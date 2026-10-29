@@ -160,12 +160,36 @@ const registrySchema = z.object({ version: z.literal(1), models: z.array(modelDe
 });
 export type ModelRegistry = z.infer<typeof registrySchema>;
 
+type RegistryOverlay = () => readonly unknown[];
+let registryOverlay: RegistryOverlay | undefined;
+/** The server installs the admin override reader (model_registry_overrides). Client bundles keep the code defaults. */
+export function setModelRegistryOverlay(reader: RegistryOverlay | undefined) { registryOverlay = reader; }
+/**
+ * Code defaults with admin overrides by key. An override that fails the definition schema removes that key (its routes close);
+ * a merged registry that fails the registry schema keeps the code defaults. Saving validates the merge first, so neither
+ * should happen outside a later code change.
+ */
+export function overlaidModelDefinitions(overrides: readonly unknown[], base: readonly ModelDefinition[] = DEFAULT_MODEL_DEFINITIONS): ModelDefinition[] {
+  if (!overrides.length) return [...base];
+  const replaced = new Map<string, ModelDefinition | null>();
+  for (const row of overrides) {
+    const key = row && typeof row === "object" ? (row as { key?: unknown }).key : undefined;
+    if (typeof key !== "string") continue;
+    const parsed = modelDefinitionSchema.safeParse(row);
+    replaced.set(key, parsed.success ? parsed.data : null);
+  }
+  const merged = base.flatMap(model => replaced.has(model.key) ? replaced.get(model.key) ?? [] : [model]);
+  for (const [key, model] of replaced) if (model && !base.some(row => row.key === key)) merged.push(model);
+  return registrySchema.safeParse({ version: 1, models: merged }).success ? merged : [...base];
+}
+
 /** Same versioned JSON environment convention as LOCAL_MODEL_SERVING_CONTRACTS; malformed input fails closed. */
 export function readModelRegistry(env: ModelEnvironment = process.env): ModelRegistry {
   env = modelEnvironment(env);
   try {
+    // An explicit MODEL_REGISTRY_CONFIG (including a job scope built from the overlaid registry) is used as is.
     return registrySchema.parse(env.MODEL_REGISTRY_CONFIG?.trim() ? JSON.parse(env.MODEL_REGISTRY_CONFIG)
-      : { version: 1, models: DEFAULT_MODEL_DEFINITIONS });
+      : { version: 1, models: overlaidModelDefinitions(registryOverlay?.() ?? []) });
   } catch (error) {
     // Never include input values (URLs may contain credentials) in configuration errors.
     const detail = error instanceof z.ZodError ? error.issues.map(issue => `${issue.path.join(".")}:${issue.code === "custom" ? issue.message : issue.code}`).join(",") : "invalid_json";

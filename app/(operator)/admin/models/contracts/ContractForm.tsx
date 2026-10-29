@@ -6,7 +6,7 @@ const AI1_TEMPLATE = { version: 1, protocol: "abcllm-raw-total-bound-v1", routeI
   model: "", responseModel: "", deploymentRevision: "", endpoint: "http://host:port/v1/chat/completions", totalTokenBound: 0 };
 
 /** One contract editor. The route schema on the server is the authority; this form only helps fill the JSON. */
-export function ContractForm({ routes, initial }: { routes: readonly string[]; initial?: { routeId: string; contract: Record<string, unknown>; auth: string } }) {
+export function ContractForm({ routes, initial }: { routes: readonly string[]; initial?: { routeId: string; contract: Record<string, unknown>; auth: string; transport?: string } }) {
   const [routeId, setRouteId] = useState(initial?.routeId ?? "crawl-agent-review");
   const [json, setJson] = useState(() => JSON.stringify(initial?.contract ?? AI1_TEMPLATE, null, 2));
   const [auth, setAuth] = useState(initial?.auth ?? "gateway"), [key, setKey] = useState("");
@@ -26,6 +26,9 @@ export function ContractForm({ routes, initial }: { routes: readonly string[]; i
     <label className="grid gap-1">계약 JSON (이 경로의 형식 그대로)
       <textarea name="contract" value={json} onChange={event => setJson(event.target.value)} rows={12} spellCheck={false}
         className="rounded border border-line bg-bg p-2 font-mono text-[13px]" /></label>
+    <label className="grid gap-1">전송
+      <select name="transport" defaultValue={initial?.transport ?? "gateway"} className="rounded border border-line bg-bg p-2">
+        <option value="gateway">abcLLM 게이트웨이로</option><option value="direct">엔진에 직접(게이트웨이 없음)</option></select></label>
     <label className="grid gap-1">인증
       <select name="auth" value={auth} onChange={event => setAuth(event.target.value)} className="rounded border border-line bg-bg p-2">
         <option value="gateway">abcLLM 게이트웨이 키(기본)</option><option value="none">키 없음(직접 연결 서버)</option>

@@ -19,11 +19,15 @@ import "@/lib/llm/text-profile-serving-contract";
 import "@/lib/llm/websearch-query-serving-contract";
 
 export type ServingContractAuthMode = "gateway" | "none" | "stored";
+export type ServingContractTransportMode = "gateway" | "direct";
 export type AdminServingContractRow = { id: number; routeId: string; model: string; contract: Record<string, unknown>; contractHash: string;
-  auth: ServingContractAuthMode; hasKey: boolean; enabled: boolean; note: string | null; updatedBy: string; updatedAt: string };
+  auth: ServingContractAuthMode; transport: ServingContractTransportMode; hasKey: boolean; enabled: boolean; note: string | null; updatedBy: string; updatedAt: string };
 export type AdminServingContractInput = { routeId: string; contract: unknown; auth: ServingContractAuthMode;
+  /** 'direct': the endpoint is the engine itself, not the abcLLM gateway (default 'gateway'). */
+  transport?: ServingContractTransportMode;
   /** A new key to store; undefined keeps the current stored key of the same route+model. Never echoed back. */
   apiKey?: string; note?: string | null };
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 const isRoute = (value: string): value is GatewayServingRoute => (GATEWAY_SERVING_CONTRACT_ROUTES as readonly string[]).includes(value);
 export const servingContractHash = (contract: unknown) => createHash("sha256").update(JSON.stringify(contract)).digest("hex");
@@ -40,7 +44,7 @@ export function validateAdminServingContract(routeId: string, value: unknown): {
 export async function listAdminServingContracts(): Promise<AdminServingContractRow[]> {
   const rows = await db.select().from(modelServingContracts).orderBy(modelServingContracts.routeId, modelServingContracts.model, desc(modelServingContracts.id));
   return rows.map(row => ({ id: row.id, routeId: row.routeId, model: row.model, contract: row.contract, contractHash: row.contractHash, auth: row.auth,
-    hasKey: row.apiKeyCiphertext !== null, enabled: row.enabled, note: row.note, updatedBy: row.updatedBy, updatedAt: row.updatedAt.toISOString() }));
+    transport: row.transport, hasKey: row.apiKeyCiphertext !== null, enabled: row.enabled, note: row.note, updatedBy: row.updatedBy, updatedAt: row.updatedAt.toISOString() }));
 }
 
 /** Read-only view of the startup env contracts per route (what an admin row would override). */
@@ -53,29 +57,43 @@ export function envServingContracts(env: Readonly<Record<string, string | undefi
 
 /** Replace the enabled contract of one route+model. The previous row stays as disabled history. */
 export async function saveAdminServingContract(input: AdminServingContractInput, actor: string): Promise<{ id: number; contractHash: string }> {
+  checkServingContractInput(input, actor);
+  return onPrimary(() => db.transaction(async tx => {
+    if (!await writerSiteActive(tx)) throw new DrWriterFencedError("site_fenced");
+    return saveServingContractTx(tx, input, actor);
+  }));
+}
+
+/** Input checks that need no DB; throws the reason code. */
+export function checkServingContractInput(input: AdminServingContractInput, actor: string) {
   const checked = validateAdminServingContract(input.routeId, input.contract);
   if (!checked.ok) throw new Error(checked.reason);
-  if (!["gateway", "none", "stored"].includes(input.auth) || !actor.trim()) throw new Error("serving_contract_input_invalid");
-  const note = input.note?.trim() ? input.note.trim().slice(0, 400) : null, model = checked.contract.model, routeId = input.routeId;
+  if (!["gateway", "none", "stored"].includes(input.auth) || !["gateway", "direct", undefined].includes(input.transport) || !actor.trim())
+    throw new Error("serving_contract_input_invalid");
   const newKey = input.apiKey?.trim() || undefined;
   if (newKey && (newKey.length > 4096 || /[\s\p{Cc}]/u.test(newKey))) throw new Error("serving_contract_key_invalid");
   if (input.auth === "stored" && newKey && !secretBoxReady()) throw new Error("secret_box_key_missing");
-  const contractHash = servingContractHash(checked.contract);
-  return onPrimary(() => db.transaction(async tx => {
-    if (!await writerSiteActive(tx)) throw new DrWriterFencedError("site_fenced");
-    const [previous] = await tx.select().from(modelServingContracts)
-      .where(and(eq(modelServingContracts.routeId, routeId), eq(modelServingContracts.model, model), eq(modelServingContracts.enabled, true))).for("update");
-    const ciphertext = input.auth !== "stored" ? null : newKey ? sealSecret(newKey, servingContractKeyAad(routeId, model))
-      : previous?.auth === "stored" ? previous.apiKeyCiphertext : null;
-    if (input.auth === "stored" && !ciphertext) throw new Error("serving_contract_key_required");
-    if (previous) await tx.update(modelServingContracts).set({ enabled: false, updatedBy: actor, updatedAt: new Date() }).where(eq(modelServingContracts.id, previous.id));
-    const [row] = await tx.insert(modelServingContracts).values({ routeId, model, contract: { ...checked.contract }, contractHash, auth: input.auth,
-      apiKeyCiphertext: ciphertext, enabled: true, note, updatedBy: actor }).returning({ id: modelServingContracts.id });
-    await tx.insert(operationsAudit).values(await adminAuditRow(actor, { action: "model-serving-contract-save", target: `${routeId}:${model}`,
-      detail: { id: row.id, previousId: previous?.id ?? null, contractHash, previousHash: previous?.contractHash ?? null, auth: input.auth,
-        keyChanged: input.auth === "stored" && !!newKey, endpoint: typeof checked.contract.endpoint === "string" ? checked.contract.endpoint : null, note } }));
-    return { id: row.id, contractHash };
-  }));
+  return { contract: checked.contract, newKey };
+}
+
+/** The save inside a caller's fenced transaction (engine connect saves several rows atomically). */
+export async function saveServingContractTx(tx: Tx, input: AdminServingContractInput, actor: string): Promise<{ id: number; contractHash: string }> {
+  const { contract, newKey } = checkServingContractInput(input, actor);
+  const note = input.note?.trim() ? input.note.trim().slice(0, 400) : null, model = contract.model, routeId = input.routeId;
+  const transport = input.transport ?? "gateway";
+  const contractHash = servingContractHash(contract);
+  const [previous] = await tx.select().from(modelServingContracts)
+    .where(and(eq(modelServingContracts.routeId, routeId), eq(modelServingContracts.model, model), eq(modelServingContracts.enabled, true))).for("update");
+  const ciphertext = input.auth !== "stored" ? null : newKey ? sealSecret(newKey, servingContractKeyAad(routeId, model))
+    : previous?.auth === "stored" ? previous.apiKeyCiphertext : null;
+  if (input.auth === "stored" && !ciphertext) throw new Error("serving_contract_key_required");
+  if (previous) await tx.update(modelServingContracts).set({ enabled: false, updatedBy: actor, updatedAt: new Date() }).where(eq(modelServingContracts.id, previous.id));
+  const [row] = await tx.insert(modelServingContracts).values({ routeId, model, contract: { ...contract }, contractHash, auth: input.auth,
+    transport, apiKeyCiphertext: ciphertext, enabled: true, note, updatedBy: actor }).returning({ id: modelServingContracts.id });
+  await tx.insert(operationsAudit).values(await adminAuditRow(actor, { action: "model-serving-contract-save", target: `${routeId}:${model}`,
+    detail: { id: row.id, previousId: previous?.id ?? null, contractHash, previousHash: previous?.contractHash ?? null, auth: input.auth, transport,
+      keyChanged: input.auth === "stored" && !!newKey, endpoint: typeof contract.endpoint === "string" ? contract.endpoint : null, note } }));
+  return { id: row.id, contractHash };
 }
 
 /** Turn an admin contract off: the env contract of that route+model (if any) applies again. */

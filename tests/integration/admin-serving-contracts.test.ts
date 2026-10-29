@@ -63,8 +63,58 @@ it("a process reload serves the admin contract and its decrypted key; switching 
   const { disableAdminServingContract } = await import("@/lib/operations/admin-serving-contracts");
   vi.stubEnv("DATABASE_URL", url.toString());
   await store.refreshServingContracts();
-  expect(store.servingContractAuth("crawl-agent-review", "qwen3.8-flash-next")).toEqual({ mode: "stored", apiKey: "sk-secret-1" });
+  expect(store.servingContractAuth("crawl-agent-review", "qwen3.8-flash-next")).toEqual({ mode: "stored", apiKey: "sk-secret-1", transport: "gateway" });
   expect(await disableAdminServingContract("crawl-agent-review", "qwen3.8-flash-next", "jr")).toBe(true);
   await store.refreshServingContracts();
   expect(store.servingContractAuth("crawl-agent-review", "qwen3.8-flash-next")).toBeNull();
+});
+
+it("engine connect repoints one registry key, writes direct contracts with the stored key and selects the stages in one step", async () => {
+  const { connectAdminEngine } = await import("@/lib/operations/admin-engine-connect");
+  const { listAdminServingContracts } = await import("@/lib/operations/admin-serving-contracts");
+  const { listAdminRegistryOverrides, disableAdminRegistryOverride } = await import("@/lib/operations/admin-model-registry");
+  const store = await import("@/lib/llm/serving-contract-store");
+  const { readModelRegistry, modelRequestName } = await import("@/lib/llm/model-registry");
+  const { getSettings } = await import("@/lib/crawl/settings");
+  const ENGINE = "mlx-community--gemma-4-26b-a4b-it-4bit", BASE = "https://m1.tail0.ts.net/v1";
+  vi.stubEnv("DATABASE_URL", url.toString());
+  const seen: { url: string; auth: string | null }[] = [];
+  const engine = (async (target: string, init?: RequestInit) => {
+    seen.push({ url: target, auth: new Headers(init?.headers).get("authorization") });
+    return Response.json({ data: [{ id: ENGINE, max_model_len: 98304 }, { id: "other", max_model_len: 8192 }] });
+  }) as typeof fetch;
+  const input = { registryKey: "m1:translation", baseUrl: `${BASE}/`, auth: "stored" as const, apiKey: "engine-secret-1", engineModel: ENGINE,
+    routes: ["product-translate", "reason-translate"], selectStages: true };
+  const before = (await listAdminServingContracts()).length;
+  await expect(connectAdminEngine({ ...input, engineModel: "missing" }, "jr", engine)).rejects.toThrow("engine_model_not_found");
+  await expect(connectAdminEngine({ ...input, baseUrl: "https://m1.tail0.ts.net" }, "jr", engine)).rejects.toThrow("engine_base_url_invalid");
+  expect((await listAdminServingContracts()).length).toBe(before);
+
+  const result = await connectAdminEngine(input, "jr", engine);
+  expect(result).toMatchObject({ requestModel: ENGINE, totalTokenBound: 98304, stages: ["reason-translate", "product-translate"] });
+  expect(result.missingPolicyRoutes).toEqual([`product-translate / abcllm / ${ENGINE}`, `reason-translate / abcllm / ${ENGINE}`]);
+  expect(seen.at(-1)).toEqual({ url: `${BASE}/models`, auth: "Bearer engine-secret-1" });
+  const rows = (await listAdminServingContracts()).filter(row => row.enabled && row.model === ENGINE);
+  expect(rows.map(row => [row.routeId, row.auth, row.transport, row.hasKey, row.contract.endpoint, row.contract.totalTokenBound])).toEqual([
+    ["product-translate", "stored", "direct", true, `${BASE}/chat/completions`, 98304], ["reason-translate", "stored", "direct", true, `${BASE}/chat/completions`, 98304]]);
+  const [override] = (await listAdminRegistryOverrides()).filter(row => row.enabled);
+  expect(override.definition).toMatchObject({ key: "m1:translation", baseUrl: BASE, model: ENGINE, provider: "abcllm" });
+  expect(override.definition).not.toHaveProperty("gatewayLabel");
+  expect((await getSettings()).stageModelPools).toMatchObject({ "product-translate": ["m1:translation"], "reason-translate": ["m1:translation"] });
+  const audits = await client`SELECT action, detail::text detail FROM operations_audit WHERE action IN ('model-serving-contract-save','model-registry-override-save') ORDER BY id`;
+  expect(audits.some(row => row.detail.includes("engine-secret-1"))).toBe(false);
+
+  // Every app: the next reload serves the bare engine name, its direct contract and the decrypted key.
+  await store.refreshServingContracts();
+  expect(modelRequestName(readModelRegistry().models.find(model => model.key === "m1:translation")!)).toBe(ENGINE);
+  expect(store.servingContractAuth("product-translate", ENGINE)).toEqual({ mode: "stored", apiKey: "engine-secret-1", transport: "direct" });
+  const { resolveProductTranslationServingContract } = await import("@/lib/llm/product-translation-serving-contract");
+  expect(resolveProductTranslationServingContract(ENGINE)).toMatchObject({ endpoint: `${BASE}/chat/completions`, strictTerminalOptIn: "abcllm-strict-terminal-v1" });
+
+  // Reconnecting without a key reuses the stored one; reverting brings the code default back under the same key.
+  await connectAdminEngine({ ...input, apiKey: undefined, routes: ["product-translate"], selectStages: false }, "jr", engine);
+  expect(seen.at(-1)?.auth).toBe("Bearer engine-secret-1");
+  expect(await disableAdminRegistryOverride("m1:translation", "jr")).toBe(true);
+  await store.refreshServingContracts();
+  expect(readModelRegistry().models.find(model => model.key === "m1:translation")?.gatewayLabel).toBe("m1");
 });

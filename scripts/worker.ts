@@ -7,6 +7,7 @@ import { probeCliServingContracts } from '@/lib/llm/cli-serving-contract';
 import type { RuntimeLane } from '@/lib/operations/worker-progress';
 import { createProviderCircuits, providerCircuitConfig, withProviderOutcome, type ProviderCircuits } from '@/lib/llm/provider-circuit-breaker';
 import { dbErrorFields } from '@/lib/db/error-fields';
+import { installTailnetDns } from '@/lib/net/tailnet-dns';
 
 /** poll·tick 실패 로그 필드: 오류 code(SQLSTATE 등)·이름·잘린 message(SQL·params 제외)와 이 줄의 연속 실패 수 */
 function failureFields(error: unknown, consecutiveFailures: number) {
@@ -388,6 +389,8 @@ export function parseLoopArgs(args: string[], defaultSeconds: number) {
 async function main() {
   const options = parseWorkerArgs(process.argv.slice(2));
   assertHostDbEntry(process.env, { kind: 'worker', role: options.role });
+  // Engines addressed by Tailscale names (admin engine connections) resolve inside containers too.
+  installTailnetDns();
   await withRuntimeProcess(options.role, async (signal, report, stopClaims) => {
     const [{ jobsForRole }, { pendingJobNames, markWorkerSeen }, { JOBS }, { runJob }, { roleLeaseFromEnv }, { startHostBudget }, { supervisorLimits },
       { backgroundConsumerJobs, backgroundConsumerLanes }, { recordJobDeferral }] = await Promise.all([

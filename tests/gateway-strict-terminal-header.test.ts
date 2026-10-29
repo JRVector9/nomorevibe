@@ -186,3 +186,38 @@ it("never sends the strict terminal header from the legacy translation leaves", 
   expect(seen).toHaveLength(5);
   for (const headers of seen) expect(Object.keys(headers)).toEqual(["Authorization", "Content-Type"]);
 });
+
+it("an admin contract marked direct (the engine itself, 0148) is terminal without the gateway's usage_provenance and sends its stored key", async () => {
+  vi.stubEnv("ABCLLM_API_KEY", "local-test-only");
+  const store = await import("@/lib/llm/serving-contract-store");
+  const usage = { inputTokens: 80, outputTokens: 20, totalTokens: 100 };
+  try {
+    for (const kind of KINDS) await server(async ({ requests, endpoint, reply }) => {
+      const strict = contract(kind, endpoint, { strictTerminalOptIn: "abcllm-strict-terminal-v1" });
+      fixture.contracts[kind.route] = strict; reply(kind.content, { usage_provenance: undefined });
+      const ask = async () => { const call = kind.prepare() as Call; expect(call.kind).toBe("prepared"); const outcome = await kind.send(call);
+        return { outcome, proof: kind.read(outcome.terminal) }; };
+      // Gateway (default): an engine-shaped answer without the PR3 mark is not terminal.
+      store.setServingContractSnapshotForTest([{ routeId: kind.route, model, contract: strict, auth: "stored", apiKey: "engine-key" }]);
+      expect((await ask()).outcome).toEqual({ result: { ok: false, error: "invalid_output" }, terminal: null });
+      // Direct: the engine's own completion is terminal and its reported usage counts.
+      store.setServingContractSnapshotForTest([{ routeId: kind.route, model, contract: strict, auth: "stored", apiKey: "engine-key", transport: "direct" }]);
+      expect((await ask()).proof).toMatchObject({ actualUsage: usage, provenance: "upstream_reported" });
+      expect(requests.map(request => request.headers.authorization)).toEqual(["Bearer engine-key", "Bearer engine-key"]);
+      expect(requests.map(request => request.body)).toEqual([kind.wire(), kind.wire()]);
+    });
+  } finally { store.setServingContractSnapshotForTest(null); }
+});
+
+it("the legacy leaf refuses a model connected straight to its engine instead of sending the gateway key there", async () => {
+  vi.stubEnv("ABCLLM_API_KEY", "local-test-only");
+  const store = await import("@/lib/llm/serving-contract-store");
+  const { TRANSLATE_MODEL } = await import("@/lib/crawl/translate");
+  const seen: unknown[] = [];
+  const request = (async (url: unknown) => { seen.push(url); return new Response(envelope("[]")); }) as typeof fetch;
+  try {
+    store.setServingContractSnapshotForTest([{ routeId: "reason-translate", model: TRANSLATE_MODEL, contract: {}, auth: "stored", apiKey: "engine-key", transport: "direct" }]);
+    expect(await translateToKorean(texts, 1000, request)).toMatchObject({ ok: false });
+    expect(seen).toHaveLength(0);
+  } finally { store.setServingContractSnapshotForTest(null); }
+});
