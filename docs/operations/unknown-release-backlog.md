@@ -52,6 +52,8 @@
 - **표 3·묶음 0절이 해시로 고정한 파일 17개(표 3의 10개 포함)와 `package-lock.json`은 하나도 바뀌지 않았다.** `git show <SHA>:<파일> | sha256sum`을 두 SHA에서 다시 계산해 17개 모두 같음을 확인했다. `drizzle/` 변경 없음(저널 145항목 그대로).
 - 바뀌는 것은 **스테이징 tar `TAR_SHA`뿐**이다. tar에 `lib`·`scripts`가 들어가기 때문이다. 확정본·묶음 문서는 대표가 받은 `TARGET 1f52c9ef` 기준이라 고치지 않았다.
 
+> 아래 표와 「남음」의 `1f52c9ef`·`279e596e` TARGET 설명은 J절(확정본 3판) 이전 기록이다. 지금 값은 J절과 확정본 3절을 따른다.
+
 ### 배포 TARGET을 새 main으로 옮길 경우 다시 계산해야 할 해시 (실제 계산값)
 계산: 이 작업 공간, git 2.53.0(묶음 0절과 같은 버전. 같은 명령으로 `1f52c9ef`의 `75f388d4…`를 재현해 확인).
 
@@ -66,10 +68,17 @@
 
 - TARGET을 옮기면 배포 이미지에 이 PR의 앱 변경(옛 `[m1] qwen…` 해석 등)이 들어간다. 옮기지 않으면 `PRODUCT_TRANSLATION_MODEL_KEY=m1:translation`으로 같은 결과를 얻는다(KEY는 `1f52c9ef`에도 있음).
 
+## 끝남 (2026-10-29, 작업 공간 `xaegis/87e232d6`, origin/main `f4fe5958` fast-forward) — 확정본 3판
+- J1 TARGET 결함: 확정본 판들이 `TARGET`을 고정 SHA로 적었다. 하지만 배포 도구는 plan·run 때 main 머리가 아니면 `main_sha_mismatch`로 멈추고(`deploy_shared_images.py` `main_sha_and_token`, readiness `target_not_main`), 그 커밋의 main CI 이미지 artifact를 요구한다. 문서만 바뀐 main 커밋에는 이미지가 없다(CI `code_changed=false`. PR #731 `49cd9330`·PR #733 `be5d1d53`의 main CI artifact 실측 0개). 그래서 `TARGET=1f52c9ef`는 PR #731 병합 순간부터 plan에서 거절될 값이었다. 3판은 `REL`(스테이징·runner 소스)을 `f4fe5958`로 고정했다. `TARGET`은 plan 시점의 main 머리로 두고, `REL`과 스테이징 경로가 같은지(`target_same_staged_tree`) 확인하는 블록을 확정본 3절에 넣었다.
+- J2 표 3·묶음 0절을 `f4fe5958`에서 다시 계산했다. 파일 17개·lock은 같고 스테이징 tar만 `cdff13dd…`로 바뀌었다. 표 3에 `TAR_SHA`·lock·relay 설치본 파일 5개·배포 뒤 이미지 도구 2개를 더했다. 실행서 표 0·C1·B절 `REL`과 묶음 1절 `REL`·`$W`도 같은 값으로 바꿨다.
+- J3 배포 뒤 단계: 17단계(PR #732 relay `279e596e…`, bootstrap 전 `server.ts check`, health `matched`, 되돌리기 argv), 21단계(PR #734 AI2 자동 정리 확인 → dry-run → [승인] apply → A1~A5), 22단계(PR #735 텍스트 T0~T10, 런북 원문에서 뽑아 `deploy_at`을 docker `StartedAt`으로 치환). 14·19단계에 영향 잡 재확인 표를 넣었다(멈춤 목록 변경 없음, M1 잡은 17단계 뒤 재개, 재개 전 T0·T1).
+- J4 시험: `tests/release-order-hashes.test.ts`(10건, 네 문서 표와 코드·문서 사이 값 대조, REL tar 재생성, 생성기), `tests/integration/release-order-post-deploy-sql.test.ts`(2건, SQL 15개를 READ ONLY로 실제 스키마에서 실행). 관련 단위 10파일 64 → 11파일 74 PASS, 통합 6파일 22 PASS, tsc·ESLint 0.
+
 ## 남음 (대표 실행)
-- M1 relay·상품 번역(I3 안내): 확정본 17단계 자리에서 relay를 `279e596e…`로 재설치하고 health `upstreamModelReason:"matched"` 확인 → text·web env에 `PRODUCT_TRANSLATION_MODEL_KEY=m1:translation`(앱이 `MODEL_REGISTRY_CONFIG`를 쓰면 이전 후보 적용) → 용량 정책 `product-translate` route 모델이 `[m1] mlx-community--gemma-4-26b-a4b-it-4bit`인지 P1로 확인 → 배포 뒤 P2·P3로 번역 저장 증가 실측. 배포 TARGET을 `279e596e…`로 옮길지는 대표가 정한다(옮기면 위 표대로 `TAR_SHA`를 바꿔 친다).
-- 확정본 1~20단계. 0143(+0144) 적용·확인 → Supa(OPEN에서 시작, DRAIN 인계로 끝) → M1(인계 DRAIN 안, D2·D10 생략) → 미확인 0 → job-pause → deploy plan(--migration-verified)·run → M1 relay 재설치 → OPEN → job-resume → verify-prod-revision.
-- 0143 전: [사전 점검 묶음](2026-10-29-pre-0143-check-bundle.md)을 그대로 친다(`blockedNow`·`non_serving` 기록). 배포 `TARGET`은 `1f52c9ef…`이다. 그 main `check`와 이미지 publish가 끝났는지 배포 전에 `deployment-fast-path.md`대로 확인한다.
+- (작업자) 확정본 3판 PR·필수 CI·일반 병합. 병합 커밋이 시험 파일을 포함하므로 main CI가 이미지를 만든다. 그 뒤 main이 움직이지 않으면 그 커밋이 `TARGET`이다(결과는 PR 기록과 보고에 남긴다).
+- M1 relay·상품 번역(I3 안내): 확정본 17단계(relay `279e596e…`, `check`·health `matched`) → (선택) 15단계 전 text·web env에 `PRODUCT_TRANSLATION_MODEL_KEY=m1:translation`(앱이 `MODEL_REGISTRY_CONFIG`를 쓰면 이전 후보 적용) → 18단계 `routes`에서 `product-translate` serving(아니면 P1) → 재개 뒤 P2·P3로 번역 저장 증가 실측.
+- 확정본 1~22단계. 0143(+0144) 적용·확인 → Supa(OPEN에서 시작, DRAIN 인계로 끝) → M1(인계 DRAIN 안, D2·D10 생략) → 미확인 0 → job-pause → deploy plan(--migration-verified)·run → M1 relay 재설치(`279e596e…`, `check`·`matched`) → OPEN → job-resume → verify-prod-revision → AI2 정합 → 텍스트 적체 T0~T10.
+- 0143 전: [사전 점검 묶음](2026-10-29-pre-0143-check-bundle.md)을 그대로 친다(`blockedNow`·`non_serving` 기록, `REL=f4fe5958…`). 배포 `TARGET`은 plan 시점의 main 머리다. 확정본 3절 「배포 TARGET 확인」을 묶음 1절과 15단계 직전에 친다.
 - 해제 뒤 30분 동안 모델별 성공·AI1/AI2·새 미확인 0을 실측한다(실제 영수증으로만 기록).
 
 ## 막힘·위험
