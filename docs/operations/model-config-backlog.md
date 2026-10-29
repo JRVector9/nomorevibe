@@ -132,3 +132,7 @@ git grep -o -E '(configuredModel|configuredModelDefinition|configuredModelForPro
 - 구현과 설정 이전 도구는 완료. 남은 코드 작업 없음. 최종 재검증·PR/check/main merge·최종 개발사항 보고를 진행한다. 운영 후속은 이 차선의 금지 범위로 유지한다.
 
 - PR [#713](https://github.com/JRVector9/nomorevibe/pull/713) 생성·push 완료. 첫 CI 40799670719는 scope/check 실패: `ci_diff_whitespace_error` / `ci_check_scope_failed`. 로그와 `git diff --check origin/main...HEAD`로 deadline-policy.ts의 EOF 빈 줄을 확인해 제거했다. 이후 검증은 작업 트리만이 아니라 PR 전체 diff에 적용한다. 실패를 rerun으로 덮지 않고 수정 커밋을 추가한다.
+
+- 두 번째 CI 40799774290: scope/typecheck/lint/build/이미지 빌드는 통과했지만 integration-ledger의 제품 번역 10시험이 실패했다. 로그의 `expected { status: 'deferred' } ... { status: 'completed' }`를 추적해 제품 번역 fixture가 여전히 사유 번역 TRANSLATE_MODEL로 계약·capacity route를 만들고 있음을 확인했다. 제품은 PRODUCT_TRANSLATION_MODEL, 한국어 소개는 KOREAN_TAGLINE_MODEL, 검색 질의/reclaim fixture는 SEARCH_QUERY_MODEL로 명시적으로 분리한다. 운영의 계약/용량 거절은 완화하지 않는다. reason fixture는 기존 용도를 유지한다.
+- 로컬 DB 재현 준비의 읽기 전용 `docker info --format '{{.ServerVersion}}'`는 `permission denied while trying to connect to the docker API at unix:///var/run/docker.sock`로 실패했다. Docker 권한을 확대하거나 운영 DB를 사용하지 않는다. 로컬 DB 시험은 미실행이며 CI의 격리 PostgreSQL에서 실제 dispatch/terminal/복원 시험을 확인한다.
+- 최종 로컬 모델 스크립트는 **66파일 905시험 + typegen/tsc + 158→99**, review-stall은 **23파일 339시험 + Oracle Python 71시험 + typegen/tsc/lint**, 둘 다 exit 0. 지정 tsc도 다시 exit 0이다.
