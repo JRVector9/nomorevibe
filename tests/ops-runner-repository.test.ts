@@ -44,3 +44,10 @@ it("DRAIN 전 수동 단계는 다른 모델의 복구를 영구 차단하지 �
   mocks.execute.mockResolvedValueOnce([]).mockResolvedValueOnce([{ detail: manual }]).mockResolvedValueOnce([{ request_id: command.targetId }]);
   expect(await submitModelOpsCommand({ ...command, id: "bd2b84de-4ddf-4b2e-9dbd-605c64f7d728" }, "admin")).toMatchObject({ status: "queued" });
 });
+it("진행 조회의 감사 번호는 detail 내부 값 대신 실제 행 id를 사용한다", async () => {
+  const { readModelOpsState, readModelOpsStates } = await import("@/lib/operations/ops-runner/repository");
+  const detail = { ...initialOpsState(command, "admin"), auditId: 1 };
+  mocks.execute.mockResolvedValue([{ id: 20940, detail }]);
+  expect(await readModelOpsState(command.id)).toMatchObject({ auditId: 20940 });
+  expect(await readModelOpsStates()).toMatchObject([{ auditId: 20940 }]);
+});

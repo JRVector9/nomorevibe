@@ -20,3 +20,9 @@ it("M1 sudo를 사람 작업으로 표시하고 미완료 복구 중 접수 재�
   expect(html).toMatch(/<button[^>]*disabled=""[^>]*>접수 재개<\/button>/);
   expect(html).not.toContain("재시작할 모델");
 });
+it("UUID 작업 식별자와 실제 감사 행 번호를 구분해 표시한다", () => {
+  const state = { ...initialOpsState(command, "admin"), auditId: 20940, status: "completed" as const };
+  const html = renderToStaticMarkup(createElement(ModelOpsProgress, { state }));
+  expect(html).toContain("감사 번호: #20940");
+  expect(html).toMatch(/<details><summary>자세히<\/summary>/);
+});

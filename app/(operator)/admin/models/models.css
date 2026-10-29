@@ -1,0 +1,6 @@
+.models-save-bar { position: fixed; bottom: 0; right: 0; left: var(--models-sidebar-width, 200px); z-index: 30; padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+@media (min-width: 761px) and (max-width: 1279px) { .admin-area:not([data-rail=expanded]) .models-save-bar { left: 64px; } }
+@media (max-width: 760px) { .models-save-bar { left: 0; } }
+.models-save-bar > div { flex: 1; max-height: 90px; overflow: auto; }
+@media (max-width: 479px) { .models-save-bar { gap: 8px; padding-inline: 16px; } .models-save-bar button { padding-inline: 12px; } }
+@media print { .models-save-bar { position: static; } }

@@ -159,3 +159,25 @@
 - 완료: 관측 SQL의 종료 이력을 최근24시간으로 제한하고 settled/withdrawn 시각 부분 인덱스 migration 0140 추가. 미확인·보류 등 열린 요청은 오래되어도 그대로 포함한다. 5만 종료 표본 상한 초과는 불완전한 집계 대신 관측 실패로 표시한다.
 - 진행: 지금 상태 띠, 모델 카드·모델 내부 복구 버튼, 칩 설정과 변경 시만 저장, 30초 갱신, 렌더 회귀·화면 검수·PR/CI.
 - 미실행: migration 적용·운영 쓰기·장비 조작·미확인 해제·배포 전부 0. 인덱스의 운영 query plan/DB 실측은 아직 검증하지 않았다.
+
+### 리디자인 구현·검증 진행
+
+- 완료: 맨 위 지금 상태(ADMIN_MODEL_STAGES20개 + 1차/2차), 미확인 경고와 카드 앵커, 장비별 모델 카드/점유/성공·실패/마지막 성공/연결 확인. 내부 route/group/budget/request ID는 기본 접힌 자세히 안에만 표시한다. 모바일 상태 띠는 2행 가로 스크롤, 카드는 모바일1열/데스크톱2~3열이다.
+- 완료: 모델별 미확인·보류 블록, 시작·경과·영향 단계, 종료(정식 해제)·모델 재시작·공통 접수 중지/재개. 기존 ModelOpsPanel·prepare→run action을 재사용하고 확인 창·2초 진행·멈춘 단계·실제 감사 행 번호를 표시한다. Supa root/미등록 접근, M1 sudo는 비활성 사유를 표시한다. 다른 모델도 prepare의 실제 권한/프로필 검증을 그대로 거친다. 장비 종료나 TTL 해제 경로는 새로 만들지 않았다.
+- 완료: 설정 바꾸기 영역으로 칩과 추가/× 제거를 분리. 검수 모델+20단계 풀을 기존 saveSettings 한 번의 CAS·감사 TX로 저장한다. 하단 고정 저장 버튼은 실제 변경 때만 활성화하고 변경 단계명을 요약한다. 프리셋을 자동 적용하거나 기존 Supa+추가 MLX 값을 덮어쓰지 않는다. 30초 관측 새로고침에도 편집 중 draft/CAS 버전은 보존한다.
+- 완료: 카테고리 분류/검색/모델 등록부/다른 LLM 단계는 기본 접힘 참고 영역. 수동/30초 자동 새로고침과 관측 시각. 열린 확인 창 동안 자동 route refresh를 쉬고 닫힌 뒤 재개한다.
+- 판정 기준: 접수 draining/disabled→접수 중지, 해당 단계의 모든 관측 그룹이 상한이고 미확인 있음→멈춤, 병렬 건강 모델이 남으면→미확인 N건. 대기·최근 실패·5분 이상 진행/예약→느림. 실제 성공/진행은 정상, 표본·관측 없음은 미확인. 이 판정은 종료·해제를 일으키지 않는다.
+- 검증: 기준선 `node node_modules/vitest/vitest.mjs run admin-models ops-runner --maxWorkers=4` 17파일82시험 PASS → 구현 후 20파일107시험 PASS. `npx next typegen` 후 `npx tsc --noEmit` PASS, 범위 ESLint(--max-warnings0) PASS. 초기 tsc의 미생성 PageProps 오류와 기존 관측 시험의 바뀐 버튼 문구 실패를 확인 후 각각 typegen/새 문구 기대값으로 해결했다. 전체 unit/DB/종합 검사 반복하지 않았다.
+- 화면 막힘(실제): 기본 Playwright가 chromium_headless_shell-1234 실행 파일 없음. 설치된 Chromium1248로 실행해도 `process_singleton_posix.cc:297 … socket() failed: Operation not permitted (1)` → SIGABRT, crashpad 설정은 Read-only file system. 권한 변경/승인 우회 없음. 실제 클릭·1440/390 스크린샷·화면 조판 품질 수치 **측정 없음**. 이 사유로 시각 검수 완료로 기록하지 않는다.
+- 검토 자료: `node scripts/preview-admin-models.mjs <artifacts-dir>`로 실제 컴포넌트·생산 CSS·합성 Supa 미확인1/GPT OSS 정상/M1 미확인+sudo fixture의 1440/390 정적 HTML을 생성했다. HTML은 스크린샷/클릭 증거가 아니다. 앱의 인증 우회 경로나 공개 fixture route는 추가하지 않았다.
+- 남음: 최종 코드 회귀·타입/정적 검사, PR/필수 CI. 환경 차단 남음: 브라우저 실행 가능한 환경에서 실제 클릭·스크린샷/잘림·정렬 확인, migration0140의 실제 DB query plan 검증. 운영 DB 조회/쓰기·접수 전환·재시작·해제·배포 모두 이번 작업에서는 하지 않았다.
+
+### 화면 환경 차단 해소·최종 화면 검수
+
+- 위 Chromium 전체 브라우저의 초기 실패는 보존한다. 이미 설치된 **전용 headless shell1248**은 추가 권한·설정 변경 없이 정상 실행됐다. 기본1234 실행 파일 부재를 설치나 OS 권한 변경으로 해결하지 않았다.
+- 실제 React+생산 CSS의 고정 데이터 HTML을 Playwright에서 열고 1440px/390px 각각 실측했다. 문서 너비=뷰포트너비 **1440/1440, 390/390(가로 넘침0px)**, 모델 카드 **3열/1열**. 브라우저 page error0. 일반 Next/auth/실제 DB 통합 화면이 아닌 독립 고정 데이터 렌더 검증임을 구별한다.
+- 실제 클릭: 수동 새로고침+30초 자동 새로고침(Playwright clock), Supa/M1 종료·재시작 비활성/사유, 내부 ID 접힘, 합성 연결 확인, 추가1차 칩 제거→저장 활성→저장 후 비활성, 단계 칩 추가/제거→원복 시 비활성, 한국어 확인 창·합성 접수·단계 진행·실패 위치·감사 번호를 모두 확인했다. 모든 action 응답은 fixture이고 운영 DB/장비 IO는 없다.
+- 기획 자체 검수: 메뉴/화면 이름 ‘단계별 모델’ 일치, 수동/확인/취소·저장 단추 정렬, 모델 이름·장비·건당 통계·비활성 사유와 모바일 확인창을 캡처해 직접 확인했다. 관측 없는 단계 배지를 중립색으로 낮추고 실제 미확인만 빨강으로 강조했다. 모바일 고정 메뉴가 카드 제목을 덮는 문제를 발견해 앵커 여백112px로 수정했다. 저장바는 모바일에서도 한 줄 구조로 과도한 화면 점유를 줄였다.
+- 결과 경로(작업 artifacts): `admin-models-1440.png`, `admin-models-390.png` 전체 화면과 각 `-first-screen.png`, `-model.png`, `-settings.png`, `-confirm.png`, `-progress.png`. `admin-models-browser-validation.json`에 실제 너비/열수·클릭 항목을 기록했다. `admin-models-1440.html`/`admin-models-390.html`은 독립 검토 자료다.
+- 재현: `node scripts/preview-admin-models.mjs <artifacts-dir>`; `ADMIN_MODELS_CHROMIUM_PATH=<설치된 headless-shell 경로> node scripts/verify-admin-models-preview.mjs <artifacts-dir>`.
+- 남음 정정: 브라우저 스크린샷/합성 클릭은 완료했다. 운영 DB query plan·migration0140 적용·실제 등록된 접근/프로필·운영 드릴·배포는 이 작업 범위 밖으로 계속 미실행이다. 실제 운영 화면의 현재 설정/장부 비교 조회도 수행하지 않았다.

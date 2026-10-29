@@ -1,4 +1,6 @@
 import "server-only";
+import { readModelRegistry } from "@/lib/llm/model-registry";
+import { findModelDefinition, modelStageId } from "./admin-models-view";
 import { buildModelThroughput, type ModelCompletion } from "./admin-models-throughput";
 import { sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
@@ -68,8 +70,9 @@ export async function readAdminModelsObservation(): Promise<AdminModelsObservati
         ORDER BY settled_at DESC LIMIT 50001`);
       // Never render a partial sample as a complete rate or percentile.
       if (completions.length > 50000) return unavailableAdminModels();
+      const registry = readModelRegistry();
       return { ...buildAdminModelsObservation({ observedAt: control.observedAt, control, metrics: Array.from(metrics), requests: Array.from(requests) }),
-        throughput: buildModelThroughput(Array.from(completions), control.observedAt) };
+        throughput: buildModelThroughput(Array.from(completions, row => ({ ...row, routeId: modelStageId(row.routeId), model: findModelDefinition(row, registry.models)?.key ?? row.model })), control.observedAt) };
     }, { accessMode: "read only", isolationLevel: "repeatable read" })));
   } catch { return unavailableAdminModels(); }
 }

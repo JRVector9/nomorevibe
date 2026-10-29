@@ -27,7 +27,7 @@ export function calculateThroughput(rows: readonly ModelCompletion[], observedAt
 export function buildModelThroughput(rows: readonly ModelCompletion[], observedAt: string): ModelThroughput {
   const group = (key: (row: ModelCompletion) => string) => {
     const groups = new Map<string, ModelCompletion[]>();
-    for (const row of rows) { const id = key(row); groups.set(id, [...(groups.get(id) ?? []), row]); }
+    for (const row of rows) { const id = key(row); const sample = groups.get(id) ?? []; sample.push(row); groups.set(id, sample); }
     return Object.fromEntries([...groups].map(([id, sample]) => [id, {
       hour: calculateThroughput(sample, observedAt, 1), day: calculateThroughput(sample, observedAt, 24),
     }]));

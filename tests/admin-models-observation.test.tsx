@@ -53,7 +53,7 @@ describe("admin-models DB 관측 표시", () => {
   });
   it("미확인 M1 요청·상태 발생·경과·로컬 종료와 접수 상태를 그린다", () => {
     const html = renderToStaticMarkup(createElement(LiveModels, { observation: buildAdminModelsObservation(snapshot()) }));
-    for (const label of ["OPEN", "미확인 · indeterminate", request.requestId, "상태 경과 1시간 0분", "로컬 호출 종료 기록 있음", "접수 일시중지", "요청 종료·해제"])
+    for (const label of ["OPEN", "미확인", request.requestId, "상태 경과 1시간 0분", "로컬 호출 종료 기록 있음", "접수 일시중지", "종료(정식 해제)"])
       expect(html).toContain(label);
     expect(html).not.toContain(">접수 재개</button>");
   });
