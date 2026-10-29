@@ -8,7 +8,7 @@ M1의 oMLX는 `127.0.0.1:8000`을 유지한다. 이 relay는 별도 서비스 �
 
 | 경로 | 동작 |
 |---|---|
-| `POST /v1/chat/completions` | 고정된 M1 Qwen 모델의 JSON 요청을 loopback에 전달한다. 추론은 한 번에1건이며 대기 요청을 relay 안에 쌓지 않는다. |
+| `POST /v1/chat/completions` | 모델 등록부의 M1 `relay` entry(기본 Gemma)이면서 loopback `/v1/models`에 있는 모델의 JSON 요청만 loopback에 전달한다(아니면 `model_not_allowed`/`upstream_model_mismatch`/`upstream_models_unavailable`). 추론은 한 번에1건이며 대기 요청을 relay 안에 쌓지 않는다. |
 | `GET /v1/models` | loopback의 모델 목록을 전달한다. 모델 추론을 새로 실행하지 않는다. |
 | `GET /v1/health` | relay generation·revision, busy·draining·indeterminate와 native 준비 여부를 반환한다. 모델 건강 검사를 대신하지 않는다. |
 | `GET /v1/requests/<UUID>` | 인증된 요청 ID별 HTTP 관측 receipt를 반환한다. 입력·생성 본문·비밀키는 저장하지 않는다. |
@@ -63,7 +63,7 @@ sudo NODE_BIN=/opt/homebrew/bin/node bash scripts/ops/local-model-relay.sh insta
 sudo bash scripts/ops/local-model-relay.sh status
 ```
 
-설치 후 M3 주·mini **실제 worker 컨테이너**에서 인증 실패·models·health와 제한된 모델 canary를 확인한다. M1 모델은 `qwen3.8-flash-next`로 고정하고 다른 미상주 모델을 시험하지 않는다. macOS 방화벽 때문에 컨테이너에서 닿지 않으면 실제 Node 경로·Tailscale ACL·허용 IP를 확인하고, 방화벽 변경은 운영 실행 계획에 별도로 기록한다. relay가 임의로 방화벽을 해제하지 않는다.
+설치 후 M3 주·mini **실제 worker 컨테이너**에서 인증 실패·models·health와 제한된 모델 canary를 확인한다. M1 모델은 등록부의 M1 `relay` entry(2026-10-29 기준 `mlx-community--gemma-4-26b-a4b-it-4bit`)만 쓰고 다른 미상주 모델을 시험하지 않는다. macOS 방화벽 때문에 컨테이너에서 닿지 않으면 실제 Node 경로·Tailscale ACL·허용 IP를 확인하고, 방화벽 변경은 운영 실행 계획에 별도로 기록한다. relay가 임의로 방화벽을 해제하지 않는다.
 
 worker의 endpoint/relay 키와 local serving 계약을 PR02 경로에 등록한다. 실제 M1을 쓰는 모든 화면·텍스트 호출이 같은 물리1슬롯에 들어가고, 직접 loopback을 호출하는 미계량 작업이 없는지 확인한다. 모델 API 접근 성공과 공통 native 정산 준비 완료는 별도 항목이다. 전역 capacity를 켜는 과정에서 기존 미연결 번역·검색을 멈추게 하지 않는다.
 

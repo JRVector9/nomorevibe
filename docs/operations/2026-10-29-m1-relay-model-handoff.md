@@ -4,7 +4,11 @@
 
 ## 코드 선택
 
-설정이 없으면 기존 relay 등록부 기본값을 보존한다(기존 설치의 중단을 줄이기 위한 선택). `LOCAL_MODEL_RELAY_MODEL`은 등록부의 실제 bare model ID여야 한다. 미등록 모델·gateway label·다른 family 선언은 거절한다. 모델을 새로 추가할 때는 같은 MODEL_REGISTRY_CONFIG에 먼저 등록한다. `LOCAL_MODEL_RELAY_MODEL_FAMILY`는 생략 시 해당 entry.family, 지정 시 그 값과 일치해야 한다. loopback upstream/별도 토큰/경계 보호는 유지한다. Qwen→Gemma 별칭은 없다.
+> 2026-10-29 갱신(`a900db03`, 병합 전): 기본값이 바뀌었다. 아래가 현재 코드다.
+
+relay 허용 모델은 `MODEL_REGISTRY_CONFIG`(없으면 중앙 기본값) 한 곳에서 읽는다. `LOCAL_MODEL_RELAY_EQUIPMENT`(기본 `m1`) 장비의 `relay` 용도 entry가 허용 목록이고, 중앙 기본값에서는 `m1:translation`의 `mlx-community--gemma-4-26b-a4b-it-4bit` 하나다(이전의 GPU3090 Qwen 기본값은 없어졌다). `LOCAL_MODEL_RELAY_MODEL`/`_KEY`는 그 목록의 한 entry로만 고정할 수 있다. 다른 장비의 같은 이름 entry·gateway label·미등록 모델은 `relay_model_not_allowed`, 장비 entry가 없으면 `relay_model_not_registered`. `LOCAL_MODEL_RELAY_MODEL_FAMILY`는 생략 시 해당 entry.family, 지정 시 일치해야 한다. loopback upstream/별도 토큰/경계 보호는 유지한다. Qwen→Gemma 별칭은 없다.
+
+추론 요청은 허용 목록 밖이면 `400 model_not_allowed`, 허용 모델이어도 상류 `/v1/models`에 없으면 `503 upstream_model_mismatch`, 목록 조회 실패는 `503 upstream_models_unavailable`로 영수증·상류 호출 전에 거절한다. health는 `allowedModels`·`upstreamModelMatch`·`upstreamModelReason`을 보인다.
 
 상품과 사유 번역 기본값은 `m1:translation` Gemma entry를 함께 쓴다. 기존 명시적 env/DB 단계 풀은 덮어쓰지 않는다. 이미 versioned JSON을 쓰면 `scripts/migrate-model-registry-m1.ts --print-migration`으로 후보 JSON을 만들고 검토한다. 이 도구는 두 목적의 selection만 M1로 준비하며 DB에 쓰지 않는다. 사유 번역의 기존 ABCLLM_MODEL/KEY override와 DB 단계 풀도 별도 확인해야 한다.
 
@@ -12,7 +16,7 @@ health마다 인증된 고정 `127.0.0.1:8000/v1/models`를 5초/100KB 한도로
 
 ## 대표용 M1 argv (미실행)
 
-각 줄은 실행 파일과 argv다. `<REVIEWED_SHA>`는 CI가 통과한 실제 40자리 커밋으로 대체한다. 새 완전한 설치본(의존성 포함)은 `/var/tmp/nmv-relay-reviewed/<REVIEWED_SHA>`에 대표가 먼저 준비·해시 검토한다. 아래 ditto 목적지 release는 처음 사용하는 경로여야 한다. 이 작업 공간은 장비의 Node 실행 파일 위치와 새 설치본 준비 상태를 확인하지 않았다. 불명확한 값을 추측해 실행하지 않는다.
+각 줄은 실행 파일과 argv다. `<REVIEWED_SHA>`는 CI가 통과한 실제 40자리 커밋으로 대체한다. 2026-10-29 등록부 연결 변경 후에는 그 변경(`a900db03` 후보)이 **병합된 main 커밋**이어야 한다. 그 전 SHA로 설치하면 relay 기본 허용 모델이 옛 GPU3090 Qwen entry에서 나온다. 설치본 경로는 바뀌지 않았다. 새 완전한 설치본(의존성 포함)은 `/var/tmp/nmv-relay-reviewed/<REVIEWED_SHA>`에 대표가 먼저 준비·해시 검토한다. 아래 ditto 목적지 release는 처음 사용하는 경로여야 한다. 이 작업 공간은 장비의 Node 실행 파일 위치와 새 설치본 준비 상태를 확인하지 않았다. 불명확한 값을 추측해 실행하지 않는다.
 
 아래 모든 명령은 `/usr/bin/perl`의 55초 alarm으로 한정한다. 시간 초과/응답 유실은 완료가 아니며 자동 재요청하지 않는다. root 소유 plist, UserName `_nmvllm`, 기존 토큰 파일·state·계약·다른 환경값은 보존한다. bootout은 기존 active/unknown 요청을 확인한 승인된 유지보수 창에서만 한다. plist 변경은 kickstart만으로 재로딩되지 않아 bootout/bootstrap이 필요하다.
 

@@ -30,7 +30,9 @@ node --import tsx -e 'const {readModelRegistry}=require("./lib/llm/model-registr
 
 `limits[용도]`는 `{maxTokens, concurrency, timeoutMs?}`이며 기존 요청별 예산 기본값을 대체한다. 모델 상한과 더 작은 값을 사용한다. 번역처럼 입력 크기에 따라 계산하는 요청은 그 예산보다 작을 수 있다. 네트워크·수집·DB 대기열 동시성, 문맥 상한 C, tokenizer 증명, byte 제한은 모델의 요청 예산과 별개다.
 
-텍스트·직접 심사의 우선순위는 해당 기존 변수의 `*_MODEL_KEY` → 기존 모델 env → registry selection → 중앙 기본 entry다. 예를 들어 `PRODUCT_TRANSLATION_MODEL_KEY=m1:translation`이 옛 `PRODUCT_TRANSLATION_MODEL`보다 우선한다. `ABCLLM_MODEL_KEY`는 공용 사유·한국어 소개·검색 질의에 적용한다. 기존 `ABCLLM_BASE_URL`, `AUDIT_SECOND_OPINION_URL`의 명시적 override는 보존한다. 모델별 주소를 사용할 때는 오래된 공용 URL override도 확인한다. 모호한 bare 모델 이름은 첫 번째 장비로 추측하지 않는다. 명시적 기존 gateway label과 등록되지 않은 기존 모델 이름은 호환 목적으로 유지한다.
+텍스트·직접 심사의 우선순위는 해당 기존 변수의 `*_MODEL_KEY` → 기존 모델 env → registry selection → 중앙 기본 entry다. 예를 들어 `PRODUCT_TRANSLATION_MODEL_KEY=m1:translation`이 옛 `PRODUCT_TRANSLATION_MODEL`보다 우선한다. `ABCLLM_MODEL_KEY`는 공용 사유·한국어 소개·검색 질의에 적용한다. 기존 `ABCLLM_BASE_URL`, `AUDIT_SECOND_OPINION_URL`의 명시적 override는 보존한다. 모델별 주소를 사용할 때는 오래된 공용 URL override도 확인한다. 옛 모델 env 값은 그 용도의 route로 해석한다(`resolvePurposeModel`). 여러 장비에 있는 bare 이름은 그 용도의 selection(없으면 purposes)이 가리키는 entry가 정확히 하나일 때만 그 entry로 정하고, 아니면 `ambiguous_model_identity`로 거절한다. 첫 번째 장비로 추측하지 않는다. 등록된 장비 label인데 그 장비에 등록되지 않은 모델(예: `[m1] qwen3.8-flash-next`)은 같은 장비에서 그 용도의 현재 등록 모델로 해석한다. 다른 장비 label과 등록되지 않은 label·기존 모델 이름은 호환 목적으로 그대로 유지한다. `configuredModelRoute(용도)`가 key·장비·route·wire 이름·주소를 함께 돌려준다.
+
+M1 relay의 허용 모델도 같은 등록부에서 읽는다: `LOCAL_MODEL_RELAY_EQUIPMENT`(기본 `m1`) 장비의 `relay` 용도 entry. 중앙 기본값에서 `relay` 용도는 `m1:translation`에 있다. 기존 JSON을 쓰면 M1 entry에 `relay` 용도를 넣는다(`scripts/migrate-model-registry-m1.ts --print-migration`이 함께 준비한다).
 
 ## M1 Gemma 4 26B로 제품 번역 설정하기
 
