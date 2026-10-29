@@ -1,0 +1,46 @@
+import { beforeEach, expect, it, vi } from "vitest";
+const mocks = vi.hoisted(() => ({ execute: vi.fn(), insert: vi.fn(), values: vi.fn(), audit: vi.fn(), fence: vi.fn() }));
+vi.mock("@/lib/db", () => ({ db: { execute: mocks.execute, transaction: (fn: (tx: unknown) => unknown) => fn({ execute: mocks.execute, insert: mocks.insert }) }, onPrimary: (fn: () => unknown) => fn() }));
+vi.mock("@/lib/operations/admin-log", () => ({ adminAuditRow: mocks.audit }));
+vi.mock("@/lib/operations/dr/epoch", () => ({ writerSiteActive: mocks.fence }));
+import { submitModelOpsCommand, saveModelOpsState } from "@/lib/operations/ops-runner/repository";
+import { initialOpsState } from "@/lib/operations/ops-runner/contract";
+const command = { id: "ad2b84de-4ddf-4b2e-9dbd-605c64f7d728", action: "request-release" as const,
+  targetId: "161d7780-5b1f-4ce8-be8d-baed927b28e8", reason: "test", confirmed: true as const };
+beforeEach(() => {
+  vi.resetAllMocks(); mocks.fence.mockResolvedValue(true); mocks.insert.mockReturnValue({ values: mocks.values }); mocks.audit.mockImplementation(async (_actor, entry) => entry);
+});
+it("접수와 단계별 결과를 기존 append-only 감사 장부에 남긴다", async () => {
+  mocks.execute.mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([{ request_id: command.targetId }]);
+  const state = await submitModelOpsCommand(command, "admin");
+  expect(state.status).toBe("queued");
+  expect(mocks.audit).toHaveBeenCalledWith("admin", expect.objectContaining({ action: "ops-runner-state", target: command.id }));
+  await saveModelOpsState({ ...state, step: "verify-stop", status: "blocked", code: "termination_evidence_missing" });
+  expect(mocks.audit).toHaveBeenLastCalledWith("admin", expect.objectContaining({ ok: false, error: "termination_evidence_missing" }));
+});
+it("같은 접수 응답이 유실돼도 같은 ID를 다시 제출하면 중복 작업을 만들지 않는다", async () => {
+  const existing = initialOpsState(command, "admin");
+  mocks.execute.mockResolvedValueOnce([]).mockResolvedValueOnce([{ detail: existing }]);
+  expect(await submitModelOpsCommand(command, "admin")).toEqual(existing); expect(mocks.insert).not.toHaveBeenCalled();
+});
+it("미완료 작업이 있으면 다른 작업과 OPEN을 직렬화하여 거절한다", async () => {
+  mocks.execute.mockResolvedValueOnce([]).mockResolvedValueOnce([{ detail: initialOpsState(command, "admin") }]);
+  await expect(submitModelOpsCommand({ ...command, id: "bd2b84de-4ddf-4b2e-9dbd-605c64f7d728", action: "admission-open", targetId: "model-capacity" }, "admin"))
+    .rejects.toThrow("unfinished_operation");
+  expect(mocks.insert).not.toHaveBeenCalled();
+});
+it("fenced DB에서는 접수·감사 쓰기를 하지 않는다", async () => {
+  mocks.fence.mockResolvedValue(false);
+  await expect(submitModelOpsCommand(command, "admin")).rejects.toThrow("dr_writer_site_fenced"); expect(mocks.insert).not.toHaveBeenCalled();
+});
+it("같은 ID를 다른 대상에 재사용하거나 이미 끝난 요청을 새 해제 대상으로 접수하지 않는다", async () => {
+  mocks.execute.mockResolvedValueOnce([]).mockResolvedValueOnce([{ detail: initialOpsState(command, "admin") }]);
+  await expect(submitModelOpsCommand({ ...command, reason: "other" }, "admin")).rejects.toThrow("id_conflict");
+  mocks.execute.mockResolvedValue([]);
+  await expect(submitModelOpsCommand(command, "admin")).rejects.toThrow("request_not_indeterminate");
+});
+it("DRAIN 전 수동 단계는 다른 모델의 복구를 영구 차단하지 않는다", async () => {
+  const manual = { ...initialOpsState(command, "admin"), status: "manual", step: "prepare" };
+  mocks.execute.mockResolvedValueOnce([]).mockResolvedValueOnce([{ detail: manual }]).mockResolvedValueOnce([{ request_id: command.targetId }]);
+  expect(await submitModelOpsCommand({ ...command, id: "bd2b84de-4ddf-4b2e-9dbd-605c64f7d728" }, "admin")).toMatchObject({ status: "queued" });
+});

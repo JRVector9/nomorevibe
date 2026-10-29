@@ -1,6 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
+vi.mock("@/app/(operator)/admin/models/ops-runner-actions", () => ({ submitAdminModelOperation: vi.fn(), readAdminModelOperation: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock("@/app/(operator)/admin/models/operation-actions", () => ({ probeAdminModel: vi.fn(), changeAdminModelAdmission: vi.fn() }));
 import { buildAdminModelsObservation, unavailableAdminModels, elapsedModelTime } from "@/lib/operations/admin-models-observation";
@@ -52,7 +53,7 @@ describe("admin-models DB 관측 표시", () => {
   });
   it("미확인 M1 요청·상태 발생·경과·로컬 종료와 접수 상태를 그린다", () => {
     const html = renderToStaticMarkup(createElement(LiveModels, { observation: buildAdminModelsObservation(snapshot()) }));
-    for (const label of ["OPEN", "미확인 · indeterminate", request.requestId, "상태 경과 1시간 0분", "로컬 호출 종료 기록 있음", "접수 일시중지", "복구 조건 확인"])
+    for (const label of ["OPEN", "미확인 · indeterminate", request.requestId, "상태 경과 1시간 0분", "로컬 호출 종료 기록 있음", "접수 일시중지", "요청 종료·해제"])
       expect(html).toContain(label);
     expect(html).not.toContain(">접수 재개</button>");
   });
