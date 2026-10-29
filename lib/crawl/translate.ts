@@ -200,7 +200,7 @@ export async function translateProductFields(
   model = scopedModel("product-translate", PRODUCT_TRANSLATION_MODEL),
 ): Promise<KoreanTaglineBatch> {
   const result = await chat(productTranslationChatBody(items, model), timeoutMs, request, signal, model);
-  return result.ok ? parseKoreanTaglines(result.content, items.length) : result;
+  return result.ok ? parseKoreanTaglines(result.content, items.length, items) : result;
 }
 
 /**

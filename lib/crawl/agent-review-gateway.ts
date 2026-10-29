@@ -848,7 +848,7 @@ export async function translateProductFieldsWithReservedGateway(items: readonly 
   productTranslationTerminals.set(terminal, freeze(productTranslationGatewayTerminalEvidenceSchema.parse({ version: 1,
     kind: "product_translation_gateway_terminal", dispatch: owned, responseHash: sha(body), ...completed })));
   const content = (JSON.parse(body) as { choices: { message: { content: string | null } }[] }).choices[0].message.content;
-  return { result: parseKoreanTaglines(content ?? "", snapshot.length), terminal };
+  return { result: parseKoreanTaglines(content ?? "", snapshot.length, snapshot), terminal };
 }
 
 import { productTaglineKoModelDispatchSchema, productTaglineKoGatewayTerminalEvidenceSchema, type ProductTaglineKoModelDispatch,
