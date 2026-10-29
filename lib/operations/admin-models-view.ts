@@ -48,11 +48,15 @@ export function buildModelCards(observation: AdminModelsObservation, models: rea
   for (const request of observation.requests) ensure(request).requests.push(request);
   return [...cards.values()].sort((a, b) => b.rows.reduce((n, r) => n + r.indeterminate, 0) - a.rows.reduce((n, r) => n + r.indeterminate, 0));
 }
+export function stageUnknownRows(observation: AdminModelsObservation, rows: AdminModelMetrics[]) {
+  const groups = new Set(rows.map(row => row.groupId));
+  return observation.rows.filter(row => groups.has(row.groupId) && row.indeterminate > 0);
+}
 /** Unknown blocks only the affected capacity group; a parallel healthy model can still serve its stage. */
 export function stageHealth(observation: AdminModelsObservation, rows: AdminModelMetrics[], requests: AdminModelRequest[]): StageHealth {
   if (observation.mode === "draining" || observation.mode === "disabled") return "접수 중지";
   if (observation.error || !observation.observedAt || !rows.length) return "미확인";
-  const unknown = rows.some(row => row.indeterminate > 0);
+  const unknown = stageUnknownRows(observation, rows).length > 0;
   const heldGroups = new Set(observation.groups.filter(group => group.limit !== null && group.held >= group.limit).map(group => group.groupId));
   if (unknown && rows.every(row => heldGroups.has(row.groupId))) return "멈춤";
   if (unknown) return "미확인";

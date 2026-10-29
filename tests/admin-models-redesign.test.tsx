@@ -31,6 +31,16 @@ describe("admin models 리디자인 렌더", () => {
     expect(html).toContain("미확인 1건"); expect(html).toContain("마지막 성공 2분 전");
     expect(html).toContain("모델 카드로 이동"); expect(html).toContain("30초 자동 새로고침");
   });
+  it("다른 단계의 미확인이 공유 슬롯을 막으면 해당 단계에도 멈춤과 건수를 표시한다", () => {
+    const observation = redesignObservation();
+    const row = { ...redesignMetrics[2], routeId: "reason-translate", indeterminate: 0, waiting: 0 };
+    observation.rows.push(row);
+    expect(stageHealth(observation, [row], [])).toBe("멈춤");
+    const html = renderToStaticMarkup(createElement(StageStatusRibbon, { observation, cards: buildModelCards(observation, redesignModels) }));
+    const cell = html.match(/<a [\s\S]*?<\/a>/g)?.find(cell => cell.includes("심사 사유 번역"));
+    expect(cell).toContain(">멈춤</span>"); expect(cell).toContain("미확인 1건");
+    expect(cell).toContain("마지막 성공 기록 없음");
+  });
   it("미설정 화면 판별을 가짜 모델 카드로 만들지 않는다", () => {
     const cards = buildModelCards(redesignObservation(), redesignModels, [{ id: "screen-review", label: "화면 판별", models: [{ provider: "local-direct", model: "미설정" }] }]);
     expect(cards.some(card => card.name === "미설정")).toBe(false);

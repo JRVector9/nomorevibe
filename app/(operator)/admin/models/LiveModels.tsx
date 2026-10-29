@@ -3,7 +3,7 @@ import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { AdminModelsObservation } from "@/lib/operations/admin-models-observation";
 import { buildModelCards, elapsedModelTime, lastModelSuccess, MODEL_DASHBOARD_STAGES, modelCardAnchor, modelRecoveryBlocked,
-  modelStageId, modelStageLabel, stageHealth, type ModelCard, type ModelStageAssignment, type StageHealth } from "@/lib/operations/admin-models-view";
+  modelStageId, modelStageLabel, stageHealth, stageUnknownRows, type ModelCard, type ModelStageAssignment, type StageHealth } from "@/lib/operations/admin-models-view";
 import type { ModelDefinition } from "@/lib/llm/model-registry";
 import { throughputModelKey, type ThroughputWindows } from "@/lib/operations/admin-models-throughput";
 import { probeAdminModel, type ModelProbeResult } from "./operation-actions";
@@ -25,7 +25,7 @@ export function StageStatusRibbon({ observation, cards }: { observation: AdminMo
     {MODEL_DASHBOARD_STAGES.map(stage => {
       const rows = observation.rows.filter(row => modelStageId(row.routeId) === stage.id);
       const requests = observation.requests.filter(row => modelStageId(row.routeId) === stage.id);
-      const status: StageHealth = stageHealth(observation, rows, requests), unknown = rows.reduce((n, row) => n + row.indeterminate, 0);
+      const status: StageHealth = stageHealth(observation, rows, requests), unknown = stageUnknownRows(observation, rows).reduce((n, row) => n + row.indeterminate, 0);
       const card = cards.find(card => card.stages.includes(stage.id));
       return <a key={stage.id} href={card ? `#${modelCardAnchor(card.id)}` : "#model-settings"} className="flex min-w-0 flex-col gap-1.5 rounded-lg border border-line bg-bg-card p-2.5 hover:border-accent">
         <span className="text-[12px] font-semibold">{stage.label}</span>
