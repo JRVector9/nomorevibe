@@ -172,7 +172,7 @@ async function server(run: (state: { bodies: string[]; setReply: (reply: (respon
   }
 }
 async function tick() { await tracked(requestJob(jobName)); return tracked(runJob(jobName, writeSearchProfiles, { requestedOnly: true, roleLease: role, budgetMs: 55_000 })); }
-function identity(request: ModelCapacityRequest): ModelCapacityRequestIdentity { const { requestId: _id, ...value } = request; return value; }
+function identity(request: ModelCapacityRequest): ModelCapacityRequestIdentity { const { requestId: _id, ...value } = request; void _id; return value; }
 async function reserve(task: ProfileTask, lease: JobLease) {
   const ready = await tracked(prepareProfileModelDispatch(task, lease, { roleLease: role, timeoutMs: 1000 }));
   expect(ready.kind).toBe("ready"); if (ready.kind !== "ready") throw new Error("fixture_prepare_required");
