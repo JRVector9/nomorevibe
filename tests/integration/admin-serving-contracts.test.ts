@@ -81,6 +81,8 @@ it("engine connect repoints one registry key, writes direct contracts with the s
   const seen: { url: string; auth: string | null }[] = [];
   const engine = (async (target: string, init?: RequestInit) => {
     seen.push({ url: target, auth: new Headers(init?.headers).get("authorization") });
+    // The 1-token probe answers with the engine's own name (vLLM: its first served name), not necessarily the requested one.
+    if (init?.method === "POST") return Response.json({ object: "chat.completion", model: `${JSON.parse(String(init.body)).model}-served` });
     return Response.json({ data: [{ id: ENGINE, max_model_len: 98304 }, { id: "other", max_model_len: 8192 }] });
   }) as typeof fetch;
   const input = { registryKey: "m1:translation", baseUrl: `${BASE}/`, auth: "stored" as const, apiKey: "engine-secret-1", engineModel: ENGINE,
@@ -93,10 +95,12 @@ it("engine connect repoints one registry key, writes direct contracts with the s
   const result = await connectAdminEngine(input, "jr", engine);
   expect(result).toMatchObject({ requestModel: ENGINE, totalTokenBound: 98304, stages: ["reason-translate", "product-translate"] });
   expect(result.missingPolicyRoutes).toEqual([`product-translate / abcllm / ${ENGINE}`, `reason-translate / abcllm / ${ENGINE}`]);
-  expect(seen.at(-1)).toEqual({ url: `${BASE}/models`, auth: "Bearer engine-secret-1" });
+  expect(seen.slice(-2)).toEqual([{ url: `${BASE}/models`, auth: "Bearer engine-secret-1" }, { url: `${BASE}/chat/completions`, auth: "Bearer engine-secret-1" }]);
+  expect(result.responseModel).toBe(`${ENGINE}-served`);
   const rows = (await listAdminServingContracts()).filter(row => row.enabled && row.model === ENGINE);
-  expect(rows.map(row => [row.routeId, row.auth, row.transport, row.hasKey, row.contract.endpoint, row.contract.totalTokenBound])).toEqual([
-    ["product-translate", "stored", "direct", true, `${BASE}/chat/completions`, 98304], ["reason-translate", "stored", "direct", true, `${BASE}/chat/completions`, 98304]]);
+  expect(rows.map(row => [row.routeId, row.auth, row.transport, row.hasKey, row.contract.endpoint, row.contract.totalTokenBound, row.contract.responseModel])).toEqual([
+    ["product-translate", "stored", "direct", true, `${BASE}/chat/completions`, 98304, `${ENGINE}-served`],
+    ["reason-translate", "stored", "direct", true, `${BASE}/chat/completions`, 98304, `${ENGINE}-served`]]);
   const [override] = (await listAdminRegistryOverrides()).filter(row => row.enabled);
   expect(override.definition).toMatchObject({ key: "m1:translation", baseUrl: BASE, model: ENGINE, provider: "abcllm" });
   expect(override.definition).not.toHaveProperty("gatewayLabel");
@@ -113,8 +117,40 @@ it("engine connect repoints one registry key, writes direct contracts with the s
 
   // Reconnecting without a key reuses the stored one; reverting brings the code default back under the same key.
   await connectAdminEngine({ ...input, apiKey: undefined, routes: ["product-translate"], selectStages: false }, "jr", engine);
-  expect(seen.at(-1)?.auth).toBe("Bearer engine-secret-1");
+  expect(seen.slice(-2).map(row => row.auth)).toEqual(["Bearer engine-secret-1", "Bearer engine-secret-1"]);
   expect(await disableAdminRegistryOverride("m1:translation", "jr")).toBe(true);
   await store.refreshServingContracts();
   expect(readModelRegistry().models.find(model => model.key === "m1:translation")?.gatewayLabel).toBe("m1");
+});
+
+it("engine connect for Supa: keyless direct contracts for AI1 and text routes, and the 1차 selection follows the new engine name", async () => {
+  const { connectAdminEngine } = await import("@/lib/operations/admin-engine-connect");
+  const { saveSettings, getSettings } = await import("@/lib/crawl/settings");
+  const { listAdminServingContracts } = await import("@/lib/operations/admin-serving-contracts");
+  const ENGINE = "Inferact/Qwen3.8-27B-NVFP4", BASE = "http://100.78.219.124:8000/v1";
+  vi.stubEnv("DATABASE_URL", url.toString());
+  expect(await saveSettings({ firstReview: { provider: "abcllm", model: "[supa] Qwen3.8-27B-NVFP4" } }, "jr")).toMatchObject({ ok: true });
+  const auth: (string | null)[] = [];
+  const vllm = (async (_target: string, init?: RequestInit) => {
+    auth.push(new Headers(init?.headers).get("authorization"));
+    return init?.method === "POST" ? Response.json({ object: "chat.completion", model: "local-llm" })
+      : Response.json({ data: [{ id: "local-llm", max_model_len: 131072 }, { id: ENGINE, max_model_len: 131072 }] });
+  }) as typeof fetch;
+  const result = await connectAdminEngine({ registryKey: "supa:review", baseUrl: BASE, auth: "none", engineModel: ENGINE,
+    routes: ["crawl-agent-review", "product-search-verify", "crawl-tagline"], selectStages: true }, "jr", vllm);
+  expect(result).toMatchObject({ requestModel: ENGINE, responseModel: "local-llm", firstReviewRenamed: true, totalTokenBound: 131072,
+    stages: ["product-search-verify", "crawl-tagline"] });
+  expect(auth).toEqual([null, null]);
+  expect((await getSettings()).firstReview).toEqual({ provider: "abcllm", model: ENGINE });
+  const rows = (await listAdminServingContracts()).filter(row => row.enabled && row.model === ENGINE);
+  expect(rows.map(row => [row.routeId, row.auth, row.transport, row.contract.responseModel])).toEqual([["crawl-agent-review", "none", "direct", "local-llm"],
+    ["crawl-tagline", "none", "direct", "local-llm"], ["product-search-verify", "none", "direct", "local-llm"]]);
+  // The direct and gateway names of Supa are one model for independence checks, in TS and in SQL.
+  const { underlyingReviewModel } = await import("@/lib/crawl/review-model-identity");
+  const { underlyingModelSql } = await import("@/lib/crawl/held-qwen-retry-policy");
+  const { sql } = await import("drizzle-orm");
+  const { db } = await import("@/lib/db");
+  expect(underlyingReviewModel(ENGINE)).toBe(underlyingReviewModel("[supa] Qwen3.8-27B-NVFP4"));
+  const [row] = await db.execute<{ a: string; b: string }>(sql`SELECT ${underlyingModelSql(sql`${ENGINE}::text`)} a, ${underlyingModelSql(sql`'[supa] Qwen3.8-27B-NVFP4'::text`)} b`);
+  expect([row.a, row.b]).toEqual(["qwen3.8-27b-nvfp4", "qwen3.8-27b-nvfp4"]);
 });

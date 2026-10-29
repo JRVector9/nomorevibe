@@ -18,6 +18,7 @@ const REASONS: Record<string, string> = {
   registry_key_unknown: "등록부에 없는 모델입니다.", engine_connect_provider_unsupported: "게이트웨이형(abcllm) 등록부 모델만 엔진 연결로 바꿀 수 있습니다.",
   engine_model_not_found: "엔진의 모델 목록에 그 모델이 없습니다. 「엔진 확인」으로 이름을 확인해주세요.",
   engine_max_len_unknown: "엔진이 최대 길이를 알려 주지 않아 토큰 한도를 정할 수 없습니다.",
+  engine_probe_failed: "엔진에 1토큰 시험 호출을 보냈지만 정상 응답이 오지 않았습니다(모델 이름·키·엔진 상태를 확인해주세요).",
   engine_stage_save_failed: "연결은 저장했지만 단계 모델 지정은 실패했습니다. 단계별 모델에서 직접 골라주세요.",
   model_definition_invalid: "등록부 정의 형식이 맞지 않습니다.", model_definition_duplicate: "같은 키가 두 번 있습니다.",
   model_registry_invalid: "합친 등록부가 검사를 통과하지 못했습니다(제한 시간 순서·키 중복 등).",
@@ -74,8 +75,10 @@ export const connectEngine = webWriteAction(async function connectEngine(_previo
       engineModel: String(form.get("engineModel") ?? ""), routes: form.getAll("routes").map(String), selectStages: form.get("selectStages") === "on",
       note: String(form.get("note") ?? "") || null }, admin.login);
     for (const path of ["/admin/models/contracts", "/admin/models"]) revalidatePath(path);
-    const parts = [`연결했습니다: 경로 ${result.contracts.length}개(${result.contracts.map(row => row.routeId).join(", ")}), 요청 모델 ${result.requestModel}, 토큰 한도 ${result.totalTokenBound}.`,
+    const parts = [`연결했습니다: 경로 ${result.contracts.length}개(${result.contracts.map(row => row.routeId).join(", ")}), 요청 모델 ${result.requestModel}`
+      + `(엔진 응답 이름 ${result.responseModel}), 토큰 한도 ${result.totalTokenBound}.`,
       result.stages.length ? `단계 모델 지정: ${result.stages.join(", ")}.` : "단계 모델은 바꾸지 않았습니다.",
+      ...(result.firstReviewRenamed ? ["1차 모델 선택을 새 이름으로 바꿨습니다."] : []),
       result.missingPolicyRoutes.length ? `용량 정책에 아직 없는 경로가 있어 그 호출은 보류됩니다: ${result.missingPolicyRoutes.join(" · ")} (정책 추가 필요).`
         : "용량 정책에 경로가 있습니다. 각 앱은 30초 안에 다음 작업부터 씁니다."];
     return { ok: true, message: parts.join(" ") };

@@ -95,3 +95,30 @@ describe("engine address", () => {
       expect(engineBaseUrl(bad)).toBeNull();
   });
 });
+
+describe("model identity across gateway and direct names", () => {
+  it("drops the routing label and a publisher prefix, so Supa direct and Supa via the gateway are one model", async () => {
+    const { bareModelName, underlyingReviewModel, sameUnderlyingModel } = await import("@/lib/crawl/review-model-identity");
+    const { sameOpinionModel, secondOpinionFamily } = await import("@/lib/crawl/second-opinion-rules");
+    expect(bareModelName("Inferact/Qwen3.8-27B-NVFP4")).toBe("qwen3.8-27b-nvfp4");
+    expect(bareModelName("[supa] Qwen3.8-27B-NVFP4")).toBe("qwen3.8-27b-nvfp4");
+    expect(sameUnderlyingModel("Inferact/Qwen3.8-27B-NVFP4", "[supa] Qwen3.8-27B-NVFP4")).toBe(true);
+    expect(sameOpinionModel("Inferact/Qwen3.8-27B-NVFP4", "[supa] Qwen3.8-27B-NVFP4")).toBe(true);
+    expect(secondOpinionFamily("Inferact/Qwen3.8-27B-NVFP4")).toBe("qwen");
+    // Unchanged for the existing names.
+    expect(underlyingReviewModel("[gpu3090] qwen3.8-flash-next+vision")).toBe("qwen3.8-flash-next");
+    expect(bareModelName("mlx-community--gemma-4-26b-a4b-it-4bit")).toBe("mlx-community--gemma-4-26b-a4b-it-4bit");
+    expect(sameUnderlyingModel("qwen3.8-flash-next", "[supa] Qwen3.8-27B-NVFP4")).toBe(false);
+  });
+});
+
+describe("response model probe", () => {
+  it("returns the name the engine answers with, or null for anything but a chat completion", async () => {
+    const { probeResponseModel } = await import("@/lib/operations/admin-engine-connect");
+    const answer = (body: unknown, status = 200) => (async () => Response.json(body, { status })) as unknown as typeof fetch;
+    expect(await probeResponseModel("http://e/v1/chat/completions", "Inferact/Q", null, answer({ object: "chat.completion", model: "local-llm" }))).toBe("local-llm");
+    expect(await probeResponseModel("http://e/v1/chat/completions", "m", null, answer({ object: "chat.completion", model: "" }))).toBeNull();
+    expect(await probeResponseModel("http://e/v1/chat/completions", "m", null, answer({ error: "x" }, 404))).toBeNull();
+    expect(await probeResponseModel("http://e/v1/chat/completions", "m", null, (async () => { throw new Error("down"); }) as unknown as typeof fetch)).toBeNull();
+  });
+});

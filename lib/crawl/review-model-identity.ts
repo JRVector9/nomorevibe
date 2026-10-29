@@ -16,7 +16,16 @@ export function sameReviewModel(a?: string | null, b?: string | null): boolean {
  */
 export function underlyingReviewModel(model: string): string {
   const definition = readModelRegistry().models.find(entry => entry.key === model.trim());
-  return (definition?.model ?? model).trim().replace(/^\[[^\]]*\]\s*/, "").toLowerCase().replace(/\+(?:vision(?:-shot2)?|prompt-v3)$/, "");
+  return bareModelName(definition?.model ?? model).replace(/\+(?:vision(?:-shot2)?|prompt-v3)$/, "");
+}
+
+/**
+ * 같은 가중치의 이름 — 앞의 자리 표시([supa] …)와 배포자 접두어(Inferact/ …)를 떼고 소문자로. 엔진에 직접 붙인 Supa 는
+ * 'Inferact/Qwen3.8-27B-NVFP4', 게이트웨이는 '[supa] Qwen3.8-27B-NVFP4' 로 부른다(2026-10-29) — 둘은 같은 모델이다.
+ * SQL 짝은 held-qwen-retry-policy.ts underlyingModelSql·audit-second-opinion-auto.ts bareModel.
+ */
+export function bareModelName(model: string): string {
+  return model.trim().replace(/^\[[^\]]*\]\s*/, "").replace(/^[^/\s]+\//, "").toLowerCase();
 }
 
 export function sameUnderlyingModel(a?: string | null, b?: string | null): boolean {

@@ -24,8 +24,10 @@ export function EngineConnectForm({ models, routes }: { models: EngineConnectMod
     if (!result.ok) { setReadback(`확인 실패: ${result.reason}`); return; }
     setReadback(result.models.length ? null : "모델 없음");
     setEngineModels(result.models);
-    const bare = selected?.requestModel.replace(/^\[[^\]]+\]\s*/, "");
-    setEngineModel(result.models.find(model => model.id === bare)?.id ?? result.models[0]?.id ?? "");
+    // The current name without its gateway label, also behind a publisher prefix (Qwen3.8-27B-NVFP4 → Inferact/Qwen3.8-27B-NVFP4).
+    const bare = selected?.requestModel.replace(/^\[[^\]]+\]\s*/, "").toLowerCase() ?? "";
+    const match = result.models.find(model => model.id.toLowerCase() === bare) ?? result.models.find(model => model.id.toLowerCase().endsWith(`/${bare}`));
+    setEngineModel(match?.id ?? result.models[0]?.id ?? "");
   }
   return <form action={action} className="grid gap-3 rounded-xl border border-line bg-bg-card p-5 text-[14px]">
     <label className="grid gap-1">바꿀 등록부 모델
