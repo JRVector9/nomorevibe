@@ -76,6 +76,7 @@ it("plans from the exact ledger row, DRAIN pin and writer", async () => {
   for (const mutate of [
     (r: ReplacedPathReceipt) => { r.hops[4].observedAt = r.hops[0].startedAt!; },
     (r: ReplacedPathReceipt) => { r.hops[4].observedAt = r.hops[3].observedAt; },
+    (r: ReplacedPathReceipt) => { r.hops[3].observedAt = dispatchAt; },
     (r: ReplacedPathReceipt) => { Object.assign(r.hops[0], { mode: "idle" }); },
     (r: ReplacedPathReceipt) => { Object.assign(r.hops[0], { mode: "absent", incarnationId: "absent", startedAt: null }); },
     (r: ReplacedPathReceipt) => { Object.assign(r.hops[4], { mode: "absent", incarnationId: "absent", startedAt: null }); },

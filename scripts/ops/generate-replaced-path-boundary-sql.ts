@@ -17,3 +17,6 @@ check(schema);
 const template = readFileSync(new URL("./replaced-path-boundary-sql.template.sql",import.meta.url),"utf8");
 writeFileSync(new URL("../../drizzle/0145_replaced_path_boundary_exit.sql",import.meta.url),template.replace("__EVIDENCE_SHAPE__",JSON.stringify(schema))
   .replace("__OWNERS__",JSON.stringify(REPLACED_PATH_OWNERS)).replace("__PROVIDERS__",JSON.stringify(REPLACED_PATH_PROVIDERS)));
+// 0145 is applied in production and stays byte-identical; 0146 replaces only the evidence validator.
+const template0146 = readFileSync(new URL("./replaced-path-boundary-0146.template.sql",import.meta.url),"utf8");
+writeFileSync(new URL("../../drizzle/0146_replaced_path_absent_after_dispatch.sql",import.meta.url),template0146.replace("__EVIDENCE_SHAPE__",JSON.stringify(schema)));

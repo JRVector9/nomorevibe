@@ -80,7 +80,8 @@ export function validReplacedPathHops(plan: ReplacedPathPlan, receipt: ReplacedP
   const cutoff = replacedPathUpstreamCutoff(receipt.hops);
   const modeValid = (hop: ReplacedPathHop) => hop.mode === "replaced" ? hop.startedAt !== null && ms(hop.startedAt) > ms(q.dispatchAt) && ms(hop.startedAt) <= ms(hop.observedAt)
     : hop.mode === "idle" ? hop.role === "provider" && hop.startedAt !== null && ms(hop.startedAt) <= ms(hop.observedAt) && ms(hop.observedAt) > cutoff
-      : hop.role !== "owner" && hop.role !== "provider" && hop.startedAt === null && hop.incarnationId === "absent";
+      // An absence proves nothing about a call dispatched after it was observed.
+      : hop.role !== "owner" && hop.role !== "provider" && hop.startedAt === null && hop.incarnationId === "absent" && ms(hop.observedAt) > ms(q.dispatchAt);
   const present = receipt.hops.filter(hop => hop.mode !== "absent");
   return !!required && receipt.hops.length === required.length && Number.isFinite(cutoff)
     && receipt.hops.every((hop, i) => isDeepStrictEqual({ role: hop.role, host: hop.host, kind: hop.kind, service: hop.service }, required[i])
