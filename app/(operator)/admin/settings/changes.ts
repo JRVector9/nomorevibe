@@ -28,6 +28,7 @@ const SCALARS: Record<string, string> = {
   excludeForks: "포크 제외",
   excludeOrganizations: "조직 계정 제외",
   holdAmbiguous: "애매하면 보류",
+  stubTextRules: "빈 화면 본문 규칙",
   agentEvidenceEnabled: "개발 AI 근거 수집",
   agentEvidenceEnforce: "근거를 발행 조건으로",
   firstReviewProvider: "1차 심사 부르는 곳",
@@ -52,6 +53,7 @@ const LISTS: Record<string, string> = {
 };
 
 const SORTS: Record<string, string> = { recent: "최신 활동순", relevance: "관련도" };
+const STUB_TEXT_MODES: Record<string, string> = { off: "꺼짐", shadow: "관측", enforce: "적용" };
 const PROVIDERS: Record<string, string> = { abcllm: "사내 게이트웨이", "claude-cli": "Claude CLI", "grok-cli": "Grok CLI" };
 
 const CHECKBOXES = new Set(["excludeForks", "excludeOrganizations", "holdAmbiguous", "agentEvidenceEnabled",
@@ -60,6 +62,7 @@ const CHECKBOXES = new Set(["excludeForks", "excludeOrganizations", "holdAmbiguo
 function shown(key: string, value: string | undefined): string {
   if (CHECKBOXES.has(key)) return value === "on" ? "켬" : "끔";
   if (key === "sort") return SORTS[value ?? ""] ?? value ?? "";
+  if (key === "stubTextRules") return STUB_TEXT_MODES[value ?? ""] ?? value ?? "";
   if (key === "firstReviewProvider") return PROVIDERS[value ?? ""] ?? value ?? "";
   return value?.trim() ? value.trim() : "비움";
 }

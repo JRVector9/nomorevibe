@@ -216,6 +216,13 @@ function SettingsFormBody({ settings, version, yields, secondControls, onRevert,
           <NumberField id="maxPushAgeDays" label="방치 기준" defaultValue={judge.maxPushAgeDays} min={1} max={3650} suffix="일"
             hint="마지막 커밋이 이보다 오래되면 죽은 프로젝트로 봅니다. 너무 짧으면 다 만들고 손을 뗀 멀쩡한 제품이 빠집니다." />
         </div>
+        <div className="flex min-w-0 flex-col gap-1.5">
+          <span className={labelClass}>빈 화면 본문 규칙</span>
+          {/* 1차 AI 발행 보호와 같은 낱말(꺼짐·관측·적용)을 쓴다 — 관측은 판정을 바꾸지 않고 걸렸을 규칙만 남긴다 */}
+          <Segmented name="stubTextRules" label="빈 화면 본문 규칙" defaultValue={judge.stubTextRules}
+            options={[{ value: "off", label: "꺼짐" }, { value: "shadow", label: "관측" }, { value: "enforce", label: "적용" }]} />
+          <p className={`${hintClass} max-w-[72ch]`}>본문이 제목뿐이거나 로딩·JavaScript 안내·로그인 화면·출시 예정 안내뿐인 페이지입니다. 관측은 판정을 바꾸지 않고 걸렸을 규칙만 남기고, 적용은 AI 심사 전에 거부합니다.</p>
+        </div>
         <div className="flex flex-col">
           <ToggleRow name="excludeForks" defaultChecked={judge.excludeForks} title="포크 제외" />
           <ToggleRow name="excludeOrganizations" defaultChecked={judge.excludeOrganizations} title="조직 계정 제외"

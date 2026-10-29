@@ -22,6 +22,9 @@ it.each(baseline.cases)("preserves the full baseline input and rule decision: $i
   const verdict = judge(factsFromRepoMeta(candidate.repo, document.repoMeta), pageFactsFromDocument(document), DEFAULT_CRAWL_SETTINGS, now);
   const withoutRetiredStarStep = (steps: typeof verdict.trace) => steps.filter(step =>
     step.rule !== "스타 상한 이하" && step.rule !== "스타 하한 이상");
-  expect({ ...verdict, trace: withoutRetiredStarStep(verdict.trace) })
+  // 빈 화면 본문 규칙의 shadow(2026-10-29)는 걸렸을 규칙만 signals 에 더한다 — 상태·사유·발자국과 위의 심사 입력은 그대로여야 한다
+  const { stubTextShadow, ...signals } = verdict.signals;
+  if (stubTextShadow !== undefined) expect(stubTextShadow).toMatchObject({ id: expect.any(String), rule: expect.any(String) });
+  expect({ ...verdict, signals, trace: withoutRetiredStarStep(verdict.trace) })
     .toEqual({ ...entry.verdict, trace: withoutRetiredStarStep(entry.verdict.trace) });
 });

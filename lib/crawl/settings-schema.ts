@@ -219,6 +219,14 @@ const judgeSchema = z.object({
   usableSignals: z.array(z.string().min(2).max(60)).max(60),
   /** 규칙으로 못 가르면 needs_review로 보류할지, 그냥 거부할지 */
   holdAmbiguous: z.boolean(),
+  /**
+   * 빈 화면 본문 규칙(제목만·로딩만·JavaScript 껍데기·로그인 화면만·출시 예정, rules.ts stubTextHit)을 어떻게 쓸지.
+   *
+   * shadow 는 판정을 바꾸지 않고 signals.stubTextShadow 에 걸렸을 규칙만 남긴다. enforce 는 거부한다. off 는 아무것도
+   * 남기지 않는다. 판정 잡과 1차 AI 직전 재확인이 같은 값을 본다. 얕은 병합이라 운영 저장값에 이 칸이 없어도 기본값이
+   * 적용된다 — 기본은 shadow 다(AI 승인과 엇갈린 표본을 사람이 본 뒤 enforce 로 올린다).
+   */
+  stubTextRules: z.enum(["off", "shadow", "enforce"]).default("shadow"),
 });
 
 /**
@@ -770,6 +778,11 @@ export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
       "workshops.aws", "docs.google.com", "drive.google.com", "forms.gle", "youtube.com", "youtu.be", "loom.com",
       "linktr.ee", "bit.ly", "discord.gg", "discord.com", "calendly.com", "npmjs.com", "pypi.org", "figma.com",
       "gamma.app", "producthunt.com", "devpost.com", "typeform.com", "tally.so", "substack.com",
+      /**
+       * 실측(2026-10-29, 10/22~10/29 1차 AI 웹 심사): 논문·패키지 문서·남의 코드 호스팅·글·포럼 주소로, 8곳 33건을 AI 가
+       * 모두 거부했다(승인 0). huggingface.co 는 넣지 않는다 — 거부 13·승인 7로 갈린다(Spaces 에 올린 데모 앱이 있다).
+       */
+      "zenodo.org", "arxiv.org", "pkg.go.dev", "codeberg.org", "stackblitz.com", "codefloe.com", "zenn.dev", "xdaforums.com",
     ],
     placeholderTitles: [
       "create next app",
@@ -849,5 +862,6 @@ export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
       "nextra",
     ],
     holdAmbiguous: true,
+    stubTextRules: "shadow",
   },
 };

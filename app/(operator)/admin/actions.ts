@@ -90,6 +90,8 @@ export const saveCrawlSettings = webWriteAction(async function saveCrawlSettings
       excludedRepoPatterns: lines(form.get("excludedRepoPatterns")),
       heldRepoPatterns: lines(form.get("heldRepoPatterns")),
       holdAmbiguous: form.get("holdAmbiguous") === "on",
+      // 2026-10-29 화면부터 있는 칸 — 보내지 않은 폼은 저장된 값을 건드리지 않는다
+      ...(form.has("stubTextRules") ? { stubTextRules: String(form.get("stubTextRules")) } : {}),
     },
     secondReview: {
       enabled: form.get("secondReviewEnabled") === "on",

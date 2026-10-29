@@ -142,6 +142,79 @@ export const DOCS_TITLE_MAX_WORDS = 5;
  */
 export const PUSH_AGE_RULE = "방치 기준 이내";
 
+/**
+ * 본문만 보고 가르는 빈 화면 규칙(2026-10-29).
+ *
+ * 1차 AI 정책은 본문이 제목뿐이거나 로딩·JavaScript 안내·로그인 화면뿐인 페이지를 거부한다. 그 판단을
+ * 규칙이 먼저 한다. 실측(10/22~10/29 1차 AI 웹 심사 11,486건): 다섯 규칙에 걸린 것 중 AI 도 거부한 것이
+ * 84.5%였다(거부 1,582 · 승인 260 · 보류 30). 승인된 260건이 있어 곧바로 거부하지 않고 judge.stubTextRules
+ * 로 켠다 — shadow 는 signals.stubTextShadow 에 "걸렸을 규칙"만 남기고, enforce 일 때만 거부한다.
+ *
+ * 본문은 AI 가 보는 것과 같은 textSample(pageFactsFromDocument)이다. 비교는 NFKC 정규화 + 소문자로 한다.
+ * 길이 조건이 규칙의 절반이다 — 출시 예정 문구는 길이를 빼면 일치가 40%로 떨어진다(진짜 제품 랜딩에도 흔하다).
+ */
+export type StubTextRuleId = "loading_only" | "javascript_shell" | "login_only" | "coming_soon" | "title_only";
+export type StubTextHit = { id: StubTextRuleId; rule: string; detail: string };
+/** 규칙마다 본문 글자 수(코드 포인트) 상한 — 이하일 때만 건다 */
+export const STUB_TEXT_MAX_CHARS: Record<StubTextRuleId, number> = {
+  loading_only: 60, javascript_shell: 300, login_only: 150, coming_soon: 400, title_only: 300,
+};
+const STUB_TEXT_RULES: Record<StubTextRuleId, string> = {
+  loading_only: "로딩 화면만 아님",
+  javascript_shell: "JavaScript 안내만 아님",
+  login_only: "로그인 화면만 아님",
+  coming_soon: "출시 예정·대기 명단 아님",
+  title_only: "제목만 있는 페이지 아님",
+};
+// 낱말: 글자·숫자·밑줄과 가나·한자·한글. 그 밖의 문자(구두점·기호)는 낱말을 가른다
+const STUB_WORD = /[\p{L}\p{N}_\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7a3]+/gu;
+const STUB_LOADING = /^(?:[^\p{L}\p{N}_]*loading[^\p{L}\p{N}_]*|.*(?<![\p{L}\p{N}_])loading(?:\.\.\.|…)[^\p{L}\p{N}_]*)$/u;
+const STUB_JAVASCRIPT = /enable javascript|javascript (?:is )?(?:required|disabled)|requires javascript/u;
+const STUB_LOGIN = /sign in|log in|login|password|비밀번호|로그인|登录|ログイン/u;
+const STUB_SIGNUP = /sign up|signup|register|create (?:an )?account|get started|free trial|가입|注册|登録/u;
+// "be the first to" 는 know·try 만 — 그냥 두면 돌아가는 앱의 빈 목록 안내("Be the first to chirp!")를 집는다(실측 승인 2건)
+const STUB_COMING_SOON = /coming soon|launching soon|wait ?list|notify me|be the first to (?:know|try)|곧 출시|출시 예정|대기자/u;
+
+const stubNormalize = (value: string) => value.normalize("NFKC").replace(/\s+/g, " ").trim().toLowerCase();
+const stubWords = (value: string) => value.match(STUB_WORD) ?? [];
+
+/**
+ * 본문이 빈 화면인지 — 걸린 규칙을 모두, 좁은 것부터(가장 넓은 "제목만"이 마지막) 돌려준다. 판정은 첫 것만 쓴다(stubTextHit).
+ *
+ * 본문이 없으면(textSample 없음) 빈 본문으로 본다. 응답 코드를 확인한 뒤에만 부르므로 이것은 "아직 못 읽음"이
+ * 아니라 "읽었는데 글이 없음"이다(extractTextSample 은 빈 본문을 null 로 남긴다).
+ */
+export function stubTextHits(input: {
+  repo: string; productUrl: string | null; title?: string | null; textSample?: string | null;
+}): StubTextHit[] {
+  const raw = input.textSample?.trim() ?? "";
+  const length = [...raw].length;
+  const text = stubNormalize(raw);
+  const hits: StubTextHit[] = [];
+  const hit = (id: StubTextRuleId, detail: string) => { hits.push({ id, rule: STUB_TEXT_RULES[id], detail }); };
+  const within = (id: StubTextRuleId) => length <= STUB_TEXT_MAX_CHARS[id];
+  const limit = (id: StubTextRuleId) => `본문 ${length}자 ≤ ${STUB_TEXT_MAX_CHARS[id]}자`;
+
+  if (within("loading_only") && STUB_LOADING.test(text)) hit("loading_only", `${limit("loading_only")} — “Loading…”만 있음`);
+  const javascript = within("javascript_shell") ? text.match(STUB_JAVASCRIPT)?.[0] : undefined;
+  if (javascript) hit("javascript_shell", `${limit("javascript_shell")} — “${javascript}” 안내`);
+  const login = within("login_only") ? text.match(STUB_LOGIN)?.[0] : undefined;
+  if (login && !STUB_SIGNUP.test(text)) hit("login_only", `${limit("login_only")} — 로그인 문구 “${login}”, 가입 문구 없음`);
+  const soon = within("coming_soon") ? text.match(STUB_COMING_SOON)?.[0] : undefined;
+  if (soon) hit("coming_soon", `${limit("coming_soon")} — “${soon}”`);
+  if (within("title_only")) {
+    let host = "";
+    try { host = input.productUrl ? new URL(input.productUrl).hostname : ""; } catch { /* 위에서 이미 걸러졌다 */ }
+    const known = new Set(stubWords(stubNormalize([input.title ?? "", host.replace(/\./g, " "), input.repo.split("/").at(-1) ?? ""].join(" "))));
+    if (stubWords(text).every((word) => known.has(word))) hit("title_only", `${limit("title_only")} — 제목·호스트·저장소 이름에 없는 낱말 0개`);
+  }
+  return hits;
+}
+
+export function stubTextHit(input: Parameters<typeof stubTextHits>[0]): StubTextHit | null {
+  return stubTextHits(input)[0] ?? null;
+}
+
 /** URL의 호스트가 차단 목록에 있는지 (서브도메인 포함) */
 export function isBlockedHost(url: string, blocked: string[]): boolean {
   let host: string;
@@ -563,6 +636,15 @@ function judgeWebsite(
       : ownGithub
         ? `제작자의 GitHub 링크가 있다 — 프로젝트의 집`
         : `본문 ${sample.length}자 · 걸리는 문구 0개 · 목차 낱말 ${navs.length}개 < ${rules.docsNavThreshold}`);
+
+  /**
+   * 빈 화면 본문(stubTextHit). shadow 는 판정을 바꾸지 않는다 — 발자국(trace)에도 넣지 않아 심사 입력(rules.stoppedAt)이
+   * 그대로다. 걸렸을 규칙만 signals 에 남겨 AI 판정과 견준다. 확실한 거부라 enforce 면 미뤄 둔 보류보다 먼저 이긴다.
+   */
+  const stubText = rules.stubTextRules === "off" ? null
+    : stubTextHit({ repo: repo.repo, productUrl: page.productUrl, title: page.title, textSample: page.textSample });
+  if (stubText && rules.stubTextRules === "enforce") return reject("not_a_product", stubText.rule, stubText.detail);
+  if (stubText) signals.stubTextShadow = stubText;
 
   // 푸시 시각을 모르면 살아있는지 확신할 수 없다
   if (!repo.pushedAt && rules.holdAmbiguous) {

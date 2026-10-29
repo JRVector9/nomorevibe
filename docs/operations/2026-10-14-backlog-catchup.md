@@ -228,3 +228,109 @@ status age9.544초/tick3,929/quotaBlockedfalse였고 정상 후속 작업을 요
 서버의 기간 한정 controller(`com.nomorevibe.backlog-catchup`)는 설계대로 신규 발굴 재개를 보고 정상 종료했다
 (exit 0, KeepAlive `SuccessfulExit=false`라 다시 뜨지 않음). 이후 제작 근거·스타·썸네일 후속 요청은
 기존 scheduler 주기로만 돈다. 같은 날 제작 근거 대기는 약 2,750(최장 약 37일)이며 진행 중이다.
+
+## 2026-10-29 빈 화면 본문 규칙(shadow)과 남의 사이트 8곳 — `lib/crawl/rules.ts`
+
+사람 지시 "추가할 규칙 넣어서 rules.ts 업데이트해"의 코드 몫. 운영 DB 쓰기·SSH·배포는 하지 않았다(대표가 한다).
+근거는 10/22~10/29 1차 AI 웹 심사 11,486건(승인 6,366·거부 5,053)이고, 원자료는 main-agent 보고
+`nomorevibe-rule-gap-20261029/rows.jsonl`이다.
+
+### 끝낸 것
+
+- `rules.ts`의 `stubTextHits`/`stubTextHit`: AI와 같은 본문(`pageFactsFromDocument().textSample`)을 NFKC+소문자로 본다.
+  응답 코드를 확인한 뒤 웹 경로에만 건다(설치형 경로·`pageStatus` 없음·오류 응답에는 걸지 않는다).
+  1) 제목만(≤300자, 제목·호스트·저장소 이름에 없는 낱말 0개, 본문 없음 포함) 2) 로딩만(≤60자) 3) JavaScript 껍데기(≤300자)
+  4) 로그인 화면만(≤150자, 가입 문구 없음) 5) 출시 예정·대기 명단(≤400자). 문서 갈래 규칙은 넣지 않았다.
+- 설정 `judge.stubTextRules = off | shadow | enforce`, 기본 `shadow`. 얕은 병합이라 운영 저장 judge에 이 칸이 없어도 shadow다.
+  - shadow: 판정·사유·발자국(trace)·AI 입력을 바꾸지 않고 `signals.stubTextShadow = {id, rule, detail}`만 남긴다.
+    판정 잡이 남기고, 1차 AI 결과를 반영할 때(발행 보호 적용 중) 같은 재확인 판정으로 다시 쓴다.
+  - enforce: `not_a_product`로 거부한다. 1차 AI 직전 재확인에서도 모델을 부르지 않고 규칙 거부(provider `rules`)로 끝낸다.
+  - off: 아무것도 남기지 않는다.
+  - shadow·off는 심사 정책 해시(`reviewPolicyHash`)에 넣지 않는다 — 이 배포만으로 진행 중인 1·2차 심사가 낡지 않는다.
+    enforce로 바꾸면 다른 판정 기준 저장과 같이 해시가 바뀐다.
+- `thirdPartyHosts` 코드 기본값에 zenodo.org·arxiv.org·pkg.go.dev·codeberg.org·stackblitz.com·codefloe.com·zenn.dev·xdaforums.com
+  (huggingface.co는 넣지 않음). **운영에는 저장된 21개가 코드 기본값을 통째로 덮으므로 배포만으로는 적용되지 않는다** — 아래 2번.
+- 관리 화면 `/admin` "판정 기준" 카드에 "빈 화면 본문 규칙" 선택(꺼짐·관측·적용, 1차 AI 발행 보호와 같은 낱말). 저장 바·기본값 되돌리기 창도 같은 낱말.
+
+재측정 — 구현한 `stubTextHits`를 rows.jsonl(AI 웹 심사 11,486건)에 그대로 걸었다. 기대치는 분석 스크립트 a3.py·a8.py 값이고 그대로 재현됐다.
+
+| 규칙 | 기대 거부/승인/보류 · 일치 | 실측(구현 코드) |
+| --- | --- | --- |
+| 1 제목만 | 1,387/229/29 · 84% | 1,387/229/29 · 84.3% |
+| 2 로딩만 | 38/1 · 97% | 38/1/0 · 97.4% |
+| 3 JavaScript 껍데기 | 70/13 · 84% | 70/13/0 · 84.3% |
+| 4 로그인 화면만 | 80/16 · 82% | 80/16/1 · 82.5% |
+| 5 출시 예정·대기 명단 | 9/1 · 90% | 9/1/0 · 90.0% |
+| 1~5 합계 | 1,582/260/30 · 84.5% (16.3%) | 1,582/260/30 · 84.5% (16.3%) |
+| 6 호스트 8곳 | — | 33/0/0 · 100% (huggingface.co는 13/7로 갈려 제외) |
+
+- 5번 문구 "be the first to"는 know·try 뒤만 본다. 그냥 두면 돌아가는 앱의 빈 목록 안내("Be the first to chirp!")까지 집어 승인 2건이 늘었다(9/3·75%).
+- 한계: rows에는 저장소 이름이 따로 없어(스냅숏 name은 제목, 없으면 저장소 이름) 저장소 이름 낱말 없이 쟀다. 운영 규칙은 저장소 이름 낱말도
+  "아는 낱말"로 보므로 1번이 이 표보다 조금 더 걸릴 수 있다. 이 차이는 아래 shadow 측정으로 확인한다.
+- 사람 정답 50건 표본(2026-10-29, b577191d): enforce로 판정하면 정답이 거부인 4건(#25·#36·#38·#49)을 더 거르고 정답이 올림인 것은 0건 거부했다.
+
+### 남은 것(대표) — 배포 → 하루 shadow → 50건 사람 검토 → enforce
+
+1. **배포.** 일반 배포 경로(`npm run deploy -- scope|plan|run`). 판정 잡·1차 AI 기록은 워커, 선택 칸은 웹이다. 기본 shadow라 판정 결과는 바뀌지 않는다.
+2. **운영 남의 사이트에 8곳 더하기(기존 21개 보존).** `/admin` → "거르는 목록" 카드 → **남의 사이트** 탭(옆에 ● 표시) →
+   노란 상자 "코드 기본값에 있는데 저장된 목록에 없는 8개" → **모두 더하기** → 화면 아래 저장 바에 "남의 사이트 +8"이 보이면
+   **저장 — 다음 틱부터 적용**. "모두 더하기"는 빠진 것만 뒤에 붙이고 기존 21개는 건드리지 않는다(저장하면 29개). 다른 칸은 손대지 않는다.
+   저장 뒤부터 새 판정과 1차 AI 직전 재확인에 적용된다(이미 판정·발행된 것은 그대로). judge가 바뀌므로 진행 중인 2차 심사는 `policy_changed`로 다시 준비된다(다른 판정 기준 저장과 같다).
+3. **하루 shadow 관측.** 아래 SQL ①②로 규칙별 AI 결정과 일치율을 잰다(시작 시각을 배포 완료 시각 UTC로 바꾼다). 위 재측정 표와 비교한다.
+4. **AI 승인과 엇갈린 50건 사람 검토.** SQL ③이 고정 순서로 50건을 뽑는다. 건마다 주소를 열어 "올림/거부"를 붙이고 규칙별로 센다.
+   사람 기준으로 올려야 할 것이 한 규칙에 몰리면 그 규칙을 코드에서 고친 뒤(새 PR) 다시 shadow로 잰다.
+5. **enforce 전환.** `/admin` → "판정 기준" 카드 → **빈 화면 본문 규칙**에서 **적용** → 저장 바 "빈 화면 본문 규칙 관측 → 적용" 확인 → 저장.
+   운영 감사(`settings-save`)에 바꾸기 전·후가 남는다. 되돌릴 때는 **관측**으로 저장한다. 전환 뒤 거부는 `signals.stoppedAt.rule`이
+   `제목만 있는 페이지 아님`·`로딩 화면만 아님`·`JavaScript 안내만 아님`·`로그인 화면만 아님`·`출시 예정·대기 명단 아님`으로 남는다.
+
+shadow 측정 SQL(읽기 전용, `begin read only … rollback`). 일회용 PostgreSQL에 같은 스키마로 문법·결과 모양을 확인했다(운영에서는 실행하지 않았다).
+
+```sql
+begin read only;
+set local statement_timeout = '30s';
+-- ① 규칙별: 걸렸을 규칙(signals.stubTextShadow) × 그 후보의 마지막 1차 AI 결정
+with ai as (
+  select distinct on (a.candidate_id) a.candidate_id, a.outcome->>'decision' as decision
+  from crawl_review_attempts a
+  where a.kind = 'automatic' and a.state = 'succeeded' and a.provider <> 'rules' and a.reused_from_attempt_id is null
+    and a.completed_at >= timestamp '2026-10-30 00:00:00'   -- 배포 완료 시각(UTC)으로 바꾼다
+    and a.snapshot->'product'->>'accessMode' = 'website'
+  order by a.candidate_id, a.completed_at desc, a.id desc
+)
+select coalesce(c.signals->'stubTextShadow'->>'id', '합계') as rule,
+  count(*) filter (where ai.decision = 'reject') as ai_reject,
+  count(*) filter (where ai.decision = 'approve') as ai_approve,
+  count(*) filter (where ai.decision = 'needs_review') as ai_hold,
+  round(100.0 * count(*) filter (where ai.decision = 'reject') / nullif(count(*), 0), 1) as agree_pct
+from crawl_candidates c join ai on ai.candidate_id = c.id
+where c.signals ? 'stubTextShadow'
+group by rollup (c.signals->'stubTextShadow'->>'id')
+order by grouping(c.signals->'stubTextShadow'->>'id'), 1;
+-- ② 분모: 같은 기간 1차 AI 웹 심사 후보 수(걸린 비율 = ① 합계 / 이것)
+select count(distinct a.candidate_id) as ai_web_candidates
+from crawl_review_attempts a
+where a.kind = 'automatic' and a.state = 'succeeded' and a.provider <> 'rules' and a.reused_from_attempt_id is null
+  and a.completed_at >= timestamp '2026-10-30 00:00:00'
+  and a.snapshot->'product'->>'accessMode' = 'website';
+-- ③ 사람 검토 표본: 걸렸는데 AI가 승인한 것 50건(고정 순서라 다시 뽑아도 같다)
+with ai as (
+  select distinct on (a.candidate_id) a.candidate_id, a.id as attempt_id, a.outcome->>'decision' as decision, a.outcome->>'reason' as reason
+  from crawl_review_attempts a
+  where a.kind = 'automatic' and a.state = 'succeeded' and a.provider <> 'rules' and a.reused_from_attempt_id is null
+    and a.completed_at >= timestamp '2026-10-30 00:00:00'
+    and a.snapshot->'product'->>'accessMode' = 'website'
+  order by a.candidate_id, a.completed_at desc, a.id desc
+)
+select c.repo, c.product_url, c.signals->'stubTextShadow'->>'id' as rule, c.signals->'stubTextShadow'->>'detail' as detail,
+  left(d.page_meta->>'title', 120) as title, left(d.page_meta->>'textSample', 400) as text, ai.attempt_id, left(ai.reason, 300) as ai_reason
+from crawl_candidates c
+join ai on ai.candidate_id = c.id and ai.decision = 'approve'
+left join crawl_documents d on d.repo = c.repo
+where c.signals ? 'stubTextShadow'
+order by md5(c.repo || ':stub-text-20261030')
+limit 50;
+rollback;
+```
+
+- 판정 잡이 shadow를 남기는 것은 배포 뒤 새로 판정하는 후보다. 1차 AI 결과 반영 때 다시 쓰므로, 배포 전에 판정돼 AI를 기다리던 후보도 AI 결정과 함께 기록된다.
+- ①의 `ai_approve`가 사람 검토 대상이다. AI 결정은 사람 정답이 아니므로 일치율을 정확도로 읽지 않는다.

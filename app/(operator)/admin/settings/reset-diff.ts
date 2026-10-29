@@ -23,6 +23,7 @@ const LABELS: Record<string, string> = {
   "judge.excludeForks": "포크 제외",
   "judge.excludeOrganizations": "조직 계정 제외",
   "judge.holdAmbiguous": "애매하면 보류",
+  "judge.stubTextRules": "빈 화면 본문 규칙",
   "judge.blockedHomepageDomains": "차단 도메인",
   "judge.thirdPartyHosts": "남의 사이트",
   "judge.stubPageTitles": "빈 페이지 제목",
@@ -79,8 +80,12 @@ function line(change: SettingChange): ResetLine {
     const note = [added.length ? `더함 ${preview(added)}` : "", removed.length ? `빠짐 ${preview(removed)}` : ""].filter(Boolean).join(" · ");
     return { label, before: `${before.length}개`, after: `${after.length}개`, note: note || "순서·세부 값이 바뀝니다" };
   }
+  if (change.path === "judge.stubTextRules") return { label, before: stubTextMode(change.before), after: stubTextMode(change.after) };
   return { label, before: scalar(change.before), after: scalar(change.after) };
 }
+
+/** 빈 화면 본문 규칙 — 설정 화면의 갈래 이름(꺼짐·관측·적용)으로 */
+const stubTextMode = (value: unknown) => ({ off: "꺼짐", shadow: "관측", enforce: "적용" } as Record<string, string>)[String(value)] ?? scalar(value);
 
 export function describeReset(changes: readonly SettingChange[]): ResetLine[] {
   const lines: ResetLine[] = [];

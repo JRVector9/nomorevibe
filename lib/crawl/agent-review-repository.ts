@@ -1176,9 +1176,13 @@ async function recordReview(input: RecordAgentReviewInput, spamHold: boolean): P
       await finishAgentReviewOwnership(tx, stages.ai1, input.receipt);
       return { applied: false, state: reusable ? "succeeded" as const : "failed" as const };
     }
-    const spam = spamHold ? judgeStoredDocument(locked.document, locked.settings, reviewSemanticNow(),
-      locked.settings.agentEvidence.enforceEligibility ? { relationship: current.snapshot.relationship,
-        scanState: current.snapshot.scanState, observations: current.snapshot.evidence.map(evidence => evidence.observation) } : undefined) : null;
+    const applied = spamHold || locked.settings.reviewMode === "enforce";
+    // 1차 AI 직전 재확인과 같은 규칙 판정 — 스팸 보류, 그리고 빈 화면 본문 규칙의 shadow(판정은 그대로, 걸렸을 규칙만 남긴다)가 쓴다
+    const recheck = spamHold || applied && locked.settings.judge.stubTextRules === "shadow"
+      ? judgeStoredDocument(locked.document, locked.settings, reviewSemanticNow(),
+        locked.settings.agentEvidence.enforceEligibility ? { relationship: current.snapshot.relationship,
+          scanState: current.snapshot.scanState, observations: current.snapshot.evidence.map(evidence => evidence.observation) } : undefined) : null;
+    const spam = spamHold ? recheck : null;
     if (spamHold && (attempt.provider !== "rules" || spam?.reason !== "suspected_spam"))
       throw new Error("agent_review_spam_hold_changed");
     const outcome = validateReviewOutcome(current, reusable ? attempt.outcome : spamHold ? { decision: "needs_review", reason: "스팸·악성 의심은 사람이 확인해야 합니다.", evidenceIds: ["product"] } : input.outcome ?? attempt.outcome);
@@ -1186,14 +1190,16 @@ async function recordReview(input: RecordAgentReviewInput, spamHold: boolean): P
     if (owns) await tx.update(crawlReviewAttempts).set({ state: "succeeded", outcome, completedAt: now, errorCode: null,
       inputTokens: input.usage?.inputTokens ?? null, outputTokens: input.usage?.outputTokens ?? null,
       costUsd: input.usage?.costUsd ?? null }).where(eq(crawlReviewAttempts.id, attempt.id));
-    const applied = spamHold || locked.settings.reviewMode === "enforce";
-    const kept = Object.fromEntries(Object.entries(locked.candidate.signals ?? {}).filter(([key]) => key !== "stoppedAt"));
+    // 판정 잡이 남긴 shadow 는 이 재확인으로 바꾼다 — 판정 뒤 바뀐 설정·이 칸이 생기기 전에 판정된 후보도 AI 결정과 같은 본문으로 견준다
+    const kept = Object.fromEntries(Object.entries(locked.candidate.signals ?? {}).filter(([key]) => key !== "stoppedAt" && key !== "stubTextShadow"));
+    const stubTextShadow = recheck?.signals.stubTextShadow;
     if (applied) await recordHumanDecisionOverride(tx, { stage: "ai1", candidateId: locked.candidate.id, firstAttemptId: attempt.id });
     if (applied) await tx.update(crawlCandidates).set({
       state: outcome.decision === "approve" ? "approved" : outcome.decision === "reject" ? "rejected" : "needs_review",
       reason: spamHold ? "suspected_spam" : ruleRejection?.reason ?? (outcome.decision === "approve" ? "passed" : outcome.decision === "reject" ? "not_a_product" : "ambiguous"),
       decidedBy: "auto", updatedAt: now,
       signals: { ...kept, agentReviewAttemptId: attempt.id,
+        ...(stubTextShadow ? { stubTextShadow } : {}),
         ...(spamHold && spam ? { suspectedSpam: spam.signals.suspectedSpam } : {}),
         ...(ruleRejection?.existingSlug ? { existingSlug: ruleRejection.existingSlug, existingStatus: ruleRejection.existingStatus } : {}),
         ...(spamHold && spam ? { stoppedAt: spam.signals.stoppedAt } : outcome.decision === "approve" ? {} : { stoppedAt: { rule: "AI 심사", detail: outcome.reason.slice(0, 300) } }) },
