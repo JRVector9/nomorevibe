@@ -147,3 +147,5 @@
 - 운영 배포0/운영 장비 접속·조작0/운영 DB 쓰기0/unknown 해제0/유료 DeepSeek 호출0/실행 권한 설정 변경0/SQL 초기화0/TTL 해제0/그룹 상한 우회0. 실행 계약과 프로필 형식은 [정식 실행기 문서](admin-models-ops-runner.md)를 따른다.
 - PR [#719](https://github.com/JRVector9/nomorevibe/pull/719) 생성. main의 배포 도구 후속 변경 `da0d044a`를 정상 merge(`26cd6f6a`)했으며 충돌 없음. 이 PR 최종 head의 필수 CI 성공을 확인한 뒤에만 표준 merge한다. 실제 CI·병합 SHA 영수증은 보고함 개발사항의 최종 보고에도 보존한다.
 - 최종 로컬 검증: 범위 17파일82시험, 확대 20파일128시험, 기존 verify-review-stall의 23파일339 TS + Python71시험 통과. 검토를 위해 임시 프로필/장비 자료는 모두 합성 자료이며 운영 성공으로 세지 않는다.
+
+- 어댑터가 성공 JSON을 출력했어도 프로세스가 비정상 종료/강제 종료되면 성공으로 받지 않는 검증을 추가했다. native의 구조화된 실패(JSON ok=false, exit1)는 계속 실패 근거로만 처리한다.

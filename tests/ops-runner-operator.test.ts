@@ -20,7 +20,7 @@ vi.mock("@/lib/operations/ops-runner/repository", () => ({ saveModelOpsState: mo
 vi.mock("@/lib/operations/ops-runner/control", () => ({ capacityPin: mocks.capacity, controlOpsAdmission: mocks.admission, assertOpsQuiescent: mocks.quiet, readOpsRequest: mocks.request }));
 vi.mock("@/lib/operations/dr/provider-boundary-release", () => ({ releaseProviderBoundaryRequest: mocks.release }));
 vi.mock("@/scripts/ops/model-provider-boundary-release", () => ({ readBoundaryReleaseFiles: mocks.files }));
-import { runPreparedModelOps, readOperatorProfile } from "@/lib/operations/ops-runner/operator";
+import { runPreparedModelOps, readOperatorProfile, callOpsAdapter } from "@/lib/operations/ops-runner/operator";
 import { initialOpsState } from "@/lib/operations/ops-runner/contract";
 import { boundaryFixture } from "./fixtures/provider-boundary-release";
 const sha = (raw: string) => createHash("sha256").update(raw).digest("hex");
@@ -85,7 +85,12 @@ it("원래 설정 복원 실패는 OPEN을 막는다", async () => {
   expect(await runPreparedModelOps(prepared, profileFile, dir, false)).toMatchObject({ step: "verify-restored", status: "blocked" });
   expect(mocks.admission.mock.calls.map(call => call[1])).toEqual(["draining"]);
 });
-it("검토 후 바뀐 어댑터와 다른 작업의 프로필을 거절한다", () => {
+it("검토 후 바뀐 어댑터·다른 대상·성공 JSON과 모순되는 실패 종료 코드를 거절한다", async () => {
+  const reviewed = readOperatorProfile(profileFile, state()).profile;
+  mocks.exec.mockImplementation((_exe, _args, _options, callback) => {
+    callback(Object.assign(new Error("synthetic_exit_failure"), { code: 1 }), JSON.stringify({ ok: true }), ""); return { stdin: { end: vi.fn() } };
+  });
+  await expect(callOpsAdapter(reviewed, "prepare", state(), {})).rejects.toThrow("adapter_outcome_unknown");
   expect(() => readOperatorProfile(profileFile, { ...state(), targetId: "11111111-1111-4111-8111-111111111111" })).toThrow("profile_target_mismatch");
   writeFileSync((profile.adapter as { path: string }).path, "changed"); expect(() => readOperatorProfile(profileFile, state())).toThrow("adapter_not_reviewed");
 });

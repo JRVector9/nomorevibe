@@ -71,7 +71,11 @@ export async function callOpsAdapter(profile: OperatorProfile, phase: string, st
     // No shell; small output; hard deadline; stdout/stderr never forwarded to logs/UI.
     const child = execFile("/usr/bin/python3", ["-I", profile.adapter!.path, phase],
       { timeout: 300_000, maxBuffer: 5 * 1024 * 1024, env: { NODE_ENV: process.env.NODE_ENV, PATH: "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin" } }, (_error, stdout, stderr) => {
-        try { if (stderr) throw new Error("adapter_stderr"); resolve(adapterResultSchema.parse(JSON.parse(stdout))); } catch { reject(new Error("ops_runner_adapter_outcome_unknown")); }
+        try {
+          const result = adapterResultSchema.parse(JSON.parse(stdout));
+          if (stderr || (_error && (result.ok || _error.killed || _error.signal))) throw new Error("adapter_exit_unconfirmed");
+          resolve(result);
+        } catch { reject(new Error("ops_runner_adapter_outcome_unknown")); }
       });
     child.stdin?.end(JSON.stringify({ id: state.id, action: state.action, targetId: state.targetId, context, material: profile.material }));
   });
