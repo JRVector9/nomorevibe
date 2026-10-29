@@ -75,6 +75,13 @@ describe("registry deadline and request policies", () => {
     expect(modelRequestBudget("gateway-review", env).maxTokens).toBe(900);
     expect(modelTimeoutMs("product-translate", config({ models: DEFAULT_MODEL_DEFINITIONS.map(model => model.key === "m1:translation" ? { ...model, timeoutMs: 9_000 } : model) }))).toBe(9_000);
   });
+  it("keeps the operator classify and screen-review call budgets and lets the registry override them", () => {
+    expect(modelTimeoutMs("classify-cli", {})).toBe(35_000);
+    expect(modelTimeoutMs("screen-review", {})).toBe(90_000);
+    const env = config({ timeouts: { "classify-cli": 20_000, "screen-review": 70_000 } });
+    expect(modelTimeoutMs("classify-cli", env)).toBe(20_000);
+    expect(modelTimeoutMs("screen-review", env)).toBe(70_000);
+  });
   it("rejects all three inverted or insufficiently separated edges at registry load", () => {
     for (const ladder of [
       { engineMs: 25_000, relayMs: 25_000, gatewayMs: 30_000, clientMs: 35_000 },

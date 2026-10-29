@@ -3,8 +3,8 @@
 import { startTransition, useActionState } from 'react';
 import { setHumanReview } from './human-review-actions';
 
-export function HumanReviewSwitch({ enabled, generation, ready, modelLabel = 'DeepSeek', modelLocation = 'M3 Ultra · DeepSeek v4.1 Flash' }: {
-  enabled: boolean; generation: number; ready: boolean; modelLabel?: string; modelLocation?: string;
+export function HumanReviewSwitch({ enabled, generation, ready, modelLabel, modelLocation }: {
+  enabled: boolean; generation: number; ready: boolean; modelLabel: string; modelLocation: string;
 }) {
   const [state, action, pending] = useActionState(setHumanReview, null);
   const toggle = () => {
