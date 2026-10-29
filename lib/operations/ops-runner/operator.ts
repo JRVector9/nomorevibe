@@ -9,7 +9,7 @@ import { providerBoundaryPlanSchema, providerBoundaryReceiptSchema, providerBoun
   boundaryExitObservationSchema } from "@/lib/llm/provider-boundary-contract";
 import { releaseProviderBoundaryRequest } from "../dr/provider-boundary-release";
 import { readBoundaryReleaseFiles } from "@/scripts/ops/model-provider-boundary-release";
-import { capacityPin, controlOpsAdmission, assertOpsQuiescent, readOpsRequest, type CapacityPin } from "./control";
+import { capacityPin, controlOpsAdmission, assertOpsQuiescent, handOffOpsDrain, readOpsRequest, type CapacityPin } from "./control";
 import { saveModelOpsState } from "./repository";
 import { type OpsState, type OpsStep, opsActionSchema } from "./contract";
 import { runModelOpsRunner, type StepResult } from "./runner";
@@ -23,39 +23,53 @@ export const operatorProfileSchema = z.object({ version: z.literal(1), jobId: z.
   artifactDirectory: z.string().optional(),
   affectedGroups: z.array(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/)).min(1).max(16).optional(),
   material: z.object({ path: z.string(), sha256: hash }).strict().optional(),
+  // Reviewed decision to end with the runner's own DRAIN kept (handoff) instead of OPEN. Pinned by profileHash.
+  finalAdmission: z.literal("draining").optional(),
 }).strict();
 export type OperatorProfile = z.infer<typeof operatorProfileSchema>;
+/**
+ * Where the ancestor walk stops and which owners count as trusted. The default (no root, root or current uid)
+ * walks to the filesystem root; the operator CLI never passes one. A root only narrows the walk and is checked itself;
+ * a path outside it is refused.
+ */
+export type OpsPathTrust = { root?: string; trustedOwner?: (uid: number) => boolean };
+export const operatorOwner = (uid: number) => uid === 0 || uid === process.getuid?.();
 /** Reject symlinks and any path writable by another account. No chmod, sudo or permission repair. */
-export function trustedOpsPath(path: string, directory = false) {
+export function trustedOpsPath(path: string, directory = false, trust: OpsPathTrust = {}) {
+  const { root, trustedOwner = operatorOwner } = trust;
   if (!isAbsolute(path) || path.split("/").includes("..")) throw new Error("ops_runner_untrusted_path");
+  if (root !== undefined && (!isAbsolute(root) || root.split("/").includes(".."))) throw new Error("ops_runner_untrusted_path");
   let current = path;
   for (;;) {
     const info = lstatSync(current);
-    if (info.isSymbolicLink() || ![0, process.getuid?.()].includes(info.uid) || (info.mode & 0o022)
+    if (info.isSymbolicLink() || !trustedOwner(info.uid) || (info.mode & 0o022)
       || (current === path && (directory ? !info.isDirectory() : !info.isFile()))) throw new Error("ops_runner_untrusted_path");
-    if (current === parse(current).root) break;
+    if (current === root) break;
+    if (current === parse(current).root) { if (root !== undefined) throw new Error("ops_runner_untrusted_path"); break; }
     current = dirname(current);
   }
   return path;
 }
-function boundedJson(path: string) {
-  trustedOpsPath(path);
+function boundedJson(path: string, trust?: OpsPathTrust) {
+  trustedOpsPath(path, false, trust);
   const raw = readFileSync(path); if (raw.length > 5 * 1024 * 1024) throw new Error("ops_runner_file_cap");
   return { raw, value: JSON.parse(raw.toString("utf8")) };
 }
-export function readOperatorProfile(path: string, state: OpsState) {
-  const { raw, value } = boundedJson(path), profile = operatorProfileSchema.parse(value);
+export function readOperatorProfile(path: string, state: OpsState, trust?: OpsPathTrust) {
+  const { raw, value } = boundedJson(path, trust), profile = operatorProfileSchema.parse(value);
   if (profile.jobId !== state.id || profile.action !== state.action || profile.targetId !== state.targetId) throw new Error("ops_runner_profile_target_mismatch");
+  if (profile.finalAdmission && profile.action.startsWith("admission-")) throw new Error("ops_runner_profile_final_admission_denied");
+  if (state.finalAdmission !== undefined && state.finalAdmission !== profile.finalAdmission) throw new Error("ops_runner_profile_changed");
   if (profile.adapter && !profile.requiresSudo) {
-    const source = boundedSource(profile.adapter.path);
+    const source = boundedSource(profile.adapter.path, trust);
     if (sha(source) !== profile.adapter.sha256) throw new Error("ops_runner_adapter_not_reviewed_or_requires_sudo");
   }
-  if (profile.material && !profile.requiresSudo && sha(boundedJson(profile.material.path).raw) !== profile.material.sha256)
+  if (profile.material && !profile.requiresSudo && sha(boundedJson(profile.material.path, trust).raw) !== profile.material.sha256)
     throw new Error("ops_runner_material_changed");
   return { profile, hash: sha(raw) };
 }
-function boundedSource(path: string) {
-  trustedOpsPath(path); const raw = readFileSync(path);
+function boundedSource(path: string, trust?: OpsPathTrust) {
+  trustedOpsPath(path, false, trust); const raw = readFileSync(path);
   if (raw.length > 1024 * 1024) throw new Error("ops_runner_source_cap");
   return raw;
 }
@@ -70,8 +84,9 @@ const adapterResultSchema = z.object({ ok: z.boolean(), manual: z.boolean().opti
   releaseFiles: z.object({ plan: z.string(), planSha: hash, receipt: z.string() }).strict().optional(),
 }).strict();
 type AdapterResult = z.infer<typeof adapterResultSchema>;
-export async function callOpsAdapter(profile: OperatorProfile, phase: string, state: OpsState, context: unknown): Promise<AdapterResult> {
-  if (!profile.adapter || sha(boundedSource(profile.adapter.path)) !== profile.adapter.sha256) throw new Error("ops_runner_adapter_changed");
+export async function callOpsAdapter(profile: OperatorProfile, phase: string, state: OpsState, context: unknown,
+  trust?: OpsPathTrust): Promise<AdapterResult> {
+  if (!profile.adapter || sha(boundedSource(profile.adapter.path, trust)) !== profile.adapter.sha256) throw new Error("ops_runner_adapter_changed");
   return new Promise((resolve, reject) => {
     // No shell; small output; hard deadline; stdout/stderr never forwarded to logs/UI.
     const child = execFile("/usr/bin/python3", ["-I", profile.adapter!.path, phase],
@@ -87,12 +102,13 @@ export async function callOpsAdapter(profile: OperatorProfile, phase: string, st
 }
 export const opsRootHandoffPath = (directory: string, id: string) => join(directory, `${z.uuid().parse(id)}.root-handoff.json`);
 type Prepared = { request?: unknown; profileHash: string; original: CapacityPin; drained?: CapacityPin; configurationHash?: string; plan?: unknown; receipt?: unknown; releaseFiles?: AdapterResult["releaseFiles"] };
-export async function runPreparedModelOps(state: OpsState, profilePath: string, stateDirectory: string, prepareOnly: boolean) {
-  trustedOpsPath(stateDirectory, true);
+export async function runPreparedModelOps(state: OpsState, profilePath: string, stateDirectory: string, prepareOnly: boolean,
+  trust?: OpsPathTrust) {
+  trustedOpsPath(stateDirectory, true, trust);
   if ((lstatSync(stateDirectory).mode & 0o077) !== 0) throw new Error("ops_runner_private_directory_required");
-  const reviewed = readOperatorProfile(profilePath, state), file = join(stateDirectory, `${state.id}.json`);
+  const reviewed = readOperatorProfile(profilePath, state, trust), file = join(stateDirectory, `${state.id}.json`);
   let prepared: Prepared | undefined;
-  try { prepared = boundedJson(file).value as Prepared; } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  try { prepared = boundedJson(file, trust).value as Prepared; } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   if (prepared && prepared.profileHash !== reviewed.hash) throw new Error("ops_runner_profile_changed");
   const persist = () => {
     const temporary = `${file}.${randomUUID()}.new`;
@@ -102,7 +118,7 @@ export async function runPreparedModelOps(state: OpsState, profilePath: string, 
     const directory = openSync(stateDirectory, "r"); try { fsyncSync(directory); } finally { closeSync(directory); }
   };
   const adapter = async (phase: string) => {
-    const result = await callOpsAdapter(reviewed.profile, phase, state, prepared);
+    const result = await callOpsAdapter(reviewed.profile, phase, state, prepared, trust);
     if (result.rootCommands?.length) {
       const handoff = opsRootHandoffPath(stateDirectory, state.id), temporary = `${handoff}.${randomUUID()}.new`;
       const fd = openSync(temporary, "wx", 0o600);
@@ -139,6 +155,7 @@ export async function runPreparedModelOps(state: OpsState, profilePath: string, 
       if (result.ok && step === "drain") { prepared.drained = await capacityPin(); persist(); }
       return result;
     }
+    if (step === "handoff") return handOffOpsDrain(state, prepared.drained!);
     await assertOpsQuiescent(prepared.drained!, state.targetId, reviewed.profile.affectedGroups);
     if (step === "stop") {
       if (!prepared.plan && state.action === "request-release") {
@@ -169,7 +186,7 @@ export async function runPreparedModelOps(state: OpsState, profilePath: string, 
       if (!prepared.releaseFiles || !reviewed.profile.artifactDirectory) return { ok: false, code: "release_artifacts_missing" };
       const release = async () => {
         const files = prepared!.releaseFiles!;
-        trustedOpsPath(files.plan); trustedOpsPath(files.receipt); trustedOpsPath(reviewed.profile.artifactDirectory!, true);
+        trustedOpsPath(files.plan, false, trust); trustedOpsPath(files.receipt, false, trust); trustedOpsPath(reviewed.profile.artifactDirectory!, true, trust);
         const checked = readBoundaryReleaseFiles([`--plan=${files.plan}`, `--plan-sha=${files.planSha}`, `--receipt=${files.receipt}`,
           `--artifact-dir=${reviewed.profile.artifactDirectory}`, `--operator=${state.actor}`, `--reference=ops-runner:${state.id} ${state.reason}`, "--database-url-stdin"]);
         if (!isDeepStrictEqual(checked.plan, prepared!.plan) || !isDeepStrictEqual(checked.receipt, prepared!.receipt)) throw new Error("ops_runner_artifacts_changed");
@@ -195,7 +212,7 @@ export async function runPreparedModelOps(state: OpsState, profilePath: string, 
     const result = await adapter("verify-restored");
     return { ok: result.ok && result.configurationHash === prepared.configurationHash, code: "original_configuration_not_restored" };
   };
-  const next = { ...state, profileHash: reviewed.hash };
+  const next: OpsState = { ...state, profileHash: reviewed.hash, ...(reviewed.profile.finalAdmission ? { finalAdmission: reviewed.profile.finalAdmission } : {}) };
   if (prepareOnly) {
     if (Object.keys(state.steps).some(step => step !== "prepare")) throw new Error("ops_runner_already_started");
     await saveModelOpsState({ ...next, status: "running", step: "prepare", code: null, steps: { ...state.steps, prepare: "running" } });

@@ -1,5 +1,5 @@
 import { beforeEach, expect, it, vi } from "vitest";
-import { initialOpsState, opsCommandSchema, OPS_STEPS, type OpsState, type OpsStep } from "@/lib/operations/ops-runner/contract";
+import { initialOpsState, opsCommandSchema, opsStepsFor, OPS_STEPS, type OpsState } from "@/lib/operations/ops-runner/contract";
 import { runModelOpsRunner, type OpsDriver } from "@/lib/operations/ops-runner/runner";
 const mocks = vi.hoisted(() => ({ release: vi.fn() }));
 vi.mock("@/lib/operations/dr/reclaim", () => ({ releaseEvidencedDispatches: mocks.release }));
@@ -40,7 +40,7 @@ it("중간 실패 후 같은 작업을 이어가며 완료한 해제는 다시 �
   expect((await runModelOpsRunner({ state: failed, driver })).status).toBe("completed");
   expect(vi.mocked(driver.execute).mock.calls.filter(([step]) => step === "release")).toHaveLength(1);
 });
-it.each(["stop", "restore", "drain", "open"] as OpsStep[])("응답 미확인 %s는 읽기 재확인하고 변이를 재요청하지 않는다", async step => {
+it.each(["stop", "restore", "drain", "open"] as (typeof OPS_STEPS)[number][])("응답 미확인 %s는 읽기 재확인하고 변이를 재요청하지 않는다", async step => {
   state.steps = Object.fromEntries(OPS_STEPS.slice(0, OPS_STEPS.indexOf(step)).map(s => [s, "done"])); state.steps[step] = "running";
   vi.mocked(driver.reconcile).mockResolvedValue({ ok: false, code: "readback_unproven" });
   expect(await runModelOpsRunner({ state, driver })).toMatchObject({ status: "blocked", step });
@@ -54,6 +54,23 @@ it("모델 재시작은 해제를 건너뛰고 복원 확인 뒤에만 OPEN 한�
   state.action = "model-restart";
   await runModelOpsRunner({ state, driver });
   expect(vi.mocked(driver.execute).mock.calls.map(([step]) => step)).toEqual(OPS_STEPS.filter(step => step !== "release"));
+});
+it("검토된 profile이 DRAIN 인계를 정하면 OPEN 대신 handoff로 끝나고 OPEN 변이를 부르지 않는다", async () => {
+  state.finalAdmission = "draining";
+  expect((await runModelOpsRunner({ state, driver })).status).toBe("completed");
+  const steps = vi.mocked(driver.execute).mock.calls.map(([step]) => step);
+  expect(steps).toEqual([...OPS_STEPS.slice(0, -1), "handoff"]); expect(steps).not.toContain("open");
+  expect(events.at(-1)?.steps).toMatchObject({ "verify-restored": "done", handoff: "done" });
+  expect(opsStepsFor({ action: "admission-open", finalAdmission: "draining" })).toEqual(["prepare", "open"]);
+});
+it("handoff 실패는 이어가기에서 다시 확인만 하며 다른 단계를 반복하지 않는다", async () => {
+  state.finalAdmission = "draining";
+  vi.mocked(driver.execute).mockImplementation(async step => step === "handoff" ? { ok: false, code: "handoff_drain_changed" } : { ok: true });
+  const blocked = await runModelOpsRunner({ state, driver });
+  expect(blocked).toMatchObject({ status: "blocked", step: "handoff", code: "handoff_drain_changed" });
+  vi.mocked(driver.execute).mockClear(); vi.mocked(driver.execute).mockResolvedValue({ ok: true });
+  expect((await runModelOpsRunner({ state: blocked, driver })).status).toBe("completed");
+  expect(vi.mocked(driver.execute).mock.calls.map(([step]) => step)).toEqual(["handoff"]); expect(driver.reconcile).not.toHaveBeenCalled();
 });
 it("접수 버튼의 작업도 같은 실행기를 통과한다", async () => {
   state.action = "admission-pause";

@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import { operationsAudit } from "@/lib/db/schema";
 import { adminAuditRow } from "../admin-log";
+import { writerSiteActive } from "../dr/epoch";
 import { currentModelEnv } from "../model-env";
 import { runPipelineControl } from "../pipeline-control-repository";
 import type { OpsState } from "./contract";
@@ -44,6 +45,26 @@ export async function controlOpsAdmission(state: OpsState, to: "open" | "drainin
     });
     return { ok: result.executed, code: result.executed ? undefined : "pipeline_control_rejected" };
   });
+}
+/** Keep the runner's OWN drain for the next declared procedure instead of OPEN. No capacity mutation:
+ * the exact pin the runner committed must still be current, and the decision is journaled in the same TX. */
+export async function handOffOpsDrain(state: OpsState, drained: CapacityPin) {
+  return onPrimary(() => db.transaction(async tx => {
+    if (!await writerSiteActive(tx)) throw new Error("dr_writer_site_fenced");
+    const key = `${state.id}:handoff`;
+    const [locked] = await tx.execute<CapacityPin>(sql`SELECT mode,epoch::float8,revision::float8,policy_hash AS "policyHash",
+      to_char(updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "updatedAt" FROM model_capacity_control WHERE id=1 FOR UPDATE`);
+    if (!locked) throw new Error("ops_runner_control_missing");
+    const [own] = await tx.execute<{ detail: { after: CapacityPin } }>(sql`SELECT detail FROM operations_audit
+      WHERE action='ops-runner-control' AND target=${`${state.id}:draining`} ORDER BY id DESC LIMIT 1`);
+    // Only a drain this job committed itself may be handed over, and only while nobody has changed it since.
+    if (!own || !isDeepStrictEqual(own.detail.after, drained)) return { ok: false, code: "handoff_drain_not_owned" };
+    if (locked.mode !== "draining" || !isDeepStrictEqual(locked, drained)) return { ok: false, code: "handoff_drain_changed" };
+    const [committed] = await tx.execute(sql`SELECT id FROM operations_audit WHERE action='ops-runner-control' AND target=${key} LIMIT 1`);
+    if (!committed) await tx.insert(operationsAudit).values(await adminAuditRow(state.actor, { action: "ops-runner-control", target: key,
+      detail: { after: locked, handoff: "draining", reason: state.reason } }));
+    return { ok: true };
+  }));
 }
 export async function assertOpsQuiescent(expected: CapacityPin, targetId: string, affectedGroups?: string[]) {
   const current = await capacityPin();

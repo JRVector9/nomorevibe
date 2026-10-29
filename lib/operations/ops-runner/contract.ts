@@ -16,17 +16,27 @@ export const opsCommandSchema = z.object({
 });
 export type OpsCommand = z.infer<typeof opsCommandSchema>;
 export const OPS_STEPS = ["prepare", "drain", "stop", "verify-stop", "release", "restore", "verify-restored", "open"] as const;
-export type OpsStep = typeof OPS_STEPS[number];
+/** handoff replaces open only when the reviewed operator profile keeps the runner's own DRAIN for the next declared procedure. */
+export type OpsStep = typeof OPS_STEPS[number] | "handoff";
 export const OPS_STEP_LABELS: Record<OpsStep, string> = { prepare: "준비·대상 고정", drain: "접수 중지 (DRAIN)", stop: "서비스·모델 종료",
-  "verify-stop": "종료 근거 확인", release: "요청 점유 해제", restore: "원래 설정 복원", "verify-restored": "복원 확인", open: "접수 재개 (OPEN)" };
+  "verify-stop": "종료 근거 확인", release: "요청 점유 해제", restore: "원래 설정 복원", "verify-restored": "복원 확인", open: "접수 재개 (OPEN)",
+  handoff: "DRAIN 유지·다음 절차 인계" };
 export type OpsState = {
   id: string; action: OpsCommand["action"]; targetId: string; actor: string; reason: string;
   status: "queued" | "running" | "blocked" | "manual" | "completed";
   steps: Partial<Record<OpsStep, "running" | "done" | "blocked" | "manual">>;
   step: OpsStep; code: string | null; profileHash?: string; auditId?: number;
+  /** Set from the pinned operator profile. "draining" ends with handoff instead of OPEN. */
+  finalAdmission?: "draining";
 };
 export function initialOpsState(command: OpsCommand, actor: string): OpsState {
   return { ...command, actor, status: "queued", steps: {}, step: "prepare", code: null };
+}
+
+export function opsStepsFor(state: Pick<OpsState, "action" | "finalAdmission">): OpsStep[] {
+  if (state.action.startsWith("admission-")) return ["prepare", state.action === "admission-open" ? "open" : "drain"];
+  return OPS_STEPS.filter(step => step !== "release" || state.action === "request-release")
+    .map(step => step === "open" && state.finalAdmission === "draining" ? "handoff" : step);
 }
 
 /** A human-only preflight has changed no admission or host state and does not own a physical boundary. */

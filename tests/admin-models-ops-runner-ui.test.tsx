@@ -26,3 +26,13 @@ it("UUID 작업 식별자와 실제 감사 행 번호를 구분해 표시한다"
   expect(html).toContain("감사 번호: #20940");
   expect(html).toMatch(/<details><summary>자세히<\/summary>/);
 });
+it("DRAIN 인계 작업은 OPEN 대신 인계 단계를 보이고 끝나도 접수가 DRAIN임을 알린다", () => {
+  const steps = { prepare: "done", drain: "done", stop: "done", "verify-stop": "done", release: "done", restore: "done", "verify-restored": "done", handoff: "done" } as const;
+  const state = { ...initialOpsState(command, "jr"), status: "completed" as const, step: "handoff" as const, finalAdmission: "draining" as const, steps };
+  const html = renderToStaticMarkup(createElement(ModelOpsProgress, { state }));
+  expect(html).toContain("DRAIN 유지·다음 절차 인계 · 완료");
+  expect(html).toContain("이 작업은 끝나도 접수를 DRAIN으로 둡니다");
+  expect(html).not.toContain("접수 재개 (OPEN)");
+  const plain = renderToStaticMarkup(createElement(ModelOpsProgress, { state: { ...initialOpsState(command, "jr"), status: "completed" as const } }));
+  expect(plain).toContain("접수 재개 (OPEN)"); expect(plain).not.toContain("DRAIN으로 둡니다");
+});

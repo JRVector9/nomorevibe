@@ -1,5 +1,5 @@
 import type { ReclaimPolicyWithReference, DispatchReleaseRow } from "../dr/reclaim";
-import { OPS_STEPS, type OpsState, type OpsStep } from "./contract";
+import { opsStepsFor, type OpsState, type OpsStep } from "./contract";
 
 export type StepResult = { ok: boolean; code?: string; manual?: boolean };
 export type OpsDriver = {
@@ -28,10 +28,7 @@ export async function runModelOpsRunner(input: AutoInput | { state: OpsState; dr
   const { driver } = input;
   let state: OpsState = structuredClone(input.state);
   if (state.status === "completed") return state;
-  const admission = state.action.startsWith("admission-");
-  const steps = admission ? ["prepare", state.action === "admission-open" ? "open" : "drain"] as OpsStep[]
-    : OPS_STEPS.filter(step => step !== "release" || state.action === "request-release");
-  for (const step of steps) {
+  for (const step of opsStepsFor(state)) {
     if (state.steps[step] === "done") continue;
     const previous = state.steps[step];
     state = { ...state, status: "running", step, code: null, steps: { ...state.steps, [step]: "running" } };
