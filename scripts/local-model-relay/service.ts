@@ -28,6 +28,7 @@ export type LocalModelRelayOptions = {
   /** 생성 길이 상한. 있으면 max_tokens(또는 max_completion_tokens)가 없거나 넘는 요청을 보내지 않는다. */
   maxOutputTokens?: number;
   verifyNativeReadiness?: RelayNativeReadinessVerifier;
+  readUpstreamModels?: () => Promise<readonly string[] | null>;
 };
 
 const plainIp = (value: string | undefined) => (value ?? "").replace(/^::ffff:(?=\d+\.\d+\.\d+\.\d+$)/, "");
@@ -114,9 +115,9 @@ export function createLocalModelRelay(options: LocalModelRelayOptions) {
     res.end(text);
   };
   const refuse = (res: http.ServerResponse, status: number, code: string) => send(res, status, { error: { code } });
-  const health = () => {
+  const health = (upstreamModels?: readonly string[] | null) => {
     const context = { relayRevision: options.relayRevision, deploymentRevision: options.deploymentRevision,
-      model: options.model, indeterminate, activeRequestId, lastReceipt };
+      model: options.model, indeterminate, activeRequestId, lastReceipt, upstreamModels };
     let verified: ReturnType<RelayNativeReadinessVerifier> | undefined;
     try { verified = options.verifyNativeReadiness?.(context); } catch { verified = undefined; }
     const terminal = lastReceipt?.terminal;
@@ -137,7 +138,11 @@ export function createLocalModelRelay(options: LocalModelRelayOptions) {
     if (!allow.has(plainIp(req.socket.remoteAddress))) return refuse(res, 403, "forbidden");
     if (!authorized(req.headers.authorization, options.token)) return refuse(res, 401, "unauthorized");
     // query·absolute URL·중복 slash도 별도 경로로 보아 임의 upstream 설정을 받지 않는다.
-    if (req.method === "GET" && req.url === "/v1/health") return send(res, 200, health());
+    if (req.method === "GET" && req.url === "/v1/health") {
+      let models: readonly string[] | null = null;
+      try { models = await options.readUpstreamModels?.() ?? null; } catch { /* readiness stays closed */ }
+      return send(res, 200, health(models));
+    }
     const receiptPath = /^\/v1\/requests\/([0-9a-f-]+)$/.exec(req.url ?? "");
     if (req.method === "GET" && receiptPath && validRelayRequestId(receiptPath[1])) {
       try {

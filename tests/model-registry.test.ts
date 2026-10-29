@@ -33,7 +33,7 @@ describe("model registry equipment identity", () => {
   });
   it("defaults public translation to equipment-qualified M1 Gemma and keeps other text roles independent", () => {
     expect(configuredModel("product-translate", {})).toBe("[m1] mlx-community--gemma-4-26b-a4b-it-4bit");
-    expect(modelForPurpose("reason-translate", {}).key).toBe("mlx:text");
+    expect(modelForPurpose("reason-translate", {}).key).toBe("m1:translation");
     expect(modelRequestName(modelForPurpose("direct-review", {}))).toBe("qwen3.8-flash-next");
     expect(modelBaseUrl("reason-translate", { ABCLLM_BASE_URL: "https://gateway.example/" })).toBe("https://gateway.example/v1");
   });

@@ -24,7 +24,7 @@ describe("configured operator model identities", () => {
       selections: { "product-tagline-ko": "m1:translation", "search-query-translate": "m1:translation" } }));
     vi.resetModules();
     const models = await (await import("@/lib/operations/model-env")).currentModelEnv();
-    expect(models.translate).toBe("[MLX] gpt-oss-120b");
+    expect(models.translate).toBe("[m1] mlx-community--gemma-4-26b-a4b-it-4bit");
     expect(models.koreanTagline).toBe("[m1] mlx-community--gemma-4-26b-a4b-it-4bit");
     expect(models.searchQuery).toBe("[m1] mlx-community--gemma-4-26b-a4b-it-4bit");
     const html = renderToStaticMarkup(createElement(TextModelStagesTable, { models }));

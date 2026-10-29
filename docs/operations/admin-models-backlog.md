@@ -162,3 +162,22 @@
 - 어댑터가 성공 JSON을 출력했어도 프로세스가 비정상 종료/강제 종료되면 성공으로 받지 않는 검증을 추가했다. native의 구조화된 실패(JSON ok=false, exit1)는 계속 실패 근거로만 처리한다.
 
 - 병합 뒤 남은 항목은 위의 화면 환경 제한, 별도 권한 영역의 운영 설치/새 프로필, 실제 운영 드릴/실측/활성화다. 코드·시험·PR·CI·기능 병합은 완료했으며 운영 배포 준비물은 저장소 실행기/문서뿐이다. 실행기 설치나 운영 배포를 완료했다고 기록하지 않는다.
+
+## 2026-10-29 코드 전용 차선74afc085
+
+M1 모델 선택/readiness 수정과 상품·사유 번역 동일 등록부 정렬 구현. 명시된 DB 풀/env는 보존. main typecheck PASS로 TS2353 재현 없음. M1 범위34시험 PASS, verify-model-config 첫35실패 fixture 원인을 보존하고 재검증 중. 대표 argv는 `2026-10-29-m1-relay-model-handoff.md`. 다음 항목은 Supa root 단계를 관리자 argv 준비/검증된 결과 수집으로 분리하는 구현이다. 운영·UI 변경 없음.
+- M1 최종 검증: verify-model-config 69파일/988시험·typegen·tsc PASS, 모델 리터럴158→99. 범위 ESLint/installer bash 문법 PASS. Supa 구현 계속.
+
+- 끝(코드): Supa provider의 명시적 rootHandoff. prepare에서 private 절대 argv/task 생성, 대표 관리자 root 실행 후 root 소유 결과+현재 전체 cgroup/old PID/boot/config/health 재검증, 기존 V1 해제·역순 복원·OPEN 경계 유지. sudo/DB 직접 해제/시간 기반 해제 없음.
+- 실제 시험: 기존4파일/26시험 PASS, 새 분기 포함9파일/43 Vitest PASS(별도 실제 Python14시험 포함). root argv는 공개 감사에 넣지 않음. 대표 명령·설치/결과 소유권은 `2026-10-29-supa-root-handoff.md`.
+- 남음: 최종 정적/모델 설정 검증·PR·필수 CI. 운영 설치/65f8c399 해제·M1 재시작/배포는 명시적 범위 밖이므로 미수행.
+- Supa 최종 정적 검사: 범위 ESLint, tsc --noEmit --incremental false, git diff --check PASS. 실제 Python14시험 재실행 PASS. 항목별 로컬 커밋 후 PR 검증으로 계속한다.
+
+- 최종 확장 검증: verify-model-config 72파일/1,032시험·typegen·tsc PASS, 동일 기준 git grep158→99. 추가 회귀7파일/64시험 및 실제 Python16시험 PASS. 최초35실패(공용 fixture), 추가 범위1실패(사유 timeout45→40초 fixture)는 고친 뒤 통과했으며 실패 로그를 보존한다. PR/CI 확인만 남음.
+
+## PR722 최종 인계 — 2026-10-29
+
+- 코드/시험/항목별 커밋 완료, 새 브랜치 push 및 PR https://github.com/JRVector9/nomorevibe/pull/722 OPEN. 대표용 절대 argv: `2026-10-29-m1-relay-model-handoff.md`(13줄), `2026-10-29-supa-root-handoff.md`(7줄 + prepare가 생성하는 실제 task).
+- verify-model-config 72파일/1,032시험·typegen·tsc PASS. Supa9파일/43시험, 실제 Python16시험, 추가7파일/64시험 PASS(중복 포함). UI 변경/실제 장비 실행 없음.
+- 막힘: Actions run40835749295 scope/check는 GitHub 계정 결제 실패 또는 spending limit으로 **잡 시작 전** 실패(annotation 확인). 나머지 코드 검사는 SKIPPED. 필수 CI 통과를 주장하지 않으며 병합하지 않음. 담당자의 Billing & plans 해결 뒤 CI 성공 확인만 남음. 결제·권한·워크플로 우회는 하지 않음.
+- 최종 relay 모델 ID/KEY 충돌 거절 회귀 추가. verify-model-config 72파일/1,032시험·typegen·tsc 재실행 PASS. PR의 GitHub CI 계정 차단은 운영자 해결 대상으로 유지.

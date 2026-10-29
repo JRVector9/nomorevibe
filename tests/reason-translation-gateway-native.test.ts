@@ -184,11 +184,11 @@ it("drains actual caller abort with no terminal authority", async () => {
     controller.abort(); expect(await pending).toEqual({ result: { ok: false, error: "network" }, terminal: null }); expect(bodies).toHaveLength(1);
   });
 });
-it("keeps the legacy whole wire independently unchanged", async () => {
+it("keeps the legacy wire format with the registry's M1 default", async () => {
   vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); const texts = sources(); let wire = "";
   const result = await translateToKorean(texts, 1000, (async (_url, options) => { wire = String(options?.body); return new Response(JSON.stringify(envelope())); }) as typeof fetch);
   expect(result).toEqual({ ok: true, translations: translated });
-  expect(wire).toBe(originalWire(texts, "[MLX] gpt-oss-120b"));
+  expect(wire).toBe(originalWire(texts, "[m1] mlx-community--gemma-4-26b-a4b-it-4bit"));
 });
 it("rejects sparse source arrays before preparation or native HTTP", async () => {
   vi.stubEnv("ABCLLM_API_KEY", "local-test-only");

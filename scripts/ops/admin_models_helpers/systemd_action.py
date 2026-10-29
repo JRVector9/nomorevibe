@@ -89,10 +89,10 @@ class NativeBackend:
         return json.loads(buf.getvalue())
     def show(self):
         keys=['MainPID','ActiveState','SubState','ExecMainStartTimestamp','ControlGroup','KillMode','KillSignal','TimeoutStopUSec','Restart','FragmentPath','InvocationID']
-        return dict(x.split('=',1)for x in self.run(['systemctl','show','vllm.service',*[a for k in keys for a in ['-p',k]]]).splitlines()if'='in x)
+        return dict(x.split('=',1)for x in self.run(['/usr/bin/systemctl','show','vllm.service',*[a for k in keys for a in ['-p',k]]]).splitlines()if'='in x)
     def config(self):
-        unit=self.run(['systemctl','cat','vllm.service']);settings=self.run(['systemctl','show','vllm.service','-p','Environment','-p','EnvironmentFiles','-p','WorkingDirectory','-p','User','-p','Group'])
-        if self.run(['systemctl','show','vllm.service','-p','EnvironmentFiles','--value']).strip():raise ValueError('external_environment_file_not_supported')
+        unit=self.run(['/usr/bin/systemctl','cat','vllm.service']);settings=self.run(['/usr/bin/systemctl','show','vllm.service','-p','Environment','-p','EnvironmentFiles','-p','WorkingDirectory','-p','User','-p','Group'])
+        if self.run(['/usr/bin/systemctl','show','vllm.service','-p','EnvironmentFiles','--value']).strip():raise ValueError('external_environment_file_not_supported')
         return sha((unit+'\n'+settings).encode())
     def activity(self):
         a=self.show()
@@ -103,10 +103,10 @@ class NativeBackend:
         return {'bootId':pathlib.Path('/proc/sys/kernel/random/boot_id').read_text().strip(),'invocationId':a['InvocationID'],'mainPid':int(a['MainPID']),'metrics':raw.decode(),'at':datetime.datetime.now(datetime.timezone.utc).isoformat()}
     def stop(self):
         if os.geteuid()!=0:raise ValueError('human_on_device_sudo_stop_restore_required')
-        self.run(['systemctl','stop','--no-block','vllm.service'])
+        self.run(['/usr/bin/systemctl','stop','--no-block','vllm.service'])
     def start(self):
         if os.geteuid()!=0:raise ValueError('human_on_device_sudo_stop_restore_required')
-        self.run(['systemctl','start','--no-block','vllm.service'])
+        self.run(['/usr/bin/systemctl','start','--no-block','vllm.service'])
     def stopped(self):
         e=self.expected;m=self.show();
         if not pathlib.Path('/sys/fs/cgroup/cgroup.controllers').is_file():raise ValueError('cgroup_v2_required')

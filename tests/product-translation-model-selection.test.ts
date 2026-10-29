@@ -71,10 +71,10 @@ it("keeps per-purpose translation selections aligned with request models and adm
   await translateTaglinesToKorean([{ name: "Doc", tagline: "Manage documents" }], 1000, recorded.request);
   await translateQueryToEnglish("문서 도구", 1000, recorded.request);
   expect(recorded.bodies.map(body => body.model)).toEqual([
-    "[m1] mlx-community--gemma-4-26b-a4b-it-4bit", "[MLX] gpt-oss-120b", "[m1] mlx-community--gemma-4-26b-a4b-it-4bit", "[m1] mlx-community--gemma-4-26b-a4b-it-4bit",
+    "[m1] mlx-community--gemma-4-26b-a4b-it-4bit", "[m1] mlx-community--gemma-4-26b-a4b-it-4bit", "[m1] mlx-community--gemma-4-26b-a4b-it-4bit", "[m1] mlx-community--gemma-4-26b-a4b-it-4bit",
   ]);
   expect(admission.mock.calls.map(([value]) => value)).toEqual([
-    { routeId: "product-translate", model: "[m1] mlx-community--gemma-4-26b-a4b-it-4bit" }, { routeId: "reason-translate", model: "[MLX] gpt-oss-120b" },
+    { routeId: "product-translate", model: "[m1] mlx-community--gemma-4-26b-a4b-it-4bit" }, { routeId: "reason-translate", model: "[m1] mlx-community--gemma-4-26b-a4b-it-4bit" },
     { routeId: "product-tagline-ko", model: "[m1] mlx-community--gemma-4-26b-a4b-it-4bit" }, { routeId: "search-query-translate", model: "[m1] mlx-community--gemma-4-26b-a4b-it-4bit" },
   ]);
 });

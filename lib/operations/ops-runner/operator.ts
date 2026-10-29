@@ -60,6 +60,11 @@ function boundedSource(path: string) {
   return raw;
 }
 const adapterResultSchema = z.object({ ok: z.boolean(), manual: z.boolean().optional(), code: z.string().regex(/^[A-Za-z0-9_:-]{1,160}$/).optional(),
+  // Private CLI material only. Never saved in the public OpsState/audit payload.
+  rootCommands: z.array(z.object({ target: z.string().regex(/^[a-zA-Z0-9_.-]+@[a-zA-Z0-9_.-]+$/),
+    phase: z.enum(["stop", "restore"]), taskPath: z.string().startsWith("/"), taskSha256: hash,
+    stagingPath: z.string().startsWith("/var/tmp/nmv-supa-root-"), resultPath: z.string().startsWith("/var/lib/nmv-admin-models-root/results/"),
+    executable: z.literal("/usr/bin/python3"), args: z.array(z.string()).max(8) }).strict()).max(2).optional(),
   configurationHash: hash.optional(), plan: z.unknown().optional(), receipt: z.unknown().optional(),
   exits: z.array(boundaryExitObservationSchema).max(16).optional(),
   releaseFiles: z.object({ plan: z.string(), planSha: hash, receipt: z.string() }).strict().optional(),
@@ -80,6 +85,7 @@ export async function callOpsAdapter(profile: OperatorProfile, phase: string, st
     child.stdin?.end(JSON.stringify({ id: state.id, action: state.action, targetId: state.targetId, context, material: profile.material }));
   });
 }
+export const opsRootHandoffPath = (directory: string, id: string) => join(directory, `${z.uuid().parse(id)}.root-handoff.json`);
 type Prepared = { request?: unknown; profileHash: string; original: CapacityPin; drained?: CapacityPin; configurationHash?: string; plan?: unknown; receipt?: unknown; releaseFiles?: AdapterResult["releaseFiles"] };
 export async function runPreparedModelOps(state: OpsState, profilePath: string, stateDirectory: string, prepareOnly: boolean) {
   trustedOpsPath(stateDirectory, true);
@@ -95,7 +101,18 @@ export async function runPreparedModelOps(state: OpsState, profilePath: string, 
     renameSync(temporary, file);
     const directory = openSync(stateDirectory, "r"); try { fsyncSync(directory); } finally { closeSync(directory); }
   };
-  const adapter = (phase: string) => callOpsAdapter(reviewed.profile, phase, state, prepared);
+  const adapter = async (phase: string) => {
+    const result = await callOpsAdapter(reviewed.profile, phase, state, prepared);
+    if (result.rootCommands?.length) {
+      const handoff = opsRootHandoffPath(stateDirectory, state.id), temporary = `${handoff}.${randomUUID()}.new`;
+      const fd = openSync(temporary, "wx", 0o600);
+      try { writeFileSync(fd, JSON.stringify({ version: 1, id: state.id, phase, commands: result.rootCommands })); fsyncSync(fd); }
+      finally { closeSync(fd); }
+      renameSync(temporary, handoff);
+      const directory = openSync(stateDirectory, "r"); try { fsyncSync(directory); } finally { closeSync(directory); }
+    }
+    return result;
+  };
   const manual = reviewed.profile.requiresSudo || /(?:^|[^a-z0-9])m1(?:[^a-z0-9]|$)|29877f65/i.test(state.targetId);
   const execute = async (step: OpsStep, reconcile = false): Promise<StepResult> => {
     if (manual) return { ok: false, manual: true, code: "human_on_device_sudo_stop_restore_required" };
@@ -106,7 +123,7 @@ export async function runPreparedModelOps(state: OpsState, profilePath: string, 
       if (prepared.original.mode !== expected) return { ok: false, code: "original_admission_mode_not_expected" };
       if (!state.action.startsWith("admission-")) {
         const result = await adapter("prepare");
-        if (result.manual) return { ok: false, manual: true, code: "human_on_device_sudo_stop_restore_required" };
+        if (result.manual) return { ok: false, manual: true, code: result.code ?? "human_on_device_sudo_stop_restore_required" };
         if (!result.ok || !result.configurationHash) return { ok: false, code: "prepare_identity_or_configuration_unproven" };
         const request = prepared.request as { groupId?: string } | undefined;
         if (request?.groupId && reviewed.profile.affectedGroups && !reviewed.profile.affectedGroups.includes(request.groupId))
@@ -139,7 +156,7 @@ export async function runPreparedModelOps(state: OpsState, profilePath: string, 
     }
     if (step === "verify-stop") {
       const result = await adapter("verify-stop");
-      if (!result.ok) return { ok: false, code: "termination_evidence_missing" };
+      if (!result.ok) return { ok: false, manual: result.manual, code: result.code ?? "termination_evidence_missing" };
       if (state.action === "request-release") {
         const plan = providerBoundaryPlanSchema.parse(result.plan), receipt = providerBoundaryReceiptSchema.parse(result.receipt);
         if (plan.version !== 1 || !isDeepStrictEqual(plan, prepared.plan) || plan.request.requestId !== state.targetId || !isDeepStrictEqual(plan.control, prepared.drained)

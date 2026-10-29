@@ -1,5 +1,5 @@
 #!/bin/bash
-# M1 Qwen 사설 relay 설치물. 운영 실행은 별도 승인 뒤에만 한다.
+# M1 사설 relay 설치물. 운영 실행은 별도 승인 뒤에만 한다.
 # plan은 파일·서비스·모델을 바꾸지 않는다. oMLX의127.0.0.1:8000은 그대로 둔다.
 set -euo pipefail
 
@@ -40,10 +40,13 @@ validate() {
 
 parse_install() {
   TARGET_SHA="" HOST="" ALLOW_FROM="" KEY_SOURCE="" PORT=8792 DEPLOYMENT_REVISION=unverified
+  MODEL="" MODEL_FAMILY=""
   while [ $# -gt 0 ]; do
     [ $# -ge 2 ] || die "인자 값이 없다"
     case "$1" in
       --sha) TARGET_SHA=$2 ;;
+      --model) MODEL=$2 ;;
+      --model-family) MODEL_FAMILY=$2 ;;
       --host) HOST=$2 ;;
       --allow-from) ALLOW_FROM=$2 ;;
       --port) PORT=$2 ;;
@@ -106,11 +109,13 @@ write_config() {
     printf 'CURRENT_SHA=%q\nHOST=%q\nPORT=%q\nALLOW_FROM=%q\nNODE=%q\nDEPLOYMENT_REVISION=%q\n' \
       "$TARGET_SHA" "$HOST" "$PORT" "$ALLOW_FROM" "$NODE" "$DEPLOYMENT_REVISION"
   } > "$CONFIG"
+  printf 'MODEL=%q\nMODEL_FAMILY=%q\n' "${MODEL:-}" "${MODEL_FAMILY:-}" >> "$CONFIG"
   chmod 600 "$CONFIG"
 }
 
 run_entry() {
-  (cd "$ROOT/current" && LOCAL_MODEL_RELAY_HOST="$HOST" LOCAL_MODEL_RELAY_PORT="$PORT" \
+  (cd "$ROOT/current" && LOCAL_MODEL_RELAY_MODEL="${MODEL:-}" LOCAL_MODEL_RELAY_MODEL_FAMILY="${MODEL_FAMILY:-}" \
+    LOCAL_MODEL_RELAY_HOST="$HOST" LOCAL_MODEL_RELAY_PORT="$PORT" \
     LOCAL_MODEL_RELAY_ALLOW_FROM="$ALLOW_FROM,$HOST" LOCAL_MODEL_RELAY_VERSION="$CURRENT_SHA" \
     LOCAL_MODEL_RELAY_DEPLOYMENT_REVISION="$DEPLOYMENT_REVISION" LOCAL_MODEL_RELAY_STATE_DIR="$STATE/receipts" \
     LOCAL_MODEL_RELAY_TOKEN_FILE="$STATE/relay-token" LOCAL_MODEL_RELAY_UPSTREAM_TOKEN_FILE="$STATE/upstream-token" \
@@ -126,12 +131,13 @@ write_service() {
   [ ! -e "$ROOT/current" ] || [ -L "$ROOT/current" ] || die "current가 symlink가 아니다"
   ln -sfn "$ROOT/releases/$TARGET_SHA" "$ROOT/current"
   CURRENT_SHA=$TARGET_SHA; write_config
-  "$NODE" - "$PLIST" "$NODE" "$ROOT/current" "$STATE" "$HOST" "$PORT" "$ALLOW_FROM,$HOST" "$CURRENT_SHA" "$DEPLOYMENT_REVISION" "$ACCOUNT" "$LABEL" <<'JS'
+  "$NODE" - "$PLIST" "$NODE" "$ROOT/current" "$STATE" "$HOST" "$PORT" "$ALLOW_FROM,$HOST" "$CURRENT_SHA" "$DEPLOYMENT_REVISION" "$ACCOUNT" "$LABEL" "${MODEL:-}" "${MODEL_FAMILY:-}" <<'JS'
 const fs=require("node:fs");
-const [file,node,cwd,state,host,port,allow,revision,deployment,account,label]=process.argv.slice(2);
+const [file,node,cwd,state,host,port,allow,revision,deployment,account,label,model,family]=process.argv.slice(2);
 const xml=value=>String(value).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 const string=value=>`<string>${xml(value)}</string>`;
 const env={PATH:"/usr/bin:/bin:/usr/sbin:/sbin",TMPDIR:`${state}/tmp/`,NODE_ENV:"production",LOCAL_MODEL_RELAY_HOST:host,
+  LOCAL_MODEL_RELAY_MODEL:model,LOCAL_MODEL_RELAY_MODEL_FAMILY:family,
   LOCAL_MODEL_RELAY_PORT:port,LOCAL_MODEL_RELAY_ALLOW_FROM:allow,LOCAL_MODEL_RELAY_VERSION:revision,
   LOCAL_MODEL_RELAY_DEPLOYMENT_REVISION:deployment,LOCAL_MODEL_RELAY_STATE_DIR:`${state}/receipts`,
   LOCAL_MODEL_RELAY_TOKEN_FILE:`${state}/relay-token`,LOCAL_MODEL_RELAY_UPSTREAM_TOKEN_FILE:`${state}/upstream-token`,
@@ -179,7 +185,7 @@ case "${1:-}" in
     TARGET_SHA=""
     while [ $# -gt 0 ]; do
       [ $# -ge 2 ] || die "인자 값이 없다"
-      case "$1" in --sha) TARGET_SHA=$2 ;; --deployment-revision) DEPLOYMENT_REVISION=$2 ;; *) die "모르는 인자" ;; esac
+      case "$1" in --sha) TARGET_SHA=$2 ;; --deployment-revision) DEPLOYMENT_REVISION=$2 ;; --model) MODEL=$2 ;; --model-family) MODEL_FAMILY=$2 ;; *) die "모르는 인자" ;; esac
       shift 2
     done
     validate; [ ! -e "$STATE/receipts/active.json" ] || die "호출을 drain·정산한 뒤 upgrade한다"

@@ -207,3 +207,26 @@
 AI1/AI2 저장 증가 명령은 두 측정 mjs를 기존 M3 text 컨테이너에서 stdin 실행한 primary READ ONLY 쿼리. 23:14→23:30 AI1 **94871→94871**, AI2 **91158→91158**. 배포 없음·증가0. 운영 회복 성공을 주장하지 않는다. 이 작업이 요청한 수동/자동 해제도 없음이며, 전체 운영의60분 수동 해제0은 관측하지 않았다.
 
 이후 할 수 있는 로컬 코드 단계는 모두 완료·커밋했고, 남은 것은 위 배포 경로/외부 강제/연결/운영 측정에 막힌 항목뿐이다. 파일시스템·인증·권한 제한을 우회하지 않았다.
+
+## 2026-10-29 코드 전용 차선74afc085
+
+- 끝: origin/main `00aa00e3` 병합. 충돌은 main 후속판을 보존. 장비 라우팅/Gemma 기본값은 이미 main에 있어 중복 cherry-pick하지 않음.
+- 끝: relay 모델/family를 등록부와 env로 선택, 실제 upstream models 대조·기존 native 증명 유지. 상품·사유 번역을 같은 M1 entry로 정렬. 설치 스크립트는 명시 모델을 보존.
+- 시험: 변경 전 main typegen/tsc PASS(TS2353 재현 없음). M1 범위5파일/34시험 PASS. verify-model-config 최초35실패는 독립 번역 모델을 공용 상수로 쓰던 fixture 등이며 재검증 결과는 후속 기록.
+- 남음: Supa root prepare argv/검증된 결과 수집 분리, 범위시험·커밋·PR/CI.
+- 운영은 막힘이 아닌 명시적 제외: DRAIN/해제/배포/DB 쓰기/장비 변경0. 대표용 argv는 `2026-10-29-m1-relay-model-handoff.md`. 운영 native ready/새 저장 실측 미수행.
+- M1 최종 로컬 검증: verify-model-config 69파일/988시험·next typegen·tsc PASS, 동일 git grep 모델 리터럴158→99. 범위 ESLint·bash -n·git diff --check PASS. 이후 Supa 구현으로 계속 진행.
+
+- 끝(코드): Supa root prepare argv/검증된 결과 수집 분리. 현재 전체 cgroup·원래 PID/startTicks·boot/config를 다시 읽고 부족한 근거는 차단. root 응답 유실은 durable ACK 읽기만 하며 stop/start 재전송 없음.
+- 시험: Supa9파일/43 Vitest PASS 및 Python14건 PASS. 대표 argv는 `2026-10-29-supa-root-handoff.md`. 최종 정적 검사·PR/CI 확인을 이어서 수행한다. 실제 운영 종료·해제 검증 없음.
+- Supa 범위 ESLint/tsc/diff 검사 PASS, Python14시험 재실행 PASS. 항목별 로컬 커밋 뒤 최종 모델 검증·PR 진행.
+
+- 최종 확장 검증: verify-model-config 72파일/1,032시험·typegen·tsc PASS, 동일 기준 git grep158→99. 추가 회귀7파일/64시험 및 실제 Python16시험 PASS. 최초35실패(공용 fixture), 추가 범위1실패(사유 timeout45→40초 fixture)는 고친 뒤 통과했으며 실패 로그를 보존한다. PR/CI 확인만 남음.
+
+## PR722 인계 — 2026-10-29
+
+- 끝: M1 `c8e2c477`, Supa `252c65bb`, 확장 회귀 `79a4b1fb` 로컬 커밋 후 새 브랜치 `fix/m1-relay-supa-root-handoff` push, PR https://github.com/JRVector9/nomorevibe/pull/722 OPEN.
+- 로컬 최종 `bash scripts/verify-model-config.sh` PASS(72파일/1,032시험·typegen·tsc), Supa9파일/43시험·Python16시험 PASS, 추가7파일/64시험 PASS(중복 합산하지 않음). 범위 ESLint/bash 문법/diff 검사 PASS.
+- 막힘: Actions run40835749295의 scope/check가 **잡 시작 전** 실패. check-run123320010237 annotation: 계정의 최근 결제 실패 또는 spending limit 증액 필요(Billing & plans). 따라서 typecheck/lint/unit/build/integration 잡은 SKIPPED이며 CI 통과로 기록하지 않는다. 코드 실패 로그는 없고 `gh run view --log-failed`도 `log not found`였다. 결제/한도 변경·CI 보호 우회·강제 병합/배포 없음.
+- 남음: 저장소 계정 담당자가 결제/한도 문제를 해결한 뒤 같은 PR의 필수 CI 성공 확인. 성공 전 병합 금지. 실제 운영 설치/종료/해제/저장 측정은 다른 승인된 운영 차선 몫이다.
+- 최종 설정 검토: relay bare ID와 *_MODEL_KEY가 서로 다른 장비를 고르는 경우도 거절해 모델/리소스 한도가 갈리지 않게 함. 72파일/1,032시험·typegen·tsc 재실행 PASS. CI 계정 차단은 별도이며 완화하지 않음.

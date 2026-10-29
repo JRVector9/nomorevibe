@@ -10,6 +10,7 @@ it("migrates only M1 model metadata and translation selection, preserving addres
   expect(migrated.models.find(model => model.key === "m1:translation")).toMatchObject({ model: "mlx-community--gemma-4-26b-a4b-it-4bit",
     baseUrl: "https://m1-fixture.example/v1", timeoutMs: 19_000, maxTokens: 700, concurrency: 1 });
   expect(migrated.selections["product-translate"]).toBe("m1:translation");
+  expect(migrated.selections["reason-translate"]).toBe("m1:translation");
   expect(migrated.limits).toEqual(original.limits);
   expect(migrated.candidates).toEqual(original.candidates);
 });
