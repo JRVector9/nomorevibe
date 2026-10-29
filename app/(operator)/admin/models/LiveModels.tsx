@@ -58,8 +58,8 @@ export function LiveModels({ observation, probeAction = probeAdminModel, admissi
           <td className="p-2 tabular-nums">{row.succeeded1h} / {row.failed1h} / {row.withdrawn1h} / {row.unclassified1h}</td>
           <td className="p-2 tabular-nums">{row.dispatched} / {row.indeterminate} / {row.reserved} / {row.waiting}</td>
           <td className="p-2">{stamp(row.lastSuccessAt)}</td>
-          <td className="max-w-[240px] p-2"><button type="button" className={buttonSmall} disabled={busy || row.provider !== "abcllm"} onClick={() => runProbe(row)}>연결 확인</button>
-            {row.provider !== "abcllm" && <p className={hintClass}>모델 목록 조회 실행기 연결 필요</p>}
+          <td className="max-w-[240px] p-2"><button type="button" className={buttonSmall} disabled={busy || !["abcllm", "local-direct"].includes(row.provider)} onClick={() => runProbe(row)}>연결 확인</button>
+            {!["abcllm", "local-direct"].includes(row.provider) && <p className={hintClass}>모델 목록 조회 실행기 연결 필요</p>}
             {probes[modelIdentityKey(row)] && <ProbeNotice result={probes[modelIdentityKey(row)]} />}</td>
         </tr>)}</tbody></table></div>
       <h3 className="text-[16px] font-semibold">미확인·보류·예약·진행 중 요청</h3>

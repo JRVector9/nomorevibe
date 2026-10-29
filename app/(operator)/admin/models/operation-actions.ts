@@ -53,7 +53,7 @@ export async function probeAdminModel(input: unknown): Promise<ModelProbeResult>
     const result: ModelProbeResult = { listed: listed ?? undefined, listMs: Date.now() - started,
       callBlocked: /deepseek/i.test(`${identity.provider} ${identity.model}`)
         ? "유료 DeepSeek 시험 호출은 허용되지 않습니다."
-        : "이 단계의 수동 시험 호출에 사용할 정식 슬롯·종료 증거 계약이 없습니다. 업무 요청으로 위장하거나 공통 용량 제어를 우회해 호출하지 않습니다.",
+        : "짧은 시험 호출에 필요한 정식 슬롯·종료 증거 계약이 등록되지 않았습니다.",
       ...(listed === null ? { error: identity.provider === "abcllm" || identity.provider === "local-direct" ? "모델 목록을 읽지 못했습니다. 연결 설정·인증을 확인해주세요." : "이 제공자의 모델 목록 조회 실행기가 연결되지 않았습니다." } : {}) };
     await db.insert(operationsAudit).values(await adminAuditRow(admin.login, { action: "admin-models-probe-result", target: identity.routeId,
       detail: { ...identity, ...result }, ok: false, error: result.error ?? "short_call_contract_missing" }));
