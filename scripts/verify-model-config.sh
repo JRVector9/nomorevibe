@@ -27,7 +27,7 @@ tests=(
   tests/text-profile-model-capacity.test.ts tests/search-verify-model-capacity.test.ts
   tests/product-translation-gateway-native.test.ts tests/text-model-capacity-admission.test.ts
   tests/product-translation-model-selection.test.ts tests/product-translation-model-capacity.test.ts
-  tests/product-tagline-ko-gateway-native.test.ts tests/reason-translation-model-capacity.test.ts tests/translate-reasons-job.test.ts
+  tests/product-tagline-ko-gateway-native.test.ts tests/reason-translation-gateway-native.test.ts tests/reason-translation-model-capacity.test.ts tests/translate-reasons-job.test.ts tests/translate.test.ts
   tests/korean-translation-qwen.test.ts tests/korean-tagline-dual-model.test.ts
   tests/korean-tagline-model-capacity.test.ts tests/search-query-model-capacity.test.ts
   tests/operations-korean-translation.test.tsx tests/search-query.test.ts tests/search-query-gateway-native.test.ts
