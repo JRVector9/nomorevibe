@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { TRANSLATE_MODEL, translateTaglinesToKorean } from "@/lib/crawl/translate";
+import { KOREAN_TAGLINE_MODEL, translateTaglinesToKorean } from "@/lib/crawl/translate";
 import { prepareProductTaglineKoGatewayCall, translateTaglinesWithReservedGateway } from "@/lib/crawl/agent-review-gateway";
 import { readModelCapacityCallerControl, findOwnPendingModelRequest, requestProductTaglineKoModelSlot,
   findOwnPendingProductTextRequests, cancelOwnPendingProductTextRequest,
@@ -34,9 +34,9 @@ export async function translateKoreanTaglinesWithModelCapacity(value: readonly K
   const control = await readModelCapacityCallerControl();
   if (control.mode === "disabled") return legacy();
   if (control.mode !== "open") throw new ModelCapacityDeferredError("draining");
-  if (!control.policy?.routes.some(route => route.routeId === "product-tagline-ko" && route.provider === "abcllm" && route.model === TRANSLATE_MODEL))
+  if (!control.policy?.routes.some(route => route.routeId === "product-tagline-ko" && route.provider === "abcllm" && route.model === KOREAN_TAGLINE_MODEL))
     throw new ModelCapacityDeferredError("unmapped");
-  let call = prepareProductTaglineKoGatewayCall(items, { model: TRANSLATE_MODEL, timeoutMs: options.timeoutMs });
+  let call = prepareProductTaglineKoGatewayCall(items, { model: KOREAN_TAGLINE_MODEL, timeoutMs: options.timeoutMs });
   if (call.kind !== "prepared") throw new ModelCapacityDeferredError(call.reason);
   const roleLease = options.roleLease ?? (env.ROLE_LEASE_ROLE === "text" || env.ROLE_LEASE_ROLE === "translation"
     ? roleLeaseFromEnv(env.ROLE_LEASE_ROLE, env) : undefined);
@@ -46,28 +46,28 @@ export async function translateKoreanTaglinesWithModelCapacity(value: readonly K
   if (initial.kind === "skipped") return initial;
   if (!("members" in initial)) throw new Error("product_tagline_ko_preparation_invalid");
   const expected = { owner: { instanceId: initial.role.instanceId, bootId: initial.role.bootId },
-    model: TRANSLATE_MODEL, routeId: "product-tagline-ko" as const };
+    model: KOREAN_TAGLINE_MODEL, routeId: "product-tagline-ko" as const };
   let adopted: { requestId: string; state: "waiting" | "reserved" } | undefined;
   for (const candidate of await findOwnPendingProductTextRequests(expected)) {
     if (options.signal?.aborted) throw new ModelCapacityDeferredError("reservation_lost");
     const recovered = await pendingKoreanTaglineBatch(candidate.memberKeys, home);
     if (!recovered) { await cancelOwnPendingProductTextRequest(candidate, expected); continue; }
     const recoveredItems = recovered.map(task => ({ name: displayProjectName(task.name, task.repoUrl), tagline: koreanTaglineSource(task) }));
-    const recoveredCall = prepareProductTaglineKoGatewayCall(recoveredItems, { model: TRANSLATE_MODEL, timeoutMs: options.timeoutMs });
+    const recoveredCall = prepareProductTaglineKoGatewayCall(recoveredItems, { model: KOREAN_TAGLINE_MODEL, timeoutMs: options.timeoutMs });
     if (recoveredCall.kind !== "prepared") throw new ModelCapacityDeferredError(recoveredCall.reason);
     const current = await prepareKoreanTaglineDispatch(recovered, home, lease, { roleLease, call: recoveredCall });
     if (current.kind === "disabled") return legacy();
     if (current.kind === "skipped") { await cancelOwnPendingProductTextRequest(candidate, expected); continue; }
     if (!("members" in current)) throw new Error("product_tagline_ko_preparation_invalid");
-    const recoveredKey = `${productTaglineKoLogicalWorkKey(current.members)}:${productTaglineKoInputHash({ members: current.members, model: TRANSLATE_MODEL })}`;
+    const recoveredKey = `${productTaglineKoLogicalWorkKey(current.members)}:${productTaglineKoInputHash({ members: current.members, model: KOREAN_TAGLINE_MODEL })}`;
     if (candidate.request.workKey !== recoveredKey) { await cancelOwnPendingProductTextRequest(candidate, expected); continue; }
     tasks = recovered; items = recoveredItems; call = recoveredCall; initial = current;
     adopted = { requestId: candidate.request.requestId, state: candidate.state }; break;
   }
   const { members, role } = initial;
   const identity = modelCapacityRequestIdentitySchema.parse({ owner: { instanceId: role.instanceId, bootId: role.bootId },
-    class: "background", pool: "text", routeId: "product-tagline-ko", provider: "abcllm", model: TRANSLATE_MODEL,
-    workKey: `${productTaglineKoLogicalWorkKey(members)}:${productTaglineKoInputHash({ members, model: TRANSLATE_MODEL })}` });
+    class: "background", pool: "text", routeId: "product-tagline-ko", provider: "abcllm", model: KOREAN_TAGLINE_MODEL,
+    workKey: `${productTaglineKoLogicalWorkKey(members)}:${productTaglineKoInputHash({ members, model: KOREAN_TAGLINE_MODEL })}` });
   const pending = adopted ?? await findOwnPendingModelRequest(identity);
   if (pending && (pending.state === "dispatched" || pending.state === "indeterminate")) throw new ModelCapacityDeferredError("dispatched");
   const slot = await requestProductTaglineKoModelSlot({ ...identity, requestId: pending?.requestId ?? randomUUID() }, members);

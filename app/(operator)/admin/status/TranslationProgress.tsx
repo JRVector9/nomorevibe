@@ -1,3 +1,4 @@
+import { configuredModel } from "@/lib/llm/model-registry";
 import type { TranslationProgress as Progress } from "@/lib/crawl/translations";
 import { formatAgo } from "@/lib/format/time";
 import { TranslationFailures } from "./TranslationFailures";
@@ -24,7 +25,7 @@ export function TranslationProgress({ progress, now }: { progress: Progress; now
   const measuredAgo = Math.max(0, Math.round((Date.parse(now) - Date.parse(progress.measuredAt)) / 1000));
   return (
     <section aria-label="사유 번역" className="flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-[12px] border border-line bg-bg-card px-3 py-2 text-[13px]">
-      <p className="font-semibold text-fg-3">사유 번역 <span className="font-mono font-normal">gpt-oss-120b</span></p>
+      <p className="font-semibold text-fg-3">사유 번역 <span className="font-mono font-normal">{configuredModel("reason-translate")}</span></p>
       <div className="h-1.5 min-w-[120px] flex-1 overflow-hidden rounded-full bg-bg-soft" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}>
         <div className={`h-full rounded-full ${stalled ? "bg-warn" : "bg-accent"}${moving ? " ops-progress-live" : ""}`} style={{ width: `${percent}%` }} />
       </div>

@@ -1,3 +1,4 @@
+import { modelFamily } from "@/lib/llm/model-registry";
 import { createHmac } from "node:crypto";
 import { z } from "zod";
 import { ASSIST_SCHEMA_VERSION, assistHash, assistInputHash, assistInputSchema, assistOutcomeSchema,
@@ -54,13 +55,13 @@ export function actionAuditPeriod(at: Date): string {
   monday.setUTCDate(monday.getUTCDate() - (monday.getUTCDay() + 6) % 7);
   return monday.toISOString().slice(0, 10);
 }
-const knownFamilies = new Set(["qwen3.8-flash-next", "deepseek-v4.1-flash-1017", "gpt-oss-120b"]);
+const knownFamilies = () => new Set([modelFamily("assist-primary"), modelFamily("assist-audit"), modelFamily("assist-legacy-family")]);
 export function independentAuditFamily(original: string | null, auditor: string): boolean {
-  return original !== null && knownFamilies.has(original) && knownFamilies.has(auditor) && original !== auditor;
+  return original !== null && knownFamilies().has(original) && knownFamilies().has(auditor) && original !== auditor;
 }
-export function preferredAuditFamily(original: string | null): "qwen3.8-flash-next" | "deepseek-v4.1-flash-1017" | null {
-  return original === "qwen3.8-flash-next" ? "deepseek-v4.1-flash-1017"
-    : original !== null && knownFamilies.has(original) ? "qwen3.8-flash-next" : null;
+export function preferredAuditFamily(original: string | null): string | null {
+  return original === modelFamily("assist-primary") ? modelFamily("assist-audit")
+    : original !== null && knownFamilies().has(original) ? modelFamily("assist-primary") : null;
 }
 export function decisionFinding(outcome: AssistOutcome): string | null {
   return outcome.task === "uptime" ? outcome.state.page_state : outcome.task === "repo" ? outcome.state.relationship
@@ -134,8 +135,8 @@ export function semanticConflictEligible(reason: "capacity" | "transport" | "inv
   first: AutomatedDecision, second: AutomatedDecision): boolean {
   if (reason !== "semantic_conflict" || first.resultId === second.resultId || first.inputHash !== second.inputHash
     || first.productId !== second.productId || first.task !== second.task
-    || first.sourceHash !== second.sourceHash || first.modelFamily !== "qwen3.8-flash-next"
-    || second.modelFamily !== "qwen3.8-flash-next") return false;
+    || first.sourceHash !== second.sourceHash || first.modelFamily !== modelFamily("assist-primary")
+    || second.modelFamily !== modelFamily("assist-primary")) return false;
   if (!automatedDecisionSchema.safeParse(first).success || !automatedDecisionSchema.safeParse(second).success) return false;
   return first.outcome.evidence_quality.status === "sufficient" && second.outcome.evidence_quality.status === "sufficient"
     && decisionFinding(first.outcome) !== decisionFinding(second.outcome)

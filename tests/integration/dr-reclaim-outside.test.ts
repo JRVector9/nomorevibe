@@ -11,7 +11,7 @@ import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import * as schema from "@/lib/db/schema";
 import { db } from "@/lib/db";
-import { TRANSLATE_MODEL, QUERY_PROMPT_VERSION, GLOSSARY_VERSION, glossaryHints } from "@/lib/crawl/translate";
+import { SEARCH_QUERY_MODEL, QUERY_PROMPT_VERSION, GLOSSARY_VERSION, glossaryHints } from "@/lib/crawl/translate";
 import { modelCapacityPolicyHash, type ModelCapacityPolicy } from "@/lib/llm/capacity";
 import type { WebsearchQueryServingContract } from "@/lib/llm/websearch-query-serving-contract";
 import { httpOriginPolicyHash } from "@/lib/net/http-origin-policy";
@@ -43,7 +43,7 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const operator = "pr15d-root-driver", reference = "fixture: loopback gateway closes with the client";
 const policy: ModelCapacityPolicy = { version: 1, globalLimit: 8, providerLimits: { account: 1, solo: 2 }, groupLimits: { engine: 8 },
   poolLimits: { reviewer: 8, text: 8 }, weights: { first: 1, second: 1, background: 1 }, maxWaiting: 16, queueTtlMs: 600_000, reservationTtlMs: 600_000,
-  routes: [{ routeId: "search-query-translate", provider: "abcllm", model: TRANSLATE_MODEL, providerBudgetId: "account", groupId: "engine" },
+  routes: [{ routeId: "search-query-translate", provider: "abcllm", model: SEARCH_QUERY_MODEL, providerBudgetId: "account", groupId: "engine" },
     { routeId: "pr15d-route", provider: "fixture", model: "m", providerBudgetId: "solo", groupId: "engine" }] };
 const clientBound = (budget: string, skewBoundMs = 1) => new Map([[budget, { termination: "client_bound" as const, hardDeadlineMs: null, skewBoundMs, reference }]]);
 const servers: Server[] = [];
@@ -129,7 +129,7 @@ beforeAll(async () => {
     expect(applied.count).toBe(entries.length);
   }
   const gateway = await serve(response => gatewayReply(response));
-  fixture.contract = { version: 1, protocol: "abcllm-websearch-query-total-bound-v1", routeId: "search-query-translate", provider: "abcllm", model: TRANSLATE_MODEL,
+  fixture.contract = { version: 1, protocol: "abcllm-websearch-query-total-bound-v1", routeId: "search-query-translate", provider: "abcllm", model: SEARCH_QUERY_MODEL,
     responseModel: "served-query", endpoint: `${gateway}/v1/chat/completions`, deploymentRevision: "local-only", totalTokenBound: 4096 };
   fixture.owner = { instanceId: `${prefix}-web`, bootId: randomUUID(), release: "pr15d-fixture" };
   vi.stubEnv("ABCLLM_API_KEY", "local-test-only");
@@ -291,13 +291,13 @@ it("local_call_ended: a live process whose gateway call timed out records its ow
   // 소유자가 아닌 handle 은 같은 프로세스에 증인이 있어도 사실을 남기지 못한다. 소유자의 handle 만 남긴다.
   gatewayReply = () => {};
   const second = target("가족 일정 공유"), owner = fixture.owner!;
-  const call = gateway.prepareWebsearchQueryGatewayCall({ sourceLocale: "ko", query: second.query }, { model: TRANSLATE_MODEL, timeoutMs: 300 });
+  const call = gateway.prepareWebsearchQueryGatewayCall({ sourceLocale: "ko", query: second.query }, { model: SEARCH_QUERY_MODEL, timeoutMs: 300 });
   if (call.kind !== "prepared") throw new Error("fixture_contract_required");
   const initial = await prepareWebsearchQueryDispatch(second, { owner, call });
   if (initial.kind !== "ready" || !("input" in initial)) throw new Error(`fixture_initial_${initial.kind}`);
   const { websearchQueryLogicalWorkKey, websearchQueryInputHash } = await import("@/lib/llm/capacity");
   const identity = { owner: { instanceId: owner.instanceId, bootId: owner.bootId }, class: "background" as const, pool: "text" as const,
-    routeId: "search-query-translate", provider: "abcllm", model: TRANSLATE_MODEL,
+    routeId: "search-query-translate", provider: "abcllm", model: SEARCH_QUERY_MODEL,
     workKey: `${websearchQueryLogicalWorkKey(initial.input.member)}:${websearchQueryInputHash(initial.input)}` };
   const slot = await ledger.requestWebsearchQueryModelSlot({ ...identity, requestId: randomUUID() }, initial.input);
   if (slot.kind !== "granted") throw new Error(`fixture_slot_${slot.reason}`);

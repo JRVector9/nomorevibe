@@ -1,3 +1,4 @@
+import { modelTimeoutMs } from "@/lib/llm/model-registry";
 import { and, asc, eq, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { withLocalModelCapacity } from "@/lib/llm/local-model-capacity";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
@@ -46,7 +47,7 @@ import { getSettings } from "./settings";
  */
 export const SPLIT_CONFIRM_DEEPSEEK_MIN_CONFIDENCE = 0.7;
 /** 한 호출의 제한 시간 — 실측 7~31초(평균 13초). 위임(60초)보다 짧게 잡아 위임의 차례를 남긴다 */
-export const SPLIT_CONFIRM_TIMEOUT_MS = 45_000;
+export const SPLIT_CONFIRM_TIMEOUT_MS = modelTimeoutMs("split-confirm");
 /** 한 틱에 묻는 수와 쓰는 시간 — 하루 갈림 거부는 수십 건이라 틱(60초 간격)마다 둘이면 넉넉하다 */
 export const SPLIT_CONFIRM_PER_TICK = 2;
 export const SPLIT_CONFIRM_LANE_MS = 60_000;

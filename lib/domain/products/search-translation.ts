@@ -1,7 +1,8 @@
+import { modelTimeoutMs } from "@/lib/llm/model-registry";
 import { and, eq, sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import { textTranslations } from "@/lib/db/schema";
-import { CHINESE_QUERY_PROMPT_VERSION, GLOSSARY_VERSION, glossaryHints, QUERY_PROMPT_VERSION, queryExpansions, queryTranslationPhrases, textHash, TRANSLATE_MODEL,
+import { CHINESE_QUERY_PROMPT_VERSION, GLOSSARY_VERSION, glossaryHints, QUERY_PROMPT_VERSION, queryExpansions, queryTranslationPhrases, textHash, SEARCH_QUERY_MODEL,
   translateChineseQueryToEnglish, translateQueryToEnglish } from "@/lib/crawl/translate";
 import { isLocale, type Locale } from "@/lib/i18n/locales";
 import { recordTranslations } from "@/lib/crawl/translations";
@@ -28,7 +29,7 @@ import { translateQueryWithModelCapacity } from "./search-query-model-capacity";
  * 게이트웨이에 줄 시간. 낱말 서넛짜리 답이라 고정비(약 6초)가 거의 전부다.
  * 검색 한 번이 이보다 오래 걸리면 기다리는 것보다 번역 없는 결과가 낫다.
  */
-const TIMEOUT_MS = 8_000;
+const TIMEOUT_MS = modelTimeoutMs("search-query-translate");
 
 export type ResolvedSearch = {
   /** 색인에 물어볼 말 — 원문 하나, 번역이 붙었으면 그 표현(한둘)까지 */
@@ -137,7 +138,7 @@ async function translateDetectedQuery(raw: string): Promise<QueryTranslation> {
     // 복제본에서 쓰면 25006 으로 실패하고, 아래 catch 가 받아 온 번역까지 버렸다
     if (reserved.kind === "legacy") await onPrimary(() => recordTranslations(
       [{ hash, translated: result.ok ? result.keywords : null, error: result.ok ? undefined : result.error }],
-      TRANSLATE_MODEL,
+      SEARCH_QUERY_MODEL,
       "en",
     ));
     if (!result.ok) {

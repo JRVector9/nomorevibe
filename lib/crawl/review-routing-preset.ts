@@ -1,11 +1,12 @@
+import { modelForPurpose, modelRequestName } from "@/lib/llm/model-registry";
 import type { CrawlSettings } from "./settings-schema";
 
 export const REVIEW_ROUTING_PRESET_ID = "supa-first-gpu-second";
 export const SUPA_FIRST_REVIEWER = {
-  provider: "abcllm", model: "[supa] Qwen3.8-27B-NVFP4",
+  provider: "abcllm", model: modelRequestName(modelForPurpose("ai1-preset")),
 } as const;
 export const GPU_SECOND_REVIEWER = {
-  provider: "local-direct", model: "qwen3.8-flash-next",
+  provider: "local-direct", model: modelForPurpose("ai2-direct").key,
 } as const;
 
 /**

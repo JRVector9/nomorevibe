@@ -1,3 +1,4 @@
+import { modelFamily } from "@/lib/llm/model-registry";
 import { z } from "zod";
 import { assistHash } from "@/lib/domain/llm-assist/contracts";
 import { localModelContractHash, localModelServingContractsSchema } from "@/lib/llm/local-model-serving-contract";
@@ -142,7 +143,7 @@ export function verifyAssistRolloutManifest(value: unknown) {
   if (m.target === "gpu" && routing?.m1BackendId && routing.primaryBackendIds.includes(routing.m1BackendId)) {
     blockers.gpu.push("m1_primary_requires_gpu_m1_target");
   }
-  for (const backendId of routing?.primaryBackendIds ?? []) if (contracts.get(backendId)?.modelFamily !== "qwen3.8-flash-next") blockers.gpu.push(`primary_qwen_required:${backendId}`);
+  for (const backendId of routing?.primaryBackendIds ?? []) if (contracts.get(backendId)?.modelFamily !== modelFamily("assist-primary")) blockers.gpu.push(`primary_qwen_required:${backendId}`);
   for (const pair of routing?.independentPairs ?? []) {
     const original = contracts.get(pair.originalBackendId), reviewer = contracts.get(pair.reviewerBackendId);
     if (!original || !reviewer || original.modelFamily === reviewer.modelFamily) blockers.global.push("independent_model_family_required");
@@ -150,13 +151,13 @@ export function verifyAssistRolloutManifest(value: unknown) {
   if (routing?.deepseek) {
     const backend = contracts.get(routing.deepseek.backendId);
     backendEvidence(routing.deepseek.backendId, blockers.deepseek);
-    if (backend?.modelFamily !== "deepseek-v4.1-flash-1017") blockers.deepseek.push("deepseek_backend_mismatch");
+    if (backend?.modelFamily !== modelFamily("assist-audit")) blockers.deepseek.push("deepseek_backend_mismatch");
     if (!backend || !m.policy?.routes.some(route => route.provider === "local-direct" && route.model === backend.model
       && route.providerBudgetId === backend.backendId && route.groupId === backend.physicalGroup)) blockers.deepseek.push("deepseek_route_unmapped");
   }
   const gpu = routing ? contracts.get(routing.gpuBackendId) : null;
   const m1 = routing?.m1BackendId ? contracts.get(routing.m1BackendId) : null, ingress = m.m1Ingress;
-  if (!m1 || m1.modelFamily !== "qwen3.8-flash-next" || !ingress || ingress.backendId !== m1.backendId
+  if (!m1 || m1.modelFamily !== modelFamily("assist-primary") || !ingress || ingress.backendId !== m1.backendId
     || !gpu || gpu.backendId === m1.backendId || gpu.physicalGroup === m1.physicalGroup || gpu.endpoint === m1.endpoint
     || ingress.integratedSha !== m.integratedSha || ingress.relayRevision !== m.integratedSha || ingress.contractHash !== localModelContractHash(m1)
     || !fresh(ingress.observedAt) || m.physicalLimits[m1.physicalGroup] !== 1
