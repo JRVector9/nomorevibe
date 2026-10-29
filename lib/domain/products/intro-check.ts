@@ -1,3 +1,4 @@
+import { configuredModelForProvider, modelLimits } from "@/lib/llm/model-registry";
 import { cliFailure, runReviewCli, usageFrom, type ReviewCliRun, type ReviewUsage } from "@/lib/crawl/agent-review";
 import { tidyTagline } from "@/lib/crawl/tagline";
 import type { IntroOutcome, IntroVerdict } from "@/lib/db/schema";
@@ -22,11 +23,11 @@ import type { IntroOutcome, IntroVerdict } from "@/lib/db/schema";
  *
  * 구독 토큰(claude-cli)으로 돈다 — API 키가 아니다. 2차 심사·키워드 검수와 한도를 같이 쓴다.
  */
-export const INTRO_CHECK_MODEL = process.env.INTRO_CHECK_MODEL?.trim() || "sonnet";
+export const INTRO_CHECK_MODEL = configuredModelForProvider("product-intro-check", "claude-cli");
 /** 한 번에 보내는 제품 수 — 10건 묶음으로 잰 정확도다 */
 export const INTRO_CHECK_BATCH = 10;
 /** 생각이 길어 2천 토큰으로는 모자란다(키워드 검수와 같다) */
-const MAX_OUTPUT_TOKENS = 8_000;
+const MAX_OUTPUT_TOKENS = modelLimits("product-intro-check").maxTokens;
 /** 고쳐 쓴 줄이 이보다 짧으면 소개가 아니라 이름이나 낱말이다 */
 const MIN_LINE = 10;
 

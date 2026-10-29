@@ -3,7 +3,7 @@ import { JobLeaseLostError, STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { RoleLeaseLostError, type RoleLease } from "@/lib/jobs/role-leader";
 import { assertJobBatchAdmission } from "@/lib/jobs/batch-repository";
 import { reviewHash } from "@/lib/crawl/agent-review-contract";
-import { TRANSLATE_MODEL, productTaglineKoSourceHash } from "@/lib/crawl/translate";
+import { KOREAN_TAGLINE_MODEL, productTaglineKoSourceHash } from "@/lib/crawl/translate";
 import { KOREAN_TRANSLATION_QWEN_MODEL, koreanTranslationQwenRecoveryEnabled } from "@/lib/crawl/korean-translation-config";
 import type { PreparedProductTaglineKoGatewayCall } from "@/lib/crawl/agent-review-gateway";
 import { displayProjectName } from "./display-name";
@@ -396,7 +396,7 @@ export async function prepareKoreanTaglineDispatch(value: readonly KoreanTagline
       const control = lock?.control ?? await lockModelCapacityCallerControl(tx);
       if (!reserved && control.mode === "disabled") return { kind: "disabled" } as const;
       if (control.mode !== "open") throw new ModelCapacityDeferredError(control.mode === "draining" ? "draining" : "disabled");
-      if (call.model !== TRANSLATE_MODEL || !control.policy?.routes.some(route => route.routeId === "product-tagline-ko"
+      if (call.model !== KOREAN_TAGLINE_MODEL || !control.policy?.routes.some(route => route.routeId === "product-tagline-ko"
         && route.provider === "abcllm" && route.model === call.model)) throw new ModelCapacityDeferredError("unmapped");
       if (!roleLease || !["text", "translation"].includes(roleLease.role)) throw new ModelCapacityDeferredError("owner_unavailable");
       await assertJobBatchAdmission(tx, "product-tagline-ko", roleLease);

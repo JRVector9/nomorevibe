@@ -1,3 +1,4 @@
+import { modelBaseUrl, modelRequestBudget } from "@/lib/llm/model-registry";
 import { createHash } from "node:crypto";
 import { fetch as undiciFetch } from "undici";
 import { observeProviderTransport } from "@/lib/llm/provider-circuit-breaker";
@@ -9,7 +10,7 @@ import { ai1ModelDispatchSchema, ai1GatewayTerminalEvidenceSchema,
   gatewayNotStartedEvidenceSchema, type GatewayNotStartedEvidence } from "@/lib/llm/capacity";
 import { ai1GatewayServingContractHash, ai1GatewayServingContractSchema, resolveAi1GatewayServingContract,
   type Ai1GatewayServingContract } from "./agent-review-serving-contract";
-import { ai2GatewayServingContractHash, ai2GatewayServingContractSchema, resolveAi2GatewayServingContract,
+import { ai2GatewayServingContractHash, ai2GatewayServingContractSchema, resolveAi2GatewayServingContract, ai2ServingContractMatches,
   type Ai2GatewayServingContract } from "./second-review-serving-contract";
 import { MAX_REVIEW_INPUT_BYTES, validateReviewOutcome, type ReviewInput } from "./agent-review-contract";
 import { assertLiveReviewAdapterAllowed } from "./review-fixture-transport";
@@ -42,8 +43,8 @@ export const REVIEW_GATEWAY_TIMEOUT_MS = REVIEW_GATEWAY_LADDER.clientMs;
  * 넉넉히 둔다 — 길이로 조이는 것은 붐비는 서버에 도움이 되지 않았다(같은 요청이 4.7초에서
  * 29초까지 흔들렸고 상한과는 무관했다).
  */
-const MAX_OUTPUT_TOKENS = 3_000;
-const BASE_URL = process.env.ABCLLM_BASE_URL?.trim() || "https://abcllm-api.brut.bot";
+const MAX_OUTPUT_TOKENS = modelRequestBudget("gateway-review").maxTokens;
+const BASE_URL = modelBaseUrl("ai1-preset", process.env, "abcllm");
 const MAX_BODY_BYTES = 128 * 1024;
 
 /**
@@ -80,7 +81,7 @@ export async function listGatewayModels(options: { timeoutMs?: number; request?:
   const key = process.env.ABCLLM_API_KEY?.trim();
   if (!key) return null;
   try {
-    const response = await (options.request ?? fetch)(`${BASE_URL}/v1/models`, {
+    const response = await (options.request ?? fetch)(`${BASE_URL}/models`, {
       headers: { authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(options.timeoutMs ?? 5_000), cache: "no-store",
     });
     if (!response.ok) return null;
@@ -162,7 +163,7 @@ export async function reviewWithGateway(input: ReviewInput, options: {
   const key = options.endpoint ? options.endpoint.apiKey?.trim() || null : process.env.ABCLLM_API_KEY?.trim();
   const model = gatewayModel(options.model);
   if ((!options.endpoint && !key) || !model) return { ok: false, error: "not_configured" };
-  const url = options.endpoint ? `${options.endpoint.baseUrl.replace(/\/+$/, "")}/chat/completions` : `${BASE_URL}/v1/chat/completions`;
+  const url = options.endpoint ? `${options.endpoint.baseUrl.replace(/\/+$/, "")}/chat/completions` : `${BASE_URL}/chat/completions`;
   const serialized = JSON.stringify(input.snapshot);
   if (Buffer.byteLength(serialized, "utf8") > MAX_REVIEW_INPUT_BYTES) return { ok: false, error: "input_too_large" };
 
@@ -425,8 +426,8 @@ export async function prepareAi2GatewayCall(input: ReviewInput, options: {
   if (!resolved) return unsupported;
   const contract = ai2GatewayServingContractSchema.parse(structuredClone(resolved));
   const serialized = JSON.stringify(snapshot.snapshot);
-  if (contract.provider !== provider || contract.model !== model || Buffer.byteLength(serialized, "utf8") > MAX_REVIEW_INPUT_BYTES) return unsupported;
-  let wire = gatewayWire(model, serialized);
+  if (contract.provider !== provider || !ai2ServingContractMatches(contract, model) || Buffer.byteLength(serialized, "utf8") > MAX_REVIEW_INPUT_BYTES) return unsupported;
+  let wire = gatewayWire(contract.model, serialized);
   if (contract.provider === "local-direct") {
     const body = JSON.parse(wire);
     delete body.context_strategy;

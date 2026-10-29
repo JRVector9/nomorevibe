@@ -6,7 +6,7 @@ vi.mock("@/lib/domain/products/korean-taglines", () => ({ homeListSlugs: async (
 vi.mock("@/lib/domain/products/korean-tagline-model-capacity", () => ({ translateKoreanTaglinesWithModelCapacity: m.gpt }));
 vi.mock("@/lib/crawl/korean-translation-qwen", () => ({ translateKoreanTaglinesWithQwen: m.qwen }));
 vi.mock("@/lib/llm/capacity-repository", () => ({ readModelCapacityCallerControl: m.control }));
-vi.mock("@/lib/crawl/translate", () => ({ TRANSLATE_MODEL: "[MLX] gpt-oss-120b" }));
+vi.mock("@/lib/crawl/translate", () => ({ KOREAN_TAGLINE_MODEL: "[MLX] gpt-oss-120b" }));
 import { writeKoreanTaglines } from "@/lib/jobs/products/korean-tagline";
 import { KOREAN_TRANSLATION_QWEN_MODEL } from "@/lib/crawl/korean-translation-config";
 const task = (id: number, attempts = 0) => ({ productId: id, name: "Tool", tagline: "Track tasks for your team", repoUrl: null, attempts });

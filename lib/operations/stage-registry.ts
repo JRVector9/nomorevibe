@@ -1,3 +1,4 @@
+import { configuredModel, configuredModelDefinition, modelForPurpose, modelRequestName } from "@/lib/llm/model-registry";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import type { CatalogRole } from "@/lib/jobs/catalog";
 import type { StageKey as CompletionStageKey } from "./pipeline-completions";
@@ -153,15 +154,15 @@ export type ModelSlot = Readonly<{
  * 환경변수는 이 프로세스의 것이다 — 웹과 워커의 환경이 다르면 관측한 모델(결과 행의 model)이 더 정확하다.
  */
 export const ENV_MODEL_SLOTS = [
-  { stage: "publish", key: "tagline", label: "소개 짓기", env: "ABCLLM_TAGLINE_MODEL", fallback: "[MLX] qwen3.6-35b-heretic", provider: "abcllm", approximated: true },
-  { stage: "keywords", key: "keywords", label: "키워드 짓기", env: "ABCLLM_PROFILE_MODEL", fallback: "[MLX] gpt-oss-120b", provider: "abcllm", approximated: false },
-  { stage: "keyword-verify", key: "keyword-verify", label: "키워드 검수", env: "SEARCH_VERIFY_MODEL", fallback: "[supa] Qwen3.8-27B-NVFP4", provider: "abcllm", approximated: true },
+  { stage: "publish", key: "tagline", label: "소개 짓기", env: "ABCLLM_TAGLINE_MODEL", fallback: modelRequestName(modelForPurpose("crawl-tagline")), provider: "abcllm", approximated: true },
+  { stage: "keywords", key: "keywords", label: "키워드 짓기", env: "ABCLLM_PROFILE_MODEL", fallback: modelRequestName(modelForPurpose("reason-translate")), provider: "abcllm", approximated: false },
+  { stage: "keyword-verify", key: "keyword-verify", label: "키워드 검수", env: "SEARCH_VERIFY_MODEL", fallback: modelRequestName(modelForPurpose("product-search-verify")), provider: "abcllm", approximated: true },
   // 벡터 모델은 환경변수로 바꾸지 않는다 — 바꾸면 전부 다시 임베딩한다(embedding.ts EMBEDDING_MODEL)
   { stage: "embedding", key: "embedding", label: "의미 검색 벡터", env: null, fallback: "bge-m3-f16@daec91ff", provider: "llama-server", approximated: true },
-  { stage: "product-translate", key: "product-translate", label: "제품 번역", env: "ABCLLM_MODEL", fallback: "[MLX] gpt-oss-120b", provider: "abcllm", approximated: true },
-  { stage: "reason-translate", key: "reason-translate", label: "사유 번역", env: "ABCLLM_MODEL", fallback: "[MLX] gpt-oss-120b", provider: "abcllm", approximated: true },
-  { stage: "intro-check", key: "intro-check", label: "소개 검수", env: "INTRO_CHECK_MODEL", fallback: "sonnet", provider: "claude-cli", approximated: true },
-  { stage: "tagline-ko", key: "tagline-ko", label: "한국어 소개", env: "ABCLLM_MODEL", fallback: "[MLX] gpt-oss-120b", provider: "abcllm", approximated: true },
+  { stage: "product-translate", key: "product-translate", label: "제품 번역", env: "PRODUCT_TRANSLATION_MODEL", fallback: modelRequestName(modelForPurpose("product-translate")), provider: "abcllm", approximated: true },
+  { stage: "reason-translate", key: "reason-translate", label: "사유 번역", env: "ABCLLM_MODEL", fallback: modelRequestName(modelForPurpose("reason-translate")), provider: "abcllm", approximated: true },
+  { stage: "intro-check", key: "intro-check", label: "소개 검수", env: "INTRO_CHECK_MODEL", fallback: modelRequestName(modelForPurpose("product-intro-check")), provider: "claude-cli", approximated: true },
+  { stage: "tagline-ko", key: "tagline-ko", label: "한국어 소개", env: "ABCLLM_MODEL", fallback: modelRequestName(modelForPurpose("reason-translate")), provider: "abcllm", approximated: true },
 ] as const satisfies readonly { stage: StageKey; key: string; label: string; env: string | null; fallback: string; provider: string; approximated: boolean }[];
 
 /** CLI 모델 이름 규칙 — agent-review.ts reviewModel 과 같다 */
@@ -194,9 +195,13 @@ export function resolveModelSlots(settings: ModelSettings, env: Env = process.en
     // 새 감사는 시작할 때의 1차 심사자로 고정된다(product-audit.ts) — 도는 중인 감사의 모델은 product_audit_campaigns.model 이다
     { stage: "audit", key: "audit", label: "발행분 감사", ...first, approximated: false },
     ...ENV_MODEL_SLOTS.map((slot): ModelSlot => {
-      const value = slot.env ? env[slot.env]?.trim() : undefined;
-      return { stage: slot.stage, key: slot.key, label: slot.label, code: slot.env ?? "EMBEDDING_MODEL", provider: slot.provider,
-        model: value || slot.fallback, source: value ? "env" : "default", approximated: slot.approximated };
+      const purpose = ({ tagline: "crawl-tagline", keywords: "product-search-profile", "keyword-verify": "product-search-verify",
+        "product-translate": "product-translate", "reason-translate": "reason-translate", "intro-check": "product-intro-check",
+        "tagline-ko": "product-tagline-ko" } as const)[slot.key as Exclude<typeof slot.key, "embedding">];
+      const value = slot.env ? env[slot.env]?.trim() || env[`${slot.env}_KEY`]?.trim() : undefined;
+      const selected = purpose ? configuredModelDefinition(purpose, env) : null;
+      return { stage: slot.stage, key: slot.key, label: slot.label, code: slot.env ?? "EMBEDDING_MODEL", provider: selected?.provider ?? slot.provider,
+        model: purpose ? configuredModel(purpose, env) : slot.fallback, source: value || env.MODEL_REGISTRY_CONFIG ? "env" : "default", approximated: slot.approximated };
     }),
     ...(koreanTranslationQwenEnabled(env) ? [{ stage: "tagline-ko", key: "tagline-ko-qwen", label: "한국어 소개 · GPU Qwen",
       code: "KOREAN_TRANSLATION_QWEN_ENABLED", provider: "vllm", model: KOREAN_TRANSLATION_QWEN_MODEL,

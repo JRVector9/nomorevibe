@@ -1,3 +1,4 @@
+import { configuredModel, configuredModelDefinition } from "../../lib/llm/model-registry";
 import net from "node:net";
 import path from "node:path";
 import { lstatSync, readFileSync } from "node:fs";
@@ -33,8 +34,9 @@ export function localModelRelayConfig(env: Readonly<Record<string, string | unde
   if (!/^[a-zA-Z0-9._:-]{1,200}$/.test(deploymentRevision)) throw new Error("relay_invalid_deployment_revision");
   if (env.LOCAL_MODEL_RELAY_UPSTREAM_URL || env.LOCAL_MODEL_RELAY_UPSTREAM_HOST || env.LOCAL_MODEL_RELAY_UPSTREAM_PORT)
     throw new Error("relay_upstream_is_fixed");
-  const model = env.LOCAL_MODEL_RELAY_MODEL ?? "qwen3.8-flash-next";
-  if (model !== "qwen3.8-flash-next") throw new Error("relay_model_not_allowed");
+  const definition = configuredModelDefinition("relay", env);
+  const model = configuredModel("relay", env);
+  if (definition.provider !== "local-direct" || model !== definition.model) throw new Error("relay_model_not_allowed");
   const token = secretFile(env.LOCAL_MODEL_RELAY_TOKEN_FILE), upstreamToken = secretFile(env.LOCAL_MODEL_RELAY_UPSTREAM_TOKEN_FILE);
   if (token.length < 32 || token === upstreamToken) throw new Error("relay_separate_tokens_required");
   // 기한 사다리(엔진 < relay < gateway < client)의 relay 몫. 값 근거는 docs/operations/2026-10-28-deadline-ladder.md.

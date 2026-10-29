@@ -1,5 +1,7 @@
 # M1 translation admission with an additive capacity policy
 
+> 모델 설정 유연화 차선: 아래 모델 선택은 이 문서 작성 당시 기록이다. 새 코드의 제품 번역 기본값은 M1 Gemma 4 26B이며, 실제 운영 설정의 변경·readback 확인은 별도다. 설정·우선순위·계약·롤백은 [모델 레지스트리 절차](model-config-registry.md)를 따른다.
+
 The existing product translation worker selects `[m1] qwen3.8-flash-next` through
 `PRODUCT_TRANSLATION_MODEL`. abcLLM PR7 preserves the explicit server label when
 GPU3090 offers the same model name. M1 relay authentication, IP restrictions,

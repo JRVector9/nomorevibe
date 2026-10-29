@@ -1,3 +1,4 @@
+import { modelFamily } from "@/lib/llm/model-registry";
 import { sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db";
@@ -20,8 +21,8 @@ export class AuditDispatchBudgetExceededError extends Error {
 /** 공통 claim SQL의 w alias 전용이다. 일반 task에는 부모가 별도 OR 분기를 둔다. */
 export function actionAuditClaimEligible(backendFamily: string): SQL<boolean> {
   return sql<boolean>`coalesce((w.task in ('decision_audit','semantic_exception') and (
-    (w.source->'decision'->>'modelFamily'='qwen3.8-flash-next' and ${backendFamily}='deepseek-v4.1-flash-1017')
-    or (w.source->'decision'->>'modelFamily' in ('deepseek-v4.1-flash-1017','gpt-oss-120b') and ${backendFamily}='qwen3.8-flash-next'))),false)`;
+    (w.source->'decision'->>'modelFamily'=${modelFamily("assist-primary")} and ${backendFamily}=${modelFamily("assist-audit")})
+    or (w.source->'decision'->>'modelFamily' in (${modelFamily("assist-audit")},${modelFamily("assist-legacy-family")}) and ${backendFamily}=${modelFamily("assist-primary")}))),false)`;
 }
 
 export function actionAuditBackendEligible(candidateValue: ActionAuditCandidate, backendFamily: string): boolean {
@@ -110,10 +111,10 @@ export async function enqueueSemanticExceptionForResult(tx: AuditTransaction, re
   if (!config.enabled) return "disabled";
   z.uuid().parse(resultId);
   const current = await loadAutomatedDecision(tx, resultId);
-  if (!current || current.modelFamily !== "qwen3.8-flash-next") return "not_eligible";
+  if (!current || current.modelFamily !== modelFamily("assist-primary")) return "not_eligible";
   const previous = await tx.execute<{ id: string }>(sql`select r.id from llm_assist_results r join llm_assist_work w on w.id=r.work_id
     where r.id<>${resultId}::uuid and w.product_id=${current.productId} and r.input_hash=${current.inputHash}
-      and w.source_hash=${current.sourceHash} and r.model_family='qwen3.8-flash-next'
+      and w.source_hash=${current.sourceHash} and r.model_family=${modelFamily("assist-primary")}
       and w.task in ('uptime','repo_move','intro_recheck') order by r.completed_at,r.id limit ${Math.min(config.policy.maxCandidates, 100)}`);
   for (const row of previous) {
     const other = await loadAutomatedDecision(tx, row.id);
