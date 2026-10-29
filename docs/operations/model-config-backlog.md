@@ -145,3 +145,23 @@ git grep -o -E '(configuredModel|configuredModelDefinition|configuredModelForPro
 
 - CI 40801093616: unit 2묶음·ledger·DB 5묶음·build/typecheck/lint는 통과했고 integration(4)의 pipeline-control 1시험만 실패(해당 묶음 57파일 중 56파일·660시험 통과). CLI fixture가 제품 번역도 ABCLLM_MODEL을 쓴다고 기대한 부분이다. 독립 PRODUCT_TRANSLATION_MODEL 환경변수를 fixture에 명시하고 그 값으로 route 기대를 검사하도록 고쳤다. 실제 capacity open 거절·계약 검사는 그대로다.
 - 구현 최종 로컬 다섯 명령 재실행: tsc exit 0, 지정 8파일 37시험, 모델 스크립트 **69파일 985시험**, review-stall **23파일 339시험 + Python 71시험**, 모든 명령 exit 0. 측정은 **158→99**. 이 뒤의 변경은 위 CI fixture 한 곳과 이 검증 이력 문서다.
+
+## 현재 차선 완료 영수증 (2026-10-29 UTC)
+
+- 구현 PR [#713](https://github.com/JRVector9/nomorevibe/pull/713) **main 병합 완료**, 2026-10-29 01:52:58 UTC. 병합 커밋 `35ef739ad501e66c9f60e717ca9df9b1c22d92b3`.
+- 최종 head `a07f8bef7594f1c9eff7dc5eacd8712c404bb61b`의 [CI 40802215723](https://github.com/JRVector9/nomorevibe/actions/runs/40802215723): **필수 check SUCCESS**, unit 두 묶음·DB 여섯 묶음·ledger·build·typecheck·lint 전부 통과. 앞선 실패·취소 및 수정 이력은 위에 보존했다.
+- 병합 main의 [CI 40803067476](https://github.com/JRVector9/nomorevibe/actions/runs/40803067476)도 **check SUCCESS**를 직접 확인했다. main에서는 동일 트리의 검증을 재사용해 unit/DB/build/typecheck/lint가 skipped였으므로 재실행했다고 기록하지 않는다. PR head와 병합 main의 파일 diff 0을 확인했다. 이미지 publish·refresh-caches는 배포 완료 영수증이 아니며 동기 배포 대기 대상으로 삼지 않았다.
+- 요청한 다섯 로컬 명령의 마지막 실행은 모두 exit 0: `npx tsc --noEmit -p .`; 지정 Vitest **8파일 37시험**; `bash scripts/verify-model-config.sh` **69파일 985시험**·typegen/tsc·**158→99**; `bash scripts/verify-review-stall.sh` **23파일 339시험 + Python 71시험**·typegen/tsc/lint. 실제 합격 시험 수·HTTP 재현·브라우저 검수를 명령 종료 코드와 구분해 기록했다.
+- 장비 지정 재현: 같은 qwen3.8-flash-next를 제공하는 두 로컬 HTTP 서버에서 key와 `[m1]` label **2경우 모두 M1 요청 1건·GPU3090 요청 0건**. bare 모델은 모호함 오류. M1 주소 누락·기한 불변식 위반은 명확한 오류.
+- 실제 로컬 컴포넌트 UI **8검수 항목 통과·pageerror 0**, 1280/390px PNG 3장. 운영 로그인·실제 워커·모델 서버 readback 검증은 미실행이다.
+
+| 항목 | 현재 상태 |
+| --- | --- |
+| 기존 차선 통합·기한 사다리·출력 상한 | 완료. 기존 PR709~712의 안전 정책과 기본 기한 보존. |
+| 1차 심사 후보 목록 설정 | 완료. 기본 GPT OSS 포함 목록·저장된 pool·배정 본문 보존. |
+| M1 Gemma 기본값·오프라인 설정 이전 | 완료. 사용자 제공 정확한 id, 기존 gateway 주소, 주소 누락 오류. DB/서버에 적용하지 않음. |
+| 동일 측정·회귀·PR/check/main 병합 | 완료. 158→99, 위 실제 검증 영수증. |
+| 운영 배포·재시작·용량 모드·모델 조작·운영 DB | 이 차선의 금지 범위. 수행하지 않음. **코드는 main에서 배포 준비됨.** |
+| 지정 artifacts/scratch 직접 저장 | 차단. OSError(30, 'Read-only file system'). 권한 확대 없이 개발사항 보고의 지원된 첨부 방식 사용. 허브 전달은 실제 반환 상태로만 보고. |
+
+선택한 통합 방식은 merge다. 기존 main 안전 동작과 다른 브랜치 이력을 보존하는 최소 변경이기 때문이다. 원본 사용자 작업 폴더는 수정하지 않았고 xaegis/d9b32a19는 여전히 6f5d98f1이다. 실행할 코드 할 일은 남아 있지 않다. 남은 환경 설정 적용·실제 운영 참여 확인은 별도 승인된 운영 차선의 일이다. 지정 폴더 직접 쓰기 제한과 허브 동기화 상태는 코드 검증 통과와 구분한다.
