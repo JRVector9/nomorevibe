@@ -1,3 +1,4 @@
+import { replacedProviderEvidenceSchema } from "./replaced-provider-boundary-contract";
 import { cliExecutorIndeterminateRemovedEvidenceSchema } from "./cli-executor-indeterminate-removed-boundary-contract";
 import { cliExecutorIndeterminateEvidenceSchema } from "./cli-executor-indeterminate-boundary-contract";
 import { cliExecutorRemovedEvidenceSchema } from "./cli-executor-removed-boundary-contract";
@@ -935,6 +936,7 @@ const releaseBase = { version: z.literal(1), requestId: z.uuid(), owner: modelCa
  * 회수는 점유만 푼다: dispatch binding(chargedTokens = C)은 그대로이고 정산(settled)·사용량 증거를 만들지 않는다.
  */
 export const modelDispatchReleaseEvidenceSchema = z.discriminatedUnion("kind", [
+  replacedProviderEvidenceSchema,
   cliExecutorIndeterminateRemovedEvidenceSchema,
   cliExecutorIndeterminateEvidenceSchema,
   cliExecutorEvidenceSchema,
