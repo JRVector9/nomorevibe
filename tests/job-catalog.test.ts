@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { JOB_CATALOG, jobsForRole, lanesForRole } from '@/lib/jobs/catalog';
+import { JOB_CATALOG, JOB_ROLES, jobsForRole, lanesForRole } from '@/lib/jobs/catalog';
+import { batchLanesForRole } from '@/lib/jobs/batches';
 import { dbPoolConfig } from '@/lib/db/pool';
 import { jobRunOptions, runWorker } from '@/scripts/worker';
 
@@ -84,8 +85,8 @@ it('maintenance 워커가 생존 확인 요청을 소비하고 crawler 워커는
 });
 
 /**
- * 감사는 1차 심사와 같은 reviewer 워커에서 차례로 돈다 — 둘이 게이트웨이에 겹쳐 보내지 않는다.
- * 다른 역할에 두면 따로 도는 프로세스라 1차 심사와 겹쳐 동시 호출이 는다(실측 4 → 성공 94%, 6 → 87%).
+ * 감사는 1차 심사와 같은 reviewer 역할(같은 역할 lease·프로세스)에 둔다. 2026-10-29 부터 1차 심사는 전용 줄(ai1)이라 줄은 다르다 —
+ * 공유 모델의 동시 호출은 공통 장부의 물리 한도가 막고, 게이트웨이 감사는 새 후보가 기다리면 양보한다(product-audit.ts).
  */
 it('발행분 감사는 1차 심사와 같은 reviewer 역할에서 돈다', () => {
   expect(JOB_CATALOG.find(job => job.name === 'product-audit')).toEqual({
@@ -117,9 +118,30 @@ describe('lanesForRole', () => {
   it('화면 판별은 reviewer 의 따로 도는 줄(screen)에서 150초 틱으로 돈다 — 기본 줄의 심사·감사를 막지 않는다', () => {
     expect(JOB_CATALOG.find(job => job.name === 'audit-screen-review')).toEqual({ name: 'audit-screen-review', role: 'reviewer', intervalMs: 60_000, lane: 'screen' });
     const reviewer = lanesForRole('reviewer');
-    expect(reviewer).toEqual([jobsForRole('reviewer').filter(name => !['audit-screen-review', 'product-llm-assist-review', 'product-llm-assist-audit-review'].includes(name)), ['audit-screen-review'], ['product-llm-assist-review'], ['product-llm-assist-audit-review']]);
+    expect(reviewer).toEqual([jobsForRole('reviewer').filter(name => !['crawl-agent-review', 'audit-screen-review', 'product-llm-assist-review', 'product-llm-assist-audit-review'].includes(name)), ['crawl-agent-review'], ['audit-screen-review'], ['product-llm-assist-review'], ['product-llm-assist-audit-review']]);
     expect(jobRunOptions('product-llm-assist-review', { requestedOnly: true }).budgetMs).toBe(105_000);
     expect(reviewer[0]).toContain('product-audit');
     expect(jobRunOptions('audit-screen-review', { requestedOnly: true })).toEqual({ requestedOnly: true, budgetMs: 150_000 });
+  });
+
+  it('AI1 은 reviewer 의 전용 줄(ai1)에서 혼자 돈다 — 2차 심사·사람 큐 위임 뒤에 줄 서지 않고, 틱 예산은 그대로다', () => {
+    expect(JOB_CATALOG.find(job => job.name === 'crawl-agent-review')).toEqual({ name: 'crawl-agent-review', role: 'reviewer', intervalMs: 60_000, lane: 'ai1' });
+    const reviewer = lanesForRole('reviewer');
+    expect(reviewer.filter(lane => lane.includes('crawl-agent-review'))).toEqual([['crawl-agent-review']]);
+    expect(reviewer[0]).toEqual(expect.arrayContaining(['crawl-judge', 'second-review', 'human-deepseek-review', 'product-audit']));
+    expect(reviewer[0]).not.toContain('crawl-agent-review');
+    expect(jobRunOptions('crawl-agent-review', { requestedOnly: true })).toEqual({ requestedOnly: true, budgetMs: 110_000 });
+  });
+
+  it('모든 역할에서 줄은 잡을 나눌 뿐 겹치지 않는다 — 한 잡이 두 줄에서 동시에 돌 수 없다', () => {
+    for (const role of JOB_ROLES) {
+      const lanes = lanesForRole(role), flat = lanes.flat();
+      expect(new Set(flat).size, role).toBe(flat.length);
+      expect([...flat].sort(), role).toEqual([...jobsForRole(role)].sort());
+      for (const mode of ['legacy', 'versioned'] as const) {
+        const batch = batchLanesForRole(role, mode).flat();
+        expect(new Set(batch).size, `${role}:${mode}`).toBe(batch.length);
+      }
+    }
   });
 });

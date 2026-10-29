@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
-import { ai1ModelDispatchSchema, modelCapacityOwnerSchema, modelCapacityRequestIdentitySchema, type Ai1ModelDispatch, ai1ItemModelDispatchSchema, type Ai1ItemModelDispatch } from '@/lib/llm/capacity';
+import { ai1ModelDispatchSchema, modelCapacityOwnerSchema, modelCapacityRequestIdentitySchema, type Ai1ModelDispatch, ai1ItemModelDispatchSchema, type Ai1ItemModelDispatch,
+  type ModelCapacityRequest, type ModelSlotResult } from '@/lib/llm/capacity';
 import { findOwnPendingModelRequest, requestAi1ModelSlot, cancelReservedModelSlot,
   markModelDispatchIndeterminate, reconcileAi1GatewayTerminal, reconcileAi1ItemGatewayTerminal, reconcileGatewayNotStarted } from '@/lib/llm/capacity-repository';
 import { markUnsettledDispatch } from '@/lib/llm/capacity-unsettled';
@@ -93,9 +94,80 @@ export async function reviewAgentReviewItemModelCapacity(input: ReviewInput, dis
   return response.result;
 }
 
+/**
+ * 틱 안의 짧은 예약 대기(2026-10-29 AI1 처리량). 슬롯이 차서 이 요청이 waiting 으로 줄에 섰으면 틱을 미루고 떠나는 대신
+ * 같은 requestId 로 다시 묻는다. 줄 순서·물리 한도·class 가중치·TTL·정책 세대는 장부(requestSlot)가 그대로 정한다 — 이 대기는
+ * 장부를 바꾸지 않고, 슬롯이 풀려 이 행이 reserved 가 되는 순간을 놓치지 않을 뿐이다. 떠나 있는 사이 받은 예약이 TTL(30초)로
+ * 만료돼 물리 슬롯이 놀던 경로(2026-10-29 실측: AI1 예약 시간의 46~54%가 미사용 만료)를 닫는다.
+ */
+export type Ai1ReservationWait = {
+  /** 이 시각(epoch ms)까지 받은 예약이어야 전체 호출 제한과 기록 여유를 지킨다. 지나면 다시 묻지 않는다 */
+  until: number;
+  /** 틱 전체의 멈춤 조건(stage·전역 미룸·종료·같은 모델 pause). false 면 그대로 미룬다 — 줄의 행은 남는다 */
+  active?: () => boolean;
+  /** 관측만. 결과·장부에 끼어들지 않는다 */
+  observe?: (event: Ai1ReservationWaitEvent) => void;
+};
+/**
+ * ended: 왜 끝났나 — granted(받음)·deadline(틱의 시작 가능 시각이 지남, 슬롯 문제가 아니다)·cap(상한 동안 슬롯이 계속 참)·
+ * not_queued(줄에 선 행이 없다 — fence·중복 작업)·stopped(종료·틱 멈춤 조건)·refused(capacity 아닌 장부 거절)
+ */
+export type Ai1ReservationWaitEvent = { granted: boolean; queued: boolean; polls: number; waitedMs: number;
+  ended: 'granted' | 'deadline' | 'cap' | 'not_queued' | 'stopped' | 'refused' };
+/** 다시 묻는 간격. 한 번이 짧은 control 잠금 TX 하나다(전송 중에는 연결을 잡지 않는다) */
+export const AI1_RESERVATION_POLL_MS = 500;
+/** 한 후보가 기다리는 상한 — 정책의 예약 TTL(30초)과 같다. 그보다 오래 차 있는 슬롯은 틱이 pause 해 다른 모델에 줄을 내준다 */
+export const AI1_RESERVATION_WAIT_MAX_MS = 30_000;
+
+const pause = (ms: number, signal?: AbortSignal) => new Promise<void>(resolve => {
+  if (signal?.aborted) return resolve();
+  const done = () => { clearTimeout(timer); signal?.removeEventListener('abort', done); resolve(); };
+  const timer = setTimeout(done, ms);
+  signal?.addEventListener('abort', done, { once: true });
+});
+
+/**
+ * 첫 요청이 capacity 로 돌아온 같은 요청을, 줄에 선 행이 있을 때만 정해진 시각까지 다시 묻는다. 행을 취소하거나 새 행을 만들지 않는다.
+ * fence·중복 작업으로 행 없이 돌아온 capacity 는 기다려도 풀리지 않으므로 바로 돌려준다. 결과가 granted 가 아니면 처음 사유 그대로 미룬다.
+ */
+export async function awaitQueuedAi1Reservation(request: ModelCapacityRequest, candidateId: number, first: ModelSlotResult,
+  wait: Ai1ReservationWait, signal?: AbortSignal): Promise<ModelSlotResult> {
+  const startedAt = Date.now(), until = Math.min(wait.until, startedAt + AI1_RESERVATION_WAIT_MAX_MS);
+  const limit = wait.until <= startedAt + AI1_RESERVATION_WAIT_MAX_MS ? 'deadline' as const : 'cap' as const;
+  const stopped = () => signal?.aborted === true || wait.active?.() === false;
+  let slot = first, polls = 0, queued = false, ended: Ai1ReservationWaitEvent['ended'] | null = null;
+  if (slot.kind !== 'deferred' || slot.reason !== 'capacity') ended = slot.kind === 'granted' ? 'granted' : 'refused';
+  else if (stopped()) ended = 'stopped';
+  else if (Date.now() >= until) ended = limit;
+  else {
+    const { requestId, ...identity } = request;
+    const own = await findOwnPendingModelRequest(identity);
+    queued = own?.requestId === requestId && (own.state === 'waiting' || own.state === 'reserved');
+    if (!queued) ended = 'not_queued';
+    // 이미 다른 호출의 grant 로 reserved 가 됐으면 쉬지 않고 바로 받는다
+    let immediate = queued && own?.state === 'reserved';
+    while (ended === null) {
+      if (!immediate) {
+        if (Date.now() + AI1_RESERVATION_POLL_MS > until) { ended = limit; break; }
+        await pause(AI1_RESERVATION_POLL_MS, signal);
+        if (stopped()) { ended = 'stopped'; break; }
+      }
+      immediate = false;
+      polls++;
+      slot = await requestAi1ModelSlot(request, candidateId);
+      if (slot.kind === 'granted') ended = 'granted';
+      else if (slot.reason !== 'capacity') ended = 'refused';
+    }
+  }
+  try { wait.observe?.({ granted: slot.kind === 'granted', queued, polls, waitedMs: Date.now() - startedAt, ended: ended ?? 'refused' }); }
+  catch { /* 관측 실패는 대기 결과가 아니다 */ }
+  return slot;
+}
+
 /** Called only after the fresh-intent claim transaction has actually rolled back.
- * Each queue read/poll is its own short primary transaction; none spans transport. */
-export async function claimAgentReviewModelCapacity(input: Context): Promise<{ claim: ModelCapacityReviewClaim; call: PreparedAi1GatewayCall }> {
+ * Each queue read/poll is its own short primary transaction; none spans transport.
+ * `wait` 가 있으면 capacity 로 줄에 선 이 요청을 그 범위 안에서만 다시 묻는다(awaitQueuedAi1Reservation). */
+export async function claimAgentReviewModelCapacity(input: Context, wait?: Ai1ReservationWait): Promise<{ claim: ModelCapacityReviewClaim; call: PreparedAi1GatewayCall }> {
   assertLiveReviewAdapterAllowed();
   // Preserve the exact intent and job while the standalone queue calls await.
   const signal = input.signal;
@@ -112,7 +184,9 @@ export async function claimAgentReviewModelCapacity(input: Context): Promise<{ c
     workKey: `ai1:${input.candidate.id}:${itemBindingHash(agentReviewBinding(input.candidate.id, input.input, { provider: input.provider, model: input.model }))}` });
   const pending = await findOwnPendingModelRequest(identity);
   if (pending && (pending.state === 'dispatched' || pending.state === 'indeterminate')) throw new ModelCapacityDeferredError('dispatched');
-  const slot = await requestAi1ModelSlot({ ...identity, requestId: pending?.requestId ?? randomUUID() }, input.candidate.id);
+  const request = { ...identity, requestId: pending?.requestId ?? randomUUID() };
+  let slot = await requestAi1ModelSlot(request, input.candidate.id);
+  if (wait && slot.kind === 'deferred' && slot.reason === 'capacity') slot = await awaitQueuedAi1Reservation(request, input.candidate.id, slot, wait, input.signal);
   if (slot.kind !== 'granted') throw new ModelCapacityDeferredError(slot.reason);
   let claim: ModelCapacityReviewClaim;
   try {
