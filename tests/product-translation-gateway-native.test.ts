@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createServer, type ServerResponse } from "node:http";
 import { afterEach, expect, it, vi } from "vitest";
-import { TRANSLATE_MODEL, translateProductFields, type ProductTranslationGatewayItem } from "@/lib/crawl/translate";
+import { PRODUCT_TRANSLATION_MODEL, translateProductFields, type ProductTranslationGatewayItem } from "@/lib/crawl/translate";
 import { productTranslationSourceHash } from "@/lib/domain/products/translation-policy";
 import { productTranslationInputHash, productTranslationLogicalWorkKey, productTranslationDispatchBindingHash,
   productTranslationModelDispatchSchema } from "@/lib/llm/capacity";
@@ -115,7 +115,7 @@ it("keeps the aligned product wire identical across legacy and native transport 
   const result = await translateProductFields(batch, 1000, (async (_url, options) => {
     wire = String(options?.body); return new Response(JSON.stringify(envelope()));
   }) as typeof fetch);
-  expect(result).toEqual({ ok: true, outputs }); expect(wire).toBe(originalWire(batch, TRANSLATE_MODEL));
+  expect(result).toEqual({ ok: true, outputs }); expect(wire).toBe(originalWire(batch, PRODUCT_TRANSLATION_MODEL));
 });
 it("keeps production unsupported and malformed or missing-key batches incapable of native authority", async () => {
   vi.stubEnv("ABCLLM_API_KEY", "local-test-only");

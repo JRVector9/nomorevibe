@@ -25,6 +25,7 @@ tests=(
   tests/llm-assist-audit-runtime.test.ts tests/intro-assist.test.ts tests/intro-assist-runtime.test.ts
   tests/search-profile.test.ts tests/search-verify.test.ts tests/intro-check.test.ts
   tests/text-profile-model-capacity.test.ts tests/search-verify-model-capacity.test.ts
+  tests/product-translation-gateway-native.test.ts tests/text-model-capacity-admission.test.ts
   tests/product-translation-model-selection.test.ts tests/product-translation-model-capacity.test.ts
   tests/korean-translation-qwen.test.ts tests/korean-tagline-dual-model.test.ts
   tests/korean-tagline-model-capacity.test.ts tests/search-query-model-capacity.test.ts
