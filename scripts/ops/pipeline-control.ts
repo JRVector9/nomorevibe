@@ -37,6 +37,8 @@ export async function pipelineControlMain(args: readonly string[], env: Readonly
     applicationName: "nomorevibe:pipeline-control" });
   const database = drizzle(client, { schema });
   try {
+    // Route judgments (status table, OPEN) use admin serving contracts too: this process's DATABASE_URL, env-only when absent.
+    await (await import("@/lib/llm/serving-contract-store")).ensureServingContracts(0);
     if (command.name === "status") {
       const snapshot = await repository.readControlSnapshot(database);
       const name = command.area ? `${command.area} status` : "status";

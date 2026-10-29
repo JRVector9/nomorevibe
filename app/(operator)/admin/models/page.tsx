@@ -47,6 +47,7 @@ export default async function ModelsPage() {
   return <main className="mx-auto flex max-w-[1440px] flex-col gap-5 px-8 pt-7 pb-28 max-sm:px-4">
     <PageStamp />
     <header className="flex flex-col gap-2"><h1 className="text-[26px] font-bold">단계별 모델</h1>
+      <Link href="/admin/models/contracts" className="text-[14px] underline">서빙 계약(모델 주소·인증) 관리 →</Link>
       <p className="text-[14px] text-fg-2">멈춘 단계와 모델을 먼저 확인하고, 아래에서 다음 작업에 쓸 모델을 바꿉니다.</p>
       <Link href="/admin/status" prefetch={false} className="text-[13px] font-semibold text-accent-ink">운영센터에서 실제 워커 경로·용량 확인 →</Link>
     </header>
