@@ -165,3 +165,9 @@ apply 뒤에는 Q1~Q5를 다시 실행한다. 성공 기준은 Q2=0, Q3=0행, Q5
 - **남음(범위 밖, 변경 안 함) — 시간 기반 닫기 하나가 남아 있다**: `closeSettledSecondReviews`의 obsolete 조건이 1차 판단의 `valid_until` 경과만으로 pending/failed 표를 `superseded`로 닫는다. 이번 규칙과 성격이 다르지만, 1차 재판단 흐름에 영향을 주므로 별도 PR에서 검토한다.
 - **남음 — 보호해서 남기는 대기**: 사람 갈림 보류(`second_review_split`) 후보의 pending 관문 표는 사람 결정 또는 `reopenOrphanedGateHolds`가 맡도록 그대로 둔다. 사람이 `needs_review`로 둔(`decided_by='admin'`) 후보의 관문 표도 건드리지 않는다. 운영에 이런 표가 실제로 있는지는 아직 세지 않았다.
 - **남음 — 스캔 수요 집계**: `staleSecondReviewScanDemand`는 새 공백 모양을 아직 넣지 않았다. 갱신은 정리 잡이 후보를 볼 때 직접 요청한다.
+
+### 병합·재검증 (2026-10-29, 이 작업 공간)
+
+- `xaegis/1c665e18`과 origin/main을 충돌 없이 합쳤다. 합친 뒤 `npx vitest run tests/ai2-stale-` 14 통과, 2차 검수 단위(`tests/ai2- tests/second-review tests/agent-review`) 463 통과, 일회용 PostgreSQL에서 `tests/integration/ai2-stale-reconcile.test.ts` 9 통과(컨테이너 삭제). eslint·`next typegen` 뒤 `tsc --noEmit` 오류 0.
+- 재검수 중복 배정 방지·공정 배분은 `tests/ai2-stale-fairness.test.ts`와 통합 시험 "single across enqueue, cleanup and repeated reconcile ticks"가 덮고 있어 시험을 더 만들지 않았다.
+- 전체 unit·전체 DB 시험은 통합 단계 정책에 따라 실행하지 않았다.
