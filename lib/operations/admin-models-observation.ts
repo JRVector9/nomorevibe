@@ -54,4 +54,3 @@ export function buildAdminModelsObservation(raw: {
     globalLimit: verified ? parsed.data.globalLimit : null, rows, groups: [...groups.values()], requests,
     truncated: raw.requests.length > 100 };
 }
-

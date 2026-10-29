@@ -76,3 +76,5 @@
 - 실제 클라이언트 시험에서 사유 번역·프로필 생성·키워드 검증·소개 생성의 저장된 모델명/주소/토큰·시간 상한을 확인했다. 모델 선택 간 동시 실행 격리와 감사·공개분·보류 단계의 독립 범위도 시험했다. 이들은 시험 응답이며 운영 성공이 아니다.
 - 기존 측정 방식 그대로 최신 origin/main 대비 모델 literal 줄 수 `99 → 99`(git grep 패턴은 verify-model-config.sh의 count_model_lines와 동일). 이 차선 회귀 파일 최초0(명령exit1) → 현재33시험 통과. 화면 품질 수치는 측정 없음: Chromium OS socket 권한 거부.
 - 확대된 로컬 preview fixture도 실제 컴포넌트·시험 전용 server action으로 준비했다. 두 번째 Next dev 기동은 Next 내부의 npm registry 접근이 `Network access to "registry.npmjs.org" was blocked: domain is not on the allowlist for the current sandbox mode.`로 거절되어 로컬 SSR/브라우저 검증을 마치지 못했다. 의존성을 설치하거나 네트워크 제한을 우회하지 않았다. 임시 preview 페이지 연결은 실제 페이지 내용으로 정확히 복원했다.
+
+- 후속 PR #716을 생성했다. 초기 head 43ce5422 / a5030746의 CI 40806021121·40806168506은 scope에서 `lib/operations/admin-models-observation.ts:57: new blank line at EOF`로 중단됐다. runtime 검사는 실행되지 않았으며 성공으로 기록하지 않는다. 작업 트리 diff만 확인해 앞선 관측 커밋의 공백을 놓친 것을 PR 전체 base diff 검사로 수정했다.
