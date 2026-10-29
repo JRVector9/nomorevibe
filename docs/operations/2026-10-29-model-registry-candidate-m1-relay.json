@@ -1,0 +1,195 @@
+{
+  "version": 1,
+  "models": [
+    {
+      "key": "gpu3090:review",
+      "equipment": "gpu3090",
+      "displayName": "GPU3090 · Qwen · 직접 연결",
+      "provider": "local-direct",
+      "baseUrl": "http://100.77.43.63:8090/v1",
+      "model": "qwen3.8-flash-next",
+      "family": "qwen3.8-flash-next",
+      "timeoutMs": 60000,
+      "maxTokens": 10000,
+      "concurrency": 2,
+      "purposes": [
+        "direct-review",
+        "ai2-direct",
+        "assist-primary",
+        "korean-translation-direct",
+        "relay"
+      ]
+    },
+    {
+      "key": "m3:review",
+      "equipment": "m3",
+      "displayName": "M3 · DeepSeek",
+      "provider": "local-direct",
+      "baseUrl": "http://100.92.77.66:8010/v1",
+      "model": "deepseek-v4.1-flash-1017",
+      "family": "deepseek-v4.1-flash-1017",
+      "timeoutMs": 60000,
+      "maxTokens": 8000,
+      "concurrency": 1,
+      "purposes": [
+        "human-review",
+        "assist-audit"
+      ]
+    },
+    {
+      "key": "m1:translation",
+      "equipment": "m1",
+      "displayName": "M1 · Gemma 4 26B",
+      "provider": "abcllm",
+      "baseUrl": "https://abcllm-api.brut.bot/v1",
+      "model": "mlx-community--gemma-4-26b-a4b-it-4bit",
+      "family": "gemma4-26b",
+      "gatewayLabel": "m1",
+      "timeoutMs": 40000,
+      "maxTokens": 8000,
+      "concurrency": 1,
+      "purposes": [
+        "product-translate",
+        "reason-translate",
+        "relay"
+      ]
+    },
+    {
+      "key": "supa:review",
+      "equipment": "supa",
+      "displayName": "Supa · Qwen",
+      "provider": "abcllm",
+      "baseUrl": "https://abcllm-api.brut.bot/v1",
+      "model": "Qwen3.8-27B-NVFP4",
+      "family": "Qwen3.8-27B-NVFP4",
+      "gatewayLabel": "supa",
+      "timeoutMs": 60000,
+      "maxTokens": 8000,
+      "concurrency": 4,
+      "purposes": [
+        "ai1-preset",
+        "product-search-verify"
+      ]
+    },
+    {
+      "key": "mlx:text",
+      "equipment": "mlx",
+      "displayName": "MLX · GPT OSS",
+      "provider": "abcllm",
+      "baseUrl": "https://abcllm-api.brut.bot/v1",
+      "model": "gpt-oss-120b",
+      "family": "gpt-oss-120b",
+      "gatewayLabel": "MLX",
+      "timeoutMs": 60000,
+      "maxTokens": 8000,
+      "concurrency": 2,
+      "purposes": [
+        "product-search-profile",
+        "product-tagline-ko",
+        "search-query-translate",
+        "assist-legacy-family"
+      ]
+    },
+    {
+      "key": "mlx:tagline",
+      "equipment": "mlx",
+      "displayName": "MLX · 소개 생성",
+      "provider": "abcllm",
+      "baseUrl": "https://abcllm-api.brut.bot/v1",
+      "model": "qwen3.6-35b-heretic",
+      "family": "qwen3.6-35b-heretic",
+      "gatewayLabel": "MLX",
+      "timeoutMs": 60000,
+      "maxTokens": 400,
+      "concurrency": 2,
+      "purposes": [
+        "crawl-tagline"
+      ]
+    },
+    {
+      "key": "connect:sonnet",
+      "equipment": "connect",
+      "displayName": "Claude CLI · sonnet",
+      "provider": "claude-cli",
+      "baseUrl": null,
+      "model": "sonnet",
+      "family": "sonnet",
+      "timeoutMs": 60000,
+      "maxTokens": 8000,
+      "concurrency": 1,
+      "purposes": [
+        "product-intro-check",
+        "classify-claude"
+      ]
+    },
+    {
+      "key": "connect:opus",
+      "equipment": "connect",
+      "displayName": "Claude CLI · opus",
+      "provider": "claude-cli",
+      "baseUrl": null,
+      "model": "opus",
+      "family": "opus",
+      "timeoutMs": 60000,
+      "maxTokens": 8000,
+      "concurrency": 1,
+      "purposes": [
+        "ai2-cli"
+      ]
+    },
+    {
+      "key": "connect:grok",
+      "equipment": "connect",
+      "displayName": "Grok CLI",
+      "provider": "grok-cli",
+      "baseUrl": null,
+      "model": "grok-4.7",
+      "family": "grok-4.7",
+      "timeoutMs": 60000,
+      "maxTokens": 8000,
+      "concurrency": 1,
+      "purposes": [
+        "ai2-grok"
+      ]
+    },
+    {
+      "key": "connect:spark",
+      "equipment": "connect",
+      "displayName": "Codex Spark",
+      "provider": "codex-cli",
+      "baseUrl": null,
+      "model": "gpt-5.3-codex-spark",
+      "family": "gpt-5.3-codex-spark",
+      "timeoutMs": 8000,
+      "maxTokens": 8000,
+      "concurrency": 1,
+      "purposes": [
+        "classify-primary"
+      ]
+    },
+    {
+      "key": "connect:terra",
+      "equipment": "connect",
+      "displayName": "Codex Terra",
+      "provider": "codex-cli",
+      "baseUrl": null,
+      "model": "gpt-5.6-terra",
+      "family": "gpt-5.6-terra",
+      "timeoutMs": 12000,
+      "maxTokens": 8000,
+      "concurrency": 1,
+      "purposes": [
+        "classify-fallback"
+      ]
+    }
+  ],
+  "selections": {
+    "product-translate": "m1:translation",
+    "reason-translate": "m1:translation",
+    "relay": "m1:translation"
+  },
+  "limits": {},
+  "deadlines": {},
+  "timeouts": {},
+  "candidates": {}
+}

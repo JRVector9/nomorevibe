@@ -42,7 +42,32 @@
 - H4 PR #730(위 H1~H3과 `xaegis/da3bd4a3` 계열 전체)이 필수 CI(typecheck·lint·unit 2·integration 6·integration-ledger·build·이미지 시험 2·check)를 모두 통과했다. 일반 병합으로 main `1f52c9efea0bfab555567c17889cf919f41938be`가 됐다. 이 값이 확정본 `REL`이자 배포 `TARGET`이다.
 - H5 대표용 [0143 전 사전 점검 묶음](2026-10-29-pre-0143-check-bundle.md)을 썼다. 내용은 C1~C7과 확정본 2단계 a~e, 스테이징 포함 명령, `blockedNow`·`non_serving` 읽는 법이다. `REL` 기준 해시와 스테이징 tar `75f388d4…`를 실제로 계산해 넣었다. 확정본 표 3·실행서 표 0·C1·B절 `REL`도 이 SHA로 바꿨다.
 
+## 끝남 (2026-10-29, 작업 공간 `xaegis/ea9af68b`, M1 relay·상품 번역 등록부 연결 병합)
+- I1 [PR #732](https://github.com/JRVector9/nomorevibe/pull/732): `xaegis/0e7cd93c`(코드 `a900db03`·문서 `6143ded5`)를 origin/main `49cd9330`에 충돌 없이 병합. 필수 CI(scope·typecheck·lint·build·unit 2·integration 6·integration-ledger·PR 이미지 2·check) 모두 pass. 일반 병합(`--merge`) → **main `279e596ee267e39b311d329ef828f4d9fe9946e7`**(2026-10-29T11:18:55Z). main CI [40864428582](https://github.com/JRVector9/nomorevibe/actions/runs/40864428582)의 `check`·`publish-web-image`·`publish-worker-image` success(`refresh-caches`는 동기 대기 대상 아님).
+- I2 로컬 확인(병합 브랜치): `bash scripts/verify-model-config.sh` exit 0(77파일/1,096시험, typegen·`tsc --noEmit` 0, 모델 이름 리터럴 158(199a3ebb)→101, main `49cd9330`도 101). 신규 2파일 14시험 PASS, relay·등록부 관련 6파일 47시험 PASS, 바뀐 코드·시험 파일 ESLint 0.
+- I3 대표 안내 [2026-10-29-m1-relay-registry-rollout.md](2026-10-29-m1-relay-registry-rollout.md): relay 재설치 SHA(`279e596e…`)·설치본 경로·원본 해시, 운영 `MODEL_REGISTRY_CONFIG`의 M1 `relay` 항목 필요 여부와 후보 JSON([파일](2026-10-29-model-registry-candidate-m1-relay.json)), `PRODUCT_TRANSLATION_MODEL_KEY=m1:translation`, `product-translate` route 확인 SQL, 배포 뒤 번역 저장 증가 SQL(모두 READ ONLY).
+
+### 표 3·사전 점검 묶음 영향 판정 (`git diff --stat 1f52c9ef 279e596e`)
+- 바뀐 파일 19개: 코드 `lib/llm/model-registry.ts`, `scripts/local-model-relay/{config,server,service}.ts`, `scripts/migrate-model-registry-m1.ts`, `scripts/verify-model-config.sh`, 시험 5개, 문서 8개(그중 `2026-10-29-pre-0143-check-bundle.md`·`release-order.md`·`unknown-release-runbook.md`·이 파일은 PR #731이 바꾼 것).
+- **표 3·묶음 0절이 해시로 고정한 파일 17개(표 3의 10개 포함)와 `package-lock.json`은 하나도 바뀌지 않았다.** `git show <SHA>:<파일> | sha256sum`을 두 SHA에서 다시 계산해 17개 모두 같음을 확인했다. `drizzle/` 변경 없음(저널 145항목 그대로).
+- 바뀌는 것은 **스테이징 tar `TAR_SHA`뿐**이다. tar에 `lib`·`scripts`가 들어가기 때문이다. 확정본·묶음 문서는 대표가 받은 `TARGET 1f52c9ef` 기준이라 고치지 않았다.
+
+### 배포 TARGET을 새 main으로 옮길 경우 다시 계산해야 할 해시 (실제 계산값)
+계산: 이 작업 공간, git 2.53.0(묶음 0절과 같은 버전. 같은 명령으로 `1f52c9ef`의 `75f388d4…`를 재현해 확인).
+
+| 항목 | `1f52c9ef`(현재 묶음) | `279e596e`(새 main) | 다시 칠 곳 |
+| --- | --- | --- | --- |
+| `REL`/`TARGET` | `1f52c9efea0bfab555567c17889cf919f41938be` | `279e596ee267e39b311d329ef828f4d9fe9946e7` | 확정본 표 3·15·16·17·20단계, 묶음 C1 |
+| 스테이징 tar `TAR_SHA`(`git archive --format=tar <SHA> lib scripts drizzle messages tsconfig.json package.json package-lock.json \| sha256sum`) | `75f388d402097478ab6a794b39e4b4f64d7fb497ece16a431f53833107cc8b5d` | `9ab8a624cd6766cc6c29edd0c7fd3fa497112624165b85614629175a1d38829f` | 묶음 1절 `TAR_SHA`, 3절 C5, 확정본 2(b)·18단계 원격 sha256 대조 |
+| `package-lock.json`(`LOCK_SHA`) | `f609ff6e…96d5` | 같음 `f609ff6e3159975cce362809a50bc335afb2a812502fb74d70c8ab3a203296d5` | 바꿀 것 없음(`same_as_image` 전제 유지) |
+| 표 3 10개·묶음 0절 나머지 7개 | 묶음 0절 값 | 17개 모두 같음 | 바꿀 것 없음 |
+| runner 실행 트리 `T` | `/home/ubuntu/ops/nmv-runner-1f52c9ef…` | `/home/ubuntu/ops/nmv-runner-279e596e…` | 확정본 표 3(경로만 바뀜, 안의 고정 파일 해시는 같음) |
+| relay 설치본 `<REVIEWED_SHA>` | `1f52c9ef…`(확정본 17단계) | `279e596e…` | 확정본 17단계. **TARGET을 옮기지 않아도** relay만 `279e596e…`로 설치할 수 있다(안내 0절) |
+
+- TARGET을 옮기면 배포 이미지에 이 PR의 앱 변경(옛 `[m1] qwen…` 해석 등)이 들어간다. 옮기지 않으면 `PRODUCT_TRANSLATION_MODEL_KEY=m1:translation`으로 같은 결과를 얻는다(KEY는 `1f52c9ef`에도 있음).
+
 ## 남음 (대표 실행)
+- M1 relay·상품 번역(I3 안내): 확정본 17단계 자리에서 relay를 `279e596e…`로 재설치하고 health `upstreamModelReason:"matched"` 확인 → text·web env에 `PRODUCT_TRANSLATION_MODEL_KEY=m1:translation`(앱이 `MODEL_REGISTRY_CONFIG`를 쓰면 이전 후보 적용) → 용량 정책 `product-translate` route 모델이 `[m1] mlx-community--gemma-4-26b-a4b-it-4bit`인지 P1로 확인 → 배포 뒤 P2·P3로 번역 저장 증가 실측. 배포 TARGET을 `279e596e…`로 옮길지는 대표가 정한다(옮기면 위 표대로 `TAR_SHA`를 바꿔 친다).
 - 확정본 1~20단계. 0143(+0144) 적용·확인 → Supa(OPEN에서 시작, DRAIN 인계로 끝) → M1(인계 DRAIN 안, D2·D10 생략) → 미확인 0 → job-pause → deploy plan(--migration-verified)·run → M1 relay 재설치 → OPEN → job-resume → verify-prod-revision.
 - 0143 전: [사전 점검 묶음](2026-10-29-pre-0143-check-bundle.md)을 그대로 친다(`blockedNow`·`non_serving` 기록). 배포 `TARGET`은 `1f52c9ef…`이다. 그 main `check`와 이미지 publish가 끝났는지 배포 전에 `deployment-fast-path.md`대로 확인한다.
 - 해제 뒤 30분 동안 모델별 성공·AI1/AI2·새 미확인 0을 실측한다(실제 영수증으로만 기록).
