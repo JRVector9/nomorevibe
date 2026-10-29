@@ -1,5 +1,12 @@
 # 남은 작업
 
+## second-review 교착·거짓 긴급 경보·SQLSTATE — 2026-10-29, 운영 미적용(코드·로컬 DB 시험만)
+
+- **교착(40P01)**: stale 재검수 컨트롤러가 후보 TX 안에서 `agent-evidence-refresh`(카탈로그 뒤)를 요청한 뒤 `second-review` 를 FOR SHARE 로 다시 봤고, scheduler `requestDueJobs` 는 그 반대 순서로 잠가 컨트롤러가 약 한 시간에 한 번 졌다. 수집 잡 깨움을 commit 뒤 별도 TX(fence → 카탈로그 순서)로 옮기고 회차마다 잡당 한 번만 보낸다. 이미 due 인 스캔은 다시 깨우지 않는다. 컨트롤러 TX 는 40P01 이면 한 번만 다시 한다(`crawl.second_review_controller_retry`). 이전·카탈로그 변경 없음.
+- **거짓 긴급 경보**: `stage_blocked` 로 미룬 틱이 `jobs.last_error` 를 지운다. 다른 미룸(model_capacity·http_origin_permit·source_buffer)은 기존대로 남긴다.
+- **SQLSTATE**: 던진 틱의 `last_error` 앞에 `[40P01] `·`[23505 table=… constraint=…] ` 를 붙이고 `job.failed` 로그에 `code`·`table`·`constraint` 를 싣는다.
+- **배포 후 볼 것(reviewer M3·mini, web)**: `pg_stat_database.deadlocks` 가 몇 시간 동안 늘지 않는지, `second-review` 의 `last_error` 가 다음 stage_blocked 틱에 비고 운영센터 "마지막 회차가 실패한 작업 — 2차 심사"가 사라지는지, `agent-evidence-refresh.requested_version` 이 scheduler 의 분당 1 근처로 돌아오는지, `crawl.second_review_controller_retry`·`crawl.second_review_wake_failed` 가 나오지 않는지. second-review 가 job-health 성공 끊김 판정에 들어오므로 `defer:second-review`(stage_blocked)로 경보가 서지 않는지도 본다.
+
 ## 마이그레이션 해시 충돌 정리 — 2026-10-29, 운영 미적용
 
 - main 의 `0140~0142`를 운영 DB(id141~143, created_at …052~…054)와 같은 바이트·when 으로 되돌리고 replaced-provider 를 `0143_replaced_provider_boundary_exit`(when …055)로 옮겼다. 운영 배포·DB 쓰기는 하지 않았다.

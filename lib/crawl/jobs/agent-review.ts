@@ -15,7 +15,8 @@ import { reviewSemanticNow } from "../review-replay-context";
 import { prepareAgentReview } from "../agent-review-preparation";
 import { assertReviewFixtureSettings, dispatchReviewFixtureCall } from "../review-fixture-transport";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
-import { claimAgentReviewModelCapacity, reviewAgentReviewModelCapacity, abandonAgentReviewModelCapacity } from "../agent-review-model-capacity";
+import { claimAgentReviewModelCapacity, reviewAgentReviewModelCapacity, abandonAgentReviewModelCapacity,
+  type Ai1ReservationWaitEvent } from "../agent-review-model-capacity";
 import type { Ai1ModelDispatch, CliModelDispatch } from "@/lib/llm/capacity";
 import type { PreparedReviewCliCall } from "../review-cli-call";
 import { firstReviewers, firstReviewerKey, firstReviewDeferralIsLocal, firstReviewPoolPosition, type FirstReviewCursor } from "../first-reviewers";
@@ -31,6 +32,8 @@ const MAX_STARTS = 16;
 // full transport ceiling; the former 24s cap could strand the only physical slot
 // on a valid, slower completion. The worker already grants this job 110s.
 const GATEWAY_TICK_MS = 108_000;
+// 예약을 받은 뒤 domain claim TX·전송 직전 확인에 남기는 여유. 대기가 이 여유를 먹으면 받은 예약을 cancelled 로 버리게 된다.
+const RESERVATION_CLAIM_MARGIN_MS = 3_000;
 
 /** Refill bounded slots without changing the full input, reviewers or admission rules. */
 export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>): Promise<JobOutcome<FirstReviewCursor>> {
@@ -83,7 +86,11 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
   const controllers = new Set<AbortController>();
   const pausedModels = new Set<string>();
   let lastPagePosition: NonNullable<typeof page>[number]["position"] | undefined;
-  let next = 0, admitted = 0, progress = 0, stopped = false, stageBlocked = false, modelDeferred = false;
+  let next = 0, admitted = 0, progress = 0, windowLeft = 0, stopped = false, stageBlocked = false, modelDeferred = false;
+  // 틱 요약(crawl.agent_review_tick) — 배포 뒤 한 시간 안에 틱당 호출·예약 대기를 잴 수 있게 남긴다. 결과·장부에는 끼어들지 않는다
+  const tally = { calls: 0, waits: 0, waitGranted: 0, waitPolls: 0, waitMs: 0, waitWindowClosed: 0, waitCapped: 0 };
+  const perModel = new Map<string, { calls: number; waits: number; waitGranted: number }>();
+  const modelTally = (name: string) => perModel.get(name) ?? perModel.set(name, { calls: 0, waits: 0, waitGranted: 0 }).get(name)!;
   const canStart = () => !stopped && !stageBlocked && !ctx.signal?.aborted && ctx.hasBudget() && remaining() >= minimumCeiling + 2_000;
   const canAdmit = () => !modelDeferred && canStart();
   const processCandidate = async (candidate: typeof candidates[number], hint?: PendingFirstReviewCandidate) => {
@@ -121,6 +128,7 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
     const context = { candidate, document, settings, input };
     let claim: ModelCapacityReviewClaim | CliModelCapacityReviewClaim;
     let prepared: PreparedAi1GatewayCall | undefined;
+    let waitEnded: Ai1ReservationWaitEvent["ended"] | undefined;
     // CLI 심사자(05c-4)는 같은 되감은 claim 에서 CLI coordinator 로 간다. gateway·disabled 경로는 그대로다.
     let cli: { capacity: typeof import("../review-cli-model-capacity"); call: PreparedReviewCliCall } | undefined;
     try {
@@ -133,12 +141,34 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
           const resumed = await capacity.claimAgentReviewCliModelCapacity({ ...context, lease, provider, model, timeoutMs: ceiling, signal: ctx.signal });
           claim = resumed.claim; cli = { capacity, call: resumed.call };
         } else {
-          const resumed = await claimAgentReviewModelCapacity({ ...context, lease, provider, model, signal: ctx.signal });
+          // 줄에 선 이 후보의 예약을 틱 안에서 기다린다 — 미루고 떠나면 그 사이 받은 예약이 TTL 로 만료된다. 모든 물리 칸이 미확인
+          // 점유로 막힌 모델(blockedModels)은 기다려도 풀리지 않으므로 기존처럼 바로 미룬다.
+          const wait = blockedModels.has(key) ? undefined : {
+            until: deadlineAt - ceiling - 2_000 - RESERVATION_CLAIM_MARGIN_MS,
+            active: () => canAdmit() && !pausedModels.has(key),
+            observe: (event: Ai1ReservationWaitEvent) => {
+              waitEnded = event.ended;
+              if (event.ended === "deadline") tally.waitWindowClosed++;
+              if (event.ended === "cap") tally.waitCapped++;
+              if (!event.queued) return;
+              const row = modelTally(model);
+              tally.waits++; row.waits++; tally.waitPolls += event.polls; tally.waitMs += event.waitedMs;
+              if (event.granted) { tally.waitGranted++; row.waitGranted++; }
+            },
+          };
+          const resumed = await claimAgentReviewModelCapacity({ ...context, lease, provider, model, signal: ctx.signal }, wait);
           claim = resumed.claim; prepared = resumed.call;
         }
       }
     } catch (error) {
       if (!(error instanceof ModelCapacityDeferredError)) throw error;
+      // 틱의 시작 가능 시각이 지나 기다림을 그친 것은 슬롯 거절이 아니다 — 모델을 pause 하지 않는다. 줄에 선 행은 그대로 두고
+      // 다음 틱이 맨 먼저 다시 본다(listOwnPendingFirstReviewCandidates). 그 틱이 늦지 않도록 이 틱은 요청을 남긴다(아래 windowLeft).
+      if (error.reason === "capacity" && waitEnded === "deadline") {
+        windowLeft++;
+        ctx.log("crawl.agent_review_wait_window_closed", { repo: candidate.repo, provider: reviewProvider, model });
+        return;
+      }
       // 이 후보의 앞선 호출이 아직 dispatched/indeterminate 다 — 이 후보만 건너뛴다. 틱 전체를 미루면 목록 맨 앞에 남은 한 건이
       // 매 틱 다른 후보까지 막는다. claim TX 는 되감겼고 호출·시도·실패 기록은 없다.
       if (error.reason === "dispatched") {
@@ -195,6 +225,7 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
       const options = { model, timeoutMs: ceiling, signal: controller.signal };
       const dispatch = claim.dispatch;
       const call = prepared;
+      tally.calls++; modelTally(model).calls++;
       let result = await measureReviewCall(telemetry, async () => {
         // CLI 제한 시간은 준비한 호출에 묶여 spawn 부터 센다. 틱 여유는 바로 위 canStart 가 spawn 직전에 다시 본다.
         if (dispatch && cli) return cli.capacity.reviewCliModelCapacity(input, dispatch as CliModelDispatch, cli.call, { signal: controller.signal });
@@ -248,6 +279,11 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
     }
   });
   const settled = await Promise.allSettled(lanes);
+  ctx.log("crawl.agent_review_tick", { admitted, calls: tally.calls, succeeded: progress, waits: tally.waits,
+    waitGranted: tally.waitGranted, waitPolls: tally.waitPolls, waitMs: tally.waitMs, pendingRevisited: pending.length,
+    waitWindowClosed: tally.waitWindowClosed, waitCapped: tally.waitCapped, pausedModels: pausedModels.size, modelDeferred, stageBlocked,
+    durationMs: Date.now() - startedAt,
+    models: Object.fromEntries(perModel) });
   const failure = settled.find(result => result.status === "rejected");
   if (failure) throw failure.reason;
   // Advance only examined hints. A paused model prefix must not repeat forever on later ticks.
@@ -256,6 +292,10 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
   else if (page && !page.length && after) await ctx.save({ ...ctx.cursor, firstReviewPoolScan: null });
   if (stageBlocked) return { done: false, deferred: "stage_blocked" };
   if (modelDeferred || pausedModels.size) return { done: false, deferred: "model_capacity" };
+  // 줄에 선 채 틱이 끝난 후보가 있다. 진전이 있었으면 runner 가 곧바로 다시 요청하게 하고(전용 줄이 1초 뒤 다시 돈다),
+  // 없으면 요청을 남겨 둔다 — scheduler 의 다음 요청(최대 1분)을 기다리면 그 사이 받은 예약이 TTL 로 만료된다.
+  if (windowLeft) return progress && !stopped && !ctx.signal?.aborted && ctx.hasBudget()
+    ? { done: false, continuation: "ready" } : { done: false, deferred: "model_capacity" };
   if (progress && !stopped && !ctx.signal?.aborted && ctx.hasBudget()) {
     const ready = await listReviewCandidates(settings, 1, { excludeCandidateIds: [...visited], readyOnly: true });
     if (ready.some(candidate => !visited.has(candidate.id))) return { done: false, continuation: "ready" };

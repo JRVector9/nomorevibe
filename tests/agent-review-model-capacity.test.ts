@@ -63,7 +63,8 @@ it('keeps the disabled legacy gateway path and its existing result writer unchan
 });
 it('resumes only a rolled-back fresh intent and dispatches the committed reserved claim once', async () => {
   expect(await reviewCrawlCandidates(context())).toEqual({ done: false });
-  expect(mocks.resume).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ lease, provider: 'abcllm', model: 'Exact Model' }));
+  expect(mocks.resume).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ lease, provider: 'abcllm', model: 'Exact Model' }),
+    expect.objectContaining({ until: expect.any(Number), active: expect.any(Function) }));
   expect(mocks.reservedReview).toHaveBeenCalledTimes(1); expect(mocks.gateway).not.toHaveBeenCalled();
   expect(mocks.record).toHaveBeenCalledWith(expect.objectContaining({ receipt, outcome }));
 });
@@ -194,4 +195,99 @@ it('preserves an exact settlement exception when the original returned result su
   mocks.native.mockResolvedValue({ result: { ok: true, outcome, usage: {} }, terminal: Object.freeze({ boundary: 'native-issued-opaque' }) });
   mocks.reconcile.mockRejectedValue(cleanup);
   await expect(api.reviewAgentReviewModelCapacity((await coordinatorInput()).input, dispatch, {} as never, {})).rejects.toBe(cleanup);
+});
+
+// 틱 안의 예약 대기(2026-10-29). 장부 경계는 mock 이다 — 실제 grant·TTL 은 tests/integration/ai1-reservation-wait.test.ts 가 본다.
+it('claims a reservation granted while it waits on the same queued request ID, without cancelling or re-queueing', async () => {
+  const api = await actualCoordinator(); roleEnvironment();
+  const input = await coordinatorInput(), dispatch = realShapeDispatch(), requestId = dispatch.requestId;
+  mocks.prepare.mockReturnValue({ kind: 'prepared' }); mocks.pending.mockResolvedValue({ requestId, state: 'waiting' });
+  const reservation = { ...dispatch, binding: undefined };
+  mocks.request.mockResolvedValueOnce({ kind: 'deferred', reason: 'capacity' }).mockResolvedValueOnce({ kind: 'deferred', reason: 'capacity' })
+    .mockResolvedValue({ kind: 'granted', reservation });
+  mocks.atomic.mockResolvedValue({ ...positive().claim, dispatch });
+  const events: unknown[] = [];
+  const started = Date.now();
+  const result = await api.claimAgentReviewModelCapacity(input, { until: Date.now() + 10_000, observe: event => events.push(event) });
+  expect(result.claim).toHaveProperty('dispatch', dispatch);
+  expect(Date.now() - started).toBeGreaterThanOrEqual(2 * api.AI1_RESERVATION_POLL_MS - 50);
+  expect(mocks.request).toHaveBeenCalledTimes(3);
+  const ids = mocks.request.mock.calls.map(([value]) => value.requestId);
+  expect(new Set(ids).size).toBe(1);
+  expect(mocks.atomic).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ reservation }));
+  expect(mocks.cancel).not.toHaveBeenCalled();
+  expect(events).toEqual([expect.objectContaining({ granted: true, queued: true, polls: 2, ended: 'granted' })]);
+});
+it('takes an already promoted own reservation immediately instead of sleeping first', async () => {
+  const api = await actualCoordinator(); roleEnvironment(); const requestId = randomUUID(), reservation = { unit: 'promoted-while-away' };
+  mocks.prepare.mockReturnValue({ kind: 'prepared' }); mocks.pending.mockResolvedValueOnce({ requestId, state: 'waiting' }).mockResolvedValue({ requestId, state: 'reserved' });
+  mocks.request.mockResolvedValueOnce({ kind: 'deferred', reason: 'capacity' }).mockResolvedValue({ kind: 'granted', reservation });
+  mocks.atomic.mockResolvedValue({ kind: 'skipped' });
+  const started = Date.now();
+  await api.claimAgentReviewModelCapacity(await coordinatorInput(), { until: Date.now() + 10_000 });
+  expect(Date.now() - started).toBeLessThan(api.AI1_RESERVATION_POLL_MS);
+  expect(mocks.request).toHaveBeenCalledTimes(2);
+  expect(mocks.cancel).toHaveBeenCalledExactlyOnceWith(reservation);
+});
+it('does not wait when the capacity refusal left no own queued row (fence or duplicate work)', async () => {
+  const api = await actualCoordinator(); roleEnvironment();
+  mocks.prepare.mockReturnValue({ kind: 'prepared' }); mocks.pending.mockResolvedValue(null);
+  mocks.request.mockResolvedValue({ kind: 'deferred', reason: 'capacity' });
+  const events: unknown[] = [];
+  await expect(api.claimAgentReviewModelCapacity(await coordinatorInput(), { until: Date.now() + 10_000, observe: event => events.push(event) }))
+    .rejects.toMatchObject({ reason: 'capacity' });
+  expect(mocks.request).toHaveBeenCalledTimes(1); expect(mocks.cancel).not.toHaveBeenCalled();
+  expect(events).toEqual([expect.objectContaining({ granted: false, queued: false, polls: 0, ended: 'not_queued' })]);
+});
+it.each([
+  ['deadline', { until: () => Date.now() + 1_200 }],
+  ['stopped', { until: () => Date.now() + 10_000, active: true }],
+] as const)('leaves the queued row untouched and defers as capacity when the wait ends by %s', async (ended, shape) => {
+  const api = await actualCoordinator(); roleEnvironment(); const requestId = randomUUID();
+  mocks.prepare.mockReturnValue({ kind: 'prepared' }); mocks.pending.mockResolvedValue({ requestId, state: 'waiting' });
+  mocks.request.mockResolvedValue({ kind: 'deferred', reason: 'capacity' });
+  let polls = 0;
+  const events: Array<{ ended: string; polls: number }> = [];
+  const wait = { until: shape.until(), observe: (event: { ended: string; polls: number }) => events.push(event),
+    ...('active' in shape ? { active: () => ++polls < 3 } : {}) };
+  await expect(api.claimAgentReviewModelCapacity(await coordinatorInput(), wait)).rejects.toMatchObject({ reason: 'capacity' });
+  expect(mocks.atomic).not.toHaveBeenCalled(); expect(mocks.cancel).not.toHaveBeenCalled();
+  expect(events).toEqual([expect.objectContaining({ ended })]);
+  expect(mocks.request.mock.calls.length).toBe(1 + events[0].polls);
+  if (ended === 'deadline') expect(events[0].polls).toBeLessThanOrEqual(2);
+});
+it('stops waiting at once on abort and on a non-capacity ledger refusal', async () => {
+  const api = await actualCoordinator(); roleEnvironment(); const requestId = randomUUID();
+  mocks.prepare.mockReturnValue({ kind: 'prepared' }); mocks.pending.mockResolvedValue({ requestId, state: 'waiting' });
+  mocks.request.mockResolvedValueOnce({ kind: 'deferred', reason: 'capacity' }).mockResolvedValue({ kind: 'deferred', reason: 'withdrawn' });
+  await expect(api.claimAgentReviewModelCapacity(await coordinatorInput(), { until: Date.now() + 10_000 })).rejects.toMatchObject({ reason: 'withdrawn' });
+  expect(mocks.request).toHaveBeenCalledTimes(2);
+  vi.clearAllMocks();
+  mocks.prepare.mockReturnValue({ kind: 'prepared' }); mocks.pending.mockResolvedValue({ requestId, state: 'waiting' });
+  mocks.request.mockResolvedValue({ kind: 'deferred', reason: 'capacity' });
+  const controller = new AbortController();
+  const started = Date.now();
+  const pending = api.claimAgentReviewModelCapacity({ ...await coordinatorInput(), signal: controller.signal }, { until: Date.now() + 10_000 });
+  setTimeout(() => controller.abort(), 50);
+  await expect(pending).rejects.toMatchObject({ reason: 'capacity' });
+  expect(Date.now() - started).toBeLessThan(api.AI1_RESERVATION_POLL_MS);
+  expect(mocks.request).toHaveBeenCalledTimes(1);
+});
+it('caps one candidate wait at the reservation TTL even with a later tick deadline', async () => {
+  const api = await actualCoordinator();
+  expect(api.AI1_RESERVATION_WAIT_MAX_MS).toBe(30_000);
+  vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+  try {
+    roleEnvironment(); const requestId = randomUUID();
+    mocks.prepare.mockReturnValue({ kind: 'prepared' }); mocks.pending.mockResolvedValue({ requestId, state: 'waiting' });
+    mocks.request.mockResolvedValue({ kind: 'deferred', reason: 'capacity' });
+    const events: Array<{ ended: string; polls: number; waitedMs: number }> = [];
+    const pending = api.claimAgentReviewModelCapacity(await coordinatorInput(), { until: Date.now() + 100_000, observe: event => events.push(event) });
+    const settled = pending.catch(error => error);
+    await vi.advanceTimersByTimeAsync(31_000);
+    expect(await settled).toMatchObject({ reason: 'capacity' });
+    expect(events).toEqual([expect.objectContaining({ ended: 'cap' })]);
+    expect(events[0].waitedMs).toBeLessThanOrEqual(30_000);
+    expect(events[0].polls).toBeLessThanOrEqual(60);
+  } finally { vi.useRealTimers(); }
 });

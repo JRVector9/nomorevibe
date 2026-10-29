@@ -174,9 +174,10 @@ async function queuedSource(stage: "fetch" | "ai1") {
     decidedBy: "auto", judgedAt: fetchedAt, updatedAt: fetchedAt }).returning();
   return { candidate, document };
 }
+/** stage_blocked 미룸이 보존하는 요청·일정·성공 기록. 던지지 않고 끝난 틱이라 지난 실패 기록(lastError)은 지운다(runner.ts) */
 function preservedRequest(row: typeof jobs.$inferSelect) {
   return { requestedVersion: row.requestedVersion, processedVersion: row.processedVersion, cursor: row.cursor,
-    notBefore: row.notBefore, lastSuccessAt: row.lastSuccessAt, lastError: row.lastError };
+    notBefore: row.notBefore, lastSuccessAt: row.lastSuccessAt };
 }
 function barrier() {
   let resolve!: () => void;
@@ -211,7 +212,8 @@ function registerBlockedStageTests<C>(stage: "fetch" | "ai1", name: string,
     expect(await runJob(name, handler, { requestedOnly: true })).toMatchObject({ status: "deferred", reason: "stage_blocked" });
     const [after] = await db.select().from(jobs).where(eq(jobs.name, name));
     expect.soft(preservedRequest(after)).toEqual(preservedRequest(beforeJob));
-    expect(after).toMatchObject({ leaseToken: null, lockedAt: null, runs: beforeJob.runs + 1 });
+    expect(beforeJob.lastError).toBe("preserved historical error");
+    expect(after).toMatchObject({ leaseToken: null, lockedAt: null, runs: beforeJob.runs + 1, lastError: null });
     for (const mock of Object.values(transport)) expect(mock).not.toHaveBeenCalled();
     expect(await domainRows(source)).toEqual(beforeDomain);
     expect(await db.select().from(jobs).where(inArray(jobs.name, downstream))).toEqual(beforeRequests);
@@ -243,7 +245,9 @@ function registerBlockedStageTests<C>(stage: "fetch" | "ai1", name: string,
         expected = preservedRequest((await db.select().from(jobs).where(eq(jobs.name, name)))[0]);
       });
     } finally { if (running) expect(await running).toMatchObject({ status: "deferred", reason: "stage_blocked" }); }
-    expect(preservedRequest((await db.select().from(jobs).where(eq(jobs.name, name)))[0])).toEqual(expected);
+    const [after] = await db.select().from(jobs).where(eq(jobs.name, name));
+    expect(preservedRequest(after)).toEqual(expected);
+    expect(after.lastError).toBeNull();
     for (const mock of Object.values(transport)) expect(mock).not.toHaveBeenCalled();
   });
 
@@ -294,7 +298,7 @@ it.each(["items", "draining"] as const)("fetch %s preserves its request even whe
     .toMatchObject({ status: "deferred", reason: "stage_blocked" });
   const [after] = await db.select().from(jobs).where(eq(jobs.name, before.name));
   expect(preservedRequest(after)).toEqual(preservedRequest(before));
-  expect(after).toMatchObject({ leaseToken: null, lockedAt: null });
+  expect(after).toMatchObject({ leaseToken: null, lockedAt: null, lastError: null });
   expect(await domainRows(source)).toEqual(domain);
   expect(await db.select().from(jobs).where(inArray(jobs.name, ["crawl-judge", "second-review", "crawl-publish"]))).toEqual([]);
   for (const mock of Object.values(transport)) expect(mock).not.toHaveBeenCalled();
@@ -320,7 +324,9 @@ it("preserves the request when AI1 stage closure during README blocks the actual
   });
   expect(await runJob("crawl-agent-review", reviewCrawlCandidates, { requestedOnly: true }))
     .toMatchObject({ status: "deferred", reason: "stage_blocked" });
-  expect(preservedRequest((await db.select().from(jobs).where(eq(jobs.name, before.name)))[0])).toEqual(preservedRequest(before));
+  const [after] = await db.select().from(jobs).where(eq(jobs.name, before.name));
+  expect(preservedRequest(after)).toEqual(preservedRequest(before));
+  expect(after.lastError).toBeNull();
   expect(transport.readme).toHaveBeenCalledOnce();
   for (const mock of [transport.cli, transport.gateway, transport.grok]) expect(mock).not.toHaveBeenCalled();
   expect(await domainRows(source)).toMatchObject({ candidate: [source.candidate], attempts: [] });

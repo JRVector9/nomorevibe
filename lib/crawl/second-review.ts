@@ -21,6 +21,9 @@ import { firstReviewProviderPredicate, lockSecondReviewDomain, secondReviewGener
 import { assertSecondReviewOwnership, finishSecondReviewOwnership, secondReviewBinding, type SecondReviewReceipt } from "./second-review-ownership";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
 import { JobLeaseLostError, assertJobLeaseAtWallTime, requestJob, type JobLease } from "@/lib/jobs/control";
+import { JOB_CATALOG } from "@/lib/jobs/catalog";
+import { dbErrorFields, isDbDeadlock } from "@/lib/db/error-fields";
+import { writerSiteActive } from "@/lib/operations/dr/epoch";
 import { canonicalReviewModel, sameReviewModel, sameUnderlyingModel } from "./review-model-identity";
 import { firstReviewer } from "./agent-review";
 import { firstReviewers, firstReviewIdentitySql, hasFirstReviewer } from "./first-reviewers";
@@ -45,6 +48,12 @@ type ControllerDomain = {
 };
 type ControllerTransition = Parameters<typeof recordReplaySecondReviewTransition>[1];
 type ControllerLockOptions = { skipCandidateLocked?: boolean; prepareStaleSourcesAt?: Date };
+/** 원본·스캔 수집 잡을 깨우는 신호 — 후보 TX 가 commit 된 뒤에만 보낸다(wakeStaleSourceJobs) */
+type StaleSourceWake = "crawl-fetch" | "agent-evidence-refresh";
+/** wakes 를 주면 commit 된 깨움을 거기에 모으고(호출자가 회차 끝에 한 번 보낸다), 없으면 commit 직후 바로 보낸다 */
+type ControllerWriteOptions = ControllerLockOptions & { wakes?: Set<StaleSourceWake> };
+type ControllerWrite = (tx: ProductTransaction, domain: ControllerDomain, events: ControllerTransition[],
+  wake: (job: StaleSourceWake) => void) => Promise<number>;
 class UnusedStaleSourcePreparation extends Error {}
 
 /** Hints select work only. All facts used by a controller are reread after this
@@ -139,19 +148,38 @@ async function assertControllerJob(tx: ProductTransaction, lease: JobLease): Pro
 }
 
 /** One candidate and its gate/chain commit together. Earlier candidates may
- * already have committed if a later one loses the job. Mode never blocks input controllers. */
-async function controllerWrite(lease: JobLease, candidateId: number | null,
-  write: (tx: ProductTransaction, domain: ControllerDomain, events: ControllerTransition[]) => Promise<number>,
-  options: ControllerLockOptions = {}): Promise<number> {
+ * already have committed if a later one loses the job. Mode never blocks input controllers.
+ *
+ * 이 TX 가 잠그는 jobs 행은 마지막의 second-review(자기 잡) 하나다. 다른 잡을 깨우는 요청은 commit 뒤에 따로 보낸다.
+ * scheduler(requestDueJobs)는 한 TX 에서 카탈로그 순서로 due 잡 행을 잠그므로, 뒤쪽 잡(agent-evidence-refresh)을 쥔 채
+ * second-review 를 기다리면 서로 기다린다 — 2026-10-29 운영에서 약 한 시간에 한 번 40P01 로 이 TX 가 졌다.
+ * 그래도 PostgreSQL 이 이 TX 를 교착 희생자로 고르면(다른 경로와의 원) 되돌려진 같은 후보를 한 번만 처음부터 다시 한다.
+ * 격리 replay DB 는 scheduler 가 없고 TX 별 인증 기록을 프로세스에 두므로 기존 단일 시도 그대로다. */
+async function controllerWrite(lease: JobLease, candidateId: number | null, write: ControllerWrite,
+  options: ControllerWriteOptions = {}): Promise<number> {
   if (!lease || lease.name !== "second-review") throw new JobLeaseLostError();
-  try { return await db.transaction(async tx => {
+  try { return await controllerWriteOnce(lease, candidateId, write, options); }
+  catch (error) {
+    if (!isDbDeadlock(error) || currentReplayDb()) throw error;
+    logger.warn("crawl.second_review_controller_retry", { candidateId, ...dbErrorFields(error) });
+    return controllerWriteOnce(lease, candidateId, write, options);
+  }
+}
+
+async function controllerWriteOnce(lease: JobLease, candidateId: number | null, write: ControllerWrite,
+  options: ControllerWriteOptions): Promise<number> {
+  // 이 시도에서 고른 깨움. TX 가 되돌려지면(교착·준비 미사용·오류) 함께 버린다
+  const wakes = new Set<StaleSourceWake>();
+  let committed: number;
+  try { committed = await db.transaction(async tx => {
     await lockPipelineInputStages(tx);
     await lockReplaySecondReviewMutation(tx);
     const domain = candidateId === null ? null : await lockControllerDomain(tx, candidateId, options);
     const events: ControllerTransition[] = [];
     // Every domain row is already locked. Fetch items precede AI2 items; jobs remain last.
     if (domain?.staleSources?.frontier) domain.staleSources.fetchBusy = await hasLiveFetchItem(tx, domain.staleSources.frontier.id);
-    const count = domain && !(await candidateItemsBusy(tx, candidateId!, domain.votes)) ? await write(tx, domain, events) : 0;
+    const count = domain && !(await candidateItemsBusy(tx, candidateId!, domain.votes))
+      ? await write(tx, domain, events, job => wakes.add(job)) : 0;
     if (!count && domain?.staleSources?.inserted) throw new UnusedStaleSourcePreparation();
     await assertControllerJob(tx, lease);
     for (const event of events) await recordReplaySecondReviewTransition(tx, event);
@@ -164,6 +192,30 @@ async function controllerWrite(lease: JobLease, candidateId: number | null,
     // The rollback also discards an absent-frontier insert when an AI2 owner is busy or input is still current.
     await db.transaction(tx => assertControllerJob(tx, lease));
     return 0;
+  }
+  if (options.wakes) for (const job of wakes) options.wakes.add(job);
+  else await wakeStaleSourceJobs(wakes);
+  return committed;
+}
+
+/**
+ * 원본(crawl-fetch)·스캔(agent-evidence-refresh) 수집 잡을 깨운다. 큐 자체(frontier pending·scan next_attempt)는 후보 TX 에서
+ * 이미 commit 됐고 이것은 "1분을 기다리지 말고 지금 보라"는 신호일 뿐이다 — 요청과 도메인 변경이 같은 commit 일 필요가 없다.
+ * 두 잡 모두 scheduler 가 1분마다 요청하고(카탈로그 60초) 남은 일이 있으면 스스로 이어 하므로, 신호가 사라져도
+ * (commit 뒤 프로세스 종료·이 쓰기의 실패) 1분 안에 같은 큐를 본다. 그래서 실패는 틱을 실패로 만들지 않고 남기기만 한다.
+ * 자기 TX 에서 DR writer fence 를 먼저 잡고(requestJob 은 fence 를 잡지 않는다) 잡 행은 카탈로그 순서로 잠근다 — scheduler 와 같은 순서다.
+ * 격리 replay DB 에서는 stale 정리가 돌지 않아 보낼 것이 없다.
+ */
+async function wakeStaleSourceJobs(wakes: ReadonlySet<StaleSourceWake>): Promise<void> {
+  if (!wakes.size || currentReplayDb()) return;
+  const names = JOB_CATALOG.map(job => job.name).filter((name): name is StaleSourceWake => wakes.has(name as StaleSourceWake));
+  try {
+    await db.transaction(async tx => {
+      if (!await writerSiteActive(tx)) return;
+      for (const name of names) await requestJob(name, tx);
+    });
+  } catch (error) {
+    logger.warn("crawl.second_review_wake_failed", { jobs: names, ...dbErrorFields(error) });
   }
 }
 
@@ -805,7 +857,8 @@ async function pullStaleReviewScan(tx: ProductTransaction, scanId: number, repos
   return pulled.length > 0;
 }
 
-async function reconcileLockedStaleCandidate(tx: ProductTransaction, domain: ControllerDomain, events: ControllerTransition[], now: Date): Promise<number> {
+async function reconcileLockedStaleCandidate(tx: ProductTransaction, domain: ControllerDomain, events: ControllerTransition[], now: Date,
+  wake: (job: StaleSourceWake) => void): Promise<number> {
   // 재현 DB 역할은 model_capacity_requests 가 없다. 용량을 못 읽는 경로에서 행을 닫지 않는다.
   if (currentReplayDb()) return 0;
   const { candidate, document, input, settings } = domain;
@@ -851,14 +904,17 @@ async function reconcileLockedStaleCandidate(tx: ProductTransaction, domain: Con
     const scanFresh = Boolean(scan?.completedAt && evidenceStillFresh(scan.completedAt, semanticNow) && scan.state === "complete"
       && !scan.lastErrorCode && scan.detectorVersion === detector);
     // 오류가 남은 스캔은 저장된 백오프를 유지한다. due 만 당기면 수집기는 캐시로 보고 GitHub 를 부르지 않는다.
-    if (!scanFresh && scan && !scan.lastErrorCode) queuedScan = await pullStaleReviewScan(tx, scan.id, candidate.repo.toLowerCase())
-      || scan.nextAttemptAt.getTime() <= now.getTime();
+    // 이미 due 인 스캔(당길 것이 없거나 살아 있는 claim 이 보고 있다)은 깨우지 않고 변경으로 세지 않는다. 수집 큐가 due 를 보고
+    // 그대로 집고(scheduler 1분 요청·이어 하기), 이 후보는 스캔이 끝날 때까지 틱마다 다시 검사되므로 깨우면 같은 잡 행을
+    // 틱마다 올리기만 한다(2026-10-29 운영: 같은 3~7후보로 40초에 14번). 실제로 당긴 때와 스캔 행이 아예 없을 때만 깨운다.
+    if (!scanFresh && scan && !scan.lastErrorCode) queuedScan = await pullStaleReviewScan(tx, scan.id, candidate.repo.toLowerCase());
     else if (!scan) queuedScan = true;
   }
   if (closed.length) events.push({ kind: "cleanup", secondReviewIds: closed.map(row => row.id), candidateIds: [candidate.id] });
   if (inserted.length) events.push({ kind: "enqueue", secondReviewIds: inserted.map(row => row.id), candidateIds: [candidate.id] });
-  if (queuedSite) await requestJob("crawl-fetch", tx);
-  if (queuedScan) await requestJob("agent-evidence-refresh", tx);
+  // 큐(frontier·scan due)는 위에서 이 TX 가 바꿨다. 수집 잡 요청은 commit 뒤에 보낸다(controllerWrite — 잡 행 잠금 순서)
+  if (queuedSite) wake("crawl-fetch");
+  if (queuedScan) wake("agent-evidence-refresh");
   return closed.length + inserted.length + (queuedSite || queuedScan ? 1 : 0);
 }
 
@@ -927,6 +983,9 @@ export async function reconcileStaleSecondReviews(now: Date | undefined, lease: 
   const previous = progress?.afterCandidateId;
   let afterCandidateId = typeof previous === "number" && Number.isSafeInteger(previous) && previous > 0 ? previous : 0;
   const startedAfterCandidateId = afterCandidateId;
+  // 이 회차에 commit 된 후보들의 수집 잡 깨움 — 후보마다 같은 잡 행을 올리지 않고 회차 끝에 잡마다 한 번 보낸다.
+  // 회차가 중간에 던지면 버려진다(1분 일정이 같은 큐를 본다)
+  const wakes = new Set<StaleSourceWake>();
   while (mutations < STALE_RECONCILE_LIMIT && examined < STALE_RECONCILE_EXAMINE_LIMIT) {
     const room = Math.min(STALE_RECONCILE_LIMIT, STALE_RECONCILE_EXAMINE_LIMIT - examined);
     const hints = await db.execute<{ candidate_id: number | string }>(staleSecondReviewHintSql(afterCandidateId, room));
@@ -938,8 +997,9 @@ export async function reconcileStaleSecondReviews(now: Date | undefined, lease: 
       afterCandidateId = candidateId;
       visited++;
       examined++;
-      const count = await controllerWrite(lease, candidateId, (tx, domain, events) => reconcileLockedStaleCandidate(tx, domain, events, now!),
-        { prepareStaleSourcesAt: now }).catch(async (error: unknown) => {
+      const count = await controllerWrite(lease, candidateId,
+        (tx, domain, events, wake) => reconcileLockedStaleCandidate(tx, domain, events, now!, wake),
+        { prepareStaleSourcesAt: now, wakes }).catch(async (error: unknown) => {
         if (!(error instanceof Error) || error.message !== "review_input_too_large") throw error;
         // This candidate's transaction rolled back. Preserve its demand and let later candidates progress.
         await controllerWrite(lease, null, async () => 0);
@@ -952,6 +1012,7 @@ export async function reconcileStaleSecondReviews(now: Date | undefined, lease: 
     afterCandidateId = staleReviewCursorAfterPage(hints.map(row => Number(row.candidate_id)), visited, room);
     if (afterCandidateId === 0) break;
   }
+  await wakeStaleSourceJobs(wakes);
   if (progress && afterCandidateId !== startedAfterCandidateId) await progress.save(afterCandidateId);
   if (examined === 0) return controllerWrite(lease, null, async () => 0);
   return changed;

@@ -582,3 +582,49 @@ it('keeps other crawler lanes on their own schedule while the scan lane runs lon
     await work;
   }
 });
+
+it('re-polls the AI1 lane after 1s only when its tick left a continuation; a deferred tick keeps the normal interval', async () => {
+  const sleeps: number[] = [];
+  for (const result of [{ status: 'completed', done: false }, { status: 'completed', done: true }, { status: 'deferred', reason: 'model_capacity' },
+    { status: 'deferred', reason: 'stage_blocked' }, { status: 'failed', done: false }, { status: 'skipped', reason: 'locked' }]) {
+    const controller = new AbortController();
+    await runWorker({ role: 'reviewer', signal: controller.signal }, {
+      names: ['crawl-agent-review'], lanes: [['crawl-agent-review']], seen: async () => {}, pending: async () => ['crawl-agent-review'],
+      run: async () => result,
+      sleep: async ms => { sleeps.push(ms); controller.abort(); },
+    });
+  }
+  expect(sleeps).toEqual([1_000, 5_000, 5_000, 5_000, 5_000, 5_000]);
+});
+
+it('runs AI1 in its own reviewer lane beside a long main-lane job, never running one job twice at once', async () => {
+  const controller = new AbortController();
+  const deepseek = runtimeGate();
+  const active = new Map<string, number>(), peak = new Map<string, number>(), ends: string[] = [];
+  const names = batchJobsForRole('reviewer', 'legacy'), lanes = batchLanesForRole('reviewer', 'legacy');
+  expect(lanes.filter(lane => lane.includes('crawl-agent-review'))).toEqual([['crawl-agent-review']]);
+  const work = runWorker({ role: 'reviewer', signal: controller.signal }, {
+    names, lanes, seen: async () => {}, pending: async () => ['crawl-agent-review', 'second-review', 'human-deepseek-review'],
+    run: async name => {
+      active.set(name, (active.get(name) ?? 0) + 1);
+      peak.set(name, Math.max(peak.get(name) ?? 0, active.get(name)!));
+      // 사람 큐 위임(DeepSeek 27~29초)은 기본 줄을 붙잡는다 — AI1 이 같은 줄이면 여기서 멈춘다
+      if (name === 'human-deepseek-review') await deepseek.promise;
+      else await new Promise(resolve => setTimeout(resolve, 1));
+      active.set(name, active.get(name)! - 1);
+      ends.push(name);
+      return name === 'crawl-agent-review' ? { status: 'completed', done: false } : { status: 'deferred', reason: 'stage_blocked' };
+    },
+    sleep: async () => { await new Promise(resolve => setTimeout(resolve, 1)); },
+  });
+  try {
+    await vi.waitFor(() => expect(ends.filter(name => name === 'crawl-agent-review').length).toBeGreaterThanOrEqual(3));
+    expect(ends).not.toContain('human-deepseek-review');
+  } finally {
+    controller.abort();
+    deepseek.release();
+    await work;
+  }
+  expect(peak.get('crawl-agent-review')).toBe(1);
+  expect([...peak.values()].every(count => count === 1)).toBe(true);
+});

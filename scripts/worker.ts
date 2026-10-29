@@ -271,6 +271,9 @@ async function runLane(options: WorkerOptions, dependencies: WorkerDependencies,
           if (name === 'second-review' && result.status === 'deferred' && result.reason === 'stage_blocked') stageRefill = true;
           // 제작 근거 스캔이 남은 일을 알리면 runner 가 다시 요청해 두었다 — 1초 뒤 다시 돈다(요청이 없으면 그 poll 은 그냥 지나간다)
           if (name === 'agent-evidence-refresh' && result.status === 'completed' && result.done === false) stageRefill = true;
+          // AI1 전용 줄(ai1): 남은 후보가 있어 runner 가 다시 요청해 두었으면 1초 뒤 다시 돈다 — 기본 5초 쉼이 틱 사이 물리 슬롯을 놀리고,
+          // 줄에 남긴 예약이 TTL(30초) 안에 다음 틱을 만나게 한다. 미룬(model_capacity) 틱은 기존 간격 그대로다
+          if (name === 'crawl-agent-review' && result.status === 'completed' && result.done === false) stageRefill = true;
           dependencies.log?.('worker.job', { role: options.role, name, status: result.status });
         } catch (error) {
           failures++; failed = true;
