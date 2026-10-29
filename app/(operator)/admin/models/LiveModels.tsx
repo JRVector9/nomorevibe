@@ -71,11 +71,11 @@ export function LiveModels({ observation, probeAction = probeAdminModel, admissi
         <p>발생 {stamp(request.stateSince)} · 상태 경과 {elapsedModelTime(request.stateSince, observation.observedAt)} · 접수 후 {elapsedModelTime(request.queuedAt, observation.observedAt)}</p>
         {request.reservedUntil && <p>예약 기한 {stamp(request.reservedUntil)}</p>}
         {request.localEndRecorded && <p>로컬 호출 종료 기록 있음 · 모델 제공자의 종료 증거는 별도 확인이 필요합니다.</p>}
-        {request.state === "indeterminate" && <div><button type="button" className={buttonSmall} disabled={busy} onClick={() => open({ kind: "recovery", request })}>요청 종료·해제</button></div>}
+        {request.state === "indeterminate" && <div><button type="button" className={buttonSmall} disabled={busy} onClick={() => open({ kind: "recovery", request })}>복구 조건 확인</button></div>}
       </article>)}
     </>}
     {dialog && <ModelOperationDialog busy={busy} onClose={() => setDialog(null)}>
-        <h3 id="model-operation-title" className="text-[20px] font-semibold">{dialog.kind === "admission" ? dialog.to === "open" ? "접수 재개" : "접수 일시중지" : "요청 종료·해제"}</h3>
+        <h3 id="model-operation-title" className="text-[20px] font-semibold">{dialog.kind === "admission" ? dialog.to === "open" ? "접수 재개" : "접수 일시중지" : "복구 조건 확인"}</h3>
         {dialog.kind === "admission" ? <>
           <p>모든 공통 모델의 접수를 {dialog.to === "open" ? "재개" : "일시중지"}합니다. 진행 중 요청과 업무 기록은 보존합니다.</p>
           <p className={hintClass}>현재 {observation.mode?.toUpperCase()} · epoch {observation.epoch} · revision {observation.revision}. 서버에서 상태·실행 계약을 다시 확인하며 거절 사유를 표시합니다.</p>
@@ -91,7 +91,8 @@ export function LiveModels({ observation, probeAction = probeAdminModel, admissi
           <p role="alert">시작 전 중단: 웹에서 기존 prepare→run 복구 실행기와 종료 근거 수집기를 호출할 연결이 없습니다. 요청과 점유를 보존합니다.</p>
           {/m1|29877f65/i.test(`${dialog.request.groupId} ${dialog.request.model} ${dialog.request.requestId}`) && <p>사람이 장비에서 할 일: M1의 sudo가 필요한 종료·복원은 장비에서 수행해야 합니다. 자동 실행하지 않습니다.</p>}
           <p className={hintClass}>M3 native stop이 exit_fact_missing_launchdUnloaded로 실패하면 native verify로 종료를 재확인해야 합니다. 시간 경과와 로컬 종료 기록만으로 해제하지 않습니다.</p>
-          <button type="button" className={buttonClass} disabled title="정식 복구 실행기 연결 필요">모델 재시작</button>
+          <div className="flex flex-wrap gap-2"><button type="button" className={buttonClass} disabled title="종료 근거 수집·정식 복구 실행기 연결 필요">요청 종료·해제</button>
+            <button type="button" className={buttonClass} disabled title="정식 복구 실행기 연결 필요">모델 재시작</button></div>
           <button type="button" className={buttonClass} autoFocus onClick={() => setDialog(null)}>닫기</button>
         </>}
     </ModelOperationDialog>}
