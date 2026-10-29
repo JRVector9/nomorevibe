@@ -24,7 +24,7 @@ git grep -I -n -i -E '(qwen[0-9]|gpt-[0-9]|gpt-oss|gemma[- /0-9]|deepseek-v[0-9]
 | 3f. app/(operator) | 끝남 | 현재 설정·선택지·표·툴팁 중앙 조회. 독립 로컬 Next 앱에서 실제 컴포넌트 브라우저 7항목 확인, JPG 확보. |
 | 3g. lib/crawl | 끝남(명시적 제외 있음) | 생성 모델·주소·출력 토큰·tagline 동시성·AI2 키 연결. 아래 병행 차선 및 불변 자료는 제외. |
 | 4. M1 번역 설정 문서·기본값 | 끝남 | 기본 `m1:translation` → `[m1] gemma4-26b` alias. exact advertised id는 운영 readback 뒤 설정에 입력. 적용·롤백·계약/정책 절차와 과거 문서 주의 문구 작성 완료. |
-| 5. 검증 스크립트 | 진행 중 | 명시적 scoped unit 목록 + typegen + tsc + git grep 감소 스크립트 작성. 최종 실행 및 로컬 커밋 남음. |
+| 5. 검증 스크립트 | 끝남 | 64개 명시적 unit 파일 + typegen + tsc + git grep 감소 검사. 최종 896시험·정적 검사·158→98, exit 0. |
 | lib/crawl/first-reviewers.ts | 다음 차례(기한 차선 병합 뒤) | 사용자 지정 배정 로직 소유 파일. 이번 차선 수정 금지. |
 | 클라이언트·중계기·게이트웨이 기한 숫자 | 다음 차례(기한 차선 병합 뒤) | 레지스트리에 timeoutMs는 선언하되 실제 deadline 상수/숫자는 이번에 교체하지 않음. |
 | 배포·운영 DB·push | 범위 밖 | 수행하지 않음. 설정·계약 준비와 실제 운영 참여를 구분. |
@@ -69,3 +69,21 @@ git grep -I -n -i -E '(qwen[0-9]|gpt-[0-9]|gpt-oss|gemma[- /0-9]|deepseek-v[0-9]
 - 중간 최종 검증은 59파일 821시험 + typegen/tsc + 158→99, exit 0으로 통과했다. 이어 실제 소비자 전체 대조에서 한국어 소개·검색 질의의 독립 registry selection이 legacy 공용 상수/기록과 불일치하는 사용처를 찾아 추가 연결했다. 요청·native capacity·결과 저장·운영 표시를 각각 KOREAN_TAGLINE_MODEL/SEARCH_QUERY_MODEL로 통일했고 기존 공용 env 동작은 유지한다.
 - 추가 점검: 9파일 156시험 통과. 이후 직접 모델 표시를 장비/실제 model로 바꾼 화면 시험 1개가 이전 고정 문구를 기대해 실패했다(7파일 82시험 중 1실패). 기대값을 실제 config 상수로 갱신했다. 모바일 화면에서 단계 표의 좁은 열을 확인해 최소 폭·가로 스크롤 안내를 적용하고 실제 화면으로 다시 확인했다. 기본 registry/CLI와 독립 용도 선택 두 시나리오, 1280px/390px JPG를 확보했으며 마지막 브라우저 9항목/페이지 오류 0을 확인했다.
 - 후속 소비자 회귀: 8파일 99시험 통과. CLI registry 교체 시 저장된 옛 model을 삭제하거나 기본값으로 덮지 않고 보존하도록 복원 경계를 분리했다. 옛 선택은 안전한 shape로 읽되 현재 registry와 맞지 않으면 classifyReady/configReady=false, native 계약 발급·실행은 보류한다. 기존 인증은 보존하며 새 선택은 기존 검사·적용 절차를 거친다. 관련 5파일 61시험과 ESLint 통과. 브라우저에서 미등록된 저장 선택이 보이는 상태와 기본값 복원을 확인했다.
+
+## 최종 상태 (2026-10-29 UTC)
+
+- 이 차선의 구현·설정 절차·검증 스크립트는 로컬 커밋 완료 대상으로 정리했다. 실행 가능한 백로그는 끝났고, 남은 것은 위의 명시적 기한/AI1 배정 병합 대기·운영 확인 범위다. push·배포·운영 DB 변경·사용자 원본 작업 폴더 변경은 수행하지 않았다.
+- 최종 `scripts/verify-model-config.sh`: **64파일 896시험 통과**, `next typegen` 성공, `tsc --noEmit --incremental false` 성공, 모델명 고정 검색 **158→98**, **exit 0**. 전체 unit·전체 DB·전체 e2e·production build·원격 CI는 실행하지 않았다.
+- 남은 검색 일치 98줄을 직접 분류: 중앙 기본값 14, 역사/측정 주석 75, 불변 수입 provenance 1, 외부 제작 근거 parser 4, `repoPushedAt` 식별자 오탐 4. 이 값은 같은 광역 검색식의 소스 줄 수이며 단독 실행 모델 설정 상수 개수로 해석하지 않는다.
+- 레지스트리 직접 연결 **41파일**, 중앙 조회 **107호출 위치**. 간접 metadata/상수 소비자도 같은 선택을 따르며 이 두 수치는 직접 import와 helper 호출만 센다.
+- 기본 설정과 용도별 M1 override, 저장된 미등록 CLI 선택 보존을 독립 로컬 Next 앱의 실제 컴포넌트로 확인했다. 1280px/390px, 마지막 브라우저 **10항목 통과·pageerror 0**. 최종 모델 표는 모바일 가로 스크롤로 전체 값을 볼 수 있다. 운영 인증·실제 워커 검증은 미실시다. JPG는 개발사항 보고에 첨부하며 최종 검수 앱/route/임시 스크립트는 제거했다.
+- 신규 registry/분류 helper/표/회귀 파일과 변경 CLI 선택 컴포넌트의 ESLint 통과. 이전의 미사용 mock 인자 경고 1개는 typed mock으로 고쳐 최종 해당 파일 lint 경고 0을 확인했다.
+- `lib/crawl/first-reviewers.ts` 기준 대비 diff 0. 기존 클라이언트·중계기·게이트웨이 기한 숫자는 유지했다. timeoutMs 선언의 실제 적용은 기한 차선 병합 뒤 항목으로 남겼다.
+- 실제 배포 준비는 정확한 M1 advertised id/revision·gateway 장비 라우팅 readback과 해당 serving/capacity 설정 검증을 거친 뒤 판정한다. 이번 산출물은 코드·문서·로컬 검증 결과이며 운영 참여 완료 영수증은 아니다.
+
+조회 사용처 재현 명령(각 명령의 검색 범위는 위 baseline과 같다):
+
+```bash
+git grep -l -F 'llm/model-registry' -- lib/crawl lib/domain 'app/(operator)' scripts/local-model-relay lib/operations lib/jobs lib/llm lib/db ':!*.test.*' ':!*.md' | wc -l
+git grep -o -E '(configuredModel|configuredModelDefinition|configuredModelForProvider|modelForPurpose|modelFamily|modelLimits|modelBaseUrl|modelRequestBudget|readModelRegistry|resolveRegistryModel)\(' -- lib/crawl lib/domain 'app/(operator)' scripts/local-model-relay lib/operations lib/jobs lib/llm lib/db ':!*.test.*' ':!*.md' ':!lib/llm/model-registry.ts' | wc -l
+```
