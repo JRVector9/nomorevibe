@@ -10,7 +10,7 @@ import { findRepositoryProduct } from "@/lib/domain/products/repository-identity
 import { lockRepositoryAgentEvidence } from "@/lib/domain/evidence/agents/lock";
 import { prepareReplayFinalWrite, recordReplayFinalWrite, recordReplaySecondReviewTransition } from "@/lib/operations/pipeline-replay-final";
 import { recordAi2Attempt, recordHumanDecisionOverride, recordHumanDecisionRefused, recordLateWriteRefused } from "@/lib/operations/pipeline-evidence-ledger";
-import { crawlCandidates, crawlDocuments, crawlFrontier, crawlReviewAttempts, crawlSettings, secondReviews, products, pipelineItemLeases, agentRepositoryScans, agentRepositoryObservations,
+import { crawlCandidates, crawlDocuments, crawlFrontier, crawlReviewAttempts, crawlSettings, secondReviews, products, pipelineItemLeases, agentRepositoryScans, agentRepositoryObservations, operationsAudit,
   type CrawlCandidate, type CrawlDocument, type CrawlReviewAttempt, type ProductStatus, type SecondReview, type SecondReviewProvider, type SecondReviewStatus, type SecondReviewTrigger } from "@/lib/db/schema";
 import { pageFactsFromDocument } from "./rules";
 import type { CrawlSettings } from "./settings-schema";
@@ -1113,6 +1113,148 @@ export async function reconcileStaleSecondReviews(now: Date | undefined, lease: 
   if (progress && afterCandidateId !== startedAfterCandidateId) await progress.save(afterCandidateId);
   if (examined === 0) return controllerWrite(lease, null, async () => 0);
   return changed;
+}
+
+/** 정합 도구(scripts/reconcile-ai2-stale.ts) 한 번에 볼 후보 수 상한 — 기본은 잡 한 틱과 같다 */
+export const STALE_RECONCILE_TOOL_DEFAULT = STALE_RECONCILE_LIMIT;
+export const STALE_RECONCILE_TOOL_MAX = 200;
+export const STALE_RECONCILE_AUDIT_ACTION = "reconcile-ai2-stale";
+
+export type StaleReconcileBlock = "capacity" | "item_busy" | "input_too_large";
+export type StaleReconcilePreview = {
+  candidateId: number; repo: string | null; candidateState: string | null; blocked: StaleReconcileBlock | null;
+  votes: { id: number; status: SecondReviewStatus; trigger: SecondReviewTrigger; model: string | null; verdict: string; reasons: string[] }[];
+  close: number[]; retire: number[]; reinsert: { model: string | null; trigger: SecondReviewTrigger }[];
+  needsSiteRefresh: boolean; needsScanRefresh: boolean;
+};
+
+function staleToolLimit(limit: number | undefined): number {
+  const value = limit ?? STALE_RECONCILE_TOOL_DEFAULT;
+  if (!Number.isSafeInteger(value) || value < 1 || value > STALE_RECONCILE_TOOL_MAX) throw new Error("invalid_stale_reconcile_limit");
+  return value;
+}
+function staleToolCursor(after: number | undefined): number {
+  const value = after ?? 0;
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error("invalid_stale_reconcile_cursor");
+  return value;
+}
+
+/** 잠그지 않고 읽는 같은 도메인 — 미리 보기 전용. 쓰기 경로는 언제나 lockControllerDomain 을 쓴다 */
+async function readControllerDomain(tx: ProductTransaction, candidateId: number): Promise<ControllerDomain> {
+  const [candidate] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.id, candidateId));
+  const [document] = candidate ? await tx.select().from(crawlDocuments).where(eq(crawlDocuments.repo, candidate.repo)) : [];
+  const [saved] = await tx.select().from(crawlSettings).where(eq(crawlSettings.id, 1));
+  const settings = mergeWithDefaults(saved?.values);
+  let publishedProductId: number | null = null;
+  if (candidate?.publishedSlug) {
+    const [product] = await tx.select({ id: products.id }).from(products).where(eq(products.slug, candidate.publishedSlug));
+    if (product && (await findRepositoryProduct(candidate.repo, candidate.productUrl, tx))?.id === product.id) publishedProductId = product.id;
+  }
+  const [scan] = candidate ? await tx.select().from(agentRepositoryScans).where(and(
+    eq(agentRepositoryScans.repositoryKey, candidate.repo.toLowerCase()), eq(agentRepositoryScans.scope, ""),
+  )).orderBy(desc(agentRepositoryScans.startedAt), desc(agentRepositoryScans.id)).limit(1) : [];
+  const attempts = await tx.select().from(crawlReviewAttempts).where(eq(crawlReviewAttempts.candidateId, candidateId)).orderBy(crawlReviewAttempts.id);
+  const votes = await tx.select().from(secondReviews).where(eq(secondReviews.candidateId, candidateId)).orderBy(secondReviews.id);
+  const input = candidate && document && candidate.productUrl === document.productUrl
+    ? await loadReviewInput(candidate, document, settings, tx) : null;
+  return { candidate: candidate ?? null, document: document ?? null, settings, input, attempts, votes, publishedProductId,
+    staleSources: { scan: scan ?? null, frontier: null, inserted: false, blocked: false } };
+}
+
+/**
+ * dry-run — 정리 잡과 같은 힌트·같은 계획(planStaleCandidate)을 READ ONLY 트랜잭션에서 계산한다. 아무 행도 쓰거나 잠그지 않는다.
+ * 원본 갱신은 "필요"만 알린다 — 실제로 큐에 넣는지는 실행 때 쿨다운·진행 중 claim 이 정한다.
+ */
+export async function previewStaleSecondReviews(options: { afterCandidateId?: number; limit?: number; now?: Date } = {}) {
+  const limit = staleToolLimit(options.limit), after = staleToolCursor(options.afterCandidateId), now = options.now ?? new Date();
+  if (currentReplayDb()) throw new Error("stale_reconcile_replay_unsupported");
+  return db.transaction(async tx => {
+    await tx.execute(sql`SET TRANSACTION READ ONLY`);
+    const hints = await tx.execute<{ candidate_id: number | string }>(staleSecondReviewHintSql(after, limit));
+    const ids = hints.map(row => Number(row.candidate_id));
+    const entries: StaleReconcilePreview[] = [];
+    for (const candidateId of ids) {
+      let domain: ControllerDomain | null = null, blocked: StaleReconcileBlock | null = null;
+      try { domain = await readControllerDomain(tx, candidateId); }
+      catch (error) {
+        if (!(error instanceof Error) || error.message !== "review_input_too_large") throw error;
+        blocked = "input_too_large";
+      }
+      const capacity = await tx.execute<{ state: string; reserved_until: Date | string | null }>(staleReviewCapacityProbeSql(candidateId));
+      if (!blocked && capacity.some(row => capacityBlocksStaleReconcile({ state: row.state, reservedUntil: row.reserved_until }, now))) blocked = "capacity";
+      if (!blocked && domain) {
+        const keys = domain.votes.map(row => `ai2:${row.id}`);
+        const [live] = await tx.select({ workKey: pipelineItemLeases.workKey }).from(pipelineItemLeases).where(and(eq(pipelineItemLeases.stage, "ai2"),
+          or(sql`${pipelineItemLeases.binding}->>'candidateId' = ${String(candidateId)}`, keys.length ? inArray(pipelineItemLeases.workKey, keys) : undefined),
+          sql`${pipelineItemLeases.token} IS NOT NULL AND ${pipelineItemLeases.leaseUntil} > clock_timestamp()`)).limit(1);
+        if (live) blocked = "item_busy";
+      }
+      const [product] = domain?.publishedProductId ? await tx.select({ status: products.status }).from(products)
+        .where(eq(products.id, domain.publishedProductId)) : [];
+      const plan = domain && !blocked ? planStaleCandidate(domain, now, product?.status ?? null) : null;
+      entries.push({ candidateId, repo: domain?.candidate?.repo ?? null, candidateState: domain?.candidate?.state ?? null, blocked,
+        votes: (plan?.verdicts ?? []).filter(item => item.verdict.kind !== "inactive").map(item => ({ id: item.id, status: item.status,
+          trigger: item.trigger, model: item.model, verdict: item.verdict.kind,
+          reasons: item.verdict.kind === "stale" ? item.verdict.reasons : "reason" in item.verdict ? [item.verdict.reason] : [] })),
+        close: plan?.closeIds ?? [], retire: plan?.retireIds ?? [],
+        reinsert: (plan?.proposed ?? []).map(row => ({ model: row.model ?? null, trigger: row.trigger })),
+        needsSiteRefresh: plan?.needsSite ?? false, needsScanRefresh: plan?.needsScan ?? false });
+    }
+    const changing = entries.filter(entry => entry.close.length || entry.retire.length || entry.reinsert.length
+      || entry.needsSiteRefresh || entry.needsScanRefresh);
+    return { mode: "dry-run" as const, afterCandidateId: after, limit, examined: entries.length,
+      nextAfterCandidateId: staleReviewCursorAfterPage(ids, ids.length, limit),
+      summary: { candidatesWithChanges: changing.length, close: changing.reduce((sum, entry) => sum + entry.close.length, 0),
+        retire: changing.reduce((sum, entry) => sum + entry.retire.length, 0),
+        reinsert: changing.reduce((sum, entry) => sum + entry.reinsert.length, 0),
+        refresh: changing.filter(entry => entry.needsSiteRefresh || entry.needsScanRefresh).length,
+        blocked: entries.filter(entry => entry.blocked).length },
+      entries };
+  });
+}
+
+/**
+ * --apply — 정리 잡과 같은 잠금 경로(controllerWrite·reconcileLockedStaleCandidate)로 후보마다 한 트랜잭션에 쓴다.
+ * 바꾼 후보마다 같은 트랜잭션에 operations_audit 한 줄(누가·무엇을·왜)을 남긴다. 사용 중인 용량·아이템·사람 결정은 건너뛴다.
+ * lease 는 second-review 잡의 실제 lease 여야 한다 — 잡과 동시에 쓰지 않는다.
+ */
+export async function applyStaleSecondReviews(options: { lease: JobLease; actor: string; afterCandidateId?: number; limit?: number; now?: Date }) {
+  const actor = options.actor.trim();
+  if (!actor || actor.length > 120) throw new Error("invalid_actor");
+  const limit = staleToolLimit(options.limit), after = staleToolCursor(options.afterCandidateId), now = options.now ?? new Date();
+  if (currentReplayDb()) throw new Error("stale_reconcile_replay_unsupported");
+  const [saved] = await db.select().from(crawlSettings).where(eq(crawlSettings.id, 1));
+  const settings = mergeWithDefaults(saved?.values);
+  if (!settings.enabled || !settings.secondReview.enabled) {
+    await controllerWrite(options.lease, null, async () => 0);
+    return { mode: "apply" as const, afterCandidateId: after, limit, examined: 0, changed: 0, nextAfterCandidateId: 0,
+      skipped: [] as { candidateId: number; reason: StaleReconcileBlock }[], entries: [] as StaleCandidateReport[], disabled: true };
+  }
+  const hints = await db.execute<{ candidate_id: number | string }>(staleSecondReviewHintSql(after, limit));
+  const ids = hints.map(row => Number(row.candidate_id));
+  const wakes = new Set<StaleSourceWake>();
+  const entries: StaleCandidateReport[] = [], skipped: { candidateId: number; reason: StaleReconcileBlock }[] = [];
+  let changed = 0;
+  for (const candidateId of ids) {
+    let report: StaleCandidateReport | undefined;
+    const count = await controllerWrite(options.lease, candidateId, async (tx, domain, events, wake) => {
+      const written = await reconcileLockedStaleCandidate(tx, domain, events, now, wake, value => { report = value; });
+      if (report) await tx.insert(operationsAudit).values({ actor, action: STALE_RECONCILE_AUDIT_ACTION, target: `candidate:${candidateId}`,
+        detail: { ...report, repo: domain.candidate?.repo ?? null, owner: STALE_REVIEW_OWNER } });
+      return written;
+    }, { prepareStaleSourcesAt: now, wakes }).catch(async (error: unknown) => {
+      if (!(error instanceof Error) || error.message !== "review_input_too_large") throw error;
+      await controllerWrite(options.lease, null, async () => 0);
+      skipped.push({ candidateId, reason: "input_too_large" });
+      return 0;
+    });
+    changed += count;
+    if (count && report) entries.push(report);
+  }
+  await wakeStaleSourceJobs(wakes);
+  if (!ids.length) await controllerWrite(options.lease, null, async () => 0);
+  return { mode: "apply" as const, afterCandidateId: after, limit, examined: ids.length, changed,
+    nextAfterCandidateId: staleReviewCursorAfterPage(ids, ids.length, limit), skipped, entries, disabled: false };
 }
 
 export async function pendingSecondReviews(limit: number) {

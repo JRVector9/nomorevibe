@@ -91,6 +91,34 @@ export function classifyAi2Vote(row: Ai2StaleRow, ctx: Ai2StaleContext): Ai2Stal
   return { kind: "stale", reasons: ["binding_invalid"] };
 }
 
+export type StaleReconcileArgs = { apply: boolean; actor: string | null; limit: number; after: number };
+
+/** scripts/reconcile-ai2-stale.ts 인자. 모르는 인자·범위 밖 값은 거부한다 — 운영에서 오타가 --apply 로 읽히지 않게 */
+export function parseStaleReconcileArgs(argv: string[], max: number, fallbackLimit = STALE_RECONCILE_LIMIT): StaleReconcileArgs {
+  const result: StaleReconcileArgs = { apply: false, actor: null, limit: fallbackLimit, after: 0 };
+  const integer = (value: string | undefined, name: string, min: number, top: number) => {
+    if (value === undefined || !/^\d+$/.test(value)) throw new Error(`invalid_${name}`);
+    const parsed = Number(value);
+    if (!Number.isSafeInteger(parsed) || parsed < min || parsed > top) throw new Error(`invalid_${name}`);
+    return parsed;
+  };
+  for (let index = 0; index < argv.length; index++) {
+    const flag = argv[index];
+    if (flag === "--apply") result.apply = true;
+    else if (flag === "--dry-run") result.apply = false;
+    else if (flag === "--actor") {
+      const value = argv[++index]?.trim();
+      if (!value || value.startsWith("--") || value.length > 120) throw new Error("invalid_actor");
+      result.actor = value;
+    } else if (flag === "--limit") result.limit = integer(argv[++index], "limit", 1, max);
+    else if (flag === "--after") result.after = integer(argv[++index], "after", 0, Number.MAX_SAFE_INTEGER);
+    else throw new Error(`unknown_argument:${flag}`);
+  }
+  if (argv.includes("--apply") && argv.includes("--dry-run")) throw new Error("conflicting_mode");
+  if (result.apply && !result.actor) throw new Error("actor_required_for_apply");
+  return result;
+}
+
 export type CapacityProbe = { state: string; reservedUntil: Date | string | null };
 /** Unknown state or reservation time protects the existing owner. No capacity row is reclaimed here. */
 export function capacityBlocksStaleReconcile(row: CapacityProbe, now: Date): boolean {
