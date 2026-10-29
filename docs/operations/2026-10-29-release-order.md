@@ -32,13 +32,13 @@ M1 쪽 코드는 바꾸지 않았다. M1 plan은 `capacity_draining`만 검사�
 
 | 이름 | 값 |
 | --- | --- |
-| 도구 소스 | gpu3090 작업 공간 `SRC=/home/ubuntu/.xaegis-hub/data/local-agent/worktrees/7b7a2d23-0c49-41f3-9665-1fc4e53ff9a0`, 브랜치 `xaegis/7b7a2d23`(push 안 함). `xaegis/4ed4ea33`·`xaegis/4cefcc24`를 포함한다. `REL=$(git -C "$SRC" rev-parse xaegis/7b7a2d23)`를 적어 둔다. 실행서 A절의 `SHA`와 B절의 `T` 모두 이 `REL`을 쓴다. `$SRC`는 `git -C "$SRC" show/archive`로만 쓴다(작업 트리 파일을 직접 실행하지 않는다). 그래서 같은 저장소의 다른 checkout(예: `/home/ubuntu/projects/nomorevibe`)을 `SRC`로 써도 결과가 같다. Node 실행은 모두 `node_modules`를 연결한 `$T`에서 한다 |
+| 도구 소스 | **`REL=1f52c9efea0bfab555567c17889cf919f41938be`** = PR #730 병합 main SHA. 이 값이 배포 `TARGET`이기도 하다(15·16·17·20단계). `SRC=/home/ubuntu/projects/nomorevibe`(또는 같은 저장소의 아무 checkout. `git -C "$SRC" fetch origin main` 뒤 `git -C "$SRC" merge-base --is-ancestor "$REL" origin/main`이 성공해야 한다). 실행서 A절의 `SHA`와 B절의 `T` 모두 이 `REL`을 쓴다. `$SRC`는 `git -C "$SRC" show/archive`로만 쓴다(작업 트리 파일을 직접 실행하지 않는다). Node 실행은 모두 `node_modules`를 연결한 `$T`에서 한다. 이전 판의 `xaegis/7b7a2d23` 작업 공간은 쓰지 않는다 |
 | runner 실행 트리 | `T=/home/ubuntu/ops/nmv-runner-$REL`(실행서 S1의 `git archive 75b8aa31` 대신 `git -C "$SRC" archive "$REL"`). runner와 접수 CLI가 이 커밋 코드여야 handoff를 쓸 수 있다 |
 | 요청 | M1 `29877f65-9f95-4efb-88f9-aea5f39a28b2`, Supa `65f8c399-ff4b-47bc-8f4d-6e4a682cf6a7` |
 | 유지보수 컨테이너 | m3ultra Swarm `app-navigate-neural-system-yf43c7`. `DK='env PATH=/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin docker'` |
 | 직접 primary | `100.99.209.55:5432/nomorevibe`(PgBouncer 아님) |
 
-검토할 SHA-256(`git show $REL:<파일> | sha256sum`). 실행서 표 0의 M1 스크립트·adapter·helper 해시는 바뀌지 않았다.
+검토할 SHA-256(`git show $REL:<파일> | sha256sum`, `REL=1f52c9efea0bfab555567c17889cf919f41938be`에서 다시 계산해 모두 확인했다). 스테이징 tar와 M1 스크립트를 포함한 전체 표와 0143 전 사전 점검 명령은 **[사전 점검 묶음](2026-10-29-pre-0143-check-bundle.md)**에 있다.
 
 | 파일 | SHA-256 |
 | --- | --- |
@@ -59,7 +59,7 @@ M1 쪽 코드는 바꾸지 않았다. M1 plan은 `capacity_draining`만 검사�
 
 ### 1. [승인] 0143(+0144) 적용과 적용 확인
 - 위치: 적용은 대표의 정식 migration 절차로 한다(이 문서 범위 밖). 확인은 m3ultra 유지보수 컨테이너에서 한다(실행서 C5에서 올린 소스 사용).
-- 전제: 실행서 C1~C7을 0143 **전에** 한 번 통과했다(`blockedNow: []`). 막히는 근거가 있으면 0143을 적용해도 M1은 풀 수 없다. 그때는 이 순서 전체를 멈추고 다시 판단한다.
+- 전제: 실행서 C1~C7과 2단계 (a)~(e)를 0143 **전에** [사전 점검 묶음](2026-10-29-pre-0143-check-bundle.md)으로 한 번 통과했다(`blockedNow: []`). 막히는 근거가 있으면 0143을 적용해도 M1은 풀 수 없다. 그때는 이 순서 전체를 멈추고 다시 판단한다.
 - 명령: 적용 뒤 실행서 C7 preflight를 다시 실행한다. 이어서 관문 문서 7절 SQL 실행기(crawler-m3, READ ONLY)로 아래를 읽는다.
 ```sql
 SELECT (SELECT count(*) FROM drizzle.__drizzle_migrations) AS applied,
@@ -165,7 +165,7 @@ SELECT pg_is_in_recovery() AS replica, (SELECT mode FROM model_capacity_control 
 
 ### 15. 배포 plan
 - 위치: gpu3090(배포 대상 main SHA를 checkout한 깨끗한 트리, `deployment-fast-path.md`)
-- 전제: 배포 대상 `TARGET`은 CI `check`와 이미지가 준비된 main 40자리 SHA다. 0143·0144를 포함하므로 `--migration-verified`가 필요하다. 이 브랜치의 PR을 먼저 병합해 `TARGET`에 넣는 것을 권한다(관리 화면의 handoff 표시, 정식 접수 CLI). 넣지 않아도 안전에는 영향이 없다. 화면이 마지막 단계를 「접수 재개 (OPEN) · 대기」로 보일 뿐이다.
+- 전제: 배포 대상 `TARGET=1f52c9efea0bfab555567c17889cf919f41938be`(= `REL`, PR #730 병합 main SHA)이다. 그 main `check`와 이미지 publish가 끝났는지 `deployment-fast-path.md`대로 확인한다. 0143·0144를 포함하므로 `--migration-verified`가 필요하다. `REL = TARGET`이므로 18단계 재스테이징 tar의 `package-lock.json`은 새 이미지의 것과 같다.
 ```sh
 xa-key exec DOKPLOY_API_KEY=gpu3090/dokploy -- env NMV_DEPLOY_SSH_USER=jr npm run deploy -- plan --sha "$TARGET" --migration-verified \
   --out "$HOME/.local/state/nomorevibe-releases/release-order-20261029-<처음 쓰는 이름>"
