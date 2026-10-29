@@ -432,6 +432,6 @@ export async function main(argv: readonly string[]): Promise<number> {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) void main(process.argv.slice(2)).then(code => { process.exitCode = code; }, error => {
-  const code = error instanceof Error && /^(release_29877f65|dr_cli)_[a-z0-9_:./-]+$/.test(error.message) ? error.message : "release_29877f65_failed";
+  const code = error instanceof Error && /^(release_29877f65|dr_cli)_[a-z0-9_:./|-]+$/.test(error.message) ? error.message : "release_29877f65_failed";
   process.stderr.write(`${JSON.stringify({ code, name: error instanceof Error ? error.name : typeof error })}\n`); process.exitCode = 1;
 });
