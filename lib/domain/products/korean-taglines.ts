@@ -24,18 +24,33 @@ import { slugArrayPredicate } from "@/lib/domain/ranking/refresh";
 import { leadClause, NEEDS_KOREAN } from "./korean-tagline";
 import { getPopularGroups } from "./popular";
 import { listProductSlugs } from "./repository";
+import { unsettledMemberFence } from "@/lib/llm/capacity-selection-fence";
 
 /**
  * 한국어 한 줄 소개의 대기열과 저장. 옮기는 일(게이트웨이)은 lib/crawl/translate.ts, 검사는 korean-tagline.ts 에 있다.
  */
 
 const PUBLIC: ProductStatus[] = ["seeded", "verified"];
-/** 검사에서 이만큼 버리면 손을 뗀다 — 원문이 보인다. 게이트웨이 실패는 세지 않고 하루 간격까지 늘려 가며 계속 본다 */
+/** 검사에서 이만큼 버리면 손을 뗀다 — 원문이 보인다. 게이트웨이 실패는 세지 않고 하루 간격까지 늘려 가며 본다 */
 export const MAX_REJECTIONS = 4;
+/**
+ * 같은 원문으로 시도할 수 있는 총 횟수 — 게이트웨이 실패까지 센다. 넘으면 손을 떼고 운영 확인(blocked)으로 센다.
+ *
+ * 게이트웨이 실패(invalid_output·http_5xx·timeout)는 품질 거절로 세지 않아, 같은 소개가 같은 실패로 하루 간격까지 늘려 가며
+ * 끝없이 다시 섰다. 실패 간격이 5분부터 두 배씩 하루까지라 12번째까지 걸리는 시간은 약 3.8일이다 — 그동안 이어진 장애가 아니면
+ * 닿지 않는다. 회복 선택기(attempts < 10)는 이 한도 안에서 돈다.
+ */
+export const MAX_ATTEMPTS = 12;
 /** Same source preparation used by the original job and the locked native path. */
 const SHORTEN_AFTER = new Set(["rejected:too_long", "rejected:empty"]);
+/**
+ * 보낼 원문 — 같은 소개가 한 번이라도 품질에서 버려졌으면 그 뒤로는 앞 문장만 보낸다.
+ *
+ * 마지막 실패 코드만 보고 줄였더니 too_long → (앞 문장) name_lost → (다시 전체) too_long 처럼 원문이 번갈아 바뀌며
+ * 같은 두 실패를 한도까지 되풀이했다. 품질 거절 횟수는 같은 원문에서 줄지 않으므로 한 번 줄이면 계속 줄인다.
+ */
 export function koreanTaglineSource(task: KoreanTaglineTask): string {
-  return task.lastError && SHORTEN_AFTER.has(task.lastError) ? leadClause(task.tagline) : task.tagline;
+  return (task.qualityRejections ?? 0) > 0 || task.lastError && SHORTEN_AFTER.has(task.lastError) ? leadClause(task.tagline) : task.tagline;
 }
 
 /**
@@ -50,6 +65,8 @@ const HOME_DEPTH = 40;
 
 const listedAt = sql`coalesce(${products.verifiedAt}, ${products.createdAt})`;
 const k = productKoreanTaglines;
+/** 결과를 모르는 요청에 묶인 소개는 고르지 않는다 — 매 틱 같은 머리를 골라 capacity deferred 로 멈추지 않게(capacity-selection-fence.ts) */
+const NOT_UNSETTLED = sql`not ${unsettledMemberFence(sql`('product-tagline-ko:' || ${products.id})`)}`;
 
 export type KoreanTaglineTask = {
   productId: number; name: string; tagline: string; repoUrl: string | null;
@@ -57,6 +74,8 @@ export type KoreanTaglineTask = {
   attempts: number;
   /** 같은 소개의 마지막 실패 코드(소개가 바뀌었거나 실패가 없으면 null) */
   lastError?: string | null;
+  /** 같은 소개의 품질 거절 횟수(소개가 바뀌었으면 0) — 보낼 원문을 정한다(koreanTaglineSource) */
+  qualityRejections?: number;
 };
 
 /**
@@ -78,8 +97,8 @@ export function koreanQueuePredicates(homeSlugs: readonly string[]) {
   const home = slugArrayPredicate(products.slug, [...homeSlugs]);
   const current = sql`${k.sourceTagline} = ${products.tagline}`;
   const fresh = sql`(${k.productId} is null or ${k.sourceTagline} <> ${products.tagline})`;
-  const allowance = sql`(${k.qualityRejections} < ${MAX_REJECTIONS}
-    or (${home} and ${k.qualityRejections} < ${MAX_REJECTIONS + HOME_EXTRA_REJECTIONS}))`;
+  const allowance = sql`(${k.attempts} < ${MAX_ATTEMPTS} and (${k.qualityRejections} < ${MAX_REJECTIONS}
+    or (${home} and ${k.qualityRejections} < ${MAX_REJECTIONS + HOME_EXTRA_REJECTIONS})))`;
   const retry = sql`(${current} and ${k.errorCode} is not null and ${allowance})`;
   const due = sql`(${k.retryAt} is null or ${k.retryAt} <= now())`;
   // A bounded alternative-model review preserves the original quality history.
@@ -144,17 +163,19 @@ export async function pendingKoreanTaglines(limit: number, homeSlugs: readonly s
     productId: products.id, name: products.name, tagline: products.tagline, repoUrl: products.repoUrl,
     attempts: sql<number>`case when ${same} then ${k.attempts} else 0 end`,
     lastError: sql<string | null>`case when ${same} then ${k.errorCode} end`,
+    qualityRejections: sql<number>`case when ${same} then ${k.qualityRejections} else 0 end`,
   }).from(products)
     .leftJoin(k, eq(k.productId, products.id))
     .where(and(
       inArray(products.status, PUBLIC),
       NEEDS_KOREAN,
       ready,
+      NOT_UNSETTLED,
     ))
     .orderBy(tier, sql`case when ${listedAt} > now() - make_interval(days => ${NEW_DAYS}::int) then ${listedAt} end desc nulls last`,
       sql`${products.stars} desc nulls last`, desc(products.id))
     .limit(limit);
-  return rows.map((row) => ({ ...row, attempts: Number(row.attempts) }));
+  return rows.map((row) => ({ ...row, attempts: Number(row.attempts), qualityRejections: Number(row.qualityRejections) }));
 }
 
 /** Restore every original target under current general/home eligibility; dispatch still rechecks full raw source/cache hashes. */
@@ -167,9 +188,11 @@ export async function pendingKoreanTaglineBatch(memberKeys: readonly string[], h
     const rows = await db.select({ productId: products.id, name: products.name, tagline: products.tagline, repoUrl: products.repoUrl,
       attempts: sql<number>`case when ${current} then ${productKoreanTaglines.attempts} else 0 end`,
       lastError: sql<string | null>`case when ${current} then ${productKoreanTaglines.errorCode} end`,
+      qualityRejections: sql<number>`case when ${current} then ${productKoreanTaglines.qualityRejections} else 0 end`,
     }).from(products).leftJoin(productKoreanTaglines, eq(productKoreanTaglines.productId, products.id))
       .where(and(inArray(products.id, ids), inArray(products.status, PUBLIC), NEEDS_KOREAN, ready));
-    return rows.length === ids.length ? ids.map(id => rows.find(row => row.productId === id)!) : null;
+    return rows.length === ids.length ? ids.map(id => rows.find(row => row.productId === id)!)
+      .map(row => ({ ...row, attempts: Number(row.attempts), qualityRejections: Number(row.qualityRejections) })) : null;
   });
 }
 
@@ -189,13 +212,14 @@ export async function pendingKoreanTaglineRecovery(limit: number, homeSlugs: rea
     productId: products.id, name: products.name, tagline: products.tagline, repoUrl: products.repoUrl,
     attempts: sql<number>`case when ${same} then ${k.attempts} else 0 end`,
     lastError: sql<string | null>`case when ${same} then ${k.errorCode} end`,
+    qualityRejections: sql<number>`case when ${same} then ${k.qualityRejections} else 0 end`,
   }).from(products).leftJoin(k, eq(k.productId, products.id))
-    .where(and(inArray(products.status, PUBLIC), NEEDS_KOREAN, recoveryReady,
+    .where(and(inArray(products.status, PUBLIC), NEEDS_KOREAN, recoveryReady, NOT_UNSETTLED,
       excluded.length ? notInArray(products.id, excluded) : undefined))
     .orderBy(tier, sql`case when ${listedAt} > now() - make_interval(days => ${NEW_DAYS}::int) then ${listedAt} end desc nulls last`,
       sql`${products.stars} desc nulls last`, desc(products.id))
     .limit(Math.min(8, Math.floor(limit)));
-  return rows.map(row => ({ ...row, attempts: Number(row.attempts) }));
+  return rows.map(row => ({ ...row, attempts: Number(row.attempts), qualityRejections: Number(row.qualityRejections) }));
 }
 
 export type KoreanTaglineResult =
@@ -252,7 +276,7 @@ export type KoreanTaglineProgress = {
   waiting: number;
   /** 게이트웨이 실패로 다시 기다리는 것 */
   failed: number;
-  /** 검사에서 MAX_REJECTIONS 번 버려 손을 뗀 것 — 원문이 보인다 */
+  /** 검사에서 MAX_REJECTIONS 번 버렸거나 MAX_ATTEMPTS 번 시도해 손을 뗀 것 — 원문이 보인다 */
   gaveUp: number;
   /** 지금 소개의 마지막 시도가 검사에서 버려진 것, 사유별(rejected: 를 뗀 사유) */
   rejected: { reason: string; count: number }[];
@@ -267,8 +291,10 @@ export async function koreanTaglineProgress(): Promise<KoreanTaglineProgress> {
     eligible: sql<number>`count(*)::int`,
     done: sql<number>`(count(*) filter (where ${current} and ${k.errorCode} is null))::int`,
     waiting: sql<number>`(count(*) filter (where ${k.productId} is null or not ${current}))::int`,
-    failed: sql<number>`(count(*) filter (where ${current} and ${k.errorCode} not like 'rejected:%' and ${k.qualityRejections} < ${MAX_REJECTIONS}))::int`,
-    gaveUp: sql<number>`(count(*) filter (where ${current} and ${k.errorCode} is not null and ${k.qualityRejections} >= ${MAX_REJECTIONS}))::int`,
+    failed: sql<number>`(count(*) filter (where ${current} and ${k.errorCode} not like 'rejected:%' and ${k.qualityRejections} < ${MAX_REJECTIONS}
+      and ${k.attempts} < ${MAX_ATTEMPTS}))::int`,
+    gaveUp: sql<number>`(count(*) filter (where ${current} and ${k.errorCode} is not null
+      and (${k.qualityRejections} >= ${MAX_REJECTIONS} or ${k.attempts} >= ${MAX_ATTEMPTS})))::int`,
     lastHour: sql<number>`(count(*) filter (where ${current} and ${k.errorCode} is null and ${k.updatedAt} > now() - interval '1 hour'))::int`,
   }).from(products).leftJoin(k, eq(k.productId, products.id)).where(and(inArray(products.status, PUBLIC), NEEDS_KOREAN));
   const rejected = await db.select({ code: k.errorCode, count: sql<number>`count(*)::int` })
@@ -301,7 +327,8 @@ const koreanWrites = new WeakMap<KoreanTaglineWriteExpectation, {
 }>();
 class KoreanTaglineChanged extends Error { constructor() { super("korean_tagline_input_changed"); } }
 const koreanTaskSchema = z.object({ productId: z.number().int().positive().safe(), name: z.string(), tagline: z.string(),
-  repoUrl: z.string().nullable(), attempts: z.number().int().nonnegative().safe(), lastError: z.string().nullable().optional() }).strict();
+  repoUrl: z.string().nullable(), attempts: z.number().int().nonnegative().safe(), lastError: z.string().nullable().optional(),
+  qualityRejections: z.number().int().nonnegative().safe().optional() }).strict();
 function koreanBatch(value: readonly KoreanTaglineTask[]): KoreanTaglineTask[] {
   const tasks = z.array(koreanTaskSchema).min(1).max(8).parse(structuredClone(value));
   if (new Set(tasks.map(task => task.productId)).size !== tasks.length) throw new Error("invalid_korean_tagline_batch");
@@ -369,7 +396,8 @@ function koreanMember(source: KoreanSource, row: KoreanCache, task: KoreanTaglin
   if (!PUBLIC.includes(source.status as ProductStatus) || !source.needs || source.name !== task.name || source.repoUrl !== task.repoUrl
     || source.tagline !== task.tagline || task.attempts !== (same ? raw!.attempts : 0)
     || (task.lastError ?? null) !== (same ? raw!.error_code : null)
-    || same && (raw!.error_code === null || !row.due || !(Number(raw!.quality_rejections) < MAX_REJECTIONS
+    || task.qualityRejections !== undefined && task.qualityRejections !== (same ? Number(raw!.quality_rejections) : 0)
+    || same && (raw!.error_code === null || !row.due || Number(raw!.attempts) >= MAX_ATTEMPTS || !(Number(raw!.quality_rejections) < MAX_REJECTIONS
       || home.includes(source.slug) && Number(raw!.quality_rejections) < MAX_REJECTIONS + HOME_EXTRA_REJECTIONS))) throw new KoreanTaglineChanged();
   return { productId: source.id, slug: source.slug, sourceIdentityHash: sourceIdentity(source),
     sourceHash: productTaglineKoSourceHash({ name: displayProjectName(source.name, source.repoUrl), tagline: koreanTaglineSource(task) }),

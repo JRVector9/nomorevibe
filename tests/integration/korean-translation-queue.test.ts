@@ -25,7 +25,9 @@ describe("한국어 번역 운영 집계와 실제 선택의 경계", () => {
     const changed = await seed("changed", { sourceTagline: "Old source", errorCode: "rejected:empty",
       qualityRejections: 9, attempts: 12, retryAt: new Date("2100-01-01") });
     await seed("done", { taglineKo: "현재 원문을 옮긴 한국어 소개", errorCode: null, qualityRejections: 6 });
-    const due = await seed("due", { errorCode: "http_502", attempts: 30, retryAt: new Date("2000-01-01") });
+    const due = await seed("due", { errorCode: "http_502", attempts: 11, retryAt: new Date("2000-01-01") });
+    // 같은 원문으로 MAX_ATTEMPTS(12)번 — 게이트웨이 실패만 쌓였어도 더 고르지 않고 운영 확인으로 센다
+    await seed("gateway-exhausted", { errorCode: "invalid_output", attempts: 12, retryAt: new Date("2000-01-01") });
     await seed("future", { errorCode: "http_502", retryAt: new Date("2100-01-01") });
     await seed("normal-four", { errorCode: "rejected:empty", qualityRejections: 4 });
     const homeFour = await seed("home-four", { errorCode: "rejected:empty", qualityRejections: 4 });
@@ -37,15 +39,15 @@ describe("한국어 번역 운영 집계와 실제 선택의 경계", () => {
     await seed("empty", undefined, { tagline: " " });
     const home = ["home-four", "home-five", "home-six"];
     const queue = await koreanTaglineQueue(home);
-    expect(queue).toMatchObject({ eligible: 10, done: 1, ready: 4, retryScheduled: 2, blocked: 3, lastHour: 1 });
+    expect(queue).toMatchObject({ eligible: 11, done: 1, ready: 4, retryScheduled: 2, blocked: 4, lastHour: 1 });
     expect(Number.isFinite(Date.parse(queue.measuredAt))).toBe(true);
     const pending = await pendingKoreanTaglines(20, home);
     expect(pending.map((row) => row.productId).sort((a, b) => a - b)).toEqual([fresh, changed, due, homeFour].sort((a, b) => a - b));
     expect(pending).toHaveLength(queue.ready);
     expect(pending.find((row) => row.productId === changed)).toMatchObject({ attempts: 0, lastError: null });
-    expect(pending.find((row) => row.productId === due)).toMatchObject({ attempts: 30, lastError: "http_502" });
+    expect(pending.find((row) => row.productId === due)).toMatchObject({ attempts: 11, lastError: "http_502", qualityRejections: 0 });
     expect(queue.done + queue.ready + queue.retryScheduled + queue.blocked).toBe(queue.eligible);
-    expect(await koreanTaglineQueue([])).toMatchObject({ eligible: 10, done: 1, ready: 3, retryScheduled: 1, blocked: 5 });
+    expect(await koreanTaglineQueue([])).toMatchObject({ eligible: 11, done: 1, ready: 3, retryScheduled: 1, blocked: 6 });
   });
 
   it("빈 큐도 집계 시각과 실제 0을 돌려준다", async () => {

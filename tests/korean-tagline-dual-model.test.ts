@@ -106,3 +106,11 @@ it("records an actual full-budget recovery timeout as a Qwen attempt instead of 
   expect(m.write.mock.calls[0][0][0].result).toEqual({ kind: "failure", error: "timeout", model: KOREAN_TRANSLATION_QWEN_MODEL });
   expect(m.qwen).toHaveBeenCalledOnce();
 });
+it("counts a solo invalid_output as a quality rejection but leaves a batch invalid_output unattributed", async () => {
+  m.control.mockResolvedValue({ mode: "open" });
+  m.pending.mockResolvedValueOnce([task(1, 2)]).mockResolvedValueOnce([task(2), task(3)]).mockResolvedValue([]);
+  m.gpt.mockResolvedValue({ kind: "result", result: { ok: false, error: "invalid_output" } });
+  await writeKoreanTaglines(ctx()); await writeKoreanTaglines(ctx());
+  const writes = m.write.mock.calls.flatMap(([entries]) => entries);
+  expect(writes.map(e => [e.task.productId, e.result.error])).toEqual([[1, "rejected:invalid_output"], [2, "invalid_output"], [3, "invalid_output"]]);
+});

@@ -35,6 +35,11 @@ const MIN_CALL_MS = 25_000;
 const SLOW_CALL_MS = 35_000;
 /** 이만큼 실패·버림이 쌓인 소개는 혼자 보낸다 — 그것 하나가 옆의 멀쩡한 소개까지 끌고 실패하지 않게 */
 const SOLO_ATTEMPTS = 2;
+/**
+ * 소개 하나만 보냈는데 배열을 못 받았으면(invalid_output) 그 소개 탓이다 — 품질 거절로 세어 한도(MAX_REJECTIONS)에 닿게 한다.
+ * 게이트웨이 실패로 두면 혼자 보낸 같은 소개가 같은 실패로 하루 간격까지 늘려 가며 끝없이 섰다. 묶음의 invalid_output 은 누구 탓인지 몰라 그대로 둔다.
+ */
+export const SOLO_INVALID_OUTPUT = "rejected:invalid_output";
 
 export { taglineSource };
 
@@ -148,7 +153,8 @@ export async function writeKoreanTaglines(ctx: JobContext<null>): Promise<JobOut
           skipped = true; stopped.add(backend); continue;
         }
         const entries = batch.map((task, index): { task: KoreanTaglineTask; result: KoreanTaglineResult } => {
-          if (!result.ok) return { task, result: { kind: "failure", error: result.error, model } };
+          if (!result.ok) return { task, result: { kind: "failure", model,
+            error: batch.length === 1 && result.error === "invalid_output" ? SOLO_INVALID_OUTPUT : result.error } };
           const checked = checkKoreanTagline(result.outputs[index], items[index]);
           return { task, result: checked.ok ? { kind: "success", line: checked.line, model }
             : { kind: "failure", error: `rejected:${checked.reason}`, model } };

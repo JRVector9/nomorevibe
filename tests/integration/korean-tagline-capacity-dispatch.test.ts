@@ -401,7 +401,7 @@ it("preserves the genuine dispatch event INSERT failure with no committed dispat
     }); }], errors); }
 }), 20_000);
 
-it("keeps EOF full-C unknown fenced across changed source and a genuinely re-elected owner boot", exercise(async () => {
+it("keeps EOF full-C unknown fenced across changed source and a genuinely re-elected owner boot while neighbours keep moving", exercise(async () => {
   const { products: [product] } = await seed(); await server(async ({ bodies, setReply }) => {
     setReply(response => { response.end('{"id":"partial"'); });
     expect(await tick()).toMatchObject({ status: "completed" }); expect(bodies).toHaveLength(1);
@@ -413,11 +413,19 @@ it("keeps EOF full-C unknown fenced across changed source and a genuinely re-ele
     await tracked(db.update(products).set({ tagline: "Search and organize documents for teams" }).where(eq(products.id, product.id)));
     const [changed] = await admin`SELECT to_jsonb(t) AS row FROM product_korean_taglines t WHERE product_id=${product.id}`;
     expect(changed.row).toMatchObject({ attempts: 1 }); // original cache is historical; new source is eligible without mutating it
-    expect((await tracked(pendingKoreanTaglines(16, []))).find(task => task.productId === product.id)?.attempts).toBe(0);
-    expect(await tick()).toMatchObject({ status: "deferred", reason: "model_capacity" }); expect(bodies).toHaveLength(1);
+    // 결과 모를 요청의 구성원은 원문이 바뀌어도 고르지 않는다 — 예전에는 매 틱 이 머리를 골라 잡 전체가 capacity deferred 로 멈췄다
+    expect((await tracked(pendingKoreanTaglines(16, []))).find(task => task.productId === product.id)).toBeUndefined();
+    expect(await tick()).toMatchObject({ status: "completed", done: true }); expect(bodies).toHaveLength(1);
     expect((await admin`SELECT to_jsonb(t) AS row FROM product_korean_taglines t WHERE product_id=${product.id}`)[0].row).toEqual(changed.row);
     expect((await admin`SELECT to_jsonb(r) AS row FROM model_capacity_requests r WHERE request_id=${unknown.row.request_id}::uuid`)[0].row).toEqual(unknown.row);
     expect(await admin`SELECT request_id FROM model_capacity_requests WHERE owner_instance_id=${prefix}`).toHaveLength(1);
+    // 뒤의 소개는 남은 자리로 그대로 옮겨진다. unknown 은 운영 회수 전까지 그대로 남는다
+    setReply(response => { response.end(JSON.stringify(replyBody())); });
+    const { products: [neighbour] } = await seed();
+    expect(await tick()).toMatchObject({ status: "completed", done: true }); expect(bodies).toHaveLength(2);
+    expect((await admin`SELECT tagline_ko,error_code FROM product_korean_taglines WHERE product_id=${neighbour.id}`)[0])
+      .toEqual({ tagline_ko: "문서를 관리하는 도구", error_code: null });
+    expect((await admin`SELECT to_jsonb(r) AS row FROM model_capacity_requests r WHERE request_id=${unknown.row.request_id}::uuid`)[0].row).toEqual(unknown.row);
   });
 }), 20_000);
 
