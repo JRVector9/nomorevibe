@@ -5,18 +5,21 @@ import { useRouter } from "next/navigation";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import { applyReviewRoutingPreset } from "@/lib/crawl/review-routing-preset";
 import { ModelRows, type ModelOption } from "../settings/ModelRows";
-import { buttonDashed, buttonQuiet, hintClass, SettingsCard } from "../settings/Switch";
+import { buttonDashed, hintClass, SettingsCard } from "../settings/Switch";
 import { saveReviewModels, type ModelSaveState } from "./actions";
 
-export function ReviewModelsForm({ settings, version, firstChoices, secondChoices }: {
+export function ReviewModelsForm({ settings, version, firstChoices, secondChoices, saveAction = saveReviewModels }: {
   settings: CrawlSettings; version: string; firstChoices: ModelOption[]; secondChoices: ModelOption[];
+  saveAction?: typeof saveReviewModels;
 }) {
   const router = useRouter();
   const [draft, setDraft] = useState(settings);
   const [generation, setGeneration] = useState(0);
   const [formVersion, setFormVersion] = useState(version);
   const [state, action, pending] = useActionState<ModelSaveState, FormData>(async (previous, form) => {
-    const result = await saveReviewModels(previous, form);
+    let result: ModelSaveState;
+    try { result = await saveAction(previous, form); }
+    catch { return { issues: ["저장 결과를 확인하지 못했습니다. 새로고침해 현재 설정을 확인해주세요."] }; }
     if (result?.ok && result.version) { setFormVersion(result.version); router.refresh(); }
     return result;
   }, null);
@@ -48,9 +51,20 @@ export function ReviewModelsForm({ settings, version, firstChoices, secondChoice
         </fieldset>
       </div>
       <p className={hintClass}>목록은 모델 선택을 돕습니다. 실제 호출은 해당 워커의 연결·실행 계약·용량 검증을 통과해야 합니다.</p>
-      {state?.issues && <ul role="alert" className="text-[13px] text-down">{state.issues.map((issue, index) => <li key={index}>{issue}</li>)}</ul>}
-      {state?.ok && <p role="status" className="text-[13px] text-up">모델 설정을 저장했습니다.</p>}
-      <button type="submit" disabled={pending} className={buttonQuiet}>{pending ? "저장 중…" : "검수 모델 저장"}</button>
+      <ModelSaveNotice state={pending ? null : state} />
+      <div className="flex flex-wrap items-center gap-3 border-t border-line pt-4">
+        <button type="submit" disabled={pending}
+          className="inline-flex min-h-10 items-center justify-center rounded-[9px] bg-accent-solid px-5 text-[14px] font-semibold text-white hover:brightness-110 disabled:opacity-50">{pending ? "저장 중…" : "검수 모델 저장"}</button>
+        <p className={hintClass}>모델을 추가·제거한 뒤 저장해야 적용됩니다.</p>
+      </div>
     </SettingsCard>
   </form>;
+}
+
+export function ModelSaveNotice({ state }: { state: ModelSaveState }) {
+  if (state?.issues) return <div role="alert" className="rounded-lg border border-down/30 bg-down/5 p-3 text-[13px] text-down">
+    <p className="font-semibold">{state.issues.some(issue => issue.includes("다른 곳에서 설정이 바뀌었습니다")) ? "저장 거절 · 다른 곳에서 설정을 수정했습니다" : "저장하지 못했습니다"}</p>
+    <ul>{state.issues.map((issue, index) => <li key={index}>{issue}</li>)}</ul>
+  </div>;
+  return state?.ok ? <p role="status" className="rounded-lg border border-up/30 bg-up/5 p-3 text-[13px] text-up">모델 설정을 저장했습니다.</p> : null;
 }
