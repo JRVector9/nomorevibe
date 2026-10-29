@@ -142,3 +142,6 @@ git grep -o -E '(configuredModel|configuredModelDefinition|configuredModelForPro
 
 - unit(2)의 운영자 조치 계약은 옛 gpt-5.5 fixture에 provider metadata가 없어 Codex 계정을 알 수 없다는 4실패였다. 실제 UI의 이름 추측을 되살리지 않고, 그 역사 관측 fixture에 명시적 modelOptions(provider)을 제공해 기존 문구/계정 집계 계약을 유지한다. 해당 계약 시험을 scoped 목록에 추가한다.
 - 발견 시험 복원 직후 diff 검수에서 같은 제목의 앞선 기존 시험까지 잘린 편집 실수를 확인했다. 즉시 git show origin/main의 정확한 파일 내용으로 되돌렸다. 이 정정은 후속 커밋으로 보존하며, 최종 origin/main 대비 해당 파일 diff는 0이다.
+
+- CI 40801093616: unit 2묶음·ledger·DB 5묶음·build/typecheck/lint는 통과했고 integration(4)의 pipeline-control 1시험만 실패(해당 묶음 57파일 중 56파일·660시험 통과). CLI fixture가 제품 번역도 ABCLLM_MODEL을 쓴다고 기대한 부분이다. 독립 PRODUCT_TRANSLATION_MODEL 환경변수를 fixture에 명시하고 그 값으로 route 기대를 검사하도록 고쳤다. 실제 capacity open 거절·계약 검사는 그대로다.
+- 구현 최종 로컬 다섯 명령 재실행: tsc exit 0, 지정 8파일 37시험, 모델 스크립트 **69파일 985시험**, review-stall **23파일 339시험 + Python 71시험**, 모든 명령 exit 0. 측정은 **158→99**. 이 뒤의 변경은 위 CI fixture 한 곳과 이 검증 이력 문서다.
