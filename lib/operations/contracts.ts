@@ -12,6 +12,9 @@ export function modelConfigSchemaFor(options: readonly ClassificationModelOption
   return z.object({ primary: model, fallback: model.nullable() }).strict()
     .refine(value => value.primary.model !== value.fallback?.model, '우선·예비 모델이 같습니다.');
 }
+// Restore a safely shaped old selection without executing it or silently replacing it after a registry change.
+const storedModel = z.object({ model: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$/), effort: z.enum(['high', 'xhigh']) }).strict();
+export const storedModelConfigSchema = z.object({ primary: storedModel, fallback: storedModel.nullable() }).strict();
 export const modelConfigSchema = modelConfigSchemaFor(CLASSIFICATION_MODEL_OPTIONS);
 export type ModelConfig = z.infer<typeof modelConfigSchema>;
 export const DEFAULT_CONFIG: ModelConfig = classificationDefaultConfig();

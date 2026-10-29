@@ -1,6 +1,6 @@
 import { translateKoreanTaglinesWithModelCapacity, type KoreanTaglineCapacityResult } from "@/lib/domain/products/korean-tagline-model-capacity";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
-import { TRANSLATE_MODEL } from "@/lib/crawl/translate";
+import { KOREAN_TAGLINE_MODEL } from "@/lib/crawl/translate";
 import { displayProjectName } from "@/lib/domain/products/display-name";
 import { checkKoreanTagline } from "@/lib/domain/products/korean-tagline";
 import { homeListSlugs, pendingKoreanTaglines, pendingKoreanTaglineRecovery, recordKoreanTaglines, koreanTaglineSource as taglineSource, type KoreanTaglineResult, type KoreanTaglineTask } from "@/lib/domain/products/korean-taglines";
@@ -99,7 +99,7 @@ export async function writeKoreanTaglines(ctx: JobContext<null>): Promise<JobOut
         }
       }
       const work = [
-        ...(gptBatch.length ? [{ backend: "gpt" as const, model: TRANSLATE_MODEL, batch: gptBatch, recovery: false }] : []),
+        ...(gptBatch.length ? [{ backend: "gpt" as const, model: KOREAN_TAGLINE_MODEL, batch: gptBatch, recovery: false }] : []),
         ...(qwenBatch.length ? [{ backend: "qwen" as const, model: KOREAN_TRANSLATION_QWEN_MODEL, batch: qwenBatch, recovery: recoveryBatch }] : []),
       ];
       if (!work.length) {

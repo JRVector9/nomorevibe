@@ -20,6 +20,8 @@ import { koreanTranslationRuntimePrompt } from "./korean-translation-prompts";
  * - 게이트웨이 앞의 Cloudflare 가 파이썬 기본 요청은 막지만(1010) Node fetch 는 통과한다
  */
 export const TRANSLATE_MODEL = configuredModel("reason-translate");
+export const KOREAN_TAGLINE_MODEL = configuredModel("product-tagline-ko");
+export const SEARCH_QUERY_MODEL = configuredModel("search-query-translate");
 /** Public field translation can select a model without changing reason, Korean tagline or live search translation. */
 export const PRODUCT_TRANSLATION_MODEL = configuredModel("product-translate");
 
@@ -152,7 +154,7 @@ export function productTaglineKoSourceHash(item: ProductTaglineKoGatewayItem): s
 
 export async function translateTaglinesToKorean(
   items: { name: string; tagline: string }[], timeoutMs: number, request: typeof fetch = fetch, signal?: AbortSignal,
-  model = TRANSLATE_MODEL,
+  model = KOREAN_TAGLINE_MODEL,
 ): Promise<KoreanTaglineBatch> {
   if (!items.length || items.length > KOREAN_TRANSLATION_MAX_ITEMS ||
     items.reduce((count, item) => count + item.tagline.length, 0) > KOREAN_TRANSLATION_LEGACY_MAX_CHARS)
@@ -304,7 +306,7 @@ function queryChatBody(query: string) {
   return { routeId: "search-query-translate" as const, system: QUERY_SYSTEM, user: `${query}${glossaryHints(query)}`, temperature: 0, maxTokens: modelLimits("search-query-translate").maxTokens };
 }
 export async function translateQueryToEnglish(query: string, timeoutMs: number, request: typeof fetch = fetch): Promise<{ ok: true; keywords: string } | { ok: false; error: string }> {
-  const result = await chat(queryChatBody(query), timeoutMs, request);
+  const result = await chat(queryChatBody(query), timeoutMs, request, undefined, SEARCH_QUERY_MODEL);
   if (!result.ok) return result;
   const keywords = parseQueryTranslation(result.content);
   return keywords ? { ok: true, keywords } : { ok: false, error: "invalid_output" };
@@ -328,7 +330,7 @@ function chineseQueryChatBody(query: string, sourceLocale: "zh-Hans" | "zh-Hant"
 export async function translateChineseQueryToEnglish(
   query: string, sourceLocale: "zh-Hans" | "zh-Hant", timeoutMs: number, request: typeof fetch = fetch,
 ): Promise<{ ok: true; keywords: string } | { ok: false; error: string }> {
-  const result = await chat(chineseQueryChatBody(query, sourceLocale), timeoutMs, request);
+  const result = await chat(chineseQueryChatBody(query, sourceLocale), timeoutMs, request, undefined, SEARCH_QUERY_MODEL);
   if (!result.ok) return result;
   const keywords = parseQueryTranslation(result.content);
   return keywords ? { ok: true, keywords } : { ok: false, error: "invalid_output" };

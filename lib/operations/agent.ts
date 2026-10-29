@@ -1,12 +1,11 @@
-import { classificationModelOptions, classificationModelProvider } from "./classification-models";
-import { modelForPurpose } from "@/lib/llm/model-registry";
+import { classificationModelOptions, classificationModelProvider, knownClassificationProvider } from "./classification-models";
 import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, renameSync, rmSync, existsSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { classifyCategories, defaultRun, failureReason, OUTPUT_SCHEMA, type CliRun, type CliResult } from '@/lib/crawl/classify';
-import { classifyPayloadSchema, DEFAULT_CONFIG, modelConfigSchema, type AgentStatus, type ClassificationAuthority } from './contracts';
+import { classifyPayloadSchema, DEFAULT_CONFIG, modelConfigSchema, storedModelConfigSchema, type AgentStatus, type ClassificationAuthority } from './contracts';
 import { stripAnsi } from '@/lib/vendor/deppy-aibox/core';
 import { claudeProvider } from '@/lib/vendor/deppy-aibox/claude';
 import { claudeClassificationArgs, isolatedClaudeEnv, killProcessGroup, parseClaudeClassificationResult, runClaude, validateClaudeCredential } from './claude';
@@ -40,7 +39,7 @@ export class ConnectAgent {
       this.credential = saved.credential ? validateCredential(saved.credential) : null;
       this.claudeCredential = saved.claudeCredential ? validateClaudeCredential(saved.claudeCredential) : null;
       this.appliedGeneration = saved.appliedGeneration;
-      this.state = { ...this.state, ...saved.state, config: modelConfigSchema.parse(saved.state.config), busy: null, activity: null, connection: null, verification: null };
+      this.state = { ...this.state, ...saved.state, config: storedModelConfigSchema.parse(saved.state.config), busy: null, activity: null, connection: null, verification: null };
       this.state.connected = !!this.credential; this.state.claudeConnected = !!this.claudeCredential;
       if (this.credential) this.writeAuth(this.home, this.credential);
     }
@@ -50,18 +49,20 @@ export class ConnectAgent {
   snapshot(): AgentStatus {
     const classificationContracts = [this.state.config.primary, this.state.config.fallback].flatMap(model => {
       if (!model) return [];
-      const contract = resolveCliServingContract(PUBLICATION_CLASSIFY_ROUTE, classificationModelProvider(model.model), model.model);
+      const provider = knownClassificationProvider(model.model);
+      if (!provider) return [];
+      const contract = resolveCliServingContract(PUBLICATION_CLASSIFY_ROUTE, provider, model.model);
       return contract ? [contract] : [];
     });
     return structuredClone({...this.state, modelOptions: classificationModelOptions(), defaultModelConfig: DEFAULT_CONFIG, classificationCapacityVersion: 1, classificationContracts, serverNow: Date.now(),
-      configReady: this.state.configVersion > 0 && this.appliedGeneration === this.state.generation, classifyReady: this.canClassify()});
+      configReady: this.state.configVersion > 0 && this.appliedGeneration === this.state.generation && modelConfigSchema.safeParse(this.state.config).success, classifyReady: this.canClassify()});
   }
   /**
    * 분류는 한 번이라도 적용한 설정이 있고 계정이 하나라도 있으면 한다. 다시 로그인해 generation 이 올라도 막지 않는다 —
    * 2026-10-08 Codex 재로그인 뒤 적용 전 한 시간 동안 잘 돌던 Claude 예비까지 거부해 발행이 2건에 그쳤다.
    * 새 계정에서 안 되는 모델은 호출이 실패하고 다음 모델로 넘어간다. configReady 는 "새 계정으로 다시 검사·적용"이 남았는지만 뜻한다.
    */
-  private canClassify() { return !this.shuttingDown && this.state.configVersion > 0 && (!!this.credential || !!this.claudeCredential); }
+  private canClassify() { return !this.shuttingDown && this.state.configVersion > 0 && modelConfigSchema.safeParse(this.state.config).success && (!!this.credential || !!this.claudeCredential); }
   private writeAuth(home: string, value: string) {
     const file = join(home, 'auth.json'); writeFileSync(file+'.tmp', value, { mode: 0o600 }); renameSync(file+'.tmp',file); chmodSync(file,0o600);
   }
@@ -220,8 +221,11 @@ export class ConnectAgent {
     this.available();
     if(provider!=='codex'&&provider!=='claude')throw new Error('지원하지 않는 AI 제공자입니다.');
     if(provider==='codex'?!this.credential:!this.claudeCredential)throw new Error('계정을 먼저 연결해주세요.');
-    const selected=[this.state.config.primary,this.state.config.fallback].find(m=>m&&(classificationModelProvider(m.model)==='claude-cli')===(provider==='claude'));
-    const model=selected??{model:modelForPurpose(provider==='claude'?'classify-claude':'classify-primary').model,effort:'high' as const};
+    const expectedProvider=provider==='claude'?'claude-cli':'codex-cli';
+    const selected=[this.state.config.primary,this.state.config.fallback].find(m=>m&&knownClassificationProvider(m.model)===expectedProvider);
+    const fallback=classificationModelOptions().find(option=>option.provider===expectedProvider);
+    if(!selected&&!fallback)throw new Error('이 제공자의 모델이 등록되어 있지 않습니다.');
+    const model=selected??{model:fallback!.model,effort:'high' as const};
     this.state.busy='account_check';
     await this.manualModelAdmission();
     void (async()=>{

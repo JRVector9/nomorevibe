@@ -38,7 +38,7 @@ node --import tsx -e 'const {readModelRegistry}=require("./lib/llm/model-registr
 
 1. 기존 레지스트리·env·검증 계약·capacity policy의 읽기 전용 사본과 현재 세대/unknown 요청을 보존한다. 운영자가 승인된 readback 절차로 M1 모델 id, revision, `/v1/models`의 `[m1]` 장비 label, 요청 라우팅, context/output 제한을 확인한다. GPU3090에 같은 이름의 모델이 있어도 label은 `[m1]` 그대로여야 한다. 외부 abcLLM의 장비 label 보존 지원도 필요하다(기존 PR7 경로).
 2. 전체 JSON에서 `m1:translation` entry의 `model`·`family`·필요한 주소/표시/리소스만 실제 값으로 바꾼다. provider=abcllm, equipment=m1, gatewayLabel=m1은 유지한다. 직접 M1 relay로 전환하려면 이 번역 어댑터와 다른 전송이므로 임의로 provider만 바꾸지 않는다.
-3. 제품 번역 소비자에 `MODEL_REGISTRY_CONFIG`와 `PRODUCT_TRANSLATION_MODEL_KEY=m1:translation`을 설정한다. 웹 표시도 같은 설정을 받는다. 오래된 `PRODUCT_TRANSLATION_MODEL=[m1] qwen...`은 삭제/대체 대상이며 KEY 설정이 있으면 우선순위상 무시된다. KEY 없이 호환 변수만 사용하는 운영 절차라면 `PRODUCT_TRANSLATION_MODEL=[m1] <실제 Gemma id>`로 바꾼다. 사유·한국어 소개·검색 질의를 함께 바꾸려고 `ABCLLM_MODEL`을 덮지 않는다.
+3. 제품 번역 소비자에 `MODEL_REGISTRY_CONFIG`와 `PRODUCT_TRANSLATION_MODEL_KEY=m1:translation`을 설정한다. 웹 표시도 같은 설정을 받는다. 오래된 `PRODUCT_TRANSLATION_MODEL=[m1] qwen...`은 삭제/대체 대상이며 KEY 설정이 있으면 우선순위상 무시된다. KEY 없이 호환 변수만 사용하는 운영 절차라면 `PRODUCT_TRANSLATION_MODEL=[m1] <실제 Gemma id>`로 바꾼다. 사유·한국어 소개·검색 질의를 함께 바꾸려고 `ABCLLM_MODEL`을 덮지 않는다. 한국어 소개와 검색 질의도 각각 `selections["product-tagline-ko"]`, `selections["search-query-translate"]`로 독립 선택할 수 있다. 대상 entry의 purposes에도 해당 용도를 추가하고, 우선순위가 높은 공용 ABCLLM_MODEL/KEY override를 확인한다. 요청 모델·용량 route·결과 기록·운영자 표시는 각 선택을 함께 따른다.
 4. `product-translate`의 정확한 scoped wire 모델 이름·endpoint·responseModel·deploymentRevision에 맞는 `ABCLLM_SERVING_CONTRACTS`와 해당 capacity route를 준비한다. 기존 strict terminal opt-in, 서버 readback hash, 물리 그룹·토큰 예산은 그대로 요구된다. 계약이 없으면 호출은 deferred이며 레지스트리 등록만으로 OPEN/ready가 되지 않는다. M1은 독립 장비 예산·단일 물리 슬롯을 유지한다.
 5. 실제 적용은 기존 감사된 DRAINING → 검증된 계약/정책 → OPEN 절차와 배포 runbook을 따른다. 이미 전송된 요청과 unknown은 원래 세대/모델/정책에 남겨 둔다. 레지스트리 이름을 바꿨다고 취소·정산·해제·재전송하지 않는다. 호환 predecessor 판단도 기존 용량 검증을 그대로 거친다.
 6. 소비자 프로세스가 읽은 키/모델, M1 실제 dispatch, strict terminal, 번역 품질 검사와 저장 model label을 확인한다. 설치·설정·OPEN만으로 참여 완료라고 기록하지 않는다.
@@ -55,7 +55,7 @@ AI2의 새 직접 모델 선택지는 `model: gpu3090:review`, provider=local-di
 
 ## 검증과 운영자 화면
 
-`/admin/models`의 기존 단계 표는 실제 소비자와 같은 모델 선택을 표시한다. 제품 번역은 `PRODUCT_TRANSLATION_MODEL`의 독립 선택을 보여 준다. `등록된 모델 설정`을 펼치면 현재 웹 프로세스의 키·표시 이름·provider·주소·요청 이름·모델 상한을 본다. 개별 env override는 단계 표를 확인한다. connect 모델 선택과 provider 표시는 서버가 전한 레지스트리 metadata를 사용한다.
+`/admin/models`의 기존 단계 표는 실제 소비자와 같은 모델 선택을 표시한다. 제품 번역은 `PRODUCT_TRANSLATION_MODEL`의 독립 선택을 보여 준다. `등록된 모델 설정`을 펼치면 현재 웹 프로세스의 키·표시 이름·provider·주소·요청 이름·모델 상한을 본다. 개별 env override는 단계 표를 확인한다. connect 모델 선택과 provider 표시는 서버가 전한 레지스트리 metadata를 사용한다. registry 교체로 저장된 옛 CLI 선택이 목록에서 사라져도 인증·기존 선택을 삭제하거나 새 기본값으로 자동 적용하지 않는다. 선택을 화면에 보존하고 실행/준비를 보류하며, 새 등록 모델을 선택·검사·적용한 뒤 분류를 재개한다.
 
 ```bash
 scripts/verify-model-config.sh

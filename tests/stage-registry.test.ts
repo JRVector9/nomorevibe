@@ -148,7 +148,7 @@ describe("모델 자리 — 설정만으로 정해진다", () => {
     embedding: async () => (await import("@/lib/domain/products/embedding")).EMBEDDING_MODEL,
     "product-translate": async () => (await import("@/lib/crawl/translate")).PRODUCT_TRANSLATION_MODEL,
     "reason-translate": async () => (await import("@/lib/crawl/translate")).TRANSLATE_MODEL,
-    "tagline-ko": async () => (await import("@/lib/crawl/translate")).TRANSLATE_MODEL,
+    "tagline-ko": async () => (await import("@/lib/crawl/translate")).KOREAN_TAGLINE_MODEL,
     "intro-check": async () => (await import("@/lib/domain/products/intro-check")).INTRO_CHECK_MODEL,
   };
 

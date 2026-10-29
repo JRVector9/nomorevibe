@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-const admission = vi.hoisted(() => vi.fn(async () => {}));
+const admission = vi.hoisted(() => vi.fn<(value: {routeId: string; model: string}) => Promise<void>>(async () => {}));
 vi.mock("@/lib/llm/text-capacity-admission", () => ({ assertTextModelAdmission: admission }));
 
 beforeEach(() => {
@@ -56,4 +56,25 @@ it("passes an explicit product model to both admission and legacy HTTP without m
   expect(admission).toHaveBeenCalledWith({ routeId: "product-translate", model: "comparison-fixture" });
   expect(TRANSLATE_MODEL).toBe("shared-text-fixture");
   expect(PRODUCT_TRANSLATION_MODEL).toBe("configured-product-fixture");
+});
+
+it("keeps per-purpose translation selections aligned with request models and admission", async () => {
+  vi.stubEnv("ABCLLM_MODEL", undefined);
+  const { DEFAULT_MODEL_DEFINITIONS } = await import("@/lib/llm/model-registry");
+  vi.stubEnv("MODEL_REGISTRY_CONFIG", JSON.stringify({ version: 1, models: DEFAULT_MODEL_DEFINITIONS.map(model =>
+    model.key === "m1:translation" ? { ...model, purposes: [...model.purposes, "product-tagline-ko", "search-query-translate"] } : model),
+    selections: { "product-tagline-ko": "m1:translation", "search-query-translate": "m1:translation" } }));
+  const { translateProductFields, translateToKorean, translateTaglinesToKorean, translateQueryToEnglish } = await import("@/lib/crawl/translate");
+  const recorded = recorder();
+  await translateProductFields(items, 1000, recorded.request);
+  await translateToKorean(["Manage documents"], 1000, recorded.request);
+  await translateTaglinesToKorean([{ name: "Doc", tagline: "Manage documents" }], 1000, recorded.request);
+  await translateQueryToEnglish("문서 도구", 1000, recorded.request);
+  expect(recorded.bodies.map(body => body.model)).toEqual([
+    "[m1] gemma4-26b", "[MLX] gpt-oss-120b", "[m1] gemma4-26b", "[m1] gemma4-26b",
+  ]);
+  expect(admission.mock.calls.map(([value]) => value)).toEqual([
+    { routeId: "product-translate", model: "[m1] gemma4-26b" }, { routeId: "reason-translate", model: "[MLX] gpt-oss-120b" },
+    { routeId: "product-tagline-ko", model: "[m1] gemma4-26b" }, { routeId: "search-query-translate", model: "[m1] gemma4-26b" },
+  ]);
 });

@@ -84,7 +84,7 @@ export const JOB_HOW: Readonly<Record<string, string>> = {
   "product-search-verify": "모델이 적은 검색 키워드를 다른 모델이 검수합니다.",
   "product-embedding": "제품 글을 의미 검색 벡터로 바꿉니다. 키워드가 바뀌면 다시 임베딩합니다. 게이트웨이를 쓰지 않습니다.",
   "product-repo-review": "저장소가 사라진 공개 제품의 github.com 을 다시 열어 정말 없으면 내립니다(5분마다 8건, 하루 100건까지). 옮겨 간 흔적이 있으면 사람 확인으로 남깁니다.",
-  "product-tagline-ko": "전용 실행 줄에서 공개 제품 소개를 한국어 한 줄로 옮깁니다(최대 8건·3,600자). GPT-OSS와 GPU Qwen이 서로 다른 항목을 맡고, 새 제품·홈에 보이는 제품이 먼저입니다.",
+  "product-tagline-ko": "전용 실행 줄에서 공개 제품 소개를 한국어 한 줄로 옮깁니다(최대 8건·3,600자). 게이트웨이 모델과 직접 연결 모델이 서로 다른 항목을 맡고, 새 제품·홈에 보이는 제품이 먼저입니다.",
   "product-translate": "보이는 공개 제품의 정보를 정해진 양만큼 번역합니다.",
   "product-intro-check": "AI 소개와 쓸모없어 보이는 메이커 소개를 근거와 대조합니다. 근거로 알 수 없으면 사람 확인으로 남깁니다.",
   "grok-session-check": "Grok 로그인 토큰이 만료되지 않게 가장 짧은 호출을 한 번 합니다(심사에 Grok 을 쓸 때만).",

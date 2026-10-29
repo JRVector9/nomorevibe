@@ -8,8 +8,8 @@ import { formatAgo } from "@/lib/format/time";
 import { jobHref } from "../action-links";
 import type { OwnerContext, WorkOwners } from "../work-owners";
 import { WorkOwnerButtons } from "./WorkOwnerButtons";
-import { TRANSLATE_MODEL } from "@/lib/crawl/translate";
-import { KOREAN_TRANSLATION_LEGACY_MAX_CHARS, KOREAN_TRANSLATION_MAX_ITEMS,
+import { KOREAN_TAGLINE_MODEL } from "@/lib/crawl/translate";
+import { KOREAN_TRANSLATION_LEGACY_MAX_CHARS, KOREAN_TRANSLATION_MAX_ITEMS, KOREAN_TRANSLATION_QWEN_MODEL, KOREAN_TRANSLATION_QWEN_SERVER,
   koreanTranslationMaxOutputTokens, koreanTranslationQwenEnabled, koreanTranslationQwenRecoveryEnabled } from "@/lib/crawl/korean-translation-config";
 
 const JOB = "product-tagline-ko";
@@ -53,7 +53,7 @@ export function KoreanTranslationStatus({ queue, owners, runtime, hasLastError, 
     <p className="dash-note">번역 요청 한도: 최대 {KOREAN_TRANSLATION_MAX_ITEMS}건·소개 합계 {n(KOREAN_TRANSLATION_LEGACY_MAX_CHARS)}자,
       출력 {n(koreanTranslationMaxOutputTokens(1))}~{n(koreanTranslationMaxOutputTokens(KOREAN_TRANSLATION_MAX_ITEMS))}토큰.
       {" "}엄격 용량 제어에서는 기존 요청 한도를 유지합니다.</p>
-    <p className="dash-note">사용 모델 설정: {TRANSLATE_MODEL}{koreanTranslationQwenEnabled() ? " + gpu3090 Qwen 직접 연결" : " (Qwen 추가 연결 꺼짐)"}.
+    <p className="dash-note">사용 모델 설정: {KOREAN_TAGLINE_MODEL}{koreanTranslationQwenEnabled() ? ` + ${KOREAN_TRANSLATION_QWEN_SERVER} · ${KOREAN_TRANSLATION_QWEN_MODEL} 직접 연결` : " (Qwen 추가 연결 꺼짐)"}.
       {koreanTranslationQwenRecoveryEnabled() && " 품질 검사 기준을 유지하며 한도 도달 항목을 Qwen으로 제한 재검토합니다."}</p>
     {stats ? <dl className="mt-3 grid grid-cols-2 gap-3 text-[13px] sm:grid-cols-4">
       <div><dt className="text-fg-3">즉시 처리</dt><dd className="font-mono text-lg">{n(stats.ready)}건</dd></div>

@@ -1,10 +1,13 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { TextModelStagesTable } from "@/app/(operator)/admin/models/TextModelStagesTable";
 import { ModelRegistryTable } from "@/app/(operator)/admin/models/ModelRegistryTable";
 import { DEFAULT_MODEL_DEFINITIONS } from "@/lib/llm/model-registry";
 import { classificationDefaultConfig, classificationModelOptions, classificationModelProvider } from "@/lib/operations/classification-models";
 import { modelConfigSchemaFor } from "@/lib/operations/contracts";
+
+afterEach(() => vi.unstubAllEnvs());
 
 describe("configured operator model identities", () => {
   it("renders equipment keys and changed request/URL/resource settings from the server registry", () => {
@@ -13,6 +16,21 @@ describe("configured operator model identities", () => {
     const html = renderToStaticMarkup(createElement(ModelRegistryTable, { env }));
     for (const value of ["m1:translation", "[m1] replacement", "https://replacement.example/v1", "2,048", "기한 설정 연결"]) expect(html).toContain(value);
     expect(html).not.toContain("qwen3.8-flash-next");
+  });
+  it("shows independent Korean tagline and query selections from the same runtime constants", async () => {
+    vi.stubEnv("ABCLLM_MODEL", undefined);
+    vi.stubEnv("MODEL_REGISTRY_CONFIG", JSON.stringify({ version: 1, models: DEFAULT_MODEL_DEFINITIONS.map(model =>
+      model.key === "m1:translation" ? { ...model, purposes: [...model.purposes, "product-tagline-ko", "search-query-translate"] } : model),
+      selections: { "product-tagline-ko": "m1:translation", "search-query-translate": "m1:translation" } }));
+    vi.resetModules();
+    const models = await (await import("@/lib/operations/model-env")).currentModelEnv();
+    expect(models.translate).toBe("[MLX] gpt-oss-120b");
+    expect(models.koreanTagline).toBe("[m1] gemma4-26b");
+    expect(models.searchQuery).toBe("[m1] gemma4-26b");
+    const html = renderToStaticMarkup(createElement(TextModelStagesTable, { models }));
+    expect(html).toContain("한국어 소개 번역");
+    expect(html).toContain("검색 질의 번역");
+    expect(html).toContain("[m1] gemma4-26b");
   });
   it("keeps default CLI configuration valid when the primary provider changes", () => {
     const env = { MODEL_REGISTRY_CONFIG: JSON.stringify({ version: 1, models: DEFAULT_MODEL_DEFINITIONS.map(model =>

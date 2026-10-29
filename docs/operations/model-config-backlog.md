@@ -65,3 +65,7 @@ git grep -I -n -i -E '(qwen[0-9]|gpt-[0-9]|gpt-oss|gemma[- /0-9]|deepseek-v[0-9]
 | `repoPushedAt` 등 광역 grep 일치 | **검색 오탐**. 고정 검색식의 opus가 식별자 일부에도 맞는다. 기준/현재 모두 같은 검색식을 사용하고 전체 줄 수를 실제 실행 모델 상수 수로 해석하지 않는다. |
 - 3 최종 추가 회귀: native 키·provider·publication 가드 관련 8파일 51시험 + `tsc --noEmit --incremental false` 통과. 구현 커밋 `acb3314b`.
 - 4 문서 확인: 전체 기본 JSON export→재해석→`m1:translation` 선택을 실제 실행해 통과. 처음 예시의 tsx CLI는 `listen EPERM: operation not permitted /tmp/tsx-1000/3.pipe`로 불필요한 IPC socket 생성이 막혔다. 예시를 IPC 서버를 만들지 않는 `node --import tsx` 로더 호출로 고쳐 같은 설치를 재사용해 통과했다. OS/네트워크 허용을 넓히지 않았다.
+- 최신 main 갱신: `git fetch origin && git merge origin/main`, `b047bddb`를 로컬 merge `17609cc9`로 반영. 반영된 것은 배포 절차/Python 회귀이며 기한·AI1 배정 차선은 들어오지 않았으므로 해당 대기는 유지한다.
+- 중간 최종 검증은 59파일 821시험 + typegen/tsc + 158→99, exit 0으로 통과했다. 이어 실제 소비자 전체 대조에서 한국어 소개·검색 질의의 독립 registry selection이 legacy 공용 상수/기록과 불일치하는 사용처를 찾아 추가 연결했다. 요청·native capacity·결과 저장·운영 표시를 각각 KOREAN_TAGLINE_MODEL/SEARCH_QUERY_MODEL로 통일했고 기존 공용 env 동작은 유지한다.
+- 추가 점검: 9파일 156시험 통과. 이후 직접 모델 표시를 장비/실제 model로 바꾼 화면 시험 1개가 이전 고정 문구를 기대해 실패했다(7파일 82시험 중 1실패). 기대값을 실제 config 상수로 갱신했다. 모바일 화면에서 단계 표의 좁은 열을 확인해 최소 폭·가로 스크롤 안내를 적용하고 실제 화면으로 다시 확인했다. 기본 registry/CLI와 독립 용도 선택 두 시나리오, 1280px/390px JPG를 확보했으며 마지막 브라우저 9항목/페이지 오류 0을 확인했다.
+- 후속 소비자 회귀: 8파일 99시험 통과. CLI registry 교체 시 저장된 옛 model을 삭제하거나 기본값으로 덮지 않고 보존하도록 복원 경계를 분리했다. 옛 선택은 안전한 shape로 읽되 현재 registry와 맞지 않으면 classifyReady/configReady=false, native 계약 발급·실행은 보류한다. 기존 인증은 보존하며 새 선택은 기존 검사·적용 절차를 거친다. 관련 5파일 61시험과 ESLint 통과. 브라우저에서 미등록된 저장 선택이 보이는 상태와 기본값 복원을 확인했다.
