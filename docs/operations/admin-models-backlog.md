@@ -31,3 +31,19 @@
 - 브라우저 실행 실패: 기본 설치 요구 경로 chromium_headless_shell-1234 부재. 설치된 chromium-1248로 실행 시 `socket() failed: Operation not permitted (1)`, SIGABRT. OS 권한을 우회하지 않았으며 화면 클릭·스크린샷·화면 품질 측정은 미완료다.
 - 지정 artifacts 경로 touch도 `Read-only file system`(exit1). 스크린샷 생성 자체가 실패했으므로 첨부할 이미지 없음.
 - Next가 AGENTS.md 관리 블록 제목을 자동 갱신했다. 관리 블록 지침에 따라 함께 보존한다.
+
+## 실측·접수 제어 구현 진행
+
+- 새 admin-models-observation/repository: primary READ ONLY REPEATABLE READ, DB 시각 기준 최근1시간 응답 종료·철회, 판정 불가 종료 별도, 모델/그룹별 미확인·보류·예약·진행 중·점유·상한·발생/경과 표시. 과거 정책의 미확인도 보존. 조회 실패는 0건으로 보이지 않음.
+- 새 LiveModels: 목록 확인 시간, 미확인 요청 복구 안내 창, 정식 runPipelineControl을 통한 접수 DRAIN/OPEN 확인·사유·진행·실패 사유. allowDeferredRoutes=false 고정. 서버 admin 검사, 실행 의도/결과 감사 기록.
+- `npx --no-install vitest run admin-models`: 3파일20시험 PASS. scoped ESLint/TypeScript PASS. 화면은 앞서 확인한 OS socket 권한 제한으로 막힘.
+- 저장 PR #714: 첫 CI 40801879041에서 변경 밖 host-aggregate-budget.test.ts:177의 heartbeat 시간 시험이 expected admitted=false / actual=true로 실패(그 외 unit/typecheck/lint/build·대부분 DB 검사 성공). 실패 잡만 같은 head에서 재실행(2차) 중. 원 실패 보존, 필수 검사 우회 없음.
+- 등록부 PR #713: 다른 차선에서 CI 실패를 수정해 새 head a07f8bef로 검사 중. 이 차선에서 해당 파일을 바꾸지 않음.
+
+## 정식 실행 계약이 없어 막힌 기능
+
+- 수동 짧은 모델 호출: 기존 connect-agent test/probe는 versioned capacity 경로에서 manualModelAdmission으로 거절하며, 각 업무용 dispatch 계약에 임의 시험 업무를 넣을 수 없다. 별도 승인된 수동 probe 슬롯/종료 증거 계약이 없다. 현재 버튼은 모델 목록 조회만 실제 실행하고 짧은 호출의 차단 사유를 분리 표시한다. 유료 DeepSeek 호출 0.
+- 자동 요청 종료·모델 재시작: 현재 추적 소스에는 provider-boundary 해제 라이브러리/CLI는 있지만, 10/29에 사용한 prepare→run 종료 근거 수집/서비스 종료·복원 실행기는 없다. 기존 recovery_gateway/native_recovery_gateway는 worker watchdog 제한 복구용이며 임의 모델 stop 권한이 없다. connect-agent RPC도 이 기능이 없다. 웹에 SSH·sudo 권한을 새로 주거나 임의 종료 receipt를 받는 우회는 하지 않는다. 복구 창은 시작 전 막힘과 원 요청 보존, native verify 필요, M1 장비 수동 작업을 표시한다. 자동 stop/해제·restore·native verify 실제 실행은 미구현/미검증.
+- 배포 precheck 실제 실행: M3 `security find-generic-password -a deploy.brut.bot -s dokploy-api-key -w >/dev/null` → `security: SecKeychainSearchCopyNext: The specified item could not be found in the keychain.` / 원격 `keychain_exit=44`. SSH wrapper의 exit0을 성공으로 해석하지 않음. 키가 없으므로 배포0·운영 설정 저장0·양 모델 새 성공 확인0.
+
+- 2026-10-29 01:52:58 UTC: 등록부 PR #713 필수 check SUCCESS로 main 병합 확인. 현재 실측 변경을 독립 커밋으로 보존한 뒤 최신 main을 merge하고 해당 등록부 위에서 2번 구현을 시작한다.

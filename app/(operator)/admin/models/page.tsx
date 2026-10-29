@@ -11,6 +11,8 @@ import { PageStamp } from "../components/PageStamp";
 import { HumanReviewSwitch } from "../review/HumanReviewSwitch";
 import { ReviewModelsForm } from "./ReviewModelsForm";
 import { reviewModelOptions } from "./model-options";
+import { readAdminModelsObservation } from "@/lib/operations/admin-models-repository";
+import { LiveModels } from "./LiveModels";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "단계별 모델 — NoMoreVibe", robots: { index: false } };
@@ -35,6 +37,7 @@ export default async function ModelsPage() {
     </header>
     <ReviewModelsForm key={settingsFormVersion(settings)} settings={settings} version={settingsFormVersion(settings)}
       firstChoices={reviewModelOptions(gatewayModels, false)} secondChoices={reviewModelOptions(gatewayModels, true)} />
+    <Suspense fallback={<p aria-busy="true">운영 DB 실측 확인 중…</p>}><LiveModelsSlot /></Suspense>
     <section className="flex flex-col gap-3 rounded-xl border border-line bg-bg-card p-5" aria-labelledby="human-model-heading">
       <h2 id="human-model-heading" className="text-[18px] font-semibold">사람 검토 단계</h2>
       <p className="text-[13px] text-fg-2">직접 판단: 사람이 심사 큐에서 결정합니다. DeepSeek 위임을 켜면 기존 정책에 따라 자동 판단하고, 불확실하거나 실패한 항목은 사람이 검토합니다.</p>
@@ -53,6 +56,10 @@ export default async function ModelsPage() {
       <div className="flex flex-wrap gap-4 text-[13px] font-semibold text-accent-ink"><Link href="/admin/audit" prefetch={false}>감사 단계 설정 →</Link><Link href="/admin/status#ai-model-title" prefetch={false}>카테고리 분류 모델 선택 →</Link><Link href="/admin/status" prefetch={false}>단계별 실제 경로 →</Link></div>
     </section>
   </main>;
+}
+
+async function LiveModelsSlot() {
+  return <LiveModels observation={await readAdminModelsObservation()} />;
 }
 
 async function HumanSlot({ enabled, generation }: { enabled: boolean; generation: number }) {
