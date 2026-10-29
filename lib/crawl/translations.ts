@@ -20,6 +20,7 @@ import { modelCapacityRequestIdentitySchema, modelCapacityReservationSchema, rea
   type ReasonTranslationMember, type ReasonTranslationModelDispatch, type ReasonTranslationDispatchBinding,
   type ModelCapacityReservation, type ModelCapacityRequestIdentity } from '@/lib/llm/capacity';
 import type { PreparedReasonTranslationGatewayCall } from './agent-review-gateway';
+import { unsettledMemberFence } from '@/lib/llm/capacity-selection-fence';
 
 /**
  * 번역해 둘 글과 번역해 둔 글.
@@ -55,6 +56,12 @@ const UNIQUE_SOURCES = UNIQUE_TRANSLATION_SOURCES_SQL;
 export type PendingTranslation = { hash: string; body: string; attempts: number };
 
 /**
+ * 결과를 모르는 요청에 묶인 사유는 고르지 않는다(capacity-selection-fence.ts). 2026-10-27 운영에서 reason-translate unknown 한 건이
+ * 최신 사유 넷을 묶은 채 남자, 잡이 매 틱 같은 넷을 골라 capacity deferred 로 끝났다 — 기록 0·오류 0이라 대기 10,964건이 무진척으로 보였다.
+ */
+const NOT_UNSETTLED = sql`not ${unsettledMemberFence(sql`('ko:' || u.hash)`)}`;
+
+/**
  * 아직 한 번도 옮기지 않은 글 — 최근 것부터. 심사 화면이 보는 것이 최근 사유라서다.
  */
 export async function untriedTranslations(limit: number): Promise<PendingTranslation[]> {
@@ -62,7 +69,7 @@ export async function untriedTranslations(limit: number): Promise<PendingTransla
     select u.hash, u.body, 0::int as attempts
       from (${UNIQUE_SOURCES}) u
       left join ${textTranslations} t on t.source_hash = u.hash and t.target_lang = 'ko'
-     where t.source_hash is null
+     where t.source_hash is null and ${NOT_UNSETTLED}
      order by u.at desc nulls last, u.hash
      limit ${limit}`);
   return [...rows].map((row) => ({ hash: row.hash, body: row.body, attempts: Number(row.attempts) }));
@@ -80,7 +87,7 @@ export async function retryableTranslations(limit: number): Promise<PendingTrans
     select u.hash, u.body, t.attempts::int as attempts
       from (${UNIQUE_SOURCES}) u
       join ${textTranslations} t on t.source_hash = u.hash and t.target_lang = 'ko'
-     where t.status = 'failed' and (t.retry_at is null or t.retry_at <= now())
+     where t.status = 'failed' and (t.retry_at is null or t.retry_at <= now()) and ${NOT_UNSETTLED}
      order by t.retry_at asc nulls first, t.attempts asc, u.hash
      limit ${limit}`);
   return [...rows].map((row) => ({ hash: row.hash, body: row.body, attempts: Number(row.attempts) }));

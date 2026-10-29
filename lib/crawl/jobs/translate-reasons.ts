@@ -33,6 +33,15 @@ const MIN_CALL_MS = 30_000;
  */
 const SOLO_ATTEMPTS = 3;
 
+/**
+ * 다음에 먼저 볼 줄 — 틱을 넘어 이어 간다.
+ *
+ * 틱마다 '밀린 실패'부터 다시 시작했더니, 실패 묶음이 또 실패해 틱을 접으면(아래 break) 처음 보는 글은 그 틱에 차례를
+ * 얻지 못했다. 늘 실패하는 글이 하나라도 재시도 시각에 서 있으면 새 사유가 영영 밀린다. 한 프로세스 안에서는 번갈아 가는
+ * 차례를 틱이 바뀌어도 잇는다(재시작하면 실패부터 — 예전과 같다).
+ */
+let takeRetryFirst = true;
+
 /** 앞에서부터 글자 수 한도까지 — 순서(최근 것부터)를 지킨다 */
 export function packBatch<T extends { body: string; attempts?: number }>(items: T[]): T[] {
   const batch: T[] = [];
@@ -73,14 +82,13 @@ export async function translateReasons(ctx: JobContext<null>): Promise<JobOutcom
      * 한쪽만 보면 다른 쪽이 굶는다 — 최근 것만 보면 실패가 엿새를 기다리고, 실패만 보면
      * 심사 화면의 새 사유가 그동안 영어로 남는다.
      */
-    let takeRetry = true;
-
     while (!signal.aborted && ctx.hasBudget() && remaining() >= MIN_CALL_MS) {
+      const takeRetry = takeRetryFirst;
       const preferred = takeRetry ? await retryableTranslations(BATCH) : await untriedTranslations(BATCH * 2);
       const pending = preferred.length
         ? preferred
         : takeRetry ? await untriedTranslations(BATCH * 2) : await retryableTranslations(BATCH);
-      takeRetry = !takeRetry;
+      takeRetryFirst = !takeRetry;
       if (!pending.length) {
         ctx.log("translate.done", { translated, failed, drained: true });
         return { done: true };
