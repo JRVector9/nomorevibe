@@ -1,3 +1,4 @@
+import { modelBaseUrl } from "@/lib/llm/model-registry";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { db } from "@/lib/db";
@@ -15,7 +16,7 @@ import { assertIsolatedReplayDatabase, FIXED_INPUT_TIMING, fixedInputRunConditio
 import { dbClockIso, fixedInputOrdinals, fixedInputWrites, loadFixedInputs } from "./pipeline-replay-fixed-input-repository";
 import { installReplayEgressGuard, startReplayModelMeter, type ReplayMeterDrain, type ReplayMeterStop } from "./pipeline-replay-model-meter";
 
-const DEFAULT_GATEWAY = "https://abcllm-api.brut.bot";
+const DEFAULT_GATEWAY = modelBaseUrl("ai1-preset", {}, "abcllm").replace(/\/v1$/, "");
 /** 같은 reviewer 역할 워커지만 고정 입력 밖(소개 검수·발행분 감사·판정)을 부르는 잡은 돌리지 않는다. 기준선을 낮추지 않는 쪽이다. */
 const REPLAY_JOBS = ["crawl-agent-review", "second-review"] as const;
 const BLOCKED_CLI = "/nonexistent/nomorevibe-replay-cli-blocked";

@@ -1,3 +1,4 @@
+import { scopedRequestTimeout } from "@/lib/llm/model-registry";
 import { randomUUID } from "node:crypto";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { findOwnPendingModelRequest, requestTextProfileModelSlot, cancelReservedModelSlot,
@@ -14,7 +15,7 @@ export type ProfileCapacityResult = { kind: "skipped" } | { kind: "result"; resu
 /** Fixed route coordinator. No callback, JSON shape or timeout is dispatch authority. */
 export async function writeKeywordsWithModelCapacity(task: ProfileTask, lease: JobLease,
   options: { timeoutMs: number; signal?: AbortSignal; roleLease?: RoleLease }): Promise<ProfileCapacityResult> {
-  const snapshot = structuredClone(task), ownedLease = structuredClone(lease), captured = { ...options,
+  const snapshot = structuredClone(task), ownedLease = structuredClone(lease), captured = { ...options, timeoutMs: scopedRequestTimeout("product-search-profile", options.timeoutMs),
     roleLease: options.roleLease && structuredClone(options.roleLease) };
   if (!process.env.ABCLLM_API_KEY?.trim()) return { kind: "result", result: { ok: false, error: "no_key" } };
   const prepared = await prepareProfileModelDispatch(snapshot, ownedLease, captured);

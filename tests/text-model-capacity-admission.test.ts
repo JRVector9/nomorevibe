@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
-import { TRANSLATE_MODEL, translateToKorean, translateTaglinesToKorean, translateProductFields,
+import { TRANSLATE_MODEL, PRODUCT_TRANSLATION_MODEL, KOREAN_TAGLINE_MODEL, SEARCH_QUERY_MODEL, translateToKorean, translateTaglinesToKorean, translateProductFields,
   translateQueryToEnglish, translateChineseQueryToEnglish } from "@/lib/crawl/translate";
 import { TAGLINE_MODEL, writeTagline } from "@/lib/crawl/tagline";
 import { PROFILE_MODEL, writeKeywords } from "@/lib/domain/products/search-profile";
@@ -15,12 +15,12 @@ const tagline = { name: "Doc", url: "https://doc.test", topics: [], language: "T
   pageTitle: "Doc", pageText: "Document management", readme: "" };
 const leaves = [
   { routeId: "reason-translate", model: TRANSLATE_MODEL, run: () => translateToKorean(["Document management tool"], 1_000) },
-  { routeId: "product-tagline-ko", model: TRANSLATE_MODEL, run: () => translateTaglinesToKorean([{ name: "Doc", tagline: "Document tool" }], 1_000) },
-  { routeId: "product-translate", model: TRANSLATE_MODEL, run: () => translateProductFields([{ name: "Doc", text: "Document tool", field: "tagline", locale: "en" }], 1_000) },
+  { routeId: "product-tagline-ko", model: KOREAN_TAGLINE_MODEL, run: () => translateTaglinesToKorean([{ name: "Doc", tagline: "Document tool" }], 1_000) },
+  { routeId: "product-translate", model: PRODUCT_TRANSLATION_MODEL, run: () => translateProductFields([{ name: "Doc", text: "Document tool", field: "tagline", locale: "en" }], 1_000) },
   { routeId: "crawl-tagline", model: TAGLINE_MODEL, run: () => writeTagline(tagline, { timeoutMs: 1_000 }) },
   { routeId: "product-search-profile", model: PROFILE_MODEL, run: () => writeKeywords(evidence, { timeoutMs: 1_000 }) },
   { routeId: "product-search-verify", model: VERIFY_MODEL, run: () => verifyKeywords({ evidence, keywords: ["document tool"] }, { timeoutMs: 1_000 }) },
-  { routeId: "search-query-translate", model: TRANSLATE_MODEL, run: () => translateQueryToEnglish("문서 정리", 1_000) },
+  { routeId: "search-query-translate", model: SEARCH_QUERY_MODEL, run: () => translateQueryToEnglish("문서 정리", 1_000) },
 ];
 const control = (mode = "open") => ({ mode, epoch: 1, revision: 1, policyHash: "a".repeat(64),
   policy: { routes: leaves.map(({ routeId, model }) => ({ routeId, model, provider: "abcllm" })) } });

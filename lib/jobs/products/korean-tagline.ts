@@ -1,6 +1,8 @@
+import { scopedModel } from "@/lib/llm/model-registry";
+import { modelTimeoutMs } from "@/lib/llm/model-registry";
 import { translateKoreanTaglinesWithModelCapacity, type KoreanTaglineCapacityResult } from "@/lib/domain/products/korean-tagline-model-capacity";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
-import { TRANSLATE_MODEL } from "@/lib/crawl/translate";
+import { KOREAN_TAGLINE_MODEL } from "@/lib/crawl/translate";
 import { displayProjectName } from "@/lib/domain/products/display-name";
 import { checkKoreanTagline } from "@/lib/domain/products/korean-tagline";
 import { homeListSlugs, pendingKoreanTaglines, pendingKoreanTaglineRecovery, recordKoreanTaglines, koreanTaglineSource as taglineSource, type KoreanTaglineResult, type KoreanTaglineTask } from "@/lib/domain/products/korean-taglines";
@@ -24,7 +26,7 @@ import { KOREAN_TRANSLATION_LEGACY_MAX_CHARS, KOREAN_TRANSLATION_NATIVE_MAX_CHAR
  */
 const BATCH = 8;
 /** 한 번 부르는 데 둘 시간 */
-const CALL_MS = 45_000;
+const CALL_MS = modelTimeoutMs("product-tagline-ko");
 /** 틱 예산(scripts/worker.ts jobRunOptions 55초)보다 조금 짧게 */
 const TICK_MS = 54_000;
 /** 이만큼 남아 있을 때만 새로 부른다 — 묶음 하나가 15~25초라 틱 끝에 부르면 제한이 짧아져 헛실패가 난다 */
@@ -99,8 +101,8 @@ export async function writeKoreanTaglines(ctx: JobContext<null>): Promise<JobOut
         }
       }
       const work = [
-        ...(gptBatch.length ? [{ backend: "gpt" as const, model: TRANSLATE_MODEL, batch: gptBatch, recovery: false }] : []),
-        ...(qwenBatch.length ? [{ backend: "qwen" as const, model: KOREAN_TRANSLATION_QWEN_MODEL, batch: qwenBatch, recovery: recoveryBatch }] : []),
+        ...(gptBatch.length ? [{ backend: "gpt" as const, model: scopedModel("product-tagline-ko", KOREAN_TAGLINE_MODEL), batch: gptBatch, recovery: false }] : []),
+        ...(qwenBatch.length ? [{ backend: "qwen" as const, model: scopedModel("korean-translation-direct", KOREAN_TRANSLATION_QWEN_MODEL), batch: qwenBatch, recovery: recoveryBatch }] : []),
       ];
       if (!work.length) {
         if (recoveryDeferred) { ctx.log("tagline_ko.budget_deferred", { ...counts(), backend: "qwen", recovery: true }); return { done: false }; }

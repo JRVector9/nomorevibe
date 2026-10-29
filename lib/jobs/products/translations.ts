@@ -1,11 +1,12 @@
+import { scopedModel } from "@/lib/llm/model-registry";
 import { PRODUCT_TRANSLATION_MODEL } from "@/lib/crawl/translate";
 import { translateProductFieldsWithModelCapacity } from "@/lib/domain/products/product-translation-model-capacity";
 import { checkProductTranslation, productTranslationSourceHash, translationSourceText } from "@/lib/domain/products/translation-policy";
 import { pendingProductTranslations, recordProductTranslations, type ProductTranslationResult } from "@/lib/domain/products/translations";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
-import { PRODUCT_TRANSLATION_LADDER } from "@/lib/llm/deadline-ladder";
+import { PRODUCT_TRANSLATION_CLIENT_TIMEOUT_MS } from "@/lib/llm/deadline-ladder";
 
-/** One call / at most four demanded fields per 25-second text-role tick. No catalog backfill. */
+/** One call / at most four demanded fields per 55-second text-role tick. No catalog backfill. */
 export async function translateDemandedProductFields(ctx: JobContext<null>): Promise<JobOutcome<null>> {
   if (!process.env.ABCLLM_API_KEY?.trim()) {
     ctx.log("product_translation.deferred", { reason: "no_key" });
@@ -33,8 +34,8 @@ export async function translateDemandedProductFields(ctx: JobContext<null>): Pro
       chars += text.length;
     }
     if (!batch.length || !ctx.hasBudget() || signal.aborted) return { done: true };
-    // Client is the outermost deadline layer (engine < relay < gateway < client). Needs main's 55s product-translate budget.
-    const outcome = await translateProductFieldsWithModelCapacity(batch, ctx.lease, { timeoutMs: PRODUCT_TRANSLATION_LADDER.clientMs, signal, deadlineAt: ctx.deadlineAt });
+    // Outermost HTTP deadline fits the 55s job budget; inner M1 bounds still require measurement and enforcement.
+    const outcome = await translateProductFieldsWithModelCapacity(batch, ctx.lease, { timeoutMs: PRODUCT_TRANSLATION_CLIENT_TIMEOUT_MS, signal, deadlineAt: ctx.deadlineAt });
     if (outcome.kind === "skipped") return { done: true };
     const response = outcome.result;
     const completedBatch = outcome.batch ?? batch;
@@ -42,14 +43,14 @@ export async function translateDemandedProductFields(ctx: JobContext<null>): Pro
     // Account for calls aborted by the tick budget. The final lease check in
     // recordProductTranslations rolls back writes if ownership was actually lost.
     const entries = completedBatch.map((task, index): { task: typeof task; result: ProductTranslationResult } => {
-      if (!response.ok) return { task, result: { ok: false, error: response.error, model: PRODUCT_TRANSLATION_MODEL } };
+      if (!response.ok) return { task, result: { ok: false, error: response.error, model: scopedModel("product-translate", PRODUCT_TRANSLATION_MODEL) } };
       const checked = checkProductTranslation(response.outputs[index], task.source, task.locale, task.field);
-      return { task, result: checked.ok ? { ok: true, text: checked.text, model: PRODUCT_TRANSLATION_MODEL }
-        : { ok: false, error: `rejected:${checked.reason}`, model: PRODUCT_TRANSLATION_MODEL } };
+      return { task, result: checked.ok ? { ok: true, text: checked.text, model: scopedModel("product-translate", PRODUCT_TRANSLATION_MODEL) }
+        : { ok: false, error: `rejected:${checked.reason}`, model: scopedModel("product-translate", PRODUCT_TRANSLATION_MODEL) } };
     });
     const stored = await (outcome.expectation ? recordProductTranslations(entries, ctx.lease, outcome.expectation)
       : recordProductTranslations(entries, ctx.lease));
-    ctx.log("product_translation.tick", { model: PRODUCT_TRANSLATION_MODEL, demanded: completedBatch.length, stored,
+    ctx.log("product_translation.tick", { model: scopedModel("product-translate", PRODUCT_TRANSLATION_MODEL), demanded: completedBatch.length, stored,
       accepted: entries.filter(({ result }) => result.ok).length, gatewayError: response.ok ? null : response.error });
     return { done: true };
   } finally {

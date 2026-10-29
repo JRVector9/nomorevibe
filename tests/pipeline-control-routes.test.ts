@@ -200,6 +200,12 @@ describe("stage → items refuses a stalled consumer by default", () => {
 });
 
 describe("capacity open is judged only on the combinations in use", () => {
+  it("keeps independent Korean tagline and query identities in capacity route discovery", () => {
+    const uses = usedModelRoutes(snapshot(), { ...MODELS, koreanTagline: "korean-role", searchQuery: "query-role" });
+    expect(uses).toContainEqual({ routeId: "product-tagline-ko", provider: "abcllm", model: "korean-role" });
+    expect(uses).toContainEqual({ routeId: "search-query-translate", provider: "abcllm", model: "query-role" });
+    expect(uses).toContainEqual({ routeId: "reason-translate", provider: "abcllm", model: MODELS.translate });
+  });
   const open = ["capacity", "mode", "--to=open", "--from-mode=draining", "--expect-epoch=1", "--expect-revision=2"];
 
   it("reads what each call site passes its resolver from the review settings, model env and the running audit", () => {

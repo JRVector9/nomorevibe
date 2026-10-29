@@ -162,8 +162,7 @@ def validate_catalog_scope(additions, selected):
 
 
 def new_client():
-    return shared.Dokploy(shared.run(['security', 'find-generic-password', '-a', 'deploy.brut.bot',
-                                     '-s', 'dokploy-api-key', '-w']))
+    return shared.Dokploy(shared.dokploy_api_key())
 
 
 def impact(snapshot, sha):
@@ -306,6 +305,53 @@ def unchanged(client, snapshot, short):
     return app
 
 
+MODEL_OWNER_ROLES = frozenset({'reviewer', 'publisher', 'text', 'maintenance'})
+MODEL_REPLACEMENT_SCRIPT = r'''import postgres from 'postgres';
+const db=postgres(process.env.DATABASE_URL,{max:1,prepare:false,connect_timeout:5,onnotice:()=>{}});
+try {
+ const result=await db.begin('read only',async tx=>{
+  await tx`SET LOCAL statement_timeout='5s'`;
+  const [identity]=await tx`SELECT pg_is_in_recovery() AS replica`;
+  const [control]=await tx`SELECT mode FROM model_capacity_control WHERE id=1`;
+  const [active]=await tx`SELECT count(*)::int AS active FROM model_capacity_requests
+    WHERE state IN ('dispatched','indeterminate') OR (state='reserved' AND reserved_until>clock_timestamp())`;
+  return {replica:identity.replica,mode:control?.mode,active:active.active};
+ });
+ console.log(JSON.stringify(result));
+} finally {await db.end({timeout:5});}
+'''
+REMOTE_MODEL_REPLACEMENT = r'''import json,subprocess,sys
+service=sys.argv[1]
+ids=subprocess.check_output(['docker','ps','--filter','label=com.docker.swarm.service.name='+service,
+                             '--format','{{.ID}}'],text=True).split()
+if len(ids)!=1:raise SystemExit('model_replacement_probe_container_count')
+r=subprocess.run(['docker','exec','-i',ids[0],'node','--input-type=module'],
+                 input=sys.stdin.read(),capture_output=True,text=True,timeout=20)
+if r.returncode or r.stderr:raise SystemExit('model_replacement_probe_failed')
+print(json.dumps(json.loads(r.stdout)))
+'''
+
+
+def model_replacement_gate(client, selected):
+    """Observe an explicit operator drain before replacing a model request owner.
+
+    Never change capacity or infer remote completion from a client exit. A
+    running/unknown call blocks replacement, including recovery releases.
+    """
+    owners = [short for short in selected if short.startswith('web-') or
+              shared.app_role(short) in MODEL_OWNER_ROLES]
+    if not owners:
+        return {'required': False}
+    app = client.app('crawler-m3')
+    observation = json.loads(shared.ssh_python(shared.M3[1], REMOTE_MODEL_REPLACEMENT, app['appName'],
+                                              input_text=MODEL_REPLACEMENT_SCRIPT, timeout=30))
+    if (not isinstance(observation, dict) or observation.get('replica') is not False or
+            observation.get('mode') != 'draining' or type(observation.get('active')) is not int or
+            observation['active'] != 0):
+        raise ValueError('model_replacement_requires_explicit_drain_and_zero_active_calls')
+    return {'required': True, 'mode': 'draining', 'active': 0, 'owners': sorted(owners), 'observedAt': now()}
+
+
 def deploy_one(client, plan, short, directory):
     snapshot, target = plan['snapshot'], plan['target']
     original = unchanged(client, snapshot, short)
@@ -399,6 +445,7 @@ def run_release(plan, execution_dir, *, observe=True):
             shared.agent_scan_release_gate(client, target['sha'])
         skipped = already_target(plan['snapshot'], target, selected)
         deployed = [short for short in selected if short not in skipped]
+        write_private(directory / 'model-drain.safe.json', model_replacement_gate(client, deployed))
         preserve_git_images(plan['snapshot'], deployed, directory)
         git_selected = [name for name in git.ORDER if name in selected]
         if git_selected:
@@ -418,6 +465,10 @@ def run_release(plan, execution_dir, *, observe=True):
             validate_tool_sources(plan)
             git.verify_main(target)
             if kind == 'deploy':
+                # Re-read before every replacement batch. Do not reuse a prior
+                # drain if another operator has reopened model admission.
+                write_private(directory / ('model-drain-' + '-'.join(names) + '.safe.json'),
+                              model_replacement_gate(client, names))
                 for short in names:
                     unchanged(client, plan['snapshot'], short)
                 receipts.update(run_batch(names, lambda short: deploy_one(client, plan, short, directory), directory))

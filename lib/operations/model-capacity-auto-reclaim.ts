@@ -14,11 +14,13 @@ const label = z.string().min(1).max(120).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
 export const AUTO_RECLAIM_SKEW_MS = 10_000;
 export const autoReclaimDeclarationSchema = z.object({
   providerBudgetId: label,
+  /** Actual verified enforcement start, never retroactive for old unknown requests. */
+  enforcedAfter: z.iso.datetime().refine(value => Date.parse(value) >= 0, "invalid_enforcement_time"),
   ladder: deadlineLadderSchema,
   generation: z.object({ maxOutputTokens: z.number().int().min(1).max(262_144),
     minDecodeTokensPerSec: z.number().positive().max(100_000), maxPrefillMs: z.number().int().min(0).max(3_600_000) }).strict(),
   /** 실측·강제 확인 기록(문서 경로·감사 번호). 해제 이벤트의 reference 로 남는다. */
-  reference: z.string().min(1).max(400).refine(value => value === value.trim() && !/[\p{Cc}]/u.test(value), "invalid_reference"),
+  reference: z.string().min(1).max(330).refine(value => value === value.trim() && !/[\p{Cc}]/u.test(value), "invalid_reference"),
 }).strict();
 export type AutoReclaimDeclaration = z.infer<typeof autoReclaimDeclarationSchema>;
 export type AutoReclaimRejection = Readonly<{ index: number; providerBudgetId: string | null; reason: string }>;
@@ -44,12 +46,12 @@ export function autoReclaimPolicies(raw: string | undefined): { policies: Map<st
     if (worstGenerationMs(value.generation) > value.ladder.engineMs) return reject("generation_exceeds_engine_bound");
     const hardDeadlineMs = Math.max(value.ladder.engineMs, value.ladder.relayMs ?? 0, value.ladder.gatewayMs);
     policies.set(value.providerBudgetId, { termination: "provider_bound", hardDeadlineMs, skewBoundMs: AUTO_RECLAIM_SKEW_MS,
-      reference: value.reference });
+      enforcedAfterMs: Date.parse(value.enforcedAfter), reference: `${value.reference} [enforcedAfter=${value.enforcedAfter}]` });
   });
   if (rejected.length) policies.clear(); // 일부만 틀린 선언은 운영자 확인 전까지 전부 쓰지 않는다
   return { policies, rejected };
 }
 
-/** 해제까지 최대 시간(로컬 종료 기준): 사람이 개입하지 않고 5분 안에 풀리는지 선언 단계에서 확인한다. */
+/** 기한만의 계산값(dispatch 기준). 스케줄 대기·실제 재개/5분 보장은 운영 드릴로 따로 확인한다. */
 export const autoReclaimLatestReleaseMs = (declaration: AutoReclaimDeclaration) =>
   declaration.ladder.clientMs + Math.max(declaration.ladder.engineMs, declaration.ladder.relayMs ?? 0, declaration.ladder.gatewayMs) + AUTO_RECLAIM_SKEW_MS;

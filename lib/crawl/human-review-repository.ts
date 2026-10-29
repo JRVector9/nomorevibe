@@ -1,3 +1,4 @@
+import { scopedModel, registeredPoolModelNames } from "@/lib/llm/model-registry";
 import { and, asc, desc, eq, inArray, isNull, not, notInArray, or, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { crawlCandidates, crawlReviewAttempts, operationsAudit, jobs, secondReviews, type DecisionReason } from '@/lib/db/schema';
@@ -74,7 +75,7 @@ export async function claimHumanReview(repo: string, lease: JobLease): Promise<H
       candidateId: candidate.id, kind: 'delegated', state: 'running', inputHash: input.inputHash,
       sourceRevisionHash: input.sourceRevisionHash, policyHash: input.policyHash, source: input.source, snapshot: input.snapshot,
       promptVersion: REVIEW_PROMPT_VERSION, rulesVersion: REVIEW_RULES_VERSION, provider: DEEPSEEK_REVIEW_PROVIDER,
-      model: DEEPSEEK_REVIEW_MODEL, actor: deepseekActor(generation), attemptNumber: attempts.length + 1,
+      model: scopedModel("human-review", DEEPSEEK_REVIEW_MODEL), actor: deepseekActor(generation), attemptNumber: attempts.length + 1,
       leaseToken: lease.token, validUntil: input.validUntil,
     }).returning({ id: crawlReviewAttempts.id });
     await assertJobLeaseAtWallTime(tx, lease);
@@ -135,7 +136,7 @@ export async function recordHumanReview(claim: HumanReviewClaim, result: DeepSee
     await tx.insert(operationsAudit).values({
       actor: DEEPSEEK_REVIEW_PROVIDER, actorKind: 'model', ok: true,
       action: 'candidate-deepseek-decision', target: claim.repo,
-      detail: { attemptId: attempt.id, generation: claim.generation, model: DEEPSEEK_REVIEW_MODEL, outcome },
+      detail: { attemptId: attempt.id, generation: claim.generation, model: scopedModel("human-review", DEEPSEEK_REVIEW_MODEL), outcome },
     });
     if (outcome.decision === 'approve') await requestJob('crawl-publish', tx);
     await assertJobLeaseAtWallTime(tx, claim.lease);
@@ -161,7 +162,7 @@ export async function requeueInvalidHumanApprovals(lease: JobLease, limit = 50):
       const [attempt] = await tx.select().from(crawlReviewAttempts).where(eq(crawlReviewAttempts.id, typeof id === 'number' ? id : -1)).for('share');
       if (current.settings.humanReview.enabled && attempt?.kind === 'delegated' && attempt.state === 'succeeded'
         && attempt.actor === deepseekActor(current.settings.humanReview.generation) && attempt.outcome?.decision === 'approve'
-        && attempt.provider === DEEPSEEK_REVIEW_PROVIDER && attempt.model === DEEPSEEK_REVIEW_MODEL
+        && attempt.provider === DEEPSEEK_REVIEW_PROVIDER && attempt.model !== null && registeredPoolModelNames(current.settings.stageModelPools?.["human-review"], DEEPSEEK_REVIEW_MODEL).includes(attempt.model)
         && attempt.policyHash === current.input.policyHash
         && attempt.inputHash === current.input.inputHash && attempt.sourceRevisionHash === current.input.sourceRevisionHash
         && attempt.validUntil > new Date() && current.input.validUntil > new Date()) return 0;

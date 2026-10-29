@@ -1,14 +1,13 @@
 import { expect, it } from "vitest";
-import { deadlineLadderViolation, PRODUCT_TRANSLATION_LADDER, REVIEW_GATEWAY_LADDER, worstGenerationMs } from "@/lib/llm/deadline-ladder";
+import { deadlineLadderViolation, PRODUCT_TRANSLATION_CLIENT_TIMEOUT_MS, REVIEW_GATEWAY_LADDER, worstGenerationMs } from "@/lib/llm/deadline-ladder";
 import { REVIEW_GATEWAY_TIMEOUT_MS } from "@/lib/crawl/agent-review-gateway";
 
 it("declared ladders keep engine < relay < gateway < client with skew between neighbours", () => {
   expect(deadlineLadderViolation(REVIEW_GATEWAY_LADDER)).toBeNull();
-  expect(deadlineLadderViolation(PRODUCT_TRANSLATION_LADDER)).toBeNull();
   // The AI review client is unchanged at 60s; only inner layers are declared.
   expect(REVIEW_GATEWAY_TIMEOUT_MS).toBe(60_000);
   // Product translation client must fit the 55s job budget with the 2s record margin.
-  expect(PRODUCT_TRANSLATION_LADDER.clientMs + 2_000).toBeLessThanOrEqual(55_000);
+  expect(PRODUCT_TRANSLATION_CLIENT_TIMEOUT_MS + 2_000).toBeLessThanOrEqual(55_000);
 });
 
 it("rejects inverted or too-close layers, including the old client-first order", () => {

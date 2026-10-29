@@ -17,6 +17,7 @@ export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs
    * 프론티어를 시간당 3,000건(5분마다 250건)에서 막는다. 1분·전용 줄은 검색 페이지만 늘린다.
    * GitHub 429/403 1차·2차 한도는 그대로 이번 틱을 미룬다.
    */
+  { name: "crawl-ko-apply", role: "crawler", intervalMs: 60_000, lane: "discovery" },
   { name: "crawl-seed", role: "crawler", intervalMs: 60_000, lane: "discovery" },
   // 하루 약 123건이 올라온다. 30분이면 한 번에 100건 상한에 걸릴 일이 없다.
   { name: "hn-show-seed", role: "crawler", intervalMs: 30 * 60_000 },

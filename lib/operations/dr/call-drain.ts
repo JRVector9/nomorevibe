@@ -86,12 +86,16 @@ export function evaluateLocalCallEnded(events: readonly ProcessGroupEvent[], dis
   return { ended: true, lastExitAtMs };
 }
 
-export type ReclaimPolicy = Readonly<{ termination: "client_bound" | "provider_bound"; hardDeadlineMs: number | null; skewBoundMs: number }>;
+export type ReclaimPolicy = Readonly<{ termination: "client_bound" | "provider_bound"; hardDeadlineMs: number | null; skewBoundMs: number;
+  /** A newly enforced bound cannot release requests dispatched before this UTC epoch time. */
+  enforcedAfterMs?: number }>;
 /** 로컬 종료 + (provider_bound면) 증명된 기한 경과. 기한이 없으면 회수 근거가 아니다. TTL은 쓰지 않는다. */
 export function evaluateProcessReclaim(events: readonly ProcessGroupEvent[], dispatchAtMs: number, policy: ReclaimPolicy, nowMs: number):
   { reclaimable: true; notBeforeMs: number } | { reclaimable: false; reason: string; notBeforeMs: number | null } {
   const local = evaluateLocalCallEnded(events, dispatchAtMs);
   if (!local.ended) return { reclaimable: false, reason: local.reason, notBeforeMs: null };
+  if (policy.enforcedAfterMs !== undefined && (!Number.isSafeInteger(policy.enforcedAfterMs) || !Number.isSafeInteger(dispatchAtMs)
+    || dispatchAtMs < policy.enforcedAfterMs)) return { reclaimable: false, reason: "provider_bound_not_effective_at_dispatch", notBeforeMs: null };
   if (policy.termination === "provider_bound" && !policy.hardDeadlineMs) return { reclaimable: false, reason: "provider_deadline_unknown", notBeforeMs: null };
   const notBeforeMs = local.lastExitAtMs + (policy.termination === "provider_bound" ? policy.hardDeadlineMs! : 0) + policy.skewBoundMs;
   return nowMs >= notBeforeMs ? { reclaimable: true, notBeforeMs } : { reclaimable: false, reason: "waiting", notBeforeMs };
@@ -125,7 +129,10 @@ export function judgeModelReclaim(facts: ModelReclaimFacts, policy: ReclaimPolic
   if (group.ended) proofs.push({ evidence: "process_group_exit", endedAtMs: group.lastExitAtMs });
   if (local && !localReason) proofs.push({ evidence: "local_call_ended", endedAtMs: local.endedAtMs });
   if (!proofs.length) return unproven(localReason ?? (group.ended ? "unknown" : group.reason));
-  const rule = policy ?? { termination: "provider_bound" as const, hardDeadlineMs: null, skewBoundMs: 1 };
+  const rule: ReclaimPolicy = policy ?? { termination: "provider_bound" as const, hardDeadlineMs: null, skewBoundMs: 1 };
+  if (rule.enforcedAfterMs !== undefined && (!Number.isSafeInteger(rule.enforcedAfterMs) || !Number.isSafeInteger(facts.dispatchAtMs)
+    || facts.dispatchAtMs < rule.enforcedAfterMs)) return { status: "policy_blocked", evidence: proofs[0].evidence,
+      reason: "provider_bound_not_effective_at_dispatch", notBeforeMs: null };
   const results = proofs.map(proof => ({ evidence: proof.evidence, result: evaluateLocalEndReclaim(proof.endedAtMs, rule, nowMs) }));
   const due = results.filter(item => item.result.notBeforeMs !== null).sort((a, b) => a.result.notBeforeMs! - b.result.notBeforeMs!)[0];
   if (!due) return { status: "policy_blocked", evidence: results[0].evidence, reason: "provider_deadline_unknown", notBeforeMs: null };

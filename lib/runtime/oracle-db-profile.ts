@@ -115,6 +115,15 @@ const AGENT_CLAIM_STATE = ['token', 'instance_id', 'boot_id', 'epoch', 'control_
 const AGENT_SCAN_STATE = ['coverage', 'state', 'cursor', 'request_count', 'file_count', 'started_at', 'completed_at', 'last_error_code',
   'next_attempt_at'] as const;
 export const ORACLE_CONSUMER_DB_PROFILES: Partial<Record<string, OracleConsumerDbProfile>> = {
+  // Staging only. Home crawler applies language=yes through the shared discovery admission lock.
+  'github-ko-discovery': { principal: 'nomorevibe_oracle_github_ko', profile: { statementTimeout: '10s', sequences: [],
+    tables: { dr_writer_fence: lock('id'), crawl_settings: read, github_ko_discovery_control: { select: true, update: ['id','shared_cursor'] },
+      github_ko_discovery_queries: { select: true, update: ['token','epoch','lease_until','cursor','due_at','last_error','updated_at'] },
+      github_ko_discovery_staging: { select: true, insert: ['repo','signal','priority','description'],
+        update: ['language','evidence','checked_at','due_at','updated_at'] },
+      github_discovery_pages: { select: true, insert: true, update: ['owner','state','result','completed_at','owner_name','lease_until','updated_at'] },
+      github_collector_apps: { select: true, update: ['core_quota','quota_observed_at'] },
+      rate_limits: { select: true, insert: true, update: ['reset_at'] }, operations_observations: observationsWrite } } },
   // 제작 근거 스캔(E5): claim·스캔 기록·포기와 App 전용 GitHub 수집(설치 토큰·한도 관측·쿨다운)만 한다. 큐 채우기·제품 연결·후보 풀기는
   // M3 컨트롤러가 한다 — products·crawl_candidates·jobs·pipeline_item_leases·개인 토큰 표(github_collector_accounts)·AI·HTTP 권한이 없다.
   'agent-scan': { principal: 'nomorevibe_oracle_agent_scan', profile: { statementTimeout: '10s',

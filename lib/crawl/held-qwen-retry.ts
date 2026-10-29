@@ -1,3 +1,4 @@
+import { modelTimeoutMs } from "@/lib/llm/model-registry";
 import { isDeepStrictEqual } from "node:util";
 import { withLocalModelCapacity } from "@/lib/llm/local-model-capacity";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
@@ -53,7 +54,7 @@ import type { CrawlSettings, HeldQwenReason } from "./settings-schema";
  */
 const JOB = "human-deepseek-review";
 /** 한 번 부를 때의 제한 시간 — 실측 2.2~4.7초(qwen-direct-review.ts). 넘는 것은 탈로 본다 */
-export const HELD_QWEN_CALL_TIMEOUT_MS = 15_000;
+export const HELD_QWEN_CALL_TIMEOUT_MS = modelTimeoutMs("held-review-retry");
 const MAX_FAILURES = 3;
 const RETRY_MS = 15 * 60_000;
 const STALE_RUNNING_MS = 120_000;

@@ -87,6 +87,39 @@ class ProviderObservationTests(unittest.TestCase):
                                  {'first': 2800, 'last': 2800})
                 self.assertEqual(self.recoveries, [])
 
+    def test_review_capacity_alerts_after_two_samples_without_restarting_a_model(self):
+        self.row['providerFailures'] = []
+        self.row['reviewFailures'] = [{'stage': 'first', 'reason': 'capacity_blocked'}]
+        self.assertTrue(self.cycle(1000)['ok'])
+        self.state = json.loads(self.path.read_text())
+        self.row['version'] += 1
+        result = self.cycle(1030)
+        self.assertFalse(result['ok'])
+        self.assertIn({'target': 'm3/monitor', 'stage': 'first', 'reason': 'capacity_blocked', 'bad': 2}, result['events'])
+        self.assertEqual(self.recoveries, [])
+        self.row['reviewFailures'] = []
+        self.assertTrue(self.cycle(1060)['ok'])
+
+    def test_review_reason_change_or_observation_gap_needs_two_new_samples(self):
+        self.row['providerFailures'] = []
+        self.row['reviewFailures'] = [{'stage': 'second', 'reason': 'consumer_missing'}]
+        self.cycle(1000)
+        self.assertTrue(self.cycle(1200)['ok'])
+        self.assertFalse(self.cycle(1230)['ok'])
+        self.row['reviewFailures'] = [{'stage': 'second', 'reason': 'upstream_stalled'}]
+        self.assertTrue(self.cycle(1260)['ok'])
+        self.assertFalse(self.cycle(1290)['ok'])
+        self.assertEqual(self.recoveries, [])
+
+    def test_review_validation_refuses_unknown_fields_duplicates_and_stage_names(self):
+        valid = {'stage': 'first', 'reason': 'capacity_blocked'}
+        for value in ['private-token', [None], [valid, valid],
+                      [{'stage': 'first', 'reason': 'private-token'}],
+                      [{**valid, 'secret': 'private-token'}],
+                      [{'stage': 'keywords', 'reason': 'capacity_blocked'}]]:
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                self.w.validate_report({'services': [{**self.row, 'reviewFailures': value}]})
+
 
 if __name__ == '__main__':
     unittest.main()

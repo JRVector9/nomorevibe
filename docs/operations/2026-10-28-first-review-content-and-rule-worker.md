@@ -1,3 +1,5 @@
+> 최신 확인: 아래 최초 보고를 보존하고, 마지막의 **23:30 UTC 최신 코드·운영 실측 정정**을 현재 결론으로 사용한다. 원래의 미측정·후보 규칙은 당시 기록이며 운영 적용 근거가 아니다.
+
 # AI 1차 심사가 실제로 판정하는 것과 결정적 '심사 워커' 대체 검토
 
 작성: 2026-10-28 UTC, 작업 공간 `xaegis/36694e57`. 코드 근거는 이 작업 공간 기준이다.
@@ -105,3 +107,37 @@ FROM ai1 GROUP BY decision;
 4. **확대 판단**: 1~3의 실측 뒤에만. 의미 판정(대행·강의·프로필)은 AI에 남긴다.
 
 전부 대체는 권하지 않는다. 기록상 규칙의 거절 정밀도가 낮았고, AI1의 핵심 판정은 자유 글을 읽는 분류다.
+
+## 23:30 UTC 최신 코드·운영 실측 정정 (p84-5)
+
+코드: origin/main `b047bddb` (#707) + 이 차선의 분리 커밋 `07930102`(재시작 보호), `01514beb`(전송 전 배정), `dc704d87`(기한/relay), `d7fea73c`(미선언 자동 회수). `git fetch origin`으로 최신 main 재확인. 운영에 반영된 커밋 목록이라는 뜻은 아니다.
+
+### 코드 재확인에서 바로잡은 내용
+
+- `agent-review-contract.ts`의 `REVIEW_RETRIABLE_REASONS`는 `ambiguous`, `ai_evidence_pending`, `ai_evidence_insufficient`, `ai_evidence_not_found`, `repository_relationship_conflict`, `source_changed`다. 최초 보고의 installable_product/docs_nav/name_pattern 등은 규칙 trace/cause를 후보 reason과 섞은 서술이었다. 실제 대상은 `decidedBy=auto`이면서 approved 또는 이6개 needs_review reason이다.
+- `packageProof`는 설치용 host 생태계 파일의 저장소 관측이다. 레지스트리 실존/이름 일치나 실제 실행 검증이라는 최초 표의 표현은 정확하지 않다. 프롬프트도 packageProof/별은 자격이며 실제 유용한 소프트웨어의 증명이 아니라고 구분한다.
+- `REVIEW_SYSTEM_PROMPT`의 **installable 예외가 빈 웹 본문 거절보다 먼저 적용**된다. accessMode=installable이면 README·설치/사용 근거를 판정하며, 원래 URL이 없거나 웹 본문이 짧아도 승인할 수 있다. 별500 미만에서 packageProof만으로 자격을 얻으면 해당 skill/plugin/MCP/extension 자체가 실제 납품물인지도 가린다. 따라서 전역 `pageText < 200 → reject`는 현재 정책을 재현하지 못한다.
+- AI1은 단일3값 판정+자유 이유/근거/confidence를 저장한다. enforce에서 AI1 approve는 AI2 관문, reject는 바로 rejected인 기존 경로를 유지한다. 규칙만으로 AI1 reject를 만들면 AI2가 이를 구해 주지 않는다.
+- gateway의 기본 출력 상한은3000이지만 AI2 native/direct 준비 경로는 검증된 serving contract의 requestBudget/maxOutputTokens를 사용한다. max_tokens만으로 실행시간 보장이 생기지 않는다.
+- 이 차선의 우회 배정은 전송 이력·활성 intent 없는 AI1 후보만 대상이다. 규칙 심사 워커가 새 결론을 쓰는 변경은 하지 않았다.
+
+### 최근14일 그림자 규칙의 실제 AI 일치 (사람 정확도 아님)
+
+명령/원본: `scripts/ops/measure-review-rule-shadow.mjs`를 기존 M3 text 컨테이너에서 `node --input-type=module` stdin으로 실행. READ ONLY·statement_timeout25초, primary 확인. prompt `2026-10-06.2`, automatic+succeeded, provider rules/재사용 제외. 2026-10-28T23:30:50.417Z 표본 **19,093건**. 원본 `review-stall-rule-shadow-by-mode.json`, 첫 조회 `review-stall-rule-shadow.json`도 보존한다.
+
+| 거절 후보 규칙 | 발동 건수 | AI1 전체 대비 | 그중 AI reject | 거절 결정 AI 일치율 | AI approve |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 본문50자 미만 | 3589 | 18.80% | 2558 | 71.27% | 875 |
+| 본문100자 미만 | 4582 | 24.00% | 3213 | 70.12% | 1199 |
+| 본문200자 미만 | 5431 | 28.44% | 3662 | 67.43% | 1593 |
+| 본문400자 미만 | 6340 | 33.21% | 4039 | 63.71% | 2122 |
+
+200자 기준을 accessMode로 분리하면 installable637건 중594건 발동, reject56·approve414다. website18456건 중4837건 발동, reject3606·approve1179다. installable을 제외해도 단순 본문 길이만으로 승인/거절을 대체할 근거가 없다. 최초 보고가 예로 든98% AI 일치 기준을 어느 길이에서도 만족하지 않는다.
+
+이것은 실제로 전송된 성공 시도 수이며 독립 제품 수나 사람 정답 표본 수가 아니다. AI와의 불일치를 사람 기준 오판이라고 단정하지 않는다. **사람 정답으로 검증된 대체 가능 비율은 측정 없음**이며, 사람의 같은 입력 판정과 대조한 오류율이 필요하다. 추정 대체율을 만들지 않는다.
+
+### 현재 선택과 다음 관문
+
+가장 덜 파괴적인 선택은 **그림자 평가만 유지하고 신규 규칙으로 자동 거절하지 않는 것**이다. 이유: 현재 입력에 installable·개인 프로필·제품 의미 판정이 섞이며, 단순 길이 규칙은 실제 AI 판단과도 크게 어긋난다. 후보 규칙을 다시 설계할 때 accessMode/설치 근거와 정상 SPA를 분리하고 사람 정답으로 검증한다. 그때까지 기존 규칙/재사용/별 자동 승인 경로를 보존한다.
+
+AI1·AI2 총 실제 저장은 첫 측정23:14 → 재측정23:30에 각각 **94871→94871**, **91158→91158**이다. 이번 앱 배포는 없고 증가도0이므로 이 차선이 운영 정체를 해결했다고 주장하지 않는다. 미확인 회복의 완료 조건은 기한 강제/종료 증거, 표준 배포,4종 드릴,60분 새 저장 증가·수동 해제0이다. 지정 scratch 쓰기 차단과 미확정 M1/서버 상한 때문에 이 운영 관문은 남아 있다.

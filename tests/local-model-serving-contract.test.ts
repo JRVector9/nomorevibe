@@ -36,6 +36,13 @@ describe("local serving contract", () => {
     expect(localModelContractHash(contract)).toBe(localModelContractHash(Object.fromEntries(Object.entries(contract).reverse()) as LocalModelServingContract));
     expect(localModelContractHash({ ...contract, capabilities: { ...contract.capabilities, vision: false } })).not.toBe(localModelContractHash(contract));
   });
+  it("accepts configured replacement families without treating them as verified", () => {
+    const replacement = { ...contract, model: "new-model", responseModel: "new-model", modelFamily: "new-family" };
+    expect(localModelServingContractSchema.parse(replacement)).toEqual(replacement);
+    expect(resolveLocalModelServingContract(replacement.backendId, {})).toBeNull();
+    expect(localModelContractHash(replacement)).not.toBe(localModelContractHash(contract));
+    expect(localModelServingContractSchema.safeParse({ ...replacement, modelFamily: "bad\nfamily" }).success).toBe(false);
+  });
   it("maps only the actual backend thinking controls and refuses unsupported requests", () => {
     expect(localModelThinkingFields(contract)).toEqual({ chat_template_kwargs: { enable_thinking: false } });
     expect(localModelThinkingFields({ ...contract, thinking: { mode: "disabled", parameter: "enable_thinking" } })).toEqual({ enable_thinking: false });

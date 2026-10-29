@@ -1,3 +1,5 @@
+import { scopedModel } from "@/lib/llm/model-registry";
+import { modelLimits, modelTimeoutMs } from "@/lib/llm/model-registry";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { pendingVerifications, recordVerificationResult } from "@/lib/domain/products/search-profiles";
@@ -13,9 +15,9 @@ import { verifyKeywordsWithModelCapacity } from "@/lib/domain/products/search-ve
 
 /** 한 번에 집는 수. 대기열은 한 번에 읽어 나눈다 — 따로 읽으면 같은 제품을 두 번 부른다 */
 const BATCH = 16;
-const CONCURRENCY = 4;
+const CONCURRENCY = modelLimits("product-search-verify").concurrency;
 /** 한 건(키워드 16개)에 둘 시간 — 시험에서 동시 넷일 때 5~25초 */
-const CALL_MS = 60_000;
+const CALL_MS = modelTimeoutMs("product-search-verify");
 /** 틱 예산(worker.ts jobRunOptions 110초)보다 조금 짧게 */
 const TICK_MS = 105_000;
 /** 이만큼 남아 있을 때만 새로 부른다 */
@@ -75,7 +77,7 @@ export async function verifySearchKeywords(ctx: JobContext<null>, request?: type
               continue;
             }
             inARow = 0;
-            const success = { kind: "success" as const, removed: result.unsupported, model: VERIFY_MODEL };
+            const success = { kind: "success" as const, removed: result.unsupported, model: scopedModel("product-search-verify", VERIFY_MODEL) };
             if (!await (outcome.expectation ? recordVerificationResult(task, lease, success, outcome.expectation)
               : recordVerificationResult(task, lease, success))) continue;
             verified++;

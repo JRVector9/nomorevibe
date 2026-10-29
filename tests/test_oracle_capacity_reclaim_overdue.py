@@ -68,14 +68,17 @@ class CapacityReclaimOverdueTests(unittest.TestCase):
         self.config['incidentNotifications'] = {'botToken': '123456:' + 'a' * 30, 'chatId': '123456'}
         send = Mock(return_value=True)
         reports = {'m3': {'services': [self.row]}}
-        self.notify(self.config, self.state, reports, self.cycle(1000), {}, now=1000, send=send)
-        self.notify(self.config, self.state, reports, self.cycle(1400), {}, now=1400, send=send)
+        result = self.cycle(1000)
+        self.notify(self.config, self.state, reports, result, {}, now=1000, send=send)
+        result = self.cycle(1400)
+        self.notify(self.config, self.state, reports, result, {}, now=1400, send=send)
         signature = 'm3/monitor/' + REQUEST + '/model_reclaim_overdue'
         self.assertIn(signature, self.state['notifications']['incidents'])
         self.assertIn('model_reclaim_overdue', send.call_args.args[1])
         self.row['capacityUnknowns'] = {'status': 'ok', 'truncated': False, 'requests': []}
         self.row.update(ok=True, reason='ok')
-        self.notify(self.config, self.state, reports, self.cycle(1430), {}, now=1430, send=send)
+        result = self.cycle(1430)
+        self.notify(self.config, self.state, reports, result, {}, now=1430, send=send)
         self.assertNotIn(signature, self.state['notifications']['incidents'])
 
 

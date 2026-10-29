@@ -1,3 +1,4 @@
+import { modelBaseUrl, modelTimeoutMs, modelCallTimeoutMs, modelCallMaxTokens } from "@/lib/llm/model-registry";
 import { createHash } from "node:crypto";
 import { fetch as undiciFetch } from "undici";
 import { observeProviderTransport } from "@/lib/llm/provider-circuit-breaker";
@@ -9,7 +10,7 @@ import { ai1ModelDispatchSchema, ai1GatewayTerminalEvidenceSchema,
   gatewayNotStartedEvidenceSchema, type GatewayNotStartedEvidence } from "@/lib/llm/capacity";
 import { ai1GatewayServingContractHash, ai1GatewayServingContractSchema, resolveAi1GatewayServingContract,
   type Ai1GatewayServingContract } from "./agent-review-serving-contract";
-import { ai2GatewayServingContractHash, ai2GatewayServingContractSchema, resolveAi2GatewayServingContract,
+import { ai2GatewayServingContractHash, ai2GatewayServingContractSchema, resolveAi2GatewayServingContract, ai2ServingContractMatches,
   type Ai2GatewayServingContract } from "./second-review-serving-contract";
 import { MAX_REVIEW_INPUT_BYTES, validateReviewOutcome, type ReviewInput } from "./agent-review-contract";
 import { assertLiveReviewAdapterAllowed } from "./review-fixture-transport";
@@ -42,8 +43,8 @@ export const REVIEW_GATEWAY_TIMEOUT_MS = REVIEW_GATEWAY_LADDER.clientMs;
  * 넉넉히 둔다 — 길이로 조이는 것은 붐비는 서버에 도움이 되지 않았다(같은 요청이 4.7초에서
  * 29초까지 흔들렸고 상한과는 무관했다).
  */
-const MAX_OUTPUT_TOKENS = 3_000;
-const BASE_URL = process.env.ABCLLM_BASE_URL?.trim() || "https://abcllm-api.brut.bot";
+const gatewayMaxOutputTokens = (model: string) => modelCallMaxTokens("gateway-review", model);
+const BASE_URL = modelBaseUrl("ai1-preset", process.env, "abcllm");
 const MAX_BODY_BYTES = 128 * 1024;
 
 /**
@@ -80,7 +81,7 @@ export async function listGatewayModels(options: { timeoutMs?: number; request?:
   const key = process.env.ABCLLM_API_KEY?.trim();
   if (!key) return null;
   try {
-    const response = await (options.request ?? fetch)(`${BASE_URL}/v1/models`, {
+    const response = await (options.request ?? fetch)(`${BASE_URL}/models`, {
       headers: { authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(options.timeoutMs ?? 5_000), cache: "no-store",
     });
     if (!response.ok) return null;
@@ -138,7 +139,7 @@ function gatewayWire(model: string, serialized: string, systemSuffix: string = G
     // The gateway's default Gemma adapter summarizes and clips evidence/policy.
     // Review decisions must use the exact snapshot whose hash we record.
     context_strategy: "raw",
-    model, stream: false, temperature: 0, max_tokens: MAX_OUTPUT_TOKENS, reasoning_effort: "low",
+    model, stream: false, temperature: 0, max_tokens: gatewayMaxOutputTokens(model), reasoning_effort: "low",
     chat_template_kwargs: { enable_thinking: false },
     response_format: { type: "json_schema", json_schema: { name: "review", schema: GATEWAY_SCHEMA } },
     messages: [
@@ -162,11 +163,11 @@ export async function reviewWithGateway(input: ReviewInput, options: {
   const key = options.endpoint ? options.endpoint.apiKey?.trim() || null : process.env.ABCLLM_API_KEY?.trim();
   const model = gatewayModel(options.model);
   if ((!options.endpoint && !key) || !model) return { ok: false, error: "not_configured" };
-  const url = options.endpoint ? `${options.endpoint.baseUrl.replace(/\/+$/, "")}/chat/completions` : `${BASE_URL}/v1/chat/completions`;
+  const url = options.endpoint ? `${options.endpoint.baseUrl.replace(/\/+$/, "")}/chat/completions` : `${BASE_URL}/chat/completions`;
   const serialized = JSON.stringify(input.snapshot);
   if (Buffer.byteLength(serialized, "utf8") > MAX_REVIEW_INPUT_BYTES) return { ok: false, error: "input_too_large" };
 
-  const deadline = AbortSignal.timeout(Math.max(1, options.timeoutMs ?? REVIEW_GATEWAY_TIMEOUT_MS));
+  const deadline = AbortSignal.timeout(Math.max(1, options.timeoutMs ?? modelCallTimeoutMs("review-gateway", options.model)));
   const timeout = options.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
   const failure = (error: unknown): ReviewFailure => {
     const name = error instanceof Error ? error.name : "";
@@ -298,7 +299,7 @@ export function settleAi2GatewayNotStarted(call: PreparedAi2GatewayCall, dispatc
 export function prepareAi1GatewayCall(input: ReviewInput, options: { model: string; timeoutMs?: number }):
   PreparedAi1GatewayCall | { kind: "unsupported"; reason: "provider_contract_unavailable" } {
   assertLiveReviewAdapterAllowed();
-  const snapshot = structuredClone(input), model = gatewayModel(options.model), timeoutMs = options.timeoutMs ?? REVIEW_GATEWAY_TIMEOUT_MS;
+  const snapshot = structuredClone(input), model = gatewayModel(options.model), timeoutMs = options.timeoutMs ?? modelCallTimeoutMs("review-gateway", options.model);
   const unsupported = { kind: "unsupported", reason: "provider_contract_unavailable" } as const;
   if (!model || !process.env.ABCLLM_API_KEY?.trim() || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return unsupported;
   const resolved = resolveAi1GatewayServingContract(model);
@@ -416,7 +417,7 @@ export async function prepareAi2GatewayCall(input: ReviewInput, options: {
   model: string; provider?: "abcllm" | "local-direct"; timeoutMs?: number; signal?: AbortSignal;
 }): Promise<PreparedAi2GatewayCall | { kind: "unsupported"; reason: "provider_contract_unavailable" }> {
   assertLiveReviewAdapterAllowed();
-  const snapshot = structuredClone(input), model = gatewayModel(options.model), timeoutMs = options.timeoutMs ?? REVIEW_GATEWAY_TIMEOUT_MS;
+  const snapshot = structuredClone(input), model = gatewayModel(options.model), timeoutMs = options.timeoutMs ?? modelCallTimeoutMs("review-gateway", options.model);
   const provider = options.provider ?? "abcllm";
   const unsupported = { kind: "unsupported", reason: "provider_contract_unavailable" } as const;
   if (!model || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || options.signal?.aborted) return unsupported;
@@ -425,8 +426,8 @@ export async function prepareAi2GatewayCall(input: ReviewInput, options: {
   if (!resolved) return unsupported;
   const contract = ai2GatewayServingContractSchema.parse(structuredClone(resolved));
   const serialized = JSON.stringify(snapshot.snapshot);
-  if (contract.provider !== provider || contract.model !== model || Buffer.byteLength(serialized, "utf8") > MAX_REVIEW_INPUT_BYTES) return unsupported;
-  let wire = gatewayWire(model, serialized);
+  if (contract.provider !== provider || !ai2ServingContractMatches(contract, model) || Buffer.byteLength(serialized, "utf8") > MAX_REVIEW_INPUT_BYTES) return unsupported;
+  let wire = gatewayWire(contract.model, serialized);
   if (contract.provider === "local-direct") {
     const body = JSON.parse(wire);
     delete body.context_strategy;
@@ -621,7 +622,7 @@ export async function writeKeywordsWithReservedGateway(evidence: ProfileEvidence
   assertLiveReviewAdapterAllowed();
   const snapshot = structuredClone(evidence), state = textProfileCalls.get(call);
   const checked = textProfileModelDispatchSchema.safeParse(structuredClone(dispatch));
-  const timeoutMs = options.timeoutMs ?? state?.timeoutMs ?? 45_000, signal = options.signal;
+  const timeoutMs = options.timeoutMs ?? state?.timeoutMs ?? modelTimeoutMs("product-search-profile"), signal = options.signal;
   if (!state || state.used || !checked.success || !validProfileEvidence(snapshot)
     || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new Error("text_profile_gateway_call_mismatch");
   const owned = checked.data, binding = owned.binding;
@@ -707,7 +708,7 @@ export async function translateWithReservedReasonGateway(texts: readonly string[
   assertLiveReviewAdapterAllowed();
   const snapshot = structuredClone(texts), state = reasonTranslationCalls.get(call);
   const checked = reasonTranslationModelDispatchSchema.safeParse(structuredClone(dispatch));
-  const timeoutMs = options.timeoutMs ?? state?.timeoutMs ?? 45_000, signal = options.signal;
+  const timeoutMs = options.timeoutMs ?? state?.timeoutMs ?? modelTimeoutMs("reason-translate"), signal = options.signal;
   if (!state || state.used || !checked.success || !validReasonTexts(snapshot)
     || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new Error("reason_translation_gateway_call_mismatch");
   const owned = checked.data, binding = owned.binding, sourceHashes = snapshot.map(textHash);
@@ -793,7 +794,7 @@ export async function translateProductFieldsWithReservedGateway(items: readonly 
   assertLiveReviewAdapterAllowed();
   const snapshot = structuredClone(items), state = productTranslationCalls.get(call);
   const checked = productTranslationModelDispatchSchema.safeParse(structuredClone(dispatch));
-  const timeoutMs = options.timeoutMs ?? state?.timeoutMs ?? 20_000, signal = options.signal;
+  const timeoutMs = options.timeoutMs ?? state?.timeoutMs ?? modelTimeoutMs("product-translate"), signal = options.signal;
   if (!state || state.used || !checked.success || !validProductTranslationItems(snapshot)
     || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new Error("product_translation_gateway_call_mismatch");
   const owned = checked.data, binding = owned.binding;
@@ -880,7 +881,7 @@ export async function translateTaglinesWithReservedGateway(items: readonly Produ
   assertLiveReviewAdapterAllowed();
   const snapshot = structuredClone(items), state = productTaglineKoCalls.get(call);
   const checked = productTaglineKoModelDispatchSchema.safeParse(structuredClone(dispatch));
-  const timeoutMs = options.timeoutMs ?? state?.timeoutMs ?? 45_000, signal = options.signal;
+  const timeoutMs = options.timeoutMs ?? state?.timeoutMs ?? modelTimeoutMs("product-tagline-ko"), signal = options.signal;
   if (!state || state.used || !checked.success || !validProductTaglineKoItems(snapshot)
     || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new Error("product_tagline_ko_gateway_call_mismatch");
   const owned = checked.data, binding = owned.binding;
@@ -965,7 +966,7 @@ export async function writeTaglineWithReservedGateway(evidence: TaglineEvidence,
   assertLiveReviewAdapterAllowed();
   const snapshot = structuredClone(evidence), state = crawlTaglineCalls.get(call);
   const checked = crawlTaglineModelDispatchSchema.safeParse(structuredClone(dispatch));
-  const timeoutMs = options.timeoutMs ?? state?.timeoutMs ?? 45_000, signal = options.signal;
+  const timeoutMs = options.timeoutMs ?? state?.timeoutMs ?? modelTimeoutMs("crawl-tagline"), signal = options.signal;
   if (!state || state.used || !checked.success || !validCrawlTaglineEvidence(snapshot)
     || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new Error("crawl_tagline_gateway_call_mismatch");
   const owned = checked.data, binding = owned.binding;
@@ -1048,7 +1049,7 @@ export async function verifyKeywordsWithReservedGateway(item: VerifyItem, dispat
   assertLiveReviewAdapterAllowed();
   const snapshot = structuredClone(item), state = searchVerifyCalls.get(call);
   const checked = searchVerifyModelDispatchSchema.safeParse(structuredClone(dispatch));
-  const timeoutMs = options.timeoutMs ?? state?.timeoutMs ?? 60_000, signal = options.signal;
+  const timeoutMs = options.timeoutMs ?? state?.timeoutMs ?? modelTimeoutMs("product-search-verify"), signal = options.signal;
   if (!state || state.used || !checked.success || !validSearchVerifyItem(snapshot)
     || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new Error("search_verify_gateway_call_mismatch");
   const owned = checked.data, binding = owned.binding;
@@ -1137,7 +1138,7 @@ export async function translateQueryWithReservedGateway(input: WebsearchQueryGat
   assertLiveReviewAdapterAllowed();
   const snapshot = structuredClone(input), state = websearchQueryCalls.get(call);
   const checked = websearchQueryModelDispatchSchema.safeParse(structuredClone(dispatch));
-  const timeoutMs = options.timeoutMs ?? state?.timeoutMs ?? 8_000, signal = options.signal;
+  const timeoutMs = options.timeoutMs ?? state?.timeoutMs ?? modelTimeoutMs("search-query-translate"), signal = options.signal;
   if (!state || state.used || !checked.success || !validWebsearchQueryInput(snapshot)
     || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new Error("websearch_query_gateway_call_mismatch");
   const owned = checked.data, binding = owned.binding;

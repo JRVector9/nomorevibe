@@ -1,4 +1,6 @@
 import { sql } from "drizzle-orm";
+import { operationsAudit } from "@/lib/db/schema";
+import { adminAuditRow } from "../admin-log";
 import { z } from "zod";
 import { releaseModelDispatchWithEvidence, type ModelDispatchReleaseCandidate } from "@/lib/llm/capacity-repository";
 import type { ModelDispatchReleaseEvidence } from "@/lib/llm/capacity";
@@ -121,6 +123,10 @@ export async function releaseEvidencedDispatches(value: { policies: ReadonlyMap<
         return { ...common, kind: "local_call_ended", fromState: "indeterminate", endedAt: local!.endedAt,
           localEnd: { dispatches: local!.dispatches, terminals: local!.terminals } };
       })));
+    if (value.onlyDeclaredBudgets && rows.length) await tx.insert(operationsAudit).values(await adminAuditRow(operator, {
+      action: "ops-runner-auto-release", target: "model-capacity", detail: { released: rows.filter(row => row.released).length,
+        kept: rows.filter(row => !row.released).length, rows: rows.slice(0, 100), evidenceOnly: true, businessResult: false },
+    }));
     return { rows };
   });
 }

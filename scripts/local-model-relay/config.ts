@@ -1,3 +1,5 @@
+import { DEADLINE_LADDER_SKEW_MS } from "../../lib/llm/deadline-policy";
+import { configuredModel, configuredModelDefinition, modelTimeoutMs, modelLimits } from "../../lib/llm/model-registry";
 import net from "node:net";
 import path from "node:path";
 import { lstatSync, readFileSync } from "node:fs";
@@ -33,8 +35,9 @@ export function localModelRelayConfig(env: Readonly<Record<string, string | unde
   if (!/^[a-zA-Z0-9._:-]{1,200}$/.test(deploymentRevision)) throw new Error("relay_invalid_deployment_revision");
   if (env.LOCAL_MODEL_RELAY_UPSTREAM_URL || env.LOCAL_MODEL_RELAY_UPSTREAM_HOST || env.LOCAL_MODEL_RELAY_UPSTREAM_PORT)
     throw new Error("relay_upstream_is_fixed");
-  const model = env.LOCAL_MODEL_RELAY_MODEL ?? "qwen3.8-flash-next";
-  if (model !== "qwen3.8-flash-next") throw new Error("relay_model_not_allowed");
+  const definition = configuredModelDefinition("relay", env);
+  const model = configuredModel("relay", env);
+  if (definition.provider !== "local-direct" || model !== definition.model) throw new Error("relay_model_not_allowed");
   const token = secretFile(env.LOCAL_MODEL_RELAY_TOKEN_FILE), upstreamToken = secretFile(env.LOCAL_MODEL_RELAY_UPSTREAM_TOKEN_FILE);
   if (token.length < 32 || token === upstreamToken) throw new Error("relay_separate_tokens_required");
   // 기한 사다리(엔진 < relay < gateway < client)의 relay 몫. 값 근거는 docs/operations/2026-10-28-deadline-ladder.md.
@@ -45,10 +48,18 @@ export function localModelRelayConfig(env: Readonly<Record<string, string | unde
     if (!/^\d+$/.test(raw) || !Number.isSafeInteger(value) || value < 1 || value > max) throw new Error("relay_invalid_deadline");
     return value;
   };
-  const upstreamTimeoutMs = optionalMs("LOCAL_MODEL_RELAY_UPSTREAM_TIMEOUT_MS", 90_000);
+  const ladder = definition.deadlineLadder;
+  if (ladder && ladder.relayMs === null) throw new Error("relay_deadline_ladder_requires_relay");
+  const upstreamTimeoutMs = optionalMs("LOCAL_MODEL_RELAY_UPSTREAM_TIMEOUT_MS", 90_000) ?? ladder?.relayMs ?? modelTimeoutMs("relay", env);
+  if (upstreamTimeoutMs > 90_000) throw new Error("relay_invalid_deadline");
+  if (ladder && upstreamTimeoutMs !== ladder.relayMs) throw new Error("relay_deadline_ladder_override_mismatch");
   const engineDeadlineMs = optionalMs("LOCAL_MODEL_RELAY_ENGINE_DEADLINE_MS", 90_000);
-  const maxOutputTokens = optionalMs("LOCAL_MODEL_RELAY_MAX_OUTPUT_TOKENS", 262_144);
+  const engineBoundEffectiveAt = env.LOCAL_MODEL_RELAY_ENGINE_BOUND_EFFECTIVE_AT?.trim();
+  const maxOutputTokens = optionalMs("LOCAL_MODEL_RELAY_MAX_OUTPUT_TOKENS", 262_144) ?? modelLimits("relay", env).maxTokens;
+  if (maxOutputTokens > modelLimits("relay", env).maxTokens) throw new Error("relay_model_output_limit_exceeded");
+  if (engineDeadlineMs !== undefined && (engineDeadlineMs + DEADLINE_LADDER_SKEW_MS >= upstreamTimeoutMs || (ladder && engineDeadlineMs !== ladder.engineMs)))
+    throw new Error("relay_deadline_order_invalid");
   return { host, port, allowFrom, stateDirectory, relayRevision, deploymentRevision, token, upstreamToken, model,
-    ...(upstreamTimeoutMs ? { upstreamTimeoutMs } : {}), ...(engineDeadlineMs ? { engineDeadlineMs } : {}),
+    ...(upstreamTimeoutMs ? { upstreamTimeoutMs } : {}), ...(engineDeadlineMs ? { engineDeadlineMs, engineBoundEffectiveAt } : {}),
     ...(maxOutputTokens ? { maxOutputTokens } : {}) };
 }

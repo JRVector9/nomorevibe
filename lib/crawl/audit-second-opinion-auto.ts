@@ -1,3 +1,5 @@
+import { withAdminModelStage } from "@/lib/llm/admin-model-pools";
+import { modelTimeoutMs } from "@/lib/llm/model-registry";
 import { and, eq, sql, type SQL } from "drizzle-orm";
 import { withLocalModelCapacity } from "@/lib/llm/local-model-capacity";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
@@ -64,7 +66,7 @@ const STEP_MS = 30_000;
  * 한 호출의 상한 — 감사 Qwen 직접 심사와 같다(jobs/product-audit.ts QWEN_CALL_TIMEOUT_MS): 한 건만이면 2.5초지만 감사 자리 넷과 함께 뜨면
  * 한 건에 12초쯤(운영 실측 평균 11.8초·최대 19.8초, 2026-10-21)이라 20초는 짧았다
  */
-export const QWEN_AUTO_CALL_TIMEOUT_MS = 45_000;
+export const QWEN_AUTO_CALL_TIMEOUT_MS = modelTimeoutMs("audit-second-opinion");
 /** 새 호출을 시작할 수 있는 틱의 남은 시간 — 부하 중 p95 쯤. 더 짧으면 제한 시간을 그 안으로 줄인다 */
 export const QWEN_AUTO_MIN_START_MS = 15_000;
 const WRITE_MARGIN_MS = 2_000;
@@ -227,7 +229,12 @@ const autoOpinion = (review: QwenDirectReview, input: ReviewInput): SecondReview
 export async function runQwenSecondOpinions(ctx: JobContext<null>, settings: CrawlSettings): Promise<QwenAutoTally> {
   const tally = emptyTally();
   try {
-    await runStep(ctx, settings, tally);
+    if (settings.stageModelPools?.["audit-second-opinion"]?.length || settings.stageModelPools?.["published-filter"]?.length) {
+      await withAdminModelStage("audit-second-opinion", () => runStep(ctx, { ...settings, qwenAuto: { ...settings.qwenAuto,
+        publishedFilter: { ...settings.qwenAuto.publishedFilter, enabled: false } } }, tally));
+      await withAdminModelStage("published-filter", () => runStep(ctx, { ...settings, qwenAuto: { ...settings.qwenAuto,
+        auditSecondOpinion: { ...settings.qwenAuto.auditSecondOpinion, enabled: false } } }, tally));
+    } else await runStep(ctx, settings, tally);
   } catch (error) {
     const code = error instanceof Error ? error.name === "Error" ? error.message.slice(0, 80) : error.name : "unknown";
     logger.error("qwen_second_opinion.failed", { code });

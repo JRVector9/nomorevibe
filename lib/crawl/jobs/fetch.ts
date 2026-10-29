@@ -65,6 +65,8 @@ export async function fetchCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
   /** 흔적이 있어야 들여보내는 신호(settings-schema requireEvidence) — 프론티어의 signal 이 그 라벨이다 */
   const evidenceRequired = new Set(settings.discover.queries.filter((q) => q.requireEvidence).map((q) => q.label));
   if (settings.discover.showHn.requireEvidence) evidenceRequired.add(SHOW_HN_SIGNAL);
+  // Oracle language routing never establishes AI authorship.
+  evidenceRequired.add('Oracle Korean');
   if (ctx.lease && ctx.hasBudget()) {
     const recovered = await crawl.recoverAbandonedFrontier(ctx.lease);
     if (recovered) ctx.log("crawl.fetch_recovered", { recovered });

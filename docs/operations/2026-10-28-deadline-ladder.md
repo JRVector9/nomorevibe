@@ -83,3 +83,33 @@
 2. 엔진별 최저 decode 속도·최대 prefill: 실제 응답의 usage(completion_tokens)와 지연에서 하위 1% 속도를 쓴다. 추정 usage(게이트웨이가 글자 수로 만든 값)는 쓰지 않는다.
 3. 게이트웨이 기한 강제 드릴: 기한보다 긴 생성(큰 `max_tokens`)을 한 번 보내 게이트웨이가 끊고, vLLM `/metrics`의 running 요청이 0으로 돌아오는지, 종료 기록이 남는지 확인한다.
 4. 1~3을 문서로 남기고 그 경로를 `reference`에 적은 뒤 `MODEL_CAPACITY_AUTO_RECLAIM`을 선언한다.
+
+## 2026-10-28 23:14 UTC primary DB 재측정 (이전 제안값보다 우선)
+
+원본: `review-stall-measurement-before.json`. 명령: `scripts/ops/measure-review-stall.mjs`를 M3의 기존 text 컨테이너에서 `node --input-type=module` stdin으로 실행. `BEGIN READ ONLY`, statement_timeout 25초. `pg_is_in_recovery=false`, 최근7일의 `dispatch_settled.created_at - requests.dispatched_at`를 초 단위로 계산했다. 성공/정산된 호출의 장부 지연이며 timeout으로 끝나지 않은 표본·순수 decode 속도는 아니다.
+
+| 경로·모델 | n | p95(초) | p99(초) | 최대(초) |
+| --- | ---: | ---: | ---: | ---: |
+| AI1 GPT-OSS | 5807 | 7.644500 | 10.320340 | 17.982 |
+| AI1 Supa Qwen | 1458 | 6.242650 | 7.764920 | 20.093 |
+| AI2 Supa Qwen | 1552 | 6.145950 | 7.967630 | 42.991 |
+| AI2 gpu3090 Qwen | 3985 | 3.781000 | 5.254440 | 6.487 |
+| 제품 번역 GPT-OSS | 774 | 7.382000 | 9.390320 | 14.387 |
+| 제품 번역 M1 | 0 | 측정 없음 | 측정 없음 | 미확인1건 |
+
+선택:
+- AI 경로의 **검증 대상 값**을 엔진50초 < gateway55초 < client60초로 갱신한다. p99가 약10.32초 이하였어도 AI2 최대42.991초를 보존하도록 엔진에 약7초 여유를 둔다. client60초는 기존 워커 예산을 보존한다. 코드 `REVIEW_GATEWAY_LADDER` 반영. gateway/엔진에서 실제 강제했다는 뜻은 아니다.
+- M1은 성공 표본이 없어 안쪽 값을 확정하지 않는다. 예전28/31/34초 사다리를 코드의 확정 상수로 내보내지 않는다. 번역 **바깥 HTTP 기한만40초**로 두어 #708의 job55초 안에 준비·기록15초를 남긴다. M1 표본 확보·서버 상한 강제 전까지 내부 사다리/자동 해제 선언은 막힘.
+- `max_tokens`는 생성 길이를 제한하며, 측정한 decode 속도만으로 벽시계 실행 상한을 증명하지 않는다. 서버의 강제 종료 상한과 gateway disconnect→vLLM abort 실측이 따로 필요하다.
+
+추가 안전 조건: `LOCAL_MODEL_RELAY_ENGINE_DEADLINE_MS`를 쓰려면 `LOCAL_MODEL_RELAY_ENGINE_BOUND_EFFECTIVE_AT`(실제 엔진 상한이 보장되기 시작한 UTC 시각)을 함께 적어야 한다. 이 시각보다 먼저 전송된 미확인 receipt는 새 상한으로 자동 해제하지 않는다. 재시작·기한 경과·기존 archive 불일치도 이를 우회하지 않는다. 현재 운영의 기존 미확인3건을 새 선언으로 자동 소급 해제하지 않는다.
+
+배포/강제 막힘: 지정 scratch 디렉터리 생성이 `Read-only file system`으로 거절되었고 별도 abcLLM/engine 작업용 checkout과 private 배포 영수증을 그 밖 경로로 우회 생성하지 않았다. 이 저장소 코드의 회귀 시험은 서버 종료·vLLM abort 운영 증명이 아니다.
+
+### 자동 해제 선언의 소급 적용 차단 (단계5 코드, 운영 미선언)
+
+`MODEL_CAPACITY_AUTO_RECLAIM` 각 항목에 `enforcedAfter`(실제 서버·gateway 보장 적용을 검증한 UTC ISO 시각)가 필수다. `provider_bound` 판정의 `enforcedAfterMs`로 전달하며, `dispatchAt < enforcedAfter`이면 로컬 종료·프로세스 그룹 종료가 있어도 `provider_bound_not_effective_at_dispatch`로 남긴다. 수동 절차의 기존 판정은 이 선택 필드가 없으면 기존대로다. 해제의 append-only reference에는 보장 적용 시각도 함께 남는다.
+
+예전 선언 예제에는 이 필드가 없어 지금 검증에서 거절된다. 문서 예제값을 복사해 운영 선언하지 않는다. 특히 현재 미확인3건은 새 서버 상한을 적용하기 전에 시작했으므로 그 선언으로 소급 해제할 수 없다. 별도 실제 종료 증거를 갖춘 정식 경계 해제만 가능하다.
+
+코드의 시간 합산은 클라이언트 기한+안쪽 상한+skew이며 스케줄 지연·업무 재시도·운영 재개의 5분 보장이 아니다. 이를 포함한 실제4종 드릴과 이후60분 저장 증가/수동 해제0은 여전히 미실측이다. 운영 env를 설정하거나 실제 점유를 해제하지 않았다.

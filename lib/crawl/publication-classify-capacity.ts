@@ -1,3 +1,4 @@
+import { knownClassificationProvider } from "@/lib/operations/classification-models";
 import { isDeepStrictEqual } from 'node:util';
 import { eq, sql } from 'drizzle-orm';
 import { db, onPrimary } from '@/lib/db';
@@ -138,7 +139,7 @@ export async function runPublicationClassificationCall(input: CliCallInput, payl
       throw new ModelCapacityDeferredError('provider_contract_unavailable');
     const configured = status().config;
     if (![configured.primary, configured.fallback].some(model => model?.model === input.model)
-      || (input.model === 'sonnet' ? input.provider !== 'claude-cli' : input.provider !== 'codex-cli'))
+      || knownClassificationProvider(input.model, status().modelOptions) !== input.provider)
       throw new ModelCapacityDeferredError('provider_contract_unavailable');
     if (!current() || classificationPayloadHash(payload) !== authority.payloadHash
       || !payload.definitions || classificationDefinitionsHash(payload.definitions) !== authority.definitionsHash)

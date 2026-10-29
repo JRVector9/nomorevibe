@@ -157,7 +157,8 @@ function areaState(snapshot: ControlSnapshot, command: TransitionCommand): unkno
  * 계획·가드 어느 쪽이든 거절되면 TX 전체가 rollback된다.
  */
 export async function runPipelineControl(database: Database, command: TransitionCommand, policyFile?: unknown,
-  models: ModelEnv | null = null): Promise<ControlResult> {
+  models: ModelEnv | null = null,
+  transitionHooks?: { beforeApply?: (tx: Tx) => Promise<void>; afterApply?: (tx: Tx) => Promise<void> }): Promise<ControlResult> {
   const before = await readControlSnapshot(database);
   const plan = planPipelineControl(command, before, policyFile, models);
   if (!command.execute || plan.blocked.length) return { command: command.name, dryRun: !command.execute, executed: false, blocked: plan.blocked.length > 0, plan, before };
@@ -170,6 +171,7 @@ export async function runPipelineControl(database: Database, command: Transition
       const locked = await snapshotIn(tx);
       const checked = planPipelineControl(command, locked, policyFile, models);
       if (checked.blocked.length) throw new Rejected(checked, locked);
+      await transitionHooks?.beforeApply?.(tx);
       await transition(tx, command, policyFile);
       const after = await snapshotIn(tx);
       const row = await adminAuditRow(o.operator, { action: `pipeline-control-${command.name.replace(" ", "-")}`, target: checked.target,
@@ -177,6 +179,7 @@ export async function runPipelineControl(database: Database, command: Transition
           policyHash: checked.policyHash ?? null, before: areaState(locked, command), after: areaState(after, command) } });
       // 운영 CLI에는 로그인 방식이 없다 — 스크립트 행 관례(actor_kind 없음)로 남긴다.
       const [audit] = await tx.insert(operationsAudit).values({ ...row, actorKind: null }).returning({ id: operationsAudit.id });
+      await transitionHooks?.afterApply?.(tx);
       return { plan: checked, before: locked, auditId: audit.id };
     });
   } catch (error) {

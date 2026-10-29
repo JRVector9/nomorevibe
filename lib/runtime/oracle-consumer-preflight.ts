@@ -11,6 +11,7 @@ import { consumerInstancePrefix, consumerSpec, type ConsumerParentRole } from '@
 import { ORACLE_CONSUMER_DB_PROFILES, ORACLE_PRIVILEGE_CATALOG_SQL, ORACLE_UNSAFE_AUTHORITY_SQL, oracleConsumerPrivilegeMismatches,
   type OracleConsumerDbProfile } from '@/lib/runtime/oracle-db-profile';
 import { oracleTimeoutsCheck } from '@/lib/runtime/oracle-preflight';
+import { koreanDiscoveryOracleReadiness } from '@/lib/crawl/korean-discovery/readiness';
 import { agentScanOracleReadiness } from '@/lib/domain/evidence/agents/oracle-readiness';
 
 /**
@@ -48,7 +49,7 @@ async function uptimeReadiness(tx: OracleConsumerTx, { instanceId }: { instanceI
 }
 /** 이름별 준비 확인. E5(agent-scan)·U2(uptime)가 더한다. 없는 consumer 는 Oracle 에서 열리지 않는다 */
 export const ORACLE_CONSUMER_READINESS: Partial<Record<string, OracleConsumerReadiness>> = { 'agent-scan': agentScanOracleReadiness,
-  uptime: uptimeReadiness };
+  uptime: uptimeReadiness, 'github-ko-discovery': koreanDiscoveryOracleReadiness };
 export type OracleConsumerSpec = { consumer: string; role: ConsumerParentRole; db: OracleConsumerDbProfile; readiness: OracleConsumerReadiness };
 
 type CheckName = 'identity' | 'runtime' | 'host' | 'release' | 'database' | 'timeouts' | 'timezone' | 'budget' | 'consumer'

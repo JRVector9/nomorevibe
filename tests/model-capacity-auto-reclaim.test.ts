@@ -6,7 +6,7 @@ import { judgeModelReclaim, type ProcessGroupEvent } from "@/lib/operations/dr/c
 import { REVIEW_GATEWAY_LADDER } from "@/lib/llm/deadline-ladder";
 import { reclaimEvidencedModelCapacity } from "@/lib/jobs/model-capacity-reclaim";
 
-const supa: AutoReclaimDeclaration = { providerBudgetId: "supa", ladder: REVIEW_GATEWAY_LADDER,
+const supa: AutoReclaimDeclaration = { providerBudgetId: "supa", ladder: REVIEW_GATEWAY_LADDER, enforcedAfter: "2026-10-28T00:00:00.000Z",
   generation: { maxOutputTokens: 3_000, minDecodeTokensPerSec: 100, maxPrefillMs: 5_000 }, reference: "docs/operations/2026-10-28-deadline-ladder.md#supa" };
 const ctx = () => ({ log: vi.fn() }) as unknown as Parameters<typeof reclaimEvidencedModelCapacity>[0];
 
@@ -16,7 +16,7 @@ afterEach(() => { vi.unstubAllEnvs(); });
 it("turns a verified ladder into a provider_bound policy with the outermost inner bound as hard deadline", () => {
   const { policies, rejected } = autoReclaimPolicies(JSON.stringify([supa]));
   expect(rejected).toEqual([]);
-  expect(policies.get("supa")).toEqual({ termination: "provider_bound", hardDeadlineMs: 50_000, skewBoundMs: AUTO_RECLAIM_SKEW_MS, reference: supa.reference });
+  expect(policies.get("supa")).toEqual({ termination: "provider_bound", hardDeadlineMs: 55_000, skewBoundMs: AUTO_RECLAIM_SKEW_MS, enforcedAfterMs: Date.parse(supa.enforcedAfter), reference: `${supa.reference} [enforcedAfter=${supa.enforcedAfter}]` });
   // Latest automatic release after the client gave up stays inside the 5-minute requirement.
   expect(autoReclaimLatestReleaseMs(supa)).toBeLessThanOrEqual(5 * 60_000);
 });
@@ -45,7 +45,7 @@ it("drills through the existing judgement: timeout/connection-drop, owner replac
   const dispatchAtMs = T0 + 1_000, base = { state: "indeterminate" as const, dispatchAtMs, bindingHash: null, owner };
   // Client timeout or dropped connection: the owner records its local end at dispatch + client deadline.
   const localEnd = { endedAtMs: dispatchAtMs + REVIEW_GATEWAY_LADDER.clientMs, owner, bindingHash: null };
-  const due = localEnd.endedAtMs + 50_000 + AUTO_RECLAIM_SKEW_MS;
+  const due = localEnd.endedAtMs + 55_000 + AUTO_RECLAIM_SKEW_MS;
   expect(judgeModelReclaim({ ...base, events: [], localEnd }, policy, due - 1).status).toBe("waiting");
   expect(judgeModelReclaim({ ...base, events: [], localEnd }, policy, due)).toMatchObject({ status: "reclaimable", evidence: "local_call_ended" });
   expect(due - dispatchAtMs).toBeLessThanOrEqual(5 * 60_000);
@@ -53,7 +53,7 @@ it("drills through the existing judgement: timeout/connection-drop, owner replac
   const event = (kind: ProcessGroupEvent["kind"], seq: number, ms: number, pid: number | null = null): ProcessGroupEvent =>
     ({ kind, seq, runId: kind === "owner_opened" ? null : runId, pid, recordedAtMs: T0 + ms });
   const exited = [event("owner_opened", 0, 0), event("spawn_intent", 1, 100), event("spawned", 1, 200, 4242), event("group_exited", 1, 9_000, 4242)];
-  expect(judgeModelReclaim({ ...base, state: "dispatched", events: exited, localEnd: null }, policy, T0 + 9_000 + 50_000 + AUTO_RECLAIM_SKEW_MS))
+  expect(judgeModelReclaim({ ...base, state: "dispatched", events: exited, localEnd: null }, policy, T0 + 9_000 + 55_000 + AUTO_RECLAIM_SKEW_MS))
     .toMatchObject({ status: "reclaimable", evidence: "process_group_exit" });
   // Response lost without any end evidence: never released by elapsed time alone.
   expect(judgeModelReclaim({ ...base, events: [], localEnd: null }, policy, T0 + 86_400_000).status).toBe("unproven");
@@ -70,5 +70,20 @@ it("the maintenance job does nothing without a declaration and only touches decl
   mocks.release.mockResolvedValueOnce({ rows: [{ requestId: "3f0c8a52-91c4-4d1e-9a51-6b8f9d3c2e10", released: true, reason: null }] });
   expect(await reclaimEvidencedModelCapacity(ctx())).toEqual({ done: true });
   expect(mocks.release).toHaveBeenCalledWith(expect.objectContaining({ operator: "auto-reclaim:m3-maintenance", onlyDeclaredBudgets: true,
-    policies: new Map([["supa", expect.objectContaining({ hardDeadlineMs: 50_000 })]]) }), true);
+    policies: new Map([["supa", expect.objectContaining({ hardDeadlineMs: 55_000 })]]) }), true);
+});
+
+
+it("rejects a declaration without an actual enforcement start and protects older dispatches even with local exit proof", () => {
+  const missing = { ...supa, enforcedAfter: undefined };
+  expect(autoReclaimPolicies(JSON.stringify([missing])).rejected).toMatchObject([{ reason: "invalid_declaration" }]);
+  const policy = autoReclaimPolicies(JSON.stringify([supa])).policies.get("supa")!;
+  const owner = { instanceId: "old-worker", bootId: "0a6bd6a3-6c2a-4f6e-9a39-2d6f7b0e5c21" };
+  const dispatchAtMs = Date.parse(supa.enforcedAfter) - 1;
+  const facts = { state: "indeterminate" as const, dispatchAtMs, bindingHash: null, owner, events: [],
+    localEnd: { endedAtMs: dispatchAtMs + 60000, owner, bindingHash: null } };
+  expect(judgeModelReclaim(facts, policy, dispatchAtMs + 86400000))
+    .toMatchObject({ status: "policy_blocked", reason: "provider_bound_not_effective_at_dispatch" });
+  expect(judgeModelReclaim({ ...facts, dispatchAtMs: Date.parse(supa.enforcedAfter) }, policy, dispatchAtMs + 86400000).status)
+    .toBe("reclaimable");
 });

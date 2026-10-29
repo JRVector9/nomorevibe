@@ -3,11 +3,12 @@ import { reviewCrawlCandidates } from "@/lib/crawl/jobs/agent-review";
 import { createReviewInput } from "@/lib/crawl/agent-review-contract";
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from "@/lib/crawl/settings-schema";
 import type { CrawlCandidate, CrawlDocument } from "@/lib/db/schema";
-import { firstReviewers, selectFirstReviewer, type FirstReviewCursor } from "@/lib/crawl/first-reviewers";
+import { firstReviewers, firstReviewerKey, selectFirstReviewer, type FirstReviewCursor } from "@/lib/crawl/first-reviewers";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { agentReviewBinding } from "@/lib/crawl/agent-review-ownership";
 import { itemBindingHash } from "@/lib/jobs/items/types";
-const mocks = vi.hoisted(() => ({settings:null as CrawlSettings|null,pendingList:vi.fn(),poolList:vi.fn(),choose:vi.fn(),canStart:vi.fn(),readme:vi.fn(),saveReadme:vi.fn(),requeue:vi.fn(),handOff:vi.fn(),list:vi.fn(),document:vi.fn(),input:vi.fn(),claim:vi.fn(),record:vi.fn(),review:vi.fn(),gateway:vi.fn(),grok:vi.fn(),existing:vi.fn(),requestJob:vi.fn()}));
+const mocks = vi.hoisted(() => ({settings:null as CrawlSettings|null,blocked:vi.fn(),pendingList:vi.fn(),poolList:vi.fn(),choose:vi.fn(),canStart:vi.fn(),readme:vi.fn(),saveReadme:vi.fn(),requeue:vi.fn(),handOff:vi.fn(),list:vi.fn(),document:vi.fn(),input:vi.fn(),claim:vi.fn(),record:vi.fn(),review:vi.fn(),gateway:vi.fn(),grok:vi.fn(),existing:vi.fn(),requestJob:vi.fn()}));
+vi.mock("@/lib/crawl/first-reviewer-blocks", () => ({readBlockedFirstReviewerKeys:mocks.blocked}));
 vi.mock("@/lib/crawl/settings", () => ({getSettings:async () => mocks.settings}));
 vi.mock("@/lib/crawl/repository", () => ({getDocument:mocks.document,setReadmeSample:mocks.saveReadme}));
 // 단위 테스트가 README 를 받으러 밖으로 나가지 않게 한다
@@ -29,6 +30,7 @@ beforeEach(() => {
   mocks.settings = {...DEFAULT_CRAWL_SETTINGS,enabled:true,reviewMode:"observe"};
   mocks.choose.mockImplementation(async ({ candidate, settings }) => selectFirstReviewer(firstReviewers(settings), candidate.id));
   mocks.canStart.mockResolvedValue(true);
+  mocks.blocked.mockResolvedValue(new Set());
   mocks.pendingList.mockResolvedValue([]);
   mocks.requeue.mockResolvedValue(0);
   mocks.handOff.mockResolvedValue(0);
@@ -243,21 +245,50 @@ it("refills four active slots: eight ten-second calls finish at twenty seconds",
     expect(peak).toBe(4);
   } finally { vi.useRealTimers(); }
 });
-it("never starts a new gateway call with a shortened timeout after a 24-second wave", async () => {
+it("never starts a new gateway call with a shortened timeout after a sixty-second wave", async () => {
   vi.useFakeTimers();
   try {
     mocks.settings = { ...mocks.settings!, reviewConcurrency: 4, firstReview: { provider: "abcllm", model: "fixture" } };
     mocks.list.mockResolvedValue(Array.from({ length: 8 }, (_, i) => ({ ...candidate(), id: i + 1 })));
     mocks.gateway.mockImplementation(async () => {
-      await new Promise(resolve => setTimeout(resolve, 24_000));
+      await new Promise(resolve => setTimeout(resolve, 60_000));
       return { ok: true, outcome: { decision: "approve" }, usage: {} };
     });
-    const run = reviewCrawlCandidates(context()); await vi.advanceTimersByTimeAsync(24_001);
+    const run = reviewCrawlCandidates(context()); await vi.advanceTimersByTimeAsync(60_001);
     await run;
     expect(mocks.gateway).toHaveBeenCalledTimes(4);
-    expect(mocks.gateway.mock.calls.every(call => call[1].timeoutMs === 24_000)).toBe(true);
+    expect(mocks.gateway.mock.calls.every(call => call[1].timeoutMs === 60_000)).toBe(true);
   } finally { vi.useRealTimers(); }
 });
+it("lets a slow gateway completion run beyond the former 24-second cap", async () => {
+  vi.useFakeTimers();
+  try {
+    mocks.settings = { ...mocks.settings!, reviewConcurrency: 1, firstReview: { provider: "abcllm", model: "fixture" } };
+    mocks.list.mockResolvedValueOnce([candidate()]).mockResolvedValue([]);
+    let transportSignal: AbortSignal | undefined;
+    mocks.gateway.mockImplementation(async (_input, options) => {
+      transportSignal = options.signal;
+      await new Promise(resolve => setTimeout(resolve, 45_000));
+      return { ok: true, outcome: { decision: "approve" }, usage: {} };
+    });
+    const run = reviewCrawlCandidates({ ...context(), deadlineAt: Date.now() + 110_000 });
+    await vi.advanceTimersByTimeAsync(24_001);
+    expect(mocks.gateway).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ timeoutMs: 60_000 }));
+    expect(transportSignal?.aborted).toBe(false);
+    expect(mocks.record).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(21_000);
+    await run;
+    expect(mocks.record).toHaveBeenCalledWith(expect.objectContaining({ outcome: { decision: "approve" } }));
+  } finally { vi.useRealTimers(); }
+});
+it("does not claim a gateway call if the runner has less than its full ceiling left", async () => {
+  mocks.settings = { ...mocks.settings!, firstReview: { provider: "abcllm", model: "fixture" } };
+  await reviewCrawlCandidates({ ...context(), deadlineAt: Date.now() + 61_000 });
+  expect(mocks.claim).not.toHaveBeenCalled();
+  expect(mocks.gateway).not.toHaveBeenCalled();
+  expect(mocks.record).not.toHaveBeenCalled();
+});
+
 it("does not call the same candidate twice or request continuation after no progress", async () => {
   mocks.list.mockResolvedValue([candidate(), candidate()]);
   mocks.claim.mockResolvedValue({ kind: "skipped", reason: "running" });
@@ -480,4 +511,30 @@ it("persists bounded scan progress past a blocked-model prefix and keeps unrelat
   expect(mocks.claim.mock.calls.map(call => call[0].candidate.id)).toEqual([1, 17, 33]);
   expect(mocks.gateway).toHaveBeenCalledOnce();
   expect(cursor).toMatchObject({ sentinel: { keep: true }, firstReviewPoolScan: { id: 33 } });
+});
+
+it("legacy pool reroutes untouched candidates around persisted unknown occupancy before claiming", async () => {
+  const primary = { provider: "abcllm" as const, model: "primary-model" };
+  const extra = { provider: "abcllm" as const, model: "extra-model" };
+  mocks.settings = { ...mocks.settings!, firstReview: primary, firstReviewAdditional: [extra], reviewConcurrency: 1 };
+  mocks.blocked.mockResolvedValue(new Set([firstReviewerKey(primary)]));
+  mocks.choose.mockImplementation(async ({ candidate, settings }, _executor, blocked) =>
+    selectFirstReviewer(firstReviewers(settings), candidate.id, [], [], { blocked, untouched: true }));
+  mocks.gateway.mockResolvedValue({ ok: true, outcome: { decision: "approve", reason: "Deployed tracker", evidenceIds: ["product"] } });
+  await reviewCrawlCandidates(context());
+  expect(mocks.claim).toHaveBeenCalledExactlyOnceWith(expect.objectContaining(extra));
+  expect(mocks.gateway).toHaveBeenCalledExactlyOnceWith(expect.anything(), expect.objectContaining({ model: extra.model }));
+});
+
+it("legacy pool keeps a sent candidate pinned even when that model's physical group is blocked", async () => {
+  const primary = { provider: "abcllm" as const, model: "primary-model" };
+  const extra = { provider: "abcllm" as const, model: "extra-model" };
+  mocks.settings = { ...mocks.settings!, firstReview: primary, firstReviewAdditional: [extra], reviewConcurrency: 1 };
+  mocks.blocked.mockResolvedValue(new Set([firstReviewerKey(primary)]));
+  mocks.choose.mockImplementation(async ({ candidate, settings }, _executor, blocked) =>
+    selectFirstReviewer(firstReviewers(settings), candidate.id, [primary], [], { blocked, untouched: false }));
+  mocks.claim.mockRejectedValue(new ModelCapacityDeferredError("capacity"));
+  await reviewCrawlCandidates(context());
+  expect(mocks.claim).toHaveBeenCalledExactlyOnceWith(expect.objectContaining(primary));
+  expect(mocks.gateway).not.toHaveBeenCalled();
 });

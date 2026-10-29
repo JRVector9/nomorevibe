@@ -44,7 +44,8 @@ async function source(repo: string, productUrl: string, candidate: { state: "app
     repoMeta: { description: "Orchestrate coding agents", pushed_at: fetchedAt.toISOString(), stargazers_count: 3, owner: { type: "User" } } });
   await db.insert(crawlCandidates).values({ repo, productUrl, ...candidate, decidedBy: "auto", judgedAt: fetchedAt, updatedAt: fetchedAt });
 }
-const tick = () => runJob("crawl-agent-review", reviewCrawlCandidates);
+// The production worker grants AI1 110s for its gateway/Grok transport ceiling.
+const tick = () => runJob("crawl-agent-review", reviewCrawlCandidates, { budgetMs: 110_000 });
 
 it("passes a configured Grok first approval through the real second-review input guards", async () => {
   await saveSettings({ firstReview: { provider: "grok-cli", model: "grok-fixture" },

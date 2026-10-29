@@ -1,3 +1,6 @@
+import { scopedModelBaseUrl, scopedRequestTimeout } from "@/lib/llm/model-registry";
+import { scopedModel } from "@/lib/llm/model-registry";
+import { configuredModel, modelBaseUrl, modelLimits } from "@/lib/llm/model-registry";
 import { createHash } from "node:crypto";
 import type { ProfileEvidence } from "./search-profile";
 import { assertTextModelAdmission } from "@/lib/llm/text-capacity-admission";
@@ -17,10 +20,10 @@ import { assertTextModelAdmission } from "@/lib/llm/text-capacity-admission";
  * 이 엔드포인트는 추론을 켤 수 없다. 그래서 생각을 출력에 적게 한다(아래 SYSTEM). 표본 점수보다 운영에서 맞는 키워드를 빼지
  * 않는 것을 먼저 본다 — 표본에는 뜻이 여럿인 한국어 낱말이 드물어 v9 의 문제가 운영에서야 드러났다.
  */
-export const VERIFY_MODEL = process.env.SEARCH_VERIFY_MODEL?.trim() || "[supa] Qwen3.8-27B-NVFP4";
-const BASE_URL = process.env.ABCLLM_BASE_URL?.trim() || "https://abcllm-api.brut.bot";
+export const VERIFY_MODEL = configuredModel("product-search-verify");
+const BASE_URL = modelBaseUrl("product-search-verify", process.env, "abcllm");
 /** 키워드마다 네 칸씩 적어 출력이 길다(16개에 약 1,000토큰, 한글이 많으면 더) */
-const MAX_TOKENS = 3_000;
+const MAX_TOKENS = modelLimits("product-search-verify").maxTokens;
 
 /**
  * 예시는 표본에 없는 것만 넣었다 — 표본의 답을 알려 주면 잰 값이 부푼다.
@@ -61,7 +64,7 @@ export function searchVerifyGatewayWire(item: VerifyItem, model: string): string
   return JSON.stringify({
     // 기본 어댑터는 근거를 요약해 버린다 — 키워드 짓기와 같은 이유로 원문을 그대로 보낸다
     context_strategy: "raw",
-    model, stream: false, temperature: 0, max_tokens: MAX_TOKENS,
+    model, stream: false, temperature: 0, max_tokens: Math.min(MAX_TOKENS, modelLimits("product-search-verify").maxTokens),
     reasoning_effort: "low", chat_template_kwargs: { enable_thinking: false },
     response_format: { type: "json_object" },
     messages: [
@@ -75,8 +78,8 @@ export type VerifyResult = { ok: true; unsupported: string[] } | { ok: false; er
 export async function verifyKeywordsInChunks(item: VerifyItem, options: {
   timeoutMs: number; model?: string; request?: typeof fetch; signal?: AbortSignal;
 }): Promise<VerifyResult> {
-  const deadline = Date.now() + Math.max(1, options.timeoutMs);
-  const timer = AbortSignal.timeout(Math.max(1, options.timeoutMs));
+  const deadline = Date.now() + Math.max(1, scopedRequestTimeout("product-search-verify", options.timeoutMs));
+  const timer = AbortSignal.timeout(Math.max(1, scopedRequestTimeout("product-search-verify", options.timeoutMs)));
   const signal = options.signal ? AbortSignal.any([options.signal, timer]) : timer;
   const stopped = (): VerifyResult | null => options.signal?.aborted ? { ok: false, error: "cancelled" }
     : timer.aborted || Date.now() >= deadline ? { ok: false, error: "timeout" } : null;
@@ -161,11 +164,11 @@ export async function verifyKeywords(item: VerifyItem, options: {
 }): Promise<VerifyResult> {
   const key = process.env.ABCLLM_API_KEY?.trim();
   if (!key) return { ok: false, error: "no_key" };
-  await assertTextModelAdmission({ routeId: "product-search-verify", model: options.model ?? VERIFY_MODEL });
-  const wire = searchVerifyGatewayWire(item, options.model ?? VERIFY_MODEL);
-  const deadline = AbortSignal.timeout(Math.max(1, options.timeoutMs));
+  await assertTextModelAdmission({ routeId: "product-search-verify", model: options.model ?? scopedModel("product-search-verify", VERIFY_MODEL) });
+  const wire = searchVerifyGatewayWire(item, options.model ?? scopedModel("product-search-verify", VERIFY_MODEL));
+  const deadline = AbortSignal.timeout(Math.max(1, scopedRequestTimeout("product-search-verify", options.timeoutMs)));
   try {
-    const response = await (options.request ?? fetch)(`${BASE_URL}/v1/chat/completions`, {
+    const response = await (options.request ?? fetch)(`${scopedModelBaseUrl("product-search-verify", BASE_URL, "abcllm")}/chat/completions`, {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
       body: wire,

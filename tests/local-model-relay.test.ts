@@ -1,3 +1,4 @@
+import { DEFAULT_MODEL_DEFINITIONS } from "@/lib/llm/model-registry";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { createHash, randomUUID } from "node:crypto";
@@ -67,6 +68,12 @@ describe("M1 사설 모델 relay", () => {
       LOCAL_MODEL_RELAY_TOKEN_FILE: relayKey, LOCAL_MODEL_RELAY_UPSTREAM_TOKEN_FILE: upstreamKey,
       LOCAL_MODEL_RELAY_STATE_DIR: directory, LOCAL_MODEL_RELAY_VERSION: "c".repeat(40) };
     expect(localModelRelayConfig(env)).toMatchObject({ host: "100.80.1.2", port: 8792, model: MODEL, deploymentRevision: "unverified" });
+    const configured = { ...env, MODEL_REGISTRY_CONFIG: JSON.stringify({ version: 1, models: DEFAULT_MODEL_DEFINITIONS,
+      limits: { relay: { maxTokens: 700, concurrency: 1, timeoutMs: 35_000 } } }) };
+    expect(localModelRelayConfig(configured)).toMatchObject({ upstreamTimeoutMs: 35_000, maxOutputTokens: 700 });
+    expect(localModelRelayConfig(configured).engineDeadlineMs).toBeUndefined();
+    expect(() => localModelRelayConfig({ ...configured, LOCAL_MODEL_RELAY_MAX_OUTPUT_TOKENS: "701" })).toThrow("relay_model_output_limit_exceeded");
+    expect(() => localModelRelayConfig({ ...configured, LOCAL_MODEL_RELAY_ENGINE_DEADLINE_MS: "34000" })).toThrow("relay_deadline_order_invalid");
     for (const host of ["0.0.0.0", "::", "127.0.0.1", "100.63.1.2", "100.128.1.2", "1.2.3.4"]) {
       expect(isTailnetIpv4(host)).toBe(false);
       expect(() => localModelRelayConfig({ ...env, LOCAL_MODEL_RELAY_HOST: host })).toThrow();

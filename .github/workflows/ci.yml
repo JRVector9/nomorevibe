@@ -104,6 +104,9 @@ jobs:
           restore-keys: nmv-tsc-v1-${{ hashFiles('package-lock.json') }}-
       - run: npx next typegen
       - run: npx tsc --noEmit
+        # The full schema/type graph exceeds Node 24's default 2 GiB heap on a cache miss.
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
       - run: npm run check:i18n
       - if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

@@ -1,3 +1,4 @@
+import { DEFAULT_MODEL_DEFINITIONS } from "@/lib/llm/model-registry";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
 import { afterEach, expect, it, vi } from "vitest";
@@ -29,11 +30,11 @@ function dispatch(value: ReviewInput, call: PreparedAi2GatewayCall) {
   const review: Ai2ItemBinding = { stage: "ai2", candidateId: 1, secondReviewId: 3, vote: 3, fallbackForId: null,
     inputHash: value.inputHash, sourceRevisionHash: value.sourceRevisionHash, policyHash: "b".repeat(64), generationKey: "c".repeat(64),
     source: { kind: "first_attempt", firstAttemptId: 2 }, promptVersion: value.snapshot.policy.promptVersion,
-    rulesVersion: value.snapshot.policy.rulesVersion, reviewer: { provider: "local-direct", model } };
+    rulesVersion: value.snapshot.policy.rulesVersion, reviewer: { provider: "local-direct", model: call.model } };
   const binding = { kind: "ai2_item_gateway" as const, version: 1 as const, logicalWorkKey: "ai2:1:3", review,
     rowIdentityHash: "d".repeat(64), failureCount: 0, inputPolicyHash: value.policyHash,
     item: { workKey: "ai2:3", owner, token: randomUUID(), stageEpoch: 1, itemEpoch: 1, bindingHash: itemBindingHash(review) },
-    provider: "local-direct" as const, model, routeId: "second-review" as const,
+    provider: "local-direct" as const, model: call.model, routeId: "second-review" as const,
     wireHash: call.wireHash, servingContractHash: call.servingContractHash, totalTokenBound: call.totalTokenBound, chargedTokens: call.totalTokenBound };
   return ai2ModelDispatchSchema.parse({ requestId: randomUUID(), owner, token: randomUUID(), epoch: 1, revision: 1,
     policyHash: "a".repeat(64), binding, bindingHash: ai2DispatchBindingHash(binding) });
@@ -164,10 +165,26 @@ it("records actual physical completion when a server violates the smaller reques
 it("keeps direct contract configuration separate, strict and tied to the engine C", async () => {
   await server(async () => {
     const contract = fixture.contract!;
-    expect(ai2DirectServingContractsFromConfig(JSON.stringify({ version: 1, contracts: [contract] })).get(model)).toEqual(contract);
+    expect(ai2DirectServingContractsFromConfig(JSON.stringify({ version: 1, contracts: [contract] })).get(contract.backendId)).toEqual(contract);
     for (const contracts of [[contract, contract], [{ ...contract, tokenizerEndpoint: "http://other.example/tokenize" }],
       [{ ...contract, requestTokenBound: 50_000 }], [{ ...contract, totalTokenBound: 24_999 }], [{ ...contract, secret: "no" }]])
       expect(ai2DirectServingContractsFromConfig(JSON.stringify({ version: 1, contracts })).size).toBe(0);
     expect(ai2GatewayServingContractHash({ ...contract, deploymentRevision: "changed" })).not.toEqual(ai2GatewayServingContractHash(contract));
+  });
+});
+
+it("keeps the equipment key in capacity bindings and sends the verified engine model on the wire", async () => {
+  await server(async ({ seen }) => {
+    const contract = fixture.contract!;
+    vi.stubEnv("MODEL_REGISTRY_CONFIG", JSON.stringify({ version: 1, models: DEFAULT_MODEL_DEFINITIONS.map(definition =>
+      definition.key === "gpu3090:review" ? { ...definition, baseUrl: contract.endpoint.replace("/chat/completions", "") } : definition) }));
+    const value = input(), call = await prepareAi2GatewayCall(value, { model: "gpu3090:review", provider: "local-direct", timeoutMs: 1000 });
+    expect(call.kind).toBe("prepared");
+    if (call.kind !== "prepared") throw new Error("fixture_not_prepared");
+    expect(call.model).toBe("gpu3090:review");
+    const owned = dispatch(value, call), result = await reviewWithReservedAi2Gateway(value, owned, call);
+    expect(result.result.ok).toBe(true);
+    expect(seen.map(request => request.body.model)).toEqual([model, model]);
+    expect(readAi2GatewayTerminal(result.terminal)?.dispatch.binding.model).toBe("gpu3090:review");
   });
 });

@@ -1,3 +1,6 @@
+import { scopedModelBaseUrl, scopedRequestTimeout } from "@/lib/llm/model-registry";
+import { scopedModel } from "@/lib/llm/model-registry";
+import { configuredModel, modelBaseUrl, modelLimits } from "@/lib/llm/model-registry";
 import { createHash } from "node:crypto";
 import { assertTextModelAdmission } from "@/lib/llm/text-capacity-admission";
 import type { CrawlDocument } from "@/lib/db/schema";
@@ -19,8 +22,8 @@ import type { CrawlDocument } from "@/lib/db/schema";
  * 게이트웨이는 스트리밍이 기본이라 stream:false 를, 기본 어댑터가 증거를 요약해 버리므로
  * context_strategy:"raw" 를 꼭 보낸다(agent-review-gateway.ts 와 같은 이유).
  */
-export const TAGLINE_MODEL = process.env.ABCLLM_TAGLINE_MODEL?.trim() || "[MLX] qwen3.6-35b-heretic";
-const BASE_URL = process.env.ABCLLM_BASE_URL?.trim() || "https://abcllm-api.brut.bot";
+export const TAGLINE_MODEL = configuredModel("crawl-tagline");
+const BASE_URL = modelBaseUrl("crawl-tagline", process.env, "abcllm");
 
 /** 목록에서 이름 밑에 한 줄로 서는 길이 — 여기까지는 짧게 끊을 자리를 찾는다 */
 export const TAGLINE_LIMIT = 100;
@@ -163,7 +166,7 @@ export function crawlTaglineGatewayWire(evidence: TaglineEvidence, model: string
   const prompt = JSON.stringify(evidence).replace(/</g, "\\u003c").replace(/>/g, "\\u003e");
   return JSON.stringify({
     context_strategy: "raw",
-    model, stream: false, temperature: 0, max_tokens: 400,
+    model, stream: false, temperature: 0, max_tokens: modelLimits("crawl-tagline").maxTokens,
     reasoning_effort: "low", chat_template_kwargs: { enable_thinking: false },
     response_format: { type: "json_schema", json_schema: { name: "tagline", schema: SCHEMA } },
     messages: [
@@ -178,14 +181,14 @@ export async function writeTagline(evidence: TaglineEvidence, options: {
 }): Promise<TaglineResult> {
   const key = process.env.ABCLLM_API_KEY?.trim();
   if (!key) return { ok: false, error: "no_key" };
-  await assertTextModelAdmission({ routeId: "crawl-tagline", model: options.model ?? TAGLINE_MODEL });
-  const wire = crawlTaglineGatewayWire(evidence, options.model ?? TAGLINE_MODEL);
+  await assertTextModelAdmission({ routeId: "crawl-tagline", model: options.model ?? scopedModel("crawl-tagline", TAGLINE_MODEL) });
+  const wire = crawlTaglineGatewayWire(evidence, options.model ?? scopedModel("crawl-tagline", TAGLINE_MODEL));
   try {
-    const response = await (options.request ?? fetch)(`${BASE_URL}/v1/chat/completions`, {
+    const response = await (options.request ?? fetch)(`${scopedModelBaseUrl("crawl-tagline", BASE_URL, "abcllm")}/chat/completions`, {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
       body: wire,
-      signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(Math.max(1, options.timeoutMs))]) : AbortSignal.timeout(Math.max(1, options.timeoutMs)),
+      signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(Math.max(1, scopedRequestTimeout("crawl-tagline", options.timeoutMs)))]) : AbortSignal.timeout(Math.max(1, scopedRequestTimeout("crawl-tagline", options.timeoutMs))),
     });
     if (!response.ok) {
       return { ok: false, error: response.status === 404 ? "model_unavailable" : response.status === 429 ? "rate_limit" : `http_${response.status}` };

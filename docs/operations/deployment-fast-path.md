@@ -10,6 +10,21 @@ main의 정확한 SHA를 checkout한 깨끗한 운영자 Mac에서 실행한다.
 Git·GitHub CLI 로그인, 기존 Keychain의 Dokploy 키와 두 호스트 SSH 접근이 필요하다.
 웹 이미지 패키지의 비공개 설정과 기존 registry 자격 증명을 유지한다.
 
+gpu3090에서는 `prod` 스킬의 기존 Keychain 호환 도구를 PATH에 추가한다.
+등록 키를 제공하는 xAegis worker에서는 키 파일이나 Keychain 설정을 만들지 않고
+`xa-key exec DOKPLOY_API_KEY=gpu3090/dokploy -- npm run deploy -- plan ...`처럼 실행한다.
+`run`과 별도 관측도 같은 등록 키 환경에서 실행한다. 도구는 `DOKPLOY_API_KEY`가 있으면
+메모리에서 읽고, 없으면 기존 Keychain 조회를 유지한다. 빈 값·공백·제어문자가 있는 명시적
+키는 다른 인증으로 조용히 대체하지 않고 거절한다. 키를 명령 인자·로그·영수증에 저장하지 않는다.
+이 인증 경로도 동일한 SSH·출처·drain·한 번 실행 관문을 거친다.
+
+현재 등록된 M3/mini SSH 계정이 `jr`이면 `NMV_DEPLOY_SSH_USER=jr`을 plan/run 및
+후속 관측에 동일하게 지정한다. 기본 계정은 기존 `root`이며 호스트·SSH 옵션·접속
+권한은 변경하지 않는다. 배포 전 두 호스트에서 해당 계정의 Docker 접근을 확인한다.
+이미지 준비의 Docker 로그인은 0700 임시 디렉터리 안 0600 설정 파일만 사용하고
+종료 시 제거한다. macOS SSH 세션의 Keychain 자동 선택·저장에 의존하지 않으며
+기존 Dokploy registry 자격 정보나 OS Keychain을 변경하지 않는다.
+
 ```bash
 # 1. 로컬 미리 보기. BASE/SHA는 검토한 40자리 커밋이다. 자격 증명·운영 호출 없음.
 npm run deploy -- scope --base "$BASE" --sha "$SHA"
@@ -69,6 +84,19 @@ DB·schema·마이그레이션 변경이 있으면 일반 배포가 이전을 �
 완료한 뒤 `plan --migration-verified`로 주장하고 실제 운영 journal count/latest/hash 읽기 검증도 통과해야 한다.
 새 catalog 잡이 있으면 scheduler 배포와 DB 등록 확인을 먼저 끝내는 기존 규칙을 유지한다.
 native unknown 회수, 모델 종료, capacity 변경과 생산자 재등록은 별도 복구 절차이며 일반 도구는 실행하지 않는다.
+
+### 모델 호출을 보유하는 앱 교체
+
+reviewer·publisher·text·maintenance·AI 소비자와 웹을 실제 교체할 때는 먼저 기존
+`pipeline-control capacity mode`의 비교 후 적용 경로로 모델 접수를 DRAINING으로 전환한다.
+reserved(유효한 예약)·dispatched·indeterminate가 모두 0이 된 뒤 `run`을 실행한다.
+대기 중인 waiting 행과 검수 결과는 보존한다. 배포 도구는 첫 변경과 각 교체 묶음 직전에
+주 DB를 읽어 이 조건을 재확인하며, 접수가 다시 열렸거나 종료 미확정이 남으면 중단한다.
+DB 조회 실패도 교체 허가가 아니다. 기존 모델 요청을 SIGTERM으로 끊은 뒤 슬롯이 자동으로
+풀릴 것으로 가정하지 않는다. 2026-10-28 배포의 번역 정체는 이 경계에서 재현됐다.
+원격 종료 미확정은 실제 종료 증거를 갖춘 별도 단건 복구로 처리한다.
+앱 교체·기본 건강 확인 후 같은 공식 제어 경로로 접수를 OPEN으로 원복한다.
+도구가 자동으로 용량을 바꾸거나 공유 모델을 강제 종료하지 않는다.
 
 ## 실패·원복 자료와 비동기 관측
 

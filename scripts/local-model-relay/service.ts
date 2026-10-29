@@ -23,6 +23,8 @@ export type LocalModelRelayOptions = {
    * 미확인 receipt는 시작+상한+skew가 지난 뒤 표식만 정리해 다시 연다. 없으면 기존처럼 운영자 경계 해제까지 거절한다.
    */
   engineDeadlineMs?: number;
+  /** Verified engine enforcement start; requests sent before this stay protected. */
+  engineBoundEffectiveAt?: string;
   /** 생성 길이 상한. 있으면 max_tokens(또는 max_completion_tokens)가 없거나 넘는 요청을 보내지 않는다. */
   maxOutputTokens?: number;
   verifyNativeReadiness?: RelayNativeReadinessVerifier;
@@ -81,11 +83,14 @@ export function createLocalModelRelay(options: LocalModelRelayOptions) {
   if (engineDeadline !== undefined && (!Number.isSafeInteger(engineDeadline) || engineDeadline < 1
     || engineDeadline + LOCAL_MODEL_RELAY_SKEW_MS >= timeout)) throw new Error("relay_deadline_order_invalid");
   if (outputCap !== undefined && (!Number.isSafeInteger(outputCap) || outputCap < 1 || outputCap > 262_144)) throw new Error("relay_invalid_limit");
+  const enforcedAfterMs = options.engineBoundEffectiveAt === undefined ? NaN : Date.parse(options.engineBoundEffectiveAt);
+  if (engineDeadline !== undefined && (!Number.isSafeInteger(enforcedAfterMs) || enforcedAfterMs < 0))
+    throw new Error("relay_engine_bound_effective_time_required");
   const allow = new Set(options.allowFrom.map(plainIp));
   const generation = randomUUID();
   let activeRequestId: string | null = null, indeterminate = options.store.hasUnsettled(), draining = false;
   let lastReceipt: RelayReceipt | null = null, lastDeadlineRelease: string | null = null;
-  const deadlinePolicy = engineDeadline === undefined ? null : { engineDeadlineMs: engineDeadline, skewMs: LOCAL_MODEL_RELAY_SKEW_MS };
+  const deadlinePolicy = engineDeadline === undefined ? null : { engineDeadlineMs: engineDeadline, skewMs: LOCAL_MODEL_RELAY_SKEW_MS, enforcedAfterMs };
   /** 선언된 엔진 상한이 지난 미확인만 정리한다. 실패·불일치는 미확인을 유지한다(운영자 경계 해제 경로는 그대로). */
   const releaseAfterDeadline = (requestId: string, delayMs: number) => {
     if (!deadlinePolicy || !options.store.releaseAfterEngineDeadline) return;
