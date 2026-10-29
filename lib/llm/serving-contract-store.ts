@@ -93,5 +93,7 @@ export function setServingContractSnapshotForTest(rows: readonly (Omit<StoredSer
     : { token: createHash("sha256").update(JSON.stringify([pinned, registry])).digest("hex"), loadedAt: Date.now(), rows: pinned, registry };
 }
 
-// Registry reads are synchronous and frequent; a stale snapshot schedules one background reload like a contract read.
-setModelRegistryOverlay(() => enabled() || state().override ? servingContractSnapshot().registry : []);
+// Registry reads are synchronous, frequent and also happen at import time, so they only read the last snapshot and never start
+// a reload (no DB client before the process's own DB entry checks). Jobs, the operator CLI and the admin pages await
+// ensureServingContracts() first.
+setModelRegistryOverlay(() => enabled() || state().override ? state().snapshot.registry : []);

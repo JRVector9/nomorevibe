@@ -18,6 +18,7 @@ import { LiveModels } from "./LiveModels";
 import { modelRecoveryBlocked, type ModelStageAssignment } from "@/lib/operations/admin-models-view";
 import { ADMIN_MODEL_STAGES } from "@/lib/llm/admin-model-stages";
 import { configuredModel, modelForPurpose, modelRequestName, MODEL_PURPOSE_ENV, readModelRegistry } from "@/lib/llm/model-registry";
+import { ensureServingContracts } from "@/lib/llm/serving-contract-store";
 import { AiConnection } from "../status/AiConnection";
 import { agentRequest } from "@/lib/operations/agent-client";
 import type { AgentStatus } from "@/lib/operations/contracts";
@@ -33,6 +34,8 @@ export const metadata: Metadata = { title: "단계별 모델 — NoMoreVibe", ro
 
 export default async function ModelsPage() {
   if (!await currentAdmin()) redirect("/admin/login");
+  // Admin registry overrides (0148) are part of the registry this page shows and validates against.
+  await ensureServingContracts();
   const [settings, gatewayModels, models] = await Promise.all([getSettings(), listGatewayModels(), currentModelEnv()]);
 
   const registry = readModelRegistry();
