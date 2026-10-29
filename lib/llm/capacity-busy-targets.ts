@@ -1,4 +1,5 @@
 import { sql, type SQL } from "drizzle-orm";
+import { db } from "@/lib/db";
 
 /**
  * 요청 장부가 이미 쥔 대상 — 대기열 선택기가 건너뛸 키(읽기만 한다, 승인·해제·만료를 하지 않는다).
@@ -42,4 +43,24 @@ export function busyLogicalKeysSql(prefix: string, options: { owner?: CapacityOw
 export function capacityOwnerFromEnv(env: Readonly<Record<string, string | undefined>> = process.env): CapacityOwner | undefined {
   const instanceId = env.ROLE_LEASE_INSTANCE_ID?.trim(), bootId = env.ROLE_LEASE_BOOT_ID?.trim();
   return instanceId && bootId && UUID.test(bootId) ? { instanceId, bootId } : undefined;
+}
+
+/**
+ * 같은 물리 그룹(정책 route 의 groupId)에서 다른 route 의 대기 요청이 살아 있는가 — 읽기만 한다.
+ *
+ * 장부는 같은 class 안에서 먼저 온 대기부터 준다. 한 잡이 그룹의 동시 수만큼 일꾼을 돌려 자리가 나는 즉시 다음 요청을 넣으면
+ * 같은 그룹의 다른 잡(기본 등록부에서 product-search-profile·product-tagline-ko 는 같은 gpt-oss 모델)은 미룸만 받는다. 남이 기다리면
+ * 이번 묶음은 일꾼 하나로 줄여 자리를 나눈다. 장부의 한도·순서는 바꾸지 않는다. 읽지 못하면 false(전과 같은 동작)다.
+ */
+export async function otherRoutesWaitingOnGroup(routeId: string, model: string): Promise<boolean> {
+  try {
+    const [row] = await db.execute<{ waiting: boolean }>(sql`SELECT EXISTS (
+      SELECT 1 FROM model_capacity_control c
+        CROSS JOIN LATERAL jsonb_array_elements(coalesce(c.policy->'routes', '[]'::jsonb)) route
+        JOIN model_capacity_requests r ON r.group_id = route->>'groupId'
+      WHERE c.id = 1 AND c.mode = 'open' AND route->>'routeId' = ${routeId} AND route->>'model' = ${model}
+        AND r.route_id <> ${routeId} AND r.state = 'waiting' AND r.queue_until > clock_timestamp()
+        AND r.epoch = c.epoch AND r.revision = c.revision AND r.policy_hash = c.policy_hash) AS waiting`);
+    return row?.waiting === true;
+  } catch { return false; }
 }

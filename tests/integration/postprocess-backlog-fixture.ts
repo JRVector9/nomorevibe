@@ -16,8 +16,8 @@ export function fixtureOwner(name: string) {
   return { instanceId: `${FIXTURE_OWNER_PREFIX}${name}`, bootId: randomUUID() };
 }
 
-export function policy(routes: { routeId: string; model: string }[]): ModelCapacityPolicy {
-  return { version: 1, globalLimit: 4, providerLimits: { account: 4 }, groupLimits: { engine: 4 },
+export function policy(routes: { routeId: string; model: string }[], groupLimit = 4): ModelCapacityPolicy {
+  return { version: 1, globalLimit: 4, providerLimits: { account: 4 }, groupLimits: { engine: groupLimit },
     poolLimits: { reviewer: 4, text: 4 }, weights: { first: 1, second: 1, background: 1 }, maxWaiting: 12,
     queueTtlMs: 60_000, reservationTtlMs: 60_000,
     routes: routes.map(route => ({ ...route, provider: "abcllm", providerBudgetId: "account", groupId: "engine" })) };

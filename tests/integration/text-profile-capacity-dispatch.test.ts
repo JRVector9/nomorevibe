@@ -377,7 +377,10 @@ it("keeps EOF full-C unknown fenced across a new boot and changed source without
     const [afterSource] = await admin`SELECT attempts,source_revision FROM product_search_profiles WHERE product_id=${task.product.id}`;
     expect(afterSource).toEqual({ attempts: 0, source_revision: beforeSource.source_revision + 1 });
     await admin`UPDATE product_search_profiles SET error_code=NULL,retry_at=NULL,needs_refresh=true WHERE product_id=${task.product.id}`;
-    expect(await tick()).toMatchObject({ status: "deferred", reason: "model_capacity" }); expect(bodies).toHaveLength(1);
+    // The unknown request still fences this product, so the selector skips it instead of re-picking it every tick
+    // (postprocess-backlog lane, 2026-10-29). It is never re-sent and its profile row is not consumed.
+    expect((await pendingProfiles(12, role)).some(row => row.product.id === task.product.id)).toBe(false);
+    expect(await tick()).toMatchObject({ status: "completed" }); expect(bodies).toHaveLength(1);
     expect((await admin`SELECT request_id,state FROM model_capacity_requests`)).toEqual([{ request_id: unknown.request_id, state: "indeterminate" }]);
     expect((await admin`SELECT attempts,source_revision FROM product_search_profiles WHERE product_id=${task.product.id}`)[0]).toEqual(afterSource);
   });
