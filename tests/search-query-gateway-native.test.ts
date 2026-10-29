@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createServer, type ServerResponse } from "node:http";
 import { afterEach, expect, it, vi } from "vitest";
-import { TRANSLATE_MODEL, parseQueryTranslation, textHash, translateChineseQueryToEnglish, translateQueryToEnglish,
+import { SEARCH_QUERY_MODEL, parseQueryTranslation, textHash, translateChineseQueryToEnglish, translateQueryToEnglish,
   websearchQueryGatewayWire, type WebsearchQueryGatewayInput } from "@/lib/crawl/translate";
 import { websearchQueryLogicalWorkKey, websearchQueryInputHash, websearchQueryDispatchBindingHash, websearchQueryModelDispatchSchema,
   type WebsearchQueryInput } from "@/lib/llm/capacity";
@@ -14,7 +14,7 @@ vi.mock("@/lib/llm/websearch-query-serving-contract", async original => ({
   ...await original<typeof import("@/lib/llm/websearch-query-serving-contract")>(), resolveWebsearchQueryServingContract: () => fixture.contract,
 }));
 vi.mock("@/lib/llm/text-capacity-admission", () => ({ assertTextModelAdmission: vi.fn() }));
-const model = TRANSLATE_MODEL, requests = new Set<Promise<unknown>>();
+const model = SEARCH_QUERY_MODEL, requests = new Set<Promise<unknown>>();
 const korean: WebsearchQueryGatewayInput = { sourceLocale: "ko", query: "헬스장 출석 체크" };
 const content = "Gym attendance | gym attendance check-in app";
 function envelope(change: Record<string, unknown> = {}) {

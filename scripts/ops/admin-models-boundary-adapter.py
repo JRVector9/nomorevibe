@@ -21,6 +21,12 @@ class BoundaryError(ValueError):
     pass
 
 
+class RootHandoffRequired(BoundaryError):
+    def __init__(self, commands):
+        super().__init__('supa_root_result_required')
+        self.commands = commands
+
+
 def need(ok, code):
     if not ok:
         raise BoundaryError(code)
@@ -85,6 +91,10 @@ def main(phase, envelope):
     need([target['role'] for target in targets] == ['owner', 'gateway', 'gateway', 'provider'], 'v1_target_order_required')
     need(len({target['key'] for target in targets}) == 4 and all(re.fullmatch('[a-z][a-z0-9-]{0,40}', target['key']) for target in targets), 'distinct_targets_required')
     need(all(target['kind'] in ('container', 'systemd', 'launchd') and re.fullmatch(r'[a-zA-Z0-9_.-]+@[a-zA-Z0-9_.-]+', target['host']) for target in targets), 'target_denied')
+    for target in targets:
+        if target.get('rootHandoff'):
+            need(target['rootHandoff'] is True and target['role'] == 'provider' and target['kind'] == 'systemd'
+                 and target['identity']['host'] == 'supa' and target['progressRoot'] == '/var/lib/nmv-admin-models-root/progress', 'supa_root_handoff_scope_required')
     need(not any(re.search(r'(^|[.@-])m1([.@-]|$)', target['host']) for target in targets), 'human_on_device_sudo_stop_restore_required')
     root = private(manifest['stateDirectory'], True)
     lock_file = (root / 'coordinator.lock').open('a')
@@ -105,6 +115,8 @@ def main(phase, envelope):
     # Verify EVERY source before the first remote call, including files used only during restoration.
     for name in ('guards.py', 'docker_reader.py', 'docker_stopped.py', 'docker_action.py', 'systemd_reader.py', 'systemd_action.py', 'native_action.py'):
         source(name)
+    if any(target.get('rootHandoff') for target in targets):
+        source('systemd_handoff.py')
 
     def remote(target, program, payload=None, argv=None):
         # No credential-bearing environment/output is copied into a receipt. Source and payload are pinned operator data.
@@ -151,6 +163,40 @@ def main(phase, envelope):
             payload['restoring' if action == 'verify-restored' else 'stopped'] = prior
         return remote(target, source('native_action.py'), payload)
 
+    def root_task(target, mode):
+        need(mode in ('stop', 'restore'), 'root_mode_denied')
+        tasks = state.setdefault('rootTasks', {}).setdefault(target['key'], {})
+        if mode not in tasks:
+            tasks[mode] = {'version': 1, 'nonce': uuid.uuid4().hex, 'targetKey': target['key'],
+                           'payload': {'requestId': envelope['id'], 'expected': target['expected'], 'service': 'vllm.service',
+                                       'mode': mode, 'operationHash': state['manifestHash'], 'progressRoot': target['progressRoot']},
+                           'sourceHashes': {name: manifest['sourceHashes'][name] for name in ('systemd_action.py', 'systemd_reader.py', 'systemd_handoff.py')}}
+            save(path, state)
+        task = tasks[mode]
+        task_hash = sha(canon(task))
+        local_file = root / ('supa-root-' + task_hash + '.json')
+        if local_file.exists():
+            need(json.loads(private(local_file).read_bytes()) == task, 'root_task_changed')
+        else:
+            save(local_file, task)
+        # The administrator transfers only this non-secret frozen task to the named staging file.
+        return task, {'target': target['host'], 'phase': mode, 'taskPath': str(local_file), 'taskSha256': task_hash,
+                      'stagingPath': '/var/tmp/nmv-supa-root-' + task_hash + '.json',
+                      'resultPath': '/var/lib/nmv-admin-models-root/results/' + task_hash + '.json',
+                      'executable': '/usr/bin/python3',
+                      'args': ['-I', '/usr/local/libexec/nmv-admin-models/systemd_handoff.py', 'execute',
+                               '/var/tmp/nmv-supa-root-' + task_hash + '.json', task_hash]}
+
+    def root_action(target, mode):
+        task, command = root_task(target, mode)
+        value = remote(target, source('systemd_handoff.py'), task, argv=['root-handoff', 'collect'])
+        if value.get('state') == 'root_result_missing':
+            raise RootHandoffRequired([command])
+        if value.get('state') == 'root_handoff_unproven':
+            raise BoundaryError(value['code'])
+        need(value.get('verified') is True and value.get('rootTaskHash') == command['taskSha256'], 'supa_root_result_unproven')
+        return value
+
     def observe(target):
         if target['kind'] == 'launchd':
             value = native(target, 'inspect')
@@ -161,7 +207,7 @@ def main(phase, envelope):
         if target['kind'] == 'container':
             guards['check_docker_before'](target['expected'], value)
         else:
-            need(value.get('operatorUid') == 0, 'human_on_device_sudo_stop_restore_required')
+            need(value.get('operatorUid') == 0 or target.get('rootHandoff') is True, 'human_on_device_sudo_stop_restore_required')
             need(all(value[k] == target['expected'][k] for k in ('hostBootId', 'unitFileSha256', 'unitConfigurationSha256', 'unitProperties', 'processes')), 'systemd_prepare_changed')
         return value
 
@@ -176,6 +222,8 @@ def main(phase, envelope):
         return name
 
     def action(target, mode, prior=None):
+        if target.get('rootHandoff'):
+            return root_action(target, 'restore' if mode in ('restore', 'read-restore-progress') else 'stop')
         if target['kind'] == 'launchd':
             return native(target, {'stop': 'stop', 'verify-stopped': 'verify', 'restore': 'restore', 'read-restore-progress': 'verify-restored'}[mode], prior)
         payload = {'requestId': envelope['id'], 'expected': target['expected'], 'service': target['expected'].get('serviceName', 'vllm.service'),
@@ -213,7 +261,8 @@ def main(phase, envelope):
         state['beforeArtifactHash'] = artifact({'at': stamp(), 'context': context, 'observed': observed})
         state['configurationHash'] = configuration(targets)
         save(path, state)
-        return {'ok': True, 'configurationHash': state['configurationHash']}
+        commands = [root_task(target, mode)[1] for target in targets if target.get('rootHandoff') for mode in ('stop', 'restore')]
+        return {'ok': True, 'configurationHash': state['configurationHash'], **({'rootCommands': commands} if commands else {})}
 
     need(state.get('configurationHash') and context.get('drained', {}).get('mode') == 'draining', 'prepare_and_drain_required')
     if phase == 'plan':
@@ -305,6 +354,8 @@ if __name__ == '__main__':
         raw = sys.stdin.buffer.read(5 * 1048576 + 1)
         need(len(raw) <= 5 * 1048576 and len(sys.argv) == 2, 'bounded_envelope_required')
         result = main(sys.argv[1], json.loads(raw))
+    except RootHandoffRequired as error:
+        result = {'ok': False, 'manual': True, 'code': str(error), 'rootCommands': error.commands}
     except BoundaryError as error:
         code = str(error)
         result = {'ok': False, 'code': code, 'manual': code == 'human_on_device_sudo_stop_restore_required'}

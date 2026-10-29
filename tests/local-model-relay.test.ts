@@ -68,6 +68,11 @@ describe("M1 사설 모델 relay", () => {
       LOCAL_MODEL_RELAY_TOKEN_FILE: relayKey, LOCAL_MODEL_RELAY_UPSTREAM_TOKEN_FILE: upstreamKey,
       LOCAL_MODEL_RELAY_STATE_DIR: directory, LOCAL_MODEL_RELAY_VERSION: "c".repeat(40) };
     expect(localModelRelayConfig(env)).toMatchObject({ host: "100.80.1.2", port: 8792, model: MODEL, deploymentRevision: "unverified" });
+    const gemma = "mlx-community--gemma-4-26b-a4b-it-4bit";
+    expect(localModelRelayConfig({ ...env, LOCAL_MODEL_RELAY_MODEL: gemma, LOCAL_MODEL_RELAY_MODEL_FAMILY: "gemma4-26b" }).model).toBe(gemma);
+    expect(() => localModelRelayConfig({ ...env, LOCAL_MODEL_RELAY_MODEL: "[m1] " + gemma })).toThrow("relay_model_not_allowed");
+    expect(() => localModelRelayConfig({ ...env, LOCAL_MODEL_RELAY_MODEL: gemma, LOCAL_MODEL_RELAY_MODEL_FAMILY: MODEL })).toThrow("relay_model_family_mismatch");
+    expect(() => localModelRelayConfig({ ...env, LOCAL_MODEL_RELAY_MODEL: gemma, LOCAL_MODEL_RELAY_MODEL_KEY: "gpu3090:review" })).toThrow("relay_model_not_allowed");
     const configured = { ...env, MODEL_REGISTRY_CONFIG: JSON.stringify({ version: 1, models: DEFAULT_MODEL_DEFINITIONS,
       limits: { relay: { maxTokens: 700, concurrency: 1, timeoutMs: 35_000 } } }) };
     expect(localModelRelayConfig(configured)).toMatchObject({ upstreamTimeoutMs: 35_000, maxOutputTokens: 700 });
@@ -224,6 +229,26 @@ describe("M1 사설 모델 relay", () => {
     expect((await restarted.receipt(next)).state).toBe('response_complete');
     expect(readFileSync(file)).toEqual(original);
     expect((await restarted.chat(body, id)).status).toBe(409);
+  });
+
+  it("Gemma 설정은 정확한 Gemma만 전달하고 health마다 최신 상류 목록을 다시 대조한다", async () => {
+    const model = "mlx-community--gemma-4-26b-a4b-it-4bit";
+    let calls = 0, models: readonly string[] | null = [model];
+    const relay = await start((_req, res) => {
+      calls++; res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ model, choices: [{ finish_reason: "stop", message: { content: "ok" } }], usage: { total_tokens: 7 } }));
+    }, { model, readUpstreamModels: async () => models,
+      verifyNativeReadiness: context => ({ ready: Boolean(context.upstreamModels?.includes(model)), contractHash: "f".repeat(64), reason: "fixture" }) });
+    expect((await relay.chat(body)).status).toBe(400); expect(calls).toBe(0);
+    const request = JSON.stringify({ model, messages: [{ role: "user", content: "x" }], stream: false });
+    expect((await relay.chat(request)).status).toBe(200);
+    await waitUntil(() => !relay.service.relayHealth().busy);
+    expect(await (await relay.call("/v1/health")).json()).toMatchObject({ nativeCapacityReady: true });
+    models = [MODEL];
+    expect(await (await relay.call("/v1/health")).json()).toMatchObject({ nativeCapacityReady: false });
+    models = null;
+    expect(await (await relay.call("/v1/health")).json()).toMatchObject({ nativeCapacityReady: false });
+    expect(calls).toBe(1);
   });
 
   it("native readiness는 검증 hook과 실제 model·finish 관측이 모두 있어야 열린다", async () => {

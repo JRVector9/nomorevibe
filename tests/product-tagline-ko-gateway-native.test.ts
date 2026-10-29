@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createServer, type ServerResponse } from "node:http";
 import { afterEach, expect, it, vi } from "vitest";
-import { TRANSLATE_MODEL, translateTaglinesToKorean, productTaglineKoSourceHash, productTaglineKoGatewayWire,
+import { KOREAN_TAGLINE_MODEL, translateTaglinesToKorean, productTaglineKoSourceHash, productTaglineKoGatewayWire,
   type ProductTaglineKoGatewayItem } from "@/lib/crawl/translate";
 import { productTaglineKoInputHash, productTaglineKoLogicalWorkKey, productTaglineKoDispatchBindingHash,
   productTaglineKoModelDispatchSchema } from "@/lib/llm/capacity";
@@ -109,8 +109,8 @@ it("triples only legacy output tokens while preserving the frozen native wire an
     wire = String(options?.body); return new Response(JSON.stringify(envelope()));
   }) as typeof fetch);
   expect(result).toEqual({ ok: true, outputs });
-  const original = originalWire(batch, TRANSLATE_MODEL), frozen = JSON.parse(original);
-  expect(productTaglineKoGatewayWire(batch, TRANSLATE_MODEL)).toBe(original);
+  const original = originalWire(batch, KOREAN_TAGLINE_MODEL), frozen = JSON.parse(original);
+  expect(productTaglineKoGatewayWire(batch, KOREAN_TAGLINE_MODEL)).toBe(original);
   expect(wire).toBe(JSON.stringify({ ...frozen, max_tokens: frozen.max_tokens * 3 }));
   expect(JSON.parse(wire).max_tokens).toBe(2700);
   expect({ ...JSON.parse(wire), max_tokens: frozen.max_tokens }).toEqual(frozen);
