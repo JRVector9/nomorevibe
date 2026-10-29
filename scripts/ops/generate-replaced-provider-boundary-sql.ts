@@ -15,4 +15,4 @@ function check(s: unknown) {
 }
 check(schema);
 const template = readFileSync(new URL("./replaced-provider-boundary-sql.template.sql",import.meta.url),"utf8");
-writeFileSync(new URL("../../drizzle/0140_replaced_provider_boundary_exit.sql",import.meta.url),template.replace("__EVIDENCE_SHAPE__",JSON.stringify(schema)));
+writeFileSync(new URL("../../drizzle/0143_replaced_provider_boundary_exit.sql",import.meta.url),template.replace("__EVIDENCE_SHAPE__",JSON.stringify(schema)));

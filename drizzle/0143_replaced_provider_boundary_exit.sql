@@ -1,3 +1,15 @@
+-- 0143 follows production 0140~0142 (systemd invocation, complete M3/M1 scope). Refuse an out-of-order chain:
+-- every CHECK below is rebuilt from its live definition, so those predecessors' branches must already be installed.
+DO $$
+BEGIN
+  IF to_regprocedure('public.nmv_systemd_invocation_boundary_valid(jsonb,jsonb,jsonb)') IS NULL
+    OR to_regprocedure('public.nmv_complete_m3_provider_scope_valid(jsonb,jsonb)') IS NULL
+    OR to_regprocedure('public.nmv_complete_m1_gateway_scope_valid(jsonb,jsonb)') IS NULL
+    OR to_regprocedure('public.nmv_provider_boundary_release_pre_0142(jsonb)') IS NULL
+    OR strpos(pg_get_functiondef('public.nmv_provider_boundary_release_valid(jsonb)'::regprocedure),'nmv_provider_boundary_release_v7_valid(e)')=0
+    THEN RAISE EXCEPTION 'replaced_provider_predecessor_0142_missing'; END IF;
+END $$;
+--> statement-breakpoint
 CREATE FUNCTION nmv_replaced_provider_shape_valid(v jsonb, s jsonb, depth integer DEFAULT 0) RETURNS boolean LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE AS $$
 DECLARE k text; x jsonb; n numeric; matched integer; i integer;
 BEGIN

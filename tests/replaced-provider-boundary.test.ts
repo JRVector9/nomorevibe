@@ -12,7 +12,7 @@ it("accepts exact replacement boundaries while retaining indeterminate failure a
   expect(evidence.receipt.relay.error).toBe("upstream_timeout");
 });
 it("pins generated SQL to the strict contract", () => {
-  expect(readFileSync("drizzle/0140_replaced_provider_boundary_exit.sql", "utf8")).toBe(readFileSync("scripts/ops/replaced-provider-boundary-sql.template.sql", "utf8")
+  expect(readFileSync("drizzle/0143_replaced_provider_boundary_exit.sql", "utf8")).toBe(readFileSync("scripts/ops/replaced-provider-boundary-sql.template.sql", "utf8")
     .replace("__EVIDENCE_SHAPE__", JSON.stringify(z.toJSONSchema(replacedProviderEvidenceShape))));
 });
 type E = ReturnType<typeof replacedProviderFixture>["evidence"];

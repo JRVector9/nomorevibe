@@ -78,7 +78,7 @@ it("event kind CHECK는 0126·0127·0134·0135 전체를 보존하고 0136 indet
   const previous = history.find(entry => entry.idx === 126)!, waiting = history.find(entry => entry.idx === 127)!, cli = history.find(entry => entry.idx === 134)!, removed = history.find(entry => entry.idx === 135)!, unknown = history.find(entry => entry.idx === 136)!, latest = history.at(-1)!;
   const check = getTableConfig(modelCapacityEvents).checks.find(check => check.name === name)!;
   const expression = new PgDialect().sqlToQuery(check.value).sql;
-  expect(latest.tag).toBe("0140_replaced_provider_boundary_exit");
+  expect(latest.tag).toBe("0143_replaced_provider_boundary_exit");
   expect(expression).toBe(latest.expression);
   expect(waiting.expression).toBe(`(${previous.expression}) OR coalesce(kind='wait_cancelled' AND from_state='waiting' AND to_state='withdrawn' AND reason IS NULL AND evidence IS NULL,false)`);
   expect(cli.expression).toBe(`(${waiting.expression}) OR coalesce(kind='dispatch_released' AND from_state='dispatched' AND to_state='withdrawn' AND reason IS NULL AND nmv_cli_executor_release_valid(evidence) AND evidence->>'requestId'=request_id::text AND evidence->'plan'->'request'->'epoch'=to_jsonb(epoch) AND evidence->'plan'->'request'->'revision'=to_jsonb(revision) AND evidence->'plan'->'request'->>'policyHash'=policy_hash,false)`);
@@ -101,7 +101,7 @@ it("member CHECK는 0125·0126·0134·0135 전체와 0136의 exact predecessor �
   const unknown = history.find(entry => entry.idx === 136)!;
   const previous = history.filter(entry => entry.idx < 125).at(-1)!;
   const expression = new PgDialect().sqlToQuery(check.value).sql;
-  expect(latest.tag).toBe("0140_replaced_provider_boundary_exit");
+  expect(latest.tag).toBe("0143_replaced_provider_boundary_exit");
   expect(expression === latest.expression, check.name).toBe(true);
   expect(publication.expression.startsWith(`(${previous.expression}) OR coalesce((`)).toBe(true);
   expect(provider.expression).toBe(`(${publication.expression}) OR nmv_provider_boundary_request_valid(to_jsonb(model_capacity_requests))`);
