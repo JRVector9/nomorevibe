@@ -4,6 +4,7 @@ import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { translateReasonsWithModelCapacity } from '@/lib/crawl/reason-translation-model-capacity';
 import { TRANSLATE_MODEL } from "@/lib/crawl/translate";
 import { recordWorkerTranslations, retryableTranslations, untriedTranslations } from "@/lib/crawl/translations";
+import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 
 /**
  * 한 번에 옮기는 양 — 최대 4건, 1,600자까지.
@@ -86,8 +87,15 @@ export async function translateReasons(ctx: JobContext<null>): Promise<JobOutcom
         return { done: true };
       }
       const batch = pending[0].attempts >= SOLO_ATTEMPTS ? [pending[0]] : packBatch(pending);
-      const prepared = await translateReasonsWithModelCapacity(batch, lease,
-        { timeoutMs: Math.max(1_000, Math.min(CALL_MS, remaining() - 1_000)), signal });
+      let prepared: Awaited<ReturnType<typeof translateReasonsWithModelCapacity>>;
+      try {
+        prepared = await translateReasonsWithModelCapacity(batch, lease,
+          { timeoutMs: Math.max(1_000, Math.min(CALL_MS, remaining() - 1_000)), signal });
+      } catch (error) {
+        // 미룸 사유(capacity·dispatched·unmapped…)를 남긴다 — 러너는 'model_capacity' 하나로만 적는다
+        if (error instanceof ModelCapacityDeferredError) ctx.log("translate.capacity_deferred", { translated, failed, reason: error.reason });
+        throw error;
+      }
       if (prepared.kind === 'skipped') return { done: false };
       const result = prepared.result;
       if (signal.aborted) return { done: false };
