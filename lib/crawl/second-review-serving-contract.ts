@@ -1,3 +1,4 @@
+import { modelRequestName, resolveRegistryModel } from "@/lib/llm/model-registry";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { startupGatewayServingContracts } from "@/lib/llm/gateway-serving-contract-config";
@@ -8,7 +9,7 @@ const tokenizerEndpoint = z.url().refine(value => {
   return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password
     && !url.search && !url.hash && url.pathname === "/tokenize";
 });
-const requestBudgetSchema = z.object({ requestTokenBound: z.literal(32_000), maxOutputTokens: z.literal(10_000),
+const requestBudgetSchema = z.object({ requestTokenBound: z.literal(32_000), maxOutputTokens: z.number().int().positive().max(32_000),
   tokenizerEndpoint, tokenizerModel: identity }).strict();
 const legacyAi2GatewayServingContractSchema = z.object({
   version: z.literal(1), protocol: z.literal("abcllm-raw-total-bound-v1"),
@@ -40,7 +41,7 @@ export const ai2DirectServingContractSchema = z.object({
   tokenizerEndpoint, backendId: identity, physicalGroup: identity,
   // C is the read-back engine context limit. The smaller request policy never rewrites C.
   totalTokenBound: z.number().int().positive().safe(),
-  requestTokenBound: z.literal(32_000), maxOutputTokens: z.literal(10_000),
+  requestTokenBound: z.literal(32_000), maxOutputTokens: z.number().int().positive().max(32_000),
 }).strict().superRefine((value, context) => {
   const chat = new URL(value.endpoint), tokenizer = new URL(value.tokenizerEndpoint);
   if (tokenizer.origin !== chat.origin || tokenizer.pathname !== "/tokenize" || tokenizer.username
@@ -66,15 +67,30 @@ export function ai2DirectServingContractsFromConfig(raw: string | undefined): Re
     const config = z.object({ version: z.literal(1), contracts: z.array(ai2DirectServingContractSchema).max(8) }).strict().parse(JSON.parse(raw));
     const contracts = new Map<string, Ai2DirectServingContract>();
     for (const contract of config.contracts) {
-      if (contracts.has(contract.model)) return none;
-      contracts.set(contract.model, Object.freeze(contract));
+      if (contracts.has(contract.backendId)) return none;
+      contracts.set(contract.backendId, Object.freeze(contract));
     }
     return contracts;
   } catch { return none; }
 }
 const directConfigured = ai2DirectServingContractsFromConfig(process.env.AI2_DIRECT_SERVING_CONTRACTS);
-/** Read-back approved provider-specific startup contracts only; missing contracts defer without inference. */
+/** A key binds the exact configured device endpoint and actual wire name; it never rewrites the verified contract. */
+export function ai2ServingContractMatches(contract: Ai2GatewayServingContract, selection: string): boolean {
+  if (selection === contract.model) return true;
+  try {
+    const definition = resolveRegistryModel(selection);
+    return Boolean(definition && selection === definition.key && definition.provider === contract.provider
+      && modelRequestName(definition) === contract.model
+      && (contract.provider !== "local-direct" || contract.maxOutputTokens <= definition.maxTokens)
+      && `${definition.baseUrl?.replace(/\/+$/, "")}/chat/completions` === contract.endpoint);
+  } catch { return false; }
+}
+export function selectAi2ServingContract(contracts: readonly Ai2GatewayServingContract[], selection: string, provider: string): Ai2GatewayServingContract | null {
+  const matches = contracts.filter(contract => contract.provider === provider && ai2ServingContractMatches(contract, selection));
+  return matches.length === 1 ? matches[0] : null;
+}
+/** Read-back approved contracts only. Ambiguous bare models close; an equipment key chooses an exact contract. */
 export function resolveAi2GatewayServingContract(model: string, provider: string = "abcllm"): Ai2GatewayServingContract | null {
   if (provider !== "abcllm" && provider !== "local-direct") return null;
-  return (provider === "local-direct" ? directConfigured : configured).get(model) ?? null;
+  return selectAi2ServingContract([...(provider === "local-direct" ? directConfigured : configured).values()], model, provider);
 }

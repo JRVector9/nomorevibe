@@ -19,6 +19,7 @@ import { claimAgentReviewModelCapacity, reviewAgentReviewModelCapacity, abandonA
 import type { Ai1ModelDispatch, CliModelDispatch } from "@/lib/llm/capacity";
 import type { PreparedReviewCliCall } from "../review-cli-call";
 import { firstReviewers, firstReviewerKey, firstReviewDeferralIsLocal, firstReviewPoolPosition, type FirstReviewCursor } from "../first-reviewers";
+import { readBlockedFirstReviewerKeys } from "../first-reviewer-blocks";
 import { agentReviewBinding } from "../agent-review-ownership";
 import { itemBindingHash } from "@/lib/jobs/items/types";
 
@@ -26,7 +27,10 @@ const MAX_CONCURRENT_REVIEWS = 16;
 const TICK_MS = 40_000;
 const GROK_TICK_MS = 108_000;
 const MAX_STARTS = 16;
-const FIRST_GATEWAY_MS = 24_000;
+// A local timeout cannot prove that a remote model stopped. Give the gateway its
+// full transport ceiling; the former 24s cap could strand the only physical slot
+// on a valid, slower completion. The worker already grants this job 110s.
+const GATEWAY_TICK_MS = 108_000;
 
 /** Refill bounded slots without changing the full input, reviewers or admission rules. */
 export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>): Promise<JobOutcome<FirstReviewCursor>> {
@@ -51,6 +55,7 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
   const primary = firstReviewer(settings);
   if (!primary) throw new Error("1차 심사자를 설정하거나 CRAWL_REVIEW_MODEL 을 넣어야 AI 심사를 켤 수 있습니다");
   const pool = firstReviewers(settings, primary);
+  const blockedModels = poolEnabled ? await readBlockedFirstReviewerKeys() : new Set<string>();
   const concurrency = Math.min(settings.reviewConcurrency || 2, MAX_CONCURRENT_REVIEWS);
   const pending = poolEnabled ? await listOwnPendingFirstReviewCandidates(settings, lease) : [];
   if (pending.length) ctx.log("crawl.agent_review_pending_revisited", { count: pending.length,
@@ -65,9 +70,13 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
     if (after) { await ctx.save({ ...ctx.cursor, firstReviewPoolScan: null }); return { done: false, continuation: "ready" }; }
     return { done: true, ...(poolEnabled && ctx.cursor ? { cursor: ctx.cursor } : {}) };
   }
-  const tickMs = pool.some(reviewer => reviewer.provider === "grok-cli") ? GROK_TICK_MS : TICK_MS;
-  const remaining = () => tickMs - (Date.now() - startedAt);
-  const timeoutFor = (provider: string) => provider === "abcllm" ? Math.min(FIRST_GATEWAY_MS, REVIEW_GATEWAY_TIMEOUT_MS)
+  const tickMs = pool.some(reviewer => reviewer.provider === "grok-cli") ? GROK_TICK_MS
+    : pool.some(reviewer => reviewer.provider === "abcllm") ? GATEWAY_TICK_MS : TICK_MS;
+  // The runner starts its budget before claiming the job. Preparing inputs or
+  // waiting for admission must not let us start a full call past that deadline.
+  const deadlineAt = Math.min(startedAt + tickMs, ctx.deadlineAt ?? Infinity);
+  const remaining = () => deadlineAt - Date.now();
+  const timeoutFor = (provider: string) => provider === "abcllm" ? REVIEW_GATEWAY_TIMEOUT_MS
     : provider === "grok-cli" ? GROK_REVIEW_TIMEOUT_MS : REVIEW_CLI_TIMEOUT_MS;
   const minimumCeiling = Math.min(...pool.map(reviewer => timeoutFor(reviewer.provider)));
   const visited = new Set<number>();
@@ -90,7 +99,8 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
     const input = await loadReviewInput(candidate, document, settings);
     if (input.validUntil <= reviewSemanticNow()) return;
     const reviewer = settings.firstReviewAdditional === undefined ? primary
-      : await chooseFirstReviewForCandidate({ candidate, document, settings, input }, undefined, pausedModels);
+      : await chooseFirstReviewForCandidate({ candidate, document, settings, input }, undefined,
+        new Set([...blockedModels, ...pausedModels]));
     if (!reviewer) return;
     const { provider: reviewProvider, model } = reviewer;
     if (hint && (hint.reviewer.provider !== reviewProvider || hint.reviewer.model !== model

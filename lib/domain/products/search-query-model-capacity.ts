@@ -1,5 +1,7 @@
+import { scopedRequestTimeout } from "@/lib/llm/model-registry";
+import { scopedModel } from "@/lib/llm/model-registry";
 import { randomUUID } from "node:crypto";
-import { TRANSLATE_MODEL } from "@/lib/crawl/translate";
+import { SEARCH_QUERY_MODEL } from "@/lib/crawl/translate";
 import { prepareWebsearchQueryGatewayCall, translateQueryWithReservedGateway } from "@/lib/crawl/agent-review-gateway";
 import { readModelCapacityCallerControl, findOwnPendingModelRequest, requestWebsearchQueryModelSlot, cancelReservedModelSlot,
   markModelDispatchIndeterminate, reconcileWebsearchQueryGatewayTerminal } from "@/lib/llm/capacity-repository";
@@ -23,6 +25,7 @@ const globalFlights = globalThis as typeof globalThis & { noMoreVibeWebsearchQue
 const flights = globalFlights.noMoreVibeWebsearchQueryFlights ??= new Map();
 
 export async function translateQueryWithModelCapacity(value: WebsearchQueryTarget, timeoutMs: number): Promise<WebsearchQueryCapacityResult> {
+  timeoutMs = scopedRequestTimeout("search-query-translate", timeoutMs);
   const target = structuredClone(value);
   if (!process.env.ABCLLM_API_KEY?.trim()) return { kind: "legacy" };
   const running = flights.get(target.cacheKey);
@@ -30,7 +33,7 @@ export async function translateQueryWithModelCapacity(value: WebsearchQueryTarge
   const control = await readModelCapacityCallerControl();
   if (control.mode === "disabled") return { kind: "legacy" };
   if (control.mode !== "open") throw new ModelCapacityDeferredError("draining");
-  if (!control.policy?.routes.some(route => route.routeId === "search-query-translate" && route.provider === "abcllm" && route.model === TRANSLATE_MODEL))
+  if (!control.policy?.routes.some(route => route.routeId === "search-query-translate" && route.provider === "abcllm" && route.model === scopedModel("search-query-translate", SEARCH_QUERY_MODEL)))
     throw new ModelCapacityDeferredError("unmapped");
   const joined = flights.get(target.cacheKey);
   if (joined) return joined;
@@ -43,7 +46,7 @@ async function translateOnce(target: WebsearchQueryTarget, timeoutMs: number): P
   const owner = websearchProcessOwner();
   if (!owner) throw new ModelCapacityDeferredError("owner_unavailable");
   const input = { sourceLocale: target.sourceLocale, query: target.query };
-  const call = prepareWebsearchQueryGatewayCall(input, { model: TRANSLATE_MODEL, timeoutMs });
+  const call = prepareWebsearchQueryGatewayCall(input, { model: scopedModel("search-query-translate", SEARCH_QUERY_MODEL), timeoutMs });
   if (call.kind !== "prepared") throw new ModelCapacityDeferredError(call.reason);
   const initial = await prepareWebsearchQueryDispatch(target, { owner, call });
   if (initial.kind === "disabled") return { kind: "legacy" };
@@ -51,7 +54,7 @@ async function translateOnce(target: WebsearchQueryTarget, timeoutMs: number): P
   if (initial.kind === "continued") return initial.cached !== null ? { kind: "cached", text: initial.cached } : { kind: "result", result: initial.result };
   if (initial.kind === "skipped" || !("input" in initial)) throw new Error("websearch_query_preparation_invalid");
   const identity = modelCapacityRequestIdentitySchema.parse({ owner: { instanceId: owner.instanceId, bootId: owner.bootId },
-    class: "background", pool: "text", routeId: "search-query-translate", provider: "abcllm", model: TRANSLATE_MODEL,
+    class: "background", pool: "text", routeId: "search-query-translate", provider: "abcllm", model: scopedModel("search-query-translate", SEARCH_QUERY_MODEL),
     workKey: `${websearchQueryLogicalWorkKey(initial.input.member)}:${websearchQueryInputHash(initial.input)}` });
   const pending = await findOwnPendingModelRequest(identity);
   if (pending && (pending.state === "dispatched" || pending.state === "indeterminate")) throw new ModelCapacityDeferredError("dispatched");

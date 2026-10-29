@@ -1,3 +1,5 @@
+import { scopedModel } from "@/lib/llm/model-registry";
+import { modelTimeoutMs } from "@/lib/llm/model-registry";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { translateReasonsWithModelCapacity } from '@/lib/crawl/reason-translation-model-capacity';
 import { TRANSLATE_MODEL } from "@/lib/crawl/translate";
@@ -13,7 +15,7 @@ import { recordWorkerTranslations, retryableTranslations, untriedTranslations } 
 const BATCH = 4;
 const BATCH_CHARS = 1_600;
 /** 한 번 부르는 데 둘 시간. 첫 배포 때 20초로 두었더니 4틱 연속 시간 초과였다 */
-const CALL_MS = 45_000;
+const CALL_MS = modelTimeoutMs("reason-translate");
 /** 틱 예산(worker.ts jobRunOptions 55초)보다 조금 짧게 */
 const TICK_MS = 54_000;
 /**
@@ -95,9 +97,9 @@ export async function translateReasons(ctx: JobContext<null>): Promise<JobOutcom
         error: result.ok ? undefined : result.error,
       }));
       if (prepared.kind === 'ready') {
-        const stored = await recordWorkerTranslations(rows, TRANSLATE_MODEL, lease, prepared.expectation);
+        const stored = await recordWorkerTranslations(rows, scopedModel("reason-translate", TRANSLATE_MODEL), lease, prepared.expectation);
         if (stored === 0) return { done: false };
-      } else await recordWorkerTranslations(rows, TRANSLATE_MODEL, lease);
+      } else await recordWorkerTranslations(rows, scopedModel("reason-translate", TRANSLATE_MODEL), lease);
       translated += rows.filter((row) => row.translated !== null).length;
       failed += rows.filter((row) => row.translated === null).length;
       // 게이트웨이가 막혔으면 이번 틱은 여기서 — 같은 실패를 되풀이하지 않는다

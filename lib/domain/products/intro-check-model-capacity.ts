@@ -1,3 +1,4 @@
+import { scopedModel } from "@/lib/llm/model-registry";
 import { isDeepStrictEqual } from "node:util";
 import { db, onPrimary } from "@/lib/db";
 import { assertJobLeaseAtWallTime, type JobLease } from "@/lib/jobs/control";
@@ -16,7 +17,7 @@ export type IntroCheckCapacityResult = Readonly<{ kind: "result"; result: IntroC
 export async function checkIntrosWithModelCapacity(tasks: readonly IntroTask[], items: readonly IntroItem[], lease: JobLease,
   options: { timeoutMs: number; signal?: AbortSignal; beforeSpawn: () => boolean }): Promise<IntroCheckCapacityResult> {
   if (lease.name !== "product-intro-check") throw new Error("intro_check_job_lease_required");
-  const model = INTRO_CHECK_MODEL, job = { name: "product-intro-check" as const, token: lease.token, requestedVersion: lease.requestedVersion };
+  const model = scopedModel("product-intro-check", INTRO_CHECK_MODEL), job = { name: "product-intro-check" as const, token: lease.token, requestedVersion: lease.requestedVersion };
   const native = capturedClaudeCliRun("product-intro-check", model, {
     beforeSpawn: options.beforeSpawn,
     plan: async () => {

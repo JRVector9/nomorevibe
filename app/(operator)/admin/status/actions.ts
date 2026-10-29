@@ -14,7 +14,22 @@ import { operationsAudit } from '@/lib/db/schema';
 import { assertWebWritable, webWriteAction } from '@/lib/operations/dr/web-gate';
 import { COLLECTION_OFF_REASONS, COLLECTION_ON_REASONS } from './collection-reasons';
 import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
+import { saveKoreanDiscoveryControl } from '@/lib/crawl/korean-discovery/control';
 export type ActionResult = { message?: string; error?: string; status?: AgentStatus };
+export const setKoreanDiscoveryControl = webWriteAction(async function setKoreanDiscoveryControl(input: unknown): Promise<ActionResult> {
+  const admin = await currentAdmin();
+  if (!admin) return { error: '관리자 로그인이 필요합니다.' };
+  try {
+    const saved = await saveKoreanDiscoveryControl(input, admin.login);
+    revalidatePath('/admin/status');
+    return { message: saved.enabled ? '한국어 탐색을 켰습니다. Oracle 실행 관측과 제한 사유를 아래에서 확인하세요.' : '한국어 탐색을 껐습니다. 저장된 진행 위치는 보존합니다.' };
+  } catch (error) {
+    const messages: Record<string, string> = { korean_history_start_missing: '과거 탐색 시작일을 지정해 주세요.',
+      korean_history_start_future: '시작일은 현재보다 미래일 수 없습니다.', korean_settings_changed: '설정이 변경됐습니다. 화면을 새로고침해 주세요.',
+      korean_history_already_started: '진행 위치가 이미 있습니다. 시작일을 바꾸려면 별도 이관이 필요합니다.' };
+    return { error: messages[error instanceof Error ? error.message : ''] ?? '한국어 탐색 설정을 저장하지 못했습니다.' };
+  }
+});
 export const requestOperation = webWriteAction(async function requestOperation(name:string):Promise<ActionResult> {
   const admin=await currentAdmin();if(!admin)return {error:'관리자 로그인이 필요합니다.'};
   try{const message=await requestAdminJob(name,admin.login);revalidatePath('/admin/status');return {message};}

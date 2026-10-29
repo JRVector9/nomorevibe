@@ -115,7 +115,7 @@ it("counts real AI1 dispatches and a grant's cursor write no longer marks the co
     const [{ count }] = await client!`SELECT count(*)::int AS count FROM crawl_review_attempts WHERE state <> 'running'`;
     if (count === 3) break;
     await requestJob("crawl-agent-review");
-    await runJob("crawl-agent-review", reviewCrawlCandidates, { requestedOnly: true, roleLease: role! });
+    await runJob("crawl-agent-review", reviewCrawlCandidates, { requestedOnly: true, roleLease: role!, budgetMs: 110_000 });
   }
   const rows = await client!`SELECT r.state, r.dispatch_binding->>'attemptId' AS attempt_id, r.terminal_evidence->'actualUsage'->'totalTokens' AS total,
     a.state AS attempt_state FROM model_capacity_requests r JOIN crawl_review_attempts a ON a.id::text = r.dispatch_binding->>'attemptId' ORDER BY a.id`;
@@ -143,7 +143,7 @@ it("verifies the open window after more real grants without backdating, since a 
     const [{ count }] = await client!`SELECT count(*)::int AS count FROM crawl_review_attempts WHERE state <> 'running'`;
     if (count === 5) break;
     await requestJob("crawl-agent-review");
-    await runJob("crawl-agent-review", reviewCrawlCandidates, { requestedOnly: true, roleLease: role! });
+    await runJob("crawl-agent-review", reviewCrawlCandidates, { requestedOnly: true, roleLease: role!, budgetMs: 110_000 });
   }
   // 두 grant가 control 행을 다시 썼지만(cursor) 모드·정책 변경 시각은 그대로다.
   const after = await control();

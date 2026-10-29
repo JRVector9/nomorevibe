@@ -1,9 +1,15 @@
+vi.mock('@/lib/crawl/korean-discovery/repository', () => ({ m3DiscoveryQueries: async (settings: {discover:{queries:unknown[]}}) => settings.discover.queries }));
 import { beforeEach, expect, it, vi } from 'vitest';
 import { ADDITIONAL_AGENT_DISCOVERY_QUERIES, DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from '@/lib/crawl/settings-schema';
 import { seedFrontier, type SeedCursor } from '@/lib/crawl/jobs/seed';
 const mocks = vi.hoisted(() => ({enqueue:vi.fn(), admission:vi.fn(), search:vi.fn(), record:vi.fn(), settings:null as CrawlSettings|null}));
 vi.mock('@/lib/crawl/repository', () => ({enqueue:mocks.enqueue,frontierCounts:vi.fn()}));
-vi.mock('@/lib/crawl/discovery-admission', async original => ({ ...await original<typeof import('@/lib/crawl/discovery-admission')>(), readDiscoveryAdmission:mocks.admission }));
+vi.mock('@/lib/crawl/discovery-progress', () => ({recordDiscoveryProgress:vi.fn().mockResolvedValue(undefined)}));
+vi.mock('@/lib/crawl/shared-discovery', () => ({
+  sharedDiscoverySearch:async (_input:unknown, load:() => Promise<unknown>) => load(),
+  enqueueDiscoveryBatch:async (entries:unknown[], _limits:unknown, lease:unknown) => ({added:await mocks.enqueue(entries,lease),processed:entries.length,remainingNew:Number.POSITIVE_INFINITY}),
+}));
+vi.mock('@/lib/crawl/review-backlog', async original => ({ ...await original<typeof import('@/lib/crawl/review-backlog')>(), readReviewBacklog:mocks.admission }));
 vi.mock('@/lib/crawl/github', () => ({searchCommits:mocks.search,searchRepositories:mocks.search,SEARCH_PER_PAGE:100,MAX_SEARCH_PAGES:10}));
 vi.mock('@/lib/crawl/settings', () => ({getSettings:async () => mocks.settings,enabledQueries:(settings:CrawlSettings) => settings.discover.queries.filter(q => q.enabled)}));
 vi.mock('@/lib/domain/evidence/agents/repository', () => ({recordDiscoveryEvidenceBatch:mocks.record}));
@@ -14,18 +20,18 @@ const context = (cursor:SeedCursor|null = null, hasBudget = () => true) => ({cur
 const recorded = ():{repositoryKey:string;attribution:{client:string|null}|null;incomplete:boolean}[] => mocks.record.mock.calls.flatMap(([rows]) => rows);
 beforeEach(() => {
   mocks.enqueue.mockReset().mockImplementation(async (entries:unknown[]) => entries.length); mocks.record.mockReset().mockResolvedValue(undefined); mocks.search.mockReset();
-  mocks.admission.mockReset().mockResolvedValue({ recentNew:0, stages:[], secondWindowLimited:false });
+  mocks.admission.mockReset().mockResolvedValue({ recentNew:0, queuedRepositories:0,downstreamRepositories:0 });
   mocks.settings = {...DEFAULT_CRAWL_SETTINGS,enabled:true,discover:{...DEFAULT_CRAWL_SETTINGS.discover,sort:"relevance",pagesPerTick:1,queries:[{label:'Codex hint',kind:'commits',query:'Co-authored-by: Codex',enabled:true,builder:'Codex',priority:90}]}};
 });
 it('retains a partial page while counting only new inserts under pressure', async () => {
-  mocks.admission.mockResolvedValue({ recentNew:99, stages:[{key:'fetch',waiting:500,oldestMinutes:10}], secondWindowLimited:false });
+  mocks.admission.mockResolvedValue({ recentNew:0, queuedRepositories:999999,downstreamRepositories:500 });
   mocks.search.mockResolvedValue(page([commit('acme/one'),commit('acme/two')]));
   const first = await seedFrontier(context());
-  expect(first.cursor).toMatchObject({ admissionThrottled:true,pendingPage:{itemIndex:1} });
-  mocks.admission.mockResolvedValue({ recentNew:100, stages:[{key:'fetch',waiting:300,oldestMinutes:3}], secondWindowLimited:false });
+  expect(first.cursor).toMatchObject({ admissionThrottled:false,pendingPage:{itemIndex:1} });
+  mocks.admission.mockResolvedValue({ recentNew:0, queuedRepositories:999998,downstreamRepositories:500 });
   const resumed = await seedFrontier(context(first.cursor!));
   expect(resumed.done).toBe(true);
-  expect(resumed.cursor?.admissionThrottled).toBe(true);
+  expect(resumed.cursor?.admissionThrottled).toBe(false);
   expect(mocks.search).toHaveBeenCalledTimes(1);
   expect(mocks.enqueue.mock.calls.flatMap(([items]) => items).map(item => item.repo)).toEqual(['acme/one','acme/two']);
 });
@@ -135,7 +141,7 @@ it('retains unresolved windows across other signals and resumes fresh discovery 
   expect(nextCycle.cursor).toMatchObject({phase:'discovery',incompleteWindows:[]});
   // 새 주기의 첫 검색은 첫 신호로, 지난 주기가 덮은 끝에서 시작한다
   expect(mocks.search.mock.calls[searches][0].query)
-    .toBe('Co-authored-by: Codex committer-date:2026-01-02T00:00:00Z..2026-01-05T00:00:00Z');
+    .toBe('Co-authored-by: Codex is:public committer-date:2026-01-02T00:00:00Z..2026-01-05T00:00:00Z');
 });
 it('keeps the cursor at the page start when the evidence write fails, then replays the page without refetching', async () => {
   mocks.search.mockResolvedValue(page([commit('acme/app','fix\n\nCo-authored-by: Codex <a@example.com>\nCo-authored-by: Claude <b@example.com>')]));

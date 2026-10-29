@@ -3,7 +3,7 @@
 #   1) next typegen + tsc --noEmit (CI와 같은 타입 검사)
 #   2) 이 차선이 바꾼 TS 파일만 eslint
 #   3) first-reviewers·기한/게이트웨이·relay·자동 해제 관련 vitest 단위 시험
-#   4) tests/test_oracle_*.py (Oracle 감시)
+#   4) Oracle 요청 감시·watchdog·recovery gateway 관련 회귀만
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -30,7 +30,7 @@ TS_FILES=(
   lib/crawl/first-reviewers.ts lib/crawl/first-reviewer-blocks.ts lib/crawl/agent-review-repository.ts
   lib/crawl/agent-review-item-lifecycle.ts lib/crawl/consumers/first.ts lib/crawl/jobs/agent-review.ts
   lib/crawl/agent-review-gateway.ts lib/llm/deadline-ladder.ts lib/jobs/products/translations.ts
-  lib/operations/model-capacity-auto-reclaim.ts lib/operations/dr/reclaim.ts lib/jobs/model-capacity-reclaim.ts
+  lib/operations/model-capacity-auto-reclaim.ts lib/operations/dr/call-drain.ts lib/operations/dr/reclaim.ts lib/jobs/model-capacity-reclaim.ts
   lib/jobs/catalog.ts lib/jobs/registry.ts lib/operations/emergency-priority.ts lib/operations/stage-registry.ts
   lib/operations/contracts.ts "app/(operator)/admin/status/work-owners.ts"
   lib/operations/capacity-admission-block.ts lib/operations/model-capacity-unknowns.ts lib/operations/failover-monitor.ts
@@ -56,17 +56,20 @@ UNIT_TESTS=(
 existing() { local file; for file in "$@"; do if [ -f "$file" ]; then printf '%s\0' "$file"; fi; done; return 0; }
 
 echo "== 1/4 typecheck"
-npx --no-install next typegen
-npx --no-install tsc --noEmit --incremental false
+node node_modules/next/dist/bin/next typegen
+node node_modules/typescript/bin/tsc --noEmit --incremental false
 
 echo "== 2/4 eslint (changed files)"
-existing "${TS_FILES[@]}" | xargs -0 npx --no-install eslint --max-warnings=0
+existing "${TS_FILES[@]}" | xargs -0 node node_modules/eslint/bin/eslint.js --max-warnings=0
 
 echo "== 3/4 vitest (lane unit tests)"
-existing "${UNIT_TESTS[@]}" | xargs -0 npx --no-install vitest run
+existing "${UNIT_TESTS[@]}" | xargs -0 node node_modules/vitest/vitest.mjs run
 
 echo "== 4/4 python Oracle tests"
-python3 -B -m unittest discover -s tests -p 'test_oracle_*.py'
+for file in test_oracle_capacity_unknowns.py test_oracle_capacity_reclaim_overdue.py test_oracle_watchdog.py test_oracle_watchdog_provider.py test_oracle_watchdog_notifications.py; do
+  if [ -f "tests/$file" ]; then python3 -B -m unittest discover -s tests -p "$file";
+  else echo "verify-review-stall: $file is not introduced in this stage"; fi
+done
 # gateway(recovery_gateway.py)·catalog 파서도 이 차선이 바꾼 파일을 읽는다
 python3 -B -m unittest discover -s tests -p 'test_recovery_provider.py'
 python3 -B -m unittest discover -s tests -p 'test_release_catalog.py'

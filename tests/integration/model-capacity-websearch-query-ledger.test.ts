@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { createServer, type Server, type ServerResponse } from "node:http";
 import postgres from "postgres";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
-import { TRANSLATE_MODEL, QUERY_PROMPT_VERSION, GLOSSARY_VERSION, glossaryHints } from "@/lib/crawl/translate";
+import { SEARCH_QUERY_MODEL, QUERY_PROMPT_VERSION, GLOSSARY_VERSION, glossaryHints } from "@/lib/crawl/translate";
 import { modelCapacityPolicyHash, modelCapacityRequestIdentitySchema, websearchQueryInputHash, websearchQueryLogicalWorkKey,
   type ModelCapacityPolicy, type WebsearchQueryInput } from "@/lib/llm/capacity";
 import type { WebsearchQueryServingContract } from "@/lib/llm/websearch-query-serving-contract";
@@ -23,7 +23,7 @@ const ownerA = { instanceId: `${prefix}-a`, bootId: randomUUID(), release: "ledg
 const ownerB = { instanceId: `${prefix}-b`, bootId: randomUUID(), release: "ledger-fixture" };
 const policy: ModelCapacityPolicy = { version: 1, globalLimit: 4, providerLimits: { account: 4 }, groupLimits: { engine: 4 },
   poolLimits: { reviewer: 4, text: 4 }, weights: { first: 1, second: 1, background: 1 }, maxWaiting: 12, queueTtlMs: 60_000, reservationTtlMs: 60_000,
-  routes: [...[TRANSLATE_MODEL, modelB].map(model => ({ routeId: "search-query-translate", provider: "abcllm", model, providerBudgetId: "account", groupId: "engine" })),
+  routes: [...[SEARCH_QUERY_MODEL, modelB].map(model => ({ routeId: "search-query-translate", provider: "abcllm", model, providerBudgetId: "account", groupId: "engine" })),
     { routeId: busyRoute, provider: "fixture", model: modelB, providerBudgetId: "account", groupId: "engine" }] };
 const cacheKeys = new Set<string>();
 let http: Server, originalControl: Record<string, unknown>;
@@ -67,7 +67,7 @@ function identity(input: WebsearchQueryInput, owner = fixture.owner!) {
 /** The coordinator's own steps up to a committed dispatch, used where a crash or race needs to be placed exactly. */
 async function dispatched(query: string) {
   const goal = target(query), owner = fixture.owner!;
-  const call = gateway.prepareWebsearchQueryGatewayCall({ sourceLocale: "ko", query }, { model: TRANSLATE_MODEL, timeoutMs: 2_000 });
+  const call = gateway.prepareWebsearchQueryGatewayCall({ sourceLocale: "ko", query }, { model: SEARCH_QUERY_MODEL, timeoutMs: 2_000 });
   if (call.kind !== "prepared") throw new Error("fixture_contract_required");
   const initial = await prepareWebsearchQueryDispatch(goal, { owner, call });
   if (initial.kind !== "ready" || !("input" in initial)) throw new Error(`fixture_initial_${initial.kind}`);
@@ -101,7 +101,7 @@ beforeAll(async () => {
   http = createServer((request, response) => { let body = ""; request.on("data", part => { body += part; }); request.on("end", () => { bodies.push(body); reply(response); }); });
   await new Promise<void>(resolve => http.listen(0, "127.0.0.1", resolve));
   const address = http.address(); if (!address || typeof address === "string") throw new Error("fixture_address");
-  fixture.contract = { version: 1, protocol: "abcllm-websearch-query-total-bound-v1", routeId: "search-query-translate", provider: "abcllm", model: TRANSLATE_MODEL,
+  fixture.contract = { version: 1, protocol: "abcllm-websearch-query-total-bound-v1", routeId: "search-query-translate", provider: "abcllm", model: SEARCH_QUERY_MODEL,
     responseModel: "served-query", endpoint: `http://127.0.0.1:${address.port}/v1/chat/completions`, deploymentRevision: "local-only", totalTokenBound: 4096 };
   fixture.owner = ownerA; vi.stubEnv("ABCLLM_API_KEY", "local-test-only");
   process.env.READ_DATABASE_URL = `${TEST_DATABASE_URL}?default_transaction_read_only=on`; globalForDb.readDb = undefined;
@@ -142,7 +142,7 @@ it("settles one native POST and writes the cache on primary even inside a read-o
     owner_instance_id: ownerA.instanceId, owner_boot_id: ownerA.bootId, terminal_evidence: { outcome: { ok: true, keywords: "merge pdf | merge pdf files" } } });
   expect(JSON.stringify(row)).not.toContain(query);
   expect((await events(row.request_id as string)).map(event => event.kind)).toEqual(["queued", "reserved", "dispatch_started", "dispatch_settled"]);
-  expect((await cache(key)).row).toMatchObject({ status: "done", translated: "merge pdf | merge pdf files", attempts: 1, model: TRANSLATE_MODEL, error_code: null });
+  expect((await cache(key)).row).toMatchObject({ status: "done", translated: "merge pdf | merge pdf files", attempts: 1, model: SEARCH_QUERY_MODEL, error_code: null });
   expect((await onReplica(() => searchTranslation.resolveSearchQuery(query, { waitForTranslation: true }))).translated).toBe("merge pdf / merge pdf files");
   expect(bodies.length - before).toBe(1); expect(await rows(key)).toHaveLength(1);
 });
@@ -263,7 +263,7 @@ it("enforces the 0093 branch: exact snapshot duplicates conflict, decimal counte
     .toBe("23514:model_capacity_requests_dispatch_check");
 });
 
-function sameTarget(query: string, owner: typeof ownerA, model = TRANSLATE_MODEL) {
+function sameTarget(query: string, owner: typeof ownerA, model = SEARCH_QUERY_MODEL) {
   const goal = target(query.trim().replace(/\s+/g, " ")), input: WebsearchQueryInput = { model, member: { cacheKey: goal.cacheKey, sourceLocale: "ko",
     queryHash: searchTranslation.normalizeQuery(query) === query ? "1".repeat(64) : "2".repeat(64), promptVersion: QUERY_PROMPT_VERSION,
     glossaryVersion: goal.glossaryVersion, cache: { kind: "absent" } } };

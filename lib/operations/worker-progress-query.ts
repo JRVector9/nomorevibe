@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { and, inArray, sql, type SQL } from "drizzle-orm";
+import { and, inArray, notLike, sql, type SQL } from "drizzle-orm";
 import { modelCapacityControl, operationsObservations, pipelineStageModes } from "@/lib/db/schema";
 import { consumerInstancePrefix } from "@/lib/runtime/consumer-registry";
 import { getSettings } from "@/lib/crawl/settings";
@@ -365,7 +365,8 @@ export async function readWorkerProgress(now = new Date(), options: { includeTex
   const agentClaims = agentScanByClaims(agentScan);
   // 관문은 주 DB 에서 읽는다 — 복제본 지연·장애가 배포·재시작 판정을 바꾸지 않게
   const [throughput, observations, evidence, split, text, publisherDraining] = await Promise.all([
-    pipelineThroughput(settings, now), db.select().from(operationsObservations).where(and(WITHOUT_JOB_DEFERRALS, WITHOUT_JOB_TALLIES)),
+    pipelineThroughput(settings, now), db.select().from(operationsObservations).where(and(WITHOUT_JOB_DEFERRALS, WITHOUT_JOB_TALLIES,
+      notLike(operationsObservations.key, "discovery-progress:%"))),
     evidenceProgress(db, settings, now, Number.isFinite(idleUntil) && idleUntil > now.getTime(),
       agentClaims ? null : parseAgentProviderFailure(agentCursor?.providerFailure), agentClaims),
     // 응답 점검은 split claims 모드에서만 단계로 본다(legacy 는 지금처럼 maintenance 생존·줄로만 본다)

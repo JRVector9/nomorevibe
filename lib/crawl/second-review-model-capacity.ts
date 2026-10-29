@@ -10,7 +10,7 @@ import { SecondReviewModelReservationRequired, claimSecondReviewItemWithModelRes
 import type { ReviewInput } from './agent-review-contract';
 import type { AgentReviewResult } from './agent-review';
 import { assertLiveReviewAdapterAllowed } from './review-fixture-transport';
-import { resolveAi2GatewayServingContract } from './second-review-serving-contract';
+import { resolveAi2GatewayServingContract, ai2ServingContractMatches } from './second-review-serving-contract';
 
 /** Called only after the ordinary claim's intent transaction has rolled back.
  * Queue polls and the fixed atomic item/dispatch claim each have short own TXs. */
@@ -31,7 +31,7 @@ export async function claimSecondReviewModelCapacity(intent: SecondReviewModelRe
   if (call.kind !== 'prepared') {
     const contract = resolveAi2GatewayServingContract(binding.reviewer.model, binding.reviewer.provider);
     if (signal?.aborted || binding.reviewer.provider !== 'local-direct' || !contract
-      || contract.provider !== binding.reviewer.provider || contract.model !== binding.reviewer.model)
+      || contract.provider !== binding.reviewer.provider || !ai2ServingContractMatches(contract, binding.reviewer.model))
       throw new ModelCapacityDeferredError('provider_contract_unavailable');
     const slot = await requestAi2ItemModelSlot({ ...identity, requestId }, { candidateId: binding.candidateId, vote: binding.vote });
     if ((slot.kind === 'granted' || slot.reason === 'capacity') && !signal?.aborted

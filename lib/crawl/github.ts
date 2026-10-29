@@ -334,8 +334,10 @@ export async function githubGraphql<T>(query: string, options: { timeoutMs?: num
   return { ok: true, data, errors };
 }
 
-async function request<T>(path: string): Promise<GitHubResult<T>> {
-  const result = await githubRequest<T>(path);
+export type GitHubSearchBudget = { timeoutMs?: number; deadlineAt?: number; signal?: AbortSignal };
+
+async function request<T>(path: string, options?: GitHubSearchBudget): Promise<GitHubResult<T>> {
+  const result = await githubRequest<T>(path, {}, options);
   if (!result.ok) return result;
   if (result.status === 200) return { ok: true, value: result.value };
   return { ok: false, error: { kind: "http", status: 304 } };
@@ -382,7 +384,7 @@ export async function searchCommits(params: {
   query: string;
   page: number;
   sort: "relevance" | "recent";
-}): Promise<GitHubResult<CommitSearchResult>> {
+}, options?: GitHubSearchBudget): Promise<GitHubResult<CommitSearchResult>> {
   const search = new URLSearchParams({
     q: params.query,
     per_page: String(SEARCH_PER_PAGE),
@@ -393,7 +395,7 @@ export async function searchCommits(params: {
     search.set("sort", "committer-date");
     search.set("order", "desc");
   }
-  return request<CommitSearchResult>(`/search/commits?${search}`);
+  return request<CommitSearchResult>(`/search/commits?${search}`, options);
 }
 
 /**
@@ -406,7 +408,7 @@ export async function searchRepositories(params: {
   query: string;
   page: number;
   sort: "relevance" | "recent";
-}): Promise<GitHubResult<RepositorySearchResult>> {
+}, options?: GitHubSearchBudget): Promise<GitHubResult<RepositorySearchResult>> {
   const search = new URLSearchParams({
     q: params.query,
     per_page: String(SEARCH_PER_PAGE),
@@ -416,5 +418,5 @@ export async function searchRepositories(params: {
     search.set("sort", "updated");
     search.set("order", "desc");
   }
-  return request<RepositorySearchResult>(`/search/repositories?${search}`);
+  return request<RepositorySearchResult>(`/search/repositories?${search}`, options);
 }

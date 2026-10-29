@@ -13,6 +13,36 @@ spec.loader.exec_module(release)
 
 
 class ReleaseFlowTests(unittest.TestCase):
+    def test_model_owner_replacement_requires_explicit_drain_and_physical_completion(self):
+        client = unittest.mock.Mock()
+        client.app.return_value = {'appName': 'crawler-service'}
+        for observation in ({'replica': False, 'mode': 'open', 'active': 0},
+                            {'replica': False, 'mode': 'draining', 'active': 1},
+                            {'replica': True, 'mode': 'draining', 'active': 0},
+                            {'replica': False, 'mode': 'draining', 'active': False}, {}):
+            with self.subTest(observation=observation), patch.object(release.shared, 'ssh_python',
+                    return_value=json.dumps(observation)):
+                with self.assertRaisesRegex(ValueError, 'explicit_drain_and_zero_active_calls'):
+                    release.model_replacement_gate(client, ['text-mini', 'reviewer-m3'])
+        client.request.assert_not_called()
+
+    def test_model_replacement_reads_primary_without_changing_capacity(self):
+        client = unittest.mock.Mock()
+        client.app.return_value = {'appName': 'crawler-service'}
+        with patch.object(release.shared, 'ssh_python', return_value=json.dumps(
+                {'replica': False, 'mode': 'draining', 'active': 0})) as remote:
+            receipt = release.model_replacement_gate(client, ['ai2-consumer-m3', 'text-m3'])
+        self.assertEqual(receipt['owners'], ['ai2-consumer-m3', 'text-m3'])
+        self.assertEqual(receipt['active'], 0)
+        self.assertEqual(remote.call_args.kwargs['input_text'], release.MODEL_REPLACEMENT_SCRIPT)
+        client.request.assert_not_called()
+
+    def test_scheduler_monitor_or_noop_does_not_require_model_drain(self):
+        client = unittest.mock.Mock()
+        with patch.object(release.shared, 'ssh_python', side_effect=AssertionError('unexpected remote read')):
+            for selected in ([], ['scheduler-m3', 'monitor-m3', 'connect-agent-m3']):
+                self.assertEqual(release.model_replacement_gate(client, selected), {'required': False})
+
     def test_web_only_updates_two_webs_serially_and_never_monitor(self):
         self.assertEqual(release.execution_steps(['web-mini', 'web-m3']),
                          [('deploy', ('web-mini',)), ('deploy', ('web-m3',)), ('public', ())])

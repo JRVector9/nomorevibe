@@ -1,3 +1,4 @@
+import { knownClassificationProvider } from "@/lib/operations/classification-models";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import { DEEPSEEK_REVIEW_MODEL } from "@/lib/crawl/deepseek-review-policy";
 import { qwenDirectConfig, qwenDirectServerLabel, QWEN_DIRECT_DEFAULT_MODEL } from "@/lib/crawl/qwen-direct-review";
@@ -62,6 +63,7 @@ export const JOB_HOW: Readonly<Record<string, string>> = {
   "product-llm-assist-audit-review": "이전 판정과 다른 기반 모델로 현재 근거를 감사합니다. 같은 Qwen의 GPU·M1은 독립 표가 아니며, 감사는 일반 Qwen 처리와 별도 줄·잡에서 돌아 다음 회차를 막지 않습니다. 불일치는 사람 확인 기록으로 남깁니다.",
   "product-llm-assist-review": "재접속 근거로 GPU Qwen을 먼저 사용하고, M1은 별도 소비 줄에서 처리합니다. 원 작업이나 확인 소비자를 멈추면 새 호출을 열지 않습니다. 확인이 필수인 후보는 오류·중단 시 보류하며 기존 즉시 내림으로 돌아가지 않습니다.",
   heartbeat: "스케줄러가 살아 있다는 관측만 남깁니다. 후보·제품은 처리하지 않습니다.",
+  "crawl-ko-apply": "Oracle이 확인한 한국어 프로젝트 후보를 공통 적재 한도 안에서 수집 대기열에 넣습니다. 한국어 확인 실패는 재시도하고, AI 제작 근거는 원본 수집 단계에서 별도로 검사합니다.",
   "crawl-seed": "GitHub 검색으로 새 저장소를 찾아 수집 대기열(프론티어)에 넣습니다. 검색 한도(분당 30회) 안에서 한 회차 몇 쪽씩 읽습니다.",
   "hn-show-seed": "Show HN 새 글에서 배포를 알린 프로젝트를 수집 대기열에 넣습니다(한 번에 100건 상한).",
   "hn-talk": "최근 72시간·10점 이상 HN 글 중 GitHub 를 가리킨 것을 점수와 함께 기록합니다. 수집 대기열에는 넣지 않습니다.",
@@ -82,7 +84,7 @@ export const JOB_HOW: Readonly<Record<string, string>> = {
   "product-search-verify": "모델이 적은 검색 키워드를 다른 모델이 검수합니다.",
   "product-embedding": "제품 글을 의미 검색 벡터로 바꿉니다. 키워드가 바뀌면 다시 임베딩합니다. 게이트웨이를 쓰지 않습니다.",
   "product-repo-review": "저장소가 사라진 공개 제품의 github.com 을 다시 열어 정말 없으면 내립니다(5분마다 8건, 하루 100건까지). 옮겨 간 흔적이 있으면 사람 확인으로 남깁니다.",
-  "product-tagline-ko": "전용 실행 줄에서 공개 제품 소개를 한국어 한 줄로 옮깁니다(최대 8건·3,600자). GPT-OSS와 GPU Qwen이 서로 다른 항목을 맡고, 새 제품·홈에 보이는 제품이 먼저입니다.",
+  "product-tagline-ko": "전용 실행 줄에서 공개 제품 소개를 한국어 한 줄로 옮깁니다(최대 8건·3,600자). 게이트웨이 모델과 직접 연결 모델이 서로 다른 항목을 맡고, 새 제품·홈에 보이는 제품이 먼저입니다.",
   "product-translate": "보이는 공개 제품의 정보를 정해진 양만큼 번역합니다.",
   "product-intro-check": "AI 소개와 쓸모없어 보이는 메이커 소개를 근거와 대조합니다. 근거로 알 수 없으면 사람 확인으로 남깁니다.",
   "grok-session-check": "Grok 로그인 토큰이 만료되지 않게 가장 짧은 호출을 한 번 합니다(심사에 Grok 을 쓸 때만).",
@@ -127,6 +129,7 @@ const JOB_CONSUMERS: Readonly<Record<string, ConsumerName>> = {
   "crawl-agent-review": "ai1", "second-review": "ai2", "uptime-ping": "uptime", "agent-evidence-refresh": "agent-scan",
 };
 const CONSUMER_LABELS: Readonly<Record<ConsumerName, string>> = {
+  "github-ko-discovery": "한국어 GitHub 탐색 consumer",
   ai1: "1차 심사 consumer", ai2: "2차 심사 consumer", uptime: "연결 확인 consumer", "agent-scan": "제작 근거 consumer",
 };
 
@@ -329,7 +332,7 @@ function serviceOwners(service: WorkService, ctx: OwnerContext): { models: Model
     const instance = hosts[0]?.row.instanceId ?? "connect-agent";
     for (const [slot, choice] of [["분류 · 우선", config.primary], ["분류 · 예비", config.fallback]] as const) {
       if (!choice) continue;
-      models.push({ name: choice.model, full: `${choice.model} · ${choice.effort}`, row: { slot, job: info.label, provider: choice.model === "sonnet" ? "Claude 계정" : "Codex 계정",
+      models.push({ name: choice.model, full: `${choice.model} · ${choice.effort}`, row: { slot, job: info.label, provider: knownClassificationProvider(choice.model, ctx.agent?.modelOptions) === "claude-cli" ? "Claude 계정" : knownClassificationProvider(choice.model, ctx.agent?.modelOptions) === "codex-cli" ? "Codex 계정" : "제공자 확인 필요",
         runsOn: `AI 연결 서비스(${instance})`, source: `AI 연결 적용 설정 v${ctx.agent?.configVersion ?? "?"}`, stats: null } });
     }
   }

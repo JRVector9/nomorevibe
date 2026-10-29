@@ -269,6 +269,17 @@ def dotenv_settings(value):
     return result
 
 
+def dokploy_api_key():
+    """Read an injected credential in memory; preserve the existing Mac lookup when absent."""
+    injected = os.environ.get('DOKPLOY_API_KEY')
+    if injected is not None:
+        if not injected or len(injected) > 4096 or any(ord(char) < 33 or ord(char) > 126 for char in injected):
+            raise ValueError('invalid_dokploy_api_key_environment')
+        return injected
+    return run(['security', 'find-generic-password', '-a', 'deploy.brut.bot',
+                '-s', 'dokploy-api-key', '-w'])
+
+
 class Dokploy:
     def __init__(self, key):
         self.key = key
@@ -479,9 +490,12 @@ print(json.dumps(result))
 
 
 def ssh_python(host, source, *args, input_text=None, timeout=40):
+    user = os.environ.get('NMV_DEPLOY_SSH_USER', 'root')
+    if not re.fullmatch(r'[a-z_][a-z0-9_-]{0,31}', user):
+        raise ValueError('invalid_deploy_ssh_user')
     command = 'python3 -c ' + shlex.quote(source) + ''.join(' ' + shlex.quote(arg) for arg in args)
     return run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10',
-                'root@' + host, command], input_text=input_text, timeout=timeout)
+                user + '@' + host, command], input_text=input_text, timeout=timeout)
 
 
 WEB_MAX_REPLICAS = 8
@@ -591,6 +605,11 @@ REMOTE_PULL = r'''import json,os,subprocess,sys,tempfile
 images=json.loads(sys.argv[1]);sha=sys.argv[2];key_hash=sys.argv[3];token=sys.stdin.read()
 with tempfile.TemporaryDirectory(prefix='nmv-release-pull-') as directory:
  env={**os.environ,'DOCKER_CONFIG':directory}
+ # Seed a file-backed registry entry so Docker does not auto-select the macOS
+ # Keychain helper over SSH. Credentials remain in this private temporary dir.
+ config=os.path.join(directory,'config.json')
+ with open(config,'x',opener=lambda path,flags:os.open(path,flags,0o600)) as stream:
+  json.dump({'auths':{'ghcr.io':{}}},stream)
  login=subprocess.run(['docker','login','ghcr.io','-u','JRVector9','--password-stdin'],
                       input=token,capture_output=True,text=True,env=env)
  if login.returncode: raise SystemExit('docker_login_failed')
@@ -1384,8 +1403,7 @@ def main(argv=None):
     target = validate_target(args.sha, args.worker_image, args.web_image) if args.action == 'prepull' else None
     # --resume reads the stopped run's private snapshot before Keychain; a missing or shared file is refused here.
     snapshot = read_snapshot(args.snapshot) if args.resume else None
-    key = run(['security', 'find-generic-password', '-a', 'deploy.brut.bot',
-               '-s', 'dokploy-api-key', '-w'])
+    key = dokploy_api_key()
     client = Dokploy(key)
     if args.action == 'inventory':
         result = inventory(client, args.sha)

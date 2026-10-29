@@ -12,6 +12,8 @@ describe("저장 바의 바뀐 항목", () => {
       .toEqual(["정렬 최신 활동순 → 관련도", "틱당 페이지 10 → 12"]);
     expect(describeChanges({ ...before, maxNewPerHour: "3000" }, { ...before, maxNewPerHour: "2500" }))
       .toEqual(["시간당 새 저장소 3000 → 2500"]);
+    expect(describeChanges({ ...before, maxReviewBacklog: "1000000" }, { ...before, maxReviewBacklog: "2000000" }))
+      .toEqual(["검수 대기열 상한 1000000 → 2000000"]);
     // 꺼진 체크박스는 폼에서 값이 빠진다
     const off = Object.fromEntries(Object.entries(before).filter(([key]) => key !== "excludeForks"));
     expect(describeChanges(before, off)).toEqual(["포크 제외 켬 → 끔"]);

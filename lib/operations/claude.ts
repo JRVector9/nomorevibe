@@ -1,3 +1,4 @@
+import { modelLimits } from "@/lib/llm/model-registry";
 import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -16,7 +17,7 @@ export function isolatedClaudeEnv(home: string): NodeJS.ProcessEnv {
   // Do not inherit API proxies, ambient API keys, login tokens or customization paths.
   return { NODE_ENV: process.env.NODE_ENV, PATH: process.env.PATH, SHELL: '/bin/sh', LANG: process.env.LANG ?? 'C.UTF-8', HOME: home,
     CLAUDE_CONFIG_DIR: join(home, 'claude'), XDG_CONFIG_HOME: join(home, '.config'),
-    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', CLAUDE_CODE_MAX_OUTPUT_TOKENS: '4000' };
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1', CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(modelLimits("classify-claude").maxTokens) };
 }
 /** Exact invocation shared by the legacy adapter and the native process runner. */
 export function claudeClassificationArgs(model: string, output: 'category' | 'text' = 'category'): string[] {

@@ -1,3 +1,4 @@
+import { modelForPurpose, resolveRegistryModel } from "@/lib/llm/model-registry";
 import { createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
@@ -475,7 +476,7 @@ export async function getSettingsMeta(): Promise<{ updatedBy: string | null; upd
 }
 
 /** General/stale settings forms cannot grant model decision authority. */
-export async function setHumanReviewEnabled(input: { enabled: boolean; expectedGeneration: number; actor: string }): Promise<SaveResult> {
+export async function setHumanReviewEnabled(input: { enabled: boolean; expectedGeneration: number; actor: string; expectedModelPoolKeys?: readonly string[] }): Promise<SaveResult> {
   if (typeof input.enabled !== 'boolean' || !Number.isSafeInteger(input.expectedGeneration) || input.expectedGeneration < 0) {
     return { ok: false, issues: ['스위치 값을 읽을 수 없습니다.'] };
   }
@@ -487,6 +488,14 @@ export async function setHumanReviewEnabled(input: { enabled: boolean; expectedG
     if (settingsUnreadable(current) || current.humanReview.generation !== input.expectedGeneration) {
       return { ok: false, issues: ['그 사이 설정이 바뀌었거나 읽지 못했습니다. 새로고침해주세요.'] };
     }
+    const keys = current.stageModelPools?.['human-review'] ?? [];
+    if (input.enabled && JSON.stringify(input.expectedModelPoolKeys ?? []) !== JSON.stringify(keys)) {
+      await tx.insert(operationsAudit).values(await adminAuditRow(input.actor, { action: 'human-review-deepseek', target: 'crawl_settings',
+        detail: { expectedModelPoolKeys: input.expectedModelPoolKeys ?? [], modelPool: keys }, ok: false, error: 'stale_model_pool' }));
+      return { ok: false, issues: ['그 사이 사람 위임 모델 풀이 바뀌었습니다. 새로고침해 연결을 다시 확인해주세요.'] };
+    }
+    const models = keys.map(key => resolveRegistryModel(key));
+    if (input.enabled && models.some(model => !model)) return { ok: false, issues: ['등록부에서 사람 위임 모델을 확인하지 못했습니다.'] };
     if (current.humanReview.enabled === input.enabled) return { ok: true, settings: current };
     if (current.humanReview.generation >= Number.MAX_SAFE_INTEGER) return { ok: false, issues: ['설정 세대를 더 올릴 수 없습니다.'] };
     const settings = crawlSettingsSchema.parse({ ...current, humanReview: {
@@ -495,7 +504,11 @@ export async function setHumanReviewEnabled(input: { enabled: boolean; expectedG
     await tx.update(crawlSettings).set({ values: settings, updatedBy: input.actor, updatedAt: new Date() }).where(eq(crawlSettings.id, ROW_ID));
     await tx.insert(operationsAudit).values(await adminAuditRow(input.actor, {
       action: 'human-review-deepseek', target: 'crawl_settings',
-      detail: { before: current.humanReview, after: settings.humanReview, model: 'deepseek-v4.1-flash-1017', host: 'm3ultra' },
+      detail: { before: current.humanReview, after: settings.humanReview,
+        model: keys.length ? keys.join(',') : modelForPurpose("human-review").model,
+        host: keys.length ? models.map(model => model?.equipment ?? 'unknown').join(',') : 'm3ultra',
+        ...(keys.length ? { modelPool: keys, models: models.map((model, index) => model
+          ? { key: model.key, equipment: model.equipment, provider: model.provider, model: model.model } : { key: keys[index], unavailable: true }) } : {}) },
     }));
     if (input.enabled) await requestJob('human-deepseek-review', tx);
     return { ok: true, settings };
@@ -544,6 +557,7 @@ const TRACKED: { label: string; read: (s: CrawlSettings) => unknown }[] = [
   { label: "기간 창(일)", read: (s) => s.discover.windowDays },
   { label: "틱당 페이지", read: (s) => s.discover.pagesPerTick },
   { label: "시간당 새 저장소 상한", read: (s) => s.discover.maxNewPerHour },
+  { label: "검수 대기열 상한", read: (s) => s.discover.maxReviewBacklog },
   { label: "Show HN 수집", read: (s) => s.discover.showHn.enabled },
   { label: "자동 승인 최소 스타", read: (s) => s.judge.autoApproveMinStars },
   { label: "스타 하한", read: (s) => s.judge.minStars },

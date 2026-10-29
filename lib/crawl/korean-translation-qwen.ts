@@ -1,3 +1,5 @@
+import { scopedRequestTimeout } from "@/lib/llm/model-registry";
+import { scopedModel, scopedModelBaseUrl } from "@/lib/llm/model-registry";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { readModelCapacityCallerControl } from "@/lib/llm/capacity-repository";
 import { parseKoreanTaglines, type KoreanTaglineBatch } from "@/lib/domain/products/korean-tagline";
@@ -17,14 +19,14 @@ export async function translateKoreanTaglinesWithQwen(items: readonly ProductTag
   const control = await readModelCapacityCallerControl();
   if (control.mode !== "disabled") throw new ModelCapacityDeferredError(control.mode === "draining" ? "draining" : "provider_contract_unavailable");
   if (options.signal?.aborted) return { ok: false, error: "cancelled" };
-  const wire = JSON.parse(productTaglineKoLegacyWire(items, KOREAN_TRANSLATION_QWEN_MODEL));
+  const wire = JSON.parse(productTaglineKoLegacyWire(items, scopedModel("korean-translation-direct", KOREAN_TRANSLATION_QWEN_MODEL)));
   delete wire.reasoning_effort;
   wire.chat_template_kwargs = { enable_thinking: false };
   const key = process.env.AUDIT_SECOND_OPINION_API_KEY?.trim();
-  const deadline = AbortSignal.timeout(options.timeoutMs);
+  const deadline = AbortSignal.timeout(scopedRequestTimeout("korean-translation-direct", options.timeoutMs));
   const signal = options.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
   try {
-    const response = await (options.request ?? fetch)(`${KOREAN_TRANSLATION_QWEN_BASE_URL}/chat/completions`, {
+    const response = await (options.request ?? fetch)(`${scopedModelBaseUrl("korean-translation-direct", KOREAN_TRANSLATION_QWEN_BASE_URL, "local-direct")}/chat/completions`, {
       method: "POST", redirect: "error", headers: { "Content-Type": "application/json", ...(key ? { Authorization: `Bearer ${key}` } : {}) },
       body: JSON.stringify(wire), signal,
     });
@@ -44,7 +46,7 @@ export async function translateKoreanTaglinesWithQwen(items: readonly ProductTag
     } finally { reader.releaseLock(); }
     let data: { model?: unknown; choices?: { finish_reason?: unknown; message?: { content?: unknown } }[] };
     try { data = JSON.parse(body); } catch { return { ok: false, error: "invalid_output" }; }
-    if (data.model !== KOREAN_TRANSLATION_QWEN_MODEL) return { ok: false, error: "model_mismatch" };
+    if (data.model !== scopedModel("korean-translation-direct", KOREAN_TRANSLATION_QWEN_MODEL)) return { ok: false, error: "model_mismatch" };
     const choice = data.choices?.[0];
     if (choice?.finish_reason !== "stop" || typeof choice.message?.content !== "string") return { ok: false, error: "invalid_output" };
     return parseKoreanTaglines(choice.message.content, items.length);

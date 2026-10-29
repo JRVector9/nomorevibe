@@ -47,7 +47,7 @@ export const modelCapacityRequestIdentitySchema = z.object(modelCapacityRequestS
   .refine(value => value.class === "background" || value.pool === "reviewer", "invalid_class_pool");
 export type ModelCapacityRequestIdentity = Readonly<z.infer<typeof modelCapacityRequestIdentitySchema>>;
 
-export const modelCapacityPolicySchema = z.object({
+const modelCapacityBasePolicySchema = z.object({
   version: z.literal(1), globalLimit: limit, providerLimits: limits, groupLimits: limits,
   poolLimits: z.object({ reviewer: limit, text: limit }).strict(),
   weights: z.object({ first: positive.max(32), second: positive.max(32), background: positive.max(32) }).strict(),
@@ -66,6 +66,32 @@ export const modelCapacityPolicySchema = z.object({
     if (!Object.hasOwn(value.groupLimits, route.groupId)) context.addIssue({
       code: "custom", message: "unknown_capacity_group", path: ["routes", index, "groupId"],
     });
+  }
+});
+/** A predecessor is authenticated by each held row's complete policy hash.
+ * Only independent new groups/providers may be appended; every old scheduling
+ * decision remains identical and old holds still count in all admission sums. */
+export const modelCapacityPolicySchema = modelCapacityBasePolicySchema.safeExtend({
+  compatiblePredecessor: z.object({ epoch: positive, revision: positive,
+    policy: modelCapacityBasePolicySchema }).strict().optional(),
+}).superRefine((value, context) => {
+  const previous = value.compatiblePredecessor?.policy;
+  if (!previous) return;
+  const same = (a: unknown, b: unknown) => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
+  const { routes, providerLimits, groupLimits } = value;
+  const currentRest = Object.fromEntries(Object.entries(value)
+    .filter(([key]) => !["routes", "providerLimits", "groupLimits", "compatiblePredecessor"].includes(key)));
+  const { routes: oldRoutes, providerLimits: oldProviders, groupLimits: oldGroups, ...oldRest } = previous;
+  const key = (route: typeof routes[number]) => JSON.stringify([route.routeId, route.provider, route.model]);
+  const oldByKey = new Map(oldRoutes.map(route => [key(route), route]));
+  const currentByKey = new Map(routes.map(route => [key(route), route]));
+  const added = routes.filter(route => !oldByKey.has(key(route)));
+  if (!same(currentRest, oldRest) || !added.length
+    || Object.entries(oldProviders).some(([id, bound]) => providerLimits[id] !== bound)
+    || Object.entries(oldGroups).some(([id, bound]) => groupLimits[id] !== bound)
+    || oldRoutes.some(route => !same(currentByKey.get(key(route)), route))
+    || added.some(route => Object.hasOwn(oldProviders, route.providerBudgetId) || Object.hasOwn(oldGroups, route.groupId))) {
+    context.addIssue({ code: "custom", message: "incompatible_capacity_predecessor", path: ["compatiblePredecessor"] });
   }
 });
 type ParsedPolicy = z.infer<typeof modelCapacityPolicySchema>;
@@ -233,6 +259,16 @@ export function modelCapacityPolicyHash(policy: ModelCapacityPolicy): string {
     return 0;
   });
   return createHash("sha256").update(JSON.stringify(canonical({ ...parsed, routes }))).digest("hex");
+}
+
+/** Caller holds control UPDATE while checking immutable old row generation.
+ * Parsing verifies additivity before this can authenticate a predecessor. */
+export function compatibleModelCapacityGeneration(policy: ModelCapacityPolicy,
+  generation: { epoch: number; revision: number; policyHash: string | null }, current: { epoch: number; revision: number }): boolean {
+  const previous = parseModelCapacityPolicy(policy).compatiblePredecessor;
+  return !!previous && previous.epoch === current.epoch && previous.revision < current.revision
+    && generation.epoch === previous.epoch && generation.revision === previous.revision
+    && generation.policyHash === modelCapacityPolicyHash(previous.policy);
 }
 
 export function modelCapacityClassCycle(policy: ModelCapacityPolicy): ModelCapacityClass[] {

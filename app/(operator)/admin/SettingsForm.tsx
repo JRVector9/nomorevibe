@@ -200,7 +200,9 @@ function SettingsFormBody({ settings, version, yields, secondControls, onRevert,
           <NumberField id="pagesPerTick" label="틱당 페이지" defaultValue={discover.pagesPerTick} min={1} max={10} onValue={setPages}
             hint={<span className="font-semibold text-up">{SEED_INTERVAL_MINUTES}분마다 {pages}회 → 시간당 {usage.perHour}회 · 검색 신원 하나의 {usage.percent}</span>} />
           <NumberField id="maxNewPerHour" label="시간당 새 저장소" defaultValue={discover.maxNewPerHour} min={60} max={3600}
-            hint="5분 창으로 나눈다. 3000이면 창마다 250건까지 새로 넣는다. 심사 대기가 500건·5분 또는 1,000건이면 더 줄인다." />
+            hint="5분 창으로 나눕니다. 3000이면 창마다 250건까지 새로 넣습니다." />
+          <NumberField id="maxReviewBacklog" label="검수 대기열 상한" defaultValue={discover.maxReviewBacklog} min={1} max={10000000}
+            hint="기본 100만 건. 탐색·원본 수집·사람 검토를 포함한 미완료 저장소를 중복 없이 셉니다. 상한까지 설정한 탐색량을 유지하고, 도달하면 신규 탐색만 멈춥니다. 기존 수집·검수는 계속됩니다." />
         </div>
       </SettingsCard>
 
@@ -240,14 +242,14 @@ function SettingsFormBody({ settings, version, yields, secondControls, onRevert,
           <div className="flex min-w-0 flex-[1_1_260px] flex-col gap-1.5">
             <label htmlFor="firstReviewModel" className={labelClass}>모델</label>
             <input id="firstReviewModel" name="firstReviewModel" defaultValue={settings.firstReview?.model ?? ""}
-              placeholder="[MLX] gpt-oss-120b — 비우면 서버 기본값(CRAWL_REVIEW_MODEL)" className={`${inputClass} font-mono`} />
+              placeholder="장비가 표시된 모델 이름 · 비우면 서버 기본값(CRAWL_REVIEW_MODEL)" className={`${inputClass} font-mono`} />
           </div>
         </div>
         <div className="flex flex-col gap-1.5">
           <span className={labelClass}>추가 1차 모델 · 후보를 나눠 처리</span>
           <input type="hidden" name="firstAdditionalPresent" value="1" />
           <ModelRows prefix="firstAdditional" initial={settings.firstReviewAdditional ?? []} max={2} allowDirect={false}
-            placeholder="[supa] Qwen3.8-27B-NVFP4" addLabel="+ 추가 1차 모델" />
+            placeholder="장비가 표시된 모델 이름" addLabel="+ 추가 1차 모델" />
           <Link href="/admin/models" prefetch={false} className="text-[13px] font-semibold text-accent-ink hover:underline">단계별 모델 선택 · Supa 1차 / GPU3090 2차 구성 →</Link>
         </div>
         <div className="flex flex-col gap-1.5">
@@ -275,13 +277,13 @@ function SettingsFormBody({ settings, version, yields, secondControls, onRevert,
         <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
           <div className="flex min-w-0 flex-col gap-1.5">
             <span className={labelClass}>다시 볼 모델 <span className="font-normal text-fg-3">최대 3</span></span>
-            <ModelRows prefix="voter" initial={secondReview.voters} max={3} placeholder="[supa] Qwen3.8-27B-NVFP4"
+            <ModelRows prefix="voter" initial={secondReview.voters} max={3} placeholder="장비가 표시된 모델 이름"
               addLabel="+ 모델 세우기 (성향이 다른 모델일수록 좋습니다)" />
             <p className={hintClass}>게이트웨이는 모델 목록이 바뀝니다. 없는 모델을 적으면 그 표만 실패로 남고 운영센터에 뜹니다.</p>
           </div>
           <div className="flex min-w-0 flex-col gap-1.5">
             <span className={labelClass}>실패 시 대체 <span className="font-normal text-fg-3">순서대로 최대 2</span></span>
-            <ModelRows prefix="fallback" initial={secondReview.fallbacks ?? []} max={2} placeholder="qwen3-coder:30b" addLabel="+ 대체 모델 더하기" />
+            <ModelRows prefix="fallback" initial={secondReview.fallbacks ?? []} max={2} placeholder="장비가 표시된 모델 이름" addLabel="+ 대체 모델 더하기" />
             <p className={hintClass}>시간 초과·응답 오류에만 씁니다. 세 번 실패하면 사람 확인으로 넘깁니다. 1차와 같은 모델의 대체 결과는 참고 의견입니다.</p>
           </div>
         </div>

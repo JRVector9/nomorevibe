@@ -1,4 +1,5 @@
 import type { JobContext, JobOutcome } from "./runner";
+import { applyKoreanDiscovery } from "@/lib/crawl/korean-discovery/apply";
 import { seedFrontier } from "@/lib/crawl/jobs/seed";
 import { seedFromShowHN } from "@/lib/crawl/jobs/hn-show";
 import { collectHnTalk } from "@/lib/social/hn-talk";
@@ -45,6 +46,7 @@ import { queueEmailDigests, sendEmailOutbox } from "@/lib/jobs/me/email";
 import { recheckMakers } from "@/lib/jobs/me/maker-recheck";
 import { pruneNotifications, sendCategoryDigest, sendDelistedNotifications } from "@/lib/jobs/me/notifications";
 import { reclaimEvidencedModelCapacity } from "@/lib/jobs/model-capacity-reclaim";
+import { MODEL_POOL_JOBS, withStoredAdminStagePools } from "@/lib/llm/admin-model-pools";
 
 /**
  * 이름 → 작업 매핑.
@@ -54,7 +56,7 @@ import { reclaimEvidencedModelCapacity } from "@/lib/jobs/model-capacity-reclaim
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- 작업마다 커서 타입이 다르다
 export type AnyJob = (ctx: JobContext<any>) => Promise<JobOutcome<any>>;
 
-export const JOBS: Record<string, AnyJob> = {
+const HANDLERS: Record<string, AnyJob> = {
   /**
    * 러너와 스케줄러 연결이 살아 있는지 확인하는 작업.
    * 실행될 때마다 카운터를 올리므로, 커서가 늘고 있으면 스케줄이 도는 것이다.
@@ -68,6 +70,7 @@ export const JOBS: Record<string, AnyJob> = {
 
   /** GitHub 검색으로 프론티어를 채운다 — 파이프라인의 입구 */
   "crawl-seed": seedFrontier,
+  "crawl-ko-apply": applyKoreanDiscovery,
 
   /** Show HN에서 배포를 알린 프로젝트를 프론티어에 넣는다 — 반대 방향의 입구 */
   "hn-show-seed": seedFromShowHN,
@@ -157,5 +160,10 @@ export const JOBS: Record<string, AnyJob> = {
   /** 회사 공식 피드에서 AI 소식을 모은다 — 제품 파이프라인과 따로 돈다 */
   "news-refresh": (ctx) => refreshNews(ctx),
 };
+
+/** Configure the real model handlers at their registration boundary; generic runners/replay fixtures keep their own contracts. */
+export const JOBS: Record<string, AnyJob> = Object.fromEntries(Object.entries(HANDLERS).map(([name, handler]) => [name,
+  MODEL_POOL_JOBS.has(name) ? (ctx: Parameters<AnyJob>[0]) => ctx.lease
+    ? withStoredAdminStagePools(`${name}:${ctx.lease.token}`, () => handler(ctx)) : handler(ctx) : handler]));
 
 export { JOB_NAMES } from "./catalog";

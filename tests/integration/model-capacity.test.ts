@@ -374,3 +374,26 @@ it("retains dispatched unknown occupancy through expiry and policy renaming", ex
   expect((await admin`SELECT kind FROM model_capacity_events WHERE request_id=${value.requestId} ORDER BY id`).map(row => row.kind))
     .toEqual(["queued", "reserved", "dispatch_started", "dispatch_indeterminate"]);
 }));
+
+
+it("admits an independent additive server while retaining and counting the old unknown", exercise(async () => {
+  await installPolicy();
+  const original = request(), reservation = await issued(original), begun = await beginModelDispatch(reservation);
+  if (begun.kind !== "dispatched") throw new Error("fixture_dispatch_not_issued");
+  expect(await markModelDispatchIndeterminate(begun.dispatch, "transport_unknown")).toBe(true);
+  const [old] = await admin`SELECT epoch,revision FROM model_capacity_control WHERE id=1`;
+  const added: ModelCapacityPolicy = { ...policy,
+    providerLimits: { ...policy.providerLimits, independent: 1 }, groupLimits: { ...policy.groupLimits, independent: 1 },
+    routes: [...policy.routes, { routeId: "new-server", provider: "fixture-provider", model: "new-model",
+      providerBudgetId: "independent", groupId: "independent" }],
+    compatiblePredecessor: { epoch: Number(old.epoch), revision: Number(old.revision), policy: { ...policy, routes: [...policy.routes] } } };
+  await installPolicy(added); await admin`UPDATE model_capacity_control SET revision=revision+1 WHERE id=1`;
+  const fresh = request({ routeId: "new-server", model: "new-model" });
+  await issued(fresh);
+  const overflow = request({ routeId: "new-server", model: "new-model" });
+  expect(await requestModelSlot(overflow)).toEqual({ kind: "deferred", reason: "capacity" });
+  expect(await admin`SELECT state,policy_hash,settled_at FROM model_capacity_requests WHERE request_id=${original.requestId}`)
+    .toEqual([{ state: "indeterminate", policy_hash: modelCapacityPolicyHash(policy), settled_at: null }]);
+  expect(await activeRows()).toHaveLength(2);
+  expect(await admin`SELECT id FROM model_capacity_events WHERE request_id=${original.requestId} AND kind='dispatch_released'`).toEqual([]);
+}));

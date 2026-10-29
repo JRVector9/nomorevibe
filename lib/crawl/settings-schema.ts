@@ -1,3 +1,5 @@
+import { modelForPurpose } from "@/lib/llm/model-registry";
+import { adminStagePoolsSchema } from "@/lib/llm/admin-model-stages";
 import { z } from "zod";
 import { CATEGORIES, type Category } from "@/lib/domain/products/categories";
 import { AUDIT_REASON_KEYS, type AuditReasonCategory } from "./audit-reason-category";
@@ -66,6 +68,8 @@ const discoverSchema = z.object({
    * 저장값에 없으면 기본 3000이 읽기에 채워진다. 심사·발행 속도를 올리지 않는다.
    */
   maxNewPerHour: z.number().int().min(60).max(3600).default(3000),
+  /** Outstanding unique repositories across discovery, ingestion and review; independent of model concurrency. */
+  maxReviewBacklog: z.number().int().min(1).max(10_000_000).default(1_000_000),
   /**
    * Show HN 수집.
    *
@@ -344,7 +348,7 @@ export const splitTiebreakSchema = z.object({
   dailyRejectCap: z.number().int().min(0).max(500).default(SPLIT_TIEBREAK_DEFAULT_DAILY_REJECT_CAP),
 }).strict();
 
-const defaultSecondReview = { enabled: true, voters: [{ provider: "claude-cli" as const, model: "opus" }], includeAiHeld: false, sampleRate: 0.05, agreeAt: 0.85 };
+const defaultSecondReview = { enabled: true, voters: [{ provider: "claude-cli" as const, model: modelForPurpose("ai2-cli").model }], includeAiHeld: false, sampleRate: 0.05, agreeAt: 0.85 };
 
 export const reviewVoterSchema = z.object({
   provider: z.enum(["claude-cli", "abcllm", "grok-cli"]),
@@ -475,6 +479,7 @@ export const DEFAULT_QWEN_AUTO: QwenAutoSettings = {
 };
 
 export const crawlSettingsSchema = z.object({
+  stageModelPools: adminStagePoolsSchema.optional(),
   /** 수집 자체를 멈추는 스위치. 무언가 잘못 돌 때 배포 없이 끊을 수 있어야 한다 */
   enabled: z.boolean(),
   reviewMode: z.enum(["off", "observe", "enforce"]).default("off"),
@@ -648,6 +653,7 @@ export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
     sort: "recent",
     pagesPerTick: 10,
     maxNewPerHour: 3000,
+    maxReviewBacklog: 1_000_000,
     showHn: { enabled: true, priority: 120 },
   },
   judge: {

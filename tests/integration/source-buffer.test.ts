@@ -145,7 +145,7 @@ function prepareCase() { return preparing = (async () => {
   const settings = { ...structuredClone(DEFAULT_CRAWL_SETTINGS), enabled: true, reviewMode: "off",
     agentEvidence: { ...DEFAULT_CRAWL_SETTINGS.agentEvidence, enabled: false, enforceEligibility: false },
     secondReview: { ...DEFAULT_CRAWL_SETTINGS.secondReview, enabled: false },
-    discover: { ...DEFAULT_CRAWL_SETTINGS.discover, sourceBuffer: { enabled: true } } };
+    discover: { ...DEFAULT_CRAWL_SETTINGS.discover, maxReviewBacklog: 500, sourceBuffer: { enabled: true } } };
   const inserted = await client.begin(async tx => {
     const insertedNames: string[] = [];
     await tx`INSERT INTO crawl_settings(id,values) VALUES(1,${JSON.stringify(settings)}::text::jsonb)

@@ -1,3 +1,4 @@
+import { classificationModelProvider } from "./classification-models";
 import { z } from "zod";
 import { ai1GatewayServingContractSchema, resolveAi1GatewayServingContract } from "@/lib/crawl/agent-review-serving-contract";
 import { ai2GatewayServingContractSchema, resolveAi2GatewayServingContract } from "@/lib/crawl/second-review-serving-contract";
@@ -204,9 +205,9 @@ const MODEL_ROUTES: readonly RouteSpec[] = [
 ];
 
 /** 호출 지점 상수가 이 프로세스 env에서 받는 model 값(각 상수와 같은 `값 || 기본값`). crawlReview는 1차 심사 설정이 없을 때의 CRAWL_REVIEW_MODEL이다. */
-export type ModelEnv = { crawlReview: string | null; translate: string; productTranslate: string; tagline: string; profile: string; verify: string; introCheck: string };
+export type ModelEnv = { crawlReview: string | null; translate: string; productTranslate: string; koreanTagline?: string; searchQuery?: string; tagline: string; profile: string; verify: string; introCheck: string };
 const TEXT_ROUTES = [["product-search-profile", "profile"], ["product-search-verify", "verify"], ["reason-translate", "translate"],
-  ["product-translate", "productTranslate"], ["product-tagline-ko", "translate"], ["search-query-translate", "translate"], ["crawl-tagline", "tagline"]] as const;
+  ["product-translate", "productTranslate"], ["product-tagline-ko", "koreanTagline"], ["search-query-translate", "searchQuery"], ["crawl-tagline", "tagline"]] as const;
 
 /**
  * 지금 각 호출 지점이 resolver에 넘기는 (route, provider, model). 고르는 식은 firstReviewer·2차 voters+fallbacks·checkGrokSession·
@@ -228,7 +229,7 @@ export function usedModelRoutes(snapshot: ControlSnapshot, models: ModelEnv | nu
     const grok = [...second, ...first].find(voter => voter.provider === "grok-cli");
     if (grok) add("grok-session-check", "grok-cli", grok.model);
   }
-  for (const [routeId, key] of TEXT_ROUTES) add(routeId, "abcllm", models?.[key]);
+  for (const [routeId, key] of TEXT_ROUTES) add(routeId, "abcllm", models?.[key] ?? (key === "koreanTagline" || key === "searchQuery" ? models?.translate : null));
   add("product-intro-check", "claude-cli", models?.introCheck);
   const audit = snapshot.auditCampaign;
   // Qwen 직접 심사(gpu3090, 0112)는 공통 슬롯을 거치지 않는다 — 게이트웨이도 CLI 도 아니라 open 이 되어도 미뤄지지 않는다
@@ -250,7 +251,7 @@ function classifierModelRoutes(snapshot: ControlSnapshot): RouteUse[] {
     && observation.value.classificationCapacityVersion === 1 && contracts.success;
   return [config.data.primary, config.data.fallback].flatMap(model => {
     if (!model) return [];
-    const provider = model.model === 'sonnet' ? 'claude-cli' : 'codex-cli', routeId = 'crawl-publish-classify';
+    const provider = classificationModelProvider(model.model), routeId = 'crawl-publish-classify';
     return [{ routeId, provider, model: model.model, remoteContractReady: Boolean(ready && contracts.data?.filter(contract =>
       contract.routeId === routeId && contract.provider === provider && contract.model === model.model).length === 1) }];
   });

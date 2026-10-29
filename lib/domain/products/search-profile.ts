@@ -1,3 +1,6 @@
+import { scopedModelBaseUrl, scopedRequestTimeout } from "@/lib/llm/model-registry";
+import { scopedModel } from "@/lib/llm/model-registry";
+import { configuredModel, modelBaseUrl, modelLimits } from "@/lib/llm/model-registry";
 import { createHash } from "node:crypto";
 import { assertTextModelAdmission } from "@/lib/llm/text-capacity-admission";
 
@@ -15,8 +18,8 @@ import { assertTextModelAdmission } from "@/lib/llm/text-capacity-admission";
  *  - 글이 얇으면(본문·README 가 거의 없으면) 이름·소개에 있는 말과 그 동의어로만 좁힌다 — 표본에서
  *    얇은 글일수록 없는 기능을 지어냈다.
  */
-export const PROFILE_MODEL = process.env.ABCLLM_PROFILE_MODEL?.trim() || "[MLX] gpt-oss-120b";
-const BASE_URL = process.env.ABCLLM_BASE_URL?.trim() || "https://abcllm-api.brut.bot";
+export const PROFILE_MODEL = configuredModel("product-search-profile");
+const BASE_URL = modelBaseUrl("product-search-profile", process.env, "abcllm");
 
 /** 언어마다 이만큼까지 — 표본에서 8개를 넘는 것은 거의 같은 말의 되풀이였다 */
 export const KEYWORD_LIMIT = 8;
@@ -148,7 +151,7 @@ export function profileGatewayWire(evidence: ProfileEvidence, model: string): st
   return JSON.stringify({
         context_strategy: "raw",
         // 한글이 토큰을 많이 먹는다 — 키워드 16개가 250토큰 안팎이었고 300에서 두 건이 잘렸다
-        model: model, stream: false, temperature: 0, max_tokens: 500,
+        model: model, stream: false, temperature: 0, max_tokens: modelLimits("product-search-profile").maxTokens,
         reasoning_effort: "low", chat_template_kwargs: { enable_thinking: false },
         response_format: { type: "json_object" },
         messages: [
@@ -163,14 +166,14 @@ export async function writeKeywords(evidence: ProfileEvidence, options: {
 }): Promise<KeywordResult> {
   const key = process.env.ABCLLM_API_KEY?.trim();
   if (!key) return { ok: false, error: "no_key" };
-  await assertTextModelAdmission({ routeId: "product-search-profile", model: options.model ?? PROFILE_MODEL });
-  const deadline = AbortSignal.timeout(Math.max(1, options.timeoutMs));
+  await assertTextModelAdmission({ routeId: "product-search-profile", model: options.model ?? scopedModel("product-search-profile", PROFILE_MODEL) });
+  const deadline = AbortSignal.timeout(Math.max(1, scopedRequestTimeout("product-search-profile", options.timeoutMs)));
   let body: string;
   try {
-    const response = await (options.request ?? fetch)(`${BASE_URL}/v1/chat/completions`, {
+    const response = await (options.request ?? fetch)(`${scopedModelBaseUrl("product-search-profile", BASE_URL, "abcllm")}/chat/completions`, {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: profileGatewayWire(evidence, options.model ?? PROFILE_MODEL),
+      body: profileGatewayWire(evidence, options.model ?? scopedModel("product-search-profile", PROFILE_MODEL)),
       signal: options.signal ? AbortSignal.any([options.signal, deadline]) : deadline,
     });
     if (!response.ok) {

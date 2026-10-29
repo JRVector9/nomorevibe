@@ -21,6 +21,77 @@ release = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(release)
 
 
+class DokployCredentialTests(unittest.TestCase):
+    def test_registered_environment_does_not_access_keychain_or_print_key(self):
+        with patch.dict(os.environ, {'DOKPLOY_API_KEY': 'registered-test-key'}, clear=True), \
+                patch.object(release, 'run', side_effect=AssertionError('keychain accessed')), \
+                redirect_stdout(io.StringIO()) as stdout, redirect_stderr(io.StringIO()) as stderr:
+            self.assertEqual(release.dokploy_api_key(), 'registered-test-key')
+        self.assertEqual(stdout.getvalue(), '')
+        self.assertEqual(stderr.getvalue(), '')
+
+    def test_absent_environment_preserves_exact_keychain_lookup(self):
+        with patch.dict(os.environ, {}, clear=True), patch.object(release, 'run', return_value='keychain-test-key') as run:
+            self.assertEqual(release.dokploy_api_key(), 'keychain-test-key')
+        run.assert_called_once_with(['security', 'find-generic-password', '-a', 'deploy.brut.bot',
+                                     '-s', 'dokploy-api-key', '-w'])
+
+    def test_invalid_explicit_environment_never_falls_back_or_leaks_value(self):
+        for invalid in ('', ' ', 'test-secret\nheader', 'test-secret\r', 'test-secret\x7f', 'x' * 4097):
+            with self.subTest(length=len(invalid)), patch.dict(os.environ, {'DOKPLOY_API_KEY': invalid}, clear=True), \
+                    patch.object(release, 'run', side_effect=AssertionError('keychain fallback')):
+                with self.assertRaises(ValueError) as failure:
+                    release.dokploy_api_key()
+                self.assertEqual(str(failure.exception), 'invalid_dokploy_api_key_environment')
+
+
+class SshAccountTests(unittest.TestCase):
+    def test_uses_existing_registered_account_without_changing_hosts_or_options(self):
+        for configured, expected in ((None, 'root'), ('jr', 'jr')):
+            with self.subTest(configured=configured), patch.dict(os.environ, {}, clear=True):
+                if configured is not None:
+                    os.environ['NMV_DEPLOY_SSH_USER'] = configured
+                with patch.object(release, 'run', return_value='ok') as run:
+                    self.assertEqual(release.ssh_python('100.92.77.66', 'print(1)'), 'ok')
+                self.assertEqual(run.call_args.args[0][:6],
+                    ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', expected + '@100.92.77.66'])
+
+    def test_rejects_options_and_unexpected_target_syntax_before_ssh(self):
+        for user in ('', '-oProxyCommand=x', 'jr@other', 'jr root', 'jr;id'):
+            with self.subTest(user=user), patch.dict(os.environ, {'NMV_DEPLOY_SSH_USER': user}), \
+                    patch.object(release, 'run') as run:
+                with self.assertRaisesRegex(ValueError, 'invalid_deploy_ssh_user'):
+                    release.ssh_python('100.92.77.66', 'print(1)')
+                run.assert_not_called()
+
+
+class PullCredentialTests(unittest.TestCase):
+    def test_login_uses_private_temporary_file_store_and_removes_it_after_pull(self):
+        directory = None
+        def docker(command, **kwargs):
+            nonlocal directory
+            directory = Path(kwargs['env']['DOCKER_CONFIG'])
+            if command[1] == 'login':
+                config = directory / 'config.json'
+                self.assertEqual(json.loads(config.read_text()), {'auths': {'ghcr.io': {}}})
+                self.assertEqual(config.stat().st_mode & 0o777, 0o600)
+                self.assertEqual(kwargs['input'], 'test-registry-token')
+                return subprocess.CompletedProcess(command, 0, '', '')
+            if command[1] == 'pull':
+                return subprocess.CompletedProcess(command, 0, '', '')
+            self.assertEqual(command[1:3], ['image', 'inspect'])
+            return subprocess.CompletedProcess(command, 0, json.dumps([{'Architecture': 'arm64',
+                'Config': {'Labels': {'org.opencontainers.image.revision': 'a' * 40}}}]), '')
+        output = io.StringIO()
+        with patch.object(sys, 'argv', ['pull', json.dumps({'worker': 'test-image'}), 'a' * 40, '']), \
+                patch.object(sys, 'stdin', io.StringIO('test-registry-token')), \
+                patch.object(subprocess, 'run', side_effect=docker), redirect_stdout(output):
+            exec(release.REMOTE_PULL, {})
+        self.assertEqual(json.loads(output.getvalue())['pulled'], True)
+        self.assertNotIn('test-registry-token', output.getvalue())
+        self.assertFalse(directory.exists())
+
+
 class FakeClient:
     def __init__(self, apps, deployment_id='old'):
         self.apps = apps
