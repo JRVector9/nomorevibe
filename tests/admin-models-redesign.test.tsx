@@ -31,6 +31,10 @@ describe("admin models 리디자인 렌더", () => {
     expect(html).toContain("미확인 1건"); expect(html).toContain("마지막 성공 2분 전");
     expect(html).toContain("모델 카드로 이동"); expect(html).toContain("30초 자동 새로고침");
   });
+  it("미설정 화면 판별을 가짜 모델 카드로 만들지 않는다", () => {
+    const cards = buildModelCards(redesignObservation(), redesignModels, [{ id: "screen-review", label: "화면 판별", models: [{ provider: "local-direct", model: "미설정" }] }]);
+    expect(cards.some(card => card.name === "미설정")).toBe(false);
+  });
   it("건강한 병렬 모델이 있으면 해당 단계 전체를 멈춤으로 단정하지 않는다", () => {
     const observation = redesignObservation();
     expect(stageHealth(observation, observation.rows.slice(0, 2), observation.requests.slice(0, 1))).toBe("미확인");

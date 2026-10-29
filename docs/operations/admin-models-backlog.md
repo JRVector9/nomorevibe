@@ -181,3 +181,11 @@
 - 결과 경로(작업 artifacts): `admin-models-1440.png`, `admin-models-390.png` 전체 화면과 각 `-first-screen.png`, `-model.png`, `-settings.png`, `-confirm.png`, `-progress.png`. `admin-models-browser-validation.json`에 실제 너비/열수·클릭 항목을 기록했다. `admin-models-1440.html`/`admin-models-390.html`은 독립 검토 자료다.
 - 재현: `node scripts/preview-admin-models.mjs <artifacts-dir>`; `ADMIN_MODELS_CHROMIUM_PATH=<설치된 headless-shell 경로> node scripts/verify-admin-models-preview.mjs <artifacts-dir>`.
 - 남음 정정: 브라우저 스크린샷/합성 클릭은 완료했다. 운영 DB query plan·migration0140 적용·실제 등록된 접근/프로필·운영 드릴·배포는 이 작업 범위 밖으로 계속 미실행이다. 실제 운영 화면의 현재 설정/장부 비교 조회도 수행하지 않았다.
+
+### PR 준비 상태
+
+- PR [#723](https://github.com/JRVector9/nomorevibe/pull/723), 현재 브랜치 `xaegis/1638b627`에 의미 단위 커밋(최신 main merge, 처리량, 화면/검수)을 보존하고 push했다. 강제 push/이력 재작성/다른 브랜치 편집 없음.
+- 최종 품질 수치: 동일 범위 명령 `node node_modules/vitest/vitest.mjs run admin-models ops-runner --maxWorkers=4`의 **17파일82시험 → 20파일111시험 PASS**. 추가 stage-registry/model-registry-operator/operations-action-contract 범위까지 23파일208시험 PASS 뒤 미설정 모델 카드 방지1시험을 더했다. 타입 검사/범위 ESLint/diff check PASS. 전체 수동 unit/DB/종합 검사는 반복하지 않았다.
+- 화면 수치: 최초 전체 Chromium 실행 실패로 측정 불가 → 전용 headless shell에서 **1440/390 가로 넘침0px, 3열/1열, page error0, 각10개 상호작용 검증 PASS**. 운영 화면의 이전 조판 수치는 측정하지 않았으며 추정하지 않는다.
+- 선택 이유: 검수+단계 풀은 기존 경로로 한 번에 저장해 서로의 CAS 버전 충돌을 줄였다. p90은 nearest-rank, 시간은 장부 접수→종료(대기 포함), 24시간 시간당 건수는 종료 건수/24로 명시했다. 운영 모델 구성은 자동 프리셋으로 바꾸지 않았다.
+- 배포 준비물: 웹 화면/집계 코드와 migration0140(읽기 범위용 인덱스). 실제 운영 적용·배포·DB 쓰기·DRAIN·재시작·미확인 해제는 수행하지 않았다. CI 결과와 병합 여부는 확인 후 덧붙인다.

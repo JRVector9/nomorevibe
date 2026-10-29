@@ -40,6 +40,7 @@ export function buildModelCards(observation: AdminModelsObservation, models: rea
     return card;
   };
   for (const assignment of assignments) for (const identity of assignment.models) {
+    if (!identity.model || identity.model === "미설정") continue;
     const card = ensure(identity); if (!card.stages.includes(assignment.id)) card.stages.push(assignment.id);
   }
   for (const row of observation.rows) { const card = ensure(row); card.rows.push(row);

@@ -136,6 +136,7 @@ function ModelLiveCard({ card, observation, controls, probe, busy, onProbe, reco
     </div>}
     <div className="flex flex-wrap gap-2"><button type="button" className={buttonSmall} disabled={busy || !["abcllm", "local-direct"].includes(card.definition?.provider ?? card.rows[0]?.provider)} onClick={onProbe}>연결 확인</button>
       {!requests.length && <AdmissionButton observation={observation} controls={controls} />}</div>
+    {!["abcllm", "local-direct"].includes(card.definition?.provider ?? card.rows[0]?.provider) && <p className="text-[12px] text-fg-2">이 제공자의 모델 목록 조회 실행기가 연결되지 않았습니다.</p>}
     {probe && <div role="status" className="text-[12px] leading-relaxed"><p>{probe.listed === undefined ? "목록 미확인" : probe.listed ? "모델 목록에 있음" : "모델 목록에 없음"} · {probe.listMs ?? "—"}ms</p>
       {probe.error && <p className="text-down">{probe.error}</p>}<p>시험 호출: {probe.callMs === undefined ? probe.callBlocked : `${probe.callMs}ms`}</p></div>}
     <details className="border-t border-line pt-3 text-[12px] text-fg-2"><summary className="cursor-pointer">자세히</summary>
