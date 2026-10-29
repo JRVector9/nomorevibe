@@ -22,6 +22,7 @@ import { products, productSearchProfiles, type Product, type ProductSearchProfil
 import { assertJobLease, assertJobLeaseAtWallTime, type JobLease } from "@/lib/jobs/control";
 import { PROFILE_MODEL, keywordText, profileEvidence, profileHash } from "./search-profile";
 import { isProfileProviderError, MAX_PROFILE_ATTEMPTS as MAX_ATTEMPTS, profileGenerationRetryAllowedSql } from "./search-profile-retry";
+import { busyLogicalKeysSql } from "@/lib/llm/capacity-busy-targets";
 
 /**
  * 검색 키워드의 대기열과 저장. 짓는 일(게이트웨이)은 search-profile.ts 에 있다.
@@ -96,12 +97,16 @@ export async function pendingProfiles(limit: number, owner?: Pick<RoleLease, "in
   })) : [];
   if (resumed.length >= limit) return resumed;
 
+  // 요청 장부가 이미 쥔 제품은 새로 집지 않는다(capacity-busy-targets.ts) — 이어받을 내 요청은 위 resumed 가 맡는다.
+  // 미확인 요청이 걸린 제품이 맨 앞에 서면 일꾼 하나가 'capacity' 미룸을 받아 틱 전체를 접었고, 묵은 내 대기(입력 해시가 바뀐 것)
+  // 위에 같은 제품의 새 요청을 또 넣으려다 같은 미룸을 받았다. 한 제품은 한 요청만 가진다.
   const rows = await db.select({ product: FIELDS, profile: productSearchProfiles, reviewerNote: REVIEWER_NOTE })
     .from(products)
     .leftJoin(productSearchProfiles, eq(productSearchProfiles.productId, products.id))
     .where(and(
       inArray(products.status, ["seeded", "verified"]),
       profileGenerationDueSql(),
+      sql`('text:profile:' || ${products.id}) NOT IN (${busyLogicalKeysSql("text:profile:")})`,
     ))
     .orderBy(sql`(${productSearchProfiles.productId} is null) desc,
       (${productSearchProfiles.productId} is null and btrim(${products.description}) = btrim(${products.tagline})) desc,

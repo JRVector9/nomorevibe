@@ -413,8 +413,10 @@ it("keeps EOF full-C unknown fenced across changed source and a genuinely re-ele
     await tracked(db.update(products).set({ tagline: "Search and organize documents for teams" }).where(eq(products.id, product.id)));
     const [changed] = await admin`SELECT to_jsonb(t) AS row FROM product_korean_taglines t WHERE product_id=${product.id}`;
     expect(changed.row).toMatchObject({ attempts: 1 }); // original cache is historical; new source is eligible without mutating it
-    expect((await tracked(pendingKoreanTaglines(16, []))).find(task => task.productId === product.id)?.attempts).toBe(0);
-    expect(await tick()).toMatchObject({ status: "deferred", reason: "model_capacity" }); expect(bodies).toHaveLength(1);
+    // The unknown request still fences this product, so the selector skips it instead of re-picking it every tick
+    // (postprocess-backlog lane, 2026-10-29). Other products remain selectable; this one is never re-sent.
+    expect((await tracked(pendingKoreanTaglines(16, []))).find(task => task.productId === product.id)).toBeUndefined();
+    expect(await tick()).toMatchObject({ status: "completed" }); expect(bodies).toHaveLength(1);
     expect((await admin`SELECT to_jsonb(t) AS row FROM product_korean_taglines t WHERE product_id=${product.id}`)[0].row).toEqual(changed.row);
     expect((await admin`SELECT to_jsonb(r) AS row FROM model_capacity_requests r WHERE request_id=${unknown.row.request_id}::uuid`)[0].row).toEqual(unknown.row);
     expect(await admin`SELECT request_id FROM model_capacity_requests WHERE owner_instance_id=${prefix}`).toHaveLength(1);
