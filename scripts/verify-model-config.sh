@@ -7,6 +7,19 @@ fi
 [[ $# -eq 0 ]] || { printf 'Unexpected arguments. Use --help.\n' >&2; exit 2; }
 cd "$(git rev-parse --show-toplevel)"
 
+# A fresh worktree has no install. Reuse the primary checkout's node_modules
+# (read-only symlink) only when its package-lock is byte-identical; never run npm here.
+if [[ ! -e node_modules ]]; then
+  primary=$(git worktree list --porcelain | sed -n '1s/^worktree //p')
+  if [[ -n $primary && $primary != "$PWD" && -d $primary/node_modules ]] && cmp -s package-lock.json "$primary/package-lock.json"; then
+    ln -s "$primary/node_modules" node_modules
+    printf 'Reusing node_modules from %s (same package-lock.json).\n' "$primary"
+  else
+    printf 'node_modules missing and no primary checkout with the same package-lock.json to reuse.\n' >&2
+    exit 1
+  fi
+fi
+
 # Deliberately scoped to this lane. Never invoke the full unit/DB/e2e suites here.
 tests=(
   tests/model-registry.test.ts tests/model-registry-deadlines.test.ts tests/model-registry-migration.test.ts tests/model-registry-http-routing.test.ts
@@ -38,6 +51,7 @@ tests=(
   tests/admin-review-models.test.tsx tests/crawl-settings-form.test.ts tests/crawl-settings-changes.test.ts
   tests/second-voter-switch.test.tsx tests/operations-actions.test.ts tests/operations-action-contract.test.tsx tests/operations-work-owners.test.tsx
   tests/m1-relay-model-config.test.ts tests/product-translate-model-registry.test.ts tests/local-model-relay-deadline.test.ts
+  tests/screen-review-observation-version.test.ts tests/connect-agent-shutdown.test.ts tests/admin-models-human-pool.test.tsx
 )
 for test_file in "${tests[@]}"; do
   [[ -f "$test_file" ]] || { printf 'Missing scoped test: %s\n' "$test_file" >&2; exit 1; }
