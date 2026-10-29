@@ -163,3 +163,9 @@ M1 모델 선택/readiness 수정과 상품·사유 번역 동일 등록부 정�
 - Supa 최종 정적 검사: 범위 ESLint, tsc --noEmit --incremental false, git diff --check PASS. 실제 Python14시험 재실행 PASS. 항목별 로컬 커밋 후 PR 검증으로 계속한다.
 
 - 최종 확장 검증: verify-model-config 72파일/1,032시험·typegen·tsc PASS, 동일 기준 git grep158→99. 추가 회귀7파일/64시험 및 실제 Python16시험 PASS. 최초35실패(공용 fixture), 추가 범위1실패(사유 timeout45→40초 fixture)는 고친 뒤 통과했으며 실패 로그를 보존한다. PR/CI 확인만 남음.
+
+## PR722 최종 인계 — 2026-10-29
+
+- 코드/시험/항목별 커밋 완료, 새 브랜치 push 및 PR https://github.com/JRVector9/nomorevibe/pull/722 OPEN. 대표용 절대 argv: `2026-10-29-m1-relay-model-handoff.md`(13줄), `2026-10-29-supa-root-handoff.md`(7줄 + prepare가 생성하는 실제 task).
+- verify-model-config 72파일/1,032시험·typegen·tsc PASS. Supa9파일/43시험, 실제 Python16시험, 추가7파일/64시험 PASS(중복 포함). UI 변경/실제 장비 실행 없음.
+- 막힘: Actions run40835749295 scope/check는 GitHub 계정 결제 실패 또는 spending limit으로 **잡 시작 전** 실패(annotation 확인). 나머지 코드 검사는 SKIPPED. 필수 CI 통과를 주장하지 않으며 병합하지 않음. 담당자의 Billing & plans 해결 뒤 CI 성공 확인만 남음. 결제·권한·워크플로 우회는 하지 않음.

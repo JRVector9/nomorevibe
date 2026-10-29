@@ -203,3 +203,10 @@ AI1/AI2 저장 증가 명령은 두 측정 mjs를 기존 M3 text 컨테이너에
 - Supa 범위 ESLint/tsc/diff 검사 PASS, Python14시험 재실행 PASS. 항목별 로컬 커밋 뒤 최종 모델 검증·PR 진행.
 
 - 최종 확장 검증: verify-model-config 72파일/1,032시험·typegen·tsc PASS, 동일 기준 git grep158→99. 추가 회귀7파일/64시험 및 실제 Python16시험 PASS. 최초35실패(공용 fixture), 추가 범위1실패(사유 timeout45→40초 fixture)는 고친 뒤 통과했으며 실패 로그를 보존한다. PR/CI 확인만 남음.
+
+## PR722 인계 — 2026-10-29
+
+- 끝: M1 `c8e2c477`, Supa `252c65bb`, 확장 회귀 `79a4b1fb` 로컬 커밋 후 새 브랜치 `fix/m1-relay-supa-root-handoff` push, PR https://github.com/JRVector9/nomorevibe/pull/722 OPEN.
+- 로컬 최종 `bash scripts/verify-model-config.sh` PASS(72파일/1,032시험·typegen·tsc), Supa9파일/43시험·Python16시험 PASS, 추가7파일/64시험 PASS(중복 합산하지 않음). 범위 ESLint/bash 문법/diff 검사 PASS.
+- 막힘: Actions run40835749295의 scope/check가 **잡 시작 전** 실패. check-run123320010237 annotation: 계정의 최근 결제 실패 또는 spending limit 증액 필요(Billing & plans). 따라서 typecheck/lint/unit/build/integration 잡은 SKIPPED이며 CI 통과로 기록하지 않는다. 코드 실패 로그는 없고 `gh run view --log-failed`도 `log not found`였다. 결제/한도 변경·CI 보호 우회·강제 병합/배포 없음.
+- 남음: 저장소 계정 담당자가 결제/한도 문제를 해결한 뒤 같은 PR의 필수 CI 성공 확인. 성공 전 병합 금지. 실제 운영 설치/종료/해제/저장 측정은 다른 승인된 운영 차선 몫이다.
