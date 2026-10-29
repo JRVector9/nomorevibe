@@ -3,7 +3,10 @@ Inputs are the verbatim outputs of the reviewed read helpers (docker_reader.py x
 Identity is recomputed exactly like admin-models-boundary-adapter.py linux_identity(); prepare re-checks it and refuses any mismatch.
   python3 -I build-manifest.py --job=<OPS_JOB_UUID> --out-dir=/abs/<OPS_JOB_UUID> --adapter=/abs/scripts/ops/admin-models-boundary-adapter.py \
     --affected-group=<request group_id> --container-progress-root=/abs/remote/private/dir \
-    --owner=jr@m3Ultra:/abs/owner.json --gateway-m3=jr@m3Ultra:/abs/gw-m3.json --gateway-mini=<user@host>:/abs/gw-mini.json --provider=jr@supa:/abs/supa.json
+    --owner=jr@m3Ultra:/abs/owner.json --gateway-m3=jr@m3Ultra:/abs/gw-m3.json --gateway-mini=<user@host>:/abs/gw-mini.json --provider=jr@supa:/abs/supa.json \
+    [--final-admission=draining]
+--final-admission=draining makes the runner end with its own DRAIN handed over (handoff) instead of OPEN
+(docs/operations/2026-10-29-release-order.md: M1 release and the deploy continue in that same DRAIN).
 """
 import datetime, hashlib, json, os, pathlib, re, sys
 
@@ -42,11 +45,12 @@ def sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def build(job, out_dir, adapter, group, container_progress, inputs):
+def build(job, out_dir, adapter, group, container_progress, inputs, final_admission=None):
     """inputs: role -> (ssh host, reader JSON). Returns (manifest bytes, profile bytes, warnings)."""
     if not UUID.match(job) or pathlib.Path(out_dir).name != job or not os.path.isabs(out_dir): fail('job_uuid_and_out_dir_named_by_job_required')
     if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:-]{0,119}', group): fail('affected_group_invalid')
     if not os.path.isabs(container_progress) or '..' in pathlib.Path(container_progress).parts: fail('container_progress_root_absolute_required')
+    if final_admission not in (None, 'draining'): fail('final_admission_draining_only')
     helpers = pathlib.Path(adapter).parent / 'admin_models_helpers'
     targets, warnings = [], []
     for key, role, kind in (('owner', 'owner', 'container'), ('gateway-m3', 'gateway', 'container'), ('gateway-mini', 'gateway', 'container'), ('provider', 'provider', 'systemd')):
@@ -68,6 +72,7 @@ def build(job, out_dir, adapter, group, container_progress, inputs):
     profile = {'version': 1, 'jobId': job, 'action': 'request-release', 'targetId': REQUEST_ID, 'requiresSudo': False, 'affectedGroups': [group],
                'adapter': {'path': adapter, 'sha256': sha(pathlib.Path(adapter).read_bytes())},
                'material': {'path': str(pathlib.Path(out_dir) / 'manifest.json'), 'sha256': sha(raw)}, 'artifactDirectory': out_dir}
+    if final_admission: profile['finalAdmission'] = final_admission
     if not any(p.get('owner', {}).get('instanceId') for p in owner_procs): warnings.append('owner_reader_shows_no_role_lease_owner_check_request_owner')
     return raw, (json.dumps(profile, separators=(',', ':')) + '\n').encode(), warnings
 
@@ -79,14 +84,15 @@ def main(argv):
         if not m or m.group(1) in opts: fail('option:' + arg.split('=')[0])
         opts[m.group(1)] = m.group(2)
     need = ('job', 'out-dir', 'adapter', 'affected-group', 'container-progress-root', 'owner', 'gateway-m3', 'gateway-mini', 'provider')
-    if set(opts) != set(need): fail('required:' + ','.join(sorted(set(need) - set(opts))))
+    if set(opts) - {'final-admission'} != set(need): fail('required:' + ','.join(sorted(set(need) - set(opts))))
     inputs = {}
     for key in ('owner', 'gateway-m3', 'gateway-mini', 'provider'):
         host, _, path = opts[key].partition(':')
         if not os.path.isabs(path): fail('reader_output_absolute_path_required:' + key)
         inputs[key] = (host, json.loads(pathlib.Path(path).read_bytes()))
     out = opts['out-dir']
-    raw, profile, warnings = build(opts['job'], out, opts['adapter'], opts['affected-group'], opts['container-progress-root'], inputs)
+    raw, profile, warnings = build(opts['job'], out, opts['adapter'], opts['affected-group'], opts['container-progress-root'], inputs,
+                                   opts.get('final-admission'))
     os.mkdir(out, 0o700)  # new once-directory; an existing one is never reused
     for name, data in (('manifest.json', raw), ('profile.json', profile)):
         fd = os.open(os.path.join(out, name), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)

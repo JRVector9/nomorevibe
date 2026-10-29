@@ -1,7 +1,7 @@
 "use client";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
-import { type OpsState, type OpsCommand, OPS_STEPS, OPS_STEP_LABELS, opsHoldsBoundary } from "@/lib/operations/ops-runner/contract";
+import { type OpsState, type OpsCommand, opsStepsFor, OPS_STEP_LABELS, opsHoldsBoundary } from "@/lib/operations/ops-runner/contract";
 import { submitAdminModelOperation, readAdminModelOperation } from "./ops-runner-actions";
 import { buttonClass, buttonSmall, inputClass, hintClass } from "../settings/Switch";
 
@@ -77,13 +77,13 @@ export function ModelOpsPanel({ mode, requests, models, initialStates = [], subm
   </div>;
 }
 export function ModelOpsProgress({ state }: { state: OpsState }) {
-  const steps = state.action.startsWith("admission-") ? ["prepare", state.action === "admission-open" ? "open" : "drain"] as const
-    : OPS_STEPS.filter(step => step !== "release" || state.action === "request-release");
+  const steps = opsStepsFor(state);
   return <article className="flex min-w-0 scroll-mt-28 flex-col gap-2 rounded-lg border border-line p-3 text-[14px] md:scroll-mt-6" aria-label={`${titles[state.action]} 진행 상황`}>
     <p><strong>{titles[state.action]}</strong></p>
     <p>감사 번호: {state.auditId ? `#${state.auditId}` : "접수 기록 확인 중"}</p>
     <details><summary>자세히</summary><p className="break-all">대상 {state.targetId} · 작업 ID {state.id}</p></details>
     <p role="status">{state.status === "queued" ? "운영 실행기 대기" : state.status === "completed" ? "완료" : state.status === "running" ? "진행 중" : "중단"}</p>
+    {state.finalAdmission === "draining" && <p>이 작업은 끝나도 접수를 DRAIN으로 둡니다. 다음 절차가 정식 명령으로 OPEN합니다.</p>}
     <ol className="list-inside list-decimal">{steps.map(step => <li key={step}>{OPS_STEP_LABELS[step]} · {state.steps[step] === "done" ? "완료" : state.steps[step] === "running" ? "진행 중" : state.steps[step] ? "중단" : "대기"}</li>)}</ol>
     {(state.status === "blocked" || state.status === "manual") && <div role="alert"><p>멈춘 단계: {OPS_STEP_LABELS[state.step]}</p>
       <p className="break-all">사유: {state.code}</p>{state.status === "manual" && <p>사람이 장비에서 할 일: sudo가 필요한 종료·복원. 자동 실행하지 않습니다.</p>}

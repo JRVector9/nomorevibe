@@ -51,3 +51,26 @@ it("진행 조회의 감사 번호는 detail 내부 값 대신 실제 행 id를 
   expect(await readModelOpsState(command.id)).toMatchObject({ auditId: 20940 });
   expect(await readModelOpsStates()).toMatchObject([{ auditId: 20940 }]);
 });
+it("운영자 셸 접수는 웹과 같은 잠금·검사·감사 행을 쓰고 웹 로그인 방식을 주장하지 않는다", async () => {
+  mocks.audit.mockImplementation(async (_actor, entry) => ({ ...entry, actorKind: "github" }));
+  mocks.execute.mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([{ request_id: command.targetId }]);
+  expect(await submitModelOpsCommand(command, "jr", "cli")).toMatchObject({ status: "queued", actor: "jr" });
+  expect(mocks.values).toHaveBeenCalledWith(expect.objectContaining({ action: "ops-runner-state", target: command.id, actorKind: null }));
+});
+it("운영자 셸 미리 보기는 READ ONLY로 같은 거절 사유를 보이고 쓰지 않는다", async () => {
+  const { previewModelOpsCommand } = await import("@/lib/operations/ops-runner/repository");
+  const transaction = vi.fn(async (fn: (tx: unknown) => unknown, config?: unknown) => { expect(config).toEqual({ accessMode: "read only" }); return fn({ execute: mocks.execute, insert: mocks.insert }); });
+  const { db } = await import("@/lib/db"); const original = db.transaction; (db as { transaction: unknown }).transaction = transaction;
+  try {
+    mocks.execute.mockResolvedValueOnce([{ detail: initialOpsState({ ...command, id: "bd2b84de-4ddf-4b2e-9dbd-605c64f7d728" }, "jr") }])
+      .mockResolvedValueOnce([{ state: "indeterminate", routeId: "crawl-agent-review", groupId: "supa", providerBudgetId: "supa", ownerInstanceId: "reviewer-m3" }]);
+    expect(await previewModelOpsCommand(command, "jr")).toMatchObject({ blocked: ["ops_runner_unfinished_operation"], existing: null, request: { groupId: "supa" } });
+    mocks.execute.mockResolvedValueOnce([]).mockResolvedValueOnce([{ state: "withdrawn", routeId: "r", groupId: "g", providerBudgetId: "b", ownerInstanceId: null }]);
+    expect((await previewModelOpsCommand(command, "jr")).blocked).toEqual(["ops_runner_request_not_indeterminate"]);
+    mocks.execute.mockResolvedValueOnce([{ detail: initialOpsState(command, "jr") }]).mockResolvedValueOnce([{ state: "indeterminate" }]);
+    expect(await previewModelOpsCommand(command, "jr")).toMatchObject({ blocked: [], existing: { id: command.id } });
+    mocks.execute.mockResolvedValueOnce([{ detail: initialOpsState(command, "jr") }]).mockResolvedValueOnce([{ state: "indeterminate" }]);
+    expect((await previewModelOpsCommand(command, "other")).blocked).toEqual(["ops_runner_id_conflict"]);
+    expect(transaction).toHaveBeenCalledTimes(4); expect(mocks.insert).not.toHaveBeenCalled();
+  } finally { (db as { transaction: unknown }).transaction = original; }
+});

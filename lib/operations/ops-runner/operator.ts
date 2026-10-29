@@ -9,7 +9,7 @@ import { providerBoundaryPlanSchema, providerBoundaryReceiptSchema, providerBoun
   boundaryExitObservationSchema } from "@/lib/llm/provider-boundary-contract";
 import { releaseProviderBoundaryRequest } from "../dr/provider-boundary-release";
 import { readBoundaryReleaseFiles } from "@/scripts/ops/model-provider-boundary-release";
-import { capacityPin, controlOpsAdmission, assertOpsQuiescent, readOpsRequest, type CapacityPin } from "./control";
+import { capacityPin, controlOpsAdmission, assertOpsQuiescent, handOffOpsDrain, readOpsRequest, type CapacityPin } from "./control";
 import { saveModelOpsState } from "./repository";
 import { type OpsState, type OpsStep, opsActionSchema } from "./contract";
 import { runModelOpsRunner, type StepResult } from "./runner";
@@ -23,6 +23,8 @@ export const operatorProfileSchema = z.object({ version: z.literal(1), jobId: z.
   artifactDirectory: z.string().optional(),
   affectedGroups: z.array(z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,119}$/)).min(1).max(16).optional(),
   material: z.object({ path: z.string(), sha256: hash }).strict().optional(),
+  // Reviewed decision to end with the runner's own DRAIN kept (handoff) instead of OPEN. Pinned by profileHash.
+  finalAdmission: z.literal("draining").optional(),
 }).strict();
 export type OperatorProfile = z.infer<typeof operatorProfileSchema>;
 /** Reject symlinks and any path writable by another account. No chmod, sudo or permission repair. */
@@ -46,6 +48,8 @@ function boundedJson(path: string) {
 export function readOperatorProfile(path: string, state: OpsState) {
   const { raw, value } = boundedJson(path), profile = operatorProfileSchema.parse(value);
   if (profile.jobId !== state.id || profile.action !== state.action || profile.targetId !== state.targetId) throw new Error("ops_runner_profile_target_mismatch");
+  if (profile.finalAdmission && profile.action.startsWith("admission-")) throw new Error("ops_runner_profile_final_admission_denied");
+  if (state.finalAdmission !== undefined && state.finalAdmission !== profile.finalAdmission) throw new Error("ops_runner_profile_changed");
   if (profile.adapter && !profile.requiresSudo) {
     const source = boundedSource(profile.adapter.path);
     if (sha(source) !== profile.adapter.sha256) throw new Error("ops_runner_adapter_not_reviewed_or_requires_sudo");
@@ -139,6 +143,7 @@ export async function runPreparedModelOps(state: OpsState, profilePath: string, 
       if (result.ok && step === "drain") { prepared.drained = await capacityPin(); persist(); }
       return result;
     }
+    if (step === "handoff") return handOffOpsDrain(state, prepared.drained!);
     await assertOpsQuiescent(prepared.drained!, state.targetId, reviewed.profile.affectedGroups);
     if (step === "stop") {
       if (!prepared.plan && state.action === "request-release") {
@@ -195,7 +200,7 @@ export async function runPreparedModelOps(state: OpsState, profilePath: string, 
     const result = await adapter("verify-restored");
     return { ok: result.ok && result.configurationHash === prepared.configurationHash, code: "original_configuration_not_restored" };
   };
-  const next = { ...state, profileHash: reviewed.hash };
+  const next: OpsState = { ...state, profileHash: reviewed.hash, ...(reviewed.profile.finalAdmission ? { finalAdmission: reviewed.profile.finalAdmission } : {}) };
   if (prepareOnly) {
     if (Object.keys(state.steps).some(step => step !== "prepare")) throw new Error("ops_runner_already_started");
     await saveModelOpsState({ ...next, status: "running", step: "prepare", code: null, steps: { ...state.steps, prepare: "running" } });

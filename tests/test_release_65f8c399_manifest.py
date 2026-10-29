@@ -76,7 +76,15 @@ class BuildManifestTests(unittest.TestCase):
         self.assertEqual((profile['artifactDirectory'], manifest['stateDirectory']), (out, out))
         self.assertEqual(profile['affectedGroups'], ['supa'])
         self.assertEqual(profile['adapter']['sha256'], hashlib.sha256(ADAPTER.read_bytes()).hexdigest())
+        self.assertNotIn('finalAdmission', profile)
         self.assertEqual(warnings, [])
+
+    def test_final_admission_handoff_is_explicit_and_draining_only(self):
+        out = '/private/' + JOB
+        _, profile, _ = self.m.build(JOB, out, str(ADAPTER.resolve()), 'supa', '/p', self.inputs, 'draining')
+        self.assertEqual(json.loads(profile)['finalAdmission'], 'draining')
+        with self.assertRaises(SystemExit):
+            self.m.build(JOB, out, str(ADAPTER.resolve()), 'supa', '/p', self.inputs, 'open')
 
     def test_refuses_unnamed_directory_and_multiple_containers(self):
         with self.assertRaises(SystemExit):
