@@ -29,10 +29,13 @@ it("배포 뒤 OPEN은 정식 pipeline-control CAS로만 하고 기본은 dry-ru
   expect(run("open", "1", "8", "jr", "release-order-open", "--execute").status).toBe(0);
   expect(readFileSync(join(dir, "argv"), "utf8").trim().split("\n").at(-1)).toBe("--execute");
   expect(run("status").status).toBe(0);
+  expect(readFileSync(join(dir, "argv"), "utf8").trim().split("\n")).toEqual(["--import", "tsx", "scripts/ops/pipeline-control.ts", "status", "--json"]);
+  expect(run("routes").status).toBe(0);
+  expect(readFileSync(join(dir, "argv"), "utf8").trim().split("\n")).toEqual(["--import", "tsx", "scripts/ops/pipeline-control.ts", "status"]);
 });
 it("deferred route 허용·다른 플래그·잘못된 숫자·공백 사유·임의 명령을 거절한다", () => {
   for (const args of [["open", "1", "8", "jr", "x", "--allow-deferred-routes"], ["open", "0", "8", "jr", "x"], ["open", "1", "8", "jr", "two words"],
-    ["open", "1", "8", "jr;id", "x"], ["drain", "1", "8", "jr", "x"], ["status", "extra"], ["open", "1", "8", "jr"]]) {
+    ["open", "1", "8", "jr;id", "x"], ["drain", "1", "8", "jr", "x"], ["status", "extra"], ["routes", "--json"], ["open", "1", "8", "jr"]]) {
     const result = run(...args);
     expect(result.status).toBe(2);
   }
