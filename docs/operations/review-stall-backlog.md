@@ -1,3 +1,24 @@
+# 2026-10-29 M1 relay·제품 번역 모델 등록부 연결 (작업 공간 xaegis/0e7cd93c, 코드 커밋 `a900db03`)
+
+배경: 제품 번역이 10/28 16:01 이후 0건인 원인 중 하나로, M1 relay의 기본 허용 모델이 등록부의 GPU3090 Qwen entry(`relay` 용도)에서 나오고 앱의 오래된 `PRODUCT_TRANSLATION_MODEL=[m1] qwen3.8-flash-next`가 그대로 전송되던 점. M1 oMLX는 `mlx-community--gemma-4-26b-a4b-it-4bit`를 서빙한다.
+
+한 일(코드·시험만, 운영 DB·SSH·배포·push 0):
+
+- `relay` 용도를 `gpu3090:review`에서 `m1:translation`(Gemma)으로 옮겼다. relay 허용 목록은 `LOCAL_MODEL_RELAY_EQUIPMENT`(기본 `m1`) 장비의 `relay` 용도 entry만이다(`relayAllowedModels`). `LOCAL_MODEL_RELAY_MODEL`/`_KEY`는 그 목록 안에서 하나로 고정만 할 수 있고, 다른 장비의 같은 이름 모델·gateway label·미등록 id는 `relay_model_not_allowed`, 장비에 entry가 없으면 `relay_model_not_registered`로 시작을 거절한다.
+- relay 요청: 허용 목록 밖 모델은 `400 model_not_allowed`. 허용 모델이어도 영수증·상류 호출 전에 loopback `/v1/models`와 대조해 없으면 `503 upstream_model_mismatch`, 목록을 못 읽으면 `503 upstream_models_unavailable`(일치 목록은 30초 재사용). 거절은 전송 전이라 미확인(indeterminate)을 만들지 않는다. health에 `allowedModels`·`upstreamModelMatch`·`upstreamModelReason`을 추가했다.
+- 앱: 옛 모델 env 해석을 용도 route 기준으로 바꿨다(`resolvePurposeModel`). 여러 장비에 같은 bare 이름이 있으면 그 용도의 selection→purposes가 가리키는 한 entry를 고르고, 둘 이상이면 계속 `ambiguous_model_identity`. 등록된 장비 label인데 그 장비에 등록되지 않은 모델(`[m1] qwen3.8-flash-next`)은 그 장비에서 해당 용도의 현재 등록 모델(`[m1] mlx-community--gemma-4-26b-a4b-it-4bit`)로 해석한다. 다른 장비 label·미등록 label은 기존처럼 그대로 둔다. `configuredModelRoute`가 key·장비·route·wire 이름·주소를 한 번에 돌려준다.
+- 오프라인 `scripts/migrate-model-registry-m1.ts`가 M1 entry에 `relay` 용도와 `selections.relay`도 넣는다(기존 JSON 사용 시).
+- 시험: `tests/m1-relay-model-config.test.ts`(7), `tests/product-translate-model-registry.test.ts`(7) 신규. 기존 relay·등록부 시험 3개의 기본값 기대를 Qwen→Gemma로 갱신. `bash scripts/verify-model-config.sh` exit0: 77파일/1,096시험 통과, typegen·`tsc --noEmit` 오류0, 모델 이름 리터럴 158(199a3ebb)→101(작업 전 c7dad56b도 101, 변화 없음). 바뀐 파일 eslint 오류0. 전체 unit·DB·종합 시험은 정책상 통합 단계 몫이라 실행하지 않았다.
+
+남은 일(대표 몫, 미실행):
+
+1. push·PR·CI `check`·main 병합. relay 재설치용 `<REVIEWED_SHA>`는 **병합된 main 커밋**이다(로컬 `a900db03`은 후보일 뿐 설치본으로 쓰지 않는다). 설치본 경로는 그대로 `/var/tmp/nmv-relay-reviewed/<REVIEWED_SHA>` → `/usr/local/nmv-llm-relay/releases/<REVIEWED_SHA>`. 절차·argv는 [M1 relay 인계](2026-10-29-m1-relay-model-handoff.md).
+2. M1 relay 재설치 후 `server.ts check` 출력의 `equipment:"m1"`, `allowedModels:["mlx-community--gemma-4-26b-a4b-it-4bit"]`와 health의 `upstreamModelReason:"matched"` 확인.
+3. 운영 `MODEL_REGISTRY_CONFIG`를 쓰는 경우 M1 entry에 `relay` 용도가 없으면 새 relay가 `relay_model_not_registered`로 시작하지 않는다 → migration 도구 후보 JSON 검토 후 반영.
+4. 운영 text·translation 소비자에 `PRODUCT_TRANSLATION_MODEL_KEY=m1:translation` 설정(옛 `[m1] qwen…`은 코드가 Gemma로 해석하지만 설정 정리는 별도), capacity policy의 `product-translate` route 모델이 `[m1] mlx-community--gemma-4-26b-a4b-it-4bit`인지 확인(다르면 `unmapped`로 보류된다), 표준 배포.
+5. 배포 후 실제 M1 dispatch·terminal·번역 저장 건수 증가 실측(현재 측정 없음).
+6. `lib/llm/replaced-provider-boundary-contract.ts`의 `[m1] qwen3.8-flash-next` 고정값은 이미 보낸 옛 요청 경계 해제용이라 이 차선에서 바꾸지 않았다.
+
 # 2026-10-29 현재 상태 — 단건 해제 코드 main 병합 / 운영 sudo 중단
 
 - [PR721](https://github.com/JRVector9/nomorevibe/pull/721) 병합 완료: `c42dcb0b16e317132f4218172e27ed64c19b3260`(07:58:53Z). 구현 head5a5bbefc의 [CI40837650963](https://github.com/JRVector9/nomorevibe/actions/runs/40837650963)은 필수check/typecheck/lint/build/unit2묶음/DB6묶음/직렬장부/PR이미지 모두 SUCCESS다. 이전 결제·한도 미시작 실패는 아래 이력에 남겼으며 이번 실행의 성공으로 구분한다. 결제·한도·관문 설정은 변경하지 않았다.

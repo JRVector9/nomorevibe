@@ -74,12 +74,12 @@ const local = "http://100.77.43.63:8090/v1";
 export const DEFAULT_MODEL_DEFINITIONS: readonly ModelDefinition[] = [
   { key: "gpu3090:review", equipment: "gpu3090", displayName: "GPU3090 · Qwen · 직접 연결", provider: "local-direct", baseUrl: local,
     model: "qwen3.8-flash-next", family: "qwen3.8-flash-next", timeoutMs: 60_000, maxTokens: 10_000, concurrency: 2,
-    purposes: ["direct-review", "ai2-direct", "assist-primary", "korean-translation-direct", "relay"] },
+    purposes: ["direct-review", "ai2-direct", "assist-primary", "korean-translation-direct"] },
   { key: "m3:review", equipment: "m3", displayName: "M3 · DeepSeek", provider: "local-direct", baseUrl: "http://100.92.77.66:8010/v1",
     model: "deepseek-v4.1-flash-1017", family: "deepseek-v4.1-flash-1017", timeoutMs: 60_000, maxTokens: 8_000, concurrency: 1,
     purposes: ["human-review", "assist-audit"] },
   { key: "m1:translation", equipment: "m1", displayName: "M1 · Gemma 4 26B", provider: "abcllm", baseUrl: gateway, gatewayLabel: "m1",
-    model: "mlx-community--gemma-4-26b-a4b-it-4bit", family: "gemma4-26b", timeoutMs: 40_000, maxTokens: 8_000, concurrency: 1, purposes: ["product-translate", "reason-translate"] },
+    model: "mlx-community--gemma-4-26b-a4b-it-4bit", family: "gemma4-26b", timeoutMs: 40_000, maxTokens: 8_000, concurrency: 1, purposes: ["product-translate", "reason-translate", "relay"] },
   { key: "supa:review", equipment: "supa", displayName: "Supa · Qwen", provider: "abcllm", baseUrl: gateway, gatewayLabel: "supa",
     model: "Qwen3.8-27B-NVFP4", family: "Qwen3.8-27B-NVFP4", timeoutMs: 60_000, maxTokens: 8_000, concurrency: 4,
     purposes: ["ai1-preset", "product-search-verify"] },
@@ -200,6 +200,30 @@ export const MODEL_PURPOSE_ENV = {
   "product-translate": "PRODUCT_TRANSLATION_MODEL", "product-intro-check": "INTRO_CHECK_MODEL",
   "direct-review": "AUDIT_SECOND_OPINION_MODEL", "relay": "LOCAL_MODEL_RELAY_MODEL",
 } as const;
+/**
+ * A legacy model env names a route, not a first match. A bare name shared by several equipment entries resolves to the one
+ * entry the registry assigns to this purpose (selection, then purposes). A registered equipment label whose model is no longer
+ * registered there resolves to the purpose's current model on that same equipment. Anything else stays unresolved.
+ */
+export function resolvePurposeModel(purpose: string, value: string, env: ModelEnvironment = process.env): ModelDefinition | null {
+  const name = value.trim();
+  try {
+    const exact = resolveRegistryModel(name, env);
+    if (exact) return exact;
+  } catch (error) {
+    if (!(error instanceof Error) || error.message !== "ambiguous_model_identity" || name.startsWith("[")) throw error;
+    const registry = readModelRegistry(env), selected = registry.selections[purpose];
+    const named = registry.models.filter(model => model.model === name);
+    const routed = selected ? named.filter(model => model.key === selected) : named.filter(model => model.purposes.includes(purpose));
+    if (routed.length !== 1) throw error;
+    return routed[0];
+  }
+  const label = /^\[([^\]]+)\] /.exec(name)?.[1]?.toLowerCase();
+  if (!label || !readModelRegistry(env).models.some(model => model.gatewayLabel?.toLowerCase() === label)) return null;
+  let current: ModelDefinition;
+  try { current = modelForPurpose(purpose, env); } catch { return null; }
+  return current.gatewayLabel?.toLowerCase() === label ? current : null;
+}
 export function configuredModelDefinition(purpose: keyof typeof MODEL_PURPOSE_ENV, env: ModelEnvironment = process.env): ModelDefinition {
   env = modelEnvironment(env, purpose);
   const variable = MODEL_PURPOSE_ENV[purpose], key = env[`${variable}_KEY`]?.trim();
@@ -209,7 +233,7 @@ export function configuredModelDefinition(purpose: keyof typeof MODEL_PURPOSE_EN
     return selected;
   }
   const legacy = env[variable]?.trim();
-  return (legacy ? resolveRegistryModel(legacy, env) : null) ?? modelForPurpose(purpose, env);
+  return (legacy ? resolvePurposeModel(purpose, legacy, env) : null) ?? modelForPurpose(purpose, env);
 }
 export function configuredModel(purpose: keyof typeof MODEL_PURPOSE_ENV, env: ModelEnvironment = process.env): string {
   env = modelEnvironment(env, purpose);
@@ -221,11 +245,22 @@ export function configuredModel(purpose: keyof typeof MODEL_PURPOSE_ENV, env: Mo
   }
   const legacy = env[variable]?.trim();
   if (legacy) {
-    const selected = resolveRegistryModel(legacy, env);
+    const selected = resolvePurposeModel(purpose, legacy, env);
     // Unknown gateway model labels and CLI aliases keep their explicit caller identity.
     return selected ? modelRequestName(selected) : legacy;
   }
   return modelRequestName(modelForPurpose(purpose, env));
+}
+/** One route descriptor for a purpose: registry entry, equipment, adapter, wire name and address. */
+export function configuredModelRoute(purpose: keyof typeof MODEL_PURPOSE_ENV, env: ModelEnvironment = process.env) {
+  const definition = configuredModelDefinition(purpose, env);
+  return { routeId: purpose, key: definition.key, equipment: definition.equipment, provider: definition.provider,
+    requestModel: configuredModel(purpose, env), baseUrl: definition.baseUrl ? modelBaseUrl(purpose, env, definition.provider) : null };
+}
+/** Models one relay may forward: its equipment's registry entries for the relay purpose, never another device's same-named model. */
+export function relayModelDefinitions(equipment: string, env: ModelEnvironment = process.env): ModelDefinition[] {
+  return readModelRegistry(env).models.filter(model => model.equipment === equipment && model.purposes.includes("relay")
+    && (model.provider === "local-direct" || model.provider === "abcllm"));
 }
 export function modelFamily(purpose: string, env: ModelEnvironment = process.env): string { return modelForPurpose(purpose, env).family; }
 export function configuredModelForProvider(purpose: keyof typeof MODEL_PURPOSE_ENV, provider: ModelDefinition["provider"], env: ModelEnvironment = process.env): string {
