@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createServer, type ServerResponse } from "node:http";
 import postgres from "postgres";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
-import { eq } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { products } from "@/lib/db/schema";
 import { PROFILE_MODEL } from "@/lib/domain/products/search-profile";
@@ -147,6 +147,13 @@ async function seed(): Promise<ProfileTask> {
   const tasks = await tracked(pendingProfiles(12)), task = tasks.find(task => task.product.id === row.id);
   expect(task).toBeDefined(); if (!task) throw new Error("fixture_seed_not_pending"); return task;
 }
+/** 오래 기다린 순서 줄까지 앞지르도록 — 새로 넣은 제품의 등재 시각을 기존 제품보다 이르게 둔다 */
+async function olderArrivals(count: number): Promise<number[]> {
+  const ids: number[] = [];
+  for (let index = 0; index < count; index++) ids.push((await seed()).product.id);
+  await tracked(db.update(products).set({ createdAt: sql`created_at - interval '1 day'` }).where(inArray(products.id, ids)));
+  return ids;
+}
 const replyBody = () => ({ id: "profile-local", object: "chat.completion", created: 1, model: "served-profile",
   choices: [{ index: 0, message: { role: "assistant", content: '{"keywords_en":["expense tracker"],"keywords_ko":["가계부"]}' }, finish_reason: "stop" }],
   usage: { prompt_tokens: 70, completion_tokens: 20, total_tokens: 90 }, usage_provenance: "upstream_reported" });
@@ -249,7 +256,7 @@ it("resumes its existing reservation after new arrivals push the product outside
   await server(async ({ bodies }) => {
     let requestId = "";
     await custom(task, async lease => { requestId = (await reserve(task, lease)).request.requestId; });
-    for (let index = 0; index < 13; index++) await seed();
+    await olderArrivals(13);
     expect((await pendingProfiles(12)).map(row => row.product.id)).not.toContain(task.product.id);
     const resumed = await pendingProfiles(12, role);
     expect(resumed).toHaveLength(12); expect(resumed[0].product.id).toBe(task.product.id);
@@ -284,7 +291,7 @@ it("does not prioritize a stale owned input or mutate that unused reservation", 
   const task = await seed(); await server(async ({ bodies }) => {
     let requestId = "";
     await custom(task, async lease => { requestId = (await reserve(task, lease)).request.requestId; });
-    for (let index = 0; index < 13; index++) await seed();
+    await olderArrivals(13);
     await db.update(products).set({ tagline: "Changed source while waiting" }).where(eq(products.id, task.product.id));
     const [before] = await admin`SELECT to_jsonb(r) AS row FROM model_capacity_requests r WHERE request_id=${requestId}::uuid`;
     expect((await pendingProfiles(12, role)).map(row => row.product.id)).not.toContain(task.product.id);
@@ -364,7 +371,7 @@ it("settles historical terminal after actual job expiry while mandatory writer a
     const [job] = await admin`SELECT * FROM jobs WHERE name=${jobName}`; expect(Number(job.processed_version)).toBeLessThan(Number(job.requested_version));
   });
 }));
-it("keeps EOF full-C unknown fenced across a new boot and changed source without another POST", exercise(async () => {
+it("keeps EOF full-C unknown fenced across a new boot and changed source without another POST while neighbours keep moving", exercise(async () => {
   const task = await seed(); await server(async ({ bodies, setReply }) => {
     setReply(response => { response.writeHead(200, { "Content-Length": "1000" }); response.write("{"); response.socket?.destroy(); });
     expect(await tick()).toMatchObject({ status: "completed" }); expect(bodies).toHaveLength(1);
@@ -377,8 +384,17 @@ it("keeps EOF full-C unknown fenced across a new boot and changed source without
     const [afterSource] = await admin`SELECT attempts,source_revision FROM product_search_profiles WHERE product_id=${task.product.id}`;
     expect(afterSource).toEqual({ attempts: 0, source_revision: beforeSource.source_revision + 1 });
     await admin`UPDATE product_search_profiles SET error_code=NULL,retry_at=NULL,needs_refresh=true WHERE product_id=${task.product.id}`;
-    expect(await tick()).toMatchObject({ status: "deferred", reason: "model_capacity" }); expect(bodies).toHaveLength(1);
+    // 결과 모를 요청에 묶인 제품은 고르지 않는다 — 예전에는 매 틱 이 머리를 골라 잡 전체가 capacity deferred 로 멈췄다
+    expect((await pendingProfiles(12)).map(row => row.product.id)).not.toContain(task.product.id);
+    expect(await tick()).toMatchObject({ status: "completed", done: true }); expect(bodies).toHaveLength(1);
     expect((await admin`SELECT request_id,state FROM model_capacity_requests`)).toEqual([{ request_id: unknown.request_id, state: "indeterminate" }]);
+    expect((await admin`SELECT attempts,source_revision FROM product_search_profiles WHERE product_id=${task.product.id}`)[0]).toEqual(afterSource);
+    // 뒤의 제품은 남은 자리로 그대로 지어진다. unknown 은 운영 회수 전까지 그대로 남는다
+    setReply(response => { response.end(JSON.stringify(replyBody())); });
+    const neighbour = await seed();
+    expect(await tick()).toMatchObject({ status: "completed", done: true }); expect(bodies).toHaveLength(2);
+    expect((await admin`SELECT keywords_en FROM product_search_profiles WHERE product_id=${neighbour.product.id}`)[0].keywords_en).toEqual(["expense tracker"]);
+    expect((await admin`SELECT state FROM model_capacity_requests WHERE request_id=${unknown.request_id}::uuid`)[0].state).toBe("indeterminate");
     expect((await admin`SELECT attempts,source_revision FROM product_search_profiles WHERE product_id=${task.product.id}`)[0]).toEqual(afterSource);
   });
 }));

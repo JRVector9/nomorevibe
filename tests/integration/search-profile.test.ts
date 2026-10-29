@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { eq, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 
 const { db } = await import("@/lib/db");
 const { crawlCandidates, crawlDocuments, jobs, products, productSearchProfiles, textTranslations } = await import("@/lib/db/schema");
@@ -320,6 +320,38 @@ describe("검색 키워드 잡", () => {
     const thin = await seed("new-thin");
 
     expect((await pendingProfiles(10)).map((task) => task.product.id)).toEqual([thin, rich, waited, recent]);
+  });
+
+  it("새 제품이 계속 들어와도 오래 기다린 제품이 묶음에서 빠지지 않는다", async () => {
+    const old = await seed("old-waiting", { createdAt: sql`now() - interval '10 days'` as unknown as Date });
+    // 우선순위 줄(안 지은 것 안에서 새 제품 먼저)만 보면 이 12건이 매번 앞을 차지한다
+    for (let index = 0; index < 13; index++) await seed(`arrival-${index}`);
+    const batch = (await pendingProfiles(12)).map((task) => task.product.id);
+    expect(batch).toHaveLength(12);
+    // 우선순위 둘 다음 셋째 — 둘씩 동시에 부르므로 둘째 차례에 간다
+    expect(batch[2]).toBe(old);
+    expect(new Set(batch).size).toBe(12);
+  });
+
+  it("실패를 되풀이하는 제품은 오래 기다린 몫만 쓰고, 다시 실패하면 그 몫에서도 뒤로 간다", async () => {
+    const failing: number[] = [];
+    for (let index = 0; index < 8; index++) {
+      const id = await seed(`provider-failing-${index}`, { createdAt: sql`now() - interval '20 days'` as unknown as Date });
+      await db.insert(productSearchProfiles).values({ productId: id, sourceHash: "old", errorCode: "rate_limit", attempts: 40,
+        retryAt: sql`now() - interval '1 minute'`, updatedAt: sql`now() - interval '19 days'` });
+      failing.push(id);
+    }
+    const fresh: number[] = [];
+    for (let index = 0; index < 10; index++) fresh.push(await seed(`fresh-${index}`));
+    const first = (await pendingProfiles(12)).map((task) => task.product.id);
+    // 4건은 오래 기다린 실패, 8건은 우선순위 줄의 안 지은 것 — 실패가 묶음을 채우지 않는다
+    expect(first.filter((id) => failing.includes(id))).toEqual(failing.slice(0, 4));
+    expect(first.filter((id) => fresh.includes(id))).toHaveLength(8);
+    // 다시 실패하면 할 일이 된 시각이 재시도 시각으로 밀려 같은 넷이 다음 묶음을 차지하지 않는다
+    await db.update(productSearchProfiles).set({ updatedAt: sql`now()`, retryAt: sql`now() - interval '1 second'` })
+      .where(inArray(productSearchProfiles.productId, failing.slice(0, 4)));
+    const next = (await pendingProfiles(12)).map((task) => task.product.id);
+    expect(next.filter((id) => failing.includes(id))).toEqual(failing.slice(4, 8));
   });
 
   it("감사가 공개분을 다시 돌아도 방금 바뀐 메모가 먼저 기다린 갱신을 앞지르지 않는다", async () => {

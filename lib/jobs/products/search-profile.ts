@@ -57,9 +57,11 @@ export async function writeSearchProfiles(ctx: JobContext<null>): Promise<JobOut
     const startedAt = Date.now();
     const remaining = () => TICK_MS - (Date.now() - startedAt);
     let written = 0, reused = 0, failed = 0, blocked = "", inARow = 0;
+    // 이번 틱에 이미 집은 제품은 다시 고르지 않는다 — 적지 못하고 돌아온(skipped·쓰기 경합) 머리가 남은 틱을 같은 조회로 맴돌게 하지 않는다
+    const visited = new Set<number>();
 
     while (!signal.aborted && ctx.hasBudget() && remaining() >= MIN_CALL_MS) {
-      const tasks = await pendingProfiles(BATCH, roleLease);
+      const tasks = await pendingProfiles(BATCH, roleLease, [...visited]);
       if (tasks.length === 0) {
         ctx.log("search_profile.done", { written, reused, failed, drained: true });
         return { done: true };
@@ -70,6 +72,7 @@ export async function writeSearchProfiles(ctx: JobContext<null>): Promise<JobOut
           for (let index = next++; index < tasks.length; index = next++) {
             if (blocked || signal.aborted || !ctx.hasBudget() || remaining() < MIN_CALL_MS) return;
             const task = tasks[index];
+            visited.add(task.product.id);
             const evidence = profileEvidence(task.product, task.reviewerNote);
             // 지은 지 30일이 지나 다시 집었는데 글이 그대로다 — 본 시각만 새로 적는다
             if (task.profile && !task.profile.errorCode && task.profile.sourceHash === profileHash(evidence)
