@@ -32,6 +32,13 @@
 - G3 시험: 경로마다 소유자를 바꾸던 `lstatSync` 흉내 대신 임시 디렉터리(`os.tmpdir()`)를 신뢰 루트로 주입했다. 루트 아래 symlink·group-writable·다른 소유자(주입 판정, 65534 흉내)·루트 밖 경로를 거절하는 시험과, 운영 기본값이 상위 디렉터리 하나라도 65534로 보이면 거절하는 시험을 더했다. 상위를 65534로 흉내 낸 실행에서 옛 시험은 13/13 실패, 새 시험은 통과했다(임시 사본, 커밋 안 함).
 - 지정 7파일 Vitest 38 → 40 PASS(시험 2건 추가). ops-runner·admin-models-ops 11파일/60 PASS. `next typegen` 뒤 `tsc --noEmit` 0. 병합해 들어온 `tests/release-order-capacity-control.test.ts`의 spawnSync env 타입 오류는 `NODE_ENV: "test"`를 넣어 고쳤다(대상 sh는 NODE_ENV를 읽지 않는다). 바뀐 파일 ESLint 0.
 
+## 끝남 (2026-10-29, 작업 공간 `xaegis/13018003`, `xaegis/da3bd4a3`·origin/main `c7dad56b` 병합)
+- H1 대표 실측 결함: 운영 이미지에 `scripts/ops`가 없다(`.dockerignore` 7행, 199a3ebb·main 같음). 옛 `capacity-control.sh`는 `/app`에서 `pipeline-control.ts`를 실행해 `ERR_MODULE_NOT_FOUND`로 실패했다. 이 때문에 확정본 2단계 (b)와 18단계가 막혔고, 18단계에서 막히면 DRAIN이 남는다. `capacity-control.sh`에 `stage <tar sha256>`를 더했다. 쓰기 전에 tar sha256과 tar 안 lock이 이미지 lock과 같은지 확인하고, 어긋나면 아무것도 쓰지 않는다. 같은 tar면 다시 쳐도 그대로 두고, 풀기는 임시 폴더에서 한 뒤 옮긴다. `node_modules`는 이미지 심링크다. `status`·`routes`·`open`은 스테이징한 소스에서만 실행한다. `.dockerignore` 변경안은 쓰지 않았다(떠 있는 컨테이너에 효과 없음).
+- H2 문서에서 `/app/scripts/ops`(컨테이너 안 직접 경로)를 전제한 곳을 고쳤다. 확정본 2절 3번·표 3·2단계 (b)·18단계(C5 재스테이징 + `in-container.sh open`)·5절 실패 경로, 실행서 표 0·C5·D10·B-1, 관문 문서 6절 3·8번이다.
+- H3 실제 DB 통합 시험으로 접수 CLI 미리 보기 결함(READ ONLY TX의 `FOR SHARE` → `25006`, 미리 보기·`--execute` 모두 exit 1)을 찾아 고쳤다(`readWriterFence`). 새 통합 시험 `tests/integration/ops-runner-drain-handoff.test.ts`를 넣었다.
+- 시험: 지정 7파일 40 → 49, 관련 18파일 175 → 184, 통합 4파일/17 PASS(새 파일 2건 포함, 고치기 전 1/2 실패), tsc·ESLint 0.
+- 범위 밖이라 고치지 않은 같은 전제: `docs/operations/2026-10-17-pipeline-control-runbook.md:9`, `docs/runbooks/uptime-gate-transition.md:31`, `docs/runbooks/uptime-split.md:66`은 「maintenance 컨테이너에서 `node --import tsx scripts/ops/…`」를 실행 위치로 적는다. 운영 이미지에서는 같은 이유로 실패한다. 다른 구역 문서라 여기서는 기록만 한다.
+
 ## 남음 (대표 실행)
 - 확정본 1~20단계. 0143(+0144) 적용·확인 → Supa(OPEN에서 시작, DRAIN 인계로 끝) → M1(인계 DRAIN 안, D2·D10 생략) → 미확인 0 → job-pause → deploy plan(--migration-verified)·run → M1 relay 재설치 → OPEN → job-resume → verify-prod-revision.
 - 권장: 이 브랜치를 PR로 main에 병합해 배포 `TARGET`에 넣는다(관리 화면 handoff 표시). 넣지 않아도 안전에는 영향이 없다.

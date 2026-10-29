@@ -18,7 +18,7 @@
 | 원 relay 요청 | `6571d6c8-002f-4f5f-b399-47e40876ee43` |
 | Supa 요청 | `65f8c399-ff4b-47bc-8f4d-6e4a682cf6a7` (crawl-agent-review, supa `vllm.service`) |
 | 도구 위치 | 처음 작성 브랜치는 `xaegis/4ed4ea33`(기준 origin/main `75b8aa31`, push 안 함)이다. 확정 순서에서는 이 브랜치를 포함하고 runner 인계·접수 CLI를 더한 `xaegis/7b7a2d23`을 쓴다: `SRC=/home/ubuntu/.xaegis-hub/data/local-agent/worktrees/7b7a2d23-0c49-41f3-9665-1fc4e53ff9a0`, 아래 `SHA`와 B절 `T`는 `git -C "$SRC" rev-parse xaegis/7b7a2d23` |
-| 유지보수 컨테이너 | m3ultra Swarm 앱 `app-navigate-neural-system-yf43c7` |
+| 유지보수 컨테이너 | m3ultra Swarm 앱 `app-navigate-neural-system-yf43c7`. **이미지 `/app`에는 `scripts/ops`가 없다**(`.dockerignore` 7행, 199a3ebb·main 같음. `/app`에서 `node … scripts/ops/…`는 `ERR_MODULE_NOT_FOUND`). 컨테이너 안의 모든 단계는 C5로 `/tmp`에 스테이징한 검토 소스에서만 실행한다(`in-container.sh`, `capacity-control.sh`) |
 | 직접 primary | `100.99.209.55:5432/nomorevibe`. 10/28 0140~0142를 적용한 경로다. 컨테이너 `DATABASE_URL`의 계정을 쓰고 host/port/db만 바꾼다(`in-container.sh`). URL은 출력하지 않는다 |
 
 검토할 스크립트의 SHA-256(브랜치 커밋 기준):
@@ -116,6 +116,7 @@ sha256sum "$W"/pre/bundle-*.json
 
 ### C5. 유지보수 컨테이너에 검토한 소스 올리기
 - 위치: gpu3090 → m3ultra 컨테이너. 컨테이너 `/tmp`에만 쓴다. 운영 데이터는 바꾸지 않는다
+- 이유: 운영 이미지에는 `scripts/ops`가 없다(표 0 「유지보수 컨테이너」). `in-container.sh`의 모든 명령은 여기서 푼 `/tmp/nmv-release-29877f65/src`(검토한 `SHA`, `node_modules`는 이미지 `/app/node_modules` 심링크)에서 실행한다. 컨테이너가 바뀌면(배포·재시작) 이 스테이징은 사라지므로 새 CID에 C5를 다시 한다
 - 명령:
 ```sh
 DK='env PATH=/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin docker'
@@ -197,7 +198,7 @@ xa-ssh m3ultra "$DK exec -i $CID sh -s -- receipt $RUN $PLAN_SHA <m3 sha> <mini 
 ### D9. 판 확인
 D2 이후 다른 쓰기가 끼어들지 않았는지 확인한다. D1과 같은 status를 보고 capacity가 여전히 `draining`, epoch/revision이 그대로인지 본다.
 
-### D10. OPEN (자기가 건 DRAIN만 복원) — 확정 순서에서는 하지 않는다(배포 뒤 release-order 18단계)
+### D10. OPEN (자기가 건 DRAIN만 복원) — 확정 순서에서는 하지 않는다(배포 뒤 release-order 18단계: 새 컨테이너에 C5를 다시 스테이징한 뒤 같은 `in-container.sh open`)
 ```sh
 xa-ssh m3ultra "$DK exec -i $CID sh -s -- open 1 7 $OP release-29877f65-done" < "$W/in-container.sh"
 xa-ssh m3ultra "$DK exec -i $CID sh -s -- open 1 7 $OP release-29877f65-done --execute" < "$W/in-container.sh"
@@ -216,6 +217,7 @@ xa-ssh m3ultra "$DK exec -i $CID sh -s -- open 1 7 $OP release-29877f65-done --e
 2. runner는 adapter를 `execFile("/usr/bin/python3", …)`로 고정 경로에서 실행한다(`lib/operations/ops-runner/operator.ts:77`). adapter는 모든 장비에 `['/usr/bin/ssh','-o','BatchMode=yes',…, target['host'], '/usr/bin/python3 -I -']`로 접속한다(`scripts/ops/admin-models-boundary-adapter.py:127-128`).
 3. 설계상 maintenance에는 SSH 키·sudo·물리 실행 모듈을 주지 않는다(`docs/operations/admin-models-ops-runner.md:4`). 컨테이너에 키를 넣는 것은 계약 위반이다.
 4. 그래도 실행하면 execFile이 실패해 stdout이 빈 값이 되고, `ops_runner_adapter_outcome_unknown` → prepare `blocked`로 끝난다. DRAIN 전이므로 운영 영향은 없다.
+5. 이미지에는 runner CLI(`scripts/ops/admin-models-ops-runner.ts`)와 adapter 자체가 없다. `.dockerignore` 7행이 `scripts/ops`를 빌드 문맥에서 뺀다. `/app`에서 실행하면 `ERR_MODULE_NOT_FOUND`로 시작조차 못 한다.
 
 신뢰 경로 검사(`operator.ts:29-40`, adapter `private()`)는 막는 원인이 아니다. 모든 경로 구성 요소가 symlink가 아니고, 소유자가 0 또는 실행 uid이며, group/other 쓰기가 없으면 통과한다. 허브 샌드박스에서 난 `ops_runner_untrusted_path`는 user namespace가 `/`·`/home`을 overflow uid로 보이게 해서 생긴 것이다. 실제 uid 매핑 셸에서는 생기지 않는다. 검사를 느슨하게 하는 코드 수정은 보호를 약하게 하므로 하지 않았다.
 

@@ -113,13 +113,13 @@
 2. **미확인 2건 단건 복구**는 일반 배포와 별도이고 선행 조건입니다. 경로는 요청마다 다릅니다. Supa `65f8c399`는 ops-runner(실행서 B절)로 풉니다. 운영자 셸 CLI로 접수하고, runner가 DRAIN을 건 뒤 끝에서 그 DRAIN을 인계합니다. M1 `29877f65`는 PR721 교체 경계 해제(`model-replaced-provider-boundary-release.ts`, 실행서 A절, 0143 필요)로, 인계받은 DRAIN 안에서 풉니다. M1의 해제 경로는 실행서 A절(PR721)로 정해져 있으므로 10-28 문서의 `model-provider-boundary-release.ts --relay-state-dir` 순서를 이 해제에 쓰지 않습니다.
    - S3에서 두 요청이 `withdrawn`이 되고 활성 0인지 확인합니다.
    - 증거가 없으면 blocked로 남기고 배포를 진행하지 **않습니다**. 이 상태에서 `run`은 `model_replacement_gate`에서 멈춥니다.
-3. **모델 접수 DRAINING**: 확정 순서에서는 2번의 Supa runner가 건 DRAIN이 인계되어 이미 `draining`입니다. 새로 DRAIN하거나 OPEN했다가 다시 DRAIN하지 않습니다. 2번 없이 배포만 하는 다른 상황이라면 `pipeline-control capacity mode --to=draining --from-mode=open --expect-epoch=<S0 epoch> --expect-revision=<S0 revision> --operator=<이름> --reason="<배포 SHA> 모델 보유 앱 교체" --execute`(`docs/operations/2026-10-17-pipeline-control-runbook.md`)를 씁니다.
+3. **모델 접수 DRAINING**: 확정 순서에서는 2번의 Supa runner가 건 DRAIN이 인계되어 이미 `draining`입니다. 새로 DRAIN하거나 OPEN했다가 다시 DRAIN하지 않습니다. 2번 없이 배포만 하는 다른 상황이라면 유지보수 컨테이너에 실행서 C5로 스테이징한 뒤 그 소스에서(`in-container.sh drain`과 같은 경로, `/app`에는 `scripts/ops`가 없다) `pipeline-control capacity mode --to=draining --from-mode=open --expect-epoch=<S0 epoch> --expect-revision=<S0 revision> --operator=<이름> --reason="<배포 SHA> 모델 보유 앱 교체" --execute`(`docs/operations/2026-10-17-pipeline-control-runbook.md`)를 씁니다.
 4. **job-pause**: R1에서 아직 경보인 잡만 4절 방식으로 하나씩 멈춥니다(기본 4개: `product-translate`·`product-tagline-ko`·`crawl-tagline`·`product-search-profile`, 그다음 조건부).
    - 잡마다 S7에서 `job-pause` 행과 `after_nb`를 확인하고, S1에서 `paused=true`를 확인합니다.
 5. **R1 재확인**: `overall`이 `ok`여야 합니다. 경보가 남았으면 그 단계를 3절에서 찾고, pause 대상이 아니면 배포를 중단합니다.
 6. `npm run deploy -- plan --sha <SHA> --migration-verified --out <새 절대 경로>` → `npm run deploy -- run --plan <PLAN> --plan-sha <PLAN_SHA256>` (`docs/operations/deployment-fast-path.md`). 배포 대상이 0143·0144를 포함하므로 `--migration-verified`가 없으면 plan이 `database_changes_require_migration_verified`로 멈춥니다. 관측 예약 영수증도 확인합니다.
 7. **M1 relay 재설치**: `docs/operations/2026-10-29-m1-relay-model-handoff.md`의 argv(같은 SHA). launchd readback과 `/v1/models` id가 일치하는지 확인합니다.
-8. **접수 OPEN**: 배포 뒤 새 유지보수 컨테이너에서 `scripts/ops/release-order/capacity-control.sh`의 `routes`를 확인하고 `open <epoch> <revision> …`(dry-run → `--execute`)을 실행합니다(확정본 18단계). 이 명령이 `deferred_routes`로 거절되면 모델 이름 고정 문제가 아직 남은 것입니다. 이 경우 재개하지 말고 원인을 확인합니다.
+8. **접수 OPEN**: 운영 이미지에는 `scripts/ops`가 없습니다(`.dockerignore` 7행). 그래서 배포 뒤 새 유지보수 컨테이너에 검토한 SHA의 tar를 `/tmp`로 다시 스테이징(실행서 C5, `capacity-control.sh stage`)한 뒤, `capacity-control.sh routes`로 route 표를 확인하고 `in-container.sh open <epoch> <revision> …`(dry-run → `--execute`)을 실행합니다(확정본 18단계). `/app`에서 `scripts/ops/…`를 직접 실행하지 않습니다(`ERR_MODULE_NOT_FOUND`). 이 명령이 `deferred_routes`로 거절되면 모델 이름 고정 문제가 아직 남은 것입니다. 이 경우 재개하지 말고 원인을 확인합니다.
 9. **resume**: 다음 절의 순서와 조건을 따릅니다.
 
 ### resume 순서와 정상 복귀 조건

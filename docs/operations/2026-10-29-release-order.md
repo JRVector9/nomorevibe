@@ -22,9 +22,9 @@
 
 ## 2. 해소 방법 (구현, 브랜치 `xaegis/7b7a2d23`)
 
-1. **운영자 셸 job 접수** `scripts/ops/admin-models-ops-submit.ts` — `request-release`만 받는다. 기본은 READ ONLY 미리 보기다(`previewModelOpsCommand`: writer fence, 같은 ID 충돌, 미완료 job, 대상 `indeterminate` 여부와 group·owner). `--execute`는 웹과 **같은** `submitModelOpsCommand`를 부르므로 advisory lock 7219401, writer fence, 미완료 job 직렬화, indeterminate 재확인, append-only 감사 행이 모두 그대로다. 웹 로그인으로 인증된 것이 아니므로 감사 행의 `actor_kind`는 `pipeline-control` CLI처럼 비운다(NULL). 응답이 불명확하면 같은 `--id`로 다시 실행한다. 기존 job을 돌려받을 뿐 새로 만들지 않는다.
+1. **운영자 셸 job 접수** `scripts/ops/admin-models-ops-submit.ts` — `request-release`만 받는다. 기본은 READ ONLY 미리 보기다(`previewModelOpsCommand`: writer fence, 같은 ID 충돌, 미완료 job, 대상 `indeterminate` 여부와 group·owner). `--execute`는 웹과 **같은** `submitModelOpsCommand`를 부르므로 advisory lock 7219401, writer fence, 미완료 job 직렬화, indeterminate 재확인, append-only 감사 행이 모두 그대로다. 웹 로그인으로 인증된 것이 아니므로 감사 행의 `actor_kind`는 `pipeline-control` CLI처럼 비운다(NULL). 응답이 불명확하면 같은 `--id`로 다시 실행한다. 기존 job을 돌려받을 뿐 새로 만들지 않는다. 미리 보기는 잠그지 않는 fence 읽기(`readWriterFence`)를 쓴다. 이전 판은 READ ONLY 트랜잭션 안에서 `FOR SHARE`로 fence를 잠가 PostgreSQL이 `25006`으로 거절했다. 그래서 미리 보기와 `--execute`(미리 보기를 먼저 부른다)가 모두 exit 1 `ops_submit_unconfirmed_readback_required`로 끝났다. 2026-10-29 실제 DB 통합 시험(`tests/integration/ops-runner-drain-handoff.test.ts`)으로 찾아 고쳤다. 실제 접수(`submitModelOpsCommand`)는 그대로 잠금 아래 다시 확인한다.
 2. **DRAIN 인계** — operator profile에 `finalAdmission:"draining"`을 넣으면 마지막 단계가 `open` 대신 `handoff`가 된다. handoff는 capacity를 바꾸지 않는다. 같은 트랜잭션에서 다음을 확인하고 기록한다. (a) writer fence, (b) 이 job이 직접 커밋한 `ops-runner-control <id>:draining` 감사의 핀이 runner가 저장한 drained 핀과 같다(자기 DRAIN만 인계), (c) `model_capacity_control` 행을 `FOR UPDATE`로 잠근 현재 핀이 그 핀과 정확히 같고 `draining`이다. 그다음 `ops-runner-control <id>:handoff` 감사 행을 한 번만 쓴다. 다른 사람이 그사이 control을 바꿨으면 `handoff_drain_changed`, 자기 DRAIN이 아니면 `handoff_drain_not_owned`로 멈춘다. profile은 prepare 때 hash로 고정되므로 시작한 뒤에는 바꿀 수 없다(`ops_runner_profile_changed`). 접수(admission) job에는 쓸 수 없다. `build-manifest.py --final-admission=draining`이 이 값을 profile에 넣는다. 관리 화면 카드는 마지막 단계를 「DRAIN 유지·다음 절차 인계」로 보여 주고, 「이 작업은 끝나도 접수를 DRAIN으로 둡니다」라는 안내를 단다.
-3. **배포 뒤 OPEN 실행기** `scripts/ops/release-order/capacity-control.sh` — 배포가 유지보수 컨테이너를 교체하면 M1용 `/tmp` 스테이징이 사라진다. 그래서 새 컨테이너의 `/app`(배포 SHA)에서 정식 `pipeline-control`의 `status`·`routes`·`open`(기본 dry-run)만 실행하는 실행기를 만들었다. `--allow-deferred-routes`는 받지 않는다.
+3. **route 확인·OPEN 실행기** `scripts/ops/release-order/capacity-control.sh` — **운영 이미지에는 `scripts/ops`가 없다.** `.dockerignore` 7행 `scripts/ops`가 빌드 문맥에서 빼기 때문이다(199a3ebb·main 같음). 대표 실측으로 m3ultra 유지보수 컨테이너에서 `/app` 기준 실행이 `ERR_MODULE_NOT_FOUND '/app/scripts/ops/pipeline-control.ts'`로 실패했고 `/app/scripts/ops` 폴더가 없었다. 그래서 이 실행기도 실행서 `in-container.sh`처럼 **`/tmp` 스테이징한 검토 소스에서만** 실행한다. `stage <tar sha256>`는 `/tmp/nmv-release-order/src.tar`(C5와 같은 `git archive` tar)의 sha256과, tar 안 `package-lock.json`이 이미지 `/app/package-lock.json`과 같은지를 **쓰기 전에** 확인한다. 그다음 한 번만 `/tmp/nmv-release-order/src`에 풀고 `node_modules`는 이미지 `/app/node_modules` 심링크로 둔다. 하나라도 어긋나면 아무것도 쓰지 않고 멈춘다(`source_tar_sha_mismatch`·`package_lock_differs_from_image`·`source_tar_unusable`·`image_app_missing`). 같은 tar로 다시 치면 `existing:true`로 그대로 둔다. `status`·`routes`·`open`(기본 dry-run)은 스테이징이 없으면 `source_not_staged`로 거절한다. 실행할 때마다 lock과 심링크를 다시 확인한다. `--allow-deferred-routes`는 받지 않는다. `.dockerignore`를 바꿔 이미지에 넣는 안은 쓰지 않았다. 이미 떠 있는 컨테이너(2단계의 199a3ebb)에는 효과가 없기 때문이다. 배포 뒤 OPEN(18단계)은 새 컨테이너에 C5를 다시 스테이징한 뒤 `in-container.sh open`으로 한다.
 
 M1 쪽 코드는 바꾸지 않았다. M1 plan은 `capacity_draining`만 검사하므로(`assemble.ts`) 인계받은 DRAIN에서 그대로 plan을 만들 수 있다.
 
@@ -43,11 +43,11 @@ M1 쪽 코드는 바꾸지 않았다. M1 plan은 `capacity_draining`만 검사�
 | 파일 | SHA-256 |
 | --- | --- |
 | `scripts/ops/admin-models-ops-submit.ts` (신규) | `b9f2bb1a8c56cc4eecb86c8ec206a3f38f76830c9d00711b3c9ffc9174ba94ea` |
-| `scripts/ops/release-order/capacity-control.sh` (신규) | `3ae03fe3f2904d384e762db2821be1d04b9a800e875415fd25ced204e59adb62` |
+| `scripts/ops/release-order/capacity-control.sh` (신규, `/tmp` 스테이징판. 옛 `3ae03fe3…`판은 `/app/scripts/ops`를 전제해 운영 이미지에서 실패한다) | `92d59f78927f5fbb983eb309ea4d9aa3c2a3e6f5c44eeade29f08cc5685f4c5a` |
 | `scripts/ops/release-65f8c399/build-manifest.py` (변경) | `1d974717b4b6b45ffa1e6119f05edfca003cb217dcb92feafbf26e692c2285c7` |
-| `lib/operations/ops-runner/operator.ts` (변경) | `0747b9dd38e2a629857cf8c6e7b3d67b9d9b91ed88535ee635555b7bb2fc17e9` |
+| `lib/operations/ops-runner/operator.ts` (변경, da3bd4a3 신뢰 루트 인자 포함. 7b7a2d23판은 `0747b9dd…`) | `600eab9327eed9db4968973165e322b58517ba7ac903fdf6b414c3b971ec1270` |
 | `lib/operations/ops-runner/control.ts` (변경) | `e152b09a1594f2298e7f2a2fc76b0e0a3fff3d0a89f9bf7e443f747509f22c92` |
-| `lib/operations/ops-runner/repository.ts` (변경) | `cbb68dafe697b7300ab0594924b0dd4792ac06b92bb655f4af223719e8b9564f` |
+| `lib/operations/ops-runner/repository.ts` (변경, 미리 보기 fence 읽기 수정. 이전 `cbb68daf…`판은 미리 보기·`--execute`가 항상 exit 1) | `b09639e60505a516ac14970b76a1fa58ccfacb8034e76afb9664c162e17d5142` |
 | `lib/operations/ops-runner/runner.ts` (변경) | `1ca48790e752655243b06c8035947066b498fd84ae8aa0defddbb15c7c99820d` |
 | `lib/operations/ops-runner/contract.ts` (변경) | `0fb66a9c36fc65a544d892af2ce67000c9357f89a31659311b98e3b6e1aebfb3` |
 | `scripts/ops/admin-models-ops-runner.ts` (main 그대로) | `78df32f4cbaeef344dc4a09a784cb6523306f04fc54b15cb27f666531e271034` |
@@ -71,7 +71,15 @@ SELECT (SELECT count(*) FROM drizzle.__drizzle_migrations) AS applied,
 
 ### 2. OPEN인 상태에서 사전 확인 (쓰기 0)
 - 위치: gpu3090 셸 → m3ultra 유지보수 컨테이너, crawler-m3
-- 명령: (a) `xa-ssh m3ultra "$DK exec -i $CID sh -s -- status" < "$W/in-container.sh"`를 실행해 capacity `open`, `EPOCH0`·`REV0`를 적는다(`$W`·`$CID`·`/tmp` 스테이징은 실행서 C1·C5의 것이다. 그사이 컨테이너가 바뀌어 CID가 다르면 C5부터 다시 한다). (b) 먼저 `git -C "$SRC" show "$REL:scripts/ops/release-order/capacity-control.sh" > "$W/capacity-control.sh"`로 받고 sha256이 표 3과 같은지 본다. 그다음 `xa-ssh m3ultra "$DK exec -i $CID sh -s -- routes" < "$W/capacity-control.sh"`를 실행한다. 현재 이미지 env 기준으로 serving·unused가 아닌 route 수를 적는다. (c) 관문 문서 S0을 실행해 `job_batch_mode`를 확인한다. (d) S3을 실행해 미확인이 정확히 2건(29877f65·65f8c399)이고 다른 활성이 0인지 확인한다. (e) 관문 문서 R1을 실행해 경보 단계를 표로 남긴다(관문 문서 6절 1번).
+- 명령: (a) `xa-ssh m3ultra "$DK exec -i $CID sh -s -- status" < "$W/in-container.sh"`를 실행해 capacity `open`, `EPOCH0`·`REV0`를 적는다(`$W`·`$CID`·`/tmp` 스테이징은 실행서 C1·C5의 것이다. 그사이 컨테이너가 바뀌어 CID가 다르면 C5부터 다시 한다). (b) route 판정. 이미지에는 `scripts/ops`가 없으므로 C5의 같은 `$W/src.tar`(`$TAR_SHA`)를 `capacity-control.sh`용 `/tmp/nmv-release-order`에 한 번 더 스테이징한 뒤 `routes`를 실행한다(아래 블록). 출력의 `[capacity routes]` 표에서 마지막 열(status)이 `serving`·`unused`가 아닌 행 수를 적는다(`NONSERVING0`). 이 수는 같은 스테이징 소스와 이 컨테이너 env로 OPEN dry-run을 하면 나올 `deferred_routes:N`과 같은 판정이다(`statusRouteContracts`와 OPEN의 `routesFor`가 같은 `modelRouteContracts`·`usedModelRoutes`를 쓴다). (c) 관문 문서 S0을 실행해 `job_batch_mode`를 확인한다. (d) S3을 실행해 미확인이 정확히 2건(29877f65·65f8c399)이고 다른 활성이 0인지 확인한다. (e) 관문 문서 R1을 실행해 경보 단계를 표로 남긴다(관문 문서 6절 1번).
+```sh
+git -C "$SRC" show "$REL:scripts/ops/release-order/capacity-control.sh" > "$W/capacity-control.sh"; sha256sum "$W/capacity-control.sh"   # 표 3과 같아야 한다
+xa-ssh m3ultra "$DK exec -i $CID sh -c 'umask 077 && mkdir -p /tmp/nmv-release-order && cat > /tmp/nmv-release-order/src.tar && sha256sum /tmp/nmv-release-order/src.tar'" < "$W/src.tar"
+xa-ssh m3ultra "$DK exec -i $CID sh -s -- stage $TAR_SHA" < "$W/capacity-control.sh"     # {"staged":…,"lock":"same_as_image"}
+xa-ssh m3ultra "$DK exec -i $CID sh -s -- routes" < "$W/capacity-control.sh" | tee "$W/pre/routes.txt"
+awk '/^\[capacity routes\]/{t=1;next} t&&NF&&$1!="route"{n++;if($NF!="serving"&&$NF!="unused"){d++;print "non-serving:",$0}} END{print "routes",n+0,"non_serving",d+0}' "$W/pre/routes.txt"
+```
+- (b)의 판단: 원격 sha256이 `$TAR_SHA`와 같고 stage가 `lock:"same_as_image"`를 내야 한다. `package_lock_differs_from_image`·`source_tar_sha_mismatch`이면 아무것도 쓰이지 않은 것이다. 멈추고 tar와 이미지를 확인한다. 옛 `capacity-control.sh`(`3ae03fe3…`)나 `/app`에서 직접 `node … scripts/ops/pipeline-control.ts`를 치면 `ERR_MODULE_NOT_FOUND`가 난다. 그 결과를 route 판정으로 읽지 않는다.
 - (e)의 판단: 관문 문서 3절에서 pause 대상(「예」·조건부)이거나 first·second(DRAIN의 held로 처리)인 경보는 시작을 막지 않는다. 생존·lane·scheduler, fetch·judge·publish·evidence 등 「아니오」인 경보가 있으면 시작하지 않는다. 그 상태로 진행하면 해제 뒤 14단계에서 배포가 막혀 DRAIN만 남는다.
 - 성공: (c)가 `legacy`다(아니면 14단계의 job-pause를 쓸 수 없다. 관문 문서 2절 ①을 따른다). (d)의 미확인이 그 2건뿐이다. (e)에 「아니오」인 경보가 없다.
 - 실패 시: 미확인이 더 있으면 그 요청이 없어지기 전에는 배포 관문을 통과할 수 없다. 이 순서를 시작하지 않는다. (b)에서 non-serving route가 있으면 **배포 전 OPEN이 거절될 수 있다는 뜻**이다. 그 경우 아래 실패 경로의 「배포 전 OPEN」을 쓸 수 없고, 9~19단계를 끝까지 이어야만 OPEN할 수 있다. 이 사실을 알고 시작할지 대표가 정한다.
@@ -177,17 +185,24 @@ xa-key exec DOKPLOY_API_KEY=gpu3090/dokploy -- env NMV_DEPLOY_SSH_USER=jr npm ru
 - 성공: launchd readback이 `state = running`과 새 pid를 보인다. `/v1/models` id가 `mlx-community--gemma-4-26b-a4b-it-4bit`이다. plist의 `LOCAL_MODEL_RELAY_VERSION`이 `TARGET`이다.
 - 실패 시: bootout 뒤 bootstrap이 실패하면 relay가 없는 상태다. backup으로 되돌릴지는 대표가 판단한다. capacity는 DRAIN이므로 M1 요청은 들어오지 않는다.
 
-### 18. [승인] 접수 OPEN
+### 18. [승인] 접수 OPEN — 새 컨테이너에 C5 재스테이징 + `in-container.sh open`
 - 위치: gpu3090 → **배포 뒤 새** m3ultra 유지보수 컨테이너
+- 전제: 배포가 유지보수 컨테이너를 교체했으므로 2단계·C5의 `/tmp` 스테이징은 없다. 새 이미지에도 `scripts/ops`는 없다(`.dockerignore` 7행). 그래서 `/app`에서 직접 실행하지 않고, **실행서 C5를 새 컨테이너에 다시 한다**(같은 `$W/src.tar`·`$TAR_SHA`, 표 3의 `REL`). `REL`이 배포 `TARGET`과 같은 main SHA이므로 tar의 `package-lock.json`은 새 이미지의 것과 같다. 다르면 두 stage가 `package_lock_differs_from_image`로 아무것도 쓰지 않고 멈춘다. 그때는 OPEN하지 않고 DRAIN을 유지한 채 `REL`·`TARGET`을 다시 확인한다.
+- OPEN은 실행서 D10과 같은 `in-container.sh open`(정식 `pipeline-control capacity mode --to=open --from-mode=draining` CAS, 기본 dry-run, 허용 플래그 없음)으로 한다. route 표는 `capacity-control.sh routes`로 같은 스테이징 소스·새 컨테이너 env에서 본다.
 ```sh
-NCID=$(xa-ssh m3ultra $DK ps -q --no-trunc --filter label=com.docker.swarm.service.name=app-navigate-neural-system-yf43c7)   # 정확히 1줄
-xa-ssh m3ultra "$DK exec -i $NCID sh -s -- status" < "$W/capacity-control.sh"        # draining, EPOCH1·REV1 확인
-xa-ssh m3ultra "$DK exec -i $NCID sh -s -- routes" < "$W/capacity-control.sh"        # serving·unused 밖 route 0 확인
-xa-ssh m3ultra "$DK exec -i $NCID sh -s -- open $EPOCH1 $REV1 <OP> release-order-20261029-open" < "$W/capacity-control.sh"
-xa-ssh m3ultra "$DK exec -i $NCID sh -s -- open $EPOCH1 $REV1 <OP> release-order-20261029-open --execute" < "$W/capacity-control.sh"
+NCID=$(xa-ssh m3ultra $DK ps -q --no-trunc --filter label=com.docker.swarm.service.name=app-navigate-neural-system-yf43c7); echo "$NCID"   # 정확히 1줄, 2단계의 $CID와 다르다
+xa-ssh m3ultra "$DK exec -i $NCID sh -c 'umask 077 && mkdir -p /tmp/nmv-release-29877f65 && cat > /tmp/nmv-release-29877f65/src.tar && sha256sum /tmp/nmv-release-29877f65/src.tar'" < "$W/src.tar"
+xa-ssh m3ultra "$DK exec -i $NCID sh -s -- stage $TAR_SHA" < "$W/in-container.sh"          # C5 재스테이징: {"staged":…,"lock":"same_as_image"}
+xa-ssh m3ultra "$DK exec -i $NCID sh -s -- status" < "$W/in-container.sh"                  # draining, EPOCH1·REV1 확인
+xa-ssh m3ultra "$DK exec -i $NCID sh -c 'umask 077 && mkdir -p /tmp/nmv-release-order && cat > /tmp/nmv-release-order/src.tar && sha256sum /tmp/nmv-release-order/src.tar'" < "$W/src.tar"
+xa-ssh m3ultra "$DK exec -i $NCID sh -s -- stage $TAR_SHA" < "$W/capacity-control.sh"
+xa-ssh m3ultra "$DK exec -i $NCID sh -s -- routes" < "$W/capacity-control.sh" | tee "$W/routes-after-deploy.txt"   # 2단계 (b)의 awk로 non_serving 0 확인
+xa-ssh m3ultra "$DK exec -i $NCID sh -s -- open $EPOCH1 $REV1 <OP> release-order-20261029-open" < "$W/in-container.sh"
+xa-ssh m3ultra "$DK exec -i $NCID sh -s -- open $EPOCH1 $REV1 <OP> release-order-20261029-open --execute" < "$W/in-container.sh"
+xa-ssh m3ultra "$DK exec -i $NCID sh -s -- status" < "$W/in-container.sh"                  # open 확인
 ```
-- 성공: dry-run에서 `blocked`가 비어 있고, execute가 exit 0과 `executed:true`를 낸다. 다시 `status`를 보면 `open`이다.
-- 실패 시: `deferred_routes:N`이면 모델 이름 고정이나 relay 계약이 아직 맞지 않는 것이다. 허용 플래그를 쓰지 않는다. DRAIN을 유지한 채 `routes` 표의 non-serving 행 원인을 고친다. 잡은 멈춘 상태로 둔다.
+- 성공: 두 원격 sha256이 `$TAR_SHA`와 같고 두 stage가 `lock:"same_as_image"`를 낸다. `routes`의 non-serving이 0이다. dry-run JSON의 `plan.blocked`가 비어 있고, execute가 exit 0과 `executed:true`를 낸다. 마지막 `status`가 `open`이다.
+- 실패 시: `ERR_MODULE_NOT_FOUND …/app/scripts/ops/…`가 보이면 스테이징 없이 `/app`에서 실행한 것이다. 쓰기는 일어나지 않았다. 위 순서대로 다시 한다. `deferred_routes:N`이면 모델 이름 고정이나 relay 계약이 아직 맞지 않는 것이다. 허용 플래그를 쓰지 않는다. DRAIN을 유지한 채 `routes` 표의 non-serving 행 원인을 고친다. 잡은 멈춘 상태로 둔다. 18단계에서 멈추면 **DRAIN이 남아 모든 모델 호출이 미뤄진다**. 그러니 17단계가 끝나는 대로 바로 이어서 한다.
 
 ### 19. job-resume (순서대로)
 - 위치: `/admin/status` → 「이 작업 재개」
@@ -204,7 +219,7 @@ xa-ssh m3ultra "$DK exec -i $NCID sh -s -- open $EPOCH1 $REV1 <OP> release-order
 
 - **7단계 이전**에 멈추면 운영(capacity·서비스)은 바뀌지 않았다. 다만 4단계에서 접수한 job은 `queued`이다. `opsHoldsBoundary`가 참이므로 **다른 ops-runner job 접수를 막는다**. 취소 경로는 없다. prepare가 `blocked`/`manual`로 끝난 job만 막지 않는다. 그러므로 4단계 접수는 3단계가 모두 끝나고 4~11단계를 한 창에서 이어 갈 수 있을 때만 한다.
 - **7~11단계 사이**에는 runner가 DRAIN과 물리 경계를 쥐고 있다. 같은 `$JOB`으로 `run`을 이어가는 것만 허용한다. 수동 OPEN, 다른 job 접수, 배포는 하지 않는다(`ops_runner_unfinished_operation`이 막는다).
-- **11단계 뒤 M1이 막히면**(12단계 실패): 배포는 관문 때문에 할 수 없다. 운영을 되살리는 정식 방법은 OPEN 하나뿐이다. 유지보수 컨테이너에서 실행서 D10 형식으로 `open $EPOCH1 $REV1 …` dry-run을 먼저 실행한다. 2단계 (b)에서 non-serving route가 있었다면 199a3ebb에서는 이 OPEN이 거절될 수 있다. 그때는 허용 플래그를 쓰지 말고 DRAIN을 유지한 채 대표가 판단한다. M1 미확인은 그대로 남고, M1 relay는 재시작하지 않는다(경로 보존).
+- **11단계 뒤 M1이 막히면**(12단계 실패): 배포는 관문 때문에 할 수 없다. 운영을 되살리는 정식 방법은 OPEN 하나뿐이다. 유지보수 컨테이너(배포 전이므로 2단계와 같은 `$CID`, C5 스테이징이 남아 있다. 컨테이너가 바뀌었으면 C5를 다시 한다)에서 실행서 D10 형식으로 `xa-ssh m3ultra "$DK exec -i $CID sh -s -- open $EPOCH1 $REV1 <OP> <REASON>" < "$W/in-container.sh"` dry-run을 먼저 실행한다. `/app`에는 `scripts/ops`가 없으므로 스테이징 없이 직접 실행하지 않는다. 2단계 (b)에서 non-serving route가 있었다면(`NONSERVING0 > 0`) 이 OPEN은 같은 판정으로 `deferred_routes:N`에 거절된다(스테이징한 `REL` 코드 + 199a3ebb 컨테이너 env). 그때는 허용 플래그를 쓰지 말고 DRAIN을 유지한 채 대표가 판단한다. M1 미확인은 그대로 남고, M1 relay는 재시작하지 않는다(경로 보존).
 - 어떤 단계에서도 시간 경과로 해제하지 않는다. `model_capacity_*`나 `jobs`를 SQL로 바꾸지 않는다. 관문 면제·`--allow-deferred-routes`를 쓰지 않는다. 실패한 once 디렉터리(배포 execution, M1 RUN, manifest out-dir)는 다시 쓰지 않는다.
 
 ## 6. 이 문서의 검증
@@ -213,3 +228,6 @@ xa-ssh m3ultra "$DK exec -i $NCID sh -s -- open $EPOCH1 $REV1 <OP> release-order
 - 화면: 관리 화면 작업 카드(인계 완료/일반 완료)를 앱 CSS로 정적 렌더해 확인했다(`ops-runner-handoff-card.png`). 운영 DB와 관리자 로그인이 필요한 `/admin/models` 실제 화면은 띄우지 않았다.
 - 실제 운영에서는 아무것도 실행하지 않았다. 따라서 운영 수치(미확인 수, route 상태, revision)는 이번에 측정하지 않았다. 표의 `EPOCH*`·`REV*`는 대표가 실행하면서 적는 값이다.
 - 재검증(2026-10-29, 브랜치 `xaegis/e84f26ca`, `xaegis/7b7a2d23`를 fast-forward로 합침, node_modules 연결): 지정 7파일(`release-29877f65`, `release-65f8c399-manifest`, `worker-progress-job-pause`, `ops-runner-root-handoff`, `ops-runner-operator`, `ops-runner-handoff`, `release-order-capacity-control`) Vitest **7파일/38시험 PASS**. 표 3의 SHA-256 10개를 `git show xaegis/7b7a2d23:<파일> | sha256sum`으로 다시 계산해 모두 일치했다. `drizzle/0143`·`0144` sha256과 저널 145항목, 0144 인덱스 이름이 1단계 기대값과 같다. `package-lock.json`은 199a3ebb·`/home/ubuntu/projects/nomorevibe`와 같다(C5 `same_as_image`, S1 `cmp` 전제 성립). 코드와 대조해 고친 곳: 7단계 revision(모드 전환은 revision을 올리지 않는다), 4단계 실패 코드 이름과 exit, 2단계 (b) 파일 경로·순서와 (e) R1 사전 확인(관문 문서 6절 1번과 맞춤), 실행서 표 0의 `build-manifest.py` 해시·S5/S7 실행 위치·B-3/D1 문구.
+- 대표 실측 결함 수정(2026-10-29, 작업 공간 `xaegis/13018003`, `xaegis/da3bd4a3`와 origin/main `c7dad56b` 병합): 운영 이미지에는 `scripts/ops`가 없다(`.dockerignore` 7행). m3ultra 유지보수 컨테이너에서 옛 `capacity-control.sh routes`가 `ERR_MODULE_NOT_FOUND '/app/scripts/ops/pipeline-control.ts'`로 실패해 2단계 (b)와 18단계를 실행할 수 없었다. `capacity-control.sh`를 `/tmp` 스테이징 방식으로 고쳤고(2절 3번), 2단계 (b)·18단계·5절 실패 경로와 실행서 표 0·C5·D10·B-1, 관문 문서 6절 3·8번을 고쳤다. 18단계는 「새 컨테이너에 C5 재스테이징 + `in-container.sh open`」이다. 시험 `tests/release-order-capacity-control.test.ts`는 이미지 `/app`에 `scripts/ops`가 없는 조건에서 스테이징 경로로만 성공함을 보인다. tar sha·lock 불일치·pipeline-control 없는 tar·`/app/node_modules` 없음·다른 tar 재스테이징·스테이징 뒤 lock 변경을 쓰기 없이 거절함도 보인다. busybox 도구만으로 도는 경우와 실제 `git archive` tar(pax 머리)도 시험하고, 2단계 (b) awk 집계가 OPEN의 `deferred_routes` 판정과 같음도 확인한다. 이 파일은 2 → 11시험이다.
+- 같은 작업에서 실제 DB 통합 시험(로컬 일회용 PostgreSQL 17 + pgvector, CI와 같은 `127.0.0.1:55435`)으로 결함 하나를 더 찾았다. 접수 CLI 미리 보기가 READ ONLY TX에서 `FOR SHARE`를 써 `25006`으로 실패했다(4단계 미리 보기·`--execute` 모두 exit 1). `readWriterFence`로 고쳤다. 새 통합 시험 `tests/integration/ops-runner-drain-handoff.test.ts`(2건)는 정식 CAS DRAIN → handoff의 감사 핀 왕복, 재실행 시 중복 없음, 남의 DRAIN(`handoff_drain_not_owned`), 바뀐 DRAIN(`handoff_drain_changed`), 미리 보기 READ ONLY와 비 indeterminate 거절(감사 행 0)을 확인한다. 고치기 전 코드에서는 1/2가 `25006`으로 실패했다. 관련 통합 `provider-boundary-release`·`replaced-provider-boundary-release`·`pipeline-control-status`와 함께 4파일/17시험 PASS다. `assemble.ts preflight`·`readback`과 `pipeline-control status`도 같은 시험 DB(0144까지 적용, 145행)에서 SQL 오류 없이 실행됐다(요청 행이 없으므로 exit 3이 정상).
+- 시험 수(전 = 병합 커밋 `69b830a5`, 후 = 수정 커밋): 지정 7파일 40 → 49, ops-runner·admin-models-ops·release·worker-progress·pipeline-control 18파일 175 → 184, Python unittest 20건 PASS, `next typegen` 뒤 `tsc --noEmit` 0, 바뀐 파일 ESLint 0.
