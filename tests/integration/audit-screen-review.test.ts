@@ -1,7 +1,7 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { asc, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { crawlCandidates, crawlDocuments, crawlSettings, productAuditCampaigns, productAuditItems, productAuditSecondOpinions,
+import { crawlCandidates, crawlDocuments, crawlSettings, productAuditAttempts, productAuditCampaigns, productAuditItems, productAuditSecondOpinions,
   productEvidenceAudit, products } from "@/lib/db/schema";
 import * as crawl from "@/lib/crawl/repository";
 import { getSettings, saveSettings, setQwenAutoStep } from "@/lib/crawl/settings";
@@ -29,7 +29,7 @@ const VISION = "qwen3.8-flash-next+vision";
 beforeAll(() => ensureSchema());
 beforeEach(async () => {
   fence.active = true;
-  for (const table of [productAuditItems, productAuditCampaigns, crawlCandidates, crawlDocuments, crawlSettings]) await db.delete(table);
+  for (const table of [productAuditAttempts, productAuditItems, productAuditCampaigns, crawlCandidates, crawlDocuments, crawlSettings]) await db.delete(table);
   await resetTables();
   await saveSettings({ enabled: true, firstReview: { provider: "abcllm", model: "[MLX] gpt-oss-120b" }, reviewConcurrency: 1 }, "test");
   // 글만 본 m1 의 의견을 보류에서 세는 단계를 켠다 — 글이 적은 항목에서 그 의견을 세지 않는 것을 본다(이 파일은 틱을 돌리지 않는다)
