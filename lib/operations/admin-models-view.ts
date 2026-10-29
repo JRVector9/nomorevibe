@@ -17,7 +17,7 @@ export type ModelStageAssignment = { id: string; label: string; models: { provid
 export type ModelCard = { id: string; name: string; equipment: string; definition?: ModelDefinition;
   rows: AdminModelMetrics[]; requests: AdminModelRequest[]; stages: string[] };
 export type StageHealth = "정상" | "느림" | "멈춤" | "미확인" | "접수 중지";
-const routeStage: Record<string, string> = { "review-gateway": "first-review", "review-cli": "first-review",
+const routeStage: Record<string, string> = { "crawl-agent-review": "first-review", "review-gateway": "first-review", "review-cli": "first-review",
   "human-deepseek-review": "human-review", "product-audit": "audit-review", "korean-tagline": "product-tagline-ko",
   "search-profile": "product-search-profile", "search-verify": "product-search-verify", "intro-check": "product-intro-check" };
 export const modelStageId = (route: string) => routeStage[route] ?? route;
