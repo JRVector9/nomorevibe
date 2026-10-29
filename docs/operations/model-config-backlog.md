@@ -87,3 +87,10 @@ git grep -I -n -i -E '(qwen[0-9]|gpt-[0-9]|gpt-oss|gemma[- /0-9]|deepseek-v[0-9]
 git grep -l -F 'llm/model-registry' -- lib/crawl lib/domain 'app/(operator)' scripts/local-model-relay lib/operations lib/jobs lib/llm lib/db ':!*.test.*' ':!*.md' | wc -l
 git grep -o -E '(configuredModel|configuredModelDefinition|configuredModelForProvider|modelForPurpose|modelFamily|modelLimits|modelBaseUrl|modelRequestBudget|readModelRegistry|resolveRegistryModel)\(' -- lib/crawl lib/domain 'app/(operator)' scripts/local-model-relay lib/operations lib/jobs lib/llm lib/db ':!*.test.*' ':!*.md' ':!lib/llm/model-registry.ts' | wc -l
 ```
+
+## 산출물 경로 차단 (최종 보고 뒤 확인)
+
+- 개발사항 보고 `c70954cd08b62121a7c1a86e723a863655a40951101d751db93adbe8a282ee41`은 Markdown 문서·백로그·설정 절차·검증 로그·JPG 3장을 인라인 첨부하여 **queued**로 저장했다. 허브 전달·artifact URL 발급은 아직 확인되지 않았다.
+- 요청 경로 `/home/ubuntu/.xaegis-hub/data/local-agent/jobs/d9b32a19-27bc-4d32-8f18-d0af05410ced/artifacts`는 존재하지만 직접 결과 파일 저장이 막혔다. 실제 시도는 Python `Path(.../artifacts/model-config-report.md).write_text(..., encoding='utf-8')`이며 **`OSError: [Errno 30] Read-only file system`**, exit 1이었다.
+- **막힘: 지정 artifacts 폴더에 결과 파일 직접 저장.** 이 경로의 쓰기 권한/마운트 상태는 현재 작업의 허용 범위 밖이다. 다른 경로로 결과 파일을 우회 저장하거나 권한을 확대하지 않았다. 기존 보고 큐의 인라인 첨부를 보존하고 허브 동기화와 산출물 경로 쓰기 가능 상태를 기다린다.
+- 코드 최종 검증은 여전히 64파일 896시험·타입 검사·158→98·스크립트 exit 0이다. 이 추가 기록은 문서만 변경하며 배포/운영 DB/push는 수행하지 않는다.
