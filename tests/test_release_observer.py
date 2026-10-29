@@ -240,8 +240,8 @@ class ObserverTests(unittest.TestCase):
 
     def test_readonly_sample_calls_exact_retained_proof_and_all_five_role_gate(self):
         class Shared:
-            def run(self, args):
-                self.args = args
+            def dokploy_api_key(self):
+                self.credentials_read = True
                 return 'private-key'
             def Dokploy(self, key):
                 self.key = key
@@ -264,6 +264,7 @@ class ObserverTests(unittest.TestCase):
         self.assertEqual(set(runtime.shared.gate[2]['roles']), {'crawler', 'reviewer', 'publisher', 'text', 'maintenance'})
         self.assertEqual(runtime.shared.gate[2]['strict'], ())
         self.assertEqual(runtime.shared.key, 'private-key')
+        self.assertTrue(runtime.shared.credentials_read)
 
     def test_integrity_failure_at_due_time_gets_a_failed_receipt_and_stops(self):
         self.prepare((300, 600))

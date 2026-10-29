@@ -269,6 +269,17 @@ def dotenv_settings(value):
     return result
 
 
+def dokploy_api_key():
+    """Read an injected credential in memory; preserve the existing Mac lookup when absent."""
+    injected = os.environ.get('DOKPLOY_API_KEY')
+    if injected is not None:
+        if not injected or len(injected) > 4096 or any(ord(char) < 33 or ord(char) > 126 for char in injected):
+            raise ValueError('invalid_dokploy_api_key_environment')
+        return injected
+    return run(['security', 'find-generic-password', '-a', 'deploy.brut.bot',
+                '-s', 'dokploy-api-key', '-w'])
+
+
 class Dokploy:
     def __init__(self, key):
         self.key = key
@@ -1392,8 +1403,7 @@ def main(argv=None):
     target = validate_target(args.sha, args.worker_image, args.web_image) if args.action == 'prepull' else None
     # --resume reads the stopped run's private snapshot before Keychain; a missing or shared file is refused here.
     snapshot = read_snapshot(args.snapshot) if args.resume else None
-    key = run(['security', 'find-generic-password', '-a', 'deploy.brut.bot',
-               '-s', 'dokploy-api-key', '-w'])
+    key = dokploy_api_key()
     client = Dokploy(key)
     if args.action == 'inventory':
         result = inventory(client, args.sha)
