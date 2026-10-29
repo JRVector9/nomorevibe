@@ -2,7 +2,7 @@
 
 기준: fetch 성공, origin/main a3094a73. 원래 허브 브랜치 xaegis/e1b30377의 다른 차선 변경은 보존하고 최신 main에서 전용 브랜치를 만들었다. 원본 사용자 폴더 변경 없음.
 
-## 현재 상태 (기능 PR #716 병합 후 최종 검색 모델 제약 표시)
+## 현재 상태 (정식 복구 실행기 PR #719 병합)
 
 | 항목 | 현재 결과 |
 | --- | --- |
@@ -10,9 +10,9 @@
 | 2 단계별 모델 풀 | #713 병합 후 구현. PR #716 필수 CI 통과·main 9b316234 병합. 화면 판별은 실제 목적 모델 등록 전 선택 불가 |
 | 3 실제 동작 확인 | HTTP 목록·시간/장부 실측 구현. 운영 primary READ ONLY SQL 확인 완료. 짧은 실제 호출·legacy 전체 이력은 정식 계약 부재로 남음 |
 | 4 미확인·점유 | 장부 snapshot/발생·경과/그룹 점유·접수 상태 구현·로컬 시험 |
-| 5 수동 복구 | 정식 ops-runner 큐/prepare→run·V1 해제·native verify·역순 복원과 버튼 구현/시험. 운영 설치·장비 드릴은 별도(아래 이번 작업 기록) |
+| 5 수동 복구 | PR #719 필수 CI 성공·main a4c1b759 병합. 정식 큐/prepare→run·V1 해제·native verify·역순 복원·버튼 구현/시험. 운영 설치·장비 드릴 별도 |
 | 6 권한·감사 | 서버 admin/CAS/정식 감사 경로 사용·관련 범위 시험 |
-| 실제 화면·배포 | Chromium/Next dev 제한으로 클릭·스크린샷 미완료. M3 Keychain exit44로 배포·운영 설정/실측 미완료 |
+| 실제 화면·배포 | 이번 실행에서도 Chromium socket 권한/Next 컴파일 오류로 클릭·스크린샷 미완료. 이 차선의 배포·운영 조작은 요청 범위 밖이며 실행하지 않음 |
 
 ## 착수 시 기록
 
@@ -145,7 +145,9 @@
 - 화면 막힘: 설치된 Chromium1248 실행은 `process_singleton_posix.cc:297 … socket() failed: Operation not permitted (1)` → SIGABRT, crashpad settings는 Read-only file system. 권한 변경/승인 우회 없이 중단했다. **실제 클릭·스크린샷·화면 품질 수치 측정 없음**. 정적 렌더의 버튼·단계·실패/사람 작업·미완료 OPEN 비활성 시험을 실제 화면 확인으로 세지 않는다.
 - 남음: 브라우저/Next 환경이 허용된 곳에서 확인 창·진행·실패 화면 스크린샷, 승인된 별도 권한 영역에 새 장비 snapshot/프로필·실행기 설치, 실제 운영 종료·복원 드릴, 자동 회수의 운영 실측 후 별도 활성화. 예전의 probe/legacy 이력/임베딩·재정렬 계약도 이번 작업 범위 밖의 남은 일이다.
 - 운영 배포0/운영 장비 접속·조작0/운영 DB 쓰기0/unknown 해제0/유료 DeepSeek 호출0/실행 권한 설정 변경0/SQL 초기화0/TTL 해제0/그룹 상한 우회0. 실행 계약과 프로필 형식은 [정식 실행기 문서](admin-models-ops-runner.md)를 따른다.
-- PR [#719](https://github.com/JRVector9/nomorevibe/pull/719) 생성. main의 배포 도구 후속 변경 `da0d044a`를 정상 merge(`26cd6f6a`)했으며 충돌 없음. 이 PR 최종 head의 필수 CI 성공을 확인한 뒤에만 표준 merge한다. 실제 CI·병합 SHA 영수증은 보고함 개발사항의 최종 보고에도 보존한다.
+- PR [#719](https://github.com/JRVector9/nomorevibe/pull/719) **병합 완료**: 최종 head `c153565e5cf9eb14b16aae3c101a27b381882f59`, [CI 40821992110](https://github.com/JRVector9/nomorevibe/actions/runs/40821992110)의 unit/TypeScript/lint/build/DB 6묶음/장부/필수 `check` SUCCESS. 최신 base `da0d044a` 반영을 확인하고 2026-10-29 05:22:11 UTC 표준 merge로 main **a4c1b759c5d1e934e17a51fc428968e0a762321b**에 병합했다. force push/관리자 우회 없음. 앞선 draft 검사 실패와 새 head로 취소된 실행을 최종 성공으로 세지 않았다.
 - 최종 로컬 검증: 범위 17파일82시험, 확대 20파일128시험, 기존 verify-review-stall의 23파일339 TS + Python71시험 통과. 검토를 위해 임시 프로필/장비 자료는 모두 합성 자료이며 운영 성공으로 세지 않는다.
 
 - 어댑터가 성공 JSON을 출력했어도 프로세스가 비정상 종료/강제 종료되면 성공으로 받지 않는 검증을 추가했다. native의 구조화된 실패(JSON ok=false, exit1)는 계속 실패 근거로만 처리한다.
+
+- 병합 뒤 남은 항목은 위의 화면 환경 제한, 별도 권한 영역의 운영 설치/새 프로필, 실제 운영 드릴/실측/활성화다. 코드·시험·PR·CI·기능 병합은 완료했으며 운영 배포 준비물은 저장소 실행기/문서뿐이다. 실행기 설치나 운영 배포를 완료했다고 기록하지 않는다.
