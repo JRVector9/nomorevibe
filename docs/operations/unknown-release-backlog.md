@@ -82,6 +82,7 @@
 - 해제 뒤 30분 동안 모델별 성공·AI1/AI2·새 미확인 0을 실측한다(실제 영수증으로만 기록).
 
 ## 막힘·위험
+- **막힘(사람 필요, 2026-10-29 14:09~14:22Z)**: 확정본 3판 PR #736의 CI가 세 번(최초 + 정식 재실행 2회, run 40888665993) 모두 **잡 시작 전** 거절됐다. annotation은 "The job was not started because recent account payments have failed or your spending limit needs to be increased"(Billing & plans)다. 코드 실패 로그는 없다. 결제·한도 변경, 관리자 병합, 필수 검사 건너뛰기는 하지 않았다. 계정 담당자가 결제·한도를 해결한 뒤 같은 PR에서 CI를 다시 돌리고, 통과하면 일반 병합한다. 그때까지 main의 확정본은 2판(`TARGET=1f52c9ef` 고정, plan에서 거절될 값)이다. 지금 main 머리 `f4fe5958`은 3판의 `REL`과 같고, main CI·이미지도 성공했다. 그래서 3판 3절 「배포 TARGET 확인」을 통과한다.
 - M1 relay를 Gemma handoff로 재시작하면 recovery.newRelayPid ≠ 현재 PID가 되어 A 경로가 영구적으로 막힌다. 확정본 17단계(M1 해제 뒤) 전에는 재시작하지 않는다.
 - Supa: 06:33Z 이후 M3 reviewer가 재배포됐으면 owner 교체로 prepare가 거절된다(이 경로로는 해제 불가). 배포는 Supa 해제 뒤에만 한다.
 - M1이 인계 DRAIN 안에서 막히면 배포할 수 없다. 199a3ebb env에 non-serving route가 있으면 배포 전 OPEN도 거절될 수 있다(확정본 2단계 (b)에서 미리 확인, 5절 실패 경로).
