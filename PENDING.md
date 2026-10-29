@@ -4,8 +4,8 @@
 
 - main 의 `0140~0142`를 운영 DB(id141~143, created_at …052~…054)와 같은 바이트·when 으로 되돌리고 replaced-provider 를 `0143_replaced_provider_boundary_exit`(when …055)로 옮겼다. 운영 배포·DB 쓰기는 하지 않았다.
 - **배포 전 확인(대표)**: 운영 READ ONLY `select id,hash,created_at from drizzle.__drizzle_migrations order by id desc limit 8`과 `git show origin/main:drizzle/<tag>.sql | sha256sum` 비교. 0000~0139 의 운영 해시는 이번에 직접 대조하지 않았고 저장소 파일(배포 커밋 5144b8c7 과 동일 바이트)로 고정했다 — `tests/fixtures/production-applied-migrations.ts`.
-- **배포 후**: migrator 가 0143 만 적용해 144행·최신 …055 가 되는지와 `model_capacity_replaced_provider_guard` 트리거 설치를 실측하고, 그 항목을 고정 목록에 덧붙인다.
-- **PR #723**: `0141_admin_models_observation_indexes`(when …053)는 0144 이후 번호·when 으로 옮겨야 한다(고정 시험이 CI 에서 거절한다).
+- **배포 후**: migrator 가 0143·0144 만 적용해 145행·최신 …056 이 되는지와 `model_capacity_replaced_provider_guard` 트리거 설치를 실측하고, 그 항목을 고정 목록에 덧붙인다.
+- **PR #723**: 이 정리 도중 main 에 먼저 병합된 `0141_admin_models_observation_indexes`(when …053, 운영 미적용)를 같은 바이트로 `0144_admin_models_observation_indexes`(when …056)로 옮겼다. 배포 시 migrator 는 0143·0144 를 적용해야 한다(145행·최신 …056).
 
 ## 격리 브랜치 병렬 개발 후속 — 2026-10-27, 운영 미적용
 
