@@ -145,4 +145,5 @@
 - 화면 막힘: 설치된 Chromium1248 실행은 `process_singleton_posix.cc:297 … socket() failed: Operation not permitted (1)` → SIGABRT, crashpad settings는 Read-only file system. 권한 변경/승인 우회 없이 중단했다. **실제 클릭·스크린샷·화면 품질 수치 측정 없음**. 정적 렌더의 버튼·단계·실패/사람 작업·미완료 OPEN 비활성 시험을 실제 화면 확인으로 세지 않는다.
 - 남음: 브라우저/Next 환경이 허용된 곳에서 확인 창·진행·실패 화면 스크린샷, 승인된 별도 권한 영역에 새 장비 snapshot/프로필·실행기 설치, 실제 운영 종료·복원 드릴, 자동 회수의 운영 실측 후 별도 활성화. 예전의 probe/legacy 이력/임베딩·재정렬 계약도 이번 작업 범위 밖의 남은 일이다.
 - 운영 배포0/운영 장비 접속·조작0/운영 DB 쓰기0/unknown 해제0/유료 DeepSeek 호출0/실행 권한 설정 변경0/SQL 초기화0/TTL 해제0/그룹 상한 우회0. 실행 계약과 프로필 형식은 [정식 실행기 문서](admin-models-ops-runner.md)를 따른다.
-- PR·필수 CI·main 병합: 아래 후속 영수증으로 기록한다. 이 시점에는 미완료다.
+- PR [#719](https://github.com/JRVector9/nomorevibe/pull/719) 생성. main의 배포 도구 후속 변경 `da0d044a`를 정상 merge(`26cd6f6a`)했으며 충돌 없음. 이 PR 최종 head의 필수 CI 성공을 확인한 뒤에만 표준 merge한다. 실제 CI·병합 SHA 영수증은 보고함 개발사항의 최종 보고에도 보존한다.
+- 최종 로컬 검증: 범위 17파일82시험, 확대 20파일128시험, 기존 verify-review-stall의 23파일339 TS + Python71시험 통과. 검토를 위해 임시 프로필/장비 자료는 모두 합성 자료이며 운영 성공으로 세지 않는다.
