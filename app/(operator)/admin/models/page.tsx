@@ -22,6 +22,9 @@ import { AiConnection } from "../status/AiConnection";
 import { agentRequest } from "@/lib/operations/agent-client";
 import type { AgentStatus } from "@/lib/operations/contracts";
 import { screenModelConfig } from "@/lib/screen-review/vision-review";
+import { EMBEDDING_MODEL, EMBEDDING_DIMENSIONS } from "@/lib/domain/products/embedding";
+import { modelServerHealth } from "@/lib/operations/model-servers";
+import { SearchModelConstraints } from "./SearchModelConstraints";
 import "../status/operations.css";
 
 export const dynamic = "force-dynamic";
@@ -45,6 +48,7 @@ export default async function ModelsPage() {
       version={settingsFormVersion(settings)} />
     <Suspense fallback={<p aria-busy="true">카테고리 분류 모델 확인 중…</p>}><CategoryModelsSlot reviewMode={settings.reviewMode} /></Suspense>
     <Suspense fallback={<p aria-busy="true">운영 DB 실측 확인 중…</p>}><LiveModelsSlot /></Suspense>
+    <Suspense fallback={<p aria-busy="true">검색 모델 서버 확인 중…</p>}><SearchModelsSlot /></Suspense>
     <section className="flex flex-col gap-3 rounded-xl border border-line bg-bg-card p-5" aria-labelledby="human-model-heading">
       <h2 id="human-model-heading" className="text-[18px] font-semibold">사람 검토 단계</h2>
       <p className="text-[13px] text-fg-2">직접 판단: 사람이 심사 큐에서 결정합니다. DeepSeek 위임을 켜면 기존 정책에 따라 자동 판단하고, 불확실하거나 실패한 항목은 사람이 검토합니다.</p>
@@ -72,6 +76,10 @@ async function CategoryModelsSlot({ reviewMode }: { reviewMode: string }) {
   const initial = await agentRequest<AgentStatus>("status").catch(() => null);
   return <section className="rounded-xl border border-line bg-bg-card p-5"><h2 className="mb-3 text-[18px] font-semibold">카테고리 분류 모델</h2>
     <AiConnection initial={initial} reviewMode={reviewMode} /></section>;
+}
+
+async function SearchModelsSlot() {
+  return <SearchModelConstraints health={await modelServerHealth()} embeddingModel={EMBEDDING_MODEL} dimensions={EMBEDDING_DIMENSIONS} />;
 }
 
 async function HumanSlot({ enabled, generation }: { enabled: boolean; generation: number }) {
