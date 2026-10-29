@@ -375,7 +375,7 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
     }
     for (const name of [...LEFT, ...UNTOUCHED].filter(name => !cliChecks.includes(name)))
       expect(removedUnknown[name], `${name}: 0137 unchanged CHECK`).toBe(unknown[name]);
-    // 0138/0139 leave these constraints unchanged; 0140 appends only the strict replaced-provider branch.
+    // 0138~0142 leave these constraints unchanged; 0143 appends only the strict replaced-provider branch.
     await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
     const replaced = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
     for (const name of cliChecks) {
@@ -385,11 +385,11 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
       await step.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT f2_replaced_expected CHECK ((${inner(removedUnknown[name])}) OR ${branch})`);
       try {
         const expected = await constraintDefs(step, ["f2_replaced_expected"]);
-        expect(replaced[name], `${name}: entire0137 predecessor plus strict0140 branch`).toBe(expected.f2_replaced_expected);
+        expect(replaced[name], `${name}: entire0142 predicate plus strict0143 branch`).toBe(expected.f2_replaced_expected);
       } finally { await step.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT f2_replaced_expected`); }
     }
     for (const name of [...LEFT, ...UNTOUCHED].filter(name => !cliChecks.includes(name)))
-      expect(replaced[name], `${name}: 0140 unchanged CHECK`).toBe(removedUnknown[name]);
+      expect(replaced[name], `${name}: 0143 unchanged CHECK`).toBe(removedUnknown[name]);
     expect((await step<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`)[0].count).toBe(journal.entries.length);
   } finally { rmSync(partial, { recursive: true, force: true }); await step.end({ timeout: 5 }); }
 }, 600_000);
