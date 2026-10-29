@@ -60,3 +60,14 @@ it("확인하지 않았거나 사유가 없는 변경은 제어기에 도달하�
   expect(await changeAdminModelAdmission({ ...input, reason: " " })).toHaveProperty("error");
   expect(mocks.control).not.toHaveBeenCalled();
 });
+it("장부의 local-direct 모델 이름도 정식 등록 장비의 목록 경로로 확인한다", async () => {
+  const row = { routeId: "direct-review", provider: "local-direct", model: "qwen3.8-flash-next" };
+  mocks.observation.mockResolvedValue({ rows: [row] });
+  const request = vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: [{ id: row.model }] })));
+  vi.stubGlobal("fetch", request);
+  try {
+    expect(await probeAdminModel(row)).toMatchObject({ listed: true });
+    expect(request.mock.calls[0][0]).toMatch(/\/models$/);
+    expect(mocks.list).not.toHaveBeenCalled();
+  } finally { vi.unstubAllGlobals(); }
+});

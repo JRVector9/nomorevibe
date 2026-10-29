@@ -1009,6 +1009,13 @@
       "when": 1794086400055,
       "tag": "0143_replaced_provider_boundary_exit",
       "breakpoints": true
+    },
+    {
+      "idx": 141,
+      "version": "7",
+      "when": 1794086400053,
+      "tag": "0141_admin_models_observation_indexes",
+      "breakpoints": true
     }
   ]
 }

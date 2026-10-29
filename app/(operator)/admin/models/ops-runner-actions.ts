@@ -15,7 +15,12 @@ export const submitAdminModelOperation = webWriteAction(async function submitAdm
     await recordAdminAction(admin.login, { action: "ops-runner-rejected", target: "model-capacity", ok: false, error: "command_not_allowlisted_or_unconfirmed" });
     return { error: "허용된 작업·대상·확인·사유를 입력해주세요." };
   }
-  try { return { state: await submitModelOpsCommand(parsed.data, admin.login) }; }
+  try {
+    const submitted = await submitModelOpsCommand(parsed.data, admin.login);
+    // The append-only row id is the audit number, distinct from the operation UUID.
+    const recorded = await readModelOpsState(submitted.id).catch(() => null);
+    return { state: recorded ?? submitted };
+  }
   catch {
     await recordAdminAction(admin.login, { action: "ops-runner-submission-unconfirmed", target: parsed.data.id, ok: false, error: "submission_unconfirmed" });
     return { error: "요청을 접수하지 못했습니다. 미완료 작업·대상 상태와 감사 기록을 확인해주세요. 같은 작업 ID로 다시 확인할 수 있습니다." }; }

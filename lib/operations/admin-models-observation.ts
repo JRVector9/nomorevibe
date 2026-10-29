@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ModelThroughput } from "./admin-models-throughput";
 import { modelCapacityPolicyHash, modelCapacityPolicySchema } from "@/lib/llm/capacity";
 import { modelIdentityKey } from "./admin-models-view";
 export { modelIdentityKey, elapsedModelTime } from "./admin-models-view";
@@ -21,7 +22,7 @@ export type AdminModelsObservation = {
   epoch: number | null; revision: number | null; policyHash: string | null; controlUpdatedAt: string | null;
   policyVerified: boolean; globalLimit: number | null; rows: AdminModelMetrics[];
   groups: { groupId: string; held: number; limit: number | null }[];
-  requests: AdminModelRequest[]; truncated: boolean;
+  requests: AdminModelRequest[]; truncated: boolean; throughput?: ModelThroughput;
 };
 export function unavailableAdminModels(): AdminModelsObservation {
   return { observedAt: null, error: "운영 DB 실측을 읽지 못했습니다. 0건으로 간주하지 않습니다.", mode: null,
