@@ -267,3 +267,34 @@ AI1/AI2 저장 증가 명령은 두 측정 mjs를 기존 M3 text 컨테이너에
 - 막힘: Actions run40835749295의 scope/check가 **잡 시작 전** 실패. check-run123320010237 annotation: 계정의 최근 결제 실패 또는 spending limit 증액 필요(Billing & plans). 따라서 typecheck/lint/unit/build/integration 잡은 SKIPPED이며 CI 통과로 기록하지 않는다. 코드 실패 로그는 없고 `gh run view --log-failed`도 `log not found`였다. 결제/한도 변경·CI 보호 우회·강제 병합/배포 없음.
 - 남음: 저장소 계정 담당자가 결제/한도 문제를 해결한 뒤 같은 PR의 필수 CI 성공 확인. 성공 전 병합 금지. 실제 운영 설치/종료/해제/저장 측정은 다른 승인된 운영 차선 몫이다.
 - 최종 설정 검토: relay bare ID와 *_MODEL_KEY가 서로 다른 장비를 고르는 경우도 거절해 모델/리소스 한도가 갈리지 않게 함. 72파일/1,032시험·typegen·tsc 재실행 PASS. CI 계정 차단은 별도이며 완화하지 않음.
+
+## 번역·후처리 3잡 적체 차선 (2026-10-29, 작업 공간 `xaegis/f1c6bae2`)
+
+대상: product-tagline-ko·reason-translate·product-search-profile(근거 `docs/CODEX_HANDOFF.md` 10/27 23:07 KST).
+원인·수정·배포 뒤 READ ONLY SQL 과 기대값은 [2026-10-29-text-backlog-runbook.md](2026-10-29-text-backlog-runbook.md).
+기준 origin/main `be5d1d53`(#733)에 fast-forward 한 뒤 작업했다.
+
+### 끝낸 것(로컬 커밋, push 안 함)
+
+- 공통: `lib/llm/capacity-busy-targets.ts` — 세 선택기가 장부 fence 와 같은 상태·키(남의 대기·예약, 누구든 보냄·미확인)를 미리 뺀다.
+  고정된 맨 앞 대상이 미확인 요청에 묶여 매 틱 같은 미룸만 되풀이하던 정체를 끊는다. fence·한도·경보 규칙은 그대로.
+- tagline-ko: 출력 후처리(뒤 괄호·뒷문장·줄표 뒤·이름 철자·첫 줄) 뒤 전체 검사 재실행, 쉼표 앞 구절, 품질 외 실패 10회 종료와
+  `gaveUpReasons`(quality_limit/failure_limit), 미룸 사유 로그.
+- reason-translate: 두 대기열에서 장부에 묶인 사유 제외, 미룸 사유 로그, 진척 시 경보 해제를 실제 PostgreSQL 관측으로 시험.
+- product-search-profile: 묶인 제품 제외(한 제품 한 요청), 같은 그룹 다른 route 대기 시 일꾼 하나(fair share), 미룸 사유 로그.
+- 시험: 단위 `tests/postprocess-backlog-{tagline,reason,profile}.test.ts`, 통합 `tests/integration/postprocess-backlog-*.test.ts`.
+  기존 dispatch 시험 세 곳(tagline-ko·reason·text-profile)의 "미확인 대상을 다시 골라 틱이 미뤄진다" 단언을
+  "건너뛰고 재전송하지 않는다"로 갱신(두 번째 POST 없음·장부·캐시 불변 단언 유지). 시험 결과는 런북 '시험' 절.
+
+### 남은 것
+
+1. (대표) PR·CI·병합·표준 배포(`npm run deploy -- scope|plan|run`, text 공통 worker digest).
+2. (대표) 배포 뒤 런북 Q0~Q10 실행, 결과를 이 절에 기록. 특히 Q0(route 전체 옛 형식 fence)·Q1(그룹 한도를 미확인이 다 쥠)이
+   걸리면 이 수정으로 풀리지 않는다 — 미확인 요청 회수(`model-capacity-reclaim`, 위 차선 4단계) 선언이 필요하다.
+3. 운영 실측 전에는 효과 크기(시간당 저장 수 변화)를 말할 수 없다. 측정 없음.
+4. 수동 전체 unit·전체 DB·종합 시험은 통합 단계(AGENTS.md 검증 정책).
+
+### 막힌 것(이유)
+
+- 운영 DB 읽기·SSH·배포·push: 이번 지시가 금지(작업자 SSH 22 차단, 배포는 사람 승인). 그래서 실제 원인 분포(Q0·Q1 해당 여부,
+  too_long 중 후처리로 살릴 비율)는 재지 못했다.
