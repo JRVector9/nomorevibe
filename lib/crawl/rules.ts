@@ -167,7 +167,7 @@ const STUB_TEXT_RULES: Record<StubTextRuleId, string> = {
   title_only: "제목만 있는 페이지 아님",
 };
 // 낱말: 글자·숫자·밑줄과 가나·한자·한글. 그 밖의 문자(구두점·기호)는 낱말을 가른다
-const STUB_WORD = /[\p{L}\p{N}_぀-ヿ一-鿿가-힣]+/gu;
+const STUB_WORD = /[\p{L}\p{N}_\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7a3]+/gu;
 const STUB_LOADING = /^(?:[^\p{L}\p{N}_]*loading[^\p{L}\p{N}_]*|.*(?<![\p{L}\p{N}_])loading(?:\.\.\.|…)[^\p{L}\p{N}_]*)$/u;
 const STUB_JAVASCRIPT = /enable javascript|javascript (?:is )?(?:required|disabled)|requires javascript/u;
 const STUB_LOGIN = /sign in|log in|login|password|비밀번호|로그인|登录|ログイン/u;
