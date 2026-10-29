@@ -9,7 +9,7 @@ import { previewSave, previewProbe, previewOpsSubmit, previewOpsRead } from "./a
 export type AdminModelsPreviewData = { observation: AdminModelsObservation; models: readonly ModelDefinition[]; assignments: ModelStageAssignment[]; settings: CrawlSettings; choices: ModelOption[] };
 export default function AdminModelsPreviewUI({ data }: { data: AdminModelsPreviewData }) {
   return <div className="admin-area"><aside className="admin-sidebar"><div className="admin-brand-row"><strong className="p-3 text-[18px]">NoMoreVibe</strong><button type="button" className="admin-menu-toggle">메뉴</button></div><nav className="admin-sidebar-menu mt-8 p-3 text-[13px] font-semibold"><p>운영센터</p><p className="mt-4 rounded-lg bg-accent-soft p-3 text-accent-ink">단계별 모델</p></nav></aside>
-    <main className="mx-auto flex w-full max-w-[1440px] flex-col gap-5 px-8 py-7 max-sm:px-4">
+    <main className="mx-auto flex w-full max-w-[1440px] flex-col gap-5 px-8 pt-7 pb-28 max-sm:px-4">
       <header><h1 className="text-[26px] font-bold">단계별 모델</h1><p className="mt-2 text-[13px] text-fg-2">고정 시험 데이터 · 운영 DB·모델 호출 없음</p></header>
       <LiveModels observation={data.observation} models={data.models} assignments={data.assignments} probeAction={previewProbe}
         opsActions={{ submitAction: previewOpsSubmit, readAction: previewOpsRead }} />

@@ -44,7 +44,7 @@ export default async function ModelsPage() {
     ...ADMIN_MODEL_STAGES.map(stage => ({ id: stage.id, label: stage.label, models: (settings.stageModelPools?.[stage.id]?.length
       ? settings.stageModelPools[stage.id]! : [defaults[stage.id]]).map(model => ({ provider: stage.provider, model })) })),
   ];
-  return <main className="mx-auto flex max-w-[1440px] flex-col gap-5 px-8 py-7 max-sm:px-4">
+  return <main className="mx-auto flex max-w-[1440px] flex-col gap-5 px-8 pt-7 pb-28 max-sm:px-4">
     <PageStamp />
     <header className="flex flex-col gap-2"><h1 className="text-[26px] font-bold">단계별 모델</h1>
       <p className="text-[14px] text-fg-2">멈춘 단계와 모델을 먼저 확인하고, 아래에서 다음 작업에 쓸 모델을 바꿉니다.</p>

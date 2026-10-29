@@ -240,3 +240,4 @@ M1 모델 선택/readiness 수정과 상품·사유 번역 동일 등록부 정�
 - 앞선 CI40838781221의 unit(1)이 이번 보조 글자(10~12px)를 기존 `tests/ui-contract.test.ts`의 최소13px 규칙 위반으로 거절했다. 이번 변경으로 생긴 실패이며 기존 실패로 돌리지 않는다.
 - 같은 검사 기준으로 실제 소스 위반 **24건 → 0건**. 화면 보조 글자를 모두13px 이상으로 올리고 작은 글자의 fg-3도 fg-2로 바꿨다. 기존 UI 기준을 낮추거나 예외를 추가하지 않았다.
 - `node node_modules/vitest/vitest.mjs run admin-models ops-runner stage-registry model-registry-operator operations-action-contract ui-contract --maxWorkers=4`: **25파일219시험 PASS**. 타입/범위 ESLint/diff PASS. 최종13px 화면을 1440/390에서 다시 캡처·클릭해 가로 넘침0/3열·1열/page error0을 확인했다. 이 결과가 앞선214시험·작은 글자 화면 자료를 대체한다.
+- 하단 참고 영역도 고정 저장바에 가리지 않도록 페이지 끝 여백을 확보했다. 실제 브라우저에서 참고 제목의 하단좌표가 저장바의 상단보다 위에 있음을 검사하고 펼치기까지 확인했다. 최종 검증은 두 크기에서 **각11항목**이다.

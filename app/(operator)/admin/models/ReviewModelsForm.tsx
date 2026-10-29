@@ -28,7 +28,7 @@ export function ReviewModelsForm({ settings, version, firstChoices, secondChoice
     } catch { return { issues: ["저장 결과를 확인하지 못했습니다. 새로고침해 현재 설정을 확인해주세요."] }; }
   }, null);
   const changes = [...(Object.keys(labels) as (keyof ReviewDraft)[]).filter(key => JSON.stringify(draft[key]) !== JSON.stringify(baseline[key])).map(key => labels[key]), ...changedStagePools(poolBaseline, pools)];
-  return <form action={action} id="model-settings" className="flex scroll-mt-28 md:scroll-mt-6 flex-col gap-4 pb-28" data-models-dirty={changes.length > 0}>
+  return <form action={action} id="model-settings" className="flex scroll-mt-28 md:scroll-mt-6 flex-col gap-4" data-models-dirty={changes.length > 0}>
     <input type="hidden" name="settingsVersion" value={formVersion} />
     {models && <input type="hidden" name="stageModelPools" value={JSON.stringify(pools)} />}
     <div><h2 className="text-[20px] font-bold">설정 바꾸기</h2><p className="mt-2 text-[13px] leading-relaxed text-fg-2">현재 선택한 모델입니다. 모델을 추가·제거한 뒤 저장해야 적용됩니다. 이후 작업 묶음부터 반영하며, 진행 중·미확인 요청과 기존 업무 기록은 원래 계약에 남습니다.</p></div>

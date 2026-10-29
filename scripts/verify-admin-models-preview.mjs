@@ -56,7 +56,13 @@ try {
     await progress.getByText("멈춘 단계:", { exact: false }).waitFor({ timeout: 15000 });
     await progress.evaluate(element => element.scrollIntoView({ block: "start" }));
     await page.screenshot({ path: resolve(directory, `admin-models-${width}-progress.png`) });
-    results.push({ width, ...dimensions, checks: ["manual and 30s auto refresh", "initial save disabled", "Supa/M1 recovery disabled with reason", "IDs collapsed", "probe synthetic result", "chip remove enables save", "save clears draft", "stage chip add/remove and revert", "Korean confirmation", "synthetic progress failure step"] });
+    const reference = page.getByText("참고 · 카테고리 분류 / 검색 모델 / 모델 등록부 / 다른 LLM 단계", { exact: true });
+    await reference.scrollIntoViewIfNeeded();
+    const referenceBox = await reference.boundingBox(), barBox = await page.getByRole("region", { name: "모델 설정 저장", exact: true }).boundingBox();
+    if (!referenceBox || !barBox || referenceBox.y + referenceBox.height > barBox.y) throw new Error("reference_hidden_by_save_bar");
+    await reference.click();
+    await page.getByText("이 파일은 화면 검토용 고정 데이터입니다.", { exact: true }).waitFor();
+    results.push({ width, ...dimensions, checks: ["manual and 30s auto refresh", "initial save disabled", "Supa/M1 recovery disabled with reason", "IDs collapsed", "probe synthetic result", "chip remove enables save", "save clears draft", "stage chip add/remove and revert", "Korean confirmation", "synthetic progress failure step", "reference stays above fixed save bar"] });
     await page.close();
   }
   if (errors.length) throw new Error(`browser_errors: ${errors.join("; ")}`);
