@@ -981,6 +981,13 @@
       "when": 1794086400051,
       "tag": "0139_oracle_korean_discovery",
       "breakpoints": true
+    },
+    {
+      "idx": 140,
+      "version": "7",
+      "when": 1794086400052,
+      "tag": "0140_admin_models_observation_indexes",
+      "breakpoints": true
     }
   ]
 }

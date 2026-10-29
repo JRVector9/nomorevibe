@@ -153,6 +153,8 @@ export const modelCapacityRequests = pgTable('model_capacity_requests', {
   uniqueIndex('model_capacity_requests_ai2_cli_claim_idx').on(sql`(dispatch_binding->'item'->>'workKey')`, sql`(dispatch_binding->'item'->>'token')`, sql`(dispatch_binding->'item'->>'itemEpoch')`).where(sql`dispatch_binding->>'kind' IN ('ai2_item_gateway','ai2_item_cli')`),
   uniqueIndex('model_capacity_requests_logical_active_idx').on(table.logicalWorkKey).where(sql`${table.logicalWorkKey} is not null and ${table.state} in ('reserved','dispatched','indeterminate')`),
   uniqueIndex('model_capacity_requests_live_work_idx').on(table.ownerInstanceId, table.ownerBootId, table.workKey).where(sql`${table.state} in ('waiting','reserved','dispatched','indeterminate')`),
+  index('model_capacity_requests_settled_at_idx').on(table.settledAt).where(sql`${table.state} = 'settled'`),
+  index('model_capacity_requests_withdrawn_at_idx').on(table.updatedAt).where(sql`${table.state} = 'withdrawn'`),
   index('model_capacity_requests_waiting_idx').on(table.class, table.queueOrdinal).where(sql`${table.state} = 'waiting'`),
   index('model_capacity_requests_active_idx').on(table.providerBudgetId, table.groupId, table.pool).where(sql`${table.state} in ('reserved','dispatched','indeterminate')`),
   index('model_capacity_requests_job_readback_idx').on(table.routeId, table.ownerInstanceId, sql`(dispatch_binding->'job'->>'requestedVersion')`),
