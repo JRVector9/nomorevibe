@@ -96,7 +96,7 @@ describe("스테이징한 검토 소스로만 실행한다", () => {
       spawnSync("ln", ["-s", "/usr/bin/busybox", join(bb, tool)]);
     }
     const bbRun = (...args: string[]) => spawnSync(join(bb, "sh"), ["-s", "--", ...args], { input: script, encoding: "utf8",
-      env: { PATH: `${dir}:${bb}`, NMV_APP_DIR: app, NMV_STAGE_BASE: base, DATABASE_URL: "postgres://user:secret@pgbouncer:6432/other" } });
+      env: { PATH: `${dir}:${bb}`, NODE_ENV: "test", NMV_APP_DIR: app, NMV_STAGE_BASE: base, DATABASE_URL: "postgres://user:secret@pgbouncer:6432/other" } });
     const bad = makeTar({ "package-lock.json": "{}\n", "scripts/ops/pipeline-control.ts": "export {};\n" });
     expect(error(bbRun("stage", bad))).toBe("package_lock_differs_from_image"); onlyTar();
     writeFileSync(join(app, "package-lock.json"), readFileSync("package-lock.json"));   // C5와 같은 git archive tar(pax 머리)
@@ -155,4 +155,33 @@ it("deferred route 허용·다른 플래그·잘못된 숫자·공백 사유·�
     expect(result.status).toBe(2);
   }
   expect(existsSync(join(dir, "argv"))).toBe(false);
+});
+
+// 확정본 2단계 (b)의 awk가 routes 표에서 세는 non-serving 수는 OPEN이 막을 deferred_routes 수와 같아야 한다.
+it("확정본 2(b)의 non-serving 집계는 OPEN의 deferred_routes 판정과 같다", async () => {
+  const { deferredRoutes, formatControlStatus, statusRouteContracts } = await import("@/lib/operations/pipeline-control");
+  const { modelCapacityPolicyHash } = await import("@/lib/llm/capacity");
+  const { DEFAULT_CRAWL_SETTINGS } = await import("@/lib/crawl/settings-schema");
+  const doc = readFileSync("docs/operations/2026-10-29-release-order.md", "utf8");
+  const awk = doc.split("\n").find((line) => line.startsWith("awk '/^\\[capacity routes"));
+  expect(awk).toBeDefined();
+  const policy = { version: 1, globalLimit: 4, providerLimits: { abcllm: 4 }, groupLimits: { gateway: 4 }, poolLimits: { reviewer: 2, text: 2 },
+    weights: { first: 1, second: 1, background: 1 }, maxWaiting: 16, queueTtlMs: 60_000, reservationTtlMs: 30_000,
+    routes: [{ routeId: "second-review", provider: "abcllm", model: "m", providerBudgetId: "abcllm", groupId: "gateway" }] } as const;
+  const stage = (name: "ai1" | "ai2") => ({ stage: name, mode: "legacy" as const, drainingFrom: null, epoch: 1, contract: 1,
+    live: 0, unsettled: 0, legacyJobLive: false, consumers: 1 });
+  const snapshot = { now: "2026-10-29T00:00:00.000Z", fence: { state: "active", writerEpoch: 1 }, stages: [stage("ai1"), stage("ai2")],
+    capacity: { mode: "draining", epoch: 1, revision: 7, policy, policyHash: modelCapacityPolicyHash(policy), waiting: 0, reserved: 0, dispatched: 0, indeterminate: 0, oldGeneration: 0 },
+    http: { mode: "disabled", epoch: 1, revision: 1, policy: null, policyHash: null, reserved: 0, dispatched: 0, indeterminate: 0 },
+    batch: { mode: "legacy", drainingFrom: null, epoch: 1, contract: 0, policy: null, policyHash: null, liveJobs: 0, liveRoles: 0, liveItems: 0, liveSources: 0, liveAgentClaims: 0 },
+    agentScan: { mode: "legacy", drainingFrom: null, epoch: 1, contract: 0, live: 0, unsettled: 0, legacyJobLive: false, consumers: 0, queue: [] },
+    recentInstances: [], uptimeSplitMode: "legacy", auditCampaign: null,
+    reviewSettings: { ...DEFAULT_CRAWL_SETTINGS, firstReview: { provider: "abcllm", model: "primary-model" } } } as unknown as Parameters<typeof formatControlStatus>[0];
+  const routes = statusRouteContracts(snapshot, null);
+  const deferred = deferredRoutes(routes).length;
+  expect(deferred).toBeGreaterThan(0); expect(routes.length).toBeGreaterThan(deferred);
+  writeFileSync(join(dir, "routes.txt"), formatControlStatus(snapshot, null));
+  const counted = spawnSync("/bin/sh", ["-c", awk!.replaceAll('"$W/pre/routes.txt"', JSON.stringify(join(dir, "routes.txt")))], { encoding: "utf8" });
+  expect(counted.status).toBe(0);
+  expect(counted.stdout.trim().split("\n").at(-1)).toBe(`routes ${routes.length} non_serving ${deferred}`);
 });
