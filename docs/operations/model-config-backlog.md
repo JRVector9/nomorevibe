@@ -165,3 +165,43 @@ git grep -o -E '(configuredModel|configuredModelDefinition|configuredModelForPro
 | 지정 artifacts/scratch 직접 저장 | 차단. OSError(30, 'Read-only file system'). 권한 확대 없이 개발사항 보고의 지원된 첨부 방식 사용. 허브 전달은 실제 반환 상태로만 보고. |
 
 선택한 통합 방식은 merge다. 기존 main 안전 동작과 다른 브랜치 이력을 보존하는 최소 변경이기 때문이다. 원본 사용자 작업 폴더는 수정하지 않았고 xaegis/d9b32a19는 여전히 6f5d98f1이다. 실행할 코드 할 일은 남아 있지 않다. 남은 환경 설정 적용·실제 운영 참여 확인은 별도 승인된 운영 차선의 일이다. 지정 폴더 직접 쓰기 제한과 허브 동기화 상태는 코드 검증 통과와 구분한다.
+
+## 이어받은 차선 (2026-10-29, 브랜치 xaegis/92521425 → feat/model-config-registry-20261029)
+
+- 출발: 로컬 `xaegis/d9b32a19`(6f5d98f1)를 merge `a2b62d17`로, `origin/main`(f4fe5958, PR735)을 merge `1e9307b6`로 가져왔다. 충돌은 rerere가 옛 해결을 재사용한 `lib/jobs/products/translations.ts` 하나였고 main 쪽(`PRODUCT_TRANSLATION_CLIENT_TIMEOUT_MS`)으로 풀었다. 병합 직후 트리는 origin/main과 diff 0이었다. d9b32a19는 PR #713으로 이미 main에 들어 있었다(merge-base = 6f5d98f1). 기록 재작성 없음.
+- 의존성: 원본 checkout과 `package-lock.json` 동일(cmp). `scripts/verify-model-config.sh`가 직접 symlink를 만든다(아래 5).
+
+| 항목 | 상태 | 내용 |
+| --- | --- | --- |
+| 1. 병합 후 시험·타입 복구 | 끝남 | 병합 트리 = main. typegen·tsc exit 0, 차선 시험 통과(아래 5). |
+| 2. first-reviewers·기한 사용처 | 끝남 | first-reviewers.ts는 main에서 이미 `modelCandidates("first-review")` 조회(배정 본문 그대로). 남아 있던 모델 호출 기한 숫자 6곳을 레지스트리 경로 예산으로 옮김: 운영자 분류 검사·검증·분류(`lib/operations/agent.ts` 35초 5곳 → `classify-cli`), 화면 판별(`lib/screen-review/job.ts` 90초 → `screen-review`). 값은 그대로, `timeouts`로 대체 가능. 커밋 87f5f19d. |
+| 3. 남은 고정 사용처 | 끝남 | 사람 검토 위임 표시 4곳(스위치의 고정 기본값 «DeepSeek»·«M3 Ultra · DeepSeek v4.1 Flash», 설정 화면 slot, 모델 화면 slot, 심사 화면 알약 «사람 검토 DeepSeek 위임 · M3 Ultra»)을 저장된 풀 또는 레지스트리 human-review 모델에서 읽게 함(`humanReviewModelDisplay`). 설정 화면 준비 확인도 모델 화면과 같은 풀 기준(`configuredHumanModelsReady`). 커밋 56b80e1d. 같은 이름 [m1]·GPU3090 회귀(http-routing 2, ai2-routing 1, m1-relay 7) 병합 뒤 통과. |
+| 4. M1 번역 설정 문서 | 끝남 | `model-config-registry.md`의 M1 절을 PR732 기준으로 갱신: 대표 실행 안내(2026-10-29-m1-relay-registry-rollout.md)를 기준으로 지정, 실제 `configuredModel` 해석표, `ABCLLM_MODEL`이 있으면 사유 번역은 JSON selection으로 안 바뀌고 단계 풀이 필요함을 실행으로 확인해 기록. 코드 기본값은 main 그대로(`m1:translation` Gemma, product/reason/relay). 커밋 9097ca55. |
+| 5. 검증 스크립트 | 끝남 | node_modules가 없으면 `git worktree list` 첫 checkout의 설치를 package-lock이 같을 때만 symlink. 시험 목록에 screen-review·connect-agent·사람 검토 표시 시험 추가. 이 작업 공간(node_modules 없음 상태에서 시작)에서 **80파일 1,108시험 + typegen + tsc + 158→104, exit 0**. 커밋 8f6e5a40. |
+| 6. 운영자 화면 확인 | 끝남(대체 환경) | 운영 DB·관리자 로그인이 없어 실제 컴포넌트+실제 helper 출력+앱 Tailwind CSS(globals·dashboard)를 로컬 HTML로 그려 Chromium 1248로 1280/390px 확인: 가로 넘침 0, 잘림 0, pageerror 0, 스위치 오른쪽 정렬. 전체 앱 서버·인증 화면 검증은 아님. 임시 harness 파일은 지웠다. |
+| 운영 env·DB·relay 반영 | 범위 밖(대표 몫) | 아래 «대표가 할 일». |
+
+### 모델명 고정 줄 수
+
+`scripts/verify-model-config.sh`의 같은 git grep: 기준 199a3ebb **158**, PR #713 병합 직후 35ef739a **99**, 이번 시작 main f4fe5958 **104**, 현재 **104**. main에서 +5는 다른 PR이 넣은 것이다: 불변 증거 계약 `replaced-provider-boundary-contract.ts`의 `z.literal("qwen3.8-flash-next")`·`"[m1] qwen3.8-flash-next"` 2줄(특정 미확인 요청의 원래 wire를 검증하는 증거라 설정으로 바꾸면 안 됨), `opuscar` 제품 이름 오탐 2줄, 기본 등록부를 설명하는 주석 1줄. 이번 차선의 이관(기한 숫자·«DeepSeek v4.1 Flash» 표시)은 이 정규식에 걸리지 않는 문자열이라 줄 수는 그대로다. 주석·증거를 줄 수 때문에 지우지 않는다.
+
+중앙 조회(같은 재현 명령): 레지스트리 직접 연결 파일 75→77, 조회 호출 121→123, `modelTimeoutMs(` 호출 24→26 (origin/main → HEAD).
+
+### 남은 것과 이유 (갱신)
+
+| 사용처 | 이유 |
+| --- | --- |
+| `lib/llm/replaced-provider-boundary-contract.ts` 모델 리터럴 2줄 | 불변 증거. 특정 indeterminate 요청의 원래 wire·relay 요청 모델을 검증한다. |
+| `scripts/ops/release-29877f65/assemble.ts` 모델 상수 | 한 번의 해제 영수증 조립 도구. 같은 이유로 고정. |
+| 감사 화면·활동 기록의 «Qwen-v2» 낱말 | 모델 선택이 아니라 출처 `qwen-v2-auto`·프롬프트 판의 이름과 과거 활동 이름. 바꾸면 기록 출처가 달라진다. |
+| `EMBEDDING_MODEL`·차원 | 벡터 호환 데이터 계약(이전 기록과 같음). |
+| 화면 판별 그리기(55초)·전체(150초) 예산, 수집/HTTP 기한 | 모델 호출이 아닌 렌더·네트워크 기한. |
+| 기존 표(이전 기록)의 주석·provenance·외부 parser·`repoPushedAt` 오탐 | 위 «남은 것과 이유»와 같다. |
+| `lib/crawl/rules.ts` | 다른 차선이 수정 중이라 건드리지 않았다. |
+
+### 대표가 할 일 (운영 반영, 이 차선은 미실행)
+
+1. 상품 번역 소비자(text-m3·mini 예비 text)와 web에 `PRODUCT_TRANSLATION_MODEL_KEY=m1:translation`. 운영 앱이 `MODEL_REGISTRY_CONFIG`를 쓰면 `scripts/migrate-model-registry-m1.ts --print-migration` 후보를 검토해 반영.
+2. 사유 번역도 M1로 옮기려면 `/admin/models` «심사 사유 번역» 단계 풀에 `m1:translation`(공용 `ABCLLM_MODEL`이 있으면 JSON selection만으로는 안 바뀜).
+3. 용량 정책 `product-translate` route 모델·serving 계약을 `[m1] mlx-community--gemma-4-26b-a4b-it-4bit`로(DRAINING→정책→OPEN 감사 절차), M1 relay 재설치는 PR732 대표 실행 안내의 SHA·시점 제약대로.
+4. 이번 PR의 기한·표시 변경은 설정 변경 없이 기본값이 같다. 다른 값을 원할 때만 `MODEL_REGISTRY_CONFIG.timeouts["classify-cli"|"screen-review"]`.
