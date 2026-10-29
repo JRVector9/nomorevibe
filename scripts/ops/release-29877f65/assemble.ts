@@ -315,6 +315,28 @@ async function dbRecheck(url: string, plan: ReplacedProviderPlan, has0143: boole
   } finally { await sql.end({ timeout: 5 }); }
 }
 
+/** Post-apply (or unclear response) readback from the primary. Never a substitute write. */
+async function readback(url: string) {
+  const { default: postgres } = await import("postgres");
+  const sql = postgres(url, { max: 1, connect_timeout: 10, prepare: false, idle_timeout: 5 });
+  try {
+    return await sql.begin("isolation level repeatable read read only", async tx => {
+      await tx.unsafe(`SET LOCAL statement_timeout='15s'`);
+      const [clock] = await tx.unsafe(`SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC',${MS}) now, pg_is_in_recovery() replica`);
+      const [c] = await tx.unsafe(`SELECT mode, epoch::int, revision::int FROM model_capacity_control WHERE id=1`);
+      const [r] = await tx.unsafe(`SELECT state, terminal_evidence->>'kind' terminal_kind, terminal_evidence_hash, settled_at IS NULL unsettled,
+          (dispatch_binding->>'chargedTokens')::int charged_tokens FROM model_capacity_requests WHERE request_id=$1::uuid`, [REQUEST_ID]);
+      const events = await tx.unsafe(`SELECT id::int, kind, from_state, to_state, to_char(created_at AT TIME ZONE 'UTC',${MS}) created_at
+        FROM model_capacity_events WHERE request_id=$1::uuid AND kind='dispatch_released' ORDER BY id`, [REQUEST_ID]);
+      const audits = await tx.unsafe(`SELECT id::int, action, to_char(created_at,${MS}) created_at FROM operations_audit
+        WHERE action='model-replaced-provider-boundary-release' AND target=$1 ORDER BY id`, [REQUEST_ID]);
+      const unknown = await tx.unsafe(`SELECT request_id::text, route_id, group_id, state FROM model_capacity_requests WHERE state IN ('dispatched','indeterminate') ORDER BY dispatched_at`);
+      return { dbNow: clock.now, replica: clock.replica, capacity: c, request: r ?? null, releaseEvents: events, audits, active: unknown,
+        released: r?.state === "withdrawn" && r.terminal_kind === "replaced_provider_boundary_exit" && r.unsettled === true && events.length === 1 && audits.length === 1 };
+    });
+  } finally { await sql.end({ timeout: 5 }); }
+}
+
 function bundlesFrom(o: ReturnType<typeof options>, required: boolean) {
   const out: { docker: Json[]; m1: Json | null; shas: Record<string, string> } = { docker: [], m1: null, shas: {} };
   for (const [key, host] of [["bundle-m3", "m3ultra"], ["bundle-mini", "9mini"]] as const) {
@@ -338,6 +360,13 @@ export async function main(argv: readonly string[]): Promise<number> {
     const url = new URL(await databaseUrl());
     print({ host: url.hostname, port: url.port, database: url.pathname.slice(1), queryKeys: [...url.searchParams.keys()], parseDatabaseUrl: "ok" });
     return 0;
+  }
+  if (command === "readback") {
+    const o = options(args, [], ["--database-url-stdin"]);
+    if (!o.flag("--database-url-stdin")) throw new Error("release_29877f65_required:database-url-stdin");
+    const result = await readback(await databaseUrl());
+    print({ command: "readback", requestId: REQUEST_ID, ...result });
+    return result.released ? 0 : 3;
   }
   if (command === "preflight") {
     const o = options(args, ["bundle-m3", "bundle-m3-sha", "bundle-mini", "bundle-mini-sha", "bundle-m1", "bundle-m1-sha"], ["--database-url-stdin"]);
@@ -399,7 +428,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       checks: [...built.checks, ...verify], readyForDryRun: ok });
     return ok ? 0 : 3;
   }
-  throw new Error("release_29877f65_usage:db-target|preflight|plan|receipt");
+  throw new Error("release_29877f65_usage:db-target|preflight|plan|receipt|readback");
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) void main(process.argv.slice(2)).then(code => { process.exitCode = code; }, error => {
