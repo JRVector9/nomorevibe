@@ -450,7 +450,7 @@ it('settles historical terminal before a late actual job wall rolls cache and or
       async () => { await Promise.allSettled([running, ...(holding ? [holding] : [])]); }, () => holder.end()], failures); }
   });
 }));
-it('retains full C after EOF and fences a new boot from another POST or failed cache attempt', exercise(async () => {
+it('retains full C after EOF and fences a new boot from another POST or failed cache attempt while neighbours keep moving', exercise(async () => {
   const item = await seed(); await server(async ({ bodies, setReply }) => {
     await custom(async lease => { await reserve([item], lease); });
     const owner = { instanceId: role.instanceId, bootId: role.bootId };
@@ -469,6 +469,13 @@ it('retains full C after EOF and fences a new boot from another POST or failed c
     expect(await retryableTranslations(4)).toEqual([]);
     expect(await tick()).toMatchObject({ status: 'completed' }); expect(bodies).toHaveLength(1);
     expect(Array.from(await admin`SELECT request_id,state FROM model_capacity_requests WHERE owner_instance_id=${prefix}`)).toEqual([{ request_id: unknown.request_id, state: 'indeterminate' }]);
+    expect((await admin`SELECT attempts FROM text_translations WHERE source_hash=${item.hash}`)[0].attempts).toBe(1);
+    // 뒤의 사유는 남은 자리로 그대로 옮겨진다. unknown 은 운영 회수 전까지 그대로 남는다
+    setReply(response => { response.end(JSON.stringify(replyBody())); });
+    const neighbour = await seed();
+    expect(await tick()).toMatchObject({ status: 'completed', done: true }); expect(bodies).toHaveLength(2);
+    expect((await admin`SELECT status,translated FROM text_translations WHERE source_hash=${neighbour.hash}`)[0]).toEqual({ status: 'done', translated: '한국어 사유' });
+    expect((await admin`SELECT state FROM model_capacity_requests WHERE request_id=${unknown.request_id}::uuid`)[0].state).toBe('indeterminate');
     expect((await admin`SELECT attempts FROM text_translations WHERE source_hash=${item.hash}`)[0].attempts).toBe(1);
   });
 }));

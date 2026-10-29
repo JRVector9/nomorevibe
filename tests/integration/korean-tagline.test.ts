@@ -243,13 +243,14 @@ describe("한국어 한 줄 소개 잡", () => {
     expect(await koreanTaglineProgress()).toMatchObject({ gaveUp: 1 });
   });
 
-  it("게이트웨이 실패는 손을 떼지 않고 늘어나는 간격으로 다시 보며, 이미 옮긴 한국어를 덮지 않는다", async () => {
+  it("게이트웨이 실패는 시도 한도(12번) 전까지 늘어나는 간격으로 다시 보며, 이미 옮긴 한국어를 덮지 않는다", async () => {
     const row = await seed({ slug: "gateway", tagline: "Plan your trips" });
     gateway.mockResolvedValue({ ok: false, status: 502 } as Response);
     expect(await tick()).toMatchObject({ status: "completed", done: true });
     const failed = await stored(row.id);
     expect(failed).toMatchObject({ errorCode: "http_502", taglineKo: null, attempts: 1 });
     await db.update(productKoreanTaglines).set({ retryAt: null, attempts: 9 }).where(eq(productKoreanTaglines.productId, row.id));
+    // 9번은 시도 한도(12번) 안이다
     expect((await pendingKoreanTaglines(10, [])).map((task) => task.productId)).toEqual([row.id]);
     expect(await koreanTaglineProgress()).toMatchObject({ failed: 1, gaveUp: 0 });
 
@@ -266,6 +267,66 @@ describe("한국어 한 줄 소개 잡", () => {
     await tick();
     expect((await stored(a.id))?.errorCode).toBe("invalid_output");
     expect((await stored(b.id))?.errorCode).toBe("invalid_output");
+    // 묶음의 invalid_output 은 누구 탓인지 몰라 품질 거절로 세지 않는다
+    expect((await stored(a.id))?.qualityRejections).toBe(0);
+  });
+
+  it("같은 게이트웨이 실패가 품질 외 실패 한도에 닿으면 더 고르지 않고 손을 뗀 것으로 센다", async () => {
+    const row = await seed({ slug: "gateway-ceiling", tagline: "Plan your trips" });
+    await db.insert(productKoreanTaglines).values({ productId: row.id, sourceTagline: "Plan your trips",
+      attempts: 9, qualityRejections: 0, errorCode: "http_400" });
+    gateway.mockResolvedValue({ ok: false, status: 400 } as Response);
+    await tick();
+    expect(await stored(row.id)).toMatchObject({ attempts: 10, qualityRejections: 0, errorCode: "http_400" });
+    await db.update(productKoreanTaglines).set({ retryAt: null }).where(eq(productKoreanTaglines.productId, row.id));
+    // 재시도 시각이 지나도 다시 서지 않는다 — 홈에 보이는 제품도 마찬가지다
+    expect(await pendingKoreanTaglines(10, [])).toEqual([]);
+    expect(await pendingKoreanTaglines(10, [row.slug])).toEqual([]);
+    expect(await koreanTaglineProgress()).toMatchObject({ failed: 0, gaveUp: 1 });
+    gateway.mockClear();
+    await tick();
+    expect(gateway).not.toHaveBeenCalled();
+  });
+
+  it("혼자 보낸 소개가 배열을 못 받으면 품질 거절로 세어 한도에서 멈춘다", async () => {
+    const row = await seed({ slug: "solo-invalid", tagline: "Plan your trips" });
+    // 두 번 실패해 혼자 보내지는 소개
+    await db.insert(productKoreanTaglines).values({ productId: row.id, sourceTagline: "Plan your trips",
+      attempts: 2, qualityRejections: 0, errorCode: "invalid_output" });
+    gateway.mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: "여행 계획 세우기" } }] }) } as unknown as Response);
+    for (let quality = 1; quality <= 4; quality++) {
+      await tick();
+      expect(await stored(row.id)).toMatchObject({ attempts: 2 + quality, qualityRejections: quality, errorCode: "rejected:invalid_output" });
+      await db.update(productKoreanTaglines).set({ retryAt: null }).where(eq(productKoreanTaglines.productId, row.id));
+    }
+    expect(await pendingKoreanTaglines(10, [])).toEqual([]);
+    expect(await koreanTaglineProgress()).toMatchObject({ gaveUp: 1, rejected: [{ reason: "invalid_output", count: 1 }] });
+  });
+
+  it("한 번 품질에서 버려진 소개는 실패 사유가 바뀌어도 앞 문장만 다시 보낸다 — 전체·앞 문장을 번갈아 보내지 않는다", async () => {
+    const tagline = "Notes is a fast editor for teams. It syncs across every device you own and keeps working offline";
+    const row = await seed({ slug: "oscillation", name: "Notes", tagline });
+    const sent: string[] = [];
+    const reply = (line: string) => gateway.mockImplementation(async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { messages: { role: string; content: string }[] };
+      const items = JSON.parse(body.messages[1].content) as { name: string; tagline: string }[];
+      sent.push(items[0].tagline);
+      return { ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify([line]) } }] }) } as unknown as Response;
+    });
+    const due = () => db.update(productKoreanTaglines).set({ retryAt: null }).where(eq(productKoreanTaglines.productId, row.id));
+    reply(`Notes는 ${"팀을 위한 빠른 편집기로 모든 기기에서 동기화된다 ".repeat(4).trim()}`);
+    await tick();
+    expect(await stored(row.id)).toMatchObject({ errorCode: "rejected:too_long", qualityRejections: 1 });
+    await due();
+    // 앞 문장을 받고 이름을 뺐다 — 마지막 실패가 name_lost 로 바뀐다
+    reply("팀을 위한 빠른 편집기");
+    await tick();
+    expect(await stored(row.id)).toMatchObject({ errorCode: "rejected:name_lost", qualityRejections: 2 });
+    await due();
+    reply("Notes는 팀을 위한 빠른 편집기");
+    await tick();
+    expect(await stored(row.id)).toMatchObject({ errorCode: null, taglineKo: "Notes는 팀을 위한 빠른 편집기", qualityRejections: 2 });
+    expect(sent).toEqual([tagline, "Notes is a fast editor for teams", "Notes is a fast editor for teams"]);
   });
 
   it("키가 없으면 부르지 않고, 성공이 아니라 제 일 못 함(no_key)으로 남는다 — 마지막 성공 시각을 옮기지 않는다", async () => {

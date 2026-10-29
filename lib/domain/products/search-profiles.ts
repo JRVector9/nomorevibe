@@ -16,7 +16,7 @@ import { lockSearchVerifyModelCapacityDispatch, finishSearchVerifyModelCapacityD
 import { SEARCH_VERIFY_POLICY_HASH, VERIFY_MODEL } from "./search-verify";
 import { assertJobBatchAdmission } from "@/lib/jobs/batch-repository";
 import { lockProductGeneration, type ProductTransaction } from "./generation";
-import { and, eq, gt, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, notInArray, sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import { products, productSearchProfiles, type Product, type ProductSearchProfile } from "@/lib/db/schema";
 import { assertJobLease, assertJobLeaseAtWallTime, type JobLease } from "@/lib/jobs/control";
@@ -72,9 +72,42 @@ const profileGenerationDueSql = () => sql`(${productSearchProfiles.productId} is
         or (${productSearchProfiles.errorCode} is null and (${productSearchProfiles.needsRefresh}
             or ${productSearchProfiles.updatedAt} < now() - interval '30 days')))`;
 
-export async function pendingProfiles(limit: number, owner?: Pick<RoleLease, "instanceId" | "bootId">): Promise<ProfileTask[]> {
-  const own = owner ? await findOwnPendingTextProfileRequests({
-    owner: { instanceId: owner.instanceId, bootId: owner.bootId }, model: scopedModel("product-search-profile", PROFILE_MODEL) }) : [];
+/**
+ * 할 일이 된 시각 — 운영 진척(text-stage-progress.ts keywords·text-progress.ts profile_age)의 식에서 갱신 대기만 REFRESH_SINCE 로
+ * 센다. 감사가 공개분을 다시 돌 때 오래전에 지은 제품이 방금 바뀐 메모로 이 줄의 맨 앞에 끼지 않게 한다(위 profileGenerationDueSql 설명의 2026-10-17 사례).
+ * 그래서 경보의 가장 오래된 나이는 감사 갱신을 updated_at 부터 세어 이 줄보다 길게 보일 수 있다 — 더 늦게 보지는 않는다.
+ */
+const READY_SINCE = sql`case when ${productSearchProfiles.productId} is null then ${products.createdAt}
+  when ${productSearchProfiles.errorCode} is not null then greatest(${productSearchProfiles.updatedAt}, ${productSearchProfiles.retryAt})
+  when ${productSearchProfiles.needsRefresh} then ${REFRESH_SINCE}
+  else ${productSearchProfiles.updatedAt} + interval '30 days' end`;
+/** 한 묶음에서 오래 기다린 순서로 채우는 몫 — 12건 중 4건 */
+const OLDEST_SHARE = 3;
+
+/**
+ * 우선순위 줄(안 지은 것 → 한 줄 소개 → 오래된 갱신, 같은 차례면 새 제품)과 오래 기다린 순서 줄을 섞는다.
+ *
+ * 우선순위 줄만 보면 공개분 1만5천 건이 안 지은 채 기다리는 동안 실패 재시도·갱신은 차례를 얻지 못하고, 안 지은 것 안에서도
+ * 새 제품(id 큰 것)이 계속 앞에 서 오래된 제품이 굶었다(2026-10-27 운영: 대기 15,511·upstream_stalled). 몫의 3분의 1은
+ * 할 일이 된 시각(READY_SINCE)이 가장 이른 것부터 채운다. 실패한 것은 재시도 시각이 그 시각이 되어 뒤로 가므로 자리를 독점하지 않는다.
+ * 결과는 우선순위 둘, 오래 기다린 것 하나 순으로 번갈아 놓는다 — 잡이 둘씩 동시에 부르므로 가장 오래 기다린 것은 둘째 차례에 가고,
+ * 틱이 일찍 접혀도 빠지지 않는다. 한 건만 고를 때는 예전처럼 우선순위 줄의 머리다.
+ */
+export function interleaveProfileTasks<T extends { product: { id: number } }>(oldest: readonly T[], priority: readonly T[], limit: number): T[] {
+  const result: T[] = [], seen = new Set<number>();
+  const push = (task: T | undefined) => { if (task && !seen.has(task.product.id) && result.length < limit) { seen.add(task.product.id); result.push(task); } };
+  for (let o = 0, p = 0; (o < oldest.length || p < priority.length) && result.length < limit;) {
+    push(priority[p++]); push(priority[p++]);
+    push(oldest[o++]);
+  }
+  return result;
+}
+
+export async function pendingProfiles(limit: number, owner?: Pick<RoleLease, "instanceId" | "bootId">,
+  excludedProductIds: readonly number[] = []): Promise<ProfileTask[]> {
+  const own = (owner ? await findOwnPendingTextProfileRequests({
+    owner: { instanceId: owner.instanceId, bootId: owner.bootId }, model: scopedModel("product-search-profile", PROFILE_MODEL) }) : [])
+    .filter(row => !excludedProductIds.includes(row.productId));
   const resumed = own.length ? await onPrimary(() => db.transaction(async tx => {
     const rows = await tx.select({ product: FIELDS, profile: productSearchProfiles, reviewerNote: REVIEWER_NOTE })
       .from(products).leftJoin(productSearchProfiles, eq(productSearchProfiles.productId, products.id))
@@ -98,22 +131,22 @@ export async function pendingProfiles(limit: number, owner?: Pick<RoleLease, "in
   if (resumed.length >= limit) return resumed;
 
   // 요청 장부가 이미 쥔 제품은 새로 집지 않는다(capacity-busy-targets.ts) — 이어받을 내 요청은 위 resumed 가 맡는다.
-  // 미확인 요청이 걸린 제품이 맨 앞에 서면 일꾼 하나가 'capacity' 미룸을 받아 틱 전체를 접었고, 묵은 내 대기(입력 해시가 바뀐 것)
-  // 위에 같은 제품의 새 요청을 또 넣으려다 같은 미룸을 받았다. 한 제품은 한 요청만 가진다.
-  const rows = await db.select({ product: FIELDS, profile: productSearchProfiles, reviewerNote: REVIEWER_NOTE })
-    .from(products)
-    .leftJoin(productSearchProfiles, eq(productSearchProfiles.productId, products.id))
-    .where(and(
-      inArray(products.status, ["seeded", "verified"]),
-      profileGenerationDueSql(),
-      sql`('text:profile:' || ${products.id}) NOT IN (${busyLogicalKeysSql("text:profile:")})`,
-    ))
-    .orderBy(sql`(${productSearchProfiles.productId} is null) desc,
+  // 미확인 요청이 걸린 제품이 맨 앞에 서면 일꾼 하나가 'capacity' 미룸을 받아 틱 전체를 접었다. 한 제품은 한 요청만 가진다.
+  const excluded = [...new Set([...excludedProductIds, ...resumed.map(task => task.product.id)].filter(id => Number.isSafeInteger(id) && id > 0))];
+  const due = and(inArray(products.status, ["seeded", "verified"]), profileGenerationDueSql(),
+    sql`('text:profile:' || ${products.id}) NOT IN (${busyLogicalKeysSql("text:profile:")})`,
+    excluded.length ? notInArray(products.id, excluded) : undefined);
+  const select = () => db.select({ product: FIELDS, profile: productSearchProfiles, reviewerNote: REVIEWER_NOTE })
+    .from(products).leftJoin(productSearchProfiles, eq(productSearchProfiles.productId, products.id)).where(due);
+  const room = limit - resumed.length;
+  const [priority, oldest] = await Promise.all([
+    select().orderBy(sql`(${productSearchProfiles.productId} is null) desc,
       (${productSearchProfiles.productId} is null and btrim(${products.description}) = btrim(${products.tagline})) desc,
-      ${REFRESH_SINCE}, ${products.id} desc`)
-    .limit(limit);
-  const fresh = rows.map((row) => ({ product: row.product, profile: row.profile ?? null, reviewerNote: row.reviewerNote }));
-  return [...resumed, ...fresh.filter(task => !resumed.some(row => row.product.id === task.product.id))].slice(0, limit);
+      ${REFRESH_SINCE}, ${products.id} desc`).limit(room),
+    select().orderBy(sql`${READY_SINCE} asc nulls first`, asc(products.id)).limit(Math.max(1, Math.ceil(room / OLDEST_SHARE))),
+  ]);
+  const task = (row: (typeof priority)[number]): ProfileTask => ({ product: row.product, profile: row.profile ?? null, reviewerNote: row.reviewerNote });
+  return [...resumed, ...interleaveProfileTasks(oldest.map(task), priority.map(task), room)];
 }
 
 export type ProfileResult =

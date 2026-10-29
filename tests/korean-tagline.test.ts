@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { checkKoreanTagline, isKoreanLine, parseKoreanTaglines } from "@/lib/domain/products/korean-tagline";
 import { packTaglineBatch } from "@/lib/jobs/products/korean-tagline";
+import { koreanTaglineSource } from "@/lib/domain/products/korean-taglines";
 
 describe("isKoreanLine — 이미 한국어인 소개는 옮기지 않는다", () => {
   it("한글이 든 낱말이 절반 이상이면 한국어다", () => {
@@ -190,5 +191,23 @@ describe("bounded percentage claims", () => {
   it("keeps exact percentages valid when the source itself makes an exact claim", () => {
     expect(checkKoreanTagline("Builder는 개발 비용을 72% 절감하는 도구",
       { ...source, tagline: "Builder reduces developer costs by 72%" }).ok).toBe(true);
+  });
+});
+
+describe("koreanTaglineSource — 한 번 품질에서 버려지면 앞 문장을 계속 보낸다", () => {
+  const tagline = "Notes is a fast editor for teams. It syncs across every device you own";
+  const task = (lastError: string | null, qualityRejections?: number) => ({ productId: 1, name: "Notes", tagline, repoUrl: null, attempts: 1, lastError, qualityRejections });
+  it("처음과 게이트웨이 실패만 있을 때는 전체를 보낸다", () => {
+    expect(koreanTaglineSource(task(null, 0))).toBe(tagline);
+    expect(koreanTaglineSource(task("http_502", 0))).toBe(tagline);
+  });
+  it("품질 거절이 한 번이라도 있으면 마지막 실패가 무엇이든 앞 문장이다", () => {
+    for (const lastError of ["rejected:too_long", "rejected:name_lost", "rejected:invented_term", "timeout"]) {
+      expect(koreanTaglineSource(task(lastError, 1))).toBe("Notes is a fast editor for teams");
+    }
+  });
+  it("횟수를 모르는 예전 작업은 too_long·empty 일 때만 줄인다", () => {
+    expect(koreanTaglineSource(task("rejected:too_long"))).toBe("Notes is a fast editor for teams");
+    expect(koreanTaglineSource(task("rejected:name_lost"))).toBe(tagline);
   });
 });

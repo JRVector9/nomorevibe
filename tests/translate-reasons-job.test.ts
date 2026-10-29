@@ -116,3 +116,14 @@ it("shutdown during translation must not write a successful late response", asyn
   await translateReasons({ ...context(), signal: stopping.signal });
   expect(mocks.record).not.toHaveBeenCalled();
 });
+
+it("이어지는 틱은 번갈아 가던 차례를 잇는다 — 늘 실패하는 재시도 묶음이 처음 보는 글을 굶기지 않는다", async () => {
+  mocks.retry.mockResolvedValue([item("failing", 1)]);
+  mocks.untried.mockResolvedValue([item("fresh")]);
+  // 첫 묶음이 실패하면 틱을 접는다(게이트웨이가 막힌 것일 수 있다)
+  mocks.translate.mockResolvedValue({ ok: false, error: "timeout" });
+  await translateReasons(context()); await translateReasons(context());
+  // 두 틱에 걸쳐 두 줄이 한 번씩 차례를 얻는다. 예전에는 틱마다 실패 줄부터 시작해 fresh 가 영영 불리지 않았다
+  expect(mocks.translate.mock.calls.map(([texts]) => texts)).toEqual(expect.arrayContaining([["English reason failing"], ["English reason fresh"]]));
+  expect(mocks.translate).toHaveBeenCalledTimes(2);
+});
