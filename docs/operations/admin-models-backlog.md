@@ -169,3 +169,4 @@ M1 모델 선택/readiness 수정과 상품·사유 번역 동일 등록부 정�
 - 코드/시험/항목별 커밋 완료, 새 브랜치 push 및 PR https://github.com/JRVector9/nomorevibe/pull/722 OPEN. 대표용 절대 argv: `2026-10-29-m1-relay-model-handoff.md`(13줄), `2026-10-29-supa-root-handoff.md`(7줄 + prepare가 생성하는 실제 task).
 - verify-model-config 72파일/1,032시험·typegen·tsc PASS. Supa9파일/43시험, 실제 Python16시험, 추가7파일/64시험 PASS(중복 포함). UI 변경/실제 장비 실행 없음.
 - 막힘: Actions run40835749295 scope/check는 GitHub 계정 결제 실패 또는 spending limit으로 **잡 시작 전** 실패(annotation 확인). 나머지 코드 검사는 SKIPPED. 필수 CI 통과를 주장하지 않으며 병합하지 않음. 담당자의 Billing & plans 해결 뒤 CI 성공 확인만 남음. 결제·권한·워크플로 우회는 하지 않음.
+- 최종 relay 모델 ID/KEY 충돌 거절 회귀 추가. verify-model-config 72파일/1,032시험·typegen·tsc 재실행 PASS. PR의 GitHub CI 계정 차단은 운영자 해결 대상으로 유지.

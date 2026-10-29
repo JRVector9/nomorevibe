@@ -13,7 +13,8 @@ export const isTailnetIpv4 = (value: string): boolean => {
 /** The relay sends the actual upstream id, never a gateway label or a model alias. */
 export function relayModelDefinition(env: Readonly<Record<string, string | undefined>>) {
   const name = env.LOCAL_MODEL_RELAY_MODEL?.trim();
-  const definition = name ? resolveRegistryModel(name, env) : configuredModelDefinition("relay", env);
+  const definition = env.LOCAL_MODEL_RELAY_MODEL_KEY?.trim() ? configuredModelDefinition("relay", env)
+    : name ? resolveRegistryModel(name, env) : configuredModelDefinition("relay", env);
   if (!definition || !["local-direct", "abcllm"].includes(definition.provider) || (name && name !== definition.model))
     throw new Error("relay_model_not_allowed");
   const family = env.LOCAL_MODEL_RELAY_MODEL_FAMILY?.trim();

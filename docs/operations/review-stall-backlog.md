@@ -210,3 +210,4 @@ AI1/AI2 저장 증가 명령은 두 측정 mjs를 기존 M3 text 컨테이너에
 - 로컬 최종 `bash scripts/verify-model-config.sh` PASS(72파일/1,032시험·typegen·tsc), Supa9파일/43시험·Python16시험 PASS, 추가7파일/64시험 PASS(중복 합산하지 않음). 범위 ESLint/bash 문법/diff 검사 PASS.
 - 막힘: Actions run40835749295의 scope/check가 **잡 시작 전** 실패. check-run123320010237 annotation: 계정의 최근 결제 실패 또는 spending limit 증액 필요(Billing & plans). 따라서 typecheck/lint/unit/build/integration 잡은 SKIPPED이며 CI 통과로 기록하지 않는다. 코드 실패 로그는 없고 `gh run view --log-failed`도 `log not found`였다. 결제/한도 변경·CI 보호 우회·강제 병합/배포 없음.
 - 남음: 저장소 계정 담당자가 결제/한도 문제를 해결한 뒤 같은 PR의 필수 CI 성공 확인. 성공 전 병합 금지. 실제 운영 설치/종료/해제/저장 측정은 다른 승인된 운영 차선 몫이다.
+- 최종 설정 검토: relay bare ID와 *_MODEL_KEY가 서로 다른 장비를 고르는 경우도 거절해 모델/리소스 한도가 갈리지 않게 함. 72파일/1,032시험·typegen·tsc 재실행 PASS. CI 계정 차단은 별도이며 완화하지 않음.
