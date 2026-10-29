@@ -227,6 +227,65 @@ export function checkKoreanTagline(output: string, source: { name: string; tagli
   return { ok: true, line };
 }
 
+export type KoreanTaglineCleanup = "name_spelling" | "parenthetical" | "first_sentences" | "dash_head" | "first_line";
+export type KoreanTaglineOutputCheck = (KoreanTaglineCheck & { ok: false }) | { ok: true; line: string; cleaned: KoreanTaglineCleanup | null };
+
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** 이름을 띄어 쓰거나 대소문자만 바꿔 적은 것(lemo opuscar·Shell-RS)을 원래 철자로 — 음역은 고치지 않는다 */
+function restoreNameSpelling(line: string, name: string): string | null {
+  const parts = name.trim().match(/[\p{L}\p{N}]+/gu);
+  if (!parts?.length || line.toLowerCase().includes(name.trim().toLowerCase())) return null;
+  // 한국어 조사는 이름에 바로 붙는다(lemo-opuscar로) — 경계는 영문·숫자만 본다
+  const loose = new RegExp(`(?<![A-Za-z0-9])${parts.map(escapeRegExp).join("[\\s\\-_.·]*")}(?![A-Za-z0-9])`, "iu");
+  return loose.test(line) ? line.replace(loose, name.trim()) : null;
+}
+/** 길이를 줄이는 정리 — 뜻을 더하지 않고 뒤쪽 부연만 뗀다. 어느 것이든 아래에서 검사를 처음부터 다시 받는다 */
+function shortenings(line: string): [KoreanTaglineCleanup, string][] {
+  const out: [KoreanTaglineCleanup, string][] = [];
+  const withoutParens = line.replace(/\s*[(（][^()（）]*[)）]/g, "").replace(/\s+/g, " ").trim();
+  if (withoutParens !== line) out.push(["parenthetical", withoutParens]);
+  for (const text of [line, withoutParens]) {
+    // 여러 문장이면 앞 문장부터 한도까지 — 완결된 문장만 남긴다
+    const sentences = text.split(/(?<=[.!?。！？])\s+/);
+    let kept = "";
+    for (const sentence of sentences) {
+      const next = kept ? `${kept} ${sentence}` : sentence;
+      if ([...next.replace(/[.。]+$/, "")].length > KOREAN_TAGLINE_MAX) break;
+      kept = next;
+    }
+    if (kept && sentences.length > 1 && kept !== text) out.push(["first_sentences", kept]);
+    // 띄어 쓴 줄표·세로선 뒤는 부연이다 — 앞 구절이 한 줄로 서면 그것만
+    const dash = /\s[—–|-]\s/.exec(text);
+    if (dash && dash.index > 0) out.push(["dash_head", text.slice(0, dash.index).trim()]);
+  }
+  return out;
+}
+
+/**
+ * 모델 출력을 검사한다 — 그대로 통과하면 그대로, '너무 긺'·'이름 사라짐'·'여러 줄'이면 정해진 정리만 해 보고 다시 처음부터 검사한다.
+ *
+ * 같은 원문이 '너무 긺'으로 거듭 버려져 대기와 손 뗀 수가 쌓였다(product-tagline-ko 최근 오류 10건 중 too_long 6·name_lost 2,
+ * 2026-10-27 실측). 정리는 뒤쪽 괄호·뒷문장·줄표 뒤 부연을 떼거나 띄어 쓴 이름을 원래 철자로 되돌리는 것뿐이고, 그 결과도
+ * checkKoreanTagline 의 모든 검사(지어낸 수·낱말·이름·외국 문자·길이)를 다시 받는다. 고칠 수 없는 줄은 원래 사유로 버린다.
+ */
+export function checkKoreanTaglineOutput(output: string, source: { name: string; tagline: string }): KoreanTaglineOutputCheck {
+  const first = checkKoreanTagline(output, source);
+  if (first.ok) return { ...first, cleaned: null };
+  if (!["too_long", "name_lost", "multiline"].includes(first.reason)) return first;
+  const base = first.reason === "multiline" ? output.trim().split(/[\r\n]+/)[0] ?? "" : output.trim().replace(/\s+/g, " ");
+  const candidates: [KoreanTaglineCleanup, string][] = first.reason === "multiline" ? [["first_line", base]] : [];
+  const named = restoreNameSpelling(base, source.name);
+  for (const text of named ? [named, base] : [base]) {
+    if (named && text === named) candidates.push(["name_spelling", named]);
+    candidates.push(...shortenings(text));
+  }
+  for (const [cleaned, text] of candidates) {
+    const checked = checkKoreanTagline(text, source);
+    if (checked.ok) return { ...checked, cleaned };
+  }
+  return first;
+}
+
 /** 다시 보낼 앞부분 — 이 길이 안에서 처음 끝나는 문장·구절. 너무 짧은 머리(이름뿐)는 건너뛴다 */
 const LEAD_MAX = 120;
 const LEAD_MIN = 20;
@@ -245,6 +304,11 @@ export function leadClause(tagline: string): string {
   for (const match of text.matchAll(CLAUSE_END)) {
     if (match.index > LEAD_MAX) break;
     if (match.index >= LEAD_MIN) return text.slice(0, match.index).trim();
+  }
+  // 문장이 끝나는 자리가 없는 긴 소개는 한도 안의 마지막 쉼표까지 — 그대로 다시 보내면 같은 '너무 긺'이 되풀이된다
+  if (text.length > LEAD_MAX) {
+    const commas = [...text.matchAll(/[,，、](?=\s)/g)].filter(match => match.index >= LEAD_MIN && match.index <= LEAD_MAX);
+    if (commas.length) return text.slice(0, commas.at(-1)!.index).trim();
   }
   return text;
 }
