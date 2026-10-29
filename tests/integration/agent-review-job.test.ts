@@ -124,3 +124,43 @@ it("records two concurrent model approvals and transactionally requests second r
   expect(await db.query.jobs.findFirst({ where: eq(jobs.name, "second-review") })).toMatchObject({ requestedVersion: 2 });
   expect(await db.query.jobs.findFirst({ where: eq(jobs.name, "crawl-publish") })).toBeUndefined();
 });
+
+// 빈 화면 본문 규칙(2026-10-29): 1차 AI 직전 재확인이 판정 잡과 같은 모드(judge.stubTextRules)를 쓴다
+it("keeps a title-only page with the model in shadow mode and records the would-be rule on the candidate", async () => {
+  expect((await getSettings()).judge.stubTextRules).toBe("shadow");
+  await source("maker/title-only", "https://title-only.example", { state: "approved", reason: "passed" },
+    { title: "Title Only", description: "A deployed product", textSample: "Title Only" });
+  // 판정 잡이 남긴 옛 값은 재확인 값으로 바뀐다
+  await db.update(crawlCandidates).set({ signals: { stubTextShadow: { id: "login_only", rule: "old", detail: "old" } } });
+  expect(await tick()).toMatchObject({ status: "completed" });
+  expect(review).toHaveBeenCalledOnce();
+  expect(await db.select().from(crawlCandidates)).toMatchObject([{ state: "approved",
+    signals: { stubTextShadow: { id: "title_only", rule: "제목만 있는 페이지 아님" } } }]);
+});
+
+it("rejects the same title-only page by rules without calling the model once enforce is saved", async () => {
+  expect(await saveSettings({ judge: { stubTextRules: "enforce" } }, "test")).toMatchObject({ ok: true });
+  const [row] = await db.select().from(crawlSettings);
+  expect((row.values as { judge: { stubTextRules: string } }).judge.stubTextRules).toBe("enforce");
+  await source("maker/title-only", "https://title-only.example", { state: "approved", reason: "passed" },
+    { title: "Title Only", description: "A deployed product", textSample: "Title Only" });
+  expect(await tick()).toMatchObject({ status: "completed" });
+  expect(review).not.toHaveBeenCalled();
+  const [candidate] = await db.select().from(crawlCandidates);
+  expect(candidate).toMatchObject({ state: "rejected", reason: "not_a_product" });
+  expect(candidate.signals).not.toHaveProperty("stubTextShadow");
+  expect(await db.select().from(crawlReviewAttempts)).toMatchObject([{ provider: "rules", state: "succeeded", outcome: { decision: "reject" } }]);
+});
+
+it("reads the shadow default when the stored judge predates the key and keeps the stored host list", async () => {
+  const { stubTextRules: _mode, ...judge } = { ...(await getSettings()).judge, thirdPartyHosts: ["substack.com"] };
+  void _mode;
+  const [row] = await db.select().from(crawlSettings);
+  await db.update(crawlSettings).set({ values: { ...(row.values as object), judge } });
+  const settings = await getSettings();
+  expect(settings.judge).toMatchObject({ stubTextRules: "shadow", thirdPartyHosts: ["substack.com"] });
+  // 다른 칸만 바꾼 저장도 새 키를 기본값으로 채워 쓴다(목록은 저장된 것 그대로)
+  expect(await saveSettings({ judge: { minStars: 1 } }, "test")).toMatchObject({ ok: true });
+  const [saved] = await db.select().from(crawlSettings);
+  expect((saved.values as { judge: Record<string, unknown> }).judge).toMatchObject({ stubTextRules: "shadow", thirdPartyHosts: ["substack.com"], minStars: 1 });
+});

@@ -121,6 +121,8 @@ export const reviewHash = (value: unknown): string => createHash("sha256").updat
 export function reviewPolicyHash(settings: CrawlSettings): string {
   const judge = { ...settings.judge };
   delete (judge as Partial<typeof judge>).maxStars;
+  // 빈 화면 본문 규칙의 shadow·off 는 판정을 바꾸지 않는다 — 넣으면 이 칸이 생긴 배포만으로 진행 중인 심사가 모두 낡은 것이 된다
+  if (judge.stubTextRules !== "enforce") delete (judge as Partial<typeof judge>).stubTextRules;
   return reviewHash({ judge, agentEvidence: {
     enforceEligibility: settings.agentEvidence.enforceEligibility,
     detectorVersion: settings.agentEvidence.detectorVersion,
