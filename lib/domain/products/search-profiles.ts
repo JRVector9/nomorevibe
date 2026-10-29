@@ -22,7 +22,7 @@ import { products, productSearchProfiles, type Product, type ProductSearchProfil
 import { assertJobLease, assertJobLeaseAtWallTime, type JobLease } from "@/lib/jobs/control";
 import { PROFILE_MODEL, keywordText, profileEvidence, profileHash } from "./search-profile";
 import { isProfileProviderError, MAX_PROFILE_ATTEMPTS as MAX_ATTEMPTS, profileGenerationRetryAllowedSql } from "./search-profile-retry";
-import { unsettledLogicalFence } from "@/lib/llm/capacity-selection-fence";
+import { busyLogicalKeysSql } from "@/lib/llm/capacity-busy-targets";
 
 /**
  * 검색 키워드의 대기열과 저장. 짓는 일(게이트웨이)은 search-profile.ts 에 있다.
@@ -81,8 +81,6 @@ const READY_SINCE = sql`case when ${productSearchProfiles.productId} is null the
   when ${productSearchProfiles.errorCode} is not null then greatest(${productSearchProfiles.updatedAt}, ${productSearchProfiles.retryAt})
   when ${productSearchProfiles.needsRefresh} then ${REFRESH_SINCE}
   else ${productSearchProfiles.updatedAt} + interval '30 days' end`;
-/** 결과를 모르는 요청에 묶인 제품은 고르지 않는다 — 머리에 선 한 건이 매 틱 잡 전체를 capacity deferred 로 멈추지 않게 */
-const NOT_UNSETTLED = sql`not ${unsettledLogicalFence(sql`('text:profile:' || ${products.id})`)}`;
 /** 한 묶음에서 오래 기다린 순서로 채우는 몫 — 12건 중 4건 */
 const OLDEST_SHARE = 3;
 
@@ -132,8 +130,11 @@ export async function pendingProfiles(limit: number, owner?: Pick<RoleLease, "in
   })) : [];
   if (resumed.length >= limit) return resumed;
 
+  // 요청 장부가 이미 쥔 제품은 새로 집지 않는다(capacity-busy-targets.ts) — 이어받을 내 요청은 위 resumed 가 맡는다.
+  // 미확인 요청이 걸린 제품이 맨 앞에 서면 일꾼 하나가 'capacity' 미룸을 받아 틱 전체를 접었다. 한 제품은 한 요청만 가진다.
   const excluded = [...new Set([...excludedProductIds, ...resumed.map(task => task.product.id)].filter(id => Number.isSafeInteger(id) && id > 0))];
-  const due = and(inArray(products.status, ["seeded", "verified"]), profileGenerationDueSql(), NOT_UNSETTLED,
+  const due = and(inArray(products.status, ["seeded", "verified"]), profileGenerationDueSql(),
+    sql`('text:profile:' || ${products.id}) NOT IN (${busyLogicalKeysSql("text:profile:")})`,
     excluded.length ? notInArray(products.id, excluded) : undefined);
   const select = () => db.select({ product: FIELDS, profile: productSearchProfiles, reviewerNote: REVIEWER_NOTE })
     .from(products).leftJoin(productSearchProfiles, eq(productSearchProfiles.productId, products.id)).where(due);

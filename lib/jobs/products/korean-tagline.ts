@@ -4,7 +4,7 @@ import { translateKoreanTaglinesWithModelCapacity, type KoreanTaglineCapacityRes
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { KOREAN_TAGLINE_MODEL } from "@/lib/crawl/translate";
 import { displayProjectName } from "@/lib/domain/products/display-name";
-import { checkKoreanTagline } from "@/lib/domain/products/korean-tagline";
+import { checkKoreanTaglineOutput } from "@/lib/domain/products/korean-tagline";
 import { homeListSlugs, pendingKoreanTaglines, pendingKoreanTaglineRecovery, recordKoreanTaglines, koreanTaglineSource as taglineSource, type KoreanTaglineResult, type KoreanTaglineTask } from "@/lib/domain/products/korean-taglines";
 import { readModelCapacityCallerControl } from "@/lib/llm/capacity-repository";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
@@ -74,8 +74,8 @@ export async function writeKoreanTaglines(ctx: JobContext<null>): Promise<JobOut
     const startedAt = Date.now();
     const remaining = () => TICK_MS - (Date.now() - startedAt);
     let written = 0, failed = 0;
-    const rejected: Record<string, number> = {};
-    const counts = () => ({ written, failed, rejected });
+    const rejected: Record<string, number> = {}, cleaned: Record<string, number> = {};
+    const counts = () => ({ written, failed, rejected, cleaned });
     const homeSlugs = await homeListSlugs();
     const visited = new Set<number>();
     const stopped = new Set<"gpt" | "qwen">();
@@ -155,7 +155,9 @@ export async function writeKoreanTaglines(ctx: JobContext<null>): Promise<JobOut
         const entries = batch.map((task, index): { task: KoreanTaglineTask; result: KoreanTaglineResult } => {
           if (!result.ok) return { task, result: { kind: "failure", model,
             error: batch.length === 1 && result.error === "invalid_output" ? SOLO_INVALID_OUTPUT : result.error } };
-          const checked = checkKoreanTagline(result.outputs[index], items[index]);
+          // 너무 긺·이름 철자·여러 줄은 정해진 정리 뒤 같은 검사를 다시 받는다(checkKoreanTaglineOutput)
+          const checked = checkKoreanTaglineOutput(result.outputs[index], items[index]);
+          if (checked.ok && checked.cleaned) cleaned[checked.cleaned] = (cleaned[checked.cleaned] ?? 0) + 1;
           return { task, result: checked.ok ? { kind: "success", line: checked.line, model }
             : { kind: "failure", error: `rejected:${checked.reason}`, model } };
         });
@@ -172,7 +174,11 @@ export async function writeKoreanTaglines(ctx: JobContext<null>): Promise<JobOut
           stopped.add(backend);
         }
       }
-      if (errors.length) throw errors[0];
+      if (errors.length) {
+        // 미룸 사유(capacity·unmapped·dispatched…)를 남긴다 — 러너는 'model_capacity' 하나로만 적는다
+        if (errors[0] instanceof ModelCapacityDeferredError) ctx.log("tagline_ko.capacity_deferred", { ...counts(), reason: errors[0].reason });
+        throw errors[0];
+      }
       if (skipped || recoveryDeferred) return { done: false };
       if (stopped.has("gpt") && (!qwen || stopped.has("qwen"))) return { done: true };
     }

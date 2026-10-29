@@ -20,7 +20,7 @@ import { modelCapacityRequestIdentitySchema, modelCapacityReservationSchema, rea
   type ReasonTranslationMember, type ReasonTranslationModelDispatch, type ReasonTranslationDispatchBinding,
   type ModelCapacityReservation, type ModelCapacityRequestIdentity } from '@/lib/llm/capacity';
 import type { PreparedReasonTranslationGatewayCall } from './agent-review-gateway';
-import { unsettledMemberFence } from '@/lib/llm/capacity-selection-fence';
+import { busyMemberKeysSql, capacityOwnerFromEnv, type CapacityOwner } from '@/lib/llm/capacity-busy-targets';
 
 /**
  * 번역해 둘 글과 번역해 둔 글.
@@ -56,20 +56,24 @@ const UNIQUE_SOURCES = UNIQUE_TRANSLATION_SOURCES_SQL;
 export type PendingTranslation = { hash: string; body: string; attempts: number };
 
 /**
- * 결과를 모르는 요청에 묶인 사유는 고르지 않는다(capacity-selection-fence.ts). 2026-10-27 운영에서 reason-translate unknown 한 건이
- * 최신 사유 넷을 묶은 채 남자, 잡이 매 틱 같은 넷을 골라 capacity deferred 로 끝났다 — 기록 0·오류 0이라 대기 10,964건이 무진척으로 보였다.
+ * 요청 장부가 이미 쥔 사유는 두 줄 모두에서 건너뛴다(capacity-busy-targets.ts). 처음 보는 글은 최신순이라 새 사유가 들어오지
+ * 않으면 맨 앞 묶음이 고정된다 — 그 묶음이 미확인 요청에 걸리면 매 틱 같은 묶음을 골라 'capacity'·'dispatched' 미룸만 되풀이했고,
+ * 아무것도 적지 않아 오류 없이 대기만 남았다(reason-translate no_progress, 대기 10,964, 2026-10-27 23:07 KST).
+ * 이 boot 의 대기·예약 요청은 남긴다 — 조정기가 이어받거나 지운다.
  */
-const NOT_UNSETTLED = sql`not ${unsettledMemberFence(sql`('ko:' || u.hash)`)}`;
+function notBusy(owner: CapacityOwner | undefined) {
+  return sql`('ko:' || u.hash) NOT IN (${busyMemberKeysSql('ko:', { owner, keepOwn: true })})`;
+}
 
 /**
  * 아직 한 번도 옮기지 않은 글 — 최근 것부터. 심사 화면이 보는 것이 최근 사유라서다.
  */
-export async function untriedTranslations(limit: number): Promise<PendingTranslation[]> {
+export async function untriedTranslations(limit: number, owner: CapacityOwner | undefined = capacityOwnerFromEnv()): Promise<PendingTranslation[]> {
   const rows = await db.execute<{ hash: string; body: string; attempts: number }>(sql`
     select u.hash, u.body, 0::int as attempts
       from (${UNIQUE_SOURCES}) u
       left join ${textTranslations} t on t.source_hash = u.hash and t.target_lang = 'ko'
-     where t.source_hash is null and ${NOT_UNSETTLED}
+     where t.source_hash is null and ${notBusy(owner)}
      order by u.at desc nulls last, u.hash
      limit ${limit}`);
   return [...rows].map((row) => ({ hash: row.hash, body: row.body, attempts: Number(row.attempts) }));
@@ -82,12 +86,12 @@ export async function untriedTranslations(limit: number): Promise<PendingTransla
  * 실패 1,871건 중 1,854건이 시도 1회에 멈춘 채 엿새를 기다렸다 — 재시도 시각은 진작 지났는데
  * 새로 들어오는 글이 늘 앞에 섰기 때문이다. 줄을 나눠 세우고 잡이 번갈아 가져간다.
  */
-export async function retryableTranslations(limit: number): Promise<PendingTranslation[]> {
+export async function retryableTranslations(limit: number, owner: CapacityOwner | undefined = capacityOwnerFromEnv()): Promise<PendingTranslation[]> {
   const rows = await db.execute<{ hash: string; body: string; attempts: number }>(sql`
     select u.hash, u.body, t.attempts::int as attempts
       from (${UNIQUE_SOURCES}) u
       join ${textTranslations} t on t.source_hash = u.hash and t.target_lang = 'ko'
-     where t.status = 'failed' and (t.retry_at is null or t.retry_at <= now()) and ${NOT_UNSETTLED}
+     where t.status = 'failed' and (t.retry_at is null or t.retry_at <= now()) and ${notBusy(owner)}
      order by t.retry_at asc nulls first, t.attempts asc, u.hash
      limit ${limit}`);
   return [...rows].map((row) => ({ hash: row.hash, body: row.body, attempts: Number(row.attempts) }));

@@ -24,7 +24,7 @@ import { slugArrayPredicate } from "@/lib/domain/ranking/refresh";
 import { leadClause, NEEDS_KOREAN } from "./korean-tagline";
 import { getPopularGroups } from "./popular";
 import { listProductSlugs } from "./repository";
-import { unsettledMemberFence } from "@/lib/llm/capacity-selection-fence";
+import { busyMemberKeysSql, capacityOwnerFromEnv, type CapacityOwner } from "@/lib/llm/capacity-busy-targets";
 
 /**
  * 한국어 한 줄 소개의 대기열과 저장. 옮기는 일(게이트웨이)은 lib/crawl/translate.ts, 검사는 korean-tagline.ts 에 있다.
@@ -34,13 +34,23 @@ const PUBLIC: ProductStatus[] = ["seeded", "verified"];
 /** 검사에서 이만큼 버리면 손을 뗀다 — 원문이 보인다. 게이트웨이 실패는 세지 않고 하루 간격까지 늘려 가며 본다 */
 export const MAX_REJECTIONS = 4;
 /**
- * 같은 원문으로 시도할 수 있는 총 횟수 — 게이트웨이 실패까지 센다. 넘으면 손을 떼고 운영 확인(blocked)으로 센다.
- *
- * 게이트웨이 실패(invalid_output·http_5xx·timeout)는 품질 거절로 세지 않아, 같은 소개가 같은 실패로 하루 간격까지 늘려 가며
- * 끝없이 다시 섰다. 실패 간격이 5분부터 두 배씩 하루까지라 12번째까지 걸리는 시간은 약 3.8일이다 — 그동안 이어진 장애가 아니면
- * 닿지 않는다. 회복 선택기(attempts < 10)는 이 한도 안에서 돈다.
+ * 같은 원문에서 품질 거절이 아닌 실패(invalid_output·timeout·http_4xx…)가 이만큼 쌓이면 손을 뗀다 — 마지막 오류 코드가 사유로 남는다.
+ * 전에는 이 실패를 세지 않아 같은 제품이 하루 간격으로 끝없이 되풀이됐다. 5분부터 두 배씩(최대 하루)이라 열 번이면 사흘쯤 본 것이다.
+ * 공급자 전체 장애(PROVIDER_OUTAGE_ERRORS·http_5xx)는 제품 탓이 아니라 세지 않는다 — 공급자가 돌아오면 이어 가고, 그동안은
+ * 정체 경보(upstream_stalled)가 그대로 알린다. 검색 키워드(search-profile-retry.ts)와 같은 구분이다.
  */
-export const MAX_ATTEMPTS = 12;
+export const MAX_GATEWAY_FAILURES = 10;
+export const PROVIDER_OUTAGE_ERRORS = ["network", "rate_limit", "rate_limited", "no_key", "model_unavailable"] as const;
+/** Qwen 회복 선택기의 누적 시도 상한(기존 값) */
+const RECOVERY_MAX_ATTEMPTS = 10;
+export function koreanTaglineFailureRetryAllowed(error: string | null, attempts: number, qualityRejections: number): boolean {
+  return attempts - qualityRejections < MAX_GATEWAY_FAILURES
+    || error !== null && ((PROVIDER_OUTAGE_ERRORS as readonly string[]).includes(error) || /^http_5\d\d$/.test(error));
+}
+function failureRetryAllowedSql() {
+  return sql`(${k.attempts} - ${k.qualityRejections} < ${MAX_GATEWAY_FAILURES}
+    or ${k.errorCode} in (${sql.join(PROVIDER_OUTAGE_ERRORS.map(code => sql`${code}`), sql`, `)}) or ${k.errorCode} ~ '^http_5[0-9][0-9]$')`;
+}
 /** Same source preparation used by the original job and the locked native path. */
 const SHORTEN_AFTER = new Set(["rejected:too_long", "rejected:empty"]);
 /**
@@ -65,8 +75,9 @@ const HOME_DEPTH = 40;
 
 const listedAt = sql`coalesce(${products.verifiedAt}, ${products.createdAt})`;
 const k = productKoreanTaglines;
-/** 결과를 모르는 요청에 묶인 소개는 고르지 않는다 — 매 틱 같은 머리를 골라 capacity deferred 로 멈추지 않게(capacity-selection-fence.ts) */
-const NOT_UNSETTLED = sql`not ${unsettledMemberFence(sql`('product-tagline-ko:' || ${products.id})`)}`;
+function notBusy(owner: CapacityOwner | undefined) {
+  return sql`('product-tagline-ko:' || ${products.id}) NOT IN (${busyMemberKeysSql("product-tagline-ko:", { owner, keepOwn: true })})`;
+}
 
 export type KoreanTaglineTask = {
   productId: number; name: string; tagline: string; repoUrl: string | null;
@@ -97,7 +108,7 @@ export function koreanQueuePredicates(homeSlugs: readonly string[]) {
   const home = slugArrayPredicate(products.slug, [...homeSlugs]);
   const current = sql`${k.sourceTagline} = ${products.tagline}`;
   const fresh = sql`(${k.productId} is null or ${k.sourceTagline} <> ${products.tagline})`;
-  const allowance = sql`(${k.attempts} < ${MAX_ATTEMPTS} and (${k.qualityRejections} < ${MAX_REJECTIONS}
+  const allowance = sql`(${failureRetryAllowedSql()} and (${k.qualityRejections} < ${MAX_REJECTIONS}
     or (${home} and ${k.qualityRejections} < ${MAX_REJECTIONS + HOME_EXTRA_REJECTIONS})))`;
   const retry = sql`(${current} and ${k.errorCode} is not null and ${allowance})`;
   const due = sql`(${k.retryAt} is null or ${k.retryAt} <= now())`;
@@ -106,7 +117,7 @@ export function koreanQueuePredicates(homeSlugs: readonly string[]) {
   const recovery = koreanTranslationQwenRecoveryEnabled() ? sql`(${current} and ${k.errorCode} is not null
     and exists (select 1 from ${modelCapacityControl} where ${modelCapacityControl.id} = 1 and ${modelCapacityControl.mode} = 'disabled')
     and ${k.qualityRejections} = case when ${home} then ${MAX_REJECTIONS + HOME_EXTRA_REJECTIONS}::int else ${MAX_REJECTIONS}::int end
-    and ${k.attempts} < 10 and ${k.model} <> ${scopedModel("korean-translation-direct", KOREAN_TRANSLATION_QWEN_MODEL)})` : sql`false`;
+    and ${k.attempts} < ${RECOVERY_MAX_ATTEMPTS} and ${k.model} <> ${scopedModel("korean-translation-direct", KOREAN_TRANSLATION_QWEN_MODEL)})` : sql`false`;
   return { home, current, fresh, allowance, retry, due, recovery,
     recoveryReady: sql`(${recovery} and ${due})`,
     ready: sql`(${fresh} or (${k.errorCode} is not null and ${allowance} and ${due}))` };
@@ -155,8 +166,11 @@ export async function koreanTaglineQueue(homeSlugs: readonly string[]): Promise<
  * 실패는 retry_at 이 지나야 다시 서므로 한 건이 앞을 막지 않는다. 검사에서 MAX_REJECTIONS 번 버린 것은 손을 떼지만,
  * 홈에 보이는 제품은 HOME_EXTRA_REJECTIONS 번 더 본다 — 첫 화면에 원문이 남는 것이 가장 눈에 띈다.
  */
-export async function pendingKoreanTaglines(limit: number, homeSlugs: readonly string[]): Promise<KoreanTaglineTask[]> {
+export async function pendingKoreanTaglines(limit: number, homeSlugs: readonly string[],
+  owner: CapacityOwner | undefined = capacityOwnerFromEnv()): Promise<KoreanTaglineTask[]> {
   const { home, current: same, ready } = koreanQueuePredicates(homeSlugs);
+  // 다른 요청이 쥔 제품은 건너뛴다(capacity-busy-targets.ts) — 맨 앞 묶음이 미확인으로 묶여도 뒤의 제품이 나간다
+  const busy = notBusy(owner);
   const tier = sql`case when ${listedAt} > now() - make_interval(days => ${NEW_DAYS}::int) then 0
     when ${home} then 1 else 2 end`;
   const rows = await db.select({
@@ -170,7 +184,7 @@ export async function pendingKoreanTaglines(limit: number, homeSlugs: readonly s
       inArray(products.status, PUBLIC),
       NEEDS_KOREAN,
       ready,
-      NOT_UNSETTLED,
+      busy,
     ))
     .orderBy(tier, sql`case when ${listedAt} > now() - make_interval(days => ${NEW_DAYS}::int) then ${listedAt} end desc nulls last`,
       sql`${products.stars} desc nulls last`, desc(products.id))
@@ -214,7 +228,7 @@ export async function pendingKoreanTaglineRecovery(limit: number, homeSlugs: rea
     lastError: sql<string | null>`case when ${same} then ${k.errorCode} end`,
     qualityRejections: sql<number>`case when ${same} then ${k.qualityRejections} else 0 end`,
   }).from(products).leftJoin(k, eq(k.productId, products.id))
-    .where(and(inArray(products.status, PUBLIC), NEEDS_KOREAN, recoveryReady, NOT_UNSETTLED,
+    .where(and(inArray(products.status, PUBLIC), NEEDS_KOREAN, recoveryReady, notBusy(capacityOwnerFromEnv()),
       excluded.length ? notInArray(products.id, excluded) : undefined))
     .orderBy(tier, sql`case when ${listedAt} > now() - make_interval(days => ${NEW_DAYS}::int) then ${listedAt} end desc nulls last`,
       sql`${products.stars} desc nulls last`, desc(products.id))
@@ -276,8 +290,10 @@ export type KoreanTaglineProgress = {
   waiting: number;
   /** 게이트웨이 실패로 다시 기다리는 것 */
   failed: number;
-  /** 검사에서 MAX_REJECTIONS 번 버렸거나 MAX_ATTEMPTS 번 시도해 손을 뗀 것 — 원문이 보인다 */
+  /** 검사에서 MAX_REJECTIONS 번 버렸거나 품질 외 실패가 MAX_GATEWAY_FAILURES 번 쌓여 손을 뗀 것 — 원문이 보인다 */
   gaveUp: number;
+  /** 손을 뗀 사유 — quality_limit:<마지막 오류>·failure_limit:<마지막 오류> */
+  gaveUpReasons: { reason: string; count: number }[];
   /** 지금 소개의 마지막 시도가 검사에서 버려진 것, 사유별(rejected: 를 뗀 사유) */
   rejected: { reason: string; count: number }[];
   /** 지난 한 시간에 옮긴 것 */
@@ -287,24 +303,30 @@ export type KoreanTaglineProgress = {
 /** 운영센터·관리자가 볼 진행과 품질 수치 — 채운 수와 함께 버린 수를 사유별로 본다 */
 export async function koreanTaglineProgress(): Promise<KoreanTaglineProgress> {
   const current = sql`${k.sourceTagline} = ${products.tagline}`;
+  const exhausted = sql`(${k.qualityRejections} >= ${MAX_REJECTIONS} or not ${failureRetryAllowedSql()})`;
   const [totals] = await db.select({
     eligible: sql<number>`count(*)::int`,
     done: sql<number>`(count(*) filter (where ${current} and ${k.errorCode} is null))::int`,
     waiting: sql<number>`(count(*) filter (where ${k.productId} is null or not ${current}))::int`,
     failed: sql<number>`(count(*) filter (where ${current} and ${k.errorCode} not like 'rejected:%' and ${k.qualityRejections} < ${MAX_REJECTIONS}
-      and ${k.attempts} < ${MAX_ATTEMPTS}))::int`,
-    gaveUp: sql<number>`(count(*) filter (where ${current} and ${k.errorCode} is not null
-      and (${k.qualityRejections} >= ${MAX_REJECTIONS} or ${k.attempts} >= ${MAX_ATTEMPTS})))::int`,
+      and ${failureRetryAllowedSql()}))::int`,
+    gaveUp: sql<number>`(count(*) filter (where ${current} and ${k.errorCode} is not null and ${exhausted}))::int`,
     lastHour: sql<number>`(count(*) filter (where ${current} and ${k.errorCode} is null and ${k.updatedAt} > now() - interval '1 hour'))::int`,
   }).from(products).leftJoin(k, eq(k.productId, products.id)).where(and(inArray(products.status, PUBLIC), NEEDS_KOREAN));
   const rejected = await db.select({ code: k.errorCode, count: sql<number>`count(*)::int` })
     .from(products).innerJoin(k, eq(k.productId, products.id))
     .where(and(inArray(products.status, PUBLIC), NEEDS_KOREAN, sql`${current} and ${k.errorCode} like 'rejected:%'`))
     .groupBy(k.errorCode).orderBy(sql`count(*) desc`);
+  const reason = sql<string>`case when ${k.qualityRejections} >= ${MAX_REJECTIONS} then 'quality_limit:' else 'failure_limit:' end || ${k.errorCode}`;
+  const gaveUpReasons = await db.select({ reason, count: sql<number>`count(*)::int` })
+    .from(products).innerJoin(k, eq(k.productId, products.id))
+    .where(and(inArray(products.status, PUBLIC), NEEDS_KOREAN, sql`${current} and ${k.errorCode} is not null and ${exhausted}`))
+    .groupBy(sql`1`).orderBy(sql`count(*) desc`);
   return {
     eligible: Number(totals?.eligible ?? 0), done: Number(totals?.done ?? 0), waiting: Number(totals?.waiting ?? 0),
     failed: Number(totals?.failed ?? 0), gaveUp: Number(totals?.gaveUp ?? 0), lastHour: Number(totals?.lastHour ?? 0),
     rejected: rejected.map((row) => ({ reason: (row.code ?? "").replace(/^rejected:/, ""), count: Number(row.count) })),
+    gaveUpReasons: gaveUpReasons.map((row) => ({ reason: row.reason, count: Number(row.count) })),
   };
 }
 
@@ -397,7 +419,8 @@ function koreanMember(source: KoreanSource, row: KoreanCache, task: KoreanTaglin
     || source.tagline !== task.tagline || task.attempts !== (same ? raw!.attempts : 0)
     || (task.lastError ?? null) !== (same ? raw!.error_code : null)
     || task.qualityRejections !== undefined && task.qualityRejections !== (same ? Number(raw!.quality_rejections) : 0)
-    || same && (raw!.error_code === null || !row.due || Number(raw!.attempts) >= MAX_ATTEMPTS || !(Number(raw!.quality_rejections) < MAX_REJECTIONS
+    || same && (raw!.error_code === null || !row.due
+      || !koreanTaglineFailureRetryAllowed(raw!.error_code as string | null, Number(raw!.attempts), Number(raw!.quality_rejections)) || !(Number(raw!.quality_rejections) < MAX_REJECTIONS
       || home.includes(source.slug) && Number(raw!.quality_rejections) < MAX_REJECTIONS + HOME_EXTRA_REJECTIONS))) throw new KoreanTaglineChanged();
   return { productId: source.id, slug: source.slug, sourceIdentityHash: sourceIdentity(source),
     sourceHash: productTaglineKoSourceHash({ name: displayProjectName(source.name, source.repoUrl), tagline: koreanTaglineSource(task) }),

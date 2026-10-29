@@ -24,9 +24,12 @@ capacity의 member·logical fence(`lib/llm/capacity-repository.ts` `requestSlot`
 handoff에 남은 `reason-translate indeterminate1`(m3group1)이 이 상황과 맞는다.
 `indeterminate`는 운영에서 회수하기 전까지 풀리지 않는다.
 
-`lib/llm/capacity-selection-fence.ts`를 추가했다. 세 선택기는 이제 그런 대상만 건너뛰고 뒤의 일을 한다.
-같은 대상은 다시 보내지 않으므로 중복 호출을 막는 장치는 그대로다.
-대기·예약 행은 TTL로 풀리고 자기 것은 재개 경로가 이어받으므로 빼지 않는다.
+세 선택기는 이제 그런 대상만 건너뛰고 뒤의 일을 한다. 같은 대상은 다시 보내지 않으므로 중복 호출을 막는 장치는 그대로다.
+
+**규칙 통일(2026-10-29 병합).** 같은 시기에 main(PR732 전후)이 `lib/llm/capacity-busy-targets.ts`로 같은 목적의 선택기 제외를 넣었다.
+이 차선의 `capacity-selection-fence.ts`는 dispatched·indeterminate만 빼는 부분집합이라 병합에서 제거하고 main의 규칙 하나로 통일했다.
+main 규칙은 `waiting/reserved/dispatched/indeterminate` 전부를 빼되(운영 모드 open일 때만) 이 boot의 대기·예약은 남겨 조정기가 이어받게 한다.
+세 선택기(`untried/retryableTranslations`, `pendingKoreanTaglines`·`pendingKoreanTaglineRecovery`, `pendingProfiles`)가 모두 이 모듈을 쓴다.
 
 ## 한 일
 
@@ -39,9 +42,10 @@ handoff에 남은 `reason-translate indeterminate1`(m3group1)이 이 상황과 �
     선택·묶음 복원·회복 선택기가 `qualityRejections`를 싣고, native 재진입 검증(`koreanMember`)도 이를 비교한다.
 - **원인 2: 게이트웨이 실패는 끝없이 재시도됐다.** invalid_output·http_5xx·timeout은 품질 거절로 세지 않았다.
   그래서 같은 대상이 같은 실패로 하루 간격까지 늘려 가며 끝없이 다시 섰다.
-  - 고침: 같은 원문의 총 시도에 `MAX_ATTEMPTS = 12` 상한을 두었다. 공통 술어 `koreanQueuePredicates.allowance` 하나에 넣었으므로 선택, 운영 집계(blocked), native 재검증이 같은 기준을 쓴다.
-  - 진척 `gaveUp`·`failed`도 같은 상한을 쓴다.
-  - 간격이 5분부터 두 배씩 늘어 하루에서 멈추므로, 12번째 시도까지 약 3.8일이 걸린다.
+  - 고침: main의 `MAX_GATEWAY_FAILURES = 10` 규칙으로 통일했다(`attempts - qualityRejections`가 10에 닿으면 손을 뗀다).
+    공급자 전체 장애(network·rate_limit·no_key·model_unavailable·http_5xx)는 제품 탓이 아니므로 세지 않는다. 이 차선의 총 시도 `MAX_ATTEMPTS = 12`는 제거했다.
+    `failureRetryAllowedSql`·`koreanTaglineFailureRetryAllowed` 하나를 선택, 운영 집계(`failed`·`gaveUp`·`gaveUpReasons`), native 재검증(`koreanMember`)이 같이 쓴다.
+  - 간격이 5분부터 두 배씩 늘어 하루에서 멈추므로, 10번째 실패까지 약 사흘이 걸린다.
 - **원인 3: 혼자 보낸 소개의 invalid_output도 품질로 세지 않았다.**
   - 고침: `rejected:invalid_output`으로 기록해 품질 한도(4회, 홈은 6회)에 닿게 했다. 묶음의 invalid_output은 누구 탓인지 몰라 그대로 둔다.
 - **원인 4: 결과 모를 요청이 머리를 막았다.** 위 공통 원인과 같다.
@@ -100,6 +104,11 @@ handoff에 남은 `reason-translate indeterminate1`(m3group1)이 이 상황과 �
 4. **product-translate에도 같은 머리 막힘 구조가 있다**(`productTranslationFence`). 이번 세 단계 범위 밖이라 고치지 않았다. 같은 fence 함수를 쓰면 고칠 수 있다.
 5. **search-profile 경보와 선택 기준의 차이.** 갱신 대기의 '가장 오래된 나이'를 경보는 `updated_at`부터 세고, 선택은 감사 시각부터 센다. 그래서 경보가 더 길게 보일 수 있다. 맞추려면 `text-stage-progress.ts`·`text-progress.ts`를 같이 바꿔야 한다.
 
+## 병합 검증(2026-10-29, 로컬)
+
+- origin/main 병합 충돌 7파일을 위 통일 규칙으로 풀었다. 유닛 30파일 433건, 통합 11파일 117건(일회용 pgvector Postgres 17) 통과, tsc·eslint 오류 0.
+- 통합 시험 `korean-tagline.test.ts`의 상한 시험은 http_502(공급자 장애, 상한 면제) 대신 http_400·attempts 10으로 고쳤다.
+
 ## 막힌 일
 
 - **GPT-OSS native 프롬프트의 길이 지시가 검사와 어긋난다.**
@@ -121,11 +130,12 @@ WHERE state IN ('dispatched','indeterminate')
   AND route_id IN ('reason-translate','product-tagline-ko','product-search-profile')
 GROUP BY 1, 2 ORDER BY 1, 2;
 
--- 2. tagline-ko: 시도 상한(12)에 닿아 blocked로 옮겨지는 현재 원문 실패(배포 전에도 같은 수)
+-- 2. tagline-ko: 품질 외 실패 상한(attempts - quality_rejections ≥ 10, 공급자 장애 코드 제외)에 닿아 blocked로 옮겨지는 현재 원문 실패(배포 전에도 같은 수)
 SELECT k.error_code, count(*) AS rows
 FROM product_korean_taglines k JOIN products p ON p.id = k.product_id
 WHERE p.status IN ('seeded','verified') AND k.source_tagline = p.tagline
-  AND k.error_code IS NOT NULL AND k.attempts >= 12
+  AND k.error_code IS NOT NULL AND k.attempts - k.quality_rejections >= 10
+  AND k.error_code NOT IN ('network','rate_limit','rate_limited','no_key','model_unavailable') AND k.error_code !~ '^http_5[0-9][0-9]$'
 GROUP BY 1 ORDER BY 2 DESC LIMIT 20;
 
 -- 3. tagline-ko: 최근 30분 결과. 성공이 다시 나오고, 품질 실패가 사유별로 고르게 줄어야 한다

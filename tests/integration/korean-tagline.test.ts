@@ -271,13 +271,13 @@ describe("한국어 한 줄 소개 잡", () => {
     expect((await stored(a.id))?.qualityRejections).toBe(0);
   });
 
-  it("같은 게이트웨이 실패가 시도 한도에 닿으면 더 고르지 않고 손을 뗀 것으로 센다", async () => {
+  it("같은 게이트웨이 실패가 품질 외 실패 한도에 닿으면 더 고르지 않고 손을 뗀 것으로 센다", async () => {
     const row = await seed({ slug: "gateway-ceiling", tagline: "Plan your trips" });
     await db.insert(productKoreanTaglines).values({ productId: row.id, sourceTagline: "Plan your trips",
-      attempts: 11, qualityRejections: 0, errorCode: "http_502" });
-    gateway.mockResolvedValue({ ok: false, status: 502 } as Response);
+      attempts: 9, qualityRejections: 0, errorCode: "http_400" });
+    gateway.mockResolvedValue({ ok: false, status: 400 } as Response);
     await tick();
-    expect(await stored(row.id)).toMatchObject({ attempts: 12, qualityRejections: 0, errorCode: "http_502" });
+    expect(await stored(row.id)).toMatchObject({ attempts: 10, qualityRejections: 0, errorCode: "http_400" });
     await db.update(productKoreanTaglines).set({ retryAt: null }).where(eq(productKoreanTaglines.productId, row.id));
     // 재시도 시각이 지나도 다시 서지 않는다 — 홈에 보이는 제품도 마찬가지다
     expect(await pendingKoreanTaglines(10, [])).toEqual([]);

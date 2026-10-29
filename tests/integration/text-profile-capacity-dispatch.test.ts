@@ -179,7 +179,7 @@ async function server(run: (state: { bodies: string[]; setReply: (reply: (respon
   }
 }
 async function tick() { await tracked(requestJob(jobName)); return tracked(runJob(jobName, writeSearchProfiles, { requestedOnly: true, roleLease: role, budgetMs: 55_000 })); }
-function identity(request: ModelCapacityRequest): ModelCapacityRequestIdentity { const { requestId: _id, ...value } = request; return value; }
+function identity(request: ModelCapacityRequest): ModelCapacityRequestIdentity { const { requestId: _id, ...value } = request; void _id; return value; }
 async function reserve(task: ProfileTask, lease: JobLease) {
   const ready = await tracked(prepareProfileModelDispatch(task, lease, { roleLease: role, timeoutMs: 1000 }));
   expect(ready.kind).toBe("ready"); if (ready.kind !== "ready") throw new Error("fixture_prepare_required");
@@ -384,9 +384,10 @@ it("keeps EOF full-C unknown fenced across a new boot and changed source without
     const [afterSource] = await admin`SELECT attempts,source_revision FROM product_search_profiles WHERE product_id=${task.product.id}`;
     expect(afterSource).toEqual({ attempts: 0, source_revision: beforeSource.source_revision + 1 });
     await admin`UPDATE product_search_profiles SET error_code=NULL,retry_at=NULL,needs_refresh=true WHERE product_id=${task.product.id}`;
-    // 결과 모를 요청에 묶인 제품은 고르지 않는다 — 예전에는 매 틱 이 머리를 골라 잡 전체가 capacity deferred 로 멈췄다
-    expect((await pendingProfiles(12)).map(row => row.product.id)).not.toContain(task.product.id);
-    expect(await tick()).toMatchObject({ status: "completed", done: true }); expect(bodies).toHaveLength(1);
+    // The unknown request still fences this product, so the selector skips it instead of re-picking it every tick
+    // (postprocess-backlog lane, 2026-10-29). It is never re-sent and its profile row is not consumed.
+    expect((await pendingProfiles(12, role)).some(row => row.product.id === task.product.id)).toBe(false);
+    expect(await tick()).toMatchObject({ status: "completed" }); expect(bodies).toHaveLength(1);
     expect((await admin`SELECT request_id,state FROM model_capacity_requests`)).toEqual([{ request_id: unknown.request_id, state: "indeterminate" }]);
     expect((await admin`SELECT attempts,source_revision FROM product_search_profiles WHERE product_id=${task.product.id}`)[0]).toEqual(afterSource);
     // 뒤의 제품은 남은 자리로 그대로 지어진다. unknown 은 운영 회수 전까지 그대로 남는다
