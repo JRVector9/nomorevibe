@@ -284,6 +284,26 @@ describe("2026-10-08 리디자인", () => {
     expect(html).toMatch(/<textarea[^>]*name="heldRepoPatterns"[^>]*>\*-website\nawesome-\*<\/textarea>/);
   });
 
+  it("빈 화면 본문 규칙(꺼짐·관측·적용)을 그리고, 그 칸을 보낸 폼만 모드를 바꾼다", async () => {
+    const html = render(twoSignals);
+    expect(html).toContain('aria-label="빈 화면 본문 규칙"');
+    expect(html).toContain(`name="stubTextRules" checked="" value="shadow"`);
+
+    await saveCrawlSettings(null, submitted({ stubTextRules: "enforce" }));
+    expect(saveSettings.mock.calls[0][0].judge.stubTextRules).toBe("enforce");
+
+    saveSettings.mockClear();
+    await saveCrawlSettings(null, submitted());
+    // 옛 폼(그 칸이 없다)은 저장된 모드를 건드리지 않는다
+    expect(saveSettings.mock.calls[0][0].judge).not.toHaveProperty("stubTextRules");
+
+    const { describeChanges } = await import("@/app/(operator)/admin/settings/changes");
+    expect(describeChanges({ stubTextRules: "shadow" }, { stubTextRules: "enforce" })).toEqual(["빈 화면 본문 규칙 관측 → 적용"]);
+    const { describeReset } = await import("@/app/(operator)/admin/settings/reset-diff");
+    expect(describeReset([{ path: "judge.stubTextRules", before: "enforce", after: "shadow" }]))
+      .toEqual([{ label: "빈 화면 본문 규칙", before: "적용", after: "관측" }]);
+  });
+
   it("신호마다 지난 7일 수집과 발행률을 붙인다", () => {
     const html = renderToStaticMarkup(createElement(SettingsForm, {
       settings: twoSignals,
