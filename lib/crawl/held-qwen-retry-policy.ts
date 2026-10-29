@@ -97,7 +97,7 @@ export const appliedHeldQwenAttemptColumn = (signals: AnyPgColumn | SQL): SQL =>
 /** 앞의 대괄호 덩이를 모두 뗀 모델 이름 — sameOpinionModel·review-model-identity.ts sameUnderlyingModel 의 SQL 짝 */
 export const underlyingModelSql = (name: SQL): SQL => {
   const aliases = readModelRegistry().models.map(model => sql`WHEN ${model.key} THEN ${underlyingReviewModel(model.model)}`);
-  return sql`CASE lower(trim(${name})) ${sql.join(aliases, sql` `)} ELSE regexp_replace(regexp_replace(lower(trim(${name})), '^\\[[^]]*\\][[:space:]]*', ''), '[+](vision(-shot2)?|prompt-v3)$', '') END`;
+  return sql`CASE lower(trim(${name})) ${sql.join(aliases, sql` `)} ELSE regexp_replace(regexp_replace(regexp_replace(lower(trim(${name})), '^\\[[^]]*\\][[:space:]]*', ''), '^[^/[:space:]]+/', ''), '[+](vision(-shot2)?|prompt-v3)$', '') END`;
 };
 
 /**

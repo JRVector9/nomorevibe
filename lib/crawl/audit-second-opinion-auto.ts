@@ -1,5 +1,6 @@
 import { withAdminModelStage } from "@/lib/llm/admin-model-pools";
 import { modelTimeoutMs } from "@/lib/llm/model-registry";
+import { bareModelName } from "./review-model-identity";
 import { and, eq, sql, type SQL } from "drizzle-orm";
 import { withLocalModelCapacity } from "@/lib/llm/local-model-capacity";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
@@ -103,9 +104,9 @@ const emptyTally = (): QwenAutoTally => ({ audit: { asked: 0, approve: 0, reject
   leftThin: 0, leftSplit: 0 },
   published: { asked: 0, kept: 0, noted: 0, skipped: 0 }, failed: 0, endpointError: null });
 
-/** 앞의 게이트웨이 자리 표시('[gpu3090] ')를 뗀 소문자 모델 이름 — second-opinion-rules.ts sameOpinionModel 과 같다 */
-const bareModel = (model: SQL) => sql`lower(regexp_replace(trim(${model}), '^\\[[^]]*\\]\\s*', ''))`;
-const bareModelValue = (model: string) => model.trim().replace(/^\[[^\]]*\]\s*/, "").toLowerCase();
+/** 앞의 게이트웨이 자리 표시('[gpu3090] ')와 배포자 접두어('Inferact/')를 뗀 소문자 모델 이름 — review-model-identity.ts bareModelName 과 같다 */
+const bareModel = (model: SQL) => sql`lower(regexp_replace(regexp_replace(trim(${model}), '^\\[[^]]*\\]\\s*', ''), '^[^/[:space:]]+/', ''))`;
+const bareModelValue = bareModelName;
 
 /** 지금(마지막) 감사 — 감사 화면·정책 처리가 보는 감사와 같다. 끝난 뒤에도 그 감사의 열린 거절을 묻는다 */
 const latestCampaign = sql`(select max(${productAuditCampaigns.id}) from ${productAuditCampaigns})`;

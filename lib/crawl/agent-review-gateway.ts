@@ -17,6 +17,22 @@ import { assertLiveReviewAdapterAllowed } from "./review-fixture-transport";
 import { REVIEW_SYSTEM_PROMPT, type AgentReviewResult, type ReviewFailure, type ReviewUsage } from "./agent-review";
 import { verifyAi2TokenBudget } from "./second-review-direct-tokenize";
 import { REVIEW_GATEWAY_LADDER } from "@/lib/llm/deadline-ladder";
+import { servingContractAuth } from "@/lib/llm/serving-contract-store";
+
+/**
+ * Bearer for a contract's endpoint. An admin contract (model_serving_contracts) decides: gateway key, no key, or its stored key.
+ * Without one, abcllm contracts use ABCLLM_API_KEY and direct contracts send none (unchanged). undefined = refuse before sending.
+ */
+export function contractBearer(contract: { routeId: string; model: string; provider: string }): string | null | undefined {
+  const stored = servingContractAuth(contract.routeId, contract.model);
+  if (!stored || stored.mode === "gateway") return contract.provider === "abcllm" ? process.env.ABCLLM_API_KEY?.trim() || undefined : null;
+  return stored.mode === "none" ? null : stored.apiKey ?? undefined;
+}
+/** An AI2 local-direct contract, or an admin contract marked direct (0148): the endpoint is the engine, not the abcLLM gateway. */
+export const directTransport = (contract: { routeId: string; model: string; provider: string }): boolean =>
+  contract.provider === "local-direct" || servingContractAuth(contract.routeId, contract.model)?.transport === "direct";
+const bearerHeaders = (key: string | null): Record<string, string> =>
+  key ? { Authorization: `Bearer ${key}`, "Content-Type": "application/json" } : { "Content-Type": "application/json" };
 /** 공통 슬롯 경로의 모든 gateway 전송: 로컬 종료 증인(PR15d)을 거치고, 배경 consumer 줄 범위 안에서만 전송 결과를 provider 회로에 알린다(PR06e, 범위 밖은 그대로) */
 const gatewayFetch = (requestId: string, ...args: Parameters<typeof undiciFetch>) =>
   observeProviderTransport(localEndGatewayFetch(requestId, ...args), args[1]?.signal);
@@ -301,10 +317,11 @@ export function prepareAi1GatewayCall(input: ReviewInput, options: { model: stri
   assertLiveReviewAdapterAllowed();
   const snapshot = structuredClone(input), model = gatewayModel(options.model), timeoutMs = options.timeoutMs ?? modelCallTimeoutMs("review-gateway", options.model);
   const unsupported = { kind: "unsupported", reason: "provider_contract_unavailable" } as const;
-  if (!model || !process.env.ABCLLM_API_KEY?.trim() || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return unsupported;
+  if (!model || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return unsupported;
   const resolved = resolveAi1GatewayServingContract(model);
   if (!resolved) return unsupported;
   const contract = ai1GatewayServingContractSchema.parse(structuredClone(resolved));
+  if (contractBearer(contract) === undefined) return unsupported;
   const serialized = JSON.stringify(snapshot.snapshot);
   if (contract.model !== model || Buffer.byteLength(serialized, "utf8") > MAX_REVIEW_INPUT_BYTES) return unsupported;
   const wire = gatewayWire(model, serialized);
@@ -337,7 +354,8 @@ function nativeTerminal(body: string, contract: Pick<Ai1GatewayServingContract, 
     && finishReason !== "function_call" && finishReason !== "content_filter") return null;
   // PR3 엄격 terminal 을 요청한 호출은 그 응답(usage_provenance 세 값 중 하나)이어야 한다. 헤더를 무시한 게이트웨이가
   // EOF 에서 합성한 "stop" 은 terminal 이 아니다. 값의 쓰임은 아래 기존 규칙 그대로다(upstream_reported 만 실제 usage 후보).
-  if (contract.strictTerminalOptIn === ABCLLM_STRICT_TERMINAL_OPT_IN && parsed.usage_provenance !== "upstream_reported"
+  // 엔진에 직접 보낸 계약(transport direct)은 게이트웨이가 없으므로 이 표시가 없다 — 본문 자체가 엔진의 완결 응답이다.
+  if (!direct && contract.strictTerminalOptIn === ABCLLM_STRICT_TERMINAL_OPT_IN && parsed.usage_provenance !== "upstream_reported"
     && parsed.usage_provenance !== "gateway_estimated" && parsed.usage_provenance !== "missing_or_invalid") return null;
   let actualUsage: Ai1GatewayTerminalEvidence["actualUsage"] = null;
   if ((parsed.usage_provenance === "upstream_reported" || direct && parsed.usage_provenance === undefined) && object(parsed.usage)) {
@@ -372,8 +390,8 @@ export async function reviewWithReservedAi1Gateway(input: ReviewInput, dispatch:
     || binding.routeId !== state.contract.routeId || dispatchedRequests.has(owned.requestId)) throw new Error("ai1_gateway_call_mismatch");
   state.used = true;
   dispatchedRequests.add(owned.requestId);
-  const key = process.env.ABCLLM_API_KEY?.trim();
-  if (!key) return { result: { ok: false, error: "not_configured" }, terminal: null, notStarted: issueNotStarted(owned) };
+  const key = contractBearer(state.contract), directEngine = directTransport(state.contract);
+  if (key === undefined) return { result: { ok: false, error: "not_configured" }, terminal: null, notStarted: issueNotStarted(owned) };
   const deadline = AbortSignal.timeout(timeoutMs), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
   const failure = (error: unknown): ReviewFailure => {
     const name = error instanceof Error ? error.name : "";
@@ -385,7 +403,7 @@ export async function reviewWithReservedAi1Gateway(input: ReviewInput, dispatch:
   let body: string;
   try {
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: "manual",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: state.wire, signal: combined });
+      headers: bearerHeaders(key), body: state.wire, signal: combined });
     if (response.status !== 200) {
       try { await response.body?.cancel(); } catch { /* A nonterminal response never releases its charge. */ }
       return { result: { ok: false, error: httpFailure(response.status) }, terminal: null };
@@ -394,7 +412,7 @@ export async function reviewWithReservedAi1Gateway(input: ReviewInput, dispatch:
   } catch (error) { return { result: { ok: false, error: failure(error) }, terminal: null }; }
   // This deployment contract requires raw gateway finish+DONE validation before its JSON response.
   // A generic HTTP200/EOF or a legacy callback is not that authority.
-  const completed = nativeTerminal(body, state.contract);
+  const completed = nativeTerminal(body, state.contract, directEngine);
   if (!completed) return { result: { ok: false, error: "invalid_output", detail: "invalid_native_terminal" }, terminal: null };
   const terminal: Ai1GatewayTerminal = Object.freeze({ kind: "ai1_gateway_terminal" });
   const evidence = ai1GatewayTerminalEvidenceSchema.parse({ version: 1, kind: "ai1_gateway_terminal",
@@ -421,10 +439,10 @@ export async function prepareAi2GatewayCall(input: ReviewInput, options: {
   const provider = options.provider ?? "abcllm";
   const unsupported = { kind: "unsupported", reason: "provider_contract_unavailable" } as const;
   if (!model || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || options.signal?.aborted) return unsupported;
-  if (provider === "abcllm" && !process.env.ABCLLM_API_KEY?.trim()) return unsupported;
   const resolved = resolveAi2GatewayServingContract(model, provider);
   if (!resolved) return unsupported;
   const contract = ai2GatewayServingContractSchema.parse(structuredClone(resolved));
+  if (contractBearer(contract) === undefined) return unsupported;
   const serialized = JSON.stringify(snapshot.snapshot);
   if (contract.provider !== provider || !ai2ServingContractMatches(contract, model) || Buffer.byteLength(serialized, "utf8") > MAX_REVIEW_INPUT_BYTES) return unsupported;
   let wire = gatewayWire(contract.model, serialized);
@@ -473,9 +491,8 @@ export async function reviewWithReservedAi2Gateway(input: ReviewInput, dispatch:
     || binding.routeId !== state.contract.routeId || dispatchedAi2Requests.has(owned.requestId)) throw new Error("ai2_gateway_call_mismatch");
   state.used = true;
   dispatchedAi2Requests.add(owned.requestId);
-  const key = state.contract.provider === "abcllm" ? process.env.ABCLLM_API_KEY?.trim() : null;
-  if (state.contract.provider === "abcllm" && !key)
-    return { result: { ok: false, error: "not_configured" }, terminal: null, notStarted: issueNotStarted(owned) };
+  const key = contractBearer(state.contract), directEngine = directTransport(state.contract);
+  if (key === undefined) return { result: { ok: false, error: "not_configured" }, terminal: null, notStarted: issueNotStarted(owned) };
   const deadline = AbortSignal.timeout(timeoutMs), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
   const failure = (error: unknown): ReviewFailure => {
     const name = error instanceof Error ? error.name : "";
@@ -488,15 +505,14 @@ export async function reviewWithReservedAi2Gateway(input: ReviewInput, dispatch:
   try {
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST",
       redirect: state.contract.provider === "local-direct" ? "error" : "manual",
-      headers: key ? { Authorization: `Bearer ${key}`, "Content-Type": "application/json" } : { "Content-Type": "application/json" },
-      body: state.wire, signal: combined });
+      headers: bearerHeaders(key), body: state.wire, signal: combined });
     if (response.status !== 200) {
       try { await response.body?.cancel(); } catch { /* Unknown native completion keeps its original charge. */ }
       return { result: { ok: false, error: httpFailure(response.status) }, terminal: null };
     }
     body = await response.text();
   } catch (error) { return { result: { ok: false, error: failure(error) }, terminal: null }; }
-  const completed = nativeTerminal(body, state.contract, state.contract.provider === "local-direct");
+  const completed = nativeTerminal(body, state.contract, directEngine);
   if (!completed) return { result: { ok: false, error: "invalid_output", detail: "invalid_native_terminal" }, terminal: null };
   const terminal: Ai2GatewayTerminal = Object.freeze({ kind: "ai2_gateway_terminal" });
   const evidence = ai2GatewayTerminalEvidenceSchema.parse({ version: 1, kind: "ai2_gateway_terminal",
@@ -542,8 +558,8 @@ export async function reviewWithReservedAi1ItemGateway(input: ReviewInput, dispa
     || binding.routeId !== state.contract.routeId || dispatchedRequests.has(owned.requestId)) throw new Error("ai1_item_gateway_call_mismatch");
   state.used = true;
   dispatchedRequests.add(owned.requestId);
-  const key = process.env.ABCLLM_API_KEY?.trim();
-  if (!key) return { result: { ok: false, error: "not_configured" }, terminal: null, notStarted: issueNotStarted(owned) };
+  const key = contractBearer(state.contract), directEngine = directTransport(state.contract);
+  if (key === undefined) return { result: { ok: false, error: "not_configured" }, terminal: null, notStarted: issueNotStarted(owned) };
   const deadline = AbortSignal.timeout(timeoutMs), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
   const failure = (error: unknown): ReviewFailure => {
     const name = error instanceof Error ? error.name : "";
@@ -555,14 +571,14 @@ export async function reviewWithReservedAi1ItemGateway(input: ReviewInput, dispa
   let body: string;
   try {
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: "manual",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: state.wire, signal: combined });
+      headers: bearerHeaders(key), body: state.wire, signal: combined });
     if (response.status !== 200) {
       try { await response.body?.cancel(); } catch { /* Unknown physical completion retains the original full charge. */ }
       return { result: { ok: false, error: httpFailure(response.status) }, terminal: null };
     }
     body = await response.text();
   } catch (error) { return { result: { ok: false, error: failure(error) }, terminal: null }; }
-  const completed = nativeTerminal(body, state.contract);
+  const completed = nativeTerminal(body, state.contract, directEngine);
   if (!completed) return { result: { ok: false, error: "invalid_output", detail: "invalid_native_terminal" }, terminal: null };
   const terminal: Ai1ItemGatewayTerminal = Object.freeze({ kind: "ai1_item_gateway_terminal" });
   const evidence = ai1ItemGatewayTerminalEvidenceSchema.parse({ version: 1, kind: "ai1_item_gateway_terminal",
@@ -600,12 +616,12 @@ export function prepareTextProfileGatewayCall(evidence: ProfileEvidence, options
   assertLiveReviewAdapterAllowed();
   const snapshot = structuredClone(evidence), model = gatewayModel(options.model), timeoutMs = options.timeoutMs;
   const unsupported = { kind: "unsupported", reason: "provider_contract_unavailable" } as const;
-  if (!validProfileEvidence(snapshot) || !model || !process.env.ABCLLM_API_KEY?.trim()
+  if (!validProfileEvidence(snapshot) || !model
     || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return unsupported;
   const resolved = resolveTextProfileServingContract(model);
   if (!resolved) return unsupported;
   const contract = textProfileServingContractSchema.parse(structuredClone(resolved));
-  if (contract.model !== model) return unsupported;
+  if (contract.model !== model || contractBearer(contract) === undefined) return unsupported;
   const wire = profileGatewayWire(snapshot, model), evidenceIdentity = profileHash(snapshot);
   const call = Object.freeze({ kind: "prepared" as const, wireHash: sha(wire),
     servingContractHash: textProfileServingContractHash(contract), totalTokenBound: contract.totalTokenBound,
@@ -632,13 +648,13 @@ export async function writeKeywordsWithReservedGateway(evidence: ProfileEvidence
     || binding.provider !== state.contract.provider || binding.routeId !== state.contract.routeId
     || dispatchedRequests.has(owned.requestId)) throw new Error("text_profile_gateway_call_mismatch");
   state.used = true; dispatchedRequests.add(owned.requestId);
-  const key = process.env.ABCLLM_API_KEY?.trim();
-  if (!key) return { result: { ok: false, error: "no_key" }, terminal: null };
+  const key = contractBearer(state.contract), directEngine = directTransport(state.contract);
+  if (key === undefined) return { result: { ok: false, error: "no_key" }, terminal: null };
   const deadline = AbortSignal.timeout(timeoutMs), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
   let body: string;
   try {
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: "manual",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: state.wire, signal: combined });
+      headers: bearerHeaders(key), body: state.wire, signal: combined });
     if (response.status !== 200) {
       try { await response.body?.cancel(); } catch { /* Nonterminal failure retains full C. */ }
       return { result: { ok: false, error: response.status === 404 ? "model_unavailable"
@@ -648,7 +664,7 @@ export async function writeKeywordsWithReservedGateway(evidence: ProfileEvidence
   } catch (error) {
     return { result: { ok: false, error: error instanceof Error && error.name === "TimeoutError" ? "timeout" : "network" }, terminal: null };
   }
-  const completed = nativeTerminal(body, state.contract);
+  const completed = nativeTerminal(body, state.contract, directEngine);
   if (!completed) return { result: { ok: false, error: "invalid_output" }, terminal: null };
   const terminal: TextProfileGatewayTerminal = Object.freeze({ kind: "text_profile_gateway_terminal" });
   textProfileTerminals.set(terminal, freeze(textProfileGatewayTerminalEvidenceSchema.parse({ version: 1,
@@ -687,11 +703,11 @@ export function prepareReasonTranslationGatewayCall(texts: readonly string[], op
   const snapshot = structuredClone(texts), model = options.model, timeoutMs = options.timeoutMs;
   const unsupported = { kind: "unsupported", reason: "provider_contract_unavailable" } as const;
   if (!validReasonTexts(snapshot) || !reasonTranslationServingContractSchema.shape.model.safeParse(model).success
-    || !process.env.ABCLLM_API_KEY?.trim() || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return unsupported;
+    || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return unsupported;
   const resolved = resolveReasonTranslationServingContract(model);
   if (!resolved) return unsupported;
   const contract = reasonTranslationServingContractSchema.parse(structuredClone(resolved));
-  if (contract.model !== model) return unsupported;
+  if (contract.model !== model || contractBearer(contract) === undefined) return unsupported;
   const wire = reasonTranslationGatewayWire(snapshot, model), sourceHashes = snapshot.map(textHash);
   const call = freeze({ kind: "prepared" as const, wireHash: sha(wire),
     servingContractHash: reasonTranslationServingContractHash(contract), totalTokenBound: contract.totalTokenBound,
@@ -719,13 +735,13 @@ export async function translateWithReservedReasonGateway(texts: readonly string[
     || binding.provider !== state.contract.provider || binding.routeId !== state.contract.routeId
     || dispatchedRequests.has(owned.requestId)) throw new Error("reason_translation_gateway_call_mismatch");
   state.used = true; dispatchedRequests.add(owned.requestId);
-  const key = process.env.ABCLLM_API_KEY?.trim();
-  if (!key) return { result: { ok: false, error: "no_key" }, terminal: null };
+  const key = contractBearer(state.contract), directEngine = directTransport(state.contract);
+  if (key === undefined) return { result: { ok: false, error: "no_key" }, terminal: null };
   const deadline = AbortSignal.timeout(timeoutMs), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
   let body: string;
   try {
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: "manual",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", ...strictTerminalHeaders(state.contract) },
+      headers: { ...bearerHeaders(key), ...strictTerminalHeaders(state.contract) },
       body: state.wire, signal: combined });
     if (response.status !== 200) {
       try { await response.body?.cancel(); } catch { /* Unknown completion retains full C. */ }
@@ -735,7 +751,7 @@ export async function translateWithReservedReasonGateway(texts: readonly string[
   } catch (error) {
     return { result: { ok: false, error: error instanceof Error && error.name === "TimeoutError" ? "timeout" : "network" }, terminal: null };
   }
-  const completed = nativeTerminal(body, state.contract);
+  const completed = nativeTerminal(body, state.contract, directEngine);
   if (!completed) return { result: { ok: false, error: "invalid_output" }, terminal: null };
   const terminal: ReasonTranslationGatewayTerminal = Object.freeze({ kind: "reason_translation_gateway_terminal" });
   reasonTranslationTerminals.set(terminal, freeze(reasonTranslationGatewayTerminalEvidenceSchema.parse({ version: 1,
@@ -773,11 +789,11 @@ export function prepareProductTranslationGatewayCall(items: readonly ProductTran
   const snapshot = structuredClone(items), model = options.model, timeoutMs = options.timeoutMs;
   const unsupported = { kind: "unsupported", reason: "provider_contract_unavailable" } as const;
   if (!validProductTranslationItems(snapshot) || !productTranslationServingContractSchema.shape.model.safeParse(model).success
-    || !process.env.ABCLLM_API_KEY?.trim() || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return unsupported;
+    || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return unsupported;
   const resolved = resolveProductTranslationServingContract(model);
   if (!resolved) return unsupported;
   const contract = productTranslationServingContractSchema.parse(structuredClone(resolved));
-  if (contract.model !== model) return unsupported;
+  if (contract.model !== model || contractBearer(contract) === undefined) return unsupported;
   const wire = productTranslationGatewayWire(snapshot, model);
   const call = freeze({ kind: "prepared" as const, wireHash: sha(wire),
     servingContractHash: productTranslationServingContractHash(contract), totalTokenBound: contract.totalTokenBound, model });
@@ -809,14 +825,14 @@ export async function translateProductFieldsWithReservedGateway(items: readonly 
     || binding.provider !== state.contract.provider || binding.routeId !== state.contract.routeId
     || dispatchedRequests.has(owned.requestId)) throw new Error("product_translation_gateway_call_mismatch");
   state.used = true; dispatchedRequests.add(owned.requestId);
-  const key = process.env.ABCLLM_API_KEY?.trim();
-  if (!key) return { result: { ok: false, error: "no_key" }, terminal: null };
+  const key = contractBearer(state.contract), directEngine = directTransport(state.contract);
+  if (key === undefined) return { result: { ok: false, error: "no_key" }, terminal: null };
   const deadline = AbortSignal.timeout(timeoutMs), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
   state.deadline = deadline;
   let body: string;
   try {
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: "manual",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", ...strictTerminalHeaders(state.contract) },
+      headers: { ...bearerHeaders(key), ...strictTerminalHeaders(state.contract) },
       body: state.wire, signal: combined });
     if (response.status !== 200) {
       try { await response.body?.cancel(); } catch { /* Unknown completion retains full C. */ }
@@ -826,13 +842,13 @@ export async function translateProductFieldsWithReservedGateway(items: readonly 
   } catch (error) {
     return { result: { ok: false, error: error instanceof Error && error.name === "TimeoutError" ? "timeout" : "network" }, terminal: null };
   } finally { delete state.deadline; }
-  const completed = nativeTerminal(body, state.contract);
+  const completed = nativeTerminal(body, state.contract, directEngine);
   if (!completed) return { result: { ok: false, error: "invalid_output" }, terminal: null };
   const terminal: ProductTranslationGatewayTerminal = Object.freeze({ kind: "product_translation_gateway_terminal" });
   productTranslationTerminals.set(terminal, freeze(productTranslationGatewayTerminalEvidenceSchema.parse({ version: 1,
     kind: "product_translation_gateway_terminal", dispatch: owned, responseHash: sha(body), ...completed })));
   const content = (JSON.parse(body) as { choices: { message: { content: string | null } }[] }).choices[0].message.content;
-  return { result: parseKoreanTaglines(content ?? "", snapshot.length), terminal };
+  return { result: parseKoreanTaglines(content ?? "", snapshot.length, snapshot), terminal };
 }
 
 import { productTaglineKoModelDispatchSchema, productTaglineKoGatewayTerminalEvidenceSchema, type ProductTaglineKoModelDispatch,
@@ -861,11 +877,11 @@ export function prepareProductTaglineKoGatewayCall(items: readonly ProductTaglin
   const snapshot = structuredClone(items), model = options.model, timeoutMs = options.timeoutMs;
   const unsupported = { kind: "unsupported", reason: "provider_contract_unavailable" } as const;
   if (!validProductTaglineKoItems(snapshot) || !productTaglineKoServingContractSchema.shape.model.safeParse(model).success
-    || !process.env.ABCLLM_API_KEY?.trim() || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return unsupported;
+    || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return unsupported;
   const resolved = resolveProductTaglineKoServingContract(model);
   if (!resolved) return unsupported;
   const contract = productTaglineKoServingContractSchema.parse(structuredClone(resolved));
-  if (contract.model !== model) return unsupported;
+  if (contract.model !== model || contractBearer(contract) === undefined) return unsupported;
   const wire = productTaglineKoGatewayWire(snapshot, model);
   const call = freeze({ kind: "prepared" as const, wireHash: sha(wire),
     servingContractHash: productTaglineKoServingContractHash(contract), totalTokenBound: contract.totalTokenBound, model });
@@ -892,14 +908,14 @@ export async function translateTaglinesWithReservedGateway(items: readonly Produ
     || binding.provider !== state.contract.provider || binding.routeId !== state.contract.routeId
     || dispatchedRequests.has(owned.requestId)) throw new Error("product_tagline_ko_gateway_call_mismatch");
   state.used = true; dispatchedRequests.add(owned.requestId);
-  const key = process.env.ABCLLM_API_KEY?.trim();
-  if (!key) return { result: { ok: false, error: "no_key" }, terminal: null };
+  const key = contractBearer(state.contract), directEngine = directTransport(state.contract);
+  if (key === undefined) return { result: { ok: false, error: "no_key" }, terminal: null };
   const deadline = AbortSignal.timeout(timeoutMs), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
   state.deadline = deadline;
   let body: string;
   try {
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: "manual",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", ...strictTerminalHeaders(state.contract) },
+      headers: { ...bearerHeaders(key), ...strictTerminalHeaders(state.contract) },
       body: state.wire, signal: combined });
     if (response.status !== 200) {
       try { await response.body?.cancel(); } catch { /* Unknown completion retains full C. */ }
@@ -909,7 +925,7 @@ export async function translateTaglinesWithReservedGateway(items: readonly Produ
   } catch (error) {
     return { result: { ok: false, error: error instanceof Error && error.name === "TimeoutError" ? "timeout" : "network" }, terminal: null };
   } finally { delete state.deadline; }
-  const completed = nativeTerminal(body, state.contract);
+  const completed = nativeTerminal(body, state.contract, directEngine);
   if (!completed) return { result: { ok: false, error: "invalid_output" }, terminal: null };
   const terminal: ProductTaglineKoGatewayTerminal = Object.freeze({ kind: "product_tagline_ko_gateway_terminal" });
   productTaglineKoTerminals.set(terminal, freeze(productTaglineKoGatewayTerminalEvidenceSchema.parse({ version: 1,
@@ -945,11 +961,11 @@ export function prepareCrawlTaglineGatewayCall(evidence: TaglineEvidence, option
   const snapshot = structuredClone(evidence), model = options.model, timeoutMs = options.timeoutMs;
   const unsupported = { kind: "unsupported", reason: "provider_contract_unavailable" } as const;
   if (!validCrawlTaglineEvidence(snapshot) || !crawlTaglineServingContractSchema.shape.model.safeParse(model).success
-    || !process.env.ABCLLM_API_KEY?.trim() || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return unsupported;
+    || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return unsupported;
   const resolved = resolveCrawlTaglineServingContract(model);
   if (!resolved) return unsupported;
   const contract = crawlTaglineServingContractSchema.parse(structuredClone(resolved));
-  if (contract.model !== model) return unsupported;
+  if (contract.model !== model || contractBearer(contract) === undefined) return unsupported;
   const wire = crawlTaglineGatewayWire(snapshot, model);
   const call = freeze({ kind: "prepared" as const, wireHash: sha(wire),
     servingContractHash: crawlTaglineServingContractHash(contract), totalTokenBound: contract.totalTokenBound,
@@ -976,14 +992,14 @@ export async function writeTaglineWithReservedGateway(evidence: TaglineEvidence,
     || binding.provider !== state.contract.provider || binding.routeId !== state.contract.routeId
     || dispatchedRequests.has(owned.requestId)) throw new Error("crawl_tagline_gateway_call_mismatch");
   state.used = true; dispatchedRequests.add(owned.requestId);
-  const key = process.env.ABCLLM_API_KEY?.trim();
-  if (!key) return { result: { ok: false, error: "no_key" }, terminal: null };
+  const key = contractBearer(state.contract), directEngine = directTransport(state.contract);
+  if (key === undefined) return { result: { ok: false, error: "no_key" }, terminal: null };
   const deadline = AbortSignal.timeout(timeoutMs), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
   state.deadline = deadline;
   let body: string;
   try {
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: "manual",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: state.wire, signal: combined });
+      headers: bearerHeaders(key), body: state.wire, signal: combined });
     if (response.status !== 200) {
       try { await response.body?.cancel(); } catch { /* Unknown completion retains full C. */ }
       return { result: { ok: false, error: response.status === 404 ? "model_unavailable" : response.status === 429 ? "rate_limit" : `http_${response.status}` }, terminal: null };
@@ -992,7 +1008,7 @@ export async function writeTaglineWithReservedGateway(evidence: TaglineEvidence,
   } catch (error) {
     return { result: { ok: false, error: error instanceof Error && error.name === "TimeoutError" ? "timeout" : "network" }, terminal: null };
   } finally { delete state.deadline; }
-  const completed = nativeTerminal(body, state.contract);
+  const completed = nativeTerminal(body, state.contract, directEngine);
   if (!completed) return { result: { ok: false, error: "invalid_output" }, terminal: null };
   const content = (JSON.parse(body) as { choices: { message: { content: string | null } }[] }).choices[0].message.content;
   const result = parseTagline(content ?? "", snapshot);
@@ -1027,11 +1043,11 @@ export function prepareSearchVerifyGatewayCall(item: VerifyItem, options: { mode
   const snapshot = structuredClone(item), model = options.model, timeoutMs = options.timeoutMs;
   const unsupported = { kind: "unsupported", reason: "provider_contract_unavailable" } as const;
   if (!validSearchVerifyItem(snapshot) || !searchVerifyServingContractSchema.shape.model.safeParse(model).success
-    || !process.env.ABCLLM_API_KEY?.trim() || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return unsupported;
+    || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return unsupported;
   const resolved = resolveSearchVerifyServingContract(model);
   if (!resolved) return unsupported;
   const contract = searchVerifyServingContractSchema.parse(structuredClone(resolved));
-  if (contract.model !== model) return unsupported;
+  if (contract.model !== model || contractBearer(contract) === undefined) return unsupported;
   const wire = searchVerifyGatewayWire(snapshot, model);
   const call = freeze({ kind: "prepared" as const, wireHash: sha(wire),
     servingContractHash: searchVerifyServingContractHash(contract), totalTokenBound: contract.totalTokenBound,
@@ -1060,13 +1076,13 @@ export async function verifyKeywordsWithReservedGateway(item: VerifyItem, dispat
     || binding.provider !== state.contract.provider || binding.routeId !== state.contract.routeId
     || dispatchedRequests.has(owned.requestId)) throw new Error("search_verify_gateway_call_mismatch");
   state.used = true; dispatchedRequests.add(owned.requestId);
-  const key = process.env.ABCLLM_API_KEY?.trim();
-  if (!key) return { result: { ok: false, error: "no_key" }, terminal: null };
+  const key = contractBearer(state.contract), directEngine = directTransport(state.contract);
+  if (key === undefined) return { result: { ok: false, error: "no_key" }, terminal: null };
   const deadline = AbortSignal.timeout(timeoutMs), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
   let body: string;
   try {
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: "manual",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, body: state.wire, signal: combined });
+      headers: bearerHeaders(key), body: state.wire, signal: combined });
     if (response.status !== 200) {
       try { await response.body?.cancel(); } catch { /* Unknown completion retains full C. */ }
       return { result: { ok: false, error: response.status === 404 ? "model_unavailable" : response.status === 429 ? "rate_limit" : `http_${response.status}` }, terminal: null };
@@ -1075,7 +1091,7 @@ export async function verifyKeywordsWithReservedGateway(item: VerifyItem, dispat
   } catch (error) {
     return { result: { ok: false, error: error instanceof Error && error.name === "TimeoutError" ? "timeout" : "network" }, terminal: null };
   }
-  const completed = nativeTerminal(body, state.contract);
+  const completed = nativeTerminal(body, state.contract, directEngine);
   if (!completed) {
     // The legacy leaf mapped an undecodable body to network; a decoded but untrusted envelope has no terminal authority.
     let decoded = true; try { JSON.parse(body); } catch { decoded = false; }
@@ -1117,11 +1133,11 @@ export function prepareWebsearchQueryGatewayCall(input: WebsearchQueryGatewayInp
   const snapshot = structuredClone(input), model = options.model, timeoutMs = options.timeoutMs;
   const unsupported = { kind: "unsupported", reason: "provider_contract_unavailable" } as const;
   if (!validWebsearchQueryInput(snapshot) || !websearchQueryServingContractSchema.shape.model.safeParse(model).success
-    || !process.env.ABCLLM_API_KEY?.trim() || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return unsupported;
+    || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return unsupported;
   const resolved = resolveWebsearchQueryServingContract(model);
   if (!resolved) return unsupported;
   const contract = websearchQueryServingContractSchema.parse(structuredClone(resolved));
-  if (contract.model !== model) return unsupported;
+  if (contract.model !== model || contractBearer(contract) === undefined) return unsupported;
   const wire = websearchQueryGatewayWire(snapshot, model);
   const call = freeze({ kind: "prepared" as const, wireHash: sha(wire), servingContractHash: websearchQueryServingContractHash(contract),
     totalTokenBound: contract.totalTokenBound, model, queryHash: sha(snapshot.query), sourceLocale: snapshot.sourceLocale });
@@ -1149,14 +1165,14 @@ export async function translateQueryWithReservedGateway(input: WebsearchQueryGat
     || binding.provider !== state.contract.provider || binding.routeId !== state.contract.routeId
     || dispatchedRequests.has(owned.requestId)) throw new Error("websearch_query_gateway_call_mismatch");
   state.used = true; dispatchedRequests.add(owned.requestId);
-  const key = process.env.ABCLLM_API_KEY?.trim();
-  if (!key) return { result: { ok: false, error: "no_key" }, terminal: null };
+  const key = contractBearer(state.contract), directEngine = directTransport(state.contract);
+  if (key === undefined) return { result: { ok: false, error: "no_key" }, terminal: null };
   const deadline = AbortSignal.timeout(timeoutMs), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
   state.deadline = deadline;
   let body: string, status: number;
   try {
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: "manual",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", ...strictTerminalHeaders(state.contract) },
+      headers: { ...bearerHeaders(key), ...strictTerminalHeaders(state.contract) },
       body: state.wire, signal: combined });
     if (!response.ok) {
       try { await response.body?.cancel(); } catch { /* Unknown completion retains full C. */ }
@@ -1168,7 +1184,7 @@ export async function translateQueryWithReservedGateway(input: WebsearchQueryGat
   } finally { delete state.deadline; }
   // The original response.json() failure was caught as "network"; it is not a content-parser failure.
   try { JSON.parse(body); } catch { return { result: { ok: false, error: "network" }, terminal: null }; }
-  const completed = status === 200 ? nativeTerminal(body, state.contract) : null;
+  const completed = status === 200 ? nativeTerminal(body, state.contract, directEngine) : null;
   if (!completed) return { result: { ok: false, error: "invalid_output" }, terminal: null };
   const content = (JSON.parse(body) as { choices: { message: { content: string | null } }[] }).choices[0].message.content;
   const keywords = parseQueryTranslation(content ?? "");

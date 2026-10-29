@@ -47,6 +47,7 @@ import { recheckMakers } from "@/lib/jobs/me/maker-recheck";
 import { pruneNotifications, sendCategoryDigest, sendDelistedNotifications } from "@/lib/jobs/me/notifications";
 import { reclaimEvidencedModelCapacity } from "@/lib/jobs/model-capacity-reclaim";
 import { MODEL_POOL_JOBS, withStoredAdminStagePools } from "@/lib/llm/admin-model-pools";
+import { ensureServingContracts } from "@/lib/llm/serving-contract-store";
 
 /**
  * 이름 → 작업 매핑.
@@ -161,9 +162,14 @@ const HANDLERS: Record<string, AnyJob> = {
   "news-refresh": (ctx) => refreshNews(ctx),
 };
 
-/** Configure the real model handlers at their registration boundary; generic runners/replay fixtures keep their own contracts. */
+/**
+ * Configure the real model handlers at their registration boundary; generic runners/replay fixtures keep their own contracts.
+ * Every run first refreshes admin serving contracts (cheap when fresh), so a contract saved in the admin applies on the next tick.
+ */
 export const JOBS: Record<string, AnyJob> = Object.fromEntries(Object.entries(HANDLERS).map(([name, handler]) => [name,
-  MODEL_POOL_JOBS.has(name) ? (ctx: Parameters<AnyJob>[0]) => ctx.lease
-    ? withStoredAdminStagePools(`${name}:${ctx.lease.token}`, () => handler(ctx)) : handler(ctx) : handler]));
+  async (ctx: Parameters<AnyJob>[0]) => {
+    await ensureServingContracts();
+    return MODEL_POOL_JOBS.has(name) && ctx.lease ? withStoredAdminStagePools(`${name}:${ctx.lease.token}`, () => handler(ctx)) : handler(ctx);
+  }]));
 
 export { JOB_NAMES } from "./catalog";

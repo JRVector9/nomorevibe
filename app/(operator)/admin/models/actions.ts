@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { validateAdminStagePools } from "@/lib/llm/admin-model-pools";
+import { ensureServingContracts } from "@/lib/llm/serving-contract-store";
 import { currentAdmin } from "@/lib/auth/admin";
 import { saveSettings, settingsFormVersion } from "@/lib/crawl/settings";
 import { webWriteAction } from "@/lib/operations/dr/web-gate";
@@ -19,6 +20,7 @@ export const saveReviewModels = webWriteAction(async function saveReviewModels(_
   let stageModelPools;
   if (form.has("stageModelPools")) {
     const raw = form.get("stageModelPools");
+    await ensureServingContracts(0);
     try {
       if (typeof raw !== "string" || raw.length > 32_000) throw new Error("invalid_pool");
       stageModelPools = validateAdminStagePools(JSON.parse(raw));

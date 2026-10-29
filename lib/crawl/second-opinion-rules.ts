@@ -1,4 +1,5 @@
 import { readModelRegistry } from "@/lib/llm/model-registry";
+import { bareModelName } from "./review-model-identity";
 import { classifyAuditReason } from "./audit-reason-category";
 
 /**
@@ -10,7 +11,7 @@ import { classifyAuditReason } from "./audit-reason-category";
  * 감사 화면의 배지('qwen: 거절')와 보류 규칙(SECOND_OPINION_REJECT_RULES)이 같은 갈래를 쓴다. 영문자로 시작하지 않으면 이름 그대로(소문자)
  */
 export function secondOpinionFamily(model: string): string {
-  const name = (readModelRegistry().models.find(entry => entry.key === model.trim())?.model ?? model).trim().replace(/^\[[^\]]*\]\s*/, "").toLowerCase();
+  const name = bareModelName(readModelRegistry().models.find(entry => entry.key === model.trim())?.model ?? model);
   return /^[a-z]+/.exec(name)?.[0] ?? name;
 }
 
@@ -19,7 +20,7 @@ export function secondOpinionFamily(model: string): string {
  * 앞의 대괄호 덩이를 떼고 대소문자 없이 견준다
  */
 export function sameOpinionModel(a: string | null | undefined, b: string | null | undefined): boolean {
-  const bare = (model: string) => (readModelRegistry().models.find(entry => entry.key === model.trim())?.model ?? model).trim().replace(/^\[[^\]]*\]\s*/, "").toLowerCase();
+  const bare = (model: string) => bareModelName(readModelRegistry().models.find(entry => entry.key === model.trim())?.model ?? model);
   return Boolean(a && b && bare(a) && bare(a) === bare(b));
 }
 

@@ -284,3 +284,45 @@ export const jobBatchCandidates = pgTable('job_batch_candidates', {
   check('job_batch_candidates_host_check',sql`${table.host} IN ('m3','mini','oracle-osaka-smoke')`),
   check('job_batch_candidates_policy_hash_check',sql`${table.policyHash} ~ '^[0-9a-f]{64}$'`),
 ]);
+
+/**
+ * Admin-managed gateway serving contracts (0147). An enabled row overrides the ABCLLM_SERVING_CONTRACTS entry for its route+model.
+ * The contract JSON is validated by the route schema in the app; the API key is encrypted (lib/security/secret-box) and never part of it.
+ */
+export const modelServingContracts = pgTable('model_serving_contracts', {
+  id: bigserial('id', { mode: 'number' }).primaryKey(),
+  routeId: varchar('route_id', { length: 64 }).notNull(),
+  model: varchar('model', { length: 200 }).notNull(),
+  contract: jsonb('contract').$type<Record<string, unknown>>().notNull(),
+  contractHash: varchar('contract_hash', { length: 64 }).notNull(),
+  auth: varchar('auth', { length: 16 }).$type<'gateway' | 'none' | 'stored'>().notNull().default('gateway'),
+  apiKeyCiphertext: text('api_key_ciphertext'),
+  /** 'direct' = the endpoint is the engine itself (0148); the gateway-only terminal rules then do not apply. */
+  transport: varchar('transport', { length: 16 }).$type<'gateway' | 'direct'>().notNull().default('gateway'),
+  enabled: boolean('enabled').notNull().default(true),
+  note: varchar('note', { length: 400 }),
+  updatedBy: varchar('updated_by', { length: 120 }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
+  updatedAt: timestamp('updated_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
+}, table => [
+  check('model_serving_contracts_identity_check', sql`jsonb_typeof(${table.contract}) = 'object' AND ${table.contract}->>'routeId' = ${table.routeId} AND ${table.contract}->>'model' = ${table.model}`),
+  check('model_serving_contracts_hash_check', sql`${table.contractHash} ~ '^[a-f0-9]{64}$'`),
+  check('model_serving_contracts_auth_check', sql`${table.auth} IN ('gateway','none','stored') AND (${table.auth} = 'stored') = (${table.apiKeyCiphertext} IS NOT NULL)`),
+  check('model_serving_contracts_transport_check', sql`${table.transport} IN ('gateway','direct')`),
+  uniqueIndex('model_serving_contracts_enabled_idx').on(table.routeId, table.model).where(sql`${table.enabled}`),
+]);
+
+/** Admin overrides of the code-default model registry (0148). An enabled row replaces the definition of the same key. */
+export const modelRegistryOverrides = pgTable('model_registry_overrides', {
+  id: bigserial('id', { mode: 'number' }).primaryKey(),
+  key: varchar('key', { length: 120 }).notNull(),
+  definition: jsonb('definition').$type<Record<string, unknown>>().notNull(),
+  enabled: boolean('enabled').notNull().default(true),
+  note: varchar('note', { length: 400 }),
+  updatedBy: varchar('updated_by', { length: 120 }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
+  updatedAt: timestamp('updated_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
+}, table => [
+  check('model_registry_overrides_identity_check', sql`jsonb_typeof(${table.definition}) = 'object' AND ${table.definition}->>'key' = ${table.key}`),
+  uniqueIndex('model_registry_overrides_enabled_idx').on(table.key).where(sql`${table.enabled}`),
+]);

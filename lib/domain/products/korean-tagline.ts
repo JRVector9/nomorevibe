@@ -320,10 +320,22 @@ export type KoreanTaglineBatch = { ok: true; outputs: string[] } | { ok: false; 
  * 받은 배열을 그대로 믿지 않는다 — 개수가 다르면 통째로 실패다(어느 줄이 어느 제품인지 모른다).
  * 문자열이 아닌 항목은 빈 줄로 두어 검사에서 'empty' 로 버린다.
  */
-export function parseKoreanTaglines(content: string, count: number): KoreanTaglineBatch {
+export function parseKoreanTaglines(content: string, count: number, expected?: readonly EchoedItem[]): KoreanTaglineBatch {
   const body = content.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
   let parsed: unknown;
   try { parsed = JSON.parse(body.match(/\[[\s\S]*\]/)?.[0] ?? "null"); } catch { return { ok: false, error: "invalid_output" }; }
   if (!Array.isArray(parsed) || parsed.length !== count) return { ok: false, error: "invalid_output" };
-  return { ok: true, outputs: parsed.map((item) => typeof item === "string" ? item : "") };
+  return { ok: true, outputs: parsed.map((item, index) => typeof item === "string" ? item : echoedText(item, expected?.[index])) };
+}
+
+type EchoedItem = Readonly<{ name: string; locale: string; field: string }>;
+/**
+ * Product translation only: Gemma 4 on oMLX (M1, 2026-10-29) answers the input objects back with `text` translated instead of
+ * a string array. That text counts only when the object is the same item (name, locale, field) at the same index; the caller's
+ * checkProductTranslation still rejects anything not in the target language, so an untranslated echo never passes.
+ */
+function echoedText(item: unknown, want: EchoedItem | undefined): string {
+  if (!want || !item || typeof item !== "object" || Array.isArray(item)) return "";
+  const row = item as Record<string, unknown>;
+  return row.name === want.name && row.locale === want.locale && row.field === want.field && typeof row.text === "string" ? row.text : "";
 }

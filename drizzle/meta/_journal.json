@@ -1030,6 +1030,20 @@
       "when": 1794086400058,
       "tag": "0146_replaced_path_absent_after_dispatch",
       "breakpoints": true
+    },
+    {
+      "idx": 147,
+      "version": "7",
+      "when": 1794086400059,
+      "tag": "0147_model_serving_contracts",
+      "breakpoints": true
+    },
+    {
+      "idx": 148,
+      "version": "7",
+      "when": 1794086401059,
+      "tag": "0148_engine_connections",
+      "breakpoints": true
     }
   ]
 }

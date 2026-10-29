@@ -10,6 +10,7 @@ import { translationSystemPrompt } from "./translation-prompts";
 import { KOREAN_TRANSLATION_LEGACY_MAX_CHARS, KOREAN_TRANSLATION_MAX_ITEMS,
   koreanTranslationMaxOutputTokens, type KoreanTranslationProfile } from "./korean-translation-config";
 import { koreanTranslationRuntimePrompt } from "./korean-translation-prompts";
+import { servingContractAuth } from "@/lib/llm/serving-contract-store";
 
 /**
  * 심사 사유를 한국어로 옮긴다 — 사내 LLM 게이트웨이(abcllm, OpenAI 호환)의 gpt-oss-120b.
@@ -92,6 +93,9 @@ async function chat(
 ): Promise<ChatResult> {
   const key = process.env.ABCLLM_API_KEY?.trim();
   if (!key) return { ok: false, error: "no_key" };
+  // A model connected straight to its engine (admin contract, transport direct) is served only through its contract path;
+  // this legacy path would send the gateway key to the engine's address.
+  if (servingContractAuth(body.routeId, model)?.transport === "direct") return { ok: false, error: "direct_engine_contract_only" };
   await assertTextModelAdmission({ routeId: body.routeId, model });
   try {
     const response = await request(`${modelBaseUrl(body.routeId, process.env, "abcllm")}/chat/completions`, {
@@ -196,7 +200,7 @@ export async function translateProductFields(
   model = scopedModel("product-translate", PRODUCT_TRANSLATION_MODEL),
 ): Promise<KoreanTaglineBatch> {
   const result = await chat(productTranslationChatBody(items, model), timeoutMs, request, signal, model);
-  return result.ok ? parseKoreanTaglines(result.content, items.length) : result;
+  return result.ok ? parseKoreanTaglines(result.content, items.length, items) : result;
 }
 
 /**

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { servingContractSnapshot } from "./serving-contract-store";
 
 /**
  * abcLLM 게이트웨이 serving 계약 설정(ABCLLM_SERVING_CONTRACTS).
@@ -49,9 +50,54 @@ export function gatewayServingContractsFromConfig<T extends ServingContract>(raw
   return contracts;
 }
 
+/** 한 항목만 검사한다(관리 화면 저장·DB 행). 틀리면 null 이다. */
+export function parseGatewayServingContract<T extends ServingContract>(value: unknown, routeId: GatewayServingRoute, schema: z.ZodType<T>): Readonly<T> | null {
+  let parsed: z.ZodSafeParseResult<T>;
+  try { parsed = schema.safeParse(value); } catch { return null; }
+  if (!parsed.success || parsed.data.routeId !== routeId
+    || STRICT_TERMINAL_ROUTES.includes(routeId) && parsed.data.strictTerminalOptIn !== ABCLLM_STRICT_TERMINAL_OPT_IN) return null;
+  return Object.freeze(parsed.data);
+}
+
+/**
+ * 시작 env 계약 위에 관리 화면 계약(model_serving_contracts)을 얹은 live 보기. 스냅샷이 바뀌면 다시 합친다.
+ * DB 행이 같은 model 의 env 항목을 대신한다. 검사에 실패한 DB 행은 그 model 만 닫는다(env 로 되돌아가지 않는다).
+ */
+class LiveGatewayContracts<T extends ServingContract> implements ReadonlyMap<string, Readonly<T>> {
+  private cache: { token: string; map: ReadonlyMap<string, Readonly<T>> } | null = null;
+  constructor(private readonly routeId: GatewayServingRoute, private readonly schema: z.ZodType<T>,
+    private readonly startup: ReadonlyMap<string, Readonly<T>>) {}
+  private current(): ReadonlyMap<string, Readonly<T>> {
+    const snapshot = servingContractSnapshot();
+    if (this.cache?.token === snapshot.token) return this.cache.map;
+    const map = new Map(this.startup);
+    for (const row of snapshot.rows) {
+      if (row.routeId !== this.routeId) continue;
+      const contract = parseGatewayServingContract(row.contract, this.routeId, this.schema);
+      if (contract && contract.model === row.model) map.set(row.model, contract); else map.delete(row.model);
+    }
+    this.cache = { token: snapshot.token, map };
+    return map;
+  }
+  get size() { return this.current().size; }
+  get(model: string) { return this.current().get(model); }
+  has(model: string) { return this.current().has(model); }
+  forEach(callback: (value: Readonly<T>, key: string, map: ReadonlyMap<string, Readonly<T>>) => void, thisArg?: unknown) { this.current().forEach(callback, thisArg); }
+  entries() { return this.current().entries(); }
+  keys() { return this.current().keys(); }
+  values() { return this.current().values(); }
+  [Symbol.iterator]() { return this.current()[Symbol.iterator](); }
+}
+
 const STARTUP_CONFIG = process.env.ABCLLM_SERVING_CONTRACTS;
-/** 각 계약 모듈이 자기 모듈을 처음 읽을 때 한 번 부른다. 재적재 함수는 두지 않는다. */
+const ROUTE_SCHEMAS = new Map<GatewayServingRoute, z.ZodType<ServingContract>>();
+/** 각 계약 모듈이 자기 모듈을 처음 읽을 때 한 번 부른다. env 는 시작 때 한 번, 관리 화면 계약은 스냅샷이 바뀔 때마다 반영된다. */
 export function startupGatewayServingContracts<T extends ServingContract>(routeId: GatewayServingRoute,
   schema: z.ZodType<T>): ReadonlyMap<string, Readonly<T>> {
-  return gatewayServingContractsFromConfig(STARTUP_CONFIG, routeId, schema);
+  ROUTE_SCHEMAS.set(routeId, schema as z.ZodType<ServingContract>);
+  return new LiveGatewayContracts(routeId, schema, gatewayServingContractsFromConfig(STARTUP_CONFIG, routeId, schema));
+}
+/** 그 route 계약 모듈이 이미 읽힌 경우의 스키마(관리 화면 검사용). 모듈을 읽지 않았으면 null 이다. */
+export function registeredGatewayServingContractSchema(routeId: GatewayServingRoute): z.ZodType<ServingContract> | null {
+  return ROUTE_SCHEMAS.get(routeId) ?? null;
 }

@@ -157,6 +157,24 @@ describe("parseKoreanTaglines", () => {
   });
 });
 
+describe("parseKoreanTaglines — product translation echo (Gemma 4 on oMLX)", () => {
+  const items = [{ name: "Toolkit", locale: "en", field: "tagline" }, { name: "Toolkit", locale: "zh-Hans", field: "tagline" }];
+  const echo = (rows: unknown[]) => JSON.stringify(rows);
+  it("takes the translated text of the same item at the same index, and only with the expected items", () => {
+    const answer = echo([{ name: "Toolkit", locale: "en", field: "tagline", text: "Toolkit organizes documents with AI", protectedTokens: ["AI"] },
+      { name: "Toolkit", locale: "zh-Hans", field: "tagline", text: "Toolkit 用 AI 整理文档" }]);
+    expect(parseKoreanTaglines(answer, 2, items)).toEqual({ ok: true, outputs: ["Toolkit organizes documents with AI", "Toolkit 用 AI 整理文档"] });
+    expect(parseKoreanTaglines(answer, 2)).toEqual({ ok: true, outputs: ["", ""] });
+  });
+  it("leaves an object for another item, field or position empty", () => {
+    const swapped = echo([{ name: "Toolkit", locale: "zh-Hans", field: "tagline", text: "中文" }, { name: "Toolkit", locale: "en", field: "tagline", text: "English" }]);
+    expect(parseKoreanTaglines(swapped, 2, items)).toEqual({ ok: true, outputs: ["", ""] });
+    const other = echo([{ name: "Other", locale: "en", field: "tagline", text: "x" }, { name: "Toolkit", locale: "zh-Hans", field: "description", text: "y" }]);
+    expect(parseKoreanTaglines(other, 2, items)).toEqual({ ok: true, outputs: ["", ""] });
+    expect(parseKoreanTaglines(echo([{ name: "Toolkit", locale: "en", field: "tagline", text: 1 }, "ok"]), 2, items)).toEqual({ ok: true, outputs: ["", "ok"] });
+  });
+});
+
 describe("packTaglineBatch", () => {
   const task = (productId: number, tagline: string, attempts = 0) => ({ productId, name: `p${productId}`, tagline, repoUrl: null, attempts });
   it("legacy는 차례대로 8건·3,600자, native는 원래 1,200자까지 묶는다", () => {
