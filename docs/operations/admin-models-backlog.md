@@ -234,3 +234,9 @@ M1 모델 선택/readiness 수정과 상품·사유 번역 동일 등록부 정�
 - PR721·722의 M1/복구 변경과 migration0140은 그대로 보존했다. 인덱스 migration은 **0141**이다. 다른 차선의 `review-stall-backlog.md`는 main 내용을 그대로 받아 이 PR의 최종 차이가 없다.
 - 같은 M1 그룹의 미확인이 상품 번역뿐 아니라 사유 번역 슬롯도 막으면 두 단계 모두 ‘멈춤·미확인 N건’을 표시한다. 다른 단계의 성공을 해당 단계의 마지막 성공으로 재사용하지 않는다. 공유 그룹 회귀1개를 추가했다.
 - 실제 최종 범위: **21파일116시험 PASS**(최신 main의 ops-runner root 검증 포함), 확대 **24파일214시험 PASS**. 1440/390 Playwright 각10항목·오류0·가로 넘침0 재확인. 타입 검사·범위 ESLint·diff 검사도 다시 확인한다. 필수 CI 최종 결과/병합 영수증은 PR #723·개발사항 완료 보고로 남긴다.
+
+### 기존 UI 기준 보완
+
+- 앞선 CI40838781221의 unit(1)이 이번 보조 글자(10~12px)를 기존 `tests/ui-contract.test.ts`의 최소13px 규칙 위반으로 거절했다. 이번 변경으로 생긴 실패이며 기존 실패로 돌리지 않는다.
+- 같은 검사 기준으로 실제 소스 위반 **24건 → 0건**. 화면 보조 글자를 모두13px 이상으로 올리고 작은 글자의 fg-3도 fg-2로 바꿨다. 기존 UI 기준을 낮추거나 예외를 추가하지 않았다.
+- `node node_modules/vitest/vitest.mjs run admin-models ops-runner stage-registry model-registry-operator operations-action-contract ui-contract --maxWorkers=4`: **25파일219시험 PASS**. 타입/범위 ESLint/diff PASS. 최종13px 화면을 1440/390에서 다시 캡처·클릭해 가로 넘침0/3열·1열/page error0을 확인했다. 이 결과가 앞선214시험·작은 글자 화면 자료를 대체한다.

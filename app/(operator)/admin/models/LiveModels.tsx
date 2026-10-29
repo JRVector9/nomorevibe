@@ -18,7 +18,7 @@ const tone: Record<string, string> = { 정상: "bg-up/10 text-up", 느림: "bg-w
   미확인: "bg-down/10 text-down", "접수 중지": "bg-bg-hover text-fg-2", "처리 중": "bg-accent-soft text-accent-ink",
   보류: "bg-warn/10 text-warn", "연결 안 됨": "bg-bg-hover text-fg-2", 내려감: "bg-down/10 text-down" };
 export function ModelStatusBadge({ status, children, muted }: { status: string; children?: React.ReactNode; muted?: boolean }) {
-  return <span className={`inline-flex shrink-0 items-center rounded-md px-2 py-1 text-[12px] font-semibold ${muted ? tone["접수 중지"] : tone[status] ?? tone["미확인"]}`}>{children ?? status}</span>;
+  return <span className={`inline-flex shrink-0 items-center rounded-md px-2 py-1 text-[13px] font-semibold ${muted ? tone["접수 중지"] : tone[status] ?? tone["미확인"]}`}>{children ?? status}</span>;
 }
 export function StageStatusRibbon({ observation, cards }: { observation: AdminModelsObservation; cards: ModelCard[] }) {
   return <div className="grid grid-flow-col auto-cols-[170px] grid-rows-1 sm:grid-rows-2 gap-2 overflow-x-auto pb-2 lg:grid-flow-row lg:auto-cols-auto lg:grid-cols-6 lg:grid-rows-none" aria-label="단계별 지금 상태">
@@ -28,19 +28,19 @@ export function StageStatusRibbon({ observation, cards }: { observation: AdminMo
       const status: StageHealth = stageHealth(observation, rows, requests), unknown = stageUnknownRows(observation, rows).reduce((n, row) => n + row.indeterminate, 0);
       const card = cards.find(card => card.stages.includes(stage.id));
       return <a key={stage.id} href={card ? `#${modelCardAnchor(card.id)}` : "#model-settings"} className="flex min-w-0 flex-col gap-1.5 rounded-lg border border-line bg-bg-card p-2.5 hover:border-accent">
-        <span className="text-[12px] font-semibold">{stage.label}</span>
+        <span className="text-[13px] font-semibold">{stage.label}</span>
         <div className="flex flex-wrap gap-1"><ModelStatusBadge status={status} muted={status === "미확인" && !unknown}>{status === "미확인" && unknown > 0 ? `미확인 ${unknown}건` : status}</ModelStatusBadge>{unknown > 0 && status !== "미확인" && <ModelStatusBadge status="미확인">미확인 {unknown}건</ModelStatusBadge>}</div>
-        <span className="text-[11px] text-fg-2">마지막 성공 {ago(lastModelSuccess(rows), observation.observedAt)}</span>
+        <span className="text-[13px] text-fg-2">마지막 성공 {ago(lastModelSuccess(rows), observation.observedAt)}</span>
       </a>;
     })}
   </div>;
 }
 export function ThroughputMetrics({ value }: { value?: ThroughputWindows }) {
   const duration = (ms: number | null | undefined) => ms == null ? "기록 없음" : ms < 1000 ? `${Math.round(ms)}ms` : ms < 60000 ? `${(ms / 1000).toFixed(1)}초` : `${(ms / 60000).toFixed(1)}분`;
-  return <div className="overflow-x-auto"><table className="w-full text-left text-[12px] tabular-nums" aria-label="건당 처리량">
+  return <div className="overflow-x-auto"><table className="w-full text-left text-[13px] tabular-nums" aria-label="건당 처리량">
     <thead className="text-fg-2"><tr><th className="py-1 font-normal">종료 기준</th><th className="font-normal">중앙값</th><th className="font-normal">p90</th><th className="font-normal">건/시간</th><th className="font-normal">실패율</th></tr></thead>
     <tbody>{(["hour", "day"] as const).map(window => { const row = value?.[window]; return <tr key={window} className="border-t border-line">
-      <th className="py-2 font-medium">{window === "hour" ? "1시간" : "24시간"}<span className="block text-[10px] font-normal text-fg-2">{row?.count ? `${row.count}건` : "기록 없음"}</span></th>
+      <th className="py-2 font-medium">{window === "hour" ? "1시간" : "24시간"}<span className="block text-[13px] font-normal text-fg-2">{row?.count ? `${row.count}건` : "기록 없음"}</span></th>
       <td>{duration(row?.medianMs)}</td><td>{duration(row?.p90Ms)}</td><td>{row?.perHour == null ? "기록 없음" : row.perHour.toLocaleString("ko-KR", { maximumFractionDigits: 2 })}</td>
       <td title={`판정 가능한 종료 ${row?.classified ?? 0}건`}>{row?.failureRate == null ? "기록 없음" : `${(row.failureRate * 100).toFixed(1)}%`}</td>
     </tr>; })}</tbody>
@@ -65,7 +65,7 @@ export function LiveModels({ observation, models = [], assignments = [], probeAc
   });
   return <section className="flex min-w-0 flex-col gap-4" aria-labelledby="live-models-heading">
     <div className="flex flex-wrap items-center justify-between gap-2"><div><h2 id="live-models-heading" className="text-[20px] font-bold">지금 상태</h2>
-      <p className="mt-1 text-[12px] text-fg-2">관측 {stamp(observation.observedAt)} · 30초 자동 새로고침</p></div>
+      <p className="mt-1 text-[13px] text-fg-2">관측 {stamp(observation.observedAt)} · 30초 자동 새로고침</p></div>
       <button type="button" className={buttonSmall} onClick={() => router.refresh()}>수동 새로고침</button></div>
     {observation.error && <StageStatusRibbon observation={observation} cards={cards} />}
     {observation.error ? <p role="alert" className="rounded-lg border border-down/30 bg-down/5 p-4 text-down">{observation.error}</p> : <>
@@ -79,7 +79,7 @@ export function LiveModels({ observation, models = [], assignments = [], probeAc
         })}
       </div>}
       <StageStatusRibbon observation={observation} cards={cards} />
-      <div className="flex flex-wrap items-center justify-between gap-2 text-[12px] text-fg-2"><p>접수 <strong>{observation.mode?.toUpperCase()}</strong> · 전체 점유 {observation.groups.reduce((n, row) => n + row.held, 0)} / {observation.globalLimit ?? "상한 미확인"}</p>
+      <div className="flex flex-wrap items-center justify-between gap-2 text-[13px] text-fg-2"><p>접수 <strong>{observation.mode?.toUpperCase()}</strong> · 전체 점유 {observation.groups.reduce((n, row) => n + row.held, 0)} / {observation.globalLimit ?? "상한 미확인"}</p>
         <p>미확인 요청은 시간이 지나도 해제하지 않습니다 · 자동 회수 기본 꺼짐</p></div>
       {observation.truncated && <p role="alert">열린 요청은 미확인 우선 100건만 표시합니다. 점유·미확인 합계는 전체 장부 기준입니다.</p>}
       <ModelOpsPanel mode={observation.mode} requests={[]} models={[]} initialStates={opsStates} {...opsActions}
@@ -92,7 +92,7 @@ export function LiveModels({ observation, models = [], assignments = [], probeAc
         <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">{MODEL_DASHBOARD_STAGES.map(stage => <div key={stage.id} className="min-w-0"><h3 className="mb-2 text-[13px] font-semibold">{stage.label}</h3>
           <ThroughputMetrics value={observation.throughput?.byStage[stage.id]} /></div>)}</div>
       </details>
-      <p className="text-[12px] leading-relaxed text-fg-2">처리 시간: 장부 접수 → 실제 종료(대기 포함). p90: 90%의 요청이 이 시간 안에 종료. 최근 1시간·24시간의 실제 종료만 집계하며 업무 승인·발행 성공과는 다릅니다. 실패율은 성공·실패 판정이 있는 종료만 분모로 사용합니다. 철회·미확인 요청은 처리량에 넣지 않습니다. 마지막 성공은 최근 24시간 내 기록입니다.</p>
+      <p className="text-[13px] leading-relaxed text-fg-2">처리 시간: 장부 접수 → 실제 종료(대기 포함). p90: 90%의 요청이 이 시간 안에 종료. 최근 1시간·24시간의 실제 종료만 집계하며 업무 승인·발행 성공과는 다릅니다. 실패율은 성공·실패 판정이 있는 종료만 분모로 사용합니다. 철회·미확인 요청은 처리량에 넣지 않습니다. 마지막 성공은 최근 24시간 내 기록입니다.</p>
     </>}
   </section>;
 }
@@ -107,16 +107,16 @@ function ModelLiveCard({ card, observation, controls, probe, busy, onProbe, reco
   const status = unknown ? "미확인" : probe?.listed === false ? "내려감" : probe?.error ? "연결 안 됨" : sum(card, "dispatched") + sum(card, "reserved") ? "처리 중" : waiting ? "보류" : lastModelSuccess(card.rows) || probe?.listed ? "정상" : "연결 안 됨";
   const requests = card.requests.filter(row => row.state === "indeterminate" || row.state === "waiting");
   return <article id={modelCardAnchor(card.id)} className={`flex min-w-0 scroll-mt-28 md:scroll-mt-6 flex-col gap-4 rounded-xl border bg-bg-card p-4 ${unknown ? "border-down/40" : "border-line"}`} aria-label={`${card.equipment} ${card.name}`}>
-    <header><div className="mb-2 flex items-center justify-between gap-2"><span className="rounded bg-bg-hover px-2 py-1 text-[12px] font-semibold">[{card.equipment}]</span><ModelStatusBadge status={status} /></div>
-      <h3 className="break-words text-[18px] font-bold leading-snug">{card.name}</h3><p className="mt-1 text-[12px] text-fg-2">{card.stages.map(modelStageLabel).join(" · ") || "사용 단계 미확인"}</p>
-      {status === "연결 안 됨" && !probe && <p className="mt-1 text-[12px] text-fg-2">최근 성공·연결 확인 기록 없음</p>}
+    <header><div className="mb-2 flex items-center justify-between gap-2"><span className="rounded bg-bg-hover px-2 py-1 text-[13px] font-semibold">[{card.equipment}]</span><ModelStatusBadge status={status} /></div>
+      <h3 className="break-words text-[18px] font-bold leading-snug">{card.name}</h3><p className="mt-1 text-[13px] text-fg-2">{card.stages.map(modelStageLabel).join(" · ") || "사용 단계 미확인"}</p>
+      {status === "연결 안 됨" && !probe && <p className="mt-1 text-[13px] text-fg-2">최근 성공·연결 확인 기록 없음</p>}
     </header>
-    <div className="grid grid-cols-3 gap-2 rounded-lg bg-bg-soft p-3 text-[12px]"><div><p className="text-fg-2">점유 슬롯</p><strong className="text-[17px]">{held} / {limit ?? "미확인"}</strong></div>
+    <div className="grid grid-cols-3 gap-2 rounded-lg bg-bg-soft p-3 text-[13px]"><div><p className="text-fg-2">점유 슬롯</p><strong className="text-[17px]">{held} / {limit ?? "미확인"}</strong></div>
       <div><p className="text-fg-2">1시간 성공</p><strong className="text-[17px] text-up">{sum(card, "succeeded1h")}건</strong></div>
       <div><p className="text-fg-2">1시간 실패</p><strong className="text-[17px]">{sum(card, "failed1h")}건</strong></div></div>
-    <p className="text-[12px] text-fg-2" title={stamp(lastModelSuccess(card.rows))}>마지막 성공 <strong className="font-medium text-fg">{ago(lastModelSuccess(card.rows), observation.observedAt)}</strong></p>
+    <p className="text-[13px] text-fg-2" title={stamp(lastModelSuccess(card.rows))}>마지막 성공 <strong className="font-medium text-fg">{ago(lastModelSuccess(card.rows), observation.observedAt)}</strong></p>
     <ThroughputMetrics value={observation.throughput?.byModel[throughputModelKey({ provider: card.definition?.provider ?? card.rows[0]?.provider ?? "", model: card.definition?.key ?? card.rows[0]?.model ?? "" })]} />
-    {(requests.length > 0 || unknown > 0) && <div className="flex flex-col gap-3 rounded-lg border border-down/25 bg-down/5 p-3 text-[12px]">
+    {(requests.length > 0 || unknown > 0) && <div className="flex flex-col gap-3 rounded-lg border border-down/25 bg-down/5 p-3 text-[13px]">
       {requests.map(request => <div key={request.requestId}><strong className="text-down">{request.state === "indeterminate" ? "미확인" : "보류"}</strong>
         <p className="mt-1">요청 시작 {stamp(request.dispatchedAt ?? request.queuedAt)}</p>
         <p>{elapsedModelTime(request.dispatchedAt ?? request.queuedAt, observation.observedAt)}째 · 상태 경과 {elapsedModelTime(request.stateSince, observation.observedAt)}</p>
@@ -136,10 +136,10 @@ function ModelLiveCard({ card, observation, controls, probe, busy, onProbe, reco
     </div>}
     <div className="flex flex-wrap gap-2"><button type="button" className={buttonSmall} disabled={busy || !["abcllm", "local-direct"].includes(card.definition?.provider ?? card.rows[0]?.provider)} onClick={onProbe}>연결 확인</button>
       {!requests.length && <AdmissionButton observation={observation} controls={controls} />}</div>
-    {!["abcllm", "local-direct"].includes(card.definition?.provider ?? card.rows[0]?.provider) && <p className="text-[12px] text-fg-2">이 제공자의 모델 목록 조회 실행기가 연결되지 않았습니다.</p>}
-    {probe && <div role="status" className="text-[12px] leading-relaxed"><p>{probe.listed === undefined ? "목록 미확인" : probe.listed ? "모델 목록에 있음" : "모델 목록에 없음"} · {probe.listMs ?? "—"}ms</p>
+    {!["abcllm", "local-direct"].includes(card.definition?.provider ?? card.rows[0]?.provider) && <p className="text-[13px] text-fg-2">이 제공자의 모델 목록 조회 실행기가 연결되지 않았습니다.</p>}
+    {probe && <div role="status" className="text-[13px] leading-relaxed"><p>{probe.listed === undefined ? "목록 미확인" : probe.listed ? "모델 목록에 있음" : "모델 목록에 없음"} · {probe.listMs ?? "—"}ms</p>
       {probe.error && <p className="text-down">{probe.error}</p>}<p>시험 호출: {probe.callMs === undefined ? probe.callBlocked : `${probe.callMs}ms`}</p></div>}
-    <details className="border-t border-line pt-3 text-[12px] text-fg-2"><summary className="cursor-pointer">자세히</summary>
+    <details className="border-t border-line pt-3 text-[13px] text-fg-2"><summary className="cursor-pointer">자세히</summary>
       <div className="mt-2 flex flex-col gap-2 break-all font-mono"><p>모델 키 {card.id}</p>{card.rows.map(row => <p key={`${row.routeId}:${row.groupId}:${row.providerBudgetId}`}>routeId {row.routeId} · provider {row.provider}<br />groupId {row.groupId} · providerBudgetId {row.providerBudgetId}<br />철회 {row.withdrawn1h} · 미분류 {row.unclassified1h}</p>)}
         {card.requests.map(row => <p key={row.requestId}>requestId {row.requestId}<br />state {row.state} · owner {row.ownerInstanceId} · 예약 기한 {stamp(row.reservedUntil)}</p>)}
         {groups.map(group => <p key={group.groupId}>공유 그룹 {group.groupId} · 전체 점유 {group.held}/{group.limit ?? "미확인"}</p>)}</div>

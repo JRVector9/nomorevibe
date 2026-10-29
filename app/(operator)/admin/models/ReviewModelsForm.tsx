@@ -36,10 +36,10 @@ export function ReviewModelsForm({ settings, version, firstChoices, secondChoice
       <div key={prefix} className="flex min-w-0 flex-col gap-3 rounded-xl border border-line bg-bg-card p-4"><h3 className="text-[14px] font-semibold">{labels[prefix]}</h3>
         <ModelChips prefix={prefix} label={labels[prefix]} rows={draft[prefix]} choices={prefix === "primary" || prefix === "firstAdditional" ? firstChoices : secondChoices}
           max={prefix === "primary" ? 1 : prefix === "voter" ? 3 : 2} onChange={rows => setDraft(current => ({ ...current, [prefix]: rows }))} />
-        {prefix === "voter" && <p className="text-[12px] text-fg-2">동일 모델은 독립 교차 검수 표로 보지 않습니다. 독립 표가 없으면 사람 확인이 남습니다.</p>}
+        {prefix === "voter" && <p className="text-[13px] text-fg-2">동일 모델은 독립 교차 검수 표로 보지 않습니다. 독립 표가 없으면 사람 확인이 남습니다.</p>}
       </div>)}</fieldset>
     {models && <fieldset disabled={pending}><StagePoolFields draft={pools} models={models} defaults={defaults} update={(id, keys) => setPools(current => ({ ...current, [id]: keys }))} /></fieldset>}
-    <p className="text-[12px] leading-relaxed text-fg-2">풀을 비우면 배포 기본 모델을 사용합니다. 단계 켜짐·발행 보호·물리 슬롯 상한은 별도입니다. 선택은 실행 권한을 부여하지 않으며, 실제 호출은 워커의 연결·실행 계약·용량 검증을 통과해야 합니다.</p>
+    <p className="text-[13px] leading-relaxed text-fg-2">풀을 비우면 배포 기본 모델을 사용합니다. 단계 켜짐·발행 보호·물리 슬롯 상한은 별도입니다. 선택은 실행 권한을 부여하지 않으며, 실제 호출은 워커의 연결·실행 계약·용량 검증을 통과해야 합니다.</p>
     <ModelSaveNotice state={pending ? null : state} /><ModelSaveBar pending={pending} changes={changes} label={models ? "모델 설정 저장" : "검수 모델 저장"} />
   </form>;
 }

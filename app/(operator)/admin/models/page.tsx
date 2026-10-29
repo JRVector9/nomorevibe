@@ -47,7 +47,7 @@ export default async function ModelsPage() {
   return <main className="mx-auto flex max-w-[1440px] flex-col gap-5 px-8 py-7 max-sm:px-4">
     <PageStamp />
     <header className="flex flex-col gap-2"><h1 className="text-[26px] font-bold">단계별 모델</h1>
-      <p className="text-[14px] text-fg-3">멈춘 단계와 모델을 먼저 확인하고, 아래에서 다음 작업에 쓸 모델을 바꿉니다.</p>
+      <p className="text-[14px] text-fg-2">멈춘 단계와 모델을 먼저 확인하고, 아래에서 다음 작업에 쓸 모델을 바꿉니다.</p>
       <Link href="/admin/status" prefetch={false} className="text-[13px] font-semibold text-accent-ink">운영센터에서 실제 워커 경로·용량 확인 →</Link>
     </header>
     <Suspense fallback={<p aria-busy="true">운영 DB 실측 확인 중…</p>}><LiveModelsSlot assignments={assignments} models={registry.models} /></Suspense>
@@ -67,9 +67,9 @@ export default async function ModelsPage() {
     </section>
     <section className="flex flex-col gap-3 rounded-xl border border-line bg-bg-card p-5" aria-labelledby="text-model-heading">
       <h2 id="text-model-heading" className="text-[18px] font-semibold">다른 LLM 단계</h2>
-      <p className="text-[13px] text-fg-3">아래는 풀을 비웠을 때 사용하는 웹 프로세스의 배포 기본값입니다. 위 단계별 모델 풀에서 저장한 선택이 새 작업에 우선합니다. 실제 호출과 점유는 위 모델 카드에서 확인하세요.</p>
+      <p className="text-[13px] text-fg-2">아래는 풀을 비웠을 때 사용하는 웹 프로세스의 배포 기본값입니다. 위 단계별 모델 풀에서 저장한 선택이 새 작업에 우선합니다. 실제 호출과 점유는 위 모델 카드에서 확인하세요.</p>
       <TextModelStagesTable models={models} />
-      <p className="text-[13px] text-fg-3">감사 재심사·공개분 필터·갈림 재검토·보류 재시도·화면 판별과 LLM 보강은 각 단계에 검증된 모델 계약을 사용합니다. 등록된 모델 설정을 바꿀 때는 해당 단계의 검증 계약과 용량 정책도 함께 확인해야 합니다. 카테고리 분류는 운영센터에서 검증된 CLI 모델과 예비 모델을 선택할 수 있습니다.</p>
+      <p className="text-[13px] text-fg-2">감사 재심사·공개분 필터·갈림 재검토·보류 재시도·화면 판별과 LLM 보강은 각 단계에 검증된 모델 계약을 사용합니다. 등록된 모델 설정을 바꿀 때는 해당 단계의 검증 계약과 용량 정책도 함께 확인해야 합니다. 카테고리 분류는 운영센터에서 검증된 CLI 모델과 예비 모델을 선택할 수 있습니다.</p>
       <div className="flex flex-wrap gap-4 text-[13px] font-semibold text-accent-ink"><Link href="/admin/audit" prefetch={false}>감사 단계 설정 →</Link><Link href="/admin/status#ai-model-title" prefetch={false}>카테고리 분류 모델 선택 →</Link><Link href="/admin/status" prefetch={false}>단계별 실제 경로 →</Link></div>
     </section>
     <ModelRegistryTable />
