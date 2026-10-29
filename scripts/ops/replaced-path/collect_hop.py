@@ -51,10 +51,11 @@ def now_ms():
 def mac_tree(root):
     """pid/ppid/start(second) of root and every descendant, from one ps snapshot. lstart is local time."""
     rows = {}
-    for line in run(['/bin/ps', '-axo', 'pid=,ppid=,lstart=,comm=']).splitlines():
+    # -ww: the full, untruncated command line. Interpreted services (node, python) share an executable name.
+    for line in run(['/bin/ps', '-axww', '-o', 'pid=,ppid=,lstart=,command=']).splitlines():
         m = re.match(r'\s*(\d+)\s+(\d+)\s+(\w{3} \w{3}\s+\d+ \d\d:\d\d:\d\d \d{4})\s+(.*)$', line)
         if m:
-            rows[int(m[1])] = {'ppid': int(m[2]), 'start': int(time.mktime(time.strptime(m[3], '%a %b %d %H:%M:%S %Y'))), 'comm': m[4].strip()}
+            rows[int(m[1])] = {'ppid': int(m[2]), 'start': int(time.mktime(time.strptime(m[3], '%a %b %d %H:%M:%S %Y'))), 'command': m[4].strip()}
     need(root in rows, 'process_missing')
     tree, frontier = {root}, [root]
     while frontier:
@@ -68,12 +69,14 @@ def mac_tree(root):
 
 def mac_process_hop(pid, extra):
     rows, tree = mac_tree(pid)
-    comm = rows[pid]['comm']
-    # A second copy of the same program outside this job could still hold an old call.
-    others = sorted(p for p, row in rows.items() if row['comm'] == comm and p not in tree)
+    command = rows[pid]['command']
+    # An older copy of the same service (identical full command line) outside this job could still hold an old call.
+    others = sorted(p for p, row in rows.items() if row['command'] == command and p not in tree)
     need(not others, 'second_instance_present')
     oldest = min(rows[p]['start'] for p in tree)
-    facts = {'pid': pid, 'command': os.path.basename(comm), 'processes': len(tree), 'oldestStartEpoch': oldest, **extra}
+    # Only the program name and a hash leave the host: arguments may carry paths or tokens.
+    facts = {'pid': pid, 'command': os.path.basename(command.split(' ', 1)[0]), 'commandSha256': hashlib.sha256(command.encode()).hexdigest(),
+             'processes': len(tree), 'oldestStartEpoch': oldest, **extra}
     return 'pid:%d:%d' % (pid, rows[pid]['start']), oldest * 1000, facts
 
 

@@ -68,8 +68,16 @@ class MacProcessTest(unittest.TestCase):
         self.assertEqual(value['hop']['startedAt'], hop.iso(1_790_000_050 * 1000))
         self.assertEqual(value['hop']['incarnationId'], 'pid:500:1790000100')
 
+    def test_unrelated_process_of_the_same_interpreter_is_allowed(self):
+        rows = [(500, 1, 1_790_000_100, '/usr/local/bin/node /opt/relay/server.js --port 8001'), (77, 1, 1_700_000_000, '/usr/local/bin/node /opt/other/app.js')]
+        with mock.patch.object(hop, 'run', fake_run({'/bin/ps': self.ps(rows)})), self.launchctl('state = running\npid = 500\n'):
+            value = hop.collect({'role': 'relay', 'host': 'm1studio', 'kind': 'launchd', 'service': 'system/bot.brut.nmv-llm-relay'})
+        facts = json.loads(value['artifact'])['facts']
+        self.assertEqual(facts['command'], 'node')
+        self.assertNotIn('/opt/relay/server.js', value['artifact'])
+
     def test_old_copy_outside_the_job_is_refused(self):
-        rows = [(500, 1, 1_790_000_100, 'omlx-server'), (77, 1, 1_700_000_000, 'omlx-server')]
+        rows = [(500, 1, 1_790_000_100, '/opt/omlx/omlx-server --port 8010'), (77, 1, 1_700_000_000, '/opt/omlx/omlx-server --port 8010')]
         with mock.patch.object(hop, 'run', fake_run({'/bin/ps': self.ps(rows)})), self.launchctl('state = running\npid = 500\n'):
             with self.assertRaisesRegex(hop.HopError, 'second_instance_present'):
                 hop.collect({'role': 'provider', 'host': 'm3ultra', 'kind': 'launchd', 'service': 'gui/501/com.jr.deepseek'})

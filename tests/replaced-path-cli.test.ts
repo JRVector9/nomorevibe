@@ -3,7 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
 import { replacedPathDigest as sha, replacedPathReceiptSchema } from "@/lib/llm/replaced-path-boundary-contract";
-import { hopMode, hopProgram, replacedPathMain } from "@/scripts/ops/replaced-path/release-cli";
+import { inflateSync } from "node:zlib";
+import { deviceAdminHopArgv, hopMode, hopProgram, replacedPathMain } from "@/scripts/ops/replaced-path/release-cli";
+import { replacedPathRequiredHops } from "@/lib/llm/replaced-path-boundary-contract";
 import { replacedPathFixture } from "./fixtures/replaced-path-boundary";
 
 const dirs: string[] = [];
@@ -53,4 +55,13 @@ it("binds the reviewed helper and only the hop request into the remote program",
   expect(program.startsWith('import io,sys\nsys.stdin=io.StringIO("{\\"role\\":\\"provider\\"')).toBe(true);
   expect(program).toContain('\\"idle\\":{\\"type\\":\\"vllm-metrics\\",\\"port\\":8000}');
   expect(program).toContain(readFileSync("scripts/ops/replaced-path/collect_hop.py", "utf8"));
+});
+it("fits device_admin argument limits and decodes to the exact reviewed program", () => {
+  for (const hop of replacedPathRequiredHops("m3-text", "abcllm-m1-qwen")!.filter(h => h.host === "m1studio")) {
+    const argv = deviceAdminHopArgv(hop), code = argv.args.at(-1)!;
+    expect(argv.args.every(arg => arg.length <= 8000 && !arg.includes("\n"))).toBe(true);
+    expect(argv.args.join("").length).toBeLessThanOrEqual(32000);
+    const packed = /b64decode\('([A-Za-z0-9+/=]+)'\)/.exec(code)![1];
+    expect(inflateSync(Buffer.from(packed, "base64")).toString("utf8")).toBe(hopProgram(hop));
+  }
 });

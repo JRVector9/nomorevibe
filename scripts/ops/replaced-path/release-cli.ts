@@ -4,6 +4,7 @@
  */
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
+import { deflateSync } from "node:zlib";
 import { closeSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -44,6 +45,13 @@ export function hopProgram(hop: { role: string; host: string; kind: string; serv
   const probe = REPLACED_PATH_PROBES[`${hop.host}\n${hop.service}`] ?? {}, request = { role: hop.role, host: hop.host, kind: hop.kind, service: hop.service, ...probe };
   return `import io,sys\nsys.stdin=io.StringIO(${JSON.stringify(JSON.stringify(request))})\n${readFileSync(HOP_SOURCE, "utf8")}`;
 }
+/** The same program as one newline-free argument for device_admin (≤ 8,000 chars per argument). zlib/base64 only change transport. */
+export function compactHopProgram(hop: { role: string; host: string; kind: string; service: string }) {
+  const packed = deflateSync(Buffer.from(hopProgram(hop), "utf8"), { level: 9 }).toString("base64");
+  return `import base64,zlib;exec(compile(zlib.decompress(base64.b64decode('${packed}')),'collect_hop','exec'))`;
+}
+export const deviceAdminHopArgv = (hop: { role: string; host: string; kind: string; service: string }) =>
+  ({ executable: "/usr/bin/perl", args: ["-e", "alarm 55; exec @ARGV; die $!", "/usr/bin/python3", "-I", "-c", compactHopProgram(hop)] });
 const bundleHopSchema = replacedPathHopSchema.omit({ mode: true }).extend({ idle: z.boolean().nullable() }).strict();
 const bundleSchema = z.array(z.object({ hop: bundleHopSchema, artifact: z.string().min(2).max(1024 * 1024) }).strict()).min(1).max(8);
 type BundleHop = z.infer<typeof bundleHopSchema>;
@@ -84,7 +92,7 @@ export async function replacedPathMain(args: readonly string[]): Promise<unknown
       const program = hopProgram(request);
       if (skip.has(request.host) || !Object.hasOwn(REPLACED_PATH_SSH, request.host)) {
         // device_admin argv: the same reviewed helper, read-only, root on the target host.
-        manual.push({ hop: request, argv: { executable: "/usr/bin/python3", args: ["-I", "-c", program] } });
+        manual.push({ hop: request, argv: deviceAdminHopArgv(request) });
         continue;
       }
       const out = execFileSync("/usr/bin/ssh", ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", REPLACED_PATH_SSH[request.host], "/usr/bin/python3 -I -"],
