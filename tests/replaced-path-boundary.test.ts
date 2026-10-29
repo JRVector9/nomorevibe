@@ -21,6 +21,14 @@ it("requires the owner, both gateways and every provider process of the budget",
   expect(replacedPathRequiredHops("mini-reviewer-standby", "abcllm-supa")).toBeNull();
   expect(replacedPathRequiredHops("toString", "abcllm-supa")).toBeNull();
 });
+it("pins 0146 to the same shape and keeps it to the evidence validator only", () => {
+  const sql = readFileSync("drizzle/0146_replaced_path_absent_after_dispatch.sql", "utf8");
+  expect(sql).toBe(readFileSync("scripts/ops/replaced-path-boundary-0146.template.sql", "utf8")
+    .replace("__EVIDENCE_SHAPE__", JSON.stringify(z.toJSONSchema(replacedPathEvidenceShape))));
+  expect(sql.match(/CREATE (OR REPLACE )?FUNCTION/g)).toEqual(["CREATE OR REPLACE FUNCTION"]);
+  expect(sql).not.toMatch(/ALTER TABLE|CREATE TRIGGER|DROP /);
+  expect(sql).toContain("(h->>'observedAt')::timestamptz<=(q->>'dispatchAt')::timestamptz");
+});
 it("pins generated SQL to the strict contract and topology", () => {
   expect(readFileSync("drizzle/0145_replaced_path_boundary_exit.sql", "utf8")).toBe(readFileSync("scripts/ops/replaced-path-boundary-sql.template.sql", "utf8")
     .replace("__EVIDENCE_SHAPE__", JSON.stringify(z.toJSONSchema(replacedPathEvidenceShape)))
@@ -73,6 +81,10 @@ const modeNegatives: [string, (e: E) => void][] = [
   ["an idle owner", e => { Object.assign(e.receipt.hops[0], { mode: "idle" }); }],
   ["an idle gateway", e => { Object.assign(e.receipt.hops[1], { mode: "idle" }); }],
   ["an absent owner", e => { Object.assign(e.receipt.hops[0], { mode: "absent", incarnationId: "absent", startedAt: null }); }],
+  ["an absence observed before the dispatch", e => { Object.assign(e.receipt.hops[3], { mode: "absent", incarnationId: "absent", startedAt: null,
+    observedAt: new Date(Date.parse(e.dispatchAt) - 1).toISOString() }); }],
+  ["an absence observed at the dispatch", e => { Object.assign(e.receipt.hops[3], { mode: "absent", incarnationId: "absent", startedAt: null,
+    observedAt: e.dispatchAt }); }],
   ["an absent engine", e => { Object.assign(e.receipt.hops[4], { mode: "absent", incarnationId: "absent", startedAt: null }); }],
   ["an absent hop with a start", e => { Object.assign(e.receipt.hops[3], { mode: "absent", incarnationId: "absent" }); }],
   ["an absent hop with an incarnation", e => { Object.assign(e.receipt.hops[3], { mode: "absent", startedAt: null }); }],

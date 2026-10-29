@@ -7,7 +7,7 @@
 | hop | 허용 상태 | 이유 |
 | --- | --- | --- |
 | owner | **replaced**: dispatch 뒤에 시작한 단일 인스턴스 | 토큰을 쥐고 다시 보낼 수 있는 것은 owner뿐이다 |
-| gateway·relay | **replaced**, 또는 **absent**(프로세스 없음) | 중계는 옛 호출을 재시도할 수 있다 |
+| gateway·relay | **replaced**, 또는 **absent**(프로세스 없음, dispatch **뒤** 관측. 0146) | 중계는 옛 호출을 재시도할 수 있다 |
 | 엔진(provider) | **replaced**, 또는 **idle** | idle은 실행 0·대기 0을 관측한 것이다. 위의 모든 hop이 교체·부재가 된 시각보다 **엄격히 뒤**에 관측해야 한다. 그러면 다시 보낼 주체가 없으니 유휴인 엔진은 옛 호출을 돌리고 있지 않다 |
 
 - 코드:
@@ -122,3 +122,23 @@ plan은 살아 있는 행과 DRAIN을 고정하므로 60분 안에 써야 한다
   - 0145 분기에 맞춰, 최종 CHECK 정의를 고정한 시험 3건의 기대값에 0145 분기를 추가했다.
 - `tsc --noEmit` exit 0, 변경 파일 ESLint 0.
 - 운영 접근: 읽기 전용 `probe`(SSH)와 omlx·vllm 상태 GET만 실행했다. DB 쓰기, migration, DRAIN, 재시작, 해제는 0이다.
+
+## 6. 실행 기록 (2026-10-29 UTC, 실제 영수증)
+
+- 사전 단계: 0143·0144·0145 적용(143→146건). gateway 두 곳 재시작(m3 16:07:23, mini 16:07:31). 허브가 M1 relay를 `disable`·`bootout`(종료 코드 0, 16:02) 하고 relay `absent`, 엔진 `omlx-server` pid 15664(10-28 23:39:06 시작)를 읽었다.
+- DRAIN 16:12:33(epoch 1, revision 7). reviewer 재시작 16:12:57.
+- 해제(`replaced_path_boundary_exit`, 모두 dry-run `released` 뒤 apply):
+
+  | 요청 | 감사 | 근거 |
+  | --- | --- | --- |
+  | `65f8c399` | 20964 | supa vllm **idle** |
+  | `19b7a1df` | 20966 | M3 omlx **idle** |
+  | `29877f65` | 20968 | relay absent, M1 엔진 replaced |
+
+  세 행 모두 `withdrawn`, `settled_at NULL`, `dispatch_released` 이벤트 1건씩 남았다.
+- 정책 revision 8(`f8223e79…`). OPEN 16:16:30. 미서빙 경로는 0/40이었다.
+- **새 미확인 2건:** `a465f729`, `1c2a4a62`(product-translate `[m1] qwen3.8-flash-next`, 16:16:41·16:16:58).
+  - 원인: relay를 끈 뒤 OPEN 전에 상품 번역을 멈추지 않았다.
+  - m1-qwen 한도(2)를 이 두 건이 채워 그 뒤 M1 dispatch는 없다.
+  - 다음 DRAIN에서 같은 방법으로 푼다: text·gateway 재시작, relay absent 재관측, M1 엔진 재시작 또는 idle.
+- 0146: 위 점검 중 absent 관측 시각 조건이 빠진 것을 찾아 막았다. 이번 세 건은 relay absent 관측(10-29 16:02)이 dispatch(10-28)보다 뒤라 유효하다.
