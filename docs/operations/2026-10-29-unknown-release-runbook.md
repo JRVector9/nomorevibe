@@ -1,4 +1,6 @@
-**결론: M1 `29877f65`는 지금(0143 전·OPEN 유지) 읽기 전용 수집과 preflight까지 할 수 있고, plan→dry-run→apply는 0143 적용 뒤 대표가 연 짧은 DRAIN 창 안에서만 이어서 실행한다. Supa `65f8c399`는 유지보수 컨테이너 안에서 runner를 돌릴 수 없다(이미지에 `/usr/bin/python3`·`/usr/bin/ssh`가 없고, maintenance에 SSH 키를 주지 않는 설계). 그래서 gpu3090의 실제 운영자 셸(허브 샌드박스 아님)에서 runner를 실행하고, root 단계 두 번만 대표가 device_admin으로 supa에서 실행한다. 이 job은 운영 웹(199a3ebb)에 접수 버튼이 없어서 0143/0144 적용과 main 배포 뒤에 시작한다.**
+**결론: M1 `29877f65`는 지금(0143 전·OPEN 유지) 읽기 전용 수집과 preflight까지 할 수 있고, plan→dry-run→apply는 0143 적용 뒤 대표가 연 짧은 DRAIN 창 안에서만 이어서 실행한다. Supa `65f8c399`는 유지보수 컨테이너 안에서 runner를 돌릴 수 없다(이미지에 `/usr/bin/python3`·`/usr/bin/ssh`가 없고, maintenance에 SSH 키를 주지 않는 설계). 그래서 gpu3090의 실제 운영자 셸(허브 샌드박스 아님)에서 runner를 실행하고, root 단계 두 번만 대표가 device_admin으로 supa에서 실행한다. 운영 웹(199a3ebb)에는 접수 버튼이 없지만, 배포는 미확인 0건을 요구하므로 배포를 기다릴 수 없다. 그래서 job은 운영자 셸 접수 CLI로 접수하고 **배포 전에** 실행한다.**
+
+> **실행 순서는 [2026-10-29-release-order.md](2026-10-29-release-order.md)가 확정본이다.** 그 순서에서는 Supa(B절)를 OPEN 상태에서 먼저 실행한다. runner는 끝에 OPEN하지 않고 자기 DRAIN을 인계한다(`--final-admission=draining`). M1(A절)은 그 DRAIN 안에서 D2·D10 없이 실행한다. 아래 절과 다르게 적힌 곳이 있으면 확정본을 따른다.
 
 # 미확인 요청 2건 해제 실행서 (2026-10-29)
 
@@ -15,7 +17,7 @@
 | M1 요청 | `29877f65-9f95-4efb-88f9-aea5f39a28b2` (product-translate, `[m1] qwen3.8-flash-next`, dispatch 2026-10-28T13:58:16.331Z, C=40768) |
 | 원 relay 요청 | `6571d6c8-002f-4f5f-b399-47e40876ee43` |
 | Supa 요청 | `65f8c399-ff4b-47bc-8f4d-6e4a682cf6a7` (crawl-agent-review, supa `vllm.service`) |
-| 도구 위치 | 이 작업 공간의 브랜치 `xaegis/4ed4ea33`. 기준은 origin/main `75b8aa31`이고, push하지 않았다. gpu3090 경로는 `SRC=/home/ubuntu/.xaegis-hub/data/local-agent/worktrees/4ed4ea33-032e-4124-8a0e-6b8eb1bed08e` |
+| 도구 위치 | 처음 작성 브랜치는 `xaegis/4ed4ea33`(기준 origin/main `75b8aa31`, push 안 함)이다. 확정 순서에서는 이 브랜치를 포함하고 runner 인계·접수 CLI를 더한 `xaegis/7b7a2d23`을 쓴다: `SRC=/home/ubuntu/.xaegis-hub/data/local-agent/worktrees/7b7a2d23-0c49-41f3-9665-1fc4e53ff9a0`, 아래 `SHA`와 B절 `T`는 `git -C "$SRC" rev-parse xaegis/7b7a2d23` |
 | 유지보수 컨테이너 | m3ultra Swarm 앱 `app-navigate-neural-system-yf43c7` |
 | 직접 primary | `100.99.209.55:5432/nomorevibe`. 10/28 0140~0142를 적용한 경로다. 컨테이너 `DATABASE_URL`의 계정을 쓰고 host/port/db만 바꾼다(`in-container.sh`). URL은 출력하지 않는다 |
 
@@ -72,9 +74,9 @@
 - 전제: 이 브랜치를 검토했다
 - 명령:
 ```sh
-SRC=/home/ubuntu/.xaegis-hub/data/local-agent/worktrees/4ed4ea33-032e-4124-8a0e-6b8eb1bed08e
+SRC=/home/ubuntu/.xaegis-hub/data/local-agent/worktrees/7b7a2d23-0c49-41f3-9665-1fc4e53ff9a0
 W=$HOME/nmv-release-29877f65; (umask 077; mkdir -p "$W/pre")
-SHA=$(git -C "$SRC" rev-parse xaegis/4ed4ea33); echo "$SHA"
+SHA=$(git -C "$SRC" rev-parse xaegis/7b7a2d23); echo "$SHA"     # 4ed4ea33의 M1 스크립트를 그대로 포함한다
 git -C "$SRC" show "$SHA:scripts/ops/release-29877f65/collect-m1.sh" | sha256sum
 git -C "$SRC" show "$SHA:scripts/ops/release-29877f65/collect-docker.sh" | sha256sum
 git -C "$SRC" show "$SHA:scripts/ops/release-29877f65/in-container.sh" | sha256sum
@@ -148,15 +150,15 @@ xa-ssh m3ultra "$DK exec -i $CID sh -s -- preflight $(sha256sum "$W/pre/bundle-m
 
 ## A-4. 0143 적용 뒤 — DRAIN 창 (한 번에 이어서)
 
-시간 제한은 둘이다. plan 생성 뒤 30분 안에 apply해야 하고, **마지막 수집 뒤 5분 안에** dry-run과 apply를 끝내야 한다. DRAIN 동안 모든 모델 호출자가 미뤄지므로 미리 C1~C7을 연습해 두고 연다. 이 창에서 무엇이든 막히면 해제하지 않고 D10(OPEN)으로 자기가 건 DRAIN만 되돌린다.
+시간 제한은 둘이다. plan 생성 뒤 30분 안에 apply해야 하고, **마지막 수집 뒤 5분 안에** dry-run과 apply를 끝내야 한다. DRAIN 동안 모든 모델 호출자가 미뤄지므로 미리 C1~C7을 연습해 둔다. **확정 순서(release-order 12단계)에서는 Supa runner가 인계한 DRAIN 안에서 D1·D3~D9만 실행한다. D2(DRAIN)와 D10(OPEN)은 하지 않는다.** 배포가 같은 DRAIN을 요구하기 때문이다. 이 창에서 M1이 막히면 해제하지 않는다. 그다음 처리는 release-order 5절 「실패 경로」를 따른다.
 
 RUN 이름 예시는 `run-20261029T1200Z`이다(처음 쓰는 이름). REF는 공백 없는 검토 참조, 예: `29877f65-replaced-boundary-20261029-jr`. OP는 운영자 이름이다.
 
 ### D1. 현재 상태 확인
 - 위치: m3ultra 컨테이너 / 명령: `xa-ssh m3ultra "$DK exec -i $CID sh -s -- status" < "$W/in-container.sh"`
-- 성공: capacity `open`, epoch 1, revision 7(다르면 아래 값을 바꾼다). ops-runner 미완료 job과 다른 차선의 DRAIN이 없다.
+- 성공(확정 순서): capacity `draining`이고 epoch/revision이 Supa runner 인계 값(release-order 11단계의 `EPOCH1`·`REV1`)과 같다. ops-runner 미완료 job이 없고, 그 DRAIN의 감사가 `<JOB>:handoff`다. (단독 실행이라면 capacity `open`, epoch 1, revision 7을 확인하고 D2로 간다.)
 
-### D2. DRAIN (정식 CAS, dry-run 뒤 실행)
+### D2. DRAIN (정식 CAS, dry-run 뒤 실행) — 확정 순서에서는 하지 않는다
 - 위치: m3ultra 컨테이너
 ```sh
 xa-ssh m3ultra "$DK exec -i $CID sh -s -- drain 1 7 $OP release-29877f65-replaced-boundary" < "$W/in-container.sh"
@@ -195,7 +197,7 @@ xa-ssh m3ultra "$DK exec -i $CID sh -s -- receipt $RUN $PLAN_SHA <m3 sha> <mini 
 ### D9. 판 확인
 D2 이후 다른 쓰기가 끼어들지 않았는지 확인한다. D1과 같은 status를 보고 capacity가 여전히 `draining`, epoch/revision이 그대로인지 본다.
 
-### D10. OPEN (자기가 건 DRAIN만 복원)
+### D10. OPEN (자기가 건 DRAIN만 복원) — 확정 순서에서는 하지 않는다(배포 뒤 release-order 18단계)
 ```sh
 xa-ssh m3ultra "$DK exec -i $CID sh -s -- open 1 7 $OP release-29877f65-done" < "$W/in-container.sh"
 xa-ssh m3ultra "$DK exec -i $CID sh -s -- open 1 7 $OP release-29877f65-done --execute" < "$W/in-container.sh"
@@ -229,21 +231,21 @@ xa-ssh m3ultra "$DK exec -i $CID sh -s -- open 1 7 $OP release-29877f65-done --e
 
 ## B-3. 선행 조건 (하나라도 아니면 시작하지 않는다)
 
-- 0143(과 0144)을 사람 승인 뒤 적용했고, 표준 배포로 운영 웹이 PR719 이상(`/admin/models`의 요청 종료·해제)을 포함한다. job은 웹 `submitModelOpsCommand`로만 접수한다. 운영 웹 199a3ebb에는 `ops-runner-actions.ts`가 없다. 일반 배포는 migration 검증 전에는 진행하지 않는다(`deployment-fast-path.md`).
-- capacity가 **OPEN**이다(prepare가 요구한다). A절이 끝났거나 아직 시작하지 않았다. 두 절차는 겹치지 않는다. runner는 시작할 때 이미 DRAIN이면 거절한다.
+- 배포를 기다리지 않는다. 운영 웹 199a3ebb에는 `ops-runner-actions.ts`가 없으므로 job은 운영자 셸 접수 CLI `scripts/ops/admin-models-ops-submit.ts`로 접수한다(S3). 이 CLI는 웹과 같은 `submitModelOpsCommand`를 쓴다. 배포는 미확인 0건을 요구하므로 Supa 해제가 배포보다 먼저다. Supa 해제 자체에는 0143이 필요 없지만, 확정 순서에서는 M1 때문에 0143(+0144)을 먼저 적용·확인한다.
+- capacity가 **OPEN**이다(prepare가 요구한다). 확정 순서에서는 A절을 아직 시작하지 않았다. runner는 시작할 때 이미 DRAIN이면 거절하고, 이 보호는 그대로다. runner는 끝에 OPEN하지 않고 자기 DRAIN을 A절에 인계한다(profile `finalAdmission:"draining"`).
 - 다른 ops-runner 미완료 job이 없다. 요청 owner가 M3 reviewer `app-copy-primary-hard-drive-b5fhzd` 안에 아직 있다. 06:33Z 이후 reviewer가 재배포됐으면 prepare가 `request_owner_incarnation_changed`로 거절한다. 그때는 이 경로로 해제할 수 없다.
 - supa에 root helper 3개가 설치돼 있다(B-4의 S2).
 
 ## B-4. 명령
 
 ### S1. 실행 셸 확인
-- 위치: gpu3090 **실제 로그인 셸**(대표). `T=/home/ubuntu/ops/nmv-runner-75b8aa31`
+- 위치: gpu3090 **실제 로그인 셸**(대표). `REL=$(git -C "$SRC" rev-parse xaegis/7b7a2d23)`, `T=/home/ubuntu/ops/nmv-runner-$REL` (runner 인계·접수 CLI가 이 커밋에 있다)
 ```sh
 id -u; cat /proc/self/uid_map          # 0 0 4294967295 이어야 한다(샌드박스면 중단)
 ls -l /usr/bin/python3 /usr/bin/ssh; node -v
 for h in jr@m3Ultra <MINI_SSH> jr@supa; do /usr/bin/ssh -o BatchMode=yes -o ConnectTimeout=10 "$h" '/usr/bin/python3 -I -c "print(1)"' 2>"$HOME/ssh-$h.err"; wc -c < "$HOME/ssh-$h.err"; done
 (umask 077; mkdir -p /home/ubuntu/ops/runner-state /home/ubuntu/ops/jobs /home/ubuntu/ops/inputs)
-git -C /home/ubuntu/projects/nomorevibe fetch https://github.com/JRVector9/nomorevibe.git main && git -C /home/ubuntu/projects/nomorevibe archive 75b8aa31 | (mkdir -p "$T" && tar -x -C "$T")
+git -C "$SRC" archive "$REL" | (mkdir -p "$T" && tar -x -C "$T")
 cmp "$T/package-lock.json" /home/ubuntu/projects/nomorevibe/package-lock.json && ln -s /home/ubuntu/projects/nomorevibe/node_modules "$T/node_modules"
 sha256sum "$T/scripts/ops/admin-models-boundary-adapter.py" "$T"/scripts/ops/admin_models_helpers/systemd_*.py
 ```
@@ -264,8 +266,8 @@ sha256이 표 0과 같으면 `2026-10-29-supa-root-handoff.md`의 설치 argv �
 - 성공: 설치 뒤 stat이 `0 0 755 directory …/nmv-admin-models`, `0 0 755 …/results`, `0 0 700 …/progress`를 보인다. 설치된 세 파일의 sha256이 표 0과 같다.
 
 ### S3. job 접수와 요청 확인
-- 위치: 운영 `/admin/models`(관리자) → 미확인 요청 `65f8c399`의 "요청 종료·해제", 사유 입력
-- 성공: 작업 카드에 JOB UUID가 나온다(`JOB=`). 같은 화면에서 요청의 group(`GROUP=`, 예: supa 물리 그룹)과 owner instance가 M3 reviewer인지 확인한다.
+- 위치: gpu3090 실제 셸(S7의 `DATABASE_URL` 셸). 운영 웹 199a3ebb에는 버튼이 없다. 명령은 release-order 4단계에 있다(`admin-models-ops-submit.ts` 미리 보기 → `--execute`).
+- 성공: `state.status: "queued"`이고 `JOB`이 나온다. 미리 보기의 `request.groupId`를 `GROUP=`로 적는다. `request.ownerInstanceId`가 M3 reviewer인지 확인한다. 순서상 S7을 S3보다 먼저 실행한다.
 
 ### S4. 읽기 helper 스냅샷 (읽기 전용)
 - 위치: gpu3090. `I=/home/ubuntu/ops/inputs/$JOB`(`umask 077; mkdir "$I"`)
@@ -283,7 +285,8 @@ P='PATH=/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin /usr/bin/python3 -I -'
 ```sh
 python3 -I "$SRC/scripts/ops/release-65f8c399/build-manifest.py" --job="$JOB" --out-dir="/home/ubuntu/ops/jobs/$JOB" \
   --adapter="$T/scripts/ops/admin-models-boundary-adapter.py" --affected-group="$GROUP" --container-progress-root=/Users/jr/.nmv-admin-models-progress \
-  --owner="jr@m3Ultra:$I/owner.json" --gateway-m3="jr@m3Ultra:$I/gw-m3.json" --gateway-mini="<MINI_SSH>:$I/gw-mini.json" --provider="jr@supa:$I/supa.json"
+  --owner="jr@m3Ultra:$I/owner.json" --gateway-m3="jr@m3Ultra:$I/gw-m3.json" --gateway-mini="<MINI_SSH>:$I/gw-mini.json" --provider="jr@supa:$I/supa.json" \
+  --final-admission=draining
 ```
 - 성공: `manifestSha256`·`profileSha256`가 나오고 warnings가 비어 있다(`owner_reader_shows_no_role_lease_owner…`가 나오면 중단한다). mini의 progress 경로가 m3와 다르면 별도로 정해야 한다. 이 생성기는 컨테이너 3개에 같은 progressRoot를 쓴다. 상위 디렉터리(`/Users/jr`)가 있는 경로를 쓴다.
 
@@ -342,7 +345,7 @@ cd "$T" && node --import tsx scripts/ops/admin-models-ops-runner.ts run "$JOB" -
 
 ### S14. run → 완료
 - 명령: S10과 같다
-- 성공: exit 0, `status:"completed"`. runner가 gateway와 owner를 역순으로 복원하고, 원래 설정 hash와 새 incarnation health를 확인한 뒤 OPEN까지 마친다. readback으로 요청 `withdrawn`(terminal kind `provider_boundary_exit`), capacity `open`, Supa 새 invocation을 확인한다. `affectedGroups` 밖의 M1 미확인은 그대로 보존된다.
+- 성공: exit 0, `status:"completed"`. runner가 gateway와 owner를 역순으로 복원하고, 원래 설정 hash와 새 incarnation health를 확인한 뒤 **OPEN 대신 `handoff`**(자기 DRAIN 핀이 그대로임을 확인하고 감사 기록)로 끝낸다. readback으로 요청 `withdrawn`(terminal kind `provider_boundary_exit`), capacity **`draining`**(인계 값), Supa 새 invocation을 확인한다. 이어서 A절(D1·D3~D9)로 간다. `affectedGroups` 밖의 M1 미확인은 그대로 보존된다.
 
 ---
 
