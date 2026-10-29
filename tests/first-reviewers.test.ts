@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { firstReviewers, hasFirstReviewer, selectFirstReviewer, firstReviewDeferralIsLocal, firstReviewPoolPosition } from "@/lib/crawl/first-reviewers";
+import { firstReviewers, firstReviewerKey, hasFirstReviewer, selectFirstReviewer, firstReviewDeferralIsLocal, firstReviewPoolPosition } from "@/lib/crawl/first-reviewers";
 import { crawlSettingsSchema, DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 import { reviewPolicyHash } from "@/lib/crawl/agent-review-contract";
 import { secondReviewPolicyHash } from "@/lib/crawl/second-review-ownership";
@@ -42,6 +42,35 @@ it("protects active/indeterminate intents of removed or unreadable models withou
   expect(selectFirstReviewer([primary, extra], 1, [], [primary, extra])).toBeNull();
 });
 
+it("moves only never-sent candidates off a blocked model and never unpins sent or retried work", () => {
+  const third = { provider: "abcllm" as const, model: "third-review-model" };
+  const blocked = new Set([firstReviewerKey(extra)]);
+  const untouched = { blocked, untouched: true };
+  // Candidate 2 would go to `extra`; it rotates to the next unblocked model.
+  expect(selectFirstReviewer([primary, extra, third], 2, [], [], untouched)).toEqual(third);
+  expect(selectFirstReviewer([primary, extra], 2, [], [], untouched)).toEqual(primary);
+  // Unblocked fixed slots are unchanged.
+  expect([1, 3].map(id => selectFirstReviewer([primary, extra], id, [], [], untouched))).toEqual([primary, primary]);
+  // Already sent (active intent incl. indeterminate) or retried candidates stay pinned to the blocked model.
+  expect(selectFirstReviewer([primary, extra], 2, [], [extra], untouched)).toEqual(extra);
+  expect(selectFirstReviewer([primary, extra], 2, [extra], [], untouched)).toEqual(extra);
+  // An attempt anywhere in history (caller's untouched=false) keeps the fixed slot.
+  expect(selectFirstReviewer([primary, extra], 2, [], [], { blocked, untouched: false })).toEqual(extra);
+  // When every model is blocked, keep the fixed slot and wait instead of overloading another.
+  expect(selectFirstReviewer([primary, extra], 2, [], [], { blocked: new Set([firstReviewerKey(primary), firstReviewerKey(extra)]), untouched: true }))
+    .toEqual(extra);
+});
+
+it("claim-time re-check keeps a rerouted never-sent candidate and still refuses a pinned one", () => {
+  // The claim re-check treats every pool model except the claimed one as "avoid".
+  const others = (claimed: typeof primary) => new Set([primary, extra].filter(row => row.model !== claimed.model).map(firstReviewerKey));
+  expect(selectFirstReviewer([primary, extra], 2, [], [], { blocked: others(primary), untouched: true })).toEqual(primary);
+  expect(selectFirstReviewer([primary, extra], 2, [], [], { blocked: others(extra), untouched: true })).toEqual(extra);
+  // A candidate with an attempt or an active intent on `extra` cannot be claimed for `primary`.
+  expect(selectFirstReviewer([primary, extra], 2, [extra], [], { blocked: others(primary), untouched: false })).toEqual(extra);
+  expect(selectFirstReviewer([primary, extra], 2, [], [extra], { blocked: others(primary), untouched: false })).toEqual(extra);
+});
+
 it("keeps global draining/policy/owner refusals global while allowing another model past a local capacity wait", () => {
   for (const reason of ["draining", "disabled", "policy_changed", "owner_unavailable"] as const)
     expect(firstReviewDeferralIsLocal(reason)).toBe(false);
@@ -54,4 +83,12 @@ it("accepts only bounded, lossless keyset timestamps and ignores malformed curso
   expect(firstReviewPoolPosition(position)).toEqual(position);
   expect(firstReviewPoolPosition({ ...position, id: 21 })).toBeNull();
   expect(firstReviewPoolPosition({ ...position, updatedAt: "invalid" })).toBeNull();
+});
+
+
+it("does not move retries from removed or unreadable models to an available pool member", () => {
+  const avoid = { blocked: new Set([firstReviewerKey(extra)]), untouched: true };
+  expect(selectFirstReviewer([primary], 2, [extra], [], avoid)).toBeNull();
+  expect(selectFirstReviewer([primary, extra], 2, [{ provider: null, model: null }], [], avoid)).toBeNull();
+  expect(selectFirstReviewer([primary, extra], 2, [{ ...extra, model: "removed" }, primary], [], avoid)).toBeNull();
 });

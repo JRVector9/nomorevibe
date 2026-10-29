@@ -12,6 +12,7 @@ import { getSettings } from '../settings';
 import { reviewCandidatePredicate } from '../agent-review-repository';
 import { executeFirstReviewConsumerItem } from '../agent-review-item-lifecycle';
 import { FirstReviewModelDeferredError, firstReviewDeferralIsLocal, firstReviewerKey } from '../first-reviewers';
+import { readBlockedFirstReviewerKeys } from '../first-reviewer-blocks';
 
 const PAGE_SIZE = 24, MAX_PAGES = 4, IDLE_MS = 5_000;
 type Cursor = { id: number; reviewed: boolean; updatedAt: string; ceiling: number };
@@ -50,6 +51,7 @@ export async function runFirstReviewConsumer(input: {
   while (!halt?.aborted) {
     report?.('polling');
     const { rows: queue, poolEnabled } = await hints(cursor);
+    const blockedReviewers = poolEnabled && queue.length ? await readBlockedFirstReviewerKeys() : new Set<string>();
     let deferred = false, completed = false;
     for (const hint of queue) {
       if (halt?.aborted) break;
@@ -67,7 +69,7 @@ export async function runFirstReviewConsumer(input: {
       try {
         const written = await executeFirstReviewConsumerItem({ candidateId: hint.id, owner, signal,
           ...(stopClaims ? { stopClaims } : {}), ...(circuit?.admitted ? { onProviderResult: circuit.record } : {}),
-          ...(poolEnabled ? { pausedReviewers, reviewerCircuits: input.circuits } : {}) });
+          ...(poolEnabled ? { pausedReviewers, blockedReviewers, reviewerCircuits: input.circuits } : {}) });
         if (written.state === 'succeeded') { result.recorded++; completed = true; }
         else result.skipped++;
       } catch (error) {

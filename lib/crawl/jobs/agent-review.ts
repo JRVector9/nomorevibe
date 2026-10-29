@@ -19,6 +19,7 @@ import { claimAgentReviewModelCapacity, reviewAgentReviewModelCapacity, abandonA
 import type { Ai1ModelDispatch, CliModelDispatch } from "@/lib/llm/capacity";
 import type { PreparedReviewCliCall } from "../review-cli-call";
 import { firstReviewers, firstReviewerKey, firstReviewDeferralIsLocal, firstReviewPoolPosition, type FirstReviewCursor } from "../first-reviewers";
+import { readBlockedFirstReviewerKeys } from "../first-reviewer-blocks";
 import { agentReviewBinding } from "../agent-review-ownership";
 import { itemBindingHash } from "@/lib/jobs/items/types";
 
@@ -54,6 +55,7 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
   const primary = firstReviewer(settings);
   if (!primary) throw new Error("1차 심사자를 설정하거나 CRAWL_REVIEW_MODEL 을 넣어야 AI 심사를 켤 수 있습니다");
   const pool = firstReviewers(settings, primary);
+  const blockedModels = poolEnabled ? await readBlockedFirstReviewerKeys() : new Set<string>();
   const concurrency = Math.min(settings.reviewConcurrency || 2, MAX_CONCURRENT_REVIEWS);
   const pending = poolEnabled ? await listOwnPendingFirstReviewCandidates(settings, lease) : [];
   if (pending.length) ctx.log("crawl.agent_review_pending_revisited", { count: pending.length,
@@ -97,7 +99,8 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
     const input = await loadReviewInput(candidate, document, settings);
     if (input.validUntil <= reviewSemanticNow()) return;
     const reviewer = settings.firstReviewAdditional === undefined ? primary
-      : await chooseFirstReviewForCandidate({ candidate, document, settings, input });
+      : await chooseFirstReviewForCandidate({ candidate, document, settings, input }, undefined,
+        new Set([...blockedModels, ...pausedModels]));
     if (!reviewer) return;
     const { provider: reviewProvider, model } = reviewer;
     if (hint && (hint.reviewer.provider !== reviewProvider || hint.reviewer.model !== model

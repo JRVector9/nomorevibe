@@ -36,7 +36,7 @@ export type { Ai1ItemLease, Ai1ReviewOrigin, Ai1ReviewReceipt } from "./agent-re
 import { mergeWithDefaults } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
 import { firstReviewer, type FirstReviewer } from "./agent-review";
-import { firstReviewers, firstReviewIdentitySql, hasFirstReviewer, selectFirstReviewer, type FirstReviewPoolPosition } from "./first-reviewers";
+import { firstReviewers, firstReviewerKey, firstReviewIdentitySql, hasFirstReviewer, selectFirstReviewer, type FirstReviewPoolPosition } from "./first-reviewers";
 import { candidateStarAutoApproval } from "./star-auto-approval";
 import { README_SAMPLE_LIMIT, README_SAMPLE_VERSION } from "./readme";
 import { reviewSemanticNow, reviewSemanticNowSql, storedReviewEvidenceRequired } from "./review-replay-context";
@@ -52,7 +52,8 @@ import {
 type Executor = typeof db | ProductTransaction;
 
 /** Selection is a hint; the existing candidate/item/capacity locks still grant all authority. */
-export async function chooseFirstReviewForCandidate(context: ReviewDomainContext, executor: Executor = db): Promise<FirstReviewer | null> {
+export async function chooseFirstReviewForCandidate(context: ReviewDomainContext, executor: Executor = db,
+  blocked: ReadonlySet<string> = new Set()): Promise<FirstReviewer | null> {
   const pool = firstReviewers(context.settings, firstReviewer(context.settings));
   // Preserve the original query footprint for installations which never enabled a pool.
   if (context.settings.firstReviewAdditional === undefined) return pool[0] ?? null;
@@ -67,7 +68,11 @@ export async function chooseFirstReviewForCandidate(context: ReviewDomainContext
       WHERE logical_work_key = ${`ai1:${context.candidate.id}`} AND state IN ('reserved','dispatched','indeterminate'))
     UNION ALL (SELECT provider, model FROM model_capacity_requests
       WHERE logical_work_key = ${`ai1:${context.candidate.id}`} AND state = 'waiting')) ai1_intents LIMIT 2`);
-  return selectFirstReviewer(pool, context.candidate.id, attempts, Array.from(active));
+  // Rerouting needs "never sent": no model attempt for any input, not only the current one.
+  const untouched = blocked.size > 0 && !active.length && !attempts.length && !(await executor.select({ id: crawlReviewAttempts.id })
+    .from(crawlReviewAttempts).where(and(eq(crawlReviewAttempts.candidateId, context.candidate.id),
+      ne(crawlReviewAttempts.provider, "rules"))).limit(1)).length;
+  return selectFirstReviewer(pool, context.candidate.id, attempts, Array.from(active), { blocked, untouched });
 }
 export async function loadReviewInput(
   candidate: CrawlCandidate, document: CrawlDocument, settings: CrawlSettings, executor: Executor = db,
@@ -905,7 +910,10 @@ async function claimReview(input: ClaimContext, authority: ClaimAuthority, reser
       || !isDeepStrictEqual(authority.owner, reserved.expected.owner)
       || !hasFirstReviewer(configuredPool, input))) return { kind: "skipped", reason: "input_changed" };
     if (locked.settings.firstReviewAdditional !== undefined && input.provider !== "rules") {
-      const selected = await chooseFirstReviewForCandidate(locked, tx);
+      // Under the candidate lock: pinned work must keep its model; a never-sent candidate may keep the
+      // reviewer it was rerouted to (every other pool model is treated as "avoid" for this re-check only).
+      const others = new Set(configuredPool.filter(row => row.provider !== input.provider || row.model !== input.model).map(firstReviewerKey));
+      const selected = await chooseFirstReviewForCandidate(locked, tx, others);
       if (!selected || selected.provider !== input.provider || selected.model !== input.model) return { kind: "skipped", reason: "input_changed" };
     }
     const binding = agentReviewBinding(locked.candidate.id, current, { provider: input.provider, model: input.model });
