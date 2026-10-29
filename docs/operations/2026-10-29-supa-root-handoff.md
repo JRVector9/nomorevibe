@@ -42,5 +42,5 @@ runner의 기존 `prepare|run UUID --profile=... --state-dir=...` CLI는 유지�
 ## 실제 로컬 검증
 
 - 기존4파일/26시험 PASS 후 새 분기를 추가했다.
-- Supa 범위9파일/43 Vitest 시험 PASS. 이 중1시험은 Python unittest14건을 실제 실행한다. root/nonroot/소유권·symlink·writable parent, 다른 task/nonce/요청/manifest/identity, 실제 현재 cgroup 대조, stop·restore 응답 유실의 읽기 재확인, 현재 새 incarnation 대조, private argv와 공개 감사 분리를 포함한다.
+- Supa 범위9파일/43 Vitest 시험 PASS. 이 중1시험은 Python unittest16건을 실제 실행한다. root/nonroot/소유권·symlink·writable parent, 다른 task/nonce/요청/manifest/identity, 실제 현재 cgroup 대조, stop·restore 응답 유실의 읽기 재확인, 현재 새 incarnation 대조, private argv와 공개 감사 분리를 포함한다.
 - SSH/systemctl/DB 호출은 모두 합성 경계다. 실제 장비 설치·관리자 실행·종료·해제·복원·OPEN은 검증하지 않았다. 화면 변경이 없으므로 UI 클릭/스크린샷 대상 없음.

@@ -197,6 +197,57 @@ class RootHandoffTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'supa_root_scope_required'):
                 self.h.validate_task(task)
 
+    def durable_backend(self, lose_ack=False):
+        owner = self
+
+        class Backend:
+            changes = []
+            first = True
+
+            def read(self):
+                return owner.expected
+
+            def activity(self):
+                return {'bootId': 'boot', 'invocationId': 'old', 'mainPid': 100,
+                        'metrics': 'vllm:num_requests_running{model_name="local-llm",engine="0"} 0\n'
+                                   'vllm:num_requests_waiting{model_name="local-llm",engine="0"} 0'}
+
+            def stop(self):
+                self.changes.append('stop')
+                if lose_ack:
+                    raise TimeoutError('synthetic unknown systemctl outcome')
+
+            def wait_stopped(self):
+                if self.first:
+                    self.first = False
+                    raise TimeoutError('synthetic lost post-ACK observation')
+                return copy.deepcopy(owner.live)
+
+        return Backend()
+
+    def test_real_durable_helper_recovers_stop_ack_without_second_stop(self):
+        module = load('systemd_action')
+        backend = self.durable_backend()
+        value = self.h.payload(self.task, '# pinned fixture reader')
+        root = self.h.RESULTS / 'progress'
+        with self.assertRaises(TimeoutError):
+            module.operate(value, backend, root, sleep=lambda seconds: None)
+        value['mode'] = 'read-stop-progress'
+        self.assertTrue(module.operate(value, backend, root)['verified'])
+        self.assertEqual(backend.changes, ['stop'])
+
+    def test_real_durable_helper_missing_ack_blocks_without_second_stop(self):
+        module = load('systemd_action')
+        backend = self.durable_backend(lose_ack=True)
+        value = self.h.payload(self.task, '# pinned fixture reader')
+        root = self.h.RESULTS / 'progress'
+        with self.assertRaises(TimeoutError):
+            module.operate(value, backend, root, sleep=lambda seconds: None)
+        value['mode'] = 'read-stop-progress'
+        with self.assertRaises(FileNotFoundError):
+            module.operate(value, backend, root)
+        self.assertEqual(backend.changes, ['stop'])
+
 
 if __name__ == '__main__':
     unittest.main()

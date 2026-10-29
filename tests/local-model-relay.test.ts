@@ -230,6 +230,26 @@ describe("M1 사설 모델 relay", () => {
     expect((await restarted.chat(body, id)).status).toBe(409);
   });
 
+  it("Gemma 설정은 정확한 Gemma만 전달하고 health마다 최신 상류 목록을 다시 대조한다", async () => {
+    const model = "mlx-community--gemma-4-26b-a4b-it-4bit";
+    let calls = 0, models: readonly string[] | null = [model];
+    const relay = await start((_req, res) => {
+      calls++; res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ model, choices: [{ finish_reason: "stop", message: { content: "ok" } }], usage: { total_tokens: 7 } }));
+    }, { model, readUpstreamModels: async () => models,
+      verifyNativeReadiness: context => ({ ready: Boolean(context.upstreamModels?.includes(model)), contractHash: "f".repeat(64), reason: "fixture" }) });
+    expect((await relay.chat(body)).status).toBe(400); expect(calls).toBe(0);
+    const request = JSON.stringify({ model, messages: [{ role: "user", content: "x" }], stream: false });
+    expect((await relay.chat(request)).status).toBe(200);
+    await waitUntil(() => !relay.service.relayHealth().busy);
+    expect(await (await relay.call("/v1/health")).json()).toMatchObject({ nativeCapacityReady: true });
+    models = [MODEL];
+    expect(await (await relay.call("/v1/health")).json()).toMatchObject({ nativeCapacityReady: false });
+    models = null;
+    expect(await (await relay.call("/v1/health")).json()).toMatchObject({ nativeCapacityReady: false });
+    expect(calls).toBe(1);
+  });
+
   it("native readiness는 검증 hook과 실제 model·finish 관측이 모두 있어야 열린다", async () => {
     const relay = await start((_req, res) => { res.writeHead(200, { "content-type": "text/event-stream" }); res.end(finish); }, {
       verifyNativeReadiness: () => ({ ready: true, contractHash: "f".repeat(64), reason: "fake_contract_verified" }) });

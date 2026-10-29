@@ -201,3 +201,5 @@ AI1/AI2 저장 증가 명령은 두 측정 mjs를 기존 M3 text 컨테이너에
 - 끝(코드): Supa root prepare argv/검증된 결과 수집 분리. 현재 전체 cgroup·원래 PID/startTicks·boot/config를 다시 읽고 부족한 근거는 차단. root 응답 유실은 durable ACK 읽기만 하며 stop/start 재전송 없음.
 - 시험: Supa9파일/43 Vitest PASS 및 Python14건 PASS. 대표 argv는 `2026-10-29-supa-root-handoff.md`. 최종 정적 검사·PR/CI 확인을 이어서 수행한다. 실제 운영 종료·해제 검증 없음.
 - Supa 범위 ESLint/tsc/diff 검사 PASS, Python14시험 재실행 PASS. 항목별 로컬 커밋 뒤 최종 모델 검증·PR 진행.
+
+- 최종 확장 검증: verify-model-config 72파일/1,032시험·typegen·tsc PASS, 동일 기준 git grep158→99. 추가 회귀7파일/64시험 및 실제 Python16시험 PASS. 최초35실패(공용 fixture), 추가 범위1실패(사유 timeout45→40초 fixture)는 고친 뒤 통과했으며 실패 로그를 보존한다. PR/CI 확인만 남음.
