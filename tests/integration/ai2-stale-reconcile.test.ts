@@ -12,7 +12,7 @@ import { ensureSchema } from './setup';
 import { TEST_DATABASE_URL } from './test-database-url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { enqueueSecondReviewsFixture as enqueue, withLegacySecondReviewJob } from './second-review-receipt-fixtures';
+import { closeSettledSecondReviewsFixture as closeSettled, enqueueSecondReviewsFixture as enqueue, withLegacySecondReviewJob } from './second-review-receipt-fixtures';
 
 /**
  * 오래된 AI2 대기 정리(2026-10-29) — 운영 138985/357316 모양: 관문 표(ai_approved)가 남은 채 후보가 갈림 보류가 아닌
@@ -38,7 +38,7 @@ beforeEach(async () => {
 });
 
 /** 1차 AI 가 승인한 자동 후보, 신선한 원본·스캔, 관문 대기 표 하나 */
-async function gateFixture(name: string) {
+async function gateFixture(name: string, voters = 1) {
   const repo = `${PREFIX}${name}`, productUrl = `https://ai2-stale-${name}.test`;
   await crawl.putDocument({ repo, productUrl, pageStatus: 200,
     repoMeta: { description: '배포한 서비스', stargazers_count: 3, pushed_at: new Date().toISOString(), owner: { type: 'User' } },
@@ -51,8 +51,8 @@ async function gateFixture(name: string) {
     repositoryKey: repo, commitSha: 'a'.repeat(40), detectorVersion: settings.agentEvidence.detectorVersion,
     scope: '', scopeHash: 'a'.repeat(64), state: 'complete', startedAt: hours(1), completedAt: hours(1), nextAttemptAt: hours(-23) }).returning();
   const first = await firstReview(candidate.id, 'approve', 0.9);
-  expect(await enqueue(settings)).toBe(1);
-  const [vote] = await db.select().from(secondReviews).where(eq(secondReviews.candidateId, candidate.id));
+  expect(await enqueue(settings)).toBe(voters);
+  const [vote] = await db.select().from(secondReviews).where(eq(secondReviews.candidateId, candidate.id)).orderBy(secondReviews.id);
   expect(vote).toMatchObject({ trigger: 'ai_approved', status: 'pending', firstAttemptId: first.id });
   return { candidate, scan, first, vote };
 }
@@ -217,4 +217,33 @@ it('runs the operator script: dry-run writes nothing, --apply writes through the
   const [job] = await db.select().from(jobs).where(eq(jobs.name, 'second-review'));
   // 실제 잡이 다음 틱에 원래 일을 이어 하도록 요청을 남긴다
   expect(job.requestedVersion).toBeGreaterThan(job.processedVersion);
+}, 120_000);
+
+it('re-enqueues one row per configured model and stays single across enqueue, cleanup and repeated reconcile ticks', async () => {
+  await saveSettings({ secondReview: { voters: [{ provider: 'claude-cli', model: 'opus' }, { provider: 'claude-cli', model: 'haiku' }] } }, 'fixture');
+  const { candidate } = await gateFixture('two-voters', 2);
+  await demote(candidate.id);
+  expect(await reconcile()).toBeGreaterThan(0);
+  const active = async () => (await votes(candidate.id)).filter(row => row.status === 'pending');
+  const first = await active();
+  expect(first.map(row => [row.trigger, row.model]).sort()).toEqual([['ai_decided', 'haiku'], ['ai_decided', 'opus']]);
+  for (let tick = 0; tick < 2; tick++) {
+    expect(await enqueue(await getSettings())).toBe(0);
+    await closeSettled();
+    expect(await reconcile()).toBe(0);
+  }
+  expect(await active()).toEqual(first);
+});
+
+it('cannot apply while the real second-review job holds its lease — the tool exits without writing', async () => {
+  const { candidate } = await gateFixture('lease');
+  await demote(candidate.id);
+  const before = await snapshot();
+  const failure = await withLegacySecondReviewJob(async () => promisify(execFile)(process.execPath,
+    ['--import', 'tsx', 'scripts/reconcile-ai2-stale.ts', '--apply', '--actor', 'script-operator'],
+    { env: { ...process.env, DATABASE_URL: TEST_DATABASE_URL, LOG_LEVEL: 'error' }, timeout: 60_000 }).then(() => null, (error: unknown) => error));
+  expect(failure).toMatchObject({ code: 3 });
+  const after = await snapshot();
+  expect(after.votes).toEqual(before.votes);
+  expect(after.audit).toEqual([]);
 }, 120_000);

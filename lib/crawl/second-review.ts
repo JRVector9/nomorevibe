@@ -31,7 +31,7 @@ import { reviewSemanticNow } from "./review-replay-context";
 import { appliedHeldQwenAttemptColumn, heldQwenGateFirst, heldQwenGateFirstSql, underlyingModelSql } from "./held-qwen-retry-policy";
 import { hasLiveFetchItem } from "./fetch-ownership";
 import { lockFrontierIdentity } from "./repository";
-import { capacityBlocksStaleReconcile, classifyAi2Vote, SOURCE_REFRESH_COOLDOWN_MS, STALE_REVIEW_OWNER, STALE_RECONCILE_EXAMINE_LIMIT,
+import { admitStaleProposals, capacityBlocksStaleReconcile, classifyAi2Vote, SOURCE_REFRESH_COOLDOWN_MS, STALE_REVIEW_OWNER, STALE_RECONCILE_EXAMINE_LIMIT,
   STALE_RECONCILE_LIMIT, staleFallbackRootIds, staleReviewCapacityProbeSql, staleReviewCursorAfterPage, staleSecondReviewHintSql,
   type Ai2StaleReason, type Ai2StaleVerdict } from "./second-review-stale";
 
@@ -1034,8 +1034,6 @@ function proposeCurrentStaleGeneration(domain: ControllerDomain, closedIds: Set<
   const open = domain.votes.filter(existing => !closedIds.has(existing.id));
   const taken = (model: string | null, publishedSlug: string | null) => open.some(existing => existing.publishedSlug === publishedSlug
     && sameReviewModel(existing.model, model) && publishedVoteTaken(existing));
-  const waiting = (model: string | null, publishedSlug: string | null) => open.some(existing => existing.publishedSlug === publishedSlug
-    && sameReviewModel(existing.model, model) && (existing.status === "pending" || existing.status === "failed"));
   let proposed: (typeof secondReviews.$inferInsert)[] = [];
   if (candidate.publishedSlug) {
     if (candidate.state !== "published" || !domain.publishedProductId || !automatedPublication(candidate.decidedBy)) return [];
@@ -1056,9 +1054,7 @@ function proposeCurrentStaleGeneration(domain: ControllerDomain, closedIds: Set<
       repo: candidate.repo, trigger, firstDecision: decision, firstConfidence: first.outcome?.confidence ?? null, firstModel: first.model,
       firstAttemptId: first.id, generationKey: secondReviewGeneration(first.id, input, trigger), inputHash: input.inputHash }));
   }
-  return proposed.filter(row => !open.some(existing => existing.generationKey === row.generationKey
-    && existing.inputHash === row.inputHash && sameReviewModel(existing.model, row.model))
-    && !waiting(row.model ?? null, row.publishedSlug ?? null));
+  return admitStaleProposals(proposed, open);
 }
 
 /**

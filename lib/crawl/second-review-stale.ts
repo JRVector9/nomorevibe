@@ -1,5 +1,6 @@
 import { sql, type SQL } from "drizzle-orm";
 import type { CrawlCandidate, CrawlReviewAttempt, SecondReview } from "@/lib/db/schema";
+import { sameReviewModel } from "./review-model-identity";
 
 export const STALE_RECONCILE_LIMIT = 25;
 export const STALE_RECONCILE_EXAMINE_LIMIT = 80;
@@ -89,6 +90,30 @@ export function classifyAi2Vote(row: Ai2StaleRow, ctx: Ai2StaleContext): Ai2Stal
   if (reasons.size) return { kind: "stale", reasons: [...reasons] };
   if (input && input.validUntil.getTime() <= ctx.now.getTime()) return { kind: "refresh_only", reason: "evidence_expired" };
   return { kind: "stale", reasons: ["binding_invalid"] };
+}
+
+type StaleProposal = { model?: string | null; publishedSlug?: string | null; generationKey?: string; inputHash: string };
+type OpenVote = Pick<SecondReview, "model" | "publishedSlug" | "generationKey" | "inputHash" | "status">;
+
+/**
+ * 다시 넣을 행의 중복 방지(2026-10-29). 한 후보·공개 slug·모델에 살아 있는 표는 언제나 하나다.
+ *  - 이미 같은 세대·입력·모델 행이 있으면(어떤 상태든) 넣지 않는다 — 유일 색인과 같은 기준, 같은 판단을 두 번 부르지 않는다
+ *  - 같은 모델의 대기(pending·failed) 표가 남아 있으면 그 모델은 넣지 않는다 — 한 모델에 같은 후보가 두 번 배정되지 않는다
+ *  - 제안 안에서도 모델마다 첫 행 하나만 남긴다([MLX] 접두 등 같은 모델의 다른 표기 포함)
+ * open 에는 이번에 닫는 행을 넣지 않는다. 순서는 제안 순서(설정의 투표자 순서)를 그대로 둔다.
+ */
+export function admitStaleProposals<T extends StaleProposal>(proposed: T[], open: OpenVote[]): T[] {
+  const admitted: T[] = [];
+  for (const row of proposed) {
+    const slug = row.publishedSlug ?? null;
+    if (open.some(existing => existing.generationKey === row.generationKey && existing.inputHash === row.inputHash
+      && sameReviewModel(existing.model, row.model))) continue;
+    if (open.some(existing => existing.publishedSlug === slug && sameReviewModel(existing.model, row.model)
+      && (existing.status === "pending" || existing.status === "failed"))) continue;
+    if (admitted.some(kept => (kept.publishedSlug ?? null) === slug && sameReviewModel(kept.model, row.model))) continue;
+    admitted.push(row);
+  }
+  return admitted;
 }
 
 export type StaleReconcileArgs = { apply: boolean; actor: string | null; limit: number; after: number };
