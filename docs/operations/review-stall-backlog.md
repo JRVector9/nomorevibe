@@ -1,18 +1,18 @@
-# 현재 재개 상태 — 2026-10-28 (3d813382)
+# 현재 재개 상태 — 2026-10-29 (3d813382)
 
 이 절이 현재 상태이며 아래 이전 기록은 당시 이력이다.
 
-- 끝남(로컬): PR709에 origin/main b047bddb를 정상 merge해 PR707 drain 보호를 복구. main과 다른 파일을 07930102의 재시작 보호 범위로 제한했다. 무관한 tests/crawl-seed-latest.test.ts, docs/CODEX_HANDOFF.md, GPU3090 개발 문서를 main으로 복구했다. 이력 재작성/force push 없음.
+- 끝남(단계1): PR709에 origin/main b047bddb를 정상 merge해 PR707 drain 보호를 복구. main과 다른 파일을 07930102의 재시작 보호 범위로 제한했다. 무관한 tests/crawl-seed-latest.test.ts, docs/CODEX_HANDOFF.md, GPU3090 개발 문서를 main으로 복구했다. 이력 재작성/force push 없음.
 - 검증: bash scripts/verify-review-stall.sh 종료0(typegen/tsc/lint, 관련 TS/Python). 별도 crawl-seed-latest 22시험 성공. PR709 기존 CI40783523028/unit(1) 실패 원인은 main에 없는 탐색 시험 혼입이었다. 새 CI40789227478/check SUCCESS 후 PR709를 7973d9b7421dad81cfe66fb4b05fded862d7c446으로 병합(23:51:18Z).
-- 진행: 01514beb를 최신 main 7973d9b7 위에 cherry-pick. item 경로만 우회하던 누락을 고쳐 실제 legacy 잡도 같은 blocked/paused hint를 선택 함수에 전달한다. 미전송 우회 및 이미 보낸 후보 고정의 legacy 회귀 2개 추가. bash scripts/verify-review-stall.sh 종료0(typegen/tsc/lint, TS20파일320시험/Python68시험). PR710 첫 CI40790400261/typecheck는 Node heap OOM(exit134, 약2GiB)으로 실패했다. 로컬2GiB도 OOM 재현. 조회 단순화로 해결되지 않아 해당 실험은 되돌렸고 CI typecheck 단계만4GiB heap으로 명시한다. 검사/필수관문/운영용량 변경 없음. 같은 CI integration(4)는 제거된 모델의 시도를 다른 모델로 재시도하던 이전 기대값 때문에 실패했다. 요청한 전송 후 고정을 검증하도록, 제거 시 시도0/거절과 원 모델 복원 후 backoff·총3회 상한을 모두 확인하는 DB 회귀로 갱신. 수정 후 NODE_OPTIONS=--max-old-space-size=4096 bash scripts/verify-review-stall.sh 종료0, CI workflow 회귀2파일16시험 성공. 관련 DB 회귀의 로컬 실행은 Docker API permission denied로 막힘(CI에서 실제 실행). 새 CI40791156676 전체 성공(check/typecheck/integration4 포함) 후 PR710을 717549486e83d04425cf861d539e048aba39cc2d로 병합(2026-10-29 00:09:53Z).
-- 단계3 로컬: dc704d87 cherry-pick, legacy 선택 충돌은 blocked+paused 합집합 유지. bash scripts/verify-review-stall.sh 종료0(TS22파일332시험/Python68시험), 측정mjs syntax/eslint 성공. PR710 병합 후 최신 main71754948을 정상 merge, 단계3 PR/필수CI 진행. 서버/gateway 강제 및 M1 표본 미검증으로 자동 회수는 선언하지 않음.
+- 끝남(단계2): 01514beb를 최신 main 7973d9b7 위에 cherry-pick. item 경로만 우회하던 누락을 고쳐 실제 legacy 잡도 같은 blocked/paused hint를 선택 함수에 전달한다. 미전송 우회 및 이미 보낸 후보 고정의 legacy 회귀 2개 추가. bash scripts/verify-review-stall.sh 종료0(typegen/tsc/lint, TS20파일320시험/Python68시험). PR710 첫 CI40790400261/typecheck는 Node heap OOM(exit134, 약2GiB)으로 실패했다. 로컬2GiB도 OOM 재현. 조회 단순화로 해결되지 않아 해당 실험은 되돌렸고 CI typecheck 단계만4GiB heap으로 명시한다. 검사/필수관문/운영용량 변경 없음. 같은 CI integration(4)는 제거된 모델의 시도를 다른 모델로 재시도하던 이전 기대값 때문에 실패했다. 요청한 전송 후 고정을 검증하도록, 제거 시 시도0/거절과 원 모델 복원 후 backoff·총3회 상한을 모두 확인하는 DB 회귀로 갱신. 수정 후 NODE_OPTIONS=--max-old-space-size=4096 bash scripts/verify-review-stall.sh 종료0, CI workflow 회귀2파일16시험 성공. 관련 DB 회귀의 로컬 실행은 Docker API permission denied로 막힘(CI에서 실제 실행). 새 CI40791156676 전체 성공(check/typecheck/integration4 포함) 후 PR710을 717549486e83d04425cf861d539e048aba39cc2d로 병합(2026-10-29 00:09:53Z).
+- 끝남(단계3): dc704d87 cherry-pick, legacy 선택 충돌은 blocked+paused 합집합 유지. bash scripts/verify-review-stall.sh 종료0(TS22파일332시험/Python68시험), 측정mjs syntax/eslint 성공. PR711 CI40792266878 전체 성공 후 2f45f6d05a7d7aff4b87d723b0e146ae50c9e1dc로 병합(00:20:02Z). 서버/gateway 강제 및 M1 표본 미검증으로 자동 회수는 선언하지 않음.
 - 막힘(사람 필요, Oracle): 10초 timeout/BatchMode의 동일 sanctioned `ssh ubuntu@nomore-x 'systemctl list-units --type=service --all --no-legend "nomorevibe*"'`를 시차를 두고3회 시도, 매회 exit255 `Connection closed by UNKNOWN port 65535`. 서비스/권한/키 변경 없음.
 - 막힘(결과 디렉터리): 지정 jobs/3d813382.../artifacts와scratch의 mkdir은 `Read-only file system`. 작업 공간에 로그 보존, 보고함 첨부로 결과를 보관한다.
-- 남음: 01514beb → dc704d87 → d7fea73c+7eaf8bef를 각각 최신 main에서 PR/필수CI/병합. 이후 표준 배포, 실제 강제 확인 후 자동 회수 선언·4종 드릴·60분 관측.
-- 실제 운영 23:41:15Z: AI1 94871(최근1시간0), AI2 91158(최근1시간2). 이전 측정과 총수 동일. GPT-OSS AI1/Supa tagline/M1 translation indeterminate 각1. scripts/ops/measure-review-stall.mjs(원 커밋 dc704d87)를 기존 M3 text 컨테이너에서 node stdin 실행, primary READ ONLY. 세부 원인 추가 조회 예정.
-- 막힘(사람 필요, 배포 checkout): ssh jr@m3Ultra 연결·Docker 조회는 성공. 문서 경로 /Users/jr/Desktop/projects/nomorevibe-release-ai1-queue-fix-20261027 및 /Users/jr/Desktop/projects/nomorevibe는 `No such file or directory`. `ls -la /Users/jr/Desktop`는 `Operation not permitted`. 경로/OS 권한을 우회하지 않았다. M3에서 SSH로 읽을 수 있는 기존 운영자 checkout의 정확한 경로 확인이 필요하다. Keychain 접근 성공은 아직 확인하지 않았다.
+- 남음: 단계4(d7fea73c+7eaf8bef) PR/필수CI/병합. 표준 배포와 실제 강제 확인·자동 회수 선언·4종 드릴·60분 관측은 아래 운영 인증/종료증거 미확인에 막힘.
+- 실제 운영 23:41:15Z: AI1 94871(최근1시간0), AI2 91158(최근1시간2). 이전 측정과 총수 동일. GPT-OSS AI1/Supa tagline/M1 translation indeterminate 각1. scripts/ops/measure-review-stall.mjs(원 커밋 dc704d87)를 기존 M3 text 컨테이너에서 node stdin 실행, primary READ ONLY. 세부 원인과 쿼리 근거는 아래 진단 절에 기록했다.
+- 막힘(사람 필요, 배포 checkout): ssh jr@m3Ultra 연결·Docker 조회는 성공. 문서 경로 /Users/jr/Desktop/projects/nomorevibe-release-ai1-queue-fix-20261027 및 /Users/jr/Desktop/projects/nomorevibe는 `No such file or directory`. `ls -la /Users/jr/Desktop`는 `Operation not permitted`. 경로/OS 권한을 우회하지 않았다. 전용 운영자 checkout의 clone도 GitHub 인증 오류로 막혔다(아래 정확한 명령/응답). Keychain 접근 성공은 아직 확인하지 않았다.
 - 의존성: npm ci --ignore-scripts --no-audit --no-fund는 registry.npmjs.org allowlist 차단. 이전 작업 공간의 기존 node_modules를 이 작업 공간에 복사해 로컬 검사했다. 원본 폴더·설정·자격정보 변경 없음.
-- 결정: 가장 적게 바꾸는 정상 merge와 main 파일 복구를 선택했다. 자동 회수는 기본 비활성으로 유지한다.
+- 결정: 가장 적게 바꾸는 정상 merge와 main 파일 복구를 선택했다. 자동 회수는 기본 비활성으로 유지한다. CI heap은 OOM이 재현된 typecheck 단계만4GiB로 명시하는 최소 변경을 택했다.
 
 ## 저장 정체 읽기 전용 원인 확인 (23:42:49Z / 23:43:26Z)
 
@@ -25,8 +25,8 @@
 
 ## 2026-10-29 추가 검증·현재 운영 막힘
 
-- 단계4 로컬: d7fea73c+7eaf8bef를 순서대로 cherry-pick. 백로그 conflict는 이 작업 최신 기록을 우선 보존하고 이전 이력도 유지했다. bash scripts/verify-review-stall.sh 종료0(typegen/tsc/lint, TS23파일338시험/Python71시험). 규칙 측정mjs syntax/eslint 성공. 자동 회수 env/서버/실행 권한 변경0, 해제 요청0.
-- M3 문서 checkout 부재를 해결하려고 전용 운영자 사본만 새로 준비했다: `ssh jr@m3Ultra 'test ! -e /Users/jr/Server/nomorevibe-release-review-stall-20261029 && git clone --no-checkout https://github.com/JRVector9/nomorevibe.git /Users/jr/Server/nomorevibe-release-review-stall-20261029 ...'`. clone은 `fatal: could not read Username for https://github.com: Device not configured`로 실패. SSH wrapper의0종료를 clone성공으로 세지 않았다.
+- 단계4 로컬/PR 준비: 최신 main2f45f6d0을 정상 merge한 d7fea73c+7eaf8bef를 순서대로 cherry-pick. 백로그 conflict는 이 작업 최신 기록을 우선 보존하고 이전 이력도 유지했다. bash scripts/verify-review-stall.sh 종료0(typegen/tsc/lint, TS23파일338시험/Python71시험). 규칙 측정mjs syntax/eslint 성공. 최신 main merge 후 최종 bash scripts/verify-review-stall.sh도 종료0(동일338/71시험). 자동 회수 env/서버/실행 권한 변경0, 해제 요청0.
+- M3 문서 checkout 부재를 해결하려고 전용 운영자 사본만 새로 준비했다: `ssh jr@m3Ultra 'test ! -e /Users/jr/Server/nomorevibe-release-review-stall-20261029 && git clone --no-checkout https://github.com/JRVector9/nomorevibe.git /Users/jr/Server/nomorevibe-release-review-stall-20261029 ...'`. clone은 `fatal: could not read Username for 'https://github.com': Device not configured`로 실패. SSH wrapper의0종료를 clone성공으로 세지 않았다.
 - 추가 읽기 명령 `ssh jr@m3Ultra 'gh repo view JRVector9/nomorevibe --json visibility --jq .visibility'`는 `HTTP 401: Requires authentication (https://api.github.com/graphql)` / `Try authenticating with: gh auth login`. 다른 호스트의 토큰 복사·auth설정 변경·GitHub 접근 우회는 하지 않았다.
 - **막힘(사람 필요): M3에서 기존 GitHub CLI 인증을 1회 복구(`gh auth login`)해야 한다.** 이후 새 clean operator checkout과 최신 main의 표준 scope/plan/run을 재개할 수 있다. 아직 npm deploy plan에 진입하지 못했으므로 Keychain 잠김/키부재 여부는 측정 없음이며 추정하지 않는다.
 - Oracle 동일SSH3회 모두 exit255 `Connection closed by UNKNOWN port 65535`. 실제 Oracle scheduler/watchdog 배포·가동은 미확인. 키/권한/known-host 설정 변경0.
