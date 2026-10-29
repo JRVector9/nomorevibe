@@ -8,7 +8,7 @@ function material() {
     const b = Buffer.from(typeof v === "string" ? v : JSON.stringify(v)); const h = sha(b); files.set(h, b); return h;
   };
   const r = fx.receipt.relay;
-  const { artifactHash: _artifact, ...originalOwner } = fx.plan.originalOwner;
+  const originalOwner = Object.fromEntries(Object.entries(fx.plan.originalOwner).filter(([key]) => key !== "artifactHash"));
   fx.plan.originalOwner.artifactHash = put({ originalOwner });
   r.originalWireArtifactHash = put(r.originalWire);
   r.receiptArtifactHash = put(Object.fromEntries(["requestId", "requestModel", "requestHash", "relayGeneration", "startedAt", "endedAt", "state", "error"].map(k => [k, r[k as keyof typeof r]])));
