@@ -95,15 +95,10 @@ it("(a) 0000~0143 on an empty DB and (b) 0143 alone on a 0142 DB give the same s
   for (const version of ["5", "6", "7"])
     expect(before.functions["nmv_provider_boundary_transition_guard()"], `0140~0142 plan v${version} owner guard`)
       .toContain(`NEW.terminal_evidence->'plan'->'version'='${version}'::jsonb`);
-  await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
+  // 0143 하나만의 효과를 본다. 뒤의 0144·0145는 아래에서 전체 체인으로 비교한다.
+  await migrate(drizzle(step), { migrationsFolder: through(143) });
   const stepped = await schema(step);
-  expect(await applied(step)).toHaveLength(journal.entries.length);
-
-  // (a) 빈 DB 전체 적용
-  await migrate(drizzle(fresh), { migrationsFolder: path.join(root, "drizzle") });
-  const whole = await schema(fresh);
-  expect(await applied(fresh)).toEqual(await applied(step));
-  expect(whole).toEqual(stepped);
+  expect(await applied(step)).toHaveLength(144);
 
   // 0143 은 다섯 CHECK 에 replaced-provider 분기만 덧붙이고 0142 의 전체 술어를 그대로 감싼다
   for (const name of CHANGED) {
@@ -132,4 +127,11 @@ it("(a) 0000~0143 on an empty DB and (b) 0143 alone on a 0142 DB give the same s
   expect(added).toEqual(["nmv_replaced_provider_event_valid(jsonb)", "nmv_replaced_provider_predecessor_valid(jsonb)",
     "nmv_replaced_provider_records_valid(jsonb,jsonb)", "nmv_replaced_provider_release_valid(jsonb)",
     "nmv_replaced_provider_request_valid(jsonb)", "nmv_replaced_provider_shape_valid(jsonb,jsonb,integer)", "nmv_replaced_provider_transition_guard()"]);
+
+  // (a) 빈 DB 전체 적용과 (b) 0142 위에 나머지 적용이 같은 기록·스키마를 만든다
+  await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
+  await migrate(drizzle(fresh), { migrationsFolder: path.join(root, "drizzle") });
+  expect(await applied(step)).toHaveLength(journal.entries.length);
+  expect(await applied(fresh)).toEqual(await applied(step));
+  expect(await schema(fresh)).toEqual(await schema(step));
 }, 600_000);
