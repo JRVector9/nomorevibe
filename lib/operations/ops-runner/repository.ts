@@ -3,7 +3,7 @@ import { sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import { operationsAudit } from "@/lib/db/schema";
 import { adminAuditRow } from "../admin-log";
-import { writerSiteActive } from "../dr/epoch";
+import { readWriterFence, writerSiteActive } from "../dr/epoch";
 import { opsCommandSchema, initialOpsState, opsHoldsBoundary, type OpsState } from "./contract";
 
 // Append-only operations_audit is the durable queue/journal. No mutable business row or TTL cleanup.
@@ -58,7 +58,8 @@ export async function previewModelOpsCommand(raw: unknown, actor: string): Promi
   const command = opsCommandSchema.parse(raw);
   return onPrimary(() => db.transaction(async tx => {
     const blocked: string[] = [];
-    if (!await writerSiteActive(tx)) blocked.push("dr_writer_site_fenced");
+    // A READ ONLY TX cannot take the FOR SHARE fence lock (25006). The unlocked read is enough here: --execute re-checks under the lock.
+    if ((await readWriterFence(tx)).state !== "active") blocked.push("dr_writer_site_fenced");
     const states = Array.from(await tx.execute<{ detail: OpsState }>(sql`
       SELECT DISTINCT ON (target) detail, target FROM operations_audit
       WHERE action = 'ops-runner-state' ORDER BY target,id DESC`)).map(row => row.detail);
