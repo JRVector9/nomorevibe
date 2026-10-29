@@ -109,3 +109,11 @@ PR712의 선언 검증·enforcedAfter·DB lock 아래 local_call_ended/process_g
 남은 운영 단계: 별도 권한 영역에 검토된 설치본/새 snapshot 프로필 배치, 큐 소비 운영 절차 적용,
 운영 종료/복원·자동 회수 활성화 드릴. 이번 PR은 배포/권한 설정/운영 장비 조작을 수행하지 않는다.
 로컬 브라우저 제한과 실제 검증 결과는 `admin-models-backlog.md`의 이번 실행 기록을 따른다.
+
+## Supa 관리자 root 단계 분리 (2026-10-29)
+
+명시적 provider `rootHandoff:true`를 지원한다. prepare의 절대 argv/private task 준비와 대표의 관리자 root 실행,
+root 소유 결과 수집·현재 종료 근거 재검증을 분리한다. runner는 sudo/원격 root 변이를 실행하지 않는다.
+자세한 manifest·설치·단계별 실행 목록과 응답 유실 처리:
+[2026-10-29-supa-root-handoff.md](2026-10-29-supa-root-handoff.md).
+기존 직접 root/launchd 경로와 M1 수동 차단은 보존한다. 이 변경은 운영 실행 영수증이 아니다.

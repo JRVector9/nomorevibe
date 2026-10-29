@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, lstatSync, rmSync } from "node:fs";
 import { join } from "node:path";
 const mocks = vi.hoisted(() => ({ exec: vi.fn(), save: vi.fn(), capacity: vi.fn(), admission: vi.fn(), quiet: vi.fn(), request: vi.fn(), release: vi.fn(), files: vi.fn() }));
 // The managed test namespace maps immutable / and /home to overflow uid 65534.
@@ -20,7 +20,7 @@ vi.mock("@/lib/operations/ops-runner/repository", () => ({ saveModelOpsState: mo
 vi.mock("@/lib/operations/ops-runner/control", () => ({ capacityPin: mocks.capacity, controlOpsAdmission: mocks.admission, assertOpsQuiescent: mocks.quiet, readOpsRequest: mocks.request }));
 vi.mock("@/lib/operations/dr/provider-boundary-release", () => ({ releaseProviderBoundaryRequest: mocks.release }));
 vi.mock("@/scripts/ops/model-provider-boundary-release", () => ({ readBoundaryReleaseFiles: mocks.files }));
-import { runPreparedModelOps, readOperatorProfile, callOpsAdapter } from "@/lib/operations/ops-runner/operator";
+import { runPreparedModelOps, readOperatorProfile, callOpsAdapter, opsRootHandoffPath } from "@/lib/operations/ops-runner/operator";
 import { initialOpsState } from "@/lib/operations/ops-runner/contract";
 import { boundaryFixture } from "./fixtures/provider-boundary-release";
 const sha = (raw: string) => createHash("sha256").update(raw).digest("hex");
@@ -123,4 +123,33 @@ it("중간 stop 실패 후 이어가기는 이미 시도한 stop을 다시 보�
   expect((await runPreparedModelOps(blocked, profileFile, dir, false)).status).toBe("completed");
   expect(mocks.exec.mock.calls.filter(call => call[1][2] === "stop")).toHaveLength(1);
   expect(mocks.exec.mock.calls.filter(call => call[1][2] === "resume-stop")).toHaveLength(1);
+});
+
+it("Supa root argv는 private 준비 파일에만 기록하고 root 결과 대기는 해제·OPEN을 막는다", async () => {
+  const commands = [{ target: "jr@supa", phase: "stop", taskPath: join(dir, "root-task.json"), taskSha256: "d".repeat(64),
+    stagingPath: "/var/tmp/nmv-supa-root-fixture.json", resultPath: "/var/lib/nmv-admin-models-root/results/fixture.json",
+    executable: "/usr/bin/python3", args: ["-I", "/usr/local/libexec/nmv-admin-models/systemd_handoff.py", "execute", "/var/tmp/nmv-supa-root-fixture.json", "d".repeat(64)] }];
+  phaseOutputs.prepare = { ok: true, configurationHash: "a".repeat(64), rootCommands: commands };
+  const prepared = await runPreparedModelOps(state(), profileFile, dir, true);
+  expect(prepared.status).toBe("queued"); expect(mocks.admission).not.toHaveBeenCalled();
+  const path = opsRootHandoffPath(dir, state().id);
+  expect(JSON.parse(readFileSync(path, "utf8"))).toMatchObject({ phase: "prepare", commands });
+  expect(lstatSync(path).mode & 0o777).toBe(0o600);
+  phaseOutputs.stop = { ok: false, manual: true, code: "supa_root_result_required", rootCommands: commands };
+  const waiting = await runPreparedModelOps(prepared, profileFile, dir, false);
+  expect(waiting).toMatchObject({ status: "manual", step: "stop", code: "supa_root_result_required" });
+  expect(mocks.release).not.toHaveBeenCalled(); expect(mocks.admission.mock.calls.map(call => call[1])).toEqual(["draining"]);
+  expect(JSON.stringify(mocks.save.mock.calls)).not.toContain("rootCommands");
+  expect(JSON.stringify(mocks.save.mock.calls)).not.toContain("systemd_handoff.py");
+  phaseOutputs["resume-stop"] = { ok: true };
+  expect((await runPreparedModelOps(waiting, profileFile, dir, false)).status).toBe("completed");
+  expect(mocks.exec.mock.calls.filter(call => call[1][2] === "stop")).toHaveLength(1);
+});
+
+it("root 결과 파일의 fresh cgroup 재검증 실패 이유를 보존하고 해제하지 않는다", async () => {
+  phaseOutputs.stop = { ok: true };
+  phaseOutputs["verify-stop"] = { ok: false, code: "supa_full_cgroup_exit_unproved" };
+  const prepared = await runPreparedModelOps(state(), profileFile, dir, true);
+  expect(await runPreparedModelOps(prepared, profileFile, dir, false)).toMatchObject({ status: "blocked", step: "verify-stop", code: "supa_full_cgroup_exit_unproved" });
+  expect(mocks.release).not.toHaveBeenCalled();
 });

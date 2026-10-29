@@ -156,3 +156,8 @@
 
 M1 모델 선택/readiness 수정과 상품·사유 번역 동일 등록부 정렬 구현. 명시된 DB 풀/env는 보존. main typecheck PASS로 TS2353 재현 없음. M1 범위34시험 PASS, verify-model-config 첫35실패 fixture 원인을 보존하고 재검증 중. 대표 argv는 `2026-10-29-m1-relay-model-handoff.md`. 다음 항목은 Supa root 단계를 관리자 argv 준비/검증된 결과 수집으로 분리하는 구현이다. 운영·UI 변경 없음.
 - M1 최종 검증: verify-model-config 69파일/988시험·typegen·tsc PASS, 모델 리터럴158→99. 범위 ESLint/installer bash 문법 PASS. Supa 구현 계속.
+
+- 끝(코드): Supa provider의 명시적 rootHandoff. prepare에서 private 절대 argv/task 생성, 대표 관리자 root 실행 후 root 소유 결과+현재 전체 cgroup/old PID/boot/config/health 재검증, 기존 V1 해제·역순 복원·OPEN 경계 유지. sudo/DB 직접 해제/시간 기반 해제 없음.
+- 실제 시험: 기존4파일/26시험 PASS, 새 분기 포함9파일/43 Vitest PASS(별도 실제 Python14시험 포함). root argv는 공개 감사에 넣지 않음. 대표 명령·설치/결과 소유권은 `2026-10-29-supa-root-handoff.md`.
+- 남음: 최종 정적/모델 설정 검증·PR·필수 CI. 운영 설치/65f8c399 해제·M1 재시작/배포는 명시적 범위 밖이므로 미수행.
+- Supa 최종 정적 검사: 범위 ESLint, tsc --noEmit --incremental false, git diff --check PASS. 실제 Python14시험 재실행 PASS. 항목별 로컬 커밋 후 PR 검증으로 계속한다.

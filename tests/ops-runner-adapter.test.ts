@@ -5,7 +5,7 @@ import { expect, it } from "vitest";
 import { providerBoundaryPlanSchema, providerBoundaryReceiptSchema, validateProviderBoundary } from "@/lib/llm/provider-boundary-contract";
 import { boundaryFixture } from "./fixtures/provider-boundary-release";
 
-it("정식 Python coordinator의 prepare→plan→stop→V1 영수증→역순 복원 변환을 실제 schema로 검증한다", () => {
+it.each([false, true])("정식 Python coordinator의 prepare→plan→stop→V1 영수증→역순 복원 변환을 실제 schema로 검증한다 (root handoff=%s)", (rootHandoff) => {
   const parent = mkdtempSync(join(process.cwd(), ".ops-runner-adapter-")), id = "ad2b84de-4ddf-4b2e-9dbd-605c64f7d728";
   const dir = join(parent, id); mkdirSync(dir, { mode: 0o700 });
   try {
@@ -32,9 +32,12 @@ expected={'operatorUid':0,'unit':'vllm.service','unitFileSha256':'b'*64,'unitCon
 targets.append({'key':'provider','role':'provider','kind':'systemd','host':'fixture@supa','identity':i,'expected':expected,'progressRoot':'/private/fixture'})
 manifest={'version':1,'id':input['id'],'action':'request-release','targetId':plan['request']['requestId'],'requiresSudo':False,'stateDirectory':str(root),'targets':targets,
  'sourceHashes':{p.name:hashlib.sha256(p.read_bytes()).hexdigest()for p in pathlib.Path('scripts/ops/admin_models_helpers').glob('*.py')}}
+if input['rootHandoff']:
+ targets[-1].update(rootHandoff=True,progressRoot='/var/lib/nmv-admin-models-root/progress')
+ targets[-1]['expected']['operatorUid']=1000
 raw=json.dumps(manifest).encode();file=root/'manifest.json';file.write_bytes(raw)
 envelope={'id':input['id'],'action':'request-release','targetId':plan['request']['requestId'],'material':{'path':str(file),'sha256':hashlib.sha256(raw).hexdigest()},'context':{'original':dict(plan['control'],mode='open'),'request':plan['request']}}
-mutations=[];fail_restore=True
+mutations=[];fail_restore=True;approved=set()
 def fake_run(args,**options):
  global fail_restore
  tree=ast.parse(options['input']);data=None;argv=None
@@ -42,6 +45,12 @@ def fake_run(args,**options):
   if isinstance(node,ast.Assign)and isinstance(node.targets[0],ast.Attribute)and isinstance(node.targets[0].value,ast.Name)and node.targets[0].value.id=='sys':
    if node.targets[0].attr=='stdin':data=json.loads(ast.literal_eval(node.value.args[0].args[0]))
    if node.targets[0].attr=='argv':argv=ast.literal_eval(node.value)
+ if data and 'payload'in data:
+  mode=data['payload']['mode']
+  assert argv==['root-handoff','collect']
+  if mode not in approved:value={'state':'root_result_missing'}
+  else:value={'verified':True,'rootTaskHash':m.sha(m.canon(data))}
+  return types.SimpleNamespace(returncode=0,stderr='',stdout=json.dumps(value))
  if not data:
   value=next(t['expected']for t in targets if t['host']==args[5]and(t['kind']=='systemd'or t['expected']['serviceName']==argv[1]))
  else:
@@ -53,24 +62,44 @@ def fake_run(args,**options):
   value={'verified':True,'pidMode':'','status':'exited','waitExitCode':0,'serviceVersion':3 if data.get('mode')=='restore'else 2}
  return types.SimpleNamespace(returncode=0,stderr='',stdout=json.dumps(value))
 m.subprocess.run=fake_run
-assert m.main('prepare',envelope)['ok']
+prepared=m.main('prepare',envelope)
+assert prepared['ok']
+if input['rootHandoff']:
+ assert len(prepared['rootCommands'])==2
+ for command in prepared['rootCommands']:
+  assert command['executable']=='/usr/bin/python3'and command['args'][1]=='/usr/local/libexec/nmv-admin-models/systemd_handoff.py'
+  assert all('sudo'not in arg for arg in command['args'])
+  assert m.sha(m.canon(json.loads(pathlib.Path(command['taskPath']).read_bytes())))==command['taskSha256']
 envelope['context']['drained']=plan['control']
 assert m.main('plan',envelope)['ok']
-assert m.main('stop',envelope)['ok']
+if input['rootHandoff']:
+ for n in range(2):
+  try:m.main('stop'if n==0 else'resume-stop',envelope)
+  except m.RootHandoffRequired as error:assert error.commands[0]['phase']=='stop'
+  else:raise AssertionError('missing root result accepted')
+ assert len(mutations)==3
+ approved.add('stop')
+assert m.main('resume-stop'if input['rootHandoff']else'stop',envelope)['ok']
 assert m.main('resume-stop',envelope)['ok']
 receipt=m.main('verify-stop',envelope)
-try:m.main('restore',envelope)
+if input['rootHandoff']:
+ try:m.main('restore',envelope)
+ except m.RootHandoffRequired as error:assert error.commands[0]['phase']=='restore'
+ else:raise AssertionError('missing root restore result accepted')
+ approved.add('restore')
+try:m.main('resume-restore'if input['rootHandoff']else'restore',envelope)
 except TimeoutError:pass
 else:raise AssertionError('fixture did not lose restore ACK')
 assert m.main('resume-restore',envelope)['ok']
 assert m.main('verify-restored',envelope)['ok']
-assert [mode for _,mode in mutations]==['stop']*4+['restore']*4,mutations
-assert [service for service,mode in mutations if mode=='restore']==list(reversed([t['expected'].get('serviceName','vllm.service')for t in targets]))
+count=3 if input['rootHandoff']else 4
+assert [mode for _,mode in mutations]==['stop']*count+['restore']*count,mutations
+assert [service for service,mode in mutations if mode=='restore']==list(reversed([t['expected'].get('serviceName','vllm.service')for t in targets if not t.get('rootHandoff')]))
 print(json.dumps(receipt))
 `;
     // Script and JSON use separate file descriptors: no shell interpolation or actual SSH/device/DB traffic.
     const result = JSON.parse(execFileSync("/usr/bin/python3", ["-I", "-B", "-c", script], { encoding: "utf8",
-      input: JSON.stringify({ fixture: boundaryFixture(), id, directory: dir }) }));
+      input: JSON.stringify({ fixture: boundaryFixture(), id, directory: dir, rootHandoff }) }));
     const plan = providerBoundaryPlanSchema.parse(result.plan), receipt = providerBoundaryReceiptSchema.parse(result.receipt);
     expect(validateProviderBoundary(plan, receipt, new Date().toISOString())).toBe(true);
   } finally { rmSync(parent, { recursive: true, force: true }); }

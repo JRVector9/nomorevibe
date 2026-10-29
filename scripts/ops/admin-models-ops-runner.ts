@@ -1,10 +1,11 @@
 /** Operator host only: node --import tsx scripts/ops/admin-models-ops-runner.ts prepare|run UUID --profile=/private/profile.json --state-dir=/private/state */
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { existsSync } from "node:fs";
 import postgres from "postgres";
 import { z } from "zod";
 import { readModelOpsState, saveModelOpsState } from "@/lib/operations/ops-runner/repository";
-import { runPreparedModelOps } from "@/lib/operations/ops-runner/operator";
+import { opsRootHandoffPath, runPreparedModelOps } from "@/lib/operations/ops-runner/operator";
 
 export function parseOpsRunnerArgs(args: string[]) {
   if (args.length !== 4 || !["prepare", "run"].includes(args[0]) || !z.uuid().safeParse(args[1]).success
@@ -30,7 +31,8 @@ async function main() {
       await saveModelOpsState({ ...(latest ?? state), status: "blocked", code: "operator_profile_or_journal_rejected" });
       throw new Error("ops_runner_operator_precheck_failed");
     }
-    process.stdout.write(JSON.stringify(result) + "\n");
+    const rootHandoffFile = opsRootHandoffPath(args.directory, args.id);
+    process.stdout.write(JSON.stringify({ ...result, ...(existsSync(rootHandoffFile) ? { rootHandoffFile } : {}) }) + "\n");
     if (result.status === "blocked" || result.status === "manual") process.exitCode = 1;
   } finally {
     await session`SELECT pg_advisory_unlock(7219402)`.catch(() => {}); session.release();
