@@ -130,3 +130,5 @@ git grep -o -E '(configuredModel|configuredModelDefinition|configuredModelForPro
 - 두 번째 review-stall 스크립트: typegen·tsc·변경 파일 eslint·차선 unit·Oracle Python 전부 exit 0. 신규 registry/순수 validator/오프라인 migration/운영자 component와 신규 회귀 ESLint도 경고 0.
 - gh branch protection 읽기 `gh api repos/JRVector9/nomorevibe/branches/main/protection ...`는 HTTP 403: `Upgrade to GitHub Pro or make this repository public to enable this feature.`였다. 보호 설정은 변경하지 않는다. PR의 실제 check 결과를 확인하고 허용된 일반 merge만 사용한다.
 - 구현과 설정 이전 도구는 완료. 남은 코드 작업 없음. 최종 재검증·PR/check/main merge·최종 개발사항 보고를 진행한다. 운영 후속은 이 차선의 금지 범위로 유지한다.
+
+- PR [#713](https://github.com/JRVector9/nomorevibe/pull/713) 생성·push 완료. 첫 CI 40799670719는 scope/check 실패: `ci_diff_whitespace_error` / `ci_check_scope_failed`. 로그와 `git diff --check origin/main...HEAD`로 deadline-policy.ts의 EOF 빈 줄을 확인해 제거했다. 이후 검증은 작업 트리만이 아니라 PR 전체 diff에 적용한다. 실패를 rerun으로 덮지 않고 수정 커밋을 추가한다.

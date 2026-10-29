@@ -32,4 +32,3 @@ export function worstGenerationMs(input: { maxOutputTokens: number; minDecodeTok
     throw new Error("invalid_generation_bound");
   return Math.ceil(input.maxPrefillMs + input.maxOutputTokens * 1_000 / input.minDecodeTokensPerSec);
 }
-
