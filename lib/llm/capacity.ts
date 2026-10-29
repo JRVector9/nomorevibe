@@ -1,4 +1,5 @@
 import { replacedProviderEvidenceSchema } from "./replaced-provider-boundary-contract";
+import { replacedPathEvidenceSchema } from "./replaced-path-boundary-contract";
 import { cliExecutorIndeterminateRemovedEvidenceSchema } from "./cli-executor-indeterminate-removed-boundary-contract";
 import { cliExecutorIndeterminateEvidenceSchema } from "./cli-executor-indeterminate-boundary-contract";
 import { cliExecutorRemovedEvidenceSchema } from "./cli-executor-removed-boundary-contract";
@@ -937,6 +938,7 @@ const releaseBase = { version: z.literal(1), requestId: z.uuid(), owner: modelCa
  */
 export const modelDispatchReleaseEvidenceSchema = z.discriminatedUnion("kind", [
   replacedProviderEvidenceSchema,
+  replacedPathEvidenceSchema,
   cliExecutorIndeterminateRemovedEvidenceSchema,
   cliExecutorIndeterminateEvidenceSchema,
   cliExecutorEvidenceSchema,

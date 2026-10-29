@@ -2336,6 +2336,11 @@ export async function releaseModelDispatchWithEvidence(tx: ProductTransaction, r
       FROM model_capacity_requests r WHERE request_id=${row.requestId}::uuid`);
     if (facts?.valid !== true) fail("replaced_provider_boundary_records_mismatch");
   }
+  if (evidence.kind === "replaced_path_boundary_exit") {
+    const [facts] = await tx.execute<{ valid: boolean }>(sql`SELECT nmv_replaced_path_records_valid(${JSON.stringify(evidence)}::text::jsonb,to_jsonb(r)) valid
+      FROM model_capacity_requests r WHERE request_id=${row.requestId}::uuid`);
+    if (facts?.valid !== true) fail("replaced_path_boundary_records_mismatch");
+  }
   if (evidence.kind === "provider_boundary_exit") {
     const expected = evidence.plan.request, expectedControl = evidence.plan.control;
     const [exactControl] = await tx.execute<{ at: string }>(sql`SELECT to_char(updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at
@@ -2371,7 +2376,7 @@ export async function releaseModelDispatchWithEvidence(tx: ProductTransaction, r
     || localEnd.owner.instanceId !== owner.instanceId || localEnd.owner.bootId !== owner.bootId || localEnd.bindingHash !== row.dispatchBindingHash
     || evidence.localEnd.dispatches !== localEnd.dispatches || evidence.localEnd.terminals !== localEnd.terminals)) fail("model_capacity_release_evidence_mismatch");
   const [changed] = await tx.update(modelCapacityRequests).set({ state: "withdrawn", terminalEvidence: evidence,
-    terminalEvidenceHash: evidence.kind === "replaced_provider_boundary_exit" || evidence.kind === "provider_boundary_exit" || evidence.kind === "cli_executor_boundary_exit" || evidence.kind === "cli_executor_removed_boundary_exit" || evidence.kind === "cli_executor_indeterminate_boundary_exit" || evidence.kind === "cli_executor_indeterminate_removed_boundary_exit" ? providerBoundaryCanonicalHash(evidence) : reviewHash(evidence),
+    terminalEvidenceHash: evidence.kind === "replaced_provider_boundary_exit" || evidence.kind === "replaced_path_boundary_exit" || evidence.kind === "provider_boundary_exit" || evidence.kind === "cli_executor_boundary_exit" || evidence.kind === "cli_executor_removed_boundary_exit" || evidence.kind === "cli_executor_indeterminate_boundary_exit" || evidence.kind === "cli_executor_indeterminate_removed_boundary_exit" ? providerBoundaryCanonicalHash(evidence) : reviewHash(evidence),
     updatedAt: sql`clock_timestamp()` }).where(and(eq(modelCapacityRequests.requestId, row.requestId), eq(modelCapacityRequests.state, row.state))).returning();
   if (!changed) fail("model_capacity_release_state_changed");
   await event(tx, changed, "dispatch_released", row.state, "withdrawn", null, evidence);
