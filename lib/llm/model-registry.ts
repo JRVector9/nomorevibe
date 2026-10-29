@@ -117,6 +117,7 @@ export const DEFAULT_MODEL_TIMEOUTS: Readonly<Record<string, number>> = {
   "audit-second-opinion": 45_000, "held-review-retry": 15_000, "split-tiebreak": 20_000,
   "split-confirm": 45_000, "product-audit": 45_000, "grok-review": 90_000,
   "grok-session": 60_000, "search-query-translate": 8_000, "crawl-tagline": 45_000,
+  "classify-cli": 35_000, "screen-review": 90_000,
 };
 export const DEFAULT_MODEL_DEADLINES: Readonly<Record<string, DeadlineLadder>> = {
   "review-gateway": { engineMs: 50_000, relayMs: null, gatewayMs: 55_000, clientMs: 60_000 },
