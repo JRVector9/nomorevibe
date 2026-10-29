@@ -17,7 +17,7 @@ printf '%s\\n' "$PIPELINE_CONTROL_DATABASE_URL" > "${dir}/url"; printf '%s\\n' "
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 const run = (...args: string[]) => spawnSync("/bin/sh", ["-s", "--", ...args], { input: script, encoding: "utf8",
-  env: { PATH: `${dir}:/usr/bin:/bin`, NMV_APP_DIR: dir, DATABASE_URL: "postgres://user:secret@pgbouncer:6432/other?sslmode=require&application_name=x" } });
+  env: { PATH: `${dir}:/usr/bin:/bin`, NODE_ENV: "test", NMV_APP_DIR: dir, DATABASE_URL: "postgres://user:secret@pgbouncer:6432/other?sslmode=require&application_name=x" } });
 
 it("배포 뒤 OPEN은 정식 pipeline-control CAS로만 하고 기본은 dry-run, 직접 primary로 host만 바꾼다", () => {
   const dry = run("open", "1", "8", "jr", "release-order-open");

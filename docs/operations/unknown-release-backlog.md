@@ -26,6 +26,12 @@
   - 확정본 4단계 실패 코드 이름(`ops_runner_request_not_indeterminate`·`ops_runner_id_conflict`)과 exit 3/1 구분을 CLI 코드대로 고쳤다. 2단계 (b) 파일 경로·순서를 고치고, 관문 문서 6절 1번의 R1 사전 확인을 (e)로 넣었다.
   - 그대로 맞는 것: 표 3 SHA-256 10개, 0143/0144 sha256·저널 145항목·0144 인덱스 이름, deploy plan/run 출력 키(`planned`·`planSha256`·`selectedApps`·`serviceMutations`·`model-drain.safe.json`), 관문 문서의 `deploy_release.py`·`deploy_shared_images.py` 줄 번호, `package-lock.json`이 199a3ebb·공유 checkout과 같음(C5·S1 전제), DRAIN은 deferred route 검사 대상이 아님(OPEN만 해당).
 
+## 끝남 (2026-10-29, 작업 공간 `xaegis/da3bd4a3`, `xaegis/e84f26ca` 병합)
+- G1 결과 확인 환경 실패 원인: `trustedOpsPath`가 경로의 모든 상위 디렉터리 소유자가 0 또는 현재 uid인지 본다. 샌드박스 UID 매핑에서는 `/`·`/home` 등이 65534로 보여 `tests/ops-runner-operator.test.ts` 13건이 `ops_runner_untrusted_path`로 실패했다. 코드 결함이 아니라 시험이 실행 환경의 상위 소유자에 의존한 것이다.
+- G2 수정: `trustedOpsPath`·`readOperatorProfile`·`callOpsAdapter`·`runPreparedModelOps`가 선택 인자 `OpsPathTrust`(`root` 신뢰 루트, `trustedOwner` 소유자 판정)를 받는다. 인자가 없으면 지금과 같다(파일시스템 루트까지 검사, 소유자 0 또는 현재 uid). 운영 CLI `scripts/ops/admin-models-ops-runner.ts`는 이 인자를 넘기지 않는다. 신뢰 루트도 symlink·쓰기 권한·소유자를 똑같이 검사하고, 루트 밖 경로는 거절한다. 검사를 끄는 환경변수·플래그는 없다.
+- G3 시험: 경로마다 소유자를 바꾸던 `lstatSync` 흉내 대신 임시 디렉터리(`os.tmpdir()`)를 신뢰 루트로 주입했다. 루트 아래 symlink·group-writable·다른 소유자(주입 판정, 65534 흉내)·루트 밖 경로를 거절하는 시험과, 운영 기본값이 상위 디렉터리 하나라도 65534로 보이면 거절하는 시험을 더했다. 상위를 65534로 흉내 낸 실행에서 옛 시험은 13/13 실패, 새 시험은 통과했다(임시 사본, 커밋 안 함).
+- 지정 7파일 Vitest 38 → 40 PASS(시험 2건 추가). ops-runner·admin-models-ops 11파일/60 PASS. `next typegen` 뒤 `tsc --noEmit` 0. 병합해 들어온 `tests/release-order-capacity-control.test.ts`의 spawnSync env 타입 오류는 `NODE_ENV: "test"`를 넣어 고쳤다(대상 sh는 NODE_ENV를 읽지 않는다). 바뀐 파일 ESLint 0.
+
 ## 남음 (대표 실행)
 - 확정본 1~20단계. 0143(+0144) 적용·확인 → Supa(OPEN에서 시작, DRAIN 인계로 끝) → M1(인계 DRAIN 안, D2·D10 생략) → 미확인 0 → job-pause → deploy plan(--migration-verified)·run → M1 relay 재설치 → OPEN → job-resume → verify-prod-revision.
 - 권장: 이 브랜치를 PR로 main에 병합해 배포 `TARGET`에 넣는다(관리 화면 handoff 표시). 넣지 않아도 안전에는 영향이 없다.
