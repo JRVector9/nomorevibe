@@ -198,7 +198,7 @@ M1 모델 선택/readiness 수정과 상품·사유 번역 동일 등록부 정�
 - 막힘: Actions run40835749295 scope/check는 GitHub 계정 결제 실패 또는 spending limit으로 **잡 시작 전** 실패(annotation 확인). 나머지 코드 검사는 SKIPPED. 필수 CI 통과를 주장하지 않으며 병합하지 않음. 담당자의 Billing & plans 해결 뒤 CI 성공 확인만 남음. 결제·권한·워크플로 우회는 하지 않음.
 - 최종 relay 모델 ID/KEY 충돌 거절 회귀 추가. verify-model-config 72파일/1,032시험·typegen·tsc 재실행 PASS. PR의 GitHub CI 계정 차단은 운영자 해결 대상으로 유지.
 
-## 2026-10-29 가독성·처리량 리디자인 (진행 중)
+## 2026-10-29 가독성·처리량 리디자인 (구현·화면 검증·병합 완료)
 
 - 기준: 현재 브랜치에서 `git fetch origin && git merge origin/main`, main `00aa00e3` 통합. 이전 차선의 중복 충돌은 저장된 해결 결과가 main과 같음을 확인하고 정상 merge commit으로 보존했다.
 - 완료: 실제 settled 종료·접수 시각으로 중앙값/nearest-rank p90/시간당 종료 건수/판정 가능한 종료의 실패율을 구하는 순수 함수. 1시간·24시간 모델별/단계별 집계, 빈 표본·종료 없음·1건·10/11건 p90·분모0·시간 경계 7시험 통과.
@@ -257,3 +257,12 @@ M1 모델 선택/readiness 수정과 상품·사유 번역 동일 등록부 정�
 - 같은 검사 기준으로 실제 소스 위반 **24건 → 0건**. 화면 보조 글자를 모두13px 이상으로 올리고 작은 글자의 fg-3도 fg-2로 바꿨다. 기존 UI 기준을 낮추거나 예외를 추가하지 않았다.
 - `node node_modules/vitest/vitest.mjs run admin-models ops-runner stage-registry model-registry-operator operations-action-contract ui-contract --maxWorkers=4`: **25파일219시험 PASS**. 타입/범위 ESLint/diff PASS. 최종13px 화면을 1440/390에서 다시 캡처·클릭해 가로 넘침0/3열·1열/page error0을 확인했다. 이 결과가 앞선214시험·작은 글자 화면 자료를 대체한다.
 - 하단 참고 영역도 고정 저장바에 가리지 않도록 페이지 끝 여백을 확보했다. 실제 브라우저에서 참고 제목의 하단좌표가 저장바의 상단보다 위에 있음을 검사하고 펼치기까지 확인했다. 최종 검증은 두 크기에서 **각11항목**이다.
+
+
+### 2026-10-29 재실행 확인 — 완료 작업 재사용 / 현재 인덱스 번호0144
+
+- [PR #723](https://github.com/JRVector9/nomorevibe/pull/723)은 08:21:29 UTC main `dc85c494`에 병합됐다. 최종 PR [CI40840395111](https://github.com/JRVector9/nomorevibe/actions/runs/40840395111)와 main [CI40841554831](https://github.com/JRVector9/nomorevibe/actions/runs/40841554831)의 필수 `check` SUCCESS를 다시 조회했다. 화면 구현·116개 관련 시험·219개 확대 시험·1440/390 각11항목은 이전 완료 결과이며 이번에는 반복하지 않았다.
+- 최신 main `e5a41882`로 fast-forward했다. [PR #725](https://github.com/JRVector9/nomorevibe/pull/725)의 운영 migration 이력 정렬에 따라 이 화면의 인덱스는 현재 **`0144_admin_models_observation_indexes.sql`**이다. 위0141 표기는 이전 실행 당시 번호다. PR725/main [CI40843359390](https://github.com/JRVector9/nomorevibe/actions/runs/40843359390)의 `check`도 SUCCESS다. 리디자인 앱·계량 코드·admin-models 시험 파일은 이전 head와 차이가 없다.
+- 이번 최신화의 기본 SSH fetch는 간격을 두고3회 모두 exit128 / `Connection closed by UNKNOWN port 65535`였다. 같은 저장소의 명령별 HTTPS 경로로 fetch 후 정상 fast-forward에 성공했다. 영구 remote/SSH/인증 설정과 자격 증명은 변경하지 않았다.
+- 기존 개발사항 보고의 로컬 저장 영수증 `f48faddfdff726b2e0a4adef0573fcf875322b63ca3b70dfade82ae0c5707369` 및 복사된 첨부19개(4,330,081 bytes)의 존재를 확인했다. worker의 queued 영수증은 허브 수신 확인이 아니며, 현재 제공된 보고 도구에는 수신 조회 기능이 없어 동기화 완료를 단정하지 않는다. 기존 보고를 중복 생성하지 않고 후속 상태와 인덱스 번호 정정만 보고한다.
+- 이 구역의 구현·화면 검증·PR/CI·병합은 완료했다. 남은 운영 작업은 별도 담당자의 **0144 인덱스 적용 후 query plan·운영 값 확인**, 승인된 장비 접근/프로필 등록 및 실제 복구 드릴이다. 이번 재실행도 배포·DRAIN·재시작·운영 DB 읽기/쓰기·미확인 해제는 수행하지 않았다.
