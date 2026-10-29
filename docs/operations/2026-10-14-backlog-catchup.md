@@ -253,6 +253,7 @@ status age9.544초/tick3,929/quotaBlockedfalse였고 정상 후속 작업을 요
 - 관리 화면 `/admin` "판정 기준" 카드에 "빈 화면 본문 규칙" 선택(꺼짐·관측·적용, 1차 AI 발행 보호와 같은 낱말). 저장 바·기본값 되돌리기 창도 같은 낱말.
 
 재측정 — 구현한 `stubTextHits`를 rows.jsonl(AI 웹 심사 11,486건)에 그대로 걸었다. 기대치는 분석 스크립트 a3.py·a8.py 값이고 그대로 재현됐다.
+다시 잴 때는 `npx tsx scripts/measure-stub-text-rules.ts <rows.jsonl> --check`(DB·네트워크 없음, 지시 수치와 다르면 종료 코드 1).
 
 | 규칙 | 기대 거부/승인/보류 · 일치 | 실측(구현 코드) |
 | --- | --- | --- |
@@ -276,6 +277,31 @@ status age9.544초/tick3,929/quotaBlockedfalse였고 정상 후속 작업을 요
    노란 상자 "코드 기본값에 있는데 저장된 목록에 없는 8개" → **모두 더하기** → 화면 아래 저장 바에 "남의 사이트 +8"이 보이면
    **저장 — 다음 틱부터 적용**. "모두 더하기"는 빠진 것만 뒤에 붙이고 기존 21개는 건드리지 않는다(저장하면 29개). 다른 칸은 손대지 않는다.
    저장 뒤부터 새 판정과 1차 AI 직전 재확인에 적용된다(이미 판정·발행된 것은 그대로). judge가 바뀌므로 진행 중인 2차 심사는 `policy_changed`로 다시 준비된다(다른 판정 기준 저장과 같다).
+   저장은 `saveSettings`(행 잠금·zod 검증)를 거치고 운영 감사 `settings-save`에 바뀐 칸이 남는다. 저장 전·후에 아래 SQL ④⑤⑥으로 확인한다.
+
+```sql
+begin read only;
+set local statement_timeout = '30s';
+-- ④ 저장 전: 운영에 저장된 남의 사이트 목록(지금 21개)과, 그 목록에 아직 없는 8곳
+select jsonb_array_length(values->'judge'->'thirdPartyHosts') as stored_count,
+  (select array_agg(h order by h) from unnest(array['zenodo.org','arxiv.org','pkg.go.dev','codeberg.org','stackblitz.com',
+     'codefloe.com','zenn.dev','xdaforums.com']) h
+   where not (values->'judge'->'thirdPartyHosts') ? h) as missing_hosts,
+  values->'judge'->>'stubTextRules' as stub_text_rules,   -- null 이면 코드 기본값 shadow(관리 화면에서 한 번 저장하면 값이 채워진다)
+  updated_by, updated_at
+from crawl_settings where id = 1;
+-- ⑤ 저장 후: 29개, missing 0개, huggingface.co 없음 — 저장 전 21개가 모두 남았는지는 ④의 목록과 견준다
+select jsonb_array_length(values->'judge'->'thirdPartyHosts') as stored_count,
+  (values->'judge'->'thirdPartyHosts') ? 'huggingface.co' as has_huggingface,
+  values->'judge'->'thirdPartyHosts' as hosts
+from crawl_settings where id = 1;
+-- ⑥ 감사 기록: 최근 설정 저장(남의 사이트 +8, 빈 화면 본문 규칙 관측 → 적용)
+select id, created_at, actor, ok, error, detail->'changes' as changes
+from operations_audit
+where action = 'settings-save' and target = 'crawl_settings'
+order by created_at desc limit 5;
+rollback;
+```
 3. **하루 shadow 관측.** 아래 SQL ①②로 규칙별 AI 결정과 일치율을 잰다(시작 시각을 배포 완료 시각 UTC로 바꾼다). 위 재측정 표와 비교한다.
 4. **AI 승인과 엇갈린 50건 사람 검토.** SQL ③이 고정 순서로 50건을 뽑는다. 건마다 주소를 열어 "올림/거부"를 붙이고 규칙별로 센다.
    사람 기준으로 올려야 할 것이 한 규칙에 몰리면 그 규칙을 코드에서 고친 뒤(새 PR) 다시 shadow로 잰다.
