@@ -23,6 +23,15 @@
 - 이 차선 코드 보강: legacy AI1의 blocked hint 연결 누락을 PR710에서 수정. 두 모델이 모두 막히면 안전하게 기다리므로 기존3건은 별도 provider 경계 종료 증거에 따른 회수가 필요하다. 그룹 상향/SQL 초기화/TTL 해제/점유 파일 삭제는 하지 않았다.
 - 원본 진단 JSON과 SELECT 스크립트는 이 작업 공간 및 /tmp/review-stall-{rca,ai2}-3d813382.mjs에 보존(자격정보 없음). 운영 DB를 시험 DB로 사용하지 않았다.
 
+## 2026-10-29 추가 검증·현재 운영 막힘
+
+- 단계4 로컬: d7fea73c+7eaf8bef를 순서대로 cherry-pick. 백로그 conflict는 이 작업 최신 기록을 우선 보존하고 이전 이력도 유지했다. bash scripts/verify-review-stall.sh 종료0(typegen/tsc/lint, TS23파일338시험/Python71시험). 규칙 측정mjs syntax/eslint 성공. 자동 회수 env/서버/실행 권한 변경0, 해제 요청0.
+- M3 문서 checkout 부재를 해결하려고 전용 운영자 사본만 새로 준비했다: `ssh jr@m3Ultra 'test ! -e /Users/jr/Server/nomorevibe-release-review-stall-20261029 && git clone --no-checkout https://github.com/JRVector9/nomorevibe.git /Users/jr/Server/nomorevibe-release-review-stall-20261029 ...'`. clone은 `fatal: could not read Username for https://github.com: Device not configured`로 실패. SSH wrapper의0종료를 clone성공으로 세지 않았다.
+- 추가 읽기 명령 `ssh jr@m3Ultra 'gh repo view JRVector9/nomorevibe --json visibility --jq .visibility'`는 `HTTP 401: Requires authentication (https://api.github.com/graphql)` / `Try authenticating with: gh auth login`. 다른 호스트의 토큰 복사·auth설정 변경·GitHub 접근 우회는 하지 않았다.
+- **막힘(사람 필요): M3에서 기존 GitHub CLI 인증을 1회 복구(`gh auth login`)해야 한다.** 이후 새 clean operator checkout과 최신 main의 표준 scope/plan/run을 재개할 수 있다. 아직 npm deploy plan에 진입하지 못했으므로 Keychain 잠김/키부재 여부는 측정 없음이며 추정하지 않는다.
+- Oracle 동일SSH3회 모두 exit255 `Connection closed by UNKNOWN port 65535`. 실제 Oracle scheduler/watchdog 배포·가동은 미확인. 키/권한/known-host 설정 변경0.
+- 운영 배포0. 서버/gateway 강제종료·M1 지연/최저decode·disconnect abort가 미검증이므로 자동 회수 선언/4종 실제드릴/60분 새저장 증가 관측은 수행하지 않는다. 기존3건은 비소급 보호로 별도 종료증거 회수가 필요하다.
+
 ---
 
 # 미확인 요청 정체 차선 남은 일 (2026-10-28)
