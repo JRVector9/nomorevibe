@@ -22,6 +22,28 @@ import { SCREEN_REVIEW_NOTE } from "@/lib/screen-review/vision-review";
 import { ensureSchema, resetTables } from "./setup";
 
 vi.mock("server-only", () => ({}));
+/**
+ * 모델 용량 층 — 시험 DB 의 용량 층은 꺼져(disabled) 그대로 보내지만, 운영의 열린 용량 층은 화면 증명의 requestedUrl 이 입력 사진의 주소
+ * (product.url)와 다르면 미룬다(local-model-capacity.ts). 그 한 가지를 진짜 계약 함수로 여기서도 걸고, 항목별 미룸 까닭을 끼워 넣을 수 있게 한다.
+ */
+const capacity = vi.hoisted(() => ({ defer: new Map<string, string>(), proofs: [] as string[] }));
+vi.mock("@/lib/llm/local-model-capacity", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/llm/local-model-capacity")>();
+  const { freshLocalModelScreenProof } = await import("@/lib/llm/local-model-capacity-contract");
+  const { ModelCapacityDeferredError } = await import("@/lib/llm/capacity-deferred");
+  const withLocalModelCapacity: typeof actual.withLocalModelCapacity = async (value, run, baseRequest) => {
+    const slug = "slug" in value.target ? value.target.slug : "";
+    const reason = capacity.defer.get(slug);
+    if (reason) throw new ModelCapacityDeferredError(reason as ConstructorParameters<typeof ModelCapacityDeferredError>[0]);
+    if (value.target.kind === "audit" && value.target.purpose === "screen") {
+      capacity.proofs.push(value.screenProof?.requestedUrl ?? "");
+      const screenUrl = "snapshot" in value.input ? value.input.snapshot.product.url : null;
+      if (!freshLocalModelScreenProof(value.screenProof, screenUrl)) throw new ModelCapacityDeferredError("provider_contract_unavailable");
+    }
+    return actual.withLocalModelCapacity(value, run, baseRequest);
+  };
+  return { ...actual, withLocalModelCapacity };
+});
 
 /**
  * 화면 판별 잡(lib/screen-review/job.ts) — 화면 판별 대기(글이 적은 감사 거절)를 화면 서버로 그려 m1 Qwen 에 글+첫 화면으로 묻고 두 번째 의견(qwen-vision-auto)으로
@@ -84,6 +106,7 @@ beforeEach(async () => {
   await resetTables();
   model.answers.clear(); model.calls.length = 0; model.before = null;
   renderer.pages.clear(); renderer.calls.length = 0; renderer.fonts = { ko: true, ja: true, zh: true };
+  capacity.defer.clear(); capacity.proofs.length = 0;
   resetQwenAuditBackoff();
   resetScreenBackoff();
   await saveSettings({ enabled: true, firstReview: { provider: "abcllm", model: "[MLX] gpt-oss-120b" }, reviewConcurrency: 1 }, "test");
@@ -256,6 +279,68 @@ describe("화면 판별", () => {
     await tick();
     expect(renderer.calls).toEqual(["https://blocked.test"]);
     expect((await readScreenObservation("qwen3.8-flash-next+vision")).failures[key]).toMatchObject({ code: "page_blocked", count: 3 });
+    renderer.calls.length = 0;
+    await tick();
+    expect(renderer.calls).toEqual([]);
+  });
+
+  it("공개 주소가 출처 증명의 주소(입력 사진)와 다르거나 사진에 주소가 없으면 그리지 않고 바로 그만 본다 — 같은 틱의 다음 항목은 증명과 같은 주소로 그린다", async () => {
+    // 확신이 높은 순서 — 주소가 어긋난 둘이 머리다(운영 항목 51858: products.url 은 있고 crawl_candidates.product_url 은 비었다)
+    await judged([{ repo: "u/nourl", confidence: 0.99 }, { repo: "u/moved", confidence: 0.98 }, { repo: "u/ok", confidence: 0.9 }]);
+    await db.update(crawlCandidates).set({ productUrl: null }).where(eq(crawlCandidates.publishedSlug, "nourl"));
+    await db.update(crawlCandidates).set({ productUrl: "https://moved.example" }).where(eq(crawlCandidates.publishedSlug, "moved"));
+    const result = await tick();
+    expect(result).toMatchObject({ status: "completed" });
+    expect("degraded" in result ? result.degraded : undefined).toBeUndefined();
+    // 어긋난 것은 그리지도 묻지도 않는다. 맞는 것은 증명이 견주는 그 주소를 그리고 그 주소로 증명한다
+    expect(renderer.calls).toEqual(["https://ok.test"]);
+    expect(capacity.proofs).toEqual(["https://ok.test"]);
+    expect(model.calls.map((call) => call.repo)).toEqual(["u/ok"]);
+    expect((await opinions()).map((row) => [row.itemId, row.decision])).toEqual([[(await item("ok")).id, "approve"]]);
+    const observation = await readScreenObservation("qwen3.8-flash-next+vision");
+    expect(observation.failures[`a:${(await item("nourl")).id}`]).toMatchObject({ code: "screen_url_mismatch", count: 2 });
+    expect(observation.failures[`a:${(await item("moved")).id}`]).toMatchObject({ code: "screen_url_mismatch", count: 2 });
+    expect(observation.failures[`a:${(await item("ok")).id}`]).toBeUndefined();
+    expect(await screenReviewStatus(await getSettings())).toMatchObject({ givenUp: 2, remaining: 0 });
+    // 다음 틱도 다시 잡지 않는다
+    renderer.calls.length = 0;
+    await tick();
+    expect(renderer.calls).toEqual([]);
+  });
+
+  it("틱당 한 건이어도 주소가 어긋난 머리 항목이 대기를 막지 않는다 — 다음 틱에 다음 항목을 본다", async () => {
+    await judged([{ repo: "h/head", confidence: 0.99 }, { repo: "h/next", confidence: 0.9 }]);
+    await db.update(crawlCandidates).set({ productUrl: null }).where(eq(crawlCandidates.publishedSlug, "head"));
+    expect(await turn({ enabled: true, perTick: 1 })).toMatchObject({ ok: true });
+    await tick();
+    expect(renderer.calls).toEqual([]);
+    expect(model.calls).toEqual([]);
+    expect((await readScreenObservation("qwen3.8-flash-next+vision")).failures[`a:${(await item("head")).id}`])
+      .toMatchObject({ code: "screen_url_mismatch", count: 2 });
+    await tick();
+    expect(renderer.calls).toEqual(["https://next.test"]);
+    expect((await opinions()).map((row) => row.itemId)).toEqual([(await item("next")).id]);
+  });
+
+  it("용량 층의 미룸 — 그 항목의 앞선 요청이 끝을 모른 채 남은 것(dispatched)은 그 항목만 실패로 세고 다음으로, 용량 가득은 이 틱을 멈춘다", async () => {
+    await judged([{ repo: "m/pending", confidence: 0.99 }, { repo: "m/full", confidence: 0.98 }, { repo: "m/after", confidence: 0.9 }]);
+    capacity.defer.set("pending", "dispatched");
+    capacity.defer.set("full", "capacity");
+    await tick();
+    // pending 은 그려 보았다가 미뤄졌고(실패 한 번), full 에서 전역 미룸으로 멈춰 after 는 그리지 않는다
+    expect(renderer.calls).toEqual(["https://pending.test", "https://full.test"]);
+    expect(await opinions()).toEqual([]);
+    const observation = await readScreenObservation("qwen3.8-flash-next+vision");
+    expect(observation.failures[`a:${(await item("pending")).id}`]).toMatchObject({ code: "model_dispatch_unsettled", count: 1 });
+    expect(observation.failures[`a:${(await item("full")).id}`]).toBeUndefined();
+    // 용량이 풀리면 full·after 를 본다. pending 은 두 번째 실패로 하루 쉰다
+    capacity.defer.delete("full");
+    renderer.calls.length = 0;
+    await tick();
+    expect(renderer.calls).toEqual(["https://pending.test", "https://full.test", "https://after.test"]);
+    expect((await readScreenObservation("qwen3.8-flash-next+vision")).failures[`a:${(await item("pending")).id}`])
+      .toMatchObject({ code: "model_dispatch_unsettled", count: 2 });
+    expect((await opinions()).map((row) => row.itemId).sort()).toEqual([(await item("full")).id, (await item("after")).id].sort());
     renderer.calls.length = 0;
     await tick();
     expect(renderer.calls).toEqual([]);

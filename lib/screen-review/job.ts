@@ -34,6 +34,8 @@ import { reviewWithScreenshot, screenInput, screenModelConfig, screenPromptConfi
  * 실패: 화면 서버 탈(닿지 않음·401/403·5xx·약속과 다른 답)·모델 서버 탈(닿지 않음·5xx·401/403/404, 시간 초과 세 번 잇달아)은 그 쪽만 1분에서 두 배씩
  * 15분까지 물러난다. 동시 그리기 상한(429)·모델 붐빔(429)은 이 틱만 멈춘다. 페이지 탓(막힘·닿지 않음·4xx/5xx·그리기 시간 초과)과 항목 탓(형식 오류·
  * 입력 초과)은 그 항목을 두 번까지 보고 하루 쉰 뒤 한 번 더 본다(관측의 failures — 원본이 없는 것처럼 다시 해도 같은 것은 바로 쉰다).
+ * 공개 주소(products.url)가 출처 증명이 견주는 입력 사진의 주소와 다르거나 사진에 주소가 없으면 그리지 않고 바로 쉰다(screen_url_mismatch).
+ * 모델 용량 층의 미룸은 이 틱을 멈추되, 그 항목의 앞선 요청이 끝을 모른 채 남은 것(dispatched)만은 그 항목의 실패로 세고 넘어간다.
  * 답을 받은 것(판단 보류·낮은 확신 포함)은 화면 의견이 적혀 대기에서 빠지고 열린 채 사람이 본다. 화면 서버가 샌드박스를 끄고 있거나 글꼴(한·일·중)이 없으면
  * 그리지 않는다(두부 화면을 모델이 오판한다 — 2026-10-22 재판정에서 겪었다).
  */
@@ -211,9 +213,16 @@ export async function reviewThinPagesByScreen(ctx: JobContext<null>, deps: Scree
     }
     // 수집 원본이 없는 항목도 대기에 든다(글을 확인할 수 없다) — 입력(증거·README)을 만들 수 없어 사람이 본다
     if (!input) { failItem(target, "no_source", "input", true); continue; }
-    // 판정할 주소는 공개 목록이 여는 그 주소(대기의 url — 보류 918건 재판정과 같다)
-    const url = target.url || input.snapshot.product.url;
-    if (!url) { failItem(target, "no_url", "input", true); continue; }
+    // 그릴 주소는 출처 증명이 견주는 그 주소(입력 사진의 product.url = 수집 후보의 productUrl)다 — 모델 용량 층은 증명의 requestedUrl 이
+    // 그것과 다르면 미루고, 도메인 증명은 공개 목록이 여는 주소(대기의 url = products.url)와도 같기를 바란다. 둘이 다르거나 사진에 주소가 없으면
+    // 그 항목만의 탓이라 그리지 않고 바로 사람에게 넘긴다(입력 사진은 sourceRevisionHash 에 묶여 고치지 않는다). 그냥 그리면 용량 층이 매번
+    // 미뤄 틱이 멈추고, perTick 1 이면 다음 틱도 같은 머리 항목을 다시 잡아 대기 전체가 막힌다(2026-10-29 항목 51858).
+    const bound = input.snapshot.product.url;
+    if (!bound || (target.url && target.url !== bound)) {
+      failItem(target, !bound && !target.url ? "no_url" : "screen_url_mismatch", "input", true);
+      continue;
+    }
+    const url = bound;
 
     const renderStarted = Date.now();
     const rendered = await requestRender(url, { config: render, request, signal: ctx.signal,
@@ -250,7 +259,14 @@ export async function reviewThinPagesByScreen(ctx: JobContext<null>, deps: Scree
           requestedAt: new Date(renderStarted).toISOString(), receivedAt: renderedReceivedAt } }), request);
     } catch (error) {
       tally.modelMs += Date.now() - modelStarted;
-      if (error instanceof ModelCapacityDeferredError) { ctx.log("screen_review.model_deferred", { reason: error.reason }); break; }
+      if (error instanceof ModelCapacityDeferredError) {
+        ctx.log("screen_review.model_deferred", { reason: error.reason, itemId: target.itemId });
+        // 이 항목(같은 입력)의 앞선 요청이 끝을 모른 채 남았다 — 그 항목만 다시 보낼 수 없으니 실패로 세고 다음 항목으로 간다
+        if (error.reason === "dispatched") { failItem(target, "model_dispatch_unsettled", "model"); continue; }
+        // 나머지(용량 가득·계약 없음·멈추는 중·예약 잃음 등)는 전역일 수 있어 이 틱을 멈춘다. provider_contract_unavailable·reservation_lost 는
+        // 전역 까닭과 항목 까닭이 한 이름이라 여기서 가르지 않는다 — 항목 탓인 주소 불일치는 위에서 그리기 전에 거른다
+        break;
+      }
       if (!(error instanceof QwenDirectError)) throw error;
       if (error.code === "qwen_cancelled") break;
       // 줄인 제한 시간(틱 끝)에 걸렸다 — 서버 탓도 항목 탓도 아니다
