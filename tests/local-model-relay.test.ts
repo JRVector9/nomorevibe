@@ -67,8 +67,10 @@ describe("M1 사설 모델 relay", () => {
     const env = { LOCAL_MODEL_RELAY_HOST: "100.80.1.2", LOCAL_MODEL_RELAY_ALLOW_FROM: "100.90.1.2,100.91.1.2",
       LOCAL_MODEL_RELAY_TOKEN_FILE: relayKey, LOCAL_MODEL_RELAY_UPSTREAM_TOKEN_FILE: upstreamKey,
       LOCAL_MODEL_RELAY_STATE_DIR: directory, LOCAL_MODEL_RELAY_VERSION: "c".repeat(40) };
-    expect(localModelRelayConfig(env)).toMatchObject({ host: "100.80.1.2", port: 8792, model: MODEL, deploymentRevision: "unverified" });
+    // Without an override the relay allows exactly the registry's M1 relay entry, not the old M1 Qwen id.
     const gemma = "mlx-community--gemma-4-26b-a4b-it-4bit";
+    expect(localModelRelayConfig(env)).toMatchObject({ host: "100.80.1.2", port: 8792, model: gemma, models: [gemma], equipment: "m1", deploymentRevision: "unverified" });
+    expect(() => localModelRelayConfig({ ...env, LOCAL_MODEL_RELAY_MODEL: MODEL })).toThrow("relay_model_not_allowed");
     expect(localModelRelayConfig({ ...env, LOCAL_MODEL_RELAY_MODEL: gemma, LOCAL_MODEL_RELAY_MODEL_FAMILY: "gemma4-26b" }).model).toBe(gemma);
     expect(() => localModelRelayConfig({ ...env, LOCAL_MODEL_RELAY_MODEL: "[m1] " + gemma })).toThrow("relay_model_not_allowed");
     expect(() => localModelRelayConfig({ ...env, LOCAL_MODEL_RELAY_MODEL: gemma, LOCAL_MODEL_RELAY_MODEL_FAMILY: MODEL })).toThrow("relay_model_family_mismatch");
