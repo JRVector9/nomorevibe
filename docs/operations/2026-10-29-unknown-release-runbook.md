@@ -17,7 +17,7 @@
 | M1 요청 | `29877f65-9f95-4efb-88f9-aea5f39a28b2` (product-translate, `[m1] qwen3.8-flash-next`, dispatch 2026-10-28T13:58:16.331Z, C=40768) |
 | 원 relay 요청 | `6571d6c8-002f-4f5f-b399-47e40876ee43` |
 | Supa 요청 | `65f8c399-ff4b-47bc-8f4d-6e4a682cf6a7` (crawl-agent-review, supa `vllm.service`) |
-| 도구 위치 | `SHA=1f52c9efea0bfab555567c17889cf919f41938be`(PR #730 병합 main, 확정본 표 3의 `REL`·배포 `TARGET`). `SRC=/home/ubuntu/projects/nomorevibe`에서 `git -C "$SRC" fetch origin main` 뒤 `git show/archive`로만 쓴다. B절 `T`도 이 SHA다. 처음 작성 브랜치 `xaegis/4ed4ea33`·`xaegis/7b7a2d23` 작업 공간은 더 쓰지 않는다. 0143 전 명령은 [사전 점검 묶음](2026-10-29-pre-0143-check-bundle.md)을 그대로 친다 |
+| 도구 위치 | `SHA=f4fe5958290713d95e2ce618126fbbf651cd3d95`(PR #735 병합 main, 확정본 표 3의 `REL`. 배포 `TARGET`은 plan 시점의 main 머리이고 확정본 3절 「배포 TARGET 확인」으로 정한다). `SRC=/home/ubuntu/projects/nomorevibe`에서 `git -C "$SRC" fetch origin main` 뒤 `git show/archive`로만 쓴다. B절 `T`도 이 SHA다. 처음 작성 브랜치 `xaegis/4ed4ea33`·`xaegis/7b7a2d23` 작업 공간은 더 쓰지 않는다. 0143 전 명령은 [사전 점검 묶음](2026-10-29-pre-0143-check-bundle.md)을 그대로 친다 |
 | 유지보수 컨테이너 | m3ultra Swarm 앱 `app-navigate-neural-system-yf43c7`. **이미지 `/app`에는 `scripts/ops`가 없다**(`.dockerignore` 7행, 199a3ebb·main 같음. `/app`에서 `node … scripts/ops/…`는 `ERR_MODULE_NOT_FOUND`). 컨테이너 안의 모든 단계는 C5로 `/tmp`에 스테이징한 검토 소스에서만 실행한다(`in-container.sh`, `capacity-control.sh`) |
 | 직접 primary | `100.99.209.55:5432/nomorevibe`. 10/28 0140~0142를 적용한 경로다. 컨테이너 `DATABASE_URL`의 계정을 쓰고 host/port/db만 바꾼다(`in-container.sh`). URL은 출력하지 않는다 |
 
@@ -76,7 +76,7 @@
 ```sh
 SRC=/home/ubuntu/projects/nomorevibe; git -C "$SRC" fetch origin main
 W=$HOME/nmv-release-29877f65; (umask 077; mkdir -p "$W/pre")
-SHA=1f52c9efea0bfab555567c17889cf919f41938be; git -C "$SRC" merge-base --is-ancestor "$SHA" origin/main && echo rel_on_main     # PR #730 병합 main. 사전 점검 묶음 1절과 같다
+SHA=f4fe5958290713d95e2ce618126fbbf651cd3d95; git -C "$SRC" merge-base --is-ancestor "$SHA" origin/main && echo rel_on_main     # PR #735 병합 main. 사전 점검 묶음 1절과 같다
 git -C "$SRC" show "$SHA:scripts/ops/release-29877f65/collect-m1.sh" | sha256sum
 git -C "$SRC" show "$SHA:scripts/ops/release-29877f65/collect-docker.sh" | sha256sum
 git -C "$SRC" show "$SHA:scripts/ops/release-29877f65/in-container.sh" | sha256sum
@@ -241,7 +241,7 @@ xa-ssh m3ultra "$DK exec -i $CID sh -s -- open 1 7 $OP release-29877f65-done --e
 ## B-4. 명령
 
 ### S1. 실행 셸 확인
-- 위치: gpu3090 **실제 로그인 셸**(대표). `REL=1f52c9efea0bfab555567c17889cf919f41938be`(PR #730 병합 main), `T=/home/ubuntu/ops/nmv-runner-$REL` (runner 인계·접수 CLI가 이 커밋에 있다)
+- 위치: gpu3090 **실제 로그인 셸**(대표). `REL=f4fe5958290713d95e2ce618126fbbf651cd3d95`(PR #735 병합 main), `T=/home/ubuntu/ops/nmv-runner-$REL` (runner 인계·접수 CLI가 이 커밋에 있다)
 ```sh
 id -u; cat /proc/self/uid_map          # 0 0 4294967295 이어야 한다(샌드박스면 중단)
 ls -l /usr/bin/python3 /usr/bin/ssh; node -v
