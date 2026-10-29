@@ -7,7 +7,7 @@ import { redirect } from "next/navigation";
 import { currentAdmin } from "@/lib/auth/admin";
 import { getSettings, settingsFormVersion } from "@/lib/crawl/settings";
 import { listGatewayModels } from "@/lib/crawl/agent-review-gateway";
-import { deepseekReviewReady } from "@/lib/crawl/deepseek-review";
+import { configuredHumanModelsReady } from "@/lib/operations/admin-models-human";
 import { currentModelEnv } from "@/lib/operations/model-env";
 import { PageStamp } from "../components/PageStamp";
 import { HumanReviewSwitch } from "../review/HumanReviewSwitch";
@@ -51,9 +51,9 @@ export default async function ModelsPage() {
     <Suspense fallback={<p aria-busy="true">검색 모델 서버 확인 중…</p>}><SearchModelsSlot /></Suspense>
     <section className="flex flex-col gap-3 rounded-xl border border-line bg-bg-card p-5" aria-labelledby="human-model-heading">
       <h2 id="human-model-heading" className="text-[18px] font-semibold">사람 검토 단계</h2>
-      <p className="text-[13px] text-fg-2">직접 판단: 사람이 심사 큐에서 결정합니다. DeepSeek 위임을 켜면 기존 정책에 따라 자동 판단하고, 불확실하거나 실패한 항목은 사람이 검토합니다.</p>
-      <Suspense fallback={<p aria-busy="true">DeepSeek 연결 확인 중…</p>}>
-        <HumanSlot enabled={settings.humanReview.enabled} generation={settings.humanReview.generation} />
+      <p className="text-[13px] text-fg-2">직접 판단: 사람이 심사 큐에서 결정합니다. 위에서 선택한 사람 위임 검수 모델을 켜면 기존 정책에 따라 자동 판단하고, 불확실하거나 실패한 항목은 사람이 검토합니다.</p>
+      <Suspense fallback={<p aria-busy="true">사람 위임 모델 연결 확인 중…</p>}>
+        <HumanSlot enabled={settings.humanReview.enabled} generation={settings.humanReview.generation} keys={settings.stageModelPools?.["human-review"] ?? []} />
       </Suspense>
       <Link prefetch={false} href="/admin/review" className="text-[13px] font-semibold text-accent-ink">사람이 검토할 심사 큐 열기 →</Link>
     </section>
@@ -82,6 +82,7 @@ async function SearchModelsSlot() {
   return <SearchModelConstraints health={await modelServerHealth()} embeddingModel={EMBEDDING_MODEL} dimensions={EMBEDDING_DIMENSIONS} />;
 }
 
-async function HumanSlot({ enabled, generation }: { enabled: boolean; generation: number }) {
-  return <HumanReviewSwitch key={generation} enabled={enabled} generation={generation} ready={await deepseekReviewReady()} />;
+async function HumanSlot({ enabled, generation, keys }: { enabled: boolean; generation: number; keys: string[] }) {
+  return <HumanReviewSwitch key={generation} enabled={enabled} generation={generation} ready={await configuredHumanModelsReady(keys)}
+    modelLabel="선택 모델" modelLocation="사람 위임 검수 풀 · 비어 있으면 배포 기본 모델" />;
 }

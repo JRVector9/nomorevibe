@@ -21,7 +21,7 @@
 - 요청된 xaegis/88105c3c는 로컬 refs와 origin ls-remote에 없다. 같은 UI 변경을 최신 main 위에 직접 적용하는 최소 변경을 선택했다. 다른 브랜치 이력 재작성 없음.
 - 최초 `npx --no-install vitest run admin-models`: 파일 없음으로 exit1. 새 범위 시험을 추가해 다시 검증한다.
 
-## 남음
+## 착수 당시 남은 목록 (완료 여부는 위 현재 상태와 아래 최종 기록 기준)
 
 1. 저장 UI 브라우저 확인 → 단독 PR → 필수 CI → 병합.
 2. 등록부 PR #713 (feat/model-config-registry) 병합 후 단계별 전체 모델 관리. 2026-10-29 최초 확인 OPEN. 해당 작업 파일 직접 변경 금지.
@@ -121,3 +121,10 @@
 7. M3 Keychain 복구 뒤 표준 drain 배포, 운영 화면에서 Supa+GPT OSS 저장, 두 모델의 새 업무 성공을 운영 DB로 확인.
 
 운영 배포0/운영 설정 저장0/unknown 해제0/유료 DeepSeek 호출0/권한 설정 변경0/SQL 초기화0. 원본 사용자 폴더의 변경과 미추적 파일은 보존했다.
+
+## 사람 위임 풀의 활성화 검증 보완 (#717)
+
+- 기본 DeepSeek만 확인하던 활성화 경로를 수정했다. 저장한 사람 위임 풀의 모든 모델을 실제 선택 범위에서 `/models`로 확인한 뒤 정식 setHumanReviewEnabled로 저장한다. 짧은 유료/추론 호출은 하지 않는다.
+- 연결 확인과 저장 사이 풀이 바뀌면 잠근 설정 행에서 expectedModelPoolKeys를 비교해 거절하고 실패 감사 기록을 남긴다. 성공 기록에는 실제 선택 key·모델·장비·제공자를 남긴다. 끄기는 연결 미확인이어도 계속 허용한다. 모델 화면의 위임 제목/설명도 선택 풀을 가리킨다.
+- `npx --no-install vitest run admin-models`: **9파일43시험 PASS**. 같은 범위에 기존 human-deepseek-review를 더한 **10파일73시험 PASS**. TypeScript noEmit/변경 파일 ESLint(--max-warnings 0)/PR 전체 diff check PASS. 브라우저 실행·스크린샷은 앞서 기록한 OS 권한/Next 네트워크 제한으로 미완료이며, 정적 렌더 시험을 실제 화면 확인으로 세지 않는다.
+- #717 첫 검색 표시 head2a3917d9의 CI40810209449도 전체 필수 check SUCCESS. 이후 위임 풀 보완 head의 필수 CI를 다시 요구하며, 앞선 head의 성공을 새 head의 성공으로 사용하지 않는다.
