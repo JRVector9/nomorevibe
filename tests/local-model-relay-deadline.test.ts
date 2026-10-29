@@ -41,7 +41,7 @@ afterEach(async () => {
 async function start(handler: http.RequestListener, over: Partial<LocalModelRelayOptions> = {}, state = tempDir()) {
   const upstreamPort = await listen(http.createServer(handler));
   const service = createLocalModelRelay({ token: TOKEN, upstreamToken: UPSTREAM_TOKEN, allowFrom: ["127.0.0.1"], model: MODEL,
-    relayRevision: "c".repeat(40), deploymentRevision: "d".repeat(40), store: fileRelayReceiptStore(state), upstreamPort, ...over });
+    relayRevision: "c".repeat(40), deploymentRevision: "d".repeat(40), engineBoundEffectiveAt: "2026-01-01T00:00:00.000Z", store: fileRelayReceiptStore(state), upstreamPort, ...over });
   const base = `http://127.0.0.1:${await listen(service)}`;
   const chat = (text: string, id = randomUUID()) => fetch(base + "/v1/chat/completions", { method: "POST", headers: {
     authorization: `Bearer ${TOKEN}`, "content-type": "application/json", [LOCAL_MODEL_RELAY_REQUEST_HEADER]: id }, body: text });
@@ -62,7 +62,7 @@ describe("relay 기한 사다리: 엔진 < relay", () => {
   it("refuses a relay deadline that is not longer than the declared engine deadline plus skew", () => {
     const store = fileRelayReceiptStore(tempDir());
     const base = { token: TOKEN, upstreamToken: UPSTREAM_TOKEN, allowFrom: ["127.0.0.1"], model: MODEL,
-      relayRevision: "c".repeat(40), deploymentRevision: "d".repeat(40), store };
+      relayRevision: "c".repeat(40), deploymentRevision: "d".repeat(40), engineBoundEffectiveAt: "2026-01-01T00:00:00.000Z", store };
     expect(() => createLocalModelRelay({ ...base, upstreamTimeoutMs: 30_000, engineDeadlineMs: 28_000 })).toThrow("relay_deadline_order_invalid");
     expect(() => createLocalModelRelay({ ...base, upstreamTimeoutMs: 30_000, engineDeadlineMs: 27_999 })).not.toThrow();
   });
@@ -82,7 +82,7 @@ describe("relay 기한 사다리: 엔진 < relay", () => {
     const receipt = JSON.parse(readFileSync(path.join(relay.state, `${id}.json`), "utf8")) as RelayReceipt;
     expect(receipt).toMatchObject({ state: "indeterminate", error: "upstream_timeout", terminal: null });
     const archive = JSON.parse(readFileSync(path.join(relay.state, `${id}${LOCAL_MODEL_RELAY_DEADLINE_RELEASE_SUFFIX}`), "utf8"));
-    expect(archive).toMatchObject({ kind: "engine_deadline_elapsed", requestId: id, engineDeadlineMs: 50, skewMs: 2_000 });
+    expect(archive).toMatchObject({ kind: "engine_deadline_elapsed", requestId: id, engineDeadlineMs: 50, skewMs: 2_000, engineBoundEffectiveAt: "2026-01-01T00:00:00.000Z" });
     expect(existsSync(path.join(relay.state, "active.json"))).toBe(false);
     // A later DB boundary release for the same request still finds the relay side done.
     expect(() => checkRelayBoundaryPending(relay.state, id)).not.toThrow();
@@ -104,7 +104,7 @@ describe("relay 기한 사다리: 엔진 < relay", () => {
     const directory = tempDir();
     const started = new Date(Date.now() - 10_000).toISOString();
     const { requestId, receiptBytes } = seedIndeterminate(directory, started);
-    const policy = { engineDeadlineMs: 9_000, skewMs: 2_000 };
+    const policy = { engineDeadlineMs: 9_000, skewMs: 2_000, enforcedAfterMs: Date.parse("2026-01-01T00:00:00.000Z") };
     const waiting = releaseRelayAfterEngineDeadline(directory, requestId, policy);
     expect(waiting).toMatchObject({ kind: "waiting", requestId });
     expect(existsSync(path.join(directory, "active.json"))).toBe(true);
@@ -116,9 +116,9 @@ describe("relay 기한 사다리: 엔진 < relay", () => {
   it("never releases an in-flight receipt or a mismatched request id", () => {
     const directory = tempDir();
     const { requestId } = seedIndeterminate(directory, new Date(Date.now() - 600_000).toISOString(), "in_flight");
-    expect(() => releaseRelayAfterEngineDeadline(directory, requestId, { engineDeadlineMs: 1_000, skewMs: 2_000 }))
+    expect(() => releaseRelayAfterEngineDeadline(directory, requestId, { engineDeadlineMs: 1_000, skewMs: 2_000, enforcedAfterMs: Date.parse("2026-01-01T00:00:00.000Z") }))
       .toThrow("relay_recovery_request_mismatch");
-    expect(() => releaseRelayAfterEngineDeadline(directory, randomUUID(), { engineDeadlineMs: 1_000, skewMs: 2_000 }))
+    expect(() => releaseRelayAfterEngineDeadline(directory, randomUUID(), { engineDeadlineMs: 1_000, skewMs: 2_000, enforcedAfterMs: Date.parse("2026-01-01T00:00:00.000Z") }))
       .toThrow("relay_recovery_request_mismatch");
     expect(existsSync(path.join(directory, "active.json"))).toBe(true);
   });
@@ -147,4 +147,25 @@ describe("relay 기한 사다리: 엔진 < relay", () => {
     expect(ok.status).toBe(200); await ok.text();
     expect(calls).toBe(1);
   });
+});
+
+
+it("never applies a newly declared engine bound retroactively to a stored unknown", () => {
+  const directory = tempDir();
+  const { requestId, receiptBytes } = seedIndeterminate(directory, "2026-10-27T00:00:00.000Z");
+  expect(() => releaseRelayAfterEngineDeadline(directory, requestId,
+    { engineDeadlineMs: 1000, skewMs: 2000, enforcedAfterMs: Date.parse("2026-10-28T00:00:00.000Z") }))
+    .toThrow("relay_engine_bound_not_effective_at_dispatch");
+  expect(existsSync(path.join(directory, "active.json"))).toBe(true);
+  expect(readFileSync(path.join(directory, `${requestId}.json`)).equals(receiptBytes)).toBe(true);
+});
+
+
+it("keeps the active marker if an existing release archive does not match its receipt", () => {
+  const directory = tempDir();
+  const { requestId } = seedIndeterminate(directory, "2026-10-27T00:00:00.000Z");
+  writeFileSync(path.join(directory, `${requestId}${LOCAL_MODEL_RELAY_DEADLINE_RELEASE_SUFFIX}`), JSON.stringify({ requestId }));
+  expect(() => releaseRelayAfterEngineDeadline(directory, requestId, { engineDeadlineMs: 1000, skewMs: 2000, enforcedAfterMs: 0 }))
+    .toThrow("relay_deadline_archive_mismatch");
+  expect(existsSync(path.join(directory, "active.json"))).toBe(true);
 });

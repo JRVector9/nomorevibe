@@ -1,3 +1,5 @@
+import { scopedModelBaseUrl, scopedRequestTimeout } from "@/lib/llm/model-registry";
+import { scopedModel } from "@/lib/llm/model-registry";
 import { configuredModel, modelBaseUrl, modelLimits } from "@/lib/llm/model-registry";
 import { createHash } from "node:crypto";
 import { assertTextModelAdmission } from "@/lib/llm/text-capacity-admission";
@@ -179,14 +181,14 @@ export async function writeTagline(evidence: TaglineEvidence, options: {
 }): Promise<TaglineResult> {
   const key = process.env.ABCLLM_API_KEY?.trim();
   if (!key) return { ok: false, error: "no_key" };
-  await assertTextModelAdmission({ routeId: "crawl-tagline", model: options.model ?? TAGLINE_MODEL });
-  const wire = crawlTaglineGatewayWire(evidence, options.model ?? TAGLINE_MODEL);
+  await assertTextModelAdmission({ routeId: "crawl-tagline", model: options.model ?? scopedModel("crawl-tagline", TAGLINE_MODEL) });
+  const wire = crawlTaglineGatewayWire(evidence, options.model ?? scopedModel("crawl-tagline", TAGLINE_MODEL));
   try {
-    const response = await (options.request ?? fetch)(`${BASE_URL}/chat/completions`, {
+    const response = await (options.request ?? fetch)(`${scopedModelBaseUrl("crawl-tagline", BASE_URL, "abcllm")}/chat/completions`, {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
       body: wire,
-      signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(Math.max(1, options.timeoutMs))]) : AbortSignal.timeout(Math.max(1, options.timeoutMs)),
+      signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(Math.max(1, scopedRequestTimeout("crawl-tagline", options.timeoutMs)))]) : AbortSignal.timeout(Math.max(1, scopedRequestTimeout("crawl-tagline", options.timeoutMs))),
     });
     if (!response.ok) {
       return { ok: false, error: response.status === 404 ? "model_unavailable" : response.status === 429 ? "rate_limit" : `http_${response.status}` };

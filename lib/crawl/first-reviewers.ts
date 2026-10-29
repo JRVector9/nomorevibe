@@ -1,3 +1,4 @@
+import { modelCandidates, modelRequestName, type ModelEnvironment } from "@/lib/llm/model-registry";
 import { sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import type { FirstReviewer } from "./agent-review";
 import { sameUnderlyingModel } from "./review-model-identity";
@@ -49,8 +50,8 @@ export function selectFirstReviewer(pool: FirstReviewer[], candidateId: number,
     if (identities.size !== 1 || !hasFirstReviewer(pool, active[0])) return null;
     return pool.find(row => row.provider === active[0].provider && row.model === active[0].model)!;
   }
-  const previous = attempts.find(row => hasFirstReviewer(pool, row));
-  if (previous) return pool.find(row => row.provider === previous.provider && row.model === previous.model)!;
+  // The latest sent attempt pins a retry even if its model was removed from the pool.
+  if (attempts.length) return pool.find(row => row.provider === attempts[0].provider && row.model === attempts[0].model) ?? null;
   const start = (candidateId - 1) % pool.length;
   if (avoid.untouched && attempts.length === 0) for (let offset = 0; offset < pool.length; offset++) {
     const reviewer = pool[(start + offset) % pool.length];
@@ -65,4 +66,12 @@ export const firstReviewDeferralIsLocal = (reason: ModelCapacityDeferredReason):
 
 export class FirstReviewModelDeferredError extends ModelCapacityDeferredError {
   constructor(reason: ModelCapacityDeferredReason, readonly reviewer: FirstReviewer) { super(reason); }
+}
+
+/** Suggestions only. Stored primary/additional selections and retry pinning remain authoritative. */
+export function firstReviewCandidates(env: ModelEnvironment = process.env): FirstReviewer[] {
+  return modelCandidates("first-review", env).map(model => {
+    if (!["abcllm", "claude-cli", "grok-cli"].includes(model.provider)) throw new Error(`first_review_candidate_provider_unsupported:${model.key}`);
+    return { provider: model.provider as FirstReviewer["provider"], model: modelRequestName(model) };
+  });
 }

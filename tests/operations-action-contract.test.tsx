@@ -5,7 +5,7 @@ import { ACK_ACTION, ACK_DAYS, BACKLOG_KEYS, UNACK_ACTION, type AttentionAck, ty
 import { actionCounts, buildActions, deriveStatus, rememberCriticalCount, splitActions, type ActionInputs, type DerivedStatus } from "@/app/(operator)/admin/status/attention";
 import { ACTION_LINKS, jobHref } from "@/app/(operator)/admin/status/action-links";
 import { AttentionList, type ActionItem } from "@/app/(operator)/admin/status/dashboard/AttentionList";
-import { ACTION_NOW, brokenActionInputs, brokenWorkerProgress, unreadableActionInputs } from "./fixtures/operations-actions";
+import { ACTION_NOW, ACTION_MODEL_OPTIONS, brokenActionInputs, brokenWorkerProgress, unreadableActionInputs } from "./fixtures/operations-actions";
 import { humanOverview } from "./fixtures/human-queue";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh() {} }) }));
@@ -147,7 +147,7 @@ describe("조치 계약 — 키·급·숫자·단위·제목·설명·가는 곳
   const broken = brokenActionInputs();
   const agent = (value: Record<string, unknown>, observedAt = ACTION_NOW): ActionInputs => ({ ...broken, ops: { ...broken.ops, serviceInstances: [
     ...broken.ops.serviceInstances.filter((item) => item.role !== "connect-agent"),
-    { key: "service:connect-agent:m3", role: "connect-agent", instanceId: "m3", observedAt: observedAt.toISOString(), value: { config: { primary: { model: "gpt-5.5" }, fallback: { model: "sonnet" } }, ...value } },
+    { key: "service:connect-agent:m3", role: "connect-agent", instanceId: "m3", observedAt: observedAt.toISOString(), value: { modelOptions: ACTION_MODEL_OPTIONS, config: { primary: { model: "gpt-5.5" }, fallback: { model: "sonnet" } }, ...value } },
   ] } } as ActionInputs);
   const attention = (patch: Partial<NonNullable<ActionInputs["attention"]>>) => ({ ...broken, attention: { ...broken.attention!, ...patch } }) as ActionInputs;
   const variants: Array<[name: string, inputs: ActionInputs, key: string, expected: Partial<ContractRow>, workerProgress?: DerivedStatus["workerProgress"]]> = [

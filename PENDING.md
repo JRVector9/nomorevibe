@@ -1,5 +1,24 @@
 # 남은 작업
 
+## second-review 교착·거짓 긴급 경보·SQLSTATE — 2026-10-29, 운영 미적용(코드·로컬 DB 시험만)
+
+- **교착(40P01)**: stale 재검수 컨트롤러가 후보 TX 안에서 `agent-evidence-refresh`(카탈로그 뒤)를 요청한 뒤 `second-review` 를 FOR SHARE 로 다시 봤고, scheduler `requestDueJobs` 는 그 반대 순서로 잠가 컨트롤러가 약 한 시간에 한 번 졌다. 수집 잡 깨움을 commit 뒤 별도 TX(fence → 카탈로그 순서)로 옮기고 회차마다 잡당 한 번만 보낸다. 이미 due 인 스캔은 다시 깨우지 않는다. 컨트롤러 TX 는 40P01 이면 한 번만 다시 한다(`crawl.second_review_controller_retry`). 이전·카탈로그 변경 없음.
+- **거짓 긴급 경보**: `stage_blocked` 로 미룬 틱이 `jobs.last_error` 를 지운다. 다른 미룸(model_capacity·http_origin_permit·source_buffer)은 기존대로 남긴다.
+- **SQLSTATE**: 던진 틱의 `last_error` 앞에 `[40P01] `·`[23505 table=… constraint=…] ` 를 붙이고 `job.failed` 로그에 `code`·`table`·`constraint` 를 싣는다.
+- **배포 후 볼 것(reviewer M3·mini, web)**: `pg_stat_database.deadlocks` 가 몇 시간 동안 늘지 않는지, `second-review` 의 `last_error` 가 다음 stage_blocked 틱에 비고 운영센터 "마지막 회차가 실패한 작업 — 2차 심사"가 사라지는지, `agent-evidence-refresh.requested_version` 이 scheduler 의 분당 1 근처로 돌아오는지, `crawl.second_review_controller_retry`·`crawl.second_review_wake_failed` 가 나오지 않는지. second-review 가 job-health 성공 끊김 판정에 들어오므로 `defer:second-review`(stage_blocked)로 경보가 서지 않는지도 본다.
+
+## 오래된 AI2 대기 정리 공백(138985/357316)·정합 도구 — 2026-10-29, 운영 미적용(코드·로컬 DB 시험만)
+
+- 관문 표가 대기로 남은 채 후보가 갈림 보류 아닌 `needs_review`로 내려간 모양을 stale 정리가 집어 입력 해시·버전 비교로 닫고, 지금 후보 상태·1차 판단으로 한 번만 다시 넣거나 `not_required`로 끝낸다. 경과 시간만으로는 닫지 않는다. `scripts/reconcile-ai2-stale.ts`(기본 dry-run, `--apply --actor`, 묶음 ≤200, `operations_audit` 기록).
+- **배포 전후 볼 것(대표)**: [실행 명령·READ ONLY Q1~Q5](docs/operations/2026-10-27-ai2-stale-reconcile.md#2026-10-29-정리-공백-보완과-정합-도구-이-차선의-남은-일-목록). 배포 뒤 Q2(남은 공백 표)=0, Q3(같은 후보·모델 중복 대기)=0행, 138985 가 `resolved` 로 바뀌는지. 운영 결과·필수 CI 는 아직 없다.
+
+## 마이그레이션 해시 충돌 정리 — 2026-10-29, 운영 미적용
+
+- main 의 `0140~0142`를 운영 DB(id141~143, created_at …052~…054)와 같은 바이트·when 으로 되돌리고 replaced-provider 를 `0143_replaced_provider_boundary_exit`(when …055)로 옮겼다. 운영 배포·DB 쓰기는 하지 않았다.
+- **배포 전 확인(대표)**: 운영 READ ONLY `select id,hash,created_at from drizzle.__drizzle_migrations order by id desc limit 8`과 `git show origin/main:drizzle/<tag>.sql | sha256sum` 비교. 0000~0139 의 운영 해시는 이번에 직접 대조하지 않았고 저장소 파일(배포 커밋 5144b8c7 과 동일 바이트)로 고정했다 — `tests/fixtures/production-applied-migrations.ts`.
+- **배포 후**: migrator 가 0143·0144 만 적용해 145행·최신 …056 이 되는지와 `model_capacity_replaced_provider_guard` 트리거 설치를 실측하고, 그 항목을 고정 목록에 덧붙인다.
+- **PR #723**: 이 정리 도중 main 에 먼저 병합된 `0141_admin_models_observation_indexes`(when …053, 운영 미적용)를 같은 바이트로 `0144_admin_models_observation_indexes`(when …056)로 옮겼다. 배포 시 migrator 는 0143·0144 를 적용해야 한다(145행·최신 …056).
+
 ## 격리 브랜치 병렬 개발 후속 — 2026-10-27, 운영 미적용
 
 `xaegis/7179effc`의 검토용 변경이다. 아래 항목은 운영 완료 기록이 아니며 기존 배포·회수 영수증을 대체하지 않는다.

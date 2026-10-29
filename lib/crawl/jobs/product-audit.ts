@@ -1,3 +1,4 @@
+import { modelTimeoutMs } from "@/lib/llm/model-registry";
 import { modelLimits } from "@/lib/llm/model-registry";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
@@ -209,7 +210,7 @@ async function askAuditCampaign(ctx: JobContext<null>, settings: CrawlSettings):
  * 한 호출의 제한 시간 — 운영 실측(2026-10-21, #587·AUDIT_QWEN_CONCURRENCY=4 뒤 한 시간): 한 건만 띄우면 2.5초인데 넷을 띄우면 한 건에 12초쯤
  * (성공 83건 평균 11.8초·최대 19.8초, TP4 MoE·3090 넷)이라 20초 제한에 18건이 걸렸다. 45초로 넉넉히 둔다
  */
-export const QWEN_CALL_TIMEOUT_MS = 45_000;
+export const QWEN_CALL_TIMEOUT_MS = modelTimeoutMs("product-audit");
 /**
  * 새 호출을 시작할 수 있는 남은 시간 — 부하 중 p95 쯤. 남은 시간이 45초보다 짧으면 제한 시간을 남은 시간(저장 여유를 뺀)으로 줄여 부른다.
  * 줄인 제한 시간에 걸린 것은 틱 끝 때문이라 서버 탈도 항목의 시도도 아니다 — 적지 않는다(러너 예산으로 끊긴 것과 같다)

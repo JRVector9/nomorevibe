@@ -1,0 +1,53 @@
+{
+ "note": "Public product text read 2026-10-29 from production (READ ONLY) for request 29877f65 wire reconstruction regression. Not a receipt.",
+ "requestId": "29877f65-9f95-4efb-88f9-aea5f39a28b2",
+ "model": "[m1] qwen3.8-flash-next",
+ "wireHash": "0507685dd86a3fe61a62d0c83b71cfafbc1add1e08feb70fb6436c38854a40d8",
+ "relayRequestHash": "81d1f5713daacd9a742e853b7880e5636efd53910ed473038ea91f61a75c1768",
+ "members": [
+  {
+   "productId": 28707,
+   "locale": "en",
+   "field": "tagline",
+   "sourceHash": "988c70f64b827b896702e6da259e93e1e2c0a13041b642292f6b75a87ac462d0"
+  },
+  {
+   "productId": 28318,
+   "locale": "en",
+   "field": "description",
+   "sourceHash": "190f81682ff5944d0b5ee60ad76848d02ec5ececba00670063f202844435bda4"
+  },
+  {
+   "productId": 28572,
+   "locale": "en",
+   "field": "description",
+   "sourceHash": "d78867f6f8601e4c9ff1b5b78b0059d5c68e9d54f6b99b402d1ada5e01d1f18a"
+  },
+  {
+   "productId": 28572,
+   "locale": "en",
+   "field": "tagline",
+   "sourceHash": "d09c25cc90fa724924d69abd1b0cbb039be1fe052202f554254412eba8f5561f"
+  }
+ ],
+ "products": [
+  {
+   "id": 28318,
+   "name": "CastBay",
+   "tagline": "Free, open-source app that turns an Android TV, TV box, car display or tablet into an AirPlay receiver: mirror your iPhone, iPad or Mac, play music with lyrics, and cast video. DLNA too.",
+   "description": "映湾 CastBay: an AirPlay and DLNA receiver for Android TV — screen mirroring, music with lyrics, video casting. Free and open source."
+  },
+  {
+   "id": 28572,
+   "name": "剣道VAR",
+   "tagline": "dedicated for Kendo, Japanese traditional martial-arts",
+   "description": "dedicated for Kendo, Japanese traditional martial-arts"
+  },
+  {
+   "id": 28707,
+   "name": "Zee",
+   "tagline": "高度AI時代に防御準備が追いついていない組織と個人が、最初の一歩を踏み出すためのオープンプロジェクト。MIT・全部この場でオープン。",
+   "description": "Post-intrusion deception & containment for SMEs. Decoy tripwires, canary tokens, automatic network cut. Python stdlib only. MIT."
+  }
+ ]
+}

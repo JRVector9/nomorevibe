@@ -105,7 +105,7 @@ it("틱 끝에 시간이 모자라면 새로 부르지 않는다 — 줄어든 �
     mocks.translate.mockImplementation(async () => { vi.advanceTimersByTime(30_000); return { ok: true, translations: ["가"] }; });
     expect(await translateReasons(context())).toEqual({ done: false });
     expect(mocks.translate).toHaveBeenCalledTimes(1);
-    expect(mocks.translate.mock.calls[0][1]).toBe(45_000);
+    expect(mocks.translate.mock.calls[0][1]).toBe(40_000);
   } finally { vi.useRealTimers(); }
 });
 

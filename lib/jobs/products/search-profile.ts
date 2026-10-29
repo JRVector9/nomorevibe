@@ -1,10 +1,12 @@
-import { modelLimits } from "@/lib/llm/model-registry";
+import { scopedModel } from "@/lib/llm/model-registry";
+import { modelLimits, modelTimeoutMs } from "@/lib/llm/model-registry";
 import { roleLeaseFromEnv } from "@/lib/jobs/role-leader";
 import { writeKeywordsWithModelCapacity } from "@/lib/domain/products/search-profile-model-capacity";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { PROFILE_MODEL, profileEvidence, profileHash } from "@/lib/domain/products/search-profile";
 import { pendingProfiles, recordProfileResult } from "@/lib/domain/products/search-profiles";
+import { otherRoutesWaitingOnGroup } from "@/lib/llm/capacity-busy-targets";
 
 /**
  * 검색 키워드 짓기 — 공개 제품마다 모델이 한·영 검색어를 적는다(search-profile.ts).
@@ -29,7 +31,7 @@ const BATCH = 12;
  */
 const CONCURRENCY = modelLimits("product-search-profile").concurrency;
 /** 한 번 부르는 데 둘 시간 */
-const CALL_MS = 45_000;
+const CALL_MS = modelTimeoutMs("product-search-profile");
 /** 한 건이 이보다 오래 걸리면 게이트웨이가 밀린 것이다(평소 7초 안팎) — 이번 틱을 접고 심사에 자리를 준다 */
 export const SLOW_CALL_MS = 20_000;
 /** 틱 예산(worker.ts jobRunOptions 55초)보다 조금 짧게 */
@@ -64,7 +66,12 @@ export async function writeSearchProfiles(ctx: JobContext<null>): Promise<JobOut
         return { done: true };
       }
       let next = 0;
-      const settled = await Promise.allSettled(Array.from({ length: CONCURRENCY }, async () => {
+      // 같은 모델 그룹에서 다른 잡이 기다리면 이번 묶음은 일꾼 하나 — 자리가 나는 즉시 둘 다 채워 남을 굶기지 않는다.
+      // 장부 예약을 쓰는 경로(역할 lease 가 있는 text 워커)에서만 본다. legacy 경로에는 장부가 없다.
+      const fairShare = CONCURRENCY > 1 && roleLease !== undefined
+        && await otherRoutesWaitingOnGroup("product-search-profile", scopedModel("product-search-profile", PROFILE_MODEL));
+      if (fairShare) ctx.log("search_profile.fair_share", { concurrency: 1 });
+      const settled = await Promise.allSettled(Array.from({ length: fairShare ? 1 : CONCURRENCY }, async () => {
         try {
           for (let index = next++; index < tasks.length; index = next++) {
             if (blocked || signal.aborted || !ctx.hasBudget() || remaining() < MIN_CALL_MS) return;
@@ -101,13 +108,17 @@ export async function writeSearchProfiles(ctx: JobContext<null>): Promise<JobOut
               continue;
             }
             inARow = 0;
-            const success = { kind: "success" as const, en: result.en, ko: result.ko, model: PROFILE_MODEL };
+            const success = { kind: "success" as const, en: result.en, ko: result.ko, model: scopedModel("product-search-profile", PROFILE_MODEL) };
             if (!await (outcome.expectedProfile ? recordProfileResult(task, lease, success, outcome.expectedProfile)
               : recordProfileResult(task, lease, success))) return;
             written++;
           }
         } catch (error) {
-          if (error instanceof ModelCapacityDeferredError) blocked ||= "model_capacity";
+          if (error instanceof ModelCapacityDeferredError) {
+            // 미룸 사유(capacity·dispatched…)를 남긴다 — 러너는 'model_capacity' 하나로만 적는다
+            if (!blocked) ctx.log("search_profile.capacity_deferred", { written, reused, failed, reason: error.reason });
+            blocked ||= "model_capacity";
+          }
           else { blocked = "result_write_failed"; controller.abort(); }
           throw error;
         }

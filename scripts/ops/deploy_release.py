@@ -162,8 +162,7 @@ def validate_catalog_scope(additions, selected):
 
 
 def new_client():
-    return shared.Dokploy(shared.run(['security', 'find-generic-password', '-a', 'deploy.brut.bot',
-                                     '-s', 'dokploy-api-key', '-w']))
+    return shared.Dokploy(shared.dokploy_api_key())
 
 
 def impact(snapshot, sha):

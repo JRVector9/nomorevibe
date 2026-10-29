@@ -1,3 +1,4 @@
+import { scopedModel } from "@/lib/llm/model-registry";
 import { currentReplayDb } from "@/lib/db/replay-scope";
 import { reviewHash } from "@/lib/crawl/agent-review-contract";
 import { prepareTextProfileGatewayCall } from "@/lib/crawl/agent-review-gateway";
@@ -21,6 +22,7 @@ import { products, productSearchProfiles, type Product, type ProductSearchProfil
 import { assertJobLease, assertJobLeaseAtWallTime, type JobLease } from "@/lib/jobs/control";
 import { PROFILE_MODEL, keywordText, profileEvidence, profileHash } from "./search-profile";
 import { isProfileProviderError, MAX_PROFILE_ATTEMPTS as MAX_ATTEMPTS, profileGenerationRetryAllowedSql } from "./search-profile-retry";
+import { busyLogicalKeysSql } from "@/lib/llm/capacity-busy-targets";
 
 /**
  * 검색 키워드의 대기열과 저장. 짓는 일(게이트웨이)은 search-profile.ts 에 있다.
@@ -72,7 +74,7 @@ const profileGenerationDueSql = () => sql`(${productSearchProfiles.productId} is
 
 export async function pendingProfiles(limit: number, owner?: Pick<RoleLease, "instanceId" | "bootId">): Promise<ProfileTask[]> {
   const own = owner ? await findOwnPendingTextProfileRequests({
-    owner: { instanceId: owner.instanceId, bootId: owner.bootId }, model: PROFILE_MODEL }) : [];
+    owner: { instanceId: owner.instanceId, bootId: owner.bootId }, model: scopedModel("product-search-profile", PROFILE_MODEL) }) : [];
   const resumed = own.length ? await onPrimary(() => db.transaction(async tx => {
     const rows = await tx.select({ product: FIELDS, profile: productSearchProfiles, reviewerNote: REVIEWER_NOTE })
       .from(products).leftJoin(productSearchProfiles, eq(productSearchProfiles.productId, products.id))
@@ -85,7 +87,7 @@ export async function pendingProfiles(limit: number, owner?: Pick<RoleLease, "in
       if (!task || selected.some(row => row.product.id === candidate.productId)) continue;
       const input = { productId: task.product.id, slug: task.product.slug,
         evidenceHash: profileHash(profileEvidence(task.product, task.reviewerNote)),
-        profile: await currentProfileIdentity(tx, task.product.id), model: PROFILE_MODEL };
+        profile: await currentProfileIdentity(tx, task.product.id), model: scopedModel("product-search-profile", PROFILE_MODEL) };
       // An old source/profile snapshot gets no priority and no new authority.
       if (candidate.workKey !== `text:profile:${task.product.id}:${textProfileInputHash(input)}`) continue;
       selected.push(task);
@@ -95,12 +97,16 @@ export async function pendingProfiles(limit: number, owner?: Pick<RoleLease, "in
   })) : [];
   if (resumed.length >= limit) return resumed;
 
+  // 요청 장부가 이미 쥔 제품은 새로 집지 않는다(capacity-busy-targets.ts) — 이어받을 내 요청은 위 resumed 가 맡는다.
+  // 미확인 요청이 걸린 제품이 맨 앞에 서면 일꾼 하나가 'capacity' 미룸을 받아 틱 전체를 접었고, 묵은 내 대기(입력 해시가 바뀐 것)
+  // 위에 같은 제품의 새 요청을 또 넣으려다 같은 미룸을 받았다. 한 제품은 한 요청만 가진다.
   const rows = await db.select({ product: FIELDS, profile: productSearchProfiles, reviewerNote: REVIEWER_NOTE })
     .from(products)
     .leftJoin(productSearchProfiles, eq(productSearchProfiles.productId, products.id))
     .where(and(
       inArray(products.status, ["seeded", "verified"]),
       profileGenerationDueSql(),
+      sql`('text:profile:' || ${products.id}) NOT IN (${busyLogicalKeysSql("text:profile:")})`,
     ))
     .orderBy(sql`(${productSearchProfiles.productId} is null) desc,
       (${productSearchProfiles.productId} is null and btrim(${products.description}) = btrim(${products.tagline})) desc,
@@ -349,7 +355,7 @@ export async function prepareProfileModelDispatch(task: ProfileTask, lease: JobL
     if (control.mode === "disabled") return { kind: "disabled" };
     if (control.mode !== "open") throw new ModelCapacityDeferredError("draining");
     if (!control.policy?.routes.some(route => route.routeId === "product-search-profile" && route.provider === "abcllm"
-      && route.model === PROFILE_MODEL)) throw new ModelCapacityDeferredError("unmapped");
+      && route.model === scopedModel("product-search-profile", PROFILE_MODEL))) throw new ModelCapacityDeferredError("unmapped");
     if (!role || role.role !== "text") throw new ModelCapacityDeferredError("owner_unavailable");
     const boundRole = textProfileDispatchBindingSchema.shape.role.parse({ role: role.role, instanceId: role.instanceId,
       bootId: role.bootId, release: role.release, kind: role.kind, epoch: role.epoch,
@@ -370,10 +376,10 @@ export async function prepareProfileModelDispatch(task: ProfileTask, lease: JobL
     if (!due || profile && !profile.errorCode && profile.sourceHash === evidenceHash
       && (!profile.needsRefresh || profile.keywordsEn.length + profile.keywordsKo.length > 0)) return { kind: "skipped" };
     const input = textProfileInputSchema.parse({ productId: product.id, slug: product.slug, evidenceHash,
-      profile: await currentProfileIdentity(tx, product.id), model: PROFILE_MODEL });
+      profile: await currentProfileIdentity(tx, product.id), model: scopedModel("product-search-profile", PROFILE_MODEL) });
     if (reserved && (textProfileInputHash(input) !== textProfileInputHash(reserved.expected)
       || reserved.identity.owner.instanceId !== role.instanceId || reserved.identity.owner.bootId !== role.bootId)) return { kind: "skipped" };
-    const call = prepareTextProfileGatewayCall(evidence, { model: PROFILE_MODEL, timeoutMs });
+    const call = prepareTextProfileGatewayCall(evidence, { model: scopedModel("product-search-profile", PROFILE_MODEL), timeoutMs });
     if (call.kind !== "prepared") throw new ModelCapacityDeferredError(call.reason);
     if (reserved && (call.wireHash !== reserved.call.wireHash || call.servingContractHash !== reserved.call.servingContractHash
       || call.totalTokenBound !== reserved.call.totalTokenBound || call.model !== reserved.call.model)) return { kind: "skipped" };
@@ -467,7 +473,7 @@ export async function prepareSearchVerifyModelDispatch(task: ProfileTask, lease:
       if (!reserved && control.mode === "disabled") return { kind: "disabled" };
       if (control.mode !== "open") throw new ModelCapacityDeferredError(control.mode === "draining" ? "draining" : "disabled");
       if (!control.policy?.routes.some(route => route.routeId === "product-search-verify" && route.provider === "abcllm"
-        && route.model === VERIFY_MODEL)) throw new ModelCapacityDeferredError("unmapped");
+        && route.model === scopedModel("product-search-verify", VERIFY_MODEL))) throw new ModelCapacityDeferredError("unmapped");
       if (!roleLease || roleLease.role !== "text") throw new ModelCapacityDeferredError("owner_unavailable");
       await assertJobBatchAdmission(tx, job.name, roleLease);
       const role = await lockVerifyRole(tx, roleLease);
@@ -491,13 +497,13 @@ export async function prepareSearchVerifyModelDispatch(task: ProfileTask, lease:
       const nowMs = Math.floor(Number(clock.now));
       if (!reserved) {
         await finalVerifyWall(tx, role, job);
-        writer = { job, role, model: VERIFY_MODEL, productId: product.id, member, used: false };
+        writer = { job, role, model: scopedModel("product-search-verify", VERIFY_MODEL), productId: product.id, member, used: false };
         return { kind: "ready", member, role, expectation: Object.freeze({ kind: "search_verify_write" as const }) };
       }
-      if (!isDeepStrictEqual(member, reserved.input.member) || reserved.input.model !== VERIFY_MODEL || !isDeepStrictEqual(role, reserved.role)
+      if (!isDeepStrictEqual(member, reserved.input.member) || reserved.input.model !== scopedModel("product-search-verify", VERIFY_MODEL) || !isDeepStrictEqual(role, reserved.role)
         || reserved.identity.owner.instanceId !== role.instanceId || reserved.identity.owner.bootId !== role.bootId) throw new SearchVerifyChanged();
       const sent = searchVerifyStepKeywords(mode === "chunk" ? [...new Set(input)] : input, reserved.input.step);
-      if (call!.model !== VERIFY_MODEL || call!.evidenceHash !== evidenceHash
+      if (call!.model !== scopedModel("product-search-verify", VERIFY_MODEL) || call!.evidenceHash !== evidenceHash
         || call!.keywordsHash !== createHash("sha256").update(JSON.stringify(sent)).digest("hex")) throw new SearchVerifyChanged();
       const deadlineAt = lock!.parentDeadlineAt ?? nowMs + Math.max(1, Math.floor(reserved.remainingMs));
       if (nowMs >= deadlineAt) return { kind: "expired" };

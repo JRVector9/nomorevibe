@@ -1,8 +1,10 @@
+import { scopedModel } from "@/lib/llm/model-registry";
+import { modelTimeoutMs } from "@/lib/llm/model-registry";
 import { translateKoreanTaglinesWithModelCapacity, type KoreanTaglineCapacityResult } from "@/lib/domain/products/korean-tagline-model-capacity";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { KOREAN_TAGLINE_MODEL } from "@/lib/crawl/translate";
 import { displayProjectName } from "@/lib/domain/products/display-name";
-import { checkKoreanTagline } from "@/lib/domain/products/korean-tagline";
+import { checkKoreanTaglineOutput } from "@/lib/domain/products/korean-tagline";
 import { homeListSlugs, pendingKoreanTaglines, pendingKoreanTaglineRecovery, recordKoreanTaglines, koreanTaglineSource as taglineSource, type KoreanTaglineResult, type KoreanTaglineTask } from "@/lib/domain/products/korean-taglines";
 import { readModelCapacityCallerControl } from "@/lib/llm/capacity-repository";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
@@ -24,7 +26,7 @@ import { KOREAN_TRANSLATION_LEGACY_MAX_CHARS, KOREAN_TRANSLATION_NATIVE_MAX_CHAR
  */
 const BATCH = 8;
 /** 한 번 부르는 데 둘 시간 */
-const CALL_MS = 45_000;
+const CALL_MS = modelTimeoutMs("product-tagline-ko");
 /** 틱 예산(scripts/worker.ts jobRunOptions 55초)보다 조금 짧게 */
 const TICK_MS = 54_000;
 /** 이만큼 남아 있을 때만 새로 부른다 — 묶음 하나가 15~25초라 틱 끝에 부르면 제한이 짧아져 헛실패가 난다 */
@@ -67,8 +69,8 @@ export async function writeKoreanTaglines(ctx: JobContext<null>): Promise<JobOut
     const startedAt = Date.now();
     const remaining = () => TICK_MS - (Date.now() - startedAt);
     let written = 0, failed = 0;
-    const rejected: Record<string, number> = {};
-    const counts = () => ({ written, failed, rejected });
+    const rejected: Record<string, number> = {}, cleaned: Record<string, number> = {};
+    const counts = () => ({ written, failed, rejected, cleaned });
     const homeSlugs = await homeListSlugs();
     const visited = new Set<number>();
     const stopped = new Set<"gpt" | "qwen">();
@@ -99,8 +101,8 @@ export async function writeKoreanTaglines(ctx: JobContext<null>): Promise<JobOut
         }
       }
       const work = [
-        ...(gptBatch.length ? [{ backend: "gpt" as const, model: KOREAN_TAGLINE_MODEL, batch: gptBatch, recovery: false }] : []),
-        ...(qwenBatch.length ? [{ backend: "qwen" as const, model: KOREAN_TRANSLATION_QWEN_MODEL, batch: qwenBatch, recovery: recoveryBatch }] : []),
+        ...(gptBatch.length ? [{ backend: "gpt" as const, model: scopedModel("product-tagline-ko", KOREAN_TAGLINE_MODEL), batch: gptBatch, recovery: false }] : []),
+        ...(qwenBatch.length ? [{ backend: "qwen" as const, model: scopedModel("korean-translation-direct", KOREAN_TRANSLATION_QWEN_MODEL), batch: qwenBatch, recovery: recoveryBatch }] : []),
       ];
       if (!work.length) {
         if (recoveryDeferred) { ctx.log("tagline_ko.budget_deferred", { ...counts(), backend: "qwen", recovery: true }); return { done: false }; }
@@ -147,7 +149,9 @@ export async function writeKoreanTaglines(ctx: JobContext<null>): Promise<JobOut
         }
         const entries = batch.map((task, index): { task: KoreanTaglineTask; result: KoreanTaglineResult } => {
           if (!result.ok) return { task, result: { kind: "failure", error: result.error, model } };
-          const checked = checkKoreanTagline(result.outputs[index], items[index]);
+          // 너무 긺·이름 철자·여러 줄은 정해진 정리 뒤 같은 검사를 다시 받는다(checkKoreanTaglineOutput)
+          const checked = checkKoreanTaglineOutput(result.outputs[index], items[index]);
+          if (checked.ok && checked.cleaned) cleaned[checked.cleaned] = (cleaned[checked.cleaned] ?? 0) + 1;
           return { task, result: checked.ok ? { kind: "success", line: checked.line, model }
             : { kind: "failure", error: `rejected:${checked.reason}`, model } };
         });
@@ -164,7 +168,11 @@ export async function writeKoreanTaglines(ctx: JobContext<null>): Promise<JobOut
           stopped.add(backend);
         }
       }
-      if (errors.length) throw errors[0];
+      if (errors.length) {
+        // 미룸 사유(capacity·unmapped·dispatched…)를 남긴다 — 러너는 'model_capacity' 하나로만 적는다
+        if (errors[0] instanceof ModelCapacityDeferredError) ctx.log("tagline_ko.capacity_deferred", { ...counts(), reason: errors[0].reason });
+        throw errors[0];
+      }
       if (skipped || recoveryDeferred) return { done: false };
       if (stopped.has("gpt") && (!qwen || stopped.has("qwen"))) return { done: true };
     }

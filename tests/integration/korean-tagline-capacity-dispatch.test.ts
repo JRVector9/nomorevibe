@@ -5,7 +5,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vite
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { products } from "@/lib/db/schema";
-import { TRANSLATE_MODEL } from "@/lib/crawl/translate";
+import { KOREAN_TAGLINE_MODEL } from "@/lib/crawl/translate";
 import { reviewHash } from "@/lib/crawl/agent-review-contract";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { pendingKoreanTaglines, prepareKoreanTaglineDispatch, recordKoreanTaglines, koreanTaglineSource,
@@ -40,7 +40,7 @@ let initial: Record<string, unknown>, initialized = false, role: RoleLease, seri
 const policy: ModelCapacityPolicy = { version: 1, globalLimit: 2, providerLimits: { account: 2 }, groupLimits: { engine: 2 },
   poolLimits: { reviewer: 2, text: 2 }, weights: { first: 1, second: 1, background: 1 }, maxWaiting: 12,
   queueTtlMs: 60_000, reservationTtlMs: 60_000,
-  routes: [{ routeId: jobName, provider: "abcllm", model: TRANSLATE_MODEL, providerBudgetId: "account", groupId: "engine" }] };
+  routes: [{ routeId: jobName, provider: "abcllm", model: KOREAN_TAGLINE_MODEL, providerBudgetId: "account", groupId: "engine" }] };
 const tracked = <T>(pending: PromiseLike<T>, set = work): Promise<T> => { const actual = Promise.resolve(pending); set.add(actual); void actual.catch(() => {}); return actual; };
 const exercise = (load: () => Promise<void>) => () => tracked(Promise.resolve().then(load), exercises);
 async function drain(set: Set<Promise<unknown>>, report = false) {
@@ -167,7 +167,7 @@ async function server(run: (state: { bodies: string[]; setReply: (reply: (respon
   try {
     await new Promise<void>((resolve, reject) => { http.once("error", reject); http.listen(0, "127.0.0.1", resolve); });
     const address = http.address(); if (!address || typeof address === "string") throw new Error("fixture_address");
-    serving.contract = { version: 1, protocol: "abcllm-product-tagline-ko-total-bound-v1", routeId: jobName, provider: "abcllm", model: TRANSLATE_MODEL,
+    serving.contract = { version: 1, protocol: "abcllm-product-tagline-ko-total-bound-v1", routeId: jobName, provider: "abcllm", model: KOREAN_TAGLINE_MODEL,
       responseModel: "served-korean", deploymentRevision: "local-only", endpoint: `http://127.0.0.1:${address.port}/v1/chat/completions`, totalTokenBound: 8000 };
     await run({ bodies, setReply: next => { reply = next; } });
   } catch (error) { failures.push(error); }
@@ -189,13 +189,13 @@ async function blocking(pid: number, operation: Promise<unknown>) {
     return (await admin`SELECT pid FROM pg_stat_activity WHERE ${pid}=ANY(pg_blocking_pids(pid))`).length > 0; });
 }
 async function reserve(tasks: KoreanTaglineTask[], lease: JobLease, home: string[] = []) {
-  const call = prepareProductTaglineKoGatewayCall(tasks.map(task => ({ name: displayProjectName(task.name, task.repoUrl), tagline: koreanTaglineSource(task) })), { model: TRANSLATE_MODEL, timeoutMs: 45_000 });
+  const call = prepareProductTaglineKoGatewayCall(tasks.map(task => ({ name: displayProjectName(task.name, task.repoUrl), tagline: koreanTaglineSource(task) })), { model: KOREAN_TAGLINE_MODEL, timeoutMs: 45_000 });
   expect(call.kind).toBe("prepared"); if (call.kind !== "prepared") throw new Error("fixture_native_contract_required");
   const ready = await tracked(prepareKoreanTaglineDispatch(tasks, home, lease, { roleLease: role, call }));
   expect(ready.kind).toBe("ready"); if (ready.kind !== "ready" || !("members" in ready)) throw new Error("fixture_current_input_required");
   const request: ModelCapacityRequest = { requestId: randomUUID(), owner: { instanceId: role.instanceId, bootId: role.bootId },
-    class: "background", pool: "text", routeId: jobName, provider: "abcllm", model: TRANSLATE_MODEL,
-    workKey: `${productTaglineKoLogicalWorkKey(ready.members)}:${productTaglineKoInputHash({ members: ready.members, model: TRANSLATE_MODEL })}` };
+    class: "background", pool: "text", routeId: jobName, provider: "abcllm", model: KOREAN_TAGLINE_MODEL,
+    workKey: `${productTaglineKoLogicalWorkKey(ready.members)}:${productTaglineKoInputHash({ members: ready.members, model: KOREAN_TAGLINE_MODEL })}` };
   const slot = await tracked(requestProductTaglineKoModelSlot(request, ready.members));
   expect(slot.kind).toBe("granted"); if (slot.kind !== "granted") throw new Error("fixture_reservation_required");
   const { requestId: _id, ...identity } = request; void _id; return { ready, call, reservation: slot.reservation, identity };
@@ -291,7 +291,7 @@ it("retains network attempts beyond six and the actual home-extra shortened solo
       const outcome = await tracked(translateKoreanTaglinesWithModelCapacity([task], [product.slug], lease, { timeoutMs: 45_000, roleLease: role }));
       if (outcome.kind !== "result") throw new Error("fixture_native_result_required");
       expect(outcome.result).toEqual({ ok: false, error: "rate_limit" });
-      expect(await tracked(recordKoreanTaglines([{ task, result: { kind: "failure", error: "rate_limit", model: TRANSLATE_MODEL } }], lease, outcome.expectation))).toBe(1);
+      expect(await tracked(recordKoreanTaglines([{ task, result: { kind: "failure", error: "rate_limit", model: KOREAN_TAGLINE_MODEL } }], lease, outcome.expectation))).toBe(1);
     })).toMatchObject({ status: "completed" });
     expect(bodies).toHaveLength(1); expect(JSON.parse(JSON.parse(bodies[0]).messages[1].content)).toEqual([{ name: "Notes", tagline: koreanTaglineSource(task) }]);
     expect(koreanTaglineSource(task)).not.toBe(task.tagline);
@@ -413,8 +413,10 @@ it("keeps EOF full-C unknown fenced across changed source and a genuinely re-ele
     await tracked(db.update(products).set({ tagline: "Search and organize documents for teams" }).where(eq(products.id, product.id)));
     const [changed] = await admin`SELECT to_jsonb(t) AS row FROM product_korean_taglines t WHERE product_id=${product.id}`;
     expect(changed.row).toMatchObject({ attempts: 1 }); // original cache is historical; new source is eligible without mutating it
-    expect((await tracked(pendingKoreanTaglines(16, []))).find(task => task.productId === product.id)?.attempts).toBe(0);
-    expect(await tick()).toMatchObject({ status: "deferred", reason: "model_capacity" }); expect(bodies).toHaveLength(1);
+    // The unknown request still fences this product, so the selector skips it instead of re-picking it every tick
+    // (postprocess-backlog lane, 2026-10-29). Other products remain selectable; this one is never re-sent.
+    expect((await tracked(pendingKoreanTaglines(16, []))).find(task => task.productId === product.id)).toBeUndefined();
+    expect(await tick()).toMatchObject({ status: "completed" }); expect(bodies).toHaveLength(1);
     expect((await admin`SELECT to_jsonb(t) AS row FROM product_korean_taglines t WHERE product_id=${product.id}`)[0].row).toEqual(changed.row);
     expect((await admin`SELECT to_jsonb(r) AS row FROM model_capacity_requests r WHERE request_id=${unknown.row.request_id}::uuid`)[0].row).toEqual(unknown.row);
     expect(await admin`SELECT request_id FROM model_capacity_requests WHERE owner_instance_id=${prefix}`).toHaveLength(1);
@@ -480,7 +482,7 @@ it("refuses foreign or changed Korean readbacks and never refunds dispatched or 
   const {tasks}=await seed();
   await server(async ({bodies})=>{
     await custom(async lease=>{
-      const slot=await reserve(tasks,lease), expected={owner:slot.reservation.owner,model:TRANSLATE_MODEL,routeId:"product-tagline-ko" as const};
+      const slot=await reserve(tasks,lease), expected={owner:slot.reservation.owner,model:KOREAN_TAGLINE_MODEL,routeId:"product-tagline-ko" as const};
       const [pending]=await findOwnPendingProductTextRequests(expected);
       expect(pending.request.requestId).toBe(slot.reservation.requestId);
       expect(await findOwnPendingProductTextRequests({...expected,owner:{...expected.owner,bootId:randomUUID()}})).toEqual([]);

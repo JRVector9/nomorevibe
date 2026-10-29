@@ -10,7 +10,10 @@ export type LocalModelRelayOptions = {
   token: string;
   upstreamToken: string;
   allowFrom: readonly string[];
+  /** Primary upstream id (native readiness is bound to it). */
   model: string;
+  /** Registry-allowed upstream ids for this equipment. Defaults to the primary only. */
+  models?: readonly string[];
   relayRevision: string;
   deploymentRevision: string;
   store: RelayReceiptStore;
@@ -23,9 +26,14 @@ export type LocalModelRelayOptions = {
    * 미확인 receipt는 시작+상한+skew가 지난 뒤 표식만 정리해 다시 연다. 없으면 기존처럼 운영자 경계 해제까지 거절한다.
    */
   engineDeadlineMs?: number;
+  /** Verified engine enforcement start; requests sent before this stay protected. */
+  engineBoundEffectiveAt?: string;
   /** 생성 길이 상한. 있으면 max_tokens(또는 max_completion_tokens)가 없거나 넘는 요청을 보내지 않는다. */
   maxOutputTokens?: number;
   verifyNativeReadiness?: RelayNativeReadinessVerifier;
+  readUpstreamModels?: () => Promise<readonly string[] | null>;
+  /** How long a matching upstream model list is reused for inference admission. */
+  upstreamModelsTtlMs?: number;
 };
 
 const plainIp = (value: string | undefined) => (value ?? "").replace(/^::ffff:(?=\d+\.\d+\.\d+\.\d+$)/, "");
@@ -81,11 +89,32 @@ export function createLocalModelRelay(options: LocalModelRelayOptions) {
   if (engineDeadline !== undefined && (!Number.isSafeInteger(engineDeadline) || engineDeadline < 1
     || engineDeadline + LOCAL_MODEL_RELAY_SKEW_MS >= timeout)) throw new Error("relay_deadline_order_invalid");
   if (outputCap !== undefined && (!Number.isSafeInteger(outputCap) || outputCap < 1 || outputCap > 262_144)) throw new Error("relay_invalid_limit");
+  const enforcedAfterMs = options.engineBoundEffectiveAt === undefined ? NaN : Date.parse(options.engineBoundEffectiveAt);
+  if (engineDeadline !== undefined && (!Number.isSafeInteger(enforcedAfterMs) || enforcedAfterMs < 0))
+    throw new Error("relay_engine_bound_effective_time_required");
   const allow = new Set(options.allowFrom.map(plainIp));
+  const allowedModels = [...new Set([options.model, ...(options.models ?? [])])];
+  if (options.models && !options.models.includes(options.model)) throw new Error("relay_model_not_allowed");
+  const upstreamModelsTtl = options.upstreamModelsTtlMs ?? 30_000;
+  let upstreamCache: { models: readonly string[]; at: number } | null = null;
+  const readUpstream = async (): Promise<readonly string[] | null> => {
+    let models: readonly string[] | null = null;
+    try { models = await options.readUpstreamModels?.() ?? null; } catch { /* stays unavailable */ }
+    upstreamCache = models ? { models, at: Date.now() } : null;
+    return models;
+  };
+  /** Before any receipt or upstream call: the registry-allowed id must be what the loopback server actually serves. */
+  const upstreamModelRefusal = async (model: string): Promise<string | null> => {
+    if (!options.readUpstreamModels) return null;
+    const cached = upstreamCache;
+    if (cached && Date.now() - cached.at < upstreamModelsTtl && cached.models.includes(model)) return null;
+    const models = await readUpstream();
+    return !models ? "upstream_models_unavailable" : models.includes(model) ? null : "upstream_model_mismatch";
+  };
   const generation = randomUUID();
   let activeRequestId: string | null = null, indeterminate = options.store.hasUnsettled(), draining = false;
   let lastReceipt: RelayReceipt | null = null, lastDeadlineRelease: string | null = null;
-  const deadlinePolicy = engineDeadline === undefined ? null : { engineDeadlineMs: engineDeadline, skewMs: LOCAL_MODEL_RELAY_SKEW_MS };
+  const deadlinePolicy = engineDeadline === undefined ? null : { engineDeadlineMs: engineDeadline, skewMs: LOCAL_MODEL_RELAY_SKEW_MS, enforcedAfterMs };
   /** 선언된 엔진 상한이 지난 미확인만 정리한다. 실패·불일치는 미확인을 유지한다(운영자 경계 해제 경로는 그대로). */
   const releaseAfterDeadline = (requestId: string, delayMs: number) => {
     if (!deadlinePolicy || !options.store.releaseAfterEngineDeadline) return;
@@ -109,9 +138,9 @@ export function createLocalModelRelay(options: LocalModelRelayOptions) {
     res.end(text);
   };
   const refuse = (res: http.ServerResponse, status: number, code: string) => send(res, status, { error: { code } });
-  const health = () => {
+  const health = (upstreamModels?: readonly string[] | null) => {
     const context = { relayRevision: options.relayRevision, deploymentRevision: options.deploymentRevision,
-      model: options.model, indeterminate, activeRequestId, lastReceipt };
+      model: options.model, indeterminate, activeRequestId, lastReceipt, upstreamModels };
     let verified: ReturnType<RelayNativeReadinessVerifier> | undefined;
     try { verified = options.verifyNativeReadiness?.(context); } catch { verified = undefined; }
     const terminal = lastReceipt?.terminal;
@@ -125,14 +154,19 @@ export function createLocalModelRelay(options: LocalModelRelayOptions) {
       nativeCapacityReady: Boolean(!draining && !indeterminate && !activeRequestId && observed
         && options.deploymentRevision !== "unverified" && verified?.ready
         && verified.contractHash && /^[0-9a-f]{64}$/.test(verified.contractHash)),
-      nativeContractHash: verified?.contractHash ?? null, nativeReadinessReason: verified?.reason ?? "native_contract_unverified" };
+      nativeContractHash: verified?.contractHash ?? null, nativeReadinessReason: verified?.reason ?? "native_contract_unverified",
+      allowedModels, upstreamModelMatch: upstreamModels === undefined ? null : Boolean(upstreamModels?.includes(options.model)),
+      upstreamModelReason: upstreamModels === undefined ? "not_checked" : !upstreamModels ? "upstream_models_unavailable"
+        : upstreamModels.includes(options.model) ? "matched" : "upstream_model_mismatch" };
   };
 
   const server = http.createServer(async (req, res) => {
     if (!allow.has(plainIp(req.socket.remoteAddress))) return refuse(res, 403, "forbidden");
     if (!authorized(req.headers.authorization, options.token)) return refuse(res, 401, "unauthorized");
     // query·absolute URL·중복 slash도 별도 경로로 보아 임의 upstream 설정을 받지 않는다.
-    if (req.method === "GET" && req.url === "/v1/health") return send(res, 200, health());
+    if (req.method === "GET" && req.url === "/v1/health") {
+      return send(res, 200, health(options.readUpstreamModels ? await readUpstream() : undefined));
+    }
     const receiptPath = /^\/v1\/requests\/([0-9a-f-]+)$/.exec(req.url ?? "");
     if (req.method === "GET" && receiptPath && validRelayRequestId(receiptPath[1])) {
       try {
@@ -153,17 +187,22 @@ export function createLocalModelRelay(options: LocalModelRelayOptions) {
         const input: unknown = JSON.parse(body.toString("utf8"));
         if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error();
         const object = input as Record<string, unknown>;
-        if (Object.keys(object).some(key => !supportedParameters.has(key)) || object.model !== options.model
+        if (Object.keys(object).some(key => !supportedParameters.has(key)) || typeof object.model !== "string"
           || !Array.isArray(object.messages) || !object.messages.length || (object.n !== undefined && object.n !== 1)
           || (object.stream !== undefined && typeof object.stream !== "boolean")) throw new Error();
+        if (!allowedModels.includes(object.model)) return refuse(res, 400, "model_not_allowed");
         // 생성 길이 상한이 엔진 실행시간을 묶는다. 없거나 넘는 요청은 보내지 않는다(호출 0, 미확인 없음).
         if (outputCap !== undefined && !((object.max_tokens !== undefined || object.max_completion_tokens !== undefined)
           && [object.max_tokens, object.max_completion_tokens].every(value => value === undefined
             || Number.isSafeInteger(value) && (value as number) >= 1 && (value as number) <= outputCap)))
           return refuse(res, 400, "output_bound_required");
-        model = options.model;
+        model = object.model;
       } catch (error) { return refuse(res, error instanceof Error && error.message === "request_too_large" ? 413 : 400,
         error instanceof Error && error.message === "request_too_large" ? "request_too_large" : "invalid_request"); }
+    }
+    if (inference) {
+      const refusal = await upstreamModelRefusal(model);
+      if (refusal) return refuse(res, 503, refusal);
     }
     if (inference && (activeRequestId || indeterminate || draining)) return refuse(res, 429, "busy");
     const suppliedId = req.headers[LOCAL_MODEL_RELAY_REQUEST_HEADER];

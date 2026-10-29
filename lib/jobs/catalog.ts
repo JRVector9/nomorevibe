@@ -7,7 +7,7 @@ export type CatalogRole = JobRole | "scheduler" | "site-evidence";
  * lane: 같은 역할 워커 안에서 따로 도는 줄. 역할 lease 는 하나라 워커를 늘려도 한 대만 일한다 — 줄이 다르면 한 프로세스 안에서
  * 동시에 돈다. 줄을 적지 않은 잡은 기본 줄(main)에서 차례로 돈다(scripts/worker.ts runWorker).
  */
-export type JobLane = "main" | "discovery" | "fetch" | "sources" | "evidence" | "scan" | "stars" | "screen" | "assist" | "assist-audit" | "product-translation" | "korean-translation";
+export type JobLane = "main" | "discovery" | "fetch" | "sources" | "evidence" | "scan" | "stars" | "screen" | "assist" | "assist-audit" | "product-translation" | "korean-translation" | "ai1";
 export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs: number | null; lane?: JobLane; batchVersion?: 1 }[] = [
   { name: "heartbeat", role: "scheduler", intervalMs: null },
   /**
@@ -32,14 +32,20 @@ export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs
   // 원본 확보는 별·README 갱신과 겹치지 않게 전용 줄에서 돈다. GitHub 같은 origin 직렬은 잡 안에 남긴다.
   { name: "crawl-fetch", role: "crawler", intervalMs: 60_000, lane: "fetch" },
   { name: "crawl-judge", role: "reviewer", intervalMs: 5 * 60_000 },
-  { name: "crawl-agent-review", role: "reviewer", intervalMs: 60_000 },
+  /**
+   * AI1(1차 모델 심사)은 전용 줄(ai1)에서 돈다. 기본 줄에서는 2차 심사(stage_blocked 여도 4.5초 안팎)와 사람 큐 위임(DeepSeek 27~29초)을
+   * 차례로 기다려 틱이 6~45초 간격으로 왔고, 그 사이 장부가 내준 예약(TTL 30초)이 만료돼 물리 슬롯이 놀았다(2026-10-29 실측: 모델마다
+   * 시간당 ~100건, AI1 슬롯 시간의 46~54%가 미사용 만료). 잡 lease 는 이름마다 하나라 다른 줄·프로세스와 겹쳐 돌지 않는다.
+   * 모델 동시 호출 수는 공통 장부(물리 한도·class 가중치)가 정한다 — 줄을 나눠도 한도는 그대로다.
+   */
+  { name: "crawl-agent-review", role: "reviewer", intervalMs: 60_000, lane: "ai1" },
   // 2차 심사 — 1차와 다른 모델. 하루 수십~백여 건이라 5분이면 밀리지 않는다
   { name: "second-review", role: "reviewer", intervalMs: 60_000 },
   { name: "human-deepseek-review", role: "reviewer", intervalMs: 60_000 },
   /**
-   * 발행분 감사 — 사람이 연 감사가 있을 때만 일한다. reviewer 에 둔 까닭은 잡이 역할 안에서
-   * 차례로 돌기 때문이다(scripts/worker.ts). 1차 심사와 번갈아 돌 뿐 겹치지 않아, 공유 게이트웨이의
-   * 동시 호출이 늘지 않는다. 새 후보가 기다리면 틱마다 먼저 양보한다(lib/crawl/jobs/product-audit.ts).
+   * 발행분 감사 — 사람이 연 감사가 있을 때만 일한다. 게이트웨이 감사는 새 후보가 기다리면 틱마다 먼저 양보한다
+   * (lib/crawl/jobs/product-audit.ts). Qwen 직접 감사는 gpu3090 이라 게이트웨이를 쓰지 않는다. 1차 심사는 2026-10-29 부터
+   * 전용 줄(ai1)이라 기본 줄의 감사와 함께 돌 수 있다 — 공유 모델의 동시 호출은 공통 장부의 물리 한도가 막는다.
    */
   { name: "product-audit", role: "reviewer", intervalMs: 60_000 },
   /**

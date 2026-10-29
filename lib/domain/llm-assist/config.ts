@@ -1,4 +1,4 @@
-import { modelFamily, modelLimits } from "@/lib/llm/model-registry";
+import { modelFamily, modelLimits, scopedModelDefinition } from "@/lib/llm/model-registry";
 import { z } from "zod";
 import { assistWorkTaskSchema, isAuditAssistTask } from "./work";
 import { readActionAuditPolicy } from "@/lib/domain/products/automated-action-audit";
@@ -14,13 +14,19 @@ export function assistBackendDrains(env: Readonly<Record<string, string | undefi
   const drains = z.array(drainSchema).max(4).parse(JSON.parse(env.LLM_ASSIST_BACKENDS));
   if (new Set(drains.map(drain => drain.backendId)).size !== drains.length) throw new Error("duplicate_assist_backend");
   const auditEnabled = lane === "audit" && readActionAuditPolicy(env).enabled;
-  return drains.map(drain => ({ ...drain, tasks: drain.tasks.filter(task => lane === "audit" ? isAuditAssistTask(task) && auditEnabled : !isAuditAssistTask(task)) }))
+  const selected = env === process.env ? scopedModelDefinition(lane === "audit" ? "assist-audit" : "assist-primary") : null;
+  const configured = drains.map(drain => ({ ...drain, tasks: drain.tasks.filter(task => lane === "audit" ? isAuditAssistTask(task) && auditEnabled : !isAuditAssistTask(task)) }))
     .filter(drain => drain.tasks.length).map(drain => {
     const contract = resolveLocalModelServingContract(drain.backendId, env);
     if (!contract || ![modelFamily("assist-primary", env), modelFamily("assist-audit", env)].includes(contract.modelFamily)
       || drain.tasks.some(task => !isAuditAssistTask(task)) && contract.modelFamily !== modelFamily("assist-primary", env)) throw new Error("assist_qwen_or_audit_backend_required");
     return { ...drain, maxClaims: Math.min(drain.maxClaims, modelLimits(isAuditAssistTask(drain.tasks[0]) ? "assist-audit" : "assist-primary", env).concurrency), contract };
   });
+  if (!selected) return configured;
+  const matching = configured.filter(drain => selected.baseUrl && drain.contract.model === selected.model
+    && drain.contract.endpoint === `${selected.baseUrl.replace(/\/+$/, "")}/chat/completions`);
+  if (configured.length && !matching.length) throw new Error("selected_assist_contract_missing");
+  return matching;
 }
 
 export function assistBackendKey(backendId: string, env: Readonly<Record<string, string | undefined>> = process.env): string | null {

@@ -1,3 +1,5 @@
+import { scopedRequestTimeout } from "@/lib/llm/model-registry";
+import { scopedModel } from "@/lib/llm/model-registry";
 import { randomUUID } from "node:crypto";
 import { prepareSearchVerifyGatewayCall, verifyKeywordsWithReservedGateway, readSearchVerifyGatewayTerminal } from "@/lib/crawl/agent-review-gateway";
 import { readModelCapacityCallerControl, findOwnPendingModelRequest, requestSearchVerifyModelSlot, cancelReservedModelSlot,
@@ -25,17 +27,17 @@ export async function verifyKeywordsWithModelCapacity(task: ProfileTask, lease: 
   timeoutMs: number; chunked: boolean; signal?: AbortSignal; request?: typeof fetch; roleLease?: RoleLease;
 }): Promise<SearchVerifyCapacityResult> {
   const snapshot = structuredClone(task), job = structuredClone(lease);
-  const options = { timeoutMs: valueOptions.timeoutMs, chunked: valueOptions.chunked, signal: valueOptions.signal, request: valueOptions.request,
+  const options = { timeoutMs: scopedRequestTimeout("product-search-verify", valueOptions.timeoutMs), chunked: valueOptions.chunked, signal: valueOptions.signal, request: valueOptions.request,
     roleLease: valueOptions.roleLease && structuredClone(valueOptions.roleLease) };
   const item = { evidence: profileEvidence(snapshot.product, snapshot.reviewerNote),
     keywords: [...snapshot.profile!.keywordsEn, ...snapshot.profile!.keywordsKo] };
   const legacy = async () => ({ kind: "result" as const, result: await (options.chunked ? verifyKeywordsInChunks : verifyKeywords)(item,
-    { request: options.request, signal: options.signal, timeoutMs: options.timeoutMs }) });
+    { request: options.request, signal: options.signal, timeoutMs: scopedRequestTimeout("product-search-verify", options.timeoutMs) }) });
   if (!process.env.ABCLLM_API_KEY?.trim()) return legacy();
   const control = await readModelCapacityCallerControl();
   if (control.mode === "disabled") return legacy();
   if (control.mode !== "open") throw new ModelCapacityDeferredError("draining");
-  if (!control.policy?.routes.some(route => route.routeId === "product-search-verify" && route.provider === "abcllm" && route.model === VERIFY_MODEL))
+  if (!control.policy?.routes.some(route => route.routeId === "product-search-verify" && route.provider === "abcllm" && route.model === scopedModel("product-search-verify", VERIFY_MODEL)))
     throw new ModelCapacityDeferredError("unmapped");
   const roleLease = options.roleLease ?? roleLeaseFromEnv("text", process.env);
   if (!roleLease) throw new ModelCapacityDeferredError("owner_unavailable");
@@ -44,14 +46,14 @@ export async function verifyKeywordsWithModelCapacity(task: ProfileTask, lease: 
   const initial = await prepareSearchVerifyModelDispatch(snapshot, job, { roleLease, keywords: item.keywords, mode });
   if (initial.kind === "disabled") return legacy();
   if (initial.kind !== "ready" || !("member" in initial)) return { kind: "skipped" };
-  const { member, role, expectation } = initial, model = VERIFY_MODEL;
+  const { member, role, expectation } = initial, model = scopedModel("product-search-verify", VERIFY_MODEL);
   const continuation = await readSearchVerifyContinuation({ member, model });
   if (continuation.unresolved) throw new ModelCapacityDeferredError("dispatched");
   // A resumed execution keeps its stored deadline, further shortened by this tick; it never receives a new 60 seconds.
   const latest = continuation.latest && continuation.latest.deadlineAt > continuation.nowMs ? continuation.latest : null;
   const resumed = !!latest, execution = latest ? latest.execution : continuation.nextExecution;
   sealSearchVerifyWriteExpectation(expectation, execution);
-  const deadline = startedAt + Math.max(1, latest ? Math.min(options.timeoutMs, latest.deadlineAt - continuation.nowMs) : options.timeoutMs);
+  const deadline = startedAt + Math.max(1, latest ? Math.min(scopedRequestTimeout("product-search-verify", options.timeoutMs), latest.deadlineAt - continuation.nowMs) : scopedRequestTimeout("product-search-verify", options.timeoutMs));
   let step: SearchVerifyStep | "done" | "stop" = latest ? latest.next : firstSearchVerifyStep(mode);
   let parent: SearchVerifyParent | null = latest ? latest.parent : null;
   const removed = latest ? latest.outcomes.flatMap(({ outcome }) => outcome.ok ? outcome.removed : []) : [];
@@ -65,7 +67,7 @@ export async function verifyKeywordsWithModelCapacity(task: ProfileTask, lease: 
     if (step === "done") return { kind: "result", result: { ok: true, unsupported: [...removed] }, expectation };
     if (step === "stop") return { kind: "result", result: { ok: false, error: "invalid_output" }, expectation };
     const before = stopped(); if (before) return finish(before);
-    const sent = searchVerifyStepKeywords(keywords, step), timeoutMs = Math.max(1, full ? options.timeoutMs : deadline - Date.now());
+    const sent = searchVerifyStepKeywords(keywords, step), timeoutMs = Math.max(1, full ? scopedRequestTimeout("product-search-verify", options.timeoutMs) : deadline - Date.now());
     const call = prepareSearchVerifyGatewayCall({ evidence: item.evidence, keywords: sent }, { model, timeoutMs });
     if (call.kind !== "prepared") throw new ModelCapacityDeferredError(call.reason);
     const input: SearchVerifyInput = { member, model, execution, step, parent };

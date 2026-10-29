@@ -71,9 +71,9 @@ export type ClassifierModel = {
 
 export const MODELS: readonly ClassifierModel[] = [
   // Fast path. Spark is currently available through a ChatGPT/Codex access token.
-  { model: modelForPurpose("classify-primary").model, effort: modelForPurpose("classify-primary").provider === "claude-cli" ? "high" : "xhigh", timeoutMs: 8_000 },
+  { model: modelForPurpose("classify-primary").model, effort: modelForPurpose("classify-primary").provider === "claude-cli" ? "high" : "xhigh", timeoutMs: modelForPurpose("classify-primary").timeoutMs },
   // Stable API-key path when Spark is unavailable, queued, or rate limited.
-  { model: modelForPurpose("classify-fallback").model, effort: "high", timeoutMs: 12_000 },
+  { model: modelForPurpose("classify-fallback").model, effort: "high", timeoutMs: modelForPurpose("classify-fallback").timeoutMs },
 ];
 
 /**

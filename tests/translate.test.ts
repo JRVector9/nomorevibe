@@ -56,14 +56,14 @@ describe("translateToKorean — 게이트웨이 호출", () => {
     expect(request).not.toHaveBeenCalled();
   });
 
-  it("스트리밍을 끄고 gpt-oss-120b 로 부르며 키를 헤더로만 보낸다", async () => {
+  it("스트리밍을 끄고 M1 Gemma 기본값으로 부르며 키를 헤더로만 보낸다", async () => {
     process.env.ABCLLM_API_KEY = "test-key";
     const request = vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: '["문서 사이트다"]' } }] })));
     expect(await translateToKorean([EN], 1_000, request as typeof fetch)).toEqual({ ok: true, translations: ["문서 사이트다"] });
     const [url, init] = request.mock.calls[0] as unknown as [string, RequestInit];
     const body = JSON.parse(String(init.body));
     expect(url).toBe("https://abcllm-api.brut.bot/v1/chat/completions");
-    expect(body).toMatchObject({ model: "[MLX] gpt-oss-120b", stream: false });
+    expect(body).toMatchObject({ model: "[m1] mlx-community--gemma-4-26b-a4b-it-4bit", stream: false });
     expect(JSON.parse(body.messages[1].content)).toEqual([EN]);
     expect(String(init.body)).not.toContain("test-key");
     expect((init.headers as Record<string, string>).Authorization).toBe("Bearer test-key");

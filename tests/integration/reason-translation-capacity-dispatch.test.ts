@@ -464,7 +464,10 @@ it('retains full C after EOF and fences a new boot from another POST or failed c
     expect((await admin`SELECT attempts FROM text_translations WHERE source_hash=${item.hash}`)[0].attempts).toBe(1);
     expect(await tracked(releaseRole(role))).toBe(true); await elect();
     await admin`UPDATE text_translations SET retry_at=clock_timestamp()-interval '1 second' WHERE source_hash=${item.hash} AND target_lang='ko'`;
-    expect(await tick()).toMatchObject({ status: 'deferred', reason: 'model_capacity' }); expect(bodies).toHaveLength(1);
+    // The unknown request still fences this reason, so both queues skip it instead of re-picking it every tick
+    // (postprocess-backlog lane, 2026-10-29). It is never re-sent and its failed cache attempt is not consumed.
+    expect(await retryableTranslations(4)).toEqual([]);
+    expect(await tick()).toMatchObject({ status: 'completed' }); expect(bodies).toHaveLength(1);
     expect(Array.from(await admin`SELECT request_id,state FROM model_capacity_requests WHERE owner_instance_id=${prefix}`)).toEqual([{ request_id: unknown.request_id, state: 'indeterminate' }]);
     expect((await admin`SELECT attempts FROM text_translations WHERE source_hash=${item.hash}`)[0].attempts).toBe(1);
   });

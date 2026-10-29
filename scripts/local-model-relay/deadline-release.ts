@@ -8,7 +8,7 @@ import { closeSync, existsSync, fsyncSync, lstatSync, openSync, readFileSync, un
 import { join } from 'node:path';
 import { LOCAL_MODEL_RELAY_DEADLINE_RELEASE_SUFFIX, LOCAL_MODEL_RELAY_RECOVERY_LOCK, validRelayRequestId, type RelayReceipt } from './protocol';
 
-export type RelayDeadlinePolicy = Readonly<{ engineDeadlineMs: number; skewMs: number }>;
+export type RelayDeadlinePolicy = Readonly<{ engineDeadlineMs: number; skewMs: number; enforcedAfterMs: number }>;
 const hash = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 function read(path: string): Buffer {
   const info = lstatSync(path);
@@ -32,6 +32,10 @@ export function pendingIndeterminateReceipt(directory: string): RelayReceipt | n
 /** Earliest time the engine must have stopped: request start (before forwarding) + declared bound + skew. */
 export function relayDeadlineNotBefore(receipt: Pick<RelayReceipt, 'startedAt'>, policy: RelayDeadlinePolicy): number {
   const started = Date.parse(receipt.startedAt);
+  if (!Number.isSafeInteger(policy.engineDeadlineMs) || policy.engineDeadlineMs < 1
+    || !Number.isSafeInteger(policy.skewMs) || policy.skewMs < 0
+    || !Number.isSafeInteger(policy.enforcedAfterMs) || policy.enforcedAfterMs < 0) throw new Error('relay_deadline_policy_invalid');
+  if (started < policy.enforcedAfterMs) throw new Error('relay_engine_bound_not_effective_at_dispatch');
   if (!Number.isFinite(started)) throw new Error('relay_deadline_start_invalid');
   return started + policy.engineDeadlineMs + policy.skewMs;
 }
@@ -56,9 +60,13 @@ export function releaseRelayAfterEngineDeadline(directory: string, requestId: st
     if (nowMs < notBeforeMs) return { kind: 'waiting', requestId, notBeforeMs };
     const active = read(activePath), bytes = read(receiptPath);
     const archive = { version: 1, kind: 'engine_deadline_elapsed', requestId, startedAt: receipt.startedAt, endedAt: receipt.endedAt,
-      error: receipt.error, engineDeadlineMs: policy.engineDeadlineMs, skewMs: policy.skewMs,
+      error: receipt.error, engineBoundEffectiveAt: new Date(policy.enforcedAfterMs).toISOString(), engineDeadlineMs: policy.engineDeadlineMs, skewMs: policy.skewMs,
       notBefore: new Date(notBeforeMs).toISOString(), evaluatedAt: new Date(nowMs).toISOString(), activeHash: hash(active), receiptHash: hash(bytes) };
-    if (!existsSync(archivePath)) writeFileSync(archivePath, JSON.stringify(archive) + '\n', { flag: 'wx', mode: 0o600, flush: true });
+    if (existsSync(archivePath)) {
+      const previous = JSON.parse(read(archivePath).toString());
+      for (const key of ['version', 'kind', 'requestId', 'activeHash', 'receiptHash', 'engineDeadlineMs', 'skewMs', 'engineBoundEffectiveAt', 'notBefore'] as const)
+        if (previous[key] !== archive[key]) throw new Error('relay_deadline_archive_mismatch');
+    } else writeFileSync(archivePath, JSON.stringify(archive) + '\n', { flag: 'wx', mode: 0o600, flush: true });
     const descriptor = openSync(directory, 'r');
     try {
       fsyncSync(descriptor);

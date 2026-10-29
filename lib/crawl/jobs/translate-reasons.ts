@@ -1,7 +1,10 @@
+import { scopedModel } from "@/lib/llm/model-registry";
+import { modelTimeoutMs } from "@/lib/llm/model-registry";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { translateReasonsWithModelCapacity } from '@/lib/crawl/reason-translation-model-capacity';
 import { TRANSLATE_MODEL } from "@/lib/crawl/translate";
 import { recordWorkerTranslations, retryableTranslations, untriedTranslations } from "@/lib/crawl/translations";
+import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 
 /**
  * 한 번에 옮기는 양 — 최대 4건, 1,600자까지.
@@ -13,7 +16,7 @@ import { recordWorkerTranslations, retryableTranslations, untriedTranslations } 
 const BATCH = 4;
 const BATCH_CHARS = 1_600;
 /** 한 번 부르는 데 둘 시간. 첫 배포 때 20초로 두었더니 4틱 연속 시간 초과였다 */
-const CALL_MS = 45_000;
+const CALL_MS = modelTimeoutMs("reason-translate");
 /** 틱 예산(worker.ts jobRunOptions 55초)보다 조금 짧게 */
 const TICK_MS = 54_000;
 /**
@@ -84,8 +87,15 @@ export async function translateReasons(ctx: JobContext<null>): Promise<JobOutcom
         return { done: true };
       }
       const batch = pending[0].attempts >= SOLO_ATTEMPTS ? [pending[0]] : packBatch(pending);
-      const prepared = await translateReasonsWithModelCapacity(batch, lease,
-        { timeoutMs: Math.max(1_000, Math.min(CALL_MS, remaining() - 1_000)), signal });
+      let prepared: Awaited<ReturnType<typeof translateReasonsWithModelCapacity>>;
+      try {
+        prepared = await translateReasonsWithModelCapacity(batch, lease,
+          { timeoutMs: Math.max(1_000, Math.min(CALL_MS, remaining() - 1_000)), signal });
+      } catch (error) {
+        // 미룸 사유(capacity·dispatched·unmapped…)를 남긴다 — 러너는 'model_capacity' 하나로만 적는다
+        if (error instanceof ModelCapacityDeferredError) ctx.log("translate.capacity_deferred", { translated, failed, reason: error.reason });
+        throw error;
+      }
       if (prepared.kind === 'skipped') return { done: false };
       const result = prepared.result;
       if (signal.aborted) return { done: false };
@@ -95,9 +105,9 @@ export async function translateReasons(ctx: JobContext<null>): Promise<JobOutcom
         error: result.ok ? undefined : result.error,
       }));
       if (prepared.kind === 'ready') {
-        const stored = await recordWorkerTranslations(rows, TRANSLATE_MODEL, lease, prepared.expectation);
+        const stored = await recordWorkerTranslations(rows, scopedModel("reason-translate", TRANSLATE_MODEL), lease, prepared.expectation);
         if (stored === 0) return { done: false };
-      } else await recordWorkerTranslations(rows, TRANSLATE_MODEL, lease);
+      } else await recordWorkerTranslations(rows, scopedModel("reason-translate", TRANSLATE_MODEL), lease);
       translated += rows.filter((row) => row.translated !== null).length;
       failed += rows.filter((row) => row.translated === null).length;
       // 게이트웨이가 막혔으면 이번 틱은 여기서 — 같은 실패를 되풀이하지 않는다

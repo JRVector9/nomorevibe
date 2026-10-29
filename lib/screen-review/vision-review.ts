@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { scopedModel, scopedModelBaseUrl } from "@/lib/llm/model-registry";
 import { observedLocalModelWireHash } from "@/lib/llm/local-model-wire-observation";
 import { MAX_REVIEW_INPUT_BYTES, reviewHash, type ReviewInput } from "@/lib/crawl/agent-review-contract";
 import { IMPORT_SOURCES, QWEN_VISION_AUTO_SOURCE, QWEN_VISION_M1_SOURCE, QWEN_VISION_SHOT2_SOURCE } from "@/lib/crawl/audit-import-sources";
@@ -70,7 +71,9 @@ export function screenModelConfig(env: Readonly<Record<string, string | undefine
     AUDIT_SECOND_OPINION_API_KEY: env.SCREEN_REVIEW_MODEL_API_KEY?.trim() || env.AUDIT_SECOND_OPINION_API_KEY,
   });
   if (!config || visionModelName(config.model, prompt.version).length > 160) return null;
-  return version === SCREEN_REVIEW_PROMPT_VERSION ? config : { ...config, screenPromptVersion: prompt.version };
+  const selected = env === process.env ? { ...config, model: scopedModel("screen-review", config.model),
+    baseUrl: scopedModelBaseUrl("screen-review", config.baseUrl, "local-direct") } : config;
+  return version === SCREEN_REVIEW_PROMPT_VERSION ? selected : { ...selected, screenPromptVersion: prompt.version };
 }
 
 /** 감사 두 번째 의견과 같은 서버인가 — 같으면 그쪽의 물러나기(qwen-endpoint-backoff.ts)를 따른다 */

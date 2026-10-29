@@ -369,7 +369,8 @@ it("every admin server action and every write route handler goes through the web
   // 0117 문의 접수·문의 처리·메이커 답장 검수 세 액션을 더한다.
   // 단계별 모델 저장(admin/models/actions.ts)도 기존 쓰기 관문을 통과한다.
   // Oracle 한국어 탐색 설정(status/actions.ts)도 같은 쓰기 관문으로 저장한다.
-  expect(wrapped).toBe(77);
+  // admin/models: stage pool save, model probe and admission control add three guarded actions.
+  expect(wrapped).toBe(82);
   const routes = files.filter(file => file.endsWith(`${path.sep}route.ts`));
   for (const file of routes) {
     const source = readFileSync(file, "utf8");

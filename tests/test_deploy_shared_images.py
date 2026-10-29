@@ -21,6 +21,30 @@ release = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(release)
 
 
+class DokployCredentialTests(unittest.TestCase):
+    def test_registered_environment_does_not_access_keychain_or_print_key(self):
+        with patch.dict(os.environ, {'DOKPLOY_API_KEY': 'registered-test-key'}, clear=True), \
+                patch.object(release, 'run', side_effect=AssertionError('keychain accessed')), \
+                redirect_stdout(io.StringIO()) as stdout, redirect_stderr(io.StringIO()) as stderr:
+            self.assertEqual(release.dokploy_api_key(), 'registered-test-key')
+        self.assertEqual(stdout.getvalue(), '')
+        self.assertEqual(stderr.getvalue(), '')
+
+    def test_absent_environment_preserves_exact_keychain_lookup(self):
+        with patch.dict(os.environ, {}, clear=True), patch.object(release, 'run', return_value='keychain-test-key') as run:
+            self.assertEqual(release.dokploy_api_key(), 'keychain-test-key')
+        run.assert_called_once_with(['security', 'find-generic-password', '-a', 'deploy.brut.bot',
+                                     '-s', 'dokploy-api-key', '-w'])
+
+    def test_invalid_explicit_environment_never_falls_back_or_leaks_value(self):
+        for invalid in ('', ' ', 'test-secret\nheader', 'test-secret\r', 'test-secret\x7f', 'x' * 4097):
+            with self.subTest(length=len(invalid)), patch.dict(os.environ, {'DOKPLOY_API_KEY': invalid}, clear=True), \
+                    patch.object(release, 'run', side_effect=AssertionError('keychain fallback')):
+                with self.assertRaises(ValueError) as failure:
+                    release.dokploy_api_key()
+                self.assertEqual(str(failure.exception), 'invalid_dokploy_api_key_environment')
+
+
 class SshAccountTests(unittest.TestCase):
     def test_uses_existing_registered_account_without_changing_hosts_or_options(self):
         for configured, expected in ((None, 'root'), ('jr', 'jr')):

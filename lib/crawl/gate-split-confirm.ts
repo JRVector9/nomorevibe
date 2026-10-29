@@ -1,3 +1,6 @@
+import { withAdminModelStage } from "@/lib/llm/admin-model-pools";
+import { scopedModel } from "@/lib/llm/model-registry";
+import { modelTimeoutMs } from "@/lib/llm/model-registry";
 import { and, asc, eq, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { withLocalModelCapacity } from "@/lib/llm/local-model-capacity";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
@@ -46,7 +49,7 @@ import { getSettings } from "./settings";
  */
 export const SPLIT_CONFIRM_DEEPSEEK_MIN_CONFIDENCE = 0.7;
 /** 한 호출의 제한 시간 — 실측 7~31초(평균 13초). 위임(60초)보다 짧게 잡아 위임의 차례를 남긴다 */
-export const SPLIT_CONFIRM_TIMEOUT_MS = 45_000;
+export const SPLIT_CONFIRM_TIMEOUT_MS = modelTimeoutMs("split-confirm");
 /** 한 틱에 묻는 수와 쓰는 시간 — 하루 갈림 거부는 수십 건이라 틱(60초 간격)마다 둘이면 넉넉하다 */
 export const SPLIT_CONFIRM_PER_TICK = 2;
 export const SPLIT_CONFIRM_LANE_MS = 60_000;
@@ -175,7 +178,7 @@ async function settleConfirmation(claim: SplitTiebreakClaim, result: DeepSeekRev
     if (ai1.mode === "draining" || ai2.mode === "draining") {
       return finish({ deepseekState: "failed", deepseekErrorCode: "stage_draining", deepseekRetryAfter: new Date(now.getTime() + DRAINING_RETRY_MS) }, "failed");
     }
-    const answered = { deepseekState: "succeeded" as const, deepseekModel: DEEPSEEK_REVIEW_MODEL, deepseekOutcome: outcome,
+    const answered = { deepseekState: "succeeded" as const, deepseekModel: scopedModel("human-review", DEEPSEEK_REVIEW_MODEL), deepseekOutcome: outcome,
       deepseekErrorCode: null, deepseekErrorDetail: null, deepseekRetryAfter: null };
     if (!domain || !sameGate(gate, row) || candidateRevisionHash(domain.candidate) !== claim.candidateRevision
       || gate.first.id !== claim.firstAttemptId || gate.input.inputHash !== claim.input.inputHash
@@ -195,7 +198,7 @@ async function settleConfirmation(claim: SplitTiebreakClaim, result: DeepSeekRev
       return finish({ ...answered, applied: "held_daily_cap" }, "capped");
     }
     const attemptId = await applySplitReject(tx, { claim, domain, gate, outcome: qwen, model: row.model, tiebreakId: row.id, now,
-      confirmation: { model: DEEPSEEK_REVIEW_MODEL, outcome } });
+      confirmation: { model: scopedModel("human-review", DEEPSEEK_REVIEW_MODEL), outcome } });
     return finish({ ...answered, applied: "rejected", decisionAttemptId: attemptId }, "rejected");
   });
 }
@@ -206,6 +209,10 @@ async function settleConfirmation(claim: SplitTiebreakClaim, result: DeepSeekRev
  */
 export async function runSplitTiebreakConfirmations(ctx: Pick<JobContext<null>, "hasBudget" | "deadlineAt" | "signal" | "log">, lease: JobLease,
   options: { request?: typeof fetch } = {}): Promise<SplitConfirmTick> {
+  return withAdminModelStage("split-confirm", () => runSplitConfirmInScope(ctx, lease, options));
+}
+async function runSplitConfirmInScope(ctx: Pick<JobContext<null>, "hasBudget" | "deadlineAt" | "signal" | "log">, lease: JobLease,
+  options: { request?: typeof fetch }): Promise<SplitConfirmTick> {
   const tick: SplitConfirmTick = { calls: 0, rejected: 0, held: 0, capped: 0, failed: 0, cancelled: 0, superseded: 0, skipped: 0, stopped: null };
   if (!liveCallsAllowed()) return { ...tick, stopped: "replay" };
   if (lease.name !== JOB) throw new JobLeaseLostError();

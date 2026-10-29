@@ -1,3 +1,5 @@
+import { scopedRequestTimeout } from "@/lib/llm/model-registry";
+import { scopedModel } from "@/lib/llm/model-registry";
 import { configuredModel, modelBaseUrl, modelLimits } from "@/lib/llm/model-registry";
 import { createHash } from "node:crypto";
 import { parseKoreanTaglines, type KoreanTaglineBatch } from "@/lib/domain/products/korean-tagline";
@@ -86,7 +88,7 @@ async function chat(
   timeoutMs: number,
   request: typeof fetch,
   signal?: AbortSignal,
-  model = TRANSLATE_MODEL,
+  model = scopedModel("reason-translate", TRANSLATE_MODEL),
 ): Promise<ChatResult> {
   const key = process.env.ABCLLM_API_KEY?.trim();
   if (!key) return { ok: false, error: "no_key" };
@@ -96,7 +98,7 @@ async function chat(
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
       body: chatWire(body, model),
-      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(scopedRequestTimeout(body.routeId, timeoutMs))]) : AbortSignal.timeout(scopedRequestTimeout(body.routeId, timeoutMs)),
     });
     if (!response.ok) return { ok: false, error: response.status === 429 ? "rate_limit" : `http_${response.status}` };
     const data = await response.json() as { choices?: { message?: { content?: string | null } }[] };
@@ -154,7 +156,7 @@ export function productTaglineKoSourceHash(item: ProductTaglineKoGatewayItem): s
 
 export async function translateTaglinesToKorean(
   items: { name: string; tagline: string }[], timeoutMs: number, request: typeof fetch = fetch, signal?: AbortSignal,
-  model = KOREAN_TAGLINE_MODEL,
+  model = scopedModel("product-tagline-ko", KOREAN_TAGLINE_MODEL),
 ): Promise<KoreanTaglineBatch> {
   if (!items.length || items.length > KOREAN_TRANSLATION_MAX_ITEMS ||
     items.reduce((count, item) => count + item.tagline.length, 0) > KOREAN_TRANSLATION_LEGACY_MAX_CHARS)
@@ -191,7 +193,7 @@ export function productTranslationGatewayWire(items: readonly ProductTranslation
 export async function translateProductFields(
   items: { name: string; text: string; field: ProductTranslationField; locale: ProductTranslationLocale }[],
   timeoutMs: number, request: typeof fetch = fetch, signal?: AbortSignal,
-  model = PRODUCT_TRANSLATION_MODEL,
+  model = scopedModel("product-translate", PRODUCT_TRANSLATION_MODEL),
 ): Promise<KoreanTaglineBatch> {
   const result = await chat(productTranslationChatBody(items, model), timeoutMs, request, signal, model);
   return result.ok ? parseKoreanTaglines(result.content, items.length) : result;
@@ -306,7 +308,7 @@ function queryChatBody(query: string) {
   return { routeId: "search-query-translate" as const, system: QUERY_SYSTEM, user: `${query}${glossaryHints(query)}`, temperature: 0, maxTokens: modelLimits("search-query-translate").maxTokens };
 }
 export async function translateQueryToEnglish(query: string, timeoutMs: number, request: typeof fetch = fetch): Promise<{ ok: true; keywords: string } | { ok: false; error: string }> {
-  const result = await chat(queryChatBody(query), timeoutMs, request, undefined, SEARCH_QUERY_MODEL);
+  const result = await chat(queryChatBody(query), timeoutMs, request, undefined, scopedModel("search-query-translate", SEARCH_QUERY_MODEL));
   if (!result.ok) return result;
   const keywords = parseQueryTranslation(result.content);
   return keywords ? { ok: true, keywords } : { ok: false, error: "invalid_output" };
@@ -330,7 +332,7 @@ function chineseQueryChatBody(query: string, sourceLocale: "zh-Hans" | "zh-Hant"
 export async function translateChineseQueryToEnglish(
   query: string, sourceLocale: "zh-Hans" | "zh-Hant", timeoutMs: number, request: typeof fetch = fetch,
 ): Promise<{ ok: true; keywords: string } | { ok: false; error: string }> {
-  const result = await chat(chineseQueryChatBody(query, sourceLocale), timeoutMs, request, undefined, SEARCH_QUERY_MODEL);
+  const result = await chat(chineseQueryChatBody(query, sourceLocale), timeoutMs, request, undefined, scopedModel("search-query-translate", SEARCH_QUERY_MODEL));
   if (!result.ok) return result;
   const keywords = parseQueryTranslation(result.content);
   return keywords ? { ok: true, keywords } : { ok: false, error: "invalid_output" };

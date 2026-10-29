@@ -15,8 +15,8 @@ export async function reclaimEvidencedModelCapacity(ctx: JobContext<null>): Prom
     return { done: true, degraded: { code: "auto_reclaim_declaration_invalid", detail: "MODEL_CAPACITY_AUTO_RECLAIM 선언을 확인해야 합니다" } };
   }
   if (!policies.size) return { done: true };
-  const { releaseEvidencedDispatches } = await import("@/lib/operations/dr/reclaim");
-  const { rows } = await releaseEvidencedDispatches({ policies, operator: operator(), onlyDeclaredBudgets: true }, true);
+  const { runModelOpsRunner } = await import("@/lib/operations/ops-runner/runner");
+  const { rows } = await runModelOpsRunner({ automatic: true, policies, operator: operator(), audit: (event, detail) => ctx.log(event, detail) });
   const released = rows.filter(row => row.released);
   if (rows.length) ctx.log("model_capacity.auto_reclaim", { released: released.length, kept: rows.length - released.length,
     rows: rows.slice(0, 16).map(row => ({ requestId: row.requestId, released: row.released, reason: row.reason })) });

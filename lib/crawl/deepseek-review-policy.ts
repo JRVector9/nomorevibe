@@ -1,3 +1,4 @@
+import { modelTimeoutMs } from "@/lib/llm/model-registry";
 import { modelBaseUrl, modelForPurpose } from "@/lib/llm/model-registry";
 // Keyless M3 service on its pinned Tailscale IP. The host's short MagicDNS name
 // is not resolvable inside the production Docker containers on M3 or mini.
@@ -5,6 +6,6 @@ import { modelBaseUrl, modelForPurpose } from "@/lib/llm/model-registry";
 export const DEEPSEEK_REVIEW_BASE = modelBaseUrl("human-review", process.env, "local-direct");
 export const DEEPSEEK_REVIEW_MODEL = modelForPurpose("human-review").model;
 export const DEEPSEEK_REVIEW_PROVIDER = 'm3-deepseek';
-export const DEEPSEEK_REVIEW_TIMEOUT_MS = 60_000;
+export const DEEPSEEK_REVIEW_TIMEOUT_MS = modelTimeoutMs("human-review");
 export const DEEPSEEK_MIN_CONFIDENCE = 0.9;
 export const deepseekActor = (generation: number) => `${DEEPSEEK_REVIEW_PROVIDER}:${generation}`;

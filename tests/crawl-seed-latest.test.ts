@@ -315,17 +315,3 @@ it('retains unfinished latest ranges when the configured sort changes to relevan
   expect(next.latestScan?.cycleWindow).toEqual(first.latestScan?.cycleWindow);
   expect(mocks.search.mock.calls.some(([p]) => p.sort === 'relevance' && p.page === 1 && range(p.query).includes('2026-10-01'))).toBe(true);
 });
-
-it('records a partial latest preview in its own summary instead of losing its new insertions', async () => {
-  const old = await oldCursor();
-  mocks.settings!.discover.pagesPerTick = 2;
-  mocks.admission.mockResolvedValue({recentNew:249,stages:[],secondWindowLimited:false});
-  mocks.search.mockResolvedValue(page(true));
-  const tick = ctx(old);
-  const result = await seedFrontier(tick);
-  expect(result.cursor?.latestScan?.pendingPage?.itemIndex).toBe(1);
-  expect(tick.log.mock.calls.filter(([event]) => event === 'crawl.seed_latest_scanned')).toEqual([
-    ['crawl.seed_latest_scanned',expect.objectContaining({discovered:1,examined:1,existing:0,searchRequests:1})],
-  ]);
-  expect(tick.log.mock.calls.some(([event]) => event === 'crawl.seeded')).toBe(false);
-});

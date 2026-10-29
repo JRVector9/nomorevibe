@@ -11,6 +11,13 @@ Git·GitHub CLI 로그인, 기존 Keychain의 Dokploy 키와 두 호스트 SSH �
 웹 이미지 패키지의 비공개 설정과 기존 registry 자격 증명을 유지한다.
 
 gpu3090에서는 `prod` 스킬의 기존 Keychain 호환 도구를 PATH에 추가한다.
+등록 키를 제공하는 xAegis worker에서는 키 파일이나 Keychain 설정을 만들지 않고
+`xa-key exec DOKPLOY_API_KEY=gpu3090/dokploy -- npm run deploy -- plan ...`처럼 실행한다.
+`run`과 별도 관측도 같은 등록 키 환경에서 실행한다. 도구는 `DOKPLOY_API_KEY`가 있으면
+메모리에서 읽고, 없으면 기존 Keychain 조회를 유지한다. 빈 값·공백·제어문자가 있는 명시적
+키는 다른 인증으로 조용히 대체하지 않고 거절한다. 키를 명령 인자·로그·영수증에 저장하지 않는다.
+이 인증 경로도 동일한 SSH·출처·drain·한 번 실행 관문을 거친다.
+
 현재 등록된 M3/mini SSH 계정이 `jr`이면 `NMV_DEPLOY_SSH_USER=jr`을 plan/run 및
 후속 관측에 동일하게 지정한다. 기본 계정은 기존 `root`이며 호스트·SSH 옵션·접속
 권한은 변경하지 않는다. 배포 전 두 호스트에서 해당 계정의 Docker 접근을 확인한다.

@@ -20,7 +20,9 @@ const root=fileURLToPath(new URL("../..",import.meta.url)),name=`nomorevibe_test
 const url=new URL(TEST_DATABASE_URL);url.pathname=`/${name}`;
 const admin=postgres(TEST_DATABASE_URL,{max:1,onnotice:()=>{}}),client=postgres(url.toString(),{max:4,prepare:false,onnotice:()=>{}});
 const fx=cliExecutorIndeterminateRemovedFixture(),{binding,token}=fx,id=fx.plan.request.requestId,owner=fx.plan.request.owner;
-const journal=JSON.parse(readFileSync(path.join(root,"drizzle/meta/_journal.json"),"utf8"));
+const fullJournal=JSON.parse(readFileSync(path.join(root,"drizzle/meta/_journal.json"),"utf8"));
+// This regression owns the 0137 historical window; later additive CHECK branches are tested separately.
+const journal={...fullJournal,entries:fullJournal.entries.filter((e:{idx:number})=>e.idx<=137)};
 const checks=["model_capacity_requests_logical_check","model_capacity_requests_members_check","model_capacity_requests_dispatch_check","model_capacity_requests_terminal_check","model_capacity_events_kind_check"];
 const policy:ModelCapacityPolicy={version:1,globalLimit:3,providerLimits:{"fixture-cli":3},groupLimits:{"fixture-cli-group":3},poolLimits:{reviewer:2,text:1},weights:{first:4,second:2,background:1},maxWaiting:20,queueTtlMs:120000,reservationTtlMs:30000,
   routes:[{routeId:"crawl-publish-classify",provider:binding.provider,model:binding.model,providerBudgetId:"fixture-cli",groupId:"fixture-cli-group"}]};
@@ -34,6 +36,14 @@ function cli(apply:boolean){
   const p=JSON.stringify(fx.plan),r=JSON.stringify(fx.receipt),sha=(v:string)=>createHash("sha256").update(v).digest("hex");
   writeFileSync(path.join(proofDir,"plan.json"),p,{mode:0o600});writeFileSync(path.join(proofDir,"receipt.json"),r,{mode:0o600});
   return JSON.parse(execFileSync(process.execPath,["--import","tsx",path.join(root,"scripts/ops/model-cli-executor-indeterminate-removed-boundary-release.ts"),`--plan=${path.join(proofDir,"plan.json")}`,`--plan-sha=${sha(p)}`,`--receipt=${path.join(proofDir,"receipt.json")}`,`--receipt-sha=${sha(r)}`,`--artifact-dir=${proofDir}`,"--operator=fixture-operator",`--reference=${fx.plan.reviewReference}`,"--database-url-stdin",...(apply?["--apply"]:[])],{cwd:root,input:url.toString(),encoding:"utf8",timeout:15000}));
+}
+async function migrateThrough(limit:number){
+  const folder=mkdtempSync(path.join(tmpdir(),"cli-unknown-window-"));
+  try{mkdirSync(path.join(folder,"meta"));const entries=journal.entries.filter((e:{idx:number})=>e.idx<limit);
+    for(const e of entries)copyFileSync(path.join(root,"drizzle",`${e.tag}.sql`),path.join(folder,`${e.tag}.sql`));
+    writeFileSync(path.join(folder,"meta/_journal.json"),JSON.stringify({...journal,entries}));
+    await migrate(drizzle(client),{migrationsFolder:folder});
+  }finally{rmSync(folder,{recursive:true,force:true});}
 }
 beforeAll(async()=>{
   await admin.unsafe(`CREATE DATABASE ${name}`);created=true;const partial=mkdtempSync(path.join(tmpdir(),"cli-unknown-pre136-"));
@@ -53,7 +63,7 @@ beforeAll(async()=>{
   beforeRows=await rows();beforeChecks=await defs();
   const e={...fx.evidence,evaluatedAt:new Date().toISOString()};
   await expect(client`UPDATE model_capacity_requests SET state='withdrawn',terminal_evidence=${JSON.stringify(e)}::jsonb,terminal_evidence_hash=${providerBoundaryCanonicalHash(e)} WHERE request_id=${id}`).rejects.toThrow();
-  expect(await rows()).toEqual(beforeRows);await migrate(drizzle(client),{migrationsFolder:path.join(root,"drizzle")});
+  expect(await rows()).toEqual(beforeRows);await migrateThrough(138);
   const g=globalThis as {db?:unknown;pgClient?:unknown};g.db=drizzle(client,{schema});g.pgClient=client;
 },120000);
 afterAll(async()=>{await client.end({timeout:5});if(created)await admin.unsafe(`DROP DATABASE ${name}`);await admin.end({timeout:5});rmSync(proofDir,{recursive:true,force:true});});

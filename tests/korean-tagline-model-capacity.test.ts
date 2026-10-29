@@ -25,7 +25,7 @@ vi.mock("@/lib/jobs/control", () => ({ assertJobLease: mocks.jobWall, assertJobL
 vi.mock("@/lib/domain/products/repository", () => ({ listProductSlugs: vi.fn() }));
 vi.mock("@/lib/domain/products/popular", () => ({ getPopularGroups: vi.fn() }));
 import { translateKoreanTaglinesWithModelCapacity } from "@/lib/domain/products/korean-tagline-model-capacity";
-import { TRANSLATE_MODEL } from "@/lib/crawl/translate";
+import { KOREAN_TAGLINE_MODEL } from "@/lib/crawl/translate";
 const task = { productId: 17, name: "owner/Doc", tagline: "Document management tools. Additional details for teams.", repoUrl: "https://github.com/owner/Doc", attempts: 9, lastError: "rejected:too_long" };
 const item = { name: "Doc", tagline: leadClause(task.tagline) };
 const role = { role: "text" as const, instanceId: "korean-unit", bootId: randomUUID(), release: "unit", epoch: 1, kind: "primary" as const };
@@ -33,7 +33,7 @@ const job = { name: "product-tagline-ko", token: randomUUID(), requestedVersion:
 const members: ProductTaglineKoMember[] = [{ productId: task.productId, slug: "korean-unit", sourceHash: "a".repeat(64), sourceIdentityHash: "e".repeat(64),
   cache: { kind: "present", attempts: 9, qualityRejections: 4, rowIdentityHash: "f".repeat(64) } }];
 const boundRole = { ...role, batch: { mode: "legacy" as const } };
-const call = { kind: "prepared" as const, wireHash: "b".repeat(64), servingContractHash: "c".repeat(64), totalTokenBound: 4096, model: TRANSLATE_MODEL };
+const call = { kind: "prepared" as const, wireHash: "b".repeat(64), servingContractHash: "c".repeat(64), totalTokenBound: 4096, model: KOREAN_TAGLINE_MODEL };
 const reservation = modelCapacityReservationSchema.parse({ requestId: randomUUID(), token: randomUUID(), owner: { instanceId: role.instanceId, bootId: role.bootId }, epoch: 1, revision: 1, policyHash: "d".repeat(64) });
 const dispatch = { ...reservation, binding: { kind: "product_tagline_ko_gateway" } };
 const expectation = { kind: "korean_tagline_write" };
@@ -43,7 +43,7 @@ const terminal = { kind: "product_tagline_ko_gateway_terminal" };
 const options = () => ({ timeoutMs: 45_000, roleLease: role });
 beforeEach(() => {
   vi.resetAllMocks(); vi.stubEnv("ABCLLM_API_KEY", "unit");
-  mocks.control.mockResolvedValue({ mode: "open", policy: { routes: [{ provider: "abcllm", routeId: "product-tagline-ko", model: TRANSLATE_MODEL }] } });
+  mocks.control.mockResolvedValue({ mode: "open", policy: { routes: [{ provider: "abcllm", routeId: "product-tagline-ko", model: KOREAN_TAGLINE_MODEL }] } });
   mocks.call.mockReturnValue(call); mocks.prepare.mockResolvedValueOnce({ kind: "ready", members, role: boundRole })
     .mockResolvedValue({ kind: "ready", dispatch, expectation });
   mocks.pending.mockResolvedValue(null); mocks.request.mockResolvedValue({ kind: "granted", reservation });
@@ -70,7 +70,7 @@ it("reuses the same pending ID and settles before returning a committed writer e
   mocks.pending.mockResolvedValue({ requestId: reservation.requestId, state: "waiting" });
   expect(await translateKoreanTaglinesWithModelCapacity([task], ["korean-unit"], job, options())).toEqual({ kind: "result", result, expectation });
   expect(mocks.request).toHaveBeenCalledWith(expect.objectContaining({ requestId: reservation.requestId,
-    workKey: `${productTaglineKoLogicalWorkKey(members)}:${productTaglineKoInputHash({ members, model: TRANSLATE_MODEL })}` }), members);
+    workKey: `${productTaglineKoLogicalWorkKey(members)}:${productTaglineKoInputHash({ members, model: KOREAN_TAGLINE_MODEL })}` }), members);
   expect(mocks.native).toHaveBeenCalledWith([item], dispatch, call, expect.objectContaining({ timeoutMs: 45_000 }));
   expect(mocks.reconcile).toHaveBeenCalledWith(terminal); expect(mocks.legacy).not.toHaveBeenCalled();
 });
@@ -148,8 +148,8 @@ it("keeps the ordinary four-rejection limit outside the home list", async () => 
 it("locks every legacy product in sorted order before any cache upsert", async () => {
   const t = domainTx();
   const domain = await vi.importActual<typeof import("@/lib/domain/products/korean-taglines")>("@/lib/domain/products/korean-taglines");
-  await domain.recordKoreanTaglines([{ task, result: { kind: "success", line: "문서를 관리하는 도구", model: TRANSLATE_MODEL } },
-    { task: { ...task, productId: 3 }, result: { kind: "failure", error: "network", model: TRANSLATE_MODEL } }], job);
+  await domain.recordKoreanTaglines([{ task, result: { kind: "success", line: "문서를 관리하는 도구", model: KOREAN_TAGLINE_MODEL } },
+    { task: { ...task, productId: 3 }, result: { kind: "failure", error: "network", model: KOREAN_TAGLINE_MODEL } }], job);
   const lock = t.queries.filter(q => q.sql.includes("FOR SHARE"));
   expect(lock.map(q => q.params[0])).toEqual([3, 17]);
   expect(t.execute.mock.invocationCallOrder.at(-1)).toBeLessThan(t.tx.insert.mock.invocationCallOrder[0]);
@@ -165,8 +165,8 @@ async function realDispatch(t: ReturnType<typeof domainTx>) {
   if (!("members" in initial)) throw new Error("unit_missing_members");
   mocks.prefix.mockResolvedValue({ control: await mocks.control() });
   mocks.finish.mockImplementation(async (_tx, _lock, binding) => ({ ...reservation, binding, bindingHash: "f".repeat(64) }));
-  const identity = { owner: reservation.owner, class: "background" as const, pool: "text" as const, provider: "abcllm", routeId: "product-tagline-ko", model: TRANSLATE_MODEL,
-    workKey: `${productTaglineKoLogicalWorkKey(initial.members)}:${productTaglineKoInputHash({ members: initial.members, model: TRANSLATE_MODEL })}` };
+  const identity = { owner: reservation.owner, class: "background" as const, pool: "text" as const, provider: "abcllm", routeId: "product-tagline-ko", model: KOREAN_TAGLINE_MODEL,
+    workKey: `${productTaglineKoLogicalWorkKey(initial.members)}:${productTaglineKoInputHash({ members: initial.members, model: KOREAN_TAGLINE_MODEL })}` };
   const prepared = await domain.prepareKoreanTaglineDispatch([task], ["korean-unit"], job, { roleLease: role, call,
     reserved: { reservation, identity, members: initial.members, role: initial.role } });
   if (!("expectation" in prepared)) throw new Error("unit_missing_dispatch");
@@ -176,7 +176,7 @@ async function realDispatch(t: ReturnType<typeof domainTx>) {
 it("preserves a microsecond-only cache replacement after native dispatch and consumes writer once", async () => {
   const t = domainTx(), { domain, prepared } = await realDispatch(t);
   t.raw!.updated_at = "2026-10-16T01:02:03.000124";
-  const entries = [{ task, result: { kind: "success" as const, line: "문서를 관리하는 도구", model: TRANSLATE_MODEL } }];
+  const entries = [{ task, result: { kind: "success" as const, line: "문서를 관리하는 도구", model: KOREAN_TAGLINE_MODEL } }];
   expect(await domain.recordKoreanTaglines(entries, job, prepared.expectation)).toBe(0);
   expect(t.tx.insert).not.toHaveBeenCalled();
   await expect(domain.recordKoreanTaglines(entries, job, prepared.expectation)).rejects.toThrow("invalid_korean_tagline_write_expectation");
@@ -184,7 +184,7 @@ it("preserves a microsecond-only cache replacement after native dispatch and con
 it("refuses a current name replacement even when tagline and cache are unchanged", async () => {
   const t = domainTx(), { domain, prepared } = await realDispatch(t);
   t.product.name = "Replacement";
-  expect(await domain.recordKoreanTaglines([{ task, result: { kind: "failure", error: "network", model: TRANSLATE_MODEL } }], job, prepared.expectation)).toBe(0);
+  expect(await domain.recordKoreanTaglines([{ task, result: { kind: "failure", error: "network", model: KOREAN_TAGLINE_MODEL } }], job, prepared.expectation)).toBe(0);
   expect(t.tx.insert).not.toHaveBeenCalled();
 });
 it("stops a positive zero-store before original success counters can certify work", async () => {
@@ -202,8 +202,8 @@ function recoverKoreanBatch() {
   const restored = [task, { ...task, productId: 18, tagline: "Tools to manage documents for your team" }];
   const recoveredMembers = [members[0], { ...members[0], productId: 18, slug: "korean-unit-other" }];
   const pending = { request: { requestId: reservation.requestId, owner: reservation.owner, routeId: "product-tagline-ko", provider: "abcllm",
-    model: TRANSLATE_MODEL, class: "background", pool: "text",
-    workKey: `${productTaglineKoLogicalWorkKey(recoveredMembers)}:${productTaglineKoInputHash({ members: recoveredMembers, model: TRANSLATE_MODEL })}` },
+    model: KOREAN_TAGLINE_MODEL, class: "background", pool: "text",
+    workKey: `${productTaglineKoLogicalWorkKey(recoveredMembers)}:${productTaglineKoInputHash({ members: recoveredMembers, model: KOREAN_TAGLINE_MODEL })}` },
     memberKeys: ["product-tagline-ko:17", "product-tagline-ko:18"], state: "reserved" };
   mocks.batches.mockResolvedValue([pending]); mocks.restore.mockResolvedValue(restored);
   mocks.prepare.mockReset().mockImplementation(async (selected, _home, _job, options) => options.reserved
@@ -228,7 +228,7 @@ it.each(["ineligible", "input_changed"])("abandons only a stale own Korean readb
   else pending.request.workKey = "text:product-tagline-ko:" + "a".repeat(64) + ":" + "b".repeat(64);
   expect(await translateKoreanTaglinesWithModelCapacity([task], ["korean-unit"], job, options())).toMatchObject({ kind: "result", expectation });
   expect(mocks.abandon).toHaveBeenCalledExactlyOnceWith(pending, expect.objectContaining({ owner: reservation.owner,
-    routeId: "product-tagline-ko", model: TRANSLATE_MODEL }));
+    routeId: "product-tagline-ko", model: KOREAN_TAGLINE_MODEL }));
   expect(mocks.native.mock.calls[0][0]).toEqual([item]);
 });
 it("propagates a Korean recovery read failure without abandonment or HTTP", async () => {

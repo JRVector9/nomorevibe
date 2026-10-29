@@ -197,11 +197,16 @@ async function domain(context: Context) {
     'publish',(SELECT to_jsonb(j) FROM jobs j WHERE name='crawl-publish')) AS value`;
   return row.value;
 }
+/** stage_blocked 미룸이 보존하는 요청·커서·일정·성공 기록. 던지지 않고 끝난 틱이라 지난 실패 기록은 지운다(lastErrorCleared, runner.ts) */
 async function preservedJob() {
   const [row] = await admin`SELECT jsonb_build_object('requested',requested_version,'processed',processed_version,
-    'cursor',cursor,'notBefore',not_before,'lastSuccess',last_success_at,'lastError',last_error) AS value
+    'cursor',cursor,'notBefore',not_before,'lastSuccess',last_success_at) AS value
     FROM jobs WHERE name='second-review'`;
   return row.value;
+}
+async function lastErrorCleared() {
+  const [row] = await admin`SELECT last_error FROM jobs WHERE name='second-review'`;
+  return row.last_error === null;
 }
 const tick = (budgetMs = 110_000) => runJob("second-review", secondReviewCandidates, { requestedOnly: true, budgetMs });
 function barrier<T = void>() {
@@ -247,6 +252,7 @@ it.each(["items", "draining"] as const)("legacy handler preserves request while 
   noModelCalls();
   expect(await domain(context)).toEqual(before);
   expect(await preservedJob()).toEqual(jobBefore);
+  expect(await lastErrorCleared()).toBe(true);
   const [job] = await admin`SELECT lease_token,locked_at FROM jobs WHERE name='second-review'`;
   expect(job.lease_token).toBeNull();
   expect(job.locked_at).toBeNull();
@@ -287,6 +293,7 @@ it.each(["items", "draining"] as const)("preserves an inactive %s request even w
   noModelCalls();
   expect(await domain(context)).toEqual(before);
   expect(await preservedJob()).toEqual(jobBefore);
+  expect(await lastErrorCleared()).toBe(true);
 });
 
 it("keeps a normal exhausted legacy tick acknowledged without dispatch", async () => {
@@ -324,6 +331,7 @@ it("settles every admitted lane before returning a midtick stage block", async (
     expect(votes).toEqual(Array.from({ length: 4 }, () => ({ status: "agreed", second_decision: "reject" })));
     expect(await domain(contexts[4])).toEqual(fifthBefore);
     expect(await preservedJob()).toEqual(jobBefore);
+    expect(await lastErrorCleared()).toBe(true);
   } finally {
     finish.resolve();
     await running;
@@ -357,6 +365,7 @@ it("preserves concurrent producer and pause changes while actual stage admission
     noModelCalls();
     expect(await domain(context)).toEqual(before);
     expect(await preservedJob()).toEqual(expectedJob);
+    expect(await lastErrorCleared()).toBe(true);
   } finally {
     finish.resolve();
     await Promise.allSettled([holding, ...(running ? [running] : [])]);
