@@ -87,7 +87,7 @@ PR692의 운영 적용 뒤 새 stale 힌트가 완료되지 않는 현상을 확
 
 ### 대표가 칠 명령
 
-**배포 전에도 가능 (READ ONLY)**: 아래 SQL은 현재 상태 기준선이다. AGENTS.md의 SQL 실행기와 같은 방식으로 reviewer-m3 컨테이너의 `DATABASE_URL`을 쓰며, 값은 출력하지 않는다.
+**배포 전에도 가능 (READ ONLY)**: 아래 SQL은 현재 상태 기준선이다. `docs/operations/2026-10-29-monitor-gate-pause-plan.md` §7 SQL 실행기와 같은 방식으로 reviewer-m3 컨테이너의 `DATABASE_URL`을 쓰며, 값은 출력하지 않는다.
 
 ```bash
 CID=$(docker ps --filter name=<reviewer-m3 appName> --format '{{.ID}}')   # 정확히 1개여야 함
