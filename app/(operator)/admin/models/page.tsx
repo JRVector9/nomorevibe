@@ -81,7 +81,7 @@ async function LiveModelsSlot({ assignments, models }: { assignments: ModelStage
   const { readModelOpsStates } = await import("@/lib/operations/ops-runner/repository");
   const states = await readModelOpsStates().catch(() => []);
   return <LiveModels observation={await readAdminModelsObservation()} opsStates={states} assignments={assignments} models={models}
-    restartModels={models.map(row => ({ key: row.key, label: row.displayName, blockedReason: modelRecoveryBlocked(row.equipment) }))} />;
+    restartModels={models.map(row => ({ key: row.key, label: row.displayName, blockedReason: modelRecoveryBlocked(row.equipment, row.provider) }))} />;
 }
 
 async function CategoryModelsSlot({ reviewMode }: { reviewMode: string }) {

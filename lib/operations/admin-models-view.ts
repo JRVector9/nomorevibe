@@ -61,7 +61,8 @@ export function stageHealth(observation: AdminModelsObservation, rows: AdminMode
   if (oldActive || rows.some(row => row.failed1h > 0) || rows.some(row => row.waiting > 0)) return "느림";
   return rows.some(row => row.succeeded1h > 0 || row.dispatched > 0 || row.reserved > 0) ? "정상" : "미확인";
 }
-export function modelRecoveryBlocked(equipment: string) {
+export function modelRecoveryBlocked(equipment: string, provider?: string) {
+  if (provider && !["abcllm", "local-direct", "llama-server"].includes(provider)) return "이 제공자의 모델 종료·재시작 실행기가 등록되지 않았습니다.";
   if (equipment.toLowerCase() === "m1") return "M1 sudo 필요 · 사람이 장비에서 종료·복원해야 합니다.";
   if (equipment.toLowerCase() === "supa") return "Supa root 필요 · 관리자 접근과 종료·복원 프로필이 등록되지 않았습니다.";
   return undefined;
