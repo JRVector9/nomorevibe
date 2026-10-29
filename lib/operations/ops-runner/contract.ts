@@ -23,7 +23,7 @@ export type OpsState = {
   id: string; action: OpsCommand["action"]; targetId: string; actor: string; reason: string;
   status: "queued" | "running" | "blocked" | "manual" | "completed";
   steps: Partial<Record<OpsStep, "running" | "done" | "blocked" | "manual">>;
-  step: OpsStep; code: string | null; profileHash?: string;
+  step: OpsStep; code: string | null; profileHash?: string; auditId?: number;
 };
 export function initialOpsState(command: OpsCommand, actor: string): OpsState {
   return { ...command, actor, status: "queued", steps: {}, step: "prepare", code: null };

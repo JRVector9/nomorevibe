@@ -8,16 +8,16 @@ import { opsCommandSchema, initialOpsState, opsHoldsBoundary, type OpsState } fr
 
 // Append-only operations_audit is the durable queue/journal. No mutable business row or TTL cleanup.
 export async function readModelOpsStates(): Promise<OpsState[]> {
-  return onPrimary(async () => Array.from(await db.execute<{ detail: OpsState }>(sql`
-    SELECT detail FROM (SELECT DISTINCT ON (target) target,detail,id FROM operations_audit
-    WHERE action = 'ops-runner-state' ORDER BY target,id DESC) latest ORDER BY id DESC LIMIT 30`)).map(row => row.detail));
+  return onPrimary(async () => Array.from(await db.execute<{ detail: OpsState; id: number }>(sql`
+    SELECT detail,id FROM (SELECT DISTINCT ON (target) target,detail,id FROM operations_audit
+    WHERE action = 'ops-runner-state' ORDER BY target,id DESC) latest ORDER BY id DESC LIMIT 30`)).map(row => ({ ...row.detail, auditId: row.id })));
 }
 export async function readModelOpsState(id: string): Promise<OpsState | null> {
   const target = z.uuid().parse(id);
   return onPrimary(async () => {
-    const [row] = await db.execute<{ detail: OpsState }>(sql`SELECT detail FROM operations_audit
+    const [row] = await db.execute<{ detail: OpsState; id: number }>(sql`SELECT detail,id FROM operations_audit
       WHERE action='ops-runner-state' AND target=${target} ORDER BY id DESC LIMIT 1`);
-    return row?.detail ?? null;
+    return row ? { ...row.detail, auditId: row.id } : null;
   });
 }
 export async function submitModelOpsCommand(raw: unknown, actor: string): Promise<OpsState> {

@@ -45,3 +45,16 @@ it("비관리자는 설정 저장에 도달하지 않는다", async () => {
   expect(await saveReviewModels(null, new FormData())).toMatchObject({ issues: [expect.stringContaining("권한")] });
   expect(saveSettings).not.toHaveBeenCalled();
 });
+it("검수와 다른 단계의 칩 변경을 한 번의 기존 CAS·감사 저장으로 보낸다", async () => {
+  const form = new FormData(); form.set("settingsVersion", "v1");
+  form.set("primaryModel0", "[supa] Qwen3.8-27B-NVFP4");
+  form.set("firstAdditionalModel0", "[MLX] gpt-oss-120b");
+  form.set("stageModelPools", JSON.stringify({ "product-translate": ["m1:translation"] }));
+  expect(await saveReviewModels(null, form)).toEqual({ ok: true, version: "v2" });
+  expect(saveSettings).toHaveBeenCalledTimes(1);
+  expect(saveSettings).toHaveBeenCalledWith(expect.objectContaining({ firstReviewAdditional: [{ provider: "abcllm", model: "[MLX] gpt-oss-120b" }], stageModelPools: { "product-translate": ["m1:translation"] } }), "operator", { expectedFormVersion: "v1" });
+});
+it("등록되지 않은 단계 모델이 섞이면 검수 모델만 부분 저장하지 않는다", async () => {
+  const form = new FormData(); form.set("settingsVersion", "v1"); form.set("stageModelPools", JSON.stringify({ "product-translate": ["none:missing"] }));
+  expect(await saveReviewModels(null, form)).toHaveProperty("issues"); expect(saveSettings).not.toHaveBeenCalled();
+});

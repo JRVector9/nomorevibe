@@ -197,3 +197,63 @@ M1 모델 선택/readiness 수정과 상품·사유 번역 동일 등록부 정�
 - verify-model-config 72파일/1,032시험·typegen·tsc PASS. Supa9파일/43시험, 실제 Python16시험, 추가7파일/64시험 PASS(중복 포함). UI 변경/실제 장비 실행 없음.
 - 막힘: Actions run40835749295 scope/check는 GitHub 계정 결제 실패 또는 spending limit으로 **잡 시작 전** 실패(annotation 확인). 나머지 코드 검사는 SKIPPED. 필수 CI 통과를 주장하지 않으며 병합하지 않음. 담당자의 Billing & plans 해결 뒤 CI 성공 확인만 남음. 결제·권한·워크플로 우회는 하지 않음.
 - 최종 relay 모델 ID/KEY 충돌 거절 회귀 추가. verify-model-config 72파일/1,032시험·typegen·tsc 재실행 PASS. PR의 GitHub CI 계정 차단은 운영자 해결 대상으로 유지.
+
+## 2026-10-29 가독성·처리량 리디자인 (진행 중)
+
+- 기준: 현재 브랜치에서 `git fetch origin && git merge origin/main`, main `00aa00e3` 통합. 이전 차선의 중복 충돌은 저장된 해결 결과가 main과 같음을 확인하고 정상 merge commit으로 보존했다.
+- 완료: 실제 settled 종료·접수 시각으로 중앙값/nearest-rank p90/시간당 종료 건수/판정 가능한 종료의 실패율을 구하는 순수 함수. 1시간·24시간 모델별/단계별 집계, 빈 표본·종료 없음·1건·10/11건 p90·분모0·시간 경계 7시험 통과.
+- 완료: 관측 SQL의 종료 이력을 최근24시간으로 제한하고 settled/withdrawn 시각 부분 인덱스 migration 0141 추가. 미확인·보류 등 열린 요청은 오래되어도 그대로 포함한다. 5만 종료 표본 상한 초과는 불완전한 집계 대신 관측 실패로 표시한다.
+- 진행: 지금 상태 띠, 모델 카드·모델 내부 복구 버튼, 칩 설정과 변경 시만 저장, 30초 갱신, 렌더 회귀·화면 검수·PR/CI.
+- 미실행: migration 적용·운영 쓰기·장비 조작·미확인 해제·배포 전부 0. 인덱스의 운영 query plan/DB 실측은 아직 검증하지 않았다.
+
+### 리디자인 구현·검증 진행
+
+- 완료: 맨 위 지금 상태(ADMIN_MODEL_STAGES20개 + 1차/2차), 미확인 경고와 카드 앵커, 장비별 모델 카드/점유/성공·실패/마지막 성공/연결 확인. 내부 route/group/budget/request ID는 기본 접힌 자세히 안에만 표시한다. 모바일 상태 띠는 2행 가로 스크롤, 카드는 모바일1열/데스크톱2~3열이다.
+- 완료: 모델별 미확인·보류 블록, 시작·경과·영향 단계, 종료(정식 해제)·모델 재시작·공통 접수 중지/재개. 기존 ModelOpsPanel·prepare→run action을 재사용하고 확인 창·2초 진행·멈춘 단계·실제 감사 행 번호를 표시한다. Supa root/미등록 접근, M1 sudo는 비활성 사유를 표시한다. 다른 모델도 prepare의 실제 권한/프로필 검증을 그대로 거친다. 장비 종료나 TTL 해제 경로는 새로 만들지 않았다.
+- 완료: 설정 바꾸기 영역으로 칩과 추가/× 제거를 분리. 검수 모델+20단계 풀을 기존 saveSettings 한 번의 CAS·감사 TX로 저장한다. 하단 고정 저장 버튼은 실제 변경 때만 활성화하고 변경 단계명을 요약한다. 프리셋을 자동 적용하거나 기존 Supa+추가 MLX 값을 덮어쓰지 않는다. 30초 관측 새로고침에도 편집 중 draft/CAS 버전은 보존한다.
+- 완료: 카테고리 분류/검색/모델 등록부/다른 LLM 단계는 기본 접힘 참고 영역. 수동/30초 자동 새로고침과 관측 시각. 열린 확인 창 동안 자동 route refresh를 쉬고 닫힌 뒤 재개한다.
+- 판정 기준: 접수 draining/disabled→접수 중지, 해당 단계의 모든 관측 그룹이 상한이고 미확인 있음→멈춤, 병렬 건강 모델이 남으면→미확인 N건. 대기·최근 실패·5분 이상 진행/예약→느림. 실제 성공/진행은 정상, 표본·관측 없음은 미확인. 이 판정은 종료·해제를 일으키지 않는다.
+- 검증: 기준선 `node node_modules/vitest/vitest.mjs run admin-models ops-runner --maxWorkers=4` 17파일82시험 PASS → 구현 후 20파일107시험 PASS. `npx next typegen` 후 `npx tsc --noEmit` PASS, 범위 ESLint(--max-warnings0) PASS. 초기 tsc의 미생성 PageProps 오류와 기존 관측 시험의 바뀐 버튼 문구 실패를 확인 후 각각 typegen/새 문구 기대값으로 해결했다. 전체 unit/DB/종합 검사 반복하지 않았다.
+- 화면 막힘(실제): 기본 Playwright가 chromium_headless_shell-1234 실행 파일 없음. 설치된 Chromium1248로 실행해도 `process_singleton_posix.cc:297 … socket() failed: Operation not permitted (1)` → SIGABRT, crashpad 설정은 Read-only file system. 권한 변경/승인 우회 없음. 실제 클릭·1440/390 스크린샷·화면 조판 품질 수치 **측정 없음**. 이 사유로 시각 검수 완료로 기록하지 않는다.
+- 검토 자료: `node scripts/preview-admin-models.mjs <artifacts-dir>`로 실제 컴포넌트·생산 CSS·합성 Supa 미확인1/GPT OSS 정상/M1 미확인+sudo fixture의 1440/390 정적 HTML을 생성했다. HTML은 스크린샷/클릭 증거가 아니다. 앱의 인증 우회 경로나 공개 fixture route는 추가하지 않았다.
+- 남음: 최종 코드 회귀·타입/정적 검사, PR/필수 CI. 환경 차단 남음: 브라우저 실행 가능한 환경에서 실제 클릭·스크린샷/잘림·정렬 확인, migration0141의 실제 DB query plan 검증. 운영 DB 조회/쓰기·접수 전환·재시작·해제·배포 모두 이번 작업에서는 하지 않았다.
+
+### 화면 환경 차단 해소·최종 화면 검수
+
+- 위 Chromium 전체 브라우저의 초기 실패는 보존한다. 이미 설치된 **전용 headless shell1248**은 추가 권한·설정 변경 없이 정상 실행됐다. 기본1234 실행 파일 부재를 설치나 OS 권한 변경으로 해결하지 않았다.
+- 실제 React+생산 CSS의 고정 데이터 HTML을 Playwright에서 열고 1440px/390px 각각 실측했다. 문서 너비=뷰포트너비 **1440/1440, 390/390(가로 넘침0px)**, 모델 카드 **3열/1열**. 브라우저 page error0. 일반 Next/auth/실제 DB 통합 화면이 아닌 독립 고정 데이터 렌더 검증임을 구별한다.
+- 실제 클릭: 수동 새로고침+30초 자동 새로고침(Playwright clock), Supa/M1 종료·재시작 비활성/사유, 내부 ID 접힘, 합성 연결 확인, 추가1차 칩 제거→저장 활성→저장 후 비활성, 단계 칩 추가/제거→원복 시 비활성, 한국어 확인 창·합성 접수·단계 진행·실패 위치·감사 번호를 모두 확인했다. 모든 action 응답은 fixture이고 운영 DB/장비 IO는 없다.
+- 기획 자체 검수: 메뉴/화면 이름 ‘단계별 모델’ 일치, 수동/확인/취소·저장 단추 정렬, 모델 이름·장비·건당 통계·비활성 사유와 모바일 확인창을 캡처해 직접 확인했다. 관측 없는 단계 배지를 중립색으로 낮추고 실제 미확인만 빨강으로 강조했다. 모바일 고정 메뉴가 카드 제목을 덮는 문제를 발견해 앵커 여백112px로 수정했다. 저장바는 모바일에서도 한 줄 구조로 과도한 화면 점유를 줄였다.
+- 결과 경로(작업 artifacts): `admin-models-1440.png`, `admin-models-390.png` 전체 화면과 각 `-first-screen.png`, `-model.png`, `-settings.png`, `-confirm.png`, `-progress.png`. `admin-models-browser-validation.json`에 실제 너비/열수·클릭 항목을 기록했다. `admin-models-1440.html`/`admin-models-390.html`은 독립 검토 자료다.
+- 재현: `node scripts/preview-admin-models.mjs <artifacts-dir>`; `ADMIN_MODELS_CHROMIUM_PATH=<설치된 headless-shell 경로> node scripts/verify-admin-models-preview.mjs <artifacts-dir>`.
+- 남음 정정: 브라우저 스크린샷/합성 클릭은 완료했다. 운영 DB query plan·migration0141 적용·실제 등록된 접근/프로필·운영 드릴·배포는 이 작업 범위 밖으로 계속 미실행이다. 실제 운영 화면의 현재 설정/장부 비교 조회도 수행하지 않았다.
+
+### PR 준비 상태
+
+- PR [#723](https://github.com/JRVector9/nomorevibe/pull/723), 현재 브랜치 `xaegis/1638b627`에 의미 단위 커밋(최신 main merge, 처리량, 화면/검수)을 보존하고 push했다. 강제 push/이력 재작성/다른 브랜치 편집 없음.
+- 최종 품질 수치: 동일 범위 명령 `node node_modules/vitest/vitest.mjs run admin-models ops-runner --maxWorkers=4`의 **17파일82시험 → 20파일111시험 PASS**. 추가 stage-registry/model-registry-operator/operations-action-contract 범위까지 23파일208시험 PASS 뒤 미설정 모델 카드 방지1시험을 더했다. 타입 검사/범위 ESLint/diff check PASS. 전체 수동 unit/DB/종합 검사는 반복하지 않았다.
+- 화면 수치: 최초 전체 Chromium 실행 실패로 측정 불가 → 전용 headless shell에서 **1440/390 가로 넘침0px, 3열/1열, page error0, 각10개 상호작용 검증 PASS**. 운영 화면의 이전 조판 수치는 측정하지 않았으며 추정하지 않는다.
+- 선택 이유: 검수+단계 풀은 기존 경로로 한 번에 저장해 서로의 CAS 버전 충돌을 줄였다. p90은 nearest-rank, 시간은 장부 접수→종료(대기 포함), 24시간 시간당 건수는 종료 건수/24로 명시했다. 운영 모델 구성은 자동 프리셋으로 바꾸지 않았다.
+- 배포 준비물: 웹 화면/집계 코드와 migration0141(읽기 범위용 인덱스). 실제 운영 적용·배포·DB 쓰기·DRAIN·재시작·미확인 해제는 수행하지 않았다. CI 결과와 병합 여부는 확인 후 덧붙인다.
+
+### 구현 종료 기준과 최종 검증 범위
+
+- 실제 AI1 장부의 `crawl-agent-review`를 ‘1차 검수’에 연결했다. 고정 자료도 이 실제 route 이름으로 바꿔 지금 상태/마지막 성공/미확인/단계별 처리량까지 같은 경로로 시험한다. 종료·재시작 버튼은 기존의 지원 제공자 범위를 넘겨 CLI 제공자에 활성화하지 않는다.
+- 최종 범위 회귀는 **20파일111시험 PASS**, 확대 범위는 **23파일209시험 PASS**, 타입/정적 검사 PASS다. 최종 고정 데이터 브라우저 재실행도 두 크기에서 각10개 검증·page error0·가로 넘침0을 확인했다.
+- 구현·회귀·고정 자료 화면 검수·커밋·push·PR 작성은 완료했다. 필수 CI와 병합의 최종 영수증은 PR #723 및 보고함 → 개발사항의 이 작업 완료 보고를 기준으로 확인한다. 이전 head에서 취소된 CI를 최종 성공으로 세지 않는다.
+- 이 구역에서 실제로 남은 운영 확인: migration0141 적용 후 읽기 쿼리 plan/운영 화면 값 비교, 승인된 장비 접근/프로필 등록, 실제 종료·복원 드릴. 이 사용자 요청은 해당 운영 쓰기·배포·DRAIN·재시작·해제를 금지하므로 별도 담당자의 작업으로 남긴다. 화면 판별/임베딩·재정렬 계약 등 앞선 기록의 운영·모델 등록 과제도 자동 완료로 바꾸지 않는다.
+
+- 최신 main PR721·722(`bde9bcf7`)를 정상 병합했다. 다른 차선의 운영 기록은 그대로 보존하고, migration 번호 충돌은 이 화면의 인덱스를 **0141**로 옮겨 해결했다. 0140 교체 경계 해제 migration은 변경하지 않았다.
+
+### 최신 main 통합 후 재검증
+
+- PR721·722의 M1/복구 변경과 migration0140은 그대로 보존했다. 인덱스 migration은 **0141**이다. 다른 차선의 `review-stall-backlog.md`는 main 내용을 그대로 받아 이 PR의 최종 차이가 없다.
+- 같은 M1 그룹의 미확인이 상품 번역뿐 아니라 사유 번역 슬롯도 막으면 두 단계 모두 ‘멈춤·미확인 N건’을 표시한다. 다른 단계의 성공을 해당 단계의 마지막 성공으로 재사용하지 않는다. 공유 그룹 회귀1개를 추가했다.
+- 실제 최종 범위: **21파일116시험 PASS**(최신 main의 ops-runner root 검증 포함), 확대 **24파일214시험 PASS**. 1440/390 Playwright 각10항목·오류0·가로 넘침0 재확인. 타입 검사·범위 ESLint·diff 검사도 다시 확인한다. 필수 CI 최종 결과/병합 영수증은 PR #723·개발사항 완료 보고로 남긴다.
+
+### 기존 UI 기준 보완
+
+- 앞선 CI40838781221의 unit(1)이 이번 보조 글자(10~12px)를 기존 `tests/ui-contract.test.ts`의 최소13px 규칙 위반으로 거절했다. 이번 변경으로 생긴 실패이며 기존 실패로 돌리지 않는다.
+- 같은 검사 기준으로 실제 소스 위반 **24건 → 0건**. 화면 보조 글자를 모두13px 이상으로 올리고 작은 글자의 fg-3도 fg-2로 바꿨다. 기존 UI 기준을 낮추거나 예외를 추가하지 않았다.
+- `node node_modules/vitest/vitest.mjs run admin-models ops-runner stage-registry model-registry-operator operations-action-contract ui-contract --maxWorkers=4`: **25파일219시험 PASS**. 타입/범위 ESLint/diff PASS. 최종13px 화면을 1440/390에서 다시 캡처·클릭해 가로 넘침0/3열·1열/page error0을 확인했다. 이 결과가 앞선214시험·작은 글자 화면 자료를 대체한다.
+- 하단 참고 영역도 고정 저장바에 가리지 않도록 페이지 끝 여백을 확보했다. 실제 브라우저에서 참고 제목의 하단좌표가 저장바의 상단보다 위에 있음을 검사하고 펼치기까지 확인했다. 최종 검증은 두 크기에서 **각11항목**이다.

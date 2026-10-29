@@ -11,6 +11,7 @@ import { randomUUID } from "node:crypto";
 import { submitModelOpsCommand } from "@/lib/operations/ops-runner/repository";
 import { adminModelIdentitySchema, modelIdentityKey } from "@/lib/operations/admin-models-observation";
 import { readAdminModelsObservation } from "@/lib/operations/admin-models-repository";
+import { findModelDefinition } from "@/lib/operations/admin-models-view";
 import { ADMIN_MODEL_STAGES } from "@/lib/llm/admin-model-stages";
 import { readModelRegistry, modelRequestName } from "@/lib/llm/model-registry";
 
@@ -40,7 +41,7 @@ export const probeAdminModel = webWriteAction(async function probeAdminModel(inp
   if (!parsed.success) return { error: "모델 식별자가 올바르지 않습니다." };
   const identity = parsed.data, observation = await readAdminModelsObservation();
   const stage = ADMIN_MODEL_STAGES.find(row => row.id === identity.routeId);
-  const definition = readModelRegistry().models.find(model => model.key === identity.model && model.provider === identity.provider);
+  const definition = findModelDefinition(identity, readModelRegistry().models);
   const registered = stage && definition && definition.provider === stage.provider;
   if (!registered && (observation.error || !observation.rows.some(row => modelIdentityKey(row) === modelIdentityKey(identity))))
     return { error: "운영 DB에서 해당 단계·모델을 확인하지 못했습니다. 새로고침해주세요." };

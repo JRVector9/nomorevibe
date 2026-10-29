@@ -15,7 +15,7 @@ import { ReviewModelsForm } from "./ReviewModelsForm";
 import { reviewModelOptions } from "./model-options";
 import { readAdminModelsObservation } from "@/lib/operations/admin-models-repository";
 import { LiveModels } from "./LiveModels";
-import { StageModelPoolsForm } from "./StageModelPoolsForm";
+import { modelRecoveryBlocked, type ModelStageAssignment } from "@/lib/operations/admin-models-view";
 import { ADMIN_MODEL_STAGES } from "@/lib/llm/admin-model-stages";
 import { configuredModel, modelForPurpose, modelRequestName, MODEL_PURPOSE_ENV, readModelRegistry } from "@/lib/llm/model-registry";
 import { AiConnection } from "../status/AiConnection";
@@ -26,6 +26,7 @@ import { EMBEDDING_MODEL, EMBEDDING_DIMENSIONS } from "@/lib/domain/products/emb
 import { modelServerHealth } from "@/lib/operations/model-servers";
 import { SearchModelConstraints } from "./SearchModelConstraints";
 import "../status/operations.css";
+import "./models.css";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "단계별 모델 — NoMoreVibe", robots: { index: false } };
@@ -34,20 +35,27 @@ export default async function ModelsPage() {
   if (!await currentAdmin()) redirect("/admin/login");
   const [settings, gatewayModels, models] = await Promise.all([getSettings(), listGatewayModels(), currentModelEnv()]);
 
-  return <main className="mx-auto flex max-w-[1100px] flex-col gap-5 px-8 py-7 max-sm:px-4">
+  const registry = readModelRegistry();
+  const defaults = Object.fromEntries(ADMIN_MODEL_STAGES.map(stage => [stage.id, stage.purpose === "screen-review" ? screenModelConfig()?.model ?? "미설정"
+    : stage.purpose in MODEL_PURPOSE_ENV ? configuredModel(stage.purpose as keyof typeof MODEL_PURPOSE_ENV) : modelRequestName(modelForPurpose(stage.purpose))]));
+  const assignments: ModelStageAssignment[] = [
+    { id: "first-review", label: "1차 검수", models: [settings.firstReview ?? { provider: "abcllm", model: modelRequestName(modelForPurpose("ai1-preset")) }, ...(settings.firstReviewAdditional ?? [])] },
+    { id: "second-review", label: "2차 검수", models: [...settings.secondReview.voters, ...(settings.secondReview.fallbacks ?? [])] },
+    ...ADMIN_MODEL_STAGES.map(stage => ({ id: stage.id, label: stage.label, models: (settings.stageModelPools?.[stage.id]?.length
+      ? settings.stageModelPools[stage.id]! : [defaults[stage.id]]).map(model => ({ provider: stage.provider, model })) })),
+  ];
+  return <main className="mx-auto flex max-w-[1440px] flex-col gap-5 px-8 pt-7 pb-28 max-sm:px-4">
     <PageStamp />
     <header className="flex flex-col gap-2"><h1 className="text-[26px] font-bold">단계별 모델</h1>
-      <p className="text-[14px] text-fg-3">1차·2차 검수 모델과 사람이 직접 판단할 단계를 관리합니다. 모델 선택과 단계의 실행 스위치는 각각 적용됩니다.</p>
+      <p className="text-[14px] text-fg-2">멈춘 단계와 모델을 먼저 확인하고, 아래에서 다음 작업에 쓸 모델을 바꿉니다.</p>
       <Link href="/admin/status" prefetch={false} className="text-[13px] font-semibold text-accent-ink">운영센터에서 실제 워커 경로·용량 확인 →</Link>
     </header>
-    <ReviewModelsForm key={settingsFormVersion(settings)} settings={settings} version={settingsFormVersion(settings)}
+    <Suspense fallback={<p aria-busy="true">운영 DB 실측 확인 중…</p>}><LiveModelsSlot assignments={assignments} models={registry.models} /></Suspense>
+    <ReviewModelsForm settings={settings} version={settingsFormVersion(settings)} models={registry.models} defaults={defaults}
       firstChoices={reviewModelOptions(gatewayModels, false)} secondChoices={reviewModelOptions(gatewayModels, true)} />
-    <StageModelPoolsForm key={`stages:${settingsFormVersion(settings)}`} pools={settings.stageModelPools ?? {}} models={readModelRegistry().models}
-      defaults={Object.fromEntries(ADMIN_MODEL_STAGES.map(stage => [stage.id, stage.purpose === "screen-review" ? screenModelConfig()?.model ?? "미설정"
-        : stage.purpose in MODEL_PURPOSE_ENV ? configuredModel(stage.purpose as keyof typeof MODEL_PURPOSE_ENV) : modelRequestName(modelForPurpose(stage.purpose))]))}
-      version={settingsFormVersion(settings)} />
+    <details className="rounded-xl border border-line bg-bg-card p-4"><summary className="cursor-pointer font-semibold">참고 · 카테고리 분류 / 검색 모델 / 모델 등록부 / 다른 LLM 단계</summary>
+    <div className="mt-4 flex min-w-0 flex-col gap-5">
     <Suspense fallback={<p aria-busy="true">카테고리 분류 모델 확인 중…</p>}><CategoryModelsSlot reviewMode={settings.reviewMode} /></Suspense>
-    <Suspense fallback={<p aria-busy="true">운영 DB 실측 확인 중…</p>}><LiveModelsSlot /></Suspense>
     <Suspense fallback={<p aria-busy="true">검색 모델 서버 확인 중…</p>}><SearchModelsSlot /></Suspense>
     <section className="flex flex-col gap-3 rounded-xl border border-line bg-bg-card p-5" aria-labelledby="human-model-heading">
       <h2 id="human-model-heading" className="text-[18px] font-semibold">사람 검토 단계</h2>
@@ -59,20 +67,21 @@ export default async function ModelsPage() {
     </section>
     <section className="flex flex-col gap-3 rounded-xl border border-line bg-bg-card p-5" aria-labelledby="text-model-heading">
       <h2 id="text-model-heading" className="text-[18px] font-semibold">다른 LLM 단계</h2>
-      <p className="text-[13px] text-fg-3">아래는 풀을 비웠을 때 사용하는 웹 프로세스의 배포 기본값입니다. 위 단계별 모델 풀에서 저장한 선택이 새 작업에 우선합니다. 실제 호출과 점유는 실측 표에서 확인하세요.</p>
+      <p className="text-[13px] text-fg-2">아래는 풀을 비웠을 때 사용하는 웹 프로세스의 배포 기본값입니다. 위 단계별 모델 풀에서 저장한 선택이 새 작업에 우선합니다. 실제 호출과 점유는 위 모델 카드에서 확인하세요.</p>
       <TextModelStagesTable models={models} />
-      <p className="text-[13px] text-fg-3">감사 재심사·공개분 필터·갈림 재검토·보류 재시도·화면 판별과 LLM 보강은 각 단계에 검증된 모델 계약을 사용합니다. 등록된 모델 설정을 바꿀 때는 해당 단계의 검증 계약과 용량 정책도 함께 확인해야 합니다. 카테고리 분류는 운영센터에서 검증된 CLI 모델과 예비 모델을 선택할 수 있습니다.</p>
+      <p className="text-[13px] text-fg-2">감사 재심사·공개분 필터·갈림 재검토·보류 재시도·화면 판별과 LLM 보강은 각 단계에 검증된 모델 계약을 사용합니다. 등록된 모델 설정을 바꿀 때는 해당 단계의 검증 계약과 용량 정책도 함께 확인해야 합니다. 카테고리 분류는 운영센터에서 검증된 CLI 모델과 예비 모델을 선택할 수 있습니다.</p>
       <div className="flex flex-wrap gap-4 text-[13px] font-semibold text-accent-ink"><Link href="/admin/audit" prefetch={false}>감사 단계 설정 →</Link><Link href="/admin/status#ai-model-title" prefetch={false}>카테고리 분류 모델 선택 →</Link><Link href="/admin/status" prefetch={false}>단계별 실제 경로 →</Link></div>
     </section>
     <ModelRegistryTable />
+    </div></details>
   </main>;
 }
 
-async function LiveModelsSlot() {
+async function LiveModelsSlot({ assignments, models }: { assignments: ModelStageAssignment[]; models: ReturnType<typeof readModelRegistry>["models"] }) {
   const { readModelOpsStates } = await import("@/lib/operations/ops-runner/repository");
   const states = await readModelOpsStates().catch(() => []);
-  return <LiveModels observation={await readAdminModelsObservation()} opsStates={states}
-    restartModels={readModelRegistry().models.filter(row => ["abcllm", "local-direct", "llama-server"].includes(row.provider)).map(row => ({ key: row.key, label: row.key }))} />;
+  return <LiveModels observation={await readAdminModelsObservation()} opsStates={states} assignments={assignments} models={models}
+    restartModels={models.map(row => ({ key: row.key, label: row.displayName, blockedReason: modelRecoveryBlocked(row.equipment, row.provider) }))} />;
 }
 
 async function CategoryModelsSlot({ reviewMode }: { reviewMode: string }) {

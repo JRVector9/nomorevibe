@@ -41,7 +41,12 @@ export async function previewOpsRead(id: string): Promise<import("@/app/(operato
   const row = previewOps.get(id);
   if (!row) return { error: "시험 작업 없음" };
   row.polls += 1;
-  const human = /m1|29877f65/i.test(row.state.targetId);
+  const human = /m1|29877f65/i.test(row.state.targetId), admission = row.state.action.startsWith("admission-");
+  if (admission) {
+    row.state = row.polls === 1 ? { ...row.state, status: "running", step: "drain", steps: { prepare: "done", drain: "running" }, auditId: 90001 }
+      : { ...row.state, status: "blocked", step: "drain", code: "fixture_admission_confirmation_missing", steps: { prepare: "done", drain: "blocked" }, auditId: 90002 };
+    return { state: row.state };
+  }
   row.state = row.polls === 1 ? { ...row.state, status: "running", step: "drain", steps: { prepare: "done", drain: "running" } }
     : { ...row.state, status: human ? "manual" : "blocked", step: "stop", code: human ? "human_on_device_sudo_stop_restore_required" : "termination_evidence_missing",
       steps: { prepare: "done", drain: "done", stop: human ? "manual" : "blocked" } };
