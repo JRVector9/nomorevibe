@@ -69,7 +69,10 @@ export default async function ModelsPage() {
 }
 
 async function LiveModelsSlot() {
-  return <LiveModels observation={await readAdminModelsObservation()} />;
+  const { readModelOpsStates } = await import("@/lib/operations/ops-runner/repository");
+  const states = await readModelOpsStates().catch(() => []);
+  return <LiveModels observation={await readAdminModelsObservation()} opsStates={states}
+    restartModels={readModelRegistry().models.filter(row => ["abcllm", "local-direct", "llama-server"].includes(row.provider)).map(row => ({ key: row.key, label: row.key }))} />;
 }
 
 async function CategoryModelsSlot({ reviewMode }: { reviewMode: string }) {

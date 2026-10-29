@@ -24,3 +24,26 @@ export async function previewAdmission(): Promise<ModelOperationResult> {
   if (process.env.NODE_ENV !== "development") throw new Error("preview_development_only");
   return { error: "로컬 시험 데이터 · 운영 접수 변경 없음", blocked: ["fixture_only"] };
 }
+
+
+const previewOps = new Map<string, { state: import("@/lib/operations/ops-runner/contract").OpsState; polls: number }>();
+export async function previewOpsSubmit(raw: unknown): Promise<import("@/app/(operator)/admin/models/ops-runner-actions").OpsActionResult> {
+  if (process.env.NODE_ENV !== "development") throw new Error("preview_development_only");
+  const { opsCommandSchema, initialOpsState } = await import("@/lib/operations/ops-runner/contract");
+  const command = opsCommandSchema.parse(raw);
+  if (previewOps.has(command.id)) return { state: previewOps.get(command.id)!.state };
+  const state = initialOpsState(command, "fixture-admin");
+  previewOps.set(state.id, { state, polls: 0 });
+  return { state };
+}
+export async function previewOpsRead(id: string): Promise<import("@/app/(operator)/admin/models/ops-runner-actions").OpsActionResult> {
+  if (process.env.NODE_ENV !== "development") throw new Error("preview_development_only");
+  const row = previewOps.get(id);
+  if (!row) return { error: "시험 작업 없음" };
+  row.polls += 1;
+  const human = /m1|29877f65/i.test(row.state.targetId);
+  row.state = row.polls === 1 ? { ...row.state, status: "running", step: "drain", steps: { prepare: "done", drain: "running" } }
+    : { ...row.state, status: human ? "manual" : "blocked", step: "stop", code: human ? "human_on_device_sudo_stop_restore_required" : "termination_evidence_missing",
+      steps: { prepare: "done", drain: "done", stop: human ? "manual" : "blocked" } };
+  return { state: row.state };
+}

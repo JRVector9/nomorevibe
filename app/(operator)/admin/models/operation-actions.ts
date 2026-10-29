@@ -2,13 +2,13 @@
 
 import { z } from "zod";
 import { currentAdmin } from "@/lib/auth/admin";
-import { db, onPrimary } from "@/lib/db";
+import { db } from "@/lib/db";
 import { operationsAudit } from "@/lib/db/schema";
 import { webWriteAction } from "@/lib/operations/dr/web-gate";
 import { adminAuditRow } from "@/lib/operations/admin-log";
 import { listGatewayModels } from "@/lib/crawl/agent-review-gateway";
-import { currentModelEnv } from "@/lib/operations/model-env";
-import { runPipelineControl } from "@/lib/operations/pipeline-control-repository";
+import { randomUUID } from "node:crypto";
+import { submitModelOpsCommand } from "@/lib/operations/ops-runner/repository";
 import { adminModelIdentitySchema, modelIdentityKey } from "@/lib/operations/admin-models-observation";
 import { readAdminModelsObservation } from "@/lib/operations/admin-models-repository";
 import { ADMIN_MODEL_STAGES } from "@/lib/llm/admin-model-stages";
@@ -62,21 +62,20 @@ export const probeAdminModel = webWriteAction(async function probeAdminModel(inp
 const admissionSchema = z.object({ to: z.enum(["open", "draining"]), fromMode: z.enum(["open", "draining"]),
   expectEpoch: z.number().int().positive().safe(), expectRevision: z.number().int().positive().safe(),
   reason: z.string().trim().min(1).max(500), confirmed: z.literal(true) }).strict().refine(value => value.to !== value.fromMode);
-export type ModelOperationResult = { ok?: true; error?: string; blocked?: string[] };
+export type ModelOperationResult = { ok?: true; error?: string; blocked?: string[]; queued?: string };
 export const changeAdminModelAdmission = webWriteAction(async function changeAdminModelAdmission(input: unknown): Promise<ModelOperationResult> {
   const admin = await currentAdmin();
   if (!admin) return { error: "관리자만 접수 상태를 바꿀 수 있습니다." };
   const parsed = admissionSchema.safeParse(input);
   if (!parsed.success) return { error: "현재 접수 상태와 변경 사유·확인을 다시 입력해주세요." };
   const { to, fromMode, expectEpoch, expectRevision, reason } = parsed.data;
-  // The official controller retains fence, CAS, route readiness and audit in one transaction.
-  const result = await onPrimary(async () => runPipelineControl(db, { name: "capacity mode", area: "capacity", execute: true,
-    json: true, allowDeferredRoutes: false, allowStalledStage: false,
-    options: { to, fromMode, expectEpoch, expectRevision, operator: admin.login, reason } }, undefined, await currentModelEnv()));
-  if (!result.executed) {
-    await db.insert(operationsAudit).values(await adminAuditRow(admin.login, { action: "admin-models-admission-rejected", target: "model_capacity_control",
-      detail: { to, fromMode, expectEpoch, expectRevision, reason, blocked: result.plan.blocked }, ok: false, error: "control_rejected" }));
-    return { error: "접수 변경이 거절됐습니다. 현재 상태와 단계별 실행 계약을 확인해주세요.", blocked: result.plan.blocked };
-  }
-  return { ok: true };
+  // Compatibility entry point also queues; it cannot OPEN around an unfinished recovery.
+  const observed = await readAdminModelsObservation();
+  if (observed.mode !== fromMode || observed.epoch !== expectEpoch || observed.revision !== expectRevision)
+    return { error: "접수 상태가 바뀌었습니다. 새로고침해주세요.", blocked: ["capacity_pin_changed"] };
+  try {
+    const state = await submitModelOpsCommand({ id: randomUUID(), action: to === "open" ? "admission-open" : "admission-pause",
+      targetId: "model-capacity", reason, confirmed: true }, admin.login);
+    return { queued: state.id };
+  } catch { return { error: "접수 변경이 거절됐습니다. 미완료 작업과 감사 기록을 확인해주세요.", blocked: ["ops_runner_submission_rejected"] }; }
 });

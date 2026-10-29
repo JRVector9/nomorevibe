@@ -1,6 +1,6 @@
 import { ReviewModelsForm } from "@/app/(operator)/admin/models/ReviewModelsForm";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
-import { previewSave, previewStageSave, previewProbe, previewAdmission } from "./admin-models-preview-actions";
+import { previewSave, previewStageSave, previewProbe, previewOpsSubmit, previewOpsRead } from "./admin-models-preview-actions";
 import { StageModelPoolsForm } from "@/app/(operator)/admin/models/StageModelPoolsForm";
 import { LiveModels } from "@/app/(operator)/admin/models/LiveModels";
 import { readModelRegistry } from "@/lib/llm/model-registry";
@@ -22,6 +22,6 @@ export default function AdminModelsPreview() {
       firstChoices={choices} secondChoices={choices} saveAction={previewSave} />
     <StageModelPoolsForm pools={{ "product-translate": ["m1:translation"], "reason-translate": ["mlx:text"] }}
       models={readModelRegistry().models} defaults={{}} version="preview-v1" saveAction={previewStageSave} probeAction={previewProbe} />
-    <LiveModels observation={observation} probeAction={previewProbe} admissionAction={previewAdmission} />
+    <LiveModels observation={observation} probeAction={previewProbe} opsActions={{ submitAction: previewOpsSubmit, readAction: previewOpsRead }} restartModels={[{ key: "mlx:text", label: "GPT OSS · 시험 데이터" }]} />
   </main>;
 }

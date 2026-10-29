@@ -10,7 +10,7 @@
 | 2 단계별 모델 풀 | #713 병합 후 구현. PR #716 필수 CI 통과·main 9b316234 병합. 화면 판별은 실제 목적 모델 등록 전 선택 불가 |
 | 3 실제 동작 확인 | HTTP 목록·시간/장부 실측 구현. 운영 primary READ ONLY SQL 확인 완료. 짧은 실제 호출·legacy 전체 이력은 정식 계약 부재로 남음 |
 | 4 미확인·점유 | 장부 snapshot/발생·경과/그룹 점유·접수 상태 구현·로컬 시험 |
-| 5 수동 복구 | 조건 안내·실행 불가 버튼/M1 수동 작업 표시. 정식 prepare→run 실행기 연결 부재로 자동 종료·해제·재시작·native verify 미구현 |
+| 5 수동 복구 | 정식 ops-runner 큐/prepare→run·V1 해제·native verify·역순 복원과 버튼 구현/시험. 운영 설치·장비 드릴은 별도(아래 이번 작업 기록) |
 | 6 권한·감사 | 서버 admin/CAS/정식 감사 경로 사용·관련 범위 시험 |
 | 실제 화면·배포 | Chromium/Next dev 제한으로 클릭·스크린샷 미완료. M3 Keychain exit44로 배포·운영 설정/실측 미완료 |
 
@@ -128,3 +128,21 @@
 - 연결 확인과 저장 사이 풀이 바뀌면 잠근 설정 행에서 expectedModelPoolKeys를 비교해 거절하고 실패 감사 기록을 남긴다. 성공 기록에는 실제 선택 key·모델·장비·제공자를 남긴다. 끄기는 연결 미확인이어도 계속 허용한다. 모델 화면의 위임 제목/설명도 선택 풀을 가리킨다.
 - `npx --no-install vitest run admin-models`: **9파일43시험 PASS**. 같은 범위에 기존 human-deepseek-review를 더한 **10파일73시험 PASS**. TypeScript noEmit/변경 파일 ESLint(--max-warnings 0)/PR 전체 diff check PASS. 브라우저 실행·스크린샷은 앞서 기록한 OS 권한/Next 네트워크 제한으로 미완료이며, 정적 렌더 시험을 실제 화면 확인으로 세지 않는다.
 - #717 첫 검색 표시 head2a3917d9의 CI40810209449도 전체 필수 check SUCCESS. 이후 위임 풀 보완 head의 필수 CI를 다시 요구하며, 앞선 head의 성공을 새 head의 성공으로 사용하지 않는다.
+
+## 2026-10-29 정식 ops-runner 차선 (이번 작업)
+
+아래 기록은 위의 “정식 실행기 부재”라는 소스 차단 사유를 대체한다. 운영 설치·실측 완료를 뜻하지 않는다.
+
+- 최신 origin/main `907b8df3`에서 전용 `feat/admin-models-ops-runner` 브랜치를 시작했다. 원본 `/home/ubuntu/projects/nomorevibe` 사용자 변경은 수정하지 않았다. 후속 main 변경은 정상 merge로 통합한다.
+- 완료: 허용 목록의 네 명령만 받는 관리자 큐, 기존 append-only 감사 장부의 단계 checkpoint, private frozen profile 기반 별도 prepare→run CLI, Docker/systemd/M3 native 관측·종료·역순 복원 helper의 정식 소스 이관. 웹/maintenance에는 SSH·sudo·물리 실행 모듈을 주지 않는다.
+- 완료: DRAIN → 종료/근거 → 기존 provider-boundary/V1 해제 → 동일 설정 복원/health → OPEN. 종료 근거 없음은 해제하지 않는다. native `exit_fact_missing_launchdUnloaded`는 verify만 재확인하며 실패하면 stop에서 멈춘다. M1/필요한 sudo는 DRAIN 전 사람 작업이다.
+- 완료: `/admin/models`의 요청 종료·해제, 모델 재시작, 접수 중지/재개를 같은 명령 큐에 연결. 확인·사유 창, 2초 단계 조회, 중단 위치/이유, 관리자 서버 검사, 중복 제출 ID, 미완료 경계 중 OPEN 거절. 재시작에는 해제 단계가 없다.
+- 완료: PR712 maintenance가 같은 `runModelOpsRunner`를 호출한다. 선언·enforcedAfter·기존 DB lock/근거 판정과 기본 비활성을 보존한다. 자동 분기는 장비를 멈추지 않고, 기존 종료 근거 해제와 같은 TX에 감사 결과를 쓴다. 운영 활성화는 하지 않았다.
+- 검증: 동일 명령 `node node_modules/vitest/vitest.mjs run admin-models ops-runner`을 시작점 `907b8df3`의 scratch 사본과 현재 코드에서 실행: **9파일43시험 → 17파일82시험 PASS**. 기본 비활성·허용 목록·비관리자·근거 없음·native 재확인 성공/실패·수동 sudo·감사·중복/응답 유실·중간 stop/restore 실패 후 이어가기를 포함한다. 새 시험 파일명은 모두 ops-runner/admin-models를 포함한다.
+- 실제 Python coordinator 시험은 SSH/장비 응답을 합성 자료로 대체하고 prepare→plan→stop→V1 영수증→역순 복원을 실행했다. 실제 V1 schema/시간·identity 검사를 통과했으며, 복원 중 ACK 유실 후에도 각 변이는 한 번이었다. 이는 운영 종료/복원 성공이 아니다.
+- 기존 `bash scripts/verify-review-stall.sh`: **23파일339 TS 시험 + Python 범위 회귀 PASS**, typegen/TypeScript/scoped lint 포함 종료0. 초기 실행의 TypeScript 오류(NODE_ENV 타입)도 보존 후 수정했다. 최종 추가 범위는 pipeline-control/자동 회수/전역 web fence를 더해 **20파일128시험 PASS**. 접수 전환의 ACK hook이 읽기 전용 snapshot을 건드리지 않고 실제 전환·감사 TX에서만 실행되는 것도 검증했다. 전체 unit/전체 DB/종합 검사를 로컬에서 반복하지 않았다.
+- 화면 막힘: 실제 fixture로 Next dev `127.0.0.1:43127 --webpack`은 Ready. `/admin/models`는 기존 instrumentation→Redis 경로에서 `Module not found: Can't resolve 'stream'`으로 HTTP502. 종료 과정에서 Next의 npm registry 접근도 allowlist 차단. 운영 페이지는 정확히 복원했다.
+- 화면 막힘: 설치된 Chromium1248 실행은 `process_singleton_posix.cc:297 … socket() failed: Operation not permitted (1)` → SIGABRT, crashpad settings는 Read-only file system. 권한 변경/승인 우회 없이 중단했다. **실제 클릭·스크린샷·화면 품질 수치 측정 없음**. 정적 렌더의 버튼·단계·실패/사람 작업·미완료 OPEN 비활성 시험을 실제 화면 확인으로 세지 않는다.
+- 남음: 브라우저/Next 환경이 허용된 곳에서 확인 창·진행·실패 화면 스크린샷, 승인된 별도 권한 영역에 새 장비 snapshot/프로필·실행기 설치, 실제 운영 종료·복원 드릴, 자동 회수의 운영 실측 후 별도 활성화. 예전의 probe/legacy 이력/임베딩·재정렬 계약도 이번 작업 범위 밖의 남은 일이다.
+- 운영 배포0/운영 장비 접속·조작0/운영 DB 쓰기0/unknown 해제0/유료 DeepSeek 호출0/실행 권한 설정 변경0/SQL 초기화0/TTL 해제0/그룹 상한 우회0. 실행 계약과 프로필 형식은 [정식 실행기 문서](admin-models-ops-runner.md)를 따른다.
+- PR·필수 CI·main 병합: 아래 후속 영수증으로 기록한다. 이 시점에는 미완료다.
