@@ -1,9 +1,11 @@
-## 2026-10-29 M1 교체 경계 후속 (진행 중)
+## 2026-10-29 M1 경계 후속 — 코드 준비 완료 / 운영·병합 차단
 
-- `00aa00e3` 위에서 새 단건 해제 경로를 추가 중. 원 장부 wireHash와 relay requestHash를 당시 본문 재생성과 실제 gateway/HTTPX0.27.2 직렬화로 연결했다(양쪽 full SHA 일치). 모델 명 변경/stream 변환/float·ASCII escape 차이를 무시하지 않는다.
-- 누락된 Docker/Swarm·원 owner DB·relay/native 종료 근거가 있으면 거절. 기존 ops-runner의 M1 sudo 차단/V1~V4 보호는 변경하지 않는다. 새 도구는 기존 종료 증거를 검토해 점유만 해제하며 정지/재시작은 하지 않는다.
-- 새 회귀97시험 통과. `NODE_OPTIONS=--max-old-space-size=4096 bash scripts/verify-review-stall.sh` 종료0. DB 회귀는 로컬 전용 DB 연결을 확보하지 못해 실행 전 global migration 단계에서 실패; CI 실제 결과는 별도 기록 예정.
-- 남음: PR/CI/병합 및 정식 해제 감사 → 표준 배포/양웹 판 검증 → 운영 /admin/models 저장(Supa+MLX) 감사·화면 확인·30분 운영 성공/번역/AI1·AI2 증가 측정. 아직 수행한 것으로 세지 않는다.
+- [PR721](https://github.com/JRVector9/nomorevibe/pull/721): 엄격한 교체 경계 단건 해제 CLI/0140 DB guard와 28ada57b 판 검증 스크립트를 준비했다. 원 장부 wire `0507685d…`와 relay `81d1f571…`를 당시 코드·일치 원문4개·gateway 변환·실제 HTTPX0.27.2 직렬화로 연결했다. 기존 ops-runner M1 수동 sudo/V1~V4 보호는 유지한다.
+- 실제 검증: 범위103 unit PASS, verify-review-stall의339 TS+71 Python 및 typegen/tsc/lint exit0. 새 DB 회귀4개 CI PASS. 구현 head2fa095f6의 CI40833430125 attempt1은 모든 시험 job SUCCESS지만, 필수check는 GitHub 결제실패/사용한도 사유로 runner가 시작하지 못했다. 실패 job1회 재시도 attempt2도 같은 차단. **병합/배포 통과로 세지 않는다.** 실패 이력과 정확한 annotation은 review-stall-backlog 최신 절에 보존했다.
+- 운영07:23:25Z PRIMARY READ ONLY: AI1 95603→95667, AI2 91774→91822(기존 서비스 자연 증가). 번역 완료16917→16917. 기존 M1미확인29877f65는 미해제/C40768/terminalNULL/감사없음. 새 Supa미확인65f8c399가06:33:07Z에 생겨 새미확인0→1, indeterminate합계2. 운영 DB 쓰기/모델 호출/해제/DRAIN/배포0, capacity OPEN epoch1/revision7.
+- 운영 차단: 설치된 root 소유 M1 relay는 Qwen3.8만 허용하지만 현재 상류는 Gemma4 등이며 nativeCapacityReady=false/native_contract_invalid. `/var/nmvllm/native-readback.json` stat이 `Permission denied`. 사용자 sudo 중단 규칙을 지켜 수리/운영 적용을 중단했다. 원본 보존 사본을 사람이 만드는 명령은 review-stall-backlog 최신 절을 따른다. 결제·한도·권한·gate를 바꾸지 않았다.
+- 공개 health12회 모두ok/dbok, 두 웹 모두199a3ebb. 원본에서 fetch 뒤 요청한 판 검증은 ancestry exit1, 아직 main에 없는 script는 exit127. 원본 사용자 변경은 보존했다. 준비된 스크립트를 병합 없이 원본에 덮어쓰지 않았다.
+- 남음: 필수CI/병합과 사람 권한의 정식 M1 수리·Supa 종료 근거 해결 뒤 merged CLI dry-run/apply/감사→표준 배포/양웹 판 확인→운영 /admin/models 저장 버튼으로 Supa+[MLX] gpt-oss-120b 저장/감사/스크린샷→30분 각 모델1차 성공·AI1/AI2·번역 증가·새미확인0 실측. **이번 저장·저장 후 모델별 성공·UI 화면·30분 관측은 미실행**이다.
 
 # 관리자 단계별 모델 작업 — 2026-10-29
 
