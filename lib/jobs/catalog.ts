@@ -141,6 +141,11 @@ export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs
   { name: "notification-delisted", role: "maintenance", intervalMs: 5 * 60_000 },
   { name: "notification-category-digest", role: "maintenance", intervalMs: 15 * 60_000 },
   { name: "notification-prune", role: "maintenance", intervalMs: 60 * 60_000 },
+  /**
+   * 미확인 모델 점유 자동 해제(2026-10-28 대표 지시). 선언된 budget의 종료 증거+기한만 기존 판정으로 푼다.
+   * 선언(MODEL_CAPACITY_AUTO_RECLAIM)이 없으면 DB 를 읽지 않고 끝난다. 한가한 maintenance 에 둔다.
+   */
+  { name: "model-capacity-reclaim", role: "maintenance", intervalMs: 60_000 },
   { name: "product-evidence-refresh", role: "crawler", lane: "sources", intervalMs: 60_000 },
   { name: "product-site-evidence-refresh", role: "site-evidence", intervalMs: 60_000, batchVersion: 1 },
   // 저장소 파일·커밋 서명 조사 — 틱마다 14초 남짓. 기본 줄에서 70초 간격으로 밀려(목표 60초) 따로 돈다(2026-10-10)

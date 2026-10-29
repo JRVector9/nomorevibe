@@ -30,7 +30,7 @@ TS_FILES=(
   lib/crawl/first-reviewers.ts lib/crawl/first-reviewer-blocks.ts lib/crawl/agent-review-repository.ts
   lib/crawl/agent-review-item-lifecycle.ts lib/crawl/consumers/first.ts lib/crawl/jobs/agent-review.ts
   lib/crawl/agent-review-gateway.ts lib/llm/deadline-ladder.ts lib/jobs/products/translations.ts
-  lib/operations/model-capacity-auto-reclaim.ts lib/operations/dr/reclaim.ts lib/jobs/model-capacity-reclaim.ts
+  lib/operations/model-capacity-auto-reclaim.ts lib/operations/dr/call-drain.ts lib/operations/dr/reclaim.ts lib/jobs/model-capacity-reclaim.ts
   lib/jobs/catalog.ts lib/jobs/registry.ts lib/operations/emergency-priority.ts lib/operations/stage-registry.ts
   lib/operations/contracts.ts "app/(operator)/admin/status/work-owners.ts"
   lib/operations/capacity-admission-block.ts lib/operations/model-capacity-unknowns.ts lib/operations/failover-monitor.ts

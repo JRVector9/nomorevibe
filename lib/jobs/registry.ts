@@ -45,6 +45,7 @@ import { reconcileGithubIntegrations } from "@/lib/jobs/github/integration-recon
 import { queueEmailDigests, sendEmailOutbox } from "@/lib/jobs/me/email";
 import { recheckMakers } from "@/lib/jobs/me/maker-recheck";
 import { pruneNotifications, sendCategoryDigest, sendDelistedNotifications } from "@/lib/jobs/me/notifications";
+import { reclaimEvidencedModelCapacity } from "@/lib/jobs/model-capacity-reclaim";
 
 /**
  * 이름 → 작업 매핑.
@@ -153,6 +154,7 @@ export const JOBS: Record<string, AnyJob> = {
   "notification-delisted": sendDelistedNotifications,
   "notification-category-digest": (ctx) => sendCategoryDigest(ctx),
   "notification-prune": pruneNotifications,
+  "model-capacity-reclaim": reclaimEvidencedModelCapacity,
 
   /** 회사 공식 피드에서 AI 소식을 모은다 — 제품 파이프라인과 따로 돈다 */
   "news-refresh": (ctx) => refreshNews(ctx),
