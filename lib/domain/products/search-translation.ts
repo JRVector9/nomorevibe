@@ -1,3 +1,4 @@
+import { modelTimeoutMs } from "@/lib/llm/model-registry";
 import { and, eq, sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import { textTranslations } from "@/lib/db/schema";
@@ -28,7 +29,7 @@ import { translateQueryWithModelCapacity } from "./search-query-model-capacity";
  * 게이트웨이에 줄 시간. 낱말 서넛짜리 답이라 고정비(약 6초)가 거의 전부다.
  * 검색 한 번이 이보다 오래 걸리면 기다리는 것보다 번역 없는 결과가 낫다.
  */
-const TIMEOUT_MS = 8_000;
+const TIMEOUT_MS = modelTimeoutMs("search-query-translate");
 
 export type ResolvedSearch = {
   /** 색인에 물어볼 말 — 원문 하나, 번역이 붙었으면 그 표현(한둘)까지 */

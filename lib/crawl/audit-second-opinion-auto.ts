@@ -1,3 +1,4 @@
+import { modelTimeoutMs } from "@/lib/llm/model-registry";
 import { and, eq, sql, type SQL } from "drizzle-orm";
 import { withLocalModelCapacity } from "@/lib/llm/local-model-capacity";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
@@ -64,7 +65,7 @@ const STEP_MS = 30_000;
  * 한 호출의 상한 — 감사 Qwen 직접 심사와 같다(jobs/product-audit.ts QWEN_CALL_TIMEOUT_MS): 한 건만이면 2.5초지만 감사 자리 넷과 함께 뜨면
  * 한 건에 12초쯤(운영 실측 평균 11.8초·최대 19.8초, 2026-10-21)이라 20초는 짧았다
  */
-export const QWEN_AUTO_CALL_TIMEOUT_MS = 45_000;
+export const QWEN_AUTO_CALL_TIMEOUT_MS = modelTimeoutMs("audit-second-opinion");
 /** 새 호출을 시작할 수 있는 틱의 남은 시간 — 부하 중 p95 쯤. 더 짧으면 제한 시간을 그 안으로 줄인다 */
 export const QWEN_AUTO_MIN_START_MS = 15_000;
 const WRITE_MARGIN_MS = 2_000;

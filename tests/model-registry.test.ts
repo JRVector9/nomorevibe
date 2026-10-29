@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_MODEL_DEFINITIONS, configuredModel, modelBaseUrl, modelForPurpose, modelRequestName, readModelRegistry,
-  resolveRegistryModel, modelLimits, configuredModelForProvider } from "@/lib/llm/model-registry";
+  resolveRegistryModel, modelLimits, configuredModelForProvider, modelDeadlineLadder, modelTimeoutMs, modelRequestBudget, modelCallTimeoutMs, modelCallMaxTokens } from "@/lib/llm/model-registry";
 
 const twins = () => ({ MODEL_REGISTRY_CONFIG: JSON.stringify({ version: 1, models: [
   { ...DEFAULT_MODEL_DEFINITIONS[0], key: "gpu3090:review", equipment: "gpu3090", model: "same-model", gatewayLabel: undefined },
@@ -32,7 +32,7 @@ describe("model registry equipment identity", () => {
     expect(modelBaseUrl("product-translate", env)).toBe(definition.baseUrl);
   });
   it("defaults public translation to equipment-qualified M1 Gemma and keeps other text roles independent", () => {
-    expect(configuredModel("product-translate", {})).toBe("[m1] gemma4-26b");
+    expect(configuredModel("product-translate", {})).toBe("[m1] mlx-community--gemma-4-26b-a4b-it-4bit");
     expect(modelForPurpose("reason-translate", {}).key).toBe("mlx:text");
     expect(modelRequestName(modelForPurpose("direct-review", {}))).toBe("qwen3.8-flash-next");
     expect(modelBaseUrl("reason-translate", { ABCLLM_BASE_URL: "https://gateway.example/" })).toBe("https://gateway.example/v1");
@@ -50,7 +50,41 @@ describe("model registry equipment identity", () => {
     for (const models of [[DEFAULT_MODEL_DEFINITIONS[0], DEFAULT_MODEL_DEFINITIONS[0]],
       [{ ...DEFAULT_MODEL_DEFINITIONS[0], equipment: "m1" }], [{ ...DEFAULT_MODEL_DEFINITIONS[0], baseUrl: "https://user:secret@example.com/v1" }]])
       expect(() => readModelRegistry({ MODEL_REGISTRY_CONFIG: JSON.stringify({ version: 1, models }) })).toThrow("invalid_model_registry");
+    for (const overrides of [{ selections: { "product-translate": "missing:key" } },
+      { candidates: { "first-review": ["missing:key"] } }, { candidates: { "first-review": ["mlx:text", "mlx:text"] } }])
+      expect(() => readModelRegistry({ MODEL_REGISTRY_CONFIG: JSON.stringify({ version: 1, models: DEFAULT_MODEL_DEFINITIONS, ...overrides }) })).toThrow("invalid_model_registry");
     expect(() => readModelRegistry({ MODEL_REGISTRY_CONFIG: "broken" })).toThrow("invalid_model_registry");
     expect(() => modelForPurpose("missing", {})).toThrow("model_purpose_not_unique");
+  });
+});
+
+describe("registry deadline and request policies", () => {
+  const config = (overrides: object) => ({ MODEL_REGISTRY_CONFIG: JSON.stringify({ version: 1, models: DEFAULT_MODEL_DEFINITIONS, ...overrides }) });
+  it("preserves PR711 review and translation budgets and makes each override observable", () => {
+    expect(modelDeadlineLadder("review-gateway", {})).toEqual({ engineMs: 50_000, relayMs: null, gatewayMs: 55_000, clientMs: 60_000 });
+    expect(modelTimeoutMs("product-translate", {})).toBe(40_000);
+    const modelEnv = config({ models: DEFAULT_MODEL_DEFINITIONS.map(model => model.key === "supa:review" ? { ...model, timeoutMs: 30_000, maxTokens: 700, deadlineLadder: { engineMs: 20_000, relayMs: null, gatewayMs: 25_000, clientMs: 30_000 } } : model) });
+    expect(modelCallTimeoutMs("review-gateway", "[supa] Qwen3.8-27B-NVFP4", modelEnv)).toBe(30_000);
+    expect(modelCallMaxTokens("gateway-review", "[supa] Qwen3.8-27B-NVFP4", modelEnv)).toBe(700);
+    expect(modelTimeoutMs("relay", {})).toBe(90_000);
+    const env = config({ deadlines: { "review-gateway": { engineMs: 20_000, relayMs: 25_000, gatewayMs: 30_000, clientMs: 35_000 } },
+      limits: { "gateway-review": { maxTokens: 900, concurrency: 1 } } });
+    expect(modelTimeoutMs("review-gateway", env)).toBe(35_000);
+    expect(modelRequestBudget("gateway-review", env).maxTokens).toBe(900);
+    expect(modelTimeoutMs("product-translate", config({ models: DEFAULT_MODEL_DEFINITIONS.map(model => model.key === "m1:translation" ? { ...model, timeoutMs: 9_000 } : model) }))).toBe(9_000);
+  });
+  it("rejects all three inverted or insufficiently separated edges at registry load", () => {
+    for (const ladder of [
+      { engineMs: 25_000, relayMs: 25_000, gatewayMs: 30_000, clientMs: 35_000 },
+      { engineMs: 20_000, relayMs: 30_000, gatewayMs: 30_000, clientMs: 35_000 },
+      { engineMs: 20_000, relayMs: 25_000, gatewayMs: 30_000, clientMs: 30_001 },
+    ]) expect(() => readModelRegistry(config({ deadlines: { "review-gateway": ladder } }))).toThrow("deadline_order_inverted");
+    expect(() => readModelRegistry(config({ models: DEFAULT_MODEL_DEFINITIONS.map(model => model.key === "supa:review" ? { ...model, timeoutMs: 30_000 } : model) }))).toThrow("model_role_deadline_order_inverted");
+    expect(() => readModelRegistry(config({ timeouts: { "review-gateway": 20_000 } }))).toThrow("model_timeout_ladder_mismatch");
+    expect(() => readModelRegistry(config({ models: [{ ...DEFAULT_MODEL_DEFINITIONS[0],
+      deadlineLadder: { engineMs: 50_000, relayMs: null, gatewayMs: 55_000, clientMs: 59_000 } }] }))).toThrow("model_timeout_ladder_mismatch");
+  });
+  it("rejects missing M1 addresses explicitly without inventing an equipment host", () => {
+    expect(() => readModelRegistry(config({ models: [{ ...DEFAULT_MODEL_DEFINITIONS[2], baseUrl: null }] }))).toThrow("model_base_url_required");
   });
 });

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { deadlineLadderSchema, deadlineLadderViolation, type DeadlineLadder } from "./deadline-policy";
 
 export type ModelEnvironment = Readonly<Record<string, string | undefined>>;
 const identity = z.string().min(1).max(200).refine(value => value === value.trim() && !/[\p{Cc}]/u.test(value));
@@ -14,9 +15,16 @@ export const modelDefinitionSchema = z.object({
   model: identity, family: identity,
   /** Gateway labels are explicit equipment identities, never inferred from a bare name. */
   gatewayLabel: identity.optional(),
-  timeoutMs: z.number().int().positive().safe(), maxTokens: z.number().int().positive().max(262_144),
+  deadlineLadder: deadlineLadderSchema.optional(),
+  timeoutMs: z.number().int().positive().max(3_600_000), maxTokens: z.number().int().positive().max(262_144),
   concurrency: z.number().int().positive().max(64), purposes: z.array(identity).min(1),
 }).strict().superRefine((model, context) => {
+  if (model.deadlineLadder) {
+    const violation = deadlineLadderViolation(model.deadlineLadder);
+    if (violation) context.addIssue({ code: "custom", message: violation });
+    if (model.timeoutMs !== model.deadlineLadder.clientMs)
+      context.addIssue({ code: "custom", message: "model_timeout_ladder_mismatch" });
+  }
   if (!model.key.startsWith(`${model.equipment}:`)) context.addIssue({ code: "custom", message: "model_key_equipment_mismatch" });
   if ((model.provider === "abcllm" || model.provider === "local-direct" || model.provider === "llama-server") && !model.baseUrl)
     context.addIssue({ code: "custom", message: "model_base_url_required" });
@@ -36,7 +44,7 @@ export const DEFAULT_MODEL_DEFINITIONS: readonly ModelDefinition[] = [
     model: "deepseek-v4.1-flash-1017", family: "deepseek-v4.1-flash-1017", timeoutMs: 60_000, maxTokens: 8_000, concurrency: 1,
     purposes: ["human-review", "assist-audit"] },
   { key: "m1:translation", equipment: "m1", displayName: "M1 · Gemma 4 26B", provider: "abcllm", baseUrl: gateway, gatewayLabel: "m1",
-    model: "gemma4-26b", family: "gemma4-26b", timeoutMs: 20_000, maxTokens: 8_000, concurrency: 1, purposes: ["product-translate"] },
+    model: "mlx-community--gemma-4-26b-a4b-it-4bit", family: "gemma4-26b", timeoutMs: 40_000, maxTokens: 8_000, concurrency: 1, purposes: ["product-translate"] },
   { key: "supa:review", equipment: "supa", displayName: "Supa · Qwen", provider: "abcllm", baseUrl: gateway, gatewayLabel: "supa",
     model: "Qwen3.8-27B-NVFP4", family: "Qwen3.8-27B-NVFP4", timeoutMs: 60_000, maxTokens: 8_000, concurrency: 4,
     purposes: ["ai1-preset", "product-search-verify"] },
@@ -57,19 +65,53 @@ export const DEFAULT_MODEL_DEFINITIONS: readonly ModelDefinition[] = [
     model: "gpt-5.6-terra", family: "gpt-5.6-terra", timeoutMs: 12_000, maxTokens: 8_000, concurrency: 1, purposes: ["classify-fallback"] },
 ];
 /** Per-purpose request budgets preserve existing adaptive wire sizing under the model ceiling. */
-export const DEFAULT_MODEL_PURPOSE_LIMITS: Readonly<Record<string, { maxTokens: number; concurrency: number }>> = {
-  "gateway-review": { maxTokens: 3_000, concurrency: 2 }, "review-cli": { maxTokens: 2_000, concurrency: 1 },
+export const DEFAULT_MODEL_PURPOSE_LIMITS: Readonly<Record<string, { maxTokens: number; concurrency: number; timeoutMs?: number }>> = {
+  "gateway-review": { maxTokens: 3_000, concurrency: 2 }, "review-cli": { maxTokens: 2_000, concurrency: 1, timeoutMs: 20_000 },
+  "relay": { maxTokens: 10_000, concurrency: 2, timeoutMs: 90_000 },
   "human-review": { maxTokens: 2_000, concurrency: 1 }, "product-intro-check": { maxTokens: 8_000, concurrency: 1 },
   "classify-claude": { maxTokens: 4_000, concurrency: 1 },
-  "product-search-profile": { maxTokens: 500, concurrency: 2 }, "product-search-verify": { maxTokens: 3_000, concurrency: 4 },
-  "crawl-tagline": { maxTokens: 400, concurrency: 2 }, "reason-translate": { maxTokens: 6_000, concurrency: 2 },
-  "product-tagline-ko": { maxTokens: 5_400, concurrency: 1 }, "product-translate": { maxTokens: 8_000, concurrency: 1 },
+  "product-search-profile": { maxTokens: 500, concurrency: 2, timeoutMs: 45_000 }, "product-search-verify": { maxTokens: 3_000, concurrency: 4, timeoutMs: 60_000 },
+  "crawl-tagline": { maxTokens: 400, concurrency: 2 }, "reason-translate": { maxTokens: 6_000, concurrency: 2, timeoutMs: 45_000 },
+  "product-tagline-ko": { maxTokens: 5_400, concurrency: 1, timeoutMs: 45_000 }, "product-translate": { maxTokens: 8_000, concurrency: 1, timeoutMs: 40_000 },
   "search-query-translate": { maxTokens: 200, concurrency: 1 }, "direct-review": { maxTokens: 3_000, concurrency: 2 },
 };
 const purposeLimitSchema = z.object({ maxTokens: z.number().int().positive().max(262_144),
-  concurrency: z.number().int().positive().max(64) }).strict();
+  concurrency: z.number().int().positive().max(64), timeoutMs: z.number().int().positive().max(3_600_000).optional() }).strict();
+/** Route budgets whose job allowance differs from the model's general client default. */
+export const DEFAULT_MODEL_TIMEOUTS: Readonly<Record<string, number>> = {
+  "audit-second-opinion": 45_000, "held-review-retry": 15_000, "split-tiebreak": 20_000,
+  "split-confirm": 45_000, "product-audit": 45_000, "grok-review": 90_000,
+  "grok-session": 60_000, "search-query-translate": 8_000, "crawl-tagline": 45_000,
+};
+export const DEFAULT_MODEL_DEADLINES: Readonly<Record<string, DeadlineLadder>> = {
+  "review-gateway": { engineMs: 50_000, relayMs: null, gatewayMs: 55_000, clientMs: 60_000 },
+};
+export const DEFAULT_MODEL_CANDIDATES: Readonly<Record<string, readonly string[]>> = {
+  "first-review": ["supa:review", "mlx:text", "connect:sonnet", "connect:opus", "connect:grok"],
+};
 const registrySchema = z.object({ version: z.literal(1), models: z.array(modelDefinitionSchema).min(1).max(64),
-  selections: z.record(z.string(), z.string()).default({}), limits: z.record(z.string(), purposeLimitSchema).default({}) }).strict().superRefine((value, context) => {
+  selections: z.record(z.string(), z.string()).default({}), limits: z.record(z.string(), purposeLimitSchema).default({}),
+  deadlines: z.record(z.string(), deadlineLadderSchema).default({}),
+  timeouts: z.record(z.string(), z.number().int().positive().max(3_600_000)).default({}),
+  candidates: z.record(z.string(), z.array(z.string()).min(1).max(64)).default({}) }).strict().superRefine((value, context) => {
+  for (const [route, ladder] of Object.entries({ ...DEFAULT_MODEL_DEADLINES, ...value.deadlines })) {
+    const violation = deadlineLadderViolation(ladder);
+    if (violation) context.addIssue({ code: "custom", path: ["deadlines", route], message: violation });
+    const timeout = value.timeouts[route] ?? value.limits[route]?.timeoutMs;
+    if (timeout !== undefined && timeout !== ladder.clientMs)
+      context.addIssue({ code: "custom", path: ["deadlines", route], message: "model_timeout_ladder_mismatch" });
+  }
+  for (const [purpose, candidates] of Object.entries(value.candidates)) {
+    if (new Set(candidates).size !== candidates.length || candidates.some(key => !value.models.some(model => model.key === key)))
+      context.addIssue({ code: "custom", path: ["candidates", purpose], message: "invalid_model_candidates" });
+  }
+  const reviewCandidates = value.candidates["first-review"] ?? DEFAULT_MODEL_CANDIDATES["first-review"];
+  for (const model of value.models) {
+    if (model.provider !== "abcllm" || !(reviewCandidates.includes(model.key) || model.purposes.some(purpose => ["first-review", "second-review", "ai1-preset", "ai2-gateway"].includes(purpose)))) continue;
+    const ladder = model.deadlineLadder ?? value.deadlines["review-gateway"] ?? DEFAULT_MODEL_DEADLINES["review-gateway"];
+    const effective = { ...ladder, clientMs: Math.min(ladder.clientMs, model.timeoutMs) };
+    if (deadlineLadderViolation(effective)) context.addIssue({ code: "custom", path: ["models", model.key], message: "model_role_deadline_order_inverted" });
+  }
   const keys = new Set<string>();
   for (const model of value.models) {
     if (keys.has(model.key)) context.addIssue({ code: "custom", message: "duplicate_model_key" });
@@ -87,7 +129,11 @@ export function readModelRegistry(env: ModelEnvironment = process.env): ModelReg
   try {
     return registrySchema.parse(env.MODEL_REGISTRY_CONFIG?.trim() ? JSON.parse(env.MODEL_REGISTRY_CONFIG)
       : { version: 1, models: DEFAULT_MODEL_DEFINITIONS });
-  } catch { throw new Error("invalid_model_registry"); }
+  } catch (error) {
+    // Never include input values (URLs may contain credentials) in configuration errors.
+    const detail = error instanceof z.ZodError ? error.issues.map(issue => `${issue.path.join(".")}:${issue.code === "custom" ? issue.message : issue.code}`).join(",") : "invalid_json";
+    throw new Error(`invalid_model_registry:${detail}`);
+  }
 }
 export function modelForPurpose(purpose: string, env: ModelEnvironment = process.env): ModelDefinition {
   const registry = readModelRegistry(env), key = registry.selections[purpose];
@@ -172,4 +218,46 @@ export function modelRequestBudget(purpose: string, env: ModelEnvironment = proc
   const budget = readModelRegistry(env).limits[purpose] ?? DEFAULT_MODEL_PURPOSE_LIMITS[purpose];
   if (!budget) throw new Error(`model_request_budget_missing:${purpose}`);
   return budget;
+}
+
+/** Candidate suggestions never rewrite the DB-selected pool or its assignment policy. */
+export function modelCandidates(purpose: string, env: ModelEnvironment = process.env): ModelDefinition[] {
+  const registry = readModelRegistry(env);
+  return (registry.candidates[purpose] ?? DEFAULT_MODEL_CANDIDATES[purpose] ?? []).flatMap(key => {
+    const model = registry.models.find(model => model.key === key);
+    return model ? [model] : [];
+  });
+}
+
+export function modelDeadlineLadder(route: string, env: ModelEnvironment = process.env): DeadlineLadder {
+  const ladder = readModelRegistry(env).deadlines[route] ?? DEFAULT_MODEL_DEADLINES[route];
+  if (!ladder) throw new Error(`model_deadline_ladder_missing:${route}`);
+  return ladder;
+}
+
+/** Explicit caller deadlines may shorten this budget; registry changes require process restart. */
+export function modelTimeoutMs(purpose: string, env: ModelEnvironment = process.env): number {
+  const registry = readModelRegistry(env);
+  if (registry.deadlines[purpose] || DEFAULT_MODEL_DEADLINES[purpose]) return modelDeadlineLadder(purpose, env).clientMs;
+  const budget = registry.limits[purpose] ?? DEFAULT_MODEL_PURPOSE_LIMITS[purpose];
+  const timeout = registry.timeouts[purpose] ?? budget?.timeoutMs ?? DEFAULT_MODEL_TIMEOUTS[purpose];
+  if (purpose in DEFAULT_MODEL_TIMEOUTS) return timeout;
+  // Relay upstream timing is separate from the direct-review client and has no proven engine bound by default.
+  if (purpose === "relay" || purpose === "review-cli") {
+    if (!timeout) throw new Error(`model_timeout_missing:${purpose}`);
+    return timeout;
+  }
+  const model = purpose in MODEL_PURPOSE_ENV ? configuredModelDefinition(purpose as keyof typeof MODEL_PURPOSE_ENV, env) : modelForPurpose(purpose, env);
+  return model.deadlineLadder?.clientMs ?? Math.min(model.timeoutMs, timeout ?? model.timeoutMs);
+}
+
+/** Known equipment models may shorten the role budget or declare their own complete ladder. */
+export function modelCallTimeoutMs(route: string, requestModel: string, env: ModelEnvironment = process.env): number {
+  const definition = resolveRegistryModel(requestModel, env), routeTimeout = modelTimeoutMs(route, env);
+  return definition?.deadlineLadder?.clientMs ?? Math.min(routeTimeout, definition?.timeoutMs ?? routeTimeout);
+}
+
+export function modelCallMaxTokens(route: string, requestModel: string, env: ModelEnvironment = process.env): number {
+  const definition = resolveRegistryModel(requestModel, env);
+  return Math.min(modelRequestBudget(route, env).maxTokens, definition?.maxTokens ?? Number.MAX_SAFE_INTEGER);
 }

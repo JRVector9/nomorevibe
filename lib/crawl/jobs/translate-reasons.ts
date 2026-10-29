@@ -1,3 +1,4 @@
+import { modelTimeoutMs } from "@/lib/llm/model-registry";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { translateReasonsWithModelCapacity } from '@/lib/crawl/reason-translation-model-capacity';
 import { TRANSLATE_MODEL } from "@/lib/crawl/translate";
@@ -13,7 +14,7 @@ import { recordWorkerTranslations, retryableTranslations, untriedTranslations } 
 const BATCH = 4;
 const BATCH_CHARS = 1_600;
 /** 한 번 부르는 데 둘 시간. 첫 배포 때 20초로 두었더니 4틱 연속 시간 초과였다 */
-const CALL_MS = 45_000;
+const CALL_MS = modelTimeoutMs("reason-translate");
 /** 틱 예산(worker.ts jobRunOptions 55초)보다 조금 짧게 */
 const TICK_MS = 54_000;
 /**

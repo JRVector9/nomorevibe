@@ -1,3 +1,4 @@
+import { modelTimeoutMs } from "@/lib/llm/model-registry";
 import { translateKoreanTaglinesWithModelCapacity, type KoreanTaglineCapacityResult } from "@/lib/domain/products/korean-tagline-model-capacity";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { KOREAN_TAGLINE_MODEL } from "@/lib/crawl/translate";
@@ -24,7 +25,7 @@ import { KOREAN_TRANSLATION_LEGACY_MAX_CHARS, KOREAN_TRANSLATION_NATIVE_MAX_CHAR
  */
 const BATCH = 8;
 /** 한 번 부르는 데 둘 시간 */
-const CALL_MS = 45_000;
+const CALL_MS = modelTimeoutMs("product-tagline-ko");
 /** 틱 예산(scripts/worker.ts jobRunOptions 55초)보다 조금 짧게 */
 const TICK_MS = 54_000;
 /** 이만큼 남아 있을 때만 새로 부른다 — 묶음 하나가 15~25초라 틱 끝에 부르면 제한이 짧아져 헛실패가 난다 */

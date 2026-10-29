@@ -1,4 +1,4 @@
-import { modelRequestBudget } from "@/lib/llm/model-registry";
+import { modelRequestBudget, modelTimeoutMs } from "@/lib/llm/model-registry";
 import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
@@ -10,7 +10,7 @@ import {
   type ReviewInput, type ReviewOutcome,
 } from "./agent-review-contract";
 
-export const REVIEW_CLI_TIMEOUT_MS = 20_000;
+export const REVIEW_CLI_TIMEOUT_MS = modelTimeoutMs("review-cli");
 const MAX_STDOUT_BYTES = 64 * 1024;
 const MAX_STDERR_BYTES = 16 * 1024;
 const MAX_OUTPUT_TOKENS = modelRequestBudget("review-cli").maxTokens;

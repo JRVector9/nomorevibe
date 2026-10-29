@@ -9,7 +9,7 @@ cd "$(git rev-parse --show-toplevel)"
 
 # Deliberately scoped to this lane. Never invoke the full unit/DB/e2e suites here.
 tests=(
-  tests/model-registry.test.ts tests/model-registry-http-routing.test.ts
+  tests/model-registry.test.ts tests/model-registry-deadlines.test.ts tests/model-registry-migration.test.ts tests/model-registry-http-routing.test.ts
   tests/model-registry-ai2-routing.test.ts tests/model-registry-operator.test.tsx
   tests/local-model-serving-contract.test.ts tests/local-model-capacity-schema.test.ts
   tests/local-model-terminal.test.ts tests/local-model-relay.test.ts tests/local-model-relay-readiness.test.ts

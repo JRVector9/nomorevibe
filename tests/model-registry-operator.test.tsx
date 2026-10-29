@@ -14,7 +14,7 @@ describe("configured operator model identities", () => {
     const env = { MODEL_REGISTRY_CONFIG: JSON.stringify({ version: 1, models: [{ ...DEFAULT_MODEL_DEFINITIONS[2],
       model: "replacement", maxTokens: 2048, concurrency: 3, baseUrl: "https://replacement.example/v1" }] }) };
     const html = renderToStaticMarkup(createElement(ModelRegistryTable, { env }));
-    for (const value of ["m1:translation", "[m1] replacement", "https://replacement.example/v1", "2,048", "기한 설정 연결"]) expect(html).toContain(value);
+    for (const value of ["m1:translation", "[m1] replacement", "https://replacement.example/v1", "2,048", "로드 시 순서를 검증"]) expect(html).toContain(value);
     expect(html).not.toContain("qwen3.8-flash-next");
   });
   it("shows independent Korean tagline and query selections from the same runtime constants", async () => {
@@ -25,12 +25,12 @@ describe("configured operator model identities", () => {
     vi.resetModules();
     const models = await (await import("@/lib/operations/model-env")).currentModelEnv();
     expect(models.translate).toBe("[MLX] gpt-oss-120b");
-    expect(models.koreanTagline).toBe("[m1] gemma4-26b");
-    expect(models.searchQuery).toBe("[m1] gemma4-26b");
+    expect(models.koreanTagline).toBe("[m1] mlx-community--gemma-4-26b-a4b-it-4bit");
+    expect(models.searchQuery).toBe("[m1] mlx-community--gemma-4-26b-a4b-it-4bit");
     const html = renderToStaticMarkup(createElement(TextModelStagesTable, { models }));
     expect(html).toContain("한국어 소개 번역");
     expect(html).toContain("검색 질의 번역");
-    expect(html).toContain("[m1] gemma4-26b");
+    expect(html).toContain("[m1] mlx-community--gemma-4-26b-a4b-it-4bit");
   });
   it("keeps default CLI configuration valid when the primary provider changes", () => {
     const env = { MODEL_REGISTRY_CONFIG: JSON.stringify({ version: 1, models: DEFAULT_MODEL_DEFINITIONS.map(model =>

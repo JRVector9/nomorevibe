@@ -19,6 +19,6 @@ export function ModelRegistryTable({ env = process.env }: { env?: ModelEnvironme
         <td className="py-3 font-mono tabular-nums">{model.concurrency}</td>
       </tr>)}</tbody></table>
     </div>
-    <p className="mt-3 text-[13px] text-fg-3">단계별 출력·동시 실행 예산은 등록된 모델 상한 안에서 적용합니다. 기존 개별 환경변수 설정은 위 단계별 표에 반영됩니다. 기한 설정 연결은 별도 기한 변경이 합쳐진 뒤 적용합니다.</p>
+    <p className="mt-3 text-[13px] text-fg-3">단계별 출력·동시 실행 예산은 등록된 모델 상한 안에서 적용합니다. 기존 개별 환경변수 설정은 위 단계별 표에 반영됩니다. 기한은 레지스트리의 모델·용도별 예산을 따르며, 선언된 사다리는 로드 시 순서를 검증합니다. 서버에서 실제로 강제하는지는 별도 검증이 필요합니다.</p>
   </details>;
 }

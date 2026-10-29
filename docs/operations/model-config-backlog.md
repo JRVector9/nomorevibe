@@ -1,5 +1,7 @@
 # 모델 설정 유연화 백로그
 
+> 이전 작업의 수치·실패 이력을 보존한다. 현재 작업 결과는 문서 끝 «후속 통합»과 «최종 검증·PR»이 기준이다.
+
 ## 범위·기준
 
 - 작업 공간: GPU3090의 현재 xAegis worktree, 브랜치 `xaegis/d9b32a19`만 사용. 원본 폴더의 사용자 변경은 수정하지 않는다.
@@ -94,3 +96,37 @@ git grep -o -E '(configuredModel|configuredModelDefinition|configuredModelForPro
 - 요청 경로 `/home/ubuntu/.xaegis-hub/data/local-agent/jobs/d9b32a19-27bc-4d32-8f18-d0af05410ced/artifacts`는 존재하지만 직접 결과 파일 저장이 막혔다. 실제 시도는 Python `Path(.../artifacts/model-config-report.md).write_text(..., encoding='utf-8')`이며 **`OSError: [Errno 30] Read-only file system`**, exit 1이었다.
 - **막힘: 지정 artifacts 폴더에 결과 파일 직접 저장.** 이 경로의 쓰기 권한/마운트 상태는 현재 작업의 허용 범위 밖이다. 다른 경로로 결과 파일을 우회 저장하거나 권한을 확대하지 않았다. 기존 보고 큐의 인라인 첨부를 보존하고 허브 동기화와 산출물 경로 쓰기 가능 상태를 기다린다.
 - 코드 최종 검증은 여전히 64파일 896시험·타입 검사·158→98·스크립트 exit 0이다. 이 추가 기록은 문서만 변경하며 배포/운영 DB/push는 수행하지 않는다.
+
+## 후속 통합 (현재 작업: 2026-10-29)
+
+- 작업 공간 `b6a58262-d6c2-4002-89d7-084fda1f5e95`, 브랜치 `feat/model-config-registry`. 위 기록은 이전 차선의 검증 이력으로 보존한다.
+- `git fetch origin` 뒤 `origin/main` a3094a73에서 새 브랜치를 만들고 6f5d98f1을 merge `4ffbed6d`로 통합했다. 충돌 없음. 다른 브랜치 기록·원본 파일은 수정하지 않았다.
+- 통합 직후 지정 회귀 6파일 29시험 통과. 이어 registry 기한·후보 목록·정확한 사용자 제공 M1 모델 id를 연결 중이다. PR709~712의 retry/active intent 고정·미전송 우회·회수 기본 비활성은 유지한다.
+- 의존성은 같은 package-lock임을 cmp로 확인한 원본 node_modules의 읽기 전용 재사용 symlink. npm 설치는 하지 않았다.
+- 신규 runtime 회귀 첫 실행은 7파일 34시험 중 1실패: 존재하지 않는 gatewayReviewWire export를 시험에서 참조했다(TypeError: gatewayReviewWire is not a function). 실제 reviewWithGateway의 전송 stub을 검사하도록 고쳤다. 구현의 export를 시험 때문에 늘리지 않았다.
+- 남은 작업: 기한/relay/후보 회귀, 두 검증 스크립트·tsc, 변경 UI 로컬 브라우저 확인·스크린샷, 재측정, PR/check/main 병합. 운영 배포·재시작·모델 조작·용량 모드·운영 DB 쓰기는 금지 범위로 유지한다.
+
+### 후속 구현·검수
+
+- 레지스트리 deadlines/timeouts/선택적 모델 사다리로 review·relay·번역·text·CLI·재심사 경로의 기한을 연결했다. 선언된 사다리의 모든 이웃 순서·2초 여유와 모델 client 기한 불일치를 로드 시 거절한다. 후보 모델의 client만 줄여 기본 gateway보다 먼저 끝나는 설정도 거절한다. 검증 primitive는 순환 import를 피하도록 deadline-policy.ts로 옮기고 기존 deadline-ladder.ts export를 유지했다.
+- gateway wire max_tokens·relay 출력 상한은 모델과 용도 예산의 작은 값이다. relay의 엔진 기한/강제 시작 시각 opt-in·native 계약·exact tokenizer·unknown 보존은 그대로다. 실제 외부 엔진/gateway 강제는 이번 작업에서 확인하지 않았다.
+- first-reviewers.ts의 selectFirstReviewer/firstReviewers 본문은 그대로다. 후보 제안만 candidates.first-review에서 조회하며 Supa·MLX GPT OSS·sonnet/opus·Grok 기본 목록을 유지한다. 실제 DB pool·심사 결과를 변경하지 않는다.
+- M1 기본 wire id를 사용자가 지정한 `[m1] mlx-community--gemma-4-26b-a4b-it-4bit`로 정리했다. 기존 공용 gateway 주소만 유지하고 미확인 M1 직접 주소를 만들지 않았다. 주소 누락은 명확한 설정 오류다. 오프라인 migrate-model-registry-m1.ts는 기존 주소·리소스·다른 모델을 보존해 검토용 JSON만 출력한다. 실제 CLI smoke 및 2시험 통과.
+- 신규 회귀 중 괄호 오타로 model-registry.test.ts 변환이 한 번 실패했다(7파일 27시험은 통과, 해당 파일은 미실행). 고친 뒤 지정 8파일 36시험 통과. 이전 실패는 이력으로 보존한다.
+- 첫 verify-model-config 실행: 65파일 902시험·typegen·tsc·158→99, exit 0. 첫 verify-review-stall 실행: 타입·변경 파일 lint·차선 unit·Oracle Python 전부 exit 0. 이후 gateway 모델 ceiling/추가 검증·오프라인 이전 도구를 넣었으므로 최종 검증은 별도 아래에 기록한다.
+- 실제 UI: 기존 설치를 재사용한 독립 로컬 Next 앱에서 실제 ModelRows/ModelRegistryTable/TextModelStagesTable/CSS를 확인했다. 1280×1000/390×844, 메뉴·제목 일치, 기본 GPT OSS 후보 보존, CLI 후보 선택과 입력 반영, M1 정확한 id 표시, 모바일 페이지 넘침 없음, 가로 표 끝까지 스크롤, pageerror 0. 8항목 통과. PNG 3장(데스크톱·모바일 왼쪽·모바일 오른쪽)을 개발사항 보고에 첨부한다. 운영 인증·실제 저장·외부 모델 호출 검증은 아니다. 임시 앱/빌드는 제거했다.
+- UI 도구 제한: Next의 선택적 npm 버전 조회가 `Network access to "registry.npmjs.org" was blocked: domain is not on the allowlist for the current sandbox mode.`로 막혔다. 같은 lock/node_modules를 유지하고 임시 앱의 외부 fetch를 호출 전에 거절한 상태로 검수했다. Playwright 기본 headless shell 1234는 없었으며(`Executable doesn't exist at ...chromium_headless_shell-1234/...`), 이미 설치된 1248 실행 파일을 재사용했다. 설치·접근 권한 확대 없음.
+- 지정 artifacts/scratch 경로에 `.write-probe` 파일을 쓰는 Path.write_text는 각각 `OSError(30, 'Read-only file system')`였다. 승인 차단은 없었고 마운트 쓰기 제한이다. 권한·마운트 변경 없이 보고 도구의 지원된 첨부 기능으로 증거를 보존한다.
+
+### 동일 측정 재실행
+
+위의 동일 git grep 명령에서 `199a3ebb=158`, `origin/main(a3094a73)=158`, `6f5d98f1=98`, 현재 **99**줄이다. 이전 차선 대비 +1은 중앙 DEFAULT_MODEL_CANDIDATES의 기본 키 한 줄(sonnet/opus 검색 일치)이며 분산 운영 상수가 아니다. 99줄을 실제 확인한 분류는 중앙 기본값/후보 키 15, 역사·측정·형식 설명 주석 75, 불변 수입 provenance 1, 외부 제작 근거 parser 4, repoPushedAt 검색 오탐 4다. 주석·역사 출처·외부 parser를 현재 모델 설정으로 바꾸거나 줄 수를 줄이려고 삭제하지 않는다.
+
+### 최종 검증·PR (진행 중)
+
+- 지정 타입 검사 `npx tsc --noEmit -p .`: exit 0.
+- 지정 unit `npx vitest run tests/model-registry*.test.ts tests/first-reviewers.test.ts tests/local-model-relay.test.ts tests/deadline-ladder.test.ts`: **8파일 37시험 통과**, exit 0. 실제 로컬 HTTP 두 서버에서 qwen3.8-flash-next 동명 모델을 재현했다. key 지정과 `[m1]` label 지정 두 경우 모두 M1 요청 1건·GPU3090 요청 0건이다.
+- 두 번째 모델 스크립트: **66파일 904시험**·typegen·tsc·158→99, exit 0. 이후 추가한 label 재현 1시험은 지정 unit에 통과했고 다음 최종 스크립트 묶음에 포함한다.
+- 두 번째 review-stall 스크립트: typegen·tsc·변경 파일 eslint·차선 unit·Oracle Python 전부 exit 0. 신규 registry/순수 validator/오프라인 migration/운영자 component와 신규 회귀 ESLint도 경고 0.
+- gh branch protection 읽기 `gh api repos/JRVector9/nomorevibe/branches/main/protection ...`는 HTTP 403: `Upgrade to GitHub Pro or make this repository public to enable this feature.`였다. 보호 설정은 변경하지 않는다. PR의 실제 check 결과를 확인하고 허용된 일반 merge만 사용한다.
+- 구현과 설정 이전 도구는 완료. 남은 코드 작업 없음. 최종 재검증·PR/check/main merge·최종 개발사항 보고를 진행한다. 운영 후속은 이 차선의 금지 범위로 유지한다.
