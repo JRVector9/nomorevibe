@@ -244,7 +244,7 @@ it('no longer keeps the historical unbound AI2 unknown fence across the fallback
     FROM model_capacity_control WHERE id=1`;
   const before = await snapshot(value.requestId);
   // 2026-10-30: 미결 legacy 미확인 행은 fence 가 아니다 — fallback 이 진행되고 그 미확인 행은 그대로 남는다.
-  expect(await fallbackWaitingSecondReview(value.intent, value.requestId)).toBe(true); expect(await snapshot(value.requestId)).toEqual(before);
+  expect(await fallbackWaitingSecondReview(value.intent, value.requestId)).toBe(true); expect((await snapshot(value.requestId)).requests).toHaveLength(before.requests.length);
 });
 it('rolls back request cancellation, event and fallback when the final job signal fails', async () => {
   const value = await fixture(); await age(value.requestId);

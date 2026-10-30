@@ -351,7 +351,7 @@ it('EOF keeps full-C unknown and original AI1 failure backoff across source chan
     // 2026-10-30: 미확인(indeterminate) 행은 점유도 fence 도 아니다 — 같은 작업이 새 requestId 로 다시 들어간다(원 미확인 행은 사람 검토용으로 남는다).
     expect(await execute(f.candidate.id, undefined, { instanceId: owner.instanceId, bootId: randomUUID() })).toMatchObject({ state: 'failed' });
     expect(posts).toHaveLength(2); expect(await capacityRows()).toContainEqual(original);
-    expect(await db.select().from(crawlReviewAttempts).where(eq(crawlReviewAttempts.candidateId, f.candidate.id))).toHaveLength(1);
+    expect(await db.select().from(crawlReviewAttempts).where(eq(crawlReviewAttempts.candidateId, f.candidate.id))).toHaveLength(2);
     expect((await item(f.candidate.id))?.row.token).toBeNull();
   });
 }));

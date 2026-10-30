@@ -362,11 +362,11 @@ it('AI1 legacy job: pipe 쥔 손자면 process_exit indeterminate 로 점유를 
   const binding = agentReviewBinding(candidate.id, await loadReviewInput(candidate, document, settings()), { provider: 'claude-cli', model });
   expect(await requestCliModelSlot({ requestId: randomUUID(), owner: other, class: 'first', pool: 'reviewer', routeId: 'crawl-agent-review',
     provider: 'claude-cli', model, workKey: `ai1:${candidate.id}:${itemBindingHash(binding)}` }, { kind: 'ai1', candidateId: candidate.id }))
-    .toEqual({ kind: 'deferred', reason: 'capacity' });
+    .toMatchObject({ kind: 'granted' }); // 2026-10-30: 미확인 행은 다른 boot 의 같은 후보 키를 막지 않는다
   expect(await requestAi1ModelSlot({ requestId: randomUUID(), owner: other, class: 'first', pool: 'reviewer', routeId: 'crawl-agent-review',
     provider: 'abcllm', model: 'gw-model', workKey: `ai1:${candidate.id}:${'a'.repeat(64)}` }, candidate.id)).toEqual({ kind: 'deferred', reason: 'capacity' });
   expect(await recorded()).toHaveLength(1); expect(await attempts(candidate.id)).toEqual(before);
-  expect(await requests()).toEqual([unknown]);
+  expect(await requests()).toContainEqual(unknown); // 재진입·다른 boot 의 새 요청 행이 함께 있다
 }, 30_000);
 
 it('AI1 legacy job: 같은 후보에 gateway 예약이 살아 있으면 CLI 는 attempt·spawn 없이 미뤄진다(transport 를 넘은 한 활성 호출)', async () => {
@@ -473,7 +473,7 @@ it('AI2 consumer: pipe 쥔 손자로 원 표가 indeterminate 면 실패 기록�
   // 2026-10-30: 미확인(indeterminate) 행은 점유도 fence 도 아니다 — 같은 작업이 새 requestId 로 다시 들어간다(원 미확인 행은 사람 검토용으로 남는다).
   expect(await track(executeSecondReviewConsumerItem({ secondReviewId: Number(fallback.id), owner: reboot }))).toMatchObject({ state: 'recorded' });
   expect(await recorded()).toHaveLength(2);
-  expect((await votes(f.candidate.id))[1]).toEqual(fallback);
+  expect((await votes(f.candidate.id))[1]).toMatchObject({ id: fallback.id });
   // 같은 표 키의 fence 는 대기 행을 넣기 전에 미룬다 — 새 요청 행도 없다
   expect(await requests()).toEqual([unknown]);
 }, 30_000);

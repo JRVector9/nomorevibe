@@ -28,7 +28,7 @@ async function installPolicy(value: ModelCapacityPolicy = policy, bump: "none" |
 /** waiting → reserved → dispatched → indeterminate(reason) 한 행. */
 async function unknownRow(reason: "client_timeout" | "local_abort" | "transport_unknown" = "client_timeout", value = request()) {
   const slot = await requestModelSlot(value);
-  if (slot.kind !== "granted") throw new Error(`fixture_not_granted:${slot.kind === "deferred" ? slot.reason : slot.kind}`);
+  if (slot.kind !== "granted") throw new Error(`fixture_not_granted:${JSON.stringify(slot)}`);
   const begun = await beginModelDispatch(slot.reservation);
   if (begun.kind !== "dispatched") throw new Error("fixture_not_dispatched");
   expect(await markModelDispatchIndeterminate(begun.dispatch, reason)).toBe(true);
@@ -94,9 +94,9 @@ it("a policy change with only indeterminate old-generation rows does not defer, 
   // 대조: 결과 모르는 실제 전송(dispatched)은 옛 세대 점유라 policy_changed 로 미룬다.
   const held = request(); const slot = await requestModelSlot(held);
   expect(slot).toEqual({ kind: "deferred", reason: "capacity" }); // fresh 가 슬롯 1 을 쥔다
-  const [row] = await admin`SELECT token FROM model_capacity_requests WHERE request_id=${fresh.requestId}::uuid`;
-  const begun = await beginModelDispatch({ requestId: fresh.requestId, owner, token: row.token, epoch: Number(originalControl.epoch) + 1,
-    revision: Number(originalControl.revision) + 1, policyHash: modelCapacityPolicyHash(renamed) });
+  const again = await requestModelSlot(fresh); // 같은 requestId 재조회는 같은 예약을 돌려준다
+  if (again.kind !== "granted") throw new Error("fixture_not_granted_again");
+  const begun = await beginModelDispatch(again.reservation);
   expect(begun.kind).toBe("dispatched");
   await installPolicy(policy, "epoch");
   expect(await requestModelSlot(request())).toEqual({ kind: "deferred", reason: "policy_changed" });

@@ -525,15 +525,17 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
     // 0150 (topology) leaves every CHECK as 0149 left them; 0151 appends the operator_review branch to the requests dispatch/terminal
     // CHECKs and the events kind CHECK (one shared SQL function), again as (whole predecessor) OR (branch).
     await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
-    const final = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
+    const after0151 = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
     const reviewed: Record<string, string> = { model_capacity_requests_dispatch_check: operatorReviewDispatchSql,
       model_capacity_requests_terminal_check: operatorReviewTerminalSql, model_capacity_events_kind_check: operatorReviewEventSql };
     for (const name of [...LEFT, ...UNTOUCHED]) {
       const branch = reviewed[name];
-      if (!branch) { expect(final[name], `${name}: unchanged after 0151`).toBe(widened[name]); continue; }
+      // 0151 also widens the reason list with client_timeout.
+      if (name === "model_capacity_events_reason_check") { expect(after0151[name]).toContain("client_timeout"); continue; }
+      if (!branch) { expect(after0151[name], `${name}: unchanged after 0151`).toBe(widened[name]); continue; }
       const table = name.startsWith("model_capacity_events_") ? "model_capacity_events" : "model_capacity_requests";
       await step.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT f2_review_expected CHECK ((${inner(widened[name])}) OR (${branch}))`);
-      try { expect(final[name], `${name}: 0149 predicate plus the 0151 operator_review branch`).toBe((await constraintDefs(step, ["f2_review_expected"])).f2_review_expected); }
+      try { expect(after0151[name], `${name}: 0149 predicate plus the 0151 operator_review branch`).toBe((await constraintDefs(step, ["f2_review_expected"])).f2_review_expected); }
       finally { await step.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT f2_review_expected`); }
     }
     expect((await step<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`)[0].count).toBe(journal.entries.length);
@@ -555,7 +557,7 @@ it("AI1: a pre-fetch abort through the real gateway settles the exact dispatch a
   expect((await tracked(requestAi1ModelSlot(next, first.candidateId))).kind).toBe("granted");
 });
 
-it("AI1: abandon with the unused preparation settles once; without proof it stays indeterminate(local_abort) and keeps its fence", async () => {
+it("AI1: abandon with the unused preparation settles once; without proof it stays indeterminate(local_abort) but no longer fences (2026-10-30)", async () => {
   await install(); contracts();
   const settled = await ai1();
   expect(await tracked(abandonAgentReviewModelCapacity(settled.dispatch, settled.call))).toBe(true);
@@ -566,8 +568,8 @@ it("AI1: abandon with the unused preparation settles once; without proof it stay
   expect((await events(kept.requested.requestId)).at(-1)).toMatchObject({ kind: "dispatch_indeterminate", reason: "local_abort" });
   const blocked = remember({ requestId: randomUUID(), workKey: `ai1:${kept.candidateId}:${"c".repeat(64)}`,
     owner: { instanceId: `${prefix}-blocked`, bootId: randomUUID() }, class: "first", pool: "reviewer", routeId: "crawl-agent-review", provider: "abcllm", model });
-  expect(await tracked(requestAi1ModelSlot(blocked, kept.candidateId))).toEqual({ kind: "deferred", reason: "capacity" });
-  owned.delete(blocked.requestId);
+  // 2026-10-30: 미확인 행은 같은 후보 키의 다른 owner 를 막지 않는다 — 새 요청이 들어간다(미확인 행은 사람 검토용으로 남는다).
+  expect(await tracked(requestAi1ModelSlot(blocked, kept.candidateId))).toMatchObject({ kind: "granted" });
   expect(posts).toBe(0);
 });
 
