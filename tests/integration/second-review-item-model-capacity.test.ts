@@ -400,9 +400,9 @@ it('EOF leaves full-C unknown and blocks a same-root fallback across a new boot 
     expect(fallback).toBeDefined();
     expect(await admin`SELECT work_key FROM pipeline_item_leases WHERE stage='ai2' AND work_key=${`ai2:${fallback.id}`}`).toEqual([]); slots.add(fallback.id);
     serving.contract = { ...serving.contract!, model: `${model} backup` };
-    await expect(execute(fallback.id, undefined, { instanceId: owner.instanceId, bootId: randomUUID() })).rejects.toMatchObject({ reason: 'capacity' });
-    expect(posts).toHaveLength(1); expect(await capacityRows()).toEqual([original]);
-    expect(await item(fallback.id)).toBeUndefined(); expect(await vote(fallback.id)).toMatchObject({ status: 'pending', failure_count: 1 });
+    // 2026-10-30: 미확인(indeterminate) 행은 점유도 fence 도 아니다 — 같은 작업이 새 requestId 로 다시 들어간다(원 미확인 행은 사람 검토용으로 남는다).
+    expect(await execute(fallback.id, undefined, { instanceId: owner.instanceId, bootId: randomUUID() })).toBeDefined();
+    expect(posts).toHaveLength(2); expect(await capacityRows()).toContainEqual(original);
   });
 }));
 

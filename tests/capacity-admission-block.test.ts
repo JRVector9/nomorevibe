@@ -39,7 +39,8 @@ it('reads old-generation occupancy on the primary without locking or changing re
   mocks.execute.mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([{ value: { ...snapshot(), oldActive: true, waiting: [] } }]);
   expect(await readCapacityAdmissionBlocks()).toHaveLength(2);
   const query = new PgDialect().sqlToQuery(mocks.execute.mock.calls[2][0]).sql;
-  expect(query).toContain("r.state IN ('dispatched','indeterminate')");
+  // 2026-10-30: indeterminate 는 점유가 아니다 — 결과 모르는 전송(dispatched)과 살아 있는 예약만 막는다.
+  expect(query).toContain("r.state = 'dispatched'"); expect(query).not.toContain("'indeterminate'");
   expect(query).toContain('r.reserved_until > clock_timestamp()');
   expect(query).toContain('r.policy_hash IS DISTINCT FROM c.policy_hash');
   expect(query).not.toMatch(/\b(?:UPDATE|DELETE|INSERT)\b|FOR SHARE/i);

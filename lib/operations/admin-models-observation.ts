@@ -41,7 +41,8 @@ export function buildAdminModelsObservation(raw: {
   if (verified) for (const [groupId, limit] of Object.entries(parsed.data.groupLimits)) groups.set(groupId, { groupId, limit, held: 0 });
   for (const row of rows) {
     const group = groups.get(row.groupId) ?? { groupId: row.groupId, limit: null, held: 0 };
-    group.held += row.reserved + row.dispatched + row.indeterminate;
+    // 미확인(indeterminate)은 점유가 아니다(2026-10-30) — 카드의 '확인 못함' 항목으로만 보인다.
+    group.held += row.reserved + row.dispatched;
     groups.set(row.groupId, group);
   }
   // Include configured routes even when they have never emitted a ledger event.

@@ -331,7 +331,7 @@ it("같은 감사 항목의 CLI와 direct 예약도 두 방향에서 서로 막�
   expect(calls).toBe(0);
 });
 
-it("실제 엔진이 계속 생성하는 중 abort는 unknown 점유를 유지하고 정책 변경도 해제하지 않는다", async () => {
+it("실제 엔진이 계속 생성하는 중 abort는 unknown 행을 남기지만 점유하지 않는다(2026-10-30)", async () => {
   const context = await fixture(); mode = "hang";
   const controller = new AbortController();
   const signalStarted = new Promise<void>(resolve => { started = resolve; });
@@ -343,18 +343,10 @@ it("실제 엔진이 계속 생성하는 중 abort는 unknown 점유를 유지�
   const reclaimed = await releaseEvidencedDispatches({ policies: new Map(), operator: "fixture" }, true);
   expect(reclaimed.rows.find(row => row.requestId === active.request_id)).toMatchObject({ released: false });
   expect((await rows()).find(row => row.request_id === active.request_id).state).toBe("indeterminate");
-  // 새 owner와 input을 써도 물리 cap의 unknown을 우회하지 못한다.
-  const next = await fixture();
-  await expect(call(next)).rejects.toMatchObject({ reason: "capacity" }); expect(calls).toBe(1);
-  await admin`UPDATE model_capacity_requests SET queue_until=clock_timestamp()-interval '1 second' WHERE owner_instance_id=${prefix} AND state='waiting'`;
+  // 2026-10-30: 미확인 행은 점유가 아니다 — 같은 물리 cap 에 새 요청이 들어가고(엔진은 아직 생성 중일 수 있다, orphan 주의) 정책 변경도 미루지 않는다.
   heldResponse!.end(body()); heldResponse = null; upstreamActive = false;
   expect((await rows()).find(row => row.request_id === active.request_id).state).toBe("indeterminate");
-  // 미확정 호출이 있을 때 정책 변경은 새로운 grant를 막는다.
-  await admin`UPDATE model_capacity_control SET policy=jsonb_set(policy,'{groupLimits,same-hardware}','2'),
-    policy_hash=${modelCapacityPolicyHash({ ...policy, groupLimits: { ...policy.groupLimits, "same-hardware": 2 } })} WHERE id=1`;
-  const changed = await fixture(); changed.env = { ...env, LOCAL_MODEL_PHYSICAL_LIMITS: JSON.stringify({ "same-hardware": 2 }) };
-  await expect(call(changed)).rejects.toMatchObject({ reason: "policy_changed" }); expect(calls).toBe(1);
-  await admin`UPDATE model_capacity_control SET policy=${JSON.stringify(policy)}::text::jsonb,policy_hash=${modelCapacityPolicyHash(policy)} WHERE id=1`;
+  expect((await rows()).filter(row => row.state === "reserved" || row.state === "dispatched")).toEqual([]);
 });
 it("실제 HTTP 반쪽 응답도 socket 종료로 정산하지 않는다", async () => {
   mode = "half";

@@ -425,7 +425,7 @@ it("rolls back historical outcome and request settlement if the event insert fai
   console.info("crawl_tagline_ledger_atomicity", { requestId: value.requestId, rollbackCode: "P0001", historicalSettlement: true });
 }));
 
-it("keeps the original binding and full C on unknown and fences a new target behind old unbound unknown", exercise(async () => {
+it("keeps the original binding and full C on unknown; an unknown fences neither a changed target nor disjoint work, an in-flight unbound dispatch still does (2026-10-30)", exercise(async () => {
   await install(); const data = input(), value = await request(data), owned = await dispatch(value, data);
   expect(await tracked(markModelDispatchIndeterminate(owned, "transport_unknown"))).toBe(true);
   const before = await rawRequest(value.requestId), events = await rawEvents(value.requestId);
@@ -433,20 +433,25 @@ it("keeps the original binding and full C on unknown and fences a new target beh
     dispatch_binding_hash: owned.bindingHash, terminal_evidence: null, terminal_evidence_hash: null, settled_at: null,
     logical_member_keys: crawlTaglineMemberKeys(data.member) });
   expect((before!.dispatch_binding as Raw).chargedTokens).toBe(8192); expect((before!.dispatch_binding as Raw).totalTokenBound).toBe(8192);
+  // 2026-10-30 결정: 같은 후보의 미확인 행은 바뀐 source·모델·cache 의 새 execution 을 막지 않는다(같은 정확한 단계 ID 의 재전송 금지만 SENT fence 로 남는다).
+  // 옛 행의 binding·C·event 는 그대로다.
   const changed = { ...data, model: modelB, member: { ...data.member, sourceHash: hashes[3], repo: "owner/changed",
-    cache: { kind: "present" as const, rowIdentityHash: hashes[2], attempts: 9 } } }, refused = await request(changed);
-  expect(await ask(refused, changed)).toEqual({ kind: "deferred", reason: "capacity" });
-  expect(await rawRequest(refused.requestId)).toBeUndefined(); expect(await rawEvents(refused.requestId)).toEqual([]);
+    cache: { kind: "present" as const, rowIdentityHash: hashes[2], attempts: 9 } } }, readmitted = await request(changed);
+  expect(await tracked(cancelReservedModelSlot(granted(await ask(readmitted, changed))))).toBe(true);
+  expect(await rawRequest(value.requestId)).toEqual(before); expect(await rawEvents(value.requestId)).toEqual(events);
   const separateInput = input(43), separate = await request(separateInput);
   expect(await tracked(cancelReservedModelSlot(granted(await ask(separate, separateInput))))).toBe(true);
   const legacy = await request(undefined, true), started = await tracked(beginModelDispatch(granted(await ask(legacy))));
   expect(started.kind).toBe("dispatched"); if (started.kind !== "dispatched") throw new Error("crawl_tagline_ledger_legacy_dispatch_required");
-  expect(await tracked(markModelDispatchIndeterminate(started.dispatch, "transport_unknown"))).toBe(true);
-  const legacyBefore = await rawRequest(legacy.requestId), legacyEvents = await rawEvents(legacy.requestId);
-  expect(legacyBefore).toMatchObject({ state: "indeterminate", logical_work_key: null, logical_member_keys: null, dispatch_binding: null });
+  // 결과를 모르는 실제 전송(dispatched)인 unbound 행은 분리된 작업까지 경로 전체를 막는다(행도 event 도 만들지 않는다).
   const disjointInput = input(54, modelB), disjoint = await request(disjointInput);
   expect(await ask(disjoint, disjointInput)).toEqual({ kind: "deferred", reason: "capacity" });
   expect(await rawRequest(disjoint.requestId)).toBeUndefined(); expect(await rawEvents(disjoint.requestId)).toEqual([]);
+  // 2026-10-30 결정: 그 전송이 미확인이 되면 fence 가 아니다 — 같은 요청이 들어가고 미확인 행·근거는 사람 검토용으로 그대로 남는다.
+  expect(await tracked(markModelDispatchIndeterminate(started.dispatch, "transport_unknown"))).toBe(true);
+  const legacyBefore = await rawRequest(legacy.requestId), legacyEvents = await rawEvents(legacy.requestId);
+  expect(legacyBefore).toMatchObject({ state: "indeterminate", logical_work_key: null, logical_member_keys: null, dispatch_binding: null });
+  expect(await tracked(cancelReservedModelSlot(granted(await ask(disjoint, disjointInput))))).toBe(true);
   expect(await rawRequest(legacy.requestId)).toEqual(legacyBefore); expect(await rawEvents(legacy.requestId)).toEqual(legacyEvents);
   expect(await rawRequest(value.requestId)).toEqual(before); expect(await rawEvents(value.requestId)).toEqual(events);
 }));

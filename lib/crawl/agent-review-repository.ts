@@ -3,6 +3,7 @@ import { emitPipelineEvent } from "@/lib/observability/review-pipeline";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { and, asc, desc, eq, gt, inArray, lte, ne, not, notInArray, or, sql, type SQL } from "drizzle-orm";
+import { occupyingStateSql } from "@/lib/llm/capacity-states";
 import { db, onPrimary } from "@/lib/db";
 import { currentReplayDb } from "@/lib/db/replay-scope";
 import { lockAi1ModelCapacityDispatch, finishAi1ModelCapacityDispatch, finishAi1ItemModelCapacityDispatch, type Ai1CapacityDispatchLock, lockModelCapacityCallerControl,
@@ -63,10 +64,10 @@ export async function chooseFirstReviewForCandidate(context: ReviewDomainContext
       eq(crawlReviewAttempts.kind, "automatic"), ne(crawlReviewAttempts.provider, "rules"),
       eq(crawlReviewAttempts.inputHash, context.input.inputHash))).orderBy(desc(crawlReviewAttempts.id)).limit(1);
   // Separate branches retain the existing active/waiting partial-index predicates.
-  // Indeterminate native calls stay pinned, including a model removed from the pool.
+  // 미확인(indeterminate) 호출은 더 이상 후보를 그 모델에 묶지 않는다(2026-10-30) — 점유 행(reserved·dispatched)만 의도다.
   const active = currentReplayDb() ? [] : await executor.execute<{ provider: string; model: string }>(sql`
     SELECT DISTINCT provider, model FROM ((SELECT provider, model FROM model_capacity_requests
-      WHERE logical_work_key = ${`ai1:${context.candidate.id}`} AND state IN ('reserved','dispatched','indeterminate'))
+      WHERE logical_work_key = ${`ai1:${context.candidate.id}`} AND ${occupyingStateSql('state')})
     UNION ALL (SELECT provider, model FROM model_capacity_requests
       WHERE logical_work_key = ${`ai1:${context.candidate.id}`} AND state = 'waiting')) ai1_intents LIMIT 2`);
   // Rerouting needs "never sent": no model attempt for any input, not only the current one.

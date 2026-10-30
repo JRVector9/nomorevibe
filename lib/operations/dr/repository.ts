@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
+import { liveStateSql, occupyingStateSql } from "@/lib/llm/capacity-states";
 import { z } from "zod";
 import { db, onPrimary } from "@/lib/db";
 import { currentReplayDb } from "@/lib/db/replay-scope";
@@ -72,14 +73,14 @@ export async function sealRestoredDatabase(planValue: PromotionPlan, apply: bool
       UNION SELECT instance_id FROM evidence_source_claims WHERE token IS NOT NULL
       UNION SELECT owner_instance_id FROM uptime_claims WHERE token IS NOT NULL
       UNION SELECT instance_id FROM agent_repository_claims WHERE token IS NOT NULL
-      UNION SELECT owner_instance_id FROM model_capacity_requests WHERE state IN ('waiting','reserved','dispatched','indeterminate')
+      UNION SELECT owner_instance_id FROM model_capacity_requests WHERE ${liveStateSql('state')}
       UNION SELECT instance_id FROM http_origin_hops WHERE state IN ('reserved','dispatched','indeterminate')
       UNION SELECT instance_id FROM job_batch_candidates) owners WHERE instance IS NOT NULL`)).map(row => row.instance).sort();
     const budgets = Array.from(await tx.execute<{ budget: string }>(sql`SELECT DISTINCT budget FROM (
-      SELECT provider_budget_id AS budget FROM model_capacity_requests WHERE state IN ('reserved','dispatched','indeterminate')
+      SELECT provider_budget_id AS budget FROM model_capacity_requests WHERE ${occupyingStateSql('state')}
       UNION SELECT jsonb_object_keys(policy->'providerLimits') FROM model_capacity_control WHERE id = 1 AND policy IS NOT NULL) b`)).map(row => row.budget).sort();
     const [counts] = await tx.execute<{ model: number; http: number; clients: number }>(sql`SELECT
-      (SELECT count(*)::int FROM model_capacity_requests WHERE state IN ('reserved','dispatched','indeterminate')) AS model,
+      (SELECT count(*)::int FROM model_capacity_requests WHERE ${occupyingStateSql('state')}) AS model,
       (SELECT count(*)::int FROM http_origin_hops WHERE state IN ('reserved','dispatched','indeterminate')) AS http,
       (SELECT count(*)::int FROM pg_catalog.pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend') AS clients`);
     const [model] = await tx.execute<{ epoch: string; revision: string; mode: "disabled" | "draining" }>(sql`UPDATE model_capacity_control

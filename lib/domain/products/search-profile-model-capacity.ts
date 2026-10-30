@@ -1,6 +1,7 @@
 import { scopedModel, scopedRequestTimeout } from "@/lib/llm/model-registry";
 import { randomUUID } from "node:crypto";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
+import { modelCapacityIndeterminateReason } from "@/lib/llm/capacity";
 import { reconcileGatewayNotStarted, findOwnPendingModelRequest, requestTextProfileModelSlot, cancelReservedModelSlot,
   reconcileTextProfileGatewayTerminal, markModelDispatchIndeterminate } from "@/lib/llm/capacity-repository";
 import { markUnsettledDispatch } from "@/lib/llm/capacity-unsettled";
@@ -56,7 +57,7 @@ export async function writeKeywordsWithModelCapacity(task: ProfileTask, lease: J
       { signal: captured.signal, timeoutMs: captured.timeoutMs });
   } catch (error) {
     try {
-      if (!await markModelDispatchIndeterminate(dispatch, captured.signal?.aborted ? "local_abort" : "transport_unknown"))
+      if (!await markModelDispatchIndeterminate(dispatch, modelCapacityIndeterminateReason({ signal: captured.signal, error })))
         throw new Error("text_profile_dispatch_not_marked");
     } catch (cleanup) { throw new AggregateError([error, cleanup], "profile transport and unknown recording failed"); }
     throw error;
@@ -64,7 +65,7 @@ export async function writeKeywordsWithModelCapacity(task: ProfileTask, lease: J
   try {
     if (native.terminal) await reconcileTextProfileGatewayTerminal(native.terminal);
     else if (native.notStarted) await reconcileGatewayNotStarted(native.notStarted);
-    else if (!await markModelDispatchIndeterminate(dispatch, captured.signal?.aborted ? "local_abort" : "transport_unknown"))
+    else if (!await markModelDispatchIndeterminate(dispatch, modelCapacityIndeterminateReason({ signal: captured.signal, timedOut: !native.result.ok && native.result.error === "timeout" })))
       throw new Error("text_profile_dispatch_not_marked");
   } catch (error) {
     if (native.terminal || native.notStarted) await markUnsettledDispatch(dispatch);

@@ -235,7 +235,7 @@ it.each(['dispatched', 'indeterminate'] as const)('never switches an actual %s i
     expect(await fallbackWaitingSecondReview(value.intent, value.requestId, reason)).toBe(false);
   expect(await snapshot(value.requestId)).toEqual(before);
 });
-it('keeps the historical unbound AI2 unknown fence across the fallback handoff', async () => {
+it('no longer keeps the historical unbound AI2 unknown fence across the fallback handoff (2026-10-30)', async () => {
   const value = await fixture(); await age(value.requestId);
   await admin`INSERT INTO model_capacity_requests(request_id,work_key,owner_instance_id,owner_boot_id,class,pool,route_id,provider,model,
     provider_budget_id,group_id,epoch,revision,policy_hash,state,token,reserved_until,queue_until)
@@ -243,7 +243,8 @@ it('keeps the historical unbound AI2 unknown fence across the fallback handoff',
       'abc','abc',epoch,revision,policy_hash,'indeterminate',${randomUUID()}::uuid,clock_timestamp()+interval '1 minute',clock_timestamp()+interval '1 minute'
     FROM model_capacity_control WHERE id=1`;
   const before = await snapshot(value.requestId);
-  expect(await fallbackWaitingSecondReview(value.intent, value.requestId)).toBe(false); expect(await snapshot(value.requestId)).toEqual(before);
+  // 2026-10-30: 미결 legacy 미확인 행은 fence 가 아니다 — fallback 이 진행되고 그 미확인 행은 그대로 남는다.
+  expect(await fallbackWaitingSecondReview(value.intent, value.requestId)).toBe(true); expect((await snapshot(value.requestId)).requests).toHaveLength(before.requests.length);
 });
 it('rolls back request cancellation, event and fallback when the final job signal fails', async () => {
   const value = await fixture(); await age(value.requestId);

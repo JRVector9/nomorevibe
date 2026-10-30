@@ -119,6 +119,8 @@ export async function runSecondReviewConsumer(input: {
         else result.skipped++;
       } catch (error) {
         if (!(error instanceof ModelCapacityDeferredError)) throw error;
+        // 이 항목의 앞선 호출만 아직 보내진 중이다 — 항목 하나를 건너뛰고 쪽을 계속 본다(미확인 행은 더 이상 이 사유를 내지 않는다).
+        if (error.reason === 'dispatched') { result.skipped++; continue; }
         result.deferred++; deferred = true;
         if (!priority) break;
       } finally {

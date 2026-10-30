@@ -1,4 +1,5 @@
 import { sql, type SQL } from 'drizzle-orm';
+import { occupyingStateSql } from '@/lib/llm/capacity-states';
 import { z } from 'zod';
 import { MAX_SECOND_REVIEW_FAILURES, SECOND_REVIEW_RETRY_MS, SECOND_REVIEW_TRANSIENT_ERRORS, TRANSIENT_RETRY_MS } from '@/lib/crawl/second-review';
 import { logger } from '@/lib/observability/logger';
@@ -284,7 +285,7 @@ export function pipelineCompletionsSql(): SQL {
     ledger_now AS (
       SELECT k.class, (SELECT count(*) FROM model_capacity_requests r WHERE r.state = 'waiting' AND r.class = k.class) AS waiting,
         (SELECT min(r.queued_at) FROM model_capacity_requests r WHERE r.state = 'waiting' AND r.class = k.class) AS waiting_oldest,
-        (SELECT count(*) FROM model_capacity_requests r WHERE r.state IN ('reserved', 'dispatched', 'indeterminate') AND r.class = k.class) AS active
+        (SELECT count(*) FROM model_capacity_requests r WHERE ${occupyingStateSql('r.state')} AND r.class = k.class) AS active
       FROM ${classes})
     SELECT jsonb_build_object('at', u.at,
       'ai1', jsonb_build_object('windows', (SELECT jsonb_object_agg(label, value) FROM ai1_window),

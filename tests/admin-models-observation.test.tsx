@@ -22,15 +22,17 @@ function snapshot(metricsRows: unknown[] = [metrics], requests: unknown[] = [req
     policy, policyHash: modelCapacityPolicyHash(policy), updatedAt: at }, metrics: metricsRows, requests };
 }
 describe("admin-models DB 관측 표시", () => {
-  it("미확인·예약은 기한과 무관하게 같은 그룹의 점유에 포함한다", () => {
+  it("예약은 기한과 무관하게 같은 그룹의 점유에 포함하고 미확인은 점유에 세지 않는다", () => {
+    // 2026-10-30 결정: 미확인(indeterminate)은 슬롯을 점유하지 않는다 — reserved 1 만 held 에 든다(미확인 1 은 요청 목록에만 남는다).
     const result = buildAdminModelsObservation(snapshot());
-    expect(result.groups).toEqual([{ groupId: "m1", held: 2, limit: 1 }]);
+    expect(result.groups).toEqual([{ groupId: "m1", held: 1, limit: 1 }]);
     expect(result.requests[0]).toMatchObject({ requestId: request.requestId, state: "indeterminate" });
     expect(result.rows[0]).toMatchObject({ succeeded1h: 3, failed1h: 1, withdrawn1h: 2, unclassified1h: 4 });
   });
   it("같은 모델의 예전 그룹과 현재 그룹을 합쳐 숨기지 않는다", () => {
     const result = buildAdminModelsObservation(snapshot([metrics, { ...metrics, groupId: "old", reserved: 0, indeterminate: 1 }]));
-    expect(result.groups.find(row => row.groupId === "old")).toEqual({ groupId: "old", limit: null, held: 1 });
+    // 2026-10-30 결정: 옛 그룹의 미확인 1 은 점유 0 이지만 그룹은 그대로 보인다(사람 검토 대상이 숨지 않는다).
+    expect(result.groups.find(row => row.groupId === "old")).toEqual({ groupId: "old", limit: null, held: 0 });
     expect(result.rows).toHaveLength(2);
   });
   it("정책 해시 검증에 실패하면 상한이나 0건을 추정하지 않는다", () => {

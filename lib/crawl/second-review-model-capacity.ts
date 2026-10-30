@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
+import { modelCapacityIndeterminateReason } from '@/lib/llm/capacity';
 import { ai2ModelDispatchSchema, modelCapacityRequestIdentitySchema, type Ai2ModelDispatch } from '@/lib/llm/capacity';
 import { findOwnPendingModelRequest, requestAi2ItemModelSlot, cancelReservedModelSlot,
   markModelDispatchIndeterminate, reconcileAi2GatewayTerminal, reconcileGatewayNotStarted } from '@/lib/llm/capacity-repository';
@@ -24,7 +25,7 @@ export async function claimSecondReviewModelCapacity(intent: SecondReviewModelRe
     routeId: 'second-review', provider: binding.reviewer.provider, model: binding.reviewer.model,
     workKey: `ai2:${binding.candidateId}:${binding.vote}:${itemBindingHash(binding)}` });
   const pending = await findOwnPendingModelRequest(identity);
-  if (pending && (pending.state === 'dispatched' || pending.state === 'indeterminate')) throw new ModelCapacityDeferredError('dispatched');
+  if (pending?.state === 'dispatched') throw new ModelCapacityDeferredError('dispatched');
   const call = await prepareAi2GatewayCall(expected.input, { model: binding.reviewer.model,
     provider: binding.reviewer.provider as "abcllm" | "local-direct", signal });
   const requestId = pending?.requestId ?? randomUUID();
@@ -83,14 +84,14 @@ export async function reviewSecondReviewModelCapacity(input: ReviewInput, dispat
   let response: Awaited<ReturnType<typeof reviewWithReservedAi2Gateway>>;
   try { response = await reviewWithReservedAi2Gateway(input, dispatch, call, options); }
   catch (error) {
-    try { await markModelDispatchIndeterminate(dispatch, options.signal?.aborted ? 'local_abort' : 'transport_unknown'); }
+    try { await markModelDispatchIndeterminate(dispatch, modelCapacityIndeterminateReason({ signal: options.signal, error })); }
     catch (cleanup) { throw new AggregateError([error, cleanup], 'ai2_model_transport_cleanup_failed'); }
     throw error;
   }
   try {
     if (response.terminal) await reconcileAi2GatewayTerminal(response.terminal);
     else if (response.notStarted) await reconcileGatewayNotStarted(response.notStarted);
-    else await markModelDispatchIndeterminate(dispatch, options.signal?.aborted ? 'local_abort' : 'transport_unknown');
+    else await markModelDispatchIndeterminate(dispatch, modelCapacityIndeterminateReason({ signal: options.signal, timedOut: !response.result.ok && response.result.error === 'timeout' }));
   } catch (cleanup) {
     if (response.terminal || response.notStarted) await markUnsettledDispatch(dispatch);
     if (!response.result.ok) throw new AggregateError([response.result, cleanup], 'ai2_model_result_cleanup_failed');

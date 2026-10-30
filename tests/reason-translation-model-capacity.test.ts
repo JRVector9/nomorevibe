@@ -72,10 +72,14 @@ it('retains waiting and opens no native call when the slot is not granted', asyn
   await expect(translateReasonsWithModelCapacity(batch(), lease, options())).rejects.toMatchObject({ reason: 'capacity' });
   expect(mocks.native).not.toHaveBeenCalled(); expect(mocks.cancel).not.toHaveBeenCalled();
 });
-it('refuses to re-dispatch an existing unknown same-work request', async () => {
-  mocks.pending.mockResolvedValue({ requestId: reservation.requestId, state: 'indeterminate' });
+it('refuses to re-dispatch an existing in-flight same-work request, but re-admits one whose call went indeterminate (2026-10-30)', async () => {
+  mocks.pending.mockResolvedValue({ requestId: reservation.requestId, state: 'dispatched' });
   await expect(translateReasonsWithModelCapacity(batch(), lease, options())).rejects.toMatchObject({ reason: 'dispatched' });
   expect(mocks.request).not.toHaveBeenCalled(); expect(mocks.native).not.toHaveBeenCalled();
+  // 조정기 readback 은 미확인 행을 돌려주지 않는다(null) → 새 requestId 로 다시 접수한다.
+  mocks.pending.mockResolvedValue(null);
+  expect(await translateReasonsWithModelCapacity(batch(), lease, options())).toMatchObject({ kind: 'ready' });
+  expect(mocks.request).toHaveBeenCalledOnce(); expect(mocks.request.mock.calls[0][0].requestId).not.toBe(reservation.requestId);
 });
 it('cancels only the original reservation when the locked cache changed', async () => {
   mocks.domain.mockResolvedValueOnce({ kind: 'ready', members, role }).mockResolvedValueOnce({ kind: 'skipped' });
@@ -91,7 +95,7 @@ it('settles the issued terminal even when native completion aborts the business 
 it('preserves full-charge unknown independently of a local failure result', async () => {
   const result = { ok: false, error: 'timeout' }; mocks.native.mockResolvedValue({ result, terminal: null });
   expect(await translateReasonsWithModelCapacity(batch(), lease, options())).toMatchObject({ kind: 'ready', result, unknown: true });
-  expect(mocks.unknown).toHaveBeenCalledExactlyOnceWith(dispatch, 'transport_unknown');
+  expect(mocks.unknown).toHaveBeenCalledExactlyOnceWith(dispatch, 'client_timeout');
 });
 it('preserves returned failure and settlement error identities together', async () => {
   const result = { ok: false, error: 'invalid_output' }, cleanup = new Error('settlement failed');

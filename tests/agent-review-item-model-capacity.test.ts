@@ -89,11 +89,15 @@ it('resumes the same pending request and binds the original owner candidate and 
   expect(mocks.atomic).toHaveBeenCalledExactlyOnceWith({ expected: value.intent.intent, reservation: value.reservation,
     identity: mocks.pending.mock.calls[0][0], call: value.call });
 });
-it('waiting and already unknown work cannot create an attempt or dispatch', async () => {
+it('waiting and already in-flight work cannot create an attempt or dispatch (indeterminate is not a pending state since 2026-10-30)', async () => {
   mocks.request.mockResolvedValueOnce({ kind: 'deferred', reason: 'capacity' });
   await expect(claimAgentReviewItemModelCapacity(value.intent)).rejects.toMatchObject({ reason: 'capacity' });
-  mocks.pending.mockResolvedValue({ requestId: randomUUID(), state: 'indeterminate' });
+  mocks.pending.mockResolvedValue({ requestId: randomUUID(), state: 'dispatched' });
   await expect(claimAgentReviewItemModelCapacity(value.intent)).rejects.toMatchObject({ reason: 'dispatched' }); expect(mocks.atomic).not.toHaveBeenCalled();
+  // 2026-10-30 결정: 미확인 행은 점유가 아니다 — readback 은 null 이고 새 requestId 로 다시 접수한다(같은 후보가 막히지 않는다).
+  mocks.pending.mockResolvedValue(null); mocks.request.mockClear();
+  expect((await claimAgentReviewItemModelCapacity(value.intent)).claim).toMatchObject({ kind: 'claimed' });
+  expect(mocks.request).toHaveBeenCalledOnce(); expect(mocks.atomic).toHaveBeenCalledOnce();
 });
 it('cancels an unused reservation if current work becomes skipped or reused', async () => {
   mocks.atomic.mockResolvedValueOnce({ kind: 'skipped', reason: 'running' });
@@ -208,6 +212,7 @@ it('preserves a returned native failure together with an unexpected renewal erro
     expect(mocks.native.mock.calls[0][3].signal.aborted).toBe(true); expect(mocks.record).not.toHaveBeenCalled();
     native.resolve({ result: failure, terminal: null }); const error = await rejected;
     expect(error).toBeInstanceOf(AggregateError); expect(error.errors[0]).toBe(failure); expect(error.errors[1]).toBe(renewal);
-    expect(mocks.unknown).toHaveBeenCalledExactlyOnceWith(value.dispatch, 'local_abort'); expect(mocks.record).not.toHaveBeenCalled();
+    // 2026-10-30: 게이트웨이가 `timeout` 결과를 돌려주면 사유는 client_timeout 이다(중단 신호가 함께 있어도 호출자 기한이 원인이다).
+    expect(mocks.unknown).toHaveBeenCalledExactlyOnceWith(value.dispatch, 'client_timeout'); expect(mocks.record).not.toHaveBeenCalled();
   } finally { native.resolve({ result: failure, terminal: null }); await Promise.allSettled([run]); }
 });

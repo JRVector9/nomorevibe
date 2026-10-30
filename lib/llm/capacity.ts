@@ -7,6 +7,7 @@ import { cliExecutorEvidenceSchema } from "./cli-executor-boundary-contract";
 import { publicationPublisherRoleSchema, publicationClassifyInputSchema, type PublicationClassifyMember, type PublicationClassifyInput } from "./publication-classify-contract";
 export { publicationPublisherRoleSchema, publicationClassifyInputSchema, publicationClassifyMemberSchema, type PublicationClassifyMember, type PublicationClassifyInput } from "./publication-classify-contract";
 import { createHash } from "node:crypto";
+import { MODEL_CAPACITY_INDETERMINATE_REASONS } from "./capacity-states";
 import { z } from "zod";
 import { itemBindingSchema, itemBindingHash, itemOwnerSchema, type Ai2ItemBinding, type Ai1ItemBinding, type ItemOwner } from "@/lib/jobs/items/types";
 import { cliProcessTerminalEvidenceSchema, cliTransportSchema } from "@/lib/llm/cli-serving-contract";
@@ -32,9 +33,29 @@ export type ModelCapacityMode = "disabled" | "open" | "draining";
 export type ModelCapacityState = "waiting" | "reserved" | "dispatched" | "indeterminate" | "withdrawn" | "settled";
 export type ModelCapacityEventKind = "queued" | "reserved" | "dispatch_started" | "reservation_cancelled"
   | "reservation_expired" | "wait_expired" | "wait_cancelled" | "policy_changed" | "dispatch_indeterminate" | "dispatch_settled" | "dispatch_released"
-  | "dispatch_local_ended";
-export type ModelCapacityIndeterminateReason = "transport_unknown" | "local_abort" | "process_exit" | "commit_unknown";
+  | "dispatch_local_ended" | "dispatch_reviewed";
+/**
+ * 왜 미확인이 됐나(dispatch_indeterminate event 의 reason) — 사람 검토의 분류 기준.
+ * client_timeout: 호출자 기한(AbortSignal.timeout / 게이트웨이 result.error==='timeout')이 먹혀 응답을 못 받았다 — 엔진은 orphan 생성 중일 수 있다.
+ * local_abort: 호출자 signal 의 중단(종료·취소). transport_unknown: 전송 뒤 결과를 모르는 그 밖의 실패. process_exit: CLI 자손 종료.
+ * commit_unknown: 정산 TX 의 commit 여부를 모른다.
+ */
+export { MODEL_CAPACITY_INDETERMINATE_REASONS };
+export type ModelCapacityIndeterminateReason = (typeof MODEL_CAPACITY_INDETERMINATE_REASONS)[number];
 export type ModelCapacityEventReason = ModelCapacityIndeterminateReason;
+
+const errorName = (value: unknown): string | null =>
+  value !== null && typeof value === "object" && "name" in value && typeof value.name === "string" ? value.name : null;
+/**
+ * 전송 뒤 결과를 모르게 된 호출의 reason 을 고른다. 제어 흐름은 바꾸지 않는다 — 호출자는 전과 같은 자리에서 markModelDispatchIndeterminate 를 부른다.
+ * 기한(TimeoutError 를 쥔 signal·TimeoutError 예외·게이트웨이의 'timeout' 결과)이 먼저고, 그 밖의 signal 중단이 local_abort, 나머지는 transport_unknown.
+ */
+export function modelCapacityIndeterminateReason(value: { signal?: AbortSignal | null; timedOut?: boolean; error?: unknown }): ModelCapacityIndeterminateReason {
+  const signal = value.signal ?? null;
+  if (value.timedOut === true || errorName(value.error) === "TimeoutError" || signal?.aborted && errorName(signal.reason) === "TimeoutError") return "client_timeout";
+  if (signal?.aborted) return "local_abort";
+  return "transport_unknown";
+}
 
 export const modelCapacityOwnerSchema = z.object({ instanceId: identity(120), bootId: z.uuid() }).strict();
 export type ModelCapacityOwner = Readonly<z.infer<typeof modelCapacityOwnerSchema>>;
@@ -977,3 +998,16 @@ export const gatewayLocalEndFactSchema = z.object({ version: z.literal(1), kind:
   .refine(value => value.dispatches === value.terminals, "invalid_gateway_local_end");
 export type GatewayLocalEndFact = Readonly<z.infer<typeof gatewayLocalEndFactSchema>>;
 export type ModelDispatchReleaseEvidence = Readonly<z.infer<typeof modelDispatchReleaseEvidenceSchema>>;
+
+/**
+ * 사람 검토 완료(0151, 2026-10-30 소유자 결정). indeterminate 행은 점유가 아니므로 이 정산은 용량을 풀지 않는다 — 검토 목록에서 빼고
+ * 운영자·메모·시각을 행(terminal_evidence)과 dispatch_reviewed event 에 같은 값으로 남긴다. 사용량 근거는 아니며 dispatch binding(C)은 그대로다.
+ * 이 뒤에 오는 늦은 종료 근거는 withdrawn 행에 정산되지 않는다(검토가 그 호출의 끝이다).
+ */
+export const operatorReviewEvidenceSchema = z.object({ version: z.literal(1), kind: z.literal("operator_review"), requestId: z.uuid(),
+  owner: modelCapacityOwnerSchema, fromState: z.literal("indeterminate"), operator: identity(120),
+  note: z.string().trim().min(1).max(400), reviewedAt: isoMillis }).strict();
+export type OperatorReviewEvidence = Readonly<z.infer<typeof operatorReviewEvidenceSchema>>;
+export function operatorReviewEvidenceHash(value: OperatorReviewEvidence): string {
+  return createHash("sha256").update(JSON.stringify(canonical(operatorReviewEvidenceSchema.parse(value)))).digest("hex");
+}

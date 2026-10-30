@@ -216,18 +216,21 @@ it.each(['candidate', 'document', 'settings', 'decision', 'tagline', 'job', 'rol
     expect((await readdir(records)).length).toBe(before);
     expect((await db.select().from(crawlCandidates).where(eq(crawlCandidates.id, value.candidate.id)))[0].state).toBe('approved');
   });
-it('retains an unknown child and fences the same member even after owner/provider changes', async () => {
+it('retains an unknown child for review and no longer fences the same member after owner/provider changes (2026-10-30)', async () => {
   const value = await prepared(), before = (await readdir(records)).length;
   await expect(runPublicationClassificationCall({ ...value.input, env: { ...value.input.env, FAKE_CLI_MODE: 'grandchild-hold' } },
     value.payload, value.authority, () => fixture.status)).rejects.toBeInstanceOf(CliPhysicalEndUnknownError);
-  const [unknown] = await admin`SELECT state,terminal_evidence FROM model_capacity_requests WHERE route_id=${routeId} ORDER BY updated_at DESC LIMIT 1`;
+  const [unknown] = await admin`SELECT request_id,state,terminal_evidence FROM model_capacity_requests WHERE route_id=${routeId} ORDER BY updated_at DESC LIMIT 1`;
   expect(unknown).toMatchObject({ state: 'indeterminate', terminal_evidence: null });
-  const { requestCliModelSlot } = await import('@/lib/llm/capacity-repository');
+  const { requestCliModelSlot, cancelReservedModelSlot } = await import('@/lib/llm/capacity-repository');
   const { publicationClassifyInputHash, publicationClassifyLogicalWorkKey } = await import('@/lib/llm/capacity');
   const facts = { members: value.authority.members, provider: 'claude-cli' as const, model: 'sonnet', payloadHash: value.authority.payloadHash,
     definitionsHash: value.authority.definitionsHash, configHash: value.authority.configHash, generation: 3, configVersion: 4 };
+  // 2026-10-30 결정: 미확인 child 행은 점유도 fence 도 아니다 — 다른 owner·provider 의 같은 멤버 재접수가 들어가고, 미확인 행은 사람 검토용으로 그대로 남는다.
   const slot = await requestCliModelSlot({ requestId: randomUUID(), owner: { instanceId: 'replacement-publisher', bootId: randomUUID() },
     class: 'background', pool: 'reviewer', routeId, provider: facts.provider, model: facts.model,
     workKey: `${publicationClassifyLogicalWorkKey(facts.members)}:${publicationClassifyInputHash(facts)}` }, { kind: 'publication-classify', members: facts.members });
-  expect(slot).toEqual({ kind: 'deferred', reason: 'capacity' }); expect((await readdir(records)).length).toBe(before + 1);
+  expect(slot.kind).toBe('granted'); if (slot.kind === 'granted') expect(await cancelReservedModelSlot(slot.reservation)).toBe(true);
+  expect((await admin`SELECT state FROM model_capacity_requests WHERE request_id=${unknown.request_id}::uuid`)[0]).toEqual({ state: 'indeterminate' });
+  expect((await readdir(records)).length).toBe(before + 1);
 });

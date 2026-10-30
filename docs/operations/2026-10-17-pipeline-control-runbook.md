@@ -71,7 +71,7 @@
 | `agent_scan_contract_reset` | `agent-scan complete --to=legacy`는 writer contract를 0으로 내린다. 다시 items로 가려면 모든 스캔 writer의 release를 확인하고 11-1부터 한다 |
 | `expired_unsettled_leases:<n>` | 기한 지난 미정산 item lease. complete를 막지 않는다 |
 | `old_generation_held:<n>` | 이전 epoch·revision·policy로 잡힌 active 장부 행. 정산될 때까지 새 admission은 `policy_changed`로 미뤄진다 |
-| `unsettled_dispatch_kept:<n>` | disabled로 가도 dispatched·indeterminate 행은 그대로 점유로 남는다 |
+| `unsettled_dispatch_kept:<n>` | disabled로 가도 dispatched·indeterminate 행은 남는다. 점유는 dispatched만이다 — indeterminate는 사람 검토 항목이다(§12) |
 | `*_callers_defer_while_draining` | draining 동안 그 control을 쓰는 모든 호출자가 미룬다 |
 | `deferred_routes:<n>` | `--allow-deferred-routes`로 미뤄질 경로를 받아들였다 |
 | `instance_unmapped:<id>` | 최근 24시간 관측된 인스턴스가 HTTP policy에 없다 |
@@ -174,7 +174,7 @@ node --import tsx scripts/ops/pipeline-control.ts stage complete --stage=ai2 --d
 
 먼저 알아야 할 것:
 - **전역 스위치다. route 단위 mode가 없다.** open이 되면 policy에 없는 route는 `unmapped`, 계약이 없는 route는 `provider_contract_unavailable`로 호출 전에 미뤄진다. 기존 전송으로 돌아가지 않는다. 그래서 "route별"은 열기 전 계약·매핑을 route마다 확인한다는 뜻이고, "text pool부터"는 처음 한도를 보수적으로 두고 text pool 한도부터 올린다는 뜻이다.
-- dispatched·indeterminate 행은 TTL·정책 변경·disabled로 풀리지 않는다. DR 밖 회수 경로는 아직 없다(재고 조사 3a·3b·2). 살아 있는 프로세스의 timeout·abort도 영구 indeterminate가 된다. 예외는 요청 바이트가 하나도 나가지 않은 것이 증명된 실패(연결 거부·DNS 실패·connect 시간 초과 — 엔진이 꺼져 있거나 재시작 중)다: 2026-10-30부터 그 호출은 `gateway_not_started`로 정산되어 칸을 바로 돌려준다(`lib/llm/gateway-not-started.ts`). 요청이 소켓에 쓰인 뒤의 실패는 그대로 indeterminate다.
+- dispatched 행은 TTL·정책 변경·disabled로 풀리지 않는다. indeterminate 행은 2026-10-30부터 점유가 아니다(§12) — 남지만 한도·재접수·정책 변경에 들지 않는다. 살아 있는 프로세스의 timeout·abort는 indeterminate가 되고 그 작업(시도)은 끝난다. 예외는 요청 바이트가 하나도 나가지 않은 것이 증명된 실패(연결 거부·DNS 실패·connect 시간 초과 — 엔진이 꺼져 있거나 재시작 중)다: 2026-10-30부터 그 호출은 `gateway_not_started`로 정산되어 칸을 바로 돌려준다(`lib/llm/gateway-not-started.ts`). 요청이 소켓에 쓰인 뒤의 실패는 그대로 indeterminate다.
 - 선행 결정·작업: PR05d(gateway 9 route 계약), PR05c-6(CLI 계약), abcLLM PR3(번역 4경로), product-audit abcllm 분기 결정(지금은 admission만 → 항상 `admission_only`), 슬롯 회수 결정, AI2 items 전환(§2).
 
 ```sh
@@ -413,3 +413,17 @@ FROM agent_repository_claims;
 SELECT instance_id, count(*) FROM agent_repository_claims WHERE token IS NOT NULL GROUP BY 1;
 SELECT key, observed_at, value->>'status' AS status FROM operations_observations WHERE key LIKE 'service:crawler:agent-scan-consumer-%' ORDER BY key;
 ```
+
+## 12. 미확인(indeterminate) 행은 점유가 아니다 — 2026-10-30 소유자 결정
+
+소유자(2026-10-30): "타임아웃으로 '확인 못함'으로 남기고 슬롯을 점유하지 못하게 하고 해당 작업은 종료시킨다. 다른 제품들 검토에 방해를 줄 수 없다. 미확인은 사람이 검토하면 된다."
+모든 모델·경로에 적용한다(Supa AI1·search-verify·crawl-tagline, gpu3090 AI2, M3 text, M1 product-translate).
+
+- 상태 묶음은 `lib/llm/capacity-states.ts` 하나다. 살아 있는 행 = waiting·reserved·dispatched(`LIVE`), 점유 = reserved·dispatched(`OCCUPYING`), 결과 모르는 전송 = dispatched 하나. 장부·fence·admission-block·DR·상태 화면·deploy gate가 같은 상수를 쓴다(리터럴 목록 금지).
+- indeterminate 행은 event·근거와 함께 남는다(법의학·사람 검토). 전역·공급자·그룹·풀 한도와 class cycle에 세지 않는다. 같은 logical/work key·owner·배치의 재접수를 막지 않는다(0151이 세 부분 인덱스에서 indeterminate를 뺐다 — 같은 work key는 새 requestId로 다시 접수된다). 옛 세대 indeterminate만 남았으면 정책 변경은 `policy_changed`로 미루지 않는다. DRAIN·replaced-path 회수 절차가 용량을 돌리기 위해 필요하지 않다(법의학 정산용으로만 남는다). 운영의 기존 indeterminate 행은 코드 배포 즉시 세지 않는다 — 데이터 이전 없음.
+- 늦게 온 종료 근거는 그대로 그 행을 정산한다(각 kind의 settle은 dispatched|indeterminate를 받는다). 검토 완료로 withdrawn이 된 뒤에는 받지 않는다.
+- 왜 미확인인지 `dispatch_indeterminate` event의 reason에 남는다: `client_timeout`(호출자 기한 — AbortSignal.timeout/게이트웨이 `timeout`; product-translate는 PR #748 뒤 300초), `local_abort`(중단·종료), `transport_unknown`(전송 뒤 결과 모름), `process_exit`(CLI 자손), `commit_unknown`(정산 commit 모름). 같은 자리에서 `modelCapacityIndeterminateReason()`이 고른다 — 제어 흐름은 그대로다.
+- 소비자는 멈추지 않는다: 미확인이 된 항목의 그 시도는 끝나고 평소 재시도·소진 규칙을 따른다. `findOwnPendingModelRequest`는 indeterminate를 돌려주지 않고, 선택기(`capacity-busy-targets`)는 그 대상을 숨기지 않고, 1차 검수 풀 힌트(`first-reviewer-blocks`)는 비어 있고, AI2 stale reconcile은 보호하지 않고, item consumer는 `dispatched` 사유 하나는 건너뛰고 쪽을 계속 본다. llm-assist의 미확인 작업은 `human`으로 간다.
+- 사람 검토: `/admin/models`의 "확인 못함 — 사람 검토" 목록(경로·모델/장비·작업 키·전송 시각·사유). "검토 완료"는 행을 withdrawn으로 닫고 `dispatch_reviewed` event(operator_review 근거)와 `operations_audit`(`model-capacity-unknown-reviewed`)를 남긴다. 용량은 바뀌지 않는다. monitor의 `capacityUnknowns.status=alarm`은 "사람 검토 대기"다 — 용량 막힘이 아니다.
+- 주의(엔진 orphan): 슬롯이 풀렸다고 엔진의 생성이 끝난 것이 아니다. mlx-lm은 취소가 없고 vLLM은 연결 끊김에 취소한다. 클라이언트 기한 뒤 orphan이 끝날 때까지 그 엔진에는 한도 이상의 동시 부하가 걸릴 수 있다. 기한은 엔진이 실제로 끝내는 시간보다 짧게 잡지 않는다(deadline ladder). 자동 회수(`MODEL_CAPACITY_AUTO_RECLAIM`)는 그대로 꺼져 있다.
+- 읽기 SQL: 점유 `SELECT count(*) FROM model_capacity_requests WHERE state IN ('reserved','dispatched');` 검토 대기 `SELECT request_id, route_id, model, work_key, dispatched_at FROM model_capacity_requests WHERE state='indeterminate' ORDER BY dispatched_at;`

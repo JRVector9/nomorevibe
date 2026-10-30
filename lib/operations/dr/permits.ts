@@ -1,4 +1,5 @@
 import { sql } from "drizzle-orm";
+import { occupyingStateSql } from "@/lib/llm/capacity-states";
 import { cancelReservedModelSlot } from "@/lib/llm/capacity-repository";
 import { modelCapacityReservationSchema, parseModelCapacityPolicy } from "@/lib/llm/capacity";
 import { identity, isoMillis } from "./epoch";
@@ -40,7 +41,7 @@ export async function openHttpPermitsAfterDrain(value: { promotionId: string; op
 }
 
 type OldReserved = { request_id: string; owner_instance_id: string; owner_boot_id: string; token: string; epoch: string; revision: string; policy_hash: string };
-const oldActive = sql`state IN ('reserved','dispatched','indeterminate') AND (epoch <> (SELECT epoch FROM model_capacity_control WHERE id = 1)
+const oldActive = sql`${occupyingStateSql('state')} AND (epoch <> (SELECT epoch FROM model_capacity_control WHERE id = 1)
   OR revision <> (SELECT revision FROM model_capacity_control WHERE id = 1) OR policy_hash IS DISTINCT FROM (SELECT policy_hash FROM model_capacity_control WHERE id = 1))`;
 
 /** 모델 슬롯: 모든 model scope가 drained 또는 independent(현재 policy가 옛 budget을 route하지 않음)이고,

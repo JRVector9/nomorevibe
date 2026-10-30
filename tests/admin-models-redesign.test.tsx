@@ -14,12 +14,12 @@ import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 import { redesignObservation, redesignModels, redesignAssignments, redesignMetrics, redesignRequests } from "./fixtures/admin-models-redesign";
 const render = () => renderToStaticMarkup(createElement(LiveModels, { observation: redesignObservation(), models: redesignModels, assignments: redesignAssignments }));
 describe("admin models 리디자인 렌더", () => {
-  it.each(["정상", "느림", "멈춤", "미확인", "접수 중지"] as const)("상태 띠가 %s 판정을 배지로 그린다", expected => {
+  // 2026-10-30 결정: 미확인은 점유가 아니므로 "멈춤" 판정은 없다 — 그룹 상한(limit 1)이어도 미확인 1건은 "미확인 1건"으로만 그린다.
+  it.each(["정상", "느림", "미확인", "접수 중지"] as const)("상태 띠가 %s 판정을 배지로 그린다", expected => {
     const observation = redesignObservation(); const row = { ...redesignMetrics[0], indeterminate: 0, succeeded1h: 1 };
     let requests = [] as typeof redesignRequests;
     if (expected === "느림") { row.waiting = 1; requests = [{ ...redesignRequests[0], state: "waiting" }]; }
-    if (expected === "멈춤") row.indeterminate = 1;
-    if (expected === "미확인") { row.indeterminate = 1; observation.groups[0].limit = 2; }
+    if (expected === "미확인") row.indeterminate = 1;
     if (expected === "접수 중지") observation.mode = "draining";
     observation.rows = [row]; observation.requests = requests;
     expect(stageHealth(observation, [row], requests)).toBe(expected);
@@ -31,27 +31,30 @@ describe("admin models 리디자인 렌더", () => {
     expect(html).toContain("미확인 1건"); expect(html).toContain("마지막 성공 2분 전");
     expect(html).toContain("모델 카드로 이동"); expect(html).toContain("30초 자동 새로고침");
   });
-  it("다른 단계의 미확인이 공유 슬롯을 막으면 해당 단계에도 멈춤과 건수를 표시한다", () => {
+  it("다른 단계의 미확인이 같은 그룹에 있으면 해당 단계에도 미확인과 건수를 표시한다(슬롯은 막지 않는다)", () => {
+    // 2026-10-30 결정: 같은 장비(m1)의 미확인은 사람 검토 대상으로 보이기만 하고, 그 단계를 멈춤으로 만들지 않는다.
     const observation = redesignObservation();
     const row = { ...redesignMetrics[2], routeId: "reason-translate", indeterminate: 0, waiting: 0 };
     observation.rows.push(row);
-    expect(stageHealth(observation, [row], [])).toBe("멈춤");
+    expect(stageHealth(observation, [row], [])).toBe("미확인");
     const html = renderToStaticMarkup(createElement(StageStatusRibbon, { observation, cards: buildModelCards(observation, redesignModels) }));
     const cell = html.match(/<a [\s\S]*?<\/a>/g)?.find(cell => cell.includes("심사 사유 번역"));
-    expect(cell).toContain(">멈춤</span>"); expect(cell).toContain("미확인 1건");
+    expect(cell).toContain(">미확인 1건</span>"); expect(cell).not.toContain("멈춤");
     expect(cell).toContain("마지막 성공 기록 없음");
   });
   it("미설정 화면 판별을 가짜 모델 카드로 만들지 않는다", () => {
     const cards = buildModelCards(redesignObservation(), redesignModels, [{ id: "screen-review", label: "화면 판별", models: [{ provider: "local-direct", model: "미설정" }] }]);
     expect(cards.some(card => card.name === "미설정")).toBe(false);
   });
-  it("건강한 병렬 모델이 있으면 해당 단계 전체를 멈춤으로 단정하지 않는다", () => {
+  it("건강한 병렬 모델이 있어도 그룹의 미확인은 해당 단계에 미확인으로만 표시한다", () => {
     const observation = redesignObservation();
     expect(stageHealth(observation, observation.rows.slice(0, 2), observation.requests.slice(0, 1))).toBe("미확인");
   });
-  it("미확인 블록에 시작·경과·막힌 단계와 M1 sudo/Supa root 비활성 사유가 있다", () => {
+  it("미확인 블록에 시작·경과·슬롯 점유 없음(사람 검토 대기)과 M1 sudo/Supa root 비활성 사유가 있다", () => {
+    // 2026-10-30 결정: 미확인 요청은 단계를 막지 않으므로 "막고 있는 단계" 대신 "슬롯 점유 없음 · 사람 검토 대기"를 안내한다.
     const html = render();
-    for (const value of ["요청 시작 2026-10-29 06:40:00 UTC", "20분째", "막고 있는 단계", "M1 sudo 필요", "Supa root 필요"]) expect(html).toContain(value);
+    for (const value of ["요청 시작 2026-10-29 06:40:00 UTC", "20분째", "슬롯 점유 없음 · 사람 검토 대기", "확인 못함 2건 · 사람 검토", "M1 sudo 필요", "Supa root 필요"]) expect(html).toContain(value);
+    expect(html).not.toContain("막고 있는 단계"); expect(html).not.toContain("멈춤"); expect(html).not.toContain("모델 슬롯 가득");
     expect(html.match(/<button[^>]*disabled=""[^>]*>종료\(정식 해제\)<\/button>/g)).toHaveLength(2);
     expect(html.match(/<button[^>]*disabled=""[^>]*>모델 재시작<\/button>/g)).toHaveLength(2);
     expect(html).toContain("접수 중지/재개는 모든 공통 모델에 적용됩니다");

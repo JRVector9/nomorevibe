@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
+import { modelCapacityIndeterminateReason } from '@/lib/llm/capacity';
 import { ai1ModelDispatchSchema, modelCapacityOwnerSchema, modelCapacityRequestIdentitySchema, type Ai1ModelDispatch, ai1ItemModelDispatchSchema, type Ai1ItemModelDispatch,
   type ModelCapacityRequest, type ModelSlotResult } from '@/lib/llm/capacity';
 import { findOwnPendingModelRequest, requestAi1ModelSlot, cancelReservedModelSlot,
@@ -32,7 +33,7 @@ export async function claimAgentReviewItemModelCapacity(intent: AgentReviewItemM
   const identity = modelCapacityRequestIdentitySchema.parse({ owner, class: 'first', pool: 'reviewer',
     routeId: 'crawl-agent-review', provider: 'abcllm', model, workKey: `ai1:${context.candidate.id}:${itemBindingHash(binding)}` });
   const pending = await findOwnPendingModelRequest(identity);
-  if (pending && (pending.state === 'dispatched' || pending.state === 'indeterminate')) throw new ModelCapacityDeferredError('dispatched');
+  if (pending?.state === 'dispatched') throw new ModelCapacityDeferredError('dispatched');
   const slot = await requestAi1ModelSlot({ ...identity, requestId: pending?.requestId ?? randomUUID() }, context.candidate.id);
   if (slot.kind !== 'granted') throw new ModelCapacityDeferredError(slot.reason);
   let claim: ItemModelCapacityReviewClaim;
@@ -78,14 +79,14 @@ export async function reviewAgentReviewItemModelCapacity(input: ReviewInput, dis
   let response: Awaited<ReturnType<typeof reviewWithReservedAi1ItemGateway>>;
   try { response = await reviewWithReservedAi1ItemGateway(input, dispatch, call, options); }
   catch (error) {
-    try { await markModelDispatchIndeterminate(dispatch, options.signal?.aborted ? 'local_abort' : 'transport_unknown'); }
+    try { await markModelDispatchIndeterminate(dispatch, modelCapacityIndeterminateReason({ signal: options.signal, error })); }
     catch (cleanup) { throw new AggregateError([error, cleanup], 'ai1_item_model_transport_cleanup_failed'); }
     throw error;
   }
   try {
     if (response.terminal) await reconcileAi1ItemGatewayTerminal(response.terminal);
     else if (response.notStarted) await reconcileGatewayNotStarted(response.notStarted);
-    else await markModelDispatchIndeterminate(dispatch, options.signal?.aborted ? 'local_abort' : 'transport_unknown');
+    else await markModelDispatchIndeterminate(dispatch, modelCapacityIndeterminateReason({ signal: options.signal, timedOut: !response.result.ok && response.result.error === 'timeout' }));
   } catch (cleanup) {
     if (response.terminal || response.notStarted) await markUnsettledDispatch(dispatch);
     if (!response.result.ok) throw new AggregateError([response.result, cleanup], 'ai1_item_model_result_cleanup_failed');
@@ -183,7 +184,7 @@ export async function claimAgentReviewModelCapacity(input: Context, wait?: Ai1Re
     routeId: 'crawl-agent-review', provider: 'abcllm', model: input.model,
     workKey: `ai1:${input.candidate.id}:${itemBindingHash(agentReviewBinding(input.candidate.id, input.input, { provider: input.provider, model: input.model }))}` });
   const pending = await findOwnPendingModelRequest(identity);
-  if (pending && (pending.state === 'dispatched' || pending.state === 'indeterminate')) throw new ModelCapacityDeferredError('dispatched');
+  if (pending?.state === 'dispatched') throw new ModelCapacityDeferredError('dispatched');
   const request = { ...identity, requestId: pending?.requestId ?? randomUUID() };
   let slot = await requestAi1ModelSlot(request, input.candidate.id);
   if (wait && slot.kind === 'deferred' && slot.reason === 'capacity') slot = await awaitQueuedAi1Reservation(request, input.candidate.id, slot, wait, input.signal);
@@ -220,14 +221,14 @@ export async function reviewAgentReviewModelCapacity(input: ReviewInput, dispatc
   let response: Awaited<ReturnType<typeof reviewWithReservedAi1Gateway>>;
   try { response = await reviewWithReservedAi1Gateway(input, dispatch, call, options); }
   catch (error) {
-    try { await markModelDispatchIndeterminate(dispatch, options.signal?.aborted ? 'local_abort' : 'transport_unknown'); }
+    try { await markModelDispatchIndeterminate(dispatch, modelCapacityIndeterminateReason({ signal: options.signal, error })); }
     catch (cleanup) { throw new AggregateError([error, cleanup], 'ai1_model_transport_cleanup_failed'); }
     throw error;
   }
   try {
     if (response.terminal) await reconcileAi1GatewayTerminal(response.terminal);
     else if (response.notStarted) await reconcileGatewayNotStarted(response.notStarted);
-    else await markModelDispatchIndeterminate(dispatch, options.signal?.aborted ? 'local_abort' : 'transport_unknown');
+    else await markModelDispatchIndeterminate(dispatch, modelCapacityIndeterminateReason({ signal: options.signal, timedOut: !response.result.ok && response.result.error === 'timeout' }));
   } catch (cleanup) {
     if (response.terminal || response.notStarted) await markUnsettledDispatch(dispatch);
     if (!response.result.ok) throw new AggregateError([response.result, cleanup], 'ai1_model_result_cleanup_failed');

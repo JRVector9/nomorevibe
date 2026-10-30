@@ -14,7 +14,7 @@ import type { OpsState } from "@/lib/operations/ops-runner/contract";
 const stamp = (at: string | null) => at ? `${at.slice(0, 10)} ${at.slice(11, 19)} UTC` : "기록 없음";
 const ago = (at: string | null, now: string | null) => at ? `${elapsedModelTime(at, now)} 전` : "기록 없음";
 const sum = (card: ModelCard, key: "succeeded1h" | "failed1h" | "dispatched" | "reserved" | "waiting" | "indeterminate") => card.rows.reduce((n, row) => n + row[key], 0);
-const tone: Record<string, string> = { 정상: "bg-up/10 text-up", 느림: "bg-warn/10 text-warn", 멈춤: "bg-down/10 text-down",
+const tone: Record<string, string> = { 정상: "bg-up/10 text-up", 느림: "bg-warn/10 text-warn",
   미확인: "bg-down/10 text-down", "접수 중지": "bg-bg-hover text-fg-2", "처리 중": "bg-accent-soft text-accent-ink",
   보류: "bg-warn/10 text-warn", "연결 안 됨": "bg-bg-hover text-fg-2", 내려감: "bg-down/10 text-down" };
 export function ModelStatusBadge({ status, children, muted }: { status: string; children?: React.ReactNode; muted?: boolean }) {
@@ -70,17 +70,17 @@ export function LiveModels({ observation, models = [], assignments = [], probeAc
     {observation.error && <StageStatusRibbon observation={observation} cards={cards} />}
     {observation.error ? <p role="alert" className="rounded-lg border border-down/30 bg-down/5 p-4 text-down">{observation.error}</p> : <>
       {unknownCount > 0 && <div role="alert" className="flex flex-col gap-2 rounded-xl border border-down/30 bg-down/5 p-4 text-[13px]">
-        <strong className="text-down">미확인 {unknownCount}건 · 모델의 종료를 확인해야 합니다</strong>
+        <strong className="text-down">확인 못함 {unknownCount}건 · 사람 검토 — 슬롯을 점유하지 않습니다(아래 목록에서 검토 완료)</strong>
         {cards.filter(card => sum(card, "indeterminate") > 0).map(card => { const request = card.requests.find(row => row.state === "indeterminate");
-          const full = card.rows.some(row => observation.groups.some(group => group.groupId === row.groupId && group.limit !== null && group.held >= group.limit));
+          // 2026-10-30: 미확인은 점유가 아니다 — 슬롯 상태와 섞지 않고 "확인 못함 · 사람 검토"로만 알린다.
           return <div key={card.id} className="flex flex-wrap items-center justify-between gap-2"><p>
-            {full ? "모델 슬롯 멈춤" : "모델 미확인"} · 영향 단계 {card.stages.map(modelStageLabel).join(" · ")} — [{card.equipment}] {card.name} · 미확인 {sum(card, "indeterminate")}건 · {request ? `${elapsedModelTime(request.dispatchedAt ?? request.queuedAt, observation.observedAt)}째` : "시작 시각 미확인"}</p>
+            모델 확인 못함 · 사람 검토 · 단계 {card.stages.map(modelStageLabel).join(" · ")} — [{card.equipment}] {card.name} · 미확인 {sum(card, "indeterminate")}건 · {request ? `${elapsedModelTime(request.dispatchedAt ?? request.queuedAt, observation.observedAt)}째` : "시작 시각 미확인"}</p>
             <a className="font-semibold text-down underline underline-offset-4" href={`#${modelCardAnchor(card.id)}`}>모델 카드로 이동 ↓</a></div>;
         })}
       </div>}
       <StageStatusRibbon observation={observation} cards={cards} />
       <div className="flex flex-wrap items-center justify-between gap-2 text-[13px] text-fg-2"><p>접수 <strong>{observation.mode?.toUpperCase()}</strong> · 전체 점유 {observation.groups.reduce((n, row) => n + row.held, 0)} / {observation.globalLimit ?? "상한 미확인"}</p>
-        <p>미확인 요청은 시간이 지나도 해제하지 않습니다 · 자동 회수 기본 꺼짐</p></div>
+        <p>확인 못함 요청은 슬롯을 점유하지 않습니다 · 사람 검토 뒤 검토 완료로 닫습니다 · 자동 회수 기본 꺼짐</p></div>
       {observation.truncated && <p role="alert">열린 요청은 미확인 우선 100건만 표시합니다. 점유·미확인 합계는 전체 장부 기준입니다.</p>}
       <ModelOpsPanel mode={observation.mode} requests={[]} models={[]} initialStates={opsStates} {...opsActions}
         renderControls={controls => <div className="grid min-w-0 grid-cols-1 items-start gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -100,7 +100,7 @@ function ModelLiveCard({ card, observation, controls, probe, busy, onProbe, reco
   card: ModelCard; observation: AdminModelsObservation; controls: ModelOpsControls; probe?: ModelProbeResult; busy: boolean; onProbe: () => void;
   recovery?: { key: string; blockedReason?: string };
 }) {
-  const unknown = sum(card, "indeterminate"), waiting = sum(card, "waiting"), held = sum(card, "reserved") + sum(card, "dispatched") + unknown;
+  const unknown = sum(card, "indeterminate"), waiting = sum(card, "waiting"), held = sum(card, "reserved") + sum(card, "dispatched");
   const groups = observation.groups.filter(group => card.rows.some(row => row.groupId === group.groupId));
   const limit = groups.length && groups.every(group => group.limit !== null) ? groups.reduce((n, group) => n + group.limit!, 0) : null;
   const blocked = !card.definition ? "등록부에서 장비·실행 대상을 확인하지 못했습니다." : recovery ? recovery.blockedReason : modelRecoveryBlocked(card.equipment, card.definition?.provider);
@@ -117,10 +117,10 @@ function ModelLiveCard({ card, observation, controls, probe, busy, onProbe, reco
     <p className="text-[13px] text-fg-2" title={stamp(lastModelSuccess(card.rows))}>마지막 성공 <strong className="font-medium text-fg">{ago(lastModelSuccess(card.rows), observation.observedAt)}</strong></p>
     <ThroughputMetrics value={observation.throughput?.byModel[throughputModelKey({ provider: card.definition?.provider ?? card.rows[0]?.provider ?? "", model: card.definition?.key ?? card.rows[0]?.model ?? "" })]} />
     {(requests.length > 0 || unknown > 0) && <div className="flex flex-col gap-3 rounded-lg border border-down/25 bg-down/5 p-3 text-[13px]">
-      {requests.map(request => <div key={request.requestId}><strong className="text-down">{request.state === "indeterminate" ? "미확인" : "보류"}</strong>
+      {requests.map(request => <div key={request.requestId}><strong className="text-down">{request.state === "indeterminate" ? "확인 못함" : "보류"}</strong>
         <p className="mt-1">요청 시작 {stamp(request.dispatchedAt ?? request.queuedAt)}</p>
         <p>{elapsedModelTime(request.dispatchedAt ?? request.queuedAt, observation.observedAt)}째 · 상태 경과 {elapsedModelTime(request.stateSince, observation.observedAt)}</p>
-        <p>막고 있는 단계: {[...new Set([modelStageLabel(request.routeId), ...card.stages.map(modelStageLabel)])].join(" · ")}{groups.some(group => group.held >= (group.limit ?? Infinity)) ? " · 슬롯 상한 도달" : " · 해당 요청 종료 대기"}</p>
+        <p>{request.state === "indeterminate" ? "슬롯 점유 없음 · 사람 검토 대기" : `막고 있는 단계: ${[...new Set([modelStageLabel(request.routeId), ...card.stages.map(modelStageLabel)])].join(" · ")}${groups.some(group => group.held >= (group.limit ?? Infinity)) ? " · 슬롯 상한 도달" : " · 해당 요청 종료 대기"}`}</p>
         {request.localEndRecorded && <p className="mt-1">로컬 호출 종료 기록 있음 · 제공자 종료 근거는 별도 확인 필요</p>}
         <button type="button" className={`${buttonSmall} mt-2`} disabled={controls.disabled || !!blocked || request.state !== "indeterminate"}
           title={blocked ?? (request.state !== "indeterminate" ? "아직 전송되지 않은 보류 요청은 정식 종료·해제 대상이 아닙니다." : undefined)}
