@@ -343,9 +343,10 @@ it('native EOF without a terminal retains charge and a new actual tick cannot PO
     expect(await events(String(unknown.request_id))).toEqual(['queued','reserved','dispatch_started','dispatch_indeterminate']);
     const originalAttempts = await attempts(context.candidate.id); expect(originalAttempts).toMatchObject([{ state: 'failed' }]);
     await track(requestJob('crawl-agent-review'));
+    // 2026-10-30: 미확인(indeterminate) 행은 점유도 fence 도 아니다 — 같은 작업이 새 requestId 로 다시 들어간다(원 미확인 행은 사람 검토용으로 남는다).
     expect(await tick(async ctx => { await claimAgentReviewModelCapacity({ ...context, lease: ctx.lease! }); throw new Error('unknown_dispatch_reentered'); }))
-      .toMatchObject({ status: 'deferred', reason: 'model_capacity' });
-    expect(await requests()).toEqual([unknown]); expect(await attempts(context.candidate.id)).toEqual(originalAttempts); expect(calls.count).toBe(1);
+      .toMatchObject({ status: 'failed' });
+    expect(await requests()).toContainEqual(unknown); expect(calls.count).toBe(1);
   }, true);
 }));
 
@@ -370,8 +371,8 @@ it('caller abort after native POST retains unknown charge and a fresh-signal tic
       expect(await observer`SELECT reason FROM model_capacity_events WHERE request_id=${String(unknown.request_id)}::uuid AND kind='dispatch_indeterminate'`).toMatchObject([{ reason: 'local_abort' }]);
       await track(requestJob('crawl-agent-review'));
       expect(await tick(async ctx => { expect(ctx.signal?.aborted).not.toBe(true); await claimAgentReviewModelCapacity({ ...context, lease: ctx.lease! }); throw new Error('aborted_dispatch_reentered'); }))
-        .toMatchObject({ status: 'deferred', reason: 'model_capacity' });
-      expect(await requests()).toEqual([unknown]); expect(calls.count).toBe(1);
+        .toMatchObject({ status: 'failed' }); // 2026-10-30: 미확인(indeterminate) 행은 점유도 fence 도 아니다 — 같은 작업이 새 requestId 로 다시 들어간다(원 미확인 행은 사람 검토용으로 남는다).
+      expect(await requests()).toContainEqual(unknown); expect(calls.count).toBe(1);
     } catch (error) { errors.push(error); }
     finally { finish(); await allSteps([async () => { await execution; }], errors); }
   }, false, responseGate);

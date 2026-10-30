@@ -9,6 +9,7 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { getTableConfig, PgDialect } from "drizzle-orm/pg-core";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
+import { operatorReviewDispatchSql, operatorReviewEventSql, operatorReviewTerminalSql } from "@/lib/llm/operator-review-sql";
 import { db } from "@/lib/db";
 import { createReviewInput, reviewHash, type ReviewInput } from "@/lib/crawl/agent-review-contract";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
@@ -502,7 +503,11 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
       expect(statement).toContain(`ADD CONSTRAINT ${name} CHECK ((%s) OR (%s))`);
       expect(statement, `${name}: the appended branch is the schema constant`).toContain(`$ai2_local$${branch}$ai2_local$`);
       const check = getTableConfig(events ? modelCapacityEvents : modelCapacityRequests).checks.find(check => check.name === name)!;
-      const expression = new PgDialect().sqlToQuery(check.value).sql, suffix = `) OR (${branch})`;
+      // 0151 appends the operator_review branch after 0149's on the requests terminal CHECK; strip that tail before the 0149 checks.
+      const tail = events ? null : `) OR (${operatorReviewTerminalSql})`;
+      const full = new PgDialect().sqlToQuery(check.value).sql, suffix = `) OR (${branch})`;
+      expect(tail === null || full.endsWith(tail), `${name}: 0151 tail present`).toBe(true);
+      const expression = tail ? full.slice(1, -tail.length) : full;
       expect(expression.startsWith("(") && expression.endsWith(suffix), `${name}: Drizzle composes (previous) OR (branch)`).toBe(true);
       // Drizzle keeps composing from source text while the DB has rebuilt these CHECKs from deparsed text since 0126 (a BETWEEN becomes a
       // nested AND on the first parse and is flattened on the next). Both must meet at PostgreSQL's own parse→deparse fixed point.
@@ -517,9 +522,20 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
       expect(replaced[name]).not.toContain(widenedList); expect(widened[name]).toContain(widenedList);
     }
     for (const name of UNTOUCHED) expect(widened[name], `${name}: 0149 unchanged CHECK`).toBe(replaced[name]);
-    // Later migrations (0150 topology) leave every one of these CHECKs as 0149 left them.
+    // 0150 (topology) leaves every CHECK as 0149 left them; 0151 appends the operator_review branch to the requests dispatch/terminal
+    // CHECKs and the events kind CHECK (one shared SQL function), again as (whole predecessor) OR (branch).
     await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
-    expect(await constraintDefs(step, [...LEFT, ...UNTOUCHED])).toEqual(widened);
+    const final = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
+    const reviewed: Record<string, string> = { model_capacity_requests_dispatch_check: operatorReviewDispatchSql,
+      model_capacity_requests_terminal_check: operatorReviewTerminalSql, model_capacity_events_kind_check: operatorReviewEventSql };
+    for (const name of [...LEFT, ...UNTOUCHED]) {
+      const branch = reviewed[name];
+      if (!branch) { expect(final[name], `${name}: unchanged after 0151`).toBe(widened[name]); continue; }
+      const table = name.startsWith("model_capacity_events_") ? "model_capacity_events" : "model_capacity_requests";
+      await step.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT f2_review_expected CHECK ((${inner(widened[name])}) OR (${branch}))`);
+      try { expect(final[name], `${name}: 0149 predicate plus the 0151 operator_review branch`).toBe((await constraintDefs(step, ["f2_review_expected"])).f2_review_expected); }
+      finally { await step.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT f2_review_expected`); }
+    }
     expect((await step<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`)[0].count).toBe(journal.entries.length);
   } finally { rmSync(partial, { recursive: true, force: true }); await step.end({ timeout: 5 }); }
 }, 600_000);

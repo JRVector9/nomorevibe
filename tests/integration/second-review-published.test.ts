@@ -116,7 +116,8 @@ it('leaves a stale vote and its live capacity reservation unchanged', async () =
 });
 
 it('fails closed on unbound active/unknown AI2 requests and null reservation times while excluding unrelated routes', async () => {
-  for (const state of ['dispatched', 'indeterminate', 'unknown', 'reserved']) for (const route of ['second-review', 'unrelated-background']) {
+  // 2026-10-30: indeterminate 는 더 이상 보호하지 않는다(끝난 시도).
+  for (const state of ['dispatched', 'unknown', 'reserved']) for (const route of ['second-review', 'unrelated-background']) {
     const [row] = await db.execute<{ busy: boolean; probe_busy: boolean }>(sql`WITH model_capacity_requests AS (
       SELECT ${state}::text state, ${route}::text route_id, NULL::text logical_work_key,
         'malformed'::text work_key, ${state === 'reserved' ? sql`NULL::timestamptz` : sql`clock_timestamp() - interval '1 day'`} reserved_until

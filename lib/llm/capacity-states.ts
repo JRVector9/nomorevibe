@@ -25,6 +25,9 @@ export const MODEL_CAPACITY_OPEN_STATES = Object.freeze(["waiting", "reserved", 
 /** 사람 검토 대기 상태. */
 export const MODEL_CAPACITY_REVIEW_STATE = "indeterminate" as const satisfies ModelCapacityState;
 
+/** dispatch_indeterminate 의 reason 목록(CHECK·zod·마이그레이션이 같은 값을 쓴다). 뜻은 lib/llm/capacity.ts 의 ModelCapacityIndeterminateReason 주석. */
+export const MODEL_CAPACITY_INDETERMINATE_REASONS = Object.freeze(["transport_unknown", "local_abort", "process_exit", "commit_unknown", "client_timeout"] as const);
+
 export type ModelCapacityLiveState = (typeof MODEL_CAPACITY_LIVE_STATES)[number];
 export type ModelCapacityOccupyingState = (typeof MODEL_CAPACITY_OCCUPYING_STATES)[number];
 

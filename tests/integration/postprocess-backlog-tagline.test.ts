@@ -75,7 +75,7 @@ it("skips products another live request already holds, keeps the caller's own pe
   expect((await pendingKoreanTaglines(8, [], self)).map(task => task.productId)).toEqual([held.id, free.id]);
 });
 
-it("treats dispatched and indeterminate requests of any owner as busy, but not settled or withdrawn ones", async () => {
+it("treats waiting/reserved/dispatched requests of any owner as busy, but not indeterminate, settled or withdrawn ones", async () => {
   const own = randomUUID(), other = randomUUID();
   const rows = [
     { state: "indeterminate", owner: "a", boot: other, members: ["product-tagline-ko:1"] },
@@ -88,9 +88,9 @@ it("treats dispatched and indeterminate requests of any owner as busy, but not s
   ];
   const keys = async (mode: string, keepOwn: boolean) => (await db.execute<{ key: string }>(sql`${shadowRequests(rows, mode)}
     ${busyMemberKeysSql("product-tagline-ko:", { owner: { instanceId: "me", bootId: own }, keepOwn })}`)).map(row => row.key).sort();
-  expect(await keys("open", true)).toEqual(["product-tagline-ko:1", "product-tagline-ko:2", "product-tagline-ko:4", "product-tagline-ko:5"]);
-  expect(await keys("open", false)).toEqual(["product-tagline-ko:1", "product-tagline-ko:2", "product-tagline-ko:3",
-    "product-tagline-ko:4", "product-tagline-ko:5"]);
+  // 2026-10-30: 미확인(indeterminate) 멤버는 busy 가 아니다 — 선택기가 숨기지 않는다.
+  expect(await keys("open", true)).toEqual(["product-tagline-ko:2", "product-tagline-ko:4", "product-tagline-ko:5"]);
+  expect(await keys("open", false)).toEqual(["product-tagline-ko:2", "product-tagline-ko:3", "product-tagline-ko:4", "product-tagline-ko:5"]);
   expect(await keys("disabled", true)).toEqual([]);
 });
 

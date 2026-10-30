@@ -7,8 +7,9 @@ import { cliExecutorRequestSql, cliExecutorEventSql } from '@/lib/llm/cli-execut
 import { publicationClassifyLogicalSql, publicationClassifyDispatchSql, publicationClassifyTerminalSql, publicationClassifyEventTerminalSql } from '@/lib/llm/publication-classify-capacity-sql';
 import { localModelLogicalSql, localModelDispatchSql, localModelTerminalSql, localModelEventTerminalSql } from '@/lib/llm/local-model-capacity-sql';
 import { operatorReviewDispatchSql, operatorReviewTerminalSql, operatorReviewEventSql } from '@/lib/llm/operator-review-sql';
-import { MODEL_CAPACITY_LIVE_STATES_SQL, MODEL_CAPACITY_OCCUPYING_STATES_SQL } from '@/lib/llm/capacity-states';
-import { MODEL_CAPACITY_INDETERMINATE_REASONS, type OperatorReviewEvidence } from '@/lib/llm/capacity';
+// 값 import 는 순환이 없는 capacity-states 에서만 한다(lib/llm/capacity 는 type 전용 — 런타임 순환이 계약 모듈을 비운다).
+import { MODEL_CAPACITY_LIVE_STATES_SQL, MODEL_CAPACITY_OCCUPYING_STATES_SQL, MODEL_CAPACITY_INDETERMINATE_REASONS } from '@/lib/llm/capacity-states';
+import type { OperatorReviewEvidence } from '@/lib/llm/capacity';
 import type { LocalModelBinding, LocalModelTerminalEvidence } from '@/lib/llm/local-model-capacity-contract';
 import { sql } from 'drizzle-orm';
 import { pgTable, varchar, jsonb, timestamp, serial, bigserial, integer, text, bigint, boolean, index, uniqueIndex, check, primaryKey, foreignKey, uuid } from 'drizzle-orm/pg-core';

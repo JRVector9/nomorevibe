@@ -7,6 +7,7 @@ import { cliExecutorEvidenceSchema } from "./cli-executor-boundary-contract";
 import { publicationPublisherRoleSchema, publicationClassifyInputSchema, type PublicationClassifyMember, type PublicationClassifyInput } from "./publication-classify-contract";
 export { publicationPublisherRoleSchema, publicationClassifyInputSchema, publicationClassifyMemberSchema, type PublicationClassifyMember, type PublicationClassifyInput } from "./publication-classify-contract";
 import { createHash } from "node:crypto";
+import { MODEL_CAPACITY_INDETERMINATE_REASONS } from "./capacity-states";
 import { z } from "zod";
 import { itemBindingSchema, itemBindingHash, itemOwnerSchema, type Ai2ItemBinding, type Ai1ItemBinding, type ItemOwner } from "@/lib/jobs/items/types";
 import { cliProcessTerminalEvidenceSchema, cliTransportSchema } from "@/lib/llm/cli-serving-contract";
@@ -39,7 +40,7 @@ export type ModelCapacityEventKind = "queued" | "reserved" | "dispatch_started" 
  * local_abort: 호출자 signal 의 중단(종료·취소). transport_unknown: 전송 뒤 결과를 모르는 그 밖의 실패. process_exit: CLI 자손 종료.
  * commit_unknown: 정산 TX 의 commit 여부를 모른다.
  */
-export const MODEL_CAPACITY_INDETERMINATE_REASONS = Object.freeze(["transport_unknown", "local_abort", "process_exit", "commit_unknown", "client_timeout"] as const);
+export { MODEL_CAPACITY_INDETERMINATE_REASONS };
 export type ModelCapacityIndeterminateReason = (typeof MODEL_CAPACITY_INDETERMINATE_REASONS)[number];
 export type ModelCapacityEventReason = ModelCapacityIndeterminateReason;
 

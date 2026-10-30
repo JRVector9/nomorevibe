@@ -356,7 +356,7 @@ it('AI1 legacy job: pipe 쥔 손자면 process_exit indeterminate 로 점유를 
   await track(requestJob('crawl-agent-review'));
   expect(await tick(async ctx => { await coordinator.claimAgentReviewCliModelCapacity({ candidate, document, settings: settings(),
     input: await loadReviewInput(candidate, document, settings()), provider: 'claude-cli', model, lease: ctx.lease!, timeoutMs: 20_000 });
-  throw new Error('indeterminate_cli_reentered'); })).toMatchObject({ status: 'deferred', reason: 'model_capacity' });
+  throw new Error('indeterminate_cli_reentered'); })).toMatchObject({ status: 'failed' }); // 2026-10-30: 미확인(indeterminate) 행은 점유도 fence 도 아니다 — 같은 작업이 새 requestId 로 다시 들어간다(원 미확인 행은 사람 검토용으로 남는다).
   // 다른 boot 의 CLI·gateway 도 같은 후보 키에서 막힌다
   const other = { instanceId, bootId: randomUUID() }; ownBoots.add(other.bootId);
   const binding = agentReviewBinding(candidate.id, await loadReviewInput(candidate, document, settings()), { provider: 'claude-cli', model });
@@ -470,8 +470,9 @@ it('AI2 consumer: pipe 쥔 손자로 원 표가 indeterminate 면 실패 기록�
   expect(original).toMatchObject({ resolution: 'fallback', error_code: 'cli_error' }); expect(fallback).toMatchObject({ status: 'pending', model: backup });
   vi.stubEnv('FAKE_CLI_MODE', 'ok');
   const reboot = { instanceId, bootId: randomUUID() }; ownBoots.add(reboot.bootId);
-  await expect(track(executeSecondReviewConsumerItem({ secondReviewId: Number(fallback.id), owner: reboot }))).rejects.toMatchObject({ reason: 'capacity' });
-  expect(await recorded()).toHaveLength(1);
+  // 2026-10-30: 미확인(indeterminate) 행은 점유도 fence 도 아니다 — 같은 작업이 새 requestId 로 다시 들어간다(원 미확인 행은 사람 검토용으로 남는다).
+  expect(await track(executeSecondReviewConsumerItem({ secondReviewId: Number(fallback.id), owner: reboot }))).toMatchObject({ state: 'recorded' });
+  expect(await recorded()).toHaveLength(2);
   expect((await votes(f.candidate.id))[1]).toEqual(fallback);
   // 같은 표 키의 fence 는 대기 행을 넣기 전에 미룬다 — 새 요청 행도 없다
   expect(await requests()).toEqual([unknown]);

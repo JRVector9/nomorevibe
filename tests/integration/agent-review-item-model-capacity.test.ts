@@ -348,8 +348,9 @@ it('EOF keeps full-C unknown and original AI1 failure backoff across source chan
     const [attempt] = await db.select().from(crawlReviewAttempts).where(eq(crawlReviewAttempts.candidateId, f.candidate.id));
     expect(attempt.state).toBe('failed'); expect(attempt.retryAfter!.getTime()).toBeGreaterThanOrEqual(before + 60_000);
     await admin`UPDATE crawl_documents SET fetched_at=fetched_at-interval '1 second' WHERE id=${f.document.id}`;
-    await expect(execute(f.candidate.id, undefined, { instanceId: owner.instanceId, bootId: randomUUID() })).rejects.toMatchObject({ reason: 'capacity' });
-    expect(posts).toHaveLength(1); expect(await capacityRows()).toEqual([original]);
+    // 2026-10-30: 미확인(indeterminate) 행은 점유도 fence 도 아니다 — 같은 작업이 새 requestId 로 다시 들어간다(원 미확인 행은 사람 검토용으로 남는다).
+    expect(await execute(f.candidate.id, undefined, { instanceId: owner.instanceId, bootId: randomUUID() })).toMatchObject({ state: 'failed' });
+    expect(posts).toHaveLength(2); expect(await capacityRows()).toContainEqual(original);
     expect(await db.select().from(crawlReviewAttempts).where(eq(crawlReviewAttempts.candidateId, f.candidate.id))).toHaveLength(1);
     expect((await item(f.candidate.id))?.row.token).toBeNull();
   });

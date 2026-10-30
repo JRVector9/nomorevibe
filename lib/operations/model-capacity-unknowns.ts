@@ -2,8 +2,7 @@ import { sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, onPrimary } from '@/lib/db';
 import { currentReplayDb } from '@/lib/db/replay-scope';
-import { MODEL_CAPACITY_INDETERMINATE_REASONS } from '@/lib/llm/capacity';
-import { reviewStateSql } from '@/lib/llm/capacity-states';
+import { MODEL_CAPACITY_INDETERMINATE_REASONS, reviewStateSql } from '@/lib/llm/capacity-states';
 
 const label = z.string().min(1).max(120).regex(/^[A-Za-z0-9_.:@+/-]+$/);
 export const capacityUnknownSchema = z.object({ requestId: z.uuid(), routeId: label, groupId: label,

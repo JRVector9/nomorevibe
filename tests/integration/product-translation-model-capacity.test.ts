@@ -379,7 +379,7 @@ it("preserves the genuine dispatch event INSERT failure with no committed dispat
     }); }], errors); }
 }), 20_000);
 
-it("keeps EOF full-C unknown fenced across changed source and a genuinely re-elected owner boot", exercise(async () => {
+it("keeps the EOF unknown row for review but lets a re-elected owner boot retry the changed source (2026-10-30)", exercise(async () => {
   const { product } = await seed(); await server(async ({ bodies, setReply }) => {
     setReply(response => { response.end('{"id":"partial"'); });
     expect(await tick()).toMatchObject({ status: "completed" }); expect(bodies).toHaveLength(1);
@@ -392,10 +392,10 @@ it("keeps EOF full-C unknown fenced across changed source and a genuinely re-ele
     expect(await tracked(requestProductTranslations([product.id], "en", ["tagline"]))).toBe(1);
     const [changed] = await admin`SELECT to_jsonb(t) AS row FROM product_translations t WHERE product_id=${product.id}`;
     expect(changed.row).toMatchObject({ attempts: 0, status: "pending" });
-    expect(await tick()).toMatchObject({ status: "deferred", reason: "model_capacity" }); expect(bodies).toHaveLength(1);
-    expect((await admin`SELECT to_jsonb(t) AS row FROM product_translations t WHERE product_id=${product.id}`)[0].row).toEqual(changed.row);
+    // 2026-10-30: 미확인(indeterminate) 행은 점유도 fence 도 아니다 — 같은 작업이 새 requestId 로 다시 들어간다(원 미확인 행은 사람 검토용으로 남는다).
+    expect(await tick()).toMatchObject({ status: "completed" }); expect(bodies).toHaveLength(2);
     expect((await admin`SELECT to_jsonb(r) AS row FROM model_capacity_requests r WHERE request_id=${unknown.row.request_id}::uuid`)[0].row).toEqual(unknown.row);
-    expect(await admin`SELECT request_id FROM model_capacity_requests WHERE owner_instance_id=${prefix}`).toHaveLength(1);
+    expect(await admin`SELECT request_id FROM model_capacity_requests WHERE owner_instance_id=${prefix}`).toHaveLength(2);
   });
 }), 20_000);
 

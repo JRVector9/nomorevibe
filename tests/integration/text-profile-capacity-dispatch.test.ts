@@ -371,7 +371,7 @@ it("settles historical terminal after actual job expiry while mandatory writer a
     const [job] = await admin`SELECT * FROM jobs WHERE name=${jobName}`; expect(Number(job.processed_version)).toBeLessThan(Number(job.requested_version));
   });
 }));
-it("keeps EOF full-C unknown fenced across a new boot and changed source without another POST while neighbours keep moving", exercise(async () => {
+it("keeps the EOF unknown row for review while a new boot retries the changed source and neighbours keep moving (2026-10-30)", exercise(async () => {
   const task = await seed(); await server(async ({ bodies, setReply }) => {
     setReply(response => { response.writeHead(200, { "Content-Length": "1000" }); response.write("{"); response.socket?.destroy(); });
     expect(await tick()).toMatchObject({ status: "completed" }); expect(bodies).toHaveLength(1);
@@ -384,16 +384,15 @@ it("keeps EOF full-C unknown fenced across a new boot and changed source without
     const [afterSource] = await admin`SELECT attempts,source_revision FROM product_search_profiles WHERE product_id=${task.product.id}`;
     expect(afterSource).toEqual({ attempts: 0, source_revision: beforeSource.source_revision + 1 });
     await admin`UPDATE product_search_profiles SET error_code=NULL,retry_at=NULL,needs_refresh=true WHERE product_id=${task.product.id}`;
-    // The unknown request still fences this product, so the selector skips it instead of re-picking it every tick
-    // (postprocess-backlog lane, 2026-10-29). It is never re-sent and its profile row is not consumed.
-    expect((await pendingProfiles(12, role)).some(row => row.product.id === task.product.id)).toBe(false);
-    expect(await tick()).toMatchObject({ status: "completed" }); expect(bodies).toHaveLength(1);
-    expect((await admin`SELECT request_id,state FROM model_capacity_requests`)).toEqual([{ request_id: unknown.request_id, state: "indeterminate" }]);
-    expect((await admin`SELECT attempts,source_revision FROM product_search_profiles WHERE product_id=${task.product.id}`)[0]).toEqual(afterSource);
-    // 뒤의 제품은 남은 자리로 그대로 지어진다. unknown 은 운영 회수 전까지 그대로 남는다
+    // 2026-10-30: 미확인 행은 이 제품을 더 fence 하지 않는다 — 선택기가 다시 고르고 새 요청으로 다시 보낸다(원 미확인 행은 사람 검토용으로 남는다).
+    expect((await pendingProfiles(12, role)).some(row => row.product.id === task.product.id)).toBe(true);
     setReply(response => { response.end(JSON.stringify(replyBody())); });
+    expect(await tick()).toMatchObject({ status: "completed" }); expect(bodies).toHaveLength(2);
+    expect((await admin`SELECT state FROM model_capacity_requests WHERE request_id=${unknown.request_id}::uuid`)[0].state).toBe("indeterminate");
+    expect((await admin`SELECT count(*)::int AS n FROM model_capacity_requests WHERE state='settled'`)[0].n).toBe(1);
+    // 뒤의 제품은 남은 자리로 그대로 지어진다.
     const neighbour = await seed();
-    expect(await tick()).toMatchObject({ status: "completed", done: true }); expect(bodies).toHaveLength(2);
+    expect(await tick()).toMatchObject({ status: "completed", done: true }); expect(bodies).toHaveLength(3);
     expect((await admin`SELECT keywords_en FROM product_search_profiles WHERE product_id=${neighbour.product.id}`)[0].keywords_en).toEqual(["expense tracker"]);
     expect((await admin`SELECT state FROM model_capacity_requests WHERE request_id=${unknown.request_id}::uuid`)[0].state).toBe("indeterminate");
     expect((await admin`SELECT attempts,source_revision FROM product_search_profiles WHERE product_id=${task.product.id}`)[0]).toEqual(afterSource);
