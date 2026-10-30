@@ -13,6 +13,8 @@ import { saveRegistryOverrideTx } from "./admin-model-registry";
  *   model name change, and the gateway label goes (the engine expects its own model name on the wire).
  * - Each chosen gateway route gets a direct contract (transport direct, the stored or no key). The engine's own model list
  *   is read on the server first: the model must be there, and its maximum length becomes the contract's total bound.
+ *   Engines whose /models omits max_model_len (mlx_lm.server, the M3 mlx-serve proxy) take the operator-typed bound instead;
+ *   a typed bound that differs from a served one is refused, never picked over. The origin stays in the contract.
  *   One 1-token completion then gives the name the engine answers with (vLLM answers with its first served name, e.g.
  *   'local-llm' for 'Inferact/Qwen3.8-27B-NVFP4'), which becomes the contract's response model.
  * - Optionally the chosen routes' admin stages select that key, so the jobs pick it on their next lease; with the AI1 route,
@@ -20,12 +22,19 @@ import { saveRegistryOverrideTx } from "./admin-model-registry";
  * - Capacity is not changed here: a route missing from the capacity policy is reported and stays deferred until it is added.
  */
 export type EngineConnectInput = { registryKey: string; baseUrl: string; auth: "stored" | "none"; apiKey?: string; engineModel: string;
-  routes: readonly string[]; selectStages: boolean; note?: string | null };
+  routes: readonly string[]; selectStages: boolean; note?: string | null;
+  /** Operator-typed context bound (tokens): required when /models omits max_model_len, must equal it when given. */
+  maxModelLen?: number | null };
+export type EngineConnectBoundOrigin = "engine" | "operator";
 export type EngineConnectResult = { registryId: number; contracts: { routeId: string; id: number }[]; stages: string[]; requestModel: string;
-  responseModel: string; firstReviewRenamed: boolean; missingPolicyRoutes: string[]; totalTokenBound: number };
+  responseModel: string; firstReviewRenamed: boolean; missingPolicyRoutes: string[]; totalTokenBound: number; totalTokenBoundFrom: EngineConnectBoundOrigin };
 
 /** Routes whose contract is the plain total-bound shape (AI2 has its own adapter contract and is configured separately). */
 export const ENGINE_CONNECT_ROUTES = GATEWAY_SERVING_CONTRACT_ROUTES.filter(route => route !== "second-review");
+/** Ceiling of the operator-typed bound (2M tokens; no served context is longer today). */
+export const ENGINE_CONNECT_MAX_MODEL_LEN = 2_097_152;
+/** Revision suffix of a contract whose bound the operator typed, so audits tell it from an engine-reported one. */
+export const OPERATOR_BOUND_REVISION_SUFFIX = "-operator-bound";
 
 /** `https://host/v1` (trailing slash or /chat/completions tolerated). Contracts require exactly /v1/chat/completions. */
 export function engineBaseUrl(value: string): string | null {
@@ -49,12 +58,15 @@ export async function probeResponseModel(endpoint: string, model: string, apiKey
   } catch { return null; }
 }
 
-function routeContract(routeId: GatewayServingRoute, model: string, responseModel: string, endpoint: string, totalTokenBound: number, equipment: string) {
+function routeContract(routeId: GatewayServingRoute, model: string, responseModel: string, endpoint: string, totalTokenBound: number, equipment: string,
+  boundFrom: EngineConnectBoundOrigin) {
   const shape = (registeredGatewayServingContractSchema(routeId) as unknown as { shape?: Record<string, { value?: unknown }> } | null)?.shape;
   const protocol = shape?.protocol?.value;
   if (typeof protocol !== "string") return null;
+  // The bound and its origin end the revision; a long model name is what gets cut to the 200-char identity, never the tail.
+  const tail = `-C${totalTokenBound}${boundFrom === "operator" ? OPERATOR_BOUND_REVISION_SUFFIX : ""}`;
   const contract: Record<string, unknown> = { version: 1, protocol, routeId, provider: "abcllm", model, responseModel,
-    deploymentRevision: `direct-${equipment}-${model}-C${totalTokenBound}`.slice(0, 200), endpoint, totalTokenBound };
+    deploymentRevision: `direct-${equipment}-${model}`.slice(0, 200 - tail.length) + tail, endpoint, totalTokenBound };
   // The four translation routes open only with the strict-terminal mark; a direct engine's own completion is terminal.
   if (shape && "strictTerminalOptIn" in shape) contract.strictTerminalOptIn = "abcllm-strict-terminal-v1";
   const checked = validateAdminServingContract(routeId, contract);
@@ -92,27 +104,36 @@ export async function connectAdminEngine(input: EngineConnectInput, actor: strin
   if (!readback.ok) throw new Error(`engine_unreachable:${readback.reason}`);
   const served = readback.models.find(model => model.id === engineModel);
   if (!served) throw new Error("engine_model_not_found");
-  if (!served.maxModelLen) throw new Error("engine_max_len_unknown");
-  const totalTokenBound = served.maxModelLen;
+  // The served max_model_len is authoritative. Without it (mlx_lm.server, the M3 mlx-serve proxy omit it) the operator's typed
+  // bound stands in; a typed bound beside a served one must match, so neither is silently picked over the other.
+  const servedBound = served.maxModelLen || null, typedBound = input.maxModelLen ?? null;
+  if (typedBound !== null && !(Number.isSafeInteger(typedBound) && typedBound > 0 && typedBound <= ENGINE_CONNECT_MAX_MODEL_LEN)) throw new Error("engine_max_len_invalid");
+  if (servedBound !== null && typedBound !== null && typedBound !== servedBound) throw new Error(`engine_max_len_mismatch:${servedBound}:${typedBound}`);
+  const totalTokenBound = servedBound ?? typedBound;
+  if (totalTokenBound === null) throw new Error("engine_max_len_unknown");
+  const totalTokenBoundFrom: EngineConnectBoundOrigin = servedBound !== null ? "engine" : "operator";
   const responseModel = await probeResponseModel(`${base}/chat/completions`, engineModel, key ?? null, request);
   if (!responseModel) throw new Error("engine_probe_failed");
   const definition: ModelDefinition = { ...current, baseUrl: base, model: engineModel, displayName: current.displayName.includes("직접")
     ? current.displayName : `${current.displayName} · 직접 연결`.slice(0, 200) };
   delete (definition as { gatewayLabel?: string }).gatewayLabel;
   const contracts = routes.map(route => ({ route, contract: routeContract(route as GatewayServingRoute, engineModel, responseModel, `${base}/chat/completions`,
-    totalTokenBound, current.equipment) }));
+    totalTokenBound, current.equipment, totalTokenBoundFrom) }));
   if (contracts.some(entry => !entry.contract)) throw new Error("contract_schema_invalid");
   const { getSettings, saveSettings } = await import("@/lib/crawl/settings");
   const settings = await getSettings(), stageIds = input.selectStages
     ? ADMIN_MODEL_STAGES.filter(stage => stage.provider === "abcllm" && routes.includes(stage.purpose)).map(stage => stage.id) : [];
   const pools: AdminStagePools = { ...(settings.stageModelPools ?? {}), ...Object.fromEntries(stageIds.map(stage => [stage, [input.registryKey]])) };
   const note = input.note?.trim() ? input.note.trim().slice(0, 400) : `엔진 연결 ${base}`;
+  // The contract rows' note (which the save audit carries) also says when the bound was typed, not read from the engine.
+  const mark = totalTokenBoundFrom === "operator" ? ` · 컨텍스트 상한 운영자 입력 ${totalTokenBound}` : "";
+  const contractNote = note.slice(0, 400 - mark.length) + mark;
   const saved = await onPrimary(() => db.transaction(async tx => {
     if (!await writerSiteActive(tx)) throw new DrWriterFencedError("site_fenced");
     const registry = await saveRegistryOverrideTx(tx, definition, actor, note, pools);
     const rows = [];
     for (const entry of contracts) rows.push({ routeId: entry.route, ...await saveServingContractTx(tx, { routeId: entry.route, contract: entry.contract,
-      auth: input.auth, transport: "direct", apiKey: input.auth === "stored" ? key : undefined, note }, actor) });
+      auth: input.auth, transport: "direct", apiKey: input.auth === "stored" ? key : undefined, note: contractNote }, actor) });
     return { registryId: registry.id, contracts: rows.map(row => ({ routeId: row.routeId, id: row.id })) };
   }));
   // Stage selection is the ordinary settings save (own version check and audit); the connection above already stands alone.
@@ -130,5 +151,5 @@ export async function connectAdminEngine(input: EngineConnectInput, actor: strin
   const missingPolicyRoutes = policy === null ? routes.map(route => `${route} / abcllm / ${engineModel}`)
     : routes.filter(route => !policy.some(row => row.routeId === route && row.provider === "abcllm" && row.model === engineModel))
       .map(route => `${route} / abcllm / ${engineModel}`);
-  return { ...saved, stages: stageIds, requestModel: engineModel, responseModel, firstReviewRenamed: renameAi1, missingPolicyRoutes, totalTokenBound };
+  return { ...saved, stages: stageIds, requestModel: engineModel, responseModel, firstReviewRenamed: renameAi1, missingPolicyRoutes, totalTokenBound, totalTokenBoundFrom };
 }
