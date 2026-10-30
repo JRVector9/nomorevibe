@@ -15,6 +15,7 @@ import type { JobLease } from "@/lib/jobs/control";
 import { roleLeaseFromEnv, type RoleLease } from "@/lib/jobs/role-leader";
 import type { KoreanTaglineBatch } from "./korean-tagline";
 import type { KoreanTaglineWriteExpectation } from "./korean-taglines";
+import { textRouteCallable } from "@/lib/llm/serving-contract-store";
 
 export type KoreanTaglineCapacityResult = { kind: "skipped" } | {
   kind: "result"; result: KoreanTaglineBatch; expectation?: KoreanTaglineWriteExpectation; batch?: readonly KoreanTaglineTask[];
@@ -32,7 +33,7 @@ export async function translateKoreanTaglinesWithModelCapacity(value: readonly K
   let items = tasks.map(task => ({ name: displayProjectName(task.name, task.repoUrl), tagline: koreanTaglineSource(task) }));
   const legacy = async () => ({ kind: "result" as const,
     result: await translateTaglinesToKorean(items, scopedRequestTimeout("product-tagline-ko", options.timeoutMs), undefined, options.signal) });
-  if (!process.env.ABCLLM_API_KEY?.trim()) return legacy();
+  if (!textRouteCallable("product-tagline-ko", scopedModel("product-tagline-ko", KOREAN_TAGLINE_MODEL))) return legacy();
   const control = await readModelCapacityCallerControl();
   if (control.mode === "disabled") return legacy();
   if (control.mode !== "open") throw new ModelCapacityDeferredError("draining");

@@ -13,6 +13,7 @@ import { pendingReasonTranslationBatch, prepareReasonTranslationDispatch, type P
 import { prepareReasonTranslationGatewayCall, translateWithReservedReasonGateway } from './agent-review-gateway';
 import type { JobLease } from '@/lib/jobs/control';
 import { roleLeaseFromEnv, type RoleLease } from '@/lib/jobs/role-leader';
+import { textRouteCallable } from "@/lib/llm/serving-contract-store";
 
 type Options = { timeoutMs: number; signal?: AbortSignal; roleLease?: RoleLease };
 export type ReasonTranslationCapacityResult = { kind: 'disabled'; result: TranslateResult } | { kind: 'skipped' }
@@ -31,7 +32,7 @@ export async function translateReasonsWithModelCapacity(value: readonly PendingT
     'ROLE_LEASE_EPOCH','ROLE_LEASE_BATCH_VERSION','ROLE_LEASE_BATCH_EPOCH','ROLE_LEASE_HOST'].map(key => [key, process.env[key]]));
   const legacy = async () => ({ kind: 'disabled' as const,
     result: await translateToKorean(batch.map(item => item.body), scopedRequestTimeout("reason-translate", options.timeoutMs), undefined, options.signal) });
-  if (!process.env.ABCLLM_API_KEY?.trim()) return legacy();
+  if (!textRouteCallable("reason-translate", scopedModel("reason-translate", TRANSLATE_MODEL))) return legacy();
   const control = await readModelCapacityCallerControl();
   if (control.mode === 'disabled') return legacy();
   if (control.mode === 'draining') throw new ModelCapacityDeferredError('draining');
