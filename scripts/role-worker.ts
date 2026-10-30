@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { writeFileSync, renameSync } from 'node:fs';
 import { basename } from 'node:path';
 import { interruptibleSleep, runtimeLog } from './worker';
-import { primaryHandoffDrainMs, superviseWorker, supervisorLimits } from './worker-supervisor';
+import { primaryHandoffDrainMs, superviseWorker, supervisorLimits, type WorkerHealth } from './worker-supervisor';
 import { readRoleLockHolders, readWaitingPrimary, releaseRole, renewRole, tryAcquireRole, yieldRoleToPrimary,
   type RoleCandidate, type RoleLease, type WaitingPrimary } from '@/lib/jobs/role-leader';
 import { batchLeaseAdmission } from '@/lib/jobs/batch-repository';
@@ -28,7 +28,8 @@ type Dependencies = {
   acquire: typeof tryAcquireRole;
   renew: typeof renewRole;
   release?: typeof releaseRole;
-  supervise: (lease: RoleLease, signal: AbortSignal, forceSignal: AbortSignal) => Promise<number>;
+  /** onHealth: 감독의 건강 기록(줄·알린 틱 예산)을 이 boot 에 되돌려 준다 — 넘겨주기 drain 한도가 줄의 예산을 따른다(superviseWorker onHealth) */
+  supervise: (lease: RoleLease, signal: AbortSignal, forceSignal: AbortSignal, onHealth: (health: WorkerHealth) => void) => Promise<number>;
   sleep?: typeof interruptibleSleep;
   /** true/false 는 기존 호출·시험 그대로다. 객체는 그 한 번 읽은 보고서의 트리거이며 다시 조회하지 않는다. */
   checkProgress?: (role: RoleCandidate['role']) => Promise<boolean | ProgressStallTrigger>;
@@ -502,9 +503,13 @@ export async function runRoleCandidate(candidate: RoleCandidate, signal: AbortSi
     let drainTimer: ReturnType<typeof setTimeout> | undefined;
     let startDrain: () => void;
     let drainLimitMs = supervisorLimits(candidate.role).drainMs + 5_000;
+    // 감독이 마지막으로 본 줄(알린 틱 예산 포함). 넘겨주기 drain 은 감독과 같은 한도(primaryHandoffDrainMs(limits, lanes))를 써야
+    // 315초 번역 틱 중 이 boot 가 먼저 drain_timeout 으로 끝나(트리 전체 종료) 미확인을 만들지 않는다
+    let lastLanes: WorkerHealth['lanes'] = undefined;
+    const onHealth = (state: WorkerHealth) => { if (state.lanes?.length) lastLanes = state.lanes; };
     const drainExpired = new Promise<number>(resolve => {
       startDrain = () => {
-        if (abortReason === 'primary_handoff') drainLimitMs = primaryHandoffDrainMs(supervisorLimits(candidate.role)) + 5_000;
+        if (abortReason === 'primary_handoff') drainLimitMs = primaryHandoffDrainMs(supervisorLimits(candidate.role), lastLanes) + 5_000;
         drainTimer = setTimeout(() => {
           drainTimedOut = true;
           runtimeLog('role.supervisor_drain_timeout', candidateLog(candidate, lease.epoch, {
@@ -516,7 +521,7 @@ export async function runRoleCandidate(candidate: RoleCandidate, signal: AbortSi
       active.signal.addEventListener('abort', startDrain, { once: true });
       if (active.signal.aborted) startDrain();
     });
-    try { exitCode = await Promise.race([deps.supervise(lease, active.signal, forceStop.signal), drainExpired]); }
+    try { exitCode = await Promise.race([deps.supervise(lease, active.signal, forceStop.signal, onHealth), drainExpired]); }
     finally {
       ended = true;
       active.signal.removeEventListener('abort', startDrain!);
@@ -663,7 +668,7 @@ async function main() {
       report: (next, currentEpoch) => { phase = next; epoch = currentEpoch; record(); },
       checkAdmission: batchLeaseAdmission, health: state => { runtime = state; }, lockBlockers: readRoleLockHolders,
       waitingPrimary: readWaitingPrimary, yieldRole: yieldRoleToPrimary, handoffStableMs, handoffPollMs,
-      supervise: (lease, signal, forceSignal) => {
+      supervise: (lease, signal, forceSignal, onHealth) => {
         process.env.ROLE_LEASE_ROLE = lease.role;
         process.env.ROLE_LEASE_INSTANCE_ID = lease.instanceId;
         process.env.ROLE_LEASE_BOOT_ID = lease.bootId;
@@ -674,7 +679,7 @@ async function main() {
           process.env.ROLE_LEASE_BATCH_EPOCH = String(lease.batchEpoch);
           process.env.ROLE_LEASE_HOST = lease.host;
         }
-        return superviseWorker(lease.role, { signal, forceSignal, closeDbOnExit: false, ...(processGroup ? { processGroup } : {}) });
+        return superviseWorker(lease.role, { signal, forceSignal, closeDbOnExit: false, onHealth, ...(processGroup ? { processGroup } : {}) });
       },
     });
   } finally {

@@ -6,6 +6,7 @@
  * 반복 실행할 때 쓴다.
  */
 import { basename } from 'node:path';
+import { ensureRuntimeSettings, withRuntimeSettings } from '@/lib/operations/runtime-settings-store';
 import { jobRunOptions, withRuntimeProcess } from './worker';
 
 async function main() {
@@ -25,7 +26,9 @@ async function main() {
     report('running', name);
     await requestJob(name);
     if (signal.aborted) return;
-    const result = await runJob(name, JOBS[name], jobRunOptions(name, { requestedOnly: true, signal }));
+    // 워커 틱과 같은 길: 관리자 실시간 한도를 지금 읽어(TTL 0) 그 판으로 예산을 정하고, 잡은 같은 판에 고정되어 돈다(D3)
+    const snapshot = await ensureRuntimeSettings(0);
+    const result = await withRuntimeSettings(snapshot, () => runJob(name, JOBS[name], jobRunOptions(name, { requestedOnly: true, signal }, snapshot.settings)));
     const state = await getJobState(name);
     report('idle');
     console.log("결과:", result);

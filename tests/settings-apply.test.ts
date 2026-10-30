@@ -3,7 +3,8 @@ import { describeReset } from "@/app/(operator)/admin/settings/reset-diff";
 import { resetChanges } from "@/lib/crawl/settings";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 import { shortSettingsVersion, storedSettingsVersion } from "@/lib/crawl/settings-version";
-import { settingsApplyStatus, SETTINGS_LAG_SECONDS, type ApplyObservation } from "@/lib/operations/settings-apply";
+import { CRAWL_SETTINGS_APPLY, RUNTIME_SETTINGS_APPLY, RUNTIME_SETTINGS_ROLES, runtimeSettingsApplyStatus, settingsApplyStatus, SETTINGS_LAG_SECONDS,
+  type ApplyObservation } from "@/lib/operations/settings-apply";
 
 /** 설정 적용 확인(ADM-19) — 저장한 판을 워커 역할마다 읽었는지 */
 describe("설정 판", () => {
@@ -75,6 +76,64 @@ describe("역할별 적용 상태", () => {
       service("maintenance", { settingsVersion: OLD })], SETTINGS_LAG_SECONDS * 10);
     expect(role(result, "crawler").state).toBe("applied");
     expect(result.roles.map((item) => item.role)).toEqual(["crawler", "reviewer", "publisher", "text"]);
+  });
+
+  it("kind 를 생략하면 크롤 설정이다 — 같은 입력에 같은 결과", () => {
+    const observations = [service("crawler", { settingsVersion: SAVED }), service("reviewer", { settingsVersion: OLD })];
+    expect(settingsApplyStatus({ savedVersion: SAVED, savedAgeSeconds: SETTINGS_LAG_SECONDS + 60, observations, kind: CRAWL_SETTINGS_APPLY }))
+      .toEqual(settingsApplyStatus({ savedVersion: SAVED, savedAgeSeconds: SETTINGS_LAG_SECONDS + 60, observations }));
+  });
+});
+
+/** 실시간 한도(runtime_settings, PR 1a) 의 '읽은 판' — 같은 길, 다른 관측 필드·다섯 역할·env 등록부 배지 */
+describe("실시간 한도의 역할별 적용 상태", () => {
+  const SAVED = "c".repeat(16), OLD = "default", READ_AT = 1_700_000_000_000;
+  const service = (role: string, value: Record<string, unknown>, ageSeconds = 5, instance = "m3"): ApplyObservation =>
+    ({ key: `service:${role}:${instance}`, value: { status: "running", ...value }, ageSeconds });
+  const read = (version: string, registryEnv = false) => ({ runtimeSettingsVersion: version, runtimeSettingsReadAt: READ_AT, runtimeSettingsRegistryEnv: registryEnv });
+  const status = (observations: ApplyObservation[], savedAgeSeconds: number | null = 30) =>
+    runtimeSettingsApplyStatus({ savedVersion: SAVED, savedAgeSeconds, observations });
+  const role = (result: ReturnType<typeof status>, name: string) => result.roles.find((item) => item.role === name)!;
+
+  it("runtimeSettings* 필드를 읽고 maintenance 까지 다섯 역할을 본다 — 크롤 설정 판은 섞이지 않는다", () => {
+    const result = status([...RUNTIME_SETTINGS_ROLES].map((name) => service(name, { settingsVersion: "zzzz", ...read(SAVED) })));
+    expect(result.roles.map((item) => item.role)).toEqual(["crawler", "reviewer", "publisher", "text", "maintenance"]);
+    expect(result.allApplied).toBe(true);
+    expect(result.attention).toBeNull();
+    expect(role(result, "maintenance")).toEqual({ role: "maintenance", label: "생존 확인·지표 집계", reportedVersion: SAVED, observedAt: READ_AT,
+      state: "applied", lagging: false, registryEnv: false });
+    expect(RUNTIME_SETTINGS_APPLY.fields).toEqual({ version: "runtimeSettingsVersion", readAt: "runtimeSettingsReadAt", registryEnv: "runtimeSettingsRegistryEnv" });
+  });
+
+  it("MODEL_REGISTRY_CONFIG env 로 도는 역할은 판을 읽었어도 registryEnv 로 표시한다(경로 한도 저장이 닿지 않는다)", () => {
+    const result = status([service("text", read(SAVED, true)), service("crawler", read(OLD, true))]);
+    expect(role(result, "text")).toMatchObject({ state: "applied", registryEnv: true });
+    expect(role(result, "crawler")).toMatchObject({ state: "waiting", registryEnv: true });
+  });
+
+  it("실시간 한도 판을 싣지 않는 옛 워커는 '확인 안 됨'이고 배지도 없다; 크롤 설정 판만 있어도 같다", () => {
+    const result = status([service("crawler", {}), service("reviewer", { settingsVersion: SAVED, settingsReadAt: READ_AT })], SETTINGS_LAG_SECONDS * 10);
+    expect(role(result, "crawler")).toEqual({ role: "crawler", label: "프로젝트 수집", reportedVersion: null, observedAt: null, state: "unknown", lagging: false });
+    expect(role(result, "reviewer").state).toBe("unknown");
+    expect(result.attention).toBeNull();
+  });
+
+  it("10분이 지나도 옛 판이면 조치할 일 — 실시간 한도 화면의 적용 확인으로 보낸다", () => {
+    const result = status([service("text", read(OLD)), service("maintenance", read(OLD)), service("crawler", read(SAVED))], SETTINGS_LAG_SECONDS + 60);
+    expect(result.attention).toMatchObject({ key: "runtime-settings-apply", tone: "hold", count: 2, href: "/admin/models/limits#apply",
+      title: "저장한 실시간 한도가 워커에 닿지 않음" });
+    expect(result.attention?.detail).toContain("소개·사유 번역·생존 확인·지표 집계 이(가) 실시간 한도를 저장하고 11분");
+    expect(result.attention?.detail).toContain("poll");
+    // 크롤 설정 쪽 글귀는 그대로다
+    const crawl = settingsApplyStatus({ savedVersion: SAVED, savedAgeSeconds: SETTINGS_LAG_SECONDS + 60, observations: [service("text", { settingsVersion: OLD })] });
+    expect(crawl.attention).toMatchObject({ key: "settings-apply", href: "/admin#apply", title: "저장한 설정이 워커에 닿지 않음" });
+    expect(crawl.attention?.detail).toBe("소개·사유 번역 이(가) 설정을 저장하고 11분이 지나도 옛 판으로 돕니다. 설정을 읽는 잡이 돌지 못하고 있는지 운영센터의 역할·작업 표에서 확인하세요.");
+  });
+
+  it("빈 문서(default 판)로 도는 워커와 빈 행은 같은 판 — 저장한 적이 없으면 늦을 것이 없다", () => {
+    const result = runtimeSettingsApplyStatus({ savedVersion: "default", savedAgeSeconds: null, observations: [service("crawler", read("default"))] });
+    expect(role(result, "crawler").state).toBe("applied");
+    expect(role(result, "text").state).toBe("inactive");
   });
 });
 

@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { PrimaryHandoff, ROLE_HANDOFF_MAX_STABLE_MS, ROLE_HANDOFF_POLL_MS, ROLE_HANDOFF_RETRY_WINDOW_MS, ROLE_HANDOFF_STABLE_MS,
   roleHandoffPollMs, roleHandoffStableMs, runRoleCandidate } from '@/scripts/role-worker';
 import type { RoleCandidate, RoleLease } from '@/lib/jobs/role-leader';
+import type { WorkerHealth } from '@/scripts/worker-supervisor';
 
 // 2026-10-22 #597: 같은 릴리스의 예비가 역할을 쥐면 주가 다시 떠도 돌려주지 않았다. 예비가 기다리는 건강한 주에게 drain 뒤 넘긴다.
 const standby: RoleCandidate = { role: 'crawler', instanceId: 'mini-crawler-standby', bootId: 'standby-boot', release: 'r1', kind: 'standby' };
@@ -160,6 +161,42 @@ it('a lease lost during the handoff drain is not yielded and the next election d
   expect(renewals).toBe(4);
   expect(yieldRole).not.toHaveBeenCalled();
   expect(acquire).toHaveBeenCalledTimes(2);
+});
+
+// PR 1a: 넘겨주기 drain 한도는 감독과 같이 줄이 알린 틱 예산을 따른다 — 315초 번역 틱 중 이 boot 가 먼저 drain_timeout 으로 끝나지 않는다
+it.each([[true, 0, 1], [false, 1, 0]] as const)('honours the declared lane budget in the handoff drain (declared=%s → exit %s)', async (declared, expectedExit, expectedYields) => {
+  vi.useFakeTimers();
+  const controller = new AbortController();
+  const lane = { name: 'crawl-fetch', jobs: ['crawl-fetch'], state: 'running' as const, currentJob: 'crawl-fetch', startedAt: 0, pollStartedAt: null,
+    lastProgressAt: 0, budgetMs: 315_000 };
+  const yieldRole = vi.fn(async () => { controller.abort(); return true; });
+  let drainLog: Record<string, unknown> | undefined;
+  const log = vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
+    try {
+      const event = JSON.parse(String(line)) as Record<string, unknown>;
+      if (event.event === 'role.supervisor_drain_timeout') drainLog = event;
+    } catch { /* JSON 이 아닌 줄은 보지 않는다 */ }
+  });
+  const running = runRoleCandidate(standby, controller.signal, {
+    acquire: vi.fn().mockResolvedValueOnce(standbyLease).mockResolvedValue(null), renew: async () => true, sleep: async () => {},
+    supervise: async (_lease, signal, _forceSignal, onHealth) => {
+      // 감독이 heartbeat 마다 건강 기록을 되돌려 준다 — 줄이 315초 예산을 알렸다(없으면 env 하한 180초만 안다)
+      const health: WorkerHealth = { role: 'crawler', pid: 1, childPid: 2, updatedAt: Date.now(), lastHeartbeatAt: Date.now(), lastProgressAt: Date.now(),
+        state: 'running', currentJob: 'crawl-fetch', jobStartedAt: Date.now(), status: 'running', ...(declared ? { lanes: [lane] } : {}) };
+      onHealth(health);
+      await untilAborted(signal);
+      // 감독은 primaryHandoffDrainMs(limits, lanes) = 315 + 45 + 45초까지 기다린다; 자식은 300초 뒤 깨끗이 끝났다(env 한도 180 + 45초보다 길다)
+      await new Promise(resolve => setTimeout(resolve, 300_000));
+      return 0;
+    },
+    waitingPrimary: async () => waiting, yieldRole, handoffStableMs: 15_000, handoffPollMs: 15_000,
+  });
+  await vi.advanceTimersByTimeAsync(600_000);
+  log.mockRestore();
+  expect(await running).toBe(expectedExit);
+  expect(yieldRole).toHaveBeenCalledTimes(expectedYields);
+  if (declared) expect(drainLog).toBeUndefined();
+  else expect(drainLog).toMatchObject({ drainTimeout: true, drainMs: 180_000 + 45_000 + 5_000 });
 });
 
 it('backs off after a handoff the primary did not take, and forgets it after a real failover window', () => {

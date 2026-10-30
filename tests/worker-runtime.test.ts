@@ -6,6 +6,7 @@ import { expect, it, vi } from 'vitest';
 import { interruptibleSleep, jobRunOptions, parseWorkerArgs, runWorker } from '@/scripts/worker';
 import { batchJobsForRole, batchLanesForRole } from '@/lib/jobs/batches';
 import { PRODUCT_TRANSLATION_JOB_BUDGET_MS } from '@/lib/llm/deadline-ladder';
+import { DEFAULT_RUNTIME_SETTINGS } from '@/lib/operations/runtime-settings-schema';
 
 function runtimeGate() {
   let release!: () => void;
@@ -268,6 +269,10 @@ it('gives the publisher batch enough cooperative time below the supervisor deadl
   expect(PRODUCT_TRANSLATION_JOB_BUDGET_MS).toBe(315_000);
   expect(jobRunOptions('crawl-fetch', base)).toEqual({ ...base, budgetMs: 120_000 });
   expect(jobRunOptions('crawl-seed', base)).toEqual({ ...base, budgetMs: 30_000 });
+  // 값의 원천은 실시간 한도 문서(기본값 = 오늘의 상수). 문서에 없는 잡은 options 그대로(runner 25초) — crawl-tagline 은 아직 줄이 없다
+  expect(jobRunOptions('crawl-publish', base, DEFAULT_RUNTIME_SETTINGS)).toEqual({ ...base, budgetMs: 120_000 });
+  expect(jobRunOptions('crawl-tagline', base, DEFAULT_RUNTIME_SETTINGS)).toEqual(base);
+  expect(jobRunOptions('heartbeat', base)).toEqual(base);
 });
 
 it('re-polls only the crawler source lane without sleeping when the runner verified a continuation', async () => {
