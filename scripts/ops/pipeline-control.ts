@@ -40,9 +40,14 @@ export async function pipelineControlMain(args: readonly string[], env: Readonly
     // Route judgments (status table, OPEN) use admin serving contracts too: this process's DATABASE_URL, env-only when absent.
     await (await import("@/lib/llm/serving-contract-store")).ensureServingContracts(0);
     if (command.name === "status") {
+      // The runtime-settings 판 this process reads (same reload family as the serving contracts; 'default' until the row is readable).
+      const [{ ensureRuntimeSettings }, { formatRuntimeSettingsLine, runtimeSettingsReadback }] = await Promise.all([
+        import("@/lib/operations/runtime-settings-store"), import("@/lib/operations/pipeline-control-status")]);
+      const runtimeSettings = runtimeSettingsReadback(await ensureRuntimeSettings(0), env);
       const snapshot = await repository.readControlSnapshot(database);
       const name = command.area ? `${command.area} status` : "status";
-      write(command.json ? `${JSON.stringify({ command: name, snapshot })}\n` : formatControlStatus(snapshot, models, command.area));
+      write(command.json ? `${JSON.stringify({ command: name, snapshot, runtimeSettings })}\n`
+        : `${formatRuntimeSettingsLine(runtimeSettings)}\n${formatControlStatus(snapshot, models, command.area)}`);
       return 0;
     }
     const result = await repository.runPipelineControl(database, command, policy, models);
