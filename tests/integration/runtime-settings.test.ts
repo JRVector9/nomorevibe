@@ -6,6 +6,7 @@ import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import * as schema from "@/lib/db/schema";
 import { TEST_DATABASE_URL } from "./setup";
+import { RUNTIME_SETTINGS_APPLY } from "@/lib/operations/settings-apply";
 
 /*
  * PR 1a WP-A: runtime_settings(0152) 저장 → 감사 → 읽기, revision compare-and-set, DR fence, 같은 reload 로 워커가 읽는 판, 적용 확인.
@@ -178,6 +179,6 @@ it("apply status compares the saved 판 with each role's reported runtimeSetting
   await client`UPDATE runtime_settings SET updated_at = clock_timestamp() - interval '11 minutes' WHERE id = 1`;
   apply = await readRuntimeSettingsApply();
   expect(role("reviewer").lagging).toBe(true);
-  expect(apply.attention).toMatchObject({ key: "settings-apply", count: 1, href: RUNTIME_SETTINGS_APPLY_HREF, title: "저장한 실시간 한도가 워커에 닿지 않음" });
+  expect(apply.attention).toMatchObject({ key: RUNTIME_SETTINGS_APPLY.key, count: 1, href: RUNTIME_SETTINGS_APPLY_HREF, title: RUNTIME_SETTINGS_APPLY.attention.title });
   expect(apply.attention?.href).toBe("/admin/models/limits#apply");
 });

@@ -1,6 +1,6 @@
-import { and, eq, inArray, like, or, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
-import { operationsAudit, operationsObservations, runtimeSettings as runtimeSettingsTable } from "@/lib/db/schema";
+import { operationsAudit, runtimeSettings as runtimeSettingsTable } from "@/lib/db/schema";
 import { overlaidModelDefinitions, type ModelDefinition } from "@/lib/llm/model-registry";
 import { ensureServingContracts, servingContractSnapshot } from "@/lib/llm/serving-contract-store";
 import { logger } from "@/lib/observability/logger";
@@ -8,7 +8,7 @@ import { adminAuditRow, settingsChanges } from "./admin-log";
 import { DrWriterFencedError, writerSiteActive } from "./dr/epoch";
 import { RUNTIME_SETTING_GROUPS, RUNTIME_SETTINGS_VERSION, resolveRuntimeSettings, runtimeSettingLabel, storedSettingsVersion,
   type RuntimeSettingGroup, type RuntimeSettings } from "./runtime-settings-schema";
-import { SETTINGS_ROLES, settingsApplyStatus, type SettingsApply } from "./settings-apply";
+import { RUNTIME_SETTINGS_ROLES, readApplyObservations, runtimeSettingsApplyStatus, type SettingsApply } from "./settings-apply";
 
 /**
  * runtime_settings 행(0152)의 DB 읽기·저장·감사·적용 확인 — PR 1a WP-A. 서명은 계약으로 고정되어 있다(live-settings-plan §7).
@@ -146,26 +146,16 @@ export async function saveRuntimeSettings(patch: unknown, actor: string, options
  * 행이 없으면(0152 전) 워커도 기본값("default")으로 돈다 — 같은 판이다.
  */
 export async function readRuntimeSettingsApply(): Promise<SettingsApply> {
+  // WP-B 의 일반화된 적용 상태(RUNTIME_SETTINGS_APPLY: 역할 5개·runtimeSettings* 필드·env 등록부 배지)를 그대로 쓴다.
   const [saved, observations] = await Promise.all([
     db.select({
       values: runtimeSettingsTable.values,
       // updated_at 은 timestamptz 다 — 경과는 DB 시계로 잰다
       ageSeconds: sql<number>`extract(epoch from (clock_timestamp() - ${runtimeSettingsTable.updatedAt}))::double precision`,
     }).from(runtimeSettingsTable).where(eq(runtimeSettingsTable.id, ROW_ID)),
-    db.select({
-      key: operationsObservations.key, value: operationsObservations.value,
-      // observed_at 은 시간대 없는 UTC 벽시계다(settings-apply.ts 와 같다)
-      ageSeconds: sql<number>`extract(epoch from ((now() at time zone 'utc') - ${operationsObservations.observedAt}))::double precision`,
-    }).from(operationsObservations)
-      .where(or(like(operationsObservations.key, "service:%"), inArray(operationsObservations.key, [...SETTINGS_ROLES]))),
+    readApplyObservations(RUNTIME_SETTINGS_ROLES),
   ]);
   const row = saved[0];
-  const status = settingsApplyStatus({
-    savedVersion: storedSettingsVersion(row?.values),
-    // 심은 행(migration)·운영자 저장 모두 updated_at 이 있다; 행이 없으면 저장한 적이 없다
-    savedAgeSeconds: row ? Number(row.ageSeconds) : null,
-    observations: observations.map(item => ({ key: item.key, ageSeconds: Number(item.ageSeconds),
-      value: { ...item.value, settingsVersion: item.value.runtimeSettingsVersion, settingsReadAt: item.value.runtimeSettingsReadAt } })),
-  });
-  return { ...status, attention: status.attention ? { ...status.attention, title: "저장한 실시간 한도가 워커에 닿지 않음", href: RUNTIME_SETTINGS_APPLY_HREF } : null };
+  // 심은 행(migration)·운영자 저장 모두 updated_at 이 있다; 행이 없으면 저장한 적이 없다
+  return runtimeSettingsApplyStatus({ savedVersion: storedSettingsVersion(row?.values), savedAgeSeconds: row ? Number(row.ageSeconds) : null, observations });
 }
