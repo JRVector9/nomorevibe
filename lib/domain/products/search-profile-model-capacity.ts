@@ -1,7 +1,7 @@
 import { scopedRequestTimeout } from "@/lib/llm/model-registry";
 import { randomUUID } from "node:crypto";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
-import { findOwnPendingModelRequest, requestTextProfileModelSlot, cancelReservedModelSlot,
+import { reconcileGatewayNotStarted, findOwnPendingModelRequest, requestTextProfileModelSlot, cancelReservedModelSlot,
   reconcileTextProfileGatewayTerminal, markModelDispatchIndeterminate } from "@/lib/llm/capacity-repository";
 import { markUnsettledDispatch } from "@/lib/llm/capacity-unsettled";
 import { writeKeywordsWithReservedGateway } from "@/lib/crawl/agent-review-gateway";
@@ -62,10 +62,11 @@ export async function writeKeywordsWithModelCapacity(task: ProfileTask, lease: J
   }
   try {
     if (native.terminal) await reconcileTextProfileGatewayTerminal(native.terminal);
+    else if (native.notStarted) await reconcileGatewayNotStarted(native.notStarted);
     else if (!await markModelDispatchIndeterminate(dispatch, captured.signal?.aborted ? "local_abort" : "transport_unknown"))
       throw new Error("text_profile_dispatch_not_marked");
   } catch (error) {
-    if (native.terminal) await markUnsettledDispatch(dispatch);
+    if (native.terminal || native.notStarted) await markUnsettledDispatch(dispatch);
     if (!native.result.ok) throw new AggregateError([native.result, error], "profile result and terminal recording failed");
     throw error;
   }

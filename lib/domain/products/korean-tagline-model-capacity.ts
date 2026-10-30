@@ -3,7 +3,7 @@ import { scopedModel } from "@/lib/llm/model-registry";
 import { randomUUID } from "node:crypto";
 import { KOREAN_TAGLINE_MODEL, translateTaglinesToKorean } from "@/lib/crawl/translate";
 import { prepareProductTaglineKoGatewayCall, translateTaglinesWithReservedGateway } from "@/lib/crawl/agent-review-gateway";
-import { readModelCapacityCallerControl, findOwnPendingModelRequest, requestProductTaglineKoModelSlot,
+import { reconcileGatewayNotStarted, readModelCapacityCallerControl, findOwnPendingModelRequest, requestProductTaglineKoModelSlot,
   findOwnPendingProductTextRequests, cancelOwnPendingProductTextRequest,
   cancelReservedModelSlot, markModelDispatchIndeterminate, reconcileProductTaglineKoGatewayTerminal } from "@/lib/llm/capacity-repository";
 import { markUnsettledDispatch } from "@/lib/llm/capacity-unsettled";
@@ -102,10 +102,11 @@ export async function translateKoreanTaglinesWithModelCapacity(value: readonly K
   // Physical history settles before current job/signal/domain writer decisions.
   try {
     if (native.terminal) await reconcileProductTaglineKoGatewayTerminal(native.terminal);
+    else if (native.notStarted) await reconcileGatewayNotStarted(native.notStarted);
     else if (!await markModelDispatchIndeterminate(prepared.dispatch, options.signal?.aborted ? "local_abort" : "transport_unknown"))
       throw new Error("product_tagline_ko_dispatch_not_marked");
   } catch (cleanup) {
-    if (native.terminal) await markUnsettledDispatch(prepared.dispatch);
+    if (native.terminal || native.notStarted) await markUnsettledDispatch(prepared.dispatch);
     if (!native.result.ok) throw new AggregateError([native.result, cleanup], "product_tagline_ko_result_cleanup_failed");
     throw cleanup;
   }

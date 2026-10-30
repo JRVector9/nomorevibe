@@ -174,7 +174,7 @@ node --import tsx scripts/ops/pipeline-control.ts stage complete --stage=ai2 --d
 
 먼저 알아야 할 것:
 - **전역 스위치다. route 단위 mode가 없다.** open이 되면 policy에 없는 route는 `unmapped`, 계약이 없는 route는 `provider_contract_unavailable`로 호출 전에 미뤄진다. 기존 전송으로 돌아가지 않는다. 그래서 "route별"은 열기 전 계약·매핑을 route마다 확인한다는 뜻이고, "text pool부터"는 처음 한도를 보수적으로 두고 text pool 한도부터 올린다는 뜻이다.
-- dispatched·indeterminate 행은 TTL·정책 변경·disabled로 풀리지 않는다. DR 밖 회수 경로는 아직 없다(재고 조사 3a·3b·2). 살아 있는 프로세스의 timeout·abort도 영구 indeterminate가 된다.
+- dispatched·indeterminate 행은 TTL·정책 변경·disabled로 풀리지 않는다. DR 밖 회수 경로는 아직 없다(재고 조사 3a·3b·2). 살아 있는 프로세스의 timeout·abort도 영구 indeterminate가 된다. 예외는 요청 바이트가 하나도 나가지 않은 것이 증명된 실패(연결 거부·DNS 실패·connect 시간 초과 — 엔진이 꺼져 있거나 재시작 중)다: 2026-10-30부터 그 호출은 `gateway_not_started`로 정산되어 칸을 바로 돌려준다(`lib/llm/gateway-not-started.ts`). 요청이 소켓에 쓰인 뒤의 실패는 그대로 indeterminate다.
 - 선행 결정·작업: PR05d(gateway 9 route 계약), PR05c-6(CLI 계약), abcLLM PR3(번역 4경로), product-audit abcllm 분기 결정(지금은 admission만 → 항상 `admission_only`), 슬롯 회수 결정, AI2 items 전환(§2).
 
 ```sh

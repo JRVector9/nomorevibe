@@ -3,7 +3,7 @@ import { scopedModel } from "@/lib/llm/model-registry";
 import { randomUUID } from "node:crypto";
 import { PRODUCT_TRANSLATION_MODEL, translateProductFields } from "@/lib/crawl/translate";
 import { prepareProductTranslationGatewayCall, translateProductFieldsWithReservedGateway } from "@/lib/crawl/agent-review-gateway";
-import { readModelCapacityCallerControl, findOwnPendingModelRequest, requestProductTranslationModelSlot,
+import { reconcileGatewayNotStarted, readModelCapacityCallerControl, findOwnPendingModelRequest, requestProductTranslationModelSlot,
   findOwnPendingProductTextRequests, cancelOwnPendingProductTextRequest,
   cancelReservedModelSlot, markModelDispatchIndeterminate, reconcileProductTranslationGatewayTerminal } from "@/lib/llm/capacity-repository";
 import { markUnsettledDispatch } from "@/lib/llm/capacity-unsettled";
@@ -105,10 +105,11 @@ export async function translateProductFieldsWithModelCapacity(value: readonly Pr
   // Physical history settles before current job/signal/domain writer decisions.
   try {
     if (native.terminal) await reconcileProductTranslationGatewayTerminal(native.terminal);
+    else if (native.notStarted) await reconcileGatewayNotStarted(native.notStarted);
     else if (!await markModelDispatchIndeterminate(prepared.dispatch, options.signal?.aborted ? "local_abort" : "transport_unknown"))
       throw new Error("product_translation_dispatch_not_marked");
   } catch (cleanup) {
-    if (native.terminal) await markUnsettledDispatch(prepared.dispatch);
+    if (native.terminal || native.notStarted) await markUnsettledDispatch(prepared.dispatch);
     if (!native.result.ok) throw new AggregateError([native.result, cleanup], "product_translation_result_cleanup_failed");
     throw cleanup;
   }

@@ -2,7 +2,7 @@ import { scopedRequestTimeout } from "@/lib/llm/model-registry";
 import { scopedModel } from "@/lib/llm/model-registry";
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { readModelCapacityCallerControl, findOwnPendingModelRequest, requestReasonTranslationModelSlot,
+import { reconcileGatewayNotStarted, readModelCapacityCallerControl, findOwnPendingModelRequest, requestReasonTranslationModelSlot,
   findOwnPendingReasonTranslationRequests, cancelOwnPendingReasonTranslationRequest,
   cancelReservedModelSlot, markModelDispatchIndeterminate, reconcileReasonTranslationGatewayTerminal } from '@/lib/llm/capacity-repository';
 import { markUnsettledDispatch } from '@/lib/llm/capacity-unsettled';
@@ -103,11 +103,12 @@ export async function translateReasonsWithModelCapacity(value: readonly PendingT
   // or the business signal aborted. Only the later writer decides current duty.
   try {
     if (response.terminal) await reconcileReasonTranslationGatewayTerminal(response.terminal);
+    else if (response.notStarted) await reconcileGatewayNotStarted(response.notStarted);
     else await markModelDispatchIndeterminate(dispatch, options.signal?.aborted ? 'local_abort' : 'transport_unknown');
   } catch (cleanup) {
-    if (response.terminal) await markUnsettledDispatch(dispatch);
+    if (response.terminal || response.notStarted) await markUnsettledDispatch(dispatch);
     if (!response.result.ok) throw new AggregateError([response.result, cleanup], 'reason_translation_result_cleanup_failed');
     throw cleanup;
   }
-  return { kind: 'ready', batch: checked, result: response.result, expectation, unknown: response.terminal === null };
+  return { kind: 'ready', batch: checked, result: response.result, expectation, unknown: !response.terminal && !response.notStarted };
 }

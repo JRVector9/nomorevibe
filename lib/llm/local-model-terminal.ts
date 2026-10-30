@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { consumeLocalModelDispatch } from "./capacity-repository";
 import { gatewayFetch } from "./gateway-local-end-fetch";
+import { GatewayNotSentError, gatewayNotSentWitness } from "./gateway-not-started";
 import { localModelContractHash, localModelServingContractSchema, type LocalModelServingContract } from "./local-model-serving-contract";
 import { localModelTerminalEvidenceSchema, type LocalModelDispatch, type LocalModelTerminalEvidence } from "./local-model-capacity-contract";
 
@@ -54,8 +55,16 @@ export async function requestReservedLocalModel(value: LocalModelDispatch, contr
   if (init.signal?.aborted) throw new DOMException("local_model_cancelled", "AbortError");
   const headersForRequest = new Headers(init.headers);
   headersForRequest.set("x-nmv-relay-request-id", dispatch.requestId);
-  const response = request ? await request(url, { ...init, headers: headersForRequest, redirect: "error" }) : await gatewayFetch(dispatch.requestId, url,
-    { method: "POST", headers: Object.fromEntries(headersForRequest.entries()), body: init.body, signal: init.signal, redirect: "error" });
+  const wire: string = init.body, send = () => request ? request(url, { ...init, headers: headersForRequest, redirect: "error" })
+    : gatewayFetch(dispatch.requestId, url, { method: "POST", headers: Object.fromEntries(headersForRequest.entries()), body: wire, signal: init.signal, redirect: "error" });
+  let response: Awaited<ReturnType<typeof send>>;
+  try { response = await send(); }
+  catch (error) {
+    // 요청 바이트 0 이 증명된 실패(엔진 다운·DNS)만 not_started 증인을 싣는다; 호출부는 원래 오류(cause)를 지금과 같이 다룬다.
+    const witness = gatewayNotSentWitness(dispatch, error);
+    if ("notStarted" in witness) throw new GatewayNotSentError(witness.notStarted, error);
+    throw error;
+  }
   const reader = response.body?.getReader();
   const chunks: Uint8Array[] = [];
   let bytes = 0;

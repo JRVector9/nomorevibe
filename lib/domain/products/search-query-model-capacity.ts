@@ -3,7 +3,7 @@ import { scopedModel } from "@/lib/llm/model-registry";
 import { randomUUID } from "node:crypto";
 import { SEARCH_QUERY_MODEL } from "@/lib/crawl/translate";
 import { prepareWebsearchQueryGatewayCall, translateQueryWithReservedGateway } from "@/lib/crawl/agent-review-gateway";
-import { readModelCapacityCallerControl, findOwnPendingModelRequest, requestWebsearchQueryModelSlot, cancelReservedModelSlot,
+import { reconcileGatewayNotStarted, readModelCapacityCallerControl, findOwnPendingModelRequest, requestWebsearchQueryModelSlot, cancelReservedModelSlot,
   markModelDispatchIndeterminate, reconcileWebsearchQueryGatewayTerminal } from "@/lib/llm/capacity-repository";
 import { markUnsettledDispatch } from "@/lib/llm/capacity-unsettled";
 import { modelCapacityRequestIdentitySchema, websearchQueryInputHash, websearchQueryLogicalWorkKey } from "@/lib/llm/capacity";
@@ -86,9 +86,10 @@ async function translateOnce(target: WebsearchQueryTarget, timeoutMs: number): P
   // 물리 호출의 끝(정산 또는 full C)을 먼저 남기고, 그 뒤에 캐시를 쓴다 — 캐시 쓰기 실패가 정산을 되돌리지 않는다
   try {
     if (native.terminal) await reconcileWebsearchQueryGatewayTerminal(native.terminal);
+    else if (native.notStarted) await reconcileGatewayNotStarted(native.notStarted);
     else if (!await markModelDispatchIndeterminate(prepared.dispatch, "transport_unknown")) throw new Error("websearch_query_dispatch_not_marked");
   } catch (cleanup) {
-    if (native.terminal) await markUnsettledDispatch(prepared.dispatch);
+    if (native.terminal || native.notStarted) await markUnsettledDispatch(prepared.dispatch);
     if (!native.result.ok) throw new AggregateError([native.result, cleanup], "websearch_query_result_cleanup_failed");
     throw cleanup;
   }
