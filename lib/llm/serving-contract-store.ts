@@ -83,6 +83,15 @@ export function servingContractAuth(routeId: string, model: string): { mode: Ser
   return row ? { mode: row.auth, apiKey: row.apiKey, transport: row.transport } : null;
 }
 
+/**
+ * A text route can call its model: an engine connected directly (admin contract, transport direct — its own stored key or none),
+ * else the abcLLM gateway key. Replaces the old "ABCLLM_API_KEY is set" gate, so removing the gateway key stops nothing that
+ * no longer goes through the gateway.
+ */
+export function textRouteCallable(routeId: string, model: string): boolean {
+  return servingContractAuth(routeId, model)?.transport === "direct" || !!process.env.ABCLLM_API_KEY?.trim();
+}
+
 /** Tests and replay: pin a snapshot and stop DB reloads. Pass null to restore normal loading. */
 export function setServingContractSnapshotForTest(rows: readonly (Omit<StoredServingContract, "transport"> & { transport?: ServingContractTransport })[] | null,
   registry: readonly unknown[] = []): void {

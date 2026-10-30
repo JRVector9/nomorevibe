@@ -15,6 +15,7 @@ import type { JobLease } from "@/lib/jobs/control";
 import { roleLeaseFromEnv, type RoleLease } from "@/lib/jobs/role-leader";
 import type { KoreanTaglineBatch } from "./korean-tagline";
 import type { ProductTranslationWriteExpectation } from "./translations";
+import { textRouteCallable } from "@/lib/llm/serving-contract-store";
 
 export type ProductTranslationCapacityResult = { kind: "skipped" } | {
   kind: "result"; result: KoreanTaglineBatch; expectation?: ProductTranslationWriteExpectation; batch?: readonly ProductTranslationTask[];
@@ -33,7 +34,7 @@ export async function translateProductFieldsWithModelCapacity(value: readonly Pr
     text: translationSourceText(task.source, task.field) }));
   const legacy = async () => ({ kind: "result" as const,
     result: await translateProductFields(items, scopedRequestTimeout("product-translate", options.timeoutMs), undefined, options.signal, scopedModel("product-translate", PRODUCT_TRANSLATION_MODEL)) });
-  if (!process.env.ABCLLM_API_KEY?.trim()) return legacy();
+  if (!textRouteCallable("product-translate", scopedModel("product-translate", PRODUCT_TRANSLATION_MODEL))) return legacy();
   const control = await readModelCapacityCallerControl();
   if (control.mode === "disabled") return legacy();
   if (control.mode !== "open") throw new ModelCapacityDeferredError("draining");

@@ -12,6 +12,7 @@ import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { prepareCrawlTaglineDispatch, prepareCrawlTaglineHistory, type TaglineTask, type CrawlTaglineWriteExpectation } from "./taglines";
 import type { JobLease } from "@/lib/jobs/control";
 import { roleLeaseFromEnv, type RoleLease } from "@/lib/jobs/role-leader";
+import { textRouteCallable } from "@/lib/llm/serving-contract-store";
 
 export type CrawlTaglineCapacityOutcome = { kind: "result"; result: TaglineResult; askOrdinal: 1 | 2;
   parent: CrawlTaglineParent | null; expectation: CrawlTaglineWriteExpectation };
@@ -27,7 +28,7 @@ export async function writeCrawlTaglineWithModelCapacity(value: TaglineTask, job
   if (previous && (previous.askOrdinal !== 1 || !previous.result.ok || previous.result.tagline))
     throw new Error("invalid_crawl_tagline_second_ask");
   if (previous && !previous.parent) throw new ModelCapacityDeferredError("dispatched");
-  if (!process.env.ABCLLM_API_KEY?.trim() && !previous) return { kind: "disabled" };
+  if (!textRouteCallable("crawl-tagline", scopedModel("crawl-tagline", TAGLINE_MODEL)) && !previous) return { kind: "disabled" };
   const control = await readModelCapacityCallerControl();
   if (control.mode === "disabled" && !previous) return { kind: "disabled" };
   if (control.mode !== "open") throw new ModelCapacityDeferredError(control.mode === "draining" ? "draining" : "disabled");
