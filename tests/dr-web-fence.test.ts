@@ -371,7 +371,8 @@ it("every admin server action and every write route handler goes through the web
   // Oracle 한국어 탐색 설정(status/actions.ts)도 같은 쓰기 관문으로 저장한다.
   // admin/models: stage pool save, model probe and admission control add three guarded actions.
   // admin/models/contracts: serving contract save, switch-off and the engine readback add three more.
-  expect(wrapped).toBe(89);
+  // 0151(2026-10-30) admin/models/unknown-review-actions.ts: '확인 못함 — 사람 검토' 검토 완료(closeUnknownReview) 하나가 더해졌다.
+  expect(wrapped).toBe(90);
   const routes = files.filter(file => file.endsWith(`${path.sep}route.ts`));
   for (const file of routes) {
     const source = readFileSync(file, "utf8");

@@ -309,28 +309,31 @@ it("serializes overlapping product targets on two actual blocked backends and gr
   }
 }));
 
-it("preserves unknown full C across changed identity and fences disjoint work behind old unbound dispatch", exercise(async () => {
+it("preserves unknown full C across changed identity; an unknown fences neither overlapping nor disjoint work, an in-flight unbound dispatch still does (2026-10-30)", exercise(async () => {
   await install(); const batch = members(21, 32), product: Batch = { kind: "product", members: batch }, value = await request(product);
   const owned = await dispatch(value, batch);
   expect(await tracked(markModelDispatchIndeterminate(owned, "transport_unknown"))).toBe(true);
   const before = await rawRequest(value.requestId), events = await rawEvents(value.requestId);
   expect(before).toMatchObject({ state: "indeterminate", token: owned.token, dispatch_binding: { chargedTokens: 8192, totalTokenBound: 8192 } });
+  // 2026-10-30 결정: 같은 멤버(제품 21)의 미확인 행은 바뀐 identity(모델 B·새 세대·다른 source)의 재접수를 막지 않는다 — 옛 행의 C(binding·charge)·event 는 그대로다.
   const changed: Batch = { kind: "product", members: [{ ...batch[0], slug: "later-generation", sourceIdentityHash: hashes[3], sourceHash: hashes[3],
-    cache: { kind: "present", rowIdentityHash: hashes[3], attempts: 15, qualityRejections: 9 } }] }, refused = await request(changed, modelB);
-  expect(await ask(refused, changed)).toEqual({ kind: "deferred", reason: "capacity" });
-  expect(await rawRequest(refused.requestId)).toBeUndefined(); expect(await rawEvents(refused.requestId)).toEqual([]);
+    cache: { kind: "present", rowIdentityHash: hashes[3], attempts: 15, qualityRejections: 9 } }] }, readmitted = await request(changed, modelB);
+  expect(await tracked(cancelReservedModelSlot(granted(await ask(readmitted, changed))))).toBe(true);
   expect(await rawRequest(value.requestId)).toEqual(before); expect(await rawEvents(value.requestId)).toEqual(events);
   const separate: Batch = { kind: "product", members: members(43) }, separateValue = await request(separate);
   expect(await tracked(cancelReservedModelSlot(granted(await ask(separateValue, separate))))).toBe(true);
   const unbound: Batch = { kind: "unbound" }, generic = await request(unbound);
   const started = await tracked(beginModelDispatch(granted(await ask(generic, unbound))));
   expect(started.kind).toBe("dispatched"); if (started.kind !== "dispatched") throw new Error("tagline_ko_ledger_generic_dispatch_required");
-  expect(await tracked(markModelDispatchIndeterminate(started.dispatch, "transport_unknown"))).toBe(true);
-  const genericBefore = await rawRequest(generic.requestId), genericEvents = await rawEvents(generic.requestId);
-  expect(genericBefore).toMatchObject({ state: "indeterminate", logical_work_key: null, logical_member_keys: null, dispatch_binding: null });
+  // 결과를 모르는 실제 전송(dispatched)인 unbound 행은 분리된 작업까지 경로 전체를 막는다(행도 event 도 만들지 않는다).
   const newDisjoint: Batch = { kind: "product", members: members(54) }, next = await request(newDisjoint, modelB);
   expect(await ask(next, newDisjoint)).toEqual({ kind: "deferred", reason: "capacity" });
   expect(await rawRequest(next.requestId)).toBeUndefined(); expect(await rawEvents(next.requestId)).toEqual([]);
+  // 2026-10-30 결정: 그 전송이 미확인이 되면 fence 가 아니다 — 같은 요청이 들어가고 미확인 행·근거는 사람 검토용으로 그대로 남는다.
+  expect(await tracked(markModelDispatchIndeterminate(started.dispatch, "transport_unknown"))).toBe(true);
+  const genericBefore = await rawRequest(generic.requestId), genericEvents = await rawEvents(generic.requestId);
+  expect(genericBefore).toMatchObject({ state: "indeterminate", logical_work_key: null, logical_member_keys: null, dispatch_binding: null });
+  expect(await tracked(cancelReservedModelSlot(granted(await ask(next, newDisjoint))))).toBe(true);
   expect(await rawRequest(generic.requestId)).toEqual(genericBefore); expect(await rawEvents(generic.requestId)).toEqual(genericEvents);
   expect(await rawRequest(value.requestId)).toEqual(before); expect(await rawEvents(value.requestId)).toEqual(events);
 }));

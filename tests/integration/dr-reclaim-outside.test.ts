@@ -253,8 +253,18 @@ it("local_call_ended: a live process whose gateway call timed out records its ow
   const [fact] = await l`SELECT from_state, to_state, reason, evidence FROM model_capacity_events WHERE request_id = ${row.request_id}::uuid AND kind = 'dispatch_local_ended'`;
   expect(fact).toEqual({ from_state: "indeterminate", to_state: "indeterminate", reason: null, evidence: { version: 1, kind: "gateway_local_end",
     requestId: row.request_id, owner: { instanceId: row.owner_instance_id, bootId: row.owner_boot_id }, bindingHash: row.dispatch_binding_hash, dispatches: 1, terminals: 1 } });
-  // 한도 1: 로컬 종료만으로는 점유가 그대로다(정책 판정 전).
-  await expect(translateQueryWithModelCapacity(target("강아지 산책 기록"), 300)).rejects.toMatchObject({ reason: "capacity" });
+  // 2026-10-30 결정: 호출자 기한(client_timeout)으로 남은 미확인 행은 점유가 아니다 — 한도 1 이어도 다음 요청은 바로 전송된다
+  // (게이트웨이가 여전히 답하지 않으니 그 행도 미확인으로 남아 사람 검토로 간다). 미확인 행은 그대로 보존된다(정책 판정 전).
+  expect((await l`SELECT reason FROM model_capacity_events WHERE request_id = ${row.request_id}::uuid AND kind = 'dispatch_indeterminate'`)[0].reason).toBe("client_timeout");
+  const dog = target("강아지 산책 기록");
+  expect(await translateQueryWithModelCapacity(dog, 300)).toMatchObject({ kind: "result", result: { ok: false } });
+  expect(await rowOf(dog.cacheKey)).toMatchObject({ state: "indeterminate", owner_instance_id: fixture.owner!.instanceId });
+  // 같은 작업의 재접수도 미확인 행에 막히지 않는다(DB 인덱스·fence 모두 미확인을 보지 않는다): 게이트웨이가 답하면 새 요청이 정상 종료한다.
+  gatewayReply = response => response.end(JSON.stringify(envelope("dog walk log | walking tracker")));
+  expect(await translateQueryWithModelCapacity(dog, 5_000)).toMatchObject({ kind: "result", result: { ok: true } });
+  expect(await rowOf(dog.cacheKey)).toMatchObject({ state: "settled" });
+  gatewayReply = () => {};
+  expect(await rowOf(first.cacheKey)).toMatchObject({ state: "indeterminate", request_id: row.request_id });
   // 정책이 없으면 provider_bound 로 보고 증명된 기한 없이는 풀지 않는다. 기한이 있으면 그만큼 기다린다.
   expect((await readReclaimReport(new Map(), 1)).model.rows.find(item => item.requestId === row.request_id))
     .toMatchObject({ status: "policy_blocked", evidence: "local_call_ended", reason: "provider_deadline_unknown" });
@@ -284,9 +294,10 @@ it("local_call_ended: a live process whose gateway call timed out records its ow
   await expect(l`INSERT INTO model_capacity_events (request_id, kind, epoch, revision, policy_hash, from_state, to_state, evidence)
     SELECT request_id, kind, epoch, revision, policy_hash, from_state, to_state, evidence FROM model_capacity_events
     WHERE request_id = ${row.request_id}::uuid AND kind = 'dispatch_local_ended'`).rejects.toMatchObject({ code: "23505" });
-  // 풀린 자리로 대기열 머리(앞서 미뤄진 같은 owner 의 요청)가 실제로 나간다.
-  gatewayReply = response => response.end(JSON.stringify(envelope("dog walk log | walking tracker")));
-  expect(await translateQueryWithModelCapacity(target("강아지 산책 기록"), 5_000)).toMatchObject({ kind: "result", result: { ok: true } });
+  // 같은 정책 판정은 두 번째 미확인 행(강아지 산책 기록, 같은 budget)도 같은 local_call_ended 근거로 함께 닫는다 — 법의학 정산은 그대로 남는다.
+  expect(released.rows.filter(item => item.released)).toHaveLength(2);
+  expect(await l`SELECT state FROM model_capacity_requests WHERE logical_member_keys && ARRAY[${`websearch-query:${dog.cacheKey}`}]::text[] ORDER BY queue_ordinal`)
+    .toEqual([{ state: "withdrawn" }, { state: "settled" }]);
 
   // 소유자가 아닌 handle 은 같은 프로세스에 증인이 있어도 사실을 남기지 못한다. 소유자의 handle 만 남긴다.
   gatewayReply = () => {};

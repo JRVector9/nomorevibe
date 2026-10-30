@@ -36,7 +36,7 @@ function reviewerOwner() {
 /** 같은 work 의 대기 요청은 같은 requestId 로 다시 묻는다(순번 유지). 이미 dispatch 된 호출은 다시 띄우지 않는다. */
 async function requestSlot(identity: ModelCapacityRequestIdentity, target: CliTarget): Promise<Extract<ModelSlotResult, { kind: 'granted' }>> {
   const pending = await findOwnPendingModelRequest(identity);
-  if (pending && (pending.state === 'dispatched' || pending.state === 'indeterminate')) throw new ModelCapacityDeferredError('dispatched');
+  if (pending?.state === 'dispatched') throw new ModelCapacityDeferredError('dispatched');
   const slot = await requestCliModelSlot({ ...identity, requestId: pending?.requestId ?? randomUUID() }, target);
   if (slot.kind !== 'granted') throw new ModelCapacityDeferredError(slot.reason);
   return slot;

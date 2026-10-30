@@ -265,28 +265,34 @@ it("serializes overlapping batches on two actual waiting backends across owner b
   }
 }));
 
-it("keeps unknown full C fenced across identity changes and blocks a disjoint set behind an old unbound reason", exercise(async () => {
+it("keeps unknown full C across identity changes; an unknown fences neither overlapping nor disjoint sets, an in-flight unbound reason still does (2026-10-30)", exercise(async () => {
   await install(); const batch = members(0, 1), value = await request(batch), owned = await dispatch(value, batch);
   expect(await tracked(markModelDispatchIndeterminate(owned, "transport_unknown"))).toBe(true);
   const before = await rawRequest(value.requestId), beforeEvents = await admin`SELECT to_jsonb(e) AS row FROM model_capacity_events e
     WHERE request_id=${value.requestId}::uuid ORDER BY id`;
   expect(before).toMatchObject({ state: "indeterminate", token: owned.token, dispatch_binding: { chargedTokens: 8192, totalTokenBound: 8192 } });
   await install({ ...policy, globalLimit: 5, providerLimits: { account: 5 }, groupLimits: { engine: 5 }, poolLimits: { reviewer: 5, text: 5 } }, 2);
+  // 2026-10-30 결정: 같은 멤버를 품은 미확인 행은 바뀐 identity(모델 B·새 정책 세대·다른 cache)의 재접수를 막지 않고, 옛 정책 세대의 미확인만 남았어도
+  // policy_changed 로 미루지 않는다 — 옛 행의 C(binding·charge)·event 는 그대로다.
   const changed = [{ sourceHash: hashes[1], cache: { kind: "present" as const, rowIdentityHash: hashes[2], attempts: 3 } }, batch[0]];
   const next = await request(changed, modelB);
-  expect(await ask(next, changed)).toEqual({ kind: "deferred", reason: "capacity" });
-  expect(await rawRequest(next.requestId)).toBeUndefined(); expect(await rawRequest(value.requestId)).toEqual(before);
+  expect(await tracked(cancelReservedModelSlot(granted(await ask(next, changed))))).toBe(true);
+  expect(await rawRequest(value.requestId)).toEqual(before);
   expect(await admin`SELECT to_jsonb(e) AS row FROM model_capacity_events e WHERE request_id=${value.requestId}::uuid ORDER BY id`).toEqual(beforeEvents);
   await install(); // Do not mistake the old-policy active guard for the unbound-route fence below.
   const generic = await request(undefined, modelA, "unbound-reason");
   const started = await tracked(beginModelDispatch(granted(await ask(generic))));
   expect(started.kind).toBe("dispatched"); if (started.kind !== "dispatched") throw new Error("reason_ledger_generic_dispatch_required");
+  // 결과를 모르는 실제 전송(dispatched)인 unbound 행은 분리된 묶음까지 경로 전체를 막는다(행을 만들지 않는다).
+  const disjoint = members(2), refused = await request(disjoint, modelB);
+  expect(await ask(refused, disjoint)).toEqual({ kind: "deferred", reason: "capacity" });
+  expect(await rawRequest(refused.requestId)).toBeUndefined();
+  // 2026-10-30 결정: 그 전송이 미확인이 되면 fence 가 아니다 — 같은 요청이 들어가고 미확인 행은 사람 검토용으로 그대로 남는다.
   expect(await tracked(markModelDispatchIndeterminate(started.dispatch, "transport_unknown"))).toBe(true);
   const genericBefore = await rawRequest(generic.requestId);
   expect(genericBefore).toMatchObject({ state: "indeterminate", logical_work_key: null, logical_member_keys: null, dispatch_binding: null });
-  const disjoint = members(2), refused = await request(disjoint, modelB);
-  expect(await ask(refused, disjoint)).toEqual({ kind: "deferred", reason: "capacity" });
-  expect(await rawRequest(refused.requestId)).toBeUndefined(); expect(await rawRequest(generic.requestId)).toEqual(genericBefore);
+  expect(await tracked(cancelReservedModelSlot(granted(await ask(refused, disjoint))))).toBe(true);
+  expect(await rawRequest(generic.requestId)).toEqual(genericBefore);
   expect(await rawRequest(value.requestId)).toEqual(before);
 }));
 

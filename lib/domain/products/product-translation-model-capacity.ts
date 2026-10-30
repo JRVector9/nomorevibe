@@ -9,6 +9,7 @@ import { reconcileGatewayNotStarted, readModelCapacityCallerControl, findOwnPend
 import { markUnsettledDispatch } from "@/lib/llm/capacity-unsettled";
 import { modelCapacityRequestIdentitySchema, productTranslationInputHash, productTranslationLogicalWorkKey } from "@/lib/llm/capacity";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
+import { modelCapacityIndeterminateReason } from "@/lib/llm/capacity";
 import { translationSourceText } from "./translation-policy";
 import { pendingProductTranslationBatch, prepareProductTranslationDispatch, type ProductTranslationTask } from "./translations";
 import type { JobLease } from "@/lib/jobs/control";
@@ -74,7 +75,7 @@ export async function translateProductFieldsWithModelCapacity(value: readonly Pr
     class: "background", pool: "text", routeId: "product-translate", provider: "abcllm", model: scopedModel("product-translate", PRODUCT_TRANSLATION_MODEL),
     workKey: `${productTranslationLogicalWorkKey(members)}:${productTranslationInputHash({ members, model: scopedModel("product-translate", PRODUCT_TRANSLATION_MODEL) })}` });
   const pending = adopted ?? await findOwnPendingModelRequest(identity);
-  if (pending && (pending.state === "dispatched" || pending.state === "indeterminate")) throw new ModelCapacityDeferredError("dispatched");
+  if (pending?.state === "dispatched") throw new ModelCapacityDeferredError("dispatched");
   const slot = await requestProductTranslationModelSlot({ ...identity, requestId: pending?.requestId ?? randomUUID() }, members);
   if (slot.kind !== "granted") throw new ModelCapacityDeferredError(slot.reason);
   let prepared: Awaited<ReturnType<typeof prepareProductTranslationDispatch>>;
@@ -98,7 +99,7 @@ export async function translateProductFieldsWithModelCapacity(value: readonly Pr
     { signal: options.signal, timeoutMs: scopedRequestTimeout("product-translate", options.timeoutMs) }); }
   catch (error) {
     try {
-      if (!await markModelDispatchIndeterminate(prepared.dispatch, options.signal?.aborted ? "local_abort" : "transport_unknown"))
+      if (!await markModelDispatchIndeterminate(prepared.dispatch, modelCapacityIndeterminateReason({ signal: options.signal, error })))
         throw new Error("product_translation_dispatch_not_marked");
     } catch (cleanup) { throw new AggregateError([error, cleanup], "product_translation_transport_cleanup_failed"); }
     throw error;
@@ -107,7 +108,7 @@ export async function translateProductFieldsWithModelCapacity(value: readonly Pr
   try {
     if (native.terminal) await reconcileProductTranslationGatewayTerminal(native.terminal);
     else if (native.notStarted) await reconcileGatewayNotStarted(native.notStarted);
-    else if (!await markModelDispatchIndeterminate(prepared.dispatch, options.signal?.aborted ? "local_abort" : "transport_unknown"))
+    else if (!await markModelDispatchIndeterminate(prepared.dispatch, modelCapacityIndeterminateReason({ signal: options.signal, timedOut: !native.result.ok && native.result.error === "timeout" })))
       throw new Error("product_translation_dispatch_not_marked");
   } catch (cleanup) {
     if (native.terminal || native.notStarted) await markUnsettledDispatch(prepared.dispatch);

@@ -32,7 +32,8 @@ import { providerBoundaryCanonicalHash } from "./provider-boundary-contract";
 import {
   compatibleModelCapacityGeneration, modelCapacityClassCycle, modelCapacityDispatchSchema, modelCapacityPolicyHash, modelCapacityRequestSchema,
   modelCapacityRequestIdentitySchema, modelCapacityReservationSchema, parseModelCapacityPolicy,
-  type ModelCapacityDispatch, type ModelCapacityEventKind, type ModelCapacityIndeterminateReason,
+  type ModelCapacityDispatch, type ModelCapacityEventKind, type ModelCapacityIndeterminateReason, MODEL_CAPACITY_INDETERMINATE_REASONS,
+  operatorReviewEvidenceSchema, operatorReviewEvidenceHash, type OperatorReviewEvidence, type ModelCapacityState,
   type ModelCapacityRequest, type ModelCapacityRequestIdentity, type ModelCapacityReservation, type ModelSlotResult,
   ai1DispatchBindingSchema, ai1DispatchBindingHash, ai1ModelDispatchSchema, ai1GatewayTerminalEvidenceSchema,
   type Ai1DispatchBinding, type Ai1ModelDispatch,
@@ -40,6 +41,7 @@ import {
   type Ai2DispatchBinding, type Ai2ModelDispatch,
 } from "./capacity";
 import { ModelCapacityDeferredError } from "./capacity-deferred";
+import { liveStateSql, occupyingStateSql, inFlightStateSql, sentStateSql } from "./capacity-states";
 import { slotOnlyModelCapacity } from "./capacity-consumer-scope";
 import { fenceFromRow, writerSiteActive } from "@/lib/operations/dr/epoch";
 import { takeGatewayLocalEnd, type GatewayLocalEnd } from "./gateway-local-end";
@@ -156,7 +158,7 @@ async function grantOne(tx: ProductTransaction, state: Control): Promise<void> {
     const [candidate] = await tx.execute<{ request_id: string }>(sql`
       WITH active AS MATERIALIZED (
         SELECT provider_budget_id, group_id, pool FROM model_capacity_requests
-        WHERE state IN ('reserved','dispatched','indeterminate')
+        WHERE ${occupyingStateSql("state")}
       )
       SELECT q.request_id FROM model_capacity_requests q
       WHERE q.state = 'waiting' AND q.class = ${cycle[position]}
@@ -224,7 +226,7 @@ async function expireReservation(tx: ProductTransaction, row: RequestRow): Promi
 /** Readback only, including expired or old-policy rows. Re-poll through
  * requestModelSlot for a current reservation; this never grants or expires work. */
 export async function findOwnPendingModelRequest(value: ModelCapacityRequestIdentity): Promise<
-  { requestId: string; state: "waiting" | "reserved" | "dispatched" | "indeterminate" } | null> {
+  { requestId: string; state: "waiting" | "reserved" | "dispatched" } | null> {
   if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
   const checked = modelCapacityRequestIdentitySchema.parse(value);
   return transaction(async tx => {
@@ -232,8 +234,9 @@ export async function findOwnPendingModelRequest(value: ModelCapacityRequestIden
     const [row] = await tx.select().from(modelCapacityRequests).where(and(
       eq(modelCapacityRequests.ownerInstanceId, checked.owner.instanceId),
       eq(modelCapacityRequests.ownerBootId, checked.owner.bootId), eq(modelCapacityRequests.workKey, checked.workKey),
-      sql`${modelCapacityRequests.state} in ('waiting','reserved','dispatched','indeterminate')`)).limit(1);
-    if (!row || row.state === "withdrawn" || row.state === "settled") return null;
+      sql`${liveStateSql(modelCapacityRequests.state)}`)).limit(1);
+    // indeterminate 는 살아 있는 행이 아니다(capacity-states.ts): 같은 work key 는 새 requestId 로 다시 접수된다.
+    if (!row || row.state === "withdrawn" || row.state === "settled" || row.state === "indeterminate") return null;
     sameIdentity(row, checked);
     return { requestId: row.requestId, state: row.state };
   });
@@ -497,7 +500,7 @@ export async function reconcileLocalModelTerminal(terminal: unknown): Promise<{ 
 
 async function localModelFence(tx: ProductTransaction, logicalKey: string, ownId: string): Promise<boolean> {
   const [blocked] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests).where(sql`
-    ${modelCapacityRequests.requestId} <> ${ownId} AND ${modelCapacityRequests.state} IN ('waiting','reserved','dispatched','indeterminate')
+    ${modelCapacityRequests.requestId} <> ${ownId} AND ${liveStateSql(modelCapacityRequests.state)}
     AND (${modelCapacityRequests.logicalWorkKey}=${logicalKey}
       OR (${logicalKey} ~ '^direct:audit:[1-9][0-9]*:audit$'
         AND ${modelCapacityRequests.logicalWorkKey}='bg:audit:' || split_part(${logicalKey},':',3))
@@ -525,12 +528,12 @@ function fixedAi1Identity(value: ModelCapacityRequestIdentity, candidateId: numb
 async function ai1Fence(tx: ProductTransaction, logicalKey: string, ownId: string): Promise<boolean> {
   const [blocked] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests).where(sql`
     (${modelCapacityRequests.logicalWorkKey} = ${logicalKey} AND ${modelCapacityRequests.requestId} <> ${ownId}
-      AND ${modelCapacityRequests.state} IN ('waiting','reserved','dispatched','indeterminate'))
+      AND ${liveStateSql(modelCapacityRequests.state)})
     OR (${modelCapacityRequests.logicalWorkKey} ~ '^direct:(candidate|split):'
       AND split_part(${modelCapacityRequests.logicalWorkKey},':',3)=split_part(${logicalKey},':',2)
-      AND ${modelCapacityRequests.state} IN ('waiting','reserved','dispatched','indeterminate'))
+      AND ${liveStateSql(modelCapacityRequests.state)})
     OR (${modelCapacityRequests.logicalWorkKey} IS NULL AND ${modelCapacityRequests.routeId} = 'crawl-agent-review'
-      AND ${modelCapacityRequests.provider} = 'abcllm' AND ${modelCapacityRequests.state} IN ('dispatched','indeterminate'))`).limit(1);
+      AND ${modelCapacityRequests.provider} = 'abcllm' AND ${inFlightStateSql(modelCapacityRequests.state)})`).limit(1);
   return !!blocked;
 }
 
@@ -581,7 +584,7 @@ function requestSlot(checked: ModelCapacityRequest, logicalKey: string | null, m
     if (!route) return { kind: "deferred", reason: "unmapped" };
     const oldActive = await tx.select({ epoch: modelCapacityRequests.epoch, revision: modelCapacityRequests.revision,
       policyHash: modelCapacityRequests.policyHash }).from(modelCapacityRequests)
-      .where(sql`${modelCapacityRequests.state} in ('reserved','dispatched','indeterminate') AND (
+      .where(sql`${occupyingStateSql(modelCapacityRequests.state)} AND (
         ${modelCapacityRequests.epoch} <> ${state.epoch} OR ${modelCapacityRequests.revision} <> ${state.revision}
         OR ${modelCapacityRequests.policyHash} <> ${state.policyHash})`);
     if (oldActive.some(row => !compatibleModelCapacityGeneration(state.policy!, row, state)))
@@ -590,7 +593,7 @@ function requestSlot(checked: ModelCapacityRequest, logicalKey: string | null, m
       const [duplicateWork] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests)
         .where(and(eq(modelCapacityRequests.ownerInstanceId, checked.owner.instanceId),
           eq(modelCapacityRequests.ownerBootId, checked.owner.bootId), eq(modelCapacityRequests.workKey, checked.workKey),
-          sql`${modelCapacityRequests.state} in ('waiting','reserved','dispatched','indeterminate')`)).limit(1);
+          sql`${liveStateSql(modelCapacityRequests.state)}`)).limit(1);
       if (duplicateWork) return { kind: "deferred", reason: "capacity" };
       const [queue] = await tx.select({ count: sql<number>`count(*)::integer` }).from(modelCapacityRequests)
         .where(eq(modelCapacityRequests.state, "waiting"));
@@ -692,7 +695,7 @@ export async function markModelDispatchIndeterminate(value: ModelCapacityDispatc
   const checked = bound.success ? modelCapacityDispatchSchema.parse({ requestId: bound.data.requestId,
     owner: bound.data.owner, token: bound.data.token, epoch: bound.data.epoch, revision: bound.data.revision,
     policyHash: bound.data.policyHash }) : modelCapacityDispatchSchema.parse(value);
-  if (!["transport_unknown", "local_abort", "process_exit", "commit_unknown"].includes(reason)) fail("invalid_model_capacity_reason");
+  if (!MODEL_CAPACITY_INDETERMINATE_REASONS.includes(reason)) fail("invalid_model_capacity_reason");
   const marked = await transaction(async tx => {
     const state = await control(tx);
     await expireRequests(tx, state);
@@ -721,6 +724,33 @@ export async function markModelDispatchIndeterminate(value: ModelCapacityDispatc
   const witness = marked ? takeGatewayLocalEnd(checked.requestId) : null;
   if (witness) await recordModelDispatchLocalEnd(checked, bound.success ? bound.data.bindingHash : null, witness).catch(() => {});
   return marked;
+}
+
+/**
+ * 사람 검토 완료(0151, 2026-10-30 소유자 결정). indeterminate 행은 점유가 아니므로 용량은 바뀌지 않는다 — 검토 목록에서 빼고 운영자·메모·DB 시각을
+ * 행(terminal_evidence·hash)과 dispatch_reviewed event 에 같은 값으로 남긴다. dispatch binding(C)은 그대로, 사용량 근거는 없다. 늦은 종료 근거는
+ * 이 뒤로는 받지 않는다(withdrawn). 호출자(관리자 action)가 operations_audit 를 따로 남긴다.
+ */
+export async function closeModelCapacityUnknownReview(value: { requestId: string; operator: string; note: string }): Promise<
+  { kind: "reviewed"; evidence: OperatorReviewEvidence } | { kind: "not_indeterminate"; state: ModelCapacityState | null }> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const requestId = z.uuid().parse(value.requestId);
+  return transaction(async tx => {
+    const state = await control(tx);
+    if (state.fenced) fail("dr_writer_site_fenced");
+    const [row] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, requestId)).for("update");
+    if (!row || row.state !== "indeterminate") return { kind: "not_indeterminate", state: row?.state ?? null };
+    const [clock] = await tx.execute<{ now: string }>(sql`SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS now`);
+    const evidence = operatorReviewEvidenceSchema.parse({ version: 1, kind: "operator_review", requestId: row.requestId,
+      owner: { instanceId: row.ownerInstanceId, bootId: row.ownerBootId }, fromState: "indeterminate",
+      operator: value.operator, note: value.note, reviewedAt: clock.now });
+    const [changed] = await tx.update(modelCapacityRequests).set({ state: "withdrawn", terminalEvidence: evidence,
+      terminalEvidenceHash: operatorReviewEvidenceHash(evidence), updatedAt: sql`clock_timestamp()` })
+      .where(and(eq(modelCapacityRequests.requestId, row.requestId), eq(modelCapacityRequests.state, "indeterminate"))).returning();
+    if (!changed) fail("model_capacity_review_state_changed");
+    await event(tx, changed, "dispatch_reviewed", "indeterminate", "withdrawn", null, evidence);
+    return { kind: "reviewed", evidence };
+  });
 }
 
 /** 소유 handle 이 잠긴 행과 같고 행이 indeterminate 일 때만, 요청당 한 번 dispatch_local_ended 사실을 쓴다(lock 순서: fence → control → 행).
@@ -848,12 +878,12 @@ function fixedAi2Identity(value: ModelCapacityRequestIdentity, target: Ai2Target
 async function ai2Fence(tx: ProductTransaction, logicalKey: string, ownId: string): Promise<boolean> {
   const [blocked] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests).where(sql`
     (${modelCapacityRequests.logicalWorkKey} = ${logicalKey} AND ${modelCapacityRequests.requestId} <> ${ownId}
-      AND ${modelCapacityRequests.state} IN ('waiting','reserved','dispatched','indeterminate'))
+      AND ${liveStateSql(modelCapacityRequests.state)})
     OR (${modelCapacityRequests.logicalWorkKey} ~ '^direct:(candidate|split):'
       AND split_part(${modelCapacityRequests.logicalWorkKey},':',3)=split_part(${logicalKey},':',2)
-      AND ${modelCapacityRequests.state} IN ('waiting','reserved','dispatched','indeterminate'))
+      AND ${liveStateSql(modelCapacityRequests.state)})
     OR (${modelCapacityRequests.logicalWorkKey} IS NULL AND ${modelCapacityRequests.routeId} = 'second-review'
-      AND ${modelCapacityRequests.provider} = 'abcllm' AND ${modelCapacityRequests.state} IN ('dispatched','indeterminate'))`).limit(1);
+      AND ${modelCapacityRequests.provider} = 'abcllm' AND ${inFlightStateSql(modelCapacityRequests.state)})`).limit(1);
   return !!blocked;
 }
 
@@ -1107,9 +1137,9 @@ function fixedTextProfileIdentity(value: ModelCapacityRequestIdentity, productId
 async function textProfileFence(tx: ProductTransaction, logicalKey: string, ownId: string): Promise<boolean> {
   const [blocked] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests).where(sql`
     (${modelCapacityRequests.logicalWorkKey} = ${logicalKey} AND ${modelCapacityRequests.requestId} <> ${ownId}
-      AND ${modelCapacityRequests.state} IN ('waiting','reserved','dispatched','indeterminate'))
+      AND ${liveStateSql(modelCapacityRequests.state)})
     OR (${modelCapacityRequests.logicalWorkKey} IS NULL AND ${modelCapacityRequests.routeId} = 'product-search-profile'
-      AND ${modelCapacityRequests.provider} = 'abcllm' AND ${modelCapacityRequests.state} IN ('dispatched','indeterminate'))`).limit(1);
+      AND ${modelCapacityRequests.provider} = 'abcllm' AND ${inFlightStateSql(modelCapacityRequests.state)})`).limit(1);
   return !!blocked;
 }
 /** Logical fence is present in the original waiting INSERT, never patched after grant. */
@@ -1217,10 +1247,10 @@ function fixedReasonTranslationIdentity(value: ModelCapacityRequestIdentity, mem
 async function reasonTranslationFence(tx: ProductTransaction, keys: readonly string[], ownId: string): Promise<boolean> {
   const keyArray = sql`ARRAY[${sql.join(keys.map(key => sql`${key}`), sql`, `)}]::text[]`;
   const [blocked] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests).where(sql`
-    (${modelCapacityRequests.requestId} <> ${ownId} AND ${modelCapacityRequests.state} IN ('waiting','reserved','dispatched','indeterminate')
+    (${modelCapacityRequests.requestId} <> ${ownId} AND ${liveStateSql(modelCapacityRequests.state)}
       AND ${modelCapacityRequests.logicalMemberKeys} && ${keyArray})
     OR (${modelCapacityRequests.logicalMemberKeys} IS NULL AND ${modelCapacityRequests.routeId} = 'reason-translate'
-      AND ${modelCapacityRequests.state} IN ('dispatched','indeterminate'))`).limit(1);
+      AND ${inFlightStateSql(modelCapacityRequests.state)})`).limit(1);
   return !!blocked;
 }
 /** Durable sorted membership belongs to the very first waiting INSERT. */
@@ -1332,10 +1362,10 @@ function fixedProductTranslationIdentity(value: ModelCapacityRequestIdentity, me
 async function productTranslationFence(tx: ProductTransaction, keys: readonly string[], ownId: string): Promise<boolean> {
   const keyArray = sql`ARRAY[${sql.join(keys.map(key => sql`${key}`), sql`, `)}]::text[]`;
   const [blocked] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests).where(sql`
-    (${modelCapacityRequests.requestId} <> ${ownId} AND ${modelCapacityRequests.state} IN ('waiting','reserved','dispatched','indeterminate')
+    (${modelCapacityRequests.requestId} <> ${ownId} AND ${liveStateSql(modelCapacityRequests.state)}
       AND ${modelCapacityRequests.logicalMemberKeys} && ${keyArray})
     OR (${modelCapacityRequests.logicalMemberKeys} IS NULL AND ${modelCapacityRequests.routeId} = 'product-translate'
-      AND ${modelCapacityRequests.state} IN ('dispatched','indeterminate'))`).limit(1);
+      AND ${inFlightStateSql(modelCapacityRequests.state)})`).limit(1);
   return !!blocked;
 }
 /** Durable sorted membership belongs to the very first waiting INSERT. */
@@ -1447,10 +1477,10 @@ function fixedProductTaglineKoIdentity(value: ModelCapacityRequestIdentity, memb
 async function productTaglineKoFence(tx: ProductTransaction, keys: readonly string[], ownId: string): Promise<boolean> {
   const keyArray = sql`ARRAY[${sql.join(keys.map(key => sql`${key}`), sql`, `)}]::text[]`;
   const [blocked] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests).where(sql`
-    (${modelCapacityRequests.requestId} <> ${ownId} AND ${modelCapacityRequests.state} IN ('waiting','reserved','dispatched','indeterminate')
+    (${modelCapacityRequests.requestId} <> ${ownId} AND ${liveStateSql(modelCapacityRequests.state)}
       AND ${modelCapacityRequests.logicalMemberKeys} && ${keyArray})
     OR (${modelCapacityRequests.logicalMemberKeys} IS NULL AND ${modelCapacityRequests.routeId} = 'product-tagline-ko'
-      AND ${modelCapacityRequests.state} IN ('dispatched','indeterminate'))`).limit(1);
+      AND ${inFlightStateSql(modelCapacityRequests.state)})`).limit(1);
   return !!blocked;
 }
 /** Durable sorted membership belongs to the very first waiting INSERT. */
@@ -1574,12 +1604,12 @@ function fixedCrawlTaglineIdentity(value: ModelCapacityRequestIdentity, input: C
 async function crawlTaglineFence(tx: ProductTransaction, input: CrawlTaglineInput, ownId: string): Promise<boolean> {
   const [blocked] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests).where(sql`
     (${modelCapacityRequests.requestId} <> ${ownId} AND (
-      (${modelCapacityRequests.state} IN ('waiting','reserved','dispatched','indeterminate')
+      (${liveStateSql(modelCapacityRequests.state)}
         AND ${modelCapacityRequests.logicalMemberKeys} && ARRAY[${crawlTaglineMemberKeys(input.member)[0]}]::text[])
       OR (${modelCapacityRequests.logicalWorkKey} = ${crawlTaglineLogicalWorkKey(input)}
-        AND ${modelCapacityRequests.state} IN ('dispatched','indeterminate','settled'))))
+        AND ${sentStateSql(modelCapacityRequests.state)})))
     OR (${modelCapacityRequests.logicalMemberKeys} IS NULL AND ${modelCapacityRequests.routeId} = 'crawl-tagline'
-      AND ${modelCapacityRequests.state} IN ('dispatched','indeterminate'))`).limit(1);
+      AND ${inFlightStateSql(modelCapacityRequests.state)})`).limit(1);
   return !!blocked;
 }
 function crawlTaglineRowMatches(row: RequestRow | undefined, dispatch: CrawlTaglineModelDispatch): row is RequestRow {
@@ -1737,12 +1767,12 @@ function fixedSearchVerifyIdentity(value: ModelCapacityRequestIdentity, input: S
 async function searchVerifyFence(tx: ProductTransaction, keys: readonly string[], logicalKey: string, ownId: string): Promise<boolean> {
   const [blocked] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests).where(sql`
     (${modelCapacityRequests.requestId} <> ${ownId} AND (
-      (${modelCapacityRequests.state} IN ('waiting','reserved','dispatched','indeterminate')
+      (${liveStateSql(modelCapacityRequests.state)}
         AND ${modelCapacityRequests.logicalMemberKeys} && ARRAY[${keys[0]}]::text[])
       OR (${modelCapacityRequests.logicalWorkKey} = ${logicalKey}
-        AND ${modelCapacityRequests.state} IN ('dispatched','indeterminate','settled'))))
+        AND ${sentStateSql(modelCapacityRequests.state)})))
     OR (${modelCapacityRequests.logicalMemberKeys} IS NULL AND ${modelCapacityRequests.routeId} = 'product-search-verify'
-      AND ${modelCapacityRequests.state} IN ('dispatched','indeterminate'))`).limit(1);
+      AND ${inFlightStateSql(modelCapacityRequests.state)})`).limit(1);
   return !!blocked;
 }
 function searchVerifyRowMatches(row: RequestRow | undefined, dispatch: SearchVerifyModelDispatch): row is RequestRow {
@@ -1859,7 +1889,7 @@ type SearchVerifyChain = { chain: StoredSearchVerify[]; next: SearchVerifyStep |
 async function searchVerifyGeneration(tx: ProductTransaction, member: SearchVerifyMember, model: string, lock: boolean) {
   const generationHash = searchVerifyGenerationHash({ member, model });
   const query = tx.select().from(modelCapacityRequests).where(sql`${modelCapacityRequests.routeId}='product-search-verify'
-    AND ${modelCapacityRequests.state} IN ('dispatched','indeterminate','settled') AND ${modelCapacityRequests.dispatchBinding}->>'kind'='search_verify_gateway'
+    AND ${sentStateSql(modelCapacityRequests.state)} AND ${modelCapacityRequests.dispatchBinding}->>'kind'='search_verify_gateway'
     AND ${modelCapacityRequests.dispatchBinding}->>'generationHash'=${generationHash}`).orderBy(asc(modelCapacityRequests.queueOrdinal));
   const rows = lock ? await query.for("share") : await query;
   const bindings = rows.map(row => searchVerifyDispatchBindingSchema.safeParse(row.dispatchBinding));
@@ -1897,7 +1927,7 @@ export async function readSearchVerifyContinuation(value: { member: SearchVerify
     if (!mutex) fail("model_capacity_control_missing");
     const [clock] = await tx.execute<{ now: number }>(sql`SELECT (extract(epoch from clock_timestamp())*1000)::float8 AS now`);
     const [active] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests).where(sql`
-      ${modelCapacityRequests.state} IN ('dispatched','indeterminate') AND (${modelCapacityRequests.logicalMemberKeys} && ARRAY[${key}]::text[]
+      ${inFlightStateSql(modelCapacityRequests.state)} AND (${modelCapacityRequests.logicalMemberKeys} && ARRAY[${key}]::text[]
         OR ${modelCapacityRequests.logicalMemberKeys} IS NULL AND ${modelCapacityRequests.routeId} = 'product-search-verify')`).limit(1);
     const { generationHash, executions } = await searchVerifyGeneration(tx, member, value.model, false);
     const nowMs = Math.floor(Number(clock.now)), ordinals = [...executions.keys()], last = ordinals.length ? executions.get(ordinals[ordinals.length - 1])! : null;
@@ -1960,13 +1990,13 @@ function fixedWebsearchQueryIdentity(value: ModelCapacityRequestIdentity, input:
 async function websearchQueryFence(tx: ProductTransaction, input: WebsearchQueryInput, ownId: string): Promise<boolean> {
   const [blocked] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests).where(sql`
     (${modelCapacityRequests.requestId} <> ${ownId} AND (
-      (${modelCapacityRequests.state} IN ('waiting','reserved','dispatched','indeterminate')
+      (${liveStateSql(modelCapacityRequests.state)}
         AND ${modelCapacityRequests.logicalMemberKeys} && ARRAY[${websearchQueryMemberKeys(input.member)[0]}]::text[])
       OR (${modelCapacityRequests.logicalWorkKey} = ${websearchQueryLogicalWorkKey(input.member)} AND ${modelCapacityRequests.state} = 'settled'
         AND ${modelCapacityRequests.dispatchBinding}->>'kind' = 'websearch_query_gateway'
         AND ${modelCapacityRequests.dispatchBinding}->'member'->'cache' = ${JSON.stringify(input.member.cache)}::text::jsonb)))
     OR (${modelCapacityRequests.logicalMemberKeys} IS NULL AND ${modelCapacityRequests.routeId} = 'search-query-translate'
-      AND ${modelCapacityRequests.state} IN ('dispatched','indeterminate'))`).limit(1);
+      AND ${inFlightStateSql(modelCapacityRequests.state)})`).limit(1);
   return !!blocked;
 }
 function websearchQueryRowMatches(row: RequestRow | undefined, dispatch: WebsearchQueryModelDispatch): row is RequestRow {
@@ -2065,9 +2095,9 @@ export async function readWebsearchQueryContinuation(tx: ProductTransaction, val
   const input = websearchQueryInputSchema.parse(value), [memberKey] = websearchQueryMemberKeys(input.member);
   await control(tx, "share");
   const [active] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests).where(sql`
-    (${modelCapacityRequests.logicalMemberKeys} && ARRAY[${memberKey}]::text[] AND ${modelCapacityRequests.state} IN ('dispatched','indeterminate'))
+    (${modelCapacityRequests.logicalMemberKeys} && ARRAY[${memberKey}]::text[] AND ${inFlightStateSql(modelCapacityRequests.state)})
     OR (${modelCapacityRequests.logicalMemberKeys} IS NULL AND ${modelCapacityRequests.routeId} = 'search-query-translate'
-      AND ${modelCapacityRequests.state} IN ('dispatched','indeterminate'))`).limit(1);
+      AND ${inFlightStateSql(modelCapacityRequests.state)})`).limit(1);
   if (active) return { kind: "blocked" };
   const rows = await tx.select().from(modelCapacityRequests).where(sql`${modelCapacityRequests.routeId}='search-query-translate'
     AND ${modelCapacityRequests.state}='settled' AND ${modelCapacityRequests.logicalWorkKey}=${websearchQueryLogicalWorkKey(input.member)}
@@ -2143,22 +2173,22 @@ function fixedCliIdentity(value: ModelCapacityRequestIdentity, raw: CliTarget): 
 async function cliKeyFence(tx: ProductTransaction, logicalKey: string, routeId: string, ownId: string): Promise<boolean> {
   const [blocked] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests).where(sql`
     (${modelCapacityRequests.logicalWorkKey} = ${logicalKey} AND ${modelCapacityRequests.requestId} <> ${ownId}
-      AND ${modelCapacityRequests.state} IN ('waiting','reserved','dispatched','indeterminate'))
+      AND ${liveStateSql(modelCapacityRequests.state)})
     OR (${logicalKey} ~ '^bg:audit:[1-9][0-9]*$'
       AND ${modelCapacityRequests.logicalWorkKey}='direct:audit:' || split_part(${logicalKey},':',3) || ':audit'
-      AND ${modelCapacityRequests.state} IN ('waiting','reserved','dispatched','indeterminate'))
+      AND ${liveStateSql(modelCapacityRequests.state)})
     OR (${modelCapacityRequests.logicalWorkKey} IS NULL AND ${modelCapacityRequests.routeId} = ${routeId}
-      AND ${modelCapacityRequests.state} IN ('dispatched','indeterminate'))`).limit(1);
+      AND ${inFlightStateSql(modelCapacityRequests.state)})`).limit(1);
   return !!blocked;
 }
 /** Any overlapping intro member, or an unbound intro-check call, blocks the batch. */
 async function introCheckFence(tx: ProductTransaction, keys: readonly string[], ownId: string, routeId = "product-intro-check"): Promise<boolean> {
   const keyArray = sql`ARRAY[${sql.join(keys.map(key => sql`${key}`), sql`, `)}]::text[]`;
   const [blocked] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests).where(sql`
-    (${modelCapacityRequests.requestId} <> ${ownId} AND ${modelCapacityRequests.state} IN ('waiting','reserved','dispatched','indeterminate')
+    (${modelCapacityRequests.requestId} <> ${ownId} AND ${liveStateSql(modelCapacityRequests.state)}
       AND ${modelCapacityRequests.logicalMemberKeys} && ${keyArray})
     OR (${modelCapacityRequests.logicalMemberKeys} IS NULL AND ${modelCapacityRequests.routeId} = ${routeId}
-      AND ${modelCapacityRequests.state} IN ('dispatched','indeterminate'))`).limit(1);
+      AND ${inFlightStateSql(modelCapacityRequests.state)})`).limit(1);
   return !!blocked;
 }
 function cliFence(tx: ProductTransaction, fixed: FixedCli, ownId: string): Promise<boolean> {

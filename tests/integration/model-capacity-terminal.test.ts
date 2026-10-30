@@ -174,20 +174,27 @@ it("blocks duplicate logical waiting across owners and keeps the original waitin
   expect(await row(first.requestId)).toMatchObject({ queue_ordinal: before.queue_ordinal, logical_work_key: `ai1:${candidateId}` });
 }));
 
-it("preserves unknown charges across owner boot policy and source changes and fences old generic unknown", exercise(async () => {
+it("preserves unknown charges across owner boot policy and source changes; an unknown no longer fences, an in-flight generic dispatch still does (2026-10-30)", exercise(async () => {
   await install(); const value = await request(), candidateId = ++serial, original = await dispatch(value, candidateId);
   expect(await tracked(markModelDispatchIndeterminate(original, "transport_unknown"))).toBe(true);
   const before = await row(value.requestId), next = await request({ owner: { instanceId: `${prefix}-new`, bootId: randomUUID() } });
   await install({ ...policy, globalLimit: 5 });
-  expect(await tracked(requestAi1ModelSlot(next, candidateId))).toEqual({ kind: "deferred", reason: "capacity" });
-  expect(await row(next.requestId)).toBeUndefined(); expect(await row(value.requestId)).toEqual(before);
+  // 2026-10-30 결정: 같은 후보의 미확인 행은 다른 owner·boot·정책의 재접수를 막지 않는다 — 옛 행의 C(binding·charge)는 그대로 보존된다.
+  const readmitted = granted(await tracked(requestAi1ModelSlot(next, candidateId)));
+  expect(await tracked(cancelReservedModelSlot(readmitted))).toBe(true);
+  expect(await row(value.requestId)).toEqual(before);
   await install();
   const generic = await request(), genericHandle = granted(await tracked(requestModelSlot(generic)));
   const started = await tracked(beginModelDispatch(genericHandle));
-  expect(started.kind).toBe("dispatched");
+  expect(started.kind).toBe("dispatched"); if (started.kind !== "dispatched") throw new Error("actual_dispatch_required");
+  // 결과를 모르는 실제 전송(dispatched)인 unbound 행은 여전히 경로 전체를 막는다.
   const other = await request();
   expect(await tracked(requestAi1ModelSlot(other, ++serial))).toEqual({ kind: "deferred", reason: "capacity" });
   expect(await row(other.requestId)).toBeUndefined();
+  // 그 전송이 미확인이 되면 fence 가 아니다 — 대기하던 요청이 들어가고 미확인 행은 사람 검토용으로 남는다.
+  expect(await tracked(markModelDispatchIndeterminate(started.dispatch, "transport_unknown"))).toBe(true);
+  expect(await tracked(cancelReservedModelSlot(granted(await tracked(requestAi1ModelSlot(other, serial)))))).toBe(true);
+  expect(await row(generic.requestId)).toMatchObject({ state: "indeterminate", logical_work_key: null });
 }));
 
 it("rejects forged foreign and reused transaction lock proofs without committing a dispatch", exercise(async () => {

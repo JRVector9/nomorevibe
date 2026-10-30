@@ -208,7 +208,7 @@ it("never lets a stale writer overwrite a winner or a 1µs-changed failure row",
   expect((await cache(goal.cacheKey)).row).toEqual(bumped);
 });
 
-it("keeps an ordinary failure at full C with the original single-attempt failed cache and fences the next search", async () => {
+it("keeps an ordinary failure at full C for review with the original single-attempt failed cache; the next search is not fenced (2026-10-30)", async () => {
   const query = "수면 패턴 분석", key = target(query).cacheKey, before = bodies.length;
   reply = response => { response.statusCode = 500; response.end("failure"); };
   try {
@@ -220,8 +220,12 @@ it("keeps an ordinary failure at full C with the original single-attempt failed 
   expect(await events(row.request_id as string)).toContainEqual({ kind: "dispatch_indeterminate", reason: "transport_unknown" });
   const failed = await cache(key);
   expect(failed.row).toMatchObject({ status: "failed", attempts: 1, error_code: "http_500" }); expect(failed.later).toBe(true);
-  expect(await searchTranslation.resolveSearchQuery(query, { waitForTranslation: true })).toMatchObject({ translated: null, translationPending: true });
-  expect(bodies.length - before).toBe(1); expect((await cache(key)).row).toEqual(failed.row);
+  // 2026-10-30 결정: 미확인 행은 다음 검색을 막지 않는다 — 같은 질의가 새 요청으로 다시 전송돼 번역되고, 미확인 행과 그 C 는 사람 검토용으로 그대로 남는다.
+  expect(await searchTranslation.resolveSearchQuery(query, { waitForTranslation: true })).toMatchObject({ translated: "merge pdf / merge pdf files" });
+  expect(bodies.length - before).toBe(2);
+  expect((await rows(key)).map(item => item.state)).toEqual(["indeterminate", "settled"]);
+  expect((await rows(key))[0]).toMatchObject({ request_id: row.request_id, state: "indeterminate", terminal_evidence: null, dispatch_binding: row.dispatch_binding });
+  expect((await cache(key)).row).toMatchObject({ status: "done", translated: "merge pdf | merge pdf files", error_code: null });
 });
 
 it("never POSTs after reservation expiry or a changed cache snapshot; only reserved rows are cancelled", async () => {
@@ -280,9 +284,10 @@ it("grants exactly one of two concurrent backends for one target and fences the 
   if (winner.kind === "granted") expect(await ledger.cancelReservedModelSlot(winner.reservation)).toBe(true);
 });
 it("stores the fixed member on the first waiting INSERT and reuses the own pending id without a duplicate", async () => {
-  // 앞 시험의 full C(indeterminate)가 자리를 계속 잡고 있다 — 남은 자리만 채운다
-  const [{ active }] = await admin`SELECT count(*)::int AS active FROM model_capacity_requests WHERE state IN ('reserved','dispatched','indeterminate')`;
-  expect(active).toBeGreaterThanOrEqual(1); expect(active).toBeLessThan(4);
+  // 2026-10-30 결정: 앞 시험의 full C(indeterminate)는 자리를 잡지 않는다 — 점유(reserved·dispatched)만 세고 남은 자리를 모두 채운다
+  const [{ active }] = await admin`SELECT count(*)::int AS active FROM model_capacity_requests WHERE state IN ('reserved','dispatched')`;
+  expect(active).toBeLessThan(4);
+  expect((await admin`SELECT count(*)::int AS unknown FROM model_capacity_requests WHERE state = 'indeterminate'`)[0].unknown).toBeGreaterThanOrEqual(1);
   const busy = await Promise.all(Array.from({ length: 4 - active }, () => ledger.requestModelSlot({ requestId: randomUUID(), workKey: randomUUID(),
     owner: { instanceId: `${prefix}-busy`, bootId: randomUUID() }, class: "background", pool: "text", routeId: busyRoute, provider: "fixture", model: modelB })));
   try {

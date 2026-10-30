@@ -1,4 +1,5 @@
 import { sql, type SQL } from "drizzle-orm";
+import { inFlightStateSql } from "@/lib/llm/capacity-states";
 import type { CrawlCandidate, CrawlReviewAttempt, SecondReview } from "@/lib/db/schema";
 import { sameReviewModel } from "./review-model-identity";
 
@@ -147,7 +148,8 @@ export function parseStaleReconcileArgs(argv: string[], max: number, fallbackLim
 export type CapacityProbe = { state: string; reservedUntil: Date | string | null };
 /** Unknown state or reservation time protects the existing owner. No capacity row is reclaimed here. */
 export function capacityBlocksStaleReconcile(row: CapacityProbe, now: Date): boolean {
-  if (row.state === "waiting" || row.state === "withdrawn" || row.state === "settled") return false;
+  // 미확인(indeterminate)은 끝난 시도다(2026-10-30) — 후보를 더 보호하지 않는다.
+  if (row.state === "waiting" || row.state === "withdrawn" || row.state === "settled" || row.state === "indeterminate") return false;
   if (row.state === "reserved") {
     if (row.reservedUntil == null) return true;
     const until = row.reservedUntil instanceof Date ? row.reservedUntil : new Date(row.reservedUntil);
@@ -157,7 +159,7 @@ export function capacityBlocksStaleReconcile(row: CapacityProbe, now: Date): boo
 }
 
 export function protectingCapacityStateSql(cap: SQL): SQL {
-  return sql`(${cap}.state IN ('dispatched', 'indeterminate')
+  return sql`(${inFlightStateSql(sql`${cap}.state`)}
     OR (${cap}.state = 'reserved' AND (${cap}.reserved_until IS NULL OR ${cap}.reserved_until > clock_timestamp()))
     OR coalesce(${cap}.state, '') NOT IN ('waiting', 'reserved', 'dispatched', 'indeterminate', 'withdrawn', 'settled'))`;
 }

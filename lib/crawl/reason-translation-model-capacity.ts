@@ -8,6 +8,7 @@ import { reconcileGatewayNotStarted, readModelCapacityCallerControl, findOwnPend
 import { markUnsettledDispatch } from '@/lib/llm/capacity-unsettled';
 import { reasonTranslationInputHash, reasonTranslationLogicalWorkKey, modelCapacityRequestIdentitySchema } from '@/lib/llm/capacity';
 import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
+import { modelCapacityIndeterminateReason } from '@/lib/llm/capacity';
 import { TRANSLATE_MODEL, textHash, translateToKorean, type TranslateResult } from './translate';
 import { pendingReasonTranslationBatch, prepareReasonTranslationDispatch, type PendingTranslation, type ReasonTranslationWriteExpectation } from './translations';
 import { prepareReasonTranslationGatewayCall, translateWithReservedReasonGateway } from './agent-review-gateway';
@@ -74,7 +75,7 @@ export async function translateReasonsWithModelCapacity(value: readonly PendingT
     class: 'background', pool: 'text', routeId: 'reason-translate', provider: 'abcllm', model: scopedModel("reason-translate", TRANSLATE_MODEL),
     workKey: `${logical}:${reasonTranslationInputHash({ members, model: scopedModel("reason-translate", TRANSLATE_MODEL) })}` });
   const pending = adopted ?? await findOwnPendingModelRequest(identity);
-  if (pending && (pending.state === 'dispatched' || pending.state === 'indeterminate')) throw new ModelCapacityDeferredError('dispatched');
+  if (pending?.state === 'dispatched') throw new ModelCapacityDeferredError('dispatched');
   const slot = await requestReasonTranslationModelSlot({ ...identity, requestId: pending?.requestId ?? randomUUID() }, members);
   if (slot.kind !== 'granted') throw new ModelCapacityDeferredError(slot.reason);
   let prepared: Awaited<ReturnType<typeof prepareReasonTranslationDispatch>>;
@@ -96,7 +97,7 @@ export async function translateReasonsWithModelCapacity(value: readonly PendingT
   try { response = await translateWithReservedReasonGateway(checked.map(item => item.body), dispatch, call,
     { signal: options.signal, timeoutMs: scopedRequestTimeout("reason-translate", options.timeoutMs) }); }
   catch (error) {
-    try { await markModelDispatchIndeterminate(dispatch, options.signal?.aborted ? 'local_abort' : 'transport_unknown'); }
+    try { await markModelDispatchIndeterminate(dispatch, modelCapacityIndeterminateReason({ signal: options.signal, error })); }
     catch (cleanup) { throw new AggregateError([error, cleanup], 'reason_translation_transport_cleanup_failed'); }
     throw error;
   }
@@ -105,7 +106,7 @@ export async function translateReasonsWithModelCapacity(value: readonly PendingT
   try {
     if (response.terminal) await reconcileReasonTranslationGatewayTerminal(response.terminal);
     else if (response.notStarted) await reconcileGatewayNotStarted(response.notStarted);
-    else await markModelDispatchIndeterminate(dispatch, options.signal?.aborted ? 'local_abort' : 'transport_unknown');
+    else await markModelDispatchIndeterminate(dispatch, modelCapacityIndeterminateReason({ signal: options.signal, timedOut: !response.result.ok && response.result.error === 'timeout' }));
   } catch (cleanup) {
     if (response.terminal || response.notStarted) await markUnsettledDispatch(dispatch);
     if (!response.result.ok) throw new AggregateError([response.result, cleanup], 'reason_translation_result_cleanup_failed');

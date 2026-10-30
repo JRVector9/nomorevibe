@@ -141,7 +141,7 @@ it("uses the primary cache and a settled continuation without a slot or POST", a
 });
 
 it("an own unresolved dispatch defers instead of a second POST", async () => {
-  mocks.pending.mockResolvedValue({ requestId: randomUUID(), state: "indeterminate" });
+  mocks.pending.mockResolvedValue({ requestId: randomUUID(), state: "dispatched" });
   expect(await resolveSearchQuery(query, { waitForTranslation: true })).toMatchObject({ translated: null, translationPending: true });
   expect(mocks.slot).not.toHaveBeenCalled(); expect(mocks.native).not.toHaveBeenCalled();
 });

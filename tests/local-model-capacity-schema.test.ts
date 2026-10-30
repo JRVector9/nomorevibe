@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { getTableConfig, PgDialect } from "drizzle-orm/pg-core";
 import { expect, it } from "vitest";
 import { modelCapacityRequests, modelCapacityEvents } from "@/lib/db/operations-schema";
+import { operatorReviewEventSql } from "@/lib/llm/operator-review-sql";
 
 const journal = JSON.parse(readFileSync("drizzle/meta/_journal.json", "utf8")) as {
   entries: { idx: number; tag: string }[];
@@ -73,12 +74,12 @@ it("현재 Drizzle의 네 CHECK는 각각 마지막으로 교체한 journal migr
   }
 });
 
-it("event kind CHECK는 0126·0127·0134·0135 전체를 보존하고 0136 indeterminate CLI 회수만 추가한다", () => {
+it("event kind CHECK는 0126·0127·0134·0135 전체를 보존하고 0136 indeterminate CLI 회수 … 0151 operator_review 까지 한 가지씩만 추가한다", () => {
   const name = "model_capacity_events_kind_check", history = checkHistory(name);
   const previous = history.find(entry => entry.idx === 126)!, waiting = history.find(entry => entry.idx === 127)!, cli = history.find(entry => entry.idx === 134)!, removed = history.find(entry => entry.idx === 135)!, unknown = history.find(entry => entry.idx === 136)!, latest = history.at(-1)!;
   const check = getTableConfig(modelCapacityEvents).checks.find(check => check.name === name)!;
   const expression = new PgDialect().sqlToQuery(check.value).sql;
-  expect(latest.tag).toBe("0145_replaced_path_boundary_exit");
+  expect(latest.tag).toBe("0151_indeterminate_no_hold");
   expect(expression).toBe(latest.expression);
   expect(waiting.expression).toBe(`(${previous.expression}) OR coalesce(kind='wait_cancelled' AND from_state='waiting' AND to_state='withdrawn' AND reason IS NULL AND evidence IS NULL,false)`);
   expect(cli.expression).toBe(`(${waiting.expression}) OR coalesce(kind='dispatch_released' AND from_state='dispatched' AND to_state='withdrawn' AND reason IS NULL AND nmv_cli_executor_release_valid(evidence) AND evidence->>'requestId'=request_id::text AND evidence->'plan'->'request'->'epoch'=to_jsonb(epoch) AND evidence->'plan'->'request'->'revision'=to_jsonb(revision) AND evidence->'plan'->'request'->>'policyHash'=policy_hash,false)`);
@@ -88,7 +89,9 @@ it("event kind CHECK는 0126·0127·0134·0135 전체를 보존하고 0136 indet
   expect(removedUnknown.expression).toBe(`(${unknown.expression}) OR nmv_cli_executor_indeterminate_removed_event_valid(to_jsonb(model_capacity_events))`);
   const replaced = history.find(entry => entry.idx === 143)!;
   expect(replaced.expression).toBe(`(${removedUnknown.expression}) OR nmv_replaced_provider_event_valid(to_jsonb(model_capacity_events))`);
-  expect(expression).toBe(`(${replaced.expression}) OR nmv_replaced_path_event_valid(to_jsonb(model_capacity_events))`);
+  const replacedPath = history.find(entry => entry.idx === 145)!;
+  expect(replacedPath.expression).toBe(`(${replaced.expression}) OR nmv_replaced_path_event_valid(to_jsonb(model_capacity_events))`);
+  expect(expression).toBe(`(${replacedPath.expression}) OR (${operatorReviewEventSql})`);
   expect(previous.expression).toContain("nmv_provider_boundary_release_valid(evidence)");
 });
 

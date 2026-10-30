@@ -29,16 +29,10 @@ it("treats an unreadable policy as no hint, keeping the original fixed assignmen
   expect(blockedFirstReviewerKeys({ routes: "x" }, [{ groupId: "supa-gpu", providerBudgetId: "supa" }])).toEqual(new Set());
 });
 
-it("reads the hint once and falls back to no hint on read failure, missing control or replay", async () => {
+it("never reads the ledger: indeterminate rows occupy nothing since 2026-10-30, so no route is blocked by them", async () => {
   mocks.execute.mockResolvedValueOnce([{ policy, unknown: [{ groupId: "supa-gpu", providerBudgetId: "supa" }] }]);
-  expect(await readBlockedFirstReviewerKeys()).toEqual(new Set([firstReviewerKey(supa)]));
-  mocks.execute.mockRejectedValueOnce(new Error("db down"));
-  expect(await readBlockedFirstReviewerKeys()).toEqual(new Set());
-  mocks.execute.mockResolvedValueOnce([]);
-  expect(await readBlockedFirstReviewerKeys()).toEqual(new Set());
-  mocks.execute.mockResolvedValueOnce([{ policy, unknown: [{ groupId: "supa-gpu" }] }]);
   expect(await readBlockedFirstReviewerKeys()).toEqual(new Set());
   mocks.replay.mockReturnValue({});
   expect(await readBlockedFirstReviewerKeys()).toEqual(new Set());
-  expect(mocks.execute).toHaveBeenCalledTimes(4);
+  expect(mocks.execute).not.toHaveBeenCalled();
 });

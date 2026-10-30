@@ -16,7 +16,8 @@ export const MODEL_DASHBOARD_STAGES = [
 export type ModelStageAssignment = { id: string; label: string; models: { provider: string; model: string }[] };
 export type ModelCard = { id: string; name: string; equipment: string; definition?: ModelDefinition;
   rows: AdminModelMetrics[]; requests: AdminModelRequest[]; stages: string[] };
-export type StageHealth = "정상" | "느림" | "멈춤" | "미확인" | "접수 중지";
+/** 2026-10-30 결정: 미확인(indeterminate)은 점유가 아니므로 단계가 "멈춤"이 되지 않는다 — "미확인 · 사람 검토"로만 보인다. */
+export type StageHealth = "정상" | "느림" | "미확인" | "접수 중지";
 const routeStage: Record<string, string> = { "crawl-agent-review": "first-review", "review-gateway": "first-review", "review-cli": "first-review",
   "human-deepseek-review": "human-review", "product-audit": "audit-review", "korean-tagline": "product-tagline-ko",
   "search-profile": "product-search-profile", "search-verify": "product-search-verify", "intro-check": "product-intro-check" };
@@ -52,14 +53,11 @@ export function stageUnknownRows(observation: AdminModelsObservation, rows: Admi
   const groups = new Set(rows.map(row => row.groupId));
   return observation.rows.filter(row => groups.has(row.groupId) && row.indeterminate > 0);
 }
-/** Unknown blocks only the affected capacity group; a parallel healthy model can still serve its stage. */
+/** An unknown row in a stage's capacity group marks the stage 미확인 for human review; it occupies no slot, so it never stops the stage (2026-10-30). */
 export function stageHealth(observation: AdminModelsObservation, rows: AdminModelMetrics[], requests: AdminModelRequest[]): StageHealth {
   if (observation.mode === "draining" || observation.mode === "disabled") return "접수 중지";
   if (observation.error || !observation.observedAt || !rows.length) return "미확인";
-  const unknown = stageUnknownRows(observation, rows).length > 0;
-  const heldGroups = new Set(observation.groups.filter(group => group.limit !== null && group.held >= group.limit).map(group => group.groupId));
-  if (unknown && rows.every(row => heldGroups.has(row.groupId))) return "멈춤";
-  if (unknown) return "미확인";
+  if (stageUnknownRows(observation, rows).length > 0) return "미확인";
   const oldActive = requests.some(row => ["waiting", "reserved", "dispatched"].includes(row.state)
     && Date.parse(observation.observedAt!) - Date.parse(row.dispatchedAt ?? row.queuedAt) >= 5 * 60_000);
   if (oldActive || rows.some(row => row.failed1h > 0) || rows.some(row => row.waiting > 0)) return "느림";

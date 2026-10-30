@@ -195,7 +195,7 @@ it("intro: a real tick takes a background slot, runs the fake CLI once, settles 
   expect(await jobRow("product-intro-check")).toMatchObject({ processed_version: 10, locked_at: null, lease_token: null, last_error: null });
 }, PROCESS_TEST_MS);
 
-it("intro: a grandchild holding the pipe keeps the request indeterminate(process_exit); the next tick defers without spawning or counting", async () => {
+it("intro: a grandchild holding the pipe keeps the request indeterminate(process_exit) for review; the next tick re-enters with a new request (2026-10-30)", async () => {
   vi.stubEnv("FAKE_CLI_MODE", "grandchild-hold");
   await introProduct("intro-held");
   await pendingJob("product-intro-check");
@@ -210,19 +210,24 @@ it("intro: a grandchild holding the pipe keeps the request indeterminate(process
     { kind: "dispatch_started", reason: null }, { kind: "dispatch_indeterminate", reason: "process_exit" }]);
   expect(await introChecks()).toEqual([{ slug: "intro-held", outcome: null, attempts: 1, errorCode: "cli_error", model: "" }]);
 
-  // 재시도 때가 되어 같은 제품이 다시 대기열 머리에 와도, 점유가 남아 있으면 띄우지 않고 미룬다(재진입 0)
+  // 2026-10-30 결정: 미확인(process_exit) 행은 점유도 fence 도 아니다 — 재시도 때가 되어 같은 제품이 다시 대기열 머리에 오면
+  // 새 requestId 로 다시 띄운다(재진입 1). 미확인 행은 그대로 사람 검토용으로 남고, 새 요청은 정상 정산된다.
   await db.update(productIntroChecks).set({ retryAt: sql`now() - interval '1 minute'` });
-  const [before] = await db.execute<{ row: Raw }>(sql`SELECT to_jsonb(c) AS row FROM product_intro_checks c`);
   for (const name of await readdir(records)) await rm(path.join(records, name));
   await pendingJob("product-intro-check");
+  vi.stubEnv("FAKE_CLI_MODE", "intro-ok");
 
-  expect(await introTick()).toMatchObject({ status: "deferred", reason: "model_capacity" });
+  expect(await introTick()).toMatchObject({ status: "completed", done: true });
 
-  expect(await recorded()).toEqual([]);
-  expect((await requests()).map(row => [row.request_id, row.state])).toEqual([[held.request_id, "indeterminate"]]);
-  const [after] = await db.execute<{ row: Raw }>(sql`SELECT to_jsonb(c) AS row FROM product_intro_checks c`);
-  expect(after.row).toEqual(before.row);
-  expect(await jobRow("product-intro-check")).toMatchObject({ requested_version: 10, processed_version: 8, locked_at: null });
+  const [respawned, ...more] = await recorded();
+  expect(more).toEqual([]); expect(respawned).toMatchObject({ mode: "intro-ok", realCliOnPath: false });
+  const rows = await requests();
+  expect(rows.map(row => row.state).sort()).toEqual(["indeterminate", "settled"]);
+  expect(rows.find(row => row.request_id === held.request_id)).toMatchObject({ state: "indeterminate", terminal_evidence: null });
+  expect(await events(held.request_id)).toEqual([{ kind: "queued", reason: null }, { kind: "reserved", reason: null },
+    { kind: "dispatch_started", reason: null }, { kind: "dispatch_indeterminate", reason: "process_exit" }]);
+  expect(await introChecks()).toEqual([expect.objectContaining({ slug: "intro-held", outcome: "kept", errorCode: null, model: INTRO_CHECK_MODEL })]);
+  expect(await jobRow("product-intro-check")).toMatchObject({ processed_version: 10, locked_at: null, lease_token: null });
 }, PROCESS_TEST_MS);
 
 it("intro: when the tick margin is gone after dispatch the request settles not_started and nothing is spawned or recorded", async () => {
@@ -347,9 +352,9 @@ it("grok session: a real tick runs the session call in this instance's slot and 
   expect(spawned).toMatchObject({ argv: grokSessionArgs(GROK_MODEL), env: { NO_COLOR: "1", RUST_LOG: "off" } });
 }, PROCESS_TEST_MS);
 
-it("grok session (D3): while this instance's earlier session call is still held, the next check defers and the observation does not move", async () => {
-  // 위험: 세션 점검은 4시간마다 토큰을 갱신하는 호출이다. 점유가 풀리지 않거나 슬롯이 오래 막히면 갱신 호출도 관측 갱신도 없다 —
-  // 6시간 토큰이 그사이 만료되면 다음 Grok 심사가 auth 로 실패한다(설계 D3, 회수는 D11).
+it("grok session (D3): an earlier held session call stays unknown for review, and the next check still runs and moves the observation (2026-10-30)", async () => {
+  // 위험: 세션 점검은 4시간마다 토큰을 갱신하는 호출이다. 예전에는 미확인 점유가 풀리지 않으면 갱신 호출도 관측 갱신도 없었다 —
+  // 6시간 토큰이 그사이 만료되면 다음 Grok 심사가 auth 로 실패했다(설계 D3). 2026-10-30 결정: 미확인은 점유가 아니므로 다음 점검이 그대로 돈다.
   vi.stubEnv("FAKE_CLI_MODE", "grandchild-hold");
   await saveSettings({ enabled: true, firstReview: { provider: "grok-cli", model: GROK_MODEL } }, "test");
   await pendingJob("grok-session-check");
@@ -364,11 +369,14 @@ it("grok session (D3): while this instance's earlier session call is still held,
   vi.stubEnv("FAKE_CLI_MODE", "grok-ok");
   await pendingJob("grok-session-check");
 
-  expect(await runJob<null>("grok-session-check", ctx => checkGrokSession(ctx), { requestedOnly: true }))
-    .toMatchObject({ status: "deferred", reason: "model_capacity" });
+  // 2026-10-30 결정: 미확인 행은 점유도 fence 도 아니다 — 다음 점검은 새 요청으로 그대로 돌고 관측이 success 로 움직인다. 미확인 행은 그대로 남는다.
+  expect(await runJob<null>("grok-session-check", ctx => checkGrokSession(ctx), { requestedOnly: true })).toMatchObject({ status: "completed" });
 
-  expect(await recorded()).toEqual([]);
-  expect((await requests()).map(row => row.request_id)).toEqual([held.request_id]);
+  const [respawned, ...more] = await recorded();
+  expect(more).toEqual([]); expect(respawned).toMatchObject({ mode: "grok-ok", argv: grokSessionArgs(GROK_MODEL) });
+  const rows = await requests();
+  expect(rows.map(row => row.state).sort()).toEqual(["indeterminate", "settled"]);
+  expect(rows.find(row => row.request_id === held.request_id)).toMatchObject({ state: "indeterminate", terminal_evidence: null });
   const [after] = await db.select().from(operationsObservations).where(eq(operationsObservations.key, `service:grok:${prefix}`));
-  expect(after).toEqual(observed);
+  expect(after.value).toMatchObject({ provider: "grok-cli", model: GROK_MODEL, result: "success" });
 }, PROCESS_TEST_MS);

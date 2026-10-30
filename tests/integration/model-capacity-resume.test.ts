@@ -249,7 +249,8 @@ it("returns only ID and state for dispatched or indeterminate work without relea
     WHERE request_id=${value.requestId}::uuid`;
   await admin`UPDATE model_capacity_control SET mode='draining',epoch=epoch+1,revision=revision+1 WHERE id=1`;
   before = await whole();
-  expect(await tracked(findOwnPendingModelRequest(identity(value)))).toEqual({ requestId: value.requestId, state: "indeterminate" });
+  // 2026-10-30: 미확인 행은 보류 중이 아니다(null) — 같은 work key 는 새 requestId 로 재접수된다.
+  expect(await tracked(findOwnPendingModelRequest(identity(value)))).toBeNull();
   expect(await tracked(cancelReservedModelSlot(handle))).toBe(false);
   expect(await tracked(requestModelSlot(value))).toEqual({ kind: "deferred", reason: "dispatched" });
   expect(await whole()).toEqual(before);

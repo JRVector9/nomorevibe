@@ -1,0 +1,29 @@
+"use server";
+
+import { z } from "zod";
+import { currentAdmin } from "@/lib/auth/admin";
+import { db } from "@/lib/db";
+import { operationsAudit } from "@/lib/db/schema";
+import { webWriteAction } from "@/lib/operations/dr/web-gate";
+import { adminAuditRow } from "@/lib/operations/admin-log";
+import { closeModelCapacityUnknownReview } from "@/lib/llm/capacity-repository";
+
+export type UnknownReviewState = { ok: true; requestId: string } | { ok: false; error: string } | null;
+const inputSchema = z.object({ requestId: z.uuid(), note: z.string().trim().min(1).max(400) });
+
+/** '검토 완료': indeterminate 행을 운영자 메모와 함께 withdrawn 으로 닫는다(0151). 용량은 바뀌지 않는다 — 검토 목록에서만 빠진다. 감사 기록을 남긴다. */
+export const closeUnknownReview = webWriteAction(async function closeUnknownReview(_previous: UnknownReviewState, form: FormData): Promise<UnknownReviewState> {
+  const admin = await currentAdmin();
+  if (!admin) return { ok: false, error: "관리자만 검토를 닫을 수 있습니다." };
+  const parsed = inputSchema.safeParse({ requestId: form.get("requestId"), note: form.get("note") });
+  if (!parsed.success) return { ok: false, error: "요청 ID 또는 메모(1~400자)가 올바르지 않습니다." };
+  const { requestId, note } = parsed.data;
+  try {
+    const result = await closeModelCapacityUnknownReview({ requestId, operator: admin.login, note });
+    await db.insert(operationsAudit).values(await adminAuditRow(admin.login, { action: "model-capacity-unknown-reviewed", target: requestId,
+      detail: { note, result: result.kind, ...(result.kind === "reviewed" ? { reviewedAt: result.evidence.reviewedAt } : { state: result.state }) },
+      ok: result.kind === "reviewed", error: result.kind === "reviewed" ? null : `request_${result.state ?? "missing"}` }));
+    if (result.kind !== "reviewed") return { ok: false, error: result.state === null ? "요청을 찾지 못했습니다." : `이미 ${result.state} 상태라 검토 대상이 아닙니다.` };
+    return { ok: true, requestId };
+  } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "검토 기록에 실패했습니다." }; }
+});

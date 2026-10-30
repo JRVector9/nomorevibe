@@ -354,7 +354,7 @@ it("does not reinterpret stale waiting identity under a replacement policy", exe
   await issued(request());
 }));
 
-it("retains dispatched unknown occupancy through expiry and policy renaming", exercise(async () => {
+it("keeps a dispatched unknown row for review through expiry and policy renaming without deferring new work (2026-10-30)", exercise(async () => {
   await installPolicy({ ...policy, globalLimit: 1 });
   const value = request(), reservation = await issued(value), begun = await beginModelDispatch(reservation);
   expect(begun.kind).toBe("dispatched"); if (begun.kind !== "dispatched") throw new Error("fixture_dispatch_not_issued");
@@ -368,9 +368,11 @@ it("retains dispatched unknown occupancy through expiry and policy renaming", ex
   expect(await markModelDispatchIndeterminate(begun.dispatch, "transport_unknown")).toBe(true);
   expect(await markModelDispatchIndeterminate(begun.dispatch, "transport_unknown")).toBe(true);
   expect(await cancelReservedModelSlot(reservation)).toBe(false);
-  const next = request(); expect(await requestModelSlot(next)).toEqual({ kind: "deferred", reason: "policy_changed" });
-  expect(await admin`SELECT request_id FROM model_capacity_requests WHERE request_id=${next.requestId}`).toEqual([]);
-  expect((await activeRows()).map(row => row.request_id)).toEqual([value.requestId]);
+  // 옛 세대에 남은 것이 미확인 행뿐이면 정책 변경은 policy_changed 로 미루지 않는다 — 그 행은 점유가 아니라 사람 검토 항목이다.
+  const next = request(); expect((await requestModelSlot(next)).kind).toBe("granted");
+  expect(await admin`SELECT state FROM model_capacity_requests WHERE request_id=${next.requestId}`).toEqual([{ state: "reserved" }]);
+  expect((await activeRows()).map(row => row.request_id).sort()).toEqual([value.requestId, next.requestId].sort());
+  expect(await admin`SELECT state FROM model_capacity_requests WHERE request_id=${value.requestId}`).toEqual([{ state: "indeterminate" }]);
   expect((await admin`SELECT kind FROM model_capacity_events WHERE request_id=${value.requestId} ORDER BY id`).map(row => row.kind))
     .toEqual(["queued", "reserved", "dispatch_started", "dispatch_indeterminate"]);
 }));

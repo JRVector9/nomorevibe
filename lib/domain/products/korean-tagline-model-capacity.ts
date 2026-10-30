@@ -9,6 +9,7 @@ import { reconcileGatewayNotStarted, readModelCapacityCallerControl, findOwnPend
 import { markUnsettledDispatch } from "@/lib/llm/capacity-unsettled";
 import { modelCapacityRequestIdentitySchema, productTaglineKoInputHash, productTaglineKoLogicalWorkKey } from "@/lib/llm/capacity";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
+import { modelCapacityIndeterminateReason } from "@/lib/llm/capacity";
 import { displayProjectName } from "./display-name";
 import { pendingKoreanTaglineBatch, prepareKoreanTaglineDispatch, koreanTaglineSource, type KoreanTaglineTask } from "./korean-taglines";
 import type { JobLease } from "@/lib/jobs/control";
@@ -72,7 +73,7 @@ export async function translateKoreanTaglinesWithModelCapacity(value: readonly K
     class: "background", pool: "text", routeId: "product-tagline-ko", provider: "abcllm", model: scopedModel("product-tagline-ko", KOREAN_TAGLINE_MODEL),
     workKey: `${productTaglineKoLogicalWorkKey(members)}:${productTaglineKoInputHash({ members, model: scopedModel("product-tagline-ko", KOREAN_TAGLINE_MODEL) })}` });
   const pending = adopted ?? await findOwnPendingModelRequest(identity);
-  if (pending && (pending.state === "dispatched" || pending.state === "indeterminate")) throw new ModelCapacityDeferredError("dispatched");
+  if (pending?.state === "dispatched") throw new ModelCapacityDeferredError("dispatched");
   const slot = await requestProductTaglineKoModelSlot({ ...identity, requestId: pending?.requestId ?? randomUUID() }, members);
   if (slot.kind !== "granted") throw new ModelCapacityDeferredError(slot.reason);
   let prepared: Awaited<ReturnType<typeof prepareKoreanTaglineDispatch>>;
@@ -95,7 +96,7 @@ export async function translateKoreanTaglinesWithModelCapacity(value: readonly K
     { signal: options.signal, timeoutMs: scopedRequestTimeout("product-tagline-ko", options.timeoutMs) }); }
   catch (error) {
     try {
-      if (!await markModelDispatchIndeterminate(prepared.dispatch, options.signal?.aborted ? "local_abort" : "transport_unknown"))
+      if (!await markModelDispatchIndeterminate(prepared.dispatch, modelCapacityIndeterminateReason({ signal: options.signal, error })))
         throw new Error("product_tagline_ko_dispatch_not_marked");
     } catch (cleanup) { throw new AggregateError([error, cleanup], "product_tagline_ko_transport_cleanup_failed"); }
     throw error;
@@ -104,7 +105,7 @@ export async function translateKoreanTaglinesWithModelCapacity(value: readonly K
   try {
     if (native.terminal) await reconcileProductTaglineKoGatewayTerminal(native.terminal);
     else if (native.notStarted) await reconcileGatewayNotStarted(native.notStarted);
-    else if (!await markModelDispatchIndeterminate(prepared.dispatch, options.signal?.aborted ? "local_abort" : "transport_unknown"))
+    else if (!await markModelDispatchIndeterminate(prepared.dispatch, modelCapacityIndeterminateReason({ signal: options.signal, timedOut: !native.result.ok && native.result.error === "timeout" })))
       throw new Error("product_tagline_ko_dispatch_not_marked");
   } catch (cleanup) {
     if (native.terminal || native.notStarted) await markUnsettledDispatch(prepared.dispatch);

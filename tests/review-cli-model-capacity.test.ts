@@ -187,9 +187,11 @@ it.skipIf(process.platform === 'win32')('pipe 쥔 손자: terminal 없이 proces
   expect(result).toEqual({ ok: false, error: 'cli_error' });
   expect(mocks.unknown).toHaveBeenCalledExactlyOnceWith(claim.dispatch, 'process_exit'); expect(mocks.reconcile).not.toHaveBeenCalled();
   expect(await recorded()).toHaveLength(1);
-  mocks.pending.mockResolvedValue({ requestId: claim.dispatch!.requestId, state: 'indeterminate' }); mocks.request.mockClear(); mocks.ai1Claim.mockClear();
-  await expect(claimAgentReviewCliModelCapacity(context())).rejects.toMatchObject({ reason: 'dispatched' });
-  expect(mocks.request).not.toHaveBeenCalled(); expect(mocks.ai1Claim).not.toHaveBeenCalled();
+  // 2026-10-30: 미확인 행은 재진입을 막지 않는다 — readback 은 null 이고 새 requestId 로 슬롯을 다시 묻는다(여기서는 capacity 로 미뤄 spawn·claim 0).
+  mocks.pending.mockResolvedValue(null); mocks.request.mockClear(); mocks.ai1Claim.mockClear();
+  mocks.request.mockResolvedValueOnce({ kind: 'deferred', reason: 'capacity' });
+  await expect(claimAgentReviewCliModelCapacity(context())).rejects.toMatchObject({ reason: 'capacity' });
+  expect(mocks.request).toHaveBeenCalledOnce(); expect(mocks.request.mock.calls[0][0].requestId).not.toBe(claim.dispatch!.requestId); expect(mocks.ai1Claim).not.toHaveBeenCalled();
   expect(await recorded()).toHaveLength(1); expect(await readdir(tmp)).toEqual([]);
 }, PROCESS_TEST_MS);
 

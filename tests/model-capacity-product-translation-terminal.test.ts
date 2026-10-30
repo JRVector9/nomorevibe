@@ -184,10 +184,12 @@ it("checks overlapping durable targets independently of model, owner, source and
   const { PgDialect } = await import("drizzle-orm/pg-core");
   const query = new PgDialect().sqlToQuery(fixture.queries.at(-1) as import("drizzle-orm").SQL);
   expect(query.sql).toContain("logical_member_keys"); expect(query.sql).toContain("&& ARRAY[");
-  expect(query.sql).toContain("'waiting','reserved','dispatched','indeterminate'");
+  // 2026-10-30 결정: fence 는 살아 있는 행(waiting·reserved·dispatched)만 본다 — 미확인 행은 같은 대상의 재접수를 막지 않는다.
+  expect(query.sql).toContain("IN ('waiting','reserved','dispatched')"); expect(query.sql).not.toContain("indeterminate");
   expect(query.sql).not.toContain("owner_instance_id"); expect(query.sql).not.toContain('"model"');
   expect(query.params).toEqual([value.handle.requestId, "product-translate:21:en:tagline", "product-translate:32:zh-Hant:description"]);
-  expect(query.sql).toContain("logical_member_keys\" IS NULL");
+  // 미결 legacy 행(멤버 키 없음)은 결과를 모르는 실제 전송(dispatched) 하나만 경로 전체를 막는다.
+  expect(query.sql).toContain("logical_member_keys\" IS NULL"); expect(query.sql).toContain("\"state\" = 'dispatched'");
   expect(query.sql).toContain("'product-translate'");
 });
 it("takes control and request UPDATE before rejecting changed durable membership", async () => {

@@ -179,7 +179,8 @@ it("a restored ledger accepts copied tokens until seal, then rejects every copie
   state.plan = { version: 1, promotionId: randomUUID(), lineageId: state.lineage, fromEpoch: 1, knownActiveEpoch: 1, restoredDb: state.rDb,
     oldDbs: [state.pDb], oldInstances: [inst.declared], snapshotAt: state.snapshotAt, operator };
   const preview = await repo.sealRestoredDatabase(state.plan, false);
-  expect(preview).toMatchObject({ state: "sealed", sealSnapshot: { modelBudgets: ["acct"], activeModelCalls: 3, activeHttpHops: 2,
+  // 2026-10-30 결정: 봉인 스냅샷의 activeModelCalls 는 점유(reserved·dispatched) 2 건만 센다 — 미확인 행은 점유가 아니다(법의학 회수 대상으로만 남는다).
+  expect(preview).toMatchObject({ state: "sealed", sealSnapshot: { modelBudgets: ["acct"], activeModelCalls: 2, activeHttpHops: 2,
     revoked: { roles: 1, jobs: 1, items: 1, sourceClaims: 0 }, modelControl: { epoch: 2, revision: 2, mode: "draining" }, httpControl: { epoch: 2, mode: "draining" } } });
   expect(preview.sealSnapshot.instances).toEqual([inst.http, inst.item, inst.model, inst.role].sort());
   // dry-run은 ROLLBACK이다: fence와 token이 그대로다.
@@ -330,11 +331,12 @@ it("reopens HTTP only after settling old hops; keeps model permits closed while 
     if (fresh[0]?.state === "released") break; await sleep(50);
   }
   expect(fresh).toEqual([{ state: "released", epoch: 2 }]);
+  // 2026-10-30 결정: 옛 세대의 미확인 행은 점유가 아니라 permit 열기를 막는 수에 들지 않는다(:1 = dispatched 만) — 행 자체는 그대로 남는다.
   const dryModel = await permits.openModelCapacityAfterDrain({ promotionId: id, operator }, false);
-  expect(dryModel).toMatchObject({ kind: "blocked", reason: "model_capacity_old_dispatch_unreleased:2", cancelledReservations: [state.reserved.reservation.requestId] });
+  expect(dryModel).toMatchObject({ kind: "blocked", reason: "model_capacity_old_dispatch_unreleased:1", cancelledReservations: [state.reserved.reservation.requestId] });
   expect((await pool("restored")`SELECT state FROM model_capacity_requests WHERE request_id = ${state.reserved.reservation.requestId}`)[0].state).toBe("reserved");
   const model = await permits.openModelCapacityAfterDrain({ promotionId: id, operator }, true);
-  expect(model).toMatchObject({ kind: "blocked", reason: "model_capacity_old_dispatch_unreleased:2", cancelledReservations: [state.reserved.reservation.requestId] });
+  expect(model).toMatchObject({ kind: "blocked", reason: "model_capacity_old_dispatch_unreleased:1", cancelledReservations: [state.reserved.reservation.requestId] });
   expect(Array.from(await pool("restored")`SELECT r.state, e.kind FROM model_capacity_requests r JOIN model_capacity_events e ON e.request_id = r.request_id
     WHERE r.request_id = ${state.reserved.reservation.requestId} ORDER BY e.id DESC LIMIT 1`)).toEqual([{ state: "withdrawn", kind: "reservation_cancelled" }]);
   expect(Array.from(await pool("restored")`SELECT state FROM model_capacity_requests WHERE request_id IN (${state.dispatched}, ${state.indeterminate}) ORDER BY state`))

@@ -3,8 +3,11 @@ import type { SecondReview } from "@/lib/db/schema";
 import { capacityBlocksStaleReconcile, staleFallbackRootIds, staleReviewCursorAfterPage } from "@/lib/crawl/second-review-stale";
 
 const now = new Date("2026-10-27T05:00:00Z");
-it.each(["dispatched", "indeterminate", "unknown"])("protects %s capacity regardless of elapsed time", state => {
+it.each(["dispatched", "unknown"])("protects %s capacity regardless of elapsed time", state => {
   expect(capacityBlocksStaleReconcile({ state, reservedUntil: new Date(0) }, now)).toBe(true);
+});
+it("no longer protects a candidate behind an indeterminate call (2026-10-30: 확인 못함 is a finished attempt, not occupancy)", () => {
+  expect(capacityBlocksStaleReconcile({ state: "indeterminate", reservedUntil: new Date(0) }, now)).toBe(false);
 });
 it.each([null, "malformed", new Date(NaN)])("protects a reservation with an unreadable time (%s)", reservedUntil => {
   expect(capacityBlocksStaleReconcile({ state: "reserved", reservedUntil }, now)).toBe(true);

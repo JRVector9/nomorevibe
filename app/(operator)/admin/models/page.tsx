@@ -15,6 +15,8 @@ import { ReviewModelsForm } from "./ReviewModelsForm";
 import { reviewModelOptions } from "./model-options";
 import { readAdminModelsObservation } from "@/lib/operations/admin-models-repository";
 import { LiveModels } from "./LiveModels";
+import { UnknownReviewList } from "./UnknownReviewList";
+import { readModelCapacityReviewQueue } from "@/lib/operations/model-capacity-unknowns";
 import { modelRecoveryBlocked, type ModelStageAssignment } from "@/lib/operations/admin-models-view";
 import { ADMIN_MODEL_STAGES } from "@/lib/llm/admin-model-stages";
 import { configuredModel, modelForPurpose, modelRequestName, MODEL_PURPOSE_ENV, readModelRegistry } from "@/lib/llm/model-registry";
@@ -55,6 +57,7 @@ export default async function ModelsPage() {
       <Link href="/admin/status" prefetch={false} className="text-[13px] font-semibold text-accent-ink">운영센터에서 실제 워커 경로·용량 확인 →</Link>
     </header>
     <Suspense fallback={<p aria-busy="true">운영 DB 실측 확인 중…</p>}><LiveModelsSlot assignments={assignments} models={registry.models} /></Suspense>
+    <Suspense fallback={<p aria-busy="true">사람 검토 목록 확인 중…</p>}><UnknownReviewSlot /></Suspense>
     <ReviewModelsForm settings={settings} version={settingsFormVersion(settings)} models={registry.models} defaults={defaults}
       firstChoices={reviewModelOptions(gatewayModels, false)} secondChoices={reviewModelOptions(gatewayModels, true)} />
     <details className="rounded-xl border border-line bg-bg-card p-4"><summary className="cursor-pointer font-semibold">참고 · 카테고리 분류 / 검색 모델 / 모델 등록부 / 다른 LLM 단계</summary>
@@ -101,4 +104,8 @@ async function SearchModelsSlot() {
 async function HumanSlot({ enabled, generation, keys }: { enabled: boolean; generation: number; keys: string[] }) {
   return <HumanReviewSwitch key={generation} enabled={enabled} generation={generation} ready={await configuredHumanModelsReady(keys)}
     {...humanReviewModelDisplay(keys)} />;
+}
+
+async function UnknownReviewSlot() {
+  return <UnknownReviewList queue={await readModelCapacityReviewQueue()} />;
 }

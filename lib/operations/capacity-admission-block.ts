@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 import { db, onPrimary } from '@/lib/db';
 import { currentReplayDb } from '@/lib/db/replay-scope';
 import { modelCapacityPolicyHash, parseModelCapacityPolicy, type ModelCapacityPolicy } from '@/lib/llm/capacity';
+import { inFlightStateSql } from '@/lib/llm/capacity-states';
 
 const ACTIVE_GROUP_CAP = 65;
 const WAITING_ROUTE_CAP = 129;
@@ -41,7 +42,7 @@ export async function readCapacityAdmissionBlocks(): Promise<CapacityAdmissionBl
           'writerActive', f.state = 'active',
           'oldActive', EXISTS (
             SELECT 1 FROM model_capacity_requests r
-            WHERE (r.state IN ('dispatched','indeterminate') OR (r.state = 'reserved' AND r.reserved_until > clock_timestamp()))
+            WHERE (${inFlightStateSql('r.state')} OR (r.state = 'reserved' AND r.reserved_until > clock_timestamp()))
               AND (r.epoch <> c.epoch OR r.revision <> c.revision OR r.policy_hash IS DISTINCT FROM c.policy_hash)
           ),
           'active', (
@@ -50,7 +51,7 @@ export async function readCapacityAdmissionBlocks(): Promise<CapacityAdmissionBl
             FROM (
               SELECT group_id, provider_budget_id, pool, count(*)::int AS n
               FROM model_capacity_requests r
-              WHERE r.state IN ('dispatched','indeterminate') OR (r.state = 'reserved' AND r.reserved_until > clock_timestamp())
+              WHERE ${inFlightStateSql('r.state')} OR (r.state = 'reserved' AND r.reserved_until > clock_timestamp())
               GROUP BY group_id, provider_budget_id, pool
               LIMIT ${ACTIVE_GROUP_CAP}
             ) s

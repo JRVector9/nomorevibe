@@ -9,6 +9,7 @@ import { reconcileGatewayNotStarted, readModelCapacityCallerControl, findOwnPend
 import { markUnsettledDispatch } from "@/lib/llm/capacity-unsettled";
 import { modelCapacityRequestIdentitySchema, crawlTaglineInputHash, crawlTaglineLogicalWorkKey, type CrawlTaglineParent } from "@/lib/llm/capacity";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
+import { modelCapacityIndeterminateReason } from "@/lib/llm/capacity";
 import { prepareCrawlTaglineDispatch, prepareCrawlTaglineHistory, type TaglineTask, type CrawlTaglineWriteExpectation } from "./taglines";
 import type { JobLease } from "@/lib/jobs/control";
 import { roleLeaseFromEnv, type RoleLease } from "@/lib/jobs/role-leader";
@@ -57,7 +58,7 @@ export async function writeCrawlTaglineWithModelCapacity(value: TaglineTask, job
     class: "background", pool: "text", routeId: "crawl-tagline", provider: "abcllm", model: scopedModel("crawl-tagline", TAGLINE_MODEL),
     workKey: `${crawlTaglineLogicalWorkKey(input)}:${crawlTaglineInputHash(input)}` });
   const pending = await findOwnPendingModelRequest(identity);
-  if (pending && (pending.state === "dispatched" || pending.state === "indeterminate")) throw new ModelCapacityDeferredError("dispatched");
+  if (pending?.state === "dispatched") throw new ModelCapacityDeferredError("dispatched");
   const slot = await requestCrawlTaglineModelSlot({ ...identity, requestId: pending?.requestId ?? randomUUID() }, input);
   if (slot.kind !== "granted") throw new ModelCapacityDeferredError(slot.reason);
   let prepared: Awaited<ReturnType<typeof prepareCrawlTaglineDispatch>>;
@@ -78,7 +79,7 @@ export async function writeCrawlTaglineWithModelCapacity(value: TaglineTask, job
   let native: Awaited<ReturnType<typeof writeTaglineWithReservedGateway>>;
   try { native = await writeTaglineWithReservedGateway(evidence, prepared.dispatch, call, { signal: options.signal, timeoutMs: scopedRequestTimeout("crawl-tagline", options.timeoutMs) }); }
   catch (error) {
-    try { if (!await markModelDispatchIndeterminate(prepared.dispatch, options.signal?.aborted ? "local_abort" : "transport_unknown"))
+    try { if (!await markModelDispatchIndeterminate(prepared.dispatch, modelCapacityIndeterminateReason({ signal: options.signal, error })))
       throw new Error("crawl_tagline_dispatch_not_marked"); }
     catch (cleanup) { throw new AggregateError([error, cleanup], "crawl_tagline_transport_cleanup_failed"); }
     throw error;
@@ -87,7 +88,7 @@ export async function writeCrawlTaglineWithModelCapacity(value: TaglineTask, job
   try {
     if (native.terminal) await reconcileCrawlTaglineGatewayTerminal(native.terminal);
     else if (native.notStarted) await reconcileGatewayNotStarted(native.notStarted);
-    else if (!await markModelDispatchIndeterminate(prepared.dispatch, options.signal?.aborted ? "local_abort" : "transport_unknown"))
+    else if (!await markModelDispatchIndeterminate(prepared.dispatch, modelCapacityIndeterminateReason({ signal: options.signal, timedOut: !native.result.ok && native.result.error === "timeout" })))
       throw new Error("crawl_tagline_dispatch_not_marked");
   } catch (cleanup) {
     if (native.terminal || native.notStarted) await markUnsettledDispatch(prepared.dispatch);
