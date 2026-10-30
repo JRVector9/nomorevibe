@@ -12,6 +12,9 @@ export function EngineConnectForm({ models, routes }: { models: EngineConnectMod
   const [engineModels, setEngineModels] = useState<{ id: string; maxModelLen: number | null }[] | null>(null);
   const [engineModel, setEngineModel] = useState(""), [readback, setReadback] = useState<string | null>(null);
   const [chosen, setChosen] = useState<string[]>(() => routes.filter(route => models[0]?.purposes.includes(route)));
+  const [maxModelLen, setMaxModelLen] = useState("");
+  // mlx_lm.server and the M3 mlx-serve proxy list their model without max_model_len: the operator types the bound then.
+  const lenUnknown = !!engineModel && engineModels?.find(model => model.id === engineModel)?.maxModelLen == null;
   const [state, action, pending] = useActionState<ContractSaveState, FormData>(connectEngine, null);
   function pick(next: string) {
     setRegistryKey(next);
@@ -49,13 +52,17 @@ export function EngineConnectForm({ models, routes }: { models: EngineConnectMod
       {engineModels.map(model => <label key={model.id} className="flex gap-2 text-[13px]">
         <input type="radio" name="engineModel" value={model.id} checked={engineModel === model.id} onChange={() => setEngineModel(model.id)} />
         <code>{model.id}</code>{model.maxModelLen ? ` · 최대 ${model.maxModelLen} 토큰` : " · 최대 길이 모름"}</label>)}</fieldset>}
+    <label className="grid gap-1">컨텍스트 상한(토큰) — /models 가 max_model_len 을 안 줄 때만
+      <input name="maxModelLen" type="number" inputMode="numeric" min={1} max={2097152} step={1} value={maxModelLen} onChange={event => setMaxModelLen(event.target.value)}
+        placeholder={lenUnknown ? "예: 131072 — 이 모델은 최대 길이를 알려 주지 않습니다" : "엔진이 알려 주면 비워 둡니다(다른 값을 넣으면 거절)"}
+        autoComplete="off" className="rounded border border-line bg-bg p-2 font-mono text-[13px]" /></label>
     <fieldset className="grid gap-1"><legend className="mb-1">쓰는 경로</legend>
       {routes.map(route => <label key={route} className="flex gap-2 text-[13px]">
         <input type="checkbox" name="routes" value={route} checked={chosen.includes(route)}
           onChange={event => setChosen(event.target.checked ? [...chosen, route] : chosen.filter(row => row !== route))} />{route}</label>)}</fieldset>
     <label className="flex gap-2 text-[13px]"><input type="checkbox" name="selectStages" defaultChecked />고른 경로의 단계별 모델을 이 모델로 지정</label>
     <label className="grid gap-1">메모<input name="note" maxLength={400} className="rounded border border-line bg-bg p-2" /></label>
-    <div><button type="submit" disabled={pending || !engineModel || !chosen.length} className="rounded bg-fg px-3 py-2 text-bg">
+    <div><button type="submit" disabled={pending || !engineModel || !chosen.length || (lenUnknown && !maxModelLen.trim())} className="rounded bg-fg px-3 py-2 text-bg">
       {pending ? "연결 중…" : "연결 저장"}</button></div>
     {state?.ok && <p role="status" className="text-[13px]">{state.message}</p>}
     {state?.issues?.map(text => <p key={text} role="alert" className="text-[13px] text-red-600">{text}</p>)}

@@ -5,6 +5,7 @@ import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { pendingVerifications, recordVerificationResult } from "@/lib/domain/products/search-profiles";
 import { VERIFY_MODEL } from "@/lib/domain/products/search-verify";
 import { verifyKeywordsWithModelCapacity } from "@/lib/domain/products/search-verify-model-capacity";
+import { textRouteCallable } from "@/lib/llm/serving-contract-store";
 
 /**
  * 검색 키워드 검수 — 지은 키워드를 게이트웨이의 Qwen3.8 이 근거와 대조해 뒷받침되지 않는 것을 뺀다(search-verify.ts).
@@ -26,9 +27,9 @@ const MIN_CALL_MS = 20_000;
 const GATEWAY_DOWN = new Set(["no_key", "model_unavailable", "rate_limit", "timeout", "network"]);
 
 export async function verifySearchKeywords(ctx: JobContext<null>, request?: typeof fetch): Promise<JobOutcome<null>> {
-  if (!process.env.ABCLLM_API_KEY?.trim()) {
+  if (!textRouteCallable("product-search-verify", scopedModel("product-search-verify", VERIFY_MODEL))) {
     ctx.log("search_verify.skipped", { reason: "no_key" });
-    return { done: true, degraded: { code: "no_key", detail: "text 워커에 ABCLLM_API_KEY 가 없습니다" } };
+    return { done: true, degraded: { code: "no_key", detail: "이 경로의 직접 연결 계약도 text 워커의 ABCLLM_API_KEY 도 없습니다" } };
   }
   const lease = ctx.lease;
   if (!lease) throw new Error("Search keyword verification requires a job lease");

@@ -7,6 +7,7 @@ import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { PROFILE_MODEL, profileEvidence, profileHash } from "@/lib/domain/products/search-profile";
 import { pendingProfiles, recordProfileResult } from "@/lib/domain/products/search-profiles";
 import { otherRoutesWaitingOnGroup } from "@/lib/llm/capacity-busy-targets";
+import { textRouteCallable } from "@/lib/llm/serving-contract-store";
 
 /**
  * 검색 키워드 짓기 — 공개 제품마다 모델이 한·영 검색어를 적는다(search-profile.ts).
@@ -43,9 +44,9 @@ const MIN_CALL_MS = 15_000;
 const GATEWAY_DOWN = new Set(["no_key", "model_unavailable", "rate_limit", "timeout", "network"]);
 
 export async function writeSearchProfiles(ctx: JobContext<null>): Promise<JobOutcome<null>> {
-  if (!process.env.ABCLLM_API_KEY?.trim()) {
+  if (!textRouteCallable("product-search-profile", scopedModel("product-search-profile", PROFILE_MODEL))) {
     ctx.log("search_profile.skipped", { reason: "no_key" });
-    return { done: true, degraded: { code: "no_key", detail: "text 워커에 ABCLLM_API_KEY 가 없습니다" } };
+    return { done: true, degraded: { code: "no_key", detail: "이 경로의 직접 연결 계약도 text 워커의 ABCLLM_API_KEY 도 없습니다" } };
   }
   const lease = ctx.lease;
   if (!lease) throw new Error("Search profile worker requires a job lease");

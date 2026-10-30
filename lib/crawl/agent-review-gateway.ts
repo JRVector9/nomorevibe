@@ -760,7 +760,7 @@ import { productTranslationModelDispatchSchema, productTranslationGatewayTermina
 import { productTranslationServingContractHash, productTranslationServingContractSchema, resolveProductTranslationServingContract,
   type ProductTranslationServingContract } from "@/lib/llm/product-translation-serving-contract";
 import { productTranslationGatewayWire, type ProductTranslationGatewayItem } from "./translate";
-import { productTranslationSourceHash } from "@/lib/domain/products/translation-policy";
+import { PRODUCT_TRANSLATION_MAX_SOURCE_CHARS, productTranslationSourceHash } from "@/lib/domain/products/translation-policy";
 import { parseKoreanTaglines, type KoreanTaglineBatch } from "@/lib/domain/products/korean-tagline";
 
 export type PreparedProductTranslationGatewayCall = Readonly<{ kind: "prepared"; wireHash: string;
@@ -775,7 +775,7 @@ function validProductTranslationItems(value: unknown): value is ProductTranslati
     && Object.keys(item).sort().join(",") === "field,locale,name,text"
     && typeof item.name === "string" && typeof item.text === "string" && !!item.text.trim()
     && ["en", "zh-Hans", "zh-Hant"].includes(item.locale) && ["tagline", "description"].includes(item.field))
-    && value.reduce((count, item) => count + item.text.length, 0) <= 4000;
+    && value.reduce((count, item) => count + item.text.length, 0) <= PRODUCT_TRANSLATION_MAX_SOURCE_CHARS;
 }
 /** No descriptor or injected request enables a product serving deployment. */
 export function prepareProductTranslationGatewayCall(items: readonly ProductTranslationGatewayItem[], options: { model: string; timeoutMs: number }):

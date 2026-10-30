@@ -35,7 +35,7 @@ const originalSystem = [
 ].join(" ");
 function originalWire(batch: readonly ProductTranslationGatewayItem[], selectedModel: string) {
   return JSON.stringify({ model: selectedModel, stream: false, temperature: 0, reasoning_effort: "low",
-    max_tokens: Math.min(8000, 600 + Math.ceil(batch.reduce((count, item) => count + item.text.length, 0) * 2)),
+    max_tokens: Math.min(30_000, 600 + Math.ceil(batch.reduce((count, item) => count + item.text.length, 0) * 2)),
     // These fixtures contain no acronym/CamelCase source tokens; the alignment tests cover nonempty lists.
     messages: [{ role: "system", content: originalSystem }, { role: "user", content: JSON.stringify(batch.map(item => ({ ...item, protectedTokens: [] }))) }] });
 }
@@ -126,7 +126,7 @@ it("keeps production unsupported and malformed or missing-key batches incapable 
   await server(async ({ bodies }) => {
     const first = items()[0];
     for (const batch of [[], new Array(1), Array(5).fill(first), [{ ...first, locale: "ko" }], [{ ...first, field: "other" }],
-      [{ ...first, extra: true }], [{ ...first, text: "" }], [{ ...first, text: "a".repeat(4001) }]])
+      [{ ...first, extra: true }], [{ ...first, text: "" }], [{ ...first, text: "a".repeat(30_001) }]])
       expect(prepareProductTranslationGatewayCall(batch as ProductTranslationGatewayItem[], { model, timeoutMs: 1000 }).kind).toBe("unsupported");
     vi.stubEnv("ABCLLM_API_KEY", "");
     expect(prepareProductTranslationGatewayCall(items(), { model, timeoutMs: 1000 }).kind).toBe("unsupported"); expect(bodies).toEqual([]);
@@ -139,7 +139,8 @@ it.each([1, 4])("preserves the original max-token formula for a valid %i-field b
       message: { role: "assistant", content: JSON.stringify(batch.map(() => "Translated unchanged")) }, finish_reason: "stop" }] }))));
     const call = prepared(batch), outcome = await send(batch, dispatch(batch, call), call);
     expect(outcome.result.ok).toBe(true); expect(bodies).toEqual([originalWire(batch, model)]);
-    expect(JSON.parse(bodies[0]).max_tokens).toBe(count === 1 ? 2600 : 8000);
+    // 출력 상한 30K(2026-10-30) 아래에서는 600 + 2×글자 수 그대로다(1건 2,600 / 4건 8,600).
+    expect(JSON.parse(bodies[0]).max_tokens).toBe(count === 1 ? 2600 : 8600);
     expect(readProductTranslationGatewayTerminal(outcome.terminal)).not.toBeNull();
   });
 });

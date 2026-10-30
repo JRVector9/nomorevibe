@@ -12,6 +12,7 @@ import { modelCapacityIndeterminateReason } from "@/lib/llm/capacity";
 import { websearchProcessOwner } from "@/lib/llm/websearch-process-owner";
 import { prepareWebsearchQueryDispatch, recordWebsearchQueryResult, type WebsearchQueryResult,
   type WebsearchQueryTarget } from "./search-query-capacity-repository";
+import { textRouteCallable } from "@/lib/llm/serving-contract-store";
 
 /**
  * 공개 검색어 번역을 공통 모델 슬롯에 묶는다.
@@ -28,7 +29,7 @@ const flights = globalFlights.noMoreVibeWebsearchQueryFlights ??= new Map();
 export async function translateQueryWithModelCapacity(value: WebsearchQueryTarget, timeoutMs: number): Promise<WebsearchQueryCapacityResult> {
   timeoutMs = scopedRequestTimeout("search-query-translate", timeoutMs);
   const target = structuredClone(value);
-  if (!process.env.ABCLLM_API_KEY?.trim()) return { kind: "legacy" };
+  if (!textRouteCallable("search-query-translate", scopedModel("search-query-translate", SEARCH_QUERY_MODEL))) return { kind: "legacy" };
   const running = flights.get(target.cacheKey);
   if (running) return running;
   const control = await readModelCapacityCallerControl();

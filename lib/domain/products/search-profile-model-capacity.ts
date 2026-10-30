@@ -1,4 +1,4 @@
-import { scopedRequestTimeout } from "@/lib/llm/model-registry";
+import { scopedModel, scopedRequestTimeout } from "@/lib/llm/model-registry";
 import { randomUUID } from "node:crypto";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { modelCapacityIndeterminateReason } from "@/lib/llm/capacity";
@@ -8,9 +8,10 @@ import { markUnsettledDispatch } from "@/lib/llm/capacity-unsettled";
 import { writeKeywordsWithReservedGateway } from "@/lib/crawl/agent-review-gateway";
 import { textProfileInputHash, type ModelCapacityRequestIdentity } from "@/lib/llm/capacity";
 import { prepareProfileModelDispatch, type ProfileTask, type ProfileWriteExpectation } from "./search-profiles";
-import { profileEvidence, writeKeywords, type KeywordResult } from "./search-profile";
+import { PROFILE_MODEL, profileEvidence, writeKeywords, type KeywordResult } from "./search-profile";
 import type { JobLease } from "@/lib/jobs/control";
 import type { RoleLease } from "@/lib/jobs/role-leader";
+import { textRouteCallable } from "@/lib/llm/serving-contract-store";
 
 export type ProfileCapacityResult = { kind: "skipped" } | { kind: "result"; result: KeywordResult; expectedProfile?: ProfileWriteExpectation };
 /** Fixed route coordinator. No callback, JSON shape or timeout is dispatch authority. */
@@ -18,7 +19,7 @@ export async function writeKeywordsWithModelCapacity(task: ProfileTask, lease: J
   options: { timeoutMs: number; signal?: AbortSignal; roleLease?: RoleLease }): Promise<ProfileCapacityResult> {
   const snapshot = structuredClone(task), ownedLease = structuredClone(lease), captured = { ...options, timeoutMs: scopedRequestTimeout("product-search-profile", options.timeoutMs),
     roleLease: options.roleLease && structuredClone(options.roleLease) };
-  if (!process.env.ABCLLM_API_KEY?.trim()) return { kind: "result", result: { ok: false, error: "no_key" } };
+  if (!textRouteCallable("product-search-profile", scopedModel("product-search-profile", PROFILE_MODEL))) return { kind: "result", result: { ok: false, error: "no_key" } };
   const prepared = await prepareProfileModelDispatch(snapshot, ownedLease, captured);
   if (prepared.kind === "disabled") return { kind: "result", result: await writeKeywords(profileEvidence(snapshot.product, snapshot.reviewerNote), options) };
   if (prepared.kind === "skipped") return prepared;

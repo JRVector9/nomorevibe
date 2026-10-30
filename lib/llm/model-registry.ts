@@ -79,7 +79,7 @@ export const DEFAULT_MODEL_DEFINITIONS: readonly ModelDefinition[] = [
     model: "deepseek-v4.1-flash-1017", family: "deepseek-v4.1-flash-1017", timeoutMs: 60_000, maxTokens: 8_000, concurrency: 1,
     purposes: ["human-review", "assist-audit"] },
   { key: "m1:translation", equipment: "m1", displayName: "M1 · Gemma 4 26B", provider: "abcllm", baseUrl: gateway, gatewayLabel: "m1",
-    model: "mlx-community--gemma-4-26b-a4b-it-4bit", family: "gemma4-26b", timeoutMs: 40_000, maxTokens: 8_000, concurrency: 1, purposes: ["product-translate", "reason-translate", "relay"] },
+    model: "mlx-community--gemma-4-26b-a4b-it-4bit", family: "gemma4-26b", timeoutMs: 300_000, maxTokens: 30_000, concurrency: 1, purposes: ["product-translate", "reason-translate", "relay"] },
   { key: "supa:review", equipment: "supa", displayName: "Supa · Qwen", provider: "abcllm", baseUrl: gateway, gatewayLabel: "supa",
     model: "Qwen3.8-27B-NVFP4", family: "Qwen3.8-27B-NVFP4", timeoutMs: 60_000, maxTokens: 8_000, concurrency: 4,
     purposes: ["ai1-preset", "product-search-verify"] },
@@ -107,7 +107,7 @@ export const DEFAULT_MODEL_PURPOSE_LIMITS: Readonly<Record<string, { maxTokens: 
   "classify-claude": { maxTokens: 4_000, concurrency: 1 },
   "product-search-profile": { maxTokens: 500, concurrency: 2, timeoutMs: 45_000 }, "product-search-verify": { maxTokens: 3_000, concurrency: 4, timeoutMs: 60_000 },
   "crawl-tagline": { maxTokens: 400, concurrency: 2 }, "reason-translate": { maxTokens: 6_000, concurrency: 2, timeoutMs: 45_000 },
-  "product-tagline-ko": { maxTokens: 5_400, concurrency: 1, timeoutMs: 45_000 }, "product-translate": { maxTokens: 8_000, concurrency: 1, timeoutMs: 40_000 },
+  "product-tagline-ko": { maxTokens: 5_400, concurrency: 1, timeoutMs: 45_000 }, "product-translate": { maxTokens: 30_000, concurrency: 1, timeoutMs: 300_000 },
   "search-query-translate": { maxTokens: 200, concurrency: 1 }, "direct-review": { maxTokens: 3_000, concurrency: 2 },
 };
 const purposeLimitSchema = z.object({ maxTokens: z.number().int().positive().max(262_144),

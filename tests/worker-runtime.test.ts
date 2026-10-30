@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
 import { interruptibleSleep, jobRunOptions, parseWorkerArgs, runWorker } from '@/scripts/worker';
 import { batchJobsForRole, batchLanesForRole } from '@/lib/jobs/batches';
+import { PRODUCT_TRANSLATION_JOB_BUDGET_MS } from '@/lib/llm/deadline-ladder';
 
 function runtimeGate() {
   let release!: () => void;
@@ -262,7 +263,9 @@ it('gives the publisher batch enough cooperative time below the supervisor deadl
   const base = { requestedOnly: true as const };
   expect(jobRunOptions('crawl-publish', base)).toEqual({ ...base, budgetMs: 120_000 });
   expect(jobRunOptions('reason-translate', base)).toEqual({ ...base, budgetMs: 55_000 });
-  expect(jobRunOptions('product-translate', base)).toEqual({ ...base, budgetMs: 55_000 });
+  // product-translate: 300초 번역 상한 + 15초(lib/llm/deadline-ladder.ts) — text 감시자 job_timeout(360초) 아래
+  expect(jobRunOptions('product-translate', base)).toEqual({ ...base, budgetMs: PRODUCT_TRANSLATION_JOB_BUDGET_MS });
+  expect(PRODUCT_TRANSLATION_JOB_BUDGET_MS).toBe(315_000);
   expect(jobRunOptions('crawl-fetch', base)).toEqual({ ...base, budgetMs: 120_000 });
   expect(jobRunOptions('crawl-seed', base)).toEqual({ ...base, budgetMs: 30_000 });
 });

@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import { dbPoolConfig } from '@/lib/db/pool';
 import { expect, it, vi } from 'vitest';
 import * as childProcess from 'node:child_process';
-import { childExitCode, isRuntimeHeartbeat, settingsFromHeartbeat, stalledReason, superviseWorker, supervisorCommand, supervisorHealthPath, supervisorLimits, type WorkerHealth } from '@/scripts/worker-supervisor';
+import { childExitCode, isRuntimeHeartbeat, primaryHandoffDrainMs, settingsFromHeartbeat, stalledReason, superviseWorker, supervisorCommand, supervisorHealthPath, supervisorLimits, type WorkerHealth } from '@/scripts/worker-supervisor';
+import { PRODUCT_TRANSLATION_JOB_BUDGET_MS } from '@/lib/llm/deadline-ladder';
 import { roleCandidateIsHealthy, workerIsHealthy } from '@/scripts/worker-healthcheck';
 import { parseCapacityArgs } from '@/scripts/measure-worker-capacity';
 
@@ -84,6 +85,10 @@ it('rejects malformed or unbounded optional lane IPC while accepting older heart
   expect(isRuntimeHeartbeat({ ...message, lanes: [lane] }, 'crawler', 2)).toBe(true);
   expect(isRuntimeHeartbeat({ ...message, lanes: [{ ...lane, pollStartedAt: NaN }] }, 'crawler', 2)).toBe(false);
   expect(isRuntimeHeartbeat({ ...message, lanes: [{ ...lane, pollStartedAt: Date.now() + 3_600_000 }] }, 'crawler', 2)).toBe(false);
+  // 줄이 알리는 틱 예산: 1초~1시간의 정수만. 없거나 null 이면 env 한도만 쓴다
+  expect(isRuntimeHeartbeat({ ...message, lanes: [{ ...lane, budgetMs: 315_000 }] }, 'crawler', 2)).toBe(true);
+  expect(isRuntimeHeartbeat({ ...message, lanes: [{ ...lane, budgetMs: null }] }, 'crawler', 2)).toBe(true);
+  for (const bad of [10, 3_600_001, 1.5, '315000']) expect(isRuntimeHeartbeat({ ...message, lanes: [{ ...lane, budgetMs: bad }] }, 'crawler', 2)).toBe(false);
   expect(isRuntimeHeartbeat({ ...message, lanes: [{ ...lane, jobs: ['secret payload'] }] }, 'crawler', 2)).toBe(false);
   expect(isRuntimeHeartbeat({ ...message, lanes: Array.from({ length: 17 }, () => lane) }, 'crawler', 2)).toBe(false);
 });
@@ -102,6 +107,17 @@ it('reports a fresh passive role candidate healthy without a supervisor, but req
 it('does not treat the cooperative 25-second budget as a hard timeout', () => {
   expect(stalledReason({ ...health, state: 'running', currentJob: 'crawl-fetch', jobStartedAt: 1_000, lastHeartbeatAt: 40_000 }, 40_000, limits)).toBeNull();
   expect(supervisorLimits('maintenance', {}).jobMs).toBe(600_000);
+  // text: env 하한은 180초 그대로. 줄이 알린 틱 예산(product-translate 315초)이 더 크면 감독은 예산 + 45초까지 기다린다 — env·재배포 없이
+  const text = supervisorLimits('text', { WORKER_JOB_TIMEOUT_SECONDS: '180' }), at = 1_000_000;
+  const lane = { name: 'product-translate', jobs: ['product-translate'], state: 'running' as const, currentJob: 'product-translate',
+    startedAt: at - 300_000, pollStartedAt: null, lastProgressAt: at - 300_000, budgetMs: PRODUCT_TRANSLATION_JOB_BUDGET_MS };
+  const textHealth = { ...health, lastHeartbeatAt: at, state: 'running' as const, currentJob: 'product-translate', jobStartedAt: at - 300_000, lanes: [lane] };
+  expect(PRODUCT_TRANSLATION_JOB_BUDGET_MS).toBe(315_000);
+  expect(stalledReason(textHealth, at, text)).toBeNull();
+  expect(stalledReason({ ...textHealth, lanes: [{ ...lane, startedAt: at - 370_000 }] }, at, text)).toBe('job_timeout');
+  expect(stalledReason({ ...textHealth, lanes: [{ ...lane, budgetMs: null, startedAt: at - 200_000 }] }, at, text)).toBe('job_timeout');
+  expect(primaryHandoffDrainMs(text, [lane])).toBe(PRODUCT_TRANSLATION_JOB_BUDGET_MS + 45_000 + text.drainMs);
+  expect(primaryHandoffDrainMs(text)).toBe(180_000 + text.drainMs);
 });
 
 it('allows a legitimate 110-second reviewer call without applying the 90-second poll limit', () => {
