@@ -372,7 +372,8 @@ it("every admin server action and every write route handler goes through the web
   // admin/models: stage pool save, model probe and admission control add three guarded actions.
   // admin/models/contracts: serving contract save, switch-off and the engine readback add three more.
   // admin/models/limits(실시간 한도, 0151): 그룹 저장 하나(saveRuntimeSettingsGroup)가 더해졌다.
-  expect(wrapped).toBe(90);
+  // admin/models/devices(장비 한도, PR 1b): 장비 저장 하나(saveCapacityDevice)가 더해졌다.
+  expect(wrapped).toBe(91);
   const routes = files.filter(file => file.endsWith(`${path.sep}route.ts`));
   for (const file of routes) {
     const source = readFileSync(file, "utf8");

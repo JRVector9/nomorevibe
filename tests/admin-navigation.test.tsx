@@ -5,9 +5,10 @@ import { AdminNav, countBadge, NAV_GROUPS } from '@/app/(operator)/admin/AdminNa
 describe('shared administrator navigation', () => {
   it('keeps feedback moderation and the selected page visible', () => {
     const html = renderToStaticMarkup(<AdminNav current="/admin/status" />);
-    expect(html.match(/href="\/admin/g)).toHaveLength(21);
+    expect(html.match(/href="\/admin/g)).toHaveLength(22);
     expect(html).toContain('href="/admin/models"');
     expect(html).toContain('href="/admin/models/limits"');
+    expect(html).toContain('href="/admin/models/devices"');
     expect(html).toContain('피드백 검수');
     expect(html).toContain('문의 접수');
     expect(html).toContain('메이커 답장 검수');
