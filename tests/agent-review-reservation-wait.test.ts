@@ -72,7 +72,7 @@ vi.mock('@/lib/crawl/agent-review-repository', () => ({
   recordAgentReview: async (value: unknown) => { mocks.record(value); return { applied: false, state: 'succeeded' }; },
 }));
 vi.mock('@/lib/crawl/agent-review-gateway', () => ({
-  REVIEW_GATEWAY_TIMEOUT_MS: 60_000, reviewWithGateway: vi.fn(), reviewWithReservedAi1ItemGateway: vi.fn(),
+  REVIEW_GATEWAY_TIMEOUT_MS: 60_000, reviewGatewayTimeoutMs: () => 60_000, reviewWithGateway: vi.fn(), reviewWithReservedAi1ItemGateway: vi.fn(),
   settleAi1GatewayNotStarted: vi.fn(), settleAi1ItemGatewayNotStarted: vi.fn(),
   prepareAi1GatewayCall: (_input: unknown, options: { model: string }) => ({ kind: 'prepared', model: options.model }),
   reviewWithReservedAi1Gateway: async (_input: unknown, dispatch: { requestId: string; binding: { model: string } }) => {

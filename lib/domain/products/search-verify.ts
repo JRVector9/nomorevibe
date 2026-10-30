@@ -22,8 +22,12 @@ import { assertTextModelAdmission } from "@/lib/llm/text-capacity-admission";
  */
 export const VERIFY_MODEL = configuredModel("product-search-verify");
 const BASE_URL = modelBaseUrl("product-search-verify", process.env, "abcllm");
-/** 키워드마다 네 칸씩 적어 출력이 길다(16개에 약 1,000토큰, 한글이 많으면 더) */
-const MAX_TOKENS = modelLimits("product-search-verify").maxTokens;
+/**
+ * 키워드마다 네 칸씩 적어 출력이 길다(16개에 약 1,000토큰, 한글이 많으면 더). 요청의 max_tokens 는 호출마다 등록부 경로
+ * product-search-verify 에서 읽는다(관리자 실시간 한도). 아래 로드 시점 값은 SEARCH_VERIFY_POLICY_HASH(단계 이어가기의 정책 정체성)에만 쓴다 —
+ * 정체성은 프로세스 안에서 고정이어야 해서 일부러 틱마다 읽지 않는다.
+ */
+const POLICY_MAX_TOKENS = modelLimits("product-search-verify").maxTokens;
 
 /**
  * 예시는 표본에 없는 것만 넣었다 — 표본의 답을 알려 주면 잰 값이 부푼다.
@@ -56,7 +60,7 @@ const SYSTEM = [
 export type VerifyItem = { evidence: ProfileEvidence; keywords: string[] };
 /** Verifier policy identity for durable step continuation: prompt, output bound and the five-keyword chunk rule. */
 export const SEARCH_VERIFY_POLICY_HASH = createHash("sha256")
-  .update(JSON.stringify({ version: 1, system: SYSTEM, maxTokens: MAX_TOKENS, chunk: 5 })).digest("hex");
+  .update(JSON.stringify({ version: 1, system: SYSTEM, maxTokens: POLICY_MAX_TOKENS, chunk: 5 })).digest("hex");
 /** Original verifier request bytes. The legacy leaf and the reserved native path send this exact body. */
 export function searchVerifyGatewayWire(item: VerifyItem, model: string): string {
   // 꺾쇠를 막아 두어야 근거 안의 글이 구분자를 끝내지 못한다 — 심사 쪽과 같은 처리다
@@ -64,7 +68,7 @@ export function searchVerifyGatewayWire(item: VerifyItem, model: string): string
   return JSON.stringify({
     // 기본 어댑터는 근거를 요약해 버린다 — 키워드 짓기와 같은 이유로 원문을 그대로 보낸다
     context_strategy: "raw",
-    model, stream: false, temperature: 0, max_tokens: Math.min(MAX_TOKENS, modelLimits("product-search-verify").maxTokens),
+    model, stream: false, temperature: 0, max_tokens: modelLimits("product-search-verify").maxTokens,
     reasoning_effort: "low", chat_template_kwargs: { enable_thinking: false },
     response_format: { type: "json_object" },
     messages: [

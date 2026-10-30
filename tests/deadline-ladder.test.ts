@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { deadlineLadderViolation, PRODUCT_TRANSLATION_CLIENT_TIMEOUT_MS, PRODUCT_TRANSLATION_JOB_BUDGET_MS, REVIEW_GATEWAY_LADDER,
-  worstGenerationMs } from "@/lib/llm/deadline-ladder";
-import { REVIEW_GATEWAY_TIMEOUT_MS } from "@/lib/crawl/agent-review-gateway";
+  productTranslationClientTimeoutMs, productTranslationJobBudgetMs, reviewGatewayLadder, worstGenerationMs } from "@/lib/llm/deadline-ladder";
+import { REVIEW_GATEWAY_TIMEOUT_MS, reviewGatewayTimeoutMs } from "@/lib/crawl/agent-review-gateway";
 
 it("declared ladders keep engine < relay < gateway < client with skew between neighbours", () => {
   expect(deadlineLadderViolation(REVIEW_GATEWAY_LADDER)).toBeNull();
@@ -10,6 +10,11 @@ it("declared ladders keep engine < relay < gateway < client with skew between ne
   // Product translation client (300s since 2026-10-30) must fit the text-role tick budget with the 2s record margin.
   expect(PRODUCT_TRANSLATION_CLIENT_TIMEOUT_MS).toBe(300_000);
   expect(PRODUCT_TRANSLATION_CLIENT_TIMEOUT_MS + 2_000).toBeLessThanOrEqual(PRODUCT_TRANSLATION_JOB_BUDGET_MS);
+  // The constants above are load-time values; callers read the function forms, which equal them while runtime_settings is at its defaults.
+  expect(reviewGatewayLadder()).toEqual(REVIEW_GATEWAY_LADDER);
+  expect(reviewGatewayTimeoutMs()).toBe(REVIEW_GATEWAY_TIMEOUT_MS);
+  expect(productTranslationClientTimeoutMs()).toBe(PRODUCT_TRANSLATION_CLIENT_TIMEOUT_MS);
+  expect(productTranslationJobBudgetMs()).toBe(PRODUCT_TRANSLATION_JOB_BUDGET_MS);
 });
 
 it("rejects inverted or too-close layers, including the old client-first order", () => {

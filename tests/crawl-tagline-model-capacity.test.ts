@@ -141,7 +141,8 @@ it("re-enters a deferred second on the next tick without asking first again", as
 });
 it("no-key, settings-disabled, reuse and no-evidence jobs remain model-free", async () => {
   const { writeTaglines } = await import("@/lib/crawl/jobs/tagline");
-  const ctx = { lease: job, cursor: null, hasBudget: () => true, save: vi.fn(), log: vi.fn() };
+  // 소개 생성은 jobRunOptions 에 예산 줄이 없어 러너 기본 25초로 돈다 — 상한 45초를 온전히 주는 창을 보려면 틱 예산을 준다(러너가 deadlineAt 을 준다)
+  const ctx = { lease: job, cursor: null, hasBudget: () => true, deadlineAt: Date.now() + 55_000, save: vi.fn(), log: vi.fn() };
   // 키가 없으면 부르지 않는다 — 성공이 아니라 제 일 못 함(no_key)으로 넘긴다
   vi.stubEnv("ABCLLM_API_KEY", ""); expect(await writeTaglines(ctx)).toEqual({ done: true, degraded: { code: "no_key", detail: "text 워커에 ABCLLM_API_KEY 가 없습니다" } });
   vi.stubEnv("ABCLLM_API_KEY", "unit"); mocks.settings.mockResolvedValueOnce({ enabled: false });
@@ -157,7 +158,7 @@ it("disabled job forwards the original evidence, signal and recalculated timeout
   const { writeTaglines } = await import("@/lib/crawl/jobs/tagline"); mocks.control.mockResolvedValue({ mode: "disabled" });
   mocks.tasks.mockResolvedValueOnce([task]).mockResolvedValue([]); mocks.legacy.mockResolvedValueOnce(empty).mockResolvedValueOnce(result);
   const controller = new AbortController();
-  expect(await writeTaglines({ lease: job, cursor: null, hasBudget: () => true, save: vi.fn(), log: vi.fn(), signal: controller.signal })).toEqual({ done: true });
+  expect(await writeTaglines({ lease: job, cursor: null, hasBudget: () => true, deadlineAt: Date.now() + 55_000, save: vi.fn(), log: vi.fn(), signal: controller.signal })).toEqual({ done: true });
   expect(mocks.legacy).toHaveBeenCalledTimes(2);
   for (const [evidence, options] of mocks.legacy.mock.calls) {
     expect(evidence).toEqual(taglineEvidence(task.candidate.repo, task.document)); expect(options.timeoutMs).toBe(45_000);

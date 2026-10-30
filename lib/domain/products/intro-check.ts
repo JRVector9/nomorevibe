@@ -28,8 +28,6 @@ import type { IntroOutcome, IntroVerdict } from "@/lib/db/schema";
 export const INTRO_CHECK_MODEL = configuredModelForProvider("product-intro-check", "claude-cli");
 /** 한 번에 보내는 제품 수 — 10건 묶음으로 잰 정확도다 */
 export const INTRO_CHECK_BATCH = 10;
-/** 생각이 길어 2천 토큰으로는 모자란다(키워드 검수와 같다) */
-const MAX_OUTPUT_TOKENS = modelLimits("product-intro-check").maxTokens;
 /** 고쳐 쓴 줄이 이보다 짧으면 소개가 아니라 이름이나 낱말이다 */
 const MIN_LINE = 10;
 
@@ -147,7 +145,7 @@ export async function checkIntros(items: readonly IntroItem[], options: {
   try {
     result = await (options.run ?? runReviewCli)(introCheckCliArgs(options.model ?? scopedModel("product-intro-check", INTRO_CHECK_MODEL)),
       `<untrusted_evidence_json>\n${body}\n</untrusted_evidence_json>`,
-      { timeoutMs: scopedRequestTimeout("product-intro-check", options.timeoutMs), signal: options.signal, maxOutputTokens: Math.min(MAX_OUTPUT_TOKENS, modelLimits("product-intro-check").maxTokens) });
+      { timeoutMs: scopedRequestTimeout("product-intro-check", options.timeoutMs), signal: options.signal, maxOutputTokens: modelLimits("product-intro-check").maxTokens });
   } catch { return { ok: false, error: "cli_error" }; }
   if (result.kind !== "exit") return { ok: false, error: result.kind };
   let output: Record<string, unknown>;

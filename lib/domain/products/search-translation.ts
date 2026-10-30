@@ -1,5 +1,4 @@
-import { scopedModel } from "@/lib/llm/model-registry";
-import { modelTimeoutMs } from "@/lib/llm/model-registry";
+import { modelTimeoutMs, scopedModel } from "@/lib/llm/model-registry";
 import { and, eq, sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import { textTranslations } from "@/lib/db/schema";
@@ -29,8 +28,9 @@ import { translateQueryWithModelCapacity } from "./search-query-model-capacity";
 /**
  * 게이트웨이에 줄 시간. 낱말 서넛짜리 답이라 고정비(약 6초)가 거의 전부다.
  * 검색 한 번이 이보다 오래 걸리면 기다리는 것보다 번역 없는 결과가 낫다.
+ * 요청마다 등록부 경로 search-query-translate 을 읽는다(관리자 실시간 한도 — 저장하면 다음 요청에 반영).
  */
-const TIMEOUT_MS = modelTimeoutMs("search-query-translate");
+const searchQueryTranslateTimeoutMs = () => modelTimeoutMs("search-query-translate");
 
 export type ResolvedSearch = {
   /** 색인에 물어볼 말 — 원문 하나, 번역이 붙었으면 그 표현(한둘)까지 */
@@ -130,11 +130,12 @@ async function translateDetectedQuery(raw: string): Promise<QueryTranslation> {
 
     // 공통 슬롯이 켜져 있으면 그 길로만 부른다(장부·캐시 기록은 그 안에서 주 DB 로). 꺼져 있으면 legacy — 아래 원래 길 그대로다
     const { prompt, glossary } = queryTranslationPolicy(raw, sourceLocale);
+    const timeoutMs = searchQueryTranslateTimeoutMs();
     const reserved = await translateQueryWithModelCapacity({ query: raw, sourceLocale, cacheKey: hash, promptVersion: prompt,
-      glossaryVersion: glossary }, TIMEOUT_MS);
+      glossaryVersion: glossary }, timeoutMs);
     if (reserved.kind === "cached") return { kind: "translated", text: reserved.text };
-    const result = reserved.kind === "result" ? reserved.result : sourceLocale === "ko" ? await translateQueryToEnglish(raw, TIMEOUT_MS)
-      : await translateChineseQueryToEnglish(raw, sourceLocale, TIMEOUT_MS);
+    const result = reserved.kind === "result" ? reserved.result : sourceLocale === "ko" ? await translateQueryToEnglish(raw, timeoutMs)
+      : await translateChineseQueryToEnglish(raw, sourceLocale, timeoutMs);
     // 관련도순 검색은 0건이면 공개 읽기(복제본) 안에서 번역을 기다린다 — 기록은 쓰기라 늘 주 DB 로 보낸다.
     // 복제본에서 쓰면 25006 으로 실패하고, 아래 catch 가 받아 온 번역까지 버렸다
     if (reserved.kind === "legacy") await onPrimary(() => recordTranslations(

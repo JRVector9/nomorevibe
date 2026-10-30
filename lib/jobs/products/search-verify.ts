@@ -1,11 +1,13 @@
-import { scopedModel } from "@/lib/llm/model-registry";
-import { modelLimits, modelTimeoutMs } from "@/lib/llm/model-registry";
+import { modelLimits, modelTimeoutMs, scopedModel } from "@/lib/llm/model-registry";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
+import { tickRemaining } from "@/lib/jobs/tick-deadline";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { pendingVerifications, recordVerificationResult } from "@/lib/domain/products/search-profiles";
 import { VERIFY_MODEL } from "@/lib/domain/products/search-verify";
 import { verifyKeywordsWithModelCapacity } from "@/lib/domain/products/search-verify-model-capacity";
 import { textRouteCallable } from "@/lib/llm/serving-contract-store";
+import { jobKnob } from "@/lib/operations/runtime-settings-schema";
+import { runtimeSettings } from "@/lib/operations/runtime-settings-store";
 
 /**
  * 검색 키워드 검수 — 지은 키워드를 게이트웨이의 Qwen3.8 이 근거와 대조해 뒷받침되지 않는 것을 뺀다(search-verify.ts).
@@ -14,15 +16,14 @@ import { textRouteCallable } from "@/lib/llm/serving-contract-store";
  * supa 서버는 동시 넷과 여덟의 처리량이 같았다(시간당 650~700건, 2026-09-25) — 넷으로 부른다.
  */
 
-/** 한 번에 집는 수. 대기열은 한 번에 읽어 나눈다 — 따로 읽으면 같은 제품을 두 번 부른다 */
-const BATCH = 16;
-const CONCURRENCY = modelLimits("product-search-verify").concurrency;
-/** 한 건(키워드 16개)에 둘 시간 — 시험에서 동시 넷일 때 5~25초 */
-const CALL_MS = modelTimeoutMs("product-search-verify");
-/** 틱 예산(worker.ts jobRunOptions 110초)보다 조금 짧게 */
-const TICK_MS = 105_000;
-/** 이만큼 남아 있을 때만 새로 부른다 */
-const MIN_CALL_MS = 20_000;
+const JOB = "product-search-verify";
+/**
+ * 한도는 틱마다 읽는다(관리자 실시간 한도 — 저장하면 재배포 없이 다음 틱에 반영):
+ * - runtime_settings jobs.product-search-verify: batch 16(한 번에 집는 수. 대기열은 한 번에 읽어 나눈다 — 따로 읽으면 같은 제품을 두 번 부른다),
+ *   minCallMs 20초(이만큼 남아 있을 때만 새로 부른다).
+ * - 등록부 경로 product-search-verify(routes.limits): 동시 호출(넷)과 한 건(키워드 16개)에 둘 시간 — 시험에서 동시 넷일 때 5~25초.
+ * - 틱의 남은 시간은 러너가 준 deadlineAt(틱 예산 budgets)에서 — 잡 안의 TICK_MS 상수는 없다(lib/jobs/tick-deadline.ts).
+ */
 /** 게이트웨이가 막힌 것은 이 제품의 문제가 아니다 — 잇따라 둘이 막히면 이번 틱을 접는다 */
 const GATEWAY_DOWN = new Set(["no_key", "model_unavailable", "rate_limit", "timeout", "network"]);
 
@@ -39,22 +40,25 @@ export async function verifySearchKeywords(ctx: JobContext<null>, request?: type
   ownershipPoll.unref?.();
   try {
     const startedAt = Date.now();
-    const remaining = () => TICK_MS - (Date.now() - startedAt);
+    const remaining = tickRemaining(ctx, JOB, startedAt);
+    const knobs = runtimeSettings();
+    const batch = jobKnob(knobs, JOB, "batch"), minCallMs = jobKnob(knobs, JOB, "minCallMs");
+    const concurrency = modelLimits(JOB).concurrency, callMs = modelTimeoutMs(JOB);
     let verified = 0, removed = 0, failed = 0, blocked = "", inARow = 0;
 
-    while (!signal.aborted && ctx.hasBudget() && remaining() >= MIN_CALL_MS) {
-      const tasks = await pendingVerifications(BATCH);
+    while (!signal.aborted && ctx.hasBudget() && remaining() >= minCallMs) {
+      const tasks = await pendingVerifications(batch);
       if (tasks.length === 0) {
         ctx.log("search_verify.done", { verified, removed, failed, drained: true });
         return { done: true };
       }
       let next = 0;
-      const settled = await Promise.allSettled(Array.from({ length: CONCURRENCY }, async () => {
+      const settled = await Promise.allSettled(Array.from({ length: concurrency }, async () => {
         try {
           for (let index = next++; index < tasks.length; index = next++) {
-            if (blocked || signal.aborted || !ctx.hasBudget() || remaining() < MIN_CALL_MS) return;
+            if (blocked || signal.aborted || !ctx.hasBudget() || remaining() < minCallMs) return;
             const task = tasks[index];
-            const timeoutMs = Math.max(1_000, Math.min(CALL_MS, remaining() - 1_000));
+            const timeoutMs = Math.max(1_000, Math.min(callMs, remaining() - 1_000));
             const chunked = ["invalid_output", "timeout"].includes(task.profile!.verifyError ?? "");
             const outcome = await verifyKeywordsWithModelCapacity(task, lease, { request, signal, timeoutMs, chunked });
             if (outcome.kind === "skipped") return;
@@ -65,7 +69,7 @@ export async function verifySearchKeywords(ctx: JobContext<null>, request?: type
             if (!result.ok) {
               // A shorter deadline comes from this tick's remaining time, not the product.
               // Keep it eligible for the next tick instead of consuming a retry.
-              if (result.error === "timeout" && timeoutMs < CALL_MS) {
+              if (result.error === "timeout" && timeoutMs < callMs) {
                 blocked = "tick_budget";
                 return;
               }

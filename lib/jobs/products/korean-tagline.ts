@@ -1,7 +1,7 @@
-import { scopedModel } from "@/lib/llm/model-registry";
-import { modelTimeoutMs } from "@/lib/llm/model-registry";
+import { modelTimeoutMs, scopedModel } from "@/lib/llm/model-registry";
 import { translateKoreanTaglinesWithModelCapacity, type KoreanTaglineCapacityResult } from "@/lib/domain/products/korean-tagline-model-capacity";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
+import { tickRemaining } from "@/lib/jobs/tick-deadline";
 import { KOREAN_TAGLINE_MODEL } from "@/lib/crawl/translate";
 import { displayProjectName } from "@/lib/domain/products/display-name";
 import { checkKoreanTaglineOutput } from "@/lib/domain/products/korean-tagline";
@@ -9,9 +9,11 @@ import { homeListSlugs, pendingKoreanTaglines, pendingKoreanTaglineRecovery, rec
 import { readModelCapacityCallerControl } from "@/lib/llm/capacity-repository";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { translateKoreanTaglinesWithQwen } from "@/lib/crawl/korean-translation-qwen";
-import { KOREAN_TRANSLATION_LEGACY_MAX_CHARS, KOREAN_TRANSLATION_NATIVE_MAX_CHARS,
+import { KOREAN_TRANSLATION_NATIVE_MAX_CHARS,
   KOREAN_TRANSLATION_QWEN_MODEL, koreanTranslationQwenEnabled, koreanTranslationQwenRecoveryEnabled } from "@/lib/crawl/korean-translation-config";
 import { textRouteCallable } from "@/lib/llm/serving-contract-store";
+import { jobKnob } from "@/lib/operations/runtime-settings-schema";
+import { runtimeSettings } from "@/lib/operations/runtime-settings-store";
 
 /**
  * 한국어 한 줄 소개 짓기(UX-13) — 공개 제품의 지금 소개를 한국어 한 줄로 옮긴다. 새 제품·홈에 보이는 제품부터, 나머지는 스타 순.
@@ -21,21 +23,17 @@ import { textRouteCallable } from "@/lib/llm/serving-contract-store";
  * 모델이 준 줄은 코드 검사를 통과한 것만 남기고, 버린 것은 사유를 적어 센다(korean-taglines.ts koreanTaglineProgress).
  */
 
+const JOB = "product-tagline-ko";
 /**
- * 한 번에 옮기는 양 — legacy 8건·3,600자. 예약 증명을 쓰는 native 경로는 원래 1,200자·요청 형식을 유지한다.
- * 호출 한 번에 고정 6초쯤 들어 묶을수록 낫지만, 출력이 한글이라 길어지면 20초를 넘는다.
+ * 손잡이는 틱마다 runtime_settings jobs.product-tagline-ko 에서 읽는다(관리자 실시간 한도 — 저장하면 재배포 없이 다음 틱에 반영):
+ * - batch 8·batchChars 3,600: 한 번에 옮기는 양(legacy). 예약 증명을 쓰는 native 경로는 원래 1,200자(KOREAN_TRANSLATION_NATIVE_MAX_CHARS, 고정)·
+ *   요청 형식을 유지한다. 호출 한 번에 고정 6초쯤 들어 묶을수록 낫지만, 출력이 한글이라 길어지면 20초를 넘는다.
+ * - minCallMs 25초: 이만큼 남아 있을 때만 새로 부른다 — 묶음 하나가 15~25초라 틱 끝에 부르면 제한이 짧아져 헛실패가 난다.
+ * - slowCallMs 35초: 한 묶음이 이보다 오래 걸리면 게이트웨이가 밀린 것이다 — 이번 틱을 접고 심사에 자리를 준다.
+ * - soloAttempts 2: 이만큼 실패·버림이 쌓인 소개는 혼자 보낸다 — 그것 하나가 옆의 멀쩡한 소개까지 끌고 실패하지 않게.
+ * 한 번 부르는 데 둘 시간은 등록부 경로 product-tagline-ko(routes.limits)에서, 틱의 남은 시간은 러너가 준 deadlineAt(틱 예산 budgets)에서 —
+ * 잡 안의 TICK_MS 상수는 없다(lib/jobs/tick-deadline.ts).
  */
-const BATCH = 8;
-/** 한 번 부르는 데 둘 시간 */
-const CALL_MS = modelTimeoutMs("product-tagline-ko");
-/** 틱 예산(scripts/worker.ts jobRunOptions 55초)보다 조금 짧게 */
-const TICK_MS = 54_000;
-/** 이만큼 남아 있을 때만 새로 부른다 — 묶음 하나가 15~25초라 틱 끝에 부르면 제한이 짧아져 헛실패가 난다 */
-const MIN_CALL_MS = 25_000;
-/** 한 묶음이 이보다 오래 걸리면 게이트웨이가 밀린 것이다 — 이번 틱을 접고 심사에 자리를 준다 */
-const SLOW_CALL_MS = 35_000;
-/** 이만큼 실패·버림이 쌓인 소개는 혼자 보낸다 — 그것 하나가 옆의 멀쩡한 소개까지 끌고 실패하지 않게 */
-const SOLO_ATTEMPTS = 2;
 /**
  * 소개 하나만 보냈는데 배열을 못 받았으면(invalid_output) 그 소개 탓이다 — 품질 거절로 세어 한도(MAX_REJECTIONS)에 닿게 한다.
  * 게이트웨이 실패로 두면 혼자 보낸 같은 소개가 같은 실패로 하루 간격까지 늘려 가며 끝없이 섰다. 묶음의 invalid_output 은 누구 탓인지 몰라 그대로 둔다.
@@ -44,15 +42,17 @@ export const SOLO_INVALID_OUTPUT = "rejected:invalid_output";
 
 export { taglineSource };
 
-/** 앞에서부터 개수·글자 수 한도까지 — 차례(새 제품·홈 먼저)를 지킨다 */
-export function packTaglineBatch(tasks: KoreanTaglineTask[], maxChars = KOREAN_TRANSLATION_LEGACY_MAX_CHARS): KoreanTaglineTask[] {
-  const fitting = tasks.filter(task => task.tagline.length <= maxChars);
-  if (fitting[0] && fitting[0].attempts >= SOLO_ATTEMPTS) return [fitting[0]];
+/** 앞에서부터 개수·글자 수 한도까지 — 차례(새 제품·홈 먼저)를 지킨다. maxChars 기본은 legacy 묶음 글자(jobs.product-tagline-ko.batchChars) */
+export function packTaglineBatch(tasks: KoreanTaglineTask[], maxChars?: number): KoreanTaglineTask[] {
+  const knobs = runtimeSettings();
+  const limit = maxChars ?? jobKnob(knobs, JOB, "batchChars"), size = jobKnob(knobs, JOB, "batch"), soloAttempts = jobKnob(knobs, JOB, "soloAttempts");
+  const fitting = tasks.filter(task => task.tagline.length <= limit);
+  if (fitting[0] && fitting[0].attempts >= soloAttempts) return [fitting[0]];
   const batch: KoreanTaglineTask[] = [];
   let chars = 0;
   for (const task of fitting) {
-    if (task.attempts >= SOLO_ATTEMPTS) continue;
-    if (batch.length && (batch.length >= BATCH || chars + task.tagline.length > maxChars)) break;
+    if (task.attempts >= soloAttempts) continue;
+    if (batch.length && (batch.length >= size || chars + task.tagline.length > limit)) break;
     batch.push(task);
     chars += task.tagline.length;
   }
@@ -75,7 +75,10 @@ export async function writeKoreanTaglines(ctx: JobContext<null>): Promise<JobOut
   ownershipPoll.unref?.();
   try {
     const startedAt = Date.now();
-    const remaining = () => TICK_MS - (Date.now() - startedAt);
+    const remaining = tickRemaining(ctx, JOB, startedAt);
+    const knobs = runtimeSettings();
+    const batchSize = jobKnob(knobs, JOB, "batch"), legacyMaxChars = jobKnob(knobs, JOB, "batchChars"), minCallMs = jobKnob(knobs, JOB, "minCallMs"),
+      slowCallMs = jobKnob(knobs, JOB, "slowCallMs"), callMs = modelTimeoutMs(JOB);
     let written = 0, failed = 0;
     const rejected: Record<string, number> = {}, cleaned: Record<string, number> = {};
     const counts = () => ({ written, failed, rejected, cleaned });
@@ -84,27 +87,27 @@ export async function writeKoreanTaglines(ctx: JobContext<null>): Promise<JobOut
     const stopped = new Set<"gpt" | "qwen">();
     let recoverySelected = 0;
 
-    while (!signal.aborted && ctx.hasBudget() && remaining() >= MIN_CALL_MS) {
+    while (!signal.aborted && ctx.hasBudget() && remaining() >= minCallMs) {
       const control = await readModelCapacityCallerControl();
       if (control.mode !== "disabled" && control.mode !== "open") throw new ModelCapacityDeferredError("draining");
       const legacy = control.mode === "disabled";
       const qwen = legacy && koreanTranslationQwenEnabled() && !stopped.has("qwen");
       if (!legacy && !gptCallable()) return { done: true,
         degraded: { code: "no_key", detail: "native 한국어 번역에 필요한 직접 연결 계약도 ABCLLM_API_KEY 도 없습니다" } };
-      const candidates = (await pendingKoreanTaglines(BATCH * 4, homeSlugs)).filter(task => !visited.has(task.productId));
+      const candidates = (await pendingKoreanTaglines(batchSize * 4, homeSlugs)).filter(task => !visited.has(task.productId));
       const gptBatch = gptCallable() && !stopped.has("gpt")
-        ? packTaglineBatch(candidates, legacy ? KOREAN_TRANSLATION_LEGACY_MAX_CHARS : KOREAN_TRANSLATION_NATIVE_MAX_CHARS) : [];
+        ? packTaglineBatch(candidates, legacy ? legacyMaxChars : KOREAN_TRANSLATION_NATIVE_MAX_CHARS) : [];
       const gptIds = new Set(gptBatch.map(task => task.productId));
-      const qwenBatch = qwen ? packTaglineBatch(candidates.filter(task => !gptIds.has(task.productId))) : [];
-      const wantsRecovery = qwen && koreanTranslationQwenRecoveryEnabled() && !qwenBatch.length && recoverySelected < BATCH;
-      let recoveryBatch = false, recoveryDeferred = wantsRecovery && remaining() < CALL_MS + 1_000;
+      const qwenBatch = qwen ? packTaglineBatch(candidates.filter(task => !gptIds.has(task.productId)), legacyMaxChars) : [];
+      const wantsRecovery = qwen && koreanTranslationQwenRecoveryEnabled() && !qwenBatch.length && recoverySelected < batchSize;
+      let recoveryBatch = false, recoveryDeferred = wantsRecovery && remaining() < callMs + 1_000;
       if (wantsRecovery && !recoveryDeferred) {
         const exclude = [...visited, ...gptIds, ...qwenBatch.map(task => task.productId)];
-        const recovery = await pendingKoreanTaglineRecovery(Math.min(BATCH - qwenBatch.length, BATCH - recoverySelected), homeSlugs, [...exclude]);
+        const recovery = await pendingKoreanTaglineRecovery(Math.min(batchSize - qwenBatch.length, batchSize - recoverySelected), homeSlugs, [...exclude]);
         let chars = qwenBatch.reduce((sum, task) => sum + task.tagline.length, 0);
         for (const task of recovery) {
-          if (qwenBatch.length >= BATCH || recoverySelected >= BATCH) break;
-          if (exclude.includes(task.productId) || chars + task.tagline.length > KOREAN_TRANSLATION_LEGACY_MAX_CHARS) continue;
+          if (qwenBatch.length >= batchSize || recoverySelected >= batchSize) break;
+          if (exclude.includes(task.productId) || chars + task.tagline.length > legacyMaxChars) continue;
           qwenBatch.push(task); exclude.push(task.productId); chars += task.tagline.length; recoverySelected++; recoveryBatch = true;
         }
       }
@@ -114,7 +117,7 @@ export async function writeKoreanTaglines(ctx: JobContext<null>): Promise<JobOut
       ];
       if (!work.length) {
         if (recoveryDeferred) { ctx.log("tagline_ko.budget_deferred", { ...counts(), backend: "qwen", recovery: true }); return { done: false }; }
-        const maxChars = legacy ? KOREAN_TRANSLATION_LEGACY_MAX_CHARS : KOREAN_TRANSLATION_NATIVE_MAX_CHARS;
+        const maxChars = legacy ? legacyMaxChars : KOREAN_TRANSLATION_NATIVE_MAX_CHARS;
         if (candidates.some(task => task.tagline.length > maxChars)) {
           ctx.log("tagline_ko.input_too_large", { count: candidates.filter(task => task.tagline.length > maxChars).length, maxChars });
           return { done: true, degraded: { code: "input_too_large", detail: "한국어 번역 입력이 현재 묶음 상한을 넘습니다" } };
@@ -123,9 +126,9 @@ export async function writeKoreanTaglines(ctx: JobContext<null>): Promise<JobOut
         return { done: true };
       }
       const calledAt = Date.now();
-      const timeoutMs = Math.max(1_000, Math.min(CALL_MS, remaining() - 1_000));
+      const timeoutMs = Math.max(1_000, Math.min(callMs, remaining() - 1_000));
       // Selection can itself take time. Never start recovery with a shortened deadline.
-      if (recoveryBatch && timeoutMs < CALL_MS) {
+      if (recoveryBatch && timeoutMs < callMs) {
         work.splice(work.findIndex(entry => entry.recovery), 1); recoveryDeferred = true;
         ctx.log("tagline_ko.budget_deferred", { ...counts(), backend: "qwen", recovery: true });
         if (!work.length) return { done: false };
@@ -151,7 +154,7 @@ export async function writeKoreanTaglines(ctx: JobContext<null>): Promise<JobOut
         if (outcome.kind === "skipped") { skipped = true; continue; }
         const result = outcome.result;
         // 틱 끝이라 짧아진 제한에 걸린 것은 소개 탓이 아니다 — 시도로 세지 않고 다음 틱에 다시
-        if (!result.ok && result.error === "timeout" && timeoutMs < CALL_MS && !recovery) {
+        if (!result.ok && result.error === "timeout" && timeoutMs < callMs && !recovery) {
           ctx.log("tagline_ko.budget_deferred", counts());
           skipped = true; stopped.add(backend); continue;
         }
@@ -172,7 +175,7 @@ export async function writeKoreanTaglines(ctx: JobContext<null>): Promise<JobOut
           else failed++;
         }
         // 게이트웨이가 막혔거나 밀렸으면 이번 틱은 여기서 — 같은 실패를 되풀이하지 않고 심사에 자리를 준다
-        if (!result.ok || elapsedMs >= SLOW_CALL_MS) {
+        if (!result.ok || elapsedMs >= slowCallMs) {
           ctx.log("tagline_ko.gateway_blocked", { ...counts(), backend, model, error: result.ok ? "slow" : result.error });
           stopped.add(backend);
         }

@@ -2,7 +2,7 @@ import { configuredModel, modelBaseUrl, modelForPurpose } from "@/lib/llm/model-
 import { createHash } from "node:crypto";
 import { observedLocalModelWireHash } from "@/lib/llm/local-model-wire-observation";
 import { reviewHash, type ReviewInput, type ReviewOutcome } from "./agent-review-contract";
-import { gatewayModel, reviewWithGateway, REVIEW_GATEWAY_TIMEOUT_MS } from "./agent-review-gateway";
+import { gatewayModel, reviewGatewayTimeoutMs, reviewWithGateway } from "./agent-review-gateway";
 
 /**
  * gpu3090 의 Qwen 을 게이트웨이(abcllm)를 거치지 않고 바로 부르는 심사(2026-10-21) — 감사 거절의 두 번째 의견과 공개분 2차의 사람 확인
@@ -160,7 +160,7 @@ export async function reviewWithQwenDirect(input: ReviewInput, opts: {
     return response;
   }) as typeof fetch;
   const startedAt = Date.now();
-  const result = await reviewWithGateway(input, { model: config.model, timeoutMs: opts.timeoutMs ?? REVIEW_GATEWAY_TIMEOUT_MS,
+  const result = await reviewWithGateway(input, { model: config.model, timeoutMs: opts.timeoutMs ?? reviewGatewayTimeoutMs(),
     signal: opts.signal, request, endpoint: { baseUrl: config.baseUrl, apiKey: config.apiKey }, systemSuffix: prompt.addendum });
   const latencyMs = Date.now() - startedAt;
   if (result.ok) return { outcome: result.outcome, model: config.model, promptVersion: prompt.version, latencyMs,

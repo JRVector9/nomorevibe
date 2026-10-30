@@ -14,8 +14,8 @@ import { claimAgentReviewWithCliModelReservation, claimConsumerItemAgentReviewWi
 import { claimSecondReviewItemWithCliModelReservation, SecondReviewCliModelReservationRequired, type SecondReviewCliModelClaim } from './second-review-ownership';
 import { isReviewCliProvider, prepareReviewCliCall, releaseReviewCliCall, reviewWithReservedCli, settleReviewCliNotStarted,
   type PreparedReviewCliCall, type ReviewCliOutcome } from './review-cli-call';
-import { REVIEW_CLI_TIMEOUT_MS, type AgentReviewResult } from './agent-review';
-import { GROK_REVIEW_TIMEOUT_MS } from './agent-review-grok';
+import { reviewCliTimeoutMs, type AgentReviewResult } from './agent-review';
+import { grokReviewTimeoutMs } from './agent-review-grok';
 import type { ReviewInput } from './agent-review-contract';
 import { assertLiveReviewAdapterAllowed } from './review-fixture-transport';
 
@@ -26,7 +26,7 @@ import { assertLiveReviewAdapterAllowed } from './review-fixture-transport';
  * 슬롯 대기는 attempt·실패·예비모델 행을 쓰기 전에 deferred 로 끝난다. spawn 전에 포기한 dispatch 는 not_started 로 정산한다(D5).
  */
 type Context = ReviewDomainContext & { provider: string; model: string; lease: JobLease; timeoutMs: number; signal?: AbortSignal };
-const providerTimeout = (provider: string) => provider === 'grok-cli' ? GROK_REVIEW_TIMEOUT_MS : REVIEW_CLI_TIMEOUT_MS;
+const providerTimeout = (provider: string) => provider === 'grok-cli' ? grokReviewTimeoutMs() : reviewCliTimeoutMs();
 
 function reviewerOwner() {
   const lease = roleLeaseFromEnv('reviewer', process.env);

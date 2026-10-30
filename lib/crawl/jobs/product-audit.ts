@@ -1,5 +1,4 @@
-import { modelTimeoutMs } from "@/lib/llm/model-registry";
-import { modelLimits } from "@/lib/llm/model-registry";
+import { modelLimits, modelTimeoutMs } from "@/lib/llm/model-registry";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { withLocalModelCapacity } from "@/lib/llm/local-model-capacity";
@@ -10,8 +9,8 @@ import { auditCliModelCapacity } from "@/lib/crawl/product-audit-model-capacity"
 import { getSettings } from "@/lib/crawl/settings";
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import { listReviewCandidates } from "@/lib/crawl/agent-review-repository";
-import { reviewWithAgent, REVIEW_CLI_TIMEOUT_MS } from "@/lib/crawl/agent-review";
-import { reviewWithGateway, REVIEW_GATEWAY_TIMEOUT_MS } from "@/lib/crawl/agent-review-gateway";
+import { reviewCliTimeoutMs, reviewWithAgent } from "@/lib/crawl/agent-review";
+import { reviewGatewayTimeoutMs, reviewWithGateway } from "@/lib/crawl/agent-review-gateway";
 import { finishAuditCampaign, loadAuditInput, markAuditInputFailed, markAuditNoSource, pendingAuditItems, recordAuditResult,
   runningAuditCampaign } from "@/lib/crawl/product-audit";
 import { sweepAuditHolds } from "@/lib/crawl/product-audit-hold";
@@ -121,7 +120,7 @@ async function askAuditCampaign(ctx: JobContext<null>, settings: CrawlSettings):
   const deadlineAt = Math.min(startedAt + TICK_MS, ctx.deadlineAt ?? Infinity);
   const remaining = () => deadlineAt - Date.now();
   // 1차 심사자 설정을 바꿔도 감사는 따라가지 않는다 — 감사 행의 심사자(reviewer)로만 묻는다
-  const ceiling = reviewer.provider === "abcllm" ? REVIEW_GATEWAY_TIMEOUT_MS : REVIEW_CLI_TIMEOUT_MS;
+  const ceiling = reviewer.provider === "abcllm" ? reviewGatewayTimeoutMs() : reviewCliTimeoutMs();
   let reviewed = 0, failed = 0, noSource = 0;
   let down: string | null = null;
   // 한 자리가 공통 모델 슬롯에서 미뤄지면 다른 자리도 새 호출을 시작하지 않는다 — 이미 시작한 호출은 끝까지 기다린다
@@ -211,6 +210,8 @@ async function askAuditCampaign(ctx: JobContext<null>, settings: CrawlSettings):
  * (성공 83건 평균 11.8초·최대 19.8초, TP4 MoE·3090 넷)이라 20초 제한에 18건이 걸렸다. 45초로 넉넉히 둔다
  */
 export const QWEN_CALL_TIMEOUT_MS = modelTimeoutMs("product-audit");
+/** 위 상수는 로드 시점 값(테스트·문서용). 틱은 이 함수로 등록부 경로 product-audit 을 그때 읽는다 — 관리자 실시간 한도가 다음 틱에 반영된다 */
+export function qwenCallTimeoutMs(): number { return modelTimeoutMs("product-audit"); }
 /**
  * 새 호출을 시작할 수 있는 남은 시간 — 부하 중 p95 쯤. 남은 시간이 45초보다 짧으면 제한 시간을 남은 시간(저장 여유를 뺀)으로 줄여 부른다.
  * 줄인 제한 시간에 걸린 것은 틱 끝 때문이라 서버 탈도 항목의 시도도 아니다 — 적지 않는다(러너 예산으로 끊긴 것과 같다)
@@ -220,7 +221,6 @@ export const QWEN_MIN_START_MS = 15_000;
 const QWEN_CONTROL_CHECK_MS = 5_000;
 /** 한 번에 읽어 둘 일감 — 자리마다 틱 하나(65초)에 3초씩 스무 건 남짓이라 넉넉히 */
 const QWEN_QUEUE_PER_SLOT = 40;
-export const QWEN_AUDIT_DEFAULT_CONCURRENCY = modelLimits("direct-review", {}).concurrency;
 export const QWEN_AUDIT_MAX_CONCURRENCY = 4;
 
 /** 동시 호출 수 — AUDIT_QWEN_CONCURRENCY(기본 2, 최대 4). 1차 심사의 reviewConcurrency(공유 게이트웨이 몫)와 따로다 */
@@ -287,6 +287,7 @@ async function auditWithQwen(ctx: JobContext<null>, value: { campaign: ProductAu
   const tickEnd = Math.min(startedAt + TICK_MS, ctx.deadlineAt ?? Infinity);
   const left = () => tickEnd - Date.now();
   const remaining = () => left() - WRITE_MARGIN_MS;
+  const callTimeoutMs = qwenCallTimeoutMs();
   let reviewed = 0, failed = 0, noSource = 0, timeouts = 0, cutoff = 0;
   const latencies: number[] = [];
   let endpoint: QwenDirectErrorCode | null = null;
@@ -332,8 +333,8 @@ async function auditWithQwen(ctx: JobContext<null>, value: { campaign: ProductAu
       // 시도로 셀지는 부르는 순간의 서버 상태로 — 같은 틱의 다른 자리가 막 탈을 만났을 수 있다
       const healthy = qwenEndpoint.failures === 0 || reviewed > 0;
       // 남은 시간이 45초보다 짧으면 그만큼 줄여 부른다 — 줄인 제한 시간에 걸린 것은 틱 끝 때문이다
-      const timeoutMs = Math.min(QWEN_CALL_TIMEOUT_MS, remaining());
-      const shrunk = timeoutMs < QWEN_CALL_TIMEOUT_MS;
+      const timeoutMs = Math.min(callTimeoutMs, remaining());
+      const shrunk = timeoutMs < callTimeoutMs;
       if (timeoutMs <= 0) return;
       const callStartedAt = new Date();
       const controller = new AbortController();

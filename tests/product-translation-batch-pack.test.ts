@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { packProductTranslationBatch, PRODUCT_TRANSLATION_BATCH_CHARS, PRODUCT_TRANSLATION_MAX_SOURCE_CHARS } from "@/lib/domain/products/translation-policy";
+import { packProductTranslationBatch, productTranslationPolicy, PRODUCT_TRANSLATION_BATCH_CHARS, PRODUCT_TRANSLATION_MAX_SOURCE_CHARS } from "@/lib/domain/products/translation-policy";
 
 const task = (id: number, chars: number, field: "description" | "tagline" = "description") =>
   ({ source: { id, name: `p${id}`, tagline: field === "tagline" ? "t".repeat(chars) : "tagline", description: field === "description" ? "d".repeat(chars) : "" }, field });
@@ -15,4 +15,13 @@ it("긴 설명은 단독으로 나가고 짧은 것만 8K 자까지 묶인다 �
   expect(packProductTranslationBatch([task(1, 2_000), task(2, 2_000), task(3, 2_000), task(4, 2_000), task(5, 1)]).map(t => t.source.id)).toEqual([1, 2, 3, 4]);
   expect(packProductTranslationBatch([task(1, 10, "tagline"), task(2, 20, "tagline"), task(3, 7_980)]).map(t => t.source.id)).toEqual([1, 2]); // 10+20+7,980 > 8,000
   expect(packProductTranslationBatch([])).toEqual([]);
+});
+
+it("묶음 임계는 부를 때의 정책이다 — 기본 인자는 지금 판(productTranslationPolicy), 명시한 정책은 그대로 쓴다", () => {
+  const policy = productTranslationPolicy();
+  expect(policy.batchChars).toBe(PRODUCT_TRANSLATION_BATCH_CHARS);
+  const tasks = [task(1, 3_000), task(2, 3_000), task(3, 3_000), task(4, 3_000), task(5, 3_000)];
+  expect(packProductTranslationBatch(tasks, policy).map(t => t.source.id)).toEqual([1, 2]);
+  // 임계를 올리면 더 묶이고, batchMax(4) 는 그대로 상한이다
+  expect(packProductTranslationBatch(tasks, { ...policy, batchChars: 20_000 }).map(t => t.source.id)).toEqual([1, 2, 3, 4]);
 });

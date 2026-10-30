@@ -50,6 +50,8 @@ import { getSettings } from "./settings";
 export const SPLIT_CONFIRM_DEEPSEEK_MIN_CONFIDENCE = 0.7;
 /** 한 호출의 제한 시간 — 실측 7~31초(평균 13초). 위임(60초)보다 짧게 잡아 위임의 차례를 남긴다 */
 export const SPLIT_CONFIRM_TIMEOUT_MS = modelTimeoutMs("split-confirm");
+/** 위 상수는 로드 시점 값(테스트·문서용). 틱은 이 함수로 등록부 경로 split-confirm 을 그때 읽는다 — 관리자 실시간 한도가 다음 틱에 반영된다 */
+export function splitConfirmTimeoutMs(): number { return modelTimeoutMs("split-confirm"); }
 /** 한 틱에 묻는 수와 쓰는 시간 — 하루 갈림 거부는 수십 건이라 틱(60초 간격)마다 둘이면 넉넉하다 */
 export const SPLIT_CONFIRM_PER_TICK = 2;
 export const SPLIT_CONFIRM_LANE_MS = 60_000;
@@ -220,9 +222,10 @@ async function runSplitConfirmInScope(ctx: Pick<JobContext<null>, "hasBudget" | 
   if (!switchOn(settings)) return { ...tick, stopped: "switch_off" };
   if (settings.reviewMode !== "enforce") return { ...tick, stopped: "not_enforce" };
   if (deepseekConfirmBackoff.retryAt > Date.now()) return { ...tick, stopped: `backoff:${deepseekConfirmBackoff.lastError ?? "unreachable"}` };
+  const callTimeoutMs = splitConfirmTimeoutMs();
   const laneEnd = Date.now() + SPLIT_CONFIRM_LANE_MS;
   const left = () => Math.min(laneEnd, ctx.deadlineAt ?? Infinity) - Date.now() - WRITE_MARGIN_MS;
-  const room = () => tick.calls < SPLIT_CONFIRM_PER_TICK && !ctx.signal?.aborted && ctx.hasBudget() && left() >= SPLIT_CONFIRM_TIMEOUT_MS
+  const room = () => tick.calls < SPLIT_CONFIRM_PER_TICK && !ctx.signal?.aborted && ctx.hasBudget() && left() >= callTimeoutMs
     && deepseekConfirmBackoff.retryAt <= Date.now();
   if (!room()) return { ...tick, stopped: "no_budget" };
   const hints = await confirmHints(SPLIT_CONFIRM_PER_TICK * 3, new Date());
@@ -259,7 +262,7 @@ async function runSplitConfirmInScope(ctx: Pick<JobContext<null>, "hasBudget" | 
       result = await withLocalModelCapacity({ target: { kind: "split", purpose: "deepseek_confirm", tiebreakId: claimed.claim.tiebreakId,
         candidateId: claimed.claim.candidateId, generationKey: claimed.claim.generationKey, repo: claimed.claim.repo },
       input: claimed.claim.input, lease, promptVersion: claimed.claim.input.snapshot.policy.promptVersion },
-      request => reviewWithDeepSeekRaw(claimed.claim.input, { timeoutMs: SPLIT_CONFIRM_TIMEOUT_MS, request,
+      request => reviewWithDeepSeekRaw(claimed.claim.input, { timeoutMs: callTimeoutMs, request,
         signal: ctx.signal ? AbortSignal.any([ctx.signal, controller.signal]) : controller.signal }), options.request);
     } catch (error) {
       if (!(error instanceof ModelCapacityDeferredError)) throw error;

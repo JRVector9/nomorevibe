@@ -1,12 +1,13 @@
-import { scopedModel } from "@/lib/llm/model-registry";
-import { modelTimeoutMs } from "@/lib/llm/model-registry";
-import { modelLimits } from "@/lib/llm/model-registry";
+import { modelLimits, modelTimeoutMs, scopedModel } from "@/lib/llm/model-registry";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
+import { tickRemaining } from "@/lib/jobs/tick-deadline";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { getSettings } from "@/lib/crawl/settings";
 import { TAGLINE_MODEL, taglineEvidence, taglineHash, writeTagline } from "@/lib/crawl/tagline";
 import { writeCrawlTaglineWithModelCapacity } from "@/lib/crawl/tagline-model-capacity";
 import { pendingTaglines, recordTaglineResult } from "@/lib/crawl/taglines";
+import { jobKnob } from "@/lib/operations/runtime-settings-schema";
+import { runtimeSettings } from "@/lib/operations/runtime-settings-store";
 
 /**
  * 소개 짓기 — 페이지에도 레포에도 소개가 없어 발행이 멈춘 후보의 한 줄을 모델이 짓는다.
@@ -15,17 +16,14 @@ import { pendingTaglines, recordTaglineResult } from "@/lib/crawl/taglines";
  *
  * 지은 줄로 곧바로 발행하지 않는다. 후보를 "승인됨"으로 되돌려 놓기만 하고, 발행할지는 발행 잡이
  * 평소 관문(두 모델 승인·원본 리비전·분류)을 그대로 거쳐 정한다.
+ *
+ * 한도는 틱마다 읽는다(관리자 실시간 한도 — 저장하면 재배포 없이 다음 틱에 반영):
+ * - 묶음(batch 12: 한 건이 4초쯤이라 둘씩 돌리면 한 틱에 20여 건)·최소 남은 시간(minCallMs 15초: 틱 끝에 부르면 제한이 짧아져
+ *   헛실패가 난다)은 runtime_settings jobs.crawl-tagline,
+ * - 동시 호출·한 번 부르는 데 둘 시간은 등록부 경로 crawl-tagline(routes.limits / routes.timeouts),
+ * - 틱의 남은 시간은 러너가 준 deadlineAt(틱 예산 budgets)에서 — 잡 안의 TICK_MS 상수는 없다(lib/jobs/tick-deadline.ts).
  */
-
-/** 한 번에 집는 수. 한 건이 4초쯤이라 둘씩 돌리면 한 틱에 20여 건 */
-const BATCH = 12;
-const CONCURRENCY = modelLimits("crawl-tagline").concurrency;
-/** 한 번 부르는 데 둘 시간 */
-const CALL_MS = modelTimeoutMs("crawl-tagline");
-/** 틱 예산(worker.ts jobRunOptions 55초)보다 조금 짧게 */
-const TICK_MS = 54_000;
-/** 이만큼 남아 있을 때만 새로 부른다 — 틱 끝에 부르면 제한이 짧아져 헛실패가 난다 */
-const MIN_CALL_MS = 15_000;
+const JOB = "crawl-tagline";
 
 /** 게이트웨이가 막힌 것은 이 후보의 문제가 아니다 — 이번 틱을 접는다 */
 const GATEWAY_DOWN = new Set(["no_key", "model_unavailable", "rate_limit", "timeout", "network"]);
@@ -49,21 +47,24 @@ export async function writeTaglines(ctx: JobContext<null>): Promise<JobOutcome<n
   ownershipPoll.unref?.();
   try {
     const startedAt = Date.now();
-    const remaining = () => TICK_MS - (Date.now() - startedAt);
+    const remaining = tickRemaining(ctx, JOB, startedAt);
+    const knobs = runtimeSettings();
+    const batch = jobKnob(knobs, JOB, "batch"), minCallMs = jobKnob(knobs, JOB, "minCallMs");
+    const concurrency = modelLimits(JOB).concurrency, callMs = modelTimeoutMs(JOB);
     let written = 0, empty = 0, failed = 0, released = 0, blocked = "", inARow = 0;
 
-    while (!signal.aborted && ctx.hasBudget() && remaining() >= MIN_CALL_MS) {
-      const tasks = await pendingTaglines(BATCH);
+    while (!signal.aborted && ctx.hasBudget() && remaining() >= minCallMs) {
+      const tasks = await pendingTaglines(batch);
       if (tasks.length === 0) {
         ctx.log("tagline.done", { written, empty, failed, released, drained: true });
         return { done: true };
       }
 
       let next = 0, skipped = false;
-      const settled = await Promise.allSettled(Array.from({ length: CONCURRENCY }, async () => {
+      const settled = await Promise.allSettled(Array.from({ length: concurrency }, async () => {
         try {
           for (let index = next++; index < tasks.length; index = next++) {
-            if (skipped || blocked || signal.aborted || !ctx.hasBudget() || remaining() < MIN_CALL_MS) return;
+            if (skipped || blocked || signal.aborted || !ctx.hasBudget() || remaining() < minCallMs) return;
             const task = tasks[index];
             const { candidate, document, written: stored } = task;
             const evidence = taglineEvidence(candidate.repo, document);
@@ -90,9 +91,9 @@ export async function writeTaglines(ctx: JobContext<null>): Promise<JobOutcome<n
               continue;
             }
 
-            const ask = () => writeTagline(evidence, { signal, timeoutMs: Math.max(1_000, Math.min(CALL_MS, remaining() - 1_000)) });
+            const ask = () => writeTagline(evidence, { signal, timeoutMs: Math.max(1_000, Math.min(callMs, remaining() - 1_000)) });
             let capacity = await writeCrawlTaglineWithModelCapacity(task, lease,
-              { signal, timeoutMs: Math.max(1_000, Math.min(CALL_MS, remaining() - 1_000)) });
+              { signal, timeoutMs: Math.max(1_000, Math.min(callMs, remaining() - 1_000)) });
             if (capacity.kind === "skipped") { skipped = true; return; }
             let result = capacity.kind === "disabled" ? await ask() : capacity.result;
             /**
@@ -100,12 +101,12 @@ export async function writeTaglines(ctx: JobContext<null>): Promise<JobOutcome<n
              * 줄이 오는 때가 14건 중 3~4건이었다(2026-09-20 프로드 실측, 온도 0인데도 그렇다).
              * 한 번만 더 묻는다. 두 번 다 빈 줄이면 그 후보는 사람이 본다.
              */
-            if (result.ok && !result.tagline && !signal.aborted && ctx.hasBudget() && remaining() >= MIN_CALL_MS
+            if (result.ok && !result.tagline && !signal.aborted && ctx.hasBudget() && remaining() >= minCallMs
               && (capacity.kind === "disabled" || capacity.askOrdinal === 1)) {
               if (capacity.kind === "disabled") result = await ask();
               else {
                 capacity = await writeCrawlTaglineWithModelCapacity(task, lease,
-                  { signal, timeoutMs: Math.max(1_000, Math.min(CALL_MS, remaining() - 1_000)), previous: capacity });
+                  { signal, timeoutMs: Math.max(1_000, Math.min(callMs, remaining() - 1_000)), previous: capacity });
                 if (capacity.kind === "skipped") { skipped = true; return; }
                 if (capacity.kind === "disabled") throw new ModelCapacityDeferredError("disabled");
                 result = capacity.result;
