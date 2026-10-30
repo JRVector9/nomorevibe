@@ -119,7 +119,8 @@ it.each(callers)("$name keeps the original control failure and starts no call", 
 it("disabled intro check keeps the exact CLI argv, stdin, timeout, records and result", async () => {
   const tasks = [introTask(2), introTask(1)];
   mocks.pendingIntro.mockResolvedValueOnce(tasks).mockResolvedValue([]);
-  const ctx = context("product-intro-check");
+  // 호출 상한(90초)은 틱의 남은 시간(러너 deadlineAt − 1초)에 맞춰 줄어든다 — 온전한 90초를 받으려면 틱 예산 110초가 있어야 한다
+  const ctx = context("product-intro-check", { deadlineAt: Date.now() + 110_000 });
   expect(await checkProductIntros(ctx, introCli)).toEqual({ done: true });
   const items = tasks.map(task => ({ slug: task.product.slug, intro: task.product.tagline, evidence: introEvidence(task.product) }));
   const stdin = `<untrusted_evidence_json>\n${JSON.stringify(items).replace(/</g, "\\u003c").replace(/>/g, "\\u003e")}\n</untrusted_evidence_json>`;

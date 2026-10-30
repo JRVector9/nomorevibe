@@ -24,9 +24,9 @@ vi.mock('@/lib/crawl/agent-review-model-capacity', () => ({ claimAgentReviewMode
 vi.mock('@/lib/crawl/review-cli-model-capacity', () => ({ claimAgentReviewCliModelCapacity: mocks.cliClaim,
   reviewCliModelCapacity: mocks.cliReview, abandonCliModelCapacity: mocks.cliAbandon }));
 vi.mock('@/lib/crawl/agent-review', () => ({ firstReviewer: (s: CrawlSettings) => s.firstReview,
-  reviewWithAgent: mocks.legacyCli, REVIEW_CLI_TIMEOUT_MS: 20_000 }));
-vi.mock('@/lib/crawl/agent-review-gateway', () => ({ reviewWithGateway: vi.fn(), REVIEW_GATEWAY_TIMEOUT_MS: 60_000 }));
-vi.mock('@/lib/crawl/agent-review-grok', () => ({ reviewWithGrokCli: mocks.legacyGrok, GROK_REVIEW_TIMEOUT_MS: 90_000 }));
+  reviewWithAgent: mocks.legacyCli, REVIEW_CLI_TIMEOUT_MS: 20_000, reviewCliTimeoutMs: () => 20_000, reviewCliMaxOutputTokens: () => 2_000 }));
+vi.mock('@/lib/crawl/agent-review-gateway', () => ({ reviewWithGateway: vi.fn(), REVIEW_GATEWAY_TIMEOUT_MS: 60_000, reviewGatewayTimeoutMs: () => 60_000 }));
+vi.mock('@/lib/crawl/agent-review-grok', () => ({ reviewWithGrokCli: mocks.legacyGrok, GROK_REVIEW_TIMEOUT_MS: 90_000, grokReviewTimeoutMs: () => 90_000 }));
 import { reviewCrawlCandidates } from '@/lib/crawl/jobs/agent-review';
 
 const lease = { name: 'crawl-agent-review', token: randomUUID(), requestedVersion: 4 };

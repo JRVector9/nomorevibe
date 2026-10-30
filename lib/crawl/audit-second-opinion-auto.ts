@@ -68,6 +68,8 @@ const STEP_MS = 30_000;
  * 한 건에 12초쯤(운영 실측 평균 11.8초·최대 19.8초, 2026-10-21)이라 20초는 짧았다
  */
 export const QWEN_AUTO_CALL_TIMEOUT_MS = modelTimeoutMs("audit-second-opinion");
+/** 위 상수는 로드 시점 값(테스트·문서용). 틱은 이 함수로 등록부 경로 audit-second-opinion 을 그때 읽는다 — 관리자 실시간 한도가 다음 틱에 반영된다 */
+export function qwenAutoCallTimeoutMs(): number { return modelTimeoutMs("audit-second-opinion"); }
 /** 새 호출을 시작할 수 있는 틱의 남은 시간 — 부하 중 p95 쯤. 더 짧으면 제한 시간을 그 안으로 줄인다 */
 export const QWEN_AUTO_MIN_START_MS = 15_000;
 const WRITE_MARGIN_MS = 2_000;
@@ -313,8 +315,9 @@ async function runStep(ctx: JobContext<null>, settings: CrawlSettings, tally: Qw
       // 두 번째 자리(갈림 판가름과 나눠 쓴다)를 얻은 뒤 남은 시간·물러나기를 다시 본다 — 기다리는 동안 바뀐다
       review = await withQwenSecondarySlot(async () => {
         if (!canStart()) return null;
-        const timeoutMs = Math.min(QWEN_AUTO_CALL_TIMEOUT_MS, left() - WRITE_MARGIN_MS);
-        shrunk = timeoutMs < QWEN_AUTO_CALL_TIMEOUT_MS;
+        const ceiling = qwenAutoCallTimeoutMs();
+        const timeoutMs = Math.min(ceiling, left() - WRITE_MARGIN_MS);
+        shrunk = timeoutMs < ceiling;
         callStartedAt = Date.now();
         return withLocalModelCapacity({ target: target.kind === "audit"
           ? { kind: "audit", purpose: "second_opinion", itemId: target.itemId, slug: target.slug }

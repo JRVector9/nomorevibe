@@ -6,7 +6,7 @@ import type { Locale } from "./locales";
 import { readProductTranslations, requestProductTranslations, selectProductTranslation,
   type ProductTranslation, type ProductTranslationField, type ProductTranslationSource } from "@/lib/domain/products/translations";
 import type { ProductTranslationSelection } from "@/lib/domain/products/translation-policy";
-import { PRODUCT_TRANSLATION_DEMAND_LIMIT } from "@/lib/domain/products/translation-policy";
+import { productTranslationPolicy } from "@/lib/domain/products/translation-policy";
 import { logger } from "@/lib/observability/logger";
 import { webWritable } from "@/lib/operations/dr/web-gate";
 
@@ -26,7 +26,8 @@ const responseDemand = cache(() => ({
 function requestVisibleTranslations(ids: readonly number[], locale: Locale, fields: readonly ProductTranslationField[]) {
   const demand = responseDemand();
   for (const id of ids) {
-    if (!demand.fields.has(id) && demand.fields.size >= PRODUCT_TRANSLATION_DEMAND_LIMIT) continue;
+    // 요청 보류 한도는 요청마다 지금 판의 translation.product.demandLimit (관리자 실시간 한도 — 다음 요청에 반영)
+    if (!demand.fields.has(id) && demand.fields.size >= productTranslationPolicy().demandLimit) continue;
     const requested = demand.fields.get(id) ?? new Set<ProductTranslationField>();
     fields.forEach((field) => requested.add(field));
     demand.fields.set(id, requested);

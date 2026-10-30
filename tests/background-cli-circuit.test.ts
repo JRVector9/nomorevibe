@@ -45,7 +45,7 @@ vi.mock("@/lib/crawl/product-audit-hold", () => ({ sweepAuditHolds: async () => 
 vi.mock("@/lib/crawl/audit-second-opinion-auto", () => ({ runQwenSecondOpinions: async () => null }));
 vi.mock("@/lib/crawl/product-audit", () => ({ runningAuditCampaign: mocks.campaign, pendingAuditItems: mocks.pendingAudit, loadAuditInput: mocks.input,
   recordAuditResult: mocks.recordAudit, markAuditNoSource: mocks.noSource, finishAuditCampaign: mocks.finishCampaign, lockAuditDispatchItem: mocks.auditItem }));
-vi.mock("@/lib/crawl/agent-review-gateway", () => ({ reviewWithGateway: mocks.gateway, REVIEW_GATEWAY_TIMEOUT_MS: 60_000 }));
+vi.mock("@/lib/crawl/agent-review-gateway", () => ({ reviewWithGateway: mocks.gateway, REVIEW_GATEWAY_TIMEOUT_MS: 60_000, reviewGatewayTimeoutMs: () => 60_000 }));
 
 type Raw = Record<string, unknown>;
 type Name = "product-intro-check" | "product-audit";

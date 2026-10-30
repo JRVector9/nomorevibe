@@ -1,38 +1,35 @@
-import { scopedModel } from "@/lib/llm/model-registry";
-import { modelTimeoutMs } from "@/lib/llm/model-registry";
+import { modelTimeoutMs, scopedModel } from "@/lib/llm/model-registry";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
+import { tickRemaining } from "@/lib/jobs/tick-deadline";
 import { translateReasonsWithModelCapacity } from '@/lib/crawl/reason-translation-model-capacity';
 import { TRANSLATE_MODEL } from "@/lib/crawl/translate";
 import { recordWorkerTranslations, retryableTranslations, untriedTranslations } from "@/lib/crawl/translations";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
+import { jobKnob, type RuntimeSettings } from "@/lib/operations/runtime-settings-schema";
+import { runtimeSettings } from "@/lib/operations/runtime-settings-store";
 
+const JOB = "reason-translate";
 /**
- * 한 번에 옮기는 양 — 최대 4건, 1,600자까지.
+ * 묶음 손잡이 — 틱마다 runtime_settings jobs.reason-translate 에서 읽는다(관리자 실시간 한도, 재배포 없이 다음 틱에 반영).
  *
- * 2026-09-11 프로드: 영어 사유 2,395건, 중앙값 466자·상위 10% 678자·최장 1,239자. 한 번 부르는 데
- * 고정으로 6초쯤 들어(1건 7.6초, 2건 1,209자 7.4초) 묶을수록 낫지만, 3건 묶음은 15초에서 20초를 넘기도 했다.
+ * batch 4·batchChars 1,600: 한 번에 옮기는 양 — 최대 4건, 1,600자까지. 2026-09-11 프로드: 영어 사유 2,395건, 중앙값 466자·상위 10% 678자·
+ * 최장 1,239자. 한 번 부르는 데 고정으로 6초쯤 들어(1건 7.6초, 2건 1,209자 7.4초) 묶을수록 낫지만, 3건 묶음은 15초에서 20초를 넘기도 했다.
  * 글자 수로 묶어 한 번이 15~25초에 들게 한다. 첫 글이 1,600자를 넘으면 그 글만 보낸다.
- */
-const BATCH = 4;
-const BATCH_CHARS = 1_600;
-/** 한 번 부르는 데 둘 시간. 첫 배포 때 20초로 두었더니 4틱 연속 시간 초과였다 */
-const CALL_MS = modelTimeoutMs("reason-translate");
-/** 틱 예산(worker.ts jobRunOptions 55초)보다 조금 짧게 */
-const TICK_MS = 54_000;
-/**
- * 이만큼 남아 있을 때만 새로 부른다. 묶음 하나가 15~25초라, 틱 끝에 남은 16초로 부르면 제한이
- * 16초로 줄어 거의 늘 시간 초과였다 — 프로드에서 틱마다 3건씩 헛실패가 났다(2026-09-11).
- */
-const MIN_CALL_MS = 30_000;
-
-/**
- * 이만큼 실패한 글은 묶지 않고 혼자 보낸다.
  *
- * 밀린 실패는 대부분 묶음이 통째로 시간 초과된 것이라(프로드 1,871건 중 1,854건이 시도 1회)
- * 다시 묶어 보내는 것이 맞다. 여러 번 되풀이해 실패한 글만 따로 떼어, 그것 하나가 옆의
- * 멀쩡한 글까지 끌고 실패하지 않게 한다.
+ * minCallMs 30초: 이만큼 남아 있을 때만 새로 부른다. 묶음 하나가 15~25초라, 틱 끝에 남은 16초로 부르면 제한이 16초로 줄어 거의 늘
+ * 시간 초과였다 — 프로드에서 틱마다 3건씩 헛실패가 났다(2026-09-11).
+ *
+ * soloAttempts 3: 이만큼 실패한 글은 묶지 않고 혼자 보낸다. 밀린 실패는 대부분 묶음이 통째로 시간 초과된 것이라(프로드 1,871건 중
+ * 1,854건이 시도 1회) 다시 묶어 보내는 것이 맞다. 여러 번 되풀이해 실패한 글만 따로 떼어, 그것 하나가 옆의 멀쩡한 글까지 끌고 실패하지 않게 한다.
+ *
+ * 한 번 부르는 데 둘 시간은 등록부 경로 reason-translate(routes.limits.reason-translate.timeoutMs — 첫 배포 때 20초로 두었더니 4틱 연속
+ * 시간 초과였다)에서, 틱의 남은 시간은 러너가 준 deadlineAt(틱 예산 budgets)에서 읽는다 — 잡 안의 TICK_MS 상수는 없다(lib/jobs/tick-deadline.ts).
  */
-const SOLO_ATTEMPTS = 3;
+export type ReasonTranslateKnobs = { batch: number; batchChars: number; minCallMs: number; soloAttempts: number };
+export function reasonTranslateKnobs(settings: RuntimeSettings = runtimeSettings()): ReasonTranslateKnobs {
+  return { batch: jobKnob(settings, JOB, "batch"), batchChars: jobKnob(settings, JOB, "batchChars"),
+    minCallMs: jobKnob(settings, JOB, "minCallMs"), soloAttempts: jobKnob(settings, JOB, "soloAttempts") };
+}
 
 /**
  * 다음에 먼저 볼 줄 — 틱을 넘어 이어 간다.
@@ -43,13 +40,13 @@ const SOLO_ATTEMPTS = 3;
  */
 let takeRetryFirst = true;
 
-/** 앞에서부터 글자 수 한도까지 — 순서(최근 것부터)를 지킨다 */
-export function packBatch<T extends { body: string; attempts?: number }>(items: T[]): T[] {
+/** 앞에서부터 글자 수 한도까지 — 순서(최근 것부터)를 지킨다. 손잡이는 부를 때의 판(기본은 지금 runtime_settings)이다 */
+export function packBatch<T extends { body: string; attempts?: number }>(items: T[], knobs: Pick<ReasonTranslateKnobs, "batch" | "batchChars" | "soloAttempts"> = reasonTranslateKnobs()): T[] {
   const batch: T[] = [];
   let chars = 0;
   for (const item of items) {
-    if (batch.length && ((item.attempts ?? 0) >= SOLO_ATTEMPTS || (batch[0].attempts ?? 0) >= SOLO_ATTEMPTS
-      || batch.length >= BATCH || chars + item.body.length > BATCH_CHARS)) break;
+    if (batch.length && ((item.attempts ?? 0) >= knobs.soloAttempts || (batch[0].attempts ?? 0) >= knobs.soloAttempts
+      || batch.length >= knobs.batch || chars + item.body.length > knobs.batchChars)) break;
     batch.push(item);
     chars += item.body.length;
   }
@@ -74,7 +71,8 @@ export async function translateReasons(ctx: JobContext<null>): Promise<JobOutcom
   ownershipPoll.unref?.();
   try {
     const startedAt = Date.now();
-    const remaining = () => TICK_MS - (Date.now() - startedAt);
+    const remaining = tickRemaining(ctx, JOB, startedAt);
+    const knobs = reasonTranslateKnobs(), callMs = modelTimeoutMs(JOB);
     let translated = 0, failed = 0;
 
     /**
@@ -83,22 +81,22 @@ export async function translateReasons(ctx: JobContext<null>): Promise<JobOutcom
      * 한쪽만 보면 다른 쪽이 굶는다 — 최근 것만 보면 실패가 엿새를 기다리고, 실패만 보면
      * 심사 화면의 새 사유가 그동안 영어로 남는다.
      */
-    while (!signal.aborted && ctx.hasBudget() && remaining() >= MIN_CALL_MS) {
+    while (!signal.aborted && ctx.hasBudget() && remaining() >= knobs.minCallMs) {
       const takeRetry = takeRetryFirst;
-      const preferred = takeRetry ? await retryableTranslations(BATCH) : await untriedTranslations(BATCH * 2);
+      const preferred = takeRetry ? await retryableTranslations(knobs.batch) : await untriedTranslations(knobs.batch * 2);
       const pending = preferred.length
         ? preferred
-        : takeRetry ? await untriedTranslations(BATCH * 2) : await retryableTranslations(BATCH);
+        : takeRetry ? await untriedTranslations(knobs.batch * 2) : await retryableTranslations(knobs.batch);
       takeRetryFirst = !takeRetry;
       if (!pending.length) {
         ctx.log("translate.done", { translated, failed, drained: true });
         return { done: true };
       }
-      const batch = pending[0].attempts >= SOLO_ATTEMPTS ? [pending[0]] : packBatch(pending);
+      const batch = pending[0].attempts >= knobs.soloAttempts ? [pending[0]] : packBatch(pending, knobs);
       let prepared: Awaited<ReturnType<typeof translateReasonsWithModelCapacity>>;
       try {
         prepared = await translateReasonsWithModelCapacity(batch, lease,
-          { timeoutMs: Math.max(1_000, Math.min(CALL_MS, remaining() - 1_000)), signal });
+          { timeoutMs: Math.max(1_000, Math.min(callMs, remaining() - 1_000)), signal });
       } catch (error) {
         // 미룸 사유(capacity·dispatched·unmapped…)를 남긴다 — 러너는 'model_capacity' 하나로만 적는다
         if (error instanceof ModelCapacityDeferredError) ctx.log("translate.capacity_deferred", { translated, failed, reason: error.reason });

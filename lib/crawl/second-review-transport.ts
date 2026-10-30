@@ -1,16 +1,17 @@
 import type { ReviewInput } from "./agent-review-contract";
-import { reviewWithAgent, REVIEW_CLI_TIMEOUT_MS, type AgentReviewResult } from "./agent-review";
-import { reviewWithGateway, REVIEW_GATEWAY_TIMEOUT_MS } from "./agent-review-gateway";
-import { reviewWithGrokCli, GROK_REVIEW_TIMEOUT_MS } from "./agent-review-grok";
+import { reviewCliTimeoutMs, reviewWithAgent, type AgentReviewResult } from "./agent-review";
+import { reviewGatewayTimeoutMs, reviewWithGateway } from "./agent-review-gateway";
+import { grokReviewTimeoutMs, reviewWithGrokCli } from "./agent-review-grok";
 import { dispatchReviewFixtureCall, type ReviewFixtureCallBinding } from "./review-fixture-transport";
 
 import type { SecondReviewItemReceipt } from "./second-review-ownership";
 
 export type SecondReviewTransportBinding = Extract<ReviewFixtureCallBinding, { stage: "second" }>;
 
+/** 제공자별 전송 상한 — 부를 때의 등록부(관리자 실시간 한도 포함)를 읽는다 */
 export function secondReviewTransportTimeoutMs(provider: SecondReviewTransportBinding["provider"]): number {
-  return provider === "abcllm" || provider === "local-direct" ? REVIEW_GATEWAY_TIMEOUT_MS
-    : provider === "grok-cli" ? GROK_REVIEW_TIMEOUT_MS : REVIEW_CLI_TIMEOUT_MS;
+  return provider === "abcllm" || provider === "local-direct" ? reviewGatewayTimeoutMs()
+    : provider === "grok-cli" ? grokReviewTimeoutMs() : reviewCliTimeoutMs();
 }
 
 export async function dispatchSecondReviewTransport(binding: SecondReviewTransportBinding, input: ReviewInput,

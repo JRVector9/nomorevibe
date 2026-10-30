@@ -26,6 +26,7 @@ vi.mock("@/lib/domain/products/search-verify", () => ({ VERIFY_MODEL: "verifier"
 import { writeSearchProfiles } from "@/lib/jobs/products/search-profile";
 import { verifySearchKeywords } from "@/lib/jobs/products/search-verify";
 import type { JobContext } from "@/lib/jobs/runner";
+import { setRuntimeSettingsForTest } from "@/lib/operations/runtime-settings-store";
 
 const tasks = (count: number) => Array.from({ length: count }, (_, id) => ({
   product: { id }, reviewerNote: null,
@@ -41,7 +42,7 @@ beforeEach(() => {
   domain.recordProfileResult.mockResolvedValue(true);
   domain.recordVerificationResult.mockResolvedValue(true);
 });
-afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
+afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); setRuntimeSettingsForTest(null); });
 
 describe("search job time budget", () => {
   it.each(["invalid_output", "timeout"])("uses chunk verification only on a later %s retry", async (verifyError) => {
@@ -95,6 +96,28 @@ describe("search job time budget", () => {
     });
     await writeSearchProfiles(ctx());
     expect(domain.recordProfileResult).toHaveBeenCalledWith(expect.anything(), expect.anything(), { kind: "failure", error: "timeout" });
+  });
+
+  it("reads the route timeout and the job knobs per tick — an admin save applies without a module reload", async () => {
+    // routes.limits.product-search-profile.timeoutMs 30초 → 다음 틱의 호출 상한; jobs.product-search-profile.minCallMs 50초 → 첫 호출 뒤에는 남은 시간이 모자라 접는다
+    setRuntimeSettingsForTest({ version: 1, routes: { limits: { "product-search-profile": { timeoutMs: 30_000 } } },
+      jobs: { "product-search-profile": { minCallMs: 50_000 } } });
+    domain.pendingProfiles.mockResolvedValue(tasks(8));
+    domain.writeKeywords.mockImplementation(async (_evidence, options) => {
+      expect(options.timeoutMs).toBe(30_000);
+      vi.setSystemTime(Date.now() + 6_000);
+      return { ok: true, en: ["calendar"], ko: ["달력"] };
+    });
+    expect(await writeSearchProfiles(ctx())).toEqual({ done: false });
+    expect(domain.writeKeywords).toHaveBeenCalledTimes(1);
+    expect(domain.recordProfileResult).toHaveBeenCalledTimes(1);
+    // 기본값으로 돌아오면 같은 프로세스에서 바로 45초·동시 둘로 돈다 — 모듈이 값을 로드 시점에 붙들지 않는다
+    setRuntimeSettingsForTest(null);
+    vi.resetAllMocks(); domain.recordProfileResult.mockResolvedValue(true);
+    domain.pendingProfiles.mockResolvedValueOnce(tasks(1)).mockResolvedValue([]);
+    domain.writeKeywords.mockImplementation(async (_evidence, options) => { expect(options.timeoutMs).toBe(45_000); return { ok: false, error: "timeout" }; });
+    await writeSearchProfiles(ctx());
+    expect(domain.writeKeywords).toHaveBeenCalledTimes(1);
   });
 
   it("still records verification timeout with the full call deadline", async () => {

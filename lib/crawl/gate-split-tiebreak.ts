@@ -58,9 +58,10 @@ export { SPLIT_QWEN_REJECT_REASON, SPLIT_TIEBREAK_MAX_FAILURES } from "./gate-sp
 
 /**
  * 한 번 부르는 제한 시간 — 실측 2.2~4.7초(qwen-direct-review.ts). 이 시간과 기록 여유가 다 남을 때만 새로 부른다 — 줄인 제한 시간으로
- * 부르지 않으니 틱 끝 때문에 난 시간 초과가 서버 탈로 셈되지 않는다(틱 끝에 끊긴 호출은 멈춤 qwen_cancelled 이다)
+ * 부르지 않으니 틱 끝 때문에 난 시간 초과가 서버 탈로 셈되지 않는다(틱 끝에 끊긴 호출은 멈춤 qwen_cancelled 이다).
+ * 틱마다 등록부 경로 split-tiebreak 을 읽는다(관리자 실시간 한도 — 저장하면 다음 틱에 반영)
  */
-const CALL_TIMEOUT_MS = modelTimeoutMs("split-tiebreak");
+const splitTiebreakTimeoutMs = () => modelTimeoutMs("split-tiebreak");
 const WRITE_MARGIN_MS = 2_000;
 /**
  * 이 틱에서 판가름이 쓰는 시간 — 2차 잡 틱(108초) 안이다. 표 심사와 나란히 돌지만 표 심사가 일찍 끝나면 틱이 이만큼 길어지고,
@@ -382,6 +383,7 @@ export async function runGateSplitTiebreak<C>(ctx: JobContext<C>, lease: JobLeas
   if (!liveCallsAllowed()) return { ...tick, stopped: "replay" };
   if (lease.name !== "second-review") throw new JobLeaseLostError();
   const deadlineAt = Math.min(options.deadlineAt, ctx.deadlineAt ?? Infinity, Date.now() + LANE_MS);
+  const callTimeoutMs = splitTiebreakTimeoutMs();
   const settings = await getSettings();
   if (!switchOn(settings)) return { ...tick, stopped: "switch_off" };
   // gpu3090 을 부르는 누군가가 서버 탈을 만나 물러나는 중이면 부르지 않는다(qwen-endpoint-backoff.ts)
@@ -394,7 +396,7 @@ export async function runGateSplitTiebreak<C>(ctx: JobContext<C>, lease: JobLeas
   const hints = await splitHints(perTick * HINT_FACTOR, new Date());
   for (const hint of hints) {
     const left = () => deadlineAt - Date.now() - WRITE_MARGIN_MS;
-    if (tick.calls >= perTick || ctx.signal?.aborted || !ctx.hasBudget() || left() < CALL_TIMEOUT_MS || qwenEndpointBackingOff()) break;
+    if (tick.calls >= perTick || ctx.signal?.aborted || !ctx.hasBudget() || left() < callTimeoutMs || qwenEndpointBackingOff()) break;
     let claimed: ClaimResult;
     try { claimed = await claimSplitTiebreak(hint, lease, new Date(), options.env); }
     catch (error) {
@@ -422,12 +424,12 @@ export async function runGateSplitTiebreak<C>(ctx: JobContext<C>, lease: JobLeas
     try {
       // 두 번째 자리(감사 두 번째 의견·공개분 거르기와 나눠 쓴다)를 얻은 뒤 남은 시간·물러나기를 다시 본다 — 못 부르면 멈춤으로 적는다
       result = await withQwenSecondarySlot(async () => {
-        if (left() < CALL_TIMEOUT_MS || qwenEndpointBackingOff()) return { ok: false as const, code: "qwen_cancelled", detail: "secondary_slot", latencyMs: 0 };
+        if (left() < callTimeoutMs || qwenEndpointBackingOff()) return { ok: false as const, code: "qwen_cancelled", detail: "secondary_slot", latencyMs: 0 };
         callStartedAt = Date.now();
         return withLocalModelCapacity({ target: { kind: "split", purpose: "qwen_tiebreak", tiebreakId: claimed.claim.tiebreakId,
           candidateId: claimed.claim.candidateId, generationKey: claimed.claim.generationKey, repo: claimed.claim.repo },
         input: claimed.claim.input, lease, promptVersion: QWEN_V2_PROMPT_VERSION, env: options.env },
-        request => callQwen(claimed.claim.input, { timeoutMs: CALL_TIMEOUT_MS,
+        request => callQwen(claimed.claim.input, { timeoutMs: callTimeoutMs,
           signal: ctx.signal ? AbortSignal.any([ctx.signal, controller.signal]) : controller.signal, request, env: options.env }), options.request);
       });
     } catch (error) {

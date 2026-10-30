@@ -15,10 +15,10 @@ vi.mock("@/lib/crawl/repository", () => ({getDocument:mocks.document,setReadmeSa
 vi.mock("@/lib/crawl/readme", () => ({fetchReadmeSample:mocks.readme,README_SAMPLE_LIMIT:3000,README_SAMPLE_VERSION:"2026-09-14.1"}));
 vi.mock("@/lib/domain/products/repository", () => ({findRepositoryProduct:mocks.existing}));
 vi.mock("@/lib/crawl/agent-review-repository", () => ({listOwnPendingFirstReviewCandidates:mocks.pendingList,listFirstReviewPoolCandidates:mocks.poolList,chooseFirstReviewForCandidate:mocks.choose,canStartLegacyAgentReview:mocks.canStart,requeueStaleReviewSources:mocks.requeue,handOffExhaustedFirstReviews:mocks.handOff,listReviewCandidates:mocks.list,loadReviewInput:mocks.input,claimAgentReview:mocks.claim,recordAgentReview:mocks.record}));
-vi.mock("@/lib/crawl/agent-review", () => ({reviewModel:()=>"tested-model",reviewWithAgent:mocks.review,REVIEW_CLI_TIMEOUT_MS:20_000,
+vi.mock("@/lib/crawl/agent-review", () => ({reviewModel:()=>"tested-model",reviewWithAgent:mocks.review,REVIEW_CLI_TIMEOUT_MS:20_000,reviewCliTimeoutMs:()=>20_000,reviewCliMaxOutputTokens:()=>2_000,
   firstReviewer:(s:{firstReview?:{provider:string;model:string}})=>s.firstReview ?? {provider:"claude-cli",model:"tested-model"}}));
-vi.mock("@/lib/crawl/agent-review-gateway", () => ({reviewWithGateway:mocks.gateway,REVIEW_GATEWAY_TIMEOUT_MS:60_000}));
-vi.mock("@/lib/crawl/agent-review-grok", () => ({ reviewWithGrokCli: mocks.grok, GROK_REVIEW_TIMEOUT_MS: 90_000 }));
+vi.mock("@/lib/crawl/agent-review-gateway", () => ({reviewWithGateway:mocks.gateway,REVIEW_GATEWAY_TIMEOUT_MS:60_000,reviewGatewayTimeoutMs:()=>60_000}));
+vi.mock("@/lib/crawl/agent-review-grok", () => ({ reviewWithGrokCli: mocks.grok, GROK_REVIEW_TIMEOUT_MS: 90_000, grokReviewTimeoutMs: () => 90_000 }));
 vi.mock("@/lib/jobs/control", () => ({requestJob:mocks.requestJob}));
 const context = () => ({cursor:null,hasBudget:()=>true,save:vi.fn(),log:vi.fn(),lease:{name:"crawl-agent-review",token:"token",requestedVersion:1}});
 const receipt = (attemptId = 1, origin: "fresh" | "direct_reuse" | "semantic_reuse" = "fresh") => ({

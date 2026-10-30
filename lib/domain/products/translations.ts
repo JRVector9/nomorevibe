@@ -23,7 +23,7 @@ import { productTranslationInputSchema, productTranslationDispatchBindingSchema,
 import { lockModelCapacityCallerControl, lockProductTranslationModelCapacityDispatch,
   finishProductTranslationModelCapacityDispatch } from "@/lib/llm/capacity-repository";
 import { detectTranslationSourceLocale, isProductTranslationField, productTranslationSourceHash, translationSourceText,
-  PRODUCT_TRANSLATION_DEMAND_LIMIT, PRODUCT_TRANSLATION_MAX_ATTEMPTS, PRODUCT_TRANSLATION_MAX_SOURCE_CHARS, PRODUCT_TRANSLATION_POLICY,
+  PRODUCT_TRANSLATION_POLICY, productTranslationPolicy,
   type ProductTranslationReadiness, type ProductTranslationSource } from "./translation-policy";
 
 export { selectProductTranslation, productTranslationSourceHash, detectTranslationSourceLocale } from "./translation-policy";
@@ -46,7 +46,7 @@ export const productTranslationEligibilityField = {
 };
 
 function demandIds(ids: readonly number[]): number[] {
-  return [...new Set(ids.filter((id) => Number.isSafeInteger(id) && id > 0))].slice(0, PRODUCT_TRANSLATION_DEMAND_LIMIT).sort((a, b) => a - b);
+  return [...new Set(ids.filter((id) => Number.isSafeInteger(id) && id > 0))].slice(0, productTranslationPolicy().demandLimit).sort((a, b) => a - b);
 }
 function requireLocale(locale: Locale): void {
   if (!isLocale(locale)) throw new Error("invalid_translation_locale");
@@ -58,7 +58,7 @@ export async function readProductTranslations(sources: readonly ProductTranslati
   if (locale === "ko") return [];
   const ids = demandIds(sources.map((source) => source.id));
   if (!ids.length) return [];
-  const visible = new Map(sources.slice(0, PRODUCT_TRANSLATION_DEMAND_LIMIT).map((source) => [source.id, source]));
+  const visible = new Map(sources.slice(0, productTranslationPolicy().demandLimit).map((source) => [source.id, source]));
   const rows = await db.select({ translation: t, source: sourceColumns }).from(t)
     .innerJoin(products, eq(products.id, t.productId))
     .where(and(inArray(t.productId, ids), eq(t.locale, locale), inArray(t.status, ["ready", "reviewed"]), eligible));
@@ -73,7 +73,7 @@ export async function readProductTranslations(sources: readonly ProductTranslati
 export async function readProductTranslationReadiness(sources: readonly ProductTranslationSource[]): Promise<ProductTranslationReadiness[]> {
   const ids = demandIds(sources.map((source) => source.id));
   if (!ids.length) return [];
-  const visible = new Map(sources.slice(0, PRODUCT_TRANSLATION_DEMAND_LIMIT).map((source) => [source.id, source]));
+  const visible = new Map(sources.slice(0, productTranslationPolicy().demandLimit).map((source) => [source.id, source]));
   const rows = await db.select({ translation: {
     productId: t.productId, locale: t.locale, field: t.field, sourceHash: t.sourceHash, status: t.status, errorCode: t.errorCode,
     text: sql<string | null>`case when length(btrim(${t.text})) > 0 then 'present' end`,
@@ -133,7 +133,7 @@ export async function pendingProductTranslations(limit = 4): Promise<ProductTran
   const rows = await db.select({ source: sourceColumns, locale: t.locale, field: t.field,
     sourceHash: t.sourceHash, attempts: t.attempts, eligible: sql<boolean>`(${eligible})` }).from(t)
     .innerJoin(products, eq(products.id, t.productId))
-    .where(and(inArray(t.status, ["pending", "failed"]), sql`${t.attempts} < ${PRODUCT_TRANSLATION_MAX_ATTEMPTS}`,
+    .where(and(inArray(t.status, ["pending", "failed"]), sql`${t.attempts} < ${productTranslationPolicy().maxAttempts}`,
       sql`(${t.retryAt} is null or ${t.retryAt} <= now())`))
     .orderBy(asc(t.updatedAt), asc(t.productId), asc(t.locale), asc(t.field)).limit(Math.max(1, Math.min(8, limit)));
   return rows;
@@ -151,11 +151,11 @@ export async function pendingProductTranslationBatch(memberKeys: readonly string
       .innerJoin(products, eq(products.id, t.productId)).where(and(eligible,
         or(...targets.map(target => and(eq(t.productId, target.productId), eq(t.locale, target.locale as ProductTranslationLocale),
           eq(t.field, target.field as ProductTranslationField)))), inArray(t.status, ["pending", "failed"]),
-        sql`${t.attempts} < ${PRODUCT_TRANSLATION_MAX_ATTEMPTS}`, sql`(${t.retryAt} is null or ${t.retryAt} <= clock_timestamp())`));
+        sql`${t.attempts} < ${productTranslationPolicy().maxAttempts}`, sql`(${t.retryAt} is null or ${t.retryAt} <= clock_timestamp())`));
     if (rows.length !== keys.length) return null;
     const batch = targets.map(target => rows.find(row => row.source.id === target.productId && row.locale === target.locale && row.field === target.field)!);
     if (batch.some(task => productTranslationSourceHash(task.source, task.field) !== task.sourceHash)
-      || batch.reduce((size, task) => size + translationSourceText(task.source, task.field).length, 0) > PRODUCT_TRANSLATION_MAX_SOURCE_CHARS) return null;
+      || batch.reduce((size, task) => size + translationSourceText(task.source, task.field).length, 0) > productTranslationPolicy().maxSourceChars) return null;
     return translationBatch(batch);
   });
 }
@@ -171,11 +171,14 @@ const productWrites = new WeakMap<ProductTranslationWriteExpectation, {
 class ProductTranslationChanged extends Error { constructor() { super("product_translation_input_changed"); } }
 const taskSchema = z.object({ source: z.object({ id: z.number().int().positive().safe(), name: z.string(), tagline: z.string(),
   description: z.string().optional() }).strict(), locale: z.enum(["en", "zh-Hans", "zh-Hant"]), field: z.enum(["tagline", "description"]),
-  sourceHash: z.string().regex(/^[a-f0-9]{64}$/), attempts: z.number().int().min(0).max(3), eligible: z.boolean() }).strict();
+  sourceHash: z.string().regex(/^[a-f0-9]{64}$/), attempts: z.number().int().min(0), eligible: z.boolean() }).strict();
 function translationBatch(value: readonly ProductTranslationTask[]): ProductTranslationTask[] {
-  const tasks = z.array(taskSchema).min(1).max(4).parse(structuredClone(value));
+  // attempts < maxAttempts 와 원문 글자 합 상한은 이 틱의 translation.product(관리자 실시간 한도)로 본다
+  const policy = productTranslationPolicy();
+  const tasks = z.array(taskSchema).min(1).max(policy.batchMax).parse(structuredClone(value));
   if (new Set(tasks.map(task => `${task.source.id}:${task.locale}:${task.field}`)).size !== tasks.length
-    || tasks.reduce((count, task) => count + translationSourceText(task.source, task.field).length, 0) > PRODUCT_TRANSLATION_MAX_SOURCE_CHARS
+    || tasks.some(task => task.attempts >= policy.maxAttempts)
+    || tasks.reduce((count, task) => count + translationSourceText(task.source, task.field).length, 0) > policy.maxSourceChars
     || tasks.some(task => !translationSourceText(task.source, task.field).trim()
       || productTranslationSourceHash(task.source, task.field) !== task.sourceHash)) throw new Error("invalid_product_translation_batch");
   return tasks;
@@ -338,12 +341,13 @@ export async function recordProductTranslations(
 async function updateProductTranslation(tx: ProductTranslationTransaction, task: ProductTranslationTask, result: ProductTranslationResult,
   source: ProductTranslationSource & { eligible: boolean }, raw?: Record<string, unknown>): Promise<number> {
   const current = source.eligible && productTranslationSourceHash(source, task.field) === task.sourceHash;
+  const { maxAttempts } = productTranslationPolicy();
   const error = current ? (result.ok ? null : result.error.slice(0, 60)) : source.eligible ? "stale_source" : "ineligible";
   const updated = await tx.update(t).set({
     text: current && result.ok ? result.text : null,
     status: current && result.ok ? "ready" : "failed", model: result.model.slice(0, 160), errorCode: error,
-    attempts: current && (result.ok || result.error !== "source_too_long") ? task.attempts + 1 : PRODUCT_TRANSLATION_MAX_ATTEMPTS,
-    retryAt: current && !result.ok && result.error !== "source_too_long" && task.attempts + 1 < PRODUCT_TRANSLATION_MAX_ATTEMPTS
+    attempts: current && (result.ok || result.error !== "source_too_long") ? task.attempts + 1 : maxAttempts,
+    retryAt: current && !result.ok && result.error !== "source_too_long" && task.attempts + 1 < maxAttempts
       ? sql`now() + least(interval '24 hours', interval '5 minutes' * power(2, ${task.attempts}))` : null,
     updatedAt: sql`now()`,
   }).where(and(eq(t.productId, task.source.id), eq(t.locale, task.locale), eq(t.field, task.field),

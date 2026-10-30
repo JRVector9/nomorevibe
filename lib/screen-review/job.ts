@@ -46,8 +46,8 @@ export const SCREEN_REVIEW_OBSERVATION = "screen-review";
 export const SCREEN_REVIEW_BUDGET_MS = 150_000;
 /** 그리기 요청의 상한 — 서버의 그리기 상한 40초 + 브라우저 띄우기·주고받기 */
 export const SCREEN_RENDER_TIMEOUT_MS = 55_000;
-/** 묻기의 상한(레지스트리 screen-review, 기본 90초) — 재판정 실측 중앙값 77초(두 갈래 동시·운영 부하 함께)·p95 103초, 한 건만이면 12초쯤 */
-export const SCREEN_MODEL_TIMEOUT_MS = modelTimeoutMs("screen-review");
+/** 묻기의 상한(레지스트리 screen-review, 기본 90초) — 재판정 실측 중앙값 77초(두 갈래 동시·운영 부하 함께)·p95 103초, 한 건만이면 12초쯤. 틱마다 읽는다(관리자 실시간 한도) */
+export function screenModelTimeoutMs(): number { return modelTimeoutMs("screen-review"); }
 const MIN_RENDER_WINDOW_MS = 45_000;
 const MIN_MODEL_WINDOW_MS = 20_000;
 const WRITE_MARGIN_MS = 3_000;
@@ -243,9 +243,10 @@ export async function reviewThinPagesByScreen(ctx: JobContext<null>, deps: Scree
     screenBackoff.render = { failures: 0, retryAt: 0, code: null };
 
     if (shared && qwenEndpointBackingOff()) break;
-    const timeoutMs = Math.min(SCREEN_MODEL_TIMEOUT_MS, left() - WRITE_MARGIN_MS);
+    const modelCeiling = screenModelTimeoutMs();
+    const timeoutMs = Math.min(modelCeiling, left() - WRITE_MARGIN_MS);
     if (timeoutMs < MIN_MODEL_WINDOW_MS) break;
-    const shrunk = timeoutMs < SCREEN_MODEL_TIMEOUT_MS;
+    const shrunk = timeoutMs < modelCeiling;
     const modelStarted = Date.now();
     const renderedReceivedAt = now();
     let review: ScreenReview;

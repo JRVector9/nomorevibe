@@ -53,8 +53,8 @@ import type { CrawlSettings, HeldQwenReason } from "./settings-schema";
  * 한 번에 한 호출만 띄운다(withQwenSecondarySlot) — 잡들이 겹쳐 돌아도 gpu3090 동시 호출은 감사 자리(2~4) + 1 이다.
  */
 const JOB = "human-deepseek-review";
-/** 한 번 부를 때의 제한 시간 — 실측 2.2~4.7초(qwen-direct-review.ts). 넘는 것은 탈로 본다 */
-export const HELD_QWEN_CALL_TIMEOUT_MS = modelTimeoutMs("held-review-retry");
+/** 한 번 부를 때의 제한 시간 — 실측 2.2~4.7초(qwen-direct-review.ts). 넘는 것은 탈로 본다. 틱마다 등록부 경로 held-review-retry 를 읽는다(관리자 실시간 한도) */
+export function heldQwenCallTimeoutMs(): number { return modelTimeoutMs("held-review-retry"); }
 const MAX_FAILURES = 3;
 const RETRY_MS = 15 * 60_000;
 const STALE_RUNNING_MS = 120_000;
@@ -450,7 +450,7 @@ async function callQwen(input: ReviewInput, options: { timeoutMs: number; signal
 
 /**
  * human-deepseek-review 잡의 앞부분 — 보류 Qwen-v2 재심사 한 틱. 시간은 budgetSeconds 와 잡의 남은 예산 중 짧은 쪽,
- * 수는 perTick 까지. 한 번 부를 시간(HELD_QWEN_CALL_TIMEOUT_MS)이 남지 않으면 새로 부르지 않는다.
+ * 수는 perTick 까지. 한 번 부를 시간(heldQwenCallTimeoutMs)이 남지 않으면 새로 부르지 않는다.
  */
 export async function runHeldQwenRetry(ctx: Pick<JobContext<null>, "lease" | "hasBudget" | "deadlineAt" | "signal" | "log">, settings: CrawlSettings,
   options: { request?: typeof fetch; env?: Readonly<Record<string, string | undefined>> } = {}): Promise<HeldQwenTick> {
@@ -467,9 +467,10 @@ export async function runHeldQwenRetry(ctx: Pick<JobContext<null>, "lease" | "ha
   if (!config) return { ...tick, skipped: "not_configured" };
   // gpu3090 을 부르는 누군가가 탈을 만나 물러나는 중이면 부르지 않는다(qwen-endpoint-backoff.ts)
   if (qwenEndpointBackingOff()) return { ...tick, skipped: "backoff", backoffUntil: new Date(qwenEndpointBackoff.retryAt).toISOString() };
+  const callTimeoutMs = heldQwenCallTimeoutMs();
   const sliceEnd = Date.now() + policy.budgetSeconds * 1000;
-  const room = () => !ctx.signal?.aborted && ctx.hasBudget() && sliceEnd - Date.now() >= HELD_QWEN_CALL_TIMEOUT_MS
-    && (ctx.deadlineAt === undefined || ctx.deadlineAt - Date.now() >= HELD_QWEN_CALL_TIMEOUT_MS + 2_000);
+  const room = () => !ctx.signal?.aborted && ctx.hasBudget() && sliceEnd - Date.now() >= callTimeoutMs
+    && (ctx.deadlineAt === undefined || ctx.deadlineAt - Date.now() >= callTimeoutMs + 2_000);
   const candidates = await heldQwenCandidates(settings, config.model, policy.perTick * 3);
   for (const candidate of candidates) {
     if (tick.started >= policy.perTick || !room()) break;
@@ -499,7 +500,7 @@ export async function runHeldQwenRetry(ctx: Pick<JobContext<null>, "lease" | "ha
         return withLocalModelCapacity({ target: { kind: "candidate", purpose: "held_qwen", attemptId: claimed.claim.attemptId,
           candidateId: claimed.claim.candidateId, repo: claimed.claim.repo }, input: claimed.claim.input, lease,
           promptVersion: QWEN_V2_PROMPT_VERSION, env: options.env },
-        request => callQwen(claimed.claim.input, { timeoutMs: HELD_QWEN_CALL_TIMEOUT_MS, request, env: options.env,
+        request => callQwen(claimed.claim.input, { timeoutMs: callTimeoutMs, request, env: options.env,
           signal: ctx.signal ? AbortSignal.any([ctx.signal, controller.signal]) : controller.signal }), options.request);
       });
     } catch (error) {

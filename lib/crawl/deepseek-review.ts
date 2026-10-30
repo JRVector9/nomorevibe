@@ -6,7 +6,7 @@ import { REVIEW_SYSTEM_PROMPT } from './agent-review';
 import { parseGatewayContent } from './agent-review-gateway';
 import { assertLiveReviewAdapterAllowed } from './review-fixture-transport';
 
-import { DEEPSEEK_REVIEW_BASE, DEEPSEEK_REVIEW_MODEL, DEEPSEEK_REVIEW_TIMEOUT_MS, DEEPSEEK_MIN_CONFIDENCE } from './deepseek-review-policy';
+import { DEEPSEEK_REVIEW_BASE, DEEPSEEK_REVIEW_MODEL, deepseekReviewTimeoutMs, DEEPSEEK_MIN_CONFIDENCE } from './deepseek-review-policy';
 
 export type DeepSeekReviewResult = { ok: true; outcome: ReviewOutcome } | { ok: false; error: string };
 
@@ -26,14 +26,14 @@ export async function deepseekReviewReady(request: typeof fetch = fetch): Promis
  * DeepSeek 의 원래 답 — 사람 검토 위임의 확신 문턱(DEEPSEEK_MIN_CONFIDENCE)을 걸기 전. 같은 프롬프트·같은 클라이언트다.
  * 2차 갈림 판가름의 확인(gate-split-confirm.ts)만 이 답을 그대로 쓰고 자기 문턱을 건다. 위임은 아래 reviewWithDeepSeek 로 문턱을 건다.
  * 실패 코드: 응답 전에 연결이 끊기면 unreachable(위임 쪽은 예전처럼 invalid_response 로 본다), 그 밖은 위임과 같다.
- * timeoutMs: 기본은 위임과 같은 DEEPSEEK_REVIEW_TIMEOUT_MS. 부르는 쪽이 남은 예산에 맞춰 더 짧게 줄 수 있다.
+ * timeoutMs: 기본은 위임과 같은 deepseekReviewTimeoutMs()(호출마다 읽는 등록부 경로 human-review). 부르는 쪽이 남은 예산에 맞춰 더 짧게 줄 수 있다.
  */
 export async function reviewWithDeepSeekRaw(input: ReviewInput, options: { signal?: AbortSignal; request?: typeof fetch; timeoutMs?: number } = {}):
   Promise<DeepSeekReviewResult> {
   assertLiveReviewAdapterAllowed();
   const serialized = JSON.stringify(input.snapshot);
   if (Buffer.byteLength(serialized) > MAX_REVIEW_INPUT_BYTES) return { ok: false, error: 'input_too_large' };
-  const deadline = AbortSignal.timeout(scopedRequestTimeout("human-review", options.timeoutMs ?? DEEPSEEK_REVIEW_TIMEOUT_MS));
+  const deadline = AbortSignal.timeout(scopedRequestTimeout("human-review", options.timeoutMs ?? deepseekReviewTimeoutMs()));
   const signal = options.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
   let responded = false;
   try {

@@ -7,7 +7,7 @@ import { pendingTaglinePredicate } from '@/lib/crawl/taglines';
 import { introCheckEligibilityPredicate, pendingIntroCheckPredicate } from '@/lib/domain/products/intro-checks';
 import { homeListSlugs, koreanQueuePredicates } from '@/lib/domain/products/korean-taglines';
 import { productTranslationEligible } from '@/lib/domain/products/translations';
-import { PRODUCT_TRANSLATION_MAX_ATTEMPTS } from '@/lib/domain/products/translation-policy';
+import { productTranslationPolicy } from '@/lib/domain/products/translation-policy';
 import { profileGenerationRetryAllowedSql } from '@/lib/domain/products/search-profile-retry';
 import { TEXT_PROGRESS_STAGE_JOBS, type ProgressStageInput, type TextProgressStageKey } from './worker-progress';
 
@@ -28,6 +28,8 @@ export function progressReasonNeedsKoreanSql(): SQL {
 /** Seven independent queues. Failed attempts never count as successful output from another text lane. */
 export function textStageProgressSql(homeSlugs: readonly string[], group: 'all' | 'reason' | 'other' = 'all'): SQL {
   const q = koreanQueuePredicates(homeSlugs), k = productKoreanTaglines, t = productTranslations, i = productIntroChecks;
+  // 공개 번역의 최대 시도는 지금 판의 translation.product.maxAttempts (관리자 실시간 한도)
+  const translationMaxAttempts = productTranslationPolicy().maxAttempts;
   const sameDocument = sql`${crawlTaglines.documentAt} IS NOT DISTINCT FROM ${crawlDocuments.fetchedAt}`;
   const filter = group === 'reason' ? sql`WHERE key='reason-translate'` : group === 'other' ? sql`WHERE key<>'reason-translate'` : sql``;
   return sql`WITH reason_sources AS MATERIALIZED (
@@ -68,10 +70,10 @@ export function textStageProgressSql(homeSlugs: readonly string[], group: 'all' 
       WHERE ${crawlCandidates.state}='needs_review' AND ${crawlCandidates.reason}='no_description'
         AND ${crawlCandidates.decidedBy} IN ('auto','admin','deepseek') AND ${crawlTaglines.writtenBy} IS NULL
     UNION ALL
-    SELECT 'product-translate', (${t.status} IN ('pending','failed') AND ${t.attempts}<${PRODUCT_TRANSLATION_MAX_ATTEMPTS}
+    SELECT 'product-translate', (${t.status} IN ('pending','failed') AND ${t.attempts}<${translationMaxAttempts}
         AND (${t.retryAt} IS NULL OR ${t.retryAt}<=now())),
-      (${t.status}='failed' AND ${t.attempts}<${PRODUCT_TRANSLATION_MAX_ATTEMPTS} AND ${t.retryAt}>now()),
-      (${t.status}='failed' AND ${t.attempts}>=${PRODUCT_TRANSLATION_MAX_ATTEMPTS}),
+      (${t.status}='failed' AND ${t.attempts}<${translationMaxAttempts} AND ${t.retryAt}>now()),
+      (${t.status}='failed' AND ${t.attempts}>=${translationMaxAttempts}),
       greatest(${t.updatedAt},${t.retryAt}),
       CASE WHEN ${t.status} IN ('ready','reviewed') THEN ${t.updatedAt} END,
       CASE WHEN ${t.status}='failed' THEN ${t.updatedAt} END
