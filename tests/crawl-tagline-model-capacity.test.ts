@@ -70,10 +70,14 @@ it("reuses the same waiting ID with exact phase input", async () => {
     workKey: `${crawlTaglineLogicalWorkKey(input)}:${crawlTaglineInputHash(input)}` }), input);
   expect(mocks.native).not.toHaveBeenCalled();
 });
-it("never retransmits a dispatched or indeterminate full work key", async () => {
-  mocks.pending.mockResolvedValue({ requestId: reservation.requestId, state: "indeterminate" });
+it("never retransmits a dispatched full work key, but re-admits one whose call went indeterminate (2026-10-30)", async () => {
+  mocks.pending.mockResolvedValue({ requestId: reservation.requestId, state: "dispatched" });
   await expect(writeCrawlTaglineWithModelCapacity(task, job, options())).rejects.toMatchObject({ reason: "dispatched" });
   expect(mocks.request).not.toHaveBeenCalled(); expect(mocks.native).not.toHaveBeenCalled();
+  // 2026-10-30 결정: 미확인 행은 점유가 아니다 — readback 은 null 이고 새 requestId 로 다시 접수한다.
+  mocks.pending.mockResolvedValue(null); mocks.prepare.mockResolvedValueOnce({ kind: "ready", member, role: boundRole, snapshot: {} });
+  expect(await writeCrawlTaglineWithModelCapacity(task, job, options())).toMatchObject({ kind: "result" });
+  expect(mocks.request).toHaveBeenCalledOnce(); expect(mocks.request.mock.calls[0][0].requestId).not.toBe(reservation.requestId);
 });
 it("settles physical history before returning a current writer", async () => {
   expect(await writeCrawlTaglineWithModelCapacity(task, job, options())).toMatchObject({ kind: "result", askOrdinal: 1, result, expectation });

@@ -325,7 +325,7 @@ it("commits the dispatch CAS with its event and the settlement with its event at
   expect((await events(dispatch.requestId)).map(event => event.kind)).toEqual(["queued", "reserved", "dispatch_started", "dispatch_settled"]);
 });
 
-it("keeps a process_exit call occupying its candidate with one event, fencing a new boot and the gateway transport", async () => {
+it("keeps a process_exit call as one unknown event for review; it fences neither a new boot nor the gateway transport (2026-10-30)", async () => {
   const value = ai1(5101, call("crawl-agent-review", "grok-cli", "grandchild-hold")), dispatch = await dispatched(value);
   const outcome = await runReservedCliCall(value.call, ref(dispatch));
   const grandchildren = await Promise.all((await readdir(records)).map(async name => JSON.parse(await readFile(path.join(records, name), "utf8")).grandchild as number | undefined));
@@ -336,10 +336,14 @@ it("keeps a process_exit call occupying its candidate with one event, fencing a 
     expect(await events(dispatch.requestId)).toEqual([{ kind: "queued", reason: null }, { kind: "reserved", reason: null },
       { kind: "dispatch_started", reason: null }, { kind: "dispatch_indeterminate", reason: "process_exit" }]);
     expect(await row(dispatch.requestId)).toMatchObject({ state: "indeterminate", dispatch_binding_hash: dispatch.bindingHash, terminal_evidence: null });
+    // 2026-10-30 결정: process_exit 미확인 행은 점유도 fence 도 아니다 — 새 boot 의 CLI 재접수와 게이트웨이 전송 모두 같은 후보에 들어가고, 미확인 행은 그대로 남는다.
     const reboot = ai1(5101, call("crawl-agent-review", "claude-cli", "ok"), { instanceId: ownerA.instanceId, bootId: randomUUID() });
-    expect(await requestCliModelSlot({ ...reboot.identity, requestId: randomUUID() }, reboot.target)).toEqual({ kind: "deferred", reason: "capacity" });
-    expect(await requestAi1ModelSlot({ requestId: randomUUID(), workKey: `ai1:5101:${hex()}`, owner: ownerB, class: "first", pool: "reviewer",
-      routeId: "crawl-agent-review", provider: "abcllm", model: "gw-model" }, 5101)).toEqual({ kind: "deferred", reason: "capacity" });
+    const rebooted = await requestCliModelSlot({ ...reboot.identity, requestId: randomUUID() }, reboot.target);
+    expect(rebooted.kind).toBe("granted"); if (rebooted.kind === "granted") expect(await cancelReservedModelSlot(rebooted.reservation)).toBe(true);
+    const transport = await requestAi1ModelSlot({ requestId: randomUUID(), workKey: `ai1:5101:${hex()}`, owner: ownerB, class: "first", pool: "reviewer",
+      routeId: "crawl-agent-review", provider: "abcllm", model: "gw-model" }, 5101);
+    expect(transport.kind).toBe("granted"); if (transport.kind === "granted") expect(await cancelReservedModelSlot(transport.reservation)).toBe(true);
+    expect(await row(dispatch.requestId)).toMatchObject({ state: "indeterminate", dispatch_binding_hash: dispatch.bindingHash, terminal_evidence: null });
     await expect(markModelDispatchIndeterminate({ ...dispatch, binding: { ...dispatch.binding, attemptId: 1 } } as never, "process_exit"))
       .rejects.toThrow();
   } finally {

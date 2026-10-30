@@ -401,7 +401,7 @@ it("preserves the genuine dispatch event INSERT failure with no committed dispat
     }); }], errors); }
 }), 20_000);
 
-it("keeps EOF full-C unknown fenced across changed source and a genuinely re-elected owner boot while neighbours keep moving", exercise(async () => {
+it("keeps the EOF full-C unknown row for review while a re-elected owner boot re-sends the changed source and neighbours keep moving (2026-10-30)", exercise(async () => {
   const { products: [product] } = await seed(); await server(async ({ bodies, setReply }) => {
     setReply(response => { response.end('{"id":"partial"'); });
     expect(await tick()).toMatchObject({ status: "completed" }); expect(bodies).toHaveLength(1);
@@ -413,17 +413,18 @@ it("keeps EOF full-C unknown fenced across changed source and a genuinely re-ele
     await tracked(db.update(products).set({ tagline: "Search and organize documents for teams" }).where(eq(products.id, product.id)));
     const [changed] = await admin`SELECT to_jsonb(t) AS row FROM product_korean_taglines t WHERE product_id=${product.id}`;
     expect(changed.row).toMatchObject({ attempts: 1 }); // original cache is historical; new source is eligible without mutating it
-    // The unknown request still fences this product, so the selector skips it instead of re-picking it every tick
-    // (postprocess-backlog lane, 2026-10-29). Other products remain selectable; this one is never re-sent.
-    expect((await tracked(pendingKoreanTaglines(16, []))).find(task => task.productId === product.id)).toBeUndefined();
-    expect(await tick()).toMatchObject({ status: "completed" }); expect(bodies).toHaveLength(1);
-    expect((await admin`SELECT to_jsonb(t) AS row FROM product_korean_taglines t WHERE product_id=${product.id}`)[0].row).toEqual(changed.row);
-    expect((await admin`SELECT to_jsonb(r) AS row FROM model_capacity_requests r WHERE request_id=${unknown.row.request_id}::uuid`)[0].row).toEqual(unknown.row);
-    expect(await admin`SELECT request_id FROM model_capacity_requests WHERE owner_instance_id=${prefix}`).toHaveLength(1);
-    // 뒤의 소개는 남은 자리로 그대로 옮겨진다. unknown 은 운영 회수 전까지 그대로 남는다
+    // 2026-10-30 결정: 미확인 행은 점유도 fence 도 아니다 — 선택기는 이 제품을 숨기지 않고(busy 대상은 살아 있는 행만), 바뀐 source 는
+    // 새 boot 의 새 요청으로 다시 전송된다. 미확인 행과 그 C 는 사람 검토용으로 그대로 남는다.
+    expect((await tracked(pendingKoreanTaglines(16, []))).find(task => task.productId === product.id)).toBeDefined();
     setReply(response => { response.end(JSON.stringify(replyBody())); });
+    expect(await tick()).toMatchObject({ status: "completed" }); expect(bodies).toHaveLength(2);
+    expect((await admin`SELECT tagline_ko,error_code FROM product_korean_taglines WHERE product_id=${product.id}`)[0])
+      .toEqual({ tagline_ko: "문서를 관리하는 도구", error_code: null });
+    expect((await admin`SELECT to_jsonb(r) AS row FROM model_capacity_requests r WHERE request_id=${unknown.row.request_id}::uuid`)[0].row).toEqual(unknown.row);
+    expect(await admin`SELECT state FROM model_capacity_requests WHERE owner_instance_id=${prefix} ORDER BY queue_ordinal`).toEqual([{ state: "indeterminate" }, { state: "settled" }]);
+    // 뒤의 소개도 그대로 이어진다. unknown 은 사람 검토(검토 완료) 전까지 그대로 남는다
     const { products: [neighbour] } = await seed();
-    expect(await tick()).toMatchObject({ status: "completed", done: true }); expect(bodies).toHaveLength(2);
+    expect(await tick()).toMatchObject({ status: "completed", done: true }); expect(bodies).toHaveLength(3);
     expect((await admin`SELECT tagline_ko,error_code FROM product_korean_taglines WHERE product_id=${neighbour.id}`)[0])
       .toEqual({ tagline_ko: "문서를 관리하는 도구", error_code: null });
     expect((await admin`SELECT to_jsonb(r) AS row FROM model_capacity_requests r WHERE request_id=${unknown.row.request_id}::uuid`)[0].row).toEqual(unknown.row);

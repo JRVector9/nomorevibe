@@ -204,10 +204,14 @@ it("preserves the actual native thrown error and a failed unknown recording toge
   await expect(translateProductFieldsWithModelCapacity([task], job, options())).rejects.toMatchObject({ errors: [original, cleanup] });
   expect(mocks.cancel).not.toHaveBeenCalled();
 });
-it("refuses an already indeterminate pending ID without another reservation or POST", async () => {
-  mocks.pending.mockResolvedValue({ requestId: reservation.requestId, state: "indeterminate" });
+it("refuses an in-flight pending ID without another reservation or POST, but re-admits work whose call went indeterminate (2026-10-30)", async () => {
+  mocks.pending.mockResolvedValue({ requestId: reservation.requestId, state: "dispatched" });
   await expect(translateProductFieldsWithModelCapacity([task], job, options())).rejects.toMatchObject({ reason: "dispatched" });
   expect(mocks.request).not.toHaveBeenCalled(); expect(mocks.native).not.toHaveBeenCalled();
+  // 2026-10-30 결정: 미확인 행은 점유가 아니다 — readback 은 null 이고 새 requestId 로 다시 접수한다(300초 기한 뒤 재시도가 막히지 않는다).
+  mocks.pending.mockResolvedValue(null); mocks.prepare.mockResolvedValueOnce({ kind: "ready", members, role: boundRole });
+  expect(await translateProductFieldsWithModelCapacity([task], job, options())).toMatchObject({ kind: "result" });
+  expect(mocks.request).toHaveBeenCalledOnce(); expect(mocks.request.mock.calls[0][0].requestId).not.toBe(reservation.requestId);
 });
 it("settles a terminal even if the caller aborts before native returns", async () => {
   const controller = new AbortController();

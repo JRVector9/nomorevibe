@@ -313,9 +313,10 @@ it("DR: after promotion, only call-drained old-generation dispatches are release
     reference: "fixture effects diff", reviewed: 0, corrective: "none" });
   for (let attempt = 0; attempt < 100 && !(await repo.readPromotionStatus(plan.promotionId)).evaluation.ready; attempt++) await sleep(100);
   expect(await repo.promoteSealedDatabase({ promotionId: plan.promotionId, operator }, true)).toMatchObject({ kind: "promoted", fence: { writerEpoch: active.writerEpoch + 1 } });
-  // 기존 의미 그대로: 옛 dispatched/indeterminate 가 남으면 모델 permit 은 열리지 않는다(옛 reserved 는 장부 API 로 취소).
+  // 옛 dispatched 가 남으면 모델 permit 은 열리지 않는다(옛 reserved 는 장부 API 로 취소).
+  // 2026-10-30 결정: 옛 indeterminate 는 점유가 아니라 세지 않는다(:1) — 그래도 아래 release-drained 는 법의학 정산으로 두 행을 함께 닫는다.
   expect(await permits.openModelCapacityAfterDrain({ promotionId: plan.promotionId, operator }, true))
-    .toMatchObject({ kind: "blocked", reason: "model_capacity_old_dispatch_unreleased:2", cancelledReservations: [reserved.reservation.requestId] });
+    .toMatchObject({ kind: "blocked", reason: "model_capacity_old_dispatch_unreleased:1", cancelledReservations: [reserved.reservation.requestId] });
   const dry = await cli(["release-drained", `--promotion=${plan.promotionId}`, `--operator=${operator}`, "--database-url-stdin"], "ledger");
   expect(dry.code).toBe(0);
   expect(JSON.parse(dry.stdout)).toMatchObject({ command: "release-drained", dryRun: true, blocked: false,

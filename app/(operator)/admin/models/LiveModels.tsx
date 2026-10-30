@@ -14,7 +14,7 @@ import type { OpsState } from "@/lib/operations/ops-runner/contract";
 const stamp = (at: string | null) => at ? `${at.slice(0, 10)} ${at.slice(11, 19)} UTC` : "기록 없음";
 const ago = (at: string | null, now: string | null) => at ? `${elapsedModelTime(at, now)} 전` : "기록 없음";
 const sum = (card: ModelCard, key: "succeeded1h" | "failed1h" | "dispatched" | "reserved" | "waiting" | "indeterminate") => card.rows.reduce((n, row) => n + row[key], 0);
-const tone: Record<string, string> = { 정상: "bg-up/10 text-up", 느림: "bg-warn/10 text-warn", 멈춤: "bg-down/10 text-down",
+const tone: Record<string, string> = { 정상: "bg-up/10 text-up", 느림: "bg-warn/10 text-warn",
   미확인: "bg-down/10 text-down", "접수 중지": "bg-bg-hover text-fg-2", "처리 중": "bg-accent-soft text-accent-ink",
   보류: "bg-warn/10 text-warn", "연결 안 됨": "bg-bg-hover text-fg-2", 내려감: "bg-down/10 text-down" };
 export function ModelStatusBadge({ status, children, muted }: { status: string; children?: React.ReactNode; muted?: boolean }) {
@@ -72,9 +72,9 @@ export function LiveModels({ observation, models = [], assignments = [], probeAc
       {unknownCount > 0 && <div role="alert" className="flex flex-col gap-2 rounded-xl border border-down/30 bg-down/5 p-4 text-[13px]">
         <strong className="text-down">확인 못함 {unknownCount}건 · 사람 검토 — 슬롯을 점유하지 않습니다(아래 목록에서 검토 완료)</strong>
         {cards.filter(card => sum(card, "indeterminate") > 0).map(card => { const request = card.requests.find(row => row.state === "indeterminate");
-          const full = card.rows.some(row => observation.groups.some(group => group.groupId === row.groupId && group.limit !== null && group.held >= group.limit));
+          // 2026-10-30: 미확인은 점유가 아니다 — 슬롯 상태와 섞지 않고 "확인 못함 · 사람 검토"로만 알린다.
           return <div key={card.id} className="flex flex-wrap items-center justify-between gap-2"><p>
-            {full ? "모델 슬롯 가득(점유 행)" : "모델 확인 못함"} · 영향 단계 {card.stages.map(modelStageLabel).join(" · ")} — [{card.equipment}] {card.name} · 미확인 {sum(card, "indeterminate")}건 · {request ? `${elapsedModelTime(request.dispatchedAt ?? request.queuedAt, observation.observedAt)}째` : "시작 시각 미확인"}</p>
+            모델 확인 못함 · 사람 검토 · 단계 {card.stages.map(modelStageLabel).join(" · ")} — [{card.equipment}] {card.name} · 미확인 {sum(card, "indeterminate")}건 · {request ? `${elapsedModelTime(request.dispatchedAt ?? request.queuedAt, observation.observedAt)}째` : "시작 시각 미확인"}</p>
             <a className="font-semibold text-down underline underline-offset-4" href={`#${modelCardAnchor(card.id)}`}>모델 카드로 이동 ↓</a></div>;
         })}
       </div>}

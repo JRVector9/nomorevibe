@@ -93,10 +93,17 @@ it.each(lanes)("$name: a failed physical settlement marks commit_unknown, keeps 
   expect(mocks.unknown).toHaveBeenCalledExactlyOnceWith(dispatch, "commit_unknown");
 });
 
-it.each(lanes)("$name: no witness and no terminal keeps the original unknown marking", async lane => {
+it.each(lanes)("$name: no witness and no terminal keeps the unknown marking — client_timeout for a timeout, transport_unknown otherwise", async lane => {
+  // 2026-10-30: 게이트웨이 `timeout` 결과는 호출자 기한(client_timeout)으로 적는다. 다른 전송 실패는 그대로 transport_unknown 이다.
+  const review = lane.review() as (...args: unknown[]) => Promise<unknown>;
   const dispatch = lane.dispatch(), result = { ok: false, error: "timeout" };
   lane.native.mockResolvedValue({ result, terminal: null });
-  expect(await (lane.review() as (...args: unknown[]) => Promise<unknown>)(input, dispatch, call, {})).toBe(result);
+  expect(await review(input, dispatch, call, {})).toBe(result);
+  expect(mocks.unknown).toHaveBeenCalledExactlyOnceWith(dispatch, "client_timeout"); expect(mocks.reconcileUnsent).not.toHaveBeenCalled();
+  vi.clearAllMocks(); mocks.unknown.mockResolvedValue(true);
+  const failed = { ok: false, error: "gateway_error" };
+  lane.native.mockResolvedValue({ result: failed, terminal: null });
+  expect(await review(input, dispatch, call, {})).toBe(failed);
   expect(mocks.unknown).toHaveBeenCalledExactlyOnceWith(dispatch, "transport_unknown"); expect(mocks.reconcileUnsent).not.toHaveBeenCalled();
 });
 

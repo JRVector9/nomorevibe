@@ -450,7 +450,7 @@ it('settles historical terminal before a late actual job wall rolls cache and or
       async () => { await Promise.allSettled([running, ...(holding ? [holding] : [])]); }, () => holder.end()], failures); }
   });
 }));
-it('retains full C after EOF and fences a new boot from another POST or failed cache attempt while neighbours keep moving', exercise(async () => {
+it('retains full C after EOF for review while a new boot retries the failed cache attempt and neighbours keep moving (2026-10-30)', exercise(async () => {
   const item = await seed(); await server(async ({ bodies, setReply }) => {
     await custom(async lease => { await reserve([item], lease); });
     const owner = { instanceId: role.instanceId, bootId: role.bootId };
@@ -464,19 +464,19 @@ it('retains full C after EOF and fences a new boot from another POST or failed c
     expect((await admin`SELECT attempts FROM text_translations WHERE source_hash=${item.hash}`)[0].attempts).toBe(1);
     expect(await tracked(releaseRole(role))).toBe(true); await elect();
     await admin`UPDATE text_translations SET retry_at=clock_timestamp()-interval '1 second' WHERE source_hash=${item.hash} AND target_lang='ko'`;
-    // The unknown request still fences this reason, so both queues skip it instead of re-picking it every tick
-    // (postprocess-backlog lane, 2026-10-29). It is never re-sent and its failed cache attempt is not consumed.
-    expect(await retryableTranslations(4)).toEqual([]);
-    expect(await tick()).toMatchObject({ status: 'completed' }); expect(bodies).toHaveLength(1);
-    expect(Array.from(await admin`SELECT request_id,state FROM model_capacity_requests WHERE owner_instance_id=${prefix}`)).toEqual([{ request_id: unknown.request_id, state: 'indeterminate' }]);
-    expect((await admin`SELECT attempts FROM text_translations WHERE source_hash=${item.hash}`)[0].attempts).toBe(1);
-    // 뒤의 사유는 남은 자리로 그대로 옮겨진다. unknown 은 운영 회수 전까지 그대로 남는다
+    // 2026-10-30 결정: 미확인 행은 점유도 fence 도 아니다 — 재시도 때가 된 사유는 다시 뽑히고 새 boot 의 새 요청으로 다시 전송된다.
+    // 미확인 행과 그 C(8000) 는 사람 검토용으로 그대로 남는다.
+    expect((await retryableTranslations(4)).map(row => row.hash)).toEqual([item.hash]);
     setReply(response => { response.end(JSON.stringify(replyBody())); });
+    expect(await tick()).toMatchObject({ status: 'completed' }); expect(bodies).toHaveLength(2);
+    expect((await admin`SELECT status,translated FROM text_translations WHERE source_hash=${item.hash}`)[0]).toEqual({ status: 'done', translated: '한국어 사유' });
+    expect(Array.from(await admin`SELECT state FROM model_capacity_requests WHERE owner_instance_id=${prefix} ORDER BY queue_ordinal`)).toEqual([{ state: 'indeterminate' }, { state: 'settled' }]);
+    expect((await admin`SELECT state,dispatch_binding FROM model_capacity_requests WHERE request_id=${unknown.request_id}::uuid`)[0]).toEqual({ state: 'indeterminate', dispatch_binding: unknown.dispatch_binding });
+    // 뒤의 사유도 그대로 이어진다. unknown 은 사람 검토(검토 완료) 전까지 그대로 남는다
     const neighbour = await seed();
-    expect(await tick()).toMatchObject({ status: 'completed', done: true }); expect(bodies).toHaveLength(2);
+    expect(await tick()).toMatchObject({ status: 'completed', done: true }); expect(bodies).toHaveLength(3);
     expect((await admin`SELECT status,translated FROM text_translations WHERE source_hash=${neighbour.hash}`)[0]).toEqual({ status: 'done', translated: '한국어 사유' });
     expect((await admin`SELECT state FROM model_capacity_requests WHERE request_id=${unknown.request_id}::uuid`)[0].state).toBe('indeterminate');
-    expect((await admin`SELECT attempts FROM text_translations WHERE source_hash=${item.hash}`)[0].attempts).toBe(1);
   });
 }));
 it('retains full C when an opted-in strict terminal response lacks the PR3 usage_provenance', exercise(async () => {

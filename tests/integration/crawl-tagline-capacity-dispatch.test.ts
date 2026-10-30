@@ -292,7 +292,7 @@ it("settles late physical history but rejects expired job domain, outbox and ACK
   });
 }), 20_000);
 
-it.each(["EOF", "abort"])("retains full C after %s and fences reentry across source/boot change", exerciseCase(async failure => {
+it.each(["EOF", "abort"])("retains full C after %s for review and re-sends the changed source from a new boot (2026-10-30)", exerciseCase(async failure => {
   let task = await seed(); await server(async ({ bodies, setReply }) => {
     const controller = new AbortController(); setReply(response => { if (failure === "EOF") response.end('{"partial":'); else controller.abort(); });
     expect(await custom(async lease => {
@@ -304,9 +304,13 @@ it.each(["EOF", "abort"])("retains full C after %s and fences reentry across sou
     expect(await tracked(releaseRole(role))).toBe(true); await elect(); expect(role.bootId).not.toBe(unknown.row.owner_boot_id);
     await admin`UPDATE crawl_documents SET page_meta=page_meta||'{"title":"Changed"}'::jsonb WHERE repo=${task.candidate.repo}`;
     task = (await pendingTaglines(32)).find(t => t.candidate.repo === task.candidate.repo)!;
-    expect(await tick()).toMatchObject({ status: "deferred", reason: "model_capacity" }); expect(bodies).toHaveLength(1);
+    // 2026-10-30 결정: 미확인 행은 점유도 fence 도 아니다 — 바뀐 source 는 새 boot 의 새 요청으로 다시 전송되고(틱이 미뤄지지 않는다),
+    // 미확인 행과 그 C(8000) 는 사람 검토용으로 그대로 남는다.
+    setReply(response => { response.end(JSON.stringify(replyBody())); });
+    expect(await tick()).toMatchObject({ status: "completed" }); expect(bodies).toHaveLength(2);
     expect((await admin`SELECT to_jsonb(r) AS row FROM model_capacity_requests r WHERE request_id=${unknown.row.request_id}::uuid`)[0].row).toEqual(unknown.row);
-    expect(await admin`SELECT repo FROM crawl_taglines WHERE repo=${task.candidate.repo}`).toEqual([]);
+    expect(await admin`SELECT state FROM model_capacity_requests WHERE owner_instance_id=${prefix} ORDER BY queue_ordinal`).toEqual([{ state: "indeterminate" }, { state: "settled" }]);
+    expect(await admin`SELECT repo FROM crawl_taglines WHERE repo=${task.candidate.repo}`).toHaveLength(1);
   });
 }), 20_000);
 

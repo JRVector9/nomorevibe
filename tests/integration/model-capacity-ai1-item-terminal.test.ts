@@ -217,14 +217,18 @@ it("keeps same-ID waiting and cross-boot AI1 fences while permitting another can
   expect((await tracked(requestAi1ModelSlot(independent, target(another)))).kind).toBe("granted");
 }));
 
-it("blocks the entire old unbound AI1 route after dispatch and unknown without TTL refunds", exercise(async () => {
+it("blocks the entire old unbound AI1 route while dispatched without TTL refunds, and stops blocking once the call is unknown (2026-10-30)", exercise(async () => {
   await install(); const value = review(), old = await request(value, { workKey: randomUUID() });
   const handle = granted(await tracked(requestModelSlot(old))), result = await tracked(beginModelDispatch(handle));
   expect(result.kind).toBe("dispatched"); if (result.kind !== "dispatched") throw new Error("actual_dispatch_required");
-  expect(await tracked(markModelDispatchIndeterminate(result.dispatch, "transport_unknown"))).toBe(true);
   const next = review(), requested = await request(next);
+  // 결과를 모르는 실제 전송(dispatched)인 옛 unbound 행은 경로 전체를 막는다 — TTL 로 돌려주지 않는다.
   expect(await tracked(requestAi1ModelSlot(requested, target(next)))).toEqual({ kind: "deferred", reason: "capacity" });
   expect(await requestRow(requested.requestId)).toBeUndefined();
+  // 2026-10-30 결정: 미확인(indeterminate)이 되면 점유도 fence 도 아니다 — 같은 경로의 다음 요청이 들어가고 옛 행은 사람 검토용으로 그대로 남는다.
+  expect(await tracked(markModelDispatchIndeterminate(result.dispatch, "transport_unknown"))).toBe(true);
+  const reentered = granted(await tracked(requestAi1ModelSlot(requested, target(next))));
+  expect(await tracked(cancelReservedModelSlot(reentered))).toBe(true);
   expect(await requestRow(old.requestId)).toMatchObject({ state: "indeterminate", logical_work_key: null, token: handle.token });
 }));
 

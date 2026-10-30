@@ -395,6 +395,7 @@ it("keeps the EOF unknown row for review while a new boot retries the changed so
     expect(await tick()).toMatchObject({ status: "completed", done: true }); expect(bodies).toHaveLength(3);
     expect((await admin`SELECT keywords_en FROM product_search_profiles WHERE product_id=${neighbour.product.id}`)[0].keywords_en).toEqual(["expense tracker"]);
     expect((await admin`SELECT state FROM model_capacity_requests WHERE request_id=${unknown.request_id}::uuid`)[0].state).toBe("indeterminate");
-    expect((await admin`SELECT attempts,source_revision FROM product_search_profiles WHERE product_id=${task.product.id}`)[0]).toEqual(afterSource);
+    // 새 source 의 재전송 한 번이 attempts 1 로 기록된다(미확인 행의 시도 1 은 옛 source 에 속한다).
+    expect((await admin`SELECT attempts,source_revision FROM product_search_profiles WHERE product_id=${task.product.id}`)[0]).toEqual({ attempts: 1, source_revision: afterSource.source_revision });
   });
 }));
