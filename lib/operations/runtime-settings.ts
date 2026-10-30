@@ -67,7 +67,10 @@ export function applyRuntimeSettingsPatch(stored: unknown, group: RuntimeSetting
   base.version = RUNTIME_SETTINGS_VERSION;
   if (!EDITABLE_GROUPS.includes(group)) return { stored: base, issues: [`group_not_editable:${group}`] };
   if (!isPlainObject(patch)) return { stored: base, issues: [`runtime_settings_invalid:${group}`] };
-  const merged = mergeSparse(isPlainObject(base[group]) ? base[group] : {}, patch, [group]);
+  // 관리자 폼(WP-D)은 문서 모양 `{ <group>: {...} }` 으로, CLI·테스트는 그룹 부분 문서로 보낸다 — 그룹 키 하나로만 감싼 패치는 벗겨서 받는다.
+  const keys = Object.keys(patch);
+  const slice = keys.length === 1 && keys[0] === group && isPlainObject((patch as Record<string, unknown>)[group]) ? (patch as Record<string, unknown>)[group] : patch;
+  const merged = mergeSparse(isPlainObject(base[group]) ? base[group] : {}, slice as Record<string, unknown>, [group]);
   if (Object.keys(merged).length) base[group] = merged; else delete base[group];
   return { stored: base, issues: [] };
 }
