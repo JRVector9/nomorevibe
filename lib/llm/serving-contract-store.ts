@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { openSecret, servingContractKeyAad } from "@/lib/security/secret-box";
-import { setModelRegistryOverlay } from "./model-registry";
+import { runtimeSettings } from "@/lib/operations/runtime-settings-store";
+import { setModelRegistryOverlay, setModelRoutePolicyOverlay } from "./model-registry";
 
 /**
  * Admin-managed serving contracts (model_serving_contracts, 0147) as an in-process snapshot.
@@ -106,3 +107,6 @@ export function setServingContractSnapshotForTest(rows: readonly (Omit<StoredSer
 // a reload (no DB client before the process's own DB entry checks). Jobs, the operator CLI and the admin pages await
 // ensureServingContracts() first.
 setModelRegistryOverlay(() => enabled() || state().override ? state().snapshot.registry : []);
+// Admin route policy (runtime_settings routes) layers the same way; the pinned tick snapshot wins inside withRuntimeSettings.
+// WP-A: load the runtime_settings row in refreshServingContracts and plug it in with setRuntimeSettingsLoader.
+setModelRoutePolicyOverlay(() => runtimeSettings().routes);
