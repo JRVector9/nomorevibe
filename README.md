@@ -237,6 +237,10 @@ PR의 GitHub CI 성공은 배포 완료를 뜻하지 않는다. [독립 워커 �
 `미확인`으로 표시한다. X는 자동 수집에 연결하지 않은 수동 API 파일럿으로 구분한다.
 독립 감시용 CLI는 같은 DB 관측을 JSON으로 내며 종료 코드 0은 정상·유휴·정책 중단, 1은 판별 불가,
 2는 작업 또는 워커 정체 경보다.
+`/admin/models/limits`(「실시간 한도」)는 경로별 출력 토큰·동시 호출·호출 상한·기한 사다리, 공개 번역·잡별 묶음, 잡별 틱 예산을
+저장한다. 저장 문서(`runtime_settings`)는 바꾼 값만 담고 나머지는 코드 기본값이며, 각 워커가 30초 안에 다음 틱부터 쓴다.
+머리의 「읽은 판」이 역할마다 새 판을 읽었는지, `env 등록부` 배지가 `MODEL_REGISTRY_CONFIG` env 때문에 경로 한도가 닿지 않는 역할을 보인다.
+`pipeline-control status`의 `[runtime-settings]` 줄이 같은 판·revision·source 를 적는다. 장비 한도 묶음은 PR 1b 의 자리다.
 새 failover CLI는 주 워커가 정상이어도 mini 예비의 관측이 60초 넘게 끊기면 경보로 기록한다.
 M3의 별도 monitor가 30초 루프로 mini와 외부 Oracle Osaka의 Kuma에 Push를 보내며,
 두 수신기의 UP과 전송 성공을 확인했다. 운영 monitor는 기존 worker digest를 재사용하고 실행 명령과

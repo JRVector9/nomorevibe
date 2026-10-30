@@ -4,16 +4,35 @@ import { modelCapacityPolicySchema, modelCapacityPolicyHash } from '@/lib/llm/ca
 import { httpOriginPolicySchema, httpOriginPolicyHash } from '@/lib/net/http-origin-policy';
 import { UptimeSourcesSchema } from '@/lib/domain/products/uptime-policy';
 import { buildPipelineRuntimeStatus, type PipelineRuntimeStatus } from './pipeline-runtime-status';
+import { shortRuntimeSettingsVersion } from './runtime-settings-schema';
+import { runtimeSettingsSnapshot, type RuntimeSettingsSnapshot } from './runtime-settings-store';
 import { storedUptimeSplitPolicy, uptimeSplitNote, uptimeSplitReadbackSchema } from './uptime-split';
 
 export type ControlMetric = { label: string; value: number | null };
 export type ControlReadback = { key: string; label: string; mode: string | null; epoch: number | null; revision: number | null;
   policy: 'verified' | 'unset' | 'unknown'; metrics: ControlMetric[]; note: string };
+/** 이 프로세스가 지금 읽은 실시간 한도(runtime_settings) 판 — source 'default' 는 행을 읽지 못해(0151 전·loader 없음) 코드 기본값으로 돈다는 뜻 */
+export type RuntimeSettingsReadback = { version: string; shortVersion: string; revision: number | null; source: 'db' | 'default'; loadedAt: string | null;
+  /** MODEL_REGISTRY_CONFIG env 가 있어 경로 한도 묶음이 이 프로세스에 닿지 않는다 */
+  registryEnv: boolean };
 export type PipelineControlStatus = { observedAt: string | null; controls: ControlReadback[];
   stages: { stage: string; mode: string | null; epoch: number | null; contract: number | null; live: number | null; unsettled: number | null }[];
   backlog: ControlMetric[]; hosts: { host: string; roles: { role: string; ready: boolean; reason: string }[] }[];
   owners: { role: string; instanceId: string | null; host: string | null; release: string | null; epoch: number | null; live: boolean | null }[];
-  runtime: PipelineRuntimeStatus };
+  runtime: PipelineRuntimeStatus;
+  /** 이 프로세스(웹·CLI)의 실시간 한도 판. buildPipelineControlStatus 는 null 로 두고 읽는 쪽이 채운다 */
+  runtimeSettings: RuntimeSettingsReadback | null };
+
+export function runtimeSettingsReadback(snapshot: RuntimeSettingsSnapshot = runtimeSettingsSnapshot(),
+  env: Readonly<Record<string, string | undefined>> = process.env): RuntimeSettingsReadback {
+  return { version: snapshot.version, shortVersion: shortRuntimeSettingsVersion(snapshot.version), revision: snapshot.revision, source: snapshot.source,
+    loadedAt: snapshot.loadedAt > 0 ? new Date(snapshot.loadedAt).toISOString() : null, registryEnv: !!env.MODEL_REGISTRY_CONFIG?.trim() };
+}
+/** CLI status 의 한 줄 — "[runtime-settings] 판=v3f9a2c revision=4 source=db" */
+export function formatRuntimeSettingsLine(readback: RuntimeSettingsReadback): string {
+  return `[runtime-settings] 판=${readback.shortVersion} revision=${readback.revision ?? '-'} source=${readback.source}`
+    + (readback.registryEnv ? ' 경로 한도=MODEL_REGISTRY_CONFIG env(저장이 이 프로세스에 닿지 않음)' : '');
+}
 const CONTROL_LABELS = { batch: '작업 배치', source: '사이트 근거', model: '공통 모델 슬롯', http: '공유 HTTP', uptime: '연결 관측',
   uptimeSplit: '응답 점검 분담' };
 const positive = z.number().int().positive().safe();
@@ -54,7 +73,7 @@ export function buildPipelineControlStatus(raw: unknown, readiness: unknown): Pi
     stages: ['fetch', 'ai1', 'ai2'].map(stage => ({ stage, mode: null, epoch: null, contract: null, live: null, unsettled: null })),
     backlog: ['수집 대기', '수집 재시도 예약', '심사 대기', '요청 남은 작업'].map(label => metric(label, null)),
     hosts: BATCH_HOSTS.map(host => ({ host, roles: BATCH_ROLES.map(role => ({ role, ready: false, reason: 'readback_unknown' })) })), owners: [],
-    runtime: buildPipelineRuntimeStatus(null, { at: null, batchMode: null, batchPolicy: null, readiness: null, owners: null }) };
+    runtime: buildPipelineRuntimeStatus(null, { at: null, batchMode: null, batchPolicy: null, readiness: null, owners: null }), runtimeSettings: null };
   if (!clock.success) return result;
   const set = (key: keyof typeof CONTROL_LABELS, values: Partial<ControlReadback>) => Object.assign(result.controls.find(row => row.key === key)!, values);
   const batch = batchSchema.safeParse(input.batch);
@@ -149,11 +168,11 @@ export function buildPipelineControlStatus(raw: unknown, readiness: unknown): Pi
  * 방금 쓴 값이 필요 없는 관리자 집계(약 30개 count)라 복제본에서 읽는다(밀리거나 닿지 않으면 주 DB, lib/db/replica.ts).
  * 읽기 전용 TX 의 문장 상한으로 주 DB 로 넘어가도 오래 붙잡지 않고, 읽지 못하면 화면은 '읽지 못했습니다'에 남기고 로그를 남긴다. */
 export async function readPipelineControlStatus(): Promise<PipelineControlStatus> {
-  const [{ db, onReplica }, { sql }, { readJobBatchReadiness }, { logger }, { uptimeSplitReadbackSql }] = await Promise.all([
+  const [{ db, onReplica }, { sql }, { readJobBatchReadiness }, { logger }, { uptimeSplitReadbackSql }, { ensureRuntimeSettings }] = await Promise.all([
     import('@/lib/db'), import('drizzle-orm'), import('./job-batch-readiness'), import('@/lib/observability/logger'),
-    import('./uptime-split-repository'),
+    import('./uptime-split-repository'), import('./runtime-settings-store'),
   ]);
-  const [snapshot, readiness] = await Promise.allSettled([
+  const [snapshot, readiness, runtimeSnapshot] = await Promise.allSettled([
     onReplica(() => db.transaction(async tx => {
       await tx.execute(sql`SET LOCAL statement_timeout = '10s'`);
       const [row] = await tx.execute<{ snapshot: unknown }>(sql`
@@ -235,9 +254,13 @@ export async function readPipelineControlStatus(): Promise<PipelineControlStatus
       return row?.snapshot;
     }, { accessMode: 'read only' })),
     readJobBatchReadiness(),
+    // 실시간 한도 판은 이 프로세스의 스냅샷을 새로 받아 적는다(한 행 SELECT; loader 가 없으면 지금 스냅샷 그대로)
+    ensureRuntimeSettings(0),
   ]);
   if (snapshot.status === 'rejected') logger.warn('operations.control_status_read_failed', { part: 'snapshot', error: snapshot.reason });
   if (readiness.status === 'rejected') logger.warn('operations.control_status_read_failed', { part: 'readiness', error: readiness.reason });
-  return buildPipelineControlStatus(snapshot.status === 'fulfilled' ? snapshot.value : null,
+  const status = buildPipelineControlStatus(snapshot.status === 'fulfilled' ? snapshot.value : null,
     readiness.status === 'fulfilled' ? readiness.value : null);
+  status.runtimeSettings = runtimeSettingsReadback(runtimeSnapshot.status === 'fulfilled' ? runtimeSnapshot.value : runtimeSettingsSnapshot());
+  return status;
 }

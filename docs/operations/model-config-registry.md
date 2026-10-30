@@ -6,7 +6,9 @@
 
 `lib/llm/model-registry.ts`가 호환 기본값과 검증기를 한 곳에 둔다. 기존 `LOCAL_MODEL_SERVING_CONTRACTS`와 같은 versioned JSON 환경설정 방식을 사용하며 새 DB 테이블·마이그레이션·인증 설정을 만들지 않는다.
 
-`MODEL_REGISTRY_CONFIG`는 `{version:1, models:[...], selections:{...}, limits:{...}, deadlines:{...}, timeouts:{...}, candidates:{...}}`다. 생략하면 중앙 기본값을 사용한다. 지정하면 **models 전체 목록**을 대체한다. 잘못된 JSON, 중복 키, 다른 장비를 가리키는 키/게이트웨이 label, 존재하지 않는 선택은 거절한다. 현재 배포 이미지의 코드 수정·재빌드 없이 설정과 프로세스 재시작으로 교체할 수 있다. import 시 읽는 기존 상수와 검증 계약은 프로세스 재시작이 필요하며, 실행 중인 프로세스의 env를 고친 것만으로 즉시 바뀐다고 주장하지 않는다. 웹·실제 소비 워커·connect/relay에 필요한 같은 설정을 전달한다. 브라우저 번들에 고정되는 `NEXT_PUBLIC_*`는 사용하지 않는다.
+우선순위(2026-10-30, PR 1a 실시간 한도): **코드 기본값 < DB(`runtime_settings`의 경로 한도 `limits/timeouts/deadlines` + `model_registry_overrides`의 모델 정의) < `MODEL_REGISTRY_CONFIG` env**. DB 층은 관리자 화면 `/admin/models/limits`(「실시간 한도」)와 `/admin/models/contracts`(「모델 연결」)에서 저장하며 각 프로세스가 30초 안에 다음 틱부터 쓴다. env JSON 이 있는 프로세스는 그 JSON 을 그대로 써서 DB 층 둘을 모두 건너뛴다 — 그 역할은 실시간 한도 화면의 「읽은 판」에 `env 등록부` 배지로 보이고 `pipeline-control status` 의 `[runtime-settings]` 줄에도 적힌다.
+
+`MODEL_REGISTRY_CONFIG`는 `{version:1, models:[...], selections:{...}, limits:{...}, deadlines:{...}, timeouts:{...}, candidates:{...}}`다. 생략하면 중앙 기본값(과 위 DB 층)을 사용한다. 지정하면 **models 전체 목록**을 대체한다. 잘못된 JSON, 중복 키, 다른 장비를 가리키는 키/게이트웨이 label, 존재하지 않는 선택은 거절한다. 현재 배포 이미지의 코드 수정·재빌드 없이 설정과 프로세스 재시작으로 교체할 수 있다. import 시 읽는 기존 상수와 검증 계약은 프로세스 재시작이 필요하며, 실행 중인 프로세스의 env를 고친 것만으로 즉시 바뀐다고 주장하지 않는다. 웹·실제 소비 워커·connect/relay에 필요한 같은 설정을 전달한다. 브라우저 번들에 고정되는 `NEXT_PUBLIC_*`는 사용하지 않는다.
 
 전체 기본 설정의 비밀 없는 편집 사본은 아래 명령으로 만든다. 원본 목록을 먼저 보존하고 필요한 entry/selection/limit만 편집한다.
 
@@ -28,7 +30,7 @@ node --import tsx -e 'const {readModelRegistry}=require("./lib/llm/model-registr
 | `maxTokens`, `concurrency` | 모델 상한. 목적별 예산과 검증된 serving/capacity 상한도 충족해야 한다. relay의 한 요청 보존·실행 중/unknown 차단은 별도 안전장치다. |
 | `purposes` | AI1·AI2·번역·보강 등 허용 용도. 용도마다 후보가 여럿이면 `selections[용도]=key`로 하나를 고른다. |
 
-`limits[용도]`는 `{maxTokens, concurrency, timeoutMs?}`이며 기존 요청별 예산 기본값을 대체한다. 모델 상한과 더 작은 값을 사용한다. 번역처럼 입력 크기에 따라 계산하는 요청은 그 예산보다 작을 수 있다. 네트워크·수집·DB 대기열 동시성, 문맥 상한 C, tokenizer 증명, byte 제한은 모델의 요청 예산과 별개다.
+`limits[용도]`는 `{maxTokens, concurrency, timeoutMs?}`이며 기존 요청별 예산 기본값을 대체한다. env 없이 바꾸려면 관리자 「실시간 한도」(`/admin/models/limits`) 경로 한도 묶음에서 저장한다(같은 키, 저장 즉시 다음 틱부터). 모델 상한과 더 작은 값을 사용한다. 번역처럼 입력 크기에 따라 계산하는 요청은 그 예산보다 작을 수 있다. 네트워크·수집·DB 대기열 동시성, 문맥 상한 C, tokenizer 증명, byte 제한은 모델의 요청 예산과 별개다.
 
 텍스트·직접 심사의 우선순위는 해당 기존 변수의 `*_MODEL_KEY` → 기존 모델 env → registry selection → 중앙 기본 entry다. 예를 들어 `PRODUCT_TRANSLATION_MODEL_KEY=m1:translation`이 옛 `PRODUCT_TRANSLATION_MODEL`보다 우선한다. `ABCLLM_MODEL_KEY`는 공용 사유·한국어 소개·검색 질의에 적용한다. 기존 `ABCLLM_BASE_URL`, `AUDIT_SECOND_OPINION_URL`의 명시적 override는 보존한다. 모델별 주소를 사용할 때는 오래된 공용 URL override도 확인한다. 옛 모델 env 값은 그 용도의 route로 해석한다(`resolvePurposeModel`). 여러 장비에 있는 bare 이름은 그 용도의 selection(없으면 purposes)이 가리키는 entry가 정확히 하나일 때만 그 entry로 정하고, 아니면 `ambiguous_model_identity`로 거절한다. 첫 번째 장비로 추측하지 않는다. 등록된 장비 label인데 그 장비에 등록되지 않은 모델(예: `[m1] qwen3.8-flash-next`)은 같은 장비에서 그 용도의 현재 등록 모델로 해석한다. 다른 장비 label과 등록되지 않은 label·기존 모델 이름은 호환 목적으로 그대로 유지한다. `configuredModelRoute(용도)`가 key·장비·route·wire 이름·주소를 함께 돌려준다.
 
@@ -89,9 +91,9 @@ scripts/verify-model-config.sh
 
 ## 기한·후보 설정과 오프라인 설정 이전
 
-경로별 호출 예산 기본값(`timeouts[경로]`로 대체 가능): 운영자 분류 검사·분류 호출 `classify-cli` 35초, 화면 판별 `screen-review` 90초 등은 `DEFAULT_MODEL_TIMEOUTS`에 있다. 값은 기존 상수와 같다.
+경로별 호출 예산 기본값(`timeouts[경로]`로 대체 가능 — 보통은 관리자 「실시간 한도」 경로 한도 묶음의 호출 상한 칸에서 바꾼다): 운영자 분류 검사·분류 호출 `classify-cli` 35초, 화면 판별 `screen-review` 90초 등은 `DEFAULT_MODEL_TIMEOUTS`에 있다. 값은 기존 상수와 같다.
 
-`deadlines["review-gateway"]`의 기본값은 PR711과 같은 `{engineMs:50000, relayMs:null, gatewayMs:55000, clientMs:60000}`다. 모델별 deadlineLadder가 있으면 그 장비의 클라이언트 기한을 사용하며, 없으면 역할의 기한과 모델 timeoutMs 중 작은 값을 사용한다. 순서 위반은 `invalid_model_registry:...deadline_order_inverted`, 선언 불일치는 `model_timeout_ladder_mismatch`로 실패한다. timeouts[용도]로 경로별 예산을 지정할 수도 있다. 같은 경로에 전체 사다리가 있으면 clientMs와 같아야 한다. 모델/용도별 출력은 maxTokens와 역할 예산 중 작은 값이다. 검증 계약과 exact tokenizer의 상한은 별도로 보존한다.
+`deadlines["review-gateway"]`의 기본값은 PR711과 같은 `{engineMs:50000, relayMs:null, gatewayMs:55000, clientMs:60000}`다. 모델별 deadlineLadder가 있으면 그 장비의 클라이언트 기한을 사용하며, 없으면 역할의 기한과 모델 timeoutMs 중 작은 값을 사용한다. 순서 위반은 `invalid_model_registry:...deadline_order_inverted`, 선언 불일치는 `model_timeout_ladder_mismatch`로 실패한다. 경로별 예산은 관리자 「실시간 한도」(`/admin/models/limits`)의 호출 상한·기한 사다리 칸에서 저장한다(env `timeouts[용도]`는 그 프로세스에서 이를 덮는다). 같은 경로에 전체 사다리가 있으면 clientMs와 같아야 한다 — 화면은 사다리 경로의 호출 상한을 사다리 클라이언트 칸 하나로만 받는다. 모델/용도별 출력은 maxTokens와 역할 예산 중 작은 값이다. 검증 계약과 exact tokenizer의 상한은 별도로 보존한다.
 
 제품 번역은 PR711의 40초 클라이언트 예산을 유지한다. 증명이 없는 M1 내부 엔진 기한은 만들지 않았다. 기존 job deadline/lease는 설정 예산보다 먼저 중단할 수 있다. relay 기본 upstream은 90초이고 maxOutputTokens는 relay 모델과 limits.relay의 작은 값이다. 기존 LOCAL_MODEL_RELAY_* 기한은 유효성·사다리 일치를 검사한다. 엔진 상한은 여전히 명시적 LOCAL_MODEL_RELAY_ENGINE_DEADLINE_MS와 강제 시작 시각이 필요하다. 레지스트리 선언만으로 unknown을 회수하지 않는다. 자동 회수 기본 비활성도 유지한다.
 

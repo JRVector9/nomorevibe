@@ -21,6 +21,8 @@ x-worker-environment: &worker-environment
   NEXT_PUBLIC_SITE_URL: http://localhost:3200
   LOG_LEVEL: info
   RELEASE_TAG: ${RELEASE_TAG:-local}
+  # 감독 liveness 하한(heartbeat·progress·drain)과 아래 역할별 WORKER_JOB_TIMEOUT_SECONDS 는 하한이다 — 실제 잡 상한은 워커가 lane heartbeat 로 알린
+  # 예산(관리자 /admin/models/limits 「틱 예산」, runtime_settings)이며 감독은 max(env 하한, 예산 + 45초)를 쓴다. 예산을 바꾸려고 이 값을 고치지 않는다.
   WORKER_DRAIN_SECONDS: "45"
   WORKER_HEARTBEAT_TIMEOUT_SECONDS: "30"
   WORKER_PROGRESS_TIMEOUT_SECONDS: "90"
