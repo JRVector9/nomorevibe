@@ -3,7 +3,7 @@ import { scopedModel } from "@/lib/llm/model-registry";
 import { randomUUID } from "node:crypto";
 import { SEARCH_QUERY_MODEL } from "@/lib/crawl/translate";
 import { prepareWebsearchQueryGatewayCall, translateQueryWithReservedGateway } from "@/lib/crawl/agent-review-gateway";
-import { readModelCapacityCallerControl, findOwnPendingModelRequest, requestWebsearchQueryModelSlot, cancelReservedModelSlot,
+import { reconcileGatewayNotStarted, readModelCapacityCallerControl, findOwnPendingModelRequest, requestWebsearchQueryModelSlot, cancelReservedModelSlot,
   markModelDispatchIndeterminate, reconcileWebsearchQueryGatewayTerminal } from "@/lib/llm/capacity-repository";
 import { markUnsettledDispatch } from "@/lib/llm/capacity-unsettled";
 import { modelCapacityRequestIdentitySchema, websearchQueryInputHash, websearchQueryLogicalWorkKey } from "@/lib/llm/capacity";
@@ -11,6 +11,7 @@ import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { websearchProcessOwner } from "@/lib/llm/websearch-process-owner";
 import { prepareWebsearchQueryDispatch, recordWebsearchQueryResult, type WebsearchQueryResult,
   type WebsearchQueryTarget } from "./search-query-capacity-repository";
+import { textRouteCallable } from "@/lib/llm/serving-contract-store";
 
 /**
  * 공개 검색어 번역을 공통 모델 슬롯에 묶는다.
@@ -27,7 +28,7 @@ const flights = globalFlights.noMoreVibeWebsearchQueryFlights ??= new Map();
 export async function translateQueryWithModelCapacity(value: WebsearchQueryTarget, timeoutMs: number): Promise<WebsearchQueryCapacityResult> {
   timeoutMs = scopedRequestTimeout("search-query-translate", timeoutMs);
   const target = structuredClone(value);
-  if (!process.env.ABCLLM_API_KEY?.trim()) return { kind: "legacy" };
+  if (!textRouteCallable("search-query-translate", scopedModel("search-query-translate", SEARCH_QUERY_MODEL))) return { kind: "legacy" };
   const running = flights.get(target.cacheKey);
   if (running) return running;
   const control = await readModelCapacityCallerControl();
@@ -86,9 +87,10 @@ async function translateOnce(target: WebsearchQueryTarget, timeoutMs: number): P
   // 물리 호출의 끝(정산 또는 full C)을 먼저 남기고, 그 뒤에 캐시를 쓴다 — 캐시 쓰기 실패가 정산을 되돌리지 않는다
   try {
     if (native.terminal) await reconcileWebsearchQueryGatewayTerminal(native.terminal);
+    else if (native.notStarted) await reconcileGatewayNotStarted(native.notStarted);
     else if (!await markModelDispatchIndeterminate(prepared.dispatch, "transport_unknown")) throw new Error("websearch_query_dispatch_not_marked");
   } catch (cleanup) {
-    if (native.terminal) await markUnsettledDispatch(prepared.dispatch);
+    if (native.terminal || native.notStarted) await markUnsettledDispatch(prepared.dispatch);
     if (!native.result.ok) throw new AggregateError([native.result, cleanup], "websearch_query_result_cleanup_failed");
     throw cleanup;
   }

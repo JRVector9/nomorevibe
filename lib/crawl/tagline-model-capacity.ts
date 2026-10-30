@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { TAGLINE_MODEL, taglineEvidence, type TaglineResult } from "./tagline";
 import { prepareCrawlTaglineGatewayCall, writeTaglineWithReservedGateway, readCrawlTaglineGatewayTerminal } from "./agent-review-gateway";
-import { readModelCapacityCallerControl, findOwnPendingModelRequest, requestCrawlTaglineModelSlot,
+import { reconcileGatewayNotStarted, readModelCapacityCallerControl, findOwnPendingModelRequest, requestCrawlTaglineModelSlot,
   readCrawlTaglineContinuation, cancelReservedModelSlot, markModelDispatchIndeterminate, reconcileCrawlTaglineGatewayTerminal } from "@/lib/llm/capacity-repository";
 import { markUnsettledDispatch } from "@/lib/llm/capacity-unsettled";
 import { modelCapacityRequestIdentitySchema, crawlTaglineInputHash, crawlTaglineLogicalWorkKey, type CrawlTaglineParent } from "@/lib/llm/capacity";
@@ -12,6 +12,7 @@ import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { prepareCrawlTaglineDispatch, prepareCrawlTaglineHistory, type TaglineTask, type CrawlTaglineWriteExpectation } from "./taglines";
 import type { JobLease } from "@/lib/jobs/control";
 import { roleLeaseFromEnv, type RoleLease } from "@/lib/jobs/role-leader";
+import { textRouteCallable } from "@/lib/llm/serving-contract-store";
 
 export type CrawlTaglineCapacityOutcome = { kind: "result"; result: TaglineResult; askOrdinal: 1 | 2;
   parent: CrawlTaglineParent | null; expectation: CrawlTaglineWriteExpectation };
@@ -27,7 +28,7 @@ export async function writeCrawlTaglineWithModelCapacity(value: TaglineTask, job
   if (previous && (previous.askOrdinal !== 1 || !previous.result.ok || previous.result.tagline))
     throw new Error("invalid_crawl_tagline_second_ask");
   if (previous && !previous.parent) throw new ModelCapacityDeferredError("dispatched");
-  if (!process.env.ABCLLM_API_KEY?.trim() && !previous) return { kind: "disabled" };
+  if (!textRouteCallable("crawl-tagline", scopedModel("crawl-tagline", TAGLINE_MODEL)) && !previous) return { kind: "disabled" };
   const control = await readModelCapacityCallerControl();
   if (control.mode === "disabled" && !previous) return { kind: "disabled" };
   if (control.mode !== "open") throw new ModelCapacityDeferredError(control.mode === "draining" ? "draining" : "disabled");
@@ -85,10 +86,11 @@ export async function writeCrawlTaglineWithModelCapacity(value: TaglineTask, job
   // 물리 정산은 현재 signal/job/domain 판단보다 먼저 끝낸다.
   try {
     if (native.terminal) await reconcileCrawlTaglineGatewayTerminal(native.terminal);
+    else if (native.notStarted) await reconcileGatewayNotStarted(native.notStarted);
     else if (!await markModelDispatchIndeterminate(prepared.dispatch, options.signal?.aborted ? "local_abort" : "transport_unknown"))
       throw new Error("crawl_tagline_dispatch_not_marked");
   } catch (cleanup) {
-    if (native.terminal) await markUnsettledDispatch(prepared.dispatch);
+    if (native.terminal || native.notStarted) await markUnsettledDispatch(prepared.dispatch);
     if (!native.result.ok) throw new AggregateError([native.result, cleanup], "crawl_tagline_result_cleanup_failed");
     throw cleanup;
   }

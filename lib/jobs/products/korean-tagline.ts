@@ -11,6 +11,7 @@ import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { translateKoreanTaglinesWithQwen } from "@/lib/crawl/korean-translation-qwen";
 import { KOREAN_TRANSLATION_LEGACY_MAX_CHARS, KOREAN_TRANSLATION_NATIVE_MAX_CHARS,
   KOREAN_TRANSLATION_QWEN_MODEL, koreanTranslationQwenEnabled, koreanTranslationQwenRecoveryEnabled } from "@/lib/crawl/korean-translation-config";
+import { textRouteCallable } from "@/lib/llm/serving-contract-store";
 
 /**
  * 한국어 한 줄 소개 짓기(UX-13) — 공개 제품의 지금 소개를 한국어 한 줄로 옮긴다. 새 제품·홈에 보이는 제품부터, 나머지는 스타 순.
@@ -59,10 +60,12 @@ export function packTaglineBatch(tasks: KoreanTaglineTask[], maxChars = KOREAN_T
 }
 
 export async function writeKoreanTaglines(ctx: JobContext<null>): Promise<JobOutcome<null>> {
-  if (!process.env.ABCLLM_API_KEY?.trim() && !koreanTranslationQwenEnabled()) {
+  // A directly connected engine (admin contract) or the gateway key; legacy Qwen does not need either.
+  const gptCallable = () => textRouteCallable("product-tagline-ko", scopedModel("product-tagline-ko", KOREAN_TAGLINE_MODEL));
+  if (!gptCallable() && !koreanTranslationQwenEnabled()) {
     ctx.log("tagline_ko.skipped", { reason: "no_key" });
     // 키가 없으면 아무것도 하지 않는다 — 성공이 아니다(러너가 성공 시각을 옮기지 않고 조치할 일이 올린다)
-    return { done: true, degraded: { code: "no_key", detail: "text 워커에 ABCLLM_API_KEY 가 없습니다" } };
+    return { done: true, degraded: { code: "no_key", detail: "이 경로의 직접 연결 계약도 text 워커의 ABCLLM_API_KEY 도 없습니다" } };
   }
   const lease = ctx.lease;
   if (!lease) throw new Error("Korean tagline worker requires a job lease");
@@ -86,10 +89,10 @@ export async function writeKoreanTaglines(ctx: JobContext<null>): Promise<JobOut
       if (control.mode !== "disabled" && control.mode !== "open") throw new ModelCapacityDeferredError("draining");
       const legacy = control.mode === "disabled";
       const qwen = legacy && koreanTranslationQwenEnabled() && !stopped.has("qwen");
-      if (!legacy && !process.env.ABCLLM_API_KEY?.trim()) return { done: true,
-        degraded: { code: "no_key", detail: "native 한국어 번역에 필요한 ABCLLM_API_KEY 가 없습니다" } };
+      if (!legacy && !gptCallable()) return { done: true,
+        degraded: { code: "no_key", detail: "native 한국어 번역에 필요한 직접 연결 계약도 ABCLLM_API_KEY 도 없습니다" } };
       const candidates = (await pendingKoreanTaglines(BATCH * 4, homeSlugs)).filter(task => !visited.has(task.productId));
-      const gptBatch = process.env.ABCLLM_API_KEY?.trim() && !stopped.has("gpt")
+      const gptBatch = gptCallable() && !stopped.has("gpt")
         ? packTaglineBatch(candidates, legacy ? KOREAN_TRANSLATION_LEGACY_MAX_CHARS : KOREAN_TRANSLATION_NATIVE_MAX_CHARS) : [];
       const gptIds = new Set(gptBatch.map(task => task.productId));
       const qwenBatch = qwen ? packTaglineBatch(candidates.filter(task => !gptIds.has(task.productId))) : [];

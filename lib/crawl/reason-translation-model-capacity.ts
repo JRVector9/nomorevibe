@@ -2,7 +2,7 @@ import { scopedRequestTimeout } from "@/lib/llm/model-registry";
 import { scopedModel } from "@/lib/llm/model-registry";
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { readModelCapacityCallerControl, findOwnPendingModelRequest, requestReasonTranslationModelSlot,
+import { reconcileGatewayNotStarted, readModelCapacityCallerControl, findOwnPendingModelRequest, requestReasonTranslationModelSlot,
   findOwnPendingReasonTranslationRequests, cancelOwnPendingReasonTranslationRequest,
   cancelReservedModelSlot, markModelDispatchIndeterminate, reconcileReasonTranslationGatewayTerminal } from '@/lib/llm/capacity-repository';
 import { markUnsettledDispatch } from '@/lib/llm/capacity-unsettled';
@@ -13,6 +13,7 @@ import { pendingReasonTranslationBatch, prepareReasonTranslationDispatch, type P
 import { prepareReasonTranslationGatewayCall, translateWithReservedReasonGateway } from './agent-review-gateway';
 import type { JobLease } from '@/lib/jobs/control';
 import { roleLeaseFromEnv, type RoleLease } from '@/lib/jobs/role-leader';
+import { textRouteCallable } from "@/lib/llm/serving-contract-store";
 
 type Options = { timeoutMs: number; signal?: AbortSignal; roleLease?: RoleLease };
 export type ReasonTranslationCapacityResult = { kind: 'disabled'; result: TranslateResult } | { kind: 'skipped' }
@@ -31,7 +32,7 @@ export async function translateReasonsWithModelCapacity(value: readonly PendingT
     'ROLE_LEASE_EPOCH','ROLE_LEASE_BATCH_VERSION','ROLE_LEASE_BATCH_EPOCH','ROLE_LEASE_HOST'].map(key => [key, process.env[key]]));
   const legacy = async () => ({ kind: 'disabled' as const,
     result: await translateToKorean(batch.map(item => item.body), scopedRequestTimeout("reason-translate", options.timeoutMs), undefined, options.signal) });
-  if (!process.env.ABCLLM_API_KEY?.trim()) return legacy();
+  if (!textRouteCallable("reason-translate", scopedModel("reason-translate", TRANSLATE_MODEL))) return legacy();
   const control = await readModelCapacityCallerControl();
   if (control.mode === 'disabled') return legacy();
   if (control.mode === 'draining') throw new ModelCapacityDeferredError('draining');
@@ -103,11 +104,12 @@ export async function translateReasonsWithModelCapacity(value: readonly PendingT
   // or the business signal aborted. Only the later writer decides current duty.
   try {
     if (response.terminal) await reconcileReasonTranslationGatewayTerminal(response.terminal);
+    else if (response.notStarted) await reconcileGatewayNotStarted(response.notStarted);
     else await markModelDispatchIndeterminate(dispatch, options.signal?.aborted ? 'local_abort' : 'transport_unknown');
   } catch (cleanup) {
-    if (response.terminal) await markUnsettledDispatch(dispatch);
+    if (response.terminal || response.notStarted) await markUnsettledDispatch(dispatch);
     if (!response.result.ok) throw new AggregateError([response.result, cleanup], 'reason_translation_result_cleanup_failed');
     throw cleanup;
   }
-  return { kind: 'ready', batch: checked, result: response.result, expectation, unknown: response.terminal === null };
+  return { kind: 'ready', batch: checked, result: response.result, expectation, unknown: !response.terminal && !response.notStarted };
 }

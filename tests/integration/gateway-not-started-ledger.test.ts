@@ -7,20 +7,27 @@ import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
+import { getTableConfig, PgDialect } from "drizzle-orm/pg-core";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 import { db } from "@/lib/db";
 import { createReviewInput, reviewHash, type ReviewInput } from "@/lib/crawl/agent-review-contract";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
-import type { CrawlCandidate, CrawlDocument } from "@/lib/db/schema";
+import { gatewayNotStartedAllKindsEventTerminalSql, gatewayNotStartedAllKindsTerminalSql, gatewayNotStartedKindsSql, modelCapacityEvents,
+  modelCapacityRequests, type CrawlCandidate, type CrawlDocument } from "@/lib/db/schema";
 import { itemBindingHash, type Ai2ItemBinding, type ItemLease } from "@/lib/jobs/items/types";
 import { claimItemLease, lockItemStage } from "@/lib/jobs/items/repository";
-import { modelCapacityPolicyHash, type Ai1DispatchBinding, type Ai1ModelDispatch, type Ai2DispatchBinding, type ModelCapacityPolicy,
-  type ModelCapacityRequest, type ModelCapacityReservation, type ModelSlotResult } from "@/lib/llm/capacity";
-import { finishAi1ModelCapacityDispatch, finishAi2ItemModelCapacityDispatch, lockAi1ModelCapacityDispatch, lockAi2ItemModelCapacityDispatch,
-  markModelDispatchIndeterminate, reconcileGatewayNotStarted, requestAi1ModelSlot, requestAi2ItemModelSlot } from "@/lib/llm/capacity-repository";
+import { modelCapacityPolicyHash, productTranslationInputHash, productTranslationLogicalWorkKey, type Ai1DispatchBinding, type Ai1ModelDispatch,
+  type Ai2DispatchBinding, type GatewayNotStartedEvidence, type ModelCapacityPolicy, type ModelCapacityRequest, type ModelCapacityReservation,
+  type ModelSlotResult, type ProductTranslationDispatchBinding, type ProductTranslationMember } from "@/lib/llm/capacity";
+import { cancelReservedModelSlot, finishAi1ModelCapacityDispatch, finishAi2ItemModelCapacityDispatch, finishProductTranslationModelCapacityDispatch,
+  lockAi1ModelCapacityDispatch, lockAi2ItemModelCapacityDispatch, lockProductTranslationModelCapacityDispatch, markModelDispatchIndeterminate,
+  reconcileGatewayNotStarted, requestAi1ModelSlot, requestAi2ItemModelSlot, requestLocalModelSlot,
+  requestProductTranslationModelSlot } from "@/lib/llm/capacity-repository";
 import { markUnsettledDispatch } from "@/lib/llm/capacity-unsettled";
+import { localModelBindingHash, localModelJob, localModelLogicalKey, localModelRoute, type LocalModelBinding,
+  type LocalModelTarget } from "@/lib/llm/local-model-capacity-contract";
 import { prepareAi1GatewayCall, prepareAi2GatewayCall, readGatewayNotStarted, settleAi1GatewayNotStarted,
-  type PreparedAi2GatewayCall } from "@/lib/crawl/agent-review-gateway";
+  type GatewayNotStarted, type PreparedAi2GatewayCall } from "@/lib/crawl/agent-review-gateway";
 import { abandonAgentReviewModelCapacity, reviewAgentReviewModelCapacity } from "@/lib/crawl/agent-review-model-capacity";
 import { abandonSecondReviewModelCapacity, reviewSecondReviewModelCapacity } from "@/lib/crawl/second-review-model-capacity";
 import type { Ai1GatewayServingContract } from "@/lib/crawl/agent-review-serving-contract";
@@ -30,30 +37,42 @@ import { ensureSchema, TEST_DATABASE_URL } from "./setup";
 /**
  * F2 결함 1·3 실제 DB driver(0102). fetch 를 부르지 않은 AI1·AI2 gateway dispatch 는 같은 owner handle 의 not_started 증인으로 settled 가 되고
  * 슬롯·후보/표 키가 풀린다. 전송 여부를 모르는 행(indeterminate)은 받지 않는다. 정산 실패는 commit_unknown 으로 표시된다.
+ * 0149 부터 같은 증거가 text 경로(product-translate 로 대표)와 local-direct(local_model_direct) dispatch 도 정산한다 — 그 두 경우는 증인 발급이
+ * 게이트웨이·local-direct 모듈의 몫이라 이 장부 driver 는 증인 객체를 그 dispatch 의 증거에 직접 묶는다(readGatewayNotStarted 만 덧씌움).
  * 모든 행·event·item lease·control·stage 는 끝나면 whole-DB 기준선으로 되돌린다(events 는 이 fixture 의 request 만 지운다).
  */
 const serving = vi.hoisted(() => ({ ai1: null as Ai1GatewayServingContract | null, ai2: null as Ai2GatewayServingContract | null }));
+const issued = vi.hoisted(() => ({ witnesses: new WeakMap<object, unknown>() }));
 vi.mock("@/lib/crawl/agent-review-serving-contract", async original => ({
   ...await original<typeof import("@/lib/crawl/agent-review-serving-contract")>(), resolveAi1GatewayServingContract: () => serving.ai1,
 }));
 vi.mock("@/lib/crawl/second-review-serving-contract", async original => ({
   ...await original<typeof import("@/lib/crawl/second-review-serving-contract")>(), resolveAi2GatewayServingContract: () => serving.ai2,
 }));
+vi.mock("@/lib/crawl/agent-review-gateway", async original => {
+  const actual = await original<typeof import("@/lib/crawl/agent-review-gateway")>();
+  return { ...actual, readGatewayNotStarted: (value: unknown) =>
+    (value && typeof value === "object" ? issued.witnesses.get(value) as GatewayNotStartedEvidence | undefined : undefined)
+    ?? actual.readGatewayNotStarted(value) };
+});
 type Raw = Record<string, unknown>;
 const root = fileURLToPath(new URL("../..", import.meta.url));
 const tag = randomBytes(6).toString("hex"), prefix = `f2-not-started-${tag}`, owner = { instanceId: prefix, bootId: randomUUID() };
 const stepName = `nomorevibe_test_f2_step_${tag}`;
 const admin = postgres(TEST_DATABASE_URL, { max: 1, prepare: false, onnotice: () => {}, connection: { application_name: "f2-not-started-fixture" } });
 const owned = new Map<string, ModelCapacityRequest>(), items = new Map<string, ItemLease>(), work = new Set<Promise<unknown>>();
-const model = "Exact Model";
+const model = "Exact Model", localModel = "fixture-local";
 let serial = Number.parseInt(randomUUID().slice(0, 7), 16), initial: Record<string, unknown> = {}, initialized = false;
 let originalControl: Raw, originalStage: Raw, stepCreated = false;
 let posts = 0, server: ReturnType<typeof createServer> | undefined, endpoint = "";
-const policy: ModelCapacityPolicy = { version: 1, globalLimit: 4, providerLimits: { account: 4 }, groupLimits: { engine: 4 },
+const policy: ModelCapacityPolicy = { version: 1, globalLimit: 4, providerLimits: { account: 4, "fixture-direct": 4 },
+  groupLimits: { engine: 4, "same-hardware": 4 },
   poolLimits: { reviewer: 4, text: 1 }, weights: { first: 1, second: 1, background: 1 }, maxWaiting: 12, queueTtlMs: 60_000,
   reservationTtlMs: 60_000, routes: [
     { routeId: "crawl-agent-review", provider: "abcllm", model, providerBudgetId: "account", groupId: "engine" },
-    { routeId: "second-review", provider: "abcllm", model, providerBudgetId: "account", groupId: "engine" }] };
+    { routeId: "second-review", provider: "abcllm", model, providerBudgetId: "account", groupId: "engine" },
+    { routeId: "product-translate", provider: "abcllm", model, providerBudgetId: "account", groupId: "engine" },
+    { routeId: "local-audit", provider: "local-direct", model: localModel, providerBudgetId: "fixture-direct", groupId: "same-hardware" }] };
 function tracked<T>(pending: Promise<T>): Promise<T> { work.add(pending); void pending.catch(() => {}); return pending; }
 async function whole(tx: postgres.Sql | postgres.TransactionSql = admin) {
   const value: Record<string, unknown> = {};
@@ -162,6 +181,62 @@ async function ai2(value = input()) {
   items.set(result.lease.workKey, result.lease);
   return { value, call, dispatch: result.dispatch, requested, logical, id };
 }
+function translationMembers(...ids: number[]): ProductTranslationMember[] {
+  return ids.map(productId => ({ productId, slug: `f2-${productId}`, locale: "en", field: "tagline", sourceHash: "a".repeat(64),
+    demand: { rowIdentityHash: "b".repeat(64), attempts: 0 } }));
+}
+function translationBinding(value: ModelCapacityRequest, batch: readonly ProductTranslationMember[]): ProductTranslationDispatchBinding {
+  return { kind: "product_translation_gateway", version: 1, members: structuredClone(batch) as ProductTranslationMember[], model: value.model,
+    logicalWorkKey: productTranslationLogicalWorkKey(batch), inputHash: productTranslationInputHash({ members: batch, model: value.model }),
+    provider: "abcllm", routeId: "product-translate", wireHash: "c".repeat(64), servingContractHash: "d".repeat(64), totalTokenBound: 8192,
+    chargedTokens: 8192, job: { name: "product-translate", token: randomUUID(), requestedVersion: 1 },
+    role: { role: "text", instanceId: value.owner.instanceId, bootId: value.owner.bootId, release: "ledger-fixture", kind: "primary", epoch: 1,
+      batch: { mode: "legacy" } } };
+}
+/** text 경로 대표: product-translate dispatched 행(실제 slot → lock → finish). 제품·수요 행은 이 장부 driver 의 관심이 아니다. */
+async function translate(batch = translationMembers(++serial, ++serial), who = owner) {
+  const requested = remember({ requestId: randomUUID(), owner: { ...who }, class: "background", pool: "text", routeId: "product-translate",
+    provider: "abcllm", model, workKey: `${productTranslationLogicalWorkKey(batch)}:${productTranslationInputHash({ members: batch, model })}` });
+  const handle = granted(await tracked(requestProductTranslationModelSlot(requested, batch)));
+  const dispatch = await tracked(db.transaction(async tx => {
+    const lock = await lockProductTranslationModelCapacityDispatch(tx, { reservation: handle, identity: identity(requested), members: batch });
+    if (!lock) throw new Error("actual_lock_required");
+    return finishProductTranslationModelCapacityDispatch(tx, lock, translationBinding(requested, batch));
+  }));
+  return { dispatch, requested, batch };
+}
+/** local-direct dispatched 행. dispatchLocalModelCapacity 의 도메인 증명(감사 행·role/job lease)은 실행 driver 의 몫이라 reserved 행을 이 binding 으로
+ * 바로 dispatched 로 옮긴다 — 저장되는 binding 모양은 CHECK 가 그대로 검증한다. */
+async function local(who = owner) {
+  const target: LocalModelTarget = { kind: "audit", purpose: "audit", itemId: ++serial, slug: `${prefix}-audit` };
+  const logical = localModelLogicalKey(target), routeId = localModelRoute(target);
+  const binding: LocalModelBinding = { kind: "local_model_direct", version: 1, target, logicalWorkKey: logical, routeId, provider: "local-direct",
+    model: localModel, backendId: "fixture-direct", physicalGroup: "same-hardware", deploymentRevision: "fixture-deployment",
+    inputHash: "a".repeat(64), sourceRevisionHash: "b".repeat(64), reviewPolicyHash: "c".repeat(64), promptVersion: "fixture-prompt",
+    wireHash: "d".repeat(64), servingContractHash: "e".repeat(64), totalTokenBound: 8192, chargedTokens: 8192,
+    job: { name: localModelJob(target), token: randomUUID(), requestedVersion: 1 } };
+  const requested = remember({ requestId: randomUUID(), workKey: `${logical}:${binding.inputHash}`, owner: { ...who }, class: "background",
+    pool: "reviewer", routeId, provider: "local-direct", model: localModel });
+  const handle = granted(await tracked(requestLocalModelSlot(requested, target)));
+  const bindingHash = localModelBindingHash(binding);
+  expect(await admin`UPDATE model_capacity_requests SET state='dispatched',dispatch_binding=${JSON.stringify(binding)}::text::jsonb,
+    dispatch_binding_hash=${bindingHash},dispatched_at=clock_timestamp(),updated_at=clock_timestamp()
+    WHERE request_id=${requested.requestId}::uuid AND state='reserved' AND token=${handle.token}::uuid RETURNING request_id`).toHaveLength(1);
+  return { dispatch: { ...handle, binding, bindingHash }, requested, target };
+}
+/** 이 dispatch 의 not_started 증거를 가진 증인 객체(발급 모듈이 할 일을 장부 driver 가 대신 묶는다). 사본·JSON 은 여전히 권한이 아니다. */
+function witness(dispatch: unknown): GatewayNotStarted {
+  const token: GatewayNotStarted = Object.freeze({ kind: "gateway_not_started" });
+  issued.witnesses.set(token, Object.freeze({ version: 1, kind: "gateway_not_started", dispatch: structuredClone(dispatch) }));
+  return token;
+}
+const constraintFailure = (error: unknown) => { const failure = error as { code?: string; constraint_name?: string }; return `${failure.code}:${failure.constraint_name}`; };
+async function settledEvent(requestId: string, fromState: string, evidence: unknown) {
+  const [current] = await admin`SELECT epoch,revision,policy_hash FROM model_capacity_requests WHERE request_id=${requestId}::uuid`;
+  return admin`INSERT INTO model_capacity_events (request_id,kind,epoch,revision,policy_hash,from_state,to_state,reason,evidence)
+    VALUES (${requestId}::uuid,'dispatch_settled',${current.epoch},${current.revision},${current.policy_hash},${fromState},'settled',NULL,
+    ${JSON.stringify(evidence)}::text::jsonb)`.then(() => "accepted", constraintFailure);
+}
 const row = async (id: string) => (await admin`SELECT to_jsonb(r) AS value FROM model_capacity_requests r WHERE request_id=${id}::uuid`)[0]?.value as Raw;
 const events = async (id: string) => Array.from(await admin`SELECT kind,from_state,to_state,reason,evidence FROM model_capacity_events
   WHERE request_id=${id}::uuid ORDER BY id`);
@@ -176,6 +251,21 @@ async function constraintDefs(sql: postgres.Sql, names: readonly string[]) {
   return Object.fromEntries(Array.from(await sql<{ name: string; def: string }[]>`SELECT conname AS name, pg_get_constraintdef(oid) AS def
     FROM pg_constraint WHERE conname = ANY(${names as string[]}::text[])`).map(value => [value.name, value.def]));
 }
+const innerPredicate = (def: string) => { expect(def.startsWith("CHECK (")).toBe(true); return def.slice("CHECK (".length, -1); };
+/** PostgreSQL's own parse→deparse fixed point of a CHECK predicate on the disposable step DB (its tables are empty, so ADD CONSTRAINT only parses).
+ * Source text and a pg_get_constraintdef rebuild of the same predicate differ only until this point; no SQL is edited by hand to compare them. */
+async function canonicalPredicate(sql: postgres.Sql, table: string, predicate: string) {
+  let current = predicate;
+  for (let round = 0; round < 4; round++) {
+    await sql.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT f2_canonical CHECK (${current})`);
+    try {
+      const next = innerPredicate((await constraintDefs(sql, ["f2_canonical"])).f2_canonical);
+      if (next === current) return next;
+      current = next;
+    } finally { await sql.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT f2_canonical`); }
+  }
+  throw new Error("f2_canonical_predicate_unstable");
+}
 const journal = JSON.parse(readFileSync(path.join(root, "drizzle/meta/_journal.json"), "utf8")) as { entries: { idx: number; tag: string }[] };
 const LEFT = ["model_capacity_requests_terminal_check", "model_capacity_events_terminal_check"] as const;
 const UNTOUCHED = ["model_capacity_requests_dispatch_check", "model_capacity_requests_logical_check", "model_capacity_requests_members_check",
@@ -184,6 +274,7 @@ const UNTOUCHED = ["model_capacity_requests_dispatch_check", "model_capacity_req
 beforeAll(async () => {
   ensureSchema();
   expect(journal.entries.map(entry => entry.tag)).toContain("0102_model_capacity_gateway_not_started");
+  expect(journal.entries.map(entry => entry.tag)).toContain("0149_gateway_not_started_all_kinds");
   const [applied] = await admin<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`;
   expect(applied.count).toBe(journal.entries.length);
   initial = await whole();
@@ -376,7 +467,8 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
     for (const name of [...LEFT, ...UNTOUCHED].filter(name => !cliChecks.includes(name)))
       expect(removedUnknown[name], `${name}: 0137 unchanged CHECK`).toBe(unknown[name]);
     // 0138~0142 leave these constraints unchanged; 0143 appends the strict replaced-provider branch and 0145 the replaced-path branch.
-    await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
+    // 0146~0148 leave them unchanged, so the 0148 boundary (every entry before 0149) still shows the 0145 shape.
+    await migrateThrough(148);
     const replaced = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
     for (const name of cliChecks) {
       const table = name === eventKind ? "model_capacity_events" : "model_capacity_requests";
@@ -392,6 +484,42 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
     }
     for (const name of [...LEFT, ...UNTOUCHED].filter(name => !cliChecks.includes(name)))
       expect(replaced[name], `${name}: 0143/0145 unchanged CHECK`).toBe(removedUnknown[name]);
+    // 0149 rebuilds both terminal CHECKs from pg_get_constraintdef (the 0132 form): the entire live 0148 predicate is the left side and exactly
+    // one gateway_not_started branch whose kind list covers every gateway dispatch kind is appended, so the live text is PostgreSQL's own
+    // reparse of "(<0148 live predicate>) OR (<branch>)". The branch is the constant lib/db/operations-schema.ts composes with, never pasted SQL.
+    expect(journal.entries.find(entry => entry.idx === 149)!.tag).toBe("0149_gateway_not_started_all_kinds");
+    await migrateThrough(149);
+    const widened = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
+    const allKinds = readFileSync(path.join(root, "drizzle/0149_gateway_not_started_all_kinds.sql"), "utf8").split("--> statement-breakpoint");
+    expect(gatewayNotStartedKindsSql).toBe("('ai1_legacy_gateway','ai1_item_gateway','ai2_item_gateway','text_profile_gateway','reason_translation_gateway',"
+      + "'product_translation_gateway','product_tagline_ko_gateway','crawl_tagline_gateway','search_verify_gateway','websearch_query_gateway','local_model_direct')");
+    for (const name of LEFT) {
+      const events = name === "model_capacity_events_terminal_check", table = events ? "model_capacity_events" : "model_capacity_requests";
+      const branch = events ? gatewayNotStartedAllKindsEventTerminalSql : gatewayNotStartedAllKindsTerminalSql;
+      expect(branch).toContain(`'kind' IN ${gatewayNotStartedKindsSql}`); expect(branch).toContain("gateway_not_started");
+      const statement = allKinds.find(sql => sql.includes(`conname='${name}'`))!;
+      expect(statement, `${name}: rebuilt from the live predicate`).toContain("substring(pg_get_constraintdef(oid) FROM 7) INTO STRICT old_predicate");
+      expect(statement).toContain(`ADD CONSTRAINT ${name} CHECK ((%s) OR (%s))`);
+      expect(statement, `${name}: the appended branch is the schema constant`).toContain(`$ai2_local$${branch}$ai2_local$`);
+      const check = getTableConfig(events ? modelCapacityEvents : modelCapacityRequests).checks.find(check => check.name === name)!;
+      const expression = new PgDialect().sqlToQuery(check.value).sql, suffix = `) OR (${branch})`;
+      expect(expression.startsWith("(") && expression.endsWith(suffix), `${name}: Drizzle composes (previous) OR (branch)`).toBe(true);
+      // Drizzle keeps composing from source text while the DB has rebuilt these CHECKs from deparsed text since 0126 (a BETWEEN becomes a
+      // nested AND on the first parse and is flattened on the next). Both must meet at PostgreSQL's own parse→deparse fixed point.
+      expect(await canonicalPredicate(step, table, expression.slice(1, -suffix.length)), `${name}: Drizzle predecessor is the live 0148 predicate`)
+        .toBe(await canonicalPredicate(step, table, inner(replaced[name])));
+      await step.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT f2_all_kinds_expected CHECK ((${inner(replaced[name])}) OR (${branch}))`);
+      try {
+        const expected = await constraintDefs(step, ["f2_all_kinds_expected"]);
+        expect(widened[name], `${name}: entire 0148 predicate plus the 0149 all-kinds branch`).toBe(expected.f2_all_kinds_expected);
+      } finally { await step.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT f2_all_kinds_expected`); }
+      const widenedList = "'websearch_query_gateway'::text, 'local_model_direct'::text";
+      expect(replaced[name]).not.toContain(widenedList); expect(widened[name]).toContain(widenedList);
+    }
+    for (const name of UNTOUCHED) expect(widened[name], `${name}: 0149 unchanged CHECK`).toBe(replaced[name]);
+    // Later migrations (0150 topology) leave every one of these CHECKs as 0149 left them.
+    await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
+    expect(await constraintDefs(step, [...LEFT, ...UNTOUCHED])).toEqual(widened);
     expect((await step<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`)[0].count).toBe(journal.entries.length);
   } finally { rmSync(partial, { recursive: true, force: true }); await step.end({ timeout: 5 }); }
 }, 600_000);
@@ -477,6 +605,70 @@ it("CHECKs reject a forged not_started row or event that is not the row's own di
   expect(await event("dispatched", { ...genuine, extra: true })).toBe("23514:model_capacity_events_terminal_check");
   expect(await row(value.requested.requestId)).toMatchObject({ state: "dispatched", terminal_evidence: null });
   expect(await tracked(reconcileGatewayNotStarted(proof))).toEqual({ kind: "settled" });
+});
+
+it("0149 text route: a product-translate dispatch settles as not_started, frees its member fence, and the CHECKs reject a forged row or event", async () => {
+  await install();
+  const first = await translate(), proof = witness(first.dispatch);
+  const genuine = { version: 1, kind: "gateway_not_started", dispatch: first.dispatch };
+  // only the row's own dispatched handle: a different token, a different request, an indeterminate origin or a non-gateway kind is refused
+  const forged = { ...genuine, dispatch: { ...first.dispatch, token: randomUUID() } };
+  expect(await admin`UPDATE model_capacity_requests SET state='settled',terminal_evidence=${JSON.stringify(forged)}::text::jsonb,
+    terminal_evidence_hash=${"e".repeat(64)},settled_at=clock_timestamp() WHERE request_id=${first.requested.requestId}::uuid`
+    .then(() => "accepted", constraintFailure)).toBe("23514:model_capacity_requests_terminal_check");
+  expect(await settledEvent(first.requested.requestId, "indeterminate", genuine)).toBe("23514:model_capacity_events_terminal_check");
+  expect(await settledEvent(first.requested.requestId, "dispatched", { ...genuine, dispatch: { ...first.dispatch, requestId: randomUUID() } }))
+    .toBe("23514:model_capacity_events_terminal_check");
+  expect(await settledEvent(first.requested.requestId, "dispatched", { ...genuine, dispatch: { ...first.dispatch,
+    binding: { ...first.dispatch.binding, kind: "product_audit_cli" } } })).toBe("23514:model_capacity_events_terminal_check");
+  expect(await row(first.requested.requestId)).toMatchObject({ state: "dispatched", terminal_evidence: null });
+  // the real ledger path: the same evidence settles the row once and is idempotent; a structural copy of the witness is not a witness
+  expect(await tracked(reconcileGatewayNotStarted(proof))).toEqual({ kind: "settled" });
+  const evidence = expectSettled(await row(first.requested.requestId), first.dispatch);
+  expect((await row(first.requested.requestId)).dispatch_binding).toEqual(first.dispatch.binding);
+  expect(await events(first.requested.requestId)).toMatchObject([{ kind: "queued" }, { kind: "reserved" }, { kind: "dispatch_started" },
+    { kind: "dispatch_settled", from_state: "dispatched", to_state: "settled", reason: null, evidence }]);
+  expect(await tracked(reconcileGatewayNotStarted(proof))).toEqual({ kind: "already_settled" });
+  await expect(tracked(reconcileGatewayNotStarted(structuredClone(proof)))).rejects.toThrow("invalid_gateway_not_started");
+  // the member fence and the single text slot are free: the same members from another boot are granted
+  const next = remember({ requestId: randomUUID(), workKey: first.requested.workKey, owner: { instanceId: `${prefix}-next`, bootId: randomUUID() },
+    class: "background", pool: "text", routeId: "product-translate", provider: "abcllm", model });
+  const nextHandle = granted(await tracked(requestProductTranslationModelSlot(next, first.batch)));
+  expect(await tracked(cancelReservedModelSlot(nextHandle))).toBe(true);
+  // a row that already recorded transport_unknown is refused as today, whatever its kind
+  const unknown = await translate();
+  expect(await tracked(markModelDispatchIndeterminate(unknown.dispatch, "transport_unknown"))).toBe(true);
+  const before = await row(unknown.requested.requestId);
+  await expect(tracked(reconcileGatewayNotStarted(witness(unknown.dispatch)))).rejects.toThrow("gateway_not_started_state_mismatch");
+  expect(await row(unknown.requested.requestId)).toEqual(before);
+  // a witness for one kind never settles a row of another kind with the same handle shape
+  const wrong = witness({ ...first.dispatch, binding: { ...first.dispatch.binding, routeId: "reason-translate", job: { ...first.dispatch.binding.job, name: "reason-translate" } } });
+  await expect(tracked(reconcileGatewayNotStarted(wrong))).rejects.toThrow();
+  expect(posts).toBe(0);
+});
+
+it("0149 local-direct: a local_model_direct dispatch settles as not_started through the same ledger path and frees its logical fence", async () => {
+  await install();
+  const direct = await local(), proof = witness(direct.dispatch);
+  const genuine = { version: 1, kind: "gateway_not_started", dispatch: direct.dispatch };
+  const forged = { ...genuine, dispatch: { ...direct.dispatch, token: randomUUID() } };
+  expect(await admin`UPDATE model_capacity_requests SET state='settled',terminal_evidence=${JSON.stringify(forged)}::text::jsonb,
+    terminal_evidence_hash=${"e".repeat(64)},settled_at=clock_timestamp() WHERE request_id=${direct.requested.requestId}::uuid`
+    .then(() => "accepted", constraintFailure)).toBe("23514:model_capacity_requests_terminal_check");
+  expect(await settledEvent(direct.requested.requestId, "indeterminate", genuine)).toBe("23514:model_capacity_events_terminal_check");
+  expect(await settledEvent(direct.requested.requestId, "dispatched", { ...genuine, extra: true })).toBe("23514:model_capacity_events_terminal_check");
+  expect(await row(direct.requested.requestId)).toMatchObject({ state: "dispatched", terminal_evidence: null });
+  expect(await tracked(reconcileGatewayNotStarted(proof))).toEqual({ kind: "settled" });
+  const evidence = expectSettled(await row(direct.requested.requestId), direct.dispatch);
+  expect((await events(direct.requested.requestId)).at(-1)).toMatchObject({ kind: "dispatch_settled", from_state: "dispatched", to_state: "settled",
+    reason: null, evidence });
+  expect(await tracked(reconcileGatewayNotStarted(proof))).toEqual({ kind: "already_settled" });
+  // the logical fence of the same target is free for a new boot
+  const next = remember({ requestId: randomUUID(), workKey: `${localModelLogicalKey(direct.target)}:${"f".repeat(64)}`,
+    owner: { instanceId: `${prefix}-next`, bootId: randomUUID() }, class: "background", pool: "reviewer", routeId: localModelRoute(direct.target),
+    provider: "local-direct", model: localModel });
+  expect((await tracked(requestLocalModelSlot(next, direct.target))).kind).toBe("granted");
+  expect(posts).toBe(0);
 });
 
 it("a failed settlement is marked commit_unknown on a dispatched row and never rewrites a settled one", async () => {

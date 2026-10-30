@@ -6,12 +6,13 @@ import { checkProductTranslation, packProductTranslationBatch, productTranslatio
 import { pendingProductTranslations, recordProductTranslations, type ProductTranslationResult } from "@/lib/domain/products/translations";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { PRODUCT_TRANSLATION_CLIENT_TIMEOUT_MS } from "@/lib/llm/deadline-ladder";
+import { textRouteCallable } from "@/lib/llm/serving-contract-store";
 
 /** One call / at most four demanded fields per text-role tick (PRODUCT_TRANSLATION_JOB_BUDGET_MS). No catalog backfill. */
 export async function translateDemandedProductFields(ctx: JobContext<null>): Promise<JobOutcome<null>> {
-  if (!process.env.ABCLLM_API_KEY?.trim()) {
+  if (!textRouteCallable("product-translate", scopedModel("product-translate", PRODUCT_TRANSLATION_MODEL))) {
     ctx.log("product_translation.deferred", { reason: "no_key" });
-    return { done: true, degraded: { code: "no_key", detail: "text 워커에 ABCLLM_API_KEY 가 없습니다" } };
+    return { done: true, degraded: { code: "no_key", detail: "이 경로의 직접 연결 계약도 text 워커의 ABCLLM_API_KEY 도 없습니다" } };
   }
   if (!ctx.lease) throw new Error("Product translation worker requires a job lease");
   const controller = new AbortController();

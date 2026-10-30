@@ -16,7 +16,8 @@ type Hop = Readonly<{ role: typeof roles[number]; host: string; kind: typeof kin
  * - gateway/relay: replaced, or absent (no process). A pass-through could otherwise retry the old call.
  * - provider: replaced, or idle (zero running and waiting requests) observed after every hop above it was replaced or absent:
  *   nothing upstream can resend, so an idle engine is not running the old call.
- * The SQL copy in drizzle/0145 is the authority; a topology change needs a new migration, never a runtime value.
+ * The SQL copies are the authority — drizzle/0145 (owners and the first providers) and drizzle/0150 (current providers); a topology
+ * change needs a new migration, never a runtime value.
  */
 export const REPLACED_PATH_OWNERS: Readonly<Record<string, Hop>> = {
   "m3-reviewer": { role: "owner", host: "m3ultra", kind: "container", service: "app-copy-primary-hard-drive-b5fhzd" },
@@ -26,12 +27,16 @@ const gateways: readonly Hop[] = [
   { role: "gateway-m3", host: "m3ultra", kind: "container", service: "app-reboot-optical-matrix-3bl2a4" },
   { role: "gateway-mini", host: "9mini", kind: "container", service: "app-hack-optical-monitor-v1ioak" },
 ];
-export const REPLACED_PATH_PROVIDERS: Readonly<Record<string, readonly Hop[]>> = {
+const providers0145: Readonly<Record<string, readonly Hop[]>> = {
   "abcllm-supa": [...gateways, { role: "provider", host: "supa", kind: "systemd", service: "vllm.service" }],
   "abcllm-m3-mlx": [...gateways, { role: "provider", host: "m3ultra", kind: "launchd", service: "gui/501/com.jr.deepseek" }],
   "abcllm-m1-qwen": [...gateways, { role: "relay", host: "m1studio", kind: "launchd", service: "system/bot.brut.nmv-llm-relay" },
     { role: "provider", host: "m1studio", kind: "listener", service: "tcp:127.0.0.1:8000" }],
 };
+/** The providers drizzle/0145 applied — frozen, since that migration stays byte-identical. */
+export const REPLACED_PATH_PROVIDERS_0145 = providers0145;
+/** Current providers (drizzle/0150): 'supa-direct' is the capacity rev12 alias budget (2026-10-30) of the same Supa vLLM path. */
+export const REPLACED_PATH_PROVIDERS: Readonly<Record<string, readonly Hop[]>> = { ...providers0145, "supa-direct": providers0145["abcllm-supa"] };
 export function replacedPathRequiredHops(ownerInstanceId: string, providerBudgetId: string): readonly Hop[] | null {
   const owner = REPLACED_PATH_OWNERS[ownerInstanceId], rest = REPLACED_PATH_PROVIDERS[providerBudgetId];
   return Object.hasOwn(REPLACED_PATH_OWNERS, ownerInstanceId) && Object.hasOwn(REPLACED_PATH_PROVIDERS, providerBudgetId) ? [owner, ...rest] : null;

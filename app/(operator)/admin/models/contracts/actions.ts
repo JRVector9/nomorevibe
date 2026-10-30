@@ -17,7 +17,8 @@ const REASONS: Record<string, string> = {
   engine_base_url_invalid: "주소는 https://호스트/v1 형태여야 합니다.", engine_routes_invalid: "쓰는 경로를 하나 이상 골라주세요.",
   registry_key_unknown: "등록부에 없는 모델입니다.", engine_connect_provider_unsupported: "게이트웨이형(abcllm) 등록부 모델만 엔진 연결로 바꿀 수 있습니다.",
   engine_model_not_found: "엔진의 모델 목록에 그 모델이 없습니다. 「엔진 확인」으로 이름을 확인해주세요.",
-  engine_max_len_unknown: "엔진이 최대 길이를 알려 주지 않아 토큰 한도를 정할 수 없습니다.",
+  engine_max_len_unknown: "엔진의 /models 가 이 모델의 최대 길이(max_model_len)를 주지 않습니다. 「컨텍스트 상한(토큰)」에 모델의 컨텍스트 길이를 직접 넣어 주세요.",
+  engine_max_len_invalid: "컨텍스트 상한은 1 이상 2,097,152 이하의 정수여야 합니다.",
   engine_probe_failed: "엔진에 1토큰 시험 호출을 보냈지만 정상 응답이 오지 않았습니다(모델 이름·키·엔진 상태를 확인해주세요).",
   engine_stage_save_failed: "연결은 저장했지만 단계 모델 지정은 실패했습니다. 단계별 모델에서 직접 골라주세요.",
   model_definition_invalid: "등록부 정의 형식이 맞지 않습니다.", model_definition_duplicate: "같은 키가 두 번 있습니다.",
@@ -29,6 +30,8 @@ const reasonOf = (error: unknown) => error instanceof Error ? error.message : ""
 const issue = (error: unknown) => {
   const reason = reasonOf(error);
   if (reason.startsWith("engine_unreachable:")) return [`엔진에 닿지 못했습니다(${reason.slice(19)}). 주소·키를 확인해주세요.`];
+  const mismatch = /^engine_max_len_mismatch:(\d+):(\d+)$/.exec(reason);
+  if (mismatch) return [`엔진이 알려 준 최대 길이(${mismatch[1]})와 입력한 컨텍스트 상한(${mismatch[2]})이 다릅니다. 엔진 값이 기준이니 입력을 비우거나 ${mismatch[1]}로 맞춰 주세요.`];
   return [REASONS[reason] ?? "저장하지 못했습니다. 새로고침해 현재 상태를 확인해주세요."];
 };
 
@@ -69,14 +72,17 @@ export const readbackEngine = webWriteAction(async function readbackEngine(endpo
 export const connectEngine = webWriteAction(async function connectEngine(_previous: ContractSaveState, form: FormData): Promise<ContractSaveState> {
   const admin = await currentAdmin();
   if (!admin) return { issues: ["권한이 없습니다. 다시 로그인해주세요."] };
+  // The typed context bound: empty means none; digits only (the range is checked with the engine's answer in connectAdminEngine).
+  const maxModelLen = String(form.get("maxModelLen") ?? "").trim();
+  if (maxModelLen && !/^\d{1,7}$/.test(maxModelLen)) return { issues: [REASONS.engine_max_len_invalid] };
   try {
     const result = await connectAdminEngine({ registryKey: String(form.get("registryKey") ?? ""), baseUrl: String(form.get("baseUrl") ?? ""),
       auth: form.get("auth") === "none" ? "none" : "stored", apiKey: String(form.get("apiKey") ?? "") || undefined,
       engineModel: String(form.get("engineModel") ?? ""), routes: form.getAll("routes").map(String), selectStages: form.get("selectStages") === "on",
-      note: String(form.get("note") ?? "") || null }, admin.login);
+      note: String(form.get("note") ?? "") || null, maxModelLen: maxModelLen ? Number(maxModelLen) : undefined }, admin.login);
     for (const path of ["/admin/models/contracts", "/admin/models"]) revalidatePath(path);
     const parts = [`연결했습니다: 경로 ${result.contracts.length}개(${result.contracts.map(row => row.routeId).join(", ")}), 요청 모델 ${result.requestModel}`
-      + `(엔진 응답 이름 ${result.responseModel}), 토큰 한도 ${result.totalTokenBound}.`,
+      + `(엔진 응답 이름 ${result.responseModel}), 토큰 한도 ${result.totalTokenBound}${result.totalTokenBoundFrom === "operator" ? "(운영자 입력)" : ""}.`,
       result.stages.length ? `단계 모델 지정: ${result.stages.join(", ")}.` : "단계 모델은 바꾸지 않았습니다.",
       ...(result.firstReviewRenamed ? ["1차 모델 선택을 새 이름으로 바꿨습니다."] : []),
       result.missingPolicyRoutes.length ? `용량 정책에 아직 없는 경로가 있어 그 호출은 보류됩니다: ${result.missingPolicyRoutes.join(" · ")} (정책 추가 필요).`

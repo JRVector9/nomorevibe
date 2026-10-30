@@ -1,7 +1,7 @@
 /** The SQL shape and topology snapshots come from the same strict contract; cross-field/time/row guards remain explicit. */
 import { readFileSync, writeFileSync } from "node:fs";
 import { z } from "zod";
-import { REPLACED_PATH_OWNERS, REPLACED_PATH_PROVIDERS, replacedPathEvidenceShape } from "../../lib/llm/replaced-path-boundary-contract";
+import { REPLACED_PATH_OWNERS, REPLACED_PATH_PROVIDERS, REPLACED_PATH_PROVIDERS_0145, replacedPathEvidenceShape } from "../../lib/llm/replaced-path-boundary-contract";
 const schema = z.toJSONSchema(replacedPathEvidenceShape);
 const allowed = new Set(["$schema","type","properties","required","additionalProperties","const","enum","oneOf","allOf","anyOf","prefixItems","format","pattern","minLength","maxLength","minimum","exclusiveMinimum","maximum","items","minItems","maxItems"]);
 function check(s: unknown) {
@@ -16,7 +16,11 @@ function check(s: unknown) {
 check(schema);
 const template = readFileSync(new URL("./replaced-path-boundary-sql.template.sql",import.meta.url),"utf8");
 writeFileSync(new URL("../../drizzle/0145_replaced_path_boundary_exit.sql",import.meta.url),template.replace("__EVIDENCE_SHAPE__",JSON.stringify(schema))
-  .replace("__OWNERS__",JSON.stringify(REPLACED_PATH_OWNERS)).replace("__PROVIDERS__",JSON.stringify(REPLACED_PATH_PROVIDERS)));
+  .replace("__OWNERS__",JSON.stringify(REPLACED_PATH_OWNERS)).replace("__PROVIDERS__",JSON.stringify(REPLACED_PATH_PROVIDERS_0145)));
 // 0145 is applied in production and stays byte-identical; 0146 replaces only the evidence validator.
 const template0146 = readFileSync(new URL("./replaced-path-boundary-0146.template.sql",import.meta.url),"utf8");
 writeFileSync(new URL("../../drizzle/0146_replaced_path_absent_after_dispatch.sql",import.meta.url),template0146.replace("__EVIDENCE_SHAPE__",JSON.stringify(schema)));
+// 0150 replaces only the topology function with the current providers (0145 keeps the providers it applied).
+const template0150 = readFileSync(new URL("./replaced-path-boundary-0150.template.sql",import.meta.url),"utf8");
+writeFileSync(new URL("../../drizzle/0150_replaced_path_supa_direct.sql",import.meta.url),template0150
+  .replace("__OWNERS__",JSON.stringify(REPLACED_PATH_OWNERS)).replace("__PROVIDERS__",JSON.stringify(REPLACED_PATH_PROVIDERS)));

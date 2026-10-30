@@ -1,15 +1,16 @@
-import { scopedRequestTimeout } from "@/lib/llm/model-registry";
+import { scopedModel, scopedRequestTimeout } from "@/lib/llm/model-registry";
 import { randomUUID } from "node:crypto";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
-import { findOwnPendingModelRequest, requestTextProfileModelSlot, cancelReservedModelSlot,
+import { reconcileGatewayNotStarted, findOwnPendingModelRequest, requestTextProfileModelSlot, cancelReservedModelSlot,
   reconcileTextProfileGatewayTerminal, markModelDispatchIndeterminate } from "@/lib/llm/capacity-repository";
 import { markUnsettledDispatch } from "@/lib/llm/capacity-unsettled";
 import { writeKeywordsWithReservedGateway } from "@/lib/crawl/agent-review-gateway";
 import { textProfileInputHash, type ModelCapacityRequestIdentity } from "@/lib/llm/capacity";
 import { prepareProfileModelDispatch, type ProfileTask, type ProfileWriteExpectation } from "./search-profiles";
-import { profileEvidence, writeKeywords, type KeywordResult } from "./search-profile";
+import { PROFILE_MODEL, profileEvidence, writeKeywords, type KeywordResult } from "./search-profile";
 import type { JobLease } from "@/lib/jobs/control";
 import type { RoleLease } from "@/lib/jobs/role-leader";
+import { textRouteCallable } from "@/lib/llm/serving-contract-store";
 
 export type ProfileCapacityResult = { kind: "skipped" } | { kind: "result"; result: KeywordResult; expectedProfile?: ProfileWriteExpectation };
 /** Fixed route coordinator. No callback, JSON shape or timeout is dispatch authority. */
@@ -17,7 +18,7 @@ export async function writeKeywordsWithModelCapacity(task: ProfileTask, lease: J
   options: { timeoutMs: number; signal?: AbortSignal; roleLease?: RoleLease }): Promise<ProfileCapacityResult> {
   const snapshot = structuredClone(task), ownedLease = structuredClone(lease), captured = { ...options, timeoutMs: scopedRequestTimeout("product-search-profile", options.timeoutMs),
     roleLease: options.roleLease && structuredClone(options.roleLease) };
-  if (!process.env.ABCLLM_API_KEY?.trim()) return { kind: "result", result: { ok: false, error: "no_key" } };
+  if (!textRouteCallable("product-search-profile", scopedModel("product-search-profile", PROFILE_MODEL))) return { kind: "result", result: { ok: false, error: "no_key" } };
   const prepared = await prepareProfileModelDispatch(snapshot, ownedLease, captured);
   if (prepared.kind === "disabled") return { kind: "result", result: await writeKeywords(profileEvidence(snapshot.product, snapshot.reviewerNote), options) };
   if (prepared.kind === "skipped") return prepared;
@@ -62,10 +63,11 @@ export async function writeKeywordsWithModelCapacity(task: ProfileTask, lease: J
   }
   try {
     if (native.terminal) await reconcileTextProfileGatewayTerminal(native.terminal);
+    else if (native.notStarted) await reconcileGatewayNotStarted(native.notStarted);
     else if (!await markModelDispatchIndeterminate(dispatch, captured.signal?.aborted ? "local_abort" : "transport_unknown"))
       throw new Error("text_profile_dispatch_not_marked");
   } catch (error) {
-    if (native.terminal) await markUnsettledDispatch(dispatch);
+    if (native.terminal || native.notStarted) await markUnsettledDispatch(dispatch);
     if (!native.result.ok) throw new AggregateError([native.result, error], "profile result and terminal recording failed");
     throw error;
   }

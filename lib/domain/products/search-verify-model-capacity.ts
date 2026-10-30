@@ -2,7 +2,7 @@ import { scopedRequestTimeout } from "@/lib/llm/model-registry";
 import { scopedModel } from "@/lib/llm/model-registry";
 import { randomUUID } from "node:crypto";
 import { prepareSearchVerifyGatewayCall, verifyKeywordsWithReservedGateway, readSearchVerifyGatewayTerminal } from "@/lib/crawl/agent-review-gateway";
-import { readModelCapacityCallerControl, findOwnPendingModelRequest, requestSearchVerifyModelSlot, cancelReservedModelSlot,
+import { reconcileGatewayNotStarted, readModelCapacityCallerControl, findOwnPendingModelRequest, requestSearchVerifyModelSlot, cancelReservedModelSlot,
   markModelDispatchIndeterminate, reconcileSearchVerifyGatewayTerminal, readSearchVerifyContinuation } from "@/lib/llm/capacity-repository";
 import { markUnsettledDispatch } from "@/lib/llm/capacity-unsettled";
 import { modelCapacityRequestIdentitySchema, firstSearchVerifyStep, nextSearchVerifyStep, searchVerifyStepKeywords,
@@ -13,6 +13,7 @@ import type { JobLease } from "@/lib/jobs/control";
 import { profileEvidence } from "./search-profile";
 import { prepareSearchVerifyModelDispatch, sealSearchVerifyWriteExpectation, type ProfileTask, type SearchVerifyWriteExpectation } from "./search-profiles";
 import { VERIFY_MODEL, verifyKeywords, verifyKeywordsInChunks, type VerifyResult } from "./search-verify";
+import { textRouteCallable } from "@/lib/llm/serving-contract-store";
 
 /**
  * "expired": the original shared deadline ended while the next permit was unavailable, or a resumed execution ran out.
@@ -33,7 +34,7 @@ export async function verifyKeywordsWithModelCapacity(task: ProfileTask, lease: 
     keywords: [...snapshot.profile!.keywordsEn, ...snapshot.profile!.keywordsKo] };
   const legacy = async () => ({ kind: "result" as const, result: await (options.chunked ? verifyKeywordsInChunks : verifyKeywords)(item,
     { request: options.request, signal: options.signal, timeoutMs: scopedRequestTimeout("product-search-verify", options.timeoutMs) }) });
-  if (!process.env.ABCLLM_API_KEY?.trim()) return legacy();
+  if (!textRouteCallable("product-search-verify", scopedModel("product-search-verify", VERIFY_MODEL))) return legacy();
   const control = await readModelCapacityCallerControl();
   if (control.mode === "disabled") return legacy();
   if (control.mode !== "open") throw new ModelCapacityDeferredError("draining");
@@ -109,10 +110,11 @@ export async function verifyKeywordsWithModelCapacity(task: ProfileTask, lease: 
     // Physical history settles before any deadline, signal or domain decision.
     try {
       if (native.terminal) await reconcileSearchVerifyGatewayTerminal(native.terminal);
+      else if (native.notStarted) await reconcileGatewayNotStarted(native.notStarted);
       else if (!await markModelDispatchIndeterminate(dispatch, options.signal?.aborted ? "local_abort" : "transport_unknown"))
         throw new Error("search_verify_dispatch_not_marked");
     } catch (cleanup) {
-      if (native.terminal) await markUnsettledDispatch(dispatch);
+      if (native.terminal || native.notStarted) await markUnsettledDispatch(dispatch);
       if (!native.result.ok) throw new AggregateError([native.result, cleanup], "search_verify_result_cleanup_failed");
       throw cleanup;
     }

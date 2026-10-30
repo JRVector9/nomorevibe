@@ -26,7 +26,7 @@ import { currentReplayDb } from "@/lib/db/replay-scope";
 import { modelCapacityControl, modelCapacityEvents, modelCapacityRequests } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import type { Ai1GatewayTerminal, Ai2GatewayTerminal, Ai1ItemGatewayTerminal, GatewayNotStarted } from "@/lib/crawl/agent-review-gateway";
-import { gatewayNotStartedEvidenceSchema } from "./capacity";
+import { gatewayNotStartedEvidenceSchema, type GatewayNotStartedDispatch } from "./capacity";
 import { reviewHash } from "@/lib/crawl/agent-review-contract";
 import { providerBoundaryCanonicalHash } from "./provider-boundary-contract";
 import {
@@ -463,6 +463,14 @@ export async function dispatchLocalModelCapacity(value: {
   return committed;
 }
 
+/** local-direct 행의 동일성: 같은 owner handle 에 provider·class·pool·logical key·route·model·physical group·backend·bindingHash·binding 이 그대로다. */
+function localModelRowMatches(row: RequestRow | undefined, dispatch: LocalModelDispatch): row is RequestRow {
+  return owned(row, dispatch) && row.provider === "local-direct" && row.class === "background" && row.pool === "reviewer"
+    && row.logicalWorkKey === dispatch.binding.logicalWorkKey && row.routeId === dispatch.binding.routeId && row.model === dispatch.binding.model
+    && row.groupId === dispatch.binding.physicalGroup && row.providerBudgetId === dispatch.binding.backendId && !!row.dispatchedAt
+    && row.dispatchBindingHash === dispatch.bindingHash && isDeepStrictEqual(row.dispatchBinding, dispatch.binding);
+}
+
 /** 실제 adapter가 발급한 원본 증인만 받는다. 현재 job·정책이 바뀌어도 과거 물리 호출은 정산한다. */
 export async function reconcileLocalModelTerminal(terminal: unknown): Promise<{ kind: "settled" | "already_settled" }> {
   const { readLocalModelTerminal } = await import("./local-model-terminal");
@@ -474,11 +482,7 @@ export async function reconcileLocalModelTerminal(terminal: unknown): Promise<{ 
     const [mutex] = await tx.select({ id: modelCapacityControl.id }).from(modelCapacityControl).where(eq(modelCapacityControl.id, 1)).for("update");
     if (!mutex) return fail("model_capacity_control_missing");
     const [row] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, dispatch.requestId)).for("update");
-    if (!owned(row, dispatch as LocalModelDispatch) || row.provider !== "local-direct" || row.class !== "background" || row.pool !== "reviewer"
-      || row.logicalWorkKey !== dispatch.binding.logicalWorkKey || row.routeId !== dispatch.binding.routeId || row.model !== dispatch.binding.model
-      || row.groupId !== dispatch.binding.physicalGroup || row.providerBudgetId !== dispatch.binding.backendId || !row.dispatchedAt
-      || row.dispatchBindingHash !== dispatch.bindingHash || !isDeepStrictEqual(row.dispatchBinding, dispatch.binding))
-      return fail("local_model_terminal_binding_mismatch");
+    if (!localModelRowMatches(row, dispatch as LocalModelDispatch)) return fail("local_model_terminal_binding_mismatch");
     if (row.state === "settled") {
       if (row.terminalEvidenceHash !== evidenceHash || !isDeepStrictEqual(row.terminalEvidence, evidence)) return fail("local_model_terminal_conflict");
       return { kind: "already_settled" };
@@ -1015,9 +1019,54 @@ export async function reconcileAi1ItemGatewayTerminal(terminal: Ai1ItemGatewayTe
   });
 }
 
+/** text 풀 게이트웨이 행의 동일성(각 text terminal reconcile 과 같은 규칙): background·text 풀·`logical:inputHash` workKey·route/provider/model·
+ * (member 경로는) logicalMemberKeys·bindingHash·dispatchedAt·binding 전체가 같은 owner handle 의 행에 그대로다. */
+function textGatewayRowMatches(row: RequestRow | undefined, dispatch: ModelCapacityDispatch & Readonly<{ bindingHash: string;
+  binding: Readonly<{ logicalWorkKey: string; inputHash: string; routeId: string; provider: string; model: string }> }>,
+  memberKeys: readonly string[] | null): row is RequestRow {
+  return owned(row, dispatch) && row.logicalWorkKey === dispatch.binding.logicalWorkKey
+    && (memberKeys === null || isDeepStrictEqual(row.logicalMemberKeys, memberKeys))
+    && row.routeId === dispatch.binding.routeId && row.provider === dispatch.binding.provider
+    && row.model === dispatch.binding.model && row.class === "background" && row.pool === "text"
+    && row.workKey === `${dispatch.binding.logicalWorkKey}:${dispatch.binding.inputHash}`
+    && row.dispatchBindingHash === dispatch.bindingHash && !!row.dispatchedAt
+    && isDeepStrictEqual(row.dispatchBinding, dispatch.binding);
+}
+/** AI1 legacy·AI1 item·AI2 item 행의 동일성(0102 그대로): reviewer 풀, legacy 는 first 에 workKey 자유, item 은 `logical:item.bindingHash`. */
+function reviewerGatewayRowMatches(row: RequestRow | undefined, dispatch: Ai1ModelDispatch | Ai1ItemModelDispatch | Ai2ModelDispatch): row is RequestRow {
+  const binding = dispatch.binding;
+  const expected = binding.kind === "ai1_legacy_gateway" ? { class: "first", workKey: null }
+    : { class: binding.kind === "ai2_item_gateway" ? "second" : "first", workKey: `${binding.logicalWorkKey}:${binding.item.bindingHash}` };
+  return owned(row, dispatch) && row.logicalWorkKey === binding.logicalWorkKey && row.routeId === binding.routeId
+    && row.provider === binding.provider && row.model === binding.model && row.class === expected.class && row.pool === "reviewer"
+    && (expected.workKey === null || row.workKey === expected.workKey)
+    && row.dispatchBindingHash === dispatch.bindingHash && !!row.dispatchedAt && isDeepStrictEqual(row.dispatchBinding, binding);
+}
+/** not_started 증인의 dispatch 가 가리키는 행이 그 binding kind 의 terminal reconcile 과 같은 동일성 규칙을 만족하는가. */
+function gatewayNotStartedRowMatches(row: RequestRow | undefined, dispatch: GatewayNotStartedDispatch): row is RequestRow {
+  const binding = dispatch.binding;
+  switch (binding.kind) {
+    case "ai1_legacy_gateway": return reviewerGatewayRowMatches(row, dispatch as Ai1ModelDispatch);
+    case "ai1_item_gateway": return reviewerGatewayRowMatches(row, dispatch as Ai1ItemModelDispatch);
+    case "ai2_item_gateway": return reviewerGatewayRowMatches(row, dispatch as Ai2ModelDispatch);
+    case "text_profile_gateway": return textGatewayRowMatches(row, dispatch as TextProfileModelDispatch, null);
+    case "reason_translation_gateway":
+      return textGatewayRowMatches(row, dispatch as ReasonTranslationModelDispatch, reasonTranslationMemberKeys(binding.members));
+    case "product_translation_gateway":
+      return textGatewayRowMatches(row, dispatch as ProductTranslationModelDispatch, productTranslationMemberKeys(binding.members));
+    case "product_tagline_ko_gateway":
+      return textGatewayRowMatches(row, dispatch as ProductTaglineKoModelDispatch, productTaglineKoMemberKeys(binding.members));
+    case "crawl_tagline_gateway": return crawlTaglineRowMatches(row, dispatch as CrawlTaglineModelDispatch);
+    case "search_verify_gateway": return searchVerifyRowMatches(row, dispatch as SearchVerifyModelDispatch);
+    case "websearch_query_gateway": return websearchQueryRowMatches(row, dispatch as WebsearchQueryModelDispatch);
+    case "local_model_direct": return localModelRowMatches(row, dispatch as LocalModelDispatch);
+  }
+}
+
 /**
- * fetch 를 부르지 않고 닫은 AI1·AI1 item·AI2 dispatch 의 정산(CLI D5 not_started 의 게이트웨이판, 0102). 게이트웨이 모듈이 낸 원본 증인만 받는다.
- * 같은 owner handle·binding 의 dispatched 행만 settled 로 바꾼다 — indeterminate 는 전송 여부를 이미 모른다는 기록이라 받지 않는다.
+ * fetch 를 부르지 않았거나 요청 바이트를 하나도 쓰지 못한 채 닫은 게이트웨이 dispatch 의 정산(CLI D5 not_started 의 게이트웨이판, 0102 → 0149 모든 kind).
+ * 게이트웨이 모듈이 낸 원본 증인만 받는다. 같은 owner handle·binding 의 dispatched 행만 settled 로 바꾼다 — indeterminate 는 전송 여부를
+ * 이미 모른다는 기록이라 받지 않는다. 행 동일성은 binding kind 별 terminal reconcile 의 규칙 그대로다(AI1/AI2 는 0102 와 같다).
  * 점유만 끝나고 binding 의 C 는 그대로다(사용량 증거 없음). 역사적 dispatch 로 정산하므로 지금의 정책·mode·job 은 막지 않는다.
  */
 export async function reconcileGatewayNotStarted(terminal: GatewayNotStarted): Promise<{ kind: "settled" | "already_settled" }> {
@@ -1025,21 +1074,15 @@ export async function reconcileGatewayNotStarted(terminal: GatewayNotStarted): P
   const { readGatewayNotStarted } = await import("@/lib/crawl/agent-review-gateway");
   const native = readGatewayNotStarted(terminal);
   if (!native) fail("invalid_gateway_not_started");
-  const evidence = gatewayNotStartedEvidenceSchema.parse(native), dispatch = evidence.dispatch, binding = dispatch.binding;
+  const evidence = gatewayNotStartedEvidenceSchema.parse(native), dispatch = evidence.dispatch;
   const evidenceHash = reviewHash(evidence);
-  const expected = binding.kind === "ai1_legacy_gateway" ? { class: "first", workKey: null }
-    : { class: binding.kind === "ai2_item_gateway" ? "second" : "first", workKey: `${binding.logicalWorkKey}:${binding.item.bindingHash}` };
   return transaction(async tx => {
     const [mutex] = await tx.select({ id: modelCapacityControl.id }).from(modelCapacityControl)
       .where(eq(modelCapacityControl.id, 1)).for("update");
     if (!mutex) fail("model_capacity_control_missing");
     const [row] = await tx.select().from(modelCapacityRequests)
       .where(eq(modelCapacityRequests.requestId, dispatch.requestId)).for("update");
-    if (!owned(row, dispatch) || row.logicalWorkKey !== binding.logicalWorkKey || row.routeId !== binding.routeId
-      || row.provider !== binding.provider || row.model !== binding.model || row.class !== expected.class || row.pool !== "reviewer"
-      || expected.workKey !== null && row.workKey !== expected.workKey
-      || row.dispatchBindingHash !== dispatch.bindingHash || !row.dispatchedAt
-      || !isDeepStrictEqual(row.dispatchBinding, binding)) fail("gateway_not_started_binding_mismatch");
+    if (!gatewayNotStartedRowMatches(row, dispatch)) fail("gateway_not_started_binding_mismatch");
     if (row.state === "settled") {
       if (row.terminalEvidenceHash !== evidenceHash || !isDeepStrictEqual(row.terminalEvidence, evidence)) fail("gateway_not_started_conflict");
       return { kind: "already_settled" };
@@ -1148,12 +1191,7 @@ export async function reconcileTextProfileGatewayTerminal(terminal: TextProfileG
     if (!mutex) fail("model_capacity_control_missing");
     const [row] = await tx.select().from(modelCapacityRequests)
       .where(eq(modelCapacityRequests.requestId, dispatch.requestId)).for("update");
-    if (!owned(row, dispatch) || row.logicalWorkKey !== dispatch.binding.logicalWorkKey
-      || row.routeId !== dispatch.binding.routeId || row.provider !== dispatch.binding.provider
-      || row.model !== dispatch.binding.model || row.class !== "background" || row.pool !== "text"
-      || row.workKey !== `${dispatch.binding.logicalWorkKey}:${dispatch.binding.inputHash}`
-      || row.dispatchBindingHash !== dispatch.bindingHash || !row.dispatchedAt
-      || !isDeepStrictEqual(row.dispatchBinding, dispatch.binding)) fail("text_profile_gateway_terminal_binding_mismatch");
+    if (!textGatewayRowMatches(row, dispatch, null)) fail("text_profile_gateway_terminal_binding_mismatch");
     if (row.state === "settled") {
       if (row.terminalEvidenceHash !== evidenceHash || !isDeepStrictEqual(row.terminalEvidence, evidence))
         fail("text_profile_gateway_terminal_conflict");
@@ -1267,13 +1305,8 @@ export async function reconcileReasonTranslationGatewayTerminal(terminal: Reason
     if (!mutex) fail("model_capacity_control_missing");
     const [row] = await tx.select().from(modelCapacityRequests)
       .where(eq(modelCapacityRequests.requestId, dispatch.requestId)).for("update");
-    if (!owned(row, dispatch) || row.logicalWorkKey !== dispatch.binding.logicalWorkKey
-      || !isDeepStrictEqual(row.logicalMemberKeys, reasonTranslationMemberKeys(dispatch.binding.members))
-      || row.routeId !== dispatch.binding.routeId || row.provider !== dispatch.binding.provider
-      || row.model !== dispatch.binding.model || row.class !== "background" || row.pool !== "text"
-      || row.workKey !== `${dispatch.binding.logicalWorkKey}:${dispatch.binding.inputHash}`
-      || row.dispatchBindingHash !== dispatch.bindingHash || !row.dispatchedAt
-      || !isDeepStrictEqual(row.dispatchBinding, dispatch.binding)) fail("reason_translation_gateway_terminal_binding_mismatch");
+    if (!textGatewayRowMatches(row, dispatch, reasonTranslationMemberKeys(dispatch.binding.members)))
+      fail("reason_translation_gateway_terminal_binding_mismatch");
     if (row.state === "settled") {
       if (row.terminalEvidenceHash !== evidenceHash || !isDeepStrictEqual(row.terminalEvidence, evidence))
         fail("reason_translation_gateway_terminal_conflict");
@@ -1387,13 +1420,8 @@ export async function reconcileProductTranslationGatewayTerminal(terminal: Produ
     if (!mutex) fail("model_capacity_control_missing");
     const [row] = await tx.select().from(modelCapacityRequests)
       .where(eq(modelCapacityRequests.requestId, dispatch.requestId)).for("update");
-    if (!owned(row, dispatch) || row.logicalWorkKey !== dispatch.binding.logicalWorkKey
-      || !isDeepStrictEqual(row.logicalMemberKeys, productTranslationMemberKeys(dispatch.binding.members))
-      || row.routeId !== dispatch.binding.routeId || row.provider !== dispatch.binding.provider
-      || row.model !== dispatch.binding.model || row.class !== "background" || row.pool !== "text"
-      || row.workKey !== `${dispatch.binding.logicalWorkKey}:${dispatch.binding.inputHash}`
-      || row.dispatchBindingHash !== dispatch.bindingHash || !row.dispatchedAt
-      || !isDeepStrictEqual(row.dispatchBinding, dispatch.binding)) fail("product_translation_gateway_terminal_binding_mismatch");
+    if (!textGatewayRowMatches(row, dispatch, productTranslationMemberKeys(dispatch.binding.members)))
+      fail("product_translation_gateway_terminal_binding_mismatch");
     if (row.state === "settled") {
       if (row.terminalEvidenceHash !== evidenceHash || !isDeepStrictEqual(row.terminalEvidence, evidence))
         fail("product_translation_gateway_terminal_conflict");
@@ -1507,13 +1535,8 @@ export async function reconcileProductTaglineKoGatewayTerminal(terminal: Product
     if (!mutex) fail("model_capacity_control_missing");
     const [row] = await tx.select().from(modelCapacityRequests)
       .where(eq(modelCapacityRequests.requestId, dispatch.requestId)).for("update");
-    if (!owned(row, dispatch) || row.logicalWorkKey !== dispatch.binding.logicalWorkKey
-      || !isDeepStrictEqual(row.logicalMemberKeys, productTaglineKoMemberKeys(dispatch.binding.members))
-      || row.routeId !== dispatch.binding.routeId || row.provider !== dispatch.binding.provider
-      || row.model !== dispatch.binding.model || row.class !== "background" || row.pool !== "text"
-      || row.workKey !== `${dispatch.binding.logicalWorkKey}:${dispatch.binding.inputHash}`
-      || row.dispatchBindingHash !== dispatch.bindingHash || !row.dispatchedAt
-      || !isDeepStrictEqual(row.dispatchBinding, dispatch.binding)) fail("product_tagline_ko_gateway_terminal_binding_mismatch");
+    if (!textGatewayRowMatches(row, dispatch, productTaglineKoMemberKeys(dispatch.binding.members)))
+      fail("product_tagline_ko_gateway_terminal_binding_mismatch");
     if (row.state === "settled") {
       if (row.terminalEvidenceHash !== evidenceHash || !isDeepStrictEqual(row.terminalEvidence, evidence))
         fail("product_tagline_ko_gateway_terminal_conflict");

@@ -38,6 +38,9 @@
 화면 맨 위 「엔진 연결」은 OpenAI 호환 엔진 하나를 등록부 모델 하나에 붙인다. 한 번 저장으로 아래를 같이 한다.
 
 1. 서버가 그 주소의 `/models`를 다시 읽는다. 고른 모델이 목록에 있어야 하고, 그 최대 길이가 계약의 토큰 한도(`totalTokenBound`)가 된다.
+   - `/models`가 `max_model_len`을 주지 않는 엔진(mlx_lm.server, M3 mlx-serve 프록시 `:8014`)은 「컨텍스트 상한(토큰)」에 운영자가 직접 넣는다(1 이상 2,097,152 이하 정수). 비워 두면 상한을 넣으라는 안내로 거절한다.
+   - 엔진이 알려 주면 그 값이 기준이다. 같은 값은 통과하고, 다른 값을 넣으면 두 값을 보여 주며 거절한다(어느 쪽도 조용히 고르지 않는다).
+   - 운영자 입력 상한으로 만든 계약은 `deploymentRevision`이 `-C<상한>-operator-bound`로 끝나고, 계약 메모(저장 감사의 `note`)에 `컨텍스트 상한 운영자 입력 <상한>`이 붙는다. 엔진이 알려 준 상한에는 표시가 없다.
    - 이어서 1토큰 시험 호출을 한 번 보내, 엔진이 답하는 모델 이름을 계약의 응답 모델로 적는다. vLLM은 요청 이름과 달리 첫 등록 이름으로 답한다.
    - 키는 이 두 요청에만 쓴다.
 2. 고른 등록부 정의(예: `m1:translation`)의 주소와 엔진 모델명을 바꾸고 abcLLM 이름표(`[m1]`)를 뗀다. 엔진은 자기 모델명만 받기 때문이다(이름표가 붙으면 404).
@@ -68,6 +71,7 @@
    - 주소: M1 주소(`https://…ts.net/v1`)
    - 인증: API 키 저장
    - 「엔진 확인」 후 엔진 모델: `mlx-community--gemma-4-26b-a4b-it-4bit`(최대 98304)
+   - 2026-10-30부터 M1은 `mlx_lm.server`라 `/models`에 최대 길이가 없다. 컨텍스트 상한에 `131072`를 넣는다(gemma-4-26b text `max_position_embeddings`). M3 mlx-serve `:8014`의 `gpt-oss-120b`도 같은 방식으로 `131072`다.
    - 경로: `product-translate`, `reason-translate`
    - 단계 지정: 켬
 2. 용량 정책에서 두 경로의 `[m1] mlx-community--gemma-4-26b-a4b-it-4bit`를 `mlx-community--gemma-4-26b-a4b-it-4bit`(그룹 `m1-qwen`)로 바꾼다. DRAIN → 정책 → OPEN 순서다.

@@ -3,7 +3,7 @@ import { scopedModel } from "@/lib/llm/model-registry";
 import { randomUUID } from "node:crypto";
 import { KOREAN_TAGLINE_MODEL, translateTaglinesToKorean } from "@/lib/crawl/translate";
 import { prepareProductTaglineKoGatewayCall, translateTaglinesWithReservedGateway } from "@/lib/crawl/agent-review-gateway";
-import { readModelCapacityCallerControl, findOwnPendingModelRequest, requestProductTaglineKoModelSlot,
+import { reconcileGatewayNotStarted, readModelCapacityCallerControl, findOwnPendingModelRequest, requestProductTaglineKoModelSlot,
   findOwnPendingProductTextRequests, cancelOwnPendingProductTextRequest,
   cancelReservedModelSlot, markModelDispatchIndeterminate, reconcileProductTaglineKoGatewayTerminal } from "@/lib/llm/capacity-repository";
 import { markUnsettledDispatch } from "@/lib/llm/capacity-unsettled";
@@ -15,6 +15,7 @@ import type { JobLease } from "@/lib/jobs/control";
 import { roleLeaseFromEnv, type RoleLease } from "@/lib/jobs/role-leader";
 import type { KoreanTaglineBatch } from "./korean-tagline";
 import type { KoreanTaglineWriteExpectation } from "./korean-taglines";
+import { textRouteCallable } from "@/lib/llm/serving-contract-store";
 
 export type KoreanTaglineCapacityResult = { kind: "skipped" } | {
   kind: "result"; result: KoreanTaglineBatch; expectation?: KoreanTaglineWriteExpectation; batch?: readonly KoreanTaglineTask[];
@@ -32,7 +33,7 @@ export async function translateKoreanTaglinesWithModelCapacity(value: readonly K
   let items = tasks.map(task => ({ name: displayProjectName(task.name, task.repoUrl), tagline: koreanTaglineSource(task) }));
   const legacy = async () => ({ kind: "result" as const,
     result: await translateTaglinesToKorean(items, scopedRequestTimeout("product-tagline-ko", options.timeoutMs), undefined, options.signal) });
-  if (!process.env.ABCLLM_API_KEY?.trim()) return legacy();
+  if (!textRouteCallable("product-tagline-ko", scopedModel("product-tagline-ko", KOREAN_TAGLINE_MODEL))) return legacy();
   const control = await readModelCapacityCallerControl();
   if (control.mode === "disabled") return legacy();
   if (control.mode !== "open") throw new ModelCapacityDeferredError("draining");
@@ -102,10 +103,11 @@ export async function translateKoreanTaglinesWithModelCapacity(value: readonly K
   // Physical history settles before current job/signal/domain writer decisions.
   try {
     if (native.terminal) await reconcileProductTaglineKoGatewayTerminal(native.terminal);
+    else if (native.notStarted) await reconcileGatewayNotStarted(native.notStarted);
     else if (!await markModelDispatchIndeterminate(prepared.dispatch, options.signal?.aborted ? "local_abort" : "transport_unknown"))
       throw new Error("product_tagline_ko_dispatch_not_marked");
   } catch (cleanup) {
-    if (native.terminal) await markUnsettledDispatch(prepared.dispatch);
+    if (native.terminal || native.notStarted) await markUnsettledDispatch(prepared.dispatch);
     if (!native.result.ok) throw new AggregateError([native.result, cleanup], "product_tagline_ko_result_cleanup_failed");
     throw cleanup;
   }

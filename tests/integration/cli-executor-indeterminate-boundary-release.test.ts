@@ -9,6 +9,7 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { afterAll,beforeAll,expect,it } from "vitest";
 import * as schema from "@/lib/db/schema";
+import { gatewayNotStartedAllKindsTerminalSql } from "@/lib/db/operations-schema";
 import { modelCapacityPolicyHash,publicationClassifyMemberKeys,type ModelCapacityPolicy } from "@/lib/llm/capacity";
 import { providerBoundaryCanonicalHash } from "@/lib/llm/provider-boundary-contract";
 import { cliExecutorIndeterminatePlanHash } from "@/lib/llm/cli-executor-indeterminate-boundary-contract";
@@ -61,7 +62,10 @@ afterAll(async()=>{await client.end({timeout:5});if(created)await admin.unsafe(`
 it("0136 preserves nonempty old rows and the complete0135 CHECK predecessor",async()=>{
   expect(await rows()).toEqual(beforeRows);const after=await defs();
   for(const n of checks){const table=n===checks[4]?"model_capacity_events":"model_capacity_requests",fn=n===checks[4]?"event":"request";
-    await client.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT unknown_expected CHECK (((((${beforeChecks[n].slice(6)}) OR nmv_cli_executor_indeterminate_${fn}_valid(to_jsonb(${table}))) OR nmv_cli_executor_indeterminate_removed_${fn}_valid(to_jsonb(${table}))) OR nmv_replaced_provider_${fn}_valid(to_jsonb(${table}))) OR nmv_replaced_path_${fn}_valid(to_jsonb(${table})))`);
+    // 0149 appends the all-kinds gateway_not_started branch to the requests terminal CHECK only (the schema constant, not pasted SQL).
+    let predicate=`((((${beforeChecks[n].slice(6)}) OR nmv_cli_executor_indeterminate_${fn}_valid(to_jsonb(${table}))) OR nmv_cli_executor_indeterminate_removed_${fn}_valid(to_jsonb(${table}))) OR nmv_replaced_provider_${fn}_valid(to_jsonb(${table}))) OR nmv_replaced_path_${fn}_valid(to_jsonb(${table}))`;
+    if(n===checks[3])predicate=`(${predicate}) OR (${gatewayNotStartedAllKindsTerminalSql})`;
+    await client.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT unknown_expected CHECK (${predicate})`);
     try{expect(after[n]).toBe((await client`SELECT pg_get_constraintdef(oid) definition FROM pg_constraint WHERE conname='unknown_expected'`)[0].definition);}finally{await client.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT unknown_expected`);}}
   expect((await client`SELECT count(*)::int n FROM drizzle.__drizzle_migrations`)[0].n).toBe(journal.entries.length);
 });
