@@ -45,4 +45,25 @@ describe('migration journal order', () => {
     expect(migration).toContain(`INSERT INTO runtime_settings (id, values, updated_by) VALUES (1, '{"version":1}'::jsonb, 'migration:0152') ON CONFLICT (id) DO NOTHING;`);
     expect(migration).not.toMatch(/ALTER TABLE|DROP /);
   });
+
+  // PR 1b-A (device admission): 0153 / when 1794086401064 follows the runtime_settings document; rows are seeded from the live policy's groupLimits.
+  it('registers the device admission tables as 0153 seeded from the live policy groupLimits', async () => {
+    const { readFileSync } = await import('node:fs');
+    const journal = JSON.parse(readFileSync('drizzle/meta/_journal.json', 'utf8')) as { entries: { idx: number; when: number; tag: string }[] };
+    expect(journal.entries.find(entry => entry.tag === '0153_model_capacity_devices')).toMatchObject({ idx: 153, when: 1794086401064, version: '7' });
+    const migration = readFileSync('drizzle/0153_model_capacity_devices.sql', 'utf8');
+    expect(migration).toContain('CREATE TABLE model_capacity_devices');
+    expect(migration).toContain('CREATE TABLE model_capacity_device_roles');
+    for (const name of ['model_capacity_devices_id_check', 'model_capacity_devices_limits_check', 'model_capacity_devices_physical_check',
+      'model_capacity_devices_version_check', 'model_capacity_device_roles_rank_check', 'model_capacity_device_roles_route_check']) expect(migration).toContain(`CONSTRAINT ${name} CHECK`);
+    expect(migration).toContain('REFERENCES model_capacity_devices (device_id) ON DELETE CASCADE');
+    // seed: device = groupLimits key, cap = limit, idle 60000, reserve 0, no rank rows → identical to today's per-group rule until the operator edits
+    expect(migration).toContain('INSERT INTO model_capacity_devices (device_id, limit_slots, secondary_cap, idle_ms, reserve_slots, updated_by, note)');
+    expect(migration).toContain("SELECT g.key, g.value::integer, g.value::integer, 60000, 0, 'migration:0153',");
+    expect(migration).toContain("FROM model_capacity_control c, jsonb_each_text(c.policy->'groupLimits') g");
+    expect(migration).toContain("jsonb_typeof(c.policy->'groupLimits') = 'object'");
+    expect(migration).toContain("g.value ~ '^[1-9][0-9]{0,2}$' AND g.value::integer BETWEEN 1 AND 256");
+    expect(migration).toContain('ON CONFLICT (device_id) DO NOTHING;');
+    expect(migration).not.toMatch(/ALTER TABLE|DROP |CREATE (OR REPLACE )?(FUNCTION|TRIGGER)|UPDATE model_capacity/);
+  });
 });

@@ -1065,6 +1065,13 @@
       "when": 1794086401063,
       "tag": "0152_runtime_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 153,
+      "version": "7",
+      "when": 1794086401064,
+      "tag": "0153_model_capacity_devices",
+      "breakpoints": true
     }
   ]
 }

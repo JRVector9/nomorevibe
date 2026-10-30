@@ -200,6 +200,47 @@ export const modelCapacityEvents = pgTable('model_capacity_events', {
   index('model_capacity_events_request_idx').on(table.requestId, table.id),
 ]);
 
+/**
+ * 장비별 실시간 입장 설정(0153, PR 1b). 장비 = 정책 route 의 groupId = model_capacity_requests.group_id. 정책 세대(hash)에 들어가지 않는다:
+ * 저장은 다음 grant 부터 적용되고 잡힌 행은 건드리지 않는다(DRAIN 불필요). 입장 판정 SQL 과 상태 보기는 lib/llm/capacity-devices.ts 가 단일 출처다.
+ */
+export const modelCapacityDevices = pgTable('model_capacity_devices', {
+  deviceId: varchar('device_id', { length: 120 }).primaryKey(),
+  /** 장비 칸 수(실제 동시 처리 수) */
+  limitSlots: integer('limit_slots').notNull(),
+  /** 우선 역할이 바쁠 때 rank>1 역할 합계 상한 */
+  secondaryCap: integer('secondary_cap').notNull(),
+  /** 우선 역할 유휴 판정 시간 */
+  idleMs: integer('idle_ms').notNull().default(60_000),
+  /** 빌려 쓰는 중에도 우선 역할용으로 비워 둘 칸 */
+  reserveSlots: integer('reserve_slots').notNull().default(0),
+  /** 운영자가 적은 엔진 실제 동시 처리 수(선택; 저장 검증·경고용) */
+  physicalLimit: integer('physical_limit'),
+  enabled: boolean('enabled').notNull().default(true),
+  /** 폼 compare-and-set 과 감사 기록의 참조. 순위 행이 바뀌어도 올라간다 */
+  version: bigint('version', { mode: 'number' }).notNull().default(1),
+  note: varchar('note', { length: 400 }),
+  updatedBy: varchar('updated_by', { length: 120 }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
+  updatedAt: timestamp('updated_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
+}, table => [
+  check('model_capacity_devices_id_check', sql`char_length(${table.deviceId}) > 0 and ${table.deviceId} = btrim(${table.deviceId}) and ${table.deviceId} !~ '[[:cntrl:]]'`),
+  check('model_capacity_devices_limits_check', sql`${table.limitSlots} between 1 and 256 and ${table.secondaryCap} between 0 and ${table.limitSlots} and ${table.reserveSlots} between 0 and ${table.limitSlots} - 1 and ${table.idleMs} between 0 and 3600000`),
+  check('model_capacity_devices_physical_check', sql`${table.physicalLimit} is null or (${table.physicalLimit} between 1 and 256 and ${table.limitSlots} <= ${table.physicalLimit})`),
+  check('model_capacity_devices_version_check', sql`${table.version} between 1 and 9007199254740991`),
+]);
+/** 장비 안 역할 순위(0153). rank 1 = 우선 역할(여러 route 가능). 순위 행이 없는 route 는 최하위(32767)다. 장비 행 삭제에 따라 지워진다. */
+export const modelCapacityDeviceRoles = pgTable('model_capacity_device_roles', {
+  deviceId: varchar('device_id', { length: 120 }).notNull(),
+  routeId: varchar('route_id', { length: 120 }).notNull(),
+  roleRank: integer('role_rank').notNull(),
+}, table => [
+  primaryKey({ columns: [table.deviceId, table.routeId], name: 'model_capacity_device_roles_pkey' }),
+  foreignKey({ columns: [table.deviceId], foreignColumns: [modelCapacityDevices.deviceId], name: 'model_capacity_device_roles_device_fk' }).onDelete('cascade'),
+  check('model_capacity_device_roles_rank_check', sql`${table.roleRank} between 1 and 64`),
+  check('model_capacity_device_roles_route_check', sql`char_length(${table.routeId}) > 0 and ${table.routeId} = btrim(${table.routeId}) and ${table.routeId} !~ '[[:cntrl:]]'`),
+]);
+
 export const operationsObservations = pgTable('operations_observations', {
   key: varchar('key', { length: 80 }).primaryKey(),
   value: jsonb('value').$type<Record<string, unknown>>().notNull(),
