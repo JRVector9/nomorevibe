@@ -71,11 +71,20 @@ class MiniSchedulerContracts(unittest.TestCase):
         self.assertEqual(result['selectedApps'], ['scheduler-mini', 'scheduler-m3'])
 
     def test_catalog_additions_require_both_scheduler_hosts(self):
-        release.validate_catalog_scope([], ['web-mini', 'web-m3'])
-        release.validate_catalog_scope(['new-job'], ['scheduler-mini', 'scheduler-m3'])
+        old = {'baseline': {'scheduler-mini': {'release': 'a' * 40}, 'scheduler-m3': {'release': 'a' * 40}}}
+        release.validate_catalog_scope([], ['web-mini', 'web-m3'], old, 'b' * 40)
+        release.validate_catalog_scope(['new-job'], ['scheduler-mini', 'scheduler-m3'], old, 'b' * 40)
         for selected in [[], ['scheduler-m3'], ['scheduler-mini']]:
             with self.subTest(selected=selected), self.assertRaisesRegex(ValueError, 'new_catalog_requires_scheduler'):
-                release.validate_catalog_scope(['new-job'], selected)
+                release.validate_catalog_scope(['new-job'], selected, old, 'b' * 40)
+
+    def test_catalog_additions_accept_schedulers_already_at_target(self):
+        # A stopped release continued by a fresh plan: both schedulers already run the target, so they are retained.
+        at_target = {'baseline': {'scheduler-mini': {'release': 'b' * 40}, 'scheduler-m3': {'release': 'b' * 40}}}
+        release.validate_catalog_scope(['new-job'], ['web-mini', 'web-m3'], at_target, 'b' * 40)
+        half = {'baseline': {'scheduler-mini': {'release': 'b' * 40}, 'scheduler-m3': {'release': 'a' * 40}}}
+        with self.assertRaisesRegex(ValueError, 'new_catalog_requires_scheduler'):
+            release.validate_catalog_scope(['new-job'], ['scheduler-mini'], half, 'b' * 40)
 
 
 if __name__ == '__main__':

@@ -48,7 +48,11 @@ export async function pipelineControlMain(args: readonly string[], env: Readonly
     const result = await repository.runPipelineControl(database, command, policy, models);
     write(command.json ? `${JSON.stringify(result)}\n` : formatControlResult(result));
     return result.blocked ? 3 : 0;
-  } finally { await client.end({ timeout: 5 }); }
+  } finally {
+    await client.end({ timeout: 5 });
+    // The serving-contract reload and the stage-pool route judgment read through the default client; close it so the CLI exits.
+    await (globalThis as typeof globalThis & { pgClient?: { end(options: { timeout: number }): Promise<void> } }).pgClient?.end({ timeout: 5 }).catch(() => {});
+  }
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

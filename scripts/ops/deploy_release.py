@@ -156,8 +156,12 @@ def required_kinds(selected):
     return tuple(kinds)
 
 
-def validate_catalog_scope(additions, selected):
-    if additions and not {'scheduler-mini', 'scheduler-m3'}.issubset(selected):
+def validate_catalog_scope(additions, selected, snapshot, sha):
+    """New catalog jobs need the new scheduler first: in this scope, or both schedulers already proven at the target
+    release (a stopped release continued by a fresh plan; run_release still waits for the rows to be registered)."""
+    schedulers = ('scheduler-mini', 'scheduler-m3')
+    at_target = all((snapshot['baseline'].get(name) or {}).get('release') == sha for name in schedulers)
+    if additions and not set(schedulers).issubset(selected) and not at_target:
         raise ValueError('new_catalog_requires_scheduler_deployment_scope')
 
 
@@ -244,7 +248,7 @@ def create_plan(sha, output, *, baseline_path=None, baseline_sha=None, migration
         scan = shared.agent_scan_release_gate(client, sha) if any(name.startswith('crawler-') for name in selected) else None
         images = prepull(snapshot, target, selected)
         additions = catalog.catalog_additions(snapshot, sha, ROOT)
-        validate_catalog_scope(additions, selected)
+        validate_catalog_scope(additions, selected, snapshot, sha)
         plan.update(target=target, readiness=proof, steps=execution_steps(selected), migrations=migrations,
                     integration=integration, existingGuard=guard, agentScan=scan, prePull=images,
                     catalogAdditions=additions)
@@ -434,7 +438,7 @@ def run_release(plan, execution_dir, *, observe=True):
         additions = catalog.catalog_additions(plan['snapshot'], target['sha'], ROOT)
         if additions != plan.get('catalogAdditions', []):
             raise ValueError('catalog_changed_new_plan_required')
-        validate_catalog_scope(additions, selected)
+        validate_catalog_scope(additions, selected, plan['snapshot'], target['sha'])
         if migration_changes(plan['snapshot'], target['sha']):
             if not plan.get('migrationVerified'):
                 raise ValueError('database_changes_require_migration_verified')
