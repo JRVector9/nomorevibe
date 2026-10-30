@@ -1,7 +1,7 @@
 import { scopedModel } from "@/lib/llm/model-registry";
 import { PRODUCT_TRANSLATION_MODEL } from "@/lib/crawl/translate";
 import { translateProductFieldsWithModelCapacity } from "@/lib/domain/products/product-translation-model-capacity";
-import { checkProductTranslation, productTranslationSourceHash, translationSourceText,
+import { checkProductTranslation, packProductTranslationBatch, productTranslationSourceHash, translationSourceText,
   PRODUCT_TRANSLATION_MAX_SOURCE_CHARS } from "@/lib/domain/products/translation-policy";
 import { pendingProductTranslations, recordProductTranslations, type ProductTranslationResult } from "@/lib/domain/products/translations";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
@@ -26,14 +26,8 @@ export async function translateDemandedProductFields(ctx: JobContext<null>): Pro
     if (retired.length) await recordProductTranslations(retired.map((task) => ({ task,
       result: { ok: false, error: translationSourceText(task.source, task.field).length > PRODUCT_TRANSLATION_MAX_SOURCE_CHARS ? "source_too_long" : "stale_source", model: "" } as ProductTranslationResult,
     })), ctx.lease);
-    const batch = [];
-    let chars = 0;
-    for (const task of tasks.filter((task) => !retired.includes(task))) {
-      const text = translationSourceText(task.source, task.field);
-      if (batch.length && chars + text.length > PRODUCT_TRANSLATION_MAX_SOURCE_CHARS) break;
-      batch.push(task);
-      chars += text.length;
-    }
+    // 긴 설명은 단독, 짧은 것만 묶인다(PRODUCT_TRANSLATION_BATCH_CHARS) — 300초 상한 안에 끝나게.
+    const batch = packProductTranslationBatch(tasks.filter((task) => !retired.includes(task)));
     if (!batch.length || !ctx.hasBudget() || signal.aborted) return { done: true };
     // Outermost HTTP deadline fits the job budget (PRODUCT_TRANSLATION_JOB_BUDGET_MS); inner M1 bounds still require measurement and enforcement.
     const outcome = await translateProductFieldsWithModelCapacity(batch, ctx.lease, { timeoutMs: PRODUCT_TRANSLATION_CLIENT_TIMEOUT_MS, signal, deadlineAt: ctx.deadlineAt });

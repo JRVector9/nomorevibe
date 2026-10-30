@@ -30,7 +30,8 @@ export type WorkerHealth = {
 };
 const JOB_LIMIT_MS: Record<RuntimeRole, number> = {
   translation:180_000, 'product-health':600_000, 'site-evidence':180_000, 'official-news':600_000,
-  scheduler: 120_000, crawler: 180_000, reviewer: 180_000, publisher: 180_000, text: 180_000, maintenance: 600_000,
+  // text: product-translate 틱 예산(lib/llm/deadline-ladder.ts PRODUCT_TRANSLATION_JOB_BUDGET_MS, 315초) 뒤 기록까지 끝나야 한다 — 2026-10-30 번역 상한 300초
+  scheduler: 120_000, crawler: 180_000, reviewer: 180_000, publisher: 180_000, text: 360_000, maintenance: 600_000,
 };
 
 export function supervisorLimits(role: RuntimeRole, env: Readonly<Record<string, string | undefined>> = process.env): SupervisorLimits {

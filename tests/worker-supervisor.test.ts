@@ -5,6 +5,7 @@ import { dbPoolConfig } from '@/lib/db/pool';
 import { expect, it, vi } from 'vitest';
 import * as childProcess from 'node:child_process';
 import { childExitCode, isRuntimeHeartbeat, settingsFromHeartbeat, stalledReason, superviseWorker, supervisorCommand, supervisorHealthPath, supervisorLimits, type WorkerHealth } from '@/scripts/worker-supervisor';
+import { PRODUCT_TRANSLATION_JOB_BUDGET_MS } from '@/lib/llm/deadline-ladder';
 import { roleCandidateIsHealthy, workerIsHealthy } from '@/scripts/worker-healthcheck';
 import { parseCapacityArgs } from '@/scripts/measure-worker-capacity';
 
@@ -102,6 +103,8 @@ it('reports a fresh passive role candidate healthy without a supervisor, but req
 it('does not treat the cooperative 25-second budget as a hard timeout', () => {
   expect(stalledReason({ ...health, state: 'running', currentJob: 'crawl-fetch', jobStartedAt: 1_000, lastHeartbeatAt: 40_000 }, 40_000, limits)).toBeNull();
   expect(supervisorLimits('maintenance', {}).jobMs).toBe(600_000);
+  // text 역할의 job_timeout 은 product-translate 틱 예산(315초)과 기록 여유 뒤에 와야 한다 — 아니면 300초 번역 중 워커를 죽여 미확인을 만든다
+  expect(supervisorLimits('text', {}).jobMs).toBeGreaterThanOrEqual(PRODUCT_TRANSLATION_JOB_BUDGET_MS + 30_000);
 });
 
 it('allows a legitimate 110-second reviewer call without applying the 90-second poll limit', () => {

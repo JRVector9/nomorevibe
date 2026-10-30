@@ -8,6 +8,19 @@ export const PRODUCT_TRANSLATION_MAX_ATTEMPTS = 4;
 export const PRODUCT_TRANSLATION_DEMAND_LIMIT = 80;
 /** 한 요청(최대 4건)의 원문 글자 합 상한. 설명은 8,000자까지인데 4,000자 상한이 긴 설명을 source_too_long 으로 버렸다 — 2026-10-30 M1 출력 30K 토큰과 함께 30K 자로. */
 export const PRODUCT_TRANSLATION_MAX_SOURCE_CHARS = 30_000;
+/** 묶음 포장 임계: 글자 합이 이를 넘으면 더 묶지 않는다. 설명 한 건은 8,000자까지라 긴 설명은 단독으로 나가고(M1 ≈ 100초), 짧은 것만 묶인다. */
+export const PRODUCT_TRANSLATION_BATCH_CHARS = 8_000;
+/** 순서대로 묶는다: 첫 건은 길이와 무관하게 들어가고(단독 요청), 다음 건은 글자 합이 임계를 넘지 않을 때만 더한다. 건너뛰지 않고 최대 4건. */
+export function packProductTranslationBatch<T extends { source: ProductTranslationSource; field: ProductTranslationField }>(tasks: readonly T[]): T[] {
+  const batch: T[] = [];
+  let chars = 0;
+  for (const task of tasks) {
+    const length = translationSourceText(task.source, task.field).length;
+    if (batch.length && (batch.length >= 4 || chars + length > PRODUCT_TRANSLATION_BATCH_CHARS)) break;
+    batch.push(task); chars += length;
+  }
+  return batch;
+}
 export type ProductTranslationSource = { id: number; name: string; tagline: string; description?: string };
 export const translationSourceText = (source: ProductTranslationSource, field: ProductTranslationField): string =>
   field === "tagline" ? source.tagline : source.description ?? "";
