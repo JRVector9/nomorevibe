@@ -126,15 +126,24 @@ describe("job knobs and translation policy are read per call", () => {
   });
 });
 
-describe("tick remaining time comes from the runner's deadlineAt, not a job-local TICK_MS", () => {
+describe("tick remaining time comes from the runner's deadlineAt and the live budget, not a job-local TICK_MS", () => {
   const now = 1_000_000;
-  it("with deadlineAt the window is deadlineAt − write margin, whatever the document says", () => {
+  it("the window ends at the later of the runner's deadlineAt and the job's effective budget", () => {
     vi.spyOn(Date, "now").mockReturnValue(now);
+    // 워커: 러너 예산 = 유효 예산(같은 판) → 예산 − 1초. 저장으로 예산이 바뀌면 둘이 함께 움직인다
+    expect(tickRemaining({ deadlineAt: now + 55_000 }, "reason-translate", now)()).toBe(55_000 - TICK_WRITE_MARGIN_MS);
+    setRuntimeSettingsForTest(CHANGED);
+    expect(tickRemaining({ deadlineAt: now + 90_000 }, "reason-translate", now)()).toBe(89_000);
+    setRuntimeSettingsForTest(null);
+    // 예산 없이 runJob 을 부른 곳(러너 기본 25초 deadlineAt)은 잡의 유효 예산(55초)으로 계획한다 — TICK_MS 54초 시절과 같다
+    expect(tickRemaining({ deadlineAt: now + 25_000 }, "reason-translate", now)()).toBe(54_000);
+    expect(tickRemaining({ deadlineAt: now + 25_000 }, "product-intro-check", now)()).toBe(109_000);
+    // 더 큰 예산을 명시한 러너는 그만큼 창이 넓어진다
+    expect(tickRemaining({ deadlineAt: now + 120_000 }, "reason-translate", now)()).toBe(119_000);
+    // 한 번 만든 remaining() 은 만들 때의 판을 쓴다(틱 안에서 판이 바뀌지 않는다)
     const remaining = tickRemaining({ deadlineAt: now + 55_000 }, "reason-translate", now);
-    expect(remaining()).toBe(55_000 - TICK_WRITE_MARGIN_MS);
     setRuntimeSettingsForTest(CHANGED);
     expect(remaining()).toBe(54_000);
-    expect(tickRemaining({ deadlineAt: now + 55_000 }, "reason-translate", now)()).toBe(54_000);
   });
   it("without deadlineAt (direct callers, tests) the job's effective budget stands in — and follows budgets.<job>", () => {
     vi.spyOn(Date, "now").mockReturnValue(now);

@@ -141,8 +141,7 @@ it("intro: open with a contract takes a background slot, runs the fake CLI once 
   fake("intro-ok");
   const tasks = [introTask(2), introTask(1)];
   mocks.pendingIntro.mockResolvedValueOnce(tasks).mockResolvedValue([]);
-  // 호출 상한(90초)은 틱의 남은 시간(러너 deadlineAt − 1초)에 맞춰 줄어든다 — 온전한 90초 transport 를 보려면 틱 예산 110초가 있어야 한다
-  const ctx = context("product-intro-check", { deadlineAt: Date.now() + 110_000 });
+  const ctx = context("product-intro-check");
 
   expect(await checkProductIntros(ctx)).toEqual({ done: true });
 
