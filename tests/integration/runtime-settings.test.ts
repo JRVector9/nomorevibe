@@ -6,7 +6,6 @@ import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import * as schema from "@/lib/db/schema";
 import { TEST_DATABASE_URL } from "./setup";
-import { RUNTIME_SETTINGS_APPLY } from "@/lib/operations/settings-apply";
 
 /*
  * PR 1a WP-A: runtime_settings(0152) 저장 → 감사 → 읽기, revision compare-and-set, DR fence, 같은 reload 로 워커가 읽는 판, 적용 확인.
@@ -157,19 +156,25 @@ it("a fenced site refuses the save before any write (no row change, no audit row
   expect(await saveRuntimeSettings({ "crawl-seed": 40_000 }, "jr", { group: "budgets", expectedRevision: before.revision })).toMatchObject({ ok: true, revision: before.revision + 1 });
 });
 
-it("apply status compares the saved 판 with each role's reported runtimeSettingsVersion and points at the limits page", async () => {
-  const { readRuntimeSettingsApply, readRuntimeSettingsRow, RUNTIME_SETTINGS_APPLY_HREF } = await import("@/lib/operations/runtime-settings");
+it("apply status compares the saved 판 with each role's reported runtimeSettingsVersion (five roles, env 등록부 badge) and points at the limits page", async () => {
+  const { readRuntimeSettingsApply, readRuntimeSettingsRow } = await import("@/lib/operations/runtime-settings");
+  const { RUNTIME_SETTINGS_APPLY, RUNTIME_SETTINGS_ROLES } = await import("@/lib/operations/settings-apply");
   const { storedSettingsVersion } = await import("@/lib/operations/runtime-settings-schema");
   const { observe } = await import("@/lib/operations/observations");
   const saved = storedSettingsVersion((await readRuntimeSettingsRow()).values);
   expect(saved).toMatch(/^[0-9a-f]{16}$/);
-  await observe("service:text:wpa", { role: "text", status: "running", runtimeSettingsVersion: saved, runtimeSettingsReadAt: 1_700_000_000_000, registryEnv: false });
+  // 워커 heartbeat(WP-B)가 싣는 그대로: runtimeSettingsVersion · runtimeSettingsReadAt · runtimeSettingsRegistryEnv
+  await observe("service:text:wpa", { role: "text", status: "running", runtimeSettingsVersion: saved, runtimeSettingsReadAt: 1_700_000_000_000, runtimeSettingsRegistryEnv: false });
+  await observe("service:maintenance:wpa", { role: "maintenance", status: "running", runtimeSettingsVersion: saved, runtimeSettingsReadAt: 1_700_000_000_001, runtimeSettingsRegistryEnv: true });
   await observe("service:crawler:wpa", { role: "crawler", status: "running" });                      // 판을 싣지 않는 옛 워커
   await observe("service:reviewer:wpa", { role: "reviewer", status: "running", runtimeSettingsVersion: "default", runtimeSettingsReadAt: 1 });   // 옛 판
   let apply = await readRuntimeSettingsApply();
   expect(apply.savedVersion).toBe(saved);
+  expect(apply.roles.map(item => item.role)).toEqual([...RUNTIME_SETTINGS_ROLES]);
   const role = (name: string) => apply.roles.find(item => item.role === name)!;
-  expect(role("text")).toMatchObject({ state: "applied", reportedVersion: saved, observedAt: 1_700_000_000_000 });
+  expect(role("text")).toMatchObject({ state: "applied", reportedVersion: saved, observedAt: 1_700_000_000_000, registryEnv: false });
+  // 판은 읽었지만 MODEL_REGISTRY_CONFIG env 로 도는 역할 — 경로 한도 저장이 닿지 않는다는 배지
+  expect(role("maintenance")).toMatchObject({ state: "applied", reportedVersion: saved, registryEnv: true });
   expect(role("crawler")).toMatchObject({ state: "unknown", reportedVersion: null });
   expect(role("reviewer")).toMatchObject({ state: "waiting", reportedVersion: "default", lagging: false });
   expect(role("publisher").state).toBe("inactive");
@@ -179,6 +184,7 @@ it("apply status compares the saved 판 with each role's reported runtimeSetting
   await client`UPDATE runtime_settings SET updated_at = clock_timestamp() - interval '11 minutes' WHERE id = 1`;
   apply = await readRuntimeSettingsApply();
   expect(role("reviewer").lagging).toBe(true);
-  expect(apply.attention).toMatchObject({ key: RUNTIME_SETTINGS_APPLY.key, count: 1, href: RUNTIME_SETTINGS_APPLY_HREF, title: RUNTIME_SETTINGS_APPLY.attention.title });
+  expect(apply.attention).toMatchObject({ key: "runtime-settings-apply", count: 1, href: RUNTIME_SETTINGS_APPLY.href, title: "저장한 실시간 한도가 워커에 닿지 않음" });
   expect(apply.attention?.href).toBe("/admin/models/limits#apply");
+  expect(apply.attention?.detail).toContain("후보 심사 이(가) 실시간 한도를 저장하고 11분");
 });

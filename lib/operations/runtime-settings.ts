@@ -37,8 +37,6 @@ const ROW_ID = 1;
 const STORED_DOCUMENT_MAX_CHARS = 60_000;
 /** 저장이 쓰는 그룹 — devices 는 PR 1b 의 관계형 표(이 문서에 들어가지 않는다) */
 const EDITABLE_GROUPS: readonly RuntimeSettingGroup[] = ["routes", "translation", "jobs", "budgets"];
-/** 적용 확인 화면의 조치 링크 */
-export const RUNTIME_SETTINGS_APPLY_HREF = "/admin/models/limits#apply";
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
 /** 기한 사다리의 relayMs: null 은 "중계 층 없음"이라는 값이다 — 지우기가 아니다 */
@@ -141,12 +139,11 @@ export async function saveRuntimeSettings(patch: unknown, actor: string, options
 }
 
 /**
- * 저장된 판과 각 역할 워커가 heartbeat 로 알린 runtimeSettingsVersion 을 견준다(settings-apply.ts 의 일반화).
- * 관측의 runtimeSettingsVersion/runtimeSettingsReadAt 을 settingsApplyStatus 가 읽는 이름으로 옮겨 같은 판정을 쓴다; 조치 링크는 실시간 한도 화면이다.
+ * 저장된 판과 각 역할 워커가 heartbeat 로 알린 runtimeSettingsVersion 을 견준다 — settings-apply.ts 의 RUNTIME_SETTINGS_APPLY(WP-B):
+ * 다섯 역할(maintenance 포함), runtimeSettingsRegistryEnv → registryEnv 배지, 조치 링크 /admin/models/limits#apply.
  * 행이 없으면(0152 전) 워커도 기본값("default")으로 돈다 — 같은 판이다.
  */
 export async function readRuntimeSettingsApply(): Promise<SettingsApply> {
-  // WP-B 의 일반화된 적용 상태(RUNTIME_SETTINGS_APPLY: 역할 5개·runtimeSettings* 필드·env 등록부 배지)를 그대로 쓴다.
   const [saved, observations] = await Promise.all([
     db.select({
       values: runtimeSettingsTable.values,
@@ -156,6 +153,10 @@ export async function readRuntimeSettingsApply(): Promise<SettingsApply> {
     readApplyObservations(RUNTIME_SETTINGS_ROLES),
   ]);
   const row = saved[0];
-  // 심은 행(migration)·운영자 저장 모두 updated_at 이 있다; 행이 없으면 저장한 적이 없다
-  return runtimeSettingsApplyStatus({ savedVersion: storedSettingsVersion(row?.values), savedAgeSeconds: row ? Number(row.ageSeconds) : null, observations });
+  return runtimeSettingsApplyStatus({
+    savedVersion: storedSettingsVersion(row?.values),
+    // 심은 행(migration)·운영자 저장 모두 updated_at 이 있다; 행이 없으면 저장한 적이 없다
+    savedAgeSeconds: row ? Number(row.ageSeconds) : null,
+    observations,
+  });
 }
