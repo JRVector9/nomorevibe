@@ -24,6 +24,8 @@ GRANT SELECT, INSERT ON TABLE public.jobs TO nomorevibe_oracle_translation;
 GRANT UPDATE (requested_version, processed_version, next_scheduled_at, not_before, lease_token, worker_seen_at, cursor, locked_at, last_run_at, last_success_at, last_error, runs, updated_at) ON TABLE public.jobs TO nomorevibe_oracle_translation;
 GRANT SELECT ON TABLE public.model_capacity_control TO nomorevibe_oracle_translation;
 GRANT UPDATE (cursor, updated_at) ON TABLE public.model_capacity_control TO nomorevibe_oracle_translation;
+GRANT SELECT ON TABLE public.model_capacity_device_roles TO nomorevibe_oracle_translation;
+GRANT SELECT ON TABLE public.model_capacity_devices TO nomorevibe_oracle_translation;
 GRANT INSERT ON TABLE public.model_capacity_events TO nomorevibe_oracle_translation;
 GRANT SELECT, INSERT, UPDATE ON TABLE public.model_capacity_requests TO nomorevibe_oracle_translation;
 GRANT SELECT ON TABLE public.model_registry_overrides TO nomorevibe_oracle_translation;
@@ -70,6 +72,8 @@ GRANT SELECT ON TABLE public.job_batch_control TO nomorevibe_oracle_product_heal
 GRANT UPDATE (id) ON TABLE public.job_batch_control TO nomorevibe_oracle_product_health;
 GRANT SELECT, INSERT ON TABLE public.jobs TO nomorevibe_oracle_product_health;
 GRANT UPDATE (requested_version, processed_version, next_scheduled_at, not_before, lease_token, worker_seen_at, cursor, locked_at, last_run_at, last_success_at, last_error, runs, updated_at) ON TABLE public.jobs TO nomorevibe_oracle_product_health;
+GRANT SELECT ON TABLE public.model_capacity_device_roles TO nomorevibe_oracle_product_health;
+GRANT SELECT ON TABLE public.model_capacity_devices TO nomorevibe_oracle_product_health;
 GRANT SELECT ON TABLE public.model_registry_overrides TO nomorevibe_oracle_product_health;
 GRANT SELECT ON TABLE public.model_serving_contracts TO nomorevibe_oracle_product_health;
 GRANT SELECT, INSERT ON TABLE public.operations_observations TO nomorevibe_oracle_product_health;
@@ -112,6 +116,8 @@ GRANT SELECT ON TABLE public.job_batch_control TO nomorevibe_oracle_site_evidenc
 GRANT UPDATE (id) ON TABLE public.job_batch_control TO nomorevibe_oracle_site_evidence;
 GRANT SELECT, INSERT ON TABLE public.jobs TO nomorevibe_oracle_site_evidence;
 GRANT UPDATE (requested_version, processed_version, next_scheduled_at, not_before, lease_token, worker_seen_at, cursor, locked_at, last_run_at, last_success_at, last_error, runs, updated_at) ON TABLE public.jobs TO nomorevibe_oracle_site_evidence;
+GRANT SELECT ON TABLE public.model_capacity_device_roles TO nomorevibe_oracle_site_evidence;
+GRANT SELECT ON TABLE public.model_capacity_devices TO nomorevibe_oracle_site_evidence;
 GRANT SELECT ON TABLE public.model_registry_overrides TO nomorevibe_oracle_site_evidence;
 GRANT SELECT ON TABLE public.model_serving_contracts TO nomorevibe_oracle_site_evidence;
 GRANT SELECT, INSERT ON TABLE public.operations_observations TO nomorevibe_oracle_site_evidence;
@@ -149,6 +155,8 @@ GRANT SELECT ON TABLE public.job_batch_control TO nomorevibe_oracle_official_new
 GRANT UPDATE (id) ON TABLE public.job_batch_control TO nomorevibe_oracle_official_news;
 GRANT SELECT, INSERT ON TABLE public.jobs TO nomorevibe_oracle_official_news;
 GRANT UPDATE (requested_version, processed_version, next_scheduled_at, not_before, lease_token, worker_seen_at, cursor, locked_at, last_run_at, last_success_at, last_error, runs, updated_at) ON TABLE public.jobs TO nomorevibe_oracle_official_news;
+GRANT SELECT ON TABLE public.model_capacity_device_roles TO nomorevibe_oracle_official_news;
+GRANT SELECT ON TABLE public.model_capacity_devices TO nomorevibe_oracle_official_news;
 GRANT SELECT ON TABLE public.model_registry_overrides TO nomorevibe_oracle_official_news;
 GRANT SELECT ON TABLE public.model_serving_contracts TO nomorevibe_oracle_official_news;
 GRANT SELECT, INSERT ON TABLE public.news_items TO nomorevibe_oracle_official_news;
