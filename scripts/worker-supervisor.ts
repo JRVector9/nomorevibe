@@ -10,7 +10,7 @@ import { networkRoutesField } from '../lib/db/network-route';
 import { consumerHealthPath, supervisorHealthPath } from './consumer-health';
 export { consumerHealthPath, supervisorHealthPath, DEFAULT_HEALTH_PATH } from './consumer-health';
 import type { RuntimeHeartbeat } from './worker';
-import { parseRuntimeLanes, runtimeLaneStall, type RuntimeLane } from '../lib/operations/worker-progress';
+import { DECLARED_BUDGET_MARGIN_MS, DECLARED_BUDGET_MAX_MS, parseRuntimeLanes, runtimeLaneStall, type RuntimeLane } from '../lib/operations/worker-progress';
 
 import type { BatchRole } from '../lib/jobs/batches';
 import { consumerSpec, type ConsumerName } from '../lib/runtime/consumer-registry';
@@ -30,8 +30,8 @@ export type WorkerHealth = {
 };
 const JOB_LIMIT_MS: Record<RuntimeRole, number> = {
   translation:180_000, 'product-health':600_000, 'site-evidence':180_000, 'official-news':600_000,
-  // text: product-translate 틱 예산(lib/llm/deadline-ladder.ts PRODUCT_TRANSLATION_JOB_BUDGET_MS, 315초) 뒤 기록까지 끝나야 한다 — 2026-10-30 번역 상한 300초
-  scheduler: 120_000, crawler: 180_000, reviewer: 180_000, publisher: 180_000, text: 360_000, maintenance: 600_000,
+  // 역할별 env 하한. 줄이 알린 틱 예산(RuntimeLane.budgetMs)이 더 크면 감독은 예산 + 여유까지 기다린다(lib/operations/worker-progress.ts runtimeLaneStall)
+  scheduler: 120_000, crawler: 180_000, reviewer: 180_000, publisher: 180_000, text: 180_000, maintenance: 600_000,
 };
 
 export function supervisorLimits(role: RuntimeRole, env: Readonly<Record<string, string | undefined>> = process.env): SupervisorLimits {
@@ -49,8 +49,10 @@ export function supervisorLimits(role: RuntimeRole, env: Readonly<Record<string,
 }
 
 /** A voluntary handoff waits for the bounded tick and its usual cleanup budget. */
-export function primaryHandoffDrainMs(limits: SupervisorLimits): number {
-  return limits.jobMs + limits.drainMs;
+export function primaryHandoffDrainMs(limits: SupervisorLimits, lanes?: readonly RuntimeLane[] | null): number {
+  // 줄이 알린 틱 예산이 env 한도보다 크면 그만큼 더 기다린다 — 300초 번역 중 handoff 로 SIGKILL 해 미확인을 만들지 않게
+  const declared = Math.max(0, ...(lanes ?? []).map(lane => Math.min(lane.budgetMs ?? 0, DECLARED_BUDGET_MAX_MS) + DECLARED_BUDGET_MARGIN_MS));
+  return Math.max(limits.jobMs, declared) + limits.drainMs;
 }
 
 export function stalledReason(health: WorkerHealth, now: number, limits: SupervisorLimits): string | null {
@@ -235,7 +237,7 @@ export async function superviseWorker(role: RuntimeRole, options: {
       // Only the elected role worker implements voluntary handoff. Consumers and
       // shutdown/lease loss retain their cancellation semantics.
       const handoff = reason === 'primary_handoff' && !options.consumer && role !== 'scheduler' && !force;
-      const drainMs = handoff ? primaryHandoffDrainMs(limits) : limits.drainMs;
+      const drainMs = handoff ? primaryHandoffDrainMs(limits, health.lanes) : limits.drainMs;
       log('supervisor.stopping', { reason, requested, signal: receivedSignal, abortReason,
         sentSignal: handoff ? null : 'SIGTERM', drainMs, stopMode: handoff ? 'drain' : 'cancel' });
       // Let the worker abort and drain first. Signalling its whole group here also kills
