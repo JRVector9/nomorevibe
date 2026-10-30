@@ -206,6 +206,15 @@ describe("capacity open is judged only on the combinations in use", () => {
     expect(uses).toContainEqual({ routeId: "search-query-translate", provider: "abcllm", model: "query-role" });
     expect(uses).toContainEqual({ routeId: "reason-translate", provider: "abcllm", model: MODELS.translate });
   });
+  it("judges a text route with an admin stage selection by each selected key's wire name, not the env constant", () => {
+    // Engine connected directly: the text job sends the bare engine name inside its stage pool; '[MLX] …' is no longer called.
+    const uses = usedModelRoutes(snapshot(), { ...MODELS, pooled: { "reason-translate": ["gpt-oss-120b", "gemma-direct"], "product-translate": [] } });
+    expect(uses).toContainEqual({ routeId: "reason-translate", provider: "abcllm", model: "gpt-oss-120b" });
+    expect(uses).toContainEqual({ routeId: "reason-translate", provider: "abcllm", model: "gemma-direct" });
+    expect(uses.some(use => use.routeId === "reason-translate" && use.model === MODELS.translate)).toBe(false);
+    // An empty selection keeps the env-only judgment.
+    expect(uses).toContainEqual({ routeId: "product-translate", provider: "abcllm", model: MODELS.productTranslate });
+  });
   const open = ["capacity", "mode", "--to=open", "--from-mode=draining", "--expect-epoch=1", "--expect-revision=2"];
 
   it("reads what each call site passes its resolver from the review settings, model env and the running audit", () => {

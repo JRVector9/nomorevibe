@@ -1083,7 +1083,8 @@ def purge_html():
     실패해도 멈추지 않고 결과만 알린다. 토큰은 지우기 권한 하나만 가진 키체인 항목이다."""
     try:
         token = run(['security', 'find-generic-password', '-s', PURGE_TOKEN_ITEM, '-w'])
-    except RuntimeError:
+    except (RuntimeError, OSError):
+        # OSError: a host without the macOS keychain command (Linux operator host, 2026-10-30) has no token either.
         return {'htmlPurge': 'skipped', 'reason': 'no_purge_token'}
     read_fd, write_fd = os.pipe()
     try:

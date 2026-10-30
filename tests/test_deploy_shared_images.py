@@ -479,6 +479,9 @@ class ReleaseSafetyTests(unittest.TestCase):
     def test_html_purge_after_release_uses_only_the_purge_token(self):
         with patch.object(release, 'run', side_effect=RuntimeError('command_failed:security:44')):
             self.assertEqual(release.purge_html(), {'htmlPurge': 'skipped', 'reason': 'no_purge_token'})
+        # A Linux operator host has no keychain command at all; the finished release must not stop there.
+        with patch.object(release, 'run', side_effect=FileNotFoundError(2, 'No such file or directory', 'security')):
+            self.assertEqual(release.purge_html(), {'htmlPurge': 'skipped', 'reason': 'no_purge_token'})
 
         calls = []
         def fake_run(command, **kwargs):

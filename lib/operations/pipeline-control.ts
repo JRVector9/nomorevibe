@@ -204,10 +204,16 @@ const MODEL_ROUTES: readonly RouteSpec[] = [
   { routeId: "product-audit", provider: "abcllm", served: null },
 ];
 
-/** 호출 지점 상수가 이 프로세스 env에서 받는 model 값(각 상수와 같은 `값 || 기본값`). crawlReview는 1차 심사 설정이 없을 때의 CRAWL_REVIEW_MODEL이다. */
-export type ModelEnv = { crawlReview: string | null; translate: string; productTranslate: string; koreanTagline?: string; searchQuery?: string; tagline: string; profile: string; verify: string; introCheck: string };
-const TEXT_ROUTES = [["product-search-profile", "profile"], ["product-search-verify", "verify"], ["reason-translate", "translate"],
+/**
+ * 호출 지점 상수가 이 프로세스 env에서 받는 model 값(각 상수와 같은 `값 || 기본값`). crawlReview는 1차 심사 설정이 없을 때의 CRAWL_REVIEW_MODEL이다.
+ * pooled: 관리자 단계 선택이 있는 text route의 실제 호출 이름(선택한 키마다 하나). text 잡은 저장된 선택 안에서 돌므로(lib/jobs/registry.ts
+ * MODEL_POOL_JOBS) 그 route는 env 상수 대신 이 이름들로 판정한다.
+ */
+export type ModelEnv = { crawlReview: string | null; translate: string; productTranslate: string; koreanTagline?: string; searchQuery?: string; tagline: string; profile: string; verify: string; introCheck: string;
+  pooled?: Partial<Record<TextModelRoute, readonly string[]>> };
+export const TEXT_ROUTES = [["product-search-profile", "profile"], ["product-search-verify", "verify"], ["reason-translate", "translate"],
   ["product-translate", "productTranslate"], ["product-tagline-ko", "koreanTagline"], ["search-query-translate", "searchQuery"], ["crawl-tagline", "tagline"]] as const;
+export type TextModelRoute = (typeof TEXT_ROUTES)[number][0];
 
 /**
  * 지금 각 호출 지점이 resolver에 넘기는 (route, provider, model). 고르는 식은 firstReviewer·2차 voters+fallbacks·checkGrokSession·
@@ -229,7 +235,11 @@ export function usedModelRoutes(snapshot: ControlSnapshot, models: ModelEnv | nu
     const grok = [...second, ...first].find(voter => voter.provider === "grok-cli");
     if (grok) add("grok-session-check", "grok-cli", grok.model);
   }
-  for (const [routeId, key] of TEXT_ROUTES) add(routeId, "abcllm", models?.[key] ?? (key === "koreanTagline" || key === "searchQuery" ? models?.translate : null));
+  for (const [routeId, key] of TEXT_ROUTES) {
+    const pooled = models?.pooled?.[routeId];
+    if (pooled?.length) for (const model of pooled) add(routeId, "abcllm", model);
+    else add(routeId, "abcllm", models?.[key] ?? (key === "koreanTagline" || key === "searchQuery" ? models?.translate : null));
+  }
   add("product-intro-check", "claude-cli", models?.introCheck);
   const audit = snapshot.auditCampaign;
   // Qwen 직접 심사(gpu3090, 0112)는 공통 슬롯을 거치지 않는다 — 게이트웨이도 CLI 도 아니라 open 이 되어도 미뤄지지 않는다
