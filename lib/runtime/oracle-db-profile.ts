@@ -52,10 +52,11 @@ const LEGACY_SEED: Record<string, TableGrant> = { dr_writer_fence: lock('id') };
  * Every job tick refreshes the admin serving-contract snapshot (lib/llm/serving-contract-store.ts: one SELECT trio per 30 s). The job-running
  * principals read the admin runtime settings document (runtime_settings, 0152: route limits·timeouts·deadlines, translation batches, tick
  * budgets — no secret) and the registry overrides (model_registry_overrides, 0148: engine address·model name·limits — no secret), so an
- * admin save reaches Oracle on the next tick like at home. model_serving_contracts is deliberately not granted: it holds api_key_ciphertext
- * and Oracle has no box key, so Oracle text routes keep their env contracts (live-settings-plan Q5; the reload tolerates that one failed part).
+ * admin save reaches Oracle on the next tick like at home. model_serving_contracts is granted too (owner decision 2026-10-30, "읽기 권한 줘"):
+ * the row carries api_key_ciphertext, which is only ciphertext — decrypting needs NMV_SECRET_BOX_KEY, which Oracle does not hold — so the
+ * grant lets Oracle see the same admin contracts (endpoint·model·bounds) as home without exposing a usable key.
  */
-const LIVE_SETTINGS: Record<string, TableGrant> = { runtime_settings: read, model_registry_overrides: read };
+const LIVE_SETTINGS: Record<string, TableGrant> = { runtime_settings: read, model_registry_overrides: read, model_serving_contracts: read };
 export const ORACLE_RESULT_READBACK_TABLES = ['news_items', 'uptime_observations', 'product_evidence_sources', 'evidence_source_claims',
   'product_refresh_requests', 'text_translations', 'product_korean_taglines', 'product_translations'] as const;
 
