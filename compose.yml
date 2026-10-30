@@ -221,7 +221,8 @@ services:
       WORKER_ROLE: text
       SERVICE_INSTANCE_ID: local-text
       DB_POOL_MAX: "3"
-      WORKER_JOB_TIMEOUT_SECONDS: "180"
+      # product-translate 틱 예산 315초(300초 번역 상한) 뒤 기록까지 — scripts/worker-supervisor.ts 기본값과 같다
+      WORKER_JOB_TIMEOUT_SECONDS: "360"
       ABCLLM_API_KEY: ${ABCLLM_API_KEY:-}
     mem_limit: 512m
 
