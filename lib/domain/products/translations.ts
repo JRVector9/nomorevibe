@@ -23,7 +23,7 @@ import { productTranslationInputSchema, productTranslationDispatchBindingSchema,
 import { lockModelCapacityCallerControl, lockProductTranslationModelCapacityDispatch,
   finishProductTranslationModelCapacityDispatch } from "@/lib/llm/capacity-repository";
 import { detectTranslationSourceLocale, isProductTranslationField, productTranslationSourceHash, translationSourceText,
-  PRODUCT_TRANSLATION_DEMAND_LIMIT, PRODUCT_TRANSLATION_MAX_ATTEMPTS, PRODUCT_TRANSLATION_POLICY,
+  PRODUCT_TRANSLATION_DEMAND_LIMIT, PRODUCT_TRANSLATION_MAX_ATTEMPTS, PRODUCT_TRANSLATION_MAX_SOURCE_CHARS, PRODUCT_TRANSLATION_POLICY,
   type ProductTranslationReadiness, type ProductTranslationSource } from "./translation-policy";
 
 export { selectProductTranslation, productTranslationSourceHash, detectTranslationSourceLocale } from "./translation-policy";
@@ -155,7 +155,7 @@ export async function pendingProductTranslationBatch(memberKeys: readonly string
     if (rows.length !== keys.length) return null;
     const batch = targets.map(target => rows.find(row => row.source.id === target.productId && row.locale === target.locale && row.field === target.field)!);
     if (batch.some(task => productTranslationSourceHash(task.source, task.field) !== task.sourceHash)
-      || batch.reduce((size, task) => size + translationSourceText(task.source, task.field).length, 0) > 4_000) return null;
+      || batch.reduce((size, task) => size + translationSourceText(task.source, task.field).length, 0) > PRODUCT_TRANSLATION_MAX_SOURCE_CHARS) return null;
     return translationBatch(batch);
   });
 }
@@ -175,7 +175,7 @@ const taskSchema = z.object({ source: z.object({ id: z.number().int().positive()
 function translationBatch(value: readonly ProductTranslationTask[]): ProductTranslationTask[] {
   const tasks = z.array(taskSchema).min(1).max(4).parse(structuredClone(value));
   if (new Set(tasks.map(task => `${task.source.id}:${task.locale}:${task.field}`)).size !== tasks.length
-    || tasks.reduce((count, task) => count + translationSourceText(task.source, task.field).length, 0) > 4_000
+    || tasks.reduce((count, task) => count + translationSourceText(task.source, task.field).length, 0) > PRODUCT_TRANSLATION_MAX_SOURCE_CHARS
     || tasks.some(task => !translationSourceText(task.source, task.field).trim()
       || productTranslationSourceHash(task.source, task.field) !== task.sourceHash)) throw new Error("invalid_product_translation_batch");
   return tasks;

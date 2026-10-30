@@ -199,5 +199,5 @@ describe("오프라인 rollout 증거 일관성", () => {
       expect(run(["--manifest", manifest, "--out", report]).status).toBe(2);
       expect(run(["--manifest", manifest, "--apply"]).status).toBe(2);
     } finally { rmSync(root, { recursive: true, force: true }); }
-  });
+  }, 30_000); // CLI 를 tsx 로 띄우는 데 CI 러너에서 5~7초 — 기본 5초 제한을 넘긴다(2026-10-30 #747·#748 에서 두 번)
 });

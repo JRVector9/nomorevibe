@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
-import { DEFAULT_MODEL_DEFINITIONS, type ModelDefinition } from "@/lib/llm/model-registry";
+import { DEFAULT_MODEL_DEFINITIONS, DEFAULT_MODEL_PURPOSE_LIMITS, type ModelDefinition } from "@/lib/llm/model-registry";
 import { localModelRelayConfig, relayAllowedModels } from "@/scripts/local-model-relay/config";
 import { migrateM1TranslationRegistry } from "@/scripts/migrate-model-registry-m1";
 import { createLocalModelRelay } from "@/scripts/local-model-relay/service";
@@ -38,7 +38,8 @@ function relayEnv() {
 describe("M1 relay allowed models come from the model registry", () => {
   it("defaults to the registry's M1 relay entry (actual Gemma id), never the old M1 Qwen id", () => {
     const env = relayEnv();
-    expect(localModelRelayConfig(env)).toMatchObject({ equipment: "m1", model: GEMMA, models: [GEMMA], maxOutputTokens: m1.maxTokens });
+    // 출력 상한은 relay purpose 한도(10K)와 모델 정의(30K, 2026-10-30 번역 상한 인상)의 최솟값
+    expect(localModelRelayConfig(env)).toMatchObject({ equipment: "m1", model: GEMMA, models: [GEMMA], maxOutputTokens: Math.min(m1.maxTokens, DEFAULT_MODEL_PURPOSE_LIMITS.relay.maxTokens) });
     expect(() => localModelRelayConfig({ ...env, LOCAL_MODEL_RELAY_MODEL: QWEN })).toThrow("relay_model_not_allowed");
     expect(() => localModelRelayConfig({ ...env, LOCAL_MODEL_RELAY_MODEL: `[m1] ${GEMMA}` })).toThrow("relay_model_not_allowed");
     expect(() => localModelRelayConfig({ ...env, LOCAL_MODEL_RELAY_MODEL_KEY: "gpu3090:review" })).toThrow("relay_model_not_allowed");

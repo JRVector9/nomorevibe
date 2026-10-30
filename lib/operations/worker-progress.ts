@@ -6,7 +6,12 @@ import { isPausedJob } from "@/lib/jobs/status";
 export type RuntimeLane = {
   name: string; jobs: string[]; state: "idle" | "polling" | "running" | "stopping";
   currentJob: string | null; startedAt: number | null; pollStartedAt: number | null; lastProgressAt: number;
+  /** 도는 잡의 틱 예산(ms). 워커가 스스로 알린다 — 감독의 job_timeout 은 env 하한과 "예산 + 여유" 중 큰 쪽이라 긴 틱(300초 번역)도 env·재배포 없이 산다 */
+  budgetMs?: number | null;
 };
+/** 알린 예산 뒤 기록·정리 여유. 감독의 drain 기본값(45초)과 같다 */
+export const DECLARED_BUDGET_MARGIN_MS = 45_000;
+export const DECLARED_BUDGET_MAX_MS = 3_600_000;
 export type AgentProviderFailure = { repositoryKey: string; code: "rate_limited" | "timeout" | "unavailable" | "invalid";
   firstFailureAt: string; lastFailureAt: string; failures: number };
 
@@ -44,10 +49,13 @@ export function parseRuntimeLanes(value: unknown, role: string): RuntimeLane[] |
       (lane.state === "running" && (lane.currentJob === null || lane.startedAt === null)) ||
       (lane.state === "polling" && lane.pollStartedAt === null) ||
       (lane.state !== "running" && (lane.currentJob !== null || lane.startedAt !== null)) ||
-      (lane.state !== "polling" && lane.pollStartedAt !== null)) return null;
+      (lane.state !== "polling" && lane.pollStartedAt !== null) ||
+      !(lane.budgetMs === undefined || lane.budgetMs === null
+        || (Number.isSafeInteger(lane.budgetMs) && lane.budgetMs >= 1_000 && lane.budgetMs <= DECLARED_BUDGET_MAX_MS))) return null;
     names.add(lane.name); lane.jobs.forEach(job => jobs.add(job));
     result.push({ name: lane.name, jobs: [...lane.jobs], state: lane.state!, currentJob: lane.currentJob!,
-      startedAt: lane.startedAt!, pollStartedAt: lane.pollStartedAt!, lastProgressAt: lane.lastProgressAt });
+      startedAt: lane.startedAt!, pollStartedAt: lane.pollStartedAt!, lastProgressAt: lane.lastProgressAt,
+      ...(lane.budgetMs == null ? {} : { budgetMs: lane.budgetMs }) });
   }
   return result;
 }
@@ -59,7 +67,9 @@ export function laneForJob(role: BatchRole, job: string): string {
 export function runtimeLaneStall(lane: RuntimeLane, now: number, limits: { progressMs: number; jobMs: number }): string | null {
   if (lane.state === "stopping") return null;
   if (lane.state === "polling" && lane.pollStartedAt !== null && now - lane.pollStartedAt > limits.progressMs) return "lane_poll_timeout";
-  if (lane.state === "running" && lane.startedAt !== null && now - lane.startedAt > limits.jobMs) return "job_timeout";
+  // 워커가 알린 틱 예산이 env 한도보다 크면 예산 + 여유까지 기다린다(300초 번역 틱을 180초 env 로 죽이지 않게)
+  const jobMs = Math.max(limits.jobMs, Math.min(lane.budgetMs ?? 0, DECLARED_BUDGET_MAX_MS) + DECLARED_BUDGET_MARGIN_MS);
+  if (lane.state === "running" && lane.startedAt !== null && now - lane.startedAt > jobMs) return "job_timeout";
   if (lane.state === "idle" && now - lane.lastProgressAt > limits.progressMs) return "lane_progress_timeout";
   return null;
 }

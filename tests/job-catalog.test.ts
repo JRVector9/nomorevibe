@@ -131,6 +131,8 @@ describe('lanesForRole', () => {
     expect(reviewer[0]).toEqual(expect.arrayContaining(['crawl-judge', 'second-review', 'human-deepseek-review', 'product-audit']));
     expect(reviewer[0]).not.toContain('crawl-agent-review');
     expect(jobRunOptions('crawl-agent-review', { requestedOnly: true })).toEqual({ requestedOnly: true, budgetMs: 110_000 });
+    // product-translate: 클라이언트 300초 + 기록 2초 + 입장·DB 대기 여유(lib/llm/deadline-ladder.ts PRODUCT_TRANSLATION_JOB_BUDGET_MS)
+    expect(jobRunOptions('product-translate', { requestedOnly: true })).toEqual({ requestedOnly: true, budgetMs: 315_000 });
   });
 
   it('모든 역할에서 줄은 잡을 나눌 뿐 겹치지 않는다 — 한 잡이 두 줄에서 동시에 돌 수 없다', () => {

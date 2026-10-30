@@ -4,7 +4,8 @@ import { basename } from 'node:path';
 import { BATCH_ROLES, batchJobsForRole, batchLanesForRole, type BatchRole } from '@/lib/jobs/batches';
 import { lastSettingsRead } from '@/lib/crawl/settings-version';
 import { probeCliServingContracts } from '@/lib/llm/cli-serving-contract';
-import type { RuntimeLane } from '@/lib/operations/worker-progress';
+import { productTranslationJobBudgetMs } from '@/lib/llm/deadline-ladder';
+import { DECLARED_BUDGET_MAX_MS, type RuntimeLane } from '@/lib/operations/worker-progress';
 import { createProviderCircuits, providerCircuitConfig, withProviderOutcome, type ProviderCircuits } from '@/lib/llm/provider-circuit-breaker';
 import { dbErrorFields } from '@/lib/db/error-fields';
 import { installTailnetDns } from '@/lib/net/tailnet-dns';
@@ -97,8 +98,9 @@ export function jobRunOptions(name: string, options: RequestedRunOptions): JobRu
   if (name === 'product-automated-action-audit') return { ...options, budgetMs: 20_000 };
   if (name === 'crawl-publish') return { ...options, budgetMs: 120_000 };
   if (name === 'reason-translate') return { ...options, budgetMs: 55_000 };
-  // Admission/DB waits must leave the public-field call its full 20-second ceiling.
-  if (name === 'product-translate') return { ...options, budgetMs: 55_000 };
+  // Admission/DB waits must leave the public-field call its full client ceiling (300s since 2026-10-30) plus the 2s record margin.
+  // 틱마다 등록부에서 다시 읽는다 — 관리자 저장(등록부 덮어쓰기)이 재배포 없이 다음 틱에 반영된다.
+  if (name === 'product-translate') return { ...options, budgetMs: productTranslationJobBudgetMs() };
   // 검색 키워드 한 건이 7초 안팎이다 — 기본 틱이면 동시 셋이 두 바퀴도 못 돈다
   if (name === 'product-search-profile') return { ...options, budgetMs: 55_000 };
   if (name === 'product-search-verify') return { ...options, budgetMs: 110_000 };
@@ -143,7 +145,7 @@ export async function runWorker(options: WorkerOptions, dependencies: WorkerDepe
   const lanes = (dependencies.lanes ?? [dependencies.names]).map((names) => [...new Set(names)].filter(name => !consumed.includes(name)))
     .filter((names) => names.length > 0);
   const states = [...lanes, ...consumed.map(name => [name])].map((jobs): RuntimeLane => ({ name: jobs[0], jobs, state: 'idle', currentJob: null,
-    startedAt: null, pollStartedAt: null, lastProgressAt: Date.now() }));
+    startedAt: null, pollStartedAt: null, lastProgressAt: Date.now(), budgetMs: null }));
   const emit = () => {
     const snapshot = states.map(lane => ({ ...lane, jobs: [...lane.jobs] }));
     const running = states.filter((lane) => lane.state === 'running' && lane.currentJob !== null && lane.startedAt !== null)
@@ -153,8 +155,11 @@ export async function runWorker(options: WorkerOptions, dependencies: WorkerDepe
   };
   const laneReport = (index: number): RuntimeReport => (state, currentJob = null) => {
     const now = Date.now();
+    // 도는 잡의 틱 예산을 감독에게 알린다 — 감독의 job_timeout 이 env 하한과 이 예산 + 여유 중 큰 쪽으로 잰다(worker-progress runtimeLaneStall)
+    const budgetMs = state === 'running' && currentJob
+      ? Math.min(jobRunOptions(currentJob, { requestedOnly: true }).budgetMs ?? 25_000, DECLARED_BUDGET_MAX_MS) : null;
     states[index] = { ...states[index], state, currentJob, startedAt: state === 'running' ? now : null,
-      pollStartedAt: state === 'polling' ? now : null, lastProgressAt: now };
+      pollStartedAt: state === 'polling' ? now : null, lastProgressAt: now, budgetMs };
     emit();
   };
   const results = await Promise.all([...lanes.map((names, index) => runLane(options, dependencies, names, intervalMs, laneReport(index))),

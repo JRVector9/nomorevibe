@@ -105,7 +105,8 @@ it("틱 끝에 시간이 모자라면 새로 부르지 않는다 — 줄어든 �
     mocks.translate.mockImplementation(async () => { vi.advanceTimersByTime(30_000); return { ok: true, translations: ["가"] }; });
     expect(await translateReasons(context())).toEqual({ done: false });
     expect(mocks.translate).toHaveBeenCalledTimes(1);
-    expect(mocks.translate.mock.calls[0][1]).toBe(40_000);
+    // reason-translate 상한 45초(모델 기본 120초와의 최솟값; M1 기본이 40초였을 때는 40초였다)
+    expect(mocks.translate.mock.calls[0][1]).toBe(45_000);
   } finally { vi.useRealTimers(); }
 });
 
