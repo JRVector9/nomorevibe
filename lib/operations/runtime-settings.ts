@@ -1,6 +1,6 @@
-import { and, eq, inArray, like, or, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
-import { operationsAudit, operationsObservations, runtimeSettings as runtimeSettingsTable } from "@/lib/db/schema";
+import { operationsAudit, runtimeSettings as runtimeSettingsTable } from "@/lib/db/schema";
 import { overlaidModelDefinitions, type ModelDefinition } from "@/lib/llm/model-registry";
 import { ensureServingContracts, servingContractSnapshot } from "@/lib/llm/serving-contract-store";
 import { logger } from "@/lib/observability/logger";
@@ -8,7 +8,7 @@ import { adminAuditRow, settingsChanges } from "./admin-log";
 import { DrWriterFencedError, writerSiteActive } from "./dr/epoch";
 import { RUNTIME_SETTING_GROUPS, RUNTIME_SETTINGS_VERSION, resolveRuntimeSettings, runtimeSettingLabel, storedSettingsVersion,
   type RuntimeSettingGroup, type RuntimeSettings } from "./runtime-settings-schema";
-import { SETTINGS_ROLES, settingsApplyStatus, type SettingsApply } from "./settings-apply";
+import { RUNTIME_SETTINGS_ROLES, readApplyObservations, runtimeSettingsApplyStatus, type SettingsApply } from "./settings-apply";
 
 /**
  * runtime_settings 행(0152)의 DB 읽기·저장·감사·적용 확인 — PR 1a WP-A. 서명은 계약으로 고정되어 있다(live-settings-plan §7).
@@ -37,8 +37,6 @@ const ROW_ID = 1;
 const STORED_DOCUMENT_MAX_CHARS = 60_000;
 /** 저장이 쓰는 그룹 — devices 는 PR 1b 의 관계형 표(이 문서에 들어가지 않는다) */
 const EDITABLE_GROUPS: readonly RuntimeSettingGroup[] = ["routes", "translation", "jobs", "budgets"];
-/** 적용 확인 화면의 조치 링크 */
-export const RUNTIME_SETTINGS_APPLY_HREF = "/admin/models/limits#apply";
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
 /** 기한 사다리의 relayMs: null 은 "중계 층 없음"이라는 값이다 — 지우기가 아니다 */
@@ -141,8 +139,8 @@ export async function saveRuntimeSettings(patch: unknown, actor: string, options
 }
 
 /**
- * 저장된 판과 각 역할 워커가 heartbeat 로 알린 runtimeSettingsVersion 을 견준다(settings-apply.ts 의 일반화).
- * 관측의 runtimeSettingsVersion/runtimeSettingsReadAt 을 settingsApplyStatus 가 읽는 이름으로 옮겨 같은 판정을 쓴다; 조치 링크는 실시간 한도 화면이다.
+ * 저장된 판과 각 역할 워커가 heartbeat 로 알린 runtimeSettingsVersion 을 견준다 — settings-apply.ts 의 RUNTIME_SETTINGS_APPLY(WP-B):
+ * 다섯 역할(maintenance 포함), runtimeSettingsRegistryEnv → registryEnv 배지, 조치 링크 /admin/models/limits#apply.
  * 행이 없으면(0152 전) 워커도 기본값("default")으로 돈다 — 같은 판이다.
  */
 export async function readRuntimeSettingsApply(): Promise<SettingsApply> {
@@ -152,20 +150,13 @@ export async function readRuntimeSettingsApply(): Promise<SettingsApply> {
       // updated_at 은 timestamptz 다 — 경과는 DB 시계로 잰다
       ageSeconds: sql<number>`extract(epoch from (clock_timestamp() - ${runtimeSettingsTable.updatedAt}))::double precision`,
     }).from(runtimeSettingsTable).where(eq(runtimeSettingsTable.id, ROW_ID)),
-    db.select({
-      key: operationsObservations.key, value: operationsObservations.value,
-      // observed_at 은 시간대 없는 UTC 벽시계다(settings-apply.ts 와 같다)
-      ageSeconds: sql<number>`extract(epoch from ((now() at time zone 'utc') - ${operationsObservations.observedAt}))::double precision`,
-    }).from(operationsObservations)
-      .where(or(like(operationsObservations.key, "service:%"), inArray(operationsObservations.key, [...SETTINGS_ROLES]))),
+    readApplyObservations(RUNTIME_SETTINGS_ROLES),
   ]);
   const row = saved[0];
-  const status = settingsApplyStatus({
+  return runtimeSettingsApplyStatus({
     savedVersion: storedSettingsVersion(row?.values),
     // 심은 행(migration)·운영자 저장 모두 updated_at 이 있다; 행이 없으면 저장한 적이 없다
     savedAgeSeconds: row ? Number(row.ageSeconds) : null,
-    observations: observations.map(item => ({ key: item.key, ageSeconds: Number(item.ageSeconds),
-      value: { ...item.value, settingsVersion: item.value.runtimeSettingsVersion, settingsReadAt: item.value.runtimeSettingsReadAt } })),
+    observations,
   });
-  return { ...status, attention: status.attention ? { ...status.attention, title: "저장한 실시간 한도가 워커에 닿지 않음", href: RUNTIME_SETTINGS_APPLY_HREF } : null };
 }
