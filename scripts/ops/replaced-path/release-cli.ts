@@ -15,7 +15,8 @@ import { REPLACED_PATH_PROBES, replacedPathHopSchema, replacedPathPlanHash, repl
 
 const sha = (value: Buffer | string) => createHash("sha256").update(value).digest("hex");
 /** Registry host → this operator shell's SSH alias. m1studio is reached only through device_admin. */
-export const REPLACED_PATH_SSH: Readonly<Record<string, string>> = { m3ultra: "m3ultra", "9mini": "9mini", supa: "supa" };
+// m1studio: the operator host ssh alias (user-level, read-only probes; the relay launchd probe reads as absent without root).
+export const REPLACED_PATH_SSH: Readonly<Record<string, string>> = { m3ultra: "m3ultra", "9mini": "9mini", supa: "supa", m1studio: "m1-studio" };
 const HOP_SOURCE = resolve(dirname(fileURLToPath(import.meta.url)), "collect_hop.py");
 
 function privateFile(path: string, cap = 5 * 1024 * 1024) {

@@ -2,12 +2,12 @@ import { readFileSync } from "node:fs";
 import { z } from "zod";
 import { expect, it } from "vitest";
 import { modelDispatchReleaseEvidenceSchema } from "@/lib/llm/capacity";
-import { REPLACED_PATH_OWNERS, REPLACED_PATH_PROVIDERS, replacedPathEvidenceShape, replacedPathPlanHash,
+import { REPLACED_PATH_OWNERS, REPLACED_PATH_PROVIDERS, REPLACED_PATH_PROVIDERS_0145, replacedPathEvidenceShape, replacedPathPlanHash,
   replacedPathRequiredHops } from "@/lib/llm/replaced-path-boundary-contract";
 import { replacedPathFixture } from "./fixtures/replaced-path-boundary";
 
 it("accepts a path whose every process started after the dispatch", () => {
-  for (const [budget, owner] of [["abcllm-m1-qwen", "m3-text"], ["abcllm-supa", "m3-reviewer"], ["abcllm-m3-mlx", "m3-reviewer"]]) {
+  for (const [budget, owner] of [["abcllm-m1-qwen", "m3-text"], ["abcllm-supa", "m3-reviewer"], ["abcllm-m3-mlx", "m3-reviewer"], ["supa-direct", "m3-text"]]) {
     const { evidence } = replacedPathFixture(budget, owner);
     expect(modelDispatchReleaseEvidenceSchema.parse(evidence).kind).toBe("replaced_path_boundary_exit");
   }
@@ -17,6 +17,9 @@ it("requires the owner, both gateways and every provider process of the budget",
     "owner:m3ultra:app-copy-primary-hard-drive-b5fhzd", "gateway-m3:m3ultra:app-reboot-optical-matrix-3bl2a4",
     "gateway-mini:9mini:app-hack-optical-monitor-v1ioak", "provider:supa:vllm.service"]);
   expect(replacedPathRequiredHops("m3-text", "abcllm-m1-qwen")?.map(h => h.role)).toEqual(["owner", "gateway-m3", "gateway-mini", "relay", "provider"]);
+  // 'supa-direct' (capacity rev12 alias, 2026-10-30) is the same Supa path; 0145 did not know it.
+  expect(replacedPathRequiredHops("m3-reviewer", "supa-direct")).toEqual(replacedPathRequiredHops("m3-reviewer", "abcllm-supa"));
+  expect(Object.keys(REPLACED_PATH_PROVIDERS_0145)).toEqual(["abcllm-supa", "abcllm-m3-mlx", "abcllm-m1-qwen"]);
   expect(replacedPathRequiredHops("m3-reviewer", "gpu3090-qwen")).toBeNull();
   expect(replacedPathRequiredHops("mini-reviewer-standby", "abcllm-supa")).toBeNull();
   expect(replacedPathRequiredHops("toString", "abcllm-supa")).toBeNull();
@@ -32,7 +35,15 @@ it("pins 0146 to the same shape and keeps it to the evidence validator only", ()
 it("pins generated SQL to the strict contract and topology", () => {
   expect(readFileSync("drizzle/0145_replaced_path_boundary_exit.sql", "utf8")).toBe(readFileSync("scripts/ops/replaced-path-boundary-sql.template.sql", "utf8")
     .replace("__EVIDENCE_SHAPE__", JSON.stringify(z.toJSONSchema(replacedPathEvidenceShape)))
+    .replace("__OWNERS__", JSON.stringify(REPLACED_PATH_OWNERS)).replace("__PROVIDERS__", JSON.stringify(REPLACED_PATH_PROVIDERS_0145)));
+});
+it("pins 0150 to the current topology and keeps it to the topology function only", () => {
+  const sql = readFileSync("drizzle/0150_replaced_path_supa_direct.sql", "utf8");
+  expect(sql).toBe(readFileSync("scripts/ops/replaced-path-boundary-0150.template.sql", "utf8")
     .replace("__OWNERS__", JSON.stringify(REPLACED_PATH_OWNERS)).replace("__PROVIDERS__", JSON.stringify(REPLACED_PATH_PROVIDERS)));
+  expect(sql.match(/CREATE (OR REPLACE )?FUNCTION/g)).toEqual(["CREATE OR REPLACE FUNCTION"]);
+  expect(sql).not.toMatch(/ALTER TABLE|CREATE TRIGGER|DROP /);
+  expect(sql).toContain('"supa-direct":');
 });
 type E = ReturnType<typeof replacedPathFixture>["evidence"];
 const negatives: [string, (e: E) => void][] = [
