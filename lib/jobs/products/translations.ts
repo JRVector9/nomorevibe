@@ -1,12 +1,13 @@
 import { scopedModel } from "@/lib/llm/model-registry";
 import { PRODUCT_TRANSLATION_MODEL } from "@/lib/crawl/translate";
 import { translateProductFieldsWithModelCapacity } from "@/lib/domain/products/product-translation-model-capacity";
-import { checkProductTranslation, productTranslationSourceHash, translationSourceText } from "@/lib/domain/products/translation-policy";
+import { checkProductTranslation, productTranslationSourceHash, translationSourceText,
+  PRODUCT_TRANSLATION_MAX_SOURCE_CHARS } from "@/lib/domain/products/translation-policy";
 import { pendingProductTranslations, recordProductTranslations, type ProductTranslationResult } from "@/lib/domain/products/translations";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { PRODUCT_TRANSLATION_CLIENT_TIMEOUT_MS } from "@/lib/llm/deadline-ladder";
 
-/** One call / at most four demanded fields per 55-second text-role tick. No catalog backfill. */
+/** One call / at most four demanded fields per text-role tick (PRODUCT_TRANSLATION_JOB_BUDGET_MS). No catalog backfill. */
 export async function translateDemandedProductFields(ctx: JobContext<null>): Promise<JobOutcome<null>> {
   if (!process.env.ABCLLM_API_KEY?.trim()) {
     ctx.log("product_translation.deferred", { reason: "no_key" });
@@ -21,20 +22,20 @@ export async function translateDemandedProductFields(ctx: JobContext<null>): Pro
     const tasks = await pendingProductTranslations(4);
     if (!tasks.length || !ctx.hasBudget() || signal.aborted) return { done: true };
     const retired = tasks.filter((task) => !task.eligible || productTranslationSourceHash(task.source, task.field) !== task.sourceHash
-      || translationSourceText(task.source, task.field).length > 4_000);
+      || translationSourceText(task.source, task.field).length > PRODUCT_TRANSLATION_MAX_SOURCE_CHARS);
     if (retired.length) await recordProductTranslations(retired.map((task) => ({ task,
-      result: { ok: false, error: translationSourceText(task.source, task.field).length > 4_000 ? "source_too_long" : "stale_source", model: "" } as ProductTranslationResult,
+      result: { ok: false, error: translationSourceText(task.source, task.field).length > PRODUCT_TRANSLATION_MAX_SOURCE_CHARS ? "source_too_long" : "stale_source", model: "" } as ProductTranslationResult,
     })), ctx.lease);
     const batch = [];
     let chars = 0;
     for (const task of tasks.filter((task) => !retired.includes(task))) {
       const text = translationSourceText(task.source, task.field);
-      if (batch.length && chars + text.length > 4_000) break;
+      if (batch.length && chars + text.length > PRODUCT_TRANSLATION_MAX_SOURCE_CHARS) break;
       batch.push(task);
       chars += text.length;
     }
     if (!batch.length || !ctx.hasBudget() || signal.aborted) return { done: true };
-    // Outermost HTTP deadline fits the 55s job budget; inner M1 bounds still require measurement and enforcement.
+    // Outermost HTTP deadline fits the job budget (PRODUCT_TRANSLATION_JOB_BUDGET_MS); inner M1 bounds still require measurement and enforcement.
     const outcome = await translateProductFieldsWithModelCapacity(batch, ctx.lease, { timeoutMs: PRODUCT_TRANSLATION_CLIENT_TIMEOUT_MS, signal, deadlineAt: ctx.deadlineAt });
     if (outcome.kind === "skipped") return { done: true };
     const response = outcome.result;

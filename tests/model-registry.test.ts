@@ -64,7 +64,9 @@ describe("registry deadline and request policies", () => {
   const config = (overrides: object) => ({ MODEL_REGISTRY_CONFIG: JSON.stringify({ version: 1, models: DEFAULT_MODEL_DEFINITIONS, ...overrides }) });
   it("preserves PR711 review and translation budgets and makes each override observable", () => {
     expect(modelDeadlineLadder("review-gateway", {})).toEqual({ engineMs: 50_000, relayMs: null, gatewayMs: 55_000, clientMs: 60_000 });
-    expect(modelTimeoutMs("product-translate", {})).toBe(40_000);
+    // 2026-10-30: M1 mlx-lm 번역 120초·출력 30K 토큰(입력 30K 자는 PRODUCT_TRANSLATION_MAX_SOURCE_CHARS).
+    expect(modelTimeoutMs("product-translate", {})).toBe(120_000);
+    expect(modelRequestBudget("product-translate", {})).toEqual({ maxTokens: 30_000, concurrency: 1, timeoutMs: 120_000 });
     const modelEnv = config({ models: DEFAULT_MODEL_DEFINITIONS.map(model => model.key === "supa:review" ? { ...model, timeoutMs: 30_000, maxTokens: 700, deadlineLadder: { engineMs: 20_000, relayMs: null, gatewayMs: 25_000, clientMs: 30_000 } } : model) });
     expect(modelCallTimeoutMs("review-gateway", "[supa] Qwen3.8-27B-NVFP4", modelEnv)).toBe(30_000);
     expect(modelCallMaxTokens("gateway-review", "[supa] Qwen3.8-27B-NVFP4", modelEnv)).toBe(700);

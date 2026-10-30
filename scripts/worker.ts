@@ -4,6 +4,7 @@ import { basename } from 'node:path';
 import { BATCH_ROLES, batchJobsForRole, batchLanesForRole, type BatchRole } from '@/lib/jobs/batches';
 import { lastSettingsRead } from '@/lib/crawl/settings-version';
 import { probeCliServingContracts } from '@/lib/llm/cli-serving-contract';
+import { PRODUCT_TRANSLATION_JOB_BUDGET_MS } from '@/lib/llm/deadline-ladder';
 import type { RuntimeLane } from '@/lib/operations/worker-progress';
 import { createProviderCircuits, providerCircuitConfig, withProviderOutcome, type ProviderCircuits } from '@/lib/llm/provider-circuit-breaker';
 import { dbErrorFields } from '@/lib/db/error-fields';
@@ -97,8 +98,8 @@ export function jobRunOptions(name: string, options: RequestedRunOptions): JobRu
   if (name === 'product-automated-action-audit') return { ...options, budgetMs: 20_000 };
   if (name === 'crawl-publish') return { ...options, budgetMs: 120_000 };
   if (name === 'reason-translate') return { ...options, budgetMs: 55_000 };
-  // Admission/DB waits must leave the public-field call its full 20-second ceiling.
-  if (name === 'product-translate') return { ...options, budgetMs: 55_000 };
+  // Admission/DB waits must leave the public-field call its full client ceiling (120s since 2026-10-30) plus the 2s record margin.
+  if (name === 'product-translate') return { ...options, budgetMs: PRODUCT_TRANSLATION_JOB_BUDGET_MS };
   // 검색 키워드 한 건이 7초 안팎이다 — 기본 틱이면 동시 셋이 두 바퀴도 못 돈다
   if (name === 'product-search-profile') return { ...options, budgetMs: 55_000 };
   if (name === 'product-search-verify') return { ...options, budgetMs: 110_000 };

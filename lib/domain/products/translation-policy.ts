@@ -6,6 +6,8 @@ import { hasEnglishEvidence } from "@/lib/i18n/content-language";
 export const PRODUCT_TRANSLATION_POLICY = "public-fields-v1";
 export const PRODUCT_TRANSLATION_MAX_ATTEMPTS = 4;
 export const PRODUCT_TRANSLATION_DEMAND_LIMIT = 80;
+/** 한 요청(최대 4건)의 원문 글자 합 상한. 설명은 8,000자까지인데 4,000자 상한이 긴 설명을 source_too_long 으로 버렸다 — 2026-10-30 M1 출력 30K 토큰과 함께 30K 자로. */
+export const PRODUCT_TRANSLATION_MAX_SOURCE_CHARS = 30_000;
 export type ProductTranslationSource = { id: number; name: string; tagline: string; description?: string };
 export const translationSourceText = (source: ProductTranslationSource, field: ProductTranslationField): string =>
   field === "tagline" ? source.tagline : source.description ?? "";
