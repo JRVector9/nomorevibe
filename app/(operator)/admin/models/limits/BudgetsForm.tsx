@@ -18,15 +18,15 @@ function BudgetCell({ row, readOnly }: { row: BudgetRow; readOnly?: boolean }) {
     <span className="flex items-center gap-1">
       <input name={`value:${path}`} defaultValue={row.field.input} aria-label={row.field.label} title={row.field.note ?? row.field.label} inputMode="decimal"
         placeholder={row.declared ? undefined : "25"} disabled={readOnly || auto} className={INPUT_WIDE} />
-      <span className="text-[12px] text-fg-3">초</span>
-      <label className="flex items-center gap-1 text-[12px]"><input type="checkbox" name={`auto:${path}`} checked={auto} disabled={readOnly || row.ceilingMs === null}
+      <span className="text-[13px] text-fg-3">초</span>
+      <label className="flex items-center gap-1 text-[13px]"><input type="checkbox" name={`auto:${path}`} checked={auto} disabled={readOnly || row.ceilingMs === null}
         onChange={event => setAuto(event.target.checked)} /> auto</label>
       <OverrideBadge overridden={row.field.overridden} />
     </span>
     <input type="hidden" name={`initial:${path}`} value={row.field.input} />
     <input type="hidden" name={`initialAuto:${path}`} value={row.auto ? "1" : "0"} />
     <input type="hidden" name={`stored:${path}`} value={row.field.overridden ? "1" : "0"} />
-    <span className="flex flex-wrap items-center gap-2 text-[11px] text-fg-3">
+    <span className="flex flex-wrap items-center gap-2 text-[13px] text-fg-3">
       <span>기본 {row.defaultAuto ? `auto(${row.field.defaultInput}초)` : row.field.defaultInput === "" ? "없음(runner 25초)" : `${row.field.defaultInput}초`}</span>
       {auto && row.autoNote && <span>{row.autoNote}</span>}
       {row.field.overridden && <label className="flex items-center gap-1"><input type="checkbox" name={`reset:${path}`} disabled={readOnly} /> 기본값으로</label>}
@@ -47,14 +47,14 @@ export function BudgetsForm({ budgets, revision, readOnly }: { budgets: BudgetRo
     <div className="overflow-x-auto"><table className="w-full min-w-[960px] text-left text-[13px]"><thead><tr className="border-b border-line">
       <th className={TH}>잡</th><th className={TH}>예산(초)</th><th className={TH}>호출 상한(초)</th><th className={TH}>감독 하한(env)</th><th className={TH}>지금 도는 틱</th></tr></thead>
       {groups.map(group => <tbody key={group.role}>
-        <tr className="border-b border-line bg-bg"><th colSpan={5} className="py-1.5 pr-3 text-left text-[12px] font-semibold text-fg-2">{group.roleLabel} <code className="font-normal text-fg-3">{group.role}</code></th></tr>
+        <tr className="border-b border-line bg-bg"><th colSpan={5} className="py-1.5 pr-3 text-left text-[13px] font-semibold text-fg-2">{group.roleLabel} <code className="font-normal text-fg-3">{group.role}</code></th></tr>
         {group.rows.map(row => <tr key={row.job} className="border-b border-line">
-          <td className={TD}>{row.label}<br /><code className="text-[12px] text-fg-3">{row.job}</code>
-            {row.warning && <p role="note" className="mt-1 max-w-[320px] text-[12px] text-amber-700">⚠ {row.warning}</p>}</td>
+          <td className={TD}>{row.label}<br /><code className="text-[13px] text-fg-3">{row.job}</code>
+            {row.warning && <p role="note" className="mt-1 max-w-[320px] text-[13px] text-amber-700">⚠ {row.warning}</p>}</td>
           <td className={TD}><BudgetCell row={row} readOnly={readOnly} /></td>
           <td className={`${TD} tabular-nums`}>{seconds(row.ceilingMs)}</td>
           <td className={`${TD} tabular-nums`}>{seconds(row.supervisorFloorMs)}</td>
-          <td className={`${TD} text-[12px]`}>{laneText(row.lane)}</td>
+          <td className={`${TD} text-[13px]`}>{laneText(row.lane)}</td>
         </tr>)}
       </tbody>)}</table></div>
   </GroupForm>;

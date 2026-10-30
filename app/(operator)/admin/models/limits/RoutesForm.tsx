@@ -13,11 +13,11 @@ export function RoutesForm({ routes, ladders, revision, readOnly }: { routes: Ro
     <div className="overflow-x-auto"><table className="w-full min-w-[880px] text-left text-[13px]"><thead><tr className="border-b border-line">
       <th className={TH}>경로</th><th className={TH}>출력 토큰 상한</th><th className={TH}>동시 호출</th><th className={TH}>호출 상한(초)</th><th className={TH}>모델 상한(등록부)</th></tr></thead>
       <tbody>{routes.map(row => <tr key={row.route} className="border-b border-line">
-        <td className={TD}>{row.label}<br /><code className="text-[12px] text-fg-3">{row.route}</code></td>
+        <td className={TD}>{row.label}<br /><code className="text-[13px] text-fg-3">{row.route}</code></td>
         <td className={TD}>{row.maxTokens ? <ValueCell field={row.maxTokens} readOnly={readOnly} unit="" /> : <span className="text-fg-3">—</span>}</td>
         <td className={TD}>{row.concurrency ? <ValueCell field={row.concurrency} readOnly={readOnly} unit="" /> : <span className="text-fg-3">—</span>}</td>
-        <td className={TD}>{row.timeout ? <ValueCell field={row.timeout} readOnly={readOnly} /> : <span className="text-[12px] text-fg-3">{row.timeoutNote ?? "—"}</span>}</td>
-        <td className={`${TD} text-[12px] text-fg-3`}>{row.modelCeiling ?? "이 경로를 맡은 등록부 모델 없음"}</td>
+        <td className={TD}>{row.timeout ? <ValueCell field={row.timeout} readOnly={readOnly} /> : <span className="text-[13px] text-fg-3">{row.timeoutNote ?? "—"}</span>}</td>
+        <td className={`${TD} text-[13px] text-fg-3`}>{row.modelCeiling ?? "이 경로를 맡은 등록부 모델 없음"}</td>
       </tr>)}</tbody></table></div>
     <h3 className="mt-2 text-[15px] font-semibold">기한 사다리</h3>
     <p className="text-[13px] text-fg-3">엔진·게이트웨이 값은 선언이며 외부 강제가 아닙니다. 순서는 엔진 &lt; 중계 &lt; 게이트웨이 &lt; 클라이언트(층 사이 2초 이상)이고,
@@ -25,7 +25,7 @@ export function RoutesForm({ routes, ladders, revision, readOnly }: { routes: Ro
     <div className="overflow-x-auto"><table className="w-full min-w-[720px] text-left text-[13px]"><thead><tr className="border-b border-line">
       <th className={TH}>경로</th><th className={TH}>엔진(초)</th><th className={TH}>중계(초)</th><th className={TH}>게이트웨이(초)</th><th className={TH}>클라이언트(초)</th></tr></thead>
       <tbody>{ladders.map(row => <tr key={row.route} className="border-b border-line">
-        <td className={TD}>{row.label}<br /><code className="text-[12px] text-fg-3">{row.route}</code></td>
+        <td className={TD}>{row.label}<br /><code className="text-[13px] text-fg-3">{row.route}</code></td>
         <td className={TD}><ValueCell field={row.fields.engineMs} readOnly={readOnly} /></td>
         <td className={TD}><ValueCell field={row.fields.relayMs} readOnly={readOnly} /></td>
         <td className={TD}><ValueCell field={row.fields.gatewayMs} readOnly={readOnly} /></td>

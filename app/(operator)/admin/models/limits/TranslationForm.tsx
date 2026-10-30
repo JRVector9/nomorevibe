@@ -21,7 +21,7 @@ export function TranslationForm({ translation, jobKnobs, revision, readOnly }: {
         {translation.map(field => <div key={field.path} className="grid gap-1">
           <dt className="text-[13px] font-semibold">{field.label}</dt>
           <dd><ValueCell field={field} readOnly={readOnly} />
-            {field.note && <p className="mt-1 max-w-prose text-[12px] text-fg-3">{field.note}</p>}</dd>
+            {field.note && <p className="mt-1 max-w-prose text-[13px] text-fg-3">{field.note}</p>}</dd>
         </div>)}
       </dl>
     </GroupForm>
@@ -31,7 +31,7 @@ export function TranslationForm({ translation, jobKnobs, revision, readOnly }: {
       <div className="overflow-x-auto"><table className="w-full min-w-[880px] text-left text-[13px]"><thead><tr className="border-b border-line">
         <th className={TH}>잡</th>{columns.map(knob => <th key={knob} className={TH}>{KNOB_HEADERS[knob]}</th>)}</tr></thead>
         <tbody>{jobKnobs.map(row => <tr key={row.job} className="border-b border-line">
-          <td className={TD}>{row.label}<br /><code className="text-[12px] text-fg-3">{row.job}</code></td>
+          <td className={TD}>{row.label}<br /><code className="text-[13px] text-fg-3">{row.job}</code></td>
           {columns.map(knob => <td key={knob} className={TD}>{row.knobs[knob] ? <ValueCell field={row.knobs[knob]!} readOnly={readOnly} unit={knob.endsWith("Ms") ? "초" : ""} />
             : <span className="text-fg-3">—</span>}</td>)}
         </tr>)}</tbody></table></div>

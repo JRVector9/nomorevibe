@@ -40,7 +40,7 @@ export function SaveNotice({ state }: { state: LimitsSaveState }) {
 
 /** 덮어씀/기본값 표시 — 색만으로 가르지 않고 글자를 낸다 */
 export function OverrideBadge({ overridden }: { overridden: boolean }) {
-  return <span className={`rounded-full px-1.5 text-[11px] font-semibold ${overridden ? "bg-amber-100 text-amber-900" : "text-fg-3"}`}>{overridden ? "덮어씀" : "기본값"}</span>;
+  return <span className={`rounded-full px-1.5 text-[13px] font-semibold ${overridden ? "bg-amber-100 text-amber-900" : "text-fg-3"}`}>{overridden ? "덮어씀" : "기본값"}</span>;
 }
 
 /**
@@ -49,22 +49,22 @@ export function OverrideBadge({ overridden }: { overridden: boolean }) {
  */
 export function ValueCell({ field, readOnly, unit }: { field: SettingField; readOnly?: boolean; unit?: string }) {
   const suffix = unit ?? (field.kind === "int" ? "" : "초");
-  if (field.readOnly) return <span className="tabular-nums" title={field.note}>{field.input || "—"}{suffix} <span className="text-[11px] text-fg-3">고정</span></span>;
+  if (field.readOnly) return <span className="tabular-nums" title={field.note}>{field.input || "—"}{suffix} <span className="text-[13px] text-fg-3">고정</span></span>;
   return <span className="inline-grid gap-0.5">
     <span className="flex items-center gap-1">
       <input name={`value:${field.path}`} defaultValue={field.input} aria-label={field.label} title={field.note ?? field.label} inputMode="decimal"
         placeholder={field.value === null ? "모델 상한" : undefined} disabled={readOnly} className={INPUT} />
-      {suffix && <span className="text-[12px] text-fg-3">{suffix}</span>}
+      {suffix && <span className="text-[13px] text-fg-3">{suffix}</span>}
       <OverrideBadge overridden={field.overridden} />
     </span>
     <input type="hidden" name={`initial:${field.path}`} value={field.input} />
     <input type="hidden" name={`stored:${field.path}`} value={field.overridden ? "1" : "0"} />
-    <span className="flex items-center gap-2 text-[11px] text-fg-3">
+    <span className="flex items-center gap-2 text-[13px] text-fg-3">
       <span>기본 {field.defaultInput === "" ? "없음" : `${field.defaultInput}${suffix}`}</span>
       {field.overridden && <label className="flex items-center gap-1"><input type="checkbox" name={`reset:${field.path}`} disabled={readOnly} /> 기본값으로</label>}
     </span>
   </span>;
 }
 
-export const TH = "py-2 pr-3 text-[12px] font-semibold text-fg-3";
+export const TH = "py-2 pr-3 text-[13px] font-semibold text-fg-3";
 export const TD = "py-2 pr-3 align-top";
