@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { products } from "@/lib/db/schema";
 import { PRODUCT_TRANSLATION_MODEL } from "@/lib/crawl/translate";
+import { PRODUCT_TRANSLATION_JOB_BUDGET_MS } from "@/lib/llm/deadline-ladder";
 import { reviewHash } from "@/lib/crawl/agent-review-contract";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { pendingProductTranslations, pendingProductTranslationBatch, requestProductTranslations, prepareProductTranslationDispatch,
@@ -164,7 +165,7 @@ async function server(run: (state: { bodies: string[]; setReply: (reply: (respon
   finally { serving.contract = null; await steps([() => drain(work),
     () => new Promise<void>((resolve, reject) => http.listening ? http.close(error => error ? reject(error) : resolve()) : resolve()), () => drain(responses, true)], failures); }
 }
-async function tick() { await tracked(requestJob(jobName)); return tracked(runJob(jobName, translateDemandedProductFields, { requestedOnly: true, roleLease: role, budgetMs: 55_000 })); }
+async function tick() { await tracked(requestJob(jobName)); return tracked(runJob(jobName, translateDemandedProductFields, { requestedOnly: true, roleLease: role, budgetMs: PRODUCT_TRANSLATION_JOB_BUDGET_MS })); }
 async function custom(run: (lease: JobLease) => Promise<void>) { await tracked(requestJob(jobName));
   return tracked(runJob(jobName, async (ctx: JobContext<null>) => { expect(ctx.lease).toBeDefined(); await run(ctx.lease!); return { done: true }; }, { requestedOnly: true, roleLease: role })); }
 function latch() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }
