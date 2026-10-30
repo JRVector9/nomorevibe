@@ -20,6 +20,8 @@
 
 이웃 층 사이 최소 2초(`DEADLINE_LADDER_SKEW_MS`). `deadlineLadderViolation()`이 순서를 검사한다.
 
+2026-10-30(PR 1a 실시간 한도)부터 아래 값은 코드 기본값이고, 운영자는 `/admin/models/limits` 「경로 한도 → 기한 사다리」에서 배포 없이 바꾼다(저장 → 각 워커 30초 안 다음 틱). 바뀌어도 성질은 같다: 엔진·게이트웨이 값은 **선언**이며 외부가 강제하지 않고, 클라이언트 값만 그 경로의 호출 상한이다. 저장은 같은 순서 검사(`deadline_order_inverted`)와 상한↔사다리 일치(`model_timeout_ladder_mismatch`)를 거친다.
+
 | 경로 | 엔진 | 중계기 | 게이트웨이 | 클라이언트 |
 | --- | --- | --- | --- | --- |
 | AI1·AI2(abcLLM) `REVIEW_GATEWAY_LADDER` | 45초 | — | 50초 | 60초(기존값 유지) |

@@ -85,7 +85,7 @@ node --import tsx scripts/ops/pipeline-control.ts status
 node --import tsx scripts/ops/pipeline-control.ts status --json > control-before.json
 ```
 
-`status`는 stage별 mode·epoch·contract·live·legacy job·consumer 수, capacity·HTTP·batch 행, `[agent-scan]` 행과 priority별 대기 표(§11), 그리고 `[capacity routes]` 표(지금 쓰는 조합별 serving 상태, §6-3)를 보여 준다.
+`status`는 stage별 mode·epoch·contract·live·legacy job·consumer 수, capacity·HTTP·batch 행, `[agent-scan]` 행과 priority별 대기 표(§11), 그리고 `[capacity routes]` 표(지금 쓰는 조합별 serving 상태, §6-3)를 보여 준다. 첫 줄 `[runtime-settings] 판=… revision=… source=db|default`는 이 CLI 프로세스가 읽은 관리자 실시간 한도(`runtime_settings`, `/admin/models/limits`)의 판이다 — `source=default`는 행을 읽지 못해 코드 기본값으로 판정했다는 뜻이고, `MODEL_REGISTRY_CONFIG` env 가 있으면 경로 한도가 이 프로세스에 닿지 않는다고 덧붙인다(`--json`에는 `runtimeSettings` 필드).
 
 ## 2. 먼저 알아야 할 순서 제약 — item consumer는 capacity open이 필요하다
 
