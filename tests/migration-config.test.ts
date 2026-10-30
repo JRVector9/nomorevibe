@@ -31,4 +31,18 @@ describe('migration journal order', () => {
       expect(entry.when, `${entry.tag} when must exceed ${previous.tag} (${previous.when})`).toBeGreaterThan(previous.when);
     });
   });
+
+  // PR 1a (live settings): 0151 is taken by the parallel device-admission PR, so the runtime_settings document takes 0152 / when 1794086401063.
+  it('registers the runtime_settings document migration as 0152 with a seeded empty document', async () => {
+    const { readFileSync } = await import('node:fs');
+    const journal = JSON.parse(readFileSync('drizzle/meta/_journal.json', 'utf8')) as { entries: { idx: number; when: number; tag: string }[] };
+    expect(journal.entries.find(entry => entry.tag === '0152_runtime_settings')).toMatchObject({ idx: 152, when: 1794086401063, version: '7' });
+    const migration = readFileSync('drizzle/0152_runtime_settings.sql', 'utf8');
+    expect(migration).toContain('CREATE TABLE runtime_settings');
+    expect(migration).toContain("CONSTRAINT runtime_settings_single_row_check CHECK (id = 1)");
+    // NULL passes a CHECK: a document without version must still be refused
+    expect(migration).toContain("coalesce(values->>'version', '') = '1'");
+    expect(migration).toContain(`INSERT INTO runtime_settings (id, values, updated_by) VALUES (1, '{"version":1}'::jsonb, 'migration:0152') ON CONFLICT (id) DO NOTHING;`);
+    expect(migration).not.toMatch(/ALTER TABLE|DROP /);
+  });
 });

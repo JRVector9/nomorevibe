@@ -66,6 +66,31 @@ it('keeps the optional capability-only refresh principal out of the default SQL 
   expect(ORACLE_DB_PROFILES.attest.tables.model_capacity_requests).toEqual({ select: true });
 });
 
+it('lets every job-running Oracle principal read the admin runtime settings and registry overrides, never the contracts (key ciphertext)', () => {
+  // PR 1a: the per-tick serving-contract reload reads runtime_settings (0152) and model_registry_overrides (0148) — neither holds a secret
+  for (const service of ['translation', 'product-health', 'site-evidence', 'official-news'] as const) {
+    expect(ORACLE_DB_PROFILES[service].tables.runtime_settings, service).toEqual({ select: true });
+    expect(ORACLE_DB_PROFILES[service].tables.model_registry_overrides, service).toEqual({ select: true });
+  }
+  for (const service of ['scheduler', 'attest'] as const) {
+    expect(ORACLE_DB_PROFILES[service].tables.runtime_settings).toBeUndefined();
+    expect(ORACLE_DB_PROFILES[service].tables.model_registry_overrides).toBeUndefined();
+  }
+  // model_serving_contracts holds api_key_ciphertext and Oracle has no box key: not granted (live-settings-plan Q5)
+  for (const service of services) expect(ORACLE_DB_PROFILES[service].tables.model_serving_contracts, service).toBeUndefined();
+  for (const consumer of ['github-ko-discovery', 'agent-scan'] as const) {
+    expect(ORACLE_CONSUMER_DB_PROFILES[consumer]!.profile.tables.runtime_settings, consumer).toEqual({ select: true });
+    expect(ORACLE_CONSUMER_DB_PROFILES[consumer]!.profile.tables.model_serving_contracts, consumer).toBeUndefined();
+  }
+  expect(ORACLE_CONSUMER_DB_PROFILES.uptime!.profile.tables.runtime_settings).toBeUndefined();
+  const rendered = renderOracleDbGrantSql();
+  expect(rendered).toContain('GRANT SELECT ON TABLE public.runtime_settings TO nomorevibe_oracle_translation;');
+  expect(rendered).toContain('GRANT SELECT ON TABLE public.model_registry_overrides TO nomorevibe_oracle_translation;');
+  expect(rendered).toContain('GRANT SELECT ON TABLE public.runtime_settings TO nomorevibe_oracle_agent_scan;');
+  expect(rendered).not.toContain('model_serving_contracts');
+  expect(rendered.match(/public\.runtime_settings TO/g)).toHaveLength(6);
+});
+
 it('lets translation read the HTTP control row and never lets a worker rewrite a runtime key column', () => {
   // host 합계 예산 장부 갱신·비상 admission 판정이 읽는다(scheduler 와 같은 SELECT 만)
   expect(ORACLE_DB_PROFILES.translation.tables.http_origin_control).toEqual({ select: true });

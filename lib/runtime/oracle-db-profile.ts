@@ -48,23 +48,31 @@ const HTTP: Record<string, TableGrant> = { http_origin_control: lock('id'), http
 // RUNTIME already grants the same lock to every worker (versioned acquire/renew read the fence too), so this entry only
 // documents the seed dependency; site-evidence (no legacy parent) has the identical grant through RUNTIME.
 const LEGACY_SEED: Record<string, TableGrant> = { dr_writer_fence: lock('id') };
+/**
+ * Every job tick refreshes the admin serving-contract snapshot (lib/llm/serving-contract-store.ts: one SELECT trio per 30 s). The job-running
+ * principals read the admin runtime settings document (runtime_settings, 0152: route limits·timeouts·deadlines, translation batches, tick
+ * budgets — no secret) and the registry overrides (model_registry_overrides, 0148: engine address·model name·limits — no secret), so an
+ * admin save reaches Oracle on the next tick like at home. model_serving_contracts is deliberately not granted: it holds api_key_ciphertext
+ * and Oracle has no box key, so Oracle text routes keep their env contracts (live-settings-plan Q5; the reload tolerates that one failed part).
+ */
+const LIVE_SETTINGS: Record<string, TableGrant> = { runtime_settings: read, model_registry_overrides: read };
 export const ORACLE_RESULT_READBACK_TABLES = ['news_items', 'uptime_observations', 'product_evidence_sources', 'evidence_source_claims',
   'product_refresh_requests', 'text_translations', 'product_korean_taglines', 'product_translations'] as const;
 
 export const ORACLE_DB_PROFILES: Record<OracleDbService, Profile> = {
   'official-news': { statementTimeout: '60s', sequences: ['http_origin_events_id_seq', 'news_items_id_seq', 'dr_process_group_events_id_seq'],
-    tables: { ...RUNTIME, ...LEGACY_SEED, ...HTTP, crawl_settings: read, news_items: { select: true, insert: true } } },
+    tables: { ...RUNTIME, ...LEGACY_SEED, ...HTTP, ...LIVE_SETTINGS, crawl_settings: read, news_items: { select: true, insert: true } } },
   // Raw-only uptime phase. Authoritative gate writes (auto-ban, health counters) are intentionally not granted.
   'product-health': { statementTimeout: '60s', sequences: ['http_origin_events_id_seq', 'dr_process_group_events_id_seq'],
-    tables: { ...RUNTIME, ...LEGACY_SEED, ...HTTP, products: lock('id'), product_health: lock('slug'), uptime_control: lock('id'),
+    tables: { ...RUNTIME, ...LEGACY_SEED, ...HTTP, ...LIVE_SETTINGS, products: lock('id'), product_health: lock('slug'), uptime_control: lock('id'),
       uptime_gates: write, uptime_observations: { select: true, insert: true } } },
   'site-evidence': { statementTimeout: '60s', sequences: ['http_origin_events_id_seq', 'product_evidence_sources_id_seq', 'dr_process_group_events_id_seq'],
-    tables: { ...RUNTIME, ...HTTP, products: lock('id'), evidence_settings: lock('id'), evidence_source_control: { select: true, update: ['cursor'] },
+    tables: { ...RUNTIME, ...HTTP, ...LIVE_SETTINGS, products: lock('id'), evidence_settings: lock('id'), evidence_source_control: { select: true, update: ['cursor'] },
       evidence_source_claims: write, product_evidence_sources: write, product_links: read,
       product_refresh_requests: { select: true, update: ['progress', 'updated_at'] } } },
   // http_origin_control: host 합계 예산(HOST_BUDGET_ENFORCEMENT) 장부 갱신과 비상 admission 판정이 읽기만 한다(번역은 HTTP permit 을 쓰지 않는다).
   translation: { statementTimeout: '60s', sequences: ['model_capacity_events_id_seq', 'model_capacity_requests_queue_ordinal_seq', 'dr_process_group_events_id_seq'],
-    tables: { ...RUNTIME, ...LEGACY_SEED, http_origin_control: read, crawl_settings: read, crawl_review_attempts: read, second_reviews: read, text_translations: write,
+    tables: { ...RUNTIME, ...LEGACY_SEED, ...LIVE_SETTINGS, http_origin_control: read, crawl_settings: read, crawl_review_attempts: read, second_reviews: read, text_translations: write,
       product_korean_taglines: write, product_translations: { select: true, update: true }, products: lock('id'), product_health: read,
       product_intro_checks: lock('product_id'), takedown_requests: lock('slug'), uptime_control: read, uptime_gates: read,
       uptime_observations: read, model_capacity_control: { select: true, update: ['cursor', 'updated_at'] },
@@ -117,7 +125,7 @@ const AGENT_SCAN_STATE = ['coverage', 'state', 'cursor', 'request_count', 'file_
 export const ORACLE_CONSUMER_DB_PROFILES: Partial<Record<string, OracleConsumerDbProfile>> = {
   // Staging only. Home crawler applies language=yes through the shared discovery admission lock.
   'github-ko-discovery': { principal: 'nomorevibe_oracle_github_ko', profile: { statementTimeout: '10s', sequences: [],
-    tables: { dr_writer_fence: lock('id'), crawl_settings: read, github_ko_discovery_control: { select: true, update: ['id','shared_cursor'] },
+    tables: { dr_writer_fence: lock('id'), crawl_settings: read, runtime_settings: read, github_ko_discovery_control: { select: true, update: ['id','shared_cursor'] },
       github_ko_discovery_queries: { select: true, update: ['token','epoch','lease_until','cursor','due_at','last_error','updated_at'] },
       github_ko_discovery_staging: { select: true, insert: ['repo','signal','priority','description'],
         update: ['language','evidence','checked_at','due_at','updated_at'] },
@@ -132,7 +140,7 @@ export const ORACLE_CONSUMER_DB_PROFILES: Partial<Record<string, OracleConsumerD
       agent_repository_claims: { select: true, update: AGENT_CLAIM_STATE },
       agent_repository_scans: { select: true, insert: true, update: AGENT_SCAN_STATE },
       agent_repository_observations: { select: true, insert: true, delete: true },
-      crawl_discovery_evidence: read, crawl_settings: read,
+      crawl_discovery_evidence: read, crawl_settings: read, runtime_settings: read,
       // 잡 멈춤(agent-evidence-refresh 의 not_before)만 보이는 보기(0106). claim 이 운영자 정지를 따른다 — jobs 권한은 없다
       agent_scan_job_schedule: read,
       // 행은 RLS(0106)가 oracle_principals 에 이 계정이 든 설치로 좁힌다 — 다른 서버 몫 App 개인 키 암호문을 읽지 못한다

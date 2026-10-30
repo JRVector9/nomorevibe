@@ -26,10 +26,23 @@ export function defaultRuntimeSettingsSnapshot(loadedAt = Date.now()): RuntimeSe
 }
 const state = (): State => (holder.__nmvRuntimeSettings ??= { snapshot: defaultRuntimeSettingsSnapshot(0), loader: null, loading: null, override: false, lastRead: null });
 
-/** 저장 행(values·revision) → 스냅샷. issues 는 함께 돌려주되 스냅샷은 늘 만든다(읽을 수 없는 키는 기본값). */
-export function runtimeSettingsSnapshotFromStored(stored: unknown, revision: number | null = null, loadedAt = Date.now()): { snapshot: RuntimeSettingsSnapshot; issues: string[] } {
-  const { settings, issues } = resolveRuntimeSettings(stored);
+/**
+ * 저장 행(values·revision) → 스냅샷. issues 는 함께 돌려주되 스냅샷은 늘 만든다(읽을 수 없는 키는 기본값).
+ * options.models: 덮어쓴 등록부(model_registry_overrides)의 모델 — 그 purposes 만 아는 경로의 한도가 기본값으로 떨어지지 않게 reload 가 넘긴다.
+ */
+export function runtimeSettingsSnapshotFromStored(stored: unknown, revision: number | null = null, loadedAt = Date.now(),
+  options: Parameters<typeof resolveRuntimeSettings>[1] = {}): { snapshot: RuntimeSettingsSnapshot; issues: string[] } {
+  const { settings, issues } = resolveRuntimeSettings(stored, options);
   return { snapshot: Object.freeze({ version: storedSettingsVersion(stored), revision, loadedAt, source: "db" as const, settings }), issues };
+}
+
+/**
+ * WP-A: serving-contract reload(계약·등록부 덮어쓰기·runtime_settings 를 한 SELECT 묶음으로 읽는다)가 읽은 판을 프로세스 스냅샷으로 올린다 —
+ * ensureServingContracts(0) 만 부르는 관리자 화면·CLI 도 runtimeSettings() 로 같은 판을 본다. 테스트 고정이 켜져 있으면 무시한다. 고정된 틱(pin)은 건드리지 않는다.
+ */
+export function publishRuntimeSettingsSnapshot(snapshot: RuntimeSettingsSnapshot): void {
+  const current = state();
+  if (!current.override) current.snapshot = snapshot;
 }
 
 /** 고정된 스냅샷이 있으면 그것, 없으면 프로세스 스냅샷. 동기, 던지지 않는다. */

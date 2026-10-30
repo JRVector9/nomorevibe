@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_MODEL_DEFINITIONS, configuredModel, modelBaseUrl, modelForPurpose, modelRequestName, readModelRegistry,
-  resolveRegistryModel, modelLimits, configuredModelForProvider, modelDeadlineLadder, modelTimeoutMs, modelRequestBudget, modelCallTimeoutMs, modelCallMaxTokens } from "@/lib/llm/model-registry";
+  resolveRegistryModel, modelLimits, configuredModelForProvider, modelDeadlineLadder, modelTimeoutMs, modelRequestBudget, modelCallTimeoutMs, modelCallMaxTokens,
+  setModelRoutePolicyOverlay } from "@/lib/llm/model-registry";
 
 const twins = () => ({ MODEL_REGISTRY_CONFIG: JSON.stringify({ version: 1, models: [
   { ...DEFAULT_MODEL_DEFINITIONS[0], key: "gpu3090:review", equipment: "gpu3090", model: "same-model", gatewayLabel: undefined },
@@ -97,5 +98,27 @@ describe("registry deadline and request policies", () => {
   });
   it("rejects missing M1 addresses explicitly without inventing an equipment host", () => {
     expect(() => readModelRegistry(config({ models: [{ ...DEFAULT_MODEL_DEFINITIONS[2], baseUrl: null }] }))).toThrow("model_base_url_required");
+  });
+  it("layers the admin route-policy overlay (runtime_settings limits/timeouts/deadlines) under an empty env; MODEL_REGISTRY_CONFIG stays authoritative", () => {
+    setModelRoutePolicyOverlay(() => ({ limits: { "product-search-profile": { maxTokens: 900, concurrency: 6 } }, timeouts: { "crawl-tagline": 46_000 },
+      deadlines: { "review-gateway": { engineMs: 50_000, relayMs: null, gatewayMs: 55_000, clientMs: 65_000 } } }));
+    try {
+      expect(modelLimits("product-search-profile", {})).toEqual({ maxTokens: 900, concurrency: 2 });
+      expect(modelRequestBudget("product-search-profile", {})).toEqual({ maxTokens: 900, concurrency: 6 });
+      expect(modelTimeoutMs("crawl-tagline", {})).toBe(46_000);
+      expect(modelTimeoutMs("review-gateway", {})).toBe(65_000);
+      expect(modelDeadlineLadder("review-gateway", {})).toEqual({ engineMs: 50_000, relayMs: null, gatewayMs: 55_000, clientMs: 65_000 });
+      // Routes the overlay does not name keep their code defaults
+      expect(modelTimeoutMs("product-translate", {})).toBe(300_000);
+      expect(modelTimeoutMs("screen-review", {})).toBe(90_000);
+      // An explicit env registry bypasses the overlay for that read
+      expect(modelTimeoutMs("crawl-tagline", config({}))).toBe(45_000);
+      // A policy that fails the merged registry schema keeps the code-default routes instead of throwing
+      setModelRoutePolicyOverlay(() => ({ timeouts: { "review-gateway": 20_000 } }));
+      expect(modelTimeoutMs("review-gateway", {})).toBe(60_000);
+      setModelRoutePolicyOverlay(() => null);
+      expect(modelTimeoutMs("crawl-tagline", {})).toBe(45_000);
+    } finally { setModelRoutePolicyOverlay(undefined); }
+    expect(modelTimeoutMs("crawl-tagline", {})).toBe(45_000);
   });
 });
