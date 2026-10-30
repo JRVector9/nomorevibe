@@ -153,4 +153,19 @@ it("engine connect for Supa: keyless direct contracts for AI1 and text routes, a
   expect(underlyingReviewModel(ENGINE)).toBe(underlyingReviewModel("[supa] Qwen3.8-27B-NVFP4"));
   const [row] = await db.execute<{ a: string; b: string }>(sql`SELECT ${underlyingModelSql(sql`${ENGINE}::text`)} a, ${underlyingModelSql(sql`'[supa] Qwen3.8-27B-NVFP4'::text`)} b`);
   expect([row.a, row.b]).toEqual(["qwen3.8-27b-nvfp4", "qwen3.8-27b-nvfp4"]);
+  // A reconnect to another served name starts from the overridden definition: the 1차 selection follows from the
+  // previous engine name, and an admin-set limit survives (it used to fall back to the code default).
+  const { saveAdminRegistryOverride } = await import("@/lib/operations/admin-model-registry");
+  const { readModelRegistry } = await import("@/lib/llm/model-registry");
+  const { ensureServingContracts } = await import("@/lib/llm/serving-contract-store");
+  await ensureServingContracts(0);
+  const connected = readModelRegistry().models.find(model => model.key === "supa:review")!;
+  expect(connected).toMatchObject({ model: ENGINE });
+  await saveAdminRegistryOverride({ ...connected, timeoutMs: 120_000 }, "jr", "longer bound");
+  const again = await connectAdminEngine({ registryKey: "supa:review", baseUrl: BASE, auth: "none", engineModel: "local-llm",
+    routes: ["crawl-agent-review"], selectStages: true }, "jr", vllm);
+  expect(again).toMatchObject({ requestModel: "local-llm", firstReviewRenamed: true });
+  expect((await getSettings()).firstReview).toEqual({ provider: "abcllm", model: "local-llm" });
+  await ensureServingContracts(0);
+  expect(readModelRegistry().models.find(model => model.key === "supa:review")).toMatchObject({ model: "local-llm", timeoutMs: 120_000 });
 });

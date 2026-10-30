@@ -76,12 +76,14 @@ export async function connectAdminEngine(input: EngineConnectInput, actor: strin
   const routes = [...new Set(input.routes)];
   if (!routes.length || routes.some(route => !(ENGINE_CONNECT_ROUTES as readonly string[]).includes(route))) throw new Error("engine_routes_invalid");
   if (!["stored", "none"].includes(input.auth) || !actor.trim()) throw new Error("serving_contract_input_invalid");
+  // Load the stored contracts and registry overrides first: a reconnect starts from the current overridden definition
+  // (its engine name, which the 1차 selection now carries, and any admin-set limits such as timeoutMs), not the code default.
+  await ensureServingContracts(0);
   const current = readModelRegistry().models.find(model => model.key === input.registryKey);
   if (!current) throw new Error("registry_key_unknown");
   if (current.provider !== "abcllm") throw new Error("engine_connect_provider_unsupported");
   const engineModel = input.engineModel.trim();
   // A new key, else the key already stored for these routes (same engine model), else none.
-  await ensureServingContracts(0);
   const typedKey = input.apiKey?.trim() || undefined;
   const storedKey = routes.map(route => servingContractAuth(route, engineModel)).find(auth => auth?.mode === "stored" && auth.apiKey)?.apiKey ?? undefined;
   const key = input.auth === "stored" ? typedKey ?? storedKey : undefined;
