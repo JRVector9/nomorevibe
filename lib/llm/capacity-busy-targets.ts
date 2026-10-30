@@ -1,4 +1,5 @@
 import { sql, type SQL } from "drizzle-orm";
+import { liveStateSql } from "./capacity-states";
 import { db } from "@/lib/db";
 
 /**
@@ -15,7 +16,8 @@ import { db } from "@/lib/db";
  */
 export type CapacityOwner = Readonly<{ instanceId: string; bootId: string }>;
 
-const ACTIVE = sql`r.state IN ('waiting','reserved','dispatched','indeterminate')`;
+// 미확인(indeterminate)은 살아 있는 행이 아니다(capacity-states.ts) — 선택기가 그 대상을 숨기지 않는다.
+const ACTIVE = liveStateSql("r.state");
 const OPEN = sql`EXISTS (SELECT 1 FROM model_capacity_control c WHERE c.id = 1 AND c.mode = 'open')`;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

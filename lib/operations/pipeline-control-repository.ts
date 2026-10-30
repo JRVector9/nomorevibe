@@ -1,4 +1,5 @@
 import { eq, sql } from "drizzle-orm";
+import { occupyingStateSql } from "@/lib/llm/capacity-states";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import type * as schema from "@/lib/db/schema";
 import { httpOriginControl } from "@/lib/db/http-origin-schema";
@@ -44,7 +45,7 @@ async function snapshotIn(tx: Tx): Promise<ControlSnapshot> {
           'reserved', (SELECT count(*) FROM model_capacity_requests WHERE state = 'reserved'),
           'dispatched', (SELECT count(*) FROM model_capacity_requests WHERE state = 'dispatched'),
           'indeterminate', (SELECT count(*) FROM model_capacity_requests WHERE state = 'indeterminate'),
-          'oldGeneration', (SELECT count(*) FROM model_capacity_requests r WHERE r.state IN ('reserved', 'dispatched', 'indeterminate')
+          'oldGeneration', (SELECT count(*) FROM model_capacity_requests r WHERE ${occupyingStateSql('r.state')}
             AND (r.epoch <> m.epoch OR r.revision <> m.revision OR r.policy_hash IS DISTINCT FROM m.policy_hash)))
         FROM model_capacity_control m WHERE m.id = 1),
       'http', (SELECT jsonb_build_object('mode', h.mode, 'epoch', h.epoch, 'revision', h.revision, 'policy', h.policy, 'policyHash', h.policy_hash,

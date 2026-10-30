@@ -73,10 +73,10 @@ it('resumes the original pending ID and binds only actual owner/chain/input iden
     workKey: `ai2:3:8:${itemBindingHash(value.intent.intent.binding)}` }, { candidateId: 3, vote: 8 });
   expect(mocks.atomic).toHaveBeenCalledExactlyOnceWith({ secondReviewId: 8, owner, expected: value.intent.intent, reservation: value.reservation, identity: mocks.pending.mock.calls[0][0], call: value.call });
 });
-it('waiting and an existing unknown dispatch defer without an item claim', async () => {
+it('waiting and an existing in-flight dispatch defer without an item claim', async () => {
   mocks.request.mockResolvedValueOnce({ kind: 'deferred', reason: 'capacity' });
   await expect(claimSecondReviewModelCapacity(value.intent)).rejects.toMatchObject({ reason: 'capacity' });
-  mocks.pending.mockResolvedValue({ requestId: randomUUID(), state: 'indeterminate' });
+  mocks.pending.mockResolvedValue({ requestId: randomUUID(), state: 'dispatched' });
   await expect(claimSecondReviewModelCapacity(value.intent)).rejects.toMatchObject({ reason: 'dispatched' });
   expect(mocks.atomic).not.toHaveBeenCalled();
 });
@@ -111,7 +111,7 @@ it.each(['draining', 'disabled', 'unmapped', 'policy_changed', 'queue_full'] as 
   await expect(claimSecondReviewModelCapacity(localIntent())).rejects.toMatchObject({ reason });
   expect(mocks.fallback).not.toHaveBeenCalled(); expect(mocks.cancel).not.toHaveBeenCalled();
 });
-it.each(['dispatched', 'indeterminate'] as const)('never hands off or cancels a %s request', async state => {
+it.each(['dispatched'] as const)('never hands off or cancels a %s request (indeterminate is not a pending state since 2026-10-30)', async state => {
   mocks.pending.mockResolvedValue({ requestId: randomUUID(), state });
   await expect(claimSecondReviewModelCapacity(localIntent())).rejects.toMatchObject({ reason: 'dispatched' });
   for (const fn of [mocks.request, mocks.fallback, mocks.cancel, mocks.atomic]) expect(fn).not.toHaveBeenCalled();

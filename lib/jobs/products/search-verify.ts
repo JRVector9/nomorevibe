@@ -55,7 +55,13 @@ export async function verifySearchKeywords(ctx: JobContext<null>, request?: type
             const task = tasks[index];
             const timeoutMs = Math.max(1_000, Math.min(CALL_MS, remaining() - 1_000));
             const chunked = ["invalid_output", "timeout"].includes(task.profile!.verifyError ?? "");
-            const outcome = await verifyKeywordsWithModelCapacity(task, lease, { request, signal, timeoutMs, chunked });
+            let outcome: Awaited<ReturnType<typeof verifyKeywordsWithModelCapacity>>;
+            try { outcome = await verifyKeywordsWithModelCapacity(task, lease, { request, signal, timeoutMs, chunked }); }
+            catch (error) {
+              // 이 제품의 앞선 호출만 아직 보내진 중이다 — 제품 하나를 건너뛰고 틱을 계속 돈다(틱 전체를 접지 않는다).
+              if (error instanceof ModelCapacityDeferredError && error.reason === "dispatched") { ctx.log("search_verify.skipped_in_flight", { productId: task.product.id }); continue; }
+              throw error;
+            }
             if (outcome.kind === "skipped") return;
             // The original shared deadline ended while waiting for a permit: no attempt or failure, next tick starts anew.
             if (outcome.kind === "expired") { blocked ||= "deadline_expired"; return; }

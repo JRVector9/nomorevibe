@@ -1,4 +1,5 @@
 import { sql, type SQL } from "drizzle-orm";
+import { openStateSql, unsettledDispatchStateSql } from "@/lib/llm/capacity-states";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { z } from "zod";
 import type * as schema from "@/lib/db/schema";
@@ -203,11 +204,11 @@ export async function collectPipelineObservation(database: Database, options: Ob
         join model_capacity_requests r on r.request_id = e.request_id where e.created_at > ${startTz} and e.created_at <= ${endTz}
         group by 1, 2, 3 order by 1, 2, 3`);
       const open = await query(sql`select route_id, class, state, count(*)::int as count from model_capacity_requests
-        where state in ('dispatched', 'indeterminate') group by 1, 2, 3 order by 1, 2, 3`);
+        where ${unsettledDispatchStateSql('state')} group by 1, 2, 3 order by 1, 2, 3`);
       // 구간에 걸친 요청: 시작 뒤 이벤트가 있거나(끝난 시각이 시작 뒤) 아직 끝나지 않았고, 구간 끝 전에 생긴 요청.
       const timeline = await query(sql`with touched as (
           select distinct request_id from model_capacity_events where created_at > ${startTz}
-          union select request_id from model_capacity_requests where state in ('waiting', 'reserved', 'dispatched', 'indeterminate'))
+          union select request_id from model_capacity_requests where ${openStateSql('state')})
         select r.request_id::text as request_id, r.route_id, r.class, r.pool, r.provider_budget_id, r.group_id, r.policy_hash,
           ${tzOffset(sql`r.queue_until`)} as queue_until_ms, ${tzOffset(sql`r.reserved_until`)} as reserved_until_ms,
           e.to_state, ${tzOffset(sql`e.created_at`)} as at_ms

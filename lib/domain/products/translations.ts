@@ -1,5 +1,6 @@
 import { scopedModel } from "@/lib/llm/model-registry";
 import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
+import { busyMemberKeysSql } from "@/lib/llm/capacity-busy-targets";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { db, onPrimary } from "@/lib/db";
@@ -134,7 +135,9 @@ export async function pendingProductTranslations(limit = 4): Promise<ProductTran
     sourceHash: t.sourceHash, attempts: t.attempts, eligible: sql<boolean>`(${eligible})` }).from(t)
     .innerJoin(products, eq(products.id, t.productId))
     .where(and(inArray(t.status, ["pending", "failed"]), sql`${t.attempts} < ${PRODUCT_TRANSLATION_MAX_ATTEMPTS}`,
-      sql`(${t.retryAt} is null or ${t.retryAt} <= now())`))
+      sql`(${t.retryAt} is null or ${t.retryAt} <= now())`,
+      // 장부가 아직 쥔(대기·예약·전송 중) 멤버는 건너뛴다 — 맨 앞 한 건이 매 틱 같은 묶음을 막지 않는다. 미확인은 쥔 것이 아니다.
+      sql`('product-translate:' || ${t.productId} || ':' || ${t.locale} || ':' || ${t.field}) NOT IN (${busyMemberKeysSql("product-translate:")})`))
     .orderBy(asc(t.updatedAt), asc(t.productId), asc(t.locale), asc(t.field)).limit(Math.max(1, Math.min(8, limit)));
   return rows;
 }

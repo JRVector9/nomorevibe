@@ -8,6 +8,7 @@ import { reconcileGatewayNotStarted, readModelCapacityCallerControl, findOwnPend
 import { markUnsettledDispatch } from "@/lib/llm/capacity-unsettled";
 import { modelCapacityRequestIdentitySchema, websearchQueryInputHash, websearchQueryLogicalWorkKey } from "@/lib/llm/capacity";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
+import { modelCapacityIndeterminateReason } from "@/lib/llm/capacity";
 import { websearchProcessOwner } from "@/lib/llm/websearch-process-owner";
 import { prepareWebsearchQueryDispatch, recordWebsearchQueryResult, type WebsearchQueryResult,
   type WebsearchQueryTarget } from "./search-query-capacity-repository";
@@ -57,7 +58,7 @@ async function translateOnce(target: WebsearchQueryTarget, timeoutMs: number): P
     class: "background", pool: "text", routeId: "search-query-translate", provider: "abcllm", model: scopedModel("search-query-translate", SEARCH_QUERY_MODEL),
     workKey: `${websearchQueryLogicalWorkKey(initial.input.member)}:${websearchQueryInputHash(initial.input)}` });
   const pending = await findOwnPendingModelRequest(identity);
-  if (pending && (pending.state === "dispatched" || pending.state === "indeterminate")) throw new ModelCapacityDeferredError("dispatched");
+  if (pending?.state === "dispatched") throw new ModelCapacityDeferredError("dispatched");
   // 한 번만 묻는다 — 슬롯이 없으면 짧게 기다리며 다시 묻지 않고 바로 미룬다
   const slot = await requestWebsearchQueryModelSlot({ ...identity, requestId: pending?.requestId ?? randomUUID() }, initial.input);
   if (slot.kind !== "granted") throw new ModelCapacityDeferredError(slot.reason);
@@ -79,7 +80,7 @@ async function translateOnce(target: WebsearchQueryTarget, timeoutMs: number): P
   try { native = await translateQueryWithReservedGateway(input, prepared.dispatch, call, { timeoutMs }); }
   catch (error) {
     try {
-      if (!await markModelDispatchIndeterminate(prepared.dispatch, "transport_unknown")) throw new Error("websearch_query_dispatch_not_marked");
+      if (!await markModelDispatchIndeterminate(prepared.dispatch, modelCapacityIndeterminateReason({ error }))) throw new Error("websearch_query_dispatch_not_marked");
     } catch (cleanup) { throw new AggregateError([error, cleanup], "websearch_query_transport_cleanup_failed"); }
     throw error;
   }
@@ -87,7 +88,7 @@ async function translateOnce(target: WebsearchQueryTarget, timeoutMs: number): P
   try {
     if (native.terminal) await reconcileWebsearchQueryGatewayTerminal(native.terminal);
     else if (native.notStarted) await reconcileGatewayNotStarted(native.notStarted);
-    else if (!await markModelDispatchIndeterminate(prepared.dispatch, "transport_unknown")) throw new Error("websearch_query_dispatch_not_marked");
+    else if (!await markModelDispatchIndeterminate(prepared.dispatch, modelCapacityIndeterminateReason({ timedOut: !native.result.ok && native.result.error === "timeout" }))) throw new Error("websearch_query_dispatch_not_marked");
   } catch (cleanup) {
     if (native.terminal || native.notStarted) await markUnsettledDispatch(prepared.dispatch);
     if (!native.result.ok) throw new AggregateError([native.result, cleanup], "websearch_query_result_cleanup_failed");

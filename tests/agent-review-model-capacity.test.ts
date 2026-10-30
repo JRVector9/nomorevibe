@@ -140,7 +140,7 @@ it.each(['waiting', 'reserved'] as const)('preserves a %s request ID when the ne
   expect(mocks.request).toHaveBeenCalledWith(expect.objectContaining({ requestId }), 1);
   expect(mocks.atomic).not.toHaveBeenCalled(); expect(mocks.cancel).not.toHaveBeenCalled();
 });
-it.each(['dispatched', 'indeterminate'] as const)('never re-polls or replaces a same-work %s request', async state => {
+it.each(['dispatched'] as const)('never re-polls or replaces a same-work %s request (an indeterminate one is not returned by the readback since 2026-10-30)', async state => {
   const api = await actualCoordinator(); roleEnvironment(); mocks.prepare.mockReturnValue({ kind: 'prepared' });
   mocks.pending.mockResolvedValue({ requestId: randomUUID(), state });
   await expect(api.claimAgentReviewModelCapacity(await coordinatorInput())).rejects.toMatchObject({ reason: 'dispatched' });
@@ -167,11 +167,11 @@ it('reconciles an issued physical terminal even when the caller signal is alread
   expect(await api.reviewAgentReviewModelCapacity((await coordinatorInput()).input, dispatch, {} as never, { signal: controller.signal })).toBe(result);
   expect(mocks.reconcile).toHaveBeenCalledExactlyOnceWith(terminal); expect(mocks.unknown).not.toHaveBeenCalled();
 });
-it('retains unknown charge when a settled local Promise has no physical terminal', async () => {
+it('records the client deadline as client_timeout when a settled local Promise has no physical terminal', async () => {
   const api = await actualCoordinator(); const dispatch = realShapeDispatch(), result = { ok: false, error: 'timeout' };
   mocks.native.mockResolvedValue({ result, terminal: null });
   expect(await api.reviewAgentReviewModelCapacity((await coordinatorInput()).input, dispatch, {} as never, {})).toBe(result);
-  expect(mocks.unknown).toHaveBeenCalledWith(dispatch, 'transport_unknown'); expect(mocks.reconcile).not.toHaveBeenCalled();
+  expect(mocks.unknown).toHaveBeenCalledWith(dispatch, 'client_timeout'); expect(mocks.reconcile).not.toHaveBeenCalled();
 });
 it('propagates the original provider exception and preserves simultaneous unknown-write failure', async () => {
   const api = await actualCoordinator(); const dispatch = realShapeDispatch(), original = new Error('native reject'), cleanup = new Error('unknown write');

@@ -149,9 +149,10 @@ export function buildPipelineControlStatus(raw: unknown, readiness: unknown): Pi
  * 방금 쓴 값이 필요 없는 관리자 집계(약 30개 count)라 복제본에서 읽는다(밀리거나 닿지 않으면 주 DB, lib/db/replica.ts).
  * 읽기 전용 TX 의 문장 상한으로 주 DB 로 넘어가도 오래 붙잡지 않고, 읽지 못하면 화면은 '읽지 못했습니다'에 남기고 로그를 남긴다. */
 export async function readPipelineControlStatus(): Promise<PipelineControlStatus> {
-  const [{ db, onReplica }, { sql }, { readJobBatchReadiness }, { logger }, { uptimeSplitReadbackSql }] = await Promise.all([
+  const [{ db, onReplica }, { sql }, { readJobBatchReadiness }, { logger }, { uptimeSplitReadbackSql },
+    { occupyingStateSql, openStateSql, reviewStateSql, unsettledDispatchStateSql }] = await Promise.all([
     import('@/lib/db'), import('drizzle-orm'), import('./job-batch-readiness'), import('@/lib/observability/logger'),
-    import('./uptime-split-repository'),
+    import('./uptime-split-repository'), import('@/lib/llm/capacity-states'),
   ]);
   const [snapshot, readiness] = await Promise.allSettled([
     onReplica(() => db.transaction(async tx => {
@@ -162,7 +163,7 @@ export async function readPipelineControlStatus(): Promise<PipelineControlStatus
         model_group_rows AS MATERIALIZED (
           SELECT group_id, route_id, state FROM (
             SELECT group_id, route_id, state FROM model_capacity_requests
-              WHERE state IN ('reserved','dispatched','indeterminate')
+              WHERE (${occupyingStateSql('state')} OR ${reviewStateSql('state')})
                 AND (state <> 'reserved' OR reserved_until > (SELECT at FROM observation_clock))
             UNION ALL
             SELECT group_id, route_id, state FROM model_capacity_requests
@@ -220,10 +221,10 @@ export async function readPipelineControlStatus(): Promise<PipelineControlStatus
               count(*) FILTER (WHERE r.state='dispatched') AS dispatched, count(*) FILTER (WHERE r.state='indeterminate') AS indeterminate,
               min(r.queued_at) FILTER (WHERE r.state='waiting') AS "oldestWaitingAt",
               min(coalesce(r.dispatched_at,(SELECT min(e.created_at) FROM model_capacity_events e WHERE e.request_id=r.request_id AND e.kind='dispatch_started')))
-                FILTER (WHERE r.state IN ('dispatched','indeterminate')) AS "oldestUnsettledAt",
-              count(*) FILTER (WHERE r.state IN ('dispatched','indeterminate') AND r.dispatched_at IS NULL
+                FILTER (WHERE ${unsettledDispatchStateSql('r.state')}) AS "oldestUnsettledAt",
+              count(*) FILTER (WHERE ${unsettledDispatchStateSql('r.state')} AND r.dispatched_at IS NULL
                 AND NOT EXISTS (SELECT 1 FROM model_capacity_events e WHERE e.request_id=r.request_id AND e.kind='dispatch_started')) AS untimed
-            FROM model_capacity_requests r WHERE r.state IN ('waiting','reserved','dispatched','indeterminate') GROUP BY r.provider_budget_id) b),'[]'::jsonb),
+            FROM model_capacity_requests r WHERE ${openStateSql('r.state')} GROUP BY r.provider_budget_id) b),'[]'::jsonb),
           'dr', (SELECT jsonb_build_object('state',f.state,'epoch',f.writer_epoch,'reason',f.reason,'updatedAt',f.updated_at,
             'promoted',(SELECT count(*) FROM dr_promotions WHERE state='promoted'),
             'sealed',coalesce((SELECT jsonb_agg(jsonb_build_object('id',p.promotion_id,'fromEpoch',p.from_epoch,'toEpoch',p.to_epoch,'sealedAt',p.sealed_at,

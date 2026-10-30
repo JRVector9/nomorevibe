@@ -369,7 +369,8 @@ export function planPipelineControl(command: TransitionCommand, snapshot: Contro
     const c = command.area === "capacity" ? snapshot.capacity : snapshot.http;
     const target = command.area === "capacity" ? "model_capacity_control" : "http_origin_control";
     expect("mode", o.fromMode, c.mode); expect("epoch", o.expectEpoch, c.epoch); expect("revision", o.expectRevision, c.revision);
-    const held = c.reserved + c.dispatched + c.indeterminate;
+    // indeterminate 는 점유가 아니다(2026-10-30) — 사람 검토 항목이지 옛 세대 보유가 아니다.
+    const held = c.reserved + c.dispatched;
     const unmappedInstances = (policy: unknown) => {
       const hosts = httpOriginPolicySchema.safeParse(policy).data?.instanceHosts ?? {};
       return snapshot.recentInstances.filter(instance => !Object.hasOwn(hosts, instance));

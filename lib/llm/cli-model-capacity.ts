@@ -7,6 +7,7 @@ import type { ProductTransaction } from "@/lib/domain/products/generation";
 import type { ReviewCliRun } from "@/lib/crawl/agent-review";
 import { roleLeaseFromEnv } from "@/lib/jobs/role-leader";
 import { ModelCapacityDeferredError } from "./capacity-deferred";
+import { modelCapacityIndeterminateReason } from "./capacity";
 import { modelCapacityOwnerSchema, type CliDispatchBinding, type CliModelDispatch, type ModelCapacityRequestIdentity } from "./capacity";
 import { cancelReservedModelSlot, findOwnPendingModelRequest, finishCliModelCapacityDispatch, lockCliModelCapacityDispatch,
   markModelDispatchIndeterminate, readModelCapacityCallerControl, reconcileCliProcessTerminal, requestCliModelSlot, type CliTarget } from "./capacity-repository";
@@ -93,7 +94,7 @@ export async function runCliWithModelCapacity(input: CliCallInput, signal: Abort
   const plan = await work.plan();
   if (!plan) return { kind: "skipped" };
   const pending = await findOwnPendingModelRequest(plan.identity);
-  if (pending && (pending.state === "dispatched" || pending.state === "indeterminate")) throw new ModelCapacityDeferredError("dispatched");
+  if (pending?.state === "dispatched") throw new ModelCapacityDeferredError("dispatched");
   const slot = await requestCliModelSlot({ ...plan.identity, requestId: pending?.requestId ?? randomUUID() }, plan.target);
   if (slot.kind !== "granted") throw new ModelCapacityDeferredError(slot.reason);
   let dispatch: CliModelDispatch | null;
@@ -128,7 +129,7 @@ export async function runCliWithModelCapacity(input: CliCallInput, signal: Abort
   catch (error) {
     let failure: unknown = error;
     try {
-      if (!await markModelDispatchIndeterminate(dispatch, signal?.aborted ? "local_abort" : "transport_unknown")) throw new Error("cli_model_dispatch_not_marked");
+      if (!await markModelDispatchIndeterminate(dispatch, modelCapacityIndeterminateReason({ signal, error }))) throw new Error("cli_model_dispatch_not_marked");
     } catch (cleanup) { failure = new AggregateError([error, cleanup], "cli_model_transport_cleanup_failed"); }
     if (work.requireTerminal) throw new CliPhysicalEndUnknownError(failure);
     throw failure;

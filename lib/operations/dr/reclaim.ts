@@ -1,4 +1,5 @@
 import { sql } from "drizzle-orm";
+import { unsettledDispatchStateSql } from "@/lib/llm/capacity-states";
 import { operationsAudit } from "@/lib/db/schema";
 import { adminAuditRow } from "../admin-log";
 import { z } from "zod";
@@ -28,7 +29,7 @@ export async function releaseProcessExitedDispatches(value: { owner: ProcessOwne
   return drTransactionMaybeDry(apply, async tx => {
     if (!await writerSiteActive(tx)) throw new Error("dr_writer_site_fenced");
     const ids = Array.from(await tx.execute<{ request_id: string }>(sql`SELECT request_id::text FROM model_capacity_requests
-      WHERE owner_instance_id = ${owner.instanceId} AND owner_boot_id = ${owner.bootId}::uuid AND state IN ('dispatched','indeterminate')
+      WHERE owner_instance_id = ${owner.instanceId} AND owner_boot_id = ${owner.bootId}::uuid AND ${unsettledDispatchStateSql('state')}
       ORDER BY queue_ordinal`)).map(item => item.request_id);
     const rows: DispatchReleaseRow[] = [];
     for (const requestId of ids) rows.push(row(requestId, await releaseModelDispatchWithEvidence(tx, requestId,
@@ -62,7 +63,7 @@ export async function releaseDrainedDispatches(value: { promotionId: string; ope
   return drTransactionMaybeDry(apply, async tx => {
     const state = await lockPromotedState(tx, promotionId);
     const ids = Array.from(await tx.execute<{ request_id: string }>(sql`SELECT r.request_id::text FROM model_capacity_requests r, model_capacity_control c
-      WHERE c.id = 1 AND r.state IN ('dispatched','indeterminate')
+      WHERE c.id = 1 AND ${unsettledDispatchStateSql('r.state')}
         AND (r.epoch <> c.epoch OR r.revision <> c.revision OR r.policy_hash IS DISTINCT FROM c.policy_hash) ORDER BY r.queue_ordinal`)).map(item => item.request_id);
     const rows: DispatchReleaseRow[] = [];
     for (const requestId of ids) rows.push(row(requestId, await releaseModelDispatchWithEvidence(tx, requestId,
@@ -104,7 +105,7 @@ export async function releaseEvidencedDispatches(value: { policies: ReadonlyMap<
     if (!await writerSiteActive(tx)) throw new Error("dr_writer_site_fenced");
     if (budgets && !budgets.length) return { rows: [] };
     const ids = Array.from(await tx.execute<{ request_id: string }>(sql`SELECT request_id::text FROM model_capacity_requests
-      WHERE state IN ('dispatched','indeterminate') ${budgets ? sql`AND provider_budget_id IN (${sql.join(budgets.map(id => sql`${id}`), sql`, `)})` : sql``}
+      WHERE ${unsettledDispatchStateSql('state')} ${budgets ? sql`AND provider_budget_id IN (${sql.join(budgets.map(id => sql`${id}`), sql`, `)})` : sql``}
       ORDER BY queue_ordinal`)).map(item => item.request_id);
     const rows: DispatchReleaseRow[] = [];
     for (const requestId of ids) rows.push(row(requestId, await releaseModelDispatchWithEvidence(tx, requestId,
@@ -193,7 +194,7 @@ export async function readReclaimReport(policies: ReadonlyMap<string, ReclaimPol
       r.dispatch_binding_hash, ${msIso(`coalesce(r.dispatched_at, (SELECT min(e.created_at) FROM model_capacity_events e
         WHERE e.request_id = r.request_id AND e.kind = 'dispatch_started'))`)} AS dispatch_at, f.evidence AS local, ${msIso("f.created_at")} AS local_at
       FROM model_capacity_requests r LEFT JOIN model_capacity_events f ON f.request_id = r.request_id AND f.kind = 'dispatch_local_ended'
-      WHERE r.state IN ('dispatched','indeterminate') ORDER BY r.queue_ordinal`));
+      WHERE ${unsettledDispatchStateSql('r.state')} ORDER BY r.queue_ordinal`));
     const hops = Array.from(await tx.execute<ActiveHop>(activeHops(false))), now = await dbNow(tx);
     const events = new Map<string, ProcessGroupEvent[]>();
     const eventsOf = async (owner: ReportOwner) => {

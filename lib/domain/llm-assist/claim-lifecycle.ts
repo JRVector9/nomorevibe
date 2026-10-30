@@ -25,19 +25,21 @@ export async function recoverAbandonedAssistClaims(lease: JobLease): Promise<num
     const abandoned = await tx.execute<{ id: string }>(sql`select w.id from llm_assist_work w
       where (w.state='claimed' and not exists(select 1 from jobs j where j.name=w.claim_job and j.lease_token=w.claim_job_token::text
         and j.locked_at >= clock_timestamp()-${STALE_LOCK_MS}*interval '1 millisecond'))
-        or (w.state='indeterminate' and exists(select 1 from model_capacity_requests r where r.request_id=w.capacity_request_id and r.state in ('settled','withdrawn')))
+        or (w.state='indeterminate' and exists(select 1 from model_capacity_requests r where r.request_id=w.capacity_request_id and r.state in ('settled','withdrawn','indeterminate')))
       order by w.updated_at for update of w skip locked limit 20`);
     for (const row of abandoned) {
       const [work] = await tx.select().from(llmAssistWorks).where(eq(llmAssistWorks.id, row.id));
       if (!work) continue;
       const [capacity] = work.capacityRequestId ? await tx.select().from(modelCapacityRequests)
         .where(eq(modelCapacityRequests.requestId, work.capacityRequestId)).for("share") : [];
-      const unknown = Boolean(work.capacityRequestId && (!capacity || !["settled", "withdrawn"].includes(capacity.state)));
+      // 장부가 indeterminate 로 끝낸 호출(2026-10-30): 미확인은 사람 검토로 넘기고 같은 제품의 다음 작업을 막지 않는다.
+      const reviewed = capacity?.state === "indeterminate";
+      const unknown = Boolean(work.capacityRequestId && (!capacity || !["settled", "withdrawn", "indeterminate"].includes(capacity.state)));
       const [counted] = capacity ? await tx.select({ id: llmAssistResults.id }).from(llmAssistResults)
         .where(and(eq(llmAssistResults.workId, work.id), eq(llmAssistResults.capacityRequestId, capacity.requestId))).limit(1) : [];
       const attempts = work.attempts + (capacity?.state === "settled" && !counted ? 1 : 0);
-      await tx.update(llmAssistWorks).set({ state: unknown ? "indeterminate" : attempts >= 3 ? "human" : "queued",
-        revision: work.revision + 1, lastError: unknown ? "abandoned_remote_unknown" : "abandoned_local_claim", attempts,
+      await tx.update(llmAssistWorks).set({ state: unknown ? "indeterminate" : reviewed || attempts >= 3 ? "human" : "queued",
+        revision: work.revision + 1, lastError: unknown ? "abandoned_remote_unknown" : reviewed ? "capacity_indeterminate_human_review" : "abandoned_local_claim", attempts,
         ...(unknown ? {} : { claimToken: null, claimJob: null, claimJobToken: null, claimRequestedVersion: null,
           ownerInstanceId: null, ownerBootId: null, backendId: null, capacityRequestId: null, input: null, inputHash: null }),
         updatedAt: sql`clock_timestamp()` }).where(eq(llmAssistWorks.id, work.id));

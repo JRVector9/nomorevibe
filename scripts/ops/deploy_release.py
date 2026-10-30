@@ -317,9 +317,11 @@ try {
   await tx`SET LOCAL statement_timeout='5s'`;
   const [identity]=await tx`SELECT pg_is_in_recovery() AS replica`;
   const [control]=await tx`SELECT mode FROM model_capacity_control WHERE id=1`;
-  const [active]=await tx`SELECT count(*)::int AS active FROM model_capacity_requests
-    WHERE state IN ('dispatched','indeterminate') OR (state='reserved' AND reserved_until>clock_timestamp())`;
-  return {replica:identity.replica,mode:control?.mode,active:active.active};
+  // indeterminate holds no slot since 2026-10-30 (lib/llm/capacity-states.ts): only in-flight dispatches and live reservations gate a deploy;
+  // unknown rows are reported separately as human-review items and never block.
+  const [active]=await tx`SELECT count(*) FILTER (WHERE state='dispatched' OR (state='reserved' AND reserved_until>clock_timestamp()))::int AS active,
+    count(*) FILTER (WHERE state='indeterminate')::int AS review FROM model_capacity_requests`;
+  return {replica:identity.replica,mode:control?.mode,active:active.active,review:active.review};
  });
  console.log(JSON.stringify(result));
 } finally {await db.end({timeout:5});}
