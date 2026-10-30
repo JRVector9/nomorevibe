@@ -169,3 +169,33 @@ it("engine connect for Supa: keyless direct contracts for AI1 and text routes, a
   await ensureServingContracts(0);
   expect(readModelRegistry().models.find(model => model.key === "supa:review")).toMatchObject({ model: "local-llm", timeoutMs: 120_000 });
 });
+
+it("engine connect without max_model_len (mlx_lm.server, M3 mlx-serve): the typed bound stands in and is marked; a typed bound never overrides a served one", async () => {
+  const { connectAdminEngine } = await import("@/lib/operations/admin-engine-connect");
+  const { listAdminServingContracts } = await import("@/lib/operations/admin-serving-contracts");
+  const { listAdminRegistryOverrides, disableAdminRegistryOverride } = await import("@/lib/operations/admin-model-registry");
+  const ENGINE = "mlx-community--gemma-4-26b-a4b-it-4bit", BASE = "https://m1.tail0.ts.net/v1";
+  vi.stubEnv("DATABASE_URL", url.toString());
+  // The same engine with and without max_model_len in its /models answer.
+  const engine = (served: number | null) => (async (_target: string, init?: RequestInit) => init?.method === "POST"
+    ? Response.json({ object: "chat.completion", model: ENGINE }) : Response.json({ data: [{ id: ENGINE, ...(served ? { max_model_len: served } : {}) }] })) as typeof fetch;
+  const input = { registryKey: "m1:translation", baseUrl: BASE, auth: "none" as const, engineModel: ENGINE, routes: ["product-translate"], selectStages: false };
+  const before = (await listAdminServingContracts()).length;
+  // Omitted: the operator must type the bound, a positive integer up to the ceiling.
+  await expect(connectAdminEngine(input, "jr", engine(null))).rejects.toThrow("engine_max_len_unknown");
+  for (const bad of [0, -1, 1.5, 2_097_153]) await expect(connectAdminEngine({ ...input, maxModelLen: bad }, "jr", engine(null))).rejects.toThrow("engine_max_len_invalid");
+  // Reported: the served value is authoritative — a different typed value is refused with both numbers, an equal one passes.
+  await expect(connectAdminEngine({ ...input, maxModelLen: 131072 }, "jr", engine(98304))).rejects.toThrow("engine_max_len_mismatch:98304:131072");
+  expect((await listAdminServingContracts()).length).toBe(before);
+  expect(await connectAdminEngine({ ...input, maxModelLen: 98304 }, "jr", engine(98304))).toMatchObject({ totalTokenBound: 98304, totalTokenBoundFrom: "engine" });
+  expect(await connectAdminEngine({ ...input, maxModelLen: 131072, note: "M1 mlx_lm.server" }, "jr", engine(null))).toMatchObject({ totalTokenBound: 131072, totalTokenBoundFrom: "operator" });
+  // The typed bound is the contract's bound, and its origin is in the revision and the note (so in the save audit); the engine-read one is unmarked.
+  const rows = (await listAdminServingContracts()).filter(row => row.routeId === "product-translate" && row.model === ENGINE);
+  expect(rows.slice(0, 2).map(row => [row.enabled, row.contract.totalTokenBound, row.contract.deploymentRevision, row.note])).toEqual([
+    [true, 131072, `direct-m1-${ENGINE}-C131072-operator-bound`, "M1 mlx_lm.server · 컨텍스트 상한 운영자 입력 131072"],
+    [false, 98304, `direct-m1-${ENGINE}-C98304`, `엔진 연결 ${BASE}`]]);
+  const [audit] = await client`SELECT detail::text detail FROM operations_audit WHERE action='model-serving-contract-save' ORDER BY id DESC LIMIT 1`;
+  expect(audit.detail).toContain("컨텍스트 상한 운영자 입력 131072");
+  expect((await listAdminRegistryOverrides()).find(row => row.enabled && row.key === "m1:translation")?.note).toBe("M1 mlx_lm.server");
+  expect(await disableAdminRegistryOverride("m1:translation", "jr")).toBe(true);
+});
