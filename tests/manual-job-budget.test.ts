@@ -39,3 +39,25 @@ it.each([
     requestedOnly: true, signal: mocks.signal, ...(budgetMs === undefined ? {} : { budgetMs }),
   });
 });
+
+it("manual run pins the runtime-settings snapshot it read: the budget passed and the version the job sees are one 판", async () => {
+  const stored = { version: 1, budgets: { "crawl-fetch": 90_000 } };
+  const store = await import("@/lib/operations/runtime-settings-store");
+  const { storedSettingsVersion } = await import("@/lib/operations/runtime-settings-schema");
+  store.setRuntimeSettingsForTest(stored);
+  let pinned: string | undefined;
+  mocks.run.mockImplementation(async () => {
+    // run-job 과 같은 모듈 인스턴스(resetModules 뒤)에서 고정된 스냅샷을 읽는다
+    const inside = await import("@/lib/operations/runtime-settings-store");
+    pinned = inside.runtimeSettingsSnapshot().version;
+    return { status: "completed" };
+  });
+  try {
+    process.argv = [originalArgv[0], "run-job.ts", "crawl-fetch"];
+    await import("@/scripts/run-job");
+    await mocks.finished;
+    expect(mocks.run).toHaveBeenCalledWith("crawl-fetch", mocks.handler, { requestedOnly: true, signal: mocks.signal, budgetMs: 90_000 });
+    expect(pinned).toBe(storedSettingsVersion(stored));
+    expect(store.lastRuntimeSettingsRead()).toEqual({ version: storedSettingsVersion(stored), at: expect.any(Number), registryEnv: false });
+  } finally { store.setRuntimeSettingsForTest(null); }
+});

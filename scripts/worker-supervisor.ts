@@ -25,6 +25,9 @@ export type WorkerHealth = {
   status: 'starting' | 'running' | 'stopping' | 'failed'; reason?: string;
   /** 일하는 프로세스가 마지막으로 읽은 크롤 설정 판·시각 — 관측(service:<역할>)에 실려 설정 화면이 견준다 */
   settingsVersion?: string | null; settingsReadAt?: number | null;
+  /** 일하는 프로세스가 틱에 마지막으로 고정한 관리자 실시간 한도(runtime_settings) 판·시각 — 실시간 한도 화면의 '읽은 판'.
+   * runtimeSettingsRegistryEnv: 그 프로세스에 MODEL_REGISTRY_CONFIG env 가 있어 경로 한도 저장이 닿지 않는다 */
+  runtimeSettingsVersion?: string | null; runtimeSettingsReadAt?: number | null; runtimeSettingsRegistryEnv?: boolean;
   lanes?: RuntimeLane[];
   laneLimits?: Pick<SupervisorLimits, 'progressMs' | 'jobMs'>;
 };
@@ -80,14 +83,27 @@ export function isRuntimeHeartbeat(value: unknown, role: RuntimeRole, pid: numbe
     (v.currentJob === null || typeof v.currentJob === 'string') &&
     (v.startedAt === null || Number.isFinite(v.startedAt)) &&
     (v.state !== 'running' || (typeof v.currentJob === 'string' && typeof v.startedAt === 'number')) &&
-    (v.lanes === undefined || parseRuntimeLanes(v.lanes, role) !== null);
+    (v.lanes === undefined || parseRuntimeLanes(v.lanes, role) !== null) &&
+    // 실시간 한도 '읽은 판'(옛 워커는 싣지 않음; 아직 고정한 틱이 없으면 null). 모양이 틀리면 heartbeat 자체를 거절한다(lanes 와 같은 기준)
+    (v.runtimeSettings === undefined || v.runtimeSettings === null || runtimeSettingsReadValid(v.runtimeSettings));
 }
 
-/** heartbeat 의 설정 판을 건강 기록으로. 옛 워커(싣지 않음)나 모양이 틀린 값은 건너뛴다 — 지난 판을 지우지 않는다 */
-export function settingsFromHeartbeat(value: RuntimeHeartbeat): Pick<WorkerHealth, 'settingsVersion' | 'settingsReadAt'> {
-  const settings = value.settings;
-  if (typeof settings?.version !== 'string' || !Number.isFinite(settings.at)) return {};
-  return { settingsVersion: settings.version.slice(0, 64), settingsReadAt: settings.at };
+function runtimeSettingsReadValid(value: unknown): value is NonNullable<RuntimeHeartbeat['runtimeSettings']> {
+  if (!value || typeof value !== 'object') return false;
+  const read = value as Partial<NonNullable<RuntimeHeartbeat['runtimeSettings']>>;
+  return typeof read.version === 'string' && read.version.length > 0 && read.version.length <= 64 && /^[A-Za-z0-9_-]+$/.test(read.version)
+    && typeof read.at === 'number' && Number.isSafeInteger(read.at) && read.at >= 0 && typeof read.registryEnv === 'boolean';
+}
+
+/** heartbeat 의 설정 판(크롤 설정·실시간 한도)을 건강 기록으로. 옛 워커(싣지 않음)나 모양이 틀린 값은 건너뛴다 — 지난 판을 지우지 않는다 */
+export function settingsFromHeartbeat(value: RuntimeHeartbeat): Pick<WorkerHealth, 'settingsVersion' | 'settingsReadAt'
+  | 'runtimeSettingsVersion' | 'runtimeSettingsReadAt' | 'runtimeSettingsRegistryEnv'> {
+  const settings = value.settings, runtime = value.runtimeSettings;
+  return {
+    ...(typeof settings?.version === 'string' && Number.isFinite(settings.at) ? { settingsVersion: settings.version.slice(0, 64), settingsReadAt: settings.at } : {}),
+    ...(runtimeSettingsReadValid(runtime)
+      ? { runtimeSettingsVersion: runtime.version, runtimeSettingsReadAt: runtime.at, runtimeSettingsRegistryEnv: runtime.registryEnv } : {}),
+  };
 }
 
 function writeHealth(path: string, health: WorkerHealth) {
@@ -155,6 +171,8 @@ export async function superviseWorker(role: RuntimeRole, options: {
   forceSignal?: AbortSignal;
   /** D11: role-worker boot 의 프로세스 그룹 근거 기록기. 없으면(직접 실행·scheduler·consumer) 기존 순서 그대로다. */
   processGroup?: ProcessGroupRecorder;
+  /** 건강 기록이 바뀔 때마다(heartbeat·5초 감시) 부모(role-worker)에게 알린다 — 넘겨주기 drain 한도가 줄이 알린 틱 예산을 따르게. 던지면 안 된다 */
+  onHealth?: (health: WorkerHealth) => void;
 } = {}): Promise<number> {
   assertHostDbEntry(process.env, { kind: role === 'scheduler' ? 'scheduler-parent' : 'role-parent', role,
     ...(options.consumer !== undefined ? { consumer: options.consumer } : {}) });
@@ -222,6 +240,7 @@ export async function superviseWorker(role: RuntimeRole, options: {
           .catch(() => {}).finally(() => { observationPending = false; });
       }
       health.updatedAt = Date.now();
+      try { options.onHealth?.(health); } catch { /* 부모의 관측 실패는 감독을 멈추지 않는다 */ }
       try { writeHealth(healthPath, health); }
       catch { stop('health_write_failed', false); }
     };
