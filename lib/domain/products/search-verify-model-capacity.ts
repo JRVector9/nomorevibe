@@ -2,7 +2,7 @@ import { scopedRequestTimeout } from "@/lib/llm/model-registry";
 import { scopedModel } from "@/lib/llm/model-registry";
 import { randomUUID } from "node:crypto";
 import { prepareSearchVerifyGatewayCall, verifyKeywordsWithReservedGateway, readSearchVerifyGatewayTerminal } from "@/lib/crawl/agent-review-gateway";
-import { readModelCapacityCallerControl, findOwnPendingModelRequest, requestSearchVerifyModelSlot, cancelReservedModelSlot,
+import { reconcileGatewayNotStarted, readModelCapacityCallerControl, findOwnPendingModelRequest, requestSearchVerifyModelSlot, cancelReservedModelSlot,
   markModelDispatchIndeterminate, reconcileSearchVerifyGatewayTerminal, readSearchVerifyContinuation } from "@/lib/llm/capacity-repository";
 import { markUnsettledDispatch } from "@/lib/llm/capacity-unsettled";
 import { modelCapacityRequestIdentitySchema, firstSearchVerifyStep, nextSearchVerifyStep, searchVerifyStepKeywords,
@@ -110,10 +110,11 @@ export async function verifyKeywordsWithModelCapacity(task: ProfileTask, lease: 
     // Physical history settles before any deadline, signal or domain decision.
     try {
       if (native.terminal) await reconcileSearchVerifyGatewayTerminal(native.terminal);
+      else if (native.notStarted) await reconcileGatewayNotStarted(native.notStarted);
       else if (!await markModelDispatchIndeterminate(dispatch, options.signal?.aborted ? "local_abort" : "transport_unknown"))
         throw new Error("search_verify_dispatch_not_marked");
     } catch (cleanup) {
-      if (native.terminal) await markUnsettledDispatch(dispatch);
+      if (native.terminal || native.notStarted) await markUnsettledDispatch(dispatch);
       if (!native.result.ok) throw new AggregateError([native.result, cleanup], "search_verify_result_cleanup_failed");
       throw cleanup;
     }

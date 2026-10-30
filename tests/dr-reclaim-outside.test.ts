@@ -110,7 +110,7 @@ afterAll(async () => { http.closeAllConnections(); await new Promise<void>(resol
 afterEach(() => { vi.unstubAllEnvs(); reply = response => response.end("ok"); });
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 
-it("gateway local end: default off keeps the original transport and records nothing; unknown flags fail closed", async () => {
+it("gateway local end: default off gives no local-end witness (the transport is always observed for the not-sent witness); unknown flags fail closed", async () => {
   vi.stubEnv("MODEL_CAPACITY_LOCAL_END", undefined);
   expect(gatewayLocalEndTrackingEnabled()).toBe(false);
   expect(await (await gatewayFetch(id(1), `http://127.0.0.1:${port}/`, { method: "POST", body: "{}" })).text()).toBe("ok");

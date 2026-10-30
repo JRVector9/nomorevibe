@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { TAGLINE_MODEL, taglineEvidence, type TaglineResult } from "./tagline";
 import { prepareCrawlTaglineGatewayCall, writeTaglineWithReservedGateway, readCrawlTaglineGatewayTerminal } from "./agent-review-gateway";
-import { readModelCapacityCallerControl, findOwnPendingModelRequest, requestCrawlTaglineModelSlot,
+import { reconcileGatewayNotStarted, readModelCapacityCallerControl, findOwnPendingModelRequest, requestCrawlTaglineModelSlot,
   readCrawlTaglineContinuation, cancelReservedModelSlot, markModelDispatchIndeterminate, reconcileCrawlTaglineGatewayTerminal } from "@/lib/llm/capacity-repository";
 import { markUnsettledDispatch } from "@/lib/llm/capacity-unsettled";
 import { modelCapacityRequestIdentitySchema, crawlTaglineInputHash, crawlTaglineLogicalWorkKey, type CrawlTaglineParent } from "@/lib/llm/capacity";
@@ -86,10 +86,11 @@ export async function writeCrawlTaglineWithModelCapacity(value: TaglineTask, job
   // 물리 정산은 현재 signal/job/domain 판단보다 먼저 끝낸다.
   try {
     if (native.terminal) await reconcileCrawlTaglineGatewayTerminal(native.terminal);
+    else if (native.notStarted) await reconcileGatewayNotStarted(native.notStarted);
     else if (!await markModelDispatchIndeterminate(prepared.dispatch, options.signal?.aborted ? "local_abort" : "transport_unknown"))
       throw new Error("crawl_tagline_dispatch_not_marked");
   } catch (cleanup) {
-    if (native.terminal) await markUnsettledDispatch(prepared.dispatch);
+    if (native.terminal || native.notStarted) await markUnsettledDispatch(prepared.dispatch);
     if (!native.result.ok) throw new AggregateError([native.result, cleanup], "crawl_tagline_result_cleanup_failed");
     throw cleanup;
   }

@@ -11,6 +11,7 @@ import { z } from "zod";
 import { itemBindingSchema, itemBindingHash, itemOwnerSchema, type Ai2ItemBinding, type Ai1ItemBinding, type ItemOwner } from "@/lib/jobs/items/types";
 import { cliProcessTerminalEvidenceSchema, cliTransportSchema } from "@/lib/llm/cli-serving-contract";
 import { providerBoundaryPlanSchema, providerBoundaryReceiptSchema, validateProviderBoundary } from "./provider-boundary-contract";
+import { localModelDispatchSchema, type LocalModelDispatch } from "./local-model-capacity-contract";
 
 const identity = (max: number) => z.string().min(1).max(max)
   .refine(value => value === value.trim() && !/[\u0000-\u001f\u007f]/.test(value), "invalid_identity");
@@ -914,13 +915,19 @@ export const cliModelTerminalEvidenceSchema = z.object({ version: z.literal(1), 
   && cliCanonical(value.process.transport) === cliCanonical(value.dispatch.binding.transport), "invalid_cli_terminal_dispatch");
 export type CliModelTerminalEvidence = Readonly<z.infer<typeof cliModelTerminalEvidenceSchema>>;
 /**
- * 게이트웨이 fetch 를 한 번도 부르지 않고 닫은 AI1·AI1 item·AI2 dispatch(CLI D5 not_started 의 게이트웨이판). one-use 준비 호출이 아직
- * 쓰이지 않았다는 것이 전송 0 의 증명이다. 정산은 점유만 끝낸다 — dispatch binding(chargedTokens = C)은 그대로이고 사용량 증거는 없다.
- * 저장된 JSON 은 권한이 아니다 — 게이트웨이 모듈이 낸 원본 증인만 정산한다.
+ * 게이트웨이 fetch 를 한 번도 부르지 않았거나(one-use 준비 호출이 아직 안 쓰임) 요청 바이트를 한 바이트도 쓰지 못했다는 것이 증명된 채 닫은
+ * dispatch(CLI D5 not_started 의 게이트웨이판). 0102 는 AI1·AI1 item·AI2 만 받았고, 0149 부터 text 7 경로와 local-direct 까지 모든 게이트웨이
+ * dispatch kind 를 받는다. 정산은 점유만 끝낸다 — dispatch binding(chargedTokens = C)은 그대로이고 사용량 증거는 없다.
+ * 저장된 JSON 은 권한이 아니다 — 게이트웨이 모듈이 낸 원본 증인만 정산한다. 증거 모양은 {version, kind, dispatch} 그대로다(CHECK 가 키를 열거한다).
+ * local-direct schema 는 lazy 로 읽는다 — local-model-capacity-contract 는 도메인 모듈을 거쳐 이 모듈로 되돌아오므로(순환) 평가 시점에 묶지 않는다.
  */
 export const gatewayNotStartedEvidenceSchema = z.object({ version: z.literal(1), kind: z.literal("gateway_not_started"),
-  dispatch: z.union([ai1ModelDispatchSchema, ai1ItemModelDispatchSchema, ai2ModelDispatchSchema]) }).strict();
+  dispatch: z.union([ai1ModelDispatchSchema, ai1ItemModelDispatchSchema, ai2ModelDispatchSchema, textProfileModelDispatchSchema,
+    reasonTranslationModelDispatchSchema, productTranslationModelDispatchSchema, productTaglineKoModelDispatchSchema,
+    crawlTaglineModelDispatchSchema, searchVerifyModelDispatchSchema, websearchQueryModelDispatchSchema,
+    z.lazy(() => localModelDispatchSchema).transform(value => value as LocalModelDispatch)]) }).strict();
 export type GatewayNotStartedEvidence = Readonly<z.infer<typeof gatewayNotStartedEvidenceSchema>>;
+export type GatewayNotStartedDispatch = GatewayNotStartedEvidence["dispatch"];
 
 const isoMillis = z.string().regex(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/)
   .refine(value => Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value, "invalid_timestamp");

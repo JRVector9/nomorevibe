@@ -9,6 +9,7 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import * as schema from "@/lib/db/schema";
+import { gatewayNotStartedAllKindsTerminalSql } from "@/lib/db/operations-schema";
 import { modelCapacityPolicyHash, publicationClassifyMemberKeys, type ModelCapacityPolicy } from "@/lib/llm/capacity";
 import { cliExecutorPlanHash } from "@/lib/llm/cli-executor-boundary-contract";
 import { providerBoundaryCanonicalHash } from "@/lib/llm/provider-boundary-contract";
@@ -83,7 +84,10 @@ it("migrates nonempty old data without mutation and retains all predecessor pred
     const branch=table==="model_capacity_events"?"nmv_cli_executor_removed_event_valid(to_jsonb(model_capacity_events))":"nmv_cli_executor_removed_request_valid(to_jsonb(model_capacity_requests))";
     const current = table === "model_capacity_events" ? "nmv_cli_executor_indeterminate_event_valid(to_jsonb(model_capacity_events))" : "nmv_cli_executor_indeterminate_request_valid(to_jsonb(model_capacity_requests))";
     const removedUnknown = `nmv_cli_executor_indeterminate_removed_${table === "model_capacity_events" ? "event" : "request"}_valid(to_jsonb(${table}))`;
-    await client.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT cli_removed_expected CHECK ((((((${prior[n].slice(6)}) OR ${branch}) OR ${current}) OR ${removedUnknown}) OR nmv_replaced_provider_${table === "model_capacity_events" ? "event" : "request"}_valid(to_jsonb(${table}))) OR nmv_replaced_path_${table === "model_capacity_events" ? "event" : "request"}_valid(to_jsonb(${table})))`);
+    // 0149 appends the all-kinds gateway_not_started branch to the requests terminal CHECK only (the schema constant, not pasted SQL).
+    let predicate=`(((((${prior[n].slice(6)}) OR ${branch}) OR ${current}) OR ${removedUnknown}) OR nmv_replaced_provider_${table === "model_capacity_events" ? "event" : "request"}_valid(to_jsonb(${table}))) OR nmv_replaced_path_${table === "model_capacity_events" ? "event" : "request"}_valid(to_jsonb(${table}))`;
+    if(n==="model_capacity_requests_terminal_check")predicate=`(${predicate}) OR (${gatewayNotStartedAllKindsTerminalSql})`;
+    await client.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT cli_removed_expected CHECK (${predicate})`);
     try{expect(after[n]).toBe((await client`SELECT pg_get_constraintdef(oid) def FROM pg_constraint WHERE conname='cli_removed_expected'`)[0].def);}
     finally{await client.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT cli_removed_expected`);}
   }

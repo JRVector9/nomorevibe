@@ -5,7 +5,7 @@ import type { JobLease } from "@/lib/jobs/control";
 import { roleLeaseFromEnv } from "@/lib/jobs/role-leader";
 import { ModelCapacityDeferredError } from "./capacity-deferred";
 import { readModelCapacityCallerControl, findOwnPendingModelRequest, requestLocalModelSlot, dispatchLocalModelCapacity,
-  cancelReservedModelSlot, cancelOwnPendingLocalModelRequest, markModelDispatchIndeterminate, reconcileLocalModelTerminal } from "./capacity-repository";
+  cancelReservedModelSlot, cancelOwnPendingLocalModelRequest, markModelDispatchIndeterminate, reconcileGatewayNotStarted, reconcileLocalModelTerminal } from "./capacity-repository";
 import { markUnsettledDispatch } from "./capacity-unsettled";
 import { freshLocalModelScreenProof, localModelScreenProofSchema, localModelBindingSchema, localModelLogicalKey, localModelRoute,
   localModelTargetSchema, type LocalModelScreenProof, type LocalModelTarget } from "./local-model-capacity-contract";
@@ -13,6 +13,7 @@ import { localModelContractHash, localModelServingContractsSchema, resolveLocalM
   localModelThinkingFields, type LocalModelServingContract } from "./local-model-serving-contract";
 import { modelCapacityRequestIdentitySchema, type ModelCapacityPolicy } from "./capacity";
 import { requestReservedLocalModel } from "./local-model-terminal";
+import { GatewayNotSentError } from "./gateway-not-started";
 import { recordLocalModelWireObservation } from "./local-model-wire-observation";
 
 type Env = Readonly<Record<string, string | undefined>>;
@@ -164,9 +165,16 @@ export async function withLocalModelCapacity<T>(value: LocalModelCallContext,
     let native: Awaited<ReturnType<typeof requestReservedLocalModel>>;
     try { native = await requestReservedLocalModel(dispatch, contract, url, { ...init, body: wire }, baseRequest); }
     catch (error) {
-      try { await markModelDispatchIndeterminate(dispatch, init?.signal?.aborted ? "local_abort" : "transport_unknown"); }
-      catch (cleanup) { controlError = new AggregateError([error, cleanup], "local_model_transport_cleanup_failed"); }
-      throw error;
+      // 요청 바이트 0 이 증명된 실패(엔진 다운·DNS)는 보내지 않은 호출로 정산해 칸을 바로 돌려준다; 그 밖은 전송 여부를 모른다.
+      const unsent = error instanceof GatewayNotSentError ? error : null;
+      try {
+        if (unsent) await reconcileGatewayNotStarted(unsent.notStarted);
+        else await markModelDispatchIndeterminate(dispatch, init?.signal?.aborted ? "local_abort" : "transport_unknown");
+      } catch (cleanup) {
+        if (unsent) await markUnsettledDispatch(dispatch);
+        controlError = new AggregateError([error, cleanup], "local_model_transport_cleanup_failed");
+      }
+      throw unsent ? unsent.cause : error;
     }
     try {
       recordLocalModelWireObservation(native.response, digest(wire));

@@ -3,11 +3,11 @@ import { createHash } from "node:crypto";
 import { fetch as undiciFetch } from "undici";
 import { observeProviderTransport } from "@/lib/llm/provider-circuit-breaker";
 import { gatewayFetch as localEndGatewayFetch } from "@/lib/llm/gateway-local-end-fetch";
+import { gatewayNotSentWitness, issueGatewayNotStarted, readGatewayNotStarted, type GatewayNotStarted } from "@/lib/llm/gateway-not-started";
 import { ai1ModelDispatchSchema, ai1GatewayTerminalEvidenceSchema,
   ai2ModelDispatchSchema, ai2GatewayTerminalEvidenceSchema,
   type Ai2ModelDispatch, type Ai2GatewayTerminalEvidence,
-  type Ai1ModelDispatch, type Ai1GatewayTerminalEvidence,
-  gatewayNotStartedEvidenceSchema, type GatewayNotStartedEvidence } from "@/lib/llm/capacity";
+  type Ai1ModelDispatch, type Ai1GatewayTerminalEvidence } from "@/lib/llm/capacity";
 import { ai1GatewayServingContractHash, ai1GatewayServingContractSchema, resolveAi1GatewayServingContract,
   type Ai1GatewayServingContract } from "./agent-review-serving-contract";
 import { ai2GatewayServingContractHash, ai2GatewayServingContractSchema, resolveAi2GatewayServingContract, ai2ServingContractMatches,
@@ -256,20 +256,13 @@ function freeze<T>(value: T): T {
 }
 
 /**
- * fetch 를 한 번도 부르지 않고 닫은 AI1·AI1 item·AI2 호출의 증인(CLI D5 not_started 의 게이트웨이판). one-use 준비 호출을 이 자리에서
- * 쓴 것으로 닫으므로 같은 dispatch 는 다시 보낼 수 없다. 이 원본 객체만 정산 근거다 — JSON·사본은 아니다.
- * fetch 를 부른 뒤(연결 전 실패 포함)는 전송 여부를 여기서 증명하지 않는다 — 그 호출은 지금처럼 indeterminate 로 남는다.
+ * 보내지 않은 호출의 증인(CLI D5 not_started 의 게이트웨이판) — 등록부와 규칙은 lib/llm/gateway-not-started 에 있다. (1) fetch 를 한 번도
+ * 부르지 않고 닫은 호출: one-use 준비 호출을 이 자리에서 쓴 것으로 닫으므로 같은 dispatch 는 다시 보낼 수 없다. (2) fetch 를 불렀지만
+ * 요청 바이트가 하나도 나가지 않은 것이 증명된 호출(연결 거부·DNS·connect 시간 초과). 요청이 소켓에 쓰인 뒤의 실패는 전송 여부를 모르므로
+ * 지금처럼 indeterminate 로 남는다. 이 원본 객체만 정산 근거다 — JSON·사본은 아니다.
  */
-export type GatewayNotStarted = Readonly<{ kind: "gateway_not_started" }>;
-const notStartedTerminals = new WeakMap<GatewayNotStarted, GatewayNotStartedEvidence>();
-export function readGatewayNotStarted(value: unknown): GatewayNotStartedEvidence | null {
-  return value && typeof value === "object" ? notStartedTerminals.get(value as GatewayNotStarted) ?? null : null;
-}
-function issueNotStarted(dispatch: Ai1ModelDispatch | Ai1ItemModelDispatch | Ai2ModelDispatch): GatewayNotStarted {
-  const terminal: GatewayNotStarted = Object.freeze({ kind: "gateway_not_started" });
-  notStartedTerminals.set(terminal, freeze(gatewayNotStartedEvidenceSchema.parse({ version: 1, kind: "gateway_not_started", dispatch })));
-  return terminal;
-}
+export { readGatewayNotStarted, type GatewayNotStarted };
+const issueNotStarted = issueGatewayNotStarted;
 /** dispatch binding 이 이 준비 호출의 wire·계약·C 를 그대로 묶었는가(입력 원문 대조는 실제 전송 경로가 한다) */
 function sameCall(call: PreparedAi1GatewayCall | PreparedAi2GatewayCall, contract: { provider: string; routeId: string },
   binding: { model: string; wireHash: string; servingContractHash: string; totalTokenBound: number; provider: string; routeId: string },
@@ -409,7 +402,7 @@ export async function reviewWithReservedAi1Gateway(input: ReviewInput, dispatch:
       return { result: { ok: false, error: httpFailure(response.status) }, terminal: null };
     }
     body = await response.text();
-  } catch (error) { return { result: { ok: false, error: failure(error) }, terminal: null }; }
+  } catch (error) { return { result: { ok: false, error: failure(error) }, terminal: null, ...gatewayNotSentWitness(owned, error) }; }
   // This deployment contract requires raw gateway finish+DONE validation before its JSON response.
   // A generic HTTP200/EOF or a legacy callback is not that authority.
   const completed = nativeTerminal(body, state.contract, directEngine);
@@ -511,7 +504,7 @@ export async function reviewWithReservedAi2Gateway(input: ReviewInput, dispatch:
       return { result: { ok: false, error: httpFailure(response.status) }, terminal: null };
     }
     body = await response.text();
-  } catch (error) { return { result: { ok: false, error: failure(error) }, terminal: null }; }
+  } catch (error) { return { result: { ok: false, error: failure(error) }, terminal: null, ...gatewayNotSentWitness(owned, error) }; }
   const completed = nativeTerminal(body, state.contract, directEngine);
   if (!completed) return { result: { ok: false, error: "invalid_output", detail: "invalid_native_terminal" }, terminal: null };
   const terminal: Ai2GatewayTerminal = Object.freeze({ kind: "ai2_gateway_terminal" });
@@ -577,7 +570,7 @@ export async function reviewWithReservedAi1ItemGateway(input: ReviewInput, dispa
       return { result: { ok: false, error: httpFailure(response.status) }, terminal: null };
     }
     body = await response.text();
-  } catch (error) { return { result: { ok: false, error: failure(error) }, terminal: null }; }
+  } catch (error) { return { result: { ok: false, error: failure(error) }, terminal: null, ...gatewayNotSentWitness(owned, error) }; }
   const completed = nativeTerminal(body, state.contract, directEngine);
   if (!completed) return { result: { ok: false, error: "invalid_output", detail: "invalid_native_terminal" }, terminal: null };
   const terminal: Ai1ItemGatewayTerminal = Object.freeze({ kind: "ai1_item_gateway_terminal" });
@@ -634,7 +627,7 @@ export function readTextProfileGatewayTerminal(value: unknown): TextProfileGatew
 }
 export async function writeKeywordsWithReservedGateway(evidence: ProfileEvidence, dispatch: TextProfileModelDispatch,
   call: PreparedTextProfileGatewayCall, options: { signal?: AbortSignal; timeoutMs?: number } = {}):
-  Promise<{ result: KeywordResult; terminal: TextProfileGatewayTerminal | null }> {
+  Promise<{ result: KeywordResult; terminal: TextProfileGatewayTerminal | null; notStarted?: GatewayNotStarted }> {
   assertLiveReviewAdapterAllowed();
   const snapshot = structuredClone(evidence), state = textProfileCalls.get(call);
   const checked = textProfileModelDispatchSchema.safeParse(structuredClone(dispatch));
@@ -662,7 +655,8 @@ export async function writeKeywordsWithReservedGateway(evidence: ProfileEvidence
     }
     body = await response.text();
   } catch (error) {
-    return { result: { ok: false, error: error instanceof Error && error.name === "TimeoutError" ? "timeout" : "network" }, terminal: null };
+    return { result: { ok: false, error: error instanceof Error && error.name === "TimeoutError" ? "timeout" : "network" }, terminal: null,
+      ...gatewayNotSentWitness(owned, error) };
   }
   const completed = nativeTerminal(body, state.contract, directEngine);
   if (!completed) return { result: { ok: false, error: "invalid_output" }, terminal: null };
@@ -720,7 +714,7 @@ export function readReasonTranslationGatewayTerminal(value: unknown): ReasonTran
 }
 export async function translateWithReservedReasonGateway(texts: readonly string[], dispatch: ReasonTranslationModelDispatch,
   call: PreparedReasonTranslationGatewayCall, options: { signal?: AbortSignal; timeoutMs?: number } = {}):
-  Promise<{ result: TranslateResult; terminal: ReasonTranslationGatewayTerminal | null }> {
+  Promise<{ result: TranslateResult; terminal: ReasonTranslationGatewayTerminal | null; notStarted?: GatewayNotStarted }> {
   assertLiveReviewAdapterAllowed();
   const snapshot = structuredClone(texts), state = reasonTranslationCalls.get(call);
   const checked = reasonTranslationModelDispatchSchema.safeParse(structuredClone(dispatch));
@@ -749,7 +743,8 @@ export async function translateWithReservedReasonGateway(texts: readonly string[
     }
     body = await response.text();
   } catch (error) {
-    return { result: { ok: false, error: error instanceof Error && error.name === "TimeoutError" ? "timeout" : "network" }, terminal: null };
+    return { result: { ok: false, error: error instanceof Error && error.name === "TimeoutError" ? "timeout" : "network" }, terminal: null,
+      ...gatewayNotSentWitness(owned, error) };
   }
   const completed = nativeTerminal(body, state.contract, directEngine);
   if (!completed) return { result: { ok: false, error: "invalid_output" }, terminal: null };
@@ -806,7 +801,7 @@ export function readProductTranslationGatewayTerminal(value: unknown): ProductTr
 }
 export async function translateProductFieldsWithReservedGateway(items: readonly ProductTranslationGatewayItem[], dispatch: ProductTranslationModelDispatch,
   call: PreparedProductTranslationGatewayCall, options: { signal?: AbortSignal; timeoutMs?: number } = {}):
-  Promise<{ result: KoreanTaglineBatch; terminal: ProductTranslationGatewayTerminal | null }> {
+  Promise<{ result: KoreanTaglineBatch; terminal: ProductTranslationGatewayTerminal | null; notStarted?: GatewayNotStarted }> {
   assertLiveReviewAdapterAllowed();
   const snapshot = structuredClone(items), state = productTranslationCalls.get(call);
   const checked = productTranslationModelDispatchSchema.safeParse(structuredClone(dispatch));
@@ -840,7 +835,8 @@ export async function translateProductFieldsWithReservedGateway(items: readonly 
     }
     body = await response.text();
   } catch (error) {
-    return { result: { ok: false, error: error instanceof Error && error.name === "TimeoutError" ? "timeout" : "network" }, terminal: null };
+    return { result: { ok: false, error: error instanceof Error && error.name === "TimeoutError" ? "timeout" : "network" }, terminal: null,
+      ...gatewayNotSentWitness(owned, error) };
   } finally { delete state.deadline; }
   const completed = nativeTerminal(body, state.contract, directEngine);
   if (!completed) return { result: { ok: false, error: "invalid_output" }, terminal: null };
@@ -893,7 +889,7 @@ export function readProductTaglineKoGatewayTerminal(value: unknown): ProductTagl
 }
 export async function translateTaglinesWithReservedGateway(items: readonly ProductTaglineKoGatewayItem[], dispatch: ProductTaglineKoModelDispatch,
   call: PreparedProductTaglineKoGatewayCall, options: { signal?: AbortSignal; timeoutMs?: number } = {}):
-  Promise<{ result: KoreanTaglineBatch; terminal: ProductTaglineKoGatewayTerminal | null }> {
+  Promise<{ result: KoreanTaglineBatch; terminal: ProductTaglineKoGatewayTerminal | null; notStarted?: GatewayNotStarted }> {
   assertLiveReviewAdapterAllowed();
   const snapshot = structuredClone(items), state = productTaglineKoCalls.get(call);
   const checked = productTaglineKoModelDispatchSchema.safeParse(structuredClone(dispatch));
@@ -923,7 +919,8 @@ export async function translateTaglinesWithReservedGateway(items: readonly Produ
     }
     body = await response.text();
   } catch (error) {
-    return { result: { ok: false, error: error instanceof Error && error.name === "TimeoutError" ? "timeout" : "network" }, terminal: null };
+    return { result: { ok: false, error: error instanceof Error && error.name === "TimeoutError" ? "timeout" : "network" }, terminal: null,
+      ...gatewayNotSentWitness(owned, error) };
   } finally { delete state.deadline; }
   const completed = nativeTerminal(body, state.contract, directEngine);
   if (!completed) return { result: { ok: false, error: "invalid_output" }, terminal: null };
@@ -978,7 +975,7 @@ export function readCrawlTaglineGatewayTerminal(value: unknown): CrawlTaglineGat
 }
 export async function writeTaglineWithReservedGateway(evidence: TaglineEvidence, dispatch: CrawlTaglineModelDispatch,
   call: PreparedCrawlTaglineGatewayCall, options: { signal?: AbortSignal; timeoutMs?: number } = {}):
-  Promise<{ result: TaglineResult; terminal: CrawlTaglineGatewayTerminal | null }> {
+  Promise<{ result: TaglineResult; terminal: CrawlTaglineGatewayTerminal | null; notStarted?: GatewayNotStarted }> {
   assertLiveReviewAdapterAllowed();
   const snapshot = structuredClone(evidence), state = crawlTaglineCalls.get(call);
   const checked = crawlTaglineModelDispatchSchema.safeParse(structuredClone(dispatch));
@@ -1006,7 +1003,8 @@ export async function writeTaglineWithReservedGateway(evidence: TaglineEvidence,
     }
     body = await response.text();
   } catch (error) {
-    return { result: { ok: false, error: error instanceof Error && error.name === "TimeoutError" ? "timeout" : "network" }, terminal: null };
+    return { result: { ok: false, error: error instanceof Error && error.name === "TimeoutError" ? "timeout" : "network" }, terminal: null,
+      ...gatewayNotSentWitness(owned, error) };
   } finally { delete state.deadline; }
   const completed = nativeTerminal(body, state.contract, directEngine);
   if (!completed) return { result: { ok: false, error: "invalid_output" }, terminal: null };
@@ -1061,7 +1059,7 @@ export function readSearchVerifyGatewayTerminal(value: unknown): SearchVerifyGat
 /** Exactly one POST. Original HTTP, outer-decoding (network) and content-parser (invalid_output) names are kept. */
 export async function verifyKeywordsWithReservedGateway(item: VerifyItem, dispatch: SearchVerifyModelDispatch,
   call: PreparedSearchVerifyGatewayCall, options: { signal?: AbortSignal; timeoutMs?: number } = {}):
-  Promise<{ result: VerifyResult; terminal: SearchVerifyGatewayTerminal | null }> {
+  Promise<{ result: VerifyResult; terminal: SearchVerifyGatewayTerminal | null; notStarted?: GatewayNotStarted }> {
   assertLiveReviewAdapterAllowed();
   const snapshot = structuredClone(item), state = searchVerifyCalls.get(call);
   const checked = searchVerifyModelDispatchSchema.safeParse(structuredClone(dispatch));
@@ -1089,7 +1087,8 @@ export async function verifyKeywordsWithReservedGateway(item: VerifyItem, dispat
     }
     body = await response.text();
   } catch (error) {
-    return { result: { ok: false, error: error instanceof Error && error.name === "TimeoutError" ? "timeout" : "network" }, terminal: null };
+    return { result: { ok: false, error: error instanceof Error && error.name === "TimeoutError" ? "timeout" : "network" }, terminal: null,
+      ...gatewayNotSentWitness(owned, error) };
   }
   const completed = nativeTerminal(body, state.contract, directEngine);
   if (!completed) {
@@ -1150,7 +1149,7 @@ export function readWebsearchQueryGatewayTerminal(value: unknown): WebsearchQuer
 /** Original chat error names stay: 404 is http_404, outer JSON decoding is network, the content parser is invalid_output. */
 export async function translateQueryWithReservedGateway(input: WebsearchQueryGatewayInput, dispatch: WebsearchQueryModelDispatch,
   call: PreparedWebsearchQueryGatewayCall, options: { signal?: AbortSignal; timeoutMs?: number } = {}):
-  Promise<{ result: WebsearchQueryGatewayResult; terminal: WebsearchQueryGatewayTerminal | null }> {
+  Promise<{ result: WebsearchQueryGatewayResult; terminal: WebsearchQueryGatewayTerminal | null; notStarted?: GatewayNotStarted }> {
   assertLiveReviewAdapterAllowed();
   const snapshot = structuredClone(input), state = websearchQueryCalls.get(call);
   const checked = websearchQueryModelDispatchSchema.safeParse(structuredClone(dispatch));
@@ -1180,7 +1179,8 @@ export async function translateQueryWithReservedGateway(input: WebsearchQueryGat
     }
     status = response.status; body = await response.text();
   } catch (error) {
-    return { result: { ok: false, error: error instanceof Error && error.name === "TimeoutError" ? "timeout" : "network" }, terminal: null };
+    return { result: { ok: false, error: error instanceof Error && error.name === "TimeoutError" ? "timeout" : "network" }, terminal: null,
+      ...gatewayNotSentWitness(owned, error) };
   } finally { delete state.deadline; }
   // The original response.json() failure was caught as "network"; it is not a content-parser failure.
   try { JSON.parse(body); } catch { return { result: { ok: false, error: "network" }, terminal: null }; }
