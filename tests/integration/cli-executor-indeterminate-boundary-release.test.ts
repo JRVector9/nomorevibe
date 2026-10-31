@@ -13,6 +13,7 @@ import { gatewayNotStartedAllKindsTerminalSql } from "@/lib/db/operations-schema
 import { operatorReviewDispatchSql, operatorReviewEventSql, operatorReviewTerminalSql } from "@/lib/llm/operator-review-sql";
 import { localModelSplitJobsDispatchSql, localModelSplitJobsTerminalSql } from "@/lib/llm/local-model-capacity-sql";
 import { gatewayLocalDirectDispatchSql, gatewayLocalDirectLogicalSql, gatewayLocalDirectMembersSql, gatewayLocalDirectTerminalSql } from "@/lib/llm/gateway-local-direct-sql";
+import { publicationClassifyReleaseLogicalSql, releaseKindsDispatchSql } from "@/lib/llm/dispatch-release-kinds-sql";
 import { modelCapacityPolicyHash,publicationClassifyMemberKeys,type ModelCapacityPolicy } from "@/lib/llm/capacity";
 import { providerBoundaryCanonicalHash } from "@/lib/llm/provider-boundary-contract";
 import { cliExecutorIndeterminatePlanHash } from "@/lib/llm/cli-executor-indeterminate-boundary-contract";
@@ -84,6 +85,14 @@ it("0136 preserves nonempty old rows and the complete0135 CHECK predecessor",asy
       await client.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT unknown_expected_0156 CHECK (${predicate})`);
       try{predicate=`(${(await client`SELECT pg_get_constraintdef(oid) definition FROM pg_constraint WHERE conname='unknown_expected_0156'`)[0].definition.slice(6)}) OR (${localDirect[n]})`;}
       finally{await client.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT unknown_expected_0156`);}
+    }
+    // 0158 (2026-10-31) appends the process_group_exit/dr_call_drain release branch for publication_classify_cli·local_model_direct to the requests
+    // logical/members/dispatch CHECKs (the schema constants), again on PostgreSQL's own deparse of the live 0157 predecessor.
+    const releaseKinds:Record<string,string>={[checks[0]]:publicationClassifyReleaseLogicalSql,[checks[1]]:publicationClassifyReleaseLogicalSql,[checks[2]]:releaseKindsDispatchSql};
+    if(releaseKinds[n]){
+      await client.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT unknown_expected_0157 CHECK (${predicate})`);
+      try{predicate=`(${(await client`SELECT pg_get_constraintdef(oid) definition FROM pg_constraint WHERE conname='unknown_expected_0157'`)[0].definition.slice(6)}) OR (${releaseKinds[n]})`;}
+      finally{await client.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT unknown_expected_0157`);}
     }
     await client.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT unknown_expected CHECK (${predicate})`);
     try{expect(after[n]).toBe((await client`SELECT pg_get_constraintdef(oid) definition FROM pg_constraint WHERE conname='unknown_expected'`)[0].definition);}finally{await client.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT unknown_expected`);}}
