@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { packBatch, translateReasons } from "@/lib/crawl/jobs/translate-reasons";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
+import { setServingContractSnapshotForTest, TEXT_ROUTE_BLOCK_DETAIL, type StoredServingContract } from "@/lib/llm/serving-contract-store";
 
 const mocks = vi.hoisted(() => ({ untried: vi.fn(), retry: vi.fn(), record: vi.fn(), translate: vi.fn() }));
 vi.mock("@/lib/crawl/translations", () => ({
@@ -15,7 +16,9 @@ vi.mock("@/lib/crawl/reason-translation-model-capacity", () => ({
 
 const context = () => ({ cursor: null, hasBudget: () => true, save: vi.fn(), log: vi.fn(), lease: { name: "reason-translate", token: "t", requestedVersion: 1 } });
 const item = (hash: string, attempts = 0) => ({ hash, body: `English reason ${hash}`, attempts });
-const original = process.env.ABCLLM_API_KEY;
+/** The admin engine contract for the mocked model — the only thing that opens the route since the gateway was removed (2026-10-30). */
+const direct = (change: Partial<StoredServingContract> = {}): StoredServingContract =>
+  ({ routeId: "reason-translate", model: "[MLX] gpt-oss-120b", contract: {}, auth: "none", apiKey: null, transport: "direct", ...change });
 
 it("capacity admission preserves the pending reason and consumes no attempt or write", async () => {
   const deferred = new ModelCapacityDeferredError("provider_contract_unavailable");
@@ -28,22 +31,40 @@ it("capacity admission preserves the pending reason and consumes no attempt or w
 
 beforeEach(() => {
   vi.resetAllMocks();
-  process.env.ABCLLM_API_KEY = "test-key";
+  setServingContractSnapshotForTest([direct()]);
   mocks.record.mockResolvedValue(undefined);
   // 잡은 두 줄을 번갈아 본다 — 밝히지 않은 줄은 비어 있는 것으로 둔다
   mocks.untried.mockResolvedValue([]);
   mocks.retry.mockResolvedValue([]);
 });
-afterEach(() => { if (original === undefined) delete process.env.ABCLLM_API_KEY; else process.env.ABCLLM_API_KEY = original; });
+afterEach(() => { setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); });
 
-it("키가 없으면 아무것도 하지 않는다", async () => {
-  delete process.env.ABCLLM_API_KEY;
+it.each([
+  ["no_direct_contract", []],
+  ["no_direct_contract", [direct({ transport: "gateway" })]],
+  ["no_direct_contract", [direct({ model: "[m1] another-model" })]],
+  ["gateway_auth", [direct({ auth: "gateway" })]],
+  ["stored_key_unreadable", [direct({ auth: "stored", apiKey: null })]],
+] as const)("직접 연결 계약으로 열리지 않으면(%s) 아무것도 하지 않는다 — ABCLLM_API_KEY 는 읽지 않는다", async (code, rows) => {
+  setServingContractSnapshotForTest(rows);
+  vi.stubEnv("ABCLLM_API_KEY", "ignored-gateway-key");
   const ctx = context();
   // 아무것도 하지 않은 틱은 성공이 아니다 — 러너가 성공 시각을 옮기지 않고 조치할 일이 올린다
-  expect(await translateReasons(ctx)).toEqual({ done: true, degraded: { code: "no_key", detail: "이 경로의 직접 연결 계약도 text 워커의 ABCLLM_API_KEY 도 없습니다" } });
+  expect(await translateReasons(ctx)).toEqual({ done: true, degraded: { code, detail: TEXT_ROUTE_BLOCK_DETAIL[code] } });
   expect(mocks.untried).not.toHaveBeenCalled();
   expect(mocks.retry).not.toHaveBeenCalled();
-  expect(ctx.log).toHaveBeenCalledWith("translate.skipped", { reason: "no_key" });
+  expect(mocks.translate).not.toHaveBeenCalled();
+  expect(ctx.log).toHaveBeenCalledWith("translate.skipped", { reason: code });
+});
+
+it("엔진 직접 연결 계약(저장한 키)이 있으면 ABCLLM_API_KEY 없이도 옮긴다", async () => {
+  setServingContractSnapshotForTest([direct({ auth: "stored", apiKey: "engine-key" })]);
+  vi.stubEnv("ABCLLM_API_KEY", undefined);
+  mocks.untried.mockResolvedValueOnce([item("a")]).mockResolvedValue([]);
+  mocks.translate.mockResolvedValue({ ok: true, translations: ["가"] });
+  expect(await translateReasons(context())).toEqual({ done: true });
+  expect(mocks.translate).toHaveBeenCalledTimes(1);
+  expect(mocks.record).toHaveBeenCalledWith([{ hash: "a", translated: "가", error: undefined }], "[MLX] gpt-oss-120b", context().lease);
 });
 
 it("처음 보는 글을 묶어 옮기고, 남은 것이 없으면 끝낸다", async () => {

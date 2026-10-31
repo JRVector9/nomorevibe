@@ -124,7 +124,7 @@ describe("모델 자리 — 설정만으로 정해진다", () => {
     expect(pick(echo, "second").map((slot) => slot.model)).toEqual(["gpt-oss-120b"]);
   });
 
-  it("1차는 설정 → CRAWL_REVIEW_MODEL(claude-cli) → 없음 — agent-review 의 firstReviewer 와 같고, 새 감사도 그 심사자를 쓴다", () => {
+  it("1차는 설정 → 없음 — CRAWL_REVIEW_MODEL 은 읽지 않는다. agent-review 의 firstReviewer 와 같고, 새 감사도 그 심사자를 쓴다", () => {
     const withFirst = settings();
     expect(pick(resolveModelSlots(withFirst, {}), "first")).toEqual([
       { key: "first", label: "주", code: "firstReview", provider: "abcllm", model: "[MLX] gpt-oss-120b", source: "settings" }]);
@@ -132,11 +132,10 @@ describe("모델 자리 — 설정만으로 정해진다", () => {
     for (const value of ["sonnet", " opus ", "bad model!", undefined]) {
       if (value === undefined) vi.stubEnv("CRAWL_REVIEW_MODEL", undefined); else vi.stubEnv("CRAWL_REVIEW_MODEL", value);
       const [slot] = pick(resolveModelSlots(withoutFirst, process.env), "first");
-      const expected = firstReviewer(withoutFirst);
-      expect({ provider: slot.provider, model: slot.model }, String(value)).toEqual({ provider: expected?.provider ?? null, model: expected?.model ?? null });
-      expect(slot.source, String(value)).toBe(expected ? "env" : "unset");
+      expect(firstReviewer(withoutFirst), String(value)).toBeNull();
+      expect(slot, String(value)).toEqual({ key: "first", label: "주", code: "firstReview", provider: null, model: null, source: "unset" });
       expect(pick(resolveModelSlots(withoutFirst, process.env), "audit").map(({ provider, model }) => ({ provider, model })))
-        .toEqual([{ provider: slot.provider, model: slot.model }]);
+        .toEqual([{ provider: null, model: null }]);
     }
   });
 
@@ -146,14 +145,19 @@ describe("모델 자리 — 설정만으로 정해진다", () => {
     keywords: async () => (await import("@/lib/domain/products/search-profile")).PROFILE_MODEL,
     "keyword-verify": async () => (await import("@/lib/domain/products/search-verify")).VERIFY_MODEL,
     embedding: async () => (await import("@/lib/domain/products/embedding")).EMBEDDING_MODEL,
-    "product-translate": async () => (await import("@/lib/crawl/translate")).PRODUCT_TRANSLATION_MODEL,
+    "product-translate": async () => (await import("@/lib/crawl/translate")).PRODUCT_TRANSLATE_MODEL,
     "reason-translate": async () => (await import("@/lib/crawl/translate")).TRANSLATE_MODEL,
     "tagline-ko": async () => (await import("@/lib/crawl/translate")).KOREAN_TAGLINE_MODEL,
     "intro-check": async () => (await import("@/lib/domain/products/intro-check")).INTRO_CHECK_MODEL,
   };
 
+  /** env 가 없는 자리(소개 짓기·제품 번역)는 등록부·단계 풀이 고른다 — 예전 환경변수 이름은 읽지 않는다(2026-10-31) */
+  const REGISTRY_CODES: Record<string, string> = { tagline: "registry:crawl-tagline", "product-translate": "registry:product-translate" };
+  const REMOVED_ENV = ["ABCLLM_TAGLINE_MODEL", "PRODUCT_TRANSLATION_MODEL"];
+
   it("환경변수 모델 자리는 잡 모듈 상수와 같은 환경변수·기본값을 읽는다", async () => {
     expect(ENV_MODEL_SLOTS.map((slot) => slot.key).sort()).toEqual(Object.keys(MODULE_CONSTANTS).sort());
+    expect(ENV_MODEL_SLOTS.filter((slot) => !slot.env && slot.key !== "embedding").map((slot) => slot.key).sort()).toEqual(Object.keys(REGISTRY_CODES).sort());
     for (const name of new Set(ENV_MODEL_SLOTS.flatMap((slot) => slot.env ? [slot.env] : []))) vi.stubEnv(name, undefined);
     vi.resetModules();
     const defaults = resolveModelSlots(settings(), process.env);
@@ -163,13 +167,16 @@ describe("모델 자리 — 설정만으로 정해진다", () => {
       expect(found.source, slot.key).toBe("default");
     }
     for (const slot of ENV_MODEL_SLOTS) if (slot.env) vi.stubEnv(slot.env, `env:${slot.env}`);
+    // 지운 이름(과 그 _KEY 선택자)은 값이 있어도 어느 자리도 바꾸지 않는다 — 예전에는 틀린 _KEY 가 invalid_model_key 로 던졌다
+    for (const name of REMOVED_ENV) { vi.stubEnv(name, `env:${name}`); vi.stubEnv(`${name}_KEY`, "missing:key"); }
     vi.resetModules();
     const overridden = resolveModelSlots(settings(), process.env);
     for (const slot of ENV_MODEL_SLOTS) {
       const found = overridden.find((row) => row.key === slot.key)!;
       expect(found.model, slot.key).toBe(await MODULE_CONSTANTS[slot.key]());
       expect(found.source, slot.key).toBe(slot.env ? "env" : "default");
-      expect(found.code, slot.key).toBe(slot.env ?? "EMBEDDING_MODEL");
+      expect(found.code, slot.key).toBe(slot.env ?? REGISTRY_CODES[slot.key] ?? "EMBEDDING_MODEL");
+      if (!slot.env) expect(found.model, slot.key).not.toMatch(/^env:/);
     }
   });
 

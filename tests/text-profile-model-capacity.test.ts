@@ -4,6 +4,8 @@ import type { ProfileTask } from "@/lib/domain/products/search-profiles";
 import { PROFILE_MODEL, profileHash, profileEvidence } from "@/lib/domain/products/search-profile";
 import { textProfileInputHash, modelCapacityReservationSchema } from "@/lib/llm/capacity";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
+import { scopedModel } from "@/lib/llm/model-registry";
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 const mocks = vi.hoisted(() => ({ prepare: vi.fn(), legacy: vi.fn(), pending: vi.fn(), request: vi.fn(),
   cancel: vi.fn(), native: vi.fn(), reconcile: vi.fn(), unknown: vi.fn(), transaction: vi.fn(), control: vi.fn(),
   prefix: vi.fn(), finish: vi.fn(), jobWall: vi.fn(), role: vi.fn(), batch: vi.fn(), generation: vi.fn(), gatewayPrepare: vi.fn() }));
@@ -35,18 +37,23 @@ function first() {
     model: input.model, wireHash: "b".repeat(64), servingContractHash: "c".repeat(64), totalTokenBound: 4096 } };
 }
 const options = () => ({ timeoutMs: 1000, roleLease: role });
+/** The route opens only on an engine connected directly (admin contract, transport direct); the gateway key was removed 2026-10-30. */
+const pinDirect = () => setServingContractSnapshotForTest([{ routeId: "product-search-profile",
+  model: scopedModel("product-search-profile", PROFILE_MODEL), contract: {}, auth: "none", apiKey: null, transport: "direct" }]);
 beforeEach(() => {
-  vi.resetAllMocks(); vi.stubEnv("ABCLLM_API_KEY", "unit-test");
+  vi.resetAllMocks(); pinDirect();
   const ready = first(); mocks.prepare.mockResolvedValueOnce(ready).mockResolvedValue({ ...ready, dispatch: nativeDispatch });
   mocks.pending.mockResolvedValue(null); mocks.request.mockResolvedValue({ kind: "granted", reservation });
   mocks.native.mockResolvedValue({ result, terminal: { kind: "text_profile_gateway_terminal" } });
   mocks.reconcile.mockResolvedValue({ kind: "settled" }); mocks.cancel.mockResolvedValue(true); mocks.unknown.mockResolvedValue(true);
 });
-afterEach(() => vi.unstubAllEnvs());
-it("returns no_key before DB and preserves disabled legacy execution without a role", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", ""); expect(await writeKeywordsWithModelCapacity(task, lease, { timeoutMs: 1000 }))
+afterEach(() => { setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); });
+it("returns no_key before DB without a direct contract and preserves disabled legacy execution without a role", async () => {
+  // A leftover gateway key does not stand in for the direct contract.
+  setServingContractSnapshotForTest([]); vi.stubEnv("ABCLLM_API_KEY", "old-gateway-key");
+  expect(await writeKeywordsWithModelCapacity(task, lease, { timeoutMs: 1000 }))
     .toEqual({ kind: "result", result: { ok: false, error: "no_key" } }); expect(mocks.prepare).not.toHaveBeenCalled();
-  vi.stubEnv("ABCLLM_API_KEY", "unit-test"); mocks.prepare.mockReset().mockResolvedValue({ kind: "disabled" }); mocks.legacy.mockResolvedValue(result);
+  pinDirect(); mocks.prepare.mockReset().mockResolvedValue({ kind: "disabled" }); mocks.legacy.mockResolvedValue(result);
   expect(await writeKeywordsWithModelCapacity(task, lease, { timeoutMs: 1000 })).toEqual({ kind: "result", result });
   expect(mocks.request).not.toHaveBeenCalled(); expect(mocks.legacy).toHaveBeenCalledWith(profileEvidence(task.product, null), { timeoutMs: 1000 });
 });

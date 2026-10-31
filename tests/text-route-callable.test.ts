@@ -1,28 +1,40 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { setServingContractSnapshotForTest, textRouteCallable } from "@/lib/llm/serving-contract-store";
+import { setServingContractSnapshotForTest, TEXT_ROUTE_BLOCK_DETAIL, textRouteBlock, textRouteCallable } from "@/lib/llm/serving-contract-store";
 
-const row = (transport: "direct" | "gateway", auth: "stored" | "none" | "gateway" = "none") =>
-  ({ routeId: "product-translate", model: "gemma-direct", contract: {}, auth, apiKey: auth === "stored" ? "engine-key" : null, transport });
+const row = (transport: "direct" | "gateway", auth: "stored" | "none" | "gateway" = "none", apiKey: string | null = auth === "stored" ? "engine-key" : null) =>
+  ({ routeId: "product-translate", model: "gemma-direct", contract: {}, auth, apiKey, transport });
 
-describe("text routes without the abcLLM gateway key", () => {
+describe("text routes open only on a directly connected engine (abcLLM gateway removed 2026-10-30)", () => {
   afterEach(() => { setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); });
 
-  it("a directly connected engine is callable with no gateway key, keyless or with its own stored key", () => {
-    vi.stubEnv("ABCLLM_API_KEY", "");
+  it("a directly connected engine is callable, keyless or with its own stored key, with no env key at all", () => {
+    vi.stubEnv("ABCLLM_API_KEY", undefined);
     setServingContractSnapshotForTest([row("direct")]);
+    expect(textRouteBlock("product-translate", "gemma-direct")).toBeNull();
     expect(textRouteCallable("product-translate", "gemma-direct")).toBe(true);
     setServingContractSnapshotForTest([row("direct", "stored")]);
     expect(textRouteCallable("product-translate", "gemma-direct")).toBe(true);
   });
 
-  it("anything else still needs the gateway key: another route or model, or a gateway contract", () => {
-    vi.stubEnv("ABCLLM_API_KEY", "");
-    setServingContractSnapshotForTest([row("direct"), { ...row("gateway", "gateway"), model: "[MLX] gpt-oss-120b" }]);
-    expect(textRouteCallable("reason-translate", "gemma-direct")).toBe(false);
-    expect(textRouteCallable("product-translate", "other-model")).toBe(false);
-    expect(textRouteCallable("product-translate", "[MLX] gpt-oss-120b")).toBe(false);
+  it("names why a route is closed: no direct contract, gateway auth, or an unreadable stored key", () => {
+    setServingContractSnapshotForTest([row("direct"), { ...row("gateway", "none"), model: "[MLX] gpt-oss-120b" }]);
+    expect(textRouteBlock("reason-translate", "gemma-direct")).toBe("no_direct_contract");
+    expect(textRouteBlock("product-translate", "other-model")).toBe("no_direct_contract");
+    // A gateway-transport contract no longer opens anything.
+    expect(textRouteBlock("product-translate", "[MLX] gpt-oss-120b")).toBe("no_direct_contract");
+    setServingContractSnapshotForTest([row("direct", "gateway")]);
+    expect(textRouteBlock("product-translate", "gemma-direct")).toBe("gateway_auth");
+    setServingContractSnapshotForTest([row("direct", "stored", null)]);
+    expect(textRouteBlock("product-translate", "gemma-direct")).toBe("stored_key_unreadable");
+    for (const detail of Object.values(TEXT_ROUTE_BLOCK_DETAIL)) expect(detail).not.toMatch(/ABCLLM/);
+  });
+
+  it("the old gateway key opens nothing any more", () => {
     vi.stubEnv("ABCLLM_API_KEY", "gateway-key");
-    expect(textRouteCallable("product-translate", "[MLX] gpt-oss-120b")).toBe(true);
+    setServingContractSnapshotForTest([{ ...row("gateway", "gateway"), model: "[MLX] gpt-oss-120b" }]);
+    expect(textRouteCallable("product-translate", "[MLX] gpt-oss-120b")).toBe(false);
+    setServingContractSnapshotForTest([]);
+    expect(textRouteCallable("product-translate", "gemma-direct")).toBe(false);
   });
 
   // PR 3b-C: the gate is the senders' own bearer rule (contractBearer), not the transport flag alone.

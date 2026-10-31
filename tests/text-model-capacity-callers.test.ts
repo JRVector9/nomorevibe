@@ -10,6 +10,11 @@ import { writeKoreanTaglines } from "@/lib/jobs/products/korean-tagline";
 import { translateDemandedProductFields } from "@/lib/jobs/products/translations";
 import { productTranslationSourceHash } from "@/lib/domain/products/translation-policy";
 import { resolveSearchQuery, warmQueryTranslation } from "@/lib/domain/products/search-translation";
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
+import { TAGLINE_MODEL } from "@/lib/crawl/tagline";
+import { PROFILE_MODEL } from "@/lib/domain/products/search-profile";
+import { VERIFY_MODEL } from "@/lib/domain/products/search-verify";
+import { KOREAN_TAGLINE_MODEL, PRODUCT_TRANSLATE_MODEL, SEARCH_QUERY_MODEL, TRANSLATE_MODEL } from "@/lib/crawl/translate";
 
 const mocks = vi.hoisted(() => ({ tagline: vi.fn(), profile: vi.fn(), verify: vi.fn(), korean: vi.fn(), product: vi.fn(), query: vi.fn(),
   tagTasks: vi.fn(), profiles: vi.fn(), verifications: vi.fn(), koreanTasks: vi.fn(), productTasks: vi.fn(),
@@ -96,7 +101,11 @@ const scenarios = [
 
 beforeEach(() => {
   vi.resetAllMocks();
-  vi.stubEnv("ABCLLM_API_KEY", "test-key");
+  // Each text route is served by a directly connected engine (admin contract, transport direct); no gateway key exists.
+  setServingContractSnapshotForTest(([["crawl-tagline", TAGLINE_MODEL], ["product-search-profile", PROFILE_MODEL],
+    ["product-search-verify", VERIFY_MODEL], ["product-tagline-ko", KOREAN_TAGLINE_MODEL], ["product-translate", PRODUCT_TRANSLATE_MODEL],
+    ["reason-translate", TRANSLATE_MODEL], ["search-query-translate", SEARCH_QUERY_MODEL]] as const).map(([routeId, model]) =>
+    ({ routeId, model, contract: {}, auth: "none" as const, apiKey: null, transport: "direct" as const })));
   vi.stubEnv("KOREAN_TRANSLATION_QWEN_ENABLED", "false");
   vi.stubEnv("KOREAN_TRANSLATION_QWEN_RECOVERY_ENABLED", "false");
   mocks.control.mockResolvedValue({ mode: "disabled" });
@@ -106,7 +115,7 @@ beforeEach(() => {
   mocks.cache.mockResolvedValue([]);
   mocks.primary.mockImplementation(async (load: () => Promise<unknown>) => load());
 });
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => { vi.unstubAllEnvs(); setServingContractSnapshotForTest(null); });
 
 it.each(scenarios)("$name drains existing calls without aborting peers or admitting another after capacity defer", async scenario => {
   const finish = latch(), entered = latch();

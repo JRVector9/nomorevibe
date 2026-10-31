@@ -1,9 +1,16 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { readTextProgress, textProgressStalled } from '@/lib/operations/text-progress';
+import { setServingContractSnapshotForTest } from '@/lib/llm/serving-contract-store';
 
 const fixture = vi.hoisted(() => ({
-  settings: vi.fn(), settingsUnreadable: vi.fn(), control: vi.fn(), translation: vi.fn(), taglines: vi.fn(), rows: vi.fn(),
+  settings: vi.fn(), settingsUnreadable: vi.fn(), control: vi.fn(), translation: vi.fn(), taglines: vi.fn(), rows: vi.fn(), models: vi.fn(),
 }));
+vi.mock('@/lib/operations/model-env', () => ({ currentModelEnv: fixture.models }));
+const MODELS = { translate: 'translate-model', tagline: 'tagline-model', profile: 'profile-model', verify: 'verify-model',
+  productTranslate: 'product-model', introCheck: 'sonnet' };
+const ROUTES = [['reason-translate', 'translate-model'], ['crawl-tagline', 'tagline-model'],
+  ['product-search-profile', 'profile-model'], ['product-search-verify', 'verify-model']] as const;
+const direct = (routeId: string, model: string) => ({ routeId, model, contract: {}, auth: 'none' as const, apiKey: null, transport: 'direct' as const });
 vi.mock('@/lib/crawl/settings', () => ({ getSettings: fixture.settings, settingsUnreadable: fixture.settingsUnreadable }));
 vi.mock('@/lib/llm/capacity-repository', () => ({ readModelCapacityCallerControl: fixture.control }));
 vi.mock('@/lib/crawl/translations', () => ({ oldestPendingTranslationMinutes: fixture.translation }));
@@ -18,9 +25,11 @@ beforeEach(() => {
   fixture.translation.mockResolvedValue(null);
   fixture.taglines.mockResolvedValue([]);
   fixture.rows.mockResolvedValue([{ profile_age: null, verify_age: null, persisted: false, in_backoff: false, provider_error: false }]);
-  vi.stubEnv('ABCLLM_API_KEY', 'fixture-key');
+  fixture.models.mockResolvedValue(MODELS);
+  // Every main text route has a directly connected engine; the gateway key is not read any more.
+  setServingContractSnapshotForTest(ROUTES.map(([route, model]) => direct(route, model)));
 });
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => { vi.unstubAllEnvs(); setServingContractSnapshotForTest(null); });
 
 it.each(['open', 'disabled'])('retains genuine text stall detection with %s admission', async mode => {
   fixture.control.mockResolvedValue({ mode });
@@ -74,3 +83,23 @@ it.each(['settings', 'control', 'translation', 'taglines', 'rows'] as const)(
     await expect(readTextProgress()).rejects.toBe(failure);
   },
 );
+
+it('does not count the queue of a route without a direct contract as a stall (restarting would not help)', async () => {
+  vi.stubEnv('ABCLLM_API_KEY', 'old-gateway-key');
+  fixture.translation.mockResolvedValue(120);
+  fixture.rows.mockResolvedValue([{ profile_age: 30, verify_age: null, persisted: false, in_backoff: false, provider_error: false }]);
+  setServingContractSnapshotForTest(ROUTES.filter(([route]) => route !== 'reason-translate').map(([route, model]) => direct(route, model)));
+  expect(await readTextProgress()).toMatchObject({ oldestReadyMinutes: 30, providerError: false });
+  setServingContractSnapshotForTest([]);
+  const none = await readTextProgress();
+  expect(none).toMatchObject({ oldestReadyMinutes: null, providerError: false });
+  expect(textProgressStalled({ ...none, schedulerScheduled: true })).toBe(false);
+});
+
+it('judges a pooled route by the stored stage selection, not the process constant', async () => {
+  fixture.translation.mockResolvedValue(120);
+  fixture.models.mockResolvedValue({ ...MODELS, pooled: { 'reason-translate': ['pooled-a', 'pooled-b'] } });
+  expect((await readTextProgress()).oldestReadyMinutes).toBeNull();
+  setServingContractSnapshotForTest([...ROUTES.map(([route, model]) => direct(route, model)), direct('reason-translate', 'pooled-b')]);
+  expect((await readTextProgress()).oldestReadyMinutes).toBe(120);
+});

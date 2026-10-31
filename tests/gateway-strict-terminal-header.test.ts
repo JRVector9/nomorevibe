@@ -18,6 +18,7 @@ import { reasonTranslationServingContractHash } from "@/lib/llm/reason-translati
 import { productTranslationServingContractHash } from "@/lib/llm/product-translation-serving-contract";
 import { productTaglineKoServingContractHash } from "@/lib/llm/product-tagline-ko-serving-contract";
 import { websearchQueryServingContractHash } from "@/lib/llm/websearch-query-serving-contract";
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 
 const fixture = vi.hoisted(() => ({ contracts: {} as Record<string, unknown> }));
 vi.mock("@/lib/llm/reason-translation-serving-contract", async original => ({
@@ -119,10 +120,18 @@ async function server(run: (state: { requests: { headers: IncomingHttpHeaders; b
 const contract = (kind: Kind, endpoint: string, change: Record<string, unknown> = {}) => ({ version: 1, protocol: kind.protocol,
   routeId: kind.route, provider: "abcllm", model, responseModel: "served-strict", deploymentRevision: "local-only", endpoint,
   totalTokenBound: 8192, ...change });
-afterEach(() => { fixture.contracts = {}; vi.unstubAllEnvs(); });
+/**
+ * The abcLLM gateway is gone (2026-10-30): an abcllm contract opens only with a direct admin row for its route+model
+ * (here the engine's own stored key). The row's contract is not read — each resolver above is the fixture.
+ */
+function directRows() {
+  setServingContractSnapshotForTest(KINDS.map(kind => ({ routeId: kind.route, model, contract: null, auth: "stored" as const,
+    apiKey: "engine-key", transport: "direct" as const })));
+}
+afterEach(() => { fixture.contracts = {}; setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); });
 
 it("adds the PR3 strict terminal header only for an opted-in translation contract, leaving body and hashes intact", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only");
+  directRows();
   for (const kind of KINDS) await server(async ({ requests, endpoint, reply }) => {
     reply(kind.content);
     // 계약이 없으면 준비 자체가 없어 요청도 헤더도 없다
@@ -146,8 +155,10 @@ it("adds the PR3 strict terminal header only for an opted-in translation contrac
   });
 });
 
-it("accepts an opted-in translation terminal only with a PR3 usage_provenance, under the existing usage rule", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only");
+it("a direct engine's opted-in translation terminal needs no PR3 mark and keeps the existing usage rule", async () => {
+  // PR3 의 usage_provenance 표시는 게이트웨이가 붙이던 것이다. 게이트웨이가 없어진 뒤(2026-10-30) 계약은 엔진 직접 연결로만 열리므로
+  // 표시가 없으면 엔진이 보고한 usage 를 쓰고, 다른 표시 값은 terminal 이되 usage 는 unknown(전체 C)이다. C 초과는 여전히 terminal 이 아니다.
+  directRows();
   const usage = { inputTokens: 80, outputTokens: 20, totalTokens: 100 }, unknown = { actualUsage: null, provenance: "unknown" };
   for (const kind of KINDS) await server(async ({ requests, endpoint, reply }) => {
     const ask = async (value: Record<string, unknown>, change: Record<string, unknown>) => {
@@ -156,68 +167,62 @@ it("accepts an opted-in translation terminal only with a PR3 usage_provenance, u
       const outcome = await kind.send(call); return { outcome, proof: kind.read(outcome.terminal) };
     };
     const strict = contract(kind, endpoint, { strictTerminalOptIn: "abcllm-strict-terminal-v1" }), plain = contract(kind, endpoint);
-    // PR3 엄격 응답이 아니면(키 없음·세 값 밖) terminal 이 아니다 — 기존 잘못된 native terminal 과 같이 invalid_output, 전체 C 유지
-    for (const change of [{ usage_provenance: undefined }, { usage_provenance: null }, { usage_provenance: "" }, { usage_provenance: 1 },
-      { usage_provenance: "UPSTREAM_REPORTED" }, { usage_provenance: "unknown" }, { usage_provenance: ["upstream_reported"] }]) {
-      const { outcome, proof } = await ask(strict, change);
-      expect(outcome).toEqual({ result: { ok: false, error: "invalid_output" }, terminal: null }); expect(proof).toBeNull();
-    }
-    // 세 값은 terminal 이다. 실제 usage 는 기존 규칙(upstream_reported·정수 셋·합 일치·C 이하)일 때만 쓰고 나머지는 unknown(전체 C)이다
+    expect((await ask(strict, { usage_provenance: undefined })).proof).toMatchObject({ actualUsage: usage, provenance: "upstream_reported" });
     expect((await ask(strict, {})).proof).toMatchObject({ actualUsage: usage, provenance: "upstream_reported" });
-    for (const usage_provenance of ["gateway_estimated", "missing_or_invalid"]) expect((await ask(strict, { usage_provenance })).proof).toMatchObject(unknown);
+    for (const change of [{ usage_provenance: null }, { usage_provenance: "" }, { usage_provenance: 1 }, { usage_provenance: "UPSTREAM_REPORTED" },
+      { usage_provenance: "unknown" }, { usage_provenance: ["upstream_reported"] }, { usage_provenance: "gateway_estimated" },
+      { usage_provenance: "missing_or_invalid" }]) {
+      const { outcome, proof } = await ask(strict, change);
+      expect(outcome.terminal).not.toBeNull(); expect(proof).toMatchObject(unknown);
+    }
     expect((await ask(strict, { usage: { prompt_tokens: 80, completion_tokens: 20, total_tokens: 99 } })).proof).toMatchObject(unknown);
     expect((await ask(strict, { usage: { prompt_tokens: 8000, completion_tokens: 193, total_tokens: 8193 } })).outcome.terminal).toBeNull();
-    // opt-in 이 아닌 계약은 그대로다 — 키가 없어도 terminal(provenance unknown)이다
-    expect((await ask(plain, { usage_provenance: undefined })).proof).toMatchObject(unknown);
+    // opt-in 이 아닌 계약도 같다 — 헤더만 없다
+    expect((await ask(plain, { usage_provenance: undefined })).proof).toMatchObject({ actualUsage: usage, provenance: "upstream_reported" });
     expect(requests.map(request => request.headers[HEADER])).toEqual([...Array(12).fill("1"), undefined]);
+    expect(requests.map(request => request.headers.authorization)).toEqual(Array(13).fill("Bearer engine-key"));
   });
 });
 
-it("never sends the strict terminal header from the legacy translation leaves", async () => {
+it("the legacy translation leaves send nothing at all — no header, no request — and ignore ABCLLM_API_KEY", async () => {
   vi.stubEnv("ABCLLM_API_KEY", "local-test-only");
-  const seen: Record<string, string>[] = [];
-  const request = (async (_url: unknown, init?: RequestInit) => { seen.push({ ...init?.headers as Record<string, string> });
-    return new Response(envelope("[]")); }) as typeof fetch;
-  await translateToKorean(texts, 1000, request);
-  await translateProductFields(products, 1000, request);
-  await translateTaglinesToKorean(taglines, 1000, request);
-  await translateQueryToEnglish(query.query, 1000, request);
-  await translateChineseQueryToEnglish("健身房签到", "zh-Hans", 1000, request);
-  expect(seen).toHaveLength(5);
-  for (const headers of seen) expect(Object.keys(headers)).toEqual(["Authorization", "Content-Type"]);
+  const seen: unknown[] = [];
+  const request = (async (url: unknown) => { seen.push(url); return new Response(envelope("[]")); }) as typeof fetch;
+  const noKey = { ok: false, error: "no_key" };
+  expect(await translateToKorean(texts, 1000, request)).toEqual(noKey);
+  expect(await translateProductFields(products, 1000, request)).toEqual(noKey);
+  expect(await translateTaglinesToKorean(taglines, 1000, request)).toEqual(noKey);
+  expect(await translateQueryToEnglish(query.query, 1000, request)).toEqual(noKey);
+  expect(await translateChineseQueryToEnglish("健身房签到", "zh-Hans", 1000, request)).toEqual(noKey);
+  expect(seen).toHaveLength(0);
 });
 
 it("an admin contract marked direct (the engine itself, 0148) is terminal without the gateway's usage_provenance and sends its stored key", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only");
-  const store = await import("@/lib/llm/serving-contract-store");
   const usage = { inputTokens: 80, outputTokens: 20, totalTokens: 100 };
-  try {
-    for (const kind of KINDS) await server(async ({ requests, endpoint, reply }) => {
-      const strict = contract(kind, endpoint, { strictTerminalOptIn: "abcllm-strict-terminal-v1" });
-      fixture.contracts[kind.route] = strict; reply(kind.content, { usage_provenance: undefined });
-      const ask = async () => { const call = kind.prepare() as Call; expect(call.kind).toBe("prepared"); const outcome = await kind.send(call);
-        return { outcome, proof: kind.read(outcome.terminal) }; };
-      // Gateway (default): an engine-shaped answer without the PR3 mark is not terminal.
-      store.setServingContractSnapshotForTest([{ routeId: kind.route, model, contract: strict, auth: "stored", apiKey: "engine-key" }]);
-      expect((await ask()).outcome).toEqual({ result: { ok: false, error: "invalid_output" }, terminal: null });
-      // Direct: the engine's own completion is terminal and its reported usage counts.
-      store.setServingContractSnapshotForTest([{ routeId: kind.route, model, contract: strict, auth: "stored", apiKey: "engine-key", transport: "direct" }]);
-      expect((await ask()).proof).toMatchObject({ actualUsage: usage, provenance: "upstream_reported" });
-      expect(requests.map(request => request.headers.authorization)).toEqual(["Bearer engine-key", "Bearer engine-key"]);
-      expect(requests.map(request => request.body)).toEqual([kind.wire(), kind.wire()]);
-    });
-  } finally { store.setServingContractSnapshotForTest(null); }
+  for (const kind of KINDS) await server(async ({ requests, endpoint, reply }) => {
+    const strict = contract(kind, endpoint, { strictTerminalOptIn: "abcllm-strict-terminal-v1" });
+    fixture.contracts[kind.route] = strict; reply(kind.content, { usage_provenance: undefined });
+    // Gateway transport (the default) or gateway auth no longer opens anything: refused before any request.
+    for (const row of [{ auth: "stored" as const, apiKey: "engine-key" }, { auth: "gateway" as const, apiKey: null, transport: "direct" as const }]) {
+      setServingContractSnapshotForTest([{ routeId: kind.route, model, contract: strict, ...row }]);
+      expect(kind.prepare()).toEqual({ kind: "unsupported", reason: "provider_contract_unavailable" });
+    }
+    expect(requests).toHaveLength(0);
+    // Direct: the engine's own completion is terminal and its reported usage counts.
+    setServingContractSnapshotForTest([{ routeId: kind.route, model, contract: strict, auth: "stored", apiKey: "engine-key", transport: "direct" }]);
+    const call = kind.prepare() as Call; expect(call.kind).toBe("prepared");
+    expect(kind.read((await kind.send(call)).terminal)).toMatchObject({ actualUsage: usage, provenance: "upstream_reported" });
+    expect(requests.map(request => request.headers.authorization)).toEqual(["Bearer engine-key"]);
+    expect(requests.map(request => request.body)).toEqual([kind.wire()]);
+  });
 });
 
-it("the legacy leaf refuses a model connected straight to its engine instead of sending the gateway key there", async () => {
+it("the legacy leaf refuses a model connected straight to its engine instead of sending anything there", async () => {
   vi.stubEnv("ABCLLM_API_KEY", "local-test-only");
-  const store = await import("@/lib/llm/serving-contract-store");
   const { TRANSLATE_MODEL } = await import("@/lib/crawl/translate");
   const seen: unknown[] = [];
   const request = (async (url: unknown) => { seen.push(url); return new Response(envelope("[]")); }) as typeof fetch;
-  try {
-    store.setServingContractSnapshotForTest([{ routeId: "reason-translate", model: TRANSLATE_MODEL, contract: {}, auth: "stored", apiKey: "engine-key", transport: "direct" }]);
-    expect(await translateToKorean(texts, 1000, request)).toMatchObject({ ok: false });
-    expect(seen).toHaveLength(0);
-  } finally { store.setServingContractSnapshotForTest(null); }
+  setServingContractSnapshotForTest([{ routeId: "reason-translate", model: TRANSLATE_MODEL, contract: {}, auth: "stored", apiKey: "engine-key", transport: "direct" }]);
+  expect(await translateToKorean(texts, 1000, request)).toEqual({ ok: false, error: "no_key" });
+  expect(seen).toHaveLength(0);
 });

@@ -75,17 +75,18 @@ describe("요청", () => {
   });
 
   it("게이트웨이 요청의 system 한 줄만 바꾼 것과 바이트까지 같다(compare-run.mts qwen-direct-v2 의 변환)", async () => {
-    vi.stubEnv("ABCLLM_API_KEY", "k");
+    // 게이트웨이 기본 주소·키(ABCLLM_API_KEY)는 2026-10-30 제거됐다 — 같은 송신기에 키가 있는 주소를 준다
     const same = input();
     const gateway = answer(outcome);
-    await reviewWithGateway(same, { model: QWEN_DIRECT_DEFAULT_MODEL, request: gateway });
+    await reviewWithGateway(same, { model: QWEN_DIRECT_DEFAULT_MODEL, request: gateway, endpoint: { baseUrl: "https://engine.test/v1", apiKey: "k" } });
     const direct = answer(outcome);
     await reviewWithQwenDirect(same, { request: direct, env: {} });
     const harness = JSON.parse(String(calls(gateway)[0][1].body));
     expect(harness.messages[0].content).toBe(REVIEW_SYSTEM_PROMPT + GATEWAY_SYSTEM_SUFFIX);
     harness.messages[0].content = REVIEW_SYSTEM_PROMPT + QWEN_V2_ADDENDUM;
     expect(String(calls(direct)[0][1].body)).toBe(JSON.stringify(harness));
-    // 게이트웨이 쪽은 그대로다 — 키와 한 줄 안내
+    // 게이트웨이 송신기 쪽은 그대로다 — 키와 한 줄 안내
+    expect(calls(gateway)[0][0]).toBe("https://engine.test/v1/chat/completions");
     expect(calls(gateway)[0][1].headers).toEqual({ Authorization: "Bearer k", "Content-Type": "application/json" });
   });
 

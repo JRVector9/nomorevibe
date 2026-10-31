@@ -1,13 +1,14 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createServer, type ServerResponse } from "node:http";
 import { afterEach, expect, it, vi } from "vitest";
-import { parseVerification, verifyKeywords, type VerifyItem } from "@/lib/domain/products/search-verify";
+import { parseVerification, searchVerifyGatewayWire, verifyKeywords, type VerifyItem } from "@/lib/domain/products/search-verify";
 import { profileHash } from "@/lib/domain/products/search-profile";
 import { searchVerifyGenerationHash, searchVerifyLogicalWorkKey, searchVerifyInputHash, searchVerifyDispatchBindingHash,
   searchVerifyModelDispatchSchema, type SearchVerifyInput, type SearchVerifyStep } from "@/lib/llm/capacity";
 import { prepareSearchVerifyGatewayCall, verifyKeywordsWithReservedGateway, readSearchVerifyGatewayTerminal,
   readCrawlTaglineGatewayTerminal, type PreparedSearchVerifyGatewayCall } from "@/lib/crawl/agent-review-gateway";
 import type { SearchVerifyServingContract } from "@/lib/llm/search-verify-serving-contract";
+import { setServingContractSnapshotForTest, type ServingContractAuth, type ServingContractTransport } from "@/lib/llm/serving-contract-store";
 
 const fixture = vi.hoisted(() => ({ contract: null as SearchVerifyServingContract | null }));
 vi.mock("@/lib/llm/search-verify-serving-contract", async original => ({
@@ -45,10 +46,18 @@ function dispatch(input: VerifyItem, call: PreparedSearchVerifyGatewayCall, step
   return searchVerifyModelDispatchSchema.parse({ requestId: randomUUID(), owner: { instanceId: role.instanceId, bootId: role.bootId },
     token: randomUUID(), epoch: 1, revision: 1, policyHash: "a".repeat(64), binding, bindingHash: searchVerifyDispatchBindingHash(binding) });
 }
+/**
+ * The abcLLM gateway was removed (2026-10-30): the native leaf sends only for an admin contract connected directly to the engine
+ * (transport direct, no key or its own stored key). The resolver mock supplies the contract; this row opens its bearer.
+ */
+function pinRow(auth: ServingContractAuth = "none", apiKey: string | null = null, transport: ServingContractTransport = "direct") {
+  setServingContractSnapshotForTest([{ routeId: "product-search-verify", model, contract: fixture.contract, auth, apiKey, transport }]);
+}
 function send(...args: Parameters<typeof verifyKeywordsWithReservedGateway>) {
   const pending = verifyKeywordsWithReservedGateway(...args); requests.add(pending); void pending.catch(() => {}); return pending;
 }
-async function server(run: (state: { bodies: string[]; reply: (next: (response: ServerResponse) => void) => void }) => Promise<void>) {
+async function server(run: (state: { bodies: string[]; reply: (next: (response: ServerResponse) => void) => void }) => Promise<void>,
+  direct = true) {
   const bodies: string[] = [], responses = new Set<Promise<void>>(), errors: unknown[] = [];
   let reply = (response: ServerResponse) => { response.end(JSON.stringify(envelope(answer(item().keywords, ["membership bonuses"])))); };
   const http = createServer((request, response) => {
@@ -62,10 +71,11 @@ async function server(run: (state: { bodies: string[]; reply: (next: (response: 
     const address = http.address(); if (!address || typeof address === "string") throw new Error("fixture_address");
     fixture.contract = { version: 1, protocol: "abcllm-search-verify-total-bound-v1", routeId: "product-search-verify", provider: "abcllm",
       model, responseModel: "served-verify", endpoint: `http://127.0.0.1:${address.port}/v1/chat/completions`, deploymentRevision: "local-only", totalTokenBound: 8192 };
+    if (direct) pinRow(); else setServingContractSnapshotForTest([]);
     await run({ bodies, reply: next => { reply = next; } });
   } catch (error) { failed = true; original = error; }
   finally {
-    fixture.contract = null;
+    fixture.contract = null; setServingContractSnapshotForTest(null);
     try {
       while (requests.size) { const pending = [...requests]; await Promise.allSettled(pending); for (const promise of pending) requests.delete(promise); }
       // 클라이언트 작업이 모두 끝난 뒤에만 남은 연결을 정리한다(기존 driver 관례). watchdog은 teardown 구간만 잰다.
@@ -78,16 +88,17 @@ async function server(run: (state: { bodies: string[]; reply: (next: (response: 
   if (failed && errors.length) throw new AggregateError([original, ...errors], "native_fixture_failed", { cause: original });
   if (failed) throw original; if (errors.length) throw new AggregateError(errors);
 }
-afterEach(() => { fixture.contract = null; vi.unstubAllEnvs(); });
+afterEach(() => { fixture.contract = null; setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); });
 
 it("sends the byte-identical legacy wire once and issues an immutable opaque parsed outcome", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ bodies }) => {
+  await server(async ({ bodies }) => {
     const input = item(), call = prepared(input), owned = dispatch(input, call), response = await send(input, owned, call);
     expect(response.result).toEqual({ ok: true, unsupported: ["membership bonuses"] });
-    let legacy = "";
-    expect(await verifyKeywords(input, { model, timeoutMs: 1000, request: (async (_url, init) => {
-      legacy = String(init?.body); return new Response(JSON.stringify(envelope(answer(input.keywords)))); }) as typeof fetch })).toEqual({ ok: true, unsupported: [] });
-    expect(bodies).toEqual([legacy]);
+    // The legacy gateway sender no longer sends (gateway removed 2026-10-30); its wire builder stays the native bytes.
+    const request = vi.fn<typeof fetch>();
+    expect(await verifyKeywords(input, { model, timeoutMs: 1000, request })).toEqual({ ok: false, error: "no_key" });
+    expect(request).not.toHaveBeenCalled();
+    expect(bodies).toEqual([searchVerifyGatewayWire(input, model)]);
     const wire = JSON.parse(bodies[0]);
     expect(wire).toMatchObject({ context_strategy: "raw", model, stream: false, temperature: 0, max_tokens: 3000, reasoning_effort: "low",
       chat_template_kwargs: { enable_thinking: false }, response_format: { type: "json_object" } });
@@ -100,20 +111,26 @@ it("sends the byte-identical legacy wire once and issues an immutable opaque par
   });
 });
 it("keeps production unsupported without caller-enabled terminal authority", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only");
   const leaf = await vi.importActual<typeof import("@/lib/llm/search-verify-serving-contract")>("@/lib/llm/search-verify-serving-contract");
   expect(leaf.resolveSearchVerifyServingContract(model)).toBeNull();
   expect(prepareSearchVerifyGatewayCall(item(), { model, timeoutMs: 1000 })).toEqual({ kind: "unsupported", reason: "provider_contract_unavailable" });
   expect(readSearchVerifyGatewayTerminal({ kind: "search_verify_gateway_terminal" })).toBeNull();
   await server(async ({ bodies }) => {
+    // A resolved contract without a direct admin row opens nothing — the old gateway key env is not read.
+    vi.stubEnv("ABCLLM_API_KEY", "old-gateway-key");
+    expect(prepareSearchVerifyGatewayCall(item(), { model, timeoutMs: 1000 })).toEqual({ kind: "unsupported", reason: "provider_contract_unavailable" });
+    for (const [auth, apiKey, transport] of [["none", null, "gateway"], ["gateway", null, "direct"], ["stored", null, "direct"]] as const) {
+      pinRow(auth, apiKey, transport);
+      expect(prepareSearchVerifyGatewayCall(item(), { model, timeoutMs: 1000 }).kind).toBe("unsupported");
+    }
+    pinRow();
     for (const input of [{ ...item(), extra: true }, { ...item(), keywords: [] }, { ...item(), keywords: [1] }, { ...item(), evidence: { ...evidence, pageText: null } }])
       expect(prepareSearchVerifyGatewayCall(input as unknown as VerifyItem, { model, timeoutMs: 1000 }).kind).toBe("unsupported");
-    vi.stubEnv("ABCLLM_API_KEY", "");
-    expect(prepareSearchVerifyGatewayCall(item(), { model, timeoutMs: 1000 }).kind).toBe("unsupported"); expect(bodies).toEqual([]);
-  });
+    expect(bodies).toEqual([]);
+  }, false);
 });
 it("uses one preparation per physical step and rejects copies, changed keywords and request reuse before POST", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ bodies }) => {
+  await server(async ({ bodies }) => {
     const input = item(), call = prepared(input), owned = dispatch(input, call);
     await expect(send(input, owned, { ...call })).rejects.toThrow("search_verify_gateway_call_mismatch");
     for (const changed of [{ ...input, keywords: [...input.keywords].reverse() }, { ...input, keywords: input.keywords.slice(1) },
@@ -133,7 +150,7 @@ it("uses one preparation per physical step and rejects copies, changed keywords 
   });
 });
 it("persists the original parser failure as a terminal invalid_output outcome", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ reply }) => {
+  await server(async ({ reply }) => {
     const input = item();
     for (const content of [answer(input.keywords.slice(1)), "not JSON", null, answer(["made up", ...input.keywords])]) {
       reply(response => response.end(JSON.stringify(envelope(content))));
@@ -145,7 +162,7 @@ it("persists the original parser failure as a terminal invalid_output outcome", 
   });
 });
 it("keeps the outer JSON decoding failure as network and an untrusted envelope as invalid_output, both without terminal", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ bodies, reply }) => {
+  await server(async ({ bodies, reply }) => {
     const input = item();
     reply(response => response.end("{not json"));
     let call = prepared(input);
@@ -161,7 +178,7 @@ it("keeps the outer JSON decoding failure as network and an untrusted envelope a
 });
 it.each([[404, "model_unavailable"], [429, "rate_limit"], [503, "http_503"], [307, "http_307"]])
   ("performs one physical POST for HTTP %i with the original %s error and no redirect/retry", async (status, error) => {
-    vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ bodies, reply }) => {
+    await server(async ({ bodies, reply }) => {
       reply(response => { response.statusCode = status; response.setHeader("Location", "/v1/chat/completions"); response.end("failure"); });
       const input = item(), call = prepared(input);
       expect(await send(input, dispatch(input, call), call)).toEqual({ result: { ok: false, error }, terminal: null });
@@ -169,14 +186,14 @@ it.each([[404, "model_unavailable"], [429, "rate_limit"], [503, "http_503"], [30
     });
   });
 it.each([{ usage: null }, { usage_provenance: "gateway_estimated" }])("keeps full C when native counters have no verified provenance: %j", async change => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ reply }) => {
+  await server(async ({ reply }) => {
     const input = item(); reply(response => response.end(JSON.stringify(envelope(answer(input.keywords), change))));
     const call = prepared(input), response = await send(input, dispatch(input, call), call);
     expect(readSearchVerifyGatewayTerminal(response.terminal)).toMatchObject({ actualUsage: null, provenance: "unknown", dispatch: { binding: { chargedTokens: 8192 } } });
   });
 });
 it("leaves truncated EOF, caller abort and timeout without terminal authority", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ bodies, reply }) => {
+  await server(async ({ bodies, reply }) => {
     const input = item();
     reply(response => { response.writeHead(200, { "Content-Length": "1000" }); response.write("{"); response.socket?.destroy(); });
     let call = prepared(input);
@@ -190,10 +207,12 @@ it("leaves truncated EOF, caller abort and timeout without terminal authority", 
     expect(await pending).toEqual({ result: { ok: false, error: "network" }, terminal: null }); expect(bodies).toHaveLength(3);
   });
 });
-it("makes a key removed after preparation incapable of POST or terminal issuance", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ bodies }) => {
-    const input = item(), call = prepared(input), owned = dispatch(input, call); vi.stubEnv("ABCLLM_API_KEY", "");
-    expect(await send(input, owned, call)).toEqual({ result: { ok: false, error: "no_key" }, terminal: null }); expect(bodies).toEqual([]);
+it("makes a direct contract removed or switched to gateway auth after preparation incapable of POST or terminal issuance", async () => {
+  await server(async ({ bodies }) => {
+    const input = item(), call = prepared(input), owned = dispatch(input, call); setServingContractSnapshotForTest([]);
+    expect(await send(input, owned, call)).toEqual({ result: { ok: false, error: "no_key" }, terminal: null });
+    pinRow(); const again = prepared(input), next = dispatch(input, again); pinRow("gateway");
+    expect(await send(input, next, again)).toEqual({ result: { ok: false, error: "no_key" }, terminal: null }); expect(bodies).toEqual([]);
   });
 });
 it("keeps invalid endpoint and descriptor data outside the fixed leaf contract", async () => {

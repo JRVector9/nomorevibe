@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "maxWaiting": 256,
+  "queueTtlMs": 300000,
+  "reservationTtlMs": 30000,
+  "routes": [
+    { "routeId": "crawl-agent-review", "provider": "abcllm", "model": "Inferact/Qwen3.8-27B-NVFP4", "providerBudgetId": "abcllm-supa", "groupId": "supa" },
+    { "routeId": "product-search-verify", "provider": "abcllm", "model": "Inferact/Qwen3.8-27B-NVFP4", "providerBudgetId": "abcllm-supa", "groupId": "supa" },
+    { "routeId": "crawl-tagline", "provider": "abcllm", "model": "Inferact/Qwen3.8-27B-NVFP4", "providerBudgetId": "abcllm-supa", "groupId": "supa" },
+    { "routeId": "second-review", "provider": "abcllm", "model": "Inferact/Qwen3.8-27B-NVFP4", "providerBudgetId": "abcllm-supa", "groupId": "supa" },
+
+    { "routeId": "second-review", "provider": "local-direct", "model": "qwen3.8-flash-next", "providerBudgetId": "gpu3090-qwen", "groupId": "gpu3090-qwen" },
+    { "routeId": "local-screen", "provider": "local-direct", "model": "qwen3.8-flash-next", "providerBudgetId": "gpu3090-qwen", "groupId": "gpu3090-qwen" },
+    { "routeId": "local-held-qwen", "provider": "local-direct", "model": "qwen3.8-flash-next", "providerBudgetId": "gpu3090-qwen", "groupId": "gpu3090-qwen" },
+    { "routeId": "local-audit", "provider": "local-direct", "model": "qwen3.8-flash-next", "providerBudgetId": "gpu3090-qwen", "groupId": "gpu3090-qwen" },
+    { "routeId": "local-second-opinion", "provider": "local-direct", "model": "qwen3.8-flash-next", "providerBudgetId": "gpu3090-qwen", "groupId": "gpu3090-qwen" },
+    { "routeId": "local-published-filter", "provider": "local-direct", "model": "qwen3.8-flash-next", "providerBudgetId": "gpu3090-qwen", "groupId": "gpu3090-qwen" },
+    { "routeId": "local-qwen-tiebreak", "provider": "local-direct", "model": "qwen3.8-flash-next", "providerBudgetId": "gpu3090-qwen", "groupId": "gpu3090-qwen" },
+    { "routeId": "local-assist-uptime-gpu3090-qwen", "provider": "local-direct", "model": "qwen3.8-flash-next", "providerBudgetId": "gpu3090-qwen", "groupId": "gpu3090-qwen" },
+    { "routeId": "local-assist-repo_move-gpu3090-qwen", "provider": "local-direct", "model": "qwen3.8-flash-next", "providerBudgetId": "gpu3090-qwen", "groupId": "gpu3090-qwen" },
+    { "routeId": "local-assist-intro_recheck-gpu3090-qwen", "provider": "local-direct", "model": "qwen3.8-flash-next", "providerBudgetId": "gpu3090-qwen", "groupId": "gpu3090-qwen" },
+    { "routeId": "local-assist-news-gpu3090-qwen", "provider": "local-direct", "model": "qwen3.8-flash-next", "providerBudgetId": "gpu3090-qwen", "groupId": "gpu3090-qwen" },
+
+    { "routeId": "local-human-deepseek", "provider": "local-direct", "model": "deepseek-v4.1-flash-1017", "providerBudgetId": "m3-deepseek", "groupId": "m3-deepseek" },
+    { "routeId": "local-deepseek-confirm", "provider": "local-direct", "model": "deepseek-v4.1-flash-1017", "providerBudgetId": "m3-deepseek", "groupId": "m3-deepseek" },
+
+    { "routeId": "product-search-profile", "provider": "abcllm", "model": "gpt-oss-120b", "providerBudgetId": "m3-gptoss", "groupId": "m3-gptoss" },
+    { "routeId": "product-tagline-ko", "provider": "abcllm", "model": "gpt-oss-120b", "providerBudgetId": "m3-gptoss", "groupId": "m3-gptoss" },
+    { "routeId": "search-query-translate", "provider": "abcllm", "model": "gpt-oss-120b", "providerBudgetId": "m3-gptoss", "groupId": "m3-gptoss" },
+    { "routeId": "crawl-agent-review", "provider": "abcllm", "model": "gpt-oss-120b", "providerBudgetId": "m3-gptoss", "groupId": "m3-gptoss" },
+
+    { "routeId": "product-translate", "provider": "abcllm", "model": "mlx-community--gemma-4-26b-a4b-it-4bit", "providerBudgetId": "abcllm-m1-qwen", "groupId": "m1-qwen" },
+    { "routeId": "reason-translate", "provider": "abcllm", "model": "mlx-community--gemma-4-26b-a4b-it-4bit", "providerBudgetId": "abcllm-m1-qwen", "groupId": "m1-qwen" },
+
+    { "routeId": "product-intro-check", "provider": "claude-cli", "model": "sonnet", "providerBudgetId": "claude-cli", "groupId": "anthropic-cli" },
+    { "routeId": "crawl-publish-classify", "provider": "claude-cli", "model": "sonnet", "providerBudgetId": "claude-cli", "groupId": "anthropic-cli" },
+    { "routeId": "crawl-publish-classify", "provider": "codex-cli", "model": "gpt-5.6-terra", "providerBudgetId": "codex-cli", "groupId": "openai-cli" }
+  ]
+}

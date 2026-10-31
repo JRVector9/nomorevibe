@@ -7,6 +7,7 @@ import type { CrawlCandidate, CrawlDocument } from "@/lib/db/schema";
 import { ai1DispatchBindingHash, ai1ModelDispatchSchema } from "@/lib/llm/capacity";
 import { prepareAi1GatewayCall, reviewWithGateway, reviewWithReservedAi1Gateway } from "@/lib/crawl/agent-review-gateway";
 import type { Ai1GatewayServingContract } from "@/lib/crawl/agent-review-serving-contract";
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { createProviderCircuits, nativeTerminalFailure, NATIVE_TERMINAL_FAILURE, providerOutcome } from "@/lib/llm/provider-circuit-breaker";
 
 /**
@@ -18,7 +19,7 @@ vi.mock("@/lib/crawl/agent-review-serving-contract", async importOriginal => ({
   ...await importOriginal<typeof import("@/lib/crawl/agent-review-serving-contract")>(),
   resolveAi1GatewayServingContract: () => fixture.contract,
 }));
-afterEach(() => { fixture.contract = null; vi.unstubAllEnvs(); });
+afterEach(() => { fixture.contract = null; setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); });
 const model = "[MLX] f2-contract";
 function input() {
   const now = new Date("2026-10-17T00:00:00.000Z");
@@ -66,7 +67,8 @@ it("opens the AI1 circuit after consecutive contract violations and never for ju
 });
 
 it("native envelope violations keep the original result shape with the contract diagnostic; content failures stay judgment failures", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-secret");
+  // The abcLLM gateway is gone (2026-10-30): an abcllm contract opens only with a direct admin row for its route+model.
+  setServingContractSnapshotForTest([{ routeId: "crawl-agent-review", model, contract: null, auth: "none", apiKey: null, transport: "direct" }]);
   let reply = JSON.stringify(envelope({ model: "other-model" }));
   const http = createServer((request, response) => { request.resume(); request.on("end", () => response.end(reply)); });
   await new Promise<void>(resolve => http.listen(0, "127.0.0.1", resolve));
@@ -98,9 +100,9 @@ it("native envelope violations keep the original result shape with the contract 
     const judged = await send();
     expect(judged.result).toMatchObject({ ok: false, error: "invalid_output", detail: "invalid_json" });
     expect(providerOutcome(judged.result)).toBe("none");
-    // 기본 env(legacy) 경로: 같은 위반 응답은 지금처럼 판정·형식 오류로 남고 회로 분류도 바뀌지 않는다
+    // legacy 경로(주소를 받은 reviewWithGateway): 같은 위반 응답은 지금처럼 판정·형식 오류로 남고 회로 분류도 바뀌지 않는다
     const request = (async () => new Response("<html>bad gateway page</html>")) as unknown as typeof fetch;
-    const legacy = await reviewWithGateway(input(), { model, request });
+    const legacy = await reviewWithGateway(input(), { model, request, endpoint: { baseUrl: "http://legacy.invalid/v1", apiKey: null } });
     expect(legacy).toEqual({ ok: false, error: "invalid_output", detail: "invalid_envelope" });
     expect(providerOutcome(legacy)).toBe("none");
   } finally { http.closeAllConnections(); await new Promise<void>(resolve => http.close(() => resolve())); }
