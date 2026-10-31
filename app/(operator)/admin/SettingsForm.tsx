@@ -249,7 +249,7 @@ function SettingsFormBody({ settings, version, yields, secondControls, assignmen
           <input type="hidden" name="firstReviewProvider" value={settings.firstReview?.provider ?? "abcllm"} />
           <input type="hidden" name="firstReviewModel" value={settings.firstReview?.model ?? ""} />
           <code className="w-fit rounded-[9px] border border-line bg-bg-soft px-2.5 py-2 text-[13px]">{settings.firstReview
-            ? `${settings.firstReview.provider} · ${settings.firstReview.model}` : "서버 기본값(CRAWL_REVIEW_MODEL)"}</code>
+            ? `${settings.firstReview.provider} · ${settings.firstReview.model}` : "없음 — 1차 심사가 멈춥니다"}</code>
         </div> : <div className="flex flex-wrap items-end gap-3">
           <div className="flex flex-col gap-1.5">
             <span className={labelClass}>부르는 곳</span>

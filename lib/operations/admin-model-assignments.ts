@@ -386,7 +386,7 @@ let depsForTest: ModelAssignmentDeps | null = null;
 /**
  * 테스트 전용 — 저장 함수의 바깥 의존(등록부·계약 readback/probe·CLI 계약)을 바꾼다. null 이면 운영 배선: 저장 함수의 기본값
  * (등록부 = ensureServingContracts 뒤 readModelRegistry, probeContract = admin-engine-connect 의 probeEngineContract — 등록부 baseUrl 의
- * `/models` readback + 1-token probe, gateway 는 ABCLLM_API_KEY, 나머지는 키 없음; cliContract = probeCliServingContracts 뒤 resolveCliServingContract).
+ * `/models` readback + 1-token probe, 어느 전송이든 키 없음(게이트웨이 키 env 는 2026-10-31 제거); cliContract = probeCliServingContracts 뒤 resolveCliServingContract).
  */
 export function setModelAssignmentDepsForTest(deps: ModelAssignmentDeps | null): void { depsForTest = deps; }
 const assignmentDeps = (): ModelAssignmentDeps => depsForTest ?? {};

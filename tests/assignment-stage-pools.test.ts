@@ -55,7 +55,8 @@ describe("stage pools from the table", () => {
 describe("registry default order", () => {
   const tagline = row({ assignmentId: "tagline:01", stage: "tagline", registryKey: "supa:review", model: "[supa] Qwen3.8-27B-NVFP4" });
   it("makes a live table row the default ahead of *_KEY and the legacy env, only for the unscoped process env", () => {
-    vi.stubEnv("ABCLLM_TAGLINE_MODEL_KEY", "mlx:tagline");
+    // crawl-tagline has no process env since 2026-10-31 (abcLLM cleanup: its *_MODEL / *_MODEL_KEY are not read) — its legacy order is the registry default;
+    // the *_KEY precedence is checked below on reason-translate, which still has one.
     const legacy = configuredModel("crawl-tagline");
     expect(legacy).toBe("[MLX] qwen3.6-35b-heretic");
     setStageAssignmentsForTest([tagline]);
@@ -68,6 +69,11 @@ describe("registry default order", () => {
     expect(withAdminStagePools({ "crawl-tagline": ["mlx:tagline"] }, "x", () => configuredModel("crawl-tagline"))).toBe(legacy);
     // purposes without a stage mapping stay on the legacy order
     expect(configuredModel("search-query-translate")).toBe(configuredModel("search-query-translate", { ...process.env }));
+    // a live row also beats an explicit *_KEY selector, again only for the unscoped process env
+    vi.stubEnv("ABCLLM_MODEL_KEY", "m1:translation");
+    expect(configuredModel("reason-translate", { ...process.env })).toBe("[m1] mlx-community--gemma-4-26b-a4b-it-4bit");
+    setStageAssignmentsForTest([tagline, supa]);
+    expect(configuredModel("reason-translate")).toBe("[supa] Qwen3.8-27B-NVFP4");
   });
   it("ignores a row whose wire name is not the registry request name", () => {
     setAssignmentTableEnabledForTest(true);

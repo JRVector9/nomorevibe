@@ -20,6 +20,22 @@
 
 - 시험: 단위 8,583/8,583, 통합(자기 Postgres) CI 실패 28개 파일 + 새 DB 전용 8개 파일 통과. PR #758 CI 전부 통과(7a538b2d).
 
+## main 위로 다시 올림 (`claude/abcllm-env-removal-2`, 2026-10-31 저녁)
+
+PR #758 의 여섯 커밋을 main acbe6948(#756~#764, 그중 3b-C #762 전송 통합) 위로 옮겼다. 의도는 그대로이고, 3b-C 가 먼저 바꾼 관문과 합쳤다.
+
+- 판정 하나: `textRouteAccess(routeId, model, provider?)`(lib/llm/serving-contract-store.ts). 잡의 틱 관문 `textRouteBlock`/`textRouteCallable` 과
+  송신기의 `contractBearer`(lib/crawl/agent-review-gateway.ts) 가 이 한 함수를 읽어 어긋나지 않는다. 열리는 것: transport direct 행의 키 없음/저장 키,
+  그리고 3b-C 의 local-direct 계약(AI1·AI2 `direct-openai-chat-v1`, 행의 contract.provider 또는 호출자가 든 계약의 provider) — transport 칸과 무관하게
+  직접이며 행에 저장 키가 없으면 키 없이 보낸다. 닫히는 것: 행 없음·게이트웨이 전송 abcllm 행(`no_direct_contract`), direct 행의 게이트웨이 인증
+  (`gateway_auth`), 열리지 않는 저장 키(`stored_key_unreadable`). 어떤 env 키도 읽지 않는다.
+- 3b-C 가 `ABCLLM_API_KEY` 로 열던 분기(게이트웨이 전송 행의 키 없음·게이트웨이 인증 + env 키)는 #758 의 의도대로 닫힘으로 고정했다
+  (tests/text-route-callable.test.ts·text-jobs-direct-gate.test.ts 의 3b-C 기대값을 바꿈). 3b-C 의 나머지(`prepareAi1DirectCall`, local 계약 표 우선,
+  `EngineDownTally`, `registeredGatewayContractShape`)는 그대로다.
+- 3b-B/3b-D 쪽: 배정 저장의 기본 probe 가 gateway 전송에서 읽던 `ABCLLM_API_KEY` 를 지웠다(어느 전송이든 키 없이 probe; 키가 필요한 엔진은 「모델 연결」의
+  저장 키 행으로 먼저 잇는다). 가져오기 경고 `first_review_unset` 문구와 배정 표 잠김 화면의 "서버 기본값(CRAWL_REVIEW_MODEL)" 문구에서 env 대체를 뗐다.
+  `crawl-tagline` 의 `*_KEY` 가 없어져 assignment-stage-pools 시험의 `*_KEY` 우선 확인은 reason-translate 로 옮겼다.
+
 ## 남은 것 (대표·후속)
 
 - 배포 뒤 18앱에서 다섯 env 삭제 — 확인 순서는 PR #758 설명 "지우기 전에 대표가 확인할 것".
