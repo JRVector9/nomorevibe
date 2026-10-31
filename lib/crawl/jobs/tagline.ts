@@ -1,5 +1,6 @@
 import { modelLimits, modelTimeoutMs, scopedModel } from "@/lib/llm/model-registry";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
+import { EngineDownTally } from "@/lib/jobs/engine-down";
 import { tickRemaining } from "@/lib/jobs/tick-deadline";
 import { ModelCapacityDeferredError, modelCapacityDeferralIsPerWork } from "@/lib/llm/capacity-deferred";
 import { getSettings } from "@/lib/crawl/settings";
@@ -26,11 +27,10 @@ import { runtimeSettings } from "@/lib/operations/runtime-settings-store";
  * 2026-10-30 소유자 결정("미확인이 되어도 절대 멈추지 않는다"): 한 후보만의 미룸(dispatched·work_busy — 앞선 단계가 보내진 중이거나
  * 미확인 단계 행·다른 요청이 같은 후보를 쥠)은 그 후보만 이 틱에서 넘기고 다음 후보를 계속 본다. 다른 요청에 묶인 후보는 고르기에서도
  * 뺀다(pendingTaglines skipBusy). 포화·정책·owner 미룸만 예전처럼 틱을 미룬다.
+ * 2026-10-31(PR 3a-B): 한 후보의 실패(시간 초과·429·5xx)는 그 후보의 시도로만 남고 다음 후보를 본다 — 예전의 "잇따라 둘이 막히면 틱을 접는다"는
+ * 없앴다. 틱을 접는 것은 엔진이 모든 후보에 대해 내려갔음이 증명될 때만이다(lib/jobs/engine-down.ts).
  */
 const JOB = "crawl-tagline";
-
-/** 게이트웨이가 막힌 것은 이 후보의 문제가 아니다 — 이번 틱을 접는다 */
-const GATEWAY_DOWN = new Set(["no_key", "model_unavailable", "rate_limit", "timeout", "network"]);
 
 export async function writeTaglines(ctx: JobContext<null>): Promise<JobOutcome<null>> {
   if (!process.env.ABCLLM_API_KEY?.trim()) {
@@ -55,7 +55,8 @@ export async function writeTaglines(ctx: JobContext<null>): Promise<JobOutcome<n
     const knobs = runtimeSettings();
     const batch = jobKnob(knobs, JOB, "batch"), minCallMs = jobKnob(knobs, JOB, "minCallMs");
     const concurrency = modelLimits(JOB).concurrency, callMs = modelTimeoutMs(JOB);
-    let written = 0, empty = 0, failed = 0, released = 0, blocked = "", inARow = 0;
+    let written = 0, empty = 0, failed = 0, released = 0, blocked = "";
+    const engine = new EngineDownTally();
     /** 이 틱에 넘긴 후보(같은 작업의 미룸) — 다시 고르지 않는다 */
     const passed = new Set<number>();
 
@@ -127,16 +128,13 @@ export async function writeTaglines(ctx: JobContext<null>): Promise<JobOutcome<n
                 const saved = await save({ kind: "failure", error: result.error });
                 if (!saved.stored) { skipped = capacity.kind === "result"; return; }
                 failed++;
-                /**
-                 * 한 건의 실패로 틱을 접지 않는다 — 같은 증거에만 502 를 돌려주는 후보가 있어
-                 * (긴 페이지 글) 그 한 건이 나머지의 차례까지 막았다. 잇따라 둘이 실패하면 그때 접는다.
-                 */
-                if (GATEWAY_DOWN.has(result.error) || result.error.startsWith("http_5")) {
-                  if (++inARow >= 2) blocked = result.error;
-                }
+                // 그 후보의 실패로 남겼다(같은 증거에만 502 를 돌려주는 긴 페이지 글이 있었다 — 2026-09-20). 엔진이 모든 후보에 대해
+                // 내려갔음이 증명될 때만 틱을 접는다(engine-down.ts)
+                const down = engine.failed(result.error);
+                if (down) blocked = down;
                 continue;
               }
-              inARow = 0;
+              engine.answered();
               const saved = await save({ kind: "success", tagline: result.tagline, source: result.source, model: scopedModel("crawl-tagline", TAGLINE_MODEL) });
               if (!saved.stored) { skipped = capacity.kind === "result"; return; }
               if (!result.tagline) { empty++; continue; }
