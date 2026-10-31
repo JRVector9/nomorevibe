@@ -13,6 +13,8 @@ import { judgeRevision } from "@/lib/crawl/rules";
 import { listAdminReviewEntries } from "@/lib/crawl/admin-review";
 import { secondReviewGeneration } from "@/lib/crawl/second-review-input";
 import { secondReviewCandidates } from "@/lib/crawl/jobs/second-review";
+import { tiebreakGateSplits } from "@/lib/crawl/jobs/split-tiebreak";
+import { confirmGateSplits } from "@/lib/crawl/jobs/split-confirm";
 import { splitTiebreakStatus } from "@/lib/crawl/gate-split-tiebreak-read";
 import { QWEN_DIRECT_DEFAULT_MODEL, QWEN_V2_ADDENDUM, QWEN_V2_PROMPT_VERSION } from "@/lib/crawl/qwen-direct-review";
 import { qwenEndpointBackingOff, qwenEndpointBackoffOf, resetQwenAuditBackoff } from "@/lib/crawl/qwen-endpoint-backoff";
@@ -27,7 +29,8 @@ import { enqueueSecondReviewsFixture as enqueueSecondReviews, recordSecondReview
 /**
  * 2차 갈림 판가름(lib/crawl/gate-split-tiebreak.ts) — 관문에서 갈린 보류를 gpu3090 Qwen-v2 에 한 번 더 묻고, Qwen-v2 가 거부하면 M3 DeepSeek 이
  * 따로 확인한다(gate-split-confirm.ts). 둘 다 거부해야 닫는다(사용자 결정 2안). Qwen 은 이 파일이 띄운 가짜 OpenAI 호환 서버
- * (AUDIT_SECOND_OPINION_URL), DeepSeek 은 fetch 를 갈라 받는 가짜 M3 다. 2차 잡·사람 검토 잡 한 틱을 그대로 돌린다.
+ * (AUDIT_SECOND_OPINION_URL), DeepSeek 은 fetch 를 갈라 받는 가짜 M3 다. 갈림 판가름 잡(split-tiebreak)·갈림 확인 잡(split-confirm) 한 틱을 그대로 돌린다
+ * (2026-10-31 PR 3a-C 전에는 2차 잡·사람 검토 잡 틱 안의 단계였다).
  */
 type Outcome = { decision: "approve" | "reject" | "needs_review"; reason: string; evidenceIds?: string[]; confidence?: number };
 type Reply = { status: number; outcome?: Outcome };
@@ -140,9 +143,14 @@ async function split(index: number, vote: "approve" | "reject" | "needs_review" 
   return { candidate: held, first, gate: (await db.select().from(secondReviews).where(eq(secondReviews.id, gate.id)))[0] };
 }
 
-const tick = () => runJob("second-review", secondReviewCandidates);
-/** 둘째 단계 — 사람 검토 잡 한 틱(보류 재심사·위임은 꺼져 있다) */
-const confirm = () => runJob("human-deepseek-review", reviewHumanQueue, { budgetMs: jobRunOptions("human-deepseek-review", { requestedOnly: true }).budgetMs });
+/** 첫 단계 — 갈림 판가름 잡 한 틱(2026-10-31 PR 3a-C 전에는 2차 잡 second-review 틱 안에서 표 심사와 나란히) */
+const tick = () => runJob("split-tiebreak", tiebreakGateSplits, { budgetMs: jobRunOptions("split-tiebreak", { requestedOnly: true }).budgetMs });
+/** 둘째 단계 — 갈림 확인 잡 한 틱(전에는 사람 검토 잡 human-deepseek-review 틱의 뒷부분) */
+const confirm = () => runJob("split-confirm", confirmGateSplits, { budgetMs: jobRunOptions("split-confirm", { requestedOnly: true }).budgetMs });
+/** 2차 심사 잡 한 틱 — 표 심사·정비 틱(끝난 관문 행 닫기 등). 분해 전에는 판가름이 이 틱 안에서 함께 돌았다 */
+const review = () => runJob("second-review", secondReviewCandidates, { budgetMs: jobRunOptions("second-review", { requestedOnly: true }).budgetMs });
+/** 사람 큐 위임 잡 한 틱 — 같은 M3 DeepSeek 을 쓴다 */
+const delegate = () => runJob("human-deepseek-review", reviewHumanQueue, { budgetMs: jobRunOptions("human-deepseek-review", { requestedOnly: true }).budgetMs });
 const candidateOf = async (id: number) => (await db.select().from(crawlCandidates).where(eq(crawlCandidates.id, id)))[0];
 const tiebreaksOf = (id: number) => db.select().from(gateSplitTiebreaks).where(eq(gateSplitTiebreaks.candidateId, id)).orderBy(gateSplitTiebreaks.id);
 const wrapped = (snapshot: unknown) => `<untrusted_evidence_json>\n${JSON.stringify(snapshot).replace(/</g, "\\u003c").replace(/>/g, "\\u003e")}\n</untrusted_evidence_json>`;
@@ -193,7 +201,8 @@ it("Qwen-v2 와 DeepSeek 이 관문이 본 입력 그대로 따로 거부하면 
     deepseekOutcome: { decision: "reject", confidence: 0.8 }, deepseekFailureCount: 0 }]);
   expect(await splitTiebreakStatus()).toMatchObject({ processed: 1, rejected: 1, rejectedToday: 1, awaitingDeepseek: 0 });
 
-  // 다음 틱 — 관문 행은 사람이 거부했을 때처럼 decided_elsewhere 로 닫히고, 다시 묻지 않는다(같은 관문 세대는 두 단계 모두 한 번)
+  // 다음 틱 — 관문 행은 사람이 거부했을 때처럼 2차 심사 잡의 정비 틱이 decided_elsewhere 로 닫고, 판가름·확인은 다시 묻지 않는다(같은 관문 세대는 두 단계 모두 한 번)
+  expect(await review()).toMatchObject({ status: "completed" });
   expect(await tick()).toMatchObject({ status: "completed" });
   expect(await confirm()).toMatchObject({ status: "completed" });
   expect(requests).toHaveLength(1);
@@ -349,18 +358,38 @@ it("그 사이 사람이 정한 갈림은 DeepSeek 에 묻지 않는다", async 
   expect(await tiebreaksOf(candidate.id)).toMatchObject([{ applied: "superseded" }]);
 });
 
-it("M3 에는 한 번에 한 호출 — DeepSeek 위임이 켜져 있어도 위임이 끝난 뒤에 확인을 묻는다", async () => {
+it("DeepSeek 위임이 켜져 있어도 위임 뒤의 확인은 원래 답으로 닫는다 — 위임의 0.90 문턱은 확인에 걸리지 않는다", async () => {
   const { candidate } = await split(0);
   await tick();
   const settings = await getSettings();
   expect(await setHumanReviewEnabled({ enabled: true, expectedGeneration: settings.humanReview.generation, actor: "test" })).toMatchObject({ ok: true });
   // 위임도 같은 후보를 본다 — 0.80 거부는 위임의 0.90 문턱에 걸려 판단 보류가 되고, 확인은 원래 답으로 닫는다
   deepseekReply = async () => { await new Promise(resolve => setTimeout(resolve, 50)); return deepseekReject(0.8); };
+  expect(await delegate()).toMatchObject({ status: "completed" });
   expect(await confirm()).toMatchObject({ status: "completed" });
   expect(deepseekRequests.length).toBeGreaterThanOrEqual(2);
   expect(m3.max).toBe(1);
   expect((await candidateOf(candidate.id)).state).toBe("rejected");
   expect(await tiebreaksOf(candidate.id)).toMatchObject([{ applied: "rejected" }]);
+});
+
+/**
+ * 2026-10-31(PR 3a-C) 전에는 위임과 확인이 한 잡(human-deepseek-review)이라 잡 lease 가 M3 호출을 하나로 줄 세웠다. 이제 둘은 자기 잡·자기 줄에서
+ * 동시에 틱을 돈다 — M3 에 한 번에 한 호출이라는 약속은 프로세스의 DeepSeek 자리(lib/crawl/deepseek-slot.ts)가 지킨다. 두 잡을 함께 띄워 잰다
+ */
+it("M3 에는 한 번에 한 호출 — 위임 잡과 확인 잡이 같은 프로세스에서 동시에 돌아도 DeepSeek 호출은 겹치지 않는다", async () => {
+  await split(0);
+  await split(1);
+  await tick();
+  const settings = await getSettings();
+  expect(await setHumanReviewEnabled({ enabled: true, expectedGeneration: settings.humanReview.generation, actor: "test" })).toMatchObject({ ok: true });
+  deepseekReply = async () => { await new Promise(resolve => setTimeout(resolve, 60)); return deepseekReject(0.8); };
+  const [delegated, confirmed] = await Promise.all([delegate(), confirm()]);
+  expect(delegated).toMatchObject({ status: "completed" });
+  expect(confirmed).toMatchObject({ status: "completed" });
+  // 두 잡이 모두 M3 를 불렀고, 어느 순간에도 M3 에 떠 있는 호출은 하나였다
+  expect(deepseekRequests.length).toBeGreaterThanOrEqual(2);
+  expect(m3.max).toBe(1);
 });
 
 it("Qwen-v2 가 승인하면 발행하지 않고 사람 큐 맨 앞에 «Qwen-v2 승인 — 발행 후보»로 둔다", async () => {
@@ -552,7 +581,7 @@ it("답을 받는 사이 잡 lease 를 잃으면 후보도 기록도 쓰지 않�
   const { candidate } = await split(0);
   const floor = await auditFloor();
   reply = async () => {
-    await db.update(jobs).set({ leaseToken: "replacement", lockedAt: new Date() }).where(eq(jobs.name, "second-review"));
+    await db.update(jobs).set({ leaseToken: "replacement", lockedAt: new Date() }).where(eq(jobs.name, "split-tiebreak"));
     return reject();
   };
   expect(await tick()).toMatchObject({ status: "failed", error: "job_lease_lost" });

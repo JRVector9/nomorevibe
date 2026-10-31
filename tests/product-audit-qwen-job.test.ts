@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { JobContext } from "@/lib/jobs/runner";
-import { auditPublishedProducts, latencyStats, QWEN_CALL_TIMEOUT_MS, QWEN_MIN_START_MS, qwenAuditBackoffMs, qwenAuditConcurrency,
-  resetQwenAuditBackoff } from "@/lib/crawl/jobs/product-audit";
+import { auditWithQwenDirect, latencyStats, QWEN_CALL_TIMEOUT_MS, QWEN_MIN_START_MS, qwenAuditBackoffMs, qwenAuditConcurrency,
+  resetQwenAuditBackoff } from "@/lib/crawl/jobs/audit-qwen";
 import { createReviewInput, REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import { QWEN_V2_PROMPT_VERSION, reviewWithQwenDirect } from "@/lib/crawl/qwen-direct-review";
 import { qwenEndpointBackingOff, qwenEndpointBackoffOf, qwenSoftFailuresOf } from "@/lib/crawl/qwen-endpoint-backoff";
@@ -11,14 +11,12 @@ import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 import type { CrawlCandidate, CrawlDocument } from "@/lib/db/schema";
 
 /**
- * 남은 감사 모델 바꾸기(0112) 뒤의 감사 틱 — Qwen 직접 심사(qwen-direct-review.ts)는 진짜로 돌고 HTTP 끝(gpu3090 vLLM)만 가짜다.
- * 감사 행·일감·기록은 이 파일이 흉내 낸다(DB 를 여는 쪽은 tests/integration/product-audit-qwen.test.ts).
+ * 남은 감사 모델 바꾸기(0112) 뒤의 Qwen 직접 감사 잡(audit-qwen, 2026-10-31 PR 3a-C 전에는 감사 잡 product-audit 의 한 갈래) — Qwen 직접 심사
+ * (qwen-direct-review.ts)는 진짜로 돌고 HTTP 끝(gpu3090 vLLM)만 가짜다. 감사 행·일감·기록은 이 파일이 흉내 낸다(DB 를 여는 쪽은 tests/integration/product-audit-qwen.test.ts).
  */
 const mocks = vi.hoisted(() => ({ campaign: vi.fn(), settings: vi.fn(), candidates: vi.fn(), pending: vi.fn(),
   input: vi.fn(), record: vi.fn(), noSource: vi.fn(), inputFailed: vi.fn(), finish: vi.fn(), gateway: vi.fn(),
   realReview: null as typeof import("@/lib/crawl/qwen-direct-review").reviewWithQwenDirect | null }));
-// Qwen-v2 두 번째 의견 단계(감사 잡 틱 안에서 나란히 돈다)는 tests/integration/audit-second-opinion-auto.test.ts 가 본다 — 여기 가짜 서버의 호출 수는 감사 묻기만
-vi.mock("@/lib/crawl/audit-second-opinion-auto", () => ({ runQwenSecondOpinions: async () => null }));
 vi.mock("@/lib/crawl/settings", () => ({ getSettings: mocks.settings }));
 vi.mock("@/lib/crawl/agent-review-repository", () => ({ listReviewCandidates: mocks.candidates }));
 vi.mock("@/lib/crawl/product-audit-hold", () => ({ sweepAuditHolds: async () => 0 }));
@@ -82,12 +80,12 @@ let lastContext: JobContext<null> | null = null;
 const context = (over: Partial<JobContext<null>> = {}): JobContext<null> => {
   const startedAt = Date.now();
   lastContext = { cursor: null, save: vi.fn(), hasBudget: () => Date.now() - startedAt < 70_000, deadlineAt: startedAt + 70_000, log: vi.fn(),
-    lease: { name: "product-audit", token: "owned", requestedVersion: 1 }, ...over };
+    lease: { name: "audit-qwen", token: "owned", requestedVersion: 1 }, ...over };
   return lastContext;
 };
 /** 한 틱을 끝까지 — 러너 예산(70초)을 흘려 보낸다 */
 async function tick(ctx = context()) {
-  const running = auditPublishedProducts(ctx).then((value) => ({ value }), (error: Error) => ({ error }));
+  const running = auditWithQwenDirect(ctx).then((value) => ({ value }), (error: Error) => ({ error }));
   await vi.advanceTimersByTimeAsync(70_000);
   return running;
 }
@@ -142,27 +140,35 @@ describe("바꾼 감사는 Qwen 에게 묻는다", () => {
     expect(mocks.candidates).not.toHaveBeenCalled();
   });
 
-  // 2026-10-31 결정: 바꾸지 않은(게이트웨이) 감사도 1차 후보 큐를 보고 양보하지 않는다 — 장비 순위가 대신한다(하나가 잘못되면 다음 작업도 안 되는 구조는 이유가 없다)
-  it("바꾸지 않은 감사도 새 후보가 기다려도 양보하지 않는다 — 1차 후보 큐를 읽지 않는다", async () => {
+  // 2026-10-31(PR 3a-C): 게이트웨이/CLI 심사자의 감사는 감사 잡(product-audit, tests/product-audit-job.test.ts)이 맡는다 — 이 잡은 손대지 않는다
+  it("바꾸지 않은(게이트웨이) 감사에는 할 일이 없다 — 일감을 집지도, 양보를 재지도, 감사를 닫지도 않는다", async () => {
     const { fetcher } = endpoint();
     mocks.campaign.mockResolvedValue({ ...switched, currentProvider: null, currentModel: null });
     mocks.candidates.mockResolvedValue([{ id: 1 }]);
     mocks.pending.mockResolvedValue([]);
-    mocks.finish.mockResolvedValue(false);
     const ctx = context();
-    await tick(ctx);
-    expect(ctx.log).not.toHaveBeenCalledWith("product_audit.yielded", expect.anything());
-    expect(mocks.candidates).not.toHaveBeenCalled();
-    expect(mocks.pending).toHaveBeenCalledTimes(1);
+    expect(await tick(ctx)).toEqual({ value: { done: true } });
+    expect(ctx.log).toHaveBeenCalledWith("audit_qwen.skipped", { reason: "gateway_reviewer", campaign: 4 });
     expect(fetcher).not.toHaveBeenCalled();
+    expect(mocks.candidates).not.toHaveBeenCalled();
+    expect(mocks.pending).not.toHaveBeenCalled();
+    expect(mocks.finish).not.toHaveBeenCalled();
   });
 
-  it("바꾸지 않은 감사는 지금처럼 게이트웨이로 묻는다 — Qwen 을 부르지 않는다", async () => {
+  it("감사가 없거나 수집 스위치가 꺼졌거나 글이 바뀌었으면 묻지 않는다 — 감사 잡과 같은 관문", async () => {
     const { fetcher } = endpoint();
-    mocks.campaign.mockResolvedValue({ ...switched, currentProvider: null, currentModel: null });
-    mocks.pending.mockResolvedValue([]);
-    mocks.finish.mockResolvedValue(false);
-    await tick();
+    mocks.campaign.mockResolvedValue(null);
+    expect(await tick()).toEqual({ value: { done: true } });
+    mocks.campaign.mockResolvedValue(switched);
+    mocks.settings.mockResolvedValue({ ...DEFAULT_CRAWL_SETTINGS, enabled: false });
+    const off = context();
+    expect(await tick(off)).toEqual({ value: { done: true } });
+    expect(off.log).toHaveBeenCalledWith("audit_qwen.skipped", { reason: "disabled", campaign: 4 });
+    mocks.settings.mockResolvedValue({ ...DEFAULT_CRAWL_SETTINGS, enabled: true });
+    mocks.campaign.mockResolvedValue({ ...switched, promptVersion: "older" });
+    const changed = context();
+    expect(await tick(changed)).toEqual({ value: { done: true } });
+    expect(changed.log).toHaveBeenCalledWith("audit_qwen.skipped", { reason: "policy_changed", campaign: 4 });
     expect(fetcher).not.toHaveBeenCalled();
   });
 
@@ -318,7 +324,7 @@ describe("동시 호출과 틱 예산", () => {
 describe("부르는 곳의 탈에서 물러나기", () => {
   /** 짧게 끝나는 틱(실패·물러나기) — 시계를 ms 만큼만 흘린다 */
   async function run(ms = 1_000) {
-    const running = auditPublishedProducts(context()).then((value) => ({ value }), (error: Error) => ({ error }));
+    const running = auditWithQwenDirect(context()).then((value) => ({ value }), (error: Error) => ({ error }));
     await vi.advanceTimersByTimeAsync(ms);
     return running as Promise<{ value?: unknown; error?: Error }>;
   }

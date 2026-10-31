@@ -15,16 +15,27 @@ export type CatalogRole = JobRole | "scheduler" | "site-evidence";
  *   역할 프로세스 DB_POOL_MAX = 동시에 틱을 도는 모델 줄 수 + 역할 lease heartbeat 1 + 여유 1(관측·미룸 기록)
  *
  * 줄은 쿼리·TX 동안만 연결을 빌리고 모델 응답을 기다리는 동안은 놓는다(postgres.js 풀). 그래서 세는 줄은 "매분 모델을 부르며 틱이
- * 수십 초 이어져 저장·15초 lease heartbeat 가 서로 겹치는 줄"이다 — 과도기 기준 reviewer 4(second·human·audit·intro), text 4(reason·tagline·
- * profile·verify) → 둘 다 4 + 1 + 1 = **6**(compose.yml·Dokploy env·lib/db/pool.ts ROLE_POOL_MAX·lib/db/host-budget.ts workerMax 가 같은 값).
+ * 수십 초 이어져 저장·15초 lease heartbeat 가 서로 겹치는 줄"이다 — 3a-A 기준 reviewer 4(second·human·audit·intro), text 4(reason·tagline·
+ * profile·verify) → 둘 다 4 + 1 + 1 = 6. 3a-C(합성 잡 분해, 아래)가 reviewer 에 held·confirm·tiebreak·audit-qwen·audit-opinion 다섯 줄을 더해
+ * reviewer 9 + 1 + 1 = **11**, text 는 그대로 **6**(compose.yml·Dokploy env·lib/db/pool.ts ROLE_POOL_MAX·lib/db/host-budget.ts workerMax 가 같은 값).
+ * 다섯 줄은 스위치(qwenAuto.*)·감사 행의 심사자에 따라 쉬는 틱이 많지만 켜져 있으면 매분 gpu3090·M3 를 부르며 틱이 수십 초 이어지므로 센다.
  * 나머지 줄(crawl-judge 모델 없음·5분, grok 4시간, ai1 은 items 모드에서 consumer 가 자기 풀 3 으로 맡고 이 프로세스는 정비 틱만,
  * screen·assist 는 설정이 켤 때만 돌고 backend drain 중 연결을 놓는다, embed 는 로컬 임베딩 묶음 한 번, repo 는 모델 없음·5분,
  * ko·translate 는 기존 전용 줄)은 짧은 claim·저장 쿼리만 빌려 여유 1 과 풀 대기(DB_POOL_WAIT_MS 5초) 안에 든다.
- * 줄을 더 쪼개면(3a-C) 같은 규칙으로 다시 센다. 줄 수 상한은 heartbeat 파서의 16(lib/operations/worker-progress.ts parseRuntimeLanes).
+ * 줄 수 상한은 heartbeat 파서의 16(lib/operations/worker-progress.ts parseRuntimeLanes) — reviewer 15 줄.
+ *
+ * 합성 잡 분해(2026-10-31, PR 3a-C): 한 잡 = 큐 하나 + 모델 호출 모양 하나. 한 틱에 두 장비(gpu3090·M3)를 차례로 부르던 세 잡을 나눴다 —
+ *   human-deepseek-review(보류 Qwen 재심사 → DeepSeek 위임 → 갈림 확인) → held-qwen-retry · human-deepseek-review · split-confirm
+ *   second-review(표 심사 ∥ 갈림 판가름) → second-review · split-tiebreak
+ *   product-audit(보류 쓸기 → 게이트웨이/CLI 감사 또는 Qwen 직접 감사 ∥ 두 번째 의견) → product-audit · audit-qwen · audit-second-opinion
+ * 각 잡은 자기 줄·자기 예산(runtime_settings budgets)이며 장부 binding 의 job.name 도 그 잡이다(lib/llm/local-model-capacity-contract.ts, migration 0155).
+ * 새 카탈로그 잡은 scheduler 가 요청해야 돈다 — 이 카탈로그를 담은 릴리스는 scheduler 를 먼저 배포한다(새 잡 → scheduler 먼저).
  */
 export type JobLane = "main" | "discovery" | "fetch" | "sources" | "evidence" | "scan" | "stars" | "screen" | "assist" | "assist-audit" | "product-translation" | "korean-translation" | "ai1"
   // reviewer 의 모델 잡 줄 — 잡 하나에 줄 하나(위 설명)
   | "second" | "human" | "audit" | "intro" | "grok"
+  // reviewer 의 합성 잡 분해 줄(3a-C) — gpu3090: held·tiebreak·audit-qwen·audit-opinion, M3 DeepSeek: confirm
+  | "held" | "confirm" | "tiebreak" | "audit-qwen" | "audit-opinion"
   // text 의 모델 잡 줄 — 잡 하나에 줄 하나
   | "reason" | "tagline" | "profile" | "verify" | "embed" | "repo";
 export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs: number | null; lane?: JobLane; batchVersion?: 1 }[] = [
@@ -61,17 +72,28 @@ export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs
   /**
    * 2차 심사 — 1차와 다른 모델. 하루 수십~백여 건이라 5분이면 밀리지 않는다. 전용 줄(second): AI2 가 items 모드면 이 잡은 행 올리기·닫기
    * 정비 틱만 하고 stage_blocked 로 끝난다 — 사람 위임·감사·소개 검수 뒤에 줄 서지 않고, 요청이 남아 있으면 다음 poll(기본 5초)에 다시 돈다.
-   * legacy 모드에서 남은 행이 있으면 continuation:"ready" 로 runner 가 다시 요청해 1초 뒤 돈다(scripts/worker.ts)
+   * legacy 모드에서 남은 행이 있으면 continuation:"ready" 로 runner 가 다시 요청해 1초 뒤 돈다(scripts/worker.ts).
+   * 갈림 판가름(gpu3090)은 2026-10-31 부터 자기 잡 split-tiebreak 이다 — 이 잡은 표 심사·정비 틱만
    */
   { name: "second-review", role: "reviewer", intervalMs: 60_000, lane: "second" },
-  // 사람 큐 위임 — DeepSeek 27~29초 × 2 가 틱을 붙잡는다. 전용 줄(human)이라 2차 심사·감사를 미루지 않는다
+  // 2차 갈림 판가름 — 관문에서 갈린 보류를 gpu3090 Qwen-v2 에 묻는다(gate-split-tiebreak.ts). 스위치 qwenAuto.splitTiebreak. 전용 줄(tiebreak)
+  { name: "split-tiebreak", role: "reviewer", intervalMs: 60_000, lane: "tiebreak" },
+  // 사람 큐 위임 — DeepSeek 27~29초 × 2 가 틱을 붙잡는다. 전용 줄(human)이라 2차 심사·감사를 미루지 않는다. 2026-10-31 부터 DeepSeek 위임만(아래 둘은 자기 잡)
   { name: "human-deepseek-review", role: "reviewer", intervalMs: 60_000, lane: "human" },
+  // 보류 Qwen-v2 재심사 — 소개 없음·재시도 소진·판단 보류를 gpu3090 Qwen-v2 에 다시 묻는다(held-qwen-retry.ts). 스위치 qwenAuto.heldRetry. 전용 줄(held)
+  { name: "held-qwen-retry", role: "reviewer", intervalMs: 60_000, lane: "held" },
+  // 갈림 판가름의 DeepSeek 확인 — awaiting_deepseek 를 M3 DeepSeek 에 다시 묻는다(gate-split-confirm.ts). M3 한 호출 약속은 deepseek-slot.ts. 전용 줄(confirm)
+  { name: "split-confirm", role: "reviewer", intervalMs: 60_000, lane: "confirm" },
   /**
-   * 발행분 감사 — 사람이 연 감사가 있을 때만 일한다. 게이트웨이 감사는 새 후보가 기다리면 틱마다 먼저 양보한다
-   * (lib/crawl/jobs/product-audit.ts). Qwen 직접 감사는 gpu3090 이라 게이트웨이를 쓰지 않는다. 1차 심사는 2026-10-29 부터
-   * 전용 줄(ai1), 감사는 2026-10-31 부터 전용 줄(audit)이라 서로·2차 심사와 함께 돈다 — 공유 모델의 동시 호출은 공통 장부의 물리 한도가 막는다.
+   * 발행분 감사 — 사람이 연 감사가 있을 때만 일한다. 1차 후보 큐를 보고 양보하지 않는다(2026-10-31 3a-B — 장비 순위가 대신한다,
+   * lib/crawl/jobs/product-audit.ts). 1차 심사는 2026-10-29 부터 전용 줄(ai1), 감사는 2026-10-31 부터 전용 줄(audit)이라 서로·2차 심사와
+   * 함께 돈다 — 공유 모델의 동시 호출은 공통 장부의 물리 한도가 막는다. 2026-10-31 부터 보류 쓸기 + 게이트웨이/CLI 감사만(아래 둘은 자기 잡)
    */
   { name: "product-audit", role: "reviewer", intervalMs: 60_000, lane: "audit" },
+  // Qwen 직접 감사 — 심사자가 qwen-direct 인 감사의 남은 항목을 gpu3090 에 게이트웨이 없이 묻는다(jobs/audit-qwen.ts). 전용 줄(audit-qwen)
+  { name: "audit-qwen", role: "reviewer", intervalMs: 60_000, lane: "audit-qwen" },
+  // 감사 두 번째 의견·공개분 거르기 — gpu3090 Qwen-v2 자동 단계(audit-second-opinion-auto.ts). 스위치 qwenAuto.auditSecondOpinion·publishedFilter. 전용 줄(audit-opinion)
+  { name: "audit-second-opinion", role: "reviewer", intervalMs: 60_000, lane: "audit-opinion" },
   /**
    * 화면 판별 — 글이 얇은(JS 로 그리는) 감사 거절을 화면 서버(m1-studio)로 그려 m1 Qwen 에 글+첫 화면으로 묻는다(lib/screen-review/job.ts).
    * 한 건이 그리기 수~40초 + 묻기 12~90초라 따로 도는 줄(screen)에 둔다 — 기본 줄의 심사·감사를 막지 않는다. 설정 qwenAuto.screenReview 를 켜야 일한다

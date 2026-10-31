@@ -11,6 +11,7 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import * as schema from "@/lib/db/schema";
 import { gatewayNotStartedAllKindsTerminalSql } from "@/lib/db/operations-schema";
 import { operatorReviewDispatchSql, operatorReviewEventSql, operatorReviewTerminalSql } from "@/lib/llm/operator-review-sql";
+import { localModelSplitJobsDispatchSql, localModelSplitJobsTerminalSql } from "@/lib/llm/local-model-capacity-sql";
 import { modelCapacityPolicyHash, publicationClassifyMemberKeys, type ModelCapacityPolicy } from "@/lib/llm/capacity";
 import { cliExecutorPlanHash } from "@/lib/llm/cli-executor-boundary-contract";
 import { providerBoundaryCanonicalHash } from "@/lib/llm/provider-boundary-contract";
@@ -92,6 +93,10 @@ it("migrates nonempty old data without mutation and retains all predecessor pred
     if(n==="model_capacity_requests_dispatch_check")predicate=`(${predicate}) OR (${operatorReviewDispatchSql})`;
     if(n==="model_capacity_requests_terminal_check")predicate=`(${predicate}) OR (${operatorReviewTerminalSql})`;
     if(n==="model_capacity_events_kind_check")predicate=`(${predicate}) OR (${operatorReviewEventSql})`;
+    // 0155(2026-10-31, PR 3a-C) appends the split-jobs local_model_direct branch (new per-stage binding.job names; the schema constant, not pasted SQL)
+    // to the requests dispatch/terminal CHECKs after everything above — the 0124 branch with the old composite names stays inside the predecessor.
+    if(n==="model_capacity_requests_dispatch_check")predicate=`(${predicate}) OR (coalesce((${localModelSplitJobsDispatchSql}),false))`;
+    if(n==="model_capacity_requests_terminal_check")predicate=`(${predicate}) OR (coalesce((${localModelSplitJobsTerminalSql}),false))`;
     await client.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT cli_removed_expected CHECK (${predicate})`);
     try{expect(after[n]).toBe((await client`SELECT pg_get_constraintdef(oid) def FROM pg_constraint WHERE conname='cli_removed_expected'`)[0].def);}
     finally{await client.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT cli_removed_expected`);}

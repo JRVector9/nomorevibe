@@ -48,7 +48,7 @@ let env: Record<string, string>, sequence = 0, mode: "ok" | "bad_business" | "mi
 let upstreamActive = false, heldResponse: ServerResponse | null = null, started = () => {};
 const observedWire: unknown[] = [];
 const realFetch = globalThis.fetch;
-const lease = { name: "product-audit", token: randomUUID(), requestedVersion: 1 };
+const lease = { name: "audit-qwen", token: randomUUID(), requestedVersion: 1 };
 const body = () => JSON.stringify({ model: "qwen", choices: [{ finish_reason: "stop", message: { content: mode === "bad_business" ? "invalid business json"
   : JSON.stringify({ decision: "approve", reason: "A usable application", evidenceIds: ["product"], confidence: 0.9 }) } }],
   usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } });

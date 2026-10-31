@@ -75,22 +75,25 @@ export const DEFAULT_RUNTIME_SETTINGS: RuntimeSettings = deepFreeze({
     // lib/jobs/products/intro-check.ts CALL_MS(CLI 호출에 직접 주는 상한)·MIN_CALL_MS
     "product-intro-check": { callMs: 90_000, minCallMs: 40_000 },
   },
-  // scripts/worker.ts jobRunOptions 의 리터럴. product-translate 만 "auto"(= 호출 상한 300초 + 여유 15초 = 315초)
+  // scripts/worker.ts jobRunOptions 의 리터럴. product-translate 만 "auto"(= 호출 상한 300초 + 여유 15초 = 315초).
+  // 2026-10-31(PR 3a-C) 합성 잡 분해 — 나뉜 잡은 전 잡의 예산 봉투를 그대로 받는다: held-qwen-retry·split-confirm 110초(human-deepseek-review),
+  // split-tiebreak 110초(second-review), audit-qwen·audit-second-opinion 70초(product-audit). 각 단계의 안쪽 상한(budgetSeconds·LANE_MS·STEP_MS)은 그대로다
   budgets: {
-    "crawl-agent-review": 110_000, "product-audit": 70_000, "audit-screen-review": 150_000,
+    "crawl-agent-review": 110_000, "product-audit": 70_000, "audit-qwen": 70_000, "audit-second-opinion": 70_000, "audit-screen-review": 150_000,
     "product-llm-assist-review": 105_000, "product-llm-assist-audit-review": 105_000, "product-automated-action-audit": 20_000,
     "crawl-publish": 120_000, "reason-translate": 55_000, "product-translate": "auto",
     "product-search-profile": 55_000, "product-search-verify": 110_000, "product-embedding": 50_000, "product-repo-review": 55_000,
     "product-tagline-ko": 55_000, "product-stars-refresh": 40_000, "product-star-observation": 40_000, "ai-level-refresh": 55_000,
     "product-evidence-refresh": 55_000, "product-site-evidence-refresh": 55_000, "agent-evidence-refresh": 55_000,
-    "product-intro-check": 110_000, "second-review": 110_000, "human-deepseek-review": 110_000,
+    "product-intro-check": 110_000, "second-review": 110_000, "split-tiebreak": 110_000, "human-deepseek-review": 110_000,
+    "held-qwen-retry": 110_000, "split-confirm": 110_000,
     "product-thumbnail-refresh": 40_000, "bluesky-talk": 40_000, "crawl-seed": 30_000, "crawl-fetch": 120_000,
   },
 });
 
 /**
  * 잡 → 그 틱이 시작하는 가장 긴 호출의 상한을 주는 경로. 예산은 상한 + BUDGET_CALL_MARGIN_MS 이상이어야 한다.
- * orRoutes: 둘 중 긴 쪽(product-audit 은 심사자 종류에 따라 product-audit 또는 review-gateway 상한을 쓴다).
+ * orRoutes: 둘 중 긴 쪽(product-audit 은 심사자 종류에 따라 review-gateway 또는 review-cli 상한을 쓴다 — Qwen 직접 감사는 2026-10-31 부터 audit-qwen 잡).
  * knob: 경로가 아니라 jobs.<job>.<knob> 가 상한이다(product-intro-check 의 callMs). extraMs: 호출 앞의 고정 단계(화면 그리기 40초).
  */
 export type JobCallRoute = Readonly<{ route: string; extraMs?: number; orRoutes?: readonly string[]; knob?: JobKnobName }>;
@@ -103,8 +106,13 @@ export const JOB_CALL_ROUTES: Readonly<Record<string, JobCallRoute>> = deepFreez
   "product-translate": { route: "product-translate" },
   "crawl-agent-review": { route: "review-gateway" },
   "second-review": { route: "review-gateway" },
-  "product-audit": { route: "product-audit", orRoutes: ["review-gateway"] },
+  "split-tiebreak": { route: "split-tiebreak" },
+  "product-audit": { route: "review-gateway" },
+  "audit-qwen": { route: "product-audit" },
+  "audit-second-opinion": { route: "audit-second-opinion" },
   "human-deepseek-review": { route: "human-review" },
+  "held-qwen-retry": { route: "held-review-retry" },
+  "split-confirm": { route: "split-confirm" },
   "audit-screen-review": { route: "screen-review", extraMs: 40_000 },
   "product-intro-check": { route: "product-intro-check", knob: "callMs" },
 });
@@ -384,7 +392,9 @@ export const JOB_LABELS: Readonly<Record<string, string>> = {
   "product-automated-action-audit": "자동 조치 감사", "crawl-publish": "발행", "product-embedding": "임베딩", "product-repo-review": "저장소 검토",
   "product-stars-refresh": "스타 갱신", "product-star-observation": "스타 관측", "ai-level-refresh": "AI 제작 근거", "product-evidence-refresh": "제품 근거 갱신",
   "product-site-evidence-refresh": "사이트 근거 갱신", "agent-evidence-refresh": "에이전트 근거 갱신", "second-review": "2차 심사",
-  "human-deepseek-review": "사람 큐 DeepSeek 심사", "product-thumbnail-refresh": "썸네일 갱신", "bluesky-talk": "Bluesky 화제", "crawl-seed": "검색 수집",
+  "split-tiebreak": "2차 갈림 판가름", "human-deepseek-review": "사람 큐 DeepSeek 심사", "held-qwen-retry": "보류 Qwen 재심사", "split-confirm": "갈림 DeepSeek 확인",
+  "audit-qwen": "Qwen 직접 감사", "audit-second-opinion": "감사 두 번째 의견",
+  "product-thumbnail-refresh": "썸네일 갱신", "bluesky-talk": "Bluesky 화제", "crawl-seed": "검색 수집",
   "crawl-fetch": "원본 확보",
 };
 const LIMIT_FIELD_LABELS: Record<keyof PurposeLimit, string> = { maxTokens: "출력 토큰 상한", concurrency: "동시 호출", timeoutMs: "호출 상한(ms)" };

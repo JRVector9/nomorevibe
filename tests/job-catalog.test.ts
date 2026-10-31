@@ -122,8 +122,9 @@ describe('lanesForRole', () => {
     expect(JOB_CATALOG.find(job => job.name === 'audit-screen-review')).toEqual({ name: 'audit-screen-review', role: 'reviewer', intervalMs: 60_000, lane: 'screen' });
     const reviewer = lanesForRole('reviewer');
     // 기본 줄에는 모델을 부르지 않는 crawl-judge 만 남는다. 그 뒤는 줄이 카탈로그에 처음 나온 차례
-    expect(reviewer).toEqual([['crawl-judge'], ['crawl-agent-review'], ['second-review'], ['human-deepseek-review'], ['product-audit'], ['audit-screen-review'],
-      ['product-intro-check'], ['product-llm-assist-review'], ['product-llm-assist-audit-review'], ['grok-session-check']]);
+    expect(reviewer).toEqual([['crawl-judge'], ['crawl-agent-review'], ['second-review'], ['split-tiebreak'], ['human-deepseek-review'], ['held-qwen-retry'], ['split-confirm'],
+      ['product-audit'], ['audit-qwen'], ['audit-second-opinion'], ['audit-screen-review'], ['product-intro-check'], ['product-llm-assist-review'],
+      ['product-llm-assist-audit-review'], ['grok-session-check']]);
     expect(jobRunOptions('product-llm-assist-review', { requestedOnly: true }).budgetMs).toBe(105_000);
     expect(reviewer[0]).not.toContain('product-audit');
     expect(jobRunOptions('audit-screen-review', { requestedOnly: true })).toEqual({ requestedOnly: true, budgetMs: 150_000 });
@@ -146,7 +147,8 @@ describe('lanesForRole', () => {
    */
   it('모델을 부르는 잡은 reviewer·text 에서 잡 하나에 줄 하나다 — 기본 줄에는 모델 잡이 남지 않는다', () => {
     const modelJobs = {
-      reviewer: ['second-review', 'human-deepseek-review', 'product-audit', 'product-intro-check', 'grok-session-check'],
+      reviewer: ['second-review', 'split-tiebreak', 'human-deepseek-review', 'held-qwen-retry', 'split-confirm', 'product-audit', 'audit-qwen', 'audit-second-opinion',
+        'product-intro-check', 'grok-session-check'],
       text: ['reason-translate', 'crawl-tagline', 'product-search-profile', 'product-search-verify', 'product-embedding', 'product-repo-review'],
     } as const;
     for (const [role, names] of Object.entries(modelJobs) as [JobRole, readonly string[]][]) {
@@ -156,8 +158,8 @@ describe('lanesForRole', () => {
         expect(lanes.filter(lane => lane.includes(name)), name).toEqual([[name]]);
       }
     }
-    // 전·후: reviewer 5줄 → 10줄, text 3줄 → 8줄. heartbeat 파서(parseRuntimeLanes)의 줄 수 상한 16 안이다
-    expect(lanesForRole('reviewer')).toHaveLength(10);
+    // 전·후: reviewer 5줄 → 10줄(3a-A) → 15줄(3a-C 합성 잡 분해), text 3줄 → 8줄. heartbeat 파서(parseRuntimeLanes)의 줄 수 상한 16 안이다
+    expect(lanesForRole('reviewer')).toHaveLength(15);
     expect(lanesForRole('text')).toHaveLength(8);
     for (const role of JOB_ROLES) expect(lanesForRole(role).length, role).toBeLessThanOrEqual(16);
     // 모델을 부르지 않는 crawl-judge 만 reviewer 기본 줄에 남는다
@@ -170,13 +172,16 @@ describe('lanesForRole', () => {
     }
   });
 
-  /** 줄을 나누는 비용은 DB 연결이다: 역할 프로세스 DB_POOL_MAX = 동시에 틱을 도는 모델 줄 4 + 역할 lease heartbeat 1 + 여유 1 = 6(catalog.ts 줄 설명) */
-  it('reviewer·text 의 기본 풀은 줄 규칙대로 6 이다 — 코드 기본값·host 선언이 같다', () => {
-    for (const role of ['reviewer', 'text'] as const) {
-      expect(dbPoolConfig({ WORKER_ROLE: role }).max, role).toBe(6);
+  /**
+   * 줄을 나누는 비용은 DB 연결이다: 역할 프로세스 DB_POOL_MAX = 동시에 틱을 도는 모델 줄 수 + 역할 lease heartbeat 1 + 여유 1(catalog.ts 줄 설명).
+   * text 4 줄 → 6. reviewer 4 줄(3a-A) → 합성 잡 분해(3a-C)로 9 줄(second·human·audit·intro + held·confirm·tiebreak·audit-qwen·audit-opinion) → 11
+   */
+  it('reviewer 11·text 6 — 기본 풀은 줄 규칙대로이고 코드 기본값·host 선언이 같다', () => {
+    for (const [role, max] of [['reviewer', 11], ['text', 6]] as const) {
+      expect(dbPoolConfig({ WORKER_ROLE: role }).max, role).toBe(max);
       const policy = { version: 1 as const, host: 'm3' as const, release: 'lanes', roles: [role], schedulerReplicas: 0, webReplicas: 0, webReadReplica: false,
         monitor: false, connectAgent: false, preflightProcesses: 0, migrationProcesses: 0, rolloutCopies: 1 as const };
-      expect(hostDbBudgetCatalog(policy).processes.find(row => row.kind === 'worker' && row.role === role)).toMatchObject({ primaryMax: 6 });
+      expect(hostDbBudgetCatalog(policy).processes.find(row => row.kind === 'worker' && row.role === role)).toMatchObject({ primaryMax: max });
     }
     // 건 단위 consumer(ai1·ai2)의 자식 풀은 등록부대로 3 그대로다 — 줄 분리는 역할 프로세스의 연결만 늘린다
     expect(dbPoolConfig({ WORKER_ROLE: 'reviewer', DB_POOL_MAX: '3' }).max).toBe(3);

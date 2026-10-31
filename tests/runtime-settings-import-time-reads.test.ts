@@ -10,7 +10,7 @@ import { GROK_REVIEW_TIMEOUT_MS, grokReviewTimeoutMs } from "@/lib/crawl/agent-r
 import { secondReviewTransportTimeoutMs } from "@/lib/crawl/second-review-transport";
 import { DEEPSEEK_REVIEW_TIMEOUT_MS, deepseekReviewTimeoutMs } from "@/lib/crawl/deepseek-review-policy";
 import { grokSessionTimeoutMs } from "@/lib/crawl/jobs/grok-session";
-import { QWEN_CALL_TIMEOUT_MS, qwenCallTimeoutMs } from "@/lib/crawl/jobs/product-audit";
+import { QWEN_CALL_TIMEOUT_MS, qwenCallTimeoutMs } from "@/lib/crawl/jobs/audit-qwen";
 import { QWEN_AUTO_CALL_TIMEOUT_MS, qwenAutoCallTimeoutMs } from "@/lib/crawl/audit-second-opinion-auto";
 import { heldQwenCallTimeoutMs } from "@/lib/crawl/held-qwen-retry";
 import { SPLIT_CONFIRM_TIMEOUT_MS, splitConfirmTimeoutMs } from "@/lib/crawl/gate-split-confirm";
