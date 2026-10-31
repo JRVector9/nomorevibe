@@ -16,8 +16,16 @@ it('reads a direct AI2 primary and gateway fallback without changing any other s
   expect(read).toEqual(saved);
 });
 
-it('does not enable an unsupported direct first reviewer', () => {
-  expect(crawlSettingsSchema.safeParse({ ...DEFAULT_CRAWL_SETTINGS, firstReview: primary }).success).toBe(false);
+// PR 3b-C (transport unify): the same direct engine may also be the first reviewer; it round-trips like any other first reviewer.
+it('reads a direct first reviewer and keeps CLI model names narrow', () => {
+  const saved = { ...structuredClone(DEFAULT_CRAWL_SETTINGS), firstReview: primary, firstReviewAdditional: [fallback] };
+  expect(crawlSettingsSchema.parse(saved)).toEqual(saved);
+  const read = mergeWithDefaults(saved);
+  expect(settingsUnreadable(read)).toBe(false);
+  expect(read.firstReview).toEqual(primary);
+  expect(crawlSettingsSchema.safeParse({ ...DEFAULT_CRAWL_SETTINGS, firstReview: { provider: 'local-direct', model: '[gpu3090] Qwen 3.8' } }).success).toBe(true);
+  expect(crawlSettingsSchema.safeParse({ ...DEFAULT_CRAWL_SETTINGS, firstReview: { provider: 'claude-cli', model: '[gpu3090] Qwen 3.8' } }).success).toBe(false);
+  expect(crawlSettingsSchema.safeParse({ ...DEFAULT_CRAWL_SETTINGS, firstReview: { provider: 'codex-cli', model: 'gpt' } }).success).toBe(false);
 });
 
 it('preserves the same Qwen consensus policy across the transport change', () => {

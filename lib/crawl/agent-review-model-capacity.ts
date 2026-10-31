@@ -12,7 +12,7 @@ import type { JobLease } from '@/lib/jobs/control';
 import { itemBindingHash } from '@/lib/jobs/items/types';
 import { agentReviewBinding } from './agent-review-ownership';
 import { claimAgentReviewWithModelReservation, AgentReviewItemModelReservationRequired, claimConsumerItemAgentReviewWithModelReservation, type ItemModelCapacityReviewClaim, type ReviewDomainContext, type ModelCapacityReviewClaim } from './agent-review-repository';
-import { prepareAi1GatewayCall, reviewWithReservedAi1Gateway, reviewWithReservedAi1ItemGateway, settleAi1GatewayNotStarted,
+import { prepareAi1DirectCall, prepareAi1GatewayCall, reviewWithReservedAi1Gateway, reviewWithReservedAi1ItemGateway, settleAi1GatewayNotStarted,
   settleAi1ItemGatewayNotStarted, type GatewayNotStarted, type PreparedAi1GatewayCall } from './agent-review-gateway';
 import type { AgentReviewResult } from './agent-review';
 import type { ReviewInput } from './agent-review-contract';
@@ -26,13 +26,14 @@ export async function claimAgentReviewItemModelCapacity(intent: AgentReviewItemM
   assertLiveReviewAdapterAllowed();
   if (!(intent instanceof AgentReviewItemModelReservationRequired)) throw new Error('invalid_agent_review_item_model_intent');
   const expected = new AgentReviewItemModelReservationRequired(intent.intent).intent;
-  const { context, owner, model } = expected;
+  const { context, owner, model, provider } = expected;
   if (signal?.aborted) throw new ModelCapacityDeferredError('reservation_lost');
-  const call = prepareAi1GatewayCall(context.input, { model });
+  // abcllm 은 예전 그대로(동기·게이트웨이 계약), local-direct 는 엔진 직접 계약(PR 3b-C) — 같은 장부 kind·같은 전송 함수로 간다.
+  const call = provider === 'local-direct' ? await prepareAi1DirectCall(context.input, { model, signal }) : prepareAi1GatewayCall(context.input, { model });
   if (call.kind !== 'prepared') throw new ModelCapacityDeferredError('provider_contract_unavailable');
-  const binding = agentReviewBinding(context.candidate.id, context.input, { provider: 'abcllm', model });
+  const binding = agentReviewBinding(context.candidate.id, context.input, { provider, model });
   const identity = modelCapacityRequestIdentitySchema.parse({ owner, class: 'first', pool: 'reviewer',
-    routeId: 'crawl-agent-review', provider: 'abcllm', model, workKey: `ai1:${context.candidate.id}:${itemBindingHash(binding)}` });
+    routeId: 'crawl-agent-review', provider, model, workKey: `ai1:${context.candidate.id}:${itemBindingHash(binding)}` });
   const pending = await findOwnPendingModelRequest(identity);
   if (pending?.state === 'dispatched') throw new ModelCapacityDeferredError('dispatched');
   const request = { ...identity, requestId: pending?.requestId ?? randomUUID() };
@@ -177,14 +178,15 @@ export async function claimAgentReviewModelCapacity(input: Context, wait?: Ai1Re
   const signal = input.signal;
   input = { ...structuredClone({ candidate: input.candidate, document: input.document, settings: input.settings,
     input: input.input, provider: input.provider, model: input.model, lease: input.lease }), signal };
-  if (input.provider !== 'abcllm') throw new ModelCapacityDeferredError('provider_contract_unavailable');
-  const call = prepareAi1GatewayCall(input.input, { model: input.model });
+  if (input.provider !== 'abcllm' && input.provider !== 'local-direct') throw new ModelCapacityDeferredError('provider_contract_unavailable');
+  const call = input.provider === 'local-direct' ? await prepareAi1DirectCall(input.input, { model: input.model, signal })
+    : prepareAi1GatewayCall(input.input, { model: input.model });
   if (call.kind !== 'prepared') throw new ModelCapacityDeferredError('provider_contract_unavailable');
   const lease = roleLeaseFromEnv('reviewer', process.env);
   if (!lease) throw new ModelCapacityDeferredError('owner_unavailable');
   const owner = modelCapacityOwnerSchema.parse({ instanceId: lease.instanceId, bootId: lease.bootId });
   const identity = modelCapacityRequestIdentitySchema.parse({ owner, class: 'first', pool: 'reviewer',
-    routeId: 'crawl-agent-review', provider: 'abcllm', model: input.model,
+    routeId: 'crawl-agent-review', provider: input.provider, model: input.model,
     workKey: `ai1:${input.candidate.id}:${itemBindingHash(agentReviewBinding(input.candidate.id, input.input, { provider: input.provider, model: input.model }))}` });
   const pending = await findOwnPendingModelRequest(identity);
   if (pending?.state === 'dispatched') throw new ModelCapacityDeferredError('dispatched');

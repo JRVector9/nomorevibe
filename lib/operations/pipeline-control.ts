@@ -9,6 +9,7 @@ import { batchPolicyHash, batchPolicySchema } from "@/lib/jobs/batches";
 import { modelCapacityPolicyHash, modelCapacityPolicySchema, type ModelCapacityPolicy } from "@/lib/llm/capacity";
 import { deviceFallbackLimit } from "@/lib/llm/capacity-devices";
 import { cliServingContractSchema, resolveCliServingContract, type CliProvider } from "@/lib/llm/cli-serving-contract";
+import { DIRECT_OPENAI_CHAT_PROTOCOL } from "@/lib/llm/direct-serving-contract";
 import { crawlTaglineServingContractSchema, resolveCrawlTaglineServingContract } from "@/lib/llm/crawl-tagline-serving-contract";
 import { productTaglineKoServingContractSchema, resolveProductTaglineKoServingContract } from "@/lib/llm/product-tagline-ko-serving-contract";
 import { productTranslationServingContractSchema, resolveProductTranslationServingContract } from "@/lib/llm/product-translation-serving-contract";
@@ -189,14 +190,20 @@ const ai2Gateway = (provider: "abcllm" | "local-direct"): RouteSpec => ({ routeI
   return contract?.routeId === "second-review" && contract.provider === provider && contract.model === model
     && (contract.provider !== "local-direct" || mapping.providerBudgetId === contract.backendId && mapping.groupId === contract.physicalGroup);
 } });
+/** AI1 엔진 직접(local-direct, PR 3b-C): AI2 직접과 같은 판정 — 계약 이름이 선택과 같고, 직접 계약이면 장부 매핑이 그 장비(backend·group)다. */
+const ai1Direct: RouteSpec = { routeId: "crawl-agent-review", provider: "local-direct", served: (model, mapping) => {
+  const contract = ai1GatewayServingContractSchema.safeParse(structuredClone(resolveAi1GatewayServingContract(model, "local-direct"))).data;
+  return contract?.routeId === "crawl-agent-review" && contract.provider === "local-direct" && contract.model === model
+    && (contract.protocol !== DIRECT_OPENAI_CHAT_PROTOCOL || mapping.providerBudgetId === contract.backendId && mapping.groupId === contract.physicalGroup);
+} };
 const cli = (routeId: string, provider: CliProvider): RouteSpec => ({ routeId, provider, served: model => {
   const contract = cliServingContractSchema.safeParse(structuredClone(resolveCliServingContract(routeId, provider, model))).data;
   return contract?.routeId === routeId && contract.provider === provider && contract.model === model;
 } });
 /** 공통 모델 슬롯을 거치는 실제 호출 지점. served가 null이면 open에서 항상 미루는 admission 전용 경로다. */
 const MODEL_ROUTES: readonly RouteSpec[] = [
-  gateway("crawl-agent-review", resolveAi1GatewayServingContract, ai1GatewayServingContractSchema),
-  ai2Gateway("abcllm"), ai2Gateway("local-direct"),
+  gateway("crawl-agent-review", model => resolveAi1GatewayServingContract(model), ai1GatewayServingContractSchema),
+  ai1Direct, ai2Gateway("abcllm"), ai2Gateway("local-direct"),
   gateway("product-search-profile", resolveTextProfileServingContract, textProfileServingContractSchema),
   gateway("product-search-verify", resolveSearchVerifyServingContract, searchVerifyServingContractSchema),
   gateway("reason-translate", resolveReasonTranslationServingContract, reasonTranslationServingContractSchema),

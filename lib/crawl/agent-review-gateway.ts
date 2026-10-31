@@ -18,6 +18,7 @@ import { REVIEW_SYSTEM_PROMPT, type AgentReviewResult, type ReviewFailure, type 
 import { verifyAi2TokenBudget } from "./second-review-direct-tokenize";
 import { REVIEW_GATEWAY_LADDER, reviewGatewayLadder } from "@/lib/llm/deadline-ladder";
 import { servingContractAuth } from "@/lib/llm/serving-contract-store";
+import { DIRECT_OPENAI_CHAT_PROTOCOL } from "@/lib/llm/direct-serving-contract";
 
 /**
  * Bearer for a contract's endpoint. An admin contract (model_serving_contracts) decides: gateway key, no key, or its stored key.
@@ -28,7 +29,7 @@ export function contractBearer(contract: { routeId: string; model: string; provi
   if (!stored || stored.mode === "gateway") return contract.provider === "abcllm" ? process.env.ABCLLM_API_KEY?.trim() || undefined : null;
   return stored.mode === "none" ? null : stored.apiKey ?? undefined;
 }
-/** An AI2 local-direct contract, or an admin contract marked direct (0148): the endpoint is the engine, not the abcLLM gateway. */
+/** A local-direct contract (AI1 or AI2, PR 3b-C), or an admin contract marked direct (0148): the endpoint is the engine, not the abcLLM gateway. */
 export const directTransport = (contract: { routeId: string; model: string; provider: string }): boolean =>
   contract.provider === "local-direct" || servingContractAuth(contract.routeId, contract.model)?.transport === "direct";
 const bearerHeaders = (key: string | null): Record<string, string> =>
@@ -170,6 +171,27 @@ function gatewayWire(model: string, serialized: string, systemSuffix: string = G
   });
 }
 
+/**
+ * 엔진에 직접 보내는(local-direct) 심사 wire — 게이트웨이와 같은 정책 글·스키마·온도·thinking 끔이고, 게이트웨이 전용 칸
+ * (context_strategy·reasoning_effort)만 뺀다. 계약의 엔진 모델 이름(게이트웨이 라벨 없음)이 나가고, 직접 계약이면 그 출력 상한을 쓴다.
+ * AI1·AI2 가 같은 wire 를 쓴다(PR 3b-C) — AI2 의 예전 wire 와 바이트까지 같다.
+ */
+function directReviewWire(contract: { model: string; maxOutputTokens?: number }, serialized: string): string {
+  const body = JSON.parse(gatewayWire(contract.model, serialized));
+  delete body.context_strategy;
+  delete body.reasoning_effort;
+  if (contract.maxOutputTokens !== undefined) body.max_tokens = contract.maxOutputTokens;
+  return JSON.stringify(body);
+}
+/** 직접 계약(direct-openai-chat-v1)의 요청 상한: 엔진이 센 입력 + 출력 상한이 requestTokenBound 안이어야 판단으로 받는다(AI2 와 같은 규칙). */
+function directBudgetResult(contract: { protocol: string; requestTokenBound?: number; maxOutputTokens?: number },
+  usage: { inputTokens: number; outputTokens: number } | null, result: () => AgentReviewResult): AgentReviewResult {
+  const { requestTokenBound, maxOutputTokens } = contract;
+  if (contract.protocol !== DIRECT_OPENAI_CHAT_PROTOCOL || requestTokenBound === undefined || maxOutputTokens === undefined || !usage) return result();
+  return usage.inputTokens + maxOutputTokens > requestTokenBound || usage.outputTokens > maxOutputTokens
+    ? { ok: false, error: "invalid_output", detail: "request_token_bound_exceeded" } : result();
+}
+
 export async function reviewWithGateway(input: ReviewInput, options: {
   model: string; timeoutMs?: number; request?: typeof fetch; signal?: AbortSignal;
   /**
@@ -309,7 +331,7 @@ export function settleAi2GatewayNotStarted(call: PreparedAi2GatewayCall, dispatc
   return issueNotStarted(checked.data);
 }
 
-/** No caller descriptor or injected request can enable a serving deployment. */
+/** No caller descriptor or injected request can enable a serving deployment. abcllm contracts only (gateway, or admin transport direct). */
 export function prepareAi1GatewayCall(input: ReviewInput, options: { model: string; timeoutMs?: number }):
   PreparedAi1GatewayCall | { kind: "unsupported"; reason: "provider_contract_unavailable" } {
   assertLiveReviewAdapterAllowed();
@@ -319,10 +341,39 @@ export function prepareAi1GatewayCall(input: ReviewInput, options: { model: stri
   const resolved = resolveAi1GatewayServingContract(model);
   if (!resolved) return unsupported;
   const contract = ai1GatewayServingContractSchema.parse(structuredClone(resolved));
-  if (contractBearer(contract) === undefined) return unsupported;
+  if (contract.provider !== "abcllm" || contractBearer(contract) === undefined) return unsupported;
   const serialized = JSON.stringify(snapshot.snapshot);
   if (contract.model !== model || Buffer.byteLength(serialized, "utf8") > MAX_REVIEW_INPUT_BYTES) return unsupported;
   const wire = gatewayWire(model, serialized);
+  const call = Object.freeze({ kind: "prepared" as const, wireHash: sha(wire),
+    servingContractHash: ai1GatewayServingContractHash(contract), totalTokenBound: contract.totalTokenBound,
+    model, inputHash: snapshot.inputHash });
+  preparedCalls.set(call, { wire, inputIdentity: sha(JSON.stringify(snapshot)), contract: freeze(contract), timeoutMs, used: false });
+  return call;
+}
+
+/**
+ * local-direct AI1 준비(PR 3b-C 전송 통합) — 같은 엔진이 AI1·AI2 를 맡는다. 운영자가 readback 한 local-direct 계약만 연다:
+ * direct-openai-chat-v1(AI2 와 같은 모양 — 엔진 tokenizer 로 요청 상한을 먼저 확인한다) 또는 raw 총량 상한 모양. 선택은 엔진 이름이거나
+ * 그 계약에 닿는 등록부 키이고 장부의 model 이다. wire 는 directReviewWire(라벨 없는 엔진 이름, 게이트웨이 칸·엄격 terminal 헤더 없음)다.
+ * 준비 호출은 abcllm 과 같은 one-use 이며 같은 전송 함수(reviewWithReservedAi1Gateway·…ItemGateway)가 쓴다.
+ */
+export async function prepareAi1DirectCall(input: ReviewInput, options: { model: string; timeoutMs?: number; signal?: AbortSignal }):
+  Promise<PreparedAi1GatewayCall | { kind: "unsupported"; reason: "provider_contract_unavailable" }> {
+  assertLiveReviewAdapterAllowed();
+  const snapshot = structuredClone(input), model = gatewayModel(options.model), timeoutMs = options.timeoutMs ?? modelCallTimeoutMs("review-gateway", options.model);
+  const unsupported = { kind: "unsupported", reason: "provider_contract_unavailable" } as const;
+  if (!model || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || options.signal?.aborted) return unsupported;
+  const resolved = resolveAi1GatewayServingContract(model, "local-direct");
+  if (!resolved) return unsupported;
+  const contract = ai1GatewayServingContractSchema.parse(structuredClone(resolved));
+  if (contract.provider !== "local-direct" || contractBearer(contract) === undefined) return unsupported;
+  const serialized = JSON.stringify(snapshot.snapshot);
+  if (Buffer.byteLength(serialized, "utf8") > MAX_REVIEW_INPUT_BYTES) return unsupported;
+  const wire = directReviewWire(contract, serialized);
+  if (contract.protocol === DIRECT_OPENAI_CHAT_PROTOCOL && !await verifyAi2TokenBudget(contract, wire, { timeoutMs, signal: options.signal }))
+    return unsupported;
+  if (options.signal?.aborted) return unsupported;
   const call = Object.freeze({ kind: "prepared" as const, wireHash: sha(wire),
     servingContractHash: ai1GatewayServingContractHash(contract), totalTokenBound: contract.totalTokenBound,
     model, inputHash: snapshot.inputHash });
@@ -400,7 +451,8 @@ export async function reviewWithReservedAi1Gateway(input: ReviewInput, dispatch:
   if (combined.aborted) return { result: { ok: false, error: failure(combined.reason) }, terminal: null, notStarted: issueNotStarted(owned) };
   let body: string;
   try {
-    const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: "manual",
+    const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST",
+      redirect: state.contract.provider === "local-direct" ? "error" : "manual",
       headers: bearerHeaders(key), body: state.wire, signal: combined });
     if (response.status !== 200) {
       try { await response.body?.cancel(); } catch { /* A nonterminal response never releases its charge. */ }
@@ -416,7 +468,7 @@ export async function reviewWithReservedAi1Gateway(input: ReviewInput, dispatch:
   const evidence = ai1GatewayTerminalEvidenceSchema.parse({ version: 1, kind: "ai1_gateway_terminal",
     dispatch: owned, responseHash: sha(body), ...completed });
   terminals.set(terminal, freeze(evidence));
-  return { result: gatewayResult(snapshot, body), terminal };
+  return { result: directBudgetResult(state.contract, completed.actualUsage, () => gatewayResult(snapshot, body)), terminal };
 }
 
 
@@ -445,11 +497,7 @@ export async function prepareAi2GatewayCall(input: ReviewInput, options: {
   if (contract.provider !== provider || !ai2ServingContractMatches(contract, model) || Buffer.byteLength(serialized, "utf8") > MAX_REVIEW_INPUT_BYTES) return unsupported;
   let wire = gatewayWire(contract.model, serialized);
   if (contract.provider === "local-direct") {
-    const body = JSON.parse(wire);
-    delete body.context_strategy;
-    delete body.reasoning_effort;
-    body.max_tokens = contract.maxOutputTokens;
-    wire = JSON.stringify(body);
+    wire = directReviewWire(contract, serialized);
     if (!await verifyAi2TokenBudget(contract, wire, { timeoutMs, signal: options.signal })) return unsupported;
   } else if (contract.requestBudget) {
     const body = JSON.parse(wire);
@@ -568,7 +616,8 @@ export async function reviewWithReservedAi1ItemGateway(input: ReviewInput, dispa
   if (combined.aborted) return { result: { ok: false, error: failure(combined.reason) }, terminal: null, notStarted: issueNotStarted(owned) };
   let body: string;
   try {
-    const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: "manual",
+    const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST",
+      redirect: state.contract.provider === "local-direct" ? "error" : "manual",
       headers: bearerHeaders(key), body: state.wire, signal: combined });
     if (response.status !== 200) {
       try { await response.body?.cancel(); } catch { /* Unknown physical completion retains the original full charge. */ }
@@ -582,7 +631,7 @@ export async function reviewWithReservedAi1ItemGateway(input: ReviewInput, dispa
   const evidence = ai1ItemGatewayTerminalEvidenceSchema.parse({ version: 1, kind: "ai1_item_gateway_terminal",
     dispatch: owned, responseHash: sha(body), ...completed });
   ai1ItemTerminals.set(terminal, freeze(evidence));
-  return { result: gatewayResult(snapshot, body), terminal };
+  return { result: directBudgetResult(state.contract, completed.actualUsage, () => gatewayResult(snapshot, body)), terminal };
 }
 
 

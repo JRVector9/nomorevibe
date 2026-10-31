@@ -39,12 +39,14 @@ function call(): CapacityArtifact["calls"][number] {
     sourceRevisionHash: hash, provider: "abcllm", model: "first", startedAt: at(1), endedAt: at(500),
     ok: true, error: null, inputTokens: 200, outputTokens: 20 };
 }
-it("accepts direct AI2 identities while retaining the three-provider first-review boundary", () => {
+it("accepts direct AI2 identities and a direct first reviewer (PR 3b-C), never an unknown provider", () => {
   const value = artifact();
   value.manifest.models.second = [{ provider: "local-direct", model: "qwen3.8-flash-next", canonicalModel: "qwen3.8-flash-next" }];
   value.manifest.models.fallbacks = [{ provider: "local-direct", model: "direct-backup", canonicalModel: "direct-backup" }];
   expect(parseCapacityArtifact(value).manifest.models.second[0].provider).toBe("local-direct");
   Object.assign(value.manifest.models.first, { provider: "local-direct" });
+  expect(parseCapacityArtifact(value).manifest.models.first.provider).toBe("local-direct");
+  Object.assign(value.manifest.models.first, { provider: "codex-cli" });
   expect(() => parseCapacityArtifact(value)).toThrow();
 });
 function labels(value: CapacityArtifact, expected: "approve" | "reject") {

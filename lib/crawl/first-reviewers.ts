@@ -76,7 +76,7 @@ export class FirstReviewModelDeferredError extends ModelCapacityDeferredError {
 /** Suggestions only. Stored primary/additional selections and retry pinning remain authoritative. */
 export function firstReviewCandidates(env: ModelEnvironment = process.env): FirstReviewer[] {
   return modelCandidates("first-review", env).map(model => {
-    if (!["abcllm", "claude-cli", "grok-cli"].includes(model.provider)) throw new Error(`first_review_candidate_provider_unsupported:${model.key}`);
+    if (!["abcllm", "claude-cli", "grok-cli", "local-direct"].includes(model.provider)) throw new Error(`first_review_candidate_provider_unsupported:${model.key}`);
     return { provider: model.provider as FirstReviewer["provider"], model: modelRequestName(model) };
   });
 }
