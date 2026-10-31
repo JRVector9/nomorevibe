@@ -7,7 +7,7 @@
 | 항목 | 위치 | 바꾸려면 |
 | --- | --- | --- |
 | 1차·2차·단계별 모델 선택 | DB (`/admin/models`) | 관리 화면. 배포 없음 |
-| **서빙 계약**: 게이트웨이 9개 경로(1차, 2차 게이트웨이, 번역, 소개, 검색) | DB `model_serving_contracts`(0147) 위에 env `ABCLLM_SERVING_CONTRACTS` | 관리 화면. 배포 없음 |
+| **서빙 계약**: 게이트웨이 9개 경로(1차, 2차 게이트웨이, 번역, 소개, 검색) | DB `model_serving_contracts`(0147)만(env 계약은 2026-10-31 제거) | 관리 화면. 배포 없음 |
 | **모델 등록부 정의**(장비, 주소, 엔진 모델명, abcLLM 이름표, 제한 시간·토큰) | DB `model_registry_overrides`(0148) 위에 코드 기본값 | 관리 화면. 배포 없음 |
 | 용량 경로·한도 | DB 정책 | 지금은 `pipeline-control capacity policy`(DRAIN 필요). 관리 화면은 다음 작업이다 |
 | AI2 직접·local·CLI 계약 | env | 다음 작업이다 |
@@ -23,7 +23,7 @@
 
 | 방식 | 보내는 키 |
 | --- | --- |
-| `gateway`(기본) | abcLLM 게이트웨이 키 `ABCLLM_API_KEY`. 직접 연결(local-direct) 계약이면 키 없음(이전과 같음) |
+| `gateway`(기본) | 게이트웨이 키 — 게이트웨이 제거(2026-10-30) 뒤로는 abcllm 계약을 열지 않는다(호출 거절). 직접 연결(local-direct) 계약이면 키 없음 |
 | `none` | 키를 보내지 않는다(키 없는 직접 연결 서버) |
 | `stored` | 이 연결에 저장한 키 |
 

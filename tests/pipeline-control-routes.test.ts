@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { modelCapacityPolicyHash, type ModelCapacityPolicy } from "@/lib/llm/capacity";
 import { deferredRoutes, modelRouteContracts, parsePipelineControlArgs, planPipelineControl, usedModelRoutes, type ControlSnapshot, type ModelEnv,
   type TransitionCommand } from "@/lib/operations/pipeline-control";
@@ -54,7 +54,7 @@ function transition(...args: string[]): TransitionCommand {
   if (command.name === "status") throw new Error("unexpected status");
   return command;
 }
-const MODELS: ModelEnv = { crawlReview: "env-ai1", translate: "tr", productTranslate: "pt", tagline: "tg", profile: "pf", verify: "vf", introCheck: "intro" };
+const MODELS: ModelEnv = { translate: "tr", productTranslate: "pt", tagline: "tg", profile: "pf", verify: "vf", introCheck: "intro" };
 const SETTINGS = { firstReview: { provider: "abcllm", model: "ai1-gw" },
   secondReview: { voters: [{ provider: "abcllm", model: "ai2-gw" }, { provider: "claude-cli", model: "opus" }],
     fallbacks: [{ provider: "grok-cli", model: "grok-4" }, { provider: "claude-cli", model: "opus" }] } };
@@ -96,6 +96,7 @@ const capacity = (mode: "draining" | "open", policy: ModelCapacityPolicy) =>
   ({ ...snapshot().capacity, mode, revision: 2, policy, policyHash: modelCapacityPolicyHash(policy) });
 
 beforeEach(() => { mocks.served.clear(); mocks.ai2Contracts.clear(); });
+afterEach(() => vi.unstubAllEnvs());
 
 const direct: Ai2DirectServingContract = { version: 1, protocol: "ai2-direct-openai-chat-v1", routeId: "second-review",
   provider: "local-direct", model: "direct-ai2", responseModel: "direct-engine", deploymentRevision: "direct-v1",
@@ -221,10 +222,13 @@ describe("capacity open is judged only on the combinations in use", () => {
     const uses = usedModelRoutes(snapshot(), MODELS);
     expect(uses).toHaveLength(IN_USE.length);
     expect(uses).toEqual(expect.arrayContaining(IN_USE.map(([routeId, provider, model]) => expect.objectContaining({ routeId, provider, model }))));
+    // 1차 심사자 설정이 없으면 claude-cli 의 모델 미상(null)이다 — CRAWL_REVIEW_MODEL 은 2026-10-31부터 읽지 않는다
+    vi.stubEnv("CRAWL_REVIEW_MODEL", "env-ai1");
     const implicit = usedModelRoutes(snapshot({ reviewSettings: { secondReview: { voters: [{ provider: "abcllm", model: "ai2-gw" }] } },
       auditCampaign: { provider: "abcllm", model: "audit-gw" } }), MODELS);
-    expect(implicit).toEqual(expect.arrayContaining([{ routeId: "crawl-agent-review", provider: "claude-cli", model: "env-ai1" },
+    expect(implicit).toEqual(expect.arrayContaining([{ routeId: "crawl-agent-review", provider: "claude-cli", model: null },
       { routeId: "product-audit", provider: "abcllm", model: "audit-gw" }]));
+    expect(implicit.some(use => use.model === "env-ai1")).toBe(false);
     expect(implicit.some(use => use.routeId === "grok-session-check")).toBe(false);
     expect(usedModelRoutes(snapshot({ auditCampaign: null }), MODELS).some(use => use.routeId === "product-audit")).toBe(false);
     // 남은 감사 모델 바꾸기(0112)로 Qwen 직접 심사가 묻는 감사는 공통 슬롯을 거치지 않는다
@@ -236,7 +240,7 @@ describe("capacity open is judged only on the combinations in use", () => {
     const corrupt = usedModelRoutes(snapshot({ reviewSettings: { reviewConcurrency: 99 } }), MODELS);
     expect(corrupt).toEqual(expect.arrayContaining([{ routeId: "crawl-agent-review", provider: "unknown", model: null },
       { routeId: "second-review", provider: "unknown", model: null }, { routeId: "grok-session-check", provider: "unknown", model: null }]));
-    const empty = usedModelRoutes(snapshot({ reviewSettings: {} }), { ...MODELS, crawlReview: null, tagline: "" });
+    const empty = usedModelRoutes(snapshot({ reviewSettings: {} }), { ...MODELS, tagline: "" });
     expect(empty).toEqual(expect.arrayContaining([{ routeId: "crawl-agent-review", provider: "claude-cli", model: null },
       { routeId: "crawl-tagline", provider: "abcllm", model: null }]));
     ALL_SERVED.forEach(model => mocks.served.add(model));

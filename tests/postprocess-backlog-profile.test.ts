@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { JobContext } from "@/lib/jobs/runner";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
+import { scopedModel } from "@/lib/llm/model-registry";
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 
 const m = vi.hoisted(() => ({ pending: vi.fn(), record: vi.fn(), write: vi.fn(), contended: vi.fn() }));
 vi.mock("@/lib/domain/products/search-profiles", () => ({ pendingProfiles: m.pending, recordProfileResult: m.record }));
@@ -17,7 +19,9 @@ const roleEnv = { ROLE_LEASE_ROLE: "text", ROLE_LEASE_INSTANCE_ID: "m3-text", RO
 let active = 0, peak = 0;
 beforeEach(() => {
   vi.clearAllMocks(); active = 0; peak = 0;
-  vi.stubEnv("ABCLLM_API_KEY", "test");
+  // The job opens only on an engine connected directly (admin contract, transport direct); the gateway key was removed 2026-10-30.
+  setServingContractSnapshotForTest([{ routeId: "product-search-profile", model: scopedModel("product-search-profile", "[MLX] gpt-oss-120b"),
+    contract: {}, auth: "none", apiKey: null, transport: "direct" }]);
   for (const [key, value] of Object.entries(roleEnv)) vi.stubEnv(key, value);
   m.pending.mockResolvedValueOnce([task(1), task(2), task(3), task(4)]).mockResolvedValue([]);
   m.record.mockResolvedValue(true);
@@ -27,7 +31,7 @@ beforeEach(() => {
     active--; return { kind: "result", result: { ok: true, en: ["list"], ko: ["목록"] } };
   });
 });
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => { setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); });
 
 it("uses one worker for the batch while another route waits on the same model group, and says so", async () => {
   m.contended.mockResolvedValue(true);

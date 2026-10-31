@@ -44,8 +44,8 @@ mini와 외부 Oracle Osaka의 Kuma 수신기 연결·장애 드릴 결과는 [�
 - 이미지에는 `tsx`가 production 의존성으로 포함된다. `lib`, `scripts`, `drizzle`, `tsconfig.json`도 포함한다.
   CLI는 worker 이미지에만 설치하며 Codex `0.153.4`, Claude Code `2.1.263`을 고정한다. 버전을 바꾸면
   `CODEX_CLI_VERSION` 또는 `CLAUDE_CODE_VERSION` build arg를 명시하고 이미지 내부 호출/timeout을 다시 검증한다.
-- 카테고리는 Codex CLI 2단계와 키워드 폴백을 사용한다. 신규 AI 리뷰 모델 `CRAWL_REVIEW_MODEL`은
-  별도 Claude CLI 경로이며 기본값이 없다. 승인된 모델·인증·관측 결과를 확인한 뒤 심사 정책에 맞춰 켠다.
+- 카테고리는 Codex CLI 2단계와 키워드 폴백을 사용한다. 1차 AI 리뷰 모델은 관리자 설정 `firstReview`이며
+  (2026-10-31부터 env를 읽지 않는다) 기본값이 없다. 승인된 모델·인증·관측 결과를 확인한 뒤 심사 정책에 맞춰 켠다.
 - `ranking-refresh`는 정기 스케줄이 없다. `click-rollup`의 done=true 성공 완료 트랜잭션이 요청한다.
   예전 매시 5분 HTTP 스케줄은 제거한다. `heartbeat`는 scheduler 생존 관측 전용으로 HTTP 예약은 400을 반환한다. cron API의 HTTP 202는 접수 결과이며 완료 확인은 `/admin/status`에서 한다.
 
@@ -416,7 +416,7 @@ Dokploy와 Keychain에만 저장하고 렌더링된 환경을 로그나 문서�
 뒤 두 원문 비밀값을 환경에서 제거한다. CLI 설정·저장소 지침·플러그인·셸·웹을 격리하고, 구조화
 출력의 제품 ID 전체 집합이 입력과 정확히 같을 때만 결과를 채택한다.
 
-리뷰는 별도 Claude CLI의 `CRAWL_REVIEW_MODEL`·effort low·20초 제한으로 한 tick에 AI 호출 최대
+리뷰는 관리자 설정 `firstReview`의 모델·effort low·20초 제한으로 한 tick에 AI 호출 최대
 1개다. 모델 기본값은 없으며 카테고리 모델을 리뷰 모델로 자동 채택하지 않는다. Claude Code CLI
 `2.1.263`은 `--safe-mode`로 사용자 설정을 격리하면서 OAuth 인증을 보존한다. 운영에서는
 `claude setup-token`으로 발급한 장기 `CLAUDE_CODE_OAUTH_TOKEN`을 reviewer에만 주입한다. 로컬
@@ -440,7 +440,7 @@ CLI smoke는 통과했으나 운영 장기 Codex/Claude 인증 설정과 24시�
 1. 초기 DB 모드는 `off`로 둔다. B 전체 릴리스가 모든 reviewer/publisher에 적용됐고
    reviewer의 명시한 모델·실제 인증·제한 시간 내 응답을 확인한다.
 2. 웹에 `CRAWL_REVIEW_READY=true`를 주입해 재시작한다. 이 플래그는 변경 준비 조건이며
-   저장된 DB 모드를 바꾸지 않는다. reviewer에는 `CRAWL_REVIEW_MODEL`과 인증을 별도로 주입한다.
+   저장된 DB 모드를 바꾸지 않는다. reviewer에는 인증을 별도로 주입하고, 1차 심사 모델은 관리자 설정에서 고른다.
 3. `/admin/review`에서 변경 사유를 입력하고 `observe`로 전환한다. 관측 모드는 심사 이력만
    남기고 후보 상태나 기존 발행 조건을 바꾸지 않는다. 실제 표본의 기대 판정과 결과를 비교한다.
 4. 검토 후 같은 화면에서 사유와 함께 `enforce`로 전환한다. 현재 입력·정책·근거에 유효한 승인과

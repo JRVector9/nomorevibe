@@ -1,11 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanKeywords, keywordText, parseKeywords, profileEvidence, writeKeywords } from "@/lib/domain/products/search-profile";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanKeywords, keywordText, parseKeywords, parseProfileGatewayBody, profileEvidence, writeKeywords } from "@/lib/domain/products/search-profile";
 import { canRetryProfileGeneration } from "@/lib/domain/products/search-profile-retry";
-
-// These legacy transport units do not open a database; actual disabled SQL is covered separately.
-vi.mock("@/lib/llm/capacity-repository", () => ({
-  readModelCapacityCallerControl: async () => ({ mode: "disabled", epoch: 1, revision: 1, policyHash: null, policy: null }),
-}));
 
 const product = {
   name: "Coche", url: "https://coche.test", category: "Productivity", tagline: "Shopping list", description: "Shopping list",
@@ -77,8 +72,8 @@ describe("증거", () => {
   });
 });
 
-describe("gateway transport and output failures", () => {
-  beforeEach(() => vi.stubEnv("ABCLLM_API_KEY", "fixture-key"));
+// The HTTP body reader is shared by the native direct-engine call (tests/text-profile-gateway-native.test.ts covers its transport).
+describe("gateway output failures and the removed legacy sender", () => {
   afterEach(() => vi.unstubAllEnvs());
 
   it.each([
@@ -88,32 +83,33 @@ describe("gateway transport and output failures", () => {
     '{"choices":{"0":{"message":{"content":"{\\\"keywords_en\\\":[],\\\"keywords_ko\\\":[]}"}}}}',
     '{"choices":[{"message":null}]}',
     '{"choices":[{"message":{"content":{"keywords_en":[],"keywords_ko":[]}}}]}',
-  ])("keeps a malformed HTTP 200 response under the quality attempt cap: %s", async body => {
-    const request = vi.fn<typeof fetch>().mockResolvedValue(new Response(body, { status: 200 }));
-    const result = await writeKeywords(profileEvidence(product, null), { timeoutMs: 1_000, request });
+  ])("keeps a malformed HTTP 200 response under the quality attempt cap: %s", body => {
+    const result = parseProfileGatewayBody(body, product.name);
     expect(result).toEqual({ ok: false, error: "invalid_output" });
     if (!result.ok) expect(canRetryProfileGeneration(result.error, 5)).toBe(false);
   });
 
-  it("keeps an actual fetch network exception retryable", async () => {
-    const request = vi.fn<typeof fetch>().mockRejectedValue(new TypeError("fetch failed"));
-    const result = await writeKeywords(profileEvidence(product, null), { timeoutMs: 1_000, request });
-    expect(result).toEqual({ ok: false, error: "network" });
-    if (!result.ok) expect(canRetryProfileGeneration(result.error, 5)).toBe(true);
+  it("keeps transport failure names retryable past the attempt cap, timeout not", () => {
+    expect(canRetryProfileGeneration("network", 5)).toBe(true);
+    expect(canRetryProfileGeneration("no_key", 5)).toBe(true);
+    expect(canRetryProfileGeneration("timeout", 5)).toBe(false);
   });
 
-  it("keeps a broken response body stream as a transport failure", async () => {
-    const body = new ReadableStream({ start(controller) { controller.error(new TypeError("terminated")); } });
-    const request = vi.fn<typeof fetch>().mockResolvedValue(new Response(body, { status: 200 }));
-    expect(await writeKeywords(profileEvidence(product, null), { timeoutMs: 1_000, request }))
-      .toEqual({ ok: false, error: "network" });
+  it("still accepts a valid HTTP 200 keyword envelope", () => {
+    expect(parseProfileGatewayBody(JSON.stringify({ choices: [{ message: {
+      content: '{"keywords_en":["shopping list"],"keywords_ko":["장보기 목록"]}',
+    } }] }), product.name)).toEqual({ ok: true, en: ["shopping list"], ko: ["장보기 목록"] });
   });
 
-  it("still accepts a valid HTTP 200 keyword envelope", async () => {
+  it("ends the removed gateway sender no_key without a request, even with a leftover gateway key", async () => {
+    // The abcLLM gateway was removed on 2026-10-30; the model is called only through a direct engine contract (capacity path).
+    vi.stubEnv("ABCLLM_API_KEY", "old-gateway-key");
     const request = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ choices: [{ message: {
       content: '{"keywords_en":["shopping list"],"keywords_ko":["장보기 목록"]}',
     } }] }));
-    expect(await writeKeywords(profileEvidence(product, null), { timeoutMs: 1_000, request }))
-      .toEqual({ ok: true, en: ["shopping list"], ko: ["장보기 목록"] });
+    const result = await writeKeywords(profileEvidence(product, null), { timeoutMs: 1_000, request });
+    expect(result).toEqual({ ok: false, error: "no_key" }); expect(request).not.toHaveBeenCalled();
+    // no_key is a provider-side reason: it never spends a quality attempt.
+    if (!result.ok) expect(canRetryProfileGeneration(result.error, 5)).toBe(true);
   });
 });

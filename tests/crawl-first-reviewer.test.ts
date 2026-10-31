@@ -5,8 +5,8 @@ import { crawlSettingsSchema, DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/setting
 /**
  * 1차 심사자를 데이터로 뺀 뒤의 계약.
  *
- * 저장된 설정에 이 칸이 없는 배포 환경이 그대로 돌아야 하고, 채우는 순간 그것이 이겨야 한다 —
- * 재배포 없이 모델을 갈아 끼울 수 있어야 비교 실험이 된다.
+ * 저장된 설정에 이 칸이 없는 배포 환경도 설정을 읽을 수 있어야 하고, 채운 설정만이 1차 심사자를 정한다 —
+ * 재배포 없이 모델을 갈아 끼울 수 있어야 비교 실험이 된다. CRAWL_REVIEW_MODEL 대체는 2026-10-31 지웠다(읽지 않는다).
  */
 describe("1차 심사자 고르기", () => {
   const withEnv = (model: string | undefined, run: () => void) => {
@@ -19,20 +19,20 @@ describe("1차 심사자 고르기", () => {
     }
   };
 
-  it("설정이 비어 있으면 예전대로 환경변수와 claude-cli 를 쓴다", () => {
+  it("설정이 비어 있으면 CRAWL_REVIEW_MODEL 이 있어도 읽지 않고 null 이다", () => {
     withEnv("sonnet", () => {
-      expect(firstReviewer(DEFAULT_CRAWL_SETTINGS)).toEqual({ provider: "claude-cli", model: "sonnet" });
+      expect(firstReviewer(DEFAULT_CRAWL_SETTINGS)).toBeNull();
     });
   });
 
-  it("설정이 있으면 환경변수를 이긴다", () => {
+  it("설정이 있으면 그것만 쓴다 — 환경변수는 상관없다", () => {
     withEnv("sonnet", () => {
       const settings = { ...DEFAULT_CRAWL_SETTINGS, firstReview: { provider: "abcllm" as const, model: "[MLX] gpt-oss-120b" } };
       expect(firstReviewer(settings)).toEqual({ provider: "abcllm", model: "[MLX] gpt-oss-120b" });
     });
   });
 
-  it("둘 다 없으면 null — 잡이 그것을 보고 멈춘다", () => {
+  it("설정이 없으면 null — 잡이 그것을 보고 멈춘다", () => {
     withEnv(undefined, () => expect(firstReviewer(DEFAULT_CRAWL_SETTINGS)).toBeNull());
   });
 
