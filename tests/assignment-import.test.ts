@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { planAssignmentImport, type AssignmentImportSettings } from "@/lib/llm/assignment-import";
+import { buildAssignmentImportPlan, planAssignmentImport, type AssignmentImportSettings, type AssignmentImportSources } from "@/lib/llm/assignment-import";
 import { modelAssignmentInputSchema, type ModelAssignmentRow } from "@/lib/llm/capacity-helpers";
 import type { ModelCapacityPolicy } from "@/lib/llm/capacity";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
-import { DEFAULT_MODEL_DEFINITIONS } from "@/lib/llm/model-registry";
+import { DEFAULT_MODEL_DEFINITIONS, readModelRegistry } from "@/lib/llm/model-registry";
+const registryFull = () => readModelRegistry();
 
 /** PR 3b-B — 배정 표 가져오기 계획(순수). 운영과 같은 모양의 설정·정책·등록부(코드 기본 등록부)로 본다. */
 const registry = { models: [...DEFAULT_MODEL_DEFINITIONS] };
@@ -24,12 +25,12 @@ const policy: ModelCapacityPolicy = { version: 1, maxWaiting: 256, queueTtlMs: 6
   route("reason-translate", "abcllm", "[m1] mlx-community--gemma-4-26b-a4b-it-4bit", "m1"),
   route("product-translate", "abcllm", "[m1] mlx-community--gemma-4-26b-a4b-it-4bit", "m1"),
   route("crawl-tagline", "abcllm", "[MLX] qwen3.6-35b-heretic", "mlx"), route("product-intro-check", "claude-cli", "sonnet", "connect")] };
-const summary = (plan: ReturnType<typeof planAssignmentImport>) => plan.entries.map(entry => [entry.action, entry.input.assignmentId, entry.input.stage,
+const summary = (plan: ReturnType<typeof buildAssignmentImportPlan>) => plan.entries.map(entry => [entry.action, entry.input.assignmentId, entry.input.stage,
   entry.input.deviceId, entry.input.registryKey, entry.input.transport, entry.input.rank, entry.input.vote, entry.input.mode]);
 
-describe("planAssignmentImport", () => {
+describe("buildAssignmentImportPlan", () => {
   it("reproduces today's AI1 pool, AI2 voters/fallbacks and stage pools as live primary rows on the policy route's device", () => {
-    const plan = planAssignmentImport(settings, policy, registry);
+    const plan = buildAssignmentImportPlan(settings, policy, registry);
     expect(summary(plan)).toEqual([
       ["create", "ai1:01:supa-review", "ai1", "supa", "supa:review", "gateway", 1, false, "live"],
       ["create", "ai1:02:mlx-text", "ai1", "mlx", "mlx:text", "gateway", 1, false, "live"],
@@ -64,7 +65,7 @@ describe("planAssignmentImport", () => {
       registryKey: "supa:review", transport: "gateway", rank: 1, role: "primary", vote: false, mode: "live", model: "[supa] Qwen3.8-27B-NVFP4",
       routeId: "crawl-agent-review", provider: "abcllm", maxSlots: 2, evidenceKey: "e".repeat(64), version: 7, note: "운영자 메모", updatedBy: "jr",
       createdAt: "2026-10-31T00:00:00.000Z", updatedAt: "2026-10-31T00:00:00.000Z", ...value });
-    const plan = planAssignmentImport(settings, policy, registry, { existing: [existing({}),
+    const plan = buildAssignmentImportPlan(settings, policy, registry, { existing: [existing({}),
       existing({ assignmentId: "opus-row", stage: "ai2", deviceId: "connect", registryKey: "connect:opus", transport: "cli", model: "opus", rank: 2,
         mode: "off", version: 3 })] });
     const ai1 = plan.entries.find(entry => entry.input.registryKey === "supa:review" && entry.input.stage === "ai1")!;
@@ -75,7 +76,7 @@ describe("planAssignmentImport", () => {
   });
 
   it("warns instead of guessing: unknown models, duplicates, the env first reviewer and inputs the save would refuse", () => {
-    const plan = planAssignmentImport({ firstReview: undefined, firstReviewAdditional: [{ provider: "abcllm", model: "[ghost] model" }],
+    const plan = buildAssignmentImportPlan({ firstReview: undefined, firstReviewAdditional: [{ provider: "abcllm", model: "[ghost] model" }],
       secondReview: { ...settings.secondReview, voters: [{ provider: "abcllm", model: "[MLX] gpt-oss-120b" }],
         fallbacks: [{ provider: "abcllm", model: "[mlx] GPT-OSS-120B" }] },
       stageModelPools: { "screen-review": ["supa:review"] } }, policy, registry, { firstReviewFallback: { provider: "claude-cli", model: "sonnet" } });
@@ -91,11 +92,39 @@ describe("planAssignmentImport", () => {
       ["create", "ai2:01:mlx-text", "ai2", "mlx", "mlx:text", "gateway", 1, true, "live"],
     ]);
     // the same model twice for AI2 (canonical name) is one row
-    const twice = planAssignmentImport({ ...settings, firstReviewAdditional: [], stageModelPools: {},
+    const twice = buildAssignmentImportPlan({ ...settings, firstReviewAdditional: [], stageModelPools: {},
       secondReview: { ...settings.secondReview, voters: [{ provider: "abcllm", model: "[MLX] gpt-oss-120b" }], fallbacks: [{ provider: "abcllm", model: "[MLX] gpt-oss-120b" }] } },
     policy, registry);
     expect(twice.warnings.map(warning => [warning.source, warning.code])).toEqual([["secondReview.fallbacks[0]", "duplicate"]]);
     // no policy at all: every row is off on its registry equipment
-    expect(planAssignmentImport(settings, null, registry).entries.every(entry => entry.input.mode === "off")).toBe(true);
+    expect(buildAssignmentImportPlan(settings, null, registry).entries.every(entry => entry.input.mode === "off")).toBe(true);
+  });
+});
+
+describe("planAssignmentImport (3b-D 화면 계약)", () => {
+  const sources = (value: Partial<AssignmentImportSources> = {}): AssignmentImportSources => ({
+    settings: { ...DEFAULT_CRAWL_SETTINGS, ...settings } as AssignmentImportSources["settings"], registry: { ...registryFull(), models: [...DEFAULT_MODEL_DEFINITIONS] },
+    policy, devices: ["supa", "mlx", "gpu3090", "connect", "m1", "m3"].map(deviceId => ({ deviceId, enabled: true, roles: [] })), assignments: [], ...value });
+  it("maps rows to { action, input, origin, changes } and warnings to sentences; every input is a saveModelAssignment input", () => {
+    const plan = planAssignmentImport(sources());
+    expect(plan.rows.map(row => [row.action, row.origin, row.input.assignmentId, row.input.mode])).toEqual(
+      buildAssignmentImportPlan(settings, policy, registry).entries.map(entry => [entry.action, entry.source, entry.input.assignmentId, entry.input.mode]));
+    for (const row of plan.rows) expect(modelAssignmentInputSchema.safeParse(row.input).success).toBe(true);
+    expect(plan.warnings).toContain("secondReview.fallbacks[1]: 정책에 이 경로가 없어 꺼짐으로 옮깁니다(저장하면 계약을 확인하고 경로를 덧붙입니다) — second-review / grok-cli / grok-4.7");
+    expect(plan.warnings).toContain("stageModelPools.direct-review: 배정 표에 대응하는 단계가 없는 단계 풀이라 옮기지 않습니다(저장 풀 그대로 씁니다) — gpu3090:review");
+  });
+  it("writes the changed fields as sentences and skips writes to a device that is missing or off", () => {
+    const current: ModelAssignmentRow = { assignmentId: "opus-row", stage: "ai2", deviceId: "connect", registryKey: "connect:opus", transport: "cli", rank: 2,
+      role: "primary", vote: false, mode: "off", model: "opus", routeId: "second-review", provider: "claude-cli", maxSlots: 1, evidenceKey: "e".repeat(64),
+      version: 3, note: null, updatedBy: "jr", createdAt: "2026-10-31T00:00:00.000Z", updatedAt: "2026-10-31T00:00:00.000Z" };
+    const plan = planAssignmentImport(sources({ assignments: [current] }));
+    expect(plan.rows.find(row => row.origin === "secondReview.voters[1]")).toMatchObject({ action: "update", changes: ["순위 2 → 1", "표 투표 아님 → 투표", "모드 꺼짐 → 실전"],
+      input: { assignmentId: "opus-row", expectedVersion: 3 } });
+    const offDevices = planAssignmentImport(sources({ devices: [{ deviceId: "supa", enabled: false, roles: [] }] }));
+    expect(offDevices.rows).toEqual([]);
+    expect(offDevices.warnings.filter(text => text.includes("장비 행이 없거나 꺼져"))).toHaveLength(12);
+    // no firstReview in settings: the env fallback is not known to the screen
+    expect(planAssignmentImport(sources({ settings: { ...DEFAULT_CRAWL_SETTINGS, secondReview: settings.secondReview } as AssignmentImportSources["settings"] })).warnings[0])
+      .toBe("firstReview: 1차 모델이 설정에 없어 1차는 옮기지 않습니다 — CRAWL_REVIEW_MODEL env 대체는 옮기지 않는다");
   });
 });

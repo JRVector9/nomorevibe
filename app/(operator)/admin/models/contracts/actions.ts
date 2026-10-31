@@ -4,10 +4,11 @@ import { revalidatePath } from "next/cache";
 import { currentAdmin } from "@/lib/auth/admin";
 import { webWriteAction } from "@/lib/operations/dr/web-gate";
 import { disableAdminServingContract, readbackServingEndpoint, saveAdminServingContract, type ServingContractAuthMode } from "@/lib/operations/admin-serving-contracts";
-import { connectAdminEngine, engineBaseUrl } from "@/lib/operations/admin-engine-connect";
+import { connectAdminEngine, engineBaseUrl, engineConnectAssignmentHref } from "@/lib/operations/admin-engine-connect";
 import { disableAdminRegistryOverride, saveAdminRegistryOverride } from "@/lib/operations/admin-model-registry";
 
-export type ContractSaveState = { ok?: true; message?: string; issues?: string[] } | null;
+/** assignHref: 엔진 연결 뒤 「이 모델을 단계에 배정」 주소(모델 배정 화면의 새 배정 폼을 미리 채운다, PR 3b-D) */
+export type ContractSaveState = { ok?: true; message?: string; issues?: string[]; assignHref?: string } | null;
 const REASONS: Record<string, string> = {
   unknown_route: "모르는 경로입니다.", route_schema_unavailable: "이 경로의 계약 형식을 읽지 못했습니다.",
   contract_schema_invalid: "계약 JSON이 이 경로의 형식과 맞지 않습니다(필드·프로토콜·주소·한도를 확인해주세요).",
@@ -75,10 +76,11 @@ export const connectEngine = webWriteAction(async function connectEngine(_previo
   // The typed context bound: empty means none; digits only (the range is checked with the engine's answer in connectAdminEngine).
   const maxModelLen = String(form.get("maxModelLen") ?? "").trim();
   if (maxModelLen && !/^\d{1,7}$/.test(maxModelLen)) return { issues: [REASONS.engine_max_len_invalid] };
+  const registryKey = String(form.get("registryKey") ?? ""), routes = form.getAll("routes").map(String);
   try {
-    const result = await connectAdminEngine({ registryKey: String(form.get("registryKey") ?? ""), baseUrl: String(form.get("baseUrl") ?? ""),
+    const result = await connectAdminEngine({ registryKey, baseUrl: String(form.get("baseUrl") ?? ""),
       auth: form.get("auth") === "none" ? "none" : "stored", apiKey: String(form.get("apiKey") ?? "") || undefined,
-      engineModel: String(form.get("engineModel") ?? ""), routes: form.getAll("routes").map(String), selectStages: form.get("selectStages") === "on",
+      engineModel: String(form.get("engineModel") ?? ""), routes, selectStages: form.get("selectStages") === "on",
       note: String(form.get("note") ?? "") || null, maxModelLen: maxModelLen ? Number(maxModelLen) : undefined }, admin.login);
     for (const path of ["/admin/models/contracts", "/admin/models"]) revalidatePath(path);
     const parts = [`연결했습니다: 경로 ${result.contracts.length}개(${result.contracts.map(row => row.routeId).join(", ")}), 요청 모델 ${result.requestModel}`
@@ -87,7 +89,7 @@ export const connectEngine = webWriteAction(async function connectEngine(_previo
       ...(result.firstReviewRenamed ? ["1차 모델 선택을 새 이름으로 바꿨습니다."] : []),
       result.missingPolicyRoutes.length ? `용량 정책에 아직 없는 경로가 있어 그 호출은 보류됩니다: ${result.missingPolicyRoutes.join(" · ")} (정책 추가 필요).`
         : "용량 정책에 경로가 있습니다. 각 앱은 30초 안에 다음 작업부터 씁니다."];
-    return { ok: true, message: parts.join(" ") };
+    return { ok: true, message: parts.join(" "), assignHref: engineConnectAssignmentHref(registryKey, routes) };
   } catch (error) { return { issues: issue(error) }; }
 });
 

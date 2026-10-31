@@ -181,7 +181,7 @@ server action 다섯(`app/(operator)/admin/models/helpers/actions.ts`), 모두 `
 ## 배정 표 열 — 3b-A
 
 migration `0156_model_assignments`(PR 3b-A)는 같은 표 `model_helper_assignments` 를 「단계 × 장비 × 모델」 배정 표로 넓힌다.
-**배포 직후 동작은 바뀌지 않는다** — 배정 표 행(role `primary`)은 아직 없고, 만드는 함수(`saveModelAssignment`)를 부르는 화면·잡도 아직 없다.
+**배포 직후 동작은 바뀌지 않는다** — 배정 표 행(role `primary`)은 아직 없고, 만드는 함수(`saveModelAssignment`)를 부르는 화면·잡도 아직 없다(화면은 3b-D 「모델 배정」 — 아래).
 이 행을 읽어 모델을 고르는 것은 3b-B(flag 뒤), 로컬 계약을 표에서 읽는 것은 3b-C 다.
 번호: 원래 0155 였으나 PR 3a-C(`0155_split_composite_jobs`)가 먼저 main 에 들어가 통합 때 0156 / when 1794086401067 로 다시 매겼다(2026-10-31).
 
@@ -241,6 +241,13 @@ migration `0156_model_assignments`(PR 3b-A)는 같은 표 `model_helper_assignme
    route 상한은 128 → 256(`MODEL_CAPACITY_ROUTES_MAX`) — 옛 parser 는 129개 이상을 거절하므로 모든 용량 소비자가 이 판을 돈 뒤에만 129번째를 넣는다.
 5. 장비 순위 `(device, route) = rank`(바뀌면 장비 version + 1 — 장비 폼의 옛 화면 저장이 CAS 로 거절된다) → 배정 행 upsert(version + 1; `shadow_route_id` 는 표지
    `primary:<단계>`, `live_route_id`·`live_provider` = 그 route) → `operations_audit` `model-assignment-save` 한 줄(before·after·계약·route·덧붙였나·revision·장비 순위).
+
+**끄기 갈래(3b-D 결정: 끄기는 거절되지 않는다)**: mode `off` 이고 `expectedVersion` 이 있으며(있는 행 — CAS 그대로) 잠금 없이 미리 본 행이 같은 등록부 key·전송의
+role `primary` 행이면, 등록부·장비 enabled·계약 확인(`deps.probeContract` 를 부르지 않고 계약 행도 요구하지 않는다)·정책 route 덧붙이기를 모두 건너뛴다.
+DR fence → control FOR UPDATE(정책이 없어도 된다) → 배정 행 FOR UPDATE·CAS → 순위가 바뀌었을 때만 장비 순위(장비 version + 1, 순위 1 이면 도우미 경로 겹침 검사) →
+배정 행(mode off, version + 1, wire 모델·route·evidence_key 는 저장된 값) → 감사 한 줄(`offOnly: true`, `contract: null`, `appended: false`).
+결과는 `offOnly: true`, `contract: null`, `route` = 지금 정책에 있으면 그 route 아니면 null. 남는 거절은 DR fence·CAS·제어 행 없음·순위 변경 때의 겹침뿐이다.
+새 행의 off 저장과 모델·전송을 바꾸는 off 저장은 지금과 같다(probe + route + 장비 순위 — route 를 미리 만든다).
 
 거절 문자열: `model_assignment_invalid:<path>` · `model_assignment_version_mismatch:<current|none>` · `model_assignment_refused:<code>`(`MODEL_ASSIGNMENT_REFUSALS`) ·
 덧붙이기의 `model_capacity_routes_cap` · `model_capacity_route_conflict` · `model_capacity_append_chain_full`(3b-B) · `site_fenced`.
@@ -309,6 +316,101 @@ migration `0156_model_assignments`(PR 3b-A)는 같은 표 `model_helper_assignme
   같으면 `unchanged`, 다르면 `update`(바뀐 칸 목록), 없으면 `create`.
 - 경고(입력 없이 건너뜀): `registry_unmatched` · `registry_ambiguous` · `transport_unsupported` · `duplicate`(같은 행·2차 같은 모델) · `input_invalid` ·
   `stage_unmapped`(대응 없는 관리자 단계). 입력은 남기고 알리는 것: `route_missing` · `first_review_from_env`.
+## 모델 배정 화면 — 3b-D
+
+`/admin/models/assignments`(메뉴 「설정·기록 → 모델 배정」, 「도우미 장비」 바로 다음). 단계 × 장비 × 모델(등록부 key) × 순위 × 모드 × 전송 배정(위 0156 의 role `primary` 행)을
+**재배포 없이** 보고 바꾼다. 저장은 3b-A 의 `saveModelAssignment` 하나뿐이다 — server action(`app/(operator)/admin/models/assignments/actions.ts`, 쓰기 관문 `webWriteAction`)
+→ `saveAdminModelAssignment`(`lib/operations/admin-model-assignments.ts`, `onPrimary(() => db.transaction(tx => saveModelAssignment(tx, input, actor, deps)))`) 한 TX 이고,
+`deps` 는 운영에서 비워 저장 함수의 기본 배선(등록부 = `ensureServingContracts` 뒤 `readModelRegistry`, 계약 = `probeEngineContract` 의 `/models` readback + 1-token probe,
+CLI = `probeCliServingContracts`)을 쓴다. 감사 줄(`model-assignment-save`)은 저장 함수가 쓰고 화면은 또 쓰지 않는다. 거절되면 TX 가 되돌려 아무 행도 남지 않는다.
+
+- **도우미 행**(role `helper`)은 같은 표에 「도우미」로 보이지만 이 화면에서는 바꾸지 않는다 — 「도우미 화면에서 →」 링크(`/admin/models/helpers#helper-<id>`)로 섀도·승격(2b·2c)을 한다.
+  폼에서 역할 「도우미」를 고르면 저장 단추가 꺼지고 도우미 화면으로 보낸다(`assignment_helper_role`).
+- **상태 띠**: 플래그가 꺼져 있으면(기본) 「읽기: 설정(legacy). 플래그 MODEL_ASSIGNMENT_TABLE 켜면 표를 읽습니다」. 켜지면 단계마다 읽기 출처 — 「표」(실전 행이 있다),
+  「표 비어 있음」(플래그는 켜졌지만 그 단계에 쓸 실전 행이 없다 — 그 단계는 설정(legacy)으로 고른다), 「설정」(그 단계는 아직 legacy). 출처는 `lib/operations/admin-assignment-source.ts`
+  (3b-B 의 `assignmentSource` — 아래 「3b-B 와 합친 뒤」)가 준다.
+
+### 표 열(단계 묶음마다, `ASSIGNMENT_STAGES` 순서)
+
+| 열 | 뜻 |
+| --- | --- |
+| 장비 | `device_id`(정책 route 의 groupId). 그 아래 배정 이름과 행 알림(장비 행 없음·꺼짐, 등록부에 없는 key, 계약 없음, 정책에 경로 없음·다른 장비, 장비 순위 ≠ 배정 순위). 서버 이름(`modelServerName`)은 그 PR 이 이 base 에 들어오면 채운다 |
+| 모델 | 등록부 key → wire 모델(저장이 정한 장부·계약 identity: gateway 는 `[label] model`) |
+| 전송 | 게이트웨이 · 엔진 직접 · 로컬 직접 · CLI(도우미 행은 —) |
+| 순위 | 단계 안 순위(1 이 먼저). 폼은 1~8 |
+| 역할 | 주 배정 / 도우미 |
+| 표 | 2차 검수 묶음에만 있는 열 — 투표자(순위 1 만) |
+| 모드 | 꺼짐 · 실전(도우미는 섀도도) |
+| 계약 | 그 route·wire 모델의 켜진 `model_serving_contracts` 행(local-direct 는 `local-direct:<route>`) — 「있음」 + hash 앞 12자리 / 「없음」(실전이면 빨강) / CLI 는 「저장·실행 때 확인」 |
+| route | 지금 용량 정책에 (route, provider, 모델)이 이 장비(groupId)로 있나 — 있음 · 없음 · 다른 장비(…) · 모름 |
+| 장비 역할 순위 | `model_capacity_device_roles` 의 (장비, route) 순위. 배정 순위와 다르면 행 알림(장비 한도에서 바뀜 — 다시 저장하면 맞춘다) |
+| 최근 1시간 | `model_capacity_requests` 에서 그 (route, 모델, group_id)의 settled 건수. `settled_at` 부분 색인 범위 읽기 하나이고 2초 statement_timeout — 넘으면 「—」 |
+| 판 | 행 version(폼 compare-and-set) |
+| 동작 | 「수정」(`?edit=<id>#form` 으로 폼을 채운다), 「끄기」(실전 행만 — 지금 행을 mode off 로 같은 저장 함수에 다시 넣는다, CAS = 화면이 본 판, 계약·route·장비 순위는 남는다. **끄기는 계약 때문에 거절되지 않는다** — 아래 「끄기 갈래」) |
+
+### 추가·수정 폼
+
+단계(예약 단계 assist·assist-audit·repo 는 고를 수 없다) → 장비(`model_capacity_devices`, 꺼진 장비는 고를 수 없고 켜진 장비가 없으면 `device_unconfigured` 안내) →
+모델(그 단계가 허락하는 전송을 하나라도 쓰는 등록부 항목만) → 전송(단계 × 공급자 × **cli 는 등록부 equipment `connect` 만**; 게이트웨이 표지가 있으면 게이트웨이가 먼저) →
+순위(1~8) · 역할(주 배정) · 표(2차의 순위 1 에서만 켤 수 있다) · 모드(꺼짐·실전) · 메모. 새 배정 이름은 비우면 `<장비>:<단계>:<등록부 key>`.
+**모드 실전으로 저장하려면 확인 칸에 「배정」**을 적어야 한다(고치기에서도 실전으로 저장할 때마다). 저장된 배정의 단계·장비는 바꿀 수 없다(새 배정을 만들고 옛 것은 끈다).
+결과 문장은 판·모드·계약 출처(저장된 계약 / 엔진 확인으로 새로 만든 계약 / CLI)·정책 경로(덧붙임 revision / 이미 있음)·장비 역할 순위 변화와, 플래그가 꺼져 있으면
+「읽는 쪽은 아직 설정을 씁니다」를 말한다.
+
+**엔진 연결에서 오는 길**: 「모델 연결」(`/admin/models/contracts`)의 엔진 연결이 성공하면 「이 모델을 단계에 배정 →」 링크
+(`engineConnectAssignmentHref`, `lib/operations/admin-engine-connect.ts`)가 뜬다 — 고른 경로 중 첫 배정 단계·엔진 직접·그 등록부 key 로 새 배정 폼을 채운다.
+연결 저장의 뜻은 그대로다(배정은 따로 저장한다).
+
+### 현재 설정 → 배정 표 가져오기
+
+1. 「계획 보기」(`?import=plan#import`) — 서버가 지금 설정(firstReview·firstReviewAdditional·secondReview.voters·fallbacks·stageModelPools)·등록부·정책·장비·지금 배정 표 행을
+   모아 `planAssignmentImport`(`lib/llm/assignment-import.ts`, 3b-B)로 만든 계획을 보인다: 만들기·고치기·그대로 행
+   (설정의 출처, 배정 이름, 단계, 장비, 모델, 전송, 순위, 모드, 바뀐 칸)과 경고, 계획 hash(앞 12자리). 보기만으로는 아무것도 쓰지 않는다.
+2. 확인 칸 「배정」 + 「적용」 — 서버가 계획을 **다시 만들어** 보여 준 hash 와 같을 때만(아니면 `assignment_import_plan_changed`, 다시 보기), 행마다
+   `saveAdminModelAssignment` 로 따로 저장한다(행마다 TX 하나·감사 한 줄). 한 행이 거절돼도 다음 행을 계속하고 「그대로」 행은 건너뛴다. 행마다 결과(저장 판 / 거절 문장 / 건너뜀)를 보인다.
+   행의 `expectedVersion` 이 CAS 다 — 같은 계획을 두 번 적용하면 둘째에는 만들기 행이 판 충돌로 거절된다.
+
+### 설정 폼 읽기 전용(플래그가 켜졌을 때만)
+
+플래그가 켜지면(3b-B `assignmentTableEnabled()`) 크롤 설정(`/admin`)의 1차·추가 1차·2차 투표·2차 대체 칸과 단계별 모델(`/admin/models`)의 모델 선택 폼(같은 넷 + 단계별 모델 풀)이
+「배정 표로 옮겨짐 — /admin/models/assignments」 알림과 함께 읽기 전용이 된다. 크롤 설정은 같은 이름의 숨은 칸으로 지금 값을 그대로 보내 다른 설정을 저장해도 모델 값이 바뀌지 않고,
+2차 표 바로 바꾸기 손잡이는 그리지 않는다. 단계별 모델 폼은 칸을 잠그고 저장 바를 뺀다. 설정 schema 는 바꾸지 않았다. **기본(꺼짐)에서는 모두 그대로 편집된다.**
+
+### 거절 코드 → 문장(할 일)
+
+| 코드 | 화면 문장의 요지(할 일) |
+| --- | --- |
+| `model_assignment_version_mismatch:<n>` / `:none` | 다른 사람이 먼저 저장(지금 판 n) — 새로고침 뒤 다시 저장 / 이 배정이 지금 없음 — 새로고침 |
+| `model_assignment_invalid:<칸>` | 칸마다: 이름 모양, 예약 단계·단계 변경 불가, 장비 변경 불가(새 배정 + 옛 것 끄기), 같은 장비·단계에 같은 모델 있음, 단계에 없는 전송·CLI 는 connect, 순위 1~8, 표는 2차 순위 1, 모드 꺼짐·실전 |
+| `model_assignment_refused:registry_key_unknown` | 등록부에 없는 모델 — 모델 연결 화면에서 등록부 확인 |
+| `…:transport_provider_mismatch` | 공급자와 전송이 맞지 않음 — 전송을 바꾼다 |
+| `…:backend_id_invalid` | 로컬 backendId 를 못 만드는 key — key 를 60자 이하 소문자·숫자·'-' |
+| `…:device_unconfigured` | 장비 행이 없거나 꺼짐 — 장비 한도(`/admin/models/devices`)에서 먼저 저장 |
+| `…:assignment_is_helper` | 도우미 배정 이름 — 도우미 장비 화면에서 |
+| `…:route_is_helper_route` | 이 장비의 도우미 경로와 겹침 — 순위 2 이상으로 하거나 도우미를 먼저 끈다 |
+| `…:route_device_mismatch` | 같은 (route, provider, 모델)이 정책에서 다른 장비 — 그 장비로 배정하거나 정책 매핑을 먼저 고친다 |
+| `…:contract_probe_failed[:<원인>]` | 엔진 확인 실패 — `engine_unreachable:<x>` 주소·키·엔진 상태, `engine_model_not_found` 모델 이름, `engine_max_len_unknown` 엔진 연결에서 컨텍스트 상한을 넣어 계약을 먼저 만든다(그 뒤 저장된 계약을 쓴다), `engine_probe_failed` 1토큰 응답 없음, `engine_base_url_invalid` 주소 모양. 원인 없음 = 엔진이 다른 모델 이름으로 답함 |
+| `…:contract_unbuildable` | 이 경로의 계약은 자동으로 못 만든다(예: 2차 `second-review`) — 모델 연결 화면에서 계약을 먼저 넣는다 |
+| `…:contract_transport_mismatch` | 저장된 계약의 전송이 다름 — 전송을 맞추거나 계약을 다시 저장 |
+| `…:contract_device_mismatch` | 로컬 계약의 physicalGroup 이 다른 장비 — 계약의 장비로 배정하거나 계약을 고친다 |
+| `…:cli_contract_missing` | 웹 프로세스에 CLI 계약(`CLI_SERVING_CONTRACTS`)이 없거나 `--version` 확인 실패 — env 계약을 넣은 뒤 저장 |
+| `model_capacity_append_chain_full` | 옛 정책 세대 16개에 잡힌 호출이 남아 앞 판 사슬이 가득 — 가장 오래된 호출이 끝난 뒤(보통 몇 분) 다시 저장(3b-B 전 판의 `…_predecessor_busy` 도 같은 문장) |
+| `model_capacity_predecessor_unproven` | 운영자 정책 쓰기의 사슬을 증명할 수 없음 — 지금 사슬·지금 세대만, 경로 덧붙이기만 |
+| `model_capacity_routes_cap` | 정책 경로 상한(256) — 안 쓰는 경로를 정책에서 정리 |
+| `model_capacity_route_conflict` · `_route_invalid` · `_policy_missing` · `_control_missing` · `_revision_exhausted` | 정책 쪽 문제 — 실시간 한도·장비 한도에서 정책 확인 / 정책을 먼저 적용 |
+| `site_fenced` 등 DR | 이 사이트는 쓰기가 막혀 있음 — 쓰기 사이트에서 |
+| `model_helper_*` | 도우미 문장(위 표) + 「도우미 배정은 /admin/models/helpers」 |
+| `assignment_confirm_required` · `assignment_helper_role` · `assignment_device_required` · `assignment_registry_required` · `assignment_id_required` · `assignment_import_plan_changed` | 화면 쪽 검사: 확인 「배정」, 도우미는 도우미 화면, 장비·모델 고르기, 배정 이름 직접 적기, 계획 다시 보기 |
+| 모르는 코드 | 그대로 보인다(숨기지 않는다). 코드 모양이 아닌 오류는 「알 수 없는 오류(로그에 남김)」 |
+
+### 3b-B 와 합친 뒤(배선)
+
+- `lib/operations/admin-assignment-source.ts` — 3b-B 의 `assignmentTableEnabled()`·`assignmentSource(stage)` 를 읽는다(출처를 묻기 전에 배정 표 스냅숏을 새로 받는다).
+  'table' → 표, 'legacy_empty_table'(켜졌지만 그 단계에 쓸 실전 행이 없어 설정으로 고른다) → 표(화면이 실전 행 0 을 보고 「표 비어 있음」), 'legacy' → 설정.
+  못 읽으면 꺼짐·legacy. 플래그는 **웹 프로세스의** env 다 — 소비자 역할과 같게 켠다(설정 폼 잠금도 웹의 플래그를 따른다).
+- `lib/llm/assignment-import.ts` — `planAssignmentImport(sources)` 는 3b-B 의 `buildAssignmentImportPlan(settings, policy, registry, { existing: assignments, devices })`
+  (위 「가져오기 계획 — 3b-B」)를 화면 계약으로 옮긴다: 행 = { action, input, origin(설정의 출처), changes(「순위 2 → 1」 같은 문장) }, 경고 = 「출처: 문장 — 자세히」.
+  켜진 장비가 아닌 곳에 쓰는 행(만들기·실전 고치기)은 건너뛰고 경고한다(저장이 `device_unconfigured` 로 거절할 행). env 대체 1차 심사자는 화면이 알 수 없어 옮기지 않는다.
 
 ## 테스트
 
@@ -327,4 +429,8 @@ migration `0156_model_assignments`(PR 3b-A)는 같은 표 `model_helper_assignme
   `tests/assignment-import.test.ts`(운영 모양 설정·정책으로 가져오기 계획·차이·경고).
 - 앞 판 사슬(3b-B): `tests/model-capacity-predecessor-chain.test.ts`(모양·옛 단일 칸 = 길이 1·세대 인증·덧붙이기 판정), `tests/integration/model-assignments.test.ts`
   (gen-1 dispatched 를 쥔 채 세 번 연속 덧붙이기, 가지치기·사슬 비우기, 16칸 꽉 참 거절과 미끄러짐, 옛 단일 칸 이어받기, 운영자 쓰기의 증명).
+- 모델 배정 화면(3b-D): `tests/admin-model-assignments.test.tsx`(묶음·한국어 이름·칸·상태 띠·3b-B 출처, 단계 × 등록부 × 전송 고르기(cli = connect), 폼 → 저장 입력·확인 「배정」,
+  모든 거절 코드 문장, 결과 문장, 가져오기 계획(3b-B planAssignmentImport)·hash, server action 셋, 그리기(표 열은 2차만, 폼·가져오기 카드), 설정 폼 읽기 전용(플래그 켜짐만)),
+  `tests/integration/admin-model-assignments.test.ts`(자기 DB: action → 진짜 저장 함수 — 계약·route·장비 순위·행·감사, CAS, 거절 문장과 남는 행 없음, 끄기, 가져오기 계획(3b-B 실제 계획)·행마다 적용).
+  `tests/dr-web-fence.test.ts` 의 쓰기 관문 action 수는 100(배정 저장·끄기·가져오기 적용), `tests/admin-navigation.test.tsx` 메뉴 링크 24개.
 - 표·입장 판정·감시자 순환은 WP-2a-A·B 의 테스트가 본다(`tests/capacity-helpers.test.ts`, `tests/integration/model-capacity-helpers.test.ts`, `tests/capacity-supervisor-decide.test.ts`).

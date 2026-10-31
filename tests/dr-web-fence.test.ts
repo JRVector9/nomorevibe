@@ -377,7 +377,8 @@ it("every admin server action and every write route handler goes through the web
   // admin/models/devices(장비 한도, PR 1b): 장비 저장 하나(saveCapacityDevice)가 더해졌다.
   // 셋이 함께 들어와 92 — closeUnknownReview(0151) + saveRuntimeSettingsGroup(0152) + saveCapacityDevice(0153)
   // admin/models/helpers(도우미 장비, PR 2a 0154): 배정 저장·모드 바꾸기·자동 정지 해제·감시자 스위치·감시자 순환 설정 다섯이 더해져 97
-  expect(wrapped).toBe(97);
+  // admin/models/assignments(모델 배정, PR 3b-D): 배정 저장·끄기·가져오기 적용 셋이 더해져 100
+  expect(wrapped).toBe(100);
   const routes = files.filter(file => file.endsWith(`${path.sep}route.ts`));
   for (const file of routes) {
     const source = readFileSync(file, "utf8");
