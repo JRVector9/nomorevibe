@@ -24,6 +24,7 @@ import { requestProductTranslationModelSlot, cancelReservedModelSlot, findOwnPen
 import { modelCapacityPolicyHash, productTranslationInputHash, productTranslationLogicalWorkKey,
   type ModelCapacityPolicy, type ModelCapacityRequest } from "@/lib/llm/capacity";
 import type { ProductTranslationServingContract } from "@/lib/llm/product-translation-serving-contract";
+import { setRuntimeSettingsForTest } from "@/lib/operations/runtime-settings-store";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
 
 const serving = vi.hoisted(() => ({ contract: null as ProductTranslationServingContract | null }));
@@ -532,4 +533,38 @@ it("refuses foreign or changed product readbacks and never refunds dispatched or
     });
     expect(bodies).toHaveLength(0);
   });
+}));
+
+// 2026-10-30 결정("미확인이 되어도 절대 멈추지 않는다"): 다른 요청에 묶인 멤버는 고르지 않는다 — 예전에는 그 멤버와 뒤의 수요를 한 묶음으로 골라
+// fence 에 미뤄지며 매 틱 같은 맨 앞 묶음을 되풀이했다(C1). 이 boot 자신의 대기·예약 묶음은 위의 복구 시험처럼 여전히 먼저 이어받는다.
+it("skips a member held by another boot's live request and translates the next demanded field in the same tick", exercise(async () => {
+  const held = await seed(), next = await seed();
+  await server(async ({ bodies }) => {
+    const bootId = randomUUID(); ownerBoots.add(bootId);
+    let requestId = "";
+    await custom(async lease => { requestId = (await reserve(held.tasks, lease, { instanceId: prefix, bootId })).reservation.requestId; });
+    expect((await pendingProductTranslations(8)).map(task => task.source.id)).toEqual([next.product.id]);
+    expect(await tick()).toMatchObject({ status: "completed", done: true });
+    expect(bodies).toHaveLength(1); expect(JSON.parse(JSON.parse(bodies[0]).messages[1].content)).toHaveLength(1);
+    expect(await admin`SELECT status,attempts FROM product_translations WHERE product_id=${next.product.id}`).toEqual([{ status: "ready", attempts: 1 }]);
+    expect(await admin`SELECT status,attempts FROM product_translations WHERE product_id=${held.product.id}`).toEqual([{ status: "pending", attempts: 0 }]);
+    expect((await admin`SELECT state FROM model_capacity_requests WHERE request_id=${requestId}::uuid`)[0].state).toBe("reserved");
+  });
+}));
+
+// 2026-10-30: 고르기(관리자 실시간 maxAttempts, 1..20)와 전송 계약(demand.attempts 0..3, 전송 직전 due 판정)이 달라, 4회를 넘긴 재시도가
+// 매 틱 skipped 로 맨 앞에 남아 뒤의 수요가 한 번도 나가지 못했다. 고르기는 이제 둘 중 작은 상한을 쓴다(C1).
+it("does not let a retry beyond the dispatch contract hold the queue when the live maxAttempts is larger", exercise(async () => {
+  const beyond = await seed(), next = await seed();
+  await admin`UPDATE product_translations SET status='failed',attempts=4,retry_at=clock_timestamp()-interval '1 minute' WHERE product_id=${beyond.product.id}`;
+  setRuntimeSettingsForTest({ version: 1, translation: { product: { maxAttempts: 6 } } });
+  try {
+    expect((await pendingProductTranslations(8)).map(task => task.source.id)).toEqual([next.product.id]);
+    await server(async ({ bodies }) => {
+      expect(await tick()).toMatchObject({ status: "completed", done: true });
+      expect(bodies).toHaveLength(1); expect(JSON.parse(JSON.parse(bodies[0]).messages[1].content)).toHaveLength(1);
+      expect(await admin`SELECT status,attempts FROM product_translations WHERE product_id=${next.product.id}`).toEqual([{ status: "ready", attempts: 1 }]);
+      expect(await admin`SELECT status,attempts FROM product_translations WHERE product_id=${beyond.product.id}`).toEqual([{ status: "failed", attempts: 4 }]);
+    });
+  } finally { setRuntimeSettingsForTest(null); }
 }));

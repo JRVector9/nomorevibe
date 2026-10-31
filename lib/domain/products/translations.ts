@@ -22,6 +22,7 @@ import { productTranslationInputSchema, productTranslationDispatchBindingSchema,
   type ModelCapacityReservation, type ModelCapacityRequestIdentity, type ProductTranslationModelDispatch } from "@/lib/llm/capacity";
 import { lockModelCapacityCallerControl, lockProductTranslationModelCapacityDispatch,
   finishProductTranslationModelCapacityDispatch } from "@/lib/llm/capacity-repository";
+import { busyMemberKeysSql, capacityOwnerFromEnv, type CapacityOwner } from "@/lib/llm/capacity-busy-targets";
 import { detectTranslationSourceLocale, isProductTranslationField, productTranslationSourceHash, translationSourceText,
   PRODUCT_TRANSLATION_POLICY, productTranslationPolicy,
   type ProductTranslationReadiness, type ProductTranslationSource } from "./translation-policy";
@@ -128,13 +129,35 @@ export type ProductTranslationTask = {
   sourceHash: string; attempts: number; eligible: boolean;
 };
 
-/** Only demanded rows. Never scans the product catalog to generate a blanket backfill. */
-export async function pendingProductTranslations(limit = 4): Promise<ProductTranslationTask[]> {
+/**
+ * 전송 계약이 받는 시도 상한 — 묶음 binding 의 demand.attempts 는 0..3 이다(capacity.ts productTranslationMemberSchema·DB dispatch CHECK
+ * `BETWEEN 0 AND 3`). 관리자 maxAttempts(1..20)가 이보다 크면 고르기는 시도 4회 이상인 행을 집지만 전송 직전 due 판정이 skipped 로 돌려,
+ * 그 행이 매 틱 맨 앞에 남아 뒤의 수요를 막았다(2026-10-30 점검). 고르기·복구·due 판정은 이 값과 실시간 maxAttempts 중 작은 쪽을 쓴다.
+ */
+const DISPATCHABLE_ATTEMPTS = 4;
+const dispatchableAttempts = () => Math.min(productTranslationPolicy().maxAttempts, DISPATCHABLE_ATTEMPTS);
+/** productTranslationTaskKey(translation-policy.ts)와 같은 키의 SQL 식 */
+const MEMBER_KEY = sql`('product-translate:' || ${t.productId} || ':' || ${t.locale} || ':' || ${t.field})`;
+
+/**
+ * Only demanded rows. Never scans the product catalog to generate a blanket backfill.
+ *
+ * 2026-10-30 소유자 결정("미확인이 되어도 절대 멈추지 않는다"): 다른 요청(대기·예약·보냄)에 묶인 멤버는 건너뛴다(capacity-busy-targets.ts).
+ * 예전에는 같은 맨 앞 묶음을 매 틱 다시 골라 장부 fence 에 미뤄지며 경로 전체가 무진척이었다. keepOwn: 이 boot 의 대기·예약 요청 멤버는
+ * 빼지 않는다 — 조정기가 그 요청을 이어받거나(복구 먼저) 지운다. `exclude` 는 이 틱에 이미 시도해 넘긴 멤버(잡이 다음 수요로 고른다).
+ * 재시도 간격(retry_at)·최대 시도(maxAttempts)가 그대로 조절판이다.
+ */
+export async function pendingProductTranslations(limit = 4, options: { owner?: CapacityOwner; exclude?: readonly string[] } = {}):
+  Promise<ProductTranslationTask[]> {
+  const owner = "owner" in options ? options.owner : capacityOwnerFromEnv();
+  const exclude = [...new Set(options.exclude ?? [])];
   const rows = await db.select({ source: sourceColumns, locale: t.locale, field: t.field,
     sourceHash: t.sourceHash, attempts: t.attempts, eligible: sql<boolean>`(${eligible})` }).from(t)
     .innerJoin(products, eq(products.id, t.productId))
-    .where(and(inArray(t.status, ["pending", "failed"]), sql`${t.attempts} < ${productTranslationPolicy().maxAttempts}`,
-      sql`(${t.retryAt} is null or ${t.retryAt} <= now())`))
+    .where(and(inArray(t.status, ["pending", "failed"]), sql`${t.attempts} < ${dispatchableAttempts()}`,
+      sql`(${t.retryAt} is null or ${t.retryAt} <= now())`,
+      sql`${MEMBER_KEY} NOT IN (${busyMemberKeysSql(`${PRODUCT_TRANSLATION_JOB}:`, { owner, keepOwn: true })})`,
+      exclude.length ? sql`${MEMBER_KEY} NOT IN (${sql.join(exclude.map(key => sql`${key}`), sql`, `)})` : undefined))
     .orderBy(asc(t.updatedAt), asc(t.productId), asc(t.locale), asc(t.field)).limit(Math.max(1, Math.min(8, limit)));
   return rows;
 }
@@ -151,7 +174,7 @@ export async function pendingProductTranslationBatch(memberKeys: readonly string
       .innerJoin(products, eq(products.id, t.productId)).where(and(eligible,
         or(...targets.map(target => and(eq(t.productId, target.productId), eq(t.locale, target.locale as ProductTranslationLocale),
           eq(t.field, target.field as ProductTranslationField)))), inArray(t.status, ["pending", "failed"]),
-        sql`${t.attempts} < ${productTranslationPolicy().maxAttempts}`, sql`(${t.retryAt} is null or ${t.retryAt} <= clock_timestamp())`));
+        sql`${t.attempts} < ${dispatchableAttempts()}`, sql`(${t.retryAt} is null or ${t.retryAt} <= clock_timestamp())`));
     if (rows.length !== keys.length) return null;
     const batch = targets.map(target => rows.find(row => row.source.id === target.productId && row.locale === target.locale && row.field === target.field)!);
     if (batch.some(task => productTranslationSourceHash(task.source, task.field) !== task.sourceHash)
@@ -238,7 +261,7 @@ async function lockedTranslationDemands(tx: ProductTranslationTransaction, targe
   const rows: (DemandSnapshot & { due: boolean })[] = [];
   for (const target of [...targets].sort(demandOrder)) {
     const [row] = await tx.execute<{ raw: Record<string, unknown>; due: boolean }>(sql`SELECT to_jsonb(t) AS raw,
-      (status IN ('pending','failed') AND attempts<4 AND (retry_at IS NULL OR retry_at<=clock_timestamp())) AS due
+      (status IN ('pending','failed') AND attempts<${dispatchableAttempts()} AND (retry_at IS NULL OR retry_at<=clock_timestamp())) AS due
       FROM product_translations t WHERE product_id=${target.productId} AND locale=${target.locale} AND field=${target.field} FOR UPDATE`);
     if (!row) throw new ProductTranslationChanged();
     rows.push({ ...target, raw: row.raw, due: row.due });

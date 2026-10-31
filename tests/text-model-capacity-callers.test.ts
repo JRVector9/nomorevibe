@@ -163,6 +163,22 @@ it("product field admission leaves an eligible demand untouched", async () => {
   expect(mocks.productWrite).not.toHaveBeenCalled();
 });
 
+// 2026-10-30 결정("미확인이 되어도 절대 멈추지 않는다"): 한 후보·한 묶음만의 미룸은 그 대상만 넘기고 같은 틱의 다음 대상을 계속한다.
+it.each(["dispatched", "work_busy"] as const)("product-translate passes a %s batch and translates the next demanded field in the same tick", async reason => {
+  const first = { id: 1, name: "Doc", tagline: "문서를 관리하는 도구" }, second = { id: 2, name: "Pad", tagline: "메모를 정리하는 도구" };
+  const task = (source: typeof first) => ({ source, field: "tagline", locale: "en", sourceHash: productTranslationSourceHash(source, "tagline"),
+    attempts: 0, eligible: true });
+  mocks.productTasks.mockResolvedValueOnce([task(first)]).mockResolvedValueOnce([task(second)]).mockResolvedValue([]);
+  mocks.product.mockRejectedValueOnce(new ModelCapacityDeferredError(reason)).mockResolvedValueOnce({ ok: true, outputs: ["Pad organizes your notes"] });
+  mocks.productWrite.mockResolvedValue(1);
+  expect(await translateDemandedProductFields(context("product-translate"))).toEqual({ done: true });
+  expect(mocks.productTasks.mock.calls.map(call => call[1])).toEqual([{ exclude: [] }, { exclude: ["product-translate:1:en:tagline"] }]);
+  // 호출한 묶음은 틱마다 하나다 — 넘긴 묶음은 호출하지 않았다
+  expect(mocks.product).toHaveBeenCalledTimes(2);
+  expect(mocks.productWrite).toHaveBeenCalledOnce();
+  expect(mocks.productWrite.mock.calls[0][0].map((entry: { task: { source: { id: number } } }) => entry.task.source.id)).toEqual([2]);
+});
+
 it.each(["문서 정리", "代码编辑器", "程式碼編輯器"])("query defer keeps original search and pending without caching failure: %s", async query => {
   mocks.query.mockRejectedValue(new ModelCapacityDeferredError("provider_contract_unavailable"));
   const result = await resolveSearchQuery(query, { waitForTranslation: true });
