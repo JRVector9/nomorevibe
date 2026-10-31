@@ -97,6 +97,37 @@ it('an additive item pool isolates local capacity waits and provider circuits by
   ]);
   expect(circuit.done).toHaveBeenCalledTimes(2);
 });
+// 2026-10-30 결정: 한 후보의 fence 거절(work_busy)은 그 후보만 건너뛴다 — 같은 모델의 다음 후보도 claim 한다(모델 pause 없음).
+it('a per-candidate fence refusal skips only that candidate and keeps its model admitting (D1)', async () => {
+  const primary = { provider: 'abcllm' as const, model: 'primary-model' };
+  const extra = { provider: 'abcllm' as const, model: 'extra-model' };
+  const settings = { ...DEFAULT_CRAWL_SETTINGS, enabled: true, reviewMode: 'enforce' as const,
+    firstReview: primary, firstReviewAdditional: [extra] };
+  mocks.settings.mockResolvedValue(settings);
+  mocks.pages = [[hint(4), hint(5), hint(6)]];
+  mocks.load.mockImplementation(async id => ({ kind: 'current', context: { ...context, candidate: { id }, settings } }));
+  mocks.choose.mockImplementation(async ({ candidate }) => candidate.id === 5 ? extra : primary);
+  mocks.prepare.mockImplementation(async (_context, reviewer) => ({ ...reviewer, spam: false }));
+  mocks.claim.mockImplementation(async ({ candidate }) => {
+    if (candidate.id === 4) throw new ModelCapacityDeferredError('work_busy');
+    return { kind: 'reused', receipt, attempt: { id: 3, outcome } };
+  });
+  expect(await runFirstReviewConsumer({ owner: owner(), once: true }))
+    .toEqual({ attempted: 3, recorded: 2, skipped: 1, deferred: 0 });
+  expect(mocks.claim.mock.calls.map(call => call[0].candidate.id)).toEqual([4, 5, 6]);
+  expect(mocks.sleep).not.toHaveBeenCalled();
+});
+it('a per-candidate fence refusal without a pool does not end the page (D1)', async () => {
+  mocks.pages = [[hint(4), hint(5)]];
+  mocks.load.mockImplementation(async id => ({ kind: 'current', context: { ...context, candidate: { id } } }));
+  mocks.claim.mockImplementation(async ({ candidate }) => {
+    if (candidate.id === 4) throw new ModelCapacityDeferredError('work_busy');
+    return { kind: 'claimed', receipt, attempt: { id: 3, outcome: null } };
+  });
+  expect(await runFirstReviewConsumer({ owner: owner(), once: true }))
+    .toEqual({ attempted: 2, recorded: 1, skipped: 1, deferred: 0 });
+  expect(mocks.claim.mock.calls.map(call => call[0].candidate.id)).toEqual([4, 5]);
+});
 it('launches one fixed reviewer runtime with a fresh boot and matching observation identity', async () => {
   await runPipelineFirstConsumer(['--once'], { PIPELINE_ITEM_CONSUMER_VERSION: '1',
     PIPELINE_ITEM_CONSUMER_INSTANCE_ID: owner().instanceId, SERVICE_INSTANCE_ID: owner().instanceId });

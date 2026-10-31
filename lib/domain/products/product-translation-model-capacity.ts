@@ -7,6 +7,7 @@ import { reconcileGatewayNotStarted, readModelCapacityCallerControl, findOwnPend
   findOwnPendingProductTextRequests, cancelOwnPendingProductTextRequest,
   cancelReservedModelSlot, markModelDispatchIndeterminate, reconcileProductTranslationGatewayTerminal } from "@/lib/llm/capacity-repository";
 import { markUnsettledDispatch } from "@/lib/llm/capacity-unsettled";
+import { capacityRefusalReason } from "@/lib/llm/capacity-busy-targets";
 import { modelCapacityRequestIdentitySchema, productTranslationInputHash, productTranslationLogicalWorkKey } from "@/lib/llm/capacity";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { modelCapacityIndeterminateReason } from "@/lib/llm/capacity";
@@ -76,8 +77,10 @@ export async function translateProductFieldsWithModelCapacity(value: readonly Pr
     workKey: `${productTranslationLogicalWorkKey(members)}:${productTranslationInputHash({ members, model: scopedModel("product-translate", PRODUCT_TRANSLATION_MODEL) })}` });
   const pending = adopted ?? await findOwnPendingModelRequest(identity);
   if (pending?.state === "dispatched") throw new ModelCapacityDeferredError("dispatched");
-  const slot = await requestProductTranslationModelSlot({ ...identity, requestId: pending?.requestId ?? randomUUID() }, members);
-  if (slot.kind !== "granted") throw new ModelCapacityDeferredError(slot.reason);
+  const request = { ...identity, requestId: pending?.requestId ?? randomUUID() };
+  const slot = await requestProductTranslationModelSlot(request, members);
+  // 줄에 서지 못한 capacity(멤버 fence)는 이 묶음만의 work_busy — 잡은 이 멤버를 넘기고 다음 수요로 간다(2026-10-30 결정)
+  if (slot.kind !== "granted") throw new ModelCapacityDeferredError(await capacityRefusalReason(request, slot.reason));
   let prepared: Awaited<ReturnType<typeof prepareProductTranslationDispatch>>;
   try {
     if (options.signal?.aborted) throw new ModelCapacityDeferredError("reservation_lost");

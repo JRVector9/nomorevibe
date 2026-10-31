@@ -234,8 +234,9 @@ it('does not wait when the capacity refusal left no own queued row (fence or dup
   mocks.prepare.mockReturnValue({ kind: 'prepared' }); mocks.pending.mockResolvedValue(null);
   mocks.request.mockResolvedValue({ kind: 'deferred', reason: 'capacity' });
   const events: unknown[] = [];
+  // 2026-10-30 결정: 줄에 서지 못한 capacity 는 포화가 아니라 이 후보만의 work_busy — 잡은 모델을 pause 하지 않고 이 후보만 건너뛴다.
   await expect(api.claimAgentReviewModelCapacity(await coordinatorInput(), { until: Date.now() + 10_000, observe: event => events.push(event) }))
-    .rejects.toMatchObject({ reason: 'capacity' });
+    .rejects.toMatchObject({ reason: 'work_busy' });
   expect(mocks.request).toHaveBeenCalledTimes(1); expect(mocks.cancel).not.toHaveBeenCalled();
   expect(events).toEqual([expect.objectContaining({ granted: false, queued: false, polls: 0, ended: 'not_queued' })]);
 });

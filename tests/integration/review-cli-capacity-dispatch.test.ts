@@ -374,7 +374,8 @@ it('AI1 legacy job: 같은 후보에 gateway 예약이 살아 있으면 CLI 는 
   const gateway = await requestAi1ModelSlot({ requestId: randomUUID(), owner, class: 'first', pool: 'reviewer', routeId: 'crawl-agent-review',
     provider: 'abcllm', model: 'gw-model', workKey: `ai1:${candidate.id}:${'b'.repeat(64)}` }, candidate.id);
   expect(gateway.kind).toBe('granted');
-  expect(await tick()).toMatchObject({ status: 'deferred', reason: 'model_capacity' });
+  // 2026-10-30 결정: 같은 후보 fence 거절은 이 후보만의 work_busy — 후보 하나만 건너뛰고 틱은 미루지 않는다(attempt·spawn 0 은 그대로).
+  expect(await tick()).toMatchObject({ status: 'completed' });
   expect(await attempts(candidate.id)).toEqual([]); expect(await recorded()).toEqual([]);
   expect((await requests()).map(row => [row.provider, row.state])).toEqual([['abcllm', 'reserved']]);
   if (gateway.kind === 'granted') expect(await cancelReservedModelSlot(gateway.reservation)).toBe(true);

@@ -60,7 +60,11 @@ export function selectFirstReviewer(pool: FirstReviewer[], candidateId: number,
   return pool[start];
 }
 
-/** Only known model/route-local refusals may leave other models running. */
+/**
+ * Only known model/route-local refusals may leave other models running.
+ * `capacity` 는 이제 진짜 포화(이 요청이 줄에 섰다)만 뜻한다 — 한 후보의 fence 거절은 `work_busy` 로 따로 오고(capacityRefusalReason),
+ * 호출자는 이 판정 전에 그 후보만 건너뛴다(modelCapacityDeferralIsPerWork). 2026-10-30 결정: 한 후보가 모델을 멈추지 않는다.
+ */
 export const firstReviewDeferralIsLocal = (reason: ModelCapacityDeferredReason): boolean =>
   ["unmapped", "provider_contract_unavailable", "capacity", "queue_full", "withdrawn", "reservation_lost"].includes(reason);
 

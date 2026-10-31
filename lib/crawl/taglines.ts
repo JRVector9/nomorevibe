@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from "node:util";
 import { assertJobLeaseAtWallTime, requestJob, type JobLease } from "@/lib/jobs/control";
 import { emitPipelineEvent } from "@/lib/observability/review-pipeline";
 import { TAGLINE_MODEL, taglineEvidence, taglineHash } from "./tagline";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, notInArray, sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, crawlSettings, crawlTaglines, jobs, modelCapacityRequests, type CrawlCandidate, type CrawlDocument, type CrawlTagline } from "@/lib/db/schema";
 import type { TaglineEvidenceSource } from "./tagline";
@@ -20,6 +20,7 @@ import { crawlTaglineMemberSchema, crawlTaglineGenerationHash, crawlTaglineInput
   type CrawlTaglineInput, type CrawlTaglineMember, type CrawlTaglineModelDispatch, type CrawlTaglineDispatchBinding,
   type CrawlTaglineParent, type ModelCapacityReservation, type ModelCapacityRequestIdentity } from "@/lib/llm/capacity";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
+import { busyMemberKeysSql, capacityOwnerFromEnv, type CapacityOwner } from "@/lib/llm/capacity-busy-targets";
 import { reviewHash } from "./agent-review-contract";
 import { mergeWithDefaults } from "./settings";
 import type { PreparedCrawlTaglineGatewayCall } from "./agent-review-gateway";
@@ -60,13 +61,26 @@ export function pendingTaglinePredicate() {
     )!;
 }
 
-export async function pendingTaglines(limit: number): Promise<TaglineTask[]> {
+/**
+ * 잡의 고르기 옵션(관측 독자는 쓰지 않는다 — 넘기지 않으면 예전 그대로다).
+ * - skipBusy: 다른 요청(대기·예약·보냄)에 묶인 후보(`crawl-tagline:<id>`)를 건너뛴다(capacity-busy-targets.ts). 이 boot 의 대기·예약은
+ *   남긴다(keepOwn) — 조정기가 같은 요청을 다시 묻는다. owner 를 주지 않으면 ROLE_LEASE_* 에서 읽는다.
+ * - exclude: 이 틱에 이미 넘긴 후보 id(같은 작업의 미룸) — 잡이 그 뒤의 후보로 다시 고른다.
+ * 2026-10-30 소유자 결정: 한 후보의 미확인·미룸이 틱·경로를 멈추지 않는다.
+ */
+export type TaglineSelection = { skipBusy?: boolean; owner?: CapacityOwner; exclude?: readonly number[] };
+
+export async function pendingTaglines(limit: number, selection: TaglineSelection = {}): Promise<TaglineTask[]> {
+  const owner = "owner" in selection ? selection.owner : capacityOwnerFromEnv();
+  const exclude = [...new Set(selection.exclude ?? [])];
   const rows = await db.select({ candidate: crawlCandidates, document: crawlDocuments, written: crawlTaglines,
     readyAgeMinutes: sql<number>`extract(epoch from (localtimestamp - ${crawlCandidates.updatedAt})) / 60` })
     .from(crawlCandidates)
     .innerJoin(crawlDocuments, eq(crawlDocuments.repo, crawlCandidates.repo))
     .leftJoin(crawlTaglines, eq(crawlTaglines.repo, crawlCandidates.repo))
-    .where(pendingTaglinePredicate())
+    .where(and(pendingTaglinePredicate(),
+      selection.skipBusy ? sql`('crawl-tagline:' || ${crawlCandidates.id}) NOT IN (${busyMemberKeysSql("crawl-tagline:", { owner, keepOwn: true })})` : undefined,
+      exclude.length ? notInArray(crawlCandidates.id, exclude) : undefined))
     // 오래 기다린 것부터. 실패한 것이 새 후보를 밀어내지 않도록 시도 적은 순이 먼저다
     .orderBy(sql`coalesce(${crawlTaglines.attempts}, 0) asc, ${crawlCandidates.updatedAt} asc`)
     .limit(limit);
