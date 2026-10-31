@@ -264,6 +264,7 @@ export function assignmentAuditChangeLines(row: Pick<AdminLogRow, "detail">): st
     const before = auditValue(change.path, change.before), after = auditValue(change.path, change.after);
     return before === after ? [] : [`${AUDIT_FIELDS[change.path] ?? change.path}: ${before} → ${after}`];
   });
+  if (detail.offOnly === true) lines.push("끄기만 — 계약·정책 경로를 보지 않음");
   const contract = isPlainObject(detail.contract) ? detail.contract : null;
   if (contract && contract.source === "probed") lines.push(`계약: 새로 만듦(${String(contract.contractHash ?? "").slice(0, CONTRACT_HASH_PREFIX)})`);
   if (detail.appended === true) lines.push(`정책 경로 덧붙임(revision ${auditValue("revision", detail.policyRevision)})`);
@@ -412,7 +413,7 @@ export async function saveAdminModelAssignment(input: unknown, actor: string): P
   try {
     const result = await onPrimary(() => db.transaction(tx => saveModelAssignment(tx, input, actor, assignmentDeps())));
     logger.info("model_assignment.saved", { actor, assignmentId: result.after.assignmentId, version: result.after.version, mode: result.after.mode,
-      appended: result.appended.length > 0, contract: result.contract.source });
+      appended: result.appended.length > 0, contract: result.contract?.source ?? "skipped", offOnly: result.offOnly });
     return { ok: true, created: result.before === null, result };
   } catch (error) { return { ok: false, issues: [issueCodeOf(error)] }; }
 }
@@ -432,8 +433,11 @@ export async function turnOffAdminModelAssignment(assignmentId: string, expected
 /** 저장 결과 → 운영자 문장(무엇이 바뀌었나: 판·모드·계약 출처·정책 route·장비 순위, 플래그가 꺼져 있으면 아직 읽지 않는다는 말) */
 export function assignmentSavedMessage(result: ModelAssignmentSaveResult, flagOn: boolean): string {
   const after = result.after;
-  const contract = `${ASSIGNMENT_CONTRACT_SOURCE_LABELS[result.contract.source]}(${result.contract.contractHash.slice(0, CONTRACT_HASH_PREFIX)})`;
-  const route = result.appended.length ? `정책에 경로를 덧붙였습니다(revision ${fmt(result.policyRevision)}, DRAIN 없음)` : "정책 경로는 이미 있습니다";
+  // 끄기 갈래(offOnly): 계약·정책 경로를 보지 않고 끈다 — 끄기는 거절되지 않는다
+  const contract = result.contract ? `${ASSIGNMENT_CONTRACT_SOURCE_LABELS[result.contract.source]}(${result.contract.contractHash.slice(0, CONTRACT_HASH_PREFIX)})`
+    : "확인하지 않음(끄기)";
+  const route = result.offOnly ? "정책 경로는 그대로 둡니다"
+    : result.appended.length ? `정책에 경로를 덧붙였습니다(revision ${fmt(result.policyRevision)}, DRAIN 없음)` : "정책 경로는 이미 있습니다";
   const role = result.deviceRole.before === result.deviceRole.after ? `장비 역할 순위 ${fmt(result.deviceRole.after)} 그대로`
     : `장비 역할 순위 ${result.deviceRole.before === null ? "없음" : fmt(result.deviceRole.before)} → ${fmt(result.deviceRole.after)}`;
   const reader = flagOn ? "" : " 읽는 쪽은 아직 설정을 씁니다(플래그 MODEL_ASSIGNMENT_TABLE 꺼짐) — 켜면 이 배정을 읽습니다.";

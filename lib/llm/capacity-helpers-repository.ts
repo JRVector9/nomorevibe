@@ -368,10 +368,14 @@ export type ModelAssignmentDeps = Readonly<{
   probeContract?: (entry: ModelDefinition, routeId: string, transport: ModelAssignmentProbeTransport) => Promise<EngineContractProbe>;
   cliContract?: (routeId: string, provider: CliProvider, model: string) => Promise<CliServingContract | null>;
 }>;
+/**
+ * 저장 결과. `offOnly` = 있는 행을 끄기만 한 저장(아래 saveModelAssignment 의 끄기 갈래) — 그때 `contract` 는 null(계약을 보지 않았다),
+ * `route` 는 지금 정책에 그 배정의 route 가 있으면 그것, 없으면 null, `appended` 는 언제나 비어 있다.
+ */
 export type ModelAssignmentSaveResult = Readonly<{
-  before: ModelAssignmentRow | null; after: ModelAssignmentRow;
-  contract: Readonly<{ routeId: string; model: string; contractHash: string; source: ModelAssignmentContractSource; id: number | null }>;
-  route: ModelCapacityRoute; appended: readonly ModelCapacityRoute[]; policyRevision: number;
+  before: ModelAssignmentRow | null; after: ModelAssignmentRow; offOnly: boolean;
+  contract: Readonly<{ routeId: string; model: string; contractHash: string; source: ModelAssignmentContractSource; id: number | null }> | null;
+  route: ModelCapacityRoute | null; appended: readonly ModelCapacityRoute[]; policyRevision: number;
   deviceRole: Readonly<{ routeId: string; before: number | null; after: number }>;
 }>;
 
@@ -491,6 +495,12 @@ async function assignmentContract(tx: ProductTransaction, input: ModelAssignment
  * { route, provider, wire 모델, providerBudgetId, groupId = 장비 } 를 덧붙인다 — providerBudgetId 는 등록부 equipment, local-direct 만 계약의 backendId
  * (PR 2a·로컬 호출이 local-direct route 의 providerBudgetId 를 backendId 로 읽는다).
  * 이 PR 에서는 이 행을 읽는 hot path 가 없다 — 입장·감시자는 role 'helper' 행만 본다(3b-B 가 flag 뒤에서 읽는다).
+ *
+ * **끄기는 거절되지 않는다(3b-D 결정)**: mode 'off' 이고 expectedVersion 이 있고(있는 행 — CAS 는 그대로), 잠금 없이 미리 본 그 행이 같은
+ * 등록부 key·전송의 role 'primary' 행이면 saveAssignmentOff 로 간다 — 등록부·장비 enabled·계약 확인(probe 를 부르지 않고 계약 행도 요구하지 않는다)·
+ * 정책 route 덧붙이기를 모두 건너뛰고, 순위가 바뀌었을 때만 장비 순위를 쓰고, 배정 행(mode off, version + 1)과 감사 한 줄을 쓴다. 새 행의 off
+ * 저장(expectedVersion null)과 모델·전송을 바꾸는 off 저장은 지금과 같다(probe + route + 장비 순위 — route 를 미리 만들어 둔다).
+ * 끄기 갈래에서도 남는 거절은 DR fence(site_fenced)·CAS(version_mismatch)·제어 행 없음·순위를 1 로 올려 도우미 경로와 겹치는 경우뿐이다.
  */
 export async function saveModelAssignment(tx: ProductTransaction, input: unknown, actor: string, deps: ModelAssignmentDeps = {}):
   Promise<ModelAssignmentSaveResult> {
@@ -499,6 +509,13 @@ export async function saveModelAssignment(tx: ProductTransaction, input: unknown
   const parsed = parseModelAssignmentInput(input);
   const routeId = ASSIGNMENT_STAGES[parsed.stage].routeId;
   if (routeId === null) return fail("model_assignment_invalid:stage");
+  if (parsed.mode === "off" && parsed.expectedVersion !== null) {
+    // 잠금 없이 미리 본다 — 같은 모델·전송을 끄기만 하면 네트워크(probe)·등록부·정책 덧붙이기 없이 끈다. 잠근 뒤 다시 본다(saveAssignmentOff)
+    const [peek] = await tx.select({ role: modelHelperAssignments.role, registryKey: modelHelperAssignments.registryKey, transport: modelHelperAssignments.transport })
+      .from(modelHelperAssignments).where(eq(modelHelperAssignments.assignmentId, parsed.assignmentId));
+    if (peek && peek.role === "primary" && peek.registryKey === parsed.registryKey && peek.transport === parsed.transport)
+      return saveAssignmentOff(tx, parsed, routeId, actor);
+  }
   // (a) 등록부 key → wire 모델·route provider
   const registry = await (deps.registry ?? defaultAssignmentRegistry)();
   const entry = registry.models.find(model => model.key === parsed.registryKey);
@@ -573,6 +590,64 @@ export async function saveModelAssignment(tx: ProductTransaction, input: unknown
   const deviceRole = Object.freeze({ routeId, before: roleBefore, after: parsed.rank });
   await tx.insert(operationsAudit).values(await adminAuditRow(actor, { action: MODEL_ASSIGNMENT_SAVE_AUDIT_ACTION, target: parsed.assignmentId,
     detail: { version: after.version, expectedVersion: parsed.expectedVersion, before: before && { ...before }, after: { ...after },
-      contract: { ...contractView }, route: { ...route }, appended: appended.length > 0, policyRevision, deviceRole: { ...deviceRole } } }));
-  return Object.freeze({ before, after, contract: contractView, route, appended: Object.freeze(appended), policyRevision, deviceRole });
+      contract: { ...contractView }, route: { ...route }, appended: appended.length > 0, policyRevision, deviceRole: { ...deviceRole }, offOnly: false } }));
+  return Object.freeze({ before, after, offOnly: false, contract: contractView, route, appended: Object.freeze(appended), policyRevision, deviceRole });
+}
+
+/**
+ * 끄기 갈래(saveModelAssignment 가 고른다) — 있는 행(같은 등록부 key·전송)을 mode off 로. 등록부·장비 enabled·계약·정책 route 덧붙이기를 보지 않는다.
+ * 잠금: DR fence(SHARE) → model_capacity_control FOR UPDATE(정책이 없거나 못 읽어도 된다 — 모든 배정·장비 저장이 이 행을 먼저 잡으므로 서로 줄 선다)
+ * → 배정 행 FOR UPDATE·CAS → 장비 순위 행 → (순위가 바뀔 때만) 장비 행 FOR UPDATE. wire 모델·route·provider·evidence_key 는 저장된 값 그대로다
+ * (계약을 다시 보지 않았으므로 근거가 바뀌지 않는다).
+ * 잠근 행이 미리 본 것과 다르게 바뀌었으면(그 사이 다른 저장) version mismatch 로 거절한다 — CAS 가 같은 일을 하지만 모델이 바뀐 경우를 막는다.
+ */
+async function saveAssignmentOff(tx: ProductTransaction, parsed: ModelAssignmentInput, routeId: string, actor: string): Promise<ModelAssignmentSaveResult> {
+  if (!await writerSiteActive(tx)) throw new DrWriterFencedError("site_fenced");
+  const [control] = await tx.select({ policy: modelCapacityControl.policy, revision: modelCapacityControl.revision }).from(modelCapacityControl)
+    .where(eq(modelCapacityControl.id, 1)).for("update");
+  if (!control) return fail("model_capacity_control_missing");
+  const [existing] = await tx.select().from(modelHelperAssignments).where(eq(modelHelperAssignments.assignmentId, parsed.assignmentId)).for("update");
+  const current = existing ? Number(existing.version) : null;
+  if (current !== parsed.expectedVersion) fail(`model_assignment_version_mismatch:${current ?? "none"}`);
+  if (!existing || existing.role !== "primary") return assignmentFail("assignment_is_helper");
+  const before = modelAssignmentFromRecord(existing);
+  if (before.stage !== parsed.stage) fail("model_assignment_invalid:stage");
+  if (before.deviceId !== parsed.deviceId) fail("model_assignment_invalid:deviceId");
+  if (before.registryKey !== parsed.registryKey || before.transport !== parsed.transport) fail(`model_assignment_version_mismatch:${current}`);
+  if (current !== null && current >= VERSION_MAX) fail("model_assignment_version_exhausted");
+  const [role] = await tx.select({ rank: modelCapacityDeviceRoles.roleRank }).from(modelCapacityDeviceRoles)
+    .where(and(eq(modelCapacityDeviceRoles.deviceId, parsed.deviceId), eq(modelCapacityDeviceRoles.routeId, before.routeId))).for("update");
+  const roleBefore = role?.rank ?? null;
+  if (roleBefore !== parsed.rank) {
+    // 순위를 바꾸는 것은 끄기 밖의 일이다 — 장비 행을 잠그고(배정 행은 장비 FK 라 행은 있다), 순위 1 로 도우미 경로를 덮지 않게 본다
+    const [device] = await tx.select({ version: modelCapacityDevices.version }).from(modelCapacityDevices)
+      .where(eq(modelCapacityDevices.deviceId, parsed.deviceId)).for("update");
+    if (!device) return assignmentFail("device_unconfigured");
+    if (parsed.rank === 1) {
+      const helpers = await tx.select({ liveRouteId: modelHelperAssignments.liveRouteId, shadowRouteId: modelHelperAssignments.shadowRouteId })
+        .from(modelHelperAssignments).where(and(eq(modelHelperAssignments.deviceId, parsed.deviceId), helperRows));
+      if (helpers.some(other => other.liveRouteId === before.routeId || other.shadowRouteId === before.routeId)) return assignmentFail("route_is_helper_route");
+    }
+    if (Number(device.version) >= VERSION_MAX) fail("model_capacity_device_version_exhausted");
+    await tx.insert(modelCapacityDeviceRoles).values({ deviceId: parsed.deviceId, routeId: before.routeId, roleRank: parsed.rank })
+      .onConflictDoUpdate({ target: [modelCapacityDeviceRoles.deviceId, modelCapacityDeviceRoles.routeId], set: { roleRank: parsed.rank } });
+    await tx.update(modelCapacityDevices).set({ version: sql`${modelCapacityDevices.version} + 1`, updatedBy: actor, updatedAt: sql`clock_timestamp()` })
+      .where(eq(modelCapacityDevices.deviceId, parsed.deviceId));
+  }
+  const [saved] = await tx.update(modelHelperAssignments).set({ mode: "off", rank: parsed.rank, vote: parsed.vote, maxSlots: parsed.maxSlots, note: parsed.note,
+    updatedBy: actor, promotedEvidence: null, promotedAt: null, promotedBy: null, version: sql`${modelHelperAssignments.version} + 1`, updatedAt: sql`clock_timestamp()` })
+    .where(and(eq(modelHelperAssignments.assignmentId, parsed.assignmentId), eq(modelHelperAssignments.version, existing.version))).returning();
+  if (!saved) return fail(`model_assignment_version_mismatch:${current}`);
+  const after = modelAssignmentFromRecord(saved);
+  // 결과·감사에 적을 route 만 찾는다 — 정책을 못 읽어도 끄기는 거절하지 않는다
+  let policy: ModelCapacityPolicy | null = null;
+  try { policy = control.policy === null ? null : parseModelCapacityPolicy(control.policy); } catch { policy = null; }
+  const route = policy?.routes.find(entry => entry.routeId === before.routeId && entry.provider === before.provider && entry.model === before.model
+    && entry.groupId === before.deviceId) ?? null;
+  const policyRevision = Number(control.revision);
+  const deviceRole = Object.freeze({ routeId: before.routeId, before: roleBefore, after: parsed.rank });
+  await tx.insert(operationsAudit).values(await adminAuditRow(actor, { action: MODEL_ASSIGNMENT_SAVE_AUDIT_ACTION, target: parsed.assignmentId,
+    detail: { version: after.version, expectedVersion: parsed.expectedVersion, before: { ...before }, after: { ...after }, contract: null,
+      route: route && { ...route }, appended: false, policyRevision, deviceRole: { ...deviceRole }, offOnly: true } }));
+  return Object.freeze({ before, after, offOnly: true, contract: null, route: route && Object.freeze({ ...route }), appended: Object.freeze([]), policyRevision, deviceRole });
 }

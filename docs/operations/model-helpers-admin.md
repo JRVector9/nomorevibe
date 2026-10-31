@@ -242,6 +242,13 @@ migration `0155_model_assignments`(PR 3b-A)는 같은 표 `model_helper_assignme
 5. 장비 순위 `(device, route) = rank`(바뀌면 장비 version + 1 — 장비 폼의 옛 화면 저장이 CAS 로 거절된다) → 배정 행 upsert(version + 1; `shadow_route_id` 는 표지
    `primary:<단계>`, `live_route_id`·`live_provider` = 그 route) → `operations_audit` `model-assignment-save` 한 줄(before·after·계약·route·덧붙였나·revision·장비 순위).
 
+**끄기 갈래(3b-D 결정: 끄기는 거절되지 않는다)**: mode `off` 이고 `expectedVersion` 이 있으며(있는 행 — CAS 그대로) 잠금 없이 미리 본 행이 같은 등록부 key·전송의
+role `primary` 행이면, 등록부·장비 enabled·계약 확인(`deps.probeContract` 를 부르지 않고 계약 행도 요구하지 않는다)·정책 route 덧붙이기를 모두 건너뛴다.
+DR fence → control FOR UPDATE(정책이 없어도 된다) → 배정 행 FOR UPDATE·CAS → 순위가 바뀌었을 때만 장비 순위(장비 version + 1, 순위 1 이면 도우미 경로 겹침 검사) →
+배정 행(mode off, version + 1, wire 모델·route·evidence_key 는 저장된 값) → 감사 한 줄(`offOnly: true`, `contract: null`, `appended: false`).
+결과는 `offOnly: true`, `contract: null`, `route` = 지금 정책에 있으면 그 route 아니면 null. 남는 거절은 DR fence·CAS·제어 행 없음·순위 변경 때의 겹침뿐이다.
+새 행의 off 저장과 모델·전송을 바꾸는 off 저장은 지금과 같다(probe + route + 장비 순위 — route 를 미리 만든다).
+
 거절 문자열: `model_assignment_invalid:<path>` · `model_assignment_version_mismatch:<current|none>` · `model_assignment_refused:<code>`(`MODEL_ASSIGNMENT_REFUSALS`) ·
 덧붙이기의 `model_capacity_routes_cap` · `model_capacity_route_conflict` · `model_capacity_append_predecessor_busy` · `site_fenced`.
 
@@ -279,7 +286,7 @@ CLI = `probeCliServingContracts`)을 쓴다. 감사 줄(`model-assignment-save`)
 | 장비 역할 순위 | `model_capacity_device_roles` 의 (장비, route) 순위. 배정 순위와 다르면 행 알림(장비 한도에서 바뀜 — 다시 저장하면 맞춘다) |
 | 최근 1시간 | `model_capacity_requests` 에서 그 (route, 모델, group_id)의 settled 건수. `settled_at` 부분 색인 범위 읽기 하나이고 2초 statement_timeout — 넘으면 「—」 |
 | 판 | 행 version(폼 compare-and-set) |
-| 동작 | 「수정」(`?edit=<id>#form` 으로 폼을 채운다), 「끄기」(실전 행만 — 지금 행을 mode off 로 같은 저장 함수에 다시 넣는다, CAS = 화면이 본 판, 계약·route·장비 순위는 남는다) |
+| 동작 | 「수정」(`?edit=<id>#form` 으로 폼을 채운다), 「끄기」(실전 행만 — 지금 행을 mode off 로 같은 저장 함수에 다시 넣는다, CAS = 화면이 본 판, 계약·route·장비 순위는 남는다. **끄기는 계약 때문에 거절되지 않는다** — 아래 「끄기 갈래」) |
 
 ### 추가·수정 폼
 

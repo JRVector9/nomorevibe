@@ -243,12 +243,16 @@ describe("거절 코드 → 한국어(무엇을 하면 되는지)", () => {
     expect(modelAssignmentIssueMessage("something_new")).toBe("something_new");
   });
   it("저장 결과 문장 — 판·모드·계약 출처·정책 경로·장비 순위, 플래그가 꺼져 있으면 아직 설정을 읽는다고", () => {
-    const result = { before: null, after: AI1, contract: { routeId: "crawl-agent-review", model: "Qwen-X", contractHash: HASH, source: "probed", id: 3 },
+    const result = { before: null, after: AI1, offOnly: false, contract: { routeId: "crawl-agent-review", model: "Qwen-X", contractHash: HASH, source: "probed", id: 3 },
       route: POLICY.routes[0], appended: [POLICY.routes[0]], policyRevision: 8, deviceRole: { routeId: "crawl-agent-review", before: null, after: 1 } } as unknown as ModelAssignmentSaveResult;
     expect(assignmentSavedMessage(result, false)).toBe(`만들었습니다(배정 ${AI1.assignmentId}, 판 3, 모드 실전). 계약: 엔진 확인(readback·1토큰)으로 새로 만든 계약(${"c".repeat(12)}). `
       + "정책에 경로를 덧붙였습니다(revision 8, DRAIN 없음). 장비 역할 순위 없음 → 1. 읽는 쪽은 아직 설정을 씁니다(플래그 MODEL_ASSIGNMENT_TABLE 꺼짐) — 켜면 이 배정을 읽습니다.");
     expect(assignmentSavedMessage({ ...result, before: AI1, appended: [], deviceRole: { routeId: "x", before: 1, after: 1 } } as ModelAssignmentSaveResult, true))
       .toMatch(/^저장했습니다.*정책 경로는 이미 있습니다\. 장비 역할 순위 1 그대로\.$/);
+    // 끄기 갈래(있는 행을 끄기만): 계약·정책 경로를 보지 않았다고 말한다
+    expect(assignmentSavedMessage({ ...result, before: AI1, after: { ...AI1, mode: "off", version: 4 }, offOnly: true, contract: null, route: null, appended: [],
+      deviceRole: { routeId: "crawl-agent-review", before: 1, after: 1 } } as ModelAssignmentSaveResult, true))
+      .toBe(`저장했습니다(배정 ${AI1.assignmentId}, 판 4, 모드 꺼짐). 계약: 확인하지 않음(끄기). 정책 경로는 그대로 둡니다. 장비 역할 순위 1 그대로.`);
   });
 });
 
@@ -272,7 +276,7 @@ describe("가져오기 계획(3b-B 자리표)", () => {
 
 describe("server action — 쓰기 관문 뒤 관리자 확인·폼 검사·저장 함수·거절 문장", () => {
   const BASE = { expectedVersion: "", stage: "ai1", deviceId: "eng-dev", registryKey: "eng:qwen", transport: "direct", rank: "1", role: "primary", mode: "live", confirm: "배정" };
-  const saved = { before: null, after: AI1, contract: { routeId: "crawl-agent-review", model: "Qwen-X", contractHash: HASH, source: "stored", id: 1 },
+  const saved = { before: null, after: AI1, offOnly: false, contract: { routeId: "crawl-agent-review", model: "Qwen-X", contractHash: HASH, source: "stored", id: 1 },
     route: POLICY.routes[0], appended: [], policyRevision: 7, deviceRole: { routeId: "crawl-agent-review", before: 1, after: 1 } };
   it("저장: 저장 입력·사람을 넘기고 결과 문장을 돌려준다; 거절은 한국어로; 폼 문제·비관리자는 저장 함수에 닿지 않는다", async () => {
     mocks.save.mockResolvedValueOnce({ ok: true, created: true, result: saved });

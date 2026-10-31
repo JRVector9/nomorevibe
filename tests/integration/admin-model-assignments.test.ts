@@ -151,8 +151,8 @@ describe("server action → saveModelAssignment(PR 3b-A) — 한 TX", () => {
     const state = await snapshot();
     expect(await saveModelAssignmentAction(null, form(NEW_AI1))).toEqual({ issues: ["다른 사람이 먼저 저장했습니다(지금 판 1). 새로고침해 바뀐 값을 확인한 뒤 다시 저장하세요."] });
     expect(await snapshot()).toEqual(state);
-    const ok = await saveModelAssignmentAction(null, form({ ...NEW_AI1, expectedVersion: "1", assignmentId: ID, rank: "2", mode: "off", confirm: "" }));
-    expect(ok).toMatchObject({ ok: true, message: expect.stringContaining("판 2, 모드 꺼짐") });
+    const ok = await saveModelAssignmentAction(null, form({ ...NEW_AI1, expectedVersion: "1", assignmentId: ID, rank: "2" }));
+    expect(ok).toMatchObject({ ok: true, message: expect.stringContaining("판 2, 모드 실전") });
     expect(ok?.message).toContain("저장된 계약");
     expect(ok?.message).toContain("장비 역할 순위 1 → 2");
     expect(probeCalls).toEqual([]);
@@ -193,6 +193,30 @@ describe("server action → saveModelAssignment(PR 3b-A) — 한 TX", () => {
     expect(await turnOffModelAssignmentAction(null, form({ assignmentId: "missing:ai1:eng:qwen", expectedVersion: "1" })))
       .toEqual({ issues: [expect.stringContaining("이 배정이 지금 없습니다")] });
     expect((await audits()).map(row => row.detail.version)).toEqual([1, 2]);
+  });
+
+  it("끄기는 거절되지 않는다 — 엔진이 사라지고 계약이 꺼져 probe 가 실패해도 끈다(probe 없음, 다른 것은 그대로); 다시 켜기는 probe 로 거절된다", async () => {
+    const { saveModelAssignmentAction, turnOffModelAssignmentAction } = await actions();
+    await saveModelAssignmentAction(null, form(NEW_AI1));
+    await client`UPDATE model_serving_contracts SET enabled = false`;
+    failWith = "engine_unreachable:timeout";
+    probeCalls = [];
+    const kept = { contracts: await contracts(), roles: await roleRows("eng-dev"), control: await controlRow() };
+    expect(await turnOffModelAssignmentAction(null, form({ assignmentId: ID, expectedVersion: "1" })))
+      .toMatchObject({ ok: true, message: `껐습니다(배정 ${ID}, 판 2). 계약·정책 경로·장비 순위는 그대로 남습니다.` });
+    expect(probeCalls).toEqual([]);
+    expect((await assignmentRows())[0]).toMatchObject({ mode: "off", version: 2 });
+    expect({ contracts: await contracts(), roles: await roleRows("eng-dev"), control: await controlRow() }).toEqual(kept);
+    expect((await audits()).at(-1)).toMatchObject({ target: ID, detail: { version: 2, offOnly: true, contract: null, after: { mode: "off" } } });
+    // 폼으로 끄기(메모만 바꿈)도 같은 갈래 — 결과 문장이 계약을 확인하지 않았다고 말한다
+    const note = await saveModelAssignmentAction(null, form({ ...NEW_AI1, expectedVersion: "2", assignmentId: ID, mode: "off", confirm: "", note: "엔진 내려감" }));
+    expect(note).toMatchObject({ ok: true, message: expect.stringContaining("계약: 확인하지 않음(끄기). 정책 경로는 그대로 둡니다.") });
+    expect(probeCalls).toEqual([]);
+    // 다시 실전으로는 계약을 확인한다 — 엔진이 없으니 거절, 행은 그대로
+    const state = await snapshot();
+    expect(await saveModelAssignmentAction(null, form({ ...NEW_AI1, expectedVersion: "3", assignmentId: ID }))).toEqual({ issues: [expect.stringContaining("엔진에 닿지 못했습니다(timeout)")] });
+    expect(probeCalls).toEqual(["eng:qwen|crawl-agent-review|direct"]);
+    expect(await snapshot()).toEqual(state);
   });
 });
 
