@@ -24,7 +24,7 @@ export default async function CapacityDevicesPage() {
   return <main className="mx-auto grid max-w-6xl gap-6 p-4">
     <PageStamp />
     <header className="grid gap-1">
-      <p className="flex flex-wrap gap-4 text-[13px] text-fg-3"><Link href="/admin/models/limits">← 실시간 한도</Link><Link href="/admin/models">← 단계별 모델</Link></p>
+      <p className="flex flex-wrap gap-4 text-[13px] text-fg-3"><Link href="/admin/models/limits">← 실시간 한도</Link><Link href="/admin/models">← 단계별 모델</Link><Link href="/admin/models/helpers">도우미 장비 →</Link></p>
       <h1 className="text-[22px] font-semibold">장비 한도</h1>
       <p className="text-[13px] text-fg-3">장비(정책 경로의 groupId)마다 칸 수·역할 순서·빌려 쓰기를 정합니다. 저장하면 입장 판정이 트랜잭션 안에서 이 표를 바로 읽어
         <strong> 다음 입장부터</strong> 쓰입니다 — DRAIN·배포·&apos;읽은 판&apos;이 없습니다. 이미 잡힌 행(예약·진행)은 그대로이고 한도를 낮추면 새 입장만 막힙니다.

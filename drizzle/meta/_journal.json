@@ -1079,6 +1079,13 @@
       "when": 1794086401064,
       "tag": "0153_model_capacity_devices",
       "breakpoints": true
+    },
+    {
+      "idx": 154,
+      "version": "7",
+      "when": 1794086401065,
+      "tag": "0154_capacity_helpers",
+      "breakpoints": true
     }
   ]
 }

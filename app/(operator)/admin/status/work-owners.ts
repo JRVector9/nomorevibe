@@ -131,6 +131,7 @@ const JOB_CONSUMERS: Readonly<Record<string, ConsumerName>> = {
 const CONSUMER_LABELS: Readonly<Record<ConsumerName, string>> = {
   "github-ko-discovery": "한국어 GitHub 탐색 consumer",
   ai1: "1차 심사 consumer", ai2: "2차 심사 consumer", uptime: "연결 확인 consumer", "agent-scan": "제작 근거 consumer",
+  "capacity-supervisor": "도우미 장비 감시자(Oracle)",
 };
 
 /** Qwen 직접 서버를 부르는 자동 단계(설정 qwenAuto)와 그 단계를 도는 잡 — 화면 판별(screenReview)은 따로 본다 */

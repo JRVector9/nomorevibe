@@ -1,6 +1,8 @@
 import { sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { MODEL_CAPACITY_OCCUPYING_STATES_SQL } from "./capacity-states";
+import { helperCandidateExclusionSql, helperDemandOnSql, helperGateCte, helperGateStatesFromJson, helperRouteMatchSql,
+  type HelperGateState } from "./capacity-helpers";
 
 /**
  * 장비별 입장 설정(PR 1b) — 1b-A 가 고정한 계약. 1b-B(관리자 화면)와 1b-C(입장 알고리즘)는 이 모듈의 이름만 쓴다.
@@ -22,6 +24,13 @@ import { MODEL_CAPACITY_OCCUPYING_STATES_SQL } from "./capacity-states";
  * - secondaryBound(D) = primaryBusy ? secondary_cap : greatest(secondary_cap, limit_slots − reserve_slots).
  * - 대기 행 q 가 **맞는다** ⇔ active(D) < limit_slots AND (rank(q) = 1 OR secondaryActive(D) < secondaryBound(D)).
  * - D 안에서는 (rank, queue_ordinal) 이 가장 작은 맞는 행 하나를 뽑는다(장비마다 pass 당 하나).
+ *
+ * 도우미(PR 2a Layer B, lib/llm/capacity-helpers.ts): 행의 (route, provider, model) 이 D 의 도우미 배정 live·shadow 경로와 같으면 **도우미 행**이다.
+ * - 도우미 행의 rank = greatest(rank, 2) — 순위 행이 1 이어도 우선 역할 우회(cap 무시)가 없고, primaryBusy·waitingPrimary 에 들지 않으며 낮은 순위 점유로 센다.
+ * - 후보 정렬은 (도우미 여부, rank, queue_ordinal): 도우미 행은 장비 자기 역할의 모든 대기 행 뒤에 선다.
+ * - 도우미 행은 helper_gate.ok(신선한 감시자 신호·mode·판정·자동 정지)이고 배정 점유 < max_slots 일 때만 맞는다(닫히면 맞지 않는다, fail-closed).
+ * - primaryBusy 는 신선한 primary_demand 신호(model_device_signals)로도 참이 된다 — 빌려주기를 끝낼 뿐, 신선하지 않으면 무시한다.
+ * 도우미 상태는 도우미가 아닌 행의 rank 1 판정을 바꾸지 않는다: 우선 역할 일은 어떤 신호로도 막히지 않는다.
  */
 
 /** 점유로 세는 상태 = lib/llm/capacity-states.ts 의 하나(reserved·dispatched). indeterminate 는 사람 검토용 행이며 슬롯을 쥐지 않고 바쁨 신호도 아니다(PR #750). */
@@ -78,7 +87,7 @@ export type ModelCapacityDeviceRow = ModelCapacityDeviceSettings & Readonly<{
   enabled: boolean; version: number; updatedBy: string; createdAt: string; updatedAt: string;
 }>;
 
-/** 장비 하나의 실시간 상태(관리자 화면·status·1b-C 의 관측). 설정 출처 `table` | `policy_fallback`. */
+/** 장비 하나의 실시간 상태(관리자 화면·status·1b-C 의 관측). 설정 출처 `table` | `policy_fallback`. `helpers` 는 이 장비의 도우미 경로 상태(PR 2a). */
 export type ModelCapacityDeviceState = Readonly<{
   deviceId: string; source: "table" | "policy_fallback";
   limitSlots: number; secondaryCap: number; idleMs: number; reserveSlots: number;
@@ -94,6 +103,8 @@ export type ModelCapacityDeviceState = Readonly<{
   /** 현재 세대의 대기 행(queue_until > now). */
   waiting: number; waitingPrimary: number;
   version: number | null; updatedAt: string | null;
+  /** 도우미 경로 상태(helper_gate + helper_active, assignment_id·kind 순). deviceStateFromRow 는 언제나 채운다(배정이 없으면 []). */
+  helpers?: readonly HelperGateState[];
 }>;
 
 export type ModelCapacityGeneration = Readonly<{ epoch: number; revision: number; policyHash: string }>;
@@ -152,16 +163,22 @@ const fallbackIdle = sql.raw(String(DEFAULT_DEVICE_IDLE_MS));
 const fallbackReserve = sql.raw(String(DEFAULT_DEVICE_RESERVE_SLOTS));
 const limitMax = sql.raw(String(MODEL_CAPACITY_DEVICE_LIMIT_MAX));
 
+/** 장부 행 `alias`(roles 를 `ro` 로 LEFT JOIN 한 행)의 순위: 도우미 행은 greatest(rank, 2), 아니면 rank(없으면 UNRANKED_ROLE_RANK). */
+const effectiveRank = (alias: string): SQL => sql`CASE WHEN ${helperRouteMatchSql(alias)}
+        THEN greatest(coalesce(ro.role_rank, ${unranked}), 2) ELSE coalesce(ro.role_rank, ${unranked}) END`;
+
 /**
- * 장비 D 의 판정 CTE 접두(s·roles·active·busy·counts·waiting). deviceCandidateSql(입장)과 deviceStateSql(관측)이 같은 접두를 쓴다 —
- * 조건의 단일 출처. `deviceId` 는 bind 값(string) 또는 바깥 열 참조(SQL, LATERAL 안에서 d.device_id 등)다.
+ * 장비 D 의 판정 CTE 접두(도우미 sup·helper_gate·helper_active·demand, 그리고 s·roles·active·busy·counts·waiting). deviceCandidateSql(입장)과
+ * deviceStateSql(관측)이 같은 접두를 쓴다 — 조건의 단일 출처. `deviceId` 는 bind 값(string) 또는 바깥 열 참조(SQL, LATERAL 안에서 d.device_id 등)다.
  * `groupLimitsJson` 은 정책 `groupLimits` 의 JSON 문자열(없으면 "{}") — 설정 행이 없을 때의 대체 한도(policy_fallback).
+ * 도우미 조각(helperGateCte)은 자기 안에서만 참조하므로 맨 앞에 두고, `busy` 가 그 `demand` 를 읽는다.
  */
 export function deviceStateCte(deviceId: SQL | string, generation: ModelCapacityGeneration, groupLimitsJson: string): SQL {
   const device = deviceRef(deviceId);
   const occupying = sql.raw(DEVICE_OCCUPYING_STATES_SQL);
   const limitPattern = sql.raw(`'${DEVICE_FALLBACK_LIMIT_PATTERN.source}'`);
-  return sql`WITH s AS MATERIALIZED (
+  return sql`WITH ${helperGateCte(device)},
+    s AS MATERIALIZED (
       SELECT d.limit_slots, d.secondary_cap, d.idle_ms, d.reserve_slots, 'table'::text AS source, d.version, d.updated_at
       FROM model_capacity_devices d WHERE d.device_id = ${device} AND d.enabled
       UNION ALL
@@ -173,25 +190,25 @@ export function deviceStateCte(deviceId: SQL | string, generation: ModelCapacity
     ),
     roles AS MATERIALIZED (SELECT ro.route_id, ro.role_rank FROM model_capacity_device_roles ro WHERE ro.device_id = ${device}),
     active AS MATERIALIZED (
-      SELECT coalesce(ro.role_rank, ${unranked}) AS role_rank
+      SELECT ${effectiveRank("r")} AS role_rank
       FROM model_capacity_requests r LEFT JOIN roles ro ON ro.route_id = r.route_id
       WHERE r.group_id = ${device} AND r.state IN ${occupying}
     ),
     busy AS MATERIALIZED (
-      SELECT EXISTS (
+      SELECT (EXISTS (
         SELECT 1 FROM model_capacity_requests r JOIN roles ro ON ro.route_id = r.route_id AND ro.role_rank = 1, s
-        WHERE r.group_id = ${device} AND (
+        WHERE r.group_id = ${device} AND NOT ${helperRouteMatchSql("r")} AND (
           (r.state = 'waiting' AND r.epoch = ${generation.epoch} AND r.revision = ${generation.revision}
             AND r.policy_hash = ${generation.policyHash} AND r.queue_until > clock_timestamp())
           OR r.state IN ${occupying}
           OR r.updated_at >= clock_timestamp() - s.idle_ms * interval '1 millisecond')
-      ) AS primary_busy
+      ) OR ${helperDemandOnSql()}) AS primary_busy
     ),
     counts AS MATERIALIZED (
       SELECT count(*)::int AS total, (count(*) FILTER (WHERE role_rank > 1))::int AS secondary FROM active
     ),
     waiting AS MATERIALIZED (
-      SELECT count(*)::int AS waiting, (count(*) FILTER (WHERE coalesce(ro.role_rank, ${unranked}) = 1))::int AS waiting_primary
+      SELECT count(*)::int AS waiting, (count(*) FILTER (WHERE ${effectiveRank("r")} = 1))::int AS waiting_primary
       FROM model_capacity_requests r LEFT JOIN roles ro ON ro.route_id = r.route_id
       WHERE r.group_id = ${device} AND r.state = 'waiting' AND r.epoch = ${generation.epoch} AND r.revision = ${generation.revision}
         AND r.policy_hash = ${generation.policyHash} AND r.queue_until > clock_timestamp()
@@ -201,19 +218,22 @@ export function deviceStateCte(deviceId: SQL | string, generation: ModelCapacity
 /**
  * 장비 D 에서 지금 입장시킬 대기 행 하나(`request_id`)를 잠근다(`FOR UPDATE OF q`). 1b-C 의 grantOne 이 control 행 FOR UPDATE 아래에서
  * 장비마다 한 번 실행한다. 설정 출처가 없으면(s 가 비면) 행이 나오지 않는다 → 그 장비는 grant 없음.
+ * 도우미 행(h.helper)은 rank 1 우회가 없고, 열린 경로·max_slots 안에서만 맞으며(helperCandidateExclusionSql), 자기 역할 행 뒤에 정렬된다.
  */
 export function deviceCandidateSql(deviceId: string, generation: ModelCapacityGeneration, groupLimitsJson: string): SQL {
   const device = deviceRef(deviceId);
   return sql`${deviceStateCte(deviceId, generation, groupLimitsJson)}
     SELECT q.request_id FROM model_capacity_requests q
-      LEFT JOIN roles ro ON ro.route_id = q.route_id, s, counts c, busy b
+      LEFT JOIN roles ro ON ro.route_id = q.route_id
+      CROSS JOIN LATERAL (SELECT ${helperRouteMatchSql("q")} AS helper) h, s, counts c, busy b
     WHERE q.group_id = ${device} AND q.state = 'waiting'
       AND q.epoch = ${generation.epoch} AND q.revision = ${generation.revision} AND q.policy_hash = ${generation.policyHash}
       AND q.queue_until > clock_timestamp()
       AND c.total < s.limit_slots
-      AND (coalesce(ro.role_rank, ${unranked}) = 1
+      AND ((NOT h.helper AND coalesce(ro.role_rank, ${unranked}) = 1)
         OR c.secondary < CASE WHEN b.primary_busy THEN s.secondary_cap ELSE greatest(s.secondary_cap, s.limit_slots - s.reserve_slots) END)
-    ORDER BY coalesce(ro.role_rank, ${unranked}), q.queue_ordinal LIMIT 1 FOR UPDATE OF q`;
+      AND ${helperCandidateExclusionSql("q")}
+    ORDER BY h.helper, coalesce(ro.role_rank, ${unranked}), q.queue_ordinal LIMIT 1 FOR UPDATE OF q`;
 }
 
 /** deviceStateSql 이 돌려주는 행(snake_case; 숫자는 int 로 캐스팅돼 있다). */
@@ -221,6 +241,8 @@ export type DeviceStateRow = {
   device_id: string; source: "table" | "policy_fallback"; limit_slots: number; secondary_cap: number; idle_ms: number; reserve_slots: number;
   active: number; secondary_active: number; secondary_bound: number; primary_busy: boolean; lending: boolean;
   waiting: number; waiting_primary: number; version: string | number | null; updated_at: Date | string | null;
+  /** jsonb 배열(HelperGateStateRow 모양). 이 열이 없는 옛 행 모양도 받는다. */
+  helpers?: unknown;
 };
 
 /**
@@ -234,7 +256,11 @@ export function deviceStateSql(deviceId: SQL | string, generation: ModelCapacity
       c.total AS active, c.secondary AS secondary_active, b.primary_busy,
       CASE WHEN b.primary_busy THEN s.secondary_cap ELSE greatest(s.secondary_cap, s.limit_slots - s.reserve_slots) END AS secondary_bound,
       (NOT b.primary_busy AND c.secondary > s.secondary_cap) AS lending,
-      w.waiting, w.waiting_primary
+      w.waiting, w.waiting_primary,
+      (SELECT coalesce(jsonb_agg(jsonb_build_object('assignment_id', g.assignment_id, 'kind', g.kind, 'route_id', g.route_id,
+          'provider', g.provider, 'model', g.model, 'ok', g.ok, 'active', coalesce(a.n, 0), 'max_slots', g.max_slots)
+          ORDER BY g.assignment_id, g.kind), '[]'::jsonb)
+        FROM helper_gate g LEFT JOIN helper_active a ON a.assignment_id = g.assignment_id) AS helpers
     FROM s, counts c, busy b, waiting w`;
 }
 
@@ -246,6 +272,6 @@ export function deviceStateFromRow(row: DeviceStateRow): ModelCapacityDeviceStat
     idleMs: Number(row.idle_ms), reserveSlots: Number(row.reserve_slots), active: Number(row.active), secondaryActive: Number(row.secondary_active),
     secondaryBound: Number(row.secondary_bound), primaryBusy: Boolean(row.primary_busy), lending: Boolean(row.lending),
     waiting: Number(row.waiting), waitingPrimary: Number(row.waiting_primary),
-    version: row.version === null ? null : Number(row.version), updatedAt,
+    version: row.version === null ? null : Number(row.version), updatedAt, helpers: helperGateStatesFromJson(row.helpers),
   });
 }

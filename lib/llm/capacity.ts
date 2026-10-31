@@ -266,7 +266,7 @@ export type Ai1ItemGatewayTerminalEvidence = Readonly<z.infer<typeof ai1ItemGate
 /** device_unconfigured: the route's device (groupId) has neither an enabled `model_capacity_devices` row nor a policy `groupLimits` fallback — no waiting row is written. */
 export type ModelSlotResult = { kind: "granted"; reservation: ModelCapacityReservation }
   | { kind: "deferred"; reason: "disabled" | "draining" | "unmapped" | "capacity" | "queue_full"
-    | "policy_changed" | "withdrawn" | "dispatched" | "device_unconfigured" };
+    | "policy_changed" | "withdrawn" | "dispatched" | "device_unconfigured" | "helper_ineligible" };
 
 export function parseModelCapacityPolicy(value: unknown): ModelCapacityPolicy {
   return modelCapacityPolicySchema.parse(value);
