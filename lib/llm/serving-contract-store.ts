@@ -20,7 +20,7 @@ import "./stage-assignment-snapshot";
  *   without SELECT on model_serving_contracts) keeps its last good value while the others still load.
  * - The runtime_settings row is published into lib/operations/runtime-settings-store (one 판 for the route-policy overlay, the
  *   translation policy and the tick budgets) and served through its loader, so ensureRuntimeSettings() costs at most this reload.
- * MODEL_SERVING_CONTRACTS_DB=0 is the kill switch back to the env-only startup contracts, the code-default registry and the
+ * MODEL_SERVING_CONTRACTS_DB=0 is the kill switch to no contracts (every contract route defers), the code-default registry and the
  * code-default runtime settings.
  */
 export type ServingContractAuth = "gateway" | "none" | "stored";
@@ -121,27 +121,53 @@ export async function ensureServingContracts(maxAgeMs = SERVING_CONTRACT_REFRESH
   return current.loading;
 }
 
-/** The stored auth and transport for one contract, or null when no admin row exists (the caller keeps its env default). */
+/** The stored auth and transport for one contract, or null when no admin row exists. */
 export function servingContractAuth(routeId: string, model: string): { mode: ServingContractAuth; apiKey: string | null; transport: ServingContractTransport } | null {
   const row = servingContractSnapshot().rows.find(entry => entry.routeId === routeId && entry.model === model);
   return row ? { mode: row.auth, apiKey: row.apiKey, transport: row.transport } : null;
 }
 
+/** Why a route cannot call its model; see textRouteAccess. */
+export type TextRouteBlock = "no_direct_contract" | "gateway_auth" | "stored_key_unreadable";
+/** Operator-facing detail for each block (job degraded detail, status lines). */
+export const TEXT_ROUTE_BLOCK_DETAIL: Readonly<Record<TextRouteBlock, string>> = {
+  no_direct_contract: "이 경로·모델의 직접 연결 계약(관리자 엔진 연결, transport direct)이 없습니다",
+  gateway_auth: "직접 연결 계약의 인증이 게이트웨이 키로 되어 있습니다 — 게이트웨이는 제거됐으니 키 없음 또는 저장한 키로 다시 저장하세요",
+  stored_key_unreadable: "직접 연결 계약에 저장한 키를 열 수 없습니다(암호 상자 키 확인)",
+};
+/** The access decision: blocked with a reason, or open with the bearer to send (null = no Authorization header). */
+export type TextRouteAccess = Readonly<{ block: TextRouteBlock; bearer?: undefined } | { block: null; bearer: string | null }>;
+
+const contractProvider = (contract: unknown): string | null =>
+  contract && typeof contract === "object" && typeof (contract as { provider?: unknown }).provider === "string" ? (contract as { provider: string }).provider : null;
+
 /**
- * A text route can authenticate a call to its model — the same rule the senders apply (contractBearer in agent-review-gateway):
- * - an admin contract for this route+model with no key (auth none: a keyless engine, usually transport direct) is callable;
- * - one with its own stored key (auth stored) is callable when that key opens (a key that does not open is refused at send time);
- * - otherwise (no admin row, or auth gateway) the abcLLM gateway key ABCLLM_API_KEY must be set.
- * Replaces the old "ABCLLM_API_KEY is set" gate, so removing the gateway key stops nothing that no longer goes through the gateway
- * (PR 3b-C: every text job — reason-translate and crawl-tagline included — gates on this, not on the key).
- * The Qwen native path of product-tagline-ko (korean-translation-config, env switch) is outside this gate and stays as is until the
- * route→engine assignment table (PR 3b-B/3b-D) absorbs it.
+ * The one rule for "may this route call this model, and with which bearer" — the gate the text jobs check before a tick (textRouteBlock /
+ * textRouteCallable) and the bearer the senders attach (contractBearer in agent-review-gateway) are this same decision, so the two never
+ * disagree. The abcLLM gateway was removed on 2026-10-30 and no process env key is consulted; what opens a route:
+ * - an engine connected directly — an admin contract (model_serving_contracts) of this route+model with transport direct — with no key
+ *   (auth none) or its own stored key (auth stored, when that key opens). Gateway auth on such a row never opens it (gateway_auth); a
+ *   stored key that does not open is refused here, not at send time (stored_key_unreadable);
+ * - a local-direct contract (PR 3b-C: AI1·AI2 direct-openai-chat-v1, the engine's own name on the wire) is direct by definition, whatever
+ *   the row's transport flag says, and sends no key unless its row stores one. `provider` is the parsed contract's provider when the caller
+ *   holds it; without it the row's contract JSON decides.
+ * Anything else — no row, a gateway-transport abcllm row — is no_direct_contract. The Qwen native path of product-tagline-ko
+ * (korean-translation-config, env switch) is outside this gate until the route→engine assignment table (PR 3b-B/3b-D) absorbs it.
  */
+export function textRouteAccess(routeId: string, model: string, provider?: string): TextRouteAccess {
+  const row = servingContractSnapshot().rows.find(entry => entry.routeId === routeId && entry.model === model);
+  const localDirect = provider === "local-direct" || (row ? contractProvider(row.contract) === "local-direct" : false);
+  if (!localDirect && row?.transport !== "direct") return { block: "no_direct_contract" };
+  if (!row || row.auth === "gateway") return localDirect ? { block: null, bearer: null } : { block: "gateway_auth" };
+  if (row.auth === "none") return { block: null, bearer: null };
+  return row.apiKey ? { block: null, bearer: row.apiKey } : { block: "stored_key_unreadable" };
+}
+/** Why a text route cannot call its model, or null when it can (textRouteAccess). */
+export function textRouteBlock(routeId: string, model: string): TextRouteBlock | null {
+  return textRouteAccess(routeId, model).block;
+}
 export function textRouteCallable(routeId: string, model: string): boolean {
-  const stored = servingContractAuth(routeId, model);
-  if (stored?.mode === "none") return true;
-  if (stored?.mode === "stored") return !!stored.apiKey;
-  return !!process.env.ABCLLM_API_KEY?.trim();
+  return textRouteBlock(routeId, model) === null;
 }
 
 /** Tests and replay: pin a snapshot and stop DB reloads. Pass null to restore normal loading. */

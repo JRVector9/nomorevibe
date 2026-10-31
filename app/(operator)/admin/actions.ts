@@ -109,7 +109,7 @@ export const saveCrawlSettings = webWriteAction(async function saveCrawlSettings
       agreeAt: num(form.get("secondReviewAgreeAt")),
     },
     /*
-     * 모델 칸을 비우면 설정을 지운다(서버의 CRAWL_REVIEW_MODEL 로 돌아간다).
+     * 모델 칸을 비우면 설정을 지운다(1차 심사자가 없어져 AI 심사가 멈춘다).
      * 키를 빼 버리면 저장이 기존 값에 덮여 한 번 넣은 심사자를 화면에서 되돌릴 길이 없다 —
      * saveSettings 가 {...지금, ...바꾼 것} 으로 합치기 때문이다. 그래서 undefined 를 명시한다.
      */

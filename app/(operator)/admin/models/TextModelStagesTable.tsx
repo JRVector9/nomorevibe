@@ -5,10 +5,10 @@ export function TextModelStagesTable({ models }: { models: ModelEnv }) {
     ["검색 프로필 생성", models.profile, "ABCLLM_PROFILE_MODEL"],
     ["검색 키워드 검수", models.verify, "SEARCH_VERIFY_MODEL"],
     ["심사 사유 번역", models.translate, "ABCLLM_MODEL"],
-    ["제품 다국어 번역", models.productTranslate, "PRODUCT_TRANSLATION_MODEL"],
+    ["제품 다국어 번역", models.productTranslate, "등록부 · product-translate"],
     ["한국어 소개 번역", models.koreanTagline ?? models.translate, "MODEL_REGISTRY_CONFIG · product-tagline-ko / ABCLLM_MODEL"],
     ["검색 질의 번역", models.searchQuery ?? models.translate, "MODEL_REGISTRY_CONFIG · search-query-translate / ABCLLM_MODEL"],
-    ["수집 소개 생성", models.tagline, "ABCLLM_TAGLINE_MODEL"],
+    ["수집 소개 생성", models.tagline, "등록부 · crawl-tagline"],
     ["소개 검수", models.introCheck, "INTRO_CHECK_MODEL · Claude CLI"],
   ];
   return <>

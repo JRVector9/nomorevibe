@@ -13,7 +13,7 @@ import { RoleLeaseLostError, type RoleLease } from "@/lib/jobs/role-leader";
 import { assertJobBatchAdmission } from "@/lib/jobs/batch-repository";
 import { currentReplayDb } from "@/lib/db/replay-scope";
 import { reviewHash } from "@/lib/crawl/agent-review-contract";
-import { PRODUCT_TRANSLATION_MODEL } from "@/lib/crawl/translate";
+import { PRODUCT_TRANSLATE_MODEL } from "@/lib/crawl/translate";
 import type { PreparedProductTranslationGatewayCall } from "@/lib/crawl/agent-review-gateway";
 import { lockProductGeneration } from "./generation";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
@@ -292,7 +292,7 @@ export async function prepareProductTranslationDispatch(value: readonly ProductT
       const control = lock?.control ?? await lockModelCapacityCallerControl(tx);
       if (!reserved && control.mode === "disabled") return { kind: "disabled" } as const;
       if (control.mode !== "open") throw new ModelCapacityDeferredError(control.mode === "draining" ? "draining" : "disabled");
-      if (call.model !== scopedModel("product-translate", PRODUCT_TRANSLATION_MODEL) || !control.policy?.routes.some(route => route.routeId === PRODUCT_TRANSLATION_JOB
+      if (call.model !== scopedModel("product-translate", PRODUCT_TRANSLATE_MODEL) || !control.policy?.routes.some(route => route.routeId === PRODUCT_TRANSLATION_JOB
         && route.provider === "abcllm" && route.model === call.model)) throw new ModelCapacityDeferredError("unmapped");
       if (!roleLease || !["text", "translation"].includes(roleLease.role)) throw new ModelCapacityDeferredError("owner_unavailable");
       await assertJobBatchAdmission(tx, PRODUCT_TRANSLATION_JOB, roleLease);

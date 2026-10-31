@@ -585,7 +585,7 @@ export const jobBatchCandidates = pgTable('job_batch_candidates', {
 ]);
 
 /**
- * Admin-managed gateway serving contracts (0147). An enabled row overrides the ABCLLM_SERVING_CONTRACTS entry for its route+model.
+ * Admin-managed gateway serving contracts (0147). The enabled row is the only source of a route+model contract (no env contracts since 2026-10-31).
  * The contract JSON is validated by the route schema in the app; the API key is encrypted (lib/security/secret-box) and never part of it.
  */
 export const modelServingContracts = pgTable('model_serving_contracts', {

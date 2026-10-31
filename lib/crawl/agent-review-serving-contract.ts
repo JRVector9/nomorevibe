@@ -32,11 +32,11 @@ export function ai1GatewayServingContractHash(value: Ai1GatewayServingContract):
   return createHash("sha256").update(JSON.stringify(ai1GatewayServingContractSchema.parse(value))).digest("hex");
 }
 
-// 관리 화면·ABCLLM_SERVING_CONTRACTS 는 두 모양을 모두 받는다. 엔진 연결(admin-engine-connect)이 채우는 칸은 raw 모양이다.
+// 관리 화면(model_serving_contracts)은 두 모양을 모두 받는다. 엔진 연결(admin-engine-connect)이 채우는 칸은 raw 모양이다.
 const configured = startupGatewayServingContracts("crawl-agent-review", ai1GatewayServingContractSchema,
   { gatewayShape: ai1RawGatewayServingContractSchema });
 /**
- * 운영자가 readback 으로 검증해 ABCLLM_SERVING_CONTRACTS·관리 화면에 넣은 계약만 연다. 없거나 틀리면 null(=deferred)이다.
+ * 운영자가 readback 으로 검증해 관리 화면(model_serving_contracts)에 저장한 계약만 연다. 없거나 틀리면 null(=deferred)이다.
  * abcllm 은 예전처럼 model 이 정확히 같은 계약 하나다. local-direct 는 그 provider 의 계약 중 선택(엔진 이름 또는 등록부 키)이 가리키는
  * 것이 정확히 하나일 때다(AI2 와 같은 규칙).
  */
