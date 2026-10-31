@@ -101,12 +101,12 @@ describe('candidate SQL', () => {
     const query = render(deviceCandidateSql('supa', generation, '{"supa":4}'));
     expect(query.sql).toContain('FOR UPDATE OF q');
     expect(query.sql).toMatch(/LIMIT 1 FOR UPDATE OF q$/);
-    expect(query.sql).toContain('ORDER BY coalesce(ro.role_rank, 32767), q.queue_ordinal');
+    expect(query.sql).toContain('ORDER BY h.helper, coalesce(ro.role_rank, 32767), q.queue_ordinal');
     expect(query.sql).toMatch(/q\.epoch = \$\d+ AND q\.revision = \$\d+ AND q\.policy_hash = \$\d+/);
     expect(query.sql).toContain("q.state = 'waiting'");
     expect(query.sql).toContain('q.queue_until > clock_timestamp()');
     expect(query.sql).toContain('c.total < s.limit_slots');
-    expect(query.sql).toContain('coalesce(ro.role_rank, 32767) = 1');
+    expect(query.sql).toContain('(NOT h.helper AND coalesce(ro.role_rank, 32767) = 1)');
     expect(query.sql).toContain('CASE WHEN b.primary_busy THEN s.secondary_cap ELSE greatest(s.secondary_cap, s.limit_slots - s.reserve_slots) END');
     expect(query.sql).toContain("'policy_fallback'::text");
     expect(query.sql).toContain('NOT EXISTS (SELECT 1 FROM model_capacity_devices d WHERE d.device_id = $');
@@ -119,13 +119,13 @@ describe('candidate SQL', () => {
 
   it('counts occupancy from reserved/dispatched rows only (indeterminate holds nothing) and busy from rank-1 live/recent rows', () => {
     const query = render(deviceCandidateSql('supa', generation, '{}')).sql;
-    expect(query.match(/r\.state IN \('reserved','dispatched'\)/g)).toHaveLength(2);  // active CTE + busy CTE
+    expect(query.match(/r\.state IN \('reserved','dispatched'\)/g)).toHaveLength(3);  // helper_active + active CTE + busy CTE
     expect(query).not.toContain("'indeterminate'");
     expect(query).toContain('ro.role_rank = 1');
     expect(query).toContain("r.updated_at >= clock_timestamp() - s.idle_ms * interval '1 millisecond'");
     expect(query).toMatch(/r\.state = 'waiting' AND r\.epoch = \$\d+ AND r\.revision = \$\d+\s+AND r\.policy_hash = \$\d+ AND r\.queue_until > clock_timestamp\(\)/);
     expect(query).toContain("count(*) FILTER (WHERE role_rank > 1)");
-    for (const cte of ['s', 'roles', 'active', 'busy', 'counts', 'waiting']) expect(query).toContain(`${cte} AS MATERIALIZED`);
+    for (const cte of ['sup', 'helper_gate', 'helper_active', 'demand', 's', 'roles', 'active', 'busy', 'counts', 'waiting']) expect(query).toContain(`${cte} AS MATERIALIZED`);
   });
 
   it('shares the CTE prefix with the state view and accepts an outer column reference for the LATERAL form', () => {
@@ -142,14 +142,38 @@ describe('candidate SQL', () => {
     expect(render(deviceStateSql('supa', generation, '{}')).sql.startsWith(prefix)).toBe(true);
   });
 
+  it('composes the helper gate before busy: helper rows rank ≥ 2, sort after own roles, need an open gate, and fresh demand ends lending', () => {
+    const prefix = render(deviceStateCte('supa', generation, '{}')).sql;
+    expect(prefix).toMatch(/^WITH sup AS MATERIALIZED/);
+    expect(prefix.indexOf('demand AS MATERIALIZED')).toBeLessThan(prefix.indexOf('busy AS MATERIALIZED'));
+    expect(prefix.indexOf('helper_gate AS MATERIALIZED')).toBeLessThan(prefix.indexOf('active AS MATERIALIZED'));
+    // a helper row never takes the rank-1 bypass, never makes the primary busy, and counts as secondary occupancy
+    expect(prefix).toContain('THEN greatest(coalesce(ro.role_rank, 32767), 2) ELSE coalesce(ro.role_rank, 32767) END AS role_rank');
+    expect(prefix).toContain('NOT EXISTS (SELECT 1 FROM helper_gate hg WHERE hg.route_id = r.route_id AND hg.provider = r.provider AND hg.model = r.model)');
+    expect(prefix).toContain('OR coalesce((SELECT d.on_ FROM demand d), false)) AS primary_busy');
+    const candidate = render(deviceCandidateSql('supa', generation, '{}')).sql;
+    expect(candidate).toContain('CROSS JOIN LATERAL (SELECT EXISTS (SELECT 1 FROM helper_gate hg WHERE hg.route_id = q.route_id');
+    expect(candidate).toContain('AND NOT EXISTS (SELECT 1 FROM helper_gate g');
+    expect(candidate).toContain('>= g.max_slots))');
+    expect(candidate).toMatch(/ORDER BY h\.helper, coalesce\(ro\.role_rank, 32767\), q\.queue_ordinal LIMIT 1 FOR UPDATE OF q$/);
+    const state = render(deviceStateSql('supa', generation, '{}')).sql;
+    expect(state).toContain("'max_slots', g.max_slots)");
+    expect(state).toContain('AS helpers');
+    expect(state).not.toMatch(/\bFOR\s+(SHARE|UPDATE)\b/);
+  });
+
   it('maps a state row to the camelCase state with ISO time and numeric version', () => {
     const at = new Date('2026-10-30T12:00:00.000Z');
     expect(deviceStateFromRow({ device_id: 'supa', source: 'table', limit_slots: 4, secondary_cap: 1, idle_ms: 60000, reserve_slots: 0, active: 2,
       secondary_active: 1, secondary_bound: 1, primary_busy: true, lending: false, waiting: 3, waiting_primary: 1, version: '5', updated_at: at }))
       .toEqual({ deviceId: 'supa', source: 'table', limitSlots: 4, secondaryCap: 1, idleMs: 60000, reserveSlots: 0, active: 2, secondaryActive: 1,
-        secondaryBound: 1, primaryBusy: true, lending: false, waiting: 3, waitingPrimary: 1, version: 5, updatedAt: '2026-10-30T12:00:00.000Z' });
+        secondaryBound: 1, primaryBusy: true, lending: false, waiting: 3, waitingPrimary: 1, version: 5, updatedAt: '2026-10-30T12:00:00.000Z', helpers: [] });
     expect(deviceStateFromRow({ device_id: 'g', source: 'policy_fallback', limit_slots: 2, secondary_cap: 2, idle_ms: 60000, reserve_slots: 0, active: 0,
       secondary_active: 0, secondary_bound: 2, primary_busy: false, lending: false, waiting: 0, waiting_primary: 0, version: null, updated_at: null }))
       .toMatchObject({ source: 'policy_fallback', version: null, updatedAt: null, secondaryBound: 2 });
+    const helpers = [{ assignment_id: 'g:ai1', kind: 'live', route_id: 'h', provider: 'local-direct', model: 'm', ok: true, active: 1, max_slots: 2 }];
+    expect(deviceStateFromRow({ device_id: 'g', source: 'table', limit_slots: 2, secondary_cap: 0, idle_ms: 0, reserve_slots: 0, active: 1,
+      secondary_active: 1, secondary_bound: 2, primary_busy: false, lending: true, waiting: 0, waiting_primary: 0, version: 1, updated_at: at, helpers }).helpers)
+      .toEqual([{ assignmentId: 'g:ai1', kind: 'live', routeId: 'h', provider: 'local-direct', model: 'm', ok: true, active: 1, maxSlots: 2 }]);
   });
 });

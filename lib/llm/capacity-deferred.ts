@@ -4,16 +4,19 @@
  *   장부(requestSlot)는 포화와 같은 `capacity` 로 답하므로 호출자가 capacityRefusalReason(capacity-busy-targets.ts)으로 가른다.
  * - `ledger_mismatch`: 이 대상 한 세대의 장부 행이 정확한 사슬로 읽히지 않는다(2026-10-31) — 그 대상만 격리하고 잡은 다음 대상으로 간다.
  *   예전에는 이 오류가 틱 전체를 던져 같은 머리 대상이 매 틱 잡 전체를 멈췄다. 호출·시도·실패 기록은 없다.
+ * - `helper_ineligible`(PR 2a Layer B): 이 요청은 도우미 경로(model_helper_assignments 의 live·shadow 경로)인데 지금 닫혀 있다 — 감시자 신호가 없거나·
+ *   만료됐거나·다른 epoch·판·계정이거나, 감시자가 꺼졌거나, 자동 정지·mode·판정이 막거나, 배정 점유가 max_slots 에 찼다(fail-closed).
+ *   대기 행·event 를 남기지 않는다. 도우미 단계는 이번 틱을 멈출 뿐 모델 호출을 다시 시도하지 않는다. 우선 역할 경로에는 오지 않는다.
  */
 export type ModelCapacityDeferredReason = "draining" | "unmapped" | "provider_contract_unavailable"
   | "reservation_required" | "owner_unavailable" | "capacity" | "queue_full" | "policy_changed"
   | "withdrawn" | "dispatched" | "disabled" | "reservation_lost" | "device_unconfigured" | "work_busy"
-  | "ledger_mismatch";
+  | "ledger_mismatch" | "helper_ineligible";
 
 export function isModelCapacityDeferredReason(value: unknown): value is ModelCapacityDeferredReason {
   return typeof value === "string" && ["draining", "unmapped", "provider_contract_unavailable", "reservation_required",
     "owner_unavailable", "capacity", "queue_full", "policy_changed", "withdrawn", "dispatched", "disabled", "reservation_lost",
-    "device_unconfigured", "work_busy", "ledger_mismatch"].includes(value);
+    "device_unconfigured", "work_busy", "ledger_mismatch", "helper_ineligible"].includes(value);
 }
 
 /**

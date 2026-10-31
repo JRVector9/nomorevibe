@@ -184,12 +184,19 @@ describe('helper gate SQL (§2.1)', () => {
   });
 });
 
-describe('repository skeleton', () => {
-  it('exposes the frozen signatures as stubs until WP-2a-A fills them', async () => {
-    const tx = {} as ProductTransaction;
-    for (const call of [() => saveHelperAssignment(tx, minimal, null, 'admin'), () => setHelperMode(tx, 'm3-deepseek:ai1', 'shadow', 1, 'admin'),
-      () => listHelperAssignments(), () => readHelperGateStates('m3-deepseek'), () => setSupervisorControl(tx, { enabled: false }, 'admin'),
-      () => readHelperStatusSnapshot()]) await expect(call()).rejects.toThrow('capacity_helpers_not_implemented');
+describe('repository input refusals (before any DB access)', () => {
+  it('refuses a bad actor, version, mode or assignment id with the contract error strings', async () => {
+    const tx = {} as ProductTransaction;   // no DB: every refusal below happens before the first statement
+    await expect(saveHelperAssignment(tx, minimal, null, ' ')).rejects.toThrow('model_helper_invalid:actor');
+    await expect(saveHelperAssignment(tx, minimal, 0, 'admin')).rejects.toThrow('model_helper_version_mismatch:invalid');
+    await expect(saveHelperAssignment(tx, minimal, 1.5, 'admin')).rejects.toThrow('model_helper_version_mismatch:invalid');
+    await expect(setHelperMode(tx, 'm3-deepseek:ai1', 'live' as 'shadow', 1, 'admin')).rejects.toThrow('model_helper_invalid:mode');
+    await expect(setHelperMode(tx, 'M3', 'shadow', 1, 'admin')).rejects.toThrow('model_helper_invalid:assignmentId');
+    await expect(setHelperMode(tx, 'm3-deepseek:ai1', 'off', 0, 'admin')).rejects.toThrow('model_helper_version_mismatch:invalid');
+    await expect(setSupervisorControl(tx, { enabled: false }, 'x'.repeat(121))).rejects.toThrow('model_supervisor_invalid:actor');
+    await expect(readHelperGateStates('')).rejects.toThrow('model_helper_invalid:deviceId');
+    expect(typeof listHelperAssignments).toBe('function');
+    expect(typeof readHelperStatusSnapshot).toBe('function');
   });
 });
 
@@ -213,6 +220,37 @@ describe('migration 0154', () => {
     for (const table of ['model_helper_signals', 'model_device_signals', 'model_role_demand'])
       expect(migration).toContain(`CONSTRAINT ${table}_ttl_check CHECK (valid_until > observed_at AND valid_until <= observed_at + interval '5 minutes')`);
     expect(migration).toContain('REFERENCES model_capacity_devices (device_id)');
-    expect(migration).not.toMatch(/ALTER TABLE|DROP |CREATE (OR REPLACE )?(FUNCTION|TRIGGER)|UPDATE model_/);
+    expect(migration).not.toMatch(/ALTER TABLE|DROP |UPDATE model_|GRANT |REVOKE |SECURITY DEFINER|ROW LEVEL SECURITY/);
+  });
+
+  const code = migration.replace(/--(?!> statement-breakpoint).*$/gm, '');
+  it('stamps written_by/observed_at on the three signal tables with one invoker trigger function', () => {
+    expect(code).toContain('CREATE FUNCTION model_signal_stamp() RETURNS trigger LANGUAGE plpgsql');
+    expect(code).toContain('NEW.written_by := current_user;');
+    expect(code).toContain('NEW.observed_at := clock_timestamp();');
+    expect([...code.matchAll(/CREATE TRIGGER (\w+) BEFORE INSERT OR UPDATE ON (\w+)\s+FOR EACH ROW EXECUTE FUNCTION model_signal_stamp\(\)/g)]
+      .map(match => [match[1], match[2]])).toEqual([['model_helper_signals_stamp', 'model_helper_signals'],
+      ['model_device_signals_stamp', 'model_device_signals'], ['model_role_demand_stamp', 'model_role_demand']]);
+  });
+
+  it('makes model_helper_stops append-only like operations_audit (UPDATE/DELETE/TRUNCATE raise 42501)', () => {
+    expect(code).toContain("RAISE EXCEPTION 'model_helper_stops is append-only: % is not allowed', TG_OP USING ERRCODE = 'insufficient_privilege'");
+    expect(code).toMatch(/CREATE TRIGGER model_helper_stops_no_change BEFORE UPDATE OR DELETE ON model_helper_stops\s+FOR EACH ROW EXECUTE FUNCTION model_helper_stops_append_only\(\)/);
+    expect(code).toMatch(/CREATE TRIGGER model_helper_stops_no_truncate BEFORE TRUNCATE ON model_helper_stops\s+FOR EACH STATEMENT EXECUTE FUNCTION model_helper_stops_append_only\(\)/);
+    expect(code).toMatch(/CREATE TRIGGER model_helper_stops_stamp BEFORE INSERT ON model_helper_stops\s+FOR EACH ROW/);
+  });
+
+  it('extends the 0107 observation scope with the supervisor branch and keeps the two old branches byte-identical', () => {
+    const body = (text: string, head: string) => { const from = text.indexOf(head); return text.slice(from, text.indexOf('$$;', from)); };
+    const old = body(readFileSync('drizzle/0107_oracle_consumer_row_scope.sql', 'utf8'), 'CREATE FUNCTION oracle_consumer_observation_scope()');
+    const next = body(migration, 'CREATE OR REPLACE FUNCTION oracle_consumer_observation_scope()');
+    const branches = old.slice(old.indexOf('  IF current_user'), old.indexOf('  END IF;'));
+    expect(branches).toContain("'nomorevibe_oracle_agent_scan'");
+    expect(next).toContain(branches);
+    expect(next).toContain(`ELSIF current_user::text = '${SUPERVISOR_PRINCIPAL}'`);
+    // consumer prefix capacity-supervisor-consumer- (29) + SERVICE_INSTANCE_ID 48 → tail 1..19
+    expect(next).toContain("'^(capacity-supervisor|service:maintenance):capacity-supervisor-consumer-[A-Za-z0-9._-]{1,19}$'");
+    expect('capacity-supervisor-consumer-'.length + 19).toBe(48);
+    expect([...next.matchAll(/ERRCODE = '(\w+)'/g)].map(match => match[1])).toEqual(['42501', '42501', '42501']);
   });
 });

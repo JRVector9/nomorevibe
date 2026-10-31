@@ -410,6 +410,17 @@ export function helperCandidateExclusionSql(alias = "q"): SQL {
         AND (NOT g.ok OR coalesce((SELECT a.n FROM helper_active a WHERE a.assignment_id = g.assignment_id), 0) >= g.max_slots))`;
 }
 
+/**
+ * 장부 행 `alias` 가 이 장비의 도우미 경로 행인가(열림·닫힘과 무관 — 배정의 live·shadow 경로 (route, provider, model) 와 같다). deviceStateCte 가
+ * 순위에 쓴다: 도우미 행은 순위 행이 1 이어도 언제나 rank ≥ 2(우선 역할 우회 없음·바쁨 신호 아님·낮은 순위 점유로 센다)이고, 입장 후보 정렬에서
+ * 장비 자기 역할의 모든 대기 행 뒤에 선다. helperGateCte 가 같은 WITH 안에 있어야 한다.
+ */
+export function helperRouteMatchSql(alias: string): SQL {
+  if (!SQL_ALIAS.test(alias)) throw new Error("model_helper_invalid:alias");
+  const r = sql.raw(alias);
+  return sql`EXISTS (SELECT 1 FROM helper_gate hg WHERE hg.route_id = ${r}.route_id AND hg.provider = ${r}.provider AND hg.model = ${r}.model)`;
+}
+
 /** busy CTE 에 OR 로 붙이는 신선한 우선 역할 수요(§2.1). helperGateCte 가 같은 WITH 안의 busy 앞에 있어야 한다. */
 export function helperDemandOnSql(): SQL {
   return sql`coalesce((SELECT d.on_ FROM demand d), false)`;
@@ -436,6 +447,13 @@ export function helperGateStatesSql(deviceId: SQL | string, route?: Readonly<{ r
 export function helperGateStateFromRow(row: HelperGateStateRow): HelperGateState {
   return Object.freeze({ assignmentId: row.assignment_id, kind: row.kind, routeId: row.route_id, provider: row.provider, model: row.model,
     ok: row.ok === true, active: Number(row.active), maxSlots: Number(row.max_slots) });
+}
+
+/** deviceStateSql 의 `helpers` jsonb(배열, 열은 HelperGateStateRow 와 같은 snake_case) → HelperGateState[]. 배열이 아니면 빈 목록. */
+export function helperGateStatesFromJson(value: unknown): readonly HelperGateState[] {
+  const rows = typeof value === "string" ? JSON.parse(value) as unknown : value;
+  if (!Array.isArray(rows)) return Object.freeze([]);
+  return Object.freeze(rows.map(row => helperGateStateFromRow(row as HelperGateStateRow)));
 }
 
 // ── 감시자 decide 입력·출력(§3.5; 구현은 lib/operations/capacity-supervisor/decide.ts, 순수 함수) ──────────────────────

@@ -2,7 +2,8 @@
 -- 배포 직후 동작은 바뀌지 않는다: 감시자 control 행은 enabled=false, 도우미 배정 행은 없다(관리자가 OPEN 전에 mode 'off' 로 만든다).
 -- 감시자 신호는 선택적 도우미 경로를 *열거나* 빌려주기를 *줄일* 뿐 우선 역할 일을 막지 못한다. 신호가 없거나·만료됐거나·다른 epoch·다른 판·다른 계정이면
 -- 도우미는 닫힌다(fail-closed). 신선도 판정은 입장 TX 안에서 DB 시계(clock_timestamp())로만 한다 — 단일 출처 lib/llm/capacity-helpers.ts.
--- 이 파일은 표·CHECK·색인·seed 행만 만든다. 기존 표·CHECK·함수·트리거·장부 행은 바뀌지 않는다.
+-- 이 파일은 새 표·CHECK·색인·seed 행과 새 표의 트리거 둘(신호 도장 model_signal_stamp, 자동 정지 append-only)을 만들고,
+-- 0107 의 oracle_consumer_observation_scope() 에 감시자 계정 갈래 하나를 더한다(기존 두 갈래는 글자 그대로). 기존 표·CHECK·트리거·장부 행은 바뀌지 않는다.
 CREATE TABLE model_supervisor_control (
   id integer PRIMARY KEY DEFAULT 1,
   enabled boolean NOT NULL DEFAULT false,
@@ -206,3 +207,66 @@ CREATE TABLE model_helper_live_outputs (
 );
 --> statement-breakpoint
 CREATE INDEX model_helper_live_outputs_assignment_idx ON model_helper_live_outputs (assignment_id, created_at DESC);
+--> statement-breakpoint
+-- 신호 도장(pr2-plan §1.1): 쓰는 계정(written_by)과 관측 시각(observed_at)은 DB 가 찍는다 — 쓰는 쪽이 계정을 꾸미거나 시각을 거꾸로 적을 수 없고,
+-- TTL CHECK(valid_until ≤ observed_at + 5분)가 도장 찍힌 시각으로 valid_until 을 묶는다. 입장은 written_by = control.signal_principal 일 때만
+-- 신호를 쓴다(lib/llm/capacity-helpers.ts helperGateCte). SECURITY INVOKER 일반(origin) 트리거라 논리 복제 적용(replica)에서는 돌지 않는다 — 원본이 이미 찍었다.
+CREATE FUNCTION model_signal_stamp() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  NEW.written_by := current_user;
+  NEW.observed_at := clock_timestamp();
+  RETURN NEW;
+END;
+$$;
+--> statement-breakpoint
+CREATE TRIGGER model_helper_signals_stamp BEFORE INSERT OR UPDATE ON model_helper_signals
+ FOR EACH ROW EXECUTE FUNCTION model_signal_stamp();
+--> statement-breakpoint
+CREATE TRIGGER model_device_signals_stamp BEFORE INSERT OR UPDATE ON model_device_signals
+ FOR EACH ROW EXECUTE FUNCTION model_signal_stamp();
+--> statement-breakpoint
+CREATE TRIGGER model_role_demand_stamp BEFORE INSERT OR UPDATE ON model_role_demand
+ FOR EACH ROW EXECUTE FUNCTION model_signal_stamp();
+--> statement-breakpoint
+-- 자동 정지·강등 기록은 넣기만 한다(operations_audit 0056 과 같은 방식): 고치기·지우기·비우기를 DB 가 거부한다(42501). 넣을 때는 쓴 계정과 시각을 DB 가 찍는다.
+-- 정지는 (배정, 그 version) 에만 걸리므로 관리자가 다시 저장(version + 1)하면 지우지 않고도 풀린다. 정지 기록이 있는 배정은 지울 수 없다(FK cascade 도
+-- 이 트리거에 걸린다) — 그만 쓰는 배정은 mode 'off' 로 둔다.
+CREATE FUNCTION model_helper_stops_append_only() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    NEW.written_by := current_user;
+    NEW.created_at := clock_timestamp();
+    RETURN NEW;
+  END IF;
+  RAISE EXCEPTION 'model_helper_stops is append-only: % is not allowed', TG_OP USING ERRCODE = 'insufficient_privilege';
+END;
+$$;
+--> statement-breakpoint
+CREATE TRIGGER model_helper_stops_stamp BEFORE INSERT ON model_helper_stops
+ FOR EACH ROW EXECUTE FUNCTION model_helper_stops_append_only();
+--> statement-breakpoint
+CREATE TRIGGER model_helper_stops_no_change BEFORE UPDATE OR DELETE ON model_helper_stops
+ FOR EACH ROW EXECUTE FUNCTION model_helper_stops_append_only();
+--> statement-breakpoint
+CREATE TRIGGER model_helper_stops_no_truncate BEFORE TRUNCATE ON model_helper_stops
+ FOR EACH STATEMENT EXECUTE FUNCTION model_helper_stops_append_only();
+--> statement-breakpoint
+-- 0107 의 관측 키 범위에 감시자 계정(nomorevibe_oracle_capacity_supervisor) 갈래를 더한다. 이 계정은 자기 consumer 의 관측 키만 만들고 고친다:
+-- capacity-supervisor:<인스턴스>(consumer 관측), service:maintenance:<인스턴스>(감독 생존). 인스턴스는 consumer 접두 capacity-supervisor-consumer-
+-- (29자)로 시작하고 SERVICE_INSTANCE_ID 48자 안이라 꼬리는 1~19자다(0107 의 uptime 32·agent-scan 28 과 같은 계산). 앞의 두 갈래는 0107 과 글자 그대로다.
+CREATE OR REPLACE FUNCTION oracle_consumer_observation_scope() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF current_user::text = 'nomorevibe_oracle_uptime'
+    AND NEW.key !~ '^(uptime-consumer|service:maintenance):uptime-consumer-[A-Za-z0-9._-]{1,32}$' THEN
+    RAISE EXCEPTION 'oracle_consumer_observation_key' USING ERRCODE = '42501';
+  ELSIF current_user::text = 'nomorevibe_oracle_agent_scan'
+    AND NEW.key !~ '^(agent-scan|service:crawler):agent-scan-consumer-[A-Za-z0-9._-]{1,28}$'
+    AND NEW.key <> 'defer:agent-scan' AND NEW.key !~ '^host-slot:oracle-osaka-smoke(:|$)' THEN
+    RAISE EXCEPTION 'oracle_consumer_observation_key' USING ERRCODE = '42501';
+  ELSIF current_user::text = 'nomorevibe_oracle_capacity_supervisor'
+    AND NEW.key !~ '^(capacity-supervisor|service:maintenance):capacity-supervisor-consumer-[A-Za-z0-9._-]{1,19}$' THEN
+    RAISE EXCEPTION 'oracle_consumer_observation_key' USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END;
+$$;
