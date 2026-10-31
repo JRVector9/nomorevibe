@@ -29,37 +29,54 @@ export type StoredServingContract = Readonly<{ routeId: string; model: string; c
   transport: ServingContractTransport }>;
 /** The runtime_settings row as read (sparse document, its 판 and revision); null before 0152 or when the row could not be read yet. */
 export type ServingContractRuntimeRow = Readonly<{ stored: unknown; version: string; revision: number; updatedAt: string }>;
+/**
+ * An enabled device row (model_capacity_devices, 0153 — /admin/models/devices) whose operator-entered physical limit is set. PR 3b-E: the
+ * local-direct readiness check (localModelRouteReady) reads the device table through this snapshot before the env LOCAL_MODEL_PHYSICAL_LIMITS.
+ */
+export type ServingContractDevice = Readonly<{ deviceId: string; physicalLimit: number }>;
 export type ServingContractSnapshot = Readonly<{ token: string; loadedAt: number; rows: readonly StoredServingContract[]; registry: readonly unknown[];
-  runtime: ServingContractRuntimeRow | null }>;
+  runtime: ServingContractRuntimeRow | null; devices: readonly ServingContractDevice[] }>;
 export const SERVING_CONTRACT_REFRESH_MS = 30_000;
 
 type Row = { route_id: string; model: string; contract: unknown; auth: ServingContractAuth; api_key_ciphertext: string | null; updated_at: string;
   transport?: ServingContractTransport };
 type RegistryRow = { key: string; definition: unknown; updated_at: string };
 export type RuntimeSettingsRow = { values: unknown; revision: number | string; updated_at: string };
-type RawParts = { rows: readonly Row[]; registry: readonly RegistryRow[]; runtime: RuntimeSettingsRow | null };
+export type DeviceLimitRow = { device_id: string; physical_limit: number | string | null };
+type RawParts = { rows: readonly Row[]; registry: readonly RegistryRow[]; runtime: RuntimeSettingsRow | null; devices: readonly DeviceLimitRow[] };
 type State = { snapshot: ServingContractSnapshot; loading: Promise<void> | null; override: boolean; raw: RawParts; partErrors: Record<string, string> };
 const holder = globalThis as unknown as { __nmvServingContracts?: State };
-const EMPTY: ServingContractSnapshot = Object.freeze({ token: "env", loadedAt: 0, rows: Object.freeze([]), registry: Object.freeze([]), runtime: null });
+const EMPTY: ServingContractSnapshot = Object.freeze({ token: "env", loadedAt: 0, rows: Object.freeze([]), registry: Object.freeze([]), runtime: null,
+  devices: Object.freeze([]) });
 const state = (): State => (holder.__nmvServingContracts ??= { snapshot: EMPTY, loading: null, override: false,
-  raw: { rows: [], registry: [], runtime: null }, partErrors: {} });
+  raw: { rows: [], registry: [], runtime: null, devices: [] }, partErrors: {} });
+/** Only a positive safe integer is a physical limit; anything else in the row is ignored (the env fallback then decides). */
+function deviceLimits(rows: readonly DeviceLimitRow[]): readonly ServingContractDevice[] {
+  return Object.freeze(rows.flatMap(row => {
+    const limit = Number(row.physical_limit);
+    return row.physical_limit !== null && Number.isSafeInteger(limit) && limit >= 1 ? [Object.freeze({ deviceId: row.device_id, physicalLimit: limit })] : [];
+  }));
+}
 
 function enabled(): boolean {
   return typeof window === "undefined" && process.env.MODEL_SERVING_CONTRACTS_DB !== "0" && !!process.env.DATABASE_URL && !state().override;
 }
 
 export function servingContractSnapshotFromRows(rows: readonly Row[], loadedAt = Date.now(), registryRows: readonly RegistryRow[] = [],
-  runtimeRow: RuntimeSettingsRow | null = null): ServingContractSnapshot {
+  runtimeRow: RuntimeSettingsRow | null = null, deviceRows: readonly DeviceLimitRow[] = []): ServingContractSnapshot {
   const runtime: ServingContractRuntimeRow | null = runtimeRow
     ? Object.freeze({ stored: runtimeRow.values, version: storedSettingsVersion(runtimeRow.values), revision: Number(runtimeRow.revision), updatedAt: runtimeRow.updated_at })
     : null;
+  const devices = deviceLimits(deviceRows);
+  // Device limits enter the token only when present, so a snapshot without device rows keeps the token it had before PR 3b-E.
   const token = createHash("sha256").update(JSON.stringify([rows.map(row => [row.route_id, row.model, row.updated_at, row.auth, row.transport ?? "gateway"]),
-    registryRows.map(row => [row.key, row.updated_at]), runtime ? [runtime.revision, runtime.updatedAt, runtime.version] : null])).digest("hex");
+    registryRows.map(row => [row.key, row.updated_at]), runtime ? [runtime.revision, runtime.updatedAt, runtime.version] : null,
+    ...(devices.length ? [devices.map(device => [device.deviceId, device.physicalLimit])] : [])])).digest("hex");
   return Object.freeze({ token, loadedAt, rows: Object.freeze(rows.map(row => Object.freeze({ routeId: row.route_id, model: row.model,
     contract: row.contract, auth: row.auth, transport: row.transport === "direct" ? "direct" as const : "gateway" as const,
     // A key that does not open (no box key, tampered or moved row) stays null; the caller then refuses that route.
     apiKey: row.auth === "stored" && row.api_key_ciphertext ? openSecret(row.api_key_ciphertext, servingContractKeyAad(row.route_id, row.model)) : null }))),
-    registry: Object.freeze(registryRows.map(row => row.definition)), runtime });
+    registry: Object.freeze(registryRows.map(row => row.definition)), runtime, devices });
 }
 
 /** One part of the reload; a failure keeps the last good value of that part and is logged once per distinct error (not every 30 s). */
@@ -93,8 +110,11 @@ export async function refreshServingContracts(): Promise<void> {
         FROM runtime_settings WHERE id = 1`));
       return row ?? null;
     }, previous.runtime);
-    current.raw = { rows, registry, runtime };
-    current.snapshot = servingContractSnapshotFromRows(rows, Date.now(), registry, runtime);
+    // Device physical limits (0153): only enabled rows with an operator-entered limit; a principal without SELECT keeps the last good list.
+    const devices = await reloadPart(current, "model_capacity_devices", async () => Array.from(await db.execute<DeviceLimitRow>(sql`SELECT device_id, physical_limit
+      FROM model_capacity_devices WHERE enabled AND physical_limit IS NOT NULL ORDER BY device_id`)), previous.devices);
+    current.raw = { rows, registry, runtime, devices };
+    current.snapshot = servingContractSnapshotFromRows(rows, Date.now(), registry, runtime, devices);
     const settings = servingRuntimeSettingsSnapshot(current.snapshot);
     if (settings) publishRuntimeSettingsSnapshot(settings);
   } catch {
@@ -121,6 +141,14 @@ export async function ensureServingContracts(maxAgeMs = SERVING_CONTRACT_REFRESH
   return current.loading;
 }
 
+/**
+ * The operator-entered physical limit of an enabled device row (model_capacity_devices.physical_limit), or null when the table has none for it
+ * (the caller then falls back to env LOCAL_MODEL_PHYSICAL_LIMITS). Synchronous from the last snapshot like every other read here.
+ */
+export function devicePhysicalLimit(deviceId: string): number | null {
+  return servingContractSnapshot().devices.find(device => device.deviceId === deviceId)?.physicalLimit ?? null;
+}
+
 /** The stored auth and transport for one contract, or null when no admin row exists (the caller keeps its env default). */
 export function servingContractAuth(routeId: string, model: string): { mode: ServingContractAuth; apiKey: string | null; transport: ServingContractTransport } | null {
   const row = servingContractSnapshot().rows.find(entry => entry.routeId === routeId && entry.model === model);
@@ -134,24 +162,29 @@ export function servingContractAuth(routeId: string, model: string): { mode: Ser
  * - otherwise (no admin row, or auth gateway) the abcLLM gateway key ABCLLM_API_KEY must be set.
  * Replaces the old "ABCLLM_API_KEY is set" gate, so removing the gateway key stops nothing that no longer goes through the gateway
  * (PR 3b-C: every text job — reason-translate and crawl-tagline included — gates on this, not on the key).
+ * - a local-direct contract (PR 3b-E: direct-openai-chat-v1 under the text route) sends no bearer at all when it has no admin row or
+ *   auth gateway (contractBearer returns null for a non-abcllm provider), so the route is callable without the gateway key. The caller
+ *   passes the provider its contract module resolved (`<route>ServingProvider(model)`); the default keeps the abcllm rule.
  * The Qwen native path of product-tagline-ko (korean-translation-config, env switch) is outside this gate and stays as is until the
  * route→engine assignment table (PR 3b-B/3b-D) absorbs it.
  */
-export function textRouteCallable(routeId: string, model: string): boolean {
+export function textRouteCallable(routeId: string, model: string, provider: "abcllm" | "local-direct" = "abcllm"): boolean {
   const stored = servingContractAuth(routeId, model);
   if (stored?.mode === "none") return true;
   if (stored?.mode === "stored") return !!stored.apiKey;
+  if (provider === "local-direct") return true;
   return !!process.env.ABCLLM_API_KEY?.trim();
 }
 
 /** Tests and replay: pin a snapshot and stop DB reloads. Pass null to restore normal loading. */
 export function setServingContractSnapshotForTest(rows: readonly (Omit<StoredServingContract, "transport"> & { transport?: ServingContractTransport })[] | null,
-  registry: readonly unknown[] = []): void {
+  registry: readonly unknown[] = [], devices: readonly ServingContractDevice[] = []): void {
   const current = state();
   current.override = rows !== null;
   const pinned = (rows ?? []).map(row => ({ ...row, transport: row.transport ?? "gateway" as const }));
   current.snapshot = rows === null ? EMPTY
-    : { token: createHash("sha256").update(JSON.stringify([pinned, registry])).digest("hex"), loadedAt: Date.now(), rows: pinned, registry, runtime: null };
+    : { token: createHash("sha256").update(JSON.stringify([pinned, registry, devices])).digest("hex"), loadedAt: Date.now(), rows: pinned, registry, runtime: null,
+      devices: Object.freeze([...devices]) };
 }
 
 /**

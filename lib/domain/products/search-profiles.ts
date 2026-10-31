@@ -2,6 +2,8 @@ import { scopedModel } from "@/lib/llm/model-registry";
 import { currentReplayDb } from "@/lib/db/replay-scope";
 import { reviewHash } from "@/lib/crawl/agent-review-contract";
 import { prepareTextProfileGatewayCall } from "@/lib/crawl/agent-review-gateway";
+import { textProfileServingProvider } from "@/lib/llm/text-profile-serving-contract";
+import { searchVerifyServingProvider } from "@/lib/llm/search-verify-serving-contract";
 import { textProfileInputSchema, textProfileInputHash, textProfileDispatchBindingSchema } from "@/lib/llm/capacity";
 import { lockModelCapacityCallerControl, lockTextProfileModelCapacityDispatch,
   finishTextProfileModelCapacityDispatch, findOwnPendingTextProfileRequests } from "@/lib/llm/capacity-repository";
@@ -387,8 +389,10 @@ export async function prepareProfileModelDispatch(task: ProfileTask, lease: JobL
     const control = lock?.control ?? await lockModelCapacityCallerControl(tx);
     if (control.mode === "disabled") return { kind: "disabled" };
     if (control.mode !== "open") throw new ModelCapacityDeferredError("draining");
-    if (!control.policy?.routes.some(route => route.routeId === "product-search-profile" && route.provider === "abcllm"
-      && route.model === scopedModel("product-search-profile", PROFILE_MODEL))) throw new ModelCapacityDeferredError("unmapped");
+    // provider 는 이 선택의 계약이 정한다(PR 3b-E) — 정책 route 도 그 provider 로 매핑돼 있어야 한다
+    const model = scopedModel("product-search-profile", PROFILE_MODEL), provider = textProfileServingProvider(model);
+    if (!control.policy?.routes.some(route => route.routeId === "product-search-profile" && route.provider === provider
+      && route.model === model)) throw new ModelCapacityDeferredError("unmapped");
     if (!role || role.role !== "text") throw new ModelCapacityDeferredError("owner_unavailable");
     const boundRole = textProfileDispatchBindingSchema.shape.role.parse({ role: role.role, instanceId: role.instanceId,
       bootId: role.bootId, release: role.release, kind: role.kind, epoch: role.epoch,
@@ -412,17 +416,18 @@ export async function prepareProfileModelDispatch(task: ProfileTask, lease: JobL
       profile: await currentProfileIdentity(tx, product.id), model: scopedModel("product-search-profile", PROFILE_MODEL) });
     if (reserved && (textProfileInputHash(input) !== textProfileInputHash(reserved.expected)
       || reserved.identity.owner.instanceId !== role.instanceId || reserved.identity.owner.bootId !== role.bootId)) return { kind: "skipped" };
-    const call = prepareTextProfileGatewayCall(evidence, { model: scopedModel("product-search-profile", PROFILE_MODEL), timeoutMs });
+    const call = prepareTextProfileGatewayCall(evidence, { model, timeoutMs, provider });
     if (call.kind !== "prepared") throw new ModelCapacityDeferredError(call.reason);
     if (reserved && (call.wireHash !== reserved.call.wireHash || call.servingContractHash !== reserved.call.servingContractHash
-      || call.totalTokenBound !== reserved.call.totalTokenBound || call.model !== reserved.call.model)) return { kind: "skipped" };
+      || call.totalTokenBound !== reserved.call.totalTokenBound || call.model !== reserved.call.model || call.provider !== reserved.call.provider
+      || reserved.identity.provider !== call.provider)) return { kind: "skipped" };
     const actualKind = await assertTextRoleWall(tx, role);
     await assertJobLeaseAtWallTime(tx, job, "update");
     const intent = immutableProfileIntent({ task: { product, profile: profile ?? null, reviewerNote }, evidence, input });
     if (!reserved || !lock) return { kind: "ready", intent, call };
     const binding = textProfileDispatchBindingSchema.parse({ kind: "text_profile_gateway", version: 1, ...input,
       inputHash: textProfileInputHash(input), logicalWorkKey: `text:profile:${product.id}`,
-      provider: "abcllm", routeId: "product-search-profile", role: { ...boundRole, kind: actualKind }, job,
+      provider: call.provider, routeId: "product-search-profile", role: { ...boundRole, kind: actualKind }, job,
       wireHash: call.wireHash, servingContractHash: call.servingContractHash,
       totalTokenBound: call.totalTokenBound, chargedTokens: call.totalTokenBound });
     const dispatch = await finishTextProfileModelCapacityDispatch(tx, lock, binding);
@@ -505,7 +510,8 @@ export async function prepareSearchVerifyModelDispatch(task: ProfileTask, lease:
       const control = lock?.control ?? await lockModelCapacityCallerControl(tx);
       if (!reserved && control.mode === "disabled") return { kind: "disabled" };
       if (control.mode !== "open") throw new ModelCapacityDeferredError(control.mode === "draining" ? "draining" : "disabled");
-      if (!control.policy?.routes.some(route => route.routeId === "product-search-verify" && route.provider === "abcllm"
+      const provider = searchVerifyServingProvider(scopedModel("product-search-verify", VERIFY_MODEL));
+      if (!control.policy?.routes.some(route => route.routeId === "product-search-verify" && route.provider === provider
         && route.model === scopedModel("product-search-verify", VERIFY_MODEL))) throw new ModelCapacityDeferredError("unmapped");
       if (!roleLease || roleLease.role !== "text") throw new ModelCapacityDeferredError("owner_unavailable");
       await assertJobBatchAdmission(tx, job.name, roleLease);
@@ -536,14 +542,15 @@ export async function prepareSearchVerifyModelDispatch(task: ProfileTask, lease:
       if (!isDeepStrictEqual(member, reserved.input.member) || reserved.input.model !== scopedModel("product-search-verify", VERIFY_MODEL) || !isDeepStrictEqual(role, reserved.role)
         || reserved.identity.owner.instanceId !== role.instanceId || reserved.identity.owner.bootId !== role.bootId) throw new SearchVerifyChanged();
       const sent = searchVerifyStepKeywords(mode === "chunk" ? [...new Set(input)] : input, reserved.input.step);
-      if (call!.model !== scopedModel("product-search-verify", VERIFY_MODEL) || call!.evidenceHash !== evidenceHash
+      if (call!.model !== scopedModel("product-search-verify", VERIFY_MODEL) || call!.provider !== provider || reserved.identity.provider !== provider
+        || call!.evidenceHash !== evidenceHash
         || call!.keywordsHash !== createHash("sha256").update(JSON.stringify(sent)).digest("hex")) throw new SearchVerifyChanged();
       const deadlineAt = lock!.parentDeadlineAt ?? nowMs + Math.max(1, Math.floor(reserved.remainingMs));
       if (nowMs >= deadlineAt) return { kind: "expired" };
       const value = reserved.input;
       const binding = searchVerifyDispatchBindingSchema.parse({ ...value, kind: "search_verify_gateway", version: 1,
         generationHash: searchVerifyGenerationHash(value), logicalWorkKey: searchVerifyLogicalWorkKey(value), inputHash: searchVerifyInputHash(value),
-        deadlineAt, provider: "abcllm", routeId: "product-search-verify", wireHash: call!.wireHash, servingContractHash: call!.servingContractHash,
+        deadlineAt, provider: call!.provider, routeId: "product-search-verify", wireHash: call!.wireHash, servingContractHash: call!.servingContractHash,
         totalTokenBound: call!.totalTokenBound, chargedTokens: call!.totalTokenBound, job, role });
       const dispatch = await finishSearchVerifyModelCapacityDispatch(tx, lock!, binding);
       await finalVerifyWall(tx, role, job, dispatch);

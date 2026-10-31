@@ -33,7 +33,7 @@ const job = { name: "product-tagline-ko", token: randomUUID(), requestedVersion:
 const members: ProductTaglineKoMember[] = [{ productId: task.productId, slug: "korean-unit", sourceHash: "a".repeat(64), sourceIdentityHash: "e".repeat(64),
   cache: { kind: "present", attempts: 9, qualityRejections: 4, rowIdentityHash: "f".repeat(64) } }];
 const boundRole = { ...role, batch: { mode: "legacy" as const } };
-const call = { kind: "prepared" as const, wireHash: "b".repeat(64), servingContractHash: "c".repeat(64), totalTokenBound: 4096, model: KOREAN_TAGLINE_MODEL };
+const call = { kind: "prepared" as const, provider: "abcllm" as const, wireHash: "b".repeat(64), servingContractHash: "c".repeat(64), totalTokenBound: 4096, model: KOREAN_TAGLINE_MODEL };
 const reservation = modelCapacityReservationSchema.parse({ requestId: randomUUID(), token: randomUUID(), owner: { instanceId: role.instanceId, bootId: role.bootId }, epoch: 1, revision: 1, policyHash: "d".repeat(64) });
 const dispatch = { ...reservation, binding: { kind: "product_tagline_ko_gateway" } };
 const expectation = { kind: "korean_tagline_write" };

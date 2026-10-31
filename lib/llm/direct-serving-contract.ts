@@ -70,3 +70,28 @@ export function selectServingContract<T extends MatchableContract>(contracts: re
   const matches = contracts.filter(contract => contract.provider === provider && servingContractMatchesSelection(contract, selection));
   return matches.length === 1 ? matches[0] : null;
 }
+
+/** 게이트웨이 kind 계약이 가질 수 있는 provider(장부의 GATEWAY_DISPATCH_PROVIDERS 와 같은 둘). */
+export const GATEWAY_CONTRACT_PROVIDERS = ["abcllm", "local-direct"] as const;
+export type GatewayContractProvider = typeof GATEWAY_CONTRACT_PROVIDERS[number];
+/**
+ * 한 route 의 계약 묶음(model → 계약)에서 provider 별로 고른다 — AI1(resolveAi1GatewayServingContract)·text 7경로(PR 3b-E)가 같은 규칙을 쓴다.
+ * abcllm 은 예전처럼 model 이 정확히 같은 abcllm 계약 하나, local-direct 는 선택(엔진 이름 또는 등록부 키)이 가리키는 local-direct 계약이
+ * 정확히 하나일 때다. 그 밖의 provider 는 null 이다.
+ */
+export function resolveProviderServingContract<T extends MatchableContract>(contracts: ReadonlyMap<string, T>, selection: string, provider: string): T | null {
+  if (provider === "abcllm") {
+    const contract = contracts.get(selection);
+    return contract?.provider === "abcllm" ? contract : null;
+  }
+  return provider === "local-direct" ? selectServingContract([...contracts.values()], selection, provider) : null;
+}
+/**
+ * 선택(설정·배정 표의 모델)이 어느 provider 의 계약을 가리키는가 — text 경로가 identity·binding 의 provider 를 정하는 한 곳(PR 3b-E).
+ * abcllm 계약이 있으면 abcllm(예전 그대로), 없고 local-direct 계약 하나가 닿으면 local-direct, 둘 다 없으면 abcllm — 그 뒤 준비가 예전처럼
+ * provider_contract_unavailable 로 미룬다(계약 없는 선택이 새 provider 로 기록되지 않는다).
+ */
+export function servingContractProvider<T extends MatchableContract>(contracts: ReadonlyMap<string, T>, selection: string): GatewayContractProvider {
+  if (resolveProviderServingContract(contracts, selection, "abcllm")) return "abcllm";
+  return resolveProviderServingContract(contracts, selection, "local-direct") ? "local-direct" : "abcllm";
+}

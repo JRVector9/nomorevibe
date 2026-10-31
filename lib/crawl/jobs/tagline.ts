@@ -1,5 +1,6 @@
 import { modelLimits, modelTimeoutMs, scopedModel } from "@/lib/llm/model-registry";
 import { textRouteCallable } from "@/lib/llm/serving-contract-store";
+import { crawlTaglineServingProvider } from "@/lib/llm/crawl-tagline-serving-contract";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { EngineDownTally } from "@/lib/jobs/engine-down";
 import { tickRemaining } from "@/lib/jobs/tick-deadline";
@@ -35,7 +36,7 @@ const JOB = "crawl-tagline";
 
 export async function writeTaglines(ctx: JobContext<null>): Promise<JobOutcome<null>> {
   // 게이트웨이 키, 또는 이 경로의 직접 연결 계약(엔진에 바로 — 키 없이도 부른다). 다른 text 잡과 같은 관문이다(PR 3b-C)
-  if (!textRouteCallable(JOB, scopedModel(JOB, TAGLINE_MODEL))) {
+  if (!textRouteCallable(JOB, scopedModel(JOB, TAGLINE_MODEL), crawlTaglineServingProvider(scopedModel(JOB, TAGLINE_MODEL)))) {
     ctx.log("tagline.skipped", { reason: "no_key" });
     return { done: true, degraded: { code: "no_key", detail: "이 경로의 직접 연결 계약도 text 워커의 ABCLLM_API_KEY 도 없습니다" } };
   }

@@ -12,6 +12,7 @@ import { translateKoreanTaglinesWithQwen } from "@/lib/crawl/korean-translation-
 import { KOREAN_TRANSLATION_NATIVE_MAX_CHARS,
   KOREAN_TRANSLATION_QWEN_MODEL, koreanTranslationQwenEnabled, koreanTranslationQwenRecoveryEnabled } from "@/lib/crawl/korean-translation-config";
 import { textRouteCallable } from "@/lib/llm/serving-contract-store";
+import { productTaglineKoServingProvider } from "@/lib/llm/product-tagline-ko-serving-contract";
 import { jobKnob } from "@/lib/operations/runtime-settings-schema";
 import { runtimeSettings } from "@/lib/operations/runtime-settings-store";
 
@@ -61,7 +62,8 @@ export function packTaglineBatch(tasks: KoreanTaglineTask[], maxChars?: number):
 
 export async function writeKoreanTaglines(ctx: JobContext<null>): Promise<JobOutcome<null>> {
   // A directly connected engine (admin contract) or the gateway key; legacy Qwen does not need either.
-  const gptCallable = () => textRouteCallable("product-tagline-ko", scopedModel("product-tagline-ko", KOREAN_TAGLINE_MODEL));
+  const gptCallable = () => textRouteCallable("product-tagline-ko", scopedModel("product-tagline-ko", KOREAN_TAGLINE_MODEL),
+    productTaglineKoServingProvider(scopedModel("product-tagline-ko", KOREAN_TAGLINE_MODEL)));
   if (!gptCallable() && !koreanTranslationQwenEnabled()) {
     ctx.log("tagline_ko.skipped", { reason: "no_key" });
     // 키가 없으면 아무것도 하지 않는다 — 성공이 아니다(러너가 성공 시각을 옮기지 않고 조치할 일이 올린다)

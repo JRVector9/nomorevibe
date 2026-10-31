@@ -30,6 +30,8 @@ const capacityPool = z.enum(["reviewer", "text"]);
 const gatewayProvider = z.enum(["abcllm", "local-direct"]);
 export const GATEWAY_DISPATCH_PROVIDERS = gatewayProvider.options;
 export type GatewayDispatchProvider = z.infer<typeof gatewayProvider>;
+/** text 7경로의 고정 identity 검사가 쓴다(PR 3b-E): 두 provider 만 게이트웨이 kind 로 장부에 선다. */
+export const isGatewayDispatchProvider = (value: string): value is GatewayDispatchProvider => gatewayProvider.safeParse(value).success;
 const limits = z.record(identity(120), limit).refine(value => {
   const count = Object.keys(value).length;
   return count >= 1 && count <= 64;

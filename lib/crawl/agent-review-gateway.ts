@@ -18,7 +18,7 @@ import { REVIEW_SYSTEM_PROMPT, type AgentReviewResult, type ReviewFailure, type 
 import { verifyAi2TokenBudget } from "./second-review-direct-tokenize";
 import { REVIEW_GATEWAY_LADDER, reviewGatewayLadder } from "@/lib/llm/deadline-ladder";
 import { servingContractAuth } from "@/lib/llm/serving-contract-store";
-import { DIRECT_OPENAI_CHAT_PROTOCOL } from "@/lib/llm/direct-serving-contract";
+import { DIRECT_OPENAI_CHAT_PROTOCOL, DIRECT_REQUEST_TOKEN_BOUND, type GatewayContractProvider } from "@/lib/llm/direct-serving-contract";
 
 /**
  * Bearer for a contract's endpoint. An admin contract (model_serving_contracts) decides: gateway key, no key, or its stored key.
@@ -183,14 +183,65 @@ function directReviewWire(contract: { model: string; maxOutputTokens?: number },
   if (contract.maxOutputTokens !== undefined) body.max_tokens = contract.maxOutputTokens;
   return JSON.stringify(body);
 }
+/**
+ * 직접 계약(direct-openai-chat-v1)의 요청 상한을 엔진이 보고한 사용량이 어겼는가: 입력 + 출력 상한이 requestTokenBound 를 넘거나 출력이 상한을
+ * 넘으면 계약과 모순이다 — terminal 은 그대로 기록하고 결과만 판단으로 받지 않는다(AI1·AI2·text 공통).
+ */
+function directBudgetExceeded(contract: { protocol: string; requestTokenBound?: number }, maxOutputTokens: number | undefined,
+  usage: { inputTokens: number; outputTokens: number } | null): boolean {
+  const { requestTokenBound } = contract;
+  if (contract.protocol !== DIRECT_OPENAI_CHAT_PROTOCOL || requestTokenBound === undefined || maxOutputTokens === undefined || !usage) return false;
+  return usage.inputTokens + maxOutputTokens > requestTokenBound || usage.outputTokens > maxOutputTokens;
+}
 /** 직접 계약(direct-openai-chat-v1)의 요청 상한: 엔진이 센 입력 + 출력 상한이 requestTokenBound 안이어야 판단으로 받는다(AI2 와 같은 규칙). */
 function directBudgetResult(contract: { protocol: string; requestTokenBound?: number; maxOutputTokens?: number },
   usage: { inputTokens: number; outputTokens: number } | null, result: () => AgentReviewResult): AgentReviewResult {
-  const { requestTokenBound, maxOutputTokens } = contract;
-  if (contract.protocol !== DIRECT_OPENAI_CHAT_PROTOCOL || requestTokenBound === undefined || maxOutputTokens === undefined || !usage) return result();
-  return usage.inputTokens + maxOutputTokens > requestTokenBound || usage.outputTokens > maxOutputTokens
+  return directBudgetExceeded(contract, contract.maxOutputTokens, usage)
     ? { ok: false, error: "invalid_output", detail: "request_token_bound_exceeded" } : result();
 }
+
+/** text 7경로의 계약 — abcLLM 총량 상한(raw) 모양 또는 공통 direct-openai-chat-v1 모양(PR 3b-E). 직접 계약만 tokenizer·요청 상한 칸이 있다. */
+type TextRouteContract = Readonly<{ routeId: string; provider: string; protocol: string; model: string; endpoint: string; totalTokenBound: number;
+  tokenizerEndpoint?: string; requestTokenBound?: typeof DIRECT_REQUEST_TOKEN_BOUND; maxOutputTokens?: number; strictTerminalOptIn?: string }>;
+/**
+ * text 7경로의 엔진 직접(local-direct) wire(PR 3b-E) — 그 경로의 게이트웨이 wire 에서 게이트웨이 전용 칸(context_strategy·reasoning_effort)만 빼고
+ * 계약의 엔진 모델 이름(라벨 없음)을 넣는다. max_tokens 는 경로의 출력 상한과 계약 maxOutputTokens 중 작은 쪽, thinking 은 AI1·AI2 직접 wire 와
+ * 같이 끈다(chat_template_kwargs.enable_thinking=false — 엔진 tokenizer 확인이 이 칸을 요구한다). 프롬프트·근거 바이트는 그대로다.
+ */
+export function directTextWire(contract: { model: string; maxOutputTokens: number }, gatewayWire: string): string {
+  const body = JSON.parse(gatewayWire) as Record<string, unknown>;
+  delete body.context_strategy;
+  delete body.reasoning_effort;
+  const requested = body.max_tokens;
+  body.model = contract.model;
+  body.max_tokens = typeof requested === "number" && Number.isSafeInteger(requested) && requested >= 1
+    ? Math.min(requested, contract.maxOutputTokens) : contract.maxOutputTokens;
+  body.chat_template_kwargs = { enable_thinking: false };
+  return JSON.stringify(body);
+}
+/** 계약에 맞는 wire: local-direct 직접 계약이면 엔진 이름의 직접 wire, abcllm(게이트웨이·직접 연결)이면 그 경로의 게이트웨이 wire 를 선택 이름으로 그대로. */
+function textWireFor(contract: TextRouteContract, selection: string, build: (model: string) => string): string {
+  return contract.provider === "local-direct" && contract.maxOutputTokens !== undefined
+    ? directTextWire({ model: contract.model, maxOutputTokens: contract.maxOutputTokens }, build(contract.model)) : build(selection);
+}
+const wireMaxTokens = (wire: string): number | undefined => {
+  const value = (JSON.parse(wire) as { max_tokens?: unknown }).max_tokens;
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 ? value : undefined;
+};
+/**
+ * 직접 계약(direct-openai-chat-v1)의 text 호출은 보내기 전에 엔진 tokenizer 로 요청 상한을 확인한다 — AI1·AI2 는 준비(prepare)에서 하지만 text 경로의
+ * 준비는 DB 트랜잭션 안에서 일어나므로(HTTP 는 잠금 밖) 전송 직전에 한다. 거짓이면 호출자는 fetch 를 부르지 않고 not_started 로 정산한다.
+ * 확인 중 신호가 끊긴 것은 상한 판정이 아니다 — 참으로 돌려 fetch 경로가 같은 신호로 거절하게 한다(요청 0 증명은 거기서 난다).
+ */
+async function directTextBudgetOk(contract: TextRouteContract, wire: string, options: { timeoutMs: number; signal?: AbortSignal }): Promise<boolean> {
+  if (contract.protocol !== DIRECT_OPENAI_CHAT_PROTOCOL || contract.tokenizerEndpoint === undefined || contract.requestTokenBound === undefined
+    || options.signal?.aborted) return true;
+  const maxOutputTokens = wireMaxTokens(wire);
+  const ok = maxOutputTokens !== undefined && await verifyAi2TokenBudget({ model: contract.model, tokenizerEndpoint: contract.tokenizerEndpoint,
+    totalTokenBound: contract.totalTokenBound, requestTokenBound: contract.requestTokenBound, maxOutputTokens }, wire, options);
+  return ok || options.signal?.aborted === true;
+}
+const textRedirect = (contract: { provider: string }): "error" | "manual" => contract.provider === "local-direct" ? "error" : "manual";
 
 export async function reviewWithGateway(input: ReviewInput, options: {
   model: string; timeoutMs?: number; request?: typeof fetch; signal?: AbortSignal;
@@ -637,12 +688,14 @@ export async function reviewWithReservedAi1ItemGateway(input: ReviewInput, dispa
 
 import { textProfileModelDispatchSchema, textProfileGatewayTerminalEvidenceSchema,
   type TextProfileModelDispatch, type TextProfileGatewayTerminalEvidence } from "@/lib/llm/capacity";
-import { textProfileServingContractHash, textProfileServingContractSchema, resolveTextProfileServingContract,
+import { textProfileServingContractHash, textProfileRouteServingContractSchema, resolveTextProfileServingContract,
   type TextProfileServingContract } from "@/lib/llm/text-profile-serving-contract";
 import { profileGatewayWire, parseProfileGatewayBody, profileHash,
   type ProfileEvidence, type KeywordResult } from "@/lib/domain/products/search-profile";
 
-export type PreparedTextProfileGatewayCall = Readonly<{ kind: "prepared"; wireHash: string;
+/** text 7경로 준비 옵션 공통: provider 는 조정자가 계약 모듈(`<route>ServingProvider`)로 정한 값이다(PR 3b-E). 주지 않으면 예전처럼 abcllm 이다. */
+type TextPrepareOptions = { model: string; timeoutMs: number; provider?: GatewayContractProvider };
+export type PreparedTextProfileGatewayCall = Readonly<{ kind: "prepared"; provider: GatewayContractProvider; wireHash: string;
   servingContractHash: string; totalTokenBound: number; model: string; evidenceHash: string }>;
 export type TextProfileGatewayTerminal = Readonly<{ kind: "text_profile_gateway_terminal" }>;
 const textProfileCalls = new WeakMap<PreparedTextProfileGatewayCall, { wire: string; evidenceIdentity: string;
@@ -658,19 +711,19 @@ function validProfileEvidence(value: ProfileEvidence): boolean {
     && (value.evidenceLevel === "thin" || value.evidenceLevel === "rich");
 }
 /** A caller flag, descriptor or injected request never enables a serving deployment. */
-export function prepareTextProfileGatewayCall(evidence: ProfileEvidence, options: { model: string; timeoutMs: number }):
+export function prepareTextProfileGatewayCall(evidence: ProfileEvidence, options: TextPrepareOptions):
   PreparedTextProfileGatewayCall | { kind: "unsupported"; reason: "provider_contract_unavailable" } {
   assertLiveReviewAdapterAllowed();
-  const snapshot = structuredClone(evidence), model = gatewayModel(options.model), timeoutMs = options.timeoutMs;
+  const snapshot = structuredClone(evidence), model = gatewayModel(options.model), timeoutMs = options.timeoutMs, provider = options.provider ?? "abcllm";
   const unsupported = { kind: "unsupported", reason: "provider_contract_unavailable" } as const;
   if (!validProfileEvidence(snapshot) || !model
     || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return unsupported;
-  const resolved = resolveTextProfileServingContract(model);
+  const resolved = resolveTextProfileServingContract(model, provider);
   if (!resolved) return unsupported;
-  const contract = textProfileServingContractSchema.parse(structuredClone(resolved));
-  if (contract.model !== model || contractBearer(contract) === undefined) return unsupported;
-  const wire = profileGatewayWire(snapshot, model), evidenceIdentity = profileHash(snapshot);
-  const call = Object.freeze({ kind: "prepared" as const, wireHash: sha(wire),
+  const contract = textProfileRouteServingContractSchema.parse(structuredClone(resolved));
+  if (contract.provider !== provider || contractBearer(contract) === undefined) return unsupported;
+  const wire = textWireFor(contract, model, engine => profileGatewayWire(snapshot, engine)), evidenceIdentity = profileHash(snapshot);
+  const call = Object.freeze({ kind: "prepared" as const, provider, wireHash: sha(wire),
     servingContractHash: textProfileServingContractHash(contract), totalTokenBound: contract.totalTokenBound,
     model, evidenceHash: evidenceIdentity });
   textProfileCalls.set(call, { wire, evidenceIdentity, contract: freeze(contract), timeoutMs, used: false });
@@ -698,9 +751,11 @@ export async function writeKeywordsWithReservedGateway(evidence: ProfileEvidence
   const key = contractBearer(state.contract), directEngine = directTransport(state.contract);
   if (key === undefined) return { result: { ok: false, error: "no_key" }, terminal: null };
   const deadline = AbortSignal.timeout(timeoutMs), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
+  if (!await directTextBudgetOk(state.contract, state.wire, { timeoutMs, signal: combined }))
+    return { result: { ok: false, error: "input_too_large" }, terminal: null, notStarted: issueNotStarted(owned) };
   let body: string;
   try {
-    const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: "manual",
+    const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: textRedirect(state.contract),
       headers: bearerHeaders(key), body: state.wire, signal: combined });
     if (response.status !== 200) {
       try { await response.body?.cancel(); } catch { /* Nonterminal failure retains full C. */ }
@@ -717,24 +772,25 @@ export async function writeKeywordsWithReservedGateway(evidence: ProfileEvidence
   const terminal: TextProfileGatewayTerminal = Object.freeze({ kind: "text_profile_gateway_terminal" });
   textProfileTerminals.set(terminal, freeze(textProfileGatewayTerminalEvidenceSchema.parse({ version: 1,
     kind: "text_profile_gateway_terminal", dispatch: owned, responseHash: sha(body), ...completed })));
-  return { result: parseProfileGatewayBody(body, snapshot.name), terminal };
+  const exceeded = directBudgetExceeded(state.contract, wireMaxTokens(state.wire), completed.actualUsage);
+  return { result: exceeded ? { ok: false, error: "invalid_output" } : parseProfileGatewayBody(body, snapshot.name), terminal };
 }
 
 
 import { reasonTranslationModelDispatchSchema, reasonTranslationGatewayTerminalEvidenceSchema,
   type ReasonTranslationModelDispatch, type ReasonTranslationGatewayTerminalEvidence } from "@/lib/llm/capacity";
-import { reasonTranslationServingContractHash, reasonTranslationServingContractSchema, resolveReasonTranslationServingContract,
-  type ReasonTranslationServingContract } from "@/lib/llm/reason-translation-serving-contract";
+import { reasonTranslationServingContractHash, reasonTranslationServingContractSchema, reasonTranslationRouteServingContractSchema,
+  resolveReasonTranslationServingContract, type ReasonTranslationServingContract } from "@/lib/llm/reason-translation-serving-contract";
 import { reasonTranslationGatewayWire, parseTranslations, textHash, type TranslateResult } from "./translate";
 import { ABCLLM_STRICT_TERMINAL_HEADER, ABCLLM_STRICT_TERMINAL_OPT_IN } from "@/lib/llm/gateway-serving-contract-config";
 /**
  * 번역 4경로(non-raw wire)의 native 호출만: 계약이 abcLLM PR3 엄격 terminal opt-in 이면 그 헤더를 "1" 로 붙인다.
  * 본문·wireHash 는 그대로다. opt-in 여부는 계약 hash(servingContractHash)가 binding 에 묶는다. legacy 경로는 쓰지 않는다.
  */
-function strictTerminalHeaders(contract: { strictTerminalOptIn?: string }): Record<string, string> {
+function strictTerminalHeaders(contract: { provider?: string; strictTerminalOptIn?: string }): Record<string, string> {
   return contract.strictTerminalOptIn === ABCLLM_STRICT_TERMINAL_OPT_IN ? { [ABCLLM_STRICT_TERMINAL_HEADER]: "1" } : {};
 }
-export type PreparedReasonTranslationGatewayCall = Readonly<{ kind: "prepared"; wireHash: string;
+export type PreparedReasonTranslationGatewayCall = Readonly<{ kind: "prepared"; provider: GatewayContractProvider; wireHash: string;
   servingContractHash: string; totalTokenBound: number; model: string; sourceHashes: readonly string[] }>;
 export type ReasonTranslationGatewayTerminal = Readonly<{ kind: "reason_translation_gateway_terminal" }>;
 const reasonTranslationCalls = new WeakMap<PreparedReasonTranslationGatewayCall, { wire: string;
@@ -745,19 +801,19 @@ function validReasonTexts(value: unknown): value is string[] {
     && new Set(value.map(textHash)).size === value.length;
 }
 /** No caller flag or descriptor enables a reason serving deployment. */
-export function prepareReasonTranslationGatewayCall(texts: readonly string[], options: { model: string; timeoutMs: number }):
+export function prepareReasonTranslationGatewayCall(texts: readonly string[], options: TextPrepareOptions):
   PreparedReasonTranslationGatewayCall | { kind: "unsupported"; reason: "provider_contract_unavailable" } {
   assertLiveReviewAdapterAllowed();
-  const snapshot = structuredClone(texts), model = options.model, timeoutMs = options.timeoutMs;
+  const snapshot = structuredClone(texts), model = options.model, timeoutMs = options.timeoutMs, provider = options.provider ?? "abcllm";
   const unsupported = { kind: "unsupported", reason: "provider_contract_unavailable" } as const;
   if (!validReasonTexts(snapshot) || !reasonTranslationServingContractSchema.shape.model.safeParse(model).success
     || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return unsupported;
-  const resolved = resolveReasonTranslationServingContract(model);
+  const resolved = resolveReasonTranslationServingContract(model, provider);
   if (!resolved) return unsupported;
-  const contract = reasonTranslationServingContractSchema.parse(structuredClone(resolved));
-  if (contract.model !== model || contractBearer(contract) === undefined) return unsupported;
-  const wire = reasonTranslationGatewayWire(snapshot, model), sourceHashes = snapshot.map(textHash);
-  const call = freeze({ kind: "prepared" as const, wireHash: sha(wire),
+  const contract = reasonTranslationRouteServingContractSchema.parse(structuredClone(resolved));
+  if (contract.provider !== provider || contractBearer(contract) === undefined) return unsupported;
+  const wire = textWireFor(contract, model, engine => reasonTranslationGatewayWire(snapshot, engine)), sourceHashes = snapshot.map(textHash);
+  const call = freeze({ kind: "prepared" as const, provider, wireHash: sha(wire),
     servingContractHash: reasonTranslationServingContractHash(contract), totalTokenBound: contract.totalTokenBound,
     model, sourceHashes: [...sourceHashes] });
   reasonTranslationCalls.set(call, { wire, sourceHashes, contract: freeze(contract), timeoutMs, used: false });
@@ -786,9 +842,11 @@ export async function translateWithReservedReasonGateway(texts: readonly string[
   const key = contractBearer(state.contract), directEngine = directTransport(state.contract);
   if (key === undefined) return { result: { ok: false, error: "no_key" }, terminal: null };
   const deadline = AbortSignal.timeout(timeoutMs), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
+  if (!await directTextBudgetOk(state.contract, state.wire, { timeoutMs, signal: combined }))
+    return { result: { ok: false, error: "input_too_large" }, terminal: null, notStarted: issueNotStarted(owned) };
   let body: string;
   try {
-    const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: "manual",
+    const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: textRedirect(state.contract),
       headers: { ...bearerHeaders(key), ...strictTerminalHeaders(state.contract) },
       body: state.wire, signal: combined });
     if (response.status !== 200) {
@@ -806,18 +864,19 @@ export async function translateWithReservedReasonGateway(texts: readonly string[
   reasonTranslationTerminals.set(terminal, freeze(reasonTranslationGatewayTerminalEvidenceSchema.parse({ version: 1,
     kind: "reason_translation_gateway_terminal", dispatch: owned, responseHash: sha(body), ...completed })));
   const content = (JSON.parse(body) as { choices: { message: { content: string | null } }[] }).choices[0].message.content;
-  return { result: parseTranslations(content ?? "", snapshot), terminal };
+  const exceeded = directBudgetExceeded(state.contract, wireMaxTokens(state.wire), completed.actualUsage);
+  return { result: exceeded ? { ok: false, error: "invalid_output" } : parseTranslations(content ?? "", snapshot), terminal };
 }
 
 import { productTranslationModelDispatchSchema, productTranslationGatewayTerminalEvidenceSchema, type ProductTranslationModelDispatch,
   type ProductTranslationGatewayTerminalEvidence } from "@/lib/llm/capacity";
-import { productTranslationServingContractHash, productTranslationServingContractSchema, resolveProductTranslationServingContract,
-  type ProductTranslationServingContract } from "@/lib/llm/product-translation-serving-contract";
+import { productTranslationServingContractHash, productTranslationServingContractSchema, productTranslationRouteServingContractSchema,
+  resolveProductTranslationServingContract, type ProductTranslationServingContract } from "@/lib/llm/product-translation-serving-contract";
 import { productTranslationGatewayWire, type ProductTranslationGatewayItem } from "./translate";
 import { productTranslationPolicy, productTranslationSourceHash } from "@/lib/domain/products/translation-policy";
 import { parseKoreanTaglines, type KoreanTaglineBatch } from "@/lib/domain/products/korean-tagline";
 
-export type PreparedProductTranslationGatewayCall = Readonly<{ kind: "prepared"; wireHash: string;
+export type PreparedProductTranslationGatewayCall = Readonly<{ kind: "prepared"; provider: GatewayContractProvider; wireHash: string;
   servingContractHash: string; totalTokenBound: number; model: string }>;
 export type ProductTranslationGatewayTerminal = Readonly<{ kind: "product_translation_gateway_terminal" }>;
 const productTranslationCalls = new WeakMap<PreparedProductTranslationGatewayCall, { wire: string;
@@ -832,19 +891,19 @@ function validProductTranslationItems(value: unknown): value is ProductTranslati
     && value.reduce((count, item) => count + item.text.length, 0) <= productTranslationPolicy().maxSourceChars;
 }
 /** No descriptor or injected request enables a product serving deployment. */
-export function prepareProductTranslationGatewayCall(items: readonly ProductTranslationGatewayItem[], options: { model: string; timeoutMs: number }):
+export function prepareProductTranslationGatewayCall(items: readonly ProductTranslationGatewayItem[], options: TextPrepareOptions):
   PreparedProductTranslationGatewayCall | { kind: "unsupported"; reason: "provider_contract_unavailable" } {
   assertLiveReviewAdapterAllowed();
-  const snapshot = structuredClone(items), model = options.model, timeoutMs = options.timeoutMs;
+  const snapshot = structuredClone(items), model = options.model, timeoutMs = options.timeoutMs, provider = options.provider ?? "abcllm";
   const unsupported = { kind: "unsupported", reason: "provider_contract_unavailable" } as const;
   if (!validProductTranslationItems(snapshot) || !productTranslationServingContractSchema.shape.model.safeParse(model).success
     || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return unsupported;
-  const resolved = resolveProductTranslationServingContract(model);
+  const resolved = resolveProductTranslationServingContract(model, provider);
   if (!resolved) return unsupported;
-  const contract = productTranslationServingContractSchema.parse(structuredClone(resolved));
-  if (contract.model !== model || contractBearer(contract) === undefined) return unsupported;
-  const wire = productTranslationGatewayWire(snapshot, model);
-  const call = freeze({ kind: "prepared" as const, wireHash: sha(wire),
+  const contract = productTranslationRouteServingContractSchema.parse(structuredClone(resolved));
+  if (contract.provider !== provider || contractBearer(contract) === undefined) return unsupported;
+  const wire = textWireFor(contract, model, engine => productTranslationGatewayWire(snapshot, engine));
+  const call = freeze({ kind: "prepared" as const, provider, wireHash: sha(wire),
     servingContractHash: productTranslationServingContractHash(contract), totalTokenBound: contract.totalTokenBound, model });
   productTranslationCalls.set(call, { wire, contract: freeze(contract), timeoutMs, used: false });
   return call;
@@ -863,7 +922,7 @@ export async function translateProductFieldsWithReservedGateway(items: readonly 
   if (!state || state.used || !checked.success || !validProductTranslationItems(snapshot)
     || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new Error("product_translation_gateway_call_mismatch");
   const owned = checked.data, binding = owned.binding;
-  if (productTranslationGatewayWire(snapshot, call.model) !== state.wire || binding.members.length !== snapshot.length
+  if (textWireFor(state.contract, call.model, engine => productTranslationGatewayWire(snapshot, engine)) !== state.wire || binding.members.length !== snapshot.length
     || binding.members.some((member, index) => {
       const item = snapshot[index];
       return member.locale !== item.locale || member.field !== item.field || member.sourceHash !== productTranslationSourceHash({
@@ -880,7 +939,9 @@ export async function translateProductFieldsWithReservedGateway(items: readonly 
   state.deadline = deadline;
   let body: string;
   try {
-    const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: "manual",
+    if (!await directTextBudgetOk(state.contract, state.wire, { timeoutMs, signal: combined }))
+      return { result: { ok: false, error: "input_too_large" }, terminal: null, notStarted: issueNotStarted(owned) };
+    const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: textRedirect(state.contract),
       headers: { ...bearerHeaders(key), ...strictTerminalHeaders(state.contract) },
       body: state.wire, signal: combined });
     if (response.status !== 200) {
@@ -898,16 +959,17 @@ export async function translateProductFieldsWithReservedGateway(items: readonly 
   productTranslationTerminals.set(terminal, freeze(productTranslationGatewayTerminalEvidenceSchema.parse({ version: 1,
     kind: "product_translation_gateway_terminal", dispatch: owned, responseHash: sha(body), ...completed })));
   const content = (JSON.parse(body) as { choices: { message: { content: string | null } }[] }).choices[0].message.content;
-  return { result: parseKoreanTaglines(content ?? "", snapshot.length, snapshot), terminal };
+  const exceeded = directBudgetExceeded(state.contract, wireMaxTokens(state.wire), completed.actualUsage);
+  return { result: exceeded ? { ok: false, error: "invalid_output" } : parseKoreanTaglines(content ?? "", snapshot.length, snapshot), terminal };
 }
 
 import { productTaglineKoModelDispatchSchema, productTaglineKoGatewayTerminalEvidenceSchema, type ProductTaglineKoModelDispatch,
   type ProductTaglineKoGatewayTerminalEvidence } from "@/lib/llm/capacity";
-import { productTaglineKoServingContractHash, productTaglineKoServingContractSchema, resolveProductTaglineKoServingContract,
-  type ProductTaglineKoServingContract } from "@/lib/llm/product-tagline-ko-serving-contract";
+import { productTaglineKoServingContractHash, productTaglineKoServingContractSchema, productTaglineKoRouteServingContractSchema,
+  resolveProductTaglineKoServingContract, type ProductTaglineKoServingContract } from "@/lib/llm/product-tagline-ko-serving-contract";
 import { productTaglineKoGatewayWire, productTaglineKoSourceHash, type ProductTaglineKoGatewayItem } from "./translate";
 
-export type PreparedProductTaglineKoGatewayCall = Readonly<{ kind: "prepared"; wireHash: string;
+export type PreparedProductTaglineKoGatewayCall = Readonly<{ kind: "prepared"; provider: GatewayContractProvider; wireHash: string;
   servingContractHash: string; totalTokenBound: number; model: string }>;
 export type ProductTaglineKoGatewayTerminal = Readonly<{ kind: "product_tagline_ko_gateway_terminal" }>;
 const productTaglineKoCalls = new WeakMap<PreparedProductTaglineKoGatewayCall, { wire: string;
@@ -921,19 +983,19 @@ function validProductTaglineKoItems(value: unknown): value is ProductTaglineKoGa
     && value.reduce((count, item) => count + item.tagline.length, 0) <= 1200;
 }
 /** No descriptor or injected request enables a Korean tagline deployment. */
-export function prepareProductTaglineKoGatewayCall(items: readonly ProductTaglineKoGatewayItem[], options: { model: string; timeoutMs: number }):
+export function prepareProductTaglineKoGatewayCall(items: readonly ProductTaglineKoGatewayItem[], options: TextPrepareOptions):
   PreparedProductTaglineKoGatewayCall | { kind: "unsupported"; reason: "provider_contract_unavailable" } {
   assertLiveReviewAdapterAllowed();
-  const snapshot = structuredClone(items), model = options.model, timeoutMs = options.timeoutMs;
+  const snapshot = structuredClone(items), model = options.model, timeoutMs = options.timeoutMs, provider = options.provider ?? "abcllm";
   const unsupported = { kind: "unsupported", reason: "provider_contract_unavailable" } as const;
   if (!validProductTaglineKoItems(snapshot) || !productTaglineKoServingContractSchema.shape.model.safeParse(model).success
     || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return unsupported;
-  const resolved = resolveProductTaglineKoServingContract(model);
+  const resolved = resolveProductTaglineKoServingContract(model, provider);
   if (!resolved) return unsupported;
-  const contract = productTaglineKoServingContractSchema.parse(structuredClone(resolved));
-  if (contract.model !== model || contractBearer(contract) === undefined) return unsupported;
-  const wire = productTaglineKoGatewayWire(snapshot, model);
-  const call = freeze({ kind: "prepared" as const, wireHash: sha(wire),
+  const contract = productTaglineKoRouteServingContractSchema.parse(structuredClone(resolved));
+  if (contract.provider !== provider || contractBearer(contract) === undefined) return unsupported;
+  const wire = textWireFor(contract, model, engine => productTaglineKoGatewayWire(snapshot, engine));
+  const call = freeze({ kind: "prepared" as const, provider, wireHash: sha(wire),
     servingContractHash: productTaglineKoServingContractHash(contract), totalTokenBound: contract.totalTokenBound, model });
   productTaglineKoCalls.set(call, { wire, contract: freeze(contract), timeoutMs, used: false });
   return call;
@@ -951,7 +1013,7 @@ export async function translateTaglinesWithReservedGateway(items: readonly Produ
   if (!state || state.used || !checked.success || !validProductTaglineKoItems(snapshot)
     || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new Error("product_tagline_ko_gateway_call_mismatch");
   const owned = checked.data, binding = owned.binding;
-  if (productTaglineKoGatewayWire(snapshot, call.model) !== state.wire || binding.members.length !== snapshot.length
+  if (textWireFor(state.contract, call.model, engine => productTaglineKoGatewayWire(snapshot, engine)) !== state.wire || binding.members.length !== snapshot.length
     || binding.members.some((member, index) => member.sourceHash !== productTaglineKoSourceHash(snapshot[index]))
     || binding.model !== call.model || binding.wireHash !== call.wireHash
     || binding.servingContractHash !== call.servingContractHash || binding.totalTokenBound !== call.totalTokenBound
@@ -964,7 +1026,9 @@ export async function translateTaglinesWithReservedGateway(items: readonly Produ
   state.deadline = deadline;
   let body: string;
   try {
-    const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: "manual",
+    if (!await directTextBudgetOk(state.contract, state.wire, { timeoutMs, signal: combined }))
+      return { result: { ok: false, error: "input_too_large" }, terminal: null, notStarted: issueNotStarted(owned) };
+    const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: textRedirect(state.contract),
       headers: { ...bearerHeaders(key), ...strictTerminalHeaders(state.contract) },
       body: state.wire, signal: combined });
     if (response.status !== 200) {
@@ -982,16 +1046,17 @@ export async function translateTaglinesWithReservedGateway(items: readonly Produ
   productTaglineKoTerminals.set(terminal, freeze(productTaglineKoGatewayTerminalEvidenceSchema.parse({ version: 1,
     kind: "product_tagline_ko_gateway_terminal", dispatch: owned, responseHash: sha(body), ...completed })));
   const content = (JSON.parse(body) as { choices: { message: { content: string | null } }[] }).choices[0].message.content;
-  return { result: parseKoreanTaglines(content ?? "", snapshot.length), terminal };
+  const exceeded = directBudgetExceeded(state.contract, wireMaxTokens(state.wire), completed.actualUsage);
+  return { result: exceeded ? { ok: false, error: "invalid_output" } : parseKoreanTaglines(content ?? "", snapshot.length), terminal };
 }
 
 import { crawlTaglineModelDispatchSchema, crawlTaglineGatewayTerminalEvidenceSchema, type CrawlTaglineModelDispatch,
   type CrawlTaglineGatewayTerminalEvidence } from "@/lib/llm/capacity";
-import { crawlTaglineServingContractHash, crawlTaglineServingContractSchema, resolveCrawlTaglineServingContract,
-  type CrawlTaglineServingContract } from "@/lib/llm/crawl-tagline-serving-contract";
+import { crawlTaglineServingContractHash, crawlTaglineServingContractSchema, crawlTaglineRouteServingContractSchema,
+  resolveCrawlTaglineServingContract, type CrawlTaglineServingContract } from "@/lib/llm/crawl-tagline-serving-contract";
 import { crawlTaglineGatewayWire, taglineHash, parseTagline, type TaglineEvidence, type TaglineResult } from "./tagline";
 
-export type PreparedCrawlTaglineGatewayCall = Readonly<{ kind: "prepared"; wireHash: string;
+export type PreparedCrawlTaglineGatewayCall = Readonly<{ kind: "prepared"; provider: GatewayContractProvider; wireHash: string;
   servingContractHash: string; totalTokenBound: number; model: string; sourceHash: string }>;
 export type CrawlTaglineGatewayTerminal = Readonly<{ kind: "crawl_tagline_gateway_terminal" }>;
 const crawlTaglineCalls = new WeakMap<PreparedCrawlTaglineGatewayCall, { wire: string;
@@ -1006,19 +1071,19 @@ function validCrawlTaglineEvidence(value: unknown): value is TaglineEvidence {
     && Array.isArray(row.topics) && Array.from(row.topics).every(topic => typeof topic === "string");
 }
 /** Each physical ask owns one preparation; a caller descriptor never enables a deployment. */
-export function prepareCrawlTaglineGatewayCall(evidence: TaglineEvidence, options: { model: string; timeoutMs: number }):
+export function prepareCrawlTaglineGatewayCall(evidence: TaglineEvidence, options: TextPrepareOptions):
   PreparedCrawlTaglineGatewayCall | { kind: "unsupported"; reason: "provider_contract_unavailable" } {
   assertLiveReviewAdapterAllowed();
-  const snapshot = structuredClone(evidence), model = options.model, timeoutMs = options.timeoutMs;
+  const snapshot = structuredClone(evidence), model = options.model, timeoutMs = options.timeoutMs, provider = options.provider ?? "abcllm";
   const unsupported = { kind: "unsupported", reason: "provider_contract_unavailable" } as const;
   if (!validCrawlTaglineEvidence(snapshot) || !crawlTaglineServingContractSchema.shape.model.safeParse(model).success
     || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return unsupported;
-  const resolved = resolveCrawlTaglineServingContract(model);
+  const resolved = resolveCrawlTaglineServingContract(model, provider);
   if (!resolved) return unsupported;
-  const contract = crawlTaglineServingContractSchema.parse(structuredClone(resolved));
-  if (contract.model !== model || contractBearer(contract) === undefined) return unsupported;
-  const wire = crawlTaglineGatewayWire(snapshot, model);
-  const call = freeze({ kind: "prepared" as const, wireHash: sha(wire),
+  const contract = crawlTaglineRouteServingContractSchema.parse(structuredClone(resolved));
+  if (contract.provider !== provider || contractBearer(contract) === undefined) return unsupported;
+  const wire = textWireFor(contract, model, engine => crawlTaglineGatewayWire(snapshot, engine));
+  const call = freeze({ kind: "prepared" as const, provider, wireHash: sha(wire),
     servingContractHash: crawlTaglineServingContractHash(contract), totalTokenBound: contract.totalTokenBound,
     model, sourceHash: taglineHash(snapshot) });
   crawlTaglineCalls.set(call, { wire, contract: freeze(contract), timeoutMs, used: false });
@@ -1037,7 +1102,7 @@ export async function writeTaglineWithReservedGateway(evidence: TaglineEvidence,
   if (!state || state.used || !checked.success || !validCrawlTaglineEvidence(snapshot)
     || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new Error("crawl_tagline_gateway_call_mismatch");
   const owned = checked.data, binding = owned.binding;
-  if (crawlTaglineGatewayWire(snapshot, call.model) !== state.wire || binding.member.sourceHash !== call.sourceHash
+  if (textWireFor(state.contract, call.model, engine => crawlTaglineGatewayWire(snapshot, engine)) !== state.wire || binding.member.sourceHash !== call.sourceHash
     || binding.model !== call.model || binding.wireHash !== call.wireHash
     || binding.servingContractHash !== call.servingContractHash || binding.totalTokenBound !== call.totalTokenBound
     || binding.provider !== state.contract.provider || binding.routeId !== state.contract.routeId
@@ -1049,7 +1114,9 @@ export async function writeTaglineWithReservedGateway(evidence: TaglineEvidence,
   state.deadline = deadline;
   let body: string;
   try {
-    const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: "manual",
+    if (!await directTextBudgetOk(state.contract, state.wire, { timeoutMs, signal: combined }))
+      return { result: { ok: false, error: "input_too_large" }, terminal: null, notStarted: issueNotStarted(owned) };
+    const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: textRedirect(state.contract),
       headers: bearerHeaders(key), body: state.wire, signal: combined });
     if (response.status !== 200) {
       try { await response.body?.cancel(); } catch { /* Unknown completion retains full C. */ }
@@ -1063,7 +1130,9 @@ export async function writeTaglineWithReservedGateway(evidence: TaglineEvidence,
   const completed = nativeTerminal(body, state.contract, directEngine);
   if (!completed) return { result: { ok: false, error: "invalid_output" }, terminal: null };
   const content = (JSON.parse(body) as { choices: { message: { content: string | null } }[] }).choices[0].message.content;
-  const result = parseTagline(content ?? "", snapshot);
+  // 직접 계약의 요청 상한 모순은 결과(outcome)에 든다 — 장부의 outcome 과 돌려주는 결과가 같아야 이어 읽기(continuation)가 맞는다
+  const result: TaglineResult = directBudgetExceeded(state.contract, wireMaxTokens(state.wire), completed.actualUsage)
+    ? { ok: false, error: "invalid_output" } : parseTagline(content ?? "", snapshot);
   const terminal: CrawlTaglineGatewayTerminal = Object.freeze({ kind: "crawl_tagline_gateway_terminal" });
   crawlTaglineTerminals.set(terminal, freeze(crawlTaglineGatewayTerminalEvidenceSchema.parse({ version: 1,
     kind: "crawl_tagline_gateway_terminal", dispatch: owned, responseHash: sha(body), ...completed, outcome: result })));
@@ -1072,11 +1141,11 @@ export async function writeTaglineWithReservedGateway(evidence: TaglineEvidence,
 
 import { searchVerifyModelDispatchSchema, searchVerifyGatewayTerminalEvidenceSchema, type SearchVerifyModelDispatch,
   type SearchVerifyGatewayTerminalEvidence, type SearchVerifyOutcome } from "@/lib/llm/capacity";
-import { searchVerifyServingContractHash, searchVerifyServingContractSchema, resolveSearchVerifyServingContract,
-  type SearchVerifyServingContract } from "@/lib/llm/search-verify-serving-contract";
+import { searchVerifyServingContractHash, searchVerifyServingContractSchema, searchVerifyRouteServingContractSchema,
+  resolveSearchVerifyServingContract, type SearchVerifyServingContract } from "@/lib/llm/search-verify-serving-contract";
 import { searchVerifyGatewayWire, parseVerification, type VerifyItem, type VerifyResult } from "@/lib/domain/products/search-verify";
 
-export type PreparedSearchVerifyGatewayCall = Readonly<{ kind: "prepared"; wireHash: string;
+export type PreparedSearchVerifyGatewayCall = Readonly<{ kind: "prepared"; provider: GatewayContractProvider; wireHash: string;
   servingContractHash: string; totalTokenBound: number; model: string; evidenceHash: string; keywordsHash: string }>;
 export type SearchVerifyGatewayTerminal = Readonly<{ kind: "search_verify_gateway_terminal" }>;
 const searchVerifyCalls = new WeakMap<PreparedSearchVerifyGatewayCall, { wire: string;
@@ -1089,19 +1158,19 @@ function validSearchVerifyItem(value: unknown): value is VerifyItem {
     && Array.isArray(item.keywords) && item.keywords.length >= 1 && Array.from(item.keywords).every(keyword => typeof keyword === "string");
 }
 /** One preparation per physical step; a caller descriptor or injected request never enables a deployment. */
-export function prepareSearchVerifyGatewayCall(item: VerifyItem, options: { model: string; timeoutMs: number }):
+export function prepareSearchVerifyGatewayCall(item: VerifyItem, options: TextPrepareOptions):
   PreparedSearchVerifyGatewayCall | { kind: "unsupported"; reason: "provider_contract_unavailable" } {
   assertLiveReviewAdapterAllowed();
-  const snapshot = structuredClone(item), model = options.model, timeoutMs = options.timeoutMs;
+  const snapshot = structuredClone(item), model = options.model, timeoutMs = options.timeoutMs, provider = options.provider ?? "abcllm";
   const unsupported = { kind: "unsupported", reason: "provider_contract_unavailable" } as const;
   if (!validSearchVerifyItem(snapshot) || !searchVerifyServingContractSchema.shape.model.safeParse(model).success
     || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return unsupported;
-  const resolved = resolveSearchVerifyServingContract(model);
+  const resolved = resolveSearchVerifyServingContract(model, provider);
   if (!resolved) return unsupported;
-  const contract = searchVerifyServingContractSchema.parse(structuredClone(resolved));
-  if (contract.model !== model || contractBearer(contract) === undefined) return unsupported;
-  const wire = searchVerifyGatewayWire(snapshot, model);
-  const call = freeze({ kind: "prepared" as const, wireHash: sha(wire),
+  const contract = searchVerifyRouteServingContractSchema.parse(structuredClone(resolved));
+  if (contract.provider !== provider || contractBearer(contract) === undefined) return unsupported;
+  const wire = textWireFor(contract, model, engine => searchVerifyGatewayWire(snapshot, engine));
+  const call = freeze({ kind: "prepared" as const, provider, wireHash: sha(wire),
     servingContractHash: searchVerifyServingContractHash(contract), totalTokenBound: contract.totalTokenBound,
     model, evidenceHash: profileHash(snapshot.evidence), keywordsHash: sha(JSON.stringify(snapshot.keywords)) });
   searchVerifyCalls.set(call, { wire, contract: freeze(contract), timeoutMs, used: false });
@@ -1121,7 +1190,7 @@ export async function verifyKeywordsWithReservedGateway(item: VerifyItem, dispat
   if (!state || state.used || !checked.success || !validSearchVerifyItem(snapshot)
     || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new Error("search_verify_gateway_call_mismatch");
   const owned = checked.data, binding = owned.binding;
-  if (searchVerifyGatewayWire(snapshot, call.model) !== state.wire || binding.member.evidenceHash !== call.evidenceHash
+  if (textWireFor(state.contract, call.model, engine => searchVerifyGatewayWire(snapshot, engine)) !== state.wire || binding.member.evidenceHash !== call.evidenceHash
     || profileHash(snapshot.evidence) !== call.evidenceHash || sha(JSON.stringify(snapshot.keywords)) !== call.keywordsHash
     || binding.model !== call.model || binding.wireHash !== call.wireHash
     || binding.servingContractHash !== call.servingContractHash || binding.totalTokenBound !== call.totalTokenBound
@@ -1131,9 +1200,11 @@ export async function verifyKeywordsWithReservedGateway(item: VerifyItem, dispat
   const key = contractBearer(state.contract), directEngine = directTransport(state.contract);
   if (key === undefined) return { result: { ok: false, error: "no_key" }, terminal: null };
   const deadline = AbortSignal.timeout(timeoutMs), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
+  if (!await directTextBudgetOk(state.contract, state.wire, { timeoutMs, signal: combined }))
+    return { result: { ok: false, error: "input_too_large" }, terminal: null, notStarted: issueNotStarted(owned) };
   let body: string;
   try {
-    const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: "manual",
+    const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: textRedirect(state.contract),
       headers: bearerHeaders(key), body: state.wire, signal: combined });
     if (response.status !== 200) {
       try { await response.body?.cancel(); } catch { /* Unknown completion retains full C. */ }
@@ -1152,7 +1223,9 @@ export async function verifyKeywordsWithReservedGateway(item: VerifyItem, dispat
   }
   const content = (JSON.parse(body) as { choices: { message: { content: string | null } }[] }).choices[0].message.content;
   let outcome: SearchVerifyOutcome;
-  try { outcome = { ok: true, removed: parseVerification(snapshot.keywords, content ?? "") }; }
+  // 직접 계약의 요청 상한 모순은 outcome 에 든다 — 장부의 outcome 과 돌려주는 결과가 같아야 단계 이어 읽기가 맞는다
+  if (directBudgetExceeded(state.contract, wireMaxTokens(state.wire), completed.actualUsage)) outcome = { ok: false, error: "invalid_output" };
+  else try { outcome = { ok: true, removed: parseVerification(snapshot.keywords, content ?? "") }; }
   catch { outcome = { ok: false, error: "invalid_output" }; }
   const terminal: SearchVerifyGatewayTerminal = Object.freeze({ kind: "search_verify_gateway_terminal" });
   searchVerifyTerminals.set(terminal, freeze(searchVerifyGatewayTerminalEvidenceSchema.parse({ version: 1,
@@ -1162,11 +1235,11 @@ export async function verifyKeywordsWithReservedGateway(item: VerifyItem, dispat
 
 import { websearchQueryModelDispatchSchema, websearchQueryGatewayTerminalEvidenceSchema, type WebsearchQueryModelDispatch,
   type WebsearchQueryGatewayTerminalEvidence } from "@/lib/llm/capacity";
-import { websearchQueryServingContractHash, websearchQueryServingContractSchema, resolveWebsearchQueryServingContract,
-  type WebsearchQueryServingContract } from "@/lib/llm/websearch-query-serving-contract";
+import { websearchQueryServingContractHash, websearchQueryServingContractSchema, websearchQueryRouteServingContractSchema,
+  resolveWebsearchQueryServingContract, type WebsearchQueryServingContract } from "@/lib/llm/websearch-query-serving-contract";
 import { parseQueryTranslation, websearchQueryGatewayWire, type WebsearchQueryGatewayInput } from "./translate";
 
-export type PreparedWebsearchQueryGatewayCall = Readonly<{ kind: "prepared"; wireHash: string;
+export type PreparedWebsearchQueryGatewayCall = Readonly<{ kind: "prepared"; provider: GatewayContractProvider; wireHash: string;
   servingContractHash: string; totalTokenBound: number; model: string; queryHash: string; sourceLocale: WebsearchQueryGatewayInput["sourceLocale"] }>;
 export type WebsearchQueryGatewayTerminal = Readonly<{ kind: "websearch_query_gateway_terminal" }>;
 export type WebsearchQueryGatewayResult = { ok: true; keywords: string } | { ok: false; error: string };
@@ -1180,19 +1253,19 @@ function validWebsearchQueryInput(value: unknown): value is WebsearchQueryGatewa
     && row.query === row.query.trim() && ["ko", "zh-Hans", "zh-Hant"].includes(String(row.sourceLocale));
 }
 /** One physical query POST per preparation; a caller descriptor never enables a deployment. */
-export function prepareWebsearchQueryGatewayCall(input: WebsearchQueryGatewayInput, options: { model: string; timeoutMs: number }):
+export function prepareWebsearchQueryGatewayCall(input: WebsearchQueryGatewayInput, options: TextPrepareOptions):
   PreparedWebsearchQueryGatewayCall | { kind: "unsupported"; reason: "provider_contract_unavailable" } {
   assertLiveReviewAdapterAllowed();
-  const snapshot = structuredClone(input), model = options.model, timeoutMs = options.timeoutMs;
+  const snapshot = structuredClone(input), model = options.model, timeoutMs = options.timeoutMs, provider = options.provider ?? "abcllm";
   const unsupported = { kind: "unsupported", reason: "provider_contract_unavailable" } as const;
   if (!validWebsearchQueryInput(snapshot) || !websearchQueryServingContractSchema.shape.model.safeParse(model).success
     || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) return unsupported;
-  const resolved = resolveWebsearchQueryServingContract(model);
+  const resolved = resolveWebsearchQueryServingContract(model, provider);
   if (!resolved) return unsupported;
-  const contract = websearchQueryServingContractSchema.parse(structuredClone(resolved));
-  if (contract.model !== model || contractBearer(contract) === undefined) return unsupported;
-  const wire = websearchQueryGatewayWire(snapshot, model);
-  const call = freeze({ kind: "prepared" as const, wireHash: sha(wire), servingContractHash: websearchQueryServingContractHash(contract),
+  const contract = websearchQueryRouteServingContractSchema.parse(structuredClone(resolved));
+  if (contract.provider !== provider || contractBearer(contract) === undefined) return unsupported;
+  const wire = textWireFor(contract, model, engine => websearchQueryGatewayWire(snapshot, engine));
+  const call = freeze({ kind: "prepared" as const, provider, wireHash: sha(wire), servingContractHash: websearchQueryServingContractHash(contract),
     totalTokenBound: contract.totalTokenBound, model, queryHash: sha(snapshot.query), sourceLocale: snapshot.sourceLocale });
   websearchQueryCalls.set(call, { wire, contract: freeze(contract), timeoutMs, used: false });
   return call;
@@ -1211,7 +1284,7 @@ export async function translateQueryWithReservedGateway(input: WebsearchQueryGat
   if (!state || state.used || !checked.success || !validWebsearchQueryInput(snapshot)
     || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1) throw new Error("websearch_query_gateway_call_mismatch");
   const owned = checked.data, binding = owned.binding;
-  if (websearchQueryGatewayWire(snapshot, call.model) !== state.wire || sha(snapshot.query) !== call.queryHash
+  if (textWireFor(state.contract, call.model, engine => websearchQueryGatewayWire(snapshot, engine)) !== state.wire || sha(snapshot.query) !== call.queryHash
     || binding.member.queryHash !== call.queryHash || binding.member.sourceLocale !== snapshot.sourceLocale
     || snapshot.sourceLocale !== call.sourceLocale || binding.model !== call.model || binding.wireHash !== call.wireHash
     || binding.servingContractHash !== call.servingContractHash || binding.totalTokenBound !== call.totalTokenBound
@@ -1224,7 +1297,9 @@ export async function translateQueryWithReservedGateway(input: WebsearchQueryGat
   state.deadline = deadline;
   let body: string, status: number;
   try {
-    const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: "manual",
+    if (!await directTextBudgetOk(state.contract, state.wire, { timeoutMs, signal: combined }))
+      return { result: { ok: false, error: "input_too_large" }, terminal: null, notStarted: issueNotStarted(owned) };
+    const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: textRedirect(state.contract),
       headers: { ...bearerHeaders(key), ...strictTerminalHeaders(state.contract) },
       body: state.wire, signal: combined });
     if (!response.ok) {
@@ -1241,7 +1316,8 @@ export async function translateQueryWithReservedGateway(input: WebsearchQueryGat
   const completed = status === 200 ? nativeTerminal(body, state.contract, directEngine) : null;
   if (!completed) return { result: { ok: false, error: "invalid_output" }, terminal: null };
   const content = (JSON.parse(body) as { choices: { message: { content: string | null } }[] }).choices[0].message.content;
-  const keywords = parseQueryTranslation(content ?? "");
+  // 직접 계약의 요청 상한 모순은 outcome 에 든다(장부의 outcome = 돌려주는 결과)
+  const keywords = directBudgetExceeded(state.contract, wireMaxTokens(state.wire), completed.actualUsage) ? null : parseQueryTranslation(content ?? "");
   const result: WebsearchQueryGatewayResult = keywords ? { ok: true, keywords } : { ok: false, error: "invalid_output" };
   const terminal: WebsearchQueryGatewayTerminal = Object.freeze({ kind: "websearch_query_gateway_terminal" });
   websearchQueryTerminals.set(terminal, freeze(websearchQueryGatewayTerminalEvidenceSchema.parse({ version: 1,

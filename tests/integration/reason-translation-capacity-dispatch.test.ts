@@ -482,7 +482,7 @@ it('retains full C after EOF for review while a new boot retries the failed cach
 it('retains full C when an opted-in strict terminal response lacks the PR3 usage_provenance', exercise(async () => {
   const item = await seed(); await server(async ({ bodies, setReply }) => {
     // 운영 값이 아니다 — PR3 opt-in 표시만 더한 로컬 fixture 계약이다
-    serving.contract = { ...serving.contract!, strictTerminalOptIn: 'abcllm-strict-terminal-v1' };
+    serving.contract = { ...serving.contract!, strictTerminalOptIn: 'abcllm-strict-terminal-v1' } as ReasonTranslationServingContract;
     const headers: unknown[] = [];
     setReply(response => { headers.push(response.req.headers['x-abcllm-strict-terminal']);
       response.end(JSON.stringify({ ...replyBody(), usage_provenance: undefined })); });

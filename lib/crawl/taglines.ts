@@ -1,4 +1,5 @@
 import { scopedModel } from "@/lib/llm/model-registry";
+import { crawlTaglineServingProvider } from "@/lib/llm/crawl-tagline-serving-contract";
 import { isDeepStrictEqual } from "node:util";
 import { assertJobLeaseAtWallTime, requestJob, type JobLease } from "@/lib/jobs/control";
 import { emitPipelineEvent } from "@/lib/observability/review-pipeline";
@@ -263,7 +264,8 @@ export async function prepareCrawlTaglineDispatch(value: TaglineTask, job: JobLe
       const control = lock?.control ?? await lockModelCapacityCallerControl(tx);
       if (!reserved && !prior && control.mode === "disabled") return { kind: "disabled" } as const;
       if (control.mode !== "open") throw new ModelCapacityDeferredError(control.mode === "draining" ? "draining" : "disabled");
-      if (!control.policy?.routes.some(route => route.routeId === "crawl-tagline" && route.provider === "abcllm" && route.model === scopedModel("crawl-tagline", TAGLINE_MODEL)))
+      const provider = crawlTaglineServingProvider(scopedModel("crawl-tagline", TAGLINE_MODEL));
+      if (!control.policy?.routes.some(route => route.routeId === "crawl-tagline" && route.provider === provider && route.model === scopedModel("crawl-tagline", TAGLINE_MODEL)))
         throw new ModelCapacityDeferredError("unmapped");
       await assertJobBatchAdmission(tx, lease.name, roleLease);
       const role = await lockCrawlRole(tx, roleLease);
@@ -274,10 +276,11 @@ export async function prepareCrawlTaglineDispatch(value: TaglineTask, job: JobLe
       if (reserved && (!isDeepStrictEqual(initial, reserved.initial) || !isDeepStrictEqual(member, reserved.input.member))) throw new CrawlTaglineChanged();
       await lockCrawlJobs(tx, lease);
       if (!reserved) { await crawlWall(tx, role, lease); return initial; }
-      if (!call || call.model !== scopedModel("crawl-tagline", TAGLINE_MODEL) || call.sourceHash !== member.sourceHash) throw new CrawlTaglineChanged();
+      if (!call || call.model !== scopedModel("crawl-tagline", TAGLINE_MODEL) || call.provider !== provider || reserved.identity.provider !== provider
+        || call.sourceHash !== member.sourceHash) throw new CrawlTaglineChanged();
       const binding = crawlTaglineDispatchBindingSchema.parse({ ...reserved.input, kind: "crawl_tagline_gateway", version: 1,
         generationHash: crawlTaglineGenerationHash(reserved.input), logicalWorkKey: crawlTaglineLogicalWorkKey(reserved.input), inputHash: crawlTaglineInputHash(reserved.input),
-        provider: "abcllm", routeId: "crawl-tagline", wireHash: call.wireHash, servingContractHash: call.servingContractHash,
+        provider: call.provider, routeId: "crawl-tagline", wireHash: call.wireHash, servingContractHash: call.servingContractHash,
         totalTokenBound: call.totalTokenBound, chargedTokens: call.totalTokenBound, job: lease, role });
       const dispatch = await finishCrawlTaglineModelCapacityDispatch(tx, lock!, binding);
       await crawlWall(tx, role, lease, dispatch); // request/event를 포함한 모든 wait 뒤의 벽
@@ -294,7 +297,7 @@ function crawlPhaseRowMatches(row: RequestRow, dispatch: CrawlTaglineModelDispat
   const binding = dispatch.binding;
   return dispatch.requestId === row.requestId && dispatch.token === row.token && dispatch.owner.instanceId === row.ownerInstanceId
     && dispatch.owner.bootId === row.ownerBootId && dispatch.epoch === row.epoch && dispatch.revision === row.revision && dispatch.policyHash === row.policyHash
-    && row.class === "background" && row.pool === "text" && row.routeId === "crawl-tagline" && row.provider === "abcllm" && row.model === scopedModel("crawl-tagline", TAGLINE_MODEL)
+    && row.class === "background" && row.pool === "text" && row.routeId === "crawl-tagline" && row.provider === binding.provider && row.model === scopedModel("crawl-tagline", TAGLINE_MODEL)
     && row.workKey === `${binding.logicalWorkKey}:${binding.inputHash}` && row.logicalWorkKey === binding.logicalWorkKey
     && isDeepStrictEqual(row.logicalMemberKeys, crawlTaglineMemberKeys(binding.member))
     && isDeepStrictEqual(row.dispatchBinding, binding) && row.dispatchBindingHash === dispatch.bindingHash

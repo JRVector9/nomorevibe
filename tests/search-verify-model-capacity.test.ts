@@ -42,7 +42,7 @@ vi.mock("@/lib/domain/products/search-profiles", () => ({
   },
 }));
 vi.mock("@/lib/crawl/agent-review-gateway", () => ({
-  prepareSearchVerifyGatewayCall: (item: { keywords: string[] }, options: { timeoutMs: number }) => ({ kind: "prepared", keywords: item.keywords, timeoutMs: options.timeoutMs }),
+  prepareSearchVerifyGatewayCall: (item: { keywords: string[] }, options: { timeoutMs: number }) => ({ kind: "prepared", provider: "abcllm", keywords: item.keywords, timeoutMs: options.timeoutMs }),
   verifyKeywordsWithReservedGateway: async (item: { keywords: string[] }, dispatch: { requestId: string }, _call: unknown, options: { timeoutMs: number }) => {
     state.posts.push({ keywords: [...item.keywords], timeoutMs: options.timeoutMs, requestId: dispatch.requestId });
     const reply = state.replies.shift() ?? { result: { ok: true, unsupported: [] }, outcome: { ok: true, removed: [] } };

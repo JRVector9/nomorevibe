@@ -13,6 +13,7 @@ import { operatorReviewDispatchSql, operatorReviewEventSql, operatorReviewTermin
 import { localModelSplitJobsDispatchSql, localModelSplitJobsEventTerminalSql, localModelSplitJobsTerminalSql } from "@/lib/llm/local-model-capacity-sql";
 import { gatewayLocalDirectDispatchSql, gatewayLocalDirectEventTerminalSql, gatewayLocalDirectLogicalSql, gatewayLocalDirectMembersSql,
   gatewayLocalDirectTerminalSql } from "@/lib/llm/gateway-local-direct-sql";
+import { textLocalDirectDispatchSql, textLocalDirectEventTerminalSql, textLocalDirectTerminalSql } from "@/lib/llm/gateway-local-direct-binding-sql";
 import { db } from "@/lib/db";
 import { createReviewInput, reviewHash, type ReviewInput } from "@/lib/crawl/agent-review-contract";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
@@ -506,12 +507,15 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
       expect(statement).toContain(`ADD CONSTRAINT ${name} CHECK ((%s) OR (%s))`);
       expect(statement, `${name}: the appended branch is the schema constant`).toContain(`$ai2_local$${branch}$ai2_local$`);
       const check = getTableConfig(events ? modelCapacityEvents : modelCapacityRequests).checks.find(check => check.name === name)!;
-      // 0157 appends the local-direct branches last (both terminal CHECKs), after 0155's split-jobs local_model_direct branch (both terminal
-      // CHECKs) and 0151's operator_review branch (requests terminal CHECK); strip those tails newest first (each "(prev) OR (branch)" wrap)
-      // before the 0149 checks.
+      // 0159 appends the text local-direct branches last (both terminal CHECKs, PR 3b-E), after 0157's AI1 local-direct branches, 0155's split-jobs
+      // local_model_direct branch (both terminal CHECKs) and 0151's operator_review branch (requests terminal CHECK); strip those tails newest
+      // first (each "(prev) OR (branch)" wrap) before the 0149 checks.
+      const textLocalDirectTail = `) OR (${events ? textLocalDirectEventTerminalSql : textLocalDirectTerminalSql})`;
       const localDirectTail = `) OR (${events ? gatewayLocalDirectEventTerminalSql : gatewayLocalDirectTerminalSql})`;
       const split = `) OR (coalesce((${events ? localModelSplitJobsEventTerminalSql : localModelSplitJobsTerminalSql}),false))`;
       let full = new PgDialect().sqlToQuery(check.value).sql;
+      expect(full.startsWith("(") && full.endsWith(textLocalDirectTail), `${name}: 0159 tail present`).toBe(true);
+      full = full.slice(1, -textLocalDirectTail.length);
       expect(full.startsWith("(") && full.endsWith(localDirectTail), `${name}: 0157 tail present`).toBe(true);
       full = full.slice(1, -localDirectTail.length);
       expect(full.endsWith(split), `${name}: 0155 tail present`).toBe(true);
@@ -573,7 +577,8 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
     // 0157 (PR 3b-C transport unify) rebuilds the requests logical/members/dispatch/terminal CHECKs and the events terminal CHECK in the 0132
     // form: the whole live 0156 predecessor (0155's split branch included) plus the AI1/text abcllm branches with only the provider replaced
     // (the schema constants). Others stay.
-    await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
+    expect(journal.entries.find(entry => entry.idx === 157)!.tag).toBe("0157_ai1_provider_enum");
+    await migrateThrough(157);
     const after0157 = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
     const localDirect: Record<string, string> = { model_capacity_requests_logical_check: gatewayLocalDirectLogicalSql,
       model_capacity_requests_members_check: gatewayLocalDirectMembersSql, model_capacity_requests_dispatch_check: gatewayLocalDirectDispatchSql,
@@ -587,6 +592,24 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
       await step.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT f2_local_direct_expected CHECK ((${inner(after0155[name])}) OR (${branch}))`);
       try { expect(after0157[name], `${name}: 0156 predicate plus the 0157 local-direct branches`).toBe((await constraintDefs(step, ["f2_local_direct_expected"])).f2_local_direct_expected); }
       finally { await step.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT f2_local_direct_expected`); }
+    }
+    // 0159 (PR 3b-E text local-direct 기록) rebuilds the dispatch CHECK and both terminal CHECKs the same way: the whole live 0157 predecessor plus
+    // the seven 0125 text-route branches with the row AND the binding/evidence JSON provider replaced (0157's text twins kept only the row literal,
+    // so a text row with provider local-direct matched none of them). logical/members stay as 0157 left them.
+    await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
+    const after0159 = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
+    const textLocalDirect: Record<string, string> = { model_capacity_requests_dispatch_check: textLocalDirectDispatchSql,
+      model_capacity_requests_terminal_check: textLocalDirectTerminalSql, model_capacity_events_terminal_check: textLocalDirectEventTerminalSql };
+    for (const name of [...LEFT, ...UNTOUCHED]) {
+      const branch = textLocalDirect[name];
+      if (!branch) { expect(after0159[name], `${name}: unchanged by 0159`).toBe(after0157[name]); continue; }
+      const jsonLocalDirectCount = (def: string) => def.split(`'"local-direct"'::jsonb`).length - 1;
+      expect(jsonLocalDirectCount(after0157[name]), `${name}: 0157 never widened the JSON provider`).toBe(0);
+      expect(jsonLocalDirectCount(after0159[name]), `${name}: 0159 widens the JSON provider of the seven text branches`).toBe(7);
+      const table = name.startsWith("model_capacity_events_") ? "model_capacity_events" : "model_capacity_requests";
+      await step.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT f2_text_local_direct_expected CHECK ((${inner(after0157[name])}) OR (${branch}))`);
+      try { expect(after0159[name], `${name}: 0157 predicate plus the 0159 text local-direct branches`).toBe((await constraintDefs(step, ["f2_text_local_direct_expected"])).f2_text_local_direct_expected); }
+      finally { await step.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT f2_text_local_direct_expected`); }
     }
     expect((await step<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`)[0].count).toBe(journal.entries.length);
   } finally { rmSync(partial, { recursive: true, force: true }); await step.end({ timeout: 5 }); }

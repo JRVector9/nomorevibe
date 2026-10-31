@@ -449,7 +449,7 @@ export async function prepareKoreanTaglineDispatch(value: readonly KoreanTagline
       if (!reserved && control.mode === "disabled") return { kind: "disabled" } as const;
       if (control.mode !== "open") throw new ModelCapacityDeferredError(control.mode === "draining" ? "draining" : "disabled");
       if (call.model !== scopedModel("product-tagline-ko", KOREAN_TAGLINE_MODEL) || !control.policy?.routes.some(route => route.routeId === "product-tagline-ko"
-        && route.provider === "abcllm" && route.model === call.model)) throw new ModelCapacityDeferredError("unmapped");
+        && route.provider === call.provider && route.model === call.model)) throw new ModelCapacityDeferredError("unmapped");
       if (!roleLease || !["text", "translation"].includes(roleLease.role)) throw new ModelCapacityDeferredError("owner_unavailable");
       await assertJobBatchAdmission(tx, "product-tagline-ko", roleLease);
       const role = await lockKoreanRole(tx, roleLease);
@@ -462,7 +462,7 @@ export async function prepareKoreanTaglineDispatch(value: readonly KoreanTagline
       if (!isDeepStrictEqual(members, reserved.members) || !isDeepStrictEqual(role, reserved.role)) throw new KoreanTaglineChanged();
       const binding = productTaglineKoDispatchBindingSchema.parse({ kind: "product_tagline_ko_gateway", version: 1,
         members, model: call.model, logicalWorkKey: productTaglineKoLogicalWorkKey(members), inputHash: productTaglineKoInputHash({ members, model: call.model }),
-        provider: "abcllm", routeId: "product-tagline-ko", wireHash: call.wireHash, servingContractHash: call.servingContractHash,
+        provider: call.provider, routeId: "product-tagline-ko", wireHash: call.wireHash, servingContractHash: call.servingContractHash,
         totalTokenBound: call.totalTokenBound, chargedTokens: call.totalTokenBound, job: lease, role });
       const dispatch = await finishProductTaglineKoModelCapacityDispatch(tx, lock!, binding);
       await finalKoreanWall(tx, role, lease, dispatch);

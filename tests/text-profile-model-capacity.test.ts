@@ -31,7 +31,7 @@ const nativeDispatch = { ...reservation, binding: { kind: "text_profile_gateway"
 function first() {
   const evidence = profileEvidence(task.product, null), input = { productId: 3, slug: task.product.slug,
     evidenceHash: profileHash(evidence), profile: { kind: "absent" as const }, model: "profile-model" };
-  return { kind: "ready", intent: { task, evidence, input }, call: { kind: "prepared", evidenceHash: input.evidenceHash,
+  return { kind: "ready", intent: { task, evidence, input }, call: { kind: "prepared", provider: "abcllm", evidenceHash: input.evidenceHash,
     model: input.model, wireHash: "b".repeat(64), servingContractHash: "c".repeat(64), totalTokenBound: 4096 } };
 }
 const options = () => ({ timeoutMs: 1000, roleLease: role });

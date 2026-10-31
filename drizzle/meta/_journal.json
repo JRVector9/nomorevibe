@@ -1107,6 +1107,13 @@
       "when": 1794086401068,
       "tag": "0157_ai1_provider_enum",
       "breakpoints": true
+    },
+    {
+      "idx": 159,
+      "version": "7",
+      "when": 1794086401070,
+      "tag": "0159_text_local_direct_binding",
+      "breakpoints": true
     }
   ]
 }

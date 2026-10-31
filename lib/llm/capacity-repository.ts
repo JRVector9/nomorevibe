@@ -26,7 +26,8 @@ import { currentReplayDb } from "@/lib/db/replay-scope";
 import { modelCapacityControl, modelCapacityDevices, modelCapacityEvents, modelCapacityRequests } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import type { Ai1GatewayTerminal, Ai2GatewayTerminal, Ai1ItemGatewayTerminal, GatewayNotStarted } from "@/lib/crawl/agent-review-gateway";
-import { gatewayNotStartedEvidenceSchema, GATEWAY_DISPATCH_PROVIDERS, type GatewayNotStartedDispatch } from "./capacity";
+import { gatewayNotStartedEvidenceSchema, GATEWAY_DISPATCH_PROVIDERS, isGatewayDispatchProvider, type GatewayDispatchProvider,
+  type GatewayNotStartedDispatch } from "./capacity";
 import { reviewHash } from "@/lib/crawl/agent-review-contract";
 import { providerBoundaryCanonicalHash } from "./provider-boundary-contract";
 import {
@@ -264,10 +265,10 @@ export type OwnPendingTextProfileRequest = Readonly<{ productId: number; workKey
 /** Priority metadata only. The normal coordinator must re-poll the exact input
  * key and validate all current domain, role, job and dispatch fences. */
 export async function findOwnPendingTextProfileRequests(value: {
-  owner: ModelCapacityRequestIdentity["owner"]; model: string;
+  owner: ModelCapacityRequestIdentity["owner"]; model: string; provider?: GatewayDispatchProvider;
 }): Promise<OwnPendingTextProfileRequest[]> {
-  const identity = modelCapacityRequestIdentitySchema.parse({ ...value, workKey: "profile-queue-readback",
-    class: "background", pool: "text", routeId: "product-search-profile", provider: "abcllm" });
+  const identity = modelCapacityRequestIdentitySchema.parse({ owner: value.owner, model: value.model, workKey: "profile-queue-readback",
+    class: "background", pool: "text", routeId: "product-search-profile", provider: value.provider ?? "abcllm" });
   return transaction(async tx => {
     // 우선순위 메타데이터만 — control 을 잠그지 않는다. 결과는 coordinator 가 control 을 잡고 다시 확인한다(2026-10-31: 이 첫 readback 의
     // FOR SHARE 가 lock_timeout 으로 product-search-profile 의 매 틱을 멈췄다).
@@ -308,10 +309,10 @@ export type OwnPendingReasonTranslationRequest = Readonly<{
  * granted batch from this exact process boot. Every reuse still re-polls and
  * passes the normal complete domain/dispatch binding checks. */
 export async function findOwnPendingReasonTranslationRequests(value: {
-  owner: ModelCapacityRequestIdentity["owner"]; model: string;
+  owner: ModelCapacityRequestIdentity["owner"]; model: string; provider?: GatewayDispatchProvider;
 }): Promise<OwnPendingReasonTranslationRequest[]> {
-  const identity = modelCapacityRequestIdentitySchema.parse({ ...value, workKey: "reason-batch-readback",
-    class: "background", pool: "text", routeId: "reason-translate", provider: "abcllm" });
+  const identity = modelCapacityRequestIdentitySchema.parse({ owner: value.owner, model: value.model, workKey: "reason-batch-readback",
+    class: "background", pool: "text", routeId: "reason-translate", provider: value.provider ?? "abcllm" });
   return transaction(async tx => {
     const state = await control(tx, "share");
     if (state.mode !== "open") return [];
@@ -348,7 +349,7 @@ export async function cancelOwnPendingReasonTranslationRequest(value: OwnPending
       || row.dispatchBinding !== null || row.dispatchBindingHash !== null || row.dispatchedAt !== null
       || row.terminalEvidence !== null || row.terminalEvidenceHash !== null || row.settledAt !== null) return false;
     sameIdentity(row, checked);
-    if (checked.routeId !== "reason-translate" || checked.class !== "background" || checked.pool !== "text" || checked.provider !== "abcllm")
+    if (checked.routeId !== "reason-translate" || checked.class !== "background" || checked.pool !== "text" || !isGatewayDispatchProvider(checked.provider))
       fail("invalid_reason_translation_capacity_identity");
     const [changed] = await tx.update(modelCapacityRequests).set({ state: "withdrawn", updatedAt: sql`clock_timestamp()` })
       .where(and(eq(modelCapacityRequests.requestId, row.requestId), eq(modelCapacityRequests.state, row.state))).returning();
@@ -359,12 +360,12 @@ export async function cancelOwnPendingReasonTranslationRequest(value: OwnPending
 }
 
 type ProductTextBatchIdentity = { owner: ModelCapacityRequestIdentity["owner"]; model: string;
-  routeId: "product-translate" | "product-tagline-ko" };
+  routeId: "product-translate" | "product-tagline-ko"; provider?: GatewayDispatchProvider };
 export type OwnPendingProductTextRequest = OwnPendingReasonTranslationRequest;
 function productTextBatchIdentity(value: ProductTextBatchIdentity) {
   if (!["product-translate", "product-tagline-ko"].includes(value.routeId)) fail("invalid_product_text_batch_route");
-  return modelCapacityRequestIdentitySchema.parse({ ...value, workKey: "product-text-batch-readback",
-    class: "background", pool: "text", provider: "abcllm" });
+  return modelCapacityRequestIdentitySchema.parse({ owner: value.owner, model: value.model, routeId: value.routeId, workKey: "product-text-batch-readback",
+    class: "background", pool: "text", provider: value.provider ?? "abcllm" });
 }
 
 /** Recover complete unstarted membership independently of a newly selected queue page. No grant or expiry. */
@@ -1162,7 +1163,7 @@ export async function reconcileGatewayNotStarted(terminal: GatewayNotStarted): P
 function fixedTextProfileIdentity(value: ModelCapacityRequestIdentity, productId: number): string {
   const logical = `text:profile:${productId}`;
   if (!Number.isSafeInteger(productId) || productId < 1 || value.class !== "background" || value.pool !== "text"
-    || value.routeId !== "product-search-profile" || value.provider !== "abcllm"
+    || value.routeId !== "product-search-profile" || !isGatewayDispatchProvider(value.provider)
     || !value.workKey.startsWith(`${logical}:`) || !/^[a-f0-9]{64}$/.test(value.workKey.slice(logical.length + 1)))
     fail("invalid_text_profile_capacity_identity");
   return logical;
@@ -1273,7 +1274,7 @@ export async function reconcileTextProfileGatewayTerminal(terminal: TextProfileG
 function fixedReasonTranslationIdentity(value: ModelCapacityRequestIdentity, members: readonly ReasonTranslationMember[]): string {
   const logical = reasonTranslationLogicalWorkKey(members);
   if (value.class !== "background" || value.pool !== "text" || value.routeId !== "reason-translate"
-    || value.provider !== "abcllm" || !value.workKey.startsWith(`${logical}:`)
+    || !isGatewayDispatchProvider(value.provider) || !value.workKey.startsWith(`${logical}:`)
     || !/^[a-f0-9]{64}$/.test(value.workKey.slice(logical.length + 1))) fail("invalid_reason_translation_capacity_identity");
   return logical;
 }
@@ -1388,7 +1389,7 @@ export async function reconcileReasonTranslationGatewayTerminal(terminal: Reason
 function fixedProductTranslationIdentity(value: ModelCapacityRequestIdentity, members: readonly ProductTranslationMember[]): string {
   const logical = productTranslationLogicalWorkKey(members);
   if (value.class !== "background" || value.pool !== "text" || value.routeId !== "product-translate"
-    || value.provider !== "abcllm" || !value.workKey.startsWith(`${logical}:`)
+    || !isGatewayDispatchProvider(value.provider) || !value.workKey.startsWith(`${logical}:`)
     || !/^[a-f0-9]{64}$/.test(value.workKey.slice(logical.length + 1))) fail("invalid_product_translation_capacity_identity");
   return logical;
 }
@@ -1503,7 +1504,7 @@ export async function reconcileProductTranslationGatewayTerminal(terminal: Produ
 function fixedProductTaglineKoIdentity(value: ModelCapacityRequestIdentity, members: readonly ProductTaglineKoMember[]): string {
   const logical = productTaglineKoLogicalWorkKey(members);
   if (value.class !== "background" || value.pool !== "text" || value.routeId !== "product-tagline-ko"
-    || value.provider !== "abcllm" || !value.workKey.startsWith(`${logical}:`)
+    || !isGatewayDispatchProvider(value.provider) || !value.workKey.startsWith(`${logical}:`)
     || !/^[a-f0-9]{64}$/.test(value.workKey.slice(logical.length + 1))) fail("invalid_product_tagline_ko_capacity_identity");
   return logical;
 }
@@ -1639,7 +1640,7 @@ const crawlTaglineLocks = new WeakMap<CrawlTaglineCapacityDispatchLock, { tx: Pr
   identity: ModelCapacityRequestIdentity; input: CrawlTaglineInput; finished: boolean }>();
 function fixedCrawlTaglineIdentity(value: ModelCapacityRequestIdentity, input: CrawlTaglineInput): string {
   const logical = crawlTaglineLogicalWorkKey(input);
-  if (value.class !== "background" || value.pool !== "text" || value.routeId !== "crawl-tagline" || value.provider !== "abcllm"
+  if (value.class !== "background" || value.pool !== "text" || value.routeId !== "crawl-tagline" || !isGatewayDispatchProvider(value.provider)
     || value.model !== input.model || value.workKey !== `${logical}:${crawlTaglineInputHash(input)}`) fail("invalid_crawl_tagline_capacity_identity");
   return logical;
 }
@@ -1824,7 +1825,7 @@ const searchVerifyLocks = new WeakMap<SearchVerifyCapacityDispatchLock, { tx: Pr
   identity: ModelCapacityRequestIdentity; input: SearchVerifyInput; parentDeadlineAt: number | null; finished: boolean }>();
 function fixedSearchVerifyIdentity(value: ModelCapacityRequestIdentity, input: SearchVerifyInput): string {
   const logical = searchVerifyLogicalWorkKey(input);
-  if (value.class !== "background" || value.pool !== "text" || value.routeId !== "product-search-verify" || value.provider !== "abcllm"
+  if (value.class !== "background" || value.pool !== "text" || value.routeId !== "product-search-verify" || !isGatewayDispatchProvider(value.provider)
     || value.model !== input.model || value.workKey !== `${logical}:${searchVerifyInputHash(input)}`) fail("invalid_search_verify_capacity_identity");
   return logical;
 }
@@ -2077,7 +2078,7 @@ const websearchQueryLocks = new WeakMap<WebsearchQueryCapacityDispatchLock, { tx
   identity: ModelCapacityRequestIdentity; input: WebsearchQueryInput; finished: boolean }>();
 function fixedWebsearchQueryIdentity(value: ModelCapacityRequestIdentity, input: WebsearchQueryInput): string {
   const logical = websearchQueryLogicalWorkKey(input.member);
-  if (value.class !== "background" || value.pool !== "text" || value.routeId !== "search-query-translate" || value.provider !== "abcllm"
+  if (value.class !== "background" || value.pool !== "text" || value.routeId !== "search-query-translate" || !isGatewayDispatchProvider(value.provider)
     || value.model !== input.model || value.workKey !== `${logical}:${websearchQueryInputHash(input)}`) fail("invalid_websearch_query_capacity_identity");
   return logical;
 }
