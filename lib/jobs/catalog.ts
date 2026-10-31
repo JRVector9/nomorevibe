@@ -85,8 +85,8 @@ export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs
   // 갈림 판가름의 DeepSeek 확인 — awaiting_deepseek 를 M3 DeepSeek 에 다시 묻는다(gate-split-confirm.ts). M3 한 호출 약속은 deepseek-slot.ts. 전용 줄(confirm)
   { name: "split-confirm", role: "reviewer", intervalMs: 60_000, lane: "confirm" },
   /**
-   * 발행분 감사 — 사람이 연 감사가 있을 때만 일한다. 게이트웨이 감사는 새 후보가 기다리면 틱마다 먼저 양보한다
-   * (lib/crawl/jobs/product-audit.ts). 1차 심사는 2026-10-29 부터 전용 줄(ai1), 감사는 2026-10-31 부터 전용 줄(audit)이라 서로·2차 심사와
+   * 발행분 감사 — 사람이 연 감사가 있을 때만 일한다. 1차 후보 큐를 보고 양보하지 않는다(2026-10-31 3a-B — 장비 순위가 대신한다,
+   * lib/crawl/jobs/product-audit.ts). 1차 심사는 2026-10-29 부터 전용 줄(ai1), 감사는 2026-10-31 부터 전용 줄(audit)이라 서로·2차 심사와
    * 함께 돈다 — 공유 모델의 동시 호출은 공통 장부의 물리 한도가 막는다. 2026-10-31 부터 보류 쓸기 + 게이트웨이/CLI 감사만(아래 둘은 자기 잡)
    */
   { name: "product-audit", role: "reviewer", intervalMs: 60_000, lane: "audit" },

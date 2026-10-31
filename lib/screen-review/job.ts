@@ -11,7 +11,7 @@ import { logger } from "@/lib/observability/logger";
 import type { ReviewInput } from "@/lib/crawl/agent-review-contract";
 import { markScreenJudged, screenReviewCounts, screenReviewQueue, type ScreenReviewItem } from "@/lib/crawl/audit-screen-review";
 import { loadAuditInput } from "@/lib/crawl/product-audit";
-import { qwenBackoffMs, qwenEndpointBackingOff, qwenSoftFailure } from "@/lib/crawl/qwen-endpoint-backoff";
+import { qwenBackoffMs, qwenSoftFailure } from "@/lib/crawl/qwen-endpoint-backoff";
 import { QwenDirectError, qwenEndpointFailure } from "@/lib/crawl/qwen-direct-review";
 import { getSettings } from "@/lib/crawl/settings";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
@@ -29,8 +29,9 @@ import { reviewWithScreenshot, screenInput, screenModelConfig, screenPromptConfi
  *
  * 한 틱(예산 150초): 그리기(서버 상한 40초) → 묻기(상한 90초, 남은 시간만큼 줄인다) → 적기를 틱당 perTick 건까지, 새 건은 68초 이상 남을 때만.
  * m1 을 나눠 쓰는 법: 이 줄은 한 번에 한 건만 묻는다(줄은 차례로 돌고, 역할 lease 로 reviewer 하나만 일한다). 글만 묻는 단계들의 두 번째 자리
- * (withQwenSecondarySlot)는 잡지 않는다 — 화면 묻기는 한 건이 길어 그 자리를 잡으면 그 단계들의 30초 창을 통째로 빼앗는다. 대신 같은 서버면
- * 그쪽의 물러나기를 따르고(그동안 그리지도 않는다), 이 줄의 탈은 이 줄만 물러나게 한다(잘못 적은 비전 모델 이름의 404 가 글 단계까지 멈추지 않게).
+ * (withQwenSecondarySlot)는 잡지 않는다 — 화면 묻기는 한 건이 길어 그 자리를 잡으면 그 단계들의 30초 창을 통째로 빼앗는다. 물러나기는 이 줄의 것만 본다
+ * (2026-10-31: 같은 서버의 글 단계가 물러나는 중이어도 그린다 — 하나가 잘못되면 다음 작업도 안 되는 구조는 이유가 없다), 이 줄의 탈은 이 줄만 물러나게 한다
+ * (잘못 적은 비전 모델 이름의 404 가 글 단계까지 멈추지 않게).
  *
  * 실패: 화면 서버 탈(닿지 않음·401/403·5xx·약속과 다른 답)·모델 서버 탈(닿지 않음·5xx·401/403/404, 시간 초과 세 번 잇달아)은 그 쪽만 1분에서 두 배씩
  * 15분까지 물러난다. 동시 그리기 상한(429)·모델 붐빔(429)은 이 틱만 멈춘다. 페이지 탓(막힘·닿지 않음·4xx/5xx·그리기 시간 초과)과 항목 탓(형식 오류·
@@ -156,9 +157,9 @@ export async function reviewThinPagesByScreen(ctx: JobContext<null>, deps: Scree
     return { done: true, degraded: { code: "screen_review_not_configured",
       detail: "SCREEN_RENDER_URL·SCREEN_RENDER_TOKEN(32자 이상)과 모델 주소(SCREEN_REVIEW_MODEL_URL 또는 AUDIT_SECOND_OPINION_URL)를 확인하세요." } };
   }
-  const shared = sharesQwenEndpoint(env);
-  // 같은 m1 을 글 단계들이 탈로 물러나는 중이면 그리지도 않는다 — 글 단계가 먼저다
-  if ((shared && qwenEndpointBackingOff()) || backingOff("render") || backingOff("model")) {
+  // 화면 판별은 자기 물러나기(screenBackoff)만 본다 — 같은 서버를 쓰는 글 단계가 물러나는 중이어도 그린다(2026-10-31 소유자 결정
+  // "하나가 잘못되면 다음 작업도 안 되는 구조는 이유가 없다"). 서버가 정말 내려갔으면 이 줄이 한 번 더 묻고 자기 물러나기에 적는다
+  if (backingOff("render") || backingOff("model")) {
     ctx.log("screen_review.backoff", { skipped: true });
     return { done: true };
   }
@@ -193,7 +194,7 @@ export async function reviewThinPagesByScreen(ctx: JobContext<null>, deps: Scree
   }
   const left = () => (ctx.deadlineAt ?? Infinity) - Date.now();
   const canStart = () => !ctx.signal?.aborted && ctx.hasBudget() && left() >= MIN_RENDER_WINDOW_MS + MIN_MODEL_WINDOW_MS + WRITE_MARGIN_MS
-    && !backingOff("render") && !backingOff("model") && !(shared && qwenEndpointBackingOff());
+    && !backingOff("render") && !backingOff("model");
   /** 항목만의 실패 — permanent 면(원본 없음 등 다시 해도 같은 것) 바로 그만 본다 */
   const failItem = (target: ScreenReviewItem, code: string, stage: Stage, permanent = false) => {
     tally.failed += 1;
@@ -242,7 +243,6 @@ export async function reviewThinPagesByScreen(ctx: JobContext<null>, deps: Scree
     }
     screenBackoff.render = { failures: 0, retryAt: 0, code: null };
 
-    if (shared && qwenEndpointBackingOff()) break;
     const modelCeiling = screenModelTimeoutMs();
     const timeoutMs = Math.min(modelCeiling, left() - WRITE_MARGIN_MS);
     if (timeoutMs < MIN_MODEL_WINDOW_MS) break;

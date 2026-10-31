@@ -10,7 +10,7 @@ import { classifyAuditReason } from "@/lib/crawl/audit-reason-category";
 import { auditReasonCategorySql, catalogLikeReasonSql } from "@/lib/crawl/audit-second-opinions";
 import { QWEN_AUTO_CALL_TIMEOUT_MS, QWEN_AUTO_MIN_START_MS, QWEN_AUTO_OBSERVATION, qwenSecondOpinionStatus, readQwenAutoObservation } from "@/lib/crawl/audit-second-opinion-auto";
 import { auditRemovalGroups, listAuditFindings, removeAuditedProducts, startProductAudit, switchAuditReviewer } from "@/lib/crawl/product-audit";
-import { qwenEndpointBackoff, resetQwenAuditBackoff } from "@/lib/crawl/qwen-endpoint-backoff";
+import { qwenEndpointBackingOff, qwenEndpointBackoffOf, resetQwenAuditBackoff } from "@/lib/crawl/qwen-endpoint-backoff";
 import { QWEN_V2_ADDENDUM, QWEN_V2_PROMPT_VERSION } from "@/lib/crawl/qwen-direct-review";
 import { catalogLikeAuditReason } from "@/lib/crawl/second-opinion-rules";
 import { publishedInputHash, publishedSecondReviews, secondReviewSummary } from "@/lib/crawl/second-review";
@@ -254,8 +254,9 @@ describe("감사 두 번째 의견", () => {
     expect(server.calls).toHaveLength(1);
     expect(await opinions()).toEqual([]);
     expect((await readQwenAutoObservation("qwen3.8-flash-next")).lastError).toMatchObject({ code: "qwen_http_503", target: "audit" });
-    // gpu3090 을 부르는 모두가 함께 물러난다(qwen-endpoint-backoff.ts — 첫 탈은 1분) — 그동안은 부르지 않는다
-    expect(qwenEndpointBackoff).toMatchObject({ failures: 1, lastError: "qwen_http_503" });
+    // 2026-10-31: 이 단계만 물러난다(qwen-endpoint-backoff.ts — 첫 탈은 1분, 호출자마다 따로) — 그동안 이 단계는 부르지 않는다
+    expect(qwenEndpointBackoffOf("second_opinion")).toMatchObject({ failures: 1, lastError: "qwen_http_503" });
+    expect(qwenEndpointBackingOff("audit")).toBe(false);
     server.status = 200;
     await tick();
     expect(server.calls).toHaveLength(1);
@@ -275,7 +276,7 @@ describe("감사 두 번째 의견", () => {
     await tick();
     expect(server.calls).toHaveLength(5);
     // 답을 받으면 물러나기도 처음으로
-    expect(qwenEndpointBackoff.failures).toBe(0);
+    expect(qwenEndpointBackoffOf("second_opinion").failures).toBe(0);
     expect(await opinions()).toHaveLength(3);
     const status = await readStatus();
     expect(status.lastError).toMatchObject({ code: "qwen_unreachable" });
@@ -288,7 +289,7 @@ describe("감사 두 번째 의견", () => {
     server.answers.set("t/slow", "timeout");
     expect(await tick()).toMatchObject({ status: "completed" });
     expect(askedRepos()).toEqual(["t/slow", "t/fine"]);
-    expect(qwenEndpointBackoff).toMatchObject({ failures: 0, retryAt: 0 });
+    expect(qwenEndpointBackoffOf("second_opinion")).toMatchObject({ failures: 0, retryAt: 0 });
     expect((await opinions()).map((row) => row.itemId)).toEqual([(await item("fine")).id]);
     const observation = await readQwenAutoObservation("qwen3.8-flash-next");
     expect(observation.failures[`a:${(await item("slow")).id}`]).toMatchObject({ code: "qwen_timeout", count: 1 });
@@ -501,7 +502,8 @@ describe("감사가 Qwen 직접 심사로 바뀐 뒤(0112)", () => {
     expect(await heldSlugs()).toEqual(["sure", "gpt"]);
   });
 
-  it("같은 틱에서 감사 쪽이 서버 탈을 만나면 두 번째 의견도 곧바로 멈춘다 — 물러나기는 틱이 끝나기 전에 모두에게 걸린다", async () => {
+  // 2026-10-31 결정: 감사 자리의 탈은 감사만 세운다 — 두 번째 의견은 자기 물러나기만 보고 계속 묻는다(하나가 잘못되면 다음 작업도 안 되는 구조는 이유가 없다)
+  it("같은 틱에서 감사 쪽이 서버 탈을 만나도 두 번째 의견은 계속 묻는다 — 물러나기는 감사에만 걸린다", async () => {
     const answered = ["h/old-1", "h/old-2", "h/old-3", "h/old-4"], pending = ["h/new-1", "h/new-2", "h/new-3", "h/new-4"];
     await partly(answered, pending);
     vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
@@ -515,24 +517,30 @@ describe("감사가 Qwen 직접 심사로 바뀐 뒤(0112)", () => {
       return fakeQwen(url, init);
     }));
     const [audit, opinion] = await both();
-    // 서버 탈은 Qwen 직접 감사 잡(audit-qwen)의 실패로 남고, 두 번째 의견 잡은 자기 안에서 잡아 틱을 실패시키지 않는다(함께 쓰는 물러나기만 건다)
+    // 서버 탈은 Qwen 직접 감사 잡(audit-qwen)의 실패로 남고, 두 번째 의견 잡은 자기 호출자의 물러나기만 보고 계속 묻는다(2026-10-31 호출자마다 따로)
     expect(audit).toMatchObject({ status: "failed", error: "product_audit_endpoint_error:qwen_http_503" });
     expect(opinion).toMatchObject({ status: "completed" });
-    // 감사의 두 자리가 함께 띄운 것만 — 그 뒤로 감사도 두 번째 의견도 새로 시작하지 않는다
+    // 감사의 두 자리가 함께 띄운 것만 — 그 뒤로 감사는 새로 시작하지 않지만 두 번째 의견은 자기 대상을 끝까지 묻는다
     expect(askedRepos().filter((repo) => pending.includes(repo))).toHaveLength(qwenAuditConcurrency());
-    expect(askedRepos().filter((repo) => answered.includes(repo)).length).toBeLessThanOrEqual(1);
-    expect(qwenEndpointBackoff).toMatchObject({ failures: 1, lastError: "qwen_http_503" });
+    expect(askedRepos().filter((repo) => answered.includes(repo))).toHaveLength(answered.length);
+    expect(qwenEndpointBackoffOf("audit")).toMatchObject({ failures: 1, lastError: "qwen_http_503" });
+    expect(qwenEndpointBackoffOf("second_opinion")).toMatchObject({ failures: 0, retryAt: 0 });
   });
 
-  it("감사의 Qwen 직접 심사가 서버 탈로 물러나는 동안에는 두 번째 의견도 부르지 않는다", async () => {
+  // 2026-10-31 결정: 감사가 물러나는 중이어도 두 번째 의견은 자기 물러나기만 본다 — 하나가 잘못되면 다음 작업도 안 되는 구조는 이유가 없다
+  it("감사의 Qwen 직접 심사가 서버 탈로 물러나는 동안에도 두 번째 의견은 자기 물러나기만 보고 묻는다", async () => {
     await judged([{ repo: "b/one", reason: CONTENT }]);
-    qwenEndpointBackoff.failures = 1;
-    qwenEndpointBackoff.retryAt = Date.now() + 60_000;
-    await tick();
-    expect(server.calls).toHaveLength(0);
-    resetQwenAuditBackoff();
+    qwenEndpointBackoffOf("audit").failures = 1;
+    qwenEndpointBackoffOf("audit").retryAt = Date.now() + 60_000;
     await tick();
     expect(askedRepos()).toEqual(["b/one"]);
+    // 이 단계 자신이 물러나는 중이면 부르지 않는다
+    await judged([{ repo: "b/two", reason: CONTENT }]);
+    server.calls.length = 0;
+    qwenEndpointBackoffOf("second_opinion").failures = 1;
+    qwenEndpointBackoffOf("second_opinion").retryAt = Date.now() + 60_000;
+    await tick();
+    expect(server.calls).toHaveLength(0);
   });
 });
 

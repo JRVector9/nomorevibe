@@ -829,7 +829,10 @@ purpose → 잡 이름 표가 함께 바뀐다(`lib/llm/local-model-capacity-con
 - M3 DeepSeek 에 한 번에 한 호출이라는 약속은 잡 lease 가 아니라 프로세스의 DeepSeek 자리(`lib/crawl/deepseek-slot.ts`)가 지킨다 — 위임·확인은 호출만 줄 서고 틱은 따로 돈다.
   gpu3090 의 두 번째 자리(`withQwenSecondarySlot`)·함께 쓰는 물러나기(`qwen-endpoint-backoff.ts`)는 같은 reviewer 프로세스 안이라 그대로다.
 - qwenAuto 스위치를 켤 때 바로 부르는 잡(`lib/crawl/settings.ts QWEN_AUTO_JOB`)·관리자 단계 풀 매핑(`admin-model-pools.ts`)·단계 표(`stage-registry.ts`)·비상 자리·
-  운영센터 이름표·조치 칸의 맡은 잡이 새 이름을 쓴다. 게이트웨이 감사의 AI1 양보(`product-audit.ts`)는 그대로다(3a-B 가 뺀다).
+  운영센터 이름표·조치 칸의 맡은 잡이 새 이름을 쓴다. 게이트웨이 감사의 AI1 양보(`product-audit.ts`)는 3a-B 가 뺐다(장비 순위가 대신한다).
+- 3a-B 와 합쳐: gpu3090 물러나기는 호출자(`QwenCaller` audit·second_opinion·split_tiebreak·held_qwen)마다 따로다 — 새 잡 audit-qwen·audit-second-opinion·
+  split-tiebreak·held-qwen-retry 가 각자 자기 호출자를 쓴다. 3a-B 의 사람 검토 잡 단계 wrapper(한 단계 실패가 다른 단계를 건너뛰지 않음)는 잡을 셋으로 나눈 뒤
+  잡·줄 단위 격리로 대신한다(`tests/split-jobs.test.ts`).
 - DB pool: reviewer 모델 줄 4 → 9(second·human·audit·intro + held·confirm·tiebreak·audit-qwen·audit-opinion) → `DB_POOL_MAX` **11**(`compose.yml`,
   `lib/db/pool.ts`, `lib/db/host-budget.ts` workerMax, Dokploy env). 다섯 새 줄은 스위치가 꺼져 있으면 틱마다 설정 한 번만 읽지만 켜져 있으면 매분 모델을 부르므로 센다.
   text 6 그대로. 기본 상한 합계(위 27 → 33)는 38 이 된다.

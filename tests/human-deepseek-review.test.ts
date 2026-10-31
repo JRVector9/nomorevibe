@@ -180,4 +180,12 @@ describe('human queue worker', () => {
     mocks.infer.mockResolvedValue({ ok: false, error: 'timeout' }); mocks.record.mockResolvedValue('failed');
     await reviewHumanQueue(ctx()); expect(mocks.infer).toHaveBeenCalledTimes(1); expect(mocks.record).toHaveBeenCalledTimes(1);
   });
+  // 2026-10-31(PR 3a-B+3a-C): 한 단계의 오류가 다음 단계를 건너뛰게 하지 않는다 — 보류 재심사·갈림 확인은 자기 잡이라(tests/split-jobs.test.ts 가 줄·잡 단위로 본다)
+  // 이 잡에는 단계가 하나뿐이다. lease 잃음·DR fence 는 그대로 던져 쓰기를 멈춘다
+  it('a lost lease stops the tick at once — nothing else is written', async () => {
+    const { JobLeaseLostError } = await import('@/lib/jobs/lease');
+    mocks.requeue.mockRejectedValue(new JobLeaseLostError());
+    await expect(reviewHumanQueue(ctx())).rejects.toBeInstanceOf(JobLeaseLostError);
+    expect(mocks.infer).not.toHaveBeenCalled();
+  });
 });

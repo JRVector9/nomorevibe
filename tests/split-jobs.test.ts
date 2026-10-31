@@ -124,6 +124,19 @@ describe("새 잡은 자기 단계 함수만 자기 lease 로 부른다", () => 
     await expect(tiebreakGateSplits(context("split-tiebreak", { lease: undefined }))).rejects.toThrow("split_tiebreak_job_required");
   });
 
+  // 3a-B 가 사람 검토 잡 안에 두었던 "한 단계의 오류가 다음 단계를 건너뛰게 하지 않는다"는 잡을 셋으로 나눈 뒤 잡·줄 단위 격리로 대신한다(아래 가짜 시계 시험).
+  // 잡 하나 안에서는 lease 잃음·DR fence 를 그대로 던져 쓰기를 멈춘다 — 단계 wrapper 가 삼키지 않는다
+  it("lease 잃음·DR fence 는 새 잡도 그대로 던진다 — 그 뒤 쓰기를 멈춘다", async () => {
+    const { JobLeaseLostError } = await import("@/lib/jobs/lease");
+    const { DrWriterFencedError } = await import("@/lib/operations/dr/epoch");
+    mocks.held.mockRejectedValue(new JobLeaseLostError());
+    await expect(retryHeldQwen(context("held-qwen-retry"))).rejects.toBeInstanceOf(JobLeaseLostError);
+    mocks.confirm.mockRejectedValue(new DrWriterFencedError("site_fenced"));
+    await expect(confirmGateSplits(context("split-confirm"))).rejects.toBeInstanceOf(DrWriterFencedError);
+    mocks.tiebreak.mockRejectedValue(new JobLeaseLostError());
+    await expect(tiebreakGateSplits(context("split-tiebreak"))).rejects.toBeInstanceOf(JobLeaseLostError);
+  });
+
   it("audit-second-opinion — 묻거나 따라잡은 것이 있으면 done:false, 단계의 오류는 단계가 잡는다", async () => {
     const ctx = context("audit-second-opinion");
     expect(await reviewAuditSecondOpinions(ctx)).toEqual({ done: true });
@@ -167,8 +180,9 @@ it("한 새 잡의 느림·실패가 다른 새 잡의 틱을 미루지 않는�
   vi.useFakeTimers();
   const controller = new AbortController();
   const ends: Array<{ name: string; at: number }> = [];
-  const slow = ["audit-qwen"], failing = ["held-qwen-retry"];
-  const watched = ["human-deepseek-review", "split-confirm", "split-tiebreak", "second-review", "product-audit", "audit-second-opinion"];
+  // 느린 줄 하나(Qwen 직접 감사 65초)와 틱마다 던지는 줄 둘(보류 재심사·갈림 확인 — 3a-C 전에는 사람 큐 위임과 한 잡이었다)
+  const slow = ["audit-qwen"], failing = ["held-qwen-retry", "split-confirm"];
+  const watched = ["human-deepseek-review", "split-tiebreak", "second-review", "product-audit", "audit-second-opinion"];
   const names = [...slow, ...failing, ...watched];
   const lanes = lanesForRole("reviewer").filter(lane => lane.some(name => names.includes(name)));
   expect(lanes).toHaveLength(names.length);
@@ -194,6 +208,6 @@ it("한 새 잡의 느림·실패가 다른 새 잡의 틱을 미루지 않는�
   expect(ends.filter(end => end.name === "audit-qwen")).toHaveLength(1);
   controller.abort();
   const result = await work;
-  // 던진 줄의 실패만 실패로 센다 — 13~14번(60초 동안 5초마다)
-  expect(result.failures).toBeGreaterThanOrEqual(13);
+  // 던진 두 줄의 실패만 실패로 센다 — 줄마다 13~14번(60초 동안 5초마다)
+  expect(result.failures).toBeGreaterThanOrEqual(26);
 });

@@ -17,7 +17,7 @@ import { claimHumanReview, humanReviewRepos } from "@/lib/crawl/human-review-rep
 import { heldQwenBadges, heldQwenRetryStatus, runHeldQwenRetry } from "@/lib/crawl/held-qwen-retry";
 import { heldQwenOwnedReasons } from "@/lib/crawl/held-qwen-retry-policy";
 import { QWEN_V2_ADDENDUM, QWEN_V2_PROMPT_VERSION } from "@/lib/crawl/qwen-direct-review";
-import { qwenEndpointBackingOff, qwenEndpointBackoff, resetQwenAuditBackoff } from "@/lib/crawl/qwen-endpoint-backoff";
+import { qwenEndpointBackingOff, qwenEndpointBackoffOf, resetQwenAuditBackoff } from "@/lib/crawl/qwen-endpoint-backoff";
 import { DEFAULT_HELD_QWEN_RETRY, type QwenAutoSettings } from "@/lib/crawl/settings-schema";
 import { enqueueSecondReviewsFixture as enqueueSecondReviews, recordSecondReviewFixture } from "./second-review-receipt-fixtures";
 import { auditFloor, auditRowsAfter, ensureSchema, resetTables } from "./setup";
@@ -346,9 +346,10 @@ describe("보류 Qwen-v2 재심사", () => {
     const [failed] = await qwenAttempts();
     expect(failed).toMatchObject({ state: "failed", errorCode: "qwen_http_503" });
     expect(failed.retryAfter!.getTime() - failed.completedAt!.getTime()).toBeGreaterThanOrEqual(14 * 60_000);
-    // gpu3090 을 부르는 모두가 함께 물러난다(qwen-endpoint-backoff.ts). 웹 화면은 이 재심사의 행으로 어림해 보인다
-    expect(qwenEndpointBackingOff()).toBe(true);
-    expect(qwenEndpointBackoff).toMatchObject({ failures: 1, lastError: "qwen_http_503" });
+    // 2026-10-31: 이 재심사만 물러난다(qwen-endpoint-backoff.ts, 호출자마다 따로) — 감사·판가름은 세우지 않는다. 웹 화면은 이 재심사의 행으로 어림해 보인다
+    expect(qwenEndpointBackingOff("held_qwen")).toBe(true);
+    expect(qwenEndpointBackoffOf("held_qwen")).toMatchObject({ failures: 1, lastError: "qwen_http_503" });
+    for (const other of ["audit", "second_opinion", "split_tiebreak"] as const) expect(qwenEndpointBackingOff(other), other).toBe(false);
     const status = await heldQwenRetryStatus(await getSettings());
     expect(status.backoffUntil).not.toBeNull();
     expect(status.lastError).toMatchObject({ code: "qwen_http_503" });

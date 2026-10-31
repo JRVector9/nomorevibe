@@ -1,12 +1,11 @@
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
-import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
+import { ModelCapacityDeferredError, modelCapacityDeferralIsPerWork } from "@/lib/llm/capacity-deferred";
 import { assertCliModelAdmission } from "@/lib/llm/cli-capacity-admission";
 import { backgroundCliPath } from "@/lib/llm/cli-model-capacity";
 import { reportProviderOutcome } from "@/lib/llm/provider-circuit-breaker";
 import { auditCliModelCapacity } from "@/lib/crawl/product-audit-model-capacity";
 import { getSettings } from "@/lib/crawl/settings";
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
-import { listReviewCandidates } from "@/lib/crawl/agent-review-repository";
 import { reviewCliTimeoutMs, reviewWithAgent } from "@/lib/crawl/agent-review";
 import { reviewGatewayTimeoutMs, reviewWithGateway } from "@/lib/crawl/agent-review-gateway";
 import { finishAuditCampaign, loadAuditInput, markAuditNoSource, pendingAuditItems, recordAuditResult, runningAuditCampaign } from "@/lib/crawl/product-audit";
@@ -41,7 +40,7 @@ const REVIEWER_DOWN = new Set(["not_configured", "auth", "missing_cli", "model_u
  * 2026-10-31(PR 3a-C) 전에는 이 틱이 보류 쓸기 + 게이트웨이/CLI 감사 + Qwen 직접 감사(gpu3090) + 두 번째 의견·공개분 거르기(gpu3090)를
  * 한 잡에서 돌렸다 — 한 장비의 느림·서버 탈이 다른 장비의 큐·쓸기의 틱을 미루고 실패로 남겼다. 이제 Qwen 직접 감사는 audit-qwen
  * (jobs/audit-qwen.ts), 두 번째 의견·공개분 거르기는 audit-second-opinion(jobs/audit-second-opinion.ts) 잡·줄이다. 이 잡은 보류 쓸기와
- * 게이트웨이/CLI 감사만 한다 — 감사 행의 심사자가 qwen-direct 면 쓸기만 하고 묻기는 audit-qwen 에 맡긴다.
+ * 게이트웨이/CLI 감사만 한다 — 감사 행의 심사자가 qwen-direct 면 쓸기만 하고 묻기는 audit-qwen 에 맡긴다. 1차 후보 큐를 보고 양보하지 않는다(3a-B, 아래).
  * 운영 주의: PIPELINE_BACKGROUND_CONSUMER_JOBS 에 product-audit 을 넣으면 이 잡(쓸기·게이트웨이/CLI 감사)이 배경 consumer 줄에서만 돌고, 그 줄은
  * 공통 모델 슬롯이 open 일 때만 돈다(scripts/worker.ts runConsumerLane) — 쓸기도 함께 멈추니 slot 모드가 open 이 아니면 넣지 않는다.
  * audit-qwen·audit-second-opinion 은 공통 슬롯을 쓰지 않아 그 목록에 들지 않는다(lib/jobs/background-consumer.ts).
@@ -84,27 +83,14 @@ async function askAuditCampaign(ctx: JobContext<null>, settings: CrawlSettings):
   if (!current) return { done: true };
   const { campaign, reviewer, direct } = current;
   /*
-   * 먼저 양보한다. 발행 문에 한 번도 심사받지 않은 새 후보가 하나라도 있으면 이 틱은 쉰다.
-   *
-   * 새 후보는 심사를 받아야 공개되고, 공개분은 이미 떠 있다 — 기다려서 잃는 쪽이 새 후보다.
-   * 같은 워커에서 차례로 돌므로 둘이 게이트웨이에 겹쳐 보내는 일은 없다 — 동시 호출은 늘
-   * settings.reviewConcurrency 이하다(4 → 성공 94%, 6 → 87% 실측).
-   *
-   * "기다리는 후보가 하나라도 있으면"으로 두었을 때는 감사가 영영 돌지 않았다. 2026-09-18 프로드에서
-   * 문은 여덟 번 모두 100건으로 찼고, 전부 이미 심사받은 보류 건이 24시간마다 다시 도는 것이었다
-   * (새 후보 0건). 그 재심사에 양보할 이유는 없다 — observe 에서는 결과가 반영되지도 않는다.
-   *
-   * Qwen 직접 심사(gpu3090)로 바꾼 감사는 양보하지 않는다 — 양보는 공유 게이트웨이 자리를 새 후보에게 비켜 주려는 것인데,
-   * Qwen 직접 심사는 게이트웨이를 쓰지 않는다. 2026-10-21 바꾼 뒤 프로드에서는 새 후보가 늘 있어 틱마다 양보만 하고
-   * 한 건도 묻지 않았다(product_audit.yielded).
+   * 다른 단계(1차 심사)의 큐를 보고 양보하지 않는다(2026-10-31, PR 3a-B 소유자 결정 "하나가 잘못되면 다음 작업도 안 되는 구조는 이유가 없다").
+   * 예전에는 발행 문에 한 번도 심사받지 않은 새 후보가 하나라도 있으면 이 틱을 쉬었는데, 2026-10-21 뒤 프로드에서는 새 후보가 늘 있어
+   * 틱마다 양보만 하고 한 건도 묻지 않았다(product_audit.yielded). 공유 장비(게이트웨이)에서 1차 심사에 자리를 먼저 주는 일은 장비 순위
+   * (PR 1b model_capacity_device_roles: ai1 rank 1, audit rank 2 + secondaryCap·reserve)가 입장 TX 에서 정한다 — 배포 전에 그 행을 둔다.
    */
   // Qwen 직접 심사(gpu3090)는 자기 잡 audit-qwen(jobs/audit-qwen.ts)이 묻는다 — 이 잡은 쓸기까지만
   if (direct) {
     ctx.log("product_audit.skipped", { reason: "qwen_direct", campaign: campaign.id });
-    return { done: true };
-  }
-  if (!direct && (await listReviewCandidates(settings, 1, { unreviewedOnly: true })).length) {
-    ctx.log("product_audit.yielded", { campaign: campaign.id });
     return { done: true };
   }
   const lease = ctx.lease;
@@ -119,11 +105,11 @@ async function askAuditCampaign(ctx: JobContext<null>, settings: CrawlSettings):
   const remaining = () => deadlineAt - Date.now();
   // 1차 심사자 설정을 바꿔도 감사는 따라가지 않는다 — 감사 행의 심사자(reviewer)로만 묻는다
   const ceiling = reviewer.provider === "abcllm" ? reviewGatewayTimeoutMs() : reviewCliTimeoutMs();
-  let reviewed = 0, failed = 0, noSource = 0;
+  let reviewed = 0, failed = 0, noSource = 0, passed = 0;
   let down: string | null = null;
-  // 한 자리가 공통 모델 슬롯에서 미뤄지면 다른 자리도 새 호출을 시작하지 않는다 — 이미 시작한 호출은 끝까지 기다린다
-  let deferred = false;
-  const canStart = () => !down && !deferred && !ctx.signal?.aborted && ctx.hasBudget() && remaining() >= ceiling + WRITE_MARGIN_MS;
+  // 심사자 쪽이 없는 실패(REVIEWER_DOWN — 설정·키·CLI·모델 없음, 항목 탓일 수 없다)만 모든 자리의 새 호출을 멈춘다. 한 자리의 장부 미룸은
+  // 그 자리만 멈춘다(2026-10-31) — 다른 자리는 각자 장부에 묻고 각자 답을 받는다
+  const canStart = () => !down && !ctx.signal?.aborted && ctx.hasBudget() && remaining() >= ceiling + WRITE_MARGIN_MS;
 
   // 자리마다 다음 것을 집어 묻는다. 한 호출이 실패해도 그 자리는 다음 것으로 넘어간다
   const settled = await Promise.allSettled(Array.from({ length: concurrency }, async () => {
@@ -144,7 +130,13 @@ async function askAuditCampaign(ctx: JobContext<null>, settings: CrawlSettings):
         if (reviewer.provider === "abcllm") await assertCliModelAdmission({ routeId: "product-audit", provider: "abcllm", model: reviewer.model });
         else capacity = await backgroundCliPath("product-audit", reviewer.model);
       } catch (error) {
-        if (error instanceof ModelCapacityDeferredError) deferred = true;
+        // 이 항목만의 미룸(같은 항목이 다른 요청에 묶임·앞선 호출이 보내진 중·장부 세대 어긋남) — 항목 하나를 넘기고 이 자리는 다음 항목을 본다
+        if (error instanceof ModelCapacityDeferredError && modelCapacityDeferralIsPerWork(error.reason)) {
+          passed += 1;
+          ctx.log("product_audit.passed", { campaign: campaign.id, itemId: item.id, reason: error.reason });
+          continue;
+        }
+        // 모델·전역 미룸 — 이 자리만 새 호출을 멈춘다(아래에서 모은다). 다른 자리의 새 시작을 세우지 않는다
         throw error;
       }
       const callStartedAt = new Date();
@@ -167,11 +159,8 @@ async function askAuditCampaign(ctx: JobContext<null>, settings: CrawlSettings):
         clearInterval(ownershipPoll);
         ctx.signal?.removeEventListener("abort", abort);
       }
-      // 슬롯 미룸은 다른 자리의 새 시작도 멈춘다. 건너뜀·띄우지 않음은 parser 에 cancelled 로 보여 아래에서 기록 없이 끝난다
-      try { native?.settled(); } catch (error) {
-        if (error instanceof ModelCapacityDeferredError) deferred = true;
-        throw error;
-      }
+      // 정산의 미룸은 이 자리만 끝낸다(아래에서 모은다). 건너뜀·띄우지 않음은 parser 에 cancelled 로 보여 아래에서 기록 없이 끝난다
+      native?.settled();
       // 멈추라고 해서 끊긴 것은 실패가 아니다 — 다음 회차가 처음부터 본다
       if (controller.signal.aborted || ctx.signal?.aborted || !ctx.hasBudget() || remaining() <= 0
         || (!result.ok && result.error === "cancelled")) return;
@@ -191,12 +180,14 @@ async function askAuditCampaign(ctx: JobContext<null>, settings: CrawlSettings):
     }
   }));
 
-  ctx.log("product_audit.reviewed", { campaign: campaign.id, reviewed, failed, noSource });
+  ctx.log("product_audit.reviewed", { campaign: campaign.id, reviewed, failed, noSource, passed });
   const failures = settled.filter((result) => result.status === "rejected");
   const failure = failures.find((result) => !(result.reason instanceof ModelCapacityDeferredError));
   if (failure) throw failure.reason;
   if (down) throw new Error(`product_audit_reviewer_unavailable:${down}`);
-  // 슬롯에서 미뤘다 — 러너가 잠금만 놓고 요청·커서·기록은 그대로 둔다
-  if (failures.length) throw failures[0].reason;
+  // 자리가 장부에서 미뤄졌다(모델·전역). 이 틱에 적은 것이 하나도 없으면 미룸으로 끝낸다 — 러너가 잠금만 놓고 요청·커서·기록은 그대로 둔다.
+  // 적은 것이 있으면 그 일은 끝난 일이다 — 다음 틱이 이어 본다
+  if (failures.length && reviewed + failed + noSource + passed === 0) throw failures[0].reason;
+  if (failures.length) ctx.log("product_audit.deferred", { campaign: campaign.id, reason: (failures[0].reason as ModelCapacityDeferredError).reason });
   return { done: false };
 }

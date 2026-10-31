@@ -17,7 +17,6 @@ import { SPLIT_CONFIRM_TIMEOUT_MS, splitConfirmTimeoutMs } from "@/lib/crawl/gat
 import { screenModelTimeoutMs } from "@/lib/screen-review/job";
 import { packBatch, reasonTranslateKnobs } from "@/lib/crawl/jobs/translate-reasons";
 import { packTaglineBatch } from "@/lib/jobs/products/korean-tagline";
-import { SLOW_CALL_MS } from "@/lib/jobs/products/search-profile";
 import { packProductTranslationBatch, productTranslationPolicy, PRODUCT_TRANSLATION_BATCH_CHARS,
   PRODUCT_TRANSLATION_MAX_ATTEMPTS } from "@/lib/domain/products/translation-policy";
 import { TICK_WRITE_MARGIN_MS, tickRemaining } from "@/lib/jobs/tick-deadline";
@@ -86,7 +85,8 @@ describe("registry route limits are read per call (not captured at import)", () 
     setRuntimeSettingsForTest(CHANGED);
     expect([REVIEW_GATEWAY_TIMEOUT_MS, REVIEW_GATEWAY_LADDER.clientMs, REVIEW_CLI_TIMEOUT_MS, GROK_REVIEW_TIMEOUT_MS, DEEPSEEK_REVIEW_TIMEOUT_MS,
       QWEN_CALL_TIMEOUT_MS, QWEN_AUTO_CALL_TIMEOUT_MS, SPLIT_CONFIRM_TIMEOUT_MS]).toEqual([60_000, 60_000, 20_000, 90_000, 60_000, 45_000, 45_000, 45_000]);
-    expect([SLOW_CALL_MS, PRODUCT_TRANSLATION_BATCH_CHARS, PRODUCT_TRANSLATION_MAX_ATTEMPTS]).toEqual([20_000, 8_000, 4]);
+    // 2026-10-31: search-profile 의 SLOW_CALL_MS(느린 호출로 틱 접기)는 없앴다 — 하나가 잘못되면 다음 작업도 안 되는 구조는 이유가 없다
+    expect([PRODUCT_TRANSLATION_BATCH_CHARS, PRODUCT_TRANSLATION_MAX_ATTEMPTS]).toEqual([8_000, 4]);
     // and the live reads disagree with them while the document is changed
     expect(reviewGatewayTimeoutMs()).not.toBe(REVIEW_GATEWAY_TIMEOUT_MS);
     expect(reviewCliTimeoutMs()).not.toBe(REVIEW_CLI_TIMEOUT_MS);

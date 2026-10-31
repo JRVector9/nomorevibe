@@ -23,7 +23,7 @@ import { currentReplayDb } from "@/lib/db/replay-scope";
 import { DrWriterFencedError, writerSiteActive } from "@/lib/operations/dr/epoch";
 import { secondReviewGeneration } from "./second-review-input";
 import { getSettings } from "./settings";
-import { noteQwenCallFailure, noteQwenEndpointSuccess, qwenEndpointBackingOff, qwenEndpointBackoff, withQwenSecondarySlot } from "./qwen-endpoint-backoff";
+import { noteQwenCallFailure, noteQwenEndpointSuccess, qwenEndpointBackingOff, qwenEndpointBackoffOf, withQwenSecondarySlot } from "./qwen-endpoint-backoff";
 import type { CrawlSettings } from "./settings-schema";
 
 /**
@@ -305,7 +305,7 @@ async function settleSplitTiebreak(claim: Claim, result: CallResult, lease: JobL
       // 잠깐 뒤에, 탈이 아닌 한 번의 진짜 시간 초과는 그 항목의 실패로 센다(qwen-endpoint-backoff.ts — 붐빔은 세 번 잇달아야 탈이다)
       const cancelled = result.code === "qwen_cancelled", busy = !outage && result.code === "qwen_http_429";
       const failureCount = cancelled || outage || busy ? row.failureCount : row.failureCount + 1;
-      const retryAt = cancelled ? now.getTime() : outage ? Math.max(now.getTime(), qwenEndpointBackoff.retryAt)
+      const retryAt = cancelled ? now.getTime() : outage ? Math.max(now.getTime(), qwenEndpointBackoffOf("split_tiebreak").retryAt)
         : busy ? now.getTime() + BUSY_RETRY_MS : now.getTime() + ITEM_RETRY_MS;
       return finish({ state: "failed", errorCode: result.code.slice(0, 60), errorDetail: result.detail, latencyMs: result.latencyMs,
         failureCount, retryAfter: new Date(retryAt) }, "failed");
@@ -389,9 +389,9 @@ export async function runGateSplitTiebreak<C>(ctx: JobContext<C>, lease: JobLeas
   const callTimeoutMs = splitTiebreakTimeoutMs();
   const settings = await getSettings();
   if (!switchOn(settings)) return { ...tick, stopped: "switch_off" };
-  // gpu3090 을 부르는 누군가가 서버 탈을 만나 물러나는 중이면 부르지 않는다(qwen-endpoint-backoff.ts)
-  if (qwenEndpointBackingOff()) {
-    const backoff = qwenEndpointBackoff.lastError ?? "qwen_unreachable";
+  // 이 판가름이 서버 탈을 만나 물러나는 중이면 부르지 않는다(qwen-endpoint-backoff.ts — 호출자마다 따로 센다, 2026-10-31)
+  if (qwenEndpointBackingOff("split_tiebreak")) {
+    const backoff = qwenEndpointBackoffOf("split_tiebreak").lastError ?? "qwen_unreachable";
     ctx.log("crawl.split_tiebreak_backoff", { error: backoff });
     return { ...tick, stopped: `backoff:${backoff}` };
   }
@@ -399,7 +399,7 @@ export async function runGateSplitTiebreak<C>(ctx: JobContext<C>, lease: JobLeas
   const hints = await splitHints(perTick * HINT_FACTOR, new Date());
   for (const hint of hints) {
     const left = () => deadlineAt - Date.now() - WRITE_MARGIN_MS;
-    if (tick.calls >= perTick || ctx.signal?.aborted || !ctx.hasBudget() || left() < callTimeoutMs || qwenEndpointBackingOff()) break;
+    if (tick.calls >= perTick || ctx.signal?.aborted || !ctx.hasBudget() || left() < callTimeoutMs || qwenEndpointBackingOff("split_tiebreak")) break;
     let claimed: ClaimResult;
     try { claimed = await claimSplitTiebreak(hint, lease, new Date(), options.env); }
     catch (error) {
@@ -427,7 +427,7 @@ export async function runGateSplitTiebreak<C>(ctx: JobContext<C>, lease: JobLeas
     try {
       // 두 번째 자리(감사 두 번째 의견·공개분 거르기와 나눠 쓴다)를 얻은 뒤 남은 시간·물러나기를 다시 본다 — 못 부르면 멈춤으로 적는다
       result = await withQwenSecondarySlot(async () => {
-        if (left() < callTimeoutMs || qwenEndpointBackingOff()) return { ok: false as const, code: "qwen_cancelled", detail: "secondary_slot", latencyMs: 0 };
+        if (left() < callTimeoutMs || qwenEndpointBackingOff("split_tiebreak")) return { ok: false as const, code: "qwen_cancelled", detail: "secondary_slot", latencyMs: 0 };
         callStartedAt = Date.now();
         return withLocalModelCapacity({ target: { kind: "split", purpose: "qwen_tiebreak", tiebreakId: claimed.claim.tiebreakId,
           candidateId: claimed.claim.candidateId, generationKey: claimed.claim.generationKey, repo: claimed.claim.repo },
@@ -441,8 +441,8 @@ export async function runGateSplitTiebreak<C>(ctx: JobContext<C>, lease: JobLeas
       result = { ok: false, code: "qwen_cancelled", detail: "model_capacity_deferred", latencyMs: 0 };
     } finally { clearInterval(poll); }
     // 다른 쪽이 탈을 적기 전에 띄운 호출의 답은 그 물러나기를 풀지 않는다(qwen-endpoint-backoff.ts)
-    if (result.ok) await noteQwenEndpointSuccess(callStartedAt);
-    const outage = !result.ok && endpointCode(result.code) && (await noteQwenCallFailure(result.code as QwenDirectErrorCode)).outage;
+    if (result.ok) await noteQwenEndpointSuccess("split_tiebreak", callStartedAt);
+    const outage = !result.ok && endpointCode(result.code) && (await noteQwenCallFailure("split_tiebreak", result.code as QwenDirectErrorCode)).outage;
     tick[await settleSplitTiebreak(claimed.claim, result, lease, outage)]++;
     if (!result.ok) {
       ctx.log("crawl.split_tiebreak_failed", { candidateId: hint.candidateId, error: result.code, detail: result.detail });
