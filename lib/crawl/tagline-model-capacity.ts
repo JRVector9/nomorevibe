@@ -45,13 +45,9 @@ export async function writeCrawlTaglineWithModelCapacity(value: TaglineTask, job
   }
   if (initial.kind === "skipped") return initial;
   if (!("snapshot" in initial)) throw new Error("crawl_tagline_preparation_invalid");
-  let history: Awaited<ReturnType<typeof readCrawlTaglineContinuation>>;
-  try { history = await readCrawlTaglineContinuation({ member: initial.member, model: scopedModel("crawl-tagline", TAGLINE_MODEL) }); }
-  catch (error) {
-    // 이 후보 한 세대의 장부가 사슬로 읽히지 않는다 — 이 후보만 넘기고 잡은 다음 후보로 간다(#754 원칙, 2026-10-31). 호출·시도 기록 없음.
-    if (error instanceof Error && error.message === "crawl_tagline_continuation_mismatch") throw new ModelCapacityDeferredError("ledger_mismatch");
-    throw error;
-  }
+  const history = await readCrawlTaglineContinuation({ member: initial.member, model: scopedModel("crawl-tagline", TAGLINE_MODEL) });
+  // 이 후보 한 세대의 장부가 사슬로 읽히지 않는다 — 이 후보만 넘기고 잡은 다음 후보로 간다(#754 원칙, 2026-10-31). 호출·시도 기록 없음.
+  if (history && "broken" in history) throw new ModelCapacityDeferredError("ledger_mismatch");
   // 보내지 않은 단계(0149)로 끝난 세대: 같은 단계는 다시 보낼 수 없으니 실패 한 번으로 닫고 다음 세대로 넘긴다.
   if (history && "notStarted" in history) {
     if (previous) throw new ModelCapacityDeferredError("reservation_lost");
