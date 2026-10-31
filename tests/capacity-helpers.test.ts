@@ -2,11 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { sql } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
+import { ASSIGNMENT_ROLES, ASSIGNMENT_STAGES, ASSIGNMENT_STAGE_IDS, ASSIGNMENT_TRANSPORTS, HELPER_STAGES, MODEL_ASSIGNMENT_REFUSALS,
+  assignmentEvidenceKey, assignmentRouteProvider, assignmentWireModel, localAssignmentBackendId, localAssignmentContractRouteId,
+  modelAssignmentInputSchema, parseModelAssignmentInput, registryKeyEquipment } from '@/lib/llm/capacity-helpers';
+import { MODEL_CAPACITY_ROUTES_MAX, modelCapacityRouteSchema, parseModelCapacityPolicy } from '@/lib/llm/capacity';
+import { readModelRegistry } from '@/lib/llm/model-registry';
 import { DEFAULT_SIGNAL_TTL_MS, DEFAULT_SUPERVISOR_LOOP_MS, HELPER_REASONS, HELPER_ROUTE_DEFAULTS, SUPERVISOR_PRINCIPAL,
   deviceSignalUsable, helperActor, helperAssignmentSchema, helperCandidateExclusionSql, helperDemandOnSql, helperEvidenceKey, helperGateCte,
   helperGateOk, helperGateStateFromRow, helperGateStateSchema, helperGateStatesSql, helperSignalStaleness, helperSignalUsable, helperStopBlocks, parseHelperAssignment,
   roleDemandFresh, supervisorControlPatchSchema, supervisorControlTimingValid, type HelperFreshnessInput } from '@/lib/llm/capacity-helpers';
-import { listHelperAssignments, readHelperGateStates, readHelperStatusSnapshot, saveHelperAssignment, setHelperMode, setSupervisorControl }
+import { listHelperAssignments, readHelperGateStates, readHelperStatusSnapshot, saveHelperAssignment, saveModelAssignment, setHelperMode, setSupervisorControl }
   from '@/lib/llm/capacity-helpers-repository';
 import type { ProductTransaction } from '@/lib/domain/products/generation';
 
@@ -257,5 +262,153 @@ describe('migration 0154', () => {
     expect(next).toContain("'^(capacity-supervisor|service:maintenance):capacity-supervisor-consumer-[A-Za-z0-9._-]{1,19}$'");
     expect('capacity-supervisor-consumer-'.length + 19).toBe(48);
     expect([...next.matchAll(/ERRCODE = '(\w+)'/g)].map(match => match[1])).toEqual(['42501', '42501', '42501']);
+  });
+});
+
+describe('assignment table vocabulary (PR 3b-A)', () => {
+  it('is a superset of the helper stages with one route per open stage, ai2 alone voting and repo·assist reserved', () => {
+    for (const stage of HELPER_STAGES) expect(ASSIGNMENT_STAGE_IDS).toContain(stage);
+    expect(ASSIGNMENT_STAGE_IDS).toEqual(['ai1', 'ai2', 'human', 'audit', 'audit-second-opinion', 'intro', 'screen', 'assist', 'assist-audit',
+      'reason', 'tagline', 'profile', 'verify', 'ko', 'translate', 'publish-classify', 'repo']);
+    expect(Object.keys(ASSIGNMENT_STAGES)).toEqual([...ASSIGNMENT_STAGE_IDS]);
+    expect(ASSIGNMENT_STAGES.ai1.routeId).toBe('crawl-agent-review');
+    expect(ASSIGNMENT_STAGES.ai2.routeId).toBe('second-review');
+    expect([...ASSIGNMENT_STAGES.ai2.transports]).toEqual(['gateway', 'direct', 'local-direct', 'cli']);
+    expect([...ASSIGNMENT_STAGES.human.transports]).toEqual(['local-direct']);
+    expect([...ASSIGNMENT_STAGES['publish-classify'].transports]).toEqual(['cli']);
+    expect(Object.entries(ASSIGNMENT_STAGES).filter(([, spec]) => spec.vote).map(([stage]) => stage)).toEqual(['ai2']);
+    for (const stage of ['repo', 'assist', 'assist-audit'] as const) expect(ASSIGNMENT_STAGES[stage]).toMatchObject({ routeId: null, vote: false });
+    for (const stage of ['repo', 'assist', 'assist-audit'] as const) expect(ASSIGNMENT_STAGES[stage].transports.size).toBe(0);
+    for (const [stage, spec] of Object.entries(ASSIGNMENT_STAGES)) {
+      expect(spec.routeId === null, stage).toBe(spec.transports.size === 0);
+      for (const transport of spec.transports) expect(ASSIGNMENT_TRANSPORTS).toContain(transport);
+    }
+    // every open stage owns its route — the (device, route) role rank and the live-route unique stay per stage
+    const routes = Object.values(ASSIGNMENT_STAGES).flatMap(spec => spec.routeId ? [spec.routeId] : []);
+    expect(new Set(routes).size).toBe(routes.length);
+    expect(ASSIGNMENT_ROLES).toEqual(['primary', 'helper']);
+  });
+
+  it('maps transports to the route provider and the wire model, and derives the local backend id from the registry key', () => {
+    expect(assignmentRouteProvider('gateway', 'abcllm')).toBe('abcllm');
+    expect(assignmentRouteProvider('direct', 'abcllm')).toBe('abcllm');
+    expect(assignmentRouteProvider('local-direct', 'local-direct')).toBe('local-direct');
+    expect(assignmentRouteProvider('cli', 'claude-cli')).toBe('claude-cli');
+    expect(assignmentRouteProvider('cli', 'codex-cli')).toBe('codex-cli');
+    expect(assignmentRouteProvider('gateway', 'local-direct')).toBeNull();
+    expect(assignmentRouteProvider('local-direct', 'abcllm')).toBeNull();
+    expect(assignmentRouteProvider('cli', 'abcllm')).toBeNull();
+    expect(assignmentRouteProvider('direct', 'llama-server')).toBeNull();
+    expect(assignmentWireModel('gateway', { model: 'Qwen3.8-27B-NVFP4', gatewayLabel: 'supa' })).toBe('[supa] Qwen3.8-27B-NVFP4');
+    expect(assignmentWireModel('direct', { model: 'Qwen3.8-27B-NVFP4', gatewayLabel: 'supa' })).toBe('Qwen3.8-27B-NVFP4');
+    expect(assignmentWireModel('gateway', { model: 'm' })).toBe('m');
+    expect(registryKeyEquipment('connect:sonnet')).toBe('connect');
+    expect(localAssignmentBackendId('m3:review')).toBe('m3-review');
+    expect(localAssignmentBackendId(`a:${'b'.repeat(80)}`)).toBeNull();
+    expect(localAssignmentContractRouteId('second-review')).toBe('local-direct:second-review');
+  });
+
+  const base = { assignmentId: 'supa:ai1:review', expectedVersion: null, stage: 'ai1', deviceId: 'supa', registryKey: 'supa:review', transport: 'gateway' } as const;
+  it('defaults a new row to primary rank 1, no vote, off, one slot', () => {
+    expect(parseModelAssignmentInput(base)).toEqual({ ...base, rank: 1, role: 'primary', vote: false, mode: 'off', maxSlots: 1, note: null });
+    expect(Object.isFrozen(parseModelAssignmentInput(base))).toBe(true);
+    expect(modelAssignmentInputSchema.safeParse({ ...base, stage: 'ai2', transport: 'local-direct', registryKey: 'gpu3090:review', vote: true, mode: 'live' }).success).toBe(true);
+    expect(modelAssignmentInputSchema.safeParse({ ...base, transport: 'cli', registryKey: 'connect:sonnet' }).success).toBe(true);
+  });
+
+  it('refuses disallowed (stage, transport), cli off connect, a vote outside ai2 rank 1 and helper-shaped input, naming the field', () => {
+    const refuse = (input: unknown, path: string) => expect(() => parseModelAssignmentInput(input)).toThrow(`model_assignment_invalid:${path}`);
+    refuse({ ...base, stage: 'human', transport: 'gateway' }, 'transport');
+    refuse({ ...base, stage: 'ai1', transport: 'local-direct' }, 'transport');
+    refuse({ ...base, stage: 'repo' }, 'transport');                                   // reserved
+    refuse({ ...base, stage: 'assist', transport: 'local-direct' }, 'transport');      // reserved until 3b-B
+    refuse({ ...base, transport: 'cli', registryKey: 'supa:review' }, 'transport');    // cli needs connect equipment
+    refuse({ ...base, vote: true }, 'vote');                                           // ai1 never votes
+    refuse({ ...base, stage: 'ai2', rank: 2, vote: true }, 'vote');                    // ai2 rank 2 is a fallback, not a voter
+    refuse({ ...base, role: 'helper' }, 'role');                                       // helpers keep saveHelperAssignment
+    refuse({ ...base, mode: 'shadow' }, 'mode');
+    refuse({ ...base, rank: 0 }, 'rank');
+    refuse({ ...base, rank: 65 }, 'rank');                                             // the device role rank CHECK is 1..64
+    refuse({ ...base, registryKey: 'Supa:Review' }, 'registryKey');
+    refuse({ ...base, registryKey: undefined }, 'registryKey');                        // required for new rows
+    refuse({ ...base, stage: 'ai3' }, 'stage');
+    refuse({ ...base, expectedVersion: 0 }, 'expectedVersion');
+    refuse({ ...base, expectedVersion: undefined }, 'expectedVersion');
+    refuse({ ...base, model: 'Qwen' }, 'root');                                        // strict: the save derives the wire model
+    for (const code of MODEL_ASSIGNMENT_REFUSALS) expect(code).toMatch(/^[a-z_]{1,40}$/);
+  });
+
+  it('keys evidence on stage, transport, route, provider, wire model and contract hash', () => {
+    const parts = { stage: 'ai1', transport: 'gateway', routeId: 'crawl-agent-review', provider: 'abcllm', model: '[supa] Q', contractHash: 'c'.repeat(64) } as const;
+    const key = assignmentEvidenceKey(parts);
+    expect(key).toMatch(/^[a-f0-9]{64}$/);
+    expect(assignmentEvidenceKey({ ...parts })).toBe(key);
+    expect(key).not.toBe(helperEvidenceKey({ stage: 'ai1', model: '[supa] Q', promptVersion: 'p', rulesVersion: 'r', wireVariant: 'json_schema', contractHash: 'c'.repeat(64) }));
+    for (const changed of [{ stage: 'ai2' }, { transport: 'direct' }, { routeId: 'x' }, { provider: 'local-direct' }, { model: 'Q' }, { contractHash: 'd'.repeat(64) }] as const)
+      expect(assignmentEvidenceKey({ ...parts, ...changed })).not.toBe(key);
+    expect(() => assignmentEvidenceKey({ ...parts, model: ' Q' })).toThrow('model_assignment_invalid:evidence');
+  });
+
+  it('keeps primary rows out of the helper gate', () => {
+    const { sql: text } = render(sql`WITH ${helperGateCte('supa')} SELECT 1`);
+    expect(text).toContain("WHERE ha.device_id = $1 AND ha.role = 'helper'");
+  });
+
+  it('refuses a bad actor, input, reserved stage, unknown registry key or provider mismatch before any DB access', async () => {
+    const tx = {} as ProductTransaction;
+    const registry = () => ({ ...readModelRegistry() });
+    await expect(saveModelAssignment(tx, base, ' ', { registry })).rejects.toThrow('model_assignment_invalid:actor');
+    await expect(saveModelAssignment(tx, { ...base, stage: 'repo' }, 'jr', { registry })).rejects.toThrow('model_assignment_invalid:transport');
+    await expect(saveModelAssignment(tx, { ...base, registryKey: 'nowhere:model' }, 'jr', { registry })).rejects.toThrow('model_assignment_refused:registry_key_unknown');
+    await expect(saveModelAssignment(tx, { ...base, registryKey: 'gpu3090:review' }, 'jr', { registry })).rejects.toThrow('model_assignment_refused:transport_provider_mismatch');
+    await expect(saveModelAssignment(tx, { ...base, stage: 'human', transport: 'local-direct', registryKey: 'supa:review' }, 'jr', { registry }))
+      .rejects.toThrow('model_assignment_refused:transport_provider_mismatch');
+  });
+});
+
+describe('policy route cap (PR 3b-A)', () => {
+  it('accepts 256 routes and refuses 257', () => {
+    const route = (index: number) => ({ routeId: `r${index}`, provider: 'p', model: 'm', providerBudgetId: 'b', groupId: 'g' });
+    const policy = (count: number) => ({ version: 1, maxWaiting: 8, queueTtlMs: 1000, reservationTtlMs: 1000, routes: Array.from({ length: count }, (_, index) => route(index)) });
+    expect(MODEL_CAPACITY_ROUTES_MAX).toBe(256);
+    expect(parseModelCapacityPolicy(policy(256)).routes).toHaveLength(256);
+    expect(() => parseModelCapacityPolicy(policy(257))).toThrow();
+    expect(modelCapacityRouteSchema.safeParse({ ...route(1), extra: 1 }).success).toBe(false);
+  });
+});
+
+describe('migration 0155', () => {
+  const journal = JSON.parse(readFileSync('drizzle/meta/_journal.json', 'utf8')) as { entries: { idx: number; when: number; tag: string; version: string }[] };
+  const migration = readFileSync('drizzle/0155_model_assignments.sql', 'utf8');
+  const code = migration.replace(/--(?!> statement-breakpoint).*$/gm, '');
+
+  it('registers 0155 right after the helper tables and notes the 3a-C numbering clash', () => {
+    expect(journal.entries.find(entry => entry.tag === '0155_model_assignments')).toMatchObject({ idx: 155, when: 1794086401066, version: '7', breakpoints: true });
+    expect(migration.split('\n')[1]).toContain('0155_split_composite_jobs');
+    expect(migration.split('\n').slice(0, 9).every(line => line.startsWith('-- '))).toBe(true);
+  });
+
+  it('adds the five columns with defaults that keep every existing row a helper', () => {
+    for (const column of ['registry_key text', "transport text NOT NULL DEFAULT 'gateway'", 'rank integer NOT NULL DEFAULT 1', "role text NOT NULL DEFAULT 'helper'",
+      'vote boolean NOT NULL DEFAULT false']) expect(code).toContain(`ALTER TABLE model_helper_assignments ADD COLUMN IF NOT EXISTS ${column};`);
+    expect(code).toContain('ALTER TABLE model_helper_assignments ALTER COLUMN stage TYPE varchar(24);');
+    expect(Math.max(...ASSIGNMENT_STAGE_IDS.map(stage => stage.length))).toBeLessThanOrEqual(24);
+    expect(code).not.toMatch(/\bUPDATE\b|\bDELETE\b|\bINSERT\b|GRANT |REVOKE |CREATE (OR REPLACE )?(FUNCTION|TRIGGER)/);
+  });
+
+  it('widens the stage CHECK to the assignment vocabulary and adds the new CHECKs and keys by name', () => {
+    const stages = /ADD CONSTRAINT model_helper_assignments_stage_check CHECK \(stage IN \(([^)]*)\)\);/.exec(code.replace(/\n\s*/g, ''))?.[1];
+    expect(stages?.split(',').map(value => value.replaceAll("'", ''))).toEqual([...ASSIGNMENT_STAGE_IDS]);
+    for (const name of ['registry_key_check', 'transport_check', 'rank_check', 'role_check', 'vote_check', 'role_stage_check', 'primary_registry_check',
+      'live_check']) expect(code).toContain(`ADD CONSTRAINT model_helper_assignments_${name} CHECK`);
+    expect(code).toContain("CHECK (transport IN ('gateway','direct','local-direct','cli'))");
+    expect(code).toContain("CHECK (NOT vote OR (stage = 'ai2' AND rank = 1))");
+    expect(code).toContain("CHECK (role = 'primary' OR stage IN ('ai1','ai2'))");
+    expect(code).toMatch(/model_helper_assignments_live_check CHECK \(mode <> 'live' OR role = 'primary'\s+OR \(promoted_at IS NOT NULL AND promoted_evidence IS NOT NULL\)\)/);
+    expect(code).toContain('DROP CONSTRAINT IF EXISTS model_helper_assignments_stage_device_key;');
+    expect(code).toContain('ADD CONSTRAINT model_helper_assignments_stage_device_model_key UNIQUE (stage, device_id, model);');
+    expect(code).toContain("CREATE UNIQUE INDEX IF NOT EXISTS model_helper_assignments_helper_stage_device_idx ON model_helper_assignments (stage, device_id) WHERE role = 'helper';");
+    // the two route keys and the helper result tables' stage CHECKs are untouched
+    expect(code).not.toMatch(/live_route_key|shadow_route_key|model_helper_shadow_runs|model_helper_live_outputs|pipeline_stage_modes|pipeline_item_leases/);
   });
 });

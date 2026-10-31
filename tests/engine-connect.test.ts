@@ -122,3 +122,25 @@ describe("response model probe", () => {
     expect(await probeResponseModel("http://e/v1/chat/completions", "m", null, (async () => { throw new Error("down"); }) as unknown as typeof fetch)).toBeNull();
   });
 });
+
+describe("engine contract probe (shared by engine connect and the assignment save, PR 3b-A)", () => {
+  /** GET …/models answers `models`; POST …/chat/completions answers `answer`. */
+  const engine = (models: unknown, answer: unknown = { object: "chat.completion", model: "local-llm" }) => (async (url: string | URL, init?: RequestInit) =>
+    String(url).endsWith("/models") && (init?.method ?? "GET") === "GET" ? Response.json(models) : Response.json(answer)) as unknown as typeof fetch;
+  it("reads the served bound and the answered name, or refuses with the engine-connect codes", async () => {
+    const { probeEngineContract } = await import("@/lib/operations/admin-engine-connect");
+    const endpoint = "http://e:8000/v1/chat/completions";
+    const served = { data: [{ id: "Inferact/Q", max_model_len: 32768 }, { id: "plain" }] };
+    expect(await probeEngineContract({ endpoint, engineModel: "Inferact/Q", apiKey: null }, engine(served)))
+      .toEqual({ endpoint, requestModel: "Inferact/Q", responseModel: "local-llm", totalTokenBound: 32768, totalTokenBoundFrom: "engine" });
+    expect(await probeEngineContract({ endpoint, engineModel: "plain", apiKey: null, maxModelLen: 8192 }, engine(served)))
+      .toMatchObject({ totalTokenBound: 8192, totalTokenBoundFrom: "operator" });
+    await expect(probeEngineContract({ endpoint, engineModel: "missing", apiKey: null }, engine(served))).rejects.toThrow("engine_model_not_found");
+    await expect(probeEngineContract({ endpoint, engineModel: "plain", apiKey: null }, engine(served))).rejects.toThrow("engine_max_len_unknown");
+    await expect(probeEngineContract({ endpoint, engineModel: "Inferact/Q", apiKey: null, maxModelLen: 4096 }, engine(served)))
+      .rejects.toThrow("engine_max_len_mismatch:32768:4096");
+    await expect(probeEngineContract({ endpoint, engineModel: "Inferact/Q", apiKey: null }, engine(served, { error: "x" }))).rejects.toThrow("engine_probe_failed");
+    await expect(probeEngineContract({ endpoint, engineModel: "Inferact/Q", apiKey: null },
+      (async () => new Response("no", { status: 503 })) as unknown as typeof fetch)).rejects.toThrow("engine_unreachable:http_503");
+  });
+});
