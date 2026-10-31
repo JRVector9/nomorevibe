@@ -7,7 +7,7 @@ import type { ModelCapacityDeviceState } from "@/lib/llm/capacity-devices";
 import { readModelCapacityDeviceStates } from "@/lib/llm/capacity-devices-repository";
 import {
   HELPER_DECISION_LIMITS, HELPER_SHADOW_PROVIDER, ROLE_DEMAND_BEACONS, SUPERVISOR_CONTROL_ID, roleDemandFresh,
-  type DeviceDemandInputs, type HelperAssignmentRow, type HelperGateKind, type HelperHealthCounts, type HelperInputs, type HelperMetrics,
+  type DeviceDemandInputs, type HelperAssignmentRow, type HelperGateKind, type HelperStage, type HelperHealthCounts, type HelperInputs, type HelperMetrics,
   type HelperPrimaryDeviceSample, type HelperShadowRunState, type HelperSignalRow, type HelperStopRow, type RoleDemandMetrics, type RoleDemandRow,
   type SupervisorControlRow,
 } from "@/lib/llm/capacity-helpers";
@@ -87,9 +87,11 @@ export async function readSupervisorControl(reader: Pick<ProductTransaction, "se
 }
 
 async function readAssignments(reader: Reader): Promise<HelperAssignmentRow[]> {
-  const rows = await reader.select().from(modelHelperAssignments).orderBy(asc(modelHelperAssignments.deviceId), asc(modelHelperAssignments.stage));
+  // 도우미 행(role 'helper', 단계는 ai1·ai2 — 0155 role_stage CHECK)만. 배정 표 행(role 'primary')은 감시자가 판정하지 않는다.
+  const rows = await reader.select().from(modelHelperAssignments).where(eq(modelHelperAssignments.role, "helper"))
+    .orderBy(asc(modelHelperAssignments.deviceId), asc(modelHelperAssignments.stage));
   return rows.map(row => Object.freeze({
-    assignmentId: row.assignmentId, stage: row.stage, deviceId: row.deviceId, model: row.model, shadowRouteId: row.shadowRouteId,
+    assignmentId: row.assignmentId, stage: row.stage as HelperStage, deviceId: row.deviceId, model: row.model, shadowRouteId: row.shadowRouteId,
     liveRouteId: row.liveRouteId, liveProvider: row.liveProvider, mode: row.mode, maxSlots: row.maxSlots, perTick: row.perTick,
     shadowPerHour: row.shadowPerHour, minShadowSamples: row.minShadowSamples, minAgreement: Number(row.minAgreement),
     maxWrongApproval: Number(row.maxWrongApproval), maxWrongRejection: Number(row.maxWrongRejection), maxUnknownRate: Number(row.maxUnknownRate),
@@ -97,6 +99,7 @@ async function readAssignments(reader: Reader): Promise<HelperAssignmentRow[]> {
     exitSamples: row.exitSamples, minHelpMs: row.minHelpMs, reenterCooldownMs: row.reenterCooldownMs, note: row.note,
     version: Number(row.version), evidenceKey: row.evidenceKey, promotedAt: isoOrNull(row.promotedAt), promotedBy: row.promotedBy,
     updatedBy: row.updatedBy, createdAt: iso(row.createdAt), updatedAt: iso(row.updatedAt),
+    registryKey: row.registryKey, transport: row.transport, rank: row.rank, role: row.role, vote: row.vote,
   }));
 }
 
@@ -158,6 +161,7 @@ async function readHelperLedger(reader: Reader): Promise<HelperLedgerRow[]> {
         AND r.updated_at >= greatest(clock_timestamp() - ${HEALTH_WINDOW}, a.updated_at)
       ORDER BY r.updated_at DESC, r.request_id DESC LIMIT ${HELPER_LEDGER_ROWS_MAX}
     ) x
+    WHERE a.role = 'helper'
     ORDER BY a.assignment_id, x.at DESC, x.request_id DESC`);
   return rows.map(row => Object.freeze({ assignmentId: row.assignment_id, kind: row.kind, state: row.state, dispatched: row.dispatched === true, at: iso(row.at) }));
 }
@@ -210,6 +214,7 @@ async function readShadowStats(reader: Reader): Promise<HelperShadowStats[]> {
         WHERE s.assignment_id = a.assignment_id AND s.evidence_key = a.evidence_key AND s.state = 'succeeded' AND s.agreement IN ${DECIDED_AGREEMENTS}
         ORDER BY s.created_at DESC, s.id DESC LIMIT ${L.rollingShadowWindow}) y
     ) rl
+    WHERE a.role = 'helper'
     ORDER BY a.assignment_id`);
   return rows.map(row => Object.freeze({
     assignmentId: row.assignment_id, lastHour: num(row.last_hour), n: num(row.n), succeeded: num(row.succeeded), failed: num(row.failed),
@@ -230,6 +235,7 @@ async function readLiveStats(reader: Reader): Promise<HelperLiveStats[]> {
     LEFT JOIN LATERAL (SELECT o.downstream FROM model_helper_live_outputs o
       WHERE o.assignment_id = a.assignment_id AND o.assignment_version = a.version AND o.evidence_key = a.evidence_key
       ORDER BY o.created_at DESC, o.id DESC LIMIT ${L.liveStatsRecent}) x ON true
+    WHERE a.role = 'helper'
     GROUP BY a.assignment_id ORDER BY a.assignment_id`);
   return rows.map(row => Object.freeze({ assignmentId: row.assignment_id, ai2Agreed: num(row.ai2_agreed), ai2Disagreed: num(row.ai2_disagreed),
     humanOverturned: num(row.human_overturned) }));

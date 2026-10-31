@@ -13,7 +13,7 @@ import type { OperatorReviewEvidence } from '@/lib/llm/capacity';
 import type { LocalModelBinding, LocalModelTerminalEvidence } from '@/lib/llm/local-model-capacity-contract';
 import { sql } from 'drizzle-orm';
 import { pgTable, varchar, jsonb, timestamp, serial, bigserial, integer, text, bigint, boolean, index, uniqueIndex, unique, check, primaryKey, foreignKey, uuid, numeric, doublePrecision } from 'drizzle-orm/pg-core';
-import type { HelperLiveDownstream, HelperMode, HelperReason, HelperShadowAgreement, HelperShadowRunState, HelperStage, HelperStopEffect, HelperVerdict } from '@/lib/llm/capacity-helpers';
+import type { AssignmentRole, AssignmentStage, AssignmentTransport, HelperLiveDownstream, HelperMode, HelperReason, HelperShadowAgreement, HelperShadowRunState, HelperStage, HelperStopEffect, HelperVerdict } from '@/lib/llm/capacity-helpers';
 import type { ItemBinding, ItemStage, ItemStageMode } from '@/lib/jobs/items/types';
 import type { ModelCapacityClass, ModelCapacityEventKind, ModelCapacityEventReason, ModelCapacityMode,
   ModelCapacityPolicy, ModelCapacityPool, ModelCapacityState, Ai1DispatchBinding, Ai1GatewayTerminalEvidence, Ai2DispatchBinding, Ai2GatewayTerminalEvidence, Ai1ItemDispatchBinding, Ai1ItemGatewayTerminalEvidence, TextProfileDispatchBinding, TextProfileGatewayTerminalEvidence, ReasonTranslationDispatchBinding, ReasonTranslationGatewayTerminalEvidence, ProductTranslationDispatchBinding, ProductTranslationGatewayTerminalEvidence, ProductTaglineKoDispatchBinding, ProductTaglineKoGatewayTerminalEvidence, CrawlTaglineDispatchBinding, CrawlTaglineGatewayTerminalEvidence, SearchVerifyDispatchBinding, SearchVerifyGatewayTerminalEvidence, WebsearchQueryDispatchBinding, WebsearchQueryGatewayTerminalEvidence, CliDispatchBinding, CliModelTerminalEvidence, ModelDispatchReleaseEvidence, GatewayNotStartedEvidence } from '@/lib/llm/capacity';
@@ -274,10 +274,14 @@ export const modelSupervisorControl = pgTable('model_supervisor_control', {
   check('model_supervisor_control_loop_check', sql`${table.loopMs} BETWEEN 5000 AND 60000 AND ${table.loopMs} * 2 <= ${table.signalTtlMs}`),
   check('model_supervisor_control_epoch_check', sql`${table.epoch} BETWEEN 0 AND 9007199254740991 AND ${table.loopSeq} >= 0`),
 ]);
-/** 도우미 배정(관리자만 쓴다): 장비 × 단계 하나. 도우미 경로는 그 장비의 우선 역할(rank 1)이 될 수 없다. mode 'live' 는 승격 기록이 있어야 한다. */
+/**
+ * 배정 표(관리자만 쓴다). role 'helper'(0154, PR 2a) = 도우미 배정: 장비 × 단계(ai1·ai2) 하나, 도우미 경로는 그 장비의 우선 역할(rank 1)이 될 수 없고
+ * mode 'live' 는 승격 기록이 있어야 한다. role 'primary'(0155, PR 3b-A) = 단계 × 장비 × 모델 배정 표 행(registry_key·transport·rank·vote, saveModelAssignment).
+ * 입장·감시자·도우미 화면은 role 'helper' 행만 읽는다. 단계 어휘·zod 의 단일 출처는 lib/llm/capacity-helpers.ts.
+ */
 export const modelHelperAssignments = pgTable('model_helper_assignments', {
   assignmentId: varchar('assignment_id', { length: 120 }).primaryKey(),
-  stage: varchar('stage', { length: 8 }).$type<HelperStage>().notNull(),
+  stage: varchar('stage', { length: 24 }).$type<AssignmentStage>().notNull(),
   deviceId: varchar('device_id', { length: 120 }).notNull(),
   /** 계약·wire 모델 이름(참 identity) */
   model: varchar('model', { length: 200 }).notNull(),
@@ -310,10 +314,21 @@ export const modelHelperAssignments = pgTable('model_helper_assignments', {
   updatedBy: varchar('updated_by', { length: 120 }).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
   updatedAt: timestamp('updated_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
+  /** 관리자 모델 등록부 key(`equipment:name`, 0155). 배정 표 행은 필수, 도우미 행은 NULL */
+  registryKey: text('registry_key'),
+  /** 배정 표 행의 전송(0155): gateway · direct · local-direct · cli. 도우미 행은 기본값 그대로(뜻 없음 — live_provider 가 정한다) */
+  transport: text('transport').$type<AssignmentTransport>().notNull().default('gateway'),
+  /** 단계 안 순위(0155). 1 = 먼저 고른다 */
+  rank: integer('rank').notNull().default(1),
+  /** primary = 배정 표 행, helper = PR 2a 도우미 행(0155 전 행은 모두 helper) */
+  role: text('role').$type<AssignmentRole>().notNull().default('helper'),
+  /** 2차(ai2) rank 1 투표자(0155) */
+  vote: boolean('vote').notNull().default(false),
 }, table => [
   foreignKey({ columns: [table.deviceId], foreignColumns: [modelCapacityDevices.deviceId], name: 'model_helper_assignments_device_fk' }),
   check('model_helper_assignments_id_check', sql`${table.assignmentId} ~ '^[a-z0-9][a-z0-9:-]{0,119}$'`),
-  check('model_helper_assignments_stage_check', sql`${table.stage} IN ('ai1','ai2')`),
+  check('model_helper_assignments_stage_check', sql`${table.stage} IN ('ai1','ai2','human','audit',
+  'audit-second-opinion','intro','screen','assist','assist-audit','reason','tagline','profile','verify','ko','translate','publish-classify','repo')`),
   check('model_helper_assignments_mode_check', sql`${table.mode} IN ('off','shadow','live')`),
   check('model_helper_assignments_identity_check', sql`char_length(${table.model}) > 0 AND ${table.model} = btrim(${table.model}) AND ${table.model} !~ '[[:cntrl:]]'
     AND char_length(${table.shadowRouteId}) > 0 AND ${table.shadowRouteId} = btrim(${table.shadowRouteId}) AND ${table.shadowRouteId} !~ '[[:cntrl:]]'
@@ -328,10 +343,19 @@ export const modelHelperAssignments = pgTable('model_helper_assignments', {
     AND ${table.maxWrongRejection} BETWEEN 0 AND 0.5 AND ${table.maxUnknownRate} BETWEEN 0 AND 0.5 AND ${table.maxFailureRate} BETWEEN 0 AND 0.9
     AND ${table.maxLiveDisagreement} BETWEEN 0 AND 0.9`),
   check('model_helper_assignments_evidence_check', sql`${table.evidenceKey} ~ '^[a-f0-9]{64}$'`),
-  check('model_helper_assignments_live_check', sql`${table.mode} <> 'live' OR (${table.promotedAt} IS NOT NULL AND ${table.promotedEvidence} IS NOT NULL)`),
+  check('model_helper_assignments_live_check', sql`${table.mode} <> 'live' OR ${table.role} = 'primary'
+  OR (${table.promotedAt} IS NOT NULL AND ${table.promotedEvidence} IS NOT NULL)`),
   check('model_helper_assignments_promoted_check', sql`${table.promotedEvidence} IS NULL OR (jsonb_typeof(${table.promotedEvidence}) = 'object' AND pg_column_size(${table.promotedEvidence}) <= 16384)`),
   check('model_helper_assignments_version_check', sql`${table.version} BETWEEN 1 AND 9007199254740991`),
-  unique('model_helper_assignments_stage_device_key').on(table.stage, table.deviceId),
+  check('model_helper_assignments_registry_key_check', sql`char_length(${table.registryKey}) BETWEEN 1 AND 200`),
+  check('model_helper_assignments_transport_check', sql`${table.transport} IN ('gateway','direct','local-direct','cli')`),
+  check('model_helper_assignments_rank_check', sql`${table.rank} >= 1`),
+  check('model_helper_assignments_role_check', sql`${table.role} IN ('primary','helper')`),
+  check('model_helper_assignments_vote_check', sql`NOT ${table.vote} OR (${table.stage} = 'ai2' AND ${table.rank} = 1)`),
+  check('model_helper_assignments_role_stage_check', sql`${table.role} = 'primary' OR ${table.stage} IN ('ai1','ai2')`),
+  check('model_helper_assignments_primary_registry_check', sql`${table.role} = 'helper' OR ${table.registryKey} IS NOT NULL`),
+  unique('model_helper_assignments_stage_device_model_key').on(table.stage, table.deviceId, table.model),
+  uniqueIndex('model_helper_assignments_helper_stage_device_idx').on(table.stage, table.deviceId).where(sql`${table.role} = 'helper'`),
   unique('model_helper_assignments_live_route_key').on(table.deviceId, table.liveRouteId, table.liveProvider, table.model),
   unique('model_helper_assignments_shadow_route_key').on(table.deviceId, table.shadowRouteId, table.model),
 ]);

@@ -58,7 +58,37 @@ export async function probeResponseModel(endpoint: string, model: string, apiKey
   } catch { return null; }
 }
 
-function routeContract(routeId: GatewayServingRoute, model: string, responseModel: string, endpoint: string, totalTokenBound: number, equipment: string,
+/**
+ * Readback (`/models`) + one 1-token probe of an OpenAI-compatible endpoint (`…/v1/chat/completions`): the engine model must be served, its
+ * maximum length (or the operator-typed bound when /models omits it; a typed bound beside a served one must match) is the contract's total
+ * bound, and the probe gives the name the engine answers with. Admin-time only, outside the capacity ledger. Throws the reason code
+ * (`engine_unreachable:<reason>` · `engine_model_not_found` · `engine_max_len_invalid` · `engine_max_len_mismatch:<served>:<typed>` ·
+ * `engine_max_len_unknown` · `engine_probe_failed`). Engine connect and the assignment save (PR 3b-A) share it.
+ */
+export type EngineContractProbe = Readonly<{ endpoint: string; requestModel: string; responseModel: string; totalTokenBound: number;
+  totalTokenBoundFrom: EngineConnectBoundOrigin }>;
+export async function probeEngineContract(input: { endpoint: string; engineModel: string; apiKey: string | null; maxModelLen?: number | null },
+  request: typeof fetch = fetch): Promise<EngineContractProbe> {
+  const { endpoint, engineModel, apiKey } = input;
+  const readback = await readbackServingEndpoint(endpoint, apiKey, request);
+  if (!readback.ok) throw new Error(`engine_unreachable:${readback.reason}`);
+  const served = readback.models.find(model => model.id === engineModel);
+  if (!served) throw new Error("engine_model_not_found");
+  // The served max_model_len is authoritative. Without it (mlx_lm.server, the M3 mlx-serve proxy omit it) the operator's typed
+  // bound stands in; a typed bound beside a served one must match, so neither is silently picked over the other.
+  const servedBound = served.maxModelLen || null, typedBound = input.maxModelLen ?? null;
+  if (typedBound !== null && !(Number.isSafeInteger(typedBound) && typedBound > 0 && typedBound <= ENGINE_CONNECT_MAX_MODEL_LEN)) throw new Error("engine_max_len_invalid");
+  if (servedBound !== null && typedBound !== null && typedBound !== servedBound) throw new Error(`engine_max_len_mismatch:${servedBound}:${typedBound}`);
+  const totalTokenBound = servedBound ?? typedBound;
+  if (totalTokenBound === null) throw new Error("engine_max_len_unknown");
+  const totalTokenBoundFrom: EngineConnectBoundOrigin = servedBound !== null ? "engine" : "operator";
+  const responseModel = await probeResponseModel(endpoint, engineModel, apiKey, request);
+  if (!responseModel) throw new Error("engine_probe_failed");
+  return Object.freeze({ endpoint, requestModel: engineModel, responseModel, totalTokenBound, totalTokenBoundFrom });
+}
+
+/** The plain total-bound contract of one gateway route for a directly connected (or gateway) engine model; null when the route schema refuses it. */
+export function engineRouteContract(routeId: GatewayServingRoute, model: string, responseModel: string, endpoint: string, totalTokenBound: number, equipment: string,
   boundFrom: EngineConnectBoundOrigin) {
   const shape = (registeredGatewayServingContractSchema(routeId) as unknown as { shape?: Record<string, { value?: unknown }> } | null)?.shape;
   const protocol = shape?.protocol?.value;
@@ -100,24 +130,12 @@ export async function connectAdminEngine(input: EngineConnectInput, actor: strin
   const storedKey = routes.map(route => servingContractAuth(route, engineModel)).find(auth => auth?.mode === "stored" && auth.apiKey)?.apiKey ?? undefined;
   const key = input.auth === "stored" ? typedKey ?? storedKey : undefined;
   if (input.auth === "stored" && !key) throw new Error("serving_contract_key_required");
-  const readback = await readbackServingEndpoint(`${base}/chat/completions`, key ?? null, request);
-  if (!readback.ok) throw new Error(`engine_unreachable:${readback.reason}`);
-  const served = readback.models.find(model => model.id === engineModel);
-  if (!served) throw new Error("engine_model_not_found");
-  // The served max_model_len is authoritative. Without it (mlx_lm.server, the M3 mlx-serve proxy omit it) the operator's typed
-  // bound stands in; a typed bound beside a served one must match, so neither is silently picked over the other.
-  const servedBound = served.maxModelLen || null, typedBound = input.maxModelLen ?? null;
-  if (typedBound !== null && !(Number.isSafeInteger(typedBound) && typedBound > 0 && typedBound <= ENGINE_CONNECT_MAX_MODEL_LEN)) throw new Error("engine_max_len_invalid");
-  if (servedBound !== null && typedBound !== null && typedBound !== servedBound) throw new Error(`engine_max_len_mismatch:${servedBound}:${typedBound}`);
-  const totalTokenBound = servedBound ?? typedBound;
-  if (totalTokenBound === null) throw new Error("engine_max_len_unknown");
-  const totalTokenBoundFrom: EngineConnectBoundOrigin = servedBound !== null ? "engine" : "operator";
-  const responseModel = await probeResponseModel(`${base}/chat/completions`, engineModel, key ?? null, request);
-  if (!responseModel) throw new Error("engine_probe_failed");
+  const { responseModel, totalTokenBound, totalTokenBoundFrom } = await probeEngineContract({ endpoint: `${base}/chat/completions`, engineModel,
+    apiKey: key ?? null, maxModelLen: input.maxModelLen }, request);
   const definition: ModelDefinition = { ...current, baseUrl: base, model: engineModel, displayName: current.displayName.includes("직접")
     ? current.displayName : `${current.displayName} · 직접 연결`.slice(0, 200) };
   delete (definition as { gatewayLabel?: string }).gatewayLabel;
-  const contracts = routes.map(route => ({ route, contract: routeContract(route as GatewayServingRoute, engineModel, responseModel, `${base}/chat/completions`,
+  const contracts = routes.map(route => ({ route, contract: engineRouteContract(route as GatewayServingRoute, engineModel, responseModel, `${base}/chat/completions`,
     totalTokenBound, current.equipment, totalTokenBoundFrom) }));
   if (contracts.some(entry => !entry.contract)) throw new Error("contract_schema_invalid");
   const { getSettings, saveSettings } = await import("@/lib/crawl/settings");

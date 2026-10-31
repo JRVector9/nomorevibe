@@ -114,7 +114,7 @@ PR 2a 의 화면이다. 배포 직후에는 아무것도 바뀌지 않는다 —
 
 ### 5. 새 배정
 
-장비 × 단계마다 하나(`UNIQUE (stage, device_id)`). 배정 이름을 비우면 `<장비>:<단계>`(예: `m3-deepseek:ai1`)가 된다. 처음에는 꺼짐으로 만든다(실전은 고를 수 없다).
+장비 × 단계마다 하나(0155 부터는 도우미 행만 거는 부분 유일 색인 `model_helper_assignments_helper_stage_device_idx`). 배정 이름을 비우면 `<장비>:<단계>`(예: `m3-deepseek:ai1`)가 된다. 처음에는 꺼짐으로 만든다(실전은 고를 수 없다).
 
 단계별 기본 경로(`HELPER_ROUTE_DEFAULTS`, 정책 rev14):
 
@@ -178,6 +178,77 @@ server action 다섯(`app/(operator)/admin/models/helpers/actions.ts`), 모두 `
 
 장애 드릴(감시자 멈춤 → 45초 안에 도우미 판정 만료)·첫 섀도 표본은 실제 실행 영수증으로만 기록한다.
 
+## 배정 표 열 — 3b-A
+
+migration `0155_model_assignments`(PR 3b-A)는 같은 표 `model_helper_assignments` 를 「단계 × 장비 × 모델」 배정 표로 넓힌다.
+**배포 직후 동작은 바뀌지 않는다** — 배정 표 행(role `primary`)은 아직 없고, 만드는 함수(`saveModelAssignment`)를 부르는 화면·잡도 아직 없다.
+이 행을 읽어 모델을 고르는 것은 3b-B(flag 뒤), 로컬 계약을 표에서 읽는 것은 3b-C 다.
+번호 주의: PR 3a-C 도 idx 155 / when 1794086401066(`0155_split_composite_jobs`)을 쓴다 — 나중에 병합되는 쪽을 통합 때 다시 번호 매긴다.
+
+### 새 열
+
+| 열 | 뜻 | 기존(도우미) 행 |
+| --- | --- | --- |
+| `registry_key text` | 관리자 모델 등록부 key(`equipment:name`, 1~200자). 배정 표 행은 필수(`primary_registry_check`) | NULL |
+| `transport text` | `gateway` · `direct` · `local-direct` · `cli` | `gateway`(기본값, 뜻 없음) |
+| `rank integer` | 단계 안 순위(≥ 1, 저장은 1~64 — 장비 순위 CHECK 와 같다). 1 = 먼저 고른다 | 1 |
+| `role text` | `primary` = 배정 표 행, `helper` = PR 2a 도우미 행 | `helper` |
+| `vote boolean` | 2차 투표자. `stage = 'ai2' AND rank = 1` 일 때만(`vote_check`) | false |
+
+- 단계 CHECK(`model_helper_assignments_stage_check`)는 열일곱으로 넓혔다: `ai1, ai2, human, audit, audit-second-opinion, intro, screen, assist, assist-audit,
+  reason, tagline, profile, verify, ko, translate, publish-classify, repo`(열은 `varchar(24)`). 도우미 행은 여전히 `ai1`·`ai2` 만(`role_stage_check`).
+  섀도·실전 결과 표의 단계 CHECK 와 `pipeline_stage_modes`·`pipeline_item_leases` 의 단계(`fetch·ai1·ai2`, 다른 어휘)는 바꾸지 않았다.
+- 유일: `(stage, device_id)` 제약(`…_stage_device_key`)을 지우고 `UNIQUE (stage, device_id, model)`(`…_stage_device_model_key`)을 걸었다.
+  「도우미는 단계 × 장비 하나」는 부분 유일 색인 `…_helper_stage_device_idx … WHERE role = 'helper'` 로 남는다. `(device_id, live_route_id, live_provider, model)`·
+  `(device_id, shadow_route_id, model)` 유일은 그대로다.
+- `live_check` 는 도우미 행에만 승격 기록을 요구한다(`mode <> 'live' OR role = 'primary' OR (promoted_at … AND promoted_evidence …)`). 배정 표 행의 `live` 는 「이 배정을 쓴다」다.
+- 입장(`helperGateCte`)·감시자 스냅숏·이 화면(`listHelperAssignments`·`readHelperStatusSnapshot`·도우미 경로 상태)은 **`role = 'helper'` 행만** 읽는다 — 배정 표 행의
+  route 는 그 장비의 보통 역할이라 도우미 관문에 걸리면 안 된다. 기존 행은 모두 `helper` 라 판정은 이전과 같다. `saveHelperAssignment`·`setHelperMode` 는 배정 표
+  행 이름을 받으면 `model_helper_invalid:assignmentId` 로 거절한다.
+
+단계별 route·전송(`ASSIGNMENT_STAGES`, `lib/llm/capacity-helpers.ts`):
+
+| 단계 | route | 전송 |
+| --- | --- | --- |
+| ai1 | `crawl-agent-review` | gateway · direct · cli |
+| ai2(투표) | `second-review` | gateway · direct · local-direct · cli |
+| human · audit · audit-second-opinion · screen | `local-human-deepseek` · `local-audit` · `local-second-opinion` · `local-screen` | local-direct |
+| intro · publish-classify | `product-intro-check` · `crawl-publish-classify` | cli |
+| reason · tagline · profile · verify · ko · translate | `reason-translate` · `crawl-tagline` · `product-search-profile` · `product-search-verify` · `product-tagline-ko` · `product-translate` | gateway · direct |
+| assist · assist-audit · repo | (예약) | 없음 — assist 의 route 는 작업·백엔드마다 다르다(`local-assist-<task>-<backendId>`), 3b-B 가 정한다 |
+
+전송 → 정책 route provider: gateway·direct → `abcllm`, local-direct → `local-direct`, cli → 등록부 provider(`claude-cli`·`grok-cli`·`codex-cli`, 등록부 equipment 가
+`connect` 인 모델만). wire 모델: gateway 는 `[label] model`(modelRequestName), 나머지는 엔진·CLI 이름 그대로.
+
+### 저장 흐름(`saveModelAssignment(tx, input, actor, deps)`, `lib/llm/capacity-helpers-repository.ts`)
+
+호출자의 TX 하나에서, 던지면 아무 행도 남지 않는다.
+
+1. replay 거부 → zod(`modelAssignmentInputSchema`: (단계, 전송) 허락·cli = connect·vote = 2차 rank 1·role `primary` 만·mode `off`/`live`) → 등록부 key → wire 모델·provider.
+2. 장비 행 미리 보기 → **계약 확인**(잠금 없이): gateway·direct 는 `model_serving_contracts` 의 (route, wire 모델) enabled 행(transport 가 맞아야 한다),
+   local-direct 는 `local-direct:<route>` 행(local-openai-chat-v1, physicalGroup = 장비), cli 는 `probeCliServingContracts()` 가 연 CLI 계약.
+   행이 없으면 `deps.probeContract`(운영 배선 = `probeEngineContract`: 엔진 연결과 같은 `/models` readback + 1-token probe)로 만든다. **readback 실패 = 저장 거절**
+   (`model_assignment_refused:contract_probe_failed:<원인>`). `second-review` 처럼 엔진 연결이 계약을 만들지 않는 route 는 `contract_unbuildable`(계약 화면에서 먼저 넣는다).
+   local-direct 계약은 env `LOCAL_MODEL_SERVING_CONTRACTS` 대신 같은 표에 `route_id = local-direct:<route>` 로 둔다(gateway 계약의 (route_id, model)과 섞이지 않게).
+   backendId = 등록부 key 의 `:` 를 `-` 로, 보수적 기본값(vision·jsonSchema 끔, thinking 끔, response_only, 출력 상한 = 등록부 maxTokens). 지금은 아무도 읽지 않는다.
+3. DR fence(첫 잠금) → probe 한 계약 쓰기(자기 감사 `model-serving-contract-save`) → control FOR UPDATE → 장비 행 FOR UPDATE(없거나 꺼졌으면 `device_unconfigured`) →
+   배정 행 FOR UPDATE·compare-and-set(`expectedVersion`) → 같은 장비의 도우미 경로와 겹침 검사(`route_is_helper_route`).
+4. **정책 route 덧붙이기**(`appendCompatibleRoutes`, `lib/llm/capacity-repository.ts`): `{ route, provider, wire 모델, providerBudgetId, groupId = 장비 }` —
+   providerBudgetId 는 등록부 equipment, local-direct 만 계약의 backendId. 같은 (route, provider, 모델)이 이미 같은 장비에 있으면 그대로 쓰고(다른 장비면 `route_device_mismatch`),
+   다섯 칸이 같으면 아무것도 쓰지 않는다(다시 저장해도 revision 그대로). **mode 는 그대로(DRAIN 없음)**, revision + 1, 옛 route 는 지우거나 순서를 바꾸지 않는다.
+   잡힌 행(reserved·dispatched)은 `compatiblePredecessor` 로 산다. 앞 판은 한 단계뿐이라: 지금 정책에 앞 판이 없으면 앞 판 = 지금 정책, 있으면 지금 판의 잡힌 행이
+   남아 있을 때 `model_capacity_append_predecessor_busy`(그 행이 끝난 뒤 다시 저장), 지금 판이 비었으면 앞 판의 잡힌 행이 있을 때만 그 앞 판을 넘기고 아니면 비운다.
+   route 상한은 128 → 256(`MODEL_CAPACITY_ROUTES_MAX`) — 옛 parser 는 129개 이상을 거절하므로 모든 용량 소비자가 이 판을 돈 뒤에만 129번째를 넣는다.
+5. 장비 순위 `(device, route) = rank`(바뀌면 장비 version + 1 — 장비 폼의 옛 화면 저장이 CAS 로 거절된다) → 배정 행 upsert(version + 1; `shadow_route_id` 는 표지
+   `primary:<단계>`, `live_route_id`·`live_provider` = 그 route) → `operations_audit` `model-assignment-save` 한 줄(before·after·계약·route·덧붙였나·revision·장비 순위).
+
+거절 문자열: `model_assignment_invalid:<path>` · `model_assignment_version_mismatch:<current|none>` · `model_assignment_refused:<code>`(`MODEL_ASSIGNMENT_REFUSALS`) ·
+덧붙이기의 `model_capacity_routes_cap` · `model_capacity_route_conflict` · `model_capacity_append_predecessor_busy` · `site_fenced`.
+
+읽기·고르기(`lib/llm/stage-assignments.ts`, 아직 아무도 부르지 않는다): `assignmentsForStage(stage, { mode: 'live' })` = rank → assignment_id 순,
+`chooseModelForItem(rows, itemKey, { excludeModels })` = 1차 오늘 규칙(`selectFirstReviewer`)과 같은 `(itemKey − 1) mod n` 칸, rank 가 모두 빠지면 다음 rank,
+`votersForItem(rows, itemKey, 1차 모델)` = 2차 rank 1 · vote · live 행에서 1차와 같은 가중치(`sameUnderlyingModel`)를 뺀 목록(순서만 항목마다 돈다).
+
 ## 테스트
 
 - `tests/admin-model-helpers.test.tsx` — 화면 모형(감시자 배지 우선순위·나이·신호 못 쓰는 이유·지금 판의 정지·beacon·metrics), 폼 → 저장 입력(백분율·초·이름 유도),
@@ -187,4 +258,6 @@ server action 다섯(`app/(operator)/admin/models/helpers/actions.ts`), 모두 `
   `setCapacityHelpersRepositoryForTest`) → 감사 한 줄 → 화면 모형; CAS 거절(저장·모드·해제, 감사 없음); 자동 정지 해제; 저장 거절; 전체 스위치(확인 칸·감사·배지); 순환 설정; 비관리자.
   공유 테스트 DB(55435)가 아니라 자기 DB 로 돌린다(예: `TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55452/nomorevibe_test`).
 - `tests/dr-web-fence.test.ts` — 도우미 action 다섯이 쓰기 관문을 지난다(수 97). `tests/admin-navigation.test.tsx` — 메뉴 링크 23개.
+- 배정 표(3b-A): `tests/capacity-helpers.test.ts`(어휘·zod·evidence·0155 글자·route 상한), `tests/stage-assignments.test.ts`(고르기, 1차 칸 = selectFirstReviewer),
+  `tests/integration/model-assignments.test.ts`(자기 DB: 계약·route·장비 순위·감사 한 TX, 같은 저장 반복, 잡힌 행과 앞 판, 상한·충돌, 거절 뒤 남는 행 없음, cli·vote·local-direct 계약).
 - 표·입장 판정·감시자 순환은 WP-2a-A·B 의 테스트가 본다(`tests/capacity-helpers.test.ts`, `tests/integration/model-capacity-helpers.test.ts`, `tests/capacity-supervisor-decide.test.ts`).

@@ -96,6 +96,36 @@ export async function saveServingContractTx(tx: Tx, input: AdminServingContractI
   return { id: row.id, contractHash };
 }
 
+/**
+ * Store a local-direct contract (protocol local-openai-chat-v1) in the same table (PR 3b-A assignment save). The row's route_id is namespaced
+ * (`local-direct:<route>`, LOCAL_DIRECT_CONTRACT_ROUTE_PREFIX) so a gateway route's (route_id, model) contract is never replaced or closed by it;
+ * the stored JSON is the local contract plus that `routeId` (the table's identity CHECK), its hash is localModelContractHash of the local contract
+ * (the hash the helper evidence and the local dispatch use). transport 'direct', auth 'none' (local engines carry no key). Same history rule
+ * as saveServingContractTx: the previous enabled row of the route+model is disabled, never deleted; one `model-serving-contract-save` audit row.
+ * Nothing reads these rows yet (3b-C moves the verified local contract readers here); the env LOCAL_MODEL_SERVING_CONTRACTS still decides.
+ */
+export async function saveLocalServingContractTx(tx: Tx, input: { routeId: string; contract: unknown; note?: string | null }, actor: string):
+  Promise<{ id: number; contractHash: string }> {
+  const { LOCAL_DIRECT_CONTRACT_ROUTE_PREFIX } = await import("@/lib/llm/capacity-helpers");
+  const { localModelContractHash, localModelServingContractSchema } = await import("@/lib/llm/local-model-serving-contract");
+  const parsed = localModelServingContractSchema.safeParse(input.contract);
+  const routeId = input.routeId;
+  if (!parsed.success) throw new Error("contract_schema_invalid");
+  if (!routeId.startsWith(LOCAL_DIRECT_CONTRACT_ROUTE_PREFIX) || routeId.length > 64 || routeId !== routeId.trim() || !actor.trim())
+    throw new Error("serving_contract_input_invalid");
+  const contract = parsed.data, model = contract.model, contractHash = localModelContractHash(contract);
+  const note = input.note?.trim() ? input.note.trim().slice(0, 400) : null;
+  const [previous] = await tx.select().from(modelServingContracts)
+    .where(and(eq(modelServingContracts.routeId, routeId), eq(modelServingContracts.model, model), eq(modelServingContracts.enabled, true))).for("update");
+  if (previous) await tx.update(modelServingContracts).set({ enabled: false, updatedBy: actor, updatedAt: new Date() }).where(eq(modelServingContracts.id, previous.id));
+  const [row] = await tx.insert(modelServingContracts).values({ routeId, model, contract: { ...contract, routeId }, contractHash, auth: "none",
+    transport: "direct", apiKeyCiphertext: null, enabled: true, note, updatedBy: actor }).returning({ id: modelServingContracts.id });
+  await tx.insert(operationsAudit).values(await adminAuditRow(actor, { action: "model-serving-contract-save", target: `${routeId}:${model}`,
+    detail: { id: row.id, previousId: previous?.id ?? null, contractHash, previousHash: previous?.contractHash ?? null, auth: "none", transport: "direct",
+      keyChanged: false, endpoint: contract.endpoint, protocol: contract.protocol, note } }));
+  return { id: row.id, contractHash };
+}
+
 /** Turn an admin contract off: the env contract of that route+model (if any) applies again. */
 export async function disableAdminServingContract(routeId: string, model: string, actor: string): Promise<boolean> {
   if (!isRoute(routeId) || !actor.trim()) throw new Error("serving_contract_input_invalid");

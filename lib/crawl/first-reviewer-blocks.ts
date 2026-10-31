@@ -1,12 +1,13 @@
 import { z } from "zod";
 import { deviceFallbackLimit } from "@/lib/llm/capacity-devices";
+import { MODEL_CAPACITY_ROUTES_MAX } from "@/lib/llm/capacity";
 import { firstReviewerKey } from "./first-reviewers";
 
 const label = z.string().min(1).max(200);
 const limits = z.record(z.string(), z.number().int().positive());
 /** 정책은 route 의 장비(groupId) 매핑과, 장비 행이 없을 때의 대체 한도(groupLimits, 선택)만 준다. 공급자 예산은 한도가 아니다(PR 1b). */
 const policySchema = z.object({ groupLimits: limits.optional(),
-  routes: z.array(z.object({ provider: label, model: label, groupId: label, providerBudgetId: label }).loose()).max(128) }).loose();
+  routes: z.array(z.object({ provider: label, model: label, groupId: label, providerBudgetId: label }).loose()).max(MODEL_CAPACITY_ROUTES_MAX) }).loose();
 export type CapacityUnknownOccupancy = { groupId: string; providerBudgetId?: string };
 
 /**
