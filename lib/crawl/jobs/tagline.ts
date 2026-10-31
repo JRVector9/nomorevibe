@@ -1,7 +1,7 @@
 import { modelLimits, modelTimeoutMs, scopedModel } from "@/lib/llm/model-registry";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { tickRemaining } from "@/lib/jobs/tick-deadline";
-import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
+import { ModelCapacityDeferredError, modelCapacityDeferralIsPerWork } from "@/lib/llm/capacity-deferred";
 import { getSettings } from "@/lib/crawl/settings";
 import { TAGLINE_MODEL, taglineEvidence, taglineHash, writeTagline } from "@/lib/crawl/tagline";
 import { writeCrawlTaglineWithModelCapacity } from "@/lib/crawl/tagline-model-capacity";
@@ -22,6 +22,10 @@ import { runtimeSettings } from "@/lib/operations/runtime-settings-store";
  *   헛실패가 난다)은 runtime_settings jobs.crawl-tagline,
  * - 동시 호출·한 번 부르는 데 둘 시간은 등록부 경로 crawl-tagline(routes.limits / routes.timeouts),
  * - 틱의 남은 시간은 러너가 준 deadlineAt(틱 예산 budgets)에서 — 잡 안의 TICK_MS 상수는 없다(lib/jobs/tick-deadline.ts).
+ *
+ * 2026-10-30 소유자 결정("미확인이 되어도 절대 멈추지 않는다"): 한 후보만의 미룸(dispatched·work_busy — 앞선 단계가 보내진 중이거나
+ * 미확인 단계 행·다른 요청이 같은 후보를 쥠)은 그 후보만 이 틱에서 넘기고 다음 후보를 계속 본다. 다른 요청에 묶인 후보는 고르기에서도
+ * 뺀다(pendingTaglines skipBusy). 포화·정책·owner 미룸만 예전처럼 틱을 미룬다.
  */
 const JOB = "crawl-tagline";
 
@@ -52,11 +56,14 @@ export async function writeTaglines(ctx: JobContext<null>): Promise<JobOutcome<n
     const batch = jobKnob(knobs, JOB, "batch"), minCallMs = jobKnob(knobs, JOB, "minCallMs");
     const concurrency = modelLimits(JOB).concurrency, callMs = modelTimeoutMs(JOB);
     let written = 0, empty = 0, failed = 0, released = 0, blocked = "", inARow = 0;
+    /** 이 틱에 넘긴 후보(같은 작업의 미룸) — 다시 고르지 않는다 */
+    const passed = new Set<number>();
 
     while (!signal.aborted && ctx.hasBudget() && remaining() >= minCallMs) {
-      const tasks = await pendingTaglines(batch);
+      const tasks = (await pendingTaglines(batch, { skipBusy: true, exclude: [...passed] }))
+        .filter(task => !passed.has(task.candidate.id));
       if (tasks.length === 0) {
-        ctx.log("tagline.done", { written, empty, failed, released, drained: true });
+        ctx.log("tagline.done", { written, empty, failed, released, passed: passed.size, drained: true });
         return { done: true };
       }
 
@@ -66,74 +73,81 @@ export async function writeTaglines(ctx: JobContext<null>): Promise<JobOutcome<n
           for (let index = next++; index < tasks.length; index = next++) {
             if (skipped || blocked || signal.aborted || !ctx.hasBudget() || remaining() < minCallMs) return;
             const task = tasks[index];
-            const { candidate, document, written: stored } = task;
-            const evidence = taglineEvidence(candidate.repo, document);
-            const sourceHash = taglineHash(evidence);
+            try {
+              const { candidate, document, written: stored } = task;
+              const evidence = taglineEvidence(candidate.repo, document);
+              const sourceHash = taglineHash(evidence);
 
-            /**
-             * 다시 긁혔지만 내용은 그대로다 — 본 판만 새로 적고 넘어간다.
-             *
-             * 실패한 줄은 여기서 넘기면 안 된다. 실패도 그때 본 원본의 해시를 남기므로, 해시만 보고
-             * 건너뛰면 다시 볼 시각이 지나도 영영 다시 묻지 않는다 — 프로드에서 게이트웨이 502 를 만난
-             * 7건이 90분 동안 시도 1회에 멈춘 채 대기열을 차지했다(2026-09-20).
-             */
-            if (stored && stored.sourceHash === sourceHash && !stored.errorCode) {
-              const saved = await recordTaglineResult(task, lease, { kind: "reuse" });
-              if (saved.released) released++;
-              if (!saved.stored) return;
-              continue;
-            }
-            // 읽을 글이 아무 데도 없다. 모델을 불러도 지을 수 없으므로 사람에게 남긴다
-            if (!evidence.pageText && !evidence.readme && !evidence.pageTitle) {
-              const saved = await recordTaglineResult(task, lease, { kind: "success", tagline: "", source: "page", model: "" });
-              if (!saved.stored) return;
-              empty++;
-              continue;
-            }
-
-            const ask = () => writeTagline(evidence, { signal, timeoutMs: Math.max(1_000, Math.min(callMs, remaining() - 1_000)) });
-            let capacity = await writeCrawlTaglineWithModelCapacity(task, lease,
-              { signal, timeoutMs: Math.max(1_000, Math.min(callMs, remaining() - 1_000)) });
-            if (capacity.kind === "skipped") { skipped = true; return; }
-            let result = capacity.kind === "disabled" ? await ask() : capacity.result;
-            /**
-             * 빈 줄("증거로는 무엇인지 알 수 없다")은 흔들리는 답이다 — 같은 증거로 다시 물으면 멀쩡한
-             * 줄이 오는 때가 14건 중 3~4건이었다(2026-09-20 프로드 실측, 온도 0인데도 그렇다).
-             * 한 번만 더 묻는다. 두 번 다 빈 줄이면 그 후보는 사람이 본다.
-             */
-            if (result.ok && !result.tagline && !signal.aborted && ctx.hasBudget() && remaining() >= minCallMs
-              && (capacity.kind === "disabled" || capacity.askOrdinal === 1)) {
-              if (capacity.kind === "disabled") result = await ask();
-              else {
-                capacity = await writeCrawlTaglineWithModelCapacity(task, lease,
-                  { signal, timeoutMs: Math.max(1_000, Math.min(callMs, remaining() - 1_000)), previous: capacity });
-                if (capacity.kind === "skipped") { skipped = true; return; }
-                if (capacity.kind === "disabled") throw new ModelCapacityDeferredError("disabled");
-                result = capacity.result;
-              }
-            }
-            const save = (value: Parameters<typeof recordTaglineResult>[2]) => capacity.kind === "result" && capacity.expectation
-              ? recordTaglineResult(task, lease, value, capacity.expectation) : recordTaglineResult(task, lease, value);
-            if (signal.aborted) return;
-            if (!result.ok) {
-              const saved = await save({ kind: "failure", error: result.error });
-              if (!saved.stored) { skipped = capacity.kind === "result"; return; }
-              failed++;
               /**
-               * 한 건의 실패로 틱을 접지 않는다 — 같은 증거에만 502 를 돌려주는 후보가 있어
-               * (긴 페이지 글) 그 한 건이 나머지의 차례까지 막았다. 잇따라 둘이 실패하면 그때 접는다.
+               * 다시 긁혔지만 내용은 그대로다 — 본 판만 새로 적고 넘어간다.
+               *
+               * 실패한 줄은 여기서 넘기면 안 된다. 실패도 그때 본 원본의 해시를 남기므로, 해시만 보고
+               * 건너뛰면 다시 볼 시각이 지나도 영영 다시 묻지 않는다 — 프로드에서 게이트웨이 502 를 만난
+               * 7건이 90분 동안 시도 1회에 멈춘 채 대기열을 차지했다(2026-09-20).
                */
-              if (GATEWAY_DOWN.has(result.error) || result.error.startsWith("http_5")) {
-                if (++inARow >= 2) blocked = result.error;
+              if (stored && stored.sourceHash === sourceHash && !stored.errorCode) {
+                const saved = await recordTaglineResult(task, lease, { kind: "reuse" });
+                if (saved.released) released++;
+                if (!saved.stored) return;
+                continue;
               }
-              continue;
+              // 읽을 글이 아무 데도 없다. 모델을 불러도 지을 수 없으므로 사람에게 남긴다
+              if (!evidence.pageText && !evidence.readme && !evidence.pageTitle) {
+                const saved = await recordTaglineResult(task, lease, { kind: "success", tagline: "", source: "page", model: "" });
+                if (!saved.stored) return;
+                empty++;
+                continue;
+              }
+
+              const ask = () => writeTagline(evidence, { signal, timeoutMs: Math.max(1_000, Math.min(callMs, remaining() - 1_000)) });
+              let capacity = await writeCrawlTaglineWithModelCapacity(task, lease,
+                { signal, timeoutMs: Math.max(1_000, Math.min(callMs, remaining() - 1_000)) });
+              if (capacity.kind === "skipped") { skipped = true; return; }
+              let result = capacity.kind === "disabled" ? await ask() : capacity.result;
+              /**
+               * 빈 줄("증거로는 무엇인지 알 수 없다")은 흔들리는 답이다 — 같은 증거로 다시 물으면 멀쩡한
+               * 줄이 오는 때가 14건 중 3~4건이었다(2026-09-20 프로드 실측, 온도 0인데도 그렇다).
+               * 한 번만 더 묻는다. 두 번 다 빈 줄이면 그 후보는 사람이 본다.
+               */
+              if (result.ok && !result.tagline && !signal.aborted && ctx.hasBudget() && remaining() >= minCallMs
+                && (capacity.kind === "disabled" || capacity.askOrdinal === 1)) {
+                if (capacity.kind === "disabled") result = await ask();
+                else {
+                  capacity = await writeCrawlTaglineWithModelCapacity(task, lease,
+                    { signal, timeoutMs: Math.max(1_000, Math.min(callMs, remaining() - 1_000)), previous: capacity });
+                  if (capacity.kind === "skipped") { skipped = true; return; }
+                  if (capacity.kind === "disabled") throw new ModelCapacityDeferredError("disabled");
+                  result = capacity.result;
+                }
+              }
+              const save = (value: Parameters<typeof recordTaglineResult>[2]) => capacity.kind === "result" && capacity.expectation
+                ? recordTaglineResult(task, lease, value, capacity.expectation) : recordTaglineResult(task, lease, value);
+              if (signal.aborted) return;
+              if (!result.ok) {
+                const saved = await save({ kind: "failure", error: result.error });
+                if (!saved.stored) { skipped = capacity.kind === "result"; return; }
+                failed++;
+                /**
+                 * 한 건의 실패로 틱을 접지 않는다 — 같은 증거에만 502 를 돌려주는 후보가 있어
+                 * (긴 페이지 글) 그 한 건이 나머지의 차례까지 막았다. 잇따라 둘이 실패하면 그때 접는다.
+                 */
+                if (GATEWAY_DOWN.has(result.error) || result.error.startsWith("http_5")) {
+                  if (++inARow >= 2) blocked = result.error;
+                }
+                continue;
+              }
+              inARow = 0;
+              const saved = await save({ kind: "success", tagline: result.tagline, source: result.source, model: scopedModel("crawl-tagline", TAGLINE_MODEL) });
+              if (!saved.stored) { skipped = capacity.kind === "result"; return; }
+              if (!result.tagline) { empty++; continue; }
+              written++;
+              if (saved.released) released++;
+            } catch (error) {
+              if (!(error instanceof ModelCapacityDeferredError) || !modelCapacityDeferralIsPerWork(error.reason)) throw error;
+              // 이 후보만의 미룸이다(호출·시도·실패 기록 없음) — 이 후보를 넘기고 같은 줄의 다음 후보로 간다.
+              passed.add(task.candidate.id);
+              ctx.log("tagline.passed", { repo: task.candidate.repo, reason: error.reason });
             }
-            inARow = 0;
-            const saved = await save({ kind: "success", tagline: result.tagline, source: result.source, model: scopedModel("crawl-tagline", TAGLINE_MODEL) });
-            if (!saved.stored) { skipped = capacity.kind === "result"; return; }
-            if (!result.tagline) { empty++; continue; }
-            written++;
-            if (saved.released) released++;
           }
         } catch (error) {
           if (error instanceof ModelCapacityDeferredError) blocked ||= "model_capacity";

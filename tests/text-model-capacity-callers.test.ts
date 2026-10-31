@@ -164,6 +164,29 @@ it("product field admission leaves an eligible demand untouched", async () => {
 });
 
 // 2026-10-30 결정("미확인이 되어도 절대 멈추지 않는다"): 한 후보·한 묶음만의 미룸은 그 대상만 넘기고 같은 틱의 다음 대상을 계속한다.
+it.each(["dispatched", "work_busy"] as const)("crawl-tagline passes one candidate's %s refusal and keeps writing the rest of the tick", async reason => {
+  const tasks = [1, 2, 3].map(id => ({ ...tagTask(id), candidate: { id, repo: `fixture/doc-${id}` } }));
+  mocks.tagTasks.mockResolvedValueOnce(tasks).mockResolvedValue([]);
+  mocks.tagline.mockImplementation(async (evidence: { url: string }) => {
+    if (evidence.url === "https://doc-1.test") throw new ModelCapacityDeferredError(reason);
+    return { ok: true, tagline: "Document manager", source: "page" };
+  });
+  const ctx = context("crawl-tagline");
+  expect(await writeTaglines(ctx)).toEqual({ done: true });
+  expect(mocks.tagWrite.mock.calls.map(call => call[0].candidate.id).sort()).toEqual([2, 3]);
+  expect(mocks.tagTasks.mock.calls.map(call => call[1])).toEqual([{ skipBusy: true, exclude: [] }, { skipBusy: true, exclude: [1] }]);
+  expect(ctx.log).toHaveBeenCalledWith("tagline.passed", { repo: "fixture/doc-1", reason });
+});
+
+it("crawl-tagline still defers the whole tick on a saturation capacity refusal", async () => {
+  const tasks = [1, 2].map(id => ({ ...tagTask(id), candidate: { id, repo: `fixture/doc-${id}` } }));
+  const deferred = new ModelCapacityDeferredError("capacity");
+  mocks.tagTasks.mockResolvedValueOnce(tasks).mockResolvedValue([]);
+  mocks.tagline.mockRejectedValue(deferred);
+  await expect(writeTaglines(context("crawl-tagline"))).rejects.toBe(deferred);
+  expect(mocks.tagWrite).not.toHaveBeenCalled();
+});
+
 it.each(["dispatched", "work_busy"] as const)("product-translate passes a %s batch and translates the next demanded field in the same tick", async reason => {
   const first = { id: 1, name: "Doc", tagline: "문서를 관리하는 도구" }, second = { id: 2, name: "Pad", tagline: "메모를 정리하는 도구" };
   const task = (source: typeof first) => ({ source, field: "tagline", locale: "en", sourceHash: productTranslationSourceHash(source, "tagline"),

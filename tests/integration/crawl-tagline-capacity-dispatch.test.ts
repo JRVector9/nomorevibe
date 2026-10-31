@@ -314,6 +314,31 @@ it.each(["EOF", "abort"])("retains full C after %s for review and re-sends the c
   });
 }), 20_000);
 
+// 2026-10-30 결정: 한 후보의 미확인 단계 행(같은 generation 의 SENT 행 → fence)은 그 후보만 넘기게 한다 — 같은 틱의 다음 후보는 계속 짓는다(C3).
+it("passes a candidate fenced by its own unknown phase row and keeps writing the next candidates in the same tick", exercise(async () => {
+  const stuck = await seed(), next = [await seed(), await seed(), await seed()];
+  await server(async ({ bodies, setReply }) => {
+    setReply(response => { response.end('{"partial":'); });
+    expect(await custom(async lease => {
+      const outcome = await tracked(writeCrawlTaglineWithModelCapacity(stuck, lease, { roleLease: role, timeoutMs: 1000 }));
+      expect(outcome).toMatchObject({ kind: "result", result: { ok: false } });
+    })).toMatchObject({ status: "completed" }); expect(bodies).toHaveLength(1);
+    const [unknown] = await admin`SELECT request_id,state FROM model_capacity_requests WHERE owner_instance_id=${prefix}`;
+    expect(unknown.state).toBe("indeterminate");
+    setReply(response => { response.end(JSON.stringify(replyBody())); });
+    // 예전: 맨 앞 후보의 fence 미룸이 틱 전체를 deferred 로 끝내 뒤의 후보가 차례를 잃었다.
+    expect(await tick()).toMatchObject({ status: "completed" });
+    expect(bodies).toHaveLength(1 + next.length);
+    expect(await admin`SELECT repo FROM crawl_taglines WHERE repo=ANY(${next.map(task => task.candidate.repo)}::text[]) ORDER BY repo`)
+      .toEqual(next.map(task => ({ repo: task.candidate.repo })).sort((a, b) => a.repo.localeCompare(b.repo)));
+    expect(await admin`SELECT repo FROM crawl_taglines WHERE repo=${stuck.candidate.repo}`).toEqual([]);
+    // 미확인 행은 사람 검토용으로 그대로 남고, 넘긴 후보에는 새 요청 행이 없다
+    expect((await admin`SELECT state FROM model_capacity_requests WHERE request_id=${unknown.request_id}::uuid`)[0].state).toBe("indeterminate");
+    expect(await admin`SELECT state FROM model_capacity_requests WHERE owner_instance_id=${prefix} AND request_id<>${unknown.request_id}::uuid`)
+      .toEqual(next.map(() => ({ state: "settled" })));
+  });
+}), 20_000);
+
 it("preserves disabled legacy cache against an older positive writer without consuming positive history", exercise(async () => {
   const task = await seed(); await server(async ({ bodies }) => {
     expect(await custom(async lease => {
