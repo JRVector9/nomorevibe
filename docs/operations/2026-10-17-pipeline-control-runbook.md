@@ -173,23 +173,23 @@ node --import tsx scripts/ops/pipeline-control.ts stage complete --stage=ai2 --d
 ## 6. capacity open — text pool부터, route별로 확인
 
 먼저 알아야 할 것:
-- **전역 스위치다. route 단위 mode가 없다.** open이 되면 policy에 없는 route는 `unmapped`, 계약이 없는 route는 `provider_contract_unavailable`로 호출 전에 미뤄진다. 기존 전송으로 돌아가지 않는다. 그래서 "route별"은 열기 전 계약·매핑을 route마다 확인한다는 뜻이고, "text pool부터"는 처음 한도를 보수적으로 두고 text pool 한도부터 올린다는 뜻이다.
+- **전역 스위치다. route 단위 mode가 없다.** open이 되면 policy에 없는 route는 `unmapped`, 계약이 없는 route는 `provider_contract_unavailable`로 호출 전에 미뤄진다. 기존 전송으로 돌아가지 않는다. 그래서 "route별"은 열기 전 계약·매핑을 route마다 확인한다는 뜻이다.
+- **한도는 장비별이다(2026-10-31, PR 1b).** policy 의 `globalLimit`·`poolLimits`·`weights`·`providerLimits`·`groupLimits` 는 선택 칸이고 입장이 읽지 않는다. 장비(route 의 `groupId`)마다 칸 수·역할 순위·낮은 순위 상한·유휴 시간·예비 칸은 `model_capacity_devices`(관리자 `/admin/models/devices`)에 있고 **저장 즉시 다음 입장부터 적용된다 — DRAIN·revision 불필요**. 장비 행이 없는 장비는 policy `groupLimits` 값으로 돈다(`policy_fallback`, 전환기). 행도 `groupLimits` 도 없는 장비의 route 는 open 뒤 `device_unconfigured` 로 미뤄지고 `capacity mode --to=open` 이 `device_unconfigured:<장비>` 로 거절한다. `status` 의 `[devices]` 표(장비·한도·점유·우선 역할 바쁨·낮은 순위/상한·빌려 쓰는 중·source·version)로 확인한다. 자세한 규칙은 `docs/operations/model-capacity-devices.md`.
 - dispatched 행은 TTL·정책 변경·disabled로 풀리지 않는다. indeterminate 행은 2026-10-30부터 점유가 아니다(§12) — 남지만 한도·재접수·정책 변경에 들지 않는다. 살아 있는 프로세스의 timeout·abort는 indeterminate가 되고 그 작업(시도)은 끝난다. 예외는 요청 바이트가 하나도 나가지 않은 것이 증명된 실패(연결 거부·DNS 실패·connect 시간 초과 — 엔진이 꺼져 있거나 재시작 중)다: 2026-10-30부터 그 호출은 `gateway_not_started`로 정산되어 칸을 바로 돌려준다(`lib/llm/gateway-not-started.ts`). 요청이 소켓에 쓰인 뒤의 실패는 그대로 indeterminate다.
 - 선행 결정·작업: PR05d(gateway 9 route 계약), PR05c-6(CLI 계약), abcLLM PR3(번역 4경로), product-audit abcllm 분기 결정(지금은 admission만 → 항상 `admission_only`), 슬롯 회수 결정, AI2 items 전환(§2).
 
 ```sh
-# 6-1 policy 파일. routes에는 실제로 쓰는 (routeId, provider, model)을 모두 적는다. 값은 사용자 승인 사항이다
+# 6-1 policy 파일. routes에는 실제로 쓰는 (routeId, provider, model)을 모두 적는다. 값은 사용자 승인 사항이다.
+#     한도는 여기 없다(장비별, /admin/models/devices). groupLimits 는 장비 행이 없을 때의 대체값으로만 쓰이며 생략해도 된다(생략하면 장비 행이 필수).
 cat > capacity-policy.json <<'EOF'
-{ "version": 1, "globalLimit": 4, "providerLimits": { "abcllm": 4 }, "groupLimits": { "gateway": 4 },
-  "poolLimits": { "reviewer": 3, "text": 1 }, "weights": { "first": 2, "second": 2, "background": 1 },
-  "maxWaiting": 64, "queueTtlMs": 300000, "reservationTtlMs": 30000,
+{ "version": 1, "maxWaiting": 64, "queueTtlMs": 300000, "reservationTtlMs": 30000,
   "routes": [
     { "routeId": "reason-translate", "provider": "abcllm", "model": "<모델>", "providerBudgetId": "abcllm", "groupId": "gateway" },
     { "routeId": "second-review", "provider": "abcllm", "model": "<모델>", "providerBudgetId": "abcllm", "groupId": "gateway" }
   ] }
 EOF
 
-# 6-2 policy 설치(disabled에서). revision R → R+1. 출력의 새 policy hash를 기록한다
+# 6-2 policy 설치(disabled에서). revision R → R+1. 출력의 새 policy hash를 기록한다. 경고 device_row_missing:<장비> 가 나오면 open 전에 /admin/models/devices 에서 그 장비 행을 만든다
 node --import tsx scripts/ops/pipeline-control.ts capacity policy --file=capacity-policy.json --from-mode=disabled --expect-epoch=CE --expect-revision=R --operator=<이름> --reason="<사유>"
 node --import tsx scripts/ops/pipeline-control.ts capacity policy --file=capacity-policy.json --from-mode=disabled --expect-epoch=CE --expect-revision=R --operator=<이름> --reason="<사유>" --execute
 ```
@@ -216,7 +216,7 @@ node --import tsx scripts/ops/pipeline-control.ts capacity mode --to=open --from
 
 6-6 관찰(첫 15분 5분마다, 이후 1시간마다): §9 장부 쿼리. route·state별 수, 최장 대기, `indeterminate` 추이, `policy_changed`·`wait_expired` event 수.
 
-6-7 한도 올리기(text pool부터): `capacity mode --to=draining --from-mode=open` → `capacity policy --from-mode=draining`(새 한도) → `capacity mode --to=open --from-mode=draining`. policy 명령이 revision을 하나 올리므로 마지막 명령의 `--expect-revision`은 `status`에서 다시 읽는다. 옛 세대 active 행이 정산될 때까지 새 admission은 `policy_changed`로 미뤄진다(`old_generation_held` 경고).
+6-7 한도·우선순위·낮은 순위 상한·유휴 시간·예비 칸 바꾸기: `/admin/models/devices` 에서 장비 행을 저장한다 — **즉시 다음 입장부터 적용, DRAIN·policy 명령·revision 없음**, 잡힌 행은 그대로 끝난다(한도를 점유 아래로 내리면 새 입장만 막힌다). `status` 의 `[devices]` 로 확인한다. DRAIN 이 필요한 것은 route→장비 매핑·TTL·maxWaiting 같은 **policy** 변경만이다: `capacity mode --to=draining --from-mode=open` → `capacity policy --from-mode=draining` → `capacity mode --to=open --from-mode=draining`. policy 명령이 revision을 하나 올리므로 마지막 명령의 `--expect-revision`은 `status`에서 다시 읽는다. 옛 세대 reserved·dispatched 행이 정산될 때까지 새 admission은 `policy_changed`로 미뤄진다(`old_generation_held` 경고; `compatiblePredecessor` 로 route 를 더하기만 한 정책은 미루지 않는다). 장비 id 를 바꾸는 매핑 변경은 장비 행을 먼저 만든 뒤 policy 를 적용한다.
 
 중단 기준(하나라도 해당하면 6-8):
 - `indeterminate`가 계속 늘어난다(회수 경로 없음).
