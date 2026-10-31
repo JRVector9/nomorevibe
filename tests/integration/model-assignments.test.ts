@@ -203,6 +203,52 @@ describe("saveModelAssignment (PR 3b-A)", () => {
     expect((await readModelCapacityDevice("eng-dev"))!.version).toBe(device + 1);
   });
 
+  it("turning an existing row off is never refused by the contract: no probe, no contract row needed, no route append — CAS still applies (3b-D)", async () => {
+    const live = await save(engAi1());
+    // the engine is gone and its contract switched off: any save that checks the contract would now probe and be refused
+    await client`UPDATE model_serving_contracts SET enabled = false`;
+    failWith = "engine_unreachable:unreachable";
+    await unchanged(() => save(engAi1({ expectedVersion: 1, note: "live again" })), "model_assignment_refused:contract_probe_failed:engine_unreachable:unreachable");
+    probeCalls = [];
+    const control = await controlRow(), stored = await contracts(), roles = await roleRows("eng-dev"), device = (await readModelCapacityDevice("eng-dev"))!.version;
+    const off = await save(engAi1({ expectedVersion: 1, mode: "off", note: "engine down" }), "jr", { registry: () => { throw new Error("registry must not be read"); } });
+    expect(probeCalls).toEqual([]);
+    expect(off).toMatchObject({ offOnly: true, contract: null, appended: [], policyRevision: control.revision, route: live.route,
+      deviceRole: { routeId: "crawl-agent-review", before: 1, after: 1 } });
+    expect(off.after).toMatchObject({ mode: "off", version: 2, note: "engine down", model: "Qwen-X", routeId: "crawl-agent-review", provider: "abcllm",
+      registryKey: "eng:qwen", transport: "direct", evidenceKey: live.after.evidenceKey });
+    // nothing else changed: policy, contracts, device roles, device version
+    expect(await controlRow()).toEqual(control);
+    expect(await contracts()).toEqual(stored);
+    expect(await roleRows("eng-dev")).toEqual(roles);
+    expect((await readModelCapacityDevice("eng-dev"))!.version).toBe(device);
+    const saved = await audits(MODEL_ASSIGNMENT_SAVE_AUDIT_ACTION);
+    expect(saved).toHaveLength(2);
+    expect(saved[1]).toMatchObject({ target: "eng-dev:ai1:qwen", detail: { version: 2, expectedVersion: 1, offOnly: true, contract: null, appended: false,
+      before: { mode: "live" }, after: { mode: "off" } } });
+    // CAS still applies; a disabled device does not block turning off either
+    await unchanged(() => save(engAi1({ expectedVersion: 1, mode: "off" })), "model_assignment_version_mismatch:2");
+    await client`UPDATE model_capacity_devices SET enabled = false WHERE device_id = 'eng-dev'`;
+    expect((await save(engAi1({ expectedVersion: 2, mode: "off" }))).after).toMatchObject({ mode: "off", version: 3 });
+    await client`UPDATE model_capacity_devices SET enabled = true WHERE device_id = 'eng-dev'`;
+    // a rank change while off writes only the device role (and bumps the device version), still without a probe
+    const ranked = await save(engAi1({ expectedVersion: 3, mode: "off", rank: 2 }));
+    expect(ranked).toMatchObject({ offOnly: true, deviceRole: { before: 1, after: 2 }, after: { rank: 2, version: 4 } });
+    expect(await roleRows("eng-dev")).toEqual([{ route_id: "crawl-agent-review", role_rank: 2 }]);
+    expect((await readModelCapacityDevice("eng-dev"))!.version).toBe(device + 1);
+    expect(probeCalls).toEqual([]);
+    // changing the model while off is not "turning off": it checks the new model's contract as before (and is refused here)
+    await unchanged(() => save(engAi1({ expectedVersion: 4, mode: "off", registryKey: "eng:qwen-y" })), "model_assignment_refused:contract_probe_failed");
+    expect(probeCalls).toEqual([{ key: "eng:qwen-y", routeId: "crawl-agent-review", transport: "direct" }]);
+    // a new row with mode off still probes, appends its route and sets the device role (the route is pre-created)
+    failWith = null; probeCalls = [];
+    const fresh = await save(engAi1({ assignmentId: "eng-dev:ai1:qwen-y", registryKey: "eng:qwen-y", mode: "off", rank: 3 }));
+    expect(probeCalls).toEqual([{ key: "eng:qwen-y", routeId: "crawl-agent-review", transport: "direct" }]);
+    expect(fresh).toMatchObject({ offOnly: false, contract: { source: "probed" }, after: { mode: "off", version: 1 },
+      appended: [{ routeId: "crawl-agent-review", provider: "abcllm", model: "Qwen-Y", providerBudgetId: "eng", groupId: "eng-dev" }] });
+    expect((await controlRow()).revision).toBe(control.revision + 1);
+  });
+
   it("keeps dispatched holds valid across appends (compatiblePredecessor), refuses an append it cannot prove, and resets the chain when nothing is held", async () => {
     const gen1 = await controlRow();
     const h1 = await dispatched(request("base-a"));

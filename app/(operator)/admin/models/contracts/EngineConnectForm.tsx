@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 import { useActionState, useState } from "react";
 import { connectEngine, readbackEngineBase, type ContractSaveState } from "./actions";
 
@@ -65,6 +66,8 @@ export function EngineConnectForm({ models, routes }: { models: EngineConnectMod
     <div><button type="submit" disabled={pending || !engineModel || !chosen.length || (lenUnknown && !maxModelLen.trim())} className="rounded bg-fg px-3 py-2 text-bg">
       {pending ? "연결 중…" : "연결 저장"}</button></div>
     {state?.ok && <p role="status" className="text-[13px]">{state.message}</p>}
+    {state?.ok && state.assignHref && <p className="text-[13px]"><Link href={state.assignHref} prefetch={false} className="font-semibold text-accent-ink underline">
+      이 모델을 단계에 배정 →</Link> <span className="text-fg-3">모델 배정 화면의 새 배정 폼을 이 모델·엔진 직접 전송으로 채웁니다(연결 저장과 별개).</span></p>}
     {state?.issues?.map(text => <p key={text} role="alert" className="text-[13px] text-red-600">{text}</p>)}
   </form>;
 }
