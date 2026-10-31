@@ -50,7 +50,7 @@ export const EMERGENCY_JOB_POLICY: Readonly<Record<string, JobNeed | "suspended"
   "cdn-purge": { tier: "translation-uptime", http: true },
   "product-search-refresh": { tier: "translation-uptime" },
   "product-embedding": { tier: "translation-uptime", embedding: true },
-  // 모델을 부르지 않고 근거 있는 미확인 점유만 푼다. 비상 중에도 모델 자리를 되돌려야 하므로 멈추지 않는다.
+  // 모델을 부르지 않고 종료 근거가 있는 보낸 호출(dispatched) 점유를 풀고 확인 못함 행을 정산한다. 비상 중에도 모델 자리를 되돌려야 하므로 멈추지 않는다.
   "model-capacity-reclaim": { tier: "translation-uptime" },
   "crawl-publish": { tier: "approved-publish", model: true },
   "crawl-judge": { tier: "prepared-review" },

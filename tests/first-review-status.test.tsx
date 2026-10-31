@@ -58,19 +58,34 @@ describe("AI 1차 상세 상태", () => {
     expect(out).toContain("오래된 집계");
   });
 
-  it("자신의 실패가 없어도 번역의 종료 미확정 점유가 막는 공유 그룹을 표시한다", () => {
+  const groupControl = (state: "dispatched" | "indeterminate") => {
     const control = buildPipelineControlStatus(null, null);
     control.observedAt = NOW;
     Object.assign(control.controls.find(row => row.key === "model")!, { mode: "open", policy: "verified", metrics: [] });
     control.runtime.modelGroups = [{ group: "shared-first-group", limit: 1,
-      firstModels: [{ provider: "abcllm", model: "first-model" }], waitingFirst: 4, reserved: 0, dispatched: 0, indeterminate: 1,
-      occupants: [{ route: "reason-translate", state: "indeterminate", count: 1 }] }];
-    const out = html({ control });
+      firstModels: [{ provider: "abcllm", model: "first-model" }], waitingFirst: 4, reserved: 0,
+      dispatched: state === "dispatched" ? 1 : 0, indeterminate: state === "indeterminate" ? 1 : 0,
+      occupants: [{ route: "reason-translate", state, count: 1 }] }];
+    return control;
+  };
+
+  it("자신의 실패가 없어도 번역의 보낸 호출 점유가 막는 공유 그룹을 표시한다", () => {
+    const out = html({ control: groupControl("dispatched") });
     expect(out).toContain("공유 모델 슬롯 대기");
     expect(out).toContain("shared-first-group");
     expect(out).toContain("reason-translate");
-    expect(out).toContain("외부 종료 미확정");
+    expect(out).toContain("호출 미정산 1건");
     expect(out).toContain("AI 1차 실행0·실패0만으로 용량이 비었다고 판단하지 않습니다");
+  });
+
+  it("확인 못함(미확인) 호출은 점유·막힘이 아니라 사람 검토 목록으로 보낸다 (2026-10-30)", () => {
+    const out = html({ control: groupControl("indeterminate") });
+    expect(out).not.toContain("공유 모델 슬롯 대기");
+    expect(out).toContain("유효 예약·호출 0 / 상한 1");
+    expect(out).toContain("확인 못함 1건 · 사람 검토");
+    expect(out).toContain("확인 못함 · 사람 검토(점유 아님) 1건");
+    expect(out).toContain('href="/admin/models#unknown-review-heading"');
+    expect(out).not.toMatch(/종료 미확정|계속 점유/);
   });
 
   it("대기 나이를 모르면 수집 압력 미만이라고 단정하지 않는다", () => {

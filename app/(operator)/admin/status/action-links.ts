@@ -30,6 +30,8 @@ export const ACTION_LINKS = {
   models: "/admin/status#models",
   firstReviewStatus: "/admin/status#first-review-status",
   modelCapacity: "/admin/status#pipeline-models-title",
+  /** 확인 못함 — 사람 검토 목록(미확인 모델 호출, 슬롯 점유 아님 · 2026-10-30) */
+  unknownReview: "/admin/models#unknown-review-heading",
   /** 직접 판단 구간, 오래 기다린 것부터 */
   reviewHuman: "/admin/review?stage=human&sort=wait#review-list",
   /** 확정만 하면 됨 — 두 모델이 같은 결론 */
