@@ -1,5 +1,6 @@
 import { db, onPrimary } from "@/lib/db";
 import { ADMIN_MODEL_STAGES, type AdminStagePools } from "@/lib/llm/admin-model-stages";
+import { ASSIGNMENT_STAGE_IDS, ASSIGNMENT_STAGES } from "@/lib/llm/capacity-helpers";
 import { GATEWAY_SERVING_CONTRACT_ROUTES, registeredGatewayServingContractSchema, type GatewayServingRoute } from "@/lib/llm/gateway-serving-contract-config";
 import { modelRequestName, readModelRegistry, type ModelDefinition } from "@/lib/llm/model-registry";
 import { ensureServingContracts, servingContractAuth } from "@/lib/llm/serving-contract-store";
@@ -101,6 +102,16 @@ export function engineRouteContract(routeId: GatewayServingRoute, model: string,
   if (shape && "strictTerminalOptIn" in shape) contract.strictTerminalOptIn = "abcllm-strict-terminal-v1";
   const checked = validateAdminServingContract(routeId, contract);
   return checked.ok ? checked.contract : null;
+}
+
+/**
+ * 연결이 끝난 뒤 「이 모델을 단계에 배정」(PR 3b-D) — 모델 배정 화면의 새 배정 폼을 이 등록부 key·엔진 직접 전송·고른 경로 중 첫 배정 단계로 미리 채우는 주소.
+ * 연결 저장의 뜻은 바꾸지 않는다(배정은 운영자가 그 폼에서 따로 저장한다).
+ */
+export function engineConnectAssignmentHref(registryKey: string, routes: readonly string[]): string {
+  const stage = ASSIGNMENT_STAGE_IDS.find(id => { const spec = ASSIGNMENT_STAGES[id]; return spec.routeId !== null && routes.includes(spec.routeId) && spec.transports.has("direct"); });
+  const query = new URLSearchParams({ registryKey, transport: "direct", ...(stage ? { stage } : {}) });
+  return `/admin/models/assignments?${query.toString()}#form`;
 }
 
 async function policyRoutes(): Promise<{ routeId: string; provider: string; model: string }[] | null> {

@@ -11,6 +11,7 @@ import { formatListTime } from "@/lib/format/time";
 import { signalYields, sumWindows, todayPublications } from "@/lib/operations/dashboard";
 import { freshWindowsLabel, WINDOW_TITLE, type FreshWindows } from "@/lib/operations/windows";
 import { readSettingsApply } from "@/lib/operations/settings-apply";
+import { assignmentTableFlag } from "@/lib/operations/admin-assignment-source";
 import { logger } from "@/lib/observability/logger";
 import { SettingsForm } from "./SettingsForm";
 import { SettingsDriftNotice } from "./SettingsDriftNotice";
@@ -64,12 +65,14 @@ export default async function AdminPage() {
   const now = new Date();
   // 머리 갱신 줄의 "새로고침"(5초 쿠키)이면 신호별 수율의 1분 캐시를 건너뛴다(분당 상한, dashboard.ts)
   const fresh = (await cookies()).has(OPS_FRESH_COOKIE);
-  const [settings, meta, counts, apply] = await Promise.all([getSettings(), getSettingsMeta(), candidateCounts(),
+  const [settings, meta, counts, apply, assignmentLocked] = await Promise.all([getSettings(), getSettingsMeta(), candidateCounts(),
     // 적용 확인도 덤이다 — 관측을 못 읽어도 설정은 고칠 수 있어야 한다
     readSettingsApply().catch((error) => {
       logger.warn("admin.settings_apply_unavailable", { error });
       return null;
-    })]);
+    }),
+    // 배정 표 플래그(3b-B) — 켜졌으면 1차·2차 모델 칸을 읽기 전용으로(PR 3b-D). 못 읽으면 꺼짐(편집 가능)
+    assignmentTableFlag()]);
   // 성과는 덤이다 — 집계가 실패해도 설정은 고칠 수 있어야 한다
   const [yields, listed] = await Promise.all([
     signalYields(settings, 7, { fresh }).catch((error) => {
@@ -151,18 +154,19 @@ export default async function AdminPage() {
           </nav>
         </aside>
         <div className="flex min-w-0 flex-[999_1_640px] flex-col gap-4">
-          <SettingsForm settings={settings} version={settingsFormVersion(settings)} yields={yieldsByLabel} secondControls={<>
+          <SettingsForm settings={settings} version={settingsFormVersion(settings)} yields={yieldsByLabel} assignmentLocked={assignmentLocked} secondControls={<>
             <Suspense fallback={<p aria-busy="true">사람 검토 모델 연결 확인 중…</p>}>
               <HumanReviewSwitchSlot enabled={settings.humanReview.enabled} generation={settings.humanReview.generation}
                 keys={settings.stageModelPools?.["human-review"] ?? []} />
             </Suspense>
             <ReviewModeForm key={settings.reviewMode} mode={settings.reviewMode} ready={process.env.CRAWL_REVIEW_READY === "true"} />
             {/* 게이트웨이 모델 목록을 기다리는 동안에도 나머지 설정은 먼저 그린다 */}
-            <Suspense fallback={<p aria-busy="true" className="rounded-[10px] border border-line px-4 py-3 text-[13px] font-semibold text-fg-2">
+            {/* 2차 표 바로 바꾸기도 투표 모델을 바꾸므로 배정 표로 옮겨진 뒤에는 그리지 않는다(PR 3b-D) */}
+            {!assignmentLocked && <Suspense fallback={<p aria-busy="true" className="rounded-[10px] border border-line px-4 py-3 text-[13px] font-semibold text-fg-2">
               2차 표 · <span className="font-mono">{currentVoter?.model ?? "없음"}</span> · 모델 목록을 읽는 중…</p>}>
               <VoterSwitchSlot key={currentVoter ? `${currentVoter.provider}|${currentVoter.model}` : "none"} current={currentVoter}
                 firstModel={settings.firstReview?.model ?? null} />
-            </Suspense>
+            </Suspense>}
           </>} />
           <SettingsDriftNotice drift={drift} reset={drift.length > 0 ? describeReset(resetChanges(settings)) : []} />
         </div>

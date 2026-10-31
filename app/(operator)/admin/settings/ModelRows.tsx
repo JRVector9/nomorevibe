@@ -16,14 +16,25 @@ const PROVIDERS = [
 /**
  * 2차 심사의 표·대체 모델 — 세운 것만 보이고, 비어 있는 칸은 "더하기"로 연다.
  * 이름은 예전과 같다(`${prefix}Provider0`·`${prefix}Model0` …). 모델을 비운 칸은 서버가 세우지 않는다.
+ * readOnly(배정 표로 옮겨진 뒤, PR 3b-D)면 지금 값을 글자로 보이고 같은 이름의 숨은 칸으로 그대로 보낸다 — 다른 칸을 저장해도 이 값은 바뀌지 않는다.
  */
-export function ModelRows({ prefix, initial, max, addLabel, placeholder, choices = [], allowDirect = true }: {
+export function ModelRows({ prefix, initial, max, addLabel, placeholder, choices = [], allowDirect = true, readOnly = false }: {
   prefix: "primary" | "firstAdditional" | "voter" | "fallback"; initial: Model[]; max: number; addLabel: string; placeholder: string;
   choices?: readonly ModelOption[];
   allowDirect?: boolean;
+  readOnly?: boolean;
 }) {
   // 값을 상태로 든다 — 가운데 칸을 빼면 아래 칸들이 한 칸씩 당겨지는데, 손대지 않는 입력이면 고친 값이 사라진다
   const [rows, setRows] = useState<Model[]>(() => initial.slice(0, max));
+  if (readOnly) return <div className="flex flex-col gap-2" data-readonly="true">
+    {rows.length === 0 && <span className="text-[13px] text-fg-3">없음</span>}
+    {rows.map((row, index) => <div key={index} className="flex flex-wrap items-center gap-2 rounded-[9px] border border-line bg-bg-soft px-2.5 py-2 text-[13px]">
+      <input type="hidden" name={`${prefix}Provider${index}`} value={row.provider} />
+      <input type="hidden" name={`${prefix}Model${index}`} value={row.model} />
+      <span className="font-semibold">{PROVIDERS.find(provider => provider.value === row.provider)?.label ?? row.provider}</span>
+      <code className="min-w-0 break-all">{row.model}</code>
+    </div>)}
+  </div>;
   const change = (index: number, patch: Partial<Model>) =>
     setRows((current) => current.map((row, at) => (at === index ? { ...row, ...patch } : row)));
   return (

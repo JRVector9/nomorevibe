@@ -27,6 +27,7 @@ import type { AgentStatus } from "@/lib/operations/contracts";
 import { screenModelConfig } from "@/lib/screen-review/vision-review";
 import { EMBEDDING_MODEL, EMBEDDING_DIMENSIONS } from "@/lib/domain/products/embedding";
 import { modelServerHealth } from "@/lib/operations/model-servers";
+import { assignmentTableFlag } from "@/lib/operations/admin-assignment-source";
 import { SearchModelConstraints } from "./SearchModelConstraints";
 import "../status/operations.css";
 import "./models.css";
@@ -38,7 +39,9 @@ export default async function ModelsPage() {
   if (!await currentAdmin()) redirect("/admin/login");
   // Admin registry overrides (0148) are part of the registry this page shows and validates against.
   await ensureServingContracts();
-  const [settings, gatewayModels, models] = await Promise.all([getSettings(), listGatewayModels(), currentModelEnv()]);
+  const [settings, gatewayModels, models, assignmentLocked] = await Promise.all([getSettings(), listGatewayModels(), currentModelEnv(),
+    // 배정 표 플래그(3b-B) — 켜졌으면 아래 모델 선택 폼을 읽기 전용으로(PR 3b-D). 못 읽으면 꺼짐(편집 가능)
+    assignmentTableFlag()]);
 
   const registry = readModelRegistry();
   const defaults = Object.fromEntries(ADMIN_MODEL_STAGES.map(stage => [stage.id, stage.purpose === "screen-review" ? screenModelConfig()?.model ?? "미설정"
@@ -55,13 +58,14 @@ export default async function ModelsPage() {
       <div className="flex flex-wrap gap-4 text-[14px]">
         <Link href="/admin/models/contracts" className="underline">모델 연결(엔진 주소·키·계약) 관리 →</Link>
         <Link href="/admin/models/limits" className="underline">실시간 한도(경로 한도·번역 묶음·틱 예산) →</Link>
+        <Link href="/admin/models/assignments" className="underline">모델 배정(단계 × 장비 × 모델) →</Link>
       </div>
       <p className="text-[14px] text-fg-2">멈춘 단계와 모델을 먼저 확인하고, 아래에서 다음 작업에 쓸 모델을 바꿉니다.</p>
       <Link href="/admin/status" prefetch={false} className="text-[13px] font-semibold text-accent-ink">운영센터에서 실제 워커 경로·용량 확인 →</Link>
     </header>
     <Suspense fallback={<p aria-busy="true">운영 DB 실측 확인 중…</p>}><LiveModelsSlot assignments={assignments} models={registry.models} /></Suspense>
     <Suspense fallback={<p aria-busy="true">사람 검토 목록 확인 중…</p>}><UnknownReviewSlot /></Suspense>
-    <ReviewModelsForm settings={settings} version={settingsFormVersion(settings)} models={registry.models} defaults={defaults}
+    <ReviewModelsForm settings={settings} version={settingsFormVersion(settings)} models={registry.models} defaults={defaults} locked={assignmentLocked}
       firstChoices={reviewModelOptions(gatewayModels, false)} secondChoices={reviewModelOptions(gatewayModels, true)} />
     <details className="rounded-xl border border-line bg-bg-card p-4"><summary className="cursor-pointer font-semibold">참고 · 카테고리 분류 / 검색 모델 / 모델 등록부 / 다른 LLM 단계</summary>
     <div className="mt-4 flex min-w-0 flex-col gap-5">
