@@ -226,13 +226,13 @@ export async function runJob<C>(
     if (outcome.deferred) {
       // No work was acknowledged. Preserve producer signals, cursor, pause and
       // historical success fields, including changes made during this tick.
-      // lastError 는 "마지막 회차가 던졌다"이다. stage_blocked 는 단계가 item 소비자에게 넘어간 동안의 정상 상태라 이 잡은
-      // 완료 틱을 다시 내지 못한다 — 그 사이 한 번 던진 오류(예: 교착)가 영원히 "마지막 회차 실패"(긴급)로 남았다(2026-10-29).
-      // 던지지 않고 끝난 이 틱이 지운다. 일시적인 미룸(model_capacity·http_origin_permit·source_buffer)은 일을 시도하지 않았고
-      // 곧 완료 틱이 오므로 기존대로 남긴다. 성공 시각은 어느 미룸도 옮기지 않는다.
-      const settled = outcome.deferred === "stage_blocked" ? { lastError: null } : {};
+      // lastError 는 "마지막 회차가 던졌다"이다 — 던지지 않고 끝난 이 틱은 사유를 가리지 않고 지운다. 처음에는 stage_blocked 만
+      // 지웠다(2026-10-29: item 소비자 단계로 넘어간 잡은 완료 틱을 다시 내지 못해 교착 한 번이 영원히 "마지막 회차 실패"로 남았다).
+      // 그런데 일시적 미룸도 같았다 — 모델 자리가 막힌 동안(model_capacity) 잡은 틱마다 미루기만 하고 완료 틱이 오지 않아, 며칠 전
+      // 던진 "[55P03] …" 이 그대로 남아 관리자 상태 "오류"·긴급 "마지막 회차가 실패한 작업"으로 보였다(2026-10-31 실측: 30분간
+      // 미룸 260회·던짐 0회). 지금 미루는 까닭은 defer:<job> 관측(onDeferred)이 따로 말한다. 성공 시각은 어느 미룸도 옮기지 않는다.
       const release = async (tx: typeof db | ProductTransaction) => {
-        return tx.update(jobs).set({ lockedAt: null, leaseToken: null, ...settled })
+        return tx.update(jobs).set({ lockedAt: null, leaseToken: null, lastError: null })
           .where(owned).returning({ name: jobs.name });
       };
       const [row] = outcome.deferred === "http_origin_permit" || outcome.deferred === "model_capacity" || outcome.deferred === "source_buffer"

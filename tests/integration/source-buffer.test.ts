@@ -307,11 +307,13 @@ it("preserves a concurrent producer request, pause, cursor and history when rele
     await requestJob("crawl-fetch");
     await client`UPDATE jobs SET not_before='2100-01-01 00:00:00.123456',cursor='{"preserved":1}'::jsonb,
       last_success_at='2026-10-15 01:02:03.123456',last_error='preserved-history',updated_at='2026-10-15 01:02:03.654321' WHERE name='crawl-fetch'`;
-    expected = await client`SELECT to_jsonb(t)-'locked_at'-'lease_token' AS value FROM jobs t WHERE name='crawl-fetch'`;
+    expected = await client`SELECT to_jsonb(t)-'locked_at'-'lease_token'-'last_error' AS value FROM jobs t WHERE name='crawl-fetch'`;
     return { done: false, deferred: "source_buffer" };
   });
   expect(result).toMatchObject({ status: "deferred", reason: "source_buffer" });
-  expect(await client`SELECT to_jsonb(t)-'locked_at'-'lease_token' AS value FROM jobs t WHERE name='crawl-fetch'`).toEqual(expected);
+  expect(await client`SELECT to_jsonb(t)-'locked_at'-'lease_token'-'last_error' AS value FROM jobs t WHERE name='crawl-fetch'`).toEqual(expected);
+  // 던지지 않고 끝난 틱이라 지난 실패 기록(last_error)은 지운다(runner.ts) — 잠금과 함께 이 틱이 바꾸는 유일한 칸
+  expect((await client`SELECT last_error FROM jobs WHERE name='crawl-fetch'`)[0]).toEqual({ last_error: null });
   expect((await client`SELECT lease_token,locked_at FROM jobs WHERE name='crawl-fetch'`)[0]).toMatchObject({ lease_token: null, locked_at: null });
 })()));
 it("rolls back a bounded control/read timeout before deferring the pending request", () => track((async () => {
