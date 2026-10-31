@@ -35,6 +35,7 @@ export const NAV_GROUPS: readonly { title: string; pages: readonly NavPage[] }[]
       { href: "/admin/models", label: "단계별 모델", hint: "1·2차·사람 검토·LLM 경로", icon: "sliders" },
       { href: "/admin/models/limits", label: "실시간 한도", hint: "경로 한도·번역 묶음·틱 예산·장비 한도", icon: "sliders" },
       { href: "/admin/models/devices", label: "장비 한도", hint: "장비별 칸 수·역할 순서·빌려 쓰기", icon: "sliders" },
+      { href: "/admin/models/helpers", label: "도우미 장비", hint: "쉬는 장비가 1·2차 검수 돕기·섀도·자동 정지", icon: "sliders" },
       { href: "/admin/categories", label: "카테고리 기준", hint: "분류 정의·예시", icon: "tag" },
       { href: "/admin/evidence", label: "근거 수집 설정", hint: "출처·갱신 정책", icon: "file" },
       { href: "/admin/ranking", label: "랭킹 설정", hint: "집계·시즌 정책", icon: "bars" },
