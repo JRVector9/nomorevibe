@@ -5,11 +5,13 @@ import { AdminNav, countBadge, NAV_GROUPS } from '@/app/(operator)/admin/AdminNa
 describe('shared administrator navigation', () => {
   it('keeps feedback moderation and the selected page visible', () => {
     const html = renderToStaticMarkup(<AdminNav current="/admin/status" />);
-    expect(html.match(/href="\/admin/g)).toHaveLength(23);
+    expect(html.match(/href="\/admin/g)).toHaveLength(24);
     expect(html).toContain('href="/admin/models"');
     expect(html).toContain('href="/admin/models/limits"');
     expect(html).toContain('href="/admin/models/devices"');
     expect(html).toContain('href="/admin/models/helpers"');
+    expect(html).toContain('href="/admin/models/assignments"');
+    expect(html).toContain('모델 배정');
     expect(html).toContain('피드백 검수');
     expect(html).toContain('문의 접수');
     expect(html).toContain('메이커 답장 검수');
@@ -19,6 +21,14 @@ describe('shared administrator navigation', () => {
     expect(html).toContain('AI 소식');
     expect(html).toContain('작업 로그');
     expect(html).toContain('aria-current="page"');
+  });
+  it('places 모델 배정 right after 도우미 장비 and selects only it on its page', () => {
+    const pages = NAV_GROUPS[1].pages.map((page) => page.href);
+    expect(pages.indexOf('/admin/models/assignments')).toBe(pages.indexOf('/admin/models/helpers') + 1);
+    expect(NAV_GROUPS[1].pages.find((page) => page.href === '/admin/models/assignments')).toMatchObject({ label: '모델 배정', icon: 'sliders' });
+    const html = renderToStaticMarkup(<AdminNav current="/admin/models/assignments" />);
+    expect(html).toMatch(/(?=[^>]*href="\/admin\/models\/assignments")(?=[^>]*aria-current="page")/);
+    expect(html.match(/aria-current="page"/g)).toHaveLength(1);
   });
   it('selects only the nested menu when a page is its own menu entry (/admin/models/limits under /admin/models)', () => {
     const html = renderToStaticMarkup(<AdminNav current="/admin/models/limits" />);
