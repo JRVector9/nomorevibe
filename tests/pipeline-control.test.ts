@@ -126,6 +126,31 @@ describe("pipeline control plan", () => {
     expect([allowed.blocked, allowed.warnings]).toEqual([[], [`deferred_routes:${deferredRoutes(rows).length}`]]);
   });
 
+  it("warns about devices without a settings row on policy install and refuses open for a device with neither row nor fallback (PR 1b)", () => {
+    const device = (deviceId: string, source: "table" | "policy_fallback") => ({ deviceId, source, limitSlots: 4, secondaryCap: 4, idleMs: 60_000, reserveSlots: 0,
+      active: 0, secondaryActive: 0, secondaryBound: 4, primaryBusy: false, lending: false, waiting: 0, waitingPrimary: 0, version: source === "table" ? 1 : null, updatedAt: null });
+    const { groupLimits, ...bare } = policy; void groupLimits;
+    const twoDevices: ModelCapacityPolicy = { ...bare, routes: [...policy.routes, { routeId: "crawl-tagline", provider: "abcllm", model: "m", providerBudgetId: "abcllm", groupId: "omega" }] };
+    // 설치: 장비 행이 없는 장비(정책 대체·미설정 모두)는 경고다 — 저장은 /admin/models/devices 에서 즉시 적용되므로 거절하지 않는다.
+    const installed = planPipelineControl(transition("capacity", "policy", "--file=p", "--from-mode=disabled", "--expect-epoch=1", "--expect-revision=1"),
+      snapshot({ devices: [device("gateway", "policy_fallback")] }), twoDevices);
+    expect([installed.blocked, installed.warnings]).toEqual([[], ["device_row_missing:gateway", "device_row_missing:omega"]]);
+    expect(planPipelineControl(transition("capacity", "policy", "--file=p", "--from-mode=disabled", "--expect-epoch=1", "--expect-revision=1"),
+      snapshot({ devices: [device("gateway", "table"), device("omega", "table")] }), twoDevices).warnings).toEqual([]);
+    // 장비 상태를 모르는 스냅숏(옛 형식·읽기 실패)은 장비 경고를 만들지 않는다.
+    expect(planPipelineControl(transition("capacity", "policy", "--file=p", "--from-mode=disabled", "--expect-epoch=1", "--expect-revision=1"), snapshot(), twoDevices).warnings).toEqual([]);
+    // OPEN: 행도 대체값도 없는 장비(omega)의 route 는 모두 device_unconfigured 로 미뤄지므로 거절한다. 대체값이 있는 장비(gateway)는 지나간다.
+    const draining = (devices: ReturnType<typeof device>[]) => snapshot({ devices,
+      capacity: { ...snapshot().capacity, mode: "draining", revision: 2, policy: twoDevices, policyHash: modelCapacityPolicyHash(twoDevices) } });
+    const open = (devices: ReturnType<typeof device>[]) => planPipelineControl({ ...transition("capacity", "mode", "--to=open", "--from-mode=draining",
+      "--expect-epoch=1", "--expect-revision=2"), allowDeferredRoutes: true }, draining(devices));
+    expect(open([device("gateway", "table")]).blocked).toEqual(["device_unconfigured:omega"]);
+    expect(open([device("gateway", "table"), device("omega", "table")]).blocked).toEqual([]);
+    // status 는 장비 표를 찍는다(전역 상한 줄은 없다).
+    const text = formatControlStatus(draining([{ ...device("gateway", "table"), active: 2, secondaryActive: 1, secondaryBound: 4, lending: true }]));
+    expect(text).toContain("[devices]"); expect(text).toMatch(/gateway\s+4\s+2\s+idle\s+1\/4\s+4\s+lending/); expect(text).not.toContain("설정 상한");
+  });
+
   it("changes a policy only while closed and refuses an unchanged or invalid policy", () => {
     const open = snapshot({ capacity: { ...snapshot().capacity, mode: "open", policy, policyHash: modelCapacityPolicyHash(policy) } });
     expect(planPipelineControl(transition("capacity", "policy", "--file=p", "--from-mode=open", "--expect-epoch=1", "--expect-revision=1"), open, policy).blocked)
@@ -236,8 +261,11 @@ describe("pipeline control runner", () => {
     const result = await runPipelineControl(fake.database, transition("stage", "drain", "--stage=ai2", "--from-mode=legacy", "--expect-epoch=1"));
     expect([result.dryRun, result.executed, result.blocked]).toEqual([true, false, false]);
     expect(fake.transactions()).toBe(1);
-    expect(fake.queries.map(query => query.text.trim().split(/\s+/).slice(0, 2).join(" "))).toEqual(["SET TRANSACTION", "WITH c"]);
+    // 스냅숏 한 문장 뒤에 장비 상태 읽기(PR 1b, SELECT 만)가 따른다 — 같은 읽기 전용 TX 다.
+    expect(fake.queries.map(query => query.text.trim().split(/\s+/).slice(0, 2).join(" "))).toEqual(["SET TRANSACTION", "WITH c", "SELECT epoch,"]);
     expect(fake.queries[0].text).toContain("READ ONLY");
+    expect(fake.queries[2].text).toContain("FROM model_capacity_control WHERE id = 1");
+    expect(fake.queries.some(query => /\b(UPDATE|INSERT|DELETE)\b|FOR (SHARE|UPDATE)/.test(query.text))).toBe(false);
   });
 
   it("execute re-plans under the lock and writes nothing when the locked state moved", async () => {

@@ -196,7 +196,7 @@ it("atomically binds an actual generic item claim and preserves generic dispatch
 }));
 
 it("keeps same-ID waiting and cross-boot chain fences while distinguishing another primary vote", exercise(async () => {
-  await install({ ...policy, globalLimit: 2 });
+  await install({ ...policy, groupLimits: { engine: 2 } });
   const busyReview = review(), busy = await request(busyReview);
   const busyHandle = granted(await tracked(requestAi2ItemModelSlot(busy, target(busyReview))));
   const otherBusyReview = review(), otherBusy = await request(otherBusyReview);

@@ -52,10 +52,11 @@ function use(side: Side) { const g = globalThis as { db?: unknown; pgClient?: un
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const dbNow = async (side: Side) => (await pool(side)<{ now: string }[]>`SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS now`)[0].now;
 const operator = "pr15b-root-driver";
-const policy: ModelCapacityPolicy = { version: 1, globalLimit: 16, providerLimits: { acct: 4, solo: 1, "grok-sub": 2 }, groupLimits: { g: 16 },
+// PR 1b: 한도는 장비별이다 — 한 칸짜리 solo 계정은 자기 장비(solo, groupLimits 대체 1)에 둔다.
+const policy: ModelCapacityPolicy = { version: 1, globalLimit: 16, providerLimits: { acct: 4, solo: 1, "grok-sub": 2 }, groupLimits: { g: 16, solo: 1 },
   poolLimits: { reviewer: 8, text: 8 }, weights: { first: 1, second: 1, background: 1 }, maxWaiting: 16, queueTtlMs: 600_000, reservationTtlMs: 600_000,
   routes: [{ routeId: "pr15b-route", provider: "fixture", model: "m", providerBudgetId: "acct", groupId: "g" },
-    { routeId: "pr15b-solo", provider: "fixture", model: "m", providerBudgetId: "solo", groupId: "g" },
+    { routeId: "pr15b-solo", provider: "fixture", model: "m", providerBudgetId: "solo", groupId: "solo" },
     { routeId: "grok-session-check", provider: "grok-cli", model: "grok-4", providerBudgetId: "grok-sub", groupId: "g" }] };
 const request = (owner: { instanceId: string; bootId: string }, work: string, routeId = "pr15b-route") => ({ requestId: randomUUID(),
   workKey: `${prefix}:${work}`, owner, class: "background" as const, pool: "text" as const, routeId, provider: "fixture", model: "m" });

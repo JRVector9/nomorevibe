@@ -10,9 +10,10 @@ const policy = { version: 1, globalLimit: 4, providerLimits: { gateway: 4 }, gro
 const slot = (id: number, requestId: string, kind: "reserved" | "exit", inWindow = true, pool = "reviewer"): SlotEvent =>
   ({ id, requestId, kind, inWindow, providerBudgetId: "gateway", groupId: "engine", pool, current: true });
 const usage = (total: number) => ({ inputTokens: total - 10, outputTokens: 10, totalTokens: total });
-/** 장부가 구간을 덮고, 호출 3(실제 usage 2·C 1)과 AI2 호출 기록 1이 모두 귀속되며 심사 슬롯 점유가 최대 2인 구간. */
+/** 장부가 구간을 덮고, 호출 3(실제 usage 2·C 1)과 AI2 호출 기록 1이 모두 귀속되며 심사 장비(engine, 한도 2) 점유가 최대 2인 구간. */
 function ledger(): LedgerBudgetInput {
-  return { capacity: { state: "present", mode: "open", changedSinceStart: false, policy },
+  // PR 1b: 선언 한도는 심사 경로가 쓰는 장비의 한도(model_capacity_devices 행 2 — 정책 groupLimits 4 는 대체값일 뿐 여기서는 쓰이지 않는다).
+  return { capacity: { state: "present", mode: "open", changedSinceStart: false, policy, deviceLimits: { engine: 2 }, devicesChangedSinceStart: false },
     calls: [{ bound: 8_000, usage: usage(1_200) }, { bound: 8_000, usage: null }, { bound: 6_000, usage: usage(900) }],
     unattributedAi1: 0,
     ai2: { records: [{ id: 5, secondReviewId: 70, failed: false, inWindow: true, failures: 0 }], dispatched: [{ secondReviewId: 70, failureCount: 0 }] },
@@ -31,8 +32,12 @@ describe("ledger budget evidence", () => {
     ["AI2 call records not covered by the 0097 marker", (value: LedgerBudgetInput) => { value.ai2 = null; }, ["ai2_call_records_unverified"]],
     ["a call without its bound C", (value: LedgerBudgetInput) => { value.calls!.push({ bound: null, usage: usage(10) }); }, ["token_bound_missing"]],
     ["a non-integer bound C", (value: LedgerBudgetInput) => { value.calls![1].bound = "8000"; }, ["token_bound_missing"]],
-    ["one moment above the reviewer slot limit", (value: LedgerBudgetInput) => { value.slots!.push(slot(21, "d", "reserved"), slot(22, "d", "exit")); },
+    ["one moment above the device limit", (value: LedgerBudgetInput) => { value.slots!.push(slot(21, "d", "reserved"), slot(22, "d", "exit")); },
       ["concurrency_limit_exceeded"]],
+    ["a device setting saved during the window", (value: LedgerBudgetInput) => { value.capacity.devicesChangedSinceStart = true; },
+      ["device_settings_changed_since_window_start"]],
+    ["an unreadable device table", (value: LedgerBudgetInput) => { value.capacity.deviceLimits = null; }, ["concurrency_limit_undeclared"]],
+    ["a review device without any limit", (value: LedgerBudgetInput) => { value.capacity.deviceLimits = { other: 4 }; }, ["concurrency_limit_undeclared"]],
     ["a slot granted under another policy generation", (value: LedgerBudgetInput) => { value.slots![3].current = false; }, ["capacity_policy_changed"]],
     ["an exit without its reservation", (value: LedgerBudgetInput) => { value.slots!.push(slot(90, "z", "exit")); }, ["ledger_inconsistent"]],
     ["too many ledger rows", (value: LedgerBudgetInput) => { value.calls = null; }, ["ledger_row_limit"]],
@@ -54,6 +59,19 @@ describe("ledger budget evidence", () => {
     value.calls = [{ bound: 8_000, usage: { inputTokens: 100, outputTokens: 10, totalTokens: 111 } },
       { bound: 8_000, usage: usage(8_001) }, { bound: 8_000, usage: { inputTokens: 1.5, outputTokens: 0, totalTokens: 1.5 } }];
     expect(ledgerBudgetEvidence(value)).toMatchObject({ status: "verified", chargedTokens: 24_000, reportedCalls: 0, boundCalls: 3 });
+  });
+  it("ignores global, provider and pool peaks: only each device's own peak is compared with its device limit (PR 1b)", () => {
+    const value = ledger();
+    // 같은 장비에 다른 공급자·풀의 점유를 더 얹어도 장비 peak 가 한도 안이면 verified — 전역·공급자·풀 한도는 없다.
+    value.slots!.push({ ...slot(70, "t", "reserved", true, "text"), providerBudgetId: "other", groupId: "text-device" },
+      { ...slot(80, "t", "exit", true, "text"), providerBudgetId: "other", groupId: "text-device" });
+    value.capacity.deviceLimits = { engine: 2, "text-device": 1 };
+    expect(ledgerBudgetEvidence(value)).toMatchObject({ status: "verified", concurrency: { limit: 2, peak: 2 } });
+    // 심사 경로가 두 장비에 걸치면 선언 한도는 합이고 peak 도 장비 peak 의 합이다.
+    const split = ledger();
+    split.capacity.policy = { ...policy, groupLimits: { engine: 4, "second-device": 4 }, routes: [policy.routes[0], { ...policy.routes[1], groupId: "second-device" }] };
+    split.capacity.deviceLimits = { engine: 2, "second-device": 3 };
+    expect(ledgerBudgetEvidence(split)).toMatchObject({ status: "verified", concurrency: { limit: 5, peak: 2 } });
   });
   it("collects every independent issue in one fixed order", () => {
     const value = ledger(); value.unattributedAi1 = 2; value.ai2 = null; value.capacity.changedSinceStart = true; value.calls!.push({ bound: 0, usage: null });

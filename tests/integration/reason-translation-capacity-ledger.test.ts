@@ -182,7 +182,7 @@ afterAll(() => steps([async () => { await setupWork; }, () => drain(hooks), () =
   async () => { await admin.end(); }, async () => { vi.unstubAllEnvs(); }]));
 
 it("stores sorted membership in the first waiting INSERT and resumes the same ID after order-only polling", exercise(async () => {
-  await install({ ...policy, globalLimit: 1 });
+  await install({ ...policy, groupLimits: { engine: 1 } });
   const busy = await request(), busyHandle = granted(await ask(busy));
   const batch = members(0, 1), waiting = await request(batch);
   expect(await ask(waiting, batch)).toEqual({ kind: "deferred", reason: "capacity" });

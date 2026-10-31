@@ -104,9 +104,9 @@ export function buildPipelineControlStatus(raw: unknown, readiness: unknown): Pi
     set('model', { mode: valid || unset ? row.mode : null, epoch: row.epoch, revision: row.revision,
       policy: valid ? 'verified' : unset ? 'unset' : 'unknown',
       metrics: [metric('대기', row.waiting), metric('최장 대기(분)', age !== null && age >= 0 ? age : null), metric('예약', row.reserved),
-        metric('미정산', row.dispatched + row.indeterminate), metric('dispatched', row.dispatched), metric('indeterminate', row.indeterminate),
-        metric('설정 상한', valid ? parsed.data.globalLimit : null)],
-      note: '미정산은 dispatched + indeterminate입니다. 기한 지난 대기·예약도 정리 전에는 남습니다. 설정 상한은 실제 모델 제공용량을 인증하지 않습니다.' });
+        metric('미정산', row.dispatched + row.indeterminate), metric('dispatched', row.dispatched), metric('indeterminate', row.indeterminate)],
+      // 전역 상한은 없다(PR 1b) — 한도는 장비별이며 runtime.modelGroups(/admin/models/devices 와 같은 출처)에 있다.
+      note: '미정산은 dispatched + indeterminate입니다. 기한 지난 대기·예약도 정리 전에는 남습니다. 한도는 장비별(model_capacity_devices)이며 아래 장비 표에 있습니다. 한도는 실제 모델 제공용량을 인증하지 않습니다.' });
   }
   const http = httpSchema.safeParse(input.http);
   if (http.success) {
@@ -230,6 +230,8 @@ export async function readPipelineControlStatus(): Promise<PipelineControlStatus
             'epoch',epoch,'live',owner_instance_id IS NOT NULL AND lease_until>c.at::timestamp) ORDER BY role) FROM role_leases),'[]'::jsonb),
           'hostSlots', jsonb_build_object('atMs',(extract(epoch FROM c.at)*1000)::float8,
             'rows',coalesce((SELECT jsonb_agg(jsonb_build_object('key',key,'value',value) ORDER BY key) FROM operations_observations WHERE key LIKE 'host-slot:%'),'[]'::jsonb)),
+          'modelDevices', coalesce((SELECT jsonb_agg(jsonb_build_object('device',d.device_id,'limit',d.limit_slots) ORDER BY d.device_id)
+            FROM (SELECT device_id, limit_slots FROM model_capacity_devices WHERE enabled LIMIT 512) d),'[]'::jsonb),
           'modelGroups', jsonb_build_object('limited',(SELECT count(*) FROM model_group_rows)>512,
             'rows',coalesce((SELECT jsonb_agg(to_jsonb(g) ORDER BY g."group",g.route,g.state) FROM (
               SELECT group_id AS "group", route_id AS route, state, count(*)::int AS count

@@ -6,15 +6,19 @@ import { parseModelCapacityPolicy, type ModelCapacityPolicy } from "@/lib/llm/ca
  * 1. 귀속 완전성: 시도·사용량 기록에 나타난 구간 안 모델 호출이 모두 장부(모델 슬롯 장부, replay면 계량기)에 있다.
  * 2. 호출당 과금 상한: upstream_reported이고 기존 검사(정수·합 일치·C 이하)를 통과한 실제 사용량, 아니면 그 호출의 전체 C.
  *    C도 없으면 unverified다. 추정치로 C보다 낮게 세지 않는다.
- * 3. 동시 예산 준수: 구간 동안 실제로 관측한 동시 호출(peak)이 선언된 공통 슬롯 한도를 넘은 순간이 없다.
+ * 3. 동시 예산 준수: 구간 동안 실제로 관측한 장비별 동시 점유(peak)가 그 장비의 한도(구간 시작 시점의 `model_capacity_devices`, 행이 없으면
+ *    정책 groupLimits 대체)를 넘은 순간이 없다. 전역·공급자·풀 한도는 2026-10-30(PR 1b)부터 입장이 읽지 않으므로 여기서도 비교하지 않는다.
+ *    장비 설정이 구간 중 바뀌었으면 그 사이 한도를 모른다(`device_settings_changed_since_window_start`).
  * 비교는 둘 다 verified일 때만 한다. 고유 최종당 호출 수·과금 토큰이 각각 기준선 이하(허용 오차 0)이고, 두 실행의 선언 한도가 같고,
  * 후보가 관측한 peak가 기준선 선언 한도 이하면 통과다. 선언 한도가 다르면 비교 불가(후보 한도가 더 크면 실패)다.
+ * 선언 한도 = 심사 경로(crawl-agent-review·second-review)가 쓰는 장비들의 한도 합, peak = 그 장비들의 구간 최대 점유 합(보수적 상한).
  */
 export const BUDGET_ISSUES = ["budget_evidence_absent", "model_capacity_absent", "model_capacity_unreadable", "model_capacity_not_open",
   "model_capacity_changed_since_window_start", "capacity_policy_invalid", "capacity_policy_changed", "ledger_row_limit", "ledger_inconsistent",
   "unattributed_ai1_calls", "ai2_call_records_unverified", "unattributed_ai2_calls", "token_bound_missing", "concurrency_limit_exceeded",
   "concurrency_limit_undeclared", "usage_unreported_without_bound", "recorded_calls_exceed_meter", "meter_calls_outside_ledger",
-  "replay_budget_unrecorded", "replay_calls_after_stop", "replay_drain_calls_cut", "concurrency_limit_declaration_mismatch"] as const;
+  "replay_budget_unrecorded", "replay_calls_after_stop", "replay_drain_calls_cut", "concurrency_limit_declaration_mismatch",
+  "device_settings_changed_since_window_start"] as const;
 export type BudgetIssue = typeof BUDGET_ISSUES[number];
 const integer = z.number().int().nonnegative().safe();
 const source = z.enum(["model_capacity_ledger", "replay_meter"]);
@@ -69,13 +73,21 @@ export function slotPeaks(events: readonly SlotEvent[]): Record<string, number> 
   record();
   return peaks;
 }
-function withinPolicy(peaks: Record<string, number>, policy: ModelCapacityPolicy): boolean {
-  const limits: Record<string, Readonly<Record<string, number>>> = { provider: policy.providerLimits, group: policy.groupLimits, pool: policy.poolLimits };
-  return Object.entries(peaks).every(([key, peak]) => {
-    if (key === "global") return peak <= policy.globalLimit;
-    const [kind, name] = [key.slice(0, key.indexOf(":")), key.slice(key.indexOf(":") + 1)];
-    return Object.hasOwn(limits[kind] ?? {}, name) && peak <= limits[kind][name];
-  });
+/** 장비(group_id)별 peak 만 그 장비 한도와 비교한다. 다른 차원(global·provider·pool)은 입장이 읽지 않으므로 비교 대상이 아니다. */
+export function withinDeviceLimits(peaks: Record<string, number>, deviceLimits: Readonly<Record<string, number>>): { exceeded: boolean; undeclared: boolean } {
+  let exceeded = false, undeclared = false;
+  for (const [key, peak] of Object.entries(peaks)) {
+    if (!key.startsWith("group:")) continue;
+    const device = key.slice("group:".length);
+    if (!Object.hasOwn(deviceLimits, device)) { if (peak > 0) undeclared = true; continue; }
+    if (peak > deviceLimits[device]) exceeded = true;
+  }
+  return { exceeded, undeclared };
+}
+/** 심사 경로가 쓰는 장비 목록(정책 route 의 groupId). 비어 있으면 선언 한도를 모른다. */
+export const REVIEW_ROUTES = Object.freeze(["crawl-agent-review", "second-review"] as const);
+export function reviewDevices(policy: ModelCapacityPolicy): string[] {
+  return [...new Set(policy.routes.filter(route => (REVIEW_ROUTES as readonly string[]).includes(route.routeId)).map(route => route.groupId))].sort();
 }
 
 /** 0097 ai2_attempt 기록 하나. failures는 그 표의 지금 실패 수(행이 없으면 null)다. */
@@ -102,18 +114,23 @@ export function unattributedAi2Calls(records: readonly Ai2Record[], dispatched: 
 export type LedgerCall = { bound: unknown; usage: unknown };
 /** 수집기가 읽은 원 행. null은 행 한도 초과(calls·slots)거나 0097 장부가 구간을 덮지 않음(ai2)이다. */
 export type LedgerBudgetInput = {
-  capacity: { state: "absent" | "unreadable" | "present"; mode: string; changedSinceStart: boolean; policy: unknown };
+  capacity: { state: "absent" | "unreadable" | "present"; mode: string; changedSinceStart: boolean; policy: unknown;
+    /** 구간 시작 시점에 유효한 장비 한도(enabled 설정 행 ∪ 정책 groupLimits 대체). null = 장비 표를 읽지 못했다(선언 한도 모름). */
+    deviceLimits: Readonly<Record<string, number>> | null;
+    /** 장비 설정 행 하나라도 구간 시작 뒤에 바뀌었다(updated_at > start) — 그 사이 한도를 모른다. */
+    devicesChangedSinceStart: boolean };
   calls: LedgerCall[] | null; unattributedAi1: number;
   ai2: { records: Ai2Record[]; dispatched: { secondReviewId: number; failureCount: number }[] } | null;
   slots: SlotEvent[] | null;
 };
-/** 운영 구간·item replay: 모델 슬롯 장부만으로 세 조건을 증명한다. 비교 한도는 심사 풀이 넘을 수 없는 min(전체, reviewer)이다. */
+/** 운영 구간·item replay: 모델 슬롯 장부만으로 세 조건을 증명한다. 비교 한도는 심사 경로가 쓰는 장비들의 한도 합이다(PR 1b). */
 export function ledgerBudgetEvidence(input: LedgerBudgetInput): BudgetEvidence {
   const { capacity } = input, issues: BudgetIssue[] = [];
   if (capacity.state !== "present") return unverified("model_capacity_ledger", [`model_capacity_${capacity.state}`]);
   // 열린 모드가 아니면 호출이 장부를 거치지 않는다. 구간 중 바뀌었는지는 control 갱신 시각으로만 안다(보수적).
   if (capacity.mode !== "open") return unverified("model_capacity_ledger", ["model_capacity_not_open"]);
   if (capacity.changedSinceStart) issues.push("model_capacity_changed_since_window_start");
+  if (capacity.devicesChangedSinceStart) issues.push("device_settings_changed_since_window_start");
   let policy: ModelCapacityPolicy | null = null;
   try { policy = parseModelCapacityPolicy(capacity.policy); } catch { issues.push("capacity_policy_invalid"); }
   let charged = 0, reported = 0, bounded = 0;
@@ -128,19 +145,28 @@ export function ledgerBudgetEvidence(input: LedgerBudgetInput): BudgetEvidence {
   if (input.unattributedAi1) issues.push("unattributed_ai1_calls");
   if (!input.ai2) issues.push("ai2_call_records_unverified");
   else if (unattributedAi2Calls(input.ai2.records, input.ai2.dispatched)) issues.push("unattributed_ai2_calls");
-  let peak = 0;
+  let peak = 0, limit = 0;
   const peaks = input.slots && slotPeaks(input.slots);
+  const devices = policy ? reviewDevices(policy) : [];
   if (!input.slots) issues.push("ledger_row_limit");
   else if (!peaks) issues.push("ledger_inconsistent");
   else {
     // 구간 안에서 새로 잡힌 슬롯은 모두 지금 정책 세대여야 한다(구간 중 정책이 바뀌면 그 사이 한도를 모른다).
     if (input.slots.some(event => event.kind === "reserved" && event.inWindow && !event.current)) issues.push("capacity_policy_changed");
-    if (policy && !withinPolicy(peaks, policy)) issues.push("concurrency_limit_exceeded");
-    peak = peaks["pool:reviewer"] ?? 0;
+    if (capacity.deviceLimits) {
+      const check = withinDeviceLimits(peaks, capacity.deviceLimits);
+      if (check.exceeded) issues.push("concurrency_limit_exceeded");
+      if (check.undeclared) issues.push("concurrency_limit_undeclared");
+    }
+    peak = devices.reduce((sum, device) => sum + (peaks[`group:${device}`] ?? 0), 0);
   }
-  if (issues.length || !policy || !input.calls) return unverified("model_capacity_ledger", issues);
+  // 선언 한도 = 심사 장비 한도의 합. 장비 표를 못 읽었거나 심사 장비 중 한도를 모르는 것이 있으면 선언 한도가 없다.
+  if (!capacity.deviceLimits || !devices.length || devices.some(device => !Object.hasOwn(capacity.deviceLimits!, device))) {
+    if (policy && !issues.includes("concurrency_limit_undeclared")) issues.push("concurrency_limit_undeclared");
+  } else limit = devices.reduce((sum, device) => sum + capacity.deviceLimits![device], 0);
+  if (issues.length || !policy || !input.calls || limit < 1) return unverified("model_capacity_ledger", issues);
   return { status: "verified", source: "model_capacity_ledger", calls: input.calls.length, chargedTokens: charged, reportedCalls: reported,
-    boundCalls: bounded, concurrency: { limit: Math.min(policy.globalLimit, policy.poolLimits.reviewer), peak } };
+    boundCalls: bounded, concurrency: { limit, peak } };
 }
 
 /**

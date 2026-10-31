@@ -42,7 +42,12 @@ export function verifiedLocalModelContract(url: string, model: string, env: Env 
   } catch { return null; }
 }
 
-/** route 하나의 실제 정책 매핑을 확인한다. 전역 활성 caller 전부의 준비를 뜻하지 않는다. */
+/**
+ * route 하나의 실제 정책 매핑을 확인한다. 전역 활성 caller 전부의 준비를 뜻하지 않는다.
+ * PR 1b: 장비 한도는 정책이 아니라 `model_capacity_devices`(실시간)에 있으므로 여기서 정책 한도와 물리 상한을 비교하지 않는다 — 그 비교는
+ * 저장 시점(`physical_limit` 열)과 llm-assist-readiness 보고서가 한다. 여기서는 route 매핑과 LOCAL_MODEL_PHYSICAL_LIMITS 에 그 장비의 상한이
+ * 있는지만 본다.
+ */
 export function localModelRouteReady(policy: ModelCapacityPolicy | null, target: LocalModelTarget, contract: LocalModelServingContract,
   env: Env = process.env): boolean {
   let limits: unknown;
@@ -50,8 +55,7 @@ export function localModelRouteReady(policy: ModelCapacityPolicy | null, target:
   const limit = object(limits) ? limits[contract.physicalGroup] : undefined;
   return Boolean(policy?.routes.some(route => route.routeId === localModelRoute(target) && route.provider === "local-direct"
     && route.model === contract.model && route.providerBudgetId === contract.backendId && route.groupId === contract.physicalGroup)
-    && policy.providerLimits[contract.backendId] && policy.groupLimits[contract.physicalGroup]
-    && typeof limit === "number" && Number.isSafeInteger(limit) && limit >= 1 && policy.groupLimits[contract.physicalGroup] <= limit);
+    && typeof limit === "number" && Number.isSafeInteger(limit) && limit >= 1);
 }
 
 /** 모델 wrapper가 통신 예외를 다른 코드로 바꿔도 capacity defer는 원래 의미로 복원한다.

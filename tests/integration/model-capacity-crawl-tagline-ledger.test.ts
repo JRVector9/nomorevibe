@@ -268,7 +268,7 @@ afterAll(() => steps([async () => { await setupWork; }, () => drain(hooks), () =
   async () => { await admin.end({ timeout: 5 }); }, async () => { vi.unstubAllEnvs(); }]));
 
 it("stores the stable target in the first waiting INSERT and polls the same ID without a second event", exercise(async () => {
-  await install({ ...policy, globalLimit: 1 }); const busy = await request(), occupied = granted(await ask(busy));
+  await install({ ...policy, groupLimits: { engine: 1 } }); const busy = await request(), occupied = granted(await ask(busy));
   const data = input(), waiting = await request(data);
   expect(await ask(waiting, data)).toEqual({ kind: "deferred", reason: "capacity" });
   const before = await rawRequest(waiting.requestId), events = await rawEvents(waiting.requestId);

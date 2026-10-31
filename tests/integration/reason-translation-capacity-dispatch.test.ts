@@ -292,7 +292,7 @@ it('abandons a stale complete cache binding and keeps the remaining/new eligible
 }));
 it('adopts an existing waiting batch after membership changes instead of enqueueing a competing overlapping set', exercise(async () => {
   const blocker = await seed(), first = await seed(1), second = await seed();
-  await install({ ...basePolicy, globalLimit: 1 });
+  await install({ ...basePolicy, groupLimits: { engine: 1 } });
   await server(async ({ bodies, setReply }) => {
     let requestId = '';
     await custom(async lease => {

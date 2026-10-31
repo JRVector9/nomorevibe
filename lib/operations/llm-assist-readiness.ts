@@ -19,6 +19,8 @@ export const assistRolloutManifestSchema = z.object({
     result: z.enum(["passed", "failed", "not_run"]), artifactHash: sha.nullable() }).strict()).max(6).default([]),
   contracts: localModelServingContractsSchema.default([]), verifiedContractHashes: z.record(id, sha).default({}),
   physicalLimits: z.record(id, positive).default({}), policy: modelCapacityPolicySchema.nullable().default(null),
+  /** 장비(groupId)별 실시간 한도 readback — `model_capacity_devices.limit_slots`(PR 1b). 없는 장비는 정책 groupLimits 대체를 본다. */
+  deviceLimits: z.record(id, positive).default({}),
   readbacks: z.array(z.object({ backendId: id, integratedSha: revision, contractHash: sha, artifactHash: sha,
     endpoint: z.url(), model: id, deploymentRevision: id, physicalGroup: id, contextWindowTokens: positive,
     configuredConcurrency: positive, observedAt: time }).strict()).max(32).default([]),
@@ -79,6 +81,8 @@ export function verifyAssistRolloutManifest(value: unknown) {
     return report(false, null, false, false, false, false, false, false);
   }
   const m = parsed.data, contracts = new Map(m.contracts.map(contract => [contract.backendId, contract]));
+  // 장비 한도: 실시간 표 readback(deviceLimits) → 정책 groupLimits 대체. 둘 다 없으면 모른다(입장은 device_unconfigured 로 미룬다).
+  const deviceLimit = (group: string): number | undefined => m.deviceLimits[group] ?? m.policy?.groupLimits?.[group];
   const fresh = (observedAt: string) => m.asOf !== null && m.maxEvidenceAgeMs !== null && Date.parse(observedAt) <= Date.parse(m.asOf)
     && Date.parse(m.asOf) - Date.parse(observedAt) <= m.maxEvidenceAgeMs;
   for (const kind of checkKinds) {
@@ -97,8 +101,8 @@ export function verifyAssistRolloutManifest(value: unknown) {
     if (reads.length !== 1 || read.integratedSha !== m.integratedSha || read.contractHash !== hash || read.endpoint !== contract.endpoint
       || read.model !== contract.responseModel || read.deploymentRevision !== contract.deploymentRevision || read.physicalGroup !== contract.physicalGroup
       || read.contextWindowTokens !== contract.contextWindowTokens || !fresh(read.observedAt)) bucket.push(`readback_mismatch:${backendId}`);
-    if (!physical || !read || physical > read.configuredConcurrency || !m.policy?.groupLimits[contract.physicalGroup]
-      || m.policy.groupLimits[contract.physicalGroup] > physical || !m.policy.providerLimits[backendId]) bucket.push(`physical_limit_unverified:${backendId}`);
+    const configured = deviceLimit(contract.physicalGroup);
+    if (!physical || !read || physical > read.configuredConcurrency || !configured || configured > physical) bucket.push(`physical_limit_unverified:${backendId}`);
     const canary = m.native?.canaries.find(row => row.backendId === backendId && row.integratedSha === m.integratedSha && row.contractHash === hash
       && row.responseModel === contract.responseModel && row.deploymentRevision === contract.deploymentRevision && row.ledgerState === "settled"
       && row.finishReason === "stop" && row.actualTotalTokens <= contract.totalTokenBound && fresh(row.observedAt));
@@ -126,8 +130,9 @@ export function verifyAssistRolloutManifest(value: unknown) {
       if (!route || route.groupId !== caller.physicalGroup || alias?.physicalGroup !== caller.physicalGroup) blockers.global.push(`caller_route_unmapped:${caller.callerId}`);
       const groups = inventory.groups.filter(row => row.physicalGroup === caller.physicalGroup), group = groups[0];
       const limit = m.physicalLimits[caller.physicalGroup];
+      const configured = deviceLimit(caller.physicalGroup);
       if (groups.length !== 1 || !group || !fresh(group.observedAt) || !limit || limit > group.configuredConcurrency
-        || !m.policy?.groupLimits[caller.physicalGroup] || m.policy.groupLimits[caller.physicalGroup] > limit) blockers.global.push(`caller_physical_limit_unverified:${caller.callerId}`);
+        || !configured || configured > limit) blockers.global.push(`caller_physical_limit_unverified:${caller.callerId}`);
       if (caller.transport === "local-direct") {
         const contract = caller.backendId ? contracts.get(caller.backendId) : null;
         if (!contract || caller.provider !== "local-direct" || caller.model !== contract.model || caller.physicalGroup !== contract.physicalGroup

@@ -1,10 +1,12 @@
+/** device_unconfigured(PR 1b): the route's device has neither an enabled `model_capacity_devices` row nor a policy `groupLimits` fallback. */
 export type ModelCapacityDeferredReason = "draining" | "unmapped" | "provider_contract_unavailable"
   | "reservation_required" | "owner_unavailable" | "capacity" | "queue_full" | "policy_changed"
-  | "withdrawn" | "dispatched" | "disabled" | "reservation_lost";
+  | "withdrawn" | "dispatched" | "disabled" | "reservation_lost" | "device_unconfigured";
 
 export function isModelCapacityDeferredReason(value: unknown): value is ModelCapacityDeferredReason {
   return typeof value === "string" && ["draining", "unmapped", "provider_contract_unavailable", "reservation_required",
-    "owner_unavailable", "capacity", "queue_full", "policy_changed", "withdrawn", "dispatched", "disabled", "reservation_lost"].includes(value);
+    "owner_unavailable", "capacity", "queue_full", "policy_changed", "withdrawn", "dispatched", "disabled", "reservation_lost",
+    "device_unconfigured"].includes(value);
 }
 
 /** Admission refusal only; this error never proves a reservation or provider end. */

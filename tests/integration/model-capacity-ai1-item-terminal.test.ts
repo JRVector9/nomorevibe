@@ -197,7 +197,7 @@ it("atomically binds an actual generic item claim and preserves generic dispatch
 }));
 
 it("keeps same-ID waiting and cross-boot AI1 fences while permitting another candidate", exercise(async () => {
-  await install({ ...policy, globalLimit: 2 });
+  await install({ ...policy, groupLimits: { engine: 2 } });
   const busyReview = review(), busy = await request(busyReview);
   const busyHandle = granted(await tracked(requestAi1ModelSlot(busy, target(busyReview))));
   const otherBusyReview = review(), otherBusy = await request(otherBusyReview);

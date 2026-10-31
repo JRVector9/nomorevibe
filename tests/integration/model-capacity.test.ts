@@ -50,12 +50,16 @@ const cancelReservedModelSlot: typeof rawCancel = value => tracked(rawCancel(val
 const beginModelDispatch: typeof rawBegin = value => tracked(rawBegin(value), apiWork);
 const markModelDispatchIndeterminate: typeof rawMark = (value, reason) => tracked(rawMark(value, reason), apiWork);
 
+// PR 1b: 입장은 장비(route 의 groupId = "shared")별이다. 공유 test DB 에는 장비 행이 없으므로 한도는 정책 groupLimits 대체(policy_fallback)이고
+// globalLimit·providerLimits·poolLimits·weights 는 입장이 읽지 않는다(아래 "ignored" 케이스가 그것을 본다). 순위·상한·대여는 tests/integration/model-capacity-devices-admission.test.ts.
 const policy: ModelCapacityPolicy = { version: 1, globalLimit: 2,
   providerLimits: { account: 2 }, groupLimits: { shared: 2 }, poolLimits: { reviewer: 2, text: 2 },
   weights: { first: 2, second: 1, background: 1 }, maxWaiting: 32,
   queueTtlMs: 60_000, reservationTtlMs: 60_000,
   routes: [{ routeId: "fixture-chat", provider: "fixture-provider", model: "fixture-model",
     providerBudgetId: "account", groupId: "shared" }] };
+/** 장비 shared 의 칸이 하나인 정책(전역 2 는 그대로 — 전역 한도가 아니라 장비 한도가 막는 것을 보인다). */
+const oneSlot: ModelCapacityPolicy = { ...policy, groupLimits: { shared: 1 } };
 
 function request(overrides: Partial<ModelCapacityRequest> = {}): ModelCapacityRequest {
   const value: ModelCapacityRequest = { requestId: randomUUID(), workKey: randomUUID(), owner,
@@ -191,8 +195,8 @@ it("issues an actual reservation, reobserves the same token, and cancels the ori
     .toEqual(["queued", "reserved", "reservation_cancelled"]);
 }));
 
-it("grants only the last global slot when two actual connections request it concurrently", exercise(async () => {
-  await installPolicy({ ...policy, globalLimit: 1 });
+it("grants only the last device slot when two actual connections request it concurrently", exercise(async () => {
+  await installPolicy(oneSlot);
   const values = [request(), request()], results = await Promise.all(values.map(value => requestModelSlot(value)));
   const [count] = await admin`SELECT count(*)::int AS active FROM model_capacity_requests
     WHERE request_id=ANY(${values.map(value => value.requestId)}::uuid[]) AND state IN ('reserved','dispatched','indeterminate')`;
@@ -211,18 +215,38 @@ async function activeRows() {
     WHERE state IN ('reserved','dispatched','indeterminate') ORDER BY queue_ordinal`;
 }
 
-for (const dimension of ["provider", "group", "pool"] as const) {
-  it(`enforces the ${dimension} limit independently of spare global capacity`, exercise(async () => {
-    await installPolicy({ ...policy,
+it("enforces the device limit (groupLimits fallback) independently of spare global, provider and pool capacity", exercise(async () => {
+  await installPolicy({ ...policy, globalLimit: 8, providerLimits: { account: 8 }, poolLimits: { reviewer: 8, text: 8 }, groupLimits: { shared: 1 } });
+  await issued(request()); const waiting = request();
+  expect(await requestModelSlot(waiting)).toEqual({ kind: "deferred", reason: "capacity" });
+  expect((await activeRows())).toHaveLength(1);
+  expect((await admin`SELECT state FROM model_capacity_requests WHERE request_id=${waiting.requestId}`)[0].state).toBe("waiting");
+}));
+
+for (const dimension of ["global", "provider", "pool"] as const) {
+  it(`ignores the ${dimension} limit: only the device limit decides (PR 1b)`, exercise(async () => {
+    await installPolicy({ ...policy, groupLimits: { shared: 2 },
+      globalLimit: dimension === "global" ? 1 : 2,
       providerLimits: { account: dimension === "provider" ? 1 : 2 },
-      groupLimits: { shared: dimension === "group" ? 1 : 2 },
-      poolLimits: { reviewer: dimension === "pool" ? 1 : 2, text: 2 } });
-    await issued(request()); const waiting = request();
-    expect(await requestModelSlot(waiting)).toEqual({ kind: "deferred", reason: "capacity" });
-    expect((await activeRows())).toHaveLength(1);
-    expect((await admin`SELECT state FROM model_capacity_requests WHERE request_id=${waiting.requestId}`)[0].state).toBe("waiting");
+      poolLimits: { reviewer: dimension === "pool" ? 1 : 2, text: dimension === "pool" ? 1 : 2 } });
+    await issued(request()); await issued(request());
+    expect(await requestModelSlot(request())).toEqual({ kind: "deferred", reason: "capacity" });
+    expect((await activeRows())).toHaveLength(2);
+    expect((await admin`SELECT cursor FROM model_capacity_control WHERE id=1`)[0].cursor).toBe(0);
   }));
 }
+
+it("admits a route whose device has neither a device row nor a groupLimits entry as device_unconfigured without any row or event", exercise(async () => {
+  const { groupLimits, ...bare } = policy; void groupLimits;
+  await installPolicy({ ...bare, routes: [...policy.routes, { routeId: "orphan", provider: "fixture-provider", model: "orphan-model", providerBudgetId: "account", groupId: "nowhere" }] });
+  const orphan = request({ routeId: "orphan", model: "orphan-model" });
+  expect(await requestModelSlot(orphan)).toEqual({ kind: "deferred", reason: "device_unconfigured" });
+  expect(await admin`SELECT request_id FROM model_capacity_requests WHERE request_id=${orphan.requestId}`).toEqual([]);
+  expect(await admin`SELECT id FROM model_capacity_events WHERE request_id=${orphan.requestId}`).toEqual([]);
+  // the same policy without groupLimits leaves the shared device unconfigured too (no device row in the shared test DB)
+  expect(await requestModelSlot(request())).toEqual({ kind: "deferred", reason: "device_unconfigured" });
+  expect(await admin`SELECT request_id FROM model_capacity_requests`).toEqual([]);
+}));
 
 it("uses explicit shared alias groups while skipping a capacity-unfit head in the same class", exercise(async () => {
   await installPolicy({ ...policy, globalLimit: 3,
@@ -239,18 +263,18 @@ it("uses explicit shared alias groups while skipping a capacity-unfit head in th
   expect((await admin`SELECT state FROM model_capacity_requests WHERE request_id=${blocked.requestId}`)[0].state).toBe("waiting");
 }));
 
-it("loans an idle review share to background work and applies pool limits without class aliasing", exercise(async () => {
+it("fills one device with every class and pool up to the device limit alone (pool limits no longer partition a device)", exercise(async () => {
   await installPolicy({ ...policy, globalLimit: 3, providerLimits: { account: 3 }, groupLimits: { shared: 3 },
     poolLimits: { reviewer: 1, text: 2 } });
   await issued(request());
-  expect(await requestModelSlot(request({ class: "second" }))).toEqual({ kind: "deferred", reason: "capacity" });
+  await issued(request({ class: "second" }));
   await issued(request({ class: "background", pool: "text" }));
-  await issued(request({ class: "background", pool: "text" }));
-  expect((await activeRows()).map(row => row.pool)).toEqual(["reviewer", "text", "text"]);
+  expect(await requestModelSlot(request({ class: "background", pool: "text" }))).toEqual({ kind: "deferred", reason: "capacity" });
+  expect((await activeRows()).map(row => row.pool)).toEqual(["reviewer", "reviewer", "text"]);
 }));
 
-it("grants one queued row per poll in weighted order, preserves class FIFO, and returns no foreign token", exercise(async () => {
-  await installPolicy({ ...policy, globalLimit: 1 });
+it("grants one queued row per device per poll in queue order across classes (weights are ignored), and returns no foreign token", exercise(async () => {
+  await installPolicy(oneSlot);
   const blocker = await issued(request({ class: "background" }));
   const queued = [request(), request(), request(), request(), request({ class: "second" }),
     request({ class: "second" }), request({ class: "background" }), request({ class: "background" })];
@@ -269,11 +293,13 @@ it("grants one queued row per poll in weighted order, preserves class FIFO, and 
     const own = await issued(requests.get(granted.request_id)!);
     expect(await cancelReservedModelSlot(own)).toBe(true);
   }
-  expect(classes).toEqual(["first", "first", "second", "background", "first", "first", "second", "background"]);
-  expect(ids).toEqual([queued[0], queued[1], queued[4], queued[6], queued[2], queued[3], queued[5], queued[7]].map(value => value.requestId));
+  // 순위 행이 없는 장비에서는 (rank 32767, queue_ordinal) 순 = 접수 순이다. class 가중치 순환은 없다.
+  expect(classes).toEqual(["first", "first", "first", "first", "second", "second", "background", "background"]);
+  expect(ids).toEqual(queued.map(value => value.requestId));
+  expect((await admin`SELECT cursor FROM model_capacity_control WHERE id=1`)[0].cursor).toBe(0);
 }));
 
-it("grants at most one waiting row per poll even when several slots are spare", exercise(async () => {
+it("grants at most one waiting row per device per poll even when several slots are spare", exercise(async () => {
   await installPolicy({ ...policy, globalLimit: 3, providerLimits: { account: 3 },
     groupLimits: { shared: 3 }, poolLimits: { reviewer: 3, text: 3 } });
   const occupied = await Promise.all([request(), request(), request()].map(value => issued(value)));
@@ -287,7 +313,7 @@ it("grants at most one waiting row per poll even when several slots are spare", 
 }));
 
 it("bounds waiting rows and refuses a second live request identity for the same owner work", exercise(async () => {
-  await installPolicy({ ...policy, globalLimit: 1, maxWaiting: 1 });
+  await installPolicy({ ...oneSlot, maxWaiting: 1 });
   const running = request(); await issued(running);
   const duplicate = request({ workKey: running.workKey });
   expect(await requestModelSlot(duplicate)).toEqual({ kind: "deferred", reason: "capacity" });
@@ -309,7 +335,7 @@ it("never queues disabled, draining, or unmapped new requests", exercise(async (
 }));
 
 it("withdraws expired reservations once, denies their late begin, and grants the freed slot", exercise(async () => {
-  await installPolicy({ ...policy, globalLimit: 1 });
+  await installPolicy(oneSlot);
   const expired = request(), old = await issued(expired);
   await admin.begin(async tx => {
     await tx`SELECT id FROM model_capacity_control WHERE id=1 FOR UPDATE`;
@@ -324,7 +350,7 @@ it("withdraws expired reservations once, denies their late begin, and grants the
 }));
 
 it("withdraws an expired waiting request without issuing a token", exercise(async () => {
-  await installPolicy({ ...policy, globalLimit: 1 }); await issued(request());
+  await installPolicy(oneSlot); await issued(request());
   const waiting = request(); expect(await requestModelSlot(waiting)).toEqual({ kind: "deferred", reason: "capacity" });
   await admin.begin(async tx => {
     await tx`SELECT id FROM model_capacity_control WHERE id=1 FOR UPDATE`;
@@ -338,31 +364,31 @@ it("withdraws an expired waiting request without issuing a token", exercise(asyn
 }));
 
 it("does not reinterpret stale waiting identity under a replacement policy", exercise(async () => {
-  await installPolicy({ ...policy, globalLimit: 1 });
+  await installPolicy(oneSlot);
   const occupied = await issued(request()), waiting = request();
   expect(await requestModelSlot(waiting)).toEqual({ kind: "deferred", reason: "capacity" });
   expect(await cancelReservedModelSlot(occupied)).toBe(true);
-  const replacement = { ...policy, globalLimit: 1, groupLimits: { renamed: 2 },
+  const replacement = { ...oneSlot, groupLimits: { renamed: 2 },
     routes: policy.routes.map(route => ({ ...route, groupId: "renamed" })) };
   await installPolicy(replacement);
   await admin`UPDATE model_capacity_control SET revision=revision+1 WHERE id=1`;
   expect(await requestModelSlot(waiting)).toEqual({ kind: "deferred", reason: "withdrawn" });
   const [row] = await admin`SELECT group_id,policy_hash,state FROM model_capacity_requests WHERE request_id=${waiting.requestId}`;
-  expect(row).toEqual({ group_id: "shared", policy_hash: modelCapacityPolicyHash({ ...policy, globalLimit: 1 }), state: "withdrawn" });
+  expect(row).toEqual({ group_id: "shared", policy_hash: modelCapacityPolicyHash(oneSlot), state: "withdrawn" });
   expect((await admin`SELECT kind FROM model_capacity_events WHERE request_id=${waiting.requestId} ORDER BY id`).map(row => row.kind))
     .toEqual(["queued", "policy_changed"]);
   await issued(request());
 }));
 
 it("keeps a dispatched unknown row for review through expiry and policy renaming without deferring new work (2026-10-30)", exercise(async () => {
-  await installPolicy({ ...policy, globalLimit: 1 });
+  await installPolicy(oneSlot);
   const value = request(), reservation = await issued(value), begun = await beginModelDispatch(reservation);
   expect(begun.kind).toBe("dispatched"); if (begun.kind !== "dispatched") throw new Error("fixture_dispatch_not_issued");
   await admin.begin(async tx => {
     await tx`SELECT id FROM model_capacity_control WHERE id=1 FOR UPDATE`;
     await tx`UPDATE model_capacity_requests SET reserved_until=clock_timestamp()-interval '1 hour' WHERE request_id=${value.requestId}`;
   });
-  const replacement = { ...policy, globalLimit: 1, groupLimits: { renamed: 2 },
+  const replacement = { ...oneSlot, groupLimits: { renamed: 2 },
     routes: policy.routes.map(route => ({ ...route, groupId: "renamed" })) };
   await installPolicy(replacement); await admin`UPDATE model_capacity_control SET epoch=epoch+1,revision=revision+1 WHERE id=1`;
   expect(await markModelDispatchIndeterminate(begun.dispatch, "transport_unknown")).toBe(true);

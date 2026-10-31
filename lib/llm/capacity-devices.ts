@@ -1,5 +1,6 @@
 import { sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
+import { MODEL_CAPACITY_OCCUPYING_STATES_SQL } from "./capacity-states";
 
 /**
  * 장비별 입장 설정(PR 1b) — 1b-A 가 고정한 계약. 1b-B(관리자 화면)와 1b-C(입장 알고리즘)는 이 모듈의 이름만 쓴다.
@@ -23,10 +24,8 @@ import { z } from "zod";
  * - D 안에서는 (rank, queue_ordinal) 이 가장 작은 맞는 행 하나를 뽑는다(장비마다 pass 당 하나).
  */
 
-// TODO(#750): capacity-states — PR #750 이 병합되면 lib/llm/capacity-states.ts 의 MODEL_CAPACITY_OCCUPYING_STATES_SQL 을 쓰고 이 목록을 지운다.
-/** 점유로 세는 상태. indeterminate 는 사람 검토용 행이며 슬롯을 쥐지 않는다. */
-const DEVICE_OCCUPYING_STATES = Object.freeze(["reserved", "dispatched"] as const);
-const DEVICE_OCCUPYING_STATES_SQL = `(${DEVICE_OCCUPYING_STATES.map(state => `'${state}'`).join(",")})`;
+/** 점유로 세는 상태 = lib/llm/capacity-states.ts 의 하나(reserved·dispatched). indeterminate 는 사람 검토용 행이며 슬롯을 쥐지 않고 바쁨 신호도 아니다(PR #750). */
+const DEVICE_OCCUPYING_STATES_SQL = MODEL_CAPACITY_OCCUPYING_STATES_SQL;
 
 export const MODEL_CAPACITY_DEVICE_ID_MAX = 120;
 export const MODEL_CAPACITY_DEVICE_LIMIT_MAX = 256;

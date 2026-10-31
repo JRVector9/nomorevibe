@@ -91,7 +91,10 @@ describe("직접 모델의 실제 admission 경계", () => {
     const c = context(); delete (c.env as Record<string, string | undefined>).LOCAL_MODEL_VERIFIED_CONTRACT_HASHES;
     await expect(withLocalModelCapacity(c, run)).rejects.toMatchObject({ reason: "provider_contract_unavailable" });
     expect(verifiedLocalModelContract(contract.endpoint, contract.model, c.env)).toBeNull();
-    expect(localModelRouteReady({ ...policy, groupLimits: { "shared-device": 2 } }, target, contract, context().env)).toBe(false);
+    // PR 1b: 장비 한도는 정책이 아니라 model_capacity_devices 에 있으므로 정책 groupLimits 와 물리 상한을 비교하지 않는다 — 물리 상한 자체가 없으면 준비 안 됨.
+    expect(localModelRouteReady({ ...policy, groupLimits: { "shared-device": 2 } }, target, contract, context().env)).toBe(true);
+    expect(localModelRouteReady(policy, target, contract, { ...context().env, LOCAL_MODEL_PHYSICAL_LIMITS: undefined })).toBe(false);
+    expect(localModelRouteReady(policy, target, contract, { ...context().env, LOCAL_MODEL_PHYSICAL_LIMITS: JSON.stringify({ other: 1 }) })).toBe(false);
     expect(mocks.native).not.toHaveBeenCalled();
   });
   it("기존 모델 wrapper가 defer를 통신 실패로 바꿔도 원래 defer를 보존한다", async () => {

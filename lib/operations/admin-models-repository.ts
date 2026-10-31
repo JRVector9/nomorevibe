@@ -6,6 +6,7 @@ import { sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import { withDbDeadline } from "@/lib/db/pool";
 import { buildAdminModelsObservation, unavailableAdminModels, type AdminModelsObservation } from "./admin-models-observation";
+import { readModelCapacityDeviceStates } from "@/lib/llm/capacity-devices-repository";
 
 /** Read-only primary snapshot. Expired reservations and historical unknowns remain visible and occupied. */
 export async function readAdminModelsObservation(): Promise<AdminModelsObservation> {
@@ -70,8 +71,10 @@ export async function readAdminModelsObservation(): Promise<AdminModelsObservati
         ORDER BY settled_at DESC LIMIT 50001`);
       // Never render a partial sample as a complete rate or percentile.
       if (completions.length > 50000) return unavailableAdminModels();
+      // 장비별 한도·점유·빌려 쓰기(PR 1b) — 같은 읽기 전용 스냅숏 안에서 읽는다. 못 읽으면 null(한도 미확인; 0 이나 정책값으로 꾸미지 않는다).
+      const devices = await readModelCapacityDeviceStates(tx).catch(() => null);
       const registry = readModelRegistry();
-      return { ...buildAdminModelsObservation({ observedAt: control.observedAt, control, metrics: Array.from(metrics), requests: Array.from(requests) }),
+      return { ...buildAdminModelsObservation({ observedAt: control.observedAt, control, metrics: Array.from(metrics), requests: Array.from(requests), devices }),
         throughput: buildModelThroughput(Array.from(completions, row => ({ ...row, routeId: modelStageId(row.routeId), model: findModelDefinition(row, registry.models)?.key ?? row.model })), control.observedAt) };
     }, { accessMode: "read only", isolationLevel: "repeatable read" })));
   } catch { return unavailableAdminModels(); }

@@ -64,7 +64,8 @@ afterAll(async () => {
   try { await admin.unsafe(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`); } finally { await admin.end({ timeout: 5 }); }
 }, 120_000);
 
-const policy: ModelCapacityPolicy = { version: 1, globalLimit: 2, providerLimits: { acct: 1, acct2: 1 }, groupLimits: { g: 2, g2: 1 },
+// PR 1b: 포화 판정은 장비별이다(장비 행이 없어 groupLimits 대체: g 1·g2 1). acct 공급자 한도는 더 판정에 들지 않는다.
+const policy: ModelCapacityPolicy = { version: 1, globalLimit: 2, providerLimits: { acct: 1, acct2: 1 }, groupLimits: { g: 1, g2: 1 },
   poolLimits: { reviewer: 2, text: 1 }, weights: { first: 1, second: 1, background: 1 }, maxWaiting: 8, queueTtlMs: 600_000, reservationTtlMs: 600_000,
   routes: [{ routeId: "r1", provider: "p", model: "m", providerBudgetId: "acct", groupId: "g" },
     { routeId: "r2", provider: "p", model: "m2", providerBudgetId: "acct2", groupId: "g2" }] };
@@ -129,14 +130,14 @@ async function fixtures() {
     updated_at = ${t(-HOUR)}::timestamptz where id = 1`;
   await client`update pipeline_stage_modes set updated_at = ${t(-HOUR)}::timestamptz`;
   await ledger([
-    // q1: 구간 전부터 대기 → 1분에 예약 → 보낸 뒤 indeterminate로 끝까지 점유(acct 한도 1을 채운다).
+    // q1: 구간 전부터 대기 → 1분에 예약 → 보낸 뒤 indeterminate로 끝까지 점유(장비 g 한도 1을 채운다).
     { route: "r1", kind: "first", state: "indeterminate", reservedUntil: 11 * MIN, queueUntil: 30 * MIN, events: [["queued", null, "waiting", -5 * MIN],
       ["reserved", "waiting", "reserved", MIN], ["dispatch_started", "reserved", "dispatched", MIN + 1000],
       ["dispatch_indeterminate", "dispatched", "indeterminate", 10 * MIN]] },
-    // q2: 같은 acct라 포화 대기. queue_until(15분)에서 끝난 것으로 보고 늦은 만료 이벤트(20분)는 대기로 세지 않는다.
+    // q2: 같은 장비 g 라 포화 대기. queue_until(15분)에서 끝난 것으로 보고 늦은 만료 이벤트(20분)는 대기로 세지 않는다.
     { route: "r1", kind: "second", state: "withdrawn", reservedUntil: null, queueUntil: 15 * MIN, events: [["queued", null, "waiting", 2 * MIN],
       ["wait_expired", "waiting", "withdrawn", 20 * MIN]] },
-    // q3: 다른 budget·text pool — 빈 슬롯이 있는데 5분 대기, 보내지 않은 예약은 reserved_until(40분)까지만 점유.
+    // q3: 다른 장비(g2)·text pool — 빈 슬롯이 있는데 5분 대기, 보내지 않은 예약은 reserved_until(40분)까지만 점유.
     { route: "r2", kind: "background", state: "withdrawn", reservedUntil: 40 * MIN, queueUntil: HOUR, events: [["queued", null, "waiting", 30 * MIN],
       ["reserved", "waiting", "reserved", 35 * MIN], ["reservation_expired", "reserved", "withdrawn", 50 * MIN]] },
     // q4: 옛 정책 hash — 한도를 알 수 없어 unknown.

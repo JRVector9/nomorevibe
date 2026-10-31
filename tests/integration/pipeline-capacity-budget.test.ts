@@ -121,7 +121,7 @@ it("counts real AI1 dispatches and a grant's cursor write no longer marks the co
     a.state AS attempt_state FROM model_capacity_requests r JOIN crawl_review_attempts a ON a.id::text = r.dispatch_binding->>'attemptId' ORDER BY a.id`;
   expect(rows.map(row => [row.state, row.total, row.attempt_state])).toEqual([["settled", 120, "succeeded"], ["settled", 120, "succeeded"],
     ["settled", 120, "succeeded"]]);
-  // grant는 control.cursor만 쓴다(updated_at은 모드·정책 변경 시각). PR01b-9 때는 grant가 updated_at도 써서 이 구간이 막혔다.
+  // grant 는 control 행을 쓰지 않는다(updated_at 은 모드·정책 변경 시각). 선언 한도 = 심사 장비(fixture)의 한도: 장비 행이 없어 정책 groupLimits 대체 1.
   expect(await budget()).toEqual({ modelCapacity: { mode: "open", changedSinceStart: false }, budget: { status: "verified",
     source: "model_capacity_ledger", calls: 3, chargedTokens: 360, reportedCalls: 3, boundCalls: 0, concurrency: { limit: 1, peak: 1 } } });
 }, 120_000);
@@ -135,8 +135,8 @@ it("verifies the same window once the control row is unchanged since its start, 
     .toEqual(before);
 });
 
-it("verifies the open window after more real grants without backdating, since a grant only advances the cursor", async () => {
-  const control = async () => (await client!`SELECT xmin::text AS version, updated_at FROM model_capacity_control WHERE id=1`)[0];
+it("verifies the open window after more real grants without backdating, since a grant no longer writes the control row at all (PR 1b)", async () => {
+  const control = async () => (await client!`SELECT xmin::text AS version, cursor, updated_at FROM model_capacity_control WHERE id=1`)[0];
   const before = await control();
   for (let index = 11; index <= 12; index++) await source(index);
   for (let tick = 0; tick < 8; tick++) {
@@ -145,9 +145,9 @@ it("verifies the open window after more real grants without backdating, since a 
     await requestJob("crawl-agent-review");
     await runJob("crawl-agent-review", reviewCrawlCandidates, { requestedOnly: true, roleLease: role!, budgetMs: 110_000 });
   }
-  // 두 grant가 control 행을 다시 썼지만(cursor) 모드·정책 변경 시각은 그대로다.
+  // 장비별 입장(PR 1b)은 control 행을 쓰지 않는다(cursor 0 유지) — 행 버전도 모드·정책 변경 시각도 그대로다.
   const after = await control();
-  expect([after.version !== before.version, after.updated_at]).toEqual([true, before.updated_at]);
+  expect(after).toEqual(before); expect(after.cursor).toBe(0);
   expect(await budget()).toEqual({ modelCapacity: { mode: "open", changedSinceStart: false }, budget: { status: "verified",
     source: "model_capacity_ledger", calls: 5, chargedTokens: 600, reportedCalls: 5, boundCalls: 0, concurrency: { limit: 1, peak: 1 } } });
 }, 120_000);
