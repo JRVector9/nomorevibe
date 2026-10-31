@@ -14,6 +14,8 @@ import type { CrawlSettings } from "./settings-schema";
 import { sameReviewModel, sameUnderlyingModel } from "./review-model-identity";
 import { firstReviewer } from "./agent-review";
 import { firstReviewers, firstReviewIdentitySql, hasFirstReviewer } from "./first-reviewers";
+import { secondReviewFallbacks, secondReviewVoters } from "./second-review-voters";
+import { requireStageAssignments } from "@/lib/llm/stage-assignment-snapshot";
 import { reviewSemanticNow } from "./review-replay-context";
 import { appliedHeldQwenAttemptSql, heldQwenGateFirst, heldQwenGateFirstSql } from "./held-qwen-retry-policy";
 
@@ -39,14 +41,15 @@ export function secondReviewInputMatches(row: SecondReview, current: {
     || !settings.enabled || !settings.secondReview.enabled) return false;
   if (row.publishedSlug ? row.firstAttemptId !== null || !["risk", "sample"].includes(row.trigger)
     : !["ai_decided", "ai_held", "ai_approved"].includes(row.trigger) || row.inputHash !== input.inputHash) return false;
-  const pool = row.fallbackForId ? settings.secondReview.fallbacks ?? [] : settings.secondReview.voters;
+  // 배정 표(PR 3b-B)가 출처면 그 표의 투표자·대체(second-review-voters.ts) — 올리는 쪽과 같은 목록이다
+  const pool = row.fallbackForId ? secondReviewFallbacks(settings) : secondReviewVoters(settings);
   if (!pool.some(voter => voter.provider === row.provider && sameReviewModel(voter.model, row.model))) return false;
   if (row.fallbackForId && (!root || root.id !== row.fallbackForId || root.fallbackForId || root.candidateId !== row.candidateId
     || root.repo !== row.repo || root.firstAttemptId !== row.firstAttemptId || root.trigger !== row.trigger
     || root.publishedSlug !== row.publishedSlug || root.firstDecision !== row.firstDecision
     || (root.firstConfidence ?? null) !== (row.firstConfidence ?? null) || root.firstModel !== row.firstModel
     || root.generationKey !== row.generationKey || root.inputHash !== row.inputHash || root.status !== "resolved"
-    || root.resolution !== "fallback" || !settings.secondReview.voters.some(voter => voter.provider === root.provider
+    || root.resolution !== "fallback" || !secondReviewVoters(settings).some(voter => voter.provider === root.provider
       && sameReviewModel(voter.model, root.model)))) return false;
   if (secondReviewGeneration(row.firstAttemptId, input, row.trigger) !== row.generationKey
     || (!row.fallbackForId && sameUnderlyingModel(row.firstModel, row.model))) return false;
@@ -136,6 +139,8 @@ export async function lockSecondReviewDomain(tx: ProductTransaction, id: number)
 }
 
 async function secondReviewInputContext(row: SecondReview, tx?: ProductTransaction, lockGate = false): Promise<SecondReviewDomainContext | null> {
+  // 배정 표 스위치가 켜졌는데 표를 못 읽었으면 어느 투표자가 맞는지 모른다 — 예전 목록으로 거르지 않고 미룬다(assignments_unavailable)
+  await requireStageAssignments();
   const executor = tx ?? db;
   const candidateQuery = executor.select().from(crawlCandidates).where(eq(crawlCandidates.id, row.candidateId)).limit(1);
   const [candidate] = await (tx ? candidateQuery.for("update") : candidateQuery);
@@ -152,7 +157,7 @@ async function secondReviewInputContext(row: SecondReview, tx?: ProductTransacti
   if (tx) await lockRepositoryAgentEvidence(tx, row.repo);
   const settings = mergeWithDefaults(saved?.values);
   if (!settings.enabled || !settings.secondReview.enabled) return null;
-  const pool = row.fallbackForId ? settings.secondReview.fallbacks ?? [] : settings.secondReview.voters;
+  const pool = row.fallbackForId ? secondReviewFallbacks(settings) : secondReviewVoters(settings);
   if (!pool.some(voter => voter.provider === row.provider && sameReviewModel(voter.model, row.model))) return null;
   const input = await loadReviewInput(candidate, document, settings, executor);
   if (secondReviewGeneration(row.firstAttemptId, input, row.trigger) !== row.generationKey || (!row.fallbackForId && sameUnderlyingModel(row.firstModel, row.model))) return null;

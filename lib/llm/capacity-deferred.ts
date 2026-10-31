@@ -7,18 +7,21 @@
  * - `helper_ineligible`(PR 2a Layer B): 이 요청은 도우미 경로(model_helper_assignments 의 live·shadow 경로)인데 지금 닫혀 있다 — 감시자 신호가 없거나·
  *   만료됐거나·다른 epoch·판·계정이거나, 감시자가 꺼졌거나, 자동 정지·mode·판정이 막거나, 배정 점유가 max_slots 에 찼다(fail-closed).
  *   대기 행·event 를 남기지 않는다. 도우미 단계는 이번 틱을 멈출 뿐 모델 호출을 다시 시도하지 않는다. 우선 역할 경로에는 오지 않는다.
+ * - `assignments_unavailable`(PR 3b-B): MODEL_ASSIGNMENT_TABLE 이 켜졌는데 이 프로세스가 배정 표를 아직 한 번도 읽지 못했다 — 어느 모델이 맞는지
+ *   모르므로 예전 설정으로 고르거나 정리하지 않고 이번 틱을 멈춘다(호출·시도·실패 기록 없음). 다음 틱에 다시 읽는다.
  */
 export type ModelCapacityDeferredReason = "draining" | "unmapped" | "provider_contract_unavailable"
   | "reservation_required" | "owner_unavailable" | "capacity" | "queue_full" | "policy_changed"
   | "withdrawn" | "dispatched" | "disabled" | "reservation_lost" | "device_unconfigured" | "work_busy"
-  | "ledger_mismatch" | "helper_ineligible";
+  | "ledger_mismatch" | "helper_ineligible" | "assignments_unavailable";
 
 /**
  * 미룸 사유의 범위(PR 3a-B, 2026-10-31 소유자 결정 "하나가 잘못되면 다음 작업도 안 되는 구조는 이유가 없다").
  * 호출자(consumer 쪽·legacy 틱의 자리)는 이 범위만큼만 멈춘다 — 그 밖의 항목·모델·단계는 계속 돈다.
  *
  * - `global`: 이 프로세스가 지금 어느 모델에도 새 요청을 낼 수 없다 — 장부 모드(`draining`·`disabled`)·정책 세대(`policy_changed`)·
- *   요청 owner 없음(`owner_unavailable`)·예약 없는 보냄 시도(`reservation_required`, 호출 흐름 계약 위반). 쪽을 접고 cursor 를 지킨 채 잠깐 쉰다.
+ *   요청 owner 없음(`owner_unavailable`)·예약 없는 보냄 시도(`reservation_required`, 호출 흐름 계약 위반)·배정 표를 켰는데 아직 한 번도 못 읽음
+ *   (`assignments_unavailable`, PR 3b-B — 표가 고르는 어느 단계도 모델을 고를 수 없다; 30초 스냅숏이 읽히면 풀린다). 쪽을 접고 cursor 를 지킨 채 잠깐 쉰다.
  * - `model`: 그 route 의 그 모델(=그 장비)만의 일 — 포화(`capacity`)·대기열 가득(`queue_full`)·정책에 없음(`unmapped`)·전송 계약 없음
  *   (`provider_contract_unavailable`)·장비 행 없음(`device_unconfigured`, 장비는 모델에 붙으므로 모델 단위다)·도우미 경로 닫힘
  *   (`helper_ineligible`, PR 2a — 그 장비의 도우미 경로만 닫힌 것). 그 모델은 이 패스 동안 건너뛰고
@@ -31,6 +34,7 @@ export type ModelCapacityDeferralScope = "global" | "model" | "work";
 
 const SCOPE: Readonly<Record<ModelCapacityDeferredReason, ModelCapacityDeferralScope>> = Object.freeze({
   draining: "global", disabled: "global", policy_changed: "global", owner_unavailable: "global", reservation_required: "global",
+  assignments_unavailable: "global",
   capacity: "model", queue_full: "model", unmapped: "model", provider_contract_unavailable: "model", device_unconfigured: "model",
   helper_ineligible: "model",
   dispatched: "work", work_busy: "work", ledger_mismatch: "work", withdrawn: "work", reservation_lost: "work",

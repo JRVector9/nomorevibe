@@ -2532,16 +2532,25 @@ export async function releaseModelDispatchWithEvidence(tx: ProductTransaction, r
 }
 
 import type { ModelCapacityMode } from "./capacity";
-import { MODEL_CAPACITY_ROUTES_MAX, modelCapacityRouteSchema, type ModelCapacityPolicy, type ModelCapacityRoute } from "./capacity";
+import { MODEL_CAPACITY_PREDECESSORS_MAX, MODEL_CAPACITY_ROUTES_MAX, modelCapacityPolicyAdditive, modelCapacityPredecessorChain, modelCapacityRouteSchema,
+  type ModelCapacityPredecessor, type ModelCapacityRoute } from "./capacity";
 /**
  * 운영자 control 쓰기(PR06d). caller TX 가 fence 다음 첫 lock 으로 부른다. 장부 행은 건드리지 않는다 — dispatched/indeterminate 는 그대로 점유한다.
  * 정책은 open 이 아닐 때만 바꾸고 revision 을 올린다(옛 대기는 다음 poll 에서 policy_changed 로 거둬진다).
+ * 앞 판 사슬(`compatiblePredecessors`, PR 3b-B)은 정책 문서를 싣지 않으므로 여기서 증명한다: 모든 칸이 지금 정책의 사슬 또는 지금 세대여야 하고,
+ * 새 정책이 지금 정책의 덧붙이기만이어야 한다(modelCapacityPolicyAdditive). 아니면 `model_capacity_predecessor_unproven`.
  */
 export async function setModelCapacityPolicy(tx: ProductTransaction, value: unknown) {
   if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
   const state = await control(tx);
   if (state.mode === "open") fail("model_capacity_transition_invalid");
   const policy = parseModelCapacityPolicy(value);
+  if (policy.compatiblePredecessors) {
+    const vouched = state.policy && state.policyHash !== null
+      ? [...modelCapacityPredecessorChain(state.policy), { epoch: state.epoch, revision: state.revision, policyHash: state.policyHash }] : [];
+    if (!state.policy || !modelCapacityPolicyAdditive(state.policy, policy) || policy.compatiblePredecessors.some(entry => !vouched.some(known =>
+      known.epoch === entry.epoch && known.revision === entry.revision && known.policyHash === entry.policyHash))) fail("model_capacity_predecessor_unproven");
+  }
   const [row] = await tx.update(modelCapacityControl).set({ policy, policyHash: modelCapacityPolicyHash(policy),
     revision: sql`${modelCapacityControl.revision} + 1`, cursor: 0, updatedAt: sql`clock_timestamp()` })
     .where(and(eq(modelCapacityControl.id, 1), sql`${modelCapacityControl.revision} < 9007199254740991`)).returning();
@@ -2559,6 +2568,22 @@ export async function setModelCapacityMode(tx: ProductTransaction, mode: ModelCa
   return row;
 }
 
+/**
+ * 사슬 칸 중 장부에 그 세대의 살아 있는 행(waiting·reserved·dispatched)이 남은 것만, 같은 순서로(PR 3b-B). epoch 가 지금과 다른 칸은 무엇도 인증하지
+ * 못하므로 뺀다. 같은 세대가 두 번 들어오면 한 번만 남긴다. 호출자가 control FOR UPDATE 를 쥐고 있다.
+ */
+async function liveCapacityPredecessors(tx: ProductTransaction, epoch: number, entries: readonly ModelCapacityPredecessor[]): Promise<ModelCapacityPredecessor[]> {
+  const live = await tx.execute<{ epoch: string | number; revision: string | number; policy_hash: string }>(sql`SELECT DISTINCT epoch, revision, policy_hash
+    FROM model_capacity_requests WHERE ${liveStateSql(modelCapacityRequests.state)}`);
+  const kept: ModelCapacityPredecessor[] = [];
+  for (const entry of entries) {
+    if (entry.epoch !== epoch || kept.some(other => other.epoch === entry.epoch && other.revision === entry.revision)) continue;
+    if (live.some(row => Number(row.epoch) === entry.epoch && Number(row.revision) === entry.revision && row.policy_hash === entry.policyHash))
+      kept.push({ epoch: entry.epoch, revision: entry.revision, policyHash: entry.policyHash });
+  }
+  return kept;
+}
+
 /** 덧붙일 정책 route(5칸 전부). */
 export type NewModelCapacityRoute = ModelCapacityRoute;
 const routeKey = (route: Pick<ModelCapacityRoute, "routeId" | "provider" | "model">) => JSON.stringify([route.routeId, route.provider, route.model]);
@@ -2572,12 +2597,14 @@ const sameRoute = (a: ModelCapacityRoute, b: ModelCapacityRoute) => routeKey(a) 
  *   지금 revision 을 돌려준다(같은 저장을 다시 해도 revision 이 그대로다).
  * - 같은 (routeId, provider, model) 이 다른 예산·장비로 있으면 `model_capacity_route_conflict` — 옛 route 를 바꾸는 것은 정책 개정(DRAIN)이다.
  * - 합이 MODEL_CAPACITY_ROUTES_MAX 를 넘으면 `model_capacity_routes_cap`.
- * - 잡힌 행(reserved·dispatched, indeterminate 는 점유가 아니다)은 compatiblePredecessor 로 살린다(compatibleModelCapacityGeneration 이 그 행의
- *   정책 hash 로 앞 판을 인증한다). 앞 판은 한 단계뿐이고 base 정책(자기 compatiblePredecessor 없음)이어야 하므로:
- *   지금 정책에 앞 판이 없으면 앞 판 = 지금 정책. 지금 정책에 앞 판이 있으면 지금 판의 잡힌 행은 인증할 수 없다 — 그런 행이 있으면
- *   `model_capacity_append_predecessor_busy`(아무것도 바꾸지 않는다; 그 행들이 끝난 뒤 다시 저장한다). 지금 판의 잡힌 행이 없으면 앞 판의 잡힌 행이
- *   있을 때 그 앞 판을 그대로 넘기고, 없으면 앞 판을 비운다(다음 덧붙이기가 다시 지금 판을 살릴 수 있다).
+ * - 잡힌 행(reserved·dispatched, indeterminate 는 점유가 아니다)은 앞 판 사슬(`compatiblePredecessors`, PR 3b-B)로 살린다 —
+ *   compatibleModelCapacityGeneration 이 그 행의 (epoch, revision, policy_hash) 를 사슬 칸과 견준다. 덧붙일 때마다:
+ *   지금 사슬(옛 단일 `compatiblePredecessor` 는 그 문서 hash 의 한 칸으로 읽는다) + 지금 세대 → 장부에 그 세대의 waiting·reserved·dispatched 행이
+ *   하나도 없거나 epoch 가 다른 칸은 뺀다 → 남은 칸이 MODEL_CAPACITY_PREDECESSORS_MAX 를 넘으면 `model_capacity_append_chain_full`
+ *   (아무것도 바꾸지 않는다; 옛 세대 행이 끝난 뒤 다시 저장한다). 비면 사슬 칸을 쓰지 않는다(옛 parser 도 읽는 정책).
+ *   지금 세대의 hash 는 control 을 읽을 때 문서와 대조됐다(parsedControl). 장부 확인과 쓰기가 같은 control FOR UPDATE 아래라 사이에 새 행이 생기지 않는다.
  * 대기 행은 다음 poll 에서 여느 정책 변경처럼 policy_changed 로 거둬지고, 옛 판의 reserved 행은 dispatch 에서 ownership_lost 다(점유는 인증된다).
+ * 사슬 칸이 있는 정책은 옛 parser 가 읽지 못한다 — 모든 용량 소비자가 이 판을 돈 뒤에만 배정을 저장한다(같은 창 배포).
  */
 export async function appendCompatibleRoutes(tx: ProductTransaction, routes: readonly NewModelCapacityRoute[]):
   Promise<{ appended: ModelCapacityRoute[]; policyRevision: number }> {
@@ -2604,16 +2631,12 @@ export async function appendCompatibleRoutes(tx: ProductTransaction, routes: rea
   if (!added.length) return { appended: [], policyRevision: state.revision };
   if (current.routes.length + added.length > MODEL_CAPACITY_ROUTES_MAX) fail("model_capacity_routes_cap");
   if (state.revision >= 9007199254740991) fail("model_capacity_revision_exhausted");
-  const held = await tx.execute<{ epoch: string | number; revision: string | number; policy_hash: string }>(sql`SELECT DISTINCT epoch, revision, policy_hash
-    FROM model_capacity_requests WHERE ${occupyingStateSql(modelCapacityRequests.state)}`);
-  const holds = (generation: { epoch: number; revision: number; policyHash: string }) => held.some(row => Number(row.epoch) === generation.epoch
-    && Number(row.revision) === generation.revision && row.policy_hash === generation.policyHash);
-  const { compatiblePredecessor: previous, ...base } = current;
-  let predecessor: ModelCapacityPolicy["compatiblePredecessor"];
-  if (!previous) predecessor = { epoch: state.epoch, revision: state.revision, policy: { ...base, routes: [...base.routes] } };
-  else if (holds({ epoch: state.epoch, revision: state.revision, policyHash: state.policyHash })) return fail("model_capacity_append_predecessor_busy");
-  else if (holds({ epoch: previous.epoch, revision: previous.revision, policyHash: modelCapacityPolicyHash(previous.policy) })) predecessor = previous;
-  const next = parseModelCapacityPolicy({ ...base, routes: [...current.routes, ...added], ...(predecessor ? { compatiblePredecessor: predecessor } : {}) });
+  const chain = await liveCapacityPredecessors(tx, state.epoch, [...modelCapacityPredecessorChain(current),
+    { epoch: state.epoch, revision: state.revision, policyHash: state.policyHash }]);
+  if (chain.length > MODEL_CAPACITY_PREDECESSORS_MAX) return fail("model_capacity_append_chain_full");
+  const { compatiblePredecessor: _single, compatiblePredecessors: _chain, ...base } = current;
+  void _single; void _chain;
+  const next = parseModelCapacityPolicy({ ...base, routes: [...current.routes, ...added], ...(chain.length ? { compatiblePredecessors: chain } : {}) });
   const [row] = await tx.update(modelCapacityControl).set({ policy: next, policyHash: modelCapacityPolicyHash(next),
     revision: sql`${modelCapacityControl.revision} + 1`, updatedAt: sql`clock_timestamp()` })
     .where(and(eq(modelCapacityControl.id, 1), eq(modelCapacityControl.revision, state.revision))).returning({ revision: modelCapacityControl.revision });

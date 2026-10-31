@@ -26,12 +26,12 @@ import { DrWriterFencedError } from "./dr/epoch";
 /**
  * 관리자 「모델 배정」(/admin/models/assignments) 화면 모형 — PR 3b-D.
  *
- * 단계 × 장비 × 모델 × 순위 × 모드 × 전송 배정(model_helper_assignments 의 role 'primary' 행, migration 0155)을 보이고, PR 3b-A 의 저장 함수
+ * 단계 × 장비 × 모델 × 순위 × 모드 × 전송 배정(model_helper_assignments 의 role 'primary' 행, migration 0156)을 보이고, PR 3b-A 의 저장 함수
  * `saveModelAssignment` 하나로 저장한다(재배포 없음). 저장 한 번이 계약 확인(없으면 readback + 1-token probe)·정책 route 덧붙이기(DRAIN 없음)·
  * 장비 순위·배정 행·감사 한 줄을 한 TX 에 한다 — 여기서는 감사 줄을 **또 쓰지 않는다**.
  *
  * - 도우미 행(role 'helper')은 표에 함께 보이지만 바꾸지 않는다 — 섀도·승격은 「도우미 장비」(/admin/models/helpers, PR 2a·2b·2c)에서 한다.
- * - 이 화면의 배정 행을 읽어 모델을 고르는 쪽은 3b-B(플래그 MODEL_ASSIGNMENT_TABLE)다. 읽기 출처는 admin-assignment-source(3b-B 자리표)가 준다.
+ * - 이 화면의 배정 행을 읽어 모델을 고르는 쪽은 3b-B(플래그 MODEL_ASSIGNMENT_TABLE)다. 읽기 출처는 admin-assignment-source(3b-B 의 assignmentSource)가 준다.
  * - 거절 코드 → 한국어 문장(무엇을 하면 되는지)은 modelAssignmentIssueMessage 한 곳에서 만든다(모르는 코드는 그대로 보인다).
  * - 「현재 설정 → 배정 표 가져오기」는 lib/llm/assignment-import.ts 의 planAssignmentImport(3b-B)가 만든 계획을 행마다 같은 저장 함수로 적용한다.
  *
@@ -558,6 +558,8 @@ const FIXED: Record<string, string> = {
   model_assignment_version_exhausted: "이 배정의 판 번호가 끝에 닿았습니다 — 새 이름으로 다시 만드세요.",
   model_assignment_save_failed: "저장하지 못했습니다(알 수 없는 오류, 로그에 남겼습니다). 새로고침해 현재 상태를 확인해 주세요.",
   model_capacity_append_predecessor_busy: "정책에 앞 판의 잡힌 호출(예약·진행)이 아직 남아 있어 경로를 덧붙일 수 없습니다 — 그 호출이 끝난 뒤(보통 몇 분) 다시 저장하세요.",
+  model_capacity_append_chain_full: "옛 정책 세대 16개에 아직 잡힌 호출이 남아 경로를 덧붙일 수 없습니다(앞 판 사슬이 가득) — 가장 오래된 호출이 끝난 뒤(보통 몇 분) 다시 저장하세요.",
+  model_capacity_predecessor_unproven: "정책의 앞 판 사슬을 증명할 수 없습니다 — 사슬은 지금 정책의 사슬·지금 세대만, 새 정책은 경로 덧붙이기만이어야 합니다.",
   model_capacity_routes_cap: "정책 경로가 상한(256)에 닿았습니다 — 안 쓰는 경로를 정책에서 정리한 뒤 저장하세요.",
   model_capacity_route_conflict: "같은 경로·공급자·모델이 정책에 다른 값(예산·장비)으로 있습니다 — 실시간 한도·장비 한도에서 정책을 확인하세요.",
   model_capacity_route_invalid: "덧붙일 정책 경로 모양이 틀립니다 — 등록부 key·장비 이름을 확인하세요.",

@@ -164,8 +164,11 @@ export async function saveHelperAssignment(tx: ProductTransaction, input: unknow
     if (evidenceChanged) mode = "shadow";
   }
   if (mode === "live" && parsed.stage === "ai2") {
-    const { getSettings } = await import("@/lib/crawl/settings");
-    const fallbacks = (await getSettings()).secondReview.fallbacks ?? [];
+    const [{ getSettings }, { secondReviewFallbacks }, { ensureStageAssignments }] = await Promise.all([import("@/lib/crawl/settings"),
+      import("@/lib/crawl/second-review-voters"), import("./stage-assignment-snapshot")]);
+    // 배정 표(PR 3b-B)가 2차 출처면 그 표의 대체(rank ≥ 2)가 도우미가 대신 설 수 있는 자리다
+    await ensureStageAssignments();
+    const fallbacks = secondReviewFallbacks(await getSettings());
     if (!fallbacks.some(voter => voter.provider === parsed.liveProvider && voter.model === parsed.model)) refuse("helper_ai2_voter_not_in_fallbacks");
   }
   const current = before?.version ?? null;
@@ -488,18 +491,18 @@ async function assignmentContract(tx: ProductTransaction, input: ModelAssignment
  * 장비 행 미리 보기(잠금 없음) → (b) 계약 확인·없으면 probe(네트워크, 잠금 없음) → DR fence(SHARE, 첫 잠금) → probe 한 계약 쓰기 →
  * model_capacity_control FOR UPDATE → 장비 행 FOR UPDATE(enabled 여야 한다, 아니면 device_unconfigured) → 배정 행 FOR UPDATE(도우미 행이면
  * assignment_is_helper, 단계·장비는 못 바꾼다) → version compare-and-set → 같은 장비의 다른 행과 겹침 검사 → (c) 정책 route 덧붙이기
- * (appendCompatibleRoutes: DRAIN 없음, 잡힌 행은 compatiblePredecessor 로 산다) → (d) 장비 순위 (device, route) = rank(바뀌면 장비 version + 1)
+ * (appendCompatibleRoutes: DRAIN 없음, 잡힌 행은 앞 판 사슬 compatiblePredecessors 로 산다 — 3b-B) → (d) 장비 순위 (device, route) = rank(바뀌면 장비 version + 1)
  * → 배정 행 upsert(version + 1) → (e) operations_audit `model-assignment-save` 한 줄. 새 계약 행은 저장 함수 그대로 자기 감사 줄
  * (`model-serving-contract-save`)도 남긴다.
  * route: 같은 (route, provider, wire 모델) 이 정책에 이미 있으면 그 route 를 그대로 쓴다(장비가 다르면 route_device_mismatch). 없으면
  * { route, provider, wire 모델, providerBudgetId, groupId = 장비 } 를 덧붙인다 — providerBudgetId 는 등록부 equipment, local-direct 만 계약의 backendId
  * (PR 2a·로컬 호출이 local-direct route 의 providerBudgetId 를 backendId 로 읽는다).
- * 이 PR 에서는 이 행을 읽는 hot path 가 없다 — 입장·감시자는 role 'helper' 행만 본다(3b-B 가 flag 뒤에서 읽는다).
+ * 입장·감시자는 role 'helper' 행만 본다. 고르기는 3b-B 부터 MODEL_ASSIGNMENT_TABLE 뒤에서 live 행을 읽는다(stage-assignment-snapshot.ts).
  *
  * **끄기는 거절되지 않는다(3b-D 결정)**: mode 'off' 이고 expectedVersion 이 있고(있는 행 — CAS 는 그대로), 잠금 없이 미리 본 그 행이 같은
  * 등록부 key·전송의 role 'primary' 행이면 saveAssignmentOff 로 간다 — 등록부·장비 enabled·계약 확인(probe 를 부르지 않고 계약 행도 요구하지 않는다)·
  * 정책 route 덧붙이기를 모두 건너뛰고, 순위가 바뀌었을 때만 장비 순위를 쓰고, 배정 행(mode off, version + 1)과 감사 한 줄을 쓴다. 새 행의 off
- * 저장(expectedVersion null)과 모델·전송을 바꾸는 off 저장은 지금과 같다(probe + route + 장비 순위 — route 를 미리 만들어 둔다).
+ * 저장(expectedVersion null)과 모델·전송을 바꾸는 off 저장은 지금과 같다(probe + route + 장비 순위 — route 를 미리 만들어 둔다; 쓰지 않을 뿐이다).
  * 끄기 갈래에서도 남는 거절은 DR fence(site_fenced)·CAS(version_mismatch)·제어 행 없음·순위를 1 로 올려 도우미 경로와 겹치는 경우뿐이다.
  */
 export async function saveModelAssignment(tx: ProductTransaction, input: unknown, actor: string, deps: ModelAssignmentDeps = {}):

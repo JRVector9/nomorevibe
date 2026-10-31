@@ -5,6 +5,8 @@ import { storedSettingsVersion } from "@/lib/operations/runtime-settings-schema"
 import { publishRuntimeSettingsSnapshot, runtimeSettings, runtimeSettingsSnapshotFromStored, setRuntimeSettingsLoader,
   type RuntimeSettingsSnapshot } from "@/lib/operations/runtime-settings-store";
 import { overlaidModelDefinitions, setModelRegistryOverlay, setModelRoutePolicyOverlay } from "./model-registry";
+// The assignment-table default reader (PR 3b-B) installs itself next to the registry overlays; it reads nothing unless MODEL_ASSIGNMENT_TABLE=1.
+import "./stage-assignment-snapshot";
 
 /**
  * Admin-managed serving contracts (model_serving_contracts, 0147) as an in-process snapshot.

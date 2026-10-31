@@ -236,8 +236,8 @@ migration `0156_model_assignments`(PR 3b-A)는 같은 표 `model_helper_assignme
 4. **정책 route 덧붙이기**(`appendCompatibleRoutes`, `lib/llm/capacity-repository.ts`): `{ route, provider, wire 모델, providerBudgetId, groupId = 장비 }` —
    providerBudgetId 는 등록부 equipment, local-direct 만 계약의 backendId. 같은 (route, provider, 모델)이 이미 같은 장비에 있으면 그대로 쓰고(다른 장비면 `route_device_mismatch`),
    다섯 칸이 같으면 아무것도 쓰지 않는다(다시 저장해도 revision 그대로). **mode 는 그대로(DRAIN 없음)**, revision + 1, 옛 route 는 지우거나 순서를 바꾸지 않는다.
-   잡힌 행(reserved·dispatched)은 `compatiblePredecessor` 로 산다. 앞 판은 한 단계뿐이라: 지금 정책에 앞 판이 없으면 앞 판 = 지금 정책, 있으면 지금 판의 잡힌 행이
-   남아 있을 때 `model_capacity_append_predecessor_busy`(그 행이 끝난 뒤 다시 저장), 지금 판이 비었으면 앞 판의 잡힌 행이 있을 때만 그 앞 판을 넘기고 아니면 비운다.
+   잡힌 행(reserved·dispatched)은 **앞 판 사슬**(`compatiblePredecessors`, 3b-B — 아래 「앞 판 사슬」)로 산다. 3b-A 의 한 단계 앞 판은 계속 부하가 걸리면 두 번째
+   덧붙이기를 `model_capacity_append_predecessor_busy` 로 거절했다 — 3b-B 에서 그 거절은 없어졌다.
    route 상한은 128 → 256(`MODEL_CAPACITY_ROUTES_MAX`) — 옛 parser 는 129개 이상을 거절하므로 모든 용량 소비자가 이 판을 돈 뒤에만 129번째를 넣는다.
 5. 장비 순위 `(device, route) = rank`(바뀌면 장비 version + 1 — 장비 폼의 옛 화면 저장이 CAS 로 거절된다) → 배정 행 upsert(version + 1; `shadow_route_id` 는 표지
    `primary:<단계>`, `live_route_id`·`live_provider` = 그 route) → `operations_audit` `model-assignment-save` 한 줄(before·after·계약·route·덧붙였나·revision·장비 순위).
@@ -250,15 +250,75 @@ DR fence → control FOR UPDATE(정책이 없어도 된다) → 배정 행 FOR U
 새 행의 off 저장과 모델·전송을 바꾸는 off 저장은 지금과 같다(probe + route + 장비 순위 — route 를 미리 만든다).
 
 거절 문자열: `model_assignment_invalid:<path>` · `model_assignment_version_mismatch:<current|none>` · `model_assignment_refused:<code>`(`MODEL_ASSIGNMENT_REFUSALS`) ·
-덧붙이기의 `model_capacity_routes_cap` · `model_capacity_route_conflict` · `model_capacity_append_predecessor_busy` · `site_fenced`.
+덧붙이기의 `model_capacity_routes_cap` · `model_capacity_route_conflict` · `model_capacity_append_chain_full`(3b-B) · `site_fenced`.
 
-읽기·고르기(`lib/llm/stage-assignments.ts`, 아직 아무도 부르지 않는다): `assignmentsForStage(stage, { mode: 'live' })` = rank → assignment_id 순,
+### 앞 판 사슬 — 3b-B
+
+정책 칸 `compatiblePredecessors: [{ epoch, revision, policyHash }]`(1~16칸, `(epoch, revision)` 오름차순, `MODEL_CAPACITY_PREDECESSORS_MAX`, `lib/llm/capacity.ts`).
+한 칸 = 행이 남은 옛 세대 하나의 사실(정책 문서는 싣지 않는다). 옛 단일 칸 `compatiblePredecessor`(정책 문서를 싣는다)는 그대로 파싱되고 그 문서 hash 의 **길이 1 사슬**로 읽힌다
+(`modelCapacityPredecessorChain`). 두 칸을 함께 두면 `ambiguous_capacity_predecessor` 로 거절한다.
+
+- 인증(`compatibleModelCapacityGeneration`, 입장 TX 의 옛 세대 점유 행마다): 행의 (epoch, revision, policy_hash) 가 사슬 **어느 칸**과 정확히 같고, 그 칸이 지금 epoch 의 더 이른 revision.
+- 덧붙이기(`appendCompatibleRoutes`): 지금 사슬 + 지금 세대 → 장부에 그 세대의 waiting·reserved·dispatched 행이 없는 칸, epoch 가 다른 칸을 뺀다(지금 세대도 행이 없으면 빠진다)
+  → 남은 칸이 16을 넘으면 `model_capacity_append_chain_full`(아무것도 쓰지 않는다 — 가장 오래된 옛 세대 행이 끝난 뒤 다시 저장). 남은 칸이 없으면 사슬 칸을 쓰지 않는다
+  (옛 parser 도 읽는 정책). 장부 확인과 쓰기가 같은 control FOR UPDATE 아래다(입장·dispatch 도 그 잠금을 잡는다).
+- 운영자 정책 쓰기(`setModelCapacityPolicy`, `pipeline-control capacity policy`): 사슬 칸이 있으면 모든 칸이 **지금 정책의 사슬 또는 지금 세대**여야 하고 새 정책이 지금 정책의
+  덧붙이기만(`modelCapacityPolicyAdditive`)이어야 한다 — 아니면 `model_capacity_predecessor_unproven`. 사슬 칸에는 문서가 없어 여기서만 증명할 수 있다.
+- **배포 순서(같은 창)**: 옛 parser(`.strict`)는 `compatiblePredecessors` 를 모르는 칸으로 거절한다 — 그 정책을 읽는 모든 용량 소비자(입장·dispatch·관측·감시자·ops CLI·웹)가
+  이 판을 돈 뒤에만 관리자가 배정을 저장한다(잡힌 행이 있는 동안의 저장이 사슬 칸을 쓴다). route 129개 이상과 같은 조건이다.
+
+읽기·고르기(`lib/llm/stage-assignments.ts`, 3b-B 부터 스위치 뒤에서 부른다 — 아래 「읽기 전환」): `assignmentsForStage(stage, { mode: 'live' })` = rank → assignment_id 순,
 `chooseModelForItem(rows, itemKey, { excludeModels })` = 1차 오늘 규칙(`selectFirstReviewer`)과 같은 `(itemKey − 1) mod n` 칸, rank 가 모두 빠지면 다음 rank,
 `votersForItem(rows, itemKey, 1차 모델)` = 2차 rank 1 · vote · live 행에서 1차와 같은 가중치(`sameUnderlyingModel`)를 뺀 목록(순서만 항목마다 돈다).
 
+## 읽기 전환 — 3b-B (`MODEL_ASSIGNMENT_TABLE`)
+
+배정 표(role `primary` · mode `live`)를 단계별 모델 고르기의 출처로 쓰는 스위치. **기본은 꺼짐이고, 꺼지면 오늘과 같다**(배정 표 SELECT 도 없다).
+
+- 스위치: 역할(Dokploy 앱)마다 env `MODEL_ASSIGNMENT_TABLE=1`. 프로세스가 처음 물을 때 한 번 읽어 고정한다(`lib/llm/assignment-flag.ts`, 재시작해야 바뀐다).
+  `1` 만 켬, 없음·`""`·`0` 끔, 그 밖은 끔 + `model_assignment_table.invalid` 한 번.
+  runtime_settings 키(재배포 없이 관리자가 켜기)는 이 PR 에 없다: 그 문서는 그룹 목록이 고정이고(시험이 목록을 고정한다), 모르는 그룹이 있으면
+  다른 그룹 저장까지 `unknown_group` 으로 거절하며, 폼은 숫자 칸만 받는다 — 그룹·폼·저장 검사를 함께 넓혀야 해 3b-D 몫으로 남겼다.
+- 스냅숏(`lib/llm/stage-assignment-snapshot.ts`): 고르기 함수는 동기라 live 행 전부를 30초 스냅숏으로 읽는다(오래된 동기 읽기는 뒤에서 한 번 다시 읽는다).
+  비동기 길목 — 1차 `chooseFirstReviewForCandidate`(TX 밖), 2차 올리기·정리·stale 정리·결과 기록·입력 로더, 단계 풀 — 은 먼저 새 스냅숏을 기다린다.
+  **켜졌는데 한 번도 못 읽었으면** 그 길목은 `ModelCapacityDeferredError('assignments_unavailable')` 로 미룬다(예전 목록으로 고르거나 2차 표를
+  `model_removed` 로 닫지 않는다). replay 범위에서는 읽지 않는다(언제나 예전 설정).
+- 출처(`assignmentSource(stage)`): `table` · `legacy`(꺼짐·아직 못 읽음·replay) · `legacy_empty_table`(켜졌지만 쓸 행이 없다 — 프로세스마다 한 번
+  `assignment_table_empty:<stage>`). 관리자 화면(3b-D)과 pipeline-control 스냅숏의 선택 칸 `assignments`(ops CLI 의 스위치가 켜졌을 때만 —
+  `enabled`·단계별 `live` 행 수·`tableReady`·`source`; 소비자 역할의 스위치는 그 앱의 env 다)가 보인다.
+
+단계별로 무엇이 바뀌나:
+
+| 단계 | 'table' 일 때 | 남은 예전 경로 |
+| --- | --- | --- |
+| ai1 (`lib/crawl/first-reviewers.ts`) | 풀 = ai1 live 행(abcllm·claude-cli·grok-cli), rank → assignment_id. `firstReviewers()` 는 표 전체(대체 포함)를 돌려준다 — 결과 유효성·route 목록. 새 후보 = `chooseModelForItem` 의 `(id − 1) mod n`(가장 낮은 rank), 손대지 않은 후보만 막힌·쉬는 모델을 비켜 가고 rank 1 이 모두 막히면 rank 2(대체). 활성 의도·재시도 고정은 같다 | **풀 모드(`firstReviewAdditional` 이 있다, [] 도 된다)일 때만** 표를 쓴다 — 1차 consumer·legacy 잡(PR 3a 소유)이 풀 모드에서만 후보마다 고르고 모델별로 쉰다. 아니면 `assignment_table_pool_mode_off:ai1` 한 번 + 예전. `firstReviewer(settings)`(AI2 정책 hash 의 1차)는 예전 그대로 |
+| ai2 (`lib/crawl/second-review-voters.ts`) | 투표자 = rank 1 · vote · live, 대체 = rank ≥ 2(rank 순), 같은 모델 한 번. **모든 2차 읽기**(올리기·입력 검증·정리·stale·결과 기록의 대체·대기 대체·공개 관문 SQL·보류 재심사·발견 관문·도우미 저장 검사·route 목록)가 이 두 함수를 읽어 함께 바뀐다. 항목마다 1차와 같은 가중치를 빼는 규칙은 그대로 | 투표자 행이 없으면 예전. AI2 정책 hash 는 저장된 설정을 그대로 hash(표가 바뀌어도 진행 중 receipt 가 hash 로 깨지지 않고, 빠진 모델은 입력 검증이 거른다). Grok 세션 점검 잡(`lib/crawl/jobs/grok-session.ts`, 3a 소유)은 예전 목록 |
+| human · audit · audit-second-opinion · screen · reason · translate · ko · profile · verify · tagline · intro (`lib/llm/admin-model-pools.ts`) | 저장 잡 범위(`withStoredAdminStagePools`)에서 대응 관리자 단계(`ADMIN_STAGE_ASSIGNMENTS`)의 풀 대신 표 행에서 **결정적** `chooseModelForItem`(같은 sha256 칸, 가장 낮은 rank). 「빈 grant 가 있는 첫 rank 1 행」은 이 동기 scope 가 표현하지 못해 쓰지 않았다(입장이 포화를 미룬다). 등록부·adapter·용도 검사와 wire = 등록부 요청 이름을 지나는 행만 | direct-review·published-filter·split-tiebreak·held-review-retry·split-confirm·korean-translation-direct·search-query-translate·assist-* 는 저장 풀. 명시 풀(`withAdminStagePools`, 준비 점검)은 바꾸지 않는다 |
+| 등록부 기본값 (`lib/llm/model-registry.ts`) | `configuredModel*`: 용도의 단계(`ASSIGNMENT_PURPOSE_STAGES`: profile·verify·tagline·reason·ko·translate·intro)에 live 행이 있으면 첫 행의 key 가 `*_KEY`·예전 env 보다 앞선다 — scope 밖 process env 만. 등록부 읽기는 import 시점에도 일어나 스냅숏을 다시 읽지 않는다(DB client 를 진입 확인보다 먼저 만들지 않는다) — 잡 길목(`withStoredAdminStagePools`)이 채운 스냅숏을 본다 | 단계 풀 scope 의 key, 호출자가 넘긴 env, 대응 없는 용도(search-query-translate·direct-review·relay)는 예전 순서 |
+
+- 인증된 용량 측정(`pipeline-capacity` manifest)은 표가 출처이면 `unsupported_capacity_assignment_table`, 실측 수집은 스위치가 켜진 프로세스에서
+  `live_capacity_assignment_table_unsupported` 로 거절한다(선언한 설정 모델이 실제 심사자가 아니다).
+- 켜기 전 확인: 1차는 풀 모드인가, 2차 표에 투표자가 있는가(`pipeline-control status` 를 스위치를 켠 셸에서 — `[assignments]` 줄), 같은 창에서
+  모든 용량 소비자가 3b-B 판인가(앞 판 사슬). 끄기는 env 를 지우고 재시작.
+
+### 가져오기 계획 — 3b-B (`planAssignmentImport`, `lib/llm/assignment-import.ts`)
+
+순수 함수(DB·네트워크·스냅숏 없음)로, 오늘 예전 설정이 고르는 모델을 배정 표 행으로 옮기는 `saveModelAssignment` 입력 목록과 지금 표와의 차이를 만든다.
+화면과 적용(행마다 저장 = 계약 확인·route 덧붙이기)은 3b-D 다.
+
+- 입력: `settings`(firstReview·firstReviewAdditional·secondReview·stageModelPools), 정책(route 의 groupId = 장비), 등록부, 선택 `existing`(지금 표 행)·
+  `firstReviewFallback`(firstReview 가 없을 때의 env 대체 — 함수는 env 를 읽지 않는다).
+- 옮기기: ai1 오늘 풀(`legacyFirstReviewers`) → rank 1, assignment_id 의 두 자리 순번이 풀 순서(`ai1:01:supa-review`). ai2 voters → rank 1 · vote,
+  fallbacks[i] → rank 2 + i. 대응하는 단계 풀 key → 그 단계 rank 1. wire 모델 = 전송 규칙(`assignmentWireModel`), 게이트웨이 표지가 없는 abcllm 행은 direct.
+- 장비: 정책 route `(단계 route, provider, wire)` 의 groupId → `mode live`. route 가 없으면 `mode off` + `route_missing`(장비 = 등록부 equipment).
+  off 행도 저장하면 계약 확인·route 덧붙이기·장비 순위를 한다 — 적용 쪽이 고른다.
+- 차이: (단계, 장비, wire 모델)이 같은 지금 행이 있으면 그 assignment_id·version(expectedVersion)·maxSlots·note 를 이어받고, registryKey·transport·rank·vote·mode 가
+  같으면 `unchanged`, 다르면 `update`(바뀐 칸 목록), 없으면 `create`.
+- 경고(입력 없이 건너뜀): `registry_unmatched` · `registry_ambiguous` · `transport_unsupported` · `duplicate`(같은 행·2차 같은 모델) · `input_invalid` ·
+  `stage_unmapped`(대응 없는 관리자 단계). 입력은 남기고 알리는 것: `route_missing` · `first_review_from_env`.
 ## 모델 배정 화면 — 3b-D
 
-`/admin/models/assignments`(메뉴 「설정·기록 → 모델 배정」, 「도우미 장비」 바로 다음). 단계 × 장비 × 모델(등록부 key) × 순위 × 모드 × 전송 배정(위 0155 의 role `primary` 행)을
+`/admin/models/assignments`(메뉴 「설정·기록 → 모델 배정」, 「도우미 장비」 바로 다음). 단계 × 장비 × 모델(등록부 key) × 순위 × 모드 × 전송 배정(위 0156 의 role `primary` 행)을
 **재배포 없이** 보고 바꾼다. 저장은 3b-A 의 `saveModelAssignment` 하나뿐이다 — server action(`app/(operator)/admin/models/assignments/actions.ts`, 쓰기 관문 `webWriteAction`)
 → `saveAdminModelAssignment`(`lib/operations/admin-model-assignments.ts`, `onPrimary(() => db.transaction(tx => saveModelAssignment(tx, input, actor, deps)))`) 한 TX 이고,
 `deps` 는 운영에서 비워 저장 함수의 기본 배선(등록부 = `ensureServingContracts` 뒤 `readModelRegistry`, 계약 = `probeEngineContract` 의 `/models` readback + 1-token probe,
@@ -267,8 +327,8 @@ CLI = `probeCliServingContracts`)을 쓴다. 감사 줄(`model-assignment-save`)
 - **도우미 행**(role `helper`)은 같은 표에 「도우미」로 보이지만 이 화면에서는 바꾸지 않는다 — 「도우미 화면에서 →」 링크(`/admin/models/helpers#helper-<id>`)로 섀도·승격(2b·2c)을 한다.
   폼에서 역할 「도우미」를 고르면 저장 단추가 꺼지고 도우미 화면으로 보낸다(`assignment_helper_role`).
 - **상태 띠**: 플래그가 꺼져 있으면(기본) 「읽기: 설정(legacy). 플래그 MODEL_ASSIGNMENT_TABLE 켜면 표를 읽습니다」. 켜지면 단계마다 읽기 출처 — 「표」(실전 행이 있다),
-  「표 비어 있음」(표를 읽게 됐는데 실전 행이 없다 — 그 단계는 고를 모델이 없다), 「설정」(그 단계는 아직 legacy). 출처는 `lib/operations/admin-assignment-source.ts`
-  (3b-B 자리표: 늘 꺼짐·legacy, env 를 직접 읽지 않는다)가 준다.
+  「표 비어 있음」(플래그는 켜졌지만 그 단계에 쓸 실전 행이 없다 — 그 단계는 설정(legacy)으로 고른다), 「설정」(그 단계는 아직 legacy). 출처는 `lib/operations/admin-assignment-source.ts`
+  (3b-B 의 `assignmentSource` — 아래 「3b-B 와 합친 뒤」)가 준다.
 
 ### 표 열(단계 묶음마다, `ASSIGNMENT_STAGES` 순서)
 
@@ -304,7 +364,7 @@ CLI = `probeCliServingContracts`)을 쓴다. 감사 줄(`model-assignment-save`)
 ### 현재 설정 → 배정 표 가져오기
 
 1. 「계획 보기」(`?import=plan#import`) — 서버가 지금 설정(firstReview·firstReviewAdditional·secondReview.voters·fallbacks·stageModelPools)·등록부·정책·장비·지금 배정 표 행을
-   모아 `planAssignmentImport`(`lib/llm/assignment-import.ts`, **3b-B 가 구현** — 지금은 빈 계획 + 경고 「3b-B 미반영」)로 만든 계획을 보인다: 만들기·고치기·그대로 행
+   모아 `planAssignmentImport`(`lib/llm/assignment-import.ts`, 3b-B)로 만든 계획을 보인다: 만들기·고치기·그대로 행
    (설정의 출처, 배정 이름, 단계, 장비, 모델, 전송, 순위, 모드, 바뀐 칸)과 경고, 계획 hash(앞 12자리). 보기만으로는 아무것도 쓰지 않는다.
 2. 확인 칸 「배정」 + 「적용」 — 서버가 계획을 **다시 만들어** 보여 준 hash 와 같을 때만(아니면 `assignment_import_plan_changed`, 다시 보기), 행마다
    `saveAdminModelAssignment` 로 따로 저장한다(행마다 TX 하나·감사 한 줄). 한 행이 거절돼도 다음 행을 계속하고 「그대로」 행은 건너뛴다. 행마다 결과(저장 판 / 거절 문장 / 건너뜀)를 보인다.
@@ -334,7 +394,8 @@ CLI = `probeCliServingContracts`)을 쓴다. 감사 줄(`model-assignment-save`)
 | `…:contract_transport_mismatch` | 저장된 계약의 전송이 다름 — 전송을 맞추거나 계약을 다시 저장 |
 | `…:contract_device_mismatch` | 로컬 계약의 physicalGroup 이 다른 장비 — 계약의 장비로 배정하거나 계약을 고친다 |
 | `…:cli_contract_missing` | 웹 프로세스에 CLI 계약(`CLI_SERVING_CONTRACTS`)이 없거나 `--version` 확인 실패 — env 계약을 넣은 뒤 저장 |
-| `model_capacity_append_predecessor_busy` | 앞 판의 잡힌 호출이 남아 경로를 덧붙일 수 없음 — 그 호출이 끝난 뒤(보통 몇 분) 다시 저장 |
+| `model_capacity_append_chain_full` | 옛 정책 세대 16개에 잡힌 호출이 남아 앞 판 사슬이 가득 — 가장 오래된 호출이 끝난 뒤(보통 몇 분) 다시 저장(3b-B 전 판의 `…_predecessor_busy` 도 같은 문장) |
+| `model_capacity_predecessor_unproven` | 운영자 정책 쓰기의 사슬을 증명할 수 없음 — 지금 사슬·지금 세대만, 경로 덧붙이기만 |
 | `model_capacity_routes_cap` | 정책 경로 상한(256) — 안 쓰는 경로를 정책에서 정리 |
 | `model_capacity_route_conflict` · `_route_invalid` · `_policy_missing` · `_control_missing` · `_revision_exhausted` | 정책 쪽 문제 — 실시간 한도·장비 한도에서 정책 확인 / 정책을 먼저 적용 |
 | `site_fenced` 등 DR | 이 사이트는 쓰기가 막혀 있음 — 쓰기 사이트에서 |
@@ -342,14 +403,14 @@ CLI = `probeCliServingContracts`)을 쓴다. 감사 줄(`model-assignment-save`)
 | `assignment_confirm_required` · `assignment_helper_role` · `assignment_device_required` · `assignment_registry_required` · `assignment_id_required` · `assignment_import_plan_changed` | 화면 쪽 검사: 확인 「배정」, 도우미는 도우미 화면, 장비·모델 고르기, 배정 이름 직접 적기, 계획 다시 보기 |
 | 모르는 코드 | 그대로 보인다(숨기지 않는다). 코드 모양이 아닌 오류는 「알 수 없는 오류(로그에 남김)」 |
 
-### 3b-B 자리표(합칠 때 바꾼다)
+### 3b-B 와 합친 뒤(배선)
 
-- `lib/operations/admin-assignment-source.ts` — `// 3b-B: wire assignmentSource()` 의 `LEGACY_SOURCE_READER` 를 3b-B 의 `assignmentTableEnabled()`·`assignmentSource(stage)` 로
-  바꾼다(형 `AssignmentSourceReader`: `assignmentTableEnabled(): boolean | Promise<boolean>`, `assignmentSource(stage: AssignmentStage): "table" | "legacy" | Promise<…>`).
-  화면·설정 폼은 `assignmentTableFlag()`·`assignmentSources(stages)` 만 부른다(못 읽으면 꺼짐·legacy).
-- `lib/llm/assignment-import.ts` — 3b-B 의 실제 `planAssignmentImport(sources: AssignmentImportSources): AssignmentImportPlan | Promise<AssignmentImportPlan>` 가 이 파일을 대신한다.
-  화면은 `AssignmentImportPlan = { rows: { action: "create" | "update" | "unchanged"; input: z.input<modelAssignmentInputSchema>; origin: string; changes?: string[] }[]; warnings: string[] }`
-  만 읽고, 입력은 `readAssignmentImportSources()`(설정·등록부·정책·장비·지금 배정 표 행)가 모은다 — 3b-B 가 칸을 더하면 그 함수만 맞춘다.
+- `lib/operations/admin-assignment-source.ts` — 3b-B 의 `assignmentTableEnabled()`·`assignmentSource(stage)` 를 읽는다(출처를 묻기 전에 배정 표 스냅숏을 새로 받는다).
+  'table' → 표, 'legacy_empty_table'(켜졌지만 그 단계에 쓸 실전 행이 없어 설정으로 고른다) → 표(화면이 실전 행 0 을 보고 「표 비어 있음」), 'legacy' → 설정.
+  못 읽으면 꺼짐·legacy. 플래그는 **웹 프로세스의** env 다 — 소비자 역할과 같게 켠다(설정 폼 잠금도 웹의 플래그를 따른다).
+- `lib/llm/assignment-import.ts` — `planAssignmentImport(sources)` 는 3b-B 의 `buildAssignmentImportPlan(settings, policy, registry, { existing: assignments, devices })`
+  (위 「가져오기 계획 — 3b-B」)를 화면 계약으로 옮긴다: 행 = { action, input, origin(설정의 출처), changes(「순위 2 → 1」 같은 문장) }, 경고 = 「출처: 문장 — 자세히」.
+  켜진 장비가 아닌 곳에 쓰는 행(만들기·실전 고치기)은 건너뛰고 경고한다(저장이 `device_unconfigured` 로 거절할 행). env 대체 1차 심사자는 화면이 알 수 없어 옮기지 않는다.
 
 ## 테스트
 
@@ -362,8 +423,14 @@ CLI = `probeCliServingContracts`)을 쓴다. 감사 줄(`model-assignment-save`)
 - `tests/dr-web-fence.test.ts` — 도우미 action 다섯이 쓰기 관문을 지난다(수 97). `tests/admin-navigation.test.tsx` — 메뉴 링크 23개.
 - 배정 표(3b-A): `tests/capacity-helpers.test.ts`(어휘·zod·evidence·0156 글자·route 상한), `tests/stage-assignments.test.ts`(고르기, 1차 칸 = selectFirstReviewer),
   `tests/integration/model-assignments.test.ts`(자기 DB: 계약·route·장비 순위·감사 한 TX, 같은 저장 반복, 잡힌 행과 앞 판, 상한·충돌, 거절 뒤 남는 행 없음, cli·vote·local-direct 계약).
-- 모델 배정 화면(3b-D): `tests/admin-model-assignments.test.tsx`(묶음·한국어 이름·칸·상태 띠·자리표, 단계 × 등록부 × 전송 고르기(cli = connect), 폼 → 저장 입력·확인 「배정」,
-  모든 거절 코드 문장, 결과 문장, 가져오기 계획 hash, server action 셋, 그리기(표 열은 2차만, 폼·가져오기 카드), 설정 폼 읽기 전용(플래그 켜짐만)),
-  `tests/integration/admin-model-assignments.test.ts`(자기 DB: action → 진짜 저장 함수 — 계약·route·장비 순위·행·감사, CAS, 거절 문장과 남는 행 없음, 끄기, 가져오기 자리표·행마다 적용).
+- 읽기 전환(3b-B): `tests/assignment-readers.test.ts`(스위치·출처·관문, 1차 표 풀·칸·고정·대체, 2차 투표자·대체·입력 검증·hash 불변),
+  `tests/assignment-stage-pools.test.ts`(단계 풀·등록부 기본값), `tests/pipeline-control-assignments.test.ts`(스냅숏 선택 칸·route 목록),
+  `tests/integration/model-assignment-readers.test.ts`(DB 에 심은 표: 1차 고르기, 2차 올리기·기록·대체·정리, 못 읽으면 미룸),
+  `tests/assignment-import.test.ts`(운영 모양 설정·정책으로 가져오기 계획·차이·경고).
+- 앞 판 사슬(3b-B): `tests/model-capacity-predecessor-chain.test.ts`(모양·옛 단일 칸 = 길이 1·세대 인증·덧붙이기 판정), `tests/integration/model-assignments.test.ts`
+  (gen-1 dispatched 를 쥔 채 세 번 연속 덧붙이기, 가지치기·사슬 비우기, 16칸 꽉 참 거절과 미끄러짐, 옛 단일 칸 이어받기, 운영자 쓰기의 증명).
+- 모델 배정 화면(3b-D): `tests/admin-model-assignments.test.tsx`(묶음·한국어 이름·칸·상태 띠·3b-B 출처, 단계 × 등록부 × 전송 고르기(cli = connect), 폼 → 저장 입력·확인 「배정」,
+  모든 거절 코드 문장, 결과 문장, 가져오기 계획(3b-B planAssignmentImport)·hash, server action 셋, 그리기(표 열은 2차만, 폼·가져오기 카드), 설정 폼 읽기 전용(플래그 켜짐만)),
+  `tests/integration/admin-model-assignments.test.ts`(자기 DB: action → 진짜 저장 함수 — 계약·route·장비 순위·행·감사, CAS, 거절 문장과 남는 행 없음, 끄기, 가져오기 계획(3b-B 실제 계획)·행마다 적용).
   `tests/dr-web-fence.test.ts` 의 쓰기 관문 action 수는 100(배정 저장·끄기·가져오기 적용), `tests/admin-navigation.test.tsx` 메뉴 링크 24개.
 - 표·입장 판정·감시자 순환은 WP-2a-A·B 의 테스트가 본다(`tests/capacity-helpers.test.ts`, `tests/integration/model-capacity-helpers.test.ts`, `tests/capacity-supervisor-decide.test.ts`).

@@ -8,6 +8,7 @@ import { isModelCapacityDeferredReason, MODEL_CAPACITY_DEFERRED_REASONS, modelCa
  */
 const TABLE: Record<ModelCapacityDeferredReason, "global" | "model" | "work"> = {
   draining: "global", disabled: "global", policy_changed: "global", owner_unavailable: "global", reservation_required: "global",
+  assignments_unavailable: "global",
   capacity: "model", queue_full: "model", unmapped: "model", provider_contract_unavailable: "model", device_unconfigured: "model",
   helper_ineligible: "model",
   dispatched: "work", work_busy: "work", ledger_mismatch: "work", withdrawn: "work", reservation_lost: "work",
@@ -32,7 +33,11 @@ describe("미룸 사유 범위 표", () => {
   it("장비는 모델에 붙으므로 device_unconfigured 는 모델 범위다 — 다른 장비의 모델은 계속 돈다", () => {
     expect(modelCapacityDeferralScope("device_unconfigured")).toBe("model");
     expect(MODEL_CAPACITY_DEFERRED_REASONS.filter(modelCapacityDeferralIsGlobal).sort())
-      .toEqual(["disabled", "draining", "owner_unavailable", "policy_changed", "reservation_required"]);
+      .toEqual(["assignments_unavailable", "disabled", "draining", "owner_unavailable", "policy_changed", "reservation_required"]);
+  });
+  it("배정 표를 켰는데 아직 못 읽음(assignments_unavailable, PR 3b-B)은 프로세스 전체다 — 표가 고르는 어느 단계도 모델을 고를 수 없고, 스냅숏이 읽히면 풀린다", () => {
+    expect(modelCapacityDeferralScope("assignments_unavailable")).toBe("global");
+    expect(isModelCapacityDeferredReason("assignments_unavailable")).toBe(true);
   });
   it("도우미 경로 닫힘(helper_ineligible, PR 2a)은 그 장비의 도우미 경로만의 일이라 모델 범위다 — 우선 역할 경로와 다른 장비는 계속 돈다", () => {
     expect(modelCapacityDeferralScope("helper_ineligible")).toBe("model");

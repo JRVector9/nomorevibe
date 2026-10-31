@@ -5,6 +5,7 @@ import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { crawlReviewAttempts, type CrawlReviewAttempt } from "@/lib/db/schema";
 import { sameOpinionModel } from "./second-opinion-rules";
 import { DEFAULT_HELD_QWEN_RETRY, type CrawlSettings, type HeldQwenReason, type HeldQwenRetrySettings } from "./settings-schema";
+import { secondReviewFallbacks, secondReviewVoters } from "./second-review-voters";
 
 /**
  * 보류 Qwen-v2 재심사(held-qwen-retry.ts)가 남기는 시도 행의 이름과, 관문이 그 승인을 1차 승인으로 받는 조건.
@@ -49,7 +50,7 @@ export function heldQwenOwnedReasons(settings: CrawlSettings): HeldQwenReason[] 
  * 모든 독립 칸의 승인을 요구하므로(secondApproved) 그 투표자의 승인 없이는 발행되지 않는다. 하나도 없으면 Qwen-v2 승인을 관문에 넣지 않는다.
  */
 export function heldQwenIndependentVoters(settings: CrawlSettings, model: string | null | undefined) {
-  return settings.secondReview.voters.filter((voter) => !sameOpinionModel(voter.model, model));
+  return secondReviewVoters(settings).filter((voter) => !sameOpinionModel(voter.model, model));
 }
 
 /**
@@ -57,7 +58,7 @@ export function heldQwenIndependentVoters(settings: CrawlSettings, model: string
  * 그 칸의 표는 독립이 아니다(관문은 그 표를 되풀이로 보고 사람에게 넘긴다 — second-review.ts sameUnderlyingModel). 그런 설정에서는 승인을 관문에 넣지 않는다
  */
 export function heldQwenSameModelFallback(settings: CrawlSettings, model: string | null | undefined): boolean {
-  return (settings.secondReview.fallbacks ?? []).some((fallback) => sameOpinionModel(fallback.model, model));
+  return secondReviewFallbacks(settings).some((fallback) => sameOpinionModel(fallback.model, model));
 }
 
 /** Qwen-v2 승인을 관문(두 모델 승인)에 넣을 수 있는가 — 적용 모드·2차 심사가 켜져 있고 독립 투표자가 있으며 같은 모델의 대체 모델이 없다 */
@@ -112,8 +113,8 @@ export function heldQwenGateFirstSql(settings: CrawlSettings, appliedAttemptId: 
 } = crawlReviewAttempts): SQL {
   const open = settings.enabled && settings.reviewMode === "enforce" && settings.secondReview.enabled && heldQwenRetry(settings).enabled;
   if (!open) return sql`false`;
-  const voters = JSON.stringify(settings.secondReview.voters.map((voter) => voter.model));
-  const fallbacks = JSON.stringify((settings.secondReview.fallbacks ?? []).map((fallback) => fallback.model));
+  const voters = JSON.stringify(secondReviewVoters(settings).map((voter) => voter.model));
+  const fallbacks = JSON.stringify(secondReviewFallbacks(settings).map((fallback) => fallback.model));
   return sql`(${attempts.kind} = 'delegated' AND ${attempts.provider} = ${HELD_QWEN_PROVIDER}
     AND ${attempts.state} = 'succeeded' AND ${attempts.actor} LIKE ${`${HELD_QWEN_ACTOR}:%`}
     AND ${attempts.outcome}->>'decision' = 'approve' AND btrim(coalesce(${attempts.model}, '')) <> ''

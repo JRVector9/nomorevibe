@@ -118,26 +118,58 @@ const modelCapacityBasePolicySchema = z.object({
     });
   }
 });
+/**
+ * 앞 판 사슬(PR 3b-B)의 길이 상한. 사슬 한 칸 = 잡힌 행이 남을 수 있는 옛 세대 하나(epoch·revision·policy_hash). 배정 표 저장(appendCompatibleRoutes)이
+ * 덧붙일 때마다 지금 세대를 넣고 장부에 행(waiting·reserved·dispatched)이 없는 세대를 빼므로, 계속 부하가 걸려도 두 번째 덧붙이기가 거절되지 않는다.
+ */
+export const MODEL_CAPACITY_PREDECESSORS_MAX = 16;
+/** 앞 판 사슬 한 칸: 그 세대 행의 (epoch, revision, policy_hash) 그대로. 정책 문서는 싣지 않는다 — 넣은 쪽이 넣을 때 검증한 사실이다. */
+export const modelCapacityPredecessorSchema = z.object({ epoch: positive, revision: positive, policyHash: sha64 }).strict();
+export type ModelCapacityPredecessor = Readonly<z.infer<typeof modelCapacityPredecessorSchema>>;
+
+/**
+ * 두 정책이 「route 덧붙이기만」 관계인가: version·maxWaiting·TTL 이 같고, 옛 route 가 모두 같은 다섯 칸으로 남고, route 가 하나 이상 늘었다.
+ * 무시하는 한도 칸·weights 와 앞 판 칸(compatiblePredecessor·compatiblePredecessors)은 견주지 않는다.
+ */
+export function modelCapacityPolicyAdditive<Previous extends { routes: readonly ModelCapacityRoute[] }, Next extends { routes: readonly ModelCapacityRoute[] }>(
+  previous: Previous, next: Next): boolean {
+  const same = (a: unknown, b: unknown) => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
+  const excluded = new Set<string>(["routes", "compatiblePredecessor", "compatiblePredecessors", ...MODEL_CAPACITY_POLICY_IGNORED_FIELDS]);
+  const rest = (policy: object) => Object.fromEntries(Object.entries(policy).filter(([key]) => !excluded.has(key)));
+  const key = (route: ModelCapacityRoute) => JSON.stringify([route.routeId, route.provider, route.model]);
+  const oldByKey = new Map(previous.routes.map(route => [key(route), route]));
+  const currentByKey = new Map(next.routes.map(route => [key(route), route]));
+  const added = next.routes.filter(route => !oldByKey.has(key(route)));
+  return same(rest(next), rest(previous)) && added.length > 0
+    && previous.routes.every(route => same(currentByKey.get(key(route)), route));
+}
+
 /** A predecessor is authenticated by each held row's complete policy hash.
  * Routes may only be appended (on any device — per-device limits are live settings, not policy): every old route keeps its
  * groupId/providerBudgetId, version/maxWaiting/TTLs are unchanged, and old holds still count in their device's occupancy.
- * The ignored limit fields and weights are not compared (they no longer decide anything). */
+ * The ignored limit fields and weights are not compared (they no longer decide anything).
+ *
+ * 두 모양(PR 3b-B): `compatiblePredecessor` = 옛 단일 앞 판(정책 문서를 싣고 이 parser 가 덧붙이기만인지 본다 — 길이 1 사슬로 읽는다),
+ * `compatiblePredecessors` = 사슬(세대 사실만, (epoch, revision) 오름차순, 최대 MODEL_CAPACITY_PREDECESSORS_MAX). 둘을 함께 둘 수 없다.
+ * 사슬 칸의 덧붙이기만 관계는 넣는 쪽이 지킨다: appendCompatibleRoutes 는 route 만 더하고, setModelCapacityPolicy 는 지금 사슬·지금 세대에
+ * 없는 칸이나 지금 정책의 덧붙이기가 아닌 새 정책을 거절한다. 옛 parser(.strict)는 사슬 칸을 모르므로 모든 용량 소비자가 이 판을 돈 뒤에만 쓴다. */
 export const modelCapacityPolicySchema = modelCapacityBasePolicySchema.safeExtend({
   compatiblePredecessor: z.object({ epoch: positive, revision: positive,
     policy: modelCapacityBasePolicySchema }).strict().optional(),
+  compatiblePredecessors: z.array(modelCapacityPredecessorSchema).min(1).max(MODEL_CAPACITY_PREDECESSORS_MAX).optional(),
 }).superRefine((value, context) => {
+  const chain = value.compatiblePredecessors;
+  if (chain) {
+    if (value.compatiblePredecessor) context.addIssue({ code: "custom", message: "ambiguous_capacity_predecessor", path: ["compatiblePredecessors"] });
+    for (let index = 1; index < chain.length; index++) {
+      const before = chain[index - 1], entry = chain[index];
+      if (!(before.epoch < entry.epoch || before.epoch === entry.epoch && before.revision < entry.revision))
+        context.addIssue({ code: "custom", message: "unordered_capacity_predecessors", path: ["compatiblePredecessors", index] });
+    }
+  }
   const previous = value.compatiblePredecessor?.policy;
   if (!previous) return;
-  const same = (a: unknown, b: unknown) => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
-  const excluded = new Set<string>(["routes", "compatiblePredecessor", ...MODEL_CAPACITY_POLICY_IGNORED_FIELDS]);
-  const rest = (policy: object) => Object.fromEntries(Object.entries(policy).filter(([key]) => !excluded.has(key)));
-  const { routes } = value, oldRoutes = previous.routes;
-  const key = (route: typeof routes[number]) => JSON.stringify([route.routeId, route.provider, route.model]);
-  const oldByKey = new Map(oldRoutes.map(route => [key(route), route]));
-  const currentByKey = new Map(routes.map(route => [key(route), route]));
-  const added = routes.filter(route => !oldByKey.has(key(route)));
-  if (!same(rest(value), rest(previous)) || !added.length
-    || oldRoutes.some(route => !same(currentByKey.get(key(route)), route))) {
+  if (!modelCapacityPolicyAdditive(previous, value)) {
     context.addIssue({ code: "custom", message: "incompatible_capacity_predecessor", path: ["compatiblePredecessor"] });
   }
 });
@@ -309,14 +341,32 @@ export function modelCapacityPolicyHash(policy: ModelCapacityPolicy): string {
   return createHash("sha256").update(JSON.stringify(canonical({ ...parsed, routes }))).digest("hex");
 }
 
+const predecessorChains = new WeakMap<object, readonly ModelCapacityPredecessor[]>();
+/**
+ * 정책이 인증하는 옛 세대 목록(PR 3b-B). 사슬(`compatiblePredecessors`)은 그대로, 옛 단일 앞 판(`compatiblePredecessor`)은 그 정책 문서의 hash 로
+ * 길이 1 사슬, 둘 다 없으면 빈 목록. 같은 정책 객체는 한 번만 파싱·hash 한다(입장 TX 가 옛 행마다 부른다).
+ */
+export function modelCapacityPredecessorChain(policy: ModelCapacityPolicy): readonly ModelCapacityPredecessor[] {
+  const cached = predecessorChains.get(policy);
+  if (cached) return cached;
+  const parsed = parseModelCapacityPolicy(policy);
+  const chain: ModelCapacityPredecessor[] = parsed.compatiblePredecessors
+    ? parsed.compatiblePredecessors.map(entry => Object.freeze({ epoch: entry.epoch, revision: entry.revision, policyHash: entry.policyHash }))
+    : parsed.compatiblePredecessor ? [Object.freeze({ epoch: parsed.compatiblePredecessor.epoch, revision: parsed.compatiblePredecessor.revision,
+      policyHash: modelCapacityPolicyHash(parsed.compatiblePredecessor.policy) })] : [];
+  const frozen = Object.freeze(chain);
+  predecessorChains.set(policy, frozen);
+  return frozen;
+}
+
 /** Caller holds control UPDATE while checking immutable old row generation.
- * Parsing verifies additivity before this can authenticate a predecessor. */
+ * Parsing verifies additivity before this can authenticate a predecessor (old single form); a chain entry was verified by its writer.
+ * 사슬 어느 칸이든 (epoch, revision, policy_hash) 가 정확히 같고, 그 칸이 지금 epoch 의 더 이른 revision 이어야 한다. */
 export function compatibleModelCapacityGeneration(policy: ModelCapacityPolicy,
   generation: { epoch: number; revision: number; policyHash: string | null }, current: { epoch: number; revision: number }): boolean {
-  const previous = parseModelCapacityPolicy(policy).compatiblePredecessor;
-  return !!previous && previous.epoch === current.epoch && previous.revision < current.revision
+  return modelCapacityPredecessorChain(policy).some(previous => previous.epoch === current.epoch && previous.revision < current.revision
     && generation.epoch === previous.epoch && generation.revision === previous.revision
-    && generation.policyHash === modelCapacityPolicyHash(previous.policy);
+    && generation.policyHash === previous.policyHash);
 }
 
 /** Fixed search-profile snapshot; raw row hash includes every column and timestamp microsecond. */

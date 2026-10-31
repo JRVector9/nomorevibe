@@ -221,13 +221,16 @@ describe("server action → saveModelAssignment(PR 3b-A) — 한 TX", () => {
 });
 
 describe("현재 설정 → 배정 표 가져오기", () => {
-  it("3b-B 자리표 계획: 빈 계획 + 「3b-B 미반영」, 적용은 아무것도 쓰지 않는다; hash 가 다르면 거절, 확인 글자가 없으면 거절", async () => {
+  it("3b-B 실제 계획(기본 설정 — 1차 없음, 2차 opus 는 정책 경로·장비 없음): 빈 계획 + 경고, 적용은 아무것도 쓰지 않는다; hash 가 다르면 거절, 확인 글자가 없으면 거절", async () => {
     const { applyAssignmentImportAction } = await actions();
     const preview = await previewAdminAssignmentImport();
-    expect(preview).toMatchObject({ rows: [], warnings: ["3b-B 미반영"], error: null });
+    expect(preview).toMatchObject({ rows: [], error: null, warnings: [
+      "firstReview: 1차 모델이 설정에 없어 1차는 옮기지 않습니다 — CRAWL_REVIEW_MODEL env 대체는 옮기지 않는다",
+      "secondReview.voters[0]: 정책에 이 경로가 없어 꺼짐으로 옮깁니다(저장하면 계약을 확인하고 경로를 덧붙입니다) — second-review / claude-cli / opus",
+      "secondReview.voters[0]: 장비 행이 없거나 꺼져 있어 옮기지 않습니다(장비 한도에서 먼저 저장) — connect"] });
     const state = await snapshot();
     expect(await applyAssignmentImportAction(null, form({ planHash: preview.hash!, confirm: "배정" })))
-      .toEqual({ ok: true, rows: [], message: "가져올 행이 없습니다. 경고: 3b-B 미반영" });
+      .toEqual({ ok: true, rows: [], message: `가져올 행이 없습니다. 경고: ${preview.warnings.join(" · ")}` });
     expect(await applyAssignmentImportAction(null, form({ planHash: "0".repeat(64), confirm: "배정" }))).toEqual({ issues: [expect.stringContaining("계획 보기")] });
     expect(await applyAssignmentImportAction(null, form({ planHash: preview.hash! }))).toEqual({ issues: [expect.stringContaining("「배정」")] });
     expect(await snapshot()).toEqual(state);

@@ -23,14 +23,14 @@ import { ReviewModelsForm } from "@/app/(operator)/admin/models/ReviewModelsForm
 import { reviewModelOptions } from "@/app/(operator)/admin/models/model-options";
 import { NAV_GROUPS } from "@/app/(operator)/admin/AdminNav";
 import { engineConnectAssignmentHref } from "@/lib/operations/admin-engine-connect";
-import { ASSIGNMENT_IMPORT_STUB_WARNING, planAssignmentImport, type AssignmentImportSources } from "@/lib/llm/assignment-import";
+import { planAssignmentImport, type AssignmentImportSources } from "@/lib/llm/assignment-import";
 import {
   ASSIGNMENT_STAGE_IDS, HELPER_ROUTE_DEFAULTS, MODEL_ASSIGNMENT_REFUSALS, parseHelperAssignment, type HelperAssignmentRow, type ModelAssignmentRow,
 } from "@/lib/llm/capacity-helpers";
 import type { ModelCapacityDeviceRow } from "@/lib/llm/capacity-devices";
 import type { ModelCapacityPolicy } from "@/lib/llm/capacity";
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from "@/lib/crawl/settings-schema";
-import { DEFAULT_MODEL_DEFINITIONS, type ModelDefinition } from "@/lib/llm/model-registry";
+import { DEFAULT_MODEL_DEFINITIONS, readModelRegistry, type ModelDefinition } from "@/lib/llm/model-registry";
 import { assignmentSources, assignmentTableFlag, setAssignmentSourceReaderForTest } from "@/lib/operations/admin-assignment-source";
 import type { AdminLogRow } from "@/lib/operations/admin-log";
 import {
@@ -135,7 +135,7 @@ describe("화면 모형 — 단계별 묶음", () => {
     expect(on.banner).toContain("켜짐");
     const source = (stage: string) => on.groups.find(group => group.id === stage)!.sourceLabel;
     expect([source("ai1"), source("human"), source("intro"), source("reason")]).toEqual(["표", "표 비어 있음", "설정", "설정"]);
-    // 3b-B 자리표: 플래그 꺼짐·모든 단계 legacy — env 를 읽지 않는다
+    // 3b-B 의 실제 출처: 이 프로세스의 MODEL_ASSIGNMENT_TABLE 이 꺼졌으면(시험 기본) 플래그 꺼짐·모든 단계 legacy
     expect(await assignmentTableFlag()).toBe(false);
     expect(Object.values(await assignmentSources(["ai1", "ai2"]))).toEqual(["legacy", "legacy"]);
     setAssignmentSourceReaderForTest({ assignmentTableEnabled: () => true, assignmentSource: stage => stage === "ai1" ? "table" : "legacy" });
@@ -256,13 +256,16 @@ describe("거절 코드 → 한국어(무엇을 하면 되는지)", () => {
   });
 });
 
-describe("가져오기 계획(3b-B 자리표)", () => {
-  it("자리표는 빈 계획 + 「3b-B 미반영」; 보기는 hash·수·경고; hash 는 행의 동작·출처·입력만(열쇠 순서와 무관)", async () => {
-    const plan = await planAssignmentImport({} as AssignmentImportSources);
-    expect(plan).toEqual({ rows: [], warnings: [ASSIGNMENT_IMPORT_STUB_WARNING] });
-    expect(ASSIGNMENT_IMPORT_STUB_WARNING).toBe("3b-B 미반영");
+describe("가져오기 계획(3b-B planAssignmentImport)", () => {
+  it("옮길 행이 없는 계획은 빈 행 + 경고; 보기는 hash·수·경고; hash 는 행의 동작·출처·입력만(열쇠 순서와 무관)", async () => {
+    // 1차가 설정에 없고 2차 투표자가 등록부에 없다 — 옮길 행 없이 경고 둘
+    const sources: AssignmentImportSources = { settings: { ...DEFAULT_CRAWL_SETTINGS, secondReview: { ...DEFAULT_CRAWL_SETTINGS.secondReview,
+      voters: [{ provider: "abcllm", model: "[ghost] model" }] } }, registry: readModelRegistry(), policy: null, devices: [], assignments: [] };
+    const plan = await planAssignmentImport(sources);
+    expect(plan).toEqual({ rows: [], warnings: ["firstReview: 1차 모델이 설정에 없어 1차는 옮기지 않습니다 — CRAWL_REVIEW_MODEL env 대체는 옮기지 않는다",
+      "secondReview.voters[0]: 등록부에서 이 모델을 찾지 못해 옮기지 않습니다 — abcllm [ghost] model"] });
     const preview = assignmentImportPreviewOf(plan);
-    expect(preview).toMatchObject({ rows: [], warnings: ["3b-B 미반영"], counts: { create: 0, update: 0, unchanged: 0 }, error: null });
+    expect(preview).toMatchObject({ rows: [], warnings: plan.warnings, counts: { create: 0, update: 0, unchanged: 0 }, error: null });
     expect(preview.hash).toMatch(/^[a-f0-9]{64}$/);
     const a = { rows: [{ action: "create" as const, origin: "firstReview", input: { assignmentId: "x", stage: "ai1" as const, deviceId: "d", registryKey: "a:b",
       transport: "direct" as const, expectedVersion: null } }], warnings: ["w"] };

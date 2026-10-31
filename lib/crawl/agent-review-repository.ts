@@ -38,7 +38,11 @@ export type { Ai1ItemLease, Ai1ReviewOrigin, Ai1ReviewReceipt } from "./agent-re
 import { mergeWithDefaults } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
 import { firstReviewer, type FirstReviewer } from "./agent-review";
-import { firstReviewers, firstReviewerKey, firstReviewIdentitySql, hasFirstReviewer, selectFirstReviewer, type FirstReviewPoolPosition } from "./first-reviewers";
+import { firstReviewers, firstReviewerKey, firstReviewIdentitySql, firstReviewTableRows, hasFirstReviewer, selectFirstReviewer, selectTableFirstReviewer,
+  tableFirstReviewers, type FirstReviewPoolPosition } from "./first-reviewers";
+import { assignmentTableEnabled } from "@/lib/llm/assignment-flag";
+import { requireStageAssignments } from "@/lib/llm/stage-assignment-snapshot";
+import { secondReviewFallbacks, secondReviewVoters } from "./second-review-voters";
 import { candidateStarAutoApproval } from "./star-auto-approval";
 import { README_SAMPLE_LIMIT, README_SAMPLE_VERSION } from "./readme";
 import { reviewSemanticNow, reviewSemanticNowSql, storedReviewEvidenceRequired } from "./review-replay-context";
@@ -56,7 +60,11 @@ type Executor = typeof db | ProductTransaction;
 /** Selection is a hint; the existing candidate/item/capacity locks still grant all authority. */
 export async function chooseFirstReviewForCandidate(context: ReviewDomainContext, executor: Executor = db,
   blocked: ReadonlySet<string> = new Set()): Promise<FirstReviewer | null> {
-  const pool = firstReviewers(context.settings, firstReviewer(context.settings));
+  // 배정 표(PR 3b-B, MODEL_ASSIGNMENT_TABLE): TX 밖의 첫 고르기만 스냅숏을 새로 받는다(못 읽었으면 assignments_unavailable 로 미룬다) —
+  // 잠금 아래 재확인은 같은 판을 다시 쓴다.
+  if (executor === db && assignmentTableEnabled()) await requireStageAssignments();
+  const table = firstReviewTableRows(context.settings);
+  const pool = table ? tableFirstReviewers(table) : firstReviewers(context.settings, firstReviewer(context.settings));
   // Preserve the original query footprint for installations which never enabled a pool.
   if (context.settings.firstReviewAdditional === undefined) return pool[0] ?? null;
   const attempts = await executor.select({ provider: crawlReviewAttempts.provider, model: crawlReviewAttempts.model })
@@ -74,7 +82,8 @@ export async function chooseFirstReviewForCandidate(context: ReviewDomainContext
   const untouched = blocked.size > 0 && !active.length && !attempts.length && !(await executor.select({ id: crawlReviewAttempts.id })
     .from(crawlReviewAttempts).where(and(eq(crawlReviewAttempts.candidateId, context.candidate.id),
       ne(crawlReviewAttempts.provider, "rules"))).limit(1)).length;
-  return selectFirstReviewer(pool, context.candidate.id, attempts, Array.from(active), { blocked, untouched });
+  return table ? selectTableFirstReviewer(table, context.candidate.id, attempts, Array.from(active), { blocked, untouched })
+    : selectFirstReviewer(pool, context.candidate.id, attempts, Array.from(active), { blocked, untouched });
 }
 export async function loadReviewInput(
   candidate: CrawlCandidate, document: CrawlDocument, settings: CrawlSettings, executor: Executor = db,
@@ -285,7 +294,7 @@ function secondApproved(attempt: { id: SQL; model: SQL }, voters: { provider: st
 /** Read-only measurement projection of the exact publication approval gate. */
 export function secondReviewApprovalPredicate(settings: CrawlSettings): SQL {
   return secondApproved({ id: sql`${crawlReviewAttempts.id}`, model: sql`${crawlReviewAttempts.model}` },
-    settings.secondReview.voters, settings.secondReview.fallbacks ?? []);
+    secondReviewVoters(settings), secondReviewFallbacks(settings));
 }
 
 export function reviewApprovalPredicate(settings: CrawlSettings): SQL {
@@ -297,7 +306,7 @@ export function reviewApprovalPredicate(settings: CrawlSettings): SQL {
     AND ${crawlReviewAttempts.state} = 'succeeded' AND ${crawlReviewAttempts.outcome}->>'decision' = 'approve'
     AND ${crawlReviewAttempts.validUntil} > ${reviewSemanticNowSql()}
     AND ${secondGateRequired(settings) ? secondApproved({ id: sql`${crawlReviewAttempts.id}`, model: sql`${crawlReviewAttempts.model}` },
-      settings.secondReview.voters, settings.secondReview.fallbacks ?? []) : sql`true`}))`;
+      secondReviewVoters(settings), secondReviewFallbacks(settings)) : sql`true`}))`;
   return sql`CASE WHEN ${crawlCandidates.decidedBy} = 'deepseek' OR (${crawlCandidates.decidedBy} <> 'admin' AND ${crawlCandidates.signals}->'delegatedReviewAttemptId' IS NOT NULL)
     THEN ${delegated} ELSE ${ordinary} END`;
 }
@@ -1280,7 +1289,7 @@ export async function assertReviewApproval(tx: ProductTransaction, input: {
     // 표를 잠근 뒤 같은 조건으로 다시 잰다 — 목록을 고른 뒤 표가 바뀌었을 수 있다
     await tx.select({ id: secondReviews.id }).from(secondReviews).where(eq(secondReviews.firstAttemptId, approval.id)).for("share");
     const [gate] = await tx.execute<{ ok: boolean }>(sql`select ${secondApproved({ id: sql`${approval.id}`, model: sql`${approval.model}` },
-      input.settings.secondReview.voters, input.settings.secondReview.fallbacks ?? [])} as ok`);
+      secondReviewVoters(input.settings), secondReviewFallbacks(input.settings))} as ok`);
     if (!gate?.ok) throw new ReviewApprovalChangedError();
   }
   return approval;

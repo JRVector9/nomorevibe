@@ -17,6 +17,7 @@ import type { ReviewInput } from "./agent-review-contract";
 import { firstReviewer } from "./agent-review";
 import { parseItemBinding, type Ai2ItemBinding } from "@/lib/jobs/items/types";
 import { lockSecondReviewDomain, secondReviewGeneration, type SecondReviewDomainContext } from "./second-review-input";
+import { secondReviewFallbacks, secondReviewVoters } from "./second-review-voters";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
 import type { CrawlSettings } from "./settings-schema";
 import { lockModelCapacityCallerControl, lockAi2ItemModelCapacityDispatch, finishAi2ItemModelCapacityDispatch,
@@ -526,8 +527,8 @@ export async function fallbackWaitingSecondReview(intent: SecondReviewModelReser
       }
       const attempted = await tx.select({ model: secondReviews.model }).from(secondReviews).where(and(
         eq(secondReviews.candidateId, row.candidateId), eq(secondReviews.generationKey, row.generationKey)));
-      const excluded = [...context.settings.secondReview.voters.map(voter => voter.model), ...attempted.map(vote => vote.model)];
-      const eligible = (context.settings.secondReview.fallbacks ?? []).filter(voter => voter.provider === "abcllm"
+      const excluded = [...secondReviewVoters(context.settings).map(voter => voter.model), ...attempted.map(vote => vote.model)];
+      const eligible = secondReviewFallbacks(context.settings).filter(voter => voter.provider === "abcllm"
         && !excluded.some(model => sameReviewModel(model, voter.model))
         && capacity.policy?.routes.some(route => route.routeId === "second-review" && route.provider === voter.provider && route.model === voter.model)
         && (() => { const serving = resolveAi2GatewayServingContract(voter.model, voter.provider);
