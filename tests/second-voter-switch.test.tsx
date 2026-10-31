@@ -112,6 +112,8 @@ describe('심사 엔진 모델 목록', () => {
       row('crawl-agent-review', '[MLX] key-unreadable', 'stored', 'direct', null),
       row('reason-translate', '[MLX] other-route'),
       row('product-search-profile', 'profile-model'),
+      // PR 3b-C local-direct contract rows are engines, not abcllm choices
+      { ...row('crawl-agent-review', 'qwen3.6-35b-engine', 'none', 'gateway'), contract: { provider: 'local-direct', protocol: 'direct-openai-chat-v1' } },
     ]);
     expect(await listReviewEngineModels()).toEqual(['[MLX] gpt-oss-120b', '[supa] Qwen3.8-27B-NVFP4', 'qwen3-coder:30b']);
     store.setServingContractSnapshotForTest([]);

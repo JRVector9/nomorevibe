@@ -94,12 +94,14 @@ export function gatewayModel(value: string): string | null {
 /**
  * 관리자가 고를 수 있는 abcllm 심사 모델 — 심사 경로(1차 crawl-agent-review·2차 second-review)에 엔진 직접 연결 계약이 켜져 있어
  * 부를 수 있는 모델(textRouteCallable). 게이트웨이 모델 목록은 게이트웨이와 함께 없어졌다(2026-10-30). 네트워크를 읽지 않는다.
+ * local-direct 계약 행(PR 3b-C)은 abcllm 선택지가 아니라 뺀다 — 그 모델은 등록부의 local-direct 항목으로 고른다.
  */
 export async function listReviewEngineModels(): Promise<string[]> {
   assertLiveReviewAdapterAllowed();
   await ensureServingContracts();
+  const localDirect = (contract: unknown) => !!contract && typeof contract === "object" && (contract as { provider?: unknown }).provider === "local-direct";
   return [...new Set(servingContractSnapshot().rows.flatMap(row => (row.routeId === "crawl-agent-review" || row.routeId === "second-review")
-    && textRouteCallable(row.routeId, row.model) && gatewayModel(row.model) ? [row.model] : []))].sort();
+    && !localDirect(row.contract) && textRouteCallable(row.routeId, row.model) && gatewayModel(row.model) ? [row.model] : []))].sort();
 }
 
 function httpFailure(status: number): ReviewFailure {
