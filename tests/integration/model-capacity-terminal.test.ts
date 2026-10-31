@@ -6,7 +6,7 @@ import { db } from "@/lib/db";
 import { createReviewInput } from "@/lib/crawl/agent-review-contract";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 import type { CrawlCandidate, CrawlDocument } from "@/lib/db/schema";
-import { prepareAi1GatewayCall, reviewWithReservedAi1Gateway, type Ai1GatewayTerminal } from "@/lib/crawl/agent-review-gateway";
+import { prepareAi1DirectCall, prepareAi1GatewayCall, reviewWithReservedAi1Gateway, type Ai1GatewayTerminal } from "@/lib/crawl/agent-review-gateway";
 import type { Ai1GatewayServingContract } from "@/lib/crawl/agent-review-serving-contract";
 import { modelCapacityPolicyHash, type Ai1DispatchBinding, type ModelCapacityPolicy,
   type ModelCapacityRequest, type ModelCapacityReservation, type ModelSlotResult } from "@/lib/llm/capacity";
@@ -289,6 +289,65 @@ it("settles only the original native proof once despite policy changes and rejec
       provenance: "unknown", actualUsage: null, dispatch: { binding: { chargedTokens: 8000 } } } });
     expect(await admin`SELECT kind FROM model_capacity_events WHERE request_id=${value.requestId}::uuid AND kind='dispatch_settled'`)
       .toEqual([{ kind: "dispatch_settled" }]);
+  } catch (error) { primary = error; throw error; }
+  finally {
+    const errors: unknown[] = [];
+    serving.contract = null; server.closeAllConnections();
+    try { if (server.listening) await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); } catch (error) { errors.push(error); }
+    for (const result of await Promise.allSettled([...pending])) if (result.status === "rejected") errors.push(result.reason);
+    if (errors.length) throw new AggregateError(primary === undefined ? errors : [primary, ...errors]);
+  }
+}));
+
+// PR 3b-C (0157): the same AI1 legacy kind on a local-direct engine — the ledger keeps provider local-direct on the row, binding and evidence.
+it("dispatches and settles an AI1 legacy call on a local-direct engine through the same kind (0157)", exercise(async () => {
+  const directPolicy: ModelCapacityPolicy = { ...policy, routes: [...policy.routes,
+    { routeId: "crawl-agent-review", provider: "local-direct", model, providerBudgetId: "account", groupId: "engine" }] };
+  await install(directPolicy); vi.stubEnv("ABCLLM_API_KEY", "");
+  const pending = new Set<Promise<void>>(), posts: { body: string; authorization?: string }[] = [];
+  const server = createServer((request, response) => {
+    const body = (async () => { let text = ""; for await (const chunk of request) text += chunk.toString();
+      posts.push({ body: text, authorization: request.headers.authorization });
+      response.end(JSON.stringify({ id: "engine-response", object: "chat.completion", created: 1, model: "local-llm",
+        choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify({ decision: "approve",
+          reason: "A working ledger tool.", evidenceIds: ["product"], confidence: 0.9 }) } }],
+        usage: { prompt_tokens: 120, completion_tokens: 30, total_tokens: 150 } })); })();
+    pending.add(body); void body.catch(() => {});
+  });
+  let primary: unknown;
+  try {
+    await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
+    const address = server.address(); if (!address || typeof address === "string") throw new Error("local_address");
+    serving.contract = { version: 1, protocol: "abcllm-raw-total-bound-v1", provider: "local-direct", routeId: "crawl-agent-review",
+      model, responseModel: "local-llm", endpoint: `http://127.0.0.1:${address.port}/v1/chat/completions`,
+      deploymentRevision: "local-direct-fixture", totalTokenBound: 8000 };
+    const now = new Date("2026-10-31T00:00:00.000Z");
+    const input = createReviewInput({ repo: "native/direct", productUrl: "https://direct.example", judgedAt: now } as CrawlCandidate,
+      { id: 1, repo: "native/direct", repoMeta: {}, productUrl: "https://direct.example", pageMeta: { title: "Direct" },
+        pageStatus: 200, fetchedAt: now } as CrawlDocument, DEFAULT_CRAWL_SETTINGS, { scan: null, observations: [] }, now);
+    expect(prepareAi1GatewayCall(input, { model }).kind).toBe("unsupported");
+    const call = await prepareAi1DirectCall(input, { model }); if (call.kind !== "prepared") throw new Error("prepared_required");
+    const value = await request({ provider: "local-direct" }), candidateId = ++serial;
+    const bound = binding(candidateId, { provider: "local-direct", inputHash: input.inputHash, sourceRevisionHash: input.sourceRevisionHash,
+      reviewPolicyHash: input.policyHash, promptVersion: input.snapshot.policy.promptVersion, rulesVersion: input.snapshot.policy.rulesVersion,
+      wireHash: call.wireHash, servingContractHash: call.servingContractHash });
+    // A binding whose provider differs from its reservation never dispatches.
+    await expect(dispatch(await request({ provider: "local-direct" }), ++serial, binding(serial, { provider: "abcllm" })))
+      .rejects.toThrow("ai1_capacity_dispatch_binding_mismatch");
+    const sent = await dispatch(value, candidateId, bound);
+    expect(await row(value.requestId)).toMatchObject({ provider: "local-direct", state: "dispatched", dispatch_binding: { provider: "local-direct" } });
+    const actual = await tracked(reviewWithReservedAi1Gateway(input, sent, call));
+    expect(actual.result).toMatchObject({ ok: true, outcome: { decision: "approve" } });
+    expect(posts).toHaveLength(1); expect(posts[0].authorization).toBeUndefined();
+    expect(JSON.parse(posts[0].body)).not.toHaveProperty("context_strategy");
+    expect(await tracked(reconcileAi1GatewayTerminal(actual.terminal!))).toEqual({ kind: "settled" });
+    expect(await row(value.requestId)).toMatchObject({ provider: "local-direct", state: "settled", terminal_evidence: {
+      provenance: "upstream_reported", actualUsage: { totalTokens: 150 }, dispatch: { binding: { provider: "local-direct", chargedTokens: 8000 } } } });
+    expect(await admin`SELECT kind FROM model_capacity_events WHERE request_id=${value.requestId}::uuid AND kind='dispatch_settled'`)
+      .toEqual([{ kind: "dispatch_settled" }]);
+    // The widened CHECK admits exactly abcllm and local-direct for this kind.
+    await expect(admin`UPDATE model_capacity_requests SET provider='other-direct' WHERE request_id=${value.requestId}::uuid`)
+      .rejects.toMatchObject({ code: "23514" });
   } catch (error) { primary = error; throw error; }
   finally {
     const errors: unknown[] = [];

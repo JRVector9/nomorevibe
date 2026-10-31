@@ -12,7 +12,7 @@ import { ai1ItemDispatchBindingHash, modelCapacityPolicyHash, type Ai1ItemDispat
   type ModelCapacityPolicy, type ModelCapacityRequest, type ModelCapacityReservation, type ModelSlotResult } from "@/lib/llm/capacity";
 import { beginModelDispatch, cancelReservedModelSlot, finishAi1ItemModelCapacityDispatch, lockAi1ModelCapacityDispatch, finishAi1ModelCapacityDispatch,
   markModelDispatchIndeterminate, reconcileAi1ItemGatewayTerminal, requestAi1ModelSlot, requestModelSlot } from "@/lib/llm/capacity-repository";
-import { prepareAi1GatewayCall, readAi1ItemGatewayTerminal, reviewWithReservedAi1ItemGateway,
+import { prepareAi1DirectCall, prepareAi1GatewayCall, readAi1ItemGatewayTerminal, reviewWithReservedAi1ItemGateway,
   type PreparedAi1GatewayCall } from "@/lib/crawl/agent-review-gateway";
 import type { Ai1GatewayServingContract } from "@/lib/crawl/agent-review-serving-contract";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
@@ -345,4 +345,65 @@ it("settles an actual native terminal historically once, rejects copied proof an
     expect(await requestRow(next.requestId)).toMatchObject({ state: "reserved", dispatch_binding: null });
     expect(posts()).toBe(1);
   });
+}));
+
+// PR 3b-C (0157): the AI1 item kind on a local-direct engine with the shared direct-openai-chat-v1 contract (the same shape as AI2's).
+it("dispatches and settles an AI1 item call on a local-direct engine once through the same item kind (0157)", exercise(async () => {
+  await install({ ...policy, routes: [...policy.routes,
+    { routeId: "crawl-agent-review", provider: "local-direct", model, providerBudgetId: "account", groupId: "engine" }] });
+  vi.stubEnv("ABCLLM_API_KEY", "");
+  const posts: { url: string; body: string; headers: Record<string, unknown> }[] = [], handlers = new Set<Promise<unknown>>();
+  const server = createServer((request, response) => {
+    const closed = new Promise<void>(resolve => response.once("close", resolve));
+    tracked((async () => {
+      let body = ""; for await (const chunk of request) body += chunk.toString();
+      posts.push({ url: request.url ?? "", body, headers: request.headers });
+      if (request.url === "/tokenize") response.end(JSON.stringify({ count: 100, tokens: Array.from({ length: 100 }, () => 1), max_model_len: 50_000 }));
+      else response.end(JSON.stringify({ id: "engine-response", object: "chat.completion", created: 1, model: "local-llm",
+        choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify({ decision: "approve", reason: "A working tool.",
+          evidenceIds: ["product"], confidence: 0.9 }) }, finish_reason: "stop" }], usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 } }));
+      await closed;
+    })(), handlers);
+  });
+  try {
+    await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
+    const address = server.address(); if (!address || typeof address === "string") throw new Error("fixture_address");
+    const origin = `http://127.0.0.1:${address.port}`;
+    serving.contract = { version: 1, protocol: "direct-openai-chat-v1", routeId: "crawl-agent-review", provider: "local-direct", model,
+      responseModel: "local-llm", deploymentRevision: "loopback-direct", endpoint: `${origin}/v1/chat/completions`, tokenizerEndpoint: `${origin}/tokenize`,
+      backendId: "account", physicalGroup: "engine", totalTokenBound: 50_000, requestTokenBound: 32_000, maxOutputTokens: 4_096 };
+    const now = new Date("2026-10-31T00:00:00.000Z");
+    const input = createReviewInput({ repo: prefix, productUrl: "https://fixture.example", judgedAt: now } as CrawlCandidate,
+      { id: 1, repo: prefix, productUrl: "https://fixture.example", repoMeta: { description: "A usable tool" },
+        pageMeta: { title: "Tool", textSample: "A working tool" }, pageStatus: 200, fetchedAt: now } as CrawlDocument,
+      DEFAULT_CRAWL_SETTINGS, { scan: null, observations: [] }, now);
+    const call = await prepareAi1DirectCall(input, { model, timeoutMs: 2_500 });
+    expect(call.kind).toBe("prepared"); if (call.kind !== "prepared") throw new Error("actual_prepared_required");
+    const value = review({ inputHash: input.inputHash, policyHash: input.policyHash, sourceRevisionHash: input.sourceRevisionHash,
+      promptVersion: input.snapshot.policy.promptVersion, rulesVersion: input.snapshot.policy.rulesVersion, reviewer: { provider: "local-direct", model } });
+    const requested = await request(value, { provider: "local-direct" });
+    const handle = granted(await tracked(requestAi1ModelSlot(requested, target(value))));
+    const result = await atomicDispatch(value, requested, handle, { provider: "local-direct", wireHash: call.wireHash,
+      servingContractHash: call.servingContractHash, totalTokenBound: call.totalTokenBound, chargedTokens: call.totalTokenBound });
+    expect(await requestRow(requested.requestId)).toMatchObject({ provider: "local-direct", state: "dispatched",
+      dispatch_binding: { provider: "local-direct", review: { reviewer: { provider: "local-direct" } }, chargedTokens: 50_000 } });
+    const native = await tracked(reviewWithReservedAi1ItemGateway(input, result.dispatch, call, { timeoutMs: 2_500 }));
+    expect(native.result).toMatchObject({ ok: true }); expect(native.terminal).not.toBeNull();
+    const chat = posts.filter(post => post.url === "/v1/chat/completions");
+    expect(chat).toHaveLength(1); expect(JSON.parse(chat[0].body)).toMatchObject({ model, max_tokens: 4_096 });
+    expect(JSON.parse(chat[0].body)).not.toHaveProperty("context_strategy"); expect(chat[0].headers.authorization).toBeUndefined();
+    await tracked(db.transaction(async tx => { const stage = await lockItemStage(tx, "ai1"); await releaseItemLease(tx, stage, result.lease); }));
+    expect(await tracked(reconcileAi1ItemGatewayTerminal(native.terminal!))).toEqual({ kind: "settled" });
+    expect(await requestRow(requested.requestId)).toMatchObject({ state: "settled", provider: "local-direct",
+      terminal_evidence: { provenance: "upstream_reported", actualUsage: { totalTokens: 120 }, dispatch: { binding: { provider: "local-direct" } } } });
+    expect(await admin`SELECT kind FROM model_capacity_events WHERE request_id=${requested.requestId}::uuid ORDER BY id`)
+      .toEqual([{ kind: "queued" }, { kind: "reserved" }, { kind: "dispatch_started" }, { kind: "dispatch_settled" }]);
+    // The reviewer provider of an item binding must still be the dispatch provider.
+    await expect(admin`UPDATE model_capacity_requests SET dispatch_binding=jsonb_set(dispatch_binding,'{review,reviewer,provider}','"abcllm"')
+      WHERE request_id=${requested.requestId}::uuid`).rejects.toMatchObject({ code: "23514" });
+  } finally {
+    serving.contract = null; server.closeAllConnections();
+    await steps([() => drain(work), () => drain(handlers, true), () => new Promise<void>((resolve, reject) => {
+      if (!server.listening) return resolve(); server.close(error => error ? reject(error) : resolve()); })]);
+  }
 }));

@@ -22,6 +22,14 @@ const ttl = positive.max(3_600_000);
 const sha64 = z.string().regex(/^[a-f0-9]{64}$/);
 const capacityClass = z.enum(["first", "second", "background"]);
 const capacityPool = z.enum(["reviewer", "text"]);
+/**
+ * 게이트웨이 dispatch kind 들의 provider(PR 3b-C 전송 통합). abcllm 계약(게이트웨이·직접 연결)과 local-direct OpenAI 호환 엔진 모두
+ * 같은 kind·같은 binding 모양으로 장부에 남는다 — 같은 모델이 AI1·AI2·text 를 모두 맡을 수 있다. 넓히기만 했다: 저장된 "abcllm" 행은
+ * 그대로 파싱되고 hash 도 그대로다(0157 이 DB CHECK 에 같은 모양의 local-direct 분기를 붙인다).
+ */
+const gatewayProvider = z.enum(["abcllm", "local-direct"]);
+export const GATEWAY_DISPATCH_PROVIDERS = gatewayProvider.options;
+export type GatewayDispatchProvider = z.infer<typeof gatewayProvider>;
 const limits = z.record(identity(120), limit).refine(value => {
   const count = Object.keys(value).length;
   return count >= 1 && count <= 64;
@@ -151,7 +159,7 @@ export const modelCapacityDispatchSchema = handleSchema.transform(value => value
 export const ai1DispatchBindingSchema = z.object({
   kind: z.literal("ai1_legacy_gateway"), version: z.literal(1), logicalWorkKey: identity(160),
   candidateId: positive, attemptId: positive, inputHash: sha64, sourceRevisionHash: sha64, reviewPolicyHash: sha64,
-  promptVersion: identity(120), rulesVersion: identity(120), provider: z.literal("abcllm"), model: identity(200),
+  promptVersion: identity(120), rulesVersion: identity(120), provider: gatewayProvider, model: identity(200),
   routeId: z.literal("crawl-agent-review"), stageEpoch: positive, wireHash: sha64, servingContractHash: sha64,
   totalTokenBound: positive, chargedTokens: positive,
   job: z.object({ name: z.literal("crawl-agent-review"), token: z.uuid(), requestedVersion: z.number().int().nonnegative().safe() }).strict(),
@@ -187,7 +195,7 @@ export const ai2DispatchBindingSchema = z.object({
   rowIdentityHash: sha64, failureCount: z.number().int().nonnegative().safe(), inputPolicyHash: sha64,
   item: z.object({ workKey: identity(160), owner: itemOwnerSchema, token: z.uuid(),
     stageEpoch: positive, itemEpoch: positive, bindingHash: sha64 }).strict(),
-  routeId: z.literal("second-review"), provider: z.enum(["abcllm", "local-direct"]), model: identity(200),
+  routeId: z.literal("second-review"), provider: gatewayProvider, model: identity(200),
   wireHash: sha64, servingContractHash: sha64, totalTokenBound: positive, chargedTokens: positive,
 }).strict()
   .refine(value => value.logicalWorkKey === `ai2:${value.review.candidateId}:${value.review.vote}`, "invalid_ai2_logical_work")
@@ -233,7 +241,7 @@ export const ai1ItemDispatchBindingSchema = z.object({
     .transform(value => value as Ai1ItemBinding),
   item: z.object({ workKey: identity(160), owner: itemOwnerSchema, token: z.uuid(),
     stageEpoch: positive, itemEpoch: positive, bindingHash: sha64 }).strict(),
-  routeId: z.literal("crawl-agent-review"), provider: z.literal("abcllm"), model: identity(200),
+  routeId: z.literal("crawl-agent-review"), provider: gatewayProvider, model: identity(200),
   wireHash: sha64, servingContractHash: sha64, totalTokenBound: positive, chargedTokens: positive,
 }).strict()
   .refine(value => value.logicalWorkKey === `ai1:${value.review.candidateId}`, "invalid_ai1_item_logical_work")
@@ -324,7 +332,7 @@ export function textProfileInputHash(value: TextProfileInput): string {
 }
 export const textProfileDispatchBindingSchema = textProfileInputSchema.extend({
   kind: z.literal("text_profile_gateway"), version: z.literal(1), logicalWorkKey: identity(160), inputHash: sha64,
-  provider: z.literal("abcllm"), routeId: z.literal("product-search-profile"), wireHash: sha64,
+  provider: gatewayProvider, routeId: z.literal("product-search-profile"), wireHash: sha64,
   servingContractHash: sha64, totalTokenBound: positive, chargedTokens: positive,
   job: z.object({ name: z.literal("product-search-profile"), token: z.uuid(), requestedVersion: z.number().int().nonnegative().safe() }).strict(),
   role: z.object({ role: z.literal("text"), instanceId: identity(120), bootId: z.uuid(), release: identity(120),
@@ -392,7 +400,7 @@ const reasonRoleIdentity = { instanceId: identity(120), bootId: z.uuid(), releas
   kind: z.enum(["primary", "standby"]), epoch: positive };
 export const reasonTranslationDispatchBindingSchema = reasonTranslationInputSchema.extend({
   kind: z.literal("reason_translation_gateway"), version: z.literal(1), logicalWorkKey: identity(160), inputHash: sha64,
-  provider: z.literal("abcllm"), routeId: z.literal("reason-translate"), wireHash: sha64, servingContractHash: sha64,
+  provider: gatewayProvider, routeId: z.literal("reason-translate"), wireHash: sha64, servingContractHash: sha64,
   totalTokenBound: positive, chargedTokens: positive,
   job: z.object({ name: z.literal("reason-translate"), token: z.uuid(), requestedVersion: z.number().int().nonnegative().safe() }).strict(),
   role: z.discriminatedUnion("role", [z.object({ ...reasonRoleIdentity, role: z.literal("text"),
@@ -460,7 +468,7 @@ export function productTranslationInputHash(value: ProductTranslationInput): str
 }
 export const productTranslationDispatchBindingSchema = productTranslationInputSchema.extend({
   kind: z.literal("product_translation_gateway"), version: z.literal(1), logicalWorkKey: identity(160), inputHash: sha64,
-  provider: z.literal("abcllm"), routeId: z.literal("product-translate"), wireHash: sha64, servingContractHash: sha64,
+  provider: gatewayProvider, routeId: z.literal("product-translate"), wireHash: sha64, servingContractHash: sha64,
   totalTokenBound: positive, chargedTokens: positive,
   job: reasonTranslationDispatchBindingSchema.shape.job.extend({ name: z.literal("product-translate") }).strict(),
   role: reasonTranslationDispatchBindingSchema.shape.role,
@@ -525,7 +533,7 @@ export function productTaglineKoInputHash(value: ProductTaglineKoInput): string 
 }
 export const productTaglineKoDispatchBindingSchema = productTaglineKoInputSchema.extend({
   kind: z.literal("product_tagline_ko_gateway"), version: z.literal(1), logicalWorkKey: identity(160), inputHash: sha64,
-  provider: z.literal("abcllm"), routeId: z.literal("product-tagline-ko"), wireHash: sha64, servingContractHash: sha64,
+  provider: gatewayProvider, routeId: z.literal("product-tagline-ko"), wireHash: sha64, servingContractHash: sha64,
   totalTokenBound: positive, chargedTokens: positive,
   job: reasonTranslationDispatchBindingSchema.shape.job.extend({ name: z.literal("product-tagline-ko") }).strict(),
   role: reasonTranslationDispatchBindingSchema.shape.role,
@@ -596,7 +604,7 @@ export function crawlTaglineInputHash(value: CrawlTaglineInput): string {
 }
 export const crawlTaglineDispatchBindingSchema = crawlTaglineInputObject.extend({
   kind: z.literal("crawl_tagline_gateway"), version: z.literal(1), generationHash: sha64,
-  logicalWorkKey: identity(160), inputHash: sha64, provider: z.literal("abcllm"), routeId: z.literal("crawl-tagline"),
+  logicalWorkKey: identity(160), inputHash: sha64, provider: gatewayProvider, routeId: z.literal("crawl-tagline"),
   wireHash: sha64, servingContractHash: sha64, totalTokenBound: positive, chargedTokens: positive,
   job: reasonTranslationDispatchBindingSchema.shape.job.extend({ name: z.literal("crawl-tagline") }).strict(),
   role: z.object({ ...reasonRoleIdentity, role: z.literal("text"), batch: z.discriminatedUnion("mode", [
@@ -701,7 +709,7 @@ export function searchVerifyInputHash(value: SearchVerifyInput): string {
 }
 export const searchVerifyDispatchBindingSchema = searchVerifyInputObject.extend({
   kind: z.literal("search_verify_gateway"), version: z.literal(1), generationHash: sha64, logicalWorkKey: identity(160), inputHash: sha64,
-  deadlineAt: positive, provider: z.literal("abcllm"), routeId: z.literal("product-search-verify"), wireHash: sha64, servingContractHash: sha64,
+  deadlineAt: positive, provider: gatewayProvider, routeId: z.literal("product-search-verify"), wireHash: sha64, servingContractHash: sha64,
   totalTokenBound: positive, chargedTokens: positive,
   job: reasonTranslationDispatchBindingSchema.shape.job.extend({ name: z.literal("product-search-verify") }).strict(),
   role: crawlTaglineDispatchBindingSchema.shape.role,
@@ -760,7 +768,7 @@ export const websearchProcessOwnerSchema = z.object({ instanceId: identity(120),
 export type WebsearchProcessOwner = Readonly<z.infer<typeof websearchProcessOwnerSchema>>;
 export const websearchQueryDispatchBindingSchema = websearchQueryInputSchema.extend({
   kind: z.literal("websearch_query_gateway"), version: z.literal(1), logicalWorkKey: identity(160), inputHash: sha64,
-  provider: z.literal("abcllm"), routeId: z.literal("search-query-translate"), wireHash: sha64, servingContractHash: sha64,
+  provider: gatewayProvider, routeId: z.literal("search-query-translate"), wireHash: sha64, servingContractHash: sha64,
   totalTokenBound: positive, chargedTokens: positive, process: websearchProcessOwnerSchema,
 }).strict().refine(value => {
   const checked = websearchQueryInputSchema.safeParse({ member: value.member, model: value.model });

@@ -22,7 +22,8 @@ const mocks = vi.hoisted(() => {
   return { served, gateway, ai2, ai2Contracts };
 });
 vi.mock("@/lib/crawl/agent-review-serving-contract", async load => { const m = await load<typeof import("@/lib/crawl/agent-review-serving-contract")>();
-  return { ...m, resolveAi1GatewayServingContract: (model: string) => mocks.gateway(m.ai1GatewayServingContractSchema, model) }; });
+  return { ...m, resolveAi1GatewayServingContract: (model: string, provider = "abcllm") =>
+    provider === "abcllm" ? mocks.gateway(m.ai1RawGatewayServingContractSchema, model) : null }; });
 vi.mock("@/lib/crawl/second-review-serving-contract", async load => { const m = await load<typeof import("@/lib/crawl/second-review-serving-contract")>();
   return { ...m, resolveAi2GatewayServingContract: mocks.ai2 }; });
 vi.mock("@/lib/llm/text-profile-serving-contract", async load => { const m = await load<typeof import("@/lib/llm/text-profile-serving-contract")>();

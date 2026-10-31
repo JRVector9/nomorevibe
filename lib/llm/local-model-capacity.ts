@@ -16,6 +16,7 @@ import { modelCapacityIndeterminateReason } from "./capacity";
 import { requestReservedLocalModel } from "./local-model-terminal";
 import { GatewayNotSentError } from "./gateway-not-started";
 import { recordLocalModelWireObservation } from "./local-model-wire-observation";
+import { tableLocalModelContract } from "./local-model-contract-table";
 
 type Env = Readonly<Record<string, string | undefined>>;
 export type LocalModelCallContext = {
@@ -30,8 +31,15 @@ export type LocalModelCallContext = {
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 const object = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
 
-/** 운영 readback으로 확인한 정확한 계약 hash만 인정한다. 설정의 모양 통과와 확인됨을 구분한다. */
+/**
+ * 운영 readback으로 확인한 정확한 계약 hash만 인정한다. 설정의 모양 통과와 확인됨을 구분한다.
+ * PR 3b-C: 관리 화면 계약 표(model_serving_contracts)의 local-openai-chat-v1 행을 먼저 본다(lib/llm/local-model-contract-table.ts —
+ * 표의 행은 readback 으로 확인해 넣은 계약이다). 이 주소·모델의 행이 없을 때만 env(LOCAL_MODEL_SERVING_CONTRACTS +
+ * LOCAL_MODEL_VERIFIED_CONTRACT_HASHES)를 예전과 똑같이 본다.
+ */
 export function verifiedLocalModelContract(url: string, model: string, env: Env = process.env): LocalModelServingContract | null {
+  const table = tableLocalModelContract(url, model);
+  if (table !== undefined) return table;
   try {
     const contracts = localModelServingContractsSchema.parse(JSON.parse(env.LOCAL_MODEL_SERVING_CONTRACTS ?? "null"));
     const matches = contracts.filter(contract => contract.endpoint === url && contract.model === model);

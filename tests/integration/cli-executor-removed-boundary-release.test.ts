@@ -12,6 +12,7 @@ import * as schema from "@/lib/db/schema";
 import { gatewayNotStartedAllKindsTerminalSql } from "@/lib/db/operations-schema";
 import { operatorReviewDispatchSql, operatorReviewEventSql, operatorReviewTerminalSql } from "@/lib/llm/operator-review-sql";
 import { localModelSplitJobsDispatchSql, localModelSplitJobsTerminalSql } from "@/lib/llm/local-model-capacity-sql";
+import { gatewayLocalDirectDispatchSql, gatewayLocalDirectLogicalSql, gatewayLocalDirectMembersSql, gatewayLocalDirectTerminalSql } from "@/lib/llm/gateway-local-direct-sql";
 import { modelCapacityPolicyHash, publicationClassifyMemberKeys, type ModelCapacityPolicy } from "@/lib/llm/capacity";
 import { cliExecutorPlanHash } from "@/lib/llm/cli-executor-boundary-contract";
 import { providerBoundaryCanonicalHash } from "@/lib/llm/provider-boundary-contract";
@@ -97,6 +98,17 @@ it("migrates nonempty old data without mutation and retains all predecessor pred
     // to the requests dispatch/terminal CHECKs after everything above — the 0124 branch with the old composite names stays inside the predecessor.
     if(n==="model_capacity_requests_dispatch_check")predicate=`(${predicate}) OR (coalesce((${localModelSplitJobsDispatchSql}),false))`;
     if(n==="model_capacity_requests_terminal_check")predicate=`(${predicate}) OR (coalesce((${localModelSplitJobsTerminalSql}),false))`;
+    // 0157 (PR 3b-C) then rebuilds the four requests CHECKs from their live 0156 definition (0155 included) plus the AI1/text local-direct
+    // branches (the schema constants). Like the migration, take PostgreSQL's own deparse of the predecessor as the left side — a second parse
+    // flattens 0155's nested BETWEEN-ANDs, so the source chain parsed once would not be the live 0157 text.
+    const localDirect: Record<string, string> = { model_capacity_requests_logical_check: gatewayLocalDirectLogicalSql,
+      model_capacity_requests_members_check: gatewayLocalDirectMembersSql, model_capacity_requests_dispatch_check: gatewayLocalDirectDispatchSql,
+      model_capacity_requests_terminal_check: gatewayLocalDirectTerminalSql };
+    if(localDirect[n]){
+      await client.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT cli_removed_expected_0156 CHECK (${predicate})`);
+      try{predicate=`(${(await client`SELECT pg_get_constraintdef(oid) def FROM pg_constraint WHERE conname='cli_removed_expected_0156'`)[0].def.slice(6)}) OR (${localDirect[n]})`;}
+      finally{await client.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT cli_removed_expected_0156`);}
+    }
     await client.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT cli_removed_expected CHECK (${predicate})`);
     try{expect(after[n]).toBe((await client`SELECT pg_get_constraintdef(oid) def FROM pg_constraint WHERE conname='cli_removed_expected'`)[0].def);}
     finally{await client.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT cli_removed_expected`);}

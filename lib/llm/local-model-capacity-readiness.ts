@@ -2,6 +2,7 @@ import type { ModelCapacityPolicy } from "./capacity";
 import { verifiedLocalModelContract, localModelRouteReady } from "./local-model-capacity";
 import { localModelServingContractsSchema } from "./local-model-serving-contract";
 import { localModelTargetSchema } from "./local-model-capacity-contract";
+import { tableLocalModelContracts } from "./local-model-contract-table";
 
 /** 읽기 전용 부분 진단이다. production의 전체 입구·gateway alias inventory 증거는 아직 수집하지 않았다.
  * 이 보고서는 전역 open 허가나 relay nativeCapacityReady 증인으로 사용할 수 없다. */
@@ -19,6 +20,8 @@ export function localModelCapacityReadiness(policy: ModelCapacityPolicy | null,
   ].map(value => localModelTargetSchema.parse(value));
   let contracts: ReturnType<typeof localModelServingContractsSchema.parse> = [];
   try { contracts = localModelServingContractsSchema.parse(JSON.parse(env.LOCAL_MODEL_SERVING_CONTRACTS ?? "null")); } catch { /* unverified */ }
+  // 관리 화면 계약 표의 local 계약이 먼저다(verifiedLocalModelContract 와 같은 순서, PR 3b-C)
+  contracts = [...tableLocalModelContracts().flatMap(row => row.contract ? [row.contract] : []), ...contracts];
   const localRoutes = (policy?.routes ?? []).filter(route => route.provider === "local-direct").map(route => {
     const contract = contracts.find(value => value.backendId === route.providerBudgetId && value.model === route.model);
     const verified = contract && verifiedLocalModelContract(contract.endpoint, contract.model, env);

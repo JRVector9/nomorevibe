@@ -91,13 +91,23 @@ class LiveGatewayContracts<T extends ServingContract> implements ReadonlyMap<str
 
 const STARTUP_CONFIG = process.env.ABCLLM_SERVING_CONTRACTS;
 const ROUTE_SCHEMAS = new Map<GatewayServingRoute, z.ZodType<ServingContract>>();
-/** 각 계약 모듈이 자기 모듈을 처음 읽을 때 한 번 부른다. env 는 시작 때 한 번, 관리 화면 계약은 스냅샷이 바뀔 때마다 반영된다. */
+const ROUTE_GATEWAY_SHAPES = new Map<GatewayServingRoute, z.ZodType<ServingContract>>();
+/**
+ * 각 계약 모듈이 자기 모듈을 처음 읽을 때 한 번 부른다. env 는 시작 때 한 번, 관리 화면 계약은 스냅샷이 바뀔 때마다 반영된다.
+ * schema 는 그 route 가 받는 모든 계약 모양이다. 엔진에 직접 보내는 direct-openai-chat-v1 계약도 받는 route(PR 3b-C: crawl-agent-review)는
+ * 두 모양의 합을 넘기고 gatewayShape 에 게이트웨이 총량 상한(raw) 모양을 따로 적는다 — 엔진 연결이 채우는 칸은 그 모양이다.
+ */
 export function startupGatewayServingContracts<T extends ServingContract>(routeId: GatewayServingRoute,
-  schema: z.ZodType<T>): ReadonlyMap<string, Readonly<T>> {
+  schema: z.ZodType<T>, options: { gatewayShape?: z.ZodType<ServingContract> } = {}): ReadonlyMap<string, Readonly<T>> {
   ROUTE_SCHEMAS.set(routeId, schema as z.ZodType<ServingContract>);
+  ROUTE_GATEWAY_SHAPES.set(routeId, options.gatewayShape ?? schema as z.ZodType<ServingContract>);
   return new LiveGatewayContracts(routeId, schema, gatewayServingContractsFromConfig(STARTUP_CONFIG, routeId, schema));
 }
-/** 그 route 계약 모듈이 이미 읽힌 경우의 스키마(관리 화면 검사용). 모듈을 읽지 않았으면 null 이다. */
+/** 그 route 계약 모듈이 이미 읽힌 경우의 스키마(관리 화면 검사용 — direct 계약도 받는 route 는 둘 다 받는다). 모듈을 읽지 않았으면 null 이다. */
 export function registeredGatewayServingContractSchema(routeId: GatewayServingRoute): z.ZodType<ServingContract> | null {
   return ROUTE_SCHEMAS.get(routeId) ?? null;
+}
+/** 그 route 의 게이트웨이 총량 상한(raw) 계약 모양(엔진 연결이 protocol·칸을 읽는다). 모듈을 읽지 않았으면 null 이다. */
+export function registeredGatewayContractShape(routeId: GatewayServingRoute): z.ZodType<ServingContract> | null {
+  return ROUTE_GATEWAY_SHAPES.get(routeId) ?? null;
 }

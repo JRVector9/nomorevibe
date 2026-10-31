@@ -126,12 +126,20 @@ export function servingContractAuth(routeId: string, model: string): { mode: Ser
 }
 
 /**
- * A text route can call its model: an engine connected directly (admin contract, transport direct — its own stored key or none),
- * else the abcLLM gateway key. Replaces the old "ABCLLM_API_KEY is set" gate, so removing the gateway key stops nothing that
- * no longer goes through the gateway.
+ * A text route can authenticate a call to its model — the same rule the senders apply (contractBearer in agent-review-gateway):
+ * - an admin contract for this route+model with no key (auth none: a keyless engine, usually transport direct) is callable;
+ * - one with its own stored key (auth stored) is callable when that key opens (a key that does not open is refused at send time);
+ * - otherwise (no admin row, or auth gateway) the abcLLM gateway key ABCLLM_API_KEY must be set.
+ * Replaces the old "ABCLLM_API_KEY is set" gate, so removing the gateway key stops nothing that no longer goes through the gateway
+ * (PR 3b-C: every text job — reason-translate and crawl-tagline included — gates on this, not on the key).
+ * The Qwen native path of product-tagline-ko (korean-translation-config, env switch) is outside this gate and stays as is until the
+ * route→engine assignment table (PR 3b-B/3b-D) absorbs it.
  */
 export function textRouteCallable(routeId: string, model: string): boolean {
-  return servingContractAuth(routeId, model)?.transport === "direct" || !!process.env.ABCLLM_API_KEY?.trim();
+  const stored = servingContractAuth(routeId, model);
+  if (stored?.mode === "none") return true;
+  if (stored?.mode === "stored") return !!stored.apiKey;
+  return !!process.env.ABCLLM_API_KEY?.trim();
 }
 
 /** Tests and replay: pin a snapshot and stop DB reloads. Pass null to restore normal loading. */

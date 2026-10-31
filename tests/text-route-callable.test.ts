@@ -24,4 +24,21 @@ describe("text routes without the abcLLM gateway key", () => {
     vi.stubEnv("ABCLLM_API_KEY", "gateway-key");
     expect(textRouteCallable("product-translate", "[MLX] gpt-oss-120b")).toBe(true);
   });
+
+  // PR 3b-C: the gate is the senders' own bearer rule (contractBearer), not the transport flag alone.
+  it("follows the sender's bearer rule: no key is callable, a stored key only when it opens, gateway auth needs the gateway key", () => {
+    vi.stubEnv("ABCLLM_API_KEY", "");
+    setServingContractSnapshotForTest([{ ...row("direct", "stored"), apiKey: null }]);
+    expect(textRouteCallable("product-translate", "gemma-direct")).toBe(false);
+    setServingContractSnapshotForTest([row("gateway", "none")]);
+    expect(textRouteCallable("product-translate", "gemma-direct")).toBe(true);
+    setServingContractSnapshotForTest([row("gateway", "stored")]);
+    expect(textRouteCallable("product-translate", "gemma-direct")).toBe(true);
+    setServingContractSnapshotForTest([row("direct", "gateway")]);
+    expect(textRouteCallable("product-translate", "gemma-direct")).toBe(false);
+    vi.stubEnv("ABCLLM_API_KEY", "gateway-key");
+    expect(textRouteCallable("product-translate", "gemma-direct")).toBe(true);
+    setServingContractSnapshotForTest([]);
+    expect(textRouteCallable("crawl-tagline", "any-model")).toBe(true);
+  });
 });

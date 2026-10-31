@@ -26,7 +26,7 @@ import { currentReplayDb } from "@/lib/db/replay-scope";
 import { modelCapacityControl, modelCapacityDevices, modelCapacityEvents, modelCapacityRequests } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import type { Ai1GatewayTerminal, Ai2GatewayTerminal, Ai1ItemGatewayTerminal, GatewayNotStarted } from "@/lib/crawl/agent-review-gateway";
-import { gatewayNotStartedEvidenceSchema, type GatewayNotStartedDispatch } from "./capacity";
+import { gatewayNotStartedEvidenceSchema, GATEWAY_DISPATCH_PROVIDERS, type GatewayNotStartedDispatch } from "./capacity";
 import { reviewHash } from "@/lib/crawl/agent-review-contract";
 import { providerBoundaryCanonicalHash } from "./provider-boundary-contract";
 import {
@@ -539,9 +539,11 @@ export async function requestAi1ModelSlot(value: ModelCapacityRequest, candidate
   return requestSlot(checked, `ai1:${candidateId}`);
 }
 
+/** AI1 게이트웨이 kind 의 고정 identity. provider 는 abcllm 계약 또는 local-direct 엔진이다(PR 3b-C, 0157). */
 function fixedAi1Identity(value: ModelCapacityRequestIdentity, candidateId: number): void {
   if (!Number.isSafeInteger(candidateId) || candidateId < 1 || value.class !== "first" || value.pool !== "reviewer"
-    || value.routeId !== "crawl-agent-review" || value.provider !== "abcllm") fail("invalid_ai1_capacity_identity");
+    || value.routeId !== "crawl-agent-review" || !(GATEWAY_DISPATCH_PROVIDERS as readonly string[]).includes(value.provider))
+    fail("invalid_ai1_capacity_identity");
 }
 
 async function ai1Fence(tx: ProductTransaction, logicalKey: string, ownId: string): Promise<boolean> {
@@ -842,7 +844,7 @@ export async function finishAi1ModelCapacityDispatch(tx: ProductTransaction, loc
   if (!proof || proof.tx !== tx || proof.finished) return fail("invalid_ai1_capacity_dispatch_lock");
   const binding = ai1DispatchBindingSchema.parse(value);
   if (binding.candidateId !== proof.candidateId || binding.logicalWorkKey !== proof.row.logicalWorkKey
-    || binding.model !== proof.identity.model) fail("ai1_capacity_dispatch_binding_mismatch");
+    || binding.model !== proof.identity.model || binding.provider !== proof.identity.provider) fail("ai1_capacity_dispatch_binding_mismatch");
   proof.finished = true;
   const bindingHash = ai1DispatchBindingHash(binding);
   const [changed] = await tx.update(modelCapacityRequests).set({ state: "dispatched", dispatchBinding: binding,
@@ -1028,7 +1030,7 @@ export async function finishAi1ItemModelCapacityDispatch(tx: ProductTransaction,
   if (!proof || proof.tx !== tx || proof.finished) return fail("invalid_ai1_capacity_dispatch_lock");
   const binding = ai1ItemDispatchBindingSchema.parse(value);
   if (binding.review.candidateId !== proof.candidateId || binding.logicalWorkKey !== proof.row.logicalWorkKey
-    || binding.model !== proof.identity.model
+    || binding.model !== proof.identity.model || binding.provider !== proof.identity.provider
     || `${binding.logicalWorkKey}:${binding.item.bindingHash}` !== proof.identity.workKey
     || binding.item.owner.instanceId !== proof.identity.owner.instanceId
     || binding.item.owner.bootId !== proof.identity.owner.bootId) fail("ai1_capacity_dispatch_binding_mismatch");

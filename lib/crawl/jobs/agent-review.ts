@@ -74,13 +74,13 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
     return { done: true, ...(poolEnabled && ctx.cursor ? { cursor: ctx.cursor } : {}) };
   }
   const tickMs = pool.some(reviewer => reviewer.provider === "grok-cli") ? GROK_TICK_MS
-    : pool.some(reviewer => reviewer.provider === "abcllm") ? GATEWAY_TICK_MS : TICK_MS;
+    : pool.some(reviewer => reviewer.provider === "abcllm" || reviewer.provider === "local-direct") ? GATEWAY_TICK_MS : TICK_MS;
   // The runner starts its budget before claiming the job. Preparing inputs or
   // waiting for admission must not let us start a full call past that deadline.
   const deadlineAt = Math.min(startedAt + tickMs, ctx.deadlineAt ?? Infinity);
   const remaining = () => deadlineAt - Date.now();
   // 제공자별 호출 상한은 이 틱의 등록부(관리자 실시간 한도 포함)에서 읽는다
-  const timeoutFor = (provider: string) => provider === "abcllm" ? reviewGatewayTimeoutMs()
+  const timeoutFor = (provider: string) => provider === "abcllm" || provider === "local-direct" ? reviewGatewayTimeoutMs()
     : provider === "grok-cli" ? grokReviewTimeoutMs() : reviewCliTimeoutMs();
   const minimumCeiling = Math.min(...pool.map(reviewer => timeoutFor(reviewer.provider)));
   const visited = new Set<number>();
@@ -238,6 +238,8 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
         return (await dispatchReviewFixtureCall({ stage: "first",
         candidateId: candidate.id, firstAttemptId: claim.attempt.id, provider: reviewProvider, model }, input, options)) ?? (reviewProvider === "abcllm"
         ? reviewWithGateway(input, options)
+        // 엔진 직접(local-direct) 1차는 공통 장부의 dispatch 로만 보낸다 — 장부 밖 호환 경로로는 보내지 않는다(AI2 와 같다, PR 3b-C)
+        : reviewProvider === "local-direct" ? { ok: false as const, error: "not_configured" as const }
         : reviewProvider === "grok-cli" ? reviewWithGrokCli(input, options) : reviewWithAgent(input, options));
       }, ctx.log);
       if (controller.signal.aborted) result = { ok: false, error: "cancelled" };

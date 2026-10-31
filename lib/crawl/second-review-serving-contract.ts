@@ -1,7 +1,8 @@
-import { modelRequestName, resolveRegistryModel } from "@/lib/llm/model-registry";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { startupGatewayServingContracts } from "@/lib/llm/gateway-serving-contract-config";
+import { AI2_DIRECT_OPENAI_CHAT_PROTOCOL, DIRECT_OPENAI_CHAT_PROTOCOL, directServingContractSchema, selectServingContract,
+  servingContractMatchesSelection } from "@/lib/llm/direct-serving-contract";
 
 const identity = z.string().min(1).max(200).refine(value => value === value.trim() && !/[\p{Cc}]/u.test(value));
 const tokenizerEndpoint = z.url().refine(value => {
@@ -28,26 +29,12 @@ const legacyAi2GatewayServingContractSchema = z.object({
   if (value.requestBudget && value.totalTokenBound < value.requestBudget.requestTokenBound)
     context.addIssue({ code: "custom", message: "invalid_request_token_bound" });
 });
-const chatEndpoint = z.url().refine(value => {
-  const url = new URL(value);
-  return ["http:", "https:"].includes(url.protocol) && !url.username && !url.password
-    && !url.search && !url.hash && url.pathname === "/v1/chat/completions";
-});
-export const ai2DirectServingContractSchema = z.object({
-  version: z.literal(1), protocol: z.literal("ai2-direct-openai-chat-v1"),
-  routeId: z.literal("second-review"), provider: z.literal("local-direct"),
-  model: identity, responseModel: identity, deploymentRevision: identity,
-  endpoint: chatEndpoint,
-  tokenizerEndpoint, backendId: identity, physicalGroup: identity,
-  // C is the read-back engine context limit. The smaller request policy never rewrites C.
-  totalTokenBound: z.number().int().positive().safe(),
-  requestTokenBound: z.literal(32_000), maxOutputTokens: z.number().int().positive().max(32_000),
-}).strict().superRefine((value, context) => {
-  const chat = new URL(value.endpoint), tokenizer = new URL(value.tokenizerEndpoint);
-  if (tokenizer.origin !== chat.origin || tokenizer.pathname !== "/tokenize" || tokenizer.username
-    || tokenizer.password || tokenizer.search || tokenizer.hash || value.totalTokenBound < value.requestTokenBound)
-    context.addIssue({ code: "custom", message: "invalid_direct_tokenizer_contract" });
-});
+/**
+ * AI2 직접 계약 — 공통 direct-openai-chat-v1 모양(lib/llm/direct-serving-contract.ts)의 얇은 별칭이다. 저장된 계약의 옛 protocol 이름
+ * "ai2-direct-openai-chat-v1" 이 첫 값이라 그대로 파싱되고, 칸 순서가 같아 hash 도 바뀌지 않는다. 공통 이름도 받는다.
+ */
+export const ai2DirectServingContractSchema = directServingContractSchema("second-review",
+  [AI2_DIRECT_OPENAI_CHAT_PROTOCOL, DIRECT_OPENAI_CHAT_PROTOCOL] as const);
 export const ai2GatewayServingContractSchema = z.discriminatedUnion("protocol", [
   legacyAi2GatewayServingContractSchema, ai2DirectServingContractSchema,
 ]);
@@ -76,18 +63,10 @@ export function ai2DirectServingContractsFromConfig(raw: string | undefined): Re
 const directConfigured = ai2DirectServingContractsFromConfig(process.env.AI2_DIRECT_SERVING_CONTRACTS);
 /** A key binds the exact configured device endpoint and actual wire name; it never rewrites the verified contract. */
 export function ai2ServingContractMatches(contract: Ai2GatewayServingContract, selection: string): boolean {
-  if (selection === contract.model) return true;
-  try {
-    const definition = resolveRegistryModel(selection);
-    return Boolean(definition && selection === definition.key && definition.provider === contract.provider
-      && modelRequestName(definition) === contract.model
-      && (contract.provider !== "local-direct" || contract.maxOutputTokens <= definition.maxTokens)
-      && `${definition.baseUrl?.replace(/\/+$/, "")}/chat/completions` === contract.endpoint);
-  } catch { return false; }
+  return servingContractMatchesSelection(contract, selection);
 }
 export function selectAi2ServingContract(contracts: readonly Ai2GatewayServingContract[], selection: string, provider: string): Ai2GatewayServingContract | null {
-  const matches = contracts.filter(contract => contract.provider === provider && ai2ServingContractMatches(contract, selection));
-  return matches.length === 1 ? matches[0] : null;
+  return selectServingContract(contracts, selection, provider);
 }
 /** Read-back approved contracts only. Ambiguous bare models close; an equipment key chooses an exact contract. */
 export function resolveAi2GatewayServingContract(model: string, provider: string = "abcllm"): Ai2GatewayServingContract | null {

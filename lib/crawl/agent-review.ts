@@ -149,7 +149,8 @@ export function reviewModel(env: Readonly<Record<string, string | undefined>> = 
   return model && /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$/.test(model) ? model : null;
 }
 
-export type FirstReviewer = { provider: "claude-cli" | "abcllm" | "grok-cli"; model: string };
+/** local-direct: 엔진 직접 계약으로 공통 장부의 AI1 게이트웨이 kind 를 쓰는 1차 심사자(PR 3b-C). */
+export type FirstReviewer = { provider: "claude-cli" | "abcllm" | "grok-cli" | "local-direct"; model: string };
 /**
  * 1차 심사를 누가 볼지 — 설정이 있으면 그것, 없으면 예전대로 환경변수.
  *

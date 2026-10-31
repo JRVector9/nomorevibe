@@ -1,7 +1,7 @@
 import { db, onPrimary } from "@/lib/db";
 import { ADMIN_MODEL_STAGES, type AdminStagePools } from "@/lib/llm/admin-model-stages";
 import { ASSIGNMENT_STAGE_IDS, ASSIGNMENT_STAGES } from "@/lib/llm/capacity-helpers";
-import { GATEWAY_SERVING_CONTRACT_ROUTES, registeredGatewayServingContractSchema, type GatewayServingRoute } from "@/lib/llm/gateway-serving-contract-config";
+import { GATEWAY_SERVING_CONTRACT_ROUTES, registeredGatewayContractShape, type GatewayServingRoute } from "@/lib/llm/gateway-serving-contract-config";
 import { modelRequestName, readModelRegistry, type ModelDefinition } from "@/lib/llm/model-registry";
 import { ensureServingContracts, servingContractAuth } from "@/lib/llm/serving-contract-store";
 import { writerSiteActive, DrWriterFencedError } from "./dr/epoch";
@@ -12,7 +12,8 @@ import { saveRegistryOverrideTx } from "./admin-model-registry";
  * 엔진 연결: an OpenAI-compatible engine address + key + engine model, applied to one existing registry key in one step.
  * - The registry definition of that key keeps its equipment, adapter, limits and purposes; only its address and engine
  *   model name change, and the gateway label goes (the engine expects its own model name on the wire).
- * - Each chosen gateway route gets a direct contract (transport direct, the stored or no key). The engine's own model list
+ * - Each chosen gateway route gets a direct contract (transport direct, the stored or no key) of the route's plain total-bound shape
+ *   (provider abcllm, so the ledger rows and capacity policy routes keep their abcllm identity). The engine's own model list
  *   is read on the server first: the model must be there, and its maximum length becomes the contract's total bound.
  *   Engines whose /models omits max_model_len (mlx_lm.server, the M3 mlx-serve proxy) take the operator-typed bound instead;
  *   a typed bound that differs from a served one is refused, never picked over. The origin stays in the contract.
@@ -91,7 +92,9 @@ export async function probeEngineContract(input: { endpoint: string; engineModel
 /** The plain total-bound contract of one gateway route for a directly connected (or gateway) engine model; null when the route schema refuses it. */
 export function engineRouteContract(routeId: GatewayServingRoute, model: string, responseModel: string, endpoint: string, totalTokenBound: number, equipment: string,
   boundFrom: EngineConnectBoundOrigin) {
-  const shape = (registeredGatewayServingContractSchema(routeId) as unknown as { shape?: Record<string, { value?: unknown }> } | null)?.shape;
+  // The route's plain total-bound gateway shape: crawl-agent-review also accepts a direct-openai-chat-v1 contract (PR 3b-C), which this
+  // connection does not write — it needs the engine's tokenizer read back and is configured separately, like AI2's direct contract.
+  const shape = (registeredGatewayContractShape(routeId) as unknown as { shape?: Record<string, { value?: unknown }> } | null)?.shape;
   const protocol = shape?.protocol?.value;
   if (typeof protocol !== "string") return null;
   // The bound and its origin end the revision; a long model name is what gets cut to the 200-char identity, never the tail.
