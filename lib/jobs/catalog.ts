@@ -148,7 +148,8 @@ export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs
   { name: "notification-category-digest", role: "maintenance", intervalMs: 15 * 60_000 },
   { name: "notification-prune", role: "maintenance", intervalMs: 60 * 60_000 },
   /**
-   * 미확인 모델 점유 자동 해제(2026-10-28 대표 지시). 선언된 budget의 종료 증거+기한만 기존 판정으로 푼다.
+   * 종료 근거가 있는 모델 호출 자동 정산(2026-10-28 대표 지시). 선언된 budget의 종료 증거+기한만 기존 판정으로 푼다.
+   * 2026-10-30 뒤 확인 못함(indeterminate)은 점유가 아니다 — 이 잡은 보낸 호출(dispatched) 점유를 풀고 확인 못함 행은 사람 검토 목록에서 닫을 뿐이다.
    * 선언(MODEL_CAPACITY_AUTO_RECLAIM)이 없으면 DB 를 읽지 않고 끝난다. 한가한 maintenance 에 둔다.
    */
   { name: "model-capacity-reclaim", role: "maintenance", intervalMs: 60_000 },

@@ -97,14 +97,16 @@ function Models({ models }: { models: Runtime['models'] }) {
     {models === null ? <p className={note}>자료 없음</p> : !models.length ? <p className={note}>정책 budget·대기·점유 요청 없음</p>
       : <ScrollTable label="provider budget별 모델 슬롯"><table className="mt-2 w-full min-w-[640px] text-left text-[13px]">
         <thead className="text-fg-3"><tr><th className="py-1">budget</th><th>설정 상한</th><th>점유</th><th>대기</th><th>최장 대기</th><th>예약 (기한 지남)</th>
-          <th>dispatched</th><th>indeterminate</th><th>최장 미정산</th></tr></thead>
+          <th>dispatched</th><th>확인 못함 (사람 검토)</th><th>최장 미정산</th></tr></thead>
         <tbody>{models.map(row => <tr key={row.budget} className="border-t border-line"><th className="break-words py-2 font-mono font-medium">{row.budget}</th>
-          <td>{number(row.limit)}</td><td>{number(row.reserved + row.dispatched + row.indeterminate)}</td><td>{number(row.waiting)}</td>
+          <td>{number(row.limit)}</td><td>{number(row.reserved + row.dispatched)}</td><td>{number(row.waiting)}</td>
           <td>{row.oldestWaitingMin === null ? '—' : `${number(row.oldestWaitingMin)}분`}</td><td>{number(row.reserved)} ({number(row.expiredReserved)})</td>
           <td>{number(row.dispatched)}</td><td>{number(row.indeterminate)}</td>
           <td>{row.dispatched + row.indeterminate === 0 ? '—' : row.oldestUnsettledMin === null ? '미확인' : `${number(row.oldestUnsettledMin)}분`}</td></tr>)}</tbody>
       </table></ScrollTable>}
-    <p className={note}>dispatched·indeterminate 는 정산 근거가 올 때까지 슬롯 하나 전체(full C)를 차지합니다. 설정 상한은 정책값이며 실제 모델 제공용량을 인증하지 않습니다.</p>
+    <p className={note}>점유는 유효 예약과 dispatched 입니다 — dispatched 는 정산 근거가 올 때까지 슬롯 하나 전체(full C)를 차지합니다.
+      확인 못함(indeterminate)은 full C 기록만 남고 슬롯을 점유하지 않으며 아무 단계도 막지 않습니다(2026-10-30) — 단계별 모델(/admin/models)의 「확인 못함 — 사람 검토」 목록에서 닫습니다.
+      설정 상한은 정책값이며 실제 모델 제공용량을 인증하지 않습니다.</p>
   </section>;
 }
 

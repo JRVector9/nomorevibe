@@ -5,6 +5,7 @@ import { fetch as monitorFetch } from 'undici';
 import { readMonitorStatus, type MonitorStatus } from '../lib/operations/failover-monitor';
 import { TEXT_PROGRESS_STAGE_JOBS } from '../lib/operations/worker-progress';
 import { readBodyStrictlyCapped } from '../lib/net/fetch';
+import { capacityMonitorThresholds } from '../lib/operations/model-capacity-unknowns';
 
 export type MonitorCycleState = { badSamples: number };
 export type MonitorPushTarget = { name: 'primary' | 'external'; url: string };
@@ -14,6 +15,18 @@ type CycleDependencies = {
   record: (status: MonitorStatus) => void;
 };
 
+const ageText = (seconds: number) => seconds >= 86_400 ? `${Math.floor(seconds / 86_400)}d` : seconds >= 3_600
+  ? `${Math.floor(seconds / 3_600)}h` : `${Math.floor(seconds / 60)}m`;
+
+/** Kuma 메시지. 확인 못함(review)은 UP 메시지에 건수·가장 오래된 나이만 덧붙인다 — 상태(up/down)는 바꾸지 않는다. */
+export function monitorPushMessage(status: MonitorStatus): string {
+  const capacity = status.capacityUnknowns, base = `worker failover ${status.overall}`;
+  if (!capacity || capacity.status === 'unknown' || capacity.status === 'ok') return base;
+  const review = capacity.count ? `capacity review ${capacity.count}${capacity.oldestAgeSeconds === null ? '' : ` (oldest ${ageText(capacity.oldestAgeSeconds)})`}` : '';
+  const alarm = capacity.alarmReasons.length ? `capacity alarm ${capacity.alarmReasons.join('+')}` : '';
+  return [base, alarm, review].filter(Boolean).join('; ');
+}
+
 export async function runMonitorCycle(
   state: MonitorCycleState, status: MonitorStatus, deps: CycleDependencies,
 ): Promise<MonitorCycleState> {
@@ -21,7 +34,7 @@ export async function runMonitorCycle(
   const badSamples = status.overall === 'ok' ? 0 : Math.min(2, state.badSamples + 1);
   if (badSamples >= 2 || status.overall === 'ok') {
     try {
-      await deps.push(status.overall === 'ok' ? 'up' : 'down', `worker failover ${status.overall}`);
+      await deps.push(status.overall === 'ok' ? 'up' : 'down', monitorPushMessage(status));
     } catch {
       throw new Error('monitor_push_failed');
     }
@@ -118,7 +131,7 @@ async function main() {
   const targets = monitorPushTargets();
   // A second hostname is only a configuration check. Independent hosting and actual delivery need operator verification.
   console.log(JSON.stringify({ event: 'monitor.configured', targets: targets.map(target => target.name),
-    externalReceiverConfigured: targets.some(target => target.name === 'external') }));
+    externalReceiverConfigured: targets.some(target => target.name === 'external'), capacityThresholds: capacityMonitorThresholds() }));
   const stop = new AbortController();
   process.once('SIGINT', () => stop.abort());
   process.once('SIGTERM', () => stop.abort());

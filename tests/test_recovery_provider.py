@@ -104,38 +104,79 @@ class ProviderProbeTests(unittest.TestCase):
 
 
 class CapacityProbeTests(unittest.TestCase):
+    """2026-10-31: review (확인 못함 · 사람 검토) passes through as information; only a summarized alarm/unread ledger fails the row."""
     def setUp(self):
         self.gateway = load('recovery_gateway_capacity', ROOT / 'scripts/ops/recovery_gateway.py')
         self.fixtures = load('recovery_capacity_fixtures', ROOT / 'tests/test_recovery_observation.py')
         self.request = {'requestId': '00000000-0000-4000-8000-000000000001', 'routeId': 'product-translate',
                         'groupId': 'm1-mlx', 'oldPolicy': True, 'localEndRecorded': True}
-        self.capacity = {'status': 'alarm', 'truncated': False, 'requests': [self.request]}
+        self.review = {'status': 'review', 'truncated': False, 'requests': [self.request], 'count': 1,
+                       'oldestAgeSeconds': 7200, 'stuckDispatched': 0, 'alarmReasons': []}
+        self.alarm = {**self.review, 'status': 'alarm', 'count': 51, 'alarmReasons': ['review_backlog']}
+        self.legacy = {'status': 'alarm', 'truncated': False, 'requests': [self.request]}
+        self.empty = {'status': 'ok', 'truncated': False, 'requests': [], 'count': 0, 'oldestAgeSeconds': None,
+                      'stuckDispatched': 0, 'alarmReasons': []}
+        self.unknown = {'status': 'unknown', 'truncated': False, 'requests': []}
 
     @unittest.skipUnless(shutil.which('node'), 'Node is needed for the actual probe')
     def test_actual_node_probe_carries_only_bounded_allowlisted_request_metadata(self):
         with tempfile.TemporaryDirectory() as directory:
             heartbeat = Path(directory) / 'health.json'
-            for value, expected in [(self.capacity, self.capacity),
-                                    ({**self.capacity, 'requests': [{**self.request, 'token': 'private-token'}]}, self.capacity),
-                                    ({**self.capacity, 'requests': [{'requestId': 'private-token'}]}, {'status': 'unknown', 'truncated': False, 'requests': []})]:
-                heartbeat.write_text(json.dumps({'checkedAt': int(time.time() * 1000), 'overall': 'alarm', 'capacityUnknowns': value}))
-                result = subprocess.run(['node', '-e', self.gateway.MONITOR_PROBE], check=True, timeout=10,
-                                        capture_output=True, env={**os.environ, 'MONITOR_HEALTH_PATH': str(heartbeat)})
-                self.assertEqual(json.loads(result.stdout)['capacityUnknowns'], expected)
-                self.assertNotIn(b'private-token', result.stdout)
+            for value, expected in [(self.review, self.review), (self.alarm, self.alarm), (self.legacy, self.legacy),
+                                    (self.empty, self.empty),
+                                    ({**self.review, 'note': 'private-token', 'requests': [{**self.request, 'token': 'private-token'}]}, self.review),
+                                    ({**self.review, 'requests': [{'requestId': 'private-token'}]}, self.unknown),
+                                    ({**self.review, 'count': 'private-token'}, self.unknown),
+                                    ({**self.alarm, 'alarmReasons': ['private-token']}, self.unknown),
+                                    ({**self.legacy, 'status': 'ok'}, self.unknown)]:
+                with self.subTest(value=value):
+                    heartbeat.write_text(json.dumps({'checkedAt': int(time.time() * 1000), 'overall': 'ok', 'capacityUnknowns': value}))
+                    result = subprocess.run(['node', '-e', self.gateway.MONITOR_PROBE], check=True, timeout=10,
+                                            capture_output=True, env={**os.environ, 'MONITOR_HEALTH_PATH': str(heartbeat)})
+                    self.assertEqual(json.loads(result.stdout)['capacityUnknowns'], expected)
+                    self.assertNotIn(b'private-token', result.stdout)
 
-    def test_monitor_unknown_is_nonrecoverable_and_missing_replica_cannot_clear_requests(self):
+    def observe(self, *values, overall='ok'):
         fixture = self.fixtures.DockerFixture(self.gateway, kind='monitor')
-        fixture.monitor[self.fixtures.IDS[0]]['capacityUnknowns'] = self.capacity
-        row = fixture.observe()
-        self.assertEqual(row['capacityUnknowns'], self.capacity)
-        self.assertEqual(row['reason'], 'pipeline_alarm')
-        self.assertFalse(row['ok'])
-        self.assertFalse(row['recoverable'])
-        fixture.monitor[self.fixtures.IDS[0]]['capacityUnknowns'] = {'status': 'ok', 'truncated': False, 'requests': []}
-        self.assertEqual(fixture.observe()['capacityUnknowns']['status'], 'unknown')
-        fixture.monitor[self.fixtures.IDS[1]]['capacityUnknowns'] = {'status': 'ok', 'truncated': False, 'requests': []}
-        self.assertEqual(fixture.observe()['capacityUnknowns']['status'], 'ok')
+        for cid, value in zip(self.fixtures.IDS, values):
+            fixture.monitor[cid]['overall'] = overall
+            if value is not None:
+                fixture.monitor[cid]['capacityUnknowns'] = value
+        return fixture.observe()
+
+    def test_review_queue_is_informational_and_keeps_a_healthy_monitor_ok(self):
+        row = self.observe(self.review, self.review)
+        self.assertEqual(row['capacityUnknowns'], self.review)
+        self.assertEqual((row['reason'], row['ok'], row['recoverable']), ('ok', True, False))
+
+    def test_summarized_alarm_or_unread_ledger_fails_the_row_without_recovery(self):
+        for values in [(self.alarm, self.review), (self.unknown, self.empty), (self.empty, None),
+                       ({**self.review, 'count': 0}, self.empty)]:  # contradictory summary is unread, never a clear
+            with self.subTest(values=values):
+                row = self.observe(*values)
+                self.assertEqual((row['reason'], row['ok'], row['recoverable']), ('pipeline_alarm', False, False))
+                self.assertTrue(self.gateway.capacity_alarm(row['capacityUnknowns']))
+        self.assertEqual(self.observe(self.alarm, self.review)['capacityUnknowns'],
+                         {**self.alarm, 'alarmReasons': ['review_backlog']})
+        self.assertEqual(self.observe(self.empty, None)['capacityUnknowns'], self.unknown)
+        self.assertEqual(self.observe(self.empty, self.empty)['capacityUnknowns'], self.empty)
+
+    def test_pre_upgrade_monitor_alarm_is_read_as_review_and_its_own_overall_still_decides_the_row(self):
+        row = self.observe(self.legacy, self.legacy, overall='alarm')
+        self.assertEqual(row['capacityUnknowns'], {**self.legacy, 'status': 'review'})
+        self.assertFalse(self.gateway.capacity_alarm(row['capacityUnknowns']))
+        self.assertEqual(row['reason'], 'pipeline_alarm')  # old monitor still reports overall=alarm until it is redeployed
+        self.assertEqual(self.observe(self.legacy, self.legacy)['reason'], 'ok')
+
+    def test_merge_keeps_every_alarm_reason_and_the_largest_backlog(self):
+        other = {**self.review, 'requests': [{**self.request, 'requestId': '00000000-0000-4000-8000-000000000002'}],
+                 'stuckDispatched': 2, 'alarmReasons': ['dispatch_stuck'], 'status': 'alarm', 'oldestAgeSeconds': 90000}
+        merged = self.gateway.merge_capacity_unknowns([self.alarm, other], True)
+        self.assertEqual(merged['status'], 'alarm')
+        self.assertEqual(merged['alarmReasons'], ['dispatch_stuck', 'review_backlog'])
+        self.assertEqual((merged['count'], merged['oldestAgeSeconds'], merged['stuckDispatched'], len(merged['requests'])), (51, 90000, 2, 2))
+        mixed = self.gateway.merge_capacity_unknowns([self.legacy, self.review], True)
+        self.assertEqual(mixed, {'status': 'review', 'truncated': False, 'requests': [self.request]})
 
 
 if __name__ == '__main__':
