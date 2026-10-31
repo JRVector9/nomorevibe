@@ -1,4 +1,5 @@
 import { modelTimeoutMs, scopedModel } from "@/lib/llm/model-registry";
+import { textRouteCallable } from "@/lib/llm/serving-contract-store";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { tickRemaining } from "@/lib/jobs/tick-deadline";
 import { translateReasonsWithModelCapacity } from '@/lib/crawl/reason-translation-model-capacity';
@@ -59,9 +60,10 @@ export function packBatch<T extends { body: string; attempts?: number }>(items: 
  * 전용 text 워커에서 번역·소개 생성이 차례로 돈다. 발행 워커는 이 호출을 기다리지 않는다.
  */
 export async function translateReasons(ctx: JobContext<null>): Promise<JobOutcome<null>> {
-  if (!process.env.ABCLLM_API_KEY?.trim()) {
+  // 게이트웨이 키, 또는 이 경로의 직접 연결 계약(엔진에 바로 — 키 없이도 부른다). 다른 text 잡과 같은 관문이다(PR 3b-C)
+  if (!textRouteCallable(JOB, scopedModel(JOB, TRANSLATE_MODEL))) {
     ctx.log("translate.skipped", { reason: "no_key" });
-    return { done: true, degraded: { code: "no_key", detail: "text 워커에 ABCLLM_API_KEY 가 없습니다" } };
+    return { done: true, degraded: { code: "no_key", detail: "이 경로의 직접 연결 계약도 text 워커의 ABCLLM_API_KEY 도 없습니다" } };
   }
   const lease = ctx.lease;
   if (!lease) throw new Error("Translation worker requires a job lease");

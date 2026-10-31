@@ -148,7 +148,7 @@ it("no-key, settings-disabled, reuse and no-evidence jobs remain model-free", as
   // 소개 생성은 jobRunOptions 에 예산 줄이 없어 러너 기본 25초로 돈다 — 상한 45초를 온전히 주는 창을 보려면 틱 예산을 준다(러너가 deadlineAt 을 준다)
   const ctx = { lease: job, cursor: null, hasBudget: () => true, deadlineAt: Date.now() + 55_000, save: vi.fn(), log: vi.fn() };
   // 키가 없으면 부르지 않는다 — 성공이 아니라 제 일 못 함(no_key)으로 넘긴다
-  vi.stubEnv("ABCLLM_API_KEY", ""); expect(await writeTaglines(ctx)).toEqual({ done: true, degraded: { code: "no_key", detail: "text 워커에 ABCLLM_API_KEY 가 없습니다" } });
+  vi.stubEnv("ABCLLM_API_KEY", ""); expect(await writeTaglines(ctx)).toEqual({ done: true, degraded: { code: "no_key", detail: "이 경로의 직접 연결 계약도 text 워커의 ABCLLM_API_KEY 도 없습니다" } });
   vi.stubEnv("ABCLLM_API_KEY", "unit"); mocks.settings.mockResolvedValueOnce({ enabled: false });
   expect(await writeTaglines(ctx)).toEqual({ done: true });
   const reuse = { ...task, written: { sourceHash: member.sourceHash, errorCode: null } } as TaglineTask;
