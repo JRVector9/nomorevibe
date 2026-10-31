@@ -196,4 +196,26 @@ describe('human queue worker', () => {
     mocks.infer.mockResolvedValue({ ok: false, error: 'timeout' }); mocks.record.mockResolvedValue('failed');
     await reviewHumanQueue(ctx()); expect(mocks.infer).toHaveBeenCalledTimes(1); expect(mocks.record).toHaveBeenCalledTimes(1);
   });
+  // 2026-10-31 결정: 한 단계의 오류가 다음 단계를 건너뛰게 하지 않는다 — 하나가 잘못되면 다음 작업도 안 되는 구조는 이유가 없다
+  it('a failing phase does not skip the other phases; the tick still reports the first error', async () => {
+    const boom = new Error('held_qwen_exploded');
+    mocks.qwen.mockRejectedValue(boom);
+    mocks.confirm.mockResolvedValue({ calls: 1 });
+    const context = ctx();
+    await expect(reviewHumanQueue(context)).rejects.toBe(boom);
+    expect(mocks.infer).toHaveBeenCalledTimes(2);
+    expect(mocks.confirm).toHaveBeenCalledTimes(1);
+    expect(context.log).toHaveBeenCalledWith('crawl.human_review_phase_failed', { phase: 'held_qwen_retry', error: 'held_qwen_exploded' });
+    // 가운데 단계가 던져도 마지막 단계는 돈다
+    mocks.qwen.mockResolvedValue({ started: 0, rejected: 0, pipeline: 0, held: 0, failed: 0, reapplied: 0 });
+    mocks.claim.mockRejectedValue(new Error('claim_exploded'));
+    await expect(reviewHumanQueue(ctx())).rejects.toThrow('claim_exploded');
+    expect(mocks.confirm).toHaveBeenCalledTimes(2);
+  });
+  it('a lost lease or writer fence stops the tick at once — later phases must not write', async () => {
+    const { JobLeaseLostError } = await import('@/lib/jobs/lease');
+    mocks.qwen.mockRejectedValue(new JobLeaseLostError());
+    await expect(reviewHumanQueue(ctx())).rejects.toBeInstanceOf(JobLeaseLostError);
+    expect(mocks.infer).not.toHaveBeenCalled(); expect(mocks.confirm).not.toHaveBeenCalled();
+  });
 });
