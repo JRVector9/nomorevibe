@@ -62,7 +62,7 @@ export function AssignmentStageTable({ group, readOnly }: { group: AssignmentSta
       <span data-source={group.source} className={`rounded-full px-2 text-[13px] font-semibold ${SOURCE_CLASS[group.source]}`}>읽기 {group.sourceLabel}</span>
       <span className="text-[13px] text-fg-3">전송 {group.transportLabel}{group.vote && " · 표(투표)는 순위 1 만"}</span>
     </div>
-    {group.reserved ? <p className="text-[13px] text-fg-3">예약 단계입니다 — 경로 규칙이 정해지면(3b-B) 배정할 수 있습니다.</p>
+    {group.reserved ? <p className="text-[13px] text-fg-3">예약 단계 — assist·assist-audit·repo 는 경로 규칙이 아직 없어 배정할 수 없습니다.</p>
       : group.rows.length === 0 ? <p className="text-[13px] text-fg-3">배정이 없습니다{group.source === "legacy" ? " — 지금은 설정(단계별 모델·크롤 설정)을 읽습니다" : ""}.</p>
       : <div className="overflow-x-auto"><table className="w-full min-w-[1180px] text-left text-[13px]"><thead><tr className="border-b border-line">
         <th className={TH}>장비</th><th className={TH}>모델</th><th className={TH}>전송</th><th className={TH}>순위</th><th className={TH}>역할</th>

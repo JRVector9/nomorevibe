@@ -342,7 +342,10 @@ describe("그리기", () => {
     expect(ai2).toContain(">표</th>");
     expect(ai2).toContain("<strong>투표</strong>");
     expect(ai2).toContain("다른 장비(gpu-other)");
-    expect(renderToStaticMarkup(createElement(AssignmentStageTable, { group: group("repo") }))).toContain("예약 단계입니다");
+    // 예약 단계 안내는 지금 상태만 말한다 — PR·정책 판 번호 없이
+    const repo = renderToStaticMarkup(createElement(AssignmentStageTable, { group: group("repo") }));
+    expect(repo).toContain("예약 단계 — assist·assist-audit·repo 는 경로 규칙이 아직 없어 배정할 수 없습니다");
+    expect(repo).not.toMatch(/3b-[A-Z]|rev ?\d+/);
     expect(renderToStaticMarkup(createElement(AssignmentStageTable, { group: group("reason") }))).toContain("지금은 설정(단계별 모델·크롤 설정)을 읽습니다");
     // 글자 크기는 13px 이상만(이 화면의 모든 파일)
     const root = path.resolve(__dirname, "..");
