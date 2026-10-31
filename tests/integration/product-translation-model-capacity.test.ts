@@ -5,7 +5,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vite
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { products } from "@/lib/db/schema";
-import { PRODUCT_TRANSLATION_MODEL } from "@/lib/crawl/translate";
+import { PRODUCT_TRANSLATE_MODEL } from "@/lib/crawl/translate";
 import { PRODUCT_TRANSLATION_JOB_BUDGET_MS } from "@/lib/llm/deadline-ladder";
 import { reviewHash } from "@/lib/crawl/agent-review-contract";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
@@ -41,7 +41,7 @@ let initial: Record<string, unknown>, initialized = false, role: RoleLease, seri
 const policy: ModelCapacityPolicy = { version: 1, globalLimit: 2, providerLimits: { account: 2 }, groupLimits: { engine: 2 },
   poolLimits: { reviewer: 2, text: 2 }, weights: { first: 1, second: 1, background: 1 }, maxWaiting: 12,
   queueTtlMs: 60_000, reservationTtlMs: 60_000,
-  routes: [{ routeId: jobName, provider: "abcllm", model: PRODUCT_TRANSLATION_MODEL, providerBudgetId: "account", groupId: "engine" }] };
+  routes: [{ routeId: jobName, provider: "abcllm", model: PRODUCT_TRANSLATE_MODEL, providerBudgetId: "account", groupId: "engine" }] };
 const tracked = <T>(pending: PromiseLike<T>, set = work): Promise<T> => { const actual = Promise.resolve(pending); set.add(actual); void actual.catch(() => {}); return actual; };
 const exercise = (load: () => Promise<void>) => () => tracked(Promise.resolve().then(load), exercises);
 async function drain(set: Set<Promise<unknown>>, report = false) {
@@ -159,7 +159,7 @@ async function server(run: (state: { bodies: string[]; setReply: (reply: (respon
   try {
     await new Promise<void>((resolve, reject) => { http.once("error", reject); http.listen(0, "127.0.0.1", resolve); });
     const address = http.address(); if (!address || typeof address === "string") throw new Error("fixture_address");
-    serving.contract = { version: 1, protocol: "abcllm-product-translation-total-bound-v1", routeId: jobName, provider: "abcllm", model: PRODUCT_TRANSLATION_MODEL,
+    serving.contract = { version: 1, protocol: "abcllm-product-translation-total-bound-v1", routeId: jobName, provider: "abcllm", model: PRODUCT_TRANSLATE_MODEL,
       responseModel: "served-product", deploymentRevision: "local-only", endpoint: `http://127.0.0.1:${address.port}/v1/chat/completions`, totalTokenBound: 8000 };
     await run({ bodies, setReply: next => { reply = next; } });
   } catch (error) { failures.push(error); }
@@ -182,13 +182,13 @@ async function blocking(pid: number, operation: Promise<unknown>) {
 }
 async function reserve(tasks: ProductTranslationTask[], lease: JobLease, owner = { instanceId: role.instanceId, bootId: role.bootId }) {
   const call = prepareProductTranslationGatewayCall(tasks.map(task => ({ name: task.source.name, locale: task.locale, field: task.field,
-    text: task.field === "tagline" ? task.source.tagline : task.source.description ?? "" })), { model: PRODUCT_TRANSLATION_MODEL, timeoutMs: 20_000 });
+    text: task.field === "tagline" ? task.source.tagline : task.source.description ?? "" })), { model: PRODUCT_TRANSLATE_MODEL, timeoutMs: 20_000 });
   expect(call.kind).toBe("prepared"); if (call.kind !== "prepared") throw new Error("fixture_native_contract_required");
   const ready = await tracked(prepareProductTranslationDispatch(tasks, lease, { roleLease: role, call }));
   expect(ready.kind).toBe("ready"); if (ready.kind !== "ready" || !("members" in ready)) throw new Error("fixture_current_input_required");
   const request: ModelCapacityRequest = { requestId: randomUUID(), owner,
-    class: "background", pool: "text", routeId: jobName, provider: "abcllm", model: PRODUCT_TRANSLATION_MODEL,
-    workKey: `${productTranslationLogicalWorkKey(ready.members)}:${productTranslationInputHash({ members: ready.members, model: PRODUCT_TRANSLATION_MODEL })}` };
+    class: "background", pool: "text", routeId: jobName, provider: "abcllm", model: PRODUCT_TRANSLATE_MODEL,
+    workKey: `${productTranslationLogicalWorkKey(ready.members)}:${productTranslationInputHash({ members: ready.members, model: PRODUCT_TRANSLATE_MODEL })}` };
   const slot = await tracked(requestProductTranslationModelSlot(request, ready.members));
   expect(slot.kind).toBe("granted"); if (slot.kind !== "granted") throw new Error("fixture_reservation_required");
   const { requestId: _id, ...identity } = request; void _id; return { ready, call, reservation: slot.reservation, identity };
@@ -223,7 +223,7 @@ it("dispatches one ordered demanded batch through actual role/runJob, native ter
     expect(JSON.parse(sent.messages[1].content)).toEqual(tasks.map(task => ({ name: task.source.name, locale: task.locale,
       field: task.field, text: task.field === "tagline" ? task.source.tagline : task.source.description ?? "", protectedTokens: [] })));
     const [row] = await admin`SELECT to_jsonb(r) AS raw FROM model_capacity_requests r WHERE owner_instance_id=${prefix}`;
-    expect(row.raw).toMatchObject({ state: "settled", route_id: jobName, model: PRODUCT_TRANSLATION_MODEL });
+    expect(row.raw).toMatchObject({ state: "settled", route_id: jobName, model: PRODUCT_TRANSLATE_MODEL });
     expect(row.raw.dispatch_binding).toMatchObject({ kind: "product_translation_gateway", totalTokenBound: 8000, chargedTokens: 8000,
       job: { name: jobName }, role: { role: "text", instanceId: role.instanceId, bootId: role.bootId, batch: { mode: "legacy" } } });
     expect(row.raw.dispatch_binding.members.map((member: Raw) => member.field)).toEqual(tasks.map(task => task.field));
@@ -233,7 +233,7 @@ it("dispatches one ordered demanded batch through actual role/runJob, native ter
     const events = await admin`SELECT kind FROM model_capacity_events WHERE request_id=${row.raw.request_id}::uuid ORDER BY id`;
     expect(events.map(event => event.kind)).toEqual(["queued", "reserved", "dispatch_started", "dispatch_settled"]);
     const stored = await admin`SELECT status,text,attempts,model FROM product_translations WHERE product_id=${product.id} ORDER BY field`;
-    expect(stored).toHaveLength(2); for (const value of stored) expect(value).toEqual({ status: "ready", text: "Doc helps you manage documents", attempts: 1, model: PRODUCT_TRANSLATION_MODEL });
+    expect(stored).toHaveLength(2); for (const value of stored) expect(value).toEqual({ status: "ready", text: "Doc helps you manage documents", attempts: 1, model: PRODUCT_TRANSLATE_MODEL });
     const [job] = await admin`SELECT requested_version,processed_version,lease_token FROM jobs WHERE name=${jobName}`;
     expect(job.processed_version).toBe(job.requested_version); expect(job.lease_token).toBeNull();
   });
@@ -251,7 +251,7 @@ it("serializes an absent takedown hold with the actual product lock and refuses 
     expect(await admin`SELECT reason FROM cdn_purges WHERE slug=${product.slug}`).toEqual([{ reason: "takedown" }]);
     const before = await admin`SELECT to_jsonb(t) AS row FROM product_translations t WHERE product_id=${product.id}`;
     await server(async ({ bodies }) => { expect(await custom(async lease => {
-      const call = prepareProductTranslationGatewayCall(tasks.map(task => ({ name: task.source.name, locale: task.locale, field: task.field, text: task.source.tagline })), { model: PRODUCT_TRANSLATION_MODEL, timeoutMs: 20_000 });
+      const call = prepareProductTranslationGatewayCall(tasks.map(task => ({ name: task.source.name, locale: task.locale, field: task.field, text: task.source.tagline })), { model: PRODUCT_TRANSLATE_MODEL, timeoutMs: 20_000 });
       if (call.kind !== "prepared") throw new Error("fixture_call_required");
       expect(await tracked(prepareProductTranslationDispatch(tasks, lease, { roleLease: role, call }))).toEqual({ kind: "skipped" });
     })).toMatchObject({ status: "completed" }); expect(bodies).toHaveLength(0); });
@@ -279,7 +279,7 @@ it("waits for actual absent intro hold creation and prevents a native dispatch a
     expect(await admin`SELECT outcome FROM product_intro_checks WHERE product_id=${product.id}`).toEqual([{ outcome: "needs_editor" }]);
     const before = await admin`SELECT to_jsonb(t) AS row FROM product_translations t WHERE product_id=${product.id}`;
     await server(async ({ bodies }) => { expect(await custom(async lease => {
-      const call = prepareProductTranslationGatewayCall(tasks.map(task => ({ name: task.source.name, locale: task.locale, field: task.field, text: task.source.tagline })), { model: PRODUCT_TRANSLATION_MODEL, timeoutMs: 20_000 });
+      const call = prepareProductTranslationGatewayCall(tasks.map(task => ({ name: task.source.name, locale: task.locale, field: task.field, text: task.source.tagline })), { model: PRODUCT_TRANSLATE_MODEL, timeoutMs: 20_000 });
       if (call.kind !== "prepared") throw new Error("fixture_call_required");
       expect(await tracked(prepareProductTranslationDispatch(tasks, lease, { roleLease: role, call }))).toEqual({ kind: "skipped" });
     })).toMatchObject({ status: "completed" }); expect(bodies).toHaveLength(0); });
@@ -512,7 +512,7 @@ it("refuses foreign or changed product readbacks and never refunds dispatched or
   const {tasks}=await seed();
   await server(async ({bodies})=>{
     await custom(async lease=>{
-      const slot=await reserve(tasks,lease), expected={owner:slot.reservation.owner,model:PRODUCT_TRANSLATION_MODEL,routeId:"product-translate" as const};
+      const slot=await reserve(tasks,lease), expected={owner:slot.reservation.owner,model:PRODUCT_TRANSLATE_MODEL,routeId:"product-translate" as const};
       const [pending]=await findOwnPendingProductTextRequests(expected);
       expect(pending.request.requestId).toBe(slot.reservation.requestId);
       expect(await findOwnPendingProductTextRequests({...expected,owner:{...expected.owner,bootId:randomUUID()}})).toEqual([]);
