@@ -8,6 +8,7 @@ import { QWEN_AUDIT_PROVIDER } from "@/lib/crawl/product-audit-reviewer";
 import { batchPolicyHash, batchPolicySchema } from "@/lib/jobs/batches";
 import { modelCapacityPolicyHash, modelCapacityPolicySchema, type ModelCapacityPolicy } from "@/lib/llm/capacity";
 import { deviceFallbackLimit } from "@/lib/llm/capacity-devices";
+import { helperGateStateSchema } from "@/lib/llm/capacity-helpers";
 import { cliServingContractSchema, resolveCliServingContract, type CliProvider } from "@/lib/llm/cli-serving-contract";
 import { crawlTaglineServingContractSchema, resolveCrawlTaglineServingContract } from "@/lib/llm/crawl-tagline-serving-contract";
 import { productTaglineKoServingContractSchema, resolveProductTaglineKoServingContract } from "@/lib/llm/product-tagline-ko-serving-contract";
@@ -145,10 +146,13 @@ export const controlSnapshotSchema = z.object({
   /**
    * 장비별 실시간 상태(PR 1b, readModelCapacityDeviceStates 와 같은 읽기): 설정 출처가 있는 장비만(table = model_capacity_devices enabled 행,
    * policy_fallback = 정책 groupLimits 대체). 없으면(옛 스냅숏·읽지 못함) 장비 판정은 "모름"이라 경고·거절을 만들지 않는다.
+   * `helpers`(PR 2a Layer B): 그 장비의 도우미 경로 상태(helper_gate + 점유). 옛 스냅숏에는 없다. 도우미 상태는 어떤 전환도 막지 않는다 —
+   * 배정 없는 장비는 [] 이고, 감시자 표가 없거나 신선하지 않으면 ok=false 로 읽힐 뿐이다(fail-closed 는 도우미 쪽이다, OPEN 쪽이 아니다).
    */
   devices: z.array(z.object({ deviceId: z.string().min(1).max(120), source: z.enum(["table", "policy_fallback"]), limitSlots: count, secondaryCap: count,
     idleMs: count, reserveSlots: count, active: count, secondaryActive: count, secondaryBound: count, primaryBusy: z.boolean(), lending: z.boolean(),
-    waiting: count, waitingPrimary: count, version: count.nullable(), updatedAt: z.string().nullable() }).strict()).max(512).optional(),
+    waiting: count, waitingPrimary: count, version: count.nullable(), updatedAt: z.string().nullable(),
+    helpers: z.array(helperGateStateSchema).max(512).optional() }).strict()).max(512).optional(),
   http: z.object(controlRow("http")).strict(),
   batch: z.object({ mode: z.enum(MODES.batch), drainingFrom: z.enum(["legacy", "versioned"]).nullable(), epoch, contract: count,
     policy: z.unknown(), policyHash: z.string().nullable(), liveJobs: count, liveRoles: count, liveItems: count, liveSources: count,

@@ -3,8 +3,8 @@ import { PgDialect } from "drizzle-orm/pg-core";
 import type { SQL } from "drizzle-orm";
 import { batchPolicyHash } from "@/lib/jobs/batches";
 import { modelCapacityPolicyHash, type ModelCapacityPolicy } from "@/lib/llm/capacity";
-import { deferredRoutes, formatControlResult, formatControlStatus, modelRouteContracts, parsePipelineControlArgs, pipelineControlDatabaseUrl,
-  planPipelineControl, usedModelRoutes, type ControlSnapshot, type TransitionCommand } from "@/lib/operations/pipeline-control";
+import { controlSnapshotSchema, deferredRoutes, formatControlResult, formatControlStatus, modelRouteContracts, parsePipelineControlArgs,
+  pipelineControlDatabaseUrl, planPipelineControl, usedModelRoutes, type ControlSnapshot, type TransitionCommand } from "@/lib/operations/pipeline-control";
 import { runPipelineControl } from "@/lib/operations/pipeline-control-repository";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 
@@ -140,15 +140,27 @@ describe("pipeline control plan", () => {
     // 장비 상태를 모르는 스냅숏(옛 형식·읽기 실패)은 장비 경고를 만들지 않는다.
     expect(planPipelineControl(transition("capacity", "policy", "--file=p", "--from-mode=disabled", "--expect-epoch=1", "--expect-revision=1"), snapshot(), twoDevices).warnings).toEqual([]);
     // OPEN: 행도 대체값도 없는 장비(omega)의 route 는 모두 device_unconfigured 로 미뤄지므로 거절한다. 대체값이 있는 장비(gateway)는 지나간다.
-    const draining = (devices: ReturnType<typeof device>[]) => snapshot({ devices,
+    const draining = (devices: NonNullable<ControlSnapshot["devices"]>) => snapshot({ devices,
       capacity: { ...snapshot().capacity, mode: "draining", revision: 2, policy: twoDevices, policyHash: modelCapacityPolicyHash(twoDevices) } });
-    const open = (devices: ReturnType<typeof device>[]) => planPipelineControl({ ...transition("capacity", "mode", "--to=open", "--from-mode=draining",
+    const open = (devices: NonNullable<ControlSnapshot["devices"]>) => planPipelineControl({ ...transition("capacity", "mode", "--to=open", "--from-mode=draining",
       "--expect-epoch=1", "--expect-revision=2"), allowDeferredRoutes: true }, draining(devices));
     expect(open([device("gateway", "table")]).blocked).toEqual(["device_unconfigured:omega"]);
     expect(open([device("gateway", "table"), device("omega", "table")]).blocked).toEqual([]);
     // status 는 장비 표를 찍는다(전역 상한 줄은 없다).
     const text = formatControlStatus(draining([{ ...device("gateway", "table"), active: 2, secondaryActive: 1, secondaryBound: 4, lending: true }]));
     expect(text).toContain("[devices]"); expect(text).toMatch(/gateway\s+4\s+2\s+idle\s+1\/4\s+4\s+lending/); expect(text).not.toContain("설정 상한");
+    // PR 2a: readModelCapacityDeviceStates 가 장비마다 도우미 경로 상태(helpers)를 더 준다 — 스냅숏 schema 가 받아들이고(2026-10-31 CI: strict 거절로
+    // status·OPEN 전체가 pipeline_control_failed 였다), 닫힌 도우미 경로는 어떤 전환도 막지 않는다. 옛 스냅숏(helpers 없음)도 그대로 읽힌다.
+    const helpers = [{ assignmentId: "gateway:ai1", kind: "live" as const, routeId: "local-ai1-helper", provider: "local-direct", model: "m", ok: false, active: 0, maxSlots: 1 },
+      { assignmentId: "gateway:ai1", kind: "shadow" as const, routeId: "local-helper-shadow-ai1", provider: "local-direct", model: "m", ok: false, active: 0, maxSlots: 1 }];
+    const withHelpers = draining([{ ...device("gateway", "table"), helpers }, { ...device("omega", "table"), helpers: [] }]);
+    expect(controlSnapshotSchema.parse(withHelpers)).toEqual(withHelpers);
+    expect(controlSnapshotSchema.parse(draining([device("gateway", "table")]))).toEqual(draining([device("gateway", "table")]));
+    expect(() => controlSnapshotSchema.parse(draining([{ ...device("gateway", "table"), helpers: [{ ...helpers[0], extra: true } as unknown as (typeof helpers)[number]] }]))).toThrow();
+    const opened = planPipelineControl({ ...transition("capacity", "mode", "--to=open", "--from-mode=draining", "--expect-epoch=1", "--expect-revision=2"),
+      allowDeferredRoutes: true }, withHelpers);
+    expect([opened.blocked, opened.warnings.filter(warning => /helper/.test(warning))]).toEqual([[], []]);
+    expect(formatControlStatus(withHelpers)).toContain("[devices]");
   });
 
   it("changes a policy only while closed and refuses an unchanged or invalid policy", () => {
