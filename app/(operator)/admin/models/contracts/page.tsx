@@ -7,7 +7,7 @@ import { readModelRegistry, modelRequestName } from "@/lib/llm/model-registry";
 import { ensureServingContracts } from "@/lib/llm/serving-contract-store";
 import { ENGINE_CONNECT_ROUTES } from "@/lib/operations/admin-engine-connect";
 import { listAdminRegistryOverrides } from "@/lib/operations/admin-model-registry";
-import { envServingContracts, listAdminServingContracts } from "@/lib/operations/admin-serving-contracts";
+import { listAdminServingContracts } from "@/lib/operations/admin-serving-contracts";
 import { secretBoxReady } from "@/lib/security/secret-box";
 import { PageStamp } from "../../components/PageStamp";
 import { ContractForm } from "./ContractForm";
@@ -18,11 +18,11 @@ import { RegistryOverrideForm, RevertRegistryButton } from "./RegistryOverrideFo
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "모델 연결 — NoMoreVibe", robots: { index: false } };
 
-/** Admin-managed serving contracts. A saved row replaces the env contract of the same route+model on every app within ~30 s. */
+/** Admin-managed serving contracts — the only contract source. A saved row applies on every app within ~30 s. */
 export default async function ServingContractsPage() {
   if (!await currentAdmin()) redirect("/admin/login");
   await ensureServingContracts(0);
-  const [rows, overrides, env] = [await listAdminServingContracts(), await listAdminRegistryOverrides(), envServingContracts()];
+  const [rows, overrides] = [await listAdminServingContracts(), await listAdminRegistryOverrides()];
   const enabled = rows.filter(row => row.enabled), overridden = overrides.filter(row => row.enabled);
   const registry = readModelRegistry().models;
   const connectable = registry.filter(model => model.provider === "abcllm").map(model => ({ key: model.key, label: model.displayName,
@@ -33,7 +33,8 @@ export default async function ServingContractsPage() {
       <Link href="/admin/models" className="text-[13px] text-fg-3">← 단계별 모델</Link>
       <h1 className="text-[22px] font-semibold">모델 연결</h1>
       <p className="text-[13px] text-fg-3">모델을 어디로(주소) 어떻게(응답 모델·토큰 한도·인증) 부르는지의 계약입니다. 저장하면 배포 없이 각 앱이 30초 안에 다음 작업부터 씁니다.
-        같은 경로·모델의 env 계약을 대신하며, 끄면 env 계약이 다시 쓰입니다. 용량 경로(정책)는 따로 있어야 실제로 호출됩니다.</p>
+        계약은 여기 저장한 것만 쓰며, 끄면 그 경로·모델은 다시 저장할 때까지 호출하지 않습니다. 용량 경로(정책)는 따로 있어야 실제로 호출됩니다.
+        abcLLM 게이트웨이는 제거됐으므로 엔진 직접 연결 계약만 호출됩니다.</p>
       {!secretBoxReady() && <p className="text-[13px]">이 서버에는 키 암호화 설정이 없어 「키 저장」 방식은 쓸 수 없습니다.</p>}
     </header>
     <section className="grid gap-2">
@@ -49,8 +50,8 @@ export default async function ServingContractsPage() {
         <tbody>{enabled.map(row => <tr key={row.id} className="border-b border-line align-top">
           <td className="py-2 pr-3">{row.routeId}<br /><code>{row.model}</code></td>
           <td className="py-2 pr-3"><code>{String(row.contract.endpoint ?? "")}</code></td>
-          <td className="py-2 pr-3">{row.auth === "stored" ? `저장 키${row.hasKey ? "" : " (없음)"}` : row.auth === "none" ? "키 없음" : "게이트웨이 키"}
-            <br />{row.transport === "direct" ? "엔진 직접" : "게이트웨이"}</td>
+          <td className="py-2 pr-3">{row.auth === "stored" ? `저장 키${row.hasKey ? "" : " (없음)"}` : row.auth === "none" ? "키 없음" : "게이트웨이 키 — 호출 안 됨"}
+            <br />{row.transport === "direct" ? "엔진 직접" : "게이트웨이 — 호출 안 됨"}</td>
           <td className="py-2 pr-3">{row.updatedBy}<br />{row.updatedAt.slice(0, 16).replace("T", " ")} · {row.contractHash.slice(0, 12)}</td>
           <td className="py-2"><DisableButton routeId={row.routeId} model={row.model} /></td></tr>)}</tbody></table></div>
     </section>
@@ -70,10 +71,5 @@ export default async function ServingContractsPage() {
           <td className="py-2"><RevertRegistryButton registryKey={row.key} /></td></tr>)}</tbody></table></div>}
       <RegistryOverrideForm definitions={registry.map(model => ({ ...model }))} />
     </section>
-    <details className="rounded-xl border border-line bg-bg-card p-5">
-      <summary className="cursor-pointer text-[16px] font-semibold">env 계약 (읽기 전용, {env.length})</summary>
-      <p className="my-2 text-[13px] text-fg-3">앱 시작 때 읽은 ABCLLM_SERVING_CONTRACTS입니다. 같은 경로·모델의 관리 계약이 켜지면 그것이 대신합니다.</p>
-      <pre className="overflow-x-auto text-[13px]">{JSON.stringify(env, null, 2)}</pre>
-    </details>
   </main>;
 }

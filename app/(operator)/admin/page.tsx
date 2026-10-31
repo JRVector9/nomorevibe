@@ -4,7 +4,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import { currentAdmin } from "@/lib/auth/admin";
-import { listGatewayModels } from "@/lib/crawl/agent-review-gateway";
+import { listReviewEngineModels } from "@/lib/crawl/agent-review-gateway";
 import { getSettings, getSettingsMeta, resetChanges, settingsDrift, settingsFormVersion } from "@/lib/crawl/settings";
 import { candidateCounts } from "@/lib/crawl/repository";
 import { formatListTime } from "@/lib/format/time";
@@ -177,8 +177,8 @@ async function HumanReviewSwitchSlot({ enabled, generation, keys }: { enabled: b
     {...humanReviewModelDisplay(keys)} />;
 }
 
-/** 2차 표 바로 바꾸기 — 게이트웨이 모델 목록이 오면 그린다(못 읽으면 Grok·Claude 만) */
+/** 2차 표 바로 바꾸기 — 직접 연결 계약이 있는 심사 모델을 그린다(없으면 Grok·Claude 만) */
 async function VoterSwitchSlot({ current, firstModel }: { current: { provider: string; model: string } | null; firstModel: string | null }) {
-  const models = await listGatewayModels();
-  return <SecondVoterSwitch current={current} choices={voterChoices(models, current, firstModel)} gatewayReachable={models !== null} />;
+  const models = await listReviewEngineModels();
+  return <SecondVoterSwitch current={current} choices={voterChoices(models, current, firstModel)} gatewayReachable={models.length > 0} />;
 }

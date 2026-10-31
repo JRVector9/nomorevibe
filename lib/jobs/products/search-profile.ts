@@ -8,7 +8,7 @@ import { PROFILE_MODEL, profileEvidence, profileHash } from "@/lib/domain/produc
 import { pendingProfiles, recordProfileResult } from "@/lib/domain/products/search-profiles";
 import { otherRoutesWaitingOnGroup } from "@/lib/llm/capacity-busy-targets";
 import { isLockNotAvailable, readControlLockHolders } from "@/lib/llm/capacity-lock-diagnostics";
-import { textRouteCallable } from "@/lib/llm/serving-contract-store";
+import { TEXT_ROUTE_BLOCK_DETAIL, textRouteBlock } from "@/lib/llm/serving-contract-store";
 import { logger } from "@/lib/observability/logger";
 import { DEFAULT_RUNTIME_SETTINGS, jobKnob } from "@/lib/operations/runtime-settings-schema";
 import { runtimeSettings } from "@/lib/operations/runtime-settings-store";
@@ -44,9 +44,10 @@ export const SLOW_CALL_MS = jobKnob(DEFAULT_RUNTIME_SETTINGS, JOB, "slowCallMs")
 const GATEWAY_DOWN = new Set(["no_key", "model_unavailable", "rate_limit", "timeout", "network"]);
 
 export async function writeSearchProfiles(ctx: JobContext<null>): Promise<JobOutcome<null>> {
-  if (!textRouteCallable("product-search-profile", scopedModel("product-search-profile", PROFILE_MODEL))) {
-    ctx.log("search_profile.skipped", { reason: "no_key" });
-    return { done: true, degraded: { code: "no_key", detail: "이 경로의 직접 연결 계약도 text 워커의 ABCLLM_API_KEY 도 없습니다" } };
+  const blocked = textRouteBlock("product-search-profile", scopedModel("product-search-profile", PROFILE_MODEL));
+  if (blocked) {
+    ctx.log("search_profile.skipped", { reason: blocked });
+    return { done: true, degraded: { code: blocked, detail: TEXT_ROUTE_BLOCK_DETAIL[blocked] } };
   }
   const lease = ctx.lease;
   if (!lease) throw new Error("Search profile worker requires a job lease");

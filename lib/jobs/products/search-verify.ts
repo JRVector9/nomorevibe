@@ -5,7 +5,7 @@ import { ModelCapacityDeferredError, modelCapacityDeferralIsPerWork } from "@/li
 import { pendingVerifications, recordVerificationResult } from "@/lib/domain/products/search-profiles";
 import { VERIFY_MODEL } from "@/lib/domain/products/search-verify";
 import { verifyKeywordsWithModelCapacity } from "@/lib/domain/products/search-verify-model-capacity";
-import { textRouteCallable } from "@/lib/llm/serving-contract-store";
+import { TEXT_ROUTE_BLOCK_DETAIL, textRouteBlock } from "@/lib/llm/serving-contract-store";
 import { jobKnob } from "@/lib/operations/runtime-settings-schema";
 import { runtimeSettings } from "@/lib/operations/runtime-settings-store";
 
@@ -28,9 +28,10 @@ const JOB = "product-search-verify";
 const GATEWAY_DOWN = new Set(["no_key", "model_unavailable", "rate_limit", "timeout", "network"]);
 
 export async function verifySearchKeywords(ctx: JobContext<null>, request?: typeof fetch): Promise<JobOutcome<null>> {
-  if (!textRouteCallable("product-search-verify", scopedModel("product-search-verify", VERIFY_MODEL))) {
-    ctx.log("search_verify.skipped", { reason: "no_key" });
-    return { done: true, degraded: { code: "no_key", detail: "이 경로의 직접 연결 계약도 text 워커의 ABCLLM_API_KEY 도 없습니다" } };
+  const blocked = textRouteBlock("product-search-verify", scopedModel("product-search-verify", VERIFY_MODEL));
+  if (blocked) {
+    ctx.log("search_verify.skipped", { reason: blocked });
+    return { done: true, degraded: { code: blocked, detail: TEXT_ROUTE_BLOCK_DETAIL[blocked] } };
   }
   const lease = ctx.lease;
   if (!lease) throw new Error("Search keyword verification requires a job lease");

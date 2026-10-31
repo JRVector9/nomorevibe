@@ -18,7 +18,7 @@ import { overlaidModelDefinitions, setModelRegistryOverlay, setModelRoutePolicyO
  *   without SELECT on model_serving_contracts) keeps its last good value while the others still load.
  * - The runtime_settings row is published into lib/operations/runtime-settings-store (one 판 for the route-policy overlay, the
  *   translation policy and the tick budgets) and served through its loader, so ensureRuntimeSettings() costs at most this reload.
- * MODEL_SERVING_CONTRACTS_DB=0 is the kill switch back to the env-only startup contracts, the code-default registry and the
+ * MODEL_SERVING_CONTRACTS_DB=0 is the kill switch to no contracts (every contract route defers), the code-default registry and the
  * code-default runtime settings.
  */
 export type ServingContractAuth = "gateway" | "none" | "stored";
@@ -125,13 +125,29 @@ export function servingContractAuth(routeId: string, model: string): { mode: Ser
   return row ? { mode: row.auth, apiKey: row.apiKey, transport: row.transport } : null;
 }
 
+/** Why a route cannot call its model; see textRouteBlock. */
+export type TextRouteBlock = "no_direct_contract" | "gateway_auth" | "stored_key_unreadable";
+/** Operator-facing detail for each block (job degraded detail, status lines). */
+export const TEXT_ROUTE_BLOCK_DETAIL: Readonly<Record<TextRouteBlock, string>> = {
+  no_direct_contract: "이 경로·모델의 직접 연결 계약(관리자 엔진 연결, transport direct)이 없습니다",
+  gateway_auth: "직접 연결 계약의 인증이 게이트웨이 키로 되어 있습니다 — 게이트웨이는 제거됐으니 키 없음 또는 저장한 키로 다시 저장하세요",
+  stored_key_unreadable: "직접 연결 계약에 저장한 키를 열 수 없습니다(암호 상자 키 확인)",
+};
+
 /**
- * A text route can call its model: an engine connected directly (admin contract, transport direct — its own stored key or none),
- * else the abcLLM gateway key. Replaces the old "ABCLLM_API_KEY is set" gate, so removing the gateway key stops nothing that
- * no longer goes through the gateway.
+ * Why a text route cannot call its model, or null when it can. Only an engine connected directly (admin contract,
+ * transport direct) with no key or its own stored key opens a route. The abcLLM gateway was removed on 2026-10-30, so neither a
+ * gateway-transport contract nor gateway auth opens anything, and no process env key is consulted.
  */
+export function textRouteBlock(routeId: string, model: string): TextRouteBlock | null {
+  const auth = servingContractAuth(routeId, model);
+  if (auth?.transport !== "direct") return "no_direct_contract";
+  if (auth.mode === "gateway") return "gateway_auth";
+  if (auth.mode === "stored" && !auth.apiKey) return "stored_key_unreadable";
+  return null;
+}
 export function textRouteCallable(routeId: string, model: string): boolean {
-  return servingContractAuth(routeId, model)?.transport === "direct" || !!process.env.ABCLLM_API_KEY?.trim();
+  return textRouteBlock(routeId, model) === null;
 }
 
 /** Tests and replay: pin a snapshot and stop DB reloads. Pass null to restore normal loading. */

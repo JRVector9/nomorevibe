@@ -1,4 +1,4 @@
-import { modelBaseUrl, modelTimeoutMs, modelCallTimeoutMs, modelCallMaxTokens } from "@/lib/llm/model-registry";
+import { modelTimeoutMs, modelCallTimeoutMs, modelCallMaxTokens } from "@/lib/llm/model-registry";
 import { createHash } from "node:crypto";
 import { fetch as undiciFetch } from "undici";
 import { observeProviderTransport } from "@/lib/llm/provider-circuit-breaker";
@@ -17,15 +17,18 @@ import { assertLiveReviewAdapterAllowed } from "./review-fixture-transport";
 import { REVIEW_SYSTEM_PROMPT, type AgentReviewResult, type ReviewFailure, type ReviewUsage } from "./agent-review";
 import { verifyAi2TokenBudget } from "./second-review-direct-tokenize";
 import { REVIEW_GATEWAY_LADDER, reviewGatewayLadder } from "@/lib/llm/deadline-ladder";
-import { servingContractAuth } from "@/lib/llm/serving-contract-store";
+import { ensureServingContracts, servingContractAuth, servingContractSnapshot, textRouteCallable } from "@/lib/llm/serving-contract-store";
 
 /**
- * Bearer for a contract's endpoint. An admin contract (model_serving_contracts) decides: gateway key, no key, or its stored key.
- * Without one, abcllm contracts use ABCLLM_API_KEY and direct contracts send none (unchanged). undefined = refuse before sending.
+ * Bearer for a contract's endpoint, decided by its admin contract (model_serving_contracts): no key, or its stored key.
+ * The abcLLM gateway was removed (2026-10-30): an abcllm contract opens only as an engine connected directly (transport direct) and
+ * never with gateway auth — the same rule as textRouteBlock. AI2 local-direct contracts without a row send no key (unchanged).
+ * undefined = refuse before sending.
  */
 export function contractBearer(contract: { routeId: string; model: string; provider: string }): string | null | undefined {
   const stored = servingContractAuth(contract.routeId, contract.model);
-  if (!stored || stored.mode === "gateway") return contract.provider === "abcllm" ? process.env.ABCLLM_API_KEY?.trim() || undefined : null;
+  if (contract.provider === "abcllm" && (stored?.transport !== "direct" || stored.mode === "gateway")) return undefined;
+  if (!stored || stored.mode === "gateway") return null;
   return stored.mode === "none" ? null : stored.apiKey ?? undefined;
 }
 /** An AI2 local-direct contract, or an admin contract marked direct (0148): the endpoint is the engine, not the abcLLM gateway. */
@@ -65,7 +68,6 @@ export function reviewGatewayTimeoutMs(): number { return reviewGatewayLadder().
  * 29초까지 흔들렸고 상한과는 무관했다).
  */
 const gatewayMaxOutputTokens = (model: string) => modelCallMaxTokens("gateway-review", model);
-const BASE_URL = modelBaseUrl("ai1-preset", process.env, "abcllm");
 const MAX_BODY_BYTES = 128 * 1024;
 
 /**
@@ -90,27 +92,15 @@ export function gatewayModel(value: string): string | null {
   return model && model.length <= 160 && !/[\p{Cc}\n\r]/u.test(model) ? model : null;
 }
 
-/** 심사에 쓸 수 없는 모델 — 임베딩·음성·비전 전용 */
-const NON_CHAT_MODEL = /(bge|embed|whisper|-vl-|vl-\d|rerank)/i;
-
 /**
- * 게이트웨이에 지금 올라와 있는 대화 모델. 목록은 예고 없이 바뀐다 — 관리자가 2차 표를 고를 때 그때그때 읽는다.
- * 키가 없거나 닿지 않으면 null.
+ * 관리자가 고를 수 있는 abcllm 심사 모델 — 심사 경로(1차 crawl-agent-review·2차 second-review)에 엔진 직접 연결 계약이 켜져 있어
+ * 부를 수 있는 모델(textRouteCallable). 게이트웨이 모델 목록은 게이트웨이와 함께 없어졌다(2026-10-30). 네트워크를 읽지 않는다.
  */
-export async function listGatewayModels(options: { timeoutMs?: number; request?: typeof fetch } = {}): Promise<string[] | null> {
+export async function listReviewEngineModels(): Promise<string[]> {
   assertLiveReviewAdapterAllowed();
-  const key = process.env.ABCLLM_API_KEY?.trim();
-  if (!key) return null;
-  try {
-    const response = await (options.request ?? fetch)(`${BASE_URL}/models`, {
-      headers: { authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(options.timeoutMs ?? 5_000), cache: "no-store",
-    });
-    if (!response.ok) return null;
-    const body = await response.json() as { data?: { id?: unknown }[] };
-    return (body.data ?? []).flatMap((item) => typeof item.id === "string" && gatewayModel(item.id) && !NON_CHAT_MODEL.test(item.id) ? [item.id] : []);
-  } catch {
-    return null;
-  }
+  await ensureServingContracts();
+  return [...new Set(servingContractSnapshot().rows.flatMap(row => (row.routeId === "crawl-agent-review" || row.routeId === "second-review")
+    && textRouteCallable(row.routeId, row.model) && gatewayModel(row.model) ? [row.model] : []))].sort();
 }
 
 function httpFailure(status: number): ReviewFailure {
@@ -173,18 +163,18 @@ function gatewayWire(model: string, serialized: string, systemSuffix: string = G
 export async function reviewWithGateway(input: ReviewInput, options: {
   model: string; timeoutMs?: number; request?: typeof fetch; signal?: AbortSignal;
   /**
-   * 게이트웨이 대신 부를 OpenAI 호환 서버(qwen-direct-review.ts — gpu3090 vLLM). baseUrl 은 /v1 까지 적는다.
-   * apiKey 가 없으면 Authorization 을 보내지 않는다(키 없는 서버). 주지 않으면 지금처럼 ABCLLM_BASE_URL·ABCLLM_API_KEY 다
+   * 부를 OpenAI 호환 서버(qwen-direct-review.ts — gpu3090 vLLM). baseUrl 은 /v1 까지 적는다.
+   * apiKey 가 없으면 Authorization 을 보내지 않는다(키 없는 서버). 주지 않으면 not_configured — 게이트웨이 기본 주소는 2026-10-30 제거됐다
    */
   endpoint?: { baseUrl: string; apiKey: string | null };
   /** 정책 글 뒤에 붙일 글 — 주지 않으면 GATEWAY_SYSTEM_SUFFIX. 정책 글 자체는 늘 그대로다 */
   systemSuffix?: string;
 }): Promise<AgentReviewResult> {
   assertLiveReviewAdapterAllowed();
-  const key = options.endpoint ? options.endpoint.apiKey?.trim() || null : process.env.ABCLLM_API_KEY?.trim();
   const model = gatewayModel(options.model);
-  if ((!options.endpoint && !key) || !model) return { ok: false, error: "not_configured" };
-  const url = options.endpoint ? `${options.endpoint.baseUrl.replace(/\/+$/, "")}/chat/completions` : `${BASE_URL}/chat/completions`;
+  if (!options.endpoint || !model) return { ok: false, error: "not_configured" };
+  const key = options.endpoint.apiKey?.trim() || null;
+  const url = `${options.endpoint.baseUrl.replace(/\/+$/, "")}/chat/completions`;
   const serialized = JSON.stringify(input.snapshot);
   if (Buffer.byteLength(serialized, "utf8") > MAX_REVIEW_INPUT_BYTES) return { ok: false, error: "input_too_large" };
 

@@ -6,7 +6,8 @@ import { db } from "@/lib/db";
 import { operationsAudit } from "@/lib/db/schema";
 import { webWriteAction } from "@/lib/operations/dr/web-gate";
 import { adminAuditRow } from "@/lib/operations/admin-log";
-import { listGatewayModels } from "@/lib/crawl/agent-review-gateway";
+import { listReviewEngineModels } from "@/lib/crawl/agent-review-gateway";
+import { servingContractSnapshot } from "@/lib/llm/serving-contract-store";
 import { randomUUID } from "node:crypto";
 import { submitModelOpsCommand } from "@/lib/operations/ops-runner/repository";
 import { adminModelIdentitySchema, modelIdentityKey } from "@/lib/operations/admin-models-observation";
@@ -15,12 +16,18 @@ import { findModelDefinition } from "@/lib/operations/admin-models-view";
 import { ADMIN_MODEL_STAGES } from "@/lib/llm/admin-model-stages";
 import { readModelRegistry, modelRequestName } from "@/lib/llm/model-registry";
 
+/** The stored key of a direct engine contract for this registry model, if any (the gateway key is gone with the gateway). */
+function directEngineKey(definition: ReturnType<typeof readModelRegistry>["models"][number]): string | null {
+  const names = new Set([definition.model, modelRequestName(definition)]);
+  return servingContractSnapshot().rows.find(row => row.transport === "direct" && row.auth === "stored" && row.apiKey && names.has(row.model))?.apiKey ?? null;
+}
+
 async function listRegisteredModel(definition: ReturnType<typeof readModelRegistry>["models"][number]): Promise<boolean | null> {
   if (!definition.baseUrl) return null;
   try {
+    const key = definition.provider === "abcllm" ? directEngineKey(definition) : null;
     const response = await fetch(`${definition.baseUrl.replace(/\/+$/, "")}/models`, { cache: "no-store", redirect: "error",
-      signal: AbortSignal.timeout(5000), headers: definition.provider === "abcllm" && process.env.ABCLLM_API_KEY
-        ? { authorization: `Bearer ${process.env.ABCLLM_API_KEY}` } : {} });
+      signal: AbortSignal.timeout(5000), headers: key ? { authorization: `Bearer ${key}` } : {} });
     if (!response.ok || !response.body) return null;
     const reader = response.body.getReader();
     const chunks: Uint8Array[] = []; let size = 0;
@@ -48,7 +55,7 @@ export const probeAdminModel = webWriteAction(async function probeAdminModel(inp
   // Commit intent before network IO. Failure to audit must prevent the operation.
   await db.insert(operationsAudit).values(await adminAuditRow(admin.login, { action: "admin-models-probe-start", target: identity.routeId, detail: identity }));
   const started = Date.now();
-  const models = !definition && identity.provider === "abcllm" ? await listGatewayModels() : null;
+  const models = !definition && identity.provider === "abcllm" ? await listReviewEngineModels() : null;
   const listed = definition ? await listRegisteredModel(definition) : models ? models.includes(identity.model) : null;
   const result: ModelProbeResult = { listed: listed ?? undefined, listMs: Date.now() - started,
     callBlocked: /deepseek/i.test(`${identity.provider} ${identity.model}`)

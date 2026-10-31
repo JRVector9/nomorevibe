@@ -56,7 +56,7 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
     return { done: false, deferred: "stage_blocked" };
   }
   const primary = firstReviewer(settings);
-  if (!primary) throw new Error("1차 심사자를 설정하거나 CRAWL_REVIEW_MODEL 을 넣어야 AI 심사를 켤 수 있습니다");
+  if (!primary) throw new Error("관리자 설정에서 1차 심사자를 골라야 AI 심사를 켤 수 있습니다");
   const pool = firstReviewers(settings, primary);
   const blockedModels = poolEnabled ? await readBlockedFirstReviewerKeys() : new Set<string>();
   const concurrency = Math.min(settings.reviewConcurrency || 2, MAX_CONCURRENT_REVIEWS);

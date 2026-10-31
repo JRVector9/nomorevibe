@@ -213,11 +213,11 @@ const MODEL_ROUTES: readonly RouteSpec[] = [
 ];
 
 /**
- * 호출 지점 상수가 이 프로세스 env에서 받는 model 값(각 상수와 같은 `값 || 기본값`). crawlReview는 1차 심사 설정이 없을 때의 CRAWL_REVIEW_MODEL이다.
+ * 호출 지점 상수가 이 프로세스 env에서 받는 model 값(각 상수와 같은 `값 || 기본값`). 1차 심사는 관리자 설정만 본다(설정이 없으면 model null).
  * pooled: 관리자 단계 선택이 있는 text route의 실제 호출 이름(선택한 키마다 하나). text 잡은 저장된 선택 안에서 돌므로(lib/jobs/registry.ts
  * MODEL_POOL_JOBS) 그 route는 env 상수 대신 이 이름들로 판정한다.
  */
-export type ModelEnv = { crawlReview: string | null; translate: string; productTranslate: string; koreanTagline?: string; searchQuery?: string; tagline: string; profile: string; verify: string; introCheck: string;
+export type ModelEnv = { translate: string; productTranslate: string; koreanTagline?: string; searchQuery?: string; tagline: string; profile: string; verify: string; introCheck: string;
   pooled?: Partial<Record<TextModelRoute, readonly string[]>> };
 export const TEXT_ROUTES = [["product-search-profile", "profile"], ["product-search-verify", "verify"], ["reason-translate", "translate"],
   ["product-translate", "productTranslate"], ["product-tagline-ko", "koreanTagline"], ["search-query-translate", "searchQuery"], ["crawl-tagline", "tagline"]] as const;
@@ -237,7 +237,7 @@ export function usedModelRoutes(snapshot: ControlSnapshot, models: ModelEnv | nu
   else {
     const first = firstReviewers(settings);
     if (first.length) for (const reviewer of first) add("crawl-agent-review", reviewer.provider, reviewer.model);
-    else add("crawl-agent-review", "claude-cli", models?.crawlReview);
+    else add("crawl-agent-review", "claude-cli", null);
     const second = [...settings.secondReview.voters, ...settings.secondReview.fallbacks ?? []];
     for (const voter of second) add("second-review", voter.provider, voter.model);
     const grok = [...second, ...first].find(voter => voter.provider === "grok-cli");

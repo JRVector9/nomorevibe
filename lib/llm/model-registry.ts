@@ -231,13 +231,18 @@ export function resolveRegistryModel(value: string, env: ModelEnvironment = proc
   return matches[0] ?? null;
 }
 
-/** Keep established per-purpose env names; new *_MODEL_KEY selectors take precedence. */
-export const MODEL_PURPOSE_ENV = {
-  "product-search-profile": "ABCLLM_PROFILE_MODEL", "product-search-verify": "SEARCH_VERIFY_MODEL", "crawl-tagline": "ABCLLM_TAGLINE_MODEL",
+/**
+ * Keep established per-purpose env names; new *_MODEL_KEY selectors take precedence. null = no process env for that purpose: the
+ * registry (code defaults + admin model_registry_overrides) and the admin stage pools select its model. crawl-tagline and
+ * product-translate lost their env (2026-10-31, abcLLM gateway removal) so a stale gateway alias in an app env cannot pick the model.
+ */
+export const MODEL_PURPOSE_ENV: Readonly<Record<"product-search-profile" | "product-search-verify" | "crawl-tagline" | "reason-translate"
+  | "product-tagline-ko" | "search-query-translate" | "product-translate" | "product-intro-check" | "direct-review" | "relay", string | null>> = {
+  "product-search-profile": "ABCLLM_PROFILE_MODEL", "product-search-verify": "SEARCH_VERIFY_MODEL", "crawl-tagline": null,
   "reason-translate": "ABCLLM_MODEL", "product-tagline-ko": "ABCLLM_MODEL", "search-query-translate": "ABCLLM_MODEL",
-  "product-translate": "PRODUCT_TRANSLATION_MODEL", "product-intro-check": "INTRO_CHECK_MODEL",
+  "product-translate": null, "product-intro-check": "INTRO_CHECK_MODEL",
   "direct-review": "AUDIT_SECOND_OPINION_MODEL", "relay": "LOCAL_MODEL_RELAY_MODEL",
-} as const;
+};
 /**
  * A legacy model env names a route, not a first match. A bare name shared by several equipment entries resolves to the one
  * entry the registry assigns to this purpose (selection, then purposes). A registered equipment label whose model is no longer
@@ -264,24 +269,24 @@ export function resolvePurposeModel(purpose: string, value: string, env: ModelEn
 }
 export function configuredModelDefinition(purpose: keyof typeof MODEL_PURPOSE_ENV, env: ModelEnvironment = process.env): ModelDefinition {
   env = modelEnvironment(env, purpose);
-  const variable = MODEL_PURPOSE_ENV[purpose], key = env[`${variable}_KEY`]?.trim();
+  const variable = MODEL_PURPOSE_ENV[purpose], key = variable ? env[`${variable}_KEY`]?.trim() : undefined;
   if (key) {
     const selected = readModelRegistry(env).models.find(model => model.key === key && model.purposes.includes(purpose));
     if (!selected) throw new Error(`invalid_model_key:${variable}_KEY`);
     return selected;
   }
-  const legacy = env[variable]?.trim();
+  const legacy = variable ? env[variable]?.trim() : undefined;
   return (legacy ? resolvePurposeModel(purpose, legacy, env) : null) ?? modelForPurpose(purpose, env);
 }
 export function configuredModel(purpose: keyof typeof MODEL_PURPOSE_ENV, env: ModelEnvironment = process.env): string {
   env = modelEnvironment(env, purpose);
-  const variable = MODEL_PURPOSE_ENV[purpose], key = env[`${variable}_KEY`]?.trim();
+  const variable = MODEL_PURPOSE_ENV[purpose], key = variable ? env[`${variable}_KEY`]?.trim() : undefined;
   if (key) {
     const selected = readModelRegistry(env).models.find(model => model.key === key && model.purposes.includes(purpose));
     if (!selected) throw new Error(`invalid_model_key:${variable}_KEY`);
     return modelRequestName(selected);
   }
-  const legacy = env[variable]?.trim();
+  const legacy = variable ? env[variable]?.trim() : undefined;
   if (legacy) {
     const selected = resolvePurposeModel(purpose, legacy, env);
     // Unknown gateway model labels and CLI aliases keep their explicit caller identity.

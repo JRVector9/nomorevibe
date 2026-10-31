@@ -249,7 +249,7 @@ function SettingsFormBody({ settings, version, yields, secondControls, onRevert,
           <div className="flex min-w-0 flex-[1_1_260px] flex-col gap-1.5">
             <label htmlFor="firstReviewModel" className={labelClass}>모델</label>
             <input id="firstReviewModel" name="firstReviewModel" defaultValue={settings.firstReview?.model ?? ""}
-              placeholder="장비가 표시된 모델 이름 · 비우면 서버 기본값(CRAWL_REVIEW_MODEL)" className={`${inputClass} font-mono`} />
+              placeholder="장비가 표시된 모델 이름 · 비우면 1차 심사가 멈춥니다" className={`${inputClass} font-mono`} />
           </div>
         </div>
         <div className="flex flex-col gap-1.5">

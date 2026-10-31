@@ -1,9 +1,7 @@
-import { scopedModelBaseUrl, scopedRequestTimeout } from "@/lib/llm/model-registry";
-import { scopedModel } from "@/lib/llm/model-registry";
-import { configuredModel, modelBaseUrl, modelLimits } from "@/lib/llm/model-registry";
+import { scopedRequestTimeout } from "@/lib/llm/model-registry";
+import { configuredModel, modelLimits } from "@/lib/llm/model-registry";
 import { createHash } from "node:crypto";
 import type { ProfileEvidence } from "./search-profile";
-import { assertTextModelAdmission } from "@/lib/llm/text-capacity-admission";
 
 /**
  * 검색 키워드 검수 — 다른 모델이 근거와 대조해 뒷받침되지 않는 키워드를 고른다.
@@ -21,7 +19,6 @@ import { assertTextModelAdmission } from "@/lib/llm/text-capacity-admission";
  * 않는 것을 먼저 본다 — 표본에는 뜻이 여럿인 한국어 낱말이 드물어 v9 의 문제가 운영에서야 드러났다.
  */
 export const VERIFY_MODEL = configuredModel("product-search-verify");
-const BASE_URL = modelBaseUrl("product-search-verify", process.env, "abcllm");
 /**
  * 키워드마다 네 칸씩 적어 출력이 길다(16개에 약 1,000토큰, 한글이 많으면 더). 요청의 max_tokens 는 호출마다 등록부 경로
  * product-search-verify 에서 읽는다(관리자 실시간 한도). 아래 로드 시점 값은 SEARCH_VERIFY_POLICY_HASH(단계 이어가기의 정책 정체성)에만 쓴다 —
@@ -163,29 +160,13 @@ export function parseVerification(keywords: readonly string[], content: string):
   return unsupported;
 }
 
+/**
+ * 게이트웨이(abcLLM)로 보내던 옛 경로다. 게이트웨이는 2026-10-30 제거됐다 — 보내지 않고 no_key(공급자 쪽 사유: 시도 수를 세지 않는다)로 끝낸다.
+ * 모델은 엔진 직접 연결 계약이 있을 때 용량 경로(*-model-capacity)로만 부른다.
+ */
 export async function verifyKeywords(item: VerifyItem, options: {
   timeoutMs: number; model?: string; request?: typeof fetch; signal?: AbortSignal;
 }): Promise<VerifyResult> {
-  const key = process.env.ABCLLM_API_KEY?.trim();
-  if (!key) return { ok: false, error: "no_key" };
-  await assertTextModelAdmission({ routeId: "product-search-verify", model: options.model ?? scopedModel("product-search-verify", VERIFY_MODEL) });
-  const wire = searchVerifyGatewayWire(item, options.model ?? scopedModel("product-search-verify", VERIFY_MODEL));
-  const deadline = AbortSignal.timeout(Math.max(1, scopedRequestTimeout("product-search-verify", options.timeoutMs)));
-  try {
-    const response = await (options.request ?? fetch)(`${scopedModelBaseUrl("product-search-verify", BASE_URL, "abcllm")}/chat/completions`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: wire,
-      signal: options.signal ? AbortSignal.any([options.signal, deadline]) : deadline,
-    });
-    if (!response.ok) {
-      return { ok: false, error: response.status === 404 ? "model_unavailable" : response.status === 429 ? "rate_limit" : `http_${response.status}` };
-    }
-    const data = await response.json() as { choices?: { message?: { content?: string | null } }[] };
-    try {
-      return { ok: true, unsupported: parseVerification(item.keywords, data.choices?.[0]?.message?.content ?? "") };
-    } catch { return { ok: false, error: "invalid_output" }; }
-  } catch (error) {
-    return { ok: false, error: error instanceof Error && error.name === "TimeoutError" ? "timeout" : "network" };
-  }
+  void item; void options;
+  return { ok: false, error: "no_key" };
 }

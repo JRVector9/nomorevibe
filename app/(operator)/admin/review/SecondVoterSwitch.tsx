@@ -39,7 +39,7 @@ export function SecondVoterSwitch({ current, choices, gatewayReachable }: {
         Grok 한도가 바닥나거나 게이트웨이 모델이 내려가면 여기서 바꿉니다. 바꾸면 옛 모델의 대기 표는 닫히고 다음 2차 잡(1분 안)부터 새 모델이 봅니다.
         실패 대체 모델과 기준값은 그대로입니다.
       </p>
-      {!gatewayReachable && <p className="text-warn">게이트웨이 모델 목록을 읽지 못했습니다 — Grok·Claude 만 고를 수 있습니다.</p>}
+      {!gatewayReachable && <p className="text-warn">직접 연결 계약이 켜진 심사 모델이 없습니다 — Grok·Claude 만 고를 수 있습니다.</p>}
       <div className="flex flex-wrap items-end gap-3">
         <label className="min-w-[260px] flex-1 text-fg-2">모델
           <select value={voter} onChange={(event) => setVoter(event.target.value)}

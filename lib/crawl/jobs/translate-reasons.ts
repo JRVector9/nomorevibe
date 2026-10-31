@@ -7,6 +7,7 @@ import { recordWorkerTranslations, retryableTranslations, untriedTranslations } 
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { jobKnob, type RuntimeSettings } from "@/lib/operations/runtime-settings-schema";
 import { runtimeSettings } from "@/lib/operations/runtime-settings-store";
+import { TEXT_ROUTE_BLOCK_DETAIL, textRouteBlock } from "@/lib/llm/serving-contract-store";
 
 const JOB = "reason-translate";
 /**
@@ -59,9 +60,11 @@ export function packBatch<T extends { body: string; attempts?: number }>(items: 
  * 전용 text 워커에서 번역·소개 생성이 차례로 돈다. 발행 워커는 이 호출을 기다리지 않는다.
  */
 export async function translateReasons(ctx: JobContext<null>): Promise<JobOutcome<null>> {
-  if (!process.env.ABCLLM_API_KEY?.trim()) {
-    ctx.log("translate.skipped", { reason: "no_key" });
-    return { done: true, degraded: { code: "no_key", detail: "text 워커에 ABCLLM_API_KEY 가 없습니다" } };
+  // 엔진에 직접 연결한 계약(관리자, transport direct)이 있어야 부를 수 있다 — 게이트웨이는 2026-10-30 제거됐다
+  const blocked = textRouteBlock(JOB, scopedModel(JOB, TRANSLATE_MODEL));
+  if (blocked) {
+    ctx.log("translate.skipped", { reason: blocked });
+    return { done: true, degraded: { code: blocked, detail: TEXT_ROUTE_BLOCK_DETAIL[blocked] } };
   }
   const lease = ctx.lease;
   if (!lease) throw new Error("Translation worker requires a job lease");

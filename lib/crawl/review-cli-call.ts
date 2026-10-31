@@ -9,7 +9,7 @@ import { prepareCliCall, runReservedCliCall, settleCliNotStarted, type CliCallOu
   type PreparedCliCall } from "@/lib/llm/cli-process-runner";
 import { cliServingContractHash, cliServingContractSchema, cliTransportSchema, resolveCliServingContract,
   type CliServingContract, type CliTransport } from "@/lib/llm/cli-serving-contract";
-import { reviewCliArgs, reviewCliMaxOutputTokens, reviewCliPrompt, reviewCliTimeoutMs, reviewModel, reviewWithAgent,
+import { reviewCliArgs, reviewCliMaxOutputTokens, reviewCliPrompt, reviewCliTimeoutMs, cliReviewModel, reviewWithAgent,
   type AgentReviewResult, type ReviewCliRun } from "./agent-review";
 import { grokAuthPath, grokReviewAgentDefinition, grokReviewArgs, grokReviewResult, grokReviewTimeoutMs,
   GROK_REVIEW_AGENT } from "./agent-review-grok";
@@ -68,7 +68,7 @@ export async function prepareReviewCliCall(input: ReviewInput, options: { routeI
   const unsupported = { kind: "unsupported", reason: "provider_contract_unavailable" } as const;
   const snapshot = structuredClone(input), { routeId, provider, model } = options;
   if (!isReviewCliProvider(provider) || (routeId !== "crawl-agent-review" && routeId !== "second-review")
-    || reviewModel({ CRAWL_REVIEW_MODEL: model }) !== model || !Number.isSafeInteger(options.timeoutMs)) return unsupported;
+    || cliReviewModel(model) !== model || !Number.isSafeInteger(options.timeoutMs)) return unsupported;
   const serialized = JSON.stringify(snapshot.snapshot);
   if (Buffer.byteLength(serialized, "utf8") > MAX_REVIEW_INPUT_BYTES) return unsupported;
   const prompt = reviewCliPrompt(serialized);

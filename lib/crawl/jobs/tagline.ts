@@ -8,6 +8,7 @@ import { writeCrawlTaglineWithModelCapacity } from "@/lib/crawl/tagline-model-ca
 import { pendingTaglines, recordTaglineResult } from "@/lib/crawl/taglines";
 import { jobKnob } from "@/lib/operations/runtime-settings-schema";
 import { runtimeSettings } from "@/lib/operations/runtime-settings-store";
+import { TEXT_ROUTE_BLOCK_DETAIL, textRouteBlock } from "@/lib/llm/serving-contract-store";
 
 /**
  * 소개 짓기 — 페이지에도 레포에도 소개가 없어 발행이 멈춘 후보의 한 줄을 모델이 짓는다.
@@ -33,9 +34,11 @@ const JOB = "crawl-tagline";
 const GATEWAY_DOWN = new Set(["no_key", "model_unavailable", "rate_limit", "timeout", "network"]);
 
 export async function writeTaglines(ctx: JobContext<null>): Promise<JobOutcome<null>> {
-  if (!process.env.ABCLLM_API_KEY?.trim()) {
-    ctx.log("tagline.skipped", { reason: "no_key" });
-    return { done: true, degraded: { code: "no_key", detail: "text 워커에 ABCLLM_API_KEY 가 없습니다" } };
+  // 엔진에 직접 연결한 계약(관리자, transport direct)이 있어야 부를 수 있다 — 게이트웨이는 2026-10-30 제거됐다
+  const blocked = textRouteBlock(JOB, scopedModel(JOB, TAGLINE_MODEL));
+  if (blocked) {
+    ctx.log("tagline.skipped", { reason: blocked });
+    return { done: true, degraded: { code: blocked, detail: TEXT_ROUTE_BLOCK_DETAIL[blocked] } };
   }
   const settings = await getSettings();
   if (!settings.enabled) {

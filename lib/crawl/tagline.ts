@@ -1,8 +1,5 @@
-import { scopedModelBaseUrl, scopedRequestTimeout } from "@/lib/llm/model-registry";
-import { scopedModel } from "@/lib/llm/model-registry";
-import { configuredModel, modelBaseUrl, modelLimits } from "@/lib/llm/model-registry";
+import { configuredModel, modelLimits } from "@/lib/llm/model-registry";
 import { createHash } from "node:crypto";
-import { assertTextModelAdmission } from "@/lib/llm/text-capacity-admission";
 import type { CrawlDocument } from "@/lib/db/schema";
 
 /**
@@ -23,7 +20,6 @@ import type { CrawlDocument } from "@/lib/db/schema";
  * context_strategy:"raw" 를 꼭 보낸다(agent-review-gateway.ts 와 같은 이유).
  */
 export const TAGLINE_MODEL = configuredModel("crawl-tagline");
-const BASE_URL = modelBaseUrl("crawl-tagline", process.env, "abcllm");
 
 /** 목록에서 이름 밑에 한 줄로 서는 길이 — 여기까지는 짧게 끊을 자리를 찾는다 */
 export const TAGLINE_LIMIT = 100;
@@ -176,26 +172,13 @@ export function crawlTaglineGatewayWire(evidence: TaglineEvidence, model: string
   });
 }
 
+/**
+ * 게이트웨이(abcLLM)로 보내던 옛 경로다. 게이트웨이는 2026-10-30 제거됐다 — 보내지 않고 no_key(공급자 쪽 사유: 시도 수를 세지 않는다)로 끝낸다.
+ * 모델은 엔진 직접 연결 계약이 있을 때 용량 경로(*-model-capacity)로만 부른다.
+ */
 export async function writeTagline(evidence: TaglineEvidence, options: {
   timeoutMs: number; model?: string; request?: typeof fetch; signal?: AbortSignal;
 }): Promise<TaglineResult> {
-  const key = process.env.ABCLLM_API_KEY?.trim();
-  if (!key) return { ok: false, error: "no_key" };
-  await assertTextModelAdmission({ routeId: "crawl-tagline", model: options.model ?? scopedModel("crawl-tagline", TAGLINE_MODEL) });
-  const wire = crawlTaglineGatewayWire(evidence, options.model ?? scopedModel("crawl-tagline", TAGLINE_MODEL));
-  try {
-    const response = await (options.request ?? fetch)(`${scopedModelBaseUrl("crawl-tagline", BASE_URL, "abcllm")}/chat/completions`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: wire,
-      signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(Math.max(1, scopedRequestTimeout("crawl-tagline", options.timeoutMs)))]) : AbortSignal.timeout(Math.max(1, scopedRequestTimeout("crawl-tagline", options.timeoutMs))),
-    });
-    if (!response.ok) {
-      return { ok: false, error: response.status === 404 ? "model_unavailable" : response.status === 429 ? "rate_limit" : `http_${response.status}` };
-    }
-    const data = await response.json() as { choices?: { message?: { content?: string | null } }[] };
-    return parseTagline(data.choices?.[0]?.message?.content ?? "", evidence);
-  } catch (error) {
-    return { ok: false, error: error instanceof Error && error.name === "TimeoutError" ? "timeout" : "network" };
-  }
+  void evidence; void options;
+  return { ok: false, error: "no_key" };
 }

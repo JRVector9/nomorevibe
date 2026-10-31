@@ -6,7 +6,7 @@ import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { currentAdmin } from "@/lib/auth/admin";
 import { getSettings, settingsFormVersion } from "@/lib/crawl/settings";
-import { listGatewayModels } from "@/lib/crawl/agent-review-gateway";
+import { listReviewEngineModels } from "@/lib/crawl/agent-review-gateway";
 import { configuredHumanModelsReady, humanReviewModelDisplay } from "@/lib/operations/admin-models-human";
 import { currentModelEnv } from "@/lib/operations/model-env";
 import { PageStamp } from "../components/PageStamp";
@@ -38,7 +38,7 @@ export default async function ModelsPage() {
   if (!await currentAdmin()) redirect("/admin/login");
   // Admin registry overrides (0148) are part of the registry this page shows and validates against.
   await ensureServingContracts();
-  const [settings, gatewayModels, models] = await Promise.all([getSettings(), listGatewayModels(), currentModelEnv()]);
+  const [settings, gatewayModels, models] = await Promise.all([getSettings(), listReviewEngineModels(), currentModelEnv()]);
 
   const registry = readModelRegistry();
   const defaults = Object.fromEntries(ADMIN_MODEL_STAGES.map(stage => [stage.id, stage.purpose === "screen-review" ? screenModelConfig()?.model ?? "미설정"
