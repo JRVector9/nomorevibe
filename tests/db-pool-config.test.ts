@@ -1,10 +1,11 @@
 import { expect, it } from "vitest";
 import { dbPoolConfig } from "@/lib/db/pool";
 
-it("allocates finite role-specific pools within the 27-connection budget", () => {
+it("allocates finite role-specific pools within the 30-connection budget", () => {
+  // 2026-10-31 PR 3a-A: reviewer 3 → 6 (동시 모델 줄 4 + 역할 lease 1 + 여유 1) — 합계 27 → 30 (text 6 은 이 여섯 역할 밖)
   const roles = ["web","crawler","reviewer","publisher","maintenance","scheduler"];
-  expect(roles.map(WORKER_ROLE => dbPoolConfig({WORKER_ROLE}).max)).toEqual([8,8,3,3,3,2]);
-  expect(roles.reduce((total,WORKER_ROLE) => total+dbPoolConfig({WORKER_ROLE}).max,0)).toBe(27);
+  expect(roles.map(WORKER_ROLE => dbPoolConfig({WORKER_ROLE}).max)).toEqual([8,8,6,3,3,2]);
+  expect(roles.reduce((total,WORKER_ROLE) => total+dbPoolConfig({WORKER_ROLE}).max,0)).toBe(30);
   expect(dbPoolConfig({}).role).toBe("web");
   expect(dbPoolConfig({WORKER_ROLE:"maintenance"}).statementMs).toBeGreaterThan(25_000);
 });
