@@ -1,5 +1,8 @@
+import contextlib
 import importlib.util
+import io
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -10,6 +13,153 @@ SOURCE = Path(__file__).resolve().parents[1] / 'scripts/ops/deploy_release.py'
 spec = importlib.util.spec_from_file_location('release_under_test', SOURCE)
 release = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release)
+OLD, NEW = 'a' * 40, 'b' * 40
+SECRET = 'synthetic-secret-value'
+
+
+def saved_env(kind, **settings):
+    lines = {'RELEASE_TAG': OLD, 'WORKER_ROLE': 'text', 'DB_POOL_MAX': '6', 'SECRET': '"' + SECRET + '"'}
+    if kind == 'web':
+        lines.update(NEXT_DEPLOYMENT_ID=OLD, WORKER_ROLE=None)
+    lines.update(settings)
+    return ''.join(key + '=' + value + '\n' for key, value in lines.items() if value is not None)
+
+
+def live_env(kind, **settings):
+    lines = {'RELEASE_TAG': OLD, 'WORKER_ROLE': 'text', 'DB_POOL_MAX': '6', 'SECRET': SECRET}
+    if kind == 'web':
+        lines.update(NEXT_DEPLOYMENT_ID=OLD, WORKER_ROLE=None)
+    lines.update(settings)
+    return [key + '=' + value for key, value in lines.items() if value is not None]
+
+
+def drift_snapshot(**live):
+    """text-mini (Git build) and publisher-m3 (Docker image) with optional live spec overrides per app."""
+    snapshot = {'schemaVersion': 1, 'apps': {}, 'runtime': {}, 'baseline': {}, 'latest': {}}
+    for short, source in (('text-mini', 'github'), ('text-m3', 'github'), ('publisher-m3', 'docker'), ('web-mini', 'docker')):
+        kind = 'web' if short.startswith('web-') else 'worker'
+        snapshot['apps'][short] = {'appName': 'service-' + short, 'sourceType': source, 'env': saved_env(kind)}
+        snapshot['runtime'][short] = {'serviceSpec': {'TaskTemplate': {'ContainerSpec': {
+            'Image': 'image', 'Env': live_env(kind, **live.get(short.replace('-', '_'), {}))}}}, 'containers': []}
+        snapshot['baseline'][short] = {'release': OLD}
+        snapshot['latest'][short] = {'status': 'done', 'deploymentId': 'old-' + short}
+    return snapshot
+
+
+class EnvDriftPreflightTests(unittest.TestCase):
+    def test_env_drift_ignores_release_settings_and_names_changed_variables_without_values(self):
+        snapshot = drift_snapshot(text_mini={'RELEASE_TAG': NEW, 'DB_POOL_MAX': '3', 'LEGACY_FLAG': '1', 'SECRET': None})
+        found = release.env_drift(snapshot['apps']['text-mini'], snapshot['runtime']['text-mini'])
+        self.assertEqual(found, {'missingInService': ['SECRET'], 'unexpectedInService': ['LEGACY_FLAG'],
+                                 'valueChanged': ['DB_POOL_MAX']})
+        self.assertNotIn(SECRET, json.dumps(found)); self.assertNotIn('=', json.dumps(found))
+        same = drift_snapshot(web_mini={'RELEASE_TAG': NEW, 'NEXT_DEPLOYMENT_ID': NEW})
+        self.assertEqual(release.env_drift(same['apps']['web-mini'], same['runtime']['web-mini']),
+                         {'missingInService': [], 'unexpectedInService': [], 'valueChanged': []})
+        self.assertEqual(release.env_drift_preflight(same, ['web-mini', 'text-mini', 'publisher-m3'])['checkedApps'],
+                         ['web-mini', 'text-mini', 'publisher-m3'])
+
+    def test_env_drift_preflight_names_the_first_drifted_app_and_lists_git_and_docker_apps(self):
+        snapshot = drift_snapshot(text_mini={'DB_POOL_MAX': '3'}, publisher_m3={'NEW_FLAG': 'on'})
+        with self.assertRaises(ValueError) as caught:
+            release.env_drift_preflight(snapshot, ['publisher-m3', 'text-mini', 'web-mini'])
+        self.assertEqual(str(caught.exception), 'publisher-m3_env_drift_redeploy_required')
+        self.assertEqual(caught.exception.safe_detail, {'envDrift': {
+            'publisher-m3': {'missingInService': [], 'unexpectedInService': ['NEW_FLAG'], 'valueChanged': []},
+            'text-mini': {'missingInService': [], 'unexpectedInService': [], 'valueChanged': ['DB_POOL_MAX']}}})
+        # Only the unselected app drifts: nothing to refuse.
+        release.env_drift_preflight(snapshot, ['web-mini'])
+
+    def test_create_plan_stops_on_env_drift_before_credentials_images_or_the_private_directory(self):
+        snapshot = drift_snapshot(text_mini={'DB_POOL_MAX': '3'})
+        def local_git(command, **kwargs):
+            self.assertEqual(command[0], 'git')
+            return NEW if 'rev-parse' in command else ''
+        decision = {'selectedApps': ['text-mini', 'text-m3'], 'retainedApps': [], 'mode': 'role', 'rulesVersion': 'v2'}
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(release.shared, 'run', side_effect=local_git), \
+                patch.object(release, 'read_private', return_value=snapshot), \
+                patch.object(release, 'impact', return_value=decision), \
+                patch.object(release, 'new_client', side_effect=AssertionError('credential accessed')), \
+                patch.object(release.readiness, 'resolve_readiness', side_effect=AssertionError('CI read')), \
+                patch.object(release.shared, 'ssh_python', side_effect=AssertionError('remote call')):
+            output = Path(directory) / 'release-out'
+            with self.assertRaisesRegex(ValueError, '^text-mini_env_drift_redeploy_required$'):
+                release.create_plan(NEW, output, baseline_path=Path(directory) / 'baseline.json', baseline_sha='0' * 64)
+            self.assertFalse(output.exists())
+
+    def test_failure_report_exposes_bare_codes_and_hides_everything_else(self):
+        for error, reason in ((ValueError('text-mini_env_drift_redeploy_required'), 'text-mini_env_drift_redeploy_required'),
+                              (RuntimeError('batch_failed_review_all_started_app_receipts'), 'batch_failed_review_all_started_app_receipts'),
+                              (release.PlanRefused('RELEASE_TAG_mismatch'), 'RELEASE_TAG_mismatch'),
+                              (release.shared.ReleaseStopped('text-m3_swarm_paused:task_error=No such container'), 'inspect-private-receipts'),
+                              (ValueError('token with spaces'), 'inspect-private-receipts'),
+                              (ValueError('https://deploy.example/api?key=' + SECRET), 'inspect-private-receipts'),
+                              (KeyError('DB_POOL_MAX'), 'inspect-private-receipts'),
+                              (ValueError('ab'), 'inspect-private-receipts'),
+                              (ValueError('x' * 161), 'inspect-private-receipts'),
+                              (FileNotFoundError(2, 'No such file', '/private/path'), 'inspect-private-receipts')):
+            with self.subTest(error=error):
+                report = release.failure_report(error)
+                self.assertEqual(report, {'status': 'release-not-complete', 'errorClass': type(error).__name__,
+                                          'reason': reason, 'automaticRetry': False})
+                self.assertNotIn(SECRET, json.dumps(report))
+        coded = RuntimeError('free text'); coded.code = 'explicit_code'
+        self.assertEqual(release.failure_report(coded)['reason'], 'explicit_code')
+        coded.code = 'not a code'
+        self.assertEqual(release.failure_report(coded)['reason'], 'inspect-private-receipts')
+
+    def test_plan_failure_record_keeps_code_stage_and_names_without_values_and_never_raises(self):
+        snapshot = drift_snapshot(text_mini={'DB_POOL_MAX': '3', 'SECRET': 'rotated-' + SECRET})
+        with self.assertRaises(release.PlanRefused) as caught:
+            release.env_drift_preflight(snapshot, ['text-mini'])
+        with tempfile.TemporaryDirectory() as directory:
+            store = Path(directory) / 'state/plan-failures'
+            with patch.object(release, 'PLAN_FAILURE_DIR', store):
+                path = release.record_plan_failure(caught.exception, 'plan')
+                self.assertTrue(Path(path).is_relative_to(store)); self.assertTrue(path.endswith('.safe.json'))
+                self.assertEqual(Path(path).stat().st_mode & 0o777, 0o600)
+                self.assertEqual(store.stat().st_mode & 0o777, 0o700)
+                text = Path(path).read_text()
+                record = json.loads(text)
+                self.assertEqual((record['stage'], record['reason'], record['errorClass'], record['status']),
+                                 ('plan', 'text-mini_env_drift_redeploy_required', 'PlanRefused', 'release-not-complete'))
+                self.assertEqual(record['detail'], {'envDrift': {'text-mini': {
+                    'missingInService': [], 'unexpectedInService': [], 'valueChanged': ['DB_POOL_MAX', 'SECRET']}}})
+                self.assertNotIn(SECRET, text); self.assertNotIn('=3', text); self.assertNotIn('=6', text)
+                # Free-text messages are recorded by class only.
+                other = release.record_plan_failure(FileNotFoundError(2, 'No such file', '/private/' + SECRET), 'plan')
+                record = json.loads(Path(other).read_text())
+                self.assertEqual((record['reason'], record['detail'], record['errorClass']), ('inspect-private-receipts', None, 'FileNotFoundError'))
+                self.assertNotIn(SECRET, Path(other).read_text())
+            blocked = Path(directory) / 'file'; blocked.write_text('x')
+            with patch.object(release, 'PLAN_FAILURE_DIR', blocked / 'child'):
+                self.assertIsNone(release.record_plan_failure(caught.exception, 'plan'))
+
+    def test_cli_plan_failure_prints_the_safe_code_and_the_record_path_before_any_private_directory(self):
+        snapshot = drift_snapshot(text_mini={'DB_POOL_MAX': '3'})
+        decision = {'selectedApps': ['text-mini', 'text-m3'], 'retainedApps': [], 'mode': 'role', 'rulesVersion': 'v2'}
+        cwd = os.getcwd(); self.addCleanup(os.chdir, cwd)
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(release.shared, 'run', side_effect=lambda command, **kwargs: NEW if 'rev-parse' in command else ''), \
+                patch.object(release, 'read_private', return_value=snapshot), \
+                patch.object(release, 'impact', return_value=decision), \
+                patch.object(release, 'PLAN_FAILURE_DIR', Path(directory) / 'plan-failures'), \
+                patch.object(release, 'new_client', side_effect=AssertionError('credential accessed')):
+            output = Path(directory) / 'release-out'
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                code = release.cli(['plan', '--sha', NEW, '--out', str(output), '--baseline', str(Path(directory) / 'baseline.json'),
+                                    '--baseline-sha', '0' * 64])
+            self.assertEqual(code, 1)
+            report = json.loads(stdout.getvalue())
+            self.assertEqual((report['status'], report['reason'], report['errorClass'], report['automaticRetry']),
+                             ('release-not-complete', 'text-mini_env_drift_redeploy_required', 'PlanRefused', False))
+            record = json.loads(Path(report['failureRecord']).read_text())
+            self.assertEqual((record['stage'], record['reason']), ('plan', 'text-mini_env_drift_redeploy_required'))
+            self.assertEqual(record['detail']['envDrift']['text-mini']['valueChanged'], ['DB_POOL_MAX'])
+            self.assertFalse(output.exists())
+            self.assertNotIn(SECRET, stdout.getvalue())
 
 
 class ReleaseFlowTests(unittest.TestCase):
