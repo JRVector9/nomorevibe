@@ -102,17 +102,41 @@ it('lets every job-running Oracle principal read the device admission settings (
     expect(ORACLE_DB_PROFILES[service].tables.model_capacity_devices).toBeUndefined();
     expect(ORACLE_DB_PROFILES[service].tables.model_capacity_device_roles).toBeUndefined();
   }
-  for (const consumer of Object.values(ORACLE_CONSUMER_DB_PROFILES)) {
-    expect(consumer!.profile.tables.model_capacity_devices, consumer!.principal).toBeUndefined();
-    expect(consumer!.profile.tables.model_capacity_device_roles, consumer!.principal).toBeUndefined();
+  // 도우미 장비 감시자(PR 2a)만 consumer 중에서 장비 상태를 읽는다(판정 입력, 읽기만)
+  for (const [name, consumer] of Object.entries(ORACLE_CONSUMER_DB_PROFILES)) {
+    const expected = name === 'capacity-supervisor' ? { select: true } : undefined;
+    expect(consumer!.profile.tables.model_capacity_devices, consumer!.principal).toEqual(expected);
+    expect(consumer!.profile.tables.model_capacity_device_roles, consumer!.principal).toEqual(expected);
   }
   expect(ORACLE_REFRESH_PROFILE.tables.model_capacity_devices).toBeUndefined();
   const rendered = renderOracleDbGrantSql();
   expect(rendered).toContain('GRANT SELECT ON TABLE public.model_capacity_devices TO nomorevibe_oracle_translation;');
   expect(rendered).toContain('GRANT SELECT ON TABLE public.model_capacity_device_roles TO nomorevibe_oracle_translation;');
-  expect(rendered.match(/public\.model_capacity_devices TO/g)).toHaveLength(4);
-  expect(rendered.match(/public\.model_capacity_device_roles TO/g)).toHaveLength(4);
+  expect(rendered).toContain('GRANT SELECT ON TABLE public.model_capacity_devices TO nomorevibe_oracle_capacity_supervisor;');
+  expect(rendered.match(/public\.model_capacity_devices TO/g)).toHaveLength(5);
+  expect(rendered.match(/public\.model_capacity_device_roles TO/g)).toHaveLength(5);
   expect(rendered).not.toMatch(/GRANT [^\n]*(INSERT|UPDATE|DELETE)[^\n]* ON TABLE public\.model_capacity_device(s|_roles) /);
+});
+
+it('lets every job-running Oracle principal read the helper gate tables (PR 2a, 0154) and only the supervisor write signals and stops', () => {
+  // 입장 TX 의 helperGateCte(sup · helper_gate · helper_active · demand) 가 같은 TX 안에서 읽는다 — 비밀 없음, 읽기만
+  const gate = ['model_supervisor_control', 'model_helper_assignments', 'model_helper_signals', 'model_helper_stops', 'model_device_signals'];
+  for (const service of ['translation', 'product-health', 'site-evidence', 'official-news'] as const)
+    for (const table of gate) expect(ORACLE_DB_PROFILES[service].tables[table], `${service}.${table}`).toEqual({ select: true });
+  for (const service of ['scheduler', 'attest'] as const) for (const table of gate) expect(ORACLE_DB_PROFILES[service].tables[table]).toBeUndefined();
+  for (const [name, consumer] of Object.entries(ORACLE_CONSUMER_DB_PROFILES)) {
+    if (name === 'capacity-supervisor') continue;
+    for (const table of gate) expect(consumer!.profile.tables[table], `${name}.${table}`).toBeUndefined();
+  }
+  const rendered = renderOracleDbGrantSql();
+  for (const table of gate) expect(rendered.match(new RegExp(`GRANT SELECT ON TABLE public\\.${table} TO nomorevibe_oracle_(translation|product_health|site_evidence|official_news);`, 'g')), table).toHaveLength(4);
+  // 쓰기는 감시자 계정만(신호 두 표·정지), control 은 lease 열만 — enabled·배정은 관리자(main 역할) 몫이다
+  const writers = rendered.split('\n').filter(line => /^GRANT [^\n]*(INSERT|UPDATE|DELETE)/.test(line)
+    && gate.some(table => line.includes(` ON TABLE public.${table} `)));
+  expect(writers.every(line => line.endsWith(' TO nomorevibe_oracle_capacity_supervisor;'))).toBe(true);
+  expect(writers.some(line => line.includes('public.model_helper_assignments'))).toBe(false);
+  expect(writers.find(line => line.includes('public.model_supervisor_control'))).toBe('GRANT UPDATE (owner_instance_id, owner_boot_id, epoch, lease_until, '
+    + 'heartbeat_at, loop_seq, release) ON TABLE public.model_supervisor_control TO nomorevibe_oracle_capacity_supervisor;');
 });
 
 it('lets translation read the HTTP control row and never lets a worker rewrite a runtime key column', () => {

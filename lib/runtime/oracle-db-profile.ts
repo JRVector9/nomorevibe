@@ -66,6 +66,15 @@ export const ORACLE_RESULT_READBACK_TABLES = ['news_items', 'uptime_observations
  */
 const DEVICE_SETTINGS: Record<string, TableGrant> = { model_capacity_devices: read, model_capacity_device_roles: read };
 Object.assign(LIVE_SETTINGS, DEVICE_SETTINGS);
+/**
+ * PR 2a (0154): the admission TX also evaluates the helper gate (lib/llm/capacity-helpers.ts helperGateCte: sup · helper_gate · helper_active ·
+ * demand), which reads the supervisor control row, the helper assignments, signals and stops, and the device lending signals. Read-only for the
+ * job-running principals (no secret in any of them); only the supervisor principal (ORACLE_CONSUMER_DB_PROFILES['capacity-supervisor']) writes
+ * signals and stops, and only the admin (main role) writes the control switch and the assignments.
+ */
+const HELPER_GATE_SETTINGS: Record<string, TableGrant> = { model_supervisor_control: read, model_helper_assignments: read, model_helper_signals: read,
+  model_helper_stops: read, model_device_signals: read };
+Object.assign(LIVE_SETTINGS, HELPER_GATE_SETTINGS);
 
 export const ORACLE_DB_PROFILES: Record<OracleDbService, Profile> = {
   'official-news': { statementTimeout: '60s', sequences: ['http_origin_events_id_seq', 'news_items_id_seq', 'dr_process_group_events_id_seq'],
@@ -130,6 +139,20 @@ const AGENT_CLAIM_STATE = ['token', 'instance_id', 'boot_id', 'epoch', 'control_
 // 스캔 upsert 의 ON CONFLICT DO UPDATE 가 쓰는 열(lib/domain/evidence/agents/repository.ts writeRepositoryAgentScanIn)
 const AGENT_SCAN_STATE = ['coverage', 'state', 'cursor', 'request_count', 'file_count', 'started_at', 'completed_at', 'last_error_code',
   'next_attempt_at'] as const;
+// 감시자(capacity-supervisor): control 행에서 바꾸는 lease 열(TX-A·TX-B). enabled·signal_*·loop_ms·updated_* 는 관리자 몫이다
+const SUPERVISOR_LEASE_STATE = ['owner_instance_id', 'owner_boot_id', 'epoch', 'lease_until', 'heartbeat_at', 'loop_seq', 'release'] as const;
+const HELPER_SIGNAL_STATE = ['assignment_version', 'supervisor_epoch', 'verdict', 'reason', 'streak', 'state_since', 'last_exit_at', 'metrics',
+  'observed_at', 'valid_until', 'written_by'] as const;
+const DEVICE_SIGNAL_STATE = ['supervisor_epoch', 'primary_demand', 'backlog', 'metrics', 'observed_at', 'valid_until', 'written_by'] as const;
+// 섀도·실전 결과는 건강 집계 열만 — 후보 id·입력 hash·도우미 출력 본문(helper_outcome)·job_token 은 읽지 않는다
+const HELPER_SHADOW_RUN_READ = ['id', 'assignment_id', 'evidence_key', 'stage', 'state', 'primary_decision', 'helper_decision', 'agreement', 'error_code',
+  'latency_ms', 'created_at', 'completed_at'] as const;
+const HELPER_LIVE_OUTPUT_READ = ['id', 'assignment_id', 'assignment_version', 'evidence_key', 'stage', 'helper_decision', 'downstream', 'created_at',
+  'downstream_at'] as const;
+// 장부는 판정 열만 — owner·work key·logical key·dispatch_binding·terminal_evidence 는 읽지 않는다
+const CAPACITY_CONTROL_READ = ['id', 'mode', 'epoch', 'revision', 'policy', 'policy_hash', 'updated_at'] as const;
+const CAPACITY_REQUEST_READ = ['request_id', 'state', 'class', 'pool', 'route_id', 'provider', 'model', 'group_id', 'epoch', 'revision', 'policy_hash',
+  'queued_at', 'queue_until', 'reserved_until', 'dispatched_at', 'settled_at', 'updated_at'] as const;
 export const ORACLE_CONSUMER_DB_PROFILES: Partial<Record<string, OracleConsumerDbProfile>> = {
   // Staging only. Home crawler applies language=yes through the shared discovery admission lock.
   'github-ko-discovery': { principal: 'nomorevibe_oracle_github_ko', profile: { statementTimeout: '10s', sequences: [],
@@ -165,6 +188,25 @@ export const ORACLE_CONSUMER_DB_PROFILES: Partial<Record<string, OracleConsumerD
   uptime: { principal: 'nomorevibe_oracle_uptime', profile: { statementTimeout: '10s', sequences: [],
     tables: { dr_writer_fence: lock('id'), uptime_split_control: lock('id'), uptime_claims: { select: true, update: UPTIME_CLAIM_WRITE },
       uptime_host_breakers: read, products: { select: UPTIME_PRODUCT_READ }, product_health: read, operations_observations: observationsWrite } } },
+  // 도우미 장비 감시자(PR 2a Layer B, pr2-plan §3.2). 판정만 한다: 장부·장비·도우미 표를 열 제한으로 읽고, lease 열·신호 두 표·정지(INSERT 만)를 쓴다.
+  // crawl·도메인 표·jobs·role_leases·dispatch_binding·terminal_evidence 는 없다 — 측정은 집(main 역할 beacon), 집행은 Layer A 입장 TX 다.
+  // control 의 enabled·signal_principal·signal_ttl_ms·loop_ms 는 관리자만 바꾼다(UPDATE 는 lease 열뿐). written_by·observed_at 은 0154 stamp
+  // 트리거가 current_user·clock_timestamp() 로 다시 쓰므로 UPDATE 목록의 written_by 는 위조 수단이 아니다. 관측 키는 0107 함수 확장이
+  // capacity-supervisor:·service:maintenance: + capacity-supervisor-consumer-* 로 좁힌다(WP-2a-A 0154). 남은 위험은 uptime 과 같다:
+  // lock 용 UPDATE(id) 로 fence 행을 FOR UPDATE 로 쥘 수 있다
+  'capacity-supervisor': { principal: 'nomorevibe_oracle_capacity_supervisor', profile: { statementTimeout: '10s',
+    sequences: ['model_helper_stops_id_seq'],
+    tables: { dr_writer_fence: lock('id'),
+      model_supervisor_control: { select: true, update: SUPERVISOR_LEASE_STATE },
+      model_helper_assignments: read,
+      model_helper_signals: { select: true, insert: true, update: HELPER_SIGNAL_STATE },
+      model_device_signals: { select: true, insert: true, update: DEVICE_SIGNAL_STATE },
+      model_helper_stops: { select: true, insert: true },
+      model_role_demand: read,
+      model_helper_shadow_runs: { select: HELPER_SHADOW_RUN_READ }, model_helper_live_outputs: { select: HELPER_LIVE_OUTPUT_READ },
+      model_capacity_control: { select: CAPACITY_CONTROL_READ }, model_capacity_requests: { select: CAPACITY_REQUEST_READ },
+      model_capacity_devices: read, model_capacity_device_roles: read,
+      operations_observations: observationsWrite } } },
 };
 export const ORACLE_CONSUMER_FORBIDDEN_TABLES = ['jobs', 'role_leases', 'job_batch_control', 'job_batch_candidates', 'pipeline_item_leases'] as const;
 

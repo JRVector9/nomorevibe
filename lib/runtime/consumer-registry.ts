@@ -25,6 +25,8 @@ export const CONSUMERS = {
   // 제작 근거 스캔(agent_repository_claims). 수집 일꾼이 crawler 와 같은 GitHub 자격을 쓰므로 부모는 crawler 다
   'github-ko-discovery': { role: 'crawler', command: ['scripts/github-ko-discovery-consumer.ts'], workerMax: 3 },
   'agent-scan': { role: 'crawler', command: ['scripts/agent-scan-consumer.ts'], workerMax: 3 },
+  // 도우미 장비 감시자(pr2-plan §3.1, Oracle 전용). 건을 claim 하지 않지만 같은 역할 lease 없는 프로세스 모양을 쓴다. 자식 pool 1 = 순환 TX 가 차례로 하나씩
+  'capacity-supervisor': { role: 'maintenance', command: ['scripts/capacity-supervisor-consumer.ts'], workerMax: 1 },
 } as const satisfies Record<string, ConsumerSpec>;
 export type ConsumerName = keyof typeof CONSUMERS;
 
