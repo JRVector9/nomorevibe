@@ -34,6 +34,8 @@ const control = async () => (await admin`SELECT enabled, epoch::int, owner_insta
   lease_until > clock_timestamp() AS live FROM model_supervisor_control WHERE id = 1`)[0];
 const signals = () => admin`SELECT assignment_id, assignment_version::int, supervisor_epoch::int, verdict, reason, streak, written_by,
   extract(epoch FROM valid_until - observed_at) * 1000 AS ttl_ms, valid_until > clock_timestamp() AS fresh FROM model_helper_signals ORDER BY assignment_id`;
+/** valid_until − observed_at. 0154 stamp 트리거가 observed_at 을 조금 뒤의 clock_timestamp() 로 다시 쓰므로 TTL 보다 몇 ms 짧을 수 있다(초로 반올림). */
+const ttlOf = (value: unknown) => Math.round(Number(value) / 1000) * 1000;
 const failure = async (statement: string) => {
   try { await principalClient.unsafe(statement); return 'allowed'; } catch (error) { return (error as { code?: string }).code ?? 'error'; }
 };
@@ -53,6 +55,17 @@ async function seedShadowRuns(states: string[]) {
       'p1', 'r1', ${state}, ${randomUUID()}, clock_timestamp() - ${(states.length - index) * 1000} * interval '1 millisecond')`;
 }
 
+/** 도우미 표를 비운다. model_helper_stops 는 append-only(0154 트리거: UPDATE·DELETE·TRUNCATE·배정 cascade 가 42501)라 그 TX 안에서만 USER 트리거를 끈다. */
+async function resetHelperTables() {
+  await admin.begin(async tx => {
+    await tx`ALTER TABLE model_helper_stops DISABLE TRIGGER USER`;
+    await tx`DELETE FROM model_helper_stops`;
+    await tx`ALTER TABLE model_helper_stops ENABLE TRIGGER USER`;
+    for (const table of ['model_helper_signals', 'model_device_signals', 'model_role_demand', 'model_helper_shadow_runs', 'model_helper_live_outputs',
+      'model_helper_assignments']) await tx.unsafe(`DELETE FROM ${table}`);
+  });
+}
+
 beforeAll(async () => {
   ensureSchema();
   expect((await admin`SELECT 1 FROM pg_roles WHERE rolname = ${PROFILE.principal}`).length).toBe(0);
@@ -65,8 +78,7 @@ beforeAll(async () => {
 afterAll(async () => {
   try {
     await principalClient?.end({ timeout: 5 });
-    await admin`TRUNCATE model_helper_signals, model_device_signals, model_role_demand, model_helper_stops, model_helper_shadow_runs,
-      model_helper_live_outputs, model_helper_assignments`;
+    await resetHelperTables();
     await admin`DELETE FROM model_capacity_devices WHERE device_id IN ('m3-deepseek', 'supa')`;
     await admin`DELETE FROM operations_observations WHERE key LIKE 'capacity-supervisor:%'`;
     await admin`UPDATE model_supervisor_control SET enabled = false, owner_instance_id = NULL, owner_boot_id = NULL, lease_until = NULL, epoch = 0, loop_seq = 0`;
@@ -77,8 +89,7 @@ afterAll(async () => {
 }, 60_000);
 
 beforeEach(async () => {
-  await admin`TRUNCATE model_helper_signals, model_device_signals, model_role_demand, model_helper_stops, model_helper_shadow_runs,
-    model_helper_live_outputs, model_helper_assignments`;
+  await resetHelperTables();
   await admin`DELETE FROM operations_observations WHERE key LIKE 'capacity-supervisor:%'`;
   await admin`UPDATE model_supervisor_control SET enabled = true, owner_instance_id = NULL, owner_boot_id = NULL, lease_until = NULL, epoch = 0, loop_seq = 0`;
   for (const device of ['m3-deepseek', 'supa']) await admin`INSERT INTO model_capacity_devices (device_id, limit_slots, secondary_cap, updated_by)
@@ -96,7 +107,7 @@ describe('home beacon writer (main role)', () => {
   it('stamps written_by and a DB-clock TTL, upserts in place and the table refuses a TTL over five minutes', async () => {
     const rows = await admin`SELECT role_id, device_id, backlog, written_by, extract(epoch FROM valid_until - observed_at) * 1000 AS ttl_ms, metrics
       FROM model_role_demand ORDER BY role_id`;
-    expect(rows.map(row => [row.role_id, row.device_id, row.backlog, row.written_by, Number(row.ttl_ms)])).toEqual([
+    expect(rows.map(row => [row.role_id, row.device_id, row.backlog, row.written_by, ttlOf(row.ttl_ms)])).toEqual([
       ['ai1', 'ai1-pool', 3, 'nomorevibe', 45_000], ['human-review', 'm3-deepseek', 0, 'nomorevibe', 150_000]]);
     expect(rows[0].metrics).toEqual({ devices: ['supa'], pausedAll: false });
     expect(await publishRoleDemand({ roleId: 'human-review', deviceId: 'm3-deepseek', backlog: 7, oldestAgeMs: 900 }, 150_000)).toBe(true);
@@ -132,7 +143,7 @@ describe('lease (TX-A) and write (TX-B) as the supervisor principal', () => {
     const plan = planSupervisorSignals(await snapshot(), held.epoch);
     expect(plan.helpers.map(decision => [decision.assignmentId, decision.verdict, decision.reason])).toEqual([['m3-deepseek:ai1', 'shadow_only', 'primary_not_full']]);
     expect(await write(a, held.epoch, plan)).toEqual({ kind: 'written', helpers: 1, devices: 1, stops: 0, skipped: 0, signalTtlMs: 45_000 });
-    expect((await signals()).map(row => ({ ...row, ttl_ms: Number(row.ttl_ms) }))).toEqual([{ assignment_id: 'm3-deepseek:ai1', assignment_version: 2,
+    expect((await signals()).map(row => ({ ...row, ttl_ms: ttlOf(row.ttl_ms) }))).toEqual([{ assignment_id: 'm3-deepseek:ai1', assignment_version: 2,
       supervisor_epoch: held.epoch, verdict: 'shadow_only', reason: 'primary_not_full', streak: 0, written_by: SUPERVISOR_PRINCIPAL, ttl_ms: 45_000, fresh: true }]);
     expect((await admin`SELECT device_id, primary_demand, backlog, written_by, metrics FROM model_device_signals`)).toEqual([
       { device_id: 'm3-deepseek', primary_demand: false, backlog: 0, written_by: SUPERVISOR_PRINCIPAL, metrics: { reason: 'fresh', roles: 1, freshRoles: 1 } }]);
@@ -143,6 +154,8 @@ describe('lease (TX-A) and write (TX-B) as the supervisor principal', () => {
       sql`UPDATE model_helper_signals SET written_by = 'nomorevibe'`, sql`UPDATE model_helper_assignments SET version = 3`,
       sql`UPDATE model_supervisor_control SET enabled = false`, sql`UPDATE model_supervisor_control SET lease_until = clock_timestamp() - interval '1 second'`]) {
       await db.transaction(async tx => {
+        // stamp 트리거(0154)는 observed_at 을 앞당기지 못하게 한다 — 만료를 흉내 내려고 이 되돌릴 TX 에서만 끈다
+        await tx.execute(sql`ALTER TABLE model_helper_signals DISABLE TRIGGER USER`);
         await tx.execute(change);
         expect((await tx.execute<HelperGateStateRow>(helperGateStatesSql('m3-deepseek'))).map(row => row.ok)).toEqual([false, false]);
         tx.rollback();
