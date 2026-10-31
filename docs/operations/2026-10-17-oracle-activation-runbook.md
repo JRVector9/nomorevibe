@@ -305,11 +305,9 @@ HTTP_ORIGIN_PERMITS=1
 - **translation만:**
 
 ```env
-ABCLLM_API_KEY=
 ABCLLM_BASE_URL=
 ABCLLM_MODEL=
-# 5단계 readback 전에는 줄을 두지 않는다. 없거나 틀리면 모든 계약이 null 이다 (lib/llm/gateway-serving-contract-config.ts:9-11,52)
-ABCLLM_SERVING_CONTRACTS=
+# 2026-10-31: 게이트웨이 키·계약 env 는 없어졌다. 계약은 관리자 「모델 연결」(model_serving_contracts)의 엔진 직접 연결 행만 쓴다.
 ```
 
 - **refresh.env(D1=A):**
