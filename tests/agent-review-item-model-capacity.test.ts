@@ -90,8 +90,12 @@ it('resumes the same pending request and binds the original owner candidate and 
     identity: mocks.pending.mock.calls[0][0], call: value.call });
 });
 it('waiting and already in-flight work cannot create an attempt or dispatch (indeterminate is not a pending state since 2026-10-30)', async () => {
+  mocks.pending.mockResolvedValue({ requestId: randomUUID(), state: 'waiting' });
   mocks.request.mockResolvedValueOnce({ kind: 'deferred', reason: 'capacity' });
   await expect(claimAgentReviewItemModelCapacity(value.intent)).rejects.toMatchObject({ reason: 'capacity' });
+  // 2026-10-30 결정: 줄에 서지 못한 capacity(같은 후보 fence)는 이 후보만의 work_busy 다 — 소비자는 모델을 멈추지 않고 이 후보만 건너뛴다.
+  mocks.pending.mockResolvedValue(null); mocks.request.mockResolvedValueOnce({ kind: 'deferred', reason: 'capacity' });
+  await expect(claimAgentReviewItemModelCapacity(value.intent)).rejects.toMatchObject({ reason: 'work_busy' });
   mocks.pending.mockResolvedValue({ requestId: randomUUID(), state: 'dispatched' });
   await expect(claimAgentReviewItemModelCapacity(value.intent)).rejects.toMatchObject({ reason: 'dispatched' }); expect(mocks.atomic).not.toHaveBeenCalled();
   // 2026-10-30 결정: 미확인 행은 점유가 아니다 — readback 은 null 이고 새 requestId 로 다시 접수한다(같은 후보가 막히지 않는다).
