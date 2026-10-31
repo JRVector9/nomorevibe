@@ -10,6 +10,8 @@ import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { getTableConfig, PgDialect } from "drizzle-orm/pg-core";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 import { operatorReviewDispatchSql, operatorReviewEventSql, operatorReviewTerminalSql } from "@/lib/llm/operator-review-sql";
+import { gatewayLocalDirectDispatchSql, gatewayLocalDirectEventTerminalSql, gatewayLocalDirectLogicalSql, gatewayLocalDirectMembersSql,
+  gatewayLocalDirectTerminalSql } from "@/lib/llm/gateway-local-direct-sql";
 import { db } from "@/lib/db";
 import { createReviewInput, reviewHash, type ReviewInput } from "@/lib/crawl/agent-review-contract";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
@@ -503,9 +505,13 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
       expect(statement).toContain(`ADD CONSTRAINT ${name} CHECK ((%s) OR (%s))`);
       expect(statement, `${name}: the appended branch is the schema constant`).toContain(`$ai2_local$${branch}$ai2_local$`);
       const check = getTableConfig(events ? modelCapacityEvents : modelCapacityRequests).checks.find(check => check.name === name)!;
-      // 0151 appends the operator_review branch after 0149's on the requests terminal CHECK; strip that tail before the 0149 checks.
+      // 0155 appends the local-direct branches last (both terminal CHECKs) and 0151 the operator_review branch before it on the requests
+      // terminal CHECK; strip those tails, newest first, before the 0149 checks.
+      const localDirectTail = `) OR (${events ? gatewayLocalDirectEventTerminalSql : gatewayLocalDirectTerminalSql})`;
+      const composed = new PgDialect().sqlToQuery(check.value).sql;
+      expect(composed.startsWith("(") && composed.endsWith(localDirectTail), `${name}: 0155 tail present`).toBe(true);
       const tail = events ? null : `) OR (${operatorReviewTerminalSql})`;
-      const full = new PgDialect().sqlToQuery(check.value).sql, suffix = `) OR (${branch})`;
+      const full = composed.slice(1, -localDirectTail.length), suffix = `) OR (${branch})`;
       expect(tail === null || full.endsWith(tail), `${name}: 0151 tail present`).toBe(true);
       const expression = tail ? full.slice(1, -tail.length) : full;
       expect(expression.startsWith("(") && expression.endsWith(suffix), `${name}: Drizzle composes (previous) OR (branch)`).toBe(true);
@@ -523,8 +529,9 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
     }
     for (const name of UNTOUCHED) expect(widened[name], `${name}: 0149 unchanged CHECK`).toBe(replaced[name]);
     // 0150 (topology) leaves every CHECK as 0149 left them; 0151 appends the operator_review branch to the requests dispatch/terminal
-    // CHECKs and the events kind CHECK (one shared SQL function), again as (whole predecessor) OR (branch).
-    await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
+    // CHECKs and the events kind CHECK (one shared SQL function), again as (whole predecessor) OR (branch). 0152·0153 touch no CHECK here.
+    expect(journal.entries.find(entry => entry.idx === 153)!.tag).toBe("0153_model_capacity_devices");
+    await migrateThrough(153);
     const after0151 = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
     const reviewed: Record<string, string> = { model_capacity_requests_dispatch_check: operatorReviewDispatchSql,
       model_capacity_requests_terminal_check: operatorReviewTerminalSql, model_capacity_events_kind_check: operatorReviewEventSql };
@@ -537,6 +544,23 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
       await step.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT f2_review_expected CHECK ((${inner(widened[name])}) OR (${branch}))`);
       try { expect(after0151[name], `${name}: 0149 predicate plus the 0151 operator_review branch`).toBe((await constraintDefs(step, ["f2_review_expected"])).f2_review_expected); }
       finally { await step.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT f2_review_expected`); }
+    }
+    // 0155 (PR 3b-C transport unify) rebuilds the requests logical/members/dispatch/terminal CHECKs and the events terminal CHECK in the 0132
+    // form: the whole live predecessor plus the AI1/text abcllm branches with only the provider replaced (the schema constants). Others stay.
+    await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
+    const after0155 = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
+    const localDirect: Record<string, string> = { model_capacity_requests_logical_check: gatewayLocalDirectLogicalSql,
+      model_capacity_requests_members_check: gatewayLocalDirectMembersSql, model_capacity_requests_dispatch_check: gatewayLocalDirectDispatchSql,
+      model_capacity_requests_terminal_check: gatewayLocalDirectTerminalSql, model_capacity_events_terminal_check: gatewayLocalDirectEventTerminalSql };
+    for (const name of [...LEFT, ...UNTOUCHED]) {
+      const branch = localDirect[name];
+      if (!branch) { expect(after0155[name], `${name}: unchanged by 0155`).toBe(after0151[name]); continue; }
+      const localDirectCount = (def: string) => def.split("'local-direct'::text").length - 1;
+      expect(localDirectCount(after0155[name]), `${name}: 0155 adds local-direct branches`).toBeGreaterThan(localDirectCount(after0151[name]));
+      const table = name.startsWith("model_capacity_events_") ? "model_capacity_events" : "model_capacity_requests";
+      await step.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT f2_local_direct_expected CHECK ((${inner(after0151[name])}) OR (${branch}))`);
+      try { expect(after0155[name], `${name}: 0153 predicate plus the 0155 local-direct branches`).toBe((await constraintDefs(step, ["f2_local_direct_expected"])).f2_local_direct_expected); }
+      finally { await step.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT f2_local_direct_expected`); }
     }
     expect((await step<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`)[0].count).toBe(journal.entries.length);
   } finally { rmSync(partial, { recursive: true, force: true }); await step.end({ timeout: 5 }); }

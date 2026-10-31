@@ -11,6 +11,7 @@ import { afterAll,beforeAll,expect,it } from "vitest";
 import * as schema from "@/lib/db/schema";
 import { gatewayNotStartedAllKindsTerminalSql } from "@/lib/db/operations-schema";
 import { operatorReviewDispatchSql, operatorReviewEventSql, operatorReviewTerminalSql } from "@/lib/llm/operator-review-sql";
+import { gatewayLocalDirectDispatchSql, gatewayLocalDirectLogicalSql, gatewayLocalDirectMembersSql, gatewayLocalDirectTerminalSql } from "@/lib/llm/gateway-local-direct-sql";
 import { modelCapacityPolicyHash,publicationClassifyMemberKeys,type ModelCapacityPolicy } from "@/lib/llm/capacity";
 import { providerBoundaryCanonicalHash } from "@/lib/llm/provider-boundary-contract";
 import { cliExecutorIndeterminatePlanHash } from "@/lib/llm/cli-executor-indeterminate-boundary-contract";
@@ -70,6 +71,9 @@ it("0136 preserves nonempty old rows and the complete0135 CHECK predecessor",asy
     if(n===checks[2])predicate=`(${predicate}) OR (${operatorReviewDispatchSql})`;
     if(n===checks[3])predicate=`(${predicate}) OR (${operatorReviewTerminalSql})`;
     if(n===checks[4])predicate=`(${predicate}) OR (${operatorReviewEventSql})`;
+    // 0155 (PR 3b-C) appends the AI1/text local-direct branches (the schema constants) to the four requests CHECKs, after everything above.
+    const localDirect:Record<string,string>={[checks[0]]:gatewayLocalDirectLogicalSql,[checks[1]]:gatewayLocalDirectMembersSql,[checks[2]]:gatewayLocalDirectDispatchSql,[checks[3]]:gatewayLocalDirectTerminalSql};
+    if(localDirect[n])predicate=`(${predicate}) OR (${localDirect[n]})`;
     await client.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT unknown_expected CHECK (${predicate})`);
     try{expect(after[n]).toBe((await client`SELECT pg_get_constraintdef(oid) definition FROM pg_constraint WHERE conname='unknown_expected'`)[0].definition);}finally{await client.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT unknown_expected`);}}
   expect((await client`SELECT count(*)::int n FROM drizzle.__drizzle_migrations`)[0].n).toBe(journal.entries.length);
