@@ -12,9 +12,9 @@ vi.mock("@/lib/crawl/settings", () => ({ getSettings: async () => mocks.settings
 vi.mock("@/lib/db", () => ({ db: { select: () => ({ from: () => ({ where: () => ({ limit: mocks.candidate }) }) }) } }));
 vi.mock("@/lib/crawl/jobs/review-document", () => ({ loadReviewDocument: mocks.document }));
 vi.mock("@/lib/crawl/second-review-ownership", () => ({ admitLegacySecondReview: mocks.admit, canStartLegacySecondReview: mocks.canStart }));
-vi.mock("@/lib/crawl/agent-review", () => ({ reviewWithAgent: mocks.review, REVIEW_CLI_TIMEOUT_MS: 20_000 }));
-vi.mock("@/lib/crawl/agent-review-gateway", () => ({ reviewWithGateway: mocks.gateway, REVIEW_GATEWAY_TIMEOUT_MS: 30_000 }));
-vi.mock("@/lib/crawl/agent-review-grok", () => ({ reviewWithGrokCli: mocks.grok, GROK_REVIEW_TIMEOUT_MS: 90_000 }));
+vi.mock("@/lib/crawl/agent-review", () => ({ reviewWithAgent: mocks.review, REVIEW_CLI_TIMEOUT_MS: 20_000, reviewCliTimeoutMs: () => 20_000, reviewCliMaxOutputTokens: () => 2_000 }));
+vi.mock("@/lib/crawl/agent-review-gateway", () => ({ reviewWithGateway: mocks.gateway, REVIEW_GATEWAY_TIMEOUT_MS: 30_000, reviewGatewayTimeoutMs: () => 30_000 }));
+vi.mock("@/lib/crawl/agent-review-grok", () => ({ reviewWithGrokCli: mocks.grok, GROK_REVIEW_TIMEOUT_MS: 90_000, grokReviewTimeoutMs: () => 90_000 }));
 // 갈림 판가름은 따로 시험한다(tests/integration/gate-split-tiebreak.test.ts) — 여기서는 틱이 그것을 나란히 띄우고 기다리는지만 본다
 vi.mock("@/lib/crawl/gate-split-tiebreak", () => ({ runGateSplitTiebreak: mocks.tiebreak }));
 vi.mock("@/lib/crawl/second-review", async (importOriginal) => ({

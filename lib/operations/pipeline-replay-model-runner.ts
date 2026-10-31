@@ -15,6 +15,8 @@ import { assertIsolatedReplayDatabase, FIXED_INPUT_TIMING, fixedInputRunConditio
   parseFixedInputRunResult, type FixedInputArtifact, type FixedInputRunResult, type FixedInputTiming } from "./pipeline-replay-fixed-input";
 import { dbClockIso, fixedInputOrdinals, fixedInputWrites, loadFixedInputs } from "./pipeline-replay-fixed-input-repository";
 import { installReplayEgressGuard, startReplayModelMeter, type ReplayMeterDrain, type ReplayMeterStop } from "./pipeline-replay-model-meter";
+import { DEFAULT_RUNTIME_SETTINGS } from "./runtime-settings-schema";
+import { defaultRuntimeSettingsSnapshot } from "./runtime-settings-store";
 
 const DEFAULT_GATEWAY = modelBaseUrl("ai1-preset", {}, "abcllm").replace(/\/v1$/, "");
 /** 같은 reviewer 역할 워커지만 고정 입력 밖(소개 검수·발행분 감사·판정)을 부르는 잡은 돌리지 않는다. 기준선을 낮추지 않는 쪽이다. */
@@ -135,8 +137,10 @@ export async function runFixedInputReplay(options: { manifest: unknown; artifact
       .filter(lane => lane.length);
     const tasks = [
       guarded("scheduler", () => runScheduler({ signal }, { requestDue: control.requestDueJobs, seen: control.markSchedulerSeen })),
+      // 리플레이는 코드 기본 실시간 한도로만 돈다(결정적) — 격리 DB 의 runtime_settings 행을 읽지 않고, 틱 예산도 기본 문서에서 명시적으로 센다
       guarded("worker", () => runWorker({ role: "reviewer", signal, intervalMs: timing.workerIntervalMs }, { names, lanes, pending: () => control.pendingJobNames("reviewer"),
-        seen: control.markWorkerSeen, run: (name, runOptions) => runJob(name, JOBS[name], jobRunOptions(name, runOptions)) })),
+        seen: control.markWorkerSeen, settings: async () => defaultRuntimeSettingsSnapshot(),
+        run: (name, runOptions) => runJob(name, JOBS[name], jobRunOptions(name, runOptions, DEFAULT_RUNTIME_SETTINGS)) })),
     ];
     if (consumers && manifest.items) {
       const [{ runFirstReviewConsumer }, { runSecondReviewConsumer }] = consumers, tag = randomUUID().slice(0, 8);

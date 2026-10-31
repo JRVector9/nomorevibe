@@ -11,6 +11,8 @@ import type { JobContext, JobOutcome } from '@/lib/jobs/runner';
 import { markSchedulerSeen, requestDueJobs } from '@/lib/jobs/control';
 import { refreshNews } from '@/lib/news/refresh';
 import { observe, observeService } from '@/lib/operations/observations';
+import { effectiveJobBudgetMs } from '@/lib/operations/runtime-settings-schema';
+import { ensureRuntimeSettings } from '@/lib/operations/runtime-settings-store';
 import { readOracleRuntimePreflight } from '@/lib/runtime/oracle-preflight';
 import type { BatchRole } from '@/lib/jobs/batches';
 import postgres from 'postgres';
@@ -98,12 +100,17 @@ async function main() {
     setLease(lease);
     await observeService(input.role, { status: 'running', release, bootId: input.bootId, bootedAt: Date.now() });
     const runs: Record<string, unknown> = {};
+    // The worker declares each job's tick budget from the runtime settings 판 it read under this principal (scripts/worker.ts jobRunOptions):
+    // the text jobs derive their remaining time from that deadline (lib/jobs/tick-deadline.ts), so a flat 25 s budget never reaches
+    // reason-translate's 30 s minCallMs. Jobs without a budget line keep the runner default, as in the worker.
+    const settings = (await ensureRuntimeSettings(0)).settings;
     for (const name of input.jobs) {
       const handler: AnyJob = name === 'news-refresh'
         ? (ctx: Parameters<typeof refreshNews>[0]) => refreshNews(ctx, (url, options) =>
           fetchCapped(`${input.httpBase}/news/${encodeURIComponent(url)}`, options))
         : name === 'product-site-evidence-refresh' ? siteEvidence : JOBS[name];
-      runs[name] = await runJob(name, handler, { roleLease: lease, budgetMs: 25_000 });
+      const budgetMs = settings.budgets[name] === undefined ? undefined : effectiveJobBudgetMs(name, settings);
+      runs[name] = await runJob(name, handler, { roleLease: lease, ...(budgetMs === undefined ? {} : { budgetMs }) });
     }
     result.runs = runs;
     result.renewed = await renewRole(lease);

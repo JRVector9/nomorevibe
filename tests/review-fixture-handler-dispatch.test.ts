@@ -25,9 +25,9 @@ vi.mock("@/lib/crawl/second-review", () => ({ enqueueSecondReviews: async () => 
   reconcileStaleSecondReviews: async () => 0,
   combineVerdicts: () => "agreed", recordSecondReview: mocks.recordSecond }));
 vi.mock("@/lib/crawl/agent-review", () => ({ firstReviewer: (settings: CrawlSettings) => settings.firstReview,
-  REVIEW_CLI_TIMEOUT_MS: 20_000, reviewWithAgent: mocks.external }));
-vi.mock("@/lib/crawl/agent-review-gateway", () => ({ REVIEW_GATEWAY_TIMEOUT_MS: 60_000, reviewWithGateway: mocks.external }));
-vi.mock("@/lib/crawl/agent-review-grok", () => ({ GROK_REVIEW_TIMEOUT_MS: 90_000, reviewWithGrokCli: mocks.external }));
+  REVIEW_CLI_TIMEOUT_MS: 20_000, reviewCliTimeoutMs: () => 20_000, reviewCliMaxOutputTokens: () => 2_000, reviewWithAgent: mocks.external }));
+vi.mock("@/lib/crawl/agent-review-gateway", () => ({ REVIEW_GATEWAY_TIMEOUT_MS: 60_000, reviewGatewayTimeoutMs: () => 60_000, reviewWithGateway: mocks.external }));
+vi.mock("@/lib/crawl/agent-review-grok", () => ({ GROK_REVIEW_TIMEOUT_MS: 90_000, grokReviewTimeoutMs: () => 90_000, reviewWithGrokCli: mocks.external }));
 const context = (name: string) => ({ cursor: null, hasBudget: () => true, log: vi.fn(), save: vi.fn(),
   lease: { name, token: "fixture-job-token", requestedVersion: 1 } });
 

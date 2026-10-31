@@ -8,8 +8,8 @@ const mocks = vi.hoisted(() => ({ campaign: vi.fn(), settings: vi.fn(), candidat
   input: vi.fn(), record: vi.fn(), noSource: vi.fn(), finish: vi.fn(), gateway: vi.fn(), agent: vi.fn(), qwen: vi.fn() }));
 vi.mock("@/lib/crawl/settings", () => ({ getSettings: mocks.settings }));
 vi.mock("@/lib/crawl/agent-review-repository", () => ({ listReviewCandidates: mocks.candidates }));
-vi.mock("@/lib/crawl/agent-review", () => ({ reviewWithAgent: mocks.agent, REVIEW_CLI_TIMEOUT_MS: 20_000 }));
-vi.mock("@/lib/crawl/agent-review-gateway", () => ({ reviewWithGateway: mocks.gateway, REVIEW_GATEWAY_TIMEOUT_MS: 60_000 }));
+vi.mock("@/lib/crawl/agent-review", () => ({ reviewWithAgent: mocks.agent, REVIEW_CLI_TIMEOUT_MS: 20_000, reviewCliTimeoutMs: () => 20_000, reviewCliMaxOutputTokens: () => 2_000 }));
+vi.mock("@/lib/crawl/agent-review-gateway", () => ({ reviewWithGateway: mocks.gateway, REVIEW_GATEWAY_TIMEOUT_MS: 60_000, reviewGatewayTimeoutMs: () => 60_000 }));
 // 감사 보류 쓸기는 DB 를 쓴다 — 이 테스트는 모델 호출만 본다(tests/integration/product-audit-hold.test.ts 가 쓸기를 본다)
 vi.mock("@/lib/crawl/product-audit-hold", () => ({ sweepAuditHolds: async () => 0 }));
 // Qwen-v2 단계(gpu3090 직접 호출) — 쓰기·호출은 tests/integration/audit-second-opinion-auto.test.ts 가 본다. 여기는 감사 묻기와의 관계만

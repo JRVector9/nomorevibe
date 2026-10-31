@@ -19,9 +19,9 @@ vi.mock('@/lib/crawl/agent-review-repository', () => ({ canStartLegacyAgentRevie
 vi.mock('@/lib/crawl/agent-review-model-capacity', () => ({ claimAgentReviewModelCapacity: mocks.resume,
   reviewAgentReviewModelCapacity: mocks.reservedReview, abandonAgentReviewModelCapacity: mocks.abandon }));
 vi.mock('@/lib/crawl/agent-review', () => ({ firstReviewer: (s: CrawlSettings) => s.firstReview,
-  reviewWithAgent: mocks.cli, REVIEW_CLI_TIMEOUT_MS: 20_000 }));
-vi.mock('@/lib/crawl/agent-review-gateway', () => ({ prepareAi1GatewayCall: mocks.prepare, reviewWithReservedAi1Gateway: mocks.native, reviewWithGateway: mocks.gateway, REVIEW_GATEWAY_TIMEOUT_MS: 60_000 }));
-vi.mock('@/lib/crawl/agent-review-grok', () => ({ reviewWithGrokCli: vi.fn(), GROK_REVIEW_TIMEOUT_MS: 90_000 }));
+  reviewWithAgent: mocks.cli, REVIEW_CLI_TIMEOUT_MS: 20_000, reviewCliTimeoutMs: () => 20_000, reviewCliMaxOutputTokens: () => 2_000 }));
+vi.mock('@/lib/crawl/agent-review-gateway', () => ({ prepareAi1GatewayCall: mocks.prepare, reviewWithReservedAi1Gateway: mocks.native, reviewWithGateway: mocks.gateway, REVIEW_GATEWAY_TIMEOUT_MS: 60_000, reviewGatewayTimeoutMs: () => 60_000 }));
+vi.mock('@/lib/crawl/agent-review-grok', () => ({ reviewWithGrokCli: vi.fn(), GROK_REVIEW_TIMEOUT_MS: 90_000, grokReviewTimeoutMs: () => 90_000 }));
 vi.mock('@/lib/llm/capacity-repository', () => ({ findOwnPendingModelRequest: mocks.pending, requestAi1ModelSlot: mocks.request,
   cancelReservedModelSlot: mocks.cancel, markModelDispatchIndeterminate: mocks.unknown, reconcileAi1GatewayTerminal: mocks.reconcile }));
 import { reviewCrawlCandidates } from '@/lib/crawl/jobs/agent-review';

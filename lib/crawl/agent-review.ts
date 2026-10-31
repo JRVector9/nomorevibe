@@ -10,10 +10,13 @@ import {
   type ReviewInput, type ReviewOutcome,
 } from "./agent-review-contract";
 
+/** 로드 시점 값(테스트·문서용). 호출은 reviewCliTimeoutMs() 로 등록부 경로 review-cli 를 그때 읽는다 — 관리자 실시간 한도가 다음 틱에 반영된다 */
 export const REVIEW_CLI_TIMEOUT_MS = modelTimeoutMs("review-cli");
+export function reviewCliTimeoutMs(): number { return modelTimeoutMs("review-cli"); }
+/** 호출마다 읽는 출력 토큰 상한(routes.limits.review-cli.maxTokens) */
+export function reviewCliMaxOutputTokens(): number { return modelRequestBudget("review-cli").maxTokens; }
 const MAX_STDOUT_BYTES = 64 * 1024;
 const MAX_STDERR_BYTES = 16 * 1024;
-const MAX_OUTPUT_TOKENS = modelRequestBudget("review-cli").maxTokens;
 export type ReviewUsage = { inputTokens?: number; outputTokens?: number; costUsd?: number };
 export type ReviewFailure = "not_configured" | "input_too_large" | "timeout" | "cancelled" | "output_too_large" | "missing_cli" | "auth" | "cli_error" | "invalid_output" | "max_turns" | "budget" | "rate_limited"
   /** 게이트웨이에 그 모델이 없다(404) — 목록이 예고 없이 바뀐다 */
@@ -173,7 +176,7 @@ export const runReviewCli: ReviewCliRun = async (args, stdin, options) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "nomorevibe-review-"));
   try {
     return await new Promise<ReviewCliResult>((resolve) => {
-      const env = { ...process.env, CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(options.maxOutputTokens ?? MAX_OUTPUT_TOKENS) };
+      const env = { ...process.env, CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(options.maxOutputTokens ?? reviewCliMaxOutputTokens()) };
       delete (env as NodeJS.ProcessEnv).CLAUDECODE;
       const child = spawn(process.env.CLAUDE_CLI ?? "claude", args, {
         // Inherit the worker process group so supervisor shutdown also reaches this child.
@@ -252,10 +255,11 @@ export async function reviewWithAgent(input: ReviewInput, options: { model?: str
   if (Buffer.byteLength(serialized, "utf8") > MAX_REVIEW_INPUT_BYTES) return { ok: false, error: "input_too_large" };
   const prompt = reviewCliPrompt(serialized);
   if (Buffer.byteLength(prompt, "utf8") > MAX_REVIEW_INPUT_BYTES + 256) return { ok: false, error: "input_too_large" };
+  const ceiling = reviewCliTimeoutMs();
   let result: ReviewCliResult;
   try {
     result = await (options.run ?? runReviewCli)(reviewCliArgs(model), prompt, {
-      timeoutMs: Math.max(1, Math.min(options.timeoutMs ?? REVIEW_CLI_TIMEOUT_MS, REVIEW_CLI_TIMEOUT_MS)), signal: options.signal,
+      timeoutMs: Math.max(1, Math.min(options.timeoutMs ?? ceiling, ceiling)), signal: options.signal,
     });
   } catch { return { ok: false, error: "cli_error" }; }
   if (result.kind !== "exit") return { ok: false, error: result.kind };

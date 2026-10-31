@@ -1,11 +1,14 @@
 import { scopedModel } from "@/lib/llm/model-registry";
 import type { ReviewCliRun } from "@/lib/crawl/agent-review";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
+import { tickRemaining } from "@/lib/jobs/tick-deadline";
 import { backgroundCliPath } from "@/lib/llm/cli-model-capacity";
 import { reportProviderOutcome } from "@/lib/llm/provider-circuit-breaker";
 import { checkIntros, INTRO_CHECK_BATCH, INTRO_CHECK_MODEL, introEvidence } from "@/lib/domain/products/intro-check";
 import { checkIntrosWithModelCapacity } from "@/lib/domain/products/intro-check-model-capacity";
 import { pendingIntroChecks, recordIntroCheck, type IntroCheckRecord } from "@/lib/domain/products/intro-checks";
+import { jobKnob } from "@/lib/operations/runtime-settings-schema";
+import { runtimeSettings } from "@/lib/operations/runtime-settings-store";
 
 /**
  * 소개 검수 — 주인 없는 수집 제품의 AI 소개와 쓸모없어 보이는 메이커 소개를 Sonnet 이 근거와 대조한다
@@ -15,12 +18,13 @@ import { pendingIntroChecks, recordIntroCheck, type IntroCheckRecord } from "@/l
  * 같이 쓰므로 한 번에 하나만 부른다. 처음 쌓인 약 970건은 30분쯤이면 끝나고, 그 뒤로는 새로 발행되는 것만 온다.
  */
 
-/** 틱 예산(worker.ts jobRunOptions 110초)보다 조금 짧게 */
-const TICK_MS = 105_000;
-/** 한 번(10건)에 둘 시간 — 표본에서 평소 13초 */
-const CALL_MS = 90_000;
-/** 이만큼 남아 있을 때만 새로 부른다 */
-const MIN_CALL_MS = 40_000;
+const JOB = "product-intro-check";
+/**
+ * 한도는 틱마다 runtime_settings jobs.product-intro-check 에서 읽는다(관리자 실시간 한도 — 저장하면 재배포 없이 다음 틱에 반영):
+ * callMs 90초(한 번(10건)에 둘 시간 — 표본에서 평소 13초. CLI 호출에 직접 주는 상한이며 등록부 경로 상한이 아니다 —
+ * scopedRequestTimeout 이 단계 모델 범위 안에서는 등록부 상한과의 최솟값을 쓴다), minCallMs 40초(이만큼 남아 있을 때만 새로 부른다).
+ * 틱의 남은 시간은 러너가 준 deadlineAt(틱 예산 budgets)에서 — 잡 안의 TICK_MS 상수는 없다(lib/jobs/tick-deadline.ts).
+ */
 /** 제품 탓이 아닌 실패 — 이번 틱을 접는다. 한도에 걸린 것은 30분 쉬게 적힌다(recordIntroCheck) */
 const STOP = new Set(["rate_limited", "auth", "missing_cli", "not_configured", "timeout", "cli_error", "budget", "cancelled"]);
 
@@ -28,10 +32,12 @@ export async function checkProductIntros(ctx: JobContext<null>, run?: ReviewCliR
   const lease = ctx.lease;
   if (!lease) throw new Error("Intro check requires a job lease");
   const startedAt = Date.now();
-  const remaining = () => TICK_MS - (Date.now() - startedAt);
+  const remaining = tickRemaining(ctx, JOB, startedAt);
+  const knobs = runtimeSettings();
+  const callMs = jobKnob(knobs, JOB, "callMs"), minCallMs = jobKnob(knobs, JOB, "minCallMs");
   const counts = { kept: 0, replaced: 0, needs_editor: 0, failed: 0 };
 
-  while (ctx.hasBudget() && !ctx.signal?.aborted && remaining() >= MIN_CALL_MS) {
+  while (ctx.hasBudget() && !ctx.signal?.aborted && remaining() >= minCallMs) {
     const tasks = await pendingIntroChecks(INTRO_CHECK_BATCH);
     if (tasks.length === 0) {
       ctx.log("intro_check.done", { ...counts, drained: true });
@@ -41,10 +47,10 @@ export async function checkProductIntros(ctx: JobContext<null>, run?: ReviewCliR
     // 슬롯 대기는 부르지 않고 미룬다 — 아무것도 적지 않으므로 시도 횟수·재시도 시각이 그대로다
     const capacity = await backgroundCliPath("product-intro-check", scopedModel("product-intro-check", INTRO_CHECK_MODEL));
     const items = tasks.map((task) => ({ slug: task.product.slug, intro: task.product.tagline, evidence: introEvidence(task.product) }));
-    const timeoutMs = Math.max(1_000, Math.min(CALL_MS, remaining() - 1_000));
+    const timeoutMs = Math.max(1_000, Math.min(callMs, remaining() - 1_000));
     const native = capacity === "native" ? await checkIntrosWithModelCapacity(tasks, items, lease, { timeoutMs, signal: ctx.signal,
       // 슬롯을 얻은 뒤 띄우기 직전에 이 틱의 여유를 다시 본다(루프 조건과 같다)
-      beforeSpawn: () => ctx.hasBudget() && !ctx.signal?.aborted && remaining() >= MIN_CALL_MS }) : null;
+      beforeSpawn: () => ctx.hasBudget() && !ctx.signal?.aborted && remaining() >= minCallMs }) : null;
     // 그사이 묶음이 바뀌었거나 여유가 모자라 띄우지 않았다 — 적지 않고 이 틱을 접는다
     if (native && native.kind !== "result") {
       ctx.log("intro_check.not_started", { ...counts, skipped: native.kind === "skipped" });

@@ -1,4 +1,3 @@
-import { modelRequestBudget } from "@/lib/llm/model-registry";
 import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
@@ -10,10 +9,10 @@ import { prepareCliCall, runReservedCliCall, settleCliNotStarted, type CliCallOu
   type PreparedCliCall } from "@/lib/llm/cli-process-runner";
 import { cliServingContractHash, cliServingContractSchema, cliTransportSchema, resolveCliServingContract,
   type CliServingContract, type CliTransport } from "@/lib/llm/cli-serving-contract";
-import { reviewCliArgs, reviewCliPrompt, reviewModel, reviewWithAgent, REVIEW_CLI_TIMEOUT_MS,
+import { reviewCliArgs, reviewCliMaxOutputTokens, reviewCliPrompt, reviewCliTimeoutMs, reviewModel, reviewWithAgent,
   type AgentReviewResult, type ReviewCliRun } from "./agent-review";
-import { grokAuthPath, grokReviewAgentDefinition, grokReviewArgs, grokReviewResult, GROK_REVIEW_AGENT,
-  GROK_REVIEW_TIMEOUT_MS } from "./agent-review-grok";
+import { grokAuthPath, grokReviewAgentDefinition, grokReviewArgs, grokReviewResult, grokReviewTimeoutMs,
+  GROK_REVIEW_AGENT } from "./agent-review-grok";
 import { MAX_REVIEW_INPUT_BYTES, type ReviewInput } from "./agent-review-contract";
 import { assertLiveReviewAdapterAllowed } from "./review-fixture-transport";
 
@@ -36,10 +35,10 @@ export const reviewCliCallRefSchema = z.object({ kind: z.literal("prepared_cli")
   provider: z.enum(["claude-cli", "grok-cli"]), model: z.string().min(1).max(160), inputHash: z.string().regex(/^[a-f0-9]{64}$/),
   transport: cliTransportSchema, totalTokenBound: z.number().int().positive().safe() }).strict();
 
-// legacy runReviewCli·runGrokCli 와 같은 값이다 — 같은 입력에서 legacy 와 byte 단위로 같은지 테스트가 고정한다
+// legacy runReviewCli·runGrokCli 와 같은 값이다 — 같은 입력에서 legacy 와 byte 단위로 같은지 테스트가 고정한다.
+// 출력 토큰 상한·제한 시간은 legacy 와 같은 함수(reviewCliMaxOutputTokens·reviewCliTimeoutMs·grokReviewTimeoutMs)로 호출마다 읽는다
 const MAX_STDOUT_BYTES = 64 * 1024;
 const MAX_STDERR_BYTES = 16 * 1024;
-const CLAUDE_MAX_OUTPUT_TOKENS = String(modelRequestBudget("review-cli").maxTokens);
 
 type State = { cli: PreparedCliCall; directory: string; inputIdentity: string; args: readonly string[]; stdin: string | null;
   timeoutMs: number; started: boolean; released: Promise<void> | null };
@@ -75,13 +74,13 @@ export async function prepareReviewCliCall(input: ReviewInput, options: { routeI
   const prompt = reviewCliPrompt(serialized);
   if (provider === "claude-cli" && Buffer.byteLength(prompt, "utf8") > MAX_REVIEW_INPUT_BYTES + 256) return unsupported;
   // legacy 와 같은 상한 — 호출자가 더 짧게 줄 수는 있어도 늘릴 수는 없다
-  const ceiling = provider === "grok-cli" ? GROK_REVIEW_TIMEOUT_MS : REVIEW_CLI_TIMEOUT_MS;
+  const ceiling = provider === "grok-cli" ? grokReviewTimeoutMs() : reviewCliTimeoutMs();
   const timeoutMs = Math.max(1, Math.min(options.timeoutMs, ceiling));
   const directory = await mkdtemp(path.join(os.tmpdir(), provider === "grok-cli" ? "nomorevibe-grok-" : "nomorevibe-review-"));
   let args: string[], stdin: string | null, prepared: ReturnType<typeof prepareCliCall>;
   try {
     if (provider === "claude-cli") {
-      const env: Record<string, string | undefined> = { ...process.env, CLAUDE_CODE_MAX_OUTPUT_TOKENS: CLAUDE_MAX_OUTPUT_TOKENS };
+      const env: Record<string, string | undefined> = { ...process.env, CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(reviewCliMaxOutputTokens()) };
       delete env.CLAUDECODE;
       args = reviewCliArgs(model); stdin = prompt;
       prepared = prepareCliCall({ routeId, provider, model, command: process.env.CLAUDE_CLI ?? "claude", args, stdin, cwd: directory, env,

@@ -28,7 +28,7 @@ export type BackgroundCliRoute = keyof typeof BACKGROUND_CLI;
 /** runReviewCli·runGrokCli 와 같은 출력 상한 */
 const MAX_STDOUT_BYTES = 64 * 1024;
 const MAX_STDERR_BYTES = 16 * 1024;
-/** runReviewCli 가 출력 토큰을 따로 받지 않을 때의 값(agent-review.ts MAX_OUTPUT_TOKENS) */
+/** runReviewCli 가 출력 토큰을 따로 받지 않을 때의 값(agent-review.ts reviewCliMaxOutputTokens) */
 const CLAUDE_OUTPUT_TOKENS = 2_000;
 
 export async function backgroundCliPath(routeId: BackgroundCliRoute, model: string): Promise<"legacy" | "native"> {

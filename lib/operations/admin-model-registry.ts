@@ -5,12 +5,16 @@ import { validateAdminStagePools } from "@/lib/llm/admin-model-pools";
 import { DEFAULT_MODEL_DEFINITIONS, modelDefinitionSchema, readModelRegistry, type ModelDefinition, type ModelRegistry } from "@/lib/llm/model-registry";
 import { writerSiteActive, DrWriterFencedError } from "./dr/epoch";
 import { adminAuditRow } from "./admin-log";
+import type { RuntimeSettings } from "./runtime-settings-schema";
+import { ensureRuntimeSettings, runtimeSettings } from "./runtime-settings-store";
 
 /**
  * Admin overrides of the code-default model registry (model_registry_overrides, 0148). A saved definition replaces the
  * default of the same key on every app within ~30 s (same reload as the serving contracts). Saving checks the merged
  * registry with the full registry schema, one model per purpose, and the saved stage selections, so a save cannot leave a
- * purpose ambiguous or a stage pointing at a missing or different-adapter model.
+ * purpose ambiguous or a stage pointing at a missing or different-adapter model. The merge is validated against the live
+ * admin route policy (runtime_settings routes: limits/timeouts/deadlines, PR 1a) — the same registry the workers will read —
+ * so a model timeout that breaks the saved deadline ladder is refused here, as a ladder that breaks a saved model is refused there.
  */
 export type AdminRegistryOverrideRow = { id: number; key: string; definition: Record<string, unknown>; enabled: boolean; note: string | null;
   updatedBy: string; updatedAt: string };
@@ -28,8 +32,9 @@ const duplicatedPurposes = (models: readonly ModelDefinition[]) => {
   return new Set([...seen].filter(([, count]) => count > 1).map(([purpose]) => purpose));
 };
 
-/** The merged registry for these override definitions, or the reason it is refused. */
-export function checkRegistryOverrides(definitions: readonly unknown[], stagePools: unknown): { ok: true; registry: ModelRegistry } | { ok: false; reason: string } {
+/** The merged registry for these override definitions under the given route policy (default: the live runtime settings), or the reason it is refused. */
+export function checkRegistryOverrides(definitions: readonly unknown[], stagePools: unknown,
+  routes: RuntimeSettings["routes"] = runtimeSettings().routes): { ok: true; registry: ModelRegistry } | { ok: false; reason: string } {
   const parsed: ModelDefinition[] = [];
   for (const value of definitions) {
     const result = modelDefinitionSchema.safeParse(value);
@@ -41,7 +46,7 @@ export function checkRegistryOverrides(definitions: readonly unknown[], stagePoo
   const models = [...DEFAULT_MODEL_DEFINITIONS.map(model => byKey.get(model.key) ?? model),
     ...parsed.filter(model => !DEFAULT_MODEL_DEFINITIONS.some(row => row.key === model.key))];
   let registry: ModelRegistry;
-  try { registry = readModelRegistry({ MODEL_REGISTRY_CONFIG: JSON.stringify({ version: 1, models }) }); }
+  try { registry = readModelRegistry({ MODEL_REGISTRY_CONFIG: JSON.stringify({ version: 1, models, limits: routes.limits, timeouts: routes.timeouts, deadlines: routes.deadlines }) }); }
   catch { return { ok: false, reason: "model_registry_invalid" }; }
   // A purpose served by two definitions makes every unscoped read of it throw; defaults never do this.
   const baseline = duplicatedPurposes(DEFAULT_MODEL_DEFINITIONS);
@@ -76,6 +81,8 @@ export async function saveRegistryOverrideTx(tx: Tx, definition: unknown, actor:
 
 export async function saveAdminRegistryOverride(definition: unknown, actor: string, note: string | null = null): Promise<{ id: number }> {
   const stagePools = await savedStagePools();
+  // The merge check reads the live route policy (runtime_settings); refresh it so a save validates against the current 판.
+  await ensureRuntimeSettings(0);
   return onPrimary(() => db.transaction(async tx => {
     if (!await writerSiteActive(tx)) throw new DrWriterFencedError("site_fenced");
     return saveRegistryOverrideTx(tx, definition, actor, note, stagePools);
@@ -86,6 +93,7 @@ export async function saveAdminRegistryOverride(definition: unknown, actor: stri
 export async function disableAdminRegistryOverride(key: string, actor: string): Promise<boolean> {
   if (!actor.trim()) throw new Error("model_definition_invalid");
   const stagePools = await savedStagePools();
+  await ensureRuntimeSettings(0);
   return onPrimary(() => db.transaction(async tx => {
     if (!await writerSiteActive(tx)) throw new DrWriterFencedError("site_fenced");
     const current = await enabledDefinitions(tx), previous = current.find(row => row.key === key);

@@ -16,7 +16,7 @@ import { MAX_REVIEW_INPUT_BYTES, validateReviewOutcome, type ReviewInput } from 
 import { assertLiveReviewAdapterAllowed } from "./review-fixture-transport";
 import { REVIEW_SYSTEM_PROMPT, type AgentReviewResult, type ReviewFailure, type ReviewUsage } from "./agent-review";
 import { verifyAi2TokenBudget } from "./second-review-direct-tokenize";
-import { REVIEW_GATEWAY_LADDER } from "@/lib/llm/deadline-ladder";
+import { REVIEW_GATEWAY_LADDER, reviewGatewayLadder } from "@/lib/llm/deadline-ladder";
 import { servingContractAuth } from "@/lib/llm/serving-contract-store";
 
 /**
@@ -51,6 +51,11 @@ const gatewayFetch = (requestId: string, ...args: Parameters<typeof undiciFetch>
  * model_unavailable 로 남겨 운영 화면에 드러낸다 — 조용히 넘기면 심사가 통째로 멈춘 줄 모른다.
  */
 export const REVIEW_GATEWAY_TIMEOUT_MS = REVIEW_GATEWAY_LADDER.clientMs;
+/**
+ * 호출마다 읽는 클라이언트 기한(routes.deadlines.review-gateway.clientMs) — 관리자 실시간 한도·등록부 덮어쓰기가 다음 틱의 호출에 반영된다.
+ * 위 상수는 로드 시점 값(테스트·문서용)이다; 보내는 길은 모두 이 함수를 쓴다.
+ */
+export function reviewGatewayTimeoutMs(): number { return reviewGatewayLadder().clientMs; }
 /**
  * 받을 답의 상한.
  *
@@ -371,7 +376,7 @@ export async function reviewWithReservedAi1Gateway(input: ReviewInput, dispatch:
   // Capture all caller-owned values before the first await. Schema brands alone are not DB authority.
   const state = preparedCalls.get(call), snapshot = structuredClone(input);
   const checked = ai1ModelDispatchSchema.safeParse(structuredClone(dispatch));
-  const timeoutMs = options.timeoutMs ?? state?.timeoutMs ?? REVIEW_GATEWAY_TIMEOUT_MS, signal = options.signal;
+  const timeoutMs = options.timeoutMs ?? state?.timeoutMs ?? reviewGatewayTimeoutMs(), signal = options.signal;
   if (!state || state.used || !checked.success || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1)
     throw new Error("ai1_gateway_call_mismatch");
   const owned = checked.data, binding = owned.binding;
@@ -471,7 +476,7 @@ export async function reviewWithReservedAi2Gateway(input: ReviewInput, dispatch:
   assertLiveReviewAdapterAllowed();
   const state = preparedAi2Calls.get(call), snapshot = structuredClone(input);
   const checked = ai2ModelDispatchSchema.safeParse(structuredClone(dispatch));
-  const timeoutMs = options.timeoutMs ?? state?.timeoutMs ?? REVIEW_GATEWAY_TIMEOUT_MS, signal = options.signal;
+  const timeoutMs = options.timeoutMs ?? state?.timeoutMs ?? reviewGatewayTimeoutMs(), signal = options.signal;
   if (!state || state.used || !checked.success || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1)
     throw new Error("ai2_gateway_call_mismatch");
   const owned = checked.data, binding = owned.binding, review = binding.review;
@@ -538,7 +543,7 @@ export async function reviewWithReservedAi1ItemGateway(input: ReviewInput, dispa
   assertLiveReviewAdapterAllowed();
   const state = preparedCalls.get(call), snapshot = structuredClone(input);
   const checked = ai1ItemModelDispatchSchema.safeParse(structuredClone(dispatch));
-  const timeoutMs = options.timeoutMs ?? state?.timeoutMs ?? REVIEW_GATEWAY_TIMEOUT_MS, signal = options.signal;
+  const timeoutMs = options.timeoutMs ?? state?.timeoutMs ?? reviewGatewayTimeoutMs(), signal = options.signal;
   if (!state || state.used || !checked.success || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1)
     throw new Error("ai1_item_gateway_call_mismatch");
   const owned = checked.data, binding = owned.binding, review = binding.review;
@@ -760,7 +765,7 @@ import { productTranslationModelDispatchSchema, productTranslationGatewayTermina
 import { productTranslationServingContractHash, productTranslationServingContractSchema, resolveProductTranslationServingContract,
   type ProductTranslationServingContract } from "@/lib/llm/product-translation-serving-contract";
 import { productTranslationGatewayWire, type ProductTranslationGatewayItem } from "./translate";
-import { PRODUCT_TRANSLATION_MAX_SOURCE_CHARS, productTranslationSourceHash } from "@/lib/domain/products/translation-policy";
+import { productTranslationPolicy, productTranslationSourceHash } from "@/lib/domain/products/translation-policy";
 import { parseKoreanTaglines, type KoreanTaglineBatch } from "@/lib/domain/products/korean-tagline";
 
 export type PreparedProductTranslationGatewayCall = Readonly<{ kind: "prepared"; wireHash: string;
@@ -775,7 +780,7 @@ function validProductTranslationItems(value: unknown): value is ProductTranslati
     && Object.keys(item).sort().join(",") === "field,locale,name,text"
     && typeof item.name === "string" && typeof item.text === "string" && !!item.text.trim()
     && ["en", "zh-Hans", "zh-Hant"].includes(item.locale) && ["tagline", "description"].includes(item.field))
-    && value.reduce((count, item) => count + item.text.length, 0) <= PRODUCT_TRANSLATION_MAX_SOURCE_CHARS;
+    && value.reduce((count, item) => count + item.text.length, 0) <= productTranslationPolicy().maxSourceChars;
 }
 /** No descriptor or injected request enables a product serving deployment. */
 export function prepareProductTranslationGatewayCall(items: readonly ProductTranslationGatewayItem[], options: { model: string; timeoutMs: number }):

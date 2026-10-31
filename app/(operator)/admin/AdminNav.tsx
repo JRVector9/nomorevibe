@@ -33,6 +33,7 @@ export const NAV_GROUPS: readonly { title: string; pages: readonly NavPage[] }[]
     pages: [
       { href: "/admin", label: "크롤 설정", hint: "수집 규칙·검색 신호", icon: "sliders" },
       { href: "/admin/models", label: "단계별 모델", hint: "1·2차·사람 검토·LLM 경로", icon: "sliders" },
+      { href: "/admin/models/limits", label: "실시간 한도", hint: "경로 한도·번역 묶음·틱 예산·장비 한도", icon: "sliders" },
       { href: "/admin/categories", label: "카테고리 기준", hint: "분류 정의·예시", icon: "tag" },
       { href: "/admin/evidence", label: "근거 수집 설정", hint: "출처·갱신 정책", icon: "file" },
       { href: "/admin/ranking", label: "랭킹 설정", hint: "집계·시즌 정책", icon: "bars" },
@@ -86,8 +87,14 @@ export function auditBadge(takedowns: { pending: number; overdue: number } | nul
 }
 
 const isActive = (current: string, href: string) => current === href || (href !== "/admin" && current.startsWith(`${href}/`));
+/** 메뉴가 서로 안긴 경로(/admin/models 와 /admin/models/limits)면 가장 긴 것 하나만 선택으로 표시한다 */
+function activeHref(current: string): string | undefined {
+  return NAV_GROUPS.flatMap((group) => group.pages).filter((page) => isActive(current, page.href))
+    .sort((a, b) => b.href.length - a.href.length)[0]?.href;
+}
 
 export function AdminNav({ current, badges = {} }: { current: string; badges?: NavBadges }) {
+  const active = activeHref(current);
   return (
     <nav className="admin-navigation" aria-label="관리자 메뉴">
       {NAV_GROUPS.map((group, index) => (
@@ -97,7 +104,7 @@ export function AdminNav({ current, badges = {} }: { current: string; badges?: N
             {group.pages.map((page) => {
               const badge = badges[page.href];
               return <li key={page.href}>
-                <Link href={page.href} aria-current={isActive(current, page.href) ? "page" : undefined} prefetch={false} title={page.label}>
+                <Link href={page.href} aria-current={page.href === active ? "page" : undefined} prefetch={false} title={page.label}>
                   <AdminIcon name={page.icon} />
                   <span className="admin-nav-text"><span>{page.label}</span><small>{page.hint}</small></span>
                   {badge && <b className="admin-nav-badge" data-tone={badge.tone} title={badge.title}>

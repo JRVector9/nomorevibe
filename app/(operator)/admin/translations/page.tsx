@@ -4,7 +4,9 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { authSecret, currentAdmin } from "@/lib/auth/admin";
 import { productTranslationAdminQueue, productTranslationAdminSummary } from "@/lib/domain/products/translation-admin";
-import { isProductTranslationField, PRODUCT_TRANSLATION_MAX_ATTEMPTS } from "@/lib/domain/products/translation-policy";
+import { isProductTranslationField, productTranslationPolicy } from "@/lib/domain/products/translation-policy";
+import type { ProductTranslationPolicy } from "@/lib/operations/runtime-settings-schema";
+import { ensureRuntimeSettings } from "@/lib/operations/runtime-settings-store";
 import type { ProductTranslationLocale, ProductTranslationStatus } from "@/lib/db/schema";
 import { formatDetailTime } from "@/lib/format/time";
 import { readJobBatchMode } from "@/lib/jobs/batch-repository";
@@ -18,14 +20,16 @@ export const metadata: Metadata = { title: "공개 번역 — NoMoreVibe", robot
 const LOCALES = { en: "영어", "zh-Hans": "중국어 간체", "zh-Hant": "중국어 번체" };
 const FIELDS = { tagline: "한 줄 소개", description: "설명" };
 const STATES = { failed: "실패", pending: "자동 처리 대기", ready: "번역 저장됨", reviewed: "검토값 저장됨", all: "전체" };
-const REASONS: Record<string, string> = {
+// 원문 글자 상한·최대 시도는 지금 판의 translation.product(관리자 실시간 한도)에서 — 문구가 저장된 값을 따라간다
+const reasonTexts = (policy: ProductTranslationPolicy): Record<string, string> => ({
   product_not_public: "현재 제품이 공개 상태가 아닙니다.", takedown_pending: "내림 요청 처리 대기 중입니다.",
   intro_editor_hold: "현재 원문이 소개 편집 보류 상태입니다.", ineligible: "현재 번역 대상이 아닙니다.",
   empty_source: "현재 원문이 비어 있어 번역이 필요하지 않습니다.", source_native: "현재 원문이 대상 언어로 확인돼 번역이 필요하지 않습니다.",
-  source_too_long: "원문이 4,000자를 넘습니다. 같은 원문으로 재시도하지 않습니다.", exhausted: "같은 원문의 자동 4회 상한을 소진했습니다.",
+  source_too_long: `원문이 ${policy.maxSourceChars.toLocaleString("ko-KR")}자를 넘습니다. 같은 원문으로 재시도하지 않습니다.`,
+  exhausted: `같은 원문의 자동 ${policy.maxAttempts}회 상한을 소진했습니다.`,
   retry_wait: "기존 재시도 시간을 기다립니다.", new_source: "저장된 번역의 원문이 바뀌었습니다. 현재 원문만 새로 접수할 수 있습니다.",
   retry: "기존 시도 횟수와 재시도 시간을 유지해 한 건 접수할 수 있습니다.", not_failed: "자동 처리 대기 또는 저장된 값입니다. 실패값만 재요청합니다.",
-};
+});
 
 export default async function AdminTranslationsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const admin = await currentAdmin();
@@ -39,6 +43,9 @@ export default async function AdminTranslationsPage({ searchParams }: { searchPa
   const field = isProductTranslationField(params.field) ? params.field : undefined;
   const q = typeof params.q === "string" ? params.q.trim().slice(0, 120) : "";
   const cursor = typeof params.cursor === "string" ? params.cursor : undefined;
+  // 관리자 실시간 한도(최대 시도·원문 글자 상한)는 30초 안의 스냅샷으로 충분하다 — 저장 직후 새로고침은 WP-A 의 loader 가 새 판을 준다
+  await ensureRuntimeSettings();
+  const policy = productTranslationPolicy(), reasons = reasonTexts(policy);
   // 모델 호출 담당은 작업 배치 방식으로 정한다 — 새로 읽는 값이라 복제본에서만(못 읽으면 까닭과 함께 보류, 주 DB 로 넘기지 않는다)
   const [queue, summary, batch] = await Promise.all([productTranslationAdminQueue({ state, locale, field, q, cursor }), productTranslationAdminSummary(),
     readReplicaOrHold("admin.translation_owner_unavailable", () => readJobBatchMode())]);
@@ -70,9 +77,9 @@ export default async function AdminTranslationsPage({ searchParams }: { searchPa
     {queue.items.length === 0 && <p className="text-[14px]">조건에 맞는 수요 기록이 없습니다.</p>}
     {queue.items.map((entry) => <section key={`${entry.productId}-${entry.locale}-${entry.field}-${entry.updatedAt}`} className="rounded-xl border border-line p-4 text-[13px]">
       <h2 className="text-[16px] font-semibold"><Link prefetch={false} href={`/admin/products/${entry.slug}`} className="underline">{entry.name}</Link> · {LOCALES[entry.locale]} · {FIELDS[entry.field]}</h2>
-      <p className="mt-2">{STATES[entry.status]} · 시도 {entry.attempts}/{PRODUCT_TRANSLATION_MAX_ATTEMPTS} · 오류 {entry.errorCode ?? "없음"}</p>
+      <p className="mt-2">{STATES[entry.status]} · 시도 {entry.attempts}/{policy.maxAttempts} · 오류 {entry.errorCode ?? "없음"}</p>
       <p className="mt-1 text-fg-2">상태 변경 {formatDetailTime(entry.updatedAt)} · 다음 시도 {formatDetailTime(entry.retryAt)} · 모델 {entry.model || "없음"}</p>
-      <p className="mt-2 text-fg-2">{entry.sourceMatches ? "현재 원문과 일치합니다." : "현재 원문과 다릅니다. 저장된 번역은 공개에 사용되지 않습니다."} {REASONS[entry.recoveryReason]}</p>
+      <p className="mt-2 text-fg-2">{entry.sourceMatches ? "현재 원문과 일치합니다." : "현재 원문과 다릅니다. 저장된 번역은 공개에 사용되지 않습니다."} {reasons[entry.recoveryReason]}</p>
       <details className="mt-3"><summary className="cursor-pointer text-fg-2">원문·저장본·해시 확인</summary>
         <div className="mt-2 space-y-2 rounded-lg bg-bg-soft p-3">
           <p className="break-all font-mono">저장 원문 hash: {entry.sourceHash}<br />현재 원문 hash: {entry.currentSourceHash}</p>

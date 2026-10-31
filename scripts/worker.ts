@@ -4,8 +4,10 @@ import { basename } from 'node:path';
 import { BATCH_ROLES, batchJobsForRole, batchLanesForRole, type BatchRole } from '@/lib/jobs/batches';
 import { lastSettingsRead } from '@/lib/crawl/settings-version';
 import { probeCliServingContracts } from '@/lib/llm/cli-serving-contract';
-import { productTranslationJobBudgetMs } from '@/lib/llm/deadline-ladder';
-import { DECLARED_BUDGET_MAX_MS, type RuntimeLane } from '@/lib/operations/worker-progress';
+import { DEFAULT_JOB_BUDGET_MS, effectiveJobBudgetMs, type RuntimeSettings } from '@/lib/operations/runtime-settings-schema';
+import { ensureRuntimeSettings, lastRuntimeSettingsRead, runtimeSettings, withRuntimeSettings,
+  type RuntimeSettingsRead, type RuntimeSettingsSnapshot } from '@/lib/operations/runtime-settings-store';
+import { DECLARED_BUDGET_MARGIN_MS, DECLARED_BUDGET_MAX_MS, type RuntimeLane } from '@/lib/operations/worker-progress';
 import { createProviderCircuits, providerCircuitConfig, withProviderOutcome, type ProviderCircuits } from '@/lib/llm/provider-circuit-breaker';
 import { dbErrorFields } from '@/lib/db/error-fields';
 import { installTailnetDns } from '@/lib/net/tailnet-dns';
@@ -29,16 +31,21 @@ export type RuntimeHeartbeat = {
   lanes?: RuntimeLane[];
   /** 이 프로세스의 잡이 마지막으로 읽은 크롤 설정 판과 그 시각(epoch ms) — 설정 화면의 적용 확인(ADM-19). 옛 워커는 싣지 않는다 */
   settings?: { version: string; at: number } | null;
+  /** 이 프로세스가 틱에 마지막으로 고정한 관리자 실시간 한도(runtime_settings) 판·시각·env 등록부 여부 — 실시간 한도 화면의 '읽은 판'. 옛 워커는 싣지 않는다 */
+  runtimeSettings?: RuntimeSettingsRead | null;
 };
 /** startedAt: 그 잡을 시작한 시각 — 줄이 여럿이면 가장 오래 돈 잡의 시작을 그대로 넘겨야 감독(job_timeout)이 맞게 잰다 */
 export type RuntimeReport = (state: RuntimeState, currentJob?: string | null, startedAt?: number | null, lanes?: RuntimeLane[]) => void;
+/** 줄 하나의 보고 — running 이면 그 틱에 선언한 예산(ms)을 함께 넘긴다. 예산은 틱이 고정한 스냅샷에서 한 번만 계산한다 */
+type LaneReport = (state: RuntimeState, currentJob?: string | null, budgetMs?: number | null) => void;
 export type RequestedRunOptions = { requestedOnly: true; signal?: AbortSignal };
 export type JobRunOptions = RequestedRunOptions & { budgetMs?: number };
 type JobRunResult = { status: string; done?: boolean; sourceContinuation?: boolean; reason?: string };
 export type BackgroundConsumerLanes = {
   names: readonly string[];
   open: () => Promise<boolean>;
-  run: (name: string, options: RequestedRunOptions) => Promise<JobRunResult>;
+  /** options 에는 줄이 고정한 스냅샷으로 계산한 budgetMs 가 들어 있다 */
+  run: (name: string, options: JobRunOptions) => Promise<JobRunResult>;
   request: (name: string) => Promise<unknown>;
   /** provider 회로(PR06e). 줄(job)마다 센다 — 틱 안 gateway 전송 결과가 쌓인다. 없으면 기존 그대로 */
   circuits?: ProviderCircuits;
@@ -52,7 +59,10 @@ type WorkerDependencies = {
   lanes?: readonly (readonly string[])[];
   pending: () => Promise<string[]>;
   seen: (names: string[]) => Promise<void>;
-  run: (name: string, options: RequestedRunOptions) => Promise<{ status: string; done?: boolean; sourceContinuation?: boolean; reason?: string }>;
+  /** options 에는 줄이 틱 앞에 고정한 스냅샷으로 계산한 budgetMs 가 들어 있다(jobRunOptions) — heartbeat 에 알린 예산과 같은 값 */
+  run: (name: string, options: JobRunOptions) => Promise<JobRunResult>;
+  /** 틱(poll) 앞에 읽는 관리자 실시간 한도 스냅샷. 없으면 ensureRuntimeSettings(30초 TTL). 리플레이·시험은 고정 스냅샷을 준다 */
+  settings?: () => Promise<RuntimeSettingsSnapshot>;
   /** host 합계 예산(lib/operations/host-budget-runtime.ts). 없으면 기존처럼 바로 실행한다 */
   admit?: (name: string) => Promise<{ admitted: true; release: () => Promise<void> } | { admitted: false; reason: string }>;
   consumer?: BackgroundConsumerLanes;
@@ -83,51 +93,29 @@ export function runtimeLog(event: string, fields: Record<string, unknown>) {
 }
 
 /**
- * A classification batch can use 20 seconds before inserts and image copies begin.
- * 사유 번역은 한 번 부르는 데 15~25초라 기본 25초 틱에는 한 번도 빠듯하다(프로드 첫 4틱이 모두 20초 제한에 걸렸다).
- * 번역은 별도 text 워커에서 실행하며 발행 잡의 실행 시간을 차지하지 않는다.
+ * 잡의 틱 예산(budgetMs)을 options 에 붙인다. 값의 원천은 관리자 실시간 한도 문서 budgets.<job> 이다
+ * (lib/operations/runtime-settings-schema.ts DEFAULT_RUNTIME_SETTINGS.budgets — 오늘의 상수: crawl-agent-review 110초, product-audit 70초,
+ * product-translate "auto" = 호출 상한 300초 + 여유 15초 = 315초 …). 문서에 없는 잡은 options 그대로(runner 기본 25초 — crawl-tagline 포함).
+ *
+ * settings 는 틱이 고정한 스냅샷을 넘긴다(runLane) — heartbeat 에 알린 예산과 잡이 읽는 상한이 한 판이다(D3). 생략하면 지금 판(고정 → 프로세스 → 기본값).
+ * 사유 번역은 한 번 부르는 데 15~25초라 기본 25초 틱에는 한 번도 빠듯하다(프로드 첫 4틱이 모두 20초 제한에 걸렸다); 번역은 별도 text 워커에서 돈다.
  */
-export function jobRunOptions(name: string, options: RequestedRunOptions): JobRunOptions {
-  // AI1 gives gateway calls their full 60s ceiling; Grok needs 90s plus startup.
-  if (name === 'crawl-agent-review') return { ...options, budgetMs: 110_000 };
-  if (name === 'product-audit') return { ...options, budgetMs: 70_000 };
-  // 화면 판별 — 그리기(서버 상한 40초) + 묻기(상한 90초). reviewer 의 작업 상한 180초 안(lib/screen-review/job.ts)
-  if (name === 'audit-screen-review') return { ...options, budgetMs: 150_000 };
-  if (name === 'product-llm-assist-review') return { ...options, budgetMs: 105_000 };
-  if (name === 'product-llm-assist-audit-review') return { ...options, budgetMs: 105_000 };
-  if (name === 'product-automated-action-audit') return { ...options, budgetMs: 20_000 };
-  if (name === 'crawl-publish') return { ...options, budgetMs: 120_000 };
-  if (name === 'reason-translate') return { ...options, budgetMs: 55_000 };
-  // Admission/DB waits must leave the public-field call its full client ceiling (300s since 2026-10-30) plus the 2s record margin.
-  // 틱마다 등록부에서 다시 읽는다 — 관리자 저장(등록부 덮어쓰기)이 재배포 없이 다음 틱에 반영된다.
-  if (name === 'product-translate') return { ...options, budgetMs: productTranslationJobBudgetMs() };
-  // 검색 키워드 한 건이 7초 안팎이다 — 기본 틱이면 동시 셋이 두 바퀴도 못 돈다
-  if (name === 'product-search-profile') return { ...options, budgetMs: 55_000 };
-  if (name === 'product-search-verify') return { ...options, budgetMs: 110_000 };
-  // 한 묶음(64건)이 1초 안쪽이라 처음 채울 때 틱 하나에 3천 건 남짓
-  if (name === 'product-embedding') return { ...options, budgetMs: 50_000 };
-  // 페이지 열기(10초)와 모델 한 번을 셋씩 — 기본 25초면 한 바퀴밖에 못 돈다
-  if (name === 'product-repo-review') return { ...options, budgetMs: 55_000 };
-  // 소개 8건 묶음 한 번이 15~25초 — 기본 25초면 한 묶음도 빠듯하다(사유 번역과 같은 까닭)
-  if (name === 'product-tagline-ko') return { ...options, budgetMs: 55_000 };
-  // 저장소 50개 묶음이 3~4초 — 기본 25초면 하루치(공개 저장소 전부)를 다 못 본다(stars-refresh.ts)
-  if (name === 'product-stars-refresh') return { ...options, budgetMs: 40_000 };
-  if (name === 'product-star-observation') return { ...options, budgetMs: 40_000 };
-  // AI 제작 근거 단계 — GraphQL 묶음을 30초 안에서 열고 마지막 묶음·두 번째 질의(각 10초 상한)와 기록까지(ai-level-refresh.ts)
-  if (name === 'ai-level-refresh') return { ...options, budgetMs: 55_000 };
-  if (name === 'product-evidence-refresh' || name === 'product-site-evidence-refresh' || name === 'agent-evidence-refresh') return { ...options, budgetMs: 55_000 };
-  if (name === 'product-intro-check') return { ...options, budgetMs: 110_000 };
-  // 게이트웨이가 붐비면 한 건이 45초까지 간다. 틱이 짧으면 그 호출을 아예 시작하지 못한다
-  if (name === 'second-review') return { ...options, budgetMs: 110_000 };
-  if (name === 'human-deepseek-review') return { ...options, budgetMs: 110_000 };
-  if (name === 'product-thumbnail-refresh') return { ...options, budgetMs: 40_000 };
-  // Bluesky 화제 — 요청 30번 상한·0.5초 간격(lib/social/bluesky-talk.ts). 기본 25초면 다시 묻기를 다 못 한다
-  if (name === 'bluesky-talk') return { ...options, budgetMs: 40_000 };
-  // 검색 10페이지와 커서 저장. 감독 잡 상한 180초 안이며 전용 줄이라 원본 확보를 기다리지 않는다.
-  if (name === 'crawl-seed') return { ...options, budgetMs: 30_000 };
-  // 홈페이지가 10초대면 25초 예산은 두 파동에서 끝난다. 120초면 전용 줄이 쉬지 않고 이어서 받는다. 감독 상한 180초 안.
-  if (name === 'crawl-fetch') return { ...options, budgetMs: 120_000 };
-  return options;
+export function jobRunOptions(name: string, options: RequestedRunOptions, settings: RuntimeSettings = runtimeSettings()): JobRunOptions {
+  return settings.budgets[name] === undefined ? options : { ...options, budgetMs: effectiveJobBudgetMs(name, settings) };
+}
+
+/** 줄이 heartbeat 에 알리는 예산 — 감독의 job_timeout 이 env 하한과 이 예산 + 여유 중 큰 쪽으로 잰다(worker-progress runtimeLaneStall). 알리는 상한 1시간 */
+function declaredBudgetMs(run: JobRunOptions): number {
+  return Math.min(run.budgetMs ?? DEFAULT_JOB_BUDGET_MS, DECLARED_BUDGET_MAX_MS);
+}
+
+/**
+ * 부팅 때 host 장부 자리를 지키는 시간 — 감독이 자식을 끊는 한도(가장 긴 틱 예산 + 여유, env 하한 중 큰 쪽)와 drain 까지.
+ * 실시간 예산을 env 하한보다 크게 올려 두면 그만큼 더 지킨다(live-settings-plan §8 Q6). 부팅 뒤 더 올린 저장은 다음 재시작부터 반영된다.
+ */
+export function hostBudgetHoldMs(limits: { jobMs: number; drainMs: number }, names: readonly string[], settings: RuntimeSettings): number {
+  const declared = Math.max(0, ...names.map(name => declaredBudgetMs(jobRunOptions(name, { requestedOnly: true }, settings)) + DECLARED_BUDGET_MARGIN_MS));
+  return Math.max(limits.jobMs, declared) + limits.drainMs;
 }
 
 /**
@@ -153,13 +141,11 @@ export async function runWorker(options: WorkerOptions, dependencies: WorkerDepe
     if (running) dependencies.report?.('running', running.currentJob, running.startedAt, snapshot);
     else dependencies.report?.(states.some((lane) => lane.state === 'polling') ? 'polling' : 'idle', null, null, snapshot);
   };
-  const laneReport = (index: number): RuntimeReport => (state, currentJob = null) => {
+  const laneReport = (index: number): LaneReport => (state, currentJob = null, budgetMs = null) => {
     const now = Date.now();
-    // 도는 잡의 틱 예산을 감독에게 알린다 — 감독의 job_timeout 이 env 하한과 이 예산 + 여유 중 큰 쪽으로 잰다(worker-progress runtimeLaneStall)
-    const budgetMs = state === 'running' && currentJob
-      ? Math.min(jobRunOptions(currentJob, { requestedOnly: true }).budgetMs ?? 25_000, DECLARED_BUDGET_MAX_MS) : null;
+    // 도는 잡의 틱 예산을 감독에게 알린다 — 줄이 틱 앞에 고정한 스냅샷에서 한 번 계산한 값이라 잡이 쓰는 예산과 같다(다시 계산하지 않는다)
     states[index] = { ...states[index], state, currentJob, startedAt: state === 'running' ? now : null,
-      pollStartedAt: state === 'polling' ? now : null, lastProgressAt: now, budgetMs };
+      pollStartedAt: state === 'polling' ? now : null, lastProgressAt: now, budgetMs: state === 'running' && currentJob ? budgetMs : null };
     emit();
   };
   const results = await Promise.all([...lanes.map((names, index) => runLane(options, dependencies, names, intervalMs, laneReport(index))),
@@ -179,14 +165,17 @@ const CONSUMER_REFILL_MS = 1_000;
  * - 종료 신호를 받으면 새 틱을 시작하지 않고, 진행 중 틱은 runJob 이 lease 를 놓을 때까지 기다린다(다시 요청하지 않음).
  */
 async function runConsumerLane(options: WorkerOptions, dependencies: WorkerDependencies, consumer: BackgroundConsumerLanes,
-  name: string, intervalMs: number, report: RuntimeReport) {
+  name: string, intervalMs: number, report: LaneReport) {
   const halt = options.stopClaims ? AbortSignal.any([options.stopClaims, ...(options.signal ? [options.signal] : [])]) : options.signal;
+  const readSettings = dependencies.settings ?? (() => ensureRuntimeSettings());
   let ticks = 0, failures = 0, streak = 0;
   while (!halt?.aborted) {
     ticks++;
     let refill = false, failed = false;
     report('polling');
     try {
+      // 틱 앞에 실시간 한도 스냅샷을 한 번 받아 예산 계산과 잡 실행을 같은 판에 고정한다(D3). 던지지 않는다
+      const snapshot = await readSettings();
       await dependencies.seen([name]);
       if ((await dependencies.pending()).includes(name) && !halt?.aborted && await consumer.open()) {
         // 회로가 열렸으면 틱(job claim)을 시작하지 않는다 — job 요청·cursor·항목 실패 수는 그대로 남고 다음 poll 에 다시 본다
@@ -204,9 +193,10 @@ async function runConsumerLane(options: WorkerOptions, dependencies: WorkerDepen
             if (admission?.admitted) await admission.release().catch(() => {});
             break;
           }
-          report('running', name);
+          const run = jobRunOptions(name, { requestedOnly: true, signal: options.signal }, snapshot.settings);
+          report('running', name, declaredBudgetMs(run));
           try {
-            const tick = () => consumer.run(name, { requestedOnly: true, signal: options.signal });
+            const tick = () => withRuntimeSettings(snapshot, () => consumer.run(name, run));
             const result = await (circuit ? withProviderOutcome(circuit.record, tick) : tick());
             if (result.status === 'failed') failures++;
             refill = result.status === 'completed' && result.done === false;
@@ -236,8 +226,9 @@ async function runConsumerLane(options: WorkerOptions, dependencies: WorkerDepen
   return { ticks, failures };
 }
 
-async function runLane(options: WorkerOptions, dependencies: WorkerDependencies, names: string[], intervalMs: number, report: RuntimeReport) {
+async function runLane(options: WorkerOptions, dependencies: WorkerDependencies, names: string[], intervalMs: number, report: LaneReport) {
   const halt = options.stopClaims ? AbortSignal.any([options.stopClaims, ...(options.signal ? [options.signal] : [])]) : options.signal;
+  const readSettings = dependencies.settings ?? (() => ensureRuntimeSettings());
   let ticks = 0, failures = 0, nextIndex = 0, streak = 0;
   const sourceLane = names.length === 1 && ((options.role === "crawler" && names[0] === "product-evidence-refresh")
     || (options.role === "site-evidence" && names[0] === "product-site-evidence-refresh"));
@@ -246,6 +237,8 @@ async function runLane(options: WorkerOptions, dependencies: WorkerDependencies,
     let sourceContinued = false, stageRefill = false, failed = false;
     report('polling');
     try {
+      // 틱 앞에 실시간 한도 스냅샷을 한 번 받는다(30초 TTL, 던지지 않음). 이 poll 의 모든 잡은 이 판으로 예산을 계산하고 그 판에 고정되어 돈다(D3)
+      const snapshot = await readSettings();
       await dependencies.seen(names);
       const pending = new Set(await dependencies.pending());
       // Visit each role-owned job at most once per poll. Never run names from another role.
@@ -265,9 +258,11 @@ async function runLane(options: WorkerOptions, dependencies: WorkerDependencies,
           if (admission?.admitted) await admission.release().catch(() => {});
           break;
         }
-        report('running', name);
+        // 예산은 여기서 한 번만 계산한다 — heartbeat 에 알리는 값과 runner 가 받는 budgetMs 가 같은 스냅샷에서 나온다
+        const run = jobRunOptions(name, { requestedOnly: true, signal: options.signal }, snapshot.settings);
+        report('running', name, declaredBudgetMs(run));
         try {
-          const result = await dependencies.run(name, { requestedOnly: true, signal: options.signal });
+          const result = await withRuntimeSettings(snapshot, () => dependencies.run(name, run));
           if (result.status === 'failed') failures++;
           if (sourceLane && result.status === 'completed' && result.done === false && result.sourceContinuation === true) {
             sourceContinued = true;
@@ -317,7 +312,7 @@ export async function withRuntimeProcess<T>(
   const heartbeat = () => {
     if (process.connected && process.send) {
       // The parent can disconnect during shutdown. IPC failure must not interrupt a DB write.
-      try { process.send({ ...current, at: Date.now(), settings: lastSettingsRead() }, () => {}); } catch { /* disconnected */ }
+      try { process.send({ ...current, at: Date.now(), settings: lastSettingsRead(), runtimeSettings: lastRuntimeSettingsRead() }, () => {}); } catch { /* disconnected */ }
     }
   };
   const report: RuntimeReport = (state, currentJob = null, startedAt = null, lanes) => {
@@ -409,21 +404,22 @@ async function main() {
     if (consumed.length && !roleLease) throw new Error('background_consumer_role_lease_required');
     // provider 회로는 배경 consumer 줄에만 건다(기존 틱 줄은 그대로). consumer 가 꺼져 있으면 설정을 읽지 않는다
     const circuit = consumed.length ? providerCircuitConfig(process.env) : { mode: 'disabled' as const };
-    // 감독이 이 잡을 끊는 한도(job+drain)까지 번역 slot 을 지킨다 — 같은 env 로 부모가 쓰는 값이다
+    const names = roleLease?.batchVersion === 1 ? batchJobsForRole(options.role, "versioned") : jobsForRole(options.role as import("@/lib/jobs/catalog").JobRole);
+    // 감독이 이 잡을 끊는 한도(가장 긴 틱 예산 + 여유 ↔ env 하한, + drain)까지 번역 slot 을 지킨다 — 부팅 때 읽은 실시간 한도 판으로 잰다(Q6)
     const limits = supervisorLimits(options.role, process.env);
-    const host = startHostBudget(process.env, { holdMs: limits.jobMs + limits.drainMs });
+    const host = startHostBudget(process.env, { holdMs: hostBudgetHoldMs(limits, names, (await ensureRuntimeSettings(0)).settings) });
     try {
       if (host.enabled) await host.settled;
       const result = await runWorker({ ...options, signal, stopClaims }, {
-        names: roleLease?.batchVersion === 1 ? batchJobsForRole(options.role,"versioned") : jobsForRole(options.role as import("@/lib/jobs/catalog").JobRole),
+        names,
         lanes: batchLanesForRole(options.role, roleLease?.batchVersion === 1 ? 'versioned' : 'legacy'),
         pending: () => pendingJobNames(options.role),
         seen: markWorkerSeen,
-        // 미룸(defer:<job>)·수집기 회차 누적(job-tally:<job>) 관측은 워커만 남긴다
-        run: (name, runOptions) => runJob(name, JOBS[name], { ...jobRunOptions(name, runOptions), roleLease,
+        // 미룸(defer:<job>)·수집기 회차 누적(job-tally:<job>) 관측은 워커만 남긴다. budgetMs 는 줄이 고정한 스냅샷으로 넣어 준다(runOptions)
+        run: (name, runOptions) => runJob(name, JOBS[name], { ...runOptions, roleLease,
           onDeferred: reason => recordJobDeferral(name, reason), tally: true }),
         ...(consumed.length ? { consumer: { ...backgroundConsumerLanes(consumed,
-          (name, runOptions) => runJob(name, JOBS[name], { ...jobRunOptions(name, runOptions), roleLease,
+          (name, runOptions) => runJob(name, JOBS[name], { ...runOptions, roleLease,
             onDeferred: reason => recordJobDeferral(name, reason), tally: true })),
           ...(circuit.mode === 'enabled' ? { circuits: createProviderCircuits(circuit) } : {}) } } : {}),
         ...(host.enabled ? { admit: host.admit } : {}),

@@ -183,13 +183,26 @@ export function overlaidModelDefinitions(overrides: readonly unknown[], base: re
   return registrySchema.safeParse({ version: 1, models: merged }).success ? merged : [...base];
 }
 
+type RoutePolicyOverlay = () => { limits?: unknown; timeouts?: unknown; deadlines?: unknown } | null;
+let routePolicyOverlay: RoutePolicyOverlay | undefined;
+/**
+ * The server installs the admin route-policy reader (runtime_settings routes: limits/timeouts/deadlines, PR 1a) next to the model overlay.
+ * Client bundles keep the code defaults. An explicit MODEL_REGISTRY_CONFIG still bypasses both overlays for that process.
+ */
+export function setModelRoutePolicyOverlay(reader: RoutePolicyOverlay | undefined) { routePolicyOverlay = reader; }
+
 /** Same versioned JSON environment convention as LOCAL_MODEL_SERVING_CONTRACTS; malformed input fails closed. */
 export function readModelRegistry(env: ModelEnvironment = process.env): ModelRegistry {
   env = modelEnvironment(env);
   try {
     // An explicit MODEL_REGISTRY_CONFIG (including a job scope built from the overlaid registry) is used as is.
-    return registrySchema.parse(env.MODEL_REGISTRY_CONFIG?.trim() ? JSON.parse(env.MODEL_REGISTRY_CONFIG)
-      : { version: 1, models: overlaidModelDefinitions(registryOverlay?.() ?? []) });
+    if (env.MODEL_REGISTRY_CONFIG?.trim()) return registrySchema.parse(JSON.parse(env.MODEL_REGISTRY_CONFIG));
+    const models = overlaidModelDefinitions(registryOverlay?.() ?? []);
+    const policy = routePolicyOverlay?.() ?? null;
+    if (!policy) return registrySchema.parse({ version: 1, models });
+    // A route policy that fails the merged registry schema keeps the code-default routes (saving validates the merge first).
+    const merged = registrySchema.safeParse({ version: 1, models, limits: policy.limits ?? {}, timeouts: policy.timeouts ?? {}, deadlines: policy.deadlines ?? {} });
+    return merged.success ? merged.data : registrySchema.parse({ version: 1, models });
   } catch (error) {
     // Never include input values (URLs may contain credentials) in configuration errors.
     const detail = error instanceof z.ZodError ? error.issues.map(issue => `${issue.path.join(".")}:${issue.code === "custom" ? issue.message : issue.code}`).join(",") : "invalid_json";
@@ -334,7 +347,7 @@ export function modelDeadlineLadder(route: string, env: ModelEnvironment = proce
   return ladder;
 }
 
-/** Explicit caller deadlines may shorten this budget; registry changes require process restart. */
+/** Explicit caller deadlines may shorten this budget. Admin route policy (runtime_settings) and overrides apply on the next read; MODEL_REGISTRY_CONFIG env is restart-only. */
 export function modelTimeoutMs(purpose: string, env: ModelEnvironment = process.env): number {
   const registry = readModelRegistry(env);
   if (registry.deadlines[purpose] || DEFAULT_MODEL_DEADLINES[purpose]) return modelDeadlineLadder(purpose, env).clientMs;

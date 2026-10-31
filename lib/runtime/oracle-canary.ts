@@ -11,6 +11,8 @@ import { releaseRole, tryAcquireRole, type RoleLease } from '@/lib/jobs/role-lea
 import { JOB_CATALOG, JOB_ROLES, type JobRole } from '@/lib/jobs/catalog';
 import { scheduledJobs } from '@/lib/jobs/control';
 import { httpOriginPolicyHash, httpOriginPolicySchema } from '@/lib/net/http-origin-policy';
+import { effectiveJobBudgetMs } from '@/lib/operations/runtime-settings-schema';
+import { ensureRuntimeSettings } from '@/lib/operations/runtime-settings-store';
 import { ORACLE_DB_PRINCIPALS, ORACLE_PRIVILEGE_CATALOG_SQL, ORACLE_REFRESH_PRINCIPAL, ORACLE_UNSAFE_AUTHORITY_SQL, oracleDbPrivilegeMismatches } from './oracle-db-profile';
 import { classifyOracleModelEvidence, type OracleModelEvidence, type OracleModelTick } from './oracle-model-evidence';
 import { recordOracleSchedulerBoot, runOracleSchedulerTick } from './oracle-scheduler';
@@ -205,7 +207,12 @@ async function tick(lease: RoleLease | null, job: string): Promise<RunResult> {
     ROLE_LEASE_RELEASE: lease.release, ROLE_LEASE_EPOCH: String(lease.epoch),
     ...(lease.batchVersion === 1 ? { ROLE_LEASE_BATCH_VERSION: '1', ROLE_LEASE_BATCH_EPOCH: String(lease.batchEpoch), ROLE_LEASE_HOST: HOST } : {}) });
   let primary: unknown, run: RunResult | undefined;
-  try { run = await runJob(job, JOBS[job], { roleLease: lease }); } catch (error) { primary = error; }
+  // The canary tick runs with the budget the worker declares for this job from the runtime settings 판 (scripts/worker.ts jobRunOptions):
+  // the text jobs read their remaining time from that deadline (lib/jobs/tick-deadline.ts), so a tick on the runner default would never
+  // reach reason-translate's minCallMs and measure a tick the worker never runs. Jobs without a budget line keep the runner default.
+  const settings = (await ensureRuntimeSettings(0)).settings;
+  const budgetMs = settings.budgets[job] === undefined ? undefined : effectiveJobBudgetMs(job, settings);
+  try { run = await runJob(job, JOBS[job], { roleLease: lease, ...(budgetMs === undefined ? {} : { budgetMs }) }); } catch (error) { primary = error; }
   for (const key of keys) { if (previous[key] === undefined) delete process.env[key]; else process.env[key] = previous[key]; }
   try { if (!await releaseRole(lease)) throw new Error('oracle_canary_role_release_failed'); }
   catch (cleanup) { if (primary !== undefined) throw new AggregateError([primary, cleanup], 'oracle_canary_tick_and_release_failed'); throw cleanup; }

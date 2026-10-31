@@ -8,9 +8,9 @@ import { listReviewCandidates, loadReviewInput, claimAgentReview, recordAgentRev
   type CliModelCapacityReviewClaim, chooseFirstReviewForCandidate, listFirstReviewPoolCandidates,
   listOwnPendingFirstReviewCandidates, type PendingFirstReviewCandidate } from "@/lib/crawl/agent-review-repository";
 import { holdSuspectedSpam } from "@/lib/crawl/repository";
-import { firstReviewer, reviewWithAgent, REVIEW_CLI_TIMEOUT_MS } from "@/lib/crawl/agent-review";
-import { reviewWithGateway, REVIEW_GATEWAY_TIMEOUT_MS, type PreparedAi1GatewayCall } from "@/lib/crawl/agent-review-gateway";
-import { reviewWithGrokCli, GROK_REVIEW_TIMEOUT_MS } from "@/lib/crawl/agent-review-grok";
+import { firstReviewer, reviewCliTimeoutMs, reviewWithAgent } from "@/lib/crawl/agent-review";
+import { reviewGatewayTimeoutMs, reviewWithGateway, type PreparedAi1GatewayCall } from "@/lib/crawl/agent-review-gateway";
+import { grokReviewTimeoutMs, reviewWithGrokCli } from "@/lib/crawl/agent-review-grok";
 import { reviewSemanticNow } from "../review-replay-context";
 import { prepareAgentReview } from "../agent-review-preparation";
 import { assertReviewFixtureSettings, dispatchReviewFixtureCall } from "../review-fixture-transport";
@@ -79,8 +79,9 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
   // waiting for admission must not let us start a full call past that deadline.
   const deadlineAt = Math.min(startedAt + tickMs, ctx.deadlineAt ?? Infinity);
   const remaining = () => deadlineAt - Date.now();
-  const timeoutFor = (provider: string) => provider === "abcllm" ? REVIEW_GATEWAY_TIMEOUT_MS
-    : provider === "grok-cli" ? GROK_REVIEW_TIMEOUT_MS : REVIEW_CLI_TIMEOUT_MS;
+  // 제공자별 호출 상한은 이 틱의 등록부(관리자 실시간 한도 포함)에서 읽는다
+  const timeoutFor = (provider: string) => provider === "abcllm" ? reviewGatewayTimeoutMs()
+    : provider === "grok-cli" ? grokReviewTimeoutMs() : reviewCliTimeoutMs();
   const minimumCeiling = Math.min(...pool.map(reviewer => timeoutFor(reviewer.provider)));
   const visited = new Set<number>();
   const controllers = new Set<AbortController>();

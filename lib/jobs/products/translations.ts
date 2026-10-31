@@ -1,14 +1,17 @@
 import { scopedModel } from "@/lib/llm/model-registry";
 import { PRODUCT_TRANSLATION_MODEL } from "@/lib/crawl/translate";
 import { translateProductFieldsWithModelCapacity } from "@/lib/domain/products/product-translation-model-capacity";
-import { checkProductTranslation, packProductTranslationBatch, productTranslationSourceHash, translationSourceText,
-  PRODUCT_TRANSLATION_MAX_SOURCE_CHARS } from "@/lib/domain/products/translation-policy";
+import { checkProductTranslation, packProductTranslationBatch, productTranslationPolicy, productTranslationSourceHash,
+  translationSourceText } from "@/lib/domain/products/translation-policy";
 import { pendingProductTranslations, recordProductTranslations, type ProductTranslationResult } from "@/lib/domain/products/translations";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { productTranslationClientTimeoutMs } from "@/lib/llm/deadline-ladder";
 import { textRouteCallable } from "@/lib/llm/serving-contract-store";
 
-/** One call / at most four demanded fields per text-role tick (PRODUCT_TRANSLATION_JOB_BUDGET_MS). No catalog backfill. */
+/**
+ * One call / at most four demanded fields per text-role tick (budget: productTranslationJobBudgetMs — client timeout + jobMarginMs). No catalog backfill.
+ * Source cap and batch packing come from the tick's runtime_settings translation.product (productTranslationPolicy), so an admin save applies on the next tick.
+ */
 export async function translateDemandedProductFields(ctx: JobContext<null>): Promise<JobOutcome<null>> {
   if (!textRouteCallable("product-translate", scopedModel("product-translate", PRODUCT_TRANSLATION_MODEL))) {
     ctx.log("product_translation.deferred", { reason: "no_key" });
@@ -20,17 +23,18 @@ export async function translateDemandedProductFields(ctx: JobContext<null>): Pro
   const ownershipPoll = setInterval(() => { if (!ctx.hasBudget()) controller.abort(); }, 250);
   ownershipPoll.unref?.();
   try {
-    const tasks = await pendingProductTranslations(4);
+    const policy = productTranslationPolicy();
+    const tasks = await pendingProductTranslations(policy.batchMax);
     if (!tasks.length || !ctx.hasBudget() || signal.aborted) return { done: true };
     const retired = tasks.filter((task) => !task.eligible || productTranslationSourceHash(task.source, task.field) !== task.sourceHash
-      || translationSourceText(task.source, task.field).length > PRODUCT_TRANSLATION_MAX_SOURCE_CHARS);
+      || translationSourceText(task.source, task.field).length > policy.maxSourceChars);
     if (retired.length) await recordProductTranslations(retired.map((task) => ({ task,
-      result: { ok: false, error: translationSourceText(task.source, task.field).length > PRODUCT_TRANSLATION_MAX_SOURCE_CHARS ? "source_too_long" : "stale_source", model: "" } as ProductTranslationResult,
+      result: { ok: false, error: translationSourceText(task.source, task.field).length > policy.maxSourceChars ? "source_too_long" : "stale_source", model: "" } as ProductTranslationResult,
     })), ctx.lease);
-    // 긴 설명은 단독, 짧은 것만 묶인다(PRODUCT_TRANSLATION_BATCH_CHARS) — 300초 상한 안에 끝나게.
-    const batch = packProductTranslationBatch(tasks.filter((task) => !retired.includes(task)));
+    // 긴 설명은 단독, 짧은 것만 묶인다(translation.product.batchChars) — 300초 상한 안에 끝나게.
+    const batch = packProductTranslationBatch(tasks.filter((task) => !retired.includes(task)), policy);
     if (!batch.length || !ctx.hasBudget() || signal.aborted) return { done: true };
-    // Outermost HTTP deadline fits the job budget (PRODUCT_TRANSLATION_JOB_BUDGET_MS); inner M1 bounds still require measurement and enforcement.
+    // Outermost HTTP deadline (routes.limits.product-translate.timeoutMs, read per tick) fits the job budget; inner M1 bounds still require measurement and enforcement.
     const outcome = await translateProductFieldsWithModelCapacity(batch, ctx.lease, { timeoutMs: productTranslationClientTimeoutMs(), signal, deadlineAt: ctx.deadlineAt });
     if (outcome.kind === "skipped") return { done: true };
     const response = outcome.result;

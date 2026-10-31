@@ -151,6 +151,24 @@ it('carries the crawl settings version the worker last read, and keeps accepting
   expect(settingsFromHeartbeat({ ...message, settings: { version: 'abc123', at: 900 } })).toEqual({ settingsVersion: 'abc123', settingsReadAt: 900 });
   expect(settingsFromHeartbeat({ ...message, settings: { version: 42, at: 900 } as never })).toEqual({});
 });
+it('carries the runtime-settings version the worker pinned last (읽은 판) with its env-registry flag, and rejects a malformed one', () => {
+  const message = { type: 'runtime.heartbeat' as const, role: 'crawler', pid: 2, at: 1_000, state: 'idle' as const, currentJob: null, startedAt: null, lastProgressAt: 1_000 };
+  const read = { version: 'a'.repeat(16), at: 900, registryEnv: false };
+  // 아직 틱을 고정하지 않은 프로세스(null)와 옛 워커(없음)는 그대로 받고 지난 판을 지우지 않는다
+  expect(isRuntimeHeartbeat({ ...message, runtimeSettings: null }, 'crawler', 2)).toBe(true);
+  expect(settingsFromHeartbeat({ ...message, runtimeSettings: null })).toEqual({});
+  expect(isRuntimeHeartbeat({ ...message, runtimeSettings: read }, 'crawler', 2)).toBe(true);
+  expect(settingsFromHeartbeat({ ...message, runtimeSettings: read, settings: { version: 'abc123', at: 800 } })).toEqual({
+    settingsVersion: 'abc123', settingsReadAt: 800, runtimeSettingsVersion: 'a'.repeat(16), runtimeSettingsReadAt: 900, runtimeSettingsRegistryEnv: false,
+  });
+  // 빈 문서로 도는 워커는 'default' 판; MODEL_REGISTRY_CONFIG env 가 있는 프로세스는 registryEnv 로 알린다(경로 한도 저장이 닿지 않는다)
+  expect(settingsFromHeartbeat({ ...message, runtimeSettings: { version: 'default', at: 900, registryEnv: true } }))
+    .toEqual({ runtimeSettingsVersion: 'default', runtimeSettingsReadAt: 900, runtimeSettingsRegistryEnv: true });
+  for (const bad of [{ ...read, version: 42 }, { ...read, version: '' }, { ...read, version: 'x'.repeat(65) }, { ...read, version: 'has space' },
+    { ...read, at: NaN }, { ...read, at: 1.5 }, { ...read, registryEnv: 'yes' }, { version: 'default', at: 900 }, 'v1', 7]) {
+    expect(isRuntimeHeartbeat({ ...message, runtimeSettings: bad }, 'crawler', 2), JSON.stringify(bad)).toBe(false);
+  }
+});
 it('rejects stale, stopped and different-role health without any network probe', () => {
   expect(workerIsHealthy(health, 5_000, 'crawler')).toBe(true);
   expect(workerIsHealthy(health, 40_000, 'crawler')).toBe(false);

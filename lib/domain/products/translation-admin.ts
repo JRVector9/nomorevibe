@@ -4,8 +4,8 @@ import { db, onPrimary } from "@/lib/db";
 import { operationsAudit, productIntroChecks, products, productTranslations, takedownRequests,
   type ProductTranslationField, type ProductTranslationLocale, type ProductTranslationStatus } from "@/lib/db/schema";
 import { adminAuditRow } from "@/lib/operations/admin-log";
-import { detectTranslationSourceLocale, isProductTranslationField, productTranslationSourceHash, translationSourceText,
-  PRODUCT_TRANSLATION_MAX_ATTEMPTS, PRODUCT_TRANSLATION_MAX_SOURCE_CHARS } from "./translation-policy";
+import { detectTranslationSourceLocale, isProductTranslationField, productTranslationPolicy, productTranslationSourceHash,
+  translationSourceText } from "./translation-policy";
 import { PRODUCT_TRANSLATION_JOB, productTranslationEligible, requestProductTranslations } from "./translations";
 import { requestJob } from "@/lib/jobs/control";
 
@@ -58,8 +58,8 @@ function item(row: {
     : takedownPending ? "takedown_pending" as const : introHold ? "intro_editor_hold" as const : null;
   const recoveryReason = !row.eligible ? holdReason ?? "ineligible" : row.status !== "failed" ? "not_failed"
     : !sourceText.trim() ? "empty_source" : detectTranslationSourceLocale(sourceText) === row.locale ? "source_native"
-      : sourceText.length > PRODUCT_TRANSLATION_MAX_SOURCE_CHARS ? "source_too_long" : !sourceMatches ? "new_source"
-        : row.attempts >= PRODUCT_TRANSLATION_MAX_ATTEMPTS ? "exhausted"
+      : sourceText.length > productTranslationPolicy().maxSourceChars ? "source_too_long" : !sourceMatches ? "new_source"
+        : row.attempts >= productTranslationPolicy().maxAttempts ? "exhausted"
           : row.retryAt && new Date(row.retryAt) > now ? "retry_wait" : "retry";
   return { ...value, updatedAt: row.updatedAt!, currentSourceHash, sourceText, sourceMatches, holdReason,
     recovery: recoveryReason === "retry" || recoveryReason === "new_source" ? recoveryReason : null, recoveryReason };
@@ -105,8 +105,8 @@ export function productTranslationAdminSummary() {
     pending: sql<number>`count(*) filter (where ${t.status} = 'pending')::int`,
     ready: sql<number>`count(*) filter (where ${t.status} in ('ready', 'reviewed'))::int`,
     failed: sql<number>`count(*) filter (where ${t.status} = 'failed')::int`,
-    exhausted: sql<number>`count(*) filter (where ${t.status} = 'failed' and ${t.attempts} >= ${PRODUCT_TRANSLATION_MAX_ATTEMPTS})::int`,
-    retryWaiting: sql<number>`count(*) filter (where ${t.status} = 'failed' and ${t.attempts} < ${PRODUCT_TRANSLATION_MAX_ATTEMPTS} and ${t.retryAt} > now())::int`,
+    exhausted: sql<number>`count(*) filter (where ${t.status} = 'failed' and ${t.attempts} >= ${productTranslationPolicy().maxAttempts})::int`,
+    retryWaiting: sql<number>`count(*) filter (where ${t.status} = 'failed' and ${t.attempts} < ${productTranslationPolicy().maxAttempts} and ${t.retryAt} > now())::int`,
     held: sql<number>`count(*) filter (where not (${productTranslationEligible}))::int`,
     oldestFailedAt: iso(sql`min(${t.updatedAt}) filter (where ${t.status} = 'failed')`),
     lastSavedAt: iso(sql`max(${t.updatedAt}) filter (where ${t.status} in ('ready', 'reviewed'))`),

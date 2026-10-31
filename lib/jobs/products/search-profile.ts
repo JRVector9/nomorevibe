@@ -1,13 +1,15 @@
-import { scopedModel } from "@/lib/llm/model-registry";
-import { modelLimits, modelTimeoutMs } from "@/lib/llm/model-registry";
+import { modelLimits, modelTimeoutMs, scopedModel } from "@/lib/llm/model-registry";
 import { roleLeaseFromEnv } from "@/lib/jobs/role-leader";
 import { writeKeywordsWithModelCapacity } from "@/lib/domain/products/search-profile-model-capacity";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
+import { tickRemaining } from "@/lib/jobs/tick-deadline";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { PROFILE_MODEL, profileEvidence, profileHash } from "@/lib/domain/products/search-profile";
 import { pendingProfiles, recordProfileResult } from "@/lib/domain/products/search-profiles";
 import { otherRoutesWaitingOnGroup } from "@/lib/llm/capacity-busy-targets";
 import { textRouteCallable } from "@/lib/llm/serving-contract-store";
+import { DEFAULT_RUNTIME_SETTINGS, jobKnob } from "@/lib/operations/runtime-settings-schema";
+import { runtimeSettings } from "@/lib/operations/runtime-settings-store";
 
 /**
  * 검색 키워드 짓기 — 공개 제품마다 모델이 한·영 검색어를 적는다(search-profile.ts).
@@ -23,22 +25,18 @@ import { textRouteCallable } from "@/lib/llm/serving-contract-store";
  * 원인이 아니라 보태는 쪽이었다.
  */
 
-/** 한 번에 집는 수 */
-const BATCH = 12;
+const JOB = "product-search-profile";
 /**
- * 한 번에 둘. gpt-oss 서버는 들어온 요청을 묶어 한꺼번에 처리해 둘이면 처리량이 거의 두 배다.
- * 하나일 때 시간당 약 680건(2026-09-24), 셋일 때 1차 심사가 평균 9.7→10.5초로 늘었다(9/23).
- * 게이트웨이가 밀리면 아래 SLOW_CALL_MS 가 틱을 접어 심사에 자리를 준다.
+ * 한도는 틱마다 읽는다(관리자 실시간 한도 — 저장하면 재배포 없이 다음 틱에 반영):
+ * - runtime_settings jobs.product-search-profile: batch 12(한 번에 집는 수), minCallMs 15초(이만큼 남아 있을 때만 새로 부른다),
+ *   slowCallMs 20초(한 건이 이보다 오래 걸리면 게이트웨이가 밀린 것이다 — 평소 7초 안팎 — 이번 틱을 접고 심사에 자리를 준다).
+ * - 등록부 경로 product-search-profile(routes.limits): 동시 호출(한 번에 둘 — gpt-oss 서버는 들어온 요청을 묶어 한꺼번에 처리해 둘이면 처리량이
+ *   거의 두 배다. 하나일 때 시간당 약 680건(2026-09-24), 셋일 때 1차 심사가 평균 9.7→10.5초로 늘었다(9/23). 게이트웨이가 밀리면 slowCallMs 가
+ *   틱을 접어 심사에 자리를 준다)과 한 번 부르는 데 둘 시간.
+ * - 틱의 남은 시간은 러너가 준 deadlineAt(틱 예산 budgets)에서 — 잡 안의 TICK_MS 상수는 없다(lib/jobs/tick-deadline.ts).
  */
-const CONCURRENCY = modelLimits("product-search-profile").concurrency;
-/** 한 번 부르는 데 둘 시간 */
-const CALL_MS = modelTimeoutMs("product-search-profile");
-/** 한 건이 이보다 오래 걸리면 게이트웨이가 밀린 것이다(평소 7초 안팎) — 이번 틱을 접고 심사에 자리를 준다 */
-export const SLOW_CALL_MS = 20_000;
-/** 틱 예산(worker.ts jobRunOptions 55초)보다 조금 짧게 */
-const TICK_MS = 54_000;
-/** 이만큼 남아 있을 때만 새로 부른다 */
-const MIN_CALL_MS = 15_000;
+/** 느린 호출 문턱의 코드 기본값(로드 시점 값, 테스트용). 잡은 틱마다 jobs.product-search-profile.slowCallMs 를 읽는다 */
+export const SLOW_CALL_MS = jobKnob(DEFAULT_RUNTIME_SETTINGS, JOB, "slowCallMs");
 
 /** 게이트웨이가 막힌 것은 이 제품의 문제가 아니다 — 잇따라 둘이 막히면 이번 틱을 접는다 */
 const GATEWAY_DOWN = new Set(["no_key", "model_unavailable", "rate_limit", "timeout", "network"]);
@@ -57,13 +55,16 @@ export async function writeSearchProfiles(ctx: JobContext<null>): Promise<JobOut
   ownershipPoll.unref?.();
   try {
     const startedAt = Date.now();
-    const remaining = () => TICK_MS - (Date.now() - startedAt);
+    const remaining = tickRemaining(ctx, JOB, startedAt);
+    const knobs = runtimeSettings();
+    const batch = jobKnob(knobs, JOB, "batch"), minCallMs = jobKnob(knobs, JOB, "minCallMs"), slowCallMs = jobKnob(knobs, JOB, "slowCallMs");
+    const concurrency = modelLimits(JOB).concurrency, callMs = modelTimeoutMs(JOB);
     let written = 0, reused = 0, failed = 0, blocked = "", inARow = 0;
     // 이번 틱에 이미 집은 제품은 다시 고르지 않는다 — 적지 못하고 돌아온(skipped·쓰기 경합) 머리가 남은 틱을 같은 조회로 맴돌게 하지 않는다
     const visited = new Set<number>();
 
-    while (!signal.aborted && ctx.hasBudget() && remaining() >= MIN_CALL_MS) {
-      const tasks = await pendingProfiles(BATCH, roleLease, [...visited]);
+    while (!signal.aborted && ctx.hasBudget() && remaining() >= minCallMs) {
+      const tasks = await pendingProfiles(batch, roleLease, [...visited]);
       if (tasks.length === 0) {
         ctx.log("search_profile.done", { written, reused, failed, drained: true });
         return { done: true };
@@ -71,13 +72,13 @@ export async function writeSearchProfiles(ctx: JobContext<null>): Promise<JobOut
       let next = 0;
       // 같은 모델 그룹에서 다른 잡이 기다리면 이번 묶음은 일꾼 하나 — 자리가 나는 즉시 둘 다 채워 남을 굶기지 않는다.
       // 장부 예약을 쓰는 경로(역할 lease 가 있는 text 워커)에서만 본다. legacy 경로에는 장부가 없다.
-      const fairShare = CONCURRENCY > 1 && roleLease !== undefined
+      const fairShare = concurrency > 1 && roleLease !== undefined
         && await otherRoutesWaitingOnGroup("product-search-profile", scopedModel("product-search-profile", PROFILE_MODEL));
       if (fairShare) ctx.log("search_profile.fair_share", { concurrency: 1 });
-      const settled = await Promise.allSettled(Array.from({ length: fairShare ? 1 : CONCURRENCY }, async () => {
+      const settled = await Promise.allSettled(Array.from({ length: fairShare ? 1 : concurrency }, async () => {
         try {
           for (let index = next++; index < tasks.length; index = next++) {
-            if (blocked || signal.aborted || !ctx.hasBudget() || remaining() < MIN_CALL_MS) return;
+            if (blocked || signal.aborted || !ctx.hasBudget() || remaining() < minCallMs) return;
             const task = tasks[index];
             visited.add(task.product.id);
             const evidence = profileEvidence(task.product, task.reviewerNote);
@@ -89,16 +90,16 @@ export async function writeSearchProfiles(ctx: JobContext<null>): Promise<JobOut
               continue;
             }
             const calledAt = Date.now();
-            const timeoutMs = Math.max(1_000, Math.min(CALL_MS, remaining() - 1_000));
+            const timeoutMs = Math.max(1_000, Math.min(callMs, remaining() - 1_000));
             const outcome = await writeKeywordsWithModelCapacity(task, lease, { signal, timeoutMs, roleLease });
             if (outcome.kind === "skipped") return;
             const result = outcome.result;
             if (signal.aborted) return;
-            if (Date.now() - calledAt >= SLOW_CALL_MS) blocked = "slow";
+            if (Date.now() - calledAt >= slowCallMs) blocked = "slow";
             if (!result.ok) {
               // A shorter deadline comes from this tick's remaining time, not the product.
               // Keep it eligible for the next tick instead of consuming a retry.
-              if (result.error === "timeout" && timeoutMs < CALL_MS) {
+              if (result.error === "timeout" && timeoutMs < callMs) {
                 blocked = "tick_budget";
                 return;
               }

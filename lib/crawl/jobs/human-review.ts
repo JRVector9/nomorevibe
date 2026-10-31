@@ -6,7 +6,7 @@ import { withLocalModelCapacity } from '@/lib/llm/local-model-capacity';
 import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
 import { REVIEW_PROMPT_VERSION } from '../agent-review-contract';
 import { reviewWithDeepSeek } from '../deepseek-review';
-import { DEEPSEEK_REVIEW_TIMEOUT_MS } from '../deepseek-review-policy';
+import { deepseekReviewTimeoutMs } from '../deepseek-review-policy';
 import { runHeldQwenRetry } from '../held-qwen-retry';
 import { heldQwenOwnedReasons } from '../held-qwen-retry-policy';
 import { runSplitTiebreakConfirmations } from '../gate-split-confirm';
@@ -43,13 +43,14 @@ async function delegateToDeepSeek(ctx: JobContext<null>, lease: NonNullable<JobC
   const ids = [...new Set([...overview.ids.human, ...overview.ids.agreed])];
   const repos = await humanReviewRepos(ids, heldQwenOwnedReasons(settings));
   let started = 0, applied = 0, held = 0, failed = 0;
+  const callTimeoutMs = deepseekReviewTimeoutMs();
   for (const repo of repos) {
     if (started >= 2 || ctx.signal?.aborted || !ctx.hasBudget()
-      || ctx.deadlineAt !== undefined && ctx.deadlineAt - Date.now() < DEEPSEEK_REVIEW_TIMEOUT_MS + 2_000) break;
+      || ctx.deadlineAt !== undefined && ctx.deadlineAt - Date.now() < callTimeoutMs + 2_000) break;
     const claim = await claimHumanReview(repo, lease);
     if (!claim) continue;
     if (ctx.signal?.aborted || !ctx.hasBudget()
-      || ctx.deadlineAt !== undefined && ctx.deadlineAt - Date.now() < DEEPSEEK_REVIEW_TIMEOUT_MS + 2_000) {
+      || ctx.deadlineAt !== undefined && ctx.deadlineAt - Date.now() < callTimeoutMs + 2_000) {
       await recordHumanReview(claim, { ok: false, error: 'cancelled' });
       break;
     }

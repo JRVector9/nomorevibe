@@ -18,7 +18,8 @@ import { serviceInstanceId } from "@/lib/operations/instance";
  * 그래서 심사와 무관하게 주기적으로 한 번 부른다. 결과는 `service:grok:<instance>` 관측으로 남겨 운영센터
  * 모델 카드가 Claude·Codex 처럼 "Grok 연결 확인"을 보인다. grok-cli 를 쓰는 설정이 없으면 아무것도 하지 않는다.
  */
-export const GROK_SESSION_TIMEOUT_MS = modelTimeoutMs("grok-session");
+/** 호출 상한 — 틱마다 등록부 경로 grok-session 을 읽는다(관리자 실시간 한도, 재배포 없이 다음 틱에 반영) */
+export function grokSessionTimeoutMs(): number { return modelTimeoutMs("grok-session"); }
 
 export function grokSessionArgs(model: string): string[] {
   return ["-p", "Reply with the single word OK.", "-m", model, "--effort", "low", "--output-format", "json",
@@ -46,7 +47,7 @@ export async function checkGrokSession(ctx: JobContext<null>, deps: { run?: Grok
     await mkdir(home);
     const run = capacity === "native" && ctx.lease ? grokSessionCliRun(model, ctx.lease) : deps.run ?? runGrokCli;
     const outcome = await run(grokSessionArgs(model), { cwd: directory, env: { ...process.env, GROK_HOME: home, GROK_AUTH_PATH: authPath, RUST_LOG: "off", NO_COLOR: "1" },
-      timeoutMs: GROK_SESSION_TIMEOUT_MS, signal: ctx.signal });
+      timeoutMs: grokSessionTimeoutMs(), signal: ctx.signal });
     if (outcome.kind !== "exit") result = { result: outcome.kind };
     else if (outcome.code !== 0) result = { result: grokFailure(outcome.stdout, outcome.stderr) };
     else {

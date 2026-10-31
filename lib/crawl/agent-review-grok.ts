@@ -18,6 +18,8 @@ import { MAX_REVIEW_INPUT_BYTES, validateReviewOutcome, type ReviewInput } from 
  * GROK_AUTH_PATH 하나만 함께 쓴다 — CLI 가 갱신한 토큰을 그 파일에 다시 쓰므로 쓸 수 있는 경로여야 한다.
  */
 export const GROK_REVIEW_TIMEOUT_MS = modelTimeoutMs("grok-review");
+/** 위 상수는 로드 시점 값(테스트·문서용). 호출은 이 함수로 등록부 경로 grok-review 를 그때 읽는다 — 관리자 실시간 한도가 다음 틱에 반영된다 */
+export function grokReviewTimeoutMs(): number { return modelTimeoutMs("grok-review"); }
 /**
  * 추론 강도 — 기본 low, 환경변수로 바꾼다. 모델 카탈로그: minimal·low·medium·high·xhigh.
  * 50건 비교(2026-10-04, 프롬프트 2026-10-03.1): low 는 high 와 48/50 같은 판정(다른 2건은 low 가 더 엄격), 중앙값 9.6초 vs 17.2초,
@@ -135,10 +137,11 @@ export async function reviewWithGrokCli(input: ReviewInput, options: { model: st
     await mkdir(path.join(home, "agents"), { recursive: true });
     await Promise.all([writeFile(promptFile, prompt, "utf8"), writeFile(path.join(home, "agents", `${GROK_REVIEW_AGENT}.md`), grokReviewAgentDefinition(), "utf8")]);
     const env = { ...process.env, GROK_HOME: home, GROK_AUTH_PATH: grokAuthPath(), RUST_LOG: "off", NO_COLOR: "1" };
+    const ceiling = grokReviewTimeoutMs();
     let result: GrokCliResult;
     try {
       result = await (options.run ?? runGrokCli)(grokReviewArgs(model, promptFile), {
-        cwd: directory, env, timeoutMs: Math.max(1, Math.min(options.timeoutMs ?? GROK_REVIEW_TIMEOUT_MS, GROK_REVIEW_TIMEOUT_MS)), signal: options.signal,
+        cwd: directory, env, timeoutMs: Math.max(1, Math.min(options.timeoutMs ?? ceiling, ceiling)), signal: options.signal,
       });
     } catch { return { ok: false, error: "cli_error" }; }
     return grokReviewResult(input, result);

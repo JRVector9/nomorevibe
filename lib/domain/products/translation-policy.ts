@@ -2,21 +2,31 @@ import { createHash } from "node:crypto";
 import { isLocale, type Locale } from "@/lib/i18n/locales";
 import type { ProductTranslation, ProductTranslationField, ProductTranslationLocale } from "@/lib/db/schema";
 import { hasEnglishEvidence } from "@/lib/i18n/content-language";
+import { DEFAULT_RUNTIME_SETTINGS, type ProductTranslationPolicy } from "@/lib/operations/runtime-settings-schema";
+import { runtimeSettings } from "@/lib/operations/runtime-settings-store";
 
 export const PRODUCT_TRANSLATION_POLICY = "public-fields-v1";
-export const PRODUCT_TRANSLATION_MAX_ATTEMPTS = 4;
-export const PRODUCT_TRANSLATION_DEMAND_LIMIT = 80;
+/**
+ * 아래 상수는 코드 기본값(로드 시점 값, 테스트·문서용)이다. 원천은 runtime_settings 의 translation.product 이며 잡·웹은 productTranslationPolicy() 로
+ * 틱/요청마다 읽는다 — 관리자 저장이 재배포 없이 다음 틱에 반영된다.
+ */
+export const PRODUCT_TRANSLATION_MAX_ATTEMPTS = DEFAULT_RUNTIME_SETTINGS.translation.product.maxAttempts;
+export const PRODUCT_TRANSLATION_DEMAND_LIMIT = DEFAULT_RUNTIME_SETTINGS.translation.product.demandLimit;
 /** 한 요청(최대 4건)의 원문 글자 합 상한. 설명은 8,000자까지인데 4,000자 상한이 긴 설명을 source_too_long 으로 버렸다 — 2026-10-30 M1 출력 30K 토큰과 함께 30K 자로. */
-export const PRODUCT_TRANSLATION_MAX_SOURCE_CHARS = 30_000;
+export const PRODUCT_TRANSLATION_MAX_SOURCE_CHARS = DEFAULT_RUNTIME_SETTINGS.translation.product.maxSourceChars;
 /** 묶음 포장 임계: 글자 합이 이를 넘으면 더 묶지 않는다. 설명 한 건은 8,000자까지라 긴 설명은 단독으로 나가고(M1 ≈ 100초), 짧은 것만 묶인다. */
-export const PRODUCT_TRANSLATION_BATCH_CHARS = 8_000;
-/** 순서대로 묶는다: 첫 건은 길이와 무관하게 들어가고(단독 요청), 다음 건은 글자 합이 임계를 넘지 않을 때만 더한다. 건너뛰지 않고 최대 4건. */
-export function packProductTranslationBatch<T extends { source: ProductTranslationSource; field: ProductTranslationField }>(tasks: readonly T[]): T[] {
+export const PRODUCT_TRANSLATION_BATCH_CHARS = DEFAULT_RUNTIME_SETTINGS.translation.product.batchChars;
+/** 지금 판의 공개 번역 정책(고정된 틱 스냅샷 → 프로세스 스냅샷 → 기본값). 동기, 던지지 않는다. */
+export function productTranslationPolicy(): ProductTranslationPolicy { return runtimeSettings().translation.product; }
+/** 순서대로 묶는다: 첫 건은 길이와 무관하게 들어가고(단독 요청), 다음 건은 글자 합이 임계를 넘지 않을 때만 더한다. 건너뛰지 않고 최대 batchMax(4)건. */
+export function packProductTranslationBatch<T extends { source: ProductTranslationSource; field: ProductTranslationField }>(
+  tasks: readonly T[], policy: ProductTranslationPolicy = productTranslationPolicy(),
+): T[] {
   const batch: T[] = [];
   let chars = 0;
   for (const task of tasks) {
     const length = translationSourceText(task.source, task.field).length;
-    if (batch.length && (batch.length >= 4 || chars + length > PRODUCT_TRANSLATION_BATCH_CHARS)) break;
+    if (batch.length && (batch.length >= policy.batchMax || chars + length > policy.batchChars)) break;
     batch.push(task); chars += length;
   }
   return batch;

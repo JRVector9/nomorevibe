@@ -340,3 +340,22 @@ export const modelRegistryOverrides = pgTable('model_registry_overrides', {
   check('model_registry_overrides_identity_check', sql`jsonb_typeof(${table.definition}) = 'object' AND ${table.definition}->>'key' = ${table.key}`),
   uniqueIndex('model_registry_overrides_enabled_idx').on(table.key).where(sql`${table.enabled}`),
 ]);
+
+/**
+ * 관리자 실시간 한도 문서(0152): 경로 한도(limits/timeouts/deadlines)·번역 묶음·틱 예산. 한 행(id = 1), 코드 기본값 위에 덮는 sparse JSON
+ * (lib/operations/runtime-settings-schema.ts). 판 = storedSettingsVersion(values); revision 은 폼의 compare-and-set 과 감사 기록의 참조다.
+ * 이력 표는 없다 — operations_audit(runtime-settings-save) 가 저장마다 before/after/changes/revision 을 남긴다.
+ */
+export const runtimeSettings = pgTable('runtime_settings', {
+  id: integer('id').primaryKey().default(1),
+  values: jsonb('values').$type<Record<string, unknown>>().notNull(),
+  revision: bigint('revision', { mode: 'number' }).notNull().default(1),
+  updatedBy: varchar('updated_by', { length: 120 }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
+  updatedAt: timestamp('updated_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
+}, table => [
+  check('runtime_settings_single_row_check', sql`${table.id} = 1`),
+  // coalesce: a document without version must fail the CHECK (a NULL comparison would pass it)
+  check('runtime_settings_values_check', sql`jsonb_typeof(${table.values}) = 'object' AND coalesce(${table.values}->>'version', '') = '1' AND pg_column_size(${table.values}) <= 65536`),
+  check('runtime_settings_revision_check', sql`${table.revision} BETWEEN 1 AND 9007199254740991`),
+]);
