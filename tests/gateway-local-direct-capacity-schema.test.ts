@@ -64,7 +64,9 @@ it("registers one additive migration after the device tables, flagged for renumb
   const journal = JSON.parse(readFileSync("drizzle/meta/_journal.json", "utf8")) as { entries: { idx: number; when: number; tag: string }[] };
   const index = journal.entries.findIndex(entry => entry.tag === tag);
   expect(journal.entries[index]).toMatchObject({ idx: 155, when: 1794086401066, tag, breakpoints: true });
-  expect(journal.entries[index - 1]).toMatchObject({ idx: 153, tag: "0153_model_capacity_devices" });
+  // main 에 PR 2a(0154 capacity_helpers)가 먼저 들어가 그 뒤에 선다. 0155 번호는 #760·#761 과 겹쳐 통합 때 다시 매긴다.
+  expect(journal.entries[index - 1]).toMatchObject({ idx: 154, tag: "0154_capacity_helpers" });
+  expect(journal.entries[index - 2]).toMatchObject({ idx: 153, tag: "0153_model_capacity_devices" });
   expect(journal.entries.filter(entry => entry.idx === 155 || entry.tag === tag)).toHaveLength(1);
   expect(migration().split("\n")[0]).toContain("renumbered at integration");
 });

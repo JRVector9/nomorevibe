@@ -64,7 +64,7 @@ describe("admin models 리디자인 렌더", () => {
     for (const value of ["routeId", "groupId", "providerBudgetId", "requestId", redesignRequests[0].requestId]) {
       expect(html).toContain(value); expect(visible).not.toContain(value);
     }
-    expect(html).not.toMatch(/<details[^>]*\sopen/); expect(visible).toContain("[supa]"); expect(visible).toContain("gpt-oss-120b");
+    expect(html).not.toMatch(/<details[^>]*\sopen/); expect(visible).toContain("[Supa]"); // 2026-10-31: 카드는 장비 값이 아니라 서버 이름(주소·장비·그룹 순)으로 보인다 expect(visible).toContain("gpt-oss-120b");
   });
   it("종료 표본이 없으면 기록 없음이며 시간당 0건·실패율 0%로 꾸미지 않는다", () => {
     const html = renderToStaticMarkup(createElement(ThroughputMetrics, {}));
@@ -81,5 +81,24 @@ describe("admin models 리디자인 렌더", () => {
     expect(html).toContain('name="firstAdditionalModel0" value="[MLX] gpt-oss-120b"');
     expect(html).toContain("설정 바꾸기"); expect(html).toContain("저장된 설정과 같습니다");
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>모델 설정 저장<\/button>/);
+  });
+});
+
+describe("모델 카드 서버 이름 — 장비 미확인 없이(2026-10-31)", () => {
+  it("주소·장비·같은 이름 항목·장비 그룹·대괄호 라벨 순으로 서버 이름을 찾는다", async () => {
+    const { modelServerName } = await import("@/lib/operations/admin-models-view");
+    const models = [
+      { key: "gpu3090:review", equipment: "gpu3090", provider: "local-direct", model: "qwen3.8-flash-next", baseUrl: "http://100.77.43.63:8090/v1" },
+      { key: "mlx:text", equipment: "mlx", provider: "abcllm", model: "gpt-oss-120b", baseUrl: "http://100.92.77.66:8014/v1" },
+      { key: "m1:translation", equipment: "m1", provider: "abcllm", model: "gemma", baseUrl: "https://m1-studio.tail02799e.ts.net/v1" },
+    ] as never[];
+    // 1차 검수 abcllm 계약: 등록부엔 local-direct 항목뿐 — 같은 모델 이름의 유일한 항목 주소로 gpu3090
+    expect(modelServerName({ provider: "abcllm", model: "qwen3.8-flash-next" }, undefined, models, ["gpu3090-qwen"])).toBe("gpu3090");
+    expect(modelServerName({ provider: "abcllm", model: "gpt-oss-120b" }, models[1], models, [])).toBe("M3 Ultra");
+    expect(modelServerName({ provider: "abcllm", model: "gemma" }, models[2], models, [])).toBe("M1 Studio");
+    // 등록부에서 사라진 옛 이름은 그 카드가 쓴 장비 그룹으로
+    expect(modelServerName({ provider: "abcllm", model: "Inferact/Qwen3.8-27B-NVFP4" }, undefined, models, ["supa", "supa-direct"])).toBe("Supa");
+    expect(modelServerName({ provider: "abcllm", model: "[MLX] gpt-oss-120b" }, undefined, models, [])).toBe("M3 Ultra");
+    expect(modelServerName({ provider: "abcllm", model: "unknown-model" }, undefined, models, [])).toBe("장비 미확인");
   });
 });

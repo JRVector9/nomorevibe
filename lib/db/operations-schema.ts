@@ -14,7 +14,8 @@ import { MODEL_CAPACITY_LIVE_STATES_SQL, MODEL_CAPACITY_OCCUPYING_STATES_SQL, MO
 import type { OperatorReviewEvidence } from '@/lib/llm/capacity';
 import type { LocalModelBinding, LocalModelTerminalEvidence } from '@/lib/llm/local-model-capacity-contract';
 import { sql } from 'drizzle-orm';
-import { pgTable, varchar, jsonb, timestamp, serial, bigserial, integer, text, bigint, boolean, index, uniqueIndex, check, primaryKey, foreignKey, uuid } from 'drizzle-orm/pg-core';
+import { pgTable, varchar, jsonb, timestamp, serial, bigserial, integer, text, bigint, boolean, index, uniqueIndex, unique, check, primaryKey, foreignKey, uuid, numeric, doublePrecision } from 'drizzle-orm/pg-core';
+import type { HelperLiveDownstream, HelperMode, HelperReason, HelperShadowAgreement, HelperShadowRunState, HelperStage, HelperStopEffect, HelperVerdict } from '@/lib/llm/capacity-helpers';
 import type { ItemBinding, ItemStage, ItemStageMode } from '@/lib/jobs/items/types';
 import type { ModelCapacityClass, ModelCapacityEventKind, ModelCapacityEventReason, ModelCapacityMode,
   ModelCapacityPolicy, ModelCapacityPool, ModelCapacityState, Ai1DispatchBinding, Ai1GatewayTerminalEvidence, Ai2DispatchBinding, Ai2GatewayTerminalEvidence, Ai1ItemDispatchBinding, Ai1ItemGatewayTerminalEvidence, TextProfileDispatchBinding, TextProfileGatewayTerminalEvidence, ReasonTranslationDispatchBinding, ReasonTranslationGatewayTerminalEvidence, ProductTranslationDispatchBinding, ProductTranslationGatewayTerminalEvidence, ProductTaglineKoDispatchBinding, ProductTaglineKoGatewayTerminalEvidence, CrawlTaglineDispatchBinding, CrawlTaglineGatewayTerminalEvidence, SearchVerifyDispatchBinding, SearchVerifyGatewayTerminalEvidence, WebsearchQueryDispatchBinding, WebsearchQueryGatewayTerminalEvidence, CliDispatchBinding, CliModelTerminalEvidence, ModelDispatchReleaseEvidence, GatewayNotStartedEvidence } from '@/lib/llm/capacity';
@@ -246,6 +247,222 @@ export const modelCapacityDeviceRoles = pgTable('model_capacity_device_roles', {
   foreignKey({ columns: [table.deviceId], foreignColumns: [modelCapacityDevices.deviceId], name: 'model_capacity_device_roles_device_fk' }).onDelete('cascade'),
   check('model_capacity_device_roles_rank_check', sql`${table.roleRank} between 1 and 64`),
   check('model_capacity_device_roles_route_check', sql`char_length(${table.routeId}) > 0 and ${table.routeId} = btrim(${table.routeId}) and ${table.routeId} !~ '[[:cntrl:]]'`),
+]);
+/**
+ * 도우미 장비 · Oracle 감시자(0154, PR 2a Layer B). 판정 SQL·신선도·zod 의 단일 출처는 lib/llm/capacity-helpers.ts 다.
+ * 감시자 신호는 선택적 도우미 경로를 열거나 빌려주기를 줄일 뿐 우선 역할 일을 막지 못한다(fail-closed). 기본값은 모두 꺼짐.
+ */
+/** 감시자 전역 스위치·singleton lease·epoch·TTL(id = 1). 관리자: enabled·signal_principal·signal_ttl_ms·loop_ms, 감시자: lease 열. */
+export const modelSupervisorControl = pgTable('model_supervisor_control', {
+  id: integer('id').primaryKey().default(1),
+  /** 감시자 전체 스위치(관리자). false ⇒ 입장은 모든 신호를 무시한다(도우미 닫힘, 빌려주기 제한 없음) */
+  enabled: boolean('enabled').notNull().default(false),
+  signalPrincipal: varchar('signal_principal', { length: 63 }).notNull().default('nomorevibe_oracle_capacity_supervisor'),
+  signalTtlMs: integer('signal_ttl_ms').notNull().default(45_000),
+  loopMs: integer('loop_ms').notNull().default(15_000),
+  ownerInstanceId: varchar('owner_instance_id', { length: 120 }),
+  ownerBootId: uuid('owner_boot_id'),
+  epoch: bigint('epoch', { mode: 'number' }).notNull().default(0),
+  leaseUntil: timestamp('lease_until', { withTimezone: true, precision: 3 }),
+  heartbeatAt: timestamp('heartbeat_at', { withTimezone: true, precision: 3 }),
+  loopSeq: bigint('loop_seq', { mode: 'number' }).notNull().default(0),
+  release: varchar('release', { length: 80 }),
+  updatedBy: varchar('updated_by', { length: 120 }).notNull().default('migration:0154'),
+  updatedAt: timestamp('updated_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
+}, table => [
+  check('model_supervisor_control_id_check', sql`${table.id} = 1`),
+  check('model_supervisor_control_principal_check', sql`${table.signalPrincipal} ~ '^[a-z_][a-z0-9_]{0,62}$'`),
+  check('model_supervisor_control_ttl_check', sql`${table.signalTtlMs} BETWEEN 15000 AND 300000`),
+  check('model_supervisor_control_loop_check', sql`${table.loopMs} BETWEEN 5000 AND 60000 AND ${table.loopMs} * 2 <= ${table.signalTtlMs}`),
+  check('model_supervisor_control_epoch_check', sql`${table.epoch} BETWEEN 0 AND 9007199254740991 AND ${table.loopSeq} >= 0`),
+]);
+/** 도우미 배정(관리자만 쓴다): 장비 × 단계 하나. 도우미 경로는 그 장비의 우선 역할(rank 1)이 될 수 없다. mode 'live' 는 승격 기록이 있어야 한다. */
+export const modelHelperAssignments = pgTable('model_helper_assignments', {
+  assignmentId: varchar('assignment_id', { length: 120 }).primaryKey(),
+  stage: varchar('stage', { length: 8 }).$type<HelperStage>().notNull(),
+  deviceId: varchar('device_id', { length: 120 }).notNull(),
+  /** 계약·wire 모델 이름(참 identity) */
+  model: varchar('model', { length: 200 }).notNull(),
+  shadowRouteId: varchar('shadow_route_id', { length: 120 }).notNull(),
+  liveRouteId: varchar('live_route_id', { length: 120 }).notNull(),
+  liveProvider: varchar('live_provider', { length: 60 }).notNull(),
+  mode: varchar('mode', { length: 8 }).$type<HelperMode>().notNull().default('off'),
+  maxSlots: integer('max_slots').notNull().default(1),
+  perTick: integer('per_tick').notNull().default(2),
+  shadowPerHour: integer('shadow_per_hour').notNull().default(30),
+  minShadowSamples: integer('min_shadow_samples').notNull().default(200),
+  minAgreement: numeric('min_agreement', { precision: 4, scale: 3, mode: 'number' }).notNull().default(0.95),
+  maxWrongApproval: numeric('max_wrong_approval', { precision: 4, scale: 3, mode: 'number' }).notNull().default(0.01),
+  maxWrongRejection: numeric('max_wrong_rejection', { precision: 4, scale: 3, mode: 'number' }).notNull().default(0.02),
+  maxUnknownRate: numeric('max_unknown_rate', { precision: 4, scale: 3, mode: 'number' }).notNull().default(0.02),
+  maxFailureRate: numeric('max_failure_rate', { precision: 4, scale: 3, mode: 'number' }).notNull().default(0.1),
+  maxLiveDisagreement: numeric('max_live_disagreement', { precision: 4, scale: 3, mode: 'number' }).notNull().default(0.1),
+  enterSamples: integer('enter_samples').notNull().default(2),
+  exitSamples: integer('exit_samples').notNull().default(4),
+  minHelpMs: integer('min_help_ms').notNull().default(120_000),
+  reenterCooldownMs: integer('reenter_cooldown_ms').notNull().default(60_000),
+  /** sha256(단계, 모델, 프롬프트판, 규칙판, wire 변형, 계약 hash) — 저장이 계산한다(helperEvidenceKey) */
+  evidenceKey: varchar('evidence_key', { length: 64 }).notNull(),
+  promotedEvidence: jsonb('promoted_evidence').$type<Record<string, unknown>>(),
+  promotedAt: timestamp('promoted_at', { withTimezone: true, precision: 3 }),
+  promotedBy: varchar('promoted_by', { length: 120 }),
+  /** 폼 compare-and-set·감사·신호(assignment_version)의 참조. 다시 저장하면 올라가고 그 판의 자동 정지가 풀린다 */
+  version: bigint('version', { mode: 'number' }).notNull().default(1),
+  note: varchar('note', { length: 400 }),
+  updatedBy: varchar('updated_by', { length: 120 }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
+  updatedAt: timestamp('updated_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
+}, table => [
+  foreignKey({ columns: [table.deviceId], foreignColumns: [modelCapacityDevices.deviceId], name: 'model_helper_assignments_device_fk' }),
+  check('model_helper_assignments_id_check', sql`${table.assignmentId} ~ '^[a-z0-9][a-z0-9:-]{0,119}$'`),
+  check('model_helper_assignments_stage_check', sql`${table.stage} IN ('ai1','ai2')`),
+  check('model_helper_assignments_mode_check', sql`${table.mode} IN ('off','shadow','live')`),
+  check('model_helper_assignments_identity_check', sql`char_length(${table.model}) > 0 AND ${table.model} = btrim(${table.model}) AND ${table.model} !~ '[[:cntrl:]]'
+    AND char_length(${table.shadowRouteId}) > 0 AND ${table.shadowRouteId} = btrim(${table.shadowRouteId}) AND ${table.shadowRouteId} !~ '[[:cntrl:]]'
+    AND char_length(${table.liveRouteId}) > 0 AND ${table.liveRouteId} = btrim(${table.liveRouteId}) AND ${table.liveRouteId} !~ '[[:cntrl:]]'
+    AND char_length(${table.liveProvider}) > 0 AND ${table.liveProvider} = btrim(${table.liveProvider}) AND ${table.liveProvider} !~ '[[:cntrl:]]'
+    AND ${table.shadowRouteId} <> ${table.liveRouteId}`),
+  check('model_helper_assignments_slots_check', sql`${table.maxSlots} BETWEEN 1 AND 256 AND ${table.perTick} BETWEEN 1 AND 16
+    AND ${table.shadowPerHour} BETWEEN 0 AND 600 AND ${table.minShadowSamples} BETWEEN 20 AND 10000`),
+  check('model_helper_assignments_hysteresis_check', sql`${table.enterSamples} BETWEEN 1 AND 20 AND ${table.exitSamples} BETWEEN 1 AND 40
+    AND ${table.minHelpMs} BETWEEN 0 AND 3600000 AND ${table.reenterCooldownMs} BETWEEN 0 AND 3600000`),
+  check('model_helper_assignments_thresholds_check', sql`${table.minAgreement} BETWEEN 0.5 AND 1 AND ${table.maxWrongApproval} BETWEEN 0 AND 0.5
+    AND ${table.maxWrongRejection} BETWEEN 0 AND 0.5 AND ${table.maxUnknownRate} BETWEEN 0 AND 0.5 AND ${table.maxFailureRate} BETWEEN 0 AND 0.9
+    AND ${table.maxLiveDisagreement} BETWEEN 0 AND 0.9`),
+  check('model_helper_assignments_evidence_check', sql`${table.evidenceKey} ~ '^[a-f0-9]{64}$'`),
+  check('model_helper_assignments_live_check', sql`${table.mode} <> 'live' OR (${table.promotedAt} IS NOT NULL AND ${table.promotedEvidence} IS NOT NULL)`),
+  check('model_helper_assignments_promoted_check', sql`${table.promotedEvidence} IS NULL OR (jsonb_typeof(${table.promotedEvidence}) = 'object' AND pg_column_size(${table.promotedEvidence}) <= 16384)`),
+  check('model_helper_assignments_version_check', sql`${table.version} BETWEEN 1 AND 9007199254740991`),
+  unique('model_helper_assignments_stage_device_key').on(table.stage, table.deviceId),
+  unique('model_helper_assignments_live_route_key').on(table.deviceId, table.liveRouteId, table.liveProvider, table.model),
+  unique('model_helper_assignments_shadow_route_key').on(table.deviceId, table.shadowRouteId, table.model),
+]);
+/** 감시자가 쓰는 도우미 판정(배정당 한 줄, TTL). 입장은 신선할 때만 쓴다(capacity-helpers 의 helperGateCte). */
+export const modelHelperSignals = pgTable('model_helper_signals', {
+  assignmentId: varchar('assignment_id', { length: 120 }).primaryKey(),
+  assignmentVersion: bigint('assignment_version', { mode: 'number' }).notNull(),
+  supervisorEpoch: bigint('supervisor_epoch', { mode: 'number' }).notNull(),
+  verdict: varchar('verdict', { length: 12 }).$type<HelperVerdict>().notNull(),
+  reason: varchar('reason', { length: 40 }).$type<HelperReason>().notNull(),
+  streak: integer('streak').notNull().default(0),
+  stateSince: timestamp('state_since', { withTimezone: true, precision: 3 }).notNull(),
+  lastExitAt: timestamp('last_exit_at', { withTimezone: true, precision: 3 }),
+  metrics: jsonb('metrics').$type<Record<string, number | string | boolean>>().notNull(),
+  observedAt: timestamp('observed_at', { withTimezone: true, precision: 3 }).notNull(),
+  validUntil: timestamp('valid_until', { withTimezone: true, precision: 3 }).notNull(),
+  writtenBy: varchar('written_by', { length: 63 }).notNull(),
+}, table => [
+  foreignKey({ columns: [table.assignmentId], foreignColumns: [modelHelperAssignments.assignmentId], name: 'model_helper_signals_assignment_fk' }).onDelete('cascade'),
+  check('model_helper_signals_verdict_check', sql`${table.verdict} IN ('help','shadow_only','hold')`),
+  check('model_helper_signals_reason_check', sql`${table.reason} ~ '^[a-z_]{1,40}$'`),
+  check('model_helper_signals_streak_check', sql`${table.streak} >= 0`),
+  check('model_helper_signals_metrics_check', sql`jsonb_typeof(${table.metrics}) = 'object' AND pg_column_size(${table.metrics}) <= 8192`),
+  check('model_helper_signals_ttl_check', sql`${table.validUntil} > ${table.observedAt} AND ${table.validUntil} <= ${table.observedAt} + interval '5 minutes'`),
+]);
+/** 감시자가 쓰는 장비 자기 역할 수요(장부에 아직 없는 일). 신선하면 빌려주기를 끝내고, 신선하지 않으면 무시한다. */
+export const modelDeviceSignals = pgTable('model_device_signals', {
+  deviceId: varchar('device_id', { length: 120 }).primaryKey(),
+  supervisorEpoch: bigint('supervisor_epoch', { mode: 'number' }).notNull(),
+  primaryDemand: boolean('primary_demand').notNull(),
+  backlog: integer('backlog').notNull(),
+  metrics: jsonb('metrics').$type<Record<string, number | string | boolean>>().notNull(),
+  observedAt: timestamp('observed_at', { withTimezone: true, precision: 3 }).notNull(),
+  validUntil: timestamp('valid_until', { withTimezone: true, precision: 3 }).notNull(),
+  writtenBy: varchar('written_by', { length: 63 }).notNull(),
+}, table => [
+  check('model_device_signals_backlog_check', sql`${table.backlog} >= 0`),
+  check('model_device_signals_metrics_check', sql`jsonb_typeof(${table.metrics}) = 'object' AND pg_column_size(${table.metrics}) <= 8192`),
+  check('model_device_signals_ttl_check', sql`${table.validUntil} > ${table.observedAt} AND ${table.validUntil} <= ${table.observedAt} + interval '5 minutes'`),
+]);
+/** 집 쪽 역할 수요 beacon(main 역할이 쓰고 감시자만 읽는다). 신선하지 않거나 없으면 그 역할은 바쁨이다(돕기에 대해 fail-closed). */
+export const modelRoleDemand = pgTable('model_role_demand', {
+  roleId: varchar('role_id', { length: 60 }).primaryKey(),
+  deviceId: varchar('device_id', { length: 120 }).notNull(),
+  backlog: integer('backlog').notNull(),
+  oldestAgeMs: bigint('oldest_age_ms', { mode: 'number' }),
+  metrics: jsonb('metrics').$type<Record<string, number | string | boolean | string[]>>().notNull().default({}),
+  observedAt: timestamp('observed_at', { withTimezone: true, precision: 3 }).notNull(),
+  validUntil: timestamp('valid_until', { withTimezone: true, precision: 3 }).notNull(),
+  writtenBy: varchar('written_by', { length: 63 }).notNull(),
+}, table => [
+  check('model_role_demand_backlog_check', sql`${table.backlog} >= 0 AND (${table.oldestAgeMs} IS NULL OR ${table.oldestAgeMs} >= 0)`),
+  check('model_role_demand_metrics_check', sql`jsonb_typeof(${table.metrics}) = 'object' AND pg_column_size(${table.metrics}) <= 8192`),
+  check('model_role_demand_ttl_check', sql`${table.validUntil} > ${table.observedAt} AND ${table.validUntil} <= ${table.observedAt} + interval '5 minutes'`),
+]);
+/** 자동 정지·강등 기록(감시자는 넣기만 한다). (배정, 현재 version) 에 대해 관리자가 다시 저장할 때까지 유지된다. */
+export const modelHelperStops = pgTable('model_helper_stops', {
+  id: bigserial('id', { mode: 'number' }).primaryKey(),
+  assignmentId: varchar('assignment_id', { length: 120 }).notNull(),
+  assignmentVersion: bigint('assignment_version', { mode: 'number' }).notNull(),
+  effect: varchar('effect', { length: 20 }).$type<HelperStopEffect>().notNull(),
+  reason: varchar('reason', { length: 40 }).$type<HelperReason>().notNull(),
+  evidence: jsonb('evidence').$type<Record<string, unknown>>().notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
+  writtenBy: varchar('written_by', { length: 63 }).notNull().default(sql`current_user`),
+}, table => [
+  foreignKey({ columns: [table.assignmentId], foreignColumns: [modelHelperAssignments.assignmentId], name: 'model_helper_stops_assignment_fk' }).onDelete('cascade'),
+  check('model_helper_stops_effect_check', sql`${table.effect} IN ('stop','demote_to_shadow')`),
+  check('model_helper_stops_reason_check', sql`${table.reason} ~ '^[a-z_]{1,40}$'`),
+  check('model_helper_stops_evidence_check', sql`jsonb_typeof(${table.evidence}) = 'object' AND pg_column_size(${table.evidence}) <= 8192`),
+  index('model_helper_stops_assignment_idx').on(table.assignmentId, table.assignmentVersion),
+]);
+/** 섀도 실행(집 쪽 도우미 단계): 주 모델이 이미 결정한 항목을 같은 입력으로 다시 보고 비교만 한다 — 결과로 행동하지 않는다. */
+export const modelHelperShadowRuns = pgTable('model_helper_shadow_runs', {
+  id: bigserial('id', { mode: 'number' }).primaryKey(),
+  assignmentId: varchar('assignment_id', { length: 120 }).notNull(),
+  evidenceKey: varchar('evidence_key', { length: 64 }).notNull(),
+  stage: varchar('stage', { length: 8 }).$type<HelperStage>().notNull(),
+  candidateId: integer('candidate_id').notNull(),
+  secondReviewId: integer('second_review_id'),
+  /** ai1: attempt id, ai2: vote id */
+  primaryRef: bigint('primary_ref', { mode: 'number' }).notNull(),
+  primaryModel: varchar('primary_model', { length: 200 }).notNull(),
+  primaryDecision: varchar('primary_decision', { length: 16 }).notNull(),
+  primaryConfidence: doublePrecision('primary_confidence'),
+  inputHash: varchar('input_hash', { length: 64 }).notNull(),
+  sourceRevisionHash: varchar('source_revision_hash', { length: 64 }).notNull(),
+  policyHash: varchar('policy_hash', { length: 64 }).notNull(),
+  promptVersion: varchar('prompt_version', { length: 40 }).notNull(),
+  rulesVersion: varchar('rules_version', { length: 40 }).notNull(),
+  state: varchar('state', { length: 10 }).$type<HelperShadowRunState>().notNull(),
+  helperDecision: varchar('helper_decision', { length: 16 }),
+  helperConfidence: doublePrecision('helper_confidence'),
+  helperOutcome: jsonb('helper_outcome').$type<Record<string, unknown>>(),
+  agreement: varchar('agreement', { length: 32 }).$type<HelperShadowAgreement>(),
+  errorCode: varchar('error_code', { length: 40 }),
+  requestId: uuid('request_id'),
+  latencyMs: integer('latency_ms'),
+  jobToken: uuid('job_token').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
+  completedAt: timestamp('completed_at', { withTimezone: true, precision: 3 }),
+}, table => [
+  foreignKey({ columns: [table.assignmentId], foreignColumns: [modelHelperAssignments.assignmentId], name: 'model_helper_shadow_runs_assignment_fk' }).onDelete('cascade'),
+  check('model_helper_shadow_runs_stage_check', sql`${table.stage} IN ('ai1','ai2')`),
+  check('model_helper_shadow_runs_state_check', sql`${table.state} IN ('claimed','succeeded','failed','unknown','cancelled')`),
+  check('model_helper_shadow_runs_outcome_check', sql`${table.helperOutcome} IS NULL OR pg_column_size(${table.helperOutcome}) <= 16384`),
+  check('model_helper_shadow_runs_agreement_check', sql`${table.agreement} IN ('same','helper_approve_primary_reject','helper_reject_primary_approve','helper_abstain','primary_abstain','other')`),
+  unique('model_helper_shadow_runs_sample_key').on(table.assignmentId, table.evidenceKey, table.candidateId, table.inputHash),
+  index('model_helper_shadow_runs_evidence_idx').on(table.assignmentId, table.evidenceKey, table.createdAt.desc()),
+]);
+/** 실전 도우미 출력과 그 하류 결과(AI2 일치·불일치, 사람 뒤집음)의 연결. attempt_id(ai1) 또는 second_review_id(ai2) 하나만. */
+export const modelHelperLiveOutputs = pgTable('model_helper_live_outputs', {
+  id: bigserial('id', { mode: 'number' }).primaryKey(),
+  assignmentId: varchar('assignment_id', { length: 120 }).notNull(),
+  assignmentVersion: bigint('assignment_version', { mode: 'number' }).notNull(),
+  evidenceKey: varchar('evidence_key', { length: 64 }).notNull(),
+  stage: varchar('stage', { length: 8 }).$type<HelperStage>().notNull(),
+  candidateId: integer('candidate_id').notNull(),
+  attemptId: integer('attempt_id'),
+  secondReviewId: integer('second_review_id'),
+  helperDecision: varchar('helper_decision', { length: 16 }),
+  downstream: varchar('downstream', { length: 20 }).$type<HelperLiveDownstream>(),
+  downstreamAt: timestamp('downstream_at', { withTimezone: true, precision: 3 }),
+  createdAt: timestamp('created_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
+}, table => [
+  check('model_helper_live_outputs_stage_check', sql`${table.stage} IN ('ai1','ai2')`),
+  check('model_helper_live_outputs_downstream_check', sql`${table.downstream} IN ('ai2_agreed','ai2_disagreed','human_overturned','none')`),
+  check('model_helper_live_outputs_ref_check', sql`(${table.attemptId} IS NULL) <> (${table.secondReviewId} IS NULL)`),
+  index('model_helper_live_outputs_assignment_idx').on(table.assignmentId, table.createdAt.desc()),
 ]);
 
 export const operationsObservations = pgTable('operations_observations', {

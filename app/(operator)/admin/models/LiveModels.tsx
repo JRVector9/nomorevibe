@@ -104,7 +104,7 @@ function ModelLiveCard({ card, observation, controls, probe, busy, onProbe, reco
   const unknown = sum(card, "indeterminate"), waiting = sum(card, "waiting"), held = sum(card, "reserved") + sum(card, "dispatched");
   const groups = observation.groups.filter(group => card.rows.some(row => row.groupId === group.groupId));
   const limit = groups.length && groups.every(group => group.limit !== null) ? groups.reduce((n, group) => n + group.limit!, 0) : null;
-  const blocked = !card.definition ? "등록부에서 장비·실행 대상을 확인하지 못했습니다." : recovery ? recovery.blockedReason : modelRecoveryBlocked(card.equipment, card.definition?.provider);
+  const blocked = !card.definition ? "등록부에서 장비·실행 대상을 확인하지 못했습니다." : recovery ? recovery.blockedReason : modelRecoveryBlocked(card.definition.equipment, card.definition.provider);
   const status = unknown ? "미확인" : probe?.listed === false ? "내려감" : probe?.error ? "연결 안 됨" : sum(card, "dispatched") + sum(card, "reserved") ? "처리 중" : waiting ? "보류" : lastModelSuccess(card.rows) || probe?.listed ? "정상" : "연결 안 됨";
   const requests = card.requests.filter(row => row.state === "indeterminate" || row.state === "waiting");
   return <article id={modelCardAnchor(card.id)} className={`flex min-w-0 scroll-mt-28 md:scroll-mt-6 flex-col gap-4 rounded-xl border bg-bg-card p-4 ${unknown ? "border-down/40" : "border-line"}`} aria-label={`${card.equipment} ${card.name}`}>

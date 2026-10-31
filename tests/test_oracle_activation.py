@@ -611,6 +611,57 @@ class UptimeConsumerLauncherTests(unittest.TestCase):
         self.assertIn('HTTP_ORIGIN_PERMITS=0\n', text)
 
 
+class CapacitySupervisorLauncherTests(unittest.TestCase):
+    """PR 2a: the Oracle helper-device supervisor starts only the maintenance supervisor with --consumer=capacity-supervisor."""
+    setUp, tearDown, budget, fetch, runner = (LauncherGateTests.setUp, LauncherGateTests.tearDown, LauncherGateTests.budget,
+                                              LauncherGateTests.fetch, LauncherGateTests.runner)
+    consumer_gate = ConsumerLauncherGateTests.consumer_gate
+    INSTANCE = 'capacity-supervisor-consumer-oracle'
+
+    def use_supervisor(self, role='maintenance', **report_changes):
+        value = json.loads(self.budget(role))
+        value['policy'].update({'roles': [], 'consumers': ['capacity-supervisor']})
+        value['process'].update({'consumer': 'capacity-supervisor'})
+        self.proc.write_text('0::/nomorevibe.slice/nomorevibe-core.slice/nomorevibe-core-consumer@capacity-supervisor.service\n')
+        self.env = {'RELEASE_TAG': SHA, 'SERVICE_INSTANCE_ID': self.INSTANCE, 'WORKER_ROLE': role, 'TZ': 'UTC',
+                    'PHYSICAL_HOST': 'oracle-osaka-smoke', 'HOST_DB_BUDGET': json.dumps(value)}
+        report_value = consumer_report('capacity-supervisor', 'maintenance', instanceId=self.INSTANCE, **report_changes)
+        self.preflight = (78, json.dumps(report_value).encode())
+
+    def test_shipped_supervisor_consumer_runs_the_maintenance_supervisor(self):
+        self.assertEqual(launch.CONSUMERS['capacity-supervisor'], 'maintenance')
+        self.use_supervisor()
+        (node, argv), _ = self.consumer_gate('capacity-supervisor')
+        self.assertEqual(argv, [node, '--import', 'tsx', 'scripts/worker-supervisor.ts', '--role=maintenance', '--consumer=capacity-supervisor'])
+        self.assertEqual(self.runs[-1][0][-1], '--consumer=capacity-supervisor')
+
+    def test_supervisor_consumer_refuses_another_parent_role(self):
+        self.use_supervisor('reviewer')
+        with self.assertRaises(launch.Unverified) as caught:
+            self.consumer_gate('capacity-supervisor')
+        self.assertEqual((caught.exception.check, caught.exception.reason), ('budget', 'host_db_budget_undeclared'))
+
+    def test_supervisor_consumer_stays_closed_for_a_main_role_connection_or_a_mismatched_signal_principal(self):
+        # A main-role connection never matches the exact consumer profile (database unknown); a control row naming another
+        # principal is a rejected readiness. Neither starts the supervisor.
+        cases = ((('database', 'unknown'), 'database_unverified'), (('consumer', 'rejected'), 'preflight_rejected'))
+        for (check, status), reason in cases:
+            with self.subTest(check=check):
+                self.use_supervisor(**{f'checks__{check}': {'status': status, 'reason': 'supervisor_principal_mismatch'},
+                                       'workload': {'ready': False, 'reason': f'{check}_{status}'}})
+                with self.assertRaises(launch.Unverified) as caught:
+                    self.consumer_gate('capacity-supervisor')
+                self.assertEqual((caught.exception.check, caught.exception.reason), ('preflight', reason))
+
+    def test_install_writes_the_supervisor_placeholder_with_its_parent_role(self):
+        root = self.root / 'install'
+        root.mkdir()
+        installer.install_units(root, 50, 1024 ** 3, 128, [], consumers=['capacity-supervisor'])
+        text = (root / 'etc/nomorevibe-core/consumer-capacity-supervisor.env').read_text()
+        self.assertIn('WORKER_ROLE=maintenance\n', text)
+        self.assertIn('HTTP_ORIGIN_PERMITS=0\n', text)
+
+
 class ReleaseContractLauncherFilesTests(unittest.TestCase):
     def test_only_fixed_launcher_modules_are_release_payload(self):
         for name in contract.LAUNCHER_FILES:
