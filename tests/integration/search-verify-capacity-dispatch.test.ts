@@ -15,7 +15,8 @@ import { runJob, type JobContext } from "@/lib/jobs/runner";
 import { requestJob, type JobLease } from "@/lib/jobs/control";
 import { JobLeaseLostError } from "@/lib/jobs/lease";
 import { tryAcquireRole, type RoleLease } from "@/lib/jobs/role-leader";
-import { requestModelSlot, requestSearchVerifyModelSlot, cancelReservedModelSlot } from "@/lib/llm/capacity-repository";
+import { requestModelSlot, requestSearchVerifyModelSlot, cancelReservedModelSlot, closeModelCapacityUnknownReview } from "@/lib/llm/capacity-repository";
+import { verifySearchKeywords } from "@/lib/jobs/products/search-verify";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { modelCapacityPolicyHash, searchVerifyInputHash, searchVerifyLogicalWorkKey, type ModelCapacityPolicy,
   type ModelCapacityRequest, type SearchVerifyInput, type SearchVerifyMember } from "@/lib/llm/capacity";
@@ -397,4 +398,88 @@ it("re-verifies the settled ledger chain in the writer: a changed stored outcome
       expect(await profileRow(current.product.id)).toEqual(before);
     }
   });
+}), 20_000);
+
+/** A loopback port nobody listens on: the gateway's connect is refused before any request byte leaves (not-sent witness, 0149). */
+async function closedPort() {
+  const probe = createServer(); await new Promise<void>(resolve => probe.listen(0, "127.0.0.1", resolve));
+  const address = probe.address(); await new Promise<void>(resolve => probe.close(() => resolve()));
+  if (!address || typeof address === "string") throw new Error("fixture_address"); return address.port;
+}
+const jobRow = async () => (await admin`SELECT last_error,last_success_at FROM jobs WHERE name=${jobName}`)[0] as { last_error: string | null; last_success_at: Date | null } | undefined;
+/** The real job reads its text role lease from the worker environment, as on the text worker. */
+async function jobTick() { await tracked(requestJob(jobName));
+  for (const [key, value] of Object.entries({ ROLE_LEASE_ROLE: role.role, ROLE_LEASE_INSTANCE_ID: role.instanceId, ROLE_LEASE_BOOT_ID: role.bootId,
+    ROLE_LEASE_RELEASE: role.release, ROLE_LEASE_EPOCH: String(role.epoch) })) vi.stubEnv(key, value);
+  return tracked(runJob(jobName, (ctx: JobContext<null>) => verifySearchKeywords(ctx), { requestedOnly: true, roleLease: role })); }
+/** The 2026-10-31 production state of one product: withdrawn permits, another target's unknown closed by review, then a step settled as not_started. */
+async function stuckProduct(task: ProfileTask, other: ProfileTask, words: string[], state: { bodies: string[][]; setReply: (reply: Reply) => void }) {
+  // (1) withdrawn: this product's reserved permit is cancelled before any POST
+  await custom(async lease => {
+    const initial = await tracked(prepareSearchVerifyModelDispatch(task, lease, { roleLease: role, keywords: words, mode: "chunk" }));
+    if (initial.kind !== "ready" || !("member" in initial)) throw new Error("fixture_initial_required");
+    const input: SearchVerifyInput = { member: initial.member, model: VERIFY_MODEL, execution: 0, step: { kind: "chunk", chunk: 0 }, parent: null };
+    const slot = await tracked(requestSearchVerifyModelSlot({ requestId: randomUUID(), owner: { instanceId: prefix, bootId: role.bootId }, class: "background",
+      pool: "text", routeId: jobName, provider: "abcllm", model: VERIFY_MODEL, workKey: `${searchVerifyLogicalWorkKey(input)}:${searchVerifyInputHash(input)}` }, input));
+    if (slot.kind !== "granted") throw new Error("fixture_slot_required");
+    expect(await tracked(cancelReservedModelSlot(slot.reservation))).toBe(true);
+  });
+  // (2) another target's call is lost after its request was written (indeterminate), then the operator closes the review
+  state.setReply((_sent, response) => { response.destroy(); });
+  await custom(async lease => { expect(await verify(other, lease)).toMatchObject({ kind: "result", result: { ok: false } }); });
+  const [unknown] = await admin`SELECT request_id,state FROM model_capacity_requests WHERE route_id=${jobName} AND logical_member_keys && ARRAY[${`search-verify:${other.product.id}`}]::text[]
+    AND dispatch_binding IS NOT NULL`;
+  expect(unknown.state).toBe("indeterminate");
+  expect(await tracked(closeModelCapacityUnknownReview({ requestId: unknown.request_id, operator: "fixture", note: "2026-10-31 repro" })))
+    .toMatchObject({ kind: "reviewed" });
+  // (3) this product's first step is refused before a byte leaves: the row settles as gateway_not_started (the old writer then refused the failure)
+  const endpoint = serving.contract!.endpoint, sent = state.bodies.length;
+  serving.contract = { ...serving.contract!, endpoint: `http://127.0.0.1:${await closedPort()}/v1/chat/completions` };
+  await custom(async lease => { expect(await verify(task, lease)).toMatchObject({ kind: "result", result: { ok: false, error: "network" } }); });
+  serving.contract = { ...serving.contract!, endpoint };
+  expect(state.bodies).toHaveLength(sent);
+  const rows = await ledger(task.product.id);
+  expect(rows.map(row => row.state)).toEqual(["withdrawn", "settled"]);
+  expect((await admin`SELECT terminal_evidence->>'kind' AS kind FROM model_capacity_requests WHERE request_id=${rows[1].request_id}::uuid`)[0].kind).toBe("gateway_not_started");
+}
+
+it("2026-10-31 repro: a not_started step among withdrawn permits and a reviewed unknown no longer stops the job; a new execution verifies the product once", exercise(async () => {
+  const words = keywords(7), task = await seed(words), other = await seed(keywords(2, "o"), null), before = await profileRow(task.product.id);
+  await server(async state => {
+    await stuckProduct(task, other, words, state);
+    const sent = state.bodies.length, previous = await jobRow();
+    state.setReply(fits([words[2]]));
+    // 예전: 이 틱이 search_verify_continuation_mismatch 를 던졌고(last_error), 같은 제품이 매 틱 잡 전체를 멈췄다.
+    expect(await jobTick()).toMatchObject({ status: "completed" });
+    const after = await jobRow();
+    expect(after?.last_error).toBeNull(); expect(after?.last_success_at).not.toBeNull();
+    if (previous?.last_success_at) expect(after!.last_success_at!.getTime()).toBeGreaterThan(previous.last_success_at.getTime());
+    // the closed execution 0 is never resumed: execution 1 sends chunk 0 and chunk 1 once each; the reviewed product is retried once
+    expect(state.bodies.slice(sent).map(body => body.length).sort()).toEqual([2, 2, 5]);
+  });
+  const rows = await ledger(task.product.id);
+  expect(rows.map(row => [row.state, row.binding?.execution ?? null, row.binding?.step ?? null])).toEqual([["withdrawn", null, null],
+    ["settled", 0, { kind: "chunk", chunk: 0 }], ["settled", 1, { kind: "chunk", chunk: 0 }], ["settled", 1, { kind: "chunk", chunk: 1 }]]);
+  expect(await profileRow(task.product.id)).toMatchObject({ removed_keywords: [words[2]], verify_attempts: Number(before.verify_attempts) + 1, verify_error: null });
+}), 20_000);
+
+it("records a live not_started failure once so the generation moves on, without a second POST", exercise(async () => {
+  const words = keywords(2), task = await seed(words, null), before = await profileRow(task.product.id);
+  await server(async ({ bodies }) => {
+    const endpoint = serving.contract!.endpoint;
+    serving.contract = { ...serving.contract!, endpoint: `http://127.0.0.1:${await closedPort()}/v1/chat/completions` };
+    expect(await custom(async lease => {
+      const outcome = await verify(task, lease);
+      expect(outcome).toMatchObject({ kind: "result", result: { ok: false, error: "network" } });
+      if (outcome.kind !== "result" || !outcome.expectation) throw new Error("fixture_expectation_required");
+      // 예전: 정산이 not_started(settled)라 writer 의 "unresolved" 꼬리 검사에 걸려 실패를 적지 못했다
+      expect(await tracked(recordVerificationResult(task, lease, { kind: "failure", error: "network" }, outcome.expectation))).toBe(true);
+      await expect(recordVerificationResult(task, lease, { kind: "failure", error: "network" }, outcome.expectation)).rejects.toThrow("invalid_search_verify_write_expectation");
+    })).toMatchObject({ status: "completed" });
+    serving.contract = { ...serving.contract!, endpoint };
+    expect(bodies).toEqual([]);
+  });
+  const after = await profileRow(task.product.id);
+  expect(after.verify_error).toBe("network"); expect(after.updated_at).not.toEqual(before.updated_at);
+  expect((await ledger(task.product.id)).map(row => row.state)).toEqual(["settled"]);
 }), 20_000);

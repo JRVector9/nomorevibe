@@ -1,7 +1,7 @@
 import { modelLimits, modelTimeoutMs, scopedModel } from "@/lib/llm/model-registry";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { tickRemaining } from "@/lib/jobs/tick-deadline";
-import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
+import { ModelCapacityDeferredError, modelCapacityDeferralIsPerWork } from "@/lib/llm/capacity-deferred";
 import { pendingVerifications, recordVerificationResult } from "@/lib/domain/products/search-profiles";
 import { VERIFY_MODEL } from "@/lib/domain/products/search-verify";
 import { verifyKeywordsWithModelCapacity } from "@/lib/domain/products/search-verify-model-capacity";
@@ -45,12 +45,18 @@ export async function verifySearchKeywords(ctx: JobContext<null>, request?: type
     const batch = jobKnob(knobs, JOB, "batch"), minCallMs = jobKnob(knobs, JOB, "minCallMs");
     const concurrency = modelLimits(JOB).concurrency, callMs = modelTimeoutMs(JOB);
     let verified = 0, removed = 0, failed = 0, blocked = "", inARow = 0;
+    /** 이 틱에 넘긴 제품(이 제품만의 미룸) — 다시 고르지 않는다. 같은 머리가 남은 틱을 같은 조회로 맴돌게 하지 않는다 */
+    const passed = new Set<number>();
 
     while (!signal.aborted && ctx.hasBudget() && remaining() >= minCallMs) {
-      const tasks = await pendingVerifications(batch);
-      if (tasks.length === 0) {
+      const fetched = await pendingVerifications(batch), tasks = fetched.filter(task => !passed.has(task.product.id));
+      if (fetched.length === 0) {
         ctx.log("search_verify.done", { verified, removed, failed, drained: true });
         return { done: true };
+      }
+      if (tasks.length === 0) {
+        ctx.log("search_verify.done", { verified, removed, failed, passed: passed.size, drained: false });
+        return { done: false };
       }
       let next = 0;
       const settled = await Promise.allSettled(Array.from({ length: concurrency }, async () => {
@@ -63,8 +69,13 @@ export async function verifySearchKeywords(ctx: JobContext<null>, request?: type
             let outcome: Awaited<ReturnType<typeof verifyKeywordsWithModelCapacity>>;
             try { outcome = await verifyKeywordsWithModelCapacity(task, lease, { request, signal, timeoutMs, chunked }); }
             catch (error) {
-              // 이 제품의 앞선 호출만 아직 보내진 중이다 — 제품 하나를 건너뛰고 틱을 계속 돈다(틱 전체를 접지 않는다).
-              if (error instanceof ModelCapacityDeferredError && error.reason === "dispatched") { ctx.log("search_verify.skipped_in_flight", { productId: task.product.id }); continue; }
+              // 이 제품만의 미룸이다 — 앞선 호출이 아직 보내진 중이거나(dispatched) 이 제품 한 세대의 장부가 사슬로 읽히지 않는다(ledger_mismatch).
+              // 제품 하나를 건너뛰고 틱을 계속 돈다(틱 전체를 접지 않는다, 2026-10-31).
+              if (error instanceof ModelCapacityDeferredError && modelCapacityDeferralIsPerWork(error.reason)) {
+                passed.add(task.product.id);
+                ctx.log(error.reason === "dispatched" ? "search_verify.skipped_in_flight" : "search_verify.skipped", { productId: task.product.id, reason: error.reason });
+                continue;
+              }
               throw error;
             }
             if (outcome.kind === "skipped") return;

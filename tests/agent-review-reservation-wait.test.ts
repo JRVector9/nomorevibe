@@ -171,7 +171,8 @@ it('does not wait on a model whose physical slots are all unknown-occupied; the 
   foreignHolder('model-a');
   const started = Date.now();
   const ctx = context();
-  expect(await reviewCrawlCandidates(ctx)).toEqual({ done: false, deferred: 'model_capacity' });
+  // 다른 모델이 심사를 남겼으니 완료 틱이다(성공 시각이 움직인다) — 남은 일은 곧바로 다시 요청한다(2026-10-31)
+  expect(await reviewCrawlCandidates(ctx)).toEqual({ done: false, continuation: 'ready' });
   expect(Date.now() - started).toBeLessThan(2_000);
   expect(mocks.gatewayCalls).toEqual(['model-b', 'model-b']);
   const summary = tickSummary(ctx.log);
@@ -240,7 +241,7 @@ it('true saturation (a queued row) still pauses that model for the tick while th
   mocks.list.mockResolvedValue(candidates(4));
   const release = foreignHolder('model-a');
   const ctx = context();
-  try { expect(await reviewCrawlCandidates(ctx)).toEqual({ done: false, deferred: 'model_capacity' }); }
+  try { expect(await reviewCrawlCandidates(ctx)).toEqual({ done: false, continuation: 'ready' }); }
   finally { release(); }
   expect(mocks.gatewayCalls).toEqual(['model-b', 'model-b']);
   expect(tickSummary(ctx.log)).toMatchObject({ pausedModels: 1 });

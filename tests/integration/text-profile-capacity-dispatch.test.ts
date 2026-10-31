@@ -13,6 +13,7 @@ import { jobsForRole } from "@/lib/jobs/catalog";
 import { requestJob, type JobLease } from "@/lib/jobs/control";
 import { releaseRole, tryAcquireRole, type RoleLease } from "@/lib/jobs/role-leader";
 import { requestModelSlot, requestTextProfileModelSlot, cancelReservedModelSlot, findOwnPendingTextProfileRequests } from "@/lib/llm/capacity-repository";
+import { readControlLockHolders } from "@/lib/llm/capacity-lock-diagnostics";
 import { modelCapacityPolicyHash, textProfileInputHash, type ModelCapacityPolicy, type ModelCapacityRequest,
   type ModelCapacityRequestIdentity } from "@/lib/llm/capacity";
 import type { TextProfileServingContract } from "@/lib/llm/text-profile-serving-contract";
@@ -399,3 +400,20 @@ it("keeps the EOF unknown row for review while a new boot retries the changed so
     expect((await admin`SELECT attempts,source_revision FROM product_search_profiles WHERE product_id=${task.product.id}`)[0]).toEqual({ attempts: 1, source_revision: afterSource.source_revision });
   });
 }));
+
+it("the profile priority readback never waits on a control FOR UPDATE holder (2026-10-31: product-search-profile failed every tick with 55P03 since 10-29)", exercise(async () => {
+  const task = await seed(), held = latch(), locked = latch();
+  const holder = admin.begin(async tx => { await tx`SELECT id FROM model_capacity_control WHERE id=1 FOR UPDATE`; locked.resolve(); await held.promise; });
+  void holder.catch(() => {});
+  try {
+    await locked.promise;
+    const started = Date.now();
+    // 예전: control FOR SHARE 를 기다리다 lock_timeout(5초, 55P03)으로 끝났다 — 매 틱 첫 잠금 문장이 이것이다(pendingProfiles).
+    expect(await tracked(findOwnPendingTextProfileRequests({ owner: { instanceId: role.instanceId, bootId: role.bootId }, model: PROFILE_MODEL }))).toEqual([]);
+    expect((await tracked(pendingProfiles(12, role))).some(row => row.product.id === task.product.id)).toBe(true);
+    expect(Date.now() - started).toBeLessThan(2_000);
+    // 55P03 뒤 진단: 그 행을 잡은 세션(이 fixture 의 admin 연결)이 TX 나이와 함께 보인다
+    const holders = await tracked(readControlLockHolders());
+    expect(holders.some(row => row.application === prefix && row.xactAgeMs >= 0)).toBe(true);
+  } finally { held.resolve(); await holder; }
+}), 20_000);

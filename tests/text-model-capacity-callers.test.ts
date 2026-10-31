@@ -234,3 +234,22 @@ it("ordinary failed query transport still records the existing failed cache on p
   expect(mocks.cacheWrite).toHaveBeenCalledWith([{ hash: expect.any(String), translated: null, error: "network" }], expect.any(String), "en");
   expect(mocks.primary).toHaveBeenCalledTimes(1);
 });
+
+it("product-search-profile: one worker's lock_timeout (55P03) never aborts the sibling's sent call and still fails the tick (2026-10-31)", async () => {
+  const finish = latch(), entered = latch(), signals: AbortSignal[] = [];
+  const timeout = Object.assign(new Error("Failed query: select \"id\" from \"model_capacity_control\" where \"id\" = $1 for share"),
+    { cause: Object.assign(new Error("canceling statement due to lock timeout"), { code: "55P03" }) });
+  mocks.profiles.mockResolvedValue([profileTask(1), profileTask(2), profileTask(3)]);
+  mocks.profile.mockImplementationOnce(async (_input, options: { signal: AbortSignal }) => {
+    signals.push(options.signal); entered.resolve(); await finish.promise; return { ok: true, en: ["document tool"], ko: ["문서 관리"] };
+  }).mockImplementationOnce(async () => { await entered.promise; throw timeout; });
+  const work = writeSearchProfiles(context("product-search-profile")).then(() => null, error => error);
+  await entered.promise; await new Promise(resolve => setTimeout(resolve, 10));
+  // 예전: 55P03 이 result_write_failed 로 controller.abort() 를 불러 옆 일꾼의 보내진 호출이 끊기고 그 요청이 미확인으로 남았다
+  expect(signals.every(signal => !signal.aborted)).toBe(true);
+  finish.resolve();
+  expect(await work).toBe(timeout);
+  expect(mocks.profile).toHaveBeenCalledTimes(2);
+  expect(mocks.profileWrite).toHaveBeenCalledTimes(1);
+  expect(mocks.log).toHaveBeenCalledWith("search_profile.lock_timeout_holders", expect.objectContaining({ holders: expect.any(Array) }));
+});

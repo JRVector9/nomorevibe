@@ -98,16 +98,22 @@ export async function readModelCapacityCallerControl() {
  * without row locks, request expiry/grants or the transport-only slotOnlyModelCapacity behavior. */
 export async function readModelCapacityControlObservation() {
   if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
-  const [row] = await onPrimary(() => db.execute<{
+  return onPrimary(async () => callerControlSnapshot(await unlockedControl(db)));
+}
+/** 한 문장으로 control 과 writer fence 를 잠금 없이 읽는다(읽기 전용 관측·readback 전용 — admission·dispatch 근거가 아니다).
+ * control FOR UPDATE 를 오래 쥔 TX 가 있어도 lock_timeout(55P03)으로 끝나지 않는다(2026-10-31, product-search-profile 이 10-29 부터
+ * 매 틱 첫 readback 의 FOR SHARE 에서 멈췄다). */
+async function unlockedControl(executor: Pick<ProductTransaction, "execute">) {
+  const [row] = await executor.execute<{
     mode: typeof modelCapacityControl.$inferSelect.mode; epoch: string | number; revision: string | number;
     policy: unknown; policy_hash: string | null; writer_fence: Parameters<typeof fenceFromRow>[0] | null;
   }>(sql`SELECT mode, epoch, revision, policy, policy_hash,
     (SELECT to_jsonb(f) FROM dr_writer_fence f WHERE f.id = 1) AS writer_fence
-    FROM model_capacity_control WHERE id = 1`));
+    FROM model_capacity_control WHERE id = 1`);
   if (!row) return fail("model_capacity_control_missing");
   const fence = fenceFromRow(row.writer_fence ?? undefined);
-  return callerControlSnapshot(parsedControl({ mode: row.mode, epoch: Number(row.epoch), revision: Number(row.revision),
-    policy: row.policy, policyHash: row.policy_hash }, fence.state !== "active"));
+  return parsedControl({ mode: row.mode, epoch: Number(row.epoch), revision: Number(row.revision),
+    policy: row.policy, policyHash: row.policy_hash }, fence.state !== "active");
 }
 
 function callerControlSnapshot(row: Pick<Control, "mode" | "epoch" | "revision" | "policyHash" | "policy" | "fenced">) {
@@ -252,7 +258,9 @@ export async function findOwnPendingTextProfileRequests(value: {
   const identity = modelCapacityRequestIdentitySchema.parse({ ...value, workKey: "profile-queue-readback",
     class: "background", pool: "text", routeId: "product-search-profile", provider: "abcllm" });
   return transaction(async tx => {
-    const state = await control(tx, "share");
+    // 우선순위 메타데이터만 — control 을 잠그지 않는다. 결과는 coordinator 가 control 을 잡고 다시 확인한다(2026-10-31: 이 첫 readback 의
+    // FOR SHARE 가 lock_timeout 으로 product-search-profile 의 매 틱을 멈췄다).
+    const state = await unlockedControl(tx);
     const route = state.policy?.routes.find(route => route.routeId === identity.routeId
       && route.provider === identity.provider && route.model === identity.model);
     if (state.fenced || state.mode !== "open" || !route) return [];
@@ -1594,6 +1602,11 @@ export type CrawlTaglineCapacityDispatchLock = Readonly<{ control: ReturnType<ty
 export type CrawlTaglineContinuation = Readonly<{ generationHash: string;
   first: CrawlTaglineParent & Readonly<{ outcome: CrawlTaglineOutcome }>;
   second: (CrawlTaglineParent & Readonly<{ outcome: CrawlTaglineOutcome }>) | null }>;
+/** 세대의 마지막 단계가 gateway_not_started(0149, 요청 바이트 0)로 정산됐다 — 결과가 없고, 같은 단계는 고유 색인 때문에 이 세대에서 다시
+ * 보낼 수 없다. 호출자는 이 세대를 실패 한 번으로 닫아(시도·재시도 시각) 다음 세대로 넘긴다. ask 2 면 first 는 그 부모(빈 줄)다. */
+export type CrawlTaglineNotStartedContinuation = Readonly<{ generationHash: string;
+  notStarted: Readonly<{ requestId: string; bindingHash: string; askOrdinal: 1 | 2 }>;
+  first: (CrawlTaglineParent & Readonly<{ outcome: CrawlTaglineOutcome }>) | null }>;
 const crawlTaglineLocks = new WeakMap<CrawlTaglineCapacityDispatchLock, { tx: ProductTransaction; row: RequestRow;
   identity: ModelCapacityRequestIdentity; input: CrawlTaglineInput; finished: boolean }>();
 function fixedCrawlTaglineIdentity(value: ModelCapacityRequestIdentity, input: CrawlTaglineInput): string {
@@ -1626,6 +1639,15 @@ function storedCrawlTaglineEvidence(row: RequestRow | undefined) {
   const parsed = crawlTaglineGatewayTerminalEvidenceSchema.safeParse(row.terminalEvidence);
   return parsed.success && crawlTaglineRowMatches(row, parsed.data.dispatch)
     && row.terminalEvidenceHash === reviewHash(parsed.data) && isDeepStrictEqual(row.terminalEvidence, parsed.data) ? parsed.data : null;
+}
+/** 이 경로의 settled gateway_not_started 행(0149) — 증거가 이 행 자신의 dispatch handle·binding 과 같을 때만. 전송 0 이라 결과도 부모 자격도 없다. */
+function storedCrawlTaglineNotStarted(row: RequestRow | undefined): CrawlTaglineModelDispatch | null {
+  if (!row || row.state !== "settled" || !row.settledAt) return null;
+  const parsed = gatewayNotStartedEvidenceSchema.safeParse(row.terminalEvidence);
+  if (!parsed.success || parsed.data.dispatch.binding.kind !== "crawl_tagline_gateway") return null;
+  const dispatch = parsed.data.dispatch as CrawlTaglineModelDispatch;
+  return crawlTaglineRowMatches(row, dispatch) && row.terminalEvidenceHash === reviewHash(parsed.data)
+    && isDeepStrictEqual(row.terminalEvidence, parsed.data) ? dispatch : null;
 }
 function crawlTaglineParentMatches(first: NonNullable<ReturnType<typeof storedCrawlTaglineEvidence>>, input: CrawlTaglineInput): boolean {
   return input.askOrdinal === 2 && input.parent !== null && first.dispatch.binding.askOrdinal === 1 && first.dispatch.binding.parent === null
@@ -1720,8 +1742,11 @@ export async function reconcileCrawlTaglineGatewayTerminal(terminal: CrawlTaglin
     return { kind: "settled" };
   });
 }
-/** Stored outcomes are business data. This never issues an opaque proof or releases capacity. */
-export async function readCrawlTaglineContinuation(value: Pick<CrawlTaglineInput, "member" | "model">): Promise<CrawlTaglineContinuation | null> {
+/** Stored outcomes are business data. This never issues an opaque proof or releases capacity.
+ * A settled gateway_not_started phase (0149) has no outcome: it is reported as `notStarted` so the caller closes the generation with
+ * one recorded failure instead of reading it as a broken chain (2026-10-31: such a row stopped crawl-tagline on every tick). */
+export async function readCrawlTaglineContinuation(value: Pick<CrawlTaglineInput, "member" | "model">):
+  Promise<CrawlTaglineContinuation | CrawlTaglineNotStartedContinuation | null> {
   if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
   const snapshot = crawlTaglineInputSchema.parse({ member: value.member, model: value.model, askOrdinal: 1, parent: null });
   const generationHash = crawlTaglineGenerationHash(snapshot);
@@ -1732,14 +1757,24 @@ export async function readCrawlTaglineContinuation(value: Pick<CrawlTaglineInput
       AND ${modelCapacityRequests.state}='settled' AND ${modelCapacityRequests.dispatchBinding}->>'kind'='crawl_tagline_gateway'
       AND ${modelCapacityRequests.dispatchBinding}->>'generationHash'=${generationHash}`).orderBy(asc(modelCapacityRequests.queueOrdinal));
     if (!rows.length) return null;
-    const phases = rows.map(row => storedCrawlTaglineEvidence(row));
-    if (phases.some(phase => !phase || phase.dispatch.binding.generationHash !== generationHash)) fail("crawl_tagline_continuation_mismatch");
-    const first = phases.filter(phase => phase!.dispatch.binding.askOrdinal === 1), second = phases.filter(phase => phase!.dispatch.binding.askOrdinal === 2);
-    if (first.length !== 1 || second.length > 1 || second.length && !crawlTaglineParentMatches(first[0]!, second[0]!.dispatch.binding))
-      fail("crawl_tagline_continuation_mismatch");
-    const data = (phase: NonNullable<typeof phases[number]>) => Object.freeze({ requestId: phase.dispatch.requestId,
+    const unsent = rows.map(row => storedCrawlTaglineNotStarted(row)).filter(dispatch => dispatch !== null);
+    const phases = rows.map(row => storedCrawlTaglineEvidence(row)).filter(phase => phase !== null);
+    if (phases.length + unsent.length !== rows.length || [...phases.map(phase => phase.dispatch), ...unsent]
+      .some(dispatch => dispatch.binding.generationHash !== generationHash)) fail("crawl_tagline_continuation_mismatch");
+    const first = phases.filter(phase => phase.dispatch.binding.askOrdinal === 1), second = phases.filter(phase => phase.dispatch.binding.askOrdinal === 2);
+    const data = (phase: typeof phases[number]) => Object.freeze({ requestId: phase.dispatch.requestId,
       bindingHash: phase.dispatch.bindingHash, responseHash: phase.responseHash, outcome: Object.freeze(structuredClone(phase.outcome)) });
-    return Object.freeze({ generationHash, first: data(first[0]!), second: second[0] ? data(second[0]) : null });
+    if (unsent.length) {
+      // 한 세대에 보내지 않은 단계는 하나뿐이고(단계 고유 색인) 그 뒤 단계는 없다. ask 2 면 부모는 이 세대의 빈 줄 ask 1 이다.
+      const [skip] = unsent, ordinal = skip.binding.askOrdinal;
+      if (unsent.length > 1 || second.length || (ordinal === 1 ? first.length !== 0
+        : first.length !== 1 || !crawlTaglineParentMatches(first[0], skip.binding))) fail("crawl_tagline_continuation_mismatch");
+      return Object.freeze({ generationHash, first: first[0] ? data(first[0]) : null,
+        notStarted: Object.freeze({ requestId: skip.requestId, bindingHash: skip.bindingHash, askOrdinal: ordinal }) });
+    }
+    if (first.length !== 1 || second.length > 1 || second.length && !crawlTaglineParentMatches(first[0], second[0].dispatch.binding))
+      fail("crawl_tagline_continuation_mismatch");
+    return Object.freeze({ generationHash, first: data(first[0]), second: second[0] ? data(second[0]) : null });
   });
 }
 
@@ -1753,7 +1788,8 @@ declare const searchVerifyLockBrand: unique symbol;
 /** parentDeadlineAt is the stored shared deadline of a locked settled parent; null only for an execution's first step. */
 export type SearchVerifyCapacityDispatchLock = Readonly<{ control: ReturnType<typeof callerControlSnapshot>;
   parentDeadlineAt: number | null; readonly [searchVerifyLockBrand]: true }>;
-export type SearchVerifyContinuation = Readonly<{ generationHash: string; nowMs: number; unresolved: boolean; nextExecution: number;
+/** `broken`: a row of this generation has no readable execution — the caller skips this target (ledger_mismatch) rather than guess. */
+export type SearchVerifyContinuation = Readonly<{ generationHash: string; nowMs: number; unresolved: boolean; broken: boolean; nextExecution: number;
   latest: Readonly<{ execution: number; deadlineAt: number; parent: SearchVerifyParent; next: SearchVerifyStep | "done" | "stop";
     outcomes: readonly Readonly<{ step: SearchVerifyStep; outcome: SearchVerifyOutcome }>[] }> | null }>;
 const searchVerifyLocks = new WeakMap<SearchVerifyCapacityDispatchLock, { tx: ProductTransaction; row: RequestRow;
@@ -1884,38 +1920,65 @@ export async function reconcileSearchVerifyGatewayTerminal(terminal: SearchVerif
     return { kind: "settled" };
   });
 }
+type SearchVerifyEntry = { row: RequestRow; binding: SearchVerifyDispatchBinding };
+/** `broken`: this execution's rows do not form one exact chain — it is closed (never resumed, never written) and the next
+ * execution starts after it. `notStarted`: its next step settled as gateway_not_started (0149, zero request bytes) — no outcome,
+ * and that exact step can never be sent again in this execution (unique step index), so the execution is closed too. */
 type SearchVerifyChain = { chain: StoredSearchVerify[]; next: SearchVerifyStep | "done" | "stop"; parent: SearchVerifyParent | null;
-  unresolved: { row: RequestRow; binding: SearchVerifyDispatchBinding }[] };
-/** Every execution of a generation must be one exact parent chain of settled rows plus at most its unresolved tail. */
+  unresolved: SearchVerifyEntry[]; notStarted: SearchVerifyEntry[]; broken: boolean };
+/** A settled gateway_not_started row of this route whose evidence is the row's own dispatch handle and binding. */
+function storedSearchVerifyNotStarted(row: RequestRow, binding: SearchVerifyDispatchBinding): boolean {
+  if (row.state !== "settled" || !row.settledAt) return false;
+  const parsed = gatewayNotStartedEvidenceSchema.safeParse(row.terminalEvidence);
+  return parsed.success && parsed.data.dispatch.binding.kind === "search_verify_gateway"
+    && isDeepStrictEqual(parsed.data.dispatch.binding, binding) && searchVerifyRowMatches(row, parsed.data.dispatch as SearchVerifyModelDispatch)
+    && row.terminalEvidenceHash === reviewHash(parsed.data) && isDeepStrictEqual(row.terminalEvidence, parsed.data);
+}
+/** Every execution of a generation is checked on its own: one exact parent chain of settled rows plus at most its unresolved or
+ * not-started tail. A broken execution is isolated (closed) instead of failing the whole generation; #754 principle, 2026-10-31 —
+ * one not_started row used to fail every later tick of product-search-verify with search_verify_continuation_mismatch.
+ * `broken` on the generation means a row whose execution cannot be read at all: callers skip this target. */
 async function searchVerifyGeneration(tx: ProductTransaction, member: SearchVerifyMember, model: string, lock: boolean) {
   const generationHash = searchVerifyGenerationHash({ member, model });
   const query = tx.select().from(modelCapacityRequests).where(sql`${modelCapacityRequests.routeId}='product-search-verify'
     AND ${sentStateSql(modelCapacityRequests.state)} AND ${modelCapacityRequests.dispatchBinding}->>'kind'='search_verify_gateway'
     AND ${modelCapacityRequests.dispatchBinding}->>'generationHash'=${generationHash}`).orderBy(asc(modelCapacityRequests.queueOrdinal));
   const rows = lock ? await query.for("share") : await query;
-  const bindings = rows.map(row => searchVerifyDispatchBindingSchema.safeParse(row.dispatchBinding));
-  if (bindings.some((binding, index) => !binding.success || binding.data.generationHash !== generationHash
-    || rows[index].logicalWorkKey !== binding.data.logicalWorkKey || rows[index].workKey !== `${binding.data.logicalWorkKey}:${binding.data.inputHash}`
-    || rows[index].dispatchBindingHash !== searchVerifyDispatchBindingHash(binding.data))) fail("search_verify_continuation_mismatch");
+  const entries: SearchVerifyEntry[] = [], brokenExecutions = new Set<number>();
+  let broken = false;
+  for (const row of rows) {
+    const binding = searchVerifyDispatchBindingSchema.safeParse(row.dispatchBinding);
+    if (binding.success && binding.data.generationHash === generationHash && row.logicalWorkKey === binding.data.logicalWorkKey
+      && row.workKey === `${binding.data.logicalWorkKey}:${binding.data.inputHash}` && row.dispatchBindingHash === searchVerifyDispatchBindingHash(binding.data)) {
+      entries.push({ row, binding: binding.data }); continue;
+    }
+    const raw = (row.dispatchBinding as { execution?: unknown } | null)?.execution;
+    if (typeof raw === "number" && Number.isSafeInteger(raw) && raw >= 0) brokenExecutions.add(raw); else broken = true;
+  }
   const executions = new Map<number, SearchVerifyChain>();
-  for (const execution of [...new Set(bindings.map(binding => binding.data!.execution))].sort((a, b) => a - b)) {
-    const own = rows.map((row, index) => ({ row, binding: bindings[index].data! })).filter(entry => entry.binding.execution === execution);
-    const settled = own.filter(entry => entry.row.state === "settled").map(entry => storedSearchVerifyEvidence(entry.row));
-    if (settled.some(phase => !phase)) fail("search_verify_continuation_mismatch");
+  const closed = (own: SearchVerifyEntry[]): SearchVerifyChain => ({ chain: [], next: "stop", parent: null, unresolved: own.filter(entry => entry.row.state !== "settled"),
+    notStarted: [], broken: true });
+  for (const execution of [...new Set([...entries.map(entry => entry.binding.execution), ...brokenExecutions])].sort((a, b) => a - b)) {
+    const own = entries.filter(entry => entry.binding.execution === execution);
+    if (brokenExecutions.has(execution)) { executions.set(execution, closed(own)); continue; }
+    const notStarted = own.filter(entry => storedSearchVerifyNotStarted(entry.row, entry.binding));
+    const settled = own.filter(entry => entry.row.state === "settled" && !notStarted.includes(entry)).map(entry => storedSearchVerifyEvidence(entry.row));
+    if (settled.some(phase => !phase)) { executions.set(execution, closed(own)); continue; }
     const chain: StoredSearchVerify[] = [], pending = [...settled as StoredSearchVerify[]];
-    let next: SearchVerifyStep | "done" | "stop" = firstSearchVerifyStep(member.mode), parent: SearchVerifyParent | null = null;
+    let next: SearchVerifyStep | "done" | "stop" = firstSearchVerifyStep(member.mode), parent: SearchVerifyParent | null = null, exact = true;
     while (pending.length) {
       const index = pending.findIndex(phase => isDeepStrictEqual(phase.dispatch.binding.step, next)
         && isDeepStrictEqual(phase.dispatch.binding.parent, parent));
-      if (typeof next === "string" || index < 0) fail("search_verify_continuation_mismatch");
+      if (typeof next === "string" || index < 0) { exact = false; break; }
       const [phase] = pending.splice(index, 1), binding = phase.dispatch.binding;
-      if (chain.length && binding.deadlineAt !== chain[0].dispatch.binding.deadlineAt) fail("search_verify_continuation_mismatch");
+      if (chain.length && binding.deadlineAt !== chain[0].dispatch.binding.deadlineAt) { exact = false; break; }
       chain.push(phase); parent = { requestId: phase.dispatch.requestId, bindingHash: phase.dispatch.bindingHash, responseHash: phase.responseHash };
       next = nextSearchVerifyStep(binding.member, binding.step, phase.outcome);
     }
-    executions.set(execution, { chain, next, parent, unresolved: own.filter(entry => entry.row.state !== "settled") });
+    executions.set(execution, exact ? { chain, next, parent, unresolved: own.filter(entry => entry.row.state !== "settled"), notStarted, broken: false }
+      : closed(own));
   }
-  return { generationHash, executions };
+  return { generationHash, executions, broken };
 }
 /** Stored parser outcomes are business data only. Any unresolved physical call of the target is reported, never skipped;
  * every execution of the generation must be one exact parent chain. This never issues proof or releases capacity. */
@@ -1930,14 +1993,15 @@ export async function readSearchVerifyContinuation(value: { member: SearchVerify
     const [active] = await tx.select({ id: modelCapacityRequests.requestId }).from(modelCapacityRequests).where(sql`
       ${inFlightStateSql(modelCapacityRequests.state)} AND (${modelCapacityRequests.logicalMemberKeys} && ARRAY[${key}]::text[]
         OR ${modelCapacityRequests.logicalMemberKeys} IS NULL AND ${modelCapacityRequests.routeId} = 'product-search-verify')`).limit(1);
-    const { generationHash, executions } = await searchVerifyGeneration(tx, member, value.model, false);
+    const { generationHash, executions, broken } = await searchVerifyGeneration(tx, member, value.model, false);
     const nowMs = Math.floor(Number(clock.now)), ordinals = [...executions.keys()], last = ordinals.length ? executions.get(ordinals[ordinals.length - 1])! : null;
-    const latest: SearchVerifyContinuation["latest"] = last && last.chain.length && last.parent ? Object.freeze({ execution: ordinals[ordinals.length - 1],
+    // A closed execution (broken chain or a not-started next step) is never resumed: the next tick starts a new execution after it.
+    const latest: SearchVerifyContinuation["latest"] = last && !last.broken && !last.notStarted.length && last.chain.length && last.parent ? Object.freeze({ execution: ordinals[ordinals.length - 1],
       deadlineAt: last.chain[0].dispatch.binding.deadlineAt, parent: Object.freeze(last.parent),
       next: typeof last.next === "string" ? last.next : Object.freeze(structuredClone(last.next)),
       outcomes: Object.freeze(last.chain.map(phase => Object.freeze({ step: Object.freeze(structuredClone(phase.dispatch.binding.step)),
         outcome: Object.freeze(structuredClone(phase.outcome)) }))) }) : null;
-    return Object.freeze({ generationHash, nowMs, unresolved: !!active, latest,
+    return Object.freeze({ generationHash, nowMs, unresolved: !!active, broken, latest,
       nextExecution: ordinals.length ? ordinals[ordinals.length - 1] + 1 : 0 });
   });
 }
@@ -1951,14 +2015,14 @@ export async function lockSearchVerifyResultChain(tx: ProductTransaction, value:
   const member = searchVerifyMemberSchema.parse(value.member);
   const [mutex] = await tx.select({ id: modelCapacityControl.id }).from(modelCapacityControl).where(eq(modelCapacityControl.id, 1)).for("share");
   if (!mutex) fail("model_capacity_control_missing");
-  let generation: Awaited<ReturnType<typeof searchVerifyGeneration>>;
-  try { generation = await searchVerifyGeneration(tx, member, value.model, true); }
-  catch (error) { if (error instanceof Error && error.message === "search_verify_continuation_mismatch") return null; throw error; }
+  const generation = await searchVerifyGeneration(tx, member, value.model, true);
   const ordinals = [...generation.executions.keys()], found = generation.executions.get(value.execution);
-  if (!found || ordinals[ordinals.length - 1] !== value.execution) return null;
-  if (found.unresolved.length) {
-    const [tail] = found.unresolved;
-    return found.unresolved.length === 1 && typeof found.next !== "string" && isDeepStrictEqual(tail.binding.step, found.next)
+  if (generation.broken || !found || found.broken || ordinals[ordinals.length - 1] !== value.execution) return null;
+  // A not-started tail is the exact next step that provably never left: its result is unknown to the business, like an unresolved call.
+  const tails = [...found.unresolved, ...found.notStarted];
+  if (tails.length) {
+    const [tail] = tails;
+    return tails.length === 1 && typeof found.next !== "string" && isDeepStrictEqual(tail.binding.step, found.next)
       && isDeepStrictEqual(tail.binding.parent, found.parent) && (!found.chain.length || tail.binding.deadlineAt === found.chain[0].dispatch.binding.deadlineAt)
       ? Object.freeze({ kind: "unresolved" as const }) : null;
   }

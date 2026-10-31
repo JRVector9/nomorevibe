@@ -1,5 +1,12 @@
 # 남은 작업
 
+## search-verify·crawl-tagline·crawl-agent-review 성공 기록 멈춤(continuation_mismatch)·search-profile 55P03 — 2026-10-31, 운영 미적용(코드·단위·일회용 DB 시험만)
+
+- 원인: #747(0149)의 `gateway_not_started` 정산 행을 search-verify·crawl-tagline 장부 사슬이 몰라 세대 전체를 불일치로 던졌다(같은 제품·후보가 매 틱 잡을 멈춤).
+  crawl-agent-review 는 풀의 모델 하나만 멈춰도 일을 남긴 틱을 미룸으로 끝내 성공 시각이 멈췄다. 운영 데이터 손질은 필요 없다(배포로 풀림).
+- **배포 뒤(대표)**: [확인 SQL ①~⑦](docs/operations/2026-10-31-continuation-mismatch-recovery.md#확인-sql-read-only-배포-전후) — ④ 세 잡 `last_success_at` 이동·`last_error` 비움,
+  ②③ 막힌 제품·후보가 새 기록을 얻었는지, ⑤ 0행. search-profile 은 `search_profile.lock_timeout_holders` 로그나 ⑦로 control 을 5초 넘게 쥔 TX 를 확정한다(아직 미확정).
+
 ## 빈 화면 본문 규칙(shadow)·남의 사이트 8곳 — 2026-10-29, 운영 미적용(코드·단위·일회용 DB 시험만)
 
 - PR #738(규칙 5종·`judge.stubTextRules` 기본 shadow·코드 기본값 8곳)·#742(재측정 스크립트·확인 SQL). 재측정은 지시 수치와 같다(1~5 합계 1,582/260/30 · 84.5%).

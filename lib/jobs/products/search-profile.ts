@@ -7,7 +7,9 @@ import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { PROFILE_MODEL, profileEvidence, profileHash } from "@/lib/domain/products/search-profile";
 import { pendingProfiles, recordProfileResult } from "@/lib/domain/products/search-profiles";
 import { otherRoutesWaitingOnGroup } from "@/lib/llm/capacity-busy-targets";
+import { isLockNotAvailable, readControlLockHolders } from "@/lib/llm/capacity-lock-diagnostics";
 import { textRouteCallable } from "@/lib/llm/serving-contract-store";
+import { logger } from "@/lib/observability/logger";
 import { DEFAULT_RUNTIME_SETTINGS, jobKnob } from "@/lib/operations/runtime-settings-schema";
 import { runtimeSettings } from "@/lib/operations/runtime-settings-store";
 
@@ -124,10 +126,20 @@ export async function writeSearchProfiles(ctx: JobContext<null>): Promise<JobOut
             if (!blocked) ctx.log("search_profile.capacity_deferred", { written, reused, failed, reason: error.reason });
             blocked ||= "model_capacity";
           }
+          // 잠금 대기 초과(55P03)는 이 일꾼의 TX 하나가 접힌 것이다 — 옆 일꾼의 보내진 호출을 끊지 않는다(끊으면 그 요청이 미확인으로 남는다).
+          // 새 호출만 멈추고 틱은 이 오류로 끝난다(last_error). 누가 잡았는지 한 번 남긴다(2026-10-31).
+          else if (isLockNotAvailable(error)) {
+            if (!blocked) ctx.log("search_profile.lock_timeout", { written, reused, failed });
+            blocked = "lock_timeout";
+          }
           else { blocked = "result_write_failed"; controller.abort(); }
           throw error;
         }
       }));
+      if (blocked === "lock_timeout") {
+        const holders = await readControlLockHolders();
+        logger.warn("search_profile.lock_timeout_holders", { holders, written, reused, failed });
+      }
       const failures = settled.filter((item): item is PromiseRejectedResult => item.status === "rejected");
       const failure = failures.find(item => !(item.reason instanceof ModelCapacityDeferredError)) ?? failures[0];
       if (failure) throw failure.reason;
