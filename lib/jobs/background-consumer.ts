@@ -21,8 +21,9 @@ export const BACKGROUND_CONSUMER_JOBS = {
 
 /**
  * 버전이 없으면 비활성(legacy 그대로). 켜면 이 역할의 고정 목록 안에서 하나 이상, 겹침 없이.
- * 주의(2026-10-21): product-audit 을 넣으면 공통 슬롯이 open 일 때만 돈다 — 감사 보류 쓸기·Qwen 직접 감사·Qwen-v2 자동 단계는 공통 슬롯을 쓰지 않으므로
- * slot 모드가 open 이 아니면 넣지 않는다(lib/crawl/jobs/product-audit.ts)
+ * 주의(2026-10-21): product-audit 을 넣으면 공통 슬롯이 open 일 때만 돈다 — 감사 보류 쓸기는 공통 슬롯을 쓰지 않으므로 slot 모드가 open 이 아니면
+ * 넣지 않는다(lib/crawl/jobs/product-audit.ts). 2026-10-31(PR 3a-C) 부터 Qwen 직접 감사(audit-qwen)·Qwen-v2 자동 단계(audit-second-opinion)는 자기 잡이고
+ * 공통 슬롯을 쓰지 않아 이 목록에 들지 않는다 — 보류 재심사(held-qwen-retry)·갈림 판가름(split-tiebreak)·갈림 확인(split-confirm)도 같다
  */
 export function backgroundConsumerJobs(role: string, env: Readonly<Record<string, string | undefined>>): readonly string[] {
   const version = env.PIPELINE_BACKGROUND_CONSUMER_VERSION;

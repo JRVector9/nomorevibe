@@ -39,8 +39,9 @@ it('keeps old reviewer catalog rows and their absent consumer keys exact', () =>
   expect(hostDbBudgetCatalog(policy)).toEqual({ host: 'm3', release: 'roster-test',
     processes: [
       { kind: 'role-parent', role: 'reviewer', count: 1, primaryMax: 1, readMax: 0 },
-      { kind: 'worker', role: 'reviewer', count: 1, primaryMax: 3, readMax: 0 },
-    ], primaryClients: 4, replicaClients: 0, totalClients: 4,
+      // 역할 worker 11 = 동시에 틱을 도는 모델 줄 9(3a-C 합성 잡 분해 뒤) + lease heartbeat 1 + 여유 1(2026-10-31 3→6→11). ai1·ai2 consumer 자식은 등록부대로 3
+      { kind: 'worker', role: 'reviewer', count: 1, primaryMax: 11, readMax: 0 },
+    ], primaryClients: 12, replicaClients: 0, totalClients: 12,
     enforcement: 'unknown', ready: false, activationAllowed: false });
 });
 it('preserves the disabled original config identity and no-env child environment', () => {
@@ -56,7 +57,8 @@ it('keeps legacy parent and child identity while changing only the kind', () => 
   const child = hostDbChildEnvironment(env, 'reviewer');
   expect(JSON.parse(child.HOST_DB_BUDGET!)).toEqual({ mode: 'enabled', policy,
     process: { kind: 'worker', role: 'reviewer', host: 'm3', release: 'roster-test', replica: 1, copy: 1 } });
-  expect(dbPoolConfig(child).max).toBe(3); expect(env).toEqual(before);
+  // legacy reviewer worker 11 = 동시에 틱을 도는 모델 줄 9(3a-C 합성 잡 분해 뒤) + lease heartbeat 1 + 여유 1(2026-10-31 3→6→11)
+  expect(dbPoolConfig(child).max).toBe(11); expect(env).toEqual(before);
 });
 
 function consumerEnvironment(consumer: 'legacy' | 'ai1' | 'ai2', kind: 'role-parent' | 'worker' = 'role-parent') {
@@ -74,9 +76,10 @@ it('counts the three fixed reviewer pairs separately and keeps their rolling cop
     { kind: 'worker', role: 'reviewer', count: 1, primaryMax: 3, readMax: 0, consumer: 'ai1' },
     { kind: 'role-parent', role: 'reviewer', count: 1, primaryMax: 1, readMax: 0, consumer: 'ai2' },
     { kind: 'worker', role: 'reviewer', count: 1, primaryMax: 3, readMax: 0, consumer: 'ai2' }]);
-  expect(result).toMatchObject({ totalClients: 12, enforcement: 'unknown', ready: false, activationAllowed: false });
+  // legacy reviewer 1 + 11(3a-C 합성 잡 분해 뒤) + ai1 1 + 3 + ai2 1 + 3 = 20
+  expect(result).toMatchObject({ totalClients: 20, enforcement: 'unknown', ready: false, activationAllowed: false });
   const rolling = hostDbBudgetCatalog({ ...selected, rolloutCopies: 2 });
-  expect(rolling.totalClients).toBe(24); expect(rolling.processes.every(row => row.count === 2)).toBe(true);
+  expect(rolling.totalClients).toBe(40); expect(rolling.processes.every(row => row.count === 2)).toBe(true);
 });
 it('allows a consumer-only roster without implicitly adding a legacy reviewer pair', () => {
   const selected = { ...policy, roles: [], reviewerConsumers: ['ai1'] };
@@ -99,9 +102,11 @@ it('matches each declared consumer parent and child to its own fixed entry and p
     expect(dbPoolConfig(env).max).toBe(1);
     const child = hostDbChildEnvironment(env, 'reviewer', consumer);
     assertHostDbEntry(child, { kind: 'worker', role: 'reviewer', consumer });
-    expect(dbPoolConfig(child).max).toBe(3);
+    // legacy 역할 worker 는 줄 규칙의 11(3a-C 합성 잡 분해 뒤 모델 줄 9 + 2), ai1·ai2 consumer 자식은 등록부의 3 — 줄 분리는 역할 프로세스의 연결만 늘린다
+    const quota = consumer === 'legacy' ? 11 : 3;
+    expect(dbPoolConfig(child).max).toBe(quota);
     expect(() => dbPoolConfig(child, 'read')).toThrow('host_db_read_pool_not_declared');
-    expect(() => dbPoolConfig({ ...child, DB_POOL_MAX: '4' })).toThrow('host_db_pool_quota_exceeded');
+    expect(() => dbPoolConfig({ ...child, DB_POOL_MAX: String(quota + 1) })).toThrow('host_db_pool_quota_exceeded');
   }
 });
 it('refuses every cross-consumer entry including implicit legacy expectations', () => {

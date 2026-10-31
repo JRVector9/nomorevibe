@@ -8,9 +8,14 @@ import { fetchCrawlDocuments } from "@/lib/crawl/jobs/fetch";
 import { judgeCrawlDocuments } from "@/lib/crawl/jobs/judge";
 import { reviewCrawlCandidates } from "@/lib/crawl/jobs/agent-review";
 import { secondReviewCandidates } from "@/lib/crawl/jobs/second-review";
+import { tiebreakGateSplits } from "@/lib/crawl/jobs/split-tiebreak";
 import { reviewHumanQueue } from "@/lib/crawl/jobs/human-review";
+import { retryHeldQwen } from "@/lib/crawl/jobs/held-qwen-retry";
+import { confirmGateSplits } from "@/lib/crawl/jobs/split-confirm";
 import { checkGrokSession } from "@/lib/crawl/jobs/grok-session";
 import { auditPublishedProducts } from "@/lib/crawl/jobs/product-audit";
+import { auditWithQwenDirect } from "@/lib/crawl/jobs/audit-qwen";
+import { reviewAuditSecondOpinions } from "@/lib/crawl/jobs/audit-second-opinion";
 import { reviewThinPagesByScreen } from "@/lib/screen-review/job";
 import { translateReasons } from "@/lib/crawl/jobs/translate-reasons";
 import { writeTaglines } from "@/lib/crawl/jobs/tagline";
@@ -90,9 +95,20 @@ const HANDLERS: Record<string, AnyJob> = {
   "crawl-agent-review": reviewCrawlCandidates,
   /** 1차와 다른 모델이 같은 입력을 따로 본다 — 엇갈리면 사람에게 */
   "second-review": secondReviewCandidates,
+  /** 관문에서 갈린 보류를 gpu3090 Qwen-v2 에 한 번 더 묻는다(2026-10-31 second-review 에서 분리) */
+  "split-tiebreak": (ctx) => tiebreakGateSplits(ctx as JobContext<null>),
+  /** 사람 몫으로 넘어온 후보를 M3 DeepSeek 이 대신 본다 */
   "human-deepseek-review": reviewHumanQueue,
-  /** 공개된 제품을 1차 심사 글로 다시 본다 — 찾아 적기만 하고, 내리는 것은 사람이다 */
+  /** 소개 없음·재시도 소진·판단 보류를 gpu3090 Qwen-v2 에 다시 묻는다(2026-10-31 human-deepseek-review 에서 분리) */
+  "held-qwen-retry": (ctx) => retryHeldQwen(ctx as JobContext<null>),
+  /** 갈림 판가름의 Qwen 거부를 M3 DeepSeek 이 확인해야 닫는다(2026-10-31 human-deepseek-review 에서 분리) */
+  "split-confirm": (ctx) => confirmGateSplits(ctx as JobContext<null>),
+  /** 공개된 제품을 1차 심사 글로 다시 본다 — 찾아 적기만 하고, 내리는 것은 사람이다. 보류 쓸기 + 게이트웨이/CLI 감사 */
   "product-audit": auditPublishedProducts,
+  /** 심사자가 qwen-direct 인 감사의 남은 항목을 gpu3090 에 묻는다(2026-10-31 product-audit 에서 분리) */
+  "audit-qwen": (ctx) => auditWithQwenDirect(ctx as JobContext<null>),
+  /** 감사 거절의 Qwen-v2 두 번째 의견·공개분 2차 거르기(2026-10-31 product-audit 에서 분리) */
+  "audit-second-opinion": (ctx) => reviewAuditSecondOpinions(ctx as JobContext<null>),
   /** 글이 얇은 감사 거절을 그려서 화면과 글로 m1 Qwen 에 묻는다 — 두 번째 의견(qwen-vision-m1)으로 적고 답으로 닫는다 */
   "audit-screen-review": (ctx) => reviewThinPagesByScreen(ctx as JobContext<null>),
 

@@ -47,7 +47,7 @@ export type HelperLiveDownstream = (typeof HELPER_LIVE_DOWNSTREAMS)[number];
 export const HELPER_WIRE_VARIANTS = Object.freeze(["json_schema", "no_response_format"] as const);
 export type HelperWireVariant = (typeof HELPER_WIRE_VARIANTS)[number];
 
-// ── 배정 표 어휘(PR 3b-A, migration 0155) ─────────────────────────────────────────────────────────────────
+// ── 배정 표 어휘(PR 3b-A, migration 0156) ─────────────────────────────────────────────────────────────────
 // 같은 표(model_helper_assignments)에 role 'primary' 행(단계 × 장비 × 모델 배정)을 둔다. role 'helper' 행은 위 PR 2a 어휘 그대로다.
 // 이 PR 에서 배정 표 행을 읽는 hot path 는 없다(3b-B 가 flag 뒤에서 읽는다). 입장(helperGateCte)·감시자·도우미 화면은 role 'helper' 행만 본다.
 
@@ -258,7 +258,7 @@ export type HelperAssignmentInput = Readonly<z.output<typeof helperAssignmentSch
 
 /**
  * 저장된 배정 행. version 은 폼 compare-and-set·감사·신호(assignment_version)의 참조다. 시각은 ISO 문자열.
- * 0155 의 새 열(registryKey·transport·rank·role·vote)은 선택 칸이다 — PR 2a 저장소의 읽기는 늘 채우고, 2b·2c 가 만드는 행 literal 은 그대로 맞는다.
+ * 0156 의 새 열(registryKey·transport·rank·role·vote)은 선택 칸이다 — PR 2a 저장소의 읽기는 늘 채우고, 2b·2c 가 만드는 행 literal 은 그대로 맞는다.
  * 도우미 행에서는 기본값(role 'helper', rank 1, vote false, transport 'gateway', registryKey null) 그대로이고 뜻이 없다.
  */
 export type HelperAssignmentRow = HelperAssignmentInput & Readonly<{
@@ -521,7 +521,7 @@ const SQL_ALIAS = /^[a-z_][a-z0-9_]{0,30}$/;
  *
  * - sup: control 한 행(enabled·epoch·principal·lease 살아 있음). 행이 없으면 LEFT JOIN 이 NULL 을 주고 coalesce 가 닫는다.
  * - helper_gate: 배정마다 live·shadow 두 줄과 `ok`(§1.3 + 정지 + mode·verdict). NULL 은 모두 false.
- *   도우미 행(role 'helper')만 — 배정 표 행(role 'primary', 0155)의 route 는 그 장비의 보통 역할이라 도우미 관문에 걸리지 않는다.
+ *   도우미 행(role 'helper')만 — 배정 표 행(role 'primary', 0156)의 route 는 그 장비의 보통 역할이라 도우미 관문에 걸리지 않는다.
  * - helper_active: 배정별 도우미 경로 점유 수(reserved/dispatched — indeterminate 는 점유가 아니다).
  * - demand: 신선한 primary_demand 신호가 있는가(`on_`). 신선하지 않으면 false = 무시.
  */

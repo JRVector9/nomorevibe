@@ -484,9 +484,9 @@ DB_POOLER_MODE=pgbouncer npx tsx scripts/reconsider-star-auto.ts --apply .crawl-
 |---|---:|---:|---:|---|
 | 웹 | 8 | 1536 MiB | 2 | OAuth·세션·방문자 키·관리자/cron 접수 토큰, 일반 로그인 `PUBLIC_AUTH_SECRET`, 메일을 켤 때 `LOGIN_EMAIL_API_KEY`·`LOGIN_EMAIL_FROM` |
 | 크롤러 | 4 | 1536 MiB | 1 | GitHub token |
-| 리뷰 | 3 | 2 GiB | 1 | 리뷰용 Claude CLI token |
+| 리뷰 | 6 | 2 GiB | 1 | 리뷰용 Claude CLI token |
 | 발행 | 3 | 1536 MiB | 1 | Codex access token 또는 OpenAI API key |
-| 소개·사유 번역 | 3 | 512 MiB | 1 | ABCLLM API key |
+| 소개·사유 번역 | 6 | 512 MiB | 1 | ABCLLM API key |
 | 집계 | 3 | 1 GiB | 1 | GitHub Feedback App 키; 메일을 켤 때 웹과 같은 `LOGIN_EMAIL_API_KEY`·`LOGIN_EMAIL_FROM`·`PUBLIC_AUTH_SECRET` |
 | 스케줄러 | 2 | 256 MiB | 0.25 | 없음 |
 | 로컬 DB | 별도 | 4 GiB | 2 | 로컬 DB 계정 |
@@ -494,9 +494,9 @@ DB_POOLER_MODE=pgbouncer npx tsx scripts/reconsider-star-auto.ts --apply .crawl-
 별도 M3 monitor의 실제 설정은 pool 1·512 MiB·0.5 CPU다. 아래 초기 합계에는 monitor 연결이 빠져 있으므로
 현재 예산을 계산할 때 1개를 추가한다. monitor에는 전용 SELECT DB 계정과 두 Push URL만 제공한다.
 
-웹 1개와 6역할의 pool 상한 합계는 26이다. 웹 복제본과 connect-agent pool 1개를 더하면 35이며
+웹 1개와 6역할의 pool 상한 합계는 32이다(2026-10-31 리뷰·소개·사유 번역 3→6 뒤; 그 전 26). 웹 복제본과 connect-agent pool 1개를 더하면 41이며
 migration/관리/다른 앱/교체 중 연결을 추가 계산한다. 운영 초기 웹 pool을 각각 6으로 설정하면 합계는
-31이다. RAM은 singleton 역할을 배치한 M3에 OS·파일 캐시 여유가 필요하다.
+37이다. 리뷰·소개·사유 번역의 6은 "동시에 틱을 도는 모델 줄 4 + 역할 lease heartbeat 1 + 여유 1"이다(아래 2026-10-31 절). RAM은 singleton 역할을 배치한 M3에 OS·파일 캐시 여유가 필요하다.
 CPU 상한은 예약량이 아니므로 모든 역할의 동시 peak를 보장하지 않는다. 8 vCPU/16 GiB 예시는
 측정을 시작할 동거형 예산이며 호스트 장애까지 견디는 무중단 구성은 아니다.
 
@@ -789,7 +789,58 @@ B 심사 장애는 신규 자동 발행을 보류하며 조용히 AI 심사를 �
 
 배포 준비: 기존 publisher를 정상 drain→새 publisher 교체 및 소유 잡 확인→새 text 컨테이너 시작. 신규 text는 worker target/위 명령, memory512MiB·DB pool3·hard timeout180초, 별도 instance ID/health를 사용한다. 실제 서버 여유는 배포 전에 확인한다. 구형 publisher와 새 text를 함께 유지하지 않는다. rollback은 text drain/중지 후 구형 publisher 복구이며 DB 요청·결과를 삭제하지 않는다.
 
-DB 기본 상한은 web8+crawler4+reviewer3+publisher3+text3+maintenance3+scheduler2+connect-agent1=27이다. 웹2개 기본8이면35, 운영 웹 각각6이면31이다. migration/관리/다른 앱/교체 여유를 별도로 확보한다. 이 계산은 설정상 최대이며 실제 연결 수 실측이 아니다.
+DB 기본 상한은 web8+crawler4+reviewer3+publisher3+text3+maintenance3+scheduler2+connect-agent1=27이었다(2026-10-31 reviewer·text 3→6 뒤 33, 같은 날 3a-C 합성 잡 분해로 reviewer 6→11 뒤 38). 웹2개 기본8이면35(→41→46), 운영 웹 각각6이면31(→37→42)이다. migration/관리/다른 앱/교체 여유를 별도로 확보한다. 이 계산은 설정상 최대이며 실제 연결 수 실측이 아니다.
+
+## 2026-10-31 단계마다 자기 줄(PR 3a-A) — reviewer·text 줄 분리와 DB pool 6
+
+모델을 부르는 잡은 잡 하나에 줄(lane) 하나다(`lib/jobs/catalog.ts`). 한 줄 안의 잡은 차례로 돌고 틱은 예산까지 가므로, 기본 줄에 모델 잡
+여럿을 두면 한 잡의 느림·오류가 다른 단계를 수 분 미뤘다(reviewer 기본 줄 2차 110 + 사람 위임 110 + 감사 70 + 소개 검수 110 ≈ 400초).
+큐는 이미 단계마다 자기 표에 있으므로 줄만 나누면 한 프로세스 안에서 동시에 돈다. 역할 lease·잡 lease·잡 이름·heartbeat `lanes[]` 모양은 그대로다.
+
+| 역할 | 전(줄 수) | 후(줄 수) |
+|---|---|---|
+| reviewer | main[crawl-judge, second-review, human-deepseek-review, product-audit, product-intro-check, grok-session-check] · ai1 · screen · assist · assist-audit (5) | main[crawl-judge] · ai1 · second · human · audit · screen · intro · assist · assist-audit · grok (10) |
+| text | main[reason-translate, crawl-tagline, product-search-profile, product-search-verify, product-embedding, product-repo-review] · korean-translation · product-translation (3) | reason · tagline · profile · verify · embed · repo · korean-translation · product-translation (8, 기본 줄 없음) |
+
+- `scripts/worker.ts`: AI2 items 모드에서 `second-review`가 `stage_blocked`면 reviewer 줄을 1초마다 다시 돌리던 특례를 지웠다. 미룬 틱은 요청을
+  남긴 채 기존 poll 간격(기본 5초)에 다시 보고, 건 처리는 AI2 consumer가 1초 idle로 집는다. 줄의 1초 재실행은 잡 이름이 아니라 runner가
+  실제로 다시 요청했다는 표시(`RunResult.continuation`, `continuation:"ready"` + `lib/jobs/runner.ts` CONTINUATION_JOBS)만 본다.
+- DB pool 규칙: **역할 프로세스 `DB_POOL_MAX` = 동시에 틱을 도는 모델 줄 수 + 역할 lease heartbeat 1 + 여유 1**. 줄은 쿼리·TX 동안만 연결을
+  빌리고 모델 응답을 기다리는 동안은 놓으므로, 세는 줄은 "매분 모델을 부르며 틱이 수십 초 이어져 저장·15초 lease heartbeat가 겹치는 줄"이다 —
+  reviewer 4(second·human·audit·intro), text 4(reason·tagline·profile·verify) → 둘 다 **6**(`compose.yml`, `lib/db/pool.ts` ROLE_POOL_MAX,
+  `lib/db/host-budget.ts` workerMax, Dokploy env). ai1·ai2 consumer 앱은 등록부대로 3 그대로다. 줄을 더 쪼개면(3a-C) 같은 규칙으로 다시 센다.
+- 배포: reviewer·text Dokploy 앱(M3·mini) env `DB_POOL_MAX`를 같은 창에서 6 이상으로 올린다(이미 그 이상이면 유지). `HOST_DB_BUDGET`을 쓰는
+  호스트는 선언(`workerMax` reviewer·text 6)이 코드와 같은 릴리스여야 `assertHostDbEntry`가 통과한다. 모델 호출 수·순서는 장부가 정해 바뀌지 않는다.
+
+## 2026-10-31 합성 잡 분해(PR 3a-C) — 한 잡 = 큐 하나 + 모델 호출 모양 하나, reviewer DB pool 11
+
+3a-A 가 모델 잡마다 줄을 줬지만 세 잡은 한 틱 안에서 두 장비(gpu3090·M3)를 차례로 불렀다 — 한 장비의 느림·서버 탈이 같은 틱의 다른 단계를 세우고
+그 잡의 틱을 실패로 남겼다. 단계마다 자기 잡·자기 줄·자기 예산으로 나눴다. 장부 binding 의 `job.name` 은 그 호출을 띄운 잡 lease 라(`lib/llm/local-model-domain.ts`)
+purpose → 잡 이름 표가 함께 바뀐다(`lib/llm/local-model-capacity-contract.ts localModelJob`, **migration 0155_split_composite_jobs** — 세 CHECK 에 새 이름 가지를 OR 로 더한다.
+옛 가지가 남아 분해 전에 띄운 행은 그대로 통과한다).
+
+| 전(합성 잡) | 후(잡 · 줄 · 예산) | 큐·결과 표 |
+|---|---|---|
+| human-deepseek-review = 보류 Qwen 재심사(gpu3090) → DeepSeek 위임(M3) → 갈림 확인(M3) | `held-qwen-retry` · held · 110초 / `human-deepseek-review` · human · 110초 / `split-confirm` · confirm · 110초 | crawl_review_attempts(delegated) / gate_split_tiebreaks(deepseek_*) |
+| second-review = 표 심사 ∥ 갈림 판가름(gpu3090) | `second-review` · second · 110초 / `split-tiebreak` · tiebreak · 110초 | second_reviews / gate_split_tiebreaks |
+| product-audit = 보류 쓸기 → 게이트웨이/CLI 감사 또는 Qwen 직접 감사(gpu3090) ∥ 두 번째 의견(gpu3090) | `product-audit` · audit · 70초 / `audit-qwen` · audit-qwen · 70초 / `audit-second-opinion` · audit-opinion · 70초 | product_audit_items / product_audit_second_opinions·second_reviews(needs_human) |
+
+- reviewer 줄: 10 → **15**(heartbeat 파서 상한 16 안). text 는 그대로 8.
+- M3 DeepSeek 에 한 번에 한 호출이라는 약속은 잡 lease 가 아니라 프로세스의 DeepSeek 자리(`lib/crawl/deepseek-slot.ts`)가 지킨다 — 위임·확인은 호출만 줄 서고 틱은 따로 돈다.
+  gpu3090 의 두 번째 자리(`withQwenSecondarySlot`)·함께 쓰는 물러나기(`qwen-endpoint-backoff.ts`)는 같은 reviewer 프로세스 안이라 그대로다.
+- qwenAuto 스위치를 켤 때 바로 부르는 잡(`lib/crawl/settings.ts QWEN_AUTO_JOB`)·관리자 단계 풀 매핑(`admin-model-pools.ts`)·단계 표(`stage-registry.ts`)·비상 자리·
+  운영센터 이름표·조치 칸의 맡은 잡이 새 이름을 쓴다. 게이트웨이 감사의 AI1 양보(`product-audit.ts`)는 3a-B 가 뺐다(장비 순위가 대신한다).
+- 3a-B 와 합쳐: gpu3090 물러나기는 호출자(`QwenCaller` audit·second_opinion·split_tiebreak·held_qwen)마다 따로다 — 새 잡 audit-qwen·audit-second-opinion·
+  split-tiebreak·held-qwen-retry 가 각자 자기 호출자를 쓴다. 3a-B 의 사람 검토 잡 단계 wrapper(한 단계 실패가 다른 단계를 건너뛰지 않음)는 잡을 셋으로 나눈 뒤
+  잡·줄 단위 격리로 대신한다(`tests/split-jobs.test.ts`).
+- DB pool: reviewer 모델 줄 4 → 9(second·human·audit·intro + held·confirm·tiebreak·audit-qwen·audit-opinion) → `DB_POOL_MAX` **11**(`compose.yml`,
+  `lib/db/pool.ts`, `lib/db/host-budget.ts` workerMax, Dokploy env). 다섯 새 줄은 스위치가 꺼져 있으면 틱마다 설정 한 번만 읽지만 켜져 있으면 매분 모델을 부르므로 센다.
+  text 6 그대로. 기본 상한 합계(위 27 → 33)는 38 이 된다.
+- **배포 차례**: 새 카탈로그 잡은 scheduler 가 요청해야 돈다 — 이 릴리스는 **scheduler 를 먼저 배포**하고(두 복제본) 그 뒤 reviewer 를 올린다(`new-jobs-scheduler-first`).
+  migration 0155 는 reviewer 가 새 이름으로 dispatch 하기 전에 적용되어야 한다(migrate → scheduler → reviewer). reviewer Dokploy 앱(M3·mini) env `DB_POOL_MAX` 를 같은 창에서
+  11 이상으로 올린다. 옛 reviewer 가 띄워 둔 행(옛 잡 이름)은 새 코드가 읽어 정산한다(`legacyLocalModelJob`).
+- 운영 관측: `job:audit-qwen` 의 실패(`product_audit_endpoint_error:*`·`product_audit_endpoint_backoff:*`)가 gpu3090 서버 탈을 보인다 — 전에는 `job:product-audit` 에 섞여 있었다.
+  `held-qwen-retry`·`split-tiebreak`·`audit-second-opinion` 은 스위치(qwenAuto.*)가 꺼져 있으면 매 틱 `done:true` 로 끝난다.
 
 관리자 상태 화면에 소개·사유 번역(text) 카드를 추가했다. 표시만으로 배포 성공을 판단하지 않는다. 해당 release의 컨테이너 healthy, publisher의 텍스트 실행0, text의 처리 및 backlog 감소를 확인한다. 공유 모델 서버 경합은 분리 후에도 계측한다.
 

@@ -59,18 +59,25 @@ export function withAdminModelStage<T>(stageId: AdminModelStage, run: () => T): 
   return scope.run({ env, selected: { ...active.selected, [stage.purpose]: key }, registry }, run);
 }
 
-export const MODEL_POOL_JOBS = new Set(["human-deepseek-review", "product-audit", "audit-screen-review", "second-review",
+export const MODEL_POOL_JOBS = new Set(["human-deepseek-review", "held-qwen-retry", "split-confirm", "product-audit", "audit-qwen", "audit-second-opinion",
+  "audit-screen-review", "second-review", "split-tiebreak",
   "reason-translate", "crawl-tagline", "product-translate", "product-tagline-ko", "product-search-profile", "product-search-verify",
   "product-intro-check", "product-llm-assist-review", "product-llm-assist-audit-review", "product-automated-action-audit"]);
+/**
+ * 잡 lease 마다 한 번 고정하는 관리자 단계 풀. 2026-10-31(PR 3a-C) 합성 잡을 나눠 잡 하나가 자기 단계 하나를 연다 — 갈림 판가름은 split-tiebreak 잡,
+ * 갈림 확인은 split-confirm 잡(gate-split-confirm.ts 가 안에서도 같은 단계를 연다), 보류 재심사는 held-qwen-retry 잡, Qwen 직접 감사는 audit-qwen 잡.
+ * 두 번째 의견·공개분 거르기는 audit-second-opinion-auto.ts 가 단계마다 스스로 연다. 사람 큐 위임(human-review)은 단계 id 가 purpose 와 같아 풀만 고른다.
+ */
 export async function withStoredAdminStagePools<T>(assignment: string, run: () => Promise<T>): Promise<T> {
   if (scope.getStore()) return run();
   const { getSettings } = await import("@/lib/crawl/settings");
   const { onPrimary } = await import("@/lib/db");
   const settings = await onPrimary(getSettings);
   return withAdminStagePools(settings.stageModelPools ?? {}, assignment, () => {
-    if (assignment.startsWith("second-review:")) return withAdminModelStage("split-tiebreak", () => withAdminModelStage("split-confirm", run));
-    if (assignment.startsWith("human-deepseek-review:")) return withAdminModelStage("held-review-retry", run);
-    if (assignment.startsWith("product-audit:")) return withAdminModelStage("audit-review", run);
+    if (assignment.startsWith("split-tiebreak:")) return withAdminModelStage("split-tiebreak", run);
+    if (assignment.startsWith("split-confirm:")) return withAdminModelStage("split-confirm", run);
+    if (assignment.startsWith("held-qwen-retry:")) return withAdminModelStage("held-review-retry", run);
+    if (assignment.startsWith("audit-qwen:")) return withAdminModelStage("audit-review", run);
     return run();
   });
 }

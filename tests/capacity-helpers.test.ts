@@ -377,13 +377,13 @@ describe('policy route cap (PR 3b-A)', () => {
   });
 });
 
-describe('migration 0155', () => {
+describe('migration 0156', () => {
   const journal = JSON.parse(readFileSync('drizzle/meta/_journal.json', 'utf8')) as { entries: { idx: number; when: number; tag: string; version: string }[] };
-  const migration = readFileSync('drizzle/0155_model_assignments.sql', 'utf8');
+  const migration = readFileSync('drizzle/0156_model_assignments.sql', 'utf8');
   const code = migration.replace(/--(?!> statement-breakpoint).*$/gm, '');
 
-  it('registers 0155 right after the helper tables and notes the 3a-C numbering clash', () => {
-    expect(journal.entries.find(entry => entry.tag === '0155_model_assignments')).toMatchObject({ idx: 155, when: 1794086401066, version: '7', breakpoints: true });
+  it('registers 0156 right after 3a-C 0155 and notes the renumbering', () => {
+    expect(journal.entries.find(entry => entry.tag === '0156_model_assignments')).toMatchObject({ idx: 156, when: 1794086401067, version: '7', breakpoints: true });
     expect(migration.split('\n')[1]).toContain('0155_split_composite_jobs');
     expect(migration.split('\n').slice(0, 9).every(line => line.startsWith('-- '))).toBe(true);
   });

@@ -48,8 +48,13 @@ export type JobDeferredReason = "stage_blocked" | "http_origin_permit" | "model_
 export type JobDegraded = { code: string; detail?: string | null; critical?: boolean };
 export type JobOutcome<C> = { done: boolean; cursor?: C | null; continuation?: "ready"; deferred?: never; degraded?: JobDegraded }
   | { done: false; deferred: JobDeferredReason; cursor?: never; continuation?: never; degraded?: never };
+/**
+ * sourceContinuation: 원본 수집 줄이 예산을 다 쓰고 남은 일을 알려 다시 요청해 두었다(줄은 쉬지 않고 이어 돈다).
+ * continuation: 이어 돌 수 있는 잡(아래 CONTINUATION_JOBS)이 continuation:"ready" 를 돌려 같은 잡을 다시 요청해 두었다 — 워커 줄은
+ * 잡 이름을 보지 않고 이 표시로 1초 뒤 다시 돈다(scripts/worker.ts runLane). 다시 요청하지 않은 done:false 에는 붙지 않는다
+ */
 export type RunResult =
-  | { status: "completed"; done: boolean; durationMs: number; sourceContinuation?: true; degraded?: string }
+  | { status: "completed"; done: boolean; durationMs: number; sourceContinuation?: true; continuation?: true; degraded?: string }
   | { status: "skipped"; reason: "locked" | "not_requested" | "backoff" | "stopping" }
   | { status: "deferred"; reason: JobDeferredReason; durationMs: number }
   | { status: "failed"; error: string; durationMs: number };
@@ -69,6 +74,12 @@ const LEASE_TAKEOVER = sql`now() - ${STALE_LOCK_MS} * interval '1 millisecond'`;
 const PAUSED = sql`${jobs.notBefore} > now() + ${PAUSED_AFTER_MS} * interval '1 millisecond'`;
 
 const DEGRADED_CODE = /^[a-z][a-z0-9_]{0,63}$/;
+/**
+ * continuation:"ready" 로 같은 잡을 다시 요청해 둘 수 있는 잡(원본 수집 둘은 예산을 다 쓴 뒤에만 — sourceReady). 다른 잡의 done:false 는
+ * scheduler 의 다음 요청을 기다린다(tests/integration/review-draining.test.ts "unapproved jobs cannot opt in"). 새 잡을 더하면 워커 줄은
+ * 바꾸지 않아도 된다 — 줄은 RunResult.continuation 만 본다
+ */
+const CONTINUATION_JOBS: readonly string[] = ["crawl-agent-review", "second-review", "agent-evidence-refresh"];
 /** job:<name> 관측에 싣는 제 일 못 한 틱 — 모양을 고정한다(화면이 그대로 읽는다) */
 export function degradedObservation(degraded: JobDegraded, at: Date) {
   const detail = typeof degraded.detail === "string" ? degraded.detail.replaceAll("\0", "").slice(0, 300) : "";
@@ -241,9 +252,8 @@ export async function runJob<C>(
     const sourceReady = ["product-evidence-refresh", "product-site-evidence-refresh"].includes(name) && outcome.done === false
       && outcome.continuation === "ready" && !options.signal?.aborted && Date.now() - startedAt >= budgetMs;
     // 제작 근거 스캔도 남은 일을 알리면 여기서 다시 요청한다 — 다음 틱이 scheduler 의 다음 요청(1분)을 기다리지 않는다
-    const reviewReady = outcome.continuation === "ready"
-      && ["crawl-agent-review", "second-review", "agent-evidence-refresh"].includes(name) && !options.signal?.aborted;
-    let sourceContinuation = false;
+    const reviewReady = outcome.continuation === "ready" && CONTINUATION_JOBS.includes(name) && !options.signal?.aborted;
+    let sourceContinuation = false, continuation = false;
     await db.transaction(async tx => {
       // DR writer fence 가 ACK TX 의 첫 lock 이다(seal 의 fence UPDATE → … → jobs 와 같은 순서; jobs → fence 는 그 UPDATE 와 교착한다).
       // handler 가 도는 사이 fence 됐으면 ACK·결과 관측을 commit 하지 않는다. 격리 replay DB 는 claim 처럼 건너뛴다.
@@ -276,6 +286,7 @@ export async function runJob<C>(
       });
       if (!row) throw new JobLeaseLostError();
       sourceContinuation = sourceReady && row.pendingReady === true;
+      continuation = reviewReady && row.pendingReady === true;
       const observedAt = new Date();
       const batchResult = batchResultObservation(batchIdentity, name, events, lease.requestedVersion);
       let batchRecordedAt: string | undefined;
@@ -307,7 +318,7 @@ export async function runJob<C>(
     if (degraded) logger.warn("job.degraded", { job: name, done: outcome.done, durationMs, code: degraded });
     else logger.info("job.completed", { job: name, done: outcome.done, durationMs });
     return { status: "completed", done: outcome.done, durationMs, ...(sourceContinuation ? { sourceContinuation: true as const } : {}),
-      ...(degraded ? { degraded } : {}) };
+      ...(continuation ? { continuation: true as const } : {}), ...(degraded ? { degraded } : {}) };
   } catch (error) {
     await stopHeartbeat();
     // fenced DB: 실패 기록도 쓰기다. lease 는 두고(seal 이 회수하거나 만료된다) 멈춘다 — claim 거절과 같은 결과

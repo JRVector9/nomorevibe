@@ -87,7 +87,7 @@ export async function readSupervisorControl(reader: Pick<ProductTransaction, "se
 }
 
 async function readAssignments(reader: Reader): Promise<HelperAssignmentRow[]> {
-  // 도우미 행(role 'helper', 단계는 ai1·ai2 — 0155 role_stage CHECK)만. 배정 표 행(role 'primary')은 감시자가 판정하지 않는다.
+  // 도우미 행(role 'helper', 단계는 ai1·ai2 — 0156 role_stage CHECK)만. 배정 표 행(role 'primary')은 감시자가 판정하지 않는다.
   const rows = await reader.select().from(modelHelperAssignments).where(eq(modelHelperAssignments.role, "helper"))
     .orderBy(asc(modelHelperAssignments.deviceId), asc(modelHelperAssignments.stage));
   return rows.map(row => Object.freeze({

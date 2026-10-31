@@ -75,7 +75,7 @@ describe("조치 칸에 맡은 작업을 단다", () => {
   it("장애·백로그 칸은 그 일을 하는 작업을, 역할·서비스 칸은 그 역할·서비스를 단다", () => {
     expect(work("down")).toEqual({ jobs: ["uptime-ping"] });
     expect(work("health-overdue")).toEqual({ jobs: ["uptime-ping"] });
-    expect(work("review")?.jobs).toEqual(["crawl-agent-review", "second-review", "human-deepseek-review"]);
+    expect(work("review")?.jobs).toEqual(["crawl-agent-review", "second-review", "split-tiebreak", "human-deepseek-review", "held-qwen-retry", "split-confirm"]);
     expect(work("second-failed")).toEqual({ jobs: ["second-review"] });
     expect(work("repo-gone")).toEqual({ jobs: ["product-stars-refresh", "product-repo-review"] });
     expect(work("jobs")).toEqual({ jobs: ["product-evidence-refresh", "uptime-ping"] });
@@ -107,8 +107,9 @@ describe("맡은 장비·LLM·일정", () => {
     expect(owners.notes.some((note) => note.startsWith("consumer 는"))).toBe(true);
   });
 
-  it("2차 심사 — 설정의 투표 모델(게이트웨이 실행기)과 켜진 Qwen 갈림 판가름, 그 서버를 장비로 보인다", () => {
-    const owners = resolveWorkOwners({ jobs: ["second-review"] }, context())!;
+  // 갈림 판가름은 2026-10-31(PR 3a-C) 부터 자기 잡 split-tiebreak 이다 — 2차 심사 칸은 두 잡을 함께 단다
+  it("2차 심사 — 설정의 투표 모델(게이트웨이 실행기)과 켜진 Qwen 갈림 판가름(split-tiebreak), 그 서버를 장비로 보인다", () => {
+    const owners = resolveWorkOwners({ jobs: ["second-review", "split-tiebreak"] }, context())!;
     expect(owners.models.map((model) => model.name)).toEqual(["Qwen3.8-27B-NVFP4", "qwen3.8-flash-next"]);
     expect(owners.models[0].rows).toEqual([{ slot: "2차 · 투표 1", job: "2차 심사", provider: "abcllm", runsOn: "abcllm 게이트웨이 · 실행기 supa",
       source: "크롤 설정 secondReview.voters[0]", stats: "최근 1시간(2차 투표) 호출 34 · 실패 8" }]);
@@ -156,7 +157,7 @@ describe("맡은 장비·LLM·일정", () => {
 
 describe("칸의 버튼", () => {
   it("장비 이름과 LLM 이름이 버튼이고, 창은 누르기 전에는 그리지 않는다", () => {
-    const owners = resolveWorkOwners({ jobs: ["agent-evidence-refresh", "second-review"] }, context())!;
+    const owners = resolveWorkOwners({ jobs: ["agent-evidence-refresh", "second-review", "split-tiebreak"] }, context())!;
     const item: SplitItem = { key: "x", tone: "hold", count: 3, unit: "건", title: "시험 칸", detail: "설명", trend: null, fresh: false };
     const html = renderToStaticMarkup(createElement(AttentionList, { urgent: [item], backlog: [], hidden: [], now: NOW, owners: { x: owners } }));
     const buttons = [...html.matchAll(/<button[^>]*class="dash-owner-btn"[^>]*data-kind="(\w+)"[^>]*>([^<]+)<\/button>/g)].map((match) => `${match[1]}:${match[2]}`);

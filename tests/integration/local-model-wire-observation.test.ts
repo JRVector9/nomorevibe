@@ -27,7 +27,7 @@ vi.mock("@/lib/llm/gateway-local-end-fetch", async original => {
 });
 
 const prefix = `wire-${randomUUID().slice(0, 8)}`, owner = { instanceId: prefix, bootId: randomUUID() };
-const names = ["product-audit", "audit-screen-review"], release = "wire-test", token = randomUUID();
+const names = ["audit-qwen", "audit-screen-review"], release = "wire-test", token = randomUUID();
 const admin = postgres(TEST_DATABASE_URL, { max: 1, prepare: false, onnotice: () => {} });
 const server = http.createServer(), realFetch = globalThis.fetch;
 const sha = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -143,7 +143,7 @@ async function fixture(purpose: "audit" | "screen") {
   const [item] = await db.insert(productAuditItems).values({ campaignId, productId: product.id, slug,
     ...(purpose === "screen" ? { aiDecision: "reject" } : {}) }).returning();
   const input = await loadAuditInput(slug, await getSettings()); if (!input) throw new Error("fixture_input");
-  const name = purpose === "audit" ? "product-audit" : "audit-screen-review";
+  const name = purpose === "audit" ? "audit-qwen" : "audit-screen-review";
   const [{ requested_version: requestedVersion }] = await admin`select requested_version from jobs where name=${name}`;
   return { target: { kind: "audit" as const, purpose, itemId: item.id, slug }, input, env,
     lease: { name, token, requestedVersion: Number(requestedVersion) } };

@@ -9,7 +9,7 @@ import * as crawl from "@/lib/crawl/repository";
 import { getSettings, saveSettings, setQwenAutoStep } from "@/lib/crawl/settings";
 import { writeAuditSecondOpinions } from "@/lib/crawl/audit-second-opinion-import";
 import { startProductAudit } from "@/lib/crawl/product-audit";
-import { qwenEndpointBackoff, resetQwenAuditBackoff } from "@/lib/crawl/qwen-endpoint-backoff";
+import { QWEN_CALLERS, qwenEndpointBackoffOf, resetQwenAuditBackoff } from "@/lib/crawl/qwen-endpoint-backoff";
 import { QWEN_V2_PROMPT_VERSION } from "@/lib/crawl/qwen-direct-review";
 import { runJob } from "@/lib/jobs/runner";
 import { jobRunOptions } from "@/scripts/worker";
@@ -366,18 +366,20 @@ describe("화면 판별", () => {
     expect(await tick()).toMatchObject({ status: "completed", degraded: "screen_model_outage" });
     expect(model.calls).toHaveLength(1);
     expect(screenBackoff.model).toMatchObject({ failures: 1, code: "qwen_http_404" });
-    expect(qwenEndpointBackoff.retryAt).toBe(0);
+    for (const caller of QWEN_CALLERS) expect(qwenEndpointBackoffOf(caller).retryAt, caller).toBe(0);
     // 물러나는 동안은 그리지도 않는다
     renderer.calls.length = 0;
     await tick();
     expect(renderer.calls).toEqual([]);
   });
 
-  it("같은 m1 을 글 단계가 탈로 물러나는 중이면 그리지 않는다", async () => {
+  // 2026-10-31 결정: 글 단계(감사·두 번째 의견)가 물러나는 중이어도 화면 판별은 자기 물러나기만 본다 — 하나가 잘못되면 다음 작업도 안 되는 구조는 이유가 없다
+  it("같은 m1 을 글 단계가 탈로 물러나는 중이어도 화면 판별은 자기 줄만 보고 그린다", async () => {
     await judged([{ repo: "q/one" }]);
-    qwenEndpointBackoff.retryAt = Date.now() + 60_000;
+    qwenEndpointBackoffOf("audit").retryAt = Date.now() + 60_000;
+    qwenEndpointBackoffOf("second_opinion").retryAt = Date.now() + 60_000;
     await tick();
-    expect(renderer.calls).toEqual([]);
+    expect(renderer.calls).toHaveLength(1);
   });
 
   it("꺼져 있으면 아무것도 하지 않고, 묻는 사이 꺼졌으면 적지 않는다", async () => {

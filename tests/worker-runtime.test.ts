@@ -531,7 +531,11 @@ it('keeps the disabled real worker entry and its original IPC lifecycle reachabl
   expect(result.heartbeats, diagnostic).toBeGreaterThan(0);
 }, ENTRY_KILL_MS + ENTRY_CLOSE_GRACE_MS);
 
-it('re-ticks the reviewer lane after 1s only when second-review is stage-blocked by AI2 item mode', async () => {
+/**
+ * 2026-10-31: AI2 items 모드에서 second-review 가 stage_blocked 면 reviewer 줄을 1초마다 다시 돌리던 특례를 지웠다 — items 모드에서 줄이 1초마다
+ * enqueue/close/reconcile TX 를 되풀이해 풀을 눌렀다. 미룬 틱은 요청을 남긴 채 기존 poll 간격에 다시 보고, 건 처리는 consumer 가 1초 idle 로 집는다
+ */
+it('keeps the poll interval when second-review is stage-blocked by AI2 item mode — no 1s re-run', async () => {
   const sleeps: number[] = [];
   for (const result of [{ status: 'deferred', reason: 'stage_blocked' }, { status: 'deferred', reason: 'model_capacity' }, { status: 'completed' }]) {
     const controller = new AbortController();
@@ -541,7 +545,59 @@ it('re-ticks the reviewer lane after 1s only when second-review is stage-blocked
       sleep: async ms => { sleeps.push(ms); controller.abort(); },
     });
   }
-  expect(sleeps).toEqual([1_000, 5_000, 5_000]);
+  expect(sleeps).toEqual([5_000, 5_000, 5_000]);
+});
+
+it('re-ticks a lane after 1s exactly when the runner reports it re-requested the job (continuation), whatever the job name', async () => {
+  const sleeps: number[] = [];
+  for (const [name, result] of [
+    ['second-review', { status: 'completed', done: false, continuation: true }],
+    ['product-audit', { status: 'completed', done: false, continuation: true }],
+    ['second-review', { status: 'completed', done: false }],
+    ['product-audit', { status: 'deferred', reason: 'stage_blocked' }],
+    ['crawl-agent-review', { status: 'failed', done: false, continuation: true }],
+  ] as const) {
+    const controller = new AbortController();
+    await runWorker({ role: 'reviewer', signal: controller.signal }, {
+      names: [name], lanes: [[name]], seen: async () => {}, pending: async () => [name],
+      run: async () => result, sleep: async ms => { sleeps.push(ms); controller.abort(); },
+    });
+  }
+  expect(sleeps).toEqual([1_000, 1_000, 5_000, 5_000, 5_000]);
+});
+
+/** 한 줄의 느린 틱(사람 위임 110초)이 다른 줄의 틱을 미루지 않는다 — 가짜 시계로 60초 동안 2차 심사 줄이 5초마다 돈 횟수를 센다 */
+it('a slow tick in one lane does not delay another lane\'s ticks (fake timers)', async () => {
+  vi.useFakeTimers();
+  try {
+    const controller = new AbortController();
+    const ends: Array<{ name: string; at: number }> = [];
+    const human = runtimeGate();
+    const work = runWorker({ role: 'reviewer', signal: controller.signal, intervalMs: 5_000 }, {
+      names: ['human-deepseek-review', 'second-review'], lanes: [['human-deepseek-review'], ['second-review']],
+      seen: async () => {}, pending: async () => ['human-deepseek-review', 'second-review'],
+      run: async name => {
+        if (name === 'human-deepseek-review') await human.promise;
+        ends.push({ name, at: Date.now() });
+        return { status: 'completed', done: true };
+      },
+      // sleep 은 기본 interruptibleSleep(setTimeout) — 가짜 시계를 따른다
+    });
+    const started = Date.now();
+    await vi.advanceTimersByTimeAsync(60_000);
+    const second = ends.filter(end => end.name === 'second-review');
+    // t=0, 5, 10, …, 60초: 13번, 간격은 정확히 poll 간격이다. 사람 위임 줄은 아직 한 틱도 끝나지 않았다
+    expect(second).toHaveLength(13);
+    expect(second.map(end => end.at - started)).toEqual(Array.from({ length: 13 }, (_, index) => index * 5_000));
+    expect(ends.filter(end => end.name === 'human-deepseek-review')).toHaveLength(0);
+    human.release();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ends.filter(end => end.name === 'human-deepseek-review')).toHaveLength(1);
+    controller.abort();
+    await work;
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it('gives the agent evidence scan the 55-second tick budget', () => {
@@ -549,10 +605,10 @@ it('gives the agent evidence scan the 55-second tick budget', () => {
   expect(jobRunOptions('agent-evidence-refresh', base)).toEqual({ ...base, budgetMs: 55_000 });
 });
 
-it('re-polls the agent evidence scan lane after 1s only when its tick left work', async () => {
+it('re-polls the agent evidence scan lane after 1s only when the runner re-requested it (continuation)', async () => {
   const sleeps: number[] = [];
-  for (const result of [{ status: 'completed', done: false }, { status: 'completed', done: true }, { status: 'deferred', reason: 'source_buffer' },
-    { status: 'failed', done: false }, { status: 'skipped', reason: 'locked' }]) {
+  for (const result of [{ status: 'completed', done: false, continuation: true }, { status: 'completed', done: false }, { status: 'completed', done: true },
+    { status: 'deferred', reason: 'source_buffer' }, { status: 'failed', done: false }, { status: 'skipped', reason: 'locked' }]) {
     const controller = new AbortController();
     await runWorker({ role: 'crawler', signal: controller.signal }, {
       names: ['agent-evidence-refresh'], lanes: [['agent-evidence-refresh']], seen: async () => {}, pending: async () => ['agent-evidence-refresh'],
@@ -560,7 +616,7 @@ it('re-polls the agent evidence scan lane after 1s only when its tick left work'
       sleep: async ms => { sleeps.push(ms); controller.abort(); },
     });
   }
-  expect(sleeps).toEqual([1_000, 5_000, 5_000, 5_000, 5_000]);
+  expect(sleeps).toEqual([1_000, 5_000, 5_000, 5_000, 5_000, 5_000]);
 });
 
 it('keeps other crawler lanes on their own schedule while the scan lane runs long ticks back to back', async () => {
@@ -574,7 +630,7 @@ it('keeps other crawler lanes on their own schedule while the scan lane runs lon
       events.push(`start:${name}`);
       if (name === 'agent-evidence-refresh') await scan.promise;
       events.push(`end:${name}`);
-      return name === 'agent-evidence-refresh' ? { status: 'completed', done: false } : { status: 'completed', done: true };
+      return name === 'agent-evidence-refresh' ? { status: 'completed', done: false, continuation: true } : { status: 'completed', done: true };
     },
     sleep: async () => { await new Promise(resolve => setTimeout(resolve, 1)); },
   });
@@ -591,10 +647,10 @@ it('keeps other crawler lanes on their own schedule while the scan lane runs lon
   }
 });
 
-it('re-polls the AI1 lane after 1s only when its tick left a continuation; a deferred tick keeps the normal interval', async () => {
+it('re-polls the AI1 lane after 1s only when the runner re-requested it; a deferred or plain done:false tick keeps the normal interval', async () => {
   const sleeps: number[] = [];
-  for (const result of [{ status: 'completed', done: false }, { status: 'completed', done: true }, { status: 'deferred', reason: 'model_capacity' },
-    { status: 'deferred', reason: 'stage_blocked' }, { status: 'failed', done: false }, { status: 'skipped', reason: 'locked' }]) {
+  for (const result of [{ status: 'completed', done: false, continuation: true }, { status: 'completed', done: false }, { status: 'completed', done: true },
+    { status: 'deferred', reason: 'model_capacity' }, { status: 'deferred', reason: 'stage_blocked' }, { status: 'failed', done: false }, { status: 'skipped', reason: 'locked' }]) {
     const controller = new AbortController();
     await runWorker({ role: 'reviewer', signal: controller.signal }, {
       names: ['crawl-agent-review'], lanes: [['crawl-agent-review']], seen: async () => {}, pending: async () => ['crawl-agent-review'],
@@ -602,7 +658,7 @@ it('re-polls the AI1 lane after 1s only when its tick left a continuation; a def
       sleep: async ms => { sleeps.push(ms); controller.abort(); },
     });
   }
-  expect(sleeps).toEqual([1_000, 5_000, 5_000, 5_000, 5_000, 5_000]);
+  expect(sleeps).toEqual([1_000, 5_000, 5_000, 5_000, 5_000, 5_000, 5_000]);
 });
 
 it('runs AI1 in its own reviewer lane beside a long main-lane job, never running one job twice at once', async () => {
@@ -621,7 +677,7 @@ it('runs AI1 in its own reviewer lane beside a long main-lane job, never running
       else await new Promise(resolve => setTimeout(resolve, 1));
       active.set(name, active.get(name)! - 1);
       ends.push(name);
-      return name === 'crawl-agent-review' ? { status: 'completed', done: false } : { status: 'deferred', reason: 'stage_blocked' };
+      return name === 'crawl-agent-review' ? { status: 'completed', done: false, continuation: true } : { status: 'deferred', reason: 'stage_blocked' };
     },
     sleep: async () => { await new Promise(resolve => setTimeout(resolve, 1)); },
   });

@@ -3,7 +3,7 @@ import { eq, inArray, sql } from "drizzle-orm";
 
 const { db } = await import("@/lib/db");
 const { crawlCandidates, crawlDocuments, jobs, products, productSearchProfiles, textTranslations } = await import("@/lib/db/schema");
-const { SLOW_CALL_MS, writeSearchProfiles } = await import("@/lib/jobs/products/search-profile");
+const { writeSearchProfiles } = await import("@/lib/jobs/products/search-profile");
 const { refreshProductSearchDocuments } = await import("@/lib/jobs/products/search-refresh");
 const { productAuditCampaigns, productAuditItems } = await import("@/lib/db/product-audit-schema");
 const { profileEvidence, profileHash } = await import("@/lib/domain/products/search-profile");
@@ -291,21 +291,21 @@ describe("검색 키워드 잡", () => {
     expect(row.keywords).toBeNull();
   });
 
-  it("한 건이 오래 걸리면 그 틱을 접는다 — 게이트웨이가 밀릴 때 1차 심사에 자리를 준다", async () => {
+  // 2026-10-31 결정: 한 건이 오래 걸려도 틱을 접지 않는다(slowCallMs 양보 삭제) — 하나가 잘못되면 다음 작업도 안 되는 구조는 이유가 없다. 1차 심사와의 장비 나눔은 장비 순위(PR 1b)가 한다
+  it("한 건이 오래 걸려도 그 틱을 접지 않는다 — 나머지를 계속 짓는다", async () => {
     for (const slug of ["first", "second", "third", "fourth"]) await seed(slug);
     vi.useFakeTimers({ toFake: ["Date"] });
-    // 첫 호출만 느리다 — 동시에 나간 둘은 답을 받고, 그다음은 부르지 않는다
+    // 첫 호출만 느리다(예전의 느린 호출 문턱 20초를 넘긴다) — 그래도 나머지 셋을 모두 짓는다
     let calls = 0;
     gateway.mockImplementation(async () => {
-      if (calls++ === 0) vi.setSystemTime(Date.now() + SLOW_CALL_MS);
+      if (calls++ === 0) vi.setSystemTime(Date.now() + 20_000);
       return answer(["grocery list"], ["장보기"]);
     });
 
     expect(await tick()).toMatchObject({ status: "completed", done: true });
 
-    // 받은 답은 버리지 않고, 남은 것은 다음 틱으로 미룬다
-    expect(gateway).toHaveBeenCalledTimes(2);
-    expect(await db.select().from(productSearchProfiles)).toHaveLength(2);
+    expect(gateway).toHaveBeenCalledTimes(4);
+    expect(await db.select().from(productSearchProfiles)).toHaveLength(4);
   });
 
   it("안 지은 것 다음에는 오래 기다린 갱신부터 짓는다 — 최근 제품이 앞을 차지하지 않게", async () => {

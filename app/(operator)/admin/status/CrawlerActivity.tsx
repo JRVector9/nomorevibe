@@ -1,5 +1,7 @@
 import Link from "next/link";
 import type { CrawlerActivityReport } from "@/lib/operations/crawler-activity";
+// 메타데이터만 — 카탈로그는 실행 수집기를 올리지 않는다(lib/jobs/catalog.ts 머리글)
+import type { JobLane } from "@/lib/jobs/catalog";
 import { JOB_LABELS, ROLE_LABELS } from "@/lib/operations/contracts";
 import { formatDetailTime, formatListTime } from "@/lib/format/time";
 import { ScrollTable } from "../components/ScrollTable";
@@ -12,7 +14,12 @@ const jobLabel = (name: string) => name === "ai-level-refresh" ? "AI 제작 단�
 const STATES = { disabled: "설정 꺼짐", paused: "사람이 중단", running: "실행 중", "stale-lock": "중단·회수 대기",
   retrying: "재시도 대기", queued: "실행 요청 대기", error: "최근 회차 오류", "never-run": "실행 기록 없음", idle: "다음 예약 대기" };
 const INSTANCE_STATES = { active: "담당 중", standby: "예비 대기", stale: "관측 지연", stopping: "종료 중", unknown: "담당 여부 미확인" };
-const LANES = { main: "기본 줄", discovery: "신규 탐색 줄", fetch: "원본 수집 줄", sources: "공개 근거 줄", scan: "개발 AI 조사 줄", evidence: "AI 단계 줄", stars: "8시간 스타 줄", screen: "화면 판별 줄", assist: "근거 보강 줄", "assist-audit": "보강 감사 줄", "product-translation": "제품 번역 줄", "korean-translation": "한국어 번역 줄", ai1: "1차 심사 줄" };
+const LANES = { main: "기본 줄", discovery: "신규 탐색 줄", fetch: "원본 수집 줄", sources: "공개 근거 줄", scan: "개발 AI 조사 줄", evidence: "AI 단계 줄", stars: "8시간 스타 줄", screen: "화면 판별 줄", assist: "근거 보강 줄", "assist-audit": "보강 감사 줄", "product-translation": "제품 번역 줄", "korean-translation": "한국어 번역 줄", ai1: "1차 심사 줄",
+  // 2026-10-31 모델 잡마다 자기 줄(lib/jobs/catalog.ts JobLane)
+  second: "2차 심사 줄", human: "사람 큐 위임 줄", audit: "발행분 감사 줄", intro: "소개 검수 줄", grok: "Grok 로그인 확인 줄",
+  // 2026-10-31 합성 잡 분해(PR 3a-C)
+  held: "보류 Qwen 재심사 줄", confirm: "갈림 DeepSeek 확인 줄", tiebreak: "2차 갈림 판가름 줄", "audit-qwen": "Qwen 직접 감사 줄", "audit-opinion": "감사 두 번째 의견 줄",
+  reason: "사유 번역 줄", tagline: "소개 짓기 줄", profile: "검색 키워드 줄", verify: "키워드 검수 줄", embed: "제품 벡터 줄", repo: "저장소 재확인 줄" } satisfies Record<JobLane, string>;
 const LANE_STATES = { idle: "일감 확인 대기", polling: "요청 확인 중", running: "실행 중", stopping: "종료 중",
   standby: "예비 대기", stale: "관측 지연", unknown: "진행 미확인", "other-job": "다른 역할 작업 중" };
 const ERROR_LABELS = { timeout: "시간 초과", "rate-limited": "공급자 한도", authentication: "인증 확인 필요", "job-error": "실행 오류" };

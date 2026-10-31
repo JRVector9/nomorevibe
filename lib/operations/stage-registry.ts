@@ -57,11 +57,13 @@ export const PIPELINE_STAGES = Object.freeze([
     throughputKey: "judge", progressKey: "judge", flowKey: "judge" }),
   stage({ key: "first", group: "review", label: "AI 1차", code: "crawl-agent-review", jobs: ["crawl-agent-review"], role: "reviewer",
     throughputKey: "first", progressKey: "first", completionKey: "ai1" }),
-  stage({ key: "second", group: "review", label: "AI 2차", code: "second-review", jobs: ["second-review"], role: "reviewer",
+  // 갈림 판가름(split-tiebreak)은 관문에서 갈린 보류를 gpu3090 Qwen-v2 에 묻는다 — 2026-10-31 second-review 에서 자기 잡으로 나뉘었다
+  stage({ key: "second", group: "review", label: "AI 2차", code: "second-review", jobs: ["second-review", "split-tiebreak"], role: "reviewer",
     throughputKey: "second", progressKey: "second", completionKey: "ai2" }),
-  // 심사 큐의 직접 판단(stage=human) — 관리자 스위치를 켜면 reviewer가 DeepSeek에 위임한다
+  // 심사 큐의 직접 판단(stage=human) — 관리자 스위치를 켜면 reviewer가 DeepSeek에 위임한다. 보류 Qwen 재심사(held-qwen-retry)·갈림의 DeepSeek 확인(split-confirm)은
+  // 사람 몫 후보를 사람 없이 가르는 같은 단계의 잡 — 2026-10-31 human-deepseek-review 에서 자기 잡으로 나뉘었다
   stage({ key: "human", group: "review", label: "사람 심사", code: "human-deepseek-review",
-    jobs: ["human-deepseek-review"], role: "reviewer", flowKey: "review" }),
+    jobs: ["human-deepseek-review", "held-qwen-retry", "split-confirm"], role: "reviewer", flowKey: "review" }),
   // 소개 짓기(crawl-tagline)는 소개가 없어 발행 앞에서 멈춘 승인 후보의 한 줄을 짓는다 — 다 지으면 발행 대기로 돌아간다
   stage({ key: "publish", group: "review", label: "발행", code: "crawl-publish", jobs: ["crawl-publish", "crawl-tagline"], role: "publisher",
     throughputKey: "publish", progressKey: "publish", flowKey: "publish", completionKey: "publish" }),
@@ -78,8 +80,9 @@ export const PIPELINE_STAGES = Object.freeze([
   stage({ key: "embedding", group: "enrichment", label: "의미 검색 벡터", code: "product-embedding", jobs: ["product-embedding"], role: "text", headline: true }),
   stage({ key: "product-translate", group: "enrichment", label: "제품 번역", code: "product-translate", jobs: ["product-translate"], role: "text", headline: true }),
   stage({ key: "reason-translate", group: "enrichment", label: "사유 번역", code: "reason-translate", jobs: ["reason-translate"], role: "text", headline: true }),
-  stage({ key: "audit", group: "enrichment", label: "발행분 감사", code: "product-audit", jobs: ["product-audit", "audit-screen-review"], role: "reviewer",
-    headline: true }),
+  // Qwen 직접 감사(audit-qwen)·두 번째 의견·공개분 거르기(audit-second-opinion)는 2026-10-31 product-audit 에서 자기 잡으로 나뉘었다
+  stage({ key: "audit", group: "enrichment", label: "발행분 감사", code: "product-audit",
+    jobs: ["product-audit", "audit-qwen", "audit-second-opinion", "audit-screen-review"], role: "reviewer", headline: true }),
   stage({ key: "assist-audit", group: "enrichment", label: "보강 독립 감사", code: "product-automated-action-audit",
     jobs: ["product-automated-action-audit", "product-llm-assist-audit-review"], role: "maintenance" }),
   stage({ key: "stars", group: "enrichment", label: "저장소·스타", code: "product-stars-refresh", jobs: ["product-stars-refresh"], role: "crawler", headline: true }),
