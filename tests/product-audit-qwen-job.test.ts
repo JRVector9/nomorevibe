@@ -4,7 +4,9 @@ import { auditPublishedProducts, latencyStats, QWEN_CALL_TIMEOUT_MS, QWEN_MIN_ST
   resetQwenAuditBackoff } from "@/lib/crawl/jobs/product-audit";
 import { createReviewInput, REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import { QWEN_V2_PROMPT_VERSION, reviewWithQwenDirect } from "@/lib/crawl/qwen-direct-review";
-import { qwenEndpointBackingOff, qwenEndpointBackoff, qwenSoftFailures } from "@/lib/crawl/qwen-endpoint-backoff";
+import { qwenEndpointBackingOff, qwenEndpointBackoffOf, qwenSoftFailuresOf } from "@/lib/crawl/qwen-endpoint-backoff";
+// 2026-10-31: 물러나기는 호출자마다 따로다 — 이 파일은 감사("audit")의 것만 본다
+const qwenEndpointBackoff = qwenEndpointBackoffOf("audit"), qwenSoftFailures = qwenSoftFailuresOf("audit");
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 import type { CrawlCandidate, CrawlDocument } from "@/lib/db/schema";
 
@@ -140,15 +142,19 @@ describe("바꾼 감사는 Qwen 에게 묻는다", () => {
     expect(mocks.candidates).not.toHaveBeenCalled();
   });
 
-  it("바꾸지 않은 감사는 새 후보가 기다리면 지금처럼 양보한다", async () => {
+  // 2026-10-31 결정: 바꾸지 않은(게이트웨이) 감사도 1차 후보 큐를 보고 양보하지 않는다 — 장비 순위가 대신한다(하나가 잘못되면 다음 작업도 안 되는 구조는 이유가 없다)
+  it("바꾸지 않은 감사도 새 후보가 기다려도 양보하지 않는다 — 1차 후보 큐를 읽지 않는다", async () => {
     const { fetcher } = endpoint();
     mocks.campaign.mockResolvedValue({ ...switched, currentProvider: null, currentModel: null });
     mocks.candidates.mockResolvedValue([{ id: 1 }]);
+    mocks.pending.mockResolvedValue([]);
+    mocks.finish.mockResolvedValue(false);
     const ctx = context();
     await tick(ctx);
-    expect(ctx.log).toHaveBeenCalledWith("product_audit.yielded", { campaign: 4 });
+    expect(ctx.log).not.toHaveBeenCalledWith("product_audit.yielded", expect.anything());
+    expect(mocks.candidates).not.toHaveBeenCalled();
+    expect(mocks.pending).toHaveBeenCalledTimes(1);
     expect(fetcher).not.toHaveBeenCalled();
-    expect(mocks.pending).not.toHaveBeenCalled();
   });
 
   it("바꾸지 않은 감사는 지금처럼 게이트웨이로 묻는다 — Qwen 을 부르지 않는다", async () => {
@@ -205,7 +211,7 @@ describe("동시 호출과 틱 예산", () => {
     expect(state.aborted).toBe(0);
     expect(recorded()).toHaveLength(14);
     expect(recorded().every((call) => call.ok)).toBe(true);
-    expect(qwenEndpointBackingOff()).toBe(false);
+    expect(qwenEndpointBackingOff("audit")).toBe(false);
     expect(fetcher).toHaveBeenCalledTimes(14);
     const timeouts = vi.mocked(reviewWithQwenDirect).mock.calls.map(([, options]) => options?.timeoutMs);
     expect(timeouts.slice(0, 2)).toEqual([45_000, 45_000]);
@@ -222,7 +228,7 @@ describe("동시 호출과 틱 예산", () => {
     expect(vi.mocked(reviewWithQwenDirect).mock.calls.map(([, options]) => options?.timeoutMs)).toEqual([14_000, 14_000]);
     // 서버 탈도 항목의 시도도 아니다 — 적지 않고 물러나지 않는다
     expect(recorded()).toHaveLength(0);
-    expect(qwenEndpointBackingOff()).toBe(false);
+    expect(qwenEndpointBackingOff("audit")).toBe(false);
     expect(qwenSoftFailures.streak).toBe(0);
     const log = vi.mocked(lastContext!.log).mock.calls.find(([event]) => event === "product_audit.reviewed")?.[1];
     expect(log).toMatchObject({ reviewed: 0, timeouts: 0, cutoff: 2 });
@@ -242,7 +248,7 @@ describe("동시 호출과 틱 예산", () => {
     expect(result).toEqual({ value: { done: false } });
     expect(state.aborted).toBe(2);
     expect(recorded()).toHaveLength(0);
-    expect(qwenEndpointBackingOff()).toBe(false);
+    expect(qwenEndpointBackingOff("audit")).toBe(false);
   });
 
   it("입력을 만들다 실패한 항목은 그 항목의 실패로 적고 넘어간다 — 잡을 실패시키지 않고 다음 항목을 묻는다", async () => {
@@ -269,7 +275,7 @@ describe("동시 호출과 틱 예산", () => {
         init.signal?.addEventListener("abort", () => { clearTimeout(timer); reject(init.signal?.reason); }, { once: true });
       });
       if (call === 0) return new Response("{}", { status: 503 });
-      if (call === 1) backingOffWhileOtherInFlight = qwenEndpointBackingOff();
+      if (call === 1) backingOffWhileOtherInFlight = qwenEndpointBackingOff("audit");
       return new Response(body(JSON.stringify(outcome)), { status: 200 });
     });
     vi.stubGlobal("fetch", fetcher);
@@ -363,7 +369,7 @@ describe("부르는 곳의 탈에서 물러나기", () => {
     expect(recorded()[0]).toEqual(expect.objectContaining({ itemId: 100, ok: false, error: "qwen_timeout", counted: true }));
     expect(recorded().slice(1).every((call) => call.ok)).toBe(true);
     expect(recorded().length).toBeGreaterThan(1);
-    expect(qwenEndpointBackingOff()).toBe(false);
+    expect(qwenEndpointBackingOff("audit")).toBe(false);
     // 그 뒤 답을 받아 붐빔 연속은 처음부터
     expect(qwenSoftFailures.streak).toBe(0);
   });
@@ -373,7 +379,7 @@ describe("부르는 곳의 탈에서 물러나기", () => {
     vi.stubEnv("AUDIT_QWEN_CONCURRENCY", "3");
     expect((await run(70_000)).error?.message).toBe("product_audit_endpoint_error:qwen_timeout");
     expect(recorded().map((call) => [call.error, call.counted])).toEqual([["qwen_timeout", true], ["qwen_timeout", true], ["qwen_timeout", true]]);
-    expect(qwenEndpointBackingOff()).toBe(true);
+    expect(qwenEndpointBackingOff("audit")).toBe(true);
     expect(qwenEndpointBackoff).toMatchObject({ failures: 1, lastError: "qwen_timeout" });
   });
 

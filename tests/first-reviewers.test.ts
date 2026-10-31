@@ -73,10 +73,13 @@ it("claim-time re-check keeps a rerouted never-sent candidate and still refuses 
 });
 
 it("keeps global draining/policy/owner refusals global while allowing another model past a local capacity wait", () => {
-  for (const reason of ["draining", "disabled", "policy_changed", "owner_unavailable"] as const)
+  for (const reason of ["draining", "disabled", "policy_changed", "owner_unavailable", "reservation_required"] as const)
     expect(firstReviewDeferralIsLocal(reason)).toBe(false);
-  for (const reason of ["capacity", "queue_full", "unmapped", "provider_contract_unavailable"] as const)
+  for (const reason of ["capacity", "queue_full", "unmapped", "provider_contract_unavailable", "device_unconfigured"] as const)
     expect(firstReviewDeferralIsLocal(reason)).toBe(true);
+  // 2026-10-31 결정: withdrawn·reservation_lost 는 요청 하나의 일이라 모델을 멈추지 않는다(그 후보만 넘긴다) — 하나가 잘못되면 다음 작업도 안 되는 구조는 이유가 없다
+  for (const reason of ["withdrawn", "reservation_lost", "dispatched", "work_busy", "ledger_mismatch"] as const)
+    expect(firstReviewDeferralIsLocal(reason)).toBe(false);
 });
 
 it("accepts only bounded, lossless keyset timestamps and ignores malformed cursor metadata", () => {

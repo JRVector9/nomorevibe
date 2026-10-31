@@ -501,8 +501,8 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
     });
   }
   /**
-   * Qwen 직접 서버의 물러나기(qwen-endpoint-backoff.ts) — 감사 직접 심사·두 번째 의견·공개분 거르기·2차 갈림 판가름·보류 재심사가 모두 멈춘다.
-   * 감사 화면에만 보였다. 6번째 탈(누적 30분)이면 보류, 12번째(누적 2시간)면 긴급.
+   * Qwen 직접 서버의 물러나기(qwen-endpoint-backoff.ts) — 2026-10-31 부터 호출자(감사 직접 심사·두 번째 의견·공개분 거르기·2차 갈림 판가름·보류 재심사)
+   * 마다 따로 물러난다. 관측의 맨 위 값은 가장 늦게까지 물러나는 호출자의 것이다(callers 에 호출자마다). 6번째 탈(누적 30분)이면 보류, 12번째(누적 2시간)면 긴급.
    * 부르는 쪽이 없어 묵은 관측(물러나기도 끝났고 30분 넘게 그대로)은 올리지 않는다.
    */
   const qwen = ops.observations.find((row) => row.key === QWEN_ENDPOINT_OBSERVATION)?.value as
@@ -517,7 +517,7 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
       title: `Qwen 직접 서버(${qwenDirectServerLabel()})가 잇달아 실패해 물러나 있습니다`,
       detail: <>연속 {n(qwenFailures)}번{typeof qwen?.lastError === "string" ? <> · 마지막 <span className="font-mono">{qwen.lastError}</span></> : null}
         {Number.isFinite(qwenRetryAt) ? ` · 다음 시도 ${formatListTime(new Date(qwenRetryAt).toISOString(), now)}` : ""}
-        {" "}— 그동안 감사 Qwen 직접 심사·두 번째 의견·공개분 거르기·2차 갈림 판가름·보류 재심사가 묻지 않습니다. 서버와 vLLM 이 떠 있는지 확인합니다.</>,
+        {" "}— 그동안 탈을 만난 호출자(감사 Qwen 직접 심사·두 번째 의견·공개분 거르기·2차 갈림 판가름·보류 재심사 중)가 묻지 않습니다. 다른 호출자는 각자 묻고 각자 판단합니다. 서버와 vLLM 이 떠 있는지 확인합니다.</>,
       action: { label: "감사", href: ACTION_LINKS.audit }, work: { jobs: ["product-audit", "second-review", "human-deepseek-review", "audit-screen-review"] },
     });
   }

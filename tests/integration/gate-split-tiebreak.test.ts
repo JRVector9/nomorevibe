@@ -15,7 +15,7 @@ import { secondReviewGeneration } from "@/lib/crawl/second-review-input";
 import { secondReviewCandidates } from "@/lib/crawl/jobs/second-review";
 import { splitTiebreakStatus } from "@/lib/crawl/gate-split-tiebreak-read";
 import { QWEN_DIRECT_DEFAULT_MODEL, QWEN_V2_ADDENDUM, QWEN_V2_PROMPT_VERSION } from "@/lib/crawl/qwen-direct-review";
-import { qwenEndpointBackingOff, qwenEndpointBackoff, resetQwenAuditBackoff } from "@/lib/crawl/qwen-endpoint-backoff";
+import { qwenEndpointBackingOff, qwenEndpointBackoffOf, resetQwenAuditBackoff } from "@/lib/crawl/qwen-endpoint-backoff";
 import { runJob } from "@/lib/jobs/runner";
 import { reviewHumanQueue } from "@/lib/crawl/jobs/human-review";
 import { jobRunOptions } from "@/scripts/worker";
@@ -495,14 +495,16 @@ it("부르는 곳이 탈 나면 후보·관문을 그대로 두고 물러난다 
   expect(await auditRowsAfter(floor, "candidate-split-tiebreak-reject")).toHaveLength(0);
   const [failed] = await tiebreaksOf(one.candidate.id);
   expect(failed).toMatchObject({ state: "failed", errorCode: "qwen_http_503", failureCount: 0, decision: null, applied: null });
-  // gpu3090 을 부르는 모두가 함께 물러난다(qwen-endpoint-backoff.ts — 첫 탈은 1분). 이 항목은 물러남이 끝날 때 다시 묻는다
-  expect(qwenEndpointBackingOff()).toBe(true);
-  expect(qwenEndpointBackoff).toMatchObject({ failures: 1, lastError: "qwen_http_503" });
-  expect(failed.retryAfter!.getTime()).toBe(qwenEndpointBackoff.retryAt);
+  // 2026-10-31: 이 판가름만 물러난다(qwen-endpoint-backoff.ts — 첫 탈은 1분, 호출자마다 따로). 이 항목은 물러남이 끝날 때 다시 묻는다.
+  // 감사·두 번째 의견·보류 재심사는 세우지 않는다 — 하나가 잘못되면 다음 작업도 안 되는 구조는 이유가 없다
+  expect(qwenEndpointBackingOff("split_tiebreak")).toBe(true);
+  expect(qwenEndpointBackoffOf("split_tiebreak")).toMatchObject({ failures: 1, lastError: "qwen_http_503" });
+  expect(failed.retryAfter!.getTime()).toBe(qwenEndpointBackoffOf("split_tiebreak").retryAt);
+  for (const other of ["audit", "second_opinion", "held_qwen"] as const) expect(qwenEndpointBackingOff(other), other).toBe(false);
   expect(failed.retryAfter!.getTime()).toBeGreaterThan(Date.now() + 50_000);
   expect((await splitTiebreakStatus()).lastError).toMatchObject({ code: "qwen_http_503" });
 
-  // 물러나 있는 동안은 다른 후보도 부르지 않는다 — 감사 쪽이 탈을 만나 물러나는 중이어도 같다
+  // 물러나 있는 동안은 다른 후보도 부르지 않는다(이 판가름의 물러나기)
   reply = async () => reject();
   await tick();
   expect(requests).toHaveLength(1);

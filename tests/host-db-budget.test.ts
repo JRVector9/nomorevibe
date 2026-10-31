@@ -36,9 +36,11 @@ it('counts role parents including their supervisors once, separate worker pools,
 it('includes web primary plus READ, all nine role children, monitor, connect agent and migration', () => {
   const result = hostDbBudgetCatalog({ ...policy, host: 'm3', roles: ['crawler', 'reviewer', 'publisher', 'text', 'maintenance', ...policy.roles],
     schedulerReplicas: 2, webReplicas: 1, webReadReplica: true, connectAgent: true, migrationProcesses: 1 });
-  expect(result.primaryClients).toBe(59);
+  // reviewer·text worker 6(2026-10-31 3→6: 동시에 틱을 도는 모델 줄 4 + lease heartbeat 1 + 여유 1) — 그 전 59/63
+  expect(result.primaryClients).toBe(65);
   expect(result.replicaClients).toBe(4);
-  expect(result.totalClients).toBe(63);
+  expect(result.totalClients).toBe(69);
+  for (const role of ['reviewer', 'text']) expect(result.processes.find(row => row.kind === 'worker' && row.role === role)).toMatchObject({ primaryMax: 6 });
   expect(result.processes.find(row => row.kind === 'worker' && row.role === 'crawler')).toMatchObject({ primaryMax: 8 });
   expect(result.processes.find(row => row.kind === 'web')).toMatchObject({ primaryMax: 8, readMax: 4 });
   expect(result.processes.find(row => row.kind === 'migration')).toMatchObject({ count: 1, primaryMax: 1 });
@@ -47,9 +49,9 @@ it('includes web primary plus READ, all nine role children, monitor, connect age
 it('counts rolling old/new overlap for persistent processes and keeps explicit CLI counts separate', () => {
   const result = hostDbBudgetCatalog({ ...policy, host: 'm3', roles: ['crawler', 'reviewer', 'publisher', 'text', 'maintenance', ...policy.roles],
     schedulerReplicas: 2, webReplicas: 1, webReadReplica: true, connectAgent: true, migrationProcesses: 1, rolloutCopies: 2 });
-  expect(result.primaryClients).toBe(116);
+  expect(result.primaryClients).toBe(128);
   expect(result.replicaClients).toBe(8);
-  expect(result.totalClients).toBe(124);
+  expect(result.totalClients).toBe(136);
   expect(result.processes.find(row => row.kind === 'scheduler-parent')).toMatchObject({ count: 4 });
   expect(result.processes.find(row => row.kind === 'monitor')).toMatchObject({ count: 2 });
   expect(result.processes.find(row => row.kind === 'preflight')).toMatchObject({ count: 1 });

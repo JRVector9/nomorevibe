@@ -1,6 +1,6 @@
 import { modelLimits, modelTimeoutMs } from "@/lib/llm/model-registry";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
-import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
+import { ModelCapacityDeferredError, modelCapacityDeferralIsPerWork } from "@/lib/llm/capacity-deferred";
 import { withLocalModelCapacity } from "@/lib/llm/local-model-capacity";
 import { assertCliModelAdmission } from "@/lib/llm/cli-capacity-admission";
 import { backgroundCliPath } from "@/lib/llm/cli-model-capacity";
@@ -8,7 +8,6 @@ import { reportProviderOutcome } from "@/lib/llm/provider-circuit-breaker";
 import { auditCliModelCapacity } from "@/lib/crawl/product-audit-model-capacity";
 import { getSettings } from "@/lib/crawl/settings";
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
-import { listReviewCandidates } from "@/lib/crawl/agent-review-repository";
 import { reviewCliTimeoutMs, reviewWithAgent } from "@/lib/crawl/agent-review";
 import { reviewGatewayTimeoutMs, reviewWithGateway } from "@/lib/crawl/agent-review-gateway";
 import { finishAuditCampaign, loadAuditInput, markAuditInputFailed, markAuditNoSource, pendingAuditItems, recordAuditResult,
@@ -21,7 +20,7 @@ import { qwenDirectConfig, QwenDirectError, reviewWithQwenDirect, QWEN_V2_PROMPT
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import type { ProductAuditCampaign } from "@/lib/db/schema";
 import type { JobLease } from "@/lib/jobs/control";
-import { classifyQwenCallFailure, noteQwenAnswered, noteQwenEndpointSuccess, qwenBackoffMs, qwenEndpointBackingOff, qwenEndpointBackoff,
+import { classifyQwenCallFailure, noteQwenAnswered, noteQwenEndpointSuccess, qwenBackoffMs, qwenEndpointBackingOff, qwenEndpointBackoffOf,
   resetQwenAuditBackoff } from "@/lib/crawl/qwen-endpoint-backoff";
 
 /**
@@ -87,27 +86,14 @@ async function askAuditCampaign(ctx: JobContext<null>, settings: CrawlSettings):
     return { done: true };
   }
   /*
-   * 먼저 양보한다. 발행 문에 한 번도 심사받지 않은 새 후보가 하나라도 있으면 이 틱은 쉰다.
-   *
-   * 새 후보는 심사를 받아야 공개되고, 공개분은 이미 떠 있다 — 기다려서 잃는 쪽이 새 후보다.
-   * 같은 워커에서 차례로 돌므로 둘이 게이트웨이에 겹쳐 보내는 일은 없다 — 동시 호출은 늘
-   * settings.reviewConcurrency 이하다(4 → 성공 94%, 6 → 87% 실측).
-   *
-   * "기다리는 후보가 하나라도 있으면"으로 두었을 때는 감사가 영영 돌지 않았다. 2026-09-18 프로드에서
-   * 문은 여덟 번 모두 100건으로 찼고, 전부 이미 심사받은 보류 건이 24시간마다 다시 도는 것이었다
-   * (새 후보 0건). 그 재심사에 양보할 이유는 없다 — observe 에서는 결과가 반영되지도 않는다.
-   *
-   * Qwen 직접 심사(gpu3090)로 바꾼 감사는 양보하지 않는다 — 양보는 공유 게이트웨이 자리를 새 후보에게 비켜 주려는 것인데,
-   * Qwen 직접 심사는 게이트웨이를 쓰지 않는다. 2026-10-21 바꾼 뒤 프로드에서는 새 후보가 늘 있어 틱마다 양보만 하고
-   * 한 건도 묻지 않았다(product_audit.yielded).
+   * 다른 단계(1차 심사)의 큐를 보고 양보하지 않는다(2026-10-31, PR 3a-B 소유자 결정 "하나가 잘못되면 다음 작업도 안 되는 구조는 이유가 없다").
+   * 예전에는 발행 문에 한 번도 심사받지 않은 새 후보가 하나라도 있으면 이 틱을 쉬었는데, 2026-10-21 뒤 프로드에서는 새 후보가 늘 있어
+   * 틱마다 양보만 하고 한 건도 묻지 않았다(product_audit.yielded). 공유 장비(게이트웨이)에서 1차 심사에 자리를 먼저 주는 일은 장비 순위
+   * (PR 1b model_capacity_device_roles: ai1 rank 1, audit rank 2 + secondaryCap·reserve)가 입장 TX 에서 정한다 — 배포 전에 그 행을 둔다.
    */
   // 누가 볼지는 감사 행에 적혀 있다 — 남은 감사 모델 바꾸기(0112) 뒤면 바꾼 심사자다. Qwen 직접 심사는 따로 돈다(아래 auditWithQwen)
   const reviewer = auditReviewer(campaign);
   const direct = reviewer.provider === QWEN_AUDIT_PROVIDER;
-  if (!direct && (await listReviewCandidates(settings, 1, { unreviewedOnly: true })).length) {
-    ctx.log("product_audit.yielded", { campaign: campaign.id });
-    return { done: true };
-  }
   const lease = ctx.lease;
   if (!lease) throw new Error("product audit requires a valid worker job lease");
   if (direct) return auditWithQwen(ctx, { campaign, reviewer, settings, startedAt, lease });
@@ -121,11 +107,11 @@ async function askAuditCampaign(ctx: JobContext<null>, settings: CrawlSettings):
   const remaining = () => deadlineAt - Date.now();
   // 1차 심사자 설정을 바꿔도 감사는 따라가지 않는다 — 감사 행의 심사자(reviewer)로만 묻는다
   const ceiling = reviewer.provider === "abcllm" ? reviewGatewayTimeoutMs() : reviewCliTimeoutMs();
-  let reviewed = 0, failed = 0, noSource = 0;
+  let reviewed = 0, failed = 0, noSource = 0, passed = 0;
   let down: string | null = null;
-  // 한 자리가 공통 모델 슬롯에서 미뤄지면 다른 자리도 새 호출을 시작하지 않는다 — 이미 시작한 호출은 끝까지 기다린다
-  let deferred = false;
-  const canStart = () => !down && !deferred && !ctx.signal?.aborted && ctx.hasBudget() && remaining() >= ceiling + WRITE_MARGIN_MS;
+  // 심사자 쪽이 없는 실패(REVIEWER_DOWN — 설정·키·CLI·모델 없음, 항목 탓일 수 없다)만 모든 자리의 새 호출을 멈춘다. 한 자리의 장부 미룸은
+  // 그 자리만 멈춘다(2026-10-31) — 다른 자리는 각자 장부에 묻고 각자 답을 받는다
+  const canStart = () => !down && !ctx.signal?.aborted && ctx.hasBudget() && remaining() >= ceiling + WRITE_MARGIN_MS;
 
   // 자리마다 다음 것을 집어 묻는다. 한 호출이 실패해도 그 자리는 다음 것으로 넘어간다
   const settled = await Promise.allSettled(Array.from({ length: concurrency }, async () => {
@@ -146,7 +132,13 @@ async function askAuditCampaign(ctx: JobContext<null>, settings: CrawlSettings):
         if (reviewer.provider === "abcllm") await assertCliModelAdmission({ routeId: "product-audit", provider: "abcllm", model: reviewer.model });
         else capacity = await backgroundCliPath("product-audit", reviewer.model);
       } catch (error) {
-        if (error instanceof ModelCapacityDeferredError) deferred = true;
+        // 이 항목만의 미룸(같은 항목이 다른 요청에 묶임·앞선 호출이 보내진 중·장부 세대 어긋남) — 항목 하나를 넘기고 이 자리는 다음 항목을 본다
+        if (error instanceof ModelCapacityDeferredError && modelCapacityDeferralIsPerWork(error.reason)) {
+          passed += 1;
+          ctx.log("product_audit.passed", { campaign: campaign.id, itemId: item.id, reason: error.reason });
+          continue;
+        }
+        // 모델·전역 미룸 — 이 자리만 새 호출을 멈춘다(아래에서 모은다). 다른 자리의 새 시작을 세우지 않는다
         throw error;
       }
       const callStartedAt = new Date();
@@ -169,11 +161,8 @@ async function askAuditCampaign(ctx: JobContext<null>, settings: CrawlSettings):
         clearInterval(ownershipPoll);
         ctx.signal?.removeEventListener("abort", abort);
       }
-      // 슬롯 미룸은 다른 자리의 새 시작도 멈춘다. 건너뜀·띄우지 않음은 parser 에 cancelled 로 보여 아래에서 기록 없이 끝난다
-      try { native?.settled(); } catch (error) {
-        if (error instanceof ModelCapacityDeferredError) deferred = true;
-        throw error;
-      }
+      // 정산의 미룸은 이 자리만 끝낸다(아래에서 모은다). 건너뜀·띄우지 않음은 parser 에 cancelled 로 보여 아래에서 기록 없이 끝난다
+      native?.settled();
       // 멈추라고 해서 끊긴 것은 실패가 아니다 — 다음 회차가 처음부터 본다
       if (controller.signal.aborted || ctx.signal?.aborted || !ctx.hasBudget() || remaining() <= 0
         || (!result.ok && result.error === "cancelled")) return;
@@ -193,13 +182,15 @@ async function askAuditCampaign(ctx: JobContext<null>, settings: CrawlSettings):
     }
   }));
 
-  ctx.log("product_audit.reviewed", { campaign: campaign.id, reviewed, failed, noSource });
+  ctx.log("product_audit.reviewed", { campaign: campaign.id, reviewed, failed, noSource, passed });
   const failures = settled.filter((result) => result.status === "rejected");
   const failure = failures.find((result) => !(result.reason instanceof ModelCapacityDeferredError));
   if (failure) throw failure.reason;
   if (down) throw new Error(`product_audit_reviewer_unavailable:${down}`);
-  // 슬롯에서 미뤘다 — 러너가 잠금만 놓고 요청·커서·기록은 그대로 둔다
-  if (failures.length) throw failures[0].reason;
+  // 자리가 장부에서 미뤄졌다(모델·전역). 이 틱에 적은 것이 하나도 없으면 미룸으로 끝낸다 — 러너가 잠금만 놓고 요청·커서·기록은 그대로 둔다.
+  // 적은 것이 있으면 그 일은 끝난 일이다 — 다음 틱이 이어 본다
+  if (failures.length && reviewed + failed + noSource + passed === 0) throw failures[0].reason;
+  if (failures.length) ctx.log("product_audit.deferred", { campaign: campaign.id, reason: (failures[0].reason as ModelCapacityDeferredError).reason });
   return { done: false };
 }
 
@@ -233,10 +224,10 @@ export function qwenAuditConcurrency(env: Readonly<Record<string, string | undef
 export const qwenAuditBackoffMs = qwenBackoffMs;
 
 /**
- * 부르는 곳이 연달아 탈 난 틱 수와 다시 물어볼 시각 — gpu3090 을 부르는 모든 쪽(두 번째 의견·공개분 거르기·갈림 판가름)과 함께 쓴다
- * (qwen-endpoint-backoff.ts). 누가 탈을 만나든 감사도 물러나고, 감사가 탈을 만나면 다른 쪽도 물러난다
+ * 감사 Qwen 직접 심사가 연달아 탈 난 틱 수와 다시 물어볼 시각 — 이 호출자("audit")의 것이다(qwen-endpoint-backoff.ts).
+ * 2026-10-31(PR 3a-B): 감사가 탈을 만나도 두 번째 의견·갈림 판가름·보류 재심사는 각자 묻고 각자 물러난다 — 함께 서지 않는다
  */
-const qwenEndpoint = qwenEndpointBackoff;
+const qwenEndpoint = qwenEndpointBackoffOf("audit");
 export { resetQwenAuditBackoff };
 
 /** 틱의 호출 시간 — 수·평균·p90·최대(ms). 답을 받았거나 진짜로 실패한 호출만(멈춤·틱 끝에 끊긴 것은 뺀다) */
@@ -257,9 +248,9 @@ const neverItemFailure = (code: QwenDirectErrorCode) =>
  *  - 틱(TICK_MS, 러너 예산 70초 안)이 끝날 때까지 자리마다 다음 것을 잇달아 묻는다. 틱 끝까지 QWEN_MIN_START_MS(15초) 이상 남아 있으면
  *    새로 시작하고, 제한 시간은 min(45초, 남은 시간 − 저장 여유)다. 줄인 제한 시간에 걸린 것(틱 끝)은 적지 않는다 — 서버 탈도 항목의 시도도 아니다.
  *  - 감사 중단·모델 바꿈·수집 스위치를 QWEN_CONTROL_CHECK_MS 마다 다시 보고, 바뀌었으면 새 호출을 멈춘다(이미 띄운 호출의 답은 적는다).
- *  - 서버 탈(qwen-endpoint-backoff.ts noteQwenCallFailure — 닿지 않음·5xx·401/403/404 는 바로, 진짜 시간 초과·429 는 부르는 쪽 모두를
- *    통틀어 성공 없이 세 번 잇달아): 이 틱의 새 호출을 멈추고 잡을 실패로 남기며(운영센터에 드러난다) 1분·2분·4분…15분 동안 묻지 않는다.
- *    그동안의 틱도 실패로 남긴다 — 감사가 서 있는 것이 보이게.
+ *  - 서버 탈(qwen-endpoint-backoff.ts noteQwenCallFailure — 닿지 않음·5xx·401/403/404 는 바로, 진짜 시간 초과·429 는 이 호출자(감사)의
+ *    호출을 통틀어 성공 없이 세 번 잇달아): 이 틱의 새 호출을 멈추고 잡을 실패로 남기며(운영센터에 드러난다) 1분·2분·4분…15분 동안 묻지 않는다.
+ *    그동안의 틱도 실패로 남긴다 — 감사가 서 있는 것이 보이게. 다른 호출자(두 번째 의견·갈림 판가름·보류 재심사)는 각자 센다(2026-10-31).
  *  - 탈이 아닌 한 번의 진짜 시간 초과(45초를 다 썼다)는 그 항목의 시도로 세고(세 번까지) 다른 자리는 이어 간다 — 잡을 실패로 남기지 않는다.
  *    429 는 항목 탓이 아니라 세지 않는다. 서버 탈로 끝난 호출은 Qwen 이 멀쩡하던 중(틱에 들어올 때 연속 탈이 없었거나 이 틱에 이미 답을
  *    받았다)에 난 제한 시간·429·5xx 만 센다 — 서버가 오래 죽어 있어도 남은 항목의 시도가 닳지 않는다.
@@ -270,7 +261,7 @@ const neverItemFailure = (code: QwenDirectErrorCode) =>
 async function auditWithQwen(ctx: JobContext<null>, value: { campaign: ProductAuditCampaign; reviewer: AuditReviewer; settings: CrawlSettings;
   startedAt: number; lease: JobLease }): Promise<JobOutcome<null>> {
   const { campaign, reviewer, settings, startedAt, lease } = value;
-  if (qwenEndpointBackingOff()) {
+  if (qwenEndpointBackingOff("audit")) {
     ctx.log("product_audit.endpoint_backoff", { campaign: campaign.id, failures: qwenEndpoint.failures, waitMs: qwenEndpoint.retryAt - Date.now() });
     throw new Error(`product_audit_endpoint_backoff:${qwenEndpoint.lastError ?? "qwen_unreachable"}`);
   }
@@ -306,9 +297,9 @@ async function auditWithQwen(ctx: JobContext<null>, value: { campaign: ProductAu
     })().finally(() => { checking = null; });
     await checking;
   };
-  // 틱 끝까지 15초 이상 남아야 시작한다(제한 시간은 그 안으로 줄인다). 누가 서버 탈을 만나 함께 쓰는 물러나기(qwen-endpoint-backoff.ts)가
-  // 걸리면 같은 틱의 다른 자리도 곧바로 멈춘다
-  const canStart = () => !endpoint && !stopped && !ctx.signal?.aborted && ctx.hasBudget() && !qwenEndpointBackingOff()
+  // 틱 끝까지 15초 이상 남아야 시작한다(제한 시간은 그 안으로 줄인다). 감사의 한 자리가 서버 탈을 만나 이 호출자의 물러나기
+  // (qwen-endpoint-backoff.ts)가 걸리면 같은 틱의 다른 감사 자리도 곧바로 멈춘다 — 같은 서버에 같은 질문을 더 보내지 않는다
+  const canStart = () => !endpoint && !stopped && !ctx.signal?.aborted && ctx.hasBudget() && !qwenEndpointBackingOff("audit")
     && left() >= QWEN_MIN_START_MS;
 
   const settled = await Promise.allSettled(Array.from({ length: concurrency }, async () => {
@@ -364,7 +355,7 @@ async function auditWithQwen(ctx: JobContext<null>, value: { campaign: ProductAu
         promptVersion: review?.promptVersion ?? QWEN_V2_PROMPT_VERSION, input };
       if (review) {
         reviewed += 1;
-        noteQwenAnswered();
+        noteQwenAnswered("audit");
         lastAnsweredStartAt = Math.max(lastAnsweredStartAt, callStartedAt.getTime());
         await recordAuditResult({ ...call, ok: true, outcome: review.outcome }, lease, settings.auditHold);
         continue;
@@ -375,7 +366,7 @@ async function auditWithQwen(ctx: JobContext<null>, value: { campaign: ProductAu
       // 이 틱에서 이미 답을 받았으면 연속 탈을 처음부터 센다
       let outage = Boolean(endpoint);
       if (!endpoint) {
-        const noted = classifyQwenCallFailure(code, { freshStreak: reviewed > 0 });
+        const noted = classifyQwenCallFailure("audit", code, { freshStreak: reviewed > 0 });
         outage = noted.outage;
         if (outage) endpoint = code;
         await noted.persisted;
@@ -400,6 +391,6 @@ async function auditWithQwen(ctx: JobContext<null>, value: { campaign: ProductAu
     ctx.log("product_audit.endpoint_error", { campaign: campaign.id, failures: qwenEndpoint.failures, waitMs: Math.max(0, qwenEndpoint.retryAt - Date.now()) });
     throw new Error(`product_audit_endpoint_error:${endpoint}`);
   }
-  if (reviewed > 0) await noteQwenEndpointSuccess(lastAnsweredStartAt);
+  if (reviewed > 0) await noteQwenEndpointSuccess("audit", lastAnsweredStartAt);
   return { done: false };
 }

@@ -13,7 +13,8 @@ it("owns text jobs once, with an executable role, bounded pool and health identi
   expect(jobsForRole("text")).toEqual(["reason-translate", "crawl-tagline", "product-search-profile", "product-search-verify", "product-embedding", "product-repo-review", "product-tagline-ko", "product-translate"]);
   expect(JOB_CATALOG.filter(job => ["reason-translate", "crawl-tagline", "product-search-profile", "product-search-verify", "product-embedding", "product-repo-review", "product-tagline-ko", "product-translate"].includes(job.name))).toHaveLength(8);
   expect(parseWorkerArgs(["--role=text"])).toMatchObject({ role: "text" });
-  expect(dbPoolConfig({ WORKER_ROLE: "text" }).max).toBe(3);
+  // 6 = 동시에 틱을 도는 모델 줄 4 + 역할 lease heartbeat 1 + 여유 1(lib/jobs/catalog.ts, 2026-10-31 3→6)
+  expect(dbPoolConfig({ WORKER_ROLE: "text" }).max).toBe(6);
   expect(supervisorLimits("text", {}).jobMs).toBe(180_000);
   expect(SERVICE_ROLES).toContain("text");
   expect(serviceObservationKey("text", { SERVICE_INSTANCE_ID: "local-text" })).toBe("service:text:local-text");
@@ -61,13 +62,17 @@ it("Korean translation starts once while both the main and multilingual text lan
   } finally { release(); await worker; }
 });
 
-it("product translation runs while the main text lane is blocked, and releases neither lane's other work", async () => {
+/** 2026-10-31: text 의 모델 잡은 잡 하나에 줄 하나 — 키워드 짓기가 막혀도 키워드 검수·번역은 바로 돈다(예전엔 같은 기본 줄이라 검수가 기다렸다) */
+it("every text model job runs in its own lane: a blocked keyword profile tick delays neither keyword verify nor translation", async () => {
   let releaseProfile!: () => void, releaseTranslation!: () => void;
   const profile = new Promise<void>(resolve => { releaseProfile = resolve; });
   const translation = new Promise<void>(resolve => { releaseTranslation = resolve; });
   const ran: string[] = [];
+  const lanes = lanesForRole("text");
+  expect(lanes.filter(lane => lane.includes("product-search-profile"))).toEqual([["product-search-profile"]]);
+  expect(lanes.filter(lane => lane.includes("product-search-verify"))).toEqual([["product-search-verify"]]);
   const worker = runWorker({ role: "text", once: true }, {
-    names: jobsForRole("text"), lanes: lanesForRole("text"), seen: async () => {},
+    names: jobsForRole("text"), lanes, seen: async () => {},
     pending: async () => ["product-search-profile", "product-search-verify", "product-translate"],
     run: async name => {
       ran.push(name);
@@ -78,11 +83,12 @@ it("product translation runs while the main text lane is blocked, and releases n
   });
   try {
     await vi.waitFor(() => expect(ran).toContain("product-translate"));
-    expect(ran).toContain("product-search-profile");
-    expect(ran).not.toContain("product-search-verify");
-    releaseProfile();
     await vi.waitFor(() => expect(ran).toContain("product-search-verify"));
+    expect(ran).toContain("product-search-profile");
+    // 한 줄에 한 잡이라 어느 잡도 두 번 시작하지 않는다(once)
+    expect(ran.filter(name => name === "product-search-profile")).toHaveLength(1);
     expect(ran.filter(name => name === "product-translate")).toHaveLength(1);
+    expect(ran.filter(name => name === "product-search-verify")).toHaveLength(1);
   } finally {
     releaseProfile(); releaseTranslation(); await worker;
   }

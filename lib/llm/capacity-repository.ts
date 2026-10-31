@@ -1629,6 +1629,10 @@ export type CrawlTaglineContinuation = Readonly<{ generationHash: string;
 export type CrawlTaglineNotStartedContinuation = Readonly<{ generationHash: string;
   notStarted: Readonly<{ requestId: string; bindingHash: string; askOrdinal: 1 | 2 }>;
   first: (CrawlTaglineParent & Readonly<{ outcome: CrawlTaglineOutcome }>) | null }>;
+/** `broken`: a settled row of this generation has no readable phase chain (forged, duplicated or re-ordered evidence). The caller skips
+ * this one target as `ledger_mismatch` (2026-10-31, PR 3a-B) instead of guessing — the reader no longer throws, so one target's rows cannot
+ * end the tick for the rest. Nothing is written. */
+export type CrawlTaglineBrokenContinuation = Readonly<{ generationHash: string; broken: true }>;
 const crawlTaglineLocks = new WeakMap<CrawlTaglineCapacityDispatchLock, { tx: ProductTransaction; row: RequestRow;
   identity: ModelCapacityRequestIdentity; input: CrawlTaglineInput; finished: boolean }>();
 function fixedCrawlTaglineIdentity(value: ModelCapacityRequestIdentity, input: CrawlTaglineInput): string {
@@ -1768,10 +1772,11 @@ export async function reconcileCrawlTaglineGatewayTerminal(terminal: CrawlTaglin
  * A settled gateway_not_started phase (0149) has no outcome: it is reported as `notStarted` so the caller closes the generation with
  * one recorded failure instead of reading it as a broken chain (2026-10-31: such a row stopped crawl-tagline on every tick). */
 export async function readCrawlTaglineContinuation(value: Pick<CrawlTaglineInput, "member" | "model">):
-  Promise<CrawlTaglineContinuation | CrawlTaglineNotStartedContinuation | null> {
+  Promise<CrawlTaglineContinuation | CrawlTaglineNotStartedContinuation | CrawlTaglineBrokenContinuation | null> {
   if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
   const snapshot = crawlTaglineInputSchema.parse({ member: value.member, model: value.model, askOrdinal: 1, parent: null });
   const generationHash = crawlTaglineGenerationHash(snapshot);
+  const broken: CrawlTaglineBrokenContinuation = Object.freeze({ generationHash, broken: true });
   return transaction(async tx => {
     const [mutex] = await tx.select({ id: modelCapacityControl.id }).from(modelCapacityControl).where(eq(modelCapacityControl.id, 1)).for("share");
     if (!mutex) fail("model_capacity_control_missing");
@@ -1782,7 +1787,7 @@ export async function readCrawlTaglineContinuation(value: Pick<CrawlTaglineInput
     const unsent = rows.map(row => storedCrawlTaglineNotStarted(row)).filter(dispatch => dispatch !== null);
     const phases = rows.map(row => storedCrawlTaglineEvidence(row)).filter(phase => phase !== null);
     if (phases.length + unsent.length !== rows.length || [...phases.map(phase => phase.dispatch), ...unsent]
-      .some(dispatch => dispatch.binding.generationHash !== generationHash)) fail("crawl_tagline_continuation_mismatch");
+      .some(dispatch => dispatch.binding.generationHash !== generationHash)) return broken;
     const first = phases.filter(phase => phase.dispatch.binding.askOrdinal === 1), second = phases.filter(phase => phase.dispatch.binding.askOrdinal === 2);
     const data = (phase: typeof phases[number]) => Object.freeze({ requestId: phase.dispatch.requestId,
       bindingHash: phase.dispatch.bindingHash, responseHash: phase.responseHash, outcome: Object.freeze(structuredClone(phase.outcome)) });
@@ -1790,12 +1795,11 @@ export async function readCrawlTaglineContinuation(value: Pick<CrawlTaglineInput
       // 한 세대에 보내지 않은 단계는 하나뿐이고(단계 고유 색인) 그 뒤 단계는 없다. ask 2 면 부모는 이 세대의 빈 줄 ask 1 이다.
       const [skip] = unsent, ordinal = skip.binding.askOrdinal;
       if (unsent.length > 1 || second.length || (ordinal === 1 ? first.length !== 0
-        : first.length !== 1 || !crawlTaglineParentMatches(first[0], skip.binding))) fail("crawl_tagline_continuation_mismatch");
+        : first.length !== 1 || !crawlTaglineParentMatches(first[0], skip.binding))) return broken;
       return Object.freeze({ generationHash, first: first[0] ? data(first[0]) : null,
         notStarted: Object.freeze({ requestId: skip.requestId, bindingHash: skip.bindingHash, askOrdinal: ordinal }) });
     }
-    if (first.length !== 1 || second.length > 1 || second.length && !crawlTaglineParentMatches(first[0], second[0].dispatch.binding))
-      fail("crawl_tagline_continuation_mismatch");
+    if (first.length !== 1 || second.length > 1 || second.length && !crawlTaglineParentMatches(first[0], second[0].dispatch.binding)) return broken;
     return Object.freeze({ generationHash, first: data(first[0]), second: second[0] ? data(second[0]) : null });
   });
 }
@@ -2063,7 +2067,9 @@ declare const websearchQueryLockBrand: unique symbol;
 export type WebsearchQueryCapacityDispatchLock = Readonly<{ control: ReturnType<typeof callerControlSnapshot>;
   readonly [websearchQueryLockBrand]: true }>;
 /** Settled outcome is business data for the same cache snapshot only; it never issues an opaque proof or releases capacity. */
-export type WebsearchQueryContinuation = { kind: "none" } | { kind: "blocked" }
+/** `broken`: the settled rows for this exact snapshot cannot be read as one outcome (duplicate or forged evidence). The caller skips this
+ * one target as `ledger_mismatch` (2026-10-31, PR 3a-B) — the reader no longer throws, so one query's rows cannot fail the surrounding TX. */
+export type WebsearchQueryContinuation = { kind: "none" } | { kind: "blocked" } | { kind: "broken" }
   | Readonly<{ kind: "settled"; requestId: string; bindingHash: string; responseHash: string; model: string; outcome: WebsearchQueryOutcome }>;
 const websearchQueryLocks = new WeakMap<WebsearchQueryCapacityDispatchLock, { tx: ProductTransaction; row: RequestRow;
   identity: ModelCapacityRequestIdentity; input: WebsearchQueryInput; finished: boolean }>();
@@ -2194,7 +2200,7 @@ export async function readWebsearchQueryContinuation(tx: ProductTransaction, val
   if (!rows.length) return { kind: "none" };
   const stored = rows.map(row => storedWebsearchQueryEvidence(row));
   if (rows.length !== 1 || !stored[0] || stored[0].dispatch.binding.member.cacheKey !== input.member.cacheKey
-    || !isDeepStrictEqual(stored[0].dispatch.binding.member.cache, input.member.cache)) fail("websearch_query_continuation_mismatch");
+    || !isDeepStrictEqual(stored[0].dispatch.binding.member.cache, input.member.cache)) return { kind: "broken" };
   const evidence = stored[0]!;
   return Object.freeze({ kind: "settled" as const, requestId: evidence.dispatch.requestId, bindingHash: evidence.dispatch.bindingHash,
     responseHash: evidence.responseHash, model: evidence.dispatch.binding.model, outcome: Object.freeze(structuredClone(evidence.outcome)) });

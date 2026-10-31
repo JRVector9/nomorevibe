@@ -21,7 +21,7 @@ import { mergeWithDefaults } from "./settings";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
 import { currentReplayDb } from "@/lib/db/replay-scope";
 import { DrWriterFencedError, writerSiteActive } from "@/lib/operations/dr/epoch";
-import { endpointBackoffActive, noteQwenCallFailure, noteQwenEndpointSuccess, qwenEndpointBackingOff, qwenEndpointBackoff,
+import { endpointBackoffActive, noteQwenCallFailure, noteQwenEndpointSuccess, qwenEndpointBackingOff, qwenEndpointBackoffOf,
   readQwenEndpointBackoff, withQwenSecondarySlot } from "./qwen-endpoint-backoff";
 import { QWEN_V2_PROMPT_VERSION, QwenDirectError, qwenDirectConfig, qwenEndpointFailure, reviewWithQwenDirect,
   type QwenDirectErrorCode, type QwenDirectReview } from "./qwen-direct-review";
@@ -465,8 +465,8 @@ export async function runHeldQwenRetry(ctx: Pick<JobContext<null>, "lease" | "ha
   tick.refreshed = await requestHeldQwenSourceRefresh(settings, lease, policy.perTick);
   const config = qwenDirectConfig(options.env ?? process.env);
   if (!config) return { ...tick, skipped: "not_configured" };
-  // gpu3090 을 부르는 누군가가 탈을 만나 물러나는 중이면 부르지 않는다(qwen-endpoint-backoff.ts)
-  if (qwenEndpointBackingOff()) return { ...tick, skipped: "backoff", backoffUntil: new Date(qwenEndpointBackoff.retryAt).toISOString() };
+  // 이 재심사가 탈을 만나 물러나는 중이면 부르지 않는다(qwen-endpoint-backoff.ts — 호출자마다 따로 센다, 2026-10-31)
+  if (qwenEndpointBackingOff("held_qwen")) return { ...tick, skipped: "backoff", backoffUntil: new Date(qwenEndpointBackoffOf("held_qwen").retryAt).toISOString() };
   const callTimeoutMs = heldQwenCallTimeoutMs();
   const sliceEnd = Date.now() + policy.budgetSeconds * 1000;
   const room = () => !ctx.signal?.aborted && ctx.hasBudget() && sliceEnd - Date.now() >= callTimeoutMs
@@ -495,7 +495,7 @@ export async function runHeldQwenRetry(ctx: Pick<JobContext<null>, "lease" | "ha
     try {
       // 두 번째 자리(두 번째 의견·공개분 거르기·갈림 판가름과 나눠 쓴다)를 얻은 뒤 남은 시간·물러나기를 다시 본다 — 못 부르면 멈춤으로 적는다
       call = await withQwenSecondarySlot(async () => {
-        if (!room() || qwenEndpointBackingOff()) return { ok: false as const, code: "qwen_cancelled", detail: "secondary_slot" };
+        if (!room() || qwenEndpointBackingOff("held_qwen")) return { ok: false as const, code: "qwen_cancelled", detail: "secondary_slot" };
         callStartedAt = Date.now();
         return withLocalModelCapacity({ target: { kind: "candidate", purpose: "held_qwen", attemptId: claimed.claim.attemptId,
           candidateId: claimed.claim.candidateId, repo: claimed.claim.repo }, input: claimed.claim.input, lease,
@@ -509,9 +509,9 @@ export async function runHeldQwenRetry(ctx: Pick<JobContext<null>, "lease" | "ha
       call = { ok: false, code: "qwen_cancelled", detail: "model_capacity_deferred" };
     } finally { clearInterval(poll); }
     // 다른 쪽이 탈을 적기 전에 띄운 호출의 답은 그 물러나기를 풀지 않는다(qwen-endpoint-backoff.ts)
-    if (call.ok) await noteQwenEndpointSuccess(callStartedAt);
-    // 서버 탈인지는 함께 쓰는 셈이 가른다 — 붐빔(진짜 시간 초과·429)은 부르는 쪽 모두를 통틀어 세 번 잇달아야 탈이다
-    const outage = !call.ok && heldQwenEndpointFailure(call.code) && (await noteQwenCallFailure(call.code as QwenDirectErrorCode)).outage;
+    if (call.ok) await noteQwenEndpointSuccess("held_qwen", callStartedAt);
+    // 서버 탈인지는 이 호출자의 셈이 가른다 — 붐빔(진짜 시간 초과·429)은 이 재심사의 호출을 통틀어 세 번 잇달아야 탈이다
+    const outage = !call.ok && heldQwenEndpointFailure(call.code) && (await noteQwenCallFailure("held_qwen", call.code as QwenDirectErrorCode)).outage;
     let state: HeldQwenRecordState;
     try { state = await recordHeldQwen(claimed.claim, call); }
     catch (error) {
@@ -526,7 +526,7 @@ export async function runHeldQwenRetry(ctx: Pick<JobContext<null>, "lease" | "ha
     if (state === "pipeline") tick.pipeline++;
     if (state === "held") tick.held++;
     if (state === "failed") tick.failed++;
-    // 부르는 곳의 탈이면 이 틱의 나머지를 부르지 않는다 — 다음 틱부터는 함께 쓰는 물러나기가 물린다
+    // 부르는 곳의 탈이면 이 틱의 나머지를 부르지 않는다 — 다음 틱부터는 이 재심사의 물러나기가 물린다
     if (!call.ok && (outage || call.code === "qwen_cancelled")) break;
   }
   return tick;

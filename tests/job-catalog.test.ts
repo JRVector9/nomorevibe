@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { JOB_CATALOG, JOB_ROLES, jobsForRole, lanesForRole } from '@/lib/jobs/catalog';
+import { JOB_CATALOG, JOB_ROLES, jobsForRole, lanesForRole, type JobRole } from '@/lib/jobs/catalog';
 import { batchLanesForRole } from '@/lib/jobs/batches';
 import { dbPoolConfig } from '@/lib/db/pool';
+import { hostDbBudgetCatalog } from '@/lib/db/host-budget';
 import { jobRunOptions, runWorker } from '@/scripts/worker';
 
 it('registers canonical site refresh only as a sixty-second version-one site-evidence job', () => {
@@ -90,7 +91,7 @@ it('maintenance 워커가 생존 확인 요청을 소비하고 crawler 워커는
  */
 it('발행분 감사는 1차 심사와 같은 reviewer 역할에서 돈다', () => {
   expect(JOB_CATALOG.find(job => job.name === 'product-audit')).toEqual({
-    name: 'product-audit', role: 'reviewer', intervalMs: 60_000,
+    name: 'product-audit', role: 'reviewer', intervalMs: 60_000, lane: 'audit',
   });
   expect(jobsForRole('reviewer')).toEqual(expect.arrayContaining(['crawl-agent-review', 'product-audit']));
 });
@@ -112,15 +113,19 @@ describe('lanesForRole', () => {
     expect(crawler[0]).not.toContain('product-evidence-refresh');
     expect(crawler.flat().sort()).toEqual(jobsForRole('crawler').sort());
     for (const role of ['publisher', 'maintenance'] as const) expect(lanesForRole(role)).toEqual([jobsForRole(role)]);
-    expect(lanesForRole('text')).toEqual([jobsForRole('text').filter(name => !['product-translate', 'product-tagline-ko'].includes(name)), ['product-tagline-ko'], ['product-translate']]);
+    // text 는 기본 줄이 없다 — 모델 잡마다 자기 줄(2026-10-31), 기존 전용 줄 둘은 그대로 뒤에 선다
+    expect(lanesForRole('text')).toEqual([['reason-translate'], ['crawl-tagline'], ['product-search-profile'], ['product-search-verify'],
+      ['product-embedding'], ['product-repo-review'], ['product-tagline-ko'], ['product-translate']]);
   });
 
   it('화면 판별은 reviewer 의 따로 도는 줄(screen)에서 150초 틱으로 돈다 — 기본 줄의 심사·감사를 막지 않는다', () => {
     expect(JOB_CATALOG.find(job => job.name === 'audit-screen-review')).toEqual({ name: 'audit-screen-review', role: 'reviewer', intervalMs: 60_000, lane: 'screen' });
     const reviewer = lanesForRole('reviewer');
-    expect(reviewer).toEqual([jobsForRole('reviewer').filter(name => !['crawl-agent-review', 'audit-screen-review', 'product-llm-assist-review', 'product-llm-assist-audit-review'].includes(name)), ['crawl-agent-review'], ['audit-screen-review'], ['product-llm-assist-review'], ['product-llm-assist-audit-review']]);
+    // 기본 줄에는 모델을 부르지 않는 crawl-judge 만 남는다. 그 뒤는 줄이 카탈로그에 처음 나온 차례
+    expect(reviewer).toEqual([['crawl-judge'], ['crawl-agent-review'], ['second-review'], ['human-deepseek-review'], ['product-audit'], ['audit-screen-review'],
+      ['product-intro-check'], ['product-llm-assist-review'], ['product-llm-assist-audit-review'], ['grok-session-check']]);
     expect(jobRunOptions('product-llm-assist-review', { requestedOnly: true }).budgetMs).toBe(105_000);
-    expect(reviewer[0]).toContain('product-audit');
+    expect(reviewer[0]).not.toContain('product-audit');
     expect(jobRunOptions('audit-screen-review', { requestedOnly: true })).toEqual({ requestedOnly: true, budgetMs: 150_000 });
   });
 
@@ -128,11 +133,55 @@ describe('lanesForRole', () => {
     expect(JOB_CATALOG.find(job => job.name === 'crawl-agent-review')).toEqual({ name: 'crawl-agent-review', role: 'reviewer', intervalMs: 60_000, lane: 'ai1' });
     const reviewer = lanesForRole('reviewer');
     expect(reviewer.filter(lane => lane.includes('crawl-agent-review'))).toEqual([['crawl-agent-review']]);
-    expect(reviewer[0]).toEqual(expect.arrayContaining(['crawl-judge', 'second-review', 'human-deepseek-review', 'product-audit']));
+    expect(reviewer[0]).toEqual(['crawl-judge']);
     expect(reviewer[0]).not.toContain('crawl-agent-review');
     expect(jobRunOptions('crawl-agent-review', { requestedOnly: true })).toEqual({ requestedOnly: true, budgetMs: 110_000 });
     // product-translate: 클라이언트 300초 + 기록 2초 + 입장·DB 대기 여유(lib/llm/deadline-ladder.ts PRODUCT_TRANSLATION_JOB_BUDGET_MS)
     expect(jobRunOptions('product-translate', { requestedOnly: true })).toEqual({ requestedOnly: true, budgetMs: 315_000 });
+  });
+
+  /**
+   * 2026-10-31(PR 3a-A): 모델을 부르는 잡은 잡 하나에 줄 하나. 한 줄 안의 잡은 차례로 돌고 틱이 예산까지 가므로, 기본 줄에 모델 잡 여럿을 두면
+   * 한 잡의 느림·오류가 다른 단계를 수 분 미뤘다. 큐는 단계마다 자기 표에 있다 — 줄만 나누면 한 프로세스 안에서 동시에 돈다.
+   */
+  it('모델을 부르는 잡은 reviewer·text 에서 잡 하나에 줄 하나다 — 기본 줄에는 모델 잡이 남지 않는다', () => {
+    const modelJobs = {
+      reviewer: ['second-review', 'human-deepseek-review', 'product-audit', 'product-intro-check', 'grok-session-check'],
+      text: ['reason-translate', 'crawl-tagline', 'product-search-profile', 'product-search-verify', 'product-embedding', 'product-repo-review'],
+    } as const;
+    for (const [role, names] of Object.entries(modelJobs) as [JobRole, readonly string[]][]) {
+      const lanes = lanesForRole(role);
+      for (const name of names) {
+        expect(JOB_CATALOG.find(job => job.name === name)?.lane, name).toBeDefined();
+        expect(lanes.filter(lane => lane.includes(name)), name).toEqual([[name]]);
+      }
+    }
+    // 전·후: reviewer 5줄 → 10줄, text 3줄 → 8줄. heartbeat 파서(parseRuntimeLanes)의 줄 수 상한 16 안이다
+    expect(lanesForRole('reviewer')).toHaveLength(10);
+    expect(lanesForRole('text')).toHaveLength(8);
+    for (const role of JOB_ROLES) expect(lanesForRole(role).length, role).toBeLessThanOrEqual(16);
+    // 모델을 부르지 않는 crawl-judge 만 reviewer 기본 줄에 남는다
+    expect(lanesForRole('reviewer')[0]).toEqual(['crawl-judge']);
+    expect(JOB_CATALOG.find(job => job.name === 'crawl-judge')?.lane).toBeUndefined();
+    // 기존 전용 줄은 그대로다
+    for (const [name, lane] of [['crawl-agent-review', 'ai1'], ['audit-screen-review', 'screen'], ['product-llm-assist-review', 'assist'],
+      ['product-llm-assist-audit-review', 'assist-audit'], ['product-tagline-ko', 'korean-translation'], ['product-translate', 'product-translation']]) {
+      expect(JOB_CATALOG.find(job => job.name === name)?.lane, name).toBe(lane);
+    }
+  });
+
+  /** 줄을 나누는 비용은 DB 연결이다: 역할 프로세스 DB_POOL_MAX = 동시에 틱을 도는 모델 줄 4 + 역할 lease heartbeat 1 + 여유 1 = 6(catalog.ts 줄 설명) */
+  it('reviewer·text 의 기본 풀은 줄 규칙대로 6 이다 — 코드 기본값·host 선언이 같다', () => {
+    for (const role of ['reviewer', 'text'] as const) {
+      expect(dbPoolConfig({ WORKER_ROLE: role }).max, role).toBe(6);
+      const policy = { version: 1 as const, host: 'm3' as const, release: 'lanes', roles: [role], schedulerReplicas: 0, webReplicas: 0, webReadReplica: false,
+        monitor: false, connectAgent: false, preflightProcesses: 0, migrationProcesses: 0, rolloutCopies: 1 as const };
+      expect(hostDbBudgetCatalog(policy).processes.find(row => row.kind === 'worker' && row.role === role)).toMatchObject({ primaryMax: 6 });
+    }
+    // 건 단위 consumer(ai1·ai2)의 자식 풀은 등록부대로 3 그대로다 — 줄 분리는 역할 프로세스의 연결만 늘린다
+    expect(dbPoolConfig({ WORKER_ROLE: 'reviewer', DB_POOL_MAX: '3' }).max).toBe(3);
+    expect(dbPoolConfig({ WORKER_ROLE: 'publisher' }).max).toBe(3);
+    expect(dbPoolConfig({ WORKER_ROLE: 'maintenance' }).max).toBe(3);
   });
 
   it('모든 역할에서 줄은 잡을 나눌 뿐 겹치지 않는다 — 한 잡이 두 줄에서 동시에 돌 수 없다', () => {

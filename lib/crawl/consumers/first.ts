@@ -55,14 +55,17 @@ export async function runFirstReviewConsumer(input: {
     let deferred = false, completed = false;
     for (const hint of queue) {
       if (halt?.aborted) break;
-      // claim 전 관문: 회로가 열렸거나 host 예산이 모자라면 claim·실패 기록 없이 이 hint 앞에서 쉰다(cursor 를 넘기지 않음)
+      // claim 전 관문: 단일 모델의 회로가 열렸으면(모델 하나뿐 = 그 모델 skip = 쪽 끝) claim·실패 기록 없이 이 hint 앞에서 쉰다(cursor 를 넘기지 않음)
       const circuit = poolEnabled ? undefined : input.circuits?.admit('ai1');
-      const host = circuit?.admitted === false || !input.admit ? null
-        : await input.admit('crawl-agent-review').catch(() => ({ admitted: false as const, reason: 'host_budget_unavailable' as const }));
-      if (circuit?.admitted === false || host?.admitted === false) {
+      if (circuit?.admitted === false) { result.deferred++; deferred = true; break; }
+      // host 예산 거절은 이 hint 하나만 넘기고 쪽을 계속 본다(2026-10-31 결정 "하나가 잘못되면 다음 작업도 안 되는 구조는 이유가 없다") —
+      // cursor 는 넘기지 않아 다음 패스가 다시 집고, 쪽 끝의 5초 쉼이 되풀이를 막는다
+      const host = input.admit
+        ? await input.admit('crawl-agent-review').catch(() => ({ admitted: false as const, reason: 'host_budget_unavailable' as const })) : null;
+      if (host?.admitted === false) {
         if (circuit?.admitted) circuit.done();
-        if (host?.admitted === false) logger.info('pipeline_consumer.deferred', { stage: 'ai1', reason: host.reason });
-        result.deferred++; deferred = true; break;
+        logger.info('pipeline_consumer.deferred', { stage: 'ai1', reason: host.reason });
+        result.deferred++; deferred = true; continue;
       }
       cursor = hint;
       result.attempted++; report?.('running', 'crawl-agent-review', Date.now());
@@ -78,6 +81,8 @@ export async function runFirstReviewConsumer(input: {
         // 쪽을 계속 본다. 모델을 pause 하지 않는다(2026-10-30 결정; 미확인 행은 더 이상 이 사유를 내지 않는다).
         if (modelCapacityDeferralIsPerWork(error.reason)) { result.skipped++; continue; }
         result.deferred++; deferred = true;
+        // 그 모델만의 미룸(포화·대기열·정책에 없음·계약 없음·장비 없음): 풀이면 그 모델만 이 패스 동안 쉬고 다른 모델의 후보는 계속 본다.
+        // 모델이 하나뿐이면 남은 후보도 같은 모델이라 쪽을 접는다(= 그 모델 skip). 전역 미룸(draining·disabled·정책·owner)도 쪽을 접는다.
         if (error instanceof FirstReviewModelDeferredError && firstReviewDeferralIsLocal(error.reason)) {
           pausedReviewers.add(firstReviewerKey(error.reviewer));
           continue;
