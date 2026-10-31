@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import type { AdminStagePools } from "@/lib/llm/admin-model-stages";
 import type { ModelDefinition } from "@/lib/llm/model-registry";
+import { AssignmentMovedNotice } from "../settings/AssignmentMovedNotice";
 import type { ModelOption } from "../settings/ModelRows";
 import { saveReviewModels, type ModelSaveState } from "./actions";
 import { ModelChips, ModelSaveBar, type SelectedModel } from "./ModelChips";
@@ -13,9 +14,11 @@ type ReviewDraft = Record<"primary" | "firstAdditional" | "voter" | "fallback", 
 const initialReview = (settings: CrawlSettings): ReviewDraft => ({ primary: settings.firstReview ? [settings.firstReview] : [],
   firstAdditional: settings.firstReviewAdditional ?? [], voter: settings.secondReview.voters, fallback: settings.secondReview.fallbacks ?? [] });
 const labels = { primary: "1차 검수", firstAdditional: "추가 1차 모델 · 후보를 나눠 처리", voter: "2차 검수", fallback: "2차 대체 모델" };
-export function ReviewModelsForm({ settings, version, firstChoices, secondChoices, models, defaults = {}, saveAction = saveReviewModels }: {
+export function ReviewModelsForm({ settings, version, firstChoices, secondChoices, models, defaults = {}, saveAction = saveReviewModels, locked = false }: {
   settings: CrawlSettings; version: string; firstChoices: ModelOption[]; secondChoices: ModelOption[];
   models?: readonly ModelDefinition[]; defaults?: Record<string, string>; saveAction?: typeof saveReviewModels;
+  /** 배정 표 플래그가 켜졌으면(PR 3b-D) 이 폼의 칸(1차·추가 1차·2차·2차 대체·단계별 모델 풀)은 모두 배정 표로 옮겨졌다 — 읽기 전용, 저장 바 없음 */
+  locked?: boolean;
 }) {
   const router = useRouter();
   const [draft, setDraft] = useState(() => initialReview(settings)), [baseline, setBaseline] = useState(() => initialReview(settings));
@@ -32,15 +35,16 @@ export function ReviewModelsForm({ settings, version, firstChoices, secondChoice
     <input type="hidden" name="settingsVersion" value={formVersion} />
     {models && <input type="hidden" name="stageModelPools" value={JSON.stringify(pools)} />}
     <div><h2 className="text-[20px] font-bold">설정 바꾸기</h2><p className="mt-2 text-[13px] leading-relaxed text-fg-2">현재 선택한 모델입니다. 모델을 추가·제거한 뒤 저장해야 적용됩니다. 이후 작업 묶음부터 반영하며, 진행 중·미확인 요청과 기존 업무 기록은 원래 계약에 남습니다.</p></div>
-    <fieldset disabled={pending} className="grid min-w-0 gap-3 md:grid-cols-2">{(Object.keys(labels) as (keyof ReviewDraft)[]).map(prefix =>
+    {locked && <AssignmentMovedNotice detail="이 폼의 모델 칸(1차·추가 1차·2차·2차 대체·단계별 모델 풀)은 읽기 전용이고 저장하지 않습니다." />}
+    <fieldset disabled={pending || locked} data-readonly={locked || undefined} className="grid min-w-0 gap-3 md:grid-cols-2">{(Object.keys(labels) as (keyof ReviewDraft)[]).map(prefix =>
       <div key={prefix} className="flex min-w-0 flex-col gap-3 rounded-xl border border-line bg-bg-card p-4"><h3 className="text-[14px] font-semibold">{labels[prefix]}</h3>
         <ModelChips prefix={prefix} label={labels[prefix]} rows={draft[prefix]} choices={prefix === "primary" || prefix === "firstAdditional" ? firstChoices : secondChoices}
           max={prefix === "primary" ? 1 : prefix === "voter" ? 3 : 2} onChange={rows => setDraft(current => ({ ...current, [prefix]: rows }))} />
         {prefix === "voter" && <p className="text-[13px] text-fg-2">동일 모델은 독립 교차 검수 표로 보지 않습니다. 독립 표가 없으면 사람 확인이 남습니다.</p>}
       </div>)}</fieldset>
-    {models && <fieldset disabled={pending}><StagePoolFields draft={pools} models={models} defaults={defaults} update={(id, keys) => setPools(current => ({ ...current, [id]: keys }))} /></fieldset>}
+    {models && <fieldset disabled={pending || locked}><StagePoolFields draft={pools} models={models} defaults={defaults} update={(id, keys) => setPools(current => ({ ...current, [id]: keys }))} /></fieldset>}
     <p className="text-[13px] leading-relaxed text-fg-2">풀을 비우면 배포 기본 모델을 사용합니다. 단계 켜짐·발행 보호·물리 슬롯 상한은 별도입니다. 선택은 실행 권한을 부여하지 않으며, 실제 호출은 워커의 연결·실행 계약·용량 검증을 통과해야 합니다.</p>
-    <ModelSaveNotice state={pending ? null : state} /><ModelSaveBar pending={pending} changes={changes} label={models ? "모델 설정 저장" : "검수 모델 저장"} />
+    <ModelSaveNotice state={pending ? null : state} />{!locked && <ModelSaveBar pending={pending} changes={changes} label={models ? "모델 설정 저장" : "검수 모델 저장"} />}
   </form>;
 }
 export function ModelSaveNotice({ state }: { state: ModelSaveState }) {
