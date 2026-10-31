@@ -294,6 +294,22 @@ migration `0155_model_assignments`(PR 3b-A)는 같은 표 `model_helper_assignme
 - 켜기 전 확인: 1차는 풀 모드인가, 2차 표에 투표자가 있는가(`pipeline-control status` 를 스위치를 켠 셸에서 — `[assignments]` 줄), 같은 창에서
   모든 용량 소비자가 3b-B 판인가(앞 판 사슬). 끄기는 env 를 지우고 재시작.
 
+### 가져오기 계획 — 3b-B (`planAssignmentImport`, `lib/llm/assignment-import.ts`)
+
+순수 함수(DB·네트워크·스냅숏 없음)로, 오늘 예전 설정이 고르는 모델을 배정 표 행으로 옮기는 `saveModelAssignment` 입력 목록과 지금 표와의 차이를 만든다.
+화면과 적용(행마다 저장 = 계약 확인·route 덧붙이기)은 3b-D 다.
+
+- 입력: `settings`(firstReview·firstReviewAdditional·secondReview·stageModelPools), 정책(route 의 groupId = 장비), 등록부, 선택 `existing`(지금 표 행)·
+  `firstReviewFallback`(firstReview 가 없을 때의 env 대체 — 함수는 env 를 읽지 않는다).
+- 옮기기: ai1 오늘 풀(`legacyFirstReviewers`) → rank 1, assignment_id 의 두 자리 순번이 풀 순서(`ai1:01:supa-review`). ai2 voters → rank 1 · vote,
+  fallbacks[i] → rank 2 + i. 대응하는 단계 풀 key → 그 단계 rank 1. wire 모델 = 전송 규칙(`assignmentWireModel`), 게이트웨이 표지가 없는 abcllm 행은 direct.
+- 장비: 정책 route `(단계 route, provider, wire)` 의 groupId → `mode live`. route 가 없으면 `mode off` + `route_missing`(장비 = 등록부 equipment).
+  off 행도 저장하면 계약 확인·route 덧붙이기·장비 순위를 한다 — 적용 쪽이 고른다.
+- 차이: (단계, 장비, wire 모델)이 같은 지금 행이 있으면 그 assignment_id·version(expectedVersion)·maxSlots·note 를 이어받고, registryKey·transport·rank·vote·mode 가
+  같으면 `unchanged`, 다르면 `update`(바뀐 칸 목록), 없으면 `create`.
+- 경고(입력 없이 건너뜀): `registry_unmatched` · `registry_ambiguous` · `transport_unsupported` · `duplicate`(같은 행·2차 같은 모델) · `input_invalid` ·
+  `stage_unmapped`(대응 없는 관리자 단계). 입력은 남기고 알리는 것: `route_missing` · `first_review_from_env`.
+
 ## 테스트
 
 - `tests/admin-model-helpers.test.tsx` — 화면 모형(감시자 배지 우선순위·나이·신호 못 쓰는 이유·지금 판의 정지·beacon·metrics), 폼 → 저장 입력(백분율·초·이름 유도),
@@ -307,7 +323,8 @@ migration `0155_model_assignments`(PR 3b-A)는 같은 표 `model_helper_assignme
   `tests/integration/model-assignments.test.ts`(자기 DB: 계약·route·장비 순위·감사 한 TX, 같은 저장 반복, 잡힌 행과 앞 판, 상한·충돌, 거절 뒤 남는 행 없음, cli·vote·local-direct 계약).
 - 읽기 전환(3b-B): `tests/assignment-readers.test.ts`(스위치·출처·관문, 1차 표 풀·칸·고정·대체, 2차 투표자·대체·입력 검증·hash 불변),
   `tests/assignment-stage-pools.test.ts`(단계 풀·등록부 기본값), `tests/pipeline-control-assignments.test.ts`(스냅숏 선택 칸·route 목록),
-  `tests/integration/model-assignment-readers.test.ts`(DB 에 심은 표: 1차 고르기, 2차 올리기·기록·대체·정리, 못 읽으면 미룸).
+  `tests/integration/model-assignment-readers.test.ts`(DB 에 심은 표: 1차 고르기, 2차 올리기·기록·대체·정리, 못 읽으면 미룸),
+  `tests/assignment-import.test.ts`(운영 모양 설정·정책으로 가져오기 계획·차이·경고).
 - 앞 판 사슬(3b-B): `tests/model-capacity-predecessor-chain.test.ts`(모양·옛 단일 칸 = 길이 1·세대 인증·덧붙이기 판정), `tests/integration/model-assignments.test.ts`
   (gen-1 dispatched 를 쥔 채 세 번 연속 덧붙이기, 가지치기·사슬 비우기, 16칸 꽉 참 거절과 미끄러짐, 옛 단일 칸 이어받기, 운영자 쓰기의 증명).
 - 표·입장 판정·감시자 순환은 WP-2a-A·B 의 테스트가 본다(`tests/capacity-helpers.test.ts`, `tests/integration/model-capacity-helpers.test.ts`, `tests/capacity-supervisor-decide.test.ts`).
