@@ -47,6 +47,92 @@ export type HelperLiveDownstream = (typeof HELPER_LIVE_DOWNSTREAMS)[number];
 export const HELPER_WIRE_VARIANTS = Object.freeze(["json_schema", "no_response_format"] as const);
 export type HelperWireVariant = (typeof HELPER_WIRE_VARIANTS)[number];
 
+// ── 배정 표 어휘(PR 3b-A, migration 0156) ─────────────────────────────────────────────────────────────────
+// 같은 표(model_helper_assignments)에 role 'primary' 행(단계 × 장비 × 모델 배정)을 둔다. role 'helper' 행은 위 PR 2a 어휘 그대로다.
+// 이 PR 에서 배정 표 행을 읽는 hot path 는 없다(3b-B 가 flag 뒤에서 읽는다). 입장(helperGateCte)·감시자·도우미 화면은 role 'helper' 행만 본다.
+
+export const ASSIGNMENT_TRANSPORTS = Object.freeze(["gateway", "direct", "local-direct", "cli"] as const);
+export type AssignmentTransport = (typeof ASSIGNMENT_TRANSPORTS)[number];
+export const ASSIGNMENT_ROLES = Object.freeze(["primary", "helper"] as const);
+export type AssignmentRole = (typeof ASSIGNMENT_ROLES)[number];
+/** 배정 단계(표 CHECK 와 같은 순서). HELPER_STAGES(ai1·ai2)를 포함한다. repo 는 예약만 한다. */
+export const ASSIGNMENT_STAGE_IDS = Object.freeze(["ai1", "ai2", "human", "audit", "audit-second-opinion", "intro", "screen", "assist", "assist-audit",
+  "reason", "tagline", "profile", "verify", "ko", "translate", "publish-classify", "repo"] as const);
+export type AssignmentStage = (typeof ASSIGNMENT_STAGE_IDS)[number];
+/** 배정 표 행에 허락하는 CLI 공급자(등록부 provider 그대로가 정책 route 의 provider 다). */
+export const ASSIGNMENT_CLI_PROVIDERS = Object.freeze(["claude-cli", "grok-cli", "codex-cli"] as const);
+/** cli 전송은 이 장비(등록부 equipment)의 모델만 — connect-agent 가 CLI 를 띄운다. */
+export const ASSIGNMENT_CLI_EQUIPMENT = "connect";
+export const ASSIGNMENT_RANK_MAX = 64;
+export const REGISTRY_KEY_PATTERN = /^[a-z0-9][a-z0-9-]*:[a-z0-9][a-z0-9-]*$/;
+/** 배정 표 행의 shadow_route_id 자리(0154 의 NOT NULL·≠ live_route_id·장비 × 모델 유일을 지키는 표지). 정책 route 가 아니다. */
+export const ASSIGNMENT_PRIMARY_SHADOW_PREFIX = "primary:";
+/** local-direct 계약을 model_serving_contracts 에 둘 때의 route_id 접두(gateway 계약의 (route_id, model) 과 섞이지 않게 — 아래 localAssignmentContractRouteId). */
+export const LOCAL_DIRECT_CONTRACT_ROUTE_PREFIX = "local-direct:";
+export const MODEL_ASSIGNMENT_SAVE_AUDIT_ACTION = "model-assignment-save";
+
+const transports = (...values: AssignmentTransport[]): ReadonlySet<AssignmentTransport> => Object.freeze(new Set(values));
+export type AssignmentStageSpec = Readonly<{
+  /** 이 단계의 정책 route id(장부·계약·장비 순위의 route). 예약 단계는 null. */
+  routeId: string | null;
+  /** 허락하는 전송. 빈 집합 = 예약(저장 거절). */
+  transports: ReadonlySet<AssignmentTransport>;
+  /** vote 열을 쓰는가(2차만). */
+  vote: boolean;
+}>;
+/**
+ * 단계별 route·전송(PR 3b-A). route 는 오늘 그 단계의 장부 kind 가 쓰는 이름이고, 전송은 그 route 에 오늘 dispatch 경로가 있는 것만 연다:
+ * gateway·direct = abcLLM 형 계약 route, local-direct = 로컬 직접 호출 route(`local-<목적>`; 2차는 second-review 의 local-direct),
+ * cli = CLI 장부 kind 가 있는 route. assist·assist-audit 의 route 는 작업·백엔드마다 다르다(`local-assist-<task>-<backendId>`) — 3b-B 가 route 목록
+ * 규칙을 정할 때까지 예약으로 둔다(repo 와 같다).
+ */
+export const ASSIGNMENT_STAGES: Readonly<Record<AssignmentStage, AssignmentStageSpec>> = Object.freeze({
+  ai1: Object.freeze({ routeId: "crawl-agent-review", transports: transports("gateway", "direct", "cli"), vote: false }),
+  ai2: Object.freeze({ routeId: "second-review", transports: transports("gateway", "direct", "local-direct", "cli"), vote: true }),
+  human: Object.freeze({ routeId: "local-human-deepseek", transports: transports("local-direct"), vote: false }),
+  audit: Object.freeze({ routeId: "local-audit", transports: transports("local-direct"), vote: false }),
+  "audit-second-opinion": Object.freeze({ routeId: "local-second-opinion", transports: transports("local-direct"), vote: false }),
+  intro: Object.freeze({ routeId: "product-intro-check", transports: transports("cli"), vote: false }),
+  screen: Object.freeze({ routeId: "local-screen", transports: transports("local-direct"), vote: false }),
+  assist: Object.freeze({ routeId: null, transports: transports(), vote: false }),
+  "assist-audit": Object.freeze({ routeId: null, transports: transports(), vote: false }),
+  reason: Object.freeze({ routeId: "reason-translate", transports: transports("gateway", "direct"), vote: false }),
+  tagline: Object.freeze({ routeId: "crawl-tagline", transports: transports("gateway", "direct"), vote: false }),
+  profile: Object.freeze({ routeId: "product-search-profile", transports: transports("gateway", "direct"), vote: false }),
+  verify: Object.freeze({ routeId: "product-search-verify", transports: transports("gateway", "direct"), vote: false }),
+  ko: Object.freeze({ routeId: "product-tagline-ko", transports: transports("gateway", "direct"), vote: false }),
+  translate: Object.freeze({ routeId: "product-translate", transports: transports("gateway", "direct"), vote: false }),
+  "publish-classify": Object.freeze({ routeId: "crawl-publish-classify", transports: transports("cli"), vote: false }),
+  repo: Object.freeze({ routeId: null, transports: transports(), vote: false }),
+});
+
+/** 등록부 key 의 장비(`equipment:name` 의 앞). 등록부 schema 가 key 가 equipment 로 시작함을 보장한다. */
+export const registryKeyEquipment = (registryKey: string): string => registryKey.slice(0, registryKey.indexOf(":"));
+
+/**
+ * 전송 → 정책 route 의 provider(등록부 provider 가 맞지 않으면 null): gateway·direct → abcllm(엔진 직접 연결도 abcllm 계약·장부 kind 를 쓴다),
+ * local-direct → local-direct, cli → 등록부 provider 그대로(claude-cli·grok-cli·codex-cli).
+ */
+export function assignmentRouteProvider(transport: AssignmentTransport, registryProvider: string): string | null {
+  switch (transport) {
+    case "gateway": case "direct": return registryProvider === "abcllm" ? "abcllm" : null;
+    case "local-direct": return registryProvider === "local-direct" ? "local-direct" : null;
+    case "cli": return (ASSIGNMENT_CLI_PROVIDERS as readonly string[]).includes(registryProvider) ? registryProvider : null;
+  }
+}
+
+/** wire 모델 이름: gateway 는 게이트웨이 표지 이름(`[label] model`, modelRequestName 과 같다), 나머지는 엔진·CLI 의 모델 이름 그대로. */
+export function assignmentWireModel(transport: AssignmentTransport, entry: Readonly<{ model: string; gatewayLabel?: string }>): string {
+  return transport === "gateway" && entry.gatewayLabel ? `[${entry.gatewayLabel}] ${entry.model}` : entry.model;
+}
+
+/** local-direct 계약의 backendId = 정책 route 의 providerBudgetId(PR 2a·로컬 호출이 이 둘을 같게 본다). 등록부 key 의 ':' 를 '-' 로(assist backendId 모양). */
+export function localAssignmentBackendId(registryKey: string): string | null {
+  const id = registryKey.replace(":", "-");
+  return /^[a-z0-9][a-z0-9-]{0,59}$/.test(id) ? id : null;
+}
+export const localAssignmentContractRouteId = (routeId: string): string => `${LOCAL_DIRECT_CONTRACT_ROUTE_PREFIX}${routeId}`;
+
 /** operations_audit 의 action(저장 함수가 한 줄씩 쓴다 — 감싸는 쪽이 또 쓰지 않는다). */
 export const HELPER_SAVE_AUDIT_ACTION = "model-helper-save";
 export const HELPER_MODE_AUDIT_ACTION = "model-helper-mode";
@@ -170,11 +256,15 @@ export const helperAssignmentSchema = z.object({
   .refine(value => value.shadowRouteId !== value.liveRouteId, { message: "shadow_route_equals_live_route", path: ["shadowRouteId"] });
 export type HelperAssignmentInput = Readonly<z.output<typeof helperAssignmentSchema>>;
 
-/** 저장된 배정 행. version 은 폼 compare-and-set·감사·신호(assignment_version)의 참조다. 시각은 ISO 문자열. */
+/**
+ * 저장된 배정 행. version 은 폼 compare-and-set·감사·신호(assignment_version)의 참조다. 시각은 ISO 문자열.
+ * 0156 의 새 열(registryKey·transport·rank·role·vote)은 선택 칸이다 — PR 2a 저장소의 읽기는 늘 채우고, 2b·2c 가 만드는 행 literal 은 그대로 맞는다.
+ * 도우미 행에서는 기본값(role 'helper', rank 1, vote false, transport 'gateway', registryKey null) 그대로이고 뜻이 없다.
+ */
 export type HelperAssignmentRow = HelperAssignmentInput & Readonly<{
   version: number; evidenceKey: string; promotedAt: string | null; promotedBy: string | null;
   updatedBy: string; createdAt: string; updatedAt: string;
-}>;
+}> & Readonly<Partial<{ registryKey: string | null; transport: AssignmentTransport; rank: number; role: AssignmentRole; vote: boolean }>>;
 
 /** 배정 입력을 검증한다. 거절은 `model_helper_invalid:<path>`. */
 export function parseHelperAssignment(input: unknown): HelperAssignmentInput {
@@ -185,6 +275,75 @@ export function parseHelperAssignment(input: unknown): HelperAssignmentInput {
     throw new Error(`model_helper_invalid:${path}`);
   }
   return Object.freeze(parsed.data);
+}
+
+// ── 배정 표 입력·행(PR 3b-A) ──────────────────────────────────────────────────────────────────────────
+
+/**
+ * 배정 표 저장 거절 코드(`model_assignment_refused:<code>`). 입력 검증은 `model_assignment_invalid:<path>`,
+ * compare-and-set 은 `model_assignment_version_mismatch:<current|none>`. 정책 route 덧붙이기의 거절(`model_capacity_*`)은 그대로 올라온다.
+ */
+export const MODEL_ASSIGNMENT_REFUSALS = Object.freeze(["registry_key_unknown", "transport_provider_mismatch", "backend_id_invalid",
+  "device_unconfigured", "assignment_is_helper", "route_is_helper_route", "route_device_mismatch", "contract_probe_failed",
+  "contract_unbuildable", "contract_transport_mismatch", "contract_device_mismatch", "cli_contract_missing"] as const);
+export type ModelAssignmentRefusal = (typeof MODEL_ASSIGNMENT_REFUSALS)[number];
+
+/**
+ * 배정 표 행 하나의 저장 입력(camelCase). `expectedVersion`: 지금 행의 version(새 배정은 null) — 폼 compare-and-set.
+ * wire 모델·route·provider·providerBudgetId 는 저장이 등록부 key 와 전송에서 정한다(입력으로 받지 않는다). role 은 'primary' 만 —
+ * 도우미 행은 saveHelperAssignment 로 저장한다. mode 는 off(쓰지 않음)·live(쓴다)만.
+ * 규칙: (단계, 전송)이 ASSIGNMENT_STAGES 에 허락돼야 하고(예약 단계는 언제나 거절), cli 는 등록부 equipment 가 connect 일 때만, vote 는 2차 rank 1 만.
+ */
+export const modelAssignmentInputSchema = z.object({
+  assignmentId: z.string().regex(HELPER_ASSIGNMENT_ID_PATTERN),
+  expectedVersion: z.number().int().min(1).max(9007199254740991).nullable(),
+  stage: z.enum(ASSIGNMENT_STAGE_IDS),
+  deviceId: identity(120),
+  registryKey: z.string().max(200).regex(REGISTRY_KEY_PATTERN),
+  transport: z.enum(ASSIGNMENT_TRANSPORTS),
+  rank: int(1, ASSIGNMENT_RANK_MAX).default(1),
+  role: z.literal("primary").default("primary"),
+  vote: z.boolean().default(false),
+  mode: z.enum(["off", "live"]).default("off"),
+  maxSlots: int(1, 256).default(1),
+  note: z.string().max(HELPER_NOTE_MAX).nullable().default(null),
+}).strict().superRefine((value, context) => {
+  const spec = ASSIGNMENT_STAGES[value.stage];
+  if (!spec.transports.has(value.transport)) context.addIssue({ code: "custom", message: "transport_not_allowed_for_stage", path: ["transport"] });
+  else if (value.transport === "cli" && registryKeyEquipment(value.registryKey) !== ASSIGNMENT_CLI_EQUIPMENT)
+    context.addIssue({ code: "custom", message: "cli_requires_connect_equipment", path: ["transport"] });
+  if (value.vote && !(spec.vote && value.rank === 1)) context.addIssue({ code: "custom", message: "vote_requires_ai2_rank1", path: ["vote"] });
+});
+export type ModelAssignmentInput = Readonly<z.output<typeof modelAssignmentInputSchema>>;
+
+/** 배정 표 입력을 검증한다. 거절은 `model_assignment_invalid:<path>`(zod 첫 issue 의 위치, 없으면 root). */
+export function parseModelAssignmentInput(input: unknown): ModelAssignmentInput {
+  const parsed = modelAssignmentInputSchema.safeParse(input);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    throw new Error(`model_assignment_invalid:${issue?.path.length ? issue.path.map(String).join(".") : "root"}`);
+  }
+  return Object.freeze(parsed.data);
+}
+
+/**
+ * 저장된 배정 표 행(role 'primary'). model = wire 모델(장부·계약 identity), routeId·provider = 그 배정의 정책 route(live_route_id·live_provider).
+ * 시각은 ISO 문자열. mode 는 표의 값 그대로(배정 표 저장은 off·live 만 쓴다).
+ */
+export type ModelAssignmentRow = Readonly<{
+  assignmentId: string; stage: AssignmentStage; deviceId: string; registryKey: string; transport: AssignmentTransport; rank: number;
+  role: "primary"; vote: boolean; mode: HelperMode; model: string; routeId: string; provider: string; maxSlots: number;
+  evidenceKey: string; version: number; note: string | null; updatedBy: string; createdAt: string; updatedAt: string;
+}>;
+
+/** 배정 표 행의 evidence_key: sha256(단계, 전송, route, provider, wire 모델, 계약 hash). 계약이나 경로가 바뀌면 바뀐다. */
+export function assignmentEvidenceKey(v: Readonly<{ stage: AssignmentStage; transport: AssignmentTransport; routeId: string; provider: string;
+  model: string; contractHash: string }>): string {
+  const fields = [v.routeId, v.provider, v.model, v.contractHash];
+  if (!ASSIGNMENT_STAGE_IDS.includes(v.stage) || !ASSIGNMENT_TRANSPORTS.includes(v.transport)
+    || fields.some(field => typeof field !== "string" || !field || field !== field.trim())) throw new Error("model_assignment_invalid:evidence");
+  return createHash("sha256")
+    .update(JSON.stringify(["nmv-assignment-evidence/1", v.stage, v.transport, v.routeId, v.provider, v.model, v.contractHash])).digest("hex");
 }
 
 /** 감시자 control 의 관리자 쪽 변경. loopMs × 2 ≤ signalTtlMs 는 저장이 현재 값과 합쳐 다시 본다(표 CHECK 와 같다). */
@@ -362,6 +521,7 @@ const SQL_ALIAS = /^[a-z_][a-z0-9_]{0,30}$/;
  *
  * - sup: control 한 행(enabled·epoch·principal·lease 살아 있음). 행이 없으면 LEFT JOIN 이 NULL 을 주고 coalesce 가 닫는다.
  * - helper_gate: 배정마다 live·shadow 두 줄과 `ok`(§1.3 + 정지 + mode·verdict). NULL 은 모두 false.
+ *   도우미 행(role 'helper')만 — 배정 표 행(role 'primary', 0156)의 route 는 그 장비의 보통 역할이라 도우미 관문에 걸리지 않는다.
  * - helper_active: 배정별 도우미 경로 점유 수(reserved/dispatched — indeterminate 는 점유가 아니다).
  * - demand: 신선한 primary_demand 신호가 있는가(`on_`). 신선하지 않으면 false = 무시.
  */
@@ -386,7 +546,7 @@ export function helperGateCte(deviceId: SQL | string): SQL {
                                  ('shadow'::text, ha.shadow_route_id, ${shadowProvider}::text, ha.model)) g(kind, route_id, provider, model)
       LEFT JOIN model_helper_signals hs ON hs.assignment_id = ha.assignment_id
       LEFT JOIN sup ON true
-      WHERE ha.device_id = ${device}
+      WHERE ha.device_id = ${device} AND ha.role = 'helper'
     ),
     helper_active AS MATERIALIZED (
       SELECT g.assignment_id, count(*)::int AS n FROM helper_gate g JOIN model_capacity_requests r

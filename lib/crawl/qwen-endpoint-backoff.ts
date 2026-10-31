@@ -9,10 +9,10 @@ import { qwenEndpointFailure, type QwenDirectErrorCode } from "./qwen-direct-rev
 /**
  * gpu3090 Qwen(qwen-direct-review.ts)을 부르는 쪽마다 따로 쓰는 물러나기와, 감사가 아닌 쪽이 나눠 쓰는 두 번째 자리 — 이 프로세스의 것이다.
  *
- * 부르는 쪽은 넷이다(QwenCaller). 감사 Qwen 직접 심사(jobs/product-audit.ts, 0112, "audit"), 감사 두 번째 의견과 공개분 2차 거르기
- * (audit-second-opinion-auto.ts — 감사 잡 틱 안, "second_opinion"), 2차 갈림 판가름(gate-split-tiebreak.ts — 2차 잡 틱 안, "split_tiebreak"),
- * 보류 Qwen-v2 재심사(held-qwen-retry.ts — 사람 검토 잡 human-deepseek-review 틱 안, "held_qwen"). 화면 판별(screen-review/job.ts)은 자기
- * 물러나기(screenBackoff)만 본다. 모두 reviewer 역할이라 역할 lease 로 한 프로세스만 돌고, 이 상태도 그 프로세스가 센다.
+ * 부르는 쪽은 넷이다(QwenCaller) — 2026-10-31(PR 3a-C) 부터 각자 자기 잡·자기 줄이다. 감사 Qwen 직접 심사(jobs/audit-qwen.ts, 0112, "audit"),
+ * 감사 두 번째 의견과 공개분 2차 거르기(audit-second-opinion-auto.ts — audit-second-opinion 잡, "second_opinion"), 2차 갈림 판가름
+ * (gate-split-tiebreak.ts — split-tiebreak 잡, "split_tiebreak"), 보류 Qwen-v2 재심사(held-qwen-retry.ts — held-qwen-retry 잡, "held_qwen").
+ * 화면 판별(screen-review/job.ts)은 자기 물러나기(screenBackoff)만 본다. 모두 reviewer 역할이라 역할 lease 로 한 프로세스만 돌고, 이 상태도 그 프로세스가 센다.
  * 워커가 다시 뜨거나 다른 워커로 넘어가면 한 번 더 물어보고 다시 센다.
  *
  * 2026-10-31(PR 3a-B) 소유자 결정 "하나가 잘못되면 다음 작업도 안 되는 구조는 이유가 없다": 예전에는 누가 탈을 만나든 다섯 호출자가 같은 시각까지

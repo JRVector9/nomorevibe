@@ -6,14 +6,13 @@ import { cdnPurges, crawlCandidates, crawlDocuments, crawlFrontier, crawlReviewA
 import * as crawl from "@/lib/crawl/repository";
 import { saveSettings } from "@/lib/crawl/settings";
 import { cancelProductAudit, listAuditFindings, productAuditOverview, startProductAudit, switchAuditReviewer } from "@/lib/crawl/product-audit";
-import { auditPublishedProducts, resetQwenAuditBackoff } from "@/lib/crawl/jobs/product-audit";
+import { auditPublishedProducts } from "@/lib/crawl/jobs/product-audit";
+import { auditWithQwenDirect, resetQwenAuditBackoff } from "@/lib/crawl/jobs/audit-qwen";
 import { QWEN_V2_PROMPT_VERSION } from "@/lib/crawl/qwen-direct-review";
 import { runJob } from "@/lib/jobs/runner";
 import { jobRunOptions } from "@/scripts/worker";
 import { auditFloor, auditRowsAfter, ensureSchema, resetTables } from "./setup";
 
-// Qwen-v2 두 번째 의견 단계(감사 잡 틱 안에서 나란히 돈다)는 tests/integration/audit-second-opinion-auto.test.ts 가 본다 — 여기 가짜 서버의 호출 수는 감사 묻기만
-vi.mock("@/lib/crawl/audit-second-opinion-auto", () => ({ runQwenSecondOpinions: async () => null }));
 vi.mock("server-only", () => ({}));
 
 /**
@@ -86,7 +85,10 @@ const answeredBefore = (slug: string, decision: "approve" | "reject", reason: st
   db.update(productAuditItems).set({ aiDecision: decision, aiReason: reason, aiConfidence: confidence, reviewedAt: sql`now()`, attempts: 1 })
     .where(eq(productAuditItems.slug, slug));
 const toQwen = (campaignId: number) => switchAuditReviewer({ campaignId, expected: GPT, reason: "남은 1만5천 건을 하루 안에", by: "jr" });
-const tick = () => runJob("product-audit", auditPublishedProducts, { budgetMs: jobRunOptions("product-audit", { requestedOnly: true }).budgetMs });
+/** Qwen 직접 감사 잡 한 틱(jobs/audit-qwen.ts) — 2026-10-31(PR 3a-C) 전에는 감사 잡(product-audit) 틱의 한 갈래였다 */
+const tick = () => runJob("audit-qwen", auditWithQwenDirect, { budgetMs: jobRunOptions("audit-qwen", { requestedOnly: true }).budgetMs });
+/** 감사 잡(product-audit) 한 틱 — 보류 쓸기 + 게이트웨이/CLI 감사. Qwen 으로 바꾼 감사에는 쓸기만 한다 */
+const sweep = () => runJob("product-audit", auditPublishedProducts, { budgetMs: jobRunOptions("product-audit", { requestedOnly: true }).budgetMs });
 const heldSlugs = async () => (await db.select({ slug: products.slug }).from(products)
   .where(sql`${products.auditHoldAt} is not null`).orderBy(asc(products.slug))).map((row) => row.slug);
 
@@ -172,9 +174,10 @@ describe("바꾼 뒤의 틱", () => {
     expect(await item("one")).toMatchObject({ aiDecision: null, attempts: 0, errorCode: null });
     expect(await db.select({ errorCode: productAuditAttempts.errorCode, provider: productAuditAttempts.provider }).from(productAuditAttempts))
       .toEqual([{ errorCode: "qwen_unreachable", provider: "qwen-direct" }]);
-    // 물러나는 동안의 틱도 실패로 남는다 — 운영센터가 멈춘 것을 본다
-    await db.update(jobs).set({ notBefore: null }).where(eq(jobs.name, "product-audit"));
+    // 물러나는 동안의 틱도 실패로 남는다 — 운영센터가 멈춘 것을 본다. 감사 잡(쓸기)은 그 서버 탈과 상관없이 돈다(2026-10-31 분해)
+    await db.update(jobs).set({ notBefore: null }).where(eq(jobs.name, "audit-qwen"));
     expect(await tick()).toMatchObject({ status: "failed", error: "product_audit_endpoint_backoff:qwen_unreachable" });
+    expect(await sweep()).toMatchObject({ status: "completed", done: true });
   });
 });
 
@@ -189,12 +192,15 @@ describe("Qwen 이 낸 거절의 보류 — 모델별 카탈로그 예외", () =
       "q/qdirectory": { decision: "reject", reason: DIRECTORY, confidence: 1 },
       "q/qlist": { decision: "reject", reason: LIST_OF, confidence: 1 },
     });
+    // Qwen 의 답은 적는 커밋에서 보류하고(audit-qwen), 바꾸기 전 gpt-oss 의 거절은 감사 잡의 쓸기가 건다(product-audit, 2026-10-31 분해 뒤 두 잡)
     expect(await tick()).toMatchObject({ status: "completed" });
+    expect(await heldSlugs()).toEqual(["qcompany"]);
+    expect(await sweep()).toMatchObject({ status: "completed" });
     expect(await heldSlugs()).toEqual(["gdirectory", "qcompany"]);
     // 쓸기를 한 번 더 돌려도 Qwen 의 카탈로그 거절은 걸지 않는다
     await db.update(cdnPurges).set({ createdAt: sql`now() - interval '1 hour'` });
     await db.update(jobs).set({ notBefore: null }).where(eq(jobs.name, "product-audit"));
-    await tick();
+    await sweep();
     expect(await heldSlugs()).toEqual(["gdirectory", "qcompany"]);
 
     const findings = await listAuditFindings(id, "reject", { limit: 50, offset: 0 });

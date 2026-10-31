@@ -1091,7 +1091,21 @@
       "idx": 155,
       "version": "7",
       "when": 1794086401066,
-      "tag": "0155_ai1_provider_enum",
+      "tag": "0155_split_composite_jobs",
+      "breakpoints": true
+    },
+    {
+      "idx": 156,
+      "version": "7",
+      "when": 1794086401067,
+      "tag": "0156_model_assignments",
+      "breakpoints": true
+    },
+    {
+      "idx": 157,
+      "version": "7",
+      "when": 1794086401068,
+      "tag": "0157_ai1_provider_enum",
       "breakpoints": true
     }
   ]

@@ -25,7 +25,7 @@ const capacityPool = z.enum(["reviewer", "text"]);
 /**
  * 게이트웨이 dispatch kind 들의 provider(PR 3b-C 전송 통합). abcllm 계약(게이트웨이·직접 연결)과 local-direct OpenAI 호환 엔진 모두
  * 같은 kind·같은 binding 모양으로 장부에 남는다 — 같은 모델이 AI1·AI2·text 를 모두 맡을 수 있다. 넓히기만 했다: 저장된 "abcllm" 행은
- * 그대로 파싱되고 hash 도 그대로다(0155 가 DB CHECK 에 같은 모양의 local-direct 분기를 붙인다).
+ * 그대로 파싱되고 hash 도 그대로다(0157 이 DB CHECK 에 같은 모양의 local-direct 분기를 붙인다).
  */
 const gatewayProvider = z.enum(["abcllm", "local-direct"]);
 export const GATEWAY_DISPATCH_PROVIDERS = gatewayProvider.options;
@@ -87,13 +87,22 @@ export type ModelCapacityRequestIdentity = Readonly<z.infer<typeof modelCapacity
  */
 export const MODEL_CAPACITY_POLICY_IGNORED_FIELDS = Object.freeze(["globalLimit", "providerLimits", "groupLimits", "poolLimits", "weights"] as const);
 
+/**
+ * 정책 route 수 상한(PR 3b-A: 128 → 256 — 배정 표가 단계 × 장비 × 모델마다 route 를 더한다). 옛 parser(128)는 129개 이상인 정책을 거절하므로
+ * 129번째 route 를 저장하기 전에 모든 용량 소비자가 이 판을 돌고 있어야 한다.
+ */
+export const MODEL_CAPACITY_ROUTES_MAX = 256;
+/** 정책 route 한 줄(정책 schema 의 routes 원소와 같다). appendCompatibleRoutes 가 새 route 를 이것으로 검사한다. */
+export const modelCapacityRouteSchema = z.object({ routeId: identity(120), provider: identity(60), model: identity(200),
+  providerBudgetId: identity(120), groupId: identity(120) }).strict();
+export type ModelCapacityRoute = Readonly<z.infer<typeof modelCapacityRouteSchema>>;
+
 const modelCapacityBasePolicySchema = z.object({
   version: z.literal(1), globalLimit: limit.optional(), providerLimits: limits.optional(), groupLimits: limits.optional(),
   poolLimits: z.object({ reviewer: limit, text: limit }).strict().optional(),
   weights: z.object({ first: positive.max(32), second: positive.max(32), background: positive.max(32) }).strict().optional(),
   maxWaiting: positive.max(4096), queueTtlMs: ttl, reservationTtlMs: ttl,
-  routes: z.array(z.object({ routeId: identity(120), provider: identity(60), model: identity(200),
-    providerBudgetId: identity(120), groupId: identity(120) }).strict()).min(1).max(128),
+  routes: z.array(modelCapacityRouteSchema).min(1).max(MODEL_CAPACITY_ROUTES_MAX),
 }).strict().superRefine((value, context) => {
   const seen = new Set<string>();
   for (const [index, route] of value.routes.entries()) {

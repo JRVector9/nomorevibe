@@ -1,10 +1,12 @@
--- 0155 (PR 3b-C transport unify; renumbered at integration — two other branches also claim 0155): every AI1 (legacy + item) and
+-- 0157 (PR 3b-C transport unify; first drafted as 0155, renumbered at integration after 0155_split_composite_jobs (PR 3a-C) and
+-- 0156_model_assignments (PR 3b-A) — final order 0155 split → 0156 assignments → 0157 provider): every AI1 (legacy + item) and
 -- text-route (product-search-profile, reason-translate, product-translate, product-tagline-ko, crawl-tagline, product-search-verify,
 -- search-query-translate) gateway kind may also be served by a local-direct OpenAI-compatible engine, so the same model can serve AI1, AI2
 -- and the text stages. Only the provider widens: the ledger kinds, bindings, hashes, keys and settlement evidence are unchanged.
--- Like 0132 (AI2 item), each CHECK is rebuilt from its live pg_get_constraintdef predicate as the whole left side plus appended OR branches
--- that are the 0125 (last full restatement) abcllm branches of those kinds with only 'abcllm' replaced by 'local-direct'; AI2 branches and
--- every other branch stay exactly as stored. The $ai2_local$ quoting tag is the marker the schema history tests recognise for this rebuild.
+-- Like 0132 (AI2 item) and 0155 (split jobs), each CHECK is rebuilt from its live pg_get_constraintdef predicate as the whole left side
+-- (so 0155's split-job branch stays exactly where it is) plus appended OR branches that are the 0125 (last full restatement) abcllm
+-- branches of those kinds with only 'abcllm' replaced by 'local-direct'; AI2 branches and every other branch stay exactly as stored.
+-- The $ai2_local$ quoting tag is the marker the schema history tests recognise for this rebuild.
 -- gateway_not_started (0149), operator_review (0151) and the release branches are already provider-agnostic. No functions, triggers, indexes,
 -- grants, columns or row changes; existing rows keep matching their original branch.
 --> statement-breakpoint

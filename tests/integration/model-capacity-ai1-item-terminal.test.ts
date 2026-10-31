@@ -347,8 +347,8 @@ it("settles an actual native terminal historically once, rejects copied proof an
   });
 }));
 
-// PR 3b-C (0155): the AI1 item kind on a local-direct engine with the shared direct-openai-chat-v1 contract (the same shape as AI2's).
-it("dispatches and settles an AI1 item call on a local-direct engine once through the same item kind (0155)", exercise(async () => {
+// PR 3b-C (0157): the AI1 item kind on a local-direct engine with the shared direct-openai-chat-v1 contract (the same shape as AI2's).
+it("dispatches and settles an AI1 item call on a local-direct engine once through the same item kind (0157)", exercise(async () => {
   await install({ ...policy, routes: [...policy.routes,
     { routeId: "crawl-agent-review", provider: "local-direct", model, providerBudgetId: "account", groupId: "engine" }] });
   vi.stubEnv("ABCLLM_API_KEY", "");

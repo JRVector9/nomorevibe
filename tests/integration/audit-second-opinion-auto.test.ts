@@ -14,7 +14,9 @@ import { qwenEndpointBackingOff, qwenEndpointBackoffOf, resetQwenAuditBackoff } 
 import { QWEN_V2_ADDENDUM, QWEN_V2_PROMPT_VERSION } from "@/lib/crawl/qwen-direct-review";
 import { catalogLikeAuditReason } from "@/lib/crawl/second-opinion-rules";
 import { publishedInputHash, publishedSecondReviews, secondReviewSummary } from "@/lib/crawl/second-review";
-import { auditPublishedProducts, qwenAuditConcurrency } from "@/lib/crawl/jobs/product-audit";
+import { auditPublishedProducts } from "@/lib/crawl/jobs/product-audit";
+import { auditWithQwenDirect, qwenAuditConcurrency } from "@/lib/crawl/jobs/audit-qwen";
+import { reviewAuditSecondOpinions } from "@/lib/crawl/jobs/audit-second-opinion";
 import { runJob } from "@/lib/jobs/runner";
 import { jobRunOptions } from "@/scripts/worker";
 import { auditFloor, auditRowsAfter, ensureSchema, resetTables } from "./setup";
@@ -115,7 +117,17 @@ async function judged(rows: { repo: string; confidence?: number; reason?: string
   }
   await db.update(productAuditCampaigns).set({ status: "done" });
 }
-const tick = () => runJob("product-audit", auditPublishedProducts, { budgetMs: jobRunOptions("product-audit", { requestedOnly: true }).budgetMs });
+/**
+ * 2026-10-31(PR 3a-C) 분해 전 감사 잡 한 틱 = 보류 쓸기 → (감사 묻기 ∥ 두 번째 의견). 이 파일의 기대(공개 중 → 보류 중 차례, "거절은 다음 쓸기가 건다")는
+ * 그 차례를 전제하므로 세 잡을 같은 차례로 돌린다: 감사 잡(쓸기, 닫힌 감사라 묻지 않는다) → 두 번째 의견 잡.
+ */
+const sweep = () => runJob("product-audit", auditPublishedProducts, { budgetMs: jobRunOptions("product-audit", { requestedOnly: true }).budgetMs });
+const opinion = () => runJob("audit-second-opinion", reviewAuditSecondOpinions, { budgetMs: jobRunOptions("audit-second-opinion", { requestedOnly: true }).budgetMs });
+const tick = async () => { await sweep(); return opinion(); };
+/** Qwen 직접 감사 잡 한 틱 — 감사가 Qwen 으로 바뀐 뒤 남은 항목을 묻는다(jobs/audit-qwen.ts) */
+const qwenAudit = () => runJob("audit-qwen", auditWithQwenDirect, { budgetMs: jobRunOptions("audit-qwen", { requestedOnly: true }).budgetMs });
+/** 쓸기 뒤 감사 Qwen 직접 심사와 두 번째 의견을 같은 프로세스에서 나란히 — 분해 전 한 틱의 모양. gpu3090 두 번째 자리·물러나기는 프로세스 안에서 함께 쓴다 */
+const both = async () => { await sweep(); return Promise.all([qwenAudit(), opinion()]); };
 const item = async (slug: string) => (await db.select().from(productAuditItems).where(eq(productAuditItems.slug, slug))
   .orderBy(asc(productAuditItems.id))).at(-1)!;
 const heldSlugs = async () => (await db.select({ slug: products.slug }).from(products)
@@ -433,7 +445,9 @@ describe("감사가 Qwen 직접 심사로 바뀐 뒤(0112)", () => {
       } finally { flight.now -= 1; if (second) flight.second -= 1; }
     }));
 
-    expect(await tick()).toMatchObject({ status: "completed" });
+    const [audit, opinion] = await both();
+    expect(audit).toMatchObject({ status: "completed" });
+    expect(opinion).toMatchObject({ status: "completed" });
     // 감사(남은 6건)와 두 번째 의견(0112 전 gpt-oss 의 거절 3건 — 지금 감사 모델이 Qwen 이어도 그 답은 gpt-oss 가 냈다)을 함께 물었다
     expect(askedRepos().sort()).toEqual([...answered, ...pending].sort());
     expect(flight.max).toBeLessThanOrEqual(qwenAuditConcurrency() + 1);
@@ -446,7 +460,7 @@ describe("감사가 Qwen 직접 심사로 바뀐 뒤(0112)", () => {
 
     // 감사가 끝나 Qwen 이 답한 거절도 보류 후보가 됐지만 같은 모델이라 묻지 않는다
     server.calls.length = 0;
-    await tick();
+    await both();
     expect(askedRepos()).toEqual([]);
     expect((await readStatus()).audit.remaining).toBe(0);
   });
@@ -502,7 +516,10 @@ describe("감사가 Qwen 직접 심사로 바뀐 뒤(0112)", () => {
       await new Promise((resolve) => setTimeout(resolve, 150));
       return fakeQwen(url, init);
     }));
-    expect(await tick()).toMatchObject({ status: "failed", error: "product_audit_endpoint_error:qwen_http_503" });
+    const [audit, opinion] = await both();
+    // 서버 탈은 Qwen 직접 감사 잡(audit-qwen)의 실패로 남고, 두 번째 의견 잡은 자기 호출자의 물러나기만 보고 계속 묻는다(2026-10-31 호출자마다 따로)
+    expect(audit).toMatchObject({ status: "failed", error: "product_audit_endpoint_error:qwen_http_503" });
+    expect(opinion).toMatchObject({ status: "completed" });
     // 감사의 두 자리가 함께 띄운 것만 — 그 뒤로 감사는 새로 시작하지 않지만 두 번째 의견은 자기 대상을 끝까지 묻는다
     expect(askedRepos().filter((repo) => pending.includes(repo))).toHaveLength(qwenAuditConcurrency());
     expect(askedRepos().filter((repo) => answered.includes(repo))).toHaveLength(answered.length);

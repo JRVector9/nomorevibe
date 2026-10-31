@@ -96,7 +96,7 @@ it("event kind CHECK는 0126·0127·0134·0135 전체를 보존하고 0136 indet
   expect(previous.expression).toContain("nmv_provider_boundary_release_valid(evidence)");
 });
 
-it("member CHECK는 0125·0126·0134·0135 전체와 0136의 exact predecessor 확장, 0155 의 text local-direct 분기를 모두 보존한다", () => {
+it("member CHECK는 0125·0126·0134·0135 전체와 0136의 exact predecessor 확장, 0157 의 text local-direct 분기를 모두 보존한다", () => {
   const check = getTableConfig(modelCapacityRequests).checks.find(check => check.name === "model_capacity_requests_members_check")!;
   const history = checkHistory(check.name);
   const latest = history.at(-1)!;
@@ -107,7 +107,7 @@ it("member CHECK는 0125·0126·0134·0135 전체와 0136의 exact predecessor �
   const unknown = history.find(entry => entry.idx === 136)!;
   const previous = history.filter(entry => entry.idx < 125).at(-1)!;
   const expression = new PgDialect().sqlToQuery(check.value).sql;
-  expect(latest.tag).toBe("0155_ai1_provider_enum");
+  expect(latest.tag).toBe("0157_ai1_provider_enum");
   expect(expression === latest.expression, check.name).toBe(true);
   expect(publication.expression.startsWith(`(${previous.expression}) OR coalesce((`)).toBe(true);
   expect(provider.expression).toBe(`(${publication.expression}) OR nmv_provider_boundary_request_valid(to_jsonb(model_capacity_requests))`);
@@ -120,7 +120,7 @@ it("member CHECK는 0125·0126·0134·0135 전체와 0136의 exact predecessor �
   expect(replaced.expression).toBe(`(${removedUnknown.expression}) OR nmv_replaced_provider_request_valid(to_jsonb(model_capacity_requests))`);
   const replacedPath = history.find(entry => entry.idx === 145)!;
   expect(replacedPath.expression).toBe(`(${replaced.expression}) OR nmv_replaced_path_request_valid(to_jsonb(model_capacity_requests))`);
-  // 0155 (PR 3b-C): the six text-route member branches again with provider local-direct, appended to the whole predecessor.
+  // 0157 (PR 3b-C): the six text-route member branches again with provider local-direct, appended to the whole predecessor.
   expect(expression).toBe(`(${replacedPath.expression}) OR (${gatewayLocalDirectMembersSql})`);
 });
 

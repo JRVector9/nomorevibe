@@ -16,6 +16,7 @@ import { screenReviewCounts, screenReviewQueue } from "@/lib/crawl/audit-screen-
 import { resetQwenAuditBackoff } from "@/lib/crawl/qwen-endpoint-backoff";
 import { QWEN_V2_PROMPT_VERSION } from "@/lib/crawl/qwen-direct-review";
 import { auditPublishedProducts } from "@/lib/crawl/jobs/product-audit";
+import { reviewAuditSecondOpinions } from "@/lib/crawl/jobs/audit-second-opinion";
 import { DrWriterFencedError } from "@/lib/operations/dr/epoch";
 import { runJob } from "@/lib/jobs/runner";
 import { jobRunOptions } from "@/scripts/worker";
@@ -103,7 +104,13 @@ async function judged(rows: Row[]) {
   }
   await db.update(productAuditCampaigns).set({ status: "done" });
 }
-const tick = () => runJob("product-audit", auditPublishedProducts, { budgetMs: jobRunOptions("product-audit", { requestedOnly: true }).budgetMs });
+/**
+ * 2026-10-31(PR 3a-C) 분해 전 감사 잡 한 틱 = 보류 쓸기 → 두 번째 의견(답으로 닫기 포함). 이 파일의 기대는 그 차례를 전제하므로 두 잡을 같은 차례로 돌린다:
+ * 감사 잡(쓸기, 닫힌 감사라 묻지 않는다) → 두 번째 의견 잡
+ */
+const sweep = () => runJob("product-audit", auditPublishedProducts, { budgetMs: jobRunOptions("product-audit", { requestedOnly: true }).budgetMs });
+const opinion = () => runJob("audit-second-opinion", reviewAuditSecondOpinions, { budgetMs: jobRunOptions("audit-second-opinion", { requestedOnly: true }).budgetMs });
+const tick = async () => { await sweep(); return opinion(); };
 const item = async (slug: string) => (await db.select().from(productAuditItems).where(eq(productAuditItems.slug, slug))
   .orderBy(asc(productAuditItems.id))).at(-1)!;
 const product = async (slug: string) => (await db.select().from(products).where(eq(products.slug, slug)))[0];

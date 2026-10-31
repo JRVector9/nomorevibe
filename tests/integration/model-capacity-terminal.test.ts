@@ -299,8 +299,8 @@ it("settles only the original native proof once despite policy changes and rejec
   }
 }));
 
-// PR 3b-C (0155): the same AI1 legacy kind on a local-direct engine — the ledger keeps provider local-direct on the row, binding and evidence.
-it("dispatches and settles an AI1 legacy call on a local-direct engine through the same kind (0155)", exercise(async () => {
+// PR 3b-C (0157): the same AI1 legacy kind on a local-direct engine — the ledger keeps provider local-direct on the row, binding and evidence.
+it("dispatches and settles an AI1 legacy call on a local-direct engine through the same kind (0157)", exercise(async () => {
   const directPolicy: ModelCapacityPolicy = { ...policy, routes: [...policy.routes,
     { routeId: "crawl-agent-review", provider: "local-direct", model, providerBudgetId: "account", groupId: "engine" }] };
   await install(directPolicy); vi.stubEnv("ABCLLM_API_KEY", "");

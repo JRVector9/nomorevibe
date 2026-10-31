@@ -17,6 +17,7 @@ import type { ReviewOutcome } from "./agent-review-contract";
 import { candidateRevisionHash, lockedInput } from "./admin-review";
 import { reviewWithDeepSeekRaw, type DeepSeekReviewResult } from "./deepseek-review";
 import { DEEPSEEK_REVIEW_MODEL } from "./deepseek-review-policy";
+import { withDeepSeekSlot } from "./deepseek-slot";
 import { applySplitReject, currentGate, liveCallsAllowed, lockedRow, splitRejectVerdict, switchOn, type SplitTiebreakClaim,
   type SplitTiebreakGate, type SplitTiebreakHint } from "./gate-split-tiebreak";
 import { SPLIT_TIEBREAK_MAX_FAILURES } from "./gate-split-tiebreak-read";
@@ -33,8 +34,9 @@ import { getSettings } from "./settings";
  * 도 거부해야(원래 확신 SPLIT_CONFIRM_DEEPSEEK_MIN_CONFIDENCE 이상) 거부로 닫는다. 아니면 두 판단을 남기고 사람에게 둔다
  * («Qwen 거부 · DeepSeek 확인 안 됨»). 하루(KST 0시부터) 닫는 수는 qwenAuto.splitTiebreak.dailyRejectCap 까지 — 넘으면 «하루 상한»으로 사람에게.
  *
- * 어디서 도나: 사람 검토 잡(human-deepseek-review) 틱 안, DeepSeek 위임 뒤에 차례로. M3 DeepSeek 은 그 잡만 쓰고(한 번에 한 호출) 잡 lease 가
- * 틱을 하나로 줄 세우니 위임과 이 확인이 M3 에 동시에 부르지 않는다. 한 틱에 SPLIT_CONFIRM_PER_TICK 건, SPLIT_CONFIRM_LANE_MS 안에서만 —
+ * 어디서 도나: 자기 잡 split-confirm(lib/crawl/jobs/split-confirm.ts, 2026-10-31 PR 3a-C 전에는 사람 검토 잡 human-deepseek-review 틱의 뒷부분).
+ * M3 DeepSeek 은 사람 큐 위임과 이 확인이 쓰고, 한 번에 한 호출이라는 약속은 프로세스의 DeepSeek 자리(deepseek-slot.ts)가 지킨다 — 자리를 얻은 뒤
+ * 남은 시간을 다시 보고, 없으면 멈춤(cancelled)으로 적어 다음 틱에 다시 본다. 한 틱에 SPLIT_CONFIRM_PER_TICK 건, SPLIT_CONFIRM_LANE_MS 안에서만 —
  * 잡의 전체 예산(110초)은 그대로다. 한 호출의 제한 시간(45초)과 기록 여유가 다 남지 않으면 새로 부르지 않는다(줄인 제한 시간으로 부르지 않는다).
  * 모델 호출은 DB 트랜잭션 밖이다: 짧은 트랜잭션으로 잡고(deepseek_state running), 부르고, 쓰는 순간 DR fence(첫 잠금)·단계 전환·후보 판·관문 행·
  * 스위치·적용 모드·잡 lease 를 모두 다시 확인한다. 같은 관문 세대·같은 덧붙임 판의 판가름 행 하나에 확인도 하나다.
@@ -58,7 +60,8 @@ export const SPLIT_CONFIRM_LANE_MS = 60_000;
 const WRITE_MARGIN_MS = 2_000;
 const ITEM_RETRY_MS = 15 * 60_000;
 const DRAINING_RETRY_MS = 5 * 60_000;
-const JOB = "human-deepseek-review";
+/** 이 단계를 도는 잡 — binding.job 과 잠금의 주인(lib/llm/local-model-capacity-contract.ts localModelJob deepseek_confirm) */
+const JOB = "split-confirm";
 const t = gateSplitTiebreaks;
 
 /** 이 단계의 물러나기 — 이 프로세스 안의 값(사람 검토 잡은 reviewer 하나에서만 돈다). 1분부터 두 배씩 15분까지 */
@@ -225,8 +228,9 @@ async function runSplitConfirmInScope(ctx: Pick<JobContext<null>, "hasBudget" | 
   const callTimeoutMs = splitConfirmTimeoutMs();
   const laneEnd = Date.now() + SPLIT_CONFIRM_LANE_MS;
   const left = () => Math.min(laneEnd, ctx.deadlineAt ?? Infinity) - Date.now() - WRITE_MARGIN_MS;
-  const room = () => tick.calls < SPLIT_CONFIRM_PER_TICK && !ctx.signal?.aborted && ctx.hasBudget() && left() >= callTimeoutMs
-    && deepseekConfirmBackoff.retryAt <= Date.now();
+  /** 지금 한 호출을 띄울 시간·물러나기가 되나 — M3 자리를 얻은 뒤에도 다시 본다(그 사이 위임이 자리를 잡고 있었을 수 있다) */
+  const time = () => !ctx.signal?.aborted && ctx.hasBudget() && left() >= callTimeoutMs && deepseekConfirmBackoff.retryAt <= Date.now();
+  const room = () => tick.calls < SPLIT_CONFIRM_PER_TICK && time();
   if (!room()) return { ...tick, stopped: "no_budget" };
   const hints = await confirmHints(SPLIT_CONFIRM_PER_TICK * 3, new Date());
   for (const hint of hints) {
@@ -259,11 +263,15 @@ async function runSplitConfirmInScope(ctx: Pick<JobContext<null>, "hasBudget" | 
     const callStartedAt = Date.now();
     let result: DeepSeekReviewResult;
     try {
-      result = await withLocalModelCapacity({ target: { kind: "split", purpose: "deepseek_confirm", tiebreakId: claimed.claim.tiebreakId,
-        candidateId: claimed.claim.candidateId, generationKey: claimed.claim.generationKey, repo: claimed.claim.repo },
-      input: claimed.claim.input, lease, promptVersion: claimed.claim.input.snapshot.policy.promptVersion },
-      request => reviewWithDeepSeekRaw(claimed.claim.input, { timeoutMs: callTimeoutMs, request,
-        signal: ctx.signal ? AbortSignal.any([ctx.signal, controller.signal]) : controller.signal }), options.request);
+      // M3 자리(deepseek-slot.ts)를 얻은 뒤 남은 시간·물러나기를 다시 본다 — 위임이 60초 호출을 붙잡고 있었을 수 있다. 못 부르면 멈춤(cancelled)
+      result = await withDeepSeekSlot(async () => {
+        if (!time()) return { ok: false as const, error: "cancelled" as const };
+        return withLocalModelCapacity({ target: { kind: "split", purpose: "deepseek_confirm", tiebreakId: claimed.claim.tiebreakId,
+          candidateId: claimed.claim.candidateId, generationKey: claimed.claim.generationKey, repo: claimed.claim.repo },
+        input: claimed.claim.input, lease, promptVersion: claimed.claim.input.snapshot.policy.promptVersion },
+        request => reviewWithDeepSeekRaw(claimed.claim.input, { timeoutMs: callTimeoutMs, request,
+          signal: ctx.signal ? AbortSignal.any([ctx.signal, controller.signal]) : controller.signal }), options.request);
+      });
     } catch (error) {
       if (!(error instanceof ModelCapacityDeferredError)) throw error;
       ctx.log("crawl.split_confirm_capacity_deferred", { reason: error.reason });

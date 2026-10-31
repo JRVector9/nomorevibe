@@ -45,7 +45,7 @@ import { liveStateSql, occupyingStateSql, inFlightStateSql, sentStateSql } from 
 import { deviceCandidateSql, deviceFallbackLimit, type ModelCapacityGeneration } from "./capacity-devices";
 import { helperGateStateFromRow, helperGateStatesSql, type HelperGateState, type HelperGateStateRow } from "./capacity-helpers";
 import { slotOnlyModelCapacity } from "./capacity-consumer-scope";
-import { fenceFromRow, writerSiteActive } from "@/lib/operations/dr/epoch";
+import { DrWriterFencedError, fenceFromRow, writerSiteActive } from "@/lib/operations/dr/epoch";
 import { takeGatewayLocalEnd, type GatewayLocalEnd } from "./gateway-local-end";
 import { localModelBindingSchema, localModelBindingHash, localModelDispatchSchema, localModelLogicalKey,
   localModelRoute, localModelTargetSchema, localModelTerminalEvidenceSchema,
@@ -539,7 +539,7 @@ export async function requestAi1ModelSlot(value: ModelCapacityRequest, candidate
   return requestSlot(checked, `ai1:${candidateId}`);
 }
 
-/** AI1 게이트웨이 kind 의 고정 identity. provider 는 abcllm 계약 또는 local-direct 엔진이다(PR 3b-C, 0155). */
+/** AI1 게이트웨이 kind 의 고정 identity. provider 는 abcllm 계약 또는 local-direct 엔진이다(PR 3b-C, 0157). */
 function fixedAi1Identity(value: ModelCapacityRequestIdentity, candidateId: number): void {
   if (!Number.isSafeInteger(candidateId) || candidateId < 1 || value.class !== "first" || value.pool !== "reviewer"
     || value.routeId !== "crawl-agent-review" || !(GATEWAY_DISPATCH_PROVIDERS as readonly string[]).includes(value.provider))
@@ -2532,6 +2532,7 @@ export async function releaseModelDispatchWithEvidence(tx: ProductTransaction, r
 }
 
 import type { ModelCapacityMode } from "./capacity";
+import { MODEL_CAPACITY_ROUTES_MAX, modelCapacityRouteSchema, type ModelCapacityPolicy, type ModelCapacityRoute } from "./capacity";
 /**
  * 운영자 control 쓰기(PR06d). caller TX 가 fence 다음 첫 lock 으로 부른다. 장부 행은 건드리지 않는다 — dispatched/indeterminate 는 그대로 점유한다.
  * 정책은 open 이 아닐 때만 바꾸고 revision 을 올린다(옛 대기는 다음 poll 에서 policy_changed 로 거둬진다).
@@ -2556,6 +2557,68 @@ export async function setModelCapacityMode(tx: ProductTransaction, mode: ModelCa
   const [row] = await tx.update(modelCapacityControl).set({ mode, updatedAt: sql`clock_timestamp()` })
     .where(eq(modelCapacityControl.id, 1)).returning();
   return row;
+}
+
+/** 덧붙일 정책 route(5칸 전부). */
+export type NewModelCapacityRoute = ModelCapacityRoute;
+const routeKey = (route: Pick<ModelCapacityRoute, "routeId" | "provider" | "model">) => JSON.stringify([route.routeId, route.provider, route.model]);
+const sameRoute = (a: ModelCapacityRoute, b: ModelCapacityRoute) => routeKey(a) === routeKey(b)
+  && a.providerBudgetId === b.providerBudgetId && a.groupId === b.groupId;
+
+/**
+ * 정책에 route 를 **덧붙이기만** 한다(PR 3b-A, 배정 표 저장). DRAIN 없이 mode 를 그대로 두고 revision 을 올린다 — 호출자의 TX 안에서
+ * DR fence(SHARE) → control FOR UPDATE(입장 TX 와 같은 잠금 순서). 옛 route 는 지우지도 순서를 바꾸지도 않는다.
+ * - (routeId, provider, model, providerBudgetId, groupId) 다섯 칸이 모두 같은 route 가 이미 있으면 건너뛴다. 덧붙일 것이 없으면 아무것도 쓰지 않고
+ *   지금 revision 을 돌려준다(같은 저장을 다시 해도 revision 이 그대로다).
+ * - 같은 (routeId, provider, model) 이 다른 예산·장비로 있으면 `model_capacity_route_conflict` — 옛 route 를 바꾸는 것은 정책 개정(DRAIN)이다.
+ * - 합이 MODEL_CAPACITY_ROUTES_MAX 를 넘으면 `model_capacity_routes_cap`.
+ * - 잡힌 행(reserved·dispatched, indeterminate 는 점유가 아니다)은 compatiblePredecessor 로 살린다(compatibleModelCapacityGeneration 이 그 행의
+ *   정책 hash 로 앞 판을 인증한다). 앞 판은 한 단계뿐이고 base 정책(자기 compatiblePredecessor 없음)이어야 하므로:
+ *   지금 정책에 앞 판이 없으면 앞 판 = 지금 정책. 지금 정책에 앞 판이 있으면 지금 판의 잡힌 행은 인증할 수 없다 — 그런 행이 있으면
+ *   `model_capacity_append_predecessor_busy`(아무것도 바꾸지 않는다; 그 행들이 끝난 뒤 다시 저장한다). 지금 판의 잡힌 행이 없으면 앞 판의 잡힌 행이
+ *   있을 때 그 앞 판을 그대로 넘기고, 없으면 앞 판을 비운다(다음 덧붙이기가 다시 지금 판을 살릴 수 있다).
+ * 대기 행은 다음 poll 에서 여느 정책 변경처럼 policy_changed 로 거둬지고, 옛 판의 reserved 행은 dispatch 에서 ownership_lost 다(점유는 인증된다).
+ */
+export async function appendCompatibleRoutes(tx: ProductTransaction, routes: readonly NewModelCapacityRoute[]):
+  Promise<{ appended: ModelCapacityRoute[]; policyRevision: number }> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const wanted: ModelCapacityRoute[] = [];
+  for (const value of routes) {
+    const parsed = modelCapacityRouteSchema.safeParse(value);
+    if (!parsed.success) return fail("model_capacity_route_invalid");
+    const route = Object.freeze(parsed.data);
+    const twin = wanted.find(other => routeKey(other) === routeKey(route));
+    if (twin && !sameRoute(twin, route)) fail("model_capacity_route_conflict");
+    if (!twin) wanted.push(route);
+  }
+  const state = await control(tx);
+  if (state.fenced) throw new DrWriterFencedError("site_fenced");
+  if (!state.policy || state.policyHash === null) return fail("model_capacity_policy_missing");
+  const current = state.policy;
+  const added: ModelCapacityRoute[] = [];
+  for (const route of wanted) {
+    const existing = current.routes.find(other => routeKey(other) === routeKey(route));
+    if (existing && !sameRoute(existing, route)) fail("model_capacity_route_conflict");
+    if (!existing) added.push(route);
+  }
+  if (!added.length) return { appended: [], policyRevision: state.revision };
+  if (current.routes.length + added.length > MODEL_CAPACITY_ROUTES_MAX) fail("model_capacity_routes_cap");
+  if (state.revision >= 9007199254740991) fail("model_capacity_revision_exhausted");
+  const held = await tx.execute<{ epoch: string | number; revision: string | number; policy_hash: string }>(sql`SELECT DISTINCT epoch, revision, policy_hash
+    FROM model_capacity_requests WHERE ${occupyingStateSql(modelCapacityRequests.state)}`);
+  const holds = (generation: { epoch: number; revision: number; policyHash: string }) => held.some(row => Number(row.epoch) === generation.epoch
+    && Number(row.revision) === generation.revision && row.policy_hash === generation.policyHash);
+  const { compatiblePredecessor: previous, ...base } = current;
+  let predecessor: ModelCapacityPolicy["compatiblePredecessor"];
+  if (!previous) predecessor = { epoch: state.epoch, revision: state.revision, policy: { ...base, routes: [...base.routes] } };
+  else if (holds({ epoch: state.epoch, revision: state.revision, policyHash: state.policyHash })) return fail("model_capacity_append_predecessor_busy");
+  else if (holds({ epoch: previous.epoch, revision: previous.revision, policyHash: modelCapacityPolicyHash(previous.policy) })) predecessor = previous;
+  const next = parseModelCapacityPolicy({ ...base, routes: [...current.routes, ...added], ...(predecessor ? { compatiblePredecessor: predecessor } : {}) });
+  const [row] = await tx.update(modelCapacityControl).set({ policy: next, policyHash: modelCapacityPolicyHash(next),
+    revision: sql`${modelCapacityControl.revision} + 1`, updatedAt: sql`clock_timestamp()` })
+    .where(and(eq(modelCapacityControl.id, 1), eq(modelCapacityControl.revision, state.revision))).returning({ revision: modelCapacityControl.revision });
+  if (!row) return fail("model_capacity_revision_exhausted");
+  return { appended: added, policyRevision: Number(row.revision) };
 }
 
 /** Fixed AI2 pre-dispatch handoff. The caller must finish its domain transition

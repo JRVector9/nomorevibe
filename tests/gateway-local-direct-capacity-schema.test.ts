@@ -3,10 +3,10 @@ import { expect, it } from "vitest";
 import * as branchesSql from "@/lib/llm/gateway-local-direct-sql";
 
 /**
- * 0155(PR 3b-C 전송 통합): AI1(legacy·item)·text 7경로의 게이트웨이 kind 가 local-direct 엔진으로도 장부에 남는다.
+ * 0157(PR 3b-C 전송 통합 — 처음엔 0155 였고 통합 때 0155 split·0156 배정 뒤로 다시 매겼다): AI1(legacy·item)·text 7경로의 게이트웨이 kind 가 local-direct 엔진으로도 장부에 남는다.
  * 0132(AI2 item)와 같은 꼴 — 살아 있는 술어 전체를 왼쪽에 두고, 0125(마지막 전체 재진술)의 그 kind 들의 abcllm 분기를 provider 만 바꿔 덧붙인다.
  */
-const tag = "0155_ai1_provider_enum";
+const tag = "0157_ai1_provider_enum";
 const TEXT_ROUTES = ["product-search-profile", "reason-translate", "product-translate", "product-tagline-ko", "crawl-tagline",
   "product-search-verify", "search-query-translate"] as const;
 const targets = [
@@ -60,15 +60,16 @@ function migrationBranches() {
   }));
 }
 
-it("registers one additive migration after the device tables, flagged for renumbering at integration", () => {
+it("registers one additive migration after 0155 split jobs and 0156 model assignments, with the final order in its header", () => {
   const journal = JSON.parse(readFileSync("drizzle/meta/_journal.json", "utf8")) as { entries: { idx: number; when: number; tag: string }[] };
   const index = journal.entries.findIndex(entry => entry.tag === tag);
-  expect(journal.entries[index]).toMatchObject({ idx: 155, when: 1794086401066, tag, breakpoints: true });
-  // main 에 PR 2a(0154 capacity_helpers)가 먼저 들어가 그 뒤에 선다. 0155 번호는 #760·#761 과 겹쳐 통합 때 다시 매긴다.
-  expect(journal.entries[index - 1]).toMatchObject({ idx: 154, tag: "0154_capacity_helpers" });
-  expect(journal.entries[index - 2]).toMatchObject({ idx: 153, tag: "0153_model_capacity_devices" });
-  expect(journal.entries.filter(entry => entry.idx === 155 || entry.tag === tag)).toHaveLength(1);
-  expect(migration().split("\n")[0]).toContain("renumbered at integration");
+  expect(journal.entries[index]).toMatchObject({ idx: 157, when: 1794086401068, tag, breakpoints: true });
+  // 통합 순서: 0154 capacity_helpers(PR 2a) → 0155 split_composite_jobs(PR 3a-C) → 0156 model_assignments(PR 3b-A) → 0157 이 PR.
+  expect(journal.entries[index - 1]).toMatchObject({ idx: 156, when: 1794086401067, tag: "0156_model_assignments" });
+  expect(journal.entries[index - 2]).toMatchObject({ idx: 155, when: 1794086401066, tag: "0155_split_composite_jobs" });
+  expect(journal.entries[index - 3]).toMatchObject({ idx: 154, tag: "0154_capacity_helpers" });
+  expect(journal.entries.filter(entry => entry.idx === 157 || entry.tag === tag)).toHaveLength(1);
+  expect(migration().split("\n").slice(0, 2).join(" ")).toContain("final order 0155 split → 0156 assignments → 0157 provider");
 });
 
 it.each(targets)("$name appends exactly the original AI1/text abcllm branches with only the provider changed", ({ name, constant, routes, kinds }) => {

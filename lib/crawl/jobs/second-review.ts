@@ -1,7 +1,6 @@
 import { emitPipelineEvent, measureReviewCall } from "@/lib/observability/review-pipeline";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import type { JobLease } from "@/lib/jobs/control";
-import { runGateSplitTiebreak } from "@/lib/crawl/gate-split-tiebreak";
 import { getSettings } from "@/lib/crawl/settings";
 import { dispatchSecondReviewTransport, secondReviewTransportTimeoutMs } from "@/lib/crawl/second-review-transport";
 import { closeSettledSecondReviews, enqueueSecondReviews, pendingSecondReviews, reconcileStaleSecondReviews, recordSecondReview, reopenOrphanedGateHolds,
@@ -28,6 +27,10 @@ export type SecondReviewCursor = { staleReviewAfterCandidateId?: number; [key: s
 /**
  * 2차 심사. 올릴 것을 올리고, 끝난 것을 닫고, 대기 중인 것을 행에 적힌 모델로 본다.
  * 결과는 기록만 한다 — 대기 후보는 사람이 확정하고, 공개된 제품은 사람이 내릴지 정한다.
+ *
+ * 2026-10-31(PR 3a-C) 전에는 갈림 판가름(gate-split-tiebreak.ts, gpu3090 Qwen-v2)을 이 틱 안에서 표 심사와 나란히 띄웠다 — AI2 items 모드의
+ * 정비 틱이 1초마다 돌 때도, 게이트웨이 표 심사가 막혔을 때도 판가름이 그 틱에 묶였고 판가름의 오류가 이 잡을 실패로 남겼다.
+ * 이제 판가름은 자기 잡(split-tiebreak, jobs/split-tiebreak.ts)·자기 줄이다. 이 잡은 표 심사와 정비 틱만 한다.
  */
 export async function secondReviewCandidates(ctx: JobContext<SecondReviewCursor>): Promise<JobOutcome<SecondReviewCursor>> {
   const startedAt = Date.now();
@@ -48,17 +51,7 @@ export async function secondReviewCandidates(ctx: JobContext<SecondReviewCursor>
   });
   const reopened = await reopenOrphanedGateHolds(settings, undefined, lease);
   await retryFailedSecondReviews(undefined, lease);
-  /*
-   * 갈림 판가름(gate-split-tiebreak.ts) — 관문에서 갈린 보류를 gpu3090 Qwen-v2 에 한 번 더 묻는다. 게이트웨이가 아닌 곳을 부르므로
-   * 아래 표 심사와 나란히 돌고, 몫(perTick)·시간·실패는 따로 센다. 표 심사가 단계에 막혀도 돈다. 둘 다 끝난 뒤 틱을 닫는다.
-   * gpu3090 은 감사 잡의 Qwen 호출과 같은 서버다 — 판가름은 감사 잡의 두 번째 의견·공개분 거르기와 두 번째 자리 하나를 나눠 쓰고, 물러나기도
-   * 함께한다(qwen-endpoint-backoff.ts). 두 잡이 겹쳐 돌아도 동시 호출은 감사 자리(2~4) + 1
-   */
-  const tiebreak = runGateSplitTiebreak(ctx, lease, { deadlineAt: startedAt + TICK_MS }).then(() => null, (error: unknown) => ({ error }));
-  const outcome = await reviewPendingVotes(ctx, lease, startedAt, { enqueued, closed, reopened, reconciled })
-    .catch(async (error: unknown) => { await tiebreak; throw error; });
-  const failure = await tiebreak;
-  if (failure) throw failure.error;
+  const outcome = await reviewPendingVotes(ctx, lease, startedAt, { enqueued, closed, reopened, reconciled });
   return "deferred" in outcome ? outcome : { ...outcome, ...(ctx.cursor ? { cursor: ctx.cursor } : {}) };
 }
 

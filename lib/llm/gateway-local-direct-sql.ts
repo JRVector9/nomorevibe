@@ -1,7 +1,7 @@
 /**
- * 0155(PR 3b-C 전송 통합)가 다섯 CHECK 에 덧붙이는 local-direct 분기 — 생성된 값이다. 손으로 고치지 않는다.
+ * 0157(PR 3b-C 전송 통합)이 다섯 CHECK 에 덧붙이는 local-direct 분기 — 생성된 값이다. 손으로 고치지 않는다.
  * 각 값은 0125(마지막 전체 재진술)의 AI1(legacy·item)·text 7경로 abcllm 분기를 그대로 두고 'abcllm' 만 'local-direct' 로 바꾼 것을
- * " OR " 로 이은 것이다. lib/db/operations-schema.ts 가 "(앞 술어) OR (이 값)" 으로 합치고, 0155 는 같은 값을 $ai2_local$ 로 감싸 붙인다
+ * " OR " 로 이은 것이다. lib/db/operations-schema.ts 가 "(앞 술어) OR (이 값)" 으로 맨 끝(0155 split 가지 뒤)에 합치고, 0157 은 같은 값을 $ai2_local$ 로 감싸 붙인다
  * (tests/gateway-local-direct-capacity-schema.test.ts 가 0125 원문과 대조한다). AI2(second-review) 분기는 0132 가 이미 넓혔다.
  */
 /** model_capacity_requests_logical_check: 8 branches. */
