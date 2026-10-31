@@ -40,7 +40,8 @@ export type RuntimeReport = (state: RuntimeState, currentJob?: string | null, st
 type LaneReport = (state: RuntimeState, currentJob?: string | null, budgetMs?: number | null) => void;
 export type RequestedRunOptions = { requestedOnly: true; signal?: AbortSignal };
 export type JobRunOptions = RequestedRunOptions & { budgetMs?: number };
-type JobRunResult = { status: string; done?: boolean; sourceContinuation?: boolean; reason?: string };
+/** continuation: runner 가 continuation:"ready" 를 받아 같은 잡을 다시 요청해 두었다(lib/jobs/runner.ts RunResult) — 줄은 1초 뒤 다시 돈다 */
+type JobRunResult = { status: string; done?: boolean; sourceContinuation?: boolean; continuation?: boolean; reason?: string };
 export type BackgroundConsumerLanes = {
   names: readonly string[];
   open: () => Promise<boolean>;
@@ -267,14 +268,12 @@ async function runLane(options: WorkerOptions, dependencies: WorkerDependencies,
           if (sourceLane && result.status === 'completed' && result.done === false && result.sourceContinuation === true) {
             sourceContinued = true;
           }
-          // AI2 가 item 모드면 이 잡은 AI2 행 올리기·닫기만 하고 stage_blocked 로 끝난다(요청은 그대로 남는다).
-          // AI1 consumer 가 쓴 승인이 다음 틱을 기다리지 않도록 줄을 짧게 다시 돈다.
-          if (name === 'second-review' && result.status === 'deferred' && result.reason === 'stage_blocked') stageRefill = true;
-          // 제작 근거 스캔이 남은 일을 알리면 runner 가 다시 요청해 두었다 — 1초 뒤 다시 돈다(요청이 없으면 그 poll 은 그냥 지나간다)
-          if (name === 'agent-evidence-refresh' && result.status === 'completed' && result.done === false) stageRefill = true;
-          // AI1 전용 줄(ai1): 남은 후보가 있어 runner 가 다시 요청해 두었으면 1초 뒤 다시 돈다 — 기본 5초 쉼이 틱 사이 물리 슬롯을 놀리고,
-          // 줄에 남긴 예약이 TTL(30초) 안에 다음 틱을 만나게 한다. 미룬(model_capacity) 틱은 기존 간격 그대로다
-          if (name === 'crawl-agent-review' && result.status === 'completed' && result.done === false) stageRefill = true;
+          // 잡이 continuation:"ready" 로 남은 일을 알려 runner 가 같은 잡을 다시 요청해 두었으면(RunResult.continuation) 1초 뒤 줄을 다시 돈다 —
+          // 기본 5초 쉼이 틱 사이 물리 슬롯을 놀리고 줄에 남긴 예약(TTL 30초)을 만료시키지 않게. 잡 이름을 보지 않는다: 어느 잡이 이어 돌 수
+          // 있는지는 runner 가 정한다(lib/jobs/runner.ts). 미룬(deferred) 틱은 요청을 남긴 채 lease 만 놓으므로 기존 poll 간격에 다시 본다 —
+          // stage_blocked(AI2 items 모드의 second-review 정비 틱)도 같다. 예전의 1초 재실행 특례(2026-10-31 삭제)는 items 모드에서
+          // reviewer 줄이 1초마다 enqueue/close/reconcile TX 를 되풀이해 풀을 눌렀다; items 모드의 건 처리는 consumer 가 1초 idle 로 집는다
+          if (result.status === 'completed' && result.continuation === true) stageRefill = true;
           dependencies.log?.('worker.job', { role: options.role, name, status: result.status });
         } catch (error) {
           failures++; failed = true;
