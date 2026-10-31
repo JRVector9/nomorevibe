@@ -104,9 +104,24 @@ def valid_review_failures(value):
             len({row['stage'] for row in value}) == len(value))
 
 
+# 2026-10-31 (owner decision 2026-10-30): an unknown-outcome model call never stops work. 'review' (확인 못함 · 사람 검토)
+# is informational only. Only a summarized 'alarm' (review backlog/stale over the monitor thresholds, or an occupying
+# dispatched row past its bound) or an unreadable ledger ('unknown') is an incident. A pre-2026-10-31 monitor sends the
+# three-key shape, where 'alarm' only meant "review pending"; it is read as review.
+CAPACITY_STATUSES = ('ok', 'review', 'alarm', 'unknown')
+CAPACITY_ALARM_REASONS = ('dispatch_stuck', 'review_backlog', 'review_stale')
+CAPACITY_BASE_KEYS = frozenset({'status', 'truncated', 'requests'})
+CAPACITY_SUMMARY_KEYS = frozenset({'count', 'oldestAgeSeconds', 'stuckDispatched', 'alarmReasons'})
+UNKNOWN_CAPACITY = {'status': 'unknown', 'truncated': False, 'requests': []}
+
+
+def _capacity_total(value):
+    return type(value) is int and 0 <= value <= 10 ** 9
+
+
 def validate_capacity_unknowns(value):
-    if (not isinstance(value, dict) or set(value) != {'status', 'truncated', 'requests'} or
-            value['status'] not in ('ok', 'alarm', 'unknown') or type(value['truncated']) is not bool or
+    if (not isinstance(value, dict) or set(value) not in (CAPACITY_BASE_KEYS, CAPACITY_BASE_KEYS | CAPACITY_SUMMARY_KEYS) or
+            value['status'] not in CAPACITY_STATUSES or type(value['truncated']) is not bool or
             not isinstance(value['requests'], list) or len(value['requests']) > 64):
         raise ValueError('invalid_capacity_unknowns')
     ids = set()
@@ -118,9 +133,53 @@ def validate_capacity_unknowns(value):
             raise ValueError('invalid_capacity_unknowns')
         ids.add(row['requestId'])
     pending = bool(value['requests']) or value['truncated']
-    if (value['status'] == 'alarm') != pending:
+    if 'count' not in value:
+        # Unsummarized: 'review' and the legacy 'alarm' are both "review pending"; this shape can never be an incident alarm.
+        if (value['status'] in ('review', 'alarm')) != pending:
+            raise ValueError('invalid_capacity_unknowns')
+        return value
+    count, oldest, stuck, reasons = value['count'], value['oldestAgeSeconds'], value['stuckDispatched'], value['alarmReasons']
+    if (value['status'] == 'unknown' or not _capacity_total(count) or not _capacity_total(stuck) or
+            not (oldest is None or _capacity_total(oldest)) or not isinstance(reasons, list) or
+            any(not isinstance(reason, str) or reason not in CAPACITY_ALARM_REASONS for reason in reasons) or
+            reasons != sorted(set(reasons)) or count < len(value['requests']) or (value['truncated'] and count <= 64) or
+            pending != (count > 0) or (count == 0 and oldest is not None) or
+            ('dispatch_stuck' in reasons) != (stuck > 0) or
+            (any(reason != 'dispatch_stuck' for reason in reasons) and count == 0) or
+            value['status'] != ('alarm' if reasons else 'review' if pending else 'ok')):
         raise ValueError('invalid_capacity_unknowns')
     return value
+
+
+def capacity_alarm(value):
+    """Validated capacity summary -> incident. Review-only (also legacy 'alarm') is not; a summarized alarm or a failed read is."""
+    return value['status'] == 'unknown' or value['status'] == 'alarm' and 'alarmReasons' in value
+
+
+def capacity_pending(value):
+    return bool(value['requests']) or value['truncated']
+
+
+def merge_capacity_unknowns(items, complete):
+    """One consistent summary for several monitor replicas. Pending requests dominate a partial read; any summarized
+    alarm reason stays; a missing/old replica is never an explicit clear."""
+    requests = {}
+    for item in items:
+        for row in item['requests']:
+            requests.setdefault(row['requestId'], row)
+    truncated = len(requests) > 64 or any(item['truncated'] for item in items)
+    pending = bool(requests) or truncated
+    summaries = [item for item in items if 'count' in item]
+    reasons = sorted({reason for item in summaries for reason in item['alarmReasons']})
+    unknown = not complete or any(item['status'] == 'unknown' for item in items)
+    status = 'alarm' if reasons else 'review' if pending else 'unknown' if unknown else 'ok'
+    merged = {'status': status, 'truncated': truncated, 'requests': list(requests.values())[:64]}
+    if reasons or (status != 'unknown' and len(summaries) == len(items)):
+        count = max([len(requests), 65 if truncated else 0] + [item['count'] for item in summaries])
+        ages = [item['oldestAgeSeconds'] for item in summaries if item['oldestAgeSeconds'] is not None]
+        merged.update(count=count, oldestAgeSeconds=max(ages) if ages and count else None,
+                      stuckDispatched=max([0] + [item['stuckDispatched'] for item in summaries]), alarmReasons=reasons)
+    return validate_capacity_unknowns(merged)
 
 
 MONITOR_PROBE = """try {const j=JSON.parse(require('fs').readFileSync(process.env.MONITOR_HEALTH_PATH||'/tmp/monitor-health.json','utf8'));
@@ -129,12 +188,17 @@ const reviews=['first','second'],reasons=['capacity_blocked','consumer_missing',
 const reviewKnown=Array.isArray(j.reviewFailures)&&j.reviewFailures.length<=2&&j.reviewFailures.every(v=>v&&typeof v==='object'&&!Array.isArray(v)&&
 Object.keys(v).sort().join(',')==='reason,stage'&&reviews.includes(v.stage)&&reasons.includes(v.reason))&&new Set(j.reviewFailures.map(v=>v.stage)).size===j.reviewFailures.length;
 const capacity=v=>{const unknown={status:'unknown',truncated:false,requests:[]};
-if(!v||!['ok','alarm','unknown'].includes(v.status)||typeof v.truncated!=='boolean'||!Array.isArray(v.requests)||v.requests.length>64)return unknown;
+if(!v||!['ok','review','alarm','unknown'].includes(v.status)||typeof v.truncated!=='boolean'||!Array.isArray(v.requests)||v.requests.length>64)return unknown;
 const ids=new Set(),rows=[];
 for(const r of v.requests){if(!r||typeof r.requestId!=='string'||!(/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/).test(r.requestId)||ids.has(r.requestId)
 ||!['routeId','groupId'].every(k=>typeof r[k]==='string'&&(/^[A-Za-z0-9_.:@+/-]{1,120}$/).test(r[k]))||typeof r.oldPolicy!=='boolean'||typeof r.localEndRecorded!=='boolean')return unknown;
 ids.add(r.requestId);rows.push({requestId:r.requestId,routeId:r.routeId,groupId:r.groupId,oldPolicy:r.oldPolicy,localEndRecorded:r.localEndRecorded});}
-return ((v.status==='alarm')===(rows.length>0||v.truncated))?{status:v.status,truncated:v.truncated,requests:rows}:unknown;};
+const n=x=>Number.isSafeInteger(x)&&x>=0&&x<=1e9,base={status:v.status,truncated:v.truncated,requests:rows};
+if(['count','oldestAgeSeconds','stuckDispatched','alarmReasons'].every(k=>v[k]===undefined))
+return ((v.status==='review'||v.status==='alarm')===(rows.length>0||v.truncated))?base:unknown;
+if(!n(v.count)||!n(v.stuckDispatched)||!(v.oldestAgeSeconds===null||n(v.oldestAgeSeconds))||!Array.isArray(v.alarmReasons)||v.alarmReasons.length>3
+||!v.alarmReasons.every(k=>['dispatch_stuck','review_backlog','review_stale'].includes(k)))return unknown;
+return {...base,count:v.count,oldestAgeSeconds:v.oldestAgeSeconds,stuckDispatched:v.stuckDispatched,alarmReasons:[...v.alarmReasons]};};
 console.log(JSON.stringify({fresh:Number.isSafeInteger(j.checkedAt)&&Date.now()-j.checkedAt>=-1000&&Date.now()-j.checkedAt<90000,
 overall:['ok','unknown','alarm'].includes(j.overall)?j.overall:'unknown',
 ...(j.capacityUnknowns!==undefined?{capacityUnknowns:capacity(j.capacityUnknowns)}:{}),
@@ -215,13 +279,18 @@ def observe(key, cfg, run=command, now=None):
                             review[failure['stage']] = failure['reason']
                     if not conflict:
                         result['reviewFailures'] = [{'stage': stage, 'reason': review[stage]} for stage in sorted(review)]
-                capacity = [validate_capacity_unknowns(check['capacityUnknowns']) for check in checks if 'capacityUnknowns' in check]
+                capacity = []
+                for check in checks:
+                    if 'capacityUnknowns' in check:
+                        try:
+                            capacity.append(validate_capacity_unknowns(check['capacityUnknowns']))
+                        except ValueError:
+                            capacity.append(dict(UNKNOWN_CAPACITY))  # contradictory summary: unread, never a clear
                 if capacity:
-                    requests = {row['requestId']: row for item in capacity for row in item['requests']}
-                    truncated = len(requests) > 64 or any(item['truncated'] for item in capacity)
-                    status = 'alarm' if requests or truncated else 'unknown' if len(capacity) != len(checks) or any(item['status'] == 'unknown' for item in capacity) else 'ok'
-                    result['capacityUnknowns'] = {'status': status, 'truncated': truncated, 'requests': list(requests.values())[:64]}
-                    if status != 'ok':
+                    merged = merge_capacity_unknowns(capacity, len(capacity) == len(checks))
+                    result['capacityUnknowns'] = merged
+                    # 확인 못함(review) alone leaves the row as the monitor's own overall reports it.
+                    if capacity_alarm(merged):
                         result.update(reason='pipeline_alarm', ok=False, recoverable=False)
         else:
             result.update(reason='ok' if healthy else 'container_unhealthy', ok=healthy)
