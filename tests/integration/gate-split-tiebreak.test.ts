@@ -102,8 +102,8 @@ beforeEach(async () => {
   vi.stubEnv("AUDIT_SECOND_OPINION_MODEL", "");
   vi.stubEnv("AUDIT_SECOND_OPINION_API_KEY", "");
   vi.stubEnv("CRAWL_REVIEW_READY", "true");
-  vi.stubEnv("CRAWL_REVIEW_MODEL", "test-model");
-  await saveSettings({ enabled: true, secondReview: { enabled: true, voters: [{ provider: "abcllm", model: "[MLX] second-test" }], sampleRate: 0 } }, "test");
+  // 1차 심사자는 관리자 설정만 본다(CRAWL_REVIEW_MODEL 대체는 2026-10-31 제거)
+  await saveSettings({ enabled: true, firstReview: { provider: "claude-cli", model: "test-model" }, secondReview: { enabled: true, voters: [{ provider: "abcllm", model: "[MLX] second-test" }], sampleRate: 0 } }, "test");
   expect(await changeReviewMode({ mode: "enforce", expectedMode: "off", actor: "test", reason: "gate split fixture" })).toMatchObject({ ok: true });
   // 기본 꺼짐이다 — 이 파일은 켜고 시작한다(화면·운영 스크립트와 같은 setter)
   expect(await turn({ enabled: true, perTick: 10 })).toMatchObject({ ok: true });

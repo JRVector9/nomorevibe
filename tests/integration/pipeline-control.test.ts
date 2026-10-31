@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { batchPolicyHash } from "@/lib/jobs/batches";
 import { modelCapacityPolicyHash, type ModelCapacityPolicy } from "@/lib/llm/capacity";
 import { httpOriginPolicyHash } from "@/lib/net/http-origin-policy";
+import { configuredModel } from "@/lib/llm/model-registry";
 import type { ControlResult, ControlSnapshot } from "@/lib/operations/pipeline-control";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
 
@@ -20,10 +21,12 @@ let baseline: Record<string, unknown[]> | undefined;
 let directory = "";
 
 // CLI는 앱 DATABASE_URL·PG* 없이 전용 변수만으로 붙어야 한다. 호출 지점 model env는 route 행이 셸에 따라 바뀌지 않게 고정한다.
-const MODEL_ENV = { PRODUCT_TRANSLATION_MODEL: "pr06d-product", ABCLLM_MODEL: "pr06d-model", ABCLLM_TAGLINE_MODEL: "pr06d-tagline", ABCLLM_PROFILE_MODEL: "pr06d-profile",
-  SEARCH_VERIFY_MODEL: "pr06d-verify", INTRO_CHECK_MODEL: "pr06d-intro", CRAWL_REVIEW_MODEL: "pr06d-env-ai1" };
+const MODEL_ENV = { ABCLLM_MODEL: "pr06d-model", ABCLLM_PROFILE_MODEL: "pr06d-profile", SEARCH_VERIFY_MODEL: "pr06d-verify", INTRO_CHECK_MODEL: "pr06d-intro" };
+// 소개 짓기·제품 번역의 모델과 1차 심사자는 env 를 읽지 않는다(2026-10-31 abcLLM 정리 — 등록부·관리자 단계 선택과 관리자 설정만 본다).
+// 옛 이름에 값을 넣어 두고 route 행이 그 값을 쓰지 않는 것을 본다.
+const IGNORED_MODEL_ENV = { PRODUCT_TRANSLATION_MODEL: "pr06d-product", ABCLLM_TAGLINE_MODEL: "pr06d-tagline", CRAWL_REVIEW_MODEL: "pr06d-env-ai1" };
 const env: NodeJS.ProcessEnv = { ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(PG|DATABASE_URL$|READ_DATABASE_URL$)/.test(key))),
-  ...MODEL_ENV, NODE_ENV: "test", PIPELINE_CONTROL_DATABASE_URL: TEST_DATABASE_URL };
+  ...MODEL_ENV, ...IGNORED_MODEL_ENV, NODE_ENV: "test", PIPELINE_CONTROL_DATABASE_URL: TEST_DATABASE_URL };
 const CLI = ["--import", "tsx", "scripts/ops/pipeline-control.ts"];
 type CliRun = { status: number | null; stderr: string; out: (ControlResult & { snapshot: ControlSnapshot }) | null };
 function cli(...args: string[]): CliRun {
@@ -324,10 +327,10 @@ it("judges capacity open only on the (route, provider, model) combinations the s
       { routeId: "product-search-profile", provider: "abcllm", model: MODEL_ENV.ABCLLM_PROFILE_MODEL, status: "unmapped" },
       { routeId: "product-search-verify", provider: "abcllm", model: MODEL_ENV.SEARCH_VERIFY_MODEL, status: "unmapped" },
       { routeId: "reason-translate", provider: "abcllm", model: MODEL_ENV.ABCLLM_MODEL, status: "no_contract" },
-      { routeId: "product-translate", provider: "abcllm", model: MODEL_ENV.PRODUCT_TRANSLATION_MODEL, status: "unmapped" },
+      { routeId: "product-translate", provider: "abcllm", model: configuredModel("product-translate", env), status: "unmapped" },
       { routeId: "product-tagline-ko", provider: "abcllm", model: MODEL_ENV.ABCLLM_MODEL, status: "unmapped" },
       { routeId: "search-query-translate", provider: "abcllm", model: MODEL_ENV.ABCLLM_MODEL, status: "unmapped" },
-      { routeId: "crawl-tagline", provider: "abcllm", model: MODEL_ENV.ABCLLM_TAGLINE_MODEL, status: "unmapped" },
+      { routeId: "crawl-tagline", provider: "abcllm", model: configuredModel("crawl-tagline", env), status: "unmapped" },
       { routeId: "product-intro-check", provider: "claude-cli", model: MODEL_ENV.INTRO_CHECK_MODEL, status: "unmapped" },
       { routeId: "crawl-publish-classify", provider: "unknown", model: null, status: "unknown" },
       { routeId: "second-review", provider: "legacy-job", model: null, status: "stage_legacy" },
@@ -338,6 +341,7 @@ it("judges capacity open only on the (route, provider, model) combinations the s
       { routeId: "grok-session-check", provider: "grok-cli", model: null, status: "unused" },
     ]));
     expect([dry.status, dry.stderr, dry.out?.plan.blocked]).toEqual([3, "", [`deferred_routes:${deferred.length}`]]);
+    expect(routes.filter(row => Object.values(IGNORED_MODEL_ENV).includes(String(row.model)))).toEqual([]);
 
     // 설정을 읽을 수 없으면 심사 route는 미상이다 — 쓰는 조합을 모르므로 거절한다
     await writeSettings({ reviewConcurrency: 99 });

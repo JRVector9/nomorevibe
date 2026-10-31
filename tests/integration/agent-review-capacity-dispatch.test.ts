@@ -22,7 +22,9 @@ import { runJob } from '@/lib/jobs/runner';
 import { requestJob } from '@/lib/jobs/control';
 import { tryAcquireRole, releaseRole, type RoleLease } from '@/lib/jobs/role-leader';
 import { jobsForRole } from '@/lib/jobs/catalog';
+import { setServingContractSnapshotForTest } from '@/lib/llm/serving-contract-store';
 import { ensureSchema, TEST_DATABASE_URL } from './setup';
+import { directContractRow } from './direct-engine-fixtures';
 
 type Raw = Record<string, unknown>;
 const admin = postgres(TEST_DATABASE_URL, { max: 1, prepare: false, onnotice: () => {}, connection: { application_name: 'pr05b3-c-admin' } });
@@ -192,7 +194,8 @@ beforeAll(() => track((async () => {
   // The only global fetch injection prevents accidental external legacy HTTP.
   // Positive fixed calls use B's unmodified native undici sender to loopback.
   vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('unexpected_external_http'); }));
-  vi.stubEnv('ABCLLM_API_KEY', `${marker}-dummy-local-only`);
+  // The loopback engine is connected directly (admin row, no key): the abcLLM gateway and its key were removed on 2026-10-30.
+  setServingContractSnapshotForTest([directContractRow('crawl-agent-review', 'pr05b3-loopback-model')]);
 })()));
 beforeEach(() => track((async () => {
   serving.contract = undefined;
@@ -235,7 +238,7 @@ afterAll(async () => {
       await tx`UPDATE crawl_candidates SET decided_by=${String(row.decided_by)} WHERE id=${Number(row.id)}`;
     } });
     const after = await whole(); await writeFile(`${evidence}-after.json`, JSON.stringify(after, null, 2)); expect(after).toEqual(baseline);
-  }, async () => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); },
+  }, async () => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); setServingContractSnapshotForTest(null); },
   () => admin.end(), () => observer.end(), async () => { await (globalThis as { pgClient?: ReturnType<typeof postgres> }).pgClient?.end(); }]);
 });
 

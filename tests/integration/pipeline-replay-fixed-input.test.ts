@@ -11,7 +11,9 @@ import { eq, sql } from "drizzle-orm";
 import * as schema from "@/lib/db/schema";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, crawlSettings, jobs } from "@/lib/db/schema";
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { ensureSchema, resetTables, TEST_DATABASE_URL } from "./setup";
+import { directContractRow } from "./direct-engine-fixtures";
 
 /** 가짜 게이트웨이(loopback)와 테스트용 serving 계약. 운영 resolver는 그대로 null이며 이 파일 안에서만 대체한다. */
 const fake = vi.hoisted(() => ({ origin: "", contracts: false, requests: [] as { model: string; repo: string }[], delayMs: 20 }));
@@ -21,6 +23,18 @@ vi.mock("@/lib/crawl/agent-review-serving-contract", async load => ({ ...await l
   resolveAi1GatewayServingContract: (model: string) => fake.contracts ? contract("crawl-agent-review", model) : null }));
 vi.mock("@/lib/crawl/second-review-serving-contract", async load => ({ ...await load<typeof import("@/lib/crawl/second-review-serving-contract")>(),
   resolveAi2GatewayServingContract: (model: string) => fake.contracts ? contract("second-review", model) : null }));
+/**
+ * abcLLM 게이트웨이는 2026-10-30 제거됐다 — 옛 심사 잎(reviewWithGateway)은 이제 엔진 주소를 받을 때만 보내고 게이트웨이 기본 주소가 없다.
+ * legacy replay 는 abcllm 심사자에게 그 잎을 그대로 부르므로, 이 파일은 없어진 기본 주소 자리에 replay upstream(ABCLLM_BASE_URL — replay
+ * preflight 가 여전히 맞춰 보는 값)을 엔진 주소로 넣는다. 같은 wire 가 같은 replay egress 계량기를 지나간다. items 는 아래 직접 연결 계약 행으로 연다.
+ */
+vi.mock("@/lib/crawl/agent-review-gateway", async load => {
+  const original = await load<typeof import("@/lib/crawl/agent-review-gateway")>();
+  const { modelBaseUrl } = await import("@/lib/llm/model-registry");
+  const reviewWithGateway: typeof original.reviewWithGateway = (input, options) => original.reviewWithGateway(input,
+    options.endpoint ? options : { ...options, endpoint: { baseUrl: modelBaseUrl("ai1-preset", process.env, "abcllm"), apiKey: null } });
+  return { ...original, reviewWithGateway };
+});
 
 const FIRST = "replay-first", SECOND = "replay-second", REPOS = ["fixture/good-one", "fixture/bad-two", "fixture/good-three", "fixture/good-four", "fixture/bad-five", "fixture/good-six"];
 // 시험 시간 값. 2026-10-22 사용자 결정으로 실시간 구간을 줄였다(전: 구간 40초·lead 1.5초·drain 60초·최소 구간 10초, 파일 약 300초).
@@ -83,9 +97,10 @@ beforeAll(async () => {
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()));
   fake.origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   // 게이트웨이 모듈은 주소를 import 때 읽는다. 아래 동적 import 전에 정한다.
-  savedEnv = { ABCLLM_BASE_URL: process.env.ABCLLM_BASE_URL, ABCLLM_API_KEY: process.env.ABCLLM_API_KEY };
+  savedEnv = { ABCLLM_BASE_URL: process.env.ABCLLM_BASE_URL };
   process.env.ABCLLM_BASE_URL = fake.origin;
-  process.env.ABCLLM_API_KEY = "replay-fixture-key";
+  // items 모드의 native 호출은 엔진 직접 연결 계약(관리자 행, 키 없음)이 있어야 나간다 — 계약 본문은 위 resolver mock 이다
+  setServingContractSnapshotForTest([directContractRow("crawl-agent-review", FIRST), directContractRow("second-review", SECOND)]);
   modules = await load();
   original = { stages: [...await db.execute<Record<string, unknown>>(sql`select stage, mode, draining_from, epoch, writer_contract_version, updated_at from pipeline_stage_modes`)],
     capacity: (await db.execute<Record<string, unknown>>(sql`select mode, policy, policy_hash, updated_at from model_capacity_control where id = 1`))[0] };
@@ -110,6 +125,7 @@ beforeEach(async () => { await wipe(); await restoreControls(); fake.contracts =
 afterAll(async () => {
   await wipe(); await restoreControls(); await db.delete(crawlSettings);
   for (const [key, value] of Object.entries(savedEnv)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+  setServingContractSnapshotForTest(null);
   await new Promise<void>(resolve => server.close(() => resolve()));
 });
 
@@ -159,7 +175,7 @@ const manifest = (sha: string, mode: "legacy" | "items", patch: Record<string, u
   artifactSha256: sha, upstream: fake.origin, durationMs: FULL_WINDOW_MS,
   limits: { maxCalls: 60, maxTokens: 60 * 40_000, perCallTokenUpperBound: 40_000, maxWallMs: 120_000 },
   ...(mode === "items" ? { items: { ai1Consumers: 1, ai2Consumers: 1, capacityPolicy: policy } } : {}), ...patch });
-const env = () => ({ DATABASE_URL: TEST_DATABASE_URL, ABCLLM_BASE_URL: fake.origin, ABCLLM_API_KEY: "replay-fixture-key" });
+const env = () => ({ DATABASE_URL: TEST_DATABASE_URL, ABCLLM_BASE_URL: fake.origin });
 const run = (artifact: Awaited<ReturnType<typeof exported>>, value: Record<string, unknown>, timing = TIMING) => modules.runner.runFixedInputReplay({
   manifest: value, artifact: artifact.artifact, artifactSha256: artifact.sha, manifestSha256: modules.fixed.sha256(JSON.stringify(value)),
   revision: "abcdef1", env: env(), timing });

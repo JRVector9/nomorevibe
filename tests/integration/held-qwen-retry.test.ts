@@ -81,10 +81,11 @@ beforeEach(async () => {
   resetQwenAuditBackoff();
   classify.mockReset().mockResolvedValue(null);
   vi.stubEnv("CRAWL_REVIEW_READY", "true");
-  vi.stubEnv("CRAWL_REVIEW_MODEL", "test-model");
   vi.stubEnv("AUDIT_SECOND_OPINION_URL", `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`);
   vi.stubEnv("AUDIT_SECOND_OPINION_MODEL", "");
-  await saveSettings({ enabled: true, secondReview: { enabled: true, voters: [QWEN_VOTER, OTHER_VOTER], sampleRate: 0, agreeAt: 0.85, includeAiHeld: false } }, "test");
+  // 1차 심사자는 관리자 설정만 본다(CRAWL_REVIEW_MODEL 대체는 2026-10-31 제거)
+  await saveSettings({ enabled: true, firstReview: { provider: "claude-cli", model: "test-model" },
+    secondReview: { enabled: true, voters: [QWEN_VOTER, OTHER_VOTER], sampleRate: 0, agreeAt: 0.85, includeAiHeld: false } }, "test");
   expect(await changeReviewMode({ mode: "enforce", expectedMode: "off", actor: "test", reason: "held qwen test" })).toMatchObject({ ok: true });
   // 기본 꺼짐이다 — 이 파일은 켜고 시작한다(화면·운영 스크립트와 같은 setter)
   expect(await setHeldQwenRetry({ ...DEFAULT_HELD_QWEN_RETRY, enabled: true })).toMatchObject({ ok: true });
