@@ -236,14 +236,29 @@ migration `0155_model_assignments`(PR 3b-A)는 같은 표 `model_helper_assignme
 4. **정책 route 덧붙이기**(`appendCompatibleRoutes`, `lib/llm/capacity-repository.ts`): `{ route, provider, wire 모델, providerBudgetId, groupId = 장비 }` —
    providerBudgetId 는 등록부 equipment, local-direct 만 계약의 backendId. 같은 (route, provider, 모델)이 이미 같은 장비에 있으면 그대로 쓰고(다른 장비면 `route_device_mismatch`),
    다섯 칸이 같으면 아무것도 쓰지 않는다(다시 저장해도 revision 그대로). **mode 는 그대로(DRAIN 없음)**, revision + 1, 옛 route 는 지우거나 순서를 바꾸지 않는다.
-   잡힌 행(reserved·dispatched)은 `compatiblePredecessor` 로 산다. 앞 판은 한 단계뿐이라: 지금 정책에 앞 판이 없으면 앞 판 = 지금 정책, 있으면 지금 판의 잡힌 행이
-   남아 있을 때 `model_capacity_append_predecessor_busy`(그 행이 끝난 뒤 다시 저장), 지금 판이 비었으면 앞 판의 잡힌 행이 있을 때만 그 앞 판을 넘기고 아니면 비운다.
+   잡힌 행(reserved·dispatched)은 **앞 판 사슬**(`compatiblePredecessors`, 3b-B — 아래 「앞 판 사슬」)로 산다. 3b-A 의 한 단계 앞 판은 계속 부하가 걸리면 두 번째
+   덧붙이기를 `model_capacity_append_predecessor_busy` 로 거절했다 — 3b-B 에서 그 거절은 없어졌다.
    route 상한은 128 → 256(`MODEL_CAPACITY_ROUTES_MAX`) — 옛 parser 는 129개 이상을 거절하므로 모든 용량 소비자가 이 판을 돈 뒤에만 129번째를 넣는다.
 5. 장비 순위 `(device, route) = rank`(바뀌면 장비 version + 1 — 장비 폼의 옛 화면 저장이 CAS 로 거절된다) → 배정 행 upsert(version + 1; `shadow_route_id` 는 표지
    `primary:<단계>`, `live_route_id`·`live_provider` = 그 route) → `operations_audit` `model-assignment-save` 한 줄(before·after·계약·route·덧붙였나·revision·장비 순위).
 
 거절 문자열: `model_assignment_invalid:<path>` · `model_assignment_version_mismatch:<current|none>` · `model_assignment_refused:<code>`(`MODEL_ASSIGNMENT_REFUSALS`) ·
-덧붙이기의 `model_capacity_routes_cap` · `model_capacity_route_conflict` · `model_capacity_append_predecessor_busy` · `site_fenced`.
+덧붙이기의 `model_capacity_routes_cap` · `model_capacity_route_conflict` · `model_capacity_append_chain_full`(3b-B) · `site_fenced`.
+
+### 앞 판 사슬 — 3b-B
+
+정책 칸 `compatiblePredecessors: [{ epoch, revision, policyHash }]`(1~16칸, `(epoch, revision)` 오름차순, `MODEL_CAPACITY_PREDECESSORS_MAX`, `lib/llm/capacity.ts`).
+한 칸 = 행이 남은 옛 세대 하나의 사실(정책 문서는 싣지 않는다). 옛 단일 칸 `compatiblePredecessor`(정책 문서를 싣는다)는 그대로 파싱되고 그 문서 hash 의 **길이 1 사슬**로 읽힌다
+(`modelCapacityPredecessorChain`). 두 칸을 함께 두면 `ambiguous_capacity_predecessor` 로 거절한다.
+
+- 인증(`compatibleModelCapacityGeneration`, 입장 TX 의 옛 세대 점유 행마다): 행의 (epoch, revision, policy_hash) 가 사슬 **어느 칸**과 정확히 같고, 그 칸이 지금 epoch 의 더 이른 revision.
+- 덧붙이기(`appendCompatibleRoutes`): 지금 사슬 + 지금 세대 → 장부에 그 세대의 waiting·reserved·dispatched 행이 없는 칸, epoch 가 다른 칸을 뺀다(지금 세대도 행이 없으면 빠진다)
+  → 남은 칸이 16을 넘으면 `model_capacity_append_chain_full`(아무것도 쓰지 않는다 — 가장 오래된 옛 세대 행이 끝난 뒤 다시 저장). 남은 칸이 없으면 사슬 칸을 쓰지 않는다
+  (옛 parser 도 읽는 정책). 장부 확인과 쓰기가 같은 control FOR UPDATE 아래다(입장·dispatch 도 그 잠금을 잡는다).
+- 운영자 정책 쓰기(`setModelCapacityPolicy`, `pipeline-control capacity policy`): 사슬 칸이 있으면 모든 칸이 **지금 정책의 사슬 또는 지금 세대**여야 하고 새 정책이 지금 정책의
+  덧붙이기만(`modelCapacityPolicyAdditive`)이어야 한다 — 아니면 `model_capacity_predecessor_unproven`. 사슬 칸에는 문서가 없어 여기서만 증명할 수 있다.
+- **배포 순서(같은 창)**: 옛 parser(`.strict`)는 `compatiblePredecessors` 를 모르는 칸으로 거절한다 — 그 정책을 읽는 모든 용량 소비자(입장·dispatch·관측·감시자·ops CLI·웹)가
+  이 판을 돈 뒤에만 관리자가 배정을 저장한다(잡힌 행이 있는 동안의 저장이 사슬 칸을 쓴다). route 129개 이상과 같은 조건이다.
 
 읽기·고르기(`lib/llm/stage-assignments.ts`, 아직 아무도 부르지 않는다): `assignmentsForStage(stage, { mode: 'live' })` = rank → assignment_id 순,
 `chooseModelForItem(rows, itemKey, { excludeModels })` = 1차 오늘 규칙(`selectFirstReviewer`)과 같은 `(itemKey − 1) mod n` 칸, rank 가 모두 빠지면 다음 rank,
@@ -260,4 +275,6 @@ migration `0155_model_assignments`(PR 3b-A)는 같은 표 `model_helper_assignme
 - `tests/dr-web-fence.test.ts` — 도우미 action 다섯이 쓰기 관문을 지난다(수 97). `tests/admin-navigation.test.tsx` — 메뉴 링크 23개.
 - 배정 표(3b-A): `tests/capacity-helpers.test.ts`(어휘·zod·evidence·0155 글자·route 상한), `tests/stage-assignments.test.ts`(고르기, 1차 칸 = selectFirstReviewer),
   `tests/integration/model-assignments.test.ts`(자기 DB: 계약·route·장비 순위·감사 한 TX, 같은 저장 반복, 잡힌 행과 앞 판, 상한·충돌, 거절 뒤 남는 행 없음, cli·vote·local-direct 계약).
+- 앞 판 사슬(3b-B): `tests/model-capacity-predecessor-chain.test.ts`(모양·옛 단일 칸 = 길이 1·세대 인증·덧붙이기 판정), `tests/integration/model-assignments.test.ts`
+  (gen-1 dispatched 를 쥔 채 세 번 연속 덧붙이기, 가지치기·사슬 비우기, 16칸 꽉 참 거절과 미끄러짐, 옛 단일 칸 이어받기, 운영자 쓰기의 증명).
 - 표·입장 판정·감시자 순환은 WP-2a-A·B 의 테스트가 본다(`tests/capacity-helpers.test.ts`, `tests/integration/model-capacity-helpers.test.ts`, `tests/capacity-supervisor-decide.test.ts`).

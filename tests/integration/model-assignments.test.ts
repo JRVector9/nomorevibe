@@ -7,7 +7,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import * as schema from "@/lib/db/schema";
 import { db } from "@/lib/db";
 import { MODEL_CAPACITY_ROUTES_MAX, modelCapacityPolicyHash, parseModelCapacityPolicy, type ModelCapacityPolicy, type ModelCapacityRequest } from "@/lib/llm/capacity";
-import { appendCompatibleRoutes, beginModelDispatch, cancelReservedModelSlot, markModelDispatchIndeterminate, requestModelSlot } from "@/lib/llm/capacity-repository";
+import { appendCompatibleRoutes, beginModelDispatch, markModelDispatchIndeterminate, requestModelSlot, setModelCapacityPolicy } from "@/lib/llm/capacity-repository";
 import { readModelCapacityDevice, saveModelCapacityDevice } from "@/lib/llm/capacity-devices-repository";
 import { MODEL_ASSIGNMENT_SAVE_AUDIT_ACTION, assignmentEvidenceKey } from "@/lib/llm/capacity-helpers";
 import { listHelperAssignments, readHelperGateStates, readModelAssignments, saveHelperAssignment, saveModelAssignment, setHelperMode,
@@ -150,7 +150,9 @@ describe("saveModelAssignment (PR 3b-A)", () => {
     expect(result).toMatchObject({ route, appended: [route], policyRevision: before.revision + 1 });
     expect(after).toMatchObject({ mode: "open", epoch: before.epoch, revision: before.revision + 1 });
     expect(after.policy.routes).toEqual([...basePolicy.routes, route]);
-    expect(after.policy.compatiblePredecessor).toEqual({ epoch: before.epoch, revision: before.revision, policy: basePolicy });
+    // nothing was held in the old generation: no chain is written (an old parser still reads this policy)
+    expect(after.policy.compatiblePredecessor).toBeUndefined();
+    expect(after.policy.compatiblePredecessors).toBeUndefined();
     expect(after.policy_hash).toBe(modelCapacityPolicyHash(parseModelCapacityPolicy(after.policy)));
     // (d) device role rank and the device version
     expect(await roleRows("eng-dev")).toEqual([{ route_id: "crawl-agent-review", role_rank: 1 }]);
@@ -203,35 +205,110 @@ describe("saveModelAssignment (PR 3b-A)", () => {
     expect((await readModelCapacityDevice("eng-dev"))!.version).toBe(device + 1);
   });
 
-  it("keeps dispatched holds valid across appends (compatiblePredecessor), refuses an append it cannot prove, and resets the chain when nothing is held", async () => {
+  it("keeps dispatched holds valid across successive appends (compatiblePredecessors chain) under constant load", async () => {
     const gen1 = await controlRow();
+    const generation = (row: { epoch: number; revision: number; policy_hash: string }) => ({ epoch: row.epoch, revision: row.revision, policyHash: row.policy_hash });
     const h1 = await dispatched(request("base-a"));
-    // P2 = P1 + r1, predecessor P1 — the gen-1 hold is authenticated, new work is admitted, mode stays open
+    // P2 = P1 + r1: the gen-1 hold is authenticated by the chain, new work is admitted, mode stays open
     await save(engAi1());
     const gen2 = await controlRow();
-    expect(gen2.policy.compatiblePredecessor).toMatchObject({ epoch: gen1.epoch, revision: gen1.revision });
+    expect(gen2.policy.compatiblePredecessors).toEqual([generation(gen1)]);
+    expect(gen2.policy.compatiblePredecessor).toBeUndefined();
     expect(gen2.mode).toBe("open");
     expect((await client`SELECT state, revision::int FROM model_capacity_requests WHERE request_id = ${h1.requestId}`)[0]).toEqual({ state: "dispatched", revision: gen1.revision });
     const h2 = await dispatched(request("base-b"));
-    // a gen-2 hold cannot be proven by a single-level predecessor once P2 already carries one: refused, nothing written
-    await unchanged(() => save({ ...engAi1({ assignmentId: "eng-dev:ai1:qwen-y", registryKey: "eng:qwen-y" }) }), "model_capacity_append_predecessor_busy");
-    // the gen-2 hold ends (indeterminate does not occupy): P3 = P2 + r2 carries P1 forward for the still-dispatched gen-1 hold
-    expect(await markModelDispatchIndeterminate(h2, "transport_unknown")).toBe(true);
+    // the second append under load (the single-predecessor form refused it with model_capacity_append_predecessor_busy) keeps both generations
     await save(engAi1({ assignmentId: "eng-dev:ai1:qwen-y", registryKey: "eng:qwen-y" }));
     const gen3 = await controlRow();
     expect(gen3.revision).toBe(gen2.revision + 1);
-    expect(gen3.policy.compatiblePredecessor).toEqual(gen2.policy.compatiblePredecessor);
-    expect(gen3.mode).toBe("open");
+    expect(gen3.policy.compatiblePredecessors).toEqual([generation(gen1), generation(gen2)]);
     const r3 = await requestModelSlot(request("base-b"));
-    expect(r3.kind).toBe("granted");                                                           // not policy_changed
-    // nothing held from gen 3 or gen 1: the next append drops the predecessor, so the one after can protect gen-4 holds again
-    expect(await markModelDispatchIndeterminate(h1, "transport_unknown")).toBe(true);
-    if (r3.kind === "granted") expect(await cancelReservedModelSlot(r3.reservation)).toBe(true);
+    expect(r3.kind).toBe("granted");                                                           // not policy_changed: gen-1 and gen-2 holds are proven
+    // a third append while gen-1, gen-2 and a gen-3 reservation are all held
     await save(engAi1({ assignmentId: "eng-dev:ai1:qwen-z", registryKey: "eng:qwen-z" }));
     const gen4 = await controlRow();
-    expect(gen4.policy.compatiblePredecessor).toBeUndefined();
-    expect(gen4.policy.routes.map(route => route.model)).toEqual(["m", "m", "Qwen-X", "Qwen-Y", "Qwen-Z"]);
+    expect(gen4.policy.compatiblePredecessors).toEqual([generation(gen1), generation(gen2), generation(gen3)]);
     expect(gen4.mode).toBe("open");
+    expect((await client`SELECT request_id, state FROM model_capacity_requests WHERE request_id IN (${h1.requestId}, ${h2.requestId}) ORDER BY revision`))
+      .toEqual([{ request_id: h1.requestId, state: "dispatched" }, { request_id: h2.requestId, state: "dispatched" }]);
+    expect((await requestModelSlot(request("base-a"))).kind).toBe("granted");
+    expect(gen4.policy.routes.map(route => route.model)).toEqual(["m", "m", "Qwen-X", "Qwen-Y", "Qwen-Z"]);
+  });
+
+  it("prunes generations without ledger rows, drops the chain when nothing is held, and refuses a full chain without writing", async () => {
+    const generation = (row: { epoch: number; revision: number; policy_hash: string }) => ({ epoch: row.epoch, revision: row.revision, policyHash: row.policy_hash });
+    const gen1 = await controlRow();
+    const h1 = await dispatched(request("base-a"));
+    await db.transaction(tx => appendCompatibleRoutes(tx, [baseRoute("p-1", "dev-a")]));
+    const h2 = await dispatched(request("base-b"));
+    const gen2 = await controlRow();
+    await db.transaction(tx => appendCompatibleRoutes(tx, [baseRoute("p-2", "dev-a")]));
+    expect((await controlRow()).policy.compatiblePredecessors).toEqual([generation(gen1), generation(gen2)]);
+    // gen 2 ends (indeterminate does not occupy and is not live), gen 3 never had a row: both are pruned, gen 1 stays
+    expect(await markModelDispatchIndeterminate(h2, "transport_unknown")).toBe(true);
+    await db.transaction(tx => appendCompatibleRoutes(tx, [baseRoute("p-3", "dev-a")]));
+    expect((await controlRow()).policy.compatiblePredecessors).toEqual([generation(gen1)]);
+    // nothing live in any old generation: the chain field is dropped altogether
+    expect(await markModelDispatchIndeterminate(h1, "transport_unknown")).toBe(true);
+    await db.transaction(tx => appendCompatibleRoutes(tx, [baseRoute("p-4", "dev-a")]));
+    const cleared = await controlRow();
+    expect(cleared.policy.compatiblePredecessors).toBeUndefined();
+    expect(cleared.policy.compatiblePredecessor).toBeUndefined();
+    // fill the chain: every generation keeps a live hold (enough slots on both devices)
+    await configure("dev-a", { limitSlots: 32, secondaryCap: 32 }); await configure("dev-b", { limitSlots: 32, secondaryCap: 32 });
+    const held: Awaited<ReturnType<typeof dispatched>>[] = [];
+    for (let index = 0; index < 16; index++) {
+      held.push(await dispatched(request(index % 2 ? "base-b" : "base-a")));
+      await db.transaction(tx => appendCompatibleRoutes(tx, [baseRoute(`q-${index}`, "dev-a")]));
+    }
+    const full = await controlRow();
+    expect(full.policy.compatiblePredecessors).toHaveLength(16);
+    expect((await requestModelSlot(request("base-a"))).kind).toBe("granted");               // every one of the 16 old generations is proven
+    // the 17th generation with a live row cannot be added: refused, nothing written
+    await unchanged(() => db.transaction(tx => appendCompatibleRoutes(tx, [baseRoute("q-overflow", "dev-a")])), "model_capacity_append_chain_full");
+    // once the oldest hold ends the same append succeeds and the chain slides
+    expect(await markModelDispatchIndeterminate(held[0], "transport_unknown")).toBe(true);
+    await db.transaction(tx => appendCompatibleRoutes(tx, [baseRoute("q-overflow", "dev-a")]));
+    const slid = await controlRow();
+    expect(slid.policy.compatiblePredecessors).toHaveLength(16);
+    expect(slid.policy.compatiblePredecessors![0]).toEqual(full.policy.compatiblePredecessors![1]);
+    expect(slid.policy.compatiblePredecessors!.at(-1)).toEqual(generation(full));
+  });
+
+  it("reads an old single predecessor as a chain of one and keeps it while its hold lives", async () => {
+    const h1 = await dispatched(request("base-a"));
+    const gen1 = await controlRow();
+    const legacy: ModelCapacityPolicy = { ...basePolicy, routes: [...basePolicy.routes, baseRoute("legacy-add", "dev-b")],
+      compatiblePredecessor: { epoch: gen1.epoch, revision: gen1.revision, policy: { ...basePolicy, routes: [...basePolicy.routes] } } };
+    await installPolicy(legacy);
+    const gen2 = await controlRow();
+    expect((await requestModelSlot(request("base-b"))).kind).toBe("granted");
+    await db.transaction(tx => appendCompatibleRoutes(tx, [baseRoute("after-legacy", "dev-a")]));
+    const gen3 = await controlRow();
+    expect(gen3.policy.compatiblePredecessor).toBeUndefined();
+    expect(gen3.policy.compatiblePredecessors).toEqual([{ epoch: gen1.epoch, revision: gen1.revision, policyHash: modelCapacityPolicyHash(basePolicy) },
+      { epoch: gen2.epoch, revision: gen2.revision, policyHash: gen2.policy_hash }]);
+    expect((await requestModelSlot(request("base-a"))).kind).toBe("granted");
+    expect(await markModelDispatchIndeterminate(h1, "transport_unknown")).toBe(true);
+  });
+
+  it("lets the operator policy write carry only a chain it can prove", async () => {
+    const h1 = await dispatched(request("base-a"));
+    await db.transaction(tx => appendCompatibleRoutes(tx, [baseRoute("op-1", "dev-a")]));
+    const gen2 = await controlRow();
+    const chain = gen2.policy.compatiblePredecessors!;
+    await client`UPDATE model_capacity_control SET mode = 'draining' WHERE id = 1`;
+    const write = (value: unknown) => db.transaction(tx => setModelCapacityPolicy(tx, value));
+    const { compatiblePredecessors: _drop, ...gen2Base } = gen2.policy; void _drop;
+    const grown = { ...gen2Base, routes: [...gen2.policy.routes, baseRoute("op-2", "dev-b")] };
+    await unchanged(() => write({ ...grown, compatiblePredecessors: [{ epoch: gen2.epoch, revision: 1, policyHash: "f".repeat(64) }] }), "model_capacity_predecessor_unproven");
+    await unchanged(() => write({ ...gen2Base, routes: [...gen2.policy.routes].reverse().slice(1), compatiblePredecessors: chain }), "model_capacity_predecessor_unproven");
+    await write({ ...grown, compatiblePredecessors: [...chain, { epoch: gen2.epoch, revision: gen2.revision, policyHash: gen2.policy_hash }] });
+    const gen3 = await controlRow();
+    expect(gen3.policy.compatiblePredecessors).toHaveLength(2);
+    await client`UPDATE model_capacity_control SET mode = 'open' WHERE id = 1`;
+    expect((await requestModelSlot(request("base-b"))).kind).toBe("granted");
+    expect(await markModelDispatchIndeterminate(h1, "transport_unknown")).toBe(true);
   });
 
   it("enforces the route cap and refuses a conflicting route without writing", async () => {
