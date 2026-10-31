@@ -4,3 +4,8 @@
 .models-save-bar > div { flex: 1; max-height: 90px; overflow: auto; }
 @media (max-width: 479px) { .models-save-bar { gap: 8px; padding-inline: 16px; } .models-save-bar button { padding-inline: 12px; } }
 @media print { .models-save-bar { position: static; } }
+
+/* 한 화면(2026-10-31) — 상태를 색만으로 가르지 않는다: 확인 못함 행의 왼쪽 점선(토큰만 쓴다) */
+.model-row-unknown { background-image: repeating-linear-gradient(180deg, var(--color-warn) 0 6px, transparent 6px 10px); background-size: 3px 100%; background-repeat: no-repeat; }
+/* 폰에서는 메뉴 머리(admin-sidebar, sticky)와 겹치지 않게 흐른다 — md 이상에서만 붙어 따라온다(RefreshBar.tsx 의 md:sticky) */
+@media (max-width: 760px) { .models-topbar { position: static; } }
