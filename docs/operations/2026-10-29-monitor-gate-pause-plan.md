@@ -17,7 +17,7 @@
 1. failover readiness의 모든 역할(publisher·reviewer·crawler·text·maintenance)이 보고되어야 합니다(`<역할>=missing`이면 차단). strict 역할은 `ready`, 나머지는 `ready` 또는 `standby_active`(`VALID_HOLDER_REASONS`, `:994`)여야 합니다.
 2. readiness의 `scheduler.reason == 'ready'`(scheduler 두 복제본).
 3. **worker progress의 `overall == 'ok'`**. `unknown`도 차단합니다. 차단 메시지에는 `progress=alarm`만 나오고 **어느 단계인지는 나오지 않습니다**. 단계는 아래 R1 명령으로 확인합니다.
-4. 관문은 `check-failover-readiness.ts` 결과에서 `.readiness`만 읽습니다. 같은 스크립트가 보고하는 미확인 요청 경보(`capacityUnknowns`, `lib/operations/failover-monitor.ts`)는 monitor_gate 판정에 **들어가지 않습니다**.
+4. 관문은 `check-failover-readiness.ts` 결과에서 `.readiness`만 읽습니다. 같은 스크립트가 보고하는 미확인 요청 경보(`capacityUnknowns`, `lib/operations/failover-monitor.ts`)는 monitor_gate 판정에 **들어가지 않습니다**. 2026-10-31부터 그 값도 검토 행만 있으면 `review`(경보 아님)이고, 문턱 초과·기한 넘긴 보낸 호출만 `alarm`입니다([Oracle 복구 runbook](oracle-recovery-runbook.md)).
 
 `overall` 계산은 `lib/operations/worker-progress-query.ts:176`에 있습니다.
 

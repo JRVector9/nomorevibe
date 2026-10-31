@@ -36,6 +36,31 @@ Oracle에는 Dokploy/DB/모델 자격을 전달하지 않는다. 공개·DB·모
 
 적용 순서는 **Oracle watchdog·incident notifier → M3/mini SSH gateway → monitor 앱**이다. 새 gateway의 선택 필드를 구버전 Oracle validator가 거절하므로 이 순서를 지킨다. 기존 state/config/key를 지우거나 수동 `--once`를 중복 실행하지 않는다. 이 절은 소스 계약이며 실제 설치·알림·복구 완료는 운영 영수증으로 별도 확인한다.
 
+## 모델 장부 '확인 못함'은 경보가 아니다 (2026-10-31)
+
+소유자 결정(2026-10-30): 결과를 모르는 모델 호출(`indeterminate`)은 일을 멈추지 않고 `/admin/models`의 「확인 못함 — 사람 검토」 목록으로만 간다.
+monitor heartbeat의 `capacityUnknowns`는 다음 뜻이다.
+
+| status | 뜻 | monitor overall·Kuma | gateway 행 | Oracle |
+| --- | --- | --- | --- | --- |
+| `ok` | 검토 행 0, 기한 넘긴 보낸 호출 0 | 영향 없음 | 영향 없음 | 지움 |
+| `review` | 검토 행이 있다(점유 아님) | 영향 없음 — UP 메시지에 `capacity review N (oldest …)`만 붙음 | monitor 자신의 overall대로 | 로그 이벤트 `model_review_pending`만, 알림 없음 |
+| `alarm` | 아래 문턱 초과(`alarmReasons`) | `alarm` → 2표본 뒤 DOWN | `pipeline_alarm` | 사유별 장애 `<host>/<service>/capacity/<reason>` 한 건, 명시적 비경보 관측 600초 연속 뒤 해제 |
+| `unknown` | 장부를 읽지 못함 | `unknown` | `pipeline_alarm` | 경보, 이전 검토 목록을 지우지 않음 |
+
+`alarm` 사유와 기본 문턱(monitor 앱 env, 양의 정수만, 틀리면 기본값; 시작 로그 `monitor.configured.capacityThresholds`에 실제 값):
+
+- `review_backlog`: 검토 행이 `MONITOR_CAPACITY_REVIEW_MAX_ROWS`(기본 **50**)보다 많다.
+- `review_stale`: 가장 오래된 검토 행(전송 시각, 없으면 접수 시각)이 `MONITOR_CAPACITY_REVIEW_MAX_AGE_SECONDS`(기본 **86400** = 24시간)보다 오래됐다.
+- `dispatch_stuck`: 보낸 호출(`dispatched`, 슬롯을 실제로 점유)이 `MONITOR_CAPACITY_DISPATCH_STUCK_SECONDS`(기본 **1800** = 30분, 가장 긴 기본 호출 상한 300초의 6배)보다 오래 남았다 — 워커가 죽어 표식 없이 남은 전송 등 실제로 슬롯을 막는 상태.
+
+요약 필드(`count`·`oldestAgeSeconds`·`stuckDispatched`·`alarmReasons`)는 `unknown`이 아닐 때 항상 붙는다. 요약 없는 예전 `alarm`(2026-10-31 전 monitor)은 "검토 대기"였으므로 gateway·Oracle은 `review`로 읽는다.
+요청별 장애(`<requestId>/model_indeterminate`, 5분 `model_reclaim_overdue`)와 Oracle의 요청별 첫 관측 시계(`capacitySeen`)는 없앴다 — 새 watchdog이 상태를 처음 읽을 때 저장된 요청별 장애는 버린다.
+
+적용 순서는 위와 같다: **Oracle watchdog·incident notifier(`oracle_watchdog.py`·`incident_notifications.py`·Oracle에 함께 설치된 `recovery_gateway.py`) → M3/mini SSH gateway(`recovery_gateway.py`) → monitor 앱**.
+새 gateway가 내는 `review`·요약 필드를 구버전 Oracle validator가 거절하므로 Oracle이 먼저다. 새 Oracle은 구 gateway·구 monitor의 형식을 받는다.
+monitor만 먼저 배포되면 구 gateway가 `review`를 `unknown`으로 읽어 지금처럼 검토 행이 있을 때 `pipeline_alarm`이 난다(지금보다 나빠지지 않음).
+
 ## 장애별 현재 검증 범위
 
 | 장애 | 자동 동작 | 현재 근거 / 남은 일 |

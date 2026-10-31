@@ -4,6 +4,7 @@ import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
 import { modelCapacityPolicyHash, type ModelCapacityPolicy, type ModelCapacityRequest, type ModelSlotResult } from "@/lib/llm/capacity";
 import { cancelReservedModelSlot, requestAi1ModelSlot } from "@/lib/llm/capacity-repository";
 import { awaitQueuedAi1Reservation, AI1_RESERVATION_POLL_MS, type Ai1ReservationWaitEvent } from "@/lib/crawl/agent-review-model-capacity";
+import { capacityRefusalReason } from "@/lib/llm/capacity-busy-targets";
 import { runJob } from "@/lib/jobs/runner";
 import { runWorker } from "@/scripts/worker";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
@@ -149,6 +150,26 @@ it("returns at the start deadline with its row still queued (never cancelled), a
   expect(Date.now() - started).toBeLessThan(AI1_RESERVATION_POLL_MS);
   expect(fenceSeen).toEqual([expect.objectContaining({ queued: false, polls: 0, ended: "not_queued" })]);
   expect(await state(fenced.requestId)).toBeUndefined();
+});
+
+// 2026-10-30 결정: 한 후보의 fence 거절은 그 후보만의 work_busy 다 — 진짜 포화(줄에 선 행)만 capacity 로 남아 모델을 멈출 수 있다(D1).
+it("tells a same-candidate fence refusal (work_busy) from a queued saturation (capacity) on the real ledger", async () => {
+  const candidateId = ++serial, holder = request(candidateId, "a");
+  reservationOf(await ask(holder));
+  // 다른 owner 가 같은 후보를 다른 입력으로 묻는다 — AI1 logical fence 가 행 없이 capacity 로 답한다
+  const peer = { ...request(candidateId, "b"), owner: { instanceId: `${owner.instanceId}-peer`, bootId: randomUUID() } };
+  const refused = await ask(peer);
+  expect(refused).toEqual({ kind: "deferred", reason: "capacity" });
+  expect(await state(peer.requestId)).toBeUndefined();
+  if (refused.kind !== "deferred") throw new Error("deferred_required");
+  expect(await capacityRefusalReason(peer, refused.reason)).toBe("work_busy");
+  // 다른 후보는 그룹 한도(engine 1)에 막혀 줄에 선다 — 진짜 포화는 capacity 그대로다
+  const queued = request(), saturated = await ask(queued);
+  expect(saturated).toEqual({ kind: "deferred", reason: "capacity" });
+  expect(await state(queued.requestId)).toBe("waiting");
+  if (saturated.kind !== "deferred") throw new Error("deferred_required");
+  expect(await capacityRefusalReason(queued, saturated.reason)).toBe("capacity");
+  expect(await capacityRefusalReason(queued, "policy_changed")).toBe("policy_changed");
 });
 
 it("measures per-model reservation expiry and unused slot time from the ledger in a read-only transaction", async () => {

@@ -37,6 +37,7 @@ const QUERY: Record<string, Record<string, readonly string[]>> = {
   "/admin/products": { filter: Object.keys(PRODUCT_FILTERS), sort: Object.keys(PRODUCT_SORTS) },
   "/admin/audit": { tab: auditTabs(), view: auditViews() },
   "/admin/github-accounts": {},
+  "/admin/models": {},
   "/admin/feedback": { state: ["accepted", "held", "rejected", "all"] },
   "/admin/translations": { state: ["pending", "ready", "failed", "reviewed", "all"] },
 };

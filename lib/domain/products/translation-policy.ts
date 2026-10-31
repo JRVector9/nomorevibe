@@ -16,6 +16,9 @@ export const PRODUCT_TRANSLATION_DEMAND_LIMIT = DEFAULT_RUNTIME_SETTINGS.transla
 export const PRODUCT_TRANSLATION_MAX_SOURCE_CHARS = DEFAULT_RUNTIME_SETTINGS.translation.product.maxSourceChars;
 /** 묶음 포장 임계: 글자 합이 이를 넘으면 더 묶지 않는다. 설명 한 건은 8,000자까지라 긴 설명은 단독으로 나가고(M1 ≈ 100초), 짧은 것만 묶인다. */
 export const PRODUCT_TRANSLATION_BATCH_CHARS = DEFAULT_RUNTIME_SETTINGS.translation.product.batchChars;
+/** 장부 멤버 키(`product-translate:<id>:<locale>:<field>`, capacity.ts productTranslationTargetKey 와 같은 모양). 잡이 이 틱에 넘긴 멤버를 센다. */
+export const productTranslationTaskKey = (task: { source: { id: number }; locale: string; field: string }): string =>
+  `product-translate:${task.source.id}:${task.locale}:${task.field}`;
 /** 지금 판의 공개 번역 정책(고정된 틱 스냅샷 → 프로세스 스냅샷 → 기본값). 동기, 던지지 않는다. */
 export function productTranslationPolicy(): ProductTranslationPolicy { return runtimeSettings().translation.product; }
 /** 순서대로 묶는다: 첫 건은 길이와 무관하게 들어가고(단독 요청), 다음 건은 글자 합이 임계를 넘지 않을 때만 더한다. 건너뛰지 않고 최대 batchMax(4)건. */

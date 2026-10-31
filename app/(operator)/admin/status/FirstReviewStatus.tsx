@@ -53,8 +53,9 @@ export function FirstReviewStatusCard({ settings, throughput, progress, jobs, no
   const groups = control.runtime?.modelGroups;
   const relatedGroups = groups?.filter(group => group.waitingFirst > 0
     || group.firstModels.some(model => slots.some(slot => slot.provider === model.provider && slot.model === model.model)));
+  // 2026-10-30: 확인 못함(indeterminate)은 점유가 아니다 — 포화는 유효 예약·보낸 호출만 센다(lib/llm/capacity-states.ts).
   const blocked = modelControl?.mode === "open" && modelControl.policy === "verified" && relatedGroups?.some(group =>
-    group.waitingFirst > 0 && group.limit !== null && group.reserved + group.dispatched + group.indeterminate >= group.limit);
+    group.waitingFirst > 0 && group.limit !== null && group.reserved + group.dispatched >= group.limit);
   const globalMetric = (label: string) => modelControl?.metrics.find(row => row.label === label)?.value ?? null;
   const capacityNumber = (value: number | null) => value === null ? "미확인" : n(value);
   const stats = read.ok ? read.value : null;
@@ -84,26 +85,27 @@ export function FirstReviewStatusCard({ settings, throughput, progress, jobs, no
     <p className="dash-note">처리 방식: {mode?.mode ? MODES[mode.mode] ?? mode.mode : "미확인"}
       {mode?.mode === "items" ? ` · 유효 항목 점유 ${mode.live === null ? "미확인" : `${n(mode.live)}건`} (외부 모델 호출 중이라는 뜻은 아님)`
         : mode?.mode === "legacy" ? ` · 작업 ${jobStatusLabel(job, Date.parse(now))}` : ""}
-      {" "}· 모델 슬롯 대기 {queueText(first?.queue.find(row => row.key === "slotWaiting"))} · 예약·호출·미확정 점유 {queueText(first?.queue.find(row => row.key === "slotActive"))}.</p>
+      {" "}· 모델 슬롯 대기 {queueText(first?.queue.find(row => row.key === "slotWaiting"))} · 예약·호출 점유 {queueText(first?.queue.find(row => row.key === "slotActive"))}.</p>
     <p className="dash-note">최근 작업 실행 {formatAgo(job?.lastRunAt, now, "기록 없음")} · 회차 성공 {formatAgo(job?.lastSuccessAt, now, "기록 없음")}
       {job?.notBefore && job.notBefore > new Date(now) && <> · 다음 작업 허용 {formatDetailTime(job.notBefore)}</>}.
       회차 성공과 후보 검수 완료는 각각의 기록입니다.</p>
     <div className="mt-4 rounded-[10px] border border-line p-3">
       <h3 className="text-[13px] font-semibold">공유 모델 용량 · 다른 단계의 점유 포함</h3>
       <p className="dash-note">전역 설정 상한 {capacityNumber(globalMetric("설정 상한"))} · 예약 {capacityNumber(globalMetric("예약"))}
-        {" "}· 호출 미정산 {capacityNumber(globalMetric("dispatched"))} · 종료 미확정 {capacityNumber(globalMetric("indeterminate"))}.
+        {" "}· 호출 미정산 {capacityNumber(globalMetric("dispatched"))} · 확인 못함(사람 검토 · 점유 아님) {capacityNumber(globalMetric("indeterminate"))}.
         조회 {control.observedAt ? formatAgo(control.observedAt, now) : "미확인"}{control.observedAt && stale(control.observedAt, now) ? " · 오래된 집계" : ""}.</p>
       {groups == null ? <p className="dash-note">공유 물리 그룹의 점유는 미확인입니다(조회 실패·상한 초과 등). AI 1차 오류가 없다는 이유로 정상으로 판정하지 않습니다.</p>
         : relatedGroups?.length ? <ul className="mt-2 grid gap-2 text-[13px]">{relatedGroups.map(group => <li key={group.group} className="break-words">
-          <b>{group.group}</b> · 유효 예약·호출·종료 미확정 {n(group.reserved + group.dispatched + group.indeterminate)} / 상한 {capacityNumber(group.limit)}
+          <b>{group.group}</b> · 유효 예약·호출 {n(group.reserved + group.dispatched)} / 상한 {capacityNumber(group.limit)}
           {" "}· AI 1차 슬롯 대기 {n(group.waitingFirst)}건
-          {group.indeterminate > 0 && <span className="text-down"> · 종료 미확정 {n(group.indeterminate)}건이 용량을 계속 점유</span>}
+          {group.indeterminate > 0 && <> · <Link href={ACTION_LINKS.unknownReview} prefetch={false}>확인 못함 {n(group.indeterminate)}건 · 사람 검토</Link> (슬롯 점유 아님)</>}
           {group.occupants.length > 0 && <ul className="mt-1 grid gap-1 pl-3 text-fg-2">{group.occupants.map(row => <li key={`${row.route}:${row.state}`}>
-            {JOB_LABELS[row.route] ?? row.route} ({row.route}) · {row.state === "indeterminate" ? "외부 종료 미확정" : row.state === "dispatched" ? "호출 미정산" : "예약"} {n(row.count)}건
+            {JOB_LABELS[row.route] ?? row.route} ({row.route}) · {row.state === "indeterminate" ? "확인 못함 · 사람 검토(점유 아님)" : row.state === "dispatched" ? "호출 미정산" : "예약"} {n(row.count)}건
           </li>)}</ul>}
         </li>)}</ul> : <p className="dash-note">현재 설정의 AI 1차 모델에 연결된 공유 그룹이 확인되지 않습니다. 모델 경로 계약을 확인해야 합니다.</p>}
-      <p className="dash-note">같은 물리 그룹을 쓰는 번역·다른 검수의 종료 미확정 호출도 AI 1차를 막을 수 있습니다.
-        유효 예약과 dispatched·indeterminate는 정산 근거가 올 때까지 점유합니다. AI 1차 실행0·실패0만으로 용량이 비었다고 판단하지 않습니다.</p>
+      <p className="dash-note">같은 물리 그룹을 쓰는 번역·다른 검수의 유효 예약·보낸 호출(dispatched)도 AI 1차를 막을 수 있습니다. 보낸 호출은 정산 근거가 올 때까지 점유합니다.
+        결과를 확인하지 못한 호출(indeterminate)은 슬롯을 점유하지 않고 아무 단계도 막지 않습니다 — <Link href={ACTION_LINKS.unknownReview} prefetch={false}>확인 못함 · 사람 검토 목록</Link>에서 봅니다.
+        AI 1차 실행0·실패0만으로 용량이 비었다고 판단하지 않습니다.</p>
       <Link href={ACTION_LINKS.modelCapacity} prefetch={false} className="mt-2 inline-block text-[13px]">전체 모델 슬롯·전역 제어 장부 보기 →</Link>
     </div>
     <div className="mt-4 border-t border-line pt-3">

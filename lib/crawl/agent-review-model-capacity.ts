@@ -6,6 +6,7 @@ import { ai1ModelDispatchSchema, modelCapacityOwnerSchema, modelCapacityRequestI
 import { findOwnPendingModelRequest, requestAi1ModelSlot, cancelReservedModelSlot,
   markModelDispatchIndeterminate, reconcileAi1GatewayTerminal, reconcileAi1ItemGatewayTerminal, reconcileGatewayNotStarted } from '@/lib/llm/capacity-repository';
 import { markUnsettledDispatch } from '@/lib/llm/capacity-unsettled';
+import { capacityRefusalReason } from '@/lib/llm/capacity-busy-targets';
 import { roleLeaseFromEnv } from '@/lib/jobs/role-leader';
 import type { JobLease } from '@/lib/jobs/control';
 import { itemBindingHash } from '@/lib/jobs/items/types';
@@ -34,8 +35,10 @@ export async function claimAgentReviewItemModelCapacity(intent: AgentReviewItemM
     routeId: 'crawl-agent-review', provider: 'abcllm', model, workKey: `ai1:${context.candidate.id}:${itemBindingHash(binding)}` });
   const pending = await findOwnPendingModelRequest(identity);
   if (pending?.state === 'dispatched') throw new ModelCapacityDeferredError('dispatched');
-  const slot = await requestAi1ModelSlot({ ...identity, requestId: pending?.requestId ?? randomUUID() }, context.candidate.id);
-  if (slot.kind !== 'granted') throw new ModelCapacityDeferredError(slot.reason);
+  const request = { ...identity, requestId: pending?.requestId ?? randomUUID() };
+  const slot = await requestAi1ModelSlot(request, context.candidate.id);
+  // 행 없는 capacity(같은 후보 fence)는 이 후보 하나의 일이다 — work_busy 로 돌려 모델을 멈추지 않게 한다(2026-10-30 결정)
+  if (slot.kind !== 'granted') throw new ModelCapacityDeferredError(await capacityRefusalReason(request, slot.reason));
   let claim: ItemModelCapacityReviewClaim;
   try {
     if (signal?.aborted) throw new ModelCapacityDeferredError('reservation_lost');
@@ -188,7 +191,8 @@ export async function claimAgentReviewModelCapacity(input: Context, wait?: Ai1Re
   const request = { ...identity, requestId: pending?.requestId ?? randomUUID() };
   let slot = await requestAi1ModelSlot(request, input.candidate.id);
   if (wait && slot.kind === 'deferred' && slot.reason === 'capacity') slot = await awaitQueuedAi1Reservation(request, input.candidate.id, slot, wait, input.signal);
-  if (slot.kind !== 'granted') throw new ModelCapacityDeferredError(slot.reason);
+  // 줄에 서지 못한 capacity(같은 후보 fence·중복 작업)는 work_busy — 호출자는 이 후보만 건너뛴다(2026-10-30 결정)
+  if (slot.kind !== 'granted') throw new ModelCapacityDeferredError(await capacityRefusalReason(request, slot.reason));
   let claim: ModelCapacityReviewClaim;
   try {
     if (input.signal?.aborted) throw new ModelCapacityDeferredError('reservation_lost');

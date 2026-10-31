@@ -13,7 +13,7 @@ import { firstReviewerKey, firstReviewers, selectFirstReviewer } from '@/lib/cra
  * 예전에는 같은 모델의 둘째 후보가 capacity 를 받으면 그 모델을 틱 끝까지 pause 해, 틱마다 모델당 호출이 1건 안팎이었다.
  */
 type Row = { requestId: string; workKey: string; model: string; state: 'waiting' | 'reserved' | 'dispatched'; ordinal: number; foreign?: boolean };
-const ledger = vi.hoisted(() => ({ rows: new Map<string, Row>(), ordinal: 0, requests: 0 }));
+const ledger = vi.hoisted(() => ({ rows: new Map<string, Row>(), ordinal: 0, requests: 0, fenced: new Set<number>() }));
 const mocks = vi.hoisted(() => ({ settings: null as CrawlSettings | null, list: vi.fn(), blocked: vi.fn(), gatewayActive: new Map<string, number>(),
   gatewayPeak: new Map<string, number>(), gatewayCalls: [] as string[], record: vi.fn(), cancel: vi.fn(), unknown: vi.fn(), callMs: 30 }));
 
@@ -31,8 +31,10 @@ vi.mock('@/lib/llm/capacity-repository', () => ({
     const row = [...ledger.rows.values()].find(value => value.workKey === identity.workKey);
     return row ? { requestId: row.requestId, state: row.state } : null;
   },
-  requestAi1ModelSlot: async (request: ModelCapacityRequest) => {
+  requestAi1ModelSlot: async (request: ModelCapacityRequest, candidateId: number) => {
     ledger.requests++;
+    // 같은 후보 fence(다른 요청이 ai1:<id> 를 쥠): 장부는 행을 만들지 않고 포화와 같은 capacity 로 답한다
+    if (ledger.fenced.has(candidateId)) return { kind: 'deferred', reason: 'capacity' };
     if (!ledger.rows.has(request.requestId)) ledger.rows.set(request.requestId,
       { requestId: request.requestId, workKey: request.workKey, model: request.model, state: 'waiting', ordinal: ++ledger.ordinal });
     grant();
@@ -122,7 +124,7 @@ function foreignHolder(model: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  ledger.rows.clear(); ledger.ordinal = 0; ledger.requests = 0;
+  ledger.rows.clear(); ledger.ordinal = 0; ledger.requests = 0; ledger.fenced.clear();
   mocks.gatewayActive.clear(); mocks.gatewayPeak.clear(); mocks.gatewayCalls.length = 0; mocks.callMs = 30;
   mocks.settings = { ...DEFAULT_CRAWL_SETTINGS, enabled: true, reviewMode: 'observe', reviewConcurrency: 4, firstReview: primary, firstReviewAdditional: [extra] };
   mocks.blocked.mockResolvedValue(new Set());
@@ -205,4 +207,41 @@ it('keeps the request (deferred) when the window closes with a queued row and no
   finally { release(); }
   expect(mocks.gatewayCalls).toEqual([]);
   expect([...ledger.rows.values()].filter(row => !row.foreign)).toEqual([expect.objectContaining({ state: 'waiting' })]);
+}, 20_000);
+
+// 2026-10-30 결정: 한 후보의 fence 거절(행 없는 capacity → work_busy)은 그 후보만 건너뛴다 — 모델을 pause 하지도, 틱을 미루지도 않는다.
+it('skips only the fenced candidate and keeps admitting the same model in the pool tick (D1)', async () => {
+  mocks.settings = { ...mocks.settings!, reviewConcurrency: 1 };
+  mocks.list.mockResolvedValue(candidates(4)); // 1·3 → model-a, 2·4 → model-b
+  ledger.fenced.add(1);
+  const ctx = context();
+  const result = await reviewCrawlCandidates(ctx);
+  expect(result).not.toHaveProperty('deferred');
+  expect(mocks.gatewayCalls).toEqual(['model-b', 'model-a', 'model-b']);
+  expect(ctx.log).toHaveBeenCalledWith('crawl.agent_review_skipped', expect.objectContaining({ repo: 'wait-unit/app-1', reason: 'work_busy' }));
+  expect(tickSummary(ctx.log)).toMatchObject({ pausedModels: 0, modelDeferred: false });
+  expect(mocks.cancel).not.toHaveBeenCalled(); expect(ledger.rows.size).toBe(0);
+}, 20_000);
+
+it('a fenced candidate on the single configured model does not defer the rest of the tick (D1)', async () => {
+  mocks.settings = { ...mocks.settings!, reviewConcurrency: 1, firstReviewAdditional: undefined };
+  mocks.list.mockResolvedValue(candidates(3));
+  ledger.fenced.add(1);
+  const ctx = context();
+  const result = await reviewCrawlCandidates(ctx);
+  expect(result).not.toHaveProperty('deferred');
+  expect(mocks.gatewayCalls).toEqual(['model-a', 'model-a']);
+  expect(tickSummary(ctx.log)).toMatchObject({ modelDeferred: false });
+}, 20_000);
+
+it('true saturation (a queued row) still pauses that model for the tick while the other model keeps working', async () => {
+  mocks.blocked.mockResolvedValue(new Set([firstReviewerKey(primary)]));
+  mocks.settings = { ...mocks.settings!, reviewConcurrency: 1 };
+  mocks.list.mockResolvedValue(candidates(4));
+  const release = foreignHolder('model-a');
+  const ctx = context();
+  try { expect(await reviewCrawlCandidates(ctx)).toEqual({ done: false, deferred: 'model_capacity' }); }
+  finally { release(); }
+  expect(mocks.gatewayCalls).toEqual(['model-b', 'model-b']);
+  expect(tickSummary(ctx.log)).toMatchObject({ pausedModels: 1 });
 }, 20_000);

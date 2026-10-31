@@ -13,7 +13,7 @@ import { itemBindingHash, type Ai2ItemBinding } from "@/lib/jobs/items/types";
 import { providerBoundaryCanonicalHash, providerBoundaryPlanHash, providerBoundaryPlanSchema, providerBoundaryReceiptSchema } from "@/lib/llm/provider-boundary-contract";
 import { releaseProviderBoundaryRequest } from "@/lib/operations/dr/provider-boundary-release";
 import { readCommittedRelayBoundaryProof } from '@/lib/operations/dr/provider-boundary-relay';
-import { readModelCapacityUnknowns } from '@/lib/operations/model-capacity-unknowns';
+import { CAPACITY_MONITOR_DEFAULTS, readModelCapacityUnknowns } from '@/lib/operations/model-capacity-unknowns';
 import { boundaryFixture } from "../fixtures/provider-boundary-release";
 import { TEST_DATABASE_URL } from "./setup";
 
@@ -159,7 +159,10 @@ it("operations audit failure rolls back both the exact request release and its a
   expect(await rows()).toEqual(beforeRows);expect(await client`SELECT id FROM model_capacity_events WHERE request_id=${requestId}`).toHaveLength(0);
 });
 it("dry-run rolls back; apply changes exact one row plus one matching release event and operations audit; replay never duplicates",async()=>{
-  expect(await readModelCapacityUnknowns()).toMatchObject({ status: 'alarm', requests: [expect.objectContaining({ requestId })] });
+  // 2026-10-31: an unknown-outcome row is a non-alarm human review item for the monitor/Oracle.
+  expect(await readModelCapacityUnknowns()).toMatchObject({ status: 'review', count: 1, alarmReasons: [], requests: [expect.objectContaining({ requestId })] });
+  expect(await readModelCapacityUnknowns({ ...CAPACITY_MONITOR_DEFAULTS, reviewMaxRows: 0 })).toMatchObject({ status: 'alarm', count: 1,
+    stuckDispatched: 0, alarmReasons: ['review_backlog'] });
   await expect(readCommittedRelayBoundaryProof(input())).rejects.toThrow('relay_recovery_committed_release_missing');
   expect((await releaseProviderBoundaryRequest(input(),false)).kind).toBe("released");expect(await rows()).toEqual(beforeRows);
   await expect(readCommittedRelayBoundaryProof(input())).rejects.toThrow('relay_recovery_committed_release_missing');
@@ -173,7 +176,8 @@ it("dry-run rolls back; apply changes exact one row plus one matching release ev
   expect(await readCommittedRelayBoundaryProof(input())).toEqual({ requestId, planHash: input().expectedPlanHash,
     bindingHash: ai2DispatchBindingHash(binding), wireHash: binding.wireHash, model: binding.model,
     releaseEvidenceHash: row.terminal_evidence_hash });
-  expect(await readModelCapacityUnknowns()).toEqual({ status: 'ok', truncated: false, requests: [] });
+  expect(await readModelCapacityUnknowns()).toEqual({ status: 'ok', truncated: false, requests: [], count: 0, oldestAgeSeconds: null,
+    stuckDispatched: 0, alarmReasons: [] });
   // Deployed e0ef monitoring/pending queries are unchanged: a withdrawn boundary has no inferred usage and is not pending.
   const [oldRead]=await client`SELECT state IN ('waiting','reserved','dispatched','indeterminate') pending,
     CASE WHEN state='settled' AND terminal_evidence->>'provenance'='upstream_reported' THEN terminal_evidence->'actualUsage' END usage

@@ -3,7 +3,7 @@ import { db, onPrimary } from '@/lib/db';
 import { currentReplayDb } from '@/lib/db/replay-scope';
 import { crawlCandidates, crawlReviewAttempts } from '@/lib/db/schema';
 import { itemOwnerSchema, type ItemOwner } from '@/lib/jobs/items/types';
-import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
+import { ModelCapacityDeferredError, modelCapacityDeferralIsPerWork } from '@/lib/llm/capacity-deferred';
 import type { ProviderCircuits } from '@/lib/llm/provider-circuit-breaker';
 import { logger } from '@/lib/observability/logger';
 import type { HostAdmission } from '@/lib/operations/host-budget-runtime';
@@ -74,8 +74,9 @@ export async function runFirstReviewConsumer(input: {
         else result.skipped++;
       } catch (error) {
         if (!(error instanceof ModelCapacityDeferredError)) throw error;
-        // 이 후보의 앞선 호출만 아직 보내진 중이다 — 후보 하나를 건너뛰고 쪽을 계속 본다(미확인 행은 더 이상 이 사유를 내지 않는다).
-        if (error.reason === 'dispatched') { result.skipped++; continue; }
+        // 이 후보의 앞선 호출만 아직 보내진 중이거나(dispatched) 같은 후보가 다른 요청에 묶였다(work_busy, fence) — 후보 하나를 건너뛰고
+        // 쪽을 계속 본다. 모델을 pause 하지 않는다(2026-10-30 결정; 미확인 행은 더 이상 이 사유를 내지 않는다).
+        if (modelCapacityDeferralIsPerWork(error.reason)) { result.skipped++; continue; }
         result.deferred++; deferred = true;
         if (error instanceof FirstReviewModelDeferredError && firstReviewDeferralIsLocal(error.reason)) {
           pausedReviewers.add(firstReviewerKey(error.reviewer));

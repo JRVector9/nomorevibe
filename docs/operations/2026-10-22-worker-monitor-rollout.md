@@ -22,6 +22,7 @@ Oracle Telegram은 두 드릴의 DOWN/UP **4건 모두 API 전송 수락**을 �
 | 주 수신기 | mini의 기존 Uptime Kuma 2.3.2, Push monitor ID `72`, Telegram notification ID `1` |
 | 외부 수신기 | Oracle `onetwoday`, `ap-osaka-1`의 별도 데이터센터, 전용 Uptime Kuma 2.3.2, Push ID `1`, Telegram notification ID `1` |
 | 전송·판정 | 검사·전송 후 30초 대기, 연속 2회 `alarm`/`unknown`이면 DOWN, 정상 회복은 즉시 UP |
+| 모델 장부 (2026-10-31) | '확인 못함 · 사람 검토'(`capacityUnknowns.status=review`)는 DOWN이 아니다. `alarm`은 검토 행 >`MONITOR_CAPACITY_REVIEW_MAX_ROWS`(50)·가장 오래된 검토 >`MONITOR_CAPACITY_REVIEW_MAX_AGE_SECONDS`(86400)·보낸 호출 >`MONITOR_CAPACITY_DISPATCH_STUCK_SECONDS`(1800)일 때만. 자세히는 [Oracle 복구 runbook](oracle-recovery-runbook.md#모델-장부-확인-못함은-경보가-아니다-2026-10-31) |
 | heartbeat timeout | 양쪽 120초 |
 
 운영은 기존 worker 이미지를 재사용하고 명령과 healthcheck를 감시 전용으로 지정했다.

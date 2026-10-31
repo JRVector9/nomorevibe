@@ -1,6 +1,25 @@
 import { sql, type SQL } from "drizzle-orm";
 import { liveStateSql } from "./capacity-states";
 import { db } from "@/lib/db";
+import type { ModelCapacityRequest, ModelSlotResult } from "./capacity";
+import type { ModelCapacityDeferredReason } from "./capacity-deferred";
+import { findOwnPendingModelRequest } from "./capacity-repository";
+
+/**
+ * 장부가 `capacity` 로 미룬 까닭을 가른다 — 줄에 섰나(포화) 아니면 행 없이 거절됐나(같은 작업 fence·중복 작업). 읽기만 한다.
+ *
+ * requestSlot(capacity-repository.ts)은 둘 다 `capacity` 로 답한다. 포화면 이 requestId 의 waiting 행이 남아 다음 poll 이 줄 순서를
+ * 잇고, fence·중복 작업은 행을 만들지 않는다(awaitQueuedAi1Reservation 의 not_queued 와 같은 판정). 행 없는 거절은 이 작업 하나의 일이라
+ * `work_busy` 로 바꾼다 — 호출자는 이 대상만 건너뛰고 모델·틱을 멈추지 않는다(2026-10-30 소유자 결정). 다른 사유는 그대로 돌려준다.
+ * 남는 경계: 이미 줄에 선 요청을 다시 묻는 사이 fence 가 생기면 행이 남아 있어 `capacity`(포화)로 본다 — 예전과 같은 동작이다.
+ */
+export async function capacityRefusalReason(request: ModelCapacityRequest,
+  reason: Extract<ModelSlotResult, { kind: "deferred" }>["reason"]): Promise<ModelCapacityDeferredReason> {
+  if (reason !== "capacity") return reason;
+  const { requestId, ...identity } = request;
+  const own = await findOwnPendingModelRequest(identity);
+  return own?.requestId === requestId && (own.state === "waiting" || own.state === "reserved") ? "capacity" : "work_busy";
+}
 
 /**
  * 요청 장부가 이미 쥔 대상 — 대기열 선택기가 건너뛸 키(읽기만 한다, 승인·해제·만료를 하지 않는다).

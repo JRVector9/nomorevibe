@@ -5,6 +5,7 @@ import { cliModelDispatchSchema, modelCapacityOwnerSchema, modelCapacityRequestI
 import { findOwnPendingModelRequest, requestCliModelSlot, cancelReservedModelSlot, markModelDispatchIndeterminate,
   reconcileCliProcessTerminal, type CliTarget } from '@/lib/llm/capacity-repository';
 import { markUnsettledDispatch } from '@/lib/llm/capacity-unsettled';
+import { capacityRefusalReason } from '@/lib/llm/capacity-busy-targets';
 import { roleLeaseFromEnv } from '@/lib/jobs/role-leader';
 import type { JobLease } from '@/lib/jobs/control';
 import { itemBindingHash } from '@/lib/jobs/items/types';
@@ -37,8 +38,10 @@ function reviewerOwner() {
 async function requestSlot(identity: ModelCapacityRequestIdentity, target: CliTarget): Promise<Extract<ModelSlotResult, { kind: 'granted' }>> {
   const pending = await findOwnPendingModelRequest(identity);
   if (pending?.state === 'dispatched') throw new ModelCapacityDeferredError('dispatched');
-  const slot = await requestCliModelSlot({ ...identity, requestId: pending?.requestId ?? randomUUID() }, target);
-  if (slot.kind !== 'granted') throw new ModelCapacityDeferredError(slot.reason);
+  const request = { ...identity, requestId: pending?.requestId ?? randomUUID() };
+  const slot = await requestCliModelSlot(request, target);
+  // AI1: 줄에 서지 못한 capacity(같은 후보 fence)는 이 후보만의 work_busy — 모델을 멈추지 않는다(2026-10-30 결정). AI2 사유는 그대로다.
+  if (slot.kind !== 'granted') throw new ModelCapacityDeferredError(target.kind === 'ai1' ? await capacityRefusalReason(request, slot.reason) : slot.reason);
   return slot;
 }
 /** 준비한 호출을 claim 까지 가져간다. commit 된 fresh dispatch 가 아니면 예약을 돌려주고 임시 디렉터리를 지운다. */

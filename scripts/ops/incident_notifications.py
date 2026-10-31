@@ -15,6 +15,9 @@ STAGES = frozenset({'reason-translate', 'crawl-tagline', 'keywords', 'keyword-ve
 REVIEW_STAGES = frozenset({'first', 'second'})
 REVIEW_REASONS = frozenset({'capacity_blocked', 'consumer_missing', 'worker_missing',
                           'upstream_stalled', 'local_stalled', 'review_stalled'})
+# 2026-10-31: the monitor's summarized model-ledger alarms. An unknown-outcome call alone (확인 못함 · 사람 검토) is
+# a human review list at /admin/models and never an incident; per-request incidents were removed.
+CAPACITY_REASONS = frozenset({'dispatch_stuck', 'review_backlog', 'review_stale'})
 FAULTS = frozenset({'probe_unknown', 'replica_intent_changed', 'replicas_missing', 'warming_up',
                     'database_unavailable', 'web_page_failed', 'web_not_ready', 'monitor_stale',
                     'pipeline_alarm', 'container_unhealthy', 'native_unit_failed',
@@ -32,10 +35,6 @@ def valid_review_failures(value):
                 isinstance(row['stage'], str) and row['stage'] in REVIEW_STAGES and
                 isinstance(row['reason'], str) and row['reason'] in REVIEW_REASONS for row in value) and
             len({row['stage'] for row in value}) == len(value))
-
-
-def _request_id(value):
-    return isinstance(value, str) and re.fullmatch(r'[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}', value) is not None
 
 
 def validate_destination(value):
@@ -112,19 +111,24 @@ def _signature(config, value):
     return (_target(config, host + '/' + service) and
             (stage == 'service' and reason in FAULTS or stage in STAGES and reason == 'upstream_stalled'
              or stage in REVIEW_STAGES and reason in REVIEW_REASONS
-             or _request_id(stage) and reason in ('model_indeterminate', 'model_reclaim_overdue')))
+             or stage == 'capacity' and reason in CAPACITY_REASONS))
 
 
 def _finite_time(value, now):
     return type(value) in (int, float) and math.isfinite(value) and 0 <= value <= now
 
 
+def _gradual(parts):
+    """pipeline_alarm 과 장부 경보(capacity)는 명시적 양호가 600초 이어져야 해제한다 — 문턱 근처 깜빡임이 알림을 되풀이하지 않는다."""
+    return parts[2] == 'service' and parts[3] == 'pipeline_alarm' or parts[2] == 'capacity'
+
+
 def _load_incident(signature, item, now):
-    """버전 1 장애. 파이프라인 복구 시각은 선택이며 재시작 뒤에도 남는다."""
+    """버전 1 장애. 파이프라인·장부 경보 복구 시각은 선택이며 재시작 뒤에도 남는다."""
     first = item.get('firstSeen')
     record = {'sent': item.get('sent') is True, 'firstSeen': first if _finite_time(first, now) else now}
     parts = signature.split('/')
-    if parts[2] == 'service' and parts[3] == 'pipeline_alarm':
+    if _gradual(parts):
         started, seen = item.get('clearSince'), item.get('lastClearAt')
         if not (started is None and seen is None):
             if _finite_time(started, now) and _finite_time(seen, now) and started <= seen:
@@ -171,7 +175,7 @@ def notify(config, state, reports, result, receipts, *, now=None, send=send_tele
     def pause_pipeline(host):
         for signature, item in incidents.items():
             parts = signature.split('/')
-            if parts[0] == host and parts[2] == 'service' and parts[3] == 'pipeline_alarm':
+            if parts[0] == host and _gradual(parts):
                 _reset_pipeline_recovery(item)
 
     # 보고서가 없거나 불완전하면 복구가 아니고 pipeline_alarm 연속 구간을 끊는다.
@@ -198,8 +202,10 @@ def notify(config, state, reports, result, receipts, *, now=None, send=send_tele
             pipeline = host + '/' + service + '/service/pipeline_alarm' if isinstance(service, str) else None
             if (not isinstance(service, str) or not _target(config, host + '/' + service) or
                     type(row.get('ok')) is not bool or row.get('reason') not in FAULTS | {'ok'}):
-                if pipeline in incidents:
-                    _reset_pipeline_recovery(incidents[pipeline])
+                for signature, item in incidents.items():
+                    parts = signature.split('/')
+                    if signature == pipeline or isinstance(service, str) and parts[:3] == [host, service, 'capacity']:
+                        _reset_pipeline_recovery(item)
                 continue
             reason = row['reason']
             prefix = [host, service, 'service']
@@ -232,26 +238,36 @@ def notify(config, state, reports, result, receipts, *, now=None, send=send_tele
                 current = {(failure['stage'], failure['reason']) for failure in reviews}
                 clear(lambda parts: parts[:2] == [host, service] and parts[2] in REVIEW_STAGES
                       and (parts[2], parts[3]) not in current)
+            # 장부 경보는 요약이 있는 명시적 관측(unknown 아님)에서 그 사유가 600초 계속 없어야 해제한다. 확인 못함(review)만
+            # 남은 것도 해제 관측이다. 관측 누락·구버전 요약 없는 형식·읽기 실패는 복구가 아니다.
+            current = None
             capacity = row.get('capacityUnknowns')
             if isinstance(capacity, dict):
                 try:
                     from recovery_gateway import validate_capacity_unknowns
                     capacity = validate_capacity_unknowns(capacity)
-                    if capacity['status'] != 'unknown' and not capacity['truncated']:
-                        pending_requests = {item['requestId'] for item in capacity['requests']}
-                        clear(lambda parts: parts[:2] == [host, service] and _request_id(parts[2]) and parts[2] not in pending_requests)
+                    if capacity['status'] != 'unknown' and 'alarmReasons' in capacity:
+                        current = set(capacity['alarmReasons'])
                 except ValueError:
                     pass
+            for signature, item in list(incidents.items()):
+                parts = signature.split('/')
+                if parts[:3] != [host, service, 'capacity']:
+                    continue
+                if current is None or parts[3] in current:
+                    _reset_pipeline_recovery(item)
+                elif _advance_pipeline_recovery(item, now):
+                    del incidents[signature]
+                else:
+                    quiet.add(signature)
 
     for event in result.get('events', []):
         if not isinstance(event, dict) or not _target(config, event.get('target')):
             continue
         stage, reason = event.get('stage', 'service'), event.get('reason')
-        if reason in ('model_indeterminate', 'model_reclaim_overdue') and _request_id(event.get('requestId')):
-            stage = event['requestId']
         if not ((stage in STAGES and reason == 'upstream_stalled') or
                 (stage in REVIEW_STAGES and reason in REVIEW_REASONS and type(event.get('bad')) is int and event['bad'] >= 2) or
-                (_request_id(stage) and reason in ('model_indeterminate', 'model_reclaim_overdue')) or
+                (stage == 'capacity' and reason in CAPACITY_REASONS) or
                 (stage == 'service' and reason in FAULTS and type(event.get('bad')) is int and event['bad'] >= 2)):
             continue
         signature = event['target'] + '/' + stage + '/' + reason
@@ -278,6 +294,10 @@ def notify(config, state, reports, result, receipts, *, now=None, send=send_tele
             line += ' (' + ('provider completion evidence required; restart does not release capacity' if reason == 'capacity_blocked'
                             else 'local fenced supervisor handles recovery' if reason == 'local_stalled'
                             else 'operator attention required; no automatic model kill') + ')'
+        elif stage == 'capacity':
+            line += ' (' + ('a dispatched model call past its bound still holds a slot; check the worker and /admin/models'
+                            if reason == 'dispatch_stuck' else
+                            'unknown-outcome model calls are piling up unreviewed; review them at /admin/models') + ')'
         if len(message) + len(line) > MESSAGE_LIMIT:
             break
         message += line

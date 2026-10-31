@@ -14,7 +14,7 @@ import { grokReviewTimeoutMs, reviewWithGrokCli } from "@/lib/crawl/agent-review
 import { reviewSemanticNow } from "../review-replay-context";
 import { prepareAgentReview } from "../agent-review-preparation";
 import { assertReviewFixtureSettings, dispatchReviewFixtureCall } from "../review-fixture-transport";
-import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
+import { ModelCapacityDeferredError, modelCapacityDeferralIsPerWork } from "@/lib/llm/capacity-deferred";
 import { claimAgentReviewModelCapacity, reviewAgentReviewModelCapacity, abandonAgentReviewModelCapacity,
   type Ai1ReservationWaitEvent } from "../agent-review-model-capacity";
 import type { Ai1ModelDispatch, CliModelDispatch } from "@/lib/llm/capacity";
@@ -170,10 +170,11 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
         ctx.log("crawl.agent_review_wait_window_closed", { repo: candidate.repo, provider: reviewProvider, model });
         return;
       }
-      // 이 후보의 앞선 호출이 아직 dispatched/indeterminate 다 — 이 후보만 건너뛴다. 틱 전체를 미루면 목록 맨 앞에 남은 한 건이
-      // 매 틱 다른 후보까지 막는다. claim TX 는 되감겼고 호출·시도·실패 기록은 없다.
-      if (error.reason === "dispatched") {
-        ctx.log("crawl.agent_review_skipped", { repo: candidate.repo, reason: "dispatched" });
+      // 이 후보의 앞선 호출이 아직 보내진 중이거나(dispatched) 같은 후보가 다른 요청에 묶였다(work_busy, fence) — 이 후보만 건너뛴다.
+      // 모델을 pause 하거나 틱 전체를 미루면 목록 맨 앞에 남은 한 건이 매 틱 다른 후보까지 막는다(2026-10-30 결정).
+      // claim TX 는 되감겼고 호출·시도·실패 기록은 없다.
+      if (modelCapacityDeferralIsPerWork(error.reason)) {
+        ctx.log("crawl.agent_review_skipped", { repo: candidate.repo, reason: error.reason });
         return;
       }
       // The claim TX has rolled back. Stop new claims without cancelling any

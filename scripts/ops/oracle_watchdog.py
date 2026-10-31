@@ -17,16 +17,17 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 
-from recovery_gateway import PROVIDER_STAGES, bounded_output, save, valid_review_failures, validate_capacity_unknowns
+from recovery_gateway import (PROVIDER_STAGES, UNKNOWN_CAPACITY, bounded_output, capacity_alarm, capacity_pending, save,
+                              valid_review_failures, validate_capacity_unknowns)
 from incident_notifications import notify, validate_destination
 
 
 REASONS = {'probe_unknown', 'replica_intent_changed', 'replicas_missing', 'warming_up',
            'database_unavailable', 'web_page_failed', 'ok', 'web_not_ready', 'monitor_stale',
            'pipeline_alarm', 'container_unhealthy', 'native_unit_failed', 'native_unit_inactive', 'native_unit_unknown'}
-# Worker auto-release target (client deadline + inner bound + skew, see lib/operations/model-capacity-auto-reclaim.ts) is
-# under 5 minutes. An unknown request still listed after this is escalated as a separate incident.
-CAPACITY_RECLAIM_OVERDUE_SECONDS = 300
+# 2026-10-31: unknown-outcome model calls (확인 못함) are a human review list (/admin/models), never an incident by
+# themselves. The monitor decides the review thresholds; Oracle only relays its summarized alarm reasons
+# (review_backlog/review_stale/dispatch_stuck) and keeps no per-request clock or per-request incident.
 
 
 def validate_report(report):
@@ -50,12 +51,22 @@ def validate_report(report):
 
         if 'capacityUnknowns' in row:
             capacity = validate_capacity_unknowns(row['capacityUnknowns'])
-            if capacity['status'] != 'ok' and (row['ok'] or row['recoverable']):
+            if capacity_alarm(capacity) and (row['ok'] or row['recoverable']):
                 raise ValueError('invalid_capacity_recovery_claim')
         if row['recoverable'] and (row['reason'] not in ('web_page_failed', 'monitor_stale', 'native_unit_failed') or not row['settled'] or row['ok']):
             raise ValueError('invalid_recovery_claim')
         keys.add(row['key'])
     return report
+
+
+def stored_capacity_alarm(target):
+    capacity = target.get('capacityUnknowns') if isinstance(target, dict) else None
+    if capacity is None:
+        return False
+    try:
+        return capacity_alarm(validate_capacity_unknowns(capacity))
+    except ValueError:
+        return True  # corrupt stored observation is unknown, never a clear
 
 
 def ssh(host, action):
@@ -87,8 +98,7 @@ def cycle(config, state, reports, *, now=None, recover=None):
     for host in config['hosts']:
         report = reports.get(host)
         if report is None:
-            alarm = alarm or any(key.startswith(host + '/') and (value.get('bad', 0) >= 2
-                                 or isinstance(value.get('capacityUnknowns'), dict) and value['capacityUnknowns'].get('status') in ('alarm', 'unknown'))
+            alarm = alarm or any(key.startswith(host + '/') and (value.get('bad', 0) >= 2 or stored_capacity_alarm(value))
                                  for key, value in state['targets'].items())
             rows = [{'key': 'host', 'ok': False, 'version': None, 'recoverable': False, 'reason': 'probe_unknown'}]
         else:
@@ -144,38 +154,30 @@ def cycle(config, state, reports, *, now=None, recover=None):
                 target['reviewFailures'] = review_observations
 
             capacity = row.get('capacityUnknowns')
-            # A missing/failed read cannot clear a known request. Only a fresh, explicit empty observation can.
-            if capacity is None or capacity['status'] == 'unknown':
+            observed_unknown = capacity is not None and capacity['status'] == 'unknown'
+            # A missing/failed read cannot clear a known review queue or alarm. Only a fresh, explicit observation can.
+            if capacity is None or observed_unknown:
                 previous_capacity = old.get('capacityUnknowns')
                 if previous_capacity is not None:
                     try:
                         previous_capacity = validate_capacity_unknowns(previous_capacity)
                     except ValueError:
-                        previous_capacity = {'status': 'unknown', 'truncated': False, 'requests': []}
-                    if capacity is None or previous_capacity['status'] == 'alarm':
+                        previous_capacity = dict(UNKNOWN_CAPACITY)
+                    if capacity is None or capacity_pending(previous_capacity) or capacity_alarm(previous_capacity):
                         capacity = previous_capacity
             if capacity is not None:
                 capacity = validate_capacity_unknowns(capacity)
                 target['capacityUnknowns'] = capacity
-                if capacity['status'] != 'ok':
+                if observed_unknown or capacity_alarm(capacity):
                     alarm = True
-                # Oracle keeps its own first-seen clock per request. The worker's automatic release must clear a request
-                # within CAPACITY_RECLAIM_OVERDUE_SECONDS; otherwise a person is asked to look (no Oracle DB/model rights).
-                previous_seen = old.get('capacitySeen') if isinstance(old.get('capacitySeen'), dict) else {}
-                seen = {}
-                for request in capacity['requests']:
-                    first = previous_seen.get(request['requestId'])
-                    first = first if type(first) in (int, float) and math.isfinite(first) and 0 <= first <= now else now
-                    seen[request['requestId']] = first
-                    events.append({'target': key, 'reason': 'model_indeterminate', **request,
-                                   'recovery': 'provider_exit_required' if request['localEndRecorded'] else 'local_and_provider_exit_required'})
-                    if now - first >= CAPACITY_RECLAIM_OVERDUE_SECONDS:
-                        events.append({'target': key, 'reason': 'model_reclaim_overdue', 'requestId': request['requestId'],
-                                       'routeId': request['routeId'], 'ageSeconds': int(now - first)})
-                if capacity['status'] == 'unknown' or capacity['truncated']:
-                    seen = {**previous_seen, **seen}  # a partial read cannot reset the clock of an unlisted request
-                if seen:
-                    target['capacitySeen'] = seen
+                for reason in capacity.get('alarmReasons', []) if capacity['status'] == 'alarm' else []:
+                    events.append({'target': key, 'stage': 'capacity', 'reason': reason, 'count': capacity['count'],
+                                   'oldestAgeSeconds': capacity['oldestAgeSeconds'], 'stuckDispatched': capacity['stuckDispatched']})
+                if capacity_pending(capacity):
+                    # Informational log line only: no incident, no DOWN, no Oracle model/DB authority.
+                    events.append({'target': key, 'reason': 'model_review_pending', 'truncated': capacity['truncated'],
+                                   'count': capacity.get('count', len(capacity['requests'])),
+                                   'oldestAgeSeconds': capacity.get('oldestAgeSeconds')})
             state['targets'][key] = target
             if bad >= 2:
                 alarm = True
