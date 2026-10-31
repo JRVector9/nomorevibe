@@ -45,8 +45,14 @@ const OptionsSchema = z.discriminatedUnion('mode', [
     overrides: z.strictObject({ max: z.number().int().positive().optional(), readMax: z.number().int().positive().optional() }).optional() }),
 ]);
 const unverified = { enforcement: 'unknown', ready: false, activationAllowed: false } as const;
+/**
+ * 역할 worker 자식의 primary pool 상한 — lib/db/pool.ts ROLE_POOL_MAX·compose.yml DB_POOL_MAX 와 같은 값.
+ * 동시에 틱을 도는 모델 줄 수 + 역할 lease heartbeat 1 + 여유 1(lib/jobs/catalog.ts 줄 설명): text 4 → 6(2026-10-31 3a-A),
+ * reviewer 4 → 6(3a-A) → 합성 잡 분해로 9 → 11(3a-C).
+ * ai1·ai2 consumer 자식은 이 값이 아니라 등록부(consumer-registry.ts workerMax 3)를 따른다 — 줄 분리는 역할 프로세스의 연결만 늘린다.
+ */
 const workerMax: Record<WorkerRole, number> = {
-  crawler: 8, reviewer: 3, publisher: 3, text: 3, maintenance: 3,
+  crawler: 8, reviewer: 11, publisher: 3, text: 6, maintenance: 3,
   translation: 3, 'product-health': 3, 'site-evidence': 3, 'official-news': 3,
 };
 
@@ -63,7 +69,8 @@ function processBudgets(policy: HostDbBudget): HostDbProcessBudget[] {
   }
   for (const consumer of reviewerConsumers.filter(value => policy.reviewerConsumers?.includes(value))) {
     add('role-parent', 'reviewer', policy.rolloutCopies, 1, 0, consumer);
-    add('worker', 'reviewer', policy.rolloutCopies, workerMax.reviewer, 0, consumer);
+    // 옛 칸의 ai1·ai2 도 자식 상한은 등록부가 정한다(3) — reviewer 역할 worker 의 줄 수 기반 상한(6)을 따르지 않는다
+    add('worker', 'reviewer', policy.rolloutCopies, consumerSpec(consumer)!.workerMax, 0, consumer);
   }
   // 일반 consumer 도 감독(부모 1)과 자식 worker 한 쌍이다. 자식 상한은 등록부가 정한다
   for (const consumer of consumerNames().filter(value => policy.consumers?.includes(value))) {

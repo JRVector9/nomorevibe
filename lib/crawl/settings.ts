@@ -369,9 +369,9 @@ export async function lockedSettings(tx: ProductTransaction): Promise<CrawlSetti
   return mergeWithDefaults(row?.values);
 }
 
-/** 단계를 켜면 다음 틱을 바로 부를 잡 */
+/** 단계를 켜면 다음 틱을 바로 부를 잡 — 2026-10-31(PR 3a-C) 부터 단계마다 자기 잡(lib/jobs/catalog.ts) */
 const QWEN_AUTO_JOB: Record<QwenAutoStep, string> = {
-  auditSecondOpinion: "product-audit", publishedFilter: "product-audit", splitTiebreak: "second-review", heldRetry: "human-deepseek-review",
+  auditSecondOpinion: "audit-second-opinion", publishedFilter: "audit-second-opinion", splitTiebreak: "split-tiebreak", heldRetry: "held-qwen-retry",
   screenReview: "audit-screen-review",
 };
 

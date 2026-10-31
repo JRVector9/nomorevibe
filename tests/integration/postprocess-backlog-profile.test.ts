@@ -4,9 +4,7 @@ import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { products } from "@/lib/db/schema";
 import { pendingProfiles } from "@/lib/domain/products/search-profiles";
-import { otherRoutesWaitingOnGroup } from "@/lib/llm/capacity-busy-targets";
-import { productTaglineKoInputHash, productTaglineKoLogicalWorkKey, type ProductTaglineKoMember } from "@/lib/llm/capacity";
-import { requestProductTaglineKoModelSlot, requestTextProfileModelSlot } from "@/lib/llm/capacity-repository";
+import { requestTextProfileModelSlot } from "@/lib/llm/capacity-repository";
 import { admin, cleanupCapacityFixture, fixtureOwner, policy, setCapacityMode } from "./postprocess-backlog-fixture";
 import { ensureSchema, resetTables } from "./setup";
 
@@ -24,12 +22,8 @@ const request = (owner: { instanceId: string; bootId: string }, routeId: string,
 async function holdProfile(owner: { instanceId: string; bootId: string }, productId: number) {
   return requestTextProfileModelSlot(request(owner, "product-search-profile", `text:profile:${productId}:${"e".repeat(64)}`), productId);
 }
-async function waitTagline(owner: { instanceId: string; bootId: string }, productId: number, slug: string) {
-  const members: ProductTaglineKoMember[] = [{ productId, slug, sourceIdentityHash: "a".repeat(64), sourceHash: "b".repeat(64), cache: { kind: "absent" } }];
-  return requestProductTaglineKoModelSlot(request(owner, "product-tagline-ko",
-    `${productTaglineKoLogicalWorkKey(members)}:${productTaglineKoInputHash({ members, model: MODEL })}`), members);
-}
 const ids = async (owner?: { instanceId: string; bootId: string }) => (await pendingProfiles(12, owner)).map(task => task.product.id);
+// 2026-10-31: `otherRoutesWaitingOnGroup`(다른 route 의 대기를 보고 양보)은 없앴다 — 하나가 잘못되면 다음 작업도 안 되는 구조는 이유가 없다
 const routes = [{ routeId: "product-search-profile", model: MODEL }, { routeId: "product-tagline-ko", model: MODEL }];
 
 beforeAll(ensureSchema);
@@ -51,19 +45,4 @@ it("never selects a product another request already holds, so one product has on
   expect(await ids(self)).toEqual([third.id]);
   await setCapacityMode("disabled");
   expect((await ids(self)).sort((a, b) => a - b)).toEqual([held.id, free.id, third.id]);
-});
-
-it("reports another route waiting on the same group only while it is really queued under the current open policy", async () => {
-  const a = await seed(), b = await seed();
-  await setCapacityMode("open", policy(routes, 1));
-  expect(await otherRoutesWaitingOnGroup("product-search-profile", MODEL)).toBe(false);
-  // 그룹 자리 하나를 키워드가 쥐고, 소개 짓기는 줄을 선다
-  expect(await holdProfile(fixtureOwner("profile-group-a"), a.id)).toMatchObject({ kind: "granted" });
-  expect(await waitTagline(fixtureOwner("profile-group-b"), b.id, b.slug)).toMatchObject({ kind: "deferred", reason: "capacity" });
-  expect(await otherRoutesWaitingOnGroup("product-search-profile", MODEL)).toBe(true);
-  // 자기 route 의 대기는 '남'이 아니다
-  expect(await otherRoutesWaitingOnGroup("product-tagline-ko", MODEL)).toBe(false);
-  expect(await otherRoutesWaitingOnGroup("product-search-profile", "another-model")).toBe(false);
-  await setCapacityMode("draining");
-  expect(await otherRoutesWaitingOnGroup("product-search-profile", MODEL)).toBe(false);
 });

@@ -10,6 +10,7 @@ import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { getTableConfig, PgDialect } from "drizzle-orm/pg-core";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 import { operatorReviewDispatchSql, operatorReviewEventSql, operatorReviewTerminalSql } from "@/lib/llm/operator-review-sql";
+import { localModelSplitJobsDispatchSql, localModelSplitJobsEventTerminalSql, localModelSplitJobsTerminalSql } from "@/lib/llm/local-model-capacity-sql";
 import { db } from "@/lib/db";
 import { createReviewInput, reviewHash, type ReviewInput } from "@/lib/crawl/agent-review-contract";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
@@ -503,9 +504,14 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
       expect(statement).toContain(`ADD CONSTRAINT ${name} CHECK ((%s) OR (%s))`);
       expect(statement, `${name}: the appended branch is the schema constant`).toContain(`$ai2_local$${branch}$ai2_local$`);
       const check = getTableConfig(events ? modelCapacityEvents : modelCapacityRequests).checks.find(check => check.name === name)!;
-      // 0151 appends the operator_review branch after 0149's on the requests terminal CHECK; strip that tail before the 0149 checks.
+      // 0151 appends the operator_review branch after 0149's on the requests terminal CHECK, and 0155 (split composite jobs) appends the
+      // split-jobs local_model_direct branch after that on both terminal CHECKs; strip those tails (each "(prev) OR (branch)" wrap) before the 0149 checks.
+      const split = `) OR (coalesce((${events ? localModelSplitJobsEventTerminalSql : localModelSplitJobsTerminalSql}),false))`;
+      let full = new PgDialect().sqlToQuery(check.value).sql;
+      expect(full.endsWith(split), `${name}: 0155 tail present`).toBe(true);
+      full = full.slice(1, -split.length);
       const tail = events ? null : `) OR (${operatorReviewTerminalSql})`;
-      const full = new PgDialect().sqlToQuery(check.value).sql, suffix = `) OR (${branch})`;
+      const suffix = `) OR (${branch})`;
       expect(tail === null || full.endsWith(tail), `${name}: 0151 tail present`).toBe(true);
       const expression = tail ? full.slice(1, -tail.length) : full;
       expect(expression.startsWith("(") && expression.endsWith(suffix), `${name}: Drizzle composes (previous) OR (branch)`).toBe(true);
@@ -523,8 +529,8 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
     }
     for (const name of UNTOUCHED) expect(widened[name], `${name}: 0149 unchanged CHECK`).toBe(replaced[name]);
     // 0150 (topology) leaves every CHECK as 0149 left them; 0151 appends the operator_review branch to the requests dispatch/terminal
-    // CHECKs and the events kind CHECK (one shared SQL function), again as (whole predecessor) OR (branch).
-    await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
+    // CHECKs and the events kind CHECK (one shared SQL function), again as (whole predecessor) OR (branch). 0152~0153 leave them unchanged.
+    await migrateThrough(153);
     const after0151 = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
     const reviewed: Record<string, string> = { model_capacity_requests_dispatch_check: operatorReviewDispatchSql,
       model_capacity_requests_terminal_check: operatorReviewTerminalSql, model_capacity_events_kind_check: operatorReviewEventSql };
@@ -537,6 +543,23 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
       await step.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT f2_review_expected CHECK ((${inner(widened[name])}) OR (${branch}))`);
       try { expect(after0151[name], `${name}: 0149 predicate plus the 0151 operator_review branch`).toBe((await constraintDefs(step, ["f2_review_expected"])).f2_review_expected); }
       finally { await step.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT f2_review_expected`); }
+    }
+    // 0155 (PR 3a-C, split composite jobs) appends the split-jobs local_model_direct branch — the same local_model_direct shape with the new
+    // per-stage job names in binding.job.name — to the requests dispatch/terminal CHECKs and the events terminal CHECK, again as (whole predecessor) OR (branch).
+    // The 0124 branch (old composite names) stays inside the predecessor, so rows dispatched before the split still pass.
+    await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
+    const after0155 = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
+    const splitJobs: Record<string, string> = { model_capacity_requests_dispatch_check: localModelSplitJobsDispatchSql,
+      model_capacity_requests_terminal_check: localModelSplitJobsTerminalSql, model_capacity_events_terminal_check: localModelSplitJobsEventTerminalSql };
+    for (const name of [...LEFT, ...UNTOUCHED]) {
+      const branch = splitJobs[name];
+      if (!branch) { expect(after0155[name], `${name}: unchanged after 0155`).toBe(after0151[name]); continue; }
+      expect(branch).toContain("'audit' THEN 'audit-qwen'"); expect(branch).toContain("'held_qwen' THEN 'held-qwen-retry'");
+      expect(after0151[name]).toContain("product-audit"); expect(after0151[name]).not.toContain("audit-qwen"); expect(after0155[name]).toContain("audit-qwen");
+      const table = name.startsWith("model_capacity_events_") ? "model_capacity_events" : "model_capacity_requests";
+      await step.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT f2_split_expected CHECK ((${inner(after0151[name])}) OR (coalesce((${branch}),false)))`);
+      try { expect(after0155[name], `${name}: 0151 predicate plus the 0155 split-jobs branch`).toBe((await constraintDefs(step, ["f2_split_expected"])).f2_split_expected); }
+      finally { await step.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT f2_split_expected`); }
     }
     expect((await step<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`)[0].count).toBe(journal.entries.length);
   } finally { rmSync(partial, { recursive: true, force: true }); await step.end({ timeout: 5 }); }

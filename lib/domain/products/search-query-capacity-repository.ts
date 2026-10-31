@@ -90,6 +90,8 @@ export async function prepareWebsearchQueryDispatch(value: WebsearchQueryTarget,
       const input = websearchQueryInputSchema.parse({ member, model: call.model });
       const continuation = await readWebsearchQueryContinuation(tx, input);
       if (continuation.kind === "blocked") throw new ModelCapacityDeferredError("dispatched");
+      // 이 검색어 한 스냅숏의 장부 행이 하나의 결과로 읽히지 않는다 — 이 검색어만 미루고(원문·정해 둔 영어로 찾는다) 다른 검색어는 계속 (2026-10-31)
+      if (continuation.kind === "broken") throw new ModelCapacityDeferredError("ledger_mismatch");
       if (continuation.kind === "settled") {
         // 끝난 호출의 결과가 캐시에 닿기 전에 프로세스가 멈췄다 — 같은 스냅숏에만 그 결과를 적는다. 다시 부르지 않는다
         const result: WebsearchQueryResult = continuation.outcome.ok ? { ok: true, keywords: continuation.outcome.keywords }

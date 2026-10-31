@@ -6,8 +6,38 @@ export type CatalogRole = JobRole | "scheduler" | "site-evidence";
 /**
  * lane: 같은 역할 워커 안에서 따로 도는 줄. 역할 lease 는 하나라 워커를 늘려도 한 대만 일한다 — 줄이 다르면 한 프로세스 안에서
  * 동시에 돈다. 줄을 적지 않은 잡은 기본 줄(main)에서 차례로 돈다(scripts/worker.ts runWorker).
+ *
+ * 모델을 부르는 잡은 잡 하나에 줄 하나다(2026-10-31, PR 3a-A). 한 줄 안의 잡은 차례로 돌고 틱은 예산(hasBudget)까지 가므로, 기본 줄에
+ * 모델 잡 여럿을 두면 한 잡의 느림·오류가 다른 단계의 처리 기회를 수 분 미뤘다(reviewer 기본 줄: 2차 110 + 사람 위임 110 + 감사 70 + 소개 검수 110
+ * ≈ 400초 뒤에야 같은 잡이 다시 돌았다). 큐는 이미 단계마다 자기 표에 있다 — 줄만 나누면 한 프로세스 안에서 동시에 돈다.
+ * 모델 동시 호출 수는 줄이 아니라 공통 장부(물리 한도)가 정한다. 비용은 DB 연결이다:
+ *
+ *   역할 프로세스 DB_POOL_MAX = 동시에 틱을 도는 모델 줄 수 + 역할 lease heartbeat 1 + 여유 1(관측·미룸 기록)
+ *
+ * 줄은 쿼리·TX 동안만 연결을 빌리고 모델 응답을 기다리는 동안은 놓는다(postgres.js 풀). 그래서 세는 줄은 "매분 모델을 부르며 틱이
+ * 수십 초 이어져 저장·15초 lease heartbeat 가 서로 겹치는 줄"이다 — 3a-A 기준 reviewer 4(second·human·audit·intro), text 4(reason·tagline·
+ * profile·verify) → 둘 다 4 + 1 + 1 = 6. 3a-C(합성 잡 분해, 아래)가 reviewer 에 held·confirm·tiebreak·audit-qwen·audit-opinion 다섯 줄을 더해
+ * reviewer 9 + 1 + 1 = **11**, text 는 그대로 **6**(compose.yml·Dokploy env·lib/db/pool.ts ROLE_POOL_MAX·lib/db/host-budget.ts workerMax 가 같은 값).
+ * 다섯 줄은 스위치(qwenAuto.*)·감사 행의 심사자에 따라 쉬는 틱이 많지만 켜져 있으면 매분 gpu3090·M3 를 부르며 틱이 수십 초 이어지므로 센다.
+ * 나머지 줄(crawl-judge 모델 없음·5분, grok 4시간, ai1 은 items 모드에서 consumer 가 자기 풀 3 으로 맡고 이 프로세스는 정비 틱만,
+ * screen·assist 는 설정이 켤 때만 돌고 backend drain 중 연결을 놓는다, embed 는 로컬 임베딩 묶음 한 번, repo 는 모델 없음·5분,
+ * ko·translate 는 기존 전용 줄)은 짧은 claim·저장 쿼리만 빌려 여유 1 과 풀 대기(DB_POOL_WAIT_MS 5초) 안에 든다.
+ * 줄 수 상한은 heartbeat 파서의 16(lib/operations/worker-progress.ts parseRuntimeLanes) — reviewer 15 줄.
+ *
+ * 합성 잡 분해(2026-10-31, PR 3a-C): 한 잡 = 큐 하나 + 모델 호출 모양 하나. 한 틱에 두 장비(gpu3090·M3)를 차례로 부르던 세 잡을 나눴다 —
+ *   human-deepseek-review(보류 Qwen 재심사 → DeepSeek 위임 → 갈림 확인) → held-qwen-retry · human-deepseek-review · split-confirm
+ *   second-review(표 심사 ∥ 갈림 판가름) → second-review · split-tiebreak
+ *   product-audit(보류 쓸기 → 게이트웨이/CLI 감사 또는 Qwen 직접 감사 ∥ 두 번째 의견) → product-audit · audit-qwen · audit-second-opinion
+ * 각 잡은 자기 줄·자기 예산(runtime_settings budgets)이며 장부 binding 의 job.name 도 그 잡이다(lib/llm/local-model-capacity-contract.ts, migration 0155).
+ * 새 카탈로그 잡은 scheduler 가 요청해야 돈다 — 이 카탈로그를 담은 릴리스는 scheduler 를 먼저 배포한다(새 잡 → scheduler 먼저).
  */
-export type JobLane = "main" | "discovery" | "fetch" | "sources" | "evidence" | "scan" | "stars" | "screen" | "assist" | "assist-audit" | "product-translation" | "korean-translation" | "ai1";
+export type JobLane = "main" | "discovery" | "fetch" | "sources" | "evidence" | "scan" | "stars" | "screen" | "assist" | "assist-audit" | "product-translation" | "korean-translation" | "ai1"
+  // reviewer 의 모델 잡 줄 — 잡 하나에 줄 하나(위 설명)
+  | "second" | "human" | "audit" | "intro" | "grok"
+  // reviewer 의 합성 잡 분해 줄(3a-C) — gpu3090: held·tiebreak·audit-qwen·audit-opinion, M3 DeepSeek: confirm
+  | "held" | "confirm" | "tiebreak" | "audit-qwen" | "audit-opinion"
+  // text 의 모델 잡 줄 — 잡 하나에 줄 하나
+  | "reason" | "tagline" | "profile" | "verify" | "embed" | "repo";
 export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs: number | null; lane?: JobLane; batchVersion?: 1 }[] = [
   { name: "heartbeat", role: "scheduler", intervalMs: null },
   /**
@@ -39,15 +69,31 @@ export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs
    * 모델 동시 호출 수는 공통 장부(물리 한도·class 가중치)가 정한다 — 줄을 나눠도 한도는 그대로다.
    */
   { name: "crawl-agent-review", role: "reviewer", intervalMs: 60_000, lane: "ai1" },
-  // 2차 심사 — 1차와 다른 모델. 하루 수십~백여 건이라 5분이면 밀리지 않는다
-  { name: "second-review", role: "reviewer", intervalMs: 60_000 },
-  { name: "human-deepseek-review", role: "reviewer", intervalMs: 60_000 },
   /**
-   * 발행분 감사 — 사람이 연 감사가 있을 때만 일한다. 게이트웨이 감사는 새 후보가 기다리면 틱마다 먼저 양보한다
-   * (lib/crawl/jobs/product-audit.ts). Qwen 직접 감사는 gpu3090 이라 게이트웨이를 쓰지 않는다. 1차 심사는 2026-10-29 부터
-   * 전용 줄(ai1)이라 기본 줄의 감사와 함께 돌 수 있다 — 공유 모델의 동시 호출은 공통 장부의 물리 한도가 막는다.
+   * 2차 심사 — 1차와 다른 모델. 하루 수십~백여 건이라 5분이면 밀리지 않는다. 전용 줄(second): AI2 가 items 모드면 이 잡은 행 올리기·닫기
+   * 정비 틱만 하고 stage_blocked 로 끝난다 — 사람 위임·감사·소개 검수 뒤에 줄 서지 않고, 요청이 남아 있으면 다음 poll(기본 5초)에 다시 돈다.
+   * legacy 모드에서 남은 행이 있으면 continuation:"ready" 로 runner 가 다시 요청해 1초 뒤 돈다(scripts/worker.ts).
+   * 갈림 판가름(gpu3090)은 2026-10-31 부터 자기 잡 split-tiebreak 이다 — 이 잡은 표 심사·정비 틱만
    */
-  { name: "product-audit", role: "reviewer", intervalMs: 60_000 },
+  { name: "second-review", role: "reviewer", intervalMs: 60_000, lane: "second" },
+  // 2차 갈림 판가름 — 관문에서 갈린 보류를 gpu3090 Qwen-v2 에 묻는다(gate-split-tiebreak.ts). 스위치 qwenAuto.splitTiebreak. 전용 줄(tiebreak)
+  { name: "split-tiebreak", role: "reviewer", intervalMs: 60_000, lane: "tiebreak" },
+  // 사람 큐 위임 — DeepSeek 27~29초 × 2 가 틱을 붙잡는다. 전용 줄(human)이라 2차 심사·감사를 미루지 않는다. 2026-10-31 부터 DeepSeek 위임만(아래 둘은 자기 잡)
+  { name: "human-deepseek-review", role: "reviewer", intervalMs: 60_000, lane: "human" },
+  // 보류 Qwen-v2 재심사 — 소개 없음·재시도 소진·판단 보류를 gpu3090 Qwen-v2 에 다시 묻는다(held-qwen-retry.ts). 스위치 qwenAuto.heldRetry. 전용 줄(held)
+  { name: "held-qwen-retry", role: "reviewer", intervalMs: 60_000, lane: "held" },
+  // 갈림 판가름의 DeepSeek 확인 — awaiting_deepseek 를 M3 DeepSeek 에 다시 묻는다(gate-split-confirm.ts). M3 한 호출 약속은 deepseek-slot.ts. 전용 줄(confirm)
+  { name: "split-confirm", role: "reviewer", intervalMs: 60_000, lane: "confirm" },
+  /**
+   * 발행분 감사 — 사람이 연 감사가 있을 때만 일한다. 1차 후보 큐를 보고 양보하지 않는다(2026-10-31 3a-B — 장비 순위가 대신한다,
+   * lib/crawl/jobs/product-audit.ts). 1차 심사는 2026-10-29 부터 전용 줄(ai1), 감사는 2026-10-31 부터 전용 줄(audit)이라 서로·2차 심사와
+   * 함께 돈다 — 공유 모델의 동시 호출은 공통 장부의 물리 한도가 막는다. 2026-10-31 부터 보류 쓸기 + 게이트웨이/CLI 감사만(아래 둘은 자기 잡)
+   */
+  { name: "product-audit", role: "reviewer", intervalMs: 60_000, lane: "audit" },
+  // Qwen 직접 감사 — 심사자가 qwen-direct 인 감사의 남은 항목을 gpu3090 에 게이트웨이 없이 묻는다(jobs/audit-qwen.ts). 전용 줄(audit-qwen)
+  { name: "audit-qwen", role: "reviewer", intervalMs: 60_000, lane: "audit-qwen" },
+  // 감사 두 번째 의견·공개분 거르기 — gpu3090 Qwen-v2 자동 단계(audit-second-opinion-auto.ts). 스위치 qwenAuto.auditSecondOpinion·publishedFilter. 전용 줄(audit-opinion)
+  { name: "audit-second-opinion", role: "reviewer", intervalMs: 60_000, lane: "audit-opinion" },
   /**
    * 화면 판별 — 글이 얇은(JS 로 그리는) 감사 거절을 화면 서버(m1-studio)로 그려 m1 Qwen 에 글+첫 화면으로 묻는다(lib/screen-review/job.ts).
    * 한 건이 그리기 수~40초 + 묻기 12~90초라 따로 도는 줄(screen)에 둔다 — 기본 줄의 심사·감사를 막지 않는다. 설정 qwenAuto.screenReview 를 켜야 일한다
@@ -61,30 +107,30 @@ export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs
   { name: "cdn-purge", role: "publisher", intervalMs: 60_000 },
   // 사용자 동의와 제품별 binding을 확인한 outbox만 처리한다. 기본 플래그는 꺼져 있다.
   { name: "github-feedback-delivery", role: "publisher", intervalMs: 60_000 },
-  // 사유 번역 — 전용 text 워커에서 1분마다 옮긴다(틱 55초, 한 번에 4건·1,600자까지)
-  { name: "reason-translate", role: "text", intervalMs: 60_000 },
+  // 사유 번역 — 전용 text 워커에서 1분마다 옮긴다(틱 55초, 한 번에 4건·1,600자까지). 전용 줄(reason) — 2026-10-31 부터 text 의 모델 잡은 줄을 나눠 동시에 돈다
+  { name: "reason-translate", role: "text", intervalMs: 60_000, lane: "reason" },
   /**
    * 소개 짓기 — 소개가 없어 멈춘 후보의 한 줄을 모델이 짓는다. 번역과 같은 자리(text 워커)에서
-   * 1분마다 조금씩. 대기가 비면 곧 끝나고, 다 지으면 후보가 발행 대기로 돌아간다.
+   * 1분마다 조금씩. 대기가 비면 곧 끝나고, 다 지으면 후보가 발행 대기로 돌아간다. 전용 줄(tagline)
    */
-  { name: "crawl-tagline", role: "text", intervalMs: 60_000 },
+  { name: "crawl-tagline", role: "text", intervalMs: 60_000, lane: "tagline" },
   /**
    * 검색 키워드 — 공개 제품마다 모델이 한·영 검색어를 적는다. 같은 text 워커에서 1분마다 조금씩.
-   * 처음 1만8천 건을 채우는 데 하루쯤 걸리고, 그 뒤로는 새 제품과 30일 지난 것만 본다.
+   * 처음 1만8천 건을 채우는 데 하루쯤 걸리고, 그 뒤로는 새 제품과 30일 지난 것만 본다. 전용 줄(profile)
    */
-  { name: "product-search-profile", role: "text", intervalMs: 60_000 },
-  /** 검색 키워드 검수 — 게이트웨이의 Qwen3.8. 키워드 짓기와 같은 text 워커(2026-09-25 reviewer·Sonnet 에서 옮김) */
-  { name: "product-search-verify", role: "text", intervalMs: 60_000 },
+  { name: "product-search-profile", role: "text", intervalMs: 60_000, lane: "profile" },
+  /** 검색 키워드 검수 — 게이트웨이의 Qwen3.8. 키워드 짓기와 같은 text 워커(2026-09-25 reviewer·Sonnet 에서 옮김). 전용 줄(verify) */
+  { name: "product-search-verify", role: "text", intervalMs: 60_000, lane: "verify" },
   /**
    * 의미 검색의 제품 벡터 — 서버 Mac 의 bge-m3(llama-server)로 임베딩한다. 키워드가 바뀌면 글이 바뀌어 다시 임베딩하므로
-   * 키워드 짓기와 같은 text 워커에 둔다. 게이트웨이를 쓰지 않아 심사와 다투지 않는다.
+   * 키워드 짓기와 같은 text 워커에 둔다. 게이트웨이를 쓰지 않아 심사와 다투지 않는다. 전용 줄(embed)
    */
-  { name: "product-embedding", role: "text", intervalMs: 60_000 },
+  { name: "product-embedding", role: "text", intervalMs: 60_000, lane: "embed" },
   /**
    * 저장소가 사라진 공개 제품을 다시 본다 — github.com 을 지금 열어 정말 없으면 내린다(repo-review.ts, 2026-10-13 운영자 결정).
-   * text 워커에서 5분마다 8건까지. 옮겨 간 흔적이 있으면 사람 확인, 하루 100건을 넘게 내리지는 않는다
+   * text 워커에서 5분마다 8건까지. 옮겨 간 흔적이 있으면 사람 확인, 하루 100건을 넘게 내리지는 않는다. 전용 줄(repo)
    */
-  { name: "product-repo-review", role: "text", intervalMs: 5 * 60_000 },
+  { name: "product-repo-review", role: "text", intervalMs: 5 * 60_000, lane: "repo" },
   /**
    * 한국어 한 줄 소개(UX-13) — 공개 제품의 소개를 게이트웨이 gpt-oss-120b 로 한국어 한 줄로 옮긴다. 같은 text 워커에서 1분마다
    * 8건 묶음으로. 새 제품·홈에 보이는 제품이 먼저고, 나머지 3만여 건은 하루이틀에 걸쳐 채운다(korean-tagline.ts)
@@ -92,13 +138,13 @@ export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs
   { name: "product-tagline-ko", role: "text", intervalMs: 60_000, lane: "korean-translation" },
   // Bounded batches with a sixty-second regular schedule, independent of the long main text cycle; same leases/admission.
   { name: "product-translate", role: "text", intervalMs: 60_000, lane: "product-translation" },
-  /** 소개 검수 — AI 소개와 쓸모없어 보이는 메이커 소개를 Sonnet 이 근거와 대조한다. 새로 발행된 것부터 */
-  { name: "product-intro-check", role: "reviewer", intervalMs: 60_000 },
+  /** 소개 검수 — AI 소개와 쓸모없어 보이는 메이커 소개를 Sonnet 이 근거와 대조한다. 새로 발행된 것부터. 전용 줄(intro) — 110초 틱이 2차 심사·감사를 미루지 않는다 */
+  { name: "product-intro-check", role: "reviewer", intervalMs: 60_000, lane: "intro" },
   /** 근거 수집·Qwen 확인은 별도 줄에서 처리한다. backend drain은 공통 물리 슬롯을 예약하고 네트워크 중 DB 연결을 놓는다. */
   { name: "product-llm-assist-review", role: "reviewer", intervalMs: 60_000, lane: "assist" },
   { name: "product-llm-assist-audit-review", role: "reviewer", intervalMs: 60_000, lane: "assist-audit" },
-  /** Grok 로그인 확인 — 6시간 토큰이 심사가 뜸한 사이 만료되지 않게 4시간마다 가장 짧은 호출 한 번(grok-cli 설정이 있을 때만) */
-  { name: "grok-session-check", role: "reviewer", intervalMs: 4 * 60 * 60_000 },
+  /** Grok 로그인 확인 — 6시간 토큰이 심사가 뜸한 사이 만료되지 않게 4시간마다 가장 짧은 호출 한 번(grok-cli 설정이 있을 때만). 전용 줄(grok) — CLI 호출이 다른 줄을 붙잡지 않는다 */
+  { name: "grok-session-check", role: "reviewer", intervalMs: 4 * 60 * 60_000, lane: "grok" },
   /**
    * 1분마다 15건 = 시간당 900건. 발행분 3,147건을 재확인 간격 6시간마다 보려면 시간당 525건이
    * 필요한데, 10분 주기(시간당 90건)로는 6시간 안에 17%만 볼 수 있었다.
@@ -184,7 +230,7 @@ export function isJobName(name: string): boolean { return JOB_NAMES.includes(nam
 export function jobsForRole(role: JobRole): string[] {
   return JOB_CATALOG.filter(job => job.role === role && job.batchVersion !== 1).map(job => job.name);
 }
-/** 역할의 잡을 줄마다 — 기본 줄이 먼저, 각 줄 안은 카탈로그 차례. 빈 줄은 없다 */
+/** 역할의 잡을 줄마다 — 기본 줄이 있으면 먼저, 그 뒤는 줄이 카탈로그에 처음 나온 차례, 각 줄 안은 카탈로그 차례. 빈 줄은 없다(text 는 기본 줄이 없다) */
 export function lanesForRole(role: JobRole): string[][] {
   const lanes = new Map<JobLane, string[]>([["main", []]]);
   for (const job of JOB_CATALOG) {

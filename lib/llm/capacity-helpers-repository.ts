@@ -52,7 +52,7 @@ function checkActor(actor: string, prefix: string): void {
   if (typeof actor !== "string" || !actor.trim() || actor.length > 120) fail(`${prefix}:actor`);
 }
 
-/** 도우미 행 → HelperAssignmentRow. 도우미 행의 단계는 언제나 ai1·ai2 다(0155 role_stage CHECK). */
+/** 도우미 행 → HelperAssignmentRow. 도우미 행의 단계는 언제나 ai1·ai2 다(0156 role_stage CHECK). */
 function toRow(row: AssignmentRecord): HelperAssignmentRow {
   return Object.freeze({
     assignmentId: row.assignmentId, stage: row.stage as HelperStage, deviceId: row.deviceId, model: row.model, shadowRouteId: row.shadowRouteId,
@@ -67,7 +67,7 @@ function toRow(row: AssignmentRecord): HelperAssignmentRow {
   });
 }
 
-/** 도우미 행만(role 'helper'). 배정 표 행(role 'primary', 0155)은 도우미 저장·화면·감시자가 보지 않는다. */
+/** 도우미 행만(role 'helper'). 배정 표 행(role 'primary', 0156)은 도우미 저장·화면·감시자가 보지 않는다. */
 const helperRows = eq(modelHelperAssignments.role, "helper");
 
 /** 감사 detail 의 before·after = 저장 전후의 전체 행(HelperAssignmentRow, 관리자 화면 감사 목록이 그대로 읽는다). */
@@ -326,7 +326,7 @@ export async function readHelperStatusSnapshot(tx?: ProductTransaction): Promise
   return tx ? load(tx) : onPrimary(() => db.transaction(load, { isolationLevel: "repeatable read", accessMode: "read only" }));
 }
 
-// ── 배정 표 저장·읽기(PR 3b-A, migration 0155) ─────────────────────────────────────────────────────────────
+// ── 배정 표 저장·읽기(PR 3b-A, migration 0156) ─────────────────────────────────────────────────────────────
 
 const assignmentFail = (code: ModelAssignmentRefusal): never => fail(`model_assignment_refused:${code}`);
 

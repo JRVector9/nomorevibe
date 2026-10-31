@@ -112,11 +112,13 @@ describe("검색 키워드 검수 잡", () => {
     expect(request.calls).toHaveLength(1);
   });
 
-  it("모델이 내려가 있으면 틱을 접고 30분 쉰다 — 제품의 실패로 세지 않는다", async () => {
-    const ids = [await seed("a", ["a app"], []), await seed("b", ["b app"], []), await seed("c", ["c app"], [])];
+  it("모델이 없다는 답(모든 제품에 대해 증명된 엔진 탈)은 한 번으로 틱을 접고 30분 쉰다 — 제품의 실패로 세지 않는다", async () => {
+    const ids = await Promise.all(["a", "b", "c", "d", "e", "f"].map(name => seed(name, [`${name} app`], [])));
     const request = gateway(() => ({ status: 404 }));
 
     expect(await tick(request)).toMatchObject({ status: "completed", done: true });
+    // 동시에 띄운 자리(등록부 동시 호출 수)만 답을 받고 새 호출은 시작하지 않는다 — 여섯을 다 묻지 않는다
+    expect(request.calls.length).toBeLessThan(ids.length);
 
     const rows = await Promise.all(ids.map(profile));
     const failed = rows.filter((row) => row.verifyError === "model_unavailable");
@@ -126,6 +128,17 @@ describe("검색 키워드 검수 잡", () => {
       const [{ minutes }] = await db.execute(sql`select extract(epoch from ${row.verifyRetryAt!.toISOString()}::timestamp - now()) / 60 as minutes`) as unknown as { minutes: number }[];
       expect(Number(minutes)).toBeGreaterThan(20);
     }
+  });
+
+  // 2026-10-31 결정: 5xx 는 그 제품의 실패로만 남고 다음 제품을 본다 — 잇따라 둘이 막혀도 틱을 접지 않는다(하나가 잘못되면 다음 작업도 안 되는 구조는 이유가 없다)
+  it("게이트웨이 5xx 가 잇따라도 남은 제품을 모두 묻고 각자의 실패로 남긴다", async () => {
+    const ids = [await seed("a", ["a app"], []), await seed("b", ["b app"], []), await seed("c", ["c app"], [])];
+    const request = gateway(() => ({ status: 502 }));
+
+    expect(await tick(request)).toMatchObject({ status: "completed" });
+
+    expect(request.calls.sort()).toEqual(["a", "b", "c"]);
+    for (const row of await Promise.all(ids.map(profile))) expect(row).toMatchObject({ verifyError: "http_502", verifiedAt: null });
   });
 
   it("알아볼 수 없는 답은 실패로 센다", async () => {

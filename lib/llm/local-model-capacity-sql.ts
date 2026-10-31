@@ -30,7 +30,19 @@ function target(value: string): string {
   ].join(" OR ")})`;
 }
 
-function binding(value: string): string {
+/**
+ * binding.job.name 이 purpose 로 정해지는 표(lib/llm/local-model-capacity-contract.ts localModelJob) — 0124 까지의 합성 잡 이름과
+ * 2026-10-31(PR 3a-C, migration 0155) 단계마다 나눈 잡 이름. 옛 표는 바이트 그대로 둔다(0124 가 만든 CHECK 가지가 그 문자열이다).
+ */
+type JobNameCase = (t: string) => string;
+const legacyJobName: JobNameCase = t => `CASE ${t}->>'purpose' WHEN 'screen' THEN 'audit-screen-review' WHEN 'audit' THEN 'product-audit'
+      WHEN 'second_opinion' THEN 'product-audit' WHEN 'published_filter' THEN 'product-audit'
+      WHEN 'qwen_tiebreak' THEN 'second-review' ELSE 'human-deepseek-review' END`;
+const splitJobName: JobNameCase = t => `CASE ${t}->>'purpose' WHEN 'screen' THEN 'audit-screen-review' WHEN 'audit' THEN 'audit-qwen'
+      WHEN 'second_opinion' THEN 'audit-second-opinion' WHEN 'published_filter' THEN 'audit-second-opinion'
+      WHEN 'qwen_tiebreak' THEN 'split-tiebreak' WHEN 'deepseek_confirm' THEN 'split-confirm' WHEN 'held_qwen' THEN 'held-qwen-retry' ELSE 'human-deepseek-review' END`;
+
+function binding(value: string, jobName: JobNameCase = legacyJobName): string {
   const t = `(${value}->'target')`, job = `(${value}->'job')`;
   return all([
     fields(value, ["kind", "version", "target", "logicalWorkKey", "routeId", "provider", "model", "backendId", "physicalGroup", "deploymentRevision",
@@ -47,27 +59,25 @@ function binding(value: string): string {
       WHEN 'assist' THEN ${t}->>'subjectId' ELSE ${t}->>'candidateId' END || ':' || CASE WHEN ${t}->>'kind'='assist' THEN ${t}->>'task' ELSE ${t}->>'purpose' END`,
     `${value}->>'routeId'=CASE WHEN ${t}->>'kind'='assist' THEN 'local-assist-' || (${t}->>'task') || '-' || (${t}->>'backendId') ELSE 'local-' || replace(${t}->>'purpose','_','-') END`,
     `(${t}->>'kind'<>'assist' OR ${t}->>'backendId'=${value}->>'backendId')`,
-    `${job}->>'name'=CASE WHEN ${t}->>'kind'='assist' THEN CASE WHEN ${t}->>'task' IN ('decision_audit','semantic_exception') THEN 'product-llm-assist-audit-review' ELSE 'product-llm-assist-review' END ELSE CASE ${t}->>'purpose' WHEN 'screen' THEN 'audit-screen-review' WHEN 'audit' THEN 'product-audit'
-      WHEN 'second_opinion' THEN 'product-audit' WHEN 'published_filter' THEN 'product-audit'
-      WHEN 'qwen_tiebreak' THEN 'second-review' ELSE 'human-deepseek-review' END END`,
+    `${job}->>'name'=CASE WHEN ${t}->>'kind'='assist' THEN CASE WHEN ${t}->>'task' IN ('decision_audit','semantic_exception') THEN 'product-llm-assist-audit-review' ELSE 'product-llm-assist-review' END ELSE ${jobName(t)} END`,
   ]);
 }
 
-function dispatch(value: string): string {
+function dispatch(value: string, jobName: JobNameCase = legacyJobName): string {
   return all([
     fields(value, ["requestId", "owner", "token", "epoch", "revision", "policyHash", "binding", "bindingHash"]),
     uuid(`${value}->'requestId'`), fields(`(${value}->'owner')`, ["instanceId", "bootId"]),
     string(`(${value}->'owner')->'instanceId'`, 120), uuid(`(${value}->'owner')->'bootId'`), uuid(`${value}->'token'`),
     integer(`${value}->'epoch'`), integer(`${value}->'revision'`), digest(`${value}->'policyHash'`), digest(`${value}->'bindingHash'`),
-    binding(`(${value}->'binding')`),
+    binding(`(${value}->'binding')`, jobName),
   ]);
 }
 
-function terminal(value: string): string {
+function terminal(value: string, jobName: JobNameCase = legacyJobName): string {
   const u = `(${value}->'actualUsage')`;
   return all([
     fields(value, ["kind", "version", "dispatch", "responseHash", "finishReason", "actualUsage", "provenance"]),
-    `${value}->>'kind'='local_model_terminal'`, `${value}->'version'='1'::jsonb`, dispatch(`(${value}->'dispatch')`), digest(`${value}->'responseHash'`),
+    `${value}->>'kind'='local_model_terminal'`, `${value}->'version'='1'::jsonb`, dispatch(`(${value}->'dispatch')`, jobName), digest(`${value}->'responseHash'`),
     `${value}->>'finishReason' IN ('stop','length','tool_calls','function_call','content_filter')`,
     `((${u}='null'::jsonb AND ${value}->>'provenance'='unknown') OR ${all([
       fields(u, ["inputTokens", "outputTokens", "totalTokens"]), ...["inputTokens", "outputTokens", "totalTokens"].map(key => integer(`${u}->'${key}'`, true)),
@@ -94,25 +104,36 @@ export const localModelLogicalSql = `(${directLogicalSql} OR ${all([
   "substring(route_id from length('local-assist-' || split_part(logical_work_key,':',4) || '-')+1) ~ '^[a-z0-9][a-z0-9-]{0,59}$'", "logical_member_keys IS NULL",
 ])})`;
 
-export const localModelDispatchSql = all([
+const dispatchSql = (jobName: JobNameCase) => all([
   "dispatch_binding IS NOT NULL AND dispatch_binding_hash ~ '^[a-f0-9]{64}$' AND dispatched_at IS NOT NULL AND state IN ('dispatched','indeterminate','settled','withdrawn')",
-  localModelLogicalSql, binding("dispatch_binding"),
+  localModelLogicalSql, binding("dispatch_binding", jobName),
   "dispatch_binding->>'logicalWorkKey'=logical_work_key AND dispatch_binding->>'routeId'=route_id AND dispatch_binding->>'provider'=provider AND dispatch_binding->>'model'=model",
   "dispatch_binding->>'physicalGroup'=group_id AND dispatch_binding->>'backendId'=provider_budget_id",
 ]);
-
-export const localModelTerminalSql = all([
+const terminalSql = (jobName: JobNameCase) => all([
   "terminal_evidence IS NOT NULL AND terminal_evidence_hash ~ '^[a-f0-9]{64}$' AND settled_at IS NOT NULL AND state='settled'",
-  terminal("terminal_evidence"),
+  terminal("terminal_evidence", jobName),
   "terminal_evidence->'dispatch'->'binding'=dispatch_binding AND terminal_evidence->'dispatch'->>'bindingHash'=dispatch_binding_hash",
   "terminal_evidence->'dispatch'->>'requestId'=request_id::text AND terminal_evidence->'dispatch'->'owner'->>'instanceId'=owner_instance_id",
   "terminal_evidence->'dispatch'->'owner'->>'bootId'=owner_boot_id::text AND terminal_evidence->'dispatch'->>'token'=token::text",
   "(terminal_evidence->'dispatch'->>'epoch')::numeric=epoch AND (terminal_evidence->'dispatch'->>'revision')::numeric=revision",
   "terminal_evidence->'dispatch'->>'policyHash'=policy_hash",
 ]);
-
-export const localModelEventTerminalSql = all([
+const eventTerminalSql = (jobName: JobNameCase) => all([
   "kind='dispatch_settled' AND from_state IN ('dispatched','indeterminate') AND to_state='settled'",
-  terminal("evidence"), "evidence->'dispatch'->>'requestId'=request_id::text",
+  terminal("evidence", jobName), "evidence->'dispatch'->>'requestId'=request_id::text",
   "evidence->'dispatch'->'epoch'=to_jsonb(epoch) AND evidence->'dispatch'->'revision'=to_jsonb(revision) AND evidence->'dispatch'->>'policyHash'=policy_hash",
 ]);
+
+/** 0118~0124 가 만든 가지(합성 잡 이름) — 바이트 그대로 */
+export const localModelDispatchSql = dispatchSql(legacyJobName);
+export const localModelTerminalSql = terminalSql(legacyJobName);
+export const localModelEventTerminalSql = eventTerminalSql(legacyJobName);
+
+/**
+ * 0155(PR 3a-C) 가 OR 로 더한 가지 — 같은 local_model_direct 모양에 binding.job.name 만 단계마다 나눈 잡 이름이다. 옛 가지는 그대로 남아
+ * 3a-C 전에 띄운 행(product-audit·second-review·human-deepseek-review 로 적힌 것)이 계속 통과한다. 새 행은 실제 잡 lease(새 이름)로만 생긴다.
+ */
+export const localModelSplitJobsDispatchSql = dispatchSql(splitJobName);
+export const localModelSplitJobsTerminalSql = terminalSql(splitJobName);
+export const localModelSplitJobsEventTerminalSql = eventTerminalSql(splitJobName);
