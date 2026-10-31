@@ -59,6 +59,13 @@ const LEGACY_SEED: Record<string, TableGrant> = { dr_writer_fence: lock('id') };
 const LIVE_SETTINGS: Record<string, TableGrant> = { runtime_settings: read, model_registry_overrides: read, model_serving_contracts: read };
 export const ORACLE_RESULT_READBACK_TABLES = ['news_items', 'uptime_observations', 'product_evidence_sources', 'evidence_source_claims',
   'product_refresh_requests', 'text_translations', 'product_korean_taglines', 'product_translations'] as const;
+/**
+ * PR 1b (0153): the admission TX (requestSlot → grantOne) joins the device slot counts and role ranks inside the same transaction, so every
+ * job-running principal that spreads LIVE_SETTINGS also reads model_capacity_devices/_roles (no secret). The operator applies these GRANTs
+ * on Oracle before OPEN; without them an Oracle translation admission errors instead of deferring (docs/operations/model-capacity-devices.md).
+ */
+const DEVICE_SETTINGS: Record<string, TableGrant> = { model_capacity_devices: read, model_capacity_device_roles: read };
+Object.assign(LIVE_SETTINGS, DEVICE_SETTINGS);
 
 export const ORACLE_DB_PROFILES: Record<OracleDbService, Profile> = {
   'official-news': { statementTimeout: '60s', sequences: ['http_origin_events_id_seq', 'news_items_id_seq', 'dr_process_group_events_id_seq'],

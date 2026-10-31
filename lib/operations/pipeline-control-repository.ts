@@ -11,6 +11,8 @@ import { beginJobBatchDrainIn, bumpJobBatchContract, completeJobBatchTransitionI
 import { beginStageDrain, bumpStageWriterContract, completeStageTransition } from "@/lib/jobs/items/repository";
 import { STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { setModelCapacityMode, setModelCapacityPolicy } from "@/lib/llm/capacity-repository";
+import { readModelCapacityDeviceStates } from "@/lib/llm/capacity-devices-repository";
+import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { setHttpOriginMode, setHttpOriginPolicy } from "@/lib/net/origin-permits";
 import { adminAuditRow } from "./admin-log";
 import { lockWriterFence } from "./dr/epoch";
@@ -97,7 +99,10 @@ async function snapshotIn(tx: Tx): Promise<ControlSnapshot> {
           'model', CASE WHEN a.current_provider IS NOT NULL AND a.current_model IS NOT NULL THEN a.current_model ELSE a.model END)
         FROM product_audit_campaigns a WHERE a.status = 'running')
     ) AS snapshot FROM c`);
-  return controlSnapshotSchema.parse(row?.snapshot);
+  // 장비별 실시간 상태(PR 1b) — 같은 TX·같은 스냅숏에서 SELECT 만(잠금 없음). 표를 못 읽으면 장비 판정은 모름(devices 없음)으로 둔다.
+  const devices = await readModelCapacityDeviceStates(tx as unknown as ProductTransaction).catch(() => undefined);
+  const snapshot = row?.snapshot && typeof row.snapshot === "object" ? { ...(row.snapshot as Record<string, unknown>), ...(devices ? { devices } : {}) } : row?.snapshot;
+  return controlSnapshotSchema.parse(snapshot);
 }
 
 /** 읽기 전용 TX. dry-run과 status는 이것만 쓴다(행 잠금·쓰기 0). */

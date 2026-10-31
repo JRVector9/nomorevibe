@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { AdminModelsObservation } from "@/lib/operations/admin-models-observation";
 import { buildModelCards, elapsedModelTime, lastModelSuccess, MODEL_DASHBOARD_STAGES, modelCardAnchor, modelRecoveryBlocked,
@@ -79,7 +80,7 @@ export function LiveModels({ observation, models = [], assignments = [], probeAc
         })}
       </div>}
       <StageStatusRibbon observation={observation} cards={cards} />
-      <div className="flex flex-wrap items-center justify-between gap-2 text-[13px] text-fg-2"><p>접수 <strong>{observation.mode?.toUpperCase()}</strong> · 전체 점유 {observation.groups.reduce((n, row) => n + row.held, 0)} / {observation.globalLimit ?? "상한 미확인"}</p>
+      <div className="flex flex-wrap items-center justify-between gap-2 text-[13px] text-fg-2"><p>접수 <strong>{observation.mode?.toUpperCase()}</strong> · 점유 {observation.groups.reduce((n, row) => n + row.held, 0)} · 장비 {observation.groups.length}개{observation.groups.some(row => row.lending) ? ` · 빌려 쓰는 중 ${observation.groups.filter(row => row.lending).length}개` : ""}{observation.devicesRead ? "" : " · 장비 한도 미확인"} · <Link className="underline underline-offset-4" href="/admin/models/devices">장비 한도·우선순위</Link></p>
         <p>확인 못함 요청은 슬롯을 점유하지 않습니다 · 사람 검토 뒤 검토 완료로 닫습니다 · 자동 회수 기본 꺼짐</p></div>
       {observation.truncated && <p role="alert">열린 요청은 미확인 우선 100건만 표시합니다. 점유·미확인 합계는 전체 장부 기준입니다.</p>}
       <ModelOpsPanel mode={observation.mode} requests={[]} models={[]} initialStates={opsStates} {...opsActions}
@@ -111,7 +112,7 @@ function ModelLiveCard({ card, observation, controls, probe, busy, onProbe, reco
       <h3 className="break-words text-[18px] font-bold leading-snug">{card.name}</h3><p className="mt-1 text-[13px] text-fg-2">{card.stages.map(modelStageLabel).join(" · ") || "사용 단계 미확인"}</p>
       {status === "연결 안 됨" && !probe && <p className="mt-1 text-[13px] text-fg-2">최근 성공·연결 확인 기록 없음</p>}
     </header>
-    <div className="grid grid-cols-3 gap-2 rounded-lg bg-bg-soft p-3 text-[13px]"><div><p className="text-fg-2">점유 슬롯</p><strong className="text-[17px]">{held} / {limit ?? "미확인"}</strong></div>
+    <div className="grid grid-cols-3 gap-2 rounded-lg bg-bg-soft p-3 text-[13px]"><div><p className="text-fg-2">점유 슬롯{groups.some(group => group.lending) ? " · 빌려 쓰는 중" : ""}</p><strong className="text-[17px]">{held} / {limit ?? "미확인"}</strong></div>
       <div><p className="text-fg-2">1시간 성공</p><strong className="text-[17px] text-up">{sum(card, "succeeded1h")}건</strong></div>
       <div><p className="text-fg-2">1시간 실패</p><strong className="text-[17px]">{sum(card, "failed1h")}건</strong></div></div>
     <p className="text-[13px] text-fg-2" title={stamp(lastModelSuccess(card.rows))}>마지막 성공 <strong className="font-medium text-fg">{ago(lastModelSuccess(card.rows), observation.observedAt)}</strong></p>

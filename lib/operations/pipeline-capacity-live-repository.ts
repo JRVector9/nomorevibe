@@ -9,6 +9,7 @@ import { mergeWithDefaults } from "@/lib/crawl/settings";
 import { readDatabaseIdentity } from "./dr/epoch";
 import { comparisonReviewPolicyHash, fullReviewPolicyHash } from "./pipeline-capacity";
 import { ledgerBudgetEvidence, type LedgerBudgetInput } from "./pipeline-capacity-budget";
+import { deviceFallbackLimit } from "@/lib/llm/capacity-devices";
 import { LIVE_MAX_WINDOW_MS, LIVE_MIN_WINDOW_MS, LIVE_OPTIONAL_TABLES, LIVE_ROW_LIMIT, parseLiveCapacityArtifact,
   type LiveCapacityArtifact } from "./pipeline-capacity-live";
 
@@ -166,9 +167,28 @@ export async function collectLiveCapacityWindow(database: Database, options: Liv
     const [ledgerReadable] = await query(sql`select
       coalesce(has_table_privilege(to_regclass('public.model_capacity_requests'), 'SELECT'), false)
         and coalesce(has_table_privilege(to_regclass('public.model_capacity_events'), 'SELECT'), false) as readable`);
+    // PR 1b: 장비 한도는 `model_capacity_devices`(enabled 행)이고, 행이 없는 장비는 정책 groupLimits 대체다. 표가 없으면(0153 이전) 대체만,
+    // 표가 있으나 읽을 권한이 없으면 선언 한도를 모른다(null). 설정 행이 구간 시작 뒤에 바뀌었으면 그 사이 한도를 모른다.
+    const [deviceTable] = await query(sql`select to_regclass('public.model_capacity_devices') is not null as present,
+      coalesce(has_table_privilege(to_regclass('public.model_capacity_devices'), 'SELECT'), false) as readable`);
+    const deviceRows = deviceTable.present && deviceTable.readable
+      ? await query(sql`select device_id, limit_slots, updated_at > ${startTz} as changed from model_capacity_devices where enabled order by device_id`) : [];
+    const fallbackLimits = capacity?.policy && typeof capacity.policy === "object" && !Array.isArray(capacity.policy)
+      ? (capacity.policy as { groupLimits?: unknown }).groupLimits : undefined;
+    const deviceLimits: Record<string, number> | null = deviceTable.present && !deviceTable.readable ? null : {};
+    if (deviceLimits) {
+      if (fallbackLimits && typeof fallbackLimits === "object" && !Array.isArray(fallbackLimits)) {
+        for (const [device, value] of Object.entries(fallbackLimits as Record<string, unknown>)) {
+          const limit = deviceFallbackLimit({ [device]: value }, device);
+          if (limit !== null) deviceLimits[device] = limit;
+        }
+      }
+      for (const row of deviceRows) deviceLimits[String(row.device_id)] = Number(row.limit_slots);
+    }
     const budgetInput: LedgerBudgetInput = { capacity: { state: absentTables.includes("model_capacity_control") ? "absent"
       : ledgerReadable.readable ? "present" : "unreadable", mode: String(capacity?.mode), changedSinceStart: Boolean(capacity?.changed),
-      policy: capacity?.policy ?? null }, calls: [], unattributedAi1: 0, ai2: null, slots: [] };
+      policy: capacity?.policy ?? null, deviceLimits, devicesChangedSinceStart: deviceRows.some(row => row.changed === true) },
+    calls: [], unattributedAi1: 0, ai2: null, slots: [] };
     if (budgetInput.capacity.state === "present" && capacity?.mode === "open") {
       const reviewRoutes = sql`('crawl-agent-review', 'second-review')`, exits = sql`('reservation_cancelled', 'reservation_expired', 'dispatch_settled', 'dispatch_released')`;
       // 구간 안에서 시작된 심사 호출(dispatch_started). C는 dispatch binding, 실제 사용량은 정산된 upstream_reported terminal에만 있다.

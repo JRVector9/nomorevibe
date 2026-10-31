@@ -23,14 +23,14 @@ import { isDeepStrictEqual } from "node:util";
 import { and, asc, eq, getTableColumns, sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import { currentReplayDb } from "@/lib/db/replay-scope";
-import { modelCapacityControl, modelCapacityEvents, modelCapacityRequests } from "@/lib/db/schema";
+import { modelCapacityControl, modelCapacityDevices, modelCapacityEvents, modelCapacityRequests } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import type { Ai1GatewayTerminal, Ai2GatewayTerminal, Ai1ItemGatewayTerminal, GatewayNotStarted } from "@/lib/crawl/agent-review-gateway";
 import { gatewayNotStartedEvidenceSchema, type GatewayNotStartedDispatch } from "./capacity";
 import { reviewHash } from "@/lib/crawl/agent-review-contract";
 import { providerBoundaryCanonicalHash } from "./provider-boundary-contract";
 import {
-  compatibleModelCapacityGeneration, modelCapacityClassCycle, modelCapacityDispatchSchema, modelCapacityPolicyHash, modelCapacityRequestSchema,
+  compatibleModelCapacityGeneration, modelCapacityDispatchSchema, modelCapacityPolicyHash, modelCapacityRequestSchema,
   modelCapacityRequestIdentitySchema, modelCapacityReservationSchema, parseModelCapacityPolicy,
   type ModelCapacityDispatch, type ModelCapacityEventKind, type ModelCapacityIndeterminateReason, MODEL_CAPACITY_INDETERMINATE_REASONS,
   operatorReviewEvidenceSchema, operatorReviewEvidenceHash, type OperatorReviewEvidence, type ModelCapacityState,
@@ -42,6 +42,7 @@ import {
 } from "./capacity";
 import { ModelCapacityDeferredError } from "./capacity-deferred";
 import { liveStateSql, occupyingStateSql, inFlightStateSql, sentStateSql } from "./capacity-states";
+import { deviceCandidateSql, deviceFallbackLimit, type ModelCapacityGeneration } from "./capacity-devices";
 import { slotOnlyModelCapacity } from "./capacity-consumer-scope";
 import { fenceFromRow, writerSiteActive } from "@/lib/operations/dr/epoch";
 import { takeGatewayLocalEnd, type GatewayLocalEnd } from "./gateway-local-end";
@@ -116,9 +117,12 @@ function callerControlSnapshot(row: Pick<Control, "mode" | "epoch" | "revision" 
     || row.policy === null && (row.mode !== "disabled" && !row.fenced || row.policyHash !== null)) { // fenced는 policy 없이도 draining
     throw new Error("model_capacity_control_invalid");
   }
+  // 입장이 읽지 않는 선언 칸(providerLimits·groupLimits·poolLimits·weights)은 있을 때만 그대로 얼린다(PR 1b: 선택 칸).
   const policy = row.policy && Object.freeze({ ...row.policy,
-    providerLimits: Object.freeze(row.policy.providerLimits), groupLimits: Object.freeze(row.policy.groupLimits),
-    poolLimits: Object.freeze(row.policy.poolLimits), weights: Object.freeze(row.policy.weights),
+    ...(row.policy.providerLimits ? { providerLimits: Object.freeze(row.policy.providerLimits) } : {}),
+    ...(row.policy.groupLimits ? { groupLimits: Object.freeze(row.policy.groupLimits) } : {}),
+    ...(row.policy.poolLimits ? { poolLimits: Object.freeze(row.policy.poolLimits) } : {}),
+    ...(row.policy.weights ? { weights: Object.freeze(row.policy.weights) } : {}),
     routes: Object.freeze(row.policy.routes.map(route => Object.freeze(route))),
   });
   return Object.freeze({ mode: row.mode, epoch: row.epoch, revision: row.revision, policyHash: row.policyHash, policy });
@@ -147,43 +151,39 @@ async function expireRequests(tx: ProductTransaction, state: Control): Promise<v
   }
 }
 
+/**
+ * 장비별 입장(PR 1b). 현재 세대의 대기 행이 있는 장비(group_id)마다 `deviceCandidateSql` 을 한 번 실행해 맞는 행 하나를 예약한다 —
+ * 장비마다 pass 당 하나, control 행 FOR UPDATE 아래. 판정은 DB 안에서만: 장비 D 의 enabled 설정 행(없으면 정책 groupLimits 대체, 둘 다 없으면
+ * grant 없음), 점유 = reserved·dispatched(모든 세대, indeterminate 제외), 우선(rank 1) 바쁨 = 대기·점유·최근(idle_ms) rank-1 행,
+ * fits ⇔ active < limit AND (rank = 1 OR secondaryActive < (primaryBusy ? cap : max(cap, limit − reserve))), (rank, queue_ordinal) 최소 하나.
+ * 전역·공급자·풀 한도와 class 가중치 순환은 더 읽지 않는다. cursor 는 0 에 머문다(control 행을 쓰지 않는다).
+ */
 async function grantOne(tx: ProductTransaction, state: Control): Promise<void> {
   const policy = state.policy;
   if (!policy) return fail("model_capacity_policy_missing");
-  const cycle = modelCapacityClassCycle(policy);
-  for (let offset = 0; offset < cycle.length; offset++) {
-    const position = (state.cursor + offset) % cycle.length;
-    // Only aggregate active charges and fetch a capacity-fit row. A saturated
-    // queue head must not hide a later route in the same class that fits.
-    const [candidate] = await tx.execute<{ request_id: string }>(sql`
-      WITH active AS MATERIALIZED (
-        SELECT provider_budget_id, group_id, pool FROM model_capacity_requests
-        WHERE ${occupyingStateSql("state")}
-      )
-      SELECT q.request_id FROM model_capacity_requests q
-      WHERE q.state = 'waiting' AND q.class = ${cycle[position]}
-        AND q.epoch = ${state.epoch} AND q.revision = ${state.revision} AND q.policy_hash = ${state.policyHash}
-        AND q.queue_until > clock_timestamp()
-        AND (SELECT count(*) FROM active) < ${policy.globalLimit}
-        AND (SELECT count(*) FROM active a WHERE a.provider_budget_id = q.provider_budget_id)
-          < (${JSON.stringify(policy.providerLimits)}::text::jsonb ->> q.provider_budget_id)::integer
-        AND (SELECT count(*) FROM active a WHERE a.group_id = q.group_id)
-          < (${JSON.stringify(policy.groupLimits)}::text::jsonb ->> q.group_id)::integer
-        AND (SELECT count(*) FROM active a WHERE a.pool = q.pool)
-          < (${JSON.stringify(policy.poolLimits)}::text::jsonb ->> q.pool)::integer
-      ORDER BY q.queue_ordinal LIMIT 1 FOR UPDATE OF q`);
+  if (state.policyHash === null) return fail("model_capacity_policy_hash_missing");
+  const generation: ModelCapacityGeneration = { epoch: state.epoch, revision: state.revision, policyHash: state.policyHash };
+  const groupLimitsJson = JSON.stringify(policy.groupLimits ?? {});
+  const devices = await tx.execute<{ group_id: string }>(sql`SELECT DISTINCT group_id FROM model_capacity_requests
+    WHERE state = 'waiting' AND epoch = ${generation.epoch} AND revision = ${generation.revision} AND policy_hash = ${generation.policyHash}
+      AND queue_until > clock_timestamp() ORDER BY group_id`);
+  for (const { group_id } of devices) {
+    const [candidate] = await tx.execute<{ request_id: string }>(deviceCandidateSql(group_id, generation, groupLimitsJson));
     if (!candidate) continue;
     const [changed] = await tx.update(modelCapacityRequests).set({ state: "reserved", token: randomUUID(),
       reservedUntil: sql`clock_timestamp() + ${policy.reservationTtlMs} * interval '1 millisecond'`,
       updatedAt: sql`clock_timestamp()` }).where(and(eq(modelCapacityRequests.requestId, candidate.request_id),
         eq(modelCapacityRequests.state, "waiting"), sql`${modelCapacityRequests.queueUntil} > clock_timestamp()`)).returning();
-    if (!changed) continue;
-    await event(tx, changed, "reserved", "waiting", "reserved");
-    // updated_at은 모드·정책이 바뀐 시각이다(판정 수집기가 구간 중 변경으로 읽는다). cursor 진행은 그 시각을 바꾸지 않는다.
-    await tx.update(modelCapacityControl).set({ cursor: (position + 1) % cycle.length })
-      .where(eq(modelCapacityControl.id, 1));
-    return;
+    if (changed) await event(tx, changed, "reserved", "waiting", "reserved");
   }
+}
+
+/** 장비(route 의 groupId)에 설정 출처가 있는가: enabled 설정 행 또는 정책 groupLimits 대체. 둘 다 없으면 `device_unconfigured`(대기 행 없음). */
+async function deviceConfigured(tx: ProductTransaction, policy: NonNullable<Control["policy"]>, deviceId: string): Promise<boolean> {
+  if (deviceFallbackLimit(policy.groupLimits, deviceId) !== null) return true;
+  const [row] = await tx.select({ deviceId: modelCapacityDevices.deviceId }).from(modelCapacityDevices)
+    .where(and(eq(modelCapacityDevices.deviceId, deviceId), eq(modelCapacityDevices.enabled, true))).limit(1);
+  return row !== undefined;
 }
 
 async function event(tx: ProductTransaction, row: RequestRow, kind: ModelCapacityEventKind,
@@ -582,6 +582,7 @@ function requestSlot(checked: ModelCapacityRequest, logicalKey: string | null, m
     const route = state.policy.routes.find(route => route.routeId === checked.routeId
       && route.provider === checked.provider && route.model === checked.model);
     if (!route) return { kind: "deferred", reason: "unmapped" };
+    if (!await deviceConfigured(tx, state.policy, route.groupId)) return { kind: "deferred", reason: "device_unconfigured" };
     const oldActive = await tx.select({ epoch: modelCapacityRequests.epoch, revision: modelCapacityRequests.revision,
       policyHash: modelCapacityRequests.policyHash }).from(modelCapacityRequests)
       .where(sql`${occupyingStateSql(modelCapacityRequests.state)} AND (

@@ -56,9 +56,11 @@ const C = claudeCliTokenBound(claudeShape);
 const claude = (routeId: string, name = model): CliServingContract => ({ version: 1, protocol: 'cli-process-v1', routeId, provider: 'claude-cli',
   model: name, cliVersion: 'fake 0.0.0', totalTokenBound: C, costBoundUsdMicros: 150_000, boundProvenance: 'derived', ...claudeShape });
 const CONTRACTS = [claude('crawl-agent-review'), claude('second-review'), claude('second-review', backup)];
-const route = (routeId: string, provider: string, name: string, providerBudgetId: string) => ({ routeId, provider, model: name, providerBudgetId, groupId: 'reviewers' });
+// PR 1b: 한도는 장비별이다 — Claude 계정의 경로는 그 계정만의 장비(claude-sub, 정책 groupLimits 대체 = claudeLimit)를 나눠 쓴다.
+const route = (routeId: string, provider: string, name: string, providerBudgetId: string) => ({ routeId, provider, model: name, providerBudgetId,
+  groupId: providerBudgetId === 'claude-sub' ? 'claude-sub' : 'reviewers' });
 const policy = (claudeLimit = 4): ModelCapacityPolicy => ({ version: 1, globalLimit: 8, providerLimits: { 'claude-sub': claudeLimit, abcllm: 4 },
-  groupLimits: { reviewers: 8 }, poolLimits: { reviewer: 8, text: 1 }, weights: { first: 1, second: 1, background: 1 }, maxWaiting: 16,
+  groupLimits: { reviewers: 8, 'claude-sub': claudeLimit }, poolLimits: { reviewer: 8, text: 1 }, weights: { first: 1, second: 1, background: 1 }, maxWaiting: 16,
   queueTtlMs: 60_000, reservationTtlMs: 60_000, routes: [route('crawl-agent-review', 'claude-cli', model, 'claude-sub'),
     route('crawl-agent-review', 'abcllm', 'gw-model', 'abcllm'), route('second-review', 'claude-cli', model, 'claude-sub'),
     route('second-review', 'claude-cli', backup, 'claude-sub')] });

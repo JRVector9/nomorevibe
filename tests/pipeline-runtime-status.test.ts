@@ -92,10 +92,11 @@ describe('runtime readback', () => {
     expect([anchor('oracle-osaka-smoke', 'official-news'), anchor('m3', 'crawler'), anchor('m3', 'maintenance'), anchor('mini', 'crawler')])
       .toEqual(['pinned', 'absent', 'invalid', null]);
     expect(runtime.ledgers.map(row => [row.host, row.ledger.state])).toEqual([['m3', 'absent'], ['mini', 'absent'], ['oracle-osaka-smoke', 'ok']]);
+    // PR 1b: 공급자 예산은 한도가 아니다(limit null). 한도는 장비별(modelGroups).
     expect(runtime.models).toEqual([
-      { budget: 'abcllm', limit: 2, waiting: 2, reserved: 1, expiredReserved: 1, dispatched: 3, indeterminate: 4, oldestWaitingMin: 30, oldestUnsettledMin: 60 },
+      { budget: 'abcllm', limit: null, waiting: 2, reserved: 1, expiredReserved: 1, dispatched: 3, indeterminate: 4, oldestWaitingMin: 30, oldestUnsettledMin: 60 },
       { budget: 'claude-cli', limit: null, waiting: 0, reserved: 0, expiredReserved: 0, dispatched: 1, indeterminate: 0, oldestWaitingMin: null, oldestUnsettledMin: null },
-      { budget: 'idle', limit: 1, waiting: 0, reserved: 0, expiredReserved: 0, dispatched: 0, indeterminate: 0, oldestWaitingMin: null, oldestUnsettledMin: null }]);
+      { budget: 'idle', limit: null, waiting: 0, reserved: 0, expiredReserved: 0, dispatched: 0, indeterminate: 0, oldestWaitingMin: null, oldestUnsettledMin: null }]);
     expect(runtime.dr).toMatchObject({ state: 'fenced', epoch: 3, reason: 'promotion_sealed', promoted: 1 });
     expect(runtime.dr.sealed?.[0]).toMatchObject({ fromEpoch: 3, toEpoch: 4, evidence: ['old_db_fenced', 'writer_process_stopped'] });
     expect(runtime.oracle.checks).toEqual([
@@ -122,9 +123,13 @@ describe('runtime readback', () => {
       modelGroups: { limited: false, rows: [{ group: 'g', route: 'reason-translate', state: 'indeterminate', count: 1 },
         { group: 'g', route: 'crawl-agent-review', state: 'waiting', count: 4 }] },
     }, readiness);
-    expect(status.runtime.modelGroups).toEqual([{ group: 'g', limit: 2, firstModels: [{ provider: 'abcllm', model: 'first-model' }],
+    // 장비 행이 없으면 정책 groupLimits 대체(policy_fallback), enabled 장비 행이 있으면 그 한도(table) — PR 1b
+    expect(status.runtime.modelGroups).toEqual([{ group: 'g', limit: 2, limitSource: 'policy_fallback', firstModels: [{ provider: 'abcllm', model: 'first-model' }],
       waitingFirst: 4, reserved: 0, dispatched: 0, indeterminate: 1,
       occupants: [{ route: 'reason-translate', state: 'indeterminate', count: 1 }] }]);
+    const live = buildPipelineControlStatus({ ...raw, modelGroups: { limited: false, rows: [] },
+      modelDevices: [{ device: 'g', limit: 5 }, { device: 'spare', limit: 1 }] }, readiness).runtime.modelGroups;
+    expect(live?.map(row => [row.group, row.limit, row.limitSource])).toEqual([['g', 5, 'table'], ['spare', 1, 'table']]);
     expect(buildPipelineControlStatus({ ...raw, modelGroups: { limited: true, rows: [] } }, readiness).runtime.modelGroups).toBeNull();
   });
   it('never carries ledger tokens, boot ids, pids, DB roles or privilege hashes into the view model', () => {

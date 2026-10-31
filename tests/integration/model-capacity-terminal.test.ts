@@ -162,7 +162,7 @@ it("commits an original fixed reservation binding and refuses generic unbound di
 }));
 
 it("blocks duplicate logical waiting across owners and keeps the original waiting ID", exercise(async () => {
-  await install({ ...policy, globalLimit: 1 });
+  await install({ ...policy, groupLimits: { engine: 1 } });
   const busy = await request(), first = await request(), next = await request({ owner: { instanceId: `${prefix}-other`, bootId: randomUUID() } });
   const handle = granted(await tracked(requestAi1ModelSlot(busy, ++serial))), candidateId = ++serial;
   expect(await tracked(requestAi1ModelSlot(first, candidateId))).toEqual({ kind: "deferred", reason: "capacity" });

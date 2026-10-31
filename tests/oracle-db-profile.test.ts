@@ -92,6 +92,29 @@ it('lets every job-running Oracle principal read the admin runtime settings, reg
   expect(rendered.match(/public\.runtime_settings TO/g)).toHaveLength(6);
 });
 
+it('lets every job-running Oracle principal read the device admission settings (PR 1b, 0153) and nobody write them', () => {
+  // The admission TX (requestSlot → grantOne) joins model_capacity_devices/_roles inside the same transaction; no secret in either table.
+  for (const service of ['translation', 'product-health', 'site-evidence', 'official-news'] as const) {
+    expect(ORACLE_DB_PROFILES[service].tables.model_capacity_devices, service).toEqual({ select: true });
+    expect(ORACLE_DB_PROFILES[service].tables.model_capacity_device_roles, service).toEqual({ select: true });
+  }
+  for (const service of ['scheduler', 'attest'] as const) {
+    expect(ORACLE_DB_PROFILES[service].tables.model_capacity_devices).toBeUndefined();
+    expect(ORACLE_DB_PROFILES[service].tables.model_capacity_device_roles).toBeUndefined();
+  }
+  for (const consumer of Object.values(ORACLE_CONSUMER_DB_PROFILES)) {
+    expect(consumer!.profile.tables.model_capacity_devices, consumer!.principal).toBeUndefined();
+    expect(consumer!.profile.tables.model_capacity_device_roles, consumer!.principal).toBeUndefined();
+  }
+  expect(ORACLE_REFRESH_PROFILE.tables.model_capacity_devices).toBeUndefined();
+  const rendered = renderOracleDbGrantSql();
+  expect(rendered).toContain('GRANT SELECT ON TABLE public.model_capacity_devices TO nomorevibe_oracle_translation;');
+  expect(rendered).toContain('GRANT SELECT ON TABLE public.model_capacity_device_roles TO nomorevibe_oracle_translation;');
+  expect(rendered.match(/public\.model_capacity_devices TO/g)).toHaveLength(4);
+  expect(rendered.match(/public\.model_capacity_device_roles TO/g)).toHaveLength(4);
+  expect(rendered).not.toMatch(/GRANT [^\n]*(INSERT|UPDATE|DELETE)[^\n]* ON TABLE public\.model_capacity_device(s|_roles) /);
+});
+
 it('lets translation read the HTTP control row and never lets a worker rewrite a runtime key column', () => {
   // host 합계 예산 장부 갱신·비상 admission 판정이 읽는다(scheduler 와 같은 SELECT 만)
   expect(ORACLE_DB_PROFILES.translation.tables.http_origin_control).toEqual({ select: true });

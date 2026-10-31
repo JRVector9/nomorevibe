@@ -226,7 +226,7 @@ afterAll(() => steps([async () => { await setupWork; }, () => drain(hooks), () =
   async () => { await admin.end({ timeout: 5 }); }, async () => { vi.unstubAllEnvs(); }]));
 
 it("owns stable targets in the first waiting INSERT and resumes the original same ID", exercise(async () => {
-  await install({ ...policy, globalLimit: 1 });
+  await install({ ...policy, groupLimits: { engine: 1 } });
   const busyBatch: Batch = { kind: "busy" }, busy = await request(busyBatch), busyHandle = granted(await ask(busy, busyBatch));
   const batch = members(21, 32), product: Batch = { kind: "product", members: batch }, waiting = await request(product);
   expect(await ask(waiting, product)).toEqual({ kind: "deferred", reason: "capacity" });

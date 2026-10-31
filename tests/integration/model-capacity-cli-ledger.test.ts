@@ -41,15 +41,17 @@ const claude = (routeId: string): CliServingContract => ({ version: 1, protocol:
   cliVersion: "fake 0.0.0", totalTokenBound: claudeCliTokenBound(claudeShape), costBoundUsdMicros: 150_000, boundProvenance: "derived", ...claudeShape });
 const grok = (routeId: string): CliServingContract => ({ version: 1, protocol: "cli-process-v1", routeId, provider: "grok-cli", model: "grok-4",
   cliVersion: "fake 0.0.0", inputByteCap: 200_000, totalTokenBound: 300_000, costBoundUsdMicros: null, boundProvenance: "declared" });
-const route = (routeId: string, provider: string, model: string, providerBudgetId: string) => ({ routeId, provider, model, providerBudgetId, groupId: "reviewers" });
-// D8: provider budget 은 계정 단위. 한도 시험만 별도 계정(claude-limit)을 쓴다
+const route = (routeId: string, provider: string, model: string, providerBudgetId: string, groupId = "reviewers") =>
+  ({ routeId, provider, model, providerBudgetId, groupId });
+// D8: provider budget 은 계정 단위(식별자). PR 1b 부터 한도는 장비별이라 한도 시험은 별도 계정(claude-limit)을 그 계정만의 장비(claude-limit,
+// 정책 groupLimits 대체 2)에 둔다 — 같은 계정의 세 경로가 한 장비 칸 둘을 나눠 쓴다.
 const policy: ModelCapacityPolicy = { version: 1, globalLimit: 16, providerLimits: { "claude-sub": 8, "grok-sub": 8, abcllm: 8, "claude-limit": 2 },
-  groupLimits: { reviewers: 16 }, poolLimits: { reviewer: 16, text: 1 }, weights: { first: 2, second: 2, background: 1 }, maxWaiting: 32,
+  groupLimits: { reviewers: 16, "claude-limit": 2 }, poolLimits: { reviewer: 16, text: 1 }, weights: { first: 2, second: 2, background: 1 }, maxWaiting: 32,
   queueTtlMs: 60_000, reservationTtlMs: 60_000, routes: [
     route("crawl-agent-review", "abcllm", "gw-model", "abcllm"), route("second-review", "abcllm", "gw-model", "abcllm"),
     ...["crawl-agent-review", "second-review", "product-audit", "product-intro-check"].map(id => route(id, "claude-cli", "sonnet", "claude-sub")),
     ...["crawl-agent-review", "second-review", "grok-session-check"].map(id => route(id, "grok-cli", "grok-4", "grok-sub")),
-    ...["crawl-agent-review", "product-audit", "product-intro-check"].map(id => route(id, "claude-cli", "sonnet-limit", "claude-limit"))] };
+    ...["crawl-agent-review", "product-audit", "product-intro-check"].map(id => route(id, "claude-cli", "sonnet-limit", "claude-limit", "claude-limit"))] };
 let root = "", bin = "", empty = "", records = "", originalControl: Record<string, unknown>;
 
 beforeAll(async () => {
@@ -385,13 +387,13 @@ it("enforces the 0094 CLI branches: CLI-only kinds and terminals, sorted intro m
     expect(await reconcileCliProcessTerminal(settleCliNotStarted(value.call, ref(own))!)).toEqual({ kind: "settled" });
 });
 
-it("counts CLI rows in the shared account budget: AI1 + intro on one Claude account defer the audit until a slot is released", async () => {
+it("counts CLI rows on the shared account device: AI1 + intro on one Claude account defer the audit until a slot is released", async () => {
   const limited = "sonnet-limit", any = call("crawl-agent-review", "claude-cli", "ok");
   const first = ai1(5501, any), mine = { ...first, identity: { ...first.identity, model: limited } };
   const batch = intro([5601], any, ownerA, limited), item = audit(5701, any, ownerA, limited), auditId = randomUUID();
   const a = await granted(mine), b = await granted(batch);
   expect(await requestCliModelSlot({ ...item.identity, requestId: auditId }, item.target)).toEqual({ kind: "deferred", reason: "capacity" });
-  expect(await row(auditId)).toMatchObject({ state: "waiting", provider_budget_id: "claude-limit", logical_work_key: "bg:audit:5701" });
+  expect(await row(auditId)).toMatchObject({ state: "waiting", provider_budget_id: "claude-limit", group_id: "claude-limit", logical_work_key: "bg:audit:5701" });
   expect(await cancelReservedModelSlot(a)).toBe(true);
   const retried = await requestCliModelSlot({ ...item.identity, requestId: auditId }, item.target);
   expect(retried.kind).toBe("granted");

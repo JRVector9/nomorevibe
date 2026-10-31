@@ -238,7 +238,7 @@ it("preserves production unsupported, disabled original transport and source-has
   expect(await admin`SELECT request_id FROM model_capacity_requests`).toEqual([]);
 }));
 it("reuses its actual pending ID after a shared engine cap is released", exercise(async () => {
-  const task = await seed(); await install({ ...basePolicy, globalLimit: 1 });
+  const task = await seed(); await install({ ...basePolicy, groupLimits: { engine: 1 } });
   await server(async ({ bodies }) => {
     const other: ModelCapacityRequest = { requestId: randomUUID(), owner: { instanceId: prefix, bootId: role.bootId },
       workKey: "profile-cap-control", class: "first", pool: "reviewer", routeId: "crawl-agent-review", provider: "abcllm", model: PROFILE_MODEL };

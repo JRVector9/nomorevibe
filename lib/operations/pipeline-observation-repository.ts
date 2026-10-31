@@ -223,10 +223,16 @@ export async function collectPipelineObservation(database: Database, options: Ob
         entry.events.push({ toState: (row.to_state as ModelEvent["toState"]) ?? null, atMs: Number(row.at_ms) });
         grouped.set(String(row.request_id), entry);
       }
+      // 장비 한도(PR 1b): 표가 있고 읽을 수 있을 때만 싣는다(없으면 보고서가 정책 groupLimits 대체를 쓴다).
+      const [deviceTable] = await query(sql`select to_regclass('public.model_capacity_devices') is not null
+        and coalesce(has_table_privilege(to_regclass('public.model_capacity_devices'), 'SELECT'), false) as readable`);
+      const devices = deviceTable.readable ? await query(sql`select device_id, limit_slots, updated_at > ${startTz} as changed
+        from model_capacity_devices where enabled order by device_id limit 512`) : null;
       // 모양 검사는 마지막 parsePipelineObservation이 한다.
       modelLedger = {
         control: control ? { mode: control.mode, changedSinceStart: control.changed === true, policyHash: control.policy_hash ?? null,
           policy: control.policy ?? null } : null,
+        ...(devices ? { devices: devices.map(row => ({ deviceId: String(row.device_id), limitSlots: Number(row.limit_slots), changedSinceStart: row.changed === true })) } : {}),
         events: events.map(row => ({ routeId: row.route_id, class: row.class, kind: row.kind, count: Number(row.count) })),
         openAtCollection: open.map(row => ({ routeId: row.route_id, class: row.class, state: row.state, count: Number(row.count) })),
         requests: [...grouped.values()].map(({ row, events: list }) => ({ routeId: row.route_id, class: row.class, pool: row.pool,

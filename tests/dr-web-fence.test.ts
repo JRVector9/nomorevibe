@@ -374,7 +374,9 @@ it("every admin server action and every write route handler goes through the web
   // 0151(2026-10-30) admin/models/unknown-review-actions.ts: '확인 못함 — 사람 검토' 검토 완료(closeUnknownReview) 하나가 더해졌다.
   // admin/models/limits(실시간 한도, 0151): 그룹 저장 하나(saveRuntimeSettingsGroup)가 더해졌다.
   // 둘이 함께 들어와 91 — closeUnknownReview(0151) + saveRuntimeSettingsGroup(0152)
-  expect(wrapped).toBe(91);
+  // admin/models/devices(장비 한도, PR 1b): 장비 저장 하나(saveCapacityDevice)가 더해졌다.
+  // 셋이 함께 들어와 92 — closeUnknownReview(0151) + saveRuntimeSettingsGroup(0152) + saveCapacityDevice(0153)
+  expect(wrapped).toBe(92);
   const routes = files.filter(file => file.endsWith(`${path.sep}route.ts`));
   for (const file of routes) {
     const source = readFileSync(file, "utf8");

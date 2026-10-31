@@ -66,7 +66,7 @@ export function selectFirstReviewer(pool: FirstReviewer[], candidateId: number,
  * 호출자는 이 판정 전에 그 후보만 건너뛴다(modelCapacityDeferralIsPerWork). 2026-10-30 결정: 한 후보가 모델을 멈추지 않는다.
  */
 export const firstReviewDeferralIsLocal = (reason: ModelCapacityDeferredReason): boolean =>
-  ["unmapped", "provider_contract_unavailable", "capacity", "queue_full", "withdrawn", "reservation_lost"].includes(reason);
+  ["unmapped", "provider_contract_unavailable", "capacity", "queue_full", "withdrawn", "reservation_lost", "device_unconfigured"].includes(reason);
 
 export class FirstReviewModelDeferredError extends ModelCapacityDeferredError {
   constructor(reason: ModelCapacityDeferredReason, readonly reviewer: FirstReviewer) { super(reason); }

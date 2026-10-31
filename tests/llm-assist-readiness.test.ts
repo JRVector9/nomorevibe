@@ -50,7 +50,7 @@ function addM1(m: AssistRolloutManifest) {
   const m1 = { ...contract, backendId: "m1-qwen", physicalGroup: "m1", endpoint: "http://100.64.0.2:8792/v1/chat/completions", deploymentRevision: "fixture-m1-q4" };
   const cHash = localModelContractHash(m1), routeId = "local-assist-uptime-m1-qwen", requestId = randomUUID();
   m.target = "gpu_m1"; m.contracts.push(m1); m.verifiedContractHashes[m1.backendId] = cHash; m.physicalLimits.m1 = 1;
-  m.policy!.globalLimit = 2; m.policy!.providerLimits[m1.backendId] = 1; m.policy!.groupLimits.m1 = 1;
+  m.policy!.globalLimit = 2; m.policy!.providerLimits![m1.backendId] = 1; m.policy!.groupLimits!.m1 = 1;
   m.policy!.routes.push({ routeId, provider: "local-direct", model: m1.model, providerBudgetId: m1.backendId, groupId: "m1" });
   m.readbacks.push({ ...m.readbacks[0], backendId: m1.backendId, physicalGroup: "m1", endpoint: m1.endpoint, contractHash: cHash, deploymentRevision: m1.deploymentRevision });
   m.inventory!.expectedCallerIds.push("assist-m1");
@@ -83,12 +83,19 @@ describe("오프라인 rollout 증거 일관성", () => {
       (m: AssistRolloutManifest) => { m.verifiedContractHashes = {}; },
       (m: AssistRolloutManifest) => { m.readbacks[0].contextWindowTokens--; },
       (m: AssistRolloutManifest) => { m.physicalLimits.gpu3090 = 2; },
+      // PR 1b: 장비 한도 readback(model_capacity_devices)이 물리 상한을 넘으면 미검증 — 정책 groupLimits 는 대체값일 뿐이다.
+      (m: AssistRolloutManifest) => { m.deviceLimits.gpu3090 = 2; },
+      (m: AssistRolloutManifest) => { delete m.policy!.groupLimits; },
       (m: AssistRolloutManifest) => { m.inventory!.expectedCallerIds.push("existing-search"); },
       (m: AssistRolloutManifest) => { m.inventory!.aliases[0].physicalGroup = "other-gpu"; },
       (m: AssistRolloutManifest) => { m.native!.unsettledRequestIds.push(randomUUID()); },
       (m: AssistRolloutManifest) => { m.native!.canaries[0].ledgerState = "indeterminate"; },
     ];
     for (const change of mutate) { const m = fixture(); change(m); expect(verifyAssistRolloutManifest(m).globalCapacityEvidenceComplete).toBe(false); }
+    // 장비 한도 readback 이 있으면 정책 groupLimits 가 없어도 된다(한도는 정책 밖에 산다).
+    const live = fixture(); delete live.policy!.groupLimits; delete live.policy!.providerLimits; live.deviceLimits.gpu3090 = 1;
+    live.policyApproval!.policyHash = modelCapacityPolicyHash(live.policy!);
+    expect(verifyAssistRolloutManifest(live).globalCapacityEvidenceComplete).toBe(true);
   });
   it("gateway alias도 같은 물리 group 한도를 사용하며 미연결 text/search는 global open을 막는다", () => {
     const m = fixture(), caller = { ...m.inventory!.callers[0], callerId: "existing-search", transport: "gateway" as const,

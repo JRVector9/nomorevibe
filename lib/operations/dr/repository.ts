@@ -76,9 +76,14 @@ export async function sealRestoredDatabase(planValue: PromotionPlan, apply: bool
       UNION SELECT owner_instance_id FROM model_capacity_requests WHERE ${liveStateSql('state')}
       UNION SELECT instance_id FROM http_origin_hops WHERE state IN ('reserved','dispatched','indeterminate')
       UNION SELECT instance_id FROM job_batch_candidates) owners WHERE instance IS NOT NULL`)).map(row => row.instance).sort();
+    // 예산 식별자 = 점유 행의 provider_budget_id ∪ 정책이 선언한 예산(providerLimits 키 — PR 1b 부터 선택 칸 — 와 route 의 providerBudgetId).
     const budgets = Array.from(await tx.execute<{ budget: string }>(sql`SELECT DISTINCT budget FROM (
       SELECT provider_budget_id AS budget FROM model_capacity_requests WHERE ${occupyingStateSql('state')}
-      UNION SELECT jsonb_object_keys(policy->'providerLimits') FROM model_capacity_control WHERE id = 1 AND policy IS NOT NULL) b`)).map(row => row.budget).sort();
+      UNION SELECT k FROM model_capacity_control c, jsonb_object_keys(CASE WHEN jsonb_typeof(c.policy->'providerLimits') = 'object'
+        THEN c.policy->'providerLimits' ELSE '{}'::jsonb END) k WHERE c.id = 1 AND c.policy IS NOT NULL
+      UNION SELECT r->>'providerBudgetId' FROM model_capacity_control c, jsonb_array_elements(CASE WHEN jsonb_typeof(c.policy->'routes') = 'array'
+        THEN c.policy->'routes' ELSE '[]'::jsonb END) r WHERE c.id = 1 AND c.policy IS NOT NULL AND jsonb_typeof(r->'providerBudgetId') = 'string') b`))
+      .map(row => row.budget).sort();
     const [counts] = await tx.execute<{ model: number; http: number; clients: number }>(sql`SELECT
       (SELECT count(*)::int FROM model_capacity_requests WHERE ${occupyingStateSql('state')}) AS model,
       (SELECT count(*)::int FROM http_origin_hops WHERE state IN ('reserved','dispatched','indeterminate')) AS http,

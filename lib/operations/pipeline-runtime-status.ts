@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { batchCapabilitySchema, batchHostOrder, BATCH_HOSTS, BATCH_ROLES, type BatchPolicy } from '@/lib/jobs/batches';
 import { modelCapacityPolicyHash, modelCapacityPolicySchema } from '@/lib/llm/capacity';
+import { deviceFallbackLimit } from '@/lib/llm/capacity-devices';
 import { httpOriginPolicyHash, httpOriginPolicySchema } from '@/lib/net/http-origin-policy';
 import { EVIDENCE_KINDS } from './dr/promotion';
 import { HOST_TRANSLATION_CALLS, hostSlotPrefix, readHostLedger } from './host-budget';
@@ -17,9 +18,11 @@ export type AnchorState = 'pinned' | 'absent' | 'invalid' | null;
 export type HostLedger = { state: 'unknown' | 'absent' | 'invalid' | 'ok'; processes: number | null; expired: number | null;
   primaryClients: number | null; replicaClients: number | null; shapes: number | null; heartbeatGapMs: number | null;
   eventLoopDelayMs: number | null; loadPerCpu: number | null; rssBytes: number | null; translationHeld: number | null; translationCap: number | null };
+/** 공급자 예산(provider_budget_id)별 장부 수. limit 은 2026-10-30(PR 1b)부터 항상 null — 예산 식별자는 한도가 아니다(한도는 장비별, modelGroups). */
 export type ModelBudget = { budget: string; limit: number | null; waiting: number; reserved: number; expiredReserved: number;
   dispatched: number; indeterminate: number; oldestWaitingMin: number | null; oldestUnsettledMin: number | null };
-export type ModelGroup = { group: string; limit: number | null; firstModels: { provider: string; model: string }[];
+/** 장비(group_id)별. limit 은 `model_capacity_devices` 의 enabled 행(source table), 없으면 정책 groupLimits 대체(policy_fallback), 둘 다 없으면 null. */
+export type ModelGroup = { group: string; limit: number | null; limitSource?: 'table' | 'policy_fallback' | null; firstModels: { provider: string; model: string }[];
   waitingFirst: number; reserved: number; dispatched: number; indeterminate: number;
   occupants: { route: string; state: 'reserved' | 'dispatched' | 'indeterminate'; count: number }[] };
 export type DrStatus = { state: 'active' | 'fenced' | null; epoch: number | null; reason: string | null; updatedAt: string | null;
@@ -47,6 +50,7 @@ const drSchema = z.object({ state: z.enum(['active', 'fenced']), epoch: positive
     evidence: z.array(z.enum(EVIDENCE_KINDS)) })) }).refine(row => (row.state === 'active') === (row.reason === null));
 const candidatesSchema = z.array(z.object({ role: z.string(), instanceId: z.string(), release: z.string(), capability: z.unknown() }));
 const controlSchema = z.object({ mode: z.string(), policy: z.unknown(), policyHash: z.string().nullable() });
+const deviceRowsSchema = z.array(z.object({ device: z.string().min(1).max(120), limit: positive.max(256) })).max(512);
 
 const UNKNOWN_LEDGER: HostLedger = { state: 'unknown', processes: null, expired: null, primaryClients: null, replicaClients: null, shapes: null,
   heartbeatGapMs: null, eventLoopDelayMs: null, loadPerCpu: null, rssBytes: null, translationHeld: null, translationCap: null };
@@ -101,12 +105,18 @@ export function buildPipelineRuntimeStatus(raw: unknown, ctx: RuntimeContext): P
     const model = verifiedPolicy(input.model, modelCapacityPolicySchema, modelCapacityPolicyHash);
     const groups = groupRowsSchema.safeParse(input.modelGroups);
     if (groups.success) {
-      const limits = model?.policy?.groupLimits ?? {};
-      const names = [...new Set([...Object.keys(limits), ...groups.data.rows.map(row => row.group)])].sort();
+      // 장비 한도(PR 1b): enabled 장비 행 → 정책 groupLimits 대체. 장비 행 목록을 못 읽었으면(스냅숏에 없음) 대체만 쓴다.
+      const devices = deviceRowsSchema.safeParse(input.modelDevices ?? []);
+      const table = new Map(devices.success ? devices.data.map(row => [row.device, row.limit]) : []);
+      const fallback = model?.policy?.groupLimits ?? {};
+      const policyGroups = model?.policy?.routes.map(row => row.groupId) ?? [];
+      const names = [...new Set([...table.keys(), ...Object.keys(fallback), ...policyGroups, ...groups.data.rows.map(row => row.group)])].sort();
       result.modelGroups = names.map(group => {
         const rows = groups.data.rows.filter(row => row.group === group);
         const total = (state: typeof rows[number]['state']) => rows.filter(row => row.state === state).reduce((sum, row) => sum + row.count, 0);
-        return { group, limit: limits[group] ?? null,
+        const fallbackLimit = deviceFallbackLimit(fallback, group);
+        const limit = table.get(group) ?? fallbackLimit, limitSource = table.has(group) ? 'table' as const : fallbackLimit !== null ? 'policy_fallback' as const : null;
+        return { group, limit, limitSource,
           firstModels: model?.policy?.routes.filter(row => row.routeId === 'crawl-agent-review' && row.groupId === group)
             .map(row => ({ provider: row.provider, model: row.model })) ?? [],
           waitingFirst: total('waiting'), reserved: total('reserved'), dispatched: total('dispatched'), indeterminate: total('indeterminate'),
@@ -116,11 +126,12 @@ export function buildPipelineRuntimeStatus(raw: unknown, ctx: RuntimeContext): P
     }
     const budgets = budgetsSchema.safeParse(input.modelBudgets);
     if (budgets.success) {
-      const limits = model?.policy?.providerLimits ?? {};
-      const names = [...new Set([...Object.keys(limits), ...budgets.data.map(row => row.budget)])].sort();
+      // 예산 식별자 = 정책 route 의 providerBudgetId(와 선택 칸 providerLimits 의 키). 한도가 아니므로 limit 은 null 이다(PR 1b).
+      const declared = [...(model?.policy?.routes.map(row => row.providerBudgetId) ?? []), ...Object.keys(model?.policy?.providerLimits ?? {})];
+      const names = [...new Set([...declared, ...budgets.data.map(row => row.budget)])].sort();
       result.models = names.map(budget => {
         const row = budgets.data.find(item => item.budget === budget);
-        return { budget, limit: limits[budget] ?? null, waiting: row?.waiting ?? 0, reserved: row?.reserved ?? 0, expiredReserved: row?.expiredReserved ?? 0,
+        return { budget, limit: null, waiting: row?.waiting ?? 0, reserved: row?.reserved ?? 0, expiredReserved: row?.expiredReserved ?? 0,
           dispatched: row?.dispatched ?? 0, indeterminate: row?.indeterminate ?? 0, oldestWaitingMin: minutes(at, row?.oldestWaitingAt ?? null),
           // dispatch 시각을 모르는 미정산이 하나라도 있으면 최장 나이를 모른다고 둔다
           oldestUnsettledMin: row && row.untimed > 0 ? null : minutes(at, row?.oldestUnsettledAt ?? null) };

@@ -50,10 +50,20 @@ describe("integrateModelSlots", () => {
       { routeId: "r", class: "second", waitingMs: 0, freeWhileWaitingMs: 0, fullWhileWaitingMs: 0, unknownWhileWaitingMs: 0, busyMs: 500 },
     ]);
   });
-  it("counts a waiting text request as saturated when only its pool limit is full", () => {
+  it("judges saturation per device: the live device limit (model_capacity_devices) beats the policy groupLimits fallback, pools and budgets do not count (PR 1b)", () => {
     const rows = [request({ class: "background", pool: "text", activeFromMs: 0, activeToMs: 1_000 }),
       request({ class: "background", pool: "text", waitFromMs: 0, waitToMs: 600 })];
-    expect(integrateModelSlots(rows, policy, 1_000).all).toMatchObject({ freeWhileWaitingMs: 0, fullWhileWaitingMs: 600 });
+    // 정책 대체 한도 g=2: 점유 1 이면 빈 칸이 있다(풀 한도 text=1 은 입장이 읽지 않는다).
+    expect(integrateModelSlots(rows, policy, 1_000).all).toMatchObject({ freeWhileWaitingMs: 600, fullWhileWaitingMs: 0 });
+    // 장비 행 g=1 이면 포화 대기다.
+    expect(integrateModelSlots(rows, policy, 1_000, { g: 1 }).all).toMatchObject({ freeWhileWaitingMs: 0, fullWhileWaitingMs: 600 });
+    // 다른 장비의 점유는 이 장비의 판정에 들지 않는다.
+    const elsewhere = [request({ groupId: "other", activeFromMs: 0, activeToMs: 1_000 }), request({ groupId: "other", activeFromMs: 0, activeToMs: 1_000 }),
+      request({ waitFromMs: 0, waitToMs: 600 })];
+    expect(integrateModelSlots(elsewhere, policy, 1_000, { g: 2, other: 2 }).all).toMatchObject({ freeWhileWaitingMs: 600, fullWhileWaitingMs: 0 });
+    // 장비 한도를 모르면(행도 대체값도 없음) unknown 이다.
+    expect(integrateModelSlots([request({ groupId: "unconfigured", waitFromMs: 0, waitToMs: 300 })], policy, 1_000).all)
+      .toMatchObject({ unknownWhileWaitingMs: 300, freeWhileWaitingMs: 0, fullWhileWaitingMs: 0 });
   });
   it("puts waiting time under unknown when the request policy differs from the current policy or no policy is readable", () => {
     const rows = [request({ waitFromMs: 0, waitToMs: 300, policyHash: "c".repeat(64) })];

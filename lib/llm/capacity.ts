@@ -71,10 +71,18 @@ export const modelCapacityRequestIdentitySchema = z.object(modelCapacityRequestS
   .refine(value => value.class === "background" || value.pool === "reviewer", "invalid_class_pool");
 export type ModelCapacityRequestIdentity = Readonly<z.infer<typeof modelCapacityRequestIdentitySchema>>;
 
+/**
+ * 입장이 더 읽지 않는 정책 칸(PR 1b, 2026-10-30 소유자 결정 "전역·풀 한도 제거, 장비별 한도만"). 있으면 모양만 검증하고(옛 문서가 그대로
+ * 파싱·해시된다 — 저장된 rev12 의 hash 가 배포 뒤에도 맞는다), 값은 grant 에 영향을 주지 않는다. 한도·순위·상한·유휴 시간은
+ * `model_capacity_devices`(lib/llm/capacity-devices.ts)에 산다. `groupLimits` 는 장비 행이 없을 때의 대체 한도(policy_fallback)로만 읽힌다.
+ * `providerLimits` 의 키는 예산 식별자 선언으로 남을 수 있다(값은 한도가 아니다).
+ */
+export const MODEL_CAPACITY_POLICY_IGNORED_FIELDS = Object.freeze(["globalLimit", "providerLimits", "groupLimits", "poolLimits", "weights"] as const);
+
 const modelCapacityBasePolicySchema = z.object({
-  version: z.literal(1), globalLimit: limit, providerLimits: limits, groupLimits: limits,
-  poolLimits: z.object({ reviewer: limit, text: limit }).strict(),
-  weights: z.object({ first: positive.max(32), second: positive.max(32), background: positive.max(32) }).strict(),
+  version: z.literal(1), globalLimit: limit.optional(), providerLimits: limits.optional(), groupLimits: limits.optional(),
+  poolLimits: z.object({ reviewer: limit, text: limit }).strict().optional(),
+  weights: z.object({ first: positive.max(32), second: positive.max(32), background: positive.max(32) }).strict().optional(),
   maxWaiting: positive.max(4096), queueTtlMs: ttl, reservationTtlMs: ttl,
   routes: z.array(z.object({ routeId: identity(120), provider: identity(60), model: identity(200),
     providerBudgetId: identity(120), groupId: identity(120) }).strict()).min(1).max(128),
@@ -84,17 +92,19 @@ const modelCapacityBasePolicySchema = z.object({
     const key = JSON.stringify([route.routeId, route.provider, route.model]);
     if (seen.has(key)) context.addIssue({ code: "custom", message: "duplicate_route", path: ["routes", index] });
     seen.add(key);
-    if (!Object.hasOwn(value.providerLimits, route.providerBudgetId)) context.addIssue({
+    // 선언 맵이 있을 때만 참조를 검사한다(맵이 없으면 장비 표·예산 선언은 정책 밖에 있다).
+    if (value.providerLimits && !Object.hasOwn(value.providerLimits, route.providerBudgetId)) context.addIssue({
       code: "custom", message: "unknown_provider_budget", path: ["routes", index, "providerBudgetId"],
     });
-    if (!Object.hasOwn(value.groupLimits, route.groupId)) context.addIssue({
+    if (value.groupLimits && !Object.hasOwn(value.groupLimits, route.groupId)) context.addIssue({
       code: "custom", message: "unknown_capacity_group", path: ["routes", index, "groupId"],
     });
   }
 });
 /** A predecessor is authenticated by each held row's complete policy hash.
- * Only independent new groups/providers may be appended; every old scheduling
- * decision remains identical and old holds still count in all admission sums. */
+ * Routes may only be appended (on any device — per-device limits are live settings, not policy): every old route keeps its
+ * groupId/providerBudgetId, version/maxWaiting/TTLs are unchanged, and old holds still count in their device's occupancy.
+ * The ignored limit fields and weights are not compared (they no longer decide anything). */
 export const modelCapacityPolicySchema = modelCapacityBasePolicySchema.safeExtend({
   compatiblePredecessor: z.object({ epoch: positive, revision: positive,
     policy: modelCapacityBasePolicySchema }).strict().optional(),
@@ -102,19 +112,15 @@ export const modelCapacityPolicySchema = modelCapacityBasePolicySchema.safeExten
   const previous = value.compatiblePredecessor?.policy;
   if (!previous) return;
   const same = (a: unknown, b: unknown) => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
-  const { routes, providerLimits, groupLimits } = value;
-  const currentRest = Object.fromEntries(Object.entries(value)
-    .filter(([key]) => !["routes", "providerLimits", "groupLimits", "compatiblePredecessor"].includes(key)));
-  const { routes: oldRoutes, providerLimits: oldProviders, groupLimits: oldGroups, ...oldRest } = previous;
+  const excluded = new Set<string>(["routes", "compatiblePredecessor", ...MODEL_CAPACITY_POLICY_IGNORED_FIELDS]);
+  const rest = (policy: object) => Object.fromEntries(Object.entries(policy).filter(([key]) => !excluded.has(key)));
+  const { routes } = value, oldRoutes = previous.routes;
   const key = (route: typeof routes[number]) => JSON.stringify([route.routeId, route.provider, route.model]);
   const oldByKey = new Map(oldRoutes.map(route => [key(route), route]));
   const currentByKey = new Map(routes.map(route => [key(route), route]));
   const added = routes.filter(route => !oldByKey.has(key(route)));
-  if (!same(currentRest, oldRest) || !added.length
-    || Object.entries(oldProviders).some(([id, bound]) => providerLimits[id] !== bound)
-    || Object.entries(oldGroups).some(([id, bound]) => groupLimits[id] !== bound)
-    || oldRoutes.some(route => !same(currentByKey.get(key(route)), route))
-    || added.some(route => Object.hasOwn(oldProviders, route.providerBudgetId) || Object.hasOwn(oldGroups, route.groupId))) {
+  if (!same(rest(value), rest(previous)) || !added.length
+    || oldRoutes.some(route => !same(currentByKey.get(key(route)), route))) {
     context.addIssue({ code: "custom", message: "incompatible_capacity_predecessor", path: ["compatiblePredecessor"] });
   }
 });
@@ -257,9 +263,10 @@ export const ai1ItemGatewayTerminalEvidenceSchema = z.object({
     && value.actualUsage.totalTokens <= value.dispatch.binding.totalTokenBound, "invalid_ai1_item_terminal_usage");
 export type Ai1ItemGatewayTerminalEvidence = Readonly<z.infer<typeof ai1ItemGatewayTerminalEvidenceSchema>>;
 
+/** device_unconfigured: the route's device (groupId) has neither an enabled `model_capacity_devices` row nor a policy `groupLimits` fallback — no waiting row is written. */
 export type ModelSlotResult = { kind: "granted"; reservation: ModelCapacityReservation }
   | { kind: "deferred"; reason: "disabled" | "draining" | "unmapped" | "capacity" | "queue_full"
-    | "policy_changed" | "withdrawn" | "dispatched" };
+    | "policy_changed" | "withdrawn" | "dispatched" | "device_unconfigured" };
 
 export function parseModelCapacityPolicy(value: unknown): ModelCapacityPolicy {
   return modelCapacityPolicySchema.parse(value);
@@ -293,11 +300,6 @@ export function compatibleModelCapacityGeneration(policy: ModelCapacityPolicy,
   return !!previous && previous.epoch === current.epoch && previous.revision < current.revision
     && generation.epoch === previous.epoch && generation.revision === previous.revision
     && generation.policyHash === modelCapacityPolicyHash(previous.policy);
-}
-
-export function modelCapacityClassCycle(policy: ModelCapacityPolicy): ModelCapacityClass[] {
-  const parsed = parseModelCapacityPolicy(policy);
-  return capacityClass.options.flatMap(kind => Array<ModelCapacityClass>(parsed.weights[kind]).fill(kind));
 }
 
 /** Fixed search-profile snapshot; raw row hash includes every column and timestamp microsecond. */

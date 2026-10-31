@@ -7,6 +7,7 @@ import { firstReviewers } from "@/lib/crawl/first-reviewers";
 import { QWEN_AUDIT_PROVIDER } from "@/lib/crawl/product-audit-reviewer";
 import { batchPolicyHash, batchPolicySchema } from "@/lib/jobs/batches";
 import { modelCapacityPolicyHash, modelCapacityPolicySchema, type ModelCapacityPolicy } from "@/lib/llm/capacity";
+import { deviceFallbackLimit } from "@/lib/llm/capacity-devices";
 import { cliServingContractSchema, resolveCliServingContract, type CliProvider } from "@/lib/llm/cli-serving-contract";
 import { crawlTaglineServingContractSchema, resolveCrawlTaglineServingContract } from "@/lib/llm/crawl-tagline-serving-contract";
 import { productTaglineKoServingContractSchema, resolveProductTaglineKoServingContract } from "@/lib/llm/product-tagline-ko-serving-contract";
@@ -141,6 +142,13 @@ export const controlSnapshotSchema = z.object({
   stages: z.array(z.object({ stage: z.enum(CONTROL_STAGES), mode: z.enum(MODES.stage), drainingFrom: z.enum(["legacy", "items"]).nullable(),
     epoch, contract: count, live: count, unsettled: count, legacyJobLive: z.boolean(), consumers: count }).strict()),
   capacity: z.object({ ...controlRow("capacity"), waiting: count, oldGeneration: count }).strict(),
+  /**
+   * 장비별 실시간 상태(PR 1b, readModelCapacityDeviceStates 와 같은 읽기): 설정 출처가 있는 장비만(table = model_capacity_devices enabled 행,
+   * policy_fallback = 정책 groupLimits 대체). 없으면(옛 스냅숏·읽지 못함) 장비 판정은 "모름"이라 경고·거절을 만들지 않는다.
+   */
+  devices: z.array(z.object({ deviceId: z.string().min(1).max(120), source: z.enum(["table", "policy_fallback"]), limitSlots: count, secondaryCap: count,
+    idleMs: count, reserveSlots: count, active: count, secondaryActive: count, secondaryBound: count, primaryBusy: z.boolean(), lending: z.boolean(),
+    waiting: count, waitingPrimary: count, version: count.nullable(), updatedAt: z.string().nullable() }).strict()).max(512).optional(),
   http: z.object(controlRow("http")).strict(),
   batch: z.object({ mode: z.enum(MODES.batch), drainingFrom: z.enum(["legacy", "versioned"]).nullable(), epoch, contract: count,
     policy: z.unknown(), policyHash: z.string().nullable(), liveJobs: count, liveRoles: count, liveItems: count, liveSources: count,
@@ -375,12 +383,18 @@ export function planPipelineControl(command: TransitionCommand, snapshot: Contro
       const hosts = httpOriginPolicySchema.safeParse(policy).data?.instanceHosts ?? {};
       return snapshot.recentInstances.filter(instance => !Object.hasOwn(hosts, instance));
     };
+    // PR 1b: 장비 판정은 스냅숏에 장비 상태가 있을 때만(없으면 모름). 행 없음 = 정책 groupLimits 대체로 돈다(경고), 둘 다 없음 = device_unconfigured(OPEN 거절).
+    const deviceRows = snapshot.devices ? new Map(snapshot.devices.map(device => [device.deviceId, device])) : null;
+    const routeDevices = (policy: ModelCapacityPolicy) => [...new Set(policy.routes.map(route => route.groupId))].sort();
     if (command.name === "capacity policy" || command.name === "http policy") {
       if (c.mode === "open") blocked.push(`${command.area}_policy_requires_closed`);
       const next = command.area === "capacity" ? newPolicy(modelCapacityPolicySchema, modelCapacityPolicyHash, c.policyHash)
         : newPolicy(httpOriginPolicySchema, httpOriginPolicyHash, c.policyHash);
       if (held > 0) warnings.push(`old_generation_held:${held}`);
       if (command.area === "http" && next) for (const instance of unmappedInstances(next.policy)) warnings.push(`instance_unmapped:${instance}`);
+      if (command.area === "capacity" && next && deviceRows) for (const device of routeDevices(next.policy as ModelCapacityPolicy)) {
+        if (deviceRows.get(device)?.source !== "table") warnings.push(`device_row_missing:${device}`);
+      }
       return plan(target, `policy ${c.policyHash?.slice(0, 12) ?? "unset"} → ${next?.hash.slice(0, 12) ?? "?"}, revision ${c.revision} → ${c.revision + 1}`,
         { policyHash: next?.hash ?? null, ...(command.area === "capacity" && next ? { routes: routesFor(next.policy as ModelCapacityPolicy, ai2Mode) } : {}) });
     }
@@ -399,6 +413,10 @@ export function planPipelineControl(command: TransitionCommand, snapshot: Contro
     const routes = routesFor(policy, ai2Mode);
     const deferred = deferredRoutes(routes).length;
     if (deferred > 0) (command.allowDeferredRoutes ? warnings : blocked).push(`deferred_routes:${deferred}`);
+    // 설정 출처가 없는 장비의 route 는 OPEN 뒤 모두 device_unconfigured 로 미뤄진다 — 장비 행(/admin/models/devices)을 먼저 만든다.
+    if (deviceRows) for (const device of routeDevices(policy)) {
+      if (!deviceRows.has(device) && deviceFallbackLimit(policy.groupLimits, device) === null) blocked.push(`device_unconfigured:${device}`);
+    }
     return plan(target, `${c.mode} → open`, { routes });
   }
 
@@ -489,6 +507,11 @@ function areaLines(snapshot: ControlSnapshot, area: Area | "all"): string[] {
     const c = snapshot.capacity;
     lines.push(`[capacity] mode=${c.mode} epoch=${c.epoch} revision=${c.revision} policy=${policyLabel(c.policy, c.policyHash)}`
       + ` waiting=${c.waiting} reserved=${c.reserved} dispatched=${c.dispatched} indeterminate=${c.indeterminate} old_generation=${c.oldGeneration}`);
+    // 장비별 한도·점유(PR 1b). 한도는 정책 세대 밖의 실시간 설정이다(저장 즉시 다음 입장부터, DRAIN 불필요). 전역·풀 한도는 없다.
+    if (snapshot.devices) lines.push("[devices] 한도·우선순위는 /admin/models/devices 에서 즉시 적용(DRAIN 불필요). source=policy_fallback 은 장비 행이 없어 정책 groupLimits 로 도는 장비",
+      ...table(["device", "limit", "active", "primary_busy", "secondary/bound", "cap", "lending", "waiting", "source", "version"],
+        snapshot.devices.map(d => [d.deviceId, d.limitSlots, d.active, d.primaryBusy ? "busy" : "idle", `${d.secondaryActive}/${d.secondaryBound}`, d.secondaryCap,
+          d.lending ? "lending" : "-", `${d.waiting}(primary ${d.waitingPrimary})`, d.source, d.version])));
   }
   if (area === "all" || area === "http") {
     const h = snapshot.http;

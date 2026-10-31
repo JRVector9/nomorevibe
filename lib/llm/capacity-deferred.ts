@@ -1,15 +1,16 @@
 /**
+ * - `device_unconfigured`(PR 1b): 경로의 장비에 활성 `model_capacity_devices` 행도 정책 `groupLimits` 대체도 없다.
  * - `work_busy`: 장부가 행 없이 거절했다(같은 작업 fence·중복 작업) — 이 작업 하나가 다른 요청에 묶였을 뿐, 슬롯은 남아 있을 수 있다.
  *   장부(requestSlot)는 포화와 같은 `capacity` 로 답하므로 호출자가 capacityRefusalReason(capacity-busy-targets.ts)으로 가른다.
  */
 export type ModelCapacityDeferredReason = "draining" | "unmapped" | "provider_contract_unavailable"
   | "reservation_required" | "owner_unavailable" | "capacity" | "queue_full" | "policy_changed"
-  | "withdrawn" | "dispatched" | "disabled" | "reservation_lost" | "work_busy";
+  | "withdrawn" | "dispatched" | "disabled" | "reservation_lost" | "device_unconfigured" | "work_busy";
 
 export function isModelCapacityDeferredReason(value: unknown): value is ModelCapacityDeferredReason {
   return typeof value === "string" && ["draining", "unmapped", "provider_contract_unavailable", "reservation_required",
     "owner_unavailable", "capacity", "queue_full", "policy_changed", "withdrawn", "dispatched", "disabled", "reservation_lost",
-    "work_busy"].includes(value);
+    "device_unconfigured", "work_busy"].includes(value);
 }
 
 /**

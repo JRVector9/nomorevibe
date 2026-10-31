@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   modelCapacityDispatchSchema, modelCapacityOwnerSchema, modelCapacityRequestSchema,
-  modelCapacityReservationSchema, modelCapacityClassCycle, modelCapacityPolicyHash,
+  modelCapacityReservationSchema, modelCapacityPolicyHash,
   parseModelCapacityPolicy, type ModelCapacityPolicy, type ModelCapacityRequest,
 } from "@/lib/llm/capacity";
 
@@ -73,7 +73,7 @@ describe("capacity policy has a strict, explicit serving map", () => {
   });
 });
 
-describe("capacity policy identity and finite fairness cycle", () => {
+describe("capacity policy identity", () => {
   it("has one SHA256 for reordered maps and routes without changing either input", () => {
     const left = policy(), right = { ...policy(), providerLimits: { other: 2, shared: 3 },
       groupLimits: { alternate: 2, primary: 2 }, routes: [...policy().routes].reverse() };
@@ -96,17 +96,10 @@ describe("capacity policy identity and finite fairness cycle", () => {
     expect(modelCapacityPolicyHash(parseModelCapacityPolicy(changed(path, value)))).not.toBe(modelCapacityPolicyHash(policy()));
   });
 
-  it("expands the fixed class order with exact nonzero shares", () => {
-    const value = policy(), before = structuredClone(value);
-    expect(modelCapacityClassCycle(value)).toEqual(["first", "first", "second", "background"]);
-    expect(value).toEqual(before);
-  });
-
-  it("bounds the maximal expanded cycle at96 without losing background", () => {
-    const value = { ...policy(), weights: { first: 32, second: 32, background: 32 } };
-    const cycle = modelCapacityClassCycle(value);
-    expect(cycle).toHaveLength(96);
-    for (const name of ["first", "second", "background"]) expect(cycle.filter(item => item === name)).toHaveLength(32);
+  it("keeps the hash of a document without the ignored limit fields distinct, so an operator sees the revision change", () => {
+    const { globalLimit, providerLimits, groupLimits, poolLimits, weights, ...bare } = policy();
+    void globalLimit; void providerLimits; void groupLimits; void poolLimits; void weights;
+    expect(modelCapacityPolicyHash(parseModelCapacityPolicy(bare))).not.toBe(modelCapacityPolicyHash(policy()));
   });
 });
 

@@ -49,7 +49,8 @@ const policy: ModelCapacityPolicy = { version: 1, globalLimit: 1, providerLimits
   weights: { first: 1, second: 1, background: 1 }, maxWaiting: 16, queueTtlMs: 60_000, reservationTtlMs: 60_000,
   routes: [{ routeId: 'second-review', provider: 'local-direct', model: mainModel, providerBudgetId: 'gpu', groupId: 'gpu' },
     { routeId: 'second-review', provider: 'abcllm', model: backupModel, providerBudgetId: 'abc', groupId: 'abc' },
-    { routeId: 'wait-fixture', provider: 'fixture', model: 'blocker', providerBudgetId: 'fixture', groupId: 'fixture' }] };
+    // PR 1b: 입장은 장비별이다 — 막는 행은 주 AI2 경로와 같은 장비(gpu, 한도 1)에 둬야 주 경로가 대기한다(전역 한도 1 은 더 읽지 않는다).
+    { routeId: 'wait-fixture', provider: 'fixture', model: 'blocker', providerBudgetId: 'fixture', groupId: 'gpu' }] };
 function contracts(origin = 'http://127.0.0.1:1') {
   const direct: Ai2GatewayServingContract = { version: 1, protocol: 'ai2-direct-openai-chat-v1', routeId: 'second-review',
     provider: 'local-direct', model: mainModel, responseModel: mainModel, deploymentRevision: 'fixture',

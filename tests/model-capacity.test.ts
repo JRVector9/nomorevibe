@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
-  compatibleModelCapacityGeneration, modelCapacityClassCycle, modelCapacityDispatchSchema, modelCapacityOwnerSchema,
+  compatibleModelCapacityGeneration, modelCapacityDispatchSchema, modelCapacityOwnerSchema,
   modelCapacityPolicyHash, modelCapacityPolicySchema, modelCapacityRequestSchema,
   modelCapacityReservationSchema, parseModelCapacityPolicy,
 } from "@/lib/llm/capacity";
@@ -95,12 +95,12 @@ describe("inactive model capacity contract", () => {
     }
   });
 
-  it("expands the fixed weighted class cycle and returns an independent array", () => {
-    const before = structuredClone(policy), cycle = modelCapacityClassCycle(policy);
-    expect(cycle).toEqual(["first", "first", "second", "background", "background", "background"]);
-    cycle.pop();
-    expect(modelCapacityClassCycle(policy)).toHaveLength(6);
-    expect(policy).toEqual(before);
+  it("parses a policy without the five ignored limit fields (PR 1b: limits live in model_capacity_devices) and still rejects bad values when present", () => {
+    const { globalLimit, providerLimits, groupLimits, poolLimits, weights, ...bare } = policy;
+    void globalLimit; void providerLimits; void groupLimits; void poolLimits; void weights;
+    expect(parseModelCapacityPolicy(bare)).toEqual(bare);
+    expect(modelCapacityPolicySchema.safeParse({ ...bare, globalLimit: 0 }).success).toBe(false);
+    expect(modelCapacityPolicySchema.safeParse({ ...bare, groupLimits: {} }).success).toBe(false);
   });
 });
 
@@ -126,17 +126,23 @@ it("does not accept predecessor authority across writer epochs or backwards revi
   expect(compatibleModelCapacityGeneration(policy, old, { epoch: 1, revision: 7 })).toBe(false);
 });
 
-it("rejects a compatibility claim when an existing bound or scheduling decision changes", () => {
+it("rejects a compatibility claim when an old route or a kept policy knob changes, but not when an ignored limit field changes", () => {
   for (const edit of [
-    (p: ReturnType<typeof extension>) => { p.globalLimit++; },
-    (p: ReturnType<typeof extension>) => { p.poolLimits.text++; },
-    (p: ReturnType<typeof extension>) => { p.providerLimits["account-a"]++; },
-    (p: ReturnType<typeof extension>) => { p.groupLimits["group-a"]++; },
-    (p: ReturnType<typeof extension>) => { p.weights.first++; },
     (p: ReturnType<typeof extension>) => { p.queueTtlMs++; },
+    (p: ReturnType<typeof extension>) => { p.maxWaiting++; },
     (p: ReturnType<typeof extension>) => { p.routes[0] = { ...p.routes[0], groupId: "m1" }; },
     (p: ReturnType<typeof extension>) => { p.routes.shift(); },
+    (p: ReturnType<typeof extension>) => { p.routes.splice(2); },
+  ]) { const changed = extension(); edit(changed); expect(modelCapacityPolicySchema.safeParse(changed).success).toBe(false); }
+  // PR 1b: 전역·풀·공급자·그룹 한도와 weights 는 입장이 읽지 않으므로 바뀌어도 이전 세대와 호환이고, 새 route 는 기존 장비에도 붙을 수 있다.
+  for (const edit of [
+    (p: ReturnType<typeof extension>) => { p.globalLimit!++; },
+    (p: ReturnType<typeof extension>) => { p.poolLimits!.text++; },
+    (p: ReturnType<typeof extension>) => { p.providerLimits!["account-a"]++; },
+    (p: ReturnType<typeof extension>) => { p.groupLimits!["group-a"]++; },
+    (p: ReturnType<typeof extension>) => { p.weights!.first++; },
     (p: ReturnType<typeof extension>) => { p.routes.at(-1)!.groupId = "group-a"; },
     (p: ReturnType<typeof extension>) => { p.routes.at(-1)!.providerBudgetId = "account-a"; },
-  ]) { const changed = extension(); edit(changed); expect(modelCapacityPolicySchema.safeParse(changed).success).toBe(false); }
+    (p: ReturnType<typeof extension>) => { const bag = p as Record<string, unknown>; delete bag.globalLimit; delete bag.poolLimits; delete bag.weights; },
+  ]) { const changed = extension(); edit(changed); expect(modelCapacityPolicySchema.safeParse(changed).success, String(edit)).toBe(true); }
 });

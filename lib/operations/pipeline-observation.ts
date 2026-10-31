@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { modelCapacityPolicyHash, parseModelCapacityPolicy, type ModelCapacityPolicy, type ModelCapacityState } from "@/lib/llm/capacity";
+import { deviceFallbackLimit } from "@/lib/llm/capacity-devices";
 
 /**
  * PR17a 운영 관측(설계 §7.5: 30분 canary 뒤 24시간). 수집은 읽기 전용이고 이 모듈은 수집물의 일관성 검사·요약만 한다.
@@ -70,6 +71,8 @@ export const pipelineObservationSchema = z.object({
   modelLedger: z.object({
     control: z.object({ mode: z.enum(["disabled", "open", "draining"]), changedSinceStart: z.boolean(), policyHash: hash.nullable(),
       policy: z.unknown() }).strict().nullable(),
+    /** 수집 시점의 장비 한도(`model_capacity_devices` enabled 행, PR 1b). 표가 없거나(0153 이전) 못 읽었으면 없음 → 정책 groupLimits 대체만. */
+    devices: z.array(z.object({ deviceId: text, limitSlots: integer.positive(), changedSinceStart: z.boolean() }).strict()).max(512).optional(),
     events: z.array(z.object({ routeId: text, class: capacityClass, kind: text, count: integer.positive() }).strict()).max(4096),
     openAtCollection: z.array(z.object({ routeId: text, class: capacityClass, state: z.enum(["dispatched", "indeterminate"]),
       count: integer.positive() }).strict()).max(4096),
@@ -134,14 +137,19 @@ const RANK: Record<Verdict, number> = { full: 0, unknown: 1, free: 2 };
 /**
  * 설계 §7 끝: "준비 대기가 있는데 슬롯이 비는 시간"과 "포화라 슬롯을 기다리는 시간"을 route/class별로 나눠 적분한다.
  * 준비 대기 = 장부의 waiting 요청(호출 준비가 끝나 슬롯을 요청한 일). 장부에 들어오지 않은 파이프라인 대기는 보지 않는다.
- * 대기 요청 w가 그 시각 전역·provider budget·group·pool 점유가 모두 한도 미만이면 free(슬롯이 비었는데 기다림),
- * 하나라도 한도에 닿았으면 full(포화 대기)이다. 요청의 policy hash가 현재 정책과 다르거나 한도를 모르면 unknown이다.
+ * 대기 요청 w가 그 시각 자기 장비(group_id)의 점유가 장비 한도 미만이면 free(슬롯이 비었는데 기다림), 한도에 닿았으면 full(포화 대기)이다
+ * (PR 1b: 전역·provider·pool 한도는 입장이 읽지 않는다). 장비 한도는 `deviceLimits`(수집 시점의 `model_capacity_devices`), 없으면 정책 groupLimits
+ * 대체다. 요청의 policy hash가 현재 정책과 다르거나 한도를 모르면 unknown이다. 낮은 순위 상한(secondary_cap)·유휴 대여는 집계로 재현할 수 없어
+ * 보지 않는다 — 그래서 free 는 "장비에 빈 칸이 있었다"의 상한이다.
  * scope 안의 대기 중 하나라도 free면 free, 아니면 unknown이 하나라도 있으면 unknown, 모두 full일 때만 full로 센다
- * (포화를 과장하지 않는 보수적 정의). 점유는 reserved·dispatched·indeterminate 전부다(장부 승인과 같은 집계).
+ * (포화를 과장하지 않는 보수적 정의). 점유는 reserved·dispatched 다(장부 승인과 같은 집계; indeterminate 는 점유가 아니다).
  * 구간은 [from, to)이며 [0, durationMs]로 자른다.
  */
-export function integrateModelSlots(requests: readonly SlotRequest[], policy: ModelCapacityPolicy | null, durationMs: number) {
+export function integrateModelSlots(requests: readonly SlotRequest[], policy: ModelCapacityPolicy | null, durationMs: number,
+  deviceLimits: Readonly<Record<string, number>> | null = null) {
   const limitsHash = policy ? modelCapacityPolicyHash(policy) : null;
+  const deviceLimit = (device: string): number | undefined => deviceLimits && Object.hasOwn(deviceLimits, device) ? deviceLimits[device]
+    : deviceFallbackLimit(policy?.groupLimits, device) ?? undefined;
   const scopeKey = (row: SlotRequest) => JSON.stringify([row.routeId, row.class]);
   const clip = (from: number | null, to: number | null): [number, number] | null => {
     if (from === null) return null;
@@ -164,10 +172,9 @@ export function integrateModelSlots(requests: readonly SlotRequest[], policy: Mo
   const bump = (map: Map<string, number>, key: string, delta: number) => map.set(key, (map.get(key) ?? 0) + delta);
   const verdict = (row: SlotRequest): Verdict => {
     if (!policy || row.policyHash !== limitsHash) return "unknown";
-    const limits = [[counts.global, policy.globalLimit], [counts.provider.get(row.providerBudgetId) ?? 0, policy.providerLimits[row.providerBudgetId]],
-      [counts.group.get(row.groupId) ?? 0, policy.groupLimits[row.groupId]], [counts.pool.get(row.pool) ?? 0, policy.poolLimits[row.pool]]] as const;
-    if (limits.some(([, limit]) => limit === undefined)) return "unknown";
-    return limits.every(([used, limit]) => used < limit!) ? "free" : "full";
+    const limit = deviceLimit(row.groupId);
+    if (limit === undefined) return "unknown";
+    return (counts.group.get(row.groupId) ?? 0) < limit ? "free" : "full";
   };
   const add = (totals: SlotTotals, value: Verdict, span: number) => {
     totals.waitingMs += span;
@@ -280,7 +287,9 @@ export function reportPipelineObservation(value: unknown) {
     if (!policy) issues.push("model_policy_unreadable");
   }
   if (model?.control?.changedSinceStart) issues.push("model_capacity_changed_since_window_start");
-  const slots = model ? integrateModelSlots(model.requests, policy, duration) : null;
+  if (model?.devices?.some(device => device.changedSinceStart)) issues.push("device_settings_changed_since_window_start");
+  const deviceLimits = model?.devices ? Object.fromEntries(model.devices.map(device => [device.deviceId, device.limitSlots])) : null;
+  const slots = model ? integrateModelSlots(model.requests, policy, duration, deviceLimits) : null;
   if (slots && slots.all.unknownWhileWaitingMs > 0) issues.push("slot_limits_unknown");
 
   const ai1 = artifact.ai1, ai2 = ledger.counts;
