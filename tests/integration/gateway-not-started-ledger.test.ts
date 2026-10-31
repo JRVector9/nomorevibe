@@ -36,7 +36,9 @@ import { abandonAgentReviewModelCapacity, reviewAgentReviewModelCapacity } from 
 import { abandonSecondReviewModelCapacity, reviewSecondReviewModelCapacity } from "@/lib/crawl/second-review-model-capacity";
 import type { Ai1GatewayServingContract } from "@/lib/crawl/agent-review-serving-contract";
 import type { Ai2GatewayServingContract } from "@/lib/crawl/second-review-serving-contract";
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
+import { directContractRow } from "./direct-engine-fixtures";
 
 /**
  * F2 결함 1·3 실제 DB driver(0102). fetch 를 부르지 않은 AI1·AI2 gateway dispatch 는 같은 owner handle 의 not_started 증인으로 settled 가 되고
@@ -294,7 +296,7 @@ beforeAll(async () => {
   const address = server.address(); if (!address || typeof address === "string") throw new Error("fixture_address");
   endpoint = `http://127.0.0.1:${address.port}/v1/chat/completions`;
 }, 120_000);
-afterEach(async () => { await cleanup(); serving.ai1 = null; serving.ai2 = null; vi.unstubAllEnvs(); });
+afterEach(async () => { await cleanup(); serving.ai1 = null; serving.ai2 = null; vi.unstubAllEnvs(); setServingContractSnapshotForTest(null); });
 afterAll(async () => {
   const errors: unknown[] = [];
   for (const load of [cleanup, async () => { if (initialized) expect(await whole()).toEqual(initial); },
@@ -305,7 +307,8 @@ afterAll(async () => {
   if (errors.length) throw new AggregateError(errors, "f2_fixture_cleanup_failed");
 }, 120_000);
 function contracts() {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only");
+  // Engines connected directly (admin rows, no key) — the abcLLM gateway and its key were removed on 2026-10-30.
+  setServingContractSnapshotForTest([directContractRow("crawl-agent-review", model), directContractRow("second-review", model)]);
   const base = { version: 1 as const, protocol: "abcllm-raw-total-bound-v1" as const, provider: "abcllm" as const, model, responseModel: "native-model",
     endpoint, deploymentRevision: "local-test-only", totalTokenBound: 8_000 };
   serving.ai1 = { ...base, routeId: "crawl-agent-review" }; serving.ai2 = { ...base, routeId: "second-review" };

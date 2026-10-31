@@ -25,7 +25,9 @@ import { modelCapacityPolicyHash, productTranslationInputHash, productTranslatio
   type ModelCapacityPolicy, type ModelCapacityRequest } from "@/lib/llm/capacity";
 import type { ProductTranslationServingContract } from "@/lib/llm/product-translation-serving-contract";
 import { setRuntimeSettingsForTest } from "@/lib/operations/runtime-settings-store";
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
+import { directContractRow } from "./direct-engine-fixtures";
 
 const serving = vi.hoisted(() => ({ contract: null as ProductTranslationServingContract | null }));
 vi.mock("@/lib/llm/product-translation-serving-contract", async original => ({
@@ -202,9 +204,10 @@ beforeAll(() => tracked((async () => {
   expect(baseline("jobs").filter(row => managedJobs.includes(String(row.name))).every(row => row.lease_token === null)).toBe(true);
   expect(baseline("job_batch_control")[0]).toMatchObject({ mode: "legacy", writer_contract_version: 0 }); initialized = true;
 })(), setups));
-beforeEach(() => tracked((async () => { vi.stubEnv("ABCLLM_API_KEY", "local-only"); await install(); await elect(); })(), setups));
+// The route opens only on a direct admin contract for its model (abcLLM gateway removed 2026-10-30); the contract body is the mock above.
+beforeEach(() => tracked((async () => { setServingContractSnapshotForTest([directContractRow(jobName, PRODUCT_TRANSLATE_MODEL)]); await install(); await elect(); })(), setups));
 afterEach(() => tracked(steps([() => drain(setups), () => drain(exercises), () => drain(work), cleanup,
-  async () => { serving.contract = null; vi.unstubAllEnvs(); vi.unstubAllGlobals(); }]), hooks));
+  async () => { serving.contract = null; setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); vi.unstubAllGlobals(); }]), hooks));
 afterAll(async () => { await steps([() => drain(setups), () => drain(exercises), () => drain(work), () => drain(hooks), cleanup,
   () => admin.end({ timeout: 5 }), async () => { await (globalThis as { pgClient?: ReturnType<typeof postgres> }).pgClient?.end({ timeout: 5 }); }]); });
 

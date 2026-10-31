@@ -1,11 +1,28 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { eq } from "drizzle-orm";
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
+import { directContractRow } from "./direct-engine-fixtures";
+
+/**
+ * 게이트웨이(abcLLM)는 2026-10-30 제거됐다. 잡은 이 경로·모델의 직접 연결 계약이 있어야 돌고, 용량을 끈(disabled) 잡이 부르는 옛 잎
+ * writeTagline 은 이제 보내지 않고 no_key 로 끝난다(파일 끝 두 시험). 이 파일은 잡이 답을 받은 뒤의 판단(빈 줄 재질문·실패 시각·사람의 줄·
+ * 원본 해시)을 보므로, 그 잎만 같은 wire 를 이 파일의 fetch 목(gateway)으로 보내는 대역으로 바꾼다(direct-engine-fixtures).
+ */
+vi.mock("@/lib/crawl/tagline", async load => {
+  const original = await load<typeof import("@/lib/crawl/tagline")>();
+  const { askRemovedGatewayLeaf, replyContent } = await import("./direct-engine-fixtures");
+  const writeTagline: typeof original.writeTagline = (evidence, options) => askRemovedGatewayLeaf(original.writeTagline(evidence, options),
+    options.request ?? fetch, original.crawlTaglineGatewayWire(evidence, options.model ?? original.TAGLINE_MODEL),
+    async response => original.parseTagline(await replyContent(response), evidence), options);
+  return { ...original, writeTagline };
+});
 
 const { db } = await import("@/lib/db");
 const { crawlCandidates, crawlDocuments, crawlFrontier, crawlSettings, crawlTaglines, jobs } = await import("@/lib/db/schema");
 const crawl = await import("@/lib/crawl/repository");
 const { saveSettings } = await import("@/lib/crawl/settings");
 const { writeTaglines } = await import("@/lib/crawl/jobs/tagline");
+const { TAGLINE_MODEL, taglineEvidence } = await import("@/lib/crawl/tagline");
 const { runJob } = await import("@/lib/jobs/runner");
 const { ensureSchema, resetTables } = await import("./setup");
 
@@ -35,12 +52,12 @@ beforeEach(async () => {
   await db.delete(jobs);
   await resetTables();
   await saveSettings({ enabled: true }, "테스트");
-  vi.stubEnv("ABCLLM_API_KEY", "test-key");
+  setServingContractSnapshotForTest([directContractRow("crawl-tagline", TAGLINE_MODEL)]);
   gateway.mockReset();
   gateway.mockResolvedValue(answer("바를 등록하면 손님이 찾습니다"));
   vi.stubGlobal("fetch", gateway);
 });
-afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); setServingContractSnapshotForTest(null); });
 
 describe("소개 짓기 잡", () => {
   it("한 줄을 지어 두고 후보를 발행 대기로 되돌린다", async () => {
@@ -195,5 +212,26 @@ describe("소개 짓기 잡", () => {
     expect(gateway).toHaveBeenCalledTimes(1);
     expect((await db.select().from(crawlTaglines))[0]).toMatchObject({ tagline: "이제 무엇을 하는지 알 수 있다" });
     expect(await crawl.getCandidate("someone/changed")).toMatchObject({ state: "approved" });
+  });
+
+  it("직접 연결 계약이 없으면 부르지 않고 no_direct_contract 로 넘긴다 — 성공이 아니다", async () => {
+    await held("someone/no-contract");
+    setServingContractSnapshotForTest([]);
+
+    expect(await tick()).toMatchObject({ status: "completed", done: true, degraded: "no_direct_contract" });
+
+    expect(gateway).not.toHaveBeenCalled();
+    expect(await db.select().from(crawlTaglines)).toEqual([]);
+    expect(await crawl.getCandidate("someone/no-contract")).toMatchObject({ state: "needs_review", reason: "no_description" });
+  });
+
+  it("옛 잎(writeTagline)은 계약이 있어도 게이트웨이로 보내지 않고 no_key 로 끝난다", async () => {
+    await held("someone/real-leaf");
+    const real = await vi.importActual<typeof import("@/lib/crawl/tagline")>("@/lib/crawl/tagline");
+    const document = (await crawl.getDocument("someone/real-leaf"))!;
+
+    expect(await real.writeTagline(taglineEvidence("someone/real-leaf", document), { timeoutMs: 1_000, request: gateway }))
+      .toEqual({ ok: false, error: "no_key" });
+    expect(gateway).not.toHaveBeenCalled();
   });
 });

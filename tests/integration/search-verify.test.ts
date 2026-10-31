@@ -1,11 +1,46 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq, sql } from "drizzle-orm";
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
+import { directContractRow } from "./direct-engine-fixtures";
+
+/**
+ * 게이트웨이(abcLLM)는 2026-10-30 제거됐다. 잡은 이 경로·모델의 직접 연결 계약이 있어야 돌고, 용량을 끈(disabled) 잡이 부르는 옛 잎
+ * verifyKeywords·verifyKeywordsInChunks 는 이제 보내지 않고 no_key 로 끝난다. 이 파일은 잡이 답을 받은 뒤의 판단(차례·실패 시각·색인 사본)을
+ * 보므로, 한 번에 묻는 잎만 같은 wire(searchVerifyGatewayWire)를 이 파일의 fetch 목으로 보내는 대역으로 바꾼다(direct-engine-fixtures).
+ * 묶음 잎은 진짜 그대로 두고 부른 것만 센다 — 묶음 단계의 전송·완결 기록은 native 경로가 맡는다(search-verify-capacity-dispatch).
+ */
+const leaves = vi.hoisted(() => ({ chunks: [] as string[][] }));
+vi.mock("@/lib/domain/products/search-verify", async load => {
+  const original = await load<typeof import("@/lib/domain/products/search-verify")>();
+  const { askRemovedGatewayLeaf, replyContent } = await import("./direct-engine-fixtures");
+  const verifyKeywords: typeof original.verifyKeywords = (item, options) => askRemovedGatewayLeaf(original.verifyKeywords(item, options),
+    options.request ?? fetch, original.searchVerifyGatewayWire(item, options.model ?? original.VERIFY_MODEL), async response => {
+      const content = await replyContent(response);
+      try { return { ok: true as const, unsupported: original.parseVerification(item.keywords, content) }; }
+      catch { return { ok: false as const, error: "invalid_output" }; }
+    }, options);
+  const verifyKeywordsInChunks: typeof original.verifyKeywordsInChunks = (item, options) => {
+    leaves.chunks.push([...item.keywords]);
+    return original.verifyKeywordsInChunks(item, options);
+  };
+  return { ...original, verifyKeywords, verifyKeywordsInChunks };
+});
+// 키워드를 다시 짓는 잡(writeSearchProfiles)의 옛 잎도 같은 대역이다(search-profile.test.ts 와 같다)
+vi.mock("@/lib/domain/products/search-profile", async load => {
+  const original = await load<typeof import("@/lib/domain/products/search-profile")>();
+  const { askRemovedGatewayLeaf } = await import("./direct-engine-fixtures");
+  const writeKeywords: typeof original.writeKeywords = (evidence, options) => askRemovedGatewayLeaf(original.writeKeywords(evidence, options),
+    options.request ?? fetch, original.profileGatewayWire(evidence, options.model ?? original.PROFILE_MODEL),
+    async response => original.parseProfileGatewayBody(await response.text(), evidence.name), options);
+  return { ...original, writeKeywords };
+});
 
 const { db } = await import("@/lib/db");
 const { jobs, products, productSearchProfiles } = await import("@/lib/db/schema");
 const { verifySearchKeywords } = await import("@/lib/jobs/products/search-verify");
 const { writeSearchProfiles } = await import("@/lib/jobs/products/search-profile");
-const { profileEvidence, profileHash } = await import("@/lib/domain/products/search-profile");
+const { PROFILE_MODEL, profileEvidence, profileHash } = await import("@/lib/domain/products/search-profile");
+const { VERIFY_MODEL } = await import("@/lib/domain/products/search-verify");
 const { runJob } = await import("@/lib/jobs/runner");
 const { pendingVerifications, reconcileSearchProfileBatch } = await import("@/lib/domain/products/search-profiles");
 const { ensureSchema, resetTables } = await import("./setup");
@@ -41,8 +76,9 @@ const profile = async (id: number) => (await db.select().from(productSearchProfi
 const keywordsOf = async (id: number) => (await db.select({ k: products.searchKeywords }).from(products).where(eq(products.id, id)))[0].k;
 
 beforeAll(() => ensureSchema());
-beforeEach(async () => { await resetTables(); await db.delete(productSearchProfiles); await db.delete(jobs); vi.stubEnv("ABCLLM_API_KEY", "test-key"); });
-afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+beforeEach(async () => { await resetTables(); await db.delete(productSearchProfiles); await db.delete(jobs); leaves.chunks.length = 0;
+  setServingContractSnapshotForTest([directContractRow("product-search-verify", VERIFY_MODEL)]); });
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); setServingContractSnapshotForTest(null); });
 
 describe("검색 키워드 검수 잡", () => {
   it("검수를 오래 기다린 제품을 새 제품보다 먼저 집는다", async () => {
@@ -56,7 +92,7 @@ describe("검색 키워드 검수 잡", () => {
     expect((await pendingVerifications(1))[0]?.product.id).toBe(older);
   });
 
-  it("preserves the failure cause so explicitly requeued exhausted checks use chunks", async () => {
+  it("preserves the failure cause so explicitly requeued exhausted checks take the chunk leaf, which no longer sends", async () => {
     const keys = Array.from({ length: 12 }, (_, i) => `key-${i}`);
     const id = await seed("reconciled-chunks", keys, []);
     await db.update(productSearchProfiles).set({ verifyError: "invalid_output", verifyAttempts: 5 })
@@ -65,36 +101,29 @@ describe("검색 키워드 검수 잡", () => {
     expect(await profile(id)).toMatchObject({ verifyError: "invalid_output", verifyAttempts: 0 });
     const request = gateway(() => ({}));
     await tick(request);
-    expect(request.calls).toHaveLength(3);
-    expect((await profile(id)).verifiedAt).not.toBeNull();
+    // 묶음 잎을 골랐다. 그 잎의 게이트웨이 전송은 없어져 아무것도 보내지 않고, 공급자 쪽 실패(no_key)로 시도를 세지 않고 30분 쉰다
+    expect(leaves.chunks).toEqual([keys]);
+    expect(request.calls).toHaveLength(0);
+    expect(await profile(id)).toMatchObject({ verifyError: "no_key", verifyAttempts: 0, verifiedAt: null, removedKeywords: [] });
   });
-  it("respects retry backoff then commits only all completed chunks", async () => {
+  it("respects retry backoff before the chunk leaf and commits nothing when it does not send", async () => {
     const keys = Array.from({ length: 12 }, (_, i) => `key-${i}`);
     const id = await seed("chunk-retry", keys, []);
     await db.update(productSearchProfiles).set({ verifyError: "invalid_output", verifyAttempts: 1,
       verifyRetryAt: sql`now() + interval '1 hour'` }).where(eq(productSearchProfiles.productId, id));
     const request = gateway(() => ({ unsupported: [keys[7], keys[11]] }));
     await tick(request);
+    expect(leaves.chunks).toHaveLength(0);
     expect(request.calls).toHaveLength(0);
     await db.update(productSearchProfiles).set({ verifyRetryAt: null }).where(eq(productSearchProfiles.productId, id));
     await tick(request);
-    expect(request.calls).toHaveLength(3);
-    expect(await profile(id)).toMatchObject({ verifyAttempts: 2, verifyError: null, removedKeywords: [keys[7], keys[11]] });
-    expect((await profile(id)).verifiedAt).not.toBeNull();
-    expect(await keywordsOf(id)).toBe(keys.filter(k => k !== keys[7] && k !== keys[11]).join(" · "));
-  });
-  it("does not save prior chunk removals when a later chunk fails", async () => {
-    const keys = Array.from({ length: 12 }, (_, i) => `key-${i}`);
-    const id = await seed("chunk-failure", keys, []);
-    await db.update(productSearchProfiles).set({ verifyError: "invalid_output", verifyAttempts: 1 })
-      .where(eq(productSearchProfiles.productId, id));
-    let calls = 0;
-    const request = gateway(() => ++calls === 1 ? { unsupported: [keys[0]] } : { invalid: true });
-    await tick(request);
-    expect(request.calls).toHaveLength(3);
-    expect(await profile(id)).toMatchObject({ verifyAttempts: 2, verifyError: "invalid_output", verifiedAt: null, removedKeywords: [] });
+    expect(leaves.chunks).toEqual([keys]);
+    expect(request.calls).toHaveLength(0);
+    expect(await profile(id)).toMatchObject({ verifyAttempts: 1, verifyError: "no_key", verifiedAt: null, removedKeywords: [] });
     expect(await keywordsOf(id)).toBe(keys.join(" · "));
   });
+  // 앞 묶음의 뺄 키워드를 뒤 묶음 실패 때 버리는 규칙은 묶음 전송과 함께 native 경로로 옮겨 갔다:
+  // search-verify-capacity-dispatch "dispatches each chunk and singleton under its own permit and writes only the complete verification".
   it("뒷받침되지 않는 키워드를 색인용 사본에서 빼고, 원본은 두고, 어느 모델이 봤는지 남긴다", async () => {
     const id = await seed("academy", ["sports academy management", "membership bonuses"], ["스포츠 학원 관리", "보너스 관리"]);
     const request = gateway(() => ({ unsupported: ["membership bonuses", "보너스 관리"] }));
@@ -168,6 +197,7 @@ describe("검색 키워드 검수 잡", () => {
     await db.update(products).set({ tagline: "Class packs for a football academy" }).where(eq(products.id, id));
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ choices: [{ message: { content:
       JSON.stringify({ keywords_en: ["class pass management"], keywords_ko: ["수강권 관리"] }) } }] })));
+    setServingContractSnapshotForTest([directContractRow("product-search-verify", VERIFY_MODEL), directContractRow("product-search-profile", PROFILE_MODEL)]);
     await runJob("product-search-profile", writeSearchProfiles);
 
     expect(await profile(id)).toMatchObject({ verifiedAt: null, removedKeywords: [], keywordsEn: ["class pass management"] });
@@ -215,6 +245,24 @@ describe("검색 키워드 검수 잡", () => {
     await seed("empty", [], []);
     const request = gateway(() => ({}));
     await tick(request);
+    expect(request.calls).toHaveLength(0);
+  });
+
+  it("직접 연결 계약이 없으면 부르지 않고 no_direct_contract 로 넘긴다 — 성공이 아니다", async () => {
+    const id = await seed("no-contract", ["coffee shop"], []);
+    setServingContractSnapshotForTest([]);
+    const request = gateway(() => ({}));
+    expect(await tick(request)).toMatchObject({ status: "completed", done: true, degraded: "no_direct_contract" });
+    expect(request.calls).toHaveLength(0);
+    expect(await profile(id)).toMatchObject({ verifiedAt: null, verifyError: null, verifyAttempts: 0 });
+  });
+
+  it("옛 잎(verifyKeywords)은 계약이 있어도 게이트웨이로 보내지 않고 no_key 로 끝난다", async () => {
+    const request = gateway(() => ({}));
+    const real = await vi.importActual<typeof import("@/lib/domain/products/search-verify")>("@/lib/domain/products/search-verify");
+    const item = { evidence: profileEvidence({ name: "Cafe", url: "https://cafe.test", category: "Food", tagline: "Coffee", description: "Coffee",
+      searchTopics: null, searchPageText: null, searchReadme: null }, null), keywords: ["coffee shop"] };
+    expect(await real.verifyKeywords(item, { timeoutMs: 1_000, request })).toEqual({ ok: false, error: "no_key" });
     expect(request.calls).toHaveLength(0);
   });
 });

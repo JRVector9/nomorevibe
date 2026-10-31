@@ -21,7 +21,9 @@ import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { modelCapacityPolicyHash, searchVerifyInputHash, searchVerifyLogicalWorkKey, type ModelCapacityPolicy,
   type ModelCapacityRequest, type SearchVerifyInput, type SearchVerifyMember } from "@/lib/llm/capacity";
 import type { SearchVerifyServingContract } from "@/lib/llm/search-verify-serving-contract";
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
+import { directContractRow } from "./direct-engine-fixtures";
 
 // 실제 PostgreSQL + loopback native 전용. provider/serving 계약은 fixture이며 실제 C·배포를 주장하지 않는다.
 const serving = vi.hoisted(() => ({ contract: null as SearchVerifyServingContract | null }));
@@ -179,9 +181,10 @@ beforeAll(() => tracked((async () => {
   expect(baseline("jobs").filter(row => row.name === jobName).every(row => row.lease_token === null)).toBe(true);
   initialized = true;
 })(), setups));
-beforeEach(() => tracked((async () => { vi.stubEnv("ABCLLM_API_KEY", "local-only"); await install(); await elect(); })(), setups));
+// The route opens only on a direct admin contract for its model (abcLLM gateway removed 2026-10-30); the contract body is the mock above.
+beforeEach(() => tracked((async () => { setServingContractSnapshotForTest([directContractRow(jobName, VERIFY_MODEL)]); await install(); await elect(); })(), setups));
 afterEach(() => tracked(steps([() => drain(setups), () => drain(exercises), () => drain(work), cleanup,
-  async () => { serving.contract = null; vi.unstubAllEnvs(); }]), hooks));
+  async () => { serving.contract = null; setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); }]), hooks));
 afterAll(async () => { await steps([() => drain(setups), () => drain(exercises), () => drain(work), () => drain(hooks), cleanup,
   () => admin.end({ timeout: 5 }), async () => { await (globalThis as { pgClient?: ReturnType<typeof postgres> }).pgClient?.end({ timeout: 5 }); }]); });
 
@@ -358,18 +361,20 @@ it("rejects a forged parent and an expired reservation before any POST", exercis
   });
 }), 20_000);
 
-it("keeps the disabled legacy leaf, wire and writer with no ledger row", exercise(async () => {
+it("keeps the disabled legacy leaf (which no longer sends) and the writer with no ledger row", exercise(async () => {
   await install("disabled");
   const words = keywords(3), task = await seed(words, null);
   await server(async ({ bodies, setReply }) => {
     setReply(fits([words[0]]));
-    const request = ((_url: RequestInfo | URL, init?: RequestInit) => fetch(serving.contract!.endpoint, init)) as typeof fetch;
+    // Disabled still selects the original leaf, but the abcLLM gateway it used is gone (2026-10-30): even with its HTTP boundary
+    // redirected to this loopback it sends nothing and ends no_key. The original writer still records without a ledger row.
+    const request = vi.fn((_url: RequestInfo | URL, init?: RequestInit) => fetch(serving.contract!.endpoint, init)) as unknown as typeof fetch;
     expect(await custom(async lease => {
       const outcome = await verify(task, lease, 60_000, request);
-      expect(outcome).toEqual({ kind: "result", result: { ok: true, unsupported: [words[0]] } });
+      expect(outcome).toEqual({ kind: "result", result: { ok: false, error: "no_key" } });
       expect(await tracked(recordVerificationResult(task, lease, { kind: "success", removed: [words[0]], model: VERIFY_MODEL }))).toBe(true);
     })).toMatchObject({ status: "completed" });
-    expect(bodies).toEqual([words]);
+    expect(bodies).toEqual([]); expect(request).not.toHaveBeenCalled();
   });
   expect(await ledger(task.product.id)).toEqual([]);
   expect(await profileRow(task.product.id)).toMatchObject({ removed_keywords: [words[0]], verify_attempts: 1 });

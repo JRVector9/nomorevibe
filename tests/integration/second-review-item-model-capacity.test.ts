@@ -20,7 +20,9 @@ import { modelCapacityPolicyHash, type ModelCapacityPolicy, type ModelCapacityRe
   type ModelCapacityReservation } from '@/lib/llm/capacity';
 import { requestAi2ItemModelSlot } from '@/lib/llm/capacity-repository';
 import { itemBindingHash } from '@/lib/jobs/items/types';
+import { setServingContractSnapshotForTest } from '@/lib/llm/serving-contract-store';
 import { ensureSchema, TEST_DATABASE_URL } from './setup';
+import { directContractRow } from './direct-engine-fixtures';
 
 // The only authority-boundary replacement is the fixed deployment allowlist.
 // Native HTTP, the queue, item claim/observer/renew and mandatory writer are real.
@@ -223,9 +225,11 @@ beforeAll(() => {
     initialized = true;
   })(); return tracked(setupWork, hooks);
 });
-beforeEach(() => tracked((async () => { await setupWork; await cleanup(); directPrimary = false; await install(); vi.stubEnv('ABCLLM_API_KEY', 'loopback-only'); })(), hooks));
+// The loopback engines are connected directly (admin rows, no key) — the abcLLM gateway and its key were removed on 2026-10-30.
+beforeEach(() => tracked((async () => { await setupWork; await cleanup(); directPrimary = false; await install();
+  setServingContractSnapshotForTest([model, `${model} backup`].map(name => directContractRow('second-review', name))); })(), hooks));
 afterEach(() => tracked(steps([async () => { await setupWork; }, () => drain(bodies), () => drain(work), cleanup,
-  async () => { serving.contract = null; vi.unstubAllEnvs(); }]), hooks));
+  async () => { serving.contract = null; setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); }]), hooks));
 afterAll(() => steps([async () => { await setupWork; }, () => drain(hooks, true), () => drain(bodies, true),
   () => drain(work), cleanup, async () => { await (globalThis as { pgClient?: postgres.Sql }).pgClient?.end(); }, () => admin.end()]));
 

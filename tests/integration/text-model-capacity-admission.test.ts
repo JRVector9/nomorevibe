@@ -5,14 +5,19 @@ import postgres from "postgres";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { readModelCapacityCallerControl } from "@/lib/llm/capacity-repository";
 import { modelCapacityPolicyHash, type ModelCapacityPolicy } from "@/lib/llm/capacity";
-import { TRANSLATE_MODEL, translateToKorean } from "@/lib/crawl/translate";
+import { TRANSLATE_MODEL, textHash } from "@/lib/crawl/translate";
 import { translateReasons } from "@/lib/crawl/jobs/translate-reasons";
+import { translateReasonsWithModelCapacity } from "@/lib/crawl/reason-translation-model-capacity";
 import { requestJob } from "@/lib/jobs/control";
 import { runJob } from "@/lib/jobs/runner";
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
+import { directContractRow } from "./direct-engine-fixtures";
 
 // This is admission/readback, not a positive serving contract or terminal proof.
-// Only the legacy HTTP transport is stubbed; the selectors, control, job and TXs are real.
+// Only global HTTP is stubbed (and must stay unused); the selectors, control, job and TXs are real.
+// The abcLLM gateway was removed on 2026-10-30: the route reaches its capacity coordinator only with a direct admin contract
+// for its model, and the original leaf the coordinator takes while disabled no longer sends anything (no_key).
 type Raw = Record<string, unknown>;
 type Snapshot = Record<string, Raw[]>;
 type Sql = postgres.Sql | postgres.TransactionSql;
@@ -145,8 +150,11 @@ beforeAll(() => tracked((async () => {
   expect(baseline.model_capacity_control).toHaveLength(1);
   await writeFile(`/tmp/${prefix}-baseline.json`, JSON.stringify(baseline), { mode: 0o600 });
 })()));
-beforeEach(async () => { await cleanup(); request.mockReset(); vi.stubEnv("ABCLLM_API_KEY", "test-key"); vi.stubGlobal("fetch", request); });
-afterEach(async () => { try { await cleanup(); } finally { vi.unstubAllEnvs(); vi.unstubAllGlobals(); } });
+beforeEach(async () => { await cleanup(); request.mockReset(); vi.stubGlobal("fetch", request);
+  setServingContractSnapshotForTest([directContractRow("reason-translate", TRANSLATE_MODEL)]); });
+afterEach(async () => { try { await cleanup(); } finally { vi.unstubAllEnvs(); vi.unstubAllGlobals(); setServingContractSnapshotForTest(null); } });
+const batch = () => [{ hash: textHash("A document management tool"), body: "A document management tool", attempts: 0 }];
+const lease = { name: "reason-translate", token: `${prefix}-lease`, requestedVersion: 1 };
 afterAll(async () => {
   await steps([drain, cleanup, async () => {
     if (baseline) {
@@ -158,21 +166,18 @@ afterAll(async () => {
   async () => { await (globalThis as { pgClient?: ReturnType<typeof postgres> }).pgClient?.end(); }]);
 });
 
-it("disabled actual SHARE read settles before the unchanged legacy transport", () => exercise(async () => {
+it("disabled actual SHARE read settles before the original leaf, which no longer sends", () => exercise(async () => {
   await setMode("disabled");
   const before = await whole();
   const control = await readModelCapacityCallerControl();
   expect(control.mode).toBe("disabled");
-  let activeTransactions: number | undefined;
-  request.mockImplementation(async () => {
-    const [row] = await observer`SELECT count(*)::int AS count FROM pg_stat_activity
-      WHERE datname=current_database() AND pid<>pg_backend_pid() AND state='idle in transaction'`;
-    activeTransactions = Number(row.count);
-    return new Response(JSON.stringify({ choices: [{ message: { content: '["문서 관리 도구"]' } }] }));
-  });
-  expect(await translateToKorean(["A document management tool"], 1_000)).toEqual({ ok: true, translations: ["문서 관리 도구"] });
-  expect(activeTransactions).toBe(0);
-  expect(request).toHaveBeenCalledTimes(1);
+  request.mockImplementation(async () => new Response(JSON.stringify({ choices: [{ message: { content: '["문서 관리 도구"]' } }] })));
+  expect(await translateReasonsWithModelCapacity(batch(), lease, { timeoutMs: 1_000 }))
+    .toEqual({ kind: "disabled", result: { ok: false, error: "no_key" } });
+  const [row] = await observer`SELECT count(*)::int AS count FROM pg_stat_activity
+    WHERE datname=current_database() AND pid<>pg_backend_pid() AND state='idle in transaction'`;
+  expect(Number(row.count)).toBe(0);
+  expect(request).not.toHaveBeenCalled();
   expect(isDeepStrictEqual(await whole(), before)).toBe(true);
 }));
 
@@ -226,7 +231,7 @@ it("a real reason job defers without consuming attempts or a concurrent producer
 it("malformed current policy is the original error, with no POST, slot or business write", () => exercise(async () => {
   await setMode("open", "d".repeat(64));
   const before = await whole();
-  await expect(translateToKorean(["A document management tool"], 1_000)).rejects.toThrow("model_capacity_policy_hash_mismatch");
+  await expect(translateReasonsWithModelCapacity(batch(), lease, { timeoutMs: 1_000 })).rejects.toThrow("model_capacity_policy_hash_mismatch");
   expect(request).not.toHaveBeenCalled();
   expect(isDeepStrictEqual(await whole(), before)).toBe(true);
 }));

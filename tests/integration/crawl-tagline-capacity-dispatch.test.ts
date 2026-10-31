@@ -20,7 +20,9 @@ import { tryAcquireRole, releaseRole, type RoleLease } from "@/lib/jobs/role-lea
 import { jobsForRole } from "@/lib/jobs/catalog";
 import { batchCanaryAnchorKey, batchPolicyHash } from "@/lib/jobs/batches";
 import { STALE_LOCK_MS } from "@/lib/jobs/lease";
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
+import { directContractRow } from "./direct-engine-fixtures";
 
 // fresh 전용 테스트 DB만 허용한다(setup이 localhost·nomorevibe_test를 강제). 이 파일은 reset/truncate하지 않는다.
 if (process.env.TEST_DATABASE_URL !== TEST_DATABASE_URL) throw new Error("crawl_tagline_runtime_test_database_required");
@@ -166,12 +168,13 @@ beforeAll(async () => {
   const journal = JSON.parse(readFileSync(new URL("../../drizzle/meta/_journal.json", import.meta.url), "utf8")) as { entries: unknown[] };
   expect(await admin`SELECT count(*)::int AS n FROM drizzle.__drizzle_migrations`).toEqual([{ n: journal.entries.length }]); initialized = true;
 });
-beforeEach(async () => { vi.stubEnv("ABCLLM_API_KEY", "local-only"); await admin`UPDATE model_capacity_control SET mode='open',policy=${JSON.stringify(policy)}::text::jsonb,
+// The route opens only on a direct admin contract for its model (abcLLM gateway removed 2026-10-30); the contract body is the mock above.
+beforeEach(async () => { setServingContractSnapshotForTest([directContractRow(jobName, TAGLINE_MODEL)]); await admin`UPDATE model_capacity_control SET mode='open',policy=${JSON.stringify(policy)}::text::jsonb,
   policy_hash=${modelCapacityPolicyHash(policy)},cursor=0 WHERE id=1`;
   await admin`INSERT INTO crawl_settings(id,values) VALUES(1,'{"enabled":true}') ON CONFLICT(id) DO UPDATE SET values=crawl_settings.values||'{"enabled":true}'::jsonb`;
   await elect();
 });
-afterEach(() => tracked(steps([() => drain(exercises), () => drain(work), cleanup, async () => { serving.contract = null; vi.unstubAllEnvs(); }]), hooks));
+afterEach(() => tracked(steps([() => drain(exercises), () => drain(work), cleanup, async () => { serving.contract = null; setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); }]), hooks));
 afterAll(async () => { await steps([() => drain(exercises), () => drain(work), () => drain(hooks), cleanup, () => admin.end({ timeout: 5 }),
   async () => { await (globalThis as { pgClient?: ReturnType<typeof postgres> }).pgClient?.end({ timeout: 5 }); }]); });
 

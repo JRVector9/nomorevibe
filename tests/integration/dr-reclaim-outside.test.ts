@@ -15,7 +15,9 @@ import { SEARCH_QUERY_MODEL, QUERY_PROMPT_VERSION, GLOSSARY_VERSION, glossaryHin
 import { modelCapacityPolicyHash, type ModelCapacityPolicy } from "@/lib/llm/capacity";
 import type { WebsearchQueryServingContract } from "@/lib/llm/websearch-query-serving-contract";
 import { httpOriginPolicyHash } from "@/lib/net/http-origin-policy";
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
+import { directContractRow } from "./direct-engine-fixtures";
 
 /*
  * PR15d 실제 PostgreSQL. 이 파일이 만들고 지우는 임시 DB 세 개만 쓴다(공유 test DB 의 행·제어값은 건드리지 않는다).
@@ -132,7 +134,8 @@ beforeAll(async () => {
   fixture.contract = { version: 1, protocol: "abcllm-websearch-query-total-bound-v1", routeId: "search-query-translate", provider: "abcllm", model: SEARCH_QUERY_MODEL,
     responseModel: "served-query", endpoint: `${gateway}/v1/chat/completions`, deploymentRevision: "local-only", totalTokenBound: 4096 };
   fixture.owner = { instanceId: `${prefix}-web`, bootId: randomUUID(), release: "pr15d-fixture" };
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only");
+  // The loopback engine is connected directly (admin row, no key) — the abcLLM gateway and its key were removed on 2026-10-30.
+  setServingContractSnapshotForTest([directContractRow("search-query-translate", SEARCH_QUERY_MODEL)]);
   for (const side of ["ledger", "fenced"] as const)
     await pool(side)`UPDATE model_capacity_control SET mode = 'open', policy = ${JSON.stringify(policy)}::text::jsonb, policy_hash = ${modelCapacityPolicyHash(policy)} WHERE id = 1`;
   console.info("pr15d_migrations", { journal: journal.entries.length });
@@ -142,7 +145,7 @@ afterAll(async () => {
   for (const child of children) if (child.pid) try { process.kill(-child.pid, "SIGKILL"); } catch { /* 이미 끝남 */ }
   for (const response of held) response.destroy();
   for (const server of servers) { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
-  fixture.contract = null; vi.unstubAllEnvs();
+  fixture.contract = null; vi.unstubAllEnvs(); setServingContractSnapshotForTest(null);
   for (const client of pools.values()) await client.end({ timeout: 5 });
   const g = globalThis as { db?: unknown; pgClient?: unknown }; delete g.db; delete g.pgClient;
   const admin = postgres(TEST_DATABASE_URL, { max: 1, onnotice: () => {} });

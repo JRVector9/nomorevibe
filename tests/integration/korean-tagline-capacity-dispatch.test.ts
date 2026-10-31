@@ -24,7 +24,9 @@ import { requestProductTaglineKoModelSlot, cancelReservedModelSlot, findOwnPendi
 import { modelCapacityPolicyHash, productTaglineKoInputHash, productTaglineKoLogicalWorkKey,
   type ModelCapacityPolicy, type ModelCapacityRequest } from "@/lib/llm/capacity";
 import type { ProductTaglineKoServingContract } from "@/lib/llm/product-tagline-ko-serving-contract";
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
+import { directContractRow } from "./direct-engine-fixtures";
 
 const serving = vi.hoisted(() => ({ contract: null as ProductTaglineKoServingContract | null }));
 vi.mock("@/lib/llm/product-tagline-ko-serving-contract", async original => ({
@@ -210,9 +212,10 @@ beforeAll(() => tracked((async () => {
   expect(baseline("job_batch_control")[0]).toMatchObject({ mode: "legacy", writer_contract_version: 0 });
   expect(baseline("job_batch_candidates").some(row => row.instance_id === prefix)).toBe(false); initialized = true;
 })(), setups));
-beforeEach(() => tracked((async () => { vi.stubEnv("ABCLLM_API_KEY", "local-only"); await install(); await elect(); })(), setups));
+// The route opens only on a direct admin contract for its model (abcLLM gateway removed 2026-10-30); the contract body is the mock above.
+beforeEach(() => tracked((async () => { setServingContractSnapshotForTest([directContractRow(jobName, KOREAN_TAGLINE_MODEL)]); await install(); await elect(); })(), setups));
 afterEach(() => tracked(steps([() => drain(setups), () => drain(exercises), () => drain(work), cleanup,
-  async () => { serving.contract = null; vi.unstubAllEnvs(); vi.unstubAllGlobals(); }]), hooks));
+  async () => { serving.contract = null; setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); vi.unstubAllGlobals(); }]), hooks));
 afterAll(async () => { await steps([() => drain(setups), () => drain(exercises), () => drain(work), () => drain(hooks), cleanup,
   () => admin.end({ timeout: 5 }), async () => { await (globalThis as { pgClient?: ReturnType<typeof postgres> }).pgClient?.end({ timeout: 5 }); }]); });
 
@@ -268,11 +271,12 @@ it("admits the actual versioned translation role after local stored-result readb
     const [latest] = await admin`SELECT dispatch_binding FROM model_capacity_requests WHERE owner_instance_id=${prefix} ORDER BY queue_ordinal DESC LIMIT 1`;
     expect(latest.dispatch_binding.role).toMatchObject({ role: "translation", batch: { mode: "versioned", host: "oracle-osaka-smoke", batchEpoch: role.batchEpoch } });
     expect((await admin`SELECT value->'batchResult'->>'role' AS role FROM operations_observations WHERE key=${`batch-result:${prefix}:${jobName}`}`)[0].role).toBe("translation");
-    // Original disabled leaf and writer remain available; only redirect its HTTP boundary to this loopback.
+    // Disabled still selects the original leaf and writer, but the abcLLM gateway that leaf used is gone (2026-10-30): even with its
+    // HTTP boundary redirected to this loopback it sends nothing, and the batch is stored as a no_key failure without a ledger row.
     await install("disabled"); const last = await seed(), originalFetch = globalThis.fetch;
-    vi.stubGlobal("fetch", (_input: RequestInfo | URL, init?: RequestInit) => originalFetch(serving.contract!.endpoint, init));
-    expect(await tick()).toMatchObject({ status: "completed", done: true }); expect(bodies).toHaveLength(3);
-    expect((await admin`SELECT attempts,error_code FROM product_korean_taglines WHERE product_id=${last.products[0].id}`)[0]).toEqual({ attempts: 1, error_code: null });
+    const legacy = vi.fn((_input: RequestInfo | URL, init?: RequestInit) => originalFetch(serving.contract!.endpoint, init)); vi.stubGlobal("fetch", legacy);
+    expect(await tick()).toMatchObject({ status: "completed", done: true }); expect(bodies).toHaveLength(2); expect(legacy).not.toHaveBeenCalled();
+    expect((await admin`SELECT attempts,error_code FROM product_korean_taglines WHERE product_id=${last.products[0].id}`)[0]).toEqual({ attempts: 1, error_code: "no_key" });
     expect(await admin`SELECT request_id FROM model_capacity_requests WHERE owner_instance_id=${prefix}`).toHaveLength(2);
   });
 }), 20_000);
