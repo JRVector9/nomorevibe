@@ -15,8 +15,6 @@ import { ensureSchema, resetTables } from "./setup";
 
 /** 외부 모델 호출만 바꾼다. 올리기·고르기·기록·lease 는 실제 DB 로 돈다 */
 const gateway = vi.hoisted(() => vi.fn());
-// Qwen-v2 단계(gpu3090 직접 호출)는 감사 잡 틱 안에서 돈다 — tests/integration/audit-second-opinion-auto.test.ts 가 본다. 여기 틱은 쓸기·감사 묻기만
-vi.mock("@/lib/crawl/audit-second-opinion-auto", () => ({ runQwenSecondOpinions: async () => null }));
 vi.mock("@/lib/crawl/agent-review-gateway", async (importOriginal) => ({
   ...await importOriginal<typeof import("@/lib/crawl/agent-review-gateway")>(), reviewWithGateway: gateway,
 }));
@@ -153,7 +151,8 @@ describe("감사 잡", () => {
     expect(await db.query.jobs.findFirst({ where: eq(jobs.name, "crawl-publish") })).toBeUndefined();
   });
 
-  it("발행 문에 기다리는 후보가 있으면 이 틱은 쉰다", async () => {
+  // 2026-10-31 결정: 발행 문에 기다리는 후보가 있어도 감사는 양보하지 않는다(장비 순위가 대신한다) — 하나가 잘못되면 다음 작업도 안 되는 구조는 이유가 없다
+  it("발행 문에 기다리는 후보가 있어도 이 틱은 쉬지 않는다 — 1차 후보 큐를 보지 않는다", async () => {
     vi.stubEnv("CRAWL_REVIEW_READY", "true");
     expect(await changeReviewMode({ mode: "observe", expectedMode: "off", actor: "test", reason: "양보 확인" })).toMatchObject({ ok: true });
     await listed("y/published");
@@ -167,13 +166,9 @@ describe("감사 잡", () => {
     await start();
 
     await tick();
-    expect(gateway).not.toHaveBeenCalled();
-    expect((await items())[0]).toMatchObject({ aiDecision: null, attempts: 0 });
-
-    // 문이 비면 감사가 이어서 본다
-    await db.delete(crawlCandidates).where(eq(crawlCandidates.repo, "y/new"));
-    await tick();
     expect(gateway).toHaveBeenCalledTimes(1);
+    // 1차 후보는 건드리지 않는다 — 감사는 자기 큐만 본다
+    expect((await db.select().from(crawlCandidates).where(eq(crawlCandidates.repo, "y/new")))[0]).toMatchObject({ state: "approved" });
   });
 
   it("답을 적고 근거를 남긴다 — 주인 없는 것부터 묻는다", async () => {

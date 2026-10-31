@@ -1,5 +1,5 @@
--- 0155: 배정 표 열(PR 3b-A) — model_helper_assignments 를 「단계 × 장비 × 모델」 배정 표로 넓힌다. 도우미 행(role 'helper', PR 2a)은 그대로다.
--- 번호 주의: PR 3a-C 도 idx 155 / when 1794086401066(0155_split_composite_jobs)을 쓴다 — 둘 중 나중에 병합되는 쪽을 통합 때 다시 번호 매긴다.
+-- 0156: 배정 표 열(PR 3b-A) — model_helper_assignments 를 「단계 × 장비 × 모델」 배정 표로 넓힌다. 도우미 행(role 'helper', PR 2a)은 그대로다.
+-- 번호: 원래 0155 였으나 PR 3a-C(0155_split_composite_jobs)가 먼저 main 에 들어가 통합 때 0156 / when 1794086401067 로 다시 매겼다(2026-10-31).
 -- 새 열: registry_key(관리자 모델 등록부 key, 새 배정 행은 필수) · transport(gateway·direct·local-direct·cli) · rank(단계 안 순위, 1 = 먼저 고른다)
 -- · role(primary = 배정 표 행, helper = PR 2a 도우미 행) · vote(2차 rank 1 투표자). 기존 행은 기본값(role 'helper', rank 1, vote false, transport 'gateway',
 -- registry_key NULL)을 받는다 — 도우미 행에서 새 열은 뜻이 없고 PR 2a 의 열(live_route_id·live_provider·shadow_route_id)이 그대로 경로를 정한다.

@@ -1,6 +1,5 @@
 import { sql, type SQL } from "drizzle-orm";
 import { liveStateSql } from "./capacity-states";
-import { db } from "@/lib/db";
 import type { ModelCapacityRequest, ModelSlotResult } from "./capacity";
 import type { ModelCapacityDeferredReason } from "./capacity-deferred";
 import { findOwnPendingModelRequest } from "./capacity-repository";
@@ -66,22 +65,5 @@ export function capacityOwnerFromEnv(env: Readonly<Record<string, string | undef
   return instanceId && bootId && UUID.test(bootId) ? { instanceId, bootId } : undefined;
 }
 
-/**
- * 같은 물리 그룹(정책 route 의 groupId)에서 다른 route 의 대기 요청이 살아 있는가 — 읽기만 한다.
- *
- * 장부는 같은 class 안에서 먼저 온 대기부터 준다. 한 잡이 그룹의 동시 수만큼 일꾼을 돌려 자리가 나는 즉시 다음 요청을 넣으면
- * 같은 그룹의 다른 잡(기본 등록부에서 product-search-profile·product-tagline-ko 는 같은 gpt-oss 모델)은 미룸만 받는다. 남이 기다리면
- * 이번 묶음은 일꾼 하나로 줄여 자리를 나눈다. 장부의 한도·순서는 바꾸지 않는다. 읽지 못하면 false(전과 같은 동작)다.
- */
-export async function otherRoutesWaitingOnGroup(routeId: string, model: string): Promise<boolean> {
-  try {
-    const [row] = await db.execute<{ waiting: boolean }>(sql`SELECT EXISTS (
-      SELECT 1 FROM model_capacity_control c
-        CROSS JOIN LATERAL jsonb_array_elements(coalesce(c.policy->'routes', '[]'::jsonb)) route
-        JOIN model_capacity_requests r ON r.group_id = route->>'groupId'
-      WHERE c.id = 1 AND c.mode = 'open' AND route->>'routeId' = ${routeId} AND route->>'model' = ${model}
-        AND r.route_id <> ${routeId} AND r.state = 'waiting' AND r.queue_until > clock_timestamp()
-        AND r.epoch = c.epoch AND r.revision = c.revision AND r.policy_hash = c.policy_hash) AS waiting`);
-    return row?.waiting === true;
-  } catch { return false; }
-}
+// 2026-10-31(PR 3a-B): `otherRoutesWaitingOnGroup`(같은 장비의 다른 route 대기를 보고 일꾼을 줄이던 양보)은 없앴다 — 단계는 다른 단계의
+// 실시간 상태를 보지 않는다. 장비 나눔은 장비 순위(PR 1b model_capacity_device_roles·secondaryCap·reserve)가 입장 TX 에서 정한다.

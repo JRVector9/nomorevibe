@@ -36,7 +36,7 @@ function envelope(content: string) {
 }
 function latch() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }
 
-const { onReplica } = await import("@/lib/db");
+const { onReplica, db } = await import("@/lib/db");
 const searchTranslation = await import("@/lib/domain/products/search-translation");
 const { translateQueryWithModelCapacity } = await import("@/lib/domain/products/search-query-model-capacity");
 const { prepareWebsearchQueryDispatch, recordWebsearchQueryResult } = await import("@/lib/domain/products/search-query-capacity-repository");
@@ -191,6 +191,26 @@ it("reuses a settled outcome after a crash between settlement and cache write in
   } finally { fixture.owner = ownerA; }
   expect(bodies.length).toBe(before); expect(await rows(key)).toHaveLength(1);
   expect((await cache(key)).row).toMatchObject({ status: "done", translated: "merge pdf | merge pdf files", attempts: 1 });
+});
+
+// 2026-10-31 결정: 장부 세대가 어긋난 검색어 하나는 그 검색어만 미룬다(ledger_mismatch) — 리더가 throw 로 TX 를 접지 않는다. 하나가 잘못되면 다음 작업도 안 되는 구조는 이유가 없다
+it("reports forged settled evidence as broken and defers only that query as ledger_mismatch; restoring the row reuses the outcome", async () => {
+  const query = "장부 어긋남 검색어", key = target(query).cacheKey;
+  await settledWithoutCache(query); const before = bodies.length;
+  const [stored] = await rows(key);
+  const input = { model: (stored.dispatch_binding as { model: string }).model, member: (stored.dispatch_binding as { member: WebsearchQueryInput["member"] }).member };
+  const hash = stored.terminal_evidence_hash as string;
+  try {
+    expect(await admin`UPDATE model_capacity_requests SET terminal_evidence_hash=${"f".repeat(64)} WHERE request_id=${stored.request_id as string}::uuid RETURNING request_id`).toHaveLength(1);
+    expect(await db.transaction(tx => ledger.readWebsearchQueryContinuation(tx, input))).toEqual({ kind: "broken" });
+    await expect(translateQueryWithModelCapacity(target(query), 2_000)).rejects.toMatchObject({ name: "ModelCapacityDeferredError", reason: "ledger_mismatch" });
+    expect(bodies.length).toBe(before); expect(await cache(key)).toBeUndefined();
+  } finally {
+    expect(await admin`UPDATE model_capacity_requests SET terminal_evidence_hash=${hash} WHERE request_id=${stored.request_id as string}::uuid RETURNING request_id`).toHaveLength(1);
+  }
+  expect(await db.transaction(tx => ledger.readWebsearchQueryContinuation(tx, input))).toMatchObject({ kind: "settled", requestId: stored.request_id });
+  expect(await translateQueryWithModelCapacity(target(query), 2_000)).toMatchObject({ kind: "result" });
+  expect(bodies.length).toBe(before); expect((await cache(key)).row).toMatchObject({ status: "done", translated: "merge pdf | merge pdf files" });
 });
 
 it("never lets a stale writer overwrite a winner or a 1µs-changed failure row", async () => {

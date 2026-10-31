@@ -13,7 +13,10 @@ export function withDbDeadline<T>(deadlineAt: number, load: () => Promise<T>): P
 }
 
 // crawler 8은 host-budget workerMax.crawler 와 같다. crawl-fetch 동시성(12)보다 작다 — HTTP 중에는 연결을 잡지 않는다.
-const ROLE_POOL_MAX = { translation:3, "product-health":3, "site-evidence":3, "official-news":3, web: 8, crawler: 8, reviewer: 3, publisher: 3, text: 3, maintenance: 3, scheduler: 2, monitor: 1, "connect-agent": 1 } as const;
+// 동시에 틱을 도는 모델 줄 수 + 역할 lease heartbeat 1 + 여유 1(lib/jobs/catalog.ts 줄 설명): text 4 → 6(2026-10-31 3a-A),
+// reviewer 4 → 6(3a-A) → 합성 잡 분해로 9(second·human·audit·intro + held·confirm·tiebreak·audit-qwen·audit-opinion) → 11(3a-C). host-budget workerMax 와 같다.
+// 건 단위 consumer(ai1·ai2 …)는 WORKER_ROLE 이 부모 역할이라도 자기 선언(lib/runtime/consumer-registry.ts workerMax 3)을 env DB_POOL_MAX 로 준다.
+const ROLE_POOL_MAX = { translation:3, "product-health":3, "site-evidence":3, "official-news":3, web: 8, crawler: 8, reviewer: 11, publisher: 3, text: 6, maintenance: 3, scheduler: 2, monitor: 1, "connect-agent": 1 } as const;
 export type DbRole = keyof typeof ROLE_POOL_MAX;
 export type DbPoolConfig = {
   role: DbRole;

@@ -113,20 +113,36 @@ describe("소개 짓기 잡", () => {
     expect(await crawl.getCandidate("someone/mine")).toMatchObject({ state: "approved", reason: "passed", decidedBy: "admin" });
   });
 
-  it("실패는 다시 볼 시각을 달고 남는다 — 잇따라 둘이 막히면 이번 틱은 접는다", async () => {
+  // 2026-10-31 결정: 잇따라 둘이 막혀도 틱을 접지 않는다 — 각 후보의 실패로만 남기고 다음 후보를 본다(하나가 잘못되면 다음 작업도 안 되는 구조는 이유가 없다)
+  it("실패는 다시 볼 시각을 달고 남는다 — 잇따라 막혀도 남은 후보를 모두 묻는다", async () => {
     await held("someone/my-app");
     await held("someone/other-app");
+    await held("someone/third-app");
     gateway.mockResolvedValue({ ok: false, status: 429 } as Response);
 
     await tick();
 
-    // 한 건의 실패로 접지 않는다 — 둘 다 물어보고 나서 접는다
-    expect(gateway).toHaveBeenCalledTimes(2);
-    const [written] = await db.select().from(crawlTaglines);
-    expect(written).toMatchObject({ errorCode: "rate_limit", attempts: 1, tagline: "" });
-    expect(written.retryAt).not.toBeNull();
+    // 예전에는 둘이 막히면 접어 세 번째가 차례를 잃었다 — 이제 셋 다 묻고 각자의 실패로 남긴다
+    expect(gateway).toHaveBeenCalledTimes(3);
+    const written = await db.select().from(crawlTaglines);
+    expect(written).toHaveLength(3);
+    for (const row of written) {
+      expect(row).toMatchObject({ errorCode: "rate_limit", attempts: 1, tagline: "" });
+      expect(row.retryAt).not.toBeNull();
+    }
     expect(await crawl.getCandidate("someone/my-app")).toMatchObject({ state: "needs_review", reason: "no_description" });
     expect(await crawl.getCandidate("someone/other-app")).toMatchObject({ state: "needs_review", reason: "no_description" });
+  });
+
+  it("키·모델이 없다는 답(모든 후보에 대해 증명된 엔진 탈)은 한 번으로 틱을 접는다", async () => {
+    for (const repo of ["someone/my-app", "someone/other-app", "someone/third-app", "someone/fourth-app"]) await held(repo);
+    gateway.mockResolvedValue({ ok: false, status: 404 } as Response);
+
+    await tick();
+
+    // 동시에 띄운 자리(등록부 동시 호출 수)만 답을 받고 새 호출은 시작하지 않는다 — 넷을 다 묻지 않는다
+    expect(gateway.mock.calls.length).toBeLessThan(4);
+    expect((await db.select().from(crawlTaglines)).length).toBeLessThan(4);
   });
 
   it("실패한 줄은 다시 볼 때가 되면 같은 원본이라도 다시 묻는다", async () => {

@@ -61,8 +61,8 @@ describe("set-qwen-auto", () => {
     const [row] = await auditRowsAfter(floor, "qwen-auto-settings");
     expect(row).toMatchObject({ actor: "ops:jr", actorKind: "token", ok: true, target: "crawl_settings",
       detail: { step: "heldRetry", before: { enabled: false }, after: { enabled: true, perTick: 3 }, reason: "적체 회복" } });
-    // 켜면 그 단계를 도는 잡을 부른다(보류 재심사 → human-deepseek-review)
-    expect((await db.select({ name: jobs.name }).from(jobs)).map((job) => job.name)).toContain("human-deepseek-review");
+    // 켜면 그 단계를 도는 잡을 부른다(보류 재심사 → held-qwen-retry, 2026-10-31 PR 3a-C 분해 뒤 자기 잡)
+    expect((await db.select({ name: jobs.name }).from(jobs)).map((job) => job.name)).toContain("held-qwen-retry");
 
     const off = await run(["--step=heldRetry", "--disable"]);
     expect(off.code).toBe(0);

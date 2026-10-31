@@ -25,7 +25,7 @@ const policy = { version: 1 as const, globalLimit: 2, providerLimits: { "fixture
   poolLimits: { reviewer: 2, text: 2 }, weights: { first: 1, second: 1, background: 1 }, maxWaiting: 20, queueTtlMs: 60_000, reservationTtlMs: 60_000,
   routes: [{ routeId: "local-audit", provider: "local-direct", model: "qwen", providerBudgetId: "fixture-gpu", groupId: "shared-device" }] };
 const target = { kind: "audit" as const, purpose: "audit" as const, itemId: 5, slug: "demo" };
-const lease: JobLease = { name: "product-audit", token: randomUUID(), requestedVersion: 1 };
+const lease: JobLease = { name: "audit-qwen", token: randomUUID(), requestedVersion: 1 };
 function context() {
   const now = new Date();
   const input = createReviewInput({ repo: "acme/demo", productUrl: "https://demo.example", judgedAt: now } as CrawlCandidate,

@@ -425,6 +425,22 @@ it("rolls back historical outcome and request settlement if the event insert fai
   console.info("crawl_tagline_ledger_atomicity", { requestId: value.requestId, rollbackCode: "P0001", historicalSettlement: true });
 }));
 
+// 2026-10-31 결정: 사슬로 읽히지 않는 세대는 broken 으로 돌려주고 호출자가 그 후보만 ledger_mismatch 로 넘긴다 — 리더가 던져 틱을 접지 않는다(하나가 잘못되면 다음 작업도 안 되는 구조는 이유가 없다)
+it("reports a generation whose settled phase no longer reads as evidence as broken instead of throwing; restoring the row reads the chain again", exercise(async () => {
+  await install(); const data = input(), value = await request(data), owned = await dispatch(value, data), proof = terminal(owned);
+  expect(await tracked(reconcileCrawlTaglineGatewayTerminal(proof.opaque))).toEqual({ kind: "settled" });
+  const settled = await rawRequest(value.requestId), hash = settled!.terminal_evidence_hash as string;
+  try {
+    expect(await tracked(admin`UPDATE model_capacity_requests SET terminal_evidence_hash=${hashes[3]} WHERE request_id=${value.requestId}::uuid RETURNING request_id`)).toHaveLength(1);
+    expect(await tracked(readCrawlTaglineContinuation(data))).toEqual({ generationHash: crawlTaglineGenerationHash(data), broken: true });
+  } finally {
+    expect(await tracked(admin`UPDATE model_capacity_requests SET terminal_evidence_hash=${hash} WHERE request_id=${value.requestId}::uuid RETURNING request_id`)).toHaveLength(1);
+  }
+  expect(await rawRequest(value.requestId)).toEqual(settled);
+  expect(await tracked(readCrawlTaglineContinuation(data))).toEqual({ generationHash: crawlTaglineGenerationHash(data),
+    first: { ...parent(proof.evidence), outcome: proof.evidence.outcome }, second: null });
+}));
+
 it("keeps the original binding and full C on unknown; an unknown fences neither a changed target nor disjoint work, an in-flight unbound dispatch still does (2026-10-30)", exercise(async () => {
   await install(); const data = input(), value = await request(data), owned = await dispatch(value, data);
   expect(await tracked(markModelDispatchIndeterminate(owned, "transport_unknown"))).toBe(true);

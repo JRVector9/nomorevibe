@@ -33,7 +33,8 @@ import { thinPageTextSql } from "./audit-text-gate";
 import { screenReviewCounts, type ScreenReviewCounts } from "./audit-screen-review";
 
 /**
- * Qwen-v2 자동 단계(2026-10-21) — 감사 잡(jobs/product-audit.ts)이 틱마다 감사 묻기와 나란히 한 번 돈다. gpu3090 의 Qwen 을 게이트웨이 밖에서
+ * Qwen-v2 자동 단계(2026-10-21) — 자기 잡 audit-second-opinion(jobs/audit-second-opinion.ts, 전용 줄 audit-opinion)이 틱마다 한 번 돈다
+ * (2026-10-31 PR 3a-C 전에는 감사 잡 product-audit 틱 안에서 감사 묻기와 나란히). gpu3090 의 Qwen 을 게이트웨이 밖에서
  * 바로 부르므로(qwen-direct-review.ts) 게이트웨이 자리·공통 슬롯을 쓰지 않는다(M3 DeepSeek 과 같다). 한 번에 한 호출이다.
  *
  * 1. 감사 두 번째 의견(qwenAuto.auditSecondOpinion, 기본 꺼짐): 묻는 범위(scope)는 지금 감사의 열린 AI 거절 전부(all — 감사 화면·정책 처리의 대상,
@@ -251,8 +252,8 @@ async function runStep(ctx: JobContext<null>, settings: CrawlSettings, tally: Qw
   const lease = ctx.lease;
   // 수집 스위치는 비상 정지다 — 모델을 부르는 다른 잡처럼 여기서도 멈춘다
   if (!lease || !settings.enabled || (!audit.enabled && !published.enabled)) return;
-  // 감사의 Qwen 직접 심사가 서버 탈로 물러나는 중이면 같은 서버를 부르지 않는다 — 감사가 먼저다
-  if (qwenEndpointBackingOff()) {
+  // 이 단계가 서버 탈로 물러나는 중이면 부르지 않는다 — 감사 Qwen 직접 심사의 물러나기와는 따로 센다(2026-10-31, 호출자마다)
+  if (qwenEndpointBackingOff("second_opinion")) {
     ctx.log("qwen_second_opinion.backoff", { skipped: true });
     return;
   }
@@ -282,10 +283,10 @@ async function runStep(ctx: JobContext<null>, settings: CrawlSettings, tally: Qw
     audit.enabled ? await auditTargets(audit.scope, settings.auditHold, config.model, given("a:"), audit.perTick) : [],
   );
   if (!queue.length) return;
-  // 새 호출은 시작 창(STEP_MS) 안에서 틱 끝까지 15초 이상 남을 때만, 그리고 누가 서버 탈을 만나 함께 쓰는 물러나기가 걸리면 곧바로 멈춘다.
+  // 새 호출은 시작 창(STEP_MS) 안에서 틱 끝까지 15초 이상 남을 때만, 그리고 이 단계가 서버 탈을 만나 물러나기가 걸리면 곧바로 멈춘다.
   // 제한 시간은 min(45초, 남은 시간 − 저장 여유) — 줄인 제한 시간에 걸린 것(틱 끝)은 서버 탈도 항목의 실패도 아니다
   const left = () => (ctx.deadlineAt ?? Infinity) - Date.now();
-  const canStart = () => !ctx.signal?.aborted && ctx.hasBudget() && Date.now() - startedAt < STEP_MS && !qwenEndpointBackingOff()
+  const canStart = () => !ctx.signal?.aborted && ctx.hasBudget() && Date.now() - startedAt < STEP_MS && !qwenEndpointBackingOff("second_opinion")
     && left() >= QWEN_AUTO_MIN_START_MS;
   const failItem = (target: Target, code: string) => {
     tally.failed += 1;
@@ -331,10 +332,10 @@ async function runStep(ctx: JobContext<null>, settings: CrawlSettings, tally: Qw
       if (error.code === "qwen_cancelled") break;
       // 줄인 제한 시간(틱 끝)에 걸렸다 — 아무것도 적지 않고 멈춘다
       if (error.code === "qwen_timeout" && shrunk) break;
-      const { outage } = await noteQwenCallFailure(error.code);
+      const { outage } = await noteQwenCallFailure("second_opinion", error.code);
       observation.lastError = { code: error.code, detail: error.detail, target: target.kind, at: now() };
       if (outage) {
-        // 서버 탈 — 이 틱의 나머지는 부르지 않고 gpu3090 을 부르는 모두가 물러난다. 항목에는 아무것도 적지 않는다
+        // 서버 탈 — 이 단계의 나머지는 부르지 않고 이 단계가 물러난다(다른 호출자는 각자 판단한다). 항목에는 아무것도 적지 않는다
         tally.endpointError = error.code;
         break;
       }
@@ -343,8 +344,8 @@ async function runStep(ctx: JobContext<null>, settings: CrawlSettings, tally: Qw
       continue;
     }
     if (!review) break;
-    // 다른 쪽(감사의 Qwen 직접 심사 등)이 탈을 적기 전에 띄운 호출의 답은 그 물러나기를 풀지 않는다 — 다음 항목은 canStart 가 막는다
-    await noteQwenEndpointSuccess(callStartedAt);
+    // 이 단계가 탈을 적기 전에 띄운 호출의 답은 그 물러나기를 풀지 않는다 — 다음 항목은 canStart 가 막는다
+    await noteQwenEndpointSuccess("second_opinion", callStartedAt);
     delete observation.failures[target.key];
     observation.lastSuccessAt = now();
     const written = target.kind === "audit" ? await writeAudit(target, review, input, lease, tally, audit.autoClose)

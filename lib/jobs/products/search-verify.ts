@@ -1,5 +1,6 @@
 import { modelLimits, modelTimeoutMs, scopedModel } from "@/lib/llm/model-registry";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
+import { EngineDownTally } from "@/lib/jobs/engine-down";
 import { tickRemaining } from "@/lib/jobs/tick-deadline";
 import { ModelCapacityDeferredError, modelCapacityDeferralIsPerWork } from "@/lib/llm/capacity-deferred";
 import { pendingVerifications, recordVerificationResult } from "@/lib/domain/products/search-profiles";
@@ -23,9 +24,10 @@ const JOB = "product-search-verify";
  *   minCallMs 20초(이만큼 남아 있을 때만 새로 부른다).
  * - 등록부 경로 product-search-verify(routes.limits): 동시 호출(넷)과 한 건(키워드 16개)에 둘 시간 — 시험에서 동시 넷일 때 5~25초.
  * - 틱의 남은 시간은 러너가 준 deadlineAt(틱 예산 budgets)에서 — 잡 안의 TICK_MS 상수는 없다(lib/jobs/tick-deadline.ts).
+ *
+ * 2026-10-31(PR 3a-B): 한 제품의 실패(시간 초과·429·5xx)는 그 제품의 시도로만 남고 다음 제품을 본다 — 예전의 "잇따라 둘이 막히면 틱을 접는다"는
+ * 없앴다. 틱을 접는 것은 엔진이 모든 제품에 대해 내려갔음이 증명될 때만이다(lib/jobs/engine-down.ts).
  */
-/** 게이트웨이가 막힌 것은 이 제품의 문제가 아니다 — 잇따라 둘이 막히면 이번 틱을 접는다 */
-const GATEWAY_DOWN = new Set(["no_key", "model_unavailable", "rate_limit", "timeout", "network"]);
 
 export async function verifySearchKeywords(ctx: JobContext<null>, request?: typeof fetch): Promise<JobOutcome<null>> {
   if (!textRouteCallable("product-search-verify", scopedModel("product-search-verify", VERIFY_MODEL))) {
@@ -44,7 +46,8 @@ export async function verifySearchKeywords(ctx: JobContext<null>, request?: type
     const knobs = runtimeSettings();
     const batch = jobKnob(knobs, JOB, "batch"), minCallMs = jobKnob(knobs, JOB, "minCallMs");
     const concurrency = modelLimits(JOB).concurrency, callMs = modelTimeoutMs(JOB);
-    let verified = 0, removed = 0, failed = 0, blocked = "", inARow = 0;
+    let verified = 0, removed = 0, failed = 0, blocked = "";
+    const engine = new EngineDownTally();
     /** 이 틱에 넘긴 제품(이 제품만의 미룸) — 다시 고르지 않는다. 같은 머리가 남은 틱을 같은 조회로 맴돌게 하지 않는다 */
     const passed = new Set<number>();
 
@@ -93,12 +96,12 @@ export async function verifySearchKeywords(ctx: JobContext<null>, request?: type
               const failure = { kind: "failure" as const, error: result.error };
               if (await (outcome.expectation ? recordVerificationResult(task, lease, failure, outcome.expectation)
                 : recordVerificationResult(task, lease, failure))) failed++;
-              if (GATEWAY_DOWN.has(result.error) || result.error.startsWith("http_5")) {
-                if (++inARow >= 2) blocked = result.error;
-              }
+              // 그 제품의 실패로 남겼다. 엔진이 모든 제품에 대해 내려갔음이 증명될 때만 틱을 접는다(engine-down.ts)
+              const down = engine.failed(result.error);
+              if (down) blocked = down;
               continue;
             }
-            inARow = 0;
+            engine.answered();
             const success = { kind: "success" as const, removed: result.unsupported, model: scopedModel("product-search-verify", VERIFY_MODEL) };
             if (!await (outcome.expectation ? recordVerificationResult(task, lease, success, outcome.expectation)
               : recordVerificationResult(task, lease, success))) continue;

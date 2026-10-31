@@ -114,7 +114,7 @@ PR 2a 의 화면이다. 배포 직후에는 아무것도 바뀌지 않는다 —
 
 ### 5. 새 배정
 
-장비 × 단계마다 하나(0155 부터는 도우미 행만 거는 부분 유일 색인 `model_helper_assignments_helper_stage_device_idx`). 배정 이름을 비우면 `<장비>:<단계>`(예: `m3-deepseek:ai1`)가 된다. 처음에는 꺼짐으로 만든다(실전은 고를 수 없다).
+장비 × 단계마다 하나(0156 부터는 도우미 행만 거는 부분 유일 색인 `model_helper_assignments_helper_stage_device_idx`). 배정 이름을 비우면 `<장비>:<단계>`(예: `m3-deepseek:ai1`)가 된다. 처음에는 꺼짐으로 만든다(실전은 고를 수 없다).
 
 단계별 기본 경로(`HELPER_ROUTE_DEFAULTS`, 정책 rev14):
 
@@ -180,10 +180,10 @@ server action 다섯(`app/(operator)/admin/models/helpers/actions.ts`), 모두 `
 
 ## 배정 표 열 — 3b-A
 
-migration `0155_model_assignments`(PR 3b-A)는 같은 표 `model_helper_assignments` 를 「단계 × 장비 × 모델」 배정 표로 넓힌다.
+migration `0156_model_assignments`(PR 3b-A)는 같은 표 `model_helper_assignments` 를 「단계 × 장비 × 모델」 배정 표로 넓힌다.
 **배포 직후 동작은 바뀌지 않는다** — 배정 표 행(role `primary`)은 아직 없고, 만드는 함수(`saveModelAssignment`)를 부르는 화면·잡도 아직 없다(화면은 3b-D 「모델 배정」 — 아래).
 이 행을 읽어 모델을 고르는 것은 3b-B(flag 뒤), 로컬 계약을 표에서 읽는 것은 3b-C 다.
-번호 주의: PR 3a-C 도 idx 155 / when 1794086401066(`0155_split_composite_jobs`)을 쓴다 — 나중에 병합되는 쪽을 통합 때 다시 번호 매긴다.
+번호: 원래 0155 였으나 PR 3a-C(`0155_split_composite_jobs`)가 먼저 main 에 들어가 통합 때 0156 / when 1794086401067 로 다시 매겼다(2026-10-31).
 
 ### 새 열
 
@@ -360,7 +360,7 @@ CLI = `probeCliServingContracts`)을 쓴다. 감사 줄(`model-assignment-save`)
   `setCapacityHelpersRepositoryForTest`) → 감사 한 줄 → 화면 모형; CAS 거절(저장·모드·해제, 감사 없음); 자동 정지 해제; 저장 거절; 전체 스위치(확인 칸·감사·배지); 순환 설정; 비관리자.
   공유 테스트 DB(55435)가 아니라 자기 DB 로 돌린다(예: `TEST_DATABASE_URL=postgres://nomorevibe:nomorevibe@localhost:55452/nomorevibe_test`).
 - `tests/dr-web-fence.test.ts` — 도우미 action 다섯이 쓰기 관문을 지난다(수 97). `tests/admin-navigation.test.tsx` — 메뉴 링크 23개.
-- 배정 표(3b-A): `tests/capacity-helpers.test.ts`(어휘·zod·evidence·0155 글자·route 상한), `tests/stage-assignments.test.ts`(고르기, 1차 칸 = selectFirstReviewer),
+- 배정 표(3b-A): `tests/capacity-helpers.test.ts`(어휘·zod·evidence·0156 글자·route 상한), `tests/stage-assignments.test.ts`(고르기, 1차 칸 = selectFirstReviewer),
   `tests/integration/model-assignments.test.ts`(자기 DB: 계약·route·장비 순위·감사 한 TX, 같은 저장 반복, 잡힌 행과 앞 판, 상한·충돌, 거절 뒤 남는 행 없음, cli·vote·local-direct 계약).
 - 모델 배정 화면(3b-D): `tests/admin-model-assignments.test.tsx`(묶음·한국어 이름·칸·상태 띠·자리표, 단계 × 등록부 × 전송 고르기(cli = connect), 폼 → 저장 입력·확인 「배정」,
   모든 거절 코드 문장, 결과 문장, 가져오기 계획 hash, server action 셋, 그리기(표 열은 2차만, 폼·가져오기 카드), 설정 폼 읽기 전용(플래그 켜짐만)),
