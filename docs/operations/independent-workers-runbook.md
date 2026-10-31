@@ -789,7 +789,7 @@ B 심사 장애는 신규 자동 발행을 보류하며 조용히 AI 심사를 �
 
 배포 준비: 기존 publisher를 정상 drain→새 publisher 교체 및 소유 잡 확인→새 text 컨테이너 시작. 신규 text는 worker target/위 명령, memory512MiB·DB pool3·hard timeout180초, 별도 instance ID/health를 사용한다. 실제 서버 여유는 배포 전에 확인한다. 구형 publisher와 새 text를 함께 유지하지 않는다. rollback은 text drain/중지 후 구형 publisher 복구이며 DB 요청·결과를 삭제하지 않는다.
 
-DB 기본 상한은 web8+crawler4+reviewer3+publisher3+text3+maintenance3+scheduler2+connect-agent1=27이었다(2026-10-31 reviewer·text 3→6 뒤 33). 웹2개 기본8이면35(→41), 운영 웹 각각6이면31(→37)이다. migration/관리/다른 앱/교체 여유를 별도로 확보한다. 이 계산은 설정상 최대이며 실제 연결 수 실측이 아니다.
+DB 기본 상한은 web8+crawler4+reviewer3+publisher3+text3+maintenance3+scheduler2+connect-agent1=27이었다(2026-10-31 reviewer·text 3→6 뒤 33, 같은 날 3a-C 합성 잡 분해로 reviewer 6→11 뒤 38). 웹2개 기본8이면35(→41→46), 운영 웹 각각6이면31(→37→42)이다. migration/관리/다른 앱/교체 여유를 별도로 확보한다. 이 계산은 설정상 최대이며 실제 연결 수 실측이 아니다.
 
 ## 2026-10-31 단계마다 자기 줄(PR 3a-A) — reviewer·text 줄 분리와 DB pool 6
 
@@ -811,6 +811,33 @@ DB 기본 상한은 web8+crawler4+reviewer3+publisher3+text3+maintenance3+schedu
   `lib/db/host-budget.ts` workerMax, Dokploy env). ai1·ai2 consumer 앱은 등록부대로 3 그대로다. 줄을 더 쪼개면(3a-C) 같은 규칙으로 다시 센다.
 - 배포: reviewer·text Dokploy 앱(M3·mini) env `DB_POOL_MAX`를 같은 창에서 6 이상으로 올린다(이미 그 이상이면 유지). `HOST_DB_BUDGET`을 쓰는
   호스트는 선언(`workerMax` reviewer·text 6)이 코드와 같은 릴리스여야 `assertHostDbEntry`가 통과한다. 모델 호출 수·순서는 장부가 정해 바뀌지 않는다.
+
+## 2026-10-31 합성 잡 분해(PR 3a-C) — 한 잡 = 큐 하나 + 모델 호출 모양 하나, reviewer DB pool 11
+
+3a-A 가 모델 잡마다 줄을 줬지만 세 잡은 한 틱 안에서 두 장비(gpu3090·M3)를 차례로 불렀다 — 한 장비의 느림·서버 탈이 같은 틱의 다른 단계를 세우고
+그 잡의 틱을 실패로 남겼다. 단계마다 자기 잡·자기 줄·자기 예산으로 나눴다. 장부 binding 의 `job.name` 은 그 호출을 띄운 잡 lease 라(`lib/llm/local-model-domain.ts`)
+purpose → 잡 이름 표가 함께 바뀐다(`lib/llm/local-model-capacity-contract.ts localModelJob`, **migration 0155_split_composite_jobs** — 세 CHECK 에 새 이름 가지를 OR 로 더한다.
+옛 가지가 남아 분해 전에 띄운 행은 그대로 통과한다).
+
+| 전(합성 잡) | 후(잡 · 줄 · 예산) | 큐·결과 표 |
+|---|---|---|
+| human-deepseek-review = 보류 Qwen 재심사(gpu3090) → DeepSeek 위임(M3) → 갈림 확인(M3) | `held-qwen-retry` · held · 110초 / `human-deepseek-review` · human · 110초 / `split-confirm` · confirm · 110초 | crawl_review_attempts(delegated) / gate_split_tiebreaks(deepseek_*) |
+| second-review = 표 심사 ∥ 갈림 판가름(gpu3090) | `second-review` · second · 110초 / `split-tiebreak` · tiebreak · 110초 | second_reviews / gate_split_tiebreaks |
+| product-audit = 보류 쓸기 → 게이트웨이/CLI 감사 또는 Qwen 직접 감사(gpu3090) ∥ 두 번째 의견(gpu3090) | `product-audit` · audit · 70초 / `audit-qwen` · audit-qwen · 70초 / `audit-second-opinion` · audit-opinion · 70초 | product_audit_items / product_audit_second_opinions·second_reviews(needs_human) |
+
+- reviewer 줄: 10 → **15**(heartbeat 파서 상한 16 안). text 는 그대로 8.
+- M3 DeepSeek 에 한 번에 한 호출이라는 약속은 잡 lease 가 아니라 프로세스의 DeepSeek 자리(`lib/crawl/deepseek-slot.ts`)가 지킨다 — 위임·확인은 호출만 줄 서고 틱은 따로 돈다.
+  gpu3090 의 두 번째 자리(`withQwenSecondarySlot`)·함께 쓰는 물러나기(`qwen-endpoint-backoff.ts`)는 같은 reviewer 프로세스 안이라 그대로다.
+- qwenAuto 스위치를 켤 때 바로 부르는 잡(`lib/crawl/settings.ts QWEN_AUTO_JOB`)·관리자 단계 풀 매핑(`admin-model-pools.ts`)·단계 표(`stage-registry.ts`)·비상 자리·
+  운영센터 이름표·조치 칸의 맡은 잡이 새 이름을 쓴다. 게이트웨이 감사의 AI1 양보(`product-audit.ts`)는 그대로다(3a-B 가 뺀다).
+- DB pool: reviewer 모델 줄 4 → 9(second·human·audit·intro + held·confirm·tiebreak·audit-qwen·audit-opinion) → `DB_POOL_MAX` **11**(`compose.yml`,
+  `lib/db/pool.ts`, `lib/db/host-budget.ts` workerMax, Dokploy env). 다섯 새 줄은 스위치가 꺼져 있으면 틱마다 설정 한 번만 읽지만 켜져 있으면 매분 모델을 부르므로 센다.
+  text 6 그대로. 기본 상한 합계(위 27 → 33)는 38 이 된다.
+- **배포 차례**: 새 카탈로그 잡은 scheduler 가 요청해야 돈다 — 이 릴리스는 **scheduler 를 먼저 배포**하고(두 복제본) 그 뒤 reviewer 를 올린다(`new-jobs-scheduler-first`).
+  migration 0155 는 reviewer 가 새 이름으로 dispatch 하기 전에 적용되어야 한다(migrate → scheduler → reviewer). reviewer Dokploy 앱(M3·mini) env `DB_POOL_MAX` 를 같은 창에서
+  11 이상으로 올린다. 옛 reviewer 가 띄워 둔 행(옛 잡 이름)은 새 코드가 읽어 정산한다(`legacyLocalModelJob`).
+- 운영 관측: `job:audit-qwen` 의 실패(`product_audit_endpoint_error:*`·`product_audit_endpoint_backoff:*`)가 gpu3090 서버 탈을 보인다 — 전에는 `job:product-audit` 에 섞여 있었다.
+  `held-qwen-retry`·`split-tiebreak`·`audit-second-opinion` 은 스위치(qwenAuto.*)가 꺼져 있으면 매 틱 `done:true` 로 끝난다.
 
 관리자 상태 화면에 소개·사유 번역(text) 카드를 추가했다. 표시만으로 배포 성공을 판단하지 않는다. 해당 release의 컨테이너 healthy, publisher의 텍스트 실행0, text의 처리 및 backlog 감소를 확인한다. 공유 모델 서버 경합은 분리 후에도 계측한다.
 

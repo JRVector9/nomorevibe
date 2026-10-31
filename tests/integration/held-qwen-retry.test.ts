@@ -12,7 +12,7 @@ import { judgeRevision } from "@/lib/crawl/rules";
 import { runJob } from "@/lib/jobs/runner";
 import type { JobLease } from "@/lib/jobs/control";
 import { publishCandidates } from "@/lib/crawl/jobs/publish";
-import { reviewHumanQueue } from "@/lib/crawl/jobs/human-review";
+import { retryHeldQwen } from "@/lib/crawl/jobs/held-qwen-retry";
 import { claimHumanReview, humanReviewRepos } from "@/lib/crawl/human-review-repository";
 import { heldQwenBadges, heldQwenRetryStatus, runHeldQwenRetry } from "@/lib/crawl/held-qwen-retry";
 import { heldQwenOwnedReasons } from "@/lib/crawl/held-qwen-retry-policy";
@@ -118,7 +118,8 @@ async function firstAbstained(candidate: typeof crawlCandidates.$inferSelect, do
     validUntil: input.validUntil, startedAt: new Date(), completedAt: new Date() });
 }
 
-const tick = () => runJob("human-deepseek-review", reviewHumanQueue);
+/** 보류 재심사 잡 한 틱 — 2026-10-31(PR 3a-C) 전에는 사람 검토 잡(human-deepseek-review) 틱의 앞부분이었다 */
+const tick = () => runJob("held-qwen-retry", retryHeldQwen);
 const publish = () => runJob("crawl-publish", publishCandidates);
 const candidateRow = async (id: number) => (await db.select().from(crawlCandidates).where(eq(crawlCandidates.id, id)))[0];
 const qwenAttempts = (candidateId?: number) => db.select().from(crawlReviewAttempts).where(and(eq(crawlReviewAttempts.provider, "qwen-direct"),
@@ -127,12 +128,15 @@ const vote = (row: { id: number; model: string | null }, decision: "approve" | "
   recordSecondReviewFixture(row.id, { ok: true, decision, confidence: 0.9, reason: "Second model", model: row.model!, provider: "abcllm", status: "agreed" });
 
 /** 잡 lease 로 저장소 함수를 부른다 — 실제 runner 가 준 lease 다 */
-async function withHumanJob<T>(load: (lease: JobLease) => Promise<T>): Promise<T> {
+async function withJob<T>(name: "human-deepseek-review" | "held-qwen-retry", load: (lease: JobLease) => Promise<T>): Promise<T> {
   let value!: T;
-  const result = await runJob<null>("human-deepseek-review", async ctx => { value = await load(ctx.lease!); return { done: true }; });
-  if (result.status !== "completed") throw new Error(`human_job_${result.status}`);
+  const result = await runJob<null>(name, async ctx => { value = await load(ctx.lease!); return { done: true }; });
+  if (result.status !== "completed") throw new Error(`${name}_${result.status}`);
   return value;
 }
+/** DeepSeek 위임의 claim 은 사람 검토 잡(human-deepseek-review)의 lease 로, 보류 재심사는 held-qwen-retry 의 lease 로 — 2026-10-31 분해 뒤 두 잡이다 */
+const withHumanJob = <T>(load: (lease: JobLease) => Promise<T>) => withJob("human-deepseek-review", load);
+const withHeldJob = <T>(load: (lease: JobLease) => Promise<T>) => withJob("held-qwen-retry", load);
 
 describe("보류 Qwen-v2 재심사", () => {
   it("거부하면 DeepSeek 위임과 같은 기록으로 끝낸다 — 시도 행·운영 감사·decided_by qwen-v2", async () => {
@@ -379,7 +383,7 @@ describe("보류 Qwen-v2 재심사", () => {
     const off = (await getSettings()).qwenAuto.heldRetry;
     await setHeldQwenRetry({ ...off, enabled: true }, off);
     reply(outcome("reject", 0.99));
-    const result = await withHumanJob(async lease => runHeldQwenRetry({ lease, hasBudget: () => true, log: () => {} }, await getSettings()));
+    const result = await withHeldJob(async lease => runHeldQwenRetry({ lease, hasBudget: () => true, log: () => {} }, await getSettings()));
     expect(result.started).toBe(0);
     expect(requests).toHaveLength(0);
     expect(await candidateRow(exhausted.row.id)).toMatchObject({ state: "needs_review", decidedBy: "auto" });

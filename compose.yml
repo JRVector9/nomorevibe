@@ -193,9 +193,10 @@ services:
       <<: *worker-environment
       WORKER_ROLE: reviewer
       SERVICE_INSTANCE_ID: local-reviewer
-      # 6 = 동시에 틱을 도는 모델 줄 4(second·human·audit·intro) + 역할 lease heartbeat 1 + 여유 1 (lib/jobs/catalog.ts 줄 설명, 2026-10-31 3→6).
-      # Dokploy reviewer 앱(M3·mini)도 같은 값 이상이어야 한다. lib/db/host-budget.ts workerMax.reviewer 와 같다. ai1·ai2 consumer 앱은 3 그대로
-      DB_POOL_MAX: "6"
+      # 11 = 동시에 틱을 도는 모델 줄 9(second·human·audit·intro + 2026-10-31 3a-C 합성 잡 분해 held·confirm·tiebreak·audit-qwen·audit-opinion)
+      # + 역할 lease heartbeat 1 + 여유 1 (lib/jobs/catalog.ts 줄 설명, 3→6→11). Dokploy reviewer 앱(M3·mini)도 같은 값 이상이어야 한다.
+      # lib/db/host-budget.ts workerMax.reviewer 와 같다. ai1·ai2 consumer 앱은 3 그대로
+      DB_POOL_MAX: "11"
       WORKER_JOB_TIMEOUT_SECONDS: "180"
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
       CRAWL_REVIEW_MODEL: ${CRAWL_REVIEW_MODEL:-}

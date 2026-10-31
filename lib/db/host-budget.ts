@@ -47,11 +47,12 @@ const OptionsSchema = z.discriminatedUnion('mode', [
 const unverified = { enforcement: 'unknown', ready: false, activationAllowed: false } as const;
 /**
  * 역할 worker 자식의 primary pool 상한 — lib/db/pool.ts ROLE_POOL_MAX·compose.yml DB_POOL_MAX 와 같은 값.
- * reviewer·text 6 = 동시에 틱을 도는 모델 줄 4 + 역할 lease heartbeat 1 + 여유 1(lib/jobs/catalog.ts 줄 설명, 2026-10-31 3→6).
+ * 동시에 틱을 도는 모델 줄 수 + 역할 lease heartbeat 1 + 여유 1(lib/jobs/catalog.ts 줄 설명): text 4 → 6(2026-10-31 3a-A),
+ * reviewer 4 → 6(3a-A) → 합성 잡 분해로 9 → 11(3a-C).
  * ai1·ai2 consumer 자식은 이 값이 아니라 등록부(consumer-registry.ts workerMax 3)를 따른다 — 줄 분리는 역할 프로세스의 연결만 늘린다.
  */
 const workerMax: Record<WorkerRole, number> = {
-  crawler: 8, reviewer: 6, publisher: 3, text: 6, maintenance: 3,
+  crawler: 8, reviewer: 11, publisher: 3, text: 6, maintenance: 3,
   translation: 3, 'product-health': 3, 'site-evidence': 3, 'official-news': 3,
 };
 

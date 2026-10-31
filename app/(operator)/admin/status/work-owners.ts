@@ -71,9 +71,14 @@ export const JOB_HOW: Readonly<Record<string, string>> = {
   "crawl-fetch": "수집 대기열에서 꺼낸 저장소의 원본(저장소 정보·배포 페이지)을 가져옵니다.",
   "crawl-judge": "가져온 원본에 규칙 기준을 적용해 심사 후보로 남깁니다. 모델을 부르지 않습니다.",
   "crawl-agent-review": "규칙을 통과한 후보를 1차 모델이 읽고 승인·거절·보류를 정합니다.",
-  "second-review": "1차와 다른 모델이 같은 입력을 따로 봅니다. 엇갈리면 사람 몫으로 넘기고, 갈림 판가름이 켜져 있으면 Qwen 직접 서버에 한 번 더 묻습니다.",
-  "human-deepseek-review": "사람 몫(직접 판단)으로 넘어온 후보를 M3 로컬 DeepSeek 이 대신 봅니다(관리자 스위치를 켰을 때만). 보류 재심사가 켜져 있으면 Qwen 직접 서버에 다시 묻습니다.",
-  "product-audit": "사람이 연 감사가 있을 때 공개 제품을 1차 심사 글로 다시 봅니다. 거절 판정은 적기만 하고 내리는 것은 사람입니다. 새 후보가 기다리면 먼저 양보합니다.",
+  "second-review": "1차와 다른 모델이 같은 입력을 따로 봅니다. 엇갈리면 사람 몫으로 넘깁니다.",
+  "split-tiebreak": "두 모델 승인 관문에서 갈린 보류를 Qwen 직접 서버(gpu3090)에 한 번 더 묻습니다(갈림 판가름 스위치를 켰을 때만). 거부면 DeepSeek 확인을 기다리고, 승인이면 사람 큐 맨 앞에 둡니다.",
+  "human-deepseek-review": "사람 몫(직접 판단)으로 넘어온 후보를 M3 로컬 DeepSeek 이 대신 봅니다(관리자 스위치를 켰을 때만).",
+  "held-qwen-retry": "소개 없음·재시도 소진·판단 보류로 사람 큐에 남은 후보를 Qwen 직접 서버(gpu3090)에 다시 묻습니다(보류 재심사 스위치를 켰을 때만).",
+  "split-confirm": "갈림 판가름이 거부한 후보를 M3 로컬 DeepSeek 에 관문 입력 그대로 다시 묻고, DeepSeek 도 거부해야 닫습니다. M3 에는 한 번에 한 호출입니다.",
+  "product-audit": "사람이 연 감사가 있을 때 공개 제품을 1차 심사 글로 다시 봅니다(게이트웨이·CLI 심사자). 거절 판정은 적기만 하고 내리는 것은 사람입니다. 새 후보가 기다리면 먼저 양보하고, 감사 보류를 틱마다 조금씩 겁니다.",
+  "audit-qwen": "남은 감사 모델을 Qwen 으로 바꾼 감사의 남은 항목을 Qwen 직접 서버(gpu3090)에 게이트웨이 없이 묻습니다. 게이트웨이·CLI 심사자의 감사에는 할 일이 없습니다.",
+  "audit-second-opinion": "감사 거절에 Qwen 직접 서버(gpu3090)의 두 번째 의견을 적고(스위치를 켰을 때만, 켜 두면 그 답으로 닫기도 합니다), 공개분 2차의 사람 확인 행을 한 번 더 봅니다.",
   "audit-screen-review": "글이 얇은 감사 거절을 화면 서버(m1-studio)에서 그려 글과 첫 화면을 Qwen 에 묻습니다. 따로 도는 줄이라 심사·감사를 막지 않습니다.",
   "crawl-publish": "승인된 후보의 카테고리를 AI 연결 서비스에 물어 정한 뒤 공개 목록에 올립니다. 분류를 못 하면 1시간 뒤 다시 합니다.",
   "cdn-purge": "내려간 제품의 Cloudflare 사본(상세·썸네일·목록)을 1분에 한 요청씩 지웁니다.",
@@ -135,8 +140,8 @@ const CONSUMER_LABELS: Readonly<Record<ConsumerName, string>> = {
 
 /** Qwen 직접 서버를 부르는 자동 단계(설정 qwenAuto)와 그 단계를 도는 잡 — 화면 판별(screenReview)은 따로 본다 */
 const QWEN_STEPS = [
-  ["auditSecondOpinion", "product-audit", "감사 두 번째 의견"], ["publishedFilter", "product-audit", "공개분 거르기"],
-  ["splitTiebreak", "second-review", "2차 갈림 판가름"], ["heldRetry", "human-deepseek-review", "보류 재심사"],
+  ["auditSecondOpinion", "audit-second-opinion", "감사 두 번째 의견"], ["publishedFilter", "audit-second-opinion", "공개분 거르기"],
+  ["splitTiebreak", "split-tiebreak", "2차 갈림 판가름"], ["heldRetry", "held-qwen-retry", "보류 재심사"],
 ] as const;
 
 const NOTES = {
@@ -288,6 +293,12 @@ function jobModels(job: string, slots: ModelSlot[], ctx: OwnerContext, env: Env)
   if (job === "human-deepseek-review" && ctx.settings.humanReview?.enabled) {
     models.push({ full: DEEPSEEK_REVIEW_MODEL, row: { slot: "사람 몫 대신 판단", job: label(job), provider: "m3-deepseek", runsOn: "M3 로컬 DeepSeek",
       source: "코드 고정값 · 크롤 설정 humanReview 켜짐", stats: null } });
+    hosts.push({ name: "M3", row: { instanceId: "m3-deepseek", what: "모델 서버 — DeepSeek", jobs: [label(job)], state: "켜짐", tone: null, release: null, seen: null } });
+  }
+  // 갈림 확인(split-confirm)도 같은 M3 DeepSeek 을 쓴다 — 위임과 한 번에 한 호출(lib/crawl/deepseek-slot.ts)
+  if (job === "split-confirm" && ctx.settings.qwenAuto?.splitTiebreak?.enabled) {
+    models.push({ full: DEEPSEEK_REVIEW_MODEL, row: { slot: "갈림 거부 확인", job: label(job), provider: "m3-deepseek", runsOn: "M3 로컬 DeepSeek",
+      source: "코드 고정값 · 크롤 설정 qwenAuto.splitTiebreak 켜짐", stats: null } });
     hosts.push({ name: "M3", row: { instanceId: "m3-deepseek", what: "모델 서버 — DeepSeek", jobs: [label(job)], state: "켜짐", tone: null, release: null, seen: null } });
   }
   const qwen = ctx.settings.qwenAuto;

@@ -33,7 +33,8 @@ import { thinPageTextSql } from "./audit-text-gate";
 import { screenReviewCounts, type ScreenReviewCounts } from "./audit-screen-review";
 
 /**
- * Qwen-v2 자동 단계(2026-10-21) — 감사 잡(jobs/product-audit.ts)이 틱마다 감사 묻기와 나란히 한 번 돈다. gpu3090 의 Qwen 을 게이트웨이 밖에서
+ * Qwen-v2 자동 단계(2026-10-21) — 자기 잡 audit-second-opinion(jobs/audit-second-opinion.ts, 전용 줄 audit-opinion)이 틱마다 한 번 돈다
+ * (2026-10-31 PR 3a-C 전에는 감사 잡 product-audit 틱 안에서 감사 묻기와 나란히). gpu3090 의 Qwen 을 게이트웨이 밖에서
  * 바로 부르므로(qwen-direct-review.ts) 게이트웨이 자리·공통 슬롯을 쓰지 않는다(M3 DeepSeek 과 같다). 한 번에 한 호출이다.
  *
  * 1. 감사 두 번째 의견(qwenAuto.auditSecondOpinion, 기본 꺼짐): 묻는 범위(scope)는 지금 감사의 열린 AI 거절 전부(all — 감사 화면·정책 처리의 대상,

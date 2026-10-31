@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/db", () => ({ db: { transaction: async () => undefined, select: () => ({ from: () => ({ where: async () => [] }) }) } }));
 import { noteQwenAnswered, noteQwenCallFailure, noteQwenEndpointFailure, noteQwenEndpointSuccess, QWEN_SOFT_FAILURE_STREAK, qwenBackoffMs,
   qwenEndpointBackingOff, qwenEndpointBackoff, qwenSoftFailures, resetQwenAuditBackoff, withQwenSecondarySlot } from "@/lib/crawl/qwen-endpoint-backoff";
-import { qwenAuditBackoffMs } from "@/lib/crawl/jobs/product-audit";
+import { qwenAuditBackoffMs } from "@/lib/crawl/jobs/audit-qwen";
 
 /**
  * gpu3090 Qwen 을 부르는 모든 쪽(감사 직접 심사·두 번째 의견·공개분 거르기·갈림 판가름)이 함께 쓰는 물러나기와 두 번째 자리.

@@ -45,14 +45,16 @@ import type { CrawlSettings, HeldQwenReason } from "./settings-schema";
  * DeepSeek 위임과 나누는 법: 스위치가 켜져 있으면 이 세 사유는 Qwen-v2 만 맡는다(heldQwenOwns — DeepSeek claim 이 같은 잠긴
  * 설정 행으로 재고 건너뛴다). 한 후보에 진행 중 시도는 하나뿐이라(crawl_review_one_active_idx) 바꾸는 순간에도 겹치지 않는다.
  *
- * 같은 잡(human-deepseek-review)의 앞부분에서 돈다 — 새 카탈로그 잡이 없다. 한 틱에 perTick 개·budgetSeconds 초까지.
+ * 자기 잡 held-qwen-retry(lib/crawl/jobs/held-qwen-retry.ts, 전용 줄 held)에서 돈다 — 2026-10-31(PR 3a-C) 전에는 사람 검토 잡
+ * human-deepseek-review 틱의 앞부분이었다. 한 틱에 perTick 개·budgetSeconds 초까지.
  * claim·기록은 각각 짧은 트랜잭션이고 모델 호출은 그 사이(트랜잭션 밖)다. 같은 입력 세대(입력·원본 해시, 덧붙임 판, 모델)마다
  * 판단은 한 번, 실패는 15분 뒤 세 번까지. 부르는 곳의 탈(닿지 않음·시간 초과·5xx 등)이면 이 틱을 멈추고, gpu3090 을 부르는 모두와 함께
  * 물러난다(qwen-endpoint-backoff.ts — 1분부터 두 배씩 15분까지, 누가 탈을 만나든 감사·두 번째 의견·공개분 거르기·갈림 판가름도 함께 쉰다).
  * 동시 호출: 감사 Qwen 직접 심사가 아닌 쪽(이 재심사·두 번째 의견·공개분 거르기·갈림 판가름)은 프로세스의 두 번째 자리 하나를 나눠
  * 한 번에 한 호출만 띄운다(withQwenSecondarySlot) — 잡들이 겹쳐 돌아도 gpu3090 동시 호출은 감사 자리(2~4) + 1 이다.
  */
-const JOB = "human-deepseek-review";
+/** 이 단계를 도는 잡 — binding.job 과 시도 행 lease 의 주인(lib/llm/local-model-capacity-contract.ts localModelJob held_qwen) */
+const JOB = "held-qwen-retry";
 /** 한 번 부를 때의 제한 시간 — 실측 2.2~4.7초(qwen-direct-review.ts). 넘는 것은 탈로 본다. 틱마다 등록부 경로 held-review-retry 를 읽는다(관리자 실시간 한도) */
 export function heldQwenCallTimeoutMs(): number { return modelTimeoutMs("held-review-retry"); }
 const MAX_FAILURES = 3;
@@ -449,7 +451,7 @@ async function callQwen(input: ReviewInput, options: { timeoutMs: number; signal
 }
 
 /**
- * human-deepseek-review 잡의 앞부분 — 보류 Qwen-v2 재심사 한 틱. 시간은 budgetSeconds 와 잡의 남은 예산 중 짧은 쪽,
+ * held-qwen-retry 잡의 한 틱(lib/crawl/jobs/held-qwen-retry.ts) — 보류 Qwen-v2 재심사. 시간은 budgetSeconds 와 잡의 남은 예산 중 짧은 쪽,
  * 수는 perTick 까지. 한 번 부를 시간(heldQwenCallTimeoutMs)이 남지 않으면 새로 부르지 않는다.
  */
 export async function runHeldQwenRetry(ctx: Pick<JobContext<null>, "lease" | "hasBudget" | "deadlineAt" | "signal" | "log">, settings: CrawlSettings,

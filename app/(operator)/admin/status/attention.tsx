@@ -201,7 +201,12 @@ const joined = (nodes: React.ReactNode[], separator = ", ") =>
 const AI_WORK: ActionWork = { jobs: ["crawl-publish"], services: ["connect-agent"] };
 const SEARCH_WORK: ActionWork = { jobs: ["product-search-health", "product-search-profile", "product-search-verify"] };
 const UPTIME_WORK: ActionWork = { jobs: ["uptime-ping"] };
-const AUDIT_WORK: ActionWork = { jobs: ["product-audit"] };
+// 감사의 세 잡(2026-10-31 분해): 쓸기·게이트웨이/CLI 감사, Qwen 직접 감사, 두 번째 의견 — 보류를 거는 쪽 모두
+const AUDIT_WORK: ActionWork = { jobs: ["product-audit", "audit-qwen", "audit-second-opinion"] };
+/** 사람 몫 후보를 가르는 잡 — 1차·2차·갈림 판가름·DeepSeek 위임·보류 재심사·갈림 확인(2026-10-31 분해) */
+const REVIEW_WORK: ActionWork = { jobs: ["crawl-agent-review", "second-review", "split-tiebreak", "human-deepseek-review", "held-qwen-retry", "split-confirm"] };
+/** Qwen 직접 서버(gpu3090)를 부르는 잡 전부 */
+const QWEN_WORK: ActionWork = { jobs: ["audit-qwen", "audit-second-opinion", "split-tiebreak", "held-qwen-retry", "audit-screen-review"] };
 const X_WORK: ActionWork = { services: ["x-collector"] };
 
 /**
@@ -346,7 +351,7 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
         {humanWaitLabel(overview)} · {humanFlowLabel(overview)}.
         {(overview.wait?.stalled ?? 0) > 0 && <> 그중 <span className="font-mono">{n(overview.wait!.stalled)}건</span>은 판정한 지 2주가 넘었습니다 — 갈래별로 묶으면 한 번에 처리할 수 있습니다.</>}
       </>,
-      action: { label: "심사 큐", href: ACTION_LINKS.reviewHuman }, work: { jobs: ["crawl-agent-review", "second-review", "human-deepseek-review"] },
+      action: { label: "심사 큐", href: ACTION_LINKS.reviewHuman }, work: REVIEW_WORK,
     });
   }
   if (overview.stages.agreed + overview.secondPublished > 0) {
@@ -518,7 +523,7 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
       detail: <>연속 {n(qwenFailures)}번{typeof qwen?.lastError === "string" ? <> · 마지막 <span className="font-mono">{qwen.lastError}</span></> : null}
         {Number.isFinite(qwenRetryAt) ? ` · 다음 시도 ${formatListTime(new Date(qwenRetryAt).toISOString(), now)}` : ""}
         {" "}— 그동안 감사 Qwen 직접 심사·두 번째 의견·공개분 거르기·2차 갈림 판가름·보류 재심사가 묻지 않습니다. 서버와 vLLM 이 떠 있는지 확인합니다.</>,
-      action: { label: "감사", href: ACTION_LINKS.audit }, work: { jobs: ["product-audit", "second-review", "human-deepseek-review", "audit-screen-review"] },
+      action: { label: "감사", href: ACTION_LINKS.audit }, work: QWEN_WORK,
     });
   }
   // 내려달라는 요청 — 상세 페이지가 내려 준다고 약속했다. 24시간을 넘기면 다른 경보처럼 맨 앞 급으로
@@ -535,7 +540,7 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
     actions.push({
       key: "audit", tone: "hold", count: attention.auditRejectsOpen, unit: "건", title: "감사가 거절 판정한 발행분이 처리되지 않았습니다",
       detail: <>발행 뒤 감사가 &ldquo;제품 아님&rdquo;으로 본 것 — 사람이 내리거나 유지로 정해야 합니다.</>,
-      action: { label: "내릴 후보", href: ACTION_LINKS.audit }, work: { jobs: ["product-audit", "audit-screen-review"] },
+      action: { label: "내릴 후보", href: ACTION_LINKS.audit }, work: { jobs: ["product-audit", "audit-qwen", "audit-screen-review"] },
     });
   }
   if (attention && attention.auditHeld > 0) {
