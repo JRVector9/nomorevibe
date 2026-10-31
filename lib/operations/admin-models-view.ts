@@ -28,15 +28,42 @@ export function findModelDefinition(row: { provider: string; model: string }, mo
     || (!row.model.startsWith("[") && row.model === model.model)));
   return matches.length === 1 ? matches[0] : undefined;
 }
+/**
+ * 카드의 서버 이름(2026-10-31 소유자 요청 "장비 미확인 뜨는 거 전부 장비 서버명 맞춰놓자"). 찾는 순서:
+ * 1) 등록부 항목의 주소(호스트) → 서버, 2) 등록부 장비 값, 3) 제공 방식이 달라도 같은 모델 이름의 유일한 항목(예: 1차 검수 abcllm 계약이
+ * gpu3090 의 local-direct 항목과 같은 vLLM 을 쓴다), 4) 이 카드가 쓰는 장비 그룹(model_capacity_devices), 5) 옛 게이트웨이 대괄호 라벨.
+ * 표시용 이름이다 — 복구 판정(modelRecoveryBlocked)은 등록부 장비 값을 그대로 쓴다.
+ */
+const SERVER_BY_HOST: Readonly<Record<string, string>> = { "100.92.77.66": "M3 Ultra", "100.78.219.124": "Supa", "100.77.43.63": "gpu3090",
+  "m1-studio.tail02799e.ts.net": "M1 Studio" };
+const SERVER_BY_NAME: Readonly<Record<string, string>> = { m3: "M3 Ultra", mlx: "M3 Ultra", "m3-mlx": "M3 Ultra", "m3-deepseek": "M3 Ultra",
+  m1: "M1 Studio", "m1-qwen": "M1 Studio", supa: "Supa", "supa-direct": "Supa", gpu3090: "gpu3090", "gpu3090-qwen": "gpu3090",
+  connect: "connect(CLI)", "anthropic-cli": "connect(CLI)", "openai-cli": "connect(CLI)" };
+const serverByName = (value: string | null | undefined) => value ? SERVER_BY_NAME[value.toLowerCase()] : undefined;
+function serverByHost(baseUrl: string | null | undefined): string | undefined {
+  if (!baseUrl) return undefined;
+  try { return SERVER_BY_HOST[new URL(baseUrl).hostname]; } catch { return undefined; }
+}
+export function modelServerName(identity: { provider: string; model: string }, definition: ModelDefinition | undefined,
+  models: readonly ModelDefinition[], groups: readonly string[]): string {
+  const sameName = definition ? undefined : (() => {
+    const matches = identity.model.startsWith("[") ? [] : models.filter(model => model.model === identity.model);
+    return matches.length === 1 ? matches[0] : undefined;
+  })();
+  const source = definition ?? sameName;
+  const fromGroups = [...new Set(groups.map(serverByName).filter((name): name is string => !!name))];
+  return serverByHost(source?.baseUrl) ?? serverByName(source?.equipment) ?? source?.equipment
+    ?? (fromGroups.length === 1 ? fromGroups[0] : undefined)
+    ?? serverByName(identity.model.match(/^\[([^\]]+)\]/)?.[1]) ?? identity.model.match(/^\[([^\]]+)\]/)?.[1] ?? "장비 미확인";
+}
 export function buildModelCards(observation: AdminModelsObservation, models: readonly ModelDefinition[], assignments: ModelStageAssignment[] = []): ModelCard[] {
-  const cards = new Map<string, ModelCard>();
+  const cards = new Map<string, ModelCard>(), identities = new Map<string, { provider: string; model: string }>();
   const ensure = (identity: { provider: string; model: string }) => {
     const definition = findModelDefinition(identity, models), id = definition?.key ?? JSON.stringify([identity.provider, identity.model]);
     let card = cards.get(id);
     if (!card) {
       card = { id, definition, name: (definition?.model.startsWith("mlx-community--") ? definition.displayName.split(" · ").slice(1).join(" · ") : definition?.model) ?? identity.model.replace(/^\[[^\]]+\]\s*/, ""),
-        equipment: definition?.gatewayLabel ?? definition?.equipment ?? identity.model.match(/^\[([^\]]+)\]/)?.[1] ?? "장비 미확인",
-        rows: [], requests: [], stages: [] }; cards.set(id, card);
+        equipment: "장비 미확인", rows: [], requests: [], stages: [] }; cards.set(id, card); identities.set(id, identity);
     }
     return card;
   };
@@ -47,6 +74,8 @@ export function buildModelCards(observation: AdminModelsObservation, models: rea
   for (const row of observation.rows) { const card = ensure(row); card.rows.push(row);
     if (!card.stages.includes(modelStageId(row.routeId))) card.stages.push(modelStageId(row.routeId)); }
   for (const request of observation.requests) ensure(request).requests.push(request);
+  for (const card of cards.values()) card.equipment = modelServerName(identities.get(card.id)!, card.definition, models,
+    [...card.rows.map(row => row.groupId), ...card.requests.map(request => request.groupId)]);
   return [...cards.values()].sort((a, b) => b.rows.reduce((n, r) => n + r.indeterminate, 0) - a.rows.reduce((n, r) => n + r.indeterminate, 0));
 }
 export function stageUnknownRows(observation: AdminModelsObservation, rows: AdminModelMetrics[]) {

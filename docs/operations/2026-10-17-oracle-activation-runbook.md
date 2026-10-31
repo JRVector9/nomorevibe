@@ -92,7 +92,7 @@ python3 scripts/ops/deploy_shared_images.py inventory --sha "$APPROVED_RELEASE_S
 | --- | --- | --- | --- |
 | D1 | Oracle capability refresh 정책: A(Oracle host timer, 별도 `nomorevibe_oracle_refresh` principal) 또는 B(M3/mini 원격 실행). 정하지 않으면 선출된 역할은 15분 안에 claim을 멈춘다. | 2, 4 | `deploy/oracle/README.md:112-124`, `lib/jobs/batches.ts:61-62` |
 | D2 | `nomorevibe-core.slice`의 CPUQuota %·MemoryMax bytes·TasksMax(실측 뒤 명시, 기본값 없음) | 3 | `deploy/oracle/manage_release.py:18-28` |
-| D3 | 역할별 DB connection limit(psql 변수 9개 — consumer `agent-scan`·`uptime`·`github-ko-discovery` 포함)과 `HOST_DB_BUDGET` 선언(roles·replicas) | 2, 3 | `deploy/oracle/least-privilege.sql:3`, `lib/db/host-budget.ts:7-15,39-69` |
+| D3 | 역할별 DB connection limit(psql 변수 10개 — consumer `agent-scan`·`uptime`·`github-ko-discovery`·`capacity-supervisor` 포함)과 `HOST_DB_BUDGET` 선언(roles·replicas) | 2, 3 | `deploy/oracle/least-privilege.sql:3`, `lib/db/host-budget.ts:7-15,39-69` |
 | D4 | `HOST_BUDGET_ENFORCEMENT` 압박 한도 4개(maxLoadPerCpu·maxHostRssBytes·maxEventLoopDelayMs·maxHeartbeatGapMs) | 3, 8 | `lib/operations/host-budget.ts:12-32` |
 | D5 | 비상 예산 값 `{jobs, modelJobs, httpJobs, agingMs}`과 `verifiedModelJobs` 목록(빈 목록도 명시) | 8 | `lib/operations/emergency-admission.ts:14-35`, `lib/operations/emergency-priority.ts:73-74` |
 | D6 | 비상 독립 provider(번역·심사 등)와 비용 상한 | 5, 8 | `/tmp/nomorevibe-pr16-emergency-design-20261017.md` 5장 |
@@ -157,8 +157,8 @@ readlink /opt/nomorevibe-core/current
 
 ## 2. 운영 DB principal 생성과 권한 readback
 
-- **목적:** Oracle 서비스별 최소권한 LOGIN role 6개(translation·product-health·site-evidence·official-news·scheduler·attest)와 consumer role 3개를 만든다 — 제작 근거 스캔 `nomorevibe_oracle_agent_scan`(SQL 파일의 `-- consumer agent-scan` 절), uptime `nomorevibe_oracle_uptime`(`-- consumer uptime` 절, split claim·제출만), 한국어 탐색 `nomorevibe_oracle_github_ko`(`-- consumer github-ko-discovery` 절). D1이 A면 refresh principal도 만든다.
-  6개 role 이 이미 있으면 파일 전체를 다시 실행하지 않는다(`CREATE ROLE` 충돌로 트랜잭션 전체가 취소된다). 그때는 승인을 받아 필요한 consumer 절(`-- consumer agent-scan`·`-- consumer uptime`·`-- consumer github-ko-discovery`)만 `BEGIN`/`COMMIT` 으로 감싸 실행한다.
+- **목적:** Oracle 서비스별 최소권한 LOGIN role 6개(translation·product-health·site-evidence·official-news·scheduler·attest)와 consumer role 4개를 만든다 — 제작 근거 스캔 `nomorevibe_oracle_agent_scan`(SQL 파일의 `-- consumer agent-scan` 절), uptime `nomorevibe_oracle_uptime`(`-- consumer uptime` 절, split claim·제출만), 한국어 탐색 `nomorevibe_oracle_github_ko`(`-- consumer github-ko-discovery` 절), 도우미 장비 감시자 `nomorevibe_oracle_capacity_supervisor`(`-- consumer capacity-supervisor` 절, 신호·정지 쓰기만; `docs/operations/capacity-supervisor.md`). D1이 A면 refresh principal도 만든다.
+  6개 role 이 이미 있으면 파일 전체를 다시 실행하지 않는다(`CREATE ROLE` 충돌로 트랜잭션 전체가 취소된다). 그때는 승인을 받아 필요한 consumer 절(`-- consumer agent-scan`·`-- consumer uptime`·`-- consumer github-ko-discovery`·`-- consumer capacity-supervisor`)만 `BEGIN`/`COMMIT` 으로 감싸 실행한다.
 - **명령:** 관리자 연결은 URL에 비밀번호를 넣지 않고 `~/.pgpass`(0600)나 프롬프트를 쓴다. 관리자 자격 보관 위치는 **확인 필요**다. SQL 파일은 한 트랜잭션이다.
 
 ```bash
@@ -172,6 +172,7 @@ psql "$ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 \
   -v uptime_connections="$UPTIME_CONNECTIONS" \
   -v agent_scan_connections="$AGENT_SCAN_CONNECTIONS" \
   -v github_ko_discovery_connections="$GITHUB_KO_DISCOVERY_CONNECTIONS" \
+  -v capacity_supervisor_connections="$CAPACITY_SUPERVISOR_CONNECTIONS" \
   -f "$SRC/deploy/oracle/least-privilege.sql"
 # D1 이 A 일 때만
 psql "$ADMIN_DATABASE_URL" -v ON_ERROR_STOP=1 -v refresh_connections=1 -f "$SRC/deploy/oracle/refresh-principal.sql"

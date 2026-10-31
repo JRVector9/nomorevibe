@@ -43,6 +43,7 @@ import {
 import { ModelCapacityDeferredError } from "./capacity-deferred";
 import { liveStateSql, occupyingStateSql, inFlightStateSql, sentStateSql } from "./capacity-states";
 import { deviceCandidateSql, deviceFallbackLimit, type ModelCapacityGeneration } from "./capacity-devices";
+import { helperGateStateFromRow, helperGateStatesSql, type HelperGateState, type HelperGateStateRow } from "./capacity-helpers";
 import { slotOnlyModelCapacity } from "./capacity-consumer-scope";
 import { fenceFromRow, writerSiteActive } from "@/lib/operations/dr/epoch";
 import { takeGatewayLocalEnd, type GatewayLocalEnd } from "./gateway-local-end";
@@ -190,6 +191,16 @@ async function deviceConfigured(tx: ProductTransaction, policy: NonNullable<Cont
   const [row] = await tx.select({ deviceId: modelCapacityDevices.deviceId }).from(modelCapacityDevices)
     .where(and(eq(modelCapacityDevices.deviceId, deviceId), eq(modelCapacityDevices.enabled, true))).limit(1);
   return row !== undefined;
+}
+
+/**
+ * 이 요청의 (route, provider, model) 이 장비의 도우미 경로인가(PR 2a Layer B). 0 줄 = 도우미 경로가 아니다(우선·보통 역할: 도우미 상태와 무관).
+ * 줄이 있으면 helper_gate.ok·배정 점유·max_slots 로 판정한다 — 입장 후보 SQL(deviceCandidateSql)과 같은 helperGateCte 조각, 같은 control 잠금 아래.
+ */
+async function helperRouteGates(tx: ProductTransaction, deviceId: string, value: ModelCapacityRequestIdentity): Promise<HelperGateState[]> {
+  const rows = await tx.execute<HelperGateStateRow>(helperGateStatesSql(deviceId,
+    { routeId: value.routeId, provider: value.provider, model: value.model }));
+  return rows.map(helperGateStateFromRow);
 }
 
 async function event(tx: ProductTransaction, row: RequestRow, kind: ModelCapacityEventKind,
@@ -591,6 +602,10 @@ function requestSlot(checked: ModelCapacityRequest, logicalKey: string | null, m
       && route.provider === checked.provider && route.model === checked.model);
     if (!route) return { kind: "deferred", reason: "unmapped" };
     if (!await deviceConfigured(tx, state.policy, route.groupId)) return { kind: "deferred", reason: "device_unconfigured" };
+    // 도우미 경로(PR 2a): 닫혀 있거나(신호 없음·만료·다른 epoch·판·계정, 감시자 꺼짐, 정지·mode·판정) 배정 점유가 찼으면 대기 행·event 없이 미룬다.
+    // 도우미가 아닌 경로는 0 줄이라 이 검사를 지나간다 — 우선 역할 일은 도우미 상태로 막히지 않는다.
+    const helperGates = await helperRouteGates(tx, route.groupId, checked);
+    if (helperGates.some(gate => !gate.ok || gate.active >= gate.maxSlots)) return { kind: "deferred", reason: "helper_ineligible" };
     const oldActive = await tx.select({ epoch: modelCapacityRequests.epoch, revision: modelCapacityRequests.revision,
       policyHash: modelCapacityRequests.policyHash }).from(modelCapacityRequests)
       .where(sql`${occupyingStateSql(modelCapacityRequests.state)} AND (
@@ -619,8 +634,15 @@ function requestSlot(checked: ModelCapacityRequest, logicalKey: string | null, m
     await grantOne(tx, state);
     const [own] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, checked.requestId));
     sameIdentity(own, checked);
-    return own.state === "reserved" ? { kind: "granted", reservation: reservation(own) }
-      : { kind: "deferred", reason: "capacity" };
+    if (own.state === "reserved") return { kind: "granted", reservation: reservation(own) };
+    // 도우미 요청은 grant-or-nothing: 이 pass 에서 예약되지 않으면 같은 TX 에서 대기 행을 거둔다. 1칸 장비에 남은 대기 행이 나중에 예약되면
+    // 쓸 사람 없이 우선 역할의 칸을 예약 TTL 동안 쥐기 때문이다(pr2-plan §2.3).
+    if (helperGates.length && own.state === "waiting") {
+      const [withdrawn] = await tx.update(modelCapacityRequests).set({ state: "withdrawn", updatedAt: sql`clock_timestamp()` })
+        .where(and(eq(modelCapacityRequests.requestId, own.requestId), eq(modelCapacityRequests.state, "waiting"))).returning();
+      if (withdrawn) await event(tx, withdrawn, "wait_cancelled", "waiting", "withdrawn");
+    }
+    return { kind: "deferred", reason: "capacity" };
   });
 }
 

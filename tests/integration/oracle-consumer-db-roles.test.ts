@@ -94,6 +94,11 @@ it('creates each consumer principal only from the generated SQL with exactly its
       expect(report.checks.consumer).toEqual({ status: 'verified', reason: 'fixture_ready' });
       expect(report.workload).toEqual({ ready: true, reason: 'ready' });
     }
+    // PR 2a: 감시자 준비 확인은 control 행의 signal_principal 이 이 계정일 때 verified 다(꺼져 있어도 — 쉰다)
+    if (target.consumer === 'capacity-supervisor') {
+      expect(report.checks.consumer.status).toBe('verified');
+      expect(report.workload).toEqual({ ready: true, reason: 'ready' });
+    }
     expect(output.negatives, target.consumer).toEqual({ ...Object.fromEntries(DENIED.map(statement => [statement, '42501'])),
       ...Object.fromEntries(allowed.map(statement => [statement, 'allowed'])) });
   }
