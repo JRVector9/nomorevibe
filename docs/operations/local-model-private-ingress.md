@@ -1,5 +1,14 @@
 # M1 Qwen 사설 모델 호출 경로
 
+> **2026-10-31 퇴역.** M1은 relay 없이 직접 연결한다(tailscale serve → `mlx_lm.server` `127.0.0.1:8000`, 관리자 모델 연결 계약).
+> 이 relay(`scripts/local-model-relay`, launchd `system/bot.brut.nmv-llm-relay`)는 웹·워커 경로에 없다. 아래 내용은 설치물·법의학 회수 도구의 기록이다.
+> relay의 미확인 래치(upstream timeout 한 번 → `503 upstream_indeterminate`, 운영자 경계 해제나 **검증된** 엔진 상한
+> `LOCAL_MODEL_RELAY_ENGINE_DEADLINE_MS`+`LOCAL_MODEL_RELAY_ENGINE_BOUND_EFFECTIVE_AT` 전까지 계속)는 시간만으로 풀리게 바꾸지 않았다 —
+> mlx-lm은 생성을 취소하지 못하고 엔진 상한이 검증되지 않았으므로, 시간만으로 다시 열면 단일 슬롯 엔진에 생성 둘을 겹치고 거짓
+> "엔진 상한 경과" 기록을 남긴다. relay의 상류 기한 최대값(90초)은 현재 product-translate 클라이언트 상한(300초)보다 짧아 그대로 되살리면
+> 긴 번역마다 잘리고 래치에 걸린다. `tests/local-model-relay-retired.test.ts`가 relay가 런타임 import·이미지·compose에 다시 들어오지 않는지 지킨다.
+> 다시 쓰려면 새 설계(검증된 엔진 상한, 상류 기한 재설계)와 이 테스트 갱신이 먼저다. 남아 있는 launchd 서비스는 호출자가 없으므로 래치가 걸려도 일을 막지 않는다.
+
 M1의 oMLX는 `127.0.0.1:8000`을 유지한다. 이 relay는 별도 서비스 계정으로 실행하며 Tailscale IPv4 한 주소에서만 M3·mini의 허용된 IP와 별도 Bearer 키를 받는다. 화면 renderer의8791 경로와 독립적이다. 모델을 설치·교체하거나 oMLX를 외부 주소에 바인딩하지 않는다.
 
 상태: **코드·가짜 upstream 검증용 설치물**. 실제 M1 설치, worker 컨테이너 접근, 모델 canary, 공통 capacity 연동·활성화는 별도 승인된 운영 단계다. 파일이 존재하거나 `relayReady`가 참이라는 사실만으로 M1 분산 도입 완료로 표시하지 않는다.
