@@ -51,6 +51,8 @@ export async function verifyKeywordsWithModelCapacity(task: ProfileTask, lease: 
   const { member, role, expectation } = initial, model = scopedModel("product-search-verify", VERIFY_MODEL);
   const continuation = await readSearchVerifyContinuation({ member, model });
   if (continuation.unresolved) throw new ModelCapacityDeferredError("dispatched");
+  // A row of this generation has no readable execution: only this product is skipped, the job goes on (no call, attempt or failure).
+  if (continuation.broken) throw new ModelCapacityDeferredError("ledger_mismatch");
   // A resumed execution keeps its stored deadline, further shortened by this tick; it never receives a new 60 seconds.
   const latest = continuation.latest && continuation.latest.deadlineAt > continuation.nowMs ? continuation.latest : null;
   const resumed = !!latest, execution = latest ? latest.execution : continuation.nextExecution;

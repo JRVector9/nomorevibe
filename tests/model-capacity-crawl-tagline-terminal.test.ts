@@ -171,7 +171,7 @@ it("returns settled first business data across refetch without issuing a new opa
   const result = await readCrawlTaglineContinuation({ ...input(), member: { ...input().member, documentRowIdentityHash: sha } });
   expect(result).toEqual({ generationHash: first.value.generationHash, first: { requestId: first.handle.requestId,
     bindingHash: first.owned.bindingHash, responseHash: sha, outcome: first.evidence.outcome }, second: null });
-  expect(Object.isFrozen(result)).toBe(true); expect(Object.isFrozen(result!.first.outcome)).toBe(true);
+  expect(Object.isFrozen(result)).toBe(true); expect(Object.isFrozen(result!.first!.outcome)).toBe(true);
   expect(fixture.writes).toEqual([]); expect(recording.terminal).not.toHaveBeenCalled();
 });
 
@@ -248,7 +248,8 @@ it("returns both settled phases as business data and rejects a broken stored par
     parent: { requestId: first.handle.requestId, bindingHash: first.owned.bindingHash, responseHash: sha } }));
   const fixture = mockTx([[{ id: 1 }], [{ ...second.row, state: "settled" }, { ...first.row, state: "settled" }]]);
   recording.transaction.mockImplementation((load: (tx: ProductTransaction) => unknown) => load(fixture.tx));
-  expect((await readCrawlTaglineContinuation(input()))?.second).toEqual({ requestId: second.handle.requestId,
+  const both = await readCrawlTaglineContinuation(input());
+  expect(both && "second" in both ? both.second : null).toEqual({ requestId: second.handle.requestId,
     bindingHash: second.owned.bindingHash, responseHash: sha, outcome: second.evidence.outcome });
   const bad = mockTx([[{ id: 1 }], [{ ...second.row, state: "settled" }]]);
   recording.transaction.mockImplementation((load: (tx: ProductTransaction) => unknown) => load(bad.tx));

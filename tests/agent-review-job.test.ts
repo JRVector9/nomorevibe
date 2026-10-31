@@ -407,7 +407,8 @@ it("stops new admission while settling an already running lane without aborting 
     release({ ok: true, outcome: { decision: "approve", reason: "Deployed tracker", evidenceIds: ["product"] } });
     await Promise.allSettled([running]);
   }
-  expect(await running).toEqual({ done: false, deferred: "model_capacity" });
+  // 전역 미룸이어도 이미 남긴 심사가 있으면 완료 틱이다 — 다시 요청하지는 않는다(scheduler 의 다음 요청을 기다린다)
+  expect(await running).toEqual({ done: false });
   expect(mocks.claim.mock.calls.map(call => call[0].candidate.id)).toEqual([1, 2]);
   expect(mocks.record).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ outcome: expect.objectContaining({ decision: "approve" }) }));
 });
@@ -431,9 +432,19 @@ it("a local model capacity wait leaves the extra reviewer working without rerout
     return { kind: "claimed", attempt: { id: 2, attemptNumber: 1 }, receipt: receipt(2) };
   });
   mocks.gateway.mockResolvedValue({ ok: true, outcome: { decision: "approve", reason: "Deployed tracker", evidenceIds: ["product"] } });
-  expect(await reviewCrawlCandidates(context())).toEqual({ done: false, deferred: "model_capacity" });
+  expect(await reviewCrawlCandidates(context())).toEqual({ done: false, continuation: "ready" });
   expect(mocks.claim.mock.calls.map(call => call[0].candidate.id)).toEqual([1, 2]);
   expect(mocks.gateway).toHaveBeenCalledExactlyOnceWith(expect.anything(), expect.objectContaining({ model: extra.model }));
+});
+
+it("a tick that recorded no review while a pool model is paused stays deferred (no success time)", async () => {
+  const primary = { provider: "abcllm" as const, model: "primary-model" };
+  mocks.settings = { ...mocks.settings!, firstReview: primary, firstReviewAdditional: [{ ...primary, model: "extra-model" }], reviewConcurrency: 1 };
+  mocks.list.mockResolvedValue([candidate(), { ...candidate(), id: 2 }]);
+  mocks.claim.mockRejectedValue(new ModelCapacityDeferredError("capacity"));
+  expect(await reviewCrawlCandidates(context())).toEqual({ done: false, deferred: "model_capacity" });
+  expect(mocks.gateway).not.toHaveBeenCalled();
+  expect(mocks.record).not.toHaveBeenCalled();
 });
 
 it("an additive pool still stops all new admission on a global drain", async () => {
@@ -461,7 +472,7 @@ it("a peer's local capacity refusal cannot cancel the same model's committed cla
   const running = reviewCrawlCandidates(context());
   await peerRefused; await new Promise(resolve => setImmediate(resolve));
   release({ kind: "claimed", attempt: { id: 1, attemptNumber: 1 }, receipt: receipt() });
-  expect(await running).toEqual({ done: false, deferred: "model_capacity" });
+  expect(await running).toEqual({ done: false, continuation: "ready" });
   expect(mocks.gateway).toHaveBeenCalledExactlyOnceWith(expect.anything(), expect.objectContaining({ model: primary.model,
     signal: expect.objectContaining({ aborted: false }) }));
   expect(mocks.record).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ outcome: expect.objectContaining({ decision: "approve" }) }));

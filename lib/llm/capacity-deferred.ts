@@ -2,24 +2,28 @@
  * - `device_unconfigured`(PR 1b): 경로의 장비에 활성 `model_capacity_devices` 행도 정책 `groupLimits` 대체도 없다.
  * - `work_busy`: 장부가 행 없이 거절했다(같은 작업 fence·중복 작업) — 이 작업 하나가 다른 요청에 묶였을 뿐, 슬롯은 남아 있을 수 있다.
  *   장부(requestSlot)는 포화와 같은 `capacity` 로 답하므로 호출자가 capacityRefusalReason(capacity-busy-targets.ts)으로 가른다.
+ * - `ledger_mismatch`: 이 대상 한 세대의 장부 행이 정확한 사슬로 읽히지 않는다(2026-10-31) — 그 대상만 격리하고 잡은 다음 대상으로 간다.
+ *   예전에는 이 오류가 틱 전체를 던져 같은 머리 대상이 매 틱 잡 전체를 멈췄다. 호출·시도·실패 기록은 없다.
  */
 export type ModelCapacityDeferredReason = "draining" | "unmapped" | "provider_contract_unavailable"
   | "reservation_required" | "owner_unavailable" | "capacity" | "queue_full" | "policy_changed"
-  | "withdrawn" | "dispatched" | "disabled" | "reservation_lost" | "device_unconfigured" | "work_busy";
+  | "withdrawn" | "dispatched" | "disabled" | "reservation_lost" | "device_unconfigured" | "work_busy"
+  | "ledger_mismatch";
 
 export function isModelCapacityDeferredReason(value: unknown): value is ModelCapacityDeferredReason {
   return typeof value === "string" && ["draining", "unmapped", "provider_contract_unavailable", "reservation_required",
     "owner_unavailable", "capacity", "queue_full", "policy_changed", "withdrawn", "dispatched", "disabled", "reservation_lost",
-    "device_unconfigured", "work_busy"].includes(value);
+    "device_unconfigured", "work_busy", "ledger_mismatch"].includes(value);
 }
 
 /**
- * 이 작업 하나만의 미룸인가 — 앞선 호출이 아직 보내진 중(`dispatched`)이거나 같은 작업이 다른 요청에 묶였다(`work_busy`).
+ * 이 작업 하나만의 미룸인가 — 앞선 호출이 아직 보내진 중(`dispatched`)이거나 같은 작업이 다른 요청에 묶였다(`work_busy`),
+ * 또는 이 작업의 장부 세대가 사슬로 읽히지 않는다(`ledger_mismatch`).
  * 2026-10-30 소유자 결정("미확인이 되어도 절대 멈추지 않는다"): 호출자는 이 대상만 건너뛰고 같은 틱·쪽의 다른 일을 계속한다.
  * 모델·경로·틱 전체를 멈추는 사유(포화 `capacity`·`queue_full`·정책·owner·draining 등)는 여기에 넣지 않는다.
  */
 export function modelCapacityDeferralIsPerWork(reason: ModelCapacityDeferredReason): boolean {
-  return reason === "dispatched" || reason === "work_busy";
+  return reason === "dispatched" || reason === "work_busy" || reason === "ledger_mismatch";
 }
 
 /** Admission refusal only; this error never proves a reservation or provider end. */

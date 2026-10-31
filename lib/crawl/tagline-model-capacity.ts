@@ -11,7 +11,7 @@ import { capacityRefusalReason } from "@/lib/llm/capacity-busy-targets";
 import { modelCapacityRequestIdentitySchema, crawlTaglineInputHash, crawlTaglineLogicalWorkKey, type CrawlTaglineParent } from "@/lib/llm/capacity";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { modelCapacityIndeterminateReason } from "@/lib/llm/capacity";
-import { prepareCrawlTaglineDispatch, prepareCrawlTaglineHistory, type TaglineTask, type CrawlTaglineWriteExpectation } from "./taglines";
+import { prepareCrawlTaglineDispatch, prepareCrawlTaglineHistory, prepareCrawlTaglineNotStarted, type TaglineTask, type CrawlTaglineWriteExpectation } from "./taglines";
 import type { JobLease } from "@/lib/jobs/control";
 import { roleLeaseFromEnv, type RoleLease } from "@/lib/jobs/role-leader";
 import { textRouteCallable } from "@/lib/llm/serving-contract-store";
@@ -45,7 +45,18 @@ export async function writeCrawlTaglineWithModelCapacity(value: TaglineTask, job
   }
   if (initial.kind === "skipped") return initial;
   if (!("snapshot" in initial)) throw new Error("crawl_tagline_preparation_invalid");
-  const history = await readCrawlTaglineContinuation({ member: initial.member, model: scopedModel("crawl-tagline", TAGLINE_MODEL) });
+  let history: Awaited<ReturnType<typeof readCrawlTaglineContinuation>>;
+  try { history = await readCrawlTaglineContinuation({ member: initial.member, model: scopedModel("crawl-tagline", TAGLINE_MODEL) }); }
+  catch (error) {
+    // 이 후보 한 세대의 장부가 사슬로 읽히지 않는다 — 이 후보만 넘기고 잡은 다음 후보로 간다(#754 원칙, 2026-10-31). 호출·시도 기록 없음.
+    if (error instanceof Error && error.message === "crawl_tagline_continuation_mismatch") throw new ModelCapacityDeferredError("ledger_mismatch");
+    throw error;
+  }
+  // 보내지 않은 단계(0149)로 끝난 세대: 같은 단계는 다시 보낼 수 없으니 실패 한 번으로 닫고 다음 세대로 넘긴다.
+  if (history && "notStarted" in history) {
+    if (previous) throw new ModelCapacityDeferredError("reservation_lost");
+    return prepareCrawlTaglineNotStarted(task, lease, { initial, history });
+  }
   if (history && (!previous || history.second)) return prepareCrawlTaglineHistory(task, lease, { initial, history });
   if (previous && (!history || !isDeepStrictEqual(previous.parent, { requestId: history.first.requestId,
     bindingHash: history.first.bindingHash, responseHash: history.first.responseHash }) || !history.first.outcome.ok || history.first.outcome.tagline))

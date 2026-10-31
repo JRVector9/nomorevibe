@@ -10,7 +10,7 @@ import { pendingTaglines, prepareCrawlTaglineDispatch, recordTaglineResult, type
 import { writeCrawlTaglineWithModelCapacity } from "@/lib/crawl/tagline-model-capacity";
 import { writeTaglines } from "@/lib/crawl/jobs/tagline";
 import { prepareCrawlTaglineGatewayCall } from "@/lib/crawl/agent-review-gateway";
-import { requestCrawlTaglineModelSlot, cancelReservedModelSlot } from "@/lib/llm/capacity-repository";
+import { requestCrawlTaglineModelSlot, cancelReservedModelSlot, closeModelCapacityUnknownReview } from "@/lib/llm/capacity-repository";
 import { crawlTaglineInputHash, crawlTaglineLogicalWorkKey, modelCapacityPolicyHash, type ModelCapacityPolicy } from "@/lib/llm/capacity";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import type { CrawlTaglineServingContract } from "@/lib/llm/crawl-tagline-serving-contract";
@@ -353,4 +353,75 @@ it("preserves disabled legacy cache against an older positive writer without con
       expect((await admin`SELECT to_jsonb(t) AS row FROM crawl_taglines t WHERE repo=${task.candidate.repo}`)[0].row).toEqual(legacy.row);
     })).toMatchObject({ status: "completed" }); expect(bodies).toHaveLength(1);
   });
+}), 20_000);
+
+/** A loopback port nobody listens on: the gateway's connect is refused before any request byte leaves (not-sent witness, 0149). */
+async function closedPort() {
+  const probe = createServer(); await new Promise<void>(resolve => probe.listen(0, "127.0.0.1", resolve));
+  const address = probe.address(); await new Promise<void>(resolve => probe.close(() => resolve()));
+  if (!address || typeof address === "string") throw new Error("fixture_address"); return address.port;
+}
+const jobRow = async () => (await admin`SELECT last_error,last_success_at FROM jobs WHERE name=${jobName}`)[0] as { last_error: string | null; last_success_at: Date | null } | undefined;
+async function refused<T>(run: () => Promise<T>): Promise<T> {
+  const endpoint = serving.contract!.endpoint;
+  serving.contract = { ...serving.contract!, endpoint: `http://127.0.0.1:${await closedPort()}/v1/chat/completions` };
+  try { return await run(); } finally { serving.contract = { ...serving.contract!, endpoint }; }
+}
+const phases = async (repo: string) => Array.from(await admin`SELECT r.state, r.dispatch_binding->'askOrdinal' AS ask, r.terminal_evidence->>'kind' AS kind,
+  r.dispatch_binding->>'generationHash' AS generation FROM model_capacity_requests r JOIN crawl_candidates c ON r.logical_member_keys && ARRAY['crawl-tagline:' || c.id]::text[]
+  WHERE c.repo=${repo} ORDER BY r.queue_ordinal`);
+
+it("2026-10-31 repro: a not_started ask among withdrawn permits and a reviewed unknown no longer stops the job; the generation closes with one failure", exercise(async () => {
+  const stuck = await seed(), lost = await seed(), next = [await seed(), await seed()];
+  await server(async ({ bodies, setReply }) => {
+    // (1) withdrawn: the stuck candidate's reserved permit is cancelled before any POST
+    await custom(async lease => { const { reserved } = await reserve(stuck, lease); expect(await tracked(cancelReservedModelSlot(reserved.reservation))).toBe(true); });
+    // (2) another candidate's call is lost after its request was written (indeterminate), then the operator closes the review
+    setReply(response => { response.end('{"partial":'); });
+    await custom(async lease => {
+      expect(await tracked(writeCrawlTaglineWithModelCapacity(lost, lease, { roleLease: role, timeoutMs: 1000 }))).toMatchObject({ kind: "result", result: { ok: false } });
+    });
+    const [unknown] = await admin`SELECT request_id,state FROM model_capacity_requests WHERE owner_instance_id=${prefix} AND state='indeterminate'`;
+    expect(await tracked(closeModelCapacityUnknownReview({ requestId: unknown.request_id, operator: "fixture", note: "2026-10-31 repro" })))
+      .toMatchObject({ kind: "reviewed" });
+    // (3) the stuck candidate's ask 1 is refused before a byte leaves: settled gateway_not_started (the old writer then refused the failure)
+    const sent = bodies.length;
+    await refused(() => custom(async lease => {
+      expect(await tracked(writeCrawlTaglineWithModelCapacity(stuck, lease, { roleLease: role, timeoutMs: 1000 })))
+        .toMatchObject({ kind: "result", result: { ok: false, error: "network" } });
+    }));
+    expect(bodies).toHaveLength(sent);
+    expect((await phases(stuck.candidate.repo)).map(row => [row.state, row.kind])).toEqual([["withdrawn", null], ["settled", "gateway_not_started"]]);
+    setReply(response => { response.end(JSON.stringify(replyBody())); });
+    const previous = await jobRow();
+    // 예전: 이 틱이 crawl_tagline_continuation_mismatch 를 던졌고(last_error), 같은 후보가 매 틱 잡 전체를 멈췄다.
+    expect(await tick()).toMatchObject({ status: "completed" });
+    const after = await jobRow();
+    expect(after?.last_error).toBeNull(); expect(after?.last_success_at).not.toBeNull();
+    if (previous?.last_success_at) expect(after!.last_success_at!.getTime()).toBeGreaterThan(previous.last_success_at.getTime());
+    // the stuck generation is closed with one failure and no second POST; the reviewed candidate is asked again once, the rest are written
+    expect(bodies).toHaveLength(sent + 1 + next.length);
+    expect((await admin`SELECT attempts,error_code,retry_at>clock_timestamp() AS later FROM crawl_taglines WHERE repo=${stuck.candidate.repo}`)[0])
+      .toEqual({ attempts: 1, error_code: "not_started", later: true });
+    expect((await phases(stuck.candidate.repo)).map(row => row.state)).toEqual(["withdrawn", "settled"]);
+    expect(await admin`SELECT repo FROM crawl_taglines WHERE repo=ANY(${[lost, ...next].map(task => task.candidate.repo)}::text[]) AND error_code IS NULL ORDER BY repo`)
+      .toEqual([lost, ...next].map(task => ({ repo: task.candidate.repo })).sort((a, b) => a.repo.localeCompare(b.repo)));
+  });
+}), 20_000);
+
+it("records a live not_started failure in the same tick and asks the next generation once when it is due", exercise(async () => {
+  const task = await seed();
+  await server(async ({ bodies }) => {
+    expect(await refused(() => tick())).toMatchObject({ status: "completed" });
+    expect(bodies).toEqual([]);
+    // 예전: 정산이 not_started(settled)라 writer 가 실패를 적지 못해(stored:false) 세대가 그대로 남았다
+    expect((await admin`SELECT attempts,error_code FROM crawl_taglines WHERE repo=${task.candidate.repo}`)[0]).toEqual({ attempts: 1, error_code: "network" });
+    await admin`UPDATE crawl_taglines SET retry_at=clock_timestamp()-interval '1 second' WHERE repo=${task.candidate.repo}`;
+    expect(await tick()).toMatchObject({ status: "completed" });
+    expect(bodies).toHaveLength(1);
+  });
+  const rows = await phases(task.candidate.repo);
+  expect(rows.map(row => [row.state, row.kind])).toEqual([["settled", "gateway_not_started"], ["settled", "crawl_tagline_gateway_terminal"]]);
+  expect(rows[0].generation).not.toBe(rows[1].generation);
+  expect((await admin`SELECT attempts,error_code,tagline FROM crawl_taglines WHERE repo=${task.candidate.repo}`)[0]).toEqual({ attempts: 2, error_code: null, tagline: "Document manager" });
 }), 20_000);
