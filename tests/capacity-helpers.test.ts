@@ -4,7 +4,7 @@ import { sql } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import { DEFAULT_SIGNAL_TTL_MS, DEFAULT_SUPERVISOR_LOOP_MS, HELPER_REASONS, HELPER_ROUTE_DEFAULTS, SUPERVISOR_PRINCIPAL,
   deviceSignalUsable, helperActor, helperAssignmentSchema, helperCandidateExclusionSql, helperDemandOnSql, helperEvidenceKey, helperGateCte,
-  helperGateOk, helperGateStateFromRow, helperGateStatesSql, helperSignalStaleness, helperSignalUsable, helperStopBlocks, parseHelperAssignment,
+  helperGateOk, helperGateStateFromRow, helperGateStateSchema, helperGateStatesSql, helperSignalStaleness, helperSignalUsable, helperStopBlocks, parseHelperAssignment,
   roleDemandFresh, supervisorControlPatchSchema, supervisorControlTimingValid, type HelperFreshnessInput } from '@/lib/llm/capacity-helpers';
 import { listHelperAssignments, readHelperGateStates, readHelperStatusSnapshot, saveHelperAssignment, setHelperMode, setSupervisorControl }
   from '@/lib/llm/capacity-helpers-repository';
@@ -178,9 +178,14 @@ describe('helper gate SQL (§2.1)', () => {
     const one = render(helperGateStatesSql('m3-deepseek', { routeId: 'local-ai1-helper', provider: 'local-direct', model: 'DeepSeek' }));
     expect(one.sql).toContain('WHERE g.route_id = $4 AND g.provider = $5 AND g.model = $6');
     expect(one.params.slice(3)).toEqual(['local-ai1-helper', 'local-direct', 'DeepSeek']);
-    expect(helperGateStateFromRow({ assignment_id: 'm3-deepseek:ai1', kind: 'live', route_id: 'local-ai1-helper', provider: 'local-direct',
-      model: 'DeepSeek', ok: false, active: '1' as unknown as number, max_slots: 1 }))
-      .toEqual({ assignmentId: 'm3-deepseek:ai1', kind: 'live', routeId: 'local-ai1-helper', provider: 'local-direct', model: 'DeepSeek', ok: false, active: 1, maxSlots: 1 });
+    const gate = helperGateStateFromRow({ assignment_id: 'm3-deepseek:ai1', kind: 'live', route_id: 'local-ai1-helper', provider: 'local-direct',
+      model: 'DeepSeek', ok: false, active: '1' as unknown as number, max_slots: 1 });
+    expect(gate).toEqual({ assignmentId: 'm3-deepseek:ai1', kind: 'live', routeId: 'local-ai1-helper', provider: 'local-direct', model: 'DeepSeek', ok: false, active: 1, maxSlots: 1 });
+    // the pipeline-control snapshot validates deviceStateSql's `helpers` with this schema: the mapped row parses, extras and bad kinds do not
+    expect(helperGateStateSchema.parse(gate)).toEqual(gate);
+    expect(helperGateStateSchema.safeParse({ ...gate, extra: 1 }).success).toBe(false);
+    expect(helperGateStateSchema.safeParse({ ...gate, kind: 'primary' }).success).toBe(false);
+    expect(helperGateStateSchema.safeParse({ ...gate, maxSlots: 0 }).success).toBe(false);
   });
 });
 

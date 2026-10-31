@@ -234,10 +234,12 @@ export type HelperStopRow = Readonly<{
   evidence: Readonly<Record<string, unknown>>; createdAt: string; writtenBy: string;
 }>;
 
-/** helper_gate + helper_active 한 줄(관리자 화면·status·requestSlot 사전 거절). */
-export type HelperGateState = Readonly<{
-  assignmentId: string; kind: HelperGateKind; routeId: string; provider: string; model: string; ok: boolean; active: number; maxSlots: number;
-}>;
+/** helper_gate + helper_active 한 줄(관리자 화면·status·requestSlot 사전 거절). deviceStateSql 의 `helpers` 도 이 모양이다(pipeline-control 스냅숏이 검증한다). */
+export const helperGateStateSchema = z.object({
+  assignmentId: z.string().regex(HELPER_ASSIGNMENT_ID_PATTERN), kind: z.enum(HELPER_GATE_KINDS), routeId: identity(120), provider: identity(60),
+  model: identity(200), ok: z.boolean(), active: int(0, 65_535), maxSlots: int(1, 256),
+}).strict();
+export type HelperGateState = Readonly<z.infer<typeof helperGateStateSchema>>;
 
 /** 관리자 화면·pipeline-control status 가 한 번에 읽는 스냅샷(readHelperStatusSnapshot). nowMs 는 그 읽기의 DB 시계다. */
 export type HelperStatusSnapshot = Readonly<{
