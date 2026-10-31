@@ -13,6 +13,7 @@ import { ORACLE_CONSUMER_DB_PROFILES, ORACLE_PRIVILEGE_CATALOG_SQL, ORACLE_UNSAF
 import { oracleTimeoutsCheck } from '@/lib/runtime/oracle-preflight';
 import { koreanDiscoveryOracleReadiness } from '@/lib/crawl/korean-discovery/readiness';
 import { agentScanOracleReadiness } from '@/lib/domain/evidence/agents/oracle-readiness';
+import { capacitySupervisorOracleReadiness } from '@/lib/operations/capacity-supervisor/repository';
 
 /**
  * Oracle consumer(건 단위 일꾼) 실행 전 점검. 읽기만 하고 아무것도 쓰지 않는다.
@@ -47,9 +48,12 @@ async function uptimeReadiness(tx: OracleConsumerTx, { instanceId }: { instanceI
   await tx.select({ host: uptimeHostBreakers.host }).from(uptimeHostBreakers).where(eq(uptimeHostBreakers.host, entry.host));
   return { status: 'verified', reason: 'split_claims_probe_ready' };
 }
-/** 이름별 준비 확인. E5(agent-scan)·U2(uptime)가 더한다. 없는 consumer 는 Oracle 에서 열리지 않는다 */
+/**
+ * 이름별 준비 확인. E5(agent-scan)·U2(uptime)가 더한다. 없는 consumer 는 Oracle 에서 열리지 않는다.
+ * capacity-supervisor(PR 2a): control 행이 있고 그 signal_principal 이 이 계정이어야 verified, 다르면 rejected(꺼져 있어도 verified — 쉰다).
+ */
 export const ORACLE_CONSUMER_READINESS: Partial<Record<string, OracleConsumerReadiness>> = { 'agent-scan': agentScanOracleReadiness,
-  uptime: uptimeReadiness, 'github-ko-discovery': koreanDiscoveryOracleReadiness };
+  uptime: uptimeReadiness, 'github-ko-discovery': koreanDiscoveryOracleReadiness, 'capacity-supervisor': capacitySupervisorOracleReadiness };
 export type OracleConsumerSpec = { consumer: string; role: ConsumerParentRole; db: OracleConsumerDbProfile; readiness: OracleConsumerReadiness };
 
 type CheckName = 'identity' | 'runtime' | 'host' | 'release' | 'database' | 'timeouts' | 'timezone' | 'budget' | 'consumer'
