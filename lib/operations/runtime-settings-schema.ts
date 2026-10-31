@@ -67,7 +67,8 @@ export const DEFAULT_RUNTIME_SETTINGS: RuntimeSettings = deepFreeze({
     "crawl-tagline": { batch: 12, minCallMs: 15_000 },
     // lib/jobs/products/korean-tagline.ts BATCH·legacy 3,600자·MIN_CALL_MS·SLOW_CALL_MS·SOLO_ATTEMPTS (native 경로의 1,200자는 고정)
     "product-tagline-ko": { batch: 8, batchChars: 3_600, minCallMs: 25_000, slowCallMs: 35_000, soloAttempts: 2 },
-    // lib/jobs/products/search-profile.ts BATCH·MIN_CALL_MS·SLOW_CALL_MS
+    // lib/jobs/products/search-profile.ts BATCH·MIN_CALL_MS. slowCallMs 는 2026-10-31 부터 잡이 읽지 않는다(느린 호출로 틱 접기 삭제) —
+    // 저장된 문서·화면과의 호환을 위해 기본값만 남겼다(관리자 정리는 3b-D)
     "product-search-profile": { batch: 12, minCallMs: 15_000, slowCallMs: 20_000 },
     // lib/jobs/products/search-verify.ts BATCH·MIN_CALL_MS
     "product-search-verify": { batch: 16, minCallMs: 20_000 },

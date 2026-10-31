@@ -2,7 +2,7 @@ import { modelCandidates, modelRequestName, type ModelEnvironment } from "@/lib/
 import { sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import type { FirstReviewer } from "./agent-review";
 import { sameUnderlyingModel } from "./review-model-identity";
-import { ModelCapacityDeferredError, type ModelCapacityDeferredReason } from "@/lib/llm/capacity-deferred";
+import { ModelCapacityDeferredError, modelCapacityDeferralIsPerModel, type ModelCapacityDeferredReason } from "@/lib/llm/capacity-deferred";
 import { z } from "zod";
 
 const poolPositionSchema = z.object({ id: z.number().int().positive().safe(), reviewed: z.boolean(),
@@ -64,9 +64,10 @@ export function selectFirstReviewer(pool: FirstReviewer[], candidateId: number,
  * Only known model/route-local refusals may leave other models running.
  * `capacity` 는 이제 진짜 포화(이 요청이 줄에 섰다)만 뜻한다 — 한 후보의 fence 거절은 `work_busy` 로 따로 오고(capacityRefusalReason),
  * 호출자는 이 판정 전에 그 후보만 건너뛴다(modelCapacityDeferralIsPerWork). 2026-10-30 결정: 한 후보가 모델을 멈추지 않는다.
+ * 2026-10-31(PR 3a-B): 사유 범위 표(capacity-deferred.ts)의 `model` 범위와 같다 — `withdrawn`·`reservation_lost` 는 요청 하나의 일(`work`)이라
+ * 모델을 멈추지 않고 그 후보만 넘긴다.
  */
-export const firstReviewDeferralIsLocal = (reason: ModelCapacityDeferredReason): boolean =>
-  ["unmapped", "provider_contract_unavailable", "capacity", "queue_full", "withdrawn", "reservation_lost", "device_unconfigured"].includes(reason);
+export const firstReviewDeferralIsLocal = (reason: ModelCapacityDeferredReason): boolean => modelCapacityDeferralIsPerModel(reason);
 
 export class FirstReviewModelDeferredError extends ModelCapacityDeferredError {
   constructor(reason: ModelCapacityDeferredReason, readonly reviewer: FirstReviewer) { super(reason); }

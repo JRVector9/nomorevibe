@@ -128,6 +128,18 @@ it('a per-candidate fence refusal without a pool does not end the page (D1)', as
     .toEqual({ attempted: 2, recorded: 1, skipped: 1, deferred: 0 });
   expect(mocks.claim.mock.calls.map(call => call[0].candidate.id)).toEqual([4, 5]);
 });
+// 2026-10-31 결정: host 예산 거절은 그 hint 하나만 넘기고 쪽을 계속 본다 — 하나가 잘못되면 다음 작업도 안 되는 구조는 이유가 없다
+it('a host-budget refusal skips only that hint and the page continues (no break, no extra sleep in once mode)', async () => {
+  mocks.pages = [[hint(4), hint(5), hint(6)]];
+  mocks.load.mockImplementation(async id => ({ kind: 'current', context: { ...context, candidate: { id } } }));
+  const release = vi.fn(async () => {});
+  const admit = vi.fn(async () => admit.mock.calls.length === 1 ? { admitted: false as const, reason: 'budget_exhausted' as const }
+    : { admitted: true as const, release });
+  expect(await runFirstReviewConsumer({ owner: owner(), once: true, admit: admit as never }))
+    .toEqual({ attempted: 2, recorded: 2, skipped: 0, deferred: 1 });
+  expect(mocks.load.mock.calls.map(call => call[0])).toEqual([5, 6]);
+  expect(admit).toHaveBeenCalledTimes(3); expect(release).toHaveBeenCalledTimes(2); expect(mocks.sleep).not.toHaveBeenCalled();
+});
 it('launches one fixed reviewer runtime with a fresh boot and matching observation identity', async () => {
   await runPipelineFirstConsumer(['--once'], { PIPELINE_ITEM_CONSUMER_VERSION: '1',
     PIPELINE_ITEM_CONSUMER_INSTANCE_ID: owner().instanceId, SERVICE_INSTANCE_ID: owner().instanceId });

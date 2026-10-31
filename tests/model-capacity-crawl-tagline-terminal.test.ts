@@ -171,7 +171,7 @@ it("returns settled first business data across refetch without issuing a new opa
   const result = await readCrawlTaglineContinuation({ ...input(), member: { ...input().member, documentRowIdentityHash: sha } });
   expect(result).toEqual({ generationHash: first.value.generationHash, first: { requestId: first.handle.requestId,
     bindingHash: first.owned.bindingHash, responseHash: sha, outcome: first.evidence.outcome }, second: null });
-  expect(Object.isFrozen(result)).toBe(true); expect(Object.isFrozen(result!.first!.outcome)).toBe(true);
+  expect(Object.isFrozen(result)).toBe(true); expect(Object.isFrozen((result as { first: { outcome: unknown } }).first.outcome)).toBe(true);
   expect(fixture.writes).toEqual([]); expect(recording.terminal).not.toHaveBeenCalled();
 });
 
@@ -243,7 +243,8 @@ it("makes the same opaque terminal idempotent and rejects conflicting persisted 
   recording.transaction.mockImplementation((load: (tx: ProductTransaction) => unknown) => load(bad.tx));
   await expect(reconcileCrawlTaglineGatewayTerminal({} as never)).rejects.toThrow("crawl_tagline_gateway_terminal_conflict");
 });
-it("returns both settled phases as business data and rejects a broken stored parent", async () => {
+// 2026-10-31 결정: 사슬이 끊긴 세대는 던지지 않고 broken 으로 돌려준다(호출자가 그 후보만 ledger_mismatch 로 넘긴다) — 하나가 잘못되면 다음 작업도 안 되는 구조는 이유가 없다
+it("returns both settled phases as business data and reports a broken stored parent instead of throwing", async () => {
   const first = rowFixture(), second = rowFixture(binding({ ...input(), askOrdinal: 2,
     parent: { requestId: first.handle.requestId, bindingHash: first.owned.bindingHash, responseHash: sha } }));
   const fixture = mockTx([[{ id: 1 }], [{ ...second.row, state: "settled" }, { ...first.row, state: "settled" }]]);
@@ -253,7 +254,8 @@ it("returns both settled phases as business data and rejects a broken stored par
     bindingHash: second.owned.bindingHash, responseHash: sha, outcome: second.evidence.outcome });
   const bad = mockTx([[{ id: 1 }], [{ ...second.row, state: "settled" }]]);
   recording.transaction.mockImplementation((load: (tx: ProductTransaction) => unknown) => load(bad.tx));
-  await expect(readCrawlTaglineContinuation(input())).rejects.toThrow("crawl_tagline_continuation_mismatch");
+  expect(await readCrawlTaglineContinuation(input())).toEqual({ generationHash: first.value.generationHash, broken: true });
+  expect(bad.writes).toEqual([]);
 });
 it("retains full original binding when marking a native call unknown", async () => {
   const value = rowFixture(), fixture = mockTx([[control()], [], [{ ...value.row, state: "dispatched" }]], [[{ ...value.row, state: "indeterminate" }]]);

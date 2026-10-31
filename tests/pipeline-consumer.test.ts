@@ -9,9 +9,9 @@ import { parsePipelineConsumerArgs, runPipelineConsumer } from '@/scripts/pipeli
 import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
 
 const mocks = vi.hoisted(() => ({
-  pages: [] as { id: number; fallback: boolean }[][], where: vi.fn(), limit: vi.fn(), select: vi.fn(),
-  reservedPages: [] as ({ id: number; fallback: boolean; reserved: true; ordinal: number } | null)[], reservedJoin: vi.fn(), reservedWhere: vi.fn(), reservedLimit: vi.fn(),
-  waitingPages: [] as ({ id: number; fallback: boolean; reserved: false; ordinal: number } | null)[], waitingJoin: vi.fn(), waitingWhere: vi.fn(), waitingLimit: vi.fn(),
+  pages: [] as { id: number; fallback: boolean; provider?: string; model?: string }[][], where: vi.fn(), limit: vi.fn(), select: vi.fn(),
+  reservedPages: [] as ({ id: number; fallback: boolean; reserved: true; ordinal: number; provider?: string; model?: string } | null)[], reservedJoin: vi.fn(), reservedWhere: vi.fn(), reservedLimit: vi.fn(),
+  waitingPages: [] as ({ id: number; fallback: boolean; reserved: false; ordinal: number; provider?: string; model?: string } | null)[], waitingJoin: vi.fn(), waitingWhere: vi.fn(), waitingLimit: vi.fn(),
   claim: vi.fn(), compatibility: vi.fn(), observe: vi.fn(), renew: vi.fn(), record: vi.fn(), dispatch: vi.fn(),
   sleep: vi.fn(), report: vi.fn(), runtime: vi.fn(),
 }));
@@ -152,6 +152,46 @@ it('backs off a typed model refusal and resumes past that hint without a hot loo
   expect(mocks.claim.mock.calls.map(call => call[0])).toEqual([4, 5]);
   expect(mocks.sleep).toHaveBeenNthCalledWith(1, 5_000, abort.signal); expect(mocks.record).not.toHaveBeenCalled();
 });
+// 2026-10-31 결정(#754 의 AI1 처리와 같다): 이 항목만의 미룸(work_busy·dispatched·ledger_mismatch)은 그 항목만 넘기고 쪽을 계속 본다 — 하나가 잘못되면 다음 작업도 안 되는 구조는 이유가 없다
+it.each(['work_busy', 'dispatched', 'ledger_mismatch'] as const)('a per-item refusal (%s) skips only that row; the page goes on without a sleep', async reason => {
+  mocks.pages = [[{ id: 4, fallback: false }, { id: 5, fallback: false }, { id: 6, fallback: false }]];
+  mocks.claim.mockImplementation(async (id: number) => {
+    if (id === 5) throw new ModelCapacityDeferredError(reason);
+    return { kind: 'claimed', row: { ...row, id }, receipt };
+  });
+  expect(await runSecondReviewConsumer({ owner: owner(), once: true })).toEqual({ attempted: 3, recorded: 2, skipped: 1, deferred: 0 });
+  expect(mocks.claim.mock.calls.map(call => call[0])).toEqual([4, 5, 6]);
+  expect(mocks.record).toHaveBeenCalledTimes(2); expect(mocks.sleep).not.toHaveBeenCalled();
+});
+it('a per-model refusal pauses only that provider:model for the pass; other models on the page are still claimed', async () => {
+  const a = { provider: 'local-direct', model: 'a' }, b = { provider: 'abcllm', model: 'b' };
+  mocks.pages = [[{ id: 4, fallback: false, ...a }, { id: 5, fallback: false, ...a }, { id: 6, fallback: false, ...b }, { id: 7, fallback: false, ...a }]];
+  mocks.claim.mockImplementation(async (id: number) => {
+    if (id === 4) throw new ModelCapacityDeferredError('capacity');
+    return { kind: 'claimed', row: { ...row, id }, receipt };
+  });
+  expect(await runSecondReviewConsumer({ owner: owner(), once: true })).toEqual({ attempted: 2, recorded: 1, skipped: 0, deferred: 3 });
+  expect(mocks.claim.mock.calls.map(call => call[0])).toEqual([4, 6]);
+  expect(mocks.sleep).not.toHaveBeenCalled();
+});
+it('a global refusal (draining) still ends the page and keeps the cursor', async () => {
+  mocks.pages = [[{ id: 4, fallback: false }, { id: 5, fallback: false }]];
+  mocks.claim.mockRejectedValueOnce(new ModelCapacityDeferredError('draining'));
+  expect(await runSecondReviewConsumer({ owner: owner(), once: true })).toEqual({ attempted: 1, recorded: 0, skipped: 0, deferred: 1 });
+  expect(mocks.claim.mock.calls.map(call => call[0])).toEqual([4]);
+});
+// 2026-10-31 결정: host 예산 거절은 그 hint 하나만 넘기고 쪽을 계속 본다
+it('a host-budget refusal skips only that hint and the page continues', async () => {
+  mocks.pages = [[{ id: 4, fallback: false }, { id: 5, fallback: false }, { id: 6, fallback: false }]];
+  mocks.claim.mockImplementation(async (id: number) => ({ kind: 'claimed', row: { ...row, id }, receipt }));
+  const release = vi.fn(async () => {});
+  const admit = vi.fn(async () => admit.mock.calls.length === 1 ? { admitted: false as const, reason: 'budget_exhausted' as const }
+    : { admitted: true as const, release });
+  expect(await runSecondReviewConsumer({ owner: owner(), once: true, admit: admit as never }))
+    .toEqual({ attempted: 2, recorded: 2, skipped: 0, deferred: 1 });
+  expect(mocks.claim.mock.calls.map(call => call[0])).toEqual([5, 6]);
+  expect(admit).toHaveBeenCalledTimes(3); expect(release).toHaveBeenCalledTimes(2); expect(mocks.sleep).not.toHaveBeenCalled();
+});
 it('consumes an owned reservation on the next poll while the normal cursor moves past its deferred hint', async () => {
   vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(0);
   const abort = new AbortController(), calls: { id: number; at: number }[] = [];
@@ -167,8 +207,9 @@ it('consumes an owned reservation on the next poll while the normal cursor moves
     vi.setSystemTime(Date.now() + ms);
     if (mocks.sleep.mock.calls.length >= 2) abort.abort();
   });
+  // 2026-10-31: 4 의 포화(capacity)는 그 모델만의 미룸이라 같은 모델의 5 는 이 패스 동안 claim 없이 넘긴다(deferred 2) — 다음 패스에 둘 다 다시 본다
   expect(await runSecondReviewConsumer({ owner: owner(), signal: abort.signal }))
-    .toEqual({ attempted: 3, recorded: 1, skipped: 1, deferred: 1 });
+    .toEqual({ attempted: 3, recorded: 1, skipped: 1, deferred: 2 });
   expect(calls).toEqual([{ id: 4, at: 0 }, { id: 4, at: 5_000 }, { id: 5, at: 5_000 }]);
   expect(mocks.dispatch).toHaveBeenCalledTimes(1); expect(mocks.record).toHaveBeenCalledTimes(1);
 });
@@ -187,8 +228,9 @@ it.each([3, 1000])('keeps the normal keyset when reserved hint %s is outside its
   expect(mocks.reservedLimit.mock.calls.flat().every(limit => limit === 1)).toBe(true);
 });
 it('continues normal work after a stale reserved hint defers and never attempts a duplicate hint', async () => {
-  mocks.reservedPages = [{ id: 4, fallback: false, reserved: true, ordinal: 1 }];
-  mocks.pages = [[{ id: 4, fallback: false }, { id: 5, fallback: false }]];
+  // 예약 hint 의 포화는 그 모델(stale)만 멈춘다 — 다른 모델의 5 는 계속 본다(2026-10-31)
+  mocks.reservedPages = [{ id: 4, fallback: false, reserved: true, ordinal: 1, provider: 'local-direct', model: 'stale' }];
+  mocks.pages = [[{ id: 4, fallback: false }, { id: 5, fallback: false, provider: 'abcllm', model: 'other' }]];
   mocks.claim.mockImplementation(async (id: number) => {
     if (id === 4) throw new ModelCapacityDeferredError('capacity');
     return { kind: 'claimed', row: { ...row, id }, receipt };
@@ -201,10 +243,11 @@ it('continues normal work after a stale reserved hint defers and never attempts 
 it('rotates reserved hints past stale reservations without changing the normal scan', async () => {
   const abort = new AbortController();
   mocks.sleep.mockImplementation(async () => { if (mocks.sleep.mock.calls.length >= 3) abort.abort(); });
+  // 묵은 예약의 포화는 그 모델(stale)만 멈춘다 — 다른 모델의 normal 행은 그대로 본다(2026-10-31)
   mocks.reservedPages = [
-    { id: 4, fallback: false, reserved: true, ordinal: 1 },
-    { id: 5, fallback: false, reserved: true, ordinal: 2 },
-    { id: 6, fallback: false, reserved: true, ordinal: 3 },
+    { id: 4, fallback: false, reserved: true, ordinal: 1, provider: 'local-direct', model: 'stale' },
+    { id: 5, fallback: false, reserved: true, ordinal: 2, provider: 'local-direct', model: 'stale' },
+    { id: 6, fallback: false, reserved: true, ordinal: 3, provider: 'local-direct', model: 'stale' },
   ];
   mocks.pages = [[{ id: 100, fallback: false }], [{ id: 101, fallback: false }], []];
   mocks.claim.mockImplementation(async (id: number) => {
@@ -235,7 +278,8 @@ it('queries reserved hints only for the current owner boot and live matching AI2
 });
 it('wraps the normal scan at EOF even when a stale reservation defers on every following poll', async () => {
   const abort = new AbortController();
-  const stale = { id: 1000, fallback: false, reserved: true as const, ordinal: 1 };
+  // 묵은 예약의 포화는 그 모델(stale)만 멈춘다 — normal 행 4 는 다른 모델이라 그대로 본다(2026-10-31)
+  const stale = { id: 1000, fallback: false, reserved: true as const, ordinal: 1, provider: 'local-direct', model: 'stale' };
   mocks.reservedPages = [null, stale, null, stale];
   mocks.limit.mockImplementation(async () => {
     if (mocks.limit.mock.calls.length === 1) return Array.from({ length: 24 }, (_, index) => ({ id: index + 1, fallback: false }));
@@ -273,23 +317,28 @@ it('bounds a once pass with a priority hint on every page to 100 attempts', asyn
 });
 it('revisits an aged capacity waiter before the normal cursor reaches EOF', async () => {
   const abort = new AbortController();
-  mocks.pages = [Array.from({ length: 24 }, (_, index) => ({ id: index + 1, fallback: false })), [{ id: 5, fallback: false }]];
+  // 1 의 포화는 그 모델(waiter)만 멈춘다 — 나머지 23 은 계속 본다(2026-10-31)
+  mocks.pages = [Array.from({ length: 24 }, (_, index) => ({ id: index + 1, fallback: false, ...(index === 0 ? { provider: 'abcllm', model: 'waiter' } : {}) })),
+    [{ id: 5, fallback: false }]];
   mocks.waitingPages = [null, { id: 1, fallback: false, reserved: false, ordinal: 1 }];
   mocks.claim.mockImplementation(async (id: number) => {
     if (id === 1 && mocks.waitingLimit.mock.calls.length === 1) throw new ModelCapacityDeferredError('capacity');
     if (id === 1) { abort.abort(); return { kind: 'skipped', reason: 'running' }; }
     return { kind: 'skipped', reason: 'running' };
   });
-  expect(await runSecondReviewConsumer({ owner: owner(), signal: abort.signal })).toMatchObject({ attempted: 2, deferred: 1 });
-  expect(mocks.claim.mock.calls.map(call => call[0])).toEqual([1, 1]);
-  expect(new PgDialect().sqlToQuery(mocks.where.mock.calls[1][0]).params).toContain(1);
+  // 2026-10-31: 1 의 포화가 쪽을 접지 않는다 — 다른 모델의 23 행을 이어 보고(attempted 25), 기다리는 1 은 다음 poll 이 맨 먼저 다시 본다
+  expect(await runSecondReviewConsumer({ owner: owner(), signal: abort.signal })).toMatchObject({ attempted: 25, deferred: 1 });
+  expect(mocks.claim.mock.calls.map(call => call[0])).toEqual([1, ...Array.from({ length: 23 }, (_, index) => index + 2), 1]);
+  // normal cursor 는 쪽 끝(24)까지 나아갔다 — 미룬 행 앞에 묶이지 않는다
+  expect(new PgDialect().sqlToQuery(mocks.where.mock.calls[1][0]).params).toContain(24);
   const query = new PgDialect().sqlToQuery(mocks.waitingWhere.mock.calls[0][0]);
   expect(query.params).toEqual(expect.arrayContaining(['waiting', 'local-direct', owner().instanceId, owner().bootId]));
   for (const fragment of ['queued_at', 'queue_until', '15 seconds', 'fallback_for_id']) expect(query.sql).toContain(fragment);
 });
 it('runs a granted reservation before an aged waiter and still makes normal progress', async () => {
   mocks.reservedPages = [{ id: 1000, fallback: false, reserved: true, ordinal: 10 }];
-  mocks.waitingPages = [{ id: 2000, fallback: false, reserved: false, ordinal: 2 }];
+  // 기다리는 2000 의 포화는 그 모델(waiter)만 멈춘다 — 3 은 계속 본다(2026-10-31)
+  mocks.waitingPages = [{ id: 2000, fallback: false, reserved: false, ordinal: 2, provider: 'local-direct', model: 'waiter' }];
   mocks.pages = [[{ id: 1000, fallback: false }, { id: 2000, fallback: false }, { id: 3, fallback: false }]];
   mocks.claim.mockImplementation(async (id: number) => {
     if (id === 2000) throw new ModelCapacityDeferredError('capacity');

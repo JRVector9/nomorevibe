@@ -3,7 +3,7 @@ import { db, onPrimary } from '@/lib/db';
 import { currentReplayDb } from '@/lib/db/replay-scope';
 import { modelCapacityRequests, secondReviews } from '@/lib/db/schema';
 import { itemOwnerSchema, type ItemOwner } from '@/lib/jobs/items/types';
-import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
+import { ModelCapacityDeferredError, modelCapacityDeferralIsPerModel, modelCapacityDeferralIsPerWork } from '@/lib/llm/capacity-deferred';
 import type { ProviderCircuits } from '@/lib/llm/provider-circuit-breaker';
 import { logger } from '@/lib/observability/logger';
 import type { HostAdmission } from '@/lib/operations/host-budget-runtime';
@@ -84,6 +84,9 @@ export async function runSecondReviewConsumer(input: {
     const priorities = [reserved, waiting].filter(hint => hint !== undefined);
     const queue = [...priorities, ...normal];
     let deferred = false, completed = false, circuitOpen = false, rerouted = false;
+    // 그 모델만의 미룸(포화·대기열·정책에 없음·계약 없음·장비 없음)을 받은 provider:model — 이 패스(쪽) 동안만 그 모델의 표를 건너뛰고
+    // 다른 모델의 표는 계속 본다(2026-10-31 결정 "하나가 잘못되면 다음 작업도 안 되는 구조는 이유가 없다"). 다음 쪽은 다시 한 번 묻는다.
+    const pausedModels = new Set<string>();
     for (const hint of queue) {
       if (halt?.aborted || once && result.attempted >= 100) break;
       const priority = hint === reserved || hint === waiting;
@@ -91,18 +94,23 @@ export async function runSecondReviewConsumer(input: {
         cursor = { id: hint.id, fallback: hint.fallback };
         continue;
       }
+      const modelKey = `${hint.provider ?? 'unknown'}:${hint.model ?? 'unknown'}`;
+      if (pausedModels.has(modelKey)) {
+        if (!priority) cursor = { id: hint.id, fallback: hint.fallback };
+        result.deferred++; continue;
+      }
       // 회로가 열린 provider·model 의 표만 claim 없이 건너뛰고 다른 모델은 계속 본다
-      const circuit = input.circuits?.admit(`ai2:${hint.provider ?? 'unknown'}:${hint.model ?? 'unknown'}`);
+      const circuit = input.circuits?.admit(`ai2:${modelKey}`);
       if (circuit?.admitted === false) {
         if (!priority) cursor = { id: hint.id, fallback: hint.fallback };
         result.deferred++; circuitOpen = true; continue;
       }
-      // host 예산은 프로세스 전체라 모자라면 이 hint 앞에서 쉰다(cursor 를 넘기지 않음)
+      // host 예산 거절은 이 hint 하나만 넘기고 쪽을 계속 본다 — cursor 는 넘기지 않아 다음 패스가 다시 집고, 쪽 끝의 5초 쉼이 되풀이를 막는다
       const host = input.admit
         ? await input.admit('second-review').catch(() => ({ admitted: false as const, reason: 'host_budget_unavailable' as const })) : null;
       if (host?.admitted === false) {
         circuit?.done(); logger.info('pipeline_consumer.deferred', { stage: 'ai2', reason: host.reason });
-        result.deferred++; deferred = true; break;
+        result.deferred++; deferred = true; continue;
       }
       if (!priority) cursor = { id: hint.id, fallback: hint.fallback };
       result.attempted++;
@@ -119,9 +127,14 @@ export async function runSecondReviewConsumer(input: {
         else result.skipped++;
       } catch (error) {
         if (!(error instanceof ModelCapacityDeferredError)) throw error;
-        // 이 항목의 앞선 호출만 아직 보내진 중이다 — 항목 하나를 건너뛰고 쪽을 계속 본다(미확인 행은 더 이상 이 사유를 내지 않는다).
-        if (error.reason === 'dispatched') { result.skipped++; continue; }
-        result.deferred++; deferred = true;
+        // 이 항목만의 미룸 — 앞선 호출이 아직 보내진 중(dispatched)이거나 같은 항목이 다른 요청에 묶였다(work_busy, fence; AI1 과 같은 #754 처리),
+        // 장부 세대가 어긋났다(ledger_mismatch). 항목 하나를 건너뛰고 쪽을 계속 본다(미확인 행은 더 이상 이 사유를 내지 않는다).
+        if (modelCapacityDeferralIsPerWork(error.reason)) { result.skipped++; continue; }
+        result.deferred++;
+        // 그 모델만의 미룸 — 이 쪽에서 그 provider:model 의 남은 표만 건너뛰고 다른 모델의 표는 계속 본다
+        if (modelCapacityDeferralIsPerModel(error.reason)) { pausedModels.add(modelKey); continue; }
+        // 전역 미룸(draining·disabled·정책·owner) — 어느 모델에도 새 요청을 낼 수 없다. 쪽을 접고 cursor 를 지킨 채 5초 쉰다
+        deferred = true;
         if (!priority) break;
       } finally {
         circuit?.done();
@@ -145,7 +158,7 @@ export async function runSecondReviewConsumer(input: {
     // across this backoff so low IDs cannot monopolize every pass.
     if (end && !completed || deferred || pages >= MAX_PAGES) {
       report?.('idle');
-      await interruptibleSleep(deferred || circuitOpen ? DEFERRED_MS : IDLE_MS, halt);
+      await interruptibleSleep(deferred || circuitOpen || pausedModels.size ? DEFERRED_MS : IDLE_MS, halt);
       pages = 0;
     }
   }

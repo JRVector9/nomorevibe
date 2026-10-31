@@ -164,7 +164,7 @@ it.each([
   expect(mocks.recordAudit.mock.calls).toEqual([[{ itemId: 7, startedAt: expect.any(Date), provider, model, promptVersion: REVIEW_PROMPT_VERSION,
     input: auditInput, ok: true, outcome: verdict.outcome }, ctx.lease, DEFAULT_CRAWL_SETTINGS.auditHold]]);
   expect(mocks.read).toHaveBeenCalledTimes(1);
-  expect(ctx.log).toHaveBeenCalledWith("product_audit.reviewed", { campaign: 4, reviewed: 1, failed: 0, noSource: 0 });
+  expect(ctx.log).toHaveBeenCalledWith("product_audit.reviewed", { campaign: 4, reviewed: 1, failed: 0, noSource: 0, passed: 0 });
 });
 
 it("disabled reviewer-down audit failure is still recorded uncounted and fails the job", async () => {
@@ -173,7 +173,8 @@ it("disabled reviewer-down audit failure is still recorded uncounted and fails t
   expect(mocks.recordAudit).toHaveBeenCalledWith(expect.objectContaining({ ok: false, error: "auth", counted: false }), expect.anything());
 });
 
-it("an audit lane defer lets started lanes finish and record but starts no further call", async () => {
+// 2026-10-31 결정: 한 자리의 미룸이 다른 자리를 세우지 않는다 — 다른 자리는 각자 장부에 묻고 같은 미룸을 받아 각자 끝난다. 적은 것이 있으면 틱은 미룸이 아니라 done:false 다
+it("an audit lane defer ends only that lane; started lanes finish and record, the next asks each get the same refusal, the tick is not deferred", async () => {
   mocks.settings.mockResolvedValue({ ...DEFAULT_CRAWL_SETTINGS, enabled: true, reviewConcurrency: 4 });
   mocks.pendingAudit.mockResolvedValue(Array.from({ length: 8 }, (_, index) => ({ id: index + 1, slug: `app-${index + 1}` })));
   const finish = latch(), entered = latch();
@@ -200,7 +201,9 @@ it("an audit lane defer lets started lanes finish and record but starts no furth
   expect(mocks.recordAudit).toHaveBeenCalledTimes(3);
   expect(mocks.recordAudit.mock.calls.every(call => call[0].ok === true)).toBe(true);
   expect(mocks.noSource).not.toHaveBeenCalled();
-  expect(outcome.error).toMatchObject({ name: "ModelCapacityDeferredError", reason: "provider_contract_unavailable" });
+  expect(outcome).toEqual({ value: { done: false }, error: undefined });
+  expect(ctx.log).toHaveBeenCalledWith("product_audit.deferred", { campaign: 4, reason: "provider_contract_unavailable" });
+  expect(ctx.log).toHaveBeenCalledWith("product_audit.reviewed", { campaign: 4, reviewed: 3, failed: 0, noSource: 0, passed: 0 });
 });
 
 it("a genuine audit lane error still wins over a peer capacity defer", async () => {
