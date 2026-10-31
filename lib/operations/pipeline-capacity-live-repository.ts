@@ -6,6 +6,7 @@ import { reviewCandidatePredicate, secondGateRequired } from "@/lib/crawl/agent-
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, reviewPolicyHash } from "@/lib/crawl/agent-review-contract";
 import { canonicalReviewModel } from "@/lib/crawl/review-model-identity";
 import { mergeWithDefaults } from "@/lib/crawl/settings";
+import { assignmentTableEnabled } from "@/lib/llm/assignment-flag";
 import { readDatabaseIdentity } from "./dr/epoch";
 import { comparisonReviewPolicyHash, fullReviewPolicyHash } from "./pipeline-capacity";
 import { ledgerBudgetEvidence, type LedgerBudgetInput } from "./pipeline-capacity-budget";
@@ -65,6 +66,8 @@ export async function collectLiveCapacityWindow(database: Database, options: Liv
     const [stored] = await query(sql`select values, ${offset(sql`updated_at`)} as updated_ms from crawl_settings where id = 1`);
     const settings = mergeWithDefaults(stored?.values);
     ensure(settings.firstReview, "live_first_reviewer_unpinned");
+    // 배정 표(PR 3b-B)를 읽는 프로세스에서는 settings 의 모델 목록이 실제 심사자가 아닐 수 있다 — 측정 artifact 를 만들지 않는다
+    ensure(!assignmentTableEnabled(), "live_capacity_assignment_table_unsupported");
     const model = <Provider extends LiveCapacityArtifact["identity"]["models"]["second"][number]["provider"]>(row: { provider: Provider; model: string }) =>
       ({ provider: row.provider, model: row.model, canonicalModel: canonicalReviewModel(row.model) });
 

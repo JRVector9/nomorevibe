@@ -9,6 +9,7 @@ import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, reviewPolicyHash, type Rev
 import { secondReviewInputMatches } from "@/lib/crawl/second-review-input";
 import { canonicalReviewModel, sameReviewModel } from "@/lib/crawl/review-model-identity";
 import { mergeWithDefaults } from "@/lib/crawl/settings";
+import { assignmentSource, requireStageAssignments } from "@/lib/llm/stage-assignment-snapshot";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import { fullReviewPolicyHash, comparisonReviewPolicyHash, type CapacityManifest, type GenerationRecord } from "./pipeline-capacity";
 
@@ -42,6 +43,7 @@ export async function snapshotPipelineGenerations(candidateIds: number[], expect
   expected?: Pick<CapacityManifest, "models" | "inputPolicyHash" | "comparisonPolicyHash">) {
   if (!candidateIds.length || candidateIds.length > 1000 || new Set(candidateIds).size !== candidateIds.length
     || candidateIds.some(id => !Number.isSafeInteger(id) || id <= 0)) throw new Error("invalid_snapshot_candidates");
+  if (expected) await requireStageAssignments();
   return onPrimary(() => db.transaction(async tx => {
     const [saved] = await tx.select().from(crawlSettings).where(eq(crawlSettings.id, 1));
     const settings = mergeWithDefaults(saved?.values);
@@ -52,6 +54,8 @@ export async function snapshotPipelineGenerations(candidateIds: number[], expect
     if (expected) {
       // The certified manifest declares one AI1 model; it does not authorize an additive pool.
       if (settings.firstReviewAdditional?.length) throw new Error("unsupported_capacity_first_review_pool");
+      // 배정 표(PR 3b-B)가 고르는 모델은 이 manifest 가 선언한 설정 모델이 아니다 — 인증 경로를 넓히지 않고 거절한다
+      if (assignmentSource("ai1") === "table" || assignmentSource("ai2") === "table") throw new Error("unsupported_capacity_assignment_table");
       if (expected.inputPolicyHash !== reviewPolicyHash(settings)
         || expected.comparisonPolicyHash !== comparisonReviewPolicyHash(settings)) throw new Error("snapshot_policy_mismatch");
       const identity = (row: { provider: string; model: string }) => ({ provider: row.provider, model: row.model,

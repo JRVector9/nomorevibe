@@ -25,6 +25,8 @@ import { JOB_CATALOG } from "@/lib/jobs/catalog";
 import { dbErrorFields, isDbDeadlock } from "@/lib/db/error-fields";
 import { writerSiteActive } from "@/lib/operations/dr/epoch";
 import { canonicalReviewModel, sameReviewModel, sameUnderlyingModel } from "./review-model-identity";
+import { secondReviewFallbacks, secondReviewVoters } from "./second-review-voters";
+import { requireStageAssignments } from "@/lib/llm/stage-assignment-snapshot";
 import { firstReviewer } from "./agent-review";
 import { firstReviewers, firstReviewIdentitySql, hasFirstReviewer } from "./first-reviewers";
 import { reviewSemanticNow } from "./review-replay-context";
@@ -429,13 +431,14 @@ const PUBLISHED_LIMIT = 25;
  * 같은 후보에 새 1차 판단이 오면 앞의 것은 superseded 로 닫는다 — 한 후보가 두 칩에 겹쳐 세어지지 않게.
  */
 export async function enqueueSecondReviews(_settingsHint: CrawlSettings, now: Date | undefined, lease: JobLease): Promise<number> {
+  await requireStageAssignments(); // 배정 표(PR 3b-B): 켜졌는데 못 읽었으면 미룬다 — 예전 투표자 목록으로 올리거나 닫지 않는다
   now ??= new Date();
   const [saved] = await db.select().from(crawlSettings).where(eq(crawlSettings.id, 1));
   const settings = mergeWithDefaults(saved?.values);
   const loneIds: number[] = [];
   const semanticNow = reviewSemanticNow(now);
   const held = settings.secondReview.includeAiHeld;
-  const voters = [...new Map(settings.secondReview.voters.map(voter => [canonicalReviewModel(voter.model), voter])).values()];
+  const voters = [...new Map(secondReviewVoters(settings).map(voter => [canonicalReviewModel(voter.model), voter])).values()];
 
   /**
    * 후보마다 마지막 1차 판단 하나 — 그것이 지금 물어야 할 입력이다.
@@ -574,7 +577,7 @@ export async function enqueueSecondReviews(_settingsHint: CrawlSettings, now: Da
   for (const candidateId of candidateIds) count += await controllerWrite(lease, candidateId, async (tx, domain, events) => {
     const { candidate, document, input, settings: current } = domain;
     if (!candidate || !document || !input || !current.enabled || !current.secondReview.enabled) return 0;
-    const currentVoters = [...new Map(current.secondReview.voters.map(voter => [canonicalReviewModel(voter.model), voter])).values()];
+    const currentVoters = [...new Map(secondReviewVoters(current).map(voter => [canonicalReviewModel(voter.model), voter])).values()];
     const hints = rows.filter(row => row.candidateId === candidateId);
     const gate = loneIds.includes(candidateId) || hints.some(row => row.trigger === "ai_approved");
     const first = currentFirst(domain, gate);
@@ -640,11 +643,12 @@ export async function enqueueSecondReviews(_settingsHint: CrawlSettings, now: Da
  * 지우지 않는다. 몇 건을 누가 어떻게 끝냈는지가 2차 심사의 정확도다.
  */
 export async function closeSettledSecondReviews(now: Date | undefined, lease: JobLease): Promise<number> {
+  await requireStageAssignments(); // 배정 표(PR 3b-B): 켜졌는데 못 읽었으면 미룬다 — 예전 투표자 목록으로 올리거나 닫지 않는다
   now ??= new Date();
   const semanticNow = reviewSemanticNow(now);
   const active = ["pending", "failed", "agreed", "needs_human"] as const;
   const [saved] = await db.select().from(crawlSettings).where(eq(crawlSettings.id, 1));
-  const { voters, fallbacks = [] } = mergeWithDefaults(saved?.values).secondReview;
+  const loaded = mergeWithDefaults(saved?.values), voters = secondReviewVoters(loaded), fallbacks = secondReviewFallbacks(loaded);
   // Preserve each cleanup's SQL eligibility before selecting work. Normal human
   // waits and completed published history must never occupy the cleanup prefix.
   const removedPredicate = and(inArray(secondReviews.status, ["pending", "failed", "agreed", "needs_human"]),
@@ -689,7 +693,7 @@ export async function closeSettledSecondReviews(now: Date | undefined, lease: Jo
   if (!hinted.length) return controllerWrite(lease, null, async () => 0);
   let total = 0;
   for (const { candidateId } of hinted) total += await controllerWrite(lease, candidateId, async (tx, domain, events) => {
-    const { voters, fallbacks = [] } = domain.settings.secondReview;
+    const voters = secondReviewVoters(domain.settings), fallbacks = secondReviewFallbacks(domain.settings);
     const currentVotes = new Map(domain.votes.map(row => [row.id, { ...row }]));
     const changed = new Set<number>();
     const inPool = (row: SecondReview, pool: typeof voters) => pool.some(voter => voter.provider === (row.provider ?? "claude-cli") && sameReviewModel(voter.model, row.model));
@@ -861,7 +865,7 @@ async function pullStaleReviewScan(tx: ProductTransaction, scanId: number, repos
 /** 한 대기 표를 지금 입력과 해시·버전으로 비교한다(second-review-stale.ts classifyAi2Vote). 로더가 받는 표는 언제나 current 다. */
 function staleVoteVerdict(domain: ControllerDomain, row: SecondReview, semanticNow: Date): Ai2StaleVerdict {
   const { candidate, document, input, settings } = domain;
-  const pool = row.fallbackForId ? settings.secondReview.fallbacks ?? [] : settings.secondReview.voters;
+  const pool = row.fallbackForId ? secondReviewFallbacks(settings) : secondReviewVoters(settings);
   return classifyAi2Vote(row, {
     candidate, documentUrl: document?.productUrl ?? null, input,
     first: domain.attempts.find(attempt => attempt.id === row.firstAttemptId) ?? null,
@@ -891,7 +895,7 @@ function unpublishedStaleDemand(domain: ControllerDomain, now: Date): "required"
     || settings.secondReview.includeAiHeld && decision === "needs_review")) return "not_required";
   if (first.outcome?.confidence == null && decision !== "needs_review") return "not_required";
   // 관문에 1차와 다른 모델이 없으면 enqueue 가 사람에게 넘긴다(holdLockedGate) — 그 뒤 갈림 보류라 not_required 가 된다
-  if (!gate && !settings.secondReview.voters.some(voter => !sameUnderlyingModel(first.model, voter.model))) return "not_required";
+  if (!gate && !secondReviewVoters(settings).some(voter => !sameUnderlyingModel(first.model, voter.model))) return "not_required";
   return "required";
 }
 
@@ -1030,7 +1034,7 @@ function proposeCurrentStaleGeneration(domain: ControllerDomain, closedIds: Set<
   productStatus: ProductStatus | null): (typeof secondReviews.$inferInsert)[] {
   const { candidate, document, input, settings } = domain;
   if (!candidate || !document || !input) return [];
-  const voters = [...new Map(settings.secondReview.voters.map(voter => [canonicalReviewModel(voter.model), voter])).values()];
+  const voters = [...new Map(secondReviewVoters(settings).map(voter => [canonicalReviewModel(voter.model), voter])).values()];
   const open = domain.votes.filter(existing => !closedIds.has(existing.id));
   const taken = (model: string | null, publishedSlug: string | null) => open.some(existing => existing.publishedSlug === publishedSlug
     && sameReviewModel(existing.model, model) && publishedVoteTaken(existing));
@@ -1067,6 +1071,7 @@ function proposeCurrentStaleGeneration(domain: ControllerDomain, closedIds: Set<
 export async function reconcileStaleSecondReviews(now: Date | undefined, lease: JobLease, progress?: {
   afterCandidateId?: number; save: (afterCandidateId: number) => Promise<void>;
 }): Promise<number> {
+  await requireStageAssignments(); // 배정 표(PR 3b-B): 켜졌는데 못 읽었으면 미룬다 — 예전 투표자 목록으로 올리거나 닫지 않는다
   now ??= new Date();
   if (currentReplayDb()) return controllerWrite(lease, null, async () => 0);
   const [saved] = await db.select().from(crawlSettings).where(eq(crawlSettings.id, 1));
@@ -1164,6 +1169,7 @@ async function readControllerDomain(tx: ProductTransaction, candidateId: number)
 export async function previewStaleSecondReviews(options: { afterCandidateId?: number; limit?: number; now?: Date } = {}) {
   const limit = staleToolLimit(options.limit), after = staleToolCursor(options.afterCandidateId), now = options.now ?? new Date();
   if (currentReplayDb()) throw new Error("stale_reconcile_replay_unsupported");
+  await requireStageAssignments(); // 배정 표(PR 3b-B): 켜졌는데 못 읽었으면 미룬다 — 예전 투표자 목록으로 올리거나 닫지 않는다
   return db.transaction(async tx => {
     await tx.execute(sql`SET TRANSACTION READ ONLY`);
     const hints = await tx.execute<{ candidate_id: number | string }>(staleSecondReviewHintSql(after, limit));
@@ -1219,6 +1225,7 @@ export async function applyStaleSecondReviews(options: { lease: JobLease; actor:
   if (!actor || actor.length > 120) throw new Error("invalid_actor");
   const limit = staleToolLimit(options.limit), after = staleToolCursor(options.afterCandidateId), now = options.now ?? new Date();
   if (currentReplayDb()) throw new Error("stale_reconcile_replay_unsupported");
+  await requireStageAssignments(); // 배정 표(PR 3b-B): 켜졌는데 못 읽었으면 미룬다 — 예전 투표자 목록으로 올리거나 닫지 않는다
   const [saved] = await db.select().from(crawlSettings).where(eq(crawlSettings.id, 1));
   const settings = mergeWithDefaults(saved?.values);
   if (!settings.enabled || !settings.secondReview.enabled) {
@@ -1269,6 +1276,7 @@ export type SecondReviewWriteResult =
 export async function recordSecondReview(input: {
   receipt: SecondReviewReceipt; result: SecondReviewResult; now?: Date;
 }): Promise<SecondReviewWriteResult> {
+  await requireStageAssignments(); // 배정 표(PR 3b-B): 켜졌는데 못 읽었으면 미룬다 — 예전 투표자 목록으로 올리거나 닫지 않는다
   const { receipt, result, now = new Date() } = input;
   if (!receipt?.binding) throw new Error("invalid_second_review_receipt");
   const id = receipt.binding.secondReviewId;
@@ -1314,8 +1322,8 @@ export async function recordSecondReview(input: {
       // The domain candidate lock serializes allocation across primary slots.
       const attempted = await tx.select({model: secondReviews.model}).from(secondReviews).where(and(
         eq(secondReviews.candidateId, row.candidateId), eq(secondReviews.generationKey, row.generationKey)));
-      const excluded = [...settings.secondReview.voters.map(v => v.model), ...attempted.map(v => v.model)];
-      const eligible = (settings.secondReview.fallbacks ?? []).filter(v => !excluded.some(model => sameReviewModel(model, v.model)));
+      const excluded = [...secondReviewVoters(settings).map(v => v.model), ...attempted.map(v => v.model)];
+      const eligible = secondReviewFallbacks(settings).filter(v => !excluded.some(model => sameReviewModel(model, v.model)));
       // Prefer an independent model. This also covers an extra AI1 worker using
       // the configured AI2 fallback: a same-first fallback is reference-only and must end in human review.
       // 같은 가중치는 자리 표시가 달라도 같은 모델이다('[gpu3090] qwen3.8-flash-next' 와 보류 재심사의 'qwen3.8-flash-next')

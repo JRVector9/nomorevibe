@@ -3,8 +3,9 @@ import { sameUnderlyingModel } from "@/lib/crawl/review-model-identity";
 import type { AssignmentRole, AssignmentStage, HelperMode, ModelAssignmentRow } from "./capacity-helpers";
 
 /**
- * 단계별 배정 표 읽기와 고르기(PR 3b-A). 고르기는 순수 함수다(DB 없이 시험한다). 이 PR 에서는 hot path 가 부르지 않는다 —
- * 3b-B 가 flag 뒤에서 1차 심사자 고르기(lib/crawl/first-reviewers.ts selectFirstReviewer)와 2차 투표자 목록을 이것으로 바꾼다.
+ * 단계별 배정 표 읽기와 고르기(PR 3b-A). 고르기는 순수 함수다(DB 없이 시험한다). 3b-B 부터 MODEL_ASSIGNMENT_TABLE 뒤에서 1차 심사자 고르기
+ * (lib/crawl/first-reviewers.ts selectTableFirstReviewer)·2차 투표자 목록(lib/crawl/second-review-voters.ts)·단계 풀·등록부 기본값이 이것을 쓴다
+ * (스냅숏은 stage-assignment-snapshot.ts).
  *
  * - 순서: rank 오름차순, 같은 rank 안에서는 assignment_id 순(안정). 1차 오늘 풀의 순서(주 심사자 → 추가 심사자)를 그대로 옮기려면
  *   3b-B 가 그 순서대로 정렬되는 assignment_id 를 준다.
@@ -70,3 +71,52 @@ export function votersForItem<T extends StageAssignmentCandidate>(rows: readonly
     .filter(row => excludeUnderlying === null || !sameModel(excludeUnderlying, row.model));
   return voters.length ? rotate(voters, itemKey) : [];
 }
+
+// ── 읽기 전환(PR 3b-B) — 순수 판정. 스냅숏 읽기는 stage-assignment-snapshot.ts ───────────────────────────────
+
+/**
+ * 단계의 고르기 출처: 'table' = 배정 표 행으로 고른다, 'legacy' = 스위치 꺼짐(또는 표를 아직 못 읽음·replay), 'legacy_empty_table' = 켜졌지만
+ * 그 단계에 쓸 수 있는 live 행이 없어 예전 설정을 쓴다.
+ */
+export type AssignmentSource = "table" | "legacy" | "legacy_empty_table";
+
+/** 1차 심사자(FirstReviewer)가 받는 공급자. 그 밖(codex-cli)의 ai1 행은 고르기에 쓰지 않는다. */
+export const AI1_TABLE_PROVIDERS: ReadonlySet<string> = Object.freeze(new Set(["abcllm", "claude-cli", "grok-cli"]));
+/** 2차 투표자(secondReviewVoterSchema)가 받는 공급자. */
+export const AI2_TABLE_PROVIDERS: ReadonlySet<string> = Object.freeze(new Set(["abcllm", "claude-cli", "grok-cli", "local-direct"]));
+
+/** 단계의 쓸 수 있는 행: 그 단계 · role 'primary' · mode 'live' · (ai1·ai2 는) 받는 공급자, rank → assignment_id 순. */
+export function stageTableRows<T extends StageAssignmentCandidate & { stage: AssignmentStage; provider: string }>(stage: AssignmentStage,
+  rows: readonly T[]): T[] {
+  return orderStageAssignments(rows.filter(row => row.stage === stage && usable(row)
+    && (stage === "ai1" ? AI1_TABLE_PROVIDERS.has(row.provider) : stage === "ai2" ? AI2_TABLE_PROVIDERS.has(row.provider) : true)));
+}
+
+/** 출처 판정. ai2 는 투표자(rank 1 · vote)가 하나 이상이어야 'table' 이다 — 투표자 없는 2차는 아무 표도 올리지 못한다. */
+export function assignmentSourceFor<T extends StageAssignmentCandidate & { stage: AssignmentStage; provider: string }>(stage: AssignmentStage,
+  enabled: boolean, rows: readonly T[] | null): AssignmentSource {
+  if (!enabled || rows === null) return "legacy";
+  const own = stageTableRows(stage, rows);
+  if (!own.length || stage === "ai2" && !own.some(row => row.rank === 1 && row.vote)) return "legacy_empty_table";
+  return "table";
+}
+
+/**
+ * 등록부 용도(MODEL_PURPOSE_ENV) → 배정 단계. 이 용도의 기본 모델은 'table' 일 때 그 단계 첫 행이다(lib/llm/model-registry.ts configuredModel).
+ * 대응이 없는 용도(search-query-translate·direct-review·relay)는 언제나 예전 순서다.
+ */
+export const ASSIGNMENT_PURPOSE_STAGES: Readonly<Record<string, AssignmentStage>> = Object.freeze({
+  "product-search-profile": "profile", "product-search-verify": "verify", "crawl-tagline": "tagline", "reason-translate": "reason",
+  "product-tagline-ko": "ko", "product-translate": "translate", "product-intro-check": "intro",
+});
+
+/**
+ * 관리자 단계 풀(stageModelPools, lib/llm/admin-model-stages.ts) → 배정 단계. 이 단계들은 'table' 일 때 저장된 풀 대신 배정 표 행으로 고른다.
+ * 대응이 없는 관리자 단계(direct-review·published-filter·split-tiebreak·held-review-retry·split-confirm·korean-translation-direct·
+ * search-query-translate·assist-primary·assist-audit)는 저장된 풀 그대로다.
+ */
+export const ADMIN_STAGE_ASSIGNMENTS: Readonly<Record<string, AssignmentStage>> = Object.freeze({
+  "human-review": "human", "audit-review": "audit", "audit-second-opinion": "audit-second-opinion", "screen-review": "screen",
+  "reason-translate": "reason", "product-translate": "translate", "product-tagline-ko": "ko", "product-search-profile": "profile",
+  "product-search-verify": "verify", "crawl-tagline": "tagline", "product-intro-check": "intro",
+});

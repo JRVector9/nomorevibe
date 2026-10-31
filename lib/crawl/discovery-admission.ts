@@ -13,6 +13,7 @@ import { firstReviewer } from "./agent-review";
 import { firstReviewers, firstReviewIdentitySql } from "./first-reviewers";
 import { README_SAMPLE_LIMIT } from "./readme";
 import { firstReviewProviderPredicate, secondReviewInputMatches } from "./second-review-input";
+import { secondReviewFallbacks, secondReviewVoters } from "./second-review-voters";
 import { MAX_SECOND_REVIEW_FAILURES, SECOND_REVIEW_RETRY_MS, SECOND_REVIEW_TRANSIENT_ERRORS, TRANSIENT_RETRY_MS } from "./second-review";
 import type { CrawlSettings } from "./settings-schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
@@ -153,13 +154,13 @@ async function readAdmissionRows(tx: ProductTransaction, settings: CrawlSettings
         eq(crawlReviewAttempts.rulesVersion, REVIEW_RULES_VERSION), sql`${crawlReviewAttempts.validUntil} > ${at}`,
         sql`${crawlReviewAttempts.outcome}->>'decision'=${secondReviews.firstDecision} and ${crawlReviewAttempts.model}=${secondReviews.firstModel}`,
         sql`case when ${secondReviews.fallbackForId} is null then
-          ${voterMatches(sql`${secondReviews.provider}`, sql`${secondReviews.model}`, settings.secondReview.voters)}
+          ${voterMatches(sql`${secondReviews.provider}`, sql`${secondReviews.model}`, secondReviewVoters(settings))}
           and ${modelName(sql`${secondReviews.firstModel}`)}<>${modelName(sql`${secondReviews.model}`)}
-          else ${voterMatches(sql`${secondReviews.provider}`, sql`${secondReviews.model}`, settings.secondReview.fallbacks ?? [])}
+          else ${voterMatches(sql`${secondReviews.provider}`, sql`${secondReviews.model}`, secondReviewFallbacks(settings))}
             and ${root.fallbackForId} is null and ${root.candidateId}=${secondReviews.candidateId}
             and ${root.generationKey}=${secondReviews.generationKey} and ${root.inputHash}=${secondReviews.inputHash}
             and ${root.status}='resolved' and ${root.resolution}='fallback'
-            and ${voterMatches(sql`${root.provider}`, sql`${root.model}`, settings.secondReview.voters)} end`,
+            and ${voterMatches(sql`${root.provider}`, sql`${root.model}`, secondReviewVoters(settings))} end`,
         sql`(${crawlReviewAttempts.source}->>'candidateJudgedAt')::timestamp is not distinct from date_trunc('milliseconds', ${crawlCandidates.judgedAt})
           and ${crawlReviewAttempts.source}->>'detectorVersion'=${settings.agentEvidence.detectorVersion}
           and exists(select 1 from crawl_documents admission_doc

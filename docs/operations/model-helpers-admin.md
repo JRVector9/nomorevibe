@@ -260,9 +260,39 @@ migration `0155_model_assignments`(PR 3b-A)는 같은 표 `model_helper_assignme
 - **배포 순서(같은 창)**: 옛 parser(`.strict`)는 `compatiblePredecessors` 를 모르는 칸으로 거절한다 — 그 정책을 읽는 모든 용량 소비자(입장·dispatch·관측·감시자·ops CLI·웹)가
   이 판을 돈 뒤에만 관리자가 배정을 저장한다(잡힌 행이 있는 동안의 저장이 사슬 칸을 쓴다). route 129개 이상과 같은 조건이다.
 
-읽기·고르기(`lib/llm/stage-assignments.ts`, 아직 아무도 부르지 않는다): `assignmentsForStage(stage, { mode: 'live' })` = rank → assignment_id 순,
+읽기·고르기(`lib/llm/stage-assignments.ts`, 3b-B 부터 스위치 뒤에서 부른다 — 아래 「읽기 전환」): `assignmentsForStage(stage, { mode: 'live' })` = rank → assignment_id 순,
 `chooseModelForItem(rows, itemKey, { excludeModels })` = 1차 오늘 규칙(`selectFirstReviewer`)과 같은 `(itemKey − 1) mod n` 칸, rank 가 모두 빠지면 다음 rank,
 `votersForItem(rows, itemKey, 1차 모델)` = 2차 rank 1 · vote · live 행에서 1차와 같은 가중치(`sameUnderlyingModel`)를 뺀 목록(순서만 항목마다 돈다).
+
+## 읽기 전환 — 3b-B (`MODEL_ASSIGNMENT_TABLE`)
+
+배정 표(role `primary` · mode `live`)를 단계별 모델 고르기의 출처로 쓰는 스위치. **기본은 꺼짐이고, 꺼지면 오늘과 같다**(배정 표 SELECT 도 없다).
+
+- 스위치: 역할(Dokploy 앱)마다 env `MODEL_ASSIGNMENT_TABLE=1`. 프로세스가 처음 물을 때 한 번 읽어 고정한다(`lib/llm/assignment-flag.ts`, 재시작해야 바뀐다).
+  `1` 만 켬, 없음·`""`·`0` 끔, 그 밖은 끔 + `model_assignment_table.invalid` 한 번.
+  runtime_settings 키(재배포 없이 관리자가 켜기)는 이 PR 에 없다: 그 문서는 그룹 목록이 고정이고(시험이 목록을 고정한다), 모르는 그룹이 있으면
+  다른 그룹 저장까지 `unknown_group` 으로 거절하며, 폼은 숫자 칸만 받는다 — 그룹·폼·저장 검사를 함께 넓혀야 해 3b-D 몫으로 남겼다.
+- 스냅숏(`lib/llm/stage-assignment-snapshot.ts`): 고르기 함수는 동기라 live 행 전부를 30초 스냅숏으로 읽는다(오래된 동기 읽기는 뒤에서 한 번 다시 읽는다).
+  비동기 길목 — 1차 `chooseFirstReviewForCandidate`(TX 밖), 2차 올리기·정리·stale 정리·결과 기록·입력 로더, 단계 풀 — 은 먼저 새 스냅숏을 기다린다.
+  **켜졌는데 한 번도 못 읽었으면** 그 길목은 `ModelCapacityDeferredError('assignments_unavailable')` 로 미룬다(예전 목록으로 고르거나 2차 표를
+  `model_removed` 로 닫지 않는다). replay 범위에서는 읽지 않는다(언제나 예전 설정).
+- 출처(`assignmentSource(stage)`): `table` · `legacy`(꺼짐·아직 못 읽음·replay) · `legacy_empty_table`(켜졌지만 쓸 행이 없다 — 프로세스마다 한 번
+  `assignment_table_empty:<stage>`). 관리자 화면(3b-D)과 pipeline-control 스냅숏의 선택 칸 `assignments`(ops CLI 의 스위치가 켜졌을 때만 —
+  `enabled`·단계별 `live` 행 수·`tableReady`·`source`; 소비자 역할의 스위치는 그 앱의 env 다)가 보인다.
+
+단계별로 무엇이 바뀌나:
+
+| 단계 | 'table' 일 때 | 남은 예전 경로 |
+| --- | --- | --- |
+| ai1 (`lib/crawl/first-reviewers.ts`) | 풀 = ai1 live 행(abcllm·claude-cli·grok-cli), rank → assignment_id. `firstReviewers()` 는 표 전체(대체 포함)를 돌려준다 — 결과 유효성·route 목록. 새 후보 = `chooseModelForItem` 의 `(id − 1) mod n`(가장 낮은 rank), 손대지 않은 후보만 막힌·쉬는 모델을 비켜 가고 rank 1 이 모두 막히면 rank 2(대체). 활성 의도·재시도 고정은 같다 | **풀 모드(`firstReviewAdditional` 이 있다, [] 도 된다)일 때만** 표를 쓴다 — 1차 consumer·legacy 잡(PR 3a 소유)이 풀 모드에서만 후보마다 고르고 모델별로 쉰다. 아니면 `assignment_table_pool_mode_off:ai1` 한 번 + 예전. `firstReviewer(settings)`(AI2 정책 hash 의 1차)는 예전 그대로 |
+| ai2 (`lib/crawl/second-review-voters.ts`) | 투표자 = rank 1 · vote · live, 대체 = rank ≥ 2(rank 순), 같은 모델 한 번. **모든 2차 읽기**(올리기·입력 검증·정리·stale·결과 기록의 대체·대기 대체·공개 관문 SQL·보류 재심사·발견 관문·도우미 저장 검사·route 목록)가 이 두 함수를 읽어 함께 바뀐다. 항목마다 1차와 같은 가중치를 빼는 규칙은 그대로 | 투표자 행이 없으면 예전. AI2 정책 hash 는 저장된 설정을 그대로 hash(표가 바뀌어도 진행 중 receipt 가 hash 로 깨지지 않고, 빠진 모델은 입력 검증이 거른다). Grok 세션 점검 잡(`lib/crawl/jobs/grok-session.ts`, 3a 소유)은 예전 목록 |
+| human · audit · audit-second-opinion · screen · reason · translate · ko · profile · verify · tagline · intro (`lib/llm/admin-model-pools.ts`) | 저장 잡 범위(`withStoredAdminStagePools`)에서 대응 관리자 단계(`ADMIN_STAGE_ASSIGNMENTS`)의 풀 대신 표 행에서 **결정적** `chooseModelForItem`(같은 sha256 칸, 가장 낮은 rank). 「빈 grant 가 있는 첫 rank 1 행」은 이 동기 scope 가 표현하지 못해 쓰지 않았다(입장이 포화를 미룬다). 등록부·adapter·용도 검사와 wire = 등록부 요청 이름을 지나는 행만 | direct-review·published-filter·split-tiebreak·held-review-retry·split-confirm·korean-translation-direct·search-query-translate·assist-* 는 저장 풀. 명시 풀(`withAdminStagePools`, 준비 점검)은 바꾸지 않는다 |
+| 등록부 기본값 (`lib/llm/model-registry.ts`) | `configuredModel*`: 용도의 단계(`ASSIGNMENT_PURPOSE_STAGES`: profile·verify·tagline·reason·ko·translate·intro)에 live 행이 있으면 첫 행의 key 가 `*_KEY`·예전 env 보다 앞선다 — scope 밖 process env 만. 등록부 읽기는 import 시점에도 일어나 스냅숏을 다시 읽지 않는다(DB client 를 진입 확인보다 먼저 만들지 않는다) — 잡 길목(`withStoredAdminStagePools`)이 채운 스냅숏을 본다 | 단계 풀 scope 의 key, 호출자가 넘긴 env, 대응 없는 용도(search-query-translate·direct-review·relay)는 예전 순서 |
+
+- 인증된 용량 측정(`pipeline-capacity` manifest)은 표가 출처이면 `unsupported_capacity_assignment_table`, 실측 수집은 스위치가 켜진 프로세스에서
+  `live_capacity_assignment_table_unsupported` 로 거절한다(선언한 설정 모델이 실제 심사자가 아니다).
+- 켜기 전 확인: 1차는 풀 모드인가, 2차 표에 투표자가 있는가(`pipeline-control status` 를 스위치를 켠 셸에서 — `[assignments]` 줄), 같은 창에서
+  모든 용량 소비자가 3b-B 판인가(앞 판 사슬). 끄기는 env 를 지우고 재시작.
 
 ## 테스트
 
@@ -275,6 +305,9 @@ migration `0155_model_assignments`(PR 3b-A)는 같은 표 `model_helper_assignme
 - `tests/dr-web-fence.test.ts` — 도우미 action 다섯이 쓰기 관문을 지난다(수 97). `tests/admin-navigation.test.tsx` — 메뉴 링크 23개.
 - 배정 표(3b-A): `tests/capacity-helpers.test.ts`(어휘·zod·evidence·0155 글자·route 상한), `tests/stage-assignments.test.ts`(고르기, 1차 칸 = selectFirstReviewer),
   `tests/integration/model-assignments.test.ts`(자기 DB: 계약·route·장비 순위·감사 한 TX, 같은 저장 반복, 잡힌 행과 앞 판, 상한·충돌, 거절 뒤 남는 행 없음, cli·vote·local-direct 계약).
+- 읽기 전환(3b-B): `tests/assignment-readers.test.ts`(스위치·출처·관문, 1차 표 풀·칸·고정·대체, 2차 투표자·대체·입력 검증·hash 불변),
+  `tests/assignment-stage-pools.test.ts`(단계 풀·등록부 기본값), `tests/pipeline-control-assignments.test.ts`(스냅숏 선택 칸·route 목록),
+  `tests/integration/model-assignment-readers.test.ts`(DB 에 심은 표: 1차 고르기, 2차 올리기·기록·대체·정리, 못 읽으면 미룸).
 - 앞 판 사슬(3b-B): `tests/model-capacity-predecessor-chain.test.ts`(모양·옛 단일 칸 = 길이 1·세대 인증·덧붙이기 판정), `tests/integration/model-assignments.test.ts`
   (gen-1 dispatched 를 쥔 채 세 번 연속 덧붙이기, 가지치기·사슬 비우기, 16칸 꽉 참 거절과 미끄러짐, 옛 단일 칸 이어받기, 운영자 쓰기의 증명).
 - 표·입장 판정·감시자 순환은 WP-2a-A·B 의 테스트가 본다(`tests/capacity-helpers.test.ts`, `tests/integration/model-capacity-helpers.test.ts`, `tests/capacity-supervisor-decide.test.ts`).

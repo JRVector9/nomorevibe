@@ -7,16 +7,18 @@
  * - `helper_ineligible`(PR 2a Layer B): 이 요청은 도우미 경로(model_helper_assignments 의 live·shadow 경로)인데 지금 닫혀 있다 — 감시자 신호가 없거나·
  *   만료됐거나·다른 epoch·판·계정이거나, 감시자가 꺼졌거나, 자동 정지·mode·판정이 막거나, 배정 점유가 max_slots 에 찼다(fail-closed).
  *   대기 행·event 를 남기지 않는다. 도우미 단계는 이번 틱을 멈출 뿐 모델 호출을 다시 시도하지 않는다. 우선 역할 경로에는 오지 않는다.
+ * - `assignments_unavailable`(PR 3b-B): MODEL_ASSIGNMENT_TABLE 이 켜졌는데 이 프로세스가 배정 표를 아직 한 번도 읽지 못했다 — 어느 모델이 맞는지
+ *   모르므로 예전 설정으로 고르거나 정리하지 않고 이번 틱을 멈춘다(호출·시도·실패 기록 없음). 다음 틱에 다시 읽는다.
  */
 export type ModelCapacityDeferredReason = "draining" | "unmapped" | "provider_contract_unavailable"
   | "reservation_required" | "owner_unavailable" | "capacity" | "queue_full" | "policy_changed"
   | "withdrawn" | "dispatched" | "disabled" | "reservation_lost" | "device_unconfigured" | "work_busy"
-  | "ledger_mismatch" | "helper_ineligible";
+  | "ledger_mismatch" | "helper_ineligible" | "assignments_unavailable";
 
 export function isModelCapacityDeferredReason(value: unknown): value is ModelCapacityDeferredReason {
   return typeof value === "string" && ["draining", "unmapped", "provider_contract_unavailable", "reservation_required",
     "owner_unavailable", "capacity", "queue_full", "policy_changed", "withdrawn", "dispatched", "disabled", "reservation_lost",
-    "device_unconfigured", "work_busy", "ledger_mismatch", "helper_ineligible"].includes(value);
+    "device_unconfigured", "work_busy", "ledger_mismatch", "helper_ineligible", "assignments_unavailable"].includes(value);
 }
 
 /**

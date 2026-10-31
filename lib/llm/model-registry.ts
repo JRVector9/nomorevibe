@@ -262,8 +262,24 @@ export function resolvePurposeModel(purpose: string, value: string, env: ModelEn
   try { current = modelForPurpose(purpose, env); } catch { return null; }
   return current.gatewayLabel?.toLowerCase() === label ? current : null;
 }
+type AssignmentDefaultsOverlay = (purpose: string, env: ModelEnvironment) => string | null;
+let assignmentDefaultsOverlay: AssignmentDefaultsOverlay | undefined;
+/**
+ * The server installs the assignment-table default reader (PR 3b-B, lib/llm/stage-assignment-snapshot.ts). With MODEL_ASSIGNMENT_TABLE on and a
+ * live assignment row for the purpose's stage, that row's registry key is the default ahead of `*_KEY` and the legacy model env. It applies only to
+ * the unscoped process environment: an admin stage-pool scope (which itself picks from the table) and explicit caller environments keep their key.
+ * Client bundles never install it.
+ */
+export function setModelAssignmentDefaultsOverlay(reader: AssignmentDefaultsOverlay | undefined) { assignmentDefaultsOverlay = reader; }
+function assignedDefinition(purpose: keyof typeof MODEL_PURPOSE_ENV, env: ModelEnvironment): ModelDefinition | null {
+  if (!assignmentDefaultsOverlay || env !== process.env) return null;
+  const key = assignmentDefaultsOverlay(purpose, env);
+  return key ? readModelRegistry(env).models.find(model => model.key === key) ?? null : null;
+}
 export function configuredModelDefinition(purpose: keyof typeof MODEL_PURPOSE_ENV, env: ModelEnvironment = process.env): ModelDefinition {
   env = modelEnvironment(env, purpose);
+  const assigned = assignedDefinition(purpose, env);
+  if (assigned) return assigned;
   const variable = MODEL_PURPOSE_ENV[purpose], key = env[`${variable}_KEY`]?.trim();
   if (key) {
     const selected = readModelRegistry(env).models.find(model => model.key === key && model.purposes.includes(purpose));
@@ -275,6 +291,8 @@ export function configuredModelDefinition(purpose: keyof typeof MODEL_PURPOSE_EN
 }
 export function configuredModel(purpose: keyof typeof MODEL_PURPOSE_ENV, env: ModelEnvironment = process.env): string {
   env = modelEnvironment(env, purpose);
+  const assigned = assignedDefinition(purpose, env);
+  if (assigned) return modelRequestName(assigned);
   const variable = MODEL_PURPOSE_ENV[purpose], key = env[`${variable}_KEY`]?.trim();
   if (key) {
     const selected = readModelRegistry(env).models.find(model => model.key === key && model.purposes.includes(purpose));
