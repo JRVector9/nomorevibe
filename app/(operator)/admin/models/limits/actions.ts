@@ -28,7 +28,8 @@ export const saveRuntimeSettingsGroup = webWriteAction(async function saveRuntim
   try {
     const result = await saveRuntimeSettings(parsed.patch, admin.login, { expectedRevision, group });
     if (!result.ok) return { issues: result.issues.map(runtimeSettingsIssueMessage) };
-    for (const path of ["/admin/models/limits", "/admin/models", "/admin/status"]) revalidatePath(path);
+    // 모델 배정 화면(3b-E)은 같은 행의 assignments 묶음을 그린다 — 저장 뒤 새로고침하면 띠·폼이 새 값이다
+    for (const path of ["/admin/models/limits", "/admin/models", "/admin/models/assignments", "/admin/status"]) revalidatePath(path);
     return { ok: true, message: `저장했습니다(판 ${shortRuntimeSettingsVersion(result.version)}, revision ${result.revision}). 각 워커는 30초 안에 다음 틱부터 씁니다.` };
   } catch (error) {
     return { issues: [runtimeSettingsIssueMessage(error instanceof Error ? error.message : "저장하지 못했습니다. 새로고침해 현재 상태를 확인해주세요.")] };

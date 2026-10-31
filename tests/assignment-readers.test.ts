@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CrawlCandidate, CrawlDocument, CrawlReviewAttempt, SecondReview } from "@/lib/db/schema";
-import { MODEL_ASSIGNMENT_TABLE_ENV, assignmentTableEnabled, parseAssignmentTableFlag, setAssignmentTableEnabledForTest } from "@/lib/llm/assignment-flag";
+import { MODEL_ASSIGNMENT_TABLE_ENV, assignmentFlag, assignmentTableEnabled, parseAssignmentTableOverride, setAssignmentTableEnabledForTest } from "@/lib/llm/assignment-flag";
 import type { ModelAssignmentRow } from "@/lib/llm/capacity-helpers";
 import { assignmentSourceFor, stageTableRows } from "@/lib/llm/stage-assignments";
-import { assignmentSource, requireStageAssignments, setStageAssignmentsForTest, stageAssignmentRows } from "@/lib/llm/stage-assignment-snapshot";
+import { assignmentSource, ensureStageAssignments, requireStageAssignments, setStageAssignmentsForTest, stageAssignmentRows } from "@/lib/llm/stage-assignment-snapshot";
+import { setRuntimeSettingsForTest } from "@/lib/operations/runtime-settings-store";
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { firstReviewTableRows, firstReviewers, firstReviewerKey, hasFirstReviewer, selectFirstReviewer, selectTableFirstReviewer,
   tableFirstReviewers } from "@/lib/crawl/first-reviewers";
 import { secondReviewFallbacks, secondReviewVoterSets, secondReviewVoters, tableSecondReviewVoters } from "@/lib/crawl/second-review-voters";
@@ -13,7 +15,13 @@ import { secondReviewGeneration, secondReviewInputMatches } from "@/lib/crawl/se
 import { secondReviewPolicyHash } from "@/lib/crawl/second-review-ownership";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 
-/** PR 3b-B — MODEL_ASSIGNMENT_TABLE 이 켜졌을 때의 고르기(순수 판정 + 고정한 스냅숏). 꺼진 경로는 기존 시험이 그대로 본다. */
+/**
+ * PR 3b-B — 배정 표 읽기가 켜졌을 때의 고르기(순수 판정 + 고정한 스냅숏). 꺼진 경로는 기존 시험이 그대로 본다.
+ * PR 3b-E — 스위치는 runtime_settings 토글(assignments.tableReads)이고 env MODEL_ASSIGNMENT_TABLE 은 강제다(첫 describe).
+ * DB 는 가짜다: 토글을 못 읽는 프로세스의 미룸을 보려고 db.execute 가 늘 실패한다(serving-contract reload 가 받아 마지막 스냅숏을 지킨다).
+ */
+vi.mock("@/lib/db", async importOriginal => ({ ...(await importOriginal<object>()),
+  db: new Proxy({}, { get: () => () => { throw new Error("db_down"); } }) }));
 let seq = 0;
 const row = (value: Partial<ModelAssignmentRow> & Pick<ModelAssignmentRow, "stage" | "model" | "provider">): ModelAssignmentRow => ({
   assignmentId: value.assignmentId ?? `row-${String(++seq).padStart(3, "0")}`, deviceId: "dev-a", registryKey: "supa:review", transport: "gateway",
@@ -22,26 +30,69 @@ const row = (value: Partial<ModelAssignmentRow> & Pick<ModelAssignmentRow, "stag
 const legacyFirst = { provider: "abcllm" as const, model: "legacy-first" };
 const poolSettings = { firstReview: legacyFirst, firstReviewAdditional: [] as { provider: "abcllm"; model: string }[] };
 
-beforeEach(() => { seq = 0; });
-afterEach(() => { setAssignmentTableEnabledForTest(null); setStageAssignmentsForTest(null); vi.unstubAllEnvs(); });
+const TOGGLE_ON = { version: 1, assignments: { tableReads: "on" } }, TOGGLE_OFF = { version: 1, assignments: { tableReads: "off" } };
 
-describe("MODEL_ASSIGNMENT_TABLE flag", () => {
-  it("is on only for exactly '1'; anything else is off (an invalid value never changes selection)", () => {
+beforeEach(() => { seq = 0; vi.stubEnv(MODEL_ASSIGNMENT_TABLE_ENV, ""); setAssignmentTableEnabledForTest(null); });
+afterEach(() => { setAssignmentTableEnabledForTest(null); setStageAssignmentsForTest(null); setRuntimeSettingsForTest(null); setServingContractSnapshotForTest(null);
+  vi.unstubAllEnvs(); });
+
+describe("assignment-table switch — runtime_settings toggle, env override (PR 3b-E)", () => {
+  it("env MODEL_ASSIGNMENT_TABLE is an override only: '1' forces on, '0' forces off, blank follows the toggle, anything else is ignored", () => {
     expect(MODEL_ASSIGNMENT_TABLE_ENV).toBe("MODEL_ASSIGNMENT_TABLE");
-    expect(parseAssignmentTableFlag("1")).toEqual({ enabled: true, invalid: false });
-    expect(parseAssignmentTableFlag(" 1 ")).toEqual({ enabled: true, invalid: false });
-    for (const value of [undefined, "", "0"]) expect(parseAssignmentTableFlag(value)).toEqual({ enabled: false, invalid: false });
-    for (const value of ["true", "yes", "2", "on"]) expect(parseAssignmentTableFlag(value)).toEqual({ enabled: false, invalid: true });
+    expect(parseAssignmentTableOverride("1")).toEqual({ override: "on", invalid: false });
+    expect(parseAssignmentTableOverride(" 1 ")).toEqual({ override: "on", invalid: false });
+    expect(parseAssignmentTableOverride("0")).toEqual({ override: "off", invalid: false });
+    for (const value of [undefined, ""]) expect(parseAssignmentTableOverride(value)).toEqual({ override: null, invalid: false });
+    for (const value of ["true", "yes", "2", "on"]) expect(parseAssignmentTableOverride(value)).toEqual({ override: null, invalid: true });
   });
 
-  it("reads the env once per process", () => {
-    setAssignmentTableEnabledForTest(null);
-    vi.stubEnv(MODEL_ASSIGNMENT_TABLE_ENV, "1");
+  it("follows the saved toggle without a restart (unread → off; off; on) and the env override wins, read once per process", () => {
+    expect(assignmentFlag()).toEqual({ enabled: false, source: "unread", override: null });         // the default snapshot never came from the DB
+    setRuntimeSettingsForTest({ version: 1 });
+    expect(assignmentFlag()).toEqual({ enabled: false, source: "runtime", override: null });        // a DB document without the key = default off
+    setRuntimeSettingsForTest(TOGGLE_ON);
+    expect(assignmentFlag()).toEqual({ enabled: true, source: "runtime", override: null });
     expect(assignmentTableEnabled()).toBe(true);
-    vi.stubEnv(MODEL_ASSIGNMENT_TABLE_ENV, "0");
-    expect(assignmentTableEnabled()).toBe(true);                                        // fixed at the first read
-    setAssignmentTableEnabledForTest(null);
+    setRuntimeSettingsForTest(TOGGLE_OFF);
     expect(assignmentTableEnabled()).toBe(false);
+    // env forces regardless of the toggle; it is read once (a later env change needs a restart)
+    vi.stubEnv(MODEL_ASSIGNMENT_TABLE_ENV, "1");
+    setAssignmentTableEnabledForTest(null);
+    expect(assignmentFlag()).toEqual({ enabled: true, source: "env", override: "on" });
+    vi.stubEnv(MODEL_ASSIGNMENT_TABLE_ENV, "0");
+    expect(assignmentTableEnabled()).toBe(true);
+    setAssignmentTableEnabledForTest(null);
+    setRuntimeSettingsForTest(TOGGLE_ON);
+    expect(assignmentFlag()).toEqual({ enabled: false, source: "env", override: "off" });          // forced off while the toggle says on
+    // a bad value follows the toggle
+    vi.stubEnv(MODEL_ASSIGNMENT_TABLE_ENV, "yes");
+    setAssignmentTableEnabledForTest(null);
+    expect(assignmentFlag()).toEqual({ enabled: true, source: "runtime", override: null });
+    // the test pin reports as forced
+    setAssignmentTableEnabledForTest(false);
+    expect(assignmentFlag()).toEqual({ enabled: false, source: "env", override: "off" });
+  });
+
+  it("the gate refreshes the toggle itself: unread in a DB-reading process defers, an env-only process (kill switch) stays legacy", async () => {
+    vi.stubEnv("DATABASE_URL", "postgres://nobody:nothing@127.0.0.1:1/never");
+    vi.stubEnv("MODEL_SERVING_CONTRACTS_DB", "0");                                                 // env-only: the toggle is never read, no deferral
+    await expect(requireStageAssignments()).resolves.toBeUndefined();
+    expect(assignmentFlag().source).toBe("unread");
+    expect(assignmentSource("ai1")).toBe("legacy");
+    vi.stubEnv("MODEL_SERVING_CONTRACTS_DB", "");                                                  // DB-reading process whose reads fail (db_down): defer
+    setStageAssignmentsForTest(null);
+    const refused = await requireStageAssignments().catch(error => error);
+    expect(refused).toBeInstanceOf(ModelCapacityDeferredError);
+    expect((refused as ModelCapacityDeferredError).reason).toBe("assignments_unavailable");
+    // once the toggle is readable (pinned document) the same gate passes while off, and the sync readers stay legacy
+    setRuntimeSettingsForTest(TOGGLE_OFF);
+    await expect(requireStageAssignments()).resolves.toBeUndefined();
+    expect(assignmentSource("ai1")).toBe("legacy");
+    // toggle on but the rows cannot be read (db_down): defer — never the legacy list
+    setRuntimeSettingsForTest(TOGGLE_ON);
+    await ensureStageAssignments(0);
+    expect(stageAssignmentRows("ai1")).toBeNull();
+    await expect(requireStageAssignments()).rejects.toMatchObject({ reason: "assignments_unavailable" });
   });
 });
 
@@ -67,15 +118,19 @@ describe("assignment source (pure)", () => {
 });
 
 describe("snapshot gate", () => {
-  it("returns no rows while off; with the flag on it serves the pinned snapshot per stage", () => {
+  it("returns no rows while off; with the switch on (toggle or override) it serves the pinned snapshot per stage", () => {
     setStageAssignmentsForTest([row({ stage: "ai1", model: "[supa] q", provider: "abcllm" })]);
     expect(assignmentSource("ai1")).toBe("legacy");
     expect(stageAssignmentRows("ai1")).toBeNull();
-    setAssignmentTableEnabledForTest(true);
+    setRuntimeSettingsForTest(TOGGLE_ON);                                                          // the saved toggle, no env
     expect(assignmentSource("ai1")).toBe("table");
     expect(assignmentSource("ai2")).toBe("legacy_empty_table");
     expect(stageAssignmentRows("ai1")?.map(entry => entry.model)).toEqual(["[supa] q"]);
     expect(stageAssignmentRows("ai2")).toBeNull();
+    setRuntimeSettingsForTest(TOGGLE_OFF);
+    expect(assignmentSource("ai1")).toBe("legacy");
+    setAssignmentTableEnabledForTest(true);
+    expect(assignmentSource("ai1")).toBe("table");
   });
 
   it("defers async entry points with assignments_unavailable when on but never read, and passes when off or loaded", async () => {

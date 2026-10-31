@@ -5,7 +5,8 @@ import { storedSettingsVersion } from "@/lib/operations/runtime-settings-schema"
 import { publishRuntimeSettingsSnapshot, runtimeSettings, runtimeSettingsSnapshotFromStored, setRuntimeSettingsLoader,
   type RuntimeSettingsSnapshot } from "@/lib/operations/runtime-settings-store";
 import { overlaidModelDefinitions, setModelRegistryOverlay, setModelRoutePolicyOverlay } from "./model-registry";
-// The assignment-table default reader (PR 3b-B) installs itself next to the registry overlays; it reads nothing unless MODEL_ASSIGNMENT_TABLE=1.
+// The assignment-table default reader (PR 3b-B) installs itself next to the registry overlays; it reads nothing unless the runtime_settings
+// toggle assignments.tableReads is on (or MODEL_ASSIGNMENT_TABLE=1 forces it — PR 3b-E, lib/llm/assignment-flag.ts).
 import "./stage-assignment-snapshot";
 
 /**
@@ -47,6 +48,12 @@ const state = (): State => (holder.__nmvServingContracts ??= { snapshot: EMPTY, 
 function enabled(): boolean {
   return typeof window === "undefined" && process.env.MODEL_SERVING_CONTRACTS_DB !== "0" && !!process.env.DATABASE_URL && !state().override;
 }
+/**
+ * Whether this process reads the admin tables (contracts, registry overrides, runtime_settings) from the DB at all: server side, no kill switch
+ * (MODEL_SERVING_CONTRACTS_DB=0), DATABASE_URL set, not pinned by a test. The assignment-table gate (PR 3b-E) defers on an unread toggle only here —
+ * an env-only process keeps the code defaults (legacy selection) without deferring.
+ */
+export function servingContractsDbEnabled(): boolean { return enabled(); }
 
 export function servingContractSnapshotFromRows(rows: readonly Row[], loadedAt = Date.now(), registryRows: readonly RegistryRow[] = [],
   runtimeRow: RuntimeSettingsRow | null = null): ServingContractSnapshot {

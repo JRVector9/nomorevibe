@@ -10,7 +10,7 @@ import { consumerHealthPath, supervisorCommand, supervisorHealthPath } from '@/s
 
 const mocks = vi.hoisted(() => ({ choose: vi.fn(), load: vi.fn(), prepare: vi.fn(), claim: vi.fn(), observe: vi.fn(), renew: vi.fn(),
   record: vi.fn(), spam: vi.fn(), select: vi.fn(), where: vi.fn(), pages: [] as unknown[][], limit: vi.fn(),
-  sleep: vi.fn(), runtime: vi.fn(), report: vi.fn(), settings: vi.fn(), predicate: vi.fn() }));
+  sleep: vi.fn(), runtime: vi.fn(), report: vi.fn(), settings: vi.fn(), predicate: vi.fn(), ensureAssignments: vi.fn() }));
 vi.mock('@/lib/db', () => ({ db: { select: mocks.select }, onPrimary: (load: () => unknown) => load() }));
 vi.mock('@/lib/db/replay-scope', () => ({ currentReplayDb: () => null }));
 vi.mock('@/lib/crawl/settings', () => ({ getSettings: mocks.settings }));
@@ -20,6 +20,8 @@ vi.mock('@/lib/crawl/agent-review-repository', () => ({ chooseFirstReviewForCand
   recordConsumerSuspectedSpam: mocks.spam, reviewCandidatePredicate: mocks.predicate }));
 vi.mock('@/lib/crawl/agent-review-preparation', () => ({ prepareAgentReview: mocks.prepare }));
 vi.mock('@/lib/crawl/agent-review', () => ({ firstReviewer: () => ({ provider: 'abcllm', model: 'same-model' }) }));
+// 배정 표 스냅숏(3b-E): 소비자 쪽마다 토글·행을 새로 받는 길목만 가짜다(고르기는 위 chooseFirstReviewForCandidate 가짜가 받는다)
+vi.mock('@/lib/llm/stage-assignment-snapshot', () => ({ ensureStageAssignments: mocks.ensureAssignments, noteAssignmentOnce: vi.fn(), stageAssignmentRows: () => null }));
 vi.mock('@/scripts/worker', () => ({ withRuntimeProcess: mocks.runtime, interruptibleSleep: mocks.sleep }));
 vi.mock('@/lib/operations/observations', () => ({ observeService: vi.fn() }));
 const owner = () => ({ instanceId: 'ai1-consumer-unit', bootId: 'f70bfcce-92d0-4ed8-a5db-bfd092d17950' });
@@ -38,6 +40,7 @@ beforeEach(() => {
   mocks.record.mockResolvedValue({ applied: true, state: 'succeeded' }); mocks.spam.mockResolvedValue({ applied: true, state: 'succeeded' });
   mocks.settings.mockResolvedValue({ ...DEFAULT_CRAWL_SETTINGS, enabled: true, reviewMode: 'enforce' });
   mocks.limit.mockImplementation(async () => mocks.pages.shift() ?? []);
+  mocks.ensureAssignments.mockResolvedValue(undefined);
   mocks.select.mockImplementation(() => ({ from: () => ({ where: (query: SQL) => { mocks.where(query);
     return { orderBy: () => ({ limit: mocks.limit }) }; } }) }));
   mocks.runtime.mockImplementation(async (_role, run) => run(new AbortController().signal, mocks.report));
@@ -203,6 +206,23 @@ it('renewal error survives drain with writer zero', async () => {
   const running = executeFirstReviewConsumerItem({ candidateId: 4, owner: owner() }); void running.catch(() => {});
   await vi.advanceTimersByTimeAsync(15_000); observed.resolve({ kind: 'current' });
   await expect(running).rejects.toBe(original); expect(mocks.record).not.toHaveBeenCalled();
+});
+// PR 3b-E: 소비자는 틱이 없어 쪽마다 토글(runtime_settings)·배정 표 스냅숏을 새로 받는다 — 관리자가 켜면 재시작 없이 다음 쪽부터 표를 본다
+it('refreshes the assignment toggle and table snapshot before every page, and a global assignments_unavailable deferral folds the page', async () => {
+  mocks.pages = [Array.from({ length: 24 }, (_, n) => hint(n + 1)), [hint(30)]];
+  mocks.claim.mockResolvedValue({ kind: 'skipped', reason: 'running' });
+  expect(await runFirstReviewConsumer({ owner: owner(), once: true })).toEqual({ attempted: 25, recorded: 0, skipped: 25, deferred: 0 });
+  expect(mocks.ensureAssignments).toHaveBeenCalledTimes(2);
+  expect(mocks.ensureAssignments.mock.invocationCallOrder[0]).toBeLessThan(mocks.limit.mock.invocationCallOrder[0]);
+  // the switch is on but the table (or the toggle itself) was never read: the chooser defers globally → page folds, cursor kept, no claim
+  const settings = { ...DEFAULT_CRAWL_SETTINGS, enabled: true, reviewMode: 'enforce' as const, firstReview: { provider: 'abcllm' as const, model: 'legacy' }, firstReviewAdditional: [] };
+  mocks.settings.mockResolvedValue(settings);
+  mocks.load.mockImplementation(async id => ({ kind: 'current', context: { ...context, candidate: { id }, settings } }));
+  mocks.pages = [[hint(4), hint(5)]];
+  mocks.choose.mockRejectedValue(new ModelCapacityDeferredError('assignments_unavailable'));
+  expect(await runFirstReviewConsumer({ owner: owner(), once: true })).toEqual({ attempted: 1, recorded: 0, skipped: 0, deferred: 1 });
+  expect(mocks.claim).toHaveBeenCalledTimes(25);
+  expect(mocks.load.mock.calls.at(-1)?.[0]).toBe(4);
 });
 it('empty once pass does not claim or back off', async () => {
   expect(await runFirstReviewConsumer({ owner: owner(), once: true })).toEqual({ attempted: 0, recorded: 0, skipped: 0, deferred: 0 });

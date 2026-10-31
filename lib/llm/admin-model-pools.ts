@@ -109,12 +109,11 @@ export async function withStoredAdminStagePools<T>(assignment: string, run: () =
   const { getSettings } = await import("@/lib/crawl/settings");
   const { onPrimary } = await import("@/lib/db");
   const settings = await onPrimary(getSettings);
-  // 배정 표(PR 3b-B, MODEL_ASSIGNMENT_TABLE): 대응하는 단계는 저장 풀 대신 표에서 고른다. 스위치가 꺼졌으면 빈 선택(오늘 그대로).
+  // 배정 표(PR 3b-B): 대응하는 단계는 저장 풀 대신 표에서 고른다. 스위치(PR 3b-E: runtime_settings 토글·env 강제)는 스냅숏과 함께 새로 읽는다 —
+  // 꺼졌으면 빈 선택(오늘 그대로). 잡 틱 안에서는 그 틱이 고정한 판의 토글이다.
   let table: Record<string, string> = {};
-  if (assignmentTableEnabled()) {
-    await ensureStageAssignments();
-    table = tableStageSelections(stageAssignmentRows, assignment, readModelRegistry(process.env));
-  }
+  await ensureStageAssignments();
+  if (assignmentTableEnabled()) table = tableStageSelections(stageAssignmentRows, assignment, readModelRegistry(process.env));
   return runWithStagePools(settings.stageModelPools ?? {}, assignment, () => {
     if (assignment.startsWith("split-tiebreak:")) return withAdminModelStage("split-tiebreak", run);
     if (assignment.startsWith("split-confirm:")) return withAdminModelStage("split-confirm", run);

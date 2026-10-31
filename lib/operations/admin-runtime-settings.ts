@@ -8,10 +8,10 @@ import { adminLog, type AdminLogRow } from "./admin-log";
 import { ROLE_LABELS } from "./contracts";
 import { isConsumerServiceInstance, parseServiceObservationKey } from "./instance";
 import { readRuntimeSettingsApply, readRuntimeSettingsRow, RUNTIME_SETTINGS_AUDIT_ACTION, type RuntimeSettingsRow } from "./runtime-settings";
-import { BUDGET_CALL_MARGIN_MS, BUDGET_THIN_MARGIN_MS, DEFAULT_JOB_BUDGET_MS, DEFAULT_RUNTIME_SETTINGS, effectiveJobBudgetMs, GROUP_LABELS,
-  JOB_CALL_ROUTES, JOB_KNOB_NAMES, JOB_LABELS, jobCallCeilingMs, resolveRuntimeSettings, ROUTE_LABELS, RUNTIME_SETTING_GROUPS, runtimeSettingLabel,
-  runtimeSettingsWarnings, shortRuntimeSettingsVersion, storedSettingsVersion, type JobKnobName, type ProductTranslationPolicy, type RuntimeSettingGroup,
-  type RuntimeSettings } from "./runtime-settings-schema";
+import { ASSIGNMENT_TABLE_READS, ASSIGNMENT_TABLE_READS_LABELS, BUDGET_CALL_MARGIN_MS, BUDGET_THIN_MARGIN_MS, DEFAULT_JOB_BUDGET_MS, DEFAULT_RUNTIME_SETTINGS,
+  effectiveJobBudgetMs, GROUP_LABELS, JOB_CALL_ROUTES, JOB_KNOB_NAMES, JOB_LABELS, jobCallCeilingMs, resolveRuntimeSettings, ROUTE_LABELS, RUNTIME_SETTING_GROUPS,
+  runtimeSettingLabel, runtimeSettingsWarnings, shortRuntimeSettingsVersion, storedSettingsVersion, type JobKnobName, type ProductTranslationPolicy,
+  type RuntimeSettingGroup, type RuntimeSettings } from "./runtime-settings-schema";
 import type { SettingsApply } from "./settings-apply";
 import { parseRuntimeLanes } from "./worker-progress";
 
@@ -26,24 +26,32 @@ import { parseRuntimeLanes } from "./worker-progress";
  * 이 모듈은 DB 를 읽으므로 서버에서만 import 한다. 클라이언트 폼은 여기서 만든 값(문자열)만 받는다.
  */
 
-export type FieldKind = "ms" | "int" | "budget";
+/** "choice"(PR 3b-E): 숫자가 아닌 열거 칸 — 입력은 options 중 하나의 value 글자다(예: assignments.tableReads 'off' | 'on') */
+export type FieldKind = "ms" | "int" | "budget" | "choice";
+export type ChoiceOption = Readonly<{ value: string; label: string }>;
 export type SettingField = {
   /** 저장 문서의 점 경로("routes.limits.product-translate.timeoutMs") — 폼 칸 이름의 뒷부분 */
   path: string;
   /** RUNTIME_SETTING_LABELS 의 한국어 이름. ms 칸은 화면이 초로 받으므로 "(ms)" 를 "(초)" 로 바꾼다 */
   label: string;
   kind: FieldKind;
-  /** 유효값(ms·정수). 값이 없는 칸(예: 호출 상한이 없는 경로 → 모델 상한을 따른다)은 null */
-  value: number | null;
-  defaultValue: number | null;
+  /** 유효값(ms·정수, choice 는 값 글자). 값이 없는 칸(예: 호출 상한이 없는 경로 → 모델 상한을 따른다)은 null */
+  value: number | string | null;
+  defaultValue: number | string | null;
   /** 저장 문서에 이 키가 있다(기본값과 같은 값이라도 "덮어씀") */
   overridden: boolean;
-  /** 입력칸에 넣을 글자 — ms 는 초("300", "1.5"), 정수는 그대로. 값이 없으면 "" */
+  /** 입력칸에 넣을 글자 — ms 는 초("300", "1.5"), 정수는 그대로, choice 는 값 글자. 값이 없으면 "" */
   input: string;
   defaultInput: string;
+  /** choice 칸의 선택지(값 → 한국어). 다른 kind 에는 없다 */
+  options?: readonly ChoiceOption[];
   readOnly?: boolean;
   note?: string;
 };
+/** 열거 칸의 선택지 — 경로마다 고정. 폼(runtimeSettingsPatchFromForm)이 이 목록 밖의 값을 거절하고, 저장 검사(zod enum)가 한 번 더 본다 */
+export const CHOICE_OPTIONS: Readonly<Record<string, readonly ChoiceOption[]>> = Object.freeze({
+  "assignments.tableReads": ASSIGNMENT_TABLE_READS.map(value => ({ value, label: ASSIGNMENT_TABLE_READS_LABELS[value] })),
+});
 
 export type RouteRow = { route: string; label: string; maxTokens: SettingField | null; concurrency: SettingField | null; timeout: SettingField | null;
   /** 호출 상한 칸이 없을 때의 설명(사다리 클라이언트 기한을 따른다 등) */
@@ -72,9 +80,13 @@ export type RuntimeSettingsAdminView = {
   effective: RuntimeSettings; defaults: RuntimeSettings;
   issues: string[]; warnings: string[];
   routes: RouteRow[]; ladders: LadderRow[]; translation: SettingField[]; jobKnobs: JobKnobRow[]; budgets: BudgetRow[];
+  /** 모델 배정 읽기(3b-E) — 열거 칸(assignments.tableReads) */
+  assignments: SettingField[];
   apply: SettingsApply | null; roles: RoleEnvView[];
   audit: AuditView[];
 };
+/** 배정 화면(/admin/models/assignments)이 그리는 「배정 표 읽기」 폼 한 묶음 — 행을 못 읽으면 revision null·읽기 전용 */
+export type AssignmentReadsControlView = { revision: number | null; rowError: string | null; fields: SettingField[] };
 
 export type AdminObservation = { key: string; value: Record<string, unknown>; ageSeconds: number };
 /** 모든 batch 역할 — 워커는 poll 마다 판을 읽으므로 maintenance 도 본다(live-settings-plan §3.3; settings-apply.ts RUNTIME_SETTINGS_APPLY.roles 와 같은 목록) */
@@ -89,14 +101,15 @@ const fmt = (value: number) => value.toLocaleString("ko-KR");
 export const msToInput = (ms: number | null | undefined): string => ms === null || ms === undefined ? "" : String(Math.round(ms) / 1000);
 export const secondsLabel = (ms: number | null | undefined): string => ms === null || ms === undefined ? "—" : `${msToInput(ms)}초`;
 export function fieldKind(path: string): FieldKind {
+  if (path in CHOICE_OPTIONS) return "choice";
   if (path.startsWith("budgets.")) return "budget";
   // routes.timeouts.<route> 는 이름에 Ms 가 없지만 ms 값이다(lib/llm/model-registry.ts DEFAULT_MODEL_TIMEOUTS)
   return path.startsWith("routes.timeouts.") || path.endsWith("Ms") ? "ms" : "int";
 }
 /** 화면 이름표 — ms 칸은 초로 받으므로 "(ms)" 를 "(초)" 로 */
 export function fieldLabel(path: string): string {
-  const label = runtimeSettingLabel(path);
-  return fieldKind(path) === "int" ? label : label.replace("(ms)", "(초)");
+  const label = runtimeSettingLabel(path), kind = fieldKind(path);
+  return kind === "int" || kind === "choice" ? label : label.replace("(ms)", "(초)");
 }
 
 /** 저장 문서(sparse)의 점 경로 값. 없으면 undefined, 명시된 null 은 null */
@@ -109,13 +122,20 @@ export function storedLeaf(stored: unknown, path: string): unknown {
   return node;
 }
 
-function field(stored: unknown, path: string, value: number | null | undefined, defaultValue: number | null | undefined,
+function field(stored: unknown, path: string, value: number | string | null | undefined, defaultValue: number | string | null | undefined,
   extra: Partial<Pick<SettingField, "readOnly" | "note">> = {}): SettingField {
   const kind = fieldKind(path);
   const leaf = storedLeaf(stored, path);
-  const toInput = (number: number | null | undefined) => number === null || number === undefined ? "" : kind === "int" ? String(number) : msToInput(number);
+  const toInput = (raw: number | string | null | undefined) => raw === null || raw === undefined ? "" : typeof raw === "string" || kind === "int" ? String(raw) : msToInput(raw);
   return { path, label: fieldLabel(path), kind, value: value ?? null, defaultValue: defaultValue ?? null, overridden: leaf !== undefined && leaf !== null,
-    input: toInput(value), defaultInput: toInput(defaultValue), ...extra };
+    input: toInput(value), defaultInput: toInput(defaultValue), ...(kind === "choice" ? { options: CHOICE_OPTIONS[path] } : {}), ...extra };
+}
+
+/** 모델 배정 읽기(3b-E) — 열거 칸 하나. 켜면 모든 역할이 30초 안에 배정 표를 읽고, 끄면 설정으로 돌아간다(재배포 없음) */
+export function assignmentFields(stored: unknown, effective: RuntimeSettings, defaults: RuntimeSettings): SettingField[] {
+  return [field(stored, "assignments.tableReads", effective.assignments.tableReads, defaults.assignments.tableReads,
+    { note: "켜면 1차·2차·단계 풀·등록부 기본값이 배정 표의 실전(live) 행으로 고릅니다(쓸 행이 없는 단계는 설정 그대로). 모든 역할이 30초 안에 같은 값을 읽습니다 — 재배포 없음. "
+      + "env MODEL_ASSIGNMENT_TABLE(1·0)이 있는 앱은 그 값이 이깁니다(비상용)." })];
 }
 
 function modelCeiling(route: string, models: readonly ModelDefinition[]): string | null {
@@ -258,6 +278,7 @@ export function buildRuntimeSettingsAdminView(input: AdminViewInput): RuntimeSet
     stored, effective, defaults, issues: issues.map(runtimeSettingsIssueMessage), warnings: warnings.map(runtimeSettingsWarningMessage),
     routes: routeRows(stored, effective, defaults, models), ladders: ladderRows(stored, effective, defaults), translation: translationFields(stored, effective, defaults),
     jobKnobs: jobKnobRows(stored, effective, defaults), budgets: budgetRows(stored, effective, defaults, models, roles, warnings, now),
+    assignments: assignmentFields(stored, effective, defaults),
     apply: input.apply ?? null,
     // env 등록부 여부는 관측에서 직접 읽은 것과 적용 확인(WP-B settings-apply.ts RoleSettingsApply.registryEnv, 선택 필드) 중 하나라도 true 면 true
     roles: RUNTIME_SETTINGS_ROLES.map(role => ({ role, label: ROLE_LABELS[role] ?? role,
@@ -285,6 +306,17 @@ export async function readRuntimeSettingsAdminView(now = new Date()): Promise<Ru
     adminLog({ actions: [RUNTIME_SETTINGS_AUDIT_ACTION] }).catch(() => [] as AdminLogRow[]),
   ]);
   return buildRuntimeSettingsAdminView({ row: row.value, rowError: row.error, models, apply, observations, audit, now });
+}
+
+/** 배정 화면의 「배정 표 읽기」 폼 — 행 하나만 읽는다(못 읽으면 revision null·읽기 전용, 값은 기본값). 순수 부분은 assignmentFields */
+export function buildAssignmentReadsControl(row: RuntimeSettingsRow | null, rowError: string | null = null): AssignmentReadsControlView {
+  const { settings } = resolveRuntimeSettings(row?.values ?? null);
+  return { revision: row?.revision ?? null, rowError: row ? null : rowError ?? "runtime_settings_row_missing",
+    fields: assignmentFields(row?.values ?? null, settings, DEFAULT_RUNTIME_SETTINGS) };
+}
+export async function readAssignmentReadsControl(): Promise<AssignmentReadsControlView> {
+  try { return buildAssignmentReadsControl(await readRuntimeSettingsRow()); }
+  catch (error) { return buildAssignmentReadsControl(null, error instanceof Error ? error.message : String(error)); }
 }
 
 // ---------- 폼 → sparse patch ----------
@@ -327,6 +359,12 @@ export function runtimeSettingsPatchFromForm(group: RuntimeSettingGroup, form: F
       continue;
     }
     const raw = text(entry), initial = text(form.get(`initial:${path}`));
+    if (kind === "choice") {
+      // 열거 칸(3b-E): 선택지 밖의 값은 거절, 처음 그린 값과 같으면 바뀐 것이 없다. 값은 글자 그대로 저장 문서에 들어간다
+      if (!CHOICE_OPTIONS[path]?.some(option => option.value === raw)) { issues.push(`${label}: 고를 수 있는 값이 아닙니다(${raw || "비었음"})`); continue; }
+      if (raw !== initial) { setLeaf(patch, path, raw); changed.push(path); }
+      continue;
+    }
     if (kind === "budget") {
       const autoNow = text(form.get(`auto:${path}`)) === "on", autoBefore = text(form.get(`initialAuto:${path}`)) === "1";
       if (autoNow) { if (!autoBefore) { setLeaf(patch, path, "auto"); changed.push(path); } continue; }
@@ -374,7 +412,8 @@ export function runtimeSettingsIssueMessage(issue: string): string {
     case "min_call_exceeds_timeout": return `${jobLabel(detail)} 최소 남은 시간이 호출 상한보다 깁니다 — 틱이 호출을 시작하지 못합니다`;
     case "auto_budget_without_route": return `${jobLabel(detail)} 은 호출 상한 경로가 없어 auto 예산을 쓸 수 없습니다`;
     case "timeout_below_engine_bound": return `${routeLabel(detail)} 호출 상한이 엔진 기한 + ${secondsLabel(BUDGET_CALL_MARGIN_MS)}보다 짧습니다`;
-    case "runtime_settings_invalid": return `${runtimeSettingLabel(detail)}: 범위를 벗어났습니다`;
+    case "runtime_settings_invalid": return detail in CHOICE_OPTIONS ? `${runtimeSettingLabel(detail)}: 고를 수 있는 값이 아닙니다(${CHOICE_OPTIONS[detail].map(option => option.value).join(" · ")})`
+      : `${runtimeSettingLabel(detail)}: 범위를 벗어났습니다`;
     case "runtime_settings_version": return `저장 문서 판 표시가 다릅니다: ${detail}`;
     default: return issue;
   }
