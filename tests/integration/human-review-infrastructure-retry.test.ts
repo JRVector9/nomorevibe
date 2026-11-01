@@ -25,9 +25,10 @@ beforeEach(async () => {
 
 async function held() {
   const repo = 'human-infrastructure/app', productUrl = 'https://human-infrastructure.example.test', now = new Date();
-  const [document] = await db.insert(crawlDocuments).values({ repo, productUrl, fetchedAt: now,
-    pageText: 'A practical application that helps people plan their daily work.',
-    pageMeta: { title: 'Infrastructure App', description: 'A practical application for daily work' } }).returning();
+  const [document] = await db.insert(crawlDocuments).values({ repo, productUrl, fetchedAt: now, pageStatus: 200,
+    repoMeta: { description: 'A practical application for daily work', stargazers_count: 3,
+      pushed_at: now.toISOString(), owner: { type: 'User' } },
+    pageMeta: { title: 'Infrastructure App', description: 'A practical application for daily work', repositoryKeys: [repo] } }).returning();
   const [candidate] = await db.insert(crawlCandidates).values({ repo, productUrl, state: 'needs_review',
     reason: 'second_review_split', decidedBy: 'auto', judgedAt: now, updatedAt: now,
     signals: { judgedRevision: judgeRevision(document) } }).returning();
