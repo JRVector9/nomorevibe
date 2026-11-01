@@ -12,7 +12,10 @@ import { runtimeSettingsSnapshot } from "@/lib/operations/runtime-settings-store
  *   없음·"" = 토글을 따른다(기본). 그 밖의 값 → 토글을 따르고 한 번 남긴다(`model_assignment_table.invalid`). env 는 프로세스 시작 때 한 번 읽는다.
  * - 토글을 아직 읽지 못했으면(`source: 'unread'` — 스냅숏이 DB 에서 온 적이 없다) 동기 고르기는 꺼짐(legacy)으로 본다. 비동기 길목
  *   (`requireStageAssignments`)은 DB 를 읽을 수 있는 프로세스에서 `assignments_unavailable` 로 미룬다 — 운영자가 켠 토글을 모른 채 예전 설정으로 고르지 않는다.
- *   DB 읽기 스위치가 꺼진 프로세스(MODEL_SERVING_CONTRACTS_DB=0·DATABASE_URL 없음·replay)는 언제나 legacy 다.
+ *   DB 읽기 스위치가 꺼진 프로세스(MODEL_SERVING_CONTRACTS_DB=0·DATABASE_URL 없음)는 언제나 legacy 다.
+ * - 리플레이는 토글·표를 읽지 않고 언제나 legacy 며 미루지도 않는다: replay DB 범위(`currentReplayDb()`, stage-assignment-snapshot 이 관문 앞단에서 가른다)와
+ *   고정 입력 실행이 틱에 고정한 `source: 'replay'` 판(runtime-settings-store `replayRuntimeSettingsSnapshot`) — 그 판은 「아직 못 읽음」(unread)이 아니라
+ *   그 실행이 정한 꺼짐이다(`assignmentTableReplayPinned()`).
  */
 export const MODEL_ASSIGNMENT_TABLE_ENV = "MODEL_ASSIGNMENT_TABLE";
 
@@ -51,8 +54,15 @@ export function assignmentFlag(): AssignmentFlag {
   const env = envOverride();
   if (env) return { enabled: env === "on", source: "env", override: env };
   const snapshot = runtimeSettingsSnapshot();
+  // 리플레이가 틱에 고정한 판: 토글을 읽지 않는 것이 그 실행의 결정이다 — 언제나 꺼짐(legacy), unread 로 미루지 않는다.
+  if (snapshot.source === "replay") return { enabled: false, source: "runtime", override: null };
   if (snapshot.source !== "db") return { enabled: false, source: "unread", override: null };
   return { enabled: snapshot.settings.assignments.tableReads === "on", source: "runtime", override: null };
+}
+
+/** 지금 이 틱이 리플레이(고정 입력 실행)가 고정한 `source: 'replay'` 판에 묶였나 — 배정 표 관문은 이 틱에서 토글·표를 읽지 않고 미루지 않는다. */
+export function assignmentTableReplayPinned(): boolean {
+  return runtimeSettingsSnapshot().source === "replay";
 }
 
 /** 배정 표 읽기가 켜졌나(강제 → 토글 → 못 읽었으면 꺼짐). */

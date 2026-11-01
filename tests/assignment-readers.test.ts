@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CrawlCandidate, CrawlDocument, CrawlReviewAttempt, SecondReview } from "@/lib/db/schema";
-import { MODEL_ASSIGNMENT_TABLE_ENV, assignmentFlag, assignmentTableEnabled, parseAssignmentTableOverride, setAssignmentTableEnabledForTest } from "@/lib/llm/assignment-flag";
+import { MODEL_ASSIGNMENT_TABLE_ENV, assignmentFlag, assignmentTableEnabled, assignmentTableReplayPinned, parseAssignmentTableOverride,
+  setAssignmentTableEnabledForTest } from "@/lib/llm/assignment-flag";
 import type { ModelAssignmentRow } from "@/lib/llm/capacity-helpers";
 import { assignmentSourceFor, stageTableRows } from "@/lib/llm/stage-assignments";
 import { assignmentSource, ensureStageAssignments, requireStageAssignments, setStageAssignmentsForTest, stageAssignmentRows } from "@/lib/llm/stage-assignment-snapshot";
-import { setRuntimeSettingsForTest } from "@/lib/operations/runtime-settings-store";
+import { replayRuntimeSettingsSnapshot, runtimeSettingsSnapshotFromStored, setRuntimeSettingsForTest, setRuntimeSettingsLoader,
+  withRuntimeSettings, type RuntimeSettingsLoader } from "@/lib/operations/runtime-settings-store";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { firstReviewTableRows, firstReviewers, firstReviewerKey, hasFirstReviewer, selectFirstReviewer, selectTableFirstReviewer,
   tableFirstReviewers } from "@/lib/crawl/first-reviewers";
@@ -22,6 +24,10 @@ import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
  */
 vi.mock("@/lib/db", async importOriginal => ({ ...(await importOriginal<object>()),
   db: new Proxy({}, { get: () => () => { throw new Error("db_down"); } }) }));
+// replay DB 범위(currentReplayDb)만 흉내 낸다 — 관문이 범위 안에서 읽지 않고, 범위 밖의 다음 길목을 「읽은 것」으로 두지 않는가(PR #771 CI 회귀).
+const replay = vi.hoisted(() => ({ active: false, marker: {} as object }));
+vi.mock("@/lib/db/replay-scope", async importOriginal => ({ ...(await importOriginal<object>()),
+  currentReplayDb: () => replay.active ? replay.marker : undefined }));
 let seq = 0;
 const row = (value: Partial<ModelAssignmentRow> & Pick<ModelAssignmentRow, "stage" | "model" | "provider">): ModelAssignmentRow => ({
   assignmentId: value.assignmentId ?? `row-${String(++seq).padStart(3, "0")}`, deviceId: "dev-a", registryKey: "supa:review", transport: "gateway",
@@ -93,6 +99,46 @@ describe("assignment-table switch — runtime_settings toggle, env override (PR 
     await ensureStageAssignments(0);
     expect(stageAssignmentRows("ai1")).toBeNull();
     await expect(requireStageAssignments()).rejects.toMatchObject({ reason: "assignments_unavailable" });
+  });
+
+  it("a replay-pinned tick (fixed-input replay) is a decided off: legacy, no toggle read, no deferral — and the pin does not leak out of the tick", async () => {
+    vi.stubEnv("DATABASE_URL", "postgres://nobody:nothing@127.0.0.1:1/never");
+    vi.stubEnv("MODEL_SERVING_CONTRACTS_DB", "");                                                  // a DB-reading process whose reads fail (db_down)
+    expect(assignmentFlag().source).toBe("unread");
+    await withRuntimeSettings(replayRuntimeSettingsSnapshot(), async () => {
+      expect(assignmentTableReplayPinned()).toBe(true);
+      expect(assignmentFlag()).toEqual({ enabled: false, source: "runtime", override: null });
+      await expect(requireStageAssignments()).resolves.toBeUndefined();                       // the fixed tick never defers on the unread process snapshot
+      await expect(ensureStageAssignments(0)).resolves.toBeUndefined();
+      expect(assignmentSource("ai1")).toBe("legacy");
+      expect(stageAssignmentRows("ai1")).toBeNull();
+    });
+    // outside the tick the process is still unread (the tick read nothing and left no read timestamp): the live gate keeps deferring as designed
+    expect(assignmentTableReplayPinned()).toBe(false);
+    expect(assignmentFlag().source).toBe("unread");
+    await expect(requireStageAssignments()).rejects.toMatchObject({ reason: "assignments_unavailable" });
+  });
+
+  it("a gate crossed inside a replay DB scope reads nothing and does not count as a read: the next gate outside the scope reads the toggle itself", async () => {
+    vi.stubEnv("DATABASE_URL", "postgres://nobody:nothing@127.0.0.1:1/never");
+    vi.stubEnv("MODEL_SERVING_CONTRACTS_DB", "");
+    // the real loader (serving-contract-store) would fail on db_down; count a stand-in that serves the stored toggle
+    const holder = globalThis as { __nmvRuntimeSettings?: { loader: RuntimeSettingsLoader | null } };
+    const original = holder.__nmvRuntimeSettings?.loader ?? null;
+    let reads = 0;
+    setRuntimeSettingsLoader(async () => { reads++; return runtimeSettingsSnapshotFromStored(TOGGLE_OFF, 7).snapshot; });
+    try {
+      replay.active = true;
+      await expect(requireStageAssignments()).resolves.toBeUndefined();                       // replay scope: legacy, no deferral …
+      await expect(ensureStageAssignments(0)).resolves.toBeUndefined();
+      expect(reads).toBe(0);                                                                  // … and no toggle read
+      expect(assignmentFlag().source).toBe("unread");
+      replay.active = false;
+      await expect(requireStageAssignments()).resolves.toBeUndefined();                       // outside: the toggle is read now (not skipped as "fresh") → off → legacy
+      expect(reads).toBe(1);
+      expect(assignmentFlag()).toEqual({ enabled: false, source: "runtime", override: null });
+      expect(assignmentSource("ai1")).toBe("legacy");
+    } finally { replay.active = false; setRuntimeSettingsLoader(original); }
   });
 });
 

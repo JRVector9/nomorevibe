@@ -288,13 +288,17 @@ DR fence → control FOR UPDATE(정책이 없어도 된다) → 배정 행 FOR U
 - 토글을 아직 읽지 못한 프로세스(`source: 'unread'` — 스냅숏이 DB 에서 온 적이 없다): 동기 고르기는 꺼짐(legacy)으로 보고, 비동기 길목(`requireStageAssignments`)은
   **DB 에서 설정을 읽는 프로세스**(serving-contract-store 의 DB 읽기 스위치가 켜짐 — `MODEL_SERVING_CONTRACTS_DB` 가 `0` 이 아니고 DATABASE_URL 이 있다)에서만
   `ModelCapacityDeferredError('assignments_unavailable')` 로 미룬다(프로세스마다 한 번 `assignment_toggle_unread`). 운영자가 켠 토글을 모른 채 예전 설정으로 고르지 않는다.
-  env 전용 프로세스(`MODEL_SERVING_CONTRACTS_DB=0`·DATABASE_URL 없음·replay)는 언제나 legacy 고 미루지 않는다.
+  env 전용 프로세스(`MODEL_SERVING_CONTRACTS_DB=0`·DATABASE_URL 없음)는 언제나 legacy 고 미루지 않는다.
+- 리플레이는 토글·표를 읽지 않고 언제나 legacy 며 미루지도 않는다 — replay DB 범위(`currentReplayDb()`, 관문 맨 앞에서 가른다)와 고정 입력 실행
+  (`pipeline-replay-model-runner`)이 워커 틱에 고정하는 `source: 'replay'` 판(`replayRuntimeSettingsSnapshot`) 둘 다. 그 판은 「아직 못 읽음」이 아니라 그 실행이
+  정한 꺼짐이다(`assignmentTableReplayPinned()`). replay 범위에서 지난 길목은 읽은 시각을 남기지 않아, 같은 프로세스가 범위 밖에서 다음 길목을 지날 때 토글을 새로 읽는다
+  (PR #771 CI: 범위 안 길목이 30초 「읽음」으로 남아 범위 밖 정리 잡이 unread 로 미뤄졌다).
 - 스냅숏(`lib/llm/stage-assignment-snapshot.ts`): 고르기 함수는 동기라 live 행 전부를 30초 스냅숏으로 읽는다(오래된 동기 읽기는 뒤에서 한 번 다시 읽는다).
   `ensureStageAssignments()` 는 먼저 토글(`ensureRuntimeSettings`, 같은 주기)을 새로 읽고 켜졌을 때만 행을 읽는다 — 꺼졌으면 SELECT 없음, 행은 비운다.
   비동기 길목 — 1차 `chooseFirstReviewForCandidate`(TX 밖, 스위치와 무관하게 관문을 지난다), 2차 올리기·정리·stale 정리·결과 기록·입력 로더, 단계 풀
   (`withStoredAdminStagePools`, 스위치와 무관하게 토글을 새로 읽는다), AI1 소비자 루프(`lib/crawl/consumers/first.ts`, 쪽마다) — 은 먼저 새 스냅숏을 기다린다.
   **켜졌는데 한 번도 못 읽었으면** 그 길목은 `assignments_unavailable` 로 미룬다(예전 목록으로 고르거나 2차 표를 `model_removed` 로 닫지 않는다).
-  replay 범위에서는 읽지 않는다(언제나 예전 설정).
+  리플레이(replay DB 범위·고정 입력 실행의 고정 틱)에서는 읽지 않는다(언제나 예전 설정, 위 항목).
 - 출처(`assignmentSource(stage)`): `table` · `legacy`(꺼짐·아직 못 읽음·replay) · `legacy_empty_table`(켜졌지만 쓸 행이 없다 — 프로세스마다 한 번
   `assignment_table_empty:<stage>`). 관리자 화면(3b-D)과 pipeline-control 스냅숏의 선택 칸 `assignments`(스위치가 켜진 프로세스만 —
   `enabled`·`flagSource`(runtime·env·unread)·단계별 `live` 행 수·`tableReady`·`source`)가 보인다. 상태 줄: `[assignments] 배정 표 읽기(이 프로세스)=on(runtime) ai1=table(live 2) …`.
