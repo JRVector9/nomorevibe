@@ -516,6 +516,32 @@ Compose `init: true`를 사용한다. 초기 자원 초과가 보이면 탐색/�
 
 ## 생존·진행·장애 복구
 
+### 운영 DB 연결을 직접 끊지 않는다(2026-11-01 격리 사고)
+
+2026-11-01 15:22:07Z(2개)와 15:28:08.021Z(19개)에 앱 밖에서 `pg_terminate_backend` 로 nomorevibe 연결이 일괄 종료됐다
+(Postgres 로그 `FATAL: terminating connection due to administrator command`, PgBouncer `server conn crashed?`).
+연결을 잃은 M3·mini 워커가 종료코드 1로 재시작을 반복했고, 발행 primary 가 5분 안에 3번 새 부팅으로 lease 를 잡으려 해
+`role-leader.ts` 규칙대로 15분 `primary_quarantined` 에 걸렸다. 그동안 배포 plan 의 다섯 역할 관문이 약 145초 뒤
+timeout(공개 사유 `inspect-private-receipts`)으로 거절했다. Postgres 재시작·장애조치는 없었다.
+
+규칙:
+
+1. **OPEN 중에는 nomorevibe 연결을 일괄 종료하지 않는다.** 사용자 조건(`usename='nomorevibe'`)이나 DB 조건으로
+   `pg_terminate_backend` 를 여러 개에 거는 일은 capacity DRAIN 과 진행 중 0건을 확인한 뒤에만 한다.
+2. 잠금을 풀어야 하면 먼저 `pg_locks`·`pg_stat_activity` 로 **잠금을 쥔 pid 하나**를 찾고, 그 pid 의 `application_name`·
+   쿼리로 어떤 잡인지 본 뒤 그 하나만 끊는다. 워커(역할 lease·잡 lease 를 쥔 연결)는 끊기보다 그 앱을 SIGTERM 으로
+   재시작하는 편이 근거(`group_exited`)를 남긴다([CHECK 재구성 migrate 는 DRAIN 뒤에](deployment-fast-path.md)).
+3. 장부 CHECK·표 재구성처럼 ACCESS EXCLUSIVE 를 잡는 마이그레이션은 DRAIN 아래에서 돌리고, 잠금 대기 때문에
+   연결을 끊어야 할 상황 자체를 만들지 않는다.
+4. 그래도 끊었다면: `role_leases` 의 `quarantine_until`·`primary_boots` 를 읽어 격리 여부를 확인한다. 격리는 강제로 지우지 않고
+   풀릴 때까지(15분) 기다린 뒤 plan 을 다시 낸다. 격리 중에는 예비가 역할을 맡을 수 있다.
+5. 원인 조사: 죽은 task 컨테이너는 Swarm 이 곧 지우므로 루프 도중에 `docker service ps <svc> -q --filter desired-state=shutdown`
+   → `docker logs` 로 떠 둔다. DB 쪽은 Patroni 저널(`journalctl -u patroni`)에서 `administrator command` 를 찾는다.
+   이 DB 는 100ms 넘는 쿼리를 모두 남기므로 grep 할 때 `duration:` 줄은 뺀다.
+
+워커는 연결 한 번 끊김에 프로세스째 죽지 않고 재연결 뒤 이어가도록 고쳤다(같은 boot 로 lease 갱신 — 격리로 번지지 않는다).
+lease 를 증명할 수 없을 만큼 오래 끊기면 종전처럼 그 역할의 일을 멈춘다.
+
 ### 역할 후보 운영·교체
 
 2026-09-29 운영에서는 M3의 crawler·reviewer·publisher·maintenance·text가
