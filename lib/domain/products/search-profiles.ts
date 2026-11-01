@@ -20,6 +20,7 @@ import { assertJobBatchAdmission } from "@/lib/jobs/batch-repository";
 import { lockProductGeneration, type ProductTransaction } from "./generation";
 import { and, asc, eq, gt, inArray, notInArray, sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
+import { retryBackoffSql } from "@/lib/db/retry-backoff";
 import { products, productSearchProfiles, type Product, type ProductSearchProfile } from "@/lib/db/schema";
 import { assertJobLease, assertJobLeaseAtWallTime, type JobLease } from "@/lib/jobs/control";
 import { PROFILE_MODEL, keywordText, profileEvidence, profileHash } from "./search-profile";
@@ -198,7 +199,7 @@ export async function recordProfileResult(task: ProfileTask, lease: JobLease, re
         .onConflictDoUpdate({ target: productSearchProfiles.productId, set: { errorCode: code, updatedAt: sql`now()`,
           attempts: sql`${productSearchProfiles.attempts} + 1`,
           retryAt: providerError ? sql`now() + interval '30 minutes'`
-            : sql`now() + least(interval '24 hours', interval '5 minutes' * power(2, ${productSearchProfiles.attempts}))` } });
+            : retryBackoffSql(productSearchProfiles.attempts) } });
     }
     await assertJobLeaseAtWallTime(tx, lease);
     return true;
@@ -275,7 +276,7 @@ export async function recordVerificationResult(task: ProfileTask, lease: JobLeas
         updatedAt: sql`now()`,
         verifyAttempts: limited ? productSearchProfiles.verifyAttempts : sql`${productSearchProfiles.verifyAttempts} + 1`,
         verifyRetryAt: limited ? sql`now() + interval '30 minutes'`
-          : sql`now() + least(interval '24 hours', interval '5 minutes' * power(2, ${productSearchProfiles.verifyAttempts}))`,
+          : retryBackoffSql(productSearchProfiles.verifyAttempts),
       }).where(eq(productSearchProfiles.productId, product.id));
     }
     await assertJobLease(tx, lease);
@@ -616,7 +617,7 @@ async function writeReservedVerificationResult(value: ProfileTask, job: JobLease
         updatedAt: sql`now()`,
         verifyAttempts: limited ? productSearchProfiles.verifyAttempts : sql`${productSearchProfiles.verifyAttempts} + 1`,
         verifyRetryAt: limited ? sql`now() + interval '30 minutes'`
-          : sql`now() + least(interval '24 hours', interval '5 minutes' * power(2, ${productSearchProfiles.verifyAttempts}))`,
+          : retryBackoffSql(productSearchProfiles.verifyAttempts),
       }).where(eq(productSearchProfiles.productId, product.id));
     }
     await finalVerifyWall(tx, proof.role, lease);
