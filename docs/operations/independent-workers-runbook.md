@@ -693,6 +693,11 @@ DB 시계로 관측과 lease 나이를 계산하고 기존 진행 판정도 JSON
 `readModelCapacityControlObservation()`이 잠금 없이 `to_jsonb(f)`로 전체 행을 읽기 때문이다. 쓰기 권한은 부여하지 않는다.
 2026-10-27 감사 20513으로 누락된 SELECT를 보완하고 기본 읽기 전용 on·SELECT true·쓰기 false를 확인했다.
 정확한 표 목록과 GRANT·검사 SQL은 [감시 연결 기록](2026-10-22-worker-monitor-rollout.md)에 있다.
+발굴 진행 감시 릴리스의 `0162_discovery_checkpoints`는 기존 monitor 역할이 있으면
+`discovery_checkpoints`, `github_ko_discovery_control`, `github_ko_discovery_queries`,
+`github_ko_discovery_staging`, `github_discovery_pages` 다섯 표에만 SELECT를 추가한다.
+배포 전 같은 기록의 추가 읽기 증명 SQL로 다섯 표의 SELECT true·쓰기 false를 확인한다.
+이 소스 변경 자체는 마이그레이션 실행이나 운영 권한 보완 완료를 뜻하지 않는다.
 이 권한 보완과 새 monitor의 readiness·양쪽 Push 수신·전체 정상 인증 결과는 각각 확인한다.
 진행 판정은 주 DB의 `db`를 사용하므로 `READ_DATABASE_URL`만 넣어서는 연결되지 않는다.
 현재 발행 적격 큐는 `CONNECT_AGENT_URL` 유무에 의존하지 않는다. 감시자에게 publisher의 URL·인증을 복사하지 않는다.

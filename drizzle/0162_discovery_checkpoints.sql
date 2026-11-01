@@ -9,7 +9,7 @@ CREATE TABLE discovery_checkpoints (
  intent varchar(24) NOT NULL CHECK (intent IN ('ready','caught_up','queue_cap','rate_cap','backoff','upstream_error','no_work','measurement_unknown')),
  resume_at timestamp,
  revision bigint NOT NULL DEFAULT 0 CHECK (revision BETWEEN 0 AND 9007199254740991),
- first_seen_at timestamp NOT NULL DEFAULT now(), progress_at timestamp, acknowledged_at timestamp,
+ first_seen_at timestamp NOT NULL DEFAULT now(), progress_at timestamp, failure_started_at timestamp, acknowledged_at timestamp,
  recorded_at timestamp NOT NULL DEFAULT now(), PRIMARY KEY(source,subject),
  CHECK (reference IS NULL OR reference ~ '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')
 );
@@ -34,7 +34,11 @@ CREATE POLICY discovery_checkpoints_oracle_ko ON discovery_checkpoints AS RESTRI
 DO $$ BEGIN
  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='nomorevibe_oracle_github_ko') THEN
   GRANT SELECT,INSERT ON discovery_checkpoints TO nomorevibe_oracle_github_ko;
-  GRANT UPDATE(generation,semantic,reference,intent,resume_at,revision,first_seen_at,progress_at,acknowledged_at,recorded_at)
+  GRANT UPDATE(generation,semantic,reference,intent,resume_at,revision,first_seen_at,progress_at,failure_started_at,acknowledged_at,recorded_at)
     ON discovery_checkpoints TO nomorevibe_oracle_github_ko;
+ END IF;
+ IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='nomorevibe_monitor_20261022') THEN
+  GRANT SELECT ON discovery_checkpoints,github_ko_discovery_control,github_ko_discovery_queries,
+    github_ko_discovery_staging,github_discovery_pages TO nomorevibe_monitor_20261022;
  END IF;
 END $$;

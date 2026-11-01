@@ -109,6 +109,19 @@ it('acknowledges a real completed empty scan but never a failed fetch as success
   })]);
 });
 
+it('never acknowledges an already-seen partial page before a later page fails', async () => {
+  const cursor = { seenUntil: 77, seenIds: ['old'] }, ctx = context(cursor);
+  const request: CappedRequest = async url => {
+    const page = new URL(url).searchParams.get('page');
+    return page === '1' ? new Response('{}', { status: 500 })
+      : new Response(JSON.stringify({ nbPages: 3, nbHits: 3, hits: [hit('old', 77, null)] }), { status: 200 });
+  };
+  expect(await seedFromShowHN(ctx, request)).toEqual({ done: false, cursor });
+  expect(ctx.save).toHaveBeenCalledOnce();
+  expect(ctx.save).toHaveBeenCalledWith(cursor, [expect.objectContaining({ intent: 'upstream_error', acknowledged: false, progressed: false })]);
+  expect(mocks.enqueue).not.toHaveBeenCalled();
+});
+
 it('예산이 끊기면 처리한 곳까지만 커서를 올린다', async () => {
   let budget = true;
   mocks.enqueue.mockImplementation(async () => { budget = false; return 1; });

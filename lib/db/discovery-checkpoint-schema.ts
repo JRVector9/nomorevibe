@@ -13,6 +13,7 @@ export const discoveryCheckpoints = pgTable("discovery_checkpoints", {
   revision: bigint("revision", { mode: "number" }).notNull().default(0),
   firstSeenAt: timestamp("first_seen_at").notNull().defaultNow(),
   progressAt: timestamp("progress_at"),
+  failureStartedAt: timestamp("failure_started_at"),
   acknowledgedAt: timestamp("acknowledged_at"),
   recordedAt: timestamp("recorded_at").notNull().defaultNow(),
 }, t => [primaryKey({ columns: [t.source, t.subject] }), uniqueIndex("discovery_checkpoints_slots").on(t.source, t.slot),

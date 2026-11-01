@@ -163,7 +163,7 @@ export const ORACLE_CONSUMER_DB_PROFILES: Partial<Record<string, OracleConsumerD
       github_discovery_pages: { select: true, insert: true, update: ['owner','state','result','completed_at','owner_name','lease_until','updated_at'] },
       github_collector_apps: { select: true, update: ['core_quota','quota_observed_at'] },
       rate_limits: { select: true, insert: true, update: ['reset_at'] }, operations_observations: observationsWrite,
-      discovery_checkpoints: { select: true, insert: true, update: ['generation','semantic','reference','intent','resume_at','revision','first_seen_at','progress_at','acknowledged_at','recorded_at'] } } },
+      discovery_checkpoints: { select: true, insert: true, update: ['generation','semantic','reference','intent','resume_at','revision','first_seen_at','progress_at','failure_started_at','acknowledged_at','recorded_at'] } } },
   // 제작 근거 스캔(E5): claim·스캔 기록·포기와 App 전용 GitHub 수집(설치 토큰·한도 관측·쿨다운)만 한다. 큐 채우기·제품 연결·후보 풀기는
   // M3 컨트롤러가 한다 — products·crawl_candidates·jobs·pipeline_item_leases·개인 토큰 표(github_collector_accounts)·AI·HTTP 권한이 없다.
   'agent-scan': { principal: 'nomorevibe_oracle_agent_scan', profile: { statementTimeout: '10s',

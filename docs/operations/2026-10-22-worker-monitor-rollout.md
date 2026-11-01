@@ -81,6 +81,26 @@ SELECT has_table_privilege('nomorevibe_monitor_20261022', 'public.dr_writer_fenc
 
 기대값은 `can_select=true`, `can_write=false`다. 이 권한 확인은 새 monitor의 readiness·양쪽 Push UP이나 전체 정상 인증의 통과를 뜻하지 않는다.
 
+발굴 진행 감시 릴리스는 아래 다섯 표를 읽기 범위에 추가한다. `0162_discovery_checkpoints`는
+기존 `nomorevibe_monitor_20261022` 역할이 있을 때 이 표들에만 SELECT를 부여한다.
+역할 생성·쓰기·전체 표·기본 권한 변경은 포함하지 않는다. 새 환경의 monitor 프로비저닝에도
+이 다섯 SELECT를 추가하고, 기존 환경에는 마이그레이션 적용 후 다음 증명을 남긴다.
+아래는 실행할 검사이며 이 문서 추가 시 운영에서 통과했다고 주장하지 않는다.
+
+```sql
+SELECT t.name,
+       has_table_privilege('nomorevibe_monitor_20261022', 'public.' || t.name, 'SELECT') AS can_select,
+       (has_any_column_privilege('nomorevibe_monitor_20261022', 'public.' || t.name, 'INSERT,UPDATE')
+        OR has_table_privilege('nomorevibe_monitor_20261022', 'public.' || t.name, 'DELETE,TRUNCATE')) AS can_write
+FROM (VALUES ('discovery_checkpoints'), ('github_ko_discovery_control'),
+             ('github_ko_discovery_queries'), ('github_ko_discovery_staging'),
+             ('github_discovery_pages')) AS t(name)
+ORDER BY t.name;
+```
+
+다섯 행 모두 `can_select=true`, `can_write=false`를 확인한 뒤 새 monitor를 배포한다.
+운영 전용 계정으로의 읽기 성공·readiness·양쪽 Push 및 새 `discoveryFailures`의 실제 수신은 별도로 증명한다.
+
 Push URL은 `MONITOR_PUSH_URL`과 `MONITOR_EXTERNAL_PUSH_URL`에만 주입했다. 신규 monitor 앱에만
 Dokploy `mounts.create`로 `/etc/resolv.conf`를 지정해 nameserver `100.100.100.100`을 사용했다.
 기존 호스트와 서비스의 DNS는 변경하지 않았다.

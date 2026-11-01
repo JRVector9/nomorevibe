@@ -11,7 +11,7 @@ const obligation = (extra: Partial<DiscoveryObligation> = {}): DiscoveryObligati
 const receipt = (extra: Partial<DiscoveryReceipt> = {}): DiscoveryReceipt => ({
   source: 'github-full', subject: discoveryHash('query-a'), generation: discoveryHash('config'), semantic: discoveryHash('cursor'),
   reference: null, intent: 'ready', resumeAt: null, firstSeenAt: ago(120), progressAt: ago(1),
-  acknowledgedAt: null, recordedAt: ago(0), ...extra,
+  failureStartedAt: null, acknowledgedAt: null, recordedAt: ago(0), ...extra,
 });
 function report(subjects = [obligation()], receipts = [receipt()]) {
   const otherSources = DISCOVERY_SOURCES.filter(s => !subjects.some(row => row.source === s));
@@ -93,8 +93,8 @@ it('reports missing workers and consumers only after current work is due and gra
 });
 
 it('retains an upstream error across repeated attempts and gives it a bounded longer grace', () => {
-  expect(report(undefined, [receipt({ intent: 'upstream_error', progressAt: ago(20) })]).overall).toBe('ok');
-  expect(report(undefined, [receipt({ intent: 'upstream_error', progressAt: ago(31), recordedAt: at })]).failures.failures)
+  expect(report(undefined, [receipt({ intent: 'upstream_error', failureStartedAt: ago(20) })]).overall).toBe('ok');
+  expect(report(undefined, [receipt({ intent: 'upstream_error', failureStartedAt: ago(31), recordedAt: at })]).failures.failures)
     .toEqual([{ source: 'github-full', reason: 'upstream_stalled' }]);
 });
 
@@ -108,8 +108,30 @@ it('can report a proved fault beside an unknown subject but cannot emit an unpro
 it('uses a deterministic source fault when unordered query rows have different failure reasons', () => {
   const subject = discoveryHash('query-b');
   const rows = [obligation(), obligation({ subject })];
-  const receipts = [receipt({ progressAt: ago(60) }), receipt({ subject, progressAt: ago(60), intent: 'upstream_error' })];
+  const receipts = [receipt({ progressAt: ago(60) }), receipt({ subject, progressAt: ago(60), intent: 'upstream_error', failureStartedAt: ago(60) })];
   const expected = [{ source: 'github-full', reason: 'upstream_stalled' }];
   expect(report(rows, receipts).failures.failures).toEqual(expected);
   expect(report([...rows].reverse(), receipts).failures.failures).toEqual(expected);
+});
+
+it('keeps failure grace independent of changing attempts, references, semantics and future retry times', () => {
+  const source = 'korean-language' as const, semantic = discoveryHash('latest-attempt');
+  const row = obligation({ source, semantic, dueAt: '2099-01-01T00:00:00Z', demandAt: ago(60) });
+  const failed = receipt({ source, semantic, reference: 'acme/another-repo', intent: 'upstream_error',
+    firstSeenAt: ago(1), progressAt: null, failureStartedAt: ago(45) });
+  expect(report([row], [failed]).failures.failures).toEqual([{ source, reason: 'upstream_stalled' }]);
+  // A genuinely new oldest demand has its own grace; repeated attempts do not change its creation time.
+  expect(report([{ ...row, demandAt: ago(1) }], [failed]).overall).toBe('ok');
+  expect(report([{ ...row, demandAt: ago(31) }], [failed]).overall).toBe('alarm');
+  expect(report([{ ...row, exempt: true }], []).overall).toBe('ok');
+  expect(report([row], [{ ...failed, intent: 'ready', failureStartedAt: null, progressAt: ago(0) }]).overall).toBe('ok');
+  expect(report([row], [{ ...failed, failureStartedAt: null }]).overall).toBe('unknown');
+});
+
+it('cannot use a recent empty-scan acknowledgement to clear a partial HN scan that is failing', () => {
+  const source = 'show-hn' as const, row = obligation({ source, graceMs: 90 * 60_000, empty: true });
+  const failed = receipt({ source, intent: 'upstream_error', failureStartedAt: ago(91), acknowledgedAt: ago(1) });
+  expect(report([row], [failed]).failures.failures).toEqual([{ source, reason: 'upstream_stalled' }]);
+  expect(report([row], [{ ...failed, failureStartedAt: ago(15) }]).overall).toBe('ok');
+  expect(report([row], [{ ...failed, intent: 'caught_up', failureStartedAt: null }]).overall).toBe('ok');
 });

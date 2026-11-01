@@ -41,6 +41,9 @@ it('permits only Korean query/shared/language receipts and no home cursor, apply
       VALUES(${source},${discoveryHash(source)},126,${hash},${hash},'ready')`), source).toBe('42501');
   expect((await session`SELECT source FROM discovery_checkpoints WHERE subject=${subject} ORDER BY source`).map(row => row.source))
     .toEqual(['korean-language', 'korean-query', 'korean-shared']);
+  expect(await session`UPDATE discovery_checkpoints SET failure_started_at=clock_timestamp()
+    WHERE source='korean-language' AND subject=${subject} RETURNING failure_started_at`).toHaveLength(1);
+  expect((await session`SELECT has_column_privilege(current_user,'discovery_checkpoints','failure_started_at','UPDATE') AS allowed`)[0].allowed).toBe(true);
   expect(await session`UPDATE discovery_checkpoints SET intent='no_work' WHERE source='github-full' AND subject=${subject} RETURNING source`).toHaveLength(0);
   expect(await code(session`UPDATE discovery_checkpoints SET source='github-full' WHERE subject=${subject}`)).toBe('42501');
   expect(await code(session`UPDATE discovery_checkpoints SET subject=${hash} WHERE subject=${subject}`)).toBe('42501');

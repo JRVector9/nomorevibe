@@ -27,9 +27,10 @@ export async function checkpointDiscovery(tx: ProductTransaction, receipts: read
             SELECT slot FROM discovery_checkpoints WHERE source=${r.source} AND subject=${r.subject}
             UNION ALL SELECT candidate::smallint FROM generate_series(0,${DISCOVERY_MAX_SUBJECTS - 1}) candidate
               WHERE NOT EXISTS(SELECT 1 FROM discovery_checkpoints WHERE source=${r.source} AND slot=candidate) LIMIT 1)
-          INSERT INTO discovery_checkpoints(source,subject,slot,generation,semantic,reference,intent,resume_at,revision,first_seen_at,progress_at,acknowledged_at,recorded_at)
+          INSERT INTO discovery_checkpoints(source,subject,slot,generation,semantic,reference,intent,resume_at,revision,first_seen_at,progress_at,failure_started_at,acknowledged_at,recorded_at)
           SELECT ${r.source},${r.subject},available.slot,${r.generation},${r.semantic},${r.reference ?? null},${r.intent},${r.resumeAt ?? null}::timestamp,
             ${r.progressed ? 1 : 0},clock_timestamp(),CASE WHEN ${r.progressed === true} THEN clock_timestamp() END,
+            CASE WHEN ${r.intent === "upstream_error"} THEN clock_timestamp() END,
             CASE WHEN ${r.acknowledged === true} THEN clock_timestamp() END,clock_timestamp() FROM available WHERE true
           ON CONFLICT(source,subject) DO UPDATE SET generation=excluded.generation,semantic=excluded.semantic,reference=excluded.reference,
             intent=excluded.intent,resume_at=excluded.resume_at,recorded_at=excluded.recorded_at,
@@ -41,6 +42,11 @@ export async function checkpointDiscovery(tx: ProductTransaction, receipts: read
             progress_at=CASE WHEN discovery_checkpoints.generation<>excluded.generation
               OR discovery_checkpoints.semantic<>excluded.semantic AND NOT ${r.progressed === true} THEN excluded.progress_at
               WHEN ${r.progressed === true} AND discovery_checkpoints.semantic<>excluded.semantic THEN excluded.progress_at ELSE discovery_checkpoints.progress_at END,
+            -- Attempts can change the semantic proof/reference without resolving work. Preserve their error streak.
+            failure_started_at=CASE WHEN discovery_checkpoints.generation<>excluded.generation THEN excluded.failure_started_at
+              WHEN ${r.intent === "upstream_error"} THEN coalesce(discovery_checkpoints.failure_started_at,excluded.failure_started_at)
+              WHEN ${r.acknowledged === true} OR ${r.progressed === true} AND discovery_checkpoints.semantic<>excluded.semantic THEN NULL
+              ELSE discovery_checkpoints.failure_started_at END,
             acknowledged_at=CASE WHEN discovery_checkpoints.generation<>excluded.generation
               OR discovery_checkpoints.semantic<>excluded.semantic AND NOT ${r.progressed === true} THEN excluded.acknowledged_at
               ELSE coalesce(excluded.acknowledged_at,discovery_checkpoints.acknowledged_at) END RETURNING source`);

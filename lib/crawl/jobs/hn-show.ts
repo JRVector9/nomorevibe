@@ -178,7 +178,6 @@ export async function seedFromShowHN(ctx: JobContext<ShowHnCursor>, request?: Ca
       await save(true);
     }
     examined += items.length;
-    await save(false, true);
     // 새로 넣은 것이 있으면 이번 틱은 여기까지다. 이미 본 경계 초의 글뿐인 페이지였다면 한 칸
     // 새로운 페이지로 간다 — 그대로 끝내면 다음 틱도 같은 페이지만 읽고 제자리에 머문다.
     if (items.length && number > 0) {

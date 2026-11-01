@@ -131,7 +131,7 @@ export async function saveKoreanLanguage(repo: string, result: KoreanLanguageRes
       checked_at=now(),due_at=now()+interval '15 minutes',updated_at=now() WHERE repo=${repo} AND state='pending' AND language='unknown'
       RETURNING repo,language,to_char(checked_at,'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at`);
     if(saved) await checkpointDiscovery(tx,[{source:'korean-language',subject:discoveryHash('language'),generation:koreanDiscoveryGeneration(control.epoch),
-      reference:saved.repo,semantic:discoveryHash(saved),intent:result.language==='unknown' ? 'backoff' : 'ready',
+      reference:saved.repo,semantic:discoveryHash(saved),intent:result.language==='unknown' ? 'upstream_error' : 'ready',
       progressed:result.language!=='unknown',acknowledged:result.language!=='unknown'}]);
   });
 }
