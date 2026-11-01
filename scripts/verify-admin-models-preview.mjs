@@ -19,16 +19,16 @@ try {
     if (await page.evaluate(() => window.previewRefreshCount) < 2) throw new Error("manual_or_auto_refresh_failed");
     const save = page.getByRole("button", { name: "모델 설정 저장", exact: true });
     if (!await save.isDisabled()) throw new Error("unchanged_save_enabled");
-    const card = page.getByRole("article", { name: "supa Qwen3.8-27B-NVFP4", exact: true });
+    const card = page.getByRole("rowgroup", { name: "[Supa] Qwen3.8-27B-NVFP4", exact: true });
     if (!await card.getByRole("button", { name: "종료(정식 해제)", exact: true }).isDisabled()) throw new Error("supa_release_not_disabled");
-    const m1 = page.getByRole("article", { name: "m1 Gemma 4 26B", exact: true });
+    const m1 = page.getByRole("rowgroup", { name: "[M1 Studio] Gemma 4 26B", exact: true });
     if (!await m1.getByRole("button", { name: "모델 재시작", exact: true }).isDisabled()) throw new Error("m1_restart_not_disabled");
     const requestVisible = await page.getByText("requestId", { exact: false }).first().isVisible();
     if (requestVisible) throw new Error("internal_id_open_by_default");
     await page.screenshot({ path: resolve(directory, `admin-models-${width}.png`), fullPage: true });
     await page.screenshot({ path: resolve(directory, `admin-models-${width}-first-screen.png`) });
     const dimensions = await page.evaluate(() => ({ viewport: innerWidth, document: document.documentElement.scrollWidth,
-      cardColumns: getComputedStyle(document.querySelector('[aria-label="supa Qwen3.8-27B-NVFP4"]').parentElement).gridTemplateColumns.split(' ').length }));
+      listColumns: document.querySelectorAll('[aria-label="모델 목록"] thead th').length }));
     if (dimensions.document > width) throw new Error(`horizontal_overflow_${width}_${dimensions.document}`);
     await card.evaluate(element => element.scrollIntoView({ block: "start" }));
     await page.screenshot({ path: resolve(directory, `admin-models-${width}-model.png`) });

@@ -4,6 +4,7 @@ import { expect, it } from "vitest";
 import { modelCapacityRequests, modelCapacityEvents } from "@/lib/db/operations-schema";
 import { operatorReviewEventSql } from "@/lib/llm/operator-review-sql";
 import { gatewayLocalDirectMembersSql } from "@/lib/llm/gateway-local-direct-sql";
+import { publicationClassifyReleaseLogicalSql } from "@/lib/llm/dispatch-release-kinds-sql";
 
 const journal = JSON.parse(readFileSync("drizzle/meta/_journal.json", "utf8")) as {
   entries: { idx: number; tag: string }[];
@@ -96,7 +97,7 @@ it("event kind CHECK는 0126·0127·0134·0135 전체를 보존하고 0136 indet
   expect(previous.expression).toContain("nmv_provider_boundary_release_valid(evidence)");
 });
 
-it("member CHECK는 0125·0126·0134·0135 전체와 0136의 exact predecessor 확장, 0157 의 text local-direct 분기를 모두 보존한다", () => {
+it("member CHECK는 0125·0126·0134·0135 전체와 0136의 exact predecessor 확장, 0157 의 text local-direct 분기, 0158 의 publication_classify 회수 분기를 모두 보존한다", () => {
   const check = getTableConfig(modelCapacityRequests).checks.find(check => check.name === "model_capacity_requests_members_check")!;
   const history = checkHistory(check.name);
   const latest = history.at(-1)!;
@@ -107,7 +108,7 @@ it("member CHECK는 0125·0126·0134·0135 전체와 0136의 exact predecessor �
   const unknown = history.find(entry => entry.idx === 136)!;
   const previous = history.filter(entry => entry.idx < 125).at(-1)!;
   const expression = new PgDialect().sqlToQuery(check.value).sql;
-  expect(latest.tag).toBe("0157_ai1_provider_enum");
+  expect(latest.tag).toBe("0158_release_branch_kinds");
   expect(expression === latest.expression, check.name).toBe(true);
   expect(publication.expression.startsWith(`(${previous.expression}) OR coalesce((`)).toBe(true);
   expect(provider.expression).toBe(`(${publication.expression}) OR nmv_provider_boundary_request_valid(to_jsonb(model_capacity_requests))`);
@@ -121,7 +122,10 @@ it("member CHECK는 0125·0126·0134·0135 전체와 0136의 exact predecessor �
   const replacedPath = history.find(entry => entry.idx === 145)!;
   expect(replacedPath.expression).toBe(`(${replaced.expression}) OR nmv_replaced_path_request_valid(to_jsonb(model_capacity_requests))`);
   // 0157 (PR 3b-C): the six text-route member branches again with provider local-direct, appended to the whole predecessor.
-  expect(expression).toBe(`(${replacedPath.expression}) OR (${gatewayLocalDirectMembersSql})`);
+  const localDirect = history.find(entry => entry.idx === 157)!;
+  expect(localDirect.expression).toBe(`(${replacedPath.expression}) OR (${gatewayLocalDirectMembersSql})`);
+  // 0158: the publication_classify withdrawn branch (process_group_exit·dr_call_drain release) appended to the whole 0157 predecessor.
+  expect(expression).toBe(`(${localDirect.expression}) OR (${publicationClassifyReleaseLogicalSql})`);
 });
 
 it("0118은 기존 네 CHECK 분기를 보존하고 typed direct 분기를 덧붙인다", () => {

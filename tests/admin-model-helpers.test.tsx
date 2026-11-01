@@ -228,7 +228,8 @@ describe("거절 코드 → 한국어(모든 코드)", () => {
     expect(modelHelperIssueMessage("model_helper_version_mismatch:invalid")).toBe("판 번호(version)를 읽지 못했습니다. 새로고침해 주세요.");
     for (const code of HELPER_SAVE_REFUSALS) expect(modelHelperIssueMessage(`model_helper_refused:${code}`)).toBe(HELPER_REFUSAL_MESSAGES[code]);
     expect(modelHelperIssueMessage("model_helper_refused:helper_route_is_primary")).toContain("순위를 2 이상으로");
-    expect(modelHelperIssueMessage("model_helper_refused:helper_route_unmapped")).toContain("rev14");
+    expect(modelHelperIssueMessage("model_helper_refused:helper_route_unmapped")).toContain("경로를 정책에 먼저 덧붙인 뒤 저장하세요");
+    expect(modelHelperIssueMessage("model_helper_refused:helper_route_unmapped")).not.toMatch(/rev ?\d+|DRAIN 창/);
     expect(modelHelperIssueMessage("model_helper_refused:helper_ai2_voter_not_in_fallbacks")).toContain("2차 대체 모델 목록");
     expect(modelHelperIssueMessage("model_helper_refused:brand_new")).toBe("저장이 거절됐습니다: brand_new");
     for (const path of [...HELPER_INPUT_KEYS, "root", "evidence", "actor"]) {
@@ -455,5 +456,17 @@ describe("그리기", () => {
       expect(source.startsWith('"use client"'), file).toBe(true);
       expect(source, file).not.toMatch(/^import \{[^}]*\} from "@\/lib\/(operations\/admin-model-helpers|llm\/capacity-helpers)"/m);
     }
+  });
+
+  it("안내 문구는 지금 상태만 말한다 — 정책 판 번호(rev14)·DRAIN 창·PR 번호를 쓰지 않는다", () => {
+    const root = path.resolve(__dirname, "..");
+    for (const file of ["page.tsx", "SupervisorCard.tsx", "actions.ts", "HelperForm.tsx", "HelperTable.tsx"]) {
+      const source = readFileSync(path.join(root, "app/(operator)/admin/models/helpers", file), "utf8");
+      expect(source, file).not.toMatch(/rev ?1\d\b|DRAIN 창|OPEN 전에/);
+    }
+    for (const message of Object.values(HELPER_REFUSAL_MESSAGES)) expect(message).not.toMatch(/rev ?1\d\b|DRAIN 창/);
+    // 새 배정 안내: 경로는 정책에 먼저, DRAIN 은 필요 없고, 새 배정은 꺼짐으로
+    const page = readFileSync(path.join(root, "app/(operator)/admin/models/helpers/page.tsx"), "utf8");
+    expect(page).toContain("경로는 DRAIN 없이 정책에 덧붙일 수 있습니다. 새 배정은 꺼짐으로 만드세요.");
   });
 });

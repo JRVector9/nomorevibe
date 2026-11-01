@@ -60,7 +60,7 @@ export function SupervisorCard({ supervisor, readOnly }: { supervisor: Superviso
     <form action={switchAction} className="flex flex-wrap items-center gap-3">
       <input type="hidden" name="enabled" value={s.enabled ? "false" : "true"} />
       {!s.enabled && <label className="flex items-center gap-1 text-[13px]"><input type="checkbox" name="confirm" value="yes" disabled={readOnly} />
-        감시자 계정·GRANT·정책 rev14·배정(꺼짐)을 마쳤습니다</label>}
+        감시자 계정·GRANT·정책의 도우미 경로·배정(꺼짐)을 마쳤습니다</label>}
       <button type="submit" disabled={switching || readOnly}
         className={`rounded px-3 py-2 disabled:opacity-50 ${s.enabled ? "bg-red-600 text-white" : "bg-fg text-bg"}`}>
         {switching ? "바꾸는 중…" : s.enabled ? "감시자 끄기" : "감시자 켜기"}</button>

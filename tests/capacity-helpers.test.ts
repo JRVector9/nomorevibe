@@ -321,7 +321,7 @@ describe('assignment table vocabulary (PR 3b-A)', () => {
     refuse({ ...base, stage: 'human', transport: 'gateway' }, 'transport');
     refuse({ ...base, stage: 'ai1', transport: 'local-direct' }, 'transport');
     refuse({ ...base, stage: 'repo' }, 'transport');                                   // reserved
-    refuse({ ...base, stage: 'assist', transport: 'local-direct' }, 'transport');      // reserved until 3b-B
+    refuse({ ...base, stage: 'assist', transport: 'local-direct' }, 'transport');      // reserved (no route rule yet)
     refuse({ ...base, transport: 'cli', registryKey: 'supa:review' }, 'transport');    // cli needs connect equipment
     refuse({ ...base, vote: true }, 'vote');                                           // ai1 never votes
     refuse({ ...base, stage: 'ai2', rank: 2, vote: true }, 'vote');                    // ai2 rank 2 is a fallback, not a voter

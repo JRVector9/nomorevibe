@@ -3,8 +3,8 @@ import { modelCapacityPolicyHash, type ModelCapacityPolicy } from "@/lib/llm/cap
 
 // PR15c: 남은 쓰기 경로(runJob claim, requestDueJobs, source claim, 모델 장부 control)가 DR writer fence 를 첫 lock 으로 잡는지.
 // 실제 DB 의 쓰기 0·교착 없음은 tests/integration/dr-fence-paths.test.ts 가 본다.
-const fake = vi.hoisted(() => ({ transaction: vi.fn(), replay: vi.fn((): unknown => undefined) }));
-vi.mock("@/lib/db", () => ({ db: { transaction: fake.transaction }, onPrimary: <T>(load: () => T) => load() }));
+const fake = vi.hoisted(() => ({ transaction: vi.fn(), execute: vi.fn(), replay: vi.fn((): unknown => undefined) }));
+vi.mock("@/lib/db", () => ({ db: { transaction: fake.transaction, execute: fake.execute }, onPrimary: <T>(load: () => T) => load() }));
 vi.mock("@/lib/db/replay-scope", () => ({ currentReplayDb: fake.replay }));
 
 const lineage = "6d7f0f53-4d39-4b9d-a5a6-3a4a8f0c1b11", boot = "0a6bd6a3-6c2a-4f6e-9a39-2d6f7b0e5c21";
@@ -97,16 +97,28 @@ it("source claim: a fenced site hands out no canonical source (typed admission r
   expect(probe.calls).toEqual(["fence", "lock:job_batch_control"]);
 });
 
-it("model ledger: the fence precedes the control lock and a fenced site is draining, never the disabled (uncapped) transport", async () => {
+it("model ledger: the caller control read is one unlocked statement of fence + control, and a fenced site is draining, never the disabled (uncapped) transport", async () => {
   const ledger = await import("@/lib/llm/capacity-repository");
+  // 2026-10-31 장부 control 경합: 전송 경로 선택용 읽기는 TX 도 행 잠금도 없이 fence 와 control 을 한 문장으로 읽는다(입장·dispatch TX 가 다시 잠근다).
+  const unlocked = (fence: unknown, raw: ReturnType<typeof control>) => {
+    fake.execute.mockReset();
+    fake.execute.mockImplementation(async (query: { queryChunks?: unknown[] }) => {
+      const value = JSON.stringify(query.queryChunks ?? query);
+      expect(value).toContain("model_capacity_control");
+      expect(value).toContain("dr_writer_fence");
+      expect(value).not.toMatch(/FOR (SHARE|UPDATE)/i);
+      return [{ mode: raw.mode, epoch: raw.epoch, revision: raw.revision, policy: raw.policy, policy_hash: raw.policyHash, writer_fence: fence }];
+    });
+  };
   for (const raw of [control(), control({ mode: "disabled", policy: null, policyHash: null })]) {
-    const probe = fakeTx([fencedRow], { model_capacity_control: [raw] });
+    unlocked(fencedRow, raw);
     expect(await ledger.readModelCapacityCallerControl()).toMatchObject({ mode: "draining", epoch: 1, revision: 1 });
-    expect(probe.calls).toEqual(["fence", "share:model_capacity_control"]);
+    expect(fake.execute).toHaveBeenCalledTimes(1);
+    expect(fake.transaction).not.toHaveBeenCalled();
   }
-  const active = fakeTx([activeRow], { model_capacity_control: [control({ mode: "disabled", policy: null, policyHash: null })] });
+  unlocked(activeRow, control({ mode: "disabled", policy: null, policyHash: null }));
   expect(await ledger.readModelCapacityCallerControl()).toMatchObject({ mode: "disabled" });
-  expect(active.calls).toEqual(["fence", "share:model_capacity_control"]);
+  expect(fake.transaction).not.toHaveBeenCalled();
 });
 
 it("model ledger: fenced admission returns the existing refusals before any expiry, row lock or write", async () => {
