@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
 import { eq, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { clickEvents, jobs, newsItems, productClickDaily,
@@ -15,6 +15,17 @@ import type { JobLease } from '@/lib/jobs/control';
 import { ensureSchema, resetTables } from './setup';
 import { readMaintenanceUptimeProgress } from '@/lib/operations/maintenance-progress';
 import { readTextProgress } from '@/lib/operations/text-progress';
+import { TRANSLATE_MODEL } from '@/lib/crawl/translate';
+import { TAGLINE_MODEL } from '@/lib/crawl/tagline';
+import { PROFILE_MODEL } from '@/lib/domain/products/search-profile';
+import { VERIFY_MODEL } from '@/lib/domain/products/search-verify';
+import { setServingContractSnapshotForTest } from '@/lib/llm/serving-contract-store';
+import { directContractRow } from './direct-engine-fixtures';
+
+/** The main text routes run only on a direct admin contract (abcLLM gateway removed 2026-10-30); a route without one is not demand. */
+const directTextRoutes = () => setServingContractSnapshotForTest([directContractRow('reason-translate', TRANSLATE_MODEL),
+  directContractRow('crawl-tagline', TAGLINE_MODEL), directContractRow('product-search-profile', PROFILE_MODEL),
+  directContractRow('product-search-verify', VERIFY_MODEL)]);
 
 beforeAll(ensureSchema);
 beforeEach(async () => {
@@ -26,8 +37,10 @@ beforeEach(async () => {
   await db.insert(products).values({ slug: 'maintenance-fence', url: 'https://maintenance-fence.test',
     name: 'Maintenance', tagline: 'Maintenance', description: 'Maintenance', category: 'Other',
     status: 'verified', verifyToken: 'verify', editTokenHash: 'x'.repeat(64) });
+  directTextRoutes();
 });
 afterEach(async () => {
+  setServingContractSnapshotForTest(null);
   await db.delete(rateLimits).where(eq(rateLimits.key, 'late-cleanup'));
   await db.delete(searchQueries).where(eq(searchQueries.query, 'maintenance-late-cleanup'));
 });
@@ -93,16 +106,16 @@ it('reads maintenance and text demand without changing production data', async (
   expect(uptime.waiting).toBe(true);
   expect(uptime.oldestMinutes).toBeLessThan(5);
   expect(text.oldestReadyMinutes).not.toBeNull();
+  // Without direct contracts the text routes are not running: their queue is a configuration gap, not a stall to restart.
+  setServingContractSnapshotForTest([]);
+  expect((await readTextProgress()).oldestReadyMinutes).toBeNull();
   expect((await db.select().from(productHealth))).toEqual([]);
 });
 
 it('does not suppress a text stall forever because of an old provider error', async () => {
-  vi.stubEnv('ABCLLM_API_KEY', 'present');
-  try {
-    await db.insert(jobs).values({ name: 'product-search-verify', lastError: 'old provider error',
-      updatedAt: sql`now() - interval '1 hour'` });
-    expect((await readTextProgress()).providerError).toBe(false);
-  } finally { vi.unstubAllEnvs(); }
+  await db.insert(jobs).values({ name: 'product-search-verify', lastError: 'old provider error',
+    updatedAt: sql`now() - interval '1 hour'` });
+  expect((await readTextProgress()).providerError).toBe(false);
 });
 
 it('does not suppress an uptime stall forever because of an old job error', async () => {
@@ -126,23 +139,20 @@ it('ages an uptime recheck from when it became due, not from the previous check'
 });
 
 it('ages text work from when a refresh or retry became due', async () => {
-  vi.stubEnv('ABCLLM_API_KEY', 'present');
-  try {
-    const [product] = await db.select({ id: products.id }).from(products);
-    // 30일이 막 지난 키워드 — 다시 지을 차례가 된 지 2분
-    await db.insert(productSearchProfiles).values({ productId: product.id, sourceHash: 'h', keywordsEn: ['a'],
-      verifiedAt: sql`now()`, updatedAt: sql`now() - interval '30 days' - interval '2 minutes'` });
-    expect((await readTextProgress()).oldestReadyMinutes).toBeLessThan(5);
+  const [product] = await db.select({ id: products.id }).from(products);
+  // 30일이 막 지난 키워드 — 다시 지을 차례가 된 지 2분
+  await db.insert(productSearchProfiles).values({ productId: product.id, sourceHash: 'h', keywordsEn: ['a'],
+    verifiedAt: sql`now()`, updatedAt: sql`now() - interval '30 days' - interval '2 minutes'` });
+  expect((await readTextProgress()).oldestReadyMinutes).toBeLessThan(5);
 
-    // 두 시간 전에 실패해 2분 전에 다시 볼 때가 된 짓기
-    await db.update(productSearchProfiles).set({ errorCode: 'timeout', attempts: 1,
-      retryAt: sql`now() - interval '2 minutes'`, updatedAt: sql`now() - interval '2 hours'` });
-    expect((await readTextProgress()).oldestReadyMinutes).toBeLessThan(5);
+  // 두 시간 전에 실패해 2분 전에 다시 볼 때가 된 짓기
+  await db.update(productSearchProfiles).set({ errorCode: 'timeout', attempts: 1,
+    retryAt: sql`now() - interval '2 minutes'`, updatedAt: sql`now() - interval '2 hours'` });
+  expect((await readTextProgress()).oldestReadyMinutes).toBeLessThan(5);
 
-    // 두 시간 전에 실패해 2분 전에 다시 볼 때가 된 검수
-    await db.update(productSearchProfiles).set({ errorCode: null, retryAt: null, verifiedAt: null,
-      verifyError: 'timeout', verifyAttempts: 1, verifyRetryAt: sql`now() - interval '2 minutes'`,
-      updatedAt: sql`now() - interval '2 hours'` });
-    expect((await readTextProgress()).oldestReadyMinutes).toBeLessThan(5);
-  } finally { vi.unstubAllEnvs(); }
+  // 두 시간 전에 실패해 2분 전에 다시 볼 때가 된 검수
+  await db.update(productSearchProfiles).set({ errorCode: null, retryAt: null, verifiedAt: null,
+    verifyError: 'timeout', verifyAttempts: 1, verifyRetryAt: sql`now() - interval '2 minutes'`,
+    updatedAt: sql`now() - interval '2 hours'` });
+  expect((await readTextProgress()).oldestReadyMinutes).toBeLessThan(5);
 });

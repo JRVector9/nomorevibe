@@ -99,14 +99,14 @@ export function modelServerName(identity: { provider: string; model: string }, d
   models: readonly ModelDefinition[], groups: readonly string[], contracts: readonly ModelContractLink[] = []): string {
   return modelServer(identity, definition, models, groups, contracts).name;
 }
-/** 이 행의 전송 방식(한국어). 관리 계약이 있으면 그 transport, 없으면 제공자로 — 엔진 직접 / 게이트웨이 / CLI. */
+/** 이 행의 전송 방식(한국어). 관리 계약이 있으면 그 transport, 없으면 제공자로 — 엔진 직접 / CLI. abcllm 은 계약 행으로만 열린다(env 게이트웨이 대체는 2026-10-31 제거) — 계약이 없으면 「계약 없음」. */
 export function modelTransportLabel(provider: string, contracts: readonly ModelContractLink[]): string {
   const kinds = [...new Set(contracts.map(row => row.transport))];
   if (kinds.length === 1) return kinds[0] === "direct" ? "엔진 직접(계약)" : "게이트웨이(계약)";
   if (kinds.length > 1) return "엔진 직접·게이트웨이(계약)";
   if (provider === "local-direct" || provider === "llama-server") return "엔진 직접";
   if (provider.endsWith("-cli")) return "CLI";
-  return provider === "abcllm" ? "게이트웨이(env)" : "미확인";
+  return provider === "abcllm" ? "계약 없음" : "미확인";
 }
 export function buildModelCards(observation: AdminModelsObservation, models: readonly ModelDefinition[], assignments: ModelStageAssignment[] = [],
   contracts: readonly ModelContractLink[] = []): ModelCard[] {

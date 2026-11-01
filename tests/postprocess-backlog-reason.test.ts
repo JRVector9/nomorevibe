@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { translateReasons } from "@/lib/crawl/jobs/translate-reasons";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { classifyStage } from "@/lib/operations/worker-progress";
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 
 const mocks = vi.hoisted(() => ({ untried: vi.fn(), retry: vi.fn(), record: vi.fn(), capacity: vi.fn() }));
 vi.mock("@/lib/crawl/translations", () => ({
@@ -13,12 +14,13 @@ vi.mock("@/lib/crawl/reason-translation-model-capacity", () => ({ translateReaso
 const context = () => ({ cursor: null, hasBudget: () => true, save: vi.fn(), log: vi.fn(),
   lease: { name: "reason-translate", token: "t", requestedVersion: 1 } });
 const item = (hash: string) => ({ hash, body: `English reason ${hash}`, attempts: 0 });
-const original = process.env.ABCLLM_API_KEY;
 beforeEach(() => {
-  vi.resetAllMocks(); process.env.ABCLLM_API_KEY = "test-key";
+  vi.resetAllMocks();
+  // The route opens only on a directly connected engine (admin contract, transport direct) for the job's model.
+  setServingContractSnapshotForTest([{ routeId: "reason-translate", model: "[M1] gemma", contract: {}, auth: "none", apiKey: null, transport: "direct" }]);
   mocks.untried.mockResolvedValue([]); mocks.retry.mockResolvedValue([]); mocks.record.mockResolvedValue(1);
 });
-afterEach(() => { if (original === undefined) delete process.env.ABCLLM_API_KEY; else process.env.ABCLLM_API_KEY = original; });
+afterEach(() => { setServingContractSnapshotForTest(null); });
 
 it("logs the exact capacity deferral reason, writes nothing and defers the tick", async () => {
   mocks.untried.mockResolvedValue([item("a")]);

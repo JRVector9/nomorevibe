@@ -8,6 +8,7 @@ import { websearchQueryLogicalWorkKey, websearchQueryInputHash, websearchQueryDi
 import { prepareWebsearchQueryGatewayCall, translateQueryWithReservedGateway, readWebsearchQueryGatewayTerminal,
   readCrawlTaglineGatewayTerminal, type PreparedWebsearchQueryGatewayCall } from "@/lib/crawl/agent-review-gateway";
 import type { WebsearchQueryServingContract } from "@/lib/llm/websearch-query-serving-contract";
+import { setServingContractSnapshotForTest, type ServingContractAuth } from "@/lib/llm/serving-contract-store";
 
 const fixture = vi.hoisted(() => ({ contract: null as WebsearchQueryServingContract | null }));
 vi.mock("@/lib/llm/websearch-query-serving-contract", async original => ({
@@ -22,13 +23,19 @@ function envelope(change: Record<string, unknown> = {}) {
     choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }],
     usage: { prompt_tokens: 80, completion_tokens: 12, total_tokens: 92 }, usage_provenance: "upstream_reported", ...change };
 }
-/** The legacy leaf's actual bytes, captured through its own injected request. */
-async function legacyWire(input: WebsearchQueryGatewayInput): Promise<string> {
-  let wire = "";
-  const request = (async (_url: unknown, init?: RequestInit) => { wire = String(init?.body); return new Response(JSON.stringify(envelope())); }) as typeof fetch;
-  if (input.sourceLocale === "ko") await translateQueryToEnglish(input.query, 1000, request);
-  else await translateChineseQueryToEnglish(input.query, input.sourceLocale, 1000, request);
-  return wire;
+/**
+ * The engine connected directly by URL (admin contract, transport direct) is the only thing that opens the native call; the abcLLM
+ * gateway and its key were removed on 2026-10-30. "stored" sends the row's own key.
+ */
+function pinDirect(auth: ServingContractAuth = "none", apiKey: string | null = null, transport: "direct" | "gateway" = "direct") {
+  setServingContractSnapshotForTest([{ routeId: "search-query-translate", model, contract: {}, auth, apiKey, transport }]);
+}
+/** The legacy gateway leaf no longer sends anything: no_key without touching its injected request. */
+async function legacyLeaf(input: WebsearchQueryGatewayInput) {
+  const request = vi.fn(async () => new Response(JSON.stringify(envelope())));
+  const result = input.sourceLocale === "ko" ? await translateQueryToEnglish(input.query, 1000, request as unknown as typeof fetch)
+    : await translateChineseQueryToEnglish(input.query, input.sourceLocale, 1000, request as unknown as typeof fetch);
+  return { result, request };
 }
 function prepared(input: WebsearchQueryGatewayInput, timeoutMs = 1000) {
   const call = prepareWebsearchQueryGatewayCall(input, { model, timeoutMs });
@@ -48,12 +55,16 @@ function dispatch(input: WebsearchQueryGatewayInput, call: PreparedWebsearchQuer
 function send(...args: Parameters<typeof translateQueryWithReservedGateway>) {
   const pending = translateQueryWithReservedGateway(...args); requests.add(pending); void pending.catch(() => {}); return pending;
 }
-async function server(run: (state: { bodies: string[]; reply: (next: (response: ServerResponse) => void) => void }) => Promise<void>) {
-  const bodies: string[] = [], responses = new Set<Promise<void>>(), errors: unknown[] = [];
+async function server(run: (state: { bodies: string[]; authorization: (string | undefined)[];
+  reply: (next: (response: ServerResponse) => void) => void }) => Promise<void>, direct: boolean = true) {
+  const bodies: string[] = [], authorization: (string | undefined)[] = [], responses = new Set<Promise<void>>(), errors: unknown[] = [];
   let reply = (response: ServerResponse) => { response.end(JSON.stringify(envelope())); };
   const http = createServer((request, response) => {
     const closed = new Promise<void>(resolve => response.once("close", resolve));
-    const pending = (async () => { let body = ""; for await (const part of request) body += part.toString(); bodies.push(body); reply(response); await closed; })();
+    const pending = (async () => {
+      let body = ""; for await (const part of request) body += part.toString(); bodies.push(body); authorization.push(request.headers.authorization);
+      reply(response); await closed;
+    })();
     responses.add(pending); void pending.catch(() => {});
   });
   let failed = false, original: unknown, watchdog: ReturnType<typeof setTimeout> | undefined;
@@ -62,10 +73,11 @@ async function server(run: (state: { bodies: string[]; reply: (next: (response: 
     const address = http.address(); if (!address || typeof address === "string") throw new Error("fixture_address");
     fixture.contract = { version: 1, protocol: "abcllm-websearch-query-total-bound-v1", routeId: "search-query-translate", provider: "abcllm",
       model, responseModel: "served-query", endpoint: `http://127.0.0.1:${address.port}/v1/chat/completions`, deploymentRevision: "local-only", totalTokenBound: 4096 };
-    await run({ bodies, reply: next => { reply = next; } });
+    if (direct) pinDirect();
+    await run({ bodies, authorization, reply: next => { reply = next; } });
   } catch (error) { failed = true; original = error; }
   finally {
-    fixture.contract = null;
+    fixture.contract = null; setServingContractSnapshotForTest(null);
     try {
       while (requests.size) { const pending = [...requests]; await Promise.allSettled(pending); for (const promise of pending) requests.delete(promise); }
       // 클라이언트 작업이 모두 끝난 뒤에만 남은 연결을 정리한다(기존 driver 관례). watchdog은 teardown 구간만 잰다.
@@ -78,14 +90,17 @@ async function server(run: (state: { bodies: string[]; reply: (next: (response: 
   if (failed && errors.length) throw new AggregateError([original, ...errors], "native_fixture_failed", { cause: original });
   if (failed) throw original; if (errors.length) throw new AggregateError(errors);
 }
-afterEach(() => { fixture.contract = null; vi.unstubAllEnvs(); });
+afterEach(() => { fixture.contract = null; setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); });
 
 it.each([korean, { sourceLocale: "zh-Hans", query: "代码编辑器" }, { sourceLocale: "zh-Hant", query: "程式碼編輯器" }] as const)
   ("sends the original legacy query bytes once and issues an immutable parsed outcome: %j", async input => {
-    vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ bodies }) => {
+    await server(async ({ bodies, authorization }) => {
       const call = prepared(input), owned = dispatch(input, call), response = await send(input, owned, call);
       expect(response.result).toEqual({ ok: true, keywords: "gym attendance | gym attendance check in app" });
-      expect(bodies).toEqual([await legacyWire(input)]); expect(bodies[0]).toBe(websearchQueryGatewayWire(input, model));
+      expect(bodies).toEqual([websearchQueryGatewayWire(input, model)]); expect(authorization).toEqual([undefined]);
+      // The legacy gateway leaf of the same query ends no_key and never reaches its request; the native wire is the only bytes sent.
+      const legacy = await legacyLeaf(input);
+      expect(legacy.result).toEqual({ ok: false, error: "no_key" }); expect(legacy.request).not.toHaveBeenCalled(); expect(bodies).toHaveLength(1);
       const wire = JSON.parse(bodies[0]);
       expect(Object.keys(wire)).toEqual(["model", "stream", "temperature", "reasoning_effort", "max_tokens", "messages"]);
       expect(wire).toMatchObject({ model, stream: false, temperature: 0, reasoning_effort: "low", max_tokens: 200 });
@@ -98,7 +113,8 @@ it.each([korean, { sourceLocale: "zh-Hans", query: "代码编辑器" }, { source
     });
   });
 it("keeps production unsupported without caller-enabled terminal authority", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only");
+  // A leftover gateway key opens nothing: only a direct admin contract does.
+  vi.stubEnv("ABCLLM_API_KEY", "old-gateway-key");
   const leaf = await vi.importActual<typeof import("@/lib/llm/websearch-query-serving-contract")>("@/lib/llm/websearch-query-serving-contract");
   expect(leaf.resolveWebsearchQueryServingContract(model)).toBeNull();
   expect(prepareWebsearchQueryGatewayCall(korean, { model, timeoutMs: 1000 })).toEqual({ kind: "unsupported", reason: "provider_contract_unavailable" });
@@ -106,13 +122,21 @@ it("keeps production unsupported without caller-enabled terminal authority", asy
   await server(async ({ bodies }) => {
     for (const input of [{ ...korean, extra: true }, { ...korean, query: " padded " }, { ...korean, query: "" }, { ...korean, sourceLocale: "ja" }])
       expect(prepareWebsearchQueryGatewayCall(input as unknown as WebsearchQueryGatewayInput, { model, timeoutMs: 1000 }).kind).toBe("unsupported");
-    vi.stubEnv("ABCLLM_API_KEY", "");
-    expect(prepareWebsearchQueryGatewayCall(korean, { model, timeoutMs: 1000 }).kind).toBe("unsupported"); expect(bodies).toEqual([]);
+    expect(bodies).toEqual([]);
   });
+  // A resolved contract without a direct admin row, behind the removed gateway, with gateway auth or an unreadable stored key is unsupported.
+  await server(async ({ bodies }) => {
+    for (const pin of [() => setServingContractSnapshotForTest([]), () => pinDirect("none", null, "gateway"), () => pinDirect("gateway"),
+      () => pinDirect("stored", null)]) {
+      pin();
+      expect(prepareWebsearchQueryGatewayCall(korean, { model, timeoutMs: 1000 })).toEqual({ kind: "unsupported", reason: "provider_contract_unavailable" });
+    }
+    expect(bodies).toEqual([]);
+  }, false);
 });
 it.each([[404, "http_404"], [429, "rate_limit"], [500, "http_500"], [307, "http_307"]] as const)
   ("performs one physical POST for HTTP %i with the original query error name and no redirect/retry", async (status, error) => {
-    vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ bodies, reply }) => {
+    await server(async ({ bodies, reply }) => {
       reply(response => { response.statusCode = status; response.setHeader("Location", "/v1/chat/completions"); response.end("failure"); });
       const call = prepared(korean);
       expect(await send(korean, dispatch(korean, call), call)).toEqual({ result: { ok: false, error }, terminal: null });
@@ -120,7 +144,7 @@ it.each([[404, "http_404"], [429, "rate_limit"], [500, "http_500"], [307, "http_
     });
   });
 it("keeps outer JSON decoding failure as the original network error, not a content parser failure", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ bodies, reply }) => {
+  await server(async ({ bodies, reply }) => {
     reply(response => response.end("not JSON"));
     const call = prepared(korean);
     expect(await send(korean, dispatch(korean, call), call)).toEqual({ result: { ok: false, error: "network" }, terminal: null });
@@ -129,7 +153,7 @@ it("keeps outer JSON decoding failure as the original network error, not a conte
 });
 it.each(["", "아무 말", "!!! | ???", "<think>x</think>\n\n merge pdf | merge pdf"])
   ("keeps the original content parser and stores only its bounded outcome as a physical terminal: %j", async text => {
-    vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ reply }) => {
+    await server(async ({ reply }) => {
       reply(response => response.end(JSON.stringify(envelope({ choices: [{ index: 0, message: { role: "assistant", content: text }, finish_reason: "stop" }] }))));
       const call = prepared(korean), response = await send(korean, dispatch(korean, call), call), parsed = parseQueryTranslation(text);
       expect(response.result).toEqual(parsed ? { ok: true, keywords: parsed } : { ok: false, error: "invalid_output" });
@@ -139,14 +163,14 @@ it.each(["", "아무 말", "!!! | ???", "<think>x</think>\n\n merge pdf | merge 
 it.each([{ usage: { prompt_tokens: 4096, completion_tokens: 1, total_tokens: 4097 } }, { model: "wrong" },
   { choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: null }] }, { object: "list" }])
   ("refuses contradictory native terminal metadata without terminal authority: %j", async change => {
-    vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ bodies, reply }) => {
+    await server(async ({ bodies, reply }) => {
       reply(response => response.end(JSON.stringify(envelope(change)))); const call = prepared(korean);
       expect(await send(korean, dispatch(korean, call), call)).toEqual({ result: { ok: false, error: "invalid_output" }, terminal: null });
       expect(bodies).toHaveLength(1);
     });
   });
 it.each([{ usage: null }, { usage_provenance: "gateway_estimated" }])("keeps full C when counters have no verified provenance: %j", async change => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ reply }) => {
+  await server(async ({ reply }) => {
     reply(response => response.end(JSON.stringify(envelope(change)))); const call = prepared(korean);
     const response = await send(korean, dispatch(korean, call), call);
     expect(readWebsearchQueryGatewayTerminal(response.terminal)).toMatchObject({ actualUsage: null, provenance: "unknown",
@@ -154,7 +178,7 @@ it.each([{ usage: null }, { usage_provenance: "gateway_estimated" }])("keeps ful
   });
 });
 it("leaves truncated HTTP EOF and a pending-body timeout without terminal authority", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ bodies, reply }) => {
+  await server(async ({ bodies, reply }) => {
     reply(response => { response.writeHead(200, { "Content-Length": "1000" }); response.write("{"); response.socket?.destroy(); });
     const first = prepared(korean);
     expect(await send(korean, dispatch(korean, first), first)).toEqual({ result: { ok: false, error: "network" }, terminal: null });
@@ -165,7 +189,8 @@ it("leaves truncated HTTP EOF and a pending-body timeout without terminal author
   });
 });
 it("rejects copied preparation, changed query bytes, locale or reuse before POST and keeps proof private", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ bodies }) => {
+  await server(async ({ bodies, authorization }) => {
+    pinDirect("stored", "local-test-only");
     const call = prepared(korean), owned = dispatch(korean, call);
     await expect(send(korean, owned, { ...call })).rejects.toThrow("websearch_query_gateway_call_mismatch");
     for (const changed of [{ ...korean, query: "헬스장 출석" }, { ...korean, query: "헬스장  출석 체크" }, { sourceLocale: "zh-Hans", query: korean.query }])
@@ -181,15 +206,18 @@ it("rejects copied preparation, changed query bytes, locale or reuse before POST
     expect(readCrawlTaglineGatewayTerminal(response.terminal)).toBeNull();
     await expect(send(korean, original, call)).rejects.toThrow("websearch_query_gateway_call_mismatch");
     await expect(send(korean, original, prepared(korean))).rejects.toThrow("websearch_query_gateway_call_mismatch");
-    expect(bodies).toHaveLength(1); expect(JSON.stringify(proof)).not.toContain("local-test-only");
+    expect(bodies).toHaveLength(1); expect(authorization).toEqual(["Bearer local-test-only"]);
+    expect(JSON.stringify(proof)).not.toContain("local-test-only");
   });
 });
-it("makes a key removed after preparation incapable of POST or terminal issuance", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ bodies }) => {
-    const call = prepared(korean), owned = dispatch(korean, call); vi.stubEnv("ABCLLM_API_KEY", "");
-    expect(await send(korean, owned, call)).toEqual({ result: { ok: false, error: "no_key" }, terminal: null }); expect(bodies).toEqual([]);
+it.each([["removed", () => setServingContractSnapshotForTest([])], ["switched to gateway auth", () => pinDirect("gateway")],
+  ["moved behind the removed gateway", () => pinDirect("none", null, "gateway")]] as const)
+  ("makes a direct contract %s after preparation incapable of POST or terminal issuance", async (_case, change) => {
+    await server(async ({ bodies }) => {
+      const call = prepared(korean), owned = dispatch(korean, call); change();
+      expect(await send(korean, owned, call)).toEqual({ result: { ok: false, error: "no_key" }, terminal: null }); expect(bodies).toEqual([]);
+    });
   });
-});
 it("keeps invalid endpoint and descriptor data outside the fixed leaf contract", async () => {
   await server(async () => {
     const leaf = await vi.importActual<typeof import("@/lib/llm/websearch-query-serving-contract")>("@/lib/llm/websearch-query-serving-contract");

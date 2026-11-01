@@ -6,12 +6,12 @@ import type { ModelEnv, TextModelRoute } from "./pipeline-control";
  * 관리자 단계 선택이 있는 text route는 잡과 같은 식(저장된 선택 + 관리자 등록부 덮어쓰기)으로 실제 호출 이름을 따로 담는다(pooled).
  */
 export async function currentModelEnv(): Promise<ModelEnv> {
-  const [{ reviewModel }, { TRANSLATE_MODEL, PRODUCT_TRANSLATION_MODEL, KOREAN_TAGLINE_MODEL, SEARCH_QUERY_MODEL }, { TAGLINE_MODEL }, { PROFILE_MODEL }, { VERIFY_MODEL }, { INTRO_CHECK_MODEL }] = await Promise.all([
-    import("@/lib/crawl/agent-review"), import("@/lib/crawl/translate"), import("@/lib/crawl/tagline"),
+  const [{ TRANSLATE_MODEL, PRODUCT_TRANSLATE_MODEL, KOREAN_TAGLINE_MODEL, SEARCH_QUERY_MODEL }, { TAGLINE_MODEL }, { PROFILE_MODEL }, { VERIFY_MODEL }, { INTRO_CHECK_MODEL }] = await Promise.all([
+    import("@/lib/crawl/translate"), import("@/lib/crawl/tagline"),
     import("@/lib/domain/products/search-profile"), import("@/lib/domain/products/search-verify"), import("@/lib/domain/products/intro-check")]);
   const pooled = await pooledTextModels({ "product-search-profile": PROFILE_MODEL, "product-search-verify": VERIFY_MODEL, "reason-translate": TRANSLATE_MODEL,
-    "product-translate": PRODUCT_TRANSLATION_MODEL, "product-tagline-ko": KOREAN_TAGLINE_MODEL, "search-query-translate": SEARCH_QUERY_MODEL, "crawl-tagline": TAGLINE_MODEL });
-  return { crawlReview: reviewModel(), translate: TRANSLATE_MODEL, koreanTagline: KOREAN_TAGLINE_MODEL, searchQuery: SEARCH_QUERY_MODEL, productTranslate: PRODUCT_TRANSLATION_MODEL, tagline: TAGLINE_MODEL,
+    "product-translate": PRODUCT_TRANSLATE_MODEL, "product-tagline-ko": KOREAN_TAGLINE_MODEL, "search-query-translate": SEARCH_QUERY_MODEL, "crawl-tagline": TAGLINE_MODEL });
+  return { translate: TRANSLATE_MODEL, koreanTagline: KOREAN_TAGLINE_MODEL, searchQuery: SEARCH_QUERY_MODEL, productTranslate: PRODUCT_TRANSLATE_MODEL, tagline: TAGLINE_MODEL,
     profile: PROFILE_MODEL, verify: VERIFY_MODEL, introCheck: INTRO_CHECK_MODEL, ...(pooled ? { pooled } : {}) };
 }
 

@@ -31,9 +31,9 @@ beforeEach(async () => {
   await resetTables();
   review.mockReset().mockResolvedValue(approve);
   grok.mockReset().mockResolvedValue({ ...approve, outcome: { ...approve.outcome, confidence: 0.9 } });
-  vi.stubEnv("CRAWL_REVIEW_MODEL", "test-model");
   vi.stubEnv("CRAWL_REVIEW_READY", "true");
-  await saveSettings({ enabled: true }, "test");
+  // 1차 심사자는 관리자 설정만 본다(CRAWL_REVIEW_MODEL 대체는 2026-10-31 제거)
+  await saveSettings({ enabled: true, firstReview: { provider: "claude-cli", model: "test-model" } }, "test");
   expect(await changeReviewMode({ mode: "enforce", expectedMode: "off", actor: "test", reason: "agent review job test" })).toMatchObject({ ok: true });
 });
 

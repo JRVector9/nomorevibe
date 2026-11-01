@@ -6,7 +6,7 @@ vi.mock("@/lib/db", () => ({ db: { insert: mocks.insert }, onPrimary: (fn: () =>
 vi.mock("@/lib/operations/dr/web-gate", () => ({ runWebWrite: (fn: () => unknown) => fn(), webWriteAction: (fn: unknown) => fn }));
 vi.mock("@/lib/operations/admin-log", () => ({ adminAuditRow: mocks.audit }));
 vi.mock("@/lib/operations/admin-models-repository", () => ({ readAdminModelsObservation: mocks.observation }));
-vi.mock("@/lib/crawl/agent-review-gateway", () => ({ listGatewayModels: mocks.list }));
+vi.mock("@/lib/crawl/agent-review-gateway", () => ({ listReviewEngineModels: mocks.list }));
 vi.mock("@/lib/operations/model-env", () => ({ currentModelEnv: async () => ({}) }));
 vi.mock("@/lib/operations/pipeline-control-repository", () => ({ runPipelineControl: mocks.control }));
 // 2026-10-31 한 화면: 연결 확인 결과는 관측 표(probe:<provider>:<model>)에 남는다 — 저장소는 목으로 두고 호출 모양만 본다

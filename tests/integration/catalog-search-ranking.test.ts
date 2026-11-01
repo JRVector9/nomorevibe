@@ -112,8 +112,7 @@ it("한국어로 친 말이 원문으로 많이 맞아도 번역을 붙인다 �
 });
 
 it("번역이 안 되면 친 그대로 찾는다 — 오류 화면이 되지 않는다", async () => {
-  // 키가 없으면 게이트웨이를 부르지 못한다. 그래도 검색은 돌아야 한다
-  delete process.env.ABCLLM_API_KEY;
+  // 검색어 번역 경로의 직접 연결 계약이 없으면 부르지 못한다(abcLLM 게이트웨이는 2026-10-30 제거). 그래도 검색은 돌아야 한다
   await seed("korean-page", { name: "한글 도구", tagline: "PDF 합치는 도구", description: "PDF 합치는 도구" });
 
   const resolved = await resolveSearchQuery("PDF 합치는 도구");
@@ -128,7 +127,6 @@ it("번역이 안 되면 친 그대로 찾는다 — 오류 화면이 되지 않
 });
 
 it("관련도순은 번역을 기다리지 않는다 — 옮겨 둔 것은 쓰고, 없으면 친 그대로 찾고 응답 뒤에 옮겨 둔다", async () => {
-  delete process.env.ABCLLM_API_KEY;
   const translationRow = (query: string) => db.select().from(textTranslations)
     .where(and(eq(textTranslations.sourceHash, queryTranslationKey(query)), eq(textTranslations.targetLang, "en")));
   await db.insert(textTranslations).values({ sourceHash: queryTranslationKey("PDF 합치는 도구"), targetLang: "en", status: "done", translated: "merge pdf" });

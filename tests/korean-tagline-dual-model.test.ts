@@ -9,18 +9,21 @@ vi.mock("@/lib/llm/capacity-repository", () => ({ readModelCapacityCallerControl
 vi.mock("@/lib/crawl/translate", () => ({ KOREAN_TAGLINE_MODEL: "[MLX] gpt-oss-120b" }));
 import { writeKoreanTaglines } from "@/lib/jobs/products/korean-tagline";
 import { KOREAN_TRANSLATION_QWEN_MODEL } from "@/lib/crawl/korean-translation-config";
+import { setServingContractSnapshotForTest, TEXT_ROUTE_BLOCK_DETAIL } from "@/lib/llm/serving-contract-store";
+/** GPT opens only on a directly connected engine (admin contract, transport direct) for its model; legacy Qwen needs none. */
+const gptDirectRow = { routeId: "product-tagline-ko", model: "[MLX] gpt-oss-120b", contract: {}, auth: "none" as const, apiKey: null, transport: "direct" as const };
 const task = (id: number, attempts = 0) => ({ productId: id, name: "Tool", tagline: "Track tasks for your team", repoUrl: null, attempts });
 const outputs = (n: number) => ({ ok: true as const, outputs: Array.from({ length: n }, () => "팀의 할 일을 기록하는 도구") });
 const ctx = (signal?: AbortSignal) => ({ lease: { name: "product-tagline-ko", token: "lease", requestedVersion: 1 },
   hasBudget: () => true, log: vi.fn(), signal }) as unknown as JobContext<null>;
 beforeEach(() => {
-  vi.clearAllMocks(); vi.stubEnv("ABCLLM_API_KEY", "test"); vi.stubEnv("KOREAN_TRANSLATION_QWEN_ENABLED", "true"); vi.stubEnv("KOREAN_TRANSLATION_QWEN_RECOVERY_ENABLED", "false");
+  vi.clearAllMocks(); setServingContractSnapshotForTest([gptDirectRow]); vi.stubEnv("KOREAN_TRANSLATION_QWEN_ENABLED", "true"); vi.stubEnv("KOREAN_TRANSLATION_QWEN_RECOVERY_ENABLED", "false");
   m.control.mockResolvedValue({ mode: "disabled" }); m.pending.mockResolvedValue([]); m.recovery.mockResolvedValue([]);
   m.write.mockImplementation(async entries => entries.length);
   m.gpt.mockImplementation(async batch => ({ kind: "result", result: outputs(batch.length) }));
   m.qwen.mockImplementation(async items => outputs(items.length));
 });
-afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
+afterEach(() => { setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 it("starts disjoint GPT and Qwen batches concurrently and stores exact model provenance once per row", async () => {
   m.pending.mockResolvedValueOnce(Array.from({ length: 16 }, (_, i) => task(i + 1)));
   let finish!: (result: unknown) => void;
@@ -73,13 +76,15 @@ it("never dispatches an oversized first source or calls it a successful drained 
   expect(await writeKoreanTaglines(ctx())).toMatchObject({ degraded: { code: "input_too_large" } });
   expect(m.gpt).not.toHaveBeenCalled(); expect(m.qwen).not.toHaveBeenCalled(); expect(m.write).not.toHaveBeenCalled();
 });
-it("uses keyless Qwen in disabled mode but does not call a missing-key native path successful", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "");
+it("uses keyless Qwen in disabled mode but does not call a native path without a direct contract successful", async () => {
+  // No direct engine row for the GPT model: the native route is closed (no env key is consulted any more).
+  setServingContractSnapshotForTest([]);
   m.pending.mockResolvedValueOnce([task(1)]);
   await writeKoreanTaglines(ctx()); expect(m.gpt).not.toHaveBeenCalled(); expect(m.qwen).toHaveBeenCalledOnce();
   m.qwen.mockClear(); m.control.mockResolvedValue({ mode: "open" });
-  expect(await writeKoreanTaglines(ctx())).toMatchObject({ degraded: { code: "no_key" } });
-  expect(m.qwen).not.toHaveBeenCalled();
+  expect(await writeKoreanTaglines(ctx())).toMatchObject({ done: true,
+    degraded: { code: "no_direct_contract", detail: TEXT_ROUTE_BLOCK_DETAIL.no_direct_contract } });
+  expect(m.qwen).not.toHaveBeenCalled(); expect(m.gpt).not.toHaveBeenCalled();
 });
 it("defers recovery before selection when an earlier regular round leaves less than a full call budget", async () => {
   vi.stubEnv("KOREAN_TRANSLATION_QWEN_RECOVERY_ENABLED", "true");

@@ -278,7 +278,7 @@ describe("가져오기 계획(3b-B planAssignmentImport)", () => {
     const sources: AssignmentImportSources = { settings: { ...DEFAULT_CRAWL_SETTINGS, secondReview: { ...DEFAULT_CRAWL_SETTINGS.secondReview,
       voters: [{ provider: "abcllm", model: "[ghost] model" }] } }, registry: readModelRegistry(), policy: null, devices: [], assignments: [] };
     const plan = await planAssignmentImport(sources);
-    expect(plan).toEqual({ rows: [], warnings: ["firstReview: 1차 모델이 설정에 없어 1차는 옮기지 않습니다 — CRAWL_REVIEW_MODEL env 대체는 옮기지 않는다",
+    expect(plan).toEqual({ rows: [], warnings: ["firstReview: 1차 모델이 설정에 없어 1차는 옮기지 않습니다 — 관리자 설정에서 1차 심사자를 고른 뒤 다시 가져온다(환경변수 대체는 2026-10-31 제거)",
       "secondReview.voters[0]: 등록부에서 이 모델을 찾지 못해 옮기지 않습니다 — abcllm [ghost] model"] });
     const preview = assignmentImportPreviewOf(plan);
     expect(preview).toMatchObject({ rows: [], warnings: plan.warnings, counts: { create: 0, update: 0, unchanged: 0 }, error: null });

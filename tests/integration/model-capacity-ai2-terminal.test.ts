@@ -15,7 +15,9 @@ import { beginModelDispatch, cancelReservedModelSlot, finishAi2ItemModelCapacity
 import { prepareAi2GatewayCall, readAi2GatewayTerminal, reviewWithReservedAi2Gateway,
   type PreparedAi2GatewayCall } from "@/lib/crawl/agent-review-gateway";
 import type { Ai2GatewayServingContract } from "@/lib/crawl/second-review-serving-contract";
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
+import { directContractRow } from "./direct-engine-fixtures";
 
 const serving = vi.hoisted(() => ({ contract: null as Ai2GatewayServingContract | null }));
 vi.mock("@/lib/crawl/second-review-serving-contract", async original => ({
@@ -177,7 +179,7 @@ beforeAll(() => tracked(setup = (async () => {
   initialized = true;
 })(), hooks));
 afterEach(() => tracked(steps([async () => { await setup; }, () => drain(bodies), () => drain(work), cleanup,
-  async () => { serving.contract = null; vi.unstubAllEnvs(); }]), hooks));
+  async () => { serving.contract = null; setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); }]), hooks));
 afterAll(() => steps([async () => { await setup; }, () => drain(hooks, true), () => drain(bodies, true),
   () => drain(work), cleanup, async () => { if (initialized) expect(await whole()).toEqual(initial); },
   async () => { await (globalThis as { pgClient?: postgres.Sql }).pgClient?.end(); }, async () => { await admin.end(); }]));
@@ -286,7 +288,8 @@ async function nativeServer(run: (state: { call: PreparedAi2GatewayCall; input: 
     const address = server.address(); if (!address || typeof address === "string") throw new Error("fixture_address");
     serving.contract = { version: 1, protocol: "abcllm-raw-total-bound-v1", routeId: "second-review", provider: "abcllm", model,
       responseModel: "native-model", endpoint: `http://127.0.0.1:${address.port}/v1/chat/completions`, deploymentRevision: "local-test-only", totalTokenBound: 8_000 };
-    vi.stubEnv("ABCLLM_API_KEY", "local-test-only");
+    // The loopback engine is connected directly (admin row, no key) — the abcLLM gateway and its key were removed on 2026-10-30.
+    setServingContractSnapshotForTest([directContractRow("second-review", model)]);
     const now = new Date("2026-10-16T00:00:00.000Z");
     const input = createReviewInput({ repo: prefix, productUrl: "https://fixture.example", judgedAt: now } as CrawlCandidate,
       { id: 1, repo: prefix, productUrl: "https://fixture.example", repoMeta: { description: "A usable tool" },

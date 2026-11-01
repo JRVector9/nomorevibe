@@ -4,9 +4,9 @@ import postgres from "postgres";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { products } from "@/lib/db/schema";
+import { productSearchProfiles, products } from "@/lib/db/schema";
 import { PROFILE_MODEL } from "@/lib/domain/products/search-profile";
-import { pendingProfiles, prepareProfileModelDispatch, type ProfileTask } from "@/lib/domain/products/search-profiles";
+import { pendingProfiles, prepareProfileModelDispatch, recordProfileResult, type ProfileTask } from "@/lib/domain/products/search-profiles";
 import { writeSearchProfiles } from "@/lib/jobs/products/search-profile";
 import { runJob, type JobContext } from "@/lib/jobs/runner";
 import { jobsForRole } from "@/lib/jobs/catalog";
@@ -17,7 +17,9 @@ import { readControlLockHolders } from "@/lib/llm/capacity-lock-diagnostics";
 import { modelCapacityPolicyHash, textProfileInputHash, type ModelCapacityPolicy, type ModelCapacityRequest,
   type ModelCapacityRequestIdentity } from "@/lib/llm/capacity";
 import type { TextProfileServingContract } from "@/lib/llm/text-profile-serving-contract";
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
+import { directContractRow } from "./direct-engine-fixtures";
 
 const serving = vi.hoisted(() => ({ contract: null as TextProfileServingContract | null }));
 vi.mock("@/lib/llm/text-profile-serving-contract", async original => ({
@@ -208,8 +210,10 @@ beforeAll(() => tracked((async () => {
   expect((await admin`SELECT lease_token FROM jobs WHERE name=ANY(${managedJobs}::text[])`).every(row => row.lease_token === null)).toBe(true);
   expect(baseline("job_batch_control")[0]).toMatchObject({ mode: "legacy", writer_contract_version: 0 }); initialized = true;
 })(), hooks));
-beforeEach(() => tracked((async () => { vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await install(); await elect(); })(), hooks));
-afterEach(() => tracked(steps([() => drain(exercises), () => drain(work), cleanup, async () => { serving.contract = null; vi.unstubAllEnvs(); vi.unstubAllGlobals(); }]), hooks));
+// The route opens only on a direct admin contract for its model (the abcLLM gateway was removed 2026-10-30); the contract body is the mock above.
+beforeEach(() => tracked((async () => { setServingContractSnapshotForTest([directContractRow(jobName, PROFILE_MODEL)]); await install(); await elect(); })(), hooks));
+afterEach(() => tracked(steps([() => drain(exercises), () => drain(work), cleanup, async () => { serving.contract = null; setServingContractSnapshotForTest(null);
+  vi.unstubAllEnvs(); vi.unstubAllGlobals(); }]), hooks));
 afterAll(async () => { await steps([() => drain(exercises), () => drain(work), () => drain(hooks), cleanup, () => admin.end()]); });
 
 it("commits real text role/job dispatch, one native POST, historical terminal, original keyword writer and ACK", exercise(async () => {
@@ -230,12 +234,22 @@ it("commits real text role/job dispatch, one native POST, historical terminal, o
       .rejects.toMatchObject({ code: "23514" });
   });
 }));
-it("preserves production unsupported, disabled original transport and source-hash reuse without capacity rows", exercise(async () => {
+it("preserves production unsupported, a disabled original leaf that no longer sends, and source-hash reuse without capacity rows", exercise(async () => {
   const task = await seed(); expect(await tick()).toMatchObject({ status: "deferred", reason: "model_capacity" }); expect(await admin`SELECT request_id FROM model_capacity_requests`).toEqual([]);
+  // Disabled still selects the original leaf, but the abcLLM gateway it used is gone (2026-10-30): no HTTP at all, a provider-side
+  // no_key failure that does not count an attempt, and no capacity row.
   await install(basePolicy, "disabled"); const legacy = vi.fn(async () => new Response(JSON.stringify(replyBody()))); vi.stubGlobal("fetch", legacy);
-  expect(await tick()).toMatchObject({ status: "completed", done: true }); expect(legacy).toHaveBeenCalledTimes(1);
+  expect(await tick()).toMatchObject({ status: "completed", done: true }); expect(legacy).not.toHaveBeenCalled();
+  expect((await admin`SELECT error_code,attempts,keywords_en FROM product_search_profiles WHERE product_id=${task.product.id}`)[0])
+    .toEqual({ error_code: "no_key", attempts: 1, keywords_en: [] });
+  // The original keyword writer (no expectation) still stores a result; an unchanged source 31 days later is reused, not asked again.
+  const [profile] = await tracked(db.select().from(productSearchProfiles).where(eq(productSearchProfiles.productId, task.product.id)));
+  await custom(task, async lease => { expect(await tracked(recordProfileResult({ ...task, profile }, lease,
+    { kind: "success", en: ["expense tracker"], ko: ["가계부"], model: PROFILE_MODEL }))).toBe(true); });
   await admin`UPDATE product_search_profiles SET updated_at=now()-interval '31 days' WHERE product_id=${task.product.id}`;
-  await install(); expect(await tick()).toMatchObject({ status: "completed", done: true }); expect(legacy).toHaveBeenCalledTimes(1);
+  await install(); expect(await tick()).toMatchObject({ status: "completed", done: true }); expect(legacy).not.toHaveBeenCalled();
+  expect((await admin`SELECT error_code,keywords_en,updated_at>now()-interval '1 day' AS seen FROM product_search_profiles WHERE product_id=${task.product.id}`)[0])
+    .toEqual({ error_code: null, keywords_en: ["expense tracker"], seen: true });
   expect(await admin`SELECT request_id FROM model_capacity_requests`).toEqual([]);
 }));
 it("reuses its actual pending ID after a shared engine cap is released", exercise(async () => {

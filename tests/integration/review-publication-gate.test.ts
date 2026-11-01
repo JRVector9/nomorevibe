@@ -37,11 +37,11 @@ beforeEach(async () => {
   fetchLease = undefined;
   await resetTables();
   classify.mockReset().mockResolvedValue(null);
-  await saveSettings({ enabled: true }, "test");
+  // 1차 심사자는 관리자 설정만 본다(CRAWL_REVIEW_MODEL 대체는 2026-10-31 제거)
+  await saveSettings({ enabled: true, firstReview: { provider: "claude-cli", model: "test-model" } }, "test");
   // 아래 대부분은 1차 승인 자체를 본다. 두 모델 승인 관문은 끝의 테스트들이 2차를 켜고 따로 본다
   await saveSettings({ secondReview: { enabled: false } }, "test");
   vi.stubEnv("CRAWL_REVIEW_READY", "true");
-  vi.stubEnv("CRAWL_REVIEW_MODEL", "test-model");
   expect(await changeReviewMode({ mode: "enforce", expectedMode: "off", actor: "test", reason: "verified gate" })).toMatchObject({ ok: true });
 });
 afterEach(async () => {

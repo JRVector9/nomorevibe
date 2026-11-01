@@ -13,6 +13,7 @@ vi.mock("@/lib/crawl/translate", () => ({ KOREAN_TAGLINE_MODEL: "[MLX] gpt-oss-1
 const { checkKoreanTagline, checkKoreanTaglineOutput, leadClause, KOREAN_TAGLINE_MAX } = await import("@/lib/domain/products/korean-tagline");
 const { writeKoreanTaglines } = await import("@/lib/jobs/products/korean-tagline");
 const { capacityOwnerFromEnv } = await import("@/lib/llm/capacity-busy-targets");
+const { setServingContractSnapshotForTest } = await import("@/lib/llm/serving-contract-store");
 
 const source = { name: "Toolkit", tagline: "Toolkit helps teams organize documents and share notes across projects" };
 const core = "Toolkit으로 팀 문서를 정리하고 프로젝트 사이에 메모를 공유하는 도구";
@@ -122,11 +123,13 @@ describe("writeKoreanTaglines — 정리된 줄을 저장하고 미룸 사유를
   const ctx = () => ({ lease: { name: "product-tagline-ko", token: "lease", requestedVersion: 1 },
     hasBudget: () => true, log: vi.fn(), signal: undefined }) as unknown as JobContext<null> & { log: ReturnType<typeof vi.fn> };
   beforeEach(() => {
-    vi.clearAllMocks(); vi.stubEnv("ABCLLM_API_KEY", "test"); vi.stubEnv("KOREAN_TRANSLATION_QWEN_ENABLED", "false");
+    vi.clearAllMocks(); vi.stubEnv("KOREAN_TRANSLATION_QWEN_ENABLED", "false");
+    // GPT opens only on an admin engine row connected directly (transport direct); the abcLLM gateway key was removed (2026-10-30)
+    setServingContractSnapshotForTest([{ routeId: "product-tagline-ko", model: "[MLX] gpt-oss-120b", contract: {}, auth: "none", apiKey: null, transport: "direct" }]);
     m.control.mockResolvedValue({ mode: "disabled" });
     m.write.mockImplementation(async entries => entries.length);
   });
-  afterEach(() => vi.unstubAllEnvs());
+  afterEach(() => { vi.unstubAllEnvs(); setServingContractSnapshotForTest(null); });
 
   it("stores the cleaned line as a success instead of another too_long rejection", async () => {
     m.pending.mockResolvedValueOnce([task(1), task(2)]).mockResolvedValue([]);

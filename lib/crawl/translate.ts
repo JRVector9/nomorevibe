@@ -1,16 +1,13 @@
-import { scopedRequestTimeout } from "@/lib/llm/model-registry";
 import { scopedModel } from "@/lib/llm/model-registry";
-import { configuredModel, modelBaseUrl, modelLimits } from "@/lib/llm/model-registry";
+import { configuredModel, modelLimits } from "@/lib/llm/model-registry";
 import { createHash } from "node:crypto";
 import { parseKoreanTaglines, type KoreanTaglineBatch } from "@/lib/domain/products/korean-tagline";
 import type { ProductTranslationField, ProductTranslationLocale } from "@/lib/db/schema";
 import { productTranslationProtectedTokens } from "@/lib/domain/products/translation-policy";
-import { assertTextModelAdmission } from "@/lib/llm/text-capacity-admission";
 import { translationSystemPrompt } from "./translation-prompts";
 import { KOREAN_TRANSLATION_LEGACY_MAX_CHARS, KOREAN_TRANSLATION_MAX_ITEMS,
   koreanTranslationMaxOutputTokens, type KoreanTranslationProfile } from "./korean-translation-config";
 import { koreanTranslationRuntimePrompt } from "./korean-translation-prompts";
-import { servingContractAuth } from "@/lib/llm/serving-contract-store";
 
 /**
  * 심사 사유를 한국어로 옮긴다 — 사내 LLM 게이트웨이(abcllm, OpenAI 호환)의 gpt-oss-120b.
@@ -26,7 +23,7 @@ export const TRANSLATE_MODEL = configuredModel("reason-translate");
 export const KOREAN_TAGLINE_MODEL = configuredModel("product-tagline-ko");
 export const SEARCH_QUERY_MODEL = configuredModel("search-query-translate");
 /** Public field translation can select a model without changing reason, Korean tagline or live search translation. */
-export const PRODUCT_TRANSLATION_MODEL = configuredModel("product-translate");
+export const PRODUCT_TRANSLATE_MODEL = configuredModel("product-translate");
 
 
 const SYSTEM = [
@@ -64,8 +61,9 @@ export function parseTranslations(content: string, sources: string[]): Translate
 }
 
 /**
- * 게이트웨이에 한 번 묻는다. 부르는 곳이 둘(사유 번역·검색어 번역)이라 여기 한 곳에만 둔다 —
- * 스트리밍 끄기·키 읽기·실패 이름이 갈라지면 한쪽만 고쳐진다.
+ * 옛 게이트웨이 경로의 한 번 묻기. 부르는 곳이 넷(사유·한국어 소개·제품·검색어 번역)이라 여기 한 곳에만 둔다.
+ * 게이트웨이(abcLLM)는 2026-10-30 제거됐다 — 보내지 않고 no_key(공급자 쪽 사유: 시도 수를 세지 않는다)로 끝낸다.
+ * 모델은 엔진 직접 연결 계약이 있을 때 용량 경로(*-model-capacity)로만 부른다.
  */
 type ChatResult = { ok: true; content: string } | { ok: false; error: string };
 
@@ -91,25 +89,8 @@ async function chat(
   signal?: AbortSignal,
   model = scopedModel("reason-translate", TRANSLATE_MODEL),
 ): Promise<ChatResult> {
-  const key = process.env.ABCLLM_API_KEY?.trim();
-  if (!key) return { ok: false, error: "no_key" };
-  // A model connected straight to its engine (admin contract, transport direct) is served only through its contract path;
-  // this legacy path would send the gateway key to the engine's address.
-  if (servingContractAuth(body.routeId, model)?.transport === "direct") return { ok: false, error: "direct_engine_contract_only" };
-  await assertTextModelAdmission({ routeId: body.routeId, model });
-  try {
-    const response = await request(`${modelBaseUrl(body.routeId, process.env, "abcllm")}/chat/completions`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: chatWire(body, model),
-      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(scopedRequestTimeout(body.routeId, timeoutMs))]) : AbortSignal.timeout(scopedRequestTimeout(body.routeId, timeoutMs)),
-    });
-    if (!response.ok) return { ok: false, error: response.status === 429 ? "rate_limit" : `http_${response.status}` };
-    const data = await response.json() as { choices?: { message?: { content?: string | null } }[] };
-    return { ok: true, content: data.choices?.[0]?.message?.content ?? "" };
-  } catch (error) {
-    return { ok: false, error: error instanceof Error && error.name === "TimeoutError" ? "timeout" : "network" };
-  }
+  void body; void timeoutMs; void request; void signal; void model;
+  return { ok: false, error: "no_key" };
 }
 
 export async function translateToKorean(texts: string[], timeoutMs: number, request: typeof fetch = fetch, signal?: AbortSignal): Promise<TranslateResult> {
@@ -197,7 +178,7 @@ export function productTranslationGatewayWire(items: readonly ProductTranslation
 export async function translateProductFields(
   items: { name: string; text: string; field: ProductTranslationField; locale: ProductTranslationLocale }[],
   timeoutMs: number, request: typeof fetch = fetch, signal?: AbortSignal,
-  model = scopedModel("product-translate", PRODUCT_TRANSLATION_MODEL),
+  model = scopedModel("product-translate", PRODUCT_TRANSLATE_MODEL),
 ): Promise<KoreanTaglineBatch> {
   const result = await chat(productTranslationChatBody(items, model), timeoutMs, request, signal, model);
   return result.ok ? parseKoreanTaglines(result.content, items.length, items) : result;

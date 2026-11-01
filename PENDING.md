@@ -524,7 +524,7 @@ Codex CLI 실행을 확인했다. 앞선 단기 OAuth 시험으로 Claude 구조
 카테고리  codex exec / structured output / CLI 설정·지침·plugin·shell·web 격리 / 최대 10건 batch
           gpt-5.3-codex-spark / effort xhigh / 8초
           실패 시 gpt-5.6-terra / effort high / 12초, 다시 실패 시 키워드 폴백
-리뷰      명시한 CRAWL_REVIEW_MODEL / effort low / safe-mode / 20초 / 한 tick AI 호출 최대 1개
+리뷰      관리자 설정 firstReview / effort low / safe-mode / 20초 / 한 tick AI 호출 최대 1개
 인증      Spark는 CODEX_ACCESS_TOKEN, Terra는 OPENAI_API_KEY, 리뷰는 CLAUDE_CODE_OAUTH_TOKEN
 실패      카테고리는 키워드 폴백. 리뷰는 보류·제한 재시도이며 enforce의 승인 조건을 우회하지 않음
 ```
@@ -616,7 +616,6 @@ Codex 연구 프리뷰이므로 서버 access token과 계정 제공 여부를 �
 | `CODEX_ACCESS_TOKEN` | publisher의 Spark 분류. 없거나 실패하면 Terra로 진행 |
 | `OPENAI_API_KEY` | publisher의 Terra 분류. 없거나 실패하면 키워드 폴백 |
 | `CLAUDE_CODE_OAUTH_TOKEN` | reviewer. 리뷰 오류는 보류·제한 재시도 |
-| `CRAWL_REVIEW_MODEL` | reviewer의 명시적 모델. 기본값 없음 |
 | `CRAWL_REVIEW_READY` | 웹 모드 변경 준비 플래그. true여야 observe/enforce 전환 가능 |
 | `TRUSTED_PROXY_HOPS` | 웹 프록시 환경의 클라이언트 IP 판별. 실제 hop 수에 맞춤 |
 

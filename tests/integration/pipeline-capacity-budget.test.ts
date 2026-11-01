@@ -28,7 +28,9 @@ import { requestJob } from "@/lib/jobs/control";
 import { tryAcquireRole, releaseRole, type RoleLease } from "@/lib/jobs/role-leader";
 import { collectLiveCapacityWindow } from "@/lib/operations/pipeline-capacity-live-repository";
 import { recordAi2Attempt } from "@/lib/operations/pipeline-evidence-ledger";
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
+import { directContractRow } from "./direct-engine-fixtures";
 
 // 모델 슬롯 사건(0078)과 기록 시작 marker(0097)는 지울 수 없다. 공유 test DB를 더럽히지 않도록 이 파일만의 DB를 만든다(PR01b-8과 같은 방식).
 const root = fileURLToPath(new URL("../..", import.meta.url));
@@ -65,7 +67,8 @@ beforeAll(async () => {
     responseModel: MODEL, deploymentRevision: "pr01b9-fixture", totalTokenBound: 8192,
     endpoint: `http://127.0.0.1:${(server.address() as { port: number }).port}/v1/chat/completions` };
   vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("unexpected_external_http"); }));
-  vi.stubEnv("ABCLLM_API_KEY", "pr01b9-local-only");
+  // The loopback engine is connected directly (admin row, no key) — the abcLLM gateway and its key were removed on 2026-10-30.
+  setServingContractSnapshotForTest([directContractRow("crawl-agent-review", MODEL)]);
   await db.insert(crawlSettings).values({ id: 1, values: settings(), updatedBy: "pr01b9" });
   role = await tryAcquireRole({ role: "reviewer", instanceId, bootId, release: "pr01b9", kind: "primary" });
   expect(role).not.toBeNull();
@@ -74,7 +77,7 @@ beforeAll(async () => {
 }, 600_000);
 afterAll(async () => {
   if (role) await releaseRole(role);
-  serving.contract = undefined; vi.unstubAllGlobals(); vi.unstubAllEnvs();
+  serving.contract = undefined; vi.unstubAllGlobals(); vi.unstubAllEnvs(); setServingContractSnapshotForTest(null);
   if (server) await new Promise<void>(resolve => server!.close(() => resolve()));
   const g = globalThis as { db?: unknown; pgClient?: unknown }; delete g.db; delete g.pgClient;
   await client?.end({ timeout: 5 });

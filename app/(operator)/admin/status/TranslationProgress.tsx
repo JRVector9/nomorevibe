@@ -33,7 +33,7 @@ export function TranslationProgress({ progress, now }: { progress: Progress; now
         {progress.done.toLocaleString("ko-KR")}/{progress.total.toLocaleString("ko-KR")} ({percent}%)
         <div className="inline text-fg-3"> · 남음 {progress.pending.toLocaleString("ko-KR")} · <TranslationFailures failed={progress.failed} failures={progress.failures} /> · 최근 1시간 {progress.lastHour.toLocaleString("ko-KR")}건 · 마지막 {ago(progress, now)}{measuredAgo >= 5 && ` · ${measuredAgo}초 전 집계`}</div>
       </div>
-      {stalled && <p className="w-full text-warn">30분 넘게 옮긴 것이 없습니다 — <span className="font-mono">reason-translate</span> 작업과 ABCLLM_API_KEY 를 확인하세요.</p>}
+      {stalled && <p className="w-full text-warn">30분 넘게 옮긴 것이 없습니다 — <span className="font-mono">reason-translate</span> 작업과 그 모델의 직접 연결 계약(모델 연결)을 확인하세요.</p>}
     </section>
   );
 }

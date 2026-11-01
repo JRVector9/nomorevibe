@@ -27,7 +27,6 @@ beforeEach(async () => {
   await db.execute(sql`update pipeline_stage_modes set updated_at = clock_timestamp() - interval '2 days'`);
   await db.execute(sql`update model_capacity_control set updated_at = clock_timestamp() - interval '2 days'`);
   vi.stubEnv("CRAWL_REVIEW_READY", "true");
-  vi.stubEnv("CRAWL_REVIEW_MODEL", "first-fixture");
 });
 afterAll(async () => {
   await db.execute(sql.raw(`DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${READER}') THEN

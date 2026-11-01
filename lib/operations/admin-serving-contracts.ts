@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import { modelServingContracts, operationsAudit } from "@/lib/db/schema";
-import { GATEWAY_SERVING_CONTRACT_ROUTES, gatewayServingContractsFromConfig, parseGatewayServingContract, registeredGatewayServingContractSchema,
+import { GATEWAY_SERVING_CONTRACT_ROUTES, parseGatewayServingContract, registeredGatewayServingContractSchema,
   type GatewayServingRoute } from "@/lib/llm/gateway-serving-contract-config";
 import { sealSecret, secretBoxReady, servingContractKeyAad } from "@/lib/security/secret-box";
 import { writerSiteActive, DrWriterFencedError } from "./dr/epoch";
@@ -45,14 +45,6 @@ export async function listAdminServingContracts(): Promise<AdminServingContractR
   const rows = await db.select().from(modelServingContracts).orderBy(modelServingContracts.routeId, modelServingContracts.model, desc(modelServingContracts.id));
   return rows.map(row => ({ id: row.id, routeId: row.routeId, model: row.model, contract: row.contract, contractHash: row.contractHash, auth: row.auth,
     transport: row.transport, hasKey: row.apiKeyCiphertext !== null, enabled: row.enabled, note: row.note, updatedBy: row.updatedBy, updatedAt: row.updatedAt.toISOString() }));
-}
-
-/** Read-only view of the startup env contracts per route (what an admin row would override). */
-export function envServingContracts(env: Readonly<Record<string, string | undefined>> = process.env) {
-  return GATEWAY_SERVING_CONTRACT_ROUTES.flatMap(routeId => {
-    const schema = registeredGatewayServingContractSchema(routeId);
-    return schema ? [...gatewayServingContractsFromConfig(env.ABCLLM_SERVING_CONTRACTS, routeId, schema).values()].map(contract => ({ routeId, model: contract.model, contract })) : [];
-  });
 }
 
 /** Replace the enabled contract of one route+model. The previous row stays as disabled history. */
@@ -126,7 +118,7 @@ export async function saveLocalServingContractTx(tx: Tx, input: { routeId: strin
   return { id: row.id, contractHash };
 }
 
-/** Turn an admin contract off: the env contract of that route+model (if any) applies again. */
+/** Turn an admin contract off: that route+model then has no contract (its calls defer) until one is saved again. */
 export async function disableAdminServingContract(routeId: string, model: string, actor: string): Promise<boolean> {
   if (!isRoute(routeId) || !actor.trim()) throw new Error("serving_contract_input_invalid");
   return onPrimary(() => db.transaction(async tx => {

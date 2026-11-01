@@ -27,6 +27,8 @@ import { writeSearchProfiles } from "@/lib/jobs/products/search-profile";
 import { verifySearchKeywords } from "@/lib/jobs/products/search-verify";
 import type { JobContext } from "@/lib/jobs/runner";
 import { setRuntimeSettingsForTest } from "@/lib/operations/runtime-settings-store";
+import { scopedModel } from "@/lib/llm/model-registry";
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 
 const tasks = (count: number) => Array.from({ length: count }, (_, id) => ({
   product: { id }, reviewerNote: null,
@@ -36,13 +38,17 @@ const ctx = (): JobContext<null> => ({
   cursor: null, lease: { name: "test", token: "token", requestedVersion: 1 },
   hasBudget: () => true, log: vi.fn(), save: vi.fn(),
 });
+// Both jobs open only on an engine connected directly (admin contract, transport direct); the gateway key env is gone (2026-10-30).
+const direct = (routeId: string, model: string) => ({ routeId, model: scopedModel(routeId, model), contract: {}, auth: "none" as const,
+  apiKey: null, transport: "direct" as const });
 beforeEach(() => {
-  vi.resetAllMocks(); vi.stubEnv("ABCLLM_API_KEY", "test-key");
+  vi.resetAllMocks();
+  setServingContractSnapshotForTest([direct("product-search-profile", "generator"), direct("product-search-verify", "verifier")]);
   vi.useFakeTimers({ toFake: ["Date"] });
   domain.recordProfileResult.mockResolvedValue(true);
   domain.recordVerificationResult.mockResolvedValue(true);
 });
-afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); setRuntimeSettingsForTest(null); });
+afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); setRuntimeSettingsForTest(null); setServingContractSnapshotForTest(null); });
 
 describe("search job time budget", () => {
   it.each(["invalid_output", "timeout"])("uses chunk verification only on a later %s retry", async (verifyError) => {
