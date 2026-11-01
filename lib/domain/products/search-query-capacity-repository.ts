@@ -2,6 +2,7 @@ import { isDeepStrictEqual } from "node:util";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { db, onPrimary } from "@/lib/db";
+import { retryBackoffSql } from "@/lib/db/retry-backoff";
 import { currentReplayDb } from "@/lib/db/replay-scope";
 import { reviewHash } from "@/lib/crawl/agent-review-contract";
 import { textHash } from "@/lib/crawl/translate";
@@ -55,7 +56,7 @@ async function writeQueryCache(tx: Transaction, cacheKey: string, expected: Cach
     : await tx.execute(sql`UPDATE text_translations t SET status=${done ? "done" : "failed"},
         translated=CASE WHEN ${done} THEN ${translated} ELSE t.translated END,model=${model},
         attempts=t.attempts+1,error_code=${error},updated_at=now(),
-        retry_at=CASE WHEN ${done} THEN NULL ELSE now()+least(interval '24 hours',interval '5 minutes'*power(2,t.attempts)) END
+        retry_at=CASE WHEN ${done} THEN NULL ELSE ${retryBackoffSql(sql`t.attempts`)} END
         WHERE t.source_hash=${cacheKey} AND t.target_lang='en' AND (${done} OR t.status <> 'done')
           AND to_jsonb(t)=${JSON.stringify(expected)}::text::jsonb RETURNING source_hash`);
   return changed.length === 1;

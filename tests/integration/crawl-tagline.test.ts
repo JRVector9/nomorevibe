@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { directContractRow } from "./direct-engine-fixtures";
 
@@ -18,6 +18,7 @@ vi.mock("@/lib/crawl/tagline", async load => {
 });
 
 const { db } = await import("@/lib/db");
+const { retryBackoffSql } = await import("@/lib/db/retry-backoff");
 const { crawlCandidates, crawlDocuments, crawlFrontier, crawlSettings, crawlTaglines, jobs } = await import("@/lib/db/schema");
 const crawl = await import("@/lib/crawl/repository");
 const { saveSettings } = await import("@/lib/crawl/settings");
@@ -212,6 +213,36 @@ describe("소개 짓기 잡", () => {
     expect(gateway).toHaveBeenCalledTimes(1);
     expect((await db.select().from(crawlTaglines))[0]).toMatchObject({ tagline: "이제 무엇을 하는지 알 수 있다" });
     expect(await crawl.getCandidate("someone/changed")).toMatchObject({ state: "approved" });
+  });
+
+  it("attempts 가 35여도 실패를 다시 적으면 넘치지 않고 하루 뒤로 미룬다", async () => {
+    await held("someone/overflow");
+    const document = (await crawl.getDocument("someone/overflow"))!;
+    await db.insert(crawlTaglines).values({
+      repo: "someone/overflow", tagline: "", source: "page", model: "fixture", sourceHash: "a".repeat(64),
+      documentAt: new Date(document.fetchedAt.getTime() - 60_000), attempts: 35, errorCode: "model_unavailable",
+      retryAt: new Date(Date.now() - 60_000),
+    });
+    gateway.mockResolvedValue({ ok: false, status: 502 } as Response);
+
+    await expect(tick()).resolves.toMatchObject({ status: "completed" });
+
+    const [row] = await db.execute<{ attempts: number; error_code: string; on_day: boolean }>(sql`
+      select attempts, error_code,
+        retry_at between now() + interval '24 hours' - interval '5 minutes'
+          and now() + interval '24 hours' + interval '5 minutes' as on_day
+      from crawl_taglines where repo = 'someone/overflow'`);
+    expect(row).toMatchObject({ attempts: 36, error_code: "http_502", on_day: true });
+    const minutes = async (attempts: number) => {
+      const [delay] = await db.execute<{ minutes: string }>(sql`
+        select extract(epoch from (${retryBackoffSql(sql`${attempts}`)} - now())) / 60 as minutes`);
+      return Number(delay.minutes);
+    };
+    expect(await minutes(0)).toBeCloseTo(5, 2);
+    expect(await minutes(1)).toBeCloseTo(10, 2);
+    expect(await minutes(8)).toBeCloseTo(1280, 2);
+    expect(await minutes(9)).toBeCloseTo(24 * 60, 2);
+    expect(await minutes(35)).toBeCloseTo(24 * 60, 2);
   });
 
   it("직접 연결 계약이 없으면 부르지 않고 no_direct_contract 로 넘긴다 — 성공이 아니다", async () => {

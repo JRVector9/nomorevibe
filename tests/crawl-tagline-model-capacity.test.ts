@@ -194,7 +194,7 @@ function domainTx(present = false) {
     attempts: 2, errorCode: "network", retryAt: null, writtenBy: null, createdAt: at, updatedAt: at };
   const state = { cache: present ? { row: written, raw: { ...written, document_at: "2026-10-17T01:02:03.000123", updated_at: "2026-10-17T01:02:03.000123", attempts: 2 }, due: true } : null,
     request: null as Record<string, unknown> | null, second: null as string | null, insertWins: true, roleLive: true, jobLive: true, requestLive: true };
-  const queries: { sql: string; params: unknown[] }[] = [], tables: string[] = [], writes: string[] = [];
+  const queries: { sql: string; params: unknown[] }[] = [], tables: string[] = [], writes: string[] = [], sets: unknown[] = [];
   const tx = {
     execute: vi.fn(async (query: Parameters<PgDialect["sqlToQuery"]>[0]) => {
       const q = new PgDialect().sqlToQuery(query); queries.push(q);
@@ -216,13 +216,16 @@ function domainTx(present = false) {
       if (getTableName(table) === "jobs") return Promise.resolve([]);
       writes.push("cache"); return { returning: async () => state.insertWins ? [{ repo: task.candidate.repo }] : [] };
     } }) })),
-    update: vi.fn((table: Parameters<typeof getTableName>[0]) => ({ set: () => ({ where: (query: Parameters<PgDialect["sqlToQuery"]>[0]) => {
-      queries.push(new PgDialect().sqlToQuery(query)); writes.push(getTableName(table));
-      return { returning: async () => [{ repo: task.candidate.repo, id: task.candidate.id }] };
-    } }) })),
+    update: vi.fn((table: Parameters<typeof getTableName>[0]) => ({ set: (values: unknown) => {
+      sets.push(values);
+      return { where: (query: Parameters<PgDialect["sqlToQuery"]>[0]) => {
+        queries.push(new PgDialect().sqlToQuery(query)); writes.push(getTableName(table));
+        return { returning: async () => [{ repo: task.candidate.repo, id: task.candidate.id }] };
+      } };
+    } })),
   };
   mocks.transaction.mockImplementation(async run => run(tx));
-  return { state, candidate, document, queries, tables, writes, tx, task: present ? { ...task, written } : task };
+  return { state, candidate, document, queries, tables, writes, sets, tx, task: present ? { ...task, written } : task };
 }
 async function domainDispatch(t: ReturnType<typeof domainTx>) {
   const domain = await vi.importActual<typeof import("@/lib/crawl/taglines")>("@/lib/crawl/taglines");
@@ -275,11 +278,14 @@ it.each(["waiting", "reserved", "dispatched", "indeterminate", "settled"])("neve
     .rejects.toMatchObject({ reason: "dispatched" });
   expect(t.writes).toEqual([]); expect(mocks.wake).not.toHaveBeenCalled();
 });
-it("keeps full raw cache CAS and the original backoff expression on a positive failure", async () => {
+it("keeps full raw cache CAS and caps the backoff exponent before the interval multiply", async () => {
   const t = domainTx(true), { domain, prepared } = await domainDispatch(t);
   expect(await domain.recordTaglineResult(t.task, job, { kind: "failure", error: "network" }, prepared.expectation)).toEqual({ stored: true, released: false });
   const cas = t.queries.find(q => q.sql.includes("to_jsonb(\"crawl_taglines\")="));
   expect(cas?.params).toContain(JSON.stringify(t.state.cache!.raw)); expect(t.writes).toEqual(["crawl_taglines"]);
+  const retryAt = t.sets.map(value => (value as { retryAt?: unknown }).retryAt).find(value => value && typeof value === "object");
+  expect(new PgDialect().sqlToQuery(retryAt as Parameters<PgDialect["sqlToQuery"]>[0]).sql).toBe(
+    `now() + least(interval '24 hours', interval '5 minutes' * power(2, least("crawl_taglines"."attempts", 9)))`);
   await expect(domain.recordTaglineResult(t.task, job, { kind: "failure", error: "network" }, prepared.expectation)).rejects.toThrow("invalid_crawl_tagline_write_expectation");
 });
 function settleDomain(t: ReturnType<typeof domainTx>, prepared: Awaited<ReturnType<typeof domainDispatch>>["prepared"], outcome = result) {

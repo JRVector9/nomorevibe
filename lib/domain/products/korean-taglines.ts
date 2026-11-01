@@ -18,6 +18,7 @@ import { and, desc, eq, inArray, notInArray, sql } from "drizzle-orm";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { db, onPrimary } from "@/lib/db";
+import { retryBackoffSql } from "@/lib/db/retry-backoff";
 import { modelCapacityControl, productKoreanTaglines, products, type ProductStatus } from "@/lib/db/schema";
 import { assertJobLease, assertJobLeaseAtWallTime, type JobLease } from "@/lib/jobs/control";
 import { slugArrayPredicate } from "@/lib/domain/ranking/refresh";
@@ -271,7 +272,7 @@ export async function recordKoreanTaglines(entries: { task: KoreanTaglineTask; r
         await tx.insert(k).values({ ...values, taglineKo: null, errorCode: code, retryAt: sql`now() + interval '5 minutes'` })
           .onConflictDoUpdate({ target: k.productId,
             set: { sourceTagline: task.tagline, taglineKo: null, model: result.model, attempts, qualityRejections, errorCode: code, updatedAt: sql`now()`,
-              retryAt: sql`now() + least(interval '24 hours', interval '5 minutes' * power(2, case when ${same} then ${k.attempts} else 0 end))` },
+              retryAt: retryBackoffSql(sql`case when ${same} then ${k.attempts} else 0 end`) },
             setWhere: sql`not (${same} and ${k.errorCode} is null)` });
       }
       stored++;
@@ -511,7 +512,7 @@ async function writeReservedKoreanTaglines(value: readonly { task: KoreanTagline
         // All products are locked first. A cache absence race must never overwrite its winner.
         const written = raw ? await tx.insert(k).values({ ...values, ...resultValues }).onConflictDoUpdate({ target: k.productId,
           set: { sourceTagline: task.tagline, ...resultValues, model: result.model, attempts, qualityRejections, updatedAt: sql`now()`,
-            retryAt: result.kind === "success" ? null : sql`now() + least(interval '24 hours', interval '5 minutes' * power(2, case when ${same} then ${k.attempts} else 0 end))` },
+            retryAt: result.kind === "success" ? null : retryBackoffSql(sql`case when ${same} then ${k.attempts} else 0 end`) },
           setWhere: sql`to_jsonb(${k}) = ${JSON.stringify(raw)}::text::jsonb AND ${result.kind === "success" ? sql`true` : sql`not (${same} and ${k.errorCode} is null)`}`,
         }).returning({ id: k.productId }) : await tx.insert(k).values({ ...values, ...resultValues })
           .onConflictDoNothing({ target: k.productId }).returning({ id: k.productId });

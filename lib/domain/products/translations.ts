@@ -3,6 +3,7 @@ import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { db, onPrimary } from "@/lib/db";
+import { retryBackoffSql } from "@/lib/db/retry-backoff";
 import { productIntroChecks, products, productTranslations, takedownRequests,
   type ProductTranslation, type ProductTranslationField, type ProductTranslationLocale } from "@/lib/db/schema";
 import { isLocale, type Locale } from "@/lib/i18n/locales";
@@ -371,7 +372,7 @@ async function updateProductTranslation(tx: ProductTranslationTransaction, task:
     status: current && result.ok ? "ready" : "failed", model: result.model.slice(0, 160), errorCode: error,
     attempts: current && (result.ok || result.error !== "source_too_long") ? task.attempts + 1 : maxAttempts,
     retryAt: current && !result.ok && result.error !== "source_too_long" && task.attempts + 1 < maxAttempts
-      ? sql`now() + least(interval '24 hours', interval '5 minutes' * power(2, ${task.attempts}))` : null,
+      ? retryBackoffSql(sql`${task.attempts}`) : null,
     updatedAt: sql`now()`,
   }).where(and(eq(t.productId, task.source.id), eq(t.locale, task.locale), eq(t.field, task.field),
     eq(t.sourceHash, task.sourceHash), eq(t.attempts, task.attempts), inArray(t.status, ["pending", "failed"]),

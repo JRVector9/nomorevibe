@@ -2,6 +2,7 @@ import { assertJobLease, type JobLease } from "@/lib/jobs/control";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { db, onReplica, onPrimary } from "@/lib/db";
+import { retryBackoffSql } from "@/lib/db/retry-backoff";
 import { createMemo } from "@/lib/cache/memo";
 import { sharedStore } from "@/lib/cache/shared";
 import { roleLeases, textTranslations } from "@/lib/db/schema";
@@ -170,7 +171,7 @@ async function writeTranslations(executor: ProductTransaction | typeof db, resul
             attempts: sql`${textTranslations.attempts} + 1` }
         : { status: "failed", model, errorCode: (result.error ?? "invalid_output").slice(0, 60), updatedAt: sql`now()`,
             attempts: sql`${textTranslations.attempts} + 1`,
-            retryAt: sql`now() + least(interval '24 hours', interval '5 minutes' * power(2, ${textTranslations.attempts}))` },
+            retryAt: retryBackoffSql(textTranslations.attempts) },
       // 번역이 이미 있으면 실패로 덮지 않는다
       setWhere: done ? undefined : sql`${textTranslations.status} <> 'done'`,
     });
@@ -407,7 +408,7 @@ async function writeReservedReasonTranslations(value: TranslationResult[], model
           : await tx.execute(sql`UPDATE text_translations t SET status=${done ? 'done' : 'failed'},
               translated=CASE WHEN ${done} THEN ${result.translated} ELSE t.translated END,model=${model},
               attempts=t.attempts+1,error_code=${error},updated_at=now(),
-              retry_at=CASE WHEN ${done} THEN NULL ELSE now()+least(interval '24 hours',interval '5 minutes'*power(2,t.attempts)) END
+              retry_at=CASE WHEN ${done} THEN NULL ELSE ${retryBackoffSql(sql`t.attempts`)} END
               WHERE t.source_hash=${result.hash} AND t.target_lang='ko'
                 AND to_jsonb(t)=${JSON.stringify(expected.raw)}::text::jsonb RETURNING source_hash`);
         if (changed.length !== 1) throw new ReasonTranslationChanged();

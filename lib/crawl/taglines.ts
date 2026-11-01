@@ -6,6 +6,7 @@ import { emitPipelineEvent } from "@/lib/observability/review-pipeline";
 import { TAGLINE_MODEL, taglineEvidence, taglineHash } from "./tagline";
 import { and, eq, inArray, notInArray, sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
+import { retryBackoffSql } from "@/lib/db/retry-backoff";
 import { crawlCandidates, crawlDocuments, crawlSettings, crawlTaglines, jobs, modelCapacityRequests, type CrawlCandidate, type CrawlDocument, type CrawlTagline } from "@/lib/db/schema";
 import type { TaglineEvidenceSource } from "./tagline";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
@@ -123,7 +124,7 @@ export async function recordTaglineResult(task: TaglineTask, lease: JobLease, re
       }).onConflictDoUpdate({ target: crawlTaglines.repo,
         set: { ...common, attempts: sql`${crawlTaglines.attempts} + 1`,
           ...(result.kind === "success" ? { tagline: line, source: result.source, model: result.model, retryAt: null }
-            : { retryAt: sql`now() + least(interval '24 hours', interval '5 minutes' * power(2, ${crawlTaglines.attempts}))` }),
+            : { retryAt: retryBackoffSql(crawlTaglines.attempts) }),
         },
         // An absent row can be inserted by an administrator after our SELECT. It always wins.
         setWhere: task.written ? sql`${crawlTaglines.writtenBy} is null AND date_trunc('milliseconds', ${crawlTaglines.updatedAt}) = ${task.written.updatedAt.toISOString()}::timestamp` : sql`false`,
@@ -455,7 +456,7 @@ async function recordReservedCrawlTagline(value: TaglineTask, job: JobLease, val
         errorCode: result.kind === "failure" ? result.error.slice(0, 60) : null };
       const saved = raw ? await tx.update(crawlTaglines).set({ ...common, attempts: sql`${crawlTaglines.attempts}+1`,
         ...(result.kind === "success" ? { tagline: line, source: result.source, model: result.model, retryAt: null }
-          : { retryAt: sql`now()+least(interval '24 hours',interval '5 minutes'*power(2,${crawlTaglines.attempts}))` }) })
+          : { retryAt: retryBackoffSql(crawlTaglines.attempts) }) })
         .where(and(eq(crawlTaglines.repo, task.candidate.repo), sql`to_jsonb(${crawlTaglines})=${JSON.stringify(raw)}::text::jsonb`)).returning({ repo: crawlTaglines.repo })
         : await tx.insert(crawlTaglines).values({ repo: task.candidate.repo, ...common, tagline: line,
           source: result.kind === "success" ? result.source : "page", model: result.kind === "success" ? result.model : "", attempts: 1,
