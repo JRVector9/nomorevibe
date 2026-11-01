@@ -256,7 +256,7 @@ export function auditView(rows: readonly AdminLogRow[]): AuditView[] {
     const revision = row.detail?.revision;
     return { id: row.id, actor: row.actor, at: row.createdAt instanceof Date ? row.createdAt.toISOString() : String(row.createdAt), ok: row.ok,
       group: (GROUP_LABELS as Record<string, string>)[group] ?? group, revision: typeof revision === "number" ? revision : null,
-      changes: auditChangeLines(row), error: row.error ?? null };
+      changes: auditChangeLines(row), error: row.error ? row.error.split(" · ").map(part => runtimeSettingsIssueMessage(part.trim())).join(" · ") : null };
   });
 }
 
