@@ -148,6 +148,15 @@ CHECK를 다시 짜는 migration(0155·0157·0158·0160)은 이 DRAIN 아래에�
 
 ## 실패·원복 자료와 비동기 관측
 
+**plan 이 `inspect-private-receipts` 로 약 2분 뒤 멈추면** 먼저 다섯 역할 관문(monitor_gate)을 의심한다. `role_leases` 의
+`quarantine_until` 이 미래면 그 역할은 `primary_quarantined`(5분 안 3회 새 부팅 → 15분 격리)다. 격리는 지우지 않고
+풀릴 때까지 기다린 뒤 다시 plan 한다. 2026-11-01 은 앱 밖의 `pg_terminate_backend` 일괄 종료가 원인이었다 —
+[운영 DB 연결을 직접 끊지 않는다](independent-workers-runbook.md#운영-db-연결을-직접-끊지-않는다2026-11-01-격리-사고).
+
+**새 표를 monitor 가 읽게 되면** monitor 읽기 역할(`nomorevibe_monitor_20261022`)에 SELECT 를 따로 준다. 이 역할은
+저장소 밖에서 만든 운영 역할이라 마이그레이션이 GRANT 하지 않는다. 빠지면 Postgres 로그에 `permission denied for table …`
+가 probe 마다 남고 monitor 보고에서 그 부분이 빈다(0153 장비 표 두 개가 2026-11-01 까지 빠져 있었다).
+
 계획·전체 API 설정·실제 runtime·원 release/image/spec·단계별 영수증은 저장소 밖 0700 디렉터리,
 0600 파일에 둔다. Git 앱의 이전 로컬 image도 첫 서비스 변경 전에 rollback 태그로 보존한다.
 파일에는 인증 정보가 있으므로 커밋하거나 응답 원문을 로그에 붙이지 않는다.

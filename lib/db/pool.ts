@@ -110,17 +110,36 @@ interface DriverQuery {
 interface DriverConnection {
   connect: (query: DriverQuery) => unknown;
   execute: (query: DriverQuery) => unknown;
+  /** begin/reserve 가 이 연결을 쥔 동안만 값이 있다. 연결이 닫히면 풀(onclose)이 null 로 되돌린다 */
+  reserved?: unknown;
+  /** begin 이 BEGIN 뒤에 거는 거절 함수. 연결이 닫히면 풀이 한 번 부르고 null 로 지운다(3.4.9 index.js onclose) */
+  onclose?: ((error: unknown) => void) | null;
 }
 type WaitingQueries = Map<DriverQuery, { assigned: () => void }>;
 
+/**
+ * 이미 닫힌 TX 연결에 뒤늦게 온 문장 — 보내지 않고 이 오류로 거절한다(code 는 드라이버의 끊김 오류와 같다).
+ *
+ * 2026-11-01 운영 장애: TX 중 연결이 끊기면(pg_terminate_backend 57P01, PgBouncer "server conn crashed?", ECONNRESET) 3.4.9 는
+ * closed() 에서 socket 을 null 로 만든 뒤에 진행 중 문장을 거절한다. 그 거절을 받은 begin scope 가 같은 연결에 `rollback` 을
+ * execute 하면 setImmediate(nextWrite) 가 null socket 에 write 해 TypeError 가 타이머 안에서 던져진다 — uncaughtException 이라
+ * 워커 프로세스가 exit 1 로 죽었다(crawler·reviewer·publisher 반복 재시작 → 역할 primary_boots 격리 15분).
+ * 서버는 연결이 끊길 때 그 TX 를 이미 되돌렸으므로 rollback 을 보내지 않아도 잃는 것이 없다.
+ */
+export class DbTransactionConnectionClosedError extends Error {
+  readonly code = "CONNECTION_CLOSED";
+  constructor() { super("Transaction connection closed before this statement was sent"); this.name = "DbTransactionConnectionClosedError"; }
+}
+
 function waitDeadline<T>(value: T, waitMs: number, waiting: WaitingQueries,
-  trackConnection: (connection: DriverConnection) => void): T {
+  trackConnection: (connection: DriverConnection) => void, poolQueries: WeakSet<DriverQuery>): T {
   const scopedDeadline = dbDeadlineScope.getStore();
   if (scopedDeadline !== undefined && scopedDeadline <= Date.now()) throw new DbPoolWaitTimeoutError();
   const query = value as T & DriverQuery;
   if (!query || typeof query.handler !== "function" || typeof query.resolve !== "function" || typeof query.reject !== "function" || !query.options) {
     throw new Error("Unsupported postgres query internals; validate the pool adapter before upgrading");
   }
+  poolQueries.add(query);
   const originalHandler = query.handler;
   const originalResolve = query.resolve;
   const originalReject = query.reject;
@@ -185,9 +204,29 @@ export function createDbClient(connectionString: string, suppliedConfig?: DbPool
     ? options : { ...options, socket: postgresFallbackSocket(purpose, connectionString, fallbackHost) };
   const waiting: WaitingQueries = new Map();
   const tracked = new WeakSet<DriverConnection>();
+  // 이 풀의 공개 입구(unsafe·tagged)로 만든 문장. 그 밖에서 연결 execute 에 오는 문장은 begin/reserve scope 의 것이다
+  const poolQueries = new WeakSet<DriverQuery>();
   const trackConnection = (connection: DriverConnection) => {
     if (tracked.has(connection)) return;
     tracked.add(connection);
+    // begin 이 쥔 채 연결이 닫혔는지. 다음 begin 이 거절 함수를 새로 걸 때까지 남는다
+    let closedUnderTransaction = false;
+    let onclose: DriverConnection["onclose"] = connection.onclose ?? null;
+    Object.defineProperty(connection, "onclose", {
+      configurable: true, enumerable: true,
+      get: () => onclose && ((error: unknown) => { closedUnderTransaction = true; return onclose?.(error); }),
+      set: (value: DriverConnection["onclose"]) => { if (typeof value === "function") closedUnderTransaction = false; onclose = value; },
+    });
+    const execute = connection.execute;
+    connection.execute = function(query) {
+      // begin 이 쥔 채 닫힌 연결에 그 scope 가 뒤늦게 보내는 문장(끊긴 TX 의 rollback 등)은 null socket 에 쓰여 프로세스를 죽이므로
+      // 거절만 한다. true 를 돌려 handler 가 닫힌 연결을 full 큐로 옮기지 않게 한다. commit 뒤 새어 나간 tx 의 문장은 지금처럼 보낸다
+      if (closedUnderTransaction && !poolQueries.has(query) && !connection.reserved) {
+        query.reject(new DbTransactionConnectionClosedError());
+        return true;
+      }
+      return execute.call(this, query);
+    };
     const connect = connection.connect;
     connection.connect = function(query) {
       // A normal lifetime rotation assigns one queued query to its replacement.
@@ -199,13 +238,13 @@ export function createDbClient(connectionString: string, suppliedConfig?: DbPool
   };
   const client = postgres(connectionString, driverOptions);
   client.unsafe = new Proxy(client.unsafe, {
-    apply: (unsafe, receiver, args) => waitDeadline(Reflect.apply(unsafe, receiver, args), config.waitMs, waiting, trackConnection),
+    apply: (unsafe, receiver, args) => waitDeadline(Reflect.apply(unsafe, receiver, args), config.waitMs, waiting, trackConnection, poolQueries),
   });
   // Preserve tagged-query use of the public client without changing SQL fragments or identifiers.
   return new Proxy(client, {
     apply(target, receiver, args) {
       const result = Reflect.apply(target, receiver, args);
-      return Array.isArray(args[0]?.raw) ? waitDeadline(result, config.waitMs, waiting, trackConnection) : result;
+      return Array.isArray(args[0]?.raw) ? waitDeadline(result, config.waitMs, waiting, trackConnection, poolQueries) : result;
     },
   });
 }
