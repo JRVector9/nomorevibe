@@ -45,7 +45,7 @@ export function OverrideBadge({ overridden }: { overridden: boolean }) {
 
 /**
  * 값 한 칸 — 지금 값 입력 + 기본값 + 덮어씀 표시 + 「기본값으로」(덮어쓴 칸에만).
- * ms 칸은 초로 받는다(label 이 "(초)"). 값이 없는 칸(비울 수 있는 호출 상한)은 빈 입력에 placeholder 를 둔다.
+ * ms 칸은 초로 받는다(label 이 "(초)"). 값이 없는 호출 상한은 placeholder 「모델 상한」. 중계(relayMs)는 비우면 층이 없으므로 그 문구를 쓰지 않는다.
  */
 export function ValueCell({ field, readOnly, unit }: { field: SettingField; readOnly?: boolean; unit?: string }) {
   const suffix = unit ?? (field.kind === "int" ? "" : "초");
@@ -53,7 +53,7 @@ export function ValueCell({ field, readOnly, unit }: { field: SettingField; read
   return <span className="inline-grid gap-0.5">
     <span className="flex items-center gap-1">
       <input name={`value:${field.path}`} defaultValue={field.input} aria-label={field.label} title={field.note ?? field.label} inputMode="decimal"
-        placeholder={field.value === null ? "모델 상한" : undefined} disabled={readOnly} className={INPUT} />
+        placeholder={field.value === null && !field.path.endsWith(".relayMs") ? "모델 상한" : undefined} disabled={readOnly} className={INPUT} />
       {suffix && <span className="text-[13px] text-fg-3">{suffix}</span>}
       <OverrideBadge overridden={field.overridden} />
     </span>
