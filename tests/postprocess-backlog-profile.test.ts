@@ -46,7 +46,10 @@ it("processes each product at most once per tick and logs the exact deferral rea
   const deferred = new ModelCapacityDeferredError("capacity");
   m.write.mockImplementationOnce(async () => { throw deferred; });
   const context = ctx();
-  await expect(writeSearchProfiles(context)).rejects.toBe(deferred);
+  // 2026-11-01: 다른 제품을 1건 이상 끝낸 뒤의 용량 미룸은 던지지 않고 processed 건수를 실어 미룸으로 돌려준다(last_success_at 갱신 신호)
+  const outcome = await writeSearchProfiles(context);
+  expect(outcome).toEqual({ done: false, deferred: "model_capacity", processed: expect.any(Number) });
+  expect((outcome as { processed?: number }).processed).toBeGreaterThanOrEqual(1);
   const ids = m.write.mock.calls.map(([value]) => value.product.id);
   expect(new Set(ids).size).toBe(ids.length);
   expect(context.log).toHaveBeenCalledWith("search_profile.capacity_deferred", expect.objectContaining({ reason: "capacity" }));

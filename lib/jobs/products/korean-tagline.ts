@@ -11,7 +11,8 @@ import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { translateKoreanTaglinesWithQwen } from "@/lib/crawl/korean-translation-qwen";
 import { KOREAN_TRANSLATION_NATIVE_MAX_CHARS,
   KOREAN_TRANSLATION_QWEN_MODEL, koreanTranslationQwenEnabled, koreanTranslationQwenRecoveryEnabled } from "@/lib/crawl/korean-translation-config";
-import { TEXT_ROUTE_BLOCK_DETAIL, textRouteBlock } from "@/lib/llm/serving-contract-store";
+import { TEXT_ROUTE_BLOCK_DETAIL, textRouteAccess } from "@/lib/llm/serving-contract-store";
+import { productTaglineKoServingProvider } from "@/lib/llm/product-tagline-ko-serving-contract";
 import { jobKnob } from "@/lib/operations/runtime-settings-schema";
 import { runtimeSettings } from "@/lib/operations/runtime-settings-store";
 
@@ -61,7 +62,9 @@ export function packTaglineBatch(tasks: KoreanTaglineTask[], maxChars?: number):
 
 export async function writeKoreanTaglines(ctx: JobContext<null>): Promise<JobOutcome<null>> {
   // Only a directly connected engine (admin contract, transport direct) opens GPT; legacy Qwen does not need one.
-  const gptBlock = () => textRouteBlock("product-tagline-ko", scopedModel("product-tagline-ko", KOREAN_TAGLINE_MODEL));
+  // provider 는 계약 모듈이 고른다 — local-direct 직접 계약이면 그 장비로 기록한다(PR 3b-E).
+  const taglineModel = scopedModel("product-tagline-ko", KOREAN_TAGLINE_MODEL);
+  const gptBlock = () => textRouteAccess("product-tagline-ko", taglineModel, productTaglineKoServingProvider(taglineModel)).block;
   const gptCallable = () => gptBlock() === null;
   const initialBlock = gptBlock();
   if (initialBlock && !koreanTranslationQwenEnabled()) {

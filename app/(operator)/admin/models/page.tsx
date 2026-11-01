@@ -103,7 +103,8 @@ export default async function ModelsPage() {
         </section>
         <section className="flex flex-col gap-3 rounded-xl border border-line bg-bg-card p-4" aria-labelledby="text-model-heading">
           <h2 id="text-model-heading" className="text-[15px] font-semibold">다른 LLM 단계 · 배포 기본값</h2>
-          <p className="text-[13px] text-fg-2">풀을 비웠을 때 사용하는 웹 프로세스의 배포 기본값입니다. 단계별 모델 풀에서 저장한 선택이 새 작업에 우선합니다. 실제 호출과 점유는 위 단계 × 모델 표에서 확인하세요.</p>
+          <p className="text-[13px] text-fg-2">풀을 비웠을 때 사용하는 웹 프로세스의 배포 기본값입니다. 단계별 모델 풀에서 저장한 선택이 새 작업에 우선합니다. 실제 호출과 점유는 위 단계 × 모델 표에서 확인하세요.
+            ABCLLM_MODEL·ABCLLM_PROFILE_MODEL 은 아직 이 프로세스의 모델 이름을 고릅니다. 그 env 를 넣었다고 호출이 열리지는 않습니다. 열림은 「모델 연결」의 직접 연결 계약입니다.</p>
           <TextModelStagesTable models={models} />
           <div className="flex flex-wrap gap-4 text-[13px] font-semibold text-accent-ink"><Link href="/admin/audit" prefetch={false}>감사 단계 설정 →</Link><Link href="/admin/status#ai-model-title" prefetch={false}>카테고리 분류 모델 선택 →</Link><Link href="/admin/status" prefetch={false}>단계별 실제 경로 →</Link></div>
         </section>

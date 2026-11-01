@@ -1,4 +1,5 @@
 import { modelLimits, modelTimeoutMs, scopedModel } from "@/lib/llm/model-registry";
+import { crawlTaglineServingProvider } from "@/lib/llm/crawl-tagline-serving-contract";
 import { deferredJob, type JobContext, type JobOutcome } from "@/lib/jobs/runner";
 import { EngineDownTally } from "@/lib/jobs/engine-down";
 import { tickRemaining } from "@/lib/jobs/tick-deadline";
@@ -9,7 +10,7 @@ import { writeCrawlTaglineWithModelCapacity } from "@/lib/crawl/tagline-model-ca
 import { pendingTaglines, recordTaglineResult } from "@/lib/crawl/taglines";
 import { jobKnob } from "@/lib/operations/runtime-settings-schema";
 import { runtimeSettings } from "@/lib/operations/runtime-settings-store";
-import { TEXT_ROUTE_BLOCK_DETAIL, textRouteBlock } from "@/lib/llm/serving-contract-store";
+import { TEXT_ROUTE_BLOCK_DETAIL, textRouteAccess } from "@/lib/llm/serving-contract-store";
 
 /**
  * 소개 짓기 — 페이지에도 레포에도 소개가 없어 발행이 멈춘 후보의 한 줄을 모델이 짓는다.
@@ -35,8 +36,9 @@ const JOB = "crawl-tagline";
 
 export async function writeTaglines(ctx: JobContext<null>): Promise<JobOutcome<null>> {
   // 이 경로의 직접 연결 계약(관리자 엔진 연결, 엔진에 바로 — 키 없이도 부른다)이 있어야 부를 수 있다. 다른 text 잡과 같은 관문이다
-  // (PR 3b-C textRouteCallable 과 같은 판정 textRouteAccess) — 게이트웨이는 2026-10-30 제거됐다
-  const blocked = textRouteBlock(JOB, scopedModel(JOB, TAGLINE_MODEL));
+  // (textRouteAccess). provider 는 계약 모듈이 고른다 — local-direct 직접 계약이면 그 장비로 기록한다(PR 3b-E).
+  const model = scopedModel(JOB, TAGLINE_MODEL);
+  const blocked = textRouteAccess(JOB, model, crawlTaglineServingProvider(model)).block;
   if (blocked) {
     ctx.log("tagline.skipped", { reason: blocked });
     return { done: true, degraded: { code: blocked, detail: TEXT_ROUTE_BLOCK_DETAIL[blocked] } };

@@ -398,12 +398,12 @@ export const shortRuntimeSettingsVersion = (version: string) => version === "def
 
 // ---------- 한국어 이름표 ----------
 export const ROUTE_LABELS: Readonly<Record<string, string>> = {
-  "gateway-review": "게이트웨이 심사", "review-cli": "CLI 심사", relay: "중계(relay)", "human-review": "사람 큐 심사", "product-intro-check": "소개 검수",
+  "gateway-review": "심사 호출", "review-cli": "CLI 심사", relay: "중계(relay)", "human-review": "사람 큐 심사", "product-intro-check": "소개 검수",
   "classify-claude": "분류(Claude)", "product-search-profile": "검색 키워드", "product-search-verify": "키워드 검수", "crawl-tagline": "소개 생성",
   "reason-translate": "사유 번역", "product-tagline-ko": "한국어 소개", "product-translate": "공개 번역", "search-query-translate": "검색어 번역",
   "direct-review": "직접 연결 심사", "audit-second-opinion": "감사 2차 의견", "held-review-retry": "보류 심사 재시도", "split-tiebreak": "갈림 판정",
   "split-confirm": "갈림 확인", "product-audit": "제품 감사", "grok-review": "Grok 심사", "grok-session": "Grok 세션", "classify-cli": "분류(CLI)",
-  "screen-review": "화면 판별", "review-gateway": "AI 심사 게이트웨이", "ai1-preset": "AI1 심사", "ai2-direct": "AI2 직접 연결", "ai2-cli": "AI2 CLI",
+  "screen-review": "화면 판별", "review-gateway": "AI 심사", "ai1-preset": "AI1 심사", "ai2-direct": "AI2 직접 연결", "ai2-cli": "AI2 CLI",
   "ai2-grok": "AI2 Grok", "assist-primary": "LLM 보조(1차)", "assist-audit": "LLM 보조 감사", "assist-legacy-family": "LLM 보조(레거시)",
   "korean-translation-direct": "한국어 번역 직접 연결", "classify-primary": "분류(1차)", "classify-fallback": "분류(예비)", "first-review": "1차 심사",
 };

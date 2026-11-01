@@ -7,6 +7,7 @@ import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { afterAll, beforeAll, expect, it } from "vitest";
+import { textLocalDirectDispatchSql, textLocalDirectEventTerminalSql, textLocalDirectTerminalSql } from "@/lib/llm/gateway-local-direct-binding-sql";
 import { LEDGER_RULE_CHECKS, ledgerCheckDefs, ledgerCheckExpressions } from "./ledger-check-defs";
 import { TEST_DATABASE_URL } from "./setup";
 
@@ -113,8 +114,8 @@ it("0158 까지: 아홉 행 가운데 받아들여지는 것 두 건, 나머지�
 });
 
 it("0160 은 여섯 CHECK 를 지우고 같은 술어를 rules 행·트리거로 두며 작은 CHECK·행·판정은 그대로다", async () => {
-  await migrate(drizzle(client), { migrationsFolder: path.join(root, "drizzle") });
-  expect((await client`SELECT count(*)::int n FROM drizzle.__drizzle_migrations`)[0].n).toBe(journal.entries.length);
+  await migrateThrough(160);
+  expect((await client`SELECT count(*)::int n FROM drizzle.__drizzle_migrations`)[0].n).toBe(journal.entries.filter(entry => entry.idx <= 160).length);
   expect(await constraintNames()).toEqual([...SMALL].sort());
   const rules = await client<{ table_name: string; constraint_name: string; ordinal: number; predicate: string; source: string }[]>`SELECT table_name, constraint_name, ordinal, predicate, source
     FROM model_capacity_check_rules ORDER BY table_name, constraint_name, ordinal`;
@@ -169,4 +170,29 @@ it("같은 INSERT 20 + UPDATE 20 묶음이 0160 뒤에 문장당 더 빠르다(�
   const msAfter = await perStatementMs(20);
   console.info("ledger_check_rules_per_statement_ms", { before: Number(msBefore.toFixed(2)), after: Number(msAfter.toFixed(2)) });
   expect(msAfter).toBeLessThan(msBefore);
+});
+
+it("0161 은 text local-direct 가지 셋만 다음 ordinal 로 더하고 판정은 그대로이며 다시 실행해도 행이 늘지 않는다", async () => {
+  const text: Record<string, string> = { model_capacity_requests_dispatch_check: textLocalDirectDispatchSql,
+    model_capacity_requests_terminal_check: textLocalDirectTerminalSql, model_capacity_events_terminal_check: textLocalDirectEventTerminalSql };
+  await migrate(drizzle(client), { migrationsFolder: path.join(root, "drizzle") });
+  expect((await client`SELECT count(*)::int n FROM drizzle.__drizzle_migrations`)[0].n).toBe(journal.entries.length);
+  const rules = await client<{ constraint_name: string; ordinal: number; predicate: string; source: string }[]>`SELECT constraint_name, ordinal, predicate, source
+    FROM model_capacity_check_rules WHERE source = '0161_text_local_direct_binding' ORDER BY constraint_name`;
+  expect(rules.map(rule => [rule.constraint_name, Number(rule.ordinal), rule.source, rule.predicate])).toEqual(Object.entries(text).sort(([a], [b]) => a < b ? -1 : 1)
+    .map(([name, predicate]) => [name, 2, "0161_text_local_direct_binding", predicate]));
+  const after = await ledgerCheckDefs(client, MOVED);
+  for (const name of MOVED) {
+    const branch = text[name];
+    if (!branch) { expect(after[name], `${name}: 0161 unchanged`).toBe(defsBefore[name]); continue; }
+    expect(after[name], `${name}: 0158 predicate plus the 0161 branch`).toBe(`CHECK ((${expressionsBefore[name]}) OR (${branch}))`);
+  }
+  expect(await verdicts()).toEqual(before);
+  const count = async () => (await client<{ n: number }[]>`SELECT count(*)::int n FROM model_capacity_check_rules`)[0].n;
+  const beforeCount = await count();
+  for (const statement of readFileSync(path.join(root, "drizzle/0161_text_local_direct_binding.sql"), "utf8").split("--> statement-breakpoint")) {
+    const sql = statement.split("\n").filter(line => !line.trimStart().startsWith("--")).join("\n").trim();
+    if (sql.startsWith("INSERT")) await client.unsafe(sql);
+  }
+  expect(await count()).toBe(beforeCount);
 });

@@ -6,7 +6,8 @@ import { ModelCapacityDeferredError, modelCapacityDeferralIsPerWork } from "@/li
 import { pendingVerifications, recordVerificationResult } from "@/lib/domain/products/search-profiles";
 import { VERIFY_MODEL } from "@/lib/domain/products/search-verify";
 import { verifyKeywordsWithModelCapacity } from "@/lib/domain/products/search-verify-model-capacity";
-import { TEXT_ROUTE_BLOCK_DETAIL, textRouteBlock } from "@/lib/llm/serving-contract-store";
+import { TEXT_ROUTE_BLOCK_DETAIL, textRouteAccess } from "@/lib/llm/serving-contract-store";
+import { searchVerifyServingProvider } from "@/lib/llm/search-verify-serving-contract";
 import { jobKnob } from "@/lib/operations/runtime-settings-schema";
 import { runtimeSettings } from "@/lib/operations/runtime-settings-store";
 
@@ -30,7 +31,8 @@ const JOB = "product-search-verify";
  */
 
 export async function verifySearchKeywords(ctx: JobContext<null>, request?: typeof fetch): Promise<JobOutcome<null>> {
-  const blocked = textRouteBlock("product-search-verify", scopedModel("product-search-verify", VERIFY_MODEL));
+  const model = scopedModel("product-search-verify", VERIFY_MODEL);
+  const blocked = textRouteAccess("product-search-verify", model, searchVerifyServingProvider(model)).block;
   if (blocked) {
     ctx.log("search_verify.skipped", { reason: blocked });
     return { done: true, degraded: { code: blocked, detail: TEXT_ROUTE_BLOCK_DETAIL[blocked] } };

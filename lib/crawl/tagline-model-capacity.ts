@@ -15,6 +15,7 @@ import { prepareCrawlTaglineDispatch, prepareCrawlTaglineHistory, prepareCrawlTa
 import type { JobLease } from "@/lib/jobs/control";
 import { roleLeaseFromEnv, type RoleLease } from "@/lib/jobs/role-leader";
 import { textRouteCallable } from "@/lib/llm/serving-contract-store";
+import { crawlTaglineServingProvider } from "@/lib/llm/crawl-tagline-serving-contract";
 
 export type CrawlTaglineCapacityOutcome = { kind: "result"; result: TaglineResult; askOrdinal: 1 | 2;
   parent: CrawlTaglineParent | null; expectation: CrawlTaglineWriteExpectation };
@@ -30,11 +31,12 @@ export async function writeCrawlTaglineWithModelCapacity(value: TaglineTask, job
   if (previous && (previous.askOrdinal !== 1 || !previous.result.ok || previous.result.tagline))
     throw new Error("invalid_crawl_tagline_second_ask");
   if (previous && !previous.parent) throw new ModelCapacityDeferredError("dispatched");
-  if (!textRouteCallable("crawl-tagline", scopedModel("crawl-tagline", TAGLINE_MODEL)) && !previous) return { kind: "disabled" };
+  const provider = crawlTaglineServingProvider(scopedModel("crawl-tagline", TAGLINE_MODEL));
+  if (!textRouteCallable("crawl-tagline", scopedModel("crawl-tagline", TAGLINE_MODEL), provider) && !previous) return { kind: "disabled" };
   const control = await readModelCapacityCallerControl();
   if (control.mode === "disabled" && !previous) return { kind: "disabled" };
   if (control.mode !== "open") throw new ModelCapacityDeferredError(control.mode === "draining" ? "draining" : "disabled");
-  if (!control.policy?.routes.some(route => route.routeId === "crawl-tagline" && route.provider === "abcllm" && route.model === scopedModel("crawl-tagline", TAGLINE_MODEL)))
+  if (!control.policy?.routes.some(route => route.routeId === "crawl-tagline" && route.provider === provider && route.model === scopedModel("crawl-tagline", TAGLINE_MODEL)))
     throw new ModelCapacityDeferredError("unmapped");
   const roleLease = options.roleLease ?? (env.ROLE_LEASE_ROLE === "text" ? roleLeaseFromEnv("text", env) : undefined);
   if (!roleLease || roleLease.role !== "text") throw new ModelCapacityDeferredError("owner_unavailable");
@@ -60,10 +62,10 @@ export async function writeCrawlTaglineWithModelCapacity(value: TaglineTask, job
   const input = { member: initial.member, model: scopedModel("crawl-tagline", TAGLINE_MODEL), askOrdinal: previous ? 2 as const : 1 as const,
     parent: previous?.parent ?? null };
   const evidence = taglineEvidence(task.candidate.repo, task.document);
-  const call = prepareCrawlTaglineGatewayCall(evidence, { model: scopedModel("crawl-tagline", TAGLINE_MODEL), timeoutMs: scopedRequestTimeout("crawl-tagline", options.timeoutMs) });
+  const call = prepareCrawlTaglineGatewayCall(evidence, { model: scopedModel("crawl-tagline", TAGLINE_MODEL), timeoutMs: scopedRequestTimeout("crawl-tagline", options.timeoutMs), provider });
   if (call.kind !== "prepared") throw new ModelCapacityDeferredError(call.reason);
   const identity = modelCapacityRequestIdentitySchema.parse({ owner: { instanceId: initial.role.instanceId, bootId: initial.role.bootId },
-    class: "background", pool: "text", routeId: "crawl-tagline", provider: "abcllm", model: scopedModel("crawl-tagline", TAGLINE_MODEL),
+    class: "background", pool: "text", routeId: "crawl-tagline", provider: call.provider, model: scopedModel("crawl-tagline", TAGLINE_MODEL),
     workKey: `${crawlTaglineLogicalWorkKey(input)}:${crawlTaglineInputHash(input)}` });
   const pending = await findOwnPendingModelRequest(identity);
   if (pending?.state === "dispatched") throw new ModelCapacityDeferredError("dispatched");

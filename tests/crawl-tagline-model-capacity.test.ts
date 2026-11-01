@@ -34,7 +34,7 @@ const job = { name: "crawl-tagline", token: randomUUID(), requestedVersion: 3 };
 const member: CrawlTaglineMember = { candidateId: 17, repo: task.candidate.repo, sourceHash: taglineHash(taglineEvidence(task.candidate.repo, task.document)),
   candidateRowIdentityHash: "a".repeat(64), documentRowIdentityHash: "b".repeat(64), cache: { kind: "absent" } };
 const boundRole = { ...role, batch: { mode: "legacy" as const } };
-const call = { kind: "prepared" as const, model: TAGLINE_MODEL, sourceHash: member.sourceHash, wireHash: "c".repeat(64), servingContractHash: "d".repeat(64), totalTokenBound: 4096 };
+const call = { kind: "prepared" as const, provider: "abcllm" as const, model: TAGLINE_MODEL, sourceHash: member.sourceHash, wireHash: "c".repeat(64), servingContractHash: "d".repeat(64), totalTokenBound: 4096 };
 const reservation = modelCapacityReservationSchema.parse({ requestId: randomUUID(), token: randomUUID(), owner: { instanceId: role.instanceId, bootId: role.bootId }, epoch: 1, revision: 1, policyHash: "e".repeat(64) });
 const dispatch = { ...reservation, binding: { kind: "crawl_tagline_gateway" } }, expectation = { kind: "crawl_tagline_write" as const };
 const result = { ok: true as const, tagline: "Document manager", source: "page" as const }, empty = { ...result, tagline: "" };

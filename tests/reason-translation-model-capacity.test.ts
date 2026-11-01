@@ -21,7 +21,7 @@ const hash = createHash('sha256').update(body).digest('hex');
 const batch = () => [{ hash, body, attempts: 0 }];
 const lease = { name: 'reason-translate', token: randomUUID(), requestedVersion: 3 };
 const role = { role: 'text', instanceId: 'reason-runtime-unit', bootId: randomUUID(), release: 'unit-release', epoch: 1, kind: 'primary' };
-const call = Object.freeze({ kind: 'prepared', model: 'Reason Model', wireHash: 'a'.repeat(64),
+const call = Object.freeze({ kind: 'prepared', provider: 'abcllm', model: 'Reason Model', wireHash: 'a'.repeat(64),
   servingContractHash: 'b'.repeat(64), totalTokenBound: 8192, sourceHashes: [hash] });
 const members = [{ sourceHash: hash, cache: { kind: 'absent' } }];
 const reservation = { requestId: randomUUID(), token: randomUUID(), owner: { instanceId: role.instanceId, bootId: role.bootId },

@@ -326,7 +326,7 @@ freshreceipt99142 EXIT0 index=fresh-receipts-1793088868304746000/index.private.j
 
 PR696 첫CI40471239295 실패원인: raw Date SQLencoder오류+새cursor를null로고정한테스트타입+singleton빈큐cursorreset회귀. agentfix/rootsource승인후01fa28a44be89a2f2f8ef1627ca3698737204f52 push. 현재CI40472373532 type/lint/build/unit/imagesactualsuccess, integration/필수check미완료. pool WTclean, 로컬tests/lint/typecheck/build/compile0, gitdiffcheckEXIT0.
 
-activation privatehelper B/ai1-dual-activation-20261027 소스준비/독립검토완료이나 treepins를새01fa상태로갱신중(운영실행0). 5앱 reviewer2/web2/ai2consumer-m3의ABCLLM_SERVING_CONTRACTS에 SupaAI1을추가해야 한다. startup환경이라 DB설정만으론안된다. 공식배포는env변경을허용하지않아 먼저same source/digest의 envrollout5앱을실제검증한뒤새baseline으로696all18공식배포한다. 최종696runtime startupreadback후canonical policy reviewer2→3/global3→4/physicalgroups1과 saveSettingsCAS 추가AI1적용; allactive0/draining필수. 기다림waiting은물리점유아니므로별도집계/비차단. DB+env변경은아직0.
+activation privatehelper B/ai1-dual-activation-20261027 소스준비/독립검토완료이나 treepins를새01fa상태로갱신중(운영실행0). 5앱 reviewer2/web2/ai2consumer-m3에 Supa AI1 계약을 넣어야 한다. 2026-10-31 이후 그 계약은 env ABCLLM_SERVING_CONTRACTS 가 아니라 관리자 「모델 연결」(model_serving_contracts 행)만 쓴다. 아래 env rollout 문장은 2026-10-27 당시 계획이고, 그 env 키는 코드가 더 읽지 않는다. 공식배포는env변경을허용하지않아 먼저same source/digest의 envrollout5앱을실제검증한뒤새baseline으로696all18공식배포한다. 최종696runtime startupreadback후canonical policy reviewer2→3/global3→4/physicalgroups1과 saveSettingsCAS 추가AI1적용; allactive0/draining필수. 기다림waiting은물리점유아니므로별도집계/비차단. DB+env변경은아직0.
 
 공식696 source-onlywrapper B/release-696-fast-path/official-release-696-v1.py SHA9f9904c1aedf22885645d451c703bbec237921ad03df3ac454c815b200c3301a rootread완료/실행0. merge된finalmain과새cleanOP로 plan --sha FULLSHA --op CLEANOP --label696a; exactplanhash로run한다. 원본gate/timeout그대로/18앱분할검증. CImerge전OP생성/배포성공주장금지.
 

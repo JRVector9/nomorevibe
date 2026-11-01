@@ -7,7 +7,8 @@ import { pendingProductTranslations, recordProductTranslations, type ProductTran
 import { deferredJob, type JobContext, type JobOutcome } from "@/lib/jobs/runner";
 import { ModelCapacityDeferredError, modelCapacityDeferralIsPerWork } from "@/lib/llm/capacity-deferred";
 import { productTranslationClientTimeoutMs } from "@/lib/llm/deadline-ladder";
-import { TEXT_ROUTE_BLOCK_DETAIL, textRouteBlock } from "@/lib/llm/serving-contract-store";
+import { TEXT_ROUTE_BLOCK_DETAIL, textRouteAccess } from "@/lib/llm/serving-contract-store";
+import { productTranslationServingProvider } from "@/lib/llm/product-translation-serving-contract";
 
 /** 한 틱에 호출 없이 넘길 수 있는 묶음 수 상한 — 고르기·장부 요청이 틱마다 끝없이 돌지 않게 한다. */
 const MAX_SELECTION_ROUNDS = 8;
@@ -21,7 +22,8 @@ const MAX_SELECTION_ROUNDS = 8;
  * 호출한 묶음의 실패·미확인은 기존처럼 attempts·retry_at 으로 적혀 다음 틱이 뒤의 수요를 고른다. 포화·정책·owner 미룸은 틱 전체를 미룬다.
  */
 export async function translateDemandedProductFields(ctx: JobContext<null>): Promise<JobOutcome<null>> {
-  const blocked = textRouteBlock("product-translate", scopedModel("product-translate", PRODUCT_TRANSLATE_MODEL));
+  const model = scopedModel("product-translate", PRODUCT_TRANSLATE_MODEL);
+  const blocked = textRouteAccess("product-translate", model, productTranslationServingProvider(model)).block;
   if (blocked) {
     ctx.log("product_translation.deferred", { reason: blocked });
     return { done: true, degraded: { code: blocked, detail: TEXT_ROUTE_BLOCK_DETAIL[blocked] } };

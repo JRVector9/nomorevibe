@@ -18,7 +18,7 @@ import { readIntroRecheckSnapshot } from "@/lib/domain/products/intro-assist-rep
 import { assistHash } from "./contracts";
 import { lockActionAuditRuntimeInput, AuditDispatchBudgetExceededError } from "./audit-runtime";
 import { readActionAuditPolicy } from "@/lib/domain/products/automated-action-audit";
-import { resolveLocalModelServingContract } from "@/lib/llm/local-model-serving-contract";
+import { resolveLocalModelContract } from "@/lib/llm/local-model-contract-table";
 import { lockNewsLocalizationRuntimeInput } from "./news-runtime";
 import { lockNewsLocalizationSource } from "@/lib/news/localization-repository";
 import { uptimeAssistSubjectCurrent } from "./uptime-source";
@@ -53,7 +53,7 @@ export async function proveAssistModelDomain(tx: ProductTransaction, target: Ext
     return true;
   }
   if (candidate.kind === "decision_audit" || candidate.kind === "semantic_exception") {
-    const config = readActionAuditPolicy(), contract = resolveLocalModelServingContract(target.backendId);
+    const config = readActionAuditPolicy(), contract = resolveLocalModelContract(target.backendId);
     if (!config.enabled || !contract || contract.model !== model
       || !await lockActionAuditRuntimeInput(tx, candidate, value.input, contract.modelFamily)) return false;
     // 공통 capacity 제어행이 잠긴 TX다. 실제 dispatch를 현재 UTC 주간 한도로 센다.

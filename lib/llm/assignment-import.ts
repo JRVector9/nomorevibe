@@ -181,7 +181,7 @@ export type AssignmentImportSources = Readonly<{
 }>;
 
 const FIELD_LABELS: Readonly<Record<(typeof FIELDS)[number], string>> = { registryKey: "모델", transport: "전송", rank: "순위", vote: "표", mode: "모드" };
-const TRANSPORT_LABELS: Readonly<Record<AssignmentTransport, string>> = { gateway: "게이트웨이", direct: "엔진 직접", "local-direct": "로컬 직접", cli: "CLI" };
+const TRANSPORT_LABELS: Readonly<Record<AssignmentTransport, string>> = { gateway: "장비 표지", direct: "엔진 직접", "local-direct": "로컬 직접", cli: "CLI" };
 const MODE_LABELS: Readonly<Record<HelperMode, string>> = { off: "꺼짐", shadow: "섀도", live: "실전" };
 function fieldValue(field: (typeof FIELDS)[number], value: unknown): string {
   if (field === "transport") return TRANSPORT_LABELS[value as AssignmentTransport] ?? String(value);

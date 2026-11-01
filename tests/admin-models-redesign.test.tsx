@@ -40,7 +40,8 @@ describe("admin models 한 화면 렌더(2026-10-31 승인 시안)", () => {
     // 모델 하나 = tbody 하나(단계 행 묶음) — 경보 칩·옛 링크의 # 앵커가 그 tbody 로 간다
     const rows = tbodies(html); expect(rows).toHaveLength(3);
     const supa = rows.find(row => row.includes("Qwen3.8-27B-NVFP4"))!;
-    for (const value of ["1차 검수", ">Supa</span>", "출처 등록부", "(abcllm)", "계약 없음", "확인 못함 1", "연결 확인", "모델 재시작", 'data-state="unknown"', "model-row-unknown"]) expect(supa).toContain(value);
+    for (const value of ["1차 검수", ">Supa</span>", "출처 등록부", "(abcllm)", "계약 없음", "코드 기본 주소(abcllm-api)만으로는 열리지 않습니다", "확인 못함 1", "연결 확인", "모델 재시작", 'data-state="unknown"', "model-row-unknown"]) expect(supa).toContain(value);
+    expect(supa).not.toContain("게이트웨이");
     expect(html).toContain("접수 일시중지"); expect(html).toContain("표를 좌우로 밀어"); expect(html).toContain("overflow-x-auto");
     // 상태는 색+글자+글리프 — 범례에 여섯 상태가 모두 있다
     for (const label of ["연결됨", "처리 중", "보류", "접수 중지", "연결 안 됨", "확인 못함"]) expect(html).toContain(`</span>${label}</span>`);
@@ -180,10 +181,12 @@ describe("모델 카드 서버 이름 — 장비 미확인 없이(2026-10-31)", 
       { routeId: "crawl-agent-review", model: "b", host: null, transport: "gateway" }, { routeId: "crawl-agent-review", model: "c", host: null, transport: "gateway" }]);
     expect(JSON.stringify(links)).not.toContain("SECRET");
   });
-  it("전송 방식: 계약이 있으면 계약 transport, 없으면 제공자로 — abcllm 은 계약 없이는 열리지 않으니 「계약 없음」", () => {
+  it("전송 방식: 열리는 직접 연결만 「직접」, CLI 는 「CLI」, abcllm 은 직접 연결 계약이 없으면 열리지 않는다", () => {
     expect(modelTransportLabel("abcllm", [{ routeId: "r", model: "m", host: null, transport: "direct" }])).toBe("엔진 직접(계약)");
-    expect(modelTransportLabel("abcllm", [{ routeId: "r", model: "m", host: null, transport: "gateway" }])).toBe("게이트웨이(계약)");
-    expect(modelTransportLabel("abcllm", [{ routeId: "r", model: "m", host: null, transport: "gateway" }, { routeId: "s", model: "m", host: null, transport: "direct" }])).toBe("엔진 직접·게이트웨이(계약)");
-    expect(modelTransportLabel("local-direct", [])).toBe("엔진 직접"); expect(modelTransportLabel("claude-cli", [])).toBe("CLI"); expect(modelTransportLabel("abcllm", [])).toBe("계약 없음");
+    expect(modelTransportLabel("abcllm", [{ routeId: "r", model: "m", host: null, transport: "gateway" }])).toBe("직접 연결 계약 필요");
+    expect(modelTransportLabel("abcllm", [{ routeId: "r", model: "m", host: null, transport: "gateway" }, { routeId: "s", model: "m", host: null, transport: "direct" }])).toBe("엔진 직접(계약)");
+    expect(modelTransportLabel("local-direct", [])).toBe("엔진 직접");
+    expect(modelTransportLabel("local-direct", [{ routeId: "r", model: "m", host: null, transport: "gateway" }])).toBe("엔진 직접(계약)");
+    expect(modelTransportLabel("claude-cli", [])).toBe("CLI"); expect(modelTransportLabel("abcllm", [])).toBe("계약 없음");
   });
 });

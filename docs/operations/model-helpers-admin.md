@@ -443,6 +443,72 @@ CLI = `probeCliServingContracts`)을 쓴다. 감사 줄(`model-assignment-save`)
   (위 「가져오기 계획 — 3b-B」)를 화면 계약으로 옮긴다: 행 = { action, input, origin(설정의 출처), changes(「순위 2 → 1」 같은 문장) }, 경고 = 「출처: 문장 — 자세히」.
   켜진 장비가 아닌 곳에 쓰는 행(만들기·실전 고치기)은 건너뛰고 경고한다(저장이 `device_unconfigured` 로 거절할 행). env 대체 1차 심사자는 화면이 알 수 없어 옮기지 않는다.
 
+## text 경로 local-direct 기록 — 3b-E
+
+3b-C(전송 통합)가 남긴 일 1·3. text 7경로(`product-search-profile`·`reason-translate`·`product-translate`·`product-tagline-ko`·`crawl-tagline`·
+`product-search-verify`·`search-query-translate`)가 엔진 직접 계약으로 보내고 장부에 provider `local-direct` 를 남긴다. 기존 abcllm 행·계약·hash 는 바이트까지 그대로다.
+
+### 계약과 provider 결정
+
+- 각 경로의 계약 모양은 둘이다: abcLLM 총량 상한(raw — 칸 순서·hash 불변, `<route>ServingContractSchema`)과 AI1·AI2 와 같은 공통 `direct-openai-chat-v1`
+  (`<route>DirectServingContractSchema`: provider `local-direct`, backendId = 정책 route 의 providerBudgetId, physicalGroup = 장비, tokenizerEndpoint 같은 origin,
+  requestTokenBound 32000). 합 스키마 `<route>RouteServingContractSchema` 가 관리 화면(`model_serving_contracts` — **route_id = 그 text route**, model = 엔진 이름)과
+  env `ABCLLM_SERVING_CONTRACTS` 를 모두 받는다. 엔진 연결이 채우는 모양은 여전히 raw 다. 번역 4경로의 엄격 terminal opt-in 표시는 abcllm 계약에만 요구한다
+  (게이트웨이가 없는 직접 계약은 엔진의 완결 응답이 terminal).
+- provider 는 계약 모듈이 정한다 — `<route>ServingProvider(model)`: 그 선택(설정·배정 표의 모델)에 abcllm 계약이 있으면 `abcllm`, 없고 local-direct 계약 하나가
+  닿으면(엔진 이름 또는 등록부 키 — AI1 과 같은 `selectServingContract` 규칙) `local-direct`, 둘 다 없으면 `abcllm`(그 뒤 준비가 예전처럼
+  `provider_contract_unavailable` 로 미룬다 — 계약 없는 선택이 새 provider 로 기록되지 않는다). 조정자·잡의 `textRouteCallable(route, model, provider)`·
+  정책 route 검사·identity·binding·`findOwnPending*` 읽기가 모두 이 값을 쓴다. 정책 route 도 그 provider 로 매핑돼 있어야 한다(없으면 `unmapped`).
+- `textRouteCallable` 은 송신의 bearer 규칙(`contractBearer`) 그대로다: local-direct 는 관리 행이 없거나 auth gateway 면 키를 보내지 않으므로 게이트웨이 키 없이 열린다.
+  auth none → 열림, stored → 그 키가 열릴 때만.
+
+### 전송(AI1 `prepareAi1DirectCall` 과 같은 선)
+
+- wire(`directTextWire`): 그 경로의 게이트웨이 wire 에서 게이트웨이 전용 칸(`context_strategy`·`reasoning_effort`)만 빼고 계약의 엔진 이름을 넣는다.
+  `max_tokens` = min(경로 출력 상한, 계약 maxOutputTokens), `chat_template_kwargs.enable_thinking=false`(AI1·AI2 직접 wire 와 같다). 프롬프트·근거 바이트는 그대로.
+  bearer 없음·엄격 terminal 헤더 없음·`redirect: error`.
+- 엔진 tokenizer 확인은 **전송 직전**이다(AI1·AI2 는 준비에서 하지만 text 의 준비는 DB 트랜잭션 안에서 일어나므로 HTTP 는 잠금 밖): 센 입력 + max_tokens 가
+  requestTokenBound 안이어야 fetch 한다. 넘으면 fetch 를 부르지 않고 결과 `input_too_large` + `gateway_not_started`(0149) 로 정산한다 — 그 경로의 보통 실패 시도로
+  남는다(재시도·backoff 는 경로 규칙). 엔진의 완결 응답이 terminal 증거다(usage_provenance 없음, usage 가 upstream_reported). 엔진이 보고한 사용량이 요청 상한과
+  모순이면 terminal 은 그대로 기록하고 결과만 `invalid_output`(crawl-tagline·verify·query 는 장부 outcome 도 같은 값 — 이어 읽기가 맞아야 한다).
+
+### 장부 — 마이그레이션 0159 가 필요했다
+
+- binding·terminal evidence 의 provider 는 0157 의 enum(`abcllm | local-direct`)이고 모양은 그대로다. 고정 identity 검사(`fixed*Identity`)는 두 provider 를 받는다
+  (`isGatewayDispatchProvider`). 미결 행 fence(`provider = 'abcllm'` 의 legacy 행)는 3b-C 의 AI1 과 같이 그대로다.
+- 사설 DB 로 확인한 사실(2026-10-31): 0157 이 붙인 text 7경로의 **dispatch 분기는 행 열 `provider='local-direct'` 만 바꾸고 binding JSON 의
+  `provider`='"abcllm"'::jsonb 는 그대로**여서 어떤 text 행도 닿지 않았고(AI1 item 은 JSON provider 를 행 열과 비교해 무관), terminal·events 의 text 분기는 'abcllm' 이
+  JSON 글자로만 들어 있어 0157 의 생성에서 빠져 있었다. `drizzle/0159_text_local_direct_binding.sql`(journal when 1794086401070 — 0158 은 다른 PR)이 0125 의 그 분기들에서
+  'abcllm' 과 '"abcllm"' 을 모두 local-direct 로 바꿔 `model_capacity_requests_dispatch_check`·`model_capacity_requests_terminal_check`·
+  `model_capacity_events_terminal_check` 끝에 덧붙인다(생성 값 `lib/llm/gateway-local-direct-binding-sql.ts`, 0132·0155·0157 과 같은 꼴 — 살아 있는 술어 전체 + OR).
+  0157 의 닿지 않는 분기는 그대로 두고, logical·members CHECK 와 gateway_not_started 는 이미 맞다. 함수·트리거·색인·행 변경 없음.
+- 배포 순서: **0159 migrate 가 먼저**, 그 뒤 text 워커(공통 worker digest)·웹. 0159 전의 코드로 local-direct text 계약을 가리키면 dispatch 가 CHECK 로 거절돼
+  예약이 취소되고 미룸으로 남는다(행은 남지 않는다). 세 CHECK 의 술어가 각 약 470KB 늘어난다(dispatch 는 약 1MB) — 행 쓰기마다 평가하는 비용이 같은 차수로 늘 뿐이다.
+
+### 물리 한도·계약 표가 먼저 — 3b-C 남은 일 3
+
+- `localModelRouteReady`: 물리 상한의 출처는 장비 표 `model_capacity_devices.physical_limit`(/admin/models/devices, 켜진 행)이 먼저다 — 표에 그 장비의 상한이 있으면
+  env 를 보지 않고, 없을 때만 env `LOCAL_MODEL_PHYSICAL_LIMITS` 를 예전과 똑같이 본다. 표는 serving-contract-store 의 30초 스냅샷에 네 번째 부분(`devices`,
+  `devicePhysicalLimit(deviceId)`)으로 실린다(읽지 못하는 principal 은 마지막 값 유지, 행이 없으면 토큰은 전과 같다).
+- `resolveLocalModelContract(backendId, env)`(`lib/llm/local-model-contract-table.ts`): 표의 `local-model:<backendId>` 행이 먼저(하나이고 통과하면 그 계약, 틀리거나 둘이면
+  null = 닫음), 없을 때만 env `LOCAL_MODEL_SERVING_CONTRACTS`. llm-assist 의 `assistBackendDrains`·`model-domain`, 도우미 evidence(`helperEvidencePartsFor`)가 이것을 쓴다.
+  env 전용 `resolveLocalModelServingContract` 는 그대로다(테스트 유지).
+
+### 설계 메모 — product-tagline-ko 의 Qwen env 스위치 흡수(3b-C 남은 일 2, 이 PR 범위 밖)
+
+- 지금: `KOREAN_TRANSLATION_QWEN_ENABLED=true` 면 `product-tagline-ko` 잡이 gpt 묶음 뒤에 Qwen 묶음을 따로 꾸려 등록부 목적 `korean-translation-direct`
+  (`KOREAN_TRANSLATION_QWEN_BASE_URL`·`_MODEL`)로 legacy(expanded) wire 를 장부·계약 밖에서 바로 부른다(`lib/crawl/korean-translation-qwen.ts`).
+  `KOREAN_TRANSLATION_QWEN_RECOVERY_ENABLED` 는 그 묶음의 회복 선택이다.
+- 흡수 안: (1) Qwen 엔진을 `product-tagline-ko` route 의 `direct-openai-chat-v1` 계약으로 등록한다(이 PR 로 송신·장부는 준비됐다). (2) 배정 표 `ko` 단계에 local-direct
+  전송을 허용한다 — `ASSIGNMENT_STAGES.ko.transports` 에 더하고, `assignmentContract` 가 `local-direct:<route>` 의 local-openai-chat-v1 대신 그 route 아래
+  direct-openai-chat-v1 을 probe 로 만들게(또는 송신이 두 모양을 모두 읽게) 정한다. (3) 잡의 gpt/qwen 두 묶음을 배정 표 rank 로 바꾼다(rank 1 = 기본, rank 2 = 보조:
+  rank 1 이 못 받는 제품만), `koreanTranslationQwenEnabled` 분기와 `KOREAN_TRANSLATION_QWEN_*` env 를 지운다. (4) 회복은 runtime_settings `jobs.product-tagline-ko`
+  의 칸으로. 결정 필요: 장부 wire 는 native 프로필(1,200자 묶음)이라 Qwen 의 expanded 묶음(3,600자)이 줄어든다 — 처리량을 받아들일지, direct 계약에 프로필 칸을 둘지.
+
+### 남은 일
+
+- 배정 표 text 단계의 local-direct 전송(3b-A `ASSIGNMENT_STAGES` 는 gateway·direct 만), 리플레이 도구의 local-direct 1차(남은 일 4), 운영 반영(0159 → text 워커).
+
 ## 테스트
 
 - `tests/admin-model-helpers.test.tsx` — 화면 모형(감시자 배지 우선순위·나이·신호 못 쓰는 이유·지금 판의 정지·beacon·metrics), 폼 → 저장 입력(백분율·초·이름 유도),
@@ -465,5 +531,8 @@ CLI = `probeCliServingContracts`)을 쓴다. 감사 줄(`model-assignment-save`)
 - 모델 배정 화면(3b-D): `tests/admin-model-assignments.test.tsx`(묶음·한국어 이름·칸·상태 띠·3b-B 출처, 단계 × 등록부 × 전송 고르기(cli = connect), 폼 → 저장 입력·확인 「배정」,
   모든 거절 코드 문장, 결과 문장, 가져오기 계획(3b-B planAssignmentImport)·hash, server action 셋, 그리기(표 열은 2차만, 폼·가져오기 카드), 설정 폼 읽기 전용(스위치 켜짐만)),
   `tests/integration/admin-model-assignments.test.ts`(자기 DB: action → 진짜 저장 함수 — 계약·route·장비 순위·행·감사, CAS, 거절 문장과 남는 행 없음, 끄기, 가져오기 계획(3b-B 실제 계획)·행마다 적용).
-  `tests/dr-web-fence.test.ts` 의 쓰기 관문 action 수는 100(배정 저장·끄기·가져오기 적용), `tests/admin-navigation.test.tsx` 메뉴 링크 24개.
+  `tests/dr-web-fence.test.ts` 의 쓰기 관문 action 수는 100(배정 저장·끄기·가져오기 적용), `tests/admin-navigation.test.tsx` 메뉴 링크 24개.- text local-direct(3b-E): `tests/text-local-direct-contracts.test.ts`(7경로 raw hash 불변·합 스키마·엄격 opt-in 면제·resolve/provider·key gate·binding·directTextWire·
+  계약 표/장비 표 우선), `tests/text-profile-local-direct-native.test.ts`(tokenizer → 엔진 wire → local-direct terminal, 상한 초과 = not_started, 모순 usage),
+  `tests/text-local-direct-binding-schema.test.ts`(0159 = 0125 text 분기의 provider 둘 다 local-direct, 0157 쌍은 닿지 않음),
+  `tests/integration/text-profile-local-direct-ledger.test.ts`(자기 DB: 예약 → local-direct dispatch(CHECK) → 엔진 terminal → settled, not_started 정산, abcllm identity 거절).
 - 표·입장 판정·감시자 순환은 WP-2a-A·B 의 테스트가 본다(`tests/capacity-helpers.test.ts`, `tests/integration/model-capacity-helpers.test.ts`, `tests/capacity-supervisor-decide.test.ts`).

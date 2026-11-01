@@ -347,7 +347,7 @@ export async function prepareReasonTranslationDispatch(value: readonly PendingTr
       const control = locked?.control ?? await lockModelCapacityCallerControl(tx);
       if (!reserved && control.mode === 'disabled') return { kind: 'disabled' } as const;
       if (control.mode !== 'open') throw new ModelCapacityDeferredError(control.mode === 'draining' ? 'draining' : 'disabled');
-      if (!control.policy?.routes.some(route => route.routeId === 'reason-translate' && route.provider === 'abcllm' && route.model === call.model))
+      if (!control.policy?.routes.some(route => route.routeId === 'reason-translate' && route.provider === call.provider && route.model === call.model))
         throw new ModelCapacityDeferredError('unmapped');
       await assertJobBatchAdmission(tx, 'reason-translate', roleLease);
       const role = await lockReasonRole(tx, roleLease);
@@ -357,7 +357,7 @@ export async function prepareReasonTranslationDispatch(value: readonly PendingTr
       if (!isDeepStrictEqual(role, reserved.role) || !isDeepStrictEqual(members, reserved.members)) throw new ReasonTranslationChanged();
       const binding = reasonTranslationDispatchBindingSchema.parse({ kind: 'reason_translation_gateway', version: 1,
         members, model: call.model, logicalWorkKey: reasonTranslationLogicalWorkKey(members),
-        inputHash: reasonTranslationInputHash({ members, model: call.model }), provider: 'abcllm', routeId: 'reason-translate',
+        inputHash: reasonTranslationInputHash({ members, model: call.model }), provider: call.provider, routeId: 'reason-translate',
         wireHash: call.wireHash, servingContractHash: call.servingContractHash, totalTokenBound: call.totalTokenBound,
         chargedTokens: call.totalTokenBound, job: lease, role });
       const dispatch = await finishReasonTranslationModelCapacityDispatch(tx, locked!, binding);

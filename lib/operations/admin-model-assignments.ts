@@ -50,7 +50,7 @@ export const ASSIGNMENT_STAGE_LABELS: Readonly<Record<AssignmentStage, string>> 
   repo: "저장소 검토",
 };
 export const ASSIGNMENT_TRANSPORT_LABELS: Readonly<Record<AssignmentTransport, string>> = {
-  gateway: "게이트웨이", direct: "엔진 직접", "local-direct": "로컬 직접", cli: "CLI",
+  gateway: "장비 표지", direct: "엔진 직접", "local-direct": "로컬 직접", cli: "CLI",
 };
 export const ASSIGNMENT_ROLE_LABELS: Readonly<Record<AssignmentRole, string>> = { primary: "주 배정", helper: "도우미" };
 export const ASSIGNMENT_MODE_LABELS: Readonly<Record<HelperMode, string>> = HELPER_MODE_LABELS;
@@ -89,7 +89,7 @@ const CONTRACT_HASH_PREFIX = 12;
 
 // ---------- 고를 수 있는 것(순수) ----------
 
-/** 단계에서 그 등록부 모델이 쓸 수 있는 전송: 단계가 허락 × 공급자가 맞음 × cli 는 connect 장비만. 권하는 것이 먼저(gateway 표지가 있으면 게이트웨이, 없으면 엔진 직접) */
+/** 단계에서 그 등록부 모델이 쓸 수 있는 전송: 단계가 허락 × 공급자가 맞음 × cli 는 connect 장비만. 권하는 것이 먼저(장비 표지 gatewayLabel 이 있으면 그 전송, 없으면 엔진 직접). 값 gateway 는 요청 이름 앞 대괄호이고, 텍스트 경로를 여는 것은 직접 연결 계약이다. */
 export function assignmentTransportsFor(stage: AssignmentStage, entry: Pick<ModelDefinition, "key" | "provider" | "gatewayLabel">): AssignmentTransport[] {
   const spec = ASSIGNMENT_STAGES[stage];
   const allowed = ASSIGNMENT_TRANSPORTS.filter(transport => spec.transports.has(transport) && assignmentRouteProvider(transport, entry.provider) !== null
@@ -230,7 +230,7 @@ export function buildModelAssignmentsAdminView(input: ModelAssignmentsViewInput)
     if (input.devices && !device) view.issues.push("장비 행이 없습니다 — 장비 한도에서 이 장비를 저장하세요");
     else if (device && !device.enabled) view.issues.push("장비 행이 꺼져 있습니다 — 입장 판정이 이 장비를 보지 않습니다");
     if (view.mode === "live" && view.contract.state === "missing" && contracts !== null) view.issues.push("켜진 계약이 없습니다(꺼졌거나 지워짐) — 다시 저장하면 엔진을 확인해 계약을 만듭니다");
-    if (view.contract.transportMismatch) view.issues.push("저장된 계약의 전송이 배정 전송과 다릅니다 — 계약 화면에서 확인하세요");
+    if (view.contract.transportMismatch) view.issues.push("저장된 계약의 전송이 배정 전송과 다릅니다 — 「모델 연결」에서 직접 연결 계약인지 확인하세요");
     if (view.mode === "live" && view.route.state === "missing") view.issues.push("현재 정책에 이 경로가 없습니다 — 다시 저장하면 덧붙입니다");
     if (view.route.state === "other_device") view.issues.push("같은 경로·공급자·모델이 정책에서 다른 장비에 묶여 있습니다");
     if (view.deviceRoleRank !== null && view.deviceRoleRank !== row.rank)
@@ -597,7 +597,7 @@ const FIXED: Record<string, string> = {
 };
 export const MODEL_ASSIGNMENT_REFUSAL_MESSAGES: Readonly<Record<ModelAssignmentRefusal, string>> = {
   registry_key_unknown: "등록부에 없는 모델입니다 — 모델 연결 화면(/admin/models/contracts)에서 등록부를 확인하세요.",
-  transport_provider_mismatch: "이 모델의 공급자로는 고른 전송을 쓸 수 없습니다(게이트웨이·엔진 직접 = abcllm 형, 로컬 직접 = 로컬 모델, CLI = Claude·Grok·Codex CLI) — 전송을 바꾸세요.",
+  transport_provider_mismatch: "이 모델의 공급자로는 고른 전송을 쓸 수 없습니다(장비 표지·엔진 직접 = abcllm 형, 로컬 직접 = 로컬 모델, CLI = Claude·Grok·Codex CLI) — 전송을 바꾸세요.",
   backend_id_invalid: "로컬 계약의 backendId 를 만들 수 없는 등록부 key 입니다 — key 를 60자 이하 소문자·숫자·'-' 로 바꾸세요.",
   device_unconfigured: "장비 행이 없거나 꺼져 있습니다 — 장비 한도(/admin/models/devices)에서 이 장비를 먼저 저장(켜기)하세요.",
   assignment_is_helper: "이 이름은 도우미 배정입니다 — 「도우미 장비」 화면(/admin/models/helpers)에서 바꾸세요.",
@@ -605,7 +605,7 @@ export const MODEL_ASSIGNMENT_REFUSAL_MESSAGES: Readonly<Record<ModelAssignmentR
   route_device_mismatch: "같은 경로·공급자·모델이 정책에서 다른 장비에 묶여 있습니다 — 그 장비로 배정하거나, 정책의 장비 매핑을 먼저 고치세요.",
   contract_probe_failed: "엔진 확인(readback·1토큰 시험)이 맞지 않아 저장하지 않았습니다 — 엔진이 다른 모델 이름으로 답했습니다. 등록부의 모델 이름을 확인하세요.",
   contract_unbuildable: "이 경로의 계약을 자동으로 만들 수 없습니다(예: 2차 second-review) — 모델 연결 화면(/admin/models/contracts)에서 계약을 먼저 넣고 다시 저장하세요.",
-  contract_transport_mismatch: "저장된 계약의 전송(게이트웨이/엔진 직접)이 고른 전송과 다릅니다 — 전송을 계약에 맞추거나 계약을 다시 저장하세요.",
+  contract_transport_mismatch: "저장된 계약의 전송이 고른 배정 전송과 다릅니다. 엔진 직접 배정은 직접 연결 계약과 맞아야 하고, 장비 표지 배정은 그 외 계약 행과 맞아야 합니다. 텍스트 경로는 「모델 연결」의 직접 연결 계약만 열립니다 — 전송을 계약에 맞추거나 계약을 다시 저장하세요.",
   contract_device_mismatch: "저장된 로컬 계약의 장비(physicalGroup)가 이 장비와 다릅니다 — 계약의 장비로 배정하거나 계약을 고치세요.",
   cli_contract_missing: "이 CLI 모델의 계약(CLI_SERVING_CONTRACTS)이 웹 프로세스에 없거나 --version 확인을 통과하지 못했습니다 — env 계약을 넣은 뒤 저장하세요.",
 };

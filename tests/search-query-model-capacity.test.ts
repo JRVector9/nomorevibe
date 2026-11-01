@@ -40,7 +40,7 @@ beforeEach(() => {
     contract: {}, auth: "none", apiKey: null, transport: "direct" }]);
   mocks.primary.mockImplementation((load: () => Promise<unknown>) => load());
   mocks.cacheRead.mockResolvedValue([]); mocks.control.mockResolvedValue(open); mocks.owner.mockReturnValue(owner);
-  mocks.prepareCall.mockReturnValue({ kind: "prepared", model: SEARCH_QUERY_MODEL, wireHash: "c".repeat(64), servingContractHash: "d".repeat(64),
+  mocks.prepareCall.mockReturnValue({ kind: "prepared", provider: "abcllm", model: SEARCH_QUERY_MODEL, wireHash: "c".repeat(64), servingContractHash: "d".repeat(64),
     totalTokenBound: 4096, queryHash: "b".repeat(64), sourceLocale: "ko" });
   mocks.prepare.mockImplementation(async (_target: unknown, options: { reserved?: unknown }) => options.reserved
     ? { kind: "ready", dispatch, expectation } : { kind: "ready", input: input() });
@@ -83,7 +83,7 @@ it("connects an immediately granted permit to one native POST, settlement first 
   expect(order).toEqual(["post", "settle", "cache"]);
   expect(mocks.native).toHaveBeenCalledTimes(1); expect(mocks.native.mock.calls[0][0]).toEqual({ sourceLocale: "ko", query });
   expect(mocks.native.mock.calls[0][3]).toEqual({ timeoutMs: 8_000 });
-  expect(mocks.prepareCall.mock.calls).toEqual([[{ sourceLocale: "ko", query }, { model: SEARCH_QUERY_MODEL, timeoutMs: 8_000 }]]);
+  expect(mocks.prepareCall.mock.calls).toEqual([[{ sourceLocale: "ko", query }, { model: SEARCH_QUERY_MODEL, timeoutMs: 8_000, provider: "abcllm" }]]);
   expect(mocks.slot).toHaveBeenCalledTimes(1);
   expect(mocks.slot.mock.calls[0][0]).toMatchObject({ owner: { instanceId: owner.instanceId, bootId: owner.bootId }, class: "background",
     pool: "text", routeId: "search-query-translate", provider: "abcllm", model: SEARCH_QUERY_MODEL });

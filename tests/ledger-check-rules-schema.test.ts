@@ -14,14 +14,16 @@ const migration = readFileSync(`drizzle/${tag}.sql`, "utf8");
 const statements = migration.split("--> statement-breakpoint");
 const moved = [...LEDGER_RULE_CHECKS.model_capacity_requests, ...LEDGER_RULE_CHECKS.model_capacity_events];
 
-it("registers 0160 last, right after 0158, with a strictly increasing when — 0159 is reserved for PR #772", () => {
+it("registers 0160 immediately before 0161 and right after 0158, with a strictly increasing when", () => {
   const index = journal.entries.findIndex(entry => entry.tag === tag);
-  expect(index).toBe(journal.entries.length - 1);
   expect(journal.entries[index]).toMatchObject({ idx: 160, when: 1794086401071, tag, breakpoints: true, version: "7" });
   expect(journal.entries[index - 1]).toMatchObject({ idx: 158, when: 1794086401069, tag: "0158_release_branch_kinds" });
+  expect(journal.entries[index + 1]).toMatchObject({ idx: 161, when: 1794086401072, tag: "0161_text_local_direct_binding", breakpoints: true, version: "7" });
+  expect(journal.entries.at(-1)?.tag).toBe("0161_text_local_direct_binding");
   expect(journal.entries.filter(entry => entry.idx === 159)).toEqual([]);
   for (let i = 1; i < journal.entries.length; i++) expect(journal.entries[i].when, `when strictly increases at ${journal.entries[i].tag}`).toBeGreaterThan(journal.entries[i - 1].when);
   expect(migration.split("\n")[0]).toContain("0160");
+  // 0160 이 쓰일 때 이 브랜치는 아직 0159 로 예약돼 있었다. 그 문장은 0160 파일에 남고, 실제 가지는 0161 이다.
   expect(migration).toContain("0159 는 아직 병합되지 않은 PR #772");
 });
 

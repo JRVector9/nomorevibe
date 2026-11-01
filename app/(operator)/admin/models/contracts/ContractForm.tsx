@@ -9,7 +9,7 @@ const AI1_TEMPLATE = { version: 1, protocol: "abcllm-raw-total-bound-v1", routeI
 export function ContractForm({ routes, initial }: { routes: readonly string[]; initial?: { routeId: string; contract: Record<string, unknown>; auth: string; transport?: string } }) {
   const [routeId, setRouteId] = useState(initial?.routeId ?? "crawl-agent-review");
   const [json, setJson] = useState(() => JSON.stringify(initial?.contract ?? AI1_TEMPLATE, null, 2));
-  const [auth, setAuth] = useState(initial?.auth ?? "gateway"), [key, setKey] = useState("");
+  const [auth, setAuth] = useState(initial?.auth ?? "none"), [key, setKey] = useState("");
   const [readback, setReadback] = useState<string | null>(null);
   const [state, action, pending] = useActionState<ContractSaveState, FormData>(saveServingContract, null);
   const endpoint = (() => { try { return String((JSON.parse(json) as { endpoint?: unknown }).endpoint ?? ""); } catch { return ""; } })();
@@ -27,11 +27,11 @@ export function ContractForm({ routes, initial }: { routes: readonly string[]; i
       <textarea name="contract" value={json} onChange={event => setJson(event.target.value)} rows={12} spellCheck={false}
         className="rounded border border-line bg-bg p-2 font-mono text-[13px]" /></label>
     <label className="grid gap-1">전송
-      <select name="transport" defaultValue={initial?.transport ?? "gateway"} className="rounded border border-line bg-bg p-2">
-        <option value="gateway">abcLLM 게이트웨이로</option><option value="direct">엔진에 직접(게이트웨이 없음)</option></select></label>
+      <select name="transport" defaultValue={initial?.transport ?? "direct"} className="rounded border border-line bg-bg p-2">
+        <option value="direct">엔진에 직접</option><option value="gateway">호출 안 됨 — 옛 전송 값(직접 연결을 고르세요)</option></select></label>
     <label className="grid gap-1">인증
       <select name="auth" value={auth} onChange={event => setAuth(event.target.value)} className="rounded border border-line bg-bg p-2">
-        <option value="gateway">abcLLM 게이트웨이 키(기본)</option><option value="none">키 없음(직접 연결 서버)</option>
+        <option value="none">키 없음(직접 연결 서버)</option><option value="gateway">호출 안 됨 — 옛 키 방식(키 없음 또는 저장 키)</option>
         <option value="stored">이 연결의 키 저장(암호화)</option></select></label>
     {auth === "stored" && <label className="grid gap-1">API 키 (비워 두면 저장된 키 유지)
       <input name="apiKey" type="password" autoComplete="off" value={key} onChange={event => setKey(event.target.value)} className="rounded border border-line bg-bg p-2" /></label>}

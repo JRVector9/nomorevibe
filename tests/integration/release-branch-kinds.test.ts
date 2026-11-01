@@ -11,6 +11,7 @@ import * as schema from "@/lib/db/schema";
 import { modelCapacityPolicyHash, publicationClassifyMemberKeys, type ModelCapacityPolicy } from "@/lib/llm/capacity";
 import { localModelBindingHash, localModelJob, localModelLogicalKey, localModelRoute, type LocalModelBinding, type LocalModelTarget } from "@/lib/llm/local-model-capacity-contract";
 import { publicationClassifyReleaseLogicalSql, releaseKindsDispatchSql } from "@/lib/llm/dispatch-release-kinds-sql";
+import { textLocalDirectDispatchSql, textLocalDirectEventTerminalSql, textLocalDirectTerminalSql } from "@/lib/llm/gateway-local-direct-binding-sql";
 import { cliExecutorFixture } from "../fixtures/cli-executor-boundary";
 import { TEST_DATABASE_URL } from "./setup";
 import { ledgerCheckDefs } from "./ledger-check-defs";
@@ -24,6 +25,7 @@ import { ledgerCheckDefs } from "./ledger-check-defs";
  * (2026-10-31 운영에서 publisher 컨테이너 사망 뒤 고아 행 1건을 정식 경로로 닫지 못한 바로 그 실패). local_model_direct 행은 0118 가지로 이미 통과한다.
  * 0158 뒤: 세 CHECK 는 "(0157 술어 전체) OR (가지)" 이고 나머지 CHECK 는 그대로다. 두 행이 모두 released 되고 dispatch_released 사건이 남는다.
  * 0160 뒤: 같은 술어가 model_capacity_check_rules 행 + nmv_model_capacity_requests_check_guard() 트리거로 산다 — 회수 UPDATE 두 건은 그 트리거 아래에서 돈다.
+ * 0161(PR 3b-E text local-direct 기록) 뒤: dispatch 와 두 terminal 은 그 술어에 text 가지(다음 ordinal)를 OR 로 더한 것이고 logical·members·events kind 는 0160 그대로, 판정도 그대로다.
  */
 const root = fileURLToPath(new URL("../..", import.meta.url)), name = `nomorevibe_test_release_kinds_${randomUUID().replaceAll("-", "")}`;
 const url = new URL(TEST_DATABASE_URL); url.pathname = `/${name}`;
@@ -157,13 +159,34 @@ it("0158 은 세 요청 CHECK 를 '(0157 술어 전체) OR (가지)' 로 다시 
 
 it("0160 은 여섯 CHECK 를 model_capacity_check_rules 행·BEFORE 트리거로 옮기고 술어 글자·행·판정은 그대로 둔다", async () => {
   const after0158 = await defs(), snapshot = await client`SELECT to_jsonb(r) value FROM model_capacity_requests r ORDER BY request_id`;
-  await migrate(drizzle(client), { migrationsFolder: path.join(root, "drizzle") });
-  expect((await client`SELECT count(*)::int n FROM drizzle.__drizzle_migrations`)[0].n).toBe(journal.entries.length);
+  await migrateThrough(160, "0160_ledger_check_rules");
+  expect((await client`SELECT count(*)::int n FROM drizzle.__drizzle_migrations`)[0].n).toBe(journal.entries.filter(entry => entry.idx <= 160).length);
   const constraints = (await client<{ conname: string }[]>`SELECT conname FROM pg_constraint WHERE contype='c' AND conname=ANY(${[...REQUESTS, ...UNCHANGED]}::text[])`).map(row => row.conname);
   expect(constraints).toEqual([]);
   expect(await defs()).toEqual(after0158);
   expect((await client<{ tgname: string }[]>`SELECT tgname FROM pg_trigger WHERE tgrelid='model_capacity_requests'::regclass AND NOT tgisinternal ORDER BY tgname`).at(-1))
     .toEqual({ tgname: "model_capacity_requests_zz_check_guard" });
+  expect(await client`SELECT to_jsonb(r) value FROM model_capacity_requests r ORDER BY request_id`).toEqual(snapshot);
+  expect(await judge(rows.publication, publisher, tickets.publisher.runId)).toEqual(Object.fromEntries(REQUESTS.map(name => [name, true])));
+});
+
+it("0161 은 text local-direct 가지를 세 제약의 다음 rules ordinal 로 더하고 회수 판정은 그대로 둔다", async () => {
+  const after0160 = await defs(), snapshot = await client`SELECT to_jsonb(r) value FROM model_capacity_requests r ORDER BY request_id`;
+  await migrate(drizzle(client), { migrationsFolder: path.join(root, "drizzle") });
+  expect((await client`SELECT count(*)::int n FROM drizzle.__drizzle_migrations`)[0].n).toBe(journal.entries.length);
+  expect(journal.entries.at(-1)).toMatchObject({ idx: 161, tag: "0161_text_local_direct_binding" });
+  const text: Record<string, string> = { model_capacity_requests_dispatch_check: textLocalDirectDispatchSql,
+    model_capacity_requests_terminal_check: textLocalDirectTerminalSql, model_capacity_events_terminal_check: textLocalDirectEventTerminalSql };
+  const rules = await client<{ constraint_name: string; ordinal: number; predicate: string; source: string }[]>`SELECT constraint_name, ordinal, predicate, source
+    FROM model_capacity_check_rules WHERE source = '0161_text_local_direct_binding' ORDER BY constraint_name`;
+  expect(rules.map(rule => [rule.constraint_name, rule.ordinal, rule.source, rule.predicate])).toEqual(Object.entries(text).sort(([a], [b]) => a < b ? -1 : 1)
+    .map(([name, predicate]) => [name, 2, "0161_text_local_direct_binding", predicate]));
+  const after = await defs();
+  for (const name of new Set<string>([...REQUESTS, ...UNCHANGED])) {
+    const branch = text[name];
+    if (!branch) { expect(after[name], `${name}: 0161 unchanged`).toBe(after0160[name]); continue; }
+    expect(after[name], `${name}: 0160 predicate plus the 0161 text local-direct branch`).toBe(`CHECK ((${after0160[name].slice("CHECK (".length, -1)}) OR (${branch}))`);
+  }
   expect(await client`SELECT to_jsonb(r) value FROM model_capacity_requests r ORDER BY request_id`).toEqual(snapshot);
   expect(await judge(rows.publication, publisher, tickets.publisher.runId)).toEqual(Object.fromEntries(REQUESTS.map(name => [name, true])));
 });

@@ -47,7 +47,7 @@ export function TranslationFailures({ failed, failures }: { failed: number; fail
           <p className="text-fg-3">
             재시도 대기는 다시 볼 때가 이미 지난 건수입니다. 작업이 매 틱 밀린 실패와 처음 보는 글을
             번갈아 가져가므로 그대로 두어도 줄어듭니다. <span className="font-mono">timeout</span> 이 대부분이면
-            게이트웨이가 느린 것이고, <span className="font-mono">invalid_output</span> 이 쌓이면 그 글 자체를 봐야 합니다.
+            직접 연결 호출이 느린 것이고, <span className="font-mono">invalid_output</span> 이 쌓이면 그 글 자체를 봐야 합니다.
           </p>
         </div>
       </dialog>

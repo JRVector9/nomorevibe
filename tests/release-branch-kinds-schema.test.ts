@@ -4,6 +4,7 @@ import { expect, it } from "vitest";
 import { modelCapacityRequests } from "@/lib/db/operations-schema";
 import { publicationClassifyLogicalSql } from "@/lib/llm/publication-classify-capacity-sql";
 import { dispatchReleaseAddedKindsSql, dispatchReleaseEvidenceKindsSql, publicationClassifyReleaseLogicalSql, releaseKindsDispatchSql } from "@/lib/llm/dispatch-release-kinds-sql";
+import { textLocalDirectDispatchSql } from "@/lib/llm/gateway-local-direct-binding-sql";
 
 /**
  * 0158(2026-10-31): 종료 근거 회수(0096)의 kind 목록에 없던 publication_classify_cli(0125)·local_model_direct(0118)를 같은 회수 길에 올린다.
@@ -68,10 +69,16 @@ it("the logical/members branch is the 0125 publication_classify identity plus wi
   expect(publicationClassifyReleaseLogicalSql.startsWith("coalesce(((") && publicationClassifyReleaseLogicalSql.endsWith("),false)")).toBe(true);
 });
 
-it("Drizzle composes the same three CHECKs as (previous) OR (branch) with the constants last", () => {
+it("Drizzle composes the same three CHECKs as (previous) OR (branch) with the constants last (under 0161's text local-direct tail on the dispatch CHECK)", () => {
   const checks = getTableConfig(modelCapacityRequests).checks;
   for (const [name, branch] of Object.entries(targets)) {
-    const expression = new PgDialect().sqlToQuery(checks.find(check => check.name === name)!.value).sql;
+    let expression = new PgDialect().sqlToQuery(checks.find(check => check.name === name)!.value).sql;
+    if (name === "model_capacity_requests_dispatch_check") {
+      // 0161 stores the text local-direct branch as the next rules ordinal. The TypeScript check() still ends with (0158 predicate) OR (text branches): strip that wrap first.
+      const textTail = `) OR (${textLocalDirectDispatchSql})`;
+      expect(expression.startsWith("(") && expression.endsWith(textTail), `${name}: 0161 tail present`).toBe(true);
+      expression = expression.slice(1, -textTail.length);
+    }
     const suffix = `) OR (${branch})`;
     expect(expression.startsWith("(") && expression.endsWith(suffix), `${name}: composed last`).toBe(true);
     expect(expression.slice(1, -suffix.length), `${name}: the predecessor still contains 0157's local-direct branch`).toContain("'local-direct'");

@@ -15,6 +15,7 @@ import { prepareReasonTranslationGatewayCall, translateWithReservedReasonGateway
 import type { JobLease } from '@/lib/jobs/control';
 import { roleLeaseFromEnv, type RoleLease } from '@/lib/jobs/role-leader';
 import { textRouteCallable } from "@/lib/llm/serving-contract-store";
+import { reasonTranslationServingProvider } from "@/lib/llm/reason-translation-serving-contract";
 
 type Options = { timeoutMs: number; signal?: AbortSignal; roleLease?: RoleLease };
 export type ReasonTranslationCapacityResult = { kind: 'disabled'; result: TranslateResult } | { kind: 'skipped' }
@@ -33,18 +34,19 @@ export async function translateReasonsWithModelCapacity(value: readonly PendingT
     'ROLE_LEASE_EPOCH','ROLE_LEASE_BATCH_VERSION','ROLE_LEASE_BATCH_EPOCH','ROLE_LEASE_HOST'].map(key => [key, process.env[key]]));
   const legacy = async () => ({ kind: 'disabled' as const,
     result: await translateToKorean(batch.map(item => item.body), scopedRequestTimeout("reason-translate", options.timeoutMs), undefined, options.signal) });
-  if (!textRouteCallable("reason-translate", scopedModel("reason-translate", TRANSLATE_MODEL))) return legacy();
+  const provider = reasonTranslationServingProvider(scopedModel("reason-translate", TRANSLATE_MODEL));
+  if (!textRouteCallable("reason-translate", scopedModel("reason-translate", TRANSLATE_MODEL), provider)) return legacy();
   const control = await readModelCapacityCallerControl();
   if (control.mode === 'disabled') return legacy();
   if (control.mode === 'draining') throw new ModelCapacityDeferredError('draining');
   if (control.mode !== 'open') throw new Error('model_capacity_control_invalid');
-  if (!control.policy?.routes.some(route => route.routeId === 'reason-translate' && route.provider === 'abcllm' && route.model === scopedModel("reason-translate", TRANSLATE_MODEL)))
+  if (!control.policy?.routes.some(route => route.routeId === 'reason-translate' && route.provider === provider && route.model === scopedModel("reason-translate", TRANSLATE_MODEL)))
     throw new ModelCapacityDeferredError('unmapped');
   let checked = z.array(z.object({ hash: z.string().regex(/^[a-f0-9]{64}$/), body: z.string(),
     attempts: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER) }).strict()).min(1).max(4).parse(batch);
   if (new Set(checked.map(item => item.hash)).size !== checked.length || checked.some(item => textHash(item.body) !== item.hash))
     throw new Error('invalid_reason_translation_batch');
-  let call = prepareReasonTranslationGatewayCall(checked.map(item => item.body), { model: scopedModel("reason-translate", TRANSLATE_MODEL), timeoutMs: scopedRequestTimeout("reason-translate", options.timeoutMs) });
+  let call = prepareReasonTranslationGatewayCall(checked.map(item => item.body), { model: scopedModel("reason-translate", TRANSLATE_MODEL), timeoutMs: scopedRequestTimeout("reason-translate", options.timeoutMs), provider });
   if (call.kind !== 'prepared') throw new ModelCapacityDeferredError('provider_contract_unavailable');
   const roleLease = options.roleLease ?? (env.ROLE_LEASE_ROLE === 'text' || env.ROLE_LEASE_ROLE === 'translation'
     ? roleLeaseFromEnv(env.ROLE_LEASE_ROLE, env) : undefined);
@@ -54,12 +56,12 @@ export async function translateReasonsWithModelCapacity(value: readonly PendingT
   if (initial.kind === 'skipped') return initial;
   if (!('members' in initial)) throw new Error('reason_translation_preparation_invalid');
   let adopted: { requestId: string; state: 'waiting' | 'reserved' } | undefined;
-  const own = await findOwnPendingReasonTranslationRequests({ owner: { instanceId: initial.role.instanceId, bootId: initial.role.bootId }, model: scopedModel("reason-translate", TRANSLATE_MODEL) });
+  const own = await findOwnPendingReasonTranslationRequests({ owner: { instanceId: initial.role.instanceId, bootId: initial.role.bootId }, model: scopedModel("reason-translate", TRANSLATE_MODEL), provider });
   for (const candidate of own) {
     if (options.signal?.aborted) throw new ModelCapacityDeferredError('reservation_lost');
     const recovered = await pendingReasonTranslationBatch(candidate.memberKeys);
     if (!recovered) { await cancelOwnPendingReasonTranslationRequest(candidate); continue; }
-    const recoveredCall = prepareReasonTranslationGatewayCall(recovered.map(item => item.body), { model: scopedModel("reason-translate", TRANSLATE_MODEL), timeoutMs: scopedRequestTimeout("reason-translate", options.timeoutMs) });
+    const recoveredCall = prepareReasonTranslationGatewayCall(recovered.map(item => item.body), { model: scopedModel("reason-translate", TRANSLATE_MODEL), timeoutMs: scopedRequestTimeout("reason-translate", options.timeoutMs), provider });
     if (recoveredCall.kind !== 'prepared') throw new ModelCapacityDeferredError('provider_contract_unavailable');
     const current = await prepareReasonTranslationDispatch(recovered, lease, { roleLease, call: recoveredCall });
     if (current.kind === 'disabled') return legacy();
@@ -72,7 +74,7 @@ export async function translateReasonsWithModelCapacity(value: readonly PendingT
   }
   const { members } = initial, logical = reasonTranslationLogicalWorkKey(members);
   const identity = modelCapacityRequestIdentitySchema.parse({ owner: { instanceId: initial.role.instanceId, bootId: initial.role.bootId },
-    class: 'background', pool: 'text', routeId: 'reason-translate', provider: 'abcllm', model: scopedModel("reason-translate", TRANSLATE_MODEL),
+    class: 'background', pool: 'text', routeId: 'reason-translate', provider: call.provider, model: scopedModel("reason-translate", TRANSLATE_MODEL),
     workKey: `${logical}:${reasonTranslationInputHash({ members, model: scopedModel("reason-translate", TRANSLATE_MODEL) })}` });
   const pending = adopted ?? await findOwnPendingModelRequest(identity);
   if (pending?.state === 'dispatched') throw new ModelCapacityDeferredError('dispatched');

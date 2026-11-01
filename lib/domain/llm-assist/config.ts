@@ -2,7 +2,9 @@ import { modelFamily, modelLimits, scopedModelDefinition } from "@/lib/llm/model
 import { z } from "zod";
 import { assistWorkTaskSchema, isAuditAssistTask } from "./work";
 import { readActionAuditPolicy } from "@/lib/domain/products/automated-action-audit";
-import { resolveLocalModelServingContract, type LocalModelServingContract } from "@/lib/llm/local-model-serving-contract";
+import type { LocalModelServingContract } from "@/lib/llm/local-model-serving-contract";
+// PR 3b-E: 관리 계약 표(model_serving_contracts 의 local-model:<backendId> 행)가 env LOCAL_MODEL_SERVING_CONTRACTS 보다 먼저다
+import { resolveLocalModelContract } from "@/lib/llm/local-model-contract-table";
 
 const drainSchema = z.object({ backendId: z.string().regex(/^[a-z0-9][a-z0-9-]{0,59}$/),
   tasks: z.array(z.lazy(() => assistWorkTaskSchema)).min(1).max(8), maxClaims: z.number().int().min(1).max(4) }).strict();
@@ -17,7 +19,7 @@ export function assistBackendDrains(env: Readonly<Record<string, string | undefi
   const selected = env === process.env ? scopedModelDefinition(lane === "audit" ? "assist-audit" : "assist-primary") : null;
   const configured = drains.map(drain => ({ ...drain, tasks: drain.tasks.filter(task => lane === "audit" ? isAuditAssistTask(task) && auditEnabled : !isAuditAssistTask(task)) }))
     .filter(drain => drain.tasks.length).map(drain => {
-    const contract = resolveLocalModelServingContract(drain.backendId, env);
+    const contract = resolveLocalModelContract(drain.backendId, env);
     if (!contract || ![modelFamily("assist-primary", env), modelFamily("assist-audit", env)].includes(contract.modelFamily)
       || drain.tasks.some(task => !isAuditAssistTask(task)) && contract.modelFamily !== modelFamily("assist-primary", env)) throw new Error("assist_qwen_or_audit_backend_required");
     return { ...drain, maxClaims: Math.min(drain.maxClaims, modelLimits(isAuditAssistTask(drain.tasks[0]) ? "assist-audit" : "assist-primary", env).concurrency), contract };
