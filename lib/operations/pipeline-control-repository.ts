@@ -12,7 +12,7 @@ import { beginStageDrain, bumpStageWriterContract, completeStageTransition } fro
 import { STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { setModelCapacityMode, setModelCapacityPolicy } from "@/lib/llm/capacity-repository";
 import { readModelCapacityDeviceStates } from "@/lib/llm/capacity-devices-repository";
-import { assignmentTableEnabled } from "@/lib/llm/assignment-flag";
+import { assignmentFlag, assignmentTableEnabled } from "@/lib/llm/assignment-flag";
 import { ASSIGNMENT_STAGE_IDS, type AssignmentStage } from "@/lib/llm/capacity-helpers";
 import { assignmentSourceFor } from "@/lib/llm/stage-assignments";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
@@ -104,8 +104,8 @@ async function snapshotIn(tx: Tx): Promise<ControlSnapshot> {
     ) AS snapshot FROM c`);
   // 장비별 실시간 상태(PR 1b) — 같은 TX·같은 스냅숏에서 SELECT 만(잠금 없음). 표를 못 읽으면 장비 판정은 모름(devices 없음)으로 둔다.
   const devices = await readModelCapacityDeviceStates(tx as unknown as ProductTransaction).catch(() => undefined);
-  // 배정 표 읽기(PR 3b-B) — 이 프로세스의 MODEL_ASSIGNMENT_TABLE 이 켜졌을 때만, 같은 TX 의 SELECT 하나(꺼졌으면 오늘과 같은 문장들).
-  // 0155 전 DB 처럼 읽지 못하면 assignments 없음.
+  // 배정 표 읽기(PR 3b-B) — 이 프로세스의 스위치(3b-E: runtime_settings 토글·env 강제, ops CLI 는 ensureServingContracts(0) 뒤라 토글이 새 값이다)가
+  // 켜졌을 때만, 같은 TX 의 SELECT 하나(꺼졌으면 오늘과 같은 문장들). 0155 전 DB 처럼 읽지 못하면 assignments 없음.
   const assignments = assignmentTableEnabled() ? await readAssignmentStatus(tx).catch(() => undefined) : undefined;
   const snapshot = row?.snapshot && typeof row.snapshot === "object" ? { ...(row.snapshot as Record<string, unknown>), ...(devices ? { devices } : {}),
     ...(assignments ? { assignments } : {}) } : row?.snapshot;
@@ -118,8 +118,8 @@ async function readAssignmentStatus(tx: Tx): Promise<NonNullable<ControlSnapshot
     SELECT assignment_id, stage, rank, vote, live_provider AS provider, model FROM model_helper_assignments
     WHERE role = 'primary' AND mode = 'live' ORDER BY stage, rank, assignment_id`)).map(row => ({ assignmentId: row.assignment_id, stage: row.stage,
     rank: Number(row.rank), vote: row.vote, provider: row.provider, model: row.model, role: "primary" as const, mode: "live" as const }));
-  const enabled = assignmentTableEnabled();
-  return { enabled, stages: ASSIGNMENT_STAGE_IDS.map(stage => ({ stage, live: rows.filter(row => row.stage === stage).length,
+  const flag = assignmentFlag(), enabled = flag.enabled;
+  return { enabled, flagSource: flag.source, stages: ASSIGNMENT_STAGE_IDS.map(stage => ({ stage, live: rows.filter(row => row.stage === stage).length,
     tableReady: assignmentSourceFor(stage, true, rows) === "table", source: assignmentSourceFor(stage, enabled, rows) })) };
 }
 

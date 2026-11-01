@@ -8,6 +8,7 @@ import { readRuntimeSettingsAdminView } from "@/lib/operations/admin-runtime-set
 import { GROUP_LABELS } from "@/lib/operations/runtime-settings-schema";
 import { PageStamp } from "../../components/PageStamp";
 import { SettingsApplyLine } from "../../settings/SettingsApplyLine";
+import { AssignmentsForm } from "./AssignmentsForm";
 import { BudgetsForm } from "./BudgetsForm";
 import { DevicesPlaceholder } from "./DevicesPlaceholder";
 import { RoutesForm } from "./RoutesForm";
@@ -60,6 +61,12 @@ export default async function RuntimeLimitsPage() {
     <section id="budgets" className="grid gap-2 scroll-mt-6">
       <h2 className="text-[18px] font-semibold">{GROUP_LABELS.budgets}</h2>
       <BudgetsForm budgets={view.budgets} revision={view.revision} readOnly={readOnly} />
+    </section>
+    <section id="assignments" className="grid gap-2 scroll-mt-6">
+      <h2 className="text-[18px] font-semibold">{GROUP_LABELS.assignments}</h2>
+      <p className="text-[13px] text-fg-3">단계별 모델 고르기가 <Link href="/admin/models/assignments" className="underline">모델 배정</Link> 표를 읽는지(켬) 설정(legacy)을 읽는지(끔)입니다.
+        저장하면 웹·reviewer·text·소비자가 30초 안에 같은 값을 읽습니다 — 재배포 없음. 켜기 전에 배정 화면에서 「현재 설정 → 배정 표 가져오기」로 행을 채우고 상태 띠를 확인합니다.</p>
+      <AssignmentsForm fields={view.assignments} revision={view.revision} readOnly={readOnly} />
     </section>
     <section id="devices" className="grid gap-2 scroll-mt-6">
       <h2 className="text-[18px] font-semibold">{GROUP_LABELS.devices}</h2>

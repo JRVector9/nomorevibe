@@ -265,8 +265,9 @@ export function resolvePurposeModel(purpose: string, value: string, env: ModelEn
 type AssignmentDefaultsOverlay = (purpose: string, env: ModelEnvironment) => string | null;
 let assignmentDefaultsOverlay: AssignmentDefaultsOverlay | undefined;
 /**
- * The server installs the assignment-table default reader (PR 3b-B, lib/llm/stage-assignment-snapshot.ts). With MODEL_ASSIGNMENT_TABLE on and a
- * live assignment row for the purpose's stage, that row's registry key is the default ahead of `*_KEY` and the legacy model env. It applies only to
+ * The server installs the assignment-table default reader (PR 3b-B, lib/llm/stage-assignment-snapshot.ts). With the assignment-table switch on
+ * (runtime_settings toggle assignments.tableReads, or MODEL_ASSIGNMENT_TABLE=1 forcing it — PR 3b-E) and a live assignment row for the purpose's
+ * stage, that row's registry key is the default ahead of `*_KEY` and the legacy model env. It applies only to
  * the unscoped process environment: an admin stage-pool scope (which itself picks from the table) and explicit caller environments keep their key.
  * Client bundles never install it.
  */

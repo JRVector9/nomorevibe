@@ -156,12 +156,14 @@ export const controlSnapshotSchema = z.object({
     waiting: count, waitingPrimary: count, version: count.nullable(), updatedAt: z.string().nullable(),
     helpers: z.array(helperGateStateSchema).max(512).optional() }).strict()).max(512).optional(),
   /**
-   * 배정 표 읽기(PR 3b-B). 이 스냅숏을 읽은 프로세스(ops CLI·웹)의 MODEL_ASSIGNMENT_TABLE 이 켜졌을 때만 있다 — 소비자 역할의 스위치는
-   * 그 앱의 env 라 다를 수 있다. `live` = 그 단계의 primary·live 행 수(DB), `tableReady` = 그 단계가 표로 고를 수 있는가(ai2 는 투표자 필요),
-   * `source` = 이 프로세스가 지금 쓰는 출처. 옛 스냅숏·0155 전 DB·스위치 꺼짐에는 없다. 어떤 전환도 막지 않는다.
+   * 배정 표 읽기(PR 3b-B). 이 스냅숏을 읽은 프로세스(ops CLI·웹)의 스위치가 켜졌을 때만 있다. PR 3b-E 부터 스위치는 runtime_settings 토글
+   * (`flagSource` 'runtime' — 모든 역할이 같은 행을 읽는다) 또는 env MODEL_ASSIGNMENT_TABLE 강제('env', 이 프로세스만)다. 옛 스냅숏에는 flagSource 가 없다.
+   * `live` = 그 단계의 primary·live 행 수(DB), `tableReady` = 그 단계가 표로 고를 수 있는가(ai2 는 투표자 필요), `source` = 이 프로세스가 지금 쓰는 출처.
+   * 옛 스냅숏·0155 전 DB·스위치 꺼짐에는 없다. 어떤 전환도 막지 않는다.
    */
-  assignments: z.object({ enabled: z.boolean(), stages: z.array(z.object({ stage: z.enum(ASSIGNMENT_STAGE_IDS), live: count, tableReady: z.boolean(),
-    source: z.enum(["table", "legacy", "legacy_empty_table"]) }).strict()).max(ASSIGNMENT_STAGE_IDS.length) }).strict().optional(),
+  assignments: z.object({ enabled: z.boolean(), flagSource: z.enum(["runtime", "env", "unread"]).optional(),
+    stages: z.array(z.object({ stage: z.enum(ASSIGNMENT_STAGE_IDS), live: count, tableReady: z.boolean(),
+      source: z.enum(["table", "legacy", "legacy_empty_table"]) }).strict()).max(ASSIGNMENT_STAGE_IDS.length) }).strict().optional(),
   http: z.object(controlRow("http")).strict(),
   batch: z.object({ mode: z.enum(MODES.batch), drainingFrom: z.enum(["legacy", "versioned"]).nullable(), epoch, contract: count,
     policy: z.unknown(), policyHash: z.string().nullable(), liveJobs: count, liveRoles: count, liveItems: count, liveSources: count,
@@ -534,7 +536,8 @@ function areaLines(snapshot: ControlSnapshot, area: Area | "all"): string[] {
   }
   if ((area === "all" || area === "capacity") && snapshot.assignments) {
     const a = snapshot.assignments, used = a.stages.filter(row => row.live > 0 || row.source !== "legacy");
-    lines.push(`[assignments] MODEL_ASSIGNMENT_TABLE(이 프로세스)=${a.enabled ? "on" : "off"}`
+    // flagSource(3b-E): runtime = runtime_settings 토글(모든 역할 공통) · env = MODEL_ASSIGNMENT_TABLE 강제(이 프로세스만) · unread = 토글을 아직 못 읽음
+    lines.push(`[assignments] 배정 표 읽기(이 프로세스)=${a.enabled ? "on" : "off"}${a.flagSource ? `(${a.flagSource})` : ""}`
       + (used.length ? ` ${used.map(row => `${row.stage}=${row.source}(live ${row.live}${row.tableReady ? "" : ", 표로 못 고름"})`).join(" ")}` : " live 배정 없음"));
   }
   if (area === "all" || area === "http") {

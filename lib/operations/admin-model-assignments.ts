@@ -17,7 +17,8 @@ import type { ModelCapacityDeviceRow } from "@/lib/llm/capacity-devices";
 import { planAssignmentImport, type AssignmentImportPlan, type AssignmentImportRow, type AssignmentImportSources } from "@/lib/llm/assignment-import";
 import { readModelRegistry, type ModelDefinition } from "@/lib/llm/model-registry";
 import { logger } from "@/lib/observability/logger";
-import { assignmentSources, assignmentTableFlag, type AssignmentReadSource } from "./admin-assignment-source";
+import type { AssignmentFlag } from "@/lib/llm/assignment-flag";
+import { assignmentFlagState, assignmentSources, type AssignmentReadSource } from "./admin-assignment-source";
 import { readCapacityDevicesControl } from "./admin-capacity-devices";
 import { adminLog, settingsChanges, type AdminLogRow } from "./admin-log";
 import { HELPER_MODE_LABELS, modelHelperIssueMessage } from "./admin-model-helpers";
@@ -31,7 +32,8 @@ import { DrWriterFencedError } from "./dr/epoch";
  * 장비 순위·배정 행·감사 한 줄을 한 TX 에 한다 — 여기서는 감사 줄을 **또 쓰지 않는다**.
  *
  * - 도우미 행(role 'helper')은 표에 함께 보이지만 바꾸지 않는다 — 섀도·승격은 「도우미 장비」(/admin/models/helpers, PR 2a·2b·2c)에서 한다.
- * - 이 화면의 배정 행을 읽어 모델을 고르는 쪽은 3b-B(플래그 MODEL_ASSIGNMENT_TABLE)다. 읽기 출처는 admin-assignment-source(3b-B 의 assignmentSource)가 준다.
+ * - 이 화면의 배정 행을 읽어 모델을 고르는 쪽은 3b-B 다. 스위치는 3b-E 부터 runtime_settings 토글 「배정 표 읽기」(이 화면의 폼, 저장 즉시 모든 역할)이고
+ *   env MODEL_ASSIGNMENT_TABLE 은 강제다. 읽기 출처는 admin-assignment-source(3b-B 의 assignmentSource·3b-E 의 assignmentFlagState)가 준다.
  * - 거절 코드 → 한국어 문장(무엇을 하면 되는지)은 modelAssignmentIssueMessage 한 곳에서 만든다(모르는 코드는 그대로 보인다).
  * - 「현재 설정 → 배정 표 가져오기」는 lib/llm/assignment-import.ts 의 planAssignmentImport(3b-B)가 만든 계획을 행마다 같은 저장 함수로 적용한다.
  *
@@ -54,8 +56,26 @@ export const ASSIGNMENT_ROLE_LABELS: Readonly<Record<AssignmentRole, string>> = 
 export const ASSIGNMENT_MODE_LABELS: Readonly<Record<HelperMode, string>> = HELPER_MODE_LABELS;
 export type AssignmentStageSource = AssignmentReadSource | "table_empty";
 export const ASSIGNMENT_SOURCE_LABELS: Readonly<Record<AssignmentStageSource, string>> = { table: "표", legacy: "설정", table_empty: "표 비어 있음" };
-export const ASSIGNMENT_FLAG_OFF_BANNER = "읽기: 설정(legacy). 플래그 MODEL_ASSIGNMENT_TABLE 켜면 표를 읽습니다";
-export const ASSIGNMENT_FLAG_ON_BANNER = "읽기: 플래그 MODEL_ASSIGNMENT_TABLE 켜짐 — 단계마다 아래 출처(표 · 설정 · 표 비어 있음)를 따릅니다";
+/**
+ * 상태 띠(PR 3b-E) — 스위치의 출처까지 보인다. runtime = runtime_settings 토글(모든 역할이 같은 행을 30초 안에 읽는다, 재배포 없음),
+ * env = 이 프로세스의 MODEL_ASSIGNMENT_TABLE 강제(토글이 닿지 않는다 — 비상용), unread = 토글을 아직 못 읽음(표가 고르는 길목은 읽을 때까지 미룬다).
+ */
+export type AssignmentReadBannerKind = "runtime_off" | "runtime_on" | "env_off" | "env_on" | "unread";
+export const ASSIGNMENT_READ_BANNERS: Readonly<Record<AssignmentReadBannerKind, string>> = {
+  runtime_off: "읽기: 설정(legacy). 아래 「배정 표 읽기」를 켜면 저장 즉시(30초 안) 모든 역할이 표를 읽습니다 — 재배포 없음",
+  runtime_on: "읽기: 배정 표 읽기 켜짐(runtime_settings 토글) — 단계마다 아래 출처(표 · 설정 · 표 비어 있음)를 따릅니다",
+  env_off: "읽기: 설정(legacy) — env MODEL_ASSIGNMENT_TABLE=0 이 이 프로세스에서 강제로 끕니다. 토글은 이 프로세스에 닿지 않습니다(비상용)",
+  env_on: "읽기: 배정 표 읽기 env 강제(MODEL_ASSIGNMENT_TABLE=1, 이 프로세스) — 토글은 이 프로세스에 닿지 않습니다. 단계마다 아래 출처를 따릅니다",
+  unread: "읽기: 배정 표 읽기 토글(runtime_settings)을 아직 읽지 못했습니다 — 표가 고르는 길목은 읽을 때까지 미룹니다(assignments_unavailable). 설정(legacy)으로 보입니다",
+};
+export const ASSIGNMENT_FLAG_OFF_BANNER = ASSIGNMENT_READ_BANNERS.runtime_off;
+export const ASSIGNMENT_FLAG_ON_BANNER = ASSIGNMENT_READ_BANNERS.runtime_on;
+/** 스위치 상태 → 띠 종류 */
+export function assignmentReadBannerKind(flag: Pick<AssignmentFlag, "enabled" | "source">): AssignmentReadBannerKind {
+  if (flag.source === "unread") return "unread";
+  if (flag.source === "env") return flag.enabled ? "env_on" : "env_off";
+  return flag.enabled ? "runtime_on" : "runtime_off";
+}
 export const ASSIGNMENT_CONTRACT_SOURCE_LABELS: Readonly<Record<ModelAssignmentContractSource, string>> = {
   stored: "저장된 계약", probed: "엔진 확인(readback·1토큰)으로 새로 만든 계약", cli: "CLI 계약",
 };
@@ -134,7 +154,8 @@ export type AssignmentStageGroupView = AssignmentStageOption & { source: Assignm
   liveCount: number; transportLabel: string };
 export type AssignmentAuditView = { id: number; actor: string; at: string; ok: boolean; target: string; version: number | null; changes: string[]; error: string | null };
 export type ModelAssignmentsAdminView = {
-  nowMs: number; flagOn: boolean; banner: string; groups: AssignmentStageGroupView[]; options: AssignmentFormOptions;
+  /** flagSource(3b-E): runtime 토글 · env 강제 · unread(못 읽음). banner 는 그 조합의 글 */
+  nowMs: number; flagOn: boolean; flagSource: AssignmentFlag["source"]; banner: string; groups: AssignmentStageGroupView[]; options: AssignmentFormOptions;
   counts: { primary: number; live: number; helpers: number };
   policy: { mode: string; revision: number; routes: number } | null;
   /** 못 읽은 것(화면은 뜬다). rows 를 못 읽으면 저장 칸을 막는다 */
@@ -145,7 +166,7 @@ export type ModelAssignmentsViewInput = {
   assignments: readonly ModelAssignmentRow[] | null; helpers?: readonly HelperAssignmentRow[] | null;
   devices: readonly ModelCapacityDeviceRow[] | null; policy?: { mode: string; revision: number; policy: ModelCapacityPolicy | null } | null;
   contracts?: readonly AssignmentContractRow[] | null; settled?: readonly AssignmentSettledCount[] | null;
-  models: readonly ModelDefinition[]; flagOn?: boolean; sources?: Partial<Record<AssignmentStage, AssignmentReadSource>>;
+  models: readonly ModelDefinition[]; flagOn?: boolean; flagSource?: AssignmentFlag["source"]; sources?: Partial<Record<AssignmentStage, AssignmentReadSource>>;
   audit?: readonly AdminLogRow[]; errors?: ModelAssignmentsAdminView["errors"]; now?: Date;
 };
 
@@ -185,6 +206,8 @@ export function buildModelAssignmentsAdminView(input: ModelAssignmentsViewInput)
   const contracts = input.contracts === undefined ? [] : input.contracts;
   const settled = input.settled ?? null;
   const flagOn = input.flagOn === true;
+  // 출처가 없으면(시험·옛 호출) runtime 토글로 본다 — 띠는 「켜짐/꺼짐」의 runtime 글
+  const flagSource: AssignmentFlag["source"] = input.flagSource ?? "runtime";
   const registryByKey = new Map(input.models.map(entry => [entry.key, entry]));
   const deviceById = new Map(devices.map(device => [device.deviceId, device]));
   const roleRank = (deviceId: string, routeId: string) => deviceById.get(deviceId)?.roles.find(role => role.routeId === routeId)?.rank ?? null;
@@ -234,7 +257,7 @@ export function buildModelAssignmentsAdminView(input: ModelAssignmentsViewInput)
   });
   const readOnly = input.assignments === null;
   return {
-    nowMs: now.getTime(), flagOn, banner: flagOn ? ASSIGNMENT_FLAG_ON_BANNER : ASSIGNMENT_FLAG_OFF_BANNER, groups,
+    nowMs: now.getTime(), flagOn, flagSource, banner: ASSIGNMENT_READ_BANNERS[assignmentReadBannerKind({ enabled: flagOn, source: flagSource })], groups,
     options: assignmentFormOptions(input.models, devices),
     counts: { primary: primaryRows.length, live: primaryRows.filter(row => row.mode === "live").length, helpers: helperRows.length },
     policy: input.policy ? { mode: input.policy.mode, revision: input.policy.revision, routes: input.policy.policy?.routes.length ?? 0 } : null,
@@ -316,10 +339,10 @@ async function readRegistryModels(): Promise<ModelDefinition[]> {
 
 /** 화면 한 번 그리기 — 배정·도우미·장비·정책·계약·1h 건수·감사·등록부·읽기 출처. 어느 하나를 못 읽어도 화면은 뜬다(그 자리에 이유) */
 export async function readModelAssignmentsAdminView(now = new Date()): Promise<ModelAssignmentsAdminView> {
-  const [assignments, helpers, devices, control, contracts, settled, registry, flagOn, sources, audit] = await Promise.all([
+  const [assignments, helpers, devices, control, contracts, settled, registry, flag, sources, audit] = await Promise.all([
     settle(readModelAssignments()), settle(listHelperAssignments()), settle(listModelCapacityDevices()), settle(readCapacityDevicesControl()),
     settle(readAssignmentContracts()), settle(readAssignmentSettledCounts()), settle(readRegistryModels()),
-    assignmentTableFlag(), assignmentSources(ASSIGNMENT_STAGE_IDS),
+    assignmentFlagState(), assignmentSources(ASSIGNMENT_STAGE_IDS),
     adminLog({ actions: [MODEL_ASSIGNMENT_SAVE_AUDIT_ACTION] }).catch(() => [] as AdminLogRow[]),
   ]);
   const errors: ModelAssignmentsAdminView["errors"] = {};
@@ -327,7 +350,7 @@ export async function readModelAssignmentsAdminView(now = new Date()): Promise<M
     ["counts", settled], ["registry", registry]] as const) if (result.error) errors[key] = result.error;
   return buildModelAssignmentsAdminView({ assignments: assignments.value, helpers: helpers.value, devices: devices.value,
     policy: control.value ? { mode: control.value.mode, revision: control.value.revision, policy: control.value.policy } : null,
-    contracts: contracts.value, settled: settled.value, models: registry.value ?? [], flagOn, sources, audit, errors, now });
+    contracts: contracts.value, settled: settled.value, models: registry.value ?? [], flagOn: flag.enabled, flagSource: flag.source, sources, audit, errors, now });
 }
 
 // ---------- 폼 → 저장 입력 ----------
@@ -440,7 +463,7 @@ export function assignmentSavedMessage(result: ModelAssignmentSaveResult, flagOn
     : result.appended.length ? `정책에 경로를 덧붙였습니다(revision ${fmt(result.policyRevision)}, DRAIN 없음)` : "정책 경로는 이미 있습니다";
   const role = result.deviceRole.before === result.deviceRole.after ? `장비 역할 순위 ${fmt(result.deviceRole.after)} 그대로`
     : `장비 역할 순위 ${result.deviceRole.before === null ? "없음" : fmt(result.deviceRole.before)} → ${fmt(result.deviceRole.after)}`;
-  const reader = flagOn ? "" : " 읽는 쪽은 아직 설정을 씁니다(플래그 MODEL_ASSIGNMENT_TABLE 꺼짐) — 켜면 이 배정을 읽습니다.";
+  const reader = flagOn ? "" : " 읽는 쪽은 아직 설정을 씁니다(배정 표 읽기 꺼짐) — 「배정 표 읽기」를 켜면 이 배정을 읽습니다.";
   return `${result.before ? "저장했습니다" : "만들었습니다"}(배정 ${after.assignmentId}, 판 ${fmt(after.version)}, 모드 ${ASSIGNMENT_MODE_LABELS[after.mode]}). `
     + `계약: ${contract}. ${route}. ${role}.${reader}`;
 }

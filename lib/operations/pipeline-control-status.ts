@@ -12,7 +12,7 @@ export type ControlMetric = { label: string; value: number | null };
 export type ControlReadback = { key: string; label: string; mode: string | null; epoch: number | null; revision: number | null;
   policy: 'verified' | 'unset' | 'unknown'; metrics: ControlMetric[]; note: string };
 /** 이 프로세스가 지금 읽은 실시간 한도(runtime_settings) 판 — source 'default' 는 행을 읽지 못해(0151 전·loader 없음) 코드 기본값으로 돈다는 뜻 */
-export type RuntimeSettingsReadback = { version: string; shortVersion: string; revision: number | null; source: 'db' | 'default'; loadedAt: string | null;
+export type RuntimeSettingsReadback = { version: string; shortVersion: string; revision: number | null; source: RuntimeSettingsSnapshot['source']; loadedAt: string | null;
   /** MODEL_REGISTRY_CONFIG env 가 있어 경로 한도 묶음이 이 프로세스에 닿지 않는다 */
   registryEnv: boolean };
 export type PipelineControlStatus = { observedAt: string | null; controls: ControlReadback[];

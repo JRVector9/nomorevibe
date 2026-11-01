@@ -21,6 +21,12 @@ export type JobKnobs = { batch?: number; batchChars?: number; minCallMs?: number
 export type JobKnobName = keyof JobKnobs;
 export type ProductTranslationPolicy = { maxSourceChars: number; batchChars: number; batchMax: 4; demandLimit: number; maxAttempts: number; jobMarginMs: number };
 export type JobBudget = number | "auto";
+/**
+ * 배정 표 읽기 토글(PR 3b-E): 'on' 이면 단계별 모델 고르기가 배정 표(model_helper_assignments role 'primary' · mode 'live')를 먼저 본다
+ * (lib/llm/assignment-flag.ts 가 30초 스냅숏으로 읽는다 — 재배포 없이 저장 즉시). env MODEL_ASSIGNMENT_TABLE 은 비상 강제(1=켬·0=끔)로만 이긴다.
+ */
+export const ASSIGNMENT_TABLE_READS = ["off", "on"] as const;
+export type AssignmentTableReads = (typeof ASSIGNMENT_TABLE_READS)[number];
 export type RuntimeSettings = Readonly<{
   routes: { limits: Record<string, PurposeLimit>; timeouts: Record<string, number>; deadlines: Record<string, DeadlineLadder> };
   translation: { product: ProductTranslationPolicy };
@@ -28,6 +34,8 @@ export type RuntimeSettings = Readonly<{
   jobs: Record<string, JobKnobs>;
   /** 적힌 잡만. 없는 잡은 runner 기본 DEFAULT_JOB_BUDGET_MS. "auto" = jobCallCeilingMs + translation.product.jobMarginMs */
   budgets: Record<string, JobBudget>;
+  /** 모델 배정 읽기 — 숫자가 아닌 첫 묶음(열거). 기본 'off' = 오늘과 같다(배정 표 SELECT 도 없다). */
+  assignments: { tableReads: AssignmentTableReads };
 }>;
 
 export const RUNTIME_SETTINGS_VERSION = 1 as const;
@@ -40,7 +48,7 @@ export const BUDGET_CALL_MARGIN_MS = 2_000;
 /** 이보다 좁은 여유는 저장은 되지만 경고한다 */
 export const BUDGET_THIN_MARGIN_MS = 15_000;
 
-export const RUNTIME_SETTING_GROUPS = ["routes", "translation", "jobs", "budgets", "devices"] as const;
+export const RUNTIME_SETTING_GROUPS = ["routes", "translation", "jobs", "budgets", "assignments", "devices"] as const;
 export type RuntimeSettingGroup = (typeof RUNTIME_SETTING_GROUPS)[number];
 
 function deepFreeze<T>(value: T): T {
@@ -89,6 +97,8 @@ export const DEFAULT_RUNTIME_SETTINGS: RuntimeSettings = deepFreeze({
     "held-qwen-retry": 110_000, "split-confirm": 110_000,
     "product-thumbnail-refresh": 40_000, "bluesky-talk": 40_000, "crawl-seed": 30_000, "crawl-fetch": 120_000,
   },
+  // 배정 표 읽기(PR 3b-E) — 기본 꺼짐: 3b-B 배포 상태(설정으로 고른다)와 같다
+  assignments: { tableReads: "off" },
 });
 
 /**
@@ -140,6 +150,8 @@ export const jobKnobsSchema = z.object({
 }).partial().strict();
 export const jobBudgetSchema = z.union([ms(5_000), z.literal("auto")]);
 export const JOB_KNOB_NAMES = Object.freeze(Object.keys(jobKnobsSchema.shape) as JobKnobName[]);
+/** 모델 배정 읽기 묶음 — 열거 칸만(불리언처럼 쓰되 저장 문서에는 글자로 남아 감사 줄이 "off → on" 으로 읽힌다) */
+export const assignmentsSchema = z.object({ tableReads: z.enum(ASSIGNMENT_TABLE_READS) }).strict();
 
 const boundsSchema = z.object({
   version: z.literal(RUNTIME_SETTINGS_VERSION),
@@ -148,6 +160,7 @@ const boundsSchema = z.object({
   translation: z.object({ product: translationProductSchema }).strict(),
   jobs: z.record(z.string(), jobKnobsSchema),
   budgets: z.record(z.string(), jobBudgetSchema),
+  assignments: assignmentsSchema,
 }).strict();
 /** 유효(병합된) 문서를 검사한다: 범위 + 교차 불변식(코드 기본 등록부 기준). 저장 경로는 resolveRuntimeSettings(…, { models }) 로 덮어쓴 등록부까지 본다. */
 export const runtimeSettingsSchema = boundsSchema.superRefine((value, context) => {
@@ -195,7 +208,7 @@ type CrossIssue = { message: string; path: (string | number)[] };
 function crossCheckIssues(value: RuntimeSettingsDocument | RuntimeSettings, models: readonly ModelDefinition[]): CrossIssue[] {
   const issues: CrossIssue[] = [];
   const known = knownRoutes(models);
-  const settings: RuntimeSettings = { routes: value.routes, translation: value.translation, jobs: value.jobs, budgets: value.budgets };
+  const settings: RuntimeSettings = { routes: value.routes, translation: value.translation, jobs: value.jobs, budgets: value.budgets, assignments: value.assignments };
   for (const part of ["limits", "timeouts", "deadlines"] as const)
     for (const route of Object.keys(settings.routes[part])) if (!known.has(route)) issues.push({ message: `unknown_route:${route}`, path: ["routes", part, route] });
   for (const [job, knobs] of Object.entries(settings.jobs)) {
@@ -341,7 +354,16 @@ export function resolveRuntimeSettings(stored: unknown, options: { models?: read
     if (parsed.success) budgets[job] = parsed.data; else issues.push(`runtime_settings_invalid:budgets.${job}`);
   }
 
-  const settings: RuntimeSettings = { routes, translation: { product: product as ProductTranslationPolicy }, jobs, budgets };
+  const assignments: RuntimeSettings["assignments"] = { ...defaults.assignments };
+  for (const [key, value] of Object.entries(groupOf(doc, "assignments", issues))) {
+    if (value === null) continue;
+    const field = assignmentsSchema.shape[key as keyof typeof assignmentsSchema.shape];
+    if (!field) { issues.push(`unknown_setting:assignments.${key}`); continue; }
+    const parsed = field.safeParse(value);
+    if (parsed.success) assignments[key as keyof typeof assignmentsSchema.shape] = parsed.data; else issues.push(`runtime_settings_invalid:assignments.${key}`);
+  }
+
+  const settings: RuntimeSettings = { routes, translation: { product: product as ProductTranslationPolicy }, jobs, budgets, assignments };
   const bounds = boundsSchema.safeParse({ version: RUNTIME_SETTINGS_VERSION, ...settings });
   if (!bounds.success) for (const issue of bounds.error.issues)
     issues.push(issue.code === "custom" ? issue.message : `runtime_settings_invalid:${issue.path.map(String).join(".")}`);
@@ -403,7 +425,10 @@ const TRANSLATION_FIELD_LABELS: Record<keyof ProductTranslationPolicy, string> =
   demandLimit: "요청 보류 한도", maxAttempts: "최대 시도", jobMarginMs: "틱 여유(ms)" };
 const KNOB_LABELS: Record<JobKnobName, string> = { batch: "묶음", batchChars: "묶음 글자", minCallMs: "최소 남은 시간(ms)", slowCallMs: "느린 호출(ms)",
   soloAttempts: "혼자 보내는 실패 수", callMs: "호출 상한(ms)", maxAttempts: "최대 시도" };
-export const GROUP_LABELS: Readonly<Record<RuntimeSettingGroup, string>> = { routes: "경로 한도", translation: "번역·묶음", jobs: "잡별 묶음", budgets: "틱 예산", devices: "장비 한도" };
+export const GROUP_LABELS: Readonly<Record<RuntimeSettingGroup, string>> = { routes: "경로 한도", translation: "번역·묶음", jobs: "잡별 묶음", budgets: "틱 예산",
+  assignments: "모델 배정 읽기", devices: "장비 한도" };
+/** 열거 칸의 값 이름 — 폼의 선택지와 감사 줄이 같은 말을 쓴다 */
+export const ASSIGNMENT_TABLE_READS_LABELS: Readonly<Record<AssignmentTableReads, string>> = { off: "끔 — 설정(legacy)으로 고른다", on: "켬 — 배정 표(live 행)로 고른다" };
 
 const routeLabel = (route: string) => ROUTE_LABELS[route] ?? route;
 const jobLabel = (job: string) => JOB_LABELS[job] ?? job;
@@ -419,6 +444,7 @@ export const RUNTIME_SETTING_LABELS: Readonly<Record<string, string>> = Object.f
     ...JOB_KNOB_NAMES.map(knob => [`jobs.${job}.${knob}`, `${jobLabel(job)} ${KNOB_LABELS[knob]}`]),
     [`budgets.${job}`, `${jobLabel(job)} 틱 예산(ms)`],
   ]),
+  ["assignments.tableReads", "배정 표 읽기"],
 ]));
 export function runtimeSettingLabel(path: string): string {
   const known = RUNTIME_SETTING_LABELS[path];

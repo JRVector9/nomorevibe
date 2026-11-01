@@ -7,6 +7,7 @@ import { ModelCapacityDeferredError, modelCapacityDeferralIsPerWork } from '@/li
 import type { ProviderCircuits } from '@/lib/llm/provider-circuit-breaker';
 import { logger } from '@/lib/observability/logger';
 import type { HostAdmission } from '@/lib/operations/host-budget-runtime';
+import { ensureStageAssignments } from '@/lib/llm/stage-assignment-snapshot';
 import { interruptibleSleep, type RuntimeReport } from '@/scripts/worker';
 import { getSettings } from '../settings';
 import { reviewCandidatePredicate } from '../agent-review-repository';
@@ -50,6 +51,9 @@ export async function runFirstReviewConsumer(input: {
   const pausedReviewers = new Set<string>();
   while (!halt?.aborted) {
     report?.('polling');
+    // 배정 표 읽기(PR 3b-E): 이 소비자는 틱이 없어 쪽마다 토글(runtime_settings)·배정 표 스냅숏을 같은 30초 주기로 새로 받는다 — 관리자가 켜면 재시작 없이
+    // 다음 쪽부터 hints 의 심사자 판정과 후보별 고르기(chooseFirstReviewForCandidate, 풀 모드만)가 표를 본다. 못 읽으면 고르기가 assignments_unavailable 로 미룬다.
+    await ensureStageAssignments();
     const { rows: queue, poolEnabled } = await hints(cursor);
     const blockedReviewers = poolEnabled && queue.length ? await readBlockedFirstReviewerKeys() : new Set<string>();
     let deferred = false, completed = false;

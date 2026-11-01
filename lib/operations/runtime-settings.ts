@@ -24,7 +24,7 @@ export type { RuntimeSettingGroup };
 export const RUNTIME_SETTINGS_AUDIT_ACTION = "runtime-settings-save";
 export const runtimeSettingsAuditTarget = (group: RuntimeSettingGroup) => `runtime_settings:${group}`;
 /** 저장 거절 이유(한국어 메시지는 UI 가 붙인다). resolveRuntimeSettings 의 issues 와 같은 꼴 */
-export type RuntimeSettingsRefusal = "stale_form" | "site_fenced" | `unknown_route:${string}` | `unknown_job:${string}` | `budget_below_call_timeout:${string}`
+export type RuntimeSettingsRefusal = "stale_form" | "site_fenced" | `unknown_route:${string}` | `unknown_job:${string}` | `unknown_setting:${string}` | `budget_below_call_timeout:${string}`
   | `budget_below_min_call:${string}` | `min_call_exceeds_timeout:${string}` | "batch_exceeds_source_cap" | "deadline_order_inverted"
   | "model_timeout_ladder_mismatch" | `timeout_below_engine_bound:${string}` | `runtime_settings_invalid:${string}` | (string & {});
 
@@ -35,8 +35,8 @@ export type SaveRuntimeSettingsResult = { ok: true; revision: number; version: s
 const ROW_ID = 1;
 /** 문서 CHECK(pg_column_size ≤ 65536)보다 앞서 거절하는 텍스트 길이. 실제 문서는 수 KB 다 */
 const STORED_DOCUMENT_MAX_CHARS = 60_000;
-/** 저장이 쓰는 그룹 — devices 는 PR 1b 의 관계형 표(이 문서에 들어가지 않는다) */
-const EDITABLE_GROUPS: readonly RuntimeSettingGroup[] = ["routes", "translation", "jobs", "budgets"];
+/** 저장이 쓰는 그룹 — devices 는 PR 1b 의 관계형 표(이 문서에 들어가지 않는다). assignments(배정 표 읽기 토글, PR 3b-E)는 이 문서의 열거 칸이다 */
+const EDITABLE_GROUPS: readonly RuntimeSettingGroup[] = ["routes", "translation", "jobs", "budgets", "assignments"];
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
 /** 기한 사다리의 relayMs: null 은 "중계 층 없음"이라는 값이다 — 지우기가 아니다 */

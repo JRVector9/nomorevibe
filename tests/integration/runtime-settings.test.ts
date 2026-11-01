@@ -188,3 +188,43 @@ it("apply status compares the saved 판 with each role's reported runtimeSetting
   expect(apply.attention?.href).toBe("/admin/models/limits#apply");
   expect(apply.attention?.detail).toContain("후보 심사 이(가) 실시간 한도를 저장하고 11분");
 });
+
+it("assignments(3b-E): the toggle saves as its own group (audit 'off → on'), the same reload serves it to the assignment-table switch, and an unknown group is still refused", async () => {
+  const { saveRuntimeSettings, readRuntimeSettingsRow } = await import("@/lib/operations/runtime-settings");
+  const { storedSettingsVersion } = await import("@/lib/operations/runtime-settings-schema");
+  const store = await import("@/lib/operations/runtime-settings-store");
+  const { assignmentFlag, setAssignmentTableEnabledForTest } = await import("@/lib/llm/assignment-flag");
+  const before = await row(), trail = (await audits()).length;
+  // 모르는 그룹은 저장 전에 거절(다른 그룹의 저장은 이 거절과 무관하다 — 새 그룹 assignments 는 알려진 그룹이다)
+  expect(await saveRuntimeSettings({ tableReads: "on" }, "jr", { group: "assignment" as never })).toEqual({ ok: false, issues: ["unknown_group:assignment"] });
+  expect(await saveRuntimeSettings({ tableReads: "yes" }, "jr", { group: "assignments" })).toEqual({ ok: false, issues: ["runtime_settings_invalid:assignments.tableReads"] });
+  expect(await saveRuntimeSettings({ nope: "on" }, "jr", { group: "assignments" })).toEqual({ ok: false, issues: ["unknown_setting:assignments.nope"] });
+  expect(await row()).toMatchObject({ revision: before.revision });
+  const saved = await saveRuntimeSettings({ tableReads: "on" }, "jr", { group: "assignments", expectedRevision: before.revision });
+  expect(saved).toMatchObject({ ok: true, revision: before.revision + 1 });
+  const stored = (await readRuntimeSettingsRow()).values as Record<string, unknown>;
+  expect(stored.assignments).toEqual({ tableReads: "on" });
+  expect(storedSettingsVersion(stored)).toBe(saved.ok ? saved.version : null);
+  const audit = (await audits()).at(-1)!;
+  expect(audit).toMatchObject({ ok: true, target: "runtime_settings:assignments" });
+  expect(audit.detail).toMatchObject({ group: "assignments", before: { tableReads: "off" }, after: { tableReads: "on" },
+    changes: [{ path: "assignments.tableReads", before: "off", after: "on", label: "배정 표 읽기" }] });
+  expect((await audits()).length).toBe(trail + 3);
+  // 읽는 쪽(모든 역할이 같은 함수): 다음 reload 부터 runtime 출처로 켜짐 — env 도 재시작도 없다
+  setAssignmentTableEnabledForTest(null);
+  vi.stubEnv("MODEL_ASSIGNMENT_TABLE", "");
+  await store.ensureRuntimeSettings(0);
+  expect(store.runtimeSettings().assignments.tableReads).toBe("on");
+  expect(assignmentFlag()).toEqual({ enabled: true, source: "runtime", override: null });
+  // 되돌리기(null = 기본값으로) → 꺼짐, 문서에서 그룹이 사라진다
+  const reset = await saveRuntimeSettings({ tableReads: null }, "jr", { group: "assignments" });
+  expect(reset).toMatchObject({ ok: true, revision: before.revision + 2 });
+  expect((await row()).values.assignments).toBeUndefined();
+  await store.ensureRuntimeSettings(0);
+  expect(assignmentFlag()).toEqual({ enabled: false, source: "runtime", override: null });
+  // env 강제는 토글을 이긴다(이 프로세스만)
+  vi.stubEnv("MODEL_ASSIGNMENT_TABLE", "1");
+  setAssignmentTableEnabledForTest(null);
+  expect(assignmentFlag()).toEqual({ enabled: true, source: "env", override: "on" });
+  setAssignmentTableEnabledForTest(null);
+});
