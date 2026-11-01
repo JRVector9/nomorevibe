@@ -1,3 +1,15 @@
+# Reliability branch pushed and PR opened — 2026-11-01 23:19 KST, root
+
+The full four-part goal remains ACTIVE. Root actually pushed `codex/reliability-resume-20261101` through `325a8b4692e8e4d786e321e11701d0edc256db0a`; local and remote HEAD matched on the subsequent read. PR **https://github.com/JRVector9/nomorevibe/pull/784** is OPEN. Actual GitHub run **41314846361** had scope/typecheck/lint/build/integration-ledger/worker-image/web-image successful, with unit and six integration shards still running; no final `check` success or merge/deploy is claimed. No local tests/lint/typecheck/build/compiler were run.
+
+During that run, main advanced from f7090118 to **b76f3d90a841ffc923fa9e9a27f4c2e36311bb7c** (PR783, admin model table/API model list). Root fetched and merged that base without conflicts; this entry is included in that merge. Push the resulting merge and inspect its NEW exact-head CI; the earlier run cannot establish latest-base validation. Do not bypass required `check`. Production remains the previously observed439dea9a until new actual receipts establish otherwise; Oracle/host gateway installation has not started.
+
+Followups stay separate: Oracle agent is preparing typed-tokenizer preflight failures with a boolean compatibility wrapper; no claim this affects current Supa raw/total-bound contracts. Root actually read serving protocols and profile errors: Supa paths currently bypass direct-openai tokenizer preflight; network322/model_unavailable77, attempts0/exhausted0 in the bounded sample. Supa intentional shutdown versus failure question is still pending. Web agent is designing durable intent-aware discovery progress, without implementation yet. Dependency alert45 minimatch<11.0.1 remains open: agent found no safe whole-tree override (3.x callers require callable export/makeRe removed by11); current flaw's optimizationLevel>=2 preprocessing is absent from3.1.5, but official advisory broad range remains authoritative pending clarification. No package override or alert dismissal was performed.
+
+Next: `cd /Users/jr/Desktop/projects/nomorevibe-reliability-resume-20261101`; finish and push this reviewed merge; `gh pr view 784 --json headRefOid,baseRefOid,statusCheckRollup,mergeStateStatus`; inspect exact-head CI, fix actual failures and merge only after latest-base required checks pass. Then use a NEW clean main-SHA operator and fresh canonical release plan/run; install Oracle watchdog/notifier/shared gateway first, M3/mini gateway second, monitor last while preserving all config/state/ACK/cooldown/once records. Do not rerun old consumed releases or failed observer. Agent followup diffs require independent review before any separate PR. Original dirty user tree and immutable operators remain unchanged.
+
+---
+
 # Reliability source batch integrated — 2026-11-01 23:09 KST, root
 
 The full four-part user objective remains ACTIVE and unproven. This is a source implementation phase, not final operational completion. Fresh base main f70901181e89e95e4e4a9d916b27f8a6d22a6e32; root tree /Users/jr/Desktop/projects/nomorevibe-reliability-resume-20261101 / codex/reliability-resume-20261101.

@@ -1,11 +1,12 @@
 "use client";
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import type { AdminModelsObservation } from "@/lib/operations/admin-models-observation";
 import { buildModelCards, elapsedModelTime, lastModelSuccess, MODEL_DASHBOARD_STAGES, MODEL_ROW_STATUS, modelCardAnchor, modelStageId, probeIdentityOf,
   stageHealth, stageUnknownRows, type CapacityAlarmSummary, type ModelCard, type ModelContractLink, type ModelStageAssignment, type StageHealth } from "@/lib/operations/admin-models-view";
 import type { ModelDefinition } from "@/lib/llm/model-registry";
 import type { ProbeObservation } from "@/lib/operations/admin-models-probe";
 import { throughputModelKey, type ThroughputWindows } from "@/lib/operations/admin-models-throughput";
+import type { ServedContractModels } from "@/lib/operations/admin-engine-connect";
 import { probeAdminModel, type ModelProbeResult } from "./operation-actions";
 import { ModelOpsPanel } from "./ModelOpsPanel";
 import type { OpsState } from "@/lib/operations/ops-runner/contract";
@@ -48,11 +49,12 @@ export function ThroughputMetrics({ value }: { value?: ThroughputWindows }) {
  * 연결 확인 결과는 서버 액션이 관측 표에 남기고(probes), 이 화면에서 방금 받은 결과(localProbes)가 있으면 그것을 먼저 보인다.
  */
 export function LiveModels({ observation, models = [], assignments = [], contracts = [], probeAction = probeAdminModel, opsStates = [], restartModels = [], opsActions,
-  probes = {}, leases = [], readiness = null, alarms = null }: {
+  probes = {}, leases = [], readiness = null, alarms = null, served = [] }: {
   observation: AdminModelsObservation; models?: readonly ModelDefinition[]; assignments?: ModelStageAssignment[]; contracts?: ModelContractLink[];
   probeAction?: typeof probeAdminModel; opsStates?: OpsState[]; restartModels?: { key: string; label: string; blockedReason?: string }[];
   opsActions?: Pick<React.ComponentProps<typeof ModelOpsPanel>, "submitAction" | "readAction">;
   probes?: Record<string, ProbeObservation>; leases?: LeaseTile[]; readiness?: "ok" | "alarm" | null; alarms?: CapacityAlarmSummary | null;
+  served?: readonly ServedContractModels[];
 }) {
   const [, start] = useTransition();
   const [localProbes, setProbes] = useState<Record<string, ModelProbeResult>>({}), [busy, setBusy] = useState<string | null>(null);
@@ -65,6 +67,19 @@ export function LiveModels({ observation, models = [], assignments = [], contrac
     catch { setProbes(current => ({ ...current, [card.id]: { error: "연결 확인 결과를 읽지 못했습니다. 감사 기록을 확인해주세요." } })); }
     finally { setBusy(null); }
   }); };
+  useEffect(() => {
+    const bar = document.querySelector<HTMLElement>(".models-topbar");
+    const head = document.querySelector<HTMLElement>(".models-stage-head");
+    const apply = () => {
+      if (bar) document.documentElement.style.setProperty("--models-topbar", `${Math.ceil(bar.getBoundingClientRect().height)}px`);
+      if (head) document.documentElement.style.setProperty("--models-stage-head", `${Math.ceil(head.getBoundingClientRect().height)}px`);
+    };
+    apply();
+    const observer = new ResizeObserver(apply);
+    if (bar) observer.observe(bar);
+    if (head) observer.observe(head);
+    return () => observer.disconnect();
+  }, []);
   const slots = new Set(cards.map(card => `${probeIdentityOf(card).provider}:${probeIdentityOf(card).model}`)).size;
   const stageRows = cards.reduce((n, card) => n + Math.max(1, new Set(card.stages).size), 0);
   return <section className="flex min-w-0 flex-col gap-3" aria-labelledby="live-models-heading">
@@ -76,13 +91,12 @@ export function LiveModels({ observation, models = [], assignments = [], contrac
           {unknownCount > 0 && <p role="alert" className="rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-[13px]"><strong className="text-warn">확인 못함 {unknownCount}건 · 사람 검토</strong> — 슬롯을 점유하지 않습니다. 표의 「미확인」 수를 누르면 <a href="#review" className="underline underline-offset-[3px]">검토 목록</a>의 그 요청으로 갑니다.</p>}
           {observation.truncated && <p role="alert" className="text-[13px]">열린 요청은 미확인 우선 100건만 표시합니다. 점유·미확인 합계는 전체 장부 기준입니다.</p>}
           <section className="min-w-0 rounded-xl border border-line bg-bg-card" aria-labelledby="models-table-heading">
-            <div className="flex flex-wrap items-baseline gap-x-3.5 gap-y-1.5 border-b border-line px-3 py-2.5">
+            <div className="models-stage-head flex flex-wrap items-baseline gap-x-3.5 gap-y-1.5 border-b border-line px-3 py-2.5">
               <h2 id="models-table-heading" className="text-[15px] font-semibold">단계 × 모델</h2>
-              <p className="min-w-0 flex-[1_1_240px] text-[13px] text-fg-2">연결 확인: 카테고리·검색·사람 위임 슬롯은 렌더마다 자동, 나머지는 「연결 확인」 버튼(abcllm·local-direct 제공자만). 같은 장비·같은 모델은 하나의 확인 결과를 공유하며 결과는 관측 표에 남아 새로고침 뒤에도 보입니다.</p>
+              <p className="min-w-0 flex-[1_1_240px] text-[13px] text-fg-2">연결 확인: 카테고리·검색·사람 위임 슬롯은 렌더마다 자동, 나머지는 「연결 확인」 버튼. 같은 장비·같은 모델은 하나의 확인 결과를 공유하며 결과는 관측 표에 남아 새로고침 뒤에도 보입니다. 장비 이름은 실제 호출 주소와 맞춥니다.</p>
               <span className="text-[13px] text-fg-2 tabular-nums"><span className="font-mono">{stageRows}</span>행 · 모델 슬롯 <span className="font-mono">{slots}</span>개</span>
             </div>
-            <p className="px-3 pt-2 text-[13px] text-fg-2 md:hidden">표를 좌우로 밀어 모든 열을 확인하세요.</p>
-            <ModelStageTable cards={cards} observation={observation} controls={controls} probes={probes} localProbes={localProbes} busy={busy} onProbe={runProbe} restartModels={restartModels} />
+            <ModelStageTable cards={cards} observation={observation} controls={controls} probes={probes} localProbes={localProbes} busy={busy} onProbe={runProbe} restartModels={restartModels} served={served} />
             <div className="flex flex-wrap items-center gap-x-3.5 gap-y-1.5 border-t border-line px-3 py-2 text-[13px] text-fg-2" aria-label="범례">
               <span>상태:</span>{(Object.keys(MODEL_ROW_STATUS) as (keyof typeof MODEL_ROW_STATUS)[]).map(key => <ModelStatusBadge key={key} status={key} />)}
               <span>· 왼쪽 줄: 실선 빨강 = 연결 안 됨, 점선 노랑 = 확인 못함, 노랑 = 보류, 회색 = 접수 중지 · 마지막 성공은 최근 24시간 안 기록 · 시각은 KST</span>

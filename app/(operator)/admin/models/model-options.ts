@@ -1,15 +1,15 @@
 import { firstReviewCandidates } from "@/lib/crawl/first-reviewers";
-import { modelForPurpose, modelRequestName, readModelRegistry } from "@/lib/llm/model-registry";
+import { modelRequestName, readModelRegistry } from "@/lib/llm/model-registry";
 import type { ModelOption } from "../settings/ModelRows";
 
-/** Suggestions are identities, not a claim that a backend or its capacity contract is ready. */
-export function reviewModelOptions(gatewayModels: readonly string[] | null, direct: boolean): ModelOption[] {
-  const directModel = modelForPurpose("ai2-direct");
+/** 엔진 모델 이름은 운영자가 넣은 API의 GET /models 결과만 쓴다. 등록부에 적힌 모델 문자열은 선택지로 만들지 않는다. */
+export function reviewModelOptions(engineModels: readonly string[] | null, direct: boolean): ModelOption[] {
+  const registry = readModelRegistry().models;
+  const candidates = firstReviewCandidates();
+  const listed = (provider: string, model: string) => direct || candidates.some(row => row.provider === provider && row.model === model);
   return [
-    ...(direct ? [{ provider: "local-direct", model: directModel.key, label: directModel.displayName }] : []),
-    ...[...new Set([...(direct ? [modelRequestName(modelForPurpose("ai1-preset")), modelRequestName(modelForPurpose("product-search-profile"))] : firstReviewCandidates().filter(row => row.provider === "abcllm").map(row => row.model)), ...(gatewayModels ?? [])])]
-      .map(model => ({ provider: "abcllm", model, label: `직접 연결 · ${model}` })),
-    ...readModelRegistry().models.filter(model => (model.provider === "claude-cli" || model.provider === "grok-cli") && (direct || firstReviewCandidates().some(row => row.provider === model.provider && row.model === modelRequestName(model))))
+    ...(engineModels ?? []).map(model => ({ provider: "local-direct" as const, model, label: model })),
+    ...registry.filter(model => (model.provider === "claude-cli" || model.provider === "grok-cli") && listed(model.provider, modelRequestName(model)))
       .map(model => ({ provider: model.provider, model: model.model, label: model.displayName })),
   ];
 }

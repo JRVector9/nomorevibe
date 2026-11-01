@@ -12,3 +12,15 @@
 .model-glyph::before { content: attr(data-glyph); font-size: 10px; line-height: 1; }
 /* 폰에서는 메뉴 머리(admin-sidebar, sticky)와 겹치지 않게 흐른다 — md 이상에서만 붙어 따라온다(RefreshBar.tsx 의 md:sticky) */
 @media (max-width: 760px) { .models-topbar { position: static; } }
+
+/* 단계 × 모델 머리 — 스크롤해도 상단 띠 아래에 남는다. 열 이름은 그 바로 아래. */
+.models-stage-head { position: sticky; top: 0; z-index: 6; background: var(--color-bg-card); }
+.models-stage-cards { display: none; }
+@media (min-width: 761px) {
+  .models-stage-head { top: var(--models-topbar, 46px); }
+  .models-stage-table thead th { position: sticky; top: calc(var(--models-topbar, 46px) + var(--models-stage-head, 52px)); z-index: 5; background: var(--color-bg-soft); }
+}
+@media (max-width: 1280px) {
+  .models-stage-wide { display: none; }
+  .models-stage-cards { display: block; }
+}

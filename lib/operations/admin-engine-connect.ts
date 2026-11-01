@@ -3,7 +3,7 @@ import { ADMIN_MODEL_STAGES, type AdminStagePools } from "@/lib/llm/admin-model-
 import { ASSIGNMENT_STAGE_IDS, ASSIGNMENT_STAGES } from "@/lib/llm/capacity-helpers";
 import { GATEWAY_SERVING_CONTRACT_ROUTES, registeredGatewayContractShape, type GatewayServingRoute } from "@/lib/llm/gateway-serving-contract-config";
 import { modelRequestName, readModelRegistry, type ModelDefinition } from "@/lib/llm/model-registry";
-import { ensureServingContracts, servingContractAuth } from "@/lib/llm/serving-contract-store";
+import { ensureServingContracts, servingContractAuth, servingContractSnapshot } from "@/lib/llm/serving-contract-store";
 import { writerSiteActive, DrWriterFencedError } from "./dr/epoch";
 import { readbackServingEndpoint, saveServingContractTx, validateAdminServingContract } from "./admin-serving-contracts";
 import { saveRegistryOverrideTx } from "./admin-model-registry";
@@ -87,6 +87,31 @@ export async function probeEngineContract(input: { endpoint: string; engineModel
   const responseModel = await probeResponseModel(endpoint, engineModel, apiKey, request);
   if (!responseModel) throw new Error("engine_probe_failed");
   return Object.freeze({ endpoint, requestModel: engineModel, responseModel, totalTokenBound, totalTokenBoundFrom });
+}
+
+/** 저장된 직접 연결 계약의 주소로 GET /models. 이름과 주소는 응답과 계약에만 있고, 키는 돌려주지 않는다. */
+export type ServedContractModels = { routeId: string; storedModel: string; servedIds: string[] | null; reason: string | null };
+export async function readServedContractModels(request: typeof fetch = fetch): Promise<ServedContractModels[]> {
+  const rows = servingContractSnapshot().rows.filter(row => row.transport === "direct");
+  const endpointOf = (contract: unknown) => contract && typeof contract === "object" && typeof (contract as { endpoint?: unknown }).endpoint === "string"
+    ? (contract as { endpoint: string }).endpoint : "";
+  const groups = new Map<string, typeof rows>();
+  for (const row of rows) {
+    const endpoint = endpointOf(row.contract);
+    if (!endpoint) continue;
+    groups.set(endpoint, [...(groups.get(endpoint) ?? []), row]);
+  }
+  const read = new Map<string, { ids: string[] | null; reason: string | null }>();
+  await Promise.all([...groups.entries()].map(async ([endpoint, group]) => {
+    const auth = servingContractAuth(group[0].routeId, group[0].model);
+    const result = await readbackServingEndpoint(endpoint, auth?.apiKey ?? null, request);
+    read.set(endpoint, result.ok ? { ids: result.models.map(model => model.id), reason: null } : { ids: null, reason: result.reason });
+  }));
+  return rows.flatMap(row => {
+    const endpoint = endpointOf(row.contract);
+    const got = endpoint ? read.get(endpoint) : undefined;
+    return got ? [{ routeId: row.routeId, storedModel: row.model, servedIds: got.ids, reason: got.reason }] : [];
+  });
 }
 
 /** The plain total-bound contract of one gateway route for a directly connected (or gateway) engine model; null when the route schema refuses it. */
