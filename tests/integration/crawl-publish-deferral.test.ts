@@ -109,7 +109,8 @@ it.each(["admission refused", "native RPC response lost", "native agent unavaila
     expect(before).toMatchObject({ requested_version: 13, processed_version: 7, cursor: { page: 4 },
       last_success_at: "2026-10-01T01:02:03.123456", last_error: "previous failure",
       next_scheduled_at: "2026-10-20T01:02:03.654321", not_before: "2100-01-01T01:02:03.123456" });
-    expect(await jobRow()).toEqual({ ...before, locked_at: null, lease_token: null });
+    // 던지지 않고 끝난 미룸 틱은 지난 실패 기록(last_error)만 지운다(runner.ts) — 요청·커서·멈춤·성공 시각은 그대로
+    expect(await jobRow()).toEqual({ ...before, locked_at: null, lease_token: null, last_error: null });
     expect(await observationRow()).toEqual(observationBefore);
     expect(onDeferred).toHaveBeenCalledExactlyOnceWith("model_capacity");
     expect(boundary.agent).toHaveBeenCalledTimes(scenario === "native RPC response lost" ? 1 : 0);

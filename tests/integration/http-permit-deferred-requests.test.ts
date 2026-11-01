@@ -81,7 +81,7 @@ afterAll(async () => {
   try { await global.pgClient?.end(); } catch (error) { errors.push(error); }
   if (errors.length) throw new AggregateError(errors, "http permit runner cleanup failed");
 });
-it("typed permit hold preserves requested work, current cursor and all previous history", exercise(async () => {
+it("typed permit hold preserves requested work, current cursor and success history, and clears the thrown failure record", exercise(async () => {
   const name = await seed();
   let before: Record<string, unknown> | undefined;
   const result = await runJob(name, async ctx => {
@@ -90,7 +90,9 @@ it("typed permit hold preserves requested work, current cursor and all previous 
     throw blocked;
   }, { requestedOnly: true });
   expect(result).toMatchObject({ status: "deferred", reason: "http_origin_permit" });
-  expect(await row(name)).toEqual({ ...before, locked_at: null, lease_token: null });
+  // 던지지 않고 끝난 미룸 틱은 지난 실패 기록(last_error)만 지운다(runner.ts) — seed 의 "previous failure"
+  expect(before).toMatchObject({ last_error: "previous failure" });
+  expect(await row(name)).toEqual({ ...before, locked_at: null, lease_token: null, last_error: null });
   expect(await admin`select * from operations_observations where key=${`job:${name}`}`).toHaveLength(0);
 }));
 it("ordinary bounded done:false still acknowledges the request", exercise(async () => {
@@ -118,7 +120,8 @@ it("producer requests and a human pause survive a deferred tick verbatim", exerc
       throw blocked;
     }, { requestedOnly: true });
     expect(result).toMatchObject({ status: "deferred", reason: "http_origin_permit" });
-    expect(await row(name)).toEqual({ ...before, locked_at: null, lease_token: null });
+    // 미룸 틱은 잠금과 지난 실패 기록(last_error)만 바꾼다(runner.ts)
+    expect(await row(name)).toEqual({ ...before, locked_at: null, lease_token: null, last_error: null });
     expect(before).toMatchObject({ requested_version: 13, processed_version: 7 });
   } catch (error) { errors.push(error); }
   finally {
@@ -198,7 +201,9 @@ it("an explicit permit-deferred outcome preserves the job like a thrown hold", e
   let before: Record<string, unknown> | undefined;
   expect(await runJob(name, async () => { before = await row(name); return { done: false, deferred: "http_origin_permit" }; }, { requestedOnly: true }))
     .toMatchObject({ status: "deferred", reason: "http_origin_permit" });
-  expect(await row(name)).toEqual({ ...before, lease_token: null, locked_at: null });
+  // 던진 hold 와 같다 — 잠금과 지난 실패 기록(last_error)만 지우고 나머지는 그대로(runner.ts)
+  expect(before).toMatchObject({ last_error: "previous failure" });
+  expect(await row(name)).toEqual({ ...before, lease_token: null, locked_at: null, last_error: null });
 }));
 it("a permit defer checks actual DB wall after waiting for the job row", exercise(async () => {
   const name = await seed();
