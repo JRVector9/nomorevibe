@@ -10,6 +10,7 @@ import { readRoleLockHolders, readWaitingPrimary, releaseRole, renewRole, tryAcq
   type RoleCandidate, type RoleLease, type WaitingPrimary } from '@/lib/jobs/role-leader';
 import { batchLeaseAdmission } from '@/lib/jobs/batch-repository';
 import { dbErrorFields } from '@/lib/db/error-fields';
+import { replicaFailure } from '@/lib/db/replica';
 import { observe } from '@/lib/operations/observations';
 import { serviceInstanceId } from '@/lib/operations/instance';
 import { readWorkerProgress } from '@/lib/operations/worker-progress-query';
@@ -429,6 +430,12 @@ export async function runRoleCandidate(candidate: RoleCandidate, signal: AbortSi
         } else leaseDeadline = startedAt + ROLE_LEASE_WINDOW_MS;
       }).catch(error => {
         if (ended || lost || renewalsStopped()) return;
+        // 끊긴 연결(57P01·57P02·57P03·CONNECTION_CLOSED·ECONNRESET 등)은 lease 를 잃었다는 근거가 아니다 — 풀이 다시 붙으면 다음 주기에
+        // 같은 boot·epoch 로 갱신한다. leaseDeadline 은 성공한 갱신만 늘리므로, 그때까지 못 갱신하면 watchdog 이 지금처럼 lease 를 놓는다
+        if (replicaFailure(error) === 'down') {
+          failed('role.renew_retry', error, { epoch: lease.epoch, cause: 'renew_failed', leaseRemainingMs: Math.max(0, leaseDeadline - Date.now()) });
+          return;
+        }
         leaseCause = 'renew_failed';
         failed('role.renew_unknown', error, { epoch: lease.epoch, cause: 'renew_failed' }); lost = true;
         forceStop.abort('role_lease_lost'); abortActive('role_lease_lost');

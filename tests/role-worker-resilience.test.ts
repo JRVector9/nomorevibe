@@ -87,14 +87,65 @@ it('logs an unknown renewal with its code before stopping the active child', asy
   let reason: unknown;
   const running = runRoleCandidate(candidate, controller.signal, {
     acquire: vi.fn().mockResolvedValueOnce(lease).mockResolvedValue(null),
-    renew: async () => { throw wrapped(Object.assign(new Error('write CONNECTION_CLOSED db:6432'), { code: 'CONNECTION_CLOSED' })); },
+    renew: async () => { throw wrapped(pg('XX000', 'unexpected renewal failure')); },
     supervise: async (_owned, signal) => { await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true })); reason = signal.reason; return 0; },
     sleep: async () => { controller.abort(); },
   });
   await vi.advanceTimersByTimeAsync(10_000);
   expect(await running).toBe(0);
   expect(reason).toBe('role_lease_lost');
-  expect(logs.find(log => log.event === 'role.renew_unknown')).toMatchObject({ epoch: 4, code: 'CONNECTION_CLOSED', errorName: 'Error', failures: 1 });
+  expect(logs.find(log => log.event === 'role.renew_unknown')).toMatchObject({ epoch: 4, code: 'XX000', errorName: 'PostgresError', failures: 1 });
+});
+
+// 2026-11-01: pg_terminate_backend 한 번(57P01)·PgBouncer 끊김에 갱신 한 번이 실패하면 자식을 끊었다. 끊긴 연결은 다음 주기에 다시 갱신한다
+it.each([
+  ['57P01', () => wrapped(pg('57P01', 'terminating connection due to administrator command'))],
+  ['CONNECTION_CLOSED', () => wrapped(Object.assign(new Error('write CONNECTION_CLOSED db:6432'), { code: 'CONNECTION_CLOSED' }))],
+  ['ECONNRESET', () => Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' })],
+])('retries a renewal dropped by a terminated connection (%s) and keeps the same child and epoch', async (code, failure) => {
+  vi.useFakeTimers(); vi.setSystemTime(T0);
+  const logs = captureLogs(), states: RoleRuntimeHealth[] = [], controller = new AbortController(), lease: RoleLease = { ...candidate, epoch: 4 };
+  const renew = vi.fn().mockRejectedValueOnce(failure()).mockResolvedValue(true);
+  const supervise = vi.fn(async (_owned: RoleLease, signal: AbortSignal) => {
+    await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true })); return 0; });
+  const acquire = vi.fn().mockResolvedValueOnce(lease).mockResolvedValue(null);
+  const running = runRoleCandidate(candidate, controller.signal, { acquire, renew, supervise, health: state => states.push(state), sleep: async () => {} });
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(logs.find(log => log.event === 'role.renew_retry')).toMatchObject({ epoch: 4, code, cause: 'renew_failed', failures: 1, leaseRemainingMs: 35_000 });
+  expect(supervise.mock.calls[0][1].aborted).toBe(false);
+  // 다음 주기 갱신이 성공하고, lease 창(45초)을 몇 번 넘겨도 같은 자식이 돈다
+  await vi.advanceTimersByTimeAsync(120_000);
+  expect(renew).toHaveBeenCalledTimes(13);
+  expect(supervise).toHaveBeenCalledOnce();
+  expect(supervise.mock.calls[0][1].aborted).toBe(false);
+  expect(acquire).toHaveBeenCalledOnce();
+  expect(states.at(-1)).toMatchObject({ dbFailingSince: null, dbFailures: 0 });
+  expect(logs.some(log => log.event === 'role.renew_unknown' || log.event === 'role.lease_lost')).toBe(false);
+  controller.abort('SIGTERM');
+  expect(await running).toBe(0);
+});
+
+it('still stops the child when terminated-connection renewals keep failing for the whole lease window', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(T0);
+  const logs = captureLogs(), controller = new AbortController(), lease: RoleLease = { ...candidate, epoch: 4 };
+  const renew = vi.fn(async (): Promise<boolean> => { throw wrapped(pg('57P01', 'terminating connection due to administrator command')); });
+  let abortedAt: number | null = null, reason: unknown;
+  const running = runRoleCandidate(candidate, controller.signal, {
+    acquire: vi.fn().mockResolvedValueOnce(lease).mockResolvedValue(null), renew,
+    supervise: async (_owned, signal, force) => { await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
+      abortedAt = Date.now(); reason = force.reason; return 1; },
+    sleep: async () => { controller.abort(); },
+  });
+  await vi.advanceTimersByTimeAsync(44_000);
+  expect(abortedAt).toBeNull();
+  await vi.advanceTimersByTimeAsync(2_000);
+  expect(await running).toBe(0);
+  // 성공한 갱신이 없으면 선출 시각부터 45초(ROLE_LEASE_WINDOW_MS)에 지금처럼 lease 를 잃었다고 보고 자식을 끊는다(강제 중지)
+  expect(abortedAt).toBe(T0 + 45_000);
+  expect(reason).toBe('role_lease_lost');
+  expect(renew).toHaveBeenCalledTimes(4);
+  expect(logs.filter(log => log.event === 'role.renew_retry')).toHaveLength(4);
+  expect(logs.find(log => log.event === 'role.renew_unknown')).toMatchObject({ epoch: 4, cause: 'role_lease_expired' });
 });
 
 const batchCandidate: RoleCandidate = { role: 'translation', instanceId: 'osaka-translation', bootId: 'boot-b', release: 'r1', kind: 'primary',
