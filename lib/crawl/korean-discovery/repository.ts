@@ -4,8 +4,10 @@ import { assertJobLeaseAtWallTime, type JobLease } from '@/lib/jobs/control';
 import { db } from '@/lib/db';
 import { writerSiteActive } from '@/lib/operations/dr/epoch';
 import type { CrawlSettings } from '@/lib/crawl/settings-schema';
-import { KoreanCursorSchema, KoreanQuerySchema, firstKoreanCursor, resumeKoreanCursor, KOREAN_QUERY_LEASE_MS, type KoreanCursor, type KoreanQuery } from './contracts';
+import { KoreanCursorSchema, desiredKoreanQueries, firstKoreanCursor, resumeKoreanCursor, KOREAN_QUERY_LEASE_MS, type KoreanCursor, type KoreanQuery } from './contracts';
 import type { KoreanLanguageResult } from './language';
+import { checkpointDiscovery } from '@/lib/crawl/discovery-checkpoint';
+import { discoveryHash, koreanCursorSemantic, koreanDiscoveryGeneration, koreanQueryGeneration } from '@/lib/crawl/discovery-checkpoint-contract';
 
 export type KoreanQueryClaim = KoreanQuery & { token: string; epoch: number; controlEpoch: number; cursor: KoreanCursor; windowDays: number };
 export type KoreanStagedRepository = { repo: string; signal: string; priority: number; description: string | null };
@@ -20,14 +22,7 @@ export async function synchronizeKoreanQueries(settings: CrawlSettings, lease?: 
     const [control] = await tx.execute<{ enabled: boolean; start_at_ms: number | null; queries: unknown }>(sql`SELECT enabled,
       (extract(epoch FROM start_at) * 1000)::double precision AS start_at_ms, queries FROM github_ko_discovery_control WHERE id=1 FOR SHARE`);
     if (!control?.enabled || control.start_at_ms === null || !settings.enabled) return;
-    const selected = settings.discover.queries.filter(q => q.enabled && q.kind === 'repositories' && /[가-힣]/.test(q.query)).map(q => ({label:q.label,query:q.query,priority:q.priority}));
-    const configured = KoreanQuerySchema.array().max(30).parse(control.queries);
-    const normalized = (query:string)=>query.trim().replace(/\s+/g,' ').toLowerCase();
-    for (const query of configured) {
-      if (!/[가-힣]/.test(query.query)) throw new Error('korean_query_requires_hangul');
-      if (!selected.some(q=>q.label===query.label || normalized(q.query)===normalized(query.query))
-        && !settings.discover.queries.some(q=>!q.enabled && normalized(q.query)===normalized(query.query))) selected.push(query);
-    }
+    const selected = desiredKoreanQueries(settings, control.queries);
     const [job] = await tx.execute<{ cursor: { states?: Record<string, unknown>; signal?: string; window?: unknown; page?: number; pendingWindows?: unknown[]; incompleteWindows?:{signal:string;window:unknown;retryAt?:string}[]; retryAt?:string; searchSort?:string } | null }>(sql`SELECT cursor FROM jobs WHERE name='crawl-seed' FOR SHARE`);
     for (const query of selected) {
       const legacy = job?.cursor?.states?.[query.label] ?? (job?.cursor?.signal === query.label ? job.cursor : null);
@@ -102,6 +97,9 @@ export async function stageKoreanPage(claim: KoreanQueryClaim, repositories: Kor
       VALUES (${row.repo.toLowerCase()},${row.signal},${row.priority},${row.description?.slice(0,4000) ?? null}) ON CONFLICT (repo) DO NOTHING`);
     await tx.execute(sql`UPDATE github_ko_discovery_queries SET cursor=${JSON.stringify(cursor)}::jsonb,token=NULL,lease_until=NULL,
       due_at=coalesce(${cursor.waitingUntil ?? null}::timestamp,now()),last_error=NULL,updated_at=now() WHERE label=${claim.label}`);
+    await checkpointDiscovery(tx,[{source:'korean-query',subject:discoveryHash(claim.label),generation:koreanQueryGeneration(claim.controlEpoch,claim.query,claim.windowDays),
+      semantic:koreanCursorSemantic(cursor),intent:cursor.waitingUntil ? 'caught_up' : 'ready',resumeAt:cursor.waitingUntil,
+      progressed:true,acknowledged:true}]);
     return true;
   });
 }
@@ -111,8 +109,10 @@ export async function deferKoreanQuery(claim: KoreanQueryClaim, dueAt: Date, rea
     if (!await writerSiteActive(tx)) return;
     const [control]=await tx.execute<{enabled:boolean;epoch:number}>(sql`SELECT enabled,epoch FROM github_ko_discovery_control WHERE id=1 FOR SHARE`);
     if (!control?.enabled || control.epoch!==claim.controlEpoch) return;
-    await tx.execute(sql`UPDATE github_ko_discovery_queries SET token=NULL,lease_until=NULL,due_at=${dueAt.toISOString()}::timestamp,last_error=${reason.slice(0,100)},updated_at=now()
-      WHERE label=${claim.label} AND token=${claim.token}::uuid AND epoch=${claim.epoch} AND lease_until>now()`);
+    const [saved]=await tx.execute<{cursor:unknown}>(sql`UPDATE github_ko_discovery_queries SET token=NULL,lease_until=NULL,due_at=${dueAt.toISOString()}::timestamp,last_error=${reason.slice(0,100)},updated_at=now()
+      WHERE label=${claim.label} AND token=${claim.token}::uuid AND epoch=${claim.epoch} AND lease_until>now() RETURNING cursor`);
+    if(saved) await checkpointDiscovery(tx,[{source:'korean-query',subject:discoveryHash(claim.label),generation:koreanQueryGeneration(claim.controlEpoch,claim.query,claim.windowDays),
+      semantic:koreanCursorSemantic(saved.cursor),intent:['rate_limited','auth_unavailable','discovery_busy','staging_capacity_or_lease'].includes(reason) ? 'backoff' : 'upstream_error',resumeAt:dueAt.toISOString()}]);
   });
 }
 
@@ -125,9 +125,14 @@ export async function koreanLanguageBatch(limit=5): Promise<KoreanStagedReposito
 export async function saveKoreanLanguage(repo: string, result: KoreanLanguageResult): Promise<void> {
   await db.transaction(async tx => {
     if (!await writerSiteActive(tx)) return;
-    await tx.execute(sql`UPDATE github_ko_discovery_staging SET language=${result.language},evidence=${JSON.stringify(result)}::jsonb,
+    const [control]=await tx.execute<{enabled:boolean;epoch:number}>(sql`SELECT enabled,epoch FROM github_ko_discovery_control WHERE id=1 FOR SHARE`);
+    if(!control?.enabled) return;
+    const [saved]=await tx.execute<{repo:string;language:string;at:string}>(sql`UPDATE github_ko_discovery_staging SET language=${result.language},evidence=${JSON.stringify(result)}::jsonb,
       checked_at=now(),due_at=now()+interval '15 minutes',updated_at=now() WHERE repo=${repo} AND state='pending' AND language='unknown'
-      AND EXISTS (SELECT 1 FROM github_ko_discovery_control WHERE id=1 AND enabled)`);
+      RETURNING repo,language,to_char(checked_at,'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at`);
+    if(saved) await checkpointDiscovery(tx,[{source:'korean-language',subject:discoveryHash('language'),generation:koreanDiscoveryGeneration(control.epoch),
+      reference:saved.repo,semantic:discoveryHash(saved),intent:result.language==='unknown' ? 'upstream_error' : 'ready',
+      progressed:result.language!=='unknown',acknowledged:result.language!=='unknown'}]);
   });
 }
 
@@ -135,7 +140,7 @@ export async function saveKoreanLanguage(repo: string, result: KoreanLanguageRes
 export async function importSharedKoreanCandidates(): Promise<number> {
   return db.transaction(async tx => {
     if (!await writerSiteActive(tx)) return 0;
-    const [control] = await tx.execute<{enabled:boolean;shared_cursor:{at?:string;key?:string}|null}>(sql`SELECT enabled,shared_cursor FROM github_ko_discovery_control WHERE id=1 FOR UPDATE`);
+    const [control] = await tx.execute<{enabled:boolean;epoch:number;shared_cursor:{at?:string;key?:string}|null}>(sql`SELECT enabled,epoch,shared_cursor FROM github_ko_discovery_control WHERE id=1 FOR UPDATE`);
     if (!control?.enabled) return 0;
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('github-ko-staging-cap-v1'))`);
     const [count] = await tx.execute<{total:number}>(sql`SELECT count(*)::integer AS total FROM github_ko_discovery_staging WHERE state='pending'`);
@@ -153,6 +158,8 @@ export async function importSharedKoreanCandidates(): Promise<number> {
         staged+=inserted.length;
       }
       await tx.execute(sql`UPDATE github_ko_discovery_control SET shared_cursor=${JSON.stringify({at:page.completed_at_key,key:page.key})}::jsonb WHERE id=1`);
+      await checkpointDiscovery(tx,[{source:'korean-shared',subject:discoveryHash('shared'),generation:koreanDiscoveryGeneration(control.epoch),
+        semantic:discoveryHash({at:page.completed_at_key,key:page.key}),intent:'ready',progressed:true,acknowledged:true}]);
     }
     return staged;
   });

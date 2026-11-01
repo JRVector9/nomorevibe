@@ -13,7 +13,8 @@ const ctx={cursor:null,save:async()=>{},hasBudget:()=>true,log:vi.fn(),lease:{na
 beforeEach(()=>{vi.resetAllMocks();mocks.settings.mockResolvedValue({enabled:true,discover:{maxNewPerHour:3000,maxReviewBacklog:1000000}});
   mocks.fence.mockResolvedValue(true);mocks.execute.mockResolvedValueOnce([{enabled:true}]).mockResolvedValueOnce([
     {repo:'a/yes',language:'yes',priority:60,signal:'first'},{repo:'b/yes',language:'yes',priority:55,signal:'second'},{repo:'c/no',language:'no',priority:50,signal:'third'}]);
-  mocks.admit.mockResolvedValue({processed:1,added:1,remainingNew:0});mocks.txExecute.mockResolvedValue([]);});
+  mocks.admit.mockResolvedValue({processed:1,added:1,remainingNew:0});
+  mocks.txExecute.mockResolvedValueOnce([{enabled:true,epoch:1}]).mockResolvedValue([]);});
 it('applies one batch through shared admission and terminalizes only its admitted prefix while excluding confirmed non-Korean rows',async()=>{
   await applyKoreanDiscovery(ctx);expect(mocks.sync).toHaveBeenCalledWith(expect.anything(),ctx.lease);
   expect(mocks.admit).toHaveBeenCalledExactlyOnceWith([{repo:'a/yes',signal:'Oracle Korean',priority:60,builder:null},{repo:'b/yes',signal:'Oracle Korean',priority:55,builder:null}],
@@ -24,5 +25,5 @@ it('applies one batch through shared admission and terminalizes only its admitte
 });
 it('preserves every Korean item when shared admission has no capacity',async()=>{
   mocks.admit.mockResolvedValue({processed:0,added:0,remainingNew:0});await applyKoreanDiscovery(ctx);
-  expect(mocks.txExecute).toHaveBeenCalledTimes(1);const query=new PgDialect().sqlToQuery(mocks.txExecute.mock.calls[0][0]);expect(query.params).toEqual(['c/no']);
+  expect(mocks.txExecute).toHaveBeenCalledTimes(2);const query=new PgDialect().sqlToQuery(mocks.txExecute.mock.calls[1][0]);expect(query.params).toEqual(['c/no']);
 });

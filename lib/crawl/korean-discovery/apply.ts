@@ -7,6 +7,8 @@ import type { JobContext, JobOutcome } from '@/lib/jobs/runner';
 import { assertJobLeaseAtWallTime } from '@/lib/jobs/control';
 import { writerSiteActive } from '@/lib/operations/dr/epoch';
 import { synchronizeKoreanQueries } from './repository';
+import { checkpointDiscovery } from '@/lib/crawl/discovery-checkpoint';
+import { discoveryHash, koreanDiscoveryGeneration } from '@/lib/crawl/discovery-checkpoint-contract';
 
 export const ORACLE_KOREAN_SIGNAL = 'Oracle Korean';
 /** Runs on the elected home crawler. Language is a routing fact, never AI authorship evidence. */
@@ -27,11 +29,20 @@ export async function applyKoreanDiscovery(ctx: JobContext<null>): Promise<JobOu
   const rejected=rows.filter(row=>row.language==='no').map(row=>row.repo);
   await db.transaction(async tx => {
     if (!await writerSiteActive(tx)) throw new Error('korean_apply_writer_fenced');
+    const [current]=await tx.execute<{enabled:boolean;epoch:number}>(sql`SELECT enabled,epoch FROM github_ko_discovery_control WHERE id=1 FOR SHARE`);
+    if(!current?.enabled) return;
     if (ctx.lease) await assertJobLeaseAtWallTime(tx,ctx.lease);
-    if (accepted.length) await tx.execute(sql`UPDATE github_ko_discovery_staging SET state='applied',updated_at=now()
-      WHERE repo IN (${sql.join(accepted.map(repo=>sql`${repo}`),sql`,`)} ) AND state='pending' AND language='yes'`);
-    if (rejected.length) await tx.execute(sql`UPDATE github_ko_discovery_staging SET state='excluded',updated_at=now()
-      WHERE repo IN (${sql.join(rejected.map(repo=>sql`${repo}`),sql`,`)} ) AND state='pending' AND language='no'`);
+    const saved:Array<{repo:string;state:string;at:string}>=[];
+    if (accepted.length) saved.push(...await tx.execute<{repo:string;state:string;at:string}>(sql`UPDATE github_ko_discovery_staging SET state='applied',updated_at=now()
+      WHERE repo IN (${sql.join(accepted.map(repo=>sql`${repo}`),sql`,`)} ) AND state='pending' AND language='yes'
+      RETURNING repo,state,to_char(updated_at,'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at`));
+    if (rejected.length) saved.push(...await tx.execute<{repo:string;state:string;at:string}>(sql`UPDATE github_ko_discovery_staging SET state='excluded',updated_at=now()
+      WHERE repo IN (${sql.join(rejected.map(repo=>sql`${repo}`),sql`,`)} ) AND state='pending' AND language='no'
+      RETURNING repo,state,to_char(updated_at,'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at`));
+    const proof=saved.sort((a,b)=>a.repo.localeCompare(b.repo)).at(-1);
+    if(proof) await checkpointDiscovery(tx,[{source:'korean-apply',subject:discoveryHash('apply'),generation:koreanDiscoveryGeneration(current.epoch),
+      reference:proof.repo,semantic:discoveryHash(proof),intent:'ready',progressed:true,acknowledged:true}]);
+    if (ctx.lease) await assertJobLeaseAtWallTime(tx,ctx.lease);
   });
   const applied=outcome.added,excluded=rejected.length;
   await recordDiscoveryProgress({worker:process.env.SERVICE_INSTANCE_ID??'home-crawler',lane:'korean',signal:ORACLE_KOREAN_SIGNAL,

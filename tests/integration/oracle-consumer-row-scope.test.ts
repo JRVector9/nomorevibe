@@ -148,8 +148,8 @@ it('keeps invoker origin triggers and the explicitly enumerated row-security bas
     { table: 'operations_observations', name: 'operations_observations_oracle_consumer_scope', enabled: 'O', definer: false },
     { table: 'uptime_claims', name: 'uptime_claims_oracle_scope', enabled: 'O', definer: false },
   ]);
-  // 0106의 두 표와 0139의 공유 검색 표만 RLS를 쓴다. 논리 DR의 row_security_requires_review 보호는 유지한다.
+  // 0162 discovery receipts also isolate the Oracle Korean writer. DR's row_security_requires_review stays unchanged.
   const rls = await admin<{ name: string }[]>`SELECT c.relname AS name FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
     WHERE n.nspname = 'public' AND c.relrowsecurity ORDER BY 1`;
-  expect(rls.map(row => row.name)).toEqual(['github_collector_apps', 'github_discovery_pages', 'rate_limits']);
+  expect(rls.map(row => row.name)).toEqual(['discovery_checkpoints', 'github_collector_apps', 'github_discovery_pages', 'rate_limits']);
 });

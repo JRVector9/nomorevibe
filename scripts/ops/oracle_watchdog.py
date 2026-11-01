@@ -18,7 +18,7 @@ from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 
 from recovery_gateway import (PROVIDER_STAGES, UNKNOWN_CAPACITY, bounded_output, capacity_alarm, capacity_pending, save,
-                              valid_review_failures, valid_stage_failures, validate_capacity_unknowns)
+                              valid_discovery_failures, valid_review_failures, valid_stage_failures, validate_capacity_unknowns)
 from incident_notifications import notify, validate_destination
 
 
@@ -35,7 +35,7 @@ def validate_report(report):
         raise ValueError('invalid_report')
     keys = set()
     for row in report['services']:
-        if (not isinstance(row, dict) or set(row) - {'providerFailures', 'reviewFailures', 'stageFailures', 'capacityUnknowns'} != {'key', 'version', 'replicas', 'settled', 'ok', 'recoverable', 'reason'} or
+        if (not isinstance(row, dict) or set(row) - {'providerFailures', 'reviewFailures', 'stageFailures', 'discoveryFailures', 'capacityUnknowns'} != {'key', 'version', 'replicas', 'settled', 'ok', 'recoverable', 'reason'} or
                 not isinstance(row['key'], str) or not re.fullmatch('[a-z0-9-]{1,60}', row['key']) or row['key'] in keys or
                 row['reason'] not in REASONS or any(type(row[key]) is not bool for key in ('ok', 'recoverable', 'settled')) or
                 not (row['version'] is None or type(row['version']) is int and 0 < row['version'] < 10 ** 16) or
@@ -50,6 +50,8 @@ def validate_report(report):
             raise ValueError('invalid_review_failures')
         if 'stageFailures' in row and not valid_stage_failures(row['stageFailures']):
             raise ValueError('invalid_stage_failures')
+        if 'discoveryFailures' in row and not valid_discovery_failures(row['discoveryFailures']):
+            raise ValueError('invalid_discovery_failures')
 
         if 'capacityUnknowns' in row:
             capacity = validate_capacity_unknowns(row['capacityUnknowns'])
@@ -107,6 +109,7 @@ def cycle(config, state, reports, *, now=None, recover=None):
             for key, value in state['targets'].items():
                 if key.startswith(host + '/'):
                     value.pop('stageFailures', None)
+                    value.pop('discoveryFailures', None)
             rows = [{'key': 'host', 'ok': False, 'version': None, 'recoverable': False, 'reason': 'probe_unknown'}]
         else:
             rows = validate_report(report)['services']
@@ -176,6 +179,26 @@ def cycle(config, state, reports, *, now=None, recover=None):
                     events.append({'target': key, 'stage': 'progress-' + stage, 'reason': reason, 'bad': samples})
             if stage_observations:
                 target['stageFailures'] = stage_observations
+
+            # Source coverage is independent: an unknown source supplies no sample
+            # and cannot bridge a gap. Notification receipts live separately.
+            discovery_observations = {}
+            previous_discovery = old.get('discoveryFailures', {})
+            discovery = row.get('discoveryFailures', {}) if row['reason'] in ('ok', 'pipeline_alarm', 'container_unhealthy') else {}
+            for failure in discovery.get('failures', []):
+                source, reason = failure['source'], failure['reason']
+                history = previous_discovery.get(source, {}) if isinstance(previous_discovery, dict) else {}
+                previous_at = history.get('at') if isinstance(history, dict) else None
+                continuous = (type(previous_at) in (int, float) and math.isfinite(previous_at) and
+                              0 <= now - previous_at <= 150 and history.get('reason') == reason and
+                              type(history.get('bad')) is int and 0 <= history['bad'] <= 3)
+                samples = min(3, history['bad'] + 1) if continuous else 1
+                discovery_observations[source] = {'at': now, 'reason': reason, 'bad': samples}
+                if samples >= 2:
+                    alarm = True
+                    events.append({'target': key, 'stage': 'discovery-' + source, 'reason': reason, 'bad': samples})
+            if discovery_observations:
+                target['discoveryFailures'] = discovery_observations
 
             capacity = row.get('capacityUnknowns')
             observed_unknown = capacity is not None and capacity['status'] == 'unknown'

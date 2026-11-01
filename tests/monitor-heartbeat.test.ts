@@ -6,6 +6,7 @@ import type { MonitorStatus } from '@/lib/operations/failover-monitor';
 import { TEXT_PROGRESS_STAGE_JOBS, type StageProgress } from '@/lib/operations/worker-progress';
 import { monitorHeartbeatIsFresh } from '@/scripts/monitor-healthcheck';
 import { recordMonitorHeartbeat } from '@/scripts/watch-failover-readiness';
+import { DISCOVERY_SOURCES } from '@/lib/crawl/discovery-checkpoint-contract';
 
 const directories: string[] = [];
 afterEach(() => { for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
@@ -158,4 +159,25 @@ it('preserves unknown scheduler and overall observations instead of emitting an 
   report.progress!.scheduler = { role: 'scheduler', reason: 'scheduled', alarm: false, overdueJobs: [] };
   report.progress!.overall = 'unknown';
   expect(heartbeat(report).value).not.toHaveProperty('stageFailures');
+});
+
+it('adds only fixed versioned discovery coverage, independently of existing stage/provider faults', () => {
+  const report = status([lane()]);
+  report.discovery = { at: report.measuredAt, overall: 'alarm', failures: { v: 1, covered: [...DISCOVERY_SOURCES].sort(),
+    failures: [{ source: 'korean-query', reason: 'consumer_missing' }] } };
+  const value = heartbeat(report).value;
+  expect(value.discoveryFailures).toEqual(report.discovery.failures);
+  expect(value.providerFailures).toEqual(['keywords']);
+  report.discovery = { at: report.measuredAt, overall: 'unknown', failures: { v: 1, covered: [], failures: [] } };
+  expect(heartbeat(report).value.discoveryFailures).toEqual({ v: 1, covered: [], failures: [] });
+});
+
+it('omits absent or malformed discovery envelopes instead of transmitting a legacy empty clear', () => {
+  expect(heartbeat(status([])).value).not.toHaveProperty('discoveryFailures');
+  for (const failures of [[], { v: 1, covered: [], failures: [], privateQuery: 'token' }]) {
+    const report = status([]);
+    report.discovery = { at: report.measuredAt, overall: 'unknown', failures } as unknown as NonNullable<MonitorStatus['discovery']>;
+    expect(heartbeat(report).value).not.toHaveProperty('discoveryFailures');
+    expect(JSON.stringify(heartbeat(report).value)).not.toMatch(/privateQuery|token/);
+  }
 });

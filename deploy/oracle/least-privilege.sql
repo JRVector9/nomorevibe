@@ -298,6 +298,8 @@ ALTER ROLE nomorevibe_oracle_github_ko SET idle_in_transaction_session_timeout =
 ALTER ROLE nomorevibe_oracle_github_ko SET timezone = 'UTC';
 GRANT USAGE ON SCHEMA public TO nomorevibe_oracle_github_ko;
 GRANT SELECT ON TABLE public.crawl_settings TO nomorevibe_oracle_github_ko;
+GRANT SELECT, INSERT ON TABLE public.discovery_checkpoints TO nomorevibe_oracle_github_ko;
+GRANT UPDATE (generation, semantic, reference, intent, resume_at, revision, first_seen_at, progress_at, failure_started_at, acknowledged_at, recorded_at) ON TABLE public.discovery_checkpoints TO nomorevibe_oracle_github_ko;
 GRANT SELECT ON TABLE public.dr_writer_fence TO nomorevibe_oracle_github_ko;
 GRANT UPDATE (id) ON TABLE public.dr_writer_fence TO nomorevibe_oracle_github_ko;
 GRANT SELECT ON TABLE public.github_collector_apps TO nomorevibe_oracle_github_ko;

@@ -6,6 +6,7 @@ import { readMonitorStatus, type MonitorStatus } from '../lib/operations/failove
 import { TEXT_PROGRESS_STAGE_JOBS } from '../lib/operations/worker-progress';
 import { readBodyStrictlyCapped } from '../lib/net/fetch';
 import { capacityMonitorThresholds } from '../lib/operations/model-capacity-unknowns';
+import { validDiscoveryFailures } from '../lib/crawl/discovery-checkpoint-contract';
 
 export type MonitorCycleState = { badSamples: number };
 export type MonitorPushTarget = { name: 'primary' | 'external'; url: string };
@@ -111,7 +112,9 @@ export function recordMonitorHeartbeat(status: MonitorStatus, path = process.env
       && ['worker_missing', 'restart_loop'].includes(role.reason)
       ? [{ stage: `role-${role.role}`, reason: role.reason }] : []),
   ] : undefined;
-  writeFileSync(temporary, JSON.stringify({ checkedAt: Date.now(), overall: status.overall, providerFailures, reviewFailures, stageFailures,
+  const discovery = status.discovery?.failures;
+  const discoveryFailures = validDiscoveryFailures(discovery) ? discovery : undefined;
+  writeFileSync(temporary, JSON.stringify({ checkedAt: Date.now(), overall: status.overall, providerFailures, reviewFailures, stageFailures, discoveryFailures,
     capacityUnknowns: status.capacityUnknowns }), { mode: 0o600 });
   renameSync(temporary, path);
 }

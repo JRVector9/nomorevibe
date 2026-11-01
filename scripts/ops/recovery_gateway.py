@@ -99,6 +99,9 @@ STAGE_FAILURE_REASONS = {stage: frozenset({'no_progress', 'worker_missing', 'con
 STAGE_FAILURE_REASONS['scheduler'] = frozenset({'scheduler_missed', 'worker_missing'})
 STAGE_FAILURE_REASONS.update({'role-' + role: frozenset({'worker_missing', 'restart_loop'})
                              for role in ('scheduler', 'crawler', 'reviewer', 'publisher', 'maintenance', 'text')})
+DISCOVERY_SOURCES = frozenset({'github-latest', 'github-full', 'show-hn', 'korean-query',
+                               'korean-shared', 'korean-language', 'korean-apply'})
+DISCOVERY_REASONS = frozenset({'no_progress', 'worker_missing', 'consumer_missing', 'upstream_stalled'})
 
 
 def valid_review_failures(value):
@@ -115,6 +118,40 @@ def valid_stage_failures(value):
                 isinstance(row['stage'], str) and row['stage'] in STAGE_FAILURE_REASONS and
                 isinstance(row['reason'], str) and row['reason'] in STAGE_FAILURE_REASONS[row['stage']] for row in value) and
             len({row['stage'] for row in value}) == len(value))
+
+
+def valid_discovery_failures(value):
+    """Coverage is explicit per source. An empty list is not a discovery observation."""
+    return (isinstance(value, dict) and set(value) == {'v', 'covered', 'failures'} and
+            type(value['v']) is int and value['v'] == 1 and
+            isinstance(value['covered'], list) and len(value['covered']) <= len(DISCOVERY_SOURCES) and
+            all(isinstance(source, str) and source in DISCOVERY_SOURCES for source in value['covered']) and
+            len(set(value['covered'])) == len(value['covered']) and
+            isinstance(value['failures'], list) and len(value['failures']) <= len(DISCOVERY_SOURCES) and
+            all(isinstance(row, dict) and set(row) == {'source', 'reason'} and
+                isinstance(row['source'], str) and row['source'] in value['covered'] and
+                isinstance(row['reason'], str) and row['reason'] in DISCOVERY_REASONS for row in value['failures']) and
+            len({row['source'] for row in value['failures']}) == len(value['failures']))
+
+
+def merge_discovery_failures(values):
+    """Every fresh replica must cover a source. Missing/conflicting evidence is unknown, never a clear."""
+    unknown = {'v': 1, 'covered': [], 'failures': []}
+    if not values or not all(valid_discovery_failures(value) for value in values):
+        return unknown
+    covered = set.intersection(*(set(value['covered']) for value in values))
+    faults, conflicts = {}, set()
+    for value in values:
+        for failure in value['failures']:
+            source, reason = failure['source'], failure['reason']
+            if source not in covered:
+                continue
+            if source in faults and faults[source] != reason:
+                conflicts.add(source)
+            faults[source] = reason
+    covered -= conflicts
+    return {'v': 1, 'covered': sorted(covered),
+            'failures': [{'source': source, 'reason': faults[source]} for source in sorted(faults) if source in covered]}
 
 
 # 2026-10-31 (owner decision 2026-10-30): an unknown-outcome model call never stops work. 'review' (확인 못함 · 사람 검토)
@@ -209,6 +246,14 @@ Object.keys(v).sort().join(',')==='reason,stage'&&typeof v.stage==='string'&&typ
 (stageKeys.includes(v.stage)?['no_progress','worker_missing','consumer_missing','upstream_stalled'].includes(v.reason):
 v.stage==='scheduler'?['scheduler_missed','worker_missing'].includes(v.reason):roles.some(role=>v.stage==='role-'+role)&&['worker_missing','restart_loop'].includes(v.reason)))
 &&new Set(j.stageFailures.map(v=>v.stage)).size===j.stageFailures.length;
+const discoverySources=['github-latest','github-full','show-hn','korean-query','korean-shared','korean-language','korean-apply'];
+const discovery=j.discoveryFailures,discoveryKnown=discovery&&typeof discovery==='object'&&!Array.isArray(discovery)&&
+Object.keys(discovery).sort().join(',')==='covered,failures,v'&&discovery.v===1&&Array.isArray(discovery.covered)&&discovery.covered.length<=7&&
+discovery.covered.every(source=>typeof source==='string'&&discoverySources.includes(source))&&new Set(discovery.covered).size===discovery.covered.length&&
+Array.isArray(discovery.failures)&&discovery.failures.length<=7&&discovery.failures.every(v=>v&&typeof v==='object'&&!Array.isArray(v)&&
+Object.keys(v).sort().join(',')==='reason,source'&&typeof v.source==='string'&&discovery.covered.includes(v.source)&&
+typeof v.reason==='string'&&['no_progress','worker_missing','consumer_missing','upstream_stalled'].includes(v.reason))&&
+new Set(discovery.failures.map(v=>v.source)).size===discovery.failures.length;
 const capacity=v=>{const unknown={status:'unknown',truncated:false,requests:[]};
 if(!v||!['ok','review','alarm','unknown'].includes(v.status)||typeof v.truncated!=='boolean'||!Array.isArray(v.requests)||v.requests.length>64)return unknown;
 const ids=new Set(),rows=[];
@@ -226,7 +271,9 @@ overall:['ok','unknown','alarm'].includes(j.overall)?j.overall:'unknown',
 ...(j.capacityUnknowns!==undefined?{capacityUnknowns:capacity(j.capacityUnknowns)}:{}),
 ...(Array.isArray(j.providerFailures)?{providerFailures:allowed.filter(key=>j.providerFailures.includes(key))}:{}),
 ...(reviewKnown?{reviewFailures:j.reviewFailures.map(v=>({stage:v.stage,reason:v.reason}))}:{}),
-...(stageKnown?{stageFailures:j.stageFailures.map(v=>({stage:v.stage,reason:v.reason}))}:{})}));}
+...(stageKnown?{stageFailures:j.stageFailures.map(v=>({stage:v.stage,reason:v.reason}))}:{}),
+...(discoveryKnown?{discoveryFailures:{v:1,covered:[...discovery.covered].sort(),
+failures:discovery.failures.map(v=>({source:v.source,reason:v.reason})).sort((a,b)=>a.source.localeCompare(b.source))}}:{})}));}
 catch{console.log(JSON.stringify({fresh:false,overall:'unknown'}));}"""
 
 
@@ -313,6 +360,8 @@ def observe(key, cfg, run=command, now=None):
                             stages[failure['stage']] = failure['reason']
                     if not conflict:
                         result['stageFailures'] = [{'stage': stage, 'reason': stages[stage]} for stage in sorted(stages)]
+                if any('discoveryFailures' in check for check in checks):
+                    result['discoveryFailures'] = merge_discovery_failures([check.get('discoveryFailures') for check in checks])
                 capacity = []
                 for check in checks:
                     if 'capacityUnknowns' in check:
