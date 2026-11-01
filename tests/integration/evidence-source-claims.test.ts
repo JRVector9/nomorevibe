@@ -398,7 +398,7 @@ it("existing actual job uses a source lane even when the product GitHub request 
  const [request]=await db.select().from(productRefreshRequests).where(eq(productRefreshRequests.productId,row.productId));
  expect(request).toMatchObject({activeVersion:1,completedVersion:0});expect(request.progress.completedKeys).toHaveLength(1);
 });
-it("actual runner typed defer preserves cursor, consumed version and failure history",async()=>{
+it("actual runner typed defer preserves cursor, consumed version and success history, and clears the thrown failure record",async()=>{
  await enabled(); const roleLease=await configureSourceOwner(); const row=await target();
  await db.update(products).set({createdAt:new Date("1800-01-01")}).where(eq(products.id,row.productId));
  await db.update(jobs).set({cursor:{afterSlug:"previous"},lastError:"original",notBefore:null}).where(eq(jobs.name,"product-evidence-refresh"));
@@ -407,7 +407,9 @@ it("actual runner typed defer preserves cursor, consumed version and failure his
  const {refreshProductEvidenceJob}=await import("@/lib/jobs/products/evidence-refresh");
  expect(await runJob("product-evidence-refresh",refreshProductEvidenceJob,{roleLease})).toMatchObject({status:"deferred",reason:"http_origin_permit"});
  const after=(await db.select().from(jobs).where(eq(jobs.name,"product-evidence-refresh")))[0];
- expect(after).toMatchObject({cursor:before.cursor,processedVersion:before.processedVersion,lastError:before.lastError,lastSuccessAt:before.lastSuccessAt,notBefore:before.notBefore,leaseToken:null});
+ expect(before.lastError).toBe("original");
+ // 던지지 않고 끝난 틱이라 지난 실패 기록은 지운다(runner.ts)
+ expect(after).toMatchObject({cursor:before.cursor,processedVersion:before.processedVersion,lastError:null,lastSuccessAt:before.lastSuccessAt,notBefore:before.notBefore,leaseToken:null});
  expect(after.requestedVersion).toBeGreaterThan(after.processedVersion);
  expect(await db.select().from(productEvidenceSources).where(eq(productEvidenceSources.slug,row.slug))).toEqual([]);
  expect((await db.select().from(evidenceSourceControl))[0].cursor).toBe(0);

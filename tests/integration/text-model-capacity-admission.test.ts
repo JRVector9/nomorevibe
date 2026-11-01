@@ -200,7 +200,8 @@ it("a real reason job defers without consuming attempts or a concurrent producer
     expect(request).not.toHaveBeenCalled();
     const settled = await jobRaw();
     expect(settled?.lease_token).toBeNull(); expect(settled?.locked_at).toBeNull();
-    expect(history(settled)).toEqual(history(managedJob!.expected));
+    // 던지지 않고 끝난 미룸 틱은 사유를 가리지 않고 lastError 를 지운다(lib/jobs/runner.ts, 2026-10-31) — 요청·커서·멈춤·성공 시각은 그대로다
+    expect(history(settled)).toEqual({ ...history(managedJob!.expected), last_error: null });
   } catch (error) { errors.push(error); }
   finally { rowHold.resolve(); await steps([() => rowHolding], errors); }
   // 2) 틱 중간의 동시 생산자·멈춤 보존은 틱을 세울 자리가 필요하다 — control 행 잠금은 더는 세우지 못하므로 표 AccessExclusiveLock 으로
@@ -233,7 +234,7 @@ it("a real reason job defers without consuming attempts or a concurrent producer
       WHERE name='reason-translate' AND lease_token=${String(current!.lease_token)} RETURNING to_jsonb(j) AS value`;
     if (!row) throw new Error("text_fixture_job_lost");
     const updated = row.value as Raw;
-    managedJob!.expected = { ...updated, locked_at: null, lease_token: null };
+    managedJob!.expected = { ...updated, locked_at: null, lease_token: null, last_error: null };
     finish.resolve(); await holding;
     expect(await execution).toMatchObject({ status: "deferred", reason: "model_capacity" });
     expect(request).not.toHaveBeenCalled();
