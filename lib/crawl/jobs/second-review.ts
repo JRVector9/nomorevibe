@@ -1,5 +1,5 @@
 import { emitPipelineEvent, measureReviewCall } from "@/lib/observability/review-pipeline";
-import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
+import { deferredJob, type JobContext, type JobOutcome } from "@/lib/jobs/runner";
 import type { JobLease } from "@/lib/jobs/control";
 import { getSettings } from "@/lib/crawl/settings";
 import { dispatchSecondReviewTransport, secondReviewTransportTimeoutMs } from "@/lib/crawl/second-review-transport";
@@ -140,8 +140,9 @@ async function reviewPendingVotes(ctx: JobContext<SecondReviewCursor>, lease: Jo
   ctx.log("crawl.second_reviewed", { enqueued, closed, reopened, reconciled, reviewed, failed, deferred });
   // A budget-exhausted lane may not have reached row admission. This is a stage
   // observation, not a durable barrier between preflight and external dispatch.
-  if (stageBlocked || !await canStartLegacySecondReview(lease)) return { done: false, deferred: "stage_blocked" };
-  if (modelDeferred) return { done: false, deferred: "model_capacity" };
+  const handled = reviewed + failed;
+  if (stageBlocked || !await canStartLegacySecondReview(lease)) return deferredJob("stage_blocked", handled);
+  if (modelDeferred) return deferredJob("model_capacity", handled);
   if (reviewed && !failed && !ctx.signal?.aborted && ctx.hasBudget()) {
     const ready = await pendingSecondReviews(1);
     if (ready.some(row => !visited.has(row.id))) return { done: false, continuation: "ready" };

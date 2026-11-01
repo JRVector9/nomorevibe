@@ -4,7 +4,7 @@ import { translateProductFieldsWithModelCapacity } from "@/lib/domain/products/p
 import { checkProductTranslation, packProductTranslationBatch, productTranslationPolicy, productTranslationSourceHash,
   productTranslationTaskKey, translationSourceText } from "@/lib/domain/products/translation-policy";
 import { pendingProductTranslations, recordProductTranslations, type ProductTranslationResult } from "@/lib/domain/products/translations";
-import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
+import { deferredJob, type JobContext, type JobOutcome } from "@/lib/jobs/runner";
 import { ModelCapacityDeferredError, modelCapacityDeferralIsPerWork } from "@/lib/llm/capacity-deferred";
 import { productTranslationClientTimeoutMs } from "@/lib/llm/deadline-ladder";
 import { TEXT_ROUTE_BLOCK_DETAIL, textRouteAccess } from "@/lib/llm/serving-contract-store";
@@ -36,15 +36,19 @@ export async function translateDemandedProductFields(ctx: JobContext<null>): Pro
   try {
     const policy = productTranslationPolicy();
     const passed = new Set<string>();
+    let recorded = 0;
     for (let round = 0; round < MAX_SELECTION_ROUNDS; round++) {
       const tasks = (await pendingProductTranslations(policy.batchMax, { exclude: [...passed] }))
         .filter(task => !passed.has(productTranslationTaskKey(task)));
       if (!tasks.length || !ctx.hasBudget() || signal.aborted) break;
       const retired = tasks.filter((task) => !task.eligible || productTranslationSourceHash(task.source, task.field) !== task.sourceHash
         || translationSourceText(task.source, task.field).length > policy.maxSourceChars);
-      if (retired.length) await recordProductTranslations(retired.map((task) => ({ task,
-        result: { ok: false, error: translationSourceText(task.source, task.field).length > policy.maxSourceChars ? "source_too_long" : "stale_source", model: "" } as ProductTranslationResult,
-      })), ctx.lease);
+      if (retired.length) {
+        await recordProductTranslations(retired.map((task) => ({ task,
+          result: { ok: false, error: translationSourceText(task.source, task.field).length > policy.maxSourceChars ? "source_too_long" : "stale_source", model: "" } as ProductTranslationResult,
+        })), ctx.lease);
+        recorded += retired.length;
+      }
       for (const task of retired) passed.add(productTranslationTaskKey(task));
       // 긴 설명은 단독, 짧은 것만 묶인다(translation.product.batchChars) — 300초 상한 안에 끝나게.
       const batch = packProductTranslationBatch(tasks.filter((task) => !retired.includes(task)), policy);
@@ -55,7 +59,10 @@ export async function translateDemandedProductFields(ctx: JobContext<null>): Pro
       try {
         outcome = await translateProductFieldsWithModelCapacity(batch, ctx.lease, { timeoutMs: productTranslationClientTimeoutMs(), signal, deadlineAt: ctx.deadlineAt });
       } catch (error) {
-        if (!(error instanceof ModelCapacityDeferredError) || !modelCapacityDeferralIsPerWork(error.reason)) throw error;
+        if (!(error instanceof ModelCapacityDeferredError) || !modelCapacityDeferralIsPerWork(error.reason)) {
+          if (error instanceof ModelCapacityDeferredError && recorded >= 1) return deferredJob("model_capacity", recorded);
+          throw error;
+        }
         // 호출은 없었다. 이 멤버만 이 틱에서 넘기고(시도·실패 기록 없음) 뒤의 수요로 다시 고른다.
         for (const task of batch) passed.add(productTranslationTaskKey(task));
         ctx.log("product_translation.passed", { reason: error.reason, demanded: batch.length, passed: passed.size });

@@ -1,7 +1,7 @@
 import { modelLimits, modelTimeoutMs, scopedModel } from "@/lib/llm/model-registry";
 import { roleLeaseFromEnv } from "@/lib/jobs/role-leader";
 import { writeKeywordsWithModelCapacity } from "@/lib/domain/products/search-profile-model-capacity";
-import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
+import { deferredJob, type JobContext, type JobOutcome } from "@/lib/jobs/runner";
 import { EngineDownTally } from "@/lib/jobs/engine-down";
 import { tickRemaining } from "@/lib/jobs/tick-deadline";
 import { ModelCapacityDeferredError, modelCapacityDeferralIsPerWork } from "@/lib/llm/capacity-deferred";
@@ -145,7 +145,13 @@ export async function writeSearchProfiles(ctx: JobContext<null>): Promise<JobOut
       }
       const failures = settled.filter((item): item is PromiseRejectedResult => item.status === "rejected");
       const failure = failures.find(item => !(item.reason instanceof ModelCapacityDeferredError)) ?? failures[0];
-      if (failure) throw failure.reason;
+      if (failure) {
+        // 항목을 끝낸 뒤의 모델 미룸은 던지지 않고 건수를 실어 돌려준다. 러너는 1건 이상이면 lastSuccessAt 을 옮긴다.
+        // 한 건도 못 끝냈거나 모델 미룸이 아닌 오류(잠금 대기 등)는 종전대로 던진다.
+        const processed = written + reused + failed;
+        if (failure.reason instanceof ModelCapacityDeferredError && processed >= 1) return deferredJob("model_capacity", processed);
+        throw failure.reason;
+      }
       if (blocked === "tick_budget") {
         ctx.log("search_profile.budget_deferred", { written, reused, failed, passed });
         return { done: false };

@@ -1,5 +1,5 @@
 import { HttpOriginPermitError } from "@/lib/net/http-origin-policy";
-import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
+import { deferredJob, type JobContext, type JobOutcome } from "@/lib/jobs/runner";
 import type { FetchClaim } from "@/lib/crawl/fetch-ownership";
 import { fetchPage } from "@/lib/net/fetch";
 import { normalizeUrl, extractPageMeta, metaRefreshTarget } from "@/lib/net/normalize";
@@ -75,12 +75,14 @@ export async function fetchCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
   }
 
   const tally: Tally = { fetched: 0, skipped: 0, failed: 0, gated: 0 };
+  const defer = (reason: "stage_blocked" | "source_buffer" | "http_origin_permit") =>
+    deferredJob<null>(reason, tally.fetched + tally.skipped + tally.failed + tally.gated);
   const oneAtATime = originQueue();
 
   while (ctx.hasBudget()) {
     const admission = await crawl.dequeueWithAdmission(BATCH, undefined, ctx.lease);
-    if (admission.kind === "stage_blocked") return { done: false, deferred: "stage_blocked" };
-    if (admission.kind === "buffer_blocked") return { done: false, deferred: "source_buffer" };
+    if (admission.kind === "stage_blocked") return defer("stage_blocked");
+    if (admission.kind === "buffer_blocked") return defer("source_buffer");
     const entries = admission.entries;
     if (entries.length === 0) {
       ctx.log("crawl.fetched", { ...tally, drained: true });
@@ -88,7 +90,7 @@ export async function fetchCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
     }
 
     const { retryAt, pauseReason, deferred, permitBlocked } = await fetchBatch(entries, ctx, settings, evidenceRequired, oneAtATime, tally);
-    if (permitBlocked) return { done: false, deferred: "http_origin_permit" };
+    if (permitBlocked) return defer("http_origin_permit");
     if (retryAt) {
       ctx.log(pauseReason === "auth_unavailable" ? "crawl.fetch_auth_unavailable" : "crawl.fetch_rate_limited",
         { fetched: tally.fetched, resetAt: retryAt.toISOString() });
@@ -101,8 +103,8 @@ export async function fetchCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
   // A zero-size dequeue checks admission under the same stage SHARE and claims
   // no input; an inactive stage must still preserve its pending job request.
   const admission = await crawl.dequeueWithAdmission(0, undefined, ctx.lease);
-  if (admission.kind === "stage_blocked") return { done: false, deferred: "stage_blocked" };
-  if (admission.kind === "buffer_blocked") return { done: false, deferred: "source_buffer" };
+  if (admission.kind === "stage_blocked") return defer("stage_blocked");
+  if (admission.kind === "buffer_blocked") return defer("source_buffer");
   ctx.log("crawl.fetched", { ...tally, drained: false });
   return { done: false };
 }

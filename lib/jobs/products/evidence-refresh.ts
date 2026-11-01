@@ -2,7 +2,7 @@ import { canonicalSourceMode } from "@/lib/domain/evidence/source-control";
 import { executeCanonicalEvidenceSource } from "@/lib/domain/evidence/source-claims";
 import { roleLeaseFromEnv } from "@/lib/jobs/role-leader";
 import { HttpOriginPermitError } from "@/lib/net/http-origin-policy";
-import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
+import { deferredJob, type JobContext, type JobOutcome } from "@/lib/jobs/runner";
 import { currentEvidenceSettings } from "@/lib/domain/evidence/settings-store";
 import {
   dueEvidenceProductSlugs,
@@ -48,6 +48,12 @@ export async function refreshProductEvidenceJob(
     eventsInserted: 0,
     mediaInserted: 0,
   };
+  const finished = () => counts.succeeded + counts.failed;
+  /** 항목을 끝낸 뒤의 permit 만 미룸 결과에 건수를 싣는다. 한 건도 못 끝냈으면 종전대로 던져 러너가 미룸으로 바꾼다. */
+  const permitHold = (error: HttpOriginPermitError): JobOutcome<EvidenceRefreshCursor> => {
+    if (finished() >= 1) return deferredJob("http_origin_permit", finished());
+    throw error;
+  };
   // Existing consumer only. Source mode has a separately owned durable lane;
   // GitHub/request-level retry deadlines never control canonical admission.
   if (await canonicalSourceMode()) {
@@ -67,7 +73,7 @@ export async function refreshProductEvidenceJob(
           }
         }
       } catch (error) {
-        if (error instanceof JobBatchBlockedError) return { done: false, deferred: "stage_blocked" };
+        if (error instanceof JobBatchBlockedError) return deferredJob("stage_blocked", finished());
         throw error;
       }
     }
@@ -91,7 +97,8 @@ export async function refreshProductEvidenceJob(
       const queued = await queueInitialProductEvidenceRefresh({ lease: ctx.lease, hasBudget: ctx.hasBudget });
       if (queued) ctx.log("evidence.initial_refresh_queued", queued);
     } catch (error) {
-      if (error instanceof JobLeaseLostError || error instanceof HttpOriginPermitError) throw error;
+      if (error instanceof JobLeaseLostError) throw error;
+      if (error instanceof HttpOriginPermitError) return permitHold(error);
       ctx.log("evidence.initial_refresh_queue_failed", { errorCode: refreshErrorCode(error) });
     }
   }
@@ -119,7 +126,7 @@ export async function refreshProductEvidenceJob(
           progress = next;
         },
       });
-      if (result.deferred === "http_origin_permit") throw new HttpOriginPermitError("unavailable");
+      if (result.deferred === "http_origin_permit") return permitHold(new HttpOriginPermitError("unavailable"));
       await saveProductRefreshProgress(request, progress, { now, lease: ctx.lease, result });
       if (result.sourcesFailed) counts.failed += 1;
       else if (result.complete) counts.succeeded += 1;
@@ -129,7 +136,8 @@ export async function refreshProductEvidenceJob(
       ctx.log("evidence.request_refresh", { productId: request.productId, requestedVersion: request.activeVersion,
         complete: result.complete, completedSources: progress.completedKeys.length });
     } catch (error) {
-      if (error instanceof JobLeaseLostError || error instanceof HttpOriginPermitError) throw error;
+      if (error instanceof JobLeaseLostError) throw error;
+      if (error instanceof HttpOriginPermitError) return permitHold(error);
       counts.failed += 1;
       const errorCode = refreshErrorCode(error);
       if (!(error instanceof ProductGenerationChangedError)) {
@@ -139,7 +147,7 @@ export async function refreshProductEvidenceJob(
     }
   };
 
-  if (pendingRequest && requestTurn) await runRequest();
+  if (pendingRequest && requestTurn) { const held = await runRequest(); if (held) return held; }
 
   while (ctx.hasBudget()) {
     // Read one later product before external I/O so a full-page deadline can
@@ -163,7 +171,7 @@ export async function refreshProductEvidenceJob(
       finalPage = !untouchedNextPage;
     }
     if (slugs.length === 0) {
-      await runRequest();
+      const held = await runRequest(); if (held) return held;
       ctx.log("evidence.refresh_batch", counts);
       return { done: true };
     }
@@ -185,7 +193,7 @@ export async function refreshProductEvidenceJob(
           hasBudget: ctx.hasBudget,
           dependencies: sourceDependencies,
         });
-        if (result.deferred === "http_origin_permit") throw new HttpOriginPermitError("unavailable");
+        if (result.deferred === "http_origin_permit") return permitHold(new HttpOriginPermitError("unavailable"));
         if (result.sourcesFailed > 0) counts.failed += 1;
         else if (result.complete) counts.succeeded += 1;
         counts.factsChanged += result.factsChanged;
@@ -195,7 +203,8 @@ export async function refreshProductEvidenceJob(
         // repeated partial work cannot keep later products behind the same cursor.
         if (!result.complete && !ctx.hasBudget()) completedPage = false;
       } catch (error) {
-        if (error instanceof JobLeaseLostError || error instanceof HttpOriginPermitError) throw error;
+        if (error instanceof JobLeaseLostError) throw error;
+        if (error instanceof HttpOriginPermitError) return permitHold(error);
         counts.failed += 1;
         ctx.log("evidence.product_refresh_failed", {
           slug,
@@ -205,7 +214,7 @@ export async function refreshProductEvidenceJob(
       afterSlug = slug;
       requestTurn = true;
       await saveCursor();
-      await runRequest();
+      const held = await runRequest(); if (held) return held;
       if (!completedPage) {
         untouchedLater = index < slugs.length - 1 || untouchedNextPage;
         break;

@@ -2,7 +2,11 @@ import { catalogJobsForBatch } from "@/lib/jobs/batches";
 import { isPausedJob } from "@/lib/jobs/status";
 
 /**
- * 작업이 정말 성공하고 있나 — "돌았다(lastRunAt)"와 "제 일을 했다(lastSuccessAt)"를 가른다.
+ * 작업이 정말 일하고 있나 — "돌았다(lastRunAt)"와 "제 일을 했다(lastSuccessAt)"를 가른다.
+ *
+ * lastSuccessAt 은 깨끗이 끝난 틱과, 미루었지만 항목을 1건 이상 끝낸 틱(runner 의 processed)이 옮긴다.
+ * 한 건도 못 끝내고 미루기만 한 틱은 옮기지 않는다. 여기의 "성공이 끊김"은 그 시각이 오래됐다는 뜻이다
+ * — 깨끗이 끝난 틱도, 항목을 끝낸 미룸도 최근에 없다.
  *
  * 2026-10-22 점검: 처리기가 실패를 잡고 그냥 돌아오면 러너가 성공으로 적어(HN·Bluesky 검색 실패, 키 없는 번역, 서버 없는 임베딩,
  * 인증이 끊긴 소개 검수, 광역 실패로 보류한 생존 확인 …) 운영센터가 초록이었다. 이제 처리기는 그런 틱을 degraded 로 돌려주고

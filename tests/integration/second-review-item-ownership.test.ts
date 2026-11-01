@@ -330,7 +330,10 @@ it("settles every admitted lane before returning a midtick stage block", async (
     const votes = await admin`SELECT status,second_decision FROM second_reviews WHERE candidate_id=ANY(${contexts.slice(0, 4).map(c => c.candidate.id)}) ORDER BY id`;
     expect(votes).toEqual(Array.from({ length: 4 }, () => ({ status: "agreed", second_decision: "reject" })));
     expect(await domain(contexts[4])).toEqual(fifthBefore);
-    expect(await preservedJob()).toEqual(jobBefore);
+    // 2026-11-01: 투표 4건을 끝낸 뒤의 stage_blocked 미룸은 processed=4 를 실어 last_success_at 만 앞으로 옮긴다(runner.ts). 요청·커서·일정은 그대로.
+    const jobAfter = await preservedJob();
+    expect({ ...jobAfter, lastSuccess: jobBefore.lastSuccess }).toEqual(jobBefore);
+    expect(String(jobAfter.lastSuccess) > String(jobBefore.lastSuccess)).toBe(true);
     expect(await lastErrorCleared()).toBe(true);
   } finally {
     finish.resolve();

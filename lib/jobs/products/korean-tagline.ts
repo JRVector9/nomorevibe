@@ -1,6 +1,6 @@
 import { modelTimeoutMs, scopedModel } from "@/lib/llm/model-registry";
 import { translateKoreanTaglinesWithModelCapacity, type KoreanTaglineCapacityResult } from "@/lib/domain/products/korean-tagline-model-capacity";
-import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
+import { deferredJob, type JobContext, type JobOutcome } from "@/lib/jobs/runner";
 import { tickRemaining } from "@/lib/jobs/tick-deadline";
 import { KOREAN_TAGLINE_MODEL } from "@/lib/crawl/translate";
 import { displayProjectName } from "@/lib/domain/products/display-name";
@@ -94,7 +94,12 @@ export async function writeKoreanTaglines(ctx: JobContext<null>): Promise<JobOut
 
     while (!signal.aborted && ctx.hasBudget() && remaining() >= minCallMs) {
       const control = await readModelCapacityCallerControl();
-      if (control.mode !== "disabled" && control.mode !== "open") throw new ModelCapacityDeferredError("draining");
+      if (control.mode !== "disabled" && control.mode !== "open") {
+        // 앞 바퀴에서 이미 적은 뒤 모드가 draining 으로 바뀌면 던지면 건수가 사라진다.
+        const processed = written + failed + Object.values(rejected).reduce((sum, count) => sum + count, 0);
+        if (processed >= 1) return deferredJob("model_capacity", processed);
+        throw new ModelCapacityDeferredError("draining");
+      }
       const legacy = control.mode === "disabled";
       const qwen = legacy && koreanTranslationQwenEnabled() && !stopped.has("qwen");
       const nativeBlock = legacy ? null : gptBlock();
@@ -187,8 +192,13 @@ export async function writeKoreanTaglines(ctx: JobContext<null>): Promise<JobOut
       }
       if (errors.length) {
         // 미룸 사유(capacity·unmapped·dispatched…)를 남긴다 — 러너는 'model_capacity' 하나로만 적는다
-        if (errors[0] instanceof ModelCapacityDeferredError) ctx.log("tagline_ko.capacity_deferred", { ...counts(), reason: errors[0].reason });
-        throw errors[0];
+        const first = errors[0];
+        if (first instanceof ModelCapacityDeferredError) {
+          ctx.log("tagline_ko.capacity_deferred", { ...counts(), reason: first.reason });
+          const processed = written + failed + Object.values(rejected).reduce((sum, count) => sum + count, 0);
+          if (processed >= 1) return deferredJob("model_capacity", processed);
+        }
+        throw first;
       }
       if (skipped || recoveryDeferred) return { done: false };
       if (stopped.has("gpt") && (!qwen || stopped.has("qwen"))) return { done: true };

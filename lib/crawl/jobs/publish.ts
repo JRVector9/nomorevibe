@@ -3,7 +3,7 @@ import { and, or } from 'drizzle-orm';
 import { agentRequest } from '@/lib/operations/agent-client';
 import { classificationReadyPredicate, decisionFor, holdClassification } from '@/lib/operations/categories';
 import type { Category } from '@/lib/domain/products/schema';
-import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
+import { deferredJob, type JobContext, type JobOutcome } from "@/lib/jobs/runner";
 import * as crawl from "@/lib/crawl/repository";
 import { getSettings } from "@/lib/crawl/settings";
 import { prepareCandidateClassification, publishCandidate } from "@/lib/crawl/publish";
@@ -60,6 +60,7 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
 
   let published = 0;
   let skipped = 0;
+  const capacityDeferred = () => deferredJob<null>("model_capacity", published + skipped);
 
   while (ctx.hasBudget()) {
     // Filter before LIMIT so pending reviews cannot starve approved products.
@@ -94,7 +95,7 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
             // A lost RPC response cannot prove whether the remote native child has ended.
             ctx.log('crawl.classification_deferred', { count: inputs.length,
               reason: error instanceof ModelCapacityDeferredError ? error.reason : 'dispatched' });
-            return { done: false, deferred: 'model_capacity' };
+            return capacityDeferred();
           }
           classified = inputs.map(() => null); ctx.log('crawl.classification_held', { count: inputs.length });
         }
@@ -102,7 +103,7 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
         const path = await publicationClassificationPath().catch(async error => { await observeClassificationDrain(error, ctx); throw error; });
         if (path !== 'legacy') {
           ctx.log('crawl.classification_deferred', { count: inputs.length, reason: 'provider_contract_unavailable' });
-          return { done: false, deferred: 'model_capacity' };
+          return capacityDeferred();
         }
         classified = await classifyCategories(inputs, undefined, undefined, undefined, settings.classify.definitions);
       }

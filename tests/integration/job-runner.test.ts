@@ -200,7 +200,7 @@ describe("runJob — 실패 기록", () => {
   /**
    * 2026-10-31 실측: 모델 자리가 막힌 product-search-profile·reason-translate 는 30분간 260·111회 model_capacity 로 미루고 한 번도 던지지
    * 않았는데, 며칠 전 던진 "[55P03] …" 이 lastError 에 그대로 남아 관리자 상태 "오류"·긴급 "마지막 회차가 실패한 작업"으로 보였다.
-   * 미룸은 사유를 가리지 않고 "던지지 않고 끝난 틱"이다 — 성공 시각·요청·커서는 그대로 두고 지난 실패 기록만 지운다.
+   * 미룸은 사유를 가리지 않고 "던지지 않고 끝난 틱"이다. 처리 신호가 없으면(0건) 성공 시각·요청·커서는 그대로 두고 지난 실패 기록만 지운다.
    */
   it("모델 자리가 없어 미룬(model_capacity) 틱도 던지지 않고 끝났으므로 지난 실패 기록을 지운다 — 성공 시각·요청·커서는 그대로", async () => {
     await runJob("capacity-wait", async () => ({ done: true }));
@@ -217,7 +217,33 @@ describe("runJob — 실패 기록", () => {
     expect(deferred!.requestedVersion).toBeGreaterThan(deferred!.processedVersion);
   });
 
-  it("처리기가 ModelCapacityDeferredError 를 던져 미룬 틱(운영 경로)도 지난 실패 기록을 지우고, 다시 던지면 다시 남는다", async () => {
+  it("항목을 1건 끝낸 뒤 model_capacity 로 미루면 성공 시각을 옮기고, 0건이면 그 시각·커서·요청을 그대로 둔다", async () => {
+    await runJob("capacity-progress", async () => ({ done: true }));
+    const succeeded = await getJobState("capacity-progress");
+    await runJob("capacity-progress", async (ctx) => { await ctx.save({ page: 4 }); throw new Error("지난 실패"); });
+    const stale = new Date("2026-01-02T03:04:05.123Z");
+    await db.update(jobs).set({ notBefore: null, lastSuccessAt: stale }).where(eq(jobs.name, "capacity-progress"));
+
+    expect(await runJob("capacity-progress", async () => ({ done: false, deferred: "model_capacity" as const, processed: 1 }), { requestedOnly: true }))
+      .toMatchObject({ status: "deferred", reason: "model_capacity" });
+    const progressed = await getJobState("capacity-progress");
+    expect(progressed).toMatchObject({ lastError: null, cursor: { page: 4 }, lockedAt: null, leaseToken: null,
+      processedVersion: succeeded!.processedVersion });
+    expect(progressed!.lastSuccessAt).toBeInstanceOf(Date);
+    expect(progressed!.lastSuccessAt!.getTime()).toBeGreaterThan(stale.getTime());
+    expect(progressed!.requestedVersion).toBeGreaterThan(progressed!.processedVersion);
+
+    const stamped = progressed!.lastSuccessAt;
+    expect(await runJob("capacity-progress", async () => ({ done: false, deferred: "model_capacity" as const, processed: 0 }), { requestedOnly: true }))
+      .toMatchObject({ status: "deferred", reason: "model_capacity" });
+    const idle = await getJobState("capacity-progress");
+    expect(idle).toMatchObject({ lastError: null, cursor: { page: 4 }, lockedAt: null, leaseToken: null,
+      processedVersion: succeeded!.processedVersion });
+    expect(idle!.lastSuccessAt?.getTime()).toBe(stamped!.getTime());
+    expect(idle!.requestedVersion).toBeGreaterThan(idle!.processedVersion);
+  });
+
+  it("처리기가 ModelCapacityDeferredError 를 던져 미룬 틱은 건수를 못 실으므로 성공 시각을 옮기지 않고, 다시 던지면 실패를 다시 남긴다", async () => {
     await runJob("capacity-typed", async () => { throw new Error("지난 실패"); });
     await db.update(jobs).set({ notBefore: null }).where(eq(jobs.name, "capacity-typed"));
     expect(await runJob("capacity-typed", async () => { throw new ModelCapacityDeferredError("capacity"); }, { requestedOnly: true }))

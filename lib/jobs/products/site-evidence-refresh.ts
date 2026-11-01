@@ -1,4 +1,5 @@
-import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
+import { HttpOriginPermitError } from "@/lib/net/http-origin-policy";
+import { deferredJob, type JobContext, type JobOutcome } from "@/lib/jobs/runner";
 import { roleLeaseFromEnv } from "@/lib/jobs/role-leader";
 import { JobBatchBlockedError } from "@/lib/jobs/batch-repository";
 import { executeCanonicalEvidenceSource } from "@/lib/domain/evidence/source-claims";
@@ -27,7 +28,8 @@ export async function refreshSiteEvidenceJob(ctx: JobContext<null>): Promise<Job
       }
     }
   } catch (error) {
-    if (error instanceof JobBatchBlockedError) return { done: false, deferred: "stage_blocked" };
+    if (error instanceof JobBatchBlockedError) return deferredJob("stage_blocked", counts.attempted);
+    if (error instanceof HttpOriginPermitError && counts.attempted >= 1) return deferredJob("http_origin_permit", counts.attempted);
     throw error;
   }
   ctx.log("evidence.site_refresh_batch", counts);
