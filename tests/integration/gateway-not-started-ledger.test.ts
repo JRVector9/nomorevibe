@@ -29,6 +29,7 @@ import { cancelReservedModelSlot, finishAi1ModelCapacityDispatch, finishAi2ItemM
   reconcileGatewayNotStarted, requestAi1ModelSlot, requestAi2ItemModelSlot, requestLocalModelSlot,
   requestProductTranslationModelSlot } from "@/lib/llm/capacity-repository";
 import { markUnsettledDispatch } from "@/lib/llm/capacity-unsettled";
+import { publicationClassifyReleaseLogicalSql, releaseKindsDispatchSql } from "@/lib/llm/dispatch-release-kinds-sql";
 import { localModelBindingHash, localModelJob, localModelLogicalKey, localModelRoute, type LocalModelBinding,
   type LocalModelTarget } from "@/lib/llm/local-model-capacity-contract";
 import { prepareAi1GatewayCall, prepareAi2GatewayCall, readGatewayNotStarted, settleAi1GatewayNotStarted,
@@ -593,22 +594,39 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
       try { expect(after0157[name], `${name}: 0156 predicate plus the 0157 local-direct branches`).toBe((await constraintDefs(step, ["f2_local_direct_expected"])).f2_local_direct_expected); }
       finally { await step.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT f2_local_direct_expected`); }
     }
-    // 0159 (PR 3b-E text local-direct 기록) rebuilds the dispatch CHECK and both terminal CHECKs the same way: the whole live 0157 predecessor plus
+    // 0158 (release branch kinds, 2026-10-31) rebuilds the requests logical/members/dispatch CHECKs the same way: the whole live 0157 predecessor
+    // plus the process_group_exit/dr_call_drain release branch for publication_classify_cli·local_model_direct (the schema constants).
+    // Both terminal CHECKs and the events kind CHECK look at no binding kind for a release and stay as 0157 left them.
+    expect(journal.entries.find(entry => entry.idx === 158)!.tag).toBe("0158_release_branch_kinds");
+    await migrateThrough(158);
+    const after0158 = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
+    const releaseKinds: Record<string, string> = { model_capacity_requests_logical_check: publicationClassifyReleaseLogicalSql,
+      model_capacity_requests_members_check: publicationClassifyReleaseLogicalSql, model_capacity_requests_dispatch_check: releaseKindsDispatchSql };
+    for (const name of [...LEFT, ...UNTOUCHED]) {
+      const branch = releaseKinds[name];
+      if (!branch) { expect(after0158[name], `${name}: unchanged by 0158`).toBe(after0157[name]); continue; }
+      expect(after0157[name]).not.toContain("'publication_classify_cli'::text, 'local_model_direct'::text");
+      await step.unsafe(`ALTER TABLE model_capacity_requests ADD CONSTRAINT f2_release_kinds_expected CHECK ((${inner(after0157[name])}) OR (${branch}))`);
+      try { expect(after0158[name], `${name}: 0157 predicate plus the 0158 release-kinds branch`).toBe((await constraintDefs(step, ["f2_release_kinds_expected"])).f2_release_kinds_expected); }
+      finally { await step.unsafe(`ALTER TABLE model_capacity_requests DROP CONSTRAINT f2_release_kinds_expected`); }
+    }
+    expect(after0158.model_capacity_requests_dispatch_check).toContain("'publication_classify_cli'::text, 'local_model_direct'::text");
+    // 0159 (PR 3b-E text local-direct 기록) rebuilds the dispatch CHECK and both terminal CHECKs the same way: the whole live 0158 predecessor plus
     // the seven 0125 text-route branches with the row AND the binding/evidence JSON provider replaced (0157's text twins kept only the row literal,
-    // so a text row with provider local-direct matched none of them). logical/members stay as 0157 left them.
+    // so a text row with provider local-direct matched none of them). logical/members stay as 0158 left them (0158 added no local-direct literal, so the JSON count below starts at 0).
     await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
     const after0159 = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
     const textLocalDirect: Record<string, string> = { model_capacity_requests_dispatch_check: textLocalDirectDispatchSql,
       model_capacity_requests_terminal_check: textLocalDirectTerminalSql, model_capacity_events_terminal_check: textLocalDirectEventTerminalSql };
     for (const name of [...LEFT, ...UNTOUCHED]) {
       const branch = textLocalDirect[name];
-      if (!branch) { expect(after0159[name], `${name}: unchanged by 0159`).toBe(after0157[name]); continue; }
+      if (!branch) { expect(after0159[name], `${name}: unchanged by 0159`).toBe(after0158[name]); continue; }
       const jsonLocalDirectCount = (def: string) => def.split(`'"local-direct"'::jsonb`).length - 1;
-      expect(jsonLocalDirectCount(after0157[name]), `${name}: 0157 never widened the JSON provider`).toBe(0);
+      expect(jsonLocalDirectCount(after0158[name]), `${name}: 0157/0158 never widened the JSON provider`).toBe(0);
       expect(jsonLocalDirectCount(after0159[name]), `${name}: 0159 widens the JSON provider of the seven text branches`).toBe(7);
       const table = name.startsWith("model_capacity_events_") ? "model_capacity_events" : "model_capacity_requests";
-      await step.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT f2_text_local_direct_expected CHECK ((${inner(after0157[name])}) OR (${branch}))`);
-      try { expect(after0159[name], `${name}: 0157 predicate plus the 0159 text local-direct branches`).toBe((await constraintDefs(step, ["f2_text_local_direct_expected"])).f2_text_local_direct_expected); }
+      await step.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT f2_text_local_direct_expected CHECK ((${inner(after0158[name])}) OR (${branch}))`);
+      try { expect(after0159[name], `${name}: 0158 predicate plus the 0159 text local-direct branches`).toBe((await constraintDefs(step, ["f2_text_local_direct_expected"])).f2_text_local_direct_expected); }
       finally { await step.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT f2_text_local_direct_expected`); }
     }
     expect((await step<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`)[0].count).toBe(journal.entries.length);

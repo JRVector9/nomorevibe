@@ -57,12 +57,16 @@ function migrationBranches() {
   }));
 }
 
-it("registers one additive migration after 0157 at the agreed journal position (0158 belongs to another PR)", () => {
+it("registers one additive migration right after 0158 (release branch kinds, merged from main) at the agreed journal position", () => {
   const journal = JSON.parse(readFileSync("drizzle/meta/_journal.json", "utf8")) as { entries: { idx: number; when: number; tag: string }[] };
   const entry = journal.entries.find(entry => entry.tag === tag);
   expect(entry).toMatchObject({ idx: 159, when: 1794086401070, tag, breakpoints: true });
   const provider = journal.entries.find(entry => entry.tag === "0157_ai1_provider_enum")!;
   expect(provider.when).toBeLessThan(entry!.when);
+  const release = journal.entries.find(entry => entry.tag === "0158_release_branch_kinds")!;
+  expect(release).toMatchObject({ idx: 158, when: 1794086401069 });
+  expect(journal.entries.indexOf(entry!), "0159 sits right after 0158").toBe(journal.entries.indexOf(release) + 1);
+  expect(journal.entries.at(-1)).toBe(entry);
   expect(journal.entries.filter(entry => entry.idx === 159 || entry.when === 1794086401070 || entry.tag === tag)).toHaveLength(1);
   expect(journal.entries.map(entry => entry.when)).toEqual([...journal.entries.map(entry => entry.when)].sort((a, b) => a - b));
 });
