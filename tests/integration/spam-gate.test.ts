@@ -121,7 +121,8 @@ describe("spam gate", () => {
   });
 
   it("hands a candidate whose README reveals the pattern to a person before any model call", async () => {
-    vi.stubEnv("CRAWL_REVIEW_MODEL", "test-model");
+    // 1차 심사자는 관리자 설정만 본다(CRAWL_REVIEW_MODEL 대체는 2026-10-31 제거)
+    await saveSettings({ firstReview: { provider: "claude-cli", model: "test-model" } }, "test");
     vi.stubEnv("CRAWL_REVIEW_READY", "true");
     expect(await changeReviewMode({ mode: "enforce", expectedMode: "off", actor: "test", reason: "spam gate test" })).toMatchObject({ ok: true });
     // 판정은 README 없이 페이지만 봤다 — 강한 신호 하나에 약한 신호 둘(이슈는 켜 둠)이라 통과했다

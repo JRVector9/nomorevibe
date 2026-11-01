@@ -19,7 +19,7 @@ export const searchVerifyServingContractSchema = z.object({
   }), totalTokenBound: z.number().int().positive().safe(),
 }).strict();
 export type SearchVerifyGatewayServingContract = Readonly<z.infer<typeof searchVerifyServingContractSchema>>;
-/** 엔진 직접 계약(PR 3b-E) — AI1·AI2 와 같은 direct-openai-chat-v1 모양, provider local-direct. 같은 route_id 아래 관리 화면·env 에 둔다. */
+/** 엔진 직접 계약(PR 3b-E) — AI1·AI2 와 같은 direct-openai-chat-v1 모양, provider local-direct. 같은 route_id 아래 관리 화면(model_serving_contracts)에 둔다. */
 export const searchVerifyDirectServingContractSchema = directServingContractSchema("product-search-verify", [DIRECT_OPENAI_CHAT_PROTOCOL] as const);
 export const searchVerifyRouteServingContractSchema = z.discriminatedUnion("protocol", [searchVerifyServingContractSchema, searchVerifyDirectServingContractSchema]);
 export type SearchVerifyServingContract = Readonly<z.infer<typeof searchVerifyRouteServingContractSchema>>;
@@ -29,7 +29,7 @@ export function searchVerifyServingContractHash(value: SearchVerifyServingContra
 }
 const configured = startupGatewayServingContracts("product-search-verify", searchVerifyRouteServingContractSchema, { gatewayShape: searchVerifyServingContractSchema });
 /**
- * 운영자가 readback 으로 검증해 ABCLLM_SERVING_CONTRACTS·관리 화면에 넣은 계약만 연다. 없거나 틀리면 null(=deferred)이다.
+ * 운영자가 readback 으로 검증해 관리 화면(model_serving_contracts)에 저장한 계약만 연다. 없거나 틀리면 null(=deferred)이다.
  * abcllm 은 model 이 정확히 같은 계약 하나, local-direct 는 선택이 가리키는 직접 계약이 정확히 하나일 때(AI1 과 같은 규칙).
  */
 export function resolveSearchVerifyServingContract(model: string, provider: GatewayContractProvider = "abcllm"): SearchVerifyServingContract | null {

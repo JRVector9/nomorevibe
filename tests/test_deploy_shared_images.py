@@ -1,6 +1,7 @@
 """Safety checks for the production release operator tool."""
 
 import importlib.util
+import inspect
 import io
 import json
 import os
@@ -502,6 +503,41 @@ class ReleaseSafetyTests(unittest.TestCase):
                          '# a\nRELEASE_TAG=' + self.new_sha + '\n')
         with self.assertRaisesRegex(ValueError, 'RELEASE_TAG_line_count_2'):
             release.replace_setting('RELEASE_TAG=1\nRELEASE_TAG=2\n', 'RELEASE_TAG', self.new_sha)
+
+    def test_drop_settings_removes_whole_entries_and_keeps_every_other_byte(self):
+        env = ('# header\nRELEASE_TAG=' + self.old_sha + '\nABCLLM_API_KEY="multi\nline-secret"\n'
+               'export ABCLLM_SERVING_CONTRACTS=[{"a":1}] # note\nCRAWL_REVIEW_MODEL=\'quoted\'\n'
+               'DB_POOL_MAX=6 # keep\nKEEP="x # y"\n')
+        kept = '# header\nRELEASE_TAG=' + self.old_sha + '\nDB_POOL_MAX=6 # keep\nKEEP="x # y"\n'
+        dropped = release.drop_settings(env, ('ABCLLM_API_KEY', 'ABCLLM_SERVING_CONTRACTS', 'CRAWL_REVIEW_MODEL', 'ABSENT_NAME'))
+        self.assertEqual(dropped, kept)
+        self.assertEqual(release.dotenv_settings(dropped), {'RELEASE_TAG': self.old_sha, 'DB_POOL_MAX': '6', 'KEEP': 'x # y'})
+        # Unchanged grammar: the parse of the original is the same as before this helper existed.
+        self.assertEqual(release.dotenv_settings(env)['ABCLLM_API_KEY'], 'multi\nline-secret')
+        self.assertEqual(release.dotenv_settings(env)['ABCLLM_SERVING_CONTRACTS'], '[{"a":1}]')
+        self.assertEqual(release.drop_settings(env, ()), env)
+        self.assertEqual(release.drop_settings('A=1\nB=2', ('B',)), 'A=1')
+        self.assertEqual(release.drop_settings('A=1\nB=2', ('A',)), 'B=2')
+        self.assertEqual(release.drop_settings('A=1\r\nB=2\r\n', ('A',)), 'B=2\r\n')
+        with self.assertRaisesRegex(ValueError, 'missing_env'):
+            release.drop_settings(None, ('A',))
+        with self.assertRaisesRegex(ValueError, 'dotenv_invalid_line_2'):
+            release.drop_settings('A=1\nnot a setting\n', ('A',))
+        with self.assertRaisesRegex(ValueError, '^A_line_count_2$'):
+            release.drop_settings('A=1\nA=2\n', ('A',))
+        with self.assertRaisesRegex(ValueError, '^B_unterminated$'):
+            release.drop_settings('A=1\nB="open\n', ('A',))
+
+    def test_integration_settings_name_every_saved_setting_the_preflight_reads(self):
+        # deploy_release.PROTECTED_SETTINGS refuses to retire these; a new read in the preflight must be listed here.
+        literals = set(re.findall(r"'([A-Z][A-Z0-9_]+)'", inspect.getsource(release.github_integration_preflight)))
+        fragments = {'GITHUB_STAR_APP_', 'GITHUB_FEEDBACK_APP_', 'CLIENT_ID', 'CLIENT_SECRET', 'WEBHOOK_SECRET'}
+        self.assertEqual(literals - fragments, set(release.INTEGRATION_SETTINGS))
+        for prefix in ('GITHUB_STAR_APP_', 'GITHUB_FEEDBACK_APP_'):
+            for suffix in ('CLIENT_ID', 'CLIENT_SECRET', 'WEBHOOK_SECRET'):
+                self.assertIn(prefix + suffix, release.INTEGRATION_SETTINGS)
+        self.assertEqual(len(set(release.INTEGRATION_SETTINGS)), len(release.INTEGRATION_SETTINGS))
+        self.assertTrue(set(release.INTEGRATION_FLAGS) <= set(release.INTEGRATION_SETTINGS))
 
     def test_snapshot_is_private_and_restore_uses_previous_digest(self):
         apps = self.apps()

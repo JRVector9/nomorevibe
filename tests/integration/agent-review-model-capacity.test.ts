@@ -282,9 +282,10 @@ it.each(["open", "draining"] as const)("defers fresh AI1 in %s without consuming
   expect(await attemptRows(context.candidate.id)).toHaveLength(0);
   for (const mock of [transport.gateway, transport.cli, transport.grok]) expect(mock).not.toHaveBeenCalled();
   const after = await jobRow();
-  for (const key of ["requested_version", "processed_version", "cursor", "not_before", "last_error", "last_success_at"])
+  for (const key of ["requested_version", "processed_version", "cursor", "not_before", "last_success_at"])
     expect(after[key], key).toEqual(before[key]);
-  expect(after).toMatchObject({ locked_at: null, lease_token: null });
+  // 던지지 않고 끝난 틱이라 지난 실패 기록은 지운다(runner.ts) — fixture 의 "prior site error"
+  expect(after).toMatchObject({ locked_at: null, lease_token: null, last_error: null });
   expect(await rows("model_capacity_requests")).toEqual(baseline!.model_capacity_requests);
   expect(await rows("model_capacity_events")).toEqual(baseline!.model_capacity_events);
 }));
@@ -422,8 +423,8 @@ it("preserves a concurrent producer request and pause when a typed error defers 
   const after = await jobRow();
   expect(after.requested_version).toBe(Number(before.requested_version) + 1);
   expect(after.not_before).toBe("2101-01-01T00:00:00");
-  for (const key of ["processed_version", "cursor", "last_error", "last_success_at"]) expect(after[key], key).toEqual(before[key]);
-  expect(after).toMatchObject({ locked_at: null, lease_token: null });
+  for (const key of ["processed_version", "cursor", "last_success_at"]) expect(after[key], key).toEqual(before[key]);
+  expect(after).toMatchObject({ locked_at: null, lease_token: null, last_error: null });
 }));
 
 it("takes the model control lock before any S3, candidate or job locks in its domain claim", () => exercise(async () => {

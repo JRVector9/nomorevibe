@@ -26,6 +26,7 @@ vi.mock("@/lib/domain/products/repository", () => ({ listProductSlugs: vi.fn() }
 vi.mock("@/lib/domain/products/popular", () => ({ getPopularGroups: vi.fn() }));
 import { translateKoreanTaglinesWithModelCapacity } from "@/lib/domain/products/korean-tagline-model-capacity";
 import { KOREAN_TAGLINE_MODEL } from "@/lib/crawl/translate";
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 const task = { productId: 17, name: "owner/Doc", tagline: "Document management tools. Additional details for teams.", repoUrl: "https://github.com/owner/Doc", attempts: 9, lastError: "rejected:too_long" };
 const item = { name: "Doc", tagline: leadClause(task.tagline) };
 const role = { role: "text" as const, instanceId: "korean-unit", bootId: randomUUID(), release: "unit", epoch: 1, kind: "primary" as const };
@@ -42,7 +43,9 @@ const failure = { ok: false as const, error: "network" };
 const terminal = { kind: "product_tagline_ko_gateway_terminal" };
 const options = () => ({ timeoutMs: 45_000, roleLease: role });
 beforeEach(() => {
-  vi.resetAllMocks(); vi.stubEnv("ABCLLM_API_KEY", "unit");
+  vi.resetAllMocks();
+  // The native route opens only on a directly connected engine (admin contract, transport direct); the gateway call is mocked.
+  setServingContractSnapshotForTest([{ routeId: "product-tagline-ko", model: KOREAN_TAGLINE_MODEL, contract: {}, auth: "none", apiKey: null, transport: "direct" }]);
   mocks.control.mockResolvedValue({ mode: "open", policy: { routes: [{ provider: "abcllm", routeId: "product-tagline-ko", model: KOREAN_TAGLINE_MODEL }] } });
   mocks.call.mockReturnValue(call); mocks.prepare.mockResolvedValueOnce({ kind: "ready", members, role: boundRole })
     .mockResolvedValue({ kind: "ready", dispatch, expectation });
@@ -51,7 +54,7 @@ beforeEach(() => {
   mocks.native.mockResolvedValue({ result, terminal }); mocks.reconcile.mockResolvedValue({ kind: "settled" });
   mocks.cancel.mockResolvedValue(true); mocks.unknown.mockResolvedValue(true); mocks.legacy.mockResolvedValue(result);
 });
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => { setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); });
 it("preserves the disabled legacy ordered shortened wire and original rejection identity", async () => {
   mocks.control.mockResolvedValue({ mode: "disabled" });
   expect(await translateKoreanTaglinesWithModelCapacity([task], ["korean-unit"], job, { timeoutMs: 45_000 })).toEqual({ kind: "result", result });
@@ -61,10 +64,10 @@ it("preserves the disabled legacy ordered shortened wire and original rejection 
   await expect(translateKoreanTaglinesWithModelCapacity([task], [], job, options())).rejects.toBe(original);
   expect(mocks.request).not.toHaveBeenCalled(); expect(mocks.prepare).not.toHaveBeenCalled();
 });
-it("preserves no_key without a model control read", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", ""); mocks.legacy.mockResolvedValue({ ok: false, error: "no_key" });
+it("preserves the legacy no_key result without a direct contract and without a model control read", async () => {
+  setServingContractSnapshotForTest([]); mocks.legacy.mockResolvedValue({ ok: false, error: "no_key" });
   expect(await translateKoreanTaglinesWithModelCapacity([task], [], job, options())).toEqual({ kind: "result", result: { ok: false, error: "no_key" } });
-  expect(mocks.control).not.toHaveBeenCalled();
+  expect(mocks.control).not.toHaveBeenCalled(); expect(mocks.call).not.toHaveBeenCalled(); expect(mocks.request).not.toHaveBeenCalled();
 });
 it("reuses the same pending ID and settles before returning a committed writer expectation", async () => {
   mocks.pending.mockResolvedValue({ requestId: reservation.requestId, state: "waiting" });

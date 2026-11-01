@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { createServer, type ServerResponse } from "node:http";
 import { afterEach, expect, it, vi } from "vitest";
-import { parseTagline, taglineHash, writeTagline, type TaglineEvidence } from "@/lib/crawl/tagline";
+import { crawlTaglineGatewayWire, parseTagline, taglineHash, writeTagline, type TaglineEvidence } from "@/lib/crawl/tagline";
 import { crawlTaglineGenerationHash, crawlTaglineLogicalWorkKey, crawlTaglineInputHash,
   crawlTaglineDispatchBindingHash, crawlTaglineModelDispatchSchema, type CrawlTaglineInput } from "@/lib/llm/capacity";
 import { prepareCrawlTaglineGatewayCall, writeTaglineWithReservedGateway, readCrawlTaglineGatewayTerminal,
   readProductTaglineKoGatewayTerminal, type PreparedCrawlTaglineGatewayCall } from "@/lib/crawl/agent-review-gateway";
 import type { CrawlTaglineServingContract } from "@/lib/llm/crawl-tagline-serving-contract";
+import { setServingContractSnapshotForTest, type ServingContractAuth, type ServingContractTransport } from "@/lib/llm/serving-contract-store";
 
 const fixture = vi.hoisted(() => ({ contract: null as CrawlTaglineServingContract | null }));
 vi.mock("@/lib/llm/crawl-tagline-serving-contract", async original => ({
@@ -14,6 +15,15 @@ vi.mock("@/lib/llm/crawl-tagline-serving-contract", async original => ({
 }));
 vi.mock("@/lib/llm/text-capacity-admission", () => ({ assertTextModelAdmission: vi.fn() }));
 const model = "crawl-original-model", requests = new Set<Promise<unknown>>();
+/**
+ * The abcLLM gateway was removed (2026-10-30): a crawl-tagline contract sends only when the admin pins a direct engine row
+ * (transport direct) for this route+model — no key ("none") or its own stored key. No process env key is read.
+ */
+type Row = { auth: ServingContractAuth; apiKey: string | null; transport: ServingContractTransport };
+const DIRECT: Row = { auth: "none", apiKey: null, transport: "direct" };
+function pin(row: Row | null) {
+  setServingContractSnapshotForTest(row ? [{ routeId: "crawl-tagline", model, contract: {}, ...row }] : []);
+}
 const evidence = (): TaglineEvidence => ({ name: "Notes", url: "https://notes.test", topics: ["documents", "<untrusted>"],
   language: "TypeScript", pageTitle: "Notes", pageText: "Organize and find documents for your team. ".repeat(5), readme: "" });
 const content = '{"product_description":"  Organize documents for your team.  ","source":"readme"}';
@@ -69,11 +79,13 @@ function dispatch(input: TaglineEvidence, call: PreparedCrawlTaglineGatewayCall,
 function send(...args: Parameters<typeof writeTaglineWithReservedGateway>) {
   const pending = writeTaglineWithReservedGateway(...args); requests.add(pending); void pending.catch(() => {}); return pending;
 }
-async function server(run: (state: { bodies: string[]; reply: (next: (response: ServerResponse) => void) => void }) => Promise<void>) {
-  const bodies: string[] = [], responses = new Set<Promise<void>>(), errors: unknown[] = [];
+async function server(run: (state: { bodies: string[]; authorizations: (string | undefined)[];
+  reply: (next: (response: ServerResponse) => void) => void }) => Promise<void>, row: Row | null = DIRECT) {
+  const bodies: string[] = [], authorizations: (string | undefined)[] = [], responses = new Set<Promise<void>>(), errors: unknown[] = [];
   let reply = (response: ServerResponse) => { response.end(JSON.stringify(envelope())); };
   const http = createServer((request, response) => {
     const closed = new Promise<void>(resolve => response.once("close", resolve));
+    authorizations.push(request.headers.authorization);
     const pending = (async () => { let body = ""; for await (const part of request) body += part.toString(); bodies.push(body); reply(response); await closed; })();
     responses.add(pending); void pending.catch(() => {});
   });
@@ -83,10 +95,11 @@ async function server(run: (state: { bodies: string[]; reply: (next: (response: 
     const address = http.address(); if (!address || typeof address === "string") throw new Error("fixture_address");
     fixture.contract = { version: 1, protocol: "abcllm-crawl-tagline-total-bound-v1", routeId: "crawl-tagline", provider: "abcllm",
       model, responseModel: "served-crawl", endpoint: `http://127.0.0.1:${address.port}/v1/chat/completions`, deploymentRevision: "local-only", totalTokenBound: 8192 };
-    await run({ bodies, reply: next => { reply = next; } });
+    pin(row);
+    await run({ bodies, authorizations, reply: next => { reply = next; } });
   } catch (error) { failed = true; original = error; }
   finally {
-    fixture.contract = null;
+    fixture.contract = null; setServingContractSnapshotForTest(null);
     try {
       while (requests.size) { const pending = [...requests]; await Promise.allSettled(pending); for (const promise of pending) requests.delete(promise); }
       // 클라이언트 작업이 모두 끝난 뒤에만 남은 연결을 정리한다(기존 driver 관례). watchdog은 teardown 구간만 잰다.
@@ -99,12 +112,12 @@ async function server(run: (state: { bodies: string[]; reply: (next: (response: 
   if (failed && errors.length) throw new AggregateError([original, ...errors], "native_fixture_failed", { cause: original });
   if (failed) throw original; if (errors.length) throw new AggregateError(errors);
 }
-afterEach(() => { fixture.contract = null; vi.unstubAllEnvs(); });
+afterEach(() => { fixture.contract = null; setServingContractSnapshotForTest(null); });
 it("sends the original evidence once and issues an immutable opaque parsed outcome", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ bodies }) => {
+  await server(async ({ bodies, authorizations }) => {
     const input = evidence(), call = prepared(input), owned = dispatch(input, call), response = await send(input, owned, call);
     expect(response.result).toEqual({ ok: true, tagline: "Organize documents for your team", source: "page" });
-    expect(bodies).toEqual([originalWire(input, model)]);
+    expect(bodies).toEqual([originalWire(input, model)]); expect(authorizations).toEqual([undefined]);
     const proof = readCrawlTaglineGatewayTerminal(response.terminal);
     expect(proof).toMatchObject({ dispatch: owned, finishReason: "stop", outcome: response.result,
       actualUsage: { inputTokens: 80, outputTokens: 20, totalTokens: 100 }, provenance: "upstream_reported" });
@@ -112,15 +125,16 @@ it("sends the original evidence once and issues an immutable opaque parsed outco
   });
 });
 it("keeps the legacy whole evidence wire and parser independently unchanged", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); const input = evidence(); let wire = "";
-  const result = await writeTagline(input, { model, timeoutMs: 1000, request: (async (_url, init) => {
-    wire = String(init?.body); return new Response(JSON.stringify(envelope()));
-  }) as typeof fetch });
-  expect(result).toEqual({ ok: true, tagline: "Organize documents for your team", source: "page" });
-  expect(wire).toBe(originalWire(input, model));
+  const input = evidence();
+  expect(crawlTaglineGatewayWire(input, model)).toBe(originalWire(input, model));
+  expect(parseTagline(content, input)).toEqual({ ok: true, tagline: "Organize documents for your team", source: "page" });
+  // The legacy gateway sender no longer sends anything (gateway removed 2026-10-30), even with a direct row pinned.
+  pin(DIRECT); const request = vi.fn<typeof fetch>();
+  expect(await writeTagline(input, { model, timeoutMs: 1000, request })).toEqual({ ok: false, error: "no_key" });
+  expect(request).not.toHaveBeenCalled();
 });
 it("keeps production unsupported without caller-enabled terminal authority", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only");
+  pin(DIRECT);
   const leaf = await vi.importActual<typeof import("@/lib/llm/crawl-tagline-serving-contract")>("@/lib/llm/crawl-tagline-serving-contract");
   expect(leaf.resolveCrawlTaglineServingContract(model)).toBeNull();
   expect(prepareCrawlTaglineGatewayCall(evidence(), { model, timeoutMs: 1000 })).toEqual({ kind: "unsupported", reason: "provider_contract_unavailable" });
@@ -128,12 +142,16 @@ it("keeps production unsupported without caller-enabled terminal authority", asy
   await server(async ({ bodies }) => {
     for (const input of [{ ...evidence(), extra: true }, { ...evidence(), topics: new Array(1) }, { ...evidence(), pageText: null }])
       expect(prepareCrawlTaglineGatewayCall(input as unknown as TaglineEvidence, { model, timeoutMs: 1000 }).kind).toBe("unsupported");
-    vi.stubEnv("ABCLLM_API_KEY", "");
-    expect(prepareCrawlTaglineGatewayCall(evidence(), { model, timeoutMs: 1000 }).kind).toBe("unsupported"); expect(bodies).toEqual([]);
+    // A resolved contract alone opens nothing: no admin row, a gateway-transport row, gateway auth or an unreadable stored key.
+    for (const row of [null, { ...DIRECT, transport: "gateway" as const }, { ...DIRECT, auth: "gateway" as const },
+      { ...DIRECT, auth: "stored" as const }]) {
+      pin(row); expect(prepareCrawlTaglineGatewayCall(evidence(), { model, timeoutMs: 1000 }).kind).toBe("unsupported");
+    }
+    expect(bodies).toEqual([]);
   });
 });
 it("uses separate one-use calls for the two physical asks with identical original wire", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ bodies, reply }) => {
+  await server(async ({ bodies, reply }) => {
     reply(response => response.end(JSON.stringify(envelope({ choices: [{ index: 0,
       message: { role: "assistant", content: '{"tagline":"","source":"page"}' }, finish_reason: "stop" }] }))));
     const input = evidence(), call1 = prepared(input), first = dispatch(input, call1), result1 = await send(input, first, call1);
@@ -151,7 +169,7 @@ it("uses separate one-use calls for the two physical asks with identical origina
   });
 });
 it("rejects copied preparation, changed evidence bytes and inconsistent source or phase before POST", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ bodies }) => {
+  await server(async ({ bodies }) => {
     const input = evidence(), call = prepared(input), owned = dispatch(input, call);
     await expect(send(input, owned, { ...call })).rejects.toThrow("crawl_tagline_gateway_call_mismatch");
     for (const changed of [{ ...input, pageText: "Changed" }, { ...input, name: "Changed" },
@@ -167,7 +185,7 @@ it("rejects copied preparation, changed evidence bytes and inconsistent source o
   });
 });
 it("snapshots before await and keeps copied proof, result mutation and request reuse outside authority", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ bodies }) => {
+  await server(async ({ bodies, authorizations }) => {
     const input = evidence(), original = structuredClone(input), call = prepared(input), owned = dispatch(input, call), originalDispatch = structuredClone(owned);
     const pending = send(input, owned, call); input.topics.reverse(); (owned as { requestId: string }).requestId = randomUUID();
     const response = await pending, proof = readCrawlTaglineGatewayTerminal(response.terminal);
@@ -180,12 +198,13 @@ it("snapshots before await and keeps copied proof, result mutation and request r
     expect(readProductTaglineKoGatewayTerminal(response.terminal)).toBeNull();
     await expect(send(original, originalDispatch, call)).rejects.toThrow("crawl_tagline_gateway_call_mismatch");
     await expect(send(original, originalDispatch, prepared(original))).rejects.toThrow("crawl_tagline_gateway_call_mismatch");
-    expect(bodies).toHaveLength(1); expect(JSON.stringify(proof)).not.toContain("local-test-only");
-  });
+    expect(bodies).toHaveLength(1); expect(authorizations).toEqual(["Bearer local-test-only"]);
+    expect(JSON.stringify(proof)).not.toContain("local-test-only");
+  }, { auth: "stored", apiKey: "local-test-only", transport: "direct" });
 });
 it.each(['{"tagline":"","source":"both"}', "not JSON", '{"description":"A sentence. ","source":"readme"}'])
   ("persists only the original bounded parsed business outcome: %s", async text => {
-    vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ reply }) => {
+    await server(async ({ reply }) => {
       reply(response => response.end(JSON.stringify(envelope({ choices: [{ index: 0,
         message: { role: "assistant", content: text }, finish_reason: "stop" }] }))));
       const input = evidence(), call = prepared(input), response = await send(input, dispatch(input, call), call);
@@ -194,7 +213,7 @@ it.each(['{"tagline":"","source":"both"}', "not JSON", '{"description":"A senten
     });
   });
 it("keeps the original parser independent of a genuine length physical terminal", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ reply }) => {
+  await server(async ({ reply }) => {
     reply(response => response.end(JSON.stringify(envelope({ choices: [{ index: 0,
       message: { role: "assistant", content }, finish_reason: "length" }] }))));
     const input = evidence(), call = prepared(input), response = await send(input, dispatch(input, call), call);
@@ -204,7 +223,7 @@ it("keeps the original parser independent of a genuine length physical terminal"
 });
 it.each([{ usage: null }, { usage_provenance: "gateway_estimated" }, { usage: { prompt_tokens: -1 } }])
   ("keeps full C when native counters have no verified provenance: %j", async change => {
-    vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ reply }) => {
+    await server(async ({ reply }) => {
       reply(response => response.end(JSON.stringify(envelope(change)))); const input = evidence(), call = prepared(input);
       const response = await send(input, dispatch(input, call), call);
       expect(readCrawlTaglineGatewayTerminal(response.terminal)).toMatchObject({ actualUsage: null, provenance: "unknown", dispatch: { binding: { chargedTokens: 8192 } } });
@@ -214,13 +233,13 @@ it.each([{ usage: { prompt_tokens: 8192, completion_tokens: 1, total_tokens: 819
   { choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: null }] },
   { choices: [0, 1].map(index => ({ index, message: { role: "assistant", content }, finish_reason: "stop" })) }])
   ("refuses contradictory native terminal metadata: %j", async change => {
-    vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ bodies, reply }) => {
+    await server(async ({ bodies, reply }) => {
       reply(response => response.end(JSON.stringify(envelope(change)))); const input = evidence(), call = prepared(input);
       expect(await send(input, dispatch(input, call), call)).toEqual({ result: { ok: false, error: "invalid_output" }, terminal: null }); expect(bodies).toHaveLength(1);
     });
   });
 it.each([404, 429, 307])("performs one physical POST for HTTP %i with original errors and no redirect/retry", async status => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ bodies, reply }) => {
+  await server(async ({ bodies, reply }) => {
     reply(response => { response.statusCode = status; response.setHeader("Location", "/v1/chat/completions"); response.end("failure"); });
     const input = evidence(), call = prepared(input);
     expect(await send(input, dispatch(input, call), call)).toEqual({ result: { ok: false, error: status === 404 ? "model_unavailable" : status === 429 ? "rate_limit" : `http_${status}` }, terminal: null });
@@ -228,14 +247,14 @@ it.each([404, 429, 307])("performs one physical POST for HTTP %i with original e
   });
 });
 it("leaves truncated HTTP EOF without terminal authority after actual body settlement", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ bodies, reply }) => {
+  await server(async ({ bodies, reply }) => {
     reply(response => { response.writeHead(200, { "Content-Length": "1000" }); response.write("{"); response.socket?.destroy(); });
     const input = evidence(), call = prepared(input);
     expect(await send(input, dispatch(input, call), call)).toEqual({ result: { ok: false, error: "network" }, terminal: null }); expect(bodies).toHaveLength(1);
   });
 });
 it("settles actual caller abort during the body without issuing terminal authority", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ bodies, reply }) => {
+  await server(async ({ bodies, reply }) => {
     let arrived!: () => void; const ready = new Promise<void>(resolve => { arrived = resolve; });
     reply(response => { response.writeHead(200); response.flushHeaders(); arrived(); });
     const input = evidence(), call = prepared(input), controller = new AbortController();
@@ -245,14 +264,14 @@ it("settles actual caller abort during the body without issuing terminal authori
   });
 });
 it("retains the original timeout source through a pending body read", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ bodies, reply }) => {
+  await server(async ({ bodies, reply }) => {
     reply(response => { response.writeHead(200); response.flushHeaders(); }); const input = evidence(), call = prepared(input, 80);
     expect(await send(input, dispatch(input, call), call)).toEqual({ result: { ok: false, error: "timeout" }, terminal: null }); expect(bodies).toHaveLength(1);
   });
 });
-it("makes a key removed after preparation incapable of POST or terminal issuance", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ bodies }) => {
-    const input = evidence(), call = prepared(input), owned = dispatch(input, call); vi.stubEnv("ABCLLM_API_KEY", "");
+it("makes a direct contract removed after preparation incapable of POST or terminal issuance", async () => {
+  await server(async ({ bodies }) => {
+    const input = evidence(), call = prepared(input), owned = dispatch(input, call); pin(null);
     expect(await send(input, owned, call)).toEqual({ result: { ok: false, error: "no_key" }, terminal: null }); expect(bodies).toEqual([]);
   });
 });

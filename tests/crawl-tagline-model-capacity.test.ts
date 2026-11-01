@@ -22,6 +22,8 @@ vi.mock("@/lib/crawl/pipeline-stage-context", () => ({ lockPipelineInputStages: 
 vi.mock("@/lib/crawl/settings", async load => ({ ...await load<typeof import("@/lib/crawl/settings")>(), getSettings: mocks.settings }));
 import { writeCrawlTaglineWithModelCapacity } from "@/lib/crawl/tagline-model-capacity";
 import { TAGLINE_MODEL, taglineEvidence, taglineHash } from "@/lib/crawl/tagline";
+import { scopedModel } from "@/lib/llm/model-registry";
+import { setServingContractSnapshotForTest, TEXT_ROUTE_BLOCK_DETAIL } from "@/lib/llm/serving-contract-store";
 import type { TaglineTask } from "@/lib/crawl/taglines";
 const at = new Date("2026-10-17T01:02:03.000Z"), task: TaglineTask = { candidate: { id: 17, repo: "fixture/doc", productUrl: "https://doc.test",
   state: "needs_review", reason: "no_description", decidedBy: "auto", signals: null, publishedSlug: null, judgedAt: null, decidedAt: null, updatedAt: at },
@@ -39,8 +41,11 @@ const result = { ok: true as const, tagline: "Document manager", source: "page" 
 const parent = { requestId: reservation.requestId, bindingHash: "f".repeat(64), responseHash: "1".repeat(64) };
 const terminal = { kind: "crawl_tagline_gateway_terminal" };
 const options = () => ({ timeoutMs: 45_000, roleLease: role });
+/** The route opens only on an admin engine row connected directly (transport direct); the abcLLM gateway key was removed (2026-10-30). */
+const pinDirect = () => setServingContractSnapshotForTest([{ routeId: "crawl-tagline", model: scopedModel("crawl-tagline", TAGLINE_MODEL),
+  contract: {}, auth: "none", apiKey: null, transport: "direct" }]);
 beforeEach(() => {
-  vi.resetAllMocks(); vi.stubEnv("ABCLLM_API_KEY", "unit");
+  vi.resetAllMocks(); pinDirect();
   mocks.control.mockResolvedValue({ mode: "open", policy: { routes: [{ routeId: "crawl-tagline", provider: "abcllm", model: TAGLINE_MODEL }] } });
   mocks.call.mockReturnValue(call); mocks.prepare.mockResolvedValueOnce({ kind: "ready", member, role: boundRole, snapshot: {} })
     .mockResolvedValue({ kind: "ready", dispatch, expectation });
@@ -50,7 +55,7 @@ beforeEach(() => {
   mocks.resume.mockResolvedValue({ kind: "result", result: empty, askOrdinal: 1, parent, expectation });
   mocks.settings.mockResolvedValue({ enabled: true }); mocks.write.mockResolvedValue({ stored: true, released: true });
 });
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => setServingContractSnapshotForTest(null));
 it("defers an unsupported production contract before request, attempt or POST", async () => {
   mocks.call.mockReturnValue({ kind: "unsupported", reason: "provider_contract_unavailable" });
   await expect(writeCrawlTaglineWithModelCapacity(task, job, options())).rejects.toMatchObject({ reason: "provider_contract_unavailable" });
@@ -60,6 +65,11 @@ it("returns disabled without reading positive history or preparing a model", asy
   mocks.control.mockResolvedValue({ mode: "disabled" });
   expect(await writeCrawlTaglineWithModelCapacity(task, job, options())).toEqual({ kind: "disabled" });
   expect(mocks.call).not.toHaveBeenCalled(); expect(mocks.prepare).not.toHaveBeenCalled(); expect(mocks.history).not.toHaveBeenCalled();
+});
+it("returns disabled without a direct engine contract before reading the control or preparing a model", async () => {
+  setServingContractSnapshotForTest([]);
+  expect(await writeCrawlTaglineWithModelCapacity(task, job, options())).toEqual({ kind: "disabled" });
+  expect(mocks.control).not.toHaveBeenCalled(); expect(mocks.call).not.toHaveBeenCalled(); expect(mocks.request).not.toHaveBeenCalled();
 });
 it("reuses the same waiting ID with exact phase input", async () => {
   mocks.pending.mockResolvedValue({ requestId: reservation.requestId, state: "waiting" });
@@ -143,13 +153,15 @@ it("re-enters a deferred second on the next tick without asking first again", as
   expect(mocks.request.mock.calls.map(([request, input]) => [request.requestId, input.askOrdinal])).toEqual([[waiting, 2], [waiting, 2]]);
   expect(mocks.native).toHaveBeenCalledTimes(1); expect(mocks.write).not.toHaveBeenCalled();
 });
-it("no-key, settings-disabled, reuse and no-evidence jobs remain model-free", async () => {
+it("no-contract, settings-disabled, reuse and no-evidence jobs remain model-free", async () => {
   const { writeTaglines } = await import("@/lib/crawl/jobs/tagline");
   // 소개 생성은 jobRunOptions 에 예산 줄이 없어 러너 기본 25초로 돈다 — 상한 45초를 온전히 주는 창을 보려면 틱 예산을 준다(러너가 deadlineAt 을 준다)
   const ctx = { lease: job, cursor: null, hasBudget: () => true, deadlineAt: Date.now() + 55_000, save: vi.fn(), log: vi.fn() };
-  // 키가 없으면 부르지 않는다 — 성공이 아니라 제 일 못 함(no_key)으로 넘긴다
-  vi.stubEnv("ABCLLM_API_KEY", ""); expect(await writeTaglines(ctx)).toEqual({ done: true, degraded: { code: "no_key", detail: "이 경로의 직접 연결 계약도 text 워커의 ABCLLM_API_KEY 도 없습니다" } });
-  vi.stubEnv("ABCLLM_API_KEY", "unit"); mocks.settings.mockResolvedValueOnce({ enabled: false });
+  // 직접 연결 계약이 없으면 부르지 않는다 — 성공이 아니라 제 일 못 함(no_direct_contract)으로 넘긴다(게이트웨이는 2026-10-30 제거)
+  setServingContractSnapshotForTest([]);
+  expect(await writeTaglines(ctx)).toEqual({ done: true, degraded: { code: "no_direct_contract", detail: TEXT_ROUTE_BLOCK_DETAIL.no_direct_contract } });
+  expect(mocks.settings).not.toHaveBeenCalled(); expect(mocks.tasks).not.toHaveBeenCalled();
+  pinDirect(); mocks.settings.mockResolvedValueOnce({ enabled: false });
   expect(await writeTaglines(ctx)).toEqual({ done: true });
   const reuse = { ...task, written: { sourceHash: member.sourceHash, errorCode: null } } as TaglineTask;
   const noEvidence = { ...task, document: { ...task.document, pageMeta: {} } };

@@ -199,7 +199,6 @@ services:
       DB_POOL_MAX: "11"
       WORKER_JOB_TIMEOUT_SECONDS: "180"
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
-      CRAWL_REVIEW_MODEL: ${CRAWL_REVIEW_MODEL:-}
     mem_limit: 2g
 
   publisher:
@@ -229,7 +228,6 @@ services:
       # Dokploy text 앱(M3·mini)도 같은 값 이상이어야 한다. lib/db/host-budget.ts workerMax.text 와 같다
       DB_POOL_MAX: "6"
       WORKER_JOB_TIMEOUT_SECONDS: "180"
-      ABCLLM_API_KEY: ${ABCLLM_API_KEY:-}
     mem_limit: 512m
 
   connect-agent:

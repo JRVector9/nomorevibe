@@ -1,5 +1,9 @@
 # 모델 레지스트리와 장비별 선택
 
+> 2026-10-31 abcLLM 정리: `crawl-tagline`·`product-translate`는 env 선택(`ABCLLM_TAGLINE_MODEL`, 상품 번역 모델 env와 그 `_KEY`)을
+> 더 읽지 않는다(`MODEL_PURPOSE_ENV` 값 null). 모델은 등록부 purposes·관리자 등록부 덮어쓰기·단계 풀이 정한다. 아래의 env 우선순위
+> 설명은 이 두 경로에는 해당하지 않는다. 텍스트 경로는 엔진 직접 연결 계약(transport direct)이 있을 때만 호출된다.
+
 이 문서는 설정 준비 절차다. 이 차선은 배포·운영 DB 갱신·실제 모델 서버 호출을 수행하지 않았다. 현재 모델의 운영 참여는 실제 dispatch, terminal, 품질 검사 및 저장 영수증으로 따로 확인한다.
 
 ## 설정 위치와 우선순위

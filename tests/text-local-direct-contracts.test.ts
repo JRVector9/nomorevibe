@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { DIRECT_OPENAI_CHAT_PROTOCOL, DIRECT_REQUEST_TOKEN_BOUND, servingContractProvider } from "@/lib/llm/direct-serving-contract";
-import { ABCLLM_STRICT_TERMINAL_OPT_IN, gatewayServingContractsFromConfig, parseGatewayServingContract,
+import { ABCLLM_STRICT_TERMINAL_OPT_IN, parseGatewayServingContract,
   type GatewayServingRoute } from "@/lib/llm/gateway-serving-contract-config";
 import { devicePhysicalLimit, setServingContractSnapshotForTest, servingContractSnapshotFromRows, textRouteCallable } from "@/lib/llm/serving-contract-store";
 import { textProfileDispatchBindingHash, textProfileDispatchBindingSchema, textProfileInputHash, type TextProfileDispatchBinding } from "@/lib/llm/capacity";
@@ -81,16 +81,15 @@ describe("text route contract shapes (PR 3b-E)", () => {
     expect(kind.union.safeParse(direct(kind, { protocol: "ai2-direct-openai-chat-v1" })).success).toBe(false);
   });
 
-  it("a direct contract of a strict-terminal translation route opens without the gateway opt-in; the raw shape still needs it", () => {
+  it("a direct contract of a strict-terminal translation route opens without the gateway opt-in; a raw row without it stays closed and does not close the direct row", () => {
     for (const kind of KINDS.filter(kind => kind.strict)) {
-      const config = JSON.stringify({ version: 1, contracts: [direct(kind)] });
-      expect(gatewayServingContractsFromConfig(config, kind.route, kind.union).get(engineModel)).toMatchObject({ provider: "local-direct" });
       expect(parseGatewayServingContract(direct(kind), kind.route, kind.union)).toMatchObject({ provider: "local-direct" });
-      // One raw entry without the opt-in still closes the whole kind, direct entries included (unchanged fail-closed rule).
       const { strictTerminalOptIn: _dropped, ...withoutOptIn } = raw(kind);
       void _dropped;
-      expect(gatewayServingContractsFromConfig(JSON.stringify({ version: 1, contracts: [direct(kind), withoutOptIn] }), kind.route, kind.union).size).toBe(0);
       expect(parseGatewayServingContract(withoutOptIn, kind.route, kind.union)).toBeNull();
+      setServingContractSnapshotForTest([row(kind.route, direct(kind)), row(kind.route, withoutOptIn)]);
+      expect(kind.resolve(engineModel, "local-direct")).toMatchObject({ provider: "local-direct" });
+      expect(kind.resolve(gatewayModel)).toBeNull();
     }
   });
 

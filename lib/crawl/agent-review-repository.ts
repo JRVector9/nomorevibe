@@ -40,7 +40,6 @@ import type { CrawlSettings } from "./settings-schema";
 import { firstReviewer, type FirstReviewer } from "./agent-review";
 import { firstReviewers, firstReviewerKey, firstReviewIdentitySql, firstReviewTableRows, hasFirstReviewer, selectFirstReviewer, selectTableFirstReviewer,
   tableFirstReviewers, type FirstReviewPoolPosition } from "./first-reviewers";
-import { assignmentTableEnabled } from "@/lib/llm/assignment-flag";
 import { requireStageAssignments } from "@/lib/llm/stage-assignment-snapshot";
 import { secondReviewFallbacks, secondReviewVoters } from "./second-review-voters";
 import { candidateStarAutoApproval } from "./star-auto-approval";
@@ -60,9 +59,9 @@ type Executor = typeof db | ProductTransaction;
 /** Selection is a hint; the existing candidate/item/capacity locks still grant all authority. */
 export async function chooseFirstReviewForCandidate(context: ReviewDomainContext, executor: Executor = db,
   blocked: ReadonlySet<string> = new Set()): Promise<FirstReviewer | null> {
-  // 배정 표(PR 3b-B, MODEL_ASSIGNMENT_TABLE): TX 밖의 첫 고르기만 스냅숏을 새로 받는다(못 읽었으면 assignments_unavailable 로 미룬다) —
-  // 잠금 아래 재확인은 같은 판을 다시 쓴다.
-  if (executor === db && assignmentTableEnabled()) await requireStageAssignments();
+  // 배정 표(PR 3b-B): TX 밖의 첫 고르기만 토글·스냅숏을 새로 받는다(스위치가 켜졌는데 못 읽었거나, 토글 자체를 아직 못 읽었으면 assignments_unavailable 로
+  // 미룬다 — PR 3b-E). 꺼졌으면 곧 돌아온다. 잠금 아래 재확인은 같은 판을 다시 쓴다.
+  if (executor === db) await requireStageAssignments();
   const table = firstReviewTableRows(context.settings);
   const pool = table ? tableFirstReviewers(table) : firstReviewers(context.settings, firstReviewer(context.settings));
   // Preserve the original query footprint for installations which never enabled a pool.

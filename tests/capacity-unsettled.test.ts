@@ -1,4 +1,4 @@
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createHash, randomUUID } from "node:crypto";
 
 /**
@@ -26,6 +26,7 @@ vi.mock("@/lib/observability/logger", () => ({ logger: { info: vi.fn(), warn: mo
 import { markUnsettledDispatch } from "@/lib/llm/capacity-unsettled";
 import { runCliWithModelCapacity } from "@/lib/llm/cli-model-capacity";
 import { translateReasonsWithModelCapacity } from "@/lib/crawl/reason-translation-model-capacity";
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 
 const dispatch = Object.freeze({ requestId: randomUUID(), binding: { transport: { boundary: "transport" } }, boundary: "committed-dispatch" });
 const terminal = Object.freeze({ kind: "cli_process_terminal" }), cleanup = new Error("settlement write failed");
@@ -36,6 +37,7 @@ beforeEach(() => {
   mocks.requestCli.mockResolvedValue({ kind: "granted", reservation: { boundary: "reservation" } });
   mocks.lock.mockResolvedValue({ boundary: "lock" }); mocks.finish.mockResolvedValue(dispatch);
 });
+afterEach(() => setServingContractSnapshotForTest(null));
 const work = (beforeSpawn = true) => ({ beforeSpawn: () => beforeSpawn,
   plan: async () => ({ identity: { boundary: "identity" }, target: { kind: "ai1", candidateId: 1 } }) as never,
   prove: async () => ({ boundary: "binding" }) as never });
@@ -81,7 +83,9 @@ it("CLI runner: carries the final admission predicate through file preparation a
 
 it("text coordinator (reason translation): a failed terminal settlement is marked commit_unknown with both errors kept", async () => {
   const body = "This original reason describes a deployed useful task tracker.", hash = createHash("sha256").update(body).digest("hex");
-  vi.stubEnv("ABCLLM_API_KEY", "test-key"); vi.stubEnv("ROLE_LEASE_ROLE", "text");
+  // The abcLLM gateway is gone (2026-10-30): the route opens only with a direct admin row for its model.
+  setServingContractSnapshotForTest([{ routeId: "reason-translate", model: "Reason Model", contract: null, auth: "none", apiKey: null, transport: "direct" }]);
+  vi.stubEnv("ROLE_LEASE_ROLE", "text");
   const role = { role: "text", instanceId: "f2-reason", bootId: randomUUID(), release: "unit", epoch: 1, kind: "primary" };
   const reservation = { requestId: randomUUID(), token: randomUUID(), owner: { instanceId: role.instanceId, bootId: role.bootId },
     epoch: 1, revision: 1, policyHash: "c".repeat(64) };

@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
 import { eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { jobs, crawlCandidates, crawlDocuments, crawlFrontier, crawlSettings, crawlReviewAttempts } from "@/lib/db/schema";
@@ -389,13 +389,12 @@ it("does not let an old model approval suppress review or satisfy enforce public
   const context = await fixture("enforce"); const first = await claimAgentReview(context);
   if (first.kind === "skipped") throw new Error(first.reason);
   await recordAgentReview({...context, receipt: first.receipt, outcome});
-  vi.stubEnv("CRAWL_REVIEW_MODEL", "other-model");
-  try {
-    expect((await listReviewCandidates(context.settings)).map(row => row.id)).toContain(context.candidate.id);
-    expect(await db.select().from(crawlCandidates).where(reviewApprovalPredicate(context.settings))).toEqual([]);
-    const candidate = (await crawl.getCandidate(context.candidate.repo))!;
-    await expect(db.transaction(tx => assertReviewApproval(tx, {...context, candidate}))).rejects.toThrow("review_approval_changed");
-  } finally {vi.unstubAllEnvs();}
+  // 1차 심사자를 다른 모델로 바꾼다 — 관리자 설정(firstReview)만 본다(CRAWL_REVIEW_MODEL 대체는 2026-10-31 제거)
+  const settings = {...context.settings, firstReview: {provider: "claude-cli" as const, model: "other-model"}};
+  expect((await listReviewCandidates(settings)).map(row => row.id)).toContain(context.candidate.id);
+  expect(await db.select().from(crawlCandidates).where(reviewApprovalPredicate(settings))).toEqual([]);
+  const candidate = (await crawl.getCandidate(context.candidate.repo))!;
+  await expect(db.transaction(tx => assertReviewApproval(tx, {...context, settings, candidate}))).rejects.toThrow("review_approval_changed");
 });
 
 /**

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ControlSnapshot, ModelEnv } from "@/lib/operations/pipeline-control";
 
 const mocks = vi.hoisted(() => ({
@@ -12,7 +12,7 @@ vi.mock("@/lib/observability/logger", () => ({ logger: { warn: mocks.warn, info:
 import { readModelRouteStatus } from "@/lib/operations/model-route-status";
 import { formatControlStatus, statusRouteContracts } from "@/lib/operations/pipeline-control";
 
-const MODELS: ModelEnv = { crawlReview: "env-ai1", translate: "tr", productTranslate: "product-tr", tagline: "tg", profile: "pf", verify: "vf", introCheck: "intro" };
+const MODELS: ModelEnv = { translate: "tr", productTranslate: "product-tr", tagline: "tg", profile: "pf", verify: "vf", introCheck: "intro" };
 type Stage = ControlSnapshot["stages"][number];
 const stage = (name: "ai1" | "ai2", extra: Partial<Stage> = {}): Stage => ({ stage: name, mode: "legacy", drainingFrom: null, epoch: 1, contract: 1,
   live: 0, unsettled: 0, legacyJobLive: false, consumers: 0, ...extra });
@@ -25,6 +25,7 @@ const SNAPSHOT: ControlSnapshot = { now: "2026-10-18T00:44:02.000Z", fence: { st
   recentInstances: [], uptimeSplitMode: "legacy", reviewSettings: { firstReview: { provider: "abcllm", model: "ai1-gw" } }, auditCampaign: null };
 
 beforeEach(() => { vi.clearAllMocks(); });
+afterEach(() => vi.unstubAllEnvs());
 
 /**
  * 모델 경로 계약·전환 진행은 운영 CLI(status)에만 있었다(ops-v8 PR8). 관리자 화면도 같은 readback·같은 판정을 쓰되,
@@ -65,5 +66,12 @@ describe("모델 경로 계약 읽기", () => {
       ...["reason-translate", "product-tagline-ko", "search-query-translate"].map(routeId =>
         ({ routeId, provider: "abcllm", model: "tr", status: "unmapped" })),
     ]));
+  });
+
+  it("1차 심사자 설정이 없으면 CRAWL_REVIEW_MODEL 을 읽지 않고 claude-cli 모델 미상으로 판정한다", () => {
+    vi.stubEnv("CRAWL_REVIEW_MODEL", "env-ai1");
+    const routes = statusRouteContracts({ ...SNAPSHOT, reviewSettings: {} }, MODELS);
+    expect(routes).toContainEqual({ routeId: "crawl-agent-review", provider: "claude-cli", model: null, status: "unknown" });
+    expect(routes.some(row => row.model === "env-ai1")).toBe(false);
   });
 });

@@ -608,7 +608,7 @@ const FIXED_MESSAGES: Record<string, string> = {
 };
 export const HELPER_REFUSAL_MESSAGES: Readonly<Record<HelperSaveRefusal, string>> = {
   helper_route_is_primary: "도우미 경로가 이 장비의 우선 역할입니다 — 장비 한도에서 순위를 2 이상으로 바꿔 주세요(/admin/models/devices).",
-  helper_route_unmapped: "정책에 도우미 경로가 없습니다(DRAIN 창에서 rev14 적용 뒤 저장하세요).",
+  helper_route_unmapped: "정책에 도우미 경로(live·shadow)가 없습니다 — 경로를 정책에 먼저 덧붙인 뒤 저장하세요(DRAIN 은 필요 없습니다).",
   helper_ai2_voter_not_in_fallbacks: "2차 대체 모델 목록에 이 모델(local-direct)을 먼저 넣으세요(단계별 모델 → 2차 검수 대체).",
   helper_device_unconfigured: "도우미 장비 행이 없습니다 — 장비 한도(/admin/models/devices)에서 이 장비를 먼저 저장하세요.",
   helper_live_requires_promotion: "실전은 승격으로만 켤 수 있습니다(섀도 근거·확인 「실전」 — PR 2c).",

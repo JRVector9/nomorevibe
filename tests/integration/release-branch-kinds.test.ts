@@ -14,6 +14,7 @@ import { publicationClassifyReleaseLogicalSql, releaseKindsDispatchSql } from "@
 import { textLocalDirectDispatchSql, textLocalDirectEventTerminalSql, textLocalDirectTerminalSql } from "@/lib/llm/gateway-local-direct-binding-sql";
 import { cliExecutorFixture } from "../fixtures/cli-executor-boundary";
 import { TEST_DATABASE_URL } from "./setup";
+import { ledgerCheckDefs } from "./ledger-check-defs";
 
 /*
  * 0158(2026-10-31) 실제 PostgreSQL. 이 파일이 만들고 지우는 임시 DB 하나만 쓴다(공유 test DB 의 행·제어값은 건드리지 않는다).
@@ -23,7 +24,8 @@ import { TEST_DATABASE_URL } from "./setup";
  * 0158 전: publication_classify 행은 dispatch·logical·members CHECK 가 거절해(terminal CHECK 와 events kind CHECK 는 kind 를 보지 않는다) UPDATE 가 23514 로 깨진다
  * (2026-10-31 운영에서 publisher 컨테이너 사망 뒤 고아 행 1건을 정식 경로로 닫지 못한 바로 그 실패). local_model_direct 행은 0118 가지로 이미 통과한다.
  * 0158 뒤: 세 CHECK 는 "(0157 술어 전체) OR (가지)" 이고 나머지 CHECK 는 그대로다. 두 행이 모두 released 되고 dispatch_released 사건이 남는다.
- * 0159(PR 3b-E text local-direct 기록) 뒤: dispatch CHECK 와 두 terminal CHECK 는 "(0158 술어 전체) OR (text 가지)" 이고 logical·members·events kind 는 0158 그대로, 판정도 그대로다.
+ * 0160 뒤: 같은 술어가 model_capacity_check_rules 행 + nmv_model_capacity_requests_check_guard() 트리거로 산다 — 회수 UPDATE 두 건은 그 트리거 아래에서 돈다.
+ * 0161(PR 3b-E text local-direct 기록) 뒤: dispatch 와 두 terminal 은 그 술어에 text 가지(다음 ordinal)를 OR 로 더한 것이고 logical·members·events kind 는 0160 그대로, 판정도 그대로다.
  */
 const root = fileURLToPath(new URL("../..", import.meta.url)), name = `nomorevibe_test_release_kinds_${randomUUID().replaceAll("-", "")}`;
 const url = new URL(TEST_DATABASE_URL); url.pathname = `/${name}`;
@@ -53,13 +55,14 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 let created = false, before: Record<string, string> = {}, exitedAt = 0;
 const row = async (id: string) => (await client`SELECT state, dispatch_binding, dispatch_binding_hash, settled_at, terminal_evidence, terminal_evidence_hash
   FROM model_capacity_requests WHERE request_id=${id}::uuid`)[0];
-const defs = async () => Object.fromEntries((await client<{ conname: string; def: string }[]>`SELECT conname, pg_get_constraintdef(oid) def FROM pg_constraint
-  WHERE conname=ANY(${[...REQUESTS, ...UNCHANGED]}::text[])`).map(item => [item.conname, item.def]));
-/** journal 을 주어진 항목까지만 잘라 그 지점까지 올린다(drizzle 은 마지막 created_at 뒤의 항목만 이어서 적용한다). */
-async function migrateThrough(entries: { idx: number; tag: string }[]) {
-  const partial = mkdtempSync(path.join(tmpdir(), "release-kinds-predecessor-"));
+// 0160 뒤에는 여섯 CHECK 가 rules 행·트리거로 살므로 두 출처를 합쳐 읽는다(글자는 pg_get_constraintdef 와 같다).
+const defs = async () => ledgerCheckDefs(client, [...REQUESTS, ...UNCHANGED]);
+/** journal 의 idx <= limit 까지만 담은 임시 migrations 폴더로 올린다. */
+async function migrateThrough(limit: number, expectLast: string) {
+  const partial = mkdtempSync(path.join(tmpdir(), "release-kinds-partial-"));
   try {
-    mkdirSync(path.join(partial, "meta"));
+    mkdirSync(path.join(partial, "meta")); const entries = journal.entries.filter(entry => entry.idx <= limit);
+    expect(entries.at(-1)!.tag).toBe(expectLast);
     for (const entry of entries) copyFileSync(path.join(root, "drizzle", `${entry.tag}.sql`), path.join(partial, `${entry.tag}.sql`));
     writeFileSync(path.join(partial, "meta/_journal.json"), JSON.stringify({ ...journal, entries }));
     await migrate(drizzle(client), { migrationsFolder: partial });
@@ -96,9 +99,7 @@ const tickets: Record<"publisher" | "gpu", { seq: number; runId: string }> = {} 
 
 beforeAll(async () => {
   await admin.unsafe(`CREATE DATABASE ${name}`); created = true;
-  const entries = journal.entries.filter(entry => entry.idx <= 157);
-  expect(entries.at(-1)!.tag).toBe("0157_ai1_provider_enum");
-  await migrateThrough(entries);
+  await migrateThrough(157, "0157_ai1_provider_enum");
   const g = globalThis as { db?: unknown; pgClient?: unknown }; g.db = drizzle(client, { schema }); g.pgClient = client;
   await client`UPDATE model_capacity_control SET mode='open',epoch=1,revision=1,policy=${JSON.stringify(policy)}::jsonb,policy_hash=${modelCapacityPolicyHash(policy)} WHERE id=1`;
   // 운영 supervisor 와 같은 순서: owner_opened → spawn_intent → spawned 뒤에 그 child 가 행을 dispatch 하고, child 그룹이 사라진 뒤 group_exited.
@@ -132,11 +133,9 @@ it("0157 까지: publication_classify_cli 행은 process_group_exit 회수 UPDAT
 
 it("0158 은 세 요청 CHECK 를 '(0157 술어 전체) OR (가지)' 로 다시 만들고 나머지 CHECK·행·해시는 그대로 둔다", async () => {
   const snapshot = await client`SELECT to_jsonb(r) value FROM model_capacity_requests r ORDER BY request_id`;
-  // 0158 alone first (journal truncated after it, as beforeAll did at 0157); 0159 follows at the end of this test.
-  const through0158 = journal.entries.filter(entry => entry.idx <= 158);
-  expect(through0158.at(-1)).toMatchObject({ idx: 158, tag: "0158_release_branch_kinds" });
-  await migrateThrough(through0158);
-  expect((await client`SELECT count(*)::int n FROM drizzle.__drizzle_migrations`)[0].n).toBe(through0158.length);
+  await migrateThrough(158, "0158_release_branch_kinds");
+  expect((await client`SELECT count(*)::int n FROM drizzle.__drizzle_migrations`)[0].n).toBe(journal.entries.filter(entry => entry.idx <= 158).length);
+  expect(journal.entries.find(entry => entry.idx === 158)).toMatchObject({ idx: 158, tag: "0158_release_branch_kinds" });
   const after = await defs();
   for (const name of UNCHANGED) expect(after[name], `${name}: 0158 unchanged`).toBe(before[name]);
   for (const [name, branch] of Object.entries(WIDENED)) {
@@ -156,21 +155,37 @@ it("0158 은 세 요청 CHECK 를 '(0157 술어 전체) OR (가지)' 로 다시 
     expect(statement).toContain(`$ai2_local$${branch}$ai2_local$`);
   }
   expect(await judge(rows.publication, publisher, tickets.publisher.runId)).toEqual(Object.fromEntries(REQUESTS.map(name => [name, true])));
-  // 0159 (PR 3b-E text local-direct 기록) then rebuilds the dispatch CHECK and both terminal CHECKs the same way on the live 0158 predicate;
-  // logical/members and the events kind CHECK stay as 0158 left them, rows are untouched and the release verdict is unchanged.
+});
+
+it("0160 은 여섯 CHECK 를 model_capacity_check_rules 행·BEFORE 트리거로 옮기고 술어 글자·행·판정은 그대로 둔다", async () => {
+  const after0158 = await defs(), snapshot = await client`SELECT to_jsonb(r) value FROM model_capacity_requests r ORDER BY request_id`;
+  await migrateThrough(160, "0160_ledger_check_rules");
+  expect((await client`SELECT count(*)::int n FROM drizzle.__drizzle_migrations`)[0].n).toBe(journal.entries.filter(entry => entry.idx <= 160).length);
+  const constraints = (await client<{ conname: string }[]>`SELECT conname FROM pg_constraint WHERE contype='c' AND conname=ANY(${[...REQUESTS, ...UNCHANGED]}::text[])`).map(row => row.conname);
+  expect(constraints).toEqual([]);
+  expect(await defs()).toEqual(after0158);
+  expect((await client<{ tgname: string }[]>`SELECT tgname FROM pg_trigger WHERE tgrelid='model_capacity_requests'::regclass AND NOT tgisinternal ORDER BY tgname`).at(-1))
+    .toEqual({ tgname: "model_capacity_requests_zz_check_guard" });
+  expect(await client`SELECT to_jsonb(r) value FROM model_capacity_requests r ORDER BY request_id`).toEqual(snapshot);
+  expect(await judge(rows.publication, publisher, tickets.publisher.runId)).toEqual(Object.fromEntries(REQUESTS.map(name => [name, true])));
+});
+
+it("0161 은 text local-direct 가지를 세 제약의 다음 rules ordinal 로 더하고 회수 판정은 그대로 둔다", async () => {
+  const after0160 = await defs(), snapshot = await client`SELECT to_jsonb(r) value FROM model_capacity_requests r ORDER BY request_id`;
   await migrate(drizzle(client), { migrationsFolder: path.join(root, "drizzle") });
   expect((await client`SELECT count(*)::int n FROM drizzle.__drizzle_migrations`)[0].n).toBe(journal.entries.length);
-  expect(journal.entries.at(-1)).toMatchObject({ idx: 159, tag: "0159_text_local_direct_binding" });
-  const after0159 = await defs();
-  const TEXT: Record<string, string> = { model_capacity_requests_dispatch_check: textLocalDirectDispatchSql,
+  expect(journal.entries.at(-1)).toMatchObject({ idx: 161, tag: "0161_text_local_direct_binding" });
+  const text: Record<string, string> = { model_capacity_requests_dispatch_check: textLocalDirectDispatchSql,
     model_capacity_requests_terminal_check: textLocalDirectTerminalSql, model_capacity_events_terminal_check: textLocalDirectEventTerminalSql };
+  const rules = await client<{ constraint_name: string; ordinal: number; predicate: string; source: string }[]>`SELECT constraint_name, ordinal, predicate, source
+    FROM model_capacity_check_rules WHERE source = '0161_text_local_direct_binding' ORDER BY constraint_name`;
+  expect(rules.map(rule => [rule.constraint_name, rule.ordinal, rule.source, rule.predicate])).toEqual(Object.entries(text).sort(([a], [b]) => a < b ? -1 : 1)
+    .map(([name, predicate]) => [name, 2, "0161_text_local_direct_binding", predicate]));
+  const after = await defs();
   for (const name of new Set<string>([...REQUESTS, ...UNCHANGED])) {
-    const branch = TEXT[name];
-    if (!branch) { expect(after0159[name], `${name}: 0159 unchanged`).toBe(after[name]); continue; }
-    const table = name.startsWith("model_capacity_events_") ? "model_capacity_events" : "model_capacity_requests";
-    await client.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT text_local_direct_expected CHECK ((${after[name].slice("CHECK ".length)}) OR (${branch}))`);
-    try { expect(after0159[name], `${name}: 0158 predicate plus the 0159 text local-direct branches`).toBe((await client`SELECT pg_get_constraintdef(oid) def FROM pg_constraint WHERE conname='text_local_direct_expected'`)[0].def); }
-    finally { await client.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT text_local_direct_expected`); }
+    const branch = text[name];
+    if (!branch) { expect(after[name], `${name}: 0161 unchanged`).toBe(after0160[name]); continue; }
+    expect(after[name], `${name}: 0160 predicate plus the 0161 text local-direct branch`).toBe(`CHECK ((${after0160[name].slice("CHECK (".length, -1)}) OR (${branch}))`);
   }
   expect(await client`SELECT to_jsonb(r) value FROM model_capacity_requests r ORDER BY request_id`).toEqual(snapshot);
   expect(await judge(rows.publication, publisher, tickets.publisher.runId)).toEqual(Object.fromEntries(REQUESTS.map(name => [name, true])));

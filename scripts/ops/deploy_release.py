@@ -40,10 +40,137 @@ ALL_ROLES = ('publisher', 'reviewer', 'crawler', 'text', 'maintenance')
 TOOL_FILES = ('deploy_release.py', 'deploy_shared_images.py', 'deploy_git_apps.py',
               'deployment_scope.py', 'release_runtime.py', 'release_readiness.py',
               'release_observer.py', 'release_monitor.py', 'release_catalog.py')
+# The only env lines a release rewrites; every other saved setting must already be live in the service spec.
+RELEASE_SETTINGS = ('RELEASE_TAG', 'NEXT_DEPLOYMENT_ID')
+# A release may also *retire* settings (plan --retire-setting NAME): the saved env of every app it redeploys is written
+# without those lines, so the new service spec renders without them. Plans and output carry the names only, never values.
+SETTING_NAME = re.compile(r'[A-Z][A-Z0-9_]{0,63}')
+# Never retired: the release's own rewrites and every saved setting this tool reads to identify, gate or verify an app
+# (role/web-key checks, the GitHub integration preflight, the model-drain probe that runs inside the crawler container).
+PROTECTED_SETTINGS = frozenset(RELEASE_SETTINGS) | frozenset(shared.INTEGRATION_SETTINGS) | frozenset(
+    ('WORKER_ROLE', 'NEXT_SERVER_ACTIONS_ENCRYPTION_KEY', 'DATABASE_URL'))
+# A failure code safe to print: no spaces, quotes, URLs or free text that could carry a secret value.
+SAFE_CODE = re.compile(r'[A-Za-z0-9_:.-]{3,160}')
+HIDDEN_REASON = 'inspect-private-receipts'
+# Plan failures happen before any private directory exists; this safe record keeps code, class, stage and names only.
+PLAN_FAILURE_DIR = Path.home() / '.local/state/nomorevibe-releases/plan-failures'
+# A run whose every deployment is proven but whose monitor push proof did not arrive within the monitor
+# verification window (release_monitor.MONITOR_VERIFY_TIMEOUT_SECONDS) finishes with this status and exit code
+# instead of stopping: the operator confirms the monitor by hand from <app>.human-review.safe.json.
+HUMAN_REVIEW_VERIFICATION = 'human_review_required'
+HUMAN_REVIEW_STATUS = 'deployed-human-review-required'
+HUMAN_REVIEW_EXIT_CODE = 2
 
 
 def now():
     return datetime.now(timezone.utc).isoformat()
+
+
+class PlanRefused(ValueError):
+    """A plan-time refusal whose message is a safe code and whose detail holds names, never values."""
+
+    def __init__(self, code, safe_detail=None):
+        super().__init__(code)
+        self.code = code
+        self.safe_detail = safe_detail or {}
+
+
+def env_drift(app, runtime):
+    """Names (never values) of saved Dokploy settings that differ from the live Swarm service spec.
+
+    A Dokploy env saved without a redeploy leaves the running service on the old spec. The
+    release would then rewrite only RELEASE_TAG/NEXT_DEPLOYMENT_ID and the post-deploy contract
+    check (runtime_contract_matches) would reject the new spec after the full verification timeout.
+    """
+    saved = shared.dotenv_settings(app.get('env'))
+    spec = runtime.get('serviceSpec') if isinstance(runtime, dict) else None
+    container = ((spec or {}).get('TaskTemplate') or {}).get('ContainerSpec') or {}
+    live = fleet._env(container.get('Env') or [])
+    for key in RELEASE_SETTINGS:
+        saved.pop(key, None)
+        live.pop(key, None)
+    return {'missingInService': sorted(set(saved) - set(live)),
+            'unexpectedInService': sorted(set(live) - set(saved)),
+            'valueChanged': sorted(key for key in set(saved) & set(live) if saved[key] != live[key])}
+
+
+def env_drift_preflight(snapshot, selected):
+    """Refuse to plan while any selected app's saved env is not what its service runs (Git and Docker apps alike)."""
+    drift = {}
+    for short in selected:
+        found = env_drift(snapshot['apps'][short], snapshot['runtime'][short])
+        if any(found.values()):
+            drift[short] = found
+    if drift:
+        raise PlanRefused(next(iter(drift)) + '_env_drift_redeploy_required', {'envDrift': drift})
+    return {'checkedApps': list(selected), 'ignoredSettings': list(RELEASE_SETTINGS), 'checkedAt': now()}
+
+
+def validate_retired_settings(values):
+    """Sorted unique names a release may retire; a malformed name is refused without being echoed."""
+    names = set()
+    for value in values or ():
+        if not isinstance(value, str) or not SETTING_NAME.fullmatch(value):
+            raise PlanRefused('retire_setting_name_invalid')
+        if value in PROTECTED_SETTINGS:
+            raise PlanRefused('retire_setting_protected:' + value, {'protectedSetting': value})
+        names.add(value)
+    return tuple(sorted(names))
+
+
+def plan_retired_settings(plan):
+    """The retired names a stored plan carries, held to the same rules as the option that produced them."""
+    values = plan.get('retiredSettings', [])
+    if not isinstance(values, list) or list(validate_retired_settings(values)) != values:
+        raise ValueError('invalid_release_plan')
+    return tuple(values)
+
+
+def retired_settings_found(snapshot, selected, retired):
+    """Per selected app, which retired names its saved env and its live spec still carry (names only)."""
+    if not retired:
+        return {}
+    return {short: git.retired_settings_present(snapshot['apps'][short], snapshot['runtime'][short], retired)
+            for short in selected}
+
+
+def _retired_kwargs(retired):
+    """Pass retired names to a verifier only when there are any, so the default call stays exactly as before."""
+    return {'retired_settings': retired} if retired else {}
+
+
+def safe_code(value):
+    return value if isinstance(value, str) and SAFE_CODE.fullmatch(value) else None
+
+
+def failure_reason(error):
+    """The stop code when the message is a bare code; anything with spaces, quotes or URLs stays private."""
+    return safe_code(getattr(error, 'code', None)) or safe_code(str(error)) or HIDDEN_REASON
+
+
+def failure_report(error):
+    report = {'status': 'release-not-complete', 'errorClass': type(error).__name__,
+              'reason': failure_reason(error), 'automaticRetry': False}
+    record = getattr(error, 'failure_record', None)
+    if isinstance(record, str):
+        report['failureRecord'] = record
+    return report
+
+
+def record_plan_failure(error, stage, directory=None):
+    """Durable safe record for a failure before the private plan directory exists; never raises, never holds values."""
+    record = {'status': 'release-not-complete', 'stage': stage, 'at': now(), 'errorClass': type(error).__name__,
+              'reason': failure_reason(error),
+              'detail': error.safe_detail if isinstance(error, PlanRefused) else None}
+    try:
+        directory = Path(directory or PLAN_FAILURE_DIR)
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ')
+        path = directory / (stamp + '-' + str(os.getpid()) + '.safe.json')
+        write_private(path, record)
+        return str(path)
+    except Exception:
+        return None
 
 
 def execution_source_hashes():
@@ -141,10 +268,17 @@ def execution_steps(selected, skipped=()):
             for kind, names in steps if kind != 'deploy' or set(names) - skipped]
 
 
-def already_target(snapshot, target, selected):
-    """A proven baseline already at the desired config needs no new deployment."""
-    return [short for short in selected if git.stable_config(snapshot['apps'][short]) ==
-            git.stable_config(fleet.expected_api(short, snapshot['apps'][short], target))]
+def already_target(snapshot, target, selected, retired=()):
+    """A proven baseline already at the desired config needs no new deployment.
+
+    An app that still carries a retired setting in its saved env or live spec is not at target: only a redeploy
+    with this release removes the line, so it is deployed rather than kept as an unchanged app.
+    """
+    return [short for short in selected
+            if git.stable_config(snapshot['apps'][short]) ==
+            git.stable_config(fleet.expected_api(short, snapshot['apps'][short], target, retired)) and
+            not (retired and any(git.retired_settings_present(snapshot['apps'][short], snapshot['runtime'][short],
+                                                              retired).values()))]
 
 
 def required_kinds(selected):
@@ -169,9 +303,19 @@ def new_client():
     return shared.Dokploy(shared.dokploy_api_key())
 
 
-def impact(snapshot, sha):
-    return scope.plan_for_baselines(ROOT, sha, snapshot['baseline'],
-                                    known_apps=shared.KNOWN_APPS, consumer_apps=shared.CONSUMER_APPS)
+def impact(snapshot, sha, retired=()):
+    """Code-diff scope; with retired settings, widened to every app that still carries one (its role pair follows)."""
+    decision = scope.plan_for_baselines(ROOT, sha, snapshot['baseline'],
+                                        known_apps=shared.KNOWN_APPS, consumer_apps=shared.CONSUMER_APPS)
+    if retired:
+        carriers = [short for short in decision['allApps'] if any(
+            git.retired_settings_present(snapshot['apps'][short], snapshot['runtime'][short], retired).values())]
+        if set(carriers) - set(decision['selectedApps']):
+            requested = [short for short in decision['allApps'] if short in set(decision['selectedApps']) | set(carriers)]
+            decision = scope.plan_for_baselines(ROOT, sha, snapshot['baseline'], known_apps=shared.KNOWN_APPS,
+                                                consumer_apps=shared.CONSUMER_APPS, requested_apps=requested)
+        decision['retiredSettingCarriers'] = carriers
+    return decision
 
 
 def merged_target(snapshot, proof):
@@ -218,20 +362,25 @@ def prepull(snapshot, target, selected):
         return {'hosts': sorted(pool.map(one, hosts)), 'kinds': kinds, 'verifiedAt': now()}
 
 
-def create_plan(sha, output, *, baseline_path=None, baseline_sha=None, migration_verified=False):
+def create_plan(sha, output, *, baseline_path=None, baseline_sha=None, migration_verified=False, retire_settings=()):
     if not re.fullmatch('[a-f0-9]{40}', sha or ''):
         raise ValueError('exact_release_sha_required')
+    # Refused names stop here, before any credential, baseline read or remote call.
+    retired = validate_retired_settings(retire_settings)
     if shared.run(['git', '--no-replace-objects', 'rev-parse', 'HEAD']) != sha:
         raise ValueError('checkout_must_be_target_release')
     if shared.run(['git', 'status', '--porcelain', '--untracked-files=no']):
         raise ValueError('clean_target_checkout_required')
     snapshot = read_private(baseline_path, baseline_sha) if baseline_path else fleet.collect_baseline(new_client(), ROOT)
-    decision = impact(snapshot, sha)
+    decision = impact(snapshot, sha, retired)
     selected = decision['selectedApps']
     plan = {'schemaVersion': SCHEMA_VERSION, 'createdAt': now(), 'scope': decision,
             'snapshot': snapshot, 'target': {'sha': sha}, 'steps': [], 'migrationVerified': migration_verified,
-            'toolSources': execution_source_hashes()}
+            'toolSources': execution_source_hashes(), 'retiredSettings': list(retired),
+            'retiredSettingsFound': retired_settings_found(snapshot, selected, retired)}
     if selected:
+        # Saved-but-undeployed Dokploy env stops the plan here, before credentials, images or any wait.
+        plan['envPreflight'] = env_drift_preflight(snapshot, selected)
         client = new_client()
         proof = readiness.resolve_readiness(sha, required_kinds=required_kinds(selected))
         target = merged_target(snapshot, proof)
@@ -253,12 +402,13 @@ def create_plan(sha, output, *, baseline_path=None, baseline_sha=None, migration
                     integration=integration, existingGuard=guard, agentScan=scan, prePull=images,
                     catalogAdditions=additions)
         git_selected = [name for name in git.ORDER if name in selected]
-        plan['gitPrepared'] = git.prepare(client, target, git_selected, snapshot, proof)
+        plan['gitPrepared'] = git.prepare(client, target, git_selected, snapshot, proof, **_retired_kwargs(retired))
     directory = fresh_directory(output)
     path = directory / 'plan.private.json'
     digest = write_private(path, plan)
     return {'status': 'planned', 'plan': str(path), 'planSha256': digest, 'selectedApps': selected,
-            'retainedApps': decision['retainedApps'], 'mode': decision['mode'], 'serviceMutations': 0}
+            'retainedApps': decision['retainedApps'], 'mode': decision['mode'], 'serviceMutations': 0,
+            'retiredSettings': list(retired), 'retiredSettingsFound': plan['retiredSettingsFound']}
 
 
 def action(client, directory, short, label, endpoint, payload):
@@ -360,8 +510,10 @@ def model_replacement_gate(client, selected):
 
 def deploy_one(client, plan, short, directory):
     snapshot, target = plan['snapshot'], plan['target']
+    retired = tuple(plan.get('retiredSettings') or ())
     original = unchanged(client, snapshot, short)
-    expected = fleet.expected_api(short, original, target)
+    # The saved env written here already lacks the retired lines; the readbacks below compare against it.
+    expected = fleet.expected_api(short, original, target, retired)
     app_id = shared.app_metadata(short)[0]
     action(client, directory, short, 'environment', 'application.saveEnvironment', {
         'applicationId': app_id, 'env': expected['env'], 'buildArgs': expected.get('buildArgs'),
@@ -384,11 +536,25 @@ def deploy_one(client, plan, short, directory):
         monitor = load('release_monitor', 'release_monitor.py')
         evidence = monitor.check_monitor_deployed(client, short, target, original, old_id,
                            git.source_manifest(target['sha'], stage='monitor', repo=ROOT),
-                           expected_runtime=snapshot['runtime'][short])
+                           expected_runtime=snapshot['runtime'][short], **_retired_kwargs(retired))
+        if evidence.get('verification') == HUMAN_REVIEW_VERIFICATION:
+            # The deployment is proven; only the push proof is missing. Leave the operator a safe record now,
+            # before the final fleet verification, so it survives any later stop.
+            write_private(directory / (short + '.human-review.safe.json'), monitor.human_review_record(client, evidence))
     latest = client.latest(short)
     if latest.get('status') != 'done' or latest.get('deploymentId') == old_id:
         raise ValueError(short + '_new_deployment_receipt_missing')
     return {**evidence, 'app': short, 'deploymentId': latest['deploymentId'], 'at': now()}
+
+
+def human_review_summary(receipts, directory):
+    """Apps whose deployment is proven but whose verification was handed to a human, with safe reason codes."""
+    apps = sorted(short for short, receipt in receipts.items()
+                  if isinstance(receipt, dict) and receipt.get('verification') == HUMAN_REVIEW_VERIFICATION)
+    if not apps:
+        return None
+    return {'apps': apps, 'reasons': {short: safe_code(receipts[short].get('reason')) or HIDDEN_REASON for short in apps},
+            'records': [str(directory / (short + '.human-review.safe.json')) for short in apps]}
 
 
 def run_batch(names, one, directory):
@@ -412,8 +578,10 @@ def run_release(plan, execution_dir, *, observe=True):
     if plan.get('schemaVersion') != SCHEMA_VERSION:
         raise ValueError('invalid_release_plan')
     selected = plan['scope']['selectedApps']
+    retired = plan_retired_settings(plan)
     directory = fresh_directory(execution_dir)
-    write_private(directory / 'once.json', {'startedAt': now(), 'target': plan['target'], 'selectedApps': selected})
+    write_private(directory / 'once.json', {'startedAt': now(), 'target': plan['target'], 'selectedApps': selected,
+                                            'retiredSettings': list(retired)})
     if not selected:
         result = {'status': 'no-runtime-changes', 'productionMutations': 0,
                   'scope': 'local change proof; no new fleet health observation'}
@@ -434,7 +602,7 @@ def run_release(plan, execution_dir, *, observe=True):
         shared.main_sha_and_token(target)
         # Every app must still be its exact original before the first service mutation.
         fleet.verify_fleet(client, plan['snapshot'], target, [], {}, ROOT)
-        current_impact = impact(plan['snapshot'], target['sha'])
+        current_impact = impact(plan['snapshot'], target['sha'], retired)
         if current_impact['selectedApps'] != selected or current_impact['rulesVersion'] != plan['scope']['rulesVersion']:
             raise ValueError('deployment_scope_changed')
         additions = catalog.catalog_additions(plan['snapshot'], target['sha'], ROOT)
@@ -449,14 +617,14 @@ def run_release(plan, execution_dir, *, observe=True):
         shared.monitor_gate(client, 'crawler', roles=ALL_ROLES, strict=())
         if any(name.startswith('crawler-') for name in selected):
             shared.agent_scan_release_gate(client, target['sha'])
-        skipped = already_target(plan['snapshot'], target, selected)
+        skipped = already_target(plan['snapshot'], target, selected, retired)
         deployed = [short for short in selected if short not in skipped]
         write_private(directory / 'model-drain.safe.json', model_replacement_gate(client, deployed))
         preserve_git_images(plan['snapshot'], deployed, directory)
         git_selected = [name for name in git.ORDER if name in selected]
         if git_selected:
             validate_tool_sources(plan)
-            prepared = git.prepare(client, target, git_selected, plan['snapshot'], proof)
+            prepared = git.prepare(client, target, git_selected, plan['snapshot'], proof, **_retired_kwargs(retired))
             result = git.deploy(client, target, prepared, directory / 'git')
             write_private(directory / 'git.summary.safe.json', result)
             if set(result['skipped']) != set(skipped) & set(git_selected):
@@ -486,16 +654,20 @@ def run_release(plan, execution_dir, *, observe=True):
                 write_private(directory / 'purge.safe.json', shared.purge_html())
         final_snapshot = {}
         validate_tool_sources(plan)
-        states = fleet.verify_fleet(client, plan['snapshot'], target, deployed, receipts, ROOT, output_snapshot=final_snapshot)
+        # Redeployed apps must have lost the retired names from saved env, service spec and containers alike.
+        states = fleet.verify_fleet(client, plan['snapshot'], target, deployed, receipts, ROOT, output_snapshot=final_snapshot,
+                                    **_retired_kwargs(retired))
         guard = shared.monitor_gate(client, 'crawler', roles=ALL_ROLES,
                                      strict=tuple(role for role in ALL_ROLES if role + '-m3' in deployed))
         final_path = directory / 'final.private.json'
         digest = write_private(final_path, final_snapshot)
-        result = {'status': 'deployed-and-verified', 'target': target, 'selectedApps': selected,
-                  'deployedApps': deployed, 'skippedApps': skipped,
+        human_review = human_review_summary(receipts, directory)
+        result = {'status': HUMAN_REVIEW_STATUS if human_review else 'deployed-and-verified', 'target': target,
+                  'selectedApps': selected, 'deployedApps': deployed, 'skippedApps': skipped,
                   'retainedApps': sorted(set(fleet.registered_apps()) - set(deployed)),
-                  'states': states, 'existingGuard': guard,
-                  'finalSnapshot': str(final_path), 'finalSnapshotSha256': digest, 'completedAt': now()}
+                  'retiredSettings': list(retired), 'states': states, 'existingGuard': guard,
+                  'finalSnapshot': str(final_path), 'finalSnapshotSha256': digest, 'completedAt': now(),
+                  **({'humanReview': human_review} if human_review else {})}
         # Deployment completion is durable before the independent scheduler starts.
         write_private(directory / 'result.safe.json', result)
         if observe:
@@ -529,6 +701,8 @@ def main(argv=None):
     prepare.add_argument('--baseline', type=Path)
     prepare.add_argument('--baseline-sha')
     prepare.add_argument('--migration-verified', action='store_true')
+    prepare.add_argument('--retire-setting', action='append', default=[], metavar='NAME',
+                         help='delete this saved Dokploy setting from every app the release redeploys; repeat per name')
     execute = sub.add_parser('run', help='execute a fresh reviewed private plan exactly once')
     execute.add_argument('--plan', type=Path, required=True)
     execute.add_argument('--plan-sha', required=True)
@@ -539,18 +713,32 @@ def main(argv=None):
     elif args.action == 'plan':
         if bool(args.baseline) != bool(args.baseline_sha):
             parser.error('--baseline and --baseline-sha must be provided together')
-        result = create_plan(args.sha, args.out, baseline_path=args.baseline,
-                             baseline_sha=args.baseline_sha, migration_verified=args.migration_verified)
+        try:
+            result = create_plan(args.sha, args.out, baseline_path=args.baseline,
+                                 baseline_sha=args.baseline_sha, migration_verified=args.migration_verified,
+                                 retire_settings=args.retire_setting)
+        except Exception as error:
+            record = record_plan_failure(error, 'plan')
+            try:
+                error.failure_record = record
+            except AttributeError:
+                pass
+            raise
     else:
         plan = read_private(args.plan, args.plan_sha)
         result = run_release(plan, args.plan.parent / 'execution')
     print(json.dumps(result, ensure_ascii=False))
+    return result
+
+
+def cli(argv=None):
+    try:
+        result = main(argv)
+    except Exception as error:
+        print(json.dumps(failure_report(error)))
+        return 1
+    return HUMAN_REVIEW_EXIT_CODE if isinstance(result, dict) and result.get('status') == HUMAN_REVIEW_STATUS else 0
 
 
 if __name__ == '__main__':
-    try:
-        main()
-    except Exception as error:
-        print(json.dumps({'status': 'release-not-complete', 'errorClass': type(error).__name__,
-                          'reason': getattr(error, 'code', 'inspect-private-receipts'), 'automaticRetry': False}))
-        sys.exit(1)
+    sys.exit(cli())

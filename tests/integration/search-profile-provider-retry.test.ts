@@ -1,16 +1,19 @@
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlTaglines, jobs, products, productSearchProfiles, secondReviews, textTranslations } from "@/lib/db/schema";
-import { profileEvidence, profileHash } from "@/lib/domain/products/search-profile";
+import { PROFILE_MODEL, profileEvidence, profileHash } from "@/lib/domain/products/search-profile";
 import { pendingProfiles, recordProfileResult } from "@/lib/domain/products/search-profiles";
 import { collectSearchHealth } from "@/lib/domain/products/search-health";
 import { readTextProgress } from "@/lib/operations/text-progress";
 import { JobLeaseLostError, type JobLease } from "@/lib/jobs/control";
 import { runJob } from "@/lib/jobs/runner";
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { ensureSchema, resetTables } from "./setup";
+import { directContractRow } from "./direct-engine-fixtures";
 
 beforeAll(ensureSchema);
+afterEach(() => setServingContractSnapshotForTest(null));
 beforeEach(async () => {
   await resetTables();
   await db.delete(jobs);
@@ -78,6 +81,9 @@ describe("generation provider failures remain retryable without rewriting histor
     await seed("future-provider", { retryAt: new Date(Date.now() + 60 * 60_000) });
     await seed("quality-exhausted", { errorCode: "invalid_output" });
     expect(await collectSearchHealth()).toMatchObject({ pendingGeneration: 2, exhausted: 1, repeatedFailures: 3 });
+    // The stall monitor counts a text route only while it can run: a direct admin contract (abcLLM gateway removed 2026-10-30).
+    expect((await readTextProgress()).oldestReadyMinutes).toBeNull();
+    setServingContractSnapshotForTest([directContractRow("product-search-profile", PROFILE_MODEL)]);
     expect(await readTextProgress()).toMatchObject({ oldestReadyMinutes: expect.any(Number) });
     expect((await readTextProgress()).oldestReadyMinutes).toBeGreaterThanOrEqual(19);
     await db.update(productSearchProfiles).set({ retryAt: sql`now() + interval '1 hour'` })

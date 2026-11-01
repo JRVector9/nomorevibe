@@ -66,5 +66,29 @@ export function ValueCell({ field, readOnly, unit }: { field: SettingField; read
   </span>;
 }
 
+/**
+ * 열거 칸(PR 3b-E) — 선택지(select) + 기본값 + 덮어씀 표시 + 「기본값으로」(덮어쓴 칸에만). 칸 이름 규약은 ValueCell 과 같다(value:·initial:·stored:·reset:).
+ * 값은 글자 그대로 보내고 서버(runtimeSettingsPatchFromForm)가 선택지 밖의 값을 거절한다.
+ */
+export function ChoiceCell({ field, readOnly }: { field: SettingField; readOnly?: boolean }) {
+  const options = field.options ?? [];
+  const labelOf = (value: string) => options.find(option => option.value === value)?.label ?? value;
+  return <span className="inline-grid gap-0.5">
+    <span className="flex items-center gap-1">
+      <select name={`value:${field.path}`} defaultValue={field.input} aria-label={field.label} title={field.note ?? field.label} disabled={readOnly}
+        className="rounded border border-line bg-bg px-2 py-1">
+        {options.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+      </select>
+      <OverrideBadge overridden={field.overridden} />
+    </span>
+    <input type="hidden" name={`initial:${field.path}`} value={field.input} />
+    <input type="hidden" name={`stored:${field.path}`} value={field.overridden ? "1" : "0"} />
+    <span className="flex items-center gap-2 text-[13px] text-fg-3">
+      <span>기본 {field.defaultInput === "" ? "없음" : labelOf(field.defaultInput)}</span>
+      {field.overridden && <label className="flex items-center gap-1"><input type="checkbox" name={`reset:${field.path}`} disabled={readOnly} /> 기본값으로</label>}
+    </span>
+  </span>;
+}
+
 export const TH = "py-2 pr-3 text-[13px] font-semibold text-fg-3";
 export const TD = "py-2 pr-3 align-top";

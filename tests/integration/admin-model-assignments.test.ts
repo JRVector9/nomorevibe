@@ -121,7 +121,7 @@ describe("server action → saveModelAssignment(PR 3b-A) — 한 TX", () => {
     expect(result?.message).toContain("엔진 확인(readback·1토큰)으로 새로 만든 계약");
     expect(result?.message).toContain(`정책에 경로를 덧붙였습니다(revision ${before.revision + 1}, DRAIN 없음)`);
     expect(result?.message).toContain("장비 역할 순위 없음 → 1");
-    expect(result?.message).toContain("플래그 MODEL_ASSIGNMENT_TABLE 꺼짐");
+    expect(result?.message).toContain("배정 표 읽기 꺼짐");
     expect(probeCalls).toEqual(["eng:qwen|crawl-agent-review|direct"]);
     expect(await assignmentRows()).toEqual([{ assignment_id: ID, mode: "live", rank: 1, version: 1, registry_key: "eng:qwen", transport: "direct", model: "Qwen-X" }]);
     const [contract] = await contracts();
@@ -139,7 +139,7 @@ describe("server action → saveModelAssignment(PR 3b-A) — 한 TX", () => {
     expect(row).toMatchObject({ role: "primary", modeLabel: "실전", transportLabel: "엔진 직접", rank: 1, deviceRoleRank: 1, version: 1,
       contract: { state: "present", hashPrefix: contract.contract_hash.slice(0, 12) }, route: { state: "present" }, settled1h: 0 });
     expect(view.errors.rows).toBeUndefined();
-    expect(view.banner).toBe("읽기: 설정(legacy). 플래그 MODEL_ASSIGNMENT_TABLE 켜면 표를 읽습니다");
+    expect(view.banner).toBe("읽기: 설정(legacy). 아래 「배정 표 읽기」를 켜면 저장 즉시(30초 안) 모든 역할이 표를 읽습니다 — 재배포 없음");   // 3b-E: 실제 DB 의 토글(기본 off)을 읽는다
     expect(view.audit[0]).toMatchObject({ target: ID, version: 1, ok: true });
     expect(view.audit[0].changes).toEqual(expect.arrayContaining(["모드: 없음 → 실전", "정책 경로 덧붙임(revision " + (before.revision + 1) + ")"]));
   });
@@ -225,7 +225,7 @@ describe("현재 설정 → 배정 표 가져오기", () => {
     const { applyAssignmentImportAction } = await actions();
     const preview = await previewAdminAssignmentImport();
     expect(preview).toMatchObject({ rows: [], error: null, warnings: [
-      "firstReview: 1차 모델이 설정에 없어 1차는 옮기지 않습니다 — CRAWL_REVIEW_MODEL env 대체는 옮기지 않는다",
+      "firstReview: 1차 모델이 설정에 없어 1차는 옮기지 않습니다 — 관리자 설정에서 1차 심사자를 고른 뒤 다시 가져온다(환경변수 대체는 2026-10-31 제거)",
       "secondReview.voters[0]: 정책에 이 경로가 없어 꺼짐으로 옮깁니다(저장하면 계약을 확인하고 경로를 덧붙입니다) — second-review / claude-cli / opus",
       "secondReview.voters[0]: 장비 행이 없거나 꺼져 있어 옮기지 않습니다(장비 한도에서 먼저 저장) — connect"] });
     const state = await snapshot();

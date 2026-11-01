@@ -1,8 +1,5 @@
-import { scopedModelBaseUrl, scopedRequestTimeout } from "@/lib/llm/model-registry";
-import { scopedModel } from "@/lib/llm/model-registry";
-import { configuredModel, modelBaseUrl, modelLimits } from "@/lib/llm/model-registry";
+import { configuredModel, modelLimits } from "@/lib/llm/model-registry";
 import { createHash } from "node:crypto";
-import { assertTextModelAdmission } from "@/lib/llm/text-capacity-admission";
 
 /**
  * 검색 키워드 — 모델이 제품의 글을 읽고 사람들이 칠 말을 한·영으로 적는다.
@@ -19,7 +16,6 @@ import { assertTextModelAdmission } from "@/lib/llm/text-capacity-admission";
  *    얇은 글일수록 없는 기능을 지어냈다.
  */
 export const PROFILE_MODEL = configuredModel("product-search-profile");
-const BASE_URL = modelBaseUrl("product-search-profile", process.env, "abcllm");
 
 /** 언어마다 이만큼까지 — 표본에서 8개를 넘는 것은 거의 같은 말의 되풀이였다 */
 export const KEYWORD_LIMIT = 8;
@@ -161,29 +157,15 @@ export function profileGatewayWire(evidence: ProfileEvidence, model: string): st
       });
 }
 
+/**
+ * 게이트웨이(abcLLM)로 보내던 옛 경로다. 게이트웨이는 2026-10-30 제거됐다 — 보내지 않고 no_key(공급자 쪽 사유: 시도 수를 세지 않는다)로 끝낸다.
+ * 모델은 엔진 직접 연결 계약이 있을 때 용량 경로(*-model-capacity)로만 부른다.
+ */
 export async function writeKeywords(evidence: ProfileEvidence, options: {
   timeoutMs: number; model?: string; request?: typeof fetch; signal?: AbortSignal;
 }): Promise<KeywordResult> {
-  const key = process.env.ABCLLM_API_KEY?.trim();
-  if (!key) return { ok: false, error: "no_key" };
-  await assertTextModelAdmission({ routeId: "product-search-profile", model: options.model ?? scopedModel("product-search-profile", PROFILE_MODEL) });
-  const deadline = AbortSignal.timeout(Math.max(1, scopedRequestTimeout("product-search-profile", options.timeoutMs)));
-  let body: string;
-  try {
-    const response = await (options.request ?? fetch)(`${scopedModelBaseUrl("product-search-profile", BASE_URL, "abcllm")}/chat/completions`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: profileGatewayWire(evidence, options.model ?? scopedModel("product-search-profile", PROFILE_MODEL)),
-      signal: options.signal ? AbortSignal.any([options.signal, deadline]) : deadline,
-    });
-    if (!response.ok) {
-      return { ok: false, error: response.status === 404 ? "model_unavailable" : response.status === 429 ? "rate_limit" : `http_${response.status}` };
-    }
-    body = await response.text();
-  } catch (error) {
-    return { ok: false, error: error instanceof Error && error.name === "TimeoutError" ? "timeout" : "network" };
-  }
-  return parseProfileGatewayBody(body, evidence.name);
+  void evidence; void options;
+  return { ok: false, error: "no_key" };
 }
 
 export function parseProfileGatewayBody(body: string, productName: string): KeywordResult {

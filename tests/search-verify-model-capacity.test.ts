@@ -4,6 +4,8 @@ import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import type { SearchVerifyInput, SearchVerifyMember, SearchVerifyOutcome, SearchVerifyParent, SearchVerifyStep } from "@/lib/llm/capacity";
 import type { ProfileTask } from "@/lib/domain/products/search-profiles";
 import type { JobContext } from "@/lib/jobs/runner";
+import { scopedModel } from "@/lib/llm/model-registry";
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 
 // Coordinator boundary only: the ledger, domain TX and native leaf are scripted fixtures, never DB or provider authority.
 const state = vi.hoisted(() => ({
@@ -57,6 +59,10 @@ vi.mock("@/lib/domain/products/search-verify", async load => ({ ...await load<ty
   verifyKeywordsInChunks: async (item: { keywords: string[] }) => { state.legacy.push(`chunk:${item.keywords.length}`); return { ok: true, unsupported: [] }; } }));
 const { verifyKeywordsWithModelCapacity } = await import("@/lib/domain/products/search-verify-model-capacity");
 const { verifySearchKeywords } = await import("@/lib/jobs/products/search-verify");
+const { VERIFY_MODEL } = await import("@/lib/domain/products/search-verify");
+/** The route opens only on an engine connected directly (admin contract, transport direct); the gateway key env is gone (2026-10-30). */
+const pinDirectContract = () => setServingContractSnapshotForTest([{ routeId: "product-search-verify",
+  model: scopedModel("product-search-verify", VERIFY_MODEL), contract: {}, auth: "none", apiKey: null, transport: "direct" }]);
 
 const boot = randomUUID(), expectation = Object.freeze({ kind: "search_verify_write" as const });
 const keywords = Array.from({ length: 12 }, (_, index) => `keyword-${index}`);
@@ -83,12 +89,12 @@ function resumable(next: SearchVerifyStep | "done" | "stop", deadlineInMs: numbe
 }
 
 beforeEach(() => {
-  vi.useFakeTimers({ toFake: ["Date"] }); vi.stubEnv("ABCLLM_API_KEY", "unit-only");
+  vi.useFakeTimers({ toFake: ["Date"] }); pinDirectContract();
   Object.assign(state, { mode: "open", mapped: true, continuation: null, slots: [], prepares: [], replies: [], posts: [], inputs: [], reserved: [],
     cancelled: 0, marked: [], settled: [], legacy: [] });
   state.writes.mockReset(); state.pending.mockReset(); state.writes.mockResolvedValue(true);
 });
-afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
+afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); setServingContractSnapshotForTest(null); });
 
 describe("one permit, one physical POST, legacy step order", () => {
   it("keeps the disabled leaf and both legacy entry points without any ledger call", async () => {
@@ -96,6 +102,11 @@ describe("one permit, one physical POST, legacy step order", () => {
     expect(await run()).toEqual({ kind: "result", result: { ok: true, unsupported: [] } });
     expect(await run({ chunked: false })).toEqual({ kind: "result", result: { ok: true, unsupported: [] } });
     expect(state.legacy).toEqual(["chunk:12", "full:12"]); expect(state.inputs).toEqual([]); expect(state.posts).toEqual([]);
+  });
+  it("keeps the legacy leaf without any ledger call when the route has no direct contract, even if a gateway key env is set", async () => {
+    vi.stubEnv("ABCLLM_API_KEY", "old-gateway-key"); setServingContractSnapshotForTest([]);
+    expect(await run()).toEqual({ kind: "result", result: { ok: true, unsupported: [] } });
+    expect(state.legacy).toEqual(["chunk:12"]); expect(state.inputs).toEqual([]); expect(state.posts).toEqual([]);
   });
   it("sends full mode once with the original order, duplicates and unshortened legacy timeout", async () => {
     const words = ["b", "a", "b"]; state.replies = [ok(["a"])];
@@ -130,6 +141,15 @@ describe("one permit, one physical POST, legacy step order", () => {
       expect(await run()).toEqual({ kind: "result", result: { ok: false, error }, expectation });
       expect(state.posts).toHaveLength(1); expect(state.marked).toHaveLength(1);
     }
+  });
+  it("deduplicates keywords before chunking, as the legacy chunk leaf did", async () => {
+    expect(await run({}, task([...keywords, keywords[0]]))).toEqual({ kind: "result", result: { ok: true, unsupported: [] }, expectation });
+    expect(state.posts.map(post => post.keywords.length)).toEqual([5, 5, 2]);
+  });
+  it("discards prior successful chunks when a later chunk ends invalid", async () => {
+    state.replies = [ok(keywords.slice(0, 5)), invalid(), invalid()];
+    expect(await run()).toEqual({ kind: "result", result: { ok: false, error: "invalid_output" }, expectation });
+    expect(state.posts.map(post => post.keywords.length)).toEqual([5, 5, 1]);
   });
   it("records no physical success before every keyword is verified", async () => {
     state.replies = [ok(["keyword-0"])]; state.slots = ["granted", "capacity"];

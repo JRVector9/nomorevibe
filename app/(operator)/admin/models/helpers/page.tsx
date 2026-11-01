@@ -72,7 +72,7 @@ export default async function ModelHelpersPage() {
     <section id="new" className="grid gap-2 scroll-mt-6">
       <h2 className="text-[18px] font-semibold">새 배정</h2>
       <p className="text-[13px] text-fg-3">장비 × 단계마다 하나입니다. 도우미 장비는 장비 한도에 있어야 하고, 도우미 경로는 그 장비에서 순위 2 이상이어야 합니다(1 이면 거절).
-        정책 rev14(DRAIN 창)의 도우미 경로가 들어간 뒤, OPEN 전에 꺼짐으로 만드세요.</p>
+        도우미 경로(live·shadow)는 먼저 정책에 들어가 있어야 저장됩니다 — 경로는 DRAIN 없이 정책에 덧붙일 수 있습니다. 새 배정은 꺼짐으로 만드세요.</p>
       <HelperForm helper={null} defaults={view.defaults} routeDefaults={view.routeDefaults} readOnly={readOnly} />
     </section>
     <section id="audit" className="grid gap-2 scroll-mt-6">

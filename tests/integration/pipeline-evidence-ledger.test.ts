@@ -49,7 +49,6 @@ afterAll(async () => {
 }, 120_000);
 beforeEach(() => {
   vi.stubEnv("CRAWL_REVIEW_READY", "true");
-  vi.stubEnv("CRAWL_REVIEW_MODEL", "first-fixture");
 });
 
 async function configure() {

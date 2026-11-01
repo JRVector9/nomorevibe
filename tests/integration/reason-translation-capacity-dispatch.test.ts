@@ -17,7 +17,9 @@ import { requestReasonTranslationModelSlot, cancelReservedModelSlot, findOwnPend
 import { modelCapacityPolicyHash, reasonTranslationLogicalWorkKey, reasonTranslationInputHash,
   type ModelCapacityPolicy, type ModelCapacityRequest } from '@/lib/llm/capacity';
 import type { ReasonTranslationServingContract } from '@/lib/llm/reason-translation-serving-contract';
+import { setServingContractSnapshotForTest } from '@/lib/llm/serving-contract-store';
 import { ensureSchema, TEST_DATABASE_URL } from './setup';
+import { directContractRow } from './direct-engine-fixtures';
 
 const legacyTransport = vi.fn(async () => { throw new Error('fixture_unexpected_legacy_transport'); });
 const serving = vi.hoisted(() => ({ contract: null as ReasonTranslationServingContract | null }));
@@ -204,10 +206,11 @@ beforeAll(() => tracked((async () => {
   expect(baseline('job_batch_control')[0]).toMatchObject({ mode: 'legacy', writer_contract_version: 0 }); initialized = true;
 })(), setups));
 beforeEach(() => tracked((async () => {
-  vi.stubEnv('ABCLLM_API_KEY', 'local-test-only'); legacyTransport.mockClear(); vi.stubGlobal('fetch', legacyTransport);
+  // The route opens only on a direct admin contract for its model (abcLLM gateway removed 2026-10-30); the contract body is the mock above.
+  setServingContractSnapshotForTest([directContractRow(jobName, TRANSLATE_MODEL)]); legacyTransport.mockClear(); vi.stubGlobal('fetch', legacyTransport);
   await install(); await elect();
 })(), setups));
-afterEach(() => tracked(steps([() => drain(setups), () => drain(exercises), () => drain(work), cleanup, async () => { serving.contract = null; vi.unstubAllEnvs(); vi.unstubAllGlobals(); }]), hooks));
+afterEach(() => tracked(steps([() => drain(setups), () => drain(exercises), () => drain(work), cleanup, async () => { serving.contract = null; setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); vi.unstubAllGlobals(); }]), hooks));
 afterAll(async () => { await steps([() => drain(setups), () => drain(exercises), () => drain(work), () => drain(hooks), cleanup,
   () => admin.end(), async () => { await (globalThis as { pgClient?: ReturnType<typeof postgres> }).pgClient?.end(); }]); });
 
@@ -220,13 +223,15 @@ it('keeps production unsupported before any request, cache attempt, provider cal
   const [job] = await admin`SELECT requested_version,processed_version,lease_token,last_error FROM jobs WHERE name=${jobName}`;
   expect(Number(job.processed_version)).toBeLessThan(Number(job.requested_version)); expect(job.lease_token).toBeNull(); expect(job.last_error).toBeNull();
 }));
-it('preserves disabled original transport, partial quality and the original three-argument cache writer', exercise(async () => {
+it('preserves the disabled original path, which no longer sends, and the original three-argument cache writer', exercise(async () => {
+  // Disabled still selects the original transport, but the abcLLM gateway it used is gone (2026-10-30): no HTTP at all, no ledger
+  // row, and the original writer stores the batch as a no_key failure.
   const first = await seed(), second = await seed(); await install(basePolicy, 'disabled');
   const legacy = vi.fn(async () => new Response(JSON.stringify(replyBody(['한국어 성공', null])))); vi.stubGlobal('fetch', legacy);
-  expect(await tick()).toMatchObject({ status: 'completed', done: true }); expect(legacy).toHaveBeenCalledTimes(1);
+  expect(await tick()).toMatchObject({ status: 'completed' }); expect(legacy).not.toHaveBeenCalled();
   expect(await admin`SELECT request_id FROM model_capacity_requests WHERE owner_instance_id=${prefix}`).toEqual([]);
-  const rows = await admin`SELECT status,attempts FROM text_translations WHERE source_hash=ANY(${[first.hash,second.hash]}::text[]) ORDER BY status`;
-  expect(Array.from(rows)).toEqual([{ status: 'done', attempts: 1 }, { status: 'failed', attempts: 1 }]);
+  const rows = await admin`SELECT status,attempts,error_code FROM text_translations WHERE source_hash=ANY(${[first.hash,second.hash]}::text[]) ORDER BY status`;
+  expect(Array.from(rows)).toEqual([{ status: 'failed', attempts: 1, error_code: 'no_key' }, { status: 'failed', attempts: 1, error_code: 'no_key' }]);
 }));
 it('commits actual legacy text role/job, one batch permit, native terminal, partial cache attempts and final ACK', exercise(async () => {
   const first = await seed(), second = await seed(); await server(async ({ bodies, setReply }) => {
@@ -278,8 +283,13 @@ it('abandons a stale complete cache binding and keeps the remaining/new eligible
     // The same canonical member remains due, but a one-microsecond cache change
     // must invalidate the original full input hash instead of rebinding its ID.
     await admin`UPDATE text_translations SET updated_at=updated_at+interval '1 microsecond' WHERE source_hash=${first.hash} AND target_lang='ko'`;
-    const latest = await seed(); let calls = 0;
-    setReply(response => response.end(JSON.stringify(replyBody(++calls === 1 ? ['재시도 번역'] : ['기존 사유 번역', '새 사유 번역']))));
+    const latest = await seed();
+    // Answer by the request, not the call order: which queue (retry or untried) the job reads first alternates per tick round
+    // across this file's ticks, and the disabled-path test above now ends its tick after one round (no_key) instead of two.
+    setReply(response => {
+      const texts = JSON.parse(JSON.parse(bodies.at(-1)!).messages[1].content) as string[];
+      response.end(JSON.stringify(replyBody(texts.map(text => text === first.body ? '재시도 번역' : '사유 번역'))));
+    });
     expect(await tick()).toMatchObject({ status: 'completed', done: true }); expect(bodies).toHaveLength(2);
     expect((await admin`SELECT state,dispatch_binding,dispatched_at FROM model_capacity_requests WHERE request_id=${requestId}::uuid`)[0])
       .toMatchObject({ state: 'withdrawn', dispatch_binding: null, dispatched_at: null });
@@ -479,17 +489,20 @@ it('retains full C after EOF for review while a new boot retries the failed cach
     expect((await admin`SELECT state FROM model_capacity_requests WHERE request_id=${unknown.request_id}::uuid`)[0].state).toBe('indeterminate');
   });
 }));
-it('retains full C when an opted-in strict terminal response lacks the PR3 usage_provenance', exercise(async () => {
+it('settles a direct engine\'s complete answer without the gateway\'s PR3 usage_provenance even under the strict opt-in', exercise(async () => {
+  // PR3 의 usage_provenance 표시는 게이트웨이가 붙이던 것이다. 게이트웨이가 없어진 뒤(2026-10-30) 계약은 엔진 직접 연결로만 열리므로
+  // opt-in 헤더는 그대로 보내되, 표시 없는 엔진의 완결 응답은 terminal 이고 엔진이 보고한 usage 로 정산한다.
   const item = await seed(); await server(async ({ bodies, setReply }) => {
     // 운영 값이 아니다 — PR3 opt-in 표시만 더한 로컬 fixture 계약이다
     serving.contract = { ...serving.contract!, strictTerminalOptIn: 'abcllm-strict-terminal-v1' } as ReasonTranslationServingContract;
     const headers: unknown[] = [];
     setReply(response => { headers.push(response.req.headers['x-abcllm-strict-terminal']);
       response.end(JSON.stringify({ ...replyBody(), usage_provenance: undefined })); });
-    expect(await tick()).toMatchObject({ status: 'completed', done: false }); expect(bodies).toHaveLength(1); expect(headers).toEqual(['1']);
-    const [unknown] = await admin`SELECT state,dispatch_binding,terminal_evidence FROM model_capacity_requests WHERE owner_instance_id=${prefix}`;
-    expect(unknown.state).toBe('indeterminate'); expect(unknown.dispatch_binding.chargedTokens).toBe(8000); expect(unknown.terminal_evidence).toBeNull();
-    expect((await admin`SELECT status,translated FROM text_translations WHERE source_hash=${item.hash}`)[0]).toMatchObject({ status: 'failed', translated: null });
+    expect(await tick()).toMatchObject({ status: 'completed', done: true }); expect(bodies).toHaveLength(1); expect(headers).toEqual(['1']);
+    const [settled] = await admin`SELECT state,dispatch_binding,terminal_evidence FROM model_capacity_requests WHERE owner_instance_id=${prefix}`;
+    expect(settled.state).toBe('settled'); expect(settled.dispatch_binding.chargedTokens).toBe(8000);
+    expect(settled.terminal_evidence).toMatchObject({ provenance: 'upstream_reported', actualUsage: { inputTokens: 70, outputTokens: 20, totalTokens: 90 } });
+    expect((await admin`SELECT status,translated FROM text_translations WHERE source_hash=${item.hash}`)[0]).toMatchObject({ status: 'done', translated: '한국어 사유' });
   });
 }));
 it('admits the actual versioned translation role and records an actual local stored-result ACK', exercise(async () => {

@@ -1,12 +1,29 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq, inArray, sql } from "drizzle-orm";
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
+import { directContractRow } from "./direct-engine-fixtures";
+
+/**
+ * 게이트웨이(abcLLM)는 2026-10-30 제거됐다. 잡은 이 경로·모델의 직접 연결 계약이 있어야 돌고, 용량을 끈(disabled) 잡이 부르는 옛 잎
+ * writeKeywords 는 이제 보내지 않고 no_key 로 끝난다(파일 끝 두 시험). 이 파일은 잡이 답을 받은 뒤의 판단(차례·실패 시각·생성 해시·색인 사본)을
+ * 보므로, 그 잎만 같은 wire(profileGatewayWire)를 이 파일의 fetch 목(gateway)으로 보내는 대역으로 바꾼다(direct-engine-fixtures).
+ * 검색어 번역(resolveSearchQuery)은 그 경로의 직접 연결 계약이 없어 부르지 않는다 — 번역 없이 색인만으로 찾는지 본다.
+ */
+vi.mock("@/lib/domain/products/search-profile", async load => {
+  const original = await load<typeof import("@/lib/domain/products/search-profile")>();
+  const { askRemovedGatewayLeaf } = await import("./direct-engine-fixtures");
+  const writeKeywords: typeof original.writeKeywords = (evidence, options) => askRemovedGatewayLeaf(original.writeKeywords(evidence, options),
+    options.request ?? fetch, original.profileGatewayWire(evidence, options.model ?? original.PROFILE_MODEL),
+    async response => original.parseProfileGatewayBody(await response.text(), evidence.name), options);
+  return { ...original, writeKeywords };
+});
 
 const { db } = await import("@/lib/db");
 const { crawlCandidates, crawlDocuments, jobs, products, productSearchProfiles, textTranslations } = await import("@/lib/db/schema");
 const { writeSearchProfiles } = await import("@/lib/jobs/products/search-profile");
 const { refreshProductSearchDocuments } = await import("@/lib/jobs/products/search-refresh");
 const { productAuditCampaigns, productAuditItems } = await import("@/lib/db/product-audit-schema");
-const { profileEvidence, profileHash } = await import("@/lib/domain/products/search-profile");
+const { PROFILE_MODEL, profileEvidence, profileHash } = await import("@/lib/domain/products/search-profile");
 const { pendingProfiles, pendingVerifications, reconcileSearchProfileBatch } = await import("@/lib/domain/products/search-profiles");
 const { runJob } = await import("@/lib/jobs/runner");
 const { listProducts } = await import("@/lib/domain/products/repository");
@@ -45,11 +62,11 @@ beforeEach(async () => {
   await db.delete(crawlDocuments);
   await db.execute(sql`truncate product_audit_campaigns, product_audit_items, product_audit_attempts restart identity cascade`);
   await db.delete(textTranslations).where(eq(textTranslations.targetLang, "en"));
-  vi.stubEnv("ABCLLM_API_KEY", "test-key");
+  setServingContractSnapshotForTest([directContractRow("product-search-profile", PROFILE_MODEL)]);
   gateway.mockReset();
   vi.stubGlobal("fetch", gateway);
 });
-afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); setServingContractSnapshotForTest(null); });
 
 describe("검색 키워드 잡", () => {
   it("키워드를 지어 원본과 색인용 사본을 같이 적는다", async () => {
@@ -235,10 +252,11 @@ describe("검색 키워드 잡", () => {
     });
     await tick();
 
-    // 번역을 부르지 않게 키를 뗀다 — 색인의 키워드만으로 찾혀야 한다
-    vi.stubEnv("ABCLLM_API_KEY", "");
+    // 번역은 부르지 않는다(검색어 번역 경로의 직접 연결 계약이 없다) — 색인의 키워드만으로 찾혀야 한다
+    gateway.mockClear();
     expect(await find("장보기 목록")).toContain("coche");
     expect(await find("football manager game")).toContain("club-season");
+    expect(gateway).not.toHaveBeenCalled();
   });
 
   it("지은 지 30일이 지나도 글이 그대로면 다시 부르지 않는다", async () => {
@@ -379,6 +397,22 @@ describe("검색 키워드 잡", () => {
     await tick();
     expect(gateway).not.toHaveBeenCalled();
   });
+
+  it("직접 연결 계약이 없으면 부르지 않고 no_direct_contract 로 넘긴다 — 성공이 아니다", async () => {
+    const id = await seed("no-contract");
+    setServingContractSnapshotForTest([]);
+    expect(await tick()).toMatchObject({ status: "completed", done: true, degraded: "no_direct_contract" });
+    expect(gateway).not.toHaveBeenCalled();
+    expect(await db.select().from(productSearchProfiles).where(eq(productSearchProfiles.productId, id))).toEqual([]);
+  });
+
+  it("옛 잎(writeKeywords)은 계약이 있어도 게이트웨이로 보내지 않고 no_key 로 끝난다", async () => {
+    const id = await seed("real-leaf");
+    const [product] = await db.select().from(products).where(eq(products.id, id));
+    const real = await vi.importActual<typeof import("@/lib/domain/products/search-profile")>("@/lib/domain/products/search-profile");
+    expect(await real.writeKeywords(profileEvidence(product, null), { timeoutMs: 1_000, request: gateway })).toEqual({ ok: false, error: "no_key" });
+    expect(gateway).not.toHaveBeenCalled();
+  });
 });
 
 describe("카테고리 색인", () => {
@@ -388,7 +422,6 @@ describe("카테고리 색인", () => {
 
     const [row] = await db.select({ category: products.searchCategory }).from(products).where(eq(products.slug, "rookies-revenge"));
     expect(row.category).toBe("Games 게임");
-    vi.stubEnv("ABCLLM_API_KEY", "");
     // 소개에 "game"이 없어도 카테고리가 잇는다
     expect(await find("chess game")).toContain("rookies-revenge");
     expect(await find("게임")).toContain("rookies-revenge");

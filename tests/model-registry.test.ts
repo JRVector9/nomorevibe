@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_MODEL_DEFINITIONS, configuredModel, modelBaseUrl, modelForPurpose, modelRequestName, readModelRegistry,
   resolveRegistryModel, modelLimits, configuredModelForProvider, modelDeadlineLadder, modelTimeoutMs, modelRequestBudget, modelCallTimeoutMs, modelCallMaxTokens,
-  setModelRoutePolicyOverlay } from "@/lib/llm/model-registry";
+  setModelRoutePolicyOverlay, MODEL_PURPOSE_ENV } from "@/lib/llm/model-registry";
 
 const twins = () => ({ MODEL_REGISTRY_CONFIG: JSON.stringify({ version: 1, models: [
   { ...DEFAULT_MODEL_DEFINITIONS[0], key: "gpu3090:review", equipment: "gpu3090", model: "same-model", gatewayLabel: undefined },
@@ -19,12 +19,30 @@ describe("model registry equipment identity", () => {
   });
   it("preserves the equipment label on legacy overrides and resolves explicit keys", () => {
     const env = twins();
-    expect(configuredModel("product-translate", { ...env, PRODUCT_TRANSLATION_MODEL: "[m1] same-model" })).toBe("[m1] same-model");
-    expect(configuredModel("product-translate", { ...env, PRODUCT_TRANSLATION_MODEL_KEY: "m1:translation", PRODUCT_TRANSLATION_MODEL: "obsolete" })).toBe("[m1] same-model");
-    // A shared bare name follows the registry route: only M1 serves product translation; GPU3090 keeps direct review.
-    expect(configuredModel("product-translate", { ...env, PRODUCT_TRANSLATION_MODEL: "same-model" })).toBe("[m1] same-model");
+    // reason-translate keeps its env (ABCLLM_MODEL / ABCLLM_MODEL_KEY): labels survive and explicit keys resolve.
+    expect(configuredModel("reason-translate", { ...env, ABCLLM_MODEL: "[m1] same-model" })).toBe("[m1] same-model");
+    expect(configuredModel("reason-translate", { ...env, ABCLLM_MODEL_KEY: "m1:translation", ABCLLM_MODEL: "obsolete" })).toBe("[m1] same-model");
+    // A shared bare name follows the registry route: only M1 serves translation; GPU3090 keeps direct review.
+    expect(configuredModel("reason-translate", { ...env, ABCLLM_MODEL: "same-model" })).toBe("[m1] same-model");
     expect(configuredModel("direct-review", { ...env, AUDIT_SECOND_OPINION_MODEL: "same-model" })).toBe("same-model");
-    expect(() => configuredModel("product-translate", { ...env, PRODUCT_TRANSLATION_MODEL_KEY: "gpu3090:review" })).toThrow("invalid_model_key");
+    expect(() => configuredModel("reason-translate", { ...env, ABCLLM_MODEL_KEY: "gpu3090:review" })).toThrow("invalid_model_key");
+  });
+  it("selects product-translate and crawl-tagline from the registry alone and ignores their removed env names", () => {
+    const env = twins();
+    // No process env for these purposes since the abcLLM gateway removal (2026-10-31): a stale gateway alias cannot pick the model.
+    expect(MODEL_PURPOSE_ENV["product-translate"]).toBeNull();
+    expect(MODEL_PURPOSE_ENV["crawl-tagline"]).toBeNull();
+    for (const ignored of [{ PRODUCT_TRANSLATION_MODEL: "[m1] same-model" }, { PRODUCT_TRANSLATION_MODEL: "obsolete" },
+      { PRODUCT_TRANSLATION_MODEL: "[other] same-model" }, { PRODUCT_TRANSLATION_MODEL_KEY: "gpu3090:review" },
+      { PRODUCT_TRANSLATION_MODEL_KEY: "missing:key", PRODUCT_TRANSLATION_MODEL: "same-model" }])
+      expect(configuredModel("product-translate", { ...env, ...ignored })).toBe("[m1] same-model");
+    // An explicit choice is a registry selection; a selection must name an entry that serves the purpose.
+    const selections = (selected: Record<string, string>) => ({ MODEL_REGISTRY_CONFIG: JSON.stringify({ ...JSON.parse(env.MODEL_REGISTRY_CONFIG), selections: selected }) });
+    expect(configuredModel("product-translate", { ...selections({ "product-translate": "m1:translation" }), PRODUCT_TRANSLATION_MODEL_KEY: "gpu3090:review" }))
+      .toBe("[m1] same-model");
+    expect(() => configuredModel("product-translate", selections({ "product-translate": "gpu3090:review" }))).toThrow("invalid_model_registry");
+    for (const ignored of [{}, { ABCLLM_TAGLINE_MODEL: "[MLX] gpt-oss-120b" }, { ABCLLM_TAGLINE_MODEL_KEY: "mlx:text" }, { ABCLLM_TAGLINE_MODEL: "unregistered-alias" }])
+      expect(configuredModel("crawl-tagline", ignored)).toBe("[MLX] qwen3.6-35b-heretic");
   });
   it("replaces model, provider, address and resource configuration without editing consumers", () => {
     const definition = { ...DEFAULT_MODEL_DEFINITIONS[2], model: "replacement", baseUrl: "https://gateway.example/v1",

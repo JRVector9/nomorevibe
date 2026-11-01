@@ -87,9 +87,14 @@ export async function lockModelCapacityCallerControl(tx: ProductTransaction) {
 }
 
 /** Standalone primary read; the transaction has settled before transport starts.
- * This never expires requests, grants a reservation or appends an event. */
+ * This never expires requests, grants a reservation or appends an event.
+ *
+ * 잠그지 않고 읽는다(2026-10-31 장부 control 행 경합): 이 스냅숏은 전송 경로(legacy/장부)와 route 매핑을 고르는 데만 쓰이고, 입장·dispatch 는
+ * 그 뒤의 TX 가 control 을 FOR UPDATE/FOR SHARE 로 다시 잠가 mode·policy 를 재확인한다. FOR SHARE 는 "지금 쓰는 TX 가 끝난 뒤의 값"을
+ * 보장했지만 그 값도 이 함수가 돌아온 순간 이미 과거다 — 대신 호출마다 control 잠금 줄에 서서(writer 뒤·다음 writer 앞) 55P03 과 convoy 를 만들었다. */
 export async function readModelCapacityCallerControl() {
-  const snapshot = await transaction(tx => lockModelCapacityCallerControl(tx));
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const snapshot = await onPrimary(async () => callerControlSnapshot(await unlockedControl(db)));
   // Every disabled-transport choice (coordinator, text/CLI admission) reads here. A background
   // consumer lane never takes that uncapped path, even if open flips to disabled mid-tick.
   if (snapshot.mode === "disabled" && slotOnlyModelCapacity()) throw new ModelCapacityDeferredError("disabled");
@@ -242,22 +247,23 @@ async function expireReservation(tx: ProductTransaction, row: RequestRow): Promi
 }
 
 /** Readback only, including expired or old-policy rows. Re-poll through
- * requestModelSlot for a current reservation; this never grants or expires work. */
+ * requestModelSlot for a current reservation; this never grants or expires work.
+ *
+ * control 을 잠그지 않는 한 문장 읽기(2026-10-31). 돌려준 requestId 는 requestSlot 이 control FOR UPDATE 아래에서 행을 다시 읽어
+ * sameIdentity·만료·상태를 재판정하고, capacityRefusalReason 의 capacity/work_busy 구분은 다음 poll 이 바로잡는 일시 분류다 —
+ * FOR SHARE 가 더해 주던 것은 "지금 쓰는 TX 가 끝나길 기다린 뒤 읽기"뿐이었고 그 대가가 매 항목 control 잠금 줄 서기였다. */
 export async function findOwnPendingModelRequest(value: ModelCapacityRequestIdentity): Promise<
   { requestId: string; state: "waiting" | "reserved" | "dispatched" } | null> {
   if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
   const checked = modelCapacityRequestIdentitySchema.parse(value);
-  return transaction(async tx => {
-    await control(tx, "share");
-    const [row] = await tx.select().from(modelCapacityRequests).where(and(
-      eq(modelCapacityRequests.ownerInstanceId, checked.owner.instanceId),
-      eq(modelCapacityRequests.ownerBootId, checked.owner.bootId), eq(modelCapacityRequests.workKey, checked.workKey),
-      sql`${liveStateSql(modelCapacityRequests.state)}`)).limit(1);
-    // indeterminate 는 살아 있는 행이 아니다(capacity-states.ts): 같은 work key 는 새 requestId 로 다시 접수된다.
-    if (!row || row.state === "withdrawn" || row.state === "settled" || row.state === "indeterminate") return null;
-    sameIdentity(row, checked);
-    return { requestId: row.requestId, state: row.state };
-  });
+  const [row] = await onPrimary(() => db.select().from(modelCapacityRequests).where(and(
+    eq(modelCapacityRequests.ownerInstanceId, checked.owner.instanceId),
+    eq(modelCapacityRequests.ownerBootId, checked.owner.bootId), eq(modelCapacityRequests.workKey, checked.workKey),
+    sql`${liveStateSql(modelCapacityRequests.state)}`)).limit(1));
+  // indeterminate 는 살아 있는 행이 아니다(capacity-states.ts): 같은 work key 는 새 requestId 로 다시 접수된다.
+  if (!row || row.state === "withdrawn" || row.state === "settled" || row.state === "indeterminate") return null;
+  sameIdentity(row, checked);
+  return { requestId: row.requestId, state: row.state };
 }
 
 export type OwnPendingTextProfileRequest = Readonly<{ productId: number; workKey: string }>;
@@ -314,7 +320,9 @@ export async function findOwnPendingReasonTranslationRequests(value: {
   const identity = modelCapacityRequestIdentitySchema.parse({ owner: value.owner, model: value.model, workKey: "reason-batch-readback",
     class: "background", pool: "text", routeId: "reason-translate", provider: value.provider ?? "abcllm" });
   return transaction(async tx => {
-    const state = await control(tx, "share");
+    // readback 전용 — control 을 잠그지 않는다(findOwnPendingTextProfileRequests 와 같은 이유, 2026-10-31). 후보는
+    // cancelOwnPendingReasonTranslationRequest(control FOR UPDATE + 행 FOR UPDATE + 상태·token·세대 CAS)와 requestSlot 이 다시 확인한다.
+    const state = await unlockedControl(tx);
     if (state.mode !== "open") return [];
     const rows = await tx.select().from(modelCapacityRequests).where(and(
       eq(modelCapacityRequests.ownerInstanceId, identity.owner.instanceId), eq(modelCapacityRequests.ownerBootId, identity.owner.bootId),
@@ -372,7 +380,8 @@ function productTextBatchIdentity(value: ProductTextBatchIdentity) {
 export async function findOwnPendingProductTextRequests(value: ProductTextBatchIdentity): Promise<OwnPendingProductTextRequest[]> {
   const identity = productTextBatchIdentity(value);
   return transaction(async tx => {
-    const state = await control(tx, "share");
+    // readback 전용 — control 을 잠그지 않는다(2026-10-31). cancelOwnPendingProductTextRequest·requestSlot 이 FOR UPDATE 아래에서 재확인한다.
+    const state = await unlockedControl(tx);
     if (state.fenced || state.mode !== "open") return [];
     const rows = await tx.select().from(modelCapacityRequests).where(and(
       eq(modelCapacityRequests.ownerInstanceId, identity.owner.instanceId), eq(modelCapacityRequests.ownerBootId, identity.owner.bootId),

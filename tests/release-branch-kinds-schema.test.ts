@@ -69,14 +69,14 @@ it("the logical/members branch is the 0125 publication_classify identity plus wi
   expect(publicationClassifyReleaseLogicalSql.startsWith("coalesce(((") && publicationClassifyReleaseLogicalSql.endsWith("),false)")).toBe(true);
 });
 
-it("Drizzle composes the same three CHECKs as (previous) OR (branch) with the constants last (under 0159's text local-direct tail on the dispatch CHECK)", () => {
+it("Drizzle composes the same three CHECKs as (previous) OR (branch) with the constants last (under 0161's text local-direct tail on the dispatch CHECK)", () => {
   const checks = getTableConfig(modelCapacityRequests).checks;
   for (const [name, branch] of Object.entries(targets)) {
     let expression = new PgDialect().sqlToQuery(checks.find(check => check.name === name)!.value).sql;
     if (name === "model_capacity_requests_dispatch_check") {
-      // 0159 (PR 3b-E text local-direct binding) rebuilt the dispatch CHECK once more after 0158, as (0158 predicate) OR (text branches): strip that wrap first.
+      // 0161 stores the text local-direct branch as the next rules ordinal. The TypeScript check() still ends with (0158 predicate) OR (text branches): strip that wrap first.
       const textTail = `) OR (${textLocalDirectDispatchSql})`;
-      expect(expression.startsWith("(") && expression.endsWith(textTail), `${name}: 0159 tail present`).toBe(true);
+      expect(expression.startsWith("(") && expression.endsWith(textTail), `${name}: 0161 tail present`).toBe(true);
       expression = expression.slice(1, -textTail.length);
     }
     const suffix = `) OR (${branch})`;

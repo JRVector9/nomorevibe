@@ -5,6 +5,8 @@ import { oldestPendingTranslationMinutes } from '@/lib/crawl/translations';
 import { getSettings, settingsUnreadable } from '@/lib/crawl/settings';
 import { profileGenerationRetryAllowedSql } from '@/lib/domain/products/search-profile-retry';
 import { readModelCapacityCallerControl } from '@/lib/llm/capacity-repository';
+import { ensureServingContracts, textRouteCallable } from '@/lib/llm/serving-contract-store';
+import { currentModelEnv } from '@/lib/operations/model-env';
 
 export type TextProgress = { schedulerScheduled: boolean; oldestReadyMinutes: number | null;
   persistedWithin10m: boolean; inBackoff: boolean; providerError: boolean; admissionHeld: boolean };
@@ -14,10 +16,26 @@ export function textProgressStalled(state: TextProgress): boolean {
     !state.persistedWithin10m && !state.inBackoff && !state.providerError && !state.admissionHeld;
 }
 
+type MainTextRoute = 'reason-translate' | 'crawl-tagline' | 'product-search-profile' | 'product-search-verify';
+
+/**
+ * Which main text routes can call their model: a directly connected engine contract (admin, transport direct) for the route's
+ * model — any of the stored admin stage pool's models, else this process's configured one. The abcLLM gateway is gone, so a route
+ * without one is not running, and its queue is a configuration gap the job already reports (degraded), not a stall to restart.
+ */
+async function callableMainTextRoutes(): Promise<Record<MainTextRoute, boolean>> {
+  await ensureServingContracts();
+  const models = await currentModelEnv();
+  const callable = (route: MainTextRoute, model: string) => (models.pooled?.[route]?.length ? models.pooled[route] : [model])
+    .some(name => textRouteCallable(route, name));
+  return { 'reason-translate': callable('reason-translate', models.translate), 'crawl-tagline': callable('crawl-tagline', models.tagline),
+    'product-search-profile': callable('product-search-profile', models.profile), 'product-search-verify': callable('product-search-verify', models.verify) };
+}
+
 /** Persisted progress of the serial main text jobs; product translation runs in a separate runtime lane. */
 export async function readTextProgress(): Promise<Omit<TextProgress, 'schedulerScheduled'>> {
-  const [settings, capacity, translationAge, taglines, rows] = await Promise.all([
-    getSettings(), readModelCapacityCallerControl(),
+  const [callable, settings, capacity, translationAge, taglines, rows] = await Promise.all([
+    callableMainTextRoutes(), getSettings(), readModelCapacityCallerControl(),
     oldestPendingTranslationMinutes(), pendingTaglines(1), db.execute<{
       profile_age: number | null; verify_age: number | null; persisted: boolean;
       in_backoff: boolean; provider_error: boolean;
@@ -61,10 +79,13 @@ export async function readTextProgress(): Promise<Omit<TextProgress, 'schedulerS
   const row = rows[0];
   // Collection pauses only crawl-tagline. Translation and keyword jobs still admit work.
   const taglineAge = settings.enabled ? taglines[0]?.readyAgeMinutes ?? null : null;
-  const ages = [translationAge, taglineAge, row.profile_age, row.verify_age].filter((n): n is number => n !== null).map(Number);
+  // A route without a direct contract is not running; its queue cannot prove the worker stuck (restarting would not help).
+  const ages = [callable['reason-translate'] ? translationAge : null, callable['crawl-tagline'] ? taglineAge : null,
+    callable['product-search-profile'] ? row.profile_age : null, callable['product-search-verify'] ? row.verify_age : null]
+    .filter((n): n is number => n !== null).map(Number);
   return { oldestReadyMinutes: ages.length ? Math.max(...ages) : null,
     persistedWithin10m: row.persisted, inBackoff: row.in_backoff,
-    providerError: row.provider_error || !process.env.ABCLLM_API_KEY?.trim(),
+    providerError: row.provider_error,
     // Only drain blocks all model admission; disabled retains the existing legacy transport.
     admissionHeld: capacity.mode === 'draining' };
 }

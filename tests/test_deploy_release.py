@@ -1,5 +1,8 @@
+import contextlib
 import importlib.util
+import io
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -10,6 +13,348 @@ SOURCE = Path(__file__).resolve().parents[1] / 'scripts/ops/deploy_release.py'
 spec = importlib.util.spec_from_file_location('release_under_test', SOURCE)
 release = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release)
+OLD, NEW = 'a' * 40, 'b' * 40
+SECRET = 'synthetic-secret-value'
+
+
+def saved_env(kind, **settings):
+    lines = {'RELEASE_TAG': OLD, 'WORKER_ROLE': 'text', 'DB_POOL_MAX': '6', 'SECRET': '"' + SECRET + '"'}
+    if kind == 'web':
+        lines.update(NEXT_DEPLOYMENT_ID=OLD, WORKER_ROLE=None)
+    lines.update(settings)
+    return ''.join(key + '=' + value + '\n' for key, value in lines.items() if value is not None)
+
+
+def live_env(kind, **settings):
+    lines = {'RELEASE_TAG': OLD, 'WORKER_ROLE': 'text', 'DB_POOL_MAX': '6', 'SECRET': SECRET}
+    if kind == 'web':
+        lines.update(NEXT_DEPLOYMENT_ID=OLD, WORKER_ROLE=None)
+    lines.update(settings)
+    return [key + '=' + value for key, value in lines.items() if value is not None]
+
+
+def drift_snapshot(**live):
+    """text-mini (Git build) and publisher-m3 (Docker image) with optional live spec overrides per app."""
+    snapshot = {'schemaVersion': 1, 'apps': {}, 'runtime': {}, 'baseline': {}, 'latest': {}}
+    for short, source in (('text-mini', 'github'), ('text-m3', 'github'), ('publisher-m3', 'docker'), ('web-mini', 'docker')):
+        kind = 'web' if short.startswith('web-') else 'worker'
+        snapshot['apps'][short] = {'appName': 'service-' + short, 'sourceType': source, 'env': saved_env(kind)}
+        snapshot['runtime'][short] = {'serviceSpec': {'TaskTemplate': {'ContainerSpec': {
+            'Image': 'image', 'Env': live_env(kind, **live.get(short.replace('-', '_'), {}))}}}, 'containers': []}
+        snapshot['baseline'][short] = {'release': OLD}
+        snapshot['latest'][short] = {'status': 'done', 'deploymentId': 'old-' + short}
+    return snapshot
+
+
+class EnvDriftPreflightTests(unittest.TestCase):
+    def test_env_drift_ignores_release_settings_and_names_changed_variables_without_values(self):
+        snapshot = drift_snapshot(text_mini={'RELEASE_TAG': NEW, 'DB_POOL_MAX': '3', 'LEGACY_FLAG': '1', 'SECRET': None})
+        found = release.env_drift(snapshot['apps']['text-mini'], snapshot['runtime']['text-mini'])
+        self.assertEqual(found, {'missingInService': ['SECRET'], 'unexpectedInService': ['LEGACY_FLAG'],
+                                 'valueChanged': ['DB_POOL_MAX']})
+        self.assertNotIn(SECRET, json.dumps(found)); self.assertNotIn('=', json.dumps(found))
+        same = drift_snapshot(web_mini={'RELEASE_TAG': NEW, 'NEXT_DEPLOYMENT_ID': NEW})
+        self.assertEqual(release.env_drift(same['apps']['web-mini'], same['runtime']['web-mini']),
+                         {'missingInService': [], 'unexpectedInService': [], 'valueChanged': []})
+        self.assertEqual(release.env_drift_preflight(same, ['web-mini', 'text-mini', 'publisher-m3'])['checkedApps'],
+                         ['web-mini', 'text-mini', 'publisher-m3'])
+
+    def test_env_drift_preflight_names_the_first_drifted_app_and_lists_git_and_docker_apps(self):
+        snapshot = drift_snapshot(text_mini={'DB_POOL_MAX': '3'}, publisher_m3={'NEW_FLAG': 'on'})
+        with self.assertRaises(ValueError) as caught:
+            release.env_drift_preflight(snapshot, ['publisher-m3', 'text-mini', 'web-mini'])
+        self.assertEqual(str(caught.exception), 'publisher-m3_env_drift_redeploy_required')
+        self.assertEqual(caught.exception.safe_detail, {'envDrift': {
+            'publisher-m3': {'missingInService': [], 'unexpectedInService': ['NEW_FLAG'], 'valueChanged': []},
+            'text-mini': {'missingInService': [], 'unexpectedInService': [], 'valueChanged': ['DB_POOL_MAX']}}})
+        # Only the unselected app drifts: nothing to refuse.
+        release.env_drift_preflight(snapshot, ['web-mini'])
+
+    def test_create_plan_stops_on_env_drift_before_credentials_images_or_the_private_directory(self):
+        snapshot = drift_snapshot(text_mini={'DB_POOL_MAX': '3'})
+        def local_git(command, **kwargs):
+            self.assertEqual(command[0], 'git')
+            return NEW if 'rev-parse' in command else ''
+        decision = {'selectedApps': ['text-mini', 'text-m3'], 'retainedApps': [], 'mode': 'role', 'rulesVersion': 'v2'}
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(release.shared, 'run', side_effect=local_git), \
+                patch.object(release, 'read_private', return_value=snapshot), \
+                patch.object(release, 'impact', return_value=decision), \
+                patch.object(release, 'new_client', side_effect=AssertionError('credential accessed')), \
+                patch.object(release.readiness, 'resolve_readiness', side_effect=AssertionError('CI read')), \
+                patch.object(release.shared, 'ssh_python', side_effect=AssertionError('remote call')):
+            output = Path(directory) / 'release-out'
+            with self.assertRaisesRegex(ValueError, '^text-mini_env_drift_redeploy_required$'):
+                release.create_plan(NEW, output, baseline_path=Path(directory) / 'baseline.json', baseline_sha='0' * 64)
+            self.assertFalse(output.exists())
+
+    def test_failure_report_exposes_bare_codes_and_hides_everything_else(self):
+        for error, reason in ((ValueError('text-mini_env_drift_redeploy_required'), 'text-mini_env_drift_redeploy_required'),
+                              (RuntimeError('batch_failed_review_all_started_app_receipts'), 'batch_failed_review_all_started_app_receipts'),
+                              (release.PlanRefused('RELEASE_TAG_mismatch'), 'RELEASE_TAG_mismatch'),
+                              (release.shared.ReleaseStopped('text-m3_swarm_paused:task_error=No such container'), 'inspect-private-receipts'),
+                              (ValueError('token with spaces'), 'inspect-private-receipts'),
+                              (ValueError('https://deploy.example/api?key=' + SECRET), 'inspect-private-receipts'),
+                              (KeyError('DB_POOL_MAX'), 'inspect-private-receipts'),
+                              (ValueError('ab'), 'inspect-private-receipts'),
+                              (ValueError('x' * 161), 'inspect-private-receipts'),
+                              (FileNotFoundError(2, 'No such file', '/private/path'), 'inspect-private-receipts')):
+            with self.subTest(error=error):
+                report = release.failure_report(error)
+                self.assertEqual(report, {'status': 'release-not-complete', 'errorClass': type(error).__name__,
+                                          'reason': reason, 'automaticRetry': False})
+                self.assertNotIn(SECRET, json.dumps(report))
+        coded = RuntimeError('free text'); coded.code = 'explicit_code'
+        self.assertEqual(release.failure_report(coded)['reason'], 'explicit_code')
+        coded.code = 'not a code'
+        self.assertEqual(release.failure_report(coded)['reason'], 'inspect-private-receipts')
+
+    def test_plan_failure_record_keeps_code_stage_and_names_without_values_and_never_raises(self):
+        snapshot = drift_snapshot(text_mini={'DB_POOL_MAX': '3', 'SECRET': 'rotated-' + SECRET})
+        with self.assertRaises(release.PlanRefused) as caught:
+            release.env_drift_preflight(snapshot, ['text-mini'])
+        with tempfile.TemporaryDirectory() as directory:
+            store = Path(directory) / 'state/plan-failures'
+            with patch.object(release, 'PLAN_FAILURE_DIR', store):
+                path = release.record_plan_failure(caught.exception, 'plan')
+                self.assertTrue(Path(path).is_relative_to(store)); self.assertTrue(path.endswith('.safe.json'))
+                self.assertEqual(Path(path).stat().st_mode & 0o777, 0o600)
+                self.assertEqual(store.stat().st_mode & 0o777, 0o700)
+                text = Path(path).read_text()
+                record = json.loads(text)
+                self.assertEqual((record['stage'], record['reason'], record['errorClass'], record['status']),
+                                 ('plan', 'text-mini_env_drift_redeploy_required', 'PlanRefused', 'release-not-complete'))
+                self.assertEqual(record['detail'], {'envDrift': {'text-mini': {
+                    'missingInService': [], 'unexpectedInService': [], 'valueChanged': ['DB_POOL_MAX', 'SECRET']}}})
+                self.assertNotIn(SECRET, text); self.assertNotIn('=3', text); self.assertNotIn('=6', text)
+                # Free-text messages are recorded by class only.
+                other = release.record_plan_failure(FileNotFoundError(2, 'No such file', '/private/' + SECRET), 'plan')
+                record = json.loads(Path(other).read_text())
+                self.assertEqual((record['reason'], record['detail'], record['errorClass']), ('inspect-private-receipts', None, 'FileNotFoundError'))
+                self.assertNotIn(SECRET, Path(other).read_text())
+            blocked = Path(directory) / 'file'; blocked.write_text('x')
+            with patch.object(release, 'PLAN_FAILURE_DIR', blocked / 'child'):
+                self.assertIsNone(release.record_plan_failure(caught.exception, 'plan'))
+
+    def test_cli_plan_failure_prints_the_safe_code_and_the_record_path_before_any_private_directory(self):
+        snapshot = drift_snapshot(text_mini={'DB_POOL_MAX': '3'})
+        decision = {'selectedApps': ['text-mini', 'text-m3'], 'retainedApps': [], 'mode': 'role', 'rulesVersion': 'v2'}
+        cwd = os.getcwd(); self.addCleanup(os.chdir, cwd)
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(release.shared, 'run', side_effect=lambda command, **kwargs: NEW if 'rev-parse' in command else ''), \
+                patch.object(release, 'read_private', return_value=snapshot), \
+                patch.object(release, 'impact', return_value=decision), \
+                patch.object(release, 'PLAN_FAILURE_DIR', Path(directory) / 'plan-failures'), \
+                patch.object(release, 'new_client', side_effect=AssertionError('credential accessed')):
+            output = Path(directory) / 'release-out'
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                code = release.cli(['plan', '--sha', NEW, '--out', str(output), '--baseline', str(Path(directory) / 'baseline.json'),
+                                    '--baseline-sha', '0' * 64])
+            self.assertEqual(code, 1)
+            report = json.loads(stdout.getvalue())
+            self.assertEqual((report['status'], report['reason'], report['errorClass'], report['automaticRetry']),
+                             ('release-not-complete', 'text-mini_env_drift_redeploy_required', 'PlanRefused', False))
+            record = json.loads(Path(report['failureRecord']).read_text())
+            self.assertEqual((record['stage'], record['reason']), ('plan', 'text-mini_env_drift_redeploy_required'))
+            self.assertEqual(record['detail']['envDrift']['text-mini']['valueChanged'], ['DB_POOL_MAX'])
+            self.assertFalse(output.exists())
+            self.assertNotIn(SECRET, stdout.getvalue())
+
+
+WORKER = release.shared.IMAGE_PREFIX['worker'] + 'sha256:' + 'c' * 64
+WEB = release.shared.IMAGE_PREFIX['web'] + 'sha256:' + 'd' * 64
+TARGET = {'sha': NEW, 'worker': WORKER, 'web': WEB}
+
+
+class RetireSettingTests(unittest.TestCase):
+    """plan --retire-setting NAME: the release deletes named saved settings from every app it redeploys."""
+
+    def test_names_are_validated_sorted_deduplicated_and_protected_names_refused_without_echoing_values(self):
+        self.assertEqual(release.validate_retired_settings(['CRAWL_REVIEW_MODEL', 'ABCLLM_API_KEY', 'ABCLLM_API_KEY']),
+                         ('ABCLLM_API_KEY', 'CRAWL_REVIEW_MODEL'))
+        self.assertEqual(release.validate_retired_settings([]), ()); self.assertEqual(release.validate_retired_settings(None), ())
+        for bad in ('abcllm_api_key', 'Abc', '1ABC', 'A-B', 'A=B', '', ' A', 'A' * 65, 'ABCLLM API_KEY', None, 5):
+            with self.subTest(bad=bad), self.assertRaises(release.PlanRefused) as caught:
+                release.validate_retired_settings(['ABCLLM_API_KEY', bad])
+            self.assertEqual((caught.exception.code, caught.exception.safe_detail), ('retire_setting_name_invalid', {}))
+        for protected in ('RELEASE_TAG', 'NEXT_DEPLOYMENT_ID', 'WORKER_ROLE', 'NEXT_SERVER_ACTIONS_ENCRYPTION_KEY', 'DATABASE_URL',
+                          'PUBLIC_USER_AUTH_ENABLED', 'GITHUB_FEEDBACK_APP_PRIVATE_KEY', 'AUTH_SECRET', 'LOGIN_EMAIL_FROM'):
+            with self.subTest(protected=protected), self.assertRaises(release.PlanRefused) as caught:
+                release.validate_retired_settings(['ABCLLM_API_KEY', protected])
+            self.assertEqual(caught.exception.code, 'retire_setting_protected:' + protected)
+            self.assertEqual(release.failure_report(caught.exception)['reason'], 'retire_setting_protected:' + protected)
+        self.assertTrue(set(release.RELEASE_SETTINGS) | set(release.shared.INTEGRATION_SETTINGS) <= release.PROTECTED_SETTINGS)
+        for name in ('ABCLLM_API_KEY', 'ABCLLM_SERVING_CONTRACTS', 'ABCLLM_TAGLINE_MODEL', 'PRODUCT_TRANSLATION_MODEL', 'CRAWL_REVIEW_MODEL'):
+            self.assertNotIn(name, release.PROTECTED_SETTINGS)
+
+    def test_cli_option_is_repeatable_and_a_refused_name_stops_before_any_baseline_read_or_credential(self):
+        captured = {}
+        cwd = os.getcwd(); self.addCleanup(os.chdir, cwd)
+        with patch.object(release, 'create_plan', side_effect=lambda sha, out, **kwargs: captured.update(kwargs) or {'status': 'planned'}), \
+                contextlib.redirect_stdout(io.StringIO()):
+            release.main(['plan', '--sha', NEW, '--out', '/tmp/unused', '--retire-setting', 'CRAWL_REVIEW_MODEL',
+                          '--retire-setting', 'ABCLLM_API_KEY'])
+            self.assertEqual(captured['retire_settings'], ['CRAWL_REVIEW_MODEL', 'ABCLLM_API_KEY'])
+            release.main(['plan', '--sha', NEW, '--out', '/tmp/unused'])
+            self.assertEqual(captured['retire_settings'], [])
+        for refused, reason in (('RELEASE_TAG', 'retire_setting_protected:RELEASE_TAG'), ('abcllm-api-key', 'retire_setting_name_invalid')):
+            with self.subTest(refused=refused), tempfile.TemporaryDirectory() as directory, \
+                    patch.object(release.shared, 'run', side_effect=AssertionError('git read')), \
+                    patch.object(release, 'read_private', side_effect=AssertionError('baseline read')), \
+                    patch.object(release.fleet, 'collect_baseline', side_effect=AssertionError('fleet read')), \
+                    patch.object(release, 'new_client', side_effect=AssertionError('credential accessed')), \
+                    patch.object(release, 'PLAN_FAILURE_DIR', Path(directory) / 'plan-failures'):
+                output = Path(directory) / 'release-out'
+                stdout = io.StringIO()
+                with contextlib.redirect_stdout(stdout):
+                    code = release.cli(['plan', '--sha', NEW, '--out', str(output), '--retire-setting', 'ABCLLM_API_KEY',
+                                        '--retire-setting', refused])
+                self.assertEqual(code, 1)
+                report = json.loads(stdout.getvalue())
+                self.assertEqual((report['status'], report['reason'], report['errorClass']), ('release-not-complete', reason, 'PlanRefused'))
+                self.assertEqual(json.loads(Path(report['failureRecord']).read_text())['reason'], reason)
+                self.assertFalse(output.exists())
+                if refused == 'abcllm-api-key':
+                    self.assertNotIn(refused, stdout.getvalue() + Path(report['failureRecord']).read_text())
+
+    def target_apps(self):
+        """publisher-m3 (Docker) and web-mini already serve the target release and images; text-m3 is still old."""
+        snapshot = {'schemaVersion': 1, 'apps': {}, 'runtime': {}, 'baseline': {}, 'latest': {}}
+        for short, kind, release_sha in (('publisher-m3', 'worker', NEW), ('web-mini', 'web', NEW), ('text-m3', 'worker', OLD)):
+            env = saved_env(kind, RELEASE_TAG=release_sha, **({'NEXT_DEPLOYMENT_ID': release_sha} if kind == 'web' else {}))
+            snapshot['apps'][short] = {'appName': 'service-' + short, 'sourceType': 'docker', 'env': env,
+                                       'dockerImage': TARGET[kind] if release_sha == NEW else TARGET[kind].replace('c' * 64, 'e' * 64),
+                                       'buildArgs': 'NEXT_DEPLOYMENT_ID=' + release_sha + '\n' if kind == 'web' else ''}
+            snapshot['runtime'][short] = {'serviceSpec': {'TaskTemplate': {'ContainerSpec': {
+                'Image': snapshot['apps'][short]['dockerImage'],
+                'Env': live_env(kind, RELEASE_TAG=release_sha, **({'NEXT_DEPLOYMENT_ID': release_sha} if kind == 'web' else {}))}}},
+                'containers': []}
+            snapshot['baseline'][short] = {'release': release_sha}
+            snapshot['latest'][short] = {'status': 'done', 'deploymentId': 'old-' + short}
+        return snapshot
+
+    def test_exact_target_app_that_still_carries_a_retired_setting_is_deployed_not_skipped(self):
+        snapshot = self.target_apps()
+        selected = ['publisher-m3', 'web-mini', 'text-m3']
+        self.assertEqual(release.already_target(snapshot, TARGET, selected), ['publisher-m3', 'web-mini'])
+        # publisher-m3 still saves the setting; web-mini's saved env is clean but its live spec still renders it.
+        snapshot['apps']['publisher-m3']['env'] += 'ABCLLM_API_KEY="' + SECRET + '"\n'
+        snapshot['runtime']['publisher-m3']['serviceSpec']['TaskTemplate']['ContainerSpec']['Env'].append('ABCLLM_API_KEY=' + SECRET)
+        snapshot['runtime']['web-mini']['serviceSpec']['TaskTemplate']['ContainerSpec']['Env'].append('ABCLLM_API_KEY=' + SECRET)
+        self.assertEqual(release.already_target(snapshot, TARGET, selected), ['publisher-m3', 'web-mini'])
+        self.assertEqual(release.already_target(snapshot, TARGET, selected, ('ABCLLM_API_KEY',)), [])
+        self.assertEqual(release.already_target(snapshot, TARGET, selected, ('CRAWL_REVIEW_MODEL',)), ['publisher-m3', 'web-mini'])
+        found = release.retired_settings_found(snapshot, selected, ('ABCLLM_API_KEY', 'CRAWL_REVIEW_MODEL'))
+        self.assertEqual(found, {'publisher-m3': {'savedEnv': ['ABCLLM_API_KEY'], 'liveSpec': ['ABCLLM_API_KEY']},
+                                 'web-mini': {'savedEnv': [], 'liveSpec': ['ABCLLM_API_KEY']},
+                                 'text-m3': {'savedEnv': [], 'liveSpec': []}})
+        self.assertNotIn(SECRET, json.dumps(found))
+        self.assertEqual(release.retired_settings_found(snapshot, selected, ()), {})
+        # The saved env a redeploy writes drops the line for Docker workers and webs alike; nothing else changes.
+        expected = release.fleet.expected_api('publisher-m3', snapshot['apps']['publisher-m3'], TARGET, ('ABCLLM_API_KEY',))
+        self.assertEqual(expected['env'], saved_env('worker', RELEASE_TAG=NEW))
+        self.assertEqual(release.fleet.expected_api('web-mini', snapshot['apps']['web-mini'], TARGET, ('ABCLLM_API_KEY',)),
+                         release.fleet.expected_api('web-mini', snapshot['apps']['web-mini'], TARGET))
+
+    def test_impact_widens_the_code_scope_to_carriers_and_their_role_pairs(self):
+        fixtures_spec = importlib.util.spec_from_file_location('retire_runtime_fixtures', Path(__file__).with_name('test_release_runtime.py'))
+        fixtures = importlib.util.module_from_spec(fixtures_spec); fixtures_spec.loader.exec_module(fixtures)
+        apps, rows, latest = fixtures.fixture()
+        snapshot = {'apps': apps, 'runtime': rows, 'latest': latest, 'baseline': {short: {'release': OLD} for short in apps}}
+        apps['text-m3']['env'] += 'ABCLLM_API_KEY=' + SECRET + '\n'
+        rows['text-m3']['serviceSpec']['TaskTemplate']['ContainerSpec']['Env'].append('ABCLLM_API_KEY=' + SECRET)
+        rows['ai2-consumer-m3']['serviceSpec']['TaskTemplate']['ContainerSpec']['Env'].append('CRAWL_REVIEW_MODEL=gpt')
+        calls = []
+        def classify(repo, after, baseline, *, known_apps, consumer_apps, requested_apps=None):
+            calls.append(requested_apps)
+            registered = list(release.fleet.registered_apps())
+            selected = {'web-mini', 'web-m3'}
+            if requested_apps is not None:
+                self.assertTrue(selected <= set(requested_apps))
+                selected = release.scope._expand_units(set(requested_apps), known_apps=known_apps, consumer_apps=consumer_apps)
+            return {'rulesVersion': 'v2', 'allApps': registered, 'selectedApps': [short for short in registered if short in selected],
+                    'retainedApps': [short for short in registered if short not in selected],
+                    'mode': 'full' if len(selected) == len(registered) else 'scoped'}
+        with patch.object(release.scope, 'plan_for_baselines', side_effect=classify):
+            plain = release.impact(snapshot, NEW)
+            self.assertEqual((plain['selectedApps'], calls), (['web-mini', 'web-m3'], [None]))
+            self.assertNotIn('retiredSettingCarriers', plain)
+            widened = release.impact(snapshot, NEW, ('ABCLLM_API_KEY', 'CRAWL_REVIEW_MODEL'))
+        registered = list(release.fleet.registered_apps())
+        # The classifier is asked once more with the code scope plus the carriers, in registered order.
+        self.assertEqual(calls, [None, None, [short for short in registered if short in {'web-mini', 'web-m3', 'text-m3', 'ai2-consumer-m3'}]])
+        # text-m3 pulls its standby, the consumer pulls the reviewer pair and the other reviewer consumer.
+        self.assertEqual(widened['selectedApps'], [short for short in registered if short in {
+            'web-mini', 'web-m3', 'text-mini', 'text-m3', 'reviewer-mini', 'reviewer-m3', 'ai1-consumer-m3', 'ai2-consumer-m3'}])
+        self.assertEqual(widened['retiredSettingCarriers'], [short for short in registered if short in {'text-m3', 'ai2-consumer-m3'}])
+        self.assertNotIn(SECRET, json.dumps(widened))
+        # Carriers already inside the code scope do not call the classifier a second time.
+        calls.clear()
+        apps['web-m3']['env'] += 'ABCLLM_API_KEY=' + SECRET + '\n'
+        del apps['text-m3']; apps['text-m3'] = {**fixtures.fixture()[0]['text-m3']}
+        rows['text-m3']['serviceSpec']['TaskTemplate']['ContainerSpec']['Env'].pop()
+        rows['ai2-consumer-m3']['serviceSpec']['TaskTemplate']['ContainerSpec']['Env'].pop()
+        with patch.object(release.scope, 'plan_for_baselines', side_effect=classify):
+            same = release.impact(snapshot, NEW, ('ABCLLM_API_KEY', 'CRAWL_REVIEW_MODEL'))
+        self.assertEqual((same['selectedApps'], same['retiredSettingCarriers'], calls), (['web-mini', 'web-m3'], ['web-m3'], [None]))
+
+    def test_create_plan_records_retired_names_and_their_presence_without_values_and_hands_them_to_the_git_rollout(self):
+        snapshot = drift_snapshot()
+        for short in ('text-mini', 'text-m3'):
+            snapshot['apps'][short]['env'] = saved_env('worker', ABCLLM_API_KEY='"' + SECRET + '"')
+            snapshot['runtime'][short]['serviceSpec']['TaskTemplate']['ContainerSpec']['Env'] = live_env('worker', ABCLLM_API_KEY=SECRET)
+        decision = {'selectedApps': ['text-mini', 'text-m3'], 'retainedApps': [], 'mode': 'scoped', 'rulesVersion': 'v2'}
+        prepared, verified = {}, []
+        def prepare(client, target, selected, root_snapshot, proof, **kwargs):
+            prepared.update(kwargs, selected=list(selected)); return {'skipped': [], 'retiredSettings': list(kwargs.get('retired_settings', ()))}
+        def verify_fleet(client, snapshot, target, selected, receipts, repo, **kwargs):
+            verified.append((list(selected), kwargs)); return {}
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(release.shared, 'run', side_effect=lambda command, **kwargs: NEW if 'rev-parse' in command else ''), \
+                    patch.object(release, 'read_private', return_value=snapshot), \
+                    patch.object(release, 'impact', return_value=decision) as impact, \
+                    patch.object(release, 'new_client', return_value=object()), \
+                    patch.object(release.readiness, 'resolve_readiness', return_value={'target': {'sha': NEW, 'worker': WORKER}}), \
+                    patch.object(release, 'merged_target', return_value=TARGET), \
+                    patch.object(release.fleet, 'verify_fleet', side_effect=verify_fleet), \
+                    patch.object(release, 'migration_changes', return_value=False), \
+                    patch.object(release.shared, 'github_integration_preflight', return_value={'configurationMatched': True}), \
+                    patch.object(release.shared, 'monitor_gate', return_value={'readiness': 'ready'}), \
+                    patch.object(release, 'prepull', return_value={'hosts': []}), \
+                    patch.object(release.catalog, 'catalog_additions', return_value=[]), \
+                    patch.object(release.git, 'prepare', side_effect=prepare):
+                output = Path(directory) / 'release-out'
+                result = release.create_plan(NEW, output, baseline_path=Path(directory) / 'baseline.json', baseline_sha='0' * 64,
+                                             retire_settings=['CRAWL_REVIEW_MODEL', 'ABCLLM_API_KEY'])
+            plan = release.read_private(Path(result['plan']), result['planSha256'])
+        retired = ('ABCLLM_API_KEY', 'CRAWL_REVIEW_MODEL')
+        self.assertEqual(impact.call_args.args, (snapshot, NEW, retired))
+        presence = {short: {'savedEnv': ['ABCLLM_API_KEY'], 'liveSpec': ['ABCLLM_API_KEY']} for short in ('text-mini', 'text-m3')}
+        self.assertEqual((plan['retiredSettings'], plan['retiredSettingsFound']), (list(retired), presence))
+        self.assertEqual((result['retiredSettings'], result['retiredSettingsFound'], result['selectedApps']),
+                         (list(retired), presence, ['text-mini', 'text-m3']))
+        self.assertNotIn(SECRET, json.dumps(result)); self.assertNotIn(SECRET, json.dumps(plan['retiredSettingsFound']))
+        self.assertEqual((prepared['retired_settings'], prepared['selected']), (retired, ['text-mini', 'text-m3']))
+        # The baseline is reproved as it is; retirement only applies to what the run writes.
+        self.assertEqual(verified, [([], {})])
+        self.assertEqual(release.plan_retired_settings(plan), retired)
+        for corrupt in ({'retiredSettings': ['CRAWL_REVIEW_MODEL', 'ABCLLM_API_KEY']}, {'retiredSettings': 'ABCLLM_API_KEY'},
+                        {'retiredSettings': ['ABCLLM_API_KEY', 'ABCLLM_API_KEY']}, {'retiredSettings': ['RELEASE_TAG']},
+                        {'retiredSettings': ['abc']}):
+            with self.subTest(plan=corrupt), self.assertRaises(ValueError):
+                release.plan_retired_settings({**plan, **corrupt})
+        self.assertEqual(release.plan_retired_settings({'schemaVersion': 1}), ())
+
+    def test_run_refuses_a_plan_whose_retired_list_breaks_the_rules_before_credentials_or_the_execution_directory(self):
+        for retired in ('ABCLLM_API_KEY', ['RELEASE_TAG'], ['b', 'A'], ['ABCLLM_API_KEY', 'ABCLLM_API_KEY']):
+            with self.subTest(retired=retired), tempfile.TemporaryDirectory() as directory, \
+                    patch.object(release, 'new_client', side_effect=AssertionError('credential accessed')):
+                with self.assertRaises(ValueError):
+                    release.run_release({'schemaVersion': 1, 'scope': {'selectedApps': ['web-mini', 'web-m3']}, 'retiredSettings': retired,
+                                         'target': {'sha': NEW}, 'toolSources': release.execution_source_hashes()},
+                                        Path(directory) / 'execution')
+                self.assertFalse((Path(directory) / 'execution').exists())
 
 
 class ReleaseFlowTests(unittest.TestCase):

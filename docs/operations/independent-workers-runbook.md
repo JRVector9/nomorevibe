@@ -44,8 +44,8 @@ mini와 외부 Oracle Osaka의 Kuma 수신기 연결·장애 드릴 결과는 [�
 - 이미지에는 `tsx`가 production 의존성으로 포함된다. `lib`, `scripts`, `drizzle`, `tsconfig.json`도 포함한다.
   CLI는 worker 이미지에만 설치하며 Codex `0.153.4`, Claude Code `2.1.263`을 고정한다. 버전을 바꾸면
   `CODEX_CLI_VERSION` 또는 `CLAUDE_CODE_VERSION` build arg를 명시하고 이미지 내부 호출/timeout을 다시 검증한다.
-- 카테고리는 Codex CLI 2단계와 키워드 폴백을 사용한다. 신규 AI 리뷰 모델 `CRAWL_REVIEW_MODEL`은
-  별도 Claude CLI 경로이며 기본값이 없다. 승인된 모델·인증·관측 결과를 확인한 뒤 심사 정책에 맞춰 켠다.
+- 카테고리는 Codex CLI 2단계와 키워드 폴백을 사용한다. 1차 AI 리뷰 모델은 관리자 설정 `firstReview`이며
+  (2026-10-31부터 env를 읽지 않는다) 기본값이 없다. 승인된 모델·인증·관측 결과를 확인한 뒤 심사 정책에 맞춰 켠다.
 - `ranking-refresh`는 정기 스케줄이 없다. `click-rollup`의 done=true 성공 완료 트랜잭션이 요청한다.
   예전 매시 5분 HTTP 스케줄은 제거한다. `heartbeat`는 scheduler 생존 관측 전용으로 HTTP 예약은 400을 반환한다. cron API의 HTTP 202는 접수 결과이며 완료 확인은 `/admin/status`에서 한다.
 
@@ -416,7 +416,7 @@ Dokploy와 Keychain에만 저장하고 렌더링된 환경을 로그나 문서�
 뒤 두 원문 비밀값을 환경에서 제거한다. CLI 설정·저장소 지침·플러그인·셸·웹을 격리하고, 구조화
 출력의 제품 ID 전체 집합이 입력과 정확히 같을 때만 결과를 채택한다.
 
-리뷰는 별도 Claude CLI의 `CRAWL_REVIEW_MODEL`·effort low·20초 제한으로 한 tick에 AI 호출 최대
+리뷰는 관리자 설정 `firstReview`의 모델·effort low·20초 제한으로 한 tick에 AI 호출 최대
 1개다. 모델 기본값은 없으며 카테고리 모델을 리뷰 모델로 자동 채택하지 않는다. Claude Code CLI
 `2.1.263`은 `--safe-mode`로 사용자 설정을 격리하면서 OAuth 인증을 보존한다. 운영에서는
 `claude setup-token`으로 발급한 장기 `CLAUDE_CODE_OAUTH_TOKEN`을 reviewer에만 주입한다. 로컬
@@ -440,7 +440,7 @@ CLI smoke는 통과했으나 운영 장기 Codex/Claude 인증 설정과 24시�
 1. 초기 DB 모드는 `off`로 둔다. B 전체 릴리스가 모든 reviewer/publisher에 적용됐고
    reviewer의 명시한 모델·실제 인증·제한 시간 내 응답을 확인한다.
 2. 웹에 `CRAWL_REVIEW_READY=true`를 주입해 재시작한다. 이 플래그는 변경 준비 조건이며
-   저장된 DB 모드를 바꾸지 않는다. reviewer에는 `CRAWL_REVIEW_MODEL`과 인증을 별도로 주입한다.
+   저장된 DB 모드를 바꾸지 않는다. reviewer에는 인증을 별도로 주입하고, 1차 심사 모델은 관리자 설정에서 고른다.
 3. `/admin/review`에서 변경 사유를 입력하고 `observe`로 전환한다. 관측 모드는 심사 이력만
    남기고 후보 상태나 기존 발행 조건을 바꾸지 않는다. 실제 표본의 기대 판정과 결과를 비교한다.
 4. 검토 후 같은 화면에서 사유와 함께 `enforce`로 전환한다. 현재 입력·정책·근거에 유효한 승인과
@@ -506,6 +506,10 @@ CPU 상한은 예약량이 아니므로 모든 역할의 동시 peak를 보장�
 배포 사전 점검(`deploy_shared_images.py`)은 넷의 값이 다르면 멈춘다. 집계에 키가 없으면 줄을 닫지 않고
 `me.email_sender_unconfigured` 경고만 남기며, 하루 안에 못 보낸 줄은 보내지 않고 닫고(`expired`) 닫힌 줄은 30일 뒤
 `email-weekly-digest`가 지운다. 키·도메인·한도 오류(Resend 401·403·429)는 시도로 세지 않고 5분 뒤 다시 본다.
+
+코드가 더 읽지 않는 Dokploy 설정을 지울 때는 Dokploy 에서 먼저 지우지 말고 일반 배포 `plan` 에 `--retire-setting NAME`(이름마다 한 번)을
+준다 — 릴리스가 재배포하는 앱의 저장 env 에서 그 줄을 빼고 새 spec·컨테이너에서도 사라졌는지 검증한다. 절차와 출력은
+[단축 배포 절차](deployment-fast-path.md)의 「설정 폐기는 릴리스에 싸서」를 따른다.
 
 로그는 컨테이너당 10 MiB × 3개로 회전한다. 비루트 프로세스, `no-new-privileges`, capability 제거,
 Compose `init: true`를 사용한다. 초기 자원 초과가 보이면 탐색/재수집량과 pool 상한을 함께 조정한다.
@@ -811,6 +815,43 @@ DB 기본 상한은 web8+crawler4+reviewer3+publisher3+text3+maintenance3+schedu
   `lib/db/host-budget.ts` workerMax, Dokploy env). ai1·ai2 consumer 앱은 등록부대로 3 그대로다. 줄을 더 쪼개면(3a-C) 같은 규칙으로 다시 센다.
 - 배포: reviewer·text Dokploy 앱(M3·mini) env `DB_POOL_MAX`를 같은 창에서 6 이상으로 올린다(이미 그 이상이면 유지). `HOST_DB_BUDGET`을 쓰는
   호스트는 선언(`workerMax` reviewer·text 6)이 코드와 같은 릴리스여야 `assertHostDbEntry`가 통과한다. 모델 호출 수·순서는 장부가 정해 바뀌지 않는다.
+
+## 2026-10-31 장부 control 행 경합 — readback 은 잠그지 않고, 대기는 `ledger-lock-sample` 로 잰다
+
+모델 용량 장부는 `model_capacity_control` 한 행(id=1)이 mutex 다(`lib/llm/capacity-repository.ts control()`): 입장(`requestSlot`)·dispatch 잠금·정산·
+취소·미확인 기록이 모두 DR fence FOR SHARE → control **FOR UPDATE** 로 시작하고, 호출자 TX 는 control **FOR SHARE** 를 잡은 채 역할·제품·잡 행을
+잠근다. reviewer 15줄·text 8줄·AI1/AI2 소비자가 건마다 이 행을 3~6번 잡으므로 줄 서기(convoy)는 구조적이다.
+
+- 관측(2026-10-31 22:34Z OPEN 직후, main acbe6948): 60초 표본 146회 중 42회(29%)에 `wait_event_type='Lock'` 세션. 대기는 거의 전부 control 행
+  (`tuple` RowShare/Exclusive)과 그 행을 쥔 TX 가 끝나길 기다리는 `transactionid ShareLock`. 차단자는 장부 쓰기(`update model_capacity_requests
+  set state=…`, `insert into model_capacity_events`, `insert into model_capacity_requests`)와 장비 후보 판정(`WITH sup AS MATERIALIZED … model_supervisor_control`)
+  을 control 잠금 아래에서 하는 TX 들이었다. text 의 reason-translate·product-search-profile 은 10-29 15:49Z 부터 매 틱 55P03.
+- 원인. (1) 55P03 은 한 TX 가 5초를 쥔 것이 아니라 **줄의 합**이다 — 행 잠금 대기는 선착순이라 FOR SHARE 하나가 FOR UPDATE 들 사이에 서면 그 뒤
+  요청은 앞의 모든 TX 가 끝나야 한다. 각 TX 는 수십 ms(쓰기마다 7개 BEFORE 트리거·긴 CHECK, 장비 후보 CTE)지만 수십 줄이 건마다 3~6번 잡으면 5초를 넘긴다.
+  (2) 건마다 잡던 **읽기 전용 FOR SHARE** 가 줄을 늘렸다: `readModelCapacityCallerControl`(모든 ledger 호출자가 전송 경로를 고르는 첫 읽기, 16곳),
+  `findOwnPendingModelRequest`(건마다 자기 행 readback), `findOwnPendingReasonTranslationRequests`·`findOwnPendingProductTextRequests`(틱마다 자기
+  대기 묶음 readback). (3) "행 잠금 없는 SELECT 가 55P03" 로 보인 기록(`select "work_key","logical_work_key" …`, `select u.hash, u.body …`)은 그
+  문장이 기다린 것이 아니다 — 평범한 SELECT 는 control 행·transactionid 를 기다리지 않는다(관계 AccessExclusiveLock 만 막는다). 같은 틱의 다른 TX
+  (control 잠금 문장)가 낸 55P03 이거나, 같은 SQL 본문을 여러 경로가 공유해(`lockModelCapacityCallerControl`·`findOwnPendingModelRequest` 의
+  `… from "model_capacity_control" … for share` 는 글이 같다) 오류 글만으로 호출 경로를 가를 수 없는 경우다. drizzle 은 실패한 바로 그 문장을
+  `Failed query:` 에 적고 원인 PostgresError(code 55P03)를 cause 에 싣는다(`tests/integration/model-capacity-control-contention.test.ts` 가 고정).
+- 고친 것(PR, 마이그레이션 없음, 장부 의미·CHECK·해시·이벤트 순서 불변): 위 네 readback 은 `unlockedControl`(fence+control 한 문장, 잠금 없음)
+  또는 단일 SELECT 로 읽는다. 안전 근거 — 돌려준 값은 **입장 근거가 아니다**: `requestSlot`·`lock*ModelCapacityDispatch`·`cancelOwnPending*` 가
+  control FOR UPDATE 아래에서 행을 다시 읽어 sameIdentity·상태·token·세대를 CAS 로 재판정한다. FOR SHARE 가 더해 주던 것은 "지금 쓰는 TX 가 끝난 뒤의
+  값"이었고 그 값도 함수가 돌아온 순간 과거다. 잠그지 않는 읽기는 커밋된 행만 본다(같은 시험이 holder 의 미커밋 insert 가 보이지 않다가 커밋 뒤 보임을 고정).
+  남긴 잠금: claim TX 안의 `lockModelCapacityCallerControl`(FOR SHARE, 역할·제품·잡 잠금 앞의 교착 순서)과 모든 쓰기 FOR UPDATE.
+- 하지 않은 것: control FOR UPDATE 아래 임계 구역 자체의 재배치(이벤트 insert·만료 정리·장비 후보 CTE). 150k 행 장부에서 그 문장들은 모두 부분
+  인덱스(BitmapOr)로 1ms 미만이라(EXPLAIN ANALYZE, 2026-10-31) 길이의 주범이 아니다 — 비용은 문장 수·트리거·CHECK 와 dispatch TX 가 control 뒤에
+  기다리는 다른 행 잠금이다. 이벤트 insert 를 잠금 밖으로 빼면 "요청 행 전이와 이벤트가 한 TX" 라는 장부 계약이 깨지므로 하지 않는다. 인덱스 추가는 마이그레이션이다.
+- `DB_LOCK_TIMEOUT_MS` 권장(코드 기본은 그대로 `min(5000, statement)` = 5초): 5초는 단일 TX 의 길이가 아니라 convoy 한도다. 올리면 55P03 틱 실패는
+  줄지만 기다리는 동안 pool 연결을 쥐어(`DB_POOL_WAIT_MS` 5초) 옆 줄이 `DB_POOL_WAIT_TIMEOUT` 으로 넘어진다 — text 는 줄 8 에 pool 6 이다. 그래서
+  **먼저 아래 도구로 p95 를 재고**, 이 PR 배포 뒤에도 control 대기 p95 가 2,500ms 를 넘으면 text·reviewer env `DB_LOCK_TIMEOUT_MS=10000` 을 **DB_POOL_MAX 를
+  줄 수 + 2 로 맞춘 뒤** 올린다(statement 60초 안, pgbouncer 모드는 `ALTER ROLE … lock_timeout` 이 같은 값이어야 한다). p95 가 1초 안이면 그대로 둔다.
+- 측정 도구(읽기 전용, 운영 앱 역할로): `echo "$DATABASE_URL" | node scripts/ops/ledger-lock-sample.mjs --seconds 60 --interval-ms 250 [--lines]`.
+  DB 주소는 stdin 으로만 받고 출력에 비밀값·파라미터 값이 없다(문장 머리 80자, drizzle 문장은 `$1` 자리표시자). stdout JSON 한 줄:
+  `controlWaitSampleRatio`(control 관련 Lock 대기가 있던 표본 비율 — 관측 당시 0.29), `controlWaitMs.p50/p95/max`(`pg_locks.waitstart` 기준 대기 나이,
+  표본마다 세므로 긴 대기가 더 무겁게 잡힌다), `waitModes`·`waiterApps`·`blockerApps`·`blockerQueryHeads`. `--lines` 는 표본마다 stderr 한 줄.
+  판정: p95 가 연결 lock_timeout(5,000ms)에 가까우면 55P03 이 실제로 나고 있다. 배포 전·후 각 60초를 같은 OPEN 상태에서 재어 비교한다.
 
 ## 2026-10-31 합성 잡 분해(PR 3a-C) — 한 잡 = 큐 하나 + 모델 호출 모양 하나, reviewer DB pool 11
 

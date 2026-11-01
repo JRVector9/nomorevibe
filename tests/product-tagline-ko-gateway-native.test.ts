@@ -2,7 +2,9 @@ import { randomUUID } from "node:crypto";
 import { createServer, type ServerResponse } from "node:http";
 import { afterEach, expect, it, vi } from "vitest";
 import { KOREAN_TAGLINE_MODEL, translateTaglinesToKorean, productTaglineKoSourceHash, productTaglineKoGatewayWire,
-  type ProductTaglineKoGatewayItem } from "@/lib/crawl/translate";
+  productTaglineKoLegacyWire, type ProductTaglineKoGatewayItem } from "@/lib/crawl/translate";
+import { parseKoreanTaglines } from "@/lib/domain/products/korean-tagline";
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { productTaglineKoInputHash, productTaglineKoLogicalWorkKey, productTaglineKoDispatchBindingHash,
   productTaglineKoModelDispatchSchema } from "@/lib/llm/capacity";
 import { prepareProductTaglineKoGatewayCall, translateTaglinesWithReservedGateway, readProductTaglineKoGatewayTerminal,
@@ -58,6 +60,10 @@ function dispatch(batch: readonly ProductTaglineKoGatewayItem[], call: PreparedP
   return productTaglineKoModelDispatchSchema.parse({ requestId: randomUUID(), owner: { instanceId: role.instanceId, bootId: role.bootId },
     token: randomUUID(), epoch: 1, revision: 1, policyHash: "a".repeat(64), binding, bindingHash: productTaglineKoDispatchBindingHash(binding) });
 }
+/** The engine connected directly (admin contract, transport direct) with its own stored key; the gateway key is gone. */
+function pinDirect(contract: unknown, auth: "stored" | "none" | "gateway" = "stored", transport: "direct" | "gateway" = "direct") {
+  setServingContractSnapshotForTest([{ routeId: "product-tagline-ko", model, contract, auth, apiKey: auth === "stored" ? "local-test-only" : null, transport }]);
+}
 function send(...args: Parameters<typeof translateTaglinesWithReservedGateway>) {
   const pending = translateTaglinesWithReservedGateway(...args); requests.add(pending); void pending.catch(() => {}); return pending;
 }
@@ -77,11 +83,12 @@ async function server(run: (state: { bodies: string[]; reply: (next: (response: 
     fixture.contract = { version: 1, protocol: "abcllm-product-tagline-ko-total-bound-v1", routeId: "product-tagline-ko", provider: "abcllm",
       model, responseModel: "served-tagline", endpoint: `http://127.0.0.1:${address.port}/v1/chat/completions`,
       deploymentRevision: "local-only", totalTokenBound: 8192 };
+    pinDirect(fixture.contract);
     watchdog = setTimeout(() => { errors.push(new Error("fixture_forced_close")); http.closeAllConnections(); }, 2000);
     await run({ bodies, reply: next => { reply = next; } });
   } catch (error) { failed = true; original = error; }
   finally {
-    fixture.contract = null;
+    fixture.contract = null; setServingContractSnapshotForTest(null);
     try {
       while (requests.size) { const pending = [...requests]; await Promise.allSettled(pending); for (const promise of pending) requests.delete(promise); }
       const close = http.listening ? new Promise<void>((resolve, reject) => http.close(error => error ? reject(error) : resolve())) : Promise.resolve();
@@ -91,9 +98,8 @@ async function server(run: (state: { bodies: string[]; reply: (next: (response: 
   if (failed && errors.length) throw new AggregateError([original, ...errors], "native_fixture_failed", { cause: original });
   if (failed) throw original; if (errors.length) throw new AggregateError(errors);
 }
-afterEach(() => { fixture.contract = null; vi.unstubAllEnvs(); });
+afterEach(() => { fixture.contract = null; setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); });
 it("sends the original ordered tagline batch once and issues an immutable opaque terminal", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only");
   await server(async ({ bodies }) => {
     const batch = items(), call = prepared(batch), owned = dispatch(batch, call);
     const outcome = await send(batch, owned, call);
@@ -104,11 +110,12 @@ it("sends the original ordered tagline batch once and issues an immutable opaque
   });
 });
 it("triples only legacy output tokens while preserving the frozen native wire and existing parser", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); const batch = items(); let wire = "";
-  const result = await translateTaglinesToKorean(batch, 1000, (async (_url, options) => {
-    wire = String(options?.body); return new Response(JSON.stringify(envelope()));
-  }) as typeof fetch);
-  expect(result).toEqual({ ok: true, outputs });
+  const batch = items(), request = vi.fn(async () => new Response(JSON.stringify(envelope())));
+  // The legacy gateway sender no longer sends anything (gateway removed); its builder keeps the tripled legacy wire.
+  expect(await translateTaglinesToKorean(batch, 1000, request as unknown as typeof fetch)).toEqual({ ok: false, error: "no_key" });
+  expect(request).not.toHaveBeenCalled();
+  expect(parseKoreanTaglines(JSON.stringify(outputs), batch.length)).toEqual({ ok: true, outputs });
+  const wire = productTaglineKoLegacyWire(batch, KOREAN_TAGLINE_MODEL);
   const original = originalWire(batch, KOREAN_TAGLINE_MODEL), frozen = JSON.parse(original);
   expect(productTaglineKoGatewayWire(batch, KOREAN_TAGLINE_MODEL)).toBe(original);
   expect(wire).toBe(JSON.stringify({ ...frozen, max_tokens: frozen.max_tokens * 3 }));
@@ -116,6 +123,7 @@ it("triples only legacy output tokens while preserving the frozen native wire an
   expect({ ...JSON.parse(wire), max_tokens: frozen.max_tokens }).toEqual(frozen);
 });
 it("keeps production unsupported and invalid batches incapable of HTTP or terminal authority", async () => {
+  // A process gateway key is ignored: only a direct admin contract opens the route (abcLLM gateway removed 2026-10-30).
   vi.stubEnv("ABCLLM_API_KEY", "local-test-only");
   const leaf = await vi.importActual<typeof import("@/lib/llm/product-tagline-ko-serving-contract")>("@/lib/llm/product-tagline-ko-serving-contract");
   expect(leaf.resolveProductTaglineKoServingContract(model)).toBeNull();
@@ -126,12 +134,17 @@ it("keeps production unsupported and invalid batches incapable of HTTP or termin
     for (const batch of [[], new Array(1), Array(9).fill(first), [{ ...first, extra: true }],
       [{ ...first, tagline: "" }], [{ ...first, tagline: "a".repeat(1201) }]])
       expect(prepareProductTaglineKoGatewayCall(batch as ProductTaglineKoGatewayItem[], { model, timeoutMs: 1000 }).kind).toBe("unsupported");
-    vi.stubEnv("ABCLLM_API_KEY", "");
-    expect(prepareProductTaglineKoGatewayCall(items(), { model, timeoutMs: 1000 }).kind).toBe("unsupported"); expect(bodies).toEqual([]);
+    // No direct row, a gateway-transport row, gateway auth or an unreadable stored key: no bearer, so no preparation.
+    for (const pin of [() => setServingContractSnapshotForTest([]), () => pinDirect(fixture.contract, "stored", "gateway"),
+      () => pinDirect(fixture.contract, "gateway"), () => setServingContractSnapshotForTest([{ routeId: "product-tagline-ko", model,
+        contract: fixture.contract, auth: "stored", apiKey: null, transport: "direct" }])]) {
+      pin(); expect(prepareProductTaglineKoGatewayCall(items(), { model, timeoutMs: 1000 }).kind).toBe("unsupported");
+    }
+    expect(bodies).toEqual([]);
   });
 });
 it.each([1, 8])("preserves the original count-based token formula for %i products with equal wire text", async count => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ bodies, reply }) => {
+  await server(async ({ bodies, reply }) => {
     const batch = Array.from({ length: count }, () => ({ name: "Same", tagline: "a".repeat(150) }));
     reply(response => response.end(JSON.stringify(envelope({ choices: [{ index: 0,
       message: { role: "assistant", content: JSON.stringify(batch.map(() => "같은 원문을 옮긴 문장")) }, finish_reason: "stop" }] }))));
@@ -142,7 +155,7 @@ it.each([1, 8])("preserves the original count-based token formula for %i product
   });
 });
 it("rejects copied preparation or changed ordered wire and source binding before native HTTP", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ bodies }) => {
+  await server(async ({ bodies }) => {
     const batch = items(), call = prepared(batch), owned = dispatch(batch, call);
     await expect(send(batch, owned, { ...call })).rejects.toThrow("product_tagline_ko_gateway_call_mismatch");
     for (const changed of [[...batch].reverse(), [{ ...batch[0], name: "Changed" }, batch[1]],
@@ -155,7 +168,7 @@ it("rejects copied preparation or changed ordered wire and source binding before
   });
 });
 it("captures full wire and dispatch before the first await and denies repeated request IDs and copied proof", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ bodies }) => {
+  await server(async ({ bodies }) => {
     const batch = items(), original = structuredClone(batch), call = prepared(batch), owned = dispatch(batch, call);
     const initial = structuredClone(owned), pending = send(batch, owned, call);
     batch.reverse(); (owned as { requestId: string }).requestId = randomUUID();
@@ -170,7 +183,7 @@ it("captures full wire and dispatch before the first await and denies repeated r
   });
 });
 it("keeps partial parsing and Korean quality checks as the original downstream responsibility", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ reply }) => {
+  await server(async ({ reply }) => {
     reply(response => response.end(JSON.stringify(envelope({ choices: [{ index: 0,
       message: { role: "assistant", content: '[42,"unchanged foreign words"]' }, finish_reason: "stop" }] }))));
     const batch = items(), call = prepared(batch), outcome = await send(batch, dispatch(batch, call), call);
@@ -179,7 +192,7 @@ it("keeps partial parsing and Korean quality checks as the original downstream r
   });
 });
 it("keeps a genuine length terminal when the original output parser rejects an incomplete array", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ reply }) => {
+  await server(async ({ reply }) => {
     reply(response => response.end(JSON.stringify(envelope({ choices: [{ index: 0,
       message: { role: "assistant", content: '["잘린 문장"' }, finish_reason: "length" }] }))));
     const batch = items(), call = prepared(batch), outcome = await send(batch, dispatch(batch, call), call);
@@ -188,7 +201,7 @@ it("keeps a genuine length terminal when the original output parser rejects an i
   });
 });
 it.each([{ usage: null }, { usage_provenance: "gateway_estimated" }, { usage: { prompt_tokens: -1 } }])("retains full C when counters are unknown: %j", async change => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ reply }) => {
+  await server(async ({ reply }) => {
     reply(response => response.end(JSON.stringify(envelope(change)))); const batch = items(), call = prepared(batch);
     const outcome = await send(batch, dispatch(batch, call), call);
     expect(readProductTaglineKoGatewayTerminal(outcome.terminal)).toMatchObject({ actualUsage: null, provenance: "unknown", dispatch: { binding: { chargedTokens: 8192 } } });
@@ -197,13 +210,13 @@ it.each([{ usage: null }, { usage_provenance: "gateway_estimated" }, { usage: { 
 it.each([{ usage: { prompt_tokens: 8192, completion_tokens: 1, total_tokens: 8193 } }, { model: "wrong" },
   { choices: [{ index: 0, message: { role: "assistant", content: "[]" }, finish_reason: null }] },
   { choices: [0, 1].map(index => ({ index, message: { role: "assistant", content: "[]" }, finish_reason: "stop" })) }])("refuses contradictory native completion: %j", async change => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ bodies, reply }) => {
+  await server(async ({ bodies, reply }) => {
     reply(response => response.end(JSON.stringify(envelope(change)))); const batch = items(), call = prepared(batch);
     expect(await send(batch, dispatch(batch, call), call)).toEqual({ result: { ok: false, error: "invalid_output" }, terminal: null }); expect(bodies).toHaveLength(1);
   });
 });
 it.each([429, 307])("performs one native POST for HTTP %i without redirect or retry", async status => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ bodies, reply }) => {
+  await server(async ({ bodies, reply }) => {
     reply(response => { response.statusCode = status; response.setHeader("Location", "/v1/chat/completions"); response.end("failure"); });
     const batch = items(), call = prepared(batch);
     expect(await send(batch, dispatch(batch, call), call)).toEqual({ result: { ok: false, error: status === 429 ? "rate_limit" : `http_${status}` }, terminal: null });
@@ -211,14 +224,14 @@ it.each([429, 307])("performs one native POST for HTTP %i without redirect or re
   });
 });
 it("leaves truncated HTTP EOF without terminal authority after actual body settlement", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ bodies, reply }) => {
+  await server(async ({ bodies, reply }) => {
     reply(response => { response.writeHead(200, { "Content-Length": "1000" }); response.write("{"); response.socket?.destroy(); });
     const batch = items(), call = prepared(batch);
     expect(await send(batch, dispatch(batch, call), call)).toEqual({ result: { ok: false, error: "network" }, terminal: null }); expect(bodies).toHaveLength(1);
   });
 });
 it("settles actual caller abort during the body without issuing terminal authority", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ bodies, reply }) => {
+  await server(async ({ bodies, reply }) => {
     let arrived!: () => void; const ready = new Promise<void>(resolve => { arrived = resolve; });
     reply(response => { response.writeHead(200); response.flushHeaders(); arrived(); });
     const batch = items(), call = prepared(batch), controller = new AbortController();
@@ -228,15 +241,16 @@ it("settles actual caller abort during the body without issuing terminal authori
   });
 });
 it("retains the native timeout source through the body read", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ bodies, reply }) => {
+  await server(async ({ bodies, reply }) => {
     reply(response => { response.writeHead(200); response.flushHeaders(); });
     const batch = items(), call = prepared(batch, 80);
     expect(await send(batch, dispatch(batch, call), call)).toEqual({ result: { ok: false, error: "timeout" }, terminal: null }); expect(bodies).toHaveLength(1);
   });
 });
 it("makes a key removed after prepare incapable of POST or terminal issuance", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ bodies }) => {
-    const batch = items(), call = prepared(batch), owned = dispatch(batch, call); vi.stubEnv("ABCLLM_API_KEY", "");
+  await server(async ({ bodies }) => {
+    // The direct admin row is removed after preparation: no bearer, so nothing is sent.
+    const batch = items(), call = prepared(batch), owned = dispatch(batch, call); setServingContractSnapshotForTest([]);
     expect(await send(batch, owned, call)).toEqual({ result: { ok: false, error: "no_key" }, terminal: null }); expect(bodies).toEqual([]);
   });
 });

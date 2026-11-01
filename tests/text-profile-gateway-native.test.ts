@@ -1,11 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { createServer, type ServerResponse } from "node:http";
 import { afterEach, expect, it, vi } from "vitest";
-import { profileHash, writeKeywords, type ProfileEvidence } from "@/lib/domain/products/search-profile";
+import { parseProfileGatewayBody, profileGatewayWire, profileHash, writeKeywords, type ProfileEvidence } from "@/lib/domain/products/search-profile";
 import { textProfileInputHash, textProfileDispatchBindingHash, textProfileModelDispatchSchema } from "@/lib/llm/capacity";
 import { prepareTextProfileGatewayCall, readTextProfileGatewayTerminal, readAi1GatewayTerminal,
   writeKeywordsWithReservedGateway, type PreparedTextProfileGatewayCall } from "@/lib/crawl/agent-review-gateway";
 import type { TextProfileServingContract } from "@/lib/llm/text-profile-serving-contract";
+import { canRetryProfileGeneration } from "@/lib/domain/products/search-profile-retry";
+import { setServingContractSnapshotForTest, type ServingContractAuth } from "@/lib/llm/serving-contract-store";
 const fixture = vi.hoisted(() => ({ contract: null as TextProfileServingContract | null }));
 vi.mock("@/lib/llm/text-profile-serving-contract", async original => ({
   ...await original<typeof import("@/lib/llm/text-profile-serving-contract")>(),
@@ -17,6 +19,13 @@ function send(...args: Parameters<typeof writeKeywordsWithReservedGateway>) {
   const promise = writeKeywordsWithReservedGateway(...args); requests.add(promise); void promise.catch(() => {}); return promise;
 }
 const model = "profile-original-model";
+/**
+ * The engine connected directly by URL (admin contract, transport direct) is the only thing that opens the native call; the abcLLM
+ * gateway and its key were removed on 2026-10-30. "stored" sends the row's own key.
+ */
+function pinDirect(auth: ServingContractAuth = "none", apiKey: string | null = null, transport: "direct" | "gateway" = "direct") {
+  setServingContractSnapshotForTest([{ routeId: "product-search-profile", model, contract: {}, auth, apiKey, transport }]);
+}
 function evidence(): ProfileEvidence {
   // Original insertion order is part of the original wire, including nested escaping.
   return { url: "https://profile.example", name: "Expense Demo", category: "finance", topics: "budget",
@@ -45,13 +54,14 @@ function dispatch(value: ProfileEvidence, call: PreparedTextProfileGatewayCall) 
   return textProfileModelDispatchSchema.parse({ requestId: randomUUID(), owner: { instanceId: role.instanceId, bootId: role.bootId },
     token: randomUUID(), epoch: 1, revision: 1, policyHash: "a".repeat(64), binding, bindingHash: textProfileDispatchBindingHash(binding) });
 }
-async function server(run: (state: { bodies: string[]; reply: (value: (response: ServerResponse) => void) => void }) => Promise<void>) {
-  const bodies: string[] = [], responses = new Set<Promise<void>>(), errors: unknown[] = [];
+async function server(run: (state: { bodies: string[]; authorization: (string | undefined)[];
+  reply: (value: (response: ServerResponse) => void) => void }) => Promise<void>, direct: boolean = true) {
+  const bodies: string[] = [], authorization: (string | undefined)[] = [], responses = new Set<Promise<void>>(), errors: unknown[] = [];
   let reply = (response: ServerResponse) => { response.end(JSON.stringify(envelope())); };
   const http = createServer((request, response) => {
     const closed = new Promise<void>(resolve => response.once("close", resolve));
     const pending = (async () => { let body = ""; for await (const chunk of request) body += chunk.toString();
-      bodies.push(body); reply(response); await closed; })();
+      bodies.push(body); authorization.push(request.headers.authorization); reply(response); await closed; })();
     responses.add(pending); void pending.catch(() => {});
   });
   let failure: unknown, failed = false;
@@ -61,10 +71,11 @@ async function server(run: (state: { bodies: string[]; reply: (value: (response:
     fixture.contract = { version: 1, protocol: "abcllm-raw-total-bound-v1", routeId: "product-search-profile", provider: "abcllm",
       model, responseModel: "served-profile", endpoint: `http://127.0.0.1:${address.port}/v1/chat/completions`,
       deploymentRevision: "loopback-only", totalTokenBound: 4096 };
-    await run({ bodies, reply: next => { reply = next; } });
+    if (direct) pinDirect();
+    await run({ bodies, authorization, reply: next => { reply = next; } });
   } catch (error) { failed = true; failure = error; }
   finally {
-    fixture.contract = null;
+    fixture.contract = null; setServingContractSnapshotForTest(null);
     const watchdog = setTimeout(() => { errors.push(new Error("fixture_forced_close")); http.closeAllConnections(); }, 2000);
     try {
       for (const result of await Promise.allSettled([...requests])) {
@@ -79,22 +90,36 @@ async function server(run: (state: { bodies: string[]; reply: (value: (response:
   if (failed && errors.length) throw new AggregateError([failure, ...errors]);
   if (failed) throw failure; if (errors.length) throw new AggregateError(errors);
 }
-afterEach(() => { fixture.contract = null; vi.unstubAllEnvs(); });
+afterEach(() => { fixture.contract = null; setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); });
 it("keeps production unsupported and JSON incapable of terminal authority", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only");
+  // A leftover gateway key opens nothing: only a direct admin contract does.
+  vi.stubEnv("ABCLLM_API_KEY", "old-gateway-key");
   const leaf = await vi.importActual<typeof import("@/lib/llm/text-profile-serving-contract")>("@/lib/llm/text-profile-serving-contract");
   expect(leaf.resolveTextProfileServingContract(model)).toBeNull();
   expect(prepareTextProfileGatewayCall(evidence(), { model, timeoutMs: 1000 })).toEqual({ kind: "unsupported", reason: "provider_contract_unavailable" });
   expect(readTextProfileGatewayTerminal({ kind: "text_profile_gateway_terminal" })).toBeNull();
+  // A resolved contract without a direct admin row, behind the removed gateway, with gateway auth or an unreadable stored key is unsupported.
+  await server(async ({ bodies }) => {
+    for (const pin of [() => setServingContractSnapshotForTest([]), () => pinDirect("none", null, "gateway"), () => pinDirect("gateway"),
+      () => pinDirect("stored", null)]) {
+      pin();
+      expect(prepareTextProfileGatewayCall(evidence(), { model, timeoutMs: 1000 })).toEqual({ kind: "unsupported", reason: "provider_contract_unavailable" });
+    }
+    expect(bodies).toEqual([]);
+  }, false);
 });
 it("sends one native POST with byte-identical original wire and private immutable terminal", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only");
-  await server(async ({ bodies }) => {
-    const value = evidence(), call = prepared(value), owned = dispatch(value, call); let wire = "";
-    const legacy = await writeKeywords(value, { model, timeoutMs: 1000, request: (async (_url, options) => {
-      wire = String(options?.body); return new Response(JSON.stringify(envelope())); }) as typeof fetch });
+  await server(async ({ bodies, authorization }) => {
+    pinDirect("stored", "local-test-only");
+    const value = evidence(), call = prepared(value), owned = dispatch(value, call);
+    // The legacy gateway leaf ends no_key without reaching its request; the native POST carries the original frozen wire.
+    const request = vi.fn(async () => new Response(JSON.stringify(envelope())));
+    expect(await writeKeywords(value, { model, timeoutMs: 1000, request: request as unknown as typeof fetch })).toEqual({ ok: false, error: "no_key" });
+    expect(request).not.toHaveBeenCalled();
     const result = await send(value, owned, call);
-    expect(result.result).toEqual(legacy); expect(bodies).toEqual([wire]);
+    expect(result.result).toEqual(parseProfileGatewayBody(JSON.stringify(envelope()), value.name));
+    expect(result.result).toEqual({ ok: true, en: ["budget app"], ko: ["가계부"] });
+    expect(bodies).toEqual([profileGatewayWire(value, model)]); expect(authorization).toEqual(["Bearer local-test-only"]);
     const proof = readTextProfileGatewayTerminal(result.terminal);
     expect(proof).toMatchObject({ dispatch: owned, actualUsage: { inputTokens: 80, outputTokens: 20, totalTokens: 100 }, provenance: "upstream_reported" });
     expect(Object.isFrozen(proof?.dispatch.binding.role)).toBe(true);
@@ -107,7 +132,6 @@ it("sends one native POST with byte-identical original wire and private immutabl
   });
 });
 it("preserves profile length-terminal keyword parsing instead of AI1 output_too_large", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only");
   await server(async ({ reply }) => {
     reply(response => response.end(JSON.stringify(envelope({ choices: [{ index: 0, message: { role: "assistant",
       content: '{"keywords_en":["budget app"],"keywords_ko":["가계부"]}' }, finish_reason: "length" }] }))));
@@ -116,19 +140,16 @@ it("preserves profile length-terminal keyword parsing instead of AI1 output_too_
   });
 });
 it.each([{ usage_provenance: "gateway_estimated" }, { usage: null }, { usage: { prompt_tokens: -1 } }])("retains full C with unknown actual usage: %j", async change => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only");
   await server(async ({ reply }) => { reply(response => response.end(JSON.stringify(envelope(change))));
     const value = evidence(), call = prepared(value), result = await send(value, dispatch(value, call), call);
     expect(readTextProfileGatewayTerminal(result.terminal)).toMatchObject({ actualUsage: null, provenance: "unknown", dispatch: { binding: { chargedTokens: 4096 } } }); });
 });
 it.each([{ usage: { prompt_tokens: 4096, completion_tokens: 1, total_tokens: 4097 } }, { choices: [] }, { model: "wrong" }])("rejects contradictory native protocol: %j", async change => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only");
   await server(async ({ bodies, reply }) => { reply(response => response.end(JSON.stringify(envelope(change))));
     const value = evidence(), call = prepared(value), result = await send(value, dispatch(value, call), call);
     expect(result).toEqual({ result: { ok: false, error: "invalid_output" }, terminal: null }); expect(bodies).toHaveLength(1); });
 });
 it("rejects copies and reordered original evidence before HTTP", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only");
   await server(async ({ bodies }) => { const value = evidence(), call = prepared(value), owned = dispatch(value, call);
     await expect(send(value, owned, { ...call })).rejects.toThrow("text_profile_gateway_call_mismatch");
     const { url, ...rest } = value;
@@ -136,15 +157,34 @@ it("rejects copies and reordered original evidence before HTTP", async () => {
     expect(bodies).toHaveLength(0); });
 });
 it.each([400, 422, 429, 307])("maps HTTP %i without retry/redirect or terminal", async status => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only");
   await server(async ({ bodies, reply }) => { reply(response => { response.statusCode = status; response.setHeader("Location", "/v1/chat/completions"); response.end("failure"); });
     const value = evidence(), call = prepared(value), result = await send(value, dispatch(value, call), call);
     expect(result).toEqual({ result: { ok: false, error: status === 429 ? "rate_limit" : `http_${status}` }, terminal: null });
     expect(bodies).toHaveLength(1); });
 });
 
+it("keeps a broken response body and a malformed HTTP 200 apart: network stays retryable, invalid_output spends the attempt cap", async () => {
+  await server(async ({ bodies, reply }) => {
+    reply(response => { response.writeHead(200, { "Content-Length": "1000" }); response.write("{"); response.socket?.destroy(); });
+    const value = evidence(), broken = prepared(value), first = await send(value, dispatch(value, broken), broken);
+    expect(first).toEqual({ result: { ok: false, error: "network" }, terminal: null });
+    if (!first.result.ok) expect(canRetryProfileGeneration(first.result.error, 5)).toBe(true);
+    reply(response => response.end("<html>upstream proxy response</html>"));
+    const malformed = prepared(value), second = await send(value, dispatch(value, malformed), malformed);
+    expect(second).toEqual({ result: { ok: false, error: "invalid_output" }, terminal: null });
+    if (!second.result.ok) expect(canRetryProfileGeneration(second.result.error, 5)).toBe(false);
+    expect(bodies).toHaveLength(2);
+  });
+});
+
+it("makes a direct contract removed after preparation incapable of POST or terminal issuance", async () => {
+  await server(async ({ bodies }) => {
+    const value = evidence(), call = prepared(value), owned = dispatch(value, call); setServingContractSnapshotForTest([]);
+    expect(await send(value, owned, call)).toEqual({ result: { ok: false, error: "no_key" }, terminal: null }); expect(bodies).toEqual([]);
+  });
+});
+
 it("retains the original frozen profile wire independently of the new native helper", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only");
   const value = evidence(), originalSystem = `You write search keywords for one product in a directory of things people built with AI.
 People search this directory in Korean or English by what they want to get done — not by the product's name.
 
@@ -163,11 +203,7 @@ Rules:
 
 Return compact JSON on one line with exactly two keys: keywords_en, keywords_ko.`;
   const prompt = JSON.stringify(value).replace(/</g, "\\u003c").replace(/>/g, "\\u003e");
-  let actual = "";
-  await writeKeywords(value, { model, timeoutMs: 1000, request: (async (_url, options) => {
-    actual = String(options?.body); return new Response(JSON.stringify(envelope()));
-  }) as typeof fetch });
-  expect(actual).toBe(JSON.stringify({ context_strategy: "raw", model, stream: false, temperature: 0, max_tokens: 500,
+  expect(profileGatewayWire(value, model)).toBe(JSON.stringify({ context_strategy: "raw", model, stream: false, temperature: 0, max_tokens: 500,
     reasoning_effort: "low", chat_template_kwargs: { enable_thinking: false }, response_format: { type: "json_object" },
     messages: [{ role: "system", content: originalSystem },
       { role: "user", content: `<untrusted_evidence_json>\n${prompt}\n</untrusted_evidence_json>` }] }));

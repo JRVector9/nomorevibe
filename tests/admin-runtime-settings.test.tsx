@@ -15,8 +15,9 @@ import { BudgetsForm } from "@/app/(operator)/admin/models/limits/BudgetsForm";
 import { RoutesForm } from "@/app/(operator)/admin/models/limits/RoutesForm";
 import { TranslationForm } from "@/app/(operator)/admin/models/limits/TranslationForm";
 import { SettingsApplyLine } from "@/app/(operator)/admin/settings/SettingsApplyLine";
-import { auditChangeLines, buildRuntimeSettingsAdminView, fieldLabel, latestRoleObservations, runtimeSettingsIssueMessage, runtimeSettingsPatchFromForm,
-  type AdminObservation } from "@/lib/operations/admin-runtime-settings";
+import { AssignmentsForm } from "@/app/(operator)/admin/models/limits/AssignmentsForm";
+import { auditChangeLines, buildAssignmentReadsControl, buildRuntimeSettingsAdminView, fieldLabel, latestRoleObservations, runtimeSettingsIssueMessage,
+  runtimeSettingsPatchFromForm, type AdminObservation } from "@/lib/operations/admin-runtime-settings";
 import type { AdminLogRow } from "@/lib/operations/admin-log";
 import { formatRuntimeSettingsLine, runtimeSettingsReadback } from "@/lib/operations/pipeline-control-status";
 import { RUNTIME_SETTING_LABELS } from "@/lib/operations/runtime-settings-schema";
@@ -61,6 +62,20 @@ describe("화면 모형 — 유효값·기본값·덮어씀", () => {
     const margin = model.translation.find(field => field.path === "translation.product.jobMarginMs")!;
     expect(margin).toMatchObject({ kind: "ms", input: "15", defaultInput: "15", label: "공개 번역 틱 여유(초)" });
     expect(fieldLabel("translation.product.jobMarginMs")).toBe(RUNTIME_SETTING_LABELS["translation.product.jobMarginMs"].replace("(ms)", "(초)"));
+  });
+
+  it("모델 배정 읽기(3b-E) — 열거 칸 하나: 기본 off, 저장 문서가 on 이면 덮어씀, 선택지와 안내가 붙는다; 배정 화면용 묶음은 행 하나로 만든다", () => {
+    const [toggle] = view().assignments;
+    expect(toggle).toMatchObject({ path: "assignments.tableReads", label: "배정 표 읽기", kind: "choice", value: "off", defaultValue: "off", input: "off", defaultInput: "off",
+      overridden: false, options: [{ value: "off", label: "끔 — 설정(legacy)으로 고른다" }, { value: "on", label: "켬 — 배정 표(live 행)로 고른다" }] });
+    expect(toggle.note).toContain("재배포 없음");
+    expect(toggle.note).toContain("MODEL_ASSIGNMENT_TABLE");
+    const on = view({ row: { ...ROW, values: { ...STORED, assignments: { tableReads: "on" } } } }).assignments[0];
+    expect(on).toMatchObject({ value: "on", input: "on", overridden: true, defaultInput: "off" });
+    expect(fieldLabel("assignments.tableReads")).toBe("배정 표 읽기");
+    const control = buildAssignmentReadsControl({ ...ROW, values: { ...STORED, assignments: { tableReads: "on" } } });
+    expect(control).toMatchObject({ revision: 3, rowError: null, fields: [{ path: "assignments.tableReads", input: "on", overridden: true }] });
+    expect(buildAssignmentReadsControl(null, "runtime_settings_row_missing")).toMatchObject({ revision: null, rowError: "runtime_settings_row_missing", fields: [{ input: "off", overridden: false }] });
   });
 
   it("경로 한도 — 호출 상한 칸은 timeouts·limits.timeoutMs·사다리 중 그 경로가 실제로 읽는 자리고, 모델 상한은 등록부에서 읽기 전용으로 붙는다", () => {
@@ -157,6 +172,21 @@ describe("폼 → sparse patch", () => {
       .toEqual({ routes: { deadlines: { "review-gateway": { relayMs: null } } } });
   });
 
+  it("열거 칸(3b-E) — 배정 표 읽기는 선택지의 글자 그대로, 선택지 밖·빈 값은 거절, 처음 값과 같으면 바뀐 것이 없다, 「기본값으로」는 덮어쓴 칸에만", () => {
+    const toggle = (over: Record<string, string>) => runtimeSettingsPatchFromForm("assignments", form({ "value:assignments.tableReads": "off", "initial:assignments.tableReads": "off",
+      "stored:assignments.tableReads": "0", ...over }));
+    expect(toggle({ "value:assignments.tableReads": "on" })).toEqual({ patch: { assignments: { tableReads: "on" } }, changed: ["assignments.tableReads"], issues: [] });
+    expect(toggle({}).changed).toEqual([]);
+    expect(toggle({ "value:assignments.tableReads": "yes" }).issues).toEqual(["배정 표 읽기: 고를 수 있는 값이 아닙니다(yes)"]);
+    expect(toggle({ "value:assignments.tableReads": "" }).issues).toEqual(["배정 표 읽기: 고를 수 있는 값이 아닙니다(비었음)"]);
+    expect(toggle({ "value:assignments.tableReads": "on", "initial:assignments.tableReads": "on", "stored:assignments.tableReads": "1", "reset:assignments.tableReads": "on" }))
+      .toEqual({ patch: { assignments: { tableReads: null } }, changed: ["assignments.tableReads"], issues: [] });
+    // 다른 묶음의 폼에 끼운 토글 칸은 모르는 설정이다
+    expect(runtimeSettingsPatchFromForm("budgets", form({ "value:assignments.tableReads": "on" })).issues).toEqual(["모르는 설정입니다: assignments.tableReads"]);
+    expect(runtimeSettingsIssueMessage("runtime_settings_invalid:assignments.tableReads")).toBe("배정 표 읽기: 고를 수 있는 값이 아닙니다(off · on)");
+    expect(runtimeSettingsIssueMessage("unknown_setting:assignments.extra")).toBe("모르는 설정입니다: assignments.extra");
+  });
+
   it("예산 — auto 를 켜면 \"auto\", 끄면 초 값, 둘 다 그대로면 바뀐 것이 없다", () => {
     const budget = (over: Record<string, string>) => runtimeSettingsPatchFromForm("budgets", form({ "value:budgets.product-translate": "315", "initial:budgets.product-translate": "315", "initialAuto:budgets.product-translate": "1", ...over }));
     expect(budget({ "auto:budgets.product-translate": "on" }).changed).toEqual([]);
@@ -231,6 +261,30 @@ describe("폼 그리기", () => {
     expect(html).toContain("엔진·게이트웨이 값은 선언이며 외부 강제가 아닙니다");
     expect(html).toContain("모델 자체의 상한은 모델 연결 → 등록부 덮어쓰기");
     expect(html).toContain("이 묶음 저장");
+  });
+  it("모델 배정 읽기(3b-E) — assignments 묶음 폼: select 선택지·숨은 initial/stored·기본값 글·덮어쓴 칸의 「기본값으로」·compact 는 제목 없이", () => {
+    const html = renderToStaticMarkup(createElement(AssignmentsForm, { fields: model.assignments, revision: model.revision }));
+    expect(html).toContain('name="group" value="assignments"');
+    expect(html).toContain('name="expectedRevision" value="3"');
+    expect(html).toContain('<select name="value:assignments.tableReads"');
+    expect(html).toContain('aria-label="배정 표 읽기"');
+    expect(html).toContain('<option value="off" selected="">끔 — 설정(legacy)으로 고른다</option>');
+    expect(html).toContain('<option value="on">켬 — 배정 표(live 행)로 고른다</option>');
+    expect(html).toContain('name="initial:assignments.tableReads" value="off"');
+    expect(html).toContain('name="stored:assignments.tableReads" value="0"');
+    expect(html).toContain("기본 끔 — 설정(legacy)으로 고른다");
+    expect(html).toContain("배정 표 읽기</h3>");
+    expect(html).not.toContain('name="reset:assignments.tableReads"');
+    expect(html).toContain("이 묶음 저장");
+    const on = view({ row: { ...ROW, values: { ...STORED, assignments: { tableReads: "on" } } } });
+    const compact = renderToStaticMarkup(createElement(AssignmentsForm, { fields: on.assignments, revision: on.revision, compact: true }));
+    expect(compact).toContain('<option value="on" selected="">');
+    expect(compact).toContain("덮어씀");
+    expect(compact).toContain('name="reset:assignments.tableReads"');
+    expect(compact).not.toContain("배정 표 읽기</h3>");
+    const locked = renderToStaticMarkup(createElement(AssignmentsForm, { fields: model.assignments, revision: null, readOnly: true }));
+    expect(locked).toMatch(/<select name="value:assignments\.tableReads"[^>]*disabled=""/);
+    expect(locked).toContain("저장 행을 읽지 못해 읽기 전용입니다.");
   });
   it("번역·묶음 — 공개 번역과 잡별 묶음은 저장 묶음이 다른 두 폼이다", () => {
     const html = renderToStaticMarkup(createElement(TranslationForm, { translation: model.translation, jobKnobs: model.jobKnobs, revision: model.revision }));

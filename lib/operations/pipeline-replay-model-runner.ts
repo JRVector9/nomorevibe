@@ -16,7 +16,7 @@ import { assertIsolatedReplayDatabase, FIXED_INPUT_TIMING, fixedInputRunConditio
 import { dbClockIso, fixedInputOrdinals, fixedInputWrites, loadFixedInputs } from "./pipeline-replay-fixed-input-repository";
 import { installReplayEgressGuard, startReplayModelMeter, type ReplayMeterDrain, type ReplayMeterStop } from "./pipeline-replay-model-meter";
 import { DEFAULT_RUNTIME_SETTINGS } from "./runtime-settings-schema";
-import { defaultRuntimeSettingsSnapshot } from "./runtime-settings-store";
+import { replayRuntimeSettingsSnapshot } from "./runtime-settings-store";
 
 const DEFAULT_GATEWAY = modelBaseUrl("ai1-preset", {}, "abcllm").replace(/\/v1$/, "");
 /** 같은 reviewer 역할 워커지만 고정 입력 밖(소개 검수·발행분 감사·판정)을 부르는 잡은 돌리지 않는다. 기준선을 낮추지 않는 쪽이다. */
@@ -45,7 +45,7 @@ export function fixedInputPreflight(manifestValue: unknown, artifactValue: unkno
   ensure([first, ...second].every(row => row.provider === "abcllm"), "replay_cli_provider_unsupported");
   // 게이트웨이 모듈은 이 값을 그대로 이어 붙인다. origin만 같고 경로·슬래시가 붙으면 egress 관문이 모든 호출을 막는다.
   ensure((env.ABCLLM_BASE_URL?.trim() || DEFAULT_GATEWAY) === manifest.upstream, "replay_upstream_mismatch");
-  ensure(env.ABCLLM_API_KEY?.trim(), "replay_api_key_missing");
+  // 키는 env 가 아니라 각 경로의 직접 연결 계약이 정한다(contractBearer) — 계약이 없으면 그 호출이 보내기 전에 거절된다.
   // 심사 잡은 README 표본이 없거나 판이 다르면 원본 옆 표본을 새로 받는다(lib/crawl/jobs/review-document.ts). 그 요청은 명시 dispatcher로
   // 나가 egress 관문·계량기를 거치지 않는다. 이 코드 판과 다른 표본이 하나라도 있으면 실행 전에 거절한다(F1).
   ensure(artifact.inputs.every(row => typeof row.document.pageMeta?.readmeSample === "string"
@@ -137,9 +137,10 @@ export async function runFixedInputReplay(options: { manifest: unknown; artifact
       .filter(lane => lane.length);
     const tasks = [
       guarded("scheduler", () => runScheduler({ signal }, { requestDue: control.requestDueJobs, seen: control.markSchedulerSeen })),
-      // 리플레이는 코드 기본 실시간 한도로만 돈다(결정적) — 격리 DB 의 runtime_settings 행을 읽지 않고, 틱 예산도 기본 문서에서 명시적으로 센다
+      // 리플레이는 코드 기본 실시간 한도로만 돈다(결정적) — 격리 DB 의 runtime_settings 행을 읽지 않고, 틱 예산도 기본 문서에서 명시적으로 센다.
+      // source 'replay' 판이라 배정 표 토글(assignments.tableReads)은 「아직 못 읽음」이 아닌 결정된 꺼짐이다 — 심사 잡이 assignments_unavailable 로 미뤄지지 않고 예전 설정으로 돈다.
       guarded("worker", () => runWorker({ role: "reviewer", signal, intervalMs: timing.workerIntervalMs }, { names, lanes, pending: () => control.pendingJobNames("reviewer"),
-        seen: control.markWorkerSeen, settings: async () => defaultRuntimeSettingsSnapshot(),
+        seen: control.markWorkerSeen, settings: async () => replayRuntimeSettingsSnapshot(),
         run: (name, runOptions) => runJob(name, JOBS[name], jobRunOptions(name, runOptions, DEFAULT_RUNTIME_SETTINGS)) })),
     ];
     if (consumers && manifest.items) {

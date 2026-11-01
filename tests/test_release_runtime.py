@@ -346,5 +346,75 @@ class RuntimeProofTests(unittest.TestCase):
             with self.subTest(receipts=corrupt), self.assertRaises(ValueError):
                 runtime.verify_fleet(self.client, baseline, TARGET, ['web-mini', 'web-m3'], corrupt, ROOT)
 
+    def strip_retired(self, short, retired):
+        """The release wrote the saved env without the retired lines; the new spec and container render without them."""
+        app = self.client.apps[short]
+        app['env'] = runtime.shared.drop_settings(app['env'], retired)
+        row = self.client.rows[short]
+        cs = row['serviceSpec']['TaskTemplate']['ContainerSpec']
+        cs['Env'] = [line for line in cs['Env'] if line.split('=', 1)[0] not in retired]
+        row['specHash'] = runtime.git_rollout.spec_hash(row['serviceSpec'])
+        for container in row['containers']:
+            container['config']['Env'] = [line for line in container['config']['Env'] if line.split('=', 1)[0] not in retired]
+
+    def test_final_requires_retired_settings_gone_from_selected_saved_env_spec_and_containers(self):
+        retired = ('ABCLLM_API_KEY', 'CRAWL_REVIEW_MODEL')
+        lines = ['ABCLLM_API_KEY=synthetic-retired', 'CRAWL_REVIEW_MODEL=gpt']
+        for short in ('text-mini', 'text-m3', 'reviewer-m3'):
+            self.client.apps[short]['env'] += 'ABCLLM_API_KEY="synthetic-retired"\nCRAWL_REVIEW_MODEL=gpt\n'
+            row = self.client.rows[short]
+            row['serviceSpec']['TaskTemplate']['ContainerSpec']['Env'] += lines
+            row['specHash'] = runtime.git_rollout.spec_hash(row['serviceSpec'])
+            row['containers'][0]['config']['Env'] += lines
+        baseline = self.collect(); baseline['target'] = TARGET
+        selected = ['text-mini', 'text-m3']
+        receipts = self.select(selected)
+        for short in selected:
+            self.strip_retired(short, retired)
+        expected = runtime.expected_api('text-mini', baseline['apps']['text-mini'], TARGET, retired)
+        self.assertEqual(expected['env'], self.client.apps['text-mini']['env'])
+        self.assertNotIn('ABCLLM_API_KEY', expected['env']); self.assertIn('CUSTOM_FLAG=16', expected['env'])
+        before = copy.deepcopy(baseline)
+        observed = runtime.verify_fleet(self.client, baseline, TARGET, selected, receipts, ROOT, retired_settings=retired)
+        self.assertEqual(observed['text-mini']['release'], NEW)
+        # Retained reviewer-m3 still carries both lines and is held to its exact original.
+        self.assertEqual(observed['reviewer-m3'], baseline['baseline']['reviewer-m3'])
+        self.assertEqual(baseline, before)
+        self.assertNotIn('synthetic-retired', json.dumps(observed))
+        # Not declared: the saved env without the lines is drift (today's behaviour).
+        with self.assertRaisesRegex(ValueError, 'text-mini_final_configuration_drift'):
+            runtime.verify_fleet(self.client, baseline, TARGET, selected, receipts, ROOT)
+        with self.assertRaisesRegex(ValueError, 'fleet_verification_contract_invalid'):
+            runtime.verify_fleet(self.client, baseline, TARGET, selected, receipts, ROOT, retired_settings='ABCLLM_API_KEY')
+        # Declared, but the new spec and container still render a retired line: drift, not tolerance.
+        row = self.client.rows['text-m3']
+        row['serviceSpec']['TaskTemplate']['ContainerSpec']['Env'].append('CRAWL_REVIEW_MODEL=gpt')
+        row['specHash'] = runtime.git_rollout.spec_hash(row['serviceSpec'])
+        row['containers'][0]['config']['Env'].append('CRAWL_REVIEW_MODEL=gpt')
+        with self.assertRaisesRegex(ValueError, 'text-m3_selected_runtime_contract_drift'):
+            runtime.verify_fleet(self.client, baseline, TARGET, selected, receipts, ROOT, retired_settings=retired)
+        # Declared, spec clean, but the container alone still renders it: the rendered-env contract fails.
+        row['serviceSpec']['TaskTemplate']['ContainerSpec']['Env'].pop()
+        row['specHash'] = runtime.git_rollout.spec_hash(row['serviceSpec'])
+        with self.assertRaisesRegex(ValueError, 'text-m3_container_contract_mismatch'):
+            runtime.verify_fleet(self.client, baseline, TARGET, selected, receipts, ROOT, retired_settings=retired)
+        row['containers'][0]['config']['Env'].pop()
+        # A retained app that lost a line it was supposed to keep is retained drift, declaration or not.
+        self.strip_retired('reviewer-m3', retired)
+        with self.assertRaisesRegex(ValueError, 'reviewer-m3_final_configuration_drift'):
+            runtime.verify_fleet(self.client, baseline, TARGET, selected, receipts, ROOT, retired_settings=retired)
+
+    def test_preserves_containers_drops_only_declared_retired_names(self):
+        baseline = self.collect(); baseline['target'] = TARGET
+        old = baseline['runtime']['text-m3']
+        old['containers'][0]['config']['Env'].append('ABCLLM_API_KEY=synthetic-retired')
+        self.select(['text-m3'])
+        new = self.client.rows['text-m3']
+        self.assertTrue(runtime._preserves_containers(old, new, NEW, 'worker', retired_settings=('ABCLLM_API_KEY',)))
+        self.assertFalse(runtime._preserves_containers(old, new, NEW, 'worker'))
+        self.assertFalse(runtime._preserves_containers(old, new, NEW, 'worker', retired_settings=('CRAWL_REVIEW_MODEL',)))
+        new['containers'][0]['config']['Env'].append('ABCLLM_API_KEY=synthetic-retired')
+        self.assertFalse(runtime._preserves_containers(old, new, NEW, 'worker', retired_settings=('ABCLLM_API_KEY',)))
+
 
 if __name__ == '__main__': unittest.main()

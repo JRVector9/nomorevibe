@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { createServer, type ServerResponse } from "node:http";
 import { afterEach, expect, it, vi } from "vitest";
-import { textHash, translateToKorean, parseTranslations } from "@/lib/crawl/translate";
+import { textHash, translateToKorean, parseTranslations, reasonTranslationGatewayWire, TRANSLATE_MODEL } from "@/lib/crawl/translate";
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { reasonTranslationInputHash, reasonTranslationLogicalWorkKey, reasonTranslationDispatchBindingHash,
   reasonTranslationModelDispatchSchema } from "@/lib/llm/capacity";
 import { prepareReasonTranslationGatewayCall, translateWithReservedReasonGateway, readReasonTranslationGatewayTerminal,
@@ -48,6 +49,10 @@ function dispatch(texts: readonly string[], call: PreparedReasonTranslationGatew
   return reasonTranslationModelDispatchSchema.parse({ requestId: randomUUID(), owner: { instanceId: role.instanceId, bootId: role.bootId },
     token: randomUUID(), epoch: 1, revision: 1, policyHash: "a".repeat(64), binding, bindingHash: reasonTranslationDispatchBindingHash(binding) });
 }
+/** The engine connected directly (admin contract, transport direct) with its own stored key; the gateway key is gone. */
+function pinDirect(contract: unknown, auth: "stored" | "none" | "gateway" = "stored", transport: "direct" | "gateway" = "direct") {
+  setServingContractSnapshotForTest([{ routeId: "reason-translate", model, contract, auth, apiKey: auth === "stored" ? "local-test-only" : null, transport }]);
+}
 function send(...args: Parameters<typeof translateWithReservedReasonGateway>) {
   const promise = translateWithReservedReasonGateway(...args); requests.add(promise); void promise.catch(() => {}); return promise;
 }
@@ -66,10 +71,11 @@ async function server(run: (state: { bodies: string[]; reply: (next: (response: 
     fixture.contract = { version: 1, protocol: "abcllm-reason-total-bound-v1", routeId: "reason-translate", provider: "abcllm",
       model, responseModel: "served-reason", endpoint: `http://127.0.0.1:${address.port}/v1/chat/completions`,
       deploymentRevision: "local-only", totalTokenBound: 8192 };
+    pinDirect(fixture.contract);
     await run({ bodies, reply: next => { reply = next; } });
   } catch (error) { failed = true; original = error; }
   finally {
-    fixture.contract = null;
+    fixture.contract = null; setServingContractSnapshotForTest(null);
     const watchdog = setTimeout(() => { errors.push(new Error("fixture_forced_close")); http.closeAllConnections(); }, 2000);
     try {
       await Promise.allSettled([...requests]); requests.clear();
@@ -80,8 +86,9 @@ async function server(run: (state: { bodies: string[]; reply: (next: (response: 
   if (failed && errors.length) throw new AggregateError([original, ...errors]);
   if (failed) throw original; if (errors.length) throw new AggregateError(errors);
 }
-afterEach(() => { fixture.contract = null; vi.unstubAllEnvs(); });
+afterEach(() => { fixture.contract = null; setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); });
 it("keeps production unsupported, no-key and malformed batches incapable of native authority", async () => {
+  // A process gateway key is ignored: only a direct admin contract opens the route (abcLLM gateway removed 2026-10-30).
   vi.stubEnv("ABCLLM_API_KEY", "local-test-only");
   const leaf = await vi.importActual<typeof import("@/lib/llm/reason-translation-serving-contract")>("@/lib/llm/reason-translation-serving-contract");
   expect(leaf.resolveReasonTranslationServingContract(model)).toBeNull();
@@ -89,11 +96,16 @@ it("keeps production unsupported, no-key and malformed batches incapable of nati
   expect(readReasonTranslationGatewayTerminal({ kind: "reason_translation_gateway_terminal" })).toBeNull();
   await server(async ({ bodies }) => {
     for (const texts of [[], Array(5).fill("reason"), ["duplicate", "duplicate"]]) expect(prepareReasonTranslationGatewayCall(texts, { model, timeoutMs: 1000 }).kind).toBe("unsupported");
-    vi.stubEnv("ABCLLM_API_KEY", ""); expect(prepareReasonTranslationGatewayCall(sources(), { model, timeoutMs: 1000 }).kind).toBe("unsupported"); expect(bodies).toEqual([]);
+    // No direct row, a gateway-transport row, gateway auth or an unreadable stored key: no bearer, so no preparation.
+    for (const pin of [() => setServingContractSnapshotForTest([]), () => pinDirect(fixture.contract, "stored", "gateway"),
+      () => pinDirect(fixture.contract, "gateway"), () => setServingContractSnapshotForTest([{ routeId: "reason-translate", model,
+        contract: fixture.contract, auth: "stored", apiKey: null, transport: "direct" }])]) {
+      pin(); expect(prepareReasonTranslationGatewayCall(sources(), { model, timeoutMs: 1000 }).kind).toBe("unsupported");
+    }
+    expect(bodies).toEqual([]);
   });
 });
 it("sends one native POST with the whole original ordered wire and private immutable terminal", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only");
   await server(async ({ bodies }) => {
     const texts = sources(), call = prepared(texts), owned = dispatch(texts, call);
     const outcome = await send(texts, owned, call); expect(outcome.result).toEqual({ ok: true, translations: translated });
@@ -109,7 +121,6 @@ it("sends one native POST with the whole original ordered wire and private immut
   });
 });
 it.each([["short"], ["a".repeat(5000)], ["a", "b", "c", "d"]])("preserves the original max-token formula and user array: %j", async (...texts) => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only");
   await server(async ({ bodies, reply }) => {
     reply(response => response.end(JSON.stringify(envelope({ choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify(texts.map(() => "한국어")) }, finish_reason: "stop" }] }))));
     const call = prepared(texts), result = await send(texts, dispatch(texts, call), call);
@@ -117,7 +128,7 @@ it.each([["short"], ["a".repeat(5000)], ["a", "b", "c", "d"]])("preserves the or
   });
 });
 it("rejects copied preparation, reordered texts and changed binding before HTTP", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ bodies }) => {
+  await server(async ({ bodies }) => {
     const texts = sources(), call = prepared(texts), owned = dispatch(texts, call);
     await expect(send(texts, owned, { ...call })).rejects.toThrow("reason_translation_gateway_call_mismatch");
     await expect(send([...texts].reverse(), owned, call)).rejects.toThrow("reason_translation_gateway_call_mismatch");
@@ -127,13 +138,13 @@ it("rejects copied preparation, reordered texts and changed binding before HTTP"
   });
 });
 it("captures the original text array before its caller mutates it", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ bodies }) => {
+  await server(async ({ bodies }) => {
     const texts = sources(), initial = [...texts], call = prepared(texts), pending = send(texts, dispatch(texts, call), call); texts.reverse();
     expect((await pending).result).toEqual({ ok: true, translations: translated }); expect(bodies).toEqual([originalWire(initial, model)]);
   });
 });
 it("preserves partial null quality and valid length terminal", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ reply }) => {
+  await server(async ({ reply }) => {
     const texts = sources(), content = JSON.stringify(["한국어 사유입니다", "English returned unchanged"]);
     reply(response => response.end(JSON.stringify(envelope({ choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "length" }] }))));
     const call = prepared(texts), result = await send(texts, dispatch(texts, call), call);
@@ -142,41 +153,41 @@ it("preserves partial null quality and valid length terminal", async () => {
   });
 });
 it("keeps terminal evidence when the original business parser rejects a truncated array", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ reply }) => {
+  await server(async ({ reply }) => {
     reply(response => response.end(JSON.stringify(envelope({ choices: [{ index: 0, message: { role: "assistant", content: '["잘린 번역"' }, finish_reason: "length" }] }))));
     const texts = sources(), call = prepared(texts), result = await send(texts, dispatch(texts, call), call);
     expect(result.result).toEqual({ ok: false, error: "invalid_output" }); expect(readReasonTranslationGatewayTerminal(result.terminal)?.finishReason).toBe("length");
   });
 });
 it.each([{ usage: null }, { usage_provenance: "gateway_estimated" }, { usage: { prompt_tokens: -1 } }])("retains full C with unknown usage: %j", async change => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ reply }) => {
+  await server(async ({ reply }) => {
     reply(response => response.end(JSON.stringify(envelope(change)))); const texts = sources(), call = prepared(texts), result = await send(texts, dispatch(texts, call), call);
     expect(readReasonTranslationGatewayTerminal(result.terminal)).toMatchObject({ actualUsage: null, provenance: "unknown", dispatch: { binding: { chargedTokens: 8192 } } });
   });
 });
 it.each([{ usage: { prompt_tokens: 8192, completion_tokens: 1, total_tokens: 8193 } }, { model: "wrong" }, { choices: [] },
   { choices: [{ index: 0, message: { role: "assistant", content: "[]" }, finish_reason: null }] }])("refuses contradictory native completion: %j", async change => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ bodies, reply }) => {
+  await server(async ({ bodies, reply }) => {
     reply(response => response.end(JSON.stringify(envelope(change)))); const texts = sources(), call = prepared(texts), result = await send(texts, dispatch(texts, call), call);
     expect(result).toEqual({ result: { ok: false, error: "invalid_output" }, terminal: null }); expect(bodies).toHaveLength(1);
   });
 });
 it.each([400, 422, 429, 307])("makes one POST for HTTP %i without retry or redirect", async status => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ bodies, reply }) => {
+  await server(async ({ bodies, reply }) => {
     reply(response => { response.statusCode = status; response.setHeader("Location", "/v1/chat/completions"); response.end("failure"); });
     const texts = sources(), call = prepared(texts), result = await send(texts, dispatch(texts, call), call);
     expect(result).toEqual({ result: { ok: false, error: status === 429 ? "rate_limit" : `http_${status}` }, terminal: null }); expect(bodies).toHaveLength(1);
   });
 });
 it("leaves EOF without terminal proof and drains the real native read", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ bodies, reply }) => {
+  await server(async ({ bodies, reply }) => {
     reply(response => { response.writeHead(200, { "Content-Length": "1000" }); response.write("{"); response.socket?.destroy(); });
     const texts = sources(), call = prepared(texts), result = await send(texts, dispatch(texts, call), call);
     expect(result).toEqual({ result: { ok: false, error: "network" }, terminal: null }); expect(bodies).toHaveLength(1);
   });
 });
 it("drains actual caller abort with no terminal authority", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); await server(async ({ bodies, reply }) => {
+  await server(async ({ bodies, reply }) => {
     let arrived!: () => void; const ready = new Promise<void>(resolve => { arrived = resolve; });
     reply(response => { response.writeHead(200); response.flushHeaders(); arrived(); });
     const texts = sources(), call = prepared(texts), controller = new AbortController(), pending = send(texts, dispatch(texts, call), call, { signal: controller.signal });
@@ -185,13 +196,14 @@ it("drains actual caller abort with no terminal authority", async () => {
   });
 });
 it("keeps the legacy wire format with the registry's M1 default", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only"); const texts = sources(); let wire = "";
-  const result = await translateToKorean(texts, 1000, (async (_url, options) => { wire = String(options?.body); return new Response(JSON.stringify(envelope())); }) as typeof fetch);
-  expect(result).toEqual({ ok: true, translations: translated });
-  expect(wire).toBe(originalWire(texts, "[m1] mlx-community--gemma-4-26b-a4b-it-4bit"));
+  const texts = sources(), request = vi.fn(async () => new Response(JSON.stringify(envelope())));
+  // The legacy gateway sender no longer sends anything (gateway removed); its wire stays the native builder's.
+  expect(await translateToKorean(texts, 1000, request as unknown as typeof fetch)).toEqual({ ok: false, error: "no_key" });
+  expect(request).not.toHaveBeenCalled();
+  expect(TRANSLATE_MODEL).toBe("[m1] mlx-community--gemma-4-26b-a4b-it-4bit");
+  expect(reasonTranslationGatewayWire(texts, TRANSLATE_MODEL)).toBe(originalWire(texts, "[m1] mlx-community--gemma-4-26b-a4b-it-4bit"));
 });
 it("rejects sparse source arrays before preparation or native HTTP", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only");
   await server(async ({ bodies }) => {
     expect(prepareReasonTranslationGatewayCall(new Array<string>(1), { model, timeoutMs: 1000 }))
       .toEqual({ kind: "unsupported", reason: "provider_contract_unavailable" });

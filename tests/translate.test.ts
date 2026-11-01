@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { needsKorean, parseTranslations, textHash, translateToKorean } from "@/lib/crawl/translate";
+import { TRANSLATE_MODEL, needsKorean, parseTranslations, reasonTranslationGatewayWire, textHash, translateToKorean } from "@/lib/crawl/translate";
 
 // These legacy transport units do not open a database; actual disabled SQL is covered separately.
 vi.mock("@/lib/llm/capacity-repository", () => ({
@@ -45,35 +45,29 @@ describe("parseTranslations — 받은 번역을 그대로 믿지 않는다", ()
   });
 });
 
-describe("translateToKorean — 게이트웨이 호출", () => {
-  const original = process.env.ABCLLM_API_KEY;
-  afterEach(() => { if (original === undefined) delete process.env.ABCLLM_API_KEY; else process.env.ABCLLM_API_KEY = original; });
+describe("translateToKorean — 옛 게이트웨이 경로", () => {
+  afterEach(() => vi.unstubAllEnvs());
 
-  it("키가 없으면 부르지 않는다", async () => {
-    delete process.env.ABCLLM_API_KEY;
-    const request = vi.fn();
-    expect(await translateToKorean([EN], 1_000, request)).toEqual({ ok: false, error: "no_key" });
-    expect(request).not.toHaveBeenCalled();
+  // 게이트웨이(abcLLM)는 2026-10-30 제거됐다 — 키가 있든 없든, 어떤 응답을 줄 fetch 를 넘겨도 보내지 않고 no_key 로 끝낸다.
+  it.each([undefined, "test-key"])("키(%j)와 상관없이 부르지 않는다", async key => {
+    vi.stubEnv("ABCLLM_API_KEY", key);
+    const timeout = Object.assign(new Error("timed out"), { name: "TimeoutError" });
+    for (const request of [
+      vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: '["문서 사이트다"]' } }] }))),
+      vi.fn(async () => new Response("", { status: 429 })), vi.fn(async () => new Response("", { status: 403 })),
+      vi.fn(async () => { throw timeout; }),
+    ]) {
+      expect(await translateToKorean([EN], 1_000, request as typeof fetch)).toEqual({ ok: false, error: "no_key" });
+      expect(request).not.toHaveBeenCalled();
+    }
   });
 
-  it("스트리밍을 끄고 M1 Gemma 기본값으로 부르며 키를 헤더로만 보낸다", async () => {
-    process.env.ABCLLM_API_KEY = "test-key";
-    const request = vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: '["문서 사이트다"]' } }] })));
-    expect(await translateToKorean([EN], 1_000, request as typeof fetch)).toEqual({ ok: true, translations: ["문서 사이트다"] });
-    const [url, init] = request.mock.calls[0] as unknown as [string, RequestInit];
-    const body = JSON.parse(String(init.body));
-    expect(url).toBe("https://abcllm-api.brut.bot/v1/chat/completions");
+  it("엔진 직접 경로가 보낼 글은 스트리밍을 끄고 M1 Gemma 기본값을 담으며 키를 싣지 않는다", () => {
+    vi.stubEnv("ABCLLM_API_KEY", "test-key");
+    expect(TRANSLATE_MODEL).toBe("[m1] mlx-community--gemma-4-26b-a4b-it-4bit");
+    const wire = reasonTranslationGatewayWire([EN], TRANSLATE_MODEL), body = JSON.parse(wire);
     expect(body).toMatchObject({ model: "[m1] mlx-community--gemma-4-26b-a4b-it-4bit", stream: false });
     expect(JSON.parse(body.messages[1].content)).toEqual([EN]);
-    expect(String(init.body)).not.toContain("test-key");
-    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer test-key");
-  });
-
-  it("막히거나 늦으면 사유를 남긴다", async () => {
-    process.env.ABCLLM_API_KEY = "test-key";
-    expect(await translateToKorean([EN], 1_000, (async () => new Response("", { status: 429 })) as typeof fetch)).toEqual({ ok: false, error: "rate_limit" });
-    expect(await translateToKorean([EN], 1_000, (async () => new Response("", { status: 403 })) as typeof fetch)).toEqual({ ok: false, error: "http_403" });
-    const timeout = Object.assign(new Error("timed out"), { name: "TimeoutError" });
-    expect(await translateToKorean([EN], 1_000, (async () => { throw timeout; }) as typeof fetch)).toEqual({ ok: false, error: "timeout" });
+    expect(wire).not.toContain("test-key");
   });
 });

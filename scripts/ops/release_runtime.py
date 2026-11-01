@@ -292,23 +292,28 @@ def collect_baseline(client, repo):
     return snapshot
 
 
-def expected_api(short, original, target):
-    """Exact permitted API changes; all other settings and secret text stay byte-for-byte."""
+def expected_api(short, original, target, retired_settings=()):
+    """Exact permitted API changes; all other settings and secret text stay byte-for-byte.
+
+    retired_settings are deleted from the saved env of Git and Docker apps alike (deploy_release --retire-setting).
+    """
     kind = shared.app_metadata(short)[3]
     if kind == 'connect-agent':
-        return git_rollout.expected_config(short, original, target, 'shared-worker')
+        return git_rollout.expected_config(short, original, target, 'shared-worker', retired_settings)
     expected = copy.deepcopy(original)
     expected['env'] = shared.replace_setting(original['env'], 'RELEASE_TAG', target['sha'])
     if kind == 'web':
         expected['env'] = shared.replace_setting(expected['env'], 'NEXT_DEPLOYMENT_ID', target['sha'])
         expected['buildArgs'] = shared.replace_setting(original.get('buildArgs'), 'NEXT_DEPLOYMENT_ID', target['sha'])
+    if retired_settings:
+        expected['env'] = shared.drop_settings(expected['env'], retired_settings)
     if kind != 'connect-agent':
         expected['sourceType'] = 'docker'
         expected['dockerImage'] = target['web' if kind == 'web' else 'worker']
     return expected
 
 
-def _preserves_containers(original, current, sha, kind, *, web_image=None):
+def _preserves_containers(original, current, sha, kind, *, web_image=None, retired_settings=()):
     for row in current['containers']:
         actual = row.get('config') or {}
         matches = False
@@ -318,6 +323,9 @@ def _preserves_containers(original, current, sha, kind, *, web_image=None):
             env['RELEASE_TAG'] = sha
             if kind == 'web':
                 env['NEXT_DEPLOYMENT_ID'] = sha
+            # The container renders without a retired setting; one that is still rendered is drift, not tolerance.
+            for key in retired_settings:
+                env.pop(key, None)
             health_matches = (actual.get('Healthcheck') == wanted.get('Healthcheck') or
                 (kind == 'web' and git_rollout._inherited_web_healthcheck_matches(original, current, old, row, sha, web_image)))
             if (_env(actual.get('Env')) == env and row.get('mounts') == old.get('mounts') and health_matches and all(
@@ -330,8 +338,12 @@ def _preserves_containers(original, current, sha, kind, *, web_image=None):
     return True
 
 
-def verify_fleet(client, snapshot, target, selected, receipts, repo, *, output_snapshot=None):
-    """Prove selected new runtimes and retained exact originals; return safe state hashes."""
+def verify_fleet(client, snapshot, target, selected, receipts, repo, *, output_snapshot=None, retired_settings=()):
+    """Prove selected new runtimes and retained exact originals; return safe state hashes.
+
+    With retired_settings, every selected app must have lost exactly those names from its saved env, its service
+    spec and its containers; retained apps are still held to their exact originals, retired names included.
+    """
     target = shared.validate_target(target['sha'], target['worker'], target['web'])
     names = registered_apps()
     apps = set(names)
@@ -339,8 +351,10 @@ def verify_fleet(client, snapshot, target, selected, receipts, repo, *, output_s
             any(not isinstance(snapshot.get(key), dict) or set(snapshot[key]) != apps for key in
                 ('apps', 'runtime', 'baseline', 'latest')) or not isinstance(selected, (tuple, list)) or
             len(selected) != len(set(selected)) or set(selected) - apps or not isinstance(receipts, dict) or
-            set(receipts) != set(selected) or (output_snapshot is not None and not isinstance(output_snapshot, dict))):
+            set(receipts) != set(selected) or (output_snapshot is not None and not isinstance(output_snapshot, dict)) or
+            not isinstance(retired_settings, (tuple, list)) or any(not isinstance(name, str) for name in retired_settings)):
         raise ValueError('fleet_verification_contract_invalid')
+    retired = tuple(retired_settings)
     selected = set(selected)
     manifests = {}
     # Local Git archives are cached before parallel remote reads; no remote source is read twice.
@@ -356,7 +370,7 @@ def verify_fleet(client, snapshot, target, selected, receipts, repo, *, output_s
             _fail(short, 'baseline_evidence_mismatch')
         app, latest = client.app(short), client.latest(short)
         release = _api_ready(short, app, latest)
-        wanted = expected_api(short, previous, target) if short in selected else previous
+        wanted = expected_api(short, previous, target, retired) if short in selected else previous
         if git_rollout.stable_config(app) != git_rollout.stable_config(wanted):
             _fail(short, 'final_configuration_drift')
         old_deployment = snapshot['latest'][short].get('deploymentId')
@@ -382,9 +396,9 @@ def verify_fleet(client, snapshot, target, selected, receipts, repo, *, output_s
             if ((raw.get('updateStatus') or {}).get('State') not in (None, 'completed') or
                     not git_rollout.runtime_contract_matches(old_runtime, raw, target['sha'],
                         deployment_id=target['sha'] if kind == 'web' else None,
-                        web_image=target['web'] if kind == 'web' else None) or
+                        web_image=target['web'] if kind == 'web' else None, retired_settings=retired) or
                     not _preserves_containers(old_runtime, raw, target['sha'], kind,
-                        web_image=target['web'] if kind == 'web' else None)):
+                        web_image=target['web'] if kind == 'web' else None, retired_settings=retired)):
                 _fail(short, 'selected_runtime_contract_drift')
         elif (raw.get('serviceSpec') != old_runtime.get('serviceSpec') or
               actual != snapshot['baseline'][short] or

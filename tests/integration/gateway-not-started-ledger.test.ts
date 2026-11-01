@@ -38,7 +38,10 @@ import { abandonAgentReviewModelCapacity, reviewAgentReviewModelCapacity } from 
 import { abandonSecondReviewModelCapacity, reviewSecondReviewModelCapacity } from "@/lib/crawl/second-review-model-capacity";
 import type { Ai1GatewayServingContract } from "@/lib/crawl/agent-review-serving-contract";
 import type { Ai2GatewayServingContract } from "@/lib/crawl/second-review-serving-contract";
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
+import { directContractRow } from "./direct-engine-fixtures";
+import { ledgerCheckDefs } from "./ledger-check-defs";
 
 /**
  * F2 결함 1·3 실제 DB driver(0102). fetch 를 부르지 않은 AI1·AI2 gateway dispatch 는 같은 owner handle 의 not_started 증인으로 settled 가 되고
@@ -254,8 +257,7 @@ function expectSettled(raw: Raw, dispatch: unknown) {
   return evidence;
 }
 async function constraintDefs(sql: postgres.Sql, names: readonly string[]) {
-  return Object.fromEntries(Array.from(await sql<{ name: string; def: string }[]>`SELECT conname AS name, pg_get_constraintdef(oid) AS def
-    FROM pg_constraint WHERE conname = ANY(${names as string[]}::text[])`).map(value => [value.name, value.def]));
+  return ledgerCheckDefs(sql, names);
 }
 const innerPredicate = (def: string) => { expect(def.startsWith("CHECK (")).toBe(true); return def.slice("CHECK (".length, -1); };
 /** PostgreSQL's own parse→deparse fixed point of a CHECK predicate on the disposable step DB (its tables are empty, so ADD CONSTRAINT only parses).
@@ -296,7 +298,7 @@ beforeAll(async () => {
   const address = server.address(); if (!address || typeof address === "string") throw new Error("fixture_address");
   endpoint = `http://127.0.0.1:${address.port}/v1/chat/completions`;
 }, 120_000);
-afterEach(async () => { await cleanup(); serving.ai1 = null; serving.ai2 = null; vi.unstubAllEnvs(); });
+afterEach(async () => { await cleanup(); serving.ai1 = null; serving.ai2 = null; vi.unstubAllEnvs(); setServingContractSnapshotForTest(null); });
 afterAll(async () => {
   const errors: unknown[] = [];
   for (const load of [cleanup, async () => { if (initialized) expect(await whole()).toEqual(initial); },
@@ -307,7 +309,8 @@ afterAll(async () => {
   if (errors.length) throw new AggregateError(errors, "f2_fixture_cleanup_failed");
 }, 120_000);
 function contracts() {
-  vi.stubEnv("ABCLLM_API_KEY", "local-test-only");
+  // Engines connected directly (admin rows, no key) — the abcLLM gateway and its key were removed on 2026-10-30.
+  setServingContractSnapshotForTest([directContractRow("crawl-agent-review", model), directContractRow("second-review", model)]);
   const base = { version: 1 as const, protocol: "abcllm-raw-total-bound-v1" as const, provider: "abcllm" as const, model, responseModel: "native-model",
     endpoint, deploymentRevision: "local-test-only", totalTokenBound: 8_000 };
   serving.ai1 = { ...base, routeId: "crawl-agent-review" }; serving.ai2 = { ...base, routeId: "second-review" };
@@ -508,14 +511,14 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
       expect(statement).toContain(`ADD CONSTRAINT ${name} CHECK ((%s) OR (%s))`);
       expect(statement, `${name}: the appended branch is the schema constant`).toContain(`$ai2_local$${branch}$ai2_local$`);
       const check = getTableConfig(events ? modelCapacityEvents : modelCapacityRequests).checks.find(check => check.name === name)!;
-      // 0159 appends the text local-direct branches last (both terminal CHECKs, PR 3b-E), after 0157's AI1 local-direct branches, 0155's split-jobs
-      // local_model_direct branch (both terminal CHECKs) and 0151's operator_review branch (requests terminal CHECK); strip those tails newest
-      // first (each "(prev) OR (branch)" wrap) before the 0149 checks.
+      // 0161 appends the text local-direct branches last in the TypeScript check() source (both terminal CHECKs, PR 3b-E), after 0157's
+      // AI1 local-direct branches, 0155's split-jobs local_model_direct branch and 0151's operator_review branch; strip those tails newest
+      // first (each "(prev) OR (branch)" wrap) before the 0149 checks. The database stores the same branch as a rules row, not a CHECK.
       const textLocalDirectTail = `) OR (${events ? textLocalDirectEventTerminalSql : textLocalDirectTerminalSql})`;
       const localDirectTail = `) OR (${events ? gatewayLocalDirectEventTerminalSql : gatewayLocalDirectTerminalSql})`;
       const split = `) OR (coalesce((${events ? localModelSplitJobsEventTerminalSql : localModelSplitJobsTerminalSql}),false))`;
       let full = new PgDialect().sqlToQuery(check.value).sql;
-      expect(full.startsWith("(") && full.endsWith(textLocalDirectTail), `${name}: 0159 tail present`).toBe(true);
+      expect(full.startsWith("(") && full.endsWith(textLocalDirectTail), `${name}: 0161 tail present`).toBe(true);
       full = full.slice(1, -textLocalDirectTail.length);
       expect(full.startsWith("(") && full.endsWith(localDirectTail), `${name}: 0157 tail present`).toBe(true);
       full = full.slice(1, -localDirectTail.length);
@@ -611,23 +614,21 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
       finally { await step.unsafe(`ALTER TABLE model_capacity_requests DROP CONSTRAINT f2_release_kinds_expected`); }
     }
     expect(after0158.model_capacity_requests_dispatch_check).toContain("'publication_classify_cli'::text, 'local_model_direct'::text");
-    // 0159 (PR 3b-E text local-direct 기록) rebuilds the dispatch CHECK and both terminal CHECKs the same way: the whole live 0158 predecessor plus
-    // the seven 0125 text-route branches with the row AND the binding/evidence JSON provider replaced (0157's text twins kept only the row literal,
-    // so a text row with provider local-direct matched none of them). logical/members stay as 0158 left them (0158 added no local-direct literal, so the JSON count below starts at 0).
+    // 0160 moves the six CHECKs into rules rows; 0161 (PR 3b-E text local-direct 기록) inserts only the new branch as the next ordinal.
+    // ledgerCheckDefs joins ordinals as "(ordinal 1) OR (ordinal 2)" inside CHECK (...), the same text as "(0158 predicate) OR (branch)"
+    // without parsing the branch again. logical/members stay as 0158 left them (0158 added no JSON local-direct literal).
+    expect(journal.entries.find(entry => entry.idx === 161)!.tag).toBe("0161_text_local_direct_binding");
     await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
-    const after0159 = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
+    const after0161 = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
     const textLocalDirect: Record<string, string> = { model_capacity_requests_dispatch_check: textLocalDirectDispatchSql,
       model_capacity_requests_terminal_check: textLocalDirectTerminalSql, model_capacity_events_terminal_check: textLocalDirectEventTerminalSql };
     for (const name of [...LEFT, ...UNTOUCHED]) {
       const branch = textLocalDirect[name];
-      if (!branch) { expect(after0159[name], `${name}: unchanged by 0159`).toBe(after0158[name]); continue; }
+      if (!branch) { expect(after0161[name], `${name}: unchanged by 0161`).toBe(after0158[name]); continue; }
       const jsonLocalDirectCount = (def: string) => def.split(`'"local-direct"'::jsonb`).length - 1;
       expect(jsonLocalDirectCount(after0158[name]), `${name}: 0157/0158 never widened the JSON provider`).toBe(0);
-      expect(jsonLocalDirectCount(after0159[name]), `${name}: 0159 widens the JSON provider of the seven text branches`).toBe(7);
-      const table = name.startsWith("model_capacity_events_") ? "model_capacity_events" : "model_capacity_requests";
-      await step.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT f2_text_local_direct_expected CHECK ((${inner(after0158[name])}) OR (${branch}))`);
-      try { expect(after0159[name], `${name}: 0158 predicate plus the 0159 text local-direct branches`).toBe((await constraintDefs(step, ["f2_text_local_direct_expected"])).f2_text_local_direct_expected); }
-      finally { await step.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT f2_text_local_direct_expected`); }
+      expect(jsonLocalDirectCount(branch), `${name}: the 0161 branch widens the JSON provider of the seven text routes`).toBe(7);
+      expect(after0161[name], `${name}: 0158 predicate plus the 0161 text local-direct branch`).toBe(`CHECK ((${inner(after0158[name])}) OR (${branch}))`);
     }
     expect((await step<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`)[0].count).toBe(journal.entries.length);
   } finally { rmSync(partial, { recursive: true, force: true }); await step.end({ timeout: 5 }); }

@@ -308,8 +308,13 @@ def _inherited_web_healthcheck_matches(original, current, old, new, sha, web_ima
         return False
 
 
-def runtime_contract_matches(original, current, sha, *, deployment_id=None, web_image=None):
-    """Preserve the service contract; opt in to proven inherited web health only."""
+def runtime_contract_matches(original, current, sha, *, deployment_id=None, web_image=None, retired_settings=()):
+    """Preserve the service contract; opt in to proven inherited web health only.
+
+    retired_settings (deploy_release --retire-setting) are the names the same release deleted from the saved env, so
+    the new spec must render without exactly those lines. A retired line still present in the new Env is a mismatch
+    like any other extra line: the saved env no longer holds it, so the service would be running stale configuration.
+    """
     try:
         old, new = copy.deepcopy(original['serviceSpec']), copy.deepcopy(current['serviceSpec'])
         old_task, new_task = old['TaskTemplate'], new['TaskTemplate']
@@ -323,6 +328,9 @@ def runtime_contract_matches(original, current, sha, *, deployment_id=None, web_
             if len(indexes) != 1:
                 return False
             old_env[indexes[0]] = key + '=' + value
+        if retired_settings:
+            retired = frozenset(retired_settings)
+            old_env = [line for line in old_env if line.split('=', 1)[0] not in retired]
         old_container['Env'] = old_env
         force = new_task.get('ForceUpdate', 0)
         if type(force) is not int or force < old_task.get('ForceUpdate', 0):
@@ -340,7 +348,8 @@ def runtime_contract_matches(original, current, sha, *, deployment_id=None, web_
         return False
 
 
-def runtime_health(short, app, runtime, sha, *, image=None, manifest=None, expected_runtime=None, require_revision=False):
+def runtime_health(short, app, runtime, sha, *, image=None, manifest=None, expected_runtime=None, require_revision=False,
+                   retired_settings=()):
     """Pure runtime checks, also exported for fleet collection and offline fixtures."""
     role = shared.app_role(short)
     spec = runtime.get('serviceSpec') or {}
@@ -383,24 +392,38 @@ def runtime_health(short, app, runtime, sha, *, image=None, manifest=None, expec
             labels = ((image_details.get(row.get('image')) or {}).get('Config') or {}).get('Labels') or {}
             ready = ready and labels.get('org.opencontainers.image.revision') == sha
     if expected_runtime is not None:
-        ready = ready and runtime_contract_matches(expected_runtime, runtime, sha)
+        ready = ready and runtime_contract_matches(expected_runtime, runtime, sha, retired_settings=retired_settings)
     return {'ready': bool(ready), 'image': actual_image, 'specHash': spec_hash(spec), 'updateState': state}
 
 
-def probe(short, app, expected_sha, *, image=None, manifest=None, expected_runtime=None, require_revision=False):
+def probe(short, app, expected_sha, *, image=None, manifest=None, expected_runtime=None, require_revision=False,
+          retired_settings=()):
     runtime = inspect_runtime(short, app, manifest=manifest)
     return runtime_health(short, app, runtime, expected_sha, image=image, manifest=manifest,
-                          expected_runtime=expected_runtime, require_revision=require_revision)
+                          expected_runtime=expected_runtime, require_revision=require_revision,
+                          retired_settings=retired_settings)
 
 
-def prepare(client, target, selected, root_snapshot, readiness, *, mode='shared-worker'):
+def retired_settings_present(app, runtime, retired_settings):
+    """Which retired names an app still carries: in its saved Dokploy env and in its live service spec. Names only."""
+    saved = shared.dotenv_settings(app.get('env')) if retired_settings else {}
+    spec = runtime.get('serviceSpec') if isinstance(runtime, dict) else None
+    env = (((spec or {}).get('TaskTemplate') or {}).get('ContainerSpec') or {}).get('Env') or []
+    live = {line.split('=', 1)[0] for line in env if isinstance(line, str) and '=' in line}
+    return {'savedEnv': [name for name in retired_settings if name in saved],
+            'liveSpec': [name for name in retired_settings if name in live]}
+
+
+def prepare(client, target, selected, root_snapshot, readiness, *, mode='shared-worker', retired_settings=()):
     target = shared.validate_target(target['sha'], target['worker'], target['web'])
     selected_waves = waves(selected)
     if mode not in ('shared-worker', 'git-build'):
         raise ValueError('invalid_git_rollout_mode')
+    retired = tuple(sorted(set(retired_settings)))
     if not selected_waves:
         return {'target': target, 'mode': mode, 'waves': (), 'apps': {}, 'baseline': {},
-                'manifests': {}, 'conversions': [], 'buildArgUpdates': [], 'skipped': [], 'readiness': readiness}
+                'manifests': {}, 'conversions': [], 'buildArgUpdates': [], 'skipped': [], 'readiness': readiness,
+                'retiredSettings': list(retired)}
     validate_readiness(target, readiness)
     if root_snapshot.get('schemaVersion') != 1 or root_snapshot.get('target') != target:
         raise ValueError('git_root_baseline_target_mismatch')
@@ -443,22 +466,27 @@ def prepare(client, target, selected, root_snapshot, readiness, *, mode='shared-
     target_manifest = source_manifest(target['sha'])
     shared.monitor_gate(client, 'crawler', roles=('text', 'maintenance'), strict=())
     requested = tuple(short for wave in selected_waves for short in wave)
+    # An app already at the target configuration is skipped only while it carries none of the retired settings:
+    # a retired line in its saved env or live spec is removed by redeploying it with this release.
     skipped = [short for short in requested if stable_config(originals[short]) == stable_config(
-        expected_config(short, originals[short], target, mode))]
+        expected_config(short, originals[short], target, mode, retired)) and
+        not any(retired_settings_present(originals[short], runtimes[short], retired).values())]
     selected_waves = tuple(tuple(short for short in wave if short not in skipped) for wave in selected_waves)
     selected_waves = tuple(wave for wave in selected_waves if wave)
     chosen = tuple(short for wave in selected_waves for short in wave)
     return {'target': target, 'mode': mode, 'waves': selected_waves, 'apps': originals,
             'baseline': baselines, 'runtime': runtimes, 'manifests': manifests, 'targetManifest': target_manifest,
-            'readiness': copy.deepcopy(readiness), 'skipped': skipped,
+            'readiness': copy.deepcopy(readiness), 'skipped': skipped, 'retiredSettings': list(retired),
             'buildArgUpdates': [short for short in chosen if mode == 'git-build' or short == 'connect-agent-m3'],
             'conversions': [short for short in chosen if mode == 'shared-worker' and short != 'connect-agent-m3'
                             and originals[short]['sourceType'] == 'github']}
 
 
-def expected_config(short, original, target, mode):
+def expected_config(short, original, target, mode, retired_settings=()):
     expected = copy.deepcopy(original)
     expected['env'] = shared.replace_setting(original['env'], 'RELEASE_TAG', target['sha'])
+    if retired_settings:
+        expected['env'] = shared.drop_settings(expected['env'], retired_settings)
     if mode == 'shared-worker' and short != 'connect-agent-m3':
         expected.update(sourceType='docker', dockerImage=target['worker'])
     else:
@@ -475,8 +503,8 @@ def unchanged(client, short, original, baseline):
 
 
 def check_deployed(client, short, target, original, previous_id, manifest, *, mode='git-build', expected_runtime=None,
-                   timeout=480, pause=2):
-    expected = expected_config(short, original, target, mode)
+                   timeout=480, pause=2, retired_settings=()):
+    expected = expected_config(short, original, target, mode, retired_settings)
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
@@ -502,7 +530,8 @@ def check_deployed(client, short, target, original, previous_id, manifest, *, mo
             docker = expected['sourceType'] == 'docker'
             try:
                 evidence = probe(short, app, target['sha'], image=target['worker'] if docker else None,
-                                 manifest=manifest, expected_runtime=expected_runtime, require_revision=not docker)
+                                 manifest=manifest, expected_runtime=expected_runtime, require_revision=not docker,
+                                 retired_settings=retired_settings)
             except json.JSONDecodeError:
                 time.sleep(pause)
                 continue
@@ -544,9 +573,11 @@ def deploy(client, target, state, receipt_dir):
         destination.mkdir(mode=0o700)
     except FileExistsError as error:
         raise ValueError('git_rollout_already_attempted_no_automatic_resume') from error
+    retired = tuple(state.get('retiredSettings') or ())
     durable_json(destination / 'once.json', {'target': target, 'mode': state['mode'], 'status': 'attempted',
                                             'waves': state['waves'], 'conversions': state['conversions'],
-                                            'buildArgUpdates': state['buildArgUpdates']})
+                                            'buildArgUpdates': state['buildArgUpdates'],
+                                            **({'retiredSettings': list(retired)} if retired else {})})
     deployed, failed, touched, completed_waves = [], [], [], []
 
     def action(short, label, path, payload):
@@ -557,7 +588,7 @@ def deploy(client, target, state, receipt_dir):
     def one(short):
         original, baseline = state['apps'][short], state['baseline'][short]
         unchanged(client, short, original, baseline)
-        expected = expected_config(short, original, target, state['mode'])
+        expected = expected_config(short, original, target, state['mode'], retired)
         app_id = shared.app_metadata(short)[0]
         action(short, 'environment', 'application.saveEnvironment', {
             'applicationId': app_id, 'env': expected['env'], 'buildArgs': expected.get('buildArgs'),
@@ -576,7 +607,8 @@ def deploy(client, target, state, receipt_dir):
             raise shared.ReleaseStopped(short + '_saved_configuration_mismatch')
         action(short, 'deploy', 'application.deploy', {'applicationId': app_id})
         result = check_deployed(client, short, target, original, baseline['deploymentId'],
-                                state['targetManifest'], mode=state['mode'], expected_runtime=state['runtime'][short])
+                                state['targetManifest'], mode=state['mode'], expected_runtime=state['runtime'][short],
+                                retired_settings=retired)
         durable_json(destination / (short + '.verified.json'), result)
         return result
 
@@ -616,7 +648,8 @@ def deploy(client, target, state, receipt_dir):
         selected = {short for wave in state['waves'] for short in wave}
         for short in ORDER:
             app = client.app(short)
-            expected = expected_config(short, state['apps'][short], target, state['mode']) if short in selected else state['apps'][short]
+            expected = (expected_config(short, state['apps'][short], target, state['mode'], retired)
+                        if short in selected else state['apps'][short])
             if stable_config(app) != stable_config(expected):
                 raise shared.ReleaseStopped(short + '_final_configuration_drift')
             sha = target['sha'] if short in selected else state['baseline'][short]['release']
@@ -624,7 +657,8 @@ def deploy(client, target, state, receipt_dir):
             image = target['worker'] if short in selected and docker else expected.get('dockerImage') if docker else None
             manifest = state['targetManifest'] if short in selected else state['manifests'][sha]
             evidence = probe(short, app, sha, image=image, manifest=manifest, expected_runtime=state['runtime'][short],
-                             require_revision=short in selected and not docker)
+                             require_revision=short in selected and not docker,
+                             retired_settings=retired if short in selected else ())
             settled = DEPLOYED_SETTLED_STATES if short in selected else BASELINE_SETTLED_STATES
             if evidence.get('ready') is not True or evidence.get('updateState') not in settled:
                 raise shared.ReleaseStopped(short + '_final_runtime_not_ready')

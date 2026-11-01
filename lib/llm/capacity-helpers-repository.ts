@@ -364,7 +364,7 @@ export type ModelAssignmentProbeTransport = Exclude<AssignmentTransport, "cli">;
  * 저장의 바깥 의존(시험이 바꾼다). 기본값이 운영 배선이다.
  * - registry: 등록부(기본 = serving 스냅숏을 새로 읽은 뒤의 readModelRegistry(), 관리자 덮어쓰기 포함).
  * - probeContract: 계약 행이 없을 때의 readback(`/models`) + 1-token probe(기본 = admin-engine-connect 의 probeEngineContract, 등록부 baseUrl,
- *   gateway 는 ABCLLM_API_KEY, 나머지는 키 없음). 던지면 저장 거절(fail-closed).
+ *   어느 전송이든 키 없음 — 게이트웨이와 그 키 env 는 2026-10-31 제거됐다). 던지면 저장 거절(fail-closed).
  * - cliContract: CLI 계약(기본 = probeCliServingContracts() 뒤 resolveCliServingContract — 그 프로세스의 CLI_SERVING_CONTRACTS 와 --version probe).
  */
 export type ModelAssignmentDeps = Readonly<{
@@ -392,8 +392,8 @@ async function defaultAssignmentProbe(entry: ModelDefinition, _routeId: string, 
   const { engineBaseUrl, probeEngineContract } = await import("@/lib/operations/admin-engine-connect");
   const base = entry.baseUrl ? engineBaseUrl(entry.baseUrl) : null;
   if (!base) throw new Error("engine_base_url_invalid");
-  const apiKey = transport === "gateway" ? process.env.ABCLLM_API_KEY?.trim() || null : null;
-  return probeEngineContract({ endpoint: `${base}/chat/completions`, engineModel: assignmentWireModel(transport, entry), apiKey });
+  // 게이트웨이는 2026-10-30 제거됐고 그 키 env 는 읽지 않는다: 어느 전송이든 키 없이 probe 한다. 키가 필요한 엔진은 「모델 연결」의 저장 키 계약 행으로 먼저 잇는다(그러면 probe 를 거치지 않는다)
+  return probeEngineContract({ endpoint: `${base}/chat/completions`, engineModel: assignmentWireModel(transport, entry), apiKey: null });
 }
 async function defaultAssignmentCliContract(routeId: string, provider: CliProvider, model: string): Promise<CliServingContract | null> {
   const { probeCliServingContracts, resolveCliServingContract } = await import("./cli-serving-contract");

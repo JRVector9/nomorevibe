@@ -3,9 +3,12 @@
 SSH/health, hosted CI and background process launch are external boundaries. No
 production, credential, model or network calls are permitted in these tests.
 """
+import contextlib
 import copy
 import importlib.util
+import io
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -109,6 +112,7 @@ class CoordinatorFlowTests(unittest.TestCase):
         self.launch = self.stack.enter_context(patch.object(release, 'load', side_effect=lambda name, filename: SimpleNamespace(launch_observer=self.launch_observer)
             if filename == 'release_observer.py' else (_ for _ in ()).throw(AssertionError('unexpected dynamic module'))))
         self.observations = []
+        self.fleet_retired = []
         self.execution = self.directory / 'execution'
 
     def git(self, *arguments):
@@ -139,8 +143,9 @@ class CoordinatorFlowTests(unittest.TestCase):
         self.assertEqual(client.app(short)['dockerImage'], self.target['web'])
         return self.record((short, 'runtime-verified'), {'ready': True})
 
-    def verify_fleet(self, client, snapshot, target, selected, receipts, repo, *, output_snapshot=None):
+    def verify_fleet(self, client, snapshot, target, selected, receipts, repo, *, output_snapshot=None, retired_settings=()):
         self.assertIs(client, self.client); self.assertEqual(repo, self.repo); self.assertEqual(target, self.target)
+        self.fleet_retired.append(tuple(retired_settings))
         if not selected:
             self.assertEqual(client.apps, snapshot['apps'])
             self.assertEqual(receipts, {})
@@ -155,6 +160,10 @@ class CoordinatorFlowTests(unittest.TestCase):
                 self.assertEqual(release.shared.setting(client.app(short)['env'], 'NEXT_DEPLOYMENT_ID'), self.after)
                 self.assertEqual(release.shared.setting(client.app(short)['buildArgs'], 'NEXT_DEPLOYMENT_ID'), self.after)
                 self.assertEqual(client.app(short)['dockerImage'], self.target['web'])
+                # The real verifier holds the saved env to expected_api(..., retired): the retired lines are gone.
+                self.assertEqual(client.app(short)['env'], release.fleet.expected_api(short, snapshot['apps'][short], target, retired_settings)['env'])
+                for name in retired_settings:
+                    self.assertNotIn(name, release.shared.dotenv_settings(client.app(short)['env']))
                 observed[short].update(release=self.after, image=self.target['web'])
             else:
                 self.assertEqual(client.app(short), snapshot['apps'][short])
@@ -321,6 +330,180 @@ class CoordinatorFlowTests(unittest.TestCase):
         self.assertTrue((self.execution / 'git/text-m3.verified.json').is_file())
         self.assertFalse((self.execution / 'stopped.safe.json').exists())
 
+    def move_fleet_to(self, revision):
+        """Every app already serves `revision` (release, image, spec, baseline), so the next commit selects only its own apps."""
+        for short, app in self.client.apps.items():
+            app['env'] = release.shared.replace_setting(app['env'], 'RELEASE_TAG', revision)
+            kind = release.shared.app_metadata(short)[3]
+            if kind == 'web':
+                app['env'] = release.shared.replace_setting(app['env'], 'NEXT_DEPLOYMENT_ID', revision)
+                app['buildArgs'] = release.shared.replace_setting(app['buildArgs'], 'NEXT_DEPLOYMENT_ID', revision)
+            if kind != 'connect-agent':
+                app.update(sourceType='docker', dockerImage=self.target['web' if kind == 'web' else 'worker'])
+            raw = self.snapshot['runtime'][short]
+            cs = raw['serviceSpec']['TaskTemplate']['ContainerSpec']
+            cs['Env'] = [line.replace(fixtures.OLD, revision) for line in cs['Env']]
+            cs['Image'] = app.get('dockerImage') or app['appName'] + ':latest'
+            raw['specHash'] = release.git.spec_hash(raw['serviceSpec'])
+            self.snapshot['baseline'][short] = {'release': revision,
+                'image': app.get('dockerImage') or fixtures.IMAGE_ID, 'specHash': raw['specHash']}
+        self.snapshot['apps'] = copy.deepcopy(self.client.apps)
+
+    def arm_monitor_release(self, check_monitor):
+        """A monitor entrypoint commit on a fleet already at `after` selects only monitor-m3; the push proof is `check_monitor`'s."""
+        previous = self.after
+        self.target['worker'] = release.shared.IMAGE_PREFIX['worker'] + fixtures.NEW_ID
+        self.move_fleet_to(previous)
+        (self.repo / 'scripts').mkdir()
+        (self.repo / 'scripts/watch-failover-readiness.ts').write_text('export const watcher = 2;\n')
+        self.git('add', '.'); self.git('commit', '-qm', 'monitor entrypoint change')
+        self.after = self.git('rev-parse', 'HEAD')
+        self.target['sha'] = self.after
+        self.snapshot['target'] = copy.deepcopy(self.target)
+        self.plan.update(target=self.target, snapshot=self.snapshot, scope=release.impact(self.snapshot, self.after))
+        self.assertEqual(self.plan['scope']['selectedApps'], ['monitor-m3'])
+        self.proof.update(profile='full', verifiedAt=release.now(), target={'sha': self.after, 'worker': self.target['worker']})
+        self.plan['readiness'] = copy.deepcopy(self.proof)
+        self.ready.side_effect = lambda sha, **kwargs: self.record('ci-verified', copy.deepcopy(self.proof))
+        self.final_receipts = []
+        def fleet(client, snapshot, target, selected, receipts, repo, *, output_snapshot=None):
+            self.assertIs(client, self.client)
+            if not selected:
+                self.assertEqual(client.apps, snapshot['apps']); self.assertEqual(receipts, {})
+                return self.record('fleet-baseline-verified', copy.deepcopy(snapshot['baseline']))
+            self.assertEqual(list(selected), ['monitor-m3']); self.assertEqual(set(receipts), {'monitor-m3'})
+            self.assertEqual(receipts['monitor-m3']['deploymentId'], client.latest('monitor-m3')['deploymentId'])
+            self.assertEqual(release.shared.setting(client.app('monitor-m3')['env'], 'RELEASE_TAG'), self.after)
+            self.final_receipts.append(copy.deepcopy(receipts['monitor-m3']))
+            observed = copy.deepcopy(snapshot['baseline'])
+            observed['monitor-m3'].update(release=self.after, image=self.target['worker'])
+            if output_snapshot is not None:
+                output_snapshot.update(schemaVersion=1, target=target, apps=copy.deepcopy(client.apps),
+                    latest=copy.deepcopy(client.deployments), runtime=copy.deepcopy(snapshot['runtime']), baseline=observed)
+            return self.record('fleet-final-verified', observed)
+        self.fleet.side_effect = fleet
+        def launch_observer(path, digest, directory):
+            self.assertIn('fleet-final-verified', self.events); self.assertIn('final-monitor', self.events)
+            final = release.read_private(path, digest)
+            self.assertEqual(final['baseline']['monitor-m3']['release'], self.after)
+            self.observations.append((path, digest, directory)); self.events.append('observer-launched')
+            return {'status': 'scheduled', 'observationComplete': False}
+        real_monitor = load('release_monitor_flow', ROOT / 'scripts/ops/release_monitor.py')
+        monitor_module = SimpleNamespace(HUMAN_REVIEW=real_monitor.HUMAN_REVIEW, PUSH_FIELDS=real_monitor.PUSH_FIELDS,
+                                         MONITOR_VERIFY_TIMEOUT_SECONDS=real_monitor.MONITOR_VERIFY_TIMEOUT_SECONDS,
+                                         check_monitor_deployed=check_monitor, human_review_record=real_monitor.human_review_record)
+        modules = {'release_observer.py': SimpleNamespace(launch_observer=launch_observer), 'release_monitor.py': monitor_module}
+        self.launch.side_effect = lambda name, filename: modules[filename]
+        report = {'check-failover-readiness.ts': {'overall': 'alarm', 'readiness': {'roles': []}, 'capacityUnknowns': {
+                      'status': 'alarm', 'truncated': False, 'count': 0, 'oldestAgeSeconds': None, 'stuckDispatched': 1,
+                      'alarmReasons': ['dispatch_stuck'], 'requests': [{'requestId': 'private-request-id'}]}},
+                  'check-worker-progress.ts': {'overall': 'ok'}}
+        def crawler_report(host, source, service, **kwargs):
+            self.assertEqual((host, source, service), (release.shared.M3[1], release.shared.REMOTE_MONITOR, 'service-crawler-m3'))
+            return self.record('capacity-summary-read', json.dumps(report))
+        self.stack.enter_context(patch.object(real_monitor.git.shared, 'ssh_python', side_effect=crawler_report))
+        self.stack.enter_context(patch.object(release.git, 'source_manifest', return_value={'package-lock.json': 'a' * 64}))
+        return monitor_module
+
+    def monitor_hand_over(self, client, short, target, original, old_id, manifest, *, expected_runtime, **kwargs):
+        """The real verifier's hand-over receipt: deployment proven, latest monitor.push still state=down after the window."""
+        self.assertIs(client, self.client); self.assertEqual(short, 'monitor-m3')
+        self.assertEqual(kwargs, {}, 'deploy_one must use the monitor verification default timeout')
+        self.assertEqual(client.latest(short)['deploymentId'], 'new-monitor-m3'); self.assertEqual(old_id, 'old-monitor-m3')
+        self.assertEqual(client.app(short), release.fleet.expected_api(short, original, target))
+        self.assertEqual(expected_runtime, self.snapshot['runtime'][short])
+        self.events.append(('monitor-m3', 'push-verification-handed-over'))
+        return {'app': short, 'deploymentId': 'new-monitor-m3', 'deployment': 'done', 'service': 'healthy',
+                'image': target['worker'], 'specHash': 'spec', 'containerId': 'c' * 64, 'source': 'sha256-manifest',
+                'pushReceipts': {'verified': False, 'primary': True, 'external': True, 'fresh': True, 'stateUp': False},
+                'verification': 'human_review_required', 'reason': 'monitor_push_state_not_up', 'verifyTimeoutSeconds': 300}
+
+    def test_monitor_push_state_down_after_the_window_finishes_the_run_as_human_review_required(self):
+        self.arm_monitor_release(self.monitor_hand_over)
+        result = release.run_release(self.plan, self.execution)
+        self.assertEqual(result['status'], 'deployed-human-review-required')
+        self.assertEqual((result['deployedApps'], result['skippedApps']), (['monitor-m3'], []))
+        record_path = self.execution / 'monitor-m3.human-review.safe.json'
+        self.assertEqual(result['humanReview'], {'apps': ['monitor-m3'], 'reasons': {'monitor-m3': 'monitor_push_state_not_up'},
+                                                 'records': [str(record_path)]})
+        self.assertEqual([(short, endpoint) for short, endpoint, _ in self.client.posts], [('monitor-m3', endpoint) for endpoint in
+            ('application.saveEnvironment', 'application.saveDockerProvider', 'application.deploy')])
+        # The run went on to the final fleet verification, the guard and the observer; nothing stopped.
+        self.assertLess(self.events.index(('monitor-m3', 'push-verification-handed-over')), self.events.index('capacity-summary-read'))
+        self.assertLess(self.events.index('capacity-summary-read'), self.events.index('fleet-final-verified'))
+        self.assertEqual(self.events[-1], 'observer-launched'); self.assertIn('final-monitor', self.events)
+        self.assertEqual(self.fleet.call_count, 2); self.assertEqual(len(self.observations), 1)
+        self.assertEqual(self.final_receipts[0]['verification'], 'human_review_required')
+        self.health.assert_not_called()
+        self.assertFalse((self.execution / 'stopped.safe.json').exists())
+        self.assertTrue((self.execution / 'final.private.json').is_file())
+        self.assertEqual(json.loads((self.execution / 'result.safe.json').read_text())['status'], 'deployed-human-review-required')
+        verified = json.loads((self.execution / 'monitor-m3.verified.json').read_text())
+        self.assertEqual((verified['verification'], verified['reason'], verified['deploymentId']),
+                         ('human_review_required', 'monitor_push_state_not_up', 'new-monitor-m3'))
+        self.assertEqual(record_path.stat().st_mode & 0o777, 0o600)
+        text = record_path.read_text(); record = json.loads(text)
+        self.assertEqual((record['status'], record['app'], record['deploymentId'], record['reason'], record['lastPushState']),
+                         ('human-review-required', 'monitor-m3', 'new-monitor-m3', 'monitor_push_state_not_up', 'down'))
+        self.assertEqual(record['pushReceipts'], {'verified': False, 'primary': True, 'external': True, 'fresh': True, 'stateUp': False})
+        self.assertEqual(record['capacityUnknowns'], {'status': 'alarm', 'monitorOverall': 'alarm', 'count': 0, 'stuckDispatched': 1,
+                                                      'oldestAgeSeconds': None, 'alarmReasons': ['dispatch_stuck']})
+        self.assertEqual(record['operatorChecks'], ['monitor_push_event_state_and_receipts', 'capacity_unknowns_alarm_reasons',
+                                                    'kuma_primary_and_external_heartbeat'])
+        for leaked in ('private-request-id', 'https://', 'preserved-registry-secret', 'synthetic-secret'):
+            self.assertNotIn(leaked, text)
+        with self.assertRaisesRegex(ValueError, 'already_attempted'):
+            release.run_release(self.plan, self.execution)
+
+    def test_monitor_hand_over_exits_with_its_own_code_and_prints_the_safe_result(self):
+        self.arm_monitor_release(self.monitor_hand_over)
+        plan_path = self.directory / 'plan-dir' / 'plan.private.json'; plan_path.parent.mkdir()
+        digest = release.write_private(plan_path, self.plan)
+        self.addCleanup(os.chdir, os.getcwd())
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            code = release.cli(['run', '--plan', str(plan_path), '--plan-sha', digest])
+        self.assertEqual(code, release.HUMAN_REVIEW_EXIT_CODE); self.assertEqual(code, 2)
+        printed = json.loads(stdout.getvalue())
+        self.assertEqual((printed['status'], printed['humanReview']['reasons']), ('deployed-human-review-required', {'monitor-m3': 'monitor_push_state_not_up'}))
+        self.assertTrue((plan_path.parent / 'execution/monitor-m3.human-review.safe.json').is_file())
+        self.assertNotIn('preserved-registry-secret', stdout.getvalue())
+        # A fully verified run keeps exit 0.
+        self.events.clear(); self.observations.clear(); self.client.posts.clear()
+        verified_plan = copy.deepcopy(self.plan)
+        self.client.deployments['monitor-m3'] = {'status': 'done', 'deploymentId': 'old-monitor-m3'}
+        self.client.apps['monitor-m3'] = copy.deepcopy(self.snapshot['apps']['monitor-m3'])
+        def verified(client, short, target, original, old_id, manifest, *, expected_runtime, **kwargs):
+            self.events.append(('monitor-m3', 'push-verified'))
+            return {'app': short, 'deploymentId': 'new-monitor-m3', 'deployment': 'done', 'service': 'healthy',
+                    'pushReceipts': {'primary': True, 'external': True}}
+        self.launch.side_effect(None, 'release_monitor.py').check_monitor_deployed = verified
+        second = self.directory / 'plan-dir-2' / 'plan.private.json'; second.parent.mkdir()
+        digest = release.write_private(second, verified_plan)
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            code = release.cli(['run', '--plan', str(second), '--plan-sha', digest])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(stdout.getvalue())['status'], 'deployed-and-verified')
+        self.assertNotIn('humanReview', json.loads(stdout.getvalue()))
+        self.assertFalse((second.parent / 'execution/monitor-m3.human-review.safe.json').exists())
+
+    def test_monitor_deployment_not_proven_within_the_window_still_stops_the_run(self):
+        def timed_out(client, short, target, original, old_id, manifest, *, expected_runtime, **kwargs):
+            self.events.append(('monitor-m3', 'push-verification-timed-out'))
+            raise TimeoutError('monitor-m3_source_health_or_push_verification_timeout')
+        self.arm_monitor_release(timed_out)
+        with self.assertRaisesRegex(RuntimeError, 'batch_failed_review_all_started_app_receipts'):
+            release.run_release(self.plan, self.execution)
+        self.assertEqual(len(self.client.posts), 3)
+        self.assertTrue((self.execution / 'monitor-m3.deploy.completed.json').is_file())
+        self.assertTrue((self.execution / 'monitor-m3.failed.json').is_file())
+        self.assertTrue((self.execution / 'stopped.safe.json').is_file())
+        for absent in ('monitor-m3.verified.json', 'monitor-m3.human-review.safe.json', 'result.safe.json', 'final.private.json'):
+            self.assertFalse((self.execution / absent).exists(), absent)
+        self.assertNotIn('capacity-summary-read', self.events); self.assertNotIn('fleet-final-verified', self.events)
+        self.assertEqual(self.observations, []); self.assertEqual(self.fleet.call_count, 1)
+
     def test_observer_launch_failure_preserves_verified_deployment_and_separate_schedule_failure_receipt(self):
         def fail_launch(*args, **kwargs):
             raise OSError('synthetic process launch failure')
@@ -418,6 +601,87 @@ class CoordinatorFlowTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'PUBLIC_USER_AUTH_ENABLED_invalid'):
             release.run_release(self.plan, self.directory / 'blocked-integration')
         self.assertEqual(self.client.posts, []); self.assertEqual(self.observations, [])
+
+    def carry_retired_setting(self, shorts, line='ABCLLM_API_KEY=synthetic-retired-secret'):
+        """Dokploy still saves `line` for these apps and their live specs still render it (no drift)."""
+        for short in shorts:
+            for data in (self.client.apps, self.snapshot['apps']):
+                data[short]['env'] += line + '\n'
+            raw = self.snapshot['runtime'][short]
+            raw['serviceSpec']['TaskTemplate']['ContainerSpec']['Env'].append(line)
+            raw['specHash'] = release.git.spec_hash(raw['serviceSpec'])
+            self.snapshot['baseline'][short]['specHash'] = raw['specHash']
+
+    def test_retired_setting_is_deleted_from_the_saved_env_of_each_redeployed_app_and_expected_absent_at_the_end(self):
+        retired = ['ABCLLM_API_KEY']
+        self.carry_retired_setting(('web-mini', 'web-m3'))
+        self.plan.update(retiredSettings=retired, scope=release.impact(self.snapshot, self.after, tuple(retired)))
+        self.assertEqual((self.plan['scope']['selectedApps'], self.plan['scope']['retiredSettingCarriers']),
+                         (['web-mini', 'web-m3'], ['web-mini', 'web-m3']))
+        before = copy.deepcopy(self.snapshot['apps'])
+        result = release.run_release(self.plan, self.execution)
+        self.assertEqual((result['status'], result['deployedApps'], result['skippedApps'], result['retiredSettings']),
+                         ('deployed-and-verified', ['web-mini', 'web-m3'], [], retired))
+        self.assertEqual(self.fleet_retired, [(), ('ABCLLM_API_KEY',)])
+        for short in ('web-mini', 'web-m3'):
+            saved = next(payload for name, endpoint, payload in self.client.posts if name == short and endpoint.endswith('saveEnvironment'))
+            self.assertNotIn('ABCLLM_API_KEY', release.shared.dotenv_settings(saved['env']))
+            self.assertNotIn('synthetic-retired-secret', saved['env'])
+            # Everything but RELEASE_TAG/NEXT_DEPLOYMENT_ID and the retired line is byte-for-byte the original.
+            self.assertEqual(saved['env'], release.shared.drop_settings(
+                release.fleet.expected_api(short, before[short], self.target)['env'], retired))
+            self.assertEqual(saved['buildSecrets'], before[short]['buildSecrets'])
+        self.assertEqual(json.loads((self.execution / 'once.json').read_text())['retiredSettings'], retired)
+        self.assertEqual(self.events[-1], 'observer-launched')
+        # The default plan keeps today's behaviour exactly: no retired kwarg reaches the verifier.
+        self.assertEqual(self.fleet_retired[0], ())
+
+    def run_retiring_release_on_carrying_webs(self, retired):
+        """The real classifier selects only the two carriers; the run redeploys exactly those and nothing else."""
+        self.plan.update(target=self.target, snapshot=self.snapshot, scope=release.impact(self.snapshot, self.after))
+        self.assertEqual((self.plan['scope']['selectedApps'], self.plan['scope']['mode']), ([], 'none'))
+        self.plan.update(retiredSettings=retired, scope=release.impact(self.snapshot, self.after, tuple(retired)))
+        self.assertEqual((self.plan['scope']['selectedApps'], self.plan['scope']['mode']), (['web-mini', 'web-m3'], 'scoped'))
+        self.proof.update(target={'sha': self.after, 'web': self.target['web']})
+        self.plan['readiness'] = copy.deepcopy(self.proof)
+        result = release.run_release(self.plan, self.execution)
+        self.assertEqual((result['status'], result['selectedApps'], result['deployedApps'], result['skippedApps']),
+                         ('deployed-and-verified', ['web-mini', 'web-m3'], ['web-mini', 'web-m3'], []))
+        self.assertEqual([(short, endpoint) for short, endpoint, _ in self.client.posts], [
+            (short, endpoint) for short in ('web-mini', 'web-m3') for endpoint in
+            ('application.saveEnvironment', 'application.saveDockerProvider', 'application.deploy')])
+        for short in ('web-mini', 'web-m3'):
+            self.assertNotIn('ABCLLM_API_KEY', release.shared.dotenv_settings(self.client.apps[short]['env']))
+            self.assertEqual(release.shared.setting(self.client.apps[short]['env'], 'RELEASE_TAG'), self.after)
+        for short in release.fleet.registered_apps():
+            if not short.startswith('web-'):
+                self.assertEqual(self.client.apps[short], self.snapshot['apps'][short])
+        self.assertEqual(self.fleet_retired, [(), tuple(retired)])
+        self.assertEqual(len(result['retainedApps']), 16)
+        return result
+
+    def test_exact_target_apps_that_still_carry_the_retired_setting_are_redeployed_instead_of_kept(self):
+        # Every app already serves the target (a stopped release continued by a fresh plan): the code scope is empty and
+        # both webs would be exact-target skips. They still carry ABCLLM_API_KEY, so the retiring release redeploys them.
+        self.move_fleet_to(self.after)
+        self.snapshot['target'] = copy.deepcopy(self.target)
+        self.carry_retired_setting(('web-mini', 'web-m3'))
+        retired = ['ABCLLM_API_KEY']
+        self.assertEqual(release.already_target(self.snapshot, self.target, ['web-mini', 'web-m3']), ['web-mini', 'web-m3'])
+        self.assertEqual(release.already_target(self.snapshot, self.target, ['web-mini', 'web-m3'], tuple(retired)), [])
+        self.run_retiring_release_on_carrying_webs(retired)
+
+    def test_docs_only_release_selects_only_the_carriers_and_bumps_their_release_while_retiring(self):
+        # The fleet serves the previous commit and the new commit is docs-only, so the code scope is empty. Only the two
+        # carriers are selected; they get the new RELEASE_TAG and lose the retired line in one redeploy each.
+        self.move_fleet_to(self.after)
+        (self.repo / 'docs').mkdir(); (self.repo / 'docs/retire.md').write_text('docs only\n')
+        self.git('add', '.'); self.git('commit', '-qm', 'docs only')
+        self.after = self.git('rev-parse', 'HEAD')
+        self.target['sha'] = self.after
+        self.snapshot['target'] = copy.deepcopy(self.target)
+        self.carry_retired_setting(('web-mini', 'web-m3'))
+        self.run_retiring_release_on_carrying_webs(['ABCLLM_API_KEY'])
 
 
 if __name__ == '__main__': unittest.main()

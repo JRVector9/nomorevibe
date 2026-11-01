@@ -271,21 +271,47 @@ DR fence → control FOR UPDATE(정책이 없어도 된다) → 배정 행 FOR U
 `chooseModelForItem(rows, itemKey, { excludeModels })` = 1차 오늘 규칙(`selectFirstReviewer`)과 같은 `(itemKey − 1) mod n` 칸, rank 가 모두 빠지면 다음 rank,
 `votersForItem(rows, itemKey, 1차 모델)` = 2차 rank 1 · vote · live 행에서 1차와 같은 가중치(`sameUnderlyingModel`)를 뺀 목록(순서만 항목마다 돈다).
 
-## 읽기 전환 — 3b-B (`MODEL_ASSIGNMENT_TABLE`)
+## 읽기 전환 — 3b-B · 3b-E (runtime_settings 토글 `assignments.tableReads`, env `MODEL_ASSIGNMENT_TABLE` 은 강제)
 
 배정 표(role `primary` · mode `live`)를 단계별 모델 고르기의 출처로 쓰는 스위치. **기본은 꺼짐이고, 꺼지면 오늘과 같다**(배정 표 SELECT 도 없다).
 
-- 스위치: 역할(Dokploy 앱)마다 env `MODEL_ASSIGNMENT_TABLE=1`. 프로세스가 처음 물을 때 한 번 읽어 고정한다(`lib/llm/assignment-flag.ts`, 재시작해야 바뀐다).
-  `1` 만 켬, 없음·`""`·`0` 끔, 그 밖은 끔 + `model_assignment_table.invalid` 한 번.
-  runtime_settings 키(재배포 없이 관리자가 켜기)는 이 PR 에 없다: 그 문서는 그룹 목록이 고정이고(시험이 목록을 고정한다), 모르는 그룹이 있으면
-  다른 그룹 저장까지 `unknown_group` 으로 거절하며, 폼은 숫자 칸만 받는다 — 그룹·폼·저장 검사를 함께 넓혀야 해 3b-D 몫으로 남겼다.
+- 스위치(3b-E): runtime_settings 문서의 그룹 `assignments`, 키 `tableReads` = `'off'`(기본) | `'on'`. 관리자가 `/admin/models/assignments` 「배정 표 읽기」
+  (같은 폼이 `/admin/models/limits` 「모델 배정 읽기」에도 있다)에서 저장하면 다른 실시간 한도와 같은 길(`saveRuntimeSettings` → revision CAS → zod enum →
+  `operations_audit` `runtime-settings-save` target `runtime_settings:assignments`, 감사 줄 「배정 표 읽기: off → on」)로 들어가고, **모든 역할**(웹·reviewer·text·소비자)이
+  runtime_settings 의 30초 프로세스 스냅숏(`lib/operations/runtime-settings-store`, serving-contract-store 의 같은 reload)으로 읽는다 — 재배포·재시작 없음.
+  읽는 함수는 하나다(`lib/llm/assignment-flag.ts` `assignmentFlag()`/`assignmentTableEnabled()`): 웹 배너·AI1·AI2·단계 풀·등록부 기본값·pipeline-control 스냅숏이
+  같은 값을 봐 웹은 「표」인데 소비자는 설정을 읽는 어긋남이 없다. 잡 틱 안에서는 그 틱이 고정한 판(`withRuntimeSettings`)의 값이다.
+  마이그레이션은 없다(0152 의 jsonb 문서 안의 키). 모르는 그룹은 여전히 `unknown_group` 으로 저장 전에 거절한다 — `assignments` 는 알려진 그룹이다.
+- env `MODEL_ASSIGNMENT_TABLE` 은 **비상 강제(override)** 로만 남는다(그 앱의 프로세스만): `1` = 토글과 무관하게 켬, `0` = 토글과 무관하게 끔.
+  없음·`""` = 토글을 따른다(기본, 운영의 현재 상태). 그 밖의 값은 토글을 따르고 `model_assignment_table.invalid` 를 한 번 남긴다. env 는 프로세스 시작 때 한 번 읽는다
+  (바꾸면 재시작). 강제가 걸린 프로세스는 배너·`[assignments]` 줄에 `env` 로 드러난다 — 토글이 그 프로세스에 닿지 않는다는 뜻이다. 강제는 운영자 결정이 있을 때만 쓴다.
+- 토글을 아직 읽지 못한 프로세스(`source: 'unread'` — 스냅숏이 DB 에서 온 적이 없다): 동기 고르기는 꺼짐(legacy)으로 보고, 비동기 길목(`requireStageAssignments`)은
+  **DB 에서 설정을 읽는 프로세스**(serving-contract-store 의 DB 읽기 스위치가 켜짐 — `MODEL_SERVING_CONTRACTS_DB` 가 `0` 이 아니고 DATABASE_URL 이 있다)에서만
+  `ModelCapacityDeferredError('assignments_unavailable')` 로 미룬다(프로세스마다 한 번 `assignment_toggle_unread`). 운영자가 켠 토글을 모른 채 예전 설정으로 고르지 않는다.
+  env 전용 프로세스(`MODEL_SERVING_CONTRACTS_DB=0`·DATABASE_URL 없음)는 언제나 legacy 고 미루지 않는다.
+- 리플레이는 토글·표를 읽지 않고 언제나 legacy 며 미루지도 않는다 — replay DB 범위(`currentReplayDb()`, 관문 맨 앞에서 가른다)와 고정 입력 실행
+  (`pipeline-replay-model-runner`)이 워커 틱에 고정하는 `source: 'replay'` 판(`replayRuntimeSettingsSnapshot`) 둘 다. 그 판은 「아직 못 읽음」이 아니라 그 실행이
+  정한 꺼짐이다(`assignmentTableReplayPinned()`). replay 범위에서 지난 길목은 읽은 시각을 남기지 않아, 같은 프로세스가 범위 밖에서 다음 길목을 지날 때 토글을 새로 읽는다
+  (PR #771 CI: 범위 안 길목이 30초 「읽음」으로 남아 범위 밖 정리 잡이 unread 로 미뤄졌다).
 - 스냅숏(`lib/llm/stage-assignment-snapshot.ts`): 고르기 함수는 동기라 live 행 전부를 30초 스냅숏으로 읽는다(오래된 동기 읽기는 뒤에서 한 번 다시 읽는다).
-  비동기 길목 — 1차 `chooseFirstReviewForCandidate`(TX 밖), 2차 올리기·정리·stale 정리·결과 기록·입력 로더, 단계 풀 — 은 먼저 새 스냅숏을 기다린다.
-  **켜졌는데 한 번도 못 읽었으면** 그 길목은 `ModelCapacityDeferredError('assignments_unavailable')` 로 미룬다(예전 목록으로 고르거나 2차 표를
-  `model_removed` 로 닫지 않는다). replay 범위에서는 읽지 않는다(언제나 예전 설정).
+  `ensureStageAssignments()` 는 먼저 토글(`ensureRuntimeSettings`, 같은 주기)을 새로 읽고 켜졌을 때만 행을 읽는다 — 꺼졌으면 SELECT 없음, 행은 비운다.
+  비동기 길목 — 1차 `chooseFirstReviewForCandidate`(TX 밖, 스위치와 무관하게 관문을 지난다), 2차 올리기·정리·stale 정리·결과 기록·입력 로더, 단계 풀
+  (`withStoredAdminStagePools`, 스위치와 무관하게 토글을 새로 읽는다), AI1 소비자 루프(`lib/crawl/consumers/first.ts`, 쪽마다) — 은 먼저 새 스냅숏을 기다린다.
+  **켜졌는데 한 번도 못 읽었으면** 그 길목은 `assignments_unavailable` 로 미룬다(예전 목록으로 고르거나 2차 표를 `model_removed` 로 닫지 않는다).
+  리플레이(replay DB 범위·고정 입력 실행의 고정 틱)에서는 읽지 않는다(언제나 예전 설정, 위 항목).
 - 출처(`assignmentSource(stage)`): `table` · `legacy`(꺼짐·아직 못 읽음·replay) · `legacy_empty_table`(켜졌지만 쓸 행이 없다 — 프로세스마다 한 번
-  `assignment_table_empty:<stage>`). 관리자 화면(3b-D)과 pipeline-control 스냅숏의 선택 칸 `assignments`(ops CLI 의 스위치가 켜졌을 때만 —
-  `enabled`·단계별 `live` 행 수·`tableReady`·`source`; 소비자 역할의 스위치는 그 앱의 env 다)가 보인다.
+  `assignment_table_empty:<stage>`). 관리자 화면(3b-D)과 pipeline-control 스냅숏의 선택 칸 `assignments`(스위치가 켜진 프로세스만 —
+  `enabled`·`flagSource`(runtime·env·unread)·단계별 `live` 행 수·`tableReady`·`source`)가 보인다. 상태 줄: `[assignments] 배정 표 읽기(이 프로세스)=on(runtime) ai1=table(live 2) …`.
+
+### 켜는 순서(재배포 불필요)
+
+1. `/admin/models/assignments` 「현재 설정 → 배정 표 가져오기」 계획 보기 → 적용(행마다 계약 확인·route 덧붙이기). 1차는 풀 모드(`firstReviewAdditional` 이 있다, `[]` 도 된다)인가,
+   2차 표에 투표자(rank 1 · vote)가 있는가를 본다.
+2. 같은 화면 「배정 표 읽기」를 **켬**으로 저장(또는 `/admin/models/limits` 「모델 배정 읽기」). 저장 결과에 판·revision 이 적힌다.
+3. 새로고침 — 상태 띠가 「읽기: 배정 표 읽기 켜짐(runtime_settings 토글)」이고 단계마다 「표」(실전 행이 있다)·「표 비어 있음」·「설정」인지 본다. 띠가 「env 강제」면 이 웹 앱에
+   `MODEL_ASSIGNMENT_TABLE` 이 남아 있다(토글이 닿지 않는 프로세스). 소비자·워커는 30초 안에 같은 값을 읽는다(`pipeline-control status` 의 `[assignments]` 줄, 워커 heartbeat 의
+   runtimeSettingsVersion 이 새 판인가 — `/admin/models/limits` 「읽은 판」).
+4. 끄기는 같은 폼에서 「끔」(또는 「기본값으로」). 비상시 한 앱만 즉시 끄려면 그 앱에 `MODEL_ASSIGNMENT_TABLE=0` 을 넣고 재시작(강제).
 
 단계별로 무엇이 바뀌나:
 
@@ -298,8 +324,8 @@ DR fence → control FOR UPDATE(정책이 없어도 된다) → 배정 행 FOR U
 
 - 인증된 용량 측정(`pipeline-capacity` manifest)은 표가 출처이면 `unsupported_capacity_assignment_table`, 실측 수집은 스위치가 켜진 프로세스에서
   `live_capacity_assignment_table_unsupported` 로 거절한다(선언한 설정 모델이 실제 심사자가 아니다).
-- 켜기 전 확인: 1차는 풀 모드인가, 2차 표에 투표자가 있는가(`pipeline-control status` 를 스위치를 켠 셸에서 — `[assignments]` 줄), 같은 창에서
-  모든 용량 소비자가 3b-B 판인가(앞 판 사슬). 끄기는 env 를 지우고 재시작.
+- 켜기 전 확인: 1차는 풀 모드인가, 2차 표에 투표자가 있는가(`pipeline-control status` — 토글이 켜진 뒤 `[assignments]` 줄, 또는 셸에 `MODEL_ASSIGNMENT_TABLE=1` 강제),
+  같은 창에서 모든 용량 소비자가 3b-B 판인가(앞 판 사슬). 끄기는 토글 「끔」(위 「켜는 순서」 4).
 
 ### 가져오기 계획 — 3b-B (`planAssignmentImport`, `lib/llm/assignment-import.ts`)
 
@@ -326,9 +352,13 @@ CLI = `probeCliServingContracts`)을 쓴다. 감사 줄(`model-assignment-save`)
 
 - **도우미 행**(role `helper`)은 같은 표에 「도우미」로 보이지만 이 화면에서는 바꾸지 않는다 — 「도우미 화면에서 →」 링크(`/admin/models/helpers#helper-<id>`)로 섀도·승격(2b·2c)을 한다.
   폼에서 역할 「도우미」를 고르면 저장 단추가 꺼지고 도우미 화면으로 보낸다(`assignment_helper_role`).
-- **상태 띠**: 플래그가 꺼져 있으면(기본) 「읽기: 설정(legacy). 플래그 MODEL_ASSIGNMENT_TABLE 켜면 표를 읽습니다」. 켜지면 단계마다 읽기 출처 — 「표」(실전 행이 있다),
-  「표 비어 있음」(플래그는 켜졌지만 그 단계에 쓸 실전 행이 없다 — 그 단계는 설정(legacy)으로 고른다), 「설정」(그 단계는 아직 legacy). 출처는 `lib/operations/admin-assignment-source.ts`
-  (3b-B 의 `assignmentSource` — 아래 「3b-B 와 합친 뒤」)가 준다.
+- **상태 띠**(3b-E 부터 스위치의 출처까지): 토글이 꺼져 있으면(기본) 「읽기: 설정(legacy). 아래 「배정 표 읽기」를 켜면 저장 즉시(30초 안) 모든 역할이 표를 읽습니다 — 재배포 없음」.
+  켜지면 「읽기: 배정 표 읽기 켜짐(runtime_settings 토글) — …」와 단계마다 읽기 출처 — 「표」(실전 행이 있다), 「표 비어 있음」(켜졌지만 그 단계에 쓸 실전 행이 없다 — 그 단계는
+  설정(legacy)으로 고른다), 「설정」(그 단계는 아직 legacy). 이 웹 프로세스에 env 강제가 있으면 「env 강제(MODEL_ASSIGNMENT_TABLE=1, 이 프로세스)」/「env MODEL_ASSIGNMENT_TABLE=0 이 …
+  강제로 끕니다」, 토글을 아직 못 읽었으면 「토글(runtime_settings)을 아직 읽지 못했습니다 — 표가 고르는 길목은 읽을 때까지 미룹니다」(노란 띠). 출처는
+  `lib/operations/admin-assignment-source.ts`(3b-B 의 `assignmentSource`, 3b-E 의 `assignmentFlagState` — 아래 「3b-B 와 합친 뒤」)가 준다.
+- **배정 표 읽기 폼**(3b-E, 띠 바로 아래 `#reads`): runtime_settings `assignments` 묶음의 열거 칸 하나(끔·켬). 저장은 실시간 한도와 같은 server action(`saveRuntimeSettingsGroup`)·
+  revision CAS·감사. 켜는 순서는 위 「읽기 전환」의 「켜는 순서」.
 
 ### 표 열(단계 묶음마다, `ASSIGNMENT_STAGES` 순서)
 
@@ -354,7 +384,7 @@ CLI = `probeCliServingContracts`)을 쓴다. 감사 줄(`model-assignment-save`)
 모델(그 단계가 허락하는 전송을 하나라도 쓰는 등록부 항목만) → 전송(단계 × 공급자 × **cli 는 등록부 equipment `connect` 만**; 게이트웨이 표지가 있으면 게이트웨이가 먼저) →
 순위(1~8) · 역할(주 배정) · 표(2차의 순위 1 에서만 켤 수 있다) · 모드(꺼짐·실전) · 메모. 새 배정 이름은 비우면 `<장비>:<단계>:<등록부 key>`.
 **모드 실전으로 저장하려면 확인 칸에 「배정」**을 적어야 한다(고치기에서도 실전으로 저장할 때마다). 저장된 배정의 단계·장비는 바꿀 수 없다(새 배정을 만들고 옛 것은 끈다).
-결과 문장은 판·모드·계약 출처(저장된 계약 / 엔진 확인으로 새로 만든 계약 / CLI)·정책 경로(덧붙임 revision / 이미 있음)·장비 역할 순위 변화와, 플래그가 꺼져 있으면
+결과 문장은 판·모드·계약 출처(저장된 계약 / 엔진 확인으로 새로 만든 계약 / CLI)·정책 경로(덧붙임 revision / 이미 있음)·장비 역할 순위 변화와, 배정 표 읽기가 꺼져 있으면
 「읽는 쪽은 아직 설정을 씁니다」를 말한다.
 
 **엔진 연결에서 오는 길**: 「모델 연결」(`/admin/models/contracts`)의 엔진 연결이 성공하면 「이 모델을 단계에 배정 →」 링크
@@ -370,9 +400,9 @@ CLI = `probeCliServingContracts`)을 쓴다. 감사 줄(`model-assignment-save`)
    `saveAdminModelAssignment` 로 따로 저장한다(행마다 TX 하나·감사 한 줄). 한 행이 거절돼도 다음 행을 계속하고 「그대로」 행은 건너뛴다. 행마다 결과(저장 판 / 거절 문장 / 건너뜀)를 보인다.
    행의 `expectedVersion` 이 CAS 다 — 같은 계획을 두 번 적용하면 둘째에는 만들기 행이 판 충돌로 거절된다.
 
-### 설정 폼 읽기 전용(플래그가 켜졌을 때만)
+### 설정 폼 읽기 전용(스위치가 켜졌을 때만)
 
-플래그가 켜지면(3b-B `assignmentTableEnabled()`) 크롤 설정(`/admin`)의 1차·추가 1차·2차 투표·2차 대체 칸과 단계별 모델(`/admin/models`)의 모델 선택 폼(같은 넷 + 단계별 모델 풀)이
+스위치가 켜지면(3b-B `assignmentTableEnabled()` — 토글 또는 env 강제) 크롤 설정(`/admin`)의 1차·추가 1차·2차 투표·2차 대체 칸과 단계별 모델(`/admin/models`)의 모델 선택 폼(같은 넷 + 단계별 모델 풀)이
 「배정 표로 옮겨짐 — /admin/models/assignments」 알림과 함께 읽기 전용이 된다. 크롤 설정은 같은 이름의 숨은 칸으로 지금 값을 그대로 보내 다른 설정을 저장해도 모델 값이 바뀌지 않고,
 2차 표 바로 바꾸기 손잡이는 그리지 않는다. 단계별 모델 폼은 칸을 잠그고 저장 바를 뺀다. 설정 schema 는 바꾸지 않았다. **기본(꺼짐)에서는 모두 그대로 편집된다.**
 
@@ -405,9 +435,10 @@ CLI = `probeCliServingContracts`)을 쓴다. 감사 줄(`model-assignment-save`)
 
 ### 3b-B 와 합친 뒤(배선)
 
-- `lib/operations/admin-assignment-source.ts` — 3b-B 의 `assignmentTableEnabled()`·`assignmentSource(stage)` 를 읽는다(출처를 묻기 전에 배정 표 스냅숏을 새로 받는다).
+- `lib/operations/admin-assignment-source.ts` — 3b-B 의 `assignmentReadFlag()`(= `assignmentFlag()`: enabled·source·override)·`assignmentSource(stage)` 를 읽는다
+  (출처를 묻기 전에 토글·배정 표 스냅숏을 maxAge 0 으로 새로 받는다 — 저장하고 새로고침하면 바로 보인다).
   'table' → 표, 'legacy_empty_table'(켜졌지만 그 단계에 쓸 실전 행이 없어 설정으로 고른다) → 표(화면이 실전 행 0 을 보고 「표 비어 있음」), 'legacy' → 설정.
-  못 읽으면 꺼짐·legacy. 플래그는 **웹 프로세스의** env 다 — 소비자 역할과 같게 켠다(설정 폼 잠금도 웹의 플래그를 따른다).
+  못 읽으면 꺼짐(unread)·legacy. 스위치는 3b-E 부터 runtime_settings 토글이라 웹과 소비자가 **같은 행**을 읽는다(설정 폼 잠금도 같은 토글을 따른다); 웹에 env 강제가 있으면 띠가 말한다.
 - `lib/llm/assignment-import.ts` — `planAssignmentImport(sources)` 는 3b-B 의 `buildAssignmentImportPlan(settings, policy, registry, { existing: assignments, devices })`
   (위 「가져오기 계획 — 3b-B」)를 화면 계약으로 옮긴다: 행 = { action, input, origin(설정의 출처), changes(「순위 2 → 1」 같은 문장) }, 경고 = 「출처: 문장 — 자세히」.
   켜진 장비가 아닌 곳에 쓰는 행(만들기·실전 고치기)은 건너뛰고 경고한다(저장이 `device_unconfigured` 로 거절할 행). env 대체 1차 심사자는 화면이 알 수 없어 옮기지 않는다.
@@ -489,14 +520,16 @@ CLI = `probeCliServingContracts`)을 쓴다. 감사 줄(`model-assignment-save`)
 - `tests/dr-web-fence.test.ts` — 도우미 action 다섯이 쓰기 관문을 지난다(수 97). `tests/admin-navigation.test.tsx` — 메뉴 링크 23개.
 - 배정 표(3b-A): `tests/capacity-helpers.test.ts`(어휘·zod·evidence·0156 글자·route 상한), `tests/stage-assignments.test.ts`(고르기, 1차 칸 = selectFirstReviewer),
   `tests/integration/model-assignments.test.ts`(자기 DB: 계약·route·장비 순위·감사 한 TX, 같은 저장 반복, 잡힌 행과 앞 판, 상한·충돌, 거절 뒤 남는 행 없음, cli·vote·local-direct 계약).
-- 읽기 전환(3b-B): `tests/assignment-readers.test.ts`(스위치·출처·관문, 1차 표 풀·칸·고정·대체, 2차 투표자·대체·입력 검증·hash 불변),
-  `tests/assignment-stage-pools.test.ts`(단계 풀·등록부 기본값), `tests/pipeline-control-assignments.test.ts`(스냅숏 선택 칸·route 목록),
-  `tests/integration/model-assignment-readers.test.ts`(DB 에 심은 표: 1차 고르기, 2차 올리기·기록·대체·정리, 못 읽으면 미룸),
+- 읽기 전환(3b-B·3b-E): `tests/assignment-readers.test.ts`(토글·env 강제·unread 미룸·관문, 출처, 1차 표 풀·칸·고정·대체, 2차 투표자·대체·입력 검증·hash 불변),
+  `tests/assignment-stage-pools.test.ts`(단계 풀·등록부 기본값), `tests/pipeline-control-assignments.test.ts`(스냅숏 선택 칸·flagSource·route 목록),
+  `tests/integration/model-assignment-readers.test.ts`(DB 에 심은 표: 1차 고르기, 2차 올리기·기록·대체·정리, 못 읽으면 미룸, 토글 저장만으로 AI1·AI2 전환),
+  `tests/runtime-settings-schema.test.ts`·`tests/runtime-settings-store.test.ts`·`tests/integration/runtime-settings.test.ts`(assignments 그룹: 열거·거절·sparse·감사·같은 reload),
+  `tests/admin-runtime-settings.test.tsx`(열거 칸 폼·AssignmentsForm 그리기), `tests/pipeline-first-consumer.test.ts`(소비자가 쪽마다 토글·스냅숏을 새로 받는다),
   `tests/assignment-import.test.ts`(운영 모양 설정·정책으로 가져오기 계획·차이·경고).
 - 앞 판 사슬(3b-B): `tests/model-capacity-predecessor-chain.test.ts`(모양·옛 단일 칸 = 길이 1·세대 인증·덧붙이기 판정), `tests/integration/model-assignments.test.ts`
   (gen-1 dispatched 를 쥔 채 세 번 연속 덧붙이기, 가지치기·사슬 비우기, 16칸 꽉 참 거절과 미끄러짐, 옛 단일 칸 이어받기, 운영자 쓰기의 증명).
 - 모델 배정 화면(3b-D): `tests/admin-model-assignments.test.tsx`(묶음·한국어 이름·칸·상태 띠·3b-B 출처, 단계 × 등록부 × 전송 고르기(cli = connect), 폼 → 저장 입력·확인 「배정」,
-  모든 거절 코드 문장, 결과 문장, 가져오기 계획(3b-B planAssignmentImport)·hash, server action 셋, 그리기(표 열은 2차만, 폼·가져오기 카드), 설정 폼 읽기 전용(플래그 켜짐만)),
+  모든 거절 코드 문장, 결과 문장, 가져오기 계획(3b-B planAssignmentImport)·hash, server action 셋, 그리기(표 열은 2차만, 폼·가져오기 카드), 설정 폼 읽기 전용(스위치 켜짐만)),
   `tests/integration/admin-model-assignments.test.ts`(자기 DB: action → 진짜 저장 함수 — 계약·route·장비 순위·행·감사, CAS, 거절 문장과 남는 행 없음, 끄기, 가져오기 계획(3b-B 실제 계획)·행마다 적용).
   `tests/dr-web-fence.test.ts` 의 쓰기 관문 action 수는 100(배정 저장·끄기·가져오기 적용), `tests/admin-navigation.test.tsx` 메뉴 링크 24개.- text local-direct(3b-E): `tests/text-local-direct-contracts.test.ts`(7경로 raw hash 불변·합 스키마·엄격 opt-in 면제·resolve/provider·key gate·binding·directTextWire·
   계약 표/장비 표 우선), `tests/text-profile-local-direct-native.test.ts`(tokenizer → 엔진 wire → local-direct terminal, 상한 초과 = not_started, 모순 usage),

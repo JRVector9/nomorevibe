@@ -7,7 +7,7 @@ import path from "node:path";
 import { createReviewInput } from "@/lib/crawl/agent-review-contract";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 import type { CrawlCandidate, CrawlDocument } from "@/lib/db/schema";
-import { cliFailure, reviewCliArgs, reviewModel, reviewWithAgent, runReviewCli, type ReviewCliRun } from "@/lib/crawl/agent-review";
+import { cliFailure, cliReviewModel, reviewCliArgs, reviewWithAgent, runReviewCli, type ReviewCliRun } from "@/lib/crawl/agent-review";
 
 function input() {
   const now = new Date();
@@ -22,12 +22,15 @@ const approved = {decision:"approve",reason:"The supplied product metadata descr
 afterEach(() => vi.unstubAllEnvs());
 
 it("requires an explicit review model and never invents a default", async () => {
-  expect(reviewModel({})).toBeNull();
-  expect(reviewModel({CRAWL_REVIEW_MODEL:"--bad-model"})).toBeNull();
-  expect(reviewModel({CRAWL_REVIEW_MODEL:"claude-sonnet-5"})).toBe("claude-sonnet-5");
-  vi.stubEnv("CRAWL_REVIEW_MODEL", "");
+  expect(cliReviewModel(undefined)).toBeNull();
+  expect(cliReviewModel(null)).toBeNull();
+  expect(cliReviewModel("--bad-model")).toBeNull();
+  expect(cliReviewModel("claude-sonnet-5")).toBe("claude-sonnet-5");
+  // CRAWL_REVIEW_MODEL is no longer read (2026-10-31): without options.model nothing runs, whatever the env says
+  vi.stubEnv("CRAWL_REVIEW_MODEL", "claude-sonnet-5");
   const run = vi.fn(answer(approved));
   expect(await reviewWithAgent(input(), {run})).toEqual({ok:false,error:"not_configured"});
+  expect(await reviewWithAgent(input(), {model:"--bad-model",run})).toEqual({ok:false,error:"not_configured"});
   expect(run).not.toHaveBeenCalled();
 });
 it("isolates instructions and tools while preserving OAuth/keychain authentication", () => {

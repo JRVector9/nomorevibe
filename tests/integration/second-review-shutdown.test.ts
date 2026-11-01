@@ -18,17 +18,22 @@ beforeEach(async () => {
 });
 
 /**
- * 응답하지 않는 게이트웨이 — 끊길 때까지 기다린다.
+ * 응답하지 않는 abcllm 투표자 — 끊길 때까지 기다린다.
  * 호출이 들어온 순간을 알려 준다: 시각에 기대지 않고 그때 종료 신호를 준다.
+ * 게이트웨이(abcLLM)는 2026-10-30 제거돼 진짜 옛 잎(reviewWithGateway)은 엔진 주소 없이는 보내지 않고 not_configured 로 끝난다.
+ * 이 파일은 종료 신호가 진행 중인 호출을 끊는지를 보므로, 그 잎만 끊길 때까지 기다리는 대역으로 바꾼다(pipeline-consumer 와 같은 방식).
  */
-let calling: () => void = () => {};
-const firstCall = new Promise<void>((resolve) => { calling = resolve; });
-const hanging = ((_url: string, init: RequestInit) => new Promise<Response>((_resolve, reject) => {
-  calling();
-  init.signal?.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true });
-})) as unknown as typeof fetch;
-vi.stubGlobal('fetch', hanging);
-vi.stubEnv('ABCLLM_API_KEY', 'test-key');
+const hang = vi.hoisted(() => { let calling: () => void = () => {}; const firstCall = new Promise<void>(resolve => { calling = resolve; });
+  return { firstCall, called: () => calling() }; });
+vi.mock('@/lib/crawl/agent-review-gateway', async load => {
+  const original = await load<typeof import('@/lib/crawl/agent-review-gateway')>();
+  const reviewWithGateway: typeof original.reviewWithGateway = (_input, options) => new Promise(resolve => {
+    hang.called();
+    options.signal?.addEventListener('abort', () => resolve({ ok: false, error: 'cancelled' }), { once: true });
+  });
+  return { ...original, reviewWithGateway };
+});
+const firstCall = hang.firstCall;
 
 it('배포로 멈출 때 진행 중인 호출을 끊고, 잠금을 놓아 다음 회차가 곧바로 집는다', async () => {
   await crawl.putDocument({ repo: 'acme/stopping', productUrl: 'https://stopping.test', pageStatus: 200,

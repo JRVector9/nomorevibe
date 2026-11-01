@@ -22,6 +22,7 @@ import { releaseCliExecutorRemovedBoundaryRequest } from "@/lib/operations/dr/cl
 import { cliExecutorFixture } from "../fixtures/cli-executor-boundary";
 import { cliExecutorRemovedFixture, materializeRemovedArtifacts } from "../fixtures/cli-executor-removed-boundary";
 import { TEST_DATABASE_URL } from "./setup";
+import { ledgerCheckDefs } from "./ledger-check-defs";
 
 const root = fileURLToPath(new URL("../..",import.meta.url)), name = `nomorevibe_test_cli_removed_${randomUUID().replaceAll("-","")}`;
 const url = new URL(TEST_DATABASE_URL); url.pathname=`/${name}`;
@@ -45,7 +46,7 @@ function cli(apply:boolean){
 }
 const rows=()=>client`SELECT to_jsonb(r) value FROM model_capacity_requests r ORDER BY request_id`;
 const counts=async()=>({events:Number((await client`SELECT count(*) n FROM model_capacity_events`)[0].n),audit:Number((await client`SELECT count(*) n FROM operations_audit`)[0].n),groups:Number((await client`SELECT count(*) n FROM dr_process_group_events`)[0].n)});
-const defs=async()=>Object.fromEntries((await client<{conname:string;def:string}[]>`SELECT conname,pg_get_constraintdef(oid) def FROM pg_constraint WHERE conname=ANY(${names}::text[])`).map(x=>[x.conname,x.def]));
+const defs=async()=>ledgerCheckDefs(client,names);
 function input() { const plan=structuredClone(fx.plan),receipt=structuredClone(fx.receipt);receipt.planHash=cliExecutorPlanHash(plan);return {plan,receipt,expectedPlanHash:receipt.planHash,operator:"fixture-operator",reference:plan.reviewReference}; }
 async function evidence() { const [clock]=await client`SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') at`;return {...fx.evidence,plan:fx.plan,receipt:fx.receipt,evaluatedAt:clock.at}; }
 beforeAll(async()=>{
@@ -119,14 +120,17 @@ it("migrates nonempty old data without mutation and retains all predecessor pred
       try{predicate=`(${(await client`SELECT pg_get_constraintdef(oid) def FROM pg_constraint WHERE conname='cli_removed_expected_0157'`)[0].def.slice(6)}) OR (${releaseKinds[n]})`;}
       finally{await client.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT cli_removed_expected_0157`);}
     }
-    // 0159 (PR 3b-E text local-direct 기록) then rebuilds the dispatch/terminal CHECKs the same way from their live 0158 definition plus the seven
-    // 0125 text-route branches with the row AND the binding/evidence JSON provider replaced by local-direct (the schema constants). logical/members
-    // stay as 0158 left them. Again take PostgreSQL's own deparse of the 0158 predecessor as the left side, as the migration does.
+    // 0161 (PR 3b-E text local-direct 기록) adds the seven text-route branches as the next rules row. ledgerCheckDefs joins that row onto the
+    // deparsed 0158 predicate without a second parse, so the expectation is the joined string, not pg_get_constraintdef of a new CHECK.
     const textLocalDirect: Record<string, string> = { model_capacity_requests_dispatch_check: textLocalDirectDispatchSql, model_capacity_requests_terminal_check: textLocalDirectTerminalSql };
     if(textLocalDirect[n]){
       await client.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT cli_removed_expected_0158 CHECK (${predicate})`);
-      try{predicate=`(${(await client`SELECT pg_get_constraintdef(oid) def FROM pg_constraint WHERE conname='cli_removed_expected_0158'`)[0].def.slice(6)}) OR (${textLocalDirect[n]})`;}
+      let live = "";
+      try{live=(await client`SELECT pg_get_constraintdef(oid) def FROM pg_constraint WHERE conname='cli_removed_expected_0158'`)[0].def;}
       finally{await client.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT cli_removed_expected_0158`);}
+      const expr=live.slice("CHECK (".length,-1);
+      expect(after[n],`${n}: 0161 rules join`).toBe(`CHECK ((${expr}) OR (${textLocalDirect[n]}))`);
+      continue;
     }
     await client.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT cli_removed_expected CHECK (${predicate})`);
     try{expect(after[n]).toBe((await client`SELECT pg_get_constraintdef(oid) def FROM pg_constraint WHERE conname='cli_removed_expected'`)[0].def);}

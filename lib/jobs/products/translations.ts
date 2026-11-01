@@ -1,5 +1,5 @@
 import { scopedModel } from "@/lib/llm/model-registry";
-import { PRODUCT_TRANSLATION_MODEL } from "@/lib/crawl/translate";
+import { PRODUCT_TRANSLATE_MODEL } from "@/lib/crawl/translate";
 import { translateProductFieldsWithModelCapacity } from "@/lib/domain/products/product-translation-model-capacity";
 import { checkProductTranslation, packProductTranslationBatch, productTranslationPolicy, productTranslationSourceHash,
   productTranslationTaskKey, translationSourceText } from "@/lib/domain/products/translation-policy";
@@ -7,7 +7,7 @@ import { pendingProductTranslations, recordProductTranslations, type ProductTran
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { ModelCapacityDeferredError, modelCapacityDeferralIsPerWork } from "@/lib/llm/capacity-deferred";
 import { productTranslationClientTimeoutMs } from "@/lib/llm/deadline-ladder";
-import { textRouteCallable } from "@/lib/llm/serving-contract-store";
+import { TEXT_ROUTE_BLOCK_DETAIL, textRouteAccess } from "@/lib/llm/serving-contract-store";
 import { productTranslationServingProvider } from "@/lib/llm/product-translation-serving-contract";
 
 /** 한 틱에 호출 없이 넘길 수 있는 묶음 수 상한 — 고르기·장부 요청이 틱마다 끝없이 돌지 않게 한다. */
@@ -22,9 +22,11 @@ const MAX_SELECTION_ROUNDS = 8;
  * 호출한 묶음의 실패·미확인은 기존처럼 attempts·retry_at 으로 적혀 다음 틱이 뒤의 수요를 고른다. 포화·정책·owner 미룸은 틱 전체를 미룬다.
  */
 export async function translateDemandedProductFields(ctx: JobContext<null>): Promise<JobOutcome<null>> {
-  if (!textRouteCallable("product-translate", scopedModel("product-translate", PRODUCT_TRANSLATION_MODEL), productTranslationServingProvider(scopedModel("product-translate", PRODUCT_TRANSLATION_MODEL)))) {
-    ctx.log("product_translation.deferred", { reason: "no_key" });
-    return { done: true, degraded: { code: "no_key", detail: "이 경로의 직접 연결 계약도 text 워커의 ABCLLM_API_KEY 도 없습니다" } };
+  const model = scopedModel("product-translate", PRODUCT_TRANSLATE_MODEL);
+  const blocked = textRouteAccess("product-translate", model, productTranslationServingProvider(model)).block;
+  if (blocked) {
+    ctx.log("product_translation.deferred", { reason: blocked });
+    return { done: true, degraded: { code: blocked, detail: TEXT_ROUTE_BLOCK_DETAIL[blocked] } };
   }
   if (!ctx.lease) throw new Error("Product translation worker requires a job lease");
   const controller = new AbortController();
@@ -69,14 +71,14 @@ export async function translateDemandedProductFields(ctx: JobContext<null>): Pro
       // Account for calls aborted by the tick budget. The final lease check in
       // recordProductTranslations rolls back writes if ownership was actually lost.
       const entries = completedBatch.map((task, index): { task: typeof task; result: ProductTranslationResult } => {
-        if (!response.ok) return { task, result: { ok: false, error: response.error, model: scopedModel("product-translate", PRODUCT_TRANSLATION_MODEL) } };
+        if (!response.ok) return { task, result: { ok: false, error: response.error, model: scopedModel("product-translate", PRODUCT_TRANSLATE_MODEL) } };
         const checked = checkProductTranslation(response.outputs[index], task.source, task.locale, task.field);
-        return { task, result: checked.ok ? { ok: true, text: checked.text, model: scopedModel("product-translate", PRODUCT_TRANSLATION_MODEL) }
-          : { ok: false, error: `rejected:${checked.reason}`, model: scopedModel("product-translate", PRODUCT_TRANSLATION_MODEL) } };
+        return { task, result: checked.ok ? { ok: true, text: checked.text, model: scopedModel("product-translate", PRODUCT_TRANSLATE_MODEL) }
+          : { ok: false, error: `rejected:${checked.reason}`, model: scopedModel("product-translate", PRODUCT_TRANSLATE_MODEL) } };
       });
       const stored = await (outcome.expectation ? recordProductTranslations(entries, ctx.lease, outcome.expectation)
         : recordProductTranslations(entries, ctx.lease));
-      ctx.log("product_translation.tick", { model: scopedModel("product-translate", PRODUCT_TRANSLATION_MODEL), demanded: completedBatch.length, stored,
+      ctx.log("product_translation.tick", { model: scopedModel("product-translate", PRODUCT_TRANSLATE_MODEL), demanded: completedBatch.length, stored,
         accepted: entries.filter(({ result }) => result.ok).length, gatewayError: response.ok ? null : response.error, passed: passed.size });
       return { done: true };
     }

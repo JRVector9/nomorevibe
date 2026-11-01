@@ -10,8 +10,11 @@ import { DEFAULT_RUNTIME_SETTINGS, resolveRuntimeSettings, storedSettingsVersion
  * - withRuntimeSettings(snapshot, run) 은 run 안의 모든 읽기가 그 스냅샷을 보게 고정한다(await 를 넘어도) — 알린 예산과 실제로 쓴 상한이 한 판이다(D3).
  *   lastRuntimeSettingsRead 를 남겨 heartbeat 가 "읽은 판"을 싣는다.
  * - 클라이언트 번들에는 들어가지 않는다(translation-policy 를 client 가 import 할 때는 type 만).
+ * - source: 'db' = runtime_settings 행에서 읽은 판 · 'default' = 아직 DB 에서 읽은 적이 없는 코드 기본값(읽기 전·실패) ·
+ *   'replay' = 리플레이(고정 입력 실행)가 틱에 고정한 코드 기본값 — 못 읽은 것이 아니라 그 실행이 정한 판이다. DB 에서 온 판만 보고 고르는 읽기 스위치
+ *   (배정 표 토글 — lib/llm/assignment-flag.ts)는 'default' 만 「아직 못 읽음」으로 보고, 'replay' 는 결정된 꺼짐(legacy)으로 본다.
  */
-export type RuntimeSettingsSnapshot = Readonly<{ version: string; revision: number | null; loadedAt: number; source: "db" | "default"; settings: RuntimeSettings }>;
+export type RuntimeSettingsSnapshot = Readonly<{ version: string; revision: number | null; loadedAt: number; source: "db" | "default" | "replay"; settings: RuntimeSettings }>;
 export type RuntimeSettingsRead = { version: string; at: number; registryEnv: boolean };
 /** 스냅샷을 새로 읽는다. null 이면 지금 스냅샷을 유지한다. 던져도 된다(여기서 받는다). */
 export type RuntimeSettingsLoader = (maxAgeMs: number) => Promise<RuntimeSettingsSnapshot | null>;
@@ -23,6 +26,13 @@ const pin = new AsyncLocalStorage<RuntimeSettingsSnapshot>();
 
 export function defaultRuntimeSettingsSnapshot(loadedAt = Date.now()): RuntimeSettingsSnapshot {
   return Object.freeze({ version: "default", revision: null, loadedAt, source: "default" as const, settings: DEFAULT_RUNTIME_SETTINGS });
+}
+/**
+ * 리플레이(고정 입력 실행, lib/operations/pipeline-replay-model-runner.ts)가 워커 틱에 고정하는 판: 코드 기본값 그대로이되 source 가 'replay' 다 —
+ * 격리 DB 의 runtime_settings 행을 읽지 않는 것은 그 실행의 결정이므로, 'default'(아직 못 읽음)로 미루는 길목(배정 표 관문)이 리플레이를 미루지 않는다.
+ */
+export function replayRuntimeSettingsSnapshot(loadedAt = Date.now()): RuntimeSettingsSnapshot {
+  return Object.freeze({ version: "default", revision: null, loadedAt, source: "replay" as const, settings: DEFAULT_RUNTIME_SETTINGS });
 }
 const state = (): State => (holder.__nmvRuntimeSettings ??= { snapshot: defaultRuntimeSettingsSnapshot(0), loader: null, loading: null, override: false, lastRead: null });
 

@@ -125,6 +125,6 @@ describe("planAssignmentImport (3b-D 화면 계약)", () => {
     expect(offDevices.warnings.filter(text => text.includes("장비 행이 없거나 꺼져"))).toHaveLength(12);
     // no firstReview in settings: the env fallback is not known to the screen
     expect(planAssignmentImport(sources({ settings: { ...DEFAULT_CRAWL_SETTINGS, secondReview: settings.secondReview } as AssignmentImportSources["settings"] })).warnings[0])
-      .toBe("firstReview: 1차 모델이 설정에 없어 1차는 옮기지 않습니다 — CRAWL_REVIEW_MODEL env 대체는 옮기지 않는다");
+      .toBe("firstReview: 1차 모델이 설정에 없어 1차는 옮기지 않습니다 — 관리자 설정에서 1차 심사자를 고른 뒤 다시 가져온다(환경변수 대체는 2026-10-31 제거)");
   });
 });

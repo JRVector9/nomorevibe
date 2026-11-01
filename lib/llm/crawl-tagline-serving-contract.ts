@@ -19,7 +19,7 @@ export const crawlTaglineServingContractSchema = z.object({
   }), totalTokenBound: z.number().int().positive().safe(),
 }).strict();
 export type CrawlTaglineGatewayServingContract = Readonly<z.infer<typeof crawlTaglineServingContractSchema>>;
-/** 엔진 직접 계약(PR 3b-E) — AI1·AI2 와 같은 direct-openai-chat-v1 모양, provider local-direct. 같은 route_id 아래 관리 화면·env 에 둔다. */
+/** 엔진 직접 계약(PR 3b-E) — AI1·AI2 와 같은 direct-openai-chat-v1 모양, provider local-direct. 같은 route_id 아래 관리 화면(model_serving_contracts)에 둔다. */
 export const crawlTaglineDirectServingContractSchema = directServingContractSchema("crawl-tagline", [DIRECT_OPENAI_CHAT_PROTOCOL] as const);
 export const crawlTaglineRouteServingContractSchema = z.discriminatedUnion("protocol", [crawlTaglineServingContractSchema, crawlTaglineDirectServingContractSchema]);
 export type CrawlTaglineServingContract = Readonly<z.infer<typeof crawlTaglineRouteServingContractSchema>>;
@@ -29,7 +29,7 @@ export function crawlTaglineServingContractHash(value: CrawlTaglineServingContra
 }
 const configured = startupGatewayServingContracts("crawl-tagline", crawlTaglineRouteServingContractSchema, { gatewayShape: crawlTaglineServingContractSchema });
 /**
- * 운영자가 readback 으로 검증해 ABCLLM_SERVING_CONTRACTS·관리 화면에 넣은 계약만 연다. 없거나 틀리면 null(=deferred)이다.
+ * 운영자가 readback 으로 검증해 관리 화면(model_serving_contracts)에 저장한 계약만 연다. 없거나 틀리면 null(=deferred)이다.
  * abcllm 은 model 이 정확히 같은 계약 하나, local-direct 는 선택이 가리키는 직접 계약이 정확히 하나일 때(AI1 과 같은 규칙).
  */
 export function resolveCrawlTaglineServingContract(model: string, provider: GatewayContractProvider = "abcllm"): CrawlTaglineServingContract | null {

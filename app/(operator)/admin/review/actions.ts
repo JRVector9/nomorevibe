@@ -7,7 +7,7 @@ import { writeTaglineByHand } from '@/lib/crawl/taglines';
 import { getDocument } from '@/lib/crawl/repository';
 import { decideCandidate } from '@/lib/crawl/review';
 import { changeReviewMode, getSettings, saveSettings } from '@/lib/crawl/settings';
-import { listGatewayModels } from '@/lib/crawl/agent-review-gateway';
+import { listReviewEngineModels } from '@/lib/crawl/agent-review-gateway';
 import { sameReviewModel } from '@/lib/crawl/review-model-identity';
 import { decidePublishedSecondReview } from '@/lib/crawl/published-second-review';
 import { recordAdminAction, recordAdminActions } from '@/lib/operations/admin-log';
@@ -145,8 +145,8 @@ export const switchSecondVoter = webWriteAction(async function switchSecondVoter
   // 화면 밖에서 만든 요청도 같은 목록 안에서만 받는다
   const allowed = choice.provider === 'grok-cli' ? (GROK_MODELS as readonly string[]).includes(choice.model)
     : choice.provider === 'claude-cli' ? (CLAUDE_MODELS as readonly string[]).includes(choice.model)
-      : (await listGatewayModels())?.includes(choice.model) ?? false;
-  if (!allowed) return { error: choice.provider === 'abcllm' ? '게이트웨이에 지금 없는 모델입니다. 새로고침해주세요.' : '고를 수 있는 모델이 아닙니다.' };
+      : (await listReviewEngineModels()).includes(choice.model);
+  if (!allowed) return { error: choice.provider === 'abcllm' ? '직접 연결 계약이 켜진 심사 모델이 아닙니다. 새로고침해주세요.' : '고를 수 있는 모델이 아닙니다.' };
   const settings = await getSettings();
   if (sameReviewModel(settings.firstReview?.model, choice.model)) return { error: '1차와 같은 모델은 2차 표가 될 수 없습니다.' };
   const current = settings.secondReview.voters;

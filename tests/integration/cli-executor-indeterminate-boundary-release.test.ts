@@ -21,6 +21,7 @@ import { cliExecutorIndeterminatePlanHash } from "@/lib/llm/cli-executor-indeter
 import { releaseCliExecutorIndeterminateBoundaryRequest } from "@/lib/operations/dr/cli-executor-indeterminate-boundary-release";
 import { cliExecutorIndeterminateFixture,materializeIndeterminateArtifacts } from "../fixtures/cli-executor-indeterminate-boundary";
 import { TEST_DATABASE_URL } from "./setup";
+import { ledgerCheckDefs } from "./ledger-check-defs";
 
 const root=fileURLToPath(new URL("../..",import.meta.url)),name=`nomorevibe_test_cli_unknown_${randomUUID().replaceAll("-","")}`;
 const url=new URL(TEST_DATABASE_URL);url.pathname=`/${name}`;
@@ -34,7 +35,7 @@ let created=false,beforeRows:Awaited<ReturnType<typeof rows>>,beforeChecks:Recor
 const proofDir=mkdtempSync(path.join(tmpdir(),"cli-unknown-proof-"));chmodSync(proofDir,0o700);
 function rows(){return client`SELECT to_jsonb(r) value FROM model_capacity_requests r ORDER BY request_id`;}
 async function counts(){return {events:Number((await client`SELECT count(*) n FROM model_capacity_events`)[0].n),audit:Number((await client`SELECT count(*) n FROM operations_audit`)[0].n),groups:Number((await client`SELECT count(*) n FROM dr_process_group_events`)[0].n)};}
-async function defs(){return Object.fromEntries((await client<{conname:string;definition:string}[]>`SELECT conname,pg_get_constraintdef(oid) definition FROM pg_constraint WHERE conrelid IN ('model_capacity_requests'::regclass,'model_capacity_events'::regclass) AND conname=ANY(${checks}::text[])`).map(x=>[x.conname,x.definition]));}
+async function defs(){return ledgerCheckDefs(client,checks);}
 function input(){const plan=structuredClone(fx.plan),receipt=structuredClone(fx.receipt);receipt.planHash=cliExecutorIndeterminatePlanHash(plan);return {plan,receipt,expectedPlanHash:receipt.planHash,operator:"fixture-operator",reference:plan.reviewReference};}
 function cli(apply:boolean){
   const p=JSON.stringify(fx.plan),r=JSON.stringify(fx.receipt),sha=(v:string)=>createHash("sha256").update(v).digest("hex");
@@ -95,14 +96,17 @@ it("0136 preserves nonempty old rows and the complete0135 CHECK predecessor",asy
       try{predicate=`(${(await client`SELECT pg_get_constraintdef(oid) definition FROM pg_constraint WHERE conname='unknown_expected_0157'`)[0].definition.slice(6)}) OR (${releaseKinds[n]})`;}
       finally{await client.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT unknown_expected_0157`);}
     }
-    // 0159 (PR 3b-E text local-direct 기록) then rebuilds the dispatch/terminal CHECKs the same way from their live 0158 definition plus the seven
-    // 0125 text-route branches with the row AND the binding/evidence JSON provider replaced by local-direct (the schema constants). logical/members
-    // stay as 0158 left them. Again take PostgreSQL's own deparse of the 0158 predecessor as the left side, as the migration does.
+    // 0161 (PR 3b-E text local-direct 기록) adds the seven text-route branches as the next rules row. ledgerCheckDefs joins that row onto the
+    // deparsed 0158 predicate without a second parse, so the expectation is the joined string, not pg_get_constraintdef of a new CHECK.
     const textLocalDirect:Record<string,string>={[checks[2]]:textLocalDirectDispatchSql,[checks[3]]:textLocalDirectTerminalSql};
     if(textLocalDirect[n]){
       await client.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT unknown_expected_0158 CHECK (${predicate})`);
-      try{predicate=`(${(await client`SELECT pg_get_constraintdef(oid) definition FROM pg_constraint WHERE conname='unknown_expected_0158'`)[0].definition.slice(6)}) OR (${textLocalDirect[n]})`;}
+      let live="";
+      try{live=(await client`SELECT pg_get_constraintdef(oid) definition FROM pg_constraint WHERE conname='unknown_expected_0158'`)[0].definition;}
       finally{await client.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT unknown_expected_0158`);}
+      const expr=live.slice("CHECK (".length,-1);
+      expect(after[n],`${n}: 0161 rules join`).toBe(`CHECK ((${expr}) OR (${textLocalDirect[n]}))`);
+      continue;
     }
     await client.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT unknown_expected CHECK (${predicate})`);
     try{expect(after[n]).toBe((await client`SELECT pg_get_constraintdef(oid) definition FROM pg_constraint WHERE conname='unknown_expected'`)[0].definition);}finally{await client.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT unknown_expected`);}}

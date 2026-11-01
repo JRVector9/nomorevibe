@@ -156,12 +156,14 @@ export const controlSnapshotSchema = z.object({
     waiting: count, waitingPrimary: count, version: count.nullable(), updatedAt: z.string().nullable(),
     helpers: z.array(helperGateStateSchema).max(512).optional() }).strict()).max(512).optional(),
   /**
-   * 배정 표 읽기(PR 3b-B). 이 스냅숏을 읽은 프로세스(ops CLI·웹)의 MODEL_ASSIGNMENT_TABLE 이 켜졌을 때만 있다 — 소비자 역할의 스위치는
-   * 그 앱의 env 라 다를 수 있다. `live` = 그 단계의 primary·live 행 수(DB), `tableReady` = 그 단계가 표로 고를 수 있는가(ai2 는 투표자 필요),
-   * `source` = 이 프로세스가 지금 쓰는 출처. 옛 스냅숏·0155 전 DB·스위치 꺼짐에는 없다. 어떤 전환도 막지 않는다.
+   * 배정 표 읽기(PR 3b-B). 이 스냅숏을 읽은 프로세스(ops CLI·웹)의 스위치가 켜졌을 때만 있다. PR 3b-E 부터 스위치는 runtime_settings 토글
+   * (`flagSource` 'runtime' — 모든 역할이 같은 행을 읽는다) 또는 env MODEL_ASSIGNMENT_TABLE 강제('env', 이 프로세스만)다. 옛 스냅숏에는 flagSource 가 없다.
+   * `live` = 그 단계의 primary·live 행 수(DB), `tableReady` = 그 단계가 표로 고를 수 있는가(ai2 는 투표자 필요), `source` = 이 프로세스가 지금 쓰는 출처.
+   * 옛 스냅숏·0155 전 DB·스위치 꺼짐에는 없다. 어떤 전환도 막지 않는다.
    */
-  assignments: z.object({ enabled: z.boolean(), stages: z.array(z.object({ stage: z.enum(ASSIGNMENT_STAGE_IDS), live: count, tableReady: z.boolean(),
-    source: z.enum(["table", "legacy", "legacy_empty_table"]) }).strict()).max(ASSIGNMENT_STAGE_IDS.length) }).strict().optional(),
+  assignments: z.object({ enabled: z.boolean(), flagSource: z.enum(["runtime", "env", "unread"]).optional(),
+    stages: z.array(z.object({ stage: z.enum(ASSIGNMENT_STAGE_IDS), live: count, tableReady: z.boolean(),
+      source: z.enum(["table", "legacy", "legacy_empty_table"]) }).strict()).max(ASSIGNMENT_STAGE_IDS.length) }).strict().optional(),
   http: z.object(controlRow("http")).strict(),
   batch: z.object({ mode: z.enum(MODES.batch), drainingFrom: z.enum(["legacy", "versioned"]).nullable(), epoch, contract: count,
     policy: z.unknown(), policyHash: z.string().nullable(), liveJobs: count, liveRoles: count, liveItems: count, liveSources: count,
@@ -232,11 +234,11 @@ const MODEL_ROUTES: readonly RouteSpec[] = [
 ];
 
 /**
- * 호출 지점 상수가 이 프로세스 env에서 받는 model 값(각 상수와 같은 `값 || 기본값`). crawlReview는 1차 심사 설정이 없을 때의 CRAWL_REVIEW_MODEL이다.
+ * 호출 지점 상수가 이 프로세스 env에서 받는 model 값(각 상수와 같은 `값 || 기본값`). 1차 심사는 관리자 설정만 본다(설정이 없으면 model null).
  * pooled: 관리자 단계 선택이 있는 text route의 실제 호출 이름(선택한 키마다 하나). text 잡은 저장된 선택 안에서 돌므로(lib/jobs/registry.ts
  * MODEL_POOL_JOBS) 그 route는 env 상수 대신 이 이름들로 판정한다.
  */
-export type ModelEnv = { crawlReview: string | null; translate: string; productTranslate: string; koreanTagline?: string; searchQuery?: string; tagline: string; profile: string; verify: string; introCheck: string;
+export type ModelEnv = { translate: string; productTranslate: string; koreanTagline?: string; searchQuery?: string; tagline: string; profile: string; verify: string; introCheck: string;
   pooled?: Partial<Record<TextModelRoute, readonly string[]>> };
 export const TEXT_ROUTES = [["product-search-profile", "profile"], ["product-search-verify", "verify"], ["reason-translate", "translate"],
   ["product-translate", "productTranslate"], ["product-tagline-ko", "koreanTagline"], ["search-query-translate", "searchQuery"], ["crawl-tagline", "tagline"]] as const;
@@ -256,7 +258,7 @@ export function usedModelRoutes(snapshot: ControlSnapshot, models: ModelEnv | nu
   else {
     const first = firstReviewers(settings);
     if (first.length) for (const reviewer of first) add("crawl-agent-review", reviewer.provider, reviewer.model);
-    else add("crawl-agent-review", "claude-cli", models?.crawlReview);
+    else add("crawl-agent-review", "claude-cli", null);
     const second = [...secondReviewVoters(settings), ...secondReviewFallbacks(settings)];
     for (const voter of second) add("second-review", voter.provider, voter.model);
     const grok = [...second, ...first].find(voter => voter.provider === "grok-cli");
@@ -534,7 +536,8 @@ function areaLines(snapshot: ControlSnapshot, area: Area | "all"): string[] {
   }
   if ((area === "all" || area === "capacity") && snapshot.assignments) {
     const a = snapshot.assignments, used = a.stages.filter(row => row.live > 0 || row.source !== "legacy");
-    lines.push(`[assignments] MODEL_ASSIGNMENT_TABLE(이 프로세스)=${a.enabled ? "on" : "off"}`
+    // flagSource(3b-E): runtime = runtime_settings 토글(모든 역할 공통) · env = MODEL_ASSIGNMENT_TABLE 강제(이 프로세스만) · unread = 토글을 아직 못 읽음
+    lines.push(`[assignments] 배정 표 읽기(이 프로세스)=${a.enabled ? "on" : "off"}${a.flagSource ? `(${a.flagSource})` : ""}`
       + (used.length ? ` ${used.map(row => `${row.stage}=${row.source}(live ${row.live}${row.tableReady ? "" : ", 표로 못 고름"})`).join(" ")}` : " live 배정 없음"));
   }
   if (area === "all" || area === "http") {

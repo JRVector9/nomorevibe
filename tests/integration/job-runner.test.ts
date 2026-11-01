@@ -3,6 +3,7 @@ import { eq, like, or } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { jobs, operationsObservations } from "@/lib/db/schema";
 import { readJobDegraded } from "@/lib/operations/job-health";
+import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { runJob, getJobState, listJobStates } from "@/lib/jobs/runner";
 import { JOBS } from "@/lib/jobs/registry";
 import { ensureSchema } from "./setup";
@@ -196,12 +197,35 @@ describe("runJob — 실패 기록", () => {
     expect((await getJobState("stage-moved"))?.lastError).toContain("또 실패");
   });
 
-  it("일을 시도하지 않은 일시적 미룸(model_capacity)은 지난 실패 기록을 그대로 둔다", async () => {
-    await runJob("capacity-wait", async () => { throw new Error("모델 호출 뒤 실패"); });
+  /**
+   * 2026-10-31 실측: 모델 자리가 막힌 product-search-profile·reason-translate 는 30분간 260·111회 model_capacity 로 미루고 한 번도 던지지
+   * 않았는데, 며칠 전 던진 "[55P03] …" 이 lastError 에 그대로 남아 관리자 상태 "오류"·긴급 "마지막 회차가 실패한 작업"으로 보였다.
+   * 미룸은 사유를 가리지 않고 "던지지 않고 끝난 틱"이다 — 성공 시각·요청·커서는 그대로 두고 지난 실패 기록만 지운다.
+   */
+  it("모델 자리가 없어 미룬(model_capacity) 틱도 던지지 않고 끝났으므로 지난 실패 기록을 지운다 — 성공 시각·요청·커서는 그대로", async () => {
+    await runJob("capacity-wait", async () => ({ done: true }));
+    const succeeded = await getJobState("capacity-wait");
+    await runJob("capacity-wait", async (ctx) => { await ctx.save({ page: 7 }); throw new Error("[55P03] 모델 호출 뒤 실패"); });
+    expect((await getJobState("capacity-wait"))?.lastError).toContain("[55P03]");
     await db.update(jobs).set({ notBefore: null }).where(eq(jobs.name, "capacity-wait"));
+
     expect(await runJob("capacity-wait", async () => ({ done: false, deferred: "model_capacity" as const }), { requestedOnly: true }))
       .toMatchObject({ status: "deferred", reason: "model_capacity" });
-    expect((await getJobState("capacity-wait"))?.lastError).toContain("모델 호출 뒤 실패");
+    const deferred = await getJobState("capacity-wait");
+    expect(deferred).toMatchObject({ lastError: null, cursor: { page: 7 }, lockedAt: null, leaseToken: null,
+      processedVersion: succeeded!.processedVersion, lastSuccessAt: succeeded!.lastSuccessAt });
+    expect(deferred!.requestedVersion).toBeGreaterThan(deferred!.processedVersion);
+  });
+
+  it("처리기가 ModelCapacityDeferredError 를 던져 미룬 틱(운영 경로)도 지난 실패 기록을 지우고, 다시 던지면 다시 남는다", async () => {
+    await runJob("capacity-typed", async () => { throw new Error("지난 실패"); });
+    await db.update(jobs).set({ notBefore: null }).where(eq(jobs.name, "capacity-typed"));
+    expect(await runJob("capacity-typed", async () => { throw new ModelCapacityDeferredError("capacity"); }, { requestedOnly: true }))
+      .toMatchObject({ status: "deferred", reason: "model_capacity" });
+    expect(await getJobState("capacity-typed")).toMatchObject({ lastError: null, lastSuccessAt: null, lockedAt: null, leaseToken: null });
+
+    await runJob("capacity-typed", async () => { throw new Error("또 실패"); });
+    expect((await getJobState("capacity-typed"))?.lastError).toContain("또 실패");
   });
 
   it("DB 오류는 SQLSTATE 와 표·제약 이름을 실패 기록 앞과 job.failed 로그에 남긴다 — 키 값(detail)은 남기지 않는다", async () => {

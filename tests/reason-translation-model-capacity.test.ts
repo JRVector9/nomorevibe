@@ -15,6 +15,7 @@ vi.mock('@/lib/crawl/agent-review-gateway', () => ({ prepareReasonTranslationGat
   translateWithReservedReasonGateway: mocks.native }));
 vi.mock('@/lib/jobs/role-leader', () => ({ roleLeaseFromEnv: mocks.role }));
 import { translateReasonsWithModelCapacity } from '@/lib/crawl/reason-translation-model-capacity';
+import { setServingContractSnapshotForTest } from '@/lib/llm/serving-contract-store';
 const body = 'This original reason describes a deployed useful task tracker.';
 const hash = createHash('sha256').update(body).digest('hex');
 const batch = () => [{ hash, body, attempts: 0 }];
@@ -29,7 +30,9 @@ const dispatch = { ...reservation, unitBoundary: 'committed-dispatch' };
 const expectation = Object.freeze({ unitBoundary: 'private-writer-proof' });
 const options = () => ({ timeoutMs: 45000 });
 beforeEach(() => {
-  vi.resetAllMocks(); vi.stubEnv('ABCLLM_API_KEY', 'test-key'); vi.stubEnv('ROLE_LEASE_ROLE', 'text');
+  vi.resetAllMocks(); vi.stubEnv('ROLE_LEASE_ROLE', 'text');
+  // The engine connected directly (admin contract, transport direct) opens the route; no gateway key exists any more.
+  setServingContractSnapshotForTest([{ routeId: 'reason-translate', model: 'Reason Model', contract: {}, auth: 'none', apiKey: null, transport: 'direct' }]);
   mocks.control.mockResolvedValue({ mode: 'open', policy: { routes: [{ routeId: 'reason-translate', provider: 'abcllm', model: 'Reason Model' }] } });
   mocks.role.mockReturnValue(role); mocks.prepare.mockReturnValue(call); mocks.pending.mockResolvedValue(null);
   mocks.batches.mockResolvedValue([]);
@@ -39,7 +42,14 @@ beforeEach(() => {
   mocks.native.mockResolvedValue({ result: { ok: true, translations: ['한국어 사유'] }, terminal: Object.freeze({ native: 'opaque' }) });
   mocks.legacy.mockResolvedValue({ ok: true, translations: ['기존 번역'] });
 });
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => { setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); });
+it('ignores a process gateway key: without a direct contract it never reads capacity, prepares or reserves', async () => {
+  setServingContractSnapshotForTest([]); vi.stubEnv('ABCLLM_API_KEY', 'ignored-gateway-key');
+  expect(await translateReasonsWithModelCapacity(batch(), lease, options()))
+    .toEqual({ kind: 'disabled', result: { ok: true, translations: ['기존 번역'] } });
+  expect(mocks.control).not.toHaveBeenCalled(); expect(mocks.prepare).not.toHaveBeenCalled();
+  expect(mocks.request).not.toHaveBeenCalled(); expect(mocks.native).not.toHaveBeenCalled();
+});
 it('preserves disabled transport and the original ordered timeout/signal arguments', async () => {
   mocks.control.mockResolvedValue({ mode: 'disabled' });
   const controller = new AbortController();

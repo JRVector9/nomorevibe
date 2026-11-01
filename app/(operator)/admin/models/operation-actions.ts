@@ -6,7 +6,8 @@ import { db } from "@/lib/db";
 import { operationsAudit } from "@/lib/db/schema";
 import { webWriteAction } from "@/lib/operations/dr/web-gate";
 import { adminAuditRow } from "@/lib/operations/admin-log";
-import { listGatewayModels } from "@/lib/crawl/agent-review-gateway";
+import { listReviewEngineModels } from "@/lib/crawl/agent-review-gateway";
+import { servingContractSnapshot } from "@/lib/llm/serving-contract-store";
 import { randomUUID } from "node:crypto";
 import { submitModelOpsCommand } from "@/lib/operations/ops-runner/repository";
 import { adminModelIdentitySchema, modelIdentityKey } from "@/lib/operations/admin-models-observation";
@@ -14,13 +15,20 @@ import { readAdminModelsObservation } from "@/lib/operations/admin-models-reposi
 import { findModelDefinition } from "@/lib/operations/admin-models-view";
 import { ADMIN_MODEL_STAGES } from "@/lib/llm/admin-model-stages";
 import { readModelRegistry, modelRequestName } from "@/lib/llm/model-registry";
+import { saveProbeObservation } from "@/lib/operations/admin-models-probe-repository";
+
+/** The stored key of a direct engine contract for this registry model, if any (the gateway key is gone with the gateway). */
+function directEngineKey(definition: ReturnType<typeof readModelRegistry>["models"][number]): string | null {
+  const names = new Set([definition.model, modelRequestName(definition)]);
+  return servingContractSnapshot().rows.find(row => row.transport === "direct" && row.auth === "stored" && row.apiKey && names.has(row.model))?.apiKey ?? null;
+}
 
 async function listRegisteredModel(definition: ReturnType<typeof readModelRegistry>["models"][number]): Promise<boolean | null> {
   if (!definition.baseUrl) return null;
   try {
+    const key = definition.provider === "abcllm" ? directEngineKey(definition) : null;
     const response = await fetch(`${definition.baseUrl.replace(/\/+$/, "")}/models`, { cache: "no-store", redirect: "error",
-      signal: AbortSignal.timeout(5000), headers: definition.provider === "abcllm" && process.env.ABCLLM_API_KEY
-        ? { authorization: `Bearer ${process.env.ABCLLM_API_KEY}` } : {} });
+      signal: AbortSignal.timeout(5000), headers: key ? { authorization: `Bearer ${key}` } : {} });
     if (!response.ok || !response.body) return null;
     const reader = response.body.getReader();
     const chunks: Uint8Array[] = []; let size = 0;
@@ -33,7 +41,9 @@ async function listRegisteredModel(definition: ReturnType<typeof readModelRegist
   } catch { return null; }
 }
 
-export type ModelProbeResult = { error?: string; listed?: boolean; listMs?: number; callMs?: number; callBlocked?: string };
+/** observedAt·source 는 결과를 관측 표(probe:<provider>:<model>)에 남긴 시각·출처 — 저장에 실패하면 saveError 만 있고 결과는 그대로다. */
+export type ModelProbeResult = { error?: string; listed?: boolean; listMs?: number; callMs?: number; callBlocked?: string;
+  observedAt?: string; source?: "manual" | "auto"; saveError?: string };
 export const probeAdminModel = webWriteAction(async function probeAdminModel(input: unknown): Promise<ModelProbeResult> {
   const admin = await currentAdmin();
   if (!admin) return { error: "관리자만 연결을 확인할 수 있습니다." };
@@ -48,7 +58,7 @@ export const probeAdminModel = webWriteAction(async function probeAdminModel(inp
   // Commit intent before network IO. Failure to audit must prevent the operation.
   await db.insert(operationsAudit).values(await adminAuditRow(admin.login, { action: "admin-models-probe-start", target: identity.routeId, detail: identity }));
   const started = Date.now();
-  const models = !definition && identity.provider === "abcllm" ? await listGatewayModels() : null;
+  const models = !definition && identity.provider === "abcllm" ? await listReviewEngineModels() : null;
   const listed = definition ? await listRegisteredModel(definition) : models ? models.includes(identity.model) : null;
   const result: ModelProbeResult = { listed: listed ?? undefined, listMs: Date.now() - started,
     callBlocked: /deepseek/i.test(`${identity.provider} ${identity.model}`)
@@ -57,7 +67,9 @@ export const probeAdminModel = webWriteAction(async function probeAdminModel(inp
     ...(listed === null ? { error: identity.provider === "abcllm" || identity.provider === "local-direct" ? "모델 목록을 읽지 못했습니다. 연결 설정·인증을 확인해주세요." : "이 제공자의 모델 목록 조회 실행기가 연결되지 않았습니다." } : {}) };
   await db.insert(operationsAudit).values(await adminAuditRow(admin.login, { action: "admin-models-probe-result", target: identity.routeId,
     detail: { ...identity, ...result }, ok: false, error: result.error ?? "short_call_contract_missing" }));
-  return result;
+  // 2026-10-31 한 화면: 결과를 슬롯 키(probe:<provider>:<model>)에 남겨 새로고침 뒤에도 「N초 전 · 수동 · 결과」로 보인다. 같은 장비·모델은 한 결과를 공유한다.
+  try { const saved = await saveProbeObservation(identity, result, "manual"); return { ...result, observedAt: saved.observedAt, source: "manual" }; }
+  catch { return { ...result, saveError: "연결 확인 결과를 관측 표에 남기지 못했습니다. 이 결과는 새로고침하면 사라집니다." }; }
 });
 
 const admissionSchema = z.object({ to: z.enum(["open", "draining"]), fromMode: z.enum(["open", "draining"]),

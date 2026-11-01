@@ -28,7 +28,7 @@ export type AssignmentImportSettings = Pick<CrawlSettings, "firstReview" | "firs
 export type AssignmentImportOptions = Readonly<{
   /** 지금 배정 표 행(role 'primary') — 차이를 만든다. 기본 []. */
   existing?: readonly ModelAssignmentRow[];
-  /** firstReview 가 없을 때 오늘 쓰는 env 대체(claude-cli + CRAWL_REVIEW_MODEL). 순수 함수라 env 를 읽지 않는다. */
+  /** firstReview 가 없을 때 대신 옮길 1차 심사자(호출자가 정한다 — 코드의 env 대체는 2026-10-31 abcLLM 정리 때 지웠다). 순수 함수라 env 를 읽지 않는다. */
   firstReviewFallback?: { provider: "claude-cli" | "abcllm" | "grok-cli"; model: string } | null;
   /** 장비 행(관리자 화면이 모은다). 주면 켜진 장비가 아닌 곳의 만들기·실전 고치기를 건너뛰고 `device_unconfigured` 로 알린다(저장이 거절할 행). */
   devices?: readonly Readonly<{ deviceId: string; enabled: boolean }>[];
@@ -106,7 +106,7 @@ export function buildAssignmentImportPlan(settings: AssignmentImportSettings, po
   };
 
   if (!settings.firstReview && options.firstReviewFallback) warn("firstReview", "first_review_from_env", options.firstReviewFallback.model);
-  if (!settings.firstReview && !options.firstReviewFallback) warn("firstReview", "first_review_unset", "CRAWL_REVIEW_MODEL env 대체는 옮기지 않는다");
+  if (!settings.firstReview && !options.firstReviewFallback) warn("firstReview", "first_review_unset", "관리자 설정에서 1차 심사자를 고른 뒤 다시 가져온다(환경변수 대체는 2026-10-31 제거)");
   legacyFirstReviewers(settings, options.firstReviewFallback ?? null).forEach((reviewer, index) =>
     addReviewer(index === 0 ? "firstReview" : `firstReviewAdditional[${index - 1}]`, "ai1", reviewer, 1, false, index + 1));
   settings.secondReview.voters.forEach((voter, index) => addReviewer(`secondReview.voters[${index}]`, "ai2", voter, 1, true, index + 1));

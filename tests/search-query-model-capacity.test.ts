@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { SEARCH_QUERY_MODEL, glossaryHints } from "@/lib/crawl/translate";
 import { normalizeQuery, queryTranslationKey, resolveSearchQuery, warmQueryTranslation } from "@/lib/domain/products/search-translation";
 import type { WebsearchQueryInput } from "@/lib/llm/capacity";
+import { scopedModel } from "@/lib/llm/model-registry";
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 
 // 공개 검색어 번역의 공통 슬롯 연결 — 장부·native·주 DB 경계는 가짜로 두고 호출 순서·횟수와 사용자에게 돌아가는 값만 본다.
 const mocks = vi.hoisted(() => ({ legacyKo: vi.fn(), legacyZh: vi.fn(), cacheRead: vi.fn(), legacyWrite: vi.fn(), primary: vi.fn(),
@@ -32,7 +34,10 @@ function input(text = query): WebsearchQueryInput {
 const dispatch = { requestId: randomUUID() }, expectation = Object.freeze({ kind: "websearch_query_write" });
 function latch<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
 beforeEach(() => {
-  vi.resetAllMocks(); vi.stubEnv("ABCLLM_API_KEY", "unit-only");
+  vi.resetAllMocks();
+  // The route opens only on an engine connected directly (admin contract, transport direct); the gateway key was removed 2026-10-30.
+  setServingContractSnapshotForTest([{ routeId: "search-query-translate", model: scopedModel("search-query-translate", SEARCH_QUERY_MODEL),
+    contract: {}, auth: "none", apiKey: null, transport: "direct" }]);
   mocks.primary.mockImplementation((load: () => Promise<unknown>) => load());
   mocks.cacheRead.mockResolvedValue([]); mocks.control.mockResolvedValue(open); mocks.owner.mockReturnValue(owner);
   mocks.prepareCall.mockReturnValue({ kind: "prepared", provider: "abcllm", model: SEARCH_QUERY_MODEL, wireHash: "c".repeat(64), servingContractHash: "d".repeat(64),
@@ -44,10 +49,12 @@ beforeEach(() => {
   mocks.reconcile.mockResolvedValue({ kind: "settled" }); mocks.mark.mockResolvedValue(true); mocks.record.mockResolvedValue({ kind: "stored" });
   mocks.legacyKo.mockResolvedValue({ ok: true, keywords: "legacy words" });
 });
+afterEach(() => { setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); });
 
-it.each([["disabled", { ...open, mode: "disabled", policy: null }], ["missing key", open]])
+it.each([["disabled", { ...open, mode: "disabled", policy: null }], ["missing direct contract", open]])
   ("keeps the original leaf, cache writer and result exactly when %s", async (name, control) => {
-    if (name === "missing key") vi.stubEnv("ABCLLM_API_KEY", "");
+    // A leftover gateway key does not stand in for the direct contract.
+    if (name === "missing direct contract") { setServingContractSnapshotForTest([]); vi.stubEnv("ABCLLM_API_KEY", "old-gateway-key"); }
     mocks.control.mockResolvedValue(control);
     const result = await resolveSearchQuery(query, { waitForTranslation: true });
     expect(result).toMatchObject({ translated: "legacy words" }); expect(result.translationPending).toBeUndefined();

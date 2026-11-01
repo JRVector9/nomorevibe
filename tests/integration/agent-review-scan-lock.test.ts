@@ -35,13 +35,13 @@ beforeEach(async () => {
   await db.delete(crawlSettings);await db.delete(jobs);await db.delete(agentRepositoryScans);
 });
 async function fixture() {
-  await saveSettings({enabled:true},"test");
+  // 1차 심사자는 관리자 설정만 본다(CRAWL_REVIEW_MODEL 대체는 2026-10-31 제거)
+  await saveSettings({enabled:true,firstReview:{provider:"claude-cli",model:"test"}},"test");
   // 이 파일은 스캔 잠금을 본다 — 두 모델 승인 관문(2차 심사)은 review-publication-gate 가 따로 본다
   await saveSettings({secondReview:{enabled:false}},"test");
   vi.stubEnv("CRAWL_REVIEW_READY","true");
   expect(await changeReviewMode({mode:"enforce",expectedMode:"off",actor:"test",reason:"scan lock test"})).toMatchObject({ok:true});
   vi.unstubAllEnvs();
-  vi.stubEnv("CRAWL_REVIEW_MODEL", "test");
   const now = new Date(Date.now()-2000), productUrl="https://scan-lock.example";
   const scan = (await saveRepositoryAgentScan(scanned("a".repeat(40)),now))!;
   const [document] = await db.insert(crawlDocuments).values({repo,productUrl,pageStatus:200,fetchedAt:now,

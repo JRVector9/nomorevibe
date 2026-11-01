@@ -4,11 +4,12 @@ import * as binding from "@/lib/llm/gateway-local-direct-binding-sql";
 import { gatewayLocalDirectDispatchSql } from "@/lib/llm/gateway-local-direct-sql";
 
 /**
- * 0159(PR 3b-E text local-direct 기록): 0157 이 text 7경로의 dispatch 분기에서 행 열의 'abcllm' 만 바꿔 binding JSON 의 provider 는 '"abcllm"' 로 남았고,
+ * 0161(PR 3b-E text local-direct 기록): 0157 이 text 7경로의 dispatch 분기에서 행 열의 'abcllm' 만 바꿔 binding JSON 의 provider 는 '"abcllm"' 로 남았고,
  * terminal·events 의 text 분기는 생성에서 빠졌다 — 그래서 provider local-direct 인 text dispatch 가 어느 분기에도 닿지 않았다(사설 DB 로 확인).
- * 0159 는 0125 의 그 분기들에서 'abcllm' 과 '"abcllm"' 을 모두 local-direct 로 바꿔 세 CHECK 끝에 덧붙인다. 0157 과 같은 꼴(살아 있는 술어 전체 + OR 분기).
+ * 0160 이 CHECK 를 rules 행으로 옮긴 뒤라, 0161 은 0125 의 그 분기들에서 'abcllm' 과 '"abcllm"' 을 모두 local-direct 로 바꾼 새 가지만
+ * model_capacity_check_rules 의 다음 ordinal 로 넣는다. 옛 술어 전체를 복사하지 않는다.
  */
-const tag = "0159_text_local_direct_binding";
+const tag = "0161_text_local_direct_binding";
 const TEXT_ROUTES = ["product-search-profile", "reason-translate", "product-translate", "product-tagline-ko", "crawl-tagline",
   "product-search-verify", "search-query-translate"] as const;
 const TEXT_TERMINALS = ["text_profile_gateway_terminal", "reason_translation_gateway_terminal", "product_translation_gateway_terminal",
@@ -52,33 +53,37 @@ function authoredBranches(name: string): string[] {
 const isAi2 = (branch: string) => /'second-review'|ai2_item_gateway|ai2_gateway_terminal/.test(branch);
 const migration = () => readFileSync(`drizzle/${tag}.sql`, "utf8");
 function migrationBranches() {
-  return migration().split("--> statement-breakpoint").filter(sql => sql.includes("DO $$")).map(sql => ({
-    name: /conname='([^']+)'/.exec(sql)![1], table: /conrelid='([^']+)'::regclass/.exec(sql)![1], branch: /\$ai2_local\$([\s\S]*?)\$ai2_local\$/.exec(sql)![1], sql,
-  }));
+  return migration().split("--> statement-breakpoint").flatMap(sql => {
+    const header = /SELECT '(model_capacity_requests|model_capacity_events)', '([^']+)', COALESCE\(MAX\(ordinal\), 0\) \+ 1, \$branch\$([\s\S]*?)\$branch\$/.exec(sql);
+    return header ? [{ table: header[1], name: header[2], branch: header[3], sql }] : [];
+  });
 }
 
-it("registers one additive migration right after 0158 (release branch kinds, merged from main) at the agreed journal position", () => {
-  const journal = JSON.parse(readFileSync("drizzle/meta/_journal.json", "utf8")) as { entries: { idx: number; when: number; tag: string }[] };
+it("registers 0161 last, immediately after 0160, at the agreed journal position", () => {
+  const journal = JSON.parse(readFileSync("drizzle/meta/_journal.json", "utf8")) as { entries: { idx: number; when: number; tag: string; breakpoints?: boolean; version?: string }[] };
   const entry = journal.entries.find(entry => entry.tag === tag);
-  expect(entry).toMatchObject({ idx: 159, when: 1794086401070, tag, breakpoints: true });
-  const provider = journal.entries.find(entry => entry.tag === "0157_ai1_provider_enum")!;
-  expect(provider.when).toBeLessThan(entry!.when);
-  const release = journal.entries.find(entry => entry.tag === "0158_release_branch_kinds")!;
-  expect(release).toMatchObject({ idx: 158, when: 1794086401069 });
-  expect(journal.entries.indexOf(entry!), "0159 sits right after 0158").toBe(journal.entries.indexOf(release) + 1);
+  expect(entry).toMatchObject({ idx: 161, when: 1794086401072, tag, breakpoints: true, version: "7" });
+  const rules = journal.entries.find(entry => entry.tag === "0160_ledger_check_rules")!;
+  expect(rules).toMatchObject({ idx: 160, when: 1794086401071 });
+  expect(rules.when).toBeLessThan(entry!.when);
+  expect(journal.entries.indexOf(entry!), "0161 sits right after 0160").toBe(journal.entries.indexOf(rules) + 1);
   expect(journal.entries.at(-1)).toBe(entry);
-  expect(journal.entries.filter(entry => entry.idx === 159 || entry.when === 1794086401070 || entry.tag === tag)).toHaveLength(1);
+  expect(journal.entries.filter(entry => entry.idx === 159 || entry.tag === "0159_text_local_direct_binding")).toEqual([]);
   expect(journal.entries.map(entry => entry.when)).toEqual([...journal.entries.map(entry => entry.when)].sort((a, b) => a - b));
+  expect(journal.entries.map(entry => entry.idx)).toEqual([...journal.entries.map(entry => entry.idx)].sort((a, b) => a - b));
 });
 
 it.each(targets)("$name appends the seven text-route branches with the row and the JSON provider both local-direct", ({ name, table, constant, kinds }) => {
   const added = migrationBranches().filter(entry => entry.name === name);
   expect(added).toHaveLength(1);
   expect(added[0].table).toBe(table);
-  expect(added[0].branch, `${name}: the appended branch is the schema constant`).toBe(constant);
-  expect(added[0].sql).toContain("substring(pg_get_constraintdef(oid) FROM 7) INTO STRICT old_predicate");
-  expect(added[0].sql).toContain(`ALTER TABLE ${table} DROP CONSTRAINT ${name}`);
-  expect(added[0].sql).toContain(`ALTER TABLE ${table} ADD CONSTRAINT ${name} CHECK ((%s) OR (%s))`);
+  expect(added[0].branch, `${name}: the inserted branch is the schema constant`).toBe(constant);
+  expect(added[0].sql).toContain("INSERT INTO model_capacity_check_rules");
+  expect(added[0].sql).toContain("COALESCE(MAX(ordinal), 0) + 1");
+  expect(added[0].sql).toContain(`WHERE table_name = '${table}' AND constraint_name = '${name}'`);
+  expect(added[0].sql).toContain("HAVING COUNT(*) FILTER (WHERE source = '0160_ledger_check_rules') >= 1");
+  expect(added[0].sql).toContain("AND COUNT(*) FILTER (WHERE source = '0161_text_local_direct_binding') = 0");
+  expect(added[0].sql).not.toMatch(/DROP CONSTRAINT|ADD CONSTRAINT/);
   // Exactly the 0125 text-route branches whose JSON carries the provider literal; AI1 compares the JSON provider to the row and AI2 was widened by 0132.
   const original = authoredBranches(name).filter(branch => branch.includes("'\"abcllm\"'") && !isAi2(branch));
   expect(original).toHaveLength(TEXT_ROUTES.length);
@@ -100,11 +105,16 @@ it("the 0157 dispatch twins stayed as stored: row local-direct, JSON still abcll
   for (const twin of twins) { expect(twin).toContain("provider='local-direct'"); expect(twin).toContain("'\"abcllm\"'::jsonb"); }
 });
 
-it("changes exactly three CHECKs without replacing SQL functions, triggers, indexes or ledger rows", () => {
+it("inserts exactly three branch rows and rebuilds both tables, without recreating the guard or touching ledger rows", () => {
   expect(migrationBranches().map(entry => entry.name)).toEqual(targets.map(target => target.name));
   const sql = migration();
-  expect(sql.split("\n")[0]).toContain("0159 (PR 3b-E");
-  expect(sql).not.toMatch(/\b(?:CREATE|REPLACE)\s+(?:OR\s+REPLACE\s+)?FUNCTION\b/i);
-  expect(sql).not.toMatch(/\b(?:CREATE|DROP|ALTER)\s+(?:TRIGGER|INDEX|COLUMN)\b/i);
-  expect(sql).not.toMatch(/^\s*(?:UPDATE|INSERT|DELETE|TRUNCATE)\b/im);
+  expect(sql.split("\n")[0]).toContain("0161 (PR 3b-E");
+  expect(sql).toContain("SELECT nmv_model_capacity_check_guard_rebuild('model_capacity_requests');");
+  expect(sql).toContain("SELECT nmv_model_capacity_check_guard_rebuild('model_capacity_events');");
+  const code = sql.split("\n").filter(line => !line.trimStart().startsWith("--")).join("\n");
+  expect(code).not.toMatch(/\b(?:CREATE|REPLACE)\s+(?:OR\s+REPLACE\s+)?FUNCTION\b/i);
+  expect(code).not.toMatch(/\b(?:CREATE|DROP|ALTER)\s+(?:TRIGGER|INDEX|COLUMN)\b/i);
+  expect(code).not.toMatch(/\bDROP\s+CONSTRAINT\b|\bADD\s+CONSTRAINT\b/i);
+  expect(code).not.toMatch(/^\s*(?:UPDATE|DELETE|TRUNCATE)\b/im);
+  expect(code).not.toMatch(/INSERT INTO model_capacity_(?:requests|events)\b/);
 });

@@ -121,6 +121,15 @@ export const modelCapacityControl = pgTable('model_capacity_control', {
   check('model_capacity_control_cursor_check', sql`${table.cursor} between 0 and 95`),
 ]);
 
+/**
+ * 0160(2026-11-01): 아래 두 표의 합성 CHECK 여섯 개(requests dispatch·logical·members·terminal, events kind·terminal)는 DB 에서는 pg_constraint 가 아니라
+ * model_capacity_check_rules 의 행 + nmv_<표>_check_guard() BEFORE INSERT OR UPDATE 트리거(<표>_zz_check_guard)로 산다 — ordinal 1 술어 글자는 0158 상태의
+ * pg_get_expr(conbin) 그대로다(글자 하나 고치지 않았다). 여기 check() 선언은 그 술어의 TypeScript 쪽 단일 출처(스키마 이력 시험이 읽는다)로 남긴다;
+ * drizzle-kit generate/push 는 이 저장소에서 쓰지 않는다. 새 가지는 "(이전 전체) OR (가지)" 재조립 대신 rules 행 하나(다음 ordinal)로 더하고
+ * nmv_model_capacity_check_guard_rebuild(표) 를 부른다(drizzle/0160_ledger_check_rules.sql, docs/operations/2026-11-01-ledger-check-cost.md).
+ * 0161 은 text 7경로 local-direct 가지(textLocalDirect*Sql)를 그 다음 ordinal 로 넣는다. 이 선언은 같은 값을 맨 끝 OR 로 이어 둔다 — DB 술어와 글자 단위로
+ * 같게 다시 파싱하지 않고, 시험은 rules 행 (ordinal, predicate) 을 상수와 직접 비교한다.
+ */
 export const modelCapacityRequests = pgTable('model_capacity_requests', {
   requestId: uuid('request_id').primaryKey(),
   queueOrdinal: bigserial('queue_ordinal', { mode: 'number' }).notNull().unique(),
@@ -239,6 +248,26 @@ export const modelCapacityDevices = pgTable('model_capacity_devices', {
   check('model_capacity_devices_limits_check', sql`${table.limitSlots} between 1 and 256 and ${table.secondaryCap} between 0 and ${table.limitSlots} and ${table.reserveSlots} between 0 and ${table.limitSlots} - 1 and ${table.idleMs} between 0 and 3600000`),
   check('model_capacity_devices_physical_check', sql`${table.physicalLimit} is null or (${table.physicalLimit} between 1 and 256 and ${table.limitSlots} <= ${table.physicalLimit})`),
   check('model_capacity_devices_version_check', sql`${table.version} between 1 and 9007199254740991`),
+]);
+
+/**
+ * 0160: 장부 CHECK 술어 행 — (표, 제약 이름, 가지 순번) → 술어(pg_get_expr 꼴, 바깥 괄호 없음). nmv_model_capacity_check_guard_rebuild(표) 가
+ * 이 행들로 nmv_<표>_check_guard() 트리거 함수를 만든다: 제약 이름 알파벳 순서(CHECK 평가 순서), 같은 제약의 가지는 ordinal 순서로 OR(3값·단락).
+ * 운영 코드는 읽지 않는다 — 마이그레이션과 스키마 이력 시험(tests/integration/ledger-check-defs.ts)만 본다.
+ */
+export const modelCapacityCheckRules = pgTable('model_capacity_check_rules', {
+  tableName: text('table_name').notNull(),
+  constraintName: text('constraint_name').notNull(),
+  ordinal: integer('ordinal').notNull(),
+  predicate: text('predicate').notNull(),
+  source: text('source').notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, table => [
+  primaryKey({ columns: [table.tableName, table.constraintName, table.ordinal], name: 'model_capacity_check_rules_pk' }),
+  check('model_capacity_check_rules_table_check', sql`${table.tableName} in ('model_capacity_requests','model_capacity_events')`),
+  check('model_capacity_check_rules_ordinal_check', sql`${table.ordinal} >= 1`),
+  check('model_capacity_check_rules_predicate_check', sql`char_length(btrim(${table.predicate})) > 0 and position('$guard$' in ${table.predicate}) = 0`),
+  check('model_capacity_check_rules_source_check', sql`char_length(btrim(${table.source})) > 0`),
 ]);
 /** 장비 안 역할 순위(0153). rank 1 = 우선 역할(여러 route 가능). 순위 행이 없는 route 는 최하위(32767)다. 장비 행 삭제에 따라 지워진다. */
 export const modelCapacityDeviceRoles = pgTable('model_capacity_device_roles', {
@@ -587,7 +616,7 @@ export const jobBatchCandidates = pgTable('job_batch_candidates', {
 ]);
 
 /**
- * Admin-managed gateway serving contracts (0147). An enabled row overrides the ABCLLM_SERVING_CONTRACTS entry for its route+model.
+ * Admin-managed gateway serving contracts (0147). The enabled row is the only source of a route+model contract (no env contracts since 2026-10-31).
  * The contract JSON is validated by the route schema in the app; the API key is encrypted (lib/security/secret-box) and never part of it.
  */
 export const modelServingContracts = pgTable('model_serving_contracts', {

@@ -28,6 +28,17 @@ fleet = _load('monitor_fleet', 'release_runtime.py')
 git = fleet.git_rollout
 MAX_RECEIPT_AGE_SECONDS = 90
 PUSH_FIELDS = frozenset(('verified', 'primary', 'external', 'fresh', 'stateUp'))
+# Operator decision 2026-10-31: the monitor push proof waits five minutes, then a deployment that is itself proven
+# (new deployment done, runtime contract, image/RELEASE_TAG/healthy) is handed to a human instead of stopping the
+# run. Only the monitor verification uses this limit; every other app keeps its own timeout.
+MONITOR_VERIFY_TIMEOUT_SECONDS = 300
+HUMAN_REVIEW = 'human_review_required'
+# What the operator confirms by hand after a human-review hand-over (codes only; the docs explain each).
+OPERATOR_CHECKS = ('monitor_push_event_state_and_receipts', 'capacity_unknowns_alarm_reasons',
+                   'kuma_primary_and_external_heartbeat')
+CAPACITY_STATUSES = ('ok', 'review', 'alarm', 'unknown')
+MONITOR_OVERALLS = ('ok', 'unknown', 'alarm')
+SAFE_REASON = re.compile(r'[a-z][a-z0-9_]{0,39}')
 
 
 def _timestamp(value):
@@ -137,14 +148,15 @@ def read_push_receipts(short, runtime):
     return result
 
 
-def _runtime_ready(short, app, runtime, target, manifest, original_runtime):
+def _runtime_ready(short, app, runtime, target, manifest, original_runtime, retired_settings=()):
     if (runtime.get('updateStatus') or {}).get('State') in git.shared.SWARM_ROLLBACK_STATES + git.shared.SWARM_STOP_STATES:
         raise git.shared.SwarmRollback(short, {'updateState': runtime['updateStatus']['State']})
     if (runtime.get('updateStatus') or {}).get('State') not in git.DEPLOYED_SETTLED_STATES:
         return False
     try:
-        preserves = (git.runtime_contract_matches(original_runtime, runtime, target['sha']) and
-                     fleet._preserves_containers(original_runtime, runtime, target['sha'], 'monitor'))
+        preserves = (git.runtime_contract_matches(original_runtime, runtime, target['sha'], retired_settings=retired_settings) and
+                     fleet._preserves_containers(original_runtime, runtime, target['sha'], 'monitor',
+                                                 retired_settings=retired_settings))
     except (KeyError, TypeError, ValueError):
         preserves = False
     if runtime.get('serviceId') != original_runtime.get('serviceId') or not preserves:
@@ -169,41 +181,125 @@ def _runtime_ready(short, app, runtime, target, manifest, original_runtime):
     return True
 
 
-def check_monitor_deployed(client, short, target, original, old_id, manifest, expected_runtime, *, timeout=480, pause=2):
-    """Wait for one new monitor and both receiver acknowledgements; never mutate or retry deploy."""
+def push_block_reason(receipts):
+    """Safe code naming the first missing push proof, for the operator who takes over.
+
+    All five booleans false means no usable monitor.push event was read at all (no event after boot,
+    container count, SSH or parse failure); 'state not up' is the 2026-10-31 case: the watcher pushed
+    down because the ledger raised a capacity alarm while the receivers acknowledged normally.
+    """
+    flags = {key: receipts.get(key) is True for key in PUSH_FIELDS} if isinstance(receipts, dict) else {}
+    if not any(flags.values()):
+        return 'monitor_push_receipts_unreadable'
+    if not flags.get('stateUp'):
+        return 'monitor_push_state_not_up'
+    if not flags.get('fresh'):
+        return 'monitor_push_receipt_stale'
+    if not (flags.get('primary') and flags.get('external')):
+        return 'monitor_push_receiver_not_acknowledged'
+    return 'monitor_push_not_verified'
+
+
+def _require_unchanged_window(client, short, expected, latest, runtime):
+    """Logs and receipts must belong to the same stable container/spec/API window that was inspected."""
+    after_app, after_latest = client.app(short), client.latest(short)
+    after = git.inspect_runtime(short, after_app)
+    if (git.stable_config(after_app) != git.stable_config(expected) or
+            after_app.get('applicationStatus') != 'done' or after_latest.get('status') != 'done' or
+            after_latest.get('deploymentId') != latest['deploymentId'] or
+            (after.get('updateStatus') or {}).get('State') not in git.DEPLOYED_SETTLED_STATES or
+            not fleet._same_runtime_window(runtime, after)):
+        raise git.shared.ReleaseStopped(short + '_changed_during_push_readback')
+
+
+def _deployment_receipt(short, target, latest, runtime):
+    return {'app': short, 'deploymentId': latest['deploymentId'], 'deployment': 'done', 'service': 'healthy',
+            'image': target['worker'], 'specHash': runtime['specHash'], 'containerId': runtime['containers'][0]['id'],
+            'source': 'sha256-manifest'}
+
+
+def check_monitor_deployed(client, short, target, original, old_id, manifest, expected_runtime, *,
+                           timeout=MONITOR_VERIFY_TIMEOUT_SECONDS, pause=2, retired_settings=()):
+    """Wait for one new monitor and both receiver acknowledgements; never mutate or retry deploy.
+
+    Verified: new deployment done, runtime contract/image/RELEASE_TAG/healthy proven, and the latest
+    monitor.push event is up, fresh and acknowledged by both receivers. When the timeout passes while
+    the deployment itself is proven on the last poll and only that push proof is missing, the run is
+    not stopped: the receipt carries verification=human_review_required, the reason code and the last
+    observed receipt booleans. A deployment not proven on the last poll still raises TimeoutError.
+    retired_settings are the names this release deleted from the saved env; the contract check expects
+    exactly their absence (deploy_git_apps.runtime_contract_matches).
+    """
     if short != 'monitor-m3':
         raise ValueError('monitor_app_required')
     target = git.shared.validate_target(target['sha'], target['worker'], target['web'])
-    expected = fleet.expected_api(short, original, target)
+    expected = fleet.expected_api(short, original, target, retired_settings)
     if (not isinstance(expected_runtime, dict) or not expected_runtime.get('containers') or
             expected_runtime.get('specHash') != git.spec_hash(expected_runtime.get('serviceSpec')) or
             not isinstance(manifest, dict) or not manifest):
         raise ValueError('monitor_baseline_or_source_contract_invalid')
     deadline = time.monotonic() + timeout
+    pending = None
     while time.monotonic() < deadline:
         app, latest = client.app(short), client.latest(short)
         if app.get('applicationStatus') == 'error' or latest.get('status') == 'error':
             raise git.shared.ReleaseStopped(short + '_deployment_error')
+        # Only a deployment proven on the most recent poll may be handed over; a flapping runtime is not proven.
+        pending = None
         if (latest.get('deploymentId') and latest['deploymentId'] != old_id and
                 latest.get('status') == 'done' and app.get('applicationStatus') == 'done'):
             if git.stable_config(app) != git.stable_config(expected):
                 raise git.shared.ReleaseStopped(short + '_saved_configuration_mismatch')
             runtime = git.inspect_runtime(short, app, manifest=manifest)
-            if _runtime_ready(short, app, runtime, target, manifest, expected_runtime):
+            if _runtime_ready(short, app, runtime, target, manifest, expected_runtime, retired_settings):
                 receipts = read_push_receipts(short, runtime)
                 if receipts.get('verified') is True and all(receipts.get(key) is True for key in PUSH_FIELDS):
-                    # Logs must belong to the same stable container/spec/API window.
-                    after_app, after_latest = client.app(short), client.latest(short)
-                    after = git.inspect_runtime(short, after_app)
-                    if (git.stable_config(after_app) != git.stable_config(expected) or
-                            after_app.get('applicationStatus') != 'done' or after_latest.get('status') != 'done' or
-                            after_latest.get('deploymentId') != latest['deploymentId'] or
-                            (after.get('updateStatus') or {}).get('State') not in git.DEPLOYED_SETTLED_STATES or
-                            not fleet._same_runtime_window(runtime, after)):
-                        raise git.shared.ReleaseStopped(short + '_changed_during_push_readback')
-                    return {'app': short, 'deploymentId': latest['deploymentId'], 'deployment': 'done',
-                            'service': 'healthy', 'image': target['worker'], 'specHash': runtime['specHash'],
-                            'containerId': runtime['containers'][0]['id'], 'source': 'sha256-manifest',
+                    _require_unchanged_window(client, short, expected, latest, runtime)
+                    return {**_deployment_receipt(short, target, latest, runtime),
                             'pushReceipts': {'primary': True, 'external': True}}
+                pending = (latest, runtime, receipts)
         time.sleep(pause)
-    raise TimeoutError(short + '_source_health_or_push_verification_timeout')
+    if pending is None:
+        raise TimeoutError(short + '_source_health_or_push_verification_timeout')
+    latest, runtime, receipts = pending
+    _require_unchanged_window(client, short, expected, latest, runtime)
+    return {**_deployment_receipt(short, target, latest, runtime),
+            'pushReceipts': {key: receipts.get(key) is True for key in sorted(PUSH_FIELDS)},
+            'verification': HUMAN_REVIEW, 'reason': push_block_reason(receipts), 'verifyTimeoutSeconds': timeout}
+
+
+def capacity_alarm_summary(client):
+    """Read-only summary of the crawler container's failover-readiness report, the same REMOTE_MONITOR read the
+    deploy gates use: monitor overall, ledger status, counts and alarm reason codes. Request ids, URLs and values
+    never enter the summary; any read or shape failure is reported as unread, never as ok."""
+    try:
+        app = client.app('crawler-m3')
+        reports = json.loads(git.shared.ssh_python(git.shared.M3[1], git.shared.REMOTE_MONITOR, app['appName'], timeout=80))
+        readiness = reports['check-failover-readiness.ts']
+        capacity = readiness.get('capacityUnknowns') if isinstance(readiness, dict) else None
+        if not isinstance(capacity, dict):
+            raise ValueError('capacity_summary_missing')
+    except Exception:
+        return {'status': 'unread'}
+    def count(value):
+        return value if type(value) is int and 0 <= value <= 10 ** 9 else None
+    reasons = capacity.get('alarmReasons')
+    return {'status': capacity.get('status') if capacity.get('status') in CAPACITY_STATUSES else 'unread',
+            'monitorOverall': readiness.get('overall') if readiness.get('overall') in MONITOR_OVERALLS else 'unknown',
+            'count': count(capacity.get('count')), 'stuckDispatched': count(capacity.get('stuckDispatched')),
+            'oldestAgeSeconds': count(capacity.get('oldestAgeSeconds')),
+            'alarmReasons': sorted(reason for reason in reasons if isinstance(reason, str) and SAFE_REASON.fullmatch(reason))[:3]
+            if isinstance(reasons, list) else []}
+
+
+def human_review_record(client, evidence):
+    """Safe hand-over record for the operator: codes, booleans and counts only; never URLs, log lines or values."""
+    receipts = evidence.get('pushReceipts') if isinstance(evidence.get('pushReceipts'), dict) else {}
+    flags = {key: receipts.get(key) is True for key in sorted(PUSH_FIELDS)}
+    return {'app': evidence.get('app'), 'deploymentId': evidence.get('deploymentId'), 'status': 'human-review-required',
+            'verification': HUMAN_REVIEW, 'reason': evidence.get('reason'),
+            'verifyTimeoutSeconds': evidence.get('verifyTimeoutSeconds'),
+            'deployment': evidence.get('deployment'), 'service': evidence.get('service'),
+            'lastPushState': 'up' if flags['stateUp'] else 'unknown' if not any(flags.values()) else 'down',
+            'pushReceipts': flags, 'capacityUnknowns': capacity_alarm_summary(client),
+            'operatorChecks': list(OPERATOR_CHECKS), 'at': datetime.now(timezone.utc).isoformat()}

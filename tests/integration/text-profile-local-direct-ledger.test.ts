@@ -16,7 +16,8 @@ import { ensureSchema, TEST_DATABASE_URL } from "./setup";
 
 /**
  * PR 3b-E: text 경로(product-search-profile) 한 건의 local-direct 장부 왕복 — 예약 → 고정 identity dispatch(binding provider local-direct) →
- * 엔진 tokenizer 확인 → 엔진 완결 응답 = terminal 증거 → settled. DB CHECK 는 0157 이 붙인 text 7경로의 local-direct 분기 그대로다(새 마이그레이션 없음).
+ * 엔진 tokenizer 확인 → 엔진 완결 응답 = terminal 증거 → settled. 행·binding JSON 이 둘 다 local-direct 인 text dispatch 는 0161 rules 가지가 받아들인다
+ * (0157 은 행 열만 바꿔 JSON provider 는 '"abcllm"' 로 남았다).
  * 요청 상한을 넘는 입력은 보내지 않고 gateway_not_started(0149, provider 무관)로 정산된다. 운영 값이 아니다(loopback fixture).
  */
 const serving = vi.hoisted(() => ({ contract: null as TextProfileServingContract | null }));
@@ -194,7 +195,7 @@ it("records a local-direct text dispatch, settles the engine's own terminal and 
       if (!lock) throw new Error("actual_lock_required");
       return finishTextProfileModelCapacityDispatch(tx, lock, binding(productId, value, call));
     }));
-    // 0157: the text_profile_gateway CHECK accepts provider local-direct with the unchanged binding shape.
+    // 0161: the text_profile_gateway rules branch accepts provider local-direct in both the row and the binding JSON.
     expect(await row(checked.requestId)).toMatchObject({ state: "dispatched", dispatch_binding: { provider: "local-direct", kind: "text_profile_gateway",
       routeId: "product-search-profile", totalTokenBound: 50_000, chargedTokens: 50_000 }, dispatch_binding_hash: sent.bindingHash });
     const native = await tracked(writeKeywordsWithReservedGateway(value, sent, call));
@@ -205,7 +206,7 @@ it("records a local-direct text dispatch, settles the engine's own terminal and 
       dispatch: { binding: { provider: "local-direct" } } });
     expect(await tracked(reconcileTextProfileGatewayTerminal(native.terminal!))).toEqual({ kind: "settled" });
     expect(await tracked(reconcileTextProfileGatewayTerminal(native.terminal!))).toEqual({ kind: "already_settled" });
-    // 0157: the terminal evidence CHECK accepts the local-direct dispatch inside text_profile_gateway_terminal.
+    // 0161: the terminal rules branch accepts the local-direct dispatch inside text_profile_gateway_terminal.
     expect(await row(checked.requestId)).toMatchObject({ state: "settled", token: sent.token, terminal_evidence: { kind: "text_profile_gateway_terminal",
       provenance: "upstream_reported", actualUsage: { totalTokens: 110 }, dispatch: { requestId: checked.requestId, binding: { provider: "local-direct" } } } });
     expect(await admin`SELECT kind FROM model_capacity_events WHERE request_id=${checked.requestId}::uuid ORDER BY id`)

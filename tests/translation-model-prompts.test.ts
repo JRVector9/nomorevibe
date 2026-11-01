@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { productTaglineKoGatewayWire, productTranslationGatewayWire,
+import { productTaglineKoGatewayWire, productTaglineKoLegacyWire, productTranslationGatewayWire,
   translateProductFields, translateTaglinesToKorean, websearchQueryGatewayWire } from "@/lib/crawl/translate";
 import { koreanTranslationRuntimePrompt } from "@/lib/crawl/korean-translation-prompts";
 import { prepareProductTaglineKoGatewayCall, prepareProductTranslationGatewayCall } from "@/lib/crawl/agent-review-gateway";
-import { checkKoreanTagline } from "@/lib/domain/products/korean-tagline";
+import { checkKoreanTagline, parseKoreanTaglines } from "@/lib/domain/products/korean-tagline";
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { checkProductTranslation } from "@/lib/domain/products/translation-policy";
 
 vi.mock("@/lib/llm/text-capacity-admission", () => ({ assertTextModelAdmission: vi.fn() }));
@@ -21,8 +22,12 @@ vi.mock("@/lib/llm/product-tagline-ko-serving-contract", async original => ({
     endpoint: "http://127.0.0.1:1/v1/chat/completions", deploymentRevision: "local-fixture", totalTokenBound: 32768 }),
 }));
 
-beforeEach(() => { vi.stubEnv("ABCLLM_API_KEY", "local-fixture-only"); });
-afterEach(() => vi.unstubAllEnvs());
+const MODELS = ["[MLX] gpt-oss-120b", "openai/gpt-oss-20b", "[supa] Qwen3.8-27B-NVFP4", "Qwen/Qwen3.8-27B", "[MLX] deepseek-v4.1-flash",
+  "unknown-qwen-lookalike"] as const;
+// The contracts above are mocked; a direct admin row per route+model opens the bearer (the abcLLM gateway was removed 2026-10-30).
+beforeEach(() => setServingContractSnapshotForTest((["product-translate", "product-tagline-ko"] as const).flatMap(routeId =>
+  MODELS.map(model => ({ routeId, model, contract: {}, auth: "none" as const, apiKey: null, transport: "direct" as const })))));
+afterEach(() => { setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); });
 const sha = (text: string) => createHash("sha256").update(text).digest("hex");
 const comparableWire = (wire: string) => JSON.stringify({ ...JSON.parse(wire), model: "same-model-for-comparison" });
 // Product hashes pin this prompt alignment. KO native hashes retain main6931ba54's pre-expansion bytes.
@@ -38,15 +43,16 @@ const taglines = [{ name: "Files", tagline: "A document manager" }, { name: "Not
 const routes = ["product-translate", "product-tagline-ko"] as const;
 const wireFor = (route: typeof routes[number], model: string) => route === "product-translate"
   ? productTranslationGatewayWire(products, model) : productTaglineKoGatewayWire(taglines, model);
-function response(content: string, record?: (wire: string) => void): typeof fetch {
-  return (async (_url, init) => {
-    record?.(String(init?.body));
-    return new Response(JSON.stringify({ choices: [{ message: { content } }] }));
-  }) as typeof fetch;
+/** The legacy gateway senders are gone (2026-10-30): they return no_key without reaching the request. */
+async function legacySendsNothing(route: typeof routes[number], model: string) {
+  const request = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ choices: [{ message: { content: "[]" } }] })));
+  expect(await (route === "product-translate" ? translateProductFields(products, 1000, request, undefined, model)
+    : translateTaglinesToKorean(taglines, 1000, request, undefined, model))).toEqual({ ok: false, error: "no_key" });
+  expect(request).not.toHaveBeenCalled();
 }
-const run = (route: typeof routes[number], model: string, request: typeof fetch) => route === "product-translate"
-  ? translateProductFields(products, 1000, request, undefined, model)
-  : translateTaglinesToKorean(taglines, 1000, request, undefined, model);
+/** The original business parser each native sender applies to its completion content. */
+const parse = (route: typeof routes[number], content: string) => route === "product-translate"
+  ? parseKoreanTaglines(content, products.length, products) : parseKoreanTaglines(content, taglines.length);
 
 it.each(["[MLX] gpt-oss-120b", "[supa] Qwen3.8-27B-NVFP4"])(
   "supplies each product item's exact protected tokens and faithful English prose requirements for %s", model => {
@@ -105,11 +111,10 @@ it.each([
         ? "980b5f9656d0cce3aeeada93f99bbb3c096785f9300ddfc823cf9fbf41dcb8b4"
         : "8e4c66ebee8fc42faeea32b42f1c03944acf9545acec055ec19f38a3d5342ccd");
     } else expect(system).toBe(original.messages[0].content);
-    let actual = "";
-    expect(await run(route, model, response('["Translated first","Translated second"]', wire => { actual = wire; })))
-      .toEqual({ ok: true, outputs: ["Translated first", "Translated second"] });
-    if (route === "product-translate") expect(actual).toBe(expected);
-    else {
+    await legacySendsNothing(route, model);
+    expect(parse(route, '["Translated first","Translated second"]')).toEqual({ ok: true, outputs: ["Translated first", "Translated second"] });
+    if (route === "product-tagline-ko") {
+      const actual = productTaglineKoLegacyWire(taglines, model);
       const runtime = koreanTranslationRuntimePrompt(model, taglines.length);
       if (qwen) expect(runtime).not.toBeNull();
       else expect(runtime).toBeNull();
@@ -130,11 +135,17 @@ it("leaves reason and live search query wires unchanged across GPT-OSS and Qwen"
   const recordings: Record<string, unknown>[][] = [];
   for (const model of ["[MLX] gpt-oss-120b", "[supa] Qwen3.8-27B-NVFP4"]) {
     vi.resetModules(); vi.stubEnv("ABCLLM_MODEL", model);
-    const { translateToKorean, translateQueryToEnglish } = await import("@/lib/crawl/translate");
-    const bodies: Record<string, unknown>[] = [];
-    const request = response('["문서를 관리하는 도구"]', wire => bodies.push(JSON.parse(wire)));
-    await translateToKorean(["A tool that manages documents"], 1000, request);
-    await translateQueryToEnglish("문서 관리", 1000, request);
+    const { TRANSLATE_MODEL, SEARCH_QUERY_MODEL, reasonTranslationGatewayWire, websearchQueryGatewayWire: queryWire,
+      translateToKorean, translateQueryToEnglish } = await import("@/lib/crawl/translate");
+    expect([TRANSLATE_MODEL, SEARCH_QUERY_MODEL]).toEqual([model, model]);
+    // The legacy senders no longer send; the native reason and Korean search paths send exactly these builders' bytes.
+    const request = vi.fn<typeof fetch>();
+    expect(await translateToKorean(["A tool that manages documents"], 1000, request)).toEqual({ ok: false, error: "no_key" });
+    expect(await translateQueryToEnglish("문서 관리", 1000, request)).toEqual({ ok: false, error: "no_key" });
+    expect(request).not.toHaveBeenCalled();
+    const bodies = [reasonTranslationGatewayWire(["A tool that manages documents"], TRANSLATE_MODEL),
+      queryWire({ sourceLocale: "ko", query: "문서 관리" }, SEARCH_QUERY_MODEL)].map(wire => JSON.parse(wire) as Record<string, unknown>);
+    expect(bodies.map(body => body.model)).toEqual([model, model]);
     recordings.push(bodies.map(body => ({ ...body, model: "same-model-for-comparison" })));
   }
   expect(recordings[1]).toEqual(recordings[0]);
@@ -153,10 +164,11 @@ it("keeps native Chinese search request bytes frozen", () => {
 
 it.each(routes)("does not make invalid nested or duplicate arrays usable on %s", async route => {
   const model = "[supa] Qwen3.8-27B-NVFP4";
+  await legacySendsNothing(route, model);
   for (const content of ['[["First","Second"]]', '["First","Second"]["First","Second"]'])
-    expect(await run(route, model, response(content))).toEqual({ ok: false, error: "invalid_output" });
+    expect(parse(route, content)).toEqual({ ok: false, error: "invalid_output" });
   // The existing parser maps non-string elements to empty strings; the existing field guards still reject them.
-  const nested = await run(route, model, response('[["First"],["Second"]]'));
+  const nested = parse(route, '[["First"],["Second"]]');
   expect(nested).toEqual({ ok: true, outputs: ["", ""] });
   if (!nested.ok) throw new Error("fixture_expected_empty_elements");
   for (const output of nested.outputs) expect(route === "product-translate"
