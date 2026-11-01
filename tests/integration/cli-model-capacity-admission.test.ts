@@ -81,7 +81,7 @@ async function clean() {
   await resetTables();
 }
 
-/** 요청이 처리를 앞선 대기 상태와 지난 기록 — deferred 는 이것을 하나도 바꾸면 안 된다 */
+/** 요청이 처리를 앞선 대기 상태와 지난 기록 — deferred 는 지난 실패 기록(던지지 않고 끝난 틱이 지운다, runner.ts) 말고는 하나도 바꾸면 안 된다 */
 async function pendingJob(name: string) {
   await db.insert(jobs).values({ name }).onConflictDoNothing();
   await db.update(jobs).set({ requestedVersion: 10, processedVersion: 8, cursor: { fixture: name }, notBefore: null,
@@ -175,12 +175,12 @@ it.each(matrix)("$label: a real tick defers before the call and keeps producer, 
   expect(spies.gateway).not.toHaveBeenCalled();
   expect(await scenario.written()).toBe(0);
   const after = await whole();
-  // runner 가 잠금을 잡았다 놓은 흔적(runs·last_run_at·updated_at)만 다르다
+  // runner 가 잠금을 잡았다 놓은 흔적(runs·last_run_at·updated_at)과 지운 지난 실패 기록(last_error)만 다르다
   const jobAfter = await jobRow(scenario.job);
   expect(jobAfter).toEqual({ ...jobBefore, runs: Number(jobBefore.runs) + 1, last_run_at: expect.any(String), updated_at: expect.any(String),
-    locked_at: null, lease_token: null });
+    locked_at: null, lease_token: null, last_error: null });
   expect(jobAfter).toMatchObject({ requested_version: 10, processed_version: 8, cursor: { fixture: scenario.job }, not_before: null,
-    last_error: "preserved history" });
+    last_error: null });
   delete before.jobs; delete after.jobs;
   expect(after).toStrictEqual(before);
 });
@@ -217,5 +217,5 @@ it("an intro tick keeps the batch recorded before a mid-tick defer and leaves th
   expect(checks.every(check => check.outcome === "kept" && check.attempts === 0)).toBe(true);
   expect(checks.map(check => check.slug)).not.toContain("intro-01");
   expect(await jobRow("product-intro-check")).toEqual({ ...jobBefore, runs: Number(jobBefore.runs) + 1, last_run_at: expect.any(String),
-    updated_at: expect.any(String), locked_at: null, lease_token: null });
+    updated_at: expect.any(String), locked_at: null, lease_token: null, last_error: null });
 });

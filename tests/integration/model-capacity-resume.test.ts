@@ -261,7 +261,7 @@ function latch() {
   const promise = new Promise<void>(done => { resolve = done; });
   return { promise, resolve };
 }
-it("waits on control first with a synchronous identity snapshot and no request row lock", exercise(async () => {
+it("reads back without waiting on a held control row, with a synchronous identity snapshot and no request row lock", exercise(async () => {
   await install(); const value = await request();
   granted(await tracked(requestModelSlot(value)));
   const checked = identity(value), ready = latch(), release = latch(), errors: unknown[] = [];
@@ -277,21 +277,15 @@ it("waits on control first with a synchronous identity snapshot and no request r
     await Promise.race([ready.promise, holding]);
     reading = tracked(findOwnPendingModelRequest(checked));
     checked.owner.instanceId = "mutated-after-entry";
-    let blockers: { pid: number }[] = [];
-    const deadline = performance.now() + 2_000;
-    while (performance.now() < deadline) {
-      blockers = await admin`SELECT pid FROM pg_stat_activity
-        WHERE datname=current_database() AND ${pid}=ANY(pg_blocking_pids(pid))`;
-      if (blockers.length) break;
-      await new Promise(resolve => setTimeout(resolve, 5));
-    }
-    expect(blockers).toHaveLength(1);
+    // 2026-10-31 장부 control 경합: readback 은 control 을 잠그지 않는다 — holder 가 FOR UPDATE 를 쥔 동안 커밋된 자기 행을 바로 돌려주고,
+    // 이 요청 행에도 잠금을 남기지 않는다(requestSlot 이 FOR UPDATE 아래에서 다시 판정한다).
+    expect(await reading).toEqual({ requestId: value.requestId, state: "reserved" });
+    expect(await admin`SELECT pid FROM pg_stat_activity WHERE datname=current_database() AND ${pid}=ANY(pg_blocking_pids(pid))`).toEqual([]);
     await admin.begin(async tx => {
       expect(await tx`SELECT request_id FROM model_capacity_requests WHERE request_id=${value.requestId}::uuid FOR UPDATE NOWAIT`)
         .toHaveLength(1);
     });
     release.resolve(); await holding;
-    expect(await reading).toEqual({ requestId: value.requestId, state: "reserved" });
   } catch (error) { errors.push(error); }
   finally {
     release.resolve();

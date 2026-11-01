@@ -248,8 +248,10 @@ it('production unsupported fresh admission has no POST, queue row, attempt, or p
   expect(await tick()).toMatchObject({ status: 'deferred', reason: 'model_capacity' });
   expect(await attempts(context.candidate.id)).toHaveLength(0); expect(await requests()).toHaveLength(0);
   const after = (await raw('jobs')).find(row => row.name === 'crawl-agent-review');
-  for (const key of ['requested_version', 'processed_version', 'cursor', 'not_before', 'last_error', 'last_success_at']) expect(after![key]).toEqual(before![key]);
-  expect(after).toMatchObject({ lease_token: null, locked_at: null }); expect(fetch).not.toHaveBeenCalled();
+  for (const key of ['requested_version', 'processed_version', 'cursor', 'not_before', 'last_success_at']) expect(after![key]).toEqual(before![key]);
+  // 던지지 않고 끝난 미룸 틱은 지난 실패 기록(last_error)을 지운다(runner.ts) — fixture 의 'prior-error'
+  expect(before).toMatchObject({ last_error: 'prior-error' });
+  expect(after).toMatchObject({ lease_token: null, locked_at: null, last_error: null }); expect(fetch).not.toHaveBeenCalled();
 }));
 it('disabled keeps the actual claim and original cancellation writer without a model reservation', () => exercise(async () => {
   const context = await source(); await mode('disabled');
@@ -330,7 +332,10 @@ it('reserved expiry during a live-start domain wait rolls back the fresh attempt
       expect(after).toMatchObject({ state: 'withdrawn', dispatch_binding: null, dispatch_binding_hash: null, dispatched_at: null });
       expect(await events(String(original.request_id))).toEqual(['queued','reserved','reservation_expired']);
       const job = (await raw('jobs')).find(row => row.name === 'crawl-agent-review')!;
-      for (const key of ['requested_version','processed_version','cursor','not_before','last_error','last_success_at']) expect(job[key]).toEqual(before[key]);
+      for (const key of ['requested_version','processed_version','cursor','not_before','last_success_at']) expect(job[key]).toEqual(before[key]);
+      // 던지지 않고 끝난 미룸 틱은 지난 실패 기록(last_error)을 지운다(runner.ts) — fixture 의 'prior-error'
+      expect(before).toMatchObject({ last_error: 'prior-error' });
+      expect(job).toMatchObject({ lease_token: null, locked_at: null, last_error: null });
     } catch (error) { errors.push(error); }
     finally { unlock(); await allSteps([() => holding, async () => { await execution; }, () => blocker.end()], errors); }
   });

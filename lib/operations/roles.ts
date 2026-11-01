@@ -18,17 +18,20 @@ export type RoleOverview = {
    */
   quarantineSeconds: number | null;
   primaryRelease: string | null; standbyRelease: string | null;
+  /** lease 행이 마지막으로 갱신된 지 몇 초(DB 시계) — 한 화면 「역할 lease」 타일의 「갱신 N초 전」. 행이 없으면 null */
+  updatedAgoSeconds?: number | null;
 };
 
 /** 공통 이미지 배포 대상 역할. 웹만 별도 배포할 수 있으므로 전체 역할·웹의 동일 릴리스를 강제하지 않는다. */
 export const SHARED_IMAGE_ROLES = new Set(["crawler", "reviewer", "publisher"]);
 
-export async function roleOverview(): Promise<{ roles: RoleOverview[]; scheduler: { freshReplicas: number; alarm: boolean } }> {
+export async function roleOverview(): Promise<{ roles: RoleOverview[]; scheduler: { freshReplicas: number; alarm: boolean }; overall: "ok" | "alarm" }> {
   const [leases, observations] = await Promise.all([
     db.select({ role: roleLeases.role, ownerInstanceId: roleLeases.ownerInstanceId, ownerBootId: roleLeases.ownerBootId,
       ownerKind: roleLeases.ownerKind, ownerRelease: roleLeases.ownerRelease, epoch: roleLeases.epoch,
       secondsUntilExpiry: sql<number>`extract(epoch from (${roleLeases.leaseUntil} - localtimestamp))::double precision`,
       quarantineSeconds: sql<number | null>`extract(epoch from (${roleLeases.quarantineUntil} - localtimestamp))::double precision`,
+      updatedAgoSeconds: sql<number | null>`extract(epoch from (localtimestamp - ${roleLeases.updatedAt}))::double precision`,
     }).from(roleLeases),
     db.select({ key: operationsObservations.key, value: operationsObservations.value,
       ageSeconds: sql<number>`extract(epoch from (localtimestamp - ${operationsObservations.observedAt}))::double precision`,
@@ -62,7 +65,9 @@ export async function roleOverview(): Promise<{ roles: RoleOverview[]; scheduler
       epoch: lease?.epoch ?? null, secondsUntilExpiry: lease?.secondsUntilExpiry ?? null,
       quarantineSeconds: lease?.quarantineSeconds != null && lease.quarantineSeconds > 0 ? lease.quarantineSeconds : null,
       primaryRelease: fresh("primary")?.release ?? null, standbyRelease: fresh("standby")?.release ?? null,
+      updatedAgoSeconds: lease?.updatedAgoSeconds != null && Number.isFinite(Number(lease.updatedAgoSeconds)) ? Math.max(0, Number(lease.updatedAgoSeconds)) : null,
     };
   });
-  return { roles, scheduler: { freshReplicas: report.scheduler.freshReplicas, alarm: report.scheduler.alarm } };
+  // overall 은 failover-readiness 의 판정 그대로(역할·스케줄러 중 하나라도 alarm). 한 화면 「경보」 타일이 「역할 준비」로 보인다.
+  return { roles, scheduler: { freshReplicas: report.scheduler.freshReplicas, alarm: report.scheduler.alarm }, overall: report.overall };
 }

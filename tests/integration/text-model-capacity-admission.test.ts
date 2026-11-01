@@ -185,23 +185,49 @@ it("a real reason job defers without consuming attempts or a concurrent producer
   await setMode("open");
   await prepareReason();
   const before = await whole();
-  const finish = latch(), started = latch();
-  let blocker = 0;
-  const holding = tracked(holder.begin(async tx => {
+  const history = (row: Raw | undefined) => row && { requested_version: row.requested_version, processed_version: row.processed_version,
+    cursor: row.cursor, not_before: row.not_before, last_error: row.last_error, last_success_at: row.last_success_at };
+  // 1) 2026-10-31 장부 control 경합: 전송 경로를 고르는 control 읽기는 행을 잠그지 않는다 — 다른 세션이 control 을 FOR UPDATE 로 쥐고 있어도
+  //    미루는 틱은 그 세션 뒤에 줄 서지 않고 끝난다(예전에는 여기서 FOR SHARE 가 Lock 대기였다).
+  const rowHold = latch(), rowHeld = latch();
+  let rowBlocker = 0;
+  const rowHolding = tracked(holder.begin(async tx => {
     const [row] = await tx`SELECT pg_backend_pid() AS pid FROM model_capacity_control WHERE id=1 FOR UPDATE`;
-    blocker = Number(row.pid); started.resolve(); await finish.promise;
+    rowBlocker = Number(row.pid); rowHeld.resolve(); await rowHold.promise;
   }));
   const errors: unknown[] = [];
   let execution: Promise<Awaited<ReturnType<typeof runJob>>> | undefined;
+  try {
+    await Promise.race([rowHeld.promise, rowHolding]);
+    const first = await tracked(runJob("reason-translate", translateReasons, { requestedOnly: true }));
+    expect(first).toMatchObject({ status: "deferred", reason: "model_capacity" });
+    expect(await observer`SELECT pid FROM pg_stat_activity WHERE datname=current_database() AND ${rowBlocker}::int=ANY(pg_blocking_pids(pid))`).toEqual([]);
+    expect(request).not.toHaveBeenCalled();
+    const settled = await jobRaw();
+    expect(settled?.lease_token).toBeNull(); expect(settled?.locked_at).toBeNull();
+    // 던지지 않고 끝난 미룸 틱은 사유를 가리지 않고 lastError 를 지운다(lib/jobs/runner.ts, 2026-10-31) — 요청·커서·멈춤·성공 시각은 그대로다
+    expect(history(settled)).toEqual({ ...history(managedJob!.expected), last_error: null });
+  } catch (error) { errors.push(error); }
+  finally { rowHold.resolve(); await steps([() => rowHolding], errors); }
+  // 2) 틱 중간의 동시 생산자·멈춤 보존은 틱을 세울 자리가 필요하다 — control 행 잠금은 더는 세우지 못하므로 표 AccessExclusiveLock 으로
+  //    틱의 첫 control 읽기(대기열 선택기의 EXISTS)를 세운다. 그 뒤는 예전 계약 그대로다.
+  const finish = latch(), started = latch();
+  let blocker = 0;
+  const holding = tracked(holder.begin(async tx => {
+    const [row] = await tx`SELECT pg_backend_pid() AS pid`;
+    await tx`LOCK TABLE model_capacity_control IN ACCESS EXCLUSIVE MODE`;
+    blocker = Number(row.pid); started.resolve(); await finish.promise;
+  }));
   try {
     await Promise.race([started.promise, holding]);
     execution = tracked(runJob("reason-translate", translateReasons, { requestedOnly: true }));
     const until = Date.now() + 2_500;
     let waiter: { pid: number; wait_event_type: string } | undefined;
     do {
+      // holder 는 control 표 잠금만 쥐므로 그 뒤에 선 세션은 control 을 읽는 문장이다(선택기의 긴 문장은 track_activity_query_size 에 잘려
+      // 표 이름이 query 에 안 보일 수 있다 — 문장 본문으로 거르지 않는다).
       const [row] = await observer`SELECT pid,wait_event_type FROM pg_stat_activity
-        WHERE datname=current_database() AND ${blocker}::int=ANY(pg_blocking_pids(pid))
-          AND position('model_capacity_control' IN query)>0`;
+        WHERE datname=current_database() AND ${blocker}::int=ANY(pg_blocking_pids(pid))`;
       if (row) { waiter = { pid: Number(row.pid), wait_event_type: String(row.wait_event_type) }; break; }
       await new Promise(resolve => setTimeout(resolve, 5));
     } while (Date.now() < until);
@@ -213,7 +239,7 @@ it("a real reason job defers without consuming attempts or a concurrent producer
       WHERE name='reason-translate' AND lease_token=${String(current!.lease_token)} RETURNING to_jsonb(j) AS value`;
     if (!row) throw new Error("text_fixture_job_lost");
     const updated = row.value as Raw;
-    managedJob!.expected = { ...updated, locked_at: null, lease_token: null };
+    managedJob!.expected = { ...updated, locked_at: null, lease_token: null, last_error: null };
     finish.resolve(); await holding;
     expect(await execution).toMatchObject({ status: "deferred", reason: "model_capacity" });
     expect(request).not.toHaveBeenCalled();

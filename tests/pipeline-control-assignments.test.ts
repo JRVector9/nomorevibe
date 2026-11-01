@@ -29,9 +29,17 @@ it("keeps old snapshots valid and accepts the optional assignments field (strict
   expect(controlSnapshotSchema.safeParse(snapshot({ assignments: { ...assignments, extra: 1 } as never })).success).toBe(false);
   expect(controlSnapshotSchema.safeParse(snapshot({ assignments: { enabled: true, stages: [{ stage: "nope", live: 0, tableReady: false, source: "legacy" }] } as never })).success)
     .toBe(false);
+  // 3b-B 스냅숏(flagSource 없음)은 그대로 읽히고 줄에 출처가 없다
   const text = formatControlStatus(snapshot({ assignments }));
-  expect(text).toContain("[assignments] MODEL_ASSIGNMENT_TABLE(이 프로세스)=on ai1=table(live 2) ai2=legacy_empty_table(live 1, 표로 못 고름)");
+  expect(text).toContain("[assignments] 배정 표 읽기(이 프로세스)=on ai1=table(live 2) ai2=legacy_empty_table(live 1, 표로 못 고름)");
   expect(formatControlStatus(snapshot())).not.toContain("[assignments]");
+  // 3b-E: 스위치의 출처 — runtime 토글(모든 역할 공통) · env 강제(이 프로세스만)
+  for (const flagSource of ["runtime", "env", "unread"] as const) {
+    const parsed = controlSnapshotSchema.parse(snapshot({ assignments: { ...assignments, flagSource } })).assignments;
+    expect(parsed?.flagSource).toBe(flagSource);
+    expect(formatControlStatus(snapshot({ assignments: { ...assignments, flagSource } }))).toContain(`[assignments] 배정 표 읽기(이 프로세스)=on(${flagSource}) ai1=table(live 2)`);
+  }
+  expect(controlSnapshotSchema.safeParse(snapshot({ assignments: { ...assignments, flagSource: "file" } as never })).success).toBe(false);
 });
 
 it("lists the table's first reviewers and AI2 voters/fallbacks as used routes when the flag is on", () => {

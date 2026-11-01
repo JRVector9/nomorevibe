@@ -15,6 +15,7 @@ import { readAdminModelsObservation } from "@/lib/operations/admin-models-reposi
 import { findModelDefinition } from "@/lib/operations/admin-models-view";
 import { ADMIN_MODEL_STAGES } from "@/lib/llm/admin-model-stages";
 import { readModelRegistry, modelRequestName } from "@/lib/llm/model-registry";
+import { saveProbeObservation } from "@/lib/operations/admin-models-probe-repository";
 
 /** The stored key of a direct engine contract for this registry model, if any (the gateway key is gone with the gateway). */
 function directEngineKey(definition: ReturnType<typeof readModelRegistry>["models"][number]): string | null {
@@ -40,7 +41,9 @@ async function listRegisteredModel(definition: ReturnType<typeof readModelRegist
   } catch { return null; }
 }
 
-export type ModelProbeResult = { error?: string; listed?: boolean; listMs?: number; callMs?: number; callBlocked?: string };
+/** observedAt·source 는 결과를 관측 표(probe:<provider>:<model>)에 남긴 시각·출처 — 저장에 실패하면 saveError 만 있고 결과는 그대로다. */
+export type ModelProbeResult = { error?: string; listed?: boolean; listMs?: number; callMs?: number; callBlocked?: string;
+  observedAt?: string; source?: "manual" | "auto"; saveError?: string };
 export const probeAdminModel = webWriteAction(async function probeAdminModel(input: unknown): Promise<ModelProbeResult> {
   const admin = await currentAdmin();
   if (!admin) return { error: "관리자만 연결을 확인할 수 있습니다." };
@@ -64,7 +67,9 @@ export const probeAdminModel = webWriteAction(async function probeAdminModel(inp
     ...(listed === null ? { error: identity.provider === "abcllm" || identity.provider === "local-direct" ? "모델 목록을 읽지 못했습니다. 연결 설정·인증을 확인해주세요." : "이 제공자의 모델 목록 조회 실행기가 연결되지 않았습니다." } : {}) };
   await db.insert(operationsAudit).values(await adminAuditRow(admin.login, { action: "admin-models-probe-result", target: identity.routeId,
     detail: { ...identity, ...result }, ok: false, error: result.error ?? "short_call_contract_missing" }));
-  return result;
+  // 2026-10-31 한 화면: 결과를 슬롯 키(probe:<provider>:<model>)에 남겨 새로고침 뒤에도 「N초 전 · 수동 · 결과」로 보인다. 같은 장비·모델은 한 결과를 공유한다.
+  try { const saved = await saveProbeObservation(identity, result, "manual"); return { ...result, observedAt: saved.observedAt, source: "manual" }; }
+  catch { return { ...result, saveError: "연결 확인 결과를 관측 표에 남기지 못했습니다. 이 결과는 새로고침하면 사라집니다." }; }
 });
 
 const admissionSchema = z.object({ to: z.enum(["open", "draining"]), fromMode: z.enum(["open", "draining"]),

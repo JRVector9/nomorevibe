@@ -83,8 +83,8 @@ export type AssignmentStageSpec = Readonly<{
 /**
  * 단계별 route·전송(PR 3b-A). route 는 오늘 그 단계의 장부 kind 가 쓰는 이름이고, 전송은 그 route 에 오늘 dispatch 경로가 있는 것만 연다:
  * gateway·direct = abcLLM 형 계약 route, local-direct = 로컬 직접 호출 route(`local-<목적>`; 2차는 second-review 의 local-direct),
- * cli = CLI 장부 kind 가 있는 route. assist·assist-audit 의 route 는 작업·백엔드마다 다르다(`local-assist-<task>-<backendId>`) — 3b-B 가 route 목록
- * 규칙을 정할 때까지 예약으로 둔다(repo 와 같다).
+ * cli = CLI 장부 kind 가 있는 route. assist·assist-audit 의 route 는 작업·백엔드마다 다르다(`local-assist-<task>-<backendId>`) — route 목록 규칙이
+ * 아직 없어 예약(routeId null·전송 없음, 저장 거절)으로 둔다(repo 와 같다). 규칙이 정해지면 여기 routeId·transports 를 채우는 것이 배정을 여는 길이다.
  */
 export const ASSIGNMENT_STAGES: Readonly<Record<AssignmentStage, AssignmentStageSpec>> = Object.freeze({
   ai1: Object.freeze({ routeId: "crawl-agent-review", transports: transports("gateway", "direct", "cli"), vote: false }),

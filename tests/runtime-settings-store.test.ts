@@ -43,6 +43,15 @@ describe("sparse patch (applyRuntimeSettingsPatch)", () => {
       .toEqual({ version: 1, routes: { deadlines: { "review-gateway": { relayMs: null } } } });
     expect(applyRuntimeSettingsPatch(ladder.stored, "routes", { deadlines: { "review-gateway": null } }).stored).toEqual({ version: 1 });
   });
+  it("assignments 그룹(3b-E)은 다른 묶음과 같은 sparse 규칙이다 — 글자 값, null 은 기본값으로, 그룹 모양 패치도 받는다", () => {
+    const on = applyRuntimeSettingsPatch({ version: 1, budgets: { "crawl-seed": 40_000 } }, "assignments", { tableReads: "on" });
+    expect(on).toEqual({ stored: { version: 1, budgets: { "crawl-seed": 40_000 }, assignments: { tableReads: "on" } }, issues: [] });
+    expect(applyRuntimeSettingsPatch(on.stored, "assignments", { assignments: { tableReads: "off" } }).stored.assignments).toEqual({ tableReads: "off" });
+    expect(applyRuntimeSettingsPatch(on.stored, "assignments", { tableReads: null }).stored).toEqual({ version: 1, budgets: { "crawl-seed": 40_000 } });
+    // 다른 그룹 저장은 토글을 건드리지 않는다
+    expect(applyRuntimeSettingsPatch(on.stored, "budgets", { "crawl-seed": null }).stored).toEqual({ version: 1, assignments: { tableReads: "on" } });
+    expect(runtimeSettingsAuditTarget("assignments")).toBe("runtime_settings:assignments");
+  });
   it("devices 그룹과 객체가 아닌 patch 는 모양에서 거절한다", () => {
     expect(applyRuntimeSettingsPatch({ version: 1 }, "devices", { x: 1 })).toEqual({ stored: { version: 1 }, issues: ["group_not_editable:devices"] });
     expect(applyRuntimeSettingsPatch({ version: 1 }, "budgets", [1]).issues).toEqual(["runtime_settings_invalid:budgets"]);

@@ -9,8 +9,10 @@ import { firstReviewerKey, firstReviewers } from '@/lib/crawl/first-reviewers';
 import { secondReviewFallbacks, secondReviewVoters } from '@/lib/crawl/second-review-voters';
 import { loadSecondReviewInput } from '@/lib/crawl/second-review-input';
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from '@/lib/crawl/agent-review-contract';
-import { setAssignmentTableEnabledForTest } from '@/lib/llm/assignment-flag';
-import { assignmentSource, ensureStageAssignments, setStageAssignmentsForTest } from '@/lib/llm/stage-assignment-snapshot';
+import { assignmentFlag, setAssignmentTableEnabledForTest } from '@/lib/llm/assignment-flag';
+import { assignmentSource, ensureStageAssignments, requireStageAssignments, setStageAssignmentsForTest } from '@/lib/llm/stage-assignment-snapshot';
+import { saveRuntimeSettings } from '@/lib/operations/runtime-settings';
+import { ensureRuntimeSettings } from '@/lib/operations/runtime-settings-store';
 import { readModelCapacityDevice, saveModelCapacityDevice } from '@/lib/llm/capacity-devices-repository';
 import type { AssignmentTransport } from '@/lib/llm/capacity-helpers';
 import { ensureSchema } from './setup';
@@ -18,9 +20,10 @@ import { closeSettledSecondReviewsFixture as closeSettledSecondReviews, enqueueS
   recordSecondReviewFixture } from './second-review-receipt-fixtures';
 
 /**
- * PR 3b-B — MODEL_ASSIGNMENT_TABLE 을 켜고 DB 에 심은 배정 표(role 'primary', mode 'live')로 1차 고르기와 2차 올리기·기록·대체·정리가 같이 바뀌는가.
+ * PR 3b-B — 배정 표 읽기를 켜고 DB 에 심은 배정 표(role 'primary', mode 'live')로 1차 고르기와 2차 올리기·기록·대체·정리가 같이 바뀌는가.
  * 스냅숏은 고정하지 않고 실제 DB 에서 읽는다(ensureStageAssignments). 예전 설정(crawl_settings)의 1차·2차 모델은 일부러 표와 다르게 둔다.
  * 계약·route 저장(saveModelAssignment)은 model-assignments 가 본다 — 여기서는 행을 SQL 로 심는다.
+ * PR 3b-E — 마지막 시험은 env 강제 없이 runtime_settings 토글(assignments.tableReads)만 저장해 같은 길이 재시작 없이 바뀌는가를 본다.
  */
 const DEVICE = 'rdr-dev', PREFIX = 'rdr-';
 const tableAi1 = [
@@ -93,6 +96,8 @@ beforeEach(async () => {
 });
 afterEach(() => { setAssignmentTableEnabledForTest(null); setStageAssignmentsForTest(null); });
 afterAll(async () => {
+  // 공유 runtime_settings 행의 토글을 기본값으로 되돌린다(다른 파일이 같은 행을 본다)
+  await saveRuntimeSettings({ tableReads: null }, 'rdr-fixture', { group: 'assignments' });
   await clean();
   await db.execute(sql`DELETE FROM model_capacity_devices WHERE device_id = ${DEVICE}`);
 });
@@ -162,4 +167,37 @@ it('defers AI2 work instead of using the legacy list when the switch is on but t
     await expect(enqueueSecondReviews(await getSettings())).rejects.toMatchObject({ reason: 'assignments_unavailable' });
   } finally { process.env.DATABASE_URL = url; }
   expect(await db.select().from(secondReviews)).toEqual([]);
+});
+
+it('switches the AI1 consumer selection and the AI2 voters by the saved runtime_settings toggle alone — no env, no restart (PR 3b-E)', async () => {
+  setAssignmentTableEnabledForTest(null);
+  process.env.MODEL_ASSIGNMENT_TABLE = '';
+  // 토글 꺼짐(기본): 같은 DB 행이 있어도 설정(legacy)으로 고른다
+  expect(await saveRuntimeSettings({ tableReads: 'off' }, 'rdr-fixture', { group: 'assignments' })).toMatchObject({ ok: true });
+  await ensureStageAssignments(0);
+  expect(assignmentFlag()).toEqual({ enabled: false, source: 'runtime', override: null });
+  expect(assignmentSource('ai1')).toBe('legacy');
+  const settings = await getSettings();
+  expect(firstReviewers(settings)).toEqual([{ provider: 'abcllm', model: 'legacy-first' }]);
+  await held('rdr/toggle');
+  expect((await chooseFirstReviewForCandidate(await context('rdr/toggle')))?.model).toBe('legacy-first');
+  // 관리자가 켠다 → 다음 30초 스냅숏(여기서는 maxAge 0)부터 모든 리더가 표를 본다
+  expect(await saveRuntimeSettings({ tableReads: 'on' }, 'rdr-fixture', { group: 'assignments' })).toMatchObject({ ok: true });
+  expect(assignmentSource('ai1')).toBe('legacy');                                   // 아직 이 프로세스의 스냅숏은 옛 판
+  await ensureStageAssignments(0);
+  expect(assignmentFlag()).toEqual({ enabled: true, source: 'runtime', override: null });
+  expect(assignmentSource('ai1')).toBe('table');
+  expect(assignmentSource('ai2')).toBe('table');
+  expect(firstReviewers(settings)).toEqual(tableAi1.map(row => ({ provider: row.provider, model: row.model })));
+  expect(secondReviewVoters(settings)).toEqual([{ provider: 'abcllm', model: '[MLX] gpt-oss-120b' }]);
+  const chosen = await chooseFirstReviewForCandidate(await context('rdr/toggle'));
+  const candidate = (await context('rdr/toggle')).candidate;
+  expect(chosen?.model).toBe(tableAi1[(candidate.id - 1) % 2].model);
+  await expect(requireStageAssignments()).resolves.toBeUndefined();
+  // 끄면 같은 길로 설정으로 돌아간다
+  expect(await saveRuntimeSettings({ tableReads: 'off' }, 'rdr-fixture', { group: 'assignments' })).toMatchObject({ ok: true });
+  await ensureRuntimeSettings(0);
+  expect(assignmentFlag().enabled).toBe(false);
+  expect(firstReviewers(settings)).toEqual([{ provider: 'abcllm', model: 'legacy-first' }]);
+  expect((await chooseFirstReviewForCandidate(await context('rdr/toggle')))?.model).toBe('legacy-first');
 });

@@ -49,6 +49,19 @@ npm run deploy -- run --plan "$PLAN" --plan-sha "$PLAN_SHA256"
 `.claude/prod.sh scope|plan|run`도 같은 진입점이며 `prod.sh deploy`는 검증된 `run`의 별칭이다.
 기존 개별 API 요청은 복구용 `legacy-deploy`로 명시해야 한다.
 
+### Dokploy env 를 바꿨으면 plan 전에 spec 을 맞춘다
+
+Dokploy 앱 env(예: `DB_POOL_MAX`)를 저장만 하고 재배포하지 않으면 Swarm 서비스 spec 은 옛 env 로 돈다.
+`plan`은 선택된 앱마다(Git 빌드·Docker 앱 모두) 저장된 env 와 라이브 서비스 spec env 를
+`RELEASE_TAG`·`NEXT_DEPLOYMENT_ID` 만 빼고 이름 집합·값까지 비교해, 하나라도 다르면 자격 증명·이미지 준비 전에
+`<app>_env_drift_redeploy_required` 로 즉시 멈춘다. 그러므로 env 를 바꿨으면 **plan 전에 그 앱을 같은 릴리스로
+재배포해 spec 을 맞추거나, 릴리스가 끝난 뒤 env 절차로 바꾼다.** 어긴 채 진행하면 2026-10-31 처럼 text-mini 가
+정상 배포돼도 계약 검증이 480초 뒤 `_verification_timeout` 으로 서고 같은 묶음의 동료 앱만 새 판이 되어 fleet 이 섞인다.
+달라진 변수 **이름**(값 없음)은 `~/.local/state/nomorevibe-releases/plan-failures/<utc>-<pid>.safe.json` 에 남고,
+최상위 출력의 `reason` 은 멈춤 코드가 공백·URL·따옴표 없는 코드 문자열이면 그대로 보이며(`failureRecord` 에 기록 경로),
+그 밖의 메시지는 지금처럼 `inspect-private-receipts` 로 숨긴다. plan 이 private 디렉터리를 만들기 전에 실패해도
+이 기록은 남는다(코드·시각·단계·변수 이름만, 비밀값 없음).
+
 준비 단계에서는 서비스를 변경하지 않고 필요한 이미지 cache를 두 호스트에 받는다.
 main의 최신 trusted CI 실행에서 필수 `check`와 필요한 image publish가 성공하고
 `release-image-{worker|web}-<SHA>` artifact의 run/attempt/tree/profile/version/digest가 일치해야 한다.
@@ -116,6 +129,34 @@ DB 조회 실패도 교체 허가가 아니다. 기존 모델 요청을 SIGTERM�
 예약 응답의 `futurePassed:false`는 관측 통과가 아니다.
 관측 예약 실패는 `observation.safe.json`의 `schedule-failed`로 남긴다. 이 경우 완료된 앱을 재배포하지 말고
 원 final snapshot과 hash로 관측만 별도로 시작한다.
+
+### monitor 검증은 5분, 넘으면 사람 판별(`deployed-human-review-required`)
+
+마지막 단계 monitor-m3 는 새 deploymentId·done, runtime 계약, 이미지 revision·RELEASE_TAG·healthy 를 확인한 뒤
+가장 최근 `monitor.push` 이벤트가 `state:"up"` 이고 두 수신자(primary·external)가 `ok:true` 로 90초 안에 응답했을 때만
+`deployed-and-verified` 다. 이 push 영수증 대기는 `release_monitor.MONITOR_VERIFY_TIMEOUT_SECONDS` = **300초**다
+(2026-10-31 사용자 결정). 다른 앱의 계약 검증 480초는 바꾸지 않았다.
+
+5분이 지나면 두 갈래다.
+
+- **(a) 배포 자체가 마지막 확인에서 증명됐고 (b) 막힌 것이 push 영수증(`stateUp`·`fresh`·receipts)뿐이면** run 을 멈추지 않는다.
+  `monitor-m3.verified.json` 에 `verification: "human_review_required"`·`reason`·마지막 관측한 다섯 불리언(`pushReceipts`)을 남기고
+  최종 fleet 검증·보호 관문·`result.safe.json`·관측 시작을 평소처럼 진행한다. `result.safe.json` 의 status 는
+  `deployed-human-review-required`, `humanReview` 에 앱·사유·기록 경로가 있고, **종료 코드는 2** 다(0 이 아니므로 호출 스크립트는
+  이를 완료가 아닌 "사람 확인 대기"로 다룬다). 5·10·15분·6시간 관측은 그대로 시작돼 있다.
+- **(a) 조차 안 되면**(새 deploymentId 없음·runtime 미정착·옛 컨테이너·이미지 revision 불일치·spec drift·rollback·저장 설정 불일치)
+  지금처럼 `monitor-m3_source_health_or_push_verification_timeout` 으로 `stopped-readback-required` 다. 사람 판별로 넘기지 않는다.
+
+운영자가 확인할 것은 `execution/monitor-m3.human-review.safe.json` 에 값 없이(URL·비밀·로그 원문 없음) 남는다.
+
+| 항목 | 뜻 · 확인 방법 |
+|---|---|
+| `reason` | `monitor_push_state_not_up`: 2026-10-31 사례 — 장부 `dispatch_stuck` 경보로 watcher 가 `down` 을 push 했고 수신자는 정상 응답. `monitor_push_receipts_unreadable`: 부팅 뒤 `monitor.push` 이벤트를 읽지 못함(컨테이너 수·SSH·로그 형식). `monitor_push_receipt_stale`: 마지막 push 가 90초보다 오래됨. `monitor_push_receiver_not_acknowledged`: 한쪽 수신자가 `ok:true` 가 아님. |
+| `lastPushState`·`pushReceipts` | 마지막 `monitor.push` 의 state(`up`/`down`/`unknown`)와 `primary`·`external`·`fresh`·`stateUp` 불리언. M3 에서 `docker logs --timestamps --since <StartedAt> <monitor 컨테이너>` 의 마지막 `monitor.push` 와 대조한다. |
+| `capacityUnknowns` | crawler-m3 컨테이너에서 읽은 `check-failover-readiness` 요약(`status`·`monitorOverall`·`count`·`stuckDispatched`·`oldestAgeSeconds`·`alarmReasons`). `alarmReasons` 에 `dispatch_stuck`·`review_backlog`·`review_stale` 가 있으면 monitor 의 `down` 은 장부 상태이고 배포 결함이 아니다 — 장부 정리(고아 dispatched 회수 등)는 별도 절차이며 그 뒤 다음 push 가 `up` 인지 본다. `unread` 는 읽지 못한 것이고 정상이 아니다. |
+| `operatorChecks` | `monitor_push_event_state_and_receipts`(위 로그 대조), `capacity_unknowns_alarm_reasons`(위 요약), `kuma_primary_and_external_heartbeat`(mini Kuma·Oracle Osaka Kuma 에 새 컨테이너 부팅 뒤 heartbeat 가 들어왔는지). |
+
+세 항목이 확인되면 사람이 그 결과를 운영 기록에 남기고 끝낸다. 사람 판별은 재배포·marker 삭제·자동 재개의 허가가 아니다.
 
 ```bash
 python3 scripts/ops/release_observer.py --help

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { DEFAULT_JOB_BUDGET_MS, DEFAULT_RUNTIME_SETTINGS, JOB_CALL_ROUTES, RUNTIME_SETTING_GROUPS, RUNTIME_SETTING_LABELS, effectiveJobBudgetMs,
+import { ASSIGNMENT_TABLE_READS, DEFAULT_JOB_BUDGET_MS, DEFAULT_RUNTIME_SETTINGS, GROUP_LABELS, JOB_CALL_ROUTES, RUNTIME_SETTING_GROUPS, RUNTIME_SETTING_LABELS, effectiveJobBudgetMs,
   jobCallCeilingMs, jobKnob, resolveRuntimeSettings, runtimeSettingLabel, runtimeSettingsSchema, runtimeSettingsWarnings, storedSettingsVersion,
   type RuntimeSettings } from "@/lib/operations/runtime-settings-schema";
 import { ensureRuntimeSettings, lastRuntimeSettingsRead, runtimeSettings, runtimeSettingsSnapshot, runtimeSettingsSnapshotFromStored,
@@ -68,7 +68,30 @@ describe("runtime settings defaults", () => {
     expect(RUNTIME_SETTING_LABELS["routes.limits.product-translate.timeoutMs"]).toBe("공개 번역 호출 상한(ms)");
     expect(runtimeSettingLabel("budgets.crawl-fetch")).toBe("원본 확보 틱 예산(ms)");
     expect(runtimeSettingLabel("routes.timeouts.brand-new-route")).toBe("brand-new-route 호출 상한(ms)");
-    expect(RUNTIME_SETTING_GROUPS).toEqual(["routes", "translation", "jobs", "budgets", "devices"]);
+    expect(RUNTIME_SETTING_GROUPS).toEqual(["routes", "translation", "jobs", "budgets", "assignments", "devices"]);
+    expect(RUNTIME_SETTING_LABELS["assignments.tableReads"]).toBe("배정 표 읽기");
+    expect(GROUP_LABELS.assignments).toBe("모델 배정 읽기");
+  });
+  it("모델 배정 읽기(3b-E) — 기본은 꺼짐(3b-B 배포 상태와 같다)이고 열거 'off' | 'on' 만 받는다", () => {
+    expect(DEFAULT_RUNTIME_SETTINGS.assignments).toEqual({ tableReads: "off" });
+    expect(ASSIGNMENT_TABLE_READS).toEqual(["off", "on"]);
+    expect(resolveRuntimeSettings({ version: 1, assignments: { tableReads: "on" } })).toMatchObject({ issues: [], settings: { assignments: { tableReads: "on" } } });
+    expect(resolveRuntimeSettings({ version: 1, assignments: { tableReads: "off" } })).toMatchObject({ issues: [], settings: { assignments: { tableReads: "off" } } });
+    // null = 기본값으로; 범위 밖(불리언·다른 글자)·모르는 키는 기본값으로 두고 issues 에 적는다(저장은 거절된다)
+    expect(resolveRuntimeSettings({ version: 1, assignments: { tableReads: null } }).settings.assignments.tableReads).toBe("off");
+    for (const bad of [true, 1, "yes", "ON"]) {
+      const result = resolveRuntimeSettings({ version: 1, assignments: { tableReads: bad } });
+      expect(result.issues).toEqual(["runtime_settings_invalid:assignments.tableReads"]);
+      expect(result.settings.assignments.tableReads).toBe("off");
+    }
+    expect(resolveRuntimeSettings({ version: 1, assignments: { tableReads: "on", extra: 1 } }).issues).toEqual(["unknown_setting:assignments.extra"]);
+    expect(resolveRuntimeSettings({ version: 1, assignments: "on" }).issues).toEqual(["runtime_settings_invalid:assignments"]);
+    // 모르는 그룹은 여전히 거절 코드다(새 그룹은 알려진 그룹이라 아니다)
+    expect(resolveRuntimeSettings({ version: 1, assignment: { tableReads: "on" } }).issues).toEqual(["unknown_group:assignment"]);
+    // 판은 내용으로만: 토글만 켠 문서와 빈 문서는 다른 판, 같은 내용은 같은 판
+    expect(storedSettingsVersion({ version: 1, assignments: { tableReads: "on" } })).not.toBe("default");
+    expect(storedSettingsVersion({ assignments: { tableReads: "on" } })).toBe(storedSettingsVersion({ version: 1, assignments: { tableReads: "on" } }));
+    expect(runtimeSettingsSchema.safeParse({ version: 1, ...DEFAULT_RUNTIME_SETTINGS, assignments: { tableReads: "maybe" } }).success).toBe(false);
   });
 });
 

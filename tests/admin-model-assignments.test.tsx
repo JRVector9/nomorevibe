@@ -31,11 +31,11 @@ import type { ModelCapacityDeviceRow } from "@/lib/llm/capacity-devices";
 import type { ModelCapacityPolicy } from "@/lib/llm/capacity";
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from "@/lib/crawl/settings-schema";
 import { DEFAULT_MODEL_DEFINITIONS, readModelRegistry, type ModelDefinition } from "@/lib/llm/model-registry";
-import { assignmentSources, assignmentTableFlag, setAssignmentSourceReaderForTest } from "@/lib/operations/admin-assignment-source";
+import { assignmentFlagState, assignmentSources, assignmentTableFlag, setAssignmentSourceReaderForTest } from "@/lib/operations/admin-assignment-source";
 import type { AdminLogRow } from "@/lib/operations/admin-log";
 import {
-  ASSIGNMENT_FLAG_OFF_BANNER, ASSIGNMENT_STAGE_LABELS, MODEL_ASSIGNMENT_REFUSAL_MESSAGES, assignmentAuditChangeLines, assignmentFormOptions, assignmentIdFor,
-  assignmentImportPlanHash, assignmentImportPreviewOf, assignmentPrefillFromParams, assignmentSavedMessage, assignmentTransportsFor,
+  ASSIGNMENT_FLAG_OFF_BANNER, ASSIGNMENT_READ_BANNERS, ASSIGNMENT_STAGE_LABELS, MODEL_ASSIGNMENT_REFUSAL_MESSAGES, assignmentAuditChangeLines, assignmentFormOptions, assignmentIdFor,
+  assignmentImportPlanHash, assignmentImportPreviewOf, assignmentPrefillFromParams, assignmentReadBannerKind, assignmentSavedMessage, assignmentTransportsFor,
   buildModelAssignmentsAdminView, modelAssignmentInputFromForm, modelAssignmentInputOf, modelAssignmentIssueMessage,
 } from "@/lib/operations/admin-model-assignments";
 import type { ModelAssignmentSaveResult } from "@/lib/llm/capacity-helpers-repository";
@@ -126,23 +126,39 @@ describe("화면 모형 — 단계별 묶음", () => {
     expect(issues).toEqual([expect.stringContaining("등록부에 없는 key(gone:model)"), expect.stringContaining("장비 행이 없습니다")]);
   });
 
-  it("상태 띠: 플래그가 꺼지면 모두 설정(legacy) + 「읽기: 설정(legacy). 플래그 MODEL_ASSIGNMENT_TABLE 켜면 표를 읽습니다」; 켜지면 표·설정·표 비어 있음", async () => {
+  it("상태 띠: 토글이 꺼지면 모두 설정(legacy) + 「읽기: 설정(legacy). 아래 「배정 표 읽기」를 켜면 …」; 켜지면 표·설정·표 비어 있음; env 강제·못 읽음은 따로 말한다(3b-E)", async () => {
     const off = viewOf();
-    expect(off.banner).toBe("읽기: 설정(legacy). 플래그 MODEL_ASSIGNMENT_TABLE 켜면 표를 읽습니다");
+    expect(off.banner).toBe("읽기: 설정(legacy). 아래 「배정 표 읽기」를 켜면 저장 즉시(30초 안) 모든 역할이 표를 읽습니다 — 재배포 없음");
     expect(off.banner).toBe(ASSIGNMENT_FLAG_OFF_BANNER);
+    expect(off.flagSource).toBe("runtime");
     expect(new Set(off.groups.map(group => group.sourceLabel))).toEqual(new Set(["설정"]));
     const on = viewOf({ flagOn: true, sources: { ai1: "table", ai2: "table", human: "table", intro: "legacy" } });
-    expect(on.banner).toContain("켜짐");
+    expect(on.banner).toBe("읽기: 배정 표 읽기 켜짐(runtime_settings 토글) — 단계마다 아래 출처(표 · 설정 · 표 비어 있음)를 따릅니다");
     const source = (stage: string) => on.groups.find(group => group.id === stage)!.sourceLabel;
     expect([source("ai1"), source("human"), source("intro"), source("reason")]).toEqual(["표", "표 비어 있음", "설정", "설정"]);
-    // 3b-B 의 실제 출처: 이 프로세스의 MODEL_ASSIGNMENT_TABLE 이 꺼졌으면(시험 기본) 플래그 꺼짐·모든 단계 legacy
+    // 세 번째 출처: env 강제(이 프로세스만 — 토글이 닿지 않는다)와 토글을 아직 못 읽음(길목은 미룬다)
+    expect(viewOf({ flagOn: true, flagSource: "env", sources: { ai1: "table" } }).banner).toBe(ASSIGNMENT_READ_BANNERS.env_on);
+    expect(viewOf({ flagOn: true, flagSource: "env" }).banner).toContain("MODEL_ASSIGNMENT_TABLE=1");
+    expect(viewOf({ flagOn: false, flagSource: "env" }).banner).toBe(ASSIGNMENT_READ_BANNERS.env_off);
+    expect(viewOf({ flagOn: false, flagSource: "env" }).banner).toContain("MODEL_ASSIGNMENT_TABLE=0");
+    const unread = viewOf({ flagOn: false, flagSource: "unread" });
+    expect(unread.banner).toBe(ASSIGNMENT_READ_BANNERS.unread);
+    expect(unread.banner).toContain("assignments_unavailable");
+    expect(new Set(unread.groups.map(group => group.sourceLabel))).toEqual(new Set(["설정"]));
+    expect(assignmentReadBannerKind({ enabled: true, source: "unread" })).toBe("unread");
+    expect(assignmentReadBannerKind({ enabled: true, source: "runtime" })).toBe("runtime_on");
+    expect(assignmentReadBannerKind({ enabled: false, source: "env" })).toBe("env_off");
+    // 3b-B 의 실제 출처: 시험 기본은 토글을 읽은 적이 없다(unread) → 꺼짐·모든 단계 legacy
     expect(await assignmentTableFlag()).toBe(false);
+    expect(await assignmentFlagState()).toEqual({ enabled: false, source: "unread", override: null });
     expect(Object.values(await assignmentSources(["ai1", "ai2"]))).toEqual(["legacy", "legacy"]);
-    setAssignmentSourceReaderForTest({ assignmentTableEnabled: () => true, assignmentSource: stage => stage === "ai1" ? "table" : "legacy" });
+    setAssignmentSourceReaderForTest({ assignmentFlag: () => ({ enabled: true, source: "runtime", override: null }), assignmentSource: stage => stage === "ai1" ? "table" : "legacy" });
     expect(await assignmentTableFlag()).toBe(true);
+    expect(await assignmentFlagState()).toEqual({ enabled: true, source: "runtime", override: null });
     expect(await assignmentSources(["ai1", "ai2"])).toEqual({ ai1: "table", ai2: "legacy" });
-    setAssignmentSourceReaderForTest({ assignmentTableEnabled: () => { throw new Error("boom"); }, assignmentSource: () => Promise.reject(new Error("boom")) });
+    setAssignmentSourceReaderForTest({ assignmentFlag: () => { throw new Error("boom"); }, assignmentSource: () => Promise.reject(new Error("boom")) });
     expect(await assignmentTableFlag()).toBe(false);
+    expect(await assignmentFlagState()).toEqual({ enabled: false, source: "unread", override: null });
     expect(await assignmentSources(["ai1"])).toEqual({ ai1: "legacy" });
   });
 
@@ -246,7 +262,7 @@ describe("거절 코드 → 한국어(무엇을 하면 되는지)", () => {
     const result = { before: null, after: AI1, offOnly: false, contract: { routeId: "crawl-agent-review", model: "Qwen-X", contractHash: HASH, source: "probed", id: 3 },
       route: POLICY.routes[0], appended: [POLICY.routes[0]], policyRevision: 8, deviceRole: { routeId: "crawl-agent-review", before: null, after: 1 } } as unknown as ModelAssignmentSaveResult;
     expect(assignmentSavedMessage(result, false)).toBe(`만들었습니다(배정 ${AI1.assignmentId}, 판 3, 모드 실전). 계약: 엔진 확인(readback·1토큰)으로 새로 만든 계약(${"c".repeat(12)}). `
-      + "정책에 경로를 덧붙였습니다(revision 8, DRAIN 없음). 장비 역할 순위 없음 → 1. 읽는 쪽은 아직 설정을 씁니다(플래그 MODEL_ASSIGNMENT_TABLE 꺼짐) — 켜면 이 배정을 읽습니다.");
+      + "정책에 경로를 덧붙였습니다(revision 8, DRAIN 없음). 장비 역할 순위 없음 → 1. 읽는 쪽은 아직 설정을 씁니다(배정 표 읽기 꺼짐) — 「배정 표 읽기」를 켜면 이 배정을 읽습니다.");
     expect(assignmentSavedMessage({ ...result, before: AI1, appended: [], deviceRole: { routeId: "x", before: 1, after: 1 } } as ModelAssignmentSaveResult, true))
       .toMatch(/^저장했습니다.*정책 경로는 이미 있습니다\. 장비 역할 순위 1 그대로\.$/);
     // 끄기 갈래(있는 행을 끄기만): 계약·정책 경로를 보지 않았다고 말한다
@@ -342,7 +358,10 @@ describe("그리기", () => {
     expect(ai2).toContain(">표</th>");
     expect(ai2).toContain("<strong>투표</strong>");
     expect(ai2).toContain("다른 장비(gpu-other)");
-    expect(renderToStaticMarkup(createElement(AssignmentStageTable, { group: group("repo") }))).toContain("예약 단계입니다");
+    // 예약 단계 안내는 지금 상태만 말한다 — PR·정책 판 번호 없이
+    const repo = renderToStaticMarkup(createElement(AssignmentStageTable, { group: group("repo") }));
+    expect(repo).toContain("예약 단계 — assist·assist-audit·repo 는 경로 규칙이 아직 없어 배정할 수 없습니다");
+    expect(repo).not.toMatch(/3b-[A-Z]|rev ?\d+/);
     expect(renderToStaticMarkup(createElement(AssignmentStageTable, { group: group("reason") }))).toContain("지금은 설정(단계별 모델·크롤 설정)을 읽습니다");
     // 글자 크기는 13px 이상만(이 화면의 모든 파일)
     const root = path.resolve(__dirname, "..");
