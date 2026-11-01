@@ -24,6 +24,7 @@ const crawl = await import("@/lib/crawl/repository");
 const { saveSettings } = await import("@/lib/crawl/settings");
 const { writeTaglines } = await import("@/lib/crawl/jobs/tagline");
 const { TAGLINE_MODEL, taglineEvidence } = await import("@/lib/crawl/tagline");
+const { pendingTaglines, recordTaglineResult } = await import("@/lib/crawl/taglines");
 const { runJob } = await import("@/lib/jobs/runner");
 const { ensureSchema, resetTables } = await import("./setup");
 
@@ -61,6 +62,23 @@ beforeEach(async () => {
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); setServingContractSnapshotForTest(null); });
 
 describe("소개 짓기 잡", () => {
+  it("preserves the tagline retry budget when its tokenizer is unavailable", async () => {
+    await held("tokenizer/unavailable");
+    for (let iteration = 0; iteration < 2; iteration++) {
+      const [task] = await pendingTaglines(1);
+      expect(task).toBeDefined();
+      await runJob("crawl-tagline", async ctx => {
+        expect(await recordTaglineResult(task, ctx.lease!, { kind: "failure", error: "tokenizer_unavailable" }))
+          .toMatchObject({ stored: true, released: false });
+        return { done: true };
+      });
+      const [saved] = await db.select().from(crawlTaglines);
+      expect(saved).toMatchObject({ attempts: 0, errorCode: "tokenizer_unavailable", tagline: "" });
+      expect(await crawl.getCandidate("tokenizer/unavailable")).toMatchObject({ state: "needs_review", reason: "no_description" });
+      await db.update(crawlTaglines).set({ retryAt: sql`now()-interval '1 second'` }).where(eq(crawlTaglines.repo, "tokenizer/unavailable"));
+    }
+  });
+
   it("한 줄을 지어 두고 후보를 발행 대기로 되돌린다", async () => {
     await held("someone/my-app");
 

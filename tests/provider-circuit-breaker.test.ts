@@ -1,6 +1,7 @@
 import { createServer } from 'node:http';
 import { expect, it } from 'vitest';
 import { SECOND_REVIEW_TRANSIENT_ERRORS } from '@/lib/crawl/second-review';
+import { EngineDownTally } from '@/lib/jobs/engine-down';
 import { createProviderCircuits, observeProviderTransport, providerCircuitConfig, providerOutcome,
   withProviderOutcome } from '@/lib/llm/provider-circuit-breaker';
 
@@ -28,10 +29,16 @@ it('is disabled by default and has no thresholds unless every value is given exp
 
 it('counts only the existing provider-side technical codes, never judgment, input or cancellation results', () => {
   for (const error of [...SECOND_REVIEW_TRANSIENT_ERRORS, 'not_configured', 'auth', 'missing_cli', 'model_unavailable',
-    'no_key', 'rate_limit', 'network', 'http_500', 'http_502', 'http_503', 'http_504']) expect(providerOutcome({ ok: false, error }), error).toBe('down');
+    'no_key', 'rate_limit', 'network', 'tokenizer_unavailable', 'http_500', 'http_502', 'http_503', 'http_504']) expect(providerOutcome({ ok: false, error }), error).toBe('down');
   for (const error of ['invalid_output', 'input_too_large', 'output_too_large', 'max_turns', 'cancelled', 'cli_error', 'http_400',
     'http_409', 'http_5', 'http_5000', 'rejected:language', 'stale_source', undefined]) expect(providerOutcome({ ok: false, error }), String(error)).toBe('none');
   expect(providerOutcome({ ok: true })).toBe('up');
+});
+
+it('defers the shared route on unavailable required tokenizer evidence while input overflow remains an item failure', () => {
+  const route = new EngineDownTally();
+  expect(route.failed('input_too_large')).toBeNull();
+  expect(route.failed('tokenizer_unavailable')).toBe('tokenizer_unavailable');
 });
 
 it('opens after consecutive technical failures, holds every admission while open, then admits exactly one half-open trial', () => {

@@ -28,6 +28,16 @@ const EN_A = "The URL serves a documentation site (title 'File: README — ArchU
 const EN_B = "The pageText shows a login form (\"Email Senha Entrar\") gating an internal dashboard — a login wall is not a product.";
 const KO = '제품이 아니라 문서·소개 페이지다';
 
+it('tokenizer availability failures preserve the reason translation attempt budget and retry clock', async () => {
+  const hash = textHash(EN_A);
+  for (let iteration = 0; iteration < 2; iteration++) {
+    await recordTranslations([{ hash, translated: null, error: 'tokenizer_unavailable' }], 'fixture-model');
+    const [saved] = await db.select().from(textTranslations).where(eq(textTranslations.sourceHash, hash));
+    expect(saved).toMatchObject({ status: 'failed', translated: null, attempts: 0, errorCode: 'tokenizer_unavailable' });
+    expect(saved.retryAt!.getTime()).toBeGreaterThan(saved.updatedAt.getTime());
+  }
+});
+
 /** AI 심사 기록 하나 — reason 은 outcome 에 둔다(자동 심사가 남기는 모양) */
 async function attempt(repo: string, reason: string, at = new Date()) {
   let [candidate] = await db.select().from(crawlCandidates).where(eq(crawlCandidates.repo, repo));

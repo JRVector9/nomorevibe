@@ -103,7 +103,7 @@ describe("koreanTaglineFailureRetryAllowed — 품질 외 실패는 정해진 �
     expect(koreanTaglineFailureRetryAllowed("timeout", MAX_GATEWAY_FAILURES + 3, 3)).toBe(false);
     // 품질 거절은 따로 센다(MAX_REJECTIONS) — 품질 거절이 섞여도 품질 외 실패만 센다
     expect(koreanTaglineFailureRetryAllowed("rejected:too_long", MAX_GATEWAY_FAILURES + 3, 4)).toBe(true);
-    for (const outage of ["network", "rate_limit", "no_key", "model_unavailable", "http_502", "http_503"])
+    for (const outage of ["network", "rate_limit", "no_key", "model_unavailable", "tokenizer_unavailable", "http_502", "http_503"])
       expect(koreanTaglineFailureRetryAllowed(outage, 40, 0)).toBe(true);
     expect(koreanTaglineFailureRetryAllowed("http_400", 40, 0)).toBe(false);
   });

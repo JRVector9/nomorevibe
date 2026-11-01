@@ -52,14 +52,19 @@ function dispatch(value: ProfileEvidence, call: PreparedTextProfileGatewayCall) 
     token: randomUUID(), epoch: 1, revision: 1, policyHash: "a".repeat(64), binding, bindingHash: textProfileDispatchBindingHash(binding) });
 }
 type Seen = { path: string; body: string; headers: IncomingMessage["headers"] };
-async function server(run: (state: { seen: Seen[]; tokens: (count: number) => void; reply: (value: (response: ServerResponse) => void) => void }) => Promise<void>) {
+async function server(run: (state: { seen: Seen[]; tokens: (count: number) => void; reply: (value: (response: ServerResponse) => void) => void;
+  tokenizer: (value: (response: ServerResponse) => void) => void }) => Promise<void>) {
   const seen: Seen[] = [], responses = new Set<Promise<void>>(), errors: unknown[] = [];
   let count = 120, reply = (response: ServerResponse) => { response.end(JSON.stringify(envelope())); };
+  let tokenizer: ((response: ServerResponse) => void) | undefined;
   const http = createServer((request, response) => {
     const closed = new Promise<void>(resolve => response.once("close", resolve));
     const pending = (async () => { let body = ""; for await (const chunk of request) body += chunk.toString();
       seen.push({ path: request.url ?? "", body, headers: request.headers });
-      if (request.url === "/tokenize") response.end(JSON.stringify({ count, max_model_len: 50_000, tokens: Array.from({ length: count }, (_, index) => index + 1) }));
+      if (request.url === "/tokenize") {
+        if (tokenizer) tokenizer(response);
+        else response.end(JSON.stringify({ count, max_model_len: 50_000, tokens: Array.from({ length: count }, (_, index) => index + 1) }));
+      }
       else reply(response);
       await closed; })();
     responses.add(pending); void pending.catch(() => {});
@@ -72,7 +77,7 @@ async function server(run: (state: { seen: Seen[]; tokens: (count: number) => vo
       model: selection, responseModel: "local-llm", deploymentRevision: "loopback-only", endpoint: `http://127.0.0.1:${address.port}/v1/chat/completions`,
       tokenizerEndpoint: `http://127.0.0.1:${address.port}/tokenize`, backendId: "engine-local-7b", physicalGroup: "engine-local",
       totalTokenBound: 50_000, requestTokenBound: DIRECT_REQUEST_TOKEN_BOUND, maxOutputTokens: 1024 };
-    await run({ seen, tokens: next => { count = next; }, reply: next => { reply = next; } });
+    await run({ seen, tokens: next => { count = next; }, reply: next => { reply = next; }, tokenizer: next => { tokenizer = next; } });
   } catch (error) { failed = true; failure = error; }
   finally {
     fixture.contract = null;
@@ -136,6 +141,26 @@ it("a request the engine tokenizer counts past the request bound is never sent a
     expect(result.terminal).toBeNull();
     expect(readGatewayNotStarted(result.notStarted)).toMatchObject({ kind: "gateway_not_started", dispatch: owned });
     expect(seen.map(entry => entry.path)).toEqual(["/tokenize"]);
+  });
+});
+
+it.each(["http_error", "invalid_response", "contract_mismatch"])("keeps tokenizer %s separate from product input overflow and issues only zero-byte proof", async cause => {
+  vi.stubEnv("ABCLLM_API_KEY", "");
+  await server(async ({ seen, tokenizer }) => {
+    tokenizer(response => {
+      if (cause === "http_error") { response.statusCode = 503; response.end("{}"); }
+      else if (cause === "invalid_response") response.end("not-json");
+      else response.end(JSON.stringify({ count: DIRECT_REQUEST_TOKEN_BOUND, max_model_len: 98_304,
+        tokens: Array(DIRECT_REQUEST_TOKEN_BOUND).fill(1) }));
+    });
+    const value = evidence(), call = prepared(value), owned = dispatch(value, call);
+    const result = await send(value, owned, call);
+    expect(result.result).toEqual({ ok: false, error: "tokenizer_unavailable" });
+    expect(result.terminal).toBeNull();
+    expect(readGatewayNotStarted(result.notStarted)).toMatchObject({ kind: "gateway_not_started", dispatch: owned });
+    expect(seen.map(entry => entry.path)).toEqual(["/tokenize"]);
+    await expect(send(value, owned, call)).rejects.toThrow("text_profile_gateway_call_mismatch");
+    expect(seen).toHaveLength(1);
   });
 });
 

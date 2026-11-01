@@ -1,7 +1,8 @@
 import { modelTimeoutMs, modelCallTimeoutMs, modelCallMaxTokens } from "@/lib/llm/model-registry";
 import { createHash } from "node:crypto";
 import { fetch as undiciFetch } from "undici";
-import { observeProviderTransport } from "@/lib/llm/provider-circuit-breaker";
+import { observeProviderTransport, reportProviderOutcome } from "@/lib/llm/provider-circuit-breaker";
+import { logger } from "@/lib/observability/logger";
 import { gatewayFetch as localEndGatewayFetch } from "@/lib/llm/gateway-local-end-fetch";
 import { gatewayNotSentWitness, issueGatewayNotStarted, readGatewayNotStarted, type GatewayNotStarted } from "@/lib/llm/gateway-not-started";
 import { ai1ModelDispatchSchema, ai1GatewayTerminalEvidenceSchema,
@@ -15,7 +16,7 @@ import { ai2GatewayServingContractHash, ai2GatewayServingContractSchema, resolve
 import { MAX_REVIEW_INPUT_BYTES, validateReviewOutcome, type ReviewInput } from "./agent-review-contract";
 import { assertLiveReviewAdapterAllowed } from "./review-fixture-transport";
 import { REVIEW_SYSTEM_PROMPT, type AgentReviewResult, type ReviewFailure, type ReviewUsage } from "./agent-review";
-import { verifyAi2TokenBudget } from "./second-review-direct-tokenize";
+import { checkAi2TokenBudget } from "./second-review-direct-tokenize";
 import { REVIEW_GATEWAY_LADDER, reviewGatewayLadder } from "@/lib/llm/deadline-ladder";
 import { ensureServingContracts, servingContractAuth, servingContractSnapshot, textRouteAccess, textRouteCallable } from "@/lib/llm/serving-contract-store";
 import { DIRECT_OPENAI_CHAT_PROTOCOL, DIRECT_REQUEST_TOKEN_BOUND, type GatewayContractProvider } from "@/lib/llm/direct-serving-contract";
@@ -220,16 +221,23 @@ const wireMaxTokens = (wire: string): number | undefined => {
 };
 /**
  * 직접 계약(direct-openai-chat-v1)의 text 호출은 보내기 전에 엔진 tokenizer 로 요청 상한을 확인한다 — AI1·AI2 는 준비(prepare)에서 하지만 text 경로의
- * 준비는 DB 트랜잭션 안에서 일어나므로(HTTP 는 잠금 밖) 전송 직전에 한다. 거짓이면 호출자는 fetch 를 부르지 않고 not_started 로 정산한다.
- * 확인 중 신호가 끊긴 것은 상한 판정이 아니다 — 참으로 돌려 fetch 경로가 같은 신호로 거절하게 한다(요청 0 증명은 거기서 난다).
+ * 준비는 DB 트랜잭션 안에서 일어나므로(HTTP 는 잠금 밖) 전송 직전에 한다. 상한 초과와 tokenizer 증거 없음은 구별한다.
+ * 확인 중 신호가 끊기면 기존처럼 같은 신호의 fetch 경로가 거절한다(요청 0 증명은 거기서 난다).
  */
-async function directTextBudgetOk(contract: TextRouteContract, wire: string, options: { timeoutMs: number; signal?: AbortSignal }): Promise<boolean> {
-  if (contract.protocol !== DIRECT_OPENAI_CHAT_PROTOCOL || contract.tokenizerEndpoint === undefined || contract.requestTokenBound === undefined
-    || options.signal?.aborted) return true;
-  const maxOutputTokens = wireMaxTokens(wire);
-  const ok = maxOutputTokens !== undefined && await verifyAi2TokenBudget({ model: contract.model, tokenizerEndpoint: contract.tokenizerEndpoint,
-    totalTokenBound: contract.totalTokenBound, requestTokenBound: contract.requestTokenBound, maxOutputTokens }, wire, options);
-  return ok || options.signal?.aborted === true;
+async function directTextBudgetFailure(contract: TextRouteContract, wire: string,
+  options: { timeoutMs: number; signal?: AbortSignal }): Promise<"input_too_large" | "tokenizer_unavailable" | null> {
+  if (contract.protocol !== DIRECT_OPENAI_CHAT_PROTOCOL || options.signal?.aborted) return null;
+  let maxOutputTokens: number | undefined;
+  try { maxOutputTokens = wireMaxTokens(wire); } catch { /* The typed failure below closes an invalid frozen wire. */ }
+  const checked = contract.tokenizerEndpoint === undefined || contract.requestTokenBound === undefined || maxOutputTokens === undefined
+    ? { kind: "unavailable", reason: "request_mismatch" } as const
+    : await checkAi2TokenBudget({ model: contract.model, tokenizerEndpoint: contract.tokenizerEndpoint,
+      totalTokenBound: contract.totalTokenBound, requestTokenBound: contract.requestTokenBound, maxOutputTokens }, wire, options);
+  if (options.signal?.aborted || checked.kind === "within_budget") return null;
+  if (checked.kind === "too_large") return "input_too_large";
+  logger.warn("gateway.tokenizer_unavailable", { reason: checked.kind === "unavailable" ? checked.reason : "cancelled" });
+  reportProviderOutcome({ ok: false, error: "tokenizer_unavailable" });
+  return "tokenizer_unavailable";
 }
 const textRedirect = (contract: { provider: string }): "error" | "manual" => contract.provider === "local-direct" ? "error" : "manual";
 
@@ -412,7 +420,7 @@ export async function prepareAi1DirectCall(input: ReviewInput, options: { model:
   const serialized = JSON.stringify(snapshot.snapshot);
   if (Buffer.byteLength(serialized, "utf8") > MAX_REVIEW_INPUT_BYTES) return unsupported;
   const wire = directReviewWire(contract, serialized);
-  if (contract.protocol === DIRECT_OPENAI_CHAT_PROTOCOL && !await verifyAi2TokenBudget(contract, wire, { timeoutMs, signal: options.signal }))
+  if (contract.protocol === DIRECT_OPENAI_CHAT_PROTOCOL && (await checkAi2TokenBudget(contract, wire, { timeoutMs, signal: options.signal })).kind !== "within_budget")
     return unsupported;
   if (options.signal?.aborted) return unsupported;
   const call = Object.freeze({ kind: "prepared" as const, wireHash: sha(wire),
@@ -539,12 +547,12 @@ export async function prepareAi2GatewayCall(input: ReviewInput, options: {
   let wire = gatewayWire(contract.model, serialized);
   if (contract.provider === "local-direct") {
     wire = directReviewWire(contract, serialized);
-    if (!await verifyAi2TokenBudget(contract, wire, { timeoutMs, signal: options.signal })) return unsupported;
+    if ((await checkAi2TokenBudget(contract, wire, { timeoutMs, signal: options.signal })).kind !== "within_budget") return unsupported;
   } else if (contract.requestBudget) {
     const body = JSON.parse(wire);
     body.max_tokens = contract.requestBudget.maxOutputTokens;
     wire = JSON.stringify(body);
-    if (!await verifyAi2TokenBudget({ ...contract, ...contract.requestBudget }, wire, { timeoutMs, signal: options.signal })) return unsupported;
+    if ((await checkAi2TokenBudget({ ...contract, ...contract.requestBudget }, wire, { timeoutMs, signal: options.signal })).kind !== "within_budget") return unsupported;
   }
   if (options.signal?.aborted) return unsupported;
   const call = Object.freeze({ kind: "prepared" as const, wireHash: sha(wire),
@@ -741,8 +749,8 @@ export async function writeKeywordsWithReservedGateway(evidence: ProfileEvidence
   const key = contractBearer(state.contract), directEngine = directTransport(state.contract);
   if (key === undefined) return { result: { ok: false, error: "no_key" }, terminal: null };
   const deadline = AbortSignal.timeout(timeoutMs), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
-  if (!await directTextBudgetOk(state.contract, state.wire, { timeoutMs, signal: combined }))
-    return { result: { ok: false, error: "input_too_large" }, terminal: null, notStarted: issueNotStarted(owned) };
+  const preflightFailure = await directTextBudgetFailure(state.contract, state.wire, { timeoutMs, signal: combined });
+  if (preflightFailure) return { result: { ok: false, error: preflightFailure }, terminal: null, notStarted: issueNotStarted(owned) };
   let body: string;
   try {
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: textRedirect(state.contract),
@@ -832,8 +840,8 @@ export async function translateWithReservedReasonGateway(texts: readonly string[
   const key = contractBearer(state.contract), directEngine = directTransport(state.contract);
   if (key === undefined) return { result: { ok: false, error: "no_key" }, terminal: null };
   const deadline = AbortSignal.timeout(timeoutMs), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
-  if (!await directTextBudgetOk(state.contract, state.wire, { timeoutMs, signal: combined }))
-    return { result: { ok: false, error: "input_too_large" }, terminal: null, notStarted: issueNotStarted(owned) };
+  const preflightFailure = await directTextBudgetFailure(state.contract, state.wire, { timeoutMs, signal: combined });
+  if (preflightFailure) return { result: { ok: false, error: preflightFailure }, terminal: null, notStarted: issueNotStarted(owned) };
   let body: string;
   try {
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: textRedirect(state.contract),
@@ -929,8 +937,8 @@ export async function translateProductFieldsWithReservedGateway(items: readonly 
   state.deadline = deadline;
   let body: string;
   try {
-    if (!await directTextBudgetOk(state.contract, state.wire, { timeoutMs, signal: combined }))
-      return { result: { ok: false, error: "input_too_large" }, terminal: null, notStarted: issueNotStarted(owned) };
+    const preflightFailure = await directTextBudgetFailure(state.contract, state.wire, { timeoutMs, signal: combined });
+    if (preflightFailure) return { result: { ok: false, error: preflightFailure }, terminal: null, notStarted: issueNotStarted(owned) };
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: textRedirect(state.contract),
       headers: { ...bearerHeaders(key), ...strictTerminalHeaders(state.contract) },
       body: state.wire, signal: combined });
@@ -1016,8 +1024,8 @@ export async function translateTaglinesWithReservedGateway(items: readonly Produ
   state.deadline = deadline;
   let body: string;
   try {
-    if (!await directTextBudgetOk(state.contract, state.wire, { timeoutMs, signal: combined }))
-      return { result: { ok: false, error: "input_too_large" }, terminal: null, notStarted: issueNotStarted(owned) };
+    const preflightFailure = await directTextBudgetFailure(state.contract, state.wire, { timeoutMs, signal: combined });
+    if (preflightFailure) return { result: { ok: false, error: preflightFailure }, terminal: null, notStarted: issueNotStarted(owned) };
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: textRedirect(state.contract),
       headers: { ...bearerHeaders(key), ...strictTerminalHeaders(state.contract) },
       body: state.wire, signal: combined });
@@ -1104,8 +1112,8 @@ export async function writeTaglineWithReservedGateway(evidence: TaglineEvidence,
   state.deadline = deadline;
   let body: string;
   try {
-    if (!await directTextBudgetOk(state.contract, state.wire, { timeoutMs, signal: combined }))
-      return { result: { ok: false, error: "input_too_large" }, terminal: null, notStarted: issueNotStarted(owned) };
+    const preflightFailure = await directTextBudgetFailure(state.contract, state.wire, { timeoutMs, signal: combined });
+    if (preflightFailure) return { result: { ok: false, error: preflightFailure }, terminal: null, notStarted: issueNotStarted(owned) };
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: textRedirect(state.contract),
       headers: bearerHeaders(key), body: state.wire, signal: combined });
     if (response.status !== 200) {
@@ -1190,8 +1198,8 @@ export async function verifyKeywordsWithReservedGateway(item: VerifyItem, dispat
   const key = contractBearer(state.contract), directEngine = directTransport(state.contract);
   if (key === undefined) return { result: { ok: false, error: "no_key" }, terminal: null };
   const deadline = AbortSignal.timeout(timeoutMs), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
-  if (!await directTextBudgetOk(state.contract, state.wire, { timeoutMs, signal: combined }))
-    return { result: { ok: false, error: "input_too_large" }, terminal: null, notStarted: issueNotStarted(owned) };
+  const preflightFailure = await directTextBudgetFailure(state.contract, state.wire, { timeoutMs, signal: combined });
+  if (preflightFailure) return { result: { ok: false, error: preflightFailure }, terminal: null, notStarted: issueNotStarted(owned) };
   let body: string;
   try {
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: textRedirect(state.contract),
@@ -1287,8 +1295,8 @@ export async function translateQueryWithReservedGateway(input: WebsearchQueryGat
   state.deadline = deadline;
   let body: string, status: number;
   try {
-    if (!await directTextBudgetOk(state.contract, state.wire, { timeoutMs, signal: combined }))
-      return { result: { ok: false, error: "input_too_large" }, terminal: null, notStarted: issueNotStarted(owned) };
+    const preflightFailure = await directTextBudgetFailure(state.contract, state.wire, { timeoutMs, signal: combined });
+    if (preflightFailure) return { result: { ok: false, error: preflightFailure }, terminal: null, notStarted: issueNotStarted(owned) };
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: textRedirect(state.contract),
       headers: { ...bearerHeaders(key), ...strictTerminalHeaders(state.contract) },
       body: state.wire, signal: combined });

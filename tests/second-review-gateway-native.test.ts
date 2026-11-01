@@ -6,7 +6,7 @@ import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 import type { CrawlCandidate, CrawlDocument } from "@/lib/db/schema";
 import { itemBindingHash, type Ai2ItemBinding } from "@/lib/jobs/items/types";
 import { ai1DispatchBindingHash, ai1ModelDispatchSchema, ai2DispatchBindingHash, ai2ModelDispatchSchema } from "@/lib/llm/capacity";
-import { prepareAi1GatewayCall, readAi1GatewayTerminal, reviewWithReservedAi1Gateway, prepareAi2GatewayCall, readAi2GatewayTerminal, reviewWithGateway, reviewWithReservedAi2Gateway,
+import { prepareAi1GatewayCall, prepareAi1DirectCall, readAi1GatewayTerminal, reviewWithReservedAi1Gateway, prepareAi2GatewayCall, readAi2GatewayTerminal, reviewWithGateway, reviewWithReservedAi2Gateway,
   type PreparedAi2GatewayCall } from "@/lib/crawl/agent-review-gateway";
 import type { Ai1GatewayServingContract } from "@/lib/crawl/agent-review-serving-contract";
 import { ai2GatewayServingContractHash, type Ai2GatewayServingContract } from "@/lib/crawl/second-review-serving-contract";
@@ -67,10 +67,12 @@ function dispatch(value: ReviewInput, call: PreparedAi2GatewayCall) {
     token: randomUUID(), epoch: 1, revision: 1, policyHash: "a".repeat(64), binding, bindingHash: ai2DispatchBindingHash(binding) });
 }
 type Reply = (response: ServerResponse) => void;
-async function server<T>(run: (state: { bodies: string[]; tokenizerBodies: string[]; setTokenCount: (count: number) => void; setReply: (reply: Reply) => void }) => Promise<T>) {
+async function server<T>(run: (state: { bodies: string[]; tokenizerBodies: string[]; setTokenCount: (count: number) => void;
+  setTokenizerReply: (reply: Reply) => void; setReply: (reply: Reply) => void }) => Promise<T>) {
   const bodies: string[] = [], pending = new Set<Promise<void>>(), cleanupErrors: unknown[] = [];
   const tokenizerBodies: string[] = [];
   let tokenCount = 100;
+  let tokenizerReply: Reply | undefined;
   let reply: Reply = response => response.end(JSON.stringify(envelope()));
   const http = createServer((request, response) => {
     const closed = new Promise<void>(resolve => response.once("close", resolve));
@@ -79,7 +81,8 @@ async function server<T>(run: (state: { bodies: string[]; tokenizerBodies: strin
       for await (const chunk of request) body += chunk.toString();
       if (request.url === "/tokenize") {
         tokenizerBodies.push(body);
-        response.end(JSON.stringify({ count: tokenCount, max_model_len: fixture.contract?.totalTokenBound, tokens: Array(tokenCount).fill(1) }));
+        if (tokenizerReply) tokenizerReply(response);
+        else response.end(JSON.stringify({ count: tokenCount, max_model_len: fixture.contract?.totalTokenBound, tokens: Array(tokenCount).fill(1) }));
       } else { bodies.push(body); reply(response); }
       await closed;
     })();
@@ -100,7 +103,8 @@ async function server<T>(run: (state: { bodies: string[]; tokenizerBodies: strin
       model, responseModel: "native-model", endpoint: `http://127.0.0.1:${address.port}/v1/chat/completions`,
       deploymentRevision: "local-test-only", totalTokenBound: 8_000 };
     fixture.ai1Contract = { ...fixture.contract, routeId: "crawl-agent-review" };
-    value = await run({ bodies, tokenizerBodies, setTokenCount: count => { tokenCount = count; }, setReply: next => { reply = next; } });
+    value = await run({ bodies, tokenizerBodies, setTokenCount: count => { tokenCount = count; },
+      setTokenizerReply: next => { tokenizerReply = next; }, setReply: next => { reply = next; } });
   } catch (error) { bodyFailed = true; bodyError = error; }
   finally {
     fixture.contract = null; fixture.ai1Contract = null;
@@ -135,6 +139,32 @@ function directRows() {
 /** The legacy sender has no default gateway any more; give it an engine endpoint so its wire can be compared. */
 const legacyEndpoint = { baseUrl: "http://legacy.invalid/v1", apiKey: "local-secret" };
 afterEach(() => { fixture.contract = null; fixture.ai1Contract = null; setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); });
+
+it.each(["ai1-direct", "ai2-direct", "ai2-request-budget"])("%s never issues a prepared capability from unavailable tokenizer evidence", async caller => {
+  directRows();
+  await server(async ({ bodies, tokenizerBodies, setTokenizerReply }) => {
+    const existing = fixture.contract!;
+    if (existing.provider !== "abcllm") throw new Error("fixture_legacy_contract");
+    const budget = { requestTokenBound: 32_000 as const, maxOutputTokens: 10_000,
+      tokenizerEndpoint: existing.endpoint.replace("/v1/chat/completions", "/tokenize") };
+    const direct = { version: 1 as const, protocol: "direct-openai-chat-v1" as const, provider: "local-direct" as const,
+      model: "fixture-engine", responseModel: "native-model", deploymentRevision: "local-only", endpoint: existing.endpoint,
+      totalTokenBound: 98_304, backendId: "fixture-engine", physicalGroup: "fixture-device", ...budget };
+    fixture.contract = caller === "ai2-request-budget" ? { ...existing, totalTokenBound: 98_304,
+      requestBudget: { ...budget, tokenizerModel: "native-model" } } : { ...direct, routeId: "second-review" };
+    fixture.ai1Contract = { ...direct, routeId: "crawl-agent-review" };
+    const selected = caller === "ai2-request-budget" ? model : direct.model;
+    const prepare = () => caller === "ai1-direct"
+      ? prepareAi1DirectCall(input(), { model: selected, timeoutMs: 1_000 })
+      : prepareAi2GatewayCall(input(), { model: selected, provider: caller === "ai2-request-budget" ? "abcllm" : "local-direct", timeoutMs: 1_000 });
+    for (const malformed of [false, true]) {
+      setTokenizerReply(response => { response.statusCode = malformed ? 200 : 503; response.end(malformed ? "not-json" : "{}"); });
+      expect(await prepare()).toEqual({ kind: "unsupported", reason: "provider_contract_unavailable" });
+    }
+    expect(tokenizerBodies).toHaveLength(2);
+    expect(bodies).toHaveLength(0);
+  });
+});
 
 it("keeps the production second-review resolver unsupported", async () => {
   directRows();

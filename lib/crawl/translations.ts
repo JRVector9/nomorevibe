@@ -160,9 +160,10 @@ export async function recordWorkerTranslations(results: TranslationResult[], mod
 async function writeTranslations(executor: ProductTransaction | typeof db, results: { hash: string; translated: string | null; error?: string }[], model: string, targetLang = "ko"): Promise<void> {
   for (const result of results) {
     const done = result.translated !== null;
+    const attempt = !done && result.error === "tokenizer_unavailable" ? 0 : 1;
     await executor.insert(textTranslations).values({
       sourceHash: result.hash, targetLang, status: done ? "done" : "failed", translated: result.translated, model,
-      attempts: 1, errorCode: done ? null : (result.error ?? "invalid_output").slice(0, 60),
+      attempts: attempt, errorCode: done ? null : (result.error ?? "invalid_output").slice(0, 60),
       retryAt: done ? null : sql`now() + interval '5 minutes'`, updatedAt: sql`now()`,
     }).onConflictDoUpdate({
       target: [textTranslations.sourceHash, textTranslations.targetLang],
@@ -170,7 +171,7 @@ async function writeTranslations(executor: ProductTransaction | typeof db, resul
         ? { status: "done", translated: result.translated, model, errorCode: null, retryAt: null, updatedAt: sql`now()`,
             attempts: sql`${textTranslations.attempts} + 1` }
         : { status: "failed", model, errorCode: (result.error ?? "invalid_output").slice(0, 60), updatedAt: sql`now()`,
-            attempts: sql`${textTranslations.attempts} + 1`,
+            attempts: sql`${textTranslations.attempts} + ${attempt}`,
             retryAt: retryBackoffSql(textTranslations.attempts) },
       // 번역이 이미 있으면 실패로 덮지 않는다
       setWhere: done ? undefined : sql`${textTranslations.status} <> 'done'`,
@@ -399,15 +400,16 @@ async function writeReservedReasonTranslations(value: TranslationResult[], model
       for (const result of [...results].sort((a, b) => a.hash.localeCompare(b.hash))) {
         const expected = proof.rows.find(row => row.sourceHash === result.hash)!, done = result.translated !== null;
         const error = done ? null : (result.error ?? 'invalid_output').slice(0, 60);
+        const attempt = error === 'tokenizer_unavailable' ? 0 : 1;
         const changed = expected.raw === null
           ? await tx.execute(sql`INSERT INTO text_translations
               (source_hash,target_lang,status,translated,model,attempts,error_code,retry_at,updated_at)
-              VALUES (${result.hash},'ko',${done ? 'done' : 'failed'},${result.translated},${model},1,${error},
+              VALUES (${result.hash},'ko',${done ? 'done' : 'failed'},${result.translated},${model},${attempt},${error},
                 CASE WHEN ${done} THEN NULL ELSE now()+interval '5 minutes' END,now())
               ON CONFLICT (source_hash,target_lang) DO NOTHING RETURNING source_hash`)
           : await tx.execute(sql`UPDATE text_translations t SET status=${done ? 'done' : 'failed'},
               translated=CASE WHEN ${done} THEN ${result.translated} ELSE t.translated END,model=${model},
-              attempts=t.attempts+1,error_code=${error},updated_at=now(),
+              attempts=t.attempts+${attempt},error_code=${error},updated_at=now(),
               retry_at=CASE WHEN ${done} THEN NULL ELSE ${retryBackoffSql(sql`t.attempts`)} END
               WHERE t.source_hash=${result.hash} AND t.target_lang='ko'
                 AND to_jsonb(t)=${JSON.stringify(expected.raw)}::text::jsonb RETURNING source_hash`);

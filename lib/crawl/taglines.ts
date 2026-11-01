@@ -116,13 +116,14 @@ export async function recordTaglineResult(task: TaglineTask, lease: JobLease, re
         .where(eq(crawlTaglines.repo, candidate.repo));
     } else {
       line = result.kind === "success" ? result.tagline.slice(0, 200) : "";
+      const attempt = result.kind === "failure" && result.error === "tokenizer_unavailable" ? 0 : 1;
       const common = { sourceHash, documentAt: document!.fetchedAt, updatedAt: sql`now()`,
         errorCode: result.kind === "failure" ? result.error.slice(0, 60) : null };
       const [saved] = await tx.insert(crawlTaglines).values({ repo: candidate.repo, ...common, tagline: line,
         source: result.kind === "success" ? result.source : "page", model: result.kind === "success" ? result.model : "",
-        attempts: 1, retryAt: result.kind === "failure" ? sql`now() + interval '5 minutes'` : null,
+        attempts: attempt, retryAt: result.kind === "failure" ? sql`now() + interval '5 minutes'` : null,
       }).onConflictDoUpdate({ target: crawlTaglines.repo,
-        set: { ...common, attempts: sql`${crawlTaglines.attempts} + 1`,
+        set: { ...common, attempts: sql`${crawlTaglines.attempts} + ${attempt}`,
           ...(result.kind === "success" ? { tagline: line, source: result.source, model: result.model, retryAt: null }
             : { retryAt: retryBackoffSql(crawlTaglines.attempts) }),
         },
@@ -452,14 +453,15 @@ async function recordReservedCrawlTagline(value: TaglineTask, job: JobLease, val
       if (!isDeepStrictEqual(snapshot, proof.initial.snapshot)) throw new CrawlTaglineChanged();
       await lockCrawlJobs(tx, lease);
       const line = result.kind === "success" ? result.tagline.slice(0, 200) : "", raw = snapshot.cache;
+      const attempt = result.kind === "failure" && result.error === "tokenizer_unavailable" ? 0 : 1;
       const common = { sourceHash: proof.initial.member.sourceHash, documentAt: sql`${snapshot.document.fetched_at}::timestamp`, updatedAt: sql`now()`,
         errorCode: result.kind === "failure" ? result.error.slice(0, 60) : null };
-      const saved = raw ? await tx.update(crawlTaglines).set({ ...common, attempts: sql`${crawlTaglines.attempts}+1`,
+      const saved = raw ? await tx.update(crawlTaglines).set({ ...common, attempts: sql`${crawlTaglines.attempts}+${attempt}`,
         ...(result.kind === "success" ? { tagline: line, source: result.source, model: result.model, retryAt: null }
           : { retryAt: retryBackoffSql(crawlTaglines.attempts) }) })
         .where(and(eq(crawlTaglines.repo, task.candidate.repo), sql`to_jsonb(${crawlTaglines})=${JSON.stringify(raw)}::text::jsonb`)).returning({ repo: crawlTaglines.repo })
         : await tx.insert(crawlTaglines).values({ repo: task.candidate.repo, ...common, tagline: line,
-          source: result.kind === "success" ? result.source : "page", model: result.kind === "success" ? result.model : "", attempts: 1,
+          source: result.kind === "success" ? result.source : "page", model: result.kind === "success" ? result.model : "", attempts: attempt,
           retryAt: result.kind === "failure" ? sql`now()+interval '5 minutes'` : null }).onConflictDoNothing({ target: crawlTaglines.repo }).returning({ repo: crawlTaglines.repo });
       if (saved.length !== 1) throw new CrawlTaglineChanged();
       if (line) {

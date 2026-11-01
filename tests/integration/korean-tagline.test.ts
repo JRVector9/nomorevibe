@@ -71,6 +71,20 @@ beforeEach(async () => {
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); setServingContractSnapshotForTest(null); });
 
 describe("한국어 한 줄 소개 잡", () => {
+  it("does not charge or create a Korean tagline from unavailable tokenizer evidence", async () => {
+    const product = await seed();
+    for (let iteration = 0; iteration < 2; iteration++) {
+      const task = (await pendingKoreanTaglines(20, [])).find(row => row.productId === product.id)!;
+      expect(task).toBeDefined();
+      await runJob("product-tagline-ko", async ctx => {
+        expect(await recordKoreanTaglines([{ task, result: { kind: "failure", error: "tokenizer_unavailable", model: KOREAN_TAGLINE_MODEL } }], ctx.lease!)).toBe(1);
+        return { done: true };
+      });
+      expect(await stored(product.id)).toMatchObject({ attempts: 0, qualityRejections: 0, taglineKo: null, errorCode: "tokenizer_unavailable" });
+      await db.update(productKoreanTaglines).set({ retryAt: sql`now()-interval '1 second'` }).where(eq(productKoreanTaglines.productId, product.id));
+    }
+  });
+
   it("한 잡 lease로 GPT와 직접 Qwen의 서로 다른 묶음을 병렬 처리하고 실제 모델을 남긴다", async () => {
     vi.stubEnv("KOREAN_TRANSLATION_QWEN_ENABLED", "true");
     for (let i = 0; i < 16; i++) await seed();

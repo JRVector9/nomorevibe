@@ -42,7 +42,7 @@ const { writeSearchProfiles } = await import("@/lib/jobs/products/search-profile
 const { PROFILE_MODEL, profileEvidence, profileHash } = await import("@/lib/domain/products/search-profile");
 const { VERIFY_MODEL } = await import("@/lib/domain/products/search-verify");
 const { runJob } = await import("@/lib/jobs/runner");
-const { pendingVerifications, reconcileSearchProfileBatch } = await import("@/lib/domain/products/search-profiles");
+const { pendingVerifications, recordVerificationResult, reconcileSearchProfileBatch } = await import("@/lib/domain/products/search-profiles");
 const { ensureSchema, resetTables } = await import("./setup");
 
 async function seed(slug: string, en: string[], ko: string[], values: Partial<typeof products.$inferInsert> = {}) {
@@ -81,6 +81,27 @@ beforeEach(async () => { await resetTables(); await db.delete(productSearchProfi
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); setServingContractSnapshotForTest(null); });
 
 describe("검색 키워드 검수 잡", () => {
+  it("keeps unavailable tokenizer evidence retryable without verifying or exhausting a product", async () => {
+    const id = await seed("tokenizer-not-a-product-failure", ["calendar"], ["달력"]);
+    for (let iteration = 0; iteration < 6; iteration++) {
+      const task = (await pendingVerifications(10)).find(row => row.product.id === id)!;
+      expect(task).toBeDefined();
+      await runJob("product-search-verify", async ctx => {
+        expect(await recordVerificationResult(task, ctx.lease!, { kind: "failure", error: "tokenizer_unavailable" })).toBe(true);
+        return { done: true };
+      });
+      expect(await profile(id)).toMatchObject({ verifyAttempts: 0, verifyError: "tokenizer_unavailable", verifiedAt: null, removedKeywords: [] });
+      expect(await keywordsOf(id)).toBe("calendar · 달력");
+      await db.update(productSearchProfiles).set({ verifyRetryAt: sql`now()-interval '1 second'` }).where(eq(productSearchProfiles.productId, id));
+    }
+    const [task] = await pendingVerifications(10);
+    await runJob("product-search-verify", async ctx => {
+      expect(await recordVerificationResult(task, ctx.lease!, { kind: "failure", error: "input_too_large" })).toBe(true);
+      return { done: true };
+    });
+    expect(await profile(id)).toMatchObject({ verifyAttempts: 1, verifyError: "input_too_large", verifiedAt: null });
+  });
+
   it("검수를 오래 기다린 제품을 새 제품보다 먼저 집는다", async () => {
     const older = await seed("older-waiting", ["older keyword"], []);
     const newer = await seed("newer-waiting", ["newer keyword"], []);

@@ -41,7 +41,7 @@ export const MAX_REJECTIONS = 4;
  * 정체 경보(upstream_stalled)가 그대로 알린다. 검색 키워드(search-profile-retry.ts)와 같은 구분이다.
  */
 export const MAX_GATEWAY_FAILURES = 10;
-export const PROVIDER_OUTAGE_ERRORS = ["network", "rate_limit", "rate_limited", "no_key", "model_unavailable"] as const;
+export const PROVIDER_OUTAGE_ERRORS = ["network", "rate_limit", "rate_limited", "no_key", "model_unavailable", "tokenizer_unavailable"] as const;
 /** Qwen 회복 선택기의 누적 시도 상한(기존 값) */
 const RECOVERY_MAX_ATTEMPTS = 10;
 export function koreanTaglineFailureRetryAllowed(error: string | null, attempts: number, qualityRejections: number): boolean {
@@ -259,10 +259,11 @@ export async function recordKoreanTaglines(entries: { task: KoreanTaglineTask; r
         .from(products).where(eq(products.id, task.productId)).for("share");
       if (!product || product.tagline !== task.tagline || !PUBLIC.includes(product.status)) continue;
       const same = sql`${k.sourceTagline} = excluded.source_tagline`;
-      const attempts = sql`case when ${same} then ${k.attempts} + 1 else 1 end`;
+      const attempt = result.kind === "failure" && result.error === "tokenizer_unavailable" ? 0 : 1;
+      const attempts = sql`case when ${same} then ${k.attempts} + ${attempt} else ${attempt} end`;
       const qualityDelta = result.kind === "failure" && result.error.startsWith("rejected:") ? 1 : 0;
       const qualityRejections = sql`case when ${same} then ${k.qualityRejections} + ${qualityDelta} else ${qualityDelta} end`;
-      const values = { productId: task.productId, sourceTagline: task.tagline, model: result.model, attempts: 1, qualityRejections: qualityDelta };
+      const values = { productId: task.productId, sourceTagline: task.tagline, model: result.model, attempts: attempt, qualityRejections: qualityDelta };
       if (result.kind === "success") {
         await tx.insert(k).values({ ...values, taglineKo: result.line, errorCode: null, retryAt: null })
           .onConflictDoUpdate({ target: k.productId, set: { sourceTagline: task.tagline, taglineKo: result.line, model: result.model,
@@ -503,10 +504,11 @@ async function writeReservedKoreanTaglines(value: readonly { task: KoreanTagline
       for (const { task, result } of [...entries].sort((a, b) => a.task.productId - b.task.productId)) {
         const raw = rows.find(row => row.productId === task.productId)!.raw;
         const same = sql`${k.sourceTagline} = excluded.source_tagline`;
-        const attempts = sql`case when ${same} then ${k.attempts} + 1 else 1 end`;
+        const attempt = result.kind === "failure" && result.error === "tokenizer_unavailable" ? 0 : 1;
+        const attempts = sql`case when ${same} then ${k.attempts} + ${attempt} else ${attempt} end`;
         const qualityDelta = result.kind === "failure" && result.error.startsWith("rejected:") ? 1 : 0;
         const qualityRejections = sql`case when ${same} then ${k.qualityRejections} + ${qualityDelta} else ${qualityDelta} end`;
-        const values = { productId: task.productId, sourceTagline: task.tagline, model: result.model, attempts: 1, qualityRejections: qualityDelta };
+        const values = { productId: task.productId, sourceTagline: task.tagline, model: result.model, attempts: attempt, qualityRejections: qualityDelta };
         const resultValues = result.kind === "success" ? { taglineKo: result.line, errorCode: null, retryAt: null }
           : { taglineKo: null, errorCode: result.error.slice(0, 60), retryAt: sql`now() + interval '5 minutes'` };
         // All products are locked first. A cache absence race must never overwrite its winner.
