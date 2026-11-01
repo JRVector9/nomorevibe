@@ -111,7 +111,15 @@ def _signature(config, value):
     return (_target(config, host + '/' + service) and
             (stage == 'service' and reason in FAULTS or stage in STAGES and reason == 'upstream_stalled'
              or stage in REVIEW_STAGES and reason in REVIEW_REASONS
+             or _stage_signature(stage, reason)
              or stage == 'capacity' and reason in CAPACITY_REASONS))
+
+
+def _stage_signature(stage, reason):
+    # Lazy import keeps the isolated Telegram transport independent of siblings.
+    from recovery_gateway import STAGE_FAILURE_REASONS
+    return (isinstance(stage, str) and isinstance(reason, str) and stage.startswith('progress-') and
+            reason in STAGE_FAILURE_REASONS.get(stage[len('progress-'):], ()))
 
 
 def _finite_time(value, now):
@@ -158,6 +166,7 @@ def notify(config, state, reports, result, receipts, *, now=None, send=send_tele
     if 'incidentNotifications' not in config:
         return {'enabled': False}
     destination = validate_destination(config['incidentNotifications'])
+    from recovery_gateway import valid_stage_failures
     now = time.time() if now is None else now
     stored = state.get('notifications', {})
     old = stored.get('incidents', {}) if isinstance(stored, dict) and stored.get('version') == 1 else {}
@@ -238,6 +247,11 @@ def notify(config, state, reports, result, receipts, *, now=None, send=send_tele
                 current = {(failure['stage'], failure['reason']) for failure in reviews}
                 clear(lambda parts: parts[:2] == [host, service] and parts[2] in REVIEW_STAGES
                       and (parts[2], parts[3]) not in current)
+            stages = row.get('stageFailures')
+            if valid_stage_failures(stages):
+                current = {('progress-' + failure['stage'], failure['reason']) for failure in stages}
+                clear(lambda parts: parts[:2] == [host, service] and parts[2].startswith('progress-')
+                      and (parts[2], parts[3]) not in current)
             # 장부 경보는 요약이 있는 명시적 관측(unknown 아님)에서 그 사유가 600초 계속 없어야 해제한다. 확인 못함(review)만
             # 남은 것도 해제 관측이다. 관측 누락·구버전 요약 없는 형식·읽기 실패는 복구가 아니다.
             current = None
@@ -267,6 +281,7 @@ def notify(config, state, reports, result, receipts, *, now=None, send=send_tele
         stage, reason = event.get('stage', 'service'), event.get('reason')
         if not ((stage in STAGES and reason == 'upstream_stalled') or
                 (stage in REVIEW_STAGES and reason in REVIEW_REASONS and type(event.get('bad')) is int and event['bad'] >= 2) or
+                (_stage_signature(stage, reason) and type(event.get('bad')) is int and event['bad'] >= 2) or
                 (stage == 'capacity' and reason in CAPACITY_REASONS) or
                 (stage == 'service' and reason in FAULTS and type(event.get('bad')) is int and event['bad'] >= 2)):
             continue
@@ -289,7 +304,8 @@ def notify(config, state, reports, result, receipts, *, now=None, send=send_tele
     message, included = 'NoMoreVibe incidents', []
     for signature in pending:
         host, service, stage, reason = signature.split('/')
-        line = '\n- ' + host + '/' + service + ('/' + stage if stage != 'service' else '') + ' ' + reason
+        label = stage[len('progress-'):] if stage.startswith('progress-') else stage
+        line = '\n- ' + host + '/' + service + ('/' + label if stage != 'service' else '') + ' ' + reason
         if stage in REVIEW_STAGES:
             line += ' (' + ('provider completion evidence required; restart does not release capacity' if reason == 'capacity_blocked'
                             else 'local fenced supervisor handles recovery' if reason == 'local_stalled'

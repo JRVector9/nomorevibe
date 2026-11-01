@@ -151,6 +151,22 @@ class CapacityReviewTests(unittest.TestCase):
         self.cycle(1040)
         self.assertFalse(self.cycle(1050, report={'m3': None})[0]['ok'])
 
+    def test_incomplete_replica_review_cannot_clear_a_known_alarm_after_ten_minutes(self):
+        from recovery_gateway import merge_capacity_unknowns
+        known_alarm = self.alarm()
+        self.row.update(ok=False, reason='pipeline_alarm', capacityUnknowns=known_alarm)
+        self.cycle(1000)
+        signature = 'm3/monitor/capacity/review_backlog'
+        partial = merge_capacity_unknowns([self.review], complete=False)
+        self.row['capacityUnknowns'] = partial
+        for now in range(1030, 1720, 30):
+            result, _ = self.cycle(now)
+            self.assertFalse(result['ok'])
+            self.assertIn(signature, self.incidents())
+            self.assertNotIn('clearSince', self.incidents()[signature])
+            self.assertEqual(self.state['targets']['m3/monitor']['capacityUnknowns'], known_alarm)
+        self.recover.assert_not_called()
+
     def test_rejects_false_recovery_claims_duplicate_ids_private_data_and_invalid_summaries(self):
         valid = [self.review, self.alarm(), self.alarm(('dispatch_stuck',), count=0, stuck=1),
                  {'status': 'review', 'truncated': True, 'requests': [], 'count': 70, 'oldestAgeSeconds': 5, 'stuckDispatched': 0, 'alarmReasons': []},

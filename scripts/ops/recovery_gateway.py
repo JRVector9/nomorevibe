@@ -94,6 +94,11 @@ PROVIDER_STAGES = frozenset({'reason-translate', 'crawl-tagline', 'keywords', 'k
 REVIEW_STAGES = frozenset({'first', 'second'})
 REVIEW_REASONS = frozenset({'capacity_blocked', 'consumer_missing', 'worker_missing',
                           'upstream_stalled', 'local_stalled', 'review_stalled'})
+STAGE_FAILURE_REASONS = {stage: frozenset({'no_progress', 'worker_missing', 'consumer_missing', 'upstream_stalled'})
+                         for stage in PROVIDER_STAGES | {'fetch', 'judge', 'publish', 'evidence', 'agent-evidence', 'ai-level', 'uptime'}}
+STAGE_FAILURE_REASONS['scheduler'] = frozenset({'scheduler_missed', 'worker_missing'})
+STAGE_FAILURE_REASONS.update({'role-' + role: frozenset({'worker_missing', 'restart_loop'})
+                             for role in ('scheduler', 'crawler', 'reviewer', 'publisher', 'maintenance', 'text')})
 
 
 def valid_review_failures(value):
@@ -101,6 +106,14 @@ def valid_review_failures(value):
             all(isinstance(row, dict) and set(row) == {'stage', 'reason'} and
                 isinstance(row['stage'], str) and row['stage'] in REVIEW_STAGES and
                 isinstance(row['reason'], str) and row['reason'] in REVIEW_REASONS for row in value) and
+            len({row['stage'] for row in value}) == len(value))
+
+
+def valid_stage_failures(value):
+    return (isinstance(value, list) and len(value) <= len(STAGE_FAILURE_REASONS) and
+            all(isinstance(row, dict) and set(row) == {'stage', 'reason'} and
+                isinstance(row['stage'], str) and row['stage'] in STAGE_FAILURE_REASONS and
+                isinstance(row['reason'], str) and row['reason'] in STAGE_FAILURE_REASONS[row['stage']] for row in value) and
             len({row['stage'] for row in value}) == len(value))
 
 
@@ -161,8 +174,12 @@ def capacity_pending(value):
 
 
 def merge_capacity_unknowns(items, complete):
-    """One consistent summary for several monitor replicas. Pending requests dominate a partial read; any summarized
-    alarm reason stays; a missing/old replica is never an explicit clear."""
+    """A fleet summary needs every replica's explicit observation. An incomplete
+    read is unknown: partial review rows cannot clear a previously known alarm.
+    Oracle retains the last known review/alarm separately from this failed read.
+    """
+    if not complete or any(item['status'] == 'unknown' for item in items):
+        return dict(UNKNOWN_CAPACITY)
     requests = {}
     for item in items:
         for row in item['requests']:
@@ -171,8 +188,7 @@ def merge_capacity_unknowns(items, complete):
     pending = bool(requests) or truncated
     summaries = [item for item in items if 'count' in item]
     reasons = sorted({reason for item in summaries for reason in item['alarmReasons']})
-    unknown = not complete or any(item['status'] == 'unknown' for item in items)
-    status = 'alarm' if reasons else 'review' if pending else 'unknown' if unknown else 'ok'
+    status = 'alarm' if reasons else 'review' if pending else 'ok'
     merged = {'status': status, 'truncated': truncated, 'requests': list(requests.values())[:64]}
     if reasons or (status != 'unknown' and len(summaries) == len(items)):
         count = max([len(requests), 65 if truncated else 0] + [item['count'] for item in summaries])
@@ -187,6 +203,12 @@ const allowed=['reason-translate','crawl-tagline','keywords','keyword-verify','p
 const reviews=['first','second'],reasons=['capacity_blocked','consumer_missing','worker_missing','upstream_stalled','local_stalled','review_stalled'];
 const reviewKnown=Array.isArray(j.reviewFailures)&&j.reviewFailures.length<=2&&j.reviewFailures.every(v=>v&&typeof v==='object'&&!Array.isArray(v)&&
 Object.keys(v).sort().join(',')==='reason,stage'&&reviews.includes(v.stage)&&reasons.includes(v.reason))&&new Set(j.reviewFailures.map(v=>v.stage)).size===j.reviewFailures.length;
+const stageKeys=[...allowed,'fetch','judge','publish','evidence','agent-evidence','ai-level','uptime'],roles=['scheduler','crawler','reviewer','publisher','maintenance','text'];
+const stageKnown=Array.isArray(j.stageFailures)&&j.stageFailures.length<=stageKeys.length+roles.length+1&&j.stageFailures.every(v=>v&&typeof v==='object'&&!Array.isArray(v)&&
+Object.keys(v).sort().join(',')==='reason,stage'&&typeof v.stage==='string'&&typeof v.reason==='string'&&
+(stageKeys.includes(v.stage)?['no_progress','worker_missing','consumer_missing','upstream_stalled'].includes(v.reason):
+v.stage==='scheduler'?['scheduler_missed','worker_missing'].includes(v.reason):roles.some(role=>v.stage==='role-'+role)&&['worker_missing','restart_loop'].includes(v.reason)))
+&&new Set(j.stageFailures.map(v=>v.stage)).size===j.stageFailures.length;
 const capacity=v=>{const unknown={status:'unknown',truncated:false,requests:[]};
 if(!v||!['ok','review','alarm','unknown'].includes(v.status)||typeof v.truncated!=='boolean'||!Array.isArray(v.requests)||v.requests.length>64)return unknown;
 const ids=new Set(),rows=[];
@@ -203,7 +225,8 @@ console.log(JSON.stringify({fresh:Number.isSafeInteger(j.checkedAt)&&Date.now()-
 overall:['ok','unknown','alarm'].includes(j.overall)?j.overall:'unknown',
 ...(j.capacityUnknowns!==undefined?{capacityUnknowns:capacity(j.capacityUnknowns)}:{}),
 ...(Array.isArray(j.providerFailures)?{providerFailures:allowed.filter(key=>j.providerFailures.includes(key))}:{}),
-...(reviewKnown?{reviewFailures:j.reviewFailures.map(v=>({stage:v.stage,reason:v.reason}))}:{})}));}
+...(reviewKnown?{reviewFailures:j.reviewFailures.map(v=>({stage:v.stage,reason:v.reason}))}:{}),
+...(stageKnown?{stageFailures:j.stageFailures.map(v=>({stage:v.stage,reason:v.reason}))}:{})}));}
 catch{console.log(JSON.stringify({fresh:false,overall:'unknown'}));}"""
 
 
@@ -262,7 +285,8 @@ def observe(key, cfg, run=command, now=None):
                 result.update(reason='monitor_stale', recoverable=settled)
             else:
                 overall_ok = all(check.get('overall') == 'ok' for check in checks)
-                result.update(reason='ok' if overall_ok else 'pipeline_alarm', ok=overall_ok and healthy)
+                result.update(reason='pipeline_alarm' if not overall_ok else 'ok' if healthy else 'container_unhealthy',
+                              ok=overall_ok and healthy)
                 failures = sorted({stage for check in checks for stage in check.get('providerFailures', [])
                                    if isinstance(stage, str) and stage in PROVIDER_STAGES})
                 if failures or all(isinstance(check.get('providerFailures'), list) for check in checks):
@@ -279,6 +303,16 @@ def observe(key, cfg, run=command, now=None):
                             review[failure['stage']] = failure['reason']
                     if not conflict:
                         result['reviewFailures'] = [{'stage': stage, 'reason': review[stage]} for stage in sorted(review)]
+                if all(valid_stage_failures(check.get('stageFailures')) for check in checks):
+                    stages = {}
+                    conflict = False
+                    for check in checks:
+                        for failure in check['stageFailures']:
+                            previous = stages.get(failure['stage'])
+                            conflict |= previous is not None and previous != failure['reason']
+                            stages[failure['stage']] = failure['reason']
+                    if not conflict:
+                        result['stageFailures'] = [{'stage': stage, 'reason': stages[stage]} for stage in sorted(stages)]
                 capacity = []
                 for check in checks:
                     if 'capacityUnknowns' in check:
@@ -351,7 +385,7 @@ def recover(config, key, version, *, now=None, probe_fn=probe, force_fn=force_up
         try:
             state = json.loads(path.read_text()) if path.exists() else {'attempts': {}}
             attempts = state['attempts'].get(key, [])
-            if not isinstance(attempts, list) or any(type(at) not in (int, float) or not math.isfinite(at) or at > now for at in attempts):
+            if not isinstance(attempts, list) or any(type(at) not in (int, float) or not math.isfinite(at) or at < 0 or at > now for at in attempts):
                 return {'result': 'limited'}
             attempts = [at for at in attempts if now - at < 86400]
             if len(attempts) >= 2 or (attempts and now - max(attempts) < 900):

@@ -103,6 +103,60 @@ class ProviderProbeTests(unittest.TestCase):
         self.assertNotIn('reviewFailures', fixture.observe())
 
 
+class StageProbeTests(unittest.TestCase):
+    def setUp(self):
+        self.gateway = load('recovery_gateway_stages', ROOT / 'scripts/ops/recovery_gateway.py')
+        self.fixtures = load('recovery_stage_fixtures', ROOT / 'tests/test_recovery_observation.py')
+
+    @unittest.skipUnless(shutil.which('node'), 'Node is needed to execute the actual in-container probe')
+    def test_actual_probe_preserves_legacy_and_only_complete_fixed_stage_metadata(self):
+        all_stages = [{'stage': stage, 'reason': sorted(reasons)[0]}
+                      for stage, reasons in self.gateway.STAGE_FAILURE_REASONS.items()]
+        valid = {'stage': 'publish', 'reason': 'no_progress'}
+        values = [(None, None), ([], []), (all_stages, all_stages), ([valid], [valid]),
+                  ('private-token', None), ([valid, valid], None), ([None], None),
+                  ([{'stage': 'first', 'reason': 'no_progress'}], None),
+                  ([{'stage': 'private-token', 'reason': 'no_progress'}], None),
+                  ([{'stage': 'scheduler', 'reason': 'no_progress'}], None),
+                  ([{**valid, 'body': 'private-token'}], None)]
+        with tempfile.TemporaryDirectory() as directory:
+            heartbeat = Path(directory) / 'health.json'
+            for value, expected in values:
+                with self.subTest(value=value):
+                    payload = {'checkedAt': int(time.time() * 1000), 'overall': 'alarm'}
+                    if value is not None:
+                        payload['stageFailures'] = value
+                    heartbeat.write_text(json.dumps(payload))
+                    result = subprocess.run(['node', '-e', self.gateway.MONITOR_PROBE], check=True, timeout=10,
+                                            capture_output=True, env={**os.environ, 'MONITOR_HEALTH_PATH': str(heartbeat)})
+                    report = json.loads(result.stdout)
+                    if expected is None:
+                        self.assertNotIn('stageFailures', report)
+                    else:
+                        self.assertEqual(report['stageFailures'], expected)
+                    self.assertNotIn(b'private-token', result.stdout)
+
+    def test_only_complete_fresh_nonconflicting_replica_metadata_can_clear(self):
+        fixture = self.fixtures.DockerFixture(self.gateway, kind='monitor')
+        first, second = [fixture.monitor[cid] for cid in self.fixtures.IDS]
+        fault = {'stage': 'fetch', 'reason': 'no_progress'}
+        first['stageFailures'] = [fault]
+        self.assertNotIn('stageFailures', fixture.observe())  # old second replica
+        second['stageFailures'] = []
+        row = fixture.observe()
+        self.assertEqual(row['stageFailures'], [fault])
+        self.assertFalse(row['recoverable'])
+        second['stageFailures'] = [{'stage': 'fetch', 'reason': 'worker_missing'}]
+        self.assertNotIn('stageFailures', fixture.observe())
+        second['stageFailures'] = [{'stage': 'publish', 'reason': 'worker_missing'}]
+        self.assertEqual(fixture.observe()['stageFailures'], [fault, second['stageFailures'][0]])
+        second['fresh'] = False
+        self.assertNotIn('stageFailures', fixture.observe())
+        second['fresh'] = True
+        first['stageFailures'] = second['stageFailures'] = []
+        self.assertEqual(fixture.observe()['stageFailures'], [])
+
+
 class CapacityProbeTests(unittest.TestCase):
     """2026-10-31: review (확인 못함 · 사람 검토) passes through as information; only a summarized alarm/unread ledger fails the row."""
     def setUp(self):
@@ -167,6 +221,16 @@ class CapacityProbeTests(unittest.TestCase):
         self.assertFalse(self.gateway.capacity_alarm(row['capacityUnknowns']))
         self.assertEqual(row['reason'], 'pipeline_alarm')  # old monitor still reports overall=alarm until it is redeployed
         self.assertEqual(self.observe(self.legacy, self.legacy)['reason'], 'ok')
+
+    def test_partial_replica_review_or_alarm_never_becomes_an_explicit_summary_clear(self):
+        for values in [(self.review, None), (self.review, self.unknown), (self.legacy, None),
+                       (self.alarm, None), (self.alarm, self.unknown)]:
+            with self.subTest(values=values):
+                row = self.observe(*values)
+                self.assertEqual(row['capacityUnknowns'], self.unknown)
+                self.assertEqual((row['reason'], row['ok'], row['recoverable']),
+                                 ('pipeline_alarm', False, False))
+                self.assertNotIn('alarmReasons', row['capacityUnknowns'])
 
     def test_merge_keeps_every_alarm_reason_and_the_largest_backlog(self):
         other = {**self.review, 'requests': [{**self.request, 'requestId': '00000000-0000-4000-8000-000000000002'}],

@@ -96,8 +96,8 @@ class GatewayTests(unittest.TestCase):
                                             run=lambda _: json.dumps([service]),
                                             exchange=lambda *args: self.fail('must not mutate changed version')), {'result': 'refused'})
 
-    def test_daily_budget_and_future_attempts_fail_closed(self):
-        for attempts in [[1, 2], [2000]]:
+    def test_daily_budget_and_invalid_attempts_fail_closed(self):
+        for attempts in [[1, 2], [2000], [-1], [float('nan')], [True], 'invalid']:
             Path(self.config['state']).write_text(json.dumps({'attempts': {'web': attempts}}))
             self.assertEqual(self.recover()['result'], 'limited')
         self.assertEqual(self.calls, [])

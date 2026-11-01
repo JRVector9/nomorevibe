@@ -97,3 +97,65 @@ it.each([
   expect(heartbeat(status([lane({ stage: 'first', reason: 'no_progress', alarm: true, ...extra })]))
     .value.reviewFailures).toEqual([]);
 });
+
+it('adds collection, approval, Korean text, scheduler and role faults while aggregate is already down', () => {
+  const report = status([
+    lane({ stage: 'fetch', role: 'crawler', reason: 'no_progress', alarm: true }),
+    lane({ stage: 'evidence', role: 'crawler', reason: 'upstream_stalled', alarm: true }),
+    lane({ stage: 'publish', role: 'publisher', reason: 'worker_missing', alarm: true }),
+    lane({ stage: 'tagline-ko', reason: 'no_progress', alarm: true }),
+    lane({ stage: 'intro-check', role: 'reviewer', reason: 'no_progress', alarm: true }),
+  ]);
+  report.overall = 'alarm';
+  report.progress!.scheduler = { role: 'scheduler', reason: 'scheduler_missed', alarm: true, overdueJobs: ['private-job'] };
+  report.progress!.liveness = [{ role: 'crawler', reason: 'restart_loop', alarm: true }];
+  expect(heartbeat(report).value.stageFailures).toEqual([
+    { stage: 'fetch', reason: 'no_progress' }, { stage: 'evidence', reason: 'upstream_stalled' },
+    { stage: 'publish', reason: 'worker_missing' }, { stage: 'tagline-ko', reason: 'no_progress' },
+    { stage: 'intro-check', reason: 'no_progress' }, { stage: 'scheduler', reason: 'scheduler_missed' },
+    { stage: 'role-crawler', reason: 'restart_loop' },
+  ]);
+  expect(JSON.stringify(heartbeat(report).value)).not.toContain('private-job');
+});
+
+it('keeps existing review and provider timing and omits held, non-alarm or unknown stage faults', () => {
+  const report = status([
+    lane({ stage: 'first', role: 'reviewer', reason: 'no_progress', alarm: true }),
+    lane({ stage: 'second', role: 'reviewer', reason: 'consumer_missing', alarm: true }),
+    lane({ reason: 'upstream_stalled', alarm: true }),
+    lane({ stage: 'publish', reason: 'no_progress', alarm: true, held: true }),
+    lane({ stage: 'fetch', reason: 'no_progress', alarm: false }),
+    { ...lane({ reason: 'no_progress', alarm: true }), stage: 'private-token' } as unknown as StageProgress,
+  ]);
+  const value = heartbeat(report).value;
+  expect(value).not.toHaveProperty('stageFailures');
+  expect(value.providerFailures).toContain('keywords');
+  expect(value.reviewFailures).toHaveLength(2);
+  expect(heartbeat(status(report.progress!.stages.slice(0, -1))).value.stageFailures).toEqual([]);
+  expect(heartbeat(status([])).value.stageFailures).toEqual([]);
+  expect(heartbeat(status(null)).value).not.toHaveProperty('stageFailures');
+});
+
+it('still reports upstream text faults when existing provider metadata cannot represent them', () => {
+  expect(heartbeat(status([lane({ reason: 'upstream_stalled', alarm: true, providerErrors: 0, errors5m: 0 })]))
+    .value.stageFailures).toEqual([{ stage: 'keywords', reason: 'upstream_stalled' }]);
+});
+
+it.each([
+  { reason: 'unknown_age' as const }, { waiting: Number.NaN }, { progress5m: Number.POSITIVE_INFINITY }, { errors5m: -1 },
+])('does not report a clear while one included stage is unmeasured even if another is alarmed: %j', extra => {
+  const report = status([lane({ stage: 'fetch', reason: 'no_progress', alarm: true }), lane(extra)]);
+  report.overall = 'alarm';
+  report.progress!.overall = 'alarm';
+  expect(heartbeat(report).value).not.toHaveProperty('stageFailures');
+});
+
+it('preserves unknown scheduler and overall observations instead of emitting an empty stage clear', () => {
+  const report = status([]);
+  report.progress!.scheduler = { role: 'scheduler', reason: 'unknown_schedule', alarm: false, overdueJobs: [] };
+  report.progress!.overall = 'alarm';
+  expect(heartbeat(report).value).not.toHaveProperty('stageFailures');
+  report.progress!.scheduler = { role: 'scheduler', reason: 'scheduled', alarm: false, overdueJobs: [] };
+  report.progress!.overall = 'unknown';
+  expect(heartbeat(report).value).not.toHaveProperty('stageFailures');
+});
