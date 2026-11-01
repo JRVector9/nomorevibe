@@ -4,6 +4,7 @@ import * as crawl from "@/lib/crawl/repository";
 import { getSettings } from "@/lib/crawl/settings";
 import { fetchCapped, type CappedRequest } from "@/lib/net/fetch";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
+import { discoveryHash } from "@/lib/crawl/discovery-checkpoint-contract";
 
 /**
  * Show HN 수집.
@@ -117,12 +118,17 @@ export async function seedFromShowHN(ctx: JobContext<ShowHnCursor>, request?: Ca
   if (!settings.enabled || !settings.discover.showHn.enabled) return { done: true };
 
   let cursor: ShowHnCursor = ctx.cursor ?? { seenUntil: Math.floor((Date.now() - FIRST_RUN_LOOKBACK_MS) / 1000) };
+  const save = (progressed = false, acknowledged = false, intent: "ready" | "caught_up" | "upstream_error" = "ready") => ctx.save(cursor, [{
+    source: "show-hn", subject: discoveryHash("show-hn"), generation: discoveryHash("show-hn-v1"), semantic: discoveryHash(cursor),
+    intent, progressed, acknowledged,
+  }]);
 
   let probe: ShowHnPage;
   for (;;) {
     const result = await fetchShowHN(requestUrl(cursor, 0), request);
     if (!result.ok) {
       ctx.log("crawl.show_hn_failed", { reason: result.reason, page: 0 });
+      await save(false, false, "upstream_error");
       return { done: false, cursor };
     }
     probe = result.value;
@@ -131,7 +137,7 @@ export async function seedFromShowHN(ctx: JobContext<ShowHnCursor>, request?: Ca
     if (!overflows(probe) || upper <= cursor.seenUntil) break;
     cursor = { ...cursor, windowTo: Math.floor((cursor.seenUntil + upper) / 2) };
     // 나눈 것도 진행이다. 끊겨도 다음 틱이 같은 구간을 다시 나누지 않게 남긴다.
-    await ctx.save(cursor);
+    await save(true);
     if (!ctx.hasBudget()) return { done: false, cursor };
   }
 
@@ -142,12 +148,14 @@ export async function seedFromShowHN(ctx: JobContext<ShowHnCursor>, request?: Ca
     const result = number === 0 ? { ok: true as const, value: probe } : await fetchShowHN(requestUrl(cursor, number), request);
     if (!result.ok) {
       ctx.log("crawl.show_hn_failed", { reason: "page_fetch", page: number });
+      await save(false, false, "upstream_error");
       return { done: false, cursor };
     }
     // 첫 조회와 지금 사이에 글이 올라오거나 지워지면 페이지가 밀린다. 이 페이지가 가장 오래된
     // 것이라는 보장이 없으므로 커서를 올리지 않고 다음 틱에 다시 센다.
     if (result.value.nbPages !== probe.nbPages || result.value.nbHits !== probe.nbHits) {
       ctx.log("crawl.show_hn_shifted", { page: number });
+      await save(false, false, "upstream_error");
       return { done: false, cursor };
     }
 
@@ -155,7 +163,7 @@ export async function seedFromShowHN(ctx: JobContext<ShowHnCursor>, request?: Ca
     const items = [...result.value.hits].sort((a, b) => a.created_at_i - b.created_at_i).filter((item) => !processed(cursor, item));
     for (const item of items) {
       if (!ctx.hasBudget()) {
-        await ctx.save(cursor);
+        await save();
         return { done: false, cursor };
       }
       const repo = repoFromUrl(item.url);
@@ -167,9 +175,10 @@ export async function seedFromShowHN(ctx: JobContext<ShowHnCursor>, request?: Ca
       cursor = item.created_at_i > cursor.seenUntil
         ? { ...cursor, seenUntil: item.created_at_i, seenIds: [item.objectID] }
         : { ...cursor, seenIds: [...(cursor.seenIds ?? []), item.objectID] };
-      await ctx.save(cursor);
+      await save(true);
     }
     examined += items.length;
+    await save(false, true);
     // 새로 넣은 것이 있으면 이번 틱은 여기까지다. 이미 본 경계 초의 글뿐인 페이지였다면 한 칸
     // 새로운 페이지로 간다 — 그대로 끝내면 다음 틱도 같은 페이지만 읽고 제자리에 머문다.
     if (items.length && number > 0) {
@@ -181,11 +190,12 @@ export async function seedFromShowHN(ctx: JobContext<ShowHnCursor>, request?: Ca
   // 0페이지까지 읽었다 — 이 구간에 남은 글이 없다.
   if (cursor.windowTo !== undefined) {
     cursor = { seenUntil: cursor.windowTo + 1 };
-    await ctx.save(cursor);
+    await save(true, true);
     ctx.log("crawl.show_hn_seeded", { discovered, examined, backlogPages: 0, drained: false });
     return { done: false, cursor };
   }
   ctx.log("crawl.show_hn_seeded", { discovered, examined, backlogPages: 0, drained: true });
+  await save(false, true, "caught_up");
   // 훑을 것이 없어도 어디까지 읽었는지는 남긴다 — 잃으면 같은 게시물을 다시 읽는다.
   return { done: true, cursor };
 }

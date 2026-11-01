@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from '@/lib/crawl/settings-schema';
 import { seedFrontier, type SeedCursor } from '@/lib/crawl/jobs/seed';
+import { discoveryHash, type DiscoveryCheckpointInput } from '@/lib/crawl/discovery-checkpoint-contract';
 
 const mocks = vi.hoisted(() => ({enqueue:vi.fn(), admission:vi.fn(), search:vi.fn(), record:vi.fn(), log:vi.fn(), settings:null as CrawlSettings|null}));
 vi.mock('@/lib/observability/logger', () => ({logger:{info:mocks.log}}));
@@ -77,6 +78,15 @@ it('separates raw search hits, rejected items, identical evidence and existing r
 });
 
 const signal = (n: number) => ({label:`신호${n}`,kind:'commits' as const,query:`q${n}`,enabled:true,builder:null,priority:100-n});
+it('saves an empty page acknowledgement only for the query actually scanned', async () => {
+  mocks.settings!.discover.queries = [signal(0), signal(1)];
+  mocks.search.mockResolvedValue(page([]));
+  const tick = context();
+  await seedFrontier(tick);
+  const receipts = tick.save.mock.calls.flatMap(([, rows]) => rows ?? []) as DiscoveryCheckpointInput[];
+  expect(receipts.some(row => row.source === 'github-full' && row.subject === discoveryHash('신호0') && row.acknowledged === true)).toBe(true);
+  expect(receipts.some(row => row.subject === discoveryHash('신호1') && (row.progressed || row.acknowledged))).toBe(false);
+});
 /** 결과가 1,000건을 넘으면 창이 절반씩 쪼개진다 — 실제로 1번 신호를 붙잡아 두던 조건 */
 const saturating = page(Array.from({length:100},(_,i) => ({repository:{full_name:`acme/r${i}`},sha:'a'.repeat(40),commit:{message:'fix'}})), {total_count:500_000});
 

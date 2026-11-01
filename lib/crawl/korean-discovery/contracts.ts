@@ -1,8 +1,21 @@
 import { z } from 'zod';
 import { splitSearchWindow, type SearchWindow } from '@/lib/crawl/search-window';
+import type { CrawlSettings } from '@/lib/crawl/settings-schema';
 
 export const KoreanQuerySchema = z.object({ label: z.string().min(1).max(40), query: z.string().min(1).max(200), priority: z.number().int().min(0).max(1000) }).strict();
 export type KoreanQuery = z.infer<typeof KoreanQuerySchema>;
+/** Synchronization and monitoring derive the same desired ownership, including not-yet-created rows. */
+export function desiredKoreanQueries(settings: CrawlSettings, configured: unknown): KoreanQuery[] {
+  const selected = settings.discover.queries.filter(q => q.enabled && q.kind === 'repositories' && /[가-힣]/.test(q.query))
+    .map(q => ({ label: q.label, query: q.query, priority: q.priority }));
+  const normalized = (query: string) => query.trim().replace(/\s+/g, ' ').toLowerCase();
+  for (const query of KoreanQuerySchema.array().max(30).parse(configured)) {
+    if (!/[가-힣]/.test(query.query)) throw new Error('korean_query_requires_hangul');
+    if (!selected.some(q => q.label === query.label || normalized(q.query) === normalized(query.query))
+      && !settings.discover.queries.some(q => !q.enabled && normalized(q.query) === normalized(query.query))) selected.push(query);
+  }
+  return selected;
+}
 export const KoreanCursorSchema = z.object({ window: z.object({ from: z.string().datetime(), to: z.string().datetime() }),
   page: z.number().int().min(1).max(10), pendingWindows: z.array(z.object({ from: z.string().datetime(), to: z.string().datetime() })).max(256).default([]),
   waitingUntil: z.string().datetime().optional(), unresolved: z.boolean().optional() }).strict();

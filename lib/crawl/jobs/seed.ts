@@ -14,6 +14,7 @@ import { searchCommits, searchRepositories, SEARCH_PER_PAGE, MAX_SEARCH_PAGES, t
 import { recordDiscoveryEvidenceBatch } from '@/lib/domain/evidence/agents/repository';
 import { isStorableLabel, parseCommitAttributions, type CommitAttribution } from '@/lib/domain/evidence/agents/commit-attribution';
 import { splitSearchWindow, type SearchWindow } from '@/lib/crawl/search-window';
+import { githubDiscoveryReceipts, githubDiscoverySharedWait } from '@/lib/crawl/discovery-checkpoint-contract';
 
 export const MAX_SEED_ATTRIBUTIONS = 8;
 const INCOMPLETE_RETRY_MS = 60 * 60_000;
@@ -105,9 +106,7 @@ export async function seedFrontier(ctx:JobContext<SeedCursor>):Promise<JobOutcom
   let nextLane:DiscoveryLane = latestTurn === false ? 'full' : 'latest';
   const savedSnapshot = (): SeedCursor => ({ ...full, admissionThrottled:admission.throttled, latestScan: latest, latestTurn:nextLane === 'latest',laneProgress });
   const waiting = (cursor:SearchCursor|undefined) => Boolean(cursor?.retryAt && Date.parse(cursor.retryAt) > Date.now());
-  const sharedWait = (cursor:SearchCursor|undefined) => waiting(cursor) && !cursor?.waiting &&
-    (cursor?.retryKind === 'rate_limited' || cursor?.retryKind === 'auth_unavailable'
-      || (!cursor?.retryKind && cursor?.phase !== 'retry' && !cursor?.incompleteWindows?.length));
+  const sharedWait = (cursor:SearchCursor|undefined) => githubDiscoverySharedWait(cursor, Date.now());
   // An authentication/quota wait is shared; a finished preview or an occupied page is not.
   if (sharedWait(latest) || sharedWait(full)) return {done:false,cursor:savedSnapshot()};
   let latestDone = latest?.waiting === true, fullDone = full.waiting === true;
@@ -125,9 +124,9 @@ export async function seedFrontier(ctx:JobContext<SeedCursor>):Promise<JobOutcom
             completedPages += typeof fields?.pagesCompleted === 'number' ? fields.pagesCompleted : 0;
           }
           ctx.log(event,fields);
-        },save:async value => {
+        },save:async (value, receipts) => {
           if (lane === 'latest') latest = {...value,coverageVersion:2}; else full = value;
-          await ctx.save(savedSnapshot());
+          await ctx.save(savedSnapshot(), receipts);
         },
       },{...settings,discover:{...settings.discover,pagesPerTick:pages}},admission,lane === 'latest');
       if (lane === 'latest') {latest = outcome.cursor ? {...outcome.cursor,coverageVersion:2} : latest;latestDone = outcome.done;}
@@ -229,7 +228,11 @@ async function seedSearchCycle(ctx:JobContext<SearchCursor>, settings:CrawlSetti
   const summarize = (drained = false) => ctx.log(latestOnly ? 'crawl.seed_latest_scanned' : 'crawl.seeded',
     {discovered,searchRequests,pagesVisited,pagesCompleted,cacheHits,examined,existing,returned,filtered,pageDuplicates,drained,window:cursor.cycleWindow,signal:cursor.signal,page:cursor.page,
       incompleteWindows:cursor.incompleteWindows?.length ?? 0});
-  const save = () => ctx.save(cursor);
+  const progressed = new Set<string>(), acknowledged = new Set<string>();
+  const save = async () => {
+    await ctx.save(cursor, githubDiscoveryReceipts(cursor,queries,settings.discover,latestOnly ? 'github-latest' : 'github-full', {progressed,acknowledged}));
+    progressed.clear(); acknowledged.clear();
+  };
   const measure = (counts:DiscoveryProgressInput['counts'], extra:Partial<Pick<DiscoveryProgressInput,'blockedBy'|'completedThrough'>> = {}) =>
     recordDiscoveryProgress({worker:discoveryWorker(),lane:latestOnly ? 'latest' : 'full',signal:cursor.signal,
       window:cursor.window ?? initial,page:cursor.page,counts,...extra});
@@ -328,7 +331,7 @@ async function seedSearchCycle(ctx:JobContext<SearchCursor>, settings:CrawlSetti
 
   // 지난번에 다 따라잡았다면, 검색을 쓰기 전에 새로 쌓인 구간이 있는지부터 본다.
   // 이 확인 없이 반복하면 이미 덮은 마지막 창을 매 틱 다시 긁는다.
-  if (cursor.waiting && !startNextCycle()) return {done:true,cursor};
+  if (cursor.waiting && !startNextCycle()) {await save(); return {done:true,cursor};}
 
   for (let visited = 0; visited < settings.discover.pagesPerTick && admission.remainingNew > 0 && ctx.hasBudget(); visited++) {
     if (cursor.retryAt && Date.parse(cursor.retryAt) > Date.now()) return defer();
@@ -379,6 +382,7 @@ async function seedSearchCycle(ctx:JobContext<SearchCursor>, settings:CrawlSetti
         saturated:(result.value.total_count ?? 0) > SEARCH_PER_PAGE*MAX_SEARCH_PAGES,
         capped:cursor.page >= MAX_SEARCH_PAGES && result.value.items.length >= SEARCH_PER_PAGE,
       };
+      progressed.add(signal.label);
       await measure({searchRequests:searchRequests-requestsBefore,pagesVisited:1,cacheHits:result.cached ? 1 : 0,
         returned:raw.length,pageDuplicates:normalized.duplicates,incomplete:cursor.pendingPage.incomplete ? 1 : 0});
       // Save before side effects so a process restart does not need to repeat a shifting API page.
@@ -415,6 +419,7 @@ async function seedSearchCycle(ctx:JobContext<SearchCursor>, settings:CrawlSetti
         window,page:cursor.page,examined:processed,discovered:added,existing:processed-added});
       admission.remainingNew = Math.min(admission.remainingNew-added, committed.remainingNew);
       page.itemIndex += processed;
+      if (processed > 0) progressed.add(signal.label);
       await measure({examined:processed,discovered:added,existing:processed-added},
         admission.remainingNew <= 0 ? {blockedBy:committed.blockedBy} : {});
       if (!processed) return defer();
@@ -422,6 +427,7 @@ async function seedSearchCycle(ctx:JobContext<SearchCursor>, settings:CrawlSetti
     }
     delete cursor.pendingPage;
     pagesCompleted++;
+    progressed.add(signal.label); acknowledged.add(signal.label);
     const incomplete = page.incomplete || page.saturated || page.capped;
     if (incomplete) {
       const pieces = splitSearchWindow(window);
@@ -448,7 +454,7 @@ async function seedSearchCycle(ctx:JobContext<SearchCursor>, settings:CrawlSetti
         await measure({}, {completedThrough:initial.to});
       }
       // 훑을 것은 없지만(done) 어디까지 덮었는지는 남긴다 — 잃으면 다음 주기가 같은 구간을 다시 긁는다.
-      if (!advance()) {summarize(true); return {done:true,cursor};}
+      if (!advance()) {await save(); summarize(true); return {done:true,cursor};}
     }
     await save();
   }

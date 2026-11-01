@@ -1,5 +1,6 @@
 import {expect,it} from 'vitest';
-import {firstKoreanCursor,koreanSearchQuery,nextKoreanCursor,resumeKoreanCursor} from '@/lib/crawl/korean-discovery/contracts';
+import {desiredKoreanQueries,firstKoreanCursor,koreanSearchQuery,nextKoreanCursor,resumeKoreanCursor} from '@/lib/crawl/korean-discovery/contracts';
+import {DEFAULT_CRAWL_SETTINGS} from '@/lib/crawl/settings-schema';
 const now=new Date('2026-10-28T00:00:00Z');
 const cursor=firstKoreanCursor(new Date('2026-10-01T00:00:00Z'),3,now);
 it('fixes explicit historical start and advances all pages before moving a window',()=>{
@@ -29,4 +30,15 @@ it('visits every accessible saturated minimal-window page and recovers after a c
   expect(retry.window).toEqual(current.window);expect(retry.unresolved).toBeUndefined();
   const recovered=nextKoreanCursor(retry,{length:1,total:1},3,now);
   expect(recovered.unresolved).toBeUndefined();expect(recovered.window.from).toBe('2026-10-01T00:00:01Z');
+});
+
+it('derives canonical desired queries before rows exist, preserving configured additions and explicit query disables',()=>{
+  const configured=[{label:'추가',query:'한국어 in:readme',priority:50},{label:'중복',query:'  있습니다   in:readme ',priority:40},
+    {label:'꺼짐',query:'합니다 in:readme',priority:40}];
+  const settings={...DEFAULT_CRAWL_SETTINGS,discover:{...DEFAULT_CRAWL_SETTINGS.discover,queries:[
+    {label:'기존',query:'있습니다 in:readme',kind:'repositories' as const,priority:60,enabled:true,builder:null},
+    {label:'끄기',query:'합니다 in:readme',kind:'repositories' as const,priority:50,enabled:false,builder:null},
+    {label:'영문',query:'topic:vibe',kind:'repositories' as const,priority:50,enabled:true,builder:null}]}};
+  expect(desiredKoreanQueries(settings,configured)).toEqual([
+    {label:'기존',query:'있습니다 in:readme',priority:60},{label:'추가',query:'한국어 in:readme',priority:50}]);
 });

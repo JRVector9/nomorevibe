@@ -15,13 +15,15 @@ import { PAUSED_AFTER_MS } from "./status";
 import { assertRoleLease, RoleLeaseLostError, type RoleLease } from "./role-leader";
 import { DrWriterFencedError, writerSiteActive } from "@/lib/operations/dr/epoch";
 import { COLLECTOR_NAMES, createTally, jobTallyUpsert } from "./tally";
+import { checkpointDiscovery } from "@/lib/crawl/discovery-checkpoint";
+import type { DiscoveryCheckpointInput } from "@/lib/crawl/discovery-checkpoint-contract";
 // 누적 실패는 오류 code·잘린 message 만 — drizzle 이 감싼 message 의 SQL·params 를 로그에 남기지 않는다
 import { dbErrorFields, dbErrorPrefix, dbErrorTag } from "@/lib/db/error-fields";
 
 /** Existing bounded handlers keep their cursors; execution ownership belongs to this runner. */
 export type JobContext<C> = {
   cursor: C | null;
-  save: (cursor: C) => Promise<void>;
+  save: (cursor: C, discovery?: readonly DiscoveryCheckpointInput[]) => Promise<void>;
   hasBudget: () => boolean;
   deadlineAt?: number;
   log: (event: string, fields?: Record<string, unknown>) => void;
@@ -212,10 +214,20 @@ export async function runJob<C>(
     lease,
     signal: options.signal,
     deadlineAt: startedAt + (options.budgetMs ?? 25_000),
-    save: async next => {
+    save: async (next, discovery) => {
       if (lost) throw new JobLeaseLostError();
-      const [row] = await db.update(jobs).set({ cursor: next, updatedAt: sql`now()` })
-        .where(owned).returning({ name: jobs.name });
+      const write = async (tx: ProductTransaction) => {
+        if (!await writerSiteActive(tx)) throw new DrWriterFencedError("site_fenced");
+        const [row] = await tx.update(jobs).set({ cursor: next, updatedAt: sql`now()` }).where(owned).returning({ name: jobs.name });
+        if (row) {
+          await assertJobLeaseAtWallTime(tx, lease);
+          await checkpointDiscovery(tx, discovery!);
+          await assertJobLeaseAtWallTime(tx, lease);
+        }
+        return row;
+      };
+      const row = discovery ? await db.transaction(write)
+        : (await db.update(jobs).set({ cursor: next, updatedAt: sql`now()` }).where(owned).returning({ name: jobs.name }))[0];
       if (!row) { lost = true; throw new JobLeaseLostError(); }
       cursor = next;
     },

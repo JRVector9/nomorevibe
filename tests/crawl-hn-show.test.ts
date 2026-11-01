@@ -96,6 +96,19 @@ it('응답이 깨졌거나 실패하면 커서를 올리지 않는다', async ()
   }
 });
 
+it('acknowledges a real completed empty scan but never a failed fetch as successful discovery', async () => {
+  const empty = context({ seenUntil: 77 });
+  await seedFromShowHN(empty, respond({ nbPages: 1, hits: [] }));
+  expect(empty.save).toHaveBeenLastCalledWith({ seenUntil: 77 }, [expect.objectContaining({
+    source: 'show-hn', intent: 'caught_up', progressed: false, acknowledged: true,
+  })]);
+  const failed = context({ seenUntil: 77 });
+  await seedFromShowHN(failed, respond({}, 500));
+  expect(failed.save).toHaveBeenLastCalledWith({ seenUntil: 77 }, [expect.objectContaining({
+    source: 'show-hn', intent: 'upstream_error', progressed: false, acknowledged: false,
+  })]);
+});
+
 it('예산이 끊기면 처리한 곳까지만 커서를 올린다', async () => {
   let budget = true;
   mocks.enqueue.mockImplementation(async () => { budget = false; return 1; });

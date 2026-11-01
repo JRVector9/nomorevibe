@@ -770,3 +770,4 @@ export * from "./intro-assist-schema";
 export * from "./news-localization-schema";
 
 export * from "./discovery-schema";
+export * from "./discovery-checkpoint-schema";

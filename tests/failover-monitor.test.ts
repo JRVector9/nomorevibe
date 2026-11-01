@@ -20,6 +20,13 @@ it('combines readiness and progress without downgrading alarms or unknowns', () 
   expect(exitCodeFor('alarm')).toBe(2);
 });
 
+it('includes discovery stalls and unavailable discovery measurements in the aggregate monitor', () => {
+  const discovery = { at: ready.measuredAt, overall: 'ok' as const, failures: { v: 1 as const, covered: [], failures: [] } };
+  expect(combineMonitorStatus(ready, progress, undefined, discovery).overall).toBe('ok');
+  expect(combineMonitorStatus(ready, progress, undefined, { ...discovery, overall: 'unknown' }).overall).toBe('unknown');
+  expect(combineMonitorStatus(ready, progress, undefined, { ...discovery, overall: 'alarm' }).overall).toBe('alarm');
+});
+
 it('pushes down after two bad samples and immediately pushes recovery', async () => {
   let state: MonitorCycleState = { badSamples: 0 };
   const push = vi.fn().mockResolvedValue(undefined);
