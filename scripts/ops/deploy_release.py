@@ -51,6 +51,8 @@ PROTECTED_SETTINGS = frozenset(RELEASE_SETTINGS) | frozenset(shared.INTEGRATION_
     ('WORKER_ROLE', 'NEXT_SERVER_ACTIONS_ENCRYPTION_KEY', 'DATABASE_URL'))
 # A failure code safe to print: no spaces, quotes, URLs or free text that could carry a secret value.
 SAFE_CODE = re.compile(r'[A-Za-z0-9_:.-]{3,160}')
+# Observation receipts may name a checkout-relative tool file, never an absolute path or a user name.
+SOURCE_RELATIVE = re.compile(r'scripts/ops/[A-Za-z0-9_.-]+\.py')
 HIDDEN_REASON = 'inspect-private-receipts'
 # Plan failures happen before any private directory exists; this safe record keeps code, class, stage and names only.
 PLAN_FAILURE_DIR = Path.home() / '.local/state/nomorevibe-releases/plan-failures'
@@ -106,6 +108,26 @@ def env_drift_preflight(snapshot, selected):
     return {'checkedApps': list(selected), 'ignoredSettings': list(RELEASE_SETTINGS), 'checkedAt': now()}
 
 
+def observer_source_preflight(root=None):
+    """Refuse to plan when an observation source is missing, unowned, or group/world-writable.
+
+    Same rule as release_observer at launch. Detail keeps the repo-relative path and problem kind only.
+    """
+    module = load('release_observe_preflight', 'release_observer.py')
+    problems = []
+    for item in module.observer_source_problems(root):
+        if not isinstance(item, dict):
+            continue
+        relative, problem = item.get('file'), item.get('problem')
+        if relative not in module.SOURCE_FILES or problem not in module.SOURCE_PROBLEM_CODE:
+            continue
+        problems.append({'file': relative, 'problem': problem})
+    if problems:
+        code = safe_code(module.SOURCE_PROBLEM_CODE[problems[0]['problem']]) or 'observer_source_refused'
+        raise PlanRefused(code, {'observerSources': problems})
+    return {'checkedFiles': list(module.SOURCE_FILES), 'checkedAt': now()}
+
+
 def validate_retired_settings(values):
     """Sorted unique names a release may retire; a malformed name is refused without being echoed."""
     names = set()
@@ -155,6 +177,19 @@ def failure_report(error):
     if isinstance(record, str):
         report['failureRecord'] = record
     return report
+
+
+def observation_failure(error):
+    """Schedule-failure receipt: class, a safe reason code, and a repo-relative source when we have one."""
+    record = {'status': 'schedule-failed', 'errorClass': type(error).__name__,
+              'scope': 'deployment verified; observation has not been scheduled'}
+    reason = safe_code(getattr(error, 'code', None)) or safe_code(str(error))
+    if reason:
+        record['reason'] = reason
+    source = getattr(error, 'source', None)
+    if isinstance(source, str) and SOURCE_RELATIVE.fullmatch(source):
+        record['file'] = source
+    return record
 
 
 def record_plan_failure(error, stage, directory=None):
@@ -381,6 +416,8 @@ def create_plan(sha, output, *, baseline_path=None, baseline_sha=None, migration
     if selected:
         # Saved-but-undeployed Dokploy env stops the plan here, before credentials, images or any wait.
         plan['envPreflight'] = env_drift_preflight(snapshot, selected)
+        # Observation sources are local files. A bad mode stops the plan before credentials or image pulls.
+        plan['observerSourcePreflight'] = observer_source_preflight()
         client = new_client()
         proof = readiness.resolve_readiness(sha, required_kinds=required_kinds(selected))
         target = merged_target(snapshot, proof)
@@ -675,8 +712,7 @@ def run_release(plan, execution_dir, *, observe=True):
                 observer = load('release_observe', 'release_observer.py')
                 result['observation'] = observer.launch_observer(final_path, digest, directory / 'observation')
             except Exception as error:
-                result['observation'] = {'status': 'schedule-failed', 'errorClass': type(error).__name__,
-                                         'scope': 'deployment verified; observation has not been scheduled'}
+                result['observation'] = observation_failure(error)
             write_private(directory / 'observation.safe.json', result['observation'])
         return result
     except Exception as error:
