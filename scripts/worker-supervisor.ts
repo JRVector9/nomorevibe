@@ -205,6 +205,8 @@ export async function superviseWorker(role: RuntimeRole, options: {
     if (!sharedHost) await host.stop();
     return 1;
   }
+  // Observation boot time must precede this child: spawn may run the child before the parent is scheduled again.
+  const childStartedAfter = Date.now();
   const child = spawn(process.execPath, ['--import', 'tsx', ...command], {
     // D11: 기록한 owner 를 child env 로만 넘긴다 — child 의 장부 행·HTTP hop 이 이 그룹 근거와 같은 owner 가 된다.
     cwd: resolve('.'), env: { ...hostDbChildEnvironment(process.env, role, options.consumer), ...(group?.owner ? processGroupOwnerEnvironment(group.owner) : {}) },
@@ -236,7 +238,7 @@ export async function superviseWorker(role: RuntimeRole, options: {
     const publish = () => {
       if (!observationPending && Date.now() - lastObserved >= 15_000) {
         lastObserved = Date.now(); observationPending = true;
-        void observeService(role, { ...health, bootId, bootedAt: started, release: process.env.RELEASE_TAG ?? "unknown", supervisorRssBytes: process.memoryUsage().rss, ...networkRoutesField() })
+        void observeService(role, { ...health, bootId, bootedAt: childStartedAfter, release: process.env.RELEASE_TAG ?? "unknown", supervisorRssBytes: process.memoryUsage().rss, ...networkRoutesField() })
           .catch(() => {}).finally(() => { observationPending = false; });
       }
       health.updatedAt = Date.now();

@@ -44,9 +44,11 @@
 
 consumer는 실제 다음 quota poll까지만 `headroomPausedUntil`을 관측하고 step에서 결정한 뒤 쉬기 전에 관측을 보낸다. quota 비율·자격·다음 poll·claim 정책은 바꾸지 않았다. `AGENT_SCAN_HEADROOM_WAIT_MS`가 실제 sleep과 분류 상한에 공통으로 쓰인다.
 
-분류는 켜진 running/starting service 전부에 대해 신선한 scan 관측, 같은 instance, `running=0`, supervisor의 `childPid`와 child의 실제 `process.pid`, child의 시작 시각이 supervisor 시작보다 늦음을 요구한다. 두 PID는 같은 supervisor가 띄운 child의 동일 PID namespace 값이다. 독립 생성되는 supervisor/child UUID를 같다고 가정하지 않았다. disabled service는 제외하지만 상태가 running으로 남은 consumer의 관측이 오래되거나 현재 child 증거가 빠지면 대기 판정을 하지 않는다. headroom의 기한은 실제 관측 시각+60초를 넘을 수 없다. 실제 provider 오류의 기존 경보 우선순위와 consumer_missing은 유지한다.
+분류는 켜진 running/starting service 전부에 대해 신선한 scan 관측, 같은 instance, `running=0`, supervisor의 `childPid`와 child의 실제 `process.pid`, child의 시작 시각이 해당 spawn 직전 하한보다 이르지 않음을 요구한다. 두 PID는 같은 supervisor가 띄운 child의 동일 PID namespace 값이다. 독립 생성되는 supervisor/child UUID를 같다고 가정하지 않았다. disabled service는 제외하지만 상태가 running으로 남은 consumer의 관측이 오래되거나 현재 child 증거가 빠지면 대기 판정을 하지 않는다. headroom의 기한은 실제 관측 시각+60초를 넘을 수 없다. 실제 provider 오류의 기존 경보 우선순위와 consumer_missing은 유지한다.
 
 회귀 기대값: disabled consumer 제외, live consumer의 일부 관측 누락, 이전 child PID/시작 시각, 오래되거나 미래인 관측, 진행 중 scan·systemic halt, 만료되거나 임의로 긴 headroom 대기, 공급자 장애 경보·consumer_missing 보존, 실제 sleep 전에 child의 quota 대기 관측. 실행하지 않았다. 혼합 배포에서 예전 child가 pid를 아직 내지 않으면 그 consumer의 대기를 증명하지 않으며 기존 경보가 유지된다.
+
+후속 소스 리뷰에서 `worker-supervisor.ts`의 `bootedAt`이 spawn 뒤 부모가 다시 실행된 시각이라, 부모가 늦게 스케줄되면 실제 현재 child의 시작보다 늦어질 수 있음을 확인했다. `1f16b329` 위의 후속 변경은 해당 child를 spawn하기 직전 시각을 별도로 잡아 관측 `bootedAt`에만 쓴다. 초기 건강·heartbeat·progress의 기존 spawn 뒤 시계와 timeout·drain 계산은 유지한다. 관측의 재시작 이력·이전 boot 교체 순서는 같은 child spawn의 하한 시각을 사용하며 부모 전체 프로세스의 시작 시각을 재사용하지 않는다. production supervisor의 spawn mock 안에서 시계를 앞으로 옮겨 child 시작이 부모 복귀보다 빠른 경우를 만들고, 그 관측으로 현재 child의 60초 이내 quota 대기를 인정하며 하한보다 이른 이전 child는 계속 거절하는 회귀를 작성했다. 이 회귀도 실행하지 않았다.
 
 ## 실행·남은 증거
 
