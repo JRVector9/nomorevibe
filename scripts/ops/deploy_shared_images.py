@@ -223,12 +223,13 @@ def setting(value, key):
     return rows[0]
 
 
-def dotenv_settings(value):
-    """Parse literal dotenv values without interpolation or secret-bearing errors."""
-    rows = (value or '').splitlines()
-    result = {}
+def _dotenv_entries(rows):
+    """Every dotenv entry as (key, parsed value, first row, last row): the grammar dotenv_settings has always used."""
+    result = []
+    seen = set()
     index = 0
     while index < len(rows):
+        start = index
         line = rows[index].strip()
         index += 1
         if not line or line.startswith('#'):
@@ -237,8 +238,9 @@ def dotenv_settings(value):
         if not match:
             raise ValueError(f'dotenv_invalid_line_{index}')
         key, raw = match.groups()
-        if key in result:
+        if key in seen:
             raise ValueError(f'{key}_line_count_2')
+        seen.add(key)
         if raw.startswith(('"', "'")):
             quote = raw[0]
             raw = raw[1:]
@@ -265,7 +267,32 @@ def dotenv_settings(value):
                 parsed = re.sub(r'\\([nrt"\\])', lambda item: escapes[item[1]], parsed)
         else:
             parsed = re.split(r'\s+#', raw, maxsplit=1)[0].rstrip()
-        result[key] = parsed
+        result.append((key, parsed, start, index - 1))
+    return result
+
+
+def dotenv_settings(value):
+    """Parse literal dotenv values without interpolation or secret-bearing errors."""
+    return {key: parsed for key, parsed, _, _ in _dotenv_entries((value or '').splitlines())}
+
+
+def drop_settings(value, names):
+    """Remove the whole entries of the named keys (quoted multi-line values included); every other byte stays.
+
+    A release retires a setting by saving the env without it (deploy_release --retire-setting). Names absent from
+    this env are a no-op, so the same retired list applies to every app. Errors carry names, never values.
+    """
+    if not isinstance(value, str):
+        raise ValueError('missing_env')
+    names = frozenset(names)
+    rows = value.split('\n')
+    dropped = set()
+    for key, _, start, end in _dotenv_entries(rows):
+        if key in names:
+            dropped.update(range(start, end + 1))
+    result = '\n'.join(row for index, row in enumerate(rows) if index not in dropped)
+    if dotenv_settings(result) != {key: parsed for key, parsed in dotenv_settings(value).items() if key not in names}:
+        raise ValueError('drop_settings_rewrite_mismatch')
     return result
 
 
@@ -327,6 +354,14 @@ class Dokploy:
 
 INTEGRATION_FLAGS = ('PUBLIC_USER_AUTH_ENABLED', 'GITHUB_STAR_ENABLED',
                      'PRODUCT_FEEDBACK_ENABLED', 'GITHUB_FEEDBACK_DELIVERY_ENABLED')
+# Every saved setting github_integration_preflight reads. A release may not retire these
+# (deploy_release.PROTECTED_SETTINGS); tests hold this list to the function body.
+INTEGRATION_SETTINGS = INTEGRATION_FLAGS + (
+    'RELEASE_TAG', 'WORKER_ROLE', 'AUTH_SECRET', 'PUBLIC_AUTH_SECRET', 'NEXT_PUBLIC_SITE_URL',
+    'LOGIN_EMAIL_API_KEY', 'LOGIN_EMAIL_FROM', 'GITHUB_INTEGRATION_SECRET',
+    'GITHUB_STAR_APP_ID', 'GITHUB_STAR_APP_WEBHOOK_SECRET', 'GITHUB_STAR_APP_CLIENT_ID', 'GITHUB_STAR_APP_CLIENT_SECRET',
+    'GITHUB_FEEDBACK_APP_SLUG', 'GITHUB_FEEDBACK_APP_CLIENT_ID', 'GITHUB_FEEDBACK_APP_CLIENT_SECRET',
+    'GITHUB_FEEDBACK_APP_WEBHOOK_SECRET', 'GITHUB_FEEDBACK_APP_ID', 'GITHUB_FEEDBACK_APP_PRIVATE_KEY')
 
 
 def github_integration_preflight(client, apps):

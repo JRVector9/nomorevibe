@@ -55,7 +55,8 @@ Dokploy 앱 env(예: `DB_POOL_MAX`)를 저장만 하고 재배포하지 않으�
 `plan`은 선택된 앱마다(Git 빌드·Docker 앱 모두) 저장된 env 와 라이브 서비스 spec env 를
 `RELEASE_TAG`·`NEXT_DEPLOYMENT_ID` 만 빼고 이름 집합·값까지 비교해, 하나라도 다르면 자격 증명·이미지 준비 전에
 `<app>_env_drift_redeploy_required` 로 즉시 멈춘다. 그러므로 env 를 바꿨으면 **plan 전에 그 앱을 같은 릴리스로
-재배포해 spec 을 맞추거나, 릴리스가 끝난 뒤 env 절차로 바꾼다.** 어긴 채 진행하면 2026-10-31 처럼 text-mini 가
+재배포해 spec 을 맞추거나, 릴리스가 끝난 뒤 env 절차로 바꾼다.** 설정을 **지우는** 것이면 Dokploy 를 먼저 고치지 말고
+plan 에 `--retire-setting NAME` 을 준다(아래 절). 어긴 채 진행하면 2026-10-31 처럼 text-mini 가
 정상 배포돼도 계약 검증이 480초 뒤 `_verification_timeout` 으로 서고 같은 묶음의 동료 앱만 새 판이 되어 fleet 이 섞인다.
 달라진 변수 **이름**(값 없음)은 `~/.local/state/nomorevibe-releases/plan-failures/<utc>-<pid>.safe.json` 에 남고,
 최상위 출력의 `reason` 은 멈춤 코드가 공백·URL·따옴표 없는 코드 문자열이면 그대로 보이며(`failureRecord` 에 기록 경로),
@@ -67,6 +68,35 @@ main의 최신 trusted CI 실행에서 필수 `check`와 필요한 image publish
 `release-image-{worker|web}-<SHA>` artifact의 run/attempt/tree/profile/version/digest가 일치해야 한다.
 전체 workflow나 `refresh-caches` 종료를 기다리지 않는다. 준비가 아직 안 됐으면 배포 요청 없이 멈춘다.
 실행 직전에도 main·CI·대상 범위·전체 원 상태를 다시 확인한다.
+
+### 설정 폐기는 릴리스에 싸서: `--retire-setting`
+
+코드가 더 읽지 않는 Dokploy 설정(예: abcLLM 게이트웨이 제거 뒤의 `ABCLLM_API_KEY`·`ABCLLM_SERVING_CONTRACTS`·
+`ABCLLM_TAGLINE_MODEL`·`PRODUCT_TRANSLATION_MODEL`·`CRAWL_REVIEW_MODEL`)은 Dokploy 에서 먼저 지우지 않는다 — 지우면 위 drift 로
+plan 이 멈추고 앱마다 같은 릴리스 재배포가 하나씩 더 든다. 대신 plan 에 이름을 준다(이름마다 한 번, `^[A-Z][A-Z0-9_]*$`).
+
+```bash
+npm run deploy -- plan --sha "$SHA" --out "$OUT" \
+  --retire-setting ABCLLM_API_KEY --retire-setting ABCLLM_SERVING_CONTRACTS \
+  --retire-setting ABCLLM_TAGLINE_MODEL --retire-setting PRODUCT_TRANSLATION_MODEL \
+  --retire-setting CRAWL_REVIEW_MODEL
+npm run deploy -- run --plan "$PLAN" --plan-sha "$PLAN_SHA256"   # run 에는 옵션이 없다 — plan 에 적힌 이름을 따른다
+```
+
+- `plan`: 코드 변경 범위에 **그 이름을 아직 가진 앱**(저장 env 또는 라이브 spec)과 그 역할 짝·소비자를 더해 선택한다.
+  이미 목표 릴리스·이미지인 앱도 이름을 갖고 있으면 유지 대상이 아니라 재배포 대상이다. 출력과 `plan.private.json` 의
+  `retiredSettings`(정렬한 이름)·`retiredSettingsFound`(선택 앱별로 `savedEnv`·`liveSpec` 에 남은 이름)와
+  `scope.retiredSettingCarriers`(이름을 가진 앱)는 **이름만** 담는다. 값은 어디에도 적지 않는다.
+  `RELEASE_TAG`·`NEXT_DEPLOYMENT_ID` 와 도구가 읽는 설정(`WORKER_ROLE`·`NEXT_SERVER_ACTIONS_ENCRYPTION_KEY`·`DATABASE_URL`·
+  GitHub 연동 사전 점검이 읽는 이름들)은 `retire_setting_protected:<NAME>` 으로, 형식이 틀린 이름은 `retire_setting_name_invalid` 로
+  자격 증명·baseline 읽기 전에 거절한다(틀린 이름은 되비추지 않는다). 저장 env 와 라이브 spec 의 drift 검사는 그대로다 —
+  폐기할 이름도 plan 전에는 둘 다에 있어야 한다.
+- `run`: 재배포하는 앱마다 `application.saveEnvironment` 에 그 줄을 뺀 env 를 쓴다(Git 빌드·Docker 앱 같음, 그 밖의 바이트는 그대로,
+  여러 줄 따옴표 값도 통째로). 배포 뒤 계약 검증(`runtime_contract_matches`)은 `RELEASE_TAG`·`NEXT_DEPLOYMENT_ID` 갱신 외에
+  **그 이름의 줄이 새 spec 에 없는 것만** 추가로 허용한다. 다른 줄이 빠지거나 값이 바뀌거나 폐기한 줄이 아직 보이면 전처럼 불일치다.
+  마지막 fleet 검증은 재배포한 앱의 저장 env·서비스 spec·컨테이너 env 모두에서 이름이 사라졌는지 보고, 유지 앱은 전처럼
+  원 상태(이름 포함)와 같아야 한다. `once.json`·`result.safe.json` 에 `retiredSettings` 가 남는다.
+- 이름을 주지 않으면 plan·run 은 이전과 같게 동작한다.
 
 ## 줄이는 단계와 유지하는 증명
 

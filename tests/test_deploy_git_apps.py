@@ -469,6 +469,136 @@ class GitRolloutTests(unittest.TestCase):
                 release.check_deployed(self.client, 'text-mini', self.target, app, 'old-text-mini', {}, pause=0)
         self.assertEqual(self.client.requests, [])
 
+    def test_runtime_contract_accepts_exactly_the_declared_retired_absence(self):
+        original = {'serviceSpec': {'Name': 'svc', 'TaskTemplate': {'ForceUpdate': 4, 'ContainerSpec': {
+            'Image': 'old', 'Env': ['RELEASE_TAG=' + self.old, 'ABCLLM_API_KEY=retired-secret', 'SECRET=private',
+                                   'CRAWL_REVIEW_MODEL=gpt'], 'Args': ['node', 'worker']}}},
+            'containers': [{'config': {'Cmd': ['node', 'worker'], 'Entrypoint': ['/sbin/tini', '--'],
+                                       'Healthcheck': {'Test': ['CMD', 'health']}}}]}
+        retired = ('ABCLLM_API_KEY', 'CRAWL_REVIEW_MODEL')
+        current = copy.deepcopy(original)
+        current['serviceSpec']['TaskTemplate']['ForceUpdate'] = 5
+        current['serviceSpec']['TaskTemplate']['ContainerSpec'].update(Image='new', Env=['RELEASE_TAG=' + self.new, 'SECRET=private'])
+        def env(row, value):
+            drift = copy.deepcopy(row)
+            drift['serviceSpec']['TaskTemplate']['ContainerSpec']['Env'] = value
+            return drift
+        self.assertTrue(release.runtime_contract_matches(original, current, self.new, retired_settings=retired))
+        # A name the original never carried is a no-op; the default call still treats the missing lines as drift.
+        self.assertTrue(release.runtime_contract_matches(original, current, self.new, retired_settings=retired + ('NEVER_SET',)))
+        self.assertFalse(release.runtime_contract_matches(original, current, self.new))
+        self.assertFalse(release.runtime_contract_matches(original, current, self.new, retired_settings=('ABCLLM_API_KEY',)))
+        cases = {
+            # Only the declared names may be absent; a further missing line, a changed value or an added line stay drift.
+            'extra line missing': ['RELEASE_TAG=' + self.new],
+            'value changed': ['RELEASE_TAG=' + self.new, 'SECRET=rotated'],
+            'line added': ['RELEASE_TAG=' + self.new, 'SECRET=private', 'NEW_FLAG=1'],
+            'order changed': ['SECRET=private', 'RELEASE_TAG=' + self.new],
+            # A retired line the new spec still renders is a mismatch: the saved env no longer holds it, so the
+            # service would run configuration Dokploy no longer shows (the 2026-10-31 text-mini failure mode).
+            'retired line still rendered': ['RELEASE_TAG=' + self.new, 'ABCLLM_API_KEY=retired-secret', 'SECRET=private'],
+            'retired value rewritten': ['RELEASE_TAG=' + self.new, 'SECRET=private', 'CRAWL_REVIEW_MODEL=other']}
+        for name, value in cases.items():
+            with self.subTest(case=name):
+                self.assertFalse(release.runtime_contract_matches(original, env(current, value), self.new, retired_settings=retired))
+        # RELEASE_TAG is rewritten before retirement is applied, so it still has to be exactly one line.
+        self.assertFalse(release.runtime_contract_matches(env(original, ['SECRET=private', 'ABCLLM_API_KEY=x']), current, self.new,
+                                                          retired_settings=retired))
+
+    def test_expected_config_drops_retired_lines_for_shared_worker_and_connect_alike(self):
+        retired = ('ABCLLM_API_KEY', 'PRODUCT_TRANSLATION_MODEL')
+        for short in ('text-mini', 'connect-agent-m3'):
+            self.apps[short]['env'] += 'ABCLLM_API_KEY="retired-secret"\nPRODUCT_TRANSLATION_MODEL=m\n'
+        before = copy.deepcopy(self.apps)
+        worker = release.expected_config('text-mini', self.apps['text-mini'], self.target, 'shared-worker', retired)
+        self.assertEqual(worker['env'], 'RELEASE_TAG=' + self.new + '\nWORKER_ROLE=text\nSECRET_TOKEN=private\n')
+        self.assertEqual((worker['sourceType'], worker['dockerImage']), ('docker', self.target['worker']))
+        connect = release.expected_config('connect-agent-m3', self.apps['connect-agent-m3'], self.target, 'shared-worker', ('ABCLLM_API_KEY',))
+        self.assertEqual(connect['env'], 'RELEASE_TAG=' + self.new + '\nWORKER_ROLE=connect-agent\nSECRET_TOKEN=private\n'
+                                         'PRODUCT_TRANSLATION_MODEL=m\n')
+        self.assertEqual(connect['buildArgs'], 'UNCHANGED=1\nNMV_SOURCE_SHA=' + self.new + '\n')
+        # Default: every other line stays byte-for-byte, retired ones included.
+        default = release.expected_config('text-mini', self.apps['text-mini'], self.target, 'shared-worker')
+        self.assertEqual(default['env'], release.shared.replace_setting(before['text-mini']['env'], 'RELEASE_TAG', self.new))
+        self.assertEqual(self.apps, before)
+
+    def test_prepare_redeploys_exact_target_apps_that_still_carry_a_retired_setting(self):
+        # Both text apps already serve the target image and release. text-mini still saves ABCLLM_API_KEY; text-m3's
+        # saved env is clean but its live spec still renders CRAWL_REVIEW_MODEL (deleted in Dokploy without a redeploy).
+        for short in ('text-mini', 'text-m3'):
+            self.apps[short].update(sourceType='docker', dockerImage=self.target['worker'],
+                env=release.shared.replace_setting(self.apps[short]['env'], 'RELEASE_TAG', self.new))
+        self.apps['text-mini']['env'] += 'ABCLLM_API_KEY=retired-secret\n'
+        for short in ('text-mini', 'text-m3'):
+            self.snapshot['apps'][short] = copy.deepcopy(self.apps[short])
+            spec = self.snapshot['runtime'][short]['serviceSpec']
+            lines = self.apps[short]['env'].splitlines() + (['CRAWL_REVIEW_MODEL=gpt'] if short == 'text-m3' else [])
+            spec['TaskTemplate']['ContainerSpec'].update(Image=self.target['worker'], Env=lines)
+            self.snapshot['baseline'][short].update(release=self.new, image=self.target['worker'], specHash=release.spec_hash(spec))
+        retired = ('ABCLLM_API_KEY', 'CRAWL_REVIEW_MODEL')
+        self.assertEqual(release.retired_settings_present(self.apps['text-mini'], self.snapshot['runtime']['text-mini'], retired),
+                         {'savedEnv': ['ABCLLM_API_KEY'], 'liveSpec': ['ABCLLM_API_KEY']})
+        self.assertEqual(release.retired_settings_present(self.apps['text-m3'], self.snapshot['runtime']['text-m3'], retired),
+                         {'savedEnv': [], 'liveSpec': ['CRAWL_REVIEW_MODEL']})
+        self.assertEqual(release.retired_settings_present(self.apps['text-m3'], self.snapshot['runtime']['text-m3'], ()),
+                         {'savedEnv': [], 'liveSpec': []})
+        # Today's behaviour without the declaration: both are exact-target skips.
+        plain = self.prepare(('text-mini', 'text-m3'), mode='shared-worker')
+        self.assertEqual((plain['skipped'], plain['retiredSettings']), (['text-mini', 'text-m3'], []))
+        state = release.prepare(self.client, self.target, ('text-mini', 'text-m3'), self.snapshot, self.readiness,
+                                mode='shared-worker', retired_settings=retired)
+        self.assertEqual((state['skipped'], state['retiredSettings']), ([], list(retired)))
+        self.assertEqual(state['waves'], (('text-mini',), ('text-m3',)))
+        self.assertEqual(self.client.requests, [])
+        verified = {}
+        def verify(client, short, target, original, previous_id, manifest, **kwargs):
+            verified[short] = kwargs.get('retired_settings')
+            self.assertNotIn('ABCLLM_API_KEY', release.shared.dotenv_settings(client.app(short)['env']))
+            return {'app': short, 'deployment': 'done', 'service': 'healthy', 'deploymentId': 'new-' + short}
+        with patch.object(release, 'check_deployed', side_effect=verify), tempfile.TemporaryDirectory() as directory:
+            result = release.deploy(self.client, self.target, state, Path(directory) / 'receipts')
+            once = json.loads((Path(directory) / 'receipts/once.json').read_text())
+        self.assertEqual(result['deployed'], ['text-mini', 'text-m3'])
+        self.assertEqual(verified, {'text-mini': retired, 'text-m3': retired})
+        self.assertEqual(once['retiredSettings'], list(retired))
+        self.assertNotIn('retired-secret', json.dumps(once))
+        self.assertEqual(self.apps['text-mini']['env'], 'RELEASE_TAG=' + self.new + '\nWORKER_ROLE=text\nSECRET_TOKEN=private\n')
+        self.assertEqual(self.apps['text-m3']['env'], 'RELEASE_TAG=' + self.new + '\nWORKER_ROLE=text\nSECRET_TOKEN=private\n')
+
+    def test_check_deployed_requires_retired_lines_gone_from_saved_env_and_service_spec(self):
+        self.runtime.stop()
+        short, retired = 'text-mini', ('ABCLLM_API_KEY',)
+        self.apps[short]['env'] += 'ABCLLM_API_KEY=retired-secret\n'
+        original, manifest, before, current = self.poll_fixture()
+        self.assertIn('ABCLLM_API_KEY=retired-secret', before['serviceSpec']['TaskTemplate']['ContainerSpec']['Env'])
+        stale_saved = copy.deepcopy(self.apps[short])
+        self.apps[short] = release.expected_config(short, original, self.target, 'shared-worker', retired)
+        clean = copy.deepcopy(current)
+        cs = clean['serviceSpec']['TaskTemplate']['ContainerSpec']
+        cs['Env'] = self.apps[short]['env'].splitlines()
+        clean['containers'][0]['config']['Env'] = cs['Env']
+        with patch.object(release.shared, 'ssh_python', return_value=json.dumps(clean)), patch.object(release.time, 'sleep'):
+            result = release.check_deployed(self.client, short, self.target, original, 'old-text-mini', manifest,
+                                            mode='shared-worker', expected_runtime=before, retired_settings=retired)
+            self.assertEqual((result['deploymentId'], result['specHash']), ('new-text-mini', release.spec_hash(clean['serviceSpec'])))
+            # Not declared: the saved env without the line is a configuration mismatch (today's behaviour).
+            with self.assertRaisesRegex(release.shared.ReleaseStopped, 'text-mini_saved_configuration_mismatch'):
+                release.check_deployed(self.client, short, self.target, original, 'old-text-mini', manifest,
+                                       mode='shared-worker', expected_runtime=before)
+        # Declared, but Dokploy still saves the line: mismatch before any runtime read.
+        self.apps[short] = stale_saved
+        with patch.object(release.shared, 'ssh_python', side_effect=AssertionError('no runtime read')), patch.object(release.time, 'sleep'):
+            with self.assertRaisesRegex(release.shared.ReleaseStopped, 'text-mini_saved_configuration_mismatch'):
+                release.check_deployed(self.client, short, self.target, original, 'old-text-mini', manifest,
+                                       mode='shared-worker', expected_runtime=before, retired_settings=retired)
+        # Declared and saved clean, but the new spec still renders the line: never ready.
+        self.apps[short] = release.expected_config(short, original, self.target, 'shared-worker', retired)
+        with patch.object(release.shared, 'ssh_python', return_value=json.dumps(current)):
+            with self.assertRaisesRegex(TimeoutError, 'text-mini_verification_timeout'):
+                release.check_deployed(self.client, short, self.target, original, 'old-text-mini', manifest,
+                                       mode='shared-worker', expected_runtime=before, retired_settings=retired, timeout=.01, pause=0)
+        self.assertEqual(self.client.requests, [])
+
 
 class FakeClient:
     def __init__(self, apps):

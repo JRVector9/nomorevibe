@@ -148,14 +148,15 @@ def read_push_receipts(short, runtime):
     return result
 
 
-def _runtime_ready(short, app, runtime, target, manifest, original_runtime):
+def _runtime_ready(short, app, runtime, target, manifest, original_runtime, retired_settings=()):
     if (runtime.get('updateStatus') or {}).get('State') in git.shared.SWARM_ROLLBACK_STATES + git.shared.SWARM_STOP_STATES:
         raise git.shared.SwarmRollback(short, {'updateState': runtime['updateStatus']['State']})
     if (runtime.get('updateStatus') or {}).get('State') not in git.DEPLOYED_SETTLED_STATES:
         return False
     try:
-        preserves = (git.runtime_contract_matches(original_runtime, runtime, target['sha']) and
-                     fleet._preserves_containers(original_runtime, runtime, target['sha'], 'monitor'))
+        preserves = (git.runtime_contract_matches(original_runtime, runtime, target['sha'], retired_settings=retired_settings) and
+                     fleet._preserves_containers(original_runtime, runtime, target['sha'], 'monitor',
+                                                 retired_settings=retired_settings))
     except (KeyError, TypeError, ValueError):
         preserves = False
     if runtime.get('serviceId') != original_runtime.get('serviceId') or not preserves:
@@ -218,7 +219,7 @@ def _deployment_receipt(short, target, latest, runtime):
 
 
 def check_monitor_deployed(client, short, target, original, old_id, manifest, expected_runtime, *,
-                           timeout=MONITOR_VERIFY_TIMEOUT_SECONDS, pause=2):
+                           timeout=MONITOR_VERIFY_TIMEOUT_SECONDS, pause=2, retired_settings=()):
     """Wait for one new monitor and both receiver acknowledgements; never mutate or retry deploy.
 
     Verified: new deployment done, runtime contract/image/RELEASE_TAG/healthy proven, and the latest
@@ -226,11 +227,13 @@ def check_monitor_deployed(client, short, target, original, old_id, manifest, ex
     the deployment itself is proven on the last poll and only that push proof is missing, the run is
     not stopped: the receipt carries verification=human_review_required, the reason code and the last
     observed receipt booleans. A deployment not proven on the last poll still raises TimeoutError.
+    retired_settings are the names this release deleted from the saved env; the contract check expects
+    exactly their absence (deploy_git_apps.runtime_contract_matches).
     """
     if short != 'monitor-m3':
         raise ValueError('monitor_app_required')
     target = git.shared.validate_target(target['sha'], target['worker'], target['web'])
-    expected = fleet.expected_api(short, original, target)
+    expected = fleet.expected_api(short, original, target, retired_settings)
     if (not isinstance(expected_runtime, dict) or not expected_runtime.get('containers') or
             expected_runtime.get('specHash') != git.spec_hash(expected_runtime.get('serviceSpec')) or
             not isinstance(manifest, dict) or not manifest):
@@ -248,7 +251,7 @@ def check_monitor_deployed(client, short, target, original, old_id, manifest, ex
             if git.stable_config(app) != git.stable_config(expected):
                 raise git.shared.ReleaseStopped(short + '_saved_configuration_mismatch')
             runtime = git.inspect_runtime(short, app, manifest=manifest)
-            if _runtime_ready(short, app, runtime, target, manifest, expected_runtime):
+            if _runtime_ready(short, app, runtime, target, manifest, expected_runtime, retired_settings):
                 receipts = read_push_receipts(short, runtime)
                 if receipts.get('verified') is True and all(receipts.get(key) is True for key in PUSH_FIELDS):
                     _require_unchanged_window(client, short, expected, latest, runtime)
