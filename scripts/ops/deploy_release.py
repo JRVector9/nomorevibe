@@ -47,6 +47,12 @@ SAFE_CODE = re.compile(r'[A-Za-z0-9_:.-]{3,160}')
 HIDDEN_REASON = 'inspect-private-receipts'
 # Plan failures happen before any private directory exists; this safe record keeps code, class, stage and names only.
 PLAN_FAILURE_DIR = Path.home() / '.local/state/nomorevibe-releases/plan-failures'
+# A run whose every deployment is proven but whose monitor push proof did not arrive within the monitor
+# verification window (release_monitor.MONITOR_VERIFY_TIMEOUT_SECONDS) finishes with this status and exit code
+# instead of stopping: the operator confirms the monitor by hand from <app>.human-review.safe.json.
+HUMAN_REVIEW_VERIFICATION = 'human_review_required'
+HUMAN_REVIEW_STATUS = 'deployed-human-review-required'
+HUMAN_REVIEW_EXIT_CODE = 2
 
 
 def now():
@@ -468,10 +474,24 @@ def deploy_one(client, plan, short, directory):
         evidence = monitor.check_monitor_deployed(client, short, target, original, old_id,
                            git.source_manifest(target['sha'], stage='monitor', repo=ROOT),
                            expected_runtime=snapshot['runtime'][short])
+        if evidence.get('verification') == HUMAN_REVIEW_VERIFICATION:
+            # The deployment is proven; only the push proof is missing. Leave the operator a safe record now,
+            # before the final fleet verification, so it survives any later stop.
+            write_private(directory / (short + '.human-review.safe.json'), monitor.human_review_record(client, evidence))
     latest = client.latest(short)
     if latest.get('status') != 'done' or latest.get('deploymentId') == old_id:
         raise ValueError(short + '_new_deployment_receipt_missing')
     return {**evidence, 'app': short, 'deploymentId': latest['deploymentId'], 'at': now()}
+
+
+def human_review_summary(receipts, directory):
+    """Apps whose deployment is proven but whose verification was handed to a human, with safe reason codes."""
+    apps = sorted(short for short, receipt in receipts.items()
+                  if isinstance(receipt, dict) and receipt.get('verification') == HUMAN_REVIEW_VERIFICATION)
+    if not apps:
+        return None
+    return {'apps': apps, 'reasons': {short: safe_code(receipts[short].get('reason')) or HIDDEN_REASON for short in apps},
+            'records': [str(directory / (short + '.human-review.safe.json')) for short in apps]}
 
 
 def run_batch(names, one, directory):
@@ -574,11 +594,13 @@ def run_release(plan, execution_dir, *, observe=True):
                                      strict=tuple(role for role in ALL_ROLES if role + '-m3' in deployed))
         final_path = directory / 'final.private.json'
         digest = write_private(final_path, final_snapshot)
-        result = {'status': 'deployed-and-verified', 'target': target, 'selectedApps': selected,
-                  'deployedApps': deployed, 'skippedApps': skipped,
+        human_review = human_review_summary(receipts, directory)
+        result = {'status': HUMAN_REVIEW_STATUS if human_review else 'deployed-and-verified', 'target': target,
+                  'selectedApps': selected, 'deployedApps': deployed, 'skippedApps': skipped,
                   'retainedApps': sorted(set(fleet.registered_apps()) - set(deployed)),
                   'states': states, 'existingGuard': guard,
-                  'finalSnapshot': str(final_path), 'finalSnapshotSha256': digest, 'completedAt': now()}
+                  'finalSnapshot': str(final_path), 'finalSnapshotSha256': digest, 'completedAt': now(),
+                  **({'humanReview': human_review} if human_review else {})}
         # Deployment completion is durable before the independent scheduler starts.
         write_private(directory / 'result.safe.json', result)
         if observe:
@@ -636,15 +658,16 @@ def main(argv=None):
         plan = read_private(args.plan, args.plan_sha)
         result = run_release(plan, args.plan.parent / 'execution')
     print(json.dumps(result, ensure_ascii=False))
+    return result
 
 
 def cli(argv=None):
     try:
-        main(argv)
+        result = main(argv)
     except Exception as error:
         print(json.dumps(failure_report(error)))
         return 1
-    return 0
+    return HUMAN_REVIEW_EXIT_CODE if isinstance(result, dict) and result.get('status') == HUMAN_REVIEW_STATUS else 0
 
 
 if __name__ == '__main__':
