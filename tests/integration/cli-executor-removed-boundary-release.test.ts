@@ -21,6 +21,7 @@ import { releaseCliExecutorRemovedBoundaryRequest } from "@/lib/operations/dr/cl
 import { cliExecutorFixture } from "../fixtures/cli-executor-boundary";
 import { cliExecutorRemovedFixture, materializeRemovedArtifacts } from "../fixtures/cli-executor-removed-boundary";
 import { TEST_DATABASE_URL } from "./setup";
+import { ledgerCheckDefs } from "./ledger-check-defs";
 
 const root = fileURLToPath(new URL("../..",import.meta.url)), name = `nomorevibe_test_cli_removed_${randomUUID().replaceAll("-","")}`;
 const url = new URL(TEST_DATABASE_URL); url.pathname=`/${name}`;
@@ -44,7 +45,7 @@ function cli(apply:boolean){
 }
 const rows=()=>client`SELECT to_jsonb(r) value FROM model_capacity_requests r ORDER BY request_id`;
 const counts=async()=>({events:Number((await client`SELECT count(*) n FROM model_capacity_events`)[0].n),audit:Number((await client`SELECT count(*) n FROM operations_audit`)[0].n),groups:Number((await client`SELECT count(*) n FROM dr_process_group_events`)[0].n)});
-const defs=async()=>Object.fromEntries((await client<{conname:string;def:string}[]>`SELECT conname,pg_get_constraintdef(oid) def FROM pg_constraint WHERE conname=ANY(${names}::text[])`).map(x=>[x.conname,x.def]));
+const defs=async()=>ledgerCheckDefs(client,names);
 function input() { const plan=structuredClone(fx.plan),receipt=structuredClone(fx.receipt);receipt.planHash=cliExecutorPlanHash(plan);return {plan,receipt,expectedPlanHash:receipt.planHash,operator:"fixture-operator",reference:plan.reviewReference}; }
 async function evidence() { const [clock]=await client`SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') at`;return {...fx.evidence,plan:fx.plan,receipt:fx.receipt,evaluatedAt:clock.at}; }
 beforeAll(async()=>{

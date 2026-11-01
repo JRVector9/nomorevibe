@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import postgres from "postgres";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
+import { ledgerCheckExpressions } from "./ledger-check-defs";
 
 const admin = postgres(TEST_DATABASE_URL, { max: 1, prepare: false, onnotice: () => {} });
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -15,10 +16,7 @@ const historical = readFileSync("drizzle/0122_automated_action_audit.sql", "utf8
 
 beforeAll(async () => {
   ensureSchema();
-  const rows = await admin<{ name: string; expression: string }[]>`SELECT conname AS name, pg_get_expr(conbin,conrelid) AS expression
-    FROM pg_constraint WHERE conrelid IN ('model_capacity_requests'::regclass,'model_capacity_events'::regclass)
-      AND conname = ANY(${checks}::text[])`;
-  for (const row of rows) current.set(row.name, row.expression);
+  for (const [name, expression] of Object.entries(await ledgerCheckExpressions(admin, checks))) current.set(name, expression);
   expect([...current.keys()].sort()).toEqual([...checks].sort());
 });
 afterAll(async () => { await admin.end(); });

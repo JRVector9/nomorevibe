@@ -20,6 +20,7 @@ import { cliExecutorIndeterminatePlanHash } from "@/lib/llm/cli-executor-indeter
 import { releaseCliExecutorIndeterminateBoundaryRequest } from "@/lib/operations/dr/cli-executor-indeterminate-boundary-release";
 import { cliExecutorIndeterminateFixture,materializeIndeterminateArtifacts } from "../fixtures/cli-executor-indeterminate-boundary";
 import { TEST_DATABASE_URL } from "./setup";
+import { ledgerCheckDefs } from "./ledger-check-defs";
 
 const root=fileURLToPath(new URL("../..",import.meta.url)),name=`nomorevibe_test_cli_unknown_${randomUUID().replaceAll("-","")}`;
 const url=new URL(TEST_DATABASE_URL);url.pathname=`/${name}`;
@@ -33,7 +34,7 @@ let created=false,beforeRows:Awaited<ReturnType<typeof rows>>,beforeChecks:Recor
 const proofDir=mkdtempSync(path.join(tmpdir(),"cli-unknown-proof-"));chmodSync(proofDir,0o700);
 function rows(){return client`SELECT to_jsonb(r) value FROM model_capacity_requests r ORDER BY request_id`;}
 async function counts(){return {events:Number((await client`SELECT count(*) n FROM model_capacity_events`)[0].n),audit:Number((await client`SELECT count(*) n FROM operations_audit`)[0].n),groups:Number((await client`SELECT count(*) n FROM dr_process_group_events`)[0].n)};}
-async function defs(){return Object.fromEntries((await client<{conname:string;definition:string}[]>`SELECT conname,pg_get_constraintdef(oid) definition FROM pg_constraint WHERE conrelid IN ('model_capacity_requests'::regclass,'model_capacity_events'::regclass) AND conname=ANY(${checks}::text[])`).map(x=>[x.conname,x.definition]));}
+async function defs(){return ledgerCheckDefs(client,checks);}
 function input(){const plan=structuredClone(fx.plan),receipt=structuredClone(fx.receipt);receipt.planHash=cliExecutorIndeterminatePlanHash(plan);return {plan,receipt,expectedPlanHash:receipt.planHash,operator:"fixture-operator",reference:plan.reviewReference};}
 function cli(apply:boolean){
   const p=JSON.stringify(fx.plan),r=JSON.stringify(fx.receipt),sha=(v:string)=>createHash("sha256").update(v).digest("hex");
