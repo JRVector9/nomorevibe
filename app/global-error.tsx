@@ -10,6 +10,7 @@ import { globalError as en } from "@/messages/en/global-error";
 import { globalError as zhHans } from "@/messages/zh-Hans/global-error";
 import { globalError as zhHant } from "@/messages/zh-Hant/global-error";
 import "./globals.css";
+import { useRenderRecovery } from "@/components/errors/RenderReadRecovery";
 
 // Only this six-message failure slice is bundled for all locales. The failed root
 // cannot pass its server-selected catalog; the router still provides pathname.
@@ -26,6 +27,7 @@ export default function GlobalError({ error, retry }: {
   error: Error & { digest?: string };
   retry: () => void;
 }) {
+  useRenderRecovery(Boolean(error.digest));
   const locale = pathLocale(usePathname()) ?? DEFAULT_LOCALE;
   const t = createTranslator("globalError", messages[locale]);
   return (

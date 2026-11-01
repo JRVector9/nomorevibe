@@ -3,6 +3,7 @@ import { SESSION_COOKIE } from "@/lib/auth/session";
 import { adminIngressAllowed, adminLocalLoginEnabled, adminOrigin, isAdminProtectedPath, verifyAdminSession } from "@/lib/auth/admin-access";
 import { DEFAULT_LOCALE, PUBLIC_LOCALE_HEADER, type Locale } from "@/lib/i18n/locales";
 import { isLocaleExcludedPath, pathLocale, stripLocale } from "@/lib/i18n/routing";
+import { RENDER_RECOVERY_COOKIE, RENDER_RECOVERY_COOKIE_VALUE } from "@/lib/web/recovery-cache";
 
 /**
  * /admin 을 기본 차단한다.
@@ -17,6 +18,16 @@ import { isLocaleExcludedPath, pathLocale, stripLocale } from "@/lib/i18n/routin
  * 끊기는 순간 차단이 조용히 풀린다.
  */
 export async function proxy(req: NextRequest) {
+  const response = await routeRequest(req);
+  if ((req.method === "GET" || req.method === "HEAD")
+    && req.cookies.get(RENDER_RECOVERY_COOKIE)?.value === RENDER_RECOVERY_COOKIE_VALUE) {
+    response.headers.set("Cache-Control", "private, no-store");
+    response.headers.set("Cloudflare-CDN-Cache-Control", "no-store");
+  }
+  return response;
+}
+
+async function routeRequest(req: NextRequest) {
   const pathname = req.nextUrl.pathname;
   const locale = pathLocale(pathname);
   if (isAdminProtectedPath(stripLocale(pathname))) {

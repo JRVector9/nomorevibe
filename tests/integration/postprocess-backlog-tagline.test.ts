@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { products, productKoreanTaglines } from "@/lib/db/schema";
-import { busyMemberKeysSql } from "@/lib/llm/capacity-busy-targets";
+import { busyLogicalKeysSql, busyMemberKeysSql } from "@/lib/llm/capacity-busy-targets";
 import { productTaglineKoInputHash, productTaglineKoLogicalWorkKey, type ProductTaglineKoMember } from "@/lib/llm/capacity";
 import { requestProductTaglineKoModelSlot } from "@/lib/llm/capacity-repository";
 import { koreanTaglineProgress, MAX_GATEWAY_FAILURES, pendingKoreanTaglines } from "@/lib/domain/products/korean-taglines";
@@ -106,4 +106,22 @@ it("clears the stalled alarm once a passing line is stored in the last five minu
   const after = (await readTextStageProgress()).find(row => row.key === "tagline-ko")!;
   expect(after).toMatchObject({ completed5m: 1 });
   expect(classifyStage(after, null, true, now)).toMatchObject({ reason: "progressing", alarm: false });
+});
+
+it("lets expired unstarted work reach admission again while preserving live, dispatched and unknown-deadline fences", async () => {
+  const boot = randomUUID();
+  const rows = [
+    { state: "waiting", queueMs: -1_000 },
+    { state: "reserved", reservedMs: -1_000 },
+    { state: "waiting", queueMs: 60_000 },
+    { state: "reserved", reservedMs: 60_000 },
+    { state: "dispatched", queueMs: -1_000, reservedMs: -1_000 },
+    { state: "waiting", queueMs: null },
+    { state: "reserved", reservedMs: null },
+  ].map((row, index) => ({ ...row, owner: "previous-boot", boot,
+    members: [`product-tagline-ko:${index + 1}`], logical: `text:profile:${index + 1}` }));
+  const members = await db.execute<{ key: string }>(sql`${shadowRequests(rows)} ${busyMemberKeysSql("product-tagline-ko:")}`);
+  const logical = await db.execute<{ key: string }>(sql`${shadowRequests(rows)} ${busyLogicalKeysSql("text:profile:")}`);
+  expect(members.map(row => row.key).sort()).toEqual([3, 4, 5, 6, 7].map(id => `product-tagline-ko:${id}`));
+  expect(logical.map(row => row.key).sort()).toEqual([3, 4, 5, 6, 7].map(id => `text:profile:${id}`));
 });

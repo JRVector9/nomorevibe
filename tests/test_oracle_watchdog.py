@@ -107,6 +107,16 @@ class WatchdogTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.w.validate_report(report)
 
+    def test_invalid_recovery_history_cannot_open_a_fresh_mutation_budget(self):
+        for attempts in [[-1], [2000], [float('nan')], [True], 'invalid']:
+            with self.subTest(attempts=attempts):
+                self.state = {'targets': {'m3/web': {'at': 970, 'version': 12, 'bad': 2,
+                              'actionable': 2, 'reason': 'web_page_failed', 'attempts': attempts}}}
+                for now in [1000, 1030, 1060]:
+                    self.cycle(now)
+                self.assertEqual(self.attempts, [])
+                self.assertEqual(self.state['targets']['m3/web']['attempts'], [1000, 1000])
+
 
 if __name__ == '__main__':
     unittest.main()

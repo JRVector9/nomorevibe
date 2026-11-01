@@ -188,6 +188,46 @@ it('requires an explicit local origin and bounds read-only measurement load', ()
 
 vi.mock('@/lib/operations/observations', () => ({ observeService: vi.fn(async () => {}) }));
 
+it('bounds current-child startup before spawn even when the parent resumes later, without moving health clocks', async () => {
+  const { observeService } = await import('@/lib/operations/observations');
+  const { agentScanProviderPause } = await import('@/lib/operations/worker-progress-query');
+  const directory = mkdtempSync(join(tmpdir(), 'consumer-start-witness-'));
+  const healthPath = join(directory, 'health.json'), instanceId = 'agent-scan-consumer-unit';
+  const beforeSpawn = 1_000_000, childBootedAt = beforeSpawn + 1, parentResumedAt = beforeSpawn + 1_000;
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(beforeSpawn);
+  const kill = vi.spyOn(process, 'kill').mockImplementation(() => { throw Object.assign(new Error('fixture group absent'), { code: 'ESRCH' }); });
+  const child = Object.assign(new childProcess.ChildProcess(), { pid: 12345, kill: vi.fn() });
+  vi.mocked(childProcess.spawn).mockReset().mockImplementation(() => {
+    // The child records its boot before spawn returns and the parent gets CPU again.
+    clock.mockReturnValue(parentResumedAt);
+    return child;
+  });
+  vi.mocked(observeService).mockClear();
+  vi.stubEnv('HOST_DB_BUDGET', undefined); vi.stubEnv('HOST_BUDGET_ENFORCEMENT', undefined);
+  vi.stubEnv('SERVICE_INSTANCE_ID', instanceId); vi.stubEnv('WORKER_HEALTH_PATH', healthPath);
+  let running: Promise<number> | undefined;
+  try {
+    running = superviseWorker('crawler', { consumer: 'agent-scan', once: true, closeDbOnExit: false, healthPath });
+    const observed = vi.mocked(observeService).mock.calls[0]?.[1];
+    expect(observed).toMatchObject({ childPid: child.pid, bootedAt: beforeSpawn,
+      lastHeartbeatAt: parentResumedAt, lastProgressAt: parentResumedAt });
+    const now = new Date(parentResumedAt), pausedUntil = new Date(parentResumedAt + 30_000);
+    const service = { key: `service:crawler:${instanceId}`, value: observed!, observedAt: now };
+    const scan = { key: `agent-scan:${instanceId}`, observedAt: now,
+      value: { instanceId, pid: child.pid, bootId: 'f70bfcce-92d0-4ed8-a5db-bfd092d17950', bootedAt: childBootedAt,
+        running: 0, pausedUntil: null, lastIdleReason: 'github_headroom_low', headroomPausedUntil: pausedUntil.toISOString() } };
+    expect(agentScanProviderPause([service, scan], now)).toEqual(pausedUntil);
+    expect(agentScanProviderPause([service, { ...scan, value: { ...scan.value, bootedAt: beforeSpawn - 1 } }], now)).toBeNull();
+    child.emit('exit', 0);
+    expect(await running).toBe(0);
+  } finally {
+    child.emit('exit', 1);
+    await running?.catch(() => {});
+    vi.mocked(childProcess.spawn).mockReset(); clock.mockRestore(); kill.mockRestore(); vi.unstubAllEnvs();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 it.each(['crawler', 'scheduler'] as const)('uses the production supervisor spawn to transfer the %s parent identity into its child', async role => {
   const directory = mkdtempSync(join(tmpdir(), 'host-db-supervisor-'));
   const child = Object.assign(new childProcess.ChildProcess(), { pid: undefined, kill: vi.fn() });

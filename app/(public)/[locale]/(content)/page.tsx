@@ -81,6 +81,7 @@ import { AI_FILTER_LEVELS, parseAiFilter, type AiLevel } from "@/lib/domain/evid
 import { siteOrigin } from "@/lib/site";
 import { TalkHero } from "@/components/social/TalkHero";
 import { loadHomeTalk } from "@/lib/social/home-talk";
+import { RenderReadRecovery } from "@/components/errors/RenderReadRecovery";
 
 export const dynamic = "force-dynamic";
 
@@ -369,6 +370,7 @@ async function NewRepositories({ pageParam }: { pageParam: SearchValue }) {
   const href = (next: number) => localePath(locale, `/?${new URLSearchParams({ new: "1", page: String(next) })}`);
   return (
     <I18nProvider locale={locale} dictionaries={{ browse: dictionary }} now={now.toISOString()}><main className="wrap">
+      {failed && <RenderReadRecovery key={now.toISOString()} />}
       <section id="new" className="row-section" aria-labelledby="new-title">
         <div className="row-head">
           <div>
@@ -639,6 +641,7 @@ export async function HomeContent({ params, titleAction }: { params: HomeParams;
 
   return (
     <I18nProvider locale={locale} dictionaries={{ browse: dictionary }} now={now.toISOString()}><main className="wrap">
+      {dbDown && <RenderReadRecovery key={now.toISOString()} />}
       {!scoped && <IntroLine pulse={pulse} total={total} state={state} />}
       {!filtered && talk && <TalkHero lead={talk.lead} rest={talk.rest} sources={talk.sources} preview={talk.preview} t={t} locale={locale} />}
       {!filtered && (

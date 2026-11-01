@@ -121,7 +121,7 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
         const category = manual?.category as Category | null ?? categoryByRepo.get(candidate.repo) ?? null;
         const snapshot = snapshotByRepo.get(candidate.repo);
         if (process.env.CONNECT_AGENT_URL && snapshot && category === null && !snapshot.starAutoApproved) {
-          await holdClassification(candidate, snapshot.document); skipped++; continue;
+          await holdClassification(candidate, snapshot.document, ctx.lease); skipped++; continue;
         }
         /**
          * 이름만으로 개인 것인지 못 가르는 패턴은 분류기의 답을 조건으로 쓴다.

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useLocale, useTranslations } from "@/lib/i18n/context";
 import { localePath } from "@/lib/i18n/routing";
 import { TrackOnMount } from "@/components/analytics/TrackOnMount";
+import { useRenderRecovery } from "@/components/errors/RenderReadRecovery";
 
 /**
  * 화면을 그리다 난 오류 — Next 기본 영어 화면 대신(2026-10-08 UX 감사 UX-10).
@@ -17,6 +18,7 @@ export default function RouteError({ error, retry }: {
   error: Error & { digest?: string };
   retry: () => void;
 }) {
+  useRenderRecovery(Boolean(error.digest));
   const locale = useLocale();
   const t = useTranslations("common");
   return (

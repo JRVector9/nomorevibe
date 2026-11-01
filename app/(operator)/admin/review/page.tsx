@@ -61,7 +61,7 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
   const rawStage = one(params.stage);
   const stage = ((STAGE_KEYS as string[]).includes(rawStage) ? rawStage : '') as StageKey | '';
   const rawCause = one(params.cause);
-  const cause = (rawCause in CAUSE_GUIDE ? rawCause : '') as CauseKey | '';
+  const cause = (Object.hasOwn(CAUSE_GUIDE, rawCause) ? rawCause : '') as CauseKey | '';
   const ai = (AI_FILTERS.some(([key]) => key === one(params.ai)) ? one(params.ai) : '') as ReviewAiDecision | '';
   const rawPage = Number(one(params.page) || 1);
   const page = Number.isSafeInteger(rawPage) && rawPage > 0 ? rawPage : 1;

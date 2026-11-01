@@ -192,6 +192,23 @@ class ObservationTests(unittest.TestCase):
         self.assertFalse(row['recoverable'])
         self.assertFalse(any(call[:2] == ['docker', 'exec'] for call in self.f.calls))
 
+    def test_fresh_monitor_with_bad_container_health_is_an_explicit_alarm_only_fault(self):
+        self.f = DockerFixture(self.g, kind='monitor', replicas=2)
+        for health in [{'Status': 'unhealthy'}, {'Status': 'starting'}, None]:
+            with self.subTest(health=health):
+                if health is None:
+                    self.f.containers[1]['State'].pop('Health', None)
+                else:
+                    self.f.containers[1]['State']['Health'] = health
+                row = self.f.observe()
+                self.assertEqual((row['reason'], row['ok'], row['recoverable']),
+                                 ('container_unhealthy', False, False))
+                self.f.monitor[IDS[1]]['overall'] = 'alarm'
+                row = self.f.observe()
+                self.assertEqual((row['reason'], row['ok'], row['recoverable']),
+                                 ('pipeline_alarm', False, False))
+                self.f.monitor[IDS[1]]['overall'] = 'ok'
+
     def test_partial_or_wrong_inspect_results_fail_closed(self):
         original = copy.deepcopy(self.f.containers)
         for rows in [[], original[:1], [original[0], original[0]],

@@ -97,6 +97,24 @@ it('defers new claims while GitHub headroom is low or the host ledger refuses, w
   expect(mocks.deferral.mock.calls).toEqual([['agent-scan', 'github_headroom_low'], ['agent-scan', 'host_slot_unconfirmed']]);
 });
 
+it('publishes the bounded low-headroom wait before sleeping with the actual child PID and boot identity', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  mocks.headroom.mockResolvedValue({ remaining: 100, limit: 10_000, low: true });
+  const { signal, controller } = stopAfter(1);
+  mocks.sleep.mockImplementation(async () => {
+    await Promise.resolve();
+    const value = mocks.observe.mock.calls.at(-1)?.[1];
+    expect(value).toMatchObject({ instanceId: owner.instanceId, bootId: owner.bootId, pid: process.pid,
+      running: 0, pausedUntil: null, lastIdleReason: 'github_headroom_low' });
+    expect(Date.parse(value.headroomPausedUntil) - Date.now()).toBeGreaterThan(55_000);
+    expect(Date.parse(value.headroomPausedUntil) - value.bootedAt).toBeLessThanOrEqual(60_000);
+    controller.abort();
+  });
+  await runAgentScanConsumer({ owner, signal });
+  expect(mocks.claim).not.toHaveBeenCalled();
+  expect(mocks.collect).not.toHaveBeenCalled();
+});
+
 it('releases the host admission after each claim attempt', async () => {
   const release = vi.fn().mockResolvedValue(undefined), admit = vi.fn().mockResolvedValue({ admitted: true, release });
   mocks.claim.mockResolvedValueOnce(claimed('acme/one')).mockResolvedValueOnce(idle('empty'));

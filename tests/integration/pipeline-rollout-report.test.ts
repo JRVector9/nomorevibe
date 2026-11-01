@@ -130,11 +130,11 @@ async function fixtures() {
     updated_at = ${t(-HOUR)}::timestamptz where id = 1`;
   await client`update pipeline_stage_modes set updated_at = ${t(-HOUR)}::timestamptz`;
   await ledger([
-    // q1: 구간 전부터 대기 → 1분에 예약 → 보낸 뒤 indeterminate로 끝까지 점유(장비 g 한도 1을 채운다).
+    // q1: 구간 전부터 대기 → 1분에 예약 → 10분에 indeterminate가 되면 점유가 끝난다(2026-10-30 소유자 결정).
     { route: "r1", kind: "first", state: "indeterminate", reservedUntil: 11 * MIN, queueUntil: 30 * MIN, events: [["queued", null, "waiting", -5 * MIN],
       ["reserved", "waiting", "reserved", MIN], ["dispatch_started", "reserved", "dispatched", MIN + 1000],
       ["dispatch_indeterminate", "dispatched", "indeterminate", 10 * MIN]] },
-    // q2: 같은 장비 g 라 포화 대기. queue_until(15분)에서 끝난 것으로 보고 늦은 만료 이벤트(20분)는 대기로 세지 않는다.
+    // q2: 장비 g는 10분까지 포화, 그 뒤에는 빈 슬롯 대기다. queue_until(15분) 뒤의 늦은 만료 이벤트는 대기로 세지 않는다.
     { route: "r1", kind: "second", state: "withdrawn", reservedUntil: null, queueUntil: 15 * MIN, events: [["queued", null, "waiting", 2 * MIN],
       ["wait_expired", "waiting", "withdrawn", 20 * MIN]] },
     // q3: 다른 장비(g2)·text pool — 빈 슬롯이 있는데 5분 대기, 보내지 않은 예약은 reserved_until(40분)까지만 점유.
@@ -150,10 +150,10 @@ async function fixtures() {
 }
 
 const EXPECTED_SLOTS = {
-  all: { waitingMs: 1_320_000, freeWhileWaitingMs: 360_000, fullWhileWaitingMs: 780_000, unknownWhileWaitingMs: 180_000, busyMs: 3_540_000 },
+  all: { waitingMs: 1_320_000, freeWhileWaitingMs: 660_000, fullWhileWaitingMs: 480_000, unknownWhileWaitingMs: 180_000, busyMs: 840_000 },
   scopes: [
-    { routeId: "r1", class: "first", waitingMs: 240_000, freeWhileWaitingMs: 60_000, fullWhileWaitingMs: 0, unknownWhileWaitingMs: 180_000, busyMs: 3_540_000 },
-    { routeId: "r1", class: "second", waitingMs: 780_000, freeWhileWaitingMs: 0, fullWhileWaitingMs: 780_000, unknownWhileWaitingMs: 0, busyMs: 0 },
+    { routeId: "r1", class: "first", waitingMs: 240_000, freeWhileWaitingMs: 60_000, fullWhileWaitingMs: 0, unknownWhileWaitingMs: 180_000, busyMs: 540_000 },
+    { routeId: "r1", class: "second", waitingMs: 780_000, freeWhileWaitingMs: 300_000, fullWhileWaitingMs: 480_000, unknownWhileWaitingMs: 0, busyMs: 0 },
     { routeId: "r2", class: "background", waitingMs: 300_000, freeWhileWaitingMs: 300_000, fullWhileWaitingMs: 0, unknownWhileWaitingMs: 0, busyMs: 300_000 },
   ] };
 

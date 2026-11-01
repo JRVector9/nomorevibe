@@ -1,3 +1,4 @@
+import { RenderReadRecovery } from "@/components/errors/RenderReadRecovery";
 import { localizeProductList } from "@/lib/i18n/products";
 import { getRequestLocale } from "@/lib/i18n/server";
 import { getTranslator, getDictionary } from "@/lib/i18n/dictionary";
@@ -53,6 +54,7 @@ export default async function RisingPage({ searchParams }: { searchParams: Promi
   const items = (await localizeProductList(result?.items ?? [],locale)).map((product, index) => ({ ...product, rank: first + index }));
   return (
     <I18nProvider locale={locale} dictionaries={{browse:dictionary}} now={now.toISOString()}><main className="wrap popular-page">
+      {!result && <RenderReadRecovery key={now.toISOString()} />}
       <nav aria-label={t("nav.breadcrumb")} className="popular-crumbs">
         <Link prefetch={false} href={localePath(locale,"/")}>{t("nav.discover")}</Link><span aria-hidden="true">›</span><span aria-current="page">{t("growth.title")}</span>
       </nav>

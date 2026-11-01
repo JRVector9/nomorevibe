@@ -1,3 +1,4 @@
+import { RenderReadRecovery } from "@/components/errors/RenderReadRecovery";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata, ResolvingMetadata } from "next";
@@ -75,6 +76,7 @@ export default async function TalkPage({ searchParams }: { searchParams: Promise
 
   return (
     <I18nProvider locale={locale} dictionaries={{ browse: dictionary }} now={now.toISOString()}><main className="wrap talk-page">
+      {!board && <RenderReadRecovery key={now.toISOString()} />}
       <nav aria-label={t("nav.breadcrumb")} className="popular-crumbs">
         <Link prefetch={false} href={localePath(locale, "/")}>{t("nav.discover")}</Link><span aria-hidden="true">›</span><span aria-current="page">{t("talk.pageTitle")}</span>
       </nav>

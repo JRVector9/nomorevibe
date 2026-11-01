@@ -15,6 +15,13 @@ type CycleDependencies = {
   record: (status: MonitorStatus) => void;
 };
 
+const STAGE_FAILURE_STAGES = new Set(['fetch', 'judge', 'publish', 'evidence', 'agent-evidence', 'ai-level', 'uptime',
+  ...Object.keys(TEXT_PROGRESS_STAGE_JOBS)]);
+const STAGE_FAILURE_REASONS = new Set(['no_progress', 'worker_missing', 'consumer_missing', 'upstream_stalled']);
+const STAGE_FAILURE_ROLES = new Set(['scheduler', 'crawler', 'reviewer', 'publisher', 'maintenance', 'text']);
+const KNOWN_PROGRESS_REASONS = new Set(['paused', 'no_work', 'progressing', 'running', 'backoff', 'upstream_or_job_error',
+  'upstream_stalled', 'warming_up', 'worker_missing', 'no_progress', 'manual_attention', 'consumer_missing']);
+
 const ageText = (seconds: number) => seconds >= 86_400 ? `${Math.floor(seconds / 86_400)}d` : seconds >= 3_600
   ? `${Math.floor(seconds / 3_600)}h` : `${Math.floor(seconds / 60)}m`;
 
@@ -66,7 +73,45 @@ export function recordMonitorHeartbeat(status: MonitorStatus, path = process.env
       : stage.reason === 'no_progress' ? (stage.restartEligible === true ? 'local_stalled' : 'review_stalled') : null;
     return reason ? [{ stage: key, reason }] : [];
   }) : undefined;
-  writeFileSync(temporary, JSON.stringify({ checkedAt: Date.now(), overall: status.overall, providerFailures, reviewFailures,
+  // The existing review/provider paths retain their timing and signatures. This
+  // optional, fixed vocabulary adds faults hidden by an already-DOWN aggregate.
+  // A different alarm can dominate overall while one stage's age is unknown.
+  // Such a report cannot establish an explicit clear of earlier stage faults.
+  const stagesKnown = status.progress && ['ok', 'alarm'].includes(status.progress.overall)
+    && new Set(status.progress.stages.map(stage => stage.stage)).size === status.progress.stages.length
+    && status.progress.stages.every(stage => (STAGE_FAILURE_STAGES.has(stage.stage) || ['first', 'second'].includes(stage.stage))
+      && KNOWN_PROGRESS_REASONS.has(stage.reason) && typeof stage.alarm === 'boolean'
+      && (stage.held === undefined || typeof stage.held === 'boolean')
+      && ['waiting', 'deferred', 'completed5m', 'providerErrors']
+        .every(key => {
+          const value = stage[key as keyof typeof stage];
+          return value === undefined || typeof value === 'number' && Number.isFinite(value) && value >= 0;
+        })
+      && ['progress5m', 'errors5m', 'oldestMinutes', 'providerErrorMinutes']
+        .every(key => {
+          const value = stage[key as keyof typeof stage];
+          return value == null || typeof value === 'number' && Number.isFinite(value) && value >= 0;
+        }))
+    && ['scheduled', 'scheduler_missed', 'worker_missing'].includes(status.progress.scheduler.reason)
+    && typeof status.progress.scheduler.alarm === 'boolean'
+    && new Set(status.progress.liveness.map(role => role.role)).size === status.progress.liveness.length
+    && status.progress.liveness.every(role => STAGE_FAILURE_ROLES.has(role.role)
+      && ['present', 'worker_missing', 'restart_loop'].includes(role.reason) && typeof role.alarm === 'boolean');
+  const stageFailures = stagesKnown && status.progress ? [
+    ...status.progress.stages.flatMap(stage => {
+      if (!STAGE_FAILURE_STAGES.has(stage.stage) || stage.alarm !== true || stage.held === true
+        || !STAGE_FAILURE_REASONS.has(stage.reason)
+        || (stage.reason === 'upstream_stalled' && providerFailures?.includes(stage.stage))) return [];
+      return [{ stage: stage.stage, reason: stage.reason }];
+    }),
+    ...(status.progress.scheduler.alarm === true
+      && ['scheduler_missed', 'worker_missing'].includes(status.progress.scheduler.reason)
+      ? [{ stage: 'scheduler', reason: status.progress.scheduler.reason }] : []),
+    ...status.progress.liveness.flatMap(role => STAGE_FAILURE_ROLES.has(role.role) && role.alarm === true
+      && ['worker_missing', 'restart_loop'].includes(role.reason)
+      ? [{ stage: `role-${role.role}`, reason: role.reason }] : []),
+  ] : undefined;
+  writeFileSync(temporary, JSON.stringify({ checkedAt: Date.now(), overall: status.overall, providerFailures, reviewFailures, stageFailures,
     capacityUnknowns: status.capacityUnknowns }), { mode: 0o600 });
   renameSync(temporary, path);
 }

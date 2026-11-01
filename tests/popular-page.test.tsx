@@ -51,6 +51,18 @@ describe("/popular 목록 보기 — 발견하기 부품으로(2026-10-11 시안
     expect(getPopularPage).toHaveBeenCalledTimes(2);
   });
 
+  it("keeps a successful list when optional facet counts fail, without showing zero counts", async () => {
+    getPopularFacets.mockRejectedValueOnce(new Error("facet timeout"));
+    const html = await render();
+    expect(html).toContain('class="popular-list"');
+    expect(html).toContain("LCU");
+    expect(html).not.toContain("목록을 불러오지 못했습니다");
+    expect(html).not.toContain('class="chip-count"');
+    expect(await render()).toContain('class="chip-count"');
+    expect(getPopularPage).toHaveBeenCalledOnce();
+    expect(getPopularFacets).toHaveBeenCalledTimes(2);
+  });
+
   it("줄마다 순위 · 카드 커버 · 이름 · @소유자 · 한국어 소개 · 분야·계정 · ★와 증감 · 저장을 둔다", async () => {
     const html = await render({ tier: "rising", page: "2" });
     const row = html.match(/<li class="popular-row">([\s\S]*?)<\/li>/)![1];

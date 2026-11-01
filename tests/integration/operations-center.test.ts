@@ -30,6 +30,24 @@ async function seed(){const repo='operations/sample',url='https://operations.exa
 it('coalesces simultaneous job requests and audits one request',async()=>{await Promise.all(Array.from({length:8},()=>requestAdminJob('crawl-seed','admin')));const [j]=await db.select().from(jobs).where(eq(jobs.name,'crawl-seed'));expect(j.requestedVersion).toBe(1);expect(await auditRowsAfter(floor,'request-job')).toHaveLength(1);await expect(requestAdminJob('heartbeat','admin')).rejects.toThrow();});
 // The hold uses the DB clock; model a later document on that same clock, not the host's.
 it('holds failed classification before LIMIT and releases source changes',async()=>{const {candidate,document}=await seed();await holdClassification(candidate,document);expect(await listCandidates(['approved'],10,classificationReadyPredicate())).toHaveLength(0);await db.update(crawlDocuments).set({fetchedAt:sql`clock_timestamp() + interval '1 second'`}).where(eq(crawlDocuments.id,document.id));expect(await listCandidates(['approved'],10,classificationReadyPredicate())).toHaveLength(1);});
+it.each([false, true])('rejects a classification hold on a fenced site (worker=%s)', async worker => {
+  const { candidate, document } = await seed();
+  const lease = { name: 'crawl-publish', token: randomUUID(), requestedVersion: 1 };
+  await db.insert(jobs).values({ name: lease.name, leaseToken: lease.token, lockedAt: sql`clock_timestamp()` as unknown as Date,
+    requestedVersion: 1 });
+  const [before] = await db.execute<{ state: string; reason: string | null; fenced_db: unknown }>(sql`
+    SELECT state, reason, fenced_db FROM dr_writer_fence WHERE id=1`);
+  try {
+    await db.execute(sql`UPDATE dr_writer_fence SET state='fenced', reason='operator_fence',
+      fenced_db='{"systemIdentifier":"1","databaseOid":"1","databaseName":"fixture"}'::jsonb WHERE id=1`);
+    await expect(holdClassification(candidate, document, worker ? lease : undefined)).rejects.toThrow('dr_writer_site_fenced');
+    expect(await db.select().from(categoryDecisions)).toEqual([]);
+    expect((await db.select().from(crawlCandidates))[0]).toEqual(candidate);
+  } finally {
+    await db.execute(sql`UPDATE dr_writer_fence SET state=${before.state}, reason=${before.reason},
+      fenced_db=${before.fenced_db === null ? null : JSON.stringify(before.fenced_db)}::text::jsonb WHERE id=1`);
+  }
+});
 it('rejects stale or no-longer-approved manual decisions',async()=>{const {candidate,sourceHash}=await seed();await expect(setManualCategory({repo:candidate.repo,sourceHash:'old',category:'Games',reason:'Playable game',actor:'admin'})).rejects.toThrow();await db.update(crawlCandidates).set({state:'rejected'}).where(eq(crawlCandidates.id,candidate.id));await expect(setManualCategory({repo:candidate.repo,sourceHash,category:'Games',reason:'Playable game',actor:'admin'})).rejects.toThrow();expect(await db.select().from(categoryDecisions)).toHaveLength(0);});
 it('publishes a manually classified candidate when AI is disconnected',async()=>{vi.stubEnv('CONNECT_AGENT_URL','http://internal');const {candidate,sourceHash}=await seed();await setManualCategory({repo:candidate.repo,sourceHash,category:'Productivity',reason:'Shared calendar tasks',actor:'admin'});await runJob('crawl-publish',publishCandidates);expect(await db.select().from(products)).toMatchObject([{category:'Productivity',source:'crawler'}]);});
 it('does not publish stale manual classification when the administrator changes it',async()=>{const {candidate,sourceHash}=await seed();await setManualCategory({repo:candidate.repo,sourceHash,category:'Productivity',reason:'Shared calendar tasks',actor:'admin'});const prepared=await prepareCandidateClassification(candidate);const [decision]=await db.select().from(categoryDecisions);await setManualCategory({repo:candidate.repo,sourceHash,category:'Business',reason:'Business operations',actor:'admin'});expect(await publishCandidate(candidate,undefined,{category:'Productivity',snapshot:prepared!.snapshot,decision:{revision:decision.revision,sourceHash}})).toMatchObject({ok:false,reason:'publication_state_changed'});expect(await db.select().from(products)).toHaveLength(0);});

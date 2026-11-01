@@ -99,6 +99,24 @@ class NotificationTests(unittest.TestCase):
         self.assertEqual(len(self.messages), 3)
         self.assertTrue(next(iter(self.state['notifications']['incidents'].values()))['sent'])
 
+    def test_monitor_container_fault_alerts_without_creating_recovery_authority(self):
+        self.config['recover'] = True
+        self.fail_service('monitor', 'container_unhealthy')
+        self.cycle(1000)
+        self.assertEqual(self.messages, [])
+        result, receipt = self.cycle(1030)
+        self.assertFalse(result['ok'])
+        self.assertTrue(receipt['accepted'])
+        self.assertIn('m3/monitor container_unhealthy', self.messages[-1])
+        self.assertNotIn('recovery', self.messages[-1])
+        self.state = json.loads(self.path.read_text())
+        self.cycle(1060)
+        self.assertEqual(len(self.messages), 1)
+        self.assertEqual(self.state['targets']['m3/monitor']['attempts'], [])
+        self.recover_rows()
+        self.cycle(1090)
+        self.assertEqual(self.state['notifications']['incidents'], {})
+
     def test_unknown_host_does_not_clear_service_fault_but_explicit_recovery_allows_realert(self):
         self.fail_service()
         self.cycle(1000)
