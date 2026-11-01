@@ -44,7 +44,6 @@ describe("관리자 단계별 검수 모델", () => {
     const html = renderToStaticMarkup(createElement(ReviewModelsForm, { settings, version: "v1", firstChoices: reviewModelOptions(null, false), secondChoices: reviewModelOptions(null, true) }));
     expect(html).toContain('name="firstAdditionalModel0"');
     expect(html).toContain('value="[supa] Qwen3.8-27B-NVFP4"');
-    expect(html).toContain("GPU3090 · Qwen · 직접 연결");
     const form = submitted(); form.set("firstAdditionalProvider0", "claude-cli"); form.set("firstAdditionalModel0", "opus");
     await saveReviewModels(null, form);
     expect(saveSettings.mock.calls[0][0].firstReviewAdditional).toEqual([{ provider: "claude-cli", model: "opus" }]);
@@ -58,8 +57,9 @@ describe("관리자 단계별 검수 모델", () => {
     saveSettings.mockResolvedValue({ ok: false, issues: ["설정이 바뀌었습니다"] });
     expect(await saveReviewModels(null, submitted())).toEqual({ issues: ["설정이 바뀌었습니다"] });
   });
-  it("직접 AI2 모델은 1차 목록에 제시하지 않고 동적 모델은 중복 제거한다", () => {
-    expect(reviewModelOptions(null, false).some(row => row.provider === "local-direct")).toBe(false);
-    expect(reviewModelOptions(["[supa] Qwen3.8-27B-NVFP4", "custom"], true).filter(row => row.model === "[supa] Qwen3.8-27B-NVFP4")).toHaveLength(1);
+  it("선택지는 엔진 API가 돌려준 이름만 담고 등록부 모델명을 지어내지 않는다", () => {
+    expect(reviewModelOptions(null, false).some(row => row.provider === "local-direct" || row.provider === "abcllm")).toBe(false);
+    expect(reviewModelOptions(["served-by-api"], true).filter(row => row.model === "served-by-api"))
+      .toEqual([{ provider: "local-direct", model: "served-by-api", label: "served-by-api" }]);
   });
 });

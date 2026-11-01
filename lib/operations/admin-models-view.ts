@@ -176,7 +176,8 @@ export function lastModelSuccess(rows: AdminModelMetrics[]) {
 
 /** text 경로 — ADMIN_MODEL_STAGES 중 abcllm 제공자 단계(검색 키워드·검증·심사 사유·다국어·한국어 소개·검색 질의·수집 소개, 7개). 한 모델이 함께 쓰므로 표에서 한 묶음(rowspan)이다. */
 export const TEXT_STAGE_IDS: readonly string[] = ADMIN_MODEL_STAGES.filter(stage => stage.provider === "abcllm").map(stage => stage.id);
-export const MODEL_TABLE_COLUMNS = ["단계 · 경로", "모델", "장비 · 출처", "전송", "상태", "점유 / 한도", "대기", "미확인", "1시간 성공 / 실패", "마지막 성공", "연결 확인 · 결과", "동작"] as const;
+/** 넓은 화면 열. 장비·전송·대기·미확인은 모델·상태 칸에 접어 페이지가 가로로 넘치지 않게 한다. */
+export const MODEL_TABLE_COLUMNS = ["단계 · 경로", "모델 · 장비 · 전송", "상태", "점유 / 한도", "1시간 성공 / 실패", "마지막 성공", "연결 확인 · 결과", "동작"] as const;
 
 export type ModelStageRow = { stage: string; label: string; routeIds: string[]; rows: AdminModelMetrics[]; requests: AdminModelRequest[];
   held: number; waiting: number; unknown: number; succeeded1h: number; failed1h: number; withdrawn1h: number; lastSuccessAt: string | null };

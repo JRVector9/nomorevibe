@@ -148,10 +148,10 @@ describe("text 경로 rowspan 구조", () => {
     const groups = modelRowGroups(cards[0]);
     expect(groups).toHaveLength(1); expect(groups[0]).toMatchObject({ shared: true, held: 1, waiting: 2 }); expect(groups[0].stages.map(row => row.stage)).toEqual(TEXT_STAGE_IDS);
     const html = renderToStaticMarkup(createElement(ModelStageTable, { cards, observation, controls, probes: {}, localProbes: {}, busy: null, onProbe: vi.fn() }));
-    expect(html.match(/rowspan="7"/gi)).toHaveLength(6); expect(html).toContain("text 경로 7개 공통"); expect(html).toContain("7경로 한 번에 적용");
+    expect(html.match(/rowspan="7"/gi)).toHaveLength(4); expect(html).toContain("text 경로 7개 공통"); expect(html).toContain("7경로 한 번에 적용");
     expect((html.match(/<tr /g) ?? []).length).toBe(7); expect(html).toContain(">1 / 2</span> <small class=\"text-fg-2\">공유</small>");
     // 단계마다 상태·대기·미확인·1시간·마지막 성공은 자기 값 — 첫 행 처리 중, 네 번째 행 보류
-    expect(html.match(/data-state="busy"/g)).toHaveLength(1); expect(html.match(/data-state="hold"/g)).toHaveLength(1);
+    expect(html.match(/data-state="busy"/g)).toHaveLength(2); expect(html.match(/data-state="hold"/g)).toHaveLength(2);
   });
   it("text 가 아닌 단계는 같은 모델이라도 행마다 자기 점유·동작을 갖고 재시작은 첫 행에서만, 연결 확인 결과는 공유한다", () => {
     const observation = redesignObservation();
@@ -159,7 +159,7 @@ describe("text 경로 rowspan 구조", () => {
     const cards = buildModelCards(observation, redesignModels, redesignAssignments), mlx = cards.find(card => card.equipment === "M3 Ultra")!;
     expect(modelRowGroups(mlx).map(group => group.shared)).toEqual([false, false]);
     const html = renderToStaticMarkup(createElement(ModelStageTable, { cards: [mlx], observation, controls, probes: {}, localProbes: {}, busy: null, onProbe: vi.fn() }));
-    expect(html.match(/>모델 재시작<\/button>/g)).toHaveLength(1); expect(html).toContain("재시작은 첫 행에서"); expect(html.match(/>연결 확인<\/button>/g)).toHaveLength(2);
+    expect(html.match(/>모델 재시작<\/button>/g)).toHaveLength(2); expect(html).toContain("재시작은 첫 행에서"); expect(html.match(/>연결 확인<\/button>/g)).toHaveLength(3);
   });
 });
 

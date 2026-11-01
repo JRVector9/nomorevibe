@@ -6,7 +6,7 @@ import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { currentAdmin } from "@/lib/auth/admin";
 import { getSettings, settingsFormVersion } from "@/lib/crawl/settings";
-import { listReviewEngineModels } from "@/lib/crawl/agent-review-gateway";
+import { readServedContractModels } from "@/lib/operations/admin-engine-connect";
 import { configuredHumanModelsProbe, configuredHumanModelsReady, humanReviewModelDisplay, type HumanModelProbe } from "@/lib/operations/admin-models-human";
 import { currentModelEnv } from "@/lib/operations/model-env";
 import { PageStamp } from "../components/PageStamp";
@@ -58,7 +58,7 @@ export default async function ModelsPage() {
   // Admin registry overrides (0148) are part of the registry this page shows and validates against.
   await ensureServingContracts();
   const renderedAt = renderClock().toISOString();
-  const [settings, gatewayModels, models, assignmentLocked] = await Promise.all([getSettings(), listReviewEngineModels(), currentModelEnv(),
+  const [settings, servedModels, models, assignmentLocked] = await Promise.all([getSettings(), readServedContractModels(), currentModelEnv(),
     // 배정 표 플래그(3b-B) — 켜졌으면 아래 모델 선택 폼을 읽기 전용으로(PR 3b-D). 못 읽으면 꺼짐(편집 가능)
     assignmentTableFlag()]);
 
@@ -79,7 +79,7 @@ export default async function ModelsPage() {
   return <main className="mx-auto flex max-w-[1440px] flex-col gap-3 px-8 pb-28 max-sm:px-4">
     <PageStamp />
     <ModelsTopBar renderedAt={renderedAt} />
-    <Suspense fallback={<p aria-busy="true" className="text-[13px]">운영 DB 실측 확인 중…</p>}><LiveModelsSlot assignments={assignments} models={registry.models} contracts={contracts} humanProbe={humanProbe} /></Suspense>
+    <Suspense fallback={<p aria-busy="true" className="text-[13px]">운영 DB 실측 확인 중…</p>}><LiveModelsSlot assignments={assignments} models={registry.models} contracts={contracts} humanProbe={humanProbe} served={servedModels} /></Suspense>
     <div className="grid gap-3 [grid-template-columns:minmax(0,7fr)_minmax(0,5fr)] max-[980px]:grid-cols-1">
       <Suspense fallback={<p aria-busy="true" className="text-[13px]">장비 한도 확인 중…</p>}><DevicesSlot models={registry.models} /></Suspense>
       <Suspense fallback={<p aria-busy="true" className="text-[13px]">사람 검토 목록 확인 중…</p>}><UnknownReviewSlot /></Suspense>
@@ -112,7 +112,7 @@ export default async function ModelsPage() {
         <section className="flex min-w-0 flex-col gap-3" aria-labelledby="model-settings">
           <h2 id="model-settings" className="text-[15px] font-semibold">단계별 모델 선택(설정)</h2>
           <ReviewModelsForm settings={settings} version={settingsFormVersion(settings)} models={registry.models} defaults={defaults} locked={assignmentLocked}
-            firstChoices={reviewModelOptions(gatewayModels, false)} secondChoices={reviewModelOptions(gatewayModels, true)} />
+            firstChoices={reviewModelOptions([...new Set(servedModels.flatMap(row => row.servedIds ?? []))].sort(), false)} secondChoices={reviewModelOptions([...new Set(servedModels.flatMap(row => row.servedIds ?? []))].sort(), true)} />
         </section>
       </div>
     </details>
@@ -127,7 +127,7 @@ async function readAlarmSummary(): Promise<CapacityAlarmSummary> {
   return { status: report.status, count: report.count, oldestAgeSeconds: report.oldestAgeSeconds, stuckDispatched: report.stuckDispatched, alarmReasons: [...report.alarmReasons], thresholds };
 }
 
-async function LiveModelsSlot({ assignments, models, contracts, humanProbe }: { assignments: ModelStageAssignment[]; models: ReturnType<typeof readModelRegistry>["models"]; contracts: ModelContractLink[]; humanProbe: Promise<HumanModelProbe[]> }) {
+async function LiveModelsSlot({ assignments, models, contracts, humanProbe, served }: { assignments: ModelStageAssignment[]; models: ReturnType<typeof readModelRegistry>["models"]; contracts: ModelContractLink[]; humanProbe: Promise<HumanModelProbe[]>; served: Awaited<ReturnType<typeof readServedContractModels>> }) {
   const { readModelOpsStates } = await import("@/lib/operations/ops-runner/repository");
   const [observation, states, roles, alarms, human] = await Promise.all([readAdminModelsObservation(), readModelOpsStates().catch(() => []),
     roleOverview().catch(() => null), readAlarmSummary(), humanProbe]);
@@ -136,7 +136,7 @@ async function LiveModelsSlot({ assignments, models, contracts, humanProbe }: { 
     result: { listed: probe.ready ? true : null, listMs: probe.ms, callBlocked: "유료 DeepSeek 시험 호출은 허용되지 않습니다.", error: probe.ready ? null : "사람 위임 모델 목록 확인 실패(연결 또는 목록 없음)" },
     detail: "사람 위임 슬롯 · GET /models" })));
   const probes = await readProbeObservations();
-  return <LiveModels observation={observation} opsStates={states} assignments={assignments} models={models} contracts={contracts} probes={probes}
+  return <LiveModels observation={observation} opsStates={states} assignments={assignments} models={models} contracts={contracts} served={served} probes={probes}
     leases={roles?.roles ?? []} readiness={roles?.overall ?? null} alarms={alarms}
     restartModels={models.map(row => ({ key: row.key, label: row.displayName, blockedReason: modelRecoveryBlocked(row.equipment, row.provider) }))} />;
 }
