@@ -46,7 +46,7 @@ import { sortActions, type ActionItem, type SplitItem } from "./dashboard/Attent
 import { modelName } from "./dashboard/ModelCards";
 import { MODEL_HEALTH_JOBS, progressStageJobs, type ActionWork } from "./work-owners";
 import { EXPECTED_WEB_INSTANCES, READINESS_LABELS, webSummary, type CollectorQuotaStatus } from "./status-summary";
-import { readAssistQueueStatus } from "@/lib/operations/llm-assist";
+import { readAssistControls, readAssistQueueStatus } from "@/lib/operations/llm-assist";
 import { readKoreanTranslationQueue } from "@/lib/operations/korean-translation";
 
 /**
@@ -83,6 +83,7 @@ export type ActionInputs = {
   /** 알림 메일 발송함·로그인 코드 메일의 최근 결과(email-health.ts) — 못 읽었으면 null */
   email?: Awaited<ReturnType<typeof emailHealth>> | null;
   assistQueue?: Awaited<ReturnType<typeof readAssistQueueStatus>> | null;
+  assistControls?: Awaited<ReturnType<typeof readAssistControls>> | null;
   koreanTranslation?: Awaited<ReturnType<typeof readKoreanTranslationQueue>> | null;
 };
 
@@ -98,7 +99,7 @@ export async function loadActionInputs(settings: CrawlSettings): Promise<ActionI
   // 성공이 30분 넘게 끊긴 잡만 미룸 까닭을 묻는다(열쇠 몇 개 — 평소에는 묻지 않는다)
   const jobDeferralsRead = jobStatesRead.then((states) => readLastJobDeferrals(jobsNeedingDeferralReason(states, new Date())))
     .catch(warn("operations.job_deferrals_unavailable"));
-  const [ops, jobStates, jobBatch, evidenceSummary, downCount, overview, secondFailures, throughput, models, attention, roles, accounts, apps, takedowns, modelServers, settingsApply, jobDeferrals, email, assistQueue, koreanTranslation] = await Promise.all([
+  const [ops, jobStates, jobBatch, evidenceSummary, downCount, overview, secondFailures, throughput, models, attention, roles, accounts, apps, takedowns, modelServers, settingsApply, jobDeferrals, email, assistQueue, assistControls, koreanTranslation] = await Promise.all([
     operationsData(), jobStatesRead, readJobBatchMode(), getEvidenceStatusSummary(new Date()), downProductCount(),
     // 사람 몫의 수(직접 판단·확정만·나이·24시간 흐름)는 심사 큐와 같은 humanQueueOverview 하나에서 온다
     // 사람 몫은 웹 여러 대·화면 여러 개가 30초 나눠 쓴다(shared-reads.ts) — 메뉴 배지도 이 읽기를 거친다
@@ -115,9 +116,10 @@ export async function loadActionInputs(settings: CrawlSettings): Promise<ActionI
     jobDeferralsRead,
     emailHealth().catch(warn("operations.email_health_unavailable")),
     readAssistQueueStatus().catch(warn("operations.assist_queue_unavailable")),
+    readAssistControls().catch(warn("operations.assist_controls_unavailable")),
     readKoreanTranslationQueue().catch(warn("operations.korean_translation_unavailable")),
   ]);
-  return { settings, settingsApply, ops, jobStates, jobBatch, evidenceSummary, downCount, overview, secondFailures, throughput, models, attention, roles, accounts, apps, takedowns, modelServers, jobDeferrals, email, assistQueue, koreanTranslation };
+  return { settings, settingsApply, ops, jobStates, jobBatch, evidenceSummary, downCount, overview, secondFailures, throughput, models, attention, roles, accounts, apps, takedowns, modelServers, jobDeferrals, email, assistQueue, assistControls, koreanTranslation };
 }
 
 const LEGACY_BATCH = { mode: "legacy", writerContractVersion: 0 } as const;
