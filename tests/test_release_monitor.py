@@ -94,6 +94,31 @@ class MonitorRolloutTests(unittest.TestCase):
         self.assertNotIn('private', json.dumps(result))
         self.assertEqual(self.client.mutations, 0)
 
+    def test_retired_setting_absence_is_accepted_only_when_the_release_declares_it(self):
+        retired = ('ABCLLM_API_KEY',)
+        self.original['env'] += 'ABCLLM_API_KEY=retired-private\n'
+        self.previous['serviceSpec']['TaskTemplate']['ContainerSpec']['Env'].append('ABCLLM_API_KEY=retired-private')
+        self.previous['specHash'] = monitor.git.spec_hash(self.previous['serviceSpec'])
+        self.previous['containers'][0]['config']['Env'].append('ABCLLM_API_KEY=retired-private')
+        # The release saved the env without the line; the new spec and container render without it.
+        self.app = monitor.fleet.expected_api('monitor-m3', self.original, self.target, retired)
+        self.assertEqual(self.app['env'], 'RELEASE_TAG=' + self.new + '\nWORKER_ROLE=monitor\nSECRET=private\n')
+        self.client = Client(self.app)
+        result = self.check(retired_settings=retired)
+        self.assertEqual((result['deploymentId'], result['pushReceipts']), ('new-deployment', {'primary': True, 'external': True}))
+        self.assertNotIn('retired-private', json.dumps(result))
+        # Not declared: the saved env is a configuration mismatch (today's behaviour) before any runtime read.
+        with patch.object(monitor.git, 'inspect_runtime', side_effect=AssertionError('no runtime read')):
+            with self.assertRaisesRegex(monitor.git.shared.ReleaseStopped, 'monitor-m3_saved_configuration_mismatch'):
+                self.check()
+        # Declared, but the new service still renders the retired line: contract drift, not tolerance.
+        self.current['serviceSpec']['TaskTemplate']['ContainerSpec']['Env'].append('ABCLLM_API_KEY=retired-private')
+        self.current['specHash'] = monitor.git.spec_hash(self.current['serviceSpec'])
+        self.current['containers'][0]['config']['Env'].append('ABCLLM_API_KEY=retired-private')
+        with self.assertRaisesRegex(monitor.git.shared.ReleaseStopped, 'monitor-m3_runtime_contract_drift'):
+            self.check(retired_settings=retired)
+        self.assertEqual(self.client.mutations, 0)
+
     def test_old_or_running_deployment_never_inspects_or_uses_receipts(self):
         for latest in ({'deploymentId': 'old-deployment', 'status': 'done'},
                        {'deploymentId': 'new-deployment', 'status': 'running'}):

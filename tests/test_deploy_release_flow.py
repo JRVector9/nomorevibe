@@ -112,6 +112,7 @@ class CoordinatorFlowTests(unittest.TestCase):
         self.launch = self.stack.enter_context(patch.object(release, 'load', side_effect=lambda name, filename: SimpleNamespace(launch_observer=self.launch_observer)
             if filename == 'release_observer.py' else (_ for _ in ()).throw(AssertionError('unexpected dynamic module'))))
         self.observations = []
+        self.fleet_retired = []
         self.execution = self.directory / 'execution'
 
     def git(self, *arguments):
@@ -142,8 +143,9 @@ class CoordinatorFlowTests(unittest.TestCase):
         self.assertEqual(client.app(short)['dockerImage'], self.target['web'])
         return self.record((short, 'runtime-verified'), {'ready': True})
 
-    def verify_fleet(self, client, snapshot, target, selected, receipts, repo, *, output_snapshot=None):
+    def verify_fleet(self, client, snapshot, target, selected, receipts, repo, *, output_snapshot=None, retired_settings=()):
         self.assertIs(client, self.client); self.assertEqual(repo, self.repo); self.assertEqual(target, self.target)
+        self.fleet_retired.append(tuple(retired_settings))
         if not selected:
             self.assertEqual(client.apps, snapshot['apps'])
             self.assertEqual(receipts, {})
@@ -158,6 +160,10 @@ class CoordinatorFlowTests(unittest.TestCase):
                 self.assertEqual(release.shared.setting(client.app(short)['env'], 'NEXT_DEPLOYMENT_ID'), self.after)
                 self.assertEqual(release.shared.setting(client.app(short)['buildArgs'], 'NEXT_DEPLOYMENT_ID'), self.after)
                 self.assertEqual(client.app(short)['dockerImage'], self.target['web'])
+                # The real verifier holds the saved env to expected_api(..., retired): the retired lines are gone.
+                self.assertEqual(client.app(short)['env'], release.fleet.expected_api(short, snapshot['apps'][short], target, retired_settings)['env'])
+                for name in retired_settings:
+                    self.assertNotIn(name, release.shared.dotenv_settings(client.app(short)['env']))
                 observed[short].update(release=self.after, image=self.target['web'])
             else:
                 self.assertEqual(client.app(short), snapshot['apps'][short])
@@ -595,6 +601,87 @@ class CoordinatorFlowTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'PUBLIC_USER_AUTH_ENABLED_invalid'):
             release.run_release(self.plan, self.directory / 'blocked-integration')
         self.assertEqual(self.client.posts, []); self.assertEqual(self.observations, [])
+
+    def carry_retired_setting(self, shorts, line='ABCLLM_API_KEY=synthetic-retired-secret'):
+        """Dokploy still saves `line` for these apps and their live specs still render it (no drift)."""
+        for short in shorts:
+            for data in (self.client.apps, self.snapshot['apps']):
+                data[short]['env'] += line + '\n'
+            raw = self.snapshot['runtime'][short]
+            raw['serviceSpec']['TaskTemplate']['ContainerSpec']['Env'].append(line)
+            raw['specHash'] = release.git.spec_hash(raw['serviceSpec'])
+            self.snapshot['baseline'][short]['specHash'] = raw['specHash']
+
+    def test_retired_setting_is_deleted_from_the_saved_env_of_each_redeployed_app_and_expected_absent_at_the_end(self):
+        retired = ['ABCLLM_API_KEY']
+        self.carry_retired_setting(('web-mini', 'web-m3'))
+        self.plan.update(retiredSettings=retired, scope=release.impact(self.snapshot, self.after, tuple(retired)))
+        self.assertEqual((self.plan['scope']['selectedApps'], self.plan['scope']['retiredSettingCarriers']),
+                         (['web-mini', 'web-m3'], ['web-mini', 'web-m3']))
+        before = copy.deepcopy(self.snapshot['apps'])
+        result = release.run_release(self.plan, self.execution)
+        self.assertEqual((result['status'], result['deployedApps'], result['skippedApps'], result['retiredSettings']),
+                         ('deployed-and-verified', ['web-mini', 'web-m3'], [], retired))
+        self.assertEqual(self.fleet_retired, [(), ('ABCLLM_API_KEY',)])
+        for short in ('web-mini', 'web-m3'):
+            saved = next(payload for name, endpoint, payload in self.client.posts if name == short and endpoint.endswith('saveEnvironment'))
+            self.assertNotIn('ABCLLM_API_KEY', release.shared.dotenv_settings(saved['env']))
+            self.assertNotIn('synthetic-retired-secret', saved['env'])
+            # Everything but RELEASE_TAG/NEXT_DEPLOYMENT_ID and the retired line is byte-for-byte the original.
+            self.assertEqual(saved['env'], release.shared.drop_settings(
+                release.fleet.expected_api(short, before[short], self.target)['env'], retired))
+            self.assertEqual(saved['buildSecrets'], before[short]['buildSecrets'])
+        self.assertEqual(json.loads((self.execution / 'once.json').read_text())['retiredSettings'], retired)
+        self.assertEqual(self.events[-1], 'observer-launched')
+        # The default plan keeps today's behaviour exactly: no retired kwarg reaches the verifier.
+        self.assertEqual(self.fleet_retired[0], ())
+
+    def run_retiring_release_on_carrying_webs(self, retired):
+        """The real classifier selects only the two carriers; the run redeploys exactly those and nothing else."""
+        self.plan.update(target=self.target, snapshot=self.snapshot, scope=release.impact(self.snapshot, self.after))
+        self.assertEqual((self.plan['scope']['selectedApps'], self.plan['scope']['mode']), ([], 'none'))
+        self.plan.update(retiredSettings=retired, scope=release.impact(self.snapshot, self.after, tuple(retired)))
+        self.assertEqual((self.plan['scope']['selectedApps'], self.plan['scope']['mode']), (['web-mini', 'web-m3'], 'scoped'))
+        self.proof.update(target={'sha': self.after, 'web': self.target['web']})
+        self.plan['readiness'] = copy.deepcopy(self.proof)
+        result = release.run_release(self.plan, self.execution)
+        self.assertEqual((result['status'], result['selectedApps'], result['deployedApps'], result['skippedApps']),
+                         ('deployed-and-verified', ['web-mini', 'web-m3'], ['web-mini', 'web-m3'], []))
+        self.assertEqual([(short, endpoint) for short, endpoint, _ in self.client.posts], [
+            (short, endpoint) for short in ('web-mini', 'web-m3') for endpoint in
+            ('application.saveEnvironment', 'application.saveDockerProvider', 'application.deploy')])
+        for short in ('web-mini', 'web-m3'):
+            self.assertNotIn('ABCLLM_API_KEY', release.shared.dotenv_settings(self.client.apps[short]['env']))
+            self.assertEqual(release.shared.setting(self.client.apps[short]['env'], 'RELEASE_TAG'), self.after)
+        for short in release.fleet.registered_apps():
+            if not short.startswith('web-'):
+                self.assertEqual(self.client.apps[short], self.snapshot['apps'][short])
+        self.assertEqual(self.fleet_retired, [(), tuple(retired)])
+        self.assertEqual(len(result['retainedApps']), 16)
+        return result
+
+    def test_exact_target_apps_that_still_carry_the_retired_setting_are_redeployed_instead_of_kept(self):
+        # Every app already serves the target (a stopped release continued by a fresh plan): the code scope is empty and
+        # both webs would be exact-target skips. They still carry ABCLLM_API_KEY, so the retiring release redeploys them.
+        self.move_fleet_to(self.after)
+        self.snapshot['target'] = copy.deepcopy(self.target)
+        self.carry_retired_setting(('web-mini', 'web-m3'))
+        retired = ['ABCLLM_API_KEY']
+        self.assertEqual(release.already_target(self.snapshot, self.target, ['web-mini', 'web-m3']), ['web-mini', 'web-m3'])
+        self.assertEqual(release.already_target(self.snapshot, self.target, ['web-mini', 'web-m3'], tuple(retired)), [])
+        self.run_retiring_release_on_carrying_webs(retired)
+
+    def test_docs_only_release_selects_only_the_carriers_and_bumps_their_release_while_retiring(self):
+        # The fleet serves the previous commit and the new commit is docs-only, so the code scope is empty. Only the two
+        # carriers are selected; they get the new RELEASE_TAG and lose the retired line in one redeploy each.
+        self.move_fleet_to(self.after)
+        (self.repo / 'docs').mkdir(); (self.repo / 'docs/retire.md').write_text('docs only\n')
+        self.git('add', '.'); self.git('commit', '-qm', 'docs only')
+        self.after = self.git('rev-parse', 'HEAD')
+        self.target['sha'] = self.after
+        self.snapshot['target'] = copy.deepcopy(self.target)
+        self.carry_retired_setting(('web-mini', 'web-m3'))
+        self.run_retiring_release_on_carrying_webs(['ABCLLM_API_KEY'])
 
 
 if __name__ == '__main__': unittest.main()

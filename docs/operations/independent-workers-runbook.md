@@ -507,6 +507,10 @@ CPU 상한은 예약량이 아니므로 모든 역할의 동시 peak를 보장�
 `me.email_sender_unconfigured` 경고만 남기며, 하루 안에 못 보낸 줄은 보내지 않고 닫고(`expired`) 닫힌 줄은 30일 뒤
 `email-weekly-digest`가 지운다. 키·도메인·한도 오류(Resend 401·403·429)는 시도로 세지 않고 5분 뒤 다시 본다.
 
+코드가 더 읽지 않는 Dokploy 설정을 지울 때는 Dokploy 에서 먼저 지우지 말고 일반 배포 `plan` 에 `--retire-setting NAME`(이름마다 한 번)을
+준다 — 릴리스가 재배포하는 앱의 저장 env 에서 그 줄을 빼고 새 spec·컨테이너에서도 사라졌는지 검증한다. 절차와 출력은
+[단축 배포 절차](deployment-fast-path.md)의 「설정 폐기는 릴리스에 싸서」를 따른다.
+
 로그는 컨테이너당 10 MiB × 3개로 회전한다. 비루트 프로세스, `no-new-privileges`, capability 제거,
 Compose `init: true`를 사용한다. 초기 자원 초과가 보이면 탐색/재수집량과 pool 상한을 함께 조정한다.
 
