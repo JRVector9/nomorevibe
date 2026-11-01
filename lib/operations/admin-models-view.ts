@@ -161,3 +161,121 @@ export const modelCardAnchor = (id: string) => `model-${encodeURIComponent(id)}`
 export function lastModelSuccess(rows: AdminModelMetrics[]) {
   return rows.map(row => row.lastSuccessAt).filter((at): at is string => !!at).sort().at(-1) ?? null;
 }
+
+/* ───────── 한 화면(2026-10-31 승인 시안) — 단계 × 모델 표의 행 구성·상태·경보·장비 서버 이름 ───────── */
+
+/** text 경로 — ADMIN_MODEL_STAGES 중 abcllm 제공자 단계(검색 키워드·검증·심사 사유·다국어·한국어 소개·검색 질의·수집 소개, 7개). 한 모델이 함께 쓰므로 표에서 한 묶음(rowspan)이다. */
+export const TEXT_STAGE_IDS: readonly string[] = ADMIN_MODEL_STAGES.filter(stage => stage.provider === "abcllm").map(stage => stage.id);
+export const MODEL_TABLE_COLUMNS = ["단계 · 경로", "모델", "장비 · 출처", "전송", "상태", "점유 / 한도", "대기", "미확인", "1시간 성공 / 실패", "마지막 성공", "연결 확인 · 결과", "동작"] as const;
+
+export type ModelStageRow = { stage: string; label: string; routeIds: string[]; rows: AdminModelMetrics[]; requests: AdminModelRequest[];
+  held: number; waiting: number; unknown: number; succeeded1h: number; failed1h: number; withdrawn1h: number; lastSuccessAt: string | null };
+/** 표의 한 묶음 — 모델·장비·전송·연결 확인·동작 셀을 rowspan 으로 공유하는 단계 행들. shared 는 text 7경로처럼 둘 이상이 한 슬롯을 나눠 쓸 때다. */
+export type ModelRowGroup = { id: string; shared: boolean; stages: ModelStageRow[]; held: number; waiting: number; unknown: number; groupIds: string[] };
+const stageOrder = (id: string) => { const index = MODEL_DASHBOARD_STAGES.findIndex(stage => stage.id === id); return index < 0 ? MODEL_DASHBOARD_STAGES.length : index; };
+export function modelStageRows(card: ModelCard): ModelStageRow[] {
+  const stages = [...new Set(card.stages.length ? card.stages : card.requests.map(request => modelStageId(request.routeId)))].sort((a, b) => stageOrder(a) - stageOrder(b));
+  const build = (stage: string, rows: AdminModelMetrics[], requests: AdminModelRequest[]): ModelStageRow => {
+    const sum = (key: "succeeded1h" | "failed1h" | "withdrawn1h" | "dispatched" | "reserved" | "waiting" | "indeterminate") => rows.reduce((n, row) => n + row[key], 0);
+    return { stage, label: stage ? modelStageLabel(stage) : "사용 단계 미확인", routeIds: [...new Set([...rows.map(row => row.routeId), ...requests.map(row => row.routeId)])], rows, requests,
+      held: sum("reserved") + sum("dispatched"), waiting: sum("waiting"), unknown: sum("indeterminate"), succeeded1h: sum("succeeded1h"), failed1h: sum("failed1h"),
+      withdrawn1h: sum("withdrawn1h"), lastSuccessAt: lastModelSuccess(rows) };
+  };
+  if (!stages.length) return [build("", card.rows, card.requests)];
+  return stages.map(stage => build(stage, card.rows.filter(row => modelStageId(row.routeId) === stage), card.requests.filter(row => modelStageId(row.routeId) === stage)));
+}
+export function modelRowGroups(card: ModelCard): ModelRowGroup[] {
+  const groups: ModelRowGroup[] = []; let text: ModelRowGroup | null = null;
+  const empty = (id: string, shared: boolean): ModelRowGroup => ({ id, shared, stages: [], held: 0, waiting: 0, unknown: 0, groupIds: [] });
+  for (const row of modelStageRows(card)) {
+    let group: ModelRowGroup;
+    if (TEXT_STAGE_IDS.includes(row.stage)) { if (!text) { text = empty(`${card.id}:text`, true); groups.push(text); } group = text; }
+    else { group = empty(`${card.id}:${row.stage || "none"}`, false); groups.push(group); }
+    group.stages.push(row); group.held += row.held; group.waiting += row.waiting; group.unknown += row.unknown;
+    for (const metric of row.rows) if (!group.groupIds.includes(metric.groupId)) group.groupIds.push(metric.groupId);
+    for (const request of row.requests) if (!group.groupIds.includes(request.groupId)) group.groupIds.push(request.groupId);
+  }
+  for (const group of groups) group.shared = group.shared && group.stages.length > 1;
+  return groups;
+}
+
+/** 행 상태 — 색·글자·모양(글리프)을 함께 낸다(시안: 색만으로 가르지 않는다). 왼쪽 줄은 tone 에 맞춰 ModelStageTable 이 그린다. */
+export type ModelRowStatus = "connected" | "busy" | "hold" | "paused" | "down" | "unknown";
+export const MODEL_ROW_STATUS: Readonly<Record<ModelRowStatus, { label: string; glyph: string; tone: string }>> = {
+  connected: { label: "연결됨", glyph: "●", tone: "bg-up/10 text-up" },
+  busy: { label: "처리 중", glyph: "▶", tone: "bg-accent-soft text-accent-ink" },
+  hold: { label: "보류", glyph: "◐", tone: "bg-warn/10 text-warn" },
+  paused: { label: "접수 중지", glyph: "❙❙", tone: "bg-bg-hover text-fg-2 border border-line" },
+  down: { label: "연결 안 됨", glyph: "✕", tone: "bg-down/10 text-down border border-down" },
+  unknown: { label: "확인 못함", glyph: "◇", tone: "bg-warn/15 text-warn border border-warn" },
+};
+export type ProbeLike = { listed?: boolean | null; error?: string | null } | null | undefined;
+/**
+ * 미확인 → (연결 확인이 목록에 없음/오류) 연결 안 됨 → 처리 중 → 접수 중지(DRAINING) → 보류(대기만) → 연결됨(최근 성공 또는 목록 있음) → 연결 안 됨(근거 없음).
+ * 2026-10-30 결정대로 미확인은 점유가 아니라 「확인 못함 N」으로만 보인다.
+ */
+export function modelRowStatus(input: { unknown: number; held: number; waiting: number; lastSuccessAt: string | null; mode: AdminModelsObservation["mode"]; probe?: ProbeLike }): ModelRowStatus {
+  if (input.unknown > 0) return "unknown";
+  if (input.probe && (input.probe.listed === false || (input.probe.error && input.probe.listed !== true))) return "down";
+  if (input.held > 0) return "busy";
+  if (input.mode === "draining" || input.mode === "disabled") return "paused";
+  if (input.waiting > 0) return "hold";
+  return input.lastSuccessAt || input.probe?.listed ? "connected" : "down";
+}
+
+/** 장비(groupId) → 서버 이름과 그 장비의 엔진 주소(host:port). 등록부 항목의 equipment 가 같은 서버로 풀리는 것만 모은다. 게이트웨이 주소는 엔진이 아니라 빼고, 키는 없다. */
+export function deviceServer(deviceId: string, models: readonly ModelDefinition[]): { name: string; hosts: string[] } {
+  const target = serverByName(deviceId) ?? deviceId.toLowerCase();
+  const mine = models.filter(model => model.equipment.toLowerCase() === deviceId.toLowerCase() || (serverByName(model.equipment) ?? model.equipment.toLowerCase()) === target);
+  const hosts = [...new Set(mine.filter(model => model.provider === "local-direct" || model.provider === "llama-server" || serverByHost(model.baseUrl))
+    .map(model => addressHost(model.baseUrl)).filter((host): host is string => !!host))];
+  return { name: serverByName(deviceId) ?? mine.map(model => serverByHost(model.baseUrl)).find((name): name is string => !!name) ?? deviceId, hosts };
+}
+
+/** 역할 lease 의 주인 instance(m3-crawler · mini-publisher-standby …) → 장비 글자. 모르는 접두는 그대로. */
+export function leaseHost(instanceId: string | null | undefined): string | null {
+  if (!instanceId) return null;
+  const head = instanceId.split("-")[0].toLowerCase();
+  return head === "m3" ? "M3" : head === "mini" ? "mini" : head === "oracle" || head === "osaka" ? "Oracle" : head;
+}
+
+/** 장부 경보 요약 — 감시(monitor)와 같은 문턱(lib/operations/model-capacity-unknowns.ts)으로 서버가 만들고 화면에 넘긴다. unknown 은 장부를 못 읽은 것이다. */
+export type CapacityAlarmSummary = { status: "ok" | "review" | "alarm" | "unknown"; count: number; oldestAgeSeconds: number | null; stuckDispatched: number;
+  alarmReasons: string[]; thresholds: { reviewMaxRows: number; reviewMaxAgeSeconds: number; dispatchStuckSeconds: number } };
+export type AlarmChip = { id: string; tone: "ok" | "warn" | "bad"; text: string };
+const hours = (seconds: number) => seconds >= 3600 ? `${Math.floor(seconds / 3600)}시간` : `${Math.floor(seconds / 60)}분`;
+export function capacityAlarmChips(summary: CapacityAlarmSummary | null): AlarmChip[] {
+  if (!summary || summary.status === "unknown") return [{ id: "ledger", tone: "warn", text: "장부 경보 미확인 · 장부를 읽지 못함" }];
+  const { thresholds } = summary, stuck = summary.alarmReasons.includes("dispatch_stuck"), backlog = summary.alarmReasons.includes("review_backlog"), stale = summary.alarmReasons.includes("review_stale");
+  return [
+    { id: "ledger", tone: summary.status === "alarm" ? "bad" : summary.status === "review" ? "warn" : "ok", text: `장부 ${summary.status === "alarm" ? "경보" : summary.status === "review" ? "검토 대기" : "정상"}` },
+    { id: "dispatch_stuck", tone: stuck ? "bad" : "ok", text: stuck ? `dispatch_stuck ${summary.stuckDispatched} · 전송 ${hours(thresholds.dispatchStuckSeconds)} 초과` : `dispatch_stuck 없음 · 문턱 ${hours(thresholds.dispatchStuckSeconds)}` },
+    { id: "review_backlog", tone: backlog ? "bad" : "ok", text: backlog ? `review_backlog ${summary.count} > ${thresholds.reviewMaxRows}` : `review_backlog 없음 · ${summary.count}/${thresholds.reviewMaxRows}` },
+    { id: "review_stale", tone: stale ? "bad" : "ok", text: stale ? `review_stale 가장 오래된 ${hours(summary.oldestAgeSeconds ?? 0)} > ${hours(thresholds.reviewMaxAgeSeconds)}`
+      : `review_stale 없음${summary.oldestAgeSeconds === null ? "" : ` · 가장 오래된 ${hours(summary.oldestAgeSeconds)}`} · 문턱 ${hours(thresholds.reviewMaxAgeSeconds)}` },
+  ];
+}
+
+/** 한 모델 슬롯의 연결 확인 식별자 — 등록부 항목이 있으면 (provider, key), 없으면 장부·요청의 (provider, model). 저장(서버 액션)과 읽기(표)가 같은 규칙으로 키를 만든다. */
+export function probeIdentityOf(card: ModelCard): { provider: string; model: string } {
+  if (card.definition) return { provider: card.definition.provider, model: card.definition.key };
+  const row = card.rows[0] ?? card.requests[0];
+  if (row) return { provider: row.provider, model: row.model };
+  try { const [provider, model] = JSON.parse(card.id) as [string, string]; return { provider, model }; } catch { return { provider: "", model: card.name }; }
+}
+
+const KST_CLOCK = new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Seoul", hourCycle: "h23", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+/** "HH:MM:SS"(KST). 서버·브라우저가 같은 글자를 내도록 시간대를 고정한다. 값이 없거나 못 읽으면 "--:--:--". */
+export function kstClock(at: string | null | undefined): string {
+  if (!at || !Number.isFinite(Date.parse(at))) return "--:--:--";
+  return KST_CLOCK.format(new Date(at)).replace(/‎/g, "");
+}
+/** 초 → "N초 전" / "N분 N초 전" / "N분 전" / "N시간 N분 전". 음수(미래)는 0초로. */
+export function secondsAgoLabel(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) return "미확인";
+  const value = Math.max(0, Math.floor(seconds));
+  if (value < 60) return `${value}초 전`;
+  if (value < 600) return `${Math.floor(value / 60)}분 ${value % 60}초 전`;
+  if (value < 3600) return `${Math.floor(value / 60)}분 전`;
+  return `${Math.floor(value / 3600)}시간 ${Math.floor(value % 3600 / 60)}분 전`;
+}
