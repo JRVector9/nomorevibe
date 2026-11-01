@@ -10,14 +10,14 @@ const laneText = (lane: BudgetRow["lane"]) => {
   return lane.state === "polling" ? "확인 중" : lane.state === "stopping" ? "멈추는 중" : "쉬는 중";
 };
 
-/** 예산 한 줄 — auto 를 켜면 입력칸이 잠기고 저장은 "auto" 를 보낸다 */
+/** 예산 한 줄 — auto 를 켜면 초 칸은 잠그되 폼에는 남긴다. disabled 이면 value: 가 빠져 auto·「기본값으로」가 저장되지 않는다 */
 function BudgetCell({ row, readOnly }: { row: BudgetRow; readOnly?: boolean }) {
   const [auto, setAuto] = useState(row.auto);
   const path = row.field.path;
   return <span className="inline-grid gap-0.5">
     <span className="flex items-center gap-1">
       <input name={`value:${path}`} defaultValue={row.field.input} aria-label={row.field.label} title={row.field.note ?? row.field.label} inputMode="decimal"
-        placeholder={row.declared ? undefined : "25"} disabled={readOnly || auto} className={INPUT_WIDE} />
+        placeholder={row.declared ? undefined : "25"} disabled={readOnly} readOnly={auto} className={INPUT_WIDE} />
       <span className="text-[13px] text-fg-3">초</span>
       <label className="flex items-center gap-1 text-[13px]"><input type="checkbox" name={`auto:${path}`} checked={auto} disabled={readOnly || row.ceilingMs === null}
         onChange={event => setAuto(event.target.checked)} /> auto</label>

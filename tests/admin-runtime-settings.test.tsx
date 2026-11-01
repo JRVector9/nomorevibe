@@ -139,6 +139,8 @@ describe("화면 모형 — 유효값·기본값·덮어씀", () => {
   it("감사 줄은 바뀐 값을 한국어 이름으로 — 그룹 안 경로와 전체 경로를 모두 읽는다", () => {
     const model = view();
     expect(model.audit).toEqual([{ id: 1, actor: "jr", at: NOW.toISOString(), ok: true, group: "번역·묶음", revision: 4, changes: ["공개 번역 묶음 글자 임계: 8000 → 6000"], error: null }]);
+    expect(buildRuntimeSettingsAdminView({ row: ROW, audit: [audit({ ok: false, error: "stale_form · budget_below_call_timeout:product-translate" })] }).audit[0].error)
+      .toBe("그 사이 다른 곳에서 설정이 바뀌었습니다. 새로고침해 바뀐 값을 확인한 뒤 다시 저장해주세요. · 공개 번역 틱 예산이 호출 상한보다 짧습니다 — 예산 ≥ 상한 + 2초");
     expect(auditChangeLines(audit({ target: "runtime_settings:budgets", detail: { changes: [{ path: "budgets.product-translate", before: "auto", after: 320_000 }, { path: "crawl-tagline", before: null, after: 60_000 }] } })))
       .toEqual(["공개 번역 틱 예산(ms): auto → 320000", "소개 생성 틱 예산(ms): 기본값 → 60000"]);
     expect(buildRuntimeSettingsAdminView({ row: ROW, audit: Array.from({ length: 12 }, (_, index) => audit({ id: index + 1 })) }).audit).toHaveLength(10);
@@ -194,6 +196,9 @@ describe("폼 → sparse patch", () => {
     expect(budget({ "value:budgets.product-translate": "" }).issues).toEqual(["공개 번역 틱 예산(초): 초 단위 숫자를 넣어주세요"]);
     expect(runtimeSettingsPatchFromForm("budgets", form({ "value:budgets.crawl-tagline": "", "initialAuto:budgets.crawl-tagline": "0", "auto:budgets.crawl-tagline": "on" })).patch)
       .toEqual({ budgets: { "crawl-tagline": "auto" } });
+    expect(runtimeSettingsPatchFromForm("budgets", form({ "value:budgets.product-translate": "315", "initial:budgets.product-translate": "315", "initialAuto:budgets.product-translate": "1",
+      "auto:budgets.product-translate": "on", "stored:budgets.product-translate": "1", "reset:budgets.product-translate": "on" })).patch)
+      .toEqual({ budgets: { "product-translate": null } });
   });
 });
 
@@ -261,6 +266,7 @@ describe("폼 그리기", () => {
     expect(html).toContain("이 숫자를 강제하는 게이트웨이는 없습니다");
     expect(html).toContain("모델 자체의 상한은 모델 연결 → 등록부 덮어쓰기");
     expect(html).toContain("이 묶음 저장");
+    expect(html).not.toMatch(/name="value:routes\.deadlines\.review-gateway\.relayMs"[^>]*placeholder="모델 상한"/);
   });
   it("모델 배정 읽기(3b-E) — assignments 묶음 폼: select 선택지·숨은 initial/stored·기본값 글·덮어쓴 칸의 「기본값으로」·compact 는 제목 없이", () => {
     const html = renderToStaticMarkup(createElement(AssignmentsForm, { fields: model.assignments, revision: model.revision }));
@@ -305,9 +311,15 @@ describe("폼 그리기", () => {
     expect(html).toContain("알린 예산 315초");
     expect(html).toContain("소개·사유 번역");
     expect(html).toContain("키워드 검수 예산 여유가 15초보다 좁습니다");
+    const autoInput = html.split("<input").find(part => part.includes('name="value:budgets.product-translate"'))!;
+    expect(autoInput).toContain('readOnly=""');
+    expect(autoInput).not.toContain("disabled");
+    const secondsInput = html.split("<input").find(part => part.includes('name="value:budgets.crawl-tagline"'))!;
+    expect(secondsInput).not.toContain('readOnly=""');
     const readOnly = renderToStaticMarkup(createElement(BudgetsForm, { budgets: model.budgets, revision: null, readOnly: true }));
     expect(readOnly).toContain("읽기 전용");
     expect(readOnly).toMatch(/<button[^>]*disabled/);
+    expect(readOnly.split("<input").find(part => part.includes('name="value:budgets.product-translate"'))).toContain('disabled=""');
   });
   it("읽은 판 줄에 역할별 env 등록부 배지를 단다", () => {
     const apply = { savedVersion: "abcdef1234567890", allApplied: false, attention: null, roles: [
