@@ -10,7 +10,8 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import { PRODUCTION_APPLIED_MIGRATIONS } from "../fixtures/production-applied-migrations";
 import { TEST_DATABASE_URL } from "./setup";
 
-// 운영은 0140~0142(systemd invocation, M3/M1 complete scope)까지 적용됐다. 0143 replaced-provider 는
+// 이 시험은 0142 까지 적용된 DB 를 만든다. 픽스처 전체는 2026-11-01 11:50Z 실측으로 0160(idx 160, 0159 공백)까지
+// 포함하므로, 0142 상태와 비교할 때는 idx 142 접두만 쓴다. 0143 replaced-provider 는
 // (a) 빈 DB 에 0000~0143 전체 적용, (b) 0142 까지 적용된 DB 에 0143 만 적용 — 두 경로에서 같은 스키마가 되고
 // 앞선 CHECK·트리거·판정 함수 분기를 하나도 지우지 않아야 한다.
 const root = fileURLToPath(new URL("../..", import.meta.url));
@@ -90,7 +91,8 @@ it("(a) 0000~0143 on an empty DB and (b) 0143 alone on a 0142 DB give the same s
   // (b) 운영과 같은 0142 상태
   await migrate(drizzle(step), { migrationsFolder: through(142) });
   const production = await applied(step);
-  expect(production.map(row => [row.hash, Number(row.created_at)])).toEqual(PRODUCTION_APPLIED_MIGRATIONS.map(([, , when, hash]) => [hash, when]));
+  expect(production.map(row => [row.hash, Number(row.created_at)])).toEqual(
+    PRODUCTION_APPLIED_MIGRATIONS.filter(([idx]) => idx <= 142).map(([, , when, hash]) => [hash, when]));
   const before = await schema(step);
   for (const version of ["5", "6", "7"])
     expect(before.functions["nmv_provider_boundary_transition_guard()"], `0140~0142 plan v${version} owner guard`)

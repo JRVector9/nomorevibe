@@ -5,6 +5,9 @@
  * 그래서 이 목록의 파일·tag·when 은 한 바이트도 바꾸지 않고, 새 migration 은 마지막 when 뒤에만 붙인다.
  *
  * 140~142 는 2026-10-29 08:10~08:20Z 운영 DB 읽기 실측(id 141~143, created_at …052~…054)과 같다.
+ * 143~158 과 160 은 2026-11-01 11:50Z 운영 DB 읽기 실측이다. id 는 1부터 세는 적용 순번이고 idx 는
+ * 0부터인 journal 번호라 보통 id = idx+1 이다(id 144 = idx 143). 0159 는 비어 있다. id 159 의 when …069 는
+ * 0158(idx 158)이고, id 160 의 when …071 은 0160(idx 160)이다. 두 when 은 journal 과 같다.
  * 0000~0139 는 운영에 배포된 커밋(5144b8c7)과 바이트가 같은 저장소 파일에서 계산했다.
  * 운영에 새 migration 이 적용되면(배포 후 실측) 그 항목을 여기에 덧붙인다.
  */
@@ -152,4 +155,21 @@ export const PRODUCTION_APPLIED_MIGRATIONS: readonly (readonly [idx: number, tag
   [140, "0140_systemd_invocation_boundary", 1794086400052, "29688d42c821b78e1f20a5512559f0808ae8d557d4666c8c48f4d3c01a384543"],
   [141, "0141_complete_m3_provider_scope", 1794086400053, "fb54a73a76e81f2959b45f6a0cf06eb549036dd46507c11e9cffc107bfd1125e"],
   [142, "0142_complete_m1_gateway_scope", 1794086400054, "700598c74669e7ddca97da2f1f92c492382ba5cbad3b658b8f3c4567fae90ef4"],
+  [143, "0143_replaced_provider_boundary_exit", 1794086400055, "3cce45c48a5e7fc9e7902e239dc486b635043f92d5afa827569e26b72dfdc173"],
+  [144, "0144_admin_models_observation_indexes", 1794086400056, "b332c698775fd7bb3998d7b3c05560247948d568acfddb05103300d1d1d6ce4e"],
+  [145, "0145_replaced_path_boundary_exit", 1794086400057, "4adef0ed3c91c453f1b7df6700adb2a92803678dc35918f188c72179d733a066"],
+  [146, "0146_replaced_path_absent_after_dispatch", 1794086400058, "47f6aed48bb38d3b1d31516ea6cefdd07ce3b2e08c087c47f8b64890bc2b2b3e"],
+  [147, "0147_model_serving_contracts", 1794086400059, "59be06b71d5525553ab67a80d7c821e735951d72bc1cca816c825563f292463b"],
+  [148, "0148_engine_connections", 1794086401059, "101d75324285ebc7a3dad05deffd12b2d2f27a9bdeaff6d50af0c75a3f7b95fe"],
+  [149, "0149_gateway_not_started_all_kinds", 1794086401060, "d7104bf7cca13f04661b7f08ce7941e19a1d08ba4bf49820a94e2f79a00d6144"],
+  [150, "0150_replaced_path_supa_direct", 1794086401061, "16e7252dc6505187f4f432cdac265a47e00c6ead0beec4d868e3d4515f10f626"],
+  [151, "0151_indeterminate_no_hold", 1794086401062, "5ccc92b21ee28d885ef5dbec4afe24211bbf49b59d0e77d44fe9d205a9e22630"],
+  [152, "0152_runtime_settings", 1794086401063, "1e09fcd2244dc9e4578c8220f72748062e7e4a8dd1a826b426bd20e90a5abad2"],
+  [153, "0153_model_capacity_devices", 1794086401064, "0a6d93714fb55ada2564e14f40f66bea9744160863ceecacb4b7adde0364d806"],
+  [154, "0154_capacity_helpers", 1794086401065, "e3b350031d471d159e9ad299960eb1323e778a679f4de88d13491e21e6af576d"],
+  [155, "0155_split_composite_jobs", 1794086401066, "f91798a1f24a712b3f4ac1b7eb9db8e0789f715b9ec6c3486feda4ec1c99823f"],
+  [156, "0156_model_assignments", 1794086401067, "b486926ecb55afe5cc7bd8d2cfea425b847b5eb4711b62aafa4bd837e0022359"],
+  [157, "0157_ai1_provider_enum", 1794086401068, "dd3f4663b4f51aac170c2fc7899379d56560131193a8ec7255c65375b4db93bf"],
+  [158, "0158_release_branch_kinds", 1794086401069, "16e37c1faace003e7282080a5fa97398344a5f6a1cfe55ae0359577019cd5a87"],
+  [160, "0160_ledger_check_rules", 1794086401071, "2e1121de6d0807a16905fa9baac45225b8742f3839a09347714cab428a5d007c"],
 ];

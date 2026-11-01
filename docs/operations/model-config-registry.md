@@ -57,7 +57,7 @@ M1 relay의 허용 모델도 같은 등록부에서 읽는다: `LOCAL_MODEL_RELA
 
 따라서 운영 반영에 필요한 설정은 다음뿐이다. 모두 대표가 승인된 절차로 수행하며, 이 차선은 운영 env·DB·relay를 바꾸지 않았다.
 
-1. 상품 번역 소비자(text-m3·mini 예비 text)와 표시용 web에 `PRODUCT_TRANSLATION_MODEL_KEY=m1:translation`을 둔다. 오래된 `PRODUCT_TRANSLATION_MODEL`은 KEY가 있으면 무시되며 정리 대상으로 기록한다.
+1. 상품 번역에는 `PRODUCT_TRANSLATION_MODEL_KEY`와 `PRODUCT_TRANSLATION_MODEL`을 두지 않는다. 2026-11-01 PR #767 이후 `product-translate`는 그 둘을 읽지 않는다(`MODEL_PURPOSE_ENV`의 값이 null). 모델은 등록부 purposes·관리자 등록부 덮어쓰기·단계 풀이 정한다. 위 표에서 상품 번역 열이 KEY·옛 변수로 바뀐다는 행은 2026-10-29 `configuredModel` 실행 기록이다.
 2. 운영 앱이 `MODEL_REGISTRY_CONFIG`를 쓰고 있으면 코드 기본값이 그 JSON을 바꾸지 않는다. 오프라인 도구로 후보를 만들고 diff를 검토한다. 기대 diff는 `m1:translation`의 model·family·displayName이 Gemma 값이 되고 purposes·selections에 `product-translate`·`reason-translate`·`relay`가 들어가는 것뿐이다.
 
    ```bash
@@ -65,7 +65,7 @@ M1 relay의 허용 모델도 같은 등록부에서 읽는다: `LOCAL_MODEL_RELA
    ```
 
 3. 사유 번역도 M1로 옮기려면 그 소비자의 `ABCLLM_MODEL`/`ABCLLM_MODEL_KEY`와 DB 단계 풀을 먼저 확인한다. 우선순위는 `*_MODEL_KEY` → 모델 env → `selections` → 기본값이므로, `ABCLLM_MODEL`이 설정된 소비자에서는 `selections["reason-translate"]`만으로는 바뀌지 않는다(확인: selection+`ABCLLM_MODEL=gpt-oss-120b` → `[MLX] gpt-oss-120b`). 공용 변수를 바꾸면 한국어 소개·검색 질의도 함께 바뀐다. 사유 번역만 옮기려면 `/admin/models`의 «심사 사유 번역» 단계 풀에 `m1:translation`을 저장한다(그 용도의 실행 범위에만 KEY를 준다). 공용 env가 없는 소비자는 JSON `selections["reason-translate"]`로도 된다.
-4. 용량 정책의 `product-translate`(필요 시 `reason-translate`) route 모델이 `[m1] mlx-community--gemma-4-26b-a4b-it-4bit`이고 같은 이름의 `ABCLLM_SERVING_CONTRACTS`가 있어야 호출이 열린다. 없으면 호출은 deferred이며 레지스트리 등록만으로 OPEN/ready가 되지 않는다. 정책 변경은 기존 감사된 DRAINING → 검증된 계약/정책 → OPEN 절차로만 한다.
+4. 용량 정책의 `product-translate`(필요 시 `reason-translate`) route 모델이 `[m1] mlx-community--gemma-4-26b-a4b-it-4bit`여야 하고, 호출은 같은 모델의 DB `model_serving_contracts` 직접 연결 계약이 있을 때만 열린다. `ABCLLM_SERVING_CONTRACTS`는 2026-11-01 PR #767 이후 코드가 읽지 않으므로 넣지 않는다. 계약이 없으면 호출은 deferred이며 레지스트리 등록만으로 OPEN/ready가 되지 않는다. 정책 변경은 기존 감사된 DRAINING → 검증된 계약/정책 → OPEN 절차로만 한다. `ABCLLM_MODEL`·`ABCLLM_PROFILE_MODEL`은 3번처럼 아직 모델 이름 선택에 쓴다.
 5. M1 relay는 설치기 plist가 `MODEL_REGISTRY_CONFIG`를 넘기지 않으므로 중앙 기본값(`relay` 용도 = `m1:translation`)을 읽는다. 재설치 SHA·plist 모델 값·시점 제약은 위 대표 실행 안내를 따른다.
 6. 이미 전송된 요청과 unknown은 원래 세대/모델/정책에 남는다. 이름을 바꿨다고 취소·정산·재전송하지 않는다. 실제 참여는 M1 dispatch·strict terminal·번역 저장 model label 증가로만 기록한다.
 
@@ -109,4 +109,4 @@ scripts/verify-model-config.sh
 node --import tsx scripts/migrate-model-registry-m1.ts --print-migration < registry-before.json > registry-candidate.json
 ```
 
-빈 입력·M1 entry 누락·M1 gateway 불일치·주소 누락은 오류다. 이전본을 검토한 뒤 별도 승인된 운영 절차에서 설정한다. 우선순위 때문에 PRODUCT_TRANSLATION_MODEL_KEY=m1:translation도 함께 준비하고 오래된 PRODUCT_TRANSLATION_MODEL은 대체 대상으로 기록한다. 직접 주소를 추측하거나 운영 DB를 갱신하는 마이그레이션은 없다. 이번 차선은 후보 JSON 생성과 코드·PR·CI·main 병합까지만 수행한다.
+빈 입력·M1 entry 누락·M1 gateway 불일치·주소 누락은 오류다. 이전본을 검토한 뒤 별도 승인된 운영 절차에서 설정한다. `PRODUCT_TRANSLATION_MODEL_KEY`와 `PRODUCT_TRANSLATION_MODEL`은 2026-11-01 PR #767 이후 상품 번역이 읽지 않으므로 이 이전 후보를 적용할 때 그 둘을 넣지 않는다. 직접 주소를 추측하거나 운영 DB를 갱신하는 마이그레이션은 없다. 이번 차선은 후보 JSON 생성과 코드·PR·CI·main 병합까지만 수행한다.

@@ -63,6 +63,8 @@ plan 에 `--retire-setting NAME` 을 준다(아래 절). 어긴 채 진행하면
 그 밖의 메시지는 지금처럼 `inspect-private-receipts` 로 숨긴다. plan 이 private 디렉터리를 만들기 전에 실패해도
 이 기록은 남는다(코드·시각·단계·변수 이름만, 비밀값 없음).
 
+값에 `#`가 있으면 큰따옴표로 감싼다. 따옴표 없는 `#`는 Dokploy가 주석으로 잘라 라이브 spec만 짧아지고, 같은 릴리스 재배포로는 드리프트가 풀리지 않는다([2026-11-01 창 #4](2026-11-01-deploy-window-4.md#교훈)).
+
 준비 단계에서는 서비스를 변경하지 않고 필요한 이미지 cache를 두 호스트에 받는다.
 main의 최신 trusted CI 실행에서 필수 `check`와 필요한 image publish가 성공하고
 `release-image-{worker|web}-<SHA>` artifact의 run/attempt/tree/profile/version/digest가 일치해야 한다.
@@ -140,6 +142,9 @@ DB 조회 실패도 교체 허가가 아니다. 기존 모델 요청을 SIGTERM�
 원격 종료 미확정은 실제 종료 증거를 갖춘 별도 단건 복구로 처리한다.
 앱 교체·기본 건강 확인 후 같은 공식 제어 경로로 접수를 OPEN으로 원복한다.
 도구가 자동으로 용량을 바꾸거나 공유 모델을 강제 종료하지 않는다.
+CHECK를 다시 짜는 migration(0155·0157·0158·0160)은 이 DRAIN 아래에서만 적용한다. OPEN 중 적용은 고아 dispatched 행을 만든다([2026-11-01 창 #4](2026-11-01-deploy-window-4.md#교훈)).
+긴 DRAIN 뒤 `upstream_stalled` 잡은 일시중지한다. 대기만 쌓이면 worker progress가 경보가 되어 plan 관문(120초, `progress=alarm`)이 막히고, OPEN 뒤에 그 잡을 재개한다([2026-11-01 창 #4](2026-11-01-deploy-window-4.md#교훈)).
+멈춘 제공자로 가는 경로는 OPEN 전에 일시중지하거나 다른 계약 행으로 바꾼다([2026-11-01 창 #4](2026-11-01-deploy-window-4.md#교훈)).
 
 ## 실패·원복 자료와 비동기 관측
 
@@ -159,6 +164,7 @@ DB 조회 실패도 교체 허가가 아니다. 기존 모델 요청을 SIGTERM�
 예약 응답의 `futurePassed:false`는 관측 통과가 아니다.
 관측 예약 실패는 `observation.safe.json`의 `schedule-failed`로 남긴다. 이 경우 완료된 앱을 재배포하지 말고
 원 final snapshot과 hash로 관측만 별도로 시작한다.
+run 트리 도구 파일은 0644여야 한다. group-writable(0664, umask 002 체크아웃)이면 `release_observer` `_source_hashes`의 `st_mode & 0o022`에 걸려 예약이 `schedule-failed`로 남는다([2026-11-01 창 #4](2026-11-01-deploy-window-4.md#교훈)).
 
 ### monitor 검증은 5분, 넘으면 사람 판별(`deployed-human-review-required`)
 
