@@ -12,6 +12,7 @@ import { PROFILE_MODEL, profileEvidence, writeKeywords, type KeywordResult } fro
 import type { JobLease } from "@/lib/jobs/control";
 import type { RoleLease } from "@/lib/jobs/role-leader";
 import { textRouteCallable } from "@/lib/llm/serving-contract-store";
+import { textProfileServingProvider } from "@/lib/llm/text-profile-serving-contract";
 
 export type ProfileCapacityResult = { kind: "skipped" } | { kind: "result"; result: KeywordResult; expectedProfile?: ProfileWriteExpectation };
 /** Fixed route coordinator. No callback, JSON shape or timeout is dispatch authority. */
@@ -19,7 +20,9 @@ export async function writeKeywordsWithModelCapacity(task: ProfileTask, lease: J
   options: { timeoutMs: number; signal?: AbortSignal; roleLease?: RoleLease }): Promise<ProfileCapacityResult> {
   const snapshot = structuredClone(task), ownedLease = structuredClone(lease), captured = { ...options, timeoutMs: scopedRequestTimeout("product-search-profile", options.timeoutMs),
     roleLease: options.roleLease && structuredClone(options.roleLease) };
-  if (!textRouteCallable("product-search-profile", scopedModel("product-search-profile", PROFILE_MODEL))) return { kind: "result", result: { ok: false, error: "no_key" } };
+  // provider 는 계약 모듈이 정한다(abcllm 계약이 있으면 abcllm, 없고 local-direct 직접 계약이 닿으면 local-direct — PR 3b-E)
+  const model = scopedModel("product-search-profile", PROFILE_MODEL), provider = textProfileServingProvider(model);
+  if (!textRouteCallable("product-search-profile", model, provider)) return { kind: "result", result: { ok: false, error: "no_key" } };
   const prepared = await prepareProfileModelDispatch(snapshot, ownedLease, captured);
   if (prepared.kind === "disabled") return { kind: "result", result: await writeKeywords(profileEvidence(snapshot.product, snapshot.reviewerNote), options) };
   if (prepared.kind === "skipped") return prepared;
@@ -28,7 +31,7 @@ export async function writeKeywordsWithModelCapacity(task: ProfileTask, lease: J
   const input = prepared.intent.input;
   const identity: ModelCapacityRequestIdentity = { owner: { instanceId: role.instanceId, bootId: role.bootId },
     workKey: `text:profile:${input.productId}:${textProfileInputHash(input)}`, class: "background", pool: "text",
-    routeId: "product-search-profile", provider: "abcllm", model: input.model };
+    routeId: "product-search-profile", provider: prepared.call.provider, model: input.model };
   const pending = await findOwnPendingModelRequest(identity);
   const slot = await requestTextProfileModelSlot({ ...identity, requestId: pending?.requestId ?? randomUUID() }, input.productId);
   if (slot.kind !== "granted") throw new ModelCapacityDeferredError(slot.reason);

@@ -8,7 +8,8 @@ import { ModelCapacityDeferredError, modelCapacityDeferralIsPerWork } from "@/li
 import { PROFILE_MODEL, profileEvidence, profileHash } from "@/lib/domain/products/search-profile";
 import { pendingProfiles, recordProfileResult } from "@/lib/domain/products/search-profiles";
 import { isLockNotAvailable, readControlLockHolders } from "@/lib/llm/capacity-lock-diagnostics";
-import { TEXT_ROUTE_BLOCK_DETAIL, textRouteBlock } from "@/lib/llm/serving-contract-store";
+import { TEXT_ROUTE_BLOCK_DETAIL, textRouteAccess } from "@/lib/llm/serving-contract-store";
+import { textProfileServingProvider } from "@/lib/llm/text-profile-serving-contract";
 import { logger } from "@/lib/observability/logger";
 import { jobKnob } from "@/lib/operations/runtime-settings-schema";
 import { runtimeSettings } from "@/lib/operations/runtime-settings-store";
@@ -39,7 +40,8 @@ const JOB = "product-search-profile";
  */
 
 export async function writeSearchProfiles(ctx: JobContext<null>): Promise<JobOutcome<null>> {
-  const blocked = textRouteBlock("product-search-profile", scopedModel("product-search-profile", PROFILE_MODEL));
+  const model = scopedModel("product-search-profile", PROFILE_MODEL);
+  const blocked = textRouteAccess("product-search-profile", model, textProfileServingProvider(model)).block;
   if (blocked) {
     ctx.log("search_profile.skipped", { reason: blocked });
     return { done: true, degraded: { code: blocked, detail: TEXT_ROUTE_BLOCK_DETAIL[blocked] } };

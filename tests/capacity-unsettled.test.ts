@@ -92,8 +92,9 @@ it("text coordinator (reason translation): a failed terminal settlement is marke
   const reasonDispatch = { ...reservation, unitBoundary: "committed-dispatch" };
   mocks.control.mockResolvedValue({ mode: "open", policy: { routes: [{ routeId: "reason-translate", provider: "abcllm", model: "Reason Model" }] } });
   mocks.role.mockReturnValue(role);
-  mocks.reasonPrepare.mockReturnValue({ kind: "prepared", model: "Reason Model", wireHash: "a".repeat(64), servingContractHash: "b".repeat(64),
-    totalTokenBound: 8192, sourceHashes: [hash] });
+  // PR 3b-E: prepared 호출은 계약의 provider 를 담고 조정자가 그것을 identity 의 provider 로 쓴다 — 정책 route 의 abcllm 과 같아야 한다.
+  mocks.reasonPrepare.mockReturnValue({ kind: "prepared", provider: "abcllm", model: "Reason Model", wireHash: "a".repeat(64),
+    servingContractHash: "b".repeat(64), totalTokenBound: 8192, sourceHashes: [hash] });
   mocks.domain.mockImplementation(async (_batch, _lease, options) => options.reserved
     ? { kind: "ready", dispatch: reasonDispatch, expectation: { unitBoundary: "writer" } } : { kind: "ready", members: [{ sourceHash: hash, cache: { kind: "absent" } }], role });
   mocks.requestReason.mockResolvedValue({ kind: "granted", reservation });

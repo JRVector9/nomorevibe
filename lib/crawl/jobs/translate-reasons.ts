@@ -1,4 +1,5 @@
 import { modelTimeoutMs, scopedModel } from "@/lib/llm/model-registry";
+import { reasonTranslationServingProvider } from "@/lib/llm/reason-translation-serving-contract";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { tickRemaining } from "@/lib/jobs/tick-deadline";
 import { translateReasonsWithModelCapacity } from '@/lib/crawl/reason-translation-model-capacity';
@@ -7,7 +8,7 @@ import { recordWorkerTranslations, retryableTranslations, untriedTranslations } 
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { jobKnob, type RuntimeSettings } from "@/lib/operations/runtime-settings-schema";
 import { runtimeSettings } from "@/lib/operations/runtime-settings-store";
-import { TEXT_ROUTE_BLOCK_DETAIL, textRouteBlock } from "@/lib/llm/serving-contract-store";
+import { TEXT_ROUTE_BLOCK_DETAIL, textRouteAccess } from "@/lib/llm/serving-contract-store";
 
 const JOB = "reason-translate";
 /**
@@ -61,8 +62,9 @@ export function packBatch<T extends { body: string; attempts?: number }>(items: 
  */
 export async function translateReasons(ctx: JobContext<null>): Promise<JobOutcome<null>> {
   // 이 경로의 직접 연결 계약(관리자 엔진 연결, 엔진에 바로 — 키 없이도 부른다)이 있어야 부를 수 있다. 다른 text 잡과 같은 관문이다
-  // (PR 3b-C textRouteCallable 과 같은 판정 textRouteAccess) — 게이트웨이는 2026-10-30 제거됐다
-  const blocked = textRouteBlock(JOB, scopedModel(JOB, TRANSLATE_MODEL));
+  // (textRouteAccess). provider 는 계약 모듈이 고른다 — local-direct 직접 계약이면 그 장비로 기록한다(PR 3b-E).
+  const model = scopedModel(JOB, TRANSLATE_MODEL);
+  const blocked = textRouteAccess(JOB, model, reasonTranslationServingProvider(model)).block;
   if (blocked) {
     ctx.log("translate.skipped", { reason: blocked });
     return { done: true, degraded: { code: blocked, detail: TEXT_ROUTE_BLOCK_DETAIL[blocked] } };

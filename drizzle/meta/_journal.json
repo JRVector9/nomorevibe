@@ -1121,6 +1121,13 @@
       "when": 1794086401071,
       "tag": "0160_ledger_check_rules",
       "breakpoints": true
+    },
+    {
+      "idx": 161,
+      "version": "7",
+      "when": 1794086401072,
+      "tag": "0161_text_local_direct_binding",
+      "breakpoints": true
     }
   ]
 }

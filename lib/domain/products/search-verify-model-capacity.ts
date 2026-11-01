@@ -15,6 +15,7 @@ import { profileEvidence } from "./search-profile";
 import { prepareSearchVerifyModelDispatch, sealSearchVerifyWriteExpectation, type ProfileTask, type SearchVerifyWriteExpectation } from "./search-profiles";
 import { VERIFY_MODEL, verifyKeywords, verifyKeywordsInChunks, type VerifyResult } from "./search-verify";
 import { textRouteCallable } from "@/lib/llm/serving-contract-store";
+import { searchVerifyServingProvider } from "@/lib/llm/search-verify-serving-contract";
 
 /**
  * "expired": the original shared deadline ended while the next permit was unavailable, or a resumed execution ran out.
@@ -35,11 +36,12 @@ export async function verifyKeywordsWithModelCapacity(task: ProfileTask, lease: 
     keywords: [...snapshot.profile!.keywordsEn, ...snapshot.profile!.keywordsKo] };
   const legacy = async () => ({ kind: "result" as const, result: await (options.chunked ? verifyKeywordsInChunks : verifyKeywords)(item,
     { request: options.request, signal: options.signal, timeoutMs: scopedRequestTimeout("product-search-verify", options.timeoutMs) }) });
-  if (!textRouteCallable("product-search-verify", scopedModel("product-search-verify", VERIFY_MODEL))) return legacy();
+  const provider = searchVerifyServingProvider(scopedModel("product-search-verify", VERIFY_MODEL));
+  if (!textRouteCallable("product-search-verify", scopedModel("product-search-verify", VERIFY_MODEL), provider)) return legacy();
   const control = await readModelCapacityCallerControl();
   if (control.mode === "disabled") return legacy();
   if (control.mode !== "open") throw new ModelCapacityDeferredError("draining");
-  if (!control.policy?.routes.some(route => route.routeId === "product-search-verify" && route.provider === "abcllm" && route.model === scopedModel("product-search-verify", VERIFY_MODEL)))
+  if (!control.policy?.routes.some(route => route.routeId === "product-search-verify" && route.provider === provider && route.model === scopedModel("product-search-verify", VERIFY_MODEL)))
     throw new ModelCapacityDeferredError("unmapped");
   const roleLease = options.roleLease ?? roleLeaseFromEnv("text", process.env);
   if (!roleLease) throw new ModelCapacityDeferredError("owner_unavailable");
@@ -72,11 +74,11 @@ export async function verifyKeywordsWithModelCapacity(task: ProfileTask, lease: 
     if (step === "stop") return { kind: "result", result: { ok: false, error: "invalid_output" }, expectation };
     const before = stopped(); if (before) return finish(before);
     const sent = searchVerifyStepKeywords(keywords, step), timeoutMs = Math.max(1, full ? scopedRequestTimeout("product-search-verify", options.timeoutMs) : deadline - Date.now());
-    const call = prepareSearchVerifyGatewayCall({ evidence: item.evidence, keywords: sent }, { model, timeoutMs });
+    const call = prepareSearchVerifyGatewayCall({ evidence: item.evidence, keywords: sent }, { model, timeoutMs, provider });
     if (call.kind !== "prepared") throw new ModelCapacityDeferredError(call.reason);
     const input: SearchVerifyInput = { member, model, execution, step, parent };
     const identity = modelCapacityRequestIdentitySchema.parse({ owner, class: "background", pool: "text", routeId: "product-search-verify",
-      provider: "abcllm", model, workKey: `${searchVerifyLogicalWorkKey(input)}:${searchVerifyInputHash(input)}` });
+      provider: call.provider, model, workKey: `${searchVerifyLogicalWorkKey(input)}:${searchVerifyInputHash(input)}` });
     const pending = await findOwnPendingModelRequest(identity);
     if (pending?.state === "dispatched") throw new ModelCapacityDeferredError("dispatched");
     // A deferred permit keeps every settled prefix in the ledger; the next tick resumes only before the stored deadline.

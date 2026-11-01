@@ -494,7 +494,7 @@ it('settles a direct engine\'s complete answer without the gateway\'s PR3 usage_
   // opt-in 헤더는 그대로 보내되, 표시 없는 엔진의 완결 응답은 terminal 이고 엔진이 보고한 usage 로 정산한다.
   const item = await seed(); await server(async ({ bodies, setReply }) => {
     // 운영 값이 아니다 — PR3 opt-in 표시만 더한 로컬 fixture 계약이다
-    serving.contract = { ...serving.contract!, strictTerminalOptIn: 'abcllm-strict-terminal-v1' };
+    serving.contract = { ...serving.contract!, strictTerminalOptIn: 'abcllm-strict-terminal-v1' } as ReasonTranslationServingContract;
     const headers: unknown[] = [];
     setReply(response => { headers.push(response.req.headers['x-abcllm-strict-terminal']);
       response.end(JSON.stringify({ ...replyBody(), usage_provenance: undefined })); });

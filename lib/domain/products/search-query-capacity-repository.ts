@@ -79,7 +79,7 @@ export async function prepareWebsearchQueryDispatch(value: WebsearchQueryTarget,
       const control = lock?.control ?? await lockModelCapacityCallerControl(tx);
       if (!reserved && control.mode === "disabled") return { kind: "disabled" };
       if (control.mode !== "open") throw new ModelCapacityDeferredError(control.mode === "draining" ? "draining" : "disabled");
-      if (!control.policy?.routes.some(route => route.routeId === "search-query-translate" && route.provider === "abcllm" && route.model === call.model))
+      if (!control.policy?.routes.some(route => route.routeId === "search-query-translate" && route.provider === call.provider && route.model === call.model))
         throw new ModelCapacityDeferredError("unmapped");
       // 복제본이 늦어 못 본 번역도 여기서 다시 본다 — 이미 옮긴 말이면 부르지 않는다
       const raw = await lockQueryCache(tx, target.cacheKey), cached = doneText(raw);
@@ -102,7 +102,7 @@ export async function prepareWebsearchQueryDispatch(value: WebsearchQueryTarget,
       if (!reserved) return { kind: "ready", input };
       if (!isDeepStrictEqual(input, reserved.input)) throw new WebsearchQueryChanged();
       const binding = websearchQueryDispatchBindingSchema.parse({ kind: "websearch_query_gateway", version: 1, member, model: call.model,
-        logicalWorkKey: websearchQueryLogicalWorkKey(member), inputHash: websearchQueryInputHash(input), provider: "abcllm",
+        logicalWorkKey: websearchQueryLogicalWorkKey(member), inputHash: websearchQueryInputHash(input), provider: call.provider,
         routeId: "search-query-translate", wireHash: call.wireHash, servingContractHash: call.servingContractHash,
         totalTokenBound: call.totalTokenBound, chargedTokens: call.totalTokenBound, process: owner });
       const dispatch = await finishWebsearchQueryModelCapacityDispatch(tx, lock!, binding);

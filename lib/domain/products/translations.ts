@@ -293,7 +293,7 @@ export async function prepareProductTranslationDispatch(value: readonly ProductT
       if (!reserved && control.mode === "disabled") return { kind: "disabled" } as const;
       if (control.mode !== "open") throw new ModelCapacityDeferredError(control.mode === "draining" ? "draining" : "disabled");
       if (call.model !== scopedModel("product-translate", PRODUCT_TRANSLATE_MODEL) || !control.policy?.routes.some(route => route.routeId === PRODUCT_TRANSLATION_JOB
-        && route.provider === "abcllm" && route.model === call.model)) throw new ModelCapacityDeferredError("unmapped");
+        && route.provider === call.provider && route.model === call.model)) throw new ModelCapacityDeferredError("unmapped");
       if (!roleLease || !["text", "translation"].includes(roleLease.role)) throw new ModelCapacityDeferredError("owner_unavailable");
       await assertJobBatchAdmission(tx, PRODUCT_TRANSLATION_JOB, roleLease);
       const role = await lockTranslationRole(tx, roleLease);
@@ -311,7 +311,7 @@ export async function prepareProductTranslationDispatch(value: readonly ProductT
       if (!isDeepStrictEqual(role, reserved.role) || !isDeepStrictEqual(members, reserved.members)) throw new ProductTranslationChanged();
       const binding = productTranslationDispatchBindingSchema.parse({ kind: "product_translation_gateway", version: 1,
         members, model: call.model, logicalWorkKey: productTranslationLogicalWorkKey(members),
-        inputHash: productTranslationInputHash({ members, model: call.model }), provider: "abcllm", routeId: PRODUCT_TRANSLATION_JOB,
+        inputHash: productTranslationInputHash({ members, model: call.model }), provider: call.provider, routeId: PRODUCT_TRANSLATION_JOB,
         wireHash: call.wireHash, servingContractHash: call.servingContractHash, totalTokenBound: call.totalTokenBound,
         chargedTokens: call.totalTokenBound, job: lease, role });
       // Check after all potentially waiting domain/owner locks, before recording

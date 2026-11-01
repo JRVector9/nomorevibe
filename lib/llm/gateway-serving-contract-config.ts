@@ -12,8 +12,13 @@ import { servingContractSnapshot } from "./serving-contract-store";
 export const GATEWAY_SERVING_CONTRACT_ROUTES = ["crawl-agent-review", "second-review", "product-search-profile", "crawl-tagline",
   "product-search-verify", "reason-translate", "product-translate", "product-tagline-ko", "search-query-translate"] as const;
 export type GatewayServingRoute = typeof GATEWAY_SERVING_CONTRACT_ROUTES[number];
-/** non-raw wire 로 보내는 번역 4경로. abcLLM PR1 의 raw terminal 이 닿지 않아 PR3 엄격 terminal opt-in 이 있어야만 연다. */
+/**
+ * non-raw wire 로 보내는 번역 4경로. abcLLM PR1 의 raw terminal 이 닿지 않아 PR3 엄격 terminal opt-in 이 있어야만 연다.
+ * 게이트웨이가 없는 엔진 직접 계약(provider local-direct, direct-openai-chat-v1 — PR 3b-E)은 엔진의 완결 응답 자체가 terminal 이라 이 표시가 없다.
+ */
 const STRICT_TERMINAL_ROUTES: readonly GatewayServingRoute[] = ["reason-translate", "product-translate", "product-tagline-ko", "search-query-translate"];
+const strictTerminalMissing = (routeId: GatewayServingRoute, contract: ServingContract): boolean =>
+  STRICT_TERMINAL_ROUTES.includes(routeId) && contract.provider !== "local-direct" && contract.strictTerminalOptIn !== ABCLLM_STRICT_TERMINAL_OPT_IN;
 /** abcLLM PR3(JRVector9/abcLLM#3) 요청 헤더. 게이트웨이는 값이 정확히 "1" 일 때만 non-raw 비스트리밍을 엄격 terminal 로 돈다. */
 export const ABCLLM_STRICT_TERMINAL_HEADER = "X-Abcllm-Strict-Terminal";
 /**
@@ -22,14 +27,13 @@ export const ABCLLM_STRICT_TERMINAL_HEADER = "X-Abcllm-Strict-Terminal";
  */
 export const ABCLLM_STRICT_TERMINAL_OPT_IN = "abcllm-strict-terminal-v1";
 
-type ServingContract = { routeId: string; model: string; strictTerminalOptIn?: string };
+type ServingContract = { routeId: string; model: string; provider?: string; strictTerminalOptIn?: string };
 
 /** 한 항목만 검사한다(관리 화면 저장·DB 행). 틀리면 null 이다. */
 export function parseGatewayServingContract<T extends ServingContract>(value: unknown, routeId: GatewayServingRoute, schema: z.ZodType<T>): Readonly<T> | null {
   let parsed: z.ZodSafeParseResult<T>;
   try { parsed = schema.safeParse(value); } catch { return null; }
-  if (!parsed.success || parsed.data.routeId !== routeId
-    || STRICT_TERMINAL_ROUTES.includes(routeId) && parsed.data.strictTerminalOptIn !== ABCLLM_STRICT_TERMINAL_OPT_IN) return null;
+  if (!parsed.success || parsed.data.routeId !== routeId || strictTerminalMissing(routeId, parsed.data)) return null;
   return Object.freeze(parsed.data);
 }
 
@@ -63,8 +67,8 @@ const ROUTE_SCHEMAS = new Map<GatewayServingRoute, z.ZodType<ServingContract>>()
 const ROUTE_GATEWAY_SHAPES = new Map<GatewayServingRoute, z.ZodType<ServingContract>>();
 /**
  * 각 계약 모듈이 자기 모듈을 처음 읽을 때 한 번 부른다. 관리 화면 계약이 스냅샷이 바뀔 때마다 반영된다.
- * schema 는 그 route 가 받는 모든 계약 모양이다. 엔진에 직접 보내는 direct-openai-chat-v1 계약도 받는 route(PR 3b-C: crawl-agent-review)는
- * 두 모양의 합을 넘기고 gatewayShape 에 게이트웨이 총량 상한(raw) 모양을 따로 적는다 — 엔진 연결이 채우는 칸은 그 모양이다.
+ * schema 는 그 route 가 받는 모든 계약 모양이다. 엔진에 직접 보내는 direct-openai-chat-v1 계약도 받는 route(PR 3b-C: crawl-agent-review,
+ * PR 3b-E: text 7경로)는 두 모양의 합을 넘기고 gatewayShape 에 게이트웨이 총량 상한(raw) 모양을 따로 적는다 — 엔진 연결이 채우는 칸은 그 모양이다.
  */
 export function startupGatewayServingContracts<T extends ServingContract>(routeId: GatewayServingRoute,
   schema: z.ZodType<T>, options: { gatewayShape?: z.ZodType<ServingContract> } = {}): ReadonlyMap<string, Readonly<T>> {

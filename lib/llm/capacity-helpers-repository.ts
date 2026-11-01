@@ -21,7 +21,8 @@ import {
   type HelperGateStateRow, type HelperMetrics, type HelperMode, type HelperSaveRefusal, type HelperSignalRow, type HelperStage, type HelperStatusSnapshot,
   type HelperStopRow, type RoleDemandMetrics, type RoleDemandRow, type SupervisorControlPatch, type SupervisorControlRow,
 } from "./capacity-helpers";
-import { localModelContractHash, localModelServingContractSchema, resolveLocalModelServingContract } from "./local-model-serving-contract";
+import { localModelContractHash, localModelServingContractSchema } from "./local-model-serving-contract";
+import { resolveLocalModelContract } from "./local-model-contract-table";
 
 /**
  * 도우미 배정·감시자 control 의 DB 읽기·저장(PR 2a WP-2a-A). 서명·오류 문자열·감사 action 은 day 0 계약(bf117187) 그대로다.
@@ -117,15 +118,15 @@ async function validateHelperRoutes(tx: ProductTransaction, policy: ModelCapacit
 }
 
 /**
- * 배정의 evidence 조각(§4.1 Q5): 단계·모델·심사 프롬프트판·규칙판·wire 변형·서빙 계약 hash. 계약은 섀도 경로의 정책 backendId 로 이 프로세스의
- * LOCAL_MODEL_SERVING_CONTRACTS 에서 찾는다(장비·모델이 같아야 한다). 못 찾으면 contractHash = `unresolved:<backendId>`, wire = no_response_format —
+ * 배정의 evidence 조각(§4.1 Q5): 단계·모델·심사 프롬프트판·규칙판·wire 변형·서빙 계약 hash. 계약은 섀도 경로의 정책 backendId 로 관리 계약 표
+ * (local-model:<backendId> 행)에서 먼저, 없으면 이 프로세스의 LOCAL_MODEL_SERVING_CONTRACTS 에서 찾는다(장비·모델이 같아야 한다 — PR 3b-E). 못 찾으면 contractHash = `unresolved:<backendId>`, wire = no_response_format —
  * 계약이 있는 프로세스에서 다시 저장하면 evidence_key 가 바뀐다. 섀도·실전 실행(PR 2b·2c)은 자기 계약으로 같은 함수를 불러 배정의 evidence_key 와
  * 다르면 그 배정을 쓰지 않는다.
  */
 export async function helperEvidencePartsFor(a: Pick<HelperAssignmentInput, "stage" | "deviceId" | "model">, backendId: string,
   env: Env = process.env): Promise<HelperEvidenceParts> {
   const { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } = await import("@/lib/crawl/agent-review-contract");
-  const found = resolveLocalModelServingContract(backendId, env);
+  const found = resolveLocalModelContract(backendId, env);
   const contract = found && found.model === a.model && found.physicalGroup === a.deviceId ? found : null;
   return Object.freeze({ stage: a.stage, model: a.model, promptVersion: REVIEW_PROMPT_VERSION, rulesVersion: REVIEW_RULES_VERSION,
     wireVariant: contract?.capabilities.jsonSchema ? "json_schema" : "no_response_format",

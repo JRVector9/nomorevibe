@@ -17,6 +17,7 @@ import { requestReservedLocalModel } from "./local-model-terminal";
 import { GatewayNotSentError } from "./gateway-not-started";
 import { recordLocalModelWireObservation } from "./local-model-wire-observation";
 import { tableLocalModelContract } from "./local-model-contract-table";
+import { devicePhysicalLimit } from "./serving-contract-store";
 
 type Env = Readonly<Record<string, string | undefined>>;
 export type LocalModelCallContext = {
@@ -53,17 +54,22 @@ export function verifiedLocalModelContract(url: string, model: string, env: Env 
 /**
  * route 하나의 실제 정책 매핑을 확인한다. 전역 활성 caller 전부의 준비를 뜻하지 않는다.
  * PR 1b: 장비 한도는 정책이 아니라 `model_capacity_devices`(실시간)에 있으므로 여기서 정책 한도와 물리 상한을 비교하지 않는다 — 그 비교는
- * 저장 시점(`physical_limit` 열)과 llm-assist-readiness 보고서가 한다. 여기서는 route 매핑과 LOCAL_MODEL_PHYSICAL_LIMITS 에 그 장비의 상한이
- * 있는지만 본다.
+ * 저장 시점(`physical_limit` 열)과 llm-assist-readiness 보고서가 한다. 여기서는 route 매핑과 그 장비에 물리 상한이 적혀 있는지만 본다.
+ * PR 3b-E(3b-C 가 남긴 일 3): 물리 상한의 출처는 장비 표 `model_capacity_devices.physical_limit`(/admin/models/devices, 켜진 행)이 먼저다 —
+ * 표에 그 장비의 상한이 있으면 env 를 보지 않고, 없을 때만 env `LOCAL_MODEL_PHYSICAL_LIMITS` 를 예전과 똑같이 본다(표는 serving-contract-store 의
+ * 30초 스냅샷으로 읽는다 — DB 를 여기서 잠그지 않는다).
  */
 export function localModelRouteReady(policy: ModelCapacityPolicy | null, target: LocalModelTarget, contract: LocalModelServingContract,
   env: Env = process.env): boolean {
+  const mapped = Boolean(policy?.routes.some(route => route.routeId === localModelRoute(target) && route.provider === "local-direct"
+    && route.model === contract.model && route.providerBudgetId === contract.backendId && route.groupId === contract.physicalGroup));
+  if (!mapped) return false;
+  const table = devicePhysicalLimit(contract.physicalGroup);
+  if (table !== null) return table >= 1;
   let limits: unknown;
   try { limits = JSON.parse(env.LOCAL_MODEL_PHYSICAL_LIMITS ?? "null"); } catch { return false; }
   const limit = object(limits) ? limits[contract.physicalGroup] : undefined;
-  return Boolean(policy?.routes.some(route => route.routeId === localModelRoute(target) && route.provider === "local-direct"
-    && route.model === contract.model && route.providerBudgetId === contract.backendId && route.groupId === contract.physicalGroup)
-    && typeof limit === "number" && Number.isSafeInteger(limit) && limit >= 1);
+  return typeof limit === "number" && Number.isSafeInteger(limit) && limit >= 1;
 }
 
 /** 모델 wrapper가 통신 예외를 다른 코드로 바꿔도 capacity defer는 원래 의미로 복원한다.
