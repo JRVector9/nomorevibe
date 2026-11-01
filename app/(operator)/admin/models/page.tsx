@@ -17,10 +17,10 @@ import { readAdminModelsObservation } from "@/lib/operations/admin-models-reposi
 import { LiveModels } from "./LiveModels";
 import { UnknownReviewList } from "./UnknownReviewList";
 import { readModelCapacityReviewQueue } from "@/lib/operations/model-capacity-unknowns";
-import { modelRecoveryBlocked, type ModelStageAssignment } from "@/lib/operations/admin-models-view";
+import { modelContractLinks, modelRecoveryBlocked, type ModelStageAssignment } from "@/lib/operations/admin-models-view";
 import { ADMIN_MODEL_STAGES } from "@/lib/llm/admin-model-stages";
 import { configuredModel, modelForPurpose, modelRequestName, MODEL_PURPOSE_ENV, readModelRegistry } from "@/lib/llm/model-registry";
-import { ensureServingContracts } from "@/lib/llm/serving-contract-store";
+import { ensureServingContracts, servingContractSnapshot } from "@/lib/llm/serving-contract-store";
 import { AiConnection } from "../status/AiConnection";
 import { agentRequest } from "@/lib/operations/agent-client";
 import type { AgentStatus } from "@/lib/operations/contracts";
@@ -81,7 +81,7 @@ export default async function ModelsPage() {
     </section>
     <section className="flex flex-col gap-3 rounded-xl border border-line bg-bg-card p-5" aria-labelledby="text-model-heading">
       <h2 id="text-model-heading" className="text-[18px] font-semibold">다른 LLM 단계</h2>
-      <p className="text-[13px] text-fg-2">아래는 풀을 비웠을 때 사용하는 웹 프로세스의 배포 기본값입니다. 위 단계별 모델 풀에서 저장한 선택이 새 작업에 우선합니다. 실제 호출과 점유는 위 모델 카드에서 확인하세요.</p>
+      <p className="text-[13px] text-fg-2">아래는 풀을 비웠을 때 사용하는 웹 프로세스의 배포 기본값입니다. 위 단계별 모델 풀에서 저장한 선택이 새 작업에 우선합니다. 실제 호출과 점유는 위 모델 목록에서 확인하세요.</p>
       <TextModelStagesTable models={models} />
       <p className="text-[13px] text-fg-2">감사 재심사·공개분 필터·갈림 재검토·보류 재시도·화면 판별과 LLM 보강은 각 단계에 검증된 모델 계약을 사용합니다. 등록된 모델 설정을 바꿀 때는 해당 단계의 검증 계약과 용량 정책도 함께 확인해야 합니다. 카테고리 분류는 운영센터에서 검증된 CLI 모델과 예비 모델을 선택할 수 있습니다.</p>
       <div className="flex flex-wrap gap-4 text-[13px] font-semibold text-accent-ink"><Link href="/admin/audit" prefetch={false}>감사 단계 설정 →</Link><Link href="/admin/status#ai-model-title" prefetch={false}>카테고리 분류 모델 선택 →</Link><Link href="/admin/status" prefetch={false}>단계별 실제 경로 →</Link></div>
@@ -94,7 +94,9 @@ export default async function ModelsPage() {
 async function LiveModelsSlot({ assignments, models }: { assignments: ModelStageAssignment[]; models: ReturnType<typeof readModelRegistry>["models"] }) {
   const { readModelOpsStates } = await import("@/lib/operations/ops-runner/repository");
   const states = await readModelOpsStates().catch(() => []);
-  return <LiveModels observation={await readAdminModelsObservation()} opsStates={states} assignments={assignments} models={models}
+  // 관리 계약(0147)의 주소는 host:port 만 넘긴다 — 장비 칸의 「장비 미확인」을 줄이고 전송 방식을 보이기 위해서다. 키는 ModelContractLink 에 없다.
+  const contracts = modelContractLinks(servingContractSnapshot().rows);
+  return <LiveModels observation={await readAdminModelsObservation()} opsStates={states} assignments={assignments} models={models} contracts={contracts}
     restartModels={models.map(row => ({ key: row.key, label: row.displayName, blockedReason: modelRecoveryBlocked(row.equipment, row.provider) }))} />;
 }
 

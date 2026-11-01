@@ -6,10 +6,10 @@ vi.mock("@/app/(operator)/admin/models/operation-actions", () => ({ probeAdminMo
 vi.mock("@/app/(operator)/admin/models/ops-runner-actions", () => ({ submitAdminModelOperation: vi.fn(), readAdminModelOperation: vi.fn() }));
 vi.mock("@/app/(operator)/admin/models/actions", () => ({ saveReviewModels: vi.fn() }));
 vi.mock("@/app/(operator)/admin/models/stage-model-actions", () => ({ saveAdminStageModels: vi.fn() }));
-import { LiveModels, StageStatusRibbon, ThroughputMetrics } from "@/app/(operator)/admin/models/LiveModels";
+import { LiveModels, MODEL_LIST_COLUMNS, StageStatusRibbon, ThroughputMetrics } from "@/app/(operator)/admin/models/LiveModels";
 import { ModelSaveBar } from "@/app/(operator)/admin/models/ModelChips";
 import { ReviewModelsForm } from "@/app/(operator)/admin/models/ReviewModelsForm";
-import { buildModelCards, MODEL_DASHBOARD_STAGES, stageHealth } from "@/lib/operations/admin-models-view";
+import { addressHost, buildModelCards, MODEL_DASHBOARD_STAGES, modelContractLinks, modelServer, modelTransportLabel, stageHealth } from "@/lib/operations/admin-models-view";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 import { redesignObservation, redesignModels, redesignAssignments, redesignMetrics, redesignRequests } from "./fixtures/admin-models-redesign";
 const render = () => renderToStaticMarkup(createElement(LiveModels, { observation: redesignObservation(), models: redesignModels, assignments: redesignAssignments }));
@@ -29,7 +29,36 @@ describe("admin models 리디자인 렌더", () => {
   it("지원하는 모든 단계·마지막 성공·미확인 건수를 빠짐없이 표시한다", () => {
     const html = render(); for (const stage of MODEL_DASHBOARD_STAGES) expect(html).toContain(stage.label);
     expect(html).toContain("미확인 1건"); expect(html).toContain("마지막 성공 2분 전");
-    expect(html).toContain("모델 카드로 이동"); expect(html).toContain("30초 자동 새로고침");
+    expect(html).toContain("표의 행으로 이동"); expect(html).toContain("30초 자동 새로고침");
+  });
+  it("모델을 카드 묶음이 아니라 표(단계·모델·장비·전송·상태·점유·1시간·최근 활동·동작)로 그린다 — 2026-10-31 사용자 요청", () => {
+    const html = render();
+    expect(html).not.toContain("<article"); expect(html.match(/<table[^>]*>/g)?.length).toBeGreaterThanOrEqual(1);
+    for (const column of MODEL_LIST_COLUMNS) expect(html).toContain(`>${column}</th>`);
+    // 모델 한 줄 = tbody(본 줄 + 보조 줄) — 리본의 # 링크가 그 tbody 로 간다
+    const rows = html.match(/<tbody id="model-[^"]+"[\s\S]*?<\/tbody>/g) ?? []; expect(rows).toHaveLength(3);
+    const supa = rows.find(row => row.includes("Qwen3.8-27B-NVFP4"))!;
+    for (const value of ["1차 검수", ">Supa</span>", ">등록부</span>", "abcllm", "게이트웨이(env)", "미확인 1건", "마지막 성공", "연결 확인", "모델 재시작", "접수 일시중지"]) expect(supa).toContain(value);
+    expect(html).toContain("표를 좌우로 밀어"); expect(html).toContain("overflow-x-auto");
+  });
+  it("등록부에 없는 계약 모델은 계약 주소(host:port)로 장비를 보이고 키는 절대 보이지 않는다", () => {
+    const observation = redesignObservation();
+    const contractRow = { ...redesignMetrics[0], routeId: "search-verify", provider: "abcllm", model: "nemotron-x", groupId: "oracle-helper", providerBudgetId: "oracle-helper", indeterminate: 0, succeeded1h: 3 };
+    observation.rows.push(contractRow);
+    const contracts = modelContractLinks([{ routeId: "search-verify", model: "nemotron-x", transport: "direct",
+      contract: { endpoint: "http://op:SECRET-PASS@10.9.8.7:8080/v1/chat/completions?api_key=SECRET-QUERY", apiKey: "SECRET-KEY" } }]);
+    const html = renderToStaticMarkup(createElement(LiveModels, { observation, models: redesignModels, assignments: redesignAssignments, contracts }));
+    const row = (html.match(/<tbody id="model-[^"]+"[\s\S]*?<\/tbody>/g) ?? []).find(row => row.includes("nemotron-x"))!;
+    expect(row).toContain(">10.9.8.7:8080</span>"); expect(row).toContain(">주소로 추정</span>"); expect(row).toContain("엔진 직접(계약)");
+    expect(row).not.toContain("장비 미확인"); expect(html).not.toContain("SECRET");
+    // 주소도 없으면 정책 route 의 groupId, 그래도 없으면 장비 미확인 + 이름 붙이는 곳 안내
+    const noAddress = renderToStaticMarkup(createElement(LiveModels, { observation, models: redesignModels, assignments: redesignAssignments }));
+    const groupRow = (noAddress.match(/<tbody id="model-[^"]+"[\s\S]*?<\/tbody>/g) ?? []).find(row => row.includes("nemotron-x"))!;
+    expect(groupRow).toContain(">oracle-helper</span>"); expect(groupRow).toContain(">그룹 ID</span>");
+    const bare = buildModelCards(redesignObservation(), redesignModels, [{ id: "audit-review", label: "감사", models: [{ provider: "abcllm", model: "ghost-model" }] }]);
+    expect(bare.find(card => card.name === "ghost-model")).toMatchObject({ equipment: "장비 미확인", equipmentSource: null });
+    const bareHtml = renderToStaticMarkup(createElement(LiveModels, { observation: redesignObservation(), models: redesignModels, assignments: [{ id: "audit-review", label: "감사", models: [{ provider: "abcllm", model: "ghost-model" }] }] }));
+    expect(bareHtml).toContain("장비 미확인"); expect(bareHtml).toContain('href="/admin/models/contracts"'); expect(bareHtml).toContain("등록부에 장비 이름 붙이기");
   });
   it("다른 단계의 미확인이 같은 그룹에 있으면 해당 단계에도 미확인과 건수를 표시한다(슬롯은 막지 않는다)", () => {
     // 2026-10-30 결정: 같은 장비(m1)의 미확인은 사람 검토 대상으로 보이기만 하고, 그 단계를 멈춤으로 만들지 않는다.
@@ -100,5 +129,59 @@ describe("모델 카드 서버 이름 — 장비 미확인 없이(2026-10-31)", 
     expect(modelServerName({ provider: "abcllm", model: "Inferact/Qwen3.8-27B-NVFP4" }, undefined, models, ["supa", "supa-direct"])).toBe("Supa");
     expect(modelServerName({ provider: "abcllm", model: "[MLX] gpt-oss-120b" }, undefined, models, [])).toBe("M3 Ultra");
     expect(modelServerName({ provider: "abcllm", model: "unknown-model" }, undefined, models, [])).toBe("장비 미확인");
+  });
+  it("이름 표에 없어도 계약 주소 host:port → 정책 groupId → 그래도 없으면 장비 미확인 순으로 보이고 출처를 함께 준다", () => {
+    const models = [{ key: "gpu3090:review", equipment: "gpu3090", provider: "local-direct", model: "qwen3.8-flash-next", baseUrl: "http://100.77.43.63:8090/v1" }] as never[];
+    const direct = (host: string) => [{ routeId: "search-verify", model: "x", host, transport: "direct" as const }];
+    // 계약 주소의 호스트가 이름 표에 있으면 서버 이름(출처 주소)
+    expect(modelServer({ provider: "abcllm", model: "x" }, undefined, models, [], direct("100.78.219.124:8000"))).toEqual({ name: "Supa", source: "주소" });
+    // 이름 표에 없는 엔진 직접 주소는 host:port 원문(키·경로 없음)
+    expect(modelServer({ provider: "abcllm", model: "x" }, undefined, models, ["oracle-helper"], direct("10.9.8.7:8080"))).toEqual({ name: "10.9.8.7:8080", source: "주소로 추정" });
+    // 게이트웨이 주소는 엔진이 아니므로 추정에 쓰지 않는다 → groupId 원문
+    expect(modelServer({ provider: "abcllm", model: "x" }, undefined, models, ["oracle-helper"], [{ routeId: "search-verify", model: "x", host: "abcllm-api.brut.bot", transport: "gateway" }]))
+      .toEqual({ name: "oracle-helper", source: "그룹 ID" });
+    expect(modelServer({ provider: "abcllm", model: "x" }, undefined, models, ["b-group", "a-group"], [])).toEqual({ name: "a-group · b-group", source: "그룹 ID" });
+    expect(modelServer({ provider: "abcllm", model: "x" }, undefined, models, [], [])).toEqual({ name: "장비 미확인", source: null });
+    // 등록부 항목의 출처: 주소가 표에 있으면 주소, 아니면 등록부(장비 값); 같은 이름 항목은 그렇게 표시
+    expect(modelServer({ provider: "local-direct", model: "qwen3.8-flash-next" }, models[0], models, [])).toEqual({ name: "gpu3090", source: "주소" });
+    expect(modelServer({ provider: "abcllm", model: "qwen3.8-flash-next" }, undefined, models, [])).toEqual({ name: "gpu3090", source: "같은 이름 항목" });
+    expect(modelServer({ provider: "abcllm", model: "gpt-oss-120b" }, { key: "mlx:text", equipment: "mlx", provider: "abcllm", model: "gpt-oss-120b", baseUrl: "https://abcllm-api.brut.bot/v1" } as never, models, []))
+      .toEqual({ name: "M3 Ultra", source: "등록부" });
+    expect(modelServer({ provider: "abcllm", model: "Inferact/Qwen3.8-27B-NVFP4" }, undefined, models, ["supa", "supa-direct"])).toEqual({ name: "Supa", source: "장비 그룹" });
+    expect(modelServer({ provider: "abcllm", model: "[supa] Qwen" }, undefined, models, [])).toEqual({ name: "Supa", source: "이름표" });
+  });
+  it("운영 주소 표: Tailscale IP·MagicDNS 호스트명·localhost(M3 자체)를 서버 이름으로 푼다", () => {
+    const at = (baseUrl: string) => modelServer({ provider: "local-direct", model: "m" }, { key: "x:m", equipment: "x", provider: "local-direct", model: "m", baseUrl } as never, [], []);
+    expect(at("http://100.92.77.66:8010/v1")).toEqual({ name: "M3 Ultra", source: "주소" });
+    expect(at("http://100.92.77.66:8014/v1").name).toBe("M3 Ultra");
+    expect(at("http://100.78.219.124:8000/v1").name).toBe("Supa");
+    expect(at("http://100.77.43.63:8090/v1").name).toBe("gpu3090");
+    expect(at("https://m1-studio.tail02799e.ts.net/v1").name).toBe("M1 Studio");
+    expect(at("https://m3ultra.tail02799e.ts.net:8014/v1").name).toBe("M3 Ultra");
+    expect(at("http://9mini.tail02799e.ts.net:8010/v1").name).toBe("mini");
+    expect(at("http://localhost:8010/v1").name).toBe("M3 Ultra");
+    expect(at("http://127.0.0.1:8014/v1").name).toBe("M3 Ultra");
+    expect(at("http://[::1]:8014/v1").name).toBe("M3 Ultra");
+    // 표에 없는 주소는 등록부 장비 값으로 떨어진다(원문 x)
+    expect(at("http://10.0.0.5:8000/v1")).toEqual({ name: "x", source: "등록부" });
+  });
+  it("주소는 host:port 만 남기고 사용자 정보·경로·query 를 버린다 — 계약 행에서 endpoint 만 읽는다", () => {
+    expect(addressHost("http://op:SECRET@100.77.43.63:8090/v1/chat/completions?api_key=SECRET")).toBe("100.77.43.63:8090");
+    expect(addressHost("https://m1-studio.tail02799e.ts.net/v1")).toBe("m1-studio.tail02799e.ts.net");
+    expect(addressHost("not a url")).toBeNull(); expect(addressHost(null)).toBeNull(); expect(addressHost("ftp://x/y")).toBeNull();
+    const links = modelContractLinks([
+      { routeId: "search-verify", model: "a", transport: "direct", contract: { endpoint: "http://10.9.8.7:8080/v1/chat/completions", apiKey: "SECRET", tokenizerEndpoint: "http://10.9.8.7:8080/tokenize" } },
+      { routeId: "crawl-agent-review", model: "b", transport: "gateway", contract: { endpoint: 42 } },
+      { routeId: "crawl-agent-review", model: "c", transport: "gateway", contract: null },
+    ]);
+    expect(links).toEqual([{ routeId: "search-verify", model: "a", host: "10.9.8.7:8080", transport: "direct" },
+      { routeId: "crawl-agent-review", model: "b", host: null, transport: "gateway" }, { routeId: "crawl-agent-review", model: "c", host: null, transport: "gateway" }]);
+    expect(JSON.stringify(links)).not.toContain("SECRET");
+  });
+  it("전송 방식: 계약이 있으면 계약 transport, 없으면 제공자로", () => {
+    expect(modelTransportLabel("abcllm", [{ routeId: "r", model: "m", host: null, transport: "direct" }])).toBe("엔진 직접(계약)");
+    expect(modelTransportLabel("abcllm", [{ routeId: "r", model: "m", host: null, transport: "gateway" }])).toBe("게이트웨이(계약)");
+    expect(modelTransportLabel("abcllm", [{ routeId: "r", model: "m", host: null, transport: "gateway" }, { routeId: "s", model: "m", host: null, transport: "direct" }])).toBe("엔진 직접·게이트웨이(계약)");
+    expect(modelTransportLabel("local-direct", [])).toBe("엔진 직접"); expect(modelTransportLabel("claude-cli", [])).toBe("CLI"); expect(modelTransportLabel("abcllm", [])).toBe("게이트웨이(env)");
   });
 });
