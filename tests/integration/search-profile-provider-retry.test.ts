@@ -54,6 +54,20 @@ async function inJob(work: (lease: JobLease) => Promise<void>) {
 }
 
 describe("generation provider failures remain retryable without rewriting history", () => {
+  it("does not charge tokenizer preflight unavailability on either cache insert or subsequent failure", async () => {
+    const { product } = await seed("tokenizer-unavailable");
+    await db.delete(productSearchProfiles).where(eq(productSearchProfiles.productId, product.id));
+    for (let iteration = 0; iteration < 2; iteration++) {
+      const task = (await pendingProfiles(100)).find(row => row.product.id === product.id)!;
+      expect(task).toBeDefined();
+      await inJob(async lease => { expect(await recordProfileResult(task, lease, { kind: "failure", error: "tokenizer_unavailable" })).toBe(true); });
+      const saved = await current(product.id);
+      expect(saved).toMatchObject({ attempts: 0, errorCode: "tokenizer_unavailable", generatedAt: null, verifiedAt: null });
+      expect(saved.retryAt!.getTime() - saved.updatedAt.getTime()).toBe(30 * 60_000);
+      await db.update(productSearchProfiles).set({ retryAt: sql`now()-interval '1 second'` }).where(eq(productSearchProfiles.productId, product.id));
+    }
+  });
+
   it("re-enters seventeen capped network failures through the normal selector without a repair", async () => {
     for (let i = 0; i < 17; i++) await seed(`network-${i}`, { repairVersion: 0, attempts: 5 + i });
     const before = await db.select().from(productSearchProfiles);
@@ -64,7 +78,7 @@ describe("generation provider failures remain retryable without rewriting histor
 
   it("recognizes typed provider errors, obeys future backoff and preserves quality and timeout caps", async () => {
     const eligible = [];
-    for (const errorCode of ["network", "no_key", "model_unavailable", "rate_limit", "rate_limited"]) {
+    for (const errorCode of ["network", "no_key", "model_unavailable", "rate_limit", "rate_limited", "tokenizer_unavailable"]) {
       eligible.push((await seed(errorCode, { errorCode, attempts: 9 })).product.id);
     }
     await seed("future-network", { retryAt: new Date(Date.now() + 10 * 60_000) });

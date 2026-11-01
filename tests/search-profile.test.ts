@@ -92,6 +92,7 @@ describe("gateway output failures and the removed legacy sender", () => {
   it("keeps transport failure names retryable past the attempt cap, timeout not", () => {
     expect(canRetryProfileGeneration("network", 5)).toBe(true);
     expect(canRetryProfileGeneration("no_key", 5)).toBe(true);
+    expect(canRetryProfileGeneration("tokenizer_unavailable", 5)).toBe(true);
     expect(canRetryProfileGeneration("timeout", 5)).toBe(false);
   });
 

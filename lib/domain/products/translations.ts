@@ -367,11 +367,12 @@ async function updateProductTranslation(tx: ProductTranslationTransaction, task:
   const current = source.eligible && productTranslationSourceHash(source, task.field) === task.sourceHash;
   const { maxAttempts } = productTranslationPolicy();
   const error = current ? (result.ok ? null : result.error.slice(0, 60)) : source.eligible ? "stale_source" : "ineligible";
+  const attempt = current && !result.ok && result.error === "tokenizer_unavailable" ? 0 : 1;
   const updated = await tx.update(t).set({
     text: current && result.ok ? result.text : null,
     status: current && result.ok ? "ready" : "failed", model: result.model.slice(0, 160), errorCode: error,
-    attempts: current && (result.ok || result.error !== "source_too_long") ? task.attempts + 1 : maxAttempts,
-    retryAt: current && !result.ok && result.error !== "source_too_long" && task.attempts + 1 < maxAttempts
+    attempts: current && (result.ok || result.error !== "source_too_long") ? task.attempts + attempt : maxAttempts,
+    retryAt: current && !result.ok && result.error !== "source_too_long" && task.attempts + attempt < maxAttempts
       ? retryBackoffSql(sql`${task.attempts}`) : null,
     updatedAt: sql`now()`,
   }).where(and(eq(t.productId, task.source.id), eq(t.locale, task.locale), eq(t.field, task.field),

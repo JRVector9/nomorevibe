@@ -194,10 +194,11 @@ export async function recordProfileResult(task: ProfileTask, lease: JobLease, re
     } else {
       const code = result.error.slice(0, 60);
       const providerError = isProfileProviderError(code);
-      await tx.insert(productSearchProfiles).values({ productId: product.id, sourceHash, errorCode: code, attempts: 1,
+      const attempt = code === "tokenizer_unavailable" ? 0 : 1;
+      await tx.insert(productSearchProfiles).values({ productId: product.id, sourceHash, errorCode: code, attempts: attempt,
         retryAt: providerError ? sql`now() + interval '30 minutes'` : sql`now() + interval '5 minutes'`, updatedAt: sql`now()` })
         .onConflictDoUpdate({ target: productSearchProfiles.productId, set: { errorCode: code, updatedAt: sql`now()`,
-          attempts: sql`${productSearchProfiles.attempts} + 1`,
+          attempts: sql`${productSearchProfiles.attempts} + ${attempt}`,
           retryAt: providerError ? sql`now() + interval '30 minutes'`
             : retryBackoffSql(productSearchProfiles.attempts) } });
     }

@@ -3,7 +3,7 @@ import { inArray, sql, type SQLWrapper } from "drizzle-orm";
 export const MAX_PROFILE_ATTEMPTS = 5;
 
 /** 명확한 공급자 장애만 품질 실패 상한에서 제외한다. timeout은 원인을 구별할 수 없다. */
-const PROVIDER_ERRORS = ["rate_limited", "rate_limit", "model_unavailable", "network", "no_key"];
+const PROVIDER_ERRORS = ["rate_limited", "rate_limit", "model_unavailable", "network", "no_key", "tokenizer_unavailable"];
 const providerErrors = new Set(PROVIDER_ERRORS);
 
 export function isProfileProviderError(error: string | null): boolean {

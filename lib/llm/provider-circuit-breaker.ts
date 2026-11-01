@@ -29,7 +29,7 @@ export function providerCircuitConfig(env: Readonly<Record<string, string | unde
  * gateway 막힘(search-profile·search-verify·tagline 의 GATEWAY_DOWN)과 gateway 5xx. cli_error 는 입력 탓일 수 있어 넣지 않는다.
  */
 const PROVIDER_DOWN: ReadonlySet<string> = new Set(["timeout", "gateway_error", "rate_limited", "budget", "not_configured", "auth",
-  "missing_cli", "model_unavailable", "no_key", "rate_limit", "network"]);
+  "missing_cli", "model_unavailable", "no_key", "rate_limit", "network", "tokenizer_unavailable"]);
 /**
  * native AI1·AI2 게이트웨이가 계약(응답 envelope·terminal: responseModel·error 키·chat.completion 모양 등)을 어긴 응답의 detail
  * (agent-review-gateway). 결과 모양은 기존 invalid_output 그대로지만 모델 판정 실패가 아니라 게이트웨이 쪽 기술 오류다 —

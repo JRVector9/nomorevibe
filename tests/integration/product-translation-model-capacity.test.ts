@@ -9,7 +9,7 @@ import { PRODUCT_TRANSLATE_MODEL } from "@/lib/crawl/translate";
 import { PRODUCT_TRANSLATION_JOB_BUDGET_MS } from "@/lib/llm/deadline-ladder";
 import { reviewHash } from "@/lib/crawl/agent-review-contract";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
-import { pendingProductTranslations, pendingProductTranslationBatch, requestProductTranslations, prepareProductTranslationDispatch,
+import { pendingProductTranslations, pendingProductTranslationBatch, requestProductTranslations, recordProductTranslations, prepareProductTranslationDispatch,
   type ProductTranslationTask } from "@/lib/domain/products/translations";
 import { translateDemandedProductFields } from "@/lib/jobs/products/translations";
 import { requestTakedown } from "@/lib/domain/products/takedown";
@@ -210,6 +210,23 @@ afterEach(() => tracked(steps([() => drain(setups), () => drain(exercises), () =
   async () => { serving.contract = null; setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); vi.unstubAllGlobals(); }]), hooks));
 afterAll(async () => { await steps([() => drain(setups), () => drain(exercises), () => drain(work), () => drain(hooks), cleanup,
   () => admin.end({ timeout: 5 }), async () => { await (globalThis as { pgClient?: ReturnType<typeof postgres> }).pgClient?.end({ timeout: 5 }); }]); });
+
+it("keeps tokenizer outages retryable without charging a demanded field attempt, while advancing its cache identity", exercise(async () => {
+  const { product } = await seed();
+  for (let retry = 0; retry < 2; retry++) {
+    const task = (await tracked(pendingProductTranslations(8))).find(task => task.source.id === product.id)!;
+    expect(task).toBeDefined(); expect(task.attempts).toBe(0);
+    const [before] = await admin`SELECT to_jsonb(t) AS row FROM product_translations t WHERE product_id=${product.id}`;
+    expect(await custom(async lease => {
+      expect(await tracked(recordProductTranslations([{ task, result: { ok: false, error: "tokenizer_unavailable", model: PRODUCT_TRANSLATE_MODEL } }], lease))).toBe(1);
+    })).toMatchObject({ status: "completed", done: true });
+    const [after] = await admin`SELECT to_jsonb(t) AS row,retry_at>now() AS retry_later FROM product_translations t WHERE product_id=${product.id}`;
+    expect(after.row).toMatchObject({ attempts: 0, status: "failed", error_code: "tokenizer_unavailable", text: null });
+    expect(after.retry_later).toBe(true); expect(reviewHash(after.row)).not.toBe(reviewHash(before.row));
+    await admin`UPDATE product_translations SET retry_at=now()-interval '1 second' WHERE product_id=${product.id}`;
+  }
+  expect(await admin`SELECT request_id FROM model_capacity_requests WHERE owner_instance_id=${prefix}`).toEqual([]);
+}));
 
 it("dispatches one ordered demanded batch through actual role/runJob, native terminal and original writer/ACK", exercise(async () => {
   const { product, tasks } = await seed(["tagline", "description"]);
