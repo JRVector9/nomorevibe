@@ -12,7 +12,7 @@ const CHIP: Record<"ok" | "warn" | "bad" | "plain", string> = { ok: "border-up b
 const GLYPH: Record<"ok" | "warn" | "bad" | "plain", string> = { ok: "●", warn: "▲", bad: "▲", plain: "" };
 export function Chip({ tone, children, title }: { tone: keyof typeof CHIP; children: React.ReactNode; title?: string }) {
   return <span title={title} className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[13px] leading-[1.5] ${CHIP[tone]}`}>
-    {GLYPH[tone] && <span aria-hidden="true" className="text-[10px]">{GLYPH[tone]}</span>}{children}</span>;
+    {GLYPH[tone] && <span aria-hidden="true" className="model-glyph" data-glyph={GLYPH[tone]} />}{children}</span>;
 }
 const sum = (cards: ModelCard[], key: "succeeded1h" | "failed1h" | "withdrawn1h" | "dispatched" | "reserved" | "waiting" | "indeterminate") =>
   cards.reduce((n, card) => n + card.rows.reduce((m, row) => m + row[key], 0), 0);

@@ -7,5 +7,8 @@
 
 /* 한 화면(2026-10-31) — 상태를 색만으로 가르지 않는다: 확인 못함 행의 왼쪽 점선(토큰만 쓴다) */
 .model-row-unknown { background-image: repeating-linear-gradient(180deg, var(--color-warn) 0 6px, transparent 6px 10px); background-size: 3px 100%; background-repeat: no-repeat; }
+/* 배지·칩 앞 글리프(●▲◐❙❙✕◇) — 글자가 아닌 장식(aria-hidden)이라 Tailwind 폰트 유틸리티 대신 여기서 모양 크기만 정한다. 글자는 13px 이상 규칙(tests/min-font-size) 그대로 */
+.model-glyph { display: inline-flex; flex: none; align-items: center; }
+.model-glyph::before { content: attr(data-glyph); font-size: 10px; line-height: 1; }
 /* 폰에서는 메뉴 머리(admin-sidebar, sticky)와 겹치지 않게 흐른다 — md 이상에서만 붙어 따라온다(RefreshBar.tsx 의 md:sticky) */
 @media (max-width: 760px) { .models-topbar { position: static; } }

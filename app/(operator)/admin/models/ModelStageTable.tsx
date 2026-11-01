@@ -18,7 +18,7 @@ export function ModelStatusBadge({ status, children, muted }: { status: ModelRow
     "처리 중": "busy", "연결 안 됨": "down", 내려감: "down" };
   const key = (status in MODEL_ROW_STATUS ? status : legacy[status] ?? "unknown") as ModelRowStatus, spec = MODEL_ROW_STATUS[muted ? "paused" : key];
   return <span data-state={muted ? "paused" : key} className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[5px] px-2 py-px text-[13px] font-semibold ${spec.tone}`}>
-    <span aria-hidden="true" className="text-[10px] leading-none">{spec.glyph}</span>{children ?? (status in MODEL_ROW_STATUS ? spec.label : status)}</span>;
+    <span aria-hidden="true" className="model-glyph" data-glyph={spec.glyph} />{children ?? (status in MODEL_ROW_STATUS ? spec.label : status)}</span>;
 }
 
 /** 저장된 관측(probes)보다 이 화면에서 방금 받은 결과(local)가 새롭다 — local 은 서버 액션의 응답이다. */
