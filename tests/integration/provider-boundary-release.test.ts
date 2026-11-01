@@ -16,6 +16,7 @@ import { readCommittedRelayBoundaryProof } from '@/lib/operations/dr/provider-bo
 import { CAPACITY_MONITOR_DEFAULTS, readModelCapacityUnknowns } from '@/lib/operations/model-capacity-unknowns';
 import { boundaryFixture } from "../fixtures/provider-boundary-release";
 import { TEST_DATABASE_URL } from "./setup";
+import { ledgerCheckDefs } from "./ledger-check-defs";
 
 // Test-only metadata rows; no model endpoint, terminal issuance, production DB or process stop is used.
 const root = fileURLToPath(new URL("../..", import.meta.url)), name = `nomorevibe_test_boundary_${randomUUID().replaceAll("-", "")}`;
@@ -51,7 +52,7 @@ function fresh() {
   return { plan: parsedPlan, receipt: parsedReceipt };
 }
 let frozen: ReturnType<typeof fresh>;
-async function defs() { return Object.fromEntries((await client<{conname:string;def:string}[]>`SELECT conname,pg_get_constraintdef(oid) def FROM pg_constraint WHERE conname=ANY(${names}::text[])`).map(x=>[x.conname,x.def])); }
+async function defs() { return ledgerCheckDefs(client, names); }
 async function rows() { return client`SELECT to_jsonb(r) value FROM model_capacity_requests r ORDER BY request_id`; }
 beforeAll(async () => {
   await admin.unsafe(`CREATE DATABASE ${name}`); created=true;

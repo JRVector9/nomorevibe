@@ -27,6 +27,7 @@ import * as reclaim from "@/lib/operations/dr/reclaim";
 import * as permits from "@/lib/operations/dr/permits";
 import type { PromotionPlan } from "@/lib/operations/dr/promotion";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
+import { ledgerCheckDefs } from "./ledger-check-defs";
 
 /*
  * PR15b 실제 PostgreSQL. 이 파일이 만들고 지우는 임시 DB 두 개만 쓴다(공유 test DB 의 행·제어값은 건드리지 않는다).
@@ -120,9 +121,7 @@ afterAll(async () => {
 }, 120_000);
 
 it("0096 adds only release branches: every earlier CHECK alternative stays, plus one released-event unique index", async () => {
-  const defs = Object.fromEntries(Array.from(await pool("ledger")<{ name: string; def: string }[]>`SELECT conname AS name, pg_get_constraintdef(oid) AS def
-    FROM pg_constraint WHERE conname IN ('model_capacity_requests_dispatch_check','model_capacity_requests_terminal_check','model_capacity_events_kind_check')`)
-    .map(row => [row.name, row.def]));
+  const defs = await ledgerCheckDefs(pool("ledger"), ["model_capacity_requests_dispatch_check", "model_capacity_requests_terminal_check", "model_capacity_events_kind_check"]);
   expect(Object.keys(defs).sort()).toEqual(["model_capacity_events_kind_check", "model_capacity_requests_dispatch_check", "model_capacity_requests_terminal_check"]);
   expect(defs.model_capacity_events_kind_check).toContain("dispatch_settled"); expect(defs.model_capacity_events_kind_check).toContain("dispatch_released");
   for (const name of ["model_capacity_requests_dispatch_check", "model_capacity_requests_terminal_check"]) {

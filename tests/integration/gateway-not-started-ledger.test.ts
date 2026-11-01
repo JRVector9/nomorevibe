@@ -38,6 +38,7 @@ import { abandonSecondReviewModelCapacity, reviewSecondReviewModelCapacity } fro
 import type { Ai1GatewayServingContract } from "@/lib/crawl/agent-review-serving-contract";
 import type { Ai2GatewayServingContract } from "@/lib/crawl/second-review-serving-contract";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
+import { ledgerCheckDefs } from "./ledger-check-defs";
 
 /**
  * F2 결함 1·3 실제 DB driver(0102). fetch 를 부르지 않은 AI1·AI2 gateway dispatch 는 같은 owner handle 의 not_started 증인으로 settled 가 되고
@@ -253,8 +254,7 @@ function expectSettled(raw: Raw, dispatch: unknown) {
   return evidence;
 }
 async function constraintDefs(sql: postgres.Sql, names: readonly string[]) {
-  return Object.fromEntries(Array.from(await sql<{ name: string; def: string }[]>`SELECT conname AS name, pg_get_constraintdef(oid) AS def
-    FROM pg_constraint WHERE conname = ANY(${names as string[]}::text[])`).map(value => [value.name, value.def]));
+  return ledgerCheckDefs(sql, names);
 }
 const innerPredicate = (def: string) => { expect(def.startsWith("CHECK (")).toBe(true); return def.slice("CHECK (".length, -1); };
 /** PostgreSQL's own parse→deparse fixed point of a CHECK predicate on the disposable step DB (its tables are empty, so ADD CONSTRAINT only parses).
