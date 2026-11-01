@@ -6,7 +6,7 @@ import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { currentAdmin } from "@/lib/auth/admin";
 import { getSettings, settingsFormVersion } from "@/lib/crawl/settings";
-import { listGatewayModels } from "@/lib/crawl/agent-review-gateway";
+import { listReviewEngineModels } from "@/lib/crawl/agent-review-gateway";
 import { configuredHumanModelsProbe, configuredHumanModelsReady, humanReviewModelDisplay, type HumanModelProbe } from "@/lib/operations/admin-models-human";
 import { currentModelEnv } from "@/lib/operations/model-env";
 import { PageStamp } from "../components/PageStamp";
@@ -58,7 +58,7 @@ export default async function ModelsPage() {
   // Admin registry overrides (0148) are part of the registry this page shows and validates against.
   await ensureServingContracts();
   const renderedAt = renderClock().toISOString();
-  const [settings, gatewayModels, models, assignmentLocked] = await Promise.all([getSettings(), listGatewayModels(), currentModelEnv(),
+  const [settings, gatewayModels, models, assignmentLocked] = await Promise.all([getSettings(), listReviewEngineModels(), currentModelEnv(),
     // 배정 표 플래그(3b-B) — 켜졌으면 아래 모델 선택 폼을 읽기 전용으로(PR 3b-D). 못 읽으면 꺼짐(편집 가능)
     assignmentTableFlag()]);
 

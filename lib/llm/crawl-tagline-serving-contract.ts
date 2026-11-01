@@ -20,5 +20,5 @@ export function crawlTaglineServingContractHash(value: CrawlTaglineServingContra
   return createHash("sha256").update(JSON.stringify(crawlTaglineServingContractSchema.parse(value))).digest("hex");
 }
 const configured = startupGatewayServingContracts("crawl-tagline", crawlTaglineServingContractSchema);
-/** 운영자가 readback 으로 검증해 ABCLLM_SERVING_CONTRACTS 에 넣은 계약만 연다. 없거나 틀리면 null(=deferred)이다. */
+/** 운영자가 readback 으로 검증해 관리 화면(model_serving_contracts)에 저장한 계약만 연다. 없거나 틀리면 null(=deferred)이다. */
 export function resolveCrawlTaglineServingContract(model: string): CrawlTaglineServingContract | null { return configured.get(model) ?? null; }

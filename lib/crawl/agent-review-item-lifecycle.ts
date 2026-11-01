@@ -41,7 +41,7 @@ export async function executeFirstReviewConsumerItem(input: {
     : await chooseFirstReviewForCandidate(context, undefined,
       new Set([...input.pausedReviewers ?? [], ...input.blockedReviewers ?? []]));
   if (!reviewer && context.settings.firstReviewAdditional !== undefined) return { state: 'skipped', reason: 'model_intent_protected' };
-  if (!reviewer) throw new Error('1차 심사자를 설정하거나 CRAWL_REVIEW_MODEL 을 넣어야 AI 심사를 켤 수 있습니다');
+  if (!reviewer) throw new Error('관리자 설정에서 1차 심사자를 골라야 AI 심사를 켤 수 있습니다');
   if (input.pausedReviewers?.has(firstReviewerKey(reviewer))) return { state: 'skipped', reason: 'model_paused' };
   const circuit = input.reviewerCircuits?.admit('ai1:' + firstReviewerKey(reviewer));
   if (circuit?.admitted === false) return { state: 'skipped', reason: 'provider_circuit_open' };

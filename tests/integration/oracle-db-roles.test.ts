@@ -6,6 +6,7 @@ import { afterAll, beforeAll, expect, it } from 'vitest';
 import { batchCanaryAnchorKey, batchPolicyHash } from '@/lib/jobs/batches';
 import { httpOriginPolicyHash } from '@/lib/net/http-origin-policy';
 import { productTranslationSourceHash } from '@/lib/domain/products/translation-policy';
+import { configuredModel } from '@/lib/llm/model-registry';
 import { ORACLE_DB_PRINCIPALS, ORACLE_REFRESH_PRINCIPAL, oracleDbGrantStatements, type OracleDbService } from '@/lib/runtime/oracle-db-profile';
 import { ensureSchema, TEST_DATABASE_URL } from './setup';
 
@@ -27,10 +28,10 @@ const RESTORED = ['model_capacity_events', 'model_capacity_requests', 'http_orig
   'product_links', 'product_evidence_sources', 'evidence_source_claims', 'product_refresh_requests', 'product_korean_taglines',
   'product_translations', 'text_translations', 'news_items', 'second_reviews', 'crawl_candidates', 'products', 'cdn_purges',
   'job_batch_candidates', 'operations_observations', 'jobs', 'role_leases', 'job_batch_control', 'http_origin_control', 'uptime_control',
-  'evidence_source_control', 'evidence_settings', 'crawl_settings', 'model_capacity_control'];
+  'evidence_source_control', 'evidence_settings', 'crawl_settings', 'model_capacity_control', 'model_serving_contracts'];
 const APPEND_ONLY = [['http_origin_events', 'http_origin_events_no_change'], ['uptime_observations', 'uptime_observations_no_change'],
   ['model_capacity_events', 'model_capacity_events_no_change']];
-let server: Server, base = '', roleCatalog: unknown, baseline: Record<string, unknown[]> = {};
+let server: Server, base = '', roleCatalog: unknown, baseline: Record<string, unknown[]> = {}, gatewayPosts = 0;
 const keys: Record<string, string[]> = {};
 const ids = { health: 0, site: 0, candidate: 0 };
 type Canary = { ready: boolean; reason: string; bootId: string; anchorInvalidated: boolean; readbackRows: number; requestedVersion: number;
@@ -70,7 +71,7 @@ function child(service: OracleDbService, input: Record<string, unknown>, attestS
       cwd: process.cwd(), stdio: ['ignore', 'pipe', 'pipe'],
       env: { PATH: process.env.PATH, NODE_ENV: process.env.NODE_ENV ?? 'test', LOG_LEVEL: 'error', DATABASE_URL: principalUrl(service),
         DB_POOL_MAX: '3', WORKER_ROLE: role, SERVICE_INSTANCE_ID: instanceId ?? instance(role), RELEASE_TAG: release, JOB_BATCH_VERSION: '1',
-        PHYSICAL_HOST: 'oracle-osaka-smoke', HTTP_ORIGIN_PERMITS: '1', ALLOW_PRIVATE_URLS: '1', ABCLLM_API_KEY: 'local-fixture-only',
+        PHYSICAL_HOST: 'oracle-osaka-smoke', HTTP_ORIGIN_PERMITS: '1', ALLOW_PRIVATE_URLS: '1',
         ABCLLM_BASE_URL: `${base}/gateway`, ORACLE_ATTEST_DATABASE_URL: principalUrl(attestService), ORACLE_DRIVER_INPUT: JSON.stringify(input),
         ...extraEnv },
     });
@@ -95,6 +96,7 @@ function fixtureServer() {
     }
     if (url.pathname.startsWith('/site/')) { response.writeHead(200, { 'content-type': 'text/html' }).end(`<html><title>${prefix}</title><body>docs</body></html>`); return; }
     if (url.pathname === '/gateway/v1/chat/completions' && request.method === 'POST') {
+      gatewayPosts++;
       let body = '';
       request.on('data', chunk => { body += String(chunk); });
       request.on('end', () => {
@@ -123,6 +125,15 @@ async function seed() {
   await admin`UPDATE uptime_control SET observations_enabled=true,gate_enabled=false,sources=${admin.json([{ host: 'oracle-osaka-smoke', instanceId: instance('product-health'), region: 'ap-osaka-1' }])} WHERE id=1`;
   await admin`UPDATE evidence_source_control SET enabled=true WHERE id=1`;
   await admin`INSERT INTO evidence_settings(id,values) VALUES(1,'{}') ON CONFLICT(id) DO NOTHING`;
+  // The abcLLM gateway was removed on 2026-10-30: a text route runs only on an admin engine connection (transport direct, no key)
+  // for its model, which the translation principal reads. FIXTURE rows: each contract body carries only its identity, so every
+  // translation serving contract still resolves to null and no native call can be prepared; with capacity disabled the jobs take
+  // the original leaf, which no longer sends, and the principal writes the provider-side no_key failures.
+  for (const routeId of ['reason-translate', 'product-tagline-ko', 'product-translate'] as const) {
+    const model = configuredModel(routeId, {});
+    await admin`INSERT INTO model_serving_contracts(route_id,model,contract,contract_hash,auth,transport,updated_by)
+      VALUES(${routeId},${model},${admin.json({ routeId, model })},${'d'.repeat(64)},'none','direct',${prefix})`;
+  }
   for (const role of ROLES) {
     const job = JOBS[role][0], at = clock.at as string, id = instance(role);
     // FIXTURE ADMISSION SEED ONLY (see file header).
@@ -219,11 +230,14 @@ it.each(ROLES)('runs the actual %s role path with only its least-privilege princ
     'official-news': admin`SELECT count(*)::int AS n FROM news_items WHERE url=${`https://openai.com/index/${prefix}`}`,
     'product-health': admin`SELECT count(*)::int AS n FROM uptime_observations WHERE instance_id=${instance(role)} AND status=200 AND disposition='raw_only'`,
     'site-evidence': admin`SELECT count(*)::int AS n FROM product_evidence_sources WHERE slug=${`${prefix}-site`} AND state='ok'`,
+    // The gateway is gone: each text job's write is its provider-side no_key failure (nothing was sent anywhere).
     translation: admin`SELECT ((SELECT count(*) FROM text_translations t JOIN second_reviews s ON t.source_hash=encode(sha256(convert_to(s.second_reason,'UTF8')),'hex')
-      WHERE s.candidate_id=${ids.candidate} AND t.status='done') + (SELECT count(*) FROM product_korean_taglines WHERE product_id=${ids.health})
-      + (SELECT count(*) FROM product_translations WHERE product_id=${ids.health} AND attempts=1))::int AS n`,
+      WHERE s.candidate_id=${ids.candidate} AND t.status='failed' AND t.error_code='no_key')
+      + (SELECT count(*) FROM product_korean_taglines WHERE product_id=${ids.health} AND error_code='no_key')
+      + (SELECT count(*) FROM product_translations WHERE product_id=${ids.health} AND attempts=1 AND error_code='no_key'))::int AS n`,
   }[role];
   expect((await written)[0].n).toBe(role === 'translation' ? 3 : 1);
+  expect(gatewayPosts).toBe(0);
   const [hops] = await admin`SELECT count(*) FILTER (WHERE state='released')::int AS released, count(*) FILTER (WHERE state<>'released')::int AS other
     FROM http_origin_hops WHERE instance_id=${instance(role)}`;
   expect(hops.other).toBe(0);
@@ -306,10 +320,14 @@ it('a restarted boot keeps DB election but loses launch readiness until a new ca
   expect((ready.preflight as { workload: { ready: boolean } }).workload.ready).toBe(true);
 }, 120_000);
 
-it('keeps translation unknown without model-bound evidence and refuses a worker principal as the attester', async () => {
+it('refuses a translation attestation without a certified tick and refuses a worker principal as the attester', async () => {
+  // The abcLLM gateway was removed (2026-10-30): with every translation serving contract null, a translation tick only writes the
+  // provider-side no_key failures, and a tick that translated nothing never certifies a batch result. The attester then has no tick
+  // window to read back and changes nothing (before the removal it attested the legacy result with model evidence 'unknown').
+  const translation = await canaryState('translation');
   const { output } = await child('translation', io('translation', 'attest'));
-  if ('error' in output) throw new Error(`driver_failed:${JSON.stringify(output)}`);
-  expect(output.attest).toMatchObject({ ready: false, reason: 'capability_unknown', capability: { dbPrivileges: 'verified', model: 'unknown' } });
+  expect(output).toMatchObject({ error: 'oracle_canary_tick_window_unknown' });
+  expect(await canaryState('translation')).toEqual(translation);
   const before = await canaryState('official-news');
   const { output: refused } = await child('official-news', io('official-news', 'attest'), 'official-news');
   expect(refused).toMatchObject({ message: expect.stringContaining('oracle_attest_principal_required') });
@@ -380,13 +398,10 @@ it('verifies PgBouncer-mode timeouts from the restricted role catalog and reject
 }, 60_000);
 
 it('keeps translation model evidence unknown while every translation serving contract is null', async () => {
+  // No certified translation tick exists without the removed gateway (see above), so there is nothing for the attester to bind.
   const { output } = await child('translation', io('translation', 'attest'));
-  if ('error' in output) throw new Error(`driver_failed:${JSON.stringify(output)}`);
-  // The attester reads the model ledger as itself (no 42501); legacy-capacity calls leave no bound row to verify.
-  expect(output.attest).toMatchObject({ ready: false, reason: 'capability_unknown', modelEvidence: 'model_readback_empty',
-    capability: { dbPrivileges: 'verified', model: 'unknown' } });
-  const [candidate] = await admin`SELECT capability FROM job_batch_candidates WHERE role='translation' AND instance_id=${instance('translation')}`;
-  expect(candidate.capability.model).toBe('unknown'); expect(candidate.capability).not.toHaveProperty('modelBoundEvidenceHash');
+  expect(output).toMatchObject({ error: 'oracle_canary_tick_window_unknown' });
+  expect(await admin`SELECT request_id FROM model_capacity_requests WHERE owner_instance_id=${instance('translation')}`).toEqual([]);
   const { output: inspected } = await child('translation', io('translation', 'preflight'));
   const preflight = inspected.preflight as { checks: Record<string, { status: string }>; workload: { ready: boolean } };
   expect(preflight.workload.ready).toBe(false); expect(preflight.checks.model.status).toBe('unknown');

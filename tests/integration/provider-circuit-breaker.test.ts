@@ -12,7 +12,9 @@ import { secondReviewGeneration } from '@/lib/crawl/second-review-input';
 import type { Ai2GatewayServingContract } from '@/lib/crawl/second-review-serving-contract';
 import { modelCapacityPolicyHash, type ModelCapacityPolicy } from '@/lib/llm/capacity';
 import { createProviderCircuits } from '@/lib/llm/provider-circuit-breaker';
+import { setServingContractSnapshotForTest } from '@/lib/llm/serving-contract-store';
 import { ensureSchema, TEST_DATABASE_URL } from './setup';
+import { directContractRow } from './direct-engine-fixtures';
 
 /*
  * PR06e provider circuit breaker 를 실제 AI2 consumer 경로(실제 hint·item claim·공통 슬롯·native HTTP·필수 writer)에 건다.
@@ -168,9 +170,11 @@ beforeAll(() => {
     initialized = true;
   })(); return tracked(setupWork, hooks);
 });
-beforeEach(() => tracked((async () => { await setupWork; await cleanup(); await install(); vi.stubEnv('ABCLLM_API_KEY', 'loopback-only'); })(), hooks));
+// The loopback engine is connected directly (admin row, no key) — the abcLLM gateway and its key were removed on 2026-10-30.
+beforeEach(() => tracked((async () => { await setupWork; await cleanup(); await install();
+  setServingContractSnapshotForTest([directContractRow('second-review', model)]); })(), hooks));
 afterEach(() => tracked(steps([async () => { await setupWork; }, () => drain(bodies), () => drain(work), cleanup,
-  async () => { serving.contract = null; vi.unstubAllEnvs(); }]), hooks));
+  async () => { serving.contract = null; setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); }]), hooks));
 afterAll(() => steps([async () => { await setupWork; }, () => drain(hooks, true), () => drain(bodies, true),
   () => drain(work), cleanup, async () => { await (globalThis as { pgClient?: postgres.Sql }).pgClient?.end(); }, () => admin.end()]));
 

@@ -7,7 +7,9 @@ import { SEARCH_QUERY_MODEL, QUERY_PROMPT_VERSION, GLOSSARY_VERSION, glossaryHin
 import { modelCapacityPolicyHash, modelCapacityRequestIdentitySchema, websearchQueryInputHash, websearchQueryLogicalWorkKey,
   type ModelCapacityPolicy, type WebsearchQueryInput } from "@/lib/llm/capacity";
 import type { WebsearchQueryServingContract } from "@/lib/llm/websearch-query-serving-contract";
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
+import { directContractRow } from "./direct-engine-fixtures";
 
 // 실제 PostgreSQL + loopback 게이트웨이. 실제 provider·운영 resolver 는 쓰지 않는다 — 계약은 이 파일의 fixture 만 연다.
 const fixture = vi.hoisted(() => ({ contract: null as WebsearchQueryServingContract | null,
@@ -103,7 +105,8 @@ beforeAll(async () => {
   const address = http.address(); if (!address || typeof address === "string") throw new Error("fixture_address");
   fixture.contract = { version: 1, protocol: "abcllm-websearch-query-total-bound-v1", routeId: "search-query-translate", provider: "abcllm", model: SEARCH_QUERY_MODEL,
     responseModel: "served-query", endpoint: `http://127.0.0.1:${address.port}/v1/chat/completions`, deploymentRevision: "local-only", totalTokenBound: 4096 };
-  fixture.owner = ownerA; vi.stubEnv("ABCLLM_API_KEY", "local-test-only");
+  // The loopback engine is connected directly (admin rows, no key) — the abcLLM gateway and its key were removed on 2026-10-30.
+  fixture.owner = ownerA; setServingContractSnapshotForTest([SEARCH_QUERY_MODEL, modelB].map(model => directContractRow("search-query-translate", model)));
   process.env.READ_DATABASE_URL = `${TEST_DATABASE_URL}?default_transaction_read_only=on`; globalForDb.readDb = undefined;
   await admin`UPDATE model_capacity_control SET mode='open',policy=${JSON.stringify(policy)}::text::jsonb,policy_hash=${modelCapacityPolicyHash(policy)},
     cursor=0,updated_at=clock_timestamp() WHERE id=1`;
@@ -128,7 +131,7 @@ afterAll(async () => {
       expect(await tx`SELECT 1 FROM model_capacity_requests`).toHaveLength(0); expect(await tx`SELECT 1 FROM model_capacity_events`).toHaveLength(0);
     });
   } finally {
-    delete process.env.READ_DATABASE_URL; globalForDb.readDb = undefined; fixture.contract = null; vi.unstubAllEnvs();
+    delete process.env.READ_DATABASE_URL; globalForDb.readDb = undefined; fixture.contract = null; vi.unstubAllEnvs(); setServingContractSnapshotForTest(null);
     await new Promise<void>(resolve => http.close(() => resolve())); await admin.end();
   }
 });

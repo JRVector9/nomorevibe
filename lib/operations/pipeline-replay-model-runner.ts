@@ -45,7 +45,7 @@ export function fixedInputPreflight(manifestValue: unknown, artifactValue: unkno
   ensure([first, ...second].every(row => row.provider === "abcllm"), "replay_cli_provider_unsupported");
   // 게이트웨이 모듈은 이 값을 그대로 이어 붙인다. origin만 같고 경로·슬래시가 붙으면 egress 관문이 모든 호출을 막는다.
   ensure((env.ABCLLM_BASE_URL?.trim() || DEFAULT_GATEWAY) === manifest.upstream, "replay_upstream_mismatch");
-  ensure(env.ABCLLM_API_KEY?.trim(), "replay_api_key_missing");
+  // 키는 env 가 아니라 각 경로의 직접 연결 계약이 정한다(contractBearer) — 계약이 없으면 그 호출이 보내기 전에 거절된다.
   // 심사 잡은 README 표본이 없거나 판이 다르면 원본 옆 표본을 새로 받는다(lib/crawl/jobs/review-document.ts). 그 요청은 명시 dispatcher로
   // 나가 egress 관문·계량기를 거치지 않는다. 이 코드 판과 다른 표본이 하나라도 있으면 실행 전에 거절한다(F1).
   ensure(artifact.inputs.every(row => typeof row.document.pageMeta?.readmeSample === "string"

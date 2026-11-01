@@ -12,6 +12,7 @@ import { prepareAi1GatewayCall, prepareAi2GatewayCall, readGatewayNotStarted, re
   settleAi2GatewayNotStarted, type PreparedAi1GatewayCall, type PreparedAi2GatewayCall } from "@/lib/crawl/agent-review-gateway";
 import type { Ai1GatewayServingContract } from "@/lib/crawl/agent-review-serving-contract";
 import type { Ai2GatewayServingContract } from "@/lib/crawl/second-review-serving-contract";
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 
 /**
  * F2 결함 1(게이트웨이판 D5): fetch 를 부르기 전에 포기한 native 호출만 not_started 증인을 낸다. 실제 HTTP 수신 0 을 로컬 서버로 센다.
@@ -103,11 +104,16 @@ async function server(run: (posts: string[]) => Promise<void>) {
     await new Promise<void>(resolve => http.close(() => resolve()));
   }
 }
-afterEach(() => { fixture.ai1 = null; fixture.ai2 = null; vi.unstubAllEnvs(); });
+/** The abcLLM gateway is gone (2026-10-30): an abcllm contract opens only with a direct admin row for its route+model. */
+function directRows() {
+  setServingContractSnapshotForTest((["crawl-agent-review", "second-review"] as const).map(routeId =>
+    ({ routeId, model, contract: null, auth: "stored" as const, apiKey: "local-secret", transport: "direct" as const })));
+}
+afterEach(() => { fixture.ai1 = null; fixture.ai2 = null; setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); });
 const aborted = () => { const controller = new AbortController(); controller.abort(); return controller.signal; };
 
 it("AI1: an already-aborted caller never calls fetch and receives an original not_started witness bound to the exact dispatch", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-secret");
+  directRows();
   await server(async posts => {
     const value = input(), call = ai1Call(value), owned = ai1Dispatch(value, call);
     const response = await reviewWithReservedAi1Gateway(value, owned, call, { signal: aborted() });
@@ -127,7 +133,7 @@ it("AI1: an already-aborted caller never calls fetch and receives an original no
 });
 
 it("AI1 item and AI2: an already-aborted caller gets not_started without any POST", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-secret");
+  directRows();
   await server(async posts => {
     const value = input(), call = ai1Call(value), item = ai1ItemDispatch(value, call);
     const first = await reviewWithReservedAi1ItemGateway(value, item, call, { signal: aborted() });
@@ -143,11 +149,12 @@ it("AI1 item and AI2: an already-aborted caller gets not_started without any POS
   });
 });
 
-it("a key removed after preparation keeps not_configured and proves no send", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-secret");
+it("a direct contract removed after preparation keeps not_configured and proves no send, whatever ABCLLM_API_KEY says", async () => {
+  directRows();
   await server(async posts => {
     const value = input(), call = ai1Call(value), owned = ai1Dispatch(value, call);
-    vi.stubEnv("ABCLLM_API_KEY", "");
+    setServingContractSnapshotForTest([]);
+    vi.stubEnv("ABCLLM_API_KEY", "local-secret");
     const response = await reviewWithReservedAi1Gateway(value, owned, call);
     expect(response.result).toEqual({ ok: false, error: "not_configured" });
     expect(readGatewayNotStarted(response.notStarted)?.dispatch).toEqual(owned);
@@ -156,7 +163,7 @@ it("a key removed after preparation keeps not_configured and proves no send", as
 });
 
 it("abandon-side settlement consumes only an unused preparation; after a real send it proves nothing", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-secret");
+  directRows();
   await server(async posts => {
     const value = input(), call = ai1Call(value), owned = ai1Dispatch(value, call);
     const witness = settleAi1GatewayNotStarted(call, owned);
@@ -178,7 +185,7 @@ it("abandon-side settlement consumes only an unused preparation; after a real se
 });
 
 it("abandon-side settlement for AI1 item and AI2 dispatches is one-use per request", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-secret");
+  directRows();
   await server(async posts => {
     const value = input(), call = ai1Call(value), item = ai1ItemDispatch(value, call);
     expect(readGatewayNotStarted(settleAi1ItemGatewayNotStarted(call, item))?.dispatch).toEqual(item);

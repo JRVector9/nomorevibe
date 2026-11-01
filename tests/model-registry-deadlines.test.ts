@@ -2,7 +2,6 @@ import { afterEach, expect, it, vi } from "vitest";
 import { DEFAULT_MODEL_DEFINITIONS } from "@/lib/llm/model-registry";
 afterEach(() => { vi.unstubAllEnvs(); vi.resetModules(); });
 it("runtime review exports and wire max_tokens follow the registry after reload", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "fixture-only");
   vi.stubEnv("MODEL_REGISTRY_CONFIG", JSON.stringify({ version: 1, models: DEFAULT_MODEL_DEFINITIONS,
     deadlines: { "review-gateway": { engineMs: 20_000, relayMs: 25_000, gatewayMs: 30_000, clientMs: 35_000 } },
     limits: { "gateway-review": { maxTokens: 900, concurrency: 1 } } }));
@@ -12,10 +11,16 @@ it("runtime review exports and wire max_tokens follow the registry after reload"
   expect(REVIEW_GATEWAY_TIMEOUT_MS).toBe(35_000);
   expect(reviewGatewayTimeoutMs()).toBe(35_000);
   const request = vi.fn<typeof fetch>(async () => new Response("{}", { status: 503 }));
+  // The gateway default address is gone (2026-10-30): without an engine endpoint nothing is sent.
+  expect(await reviewWithGateway({ snapshot: {} } as Parameters<typeof reviewWithGateway>[0], { model: "[supa] fixture", request }))
+    .toEqual({ ok: false, error: "not_configured" });
+  expect(request).not.toHaveBeenCalled();
   const timer = vi.spyOn(AbortSignal, "timeout");
-  const result = await reviewWithGateway({ snapshot: {} } as Parameters<typeof reviewWithGateway>[0], { model: "[supa] fixture", request });
+  const result = await reviewWithGateway({ snapshot: {} } as Parameters<typeof reviewWithGateway>[0], { model: "[supa] fixture", request,
+    endpoint: { baseUrl: "http://127.0.0.1:9/v1", apiKey: null } });
   expect(result).toEqual({ ok: false, error: "gateway_error" });
   expect(timer).toHaveBeenCalledWith(35_000);
+  expect(request.mock.calls[0][0]).toBe("http://127.0.0.1:9/v1/chat/completions");
   expect(JSON.parse(String(request.mock.calls[0][1]?.body)).max_tokens).toBe(900);
   timer.mockRestore();
 });

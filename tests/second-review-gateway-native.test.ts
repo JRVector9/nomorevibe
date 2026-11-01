@@ -10,6 +10,7 @@ import { prepareAi1GatewayCall, readAi1GatewayTerminal, reviewWithReservedAi1Gat
   type PreparedAi2GatewayCall } from "@/lib/crawl/agent-review-gateway";
 import type { Ai1GatewayServingContract } from "@/lib/crawl/agent-review-serving-contract";
 import { ai2GatewayServingContractHash, type Ai2GatewayServingContract } from "@/lib/crawl/second-review-serving-contract";
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 
 const fixture = vi.hoisted(() => ({ contract: null as Ai2GatewayServingContract | null, ai1Contract: null as Ai1GatewayServingContract | null }));
 vi.mock("@/lib/crawl/second-review-serving-contract", async importOriginal => ({
@@ -123,23 +124,44 @@ async function server<T>(run: (state: { bodies: string[]; tokenizerBodies: strin
   if (cleanupErrors.length) throw new AggregateError(cleanupErrors);
   return value as T;
 }
-afterEach(() => { fixture.contract = null; fixture.ai1Contract = null; vi.unstubAllEnvs(); });
+/**
+ * The abcLLM gateway is gone (2026-10-30): an abcllm contract opens only with a direct admin row for its route+model.
+ * The stored key stands in for the engine's own key — it is sent as the bearer and must never reach a proof.
+ */
+function directRows() {
+  setServingContractSnapshotForTest((["second-review", "crawl-agent-review"] as const).map(routeId =>
+    ({ routeId, model, contract: null, auth: "stored" as const, apiKey: "local-secret", transport: "direct" as const })));
+}
+/** The legacy sender has no default gateway any more; give it an engine endpoint so its wire can be compared. */
+const legacyEndpoint = { baseUrl: "http://legacy.invalid/v1", apiKey: "local-secret" };
+afterEach(() => { fixture.contract = null; fixture.ai1Contract = null; setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); });
 
 it("keeps the production second-review resolver unsupported", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-secret");
+  directRows();
   const original = await vi.importActual<typeof import("@/lib/crawl/second-review-serving-contract")>("@/lib/crawl/second-review-serving-contract");
   expect(original.resolveAi2GatewayServingContract(model)).toBeNull();
   expect(await prepareAi2GatewayCall(input(), { model })).toEqual({ kind: "unsupported", reason: "provider_contract_unavailable" });
   expect(readAi2GatewayTerminal({ kind: "ai2_gateway_terminal" })).toBeNull();
 });
 
+it("refuses an abcllm AI2 contract without a direct admin row before any POST, ignoring ABCLLM_API_KEY", async () => {
+  vi.stubEnv("ABCLLM_API_KEY", "ignored-secret");
+  await server(async ({ bodies, tokenizerBodies }) => {
+    const unsupported = { kind: "unsupported", reason: "provider_contract_unavailable" };
+    expect(await prepareAi2GatewayCall(input(), { model, timeoutMs: 1_000 })).toEqual(unsupported);
+    setServingContractSnapshotForTest([{ routeId: "second-review", model, contract: null, auth: "none", apiKey: null, transport: "gateway" }]);
+    expect(await prepareAi2GatewayCall(input(), { model, timeoutMs: 1_000 })).toEqual(unsupported);
+    expect(bodies).toHaveLength(0); expect(tokenizerBodies).toHaveLength(0);
+  });
+});
+
 it("sends one native POST with exactly the legacy wire and issues only an immutable original terminal", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-secret");
+  directRows();
   await server(async ({ bodies }) => {
     const value = input(), call = await prepared(value), owned = dispatch(value, call);
     let legacyWire = "";
     const request = vi.fn(async (_url, init) => { legacyWire = String(init?.body); return new Response(JSON.stringify(envelope())); });
-    const legacy = await reviewWithGateway(value, { model, request: request as typeof fetch });
+    const legacy = await reviewWithGateway(value, { model, request: request as typeof fetch, endpoint: legacyEndpoint });
     const native = await sendNative(value, owned, call);
     expect(native.result).toEqual(legacy);
     expect(bodies).toEqual([legacyWire]);
@@ -166,7 +188,7 @@ it("preserves the historical serving hash without an optional request budget", a
 });
 
 it("tokenizes an explicitly mapped alias before sending its bounded raw abcLLM request", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-secret");
+  directRows();
   await server(async ({ bodies, tokenizerBodies }) => {
     const contract = fixture.contract!;
     if (contract.provider !== "abcllm") throw new Error("fixture_legacy_contract");
@@ -176,7 +198,7 @@ it("tokenizes an explicitly mapped alias before sending its bounded raw abcLLM r
     expect(call.totalTokenBound).toBe(98_304);
     expect(bodies).toHaveLength(0); expect(tokenizerBodies).toHaveLength(1);
     let historicalWire = "";
-    await reviewWithGateway(value, { model, request: (async (_url, init) => {
+    await reviewWithGateway(value, { model, endpoint: legacyEndpoint, request: (async (_url, init) => {
       historicalWire = String(init?.body); return new Response(JSON.stringify(envelope()));
     }) as typeof fetch });
     const result = await sendNative(value, dispatch(value, call), call);
@@ -190,7 +212,7 @@ it("tokenizes an explicitly mapped alias before sending its bounded raw abcLLM r
 });
 
 it("refuses gateway inference when its approved engine tokenizer exceeds the request budget", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-secret");
+  directRows();
   await server(async ({ bodies, tokenizerBodies, setTokenCount }) => {
     const contract = fixture.contract!;
     if (contract.provider !== "abcllm") throw new Error("fixture_legacy_contract");
@@ -203,7 +225,7 @@ it("refuses gateway inference when its approved engine tokenizer exceeds the req
 });
 
 it.each(["length", "invalid-outcome"])("separates %s review failure from strict physical completion", async kind => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-secret");
+  directRows();
   await server(async ({ setReply }) => {
     setReply(response => response.end(JSON.stringify(envelope({ choices: [{ index: 0, message: { role: "assistant",
       content: kind === "length" ? "unfinished" : "invalid judgment" }, finish_reason: kind === "length" ? "length" : "stop" }] }))));
@@ -219,7 +241,7 @@ it.each([
   { usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 99 } },
   { usage: { prompt_tokens: Number.MAX_SAFE_INTEGER + 1, completion_tokens: 0, total_tokens: Number.MAX_SAFE_INTEGER + 1 } },
 ])("retains full charge with unknown usage instead of inventing actual usage: %j", async change => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-secret");
+  directRows();
   await server(async ({ setReply }) => {
     setReply(response => response.end(JSON.stringify(envelope(change))));
     const value = input(), call = await prepared(value);
@@ -233,7 +255,7 @@ it.each([
   { choices: [{ index: 0, message: { role: "assistant", content: "{}" }, finish_reason: null }] },
   { usage: { prompt_tokens: 8_000, completion_tokens: 1, total_tokens: 8_001 } },
 ])("rejects protocol/serving-bound violations without terminal proof: %j", async change => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-secret");
+  directRows();
   await server(async ({ bodies, setReply }) => {
     setReply(response => response.end(JSON.stringify(envelope(change))));
     const value = input(), call = await prepared(value);
@@ -244,7 +266,7 @@ it.each([
 });
 
 it("rejects copied preparations, different inputs/bindings and repeats before any extra POST", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-secret");
+  directRows();
   await server(async ({ bodies }) => {
     const value = input(), call = await prepared(value), owned = dispatch(value, call);
     await expect(sendNative(value, owned, { ...call })).rejects.toThrow("ai2_gateway_call_mismatch");
@@ -261,7 +283,7 @@ it("rejects copied preparations, different inputs/bindings and repeats before an
 });
 
 it.each(["http", "redirect", "eof", "json"])("keeps %s failures unknown and never retries", async kind => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-secret");
+  directRows();
   await server(async ({ bodies, setReply }) => {
     setReply(response => {
       if (kind === "http") { response.statusCode = 502; response.end("failure"); }
@@ -278,7 +300,7 @@ it.each(["http", "redirect", "eof", "json"])("keeps %s failures unknown and neve
 });
 
 it("snapshots input/dispatch/contract before await and ignores global fetch injection", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-secret");
+  directRows();
   await server(async ({ bodies }) => {
     const value = input(), call = await prepared(value), owned = dispatch(value, call), originalDispatch = structuredClone(owned);
     const globalRequest = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("injected_request_not_allowed"));
@@ -298,7 +320,7 @@ it("snapshots input/dispatch/contract before await and ignores global fetch inje
 });
 
 it("settles an actual aborted native request without proof or retry", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-secret");
+  directRows();
   await server(async ({ bodies, setReply }) => {
     let arrived!: () => void;
     const accepted = new Promise<void>(resolve => { arrived = resolve; });
@@ -317,7 +339,7 @@ it("settles an actual aborted native request without proof or retry", async () =
 
 
 it("keeps genuine AI1 and AI2 preparations and terminal capabilities separate", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-secret");
+  directRows();
   await server(async ({ bodies }) => {
     const value = input(), call = await prepared(value), owned = dispatch(value, call);
     const ai1Call = prepareAi1GatewayCall(value, { model, timeoutMs: 1_000 });

@@ -225,7 +225,7 @@ describe("현재 설정 → 배정 표 가져오기", () => {
     const { applyAssignmentImportAction } = await actions();
     const preview = await previewAdminAssignmentImport();
     expect(preview).toMatchObject({ rows: [], error: null, warnings: [
-      "firstReview: 1차 모델이 설정에 없어 1차는 옮기지 않습니다 — CRAWL_REVIEW_MODEL env 대체는 옮기지 않는다",
+      "firstReview: 1차 모델이 설정에 없어 1차는 옮기지 않습니다 — 관리자 설정에서 1차 심사자를 고른 뒤 다시 가져온다(환경변수 대체는 2026-10-31 제거)",
       "secondReview.voters[0]: 정책에 이 경로가 없어 꺼짐으로 옮깁니다(저장하면 계약을 확인하고 경로를 덧붙입니다) — second-review / claude-cli / opus",
       "secondReview.voters[0]: 장비 행이 없거나 꺼져 있어 옮기지 않습니다(장비 한도에서 먼저 저장) — connect"] });
     const state = await snapshot();

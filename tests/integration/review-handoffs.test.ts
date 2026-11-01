@@ -16,7 +16,6 @@ beforeEach(async () => {
   for (const table of [secondReviews, crawlReviewAttempts, crawlCandidates, crawlDocuments, crawlSettings, jobs]) await db.delete(table);
   await db.delete(roleLeases);
   vi.stubEnv("CRAWL_REVIEW_READY", "true");
-  vi.stubEnv("CRAWL_REVIEW_MODEL", "first-fixture");
 });
 it("rejects an old reviewer rule verdict after role ownership changes", async () => {
   const primary = { role: "reviewer" as const, kind: "primary" as const,

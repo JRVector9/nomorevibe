@@ -1,6 +1,23 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { readFile } from "node:fs/promises";
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
+import { directContractRow } from "./direct-engine-fixtures";
+
+/**
+ * 게이트웨이(abcLLM)는 2026-10-30 제거됐다. GPT 묶음은 이 경로·모델의 직접 연결 계약이 있어야 열리고, 용량을 끈(disabled) 잡이 부르는
+ * 옛 잎 translateTaglinesToKorean 은 이제 보내지 않고 no_key 로 끝난다(파일 끝 두 시험). 이 파일은 잡이 답을 받은 뒤의 판단(차례·품질 검사·
+ * 재시도 간격·한도)을 보므로, 그 잎만 같은 wire(productTaglineKoLegacyWire)를 이 파일의 fetch 목으로 보내는 대역으로 바꾼다.
+ */
+vi.mock("@/lib/crawl/translate", async load => {
+  const original = await load<typeof import("@/lib/crawl/translate")>();
+  const { parseKoreanTaglines } = await import("@/lib/domain/products/korean-tagline");
+  const { askRemovedGatewayLeaf, replyContent } = await import("./direct-engine-fixtures");
+  const translateTaglinesToKorean: typeof original.translateTaglinesToKorean = (items, timeoutMs, request = fetch, signal, model = original.KOREAN_TAGLINE_MODEL) =>
+    askRemovedGatewayLeaf(original.translateTaglinesToKorean(items, timeoutMs, request, signal, model), request,
+      original.productTaglineKoLegacyWire(items, model), async response => parseKoreanTaglines(await replyContent(response), items.length), { timeoutMs, signal });
+  return { ...original, translateTaglinesToKorean };
+});
 
 const { db } = await import("@/lib/db");
 const { jobs, products, productKoreanTaglines } = await import("@/lib/db/schema");
@@ -9,6 +26,7 @@ const { koreanTaglineProgress, koreanTaglineSample, pendingKoreanTaglines, recor
 const { getPublicList, getDiscoveryList } = await import("@/lib/domain/products/view");
 const { getPopularGroups } = await import("@/lib/domain/products/popular");
 const { runJob } = await import("@/lib/jobs/runner");
+const { KOREAN_TAGLINE_MODEL } = await import("@/lib/crawl/translate");
 const { clearAllMemos } = await import("@/lib/cache/memo");
 const { ensureSchema, resetTables } = await import("./setup");
 
@@ -45,12 +63,12 @@ beforeEach(async () => {
   clearAllMemos();
   seen.length = 0;
   gateway.mockReset();
-  vi.stubEnv("ABCLLM_API_KEY", "test-key");
+  setServingContractSnapshotForTest([directContractRow("product-tagline-ko", KOREAN_TAGLINE_MODEL)]);
   vi.stubEnv("KOREAN_TRANSLATION_QWEN_ENABLED", "false");
   vi.stubEnv("KOREAN_TRANSLATION_QWEN_RECOVERY_ENABLED", "false");
   vi.stubGlobal("fetch", gateway);
 });
-afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); setServingContractSnapshotForTest(null); });
 
 describe("한국어 한 줄 소개 잡", () => {
   it("한 잡 lease로 GPT와 직접 Qwen의 서로 다른 묶음을 병렬 처리하고 실제 모델을 남긴다", async () => {
@@ -329,13 +347,20 @@ describe("한국어 한 줄 소개 잡", () => {
     expect(sent).toEqual([tagline, "Notes is a fast editor for teams", "Notes is a fast editor for teams"]);
   });
 
-  it("키가 없으면 부르지 않고, 성공이 아니라 제 일 못 함(no_key)으로 남는다 — 마지막 성공 시각을 옮기지 않는다", async () => {
+  it("직접 연결 계약이 없으면 부르지 않고, 성공이 아니라 제 일 못 함(no_direct_contract)으로 남는다 — 마지막 성공 시각을 옮기지 않는다", async () => {
     await seed({ slug: "nokey" });
-    vi.stubEnv("ABCLLM_API_KEY", "");
-    expect(await tick()).toMatchObject({ status: "completed", done: true, degraded: "no_key" });
+    setServingContractSnapshotForTest([]);
+    expect(await tick()).toMatchObject({ status: "completed", done: true, degraded: "no_direct_contract" });
     expect(gateway).not.toHaveBeenCalled();
     const [state] = await db.select().from(jobs).where(eq(jobs.name, "product-tagline-ko"));
     expect(state).toMatchObject({ lastSuccessAt: null, lastError: null });
     expect(state.processedVersion).toBe(state.requestedVersion);
+  });
+
+  it("옛 잎(translateTaglinesToKorean)은 계약이 있어도 게이트웨이로 보내지 않고 no_key 로 끝난다", async () => {
+    const real = await vi.importActual<typeof import("@/lib/crawl/translate")>("@/lib/crawl/translate");
+    expect(await real.translateTaglinesToKorean([{ name: "Notes", tagline: "A fast editor for teams" }], 1_000, gateway))
+      .toEqual({ ok: false, error: "no_key" });
+    expect(gateway).not.toHaveBeenCalled();
   });
 });

@@ -7,7 +7,9 @@ import { markWorkerSeen, pendingJobNames, requestJob, withJobLeaseWrite } from '
 import { runJob, type JobContext, type JobOutcome } from '@/lib/jobs/runner';
 import { tryAcquireRole, type RoleLease } from '@/lib/jobs/role-leader';
 import { backgroundConsumerLanes } from '@/lib/jobs/background-consumer';
-import { translateToKorean } from '@/lib/crawl/translate';
+import { KOREAN_TAGLINE_MODEL } from '@/lib/crawl/translate';
+import { translateKoreanTaglinesWithModelCapacity } from '@/lib/domain/products/korean-tagline-model-capacity';
+import { setServingContractSnapshotForTest } from '@/lib/llm/serving-contract-store';
 import { INTRO_CHECK_MODEL } from '@/lib/domain/products/intro-check';
 import { modelCapacityPolicyHash, type ModelCapacityPolicy } from '@/lib/llm/capacity';
 import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
@@ -16,6 +18,7 @@ import { readModelCapacityCallerControl } from '@/lib/llm/capacity-repository';
 import { backgroundCliPath } from '@/lib/llm/cli-model-capacity';
 import { jobRunOptions, runWorker } from '@/scripts/worker';
 import { ensureSchema, TEST_DATABASE_URL } from './setup';
+import { directContractRow } from './direct-engine-fixtures';
 
 /*
  * PR06c 실제 DB driver — 실제 runJob(job lease·heartbeat·ACK)·pendingJobNames·requestJob·역할 선출(role_leases)·
@@ -55,6 +58,13 @@ function deps(handler: Handler) {
 }
 const pass = (handler: Handler) => runWorker({ role: 'text', once: true }, deps(handler));
 const fixtureResponse = () => new Response(JSON.stringify({ choices: [{ message: { content: '["번역"]' } }] }), { status: 200 });
+/**
+ * 한국어 소개 경로가 disabled 원 경로를 고르는 지점(용량 조정자). 이 경로·모델의 직접 연결 계약이 있어야 그 지점까지 간다 — 계약이 없으면
+ * 원 경로로 곧장 간다. 원 경로의 게이트웨이 전송은 2026-10-30 제거돼 이제 보내지 않고 no_key 로 끝난다.
+ */
+const directKoreanRoute = () => setServingContractSnapshotForTest([directContractRow(JOB, KOREAN_TAGLINE_MODEL)]);
+const translateOne = () => translateKoreanTaglinesWithModelCapacity([{ productId: 1, name: 'Fixture', tagline: 'hello', repoUrl: null, attempts: 0 }],
+  [], { name: JOB, token: `${MARKER}-fixture`, requestedVersion: 1 }, { timeoutMs: 1_000 });
 
 beforeAll(async () => {
   ensureSchema();
@@ -83,7 +93,7 @@ beforeEach(async () => {
   lease = acquired!;
 });
 afterEach(async () => {
-  vi.unstubAllEnvs();
+  vi.unstubAllEnvs(); vi.unstubAllGlobals(); setServingContractSnapshotForTest(null);
   await admin`DELETE FROM operations_observations WHERE key LIKE ${`${MARKER}:%`}`;
   await restore('model_capacity_control', 'id', 1, baseline.control);
 });
@@ -235,30 +245,31 @@ it('역할 인계는 진행 중 consumer 틱의 job lease 를 폐기하고, 늦�
 });
 
 it('consumer 범위에서는 disabled 원 경로(공통 슬롯 밖)를 고르는 지점이 호출 대신 typed defer 로 끝나고, 범위 밖 기존 경로는 그대로다', async () => {
-  vi.stubEnv('ABCLLM_API_KEY', 'pr06c-fixture-key');
+  directKoreanRoute();
   await control('disabled');
-  const request = vi.fn(async () => fixtureResponse());
-  await expect(withSlotOnlyModelCapacity(() => translateToKorean(['hello'], 1_000, request)))
+  const request = vi.fn(async () => fixtureResponse()); vi.stubGlobal('fetch', request);
+  await expect(withSlotOnlyModelCapacity(translateOne))
     .rejects.toMatchObject({ name: 'ModelCapacityDeferredError', reason: 'disabled' });
   await expect(withSlotOnlyModelCapacity(() => backgroundCliPath('product-intro-check', INTRO_CHECK_MODEL)))
     .rejects.toBeInstanceOf(ModelCapacityDeferredError);
   expect(request).not.toHaveBeenCalled();
   expect(await backgroundCliPath('product-intro-check', INTRO_CHECK_MODEL)).toBe('legacy');
-  await translateToKorean(['hello'], 1_000, request);
-  expect(request).toHaveBeenCalledTimes(1);
+  // 범위 밖은 그대로 원 경로를 고른다 — 그 원 경로가 이제 보내지 않을 뿐이다
+  expect(await translateOne()).toEqual({ kind: 'result', result: { ok: false, error: 'no_key' } });
+  expect(request).not.toHaveBeenCalled();
   await control('open');
   expect((await withSlotOnlyModelCapacity(() => readModelCapacityCallerControl())).mode).toBe('open');
 });
 
 it('틱 도중 open→disabled 로 바뀌어도 consumer 는 슬롯 밖 원 경로로 부르지 않고 미룬다(요청·처리 판 보존, lease 반환)', async () => {
-  vi.stubEnv('ABCLLM_API_KEY', 'pr06c-fixture-key');
+  directKoreanRoute();
   await control('open');
   await requestJob(JOB);
   const before = await jobRow();
-  const request = vi.fn(async () => fixtureResponse());
+  const request = vi.fn(async () => fixtureResponse()); vi.stubGlobal('fetch', request);
   const handler = vi.fn(async () => {
     await control('disabled');
-    await translateToKorean(['hello'], 1_000, request);
+    await translateOne();
     return { done: false };
   });
   expect(await pass(handler)).toEqual({ ticks: 1, failures: 0 });

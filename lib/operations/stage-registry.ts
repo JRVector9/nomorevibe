@@ -155,28 +155,24 @@ export type ModelSlot = Readonly<{
 /**
  * 환경변수로 고르는 텍스트·벡터 모델 — 이름과 기본값은 각 잡 모듈의 상수와 같다(테스트가 모듈을 다시 읽어 견준다).
  * 환경변수는 이 프로세스의 것이다 — 웹과 워커의 환경이 다르면 관측한 모델(결과 행의 model)이 더 정확하다.
+ * env null 인 소개 짓기·제품 번역은 환경변수를 읽지 않는다 — 등록부(관리자 덮어쓰기)와 단계 풀이 고른다(code `registry:<용도>`).
  */
 export const ENV_MODEL_SLOTS = [
-  { stage: "publish", key: "tagline", label: "소개 짓기", env: "ABCLLM_TAGLINE_MODEL", fallback: modelRequestName(modelForPurpose("crawl-tagline")), provider: "abcllm", approximated: true },
+  { stage: "publish", key: "tagline", label: "소개 짓기", env: null, fallback: modelRequestName(modelForPurpose("crawl-tagline")), provider: "abcllm", approximated: true },
   { stage: "keywords", key: "keywords", label: "키워드 짓기", env: "ABCLLM_PROFILE_MODEL", fallback: modelRequestName(modelForPurpose("reason-translate")), provider: "abcllm", approximated: false },
   { stage: "keyword-verify", key: "keyword-verify", label: "키워드 검수", env: "SEARCH_VERIFY_MODEL", fallback: modelRequestName(modelForPurpose("product-search-verify")), provider: "abcllm", approximated: true },
   // 벡터 모델은 환경변수로 바꾸지 않는다 — 바꾸면 전부 다시 임베딩한다(embedding.ts EMBEDDING_MODEL)
   { stage: "embedding", key: "embedding", label: "의미 검색 벡터", env: null, fallback: "bge-m3-f16@daec91ff", provider: "llama-server", approximated: true },
-  { stage: "product-translate", key: "product-translate", label: "제품 번역", env: "PRODUCT_TRANSLATION_MODEL", fallback: modelRequestName(modelForPurpose("product-translate")), provider: "abcllm", approximated: true },
+  { stage: "product-translate", key: "product-translate", label: "제품 번역", env: null, fallback: modelRequestName(modelForPurpose("product-translate")), provider: "abcllm", approximated: true },
   { stage: "reason-translate", key: "reason-translate", label: "사유 번역", env: "ABCLLM_MODEL", fallback: modelRequestName(modelForPurpose("reason-translate")), provider: "abcllm", approximated: true },
   { stage: "intro-check", key: "intro-check", label: "소개 검수", env: "INTRO_CHECK_MODEL", fallback: modelRequestName(modelForPurpose("product-intro-check")), provider: "claude-cli", approximated: true },
   { stage: "tagline-ko", key: "tagline-ko", label: "한국어 소개", env: "ABCLLM_MODEL", fallback: modelRequestName(modelForPurpose("reason-translate")), provider: "abcllm", approximated: true },
 ] as const satisfies readonly { stage: StageKey; key: string; label: string; env: string | null; fallback: string; provider: string; approximated: boolean }[];
 
-/** CLI 모델 이름 규칙 — agent-review.ts reviewModel 과 같다 */
-const CLI_MODEL = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$/;
-
-/** 1차 심사자 — 설정이 있으면 그것, 없으면 CRAWL_REVIEW_MODEL(claude-cli). agent-review.ts firstReviewer 와 같다 */
-function firstReviewSlot(settings: ModelSettings, env: Env) {
-  if (settings.firstReview) return { code: "firstReview", provider: settings.firstReview.provider, model: settings.firstReview.model, source: "settings" as const };
-  const model = env.CRAWL_REVIEW_MODEL?.trim();
-  return model && CLI_MODEL.test(model)
-    ? { code: "CRAWL_REVIEW_MODEL", provider: "claude-cli", model, source: "env" as const }
+/** 1차 심사자 — 관리자 설정(firstReview)만 본다. agent-review.ts firstReviewer 와 같다(환경변수 대체는 2026-10-31 제거) */
+function firstReviewSlot(settings: ModelSettings) {
+  return settings.firstReview
+    ? { code: "firstReview", provider: settings.firstReview.provider, model: settings.firstReview.model, source: "settings" as const }
     : { code: "firstReview", provider: null, model: null, source: "unset" as const };
 }
 
@@ -185,7 +181,7 @@ function firstReviewSlot(settings: ModelSettings, env: Env) {
  * 흐름 차례(PIPELINE_STAGES)대로, 같은 단계 안은 설정 차례대로 낸다.
  */
 export function resolveModelSlots(settings: ModelSettings, env: Env = process.env): ModelSlot[] {
-  const first = firstReviewSlot(settings, env);
+  const first = firstReviewSlot(settings);
   const slots: ModelSlot[] = [
     { stage: "first", key: "first", label: "주", ...first, approximated: false },
     ...(settings.firstReviewAdditional ?? []).map((reviewer, index): ModelSlot => ({ stage: "first", key: `first-additional-${index + 1}`,
@@ -203,7 +199,7 @@ export function resolveModelSlots(settings: ModelSettings, env: Env = process.en
         "tagline-ko": "product-tagline-ko" } as const)[slot.key as Exclude<typeof slot.key, "embedding">];
       const value = slot.env ? env[slot.env]?.trim() || env[`${slot.env}_KEY`]?.trim() : undefined;
       const selected = purpose ? configuredModelDefinition(purpose, env) : null;
-      return { stage: slot.stage, key: slot.key, label: slot.label, code: slot.env ?? "EMBEDDING_MODEL", provider: selected?.provider ?? slot.provider,
+      return { stage: slot.stage, key: slot.key, label: slot.label, code: slot.env ?? (purpose ? `registry:${purpose}` : "EMBEDDING_MODEL"), provider: selected?.provider ?? slot.provider,
         model: purpose ? configuredModel(purpose, env) : slot.fallback, source: value || env.MODEL_REGISTRY_CONFIG ? "env" : "default", approximated: slot.approximated };
     }),
     ...(koreanTranslationQwenEnabled(env) ? [{ stage: "tagline-ko", key: "tagline-ko-qwen", label: "한국어 소개 · GPU Qwen",

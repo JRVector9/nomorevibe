@@ -19,8 +19,7 @@ beforeEach(async () => {
   await db.delete(crawlCandidates);
   await db.delete(crawlDocuments);
   await db.delete(textTranslations).where(eq(textTranslations.targetLang, "en"));
-  // 게이트웨이를 부르지 않는다 — 번역이 필요한 경우는 번역 캐시를 미리 넣어 둔다
-  delete process.env.ABCLLM_API_KEY;
+  // 번역 모델을 부르지 않는다(검색어 번역 경로의 직접 연결 계약이 없다) — 번역이 필요한 경우는 번역 캐시를 미리 넣어 둔다
 });
 
 let clock = 0;

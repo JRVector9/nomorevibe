@@ -13,7 +13,9 @@ import { modelCapacityPolicyHash, type Ai1DispatchBinding, type ModelCapacityPol
 import { beginModelDispatch, cancelReservedModelSlot, finishAi1ModelCapacityDispatch, lockAi1ModelCapacityDispatch,
   markModelDispatchIndeterminate, reconcileAi1GatewayTerminal, requestAi1ModelSlot, requestModelSlot,
   type Ai1CapacityDispatchLock } from "@/lib/llm/capacity-repository";
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
+import { directContractRow } from "./direct-engine-fixtures";
 
 const serving = vi.hoisted(() => ({ contract: null as Ai1GatewayServingContract | null }));
 vi.mock("@/lib/crawl/agent-review-serving-contract", async original => ({
@@ -141,7 +143,7 @@ beforeAll(() => {
   })(); return tracked(setupWork, hooks);
 });
 afterEach(() => tracked(steps([async () => { await setupWork; }, () => settle(bodies), () => settle(work), cleanup,
-  async () => { serving.contract = null; vi.unstubAllEnvs(); }]), hooks));
+  async () => { serving.contract = null; setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); }]), hooks));
 afterAll(() => steps([async () => { await setupWork; }, () => settle(hooks, true), () => settle(bodies, true),
   () => settle(work), cleanup, async () => {
     if (!initialized) return;
@@ -251,7 +253,8 @@ it("rolls back dispatched binding when the append-only event INSERT faults", exe
 }));
 
 it("settles only the original native proof once despite policy changes and rejects copied JSON", exercise(async () => {
-  await install(); vi.stubEnv("ABCLLM_API_KEY", "local-fixture-secret");
+  // The loopback engine is connected directly (admin row, no key) — the abcLLM gateway and its key were removed on 2026-10-30.
+  await install(); setServingContractSnapshotForTest([directContractRow("crawl-agent-review", model)]);
   const pending = new Set<Promise<void>>();
   const server = createServer((request, response) => {
     const body = (async () => { for await (const chunk of request) { void chunk; }

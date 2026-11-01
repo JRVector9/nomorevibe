@@ -11,6 +11,7 @@ import { prepareAi1GatewayCall, prepareReasonTranslationGatewayCall, readGateway
   translateWithReservedReasonGateway, type PreparedAi1GatewayCall, type PreparedReasonTranslationGatewayCall } from "@/lib/crawl/agent-review-gateway";
 import type { Ai1GatewayServingContract } from "@/lib/crawl/agent-review-serving-contract";
 import type { ReasonTranslationServingContract } from "@/lib/llm/reason-translation-serving-contract";
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 
 /**
  * 연결이 거부되거나 이름을 못 찾아 요청 바이트가 하나도 나가지 않은 reserved 게이트웨이 호출은 not_started 증인을 싣는다(엔진 다운·재시작 구간).
@@ -70,6 +71,9 @@ function reasonDispatch(call: PreparedReasonTranslationGatewayCall) {
     binding, bindingHash: reasonTranslationDispatchBindingHash(binding) });
 }
 function contracts(endpoint: string) {
+  // The abcLLM gateway is gone (2026-10-30): an abcllm contract opens only with a direct admin row for its route+model.
+  setServingContractSnapshotForTest((["crawl-agent-review", "reason-translate"] as const).map(routeId =>
+    ({ routeId, model, contract: null, auth: "stored" as const, apiKey: "local-secret", transport: "direct" as const })));
   fixture.ai1 = { version: 1, protocol: "abcllm-raw-total-bound-v1", routeId: "crawl-agent-review", provider: "abcllm", model,
     responseModel: "native-model", endpoint, deploymentRevision: "local-test-only", totalTokenBound: 8_000 };
   fixture.reason = { version: 1, protocol: "abcllm-reason-total-bound-v1", routeId: "reason-translate", provider: "abcllm", model,
@@ -84,10 +88,9 @@ async function closedPort(): Promise<number> {
   await new Promise<void>(resolve => http.close(() => resolve()));
   return address.port;
 }
-afterEach(() => { fixture.ai1 = null; fixture.reason = null; vi.unstubAllEnvs(); });
+afterEach(() => { fixture.ai1 = null; fixture.reason = null; setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); });
 
 it("AI1: a refused connection returns gateway_error with a not_started witness bound to the exact dispatch", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-secret");
   contracts(`http://127.0.0.1:${await closedPort()}/v1/chat/completions`);
   const value = input(), call = ai1Call(value), owned = ai1Dispatch(value, call);
   const response = await reviewWithReservedAi1Gateway(value, owned, call);
@@ -99,7 +102,6 @@ it("AI1: a refused connection returns gateway_error with a not_started witness b
 });
 
 it("reason-translate: a refused connection and an unresolvable name both return network with a not_started witness", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-secret");
   for (const endpoint of [`http://127.0.0.1:${await closedPort()}/v1/chat/completions`, "http://nonexistent.invalid/v1/chat/completions"]) {
     contracts(endpoint);
     const call = reasonCall(), owned = reasonDispatch(call);
@@ -110,7 +112,6 @@ it("reason-translate: a refused connection and an unresolvable name both return 
 });
 
 it("a request that reached the socket and was then cut has no witness: the call stays unproven", async () => {
-  vi.stubEnv("ABCLLM_API_KEY", "local-secret");
   const received: string[] = [];
   const http = createServer(request => { received.push(request.url ?? ""); request.socket.destroy(); });
   await new Promise<void>(resolve => http.listen(0, "127.0.0.1", resolve));

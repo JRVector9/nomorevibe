@@ -20,7 +20,6 @@ beforeAll(ensureSchema);
 beforeEach(async () => {
   for (const table of [secondReviews, crawlReviewAttempts, crawlCandidates, crawlDocuments, crawlFrontier, crawlSettings, jobs]) await db.delete(table);
   vi.stubEnv("CRAWL_REVIEW_READY", "true");
-  vi.stubEnv("CRAWL_REVIEW_MODEL", "first-fixture");
 });
 const outcome = { decision: "approve" as const, reason: "A usable product", evidenceIds: ["product"], confidence: .95 };
 async function fixture(voters = ["second-a", "second-b"], decision: "approve" | "reject" = "approve") {
