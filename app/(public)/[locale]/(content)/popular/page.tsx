@@ -1,3 +1,4 @@
+import { RenderReadRecovery } from "@/components/errors/RenderReadRecovery";
 import {localizeProductList} from "@/lib/i18n/products";
 import { getRequestLocale } from "@/lib/i18n/server";
 import { getTranslator, getDictionary } from "@/lib/i18n/dictionary";
@@ -53,17 +54,21 @@ export default async function PopularPage({searchParams}:{searchParams:Promise<R
  let result:Awaited<ReturnType<typeof getPopularPage>>|undefined;
  let facets:PopularFacets|undefined;
  // 원본 목록은 보기·언어와 무관하다. 워커 조회는 그대로 두고 공개 읽기만 30초 공유·복제본 경로를 쓴다.
- try{[result,facets]=await Promise.all([
+ const [listRead,facetRead]=await Promise.allSettled([
   publicRead("list", ["popular-page",state.tier,filters,state.sort,state.page], () => getPopularPage(state.tier,filters,state.sort,state.page)),
   publicRead("count", ["popular-facets",state.tier,filters], () => getPopularFacets(state.tier,filters)),
- ]);}
- catch(error){logger.error('popular.list_failed',{error});}
+ ]);
+ if(listRead.status==='fulfilled') result=listRead.value;
+ else logger.error('popular.list_failed',{error:listRead.reason});
+ if(facetRead.status==='fulfilled') facets=facetRead.value;
+ else logger.warn('popular.facets_unavailable',{error:facetRead.reason});
  const narrowed=state.personal||state.ai||Boolean(state.category);
  const href=(patch:Partial<PopularState>)=>localePath(locale,popularStateHref(state,patch));
  const first=result?(result.page-1)*result.pageSize+1:1;
  const items=(await localizeProductList(result?.items??[],locale)).map((item,index)=>rankedCard(item,first+index));
 
  return <I18nProvider locale={locale} dictionaries={{browse:dictionary}} now={now}><main className="wrap popular-page">
+  {!result && <RenderReadRecovery key={now} />}
   <nav aria-label={t("nav.breadcrumb")} className="popular-crumbs"><Link prefetch={false} href={localePath(locale,"/")}>{t("nav.discover")}</Link><span aria-hidden="true">›</span><span aria-current="page">{t("popular.title")}</span></nav>
   <div className="popular-heading">
    <h1>{t("popular.title")}</h1>

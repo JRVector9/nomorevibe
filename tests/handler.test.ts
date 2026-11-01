@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextResponse } from "next/server";
 import { withRoute } from "@/lib/http/handler";
+import { HttpOriginPermitError } from "@/lib/net/http-origin-policy";
+import { DrWriterFencedError } from "@/lib/operations/dr/epoch";
 vi.mock("@/lib/operations/dr/epoch", async original => ({ ...await original<typeof import("@/lib/operations/dr/epoch")>(), readWriterFence: async () => ({ state: "active" }) })); // PR15e: 웹 쓰기 관문은 dr-web-fence 테스트가 본다(이 fixture 의 요청 흐름 불변)
 
 const ctx = { params: Promise.resolve({}) };
@@ -40,6 +42,26 @@ describe("withRoute — 라우트 에러 경계", () => {
     expect(body.request_id).toBeTruthy();
     // 사용자가 제보할 때 이 ID로 로그를 찾을 수 있어야 한다
     expect(res.headers.get("x-request-id")).toBe(body.request_id);
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
+    expect(res.headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
+  });
+
+  it.each([new HttpOriginPermitError("unavailable"), new DrWriterFencedError("site_fenced")])(
+    "never caches a deferred/fenced failure: %s", async (error) => {
+      const res = await withRoute("test.deferred", async () => { throw error; })(req("GET"), ctx);
+      expect(res.status).toBe(503);
+      expect(res.headers.get("cache-control")).toBe("private, no-store");
+      expect(res.headers.get("cloudflare-cdn-cache-control")).toBe("no-store");
+      if (error instanceof DrWriterFencedError) expect(res.headers.get("retry-after")).toBeTruthy();
+    },
+  );
+
+  it("preserves successful public cache headers", async () => {
+    const res = await withRoute("test.cache", async () => NextResponse.json({ ok: true }, {
+      headers: { "Cache-Control": "public, max-age=60", "Cloudflare-CDN-Cache-Control": "max-age=240" },
+    }))(req("GET"), ctx);
+    expect(res.headers.get("cache-control")).toBe("public, max-age=60");
+    expect(res.headers.get("cloudflare-cdn-cache-control")).toBe("max-age=240");
   });
 
   it("예외 원인은 로그에 남긴다", async () => {

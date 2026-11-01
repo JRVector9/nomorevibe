@@ -40,10 +40,14 @@ describe("Next.js multi-instance configuration", () => {
     expect(edge("/p/:slug")?.headers[0].value).toBe("max-age=240, stale-while-revalidate=60, stale-if-error=3600");
     for (const source of ["/", "/popular", "/rankings/:key", "/p/:slug"]) {
       expect(edge(source)?.missing).toEqual([{ type: "cookie", key: "nmv_admin" }, { type: "cookie", key: "nmv_user" },
-        { type: "cookie", key: "nmv_login_nonce" }, { type: "query", key: "q" }]);
+        { type: "cookie", key: "nmv_login_nonce" }, { type: "query", key: "q" },
+        { type: "cookie", key: "nmv_render_recovery", value: "1" }]);
     }
     // 방문자 브라우저용 Cache-Control 은 건드리지 않는다
     expect(rules.flatMap((rule) => rule.headers).some((header) => header.key.toLowerCase() === "cache-control")).toBe(false);
+    expect(rules.find(rule => rule.has?.some(condition => condition.type === "cookie" && condition.key === "nmv_render_recovery")))
+      .toMatchObject({ source: "/:path*", has: [{ type: "cookie", key: "nmv_render_recovery", value: "1" }],
+        headers: [{ key: "Cloudflare-CDN-Cache-Control", value: "no-store" }] });
   });
 
   it("does not invent a deployment ID for local builds", async () => {

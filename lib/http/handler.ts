@@ -51,21 +51,21 @@ export function withRoute<C extends RouteContext = RouteContext>(
         logger.info("http.deferred", { ...base, status: 503, durationMs: Date.now() - startedAt });
         return NextResponse.json(
           { error: "잠시 이용할 수 없습니다. 잠시 후 다시 시도해주세요.", request_id: requestId },
-          { status: 503, headers: { "x-request-id": requestId } },
+          { status: 503, headers: { "x-request-id": requestId, "Cache-Control": "private, no-store", "Cloudflare-CDN-Cache-Control": "no-store" } },
         );
       }
       if (error instanceof DrWriterFencedError) {
         logger.warn("http.writer_fenced", { ...base, status: 503, reason: error.reason, durationMs: Date.now() - startedAt });
         return NextResponse.json(
           { error: "잠시 이용할 수 없습니다. 잠시 후 다시 시도해주세요.", request_id: requestId },
-          { status: 503, headers: { "x-request-id": requestId, "Retry-After": WEB_FENCED_RETRY_AFTER } },
+          { status: 503, headers: { "x-request-id": requestId, "Retry-After": WEB_FENCED_RETRY_AFTER, "Cache-Control": "private, no-store", "Cloudflare-CDN-Cache-Control": "no-store" } },
         );
       }
       // 처리되지 않은 예외 — 원인을 로그에 남기고, 응답에는 내부 정보를 흘리지 않는다
       logger.error("http.unhandled", { ...base, durationMs: Date.now() - startedAt, error });
       return NextResponse.json(
         { error: "요청을 처리하지 못했습니다", request_id: requestId },
-        { status: 500, headers: { "x-request-id": requestId } },
+        { status: 500, headers: { "x-request-id": requestId, "Cache-Control": "private, no-store", "Cloudflare-CDN-Cache-Control": "no-store" } },
       );
     }
   };

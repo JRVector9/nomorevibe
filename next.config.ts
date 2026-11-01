@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 import { LOCALES } from "./lib/i18n/locales";
 import { localePath } from "./lib/i18n/routing";
+import { RENDER_RECOVERY_COOKIE, RENDER_RECOVERY_COOKIE_VALUE } from "./lib/web/recovery-cache";
 
 const nextConfig: NextConfig = {
   // Docker/Dokploy 배포용 — .next/standalone만 복사해도 동작하게
@@ -57,7 +58,8 @@ const nextConfig: NextConfig = {
      */
     const edge = (seconds: number) => ({
       missing: [{ type: "cookie" as const, key: "nmv_admin" }, { type: "cookie" as const, key: "nmv_user" },
-        { type: "cookie" as const, key: "nmv_login_nonce" }, { type: "query" as const, key: "q" }],
+        { type: "cookie" as const, key: "nmv_login_nonce" }, { type: "query" as const, key: "q" },
+        { type: "cookie" as const, key: RENDER_RECOVERY_COOKIE, value: RENDER_RECOVERY_COOKIE_VALUE }],
       headers: [{ key: "Cloudflare-CDN-Cache-Control", value: `max-age=${seconds}, stale-while-revalidate=60, stale-if-error=3600` }],
     });
     const pages = [
@@ -95,6 +97,8 @@ const nextConfig: NextConfig = {
         source: "/:path*", has: [{ type: "cookie" as const, key }], headers: noStore,
       })),
       { source: "/:path*", has: [{ type: "query" as const, key: "q" }], headers: noStore },
+      // A bounded recovery GET must not store another caught-error 200 response.
+      { source: "/:path*", has: [{ type: "cookie" as const, key: RENDER_RECOVERY_COOKIE, value: RENDER_RECOVERY_COOKIE_VALUE }], headers: noStore },
     ];
   },
 };
