@@ -20,7 +20,7 @@ import { UnknownReviewList } from "./UnknownReviewList";
 import { DevicesPanel } from "./DevicesPanel";
 import { HelpersFold, type AssignmentSourceView } from "./HelpersFold";
 import { capacityMonitorThresholds, readModelCapacityReviewQueue, readModelCapacityUnknowns } from "@/lib/operations/model-capacity-unknowns";
-import { modelContractLinks, modelRecoveryBlocked, type CapacityAlarmSummary, type ModelContractLink, type ModelStageAssignment } from "@/lib/operations/admin-models-view";
+import { buildModelCards, modelContractLinks, modelRecoveryBlocked, type CapacityAlarmSummary, type ModelContractLink, type ModelStageAssignment } from "@/lib/operations/admin-models-view";
 import { ADMIN_MODEL_STAGES } from "@/lib/llm/admin-model-stages";
 import { configuredModel, modelForPurpose, modelRequestName, MODEL_PURPOSE_ENV, readModelRegistry } from "@/lib/llm/model-registry";
 import { ensureServingContracts, servingContractSnapshot } from "@/lib/llm/serving-contract-store";
@@ -35,7 +35,8 @@ import { ASSIGNMENT_STAGE_IDS } from "@/lib/llm/capacity-helpers";
 import { readCapacityDevicesAdminView } from "@/lib/operations/admin-capacity-devices";
 import { readModelHelpersAdminView } from "@/lib/operations/admin-model-helpers";
 import { readCatalogJobRegistration } from "@/lib/operations/admin-models-jobs";
-import { readProbeObservations, recordAutoProbes } from "@/lib/operations/admin-models-probe-repository";
+import { autoProbeDirectEngines, readProbeObservations, recordAutoProbes } from "@/lib/operations/admin-models-probe-repository";
+import { readbackServingEndpoint } from "@/lib/operations/admin-serving-contracts";
 import { roleOverview } from "@/lib/operations/roles";
 import { SearchModelConstraints } from "./SearchModelConstraints";
 import "../status/operations.css";
@@ -129,12 +130,16 @@ async function readAlarmSummary(): Promise<CapacityAlarmSummary> {
 
 async function LiveModelsSlot({ assignments, models, contracts, humanProbe, served }: { assignments: ModelStageAssignment[]; models: ReturnType<typeof readModelRegistry>["models"]; contracts: ModelContractLink[]; humanProbe: Promise<HumanModelProbe[]>; served: Awaited<ReturnType<typeof readServedContractModels>> }) {
   const { readModelOpsStates } = await import("@/lib/operations/ops-runner/repository");
-  const [observation, states, roles, alarms, human] = await Promise.all([readAdminModelsObservation(), readModelOpsStates().catch(() => []),
+  const observationRead = readAdminModelsObservation();
+  // 엔진 직접 연결 계약의 자동 확인(GET /models, 슬롯마다 1분에 한 번) — 장부를 읽자마자 다른 읽기·사람 위임 확인과 나란히 돈다. 던지지 않는다.
+  const directProbes = observationRead.then(observation => autoProbeDirectEngines(buildModelCards(observation, models, assignments, contracts),
+    servingContractSnapshot().rows, readbackServingEndpoint)).catch(() => 0);
+  const [observation, states, roles, alarms, human] = await Promise.all([observationRead, readModelOpsStates().catch(() => []),
     roleOverview().catch(() => null), readAlarmSummary(), humanProbe]);
   // 사람 위임 슬롯의 자동 확인 결과를 같은 키(probe:<provider>:<key>)에 남긴 뒤 읽는다 — 표의 연결 확인 열이 「자동(렌더)」으로 보인다.
-  await recordAutoProbes(human.map(probe => ({ identity: { routeId: "human-deepseek-review", provider: probe.provider, model: probe.key },
+  await Promise.all([recordAutoProbes(human.map(probe => ({ identity: { routeId: "human-deepseek-review", provider: probe.provider, model: probe.key },
     result: { listed: probe.ready ? true : null, listMs: probe.ms, callBlocked: "유료 DeepSeek 시험 호출은 허용되지 않습니다.", error: probe.ready ? null : "사람 위임 모델 목록 확인 실패(연결 또는 목록 없음)" },
-    detail: "사람 위임 슬롯 · GET /models" })));
+    detail: "사람 위임 슬롯 · GET /models" }))), directProbes]);
   const probes = await readProbeObservations();
   return <LiveModels observation={observation} opsStates={states} assignments={assignments} models={models} contracts={contracts} served={served} probes={probes}
     leases={roles?.roles ?? []} readiness={roles?.overall ?? null} alarms={alarms}

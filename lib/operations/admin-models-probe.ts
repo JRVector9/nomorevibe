@@ -4,7 +4,8 @@ import { z } from "zod";
  * 「연결 확인」 결과의 관측(operations_observations) 계약 — 2026-10-31 한 화면 개편.
  *
  * 전에는 연결 확인 버튼의 결과가 브라우저 상태에만 있어 새로고침(30초 자동)마다 사라졌다. 이제 서버 액션(probeAdminModel)과
- * 렌더 때의 자동 확인(사람 위임·카테고리·검색 서버)이 같은 키에 upsert 하고, 표의 「연결 확인」 열이 읽어 「N초 전 · 수동/자동 · 결과」로 보인다.
+ * 렌더 때의 자동 확인(사람 위임·카테고리·검색 서버, 2026-11-01 부터 엔진 직접 연결 계약도 — admin-models-direct-probe.ts, 1분에 한 번)이
+ * 같은 키에 upsert 하고, 표의 「연결 확인」 열이 읽어 「N초 전 · 수동/자동 · 결과」로 보인다.
  *
  * 키: `probe:<provider>:<model>` — 경로(routeId)는 넣지 않는다. 같은 장비·같은 모델 슬롯은 어느 단계가 확인했든 하나의 결과를 공유한다.
  * 값: 결과·출처·소요 ms·확인한 경로만. 주소·키·토큰은 절대 넣지 않는다(결과 문구는 서버 액션이 만든 한국어 메시지다).
@@ -61,6 +62,9 @@ export function parseProbeObservation(row: { key: string; value: unknown; observ
   const observedAt = typeof row.observedAt === "string" ? row.observedAt : row.observedAt.toISOString();
   return Number.isFinite(Date.parse(observedAt)) ? { ...parsed.data, key: row.key, observedAt } : null;
 }
+
+/** 모델 목록(GET /models)을 읽지 못했을 때의 결과 문구 — 수동 버튼(probeAdminModel)과 엔진 직접 연결의 자동 확인이 같은 글을 쓴다. */
+export const PROBE_LIST_FAILED_MESSAGE = "모델 목록을 읽지 못했습니다. 연결 설정·인증을 확인해주세요.";
 
 export const probeSourceLabel = (source: ProbeSource): string => source === "manual" ? "수동(버튼)" : "자동(렌더)";
 const ms = (value: number | null) => value === null ? null : value < 1000 ? `${value}ms` : `${(value / 1000).toFixed(1)}초`;

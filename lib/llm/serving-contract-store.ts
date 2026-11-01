@@ -190,7 +190,13 @@ const contractProvider = (contract: unknown): string | null =>
  * (korean-translation-config, env switch) is outside this gate until the route→engine assignment table (PR 3b-B/3b-D) absorbs it.
  */
 export function textRouteAccess(routeId: string, model: string, provider?: string): TextRouteAccess {
-  const row = servingContractSnapshot().rows.find(entry => entry.routeId === routeId && entry.model === model);
+  return servingContractRowAccess(servingContractSnapshot().rows.find(entry => entry.routeId === routeId && entry.model === model), provider);
+}
+/**
+ * textRouteAccess for one already-found row (or none) — the same rule without the snapshot lookup. The admin models page's automatic
+ * connection check (lib/operations/admin-models-direct-probe.ts) decides with this which contract rows it may list and with which bearer.
+ */
+export function servingContractRowAccess(row: StoredServingContract | undefined, provider?: string): TextRouteAccess {
   const localDirect = provider === "local-direct" || (row ? contractProvider(row.contract) === "local-direct" : false);
   if (!localDirect && row?.transport !== "direct") return { block: "no_direct_contract" };
   if (!row || row.auth === "gateway") return localDirect ? { block: null, bearer: null } : { block: "gateway_auth" };

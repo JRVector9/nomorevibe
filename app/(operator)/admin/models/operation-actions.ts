@@ -16,6 +16,7 @@ import { findModelDefinition } from "@/lib/operations/admin-models-view";
 import { ADMIN_MODEL_STAGES } from "@/lib/llm/admin-model-stages";
 import { readModelRegistry, modelRequestName } from "@/lib/llm/model-registry";
 import { saveProbeObservation } from "@/lib/operations/admin-models-probe-repository";
+import { PROBE_LIST_FAILED_MESSAGE } from "@/lib/operations/admin-models-probe";
 
 /** The stored key of a direct engine contract for this registry model, if any (the gateway key is gone with the gateway). */
 function directEngineKey(definition: ReturnType<typeof readModelRegistry>["models"][number]): string | null {
@@ -64,7 +65,7 @@ export const probeAdminModel = webWriteAction(async function probeAdminModel(inp
     callBlocked: /deepseek/i.test(`${identity.provider} ${identity.model}`)
       ? "유료 DeepSeek 시험 호출은 허용되지 않습니다."
       : "짧은 시험 호출에 필요한 정식 슬롯·종료 증거 계약이 등록되지 않았습니다.",
-    ...(listed === null ? { error: identity.provider === "abcllm" || identity.provider === "local-direct" ? "모델 목록을 읽지 못했습니다. 연결 설정·인증을 확인해주세요." : "이 제공자의 모델 목록 조회 실행기가 연결되지 않았습니다." } : {}) };
+    ...(listed === null ? { error: identity.provider === "abcllm" || identity.provider === "local-direct" ? PROBE_LIST_FAILED_MESSAGE : "이 제공자의 모델 목록 조회 실행기가 연결되지 않았습니다." } : {}) };
   await db.insert(operationsAudit).values(await adminAuditRow(admin.login, { action: "admin-models-probe-result", target: identity.routeId,
     detail: { ...identity, ...result }, ok: false, error: result.error ?? "short_call_contract_missing" }));
   // 2026-10-31 한 화면: 결과를 슬롯 키(probe:<provider>:<model>)에 남겨 새로고침 뒤에도 「N초 전 · 수동 · 결과」로 보인다. 같은 장비·모델은 한 결과를 공유한다.

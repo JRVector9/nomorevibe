@@ -93,7 +93,7 @@ export function LiveModels({ observation, models = [], assignments = [], contrac
           <section className="min-w-0 rounded-xl border border-line bg-bg-card" aria-labelledby="models-table-heading">
             <div className="models-stage-head flex flex-wrap items-baseline gap-x-3.5 gap-y-1.5 border-b border-line px-3 py-2.5">
               <h2 id="models-table-heading" className="text-[15px] font-semibold">단계 × 모델</h2>
-              <p className="min-w-0 flex-[1_1_240px] text-[13px] text-fg-2">연결 확인: 카테고리·검색·사람 위임 슬롯은 렌더마다 자동, 나머지는 「연결 확인」 버튼. 같은 장비·같은 모델은 하나의 확인 결과를 공유하며 결과는 관측 표에 남아 새로고침 뒤에도 보입니다. 장비 이름은 실제 호출 주소와 맞춥니다.</p>
+              <p className="min-w-0 flex-[1_1_240px] text-[13px] text-fg-2">연결 확인: 카테고리·검색·사람 위임 슬롯은 렌더마다 자동, 엔진 직접 연결 모델은 1분에 한 번 자동(GET /models), 나머지는 「연결 확인」 버튼. 같은 장비·같은 모델은 하나의 확인 결과를 공유하며 결과는 관측 표에 남아 새로고침 뒤에도 보입니다. 장비 이름은 실제 호출 주소와 맞춥니다.</p>
               <span className="text-[13px] text-fg-2 tabular-nums"><span className="font-mono">{stageRows}</span>행 · 모델 슬롯 <span className="font-mono">{slots}</span>개</span>
             </div>
             <ModelStageTable cards={cards} observation={observation} controls={controls} probes={probes} localProbes={localProbes} busy={busy} onProbe={runProbe} restartModels={restartModels} served={served} />
