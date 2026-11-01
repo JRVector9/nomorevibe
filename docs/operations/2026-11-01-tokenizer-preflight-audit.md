@@ -2,7 +2,7 @@
 
 This source-only follow-up separates unavailable tokenizer evidence from proven input overflow. It is separate from the Oracle/stage-alert reliability change and requires its own review and CI before integration. No production settings or services were changed.
 
-The root agent's read-only observation at 14:10:18 KST found Supa search verification using `abcllm-search-verify-total-bound-v1` with direct transport, crawl tagline using its total-bound protocol, and AI1 using the raw total-bound protocol. Those routes do not take this tokenizer branch. The observed search-profile verification failures were `network=322`, `model_unavailable=77`, `exhausted=0`, and minimum/maximum verification attempts `0`. This patch does not establish the cause of those live failures or claim live product-budget exhaustion.
+The root agent's read-only observation at 14:10:18 UTC (23:10:18 KST) found Supa search verification using `abcllm-search-verify-total-bound-v1` with direct transport, crawl tagline using its total-bound protocol, and AI1 using the raw total-bound protocol. Those routes do not take this tokenizer branch. The observed search-profile verification failures were `network=322`, `model_unavailable=77`, `exhausted=0`, and minimum/maximum verification attempts `0`. This patch does not establish the cause of those live failures or claim live product-budget exhaustion.
 
 ## API and dispatch policy
 
