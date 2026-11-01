@@ -9,7 +9,7 @@ import { categorySourceHash, holdClassification, setManualCategory } from "@/lib
 import { editIntro, keepIntro } from "@/lib/domain/products/intro-editor";
 import { fixIntroFromRequest } from "@/lib/domain/products/intro-requests";
 import { pendingIntroChecks, recordIntroCheck } from "@/lib/domain/products/intro-checks";
-import type { JobLease } from "@/lib/jobs/control";
+import { JobLeaseLostError, type JobLease } from "@/lib/jobs/control";
 import { STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
 
@@ -258,7 +258,7 @@ it("rejects a publisher classification hold when its job lease expires during th
   const lease = await leaseFor("crawl-publish");
   await expect(behindStage(candidate.id, () => holdClassification(candidate, fixture.task.document, lease), async () => {
     await raw`UPDATE jobs SET locked_at=clock_timestamp()-(${STALE_LOCK_MS}+1000)*interval '1 millisecond' WHERE name=${lease.name}`;
-  })).rejects.toMatchObject({ name: "JobLeaseLostError" });
+  })).rejects.toBeInstanceOf(JobLeaseLostError);
   expect(await db.select().from(categoryDecisions).where(eq(categoryDecisions.repo, fixture.repo))).toEqual([]);
   expect((await db.select().from(crawlCandidates).where(eq(crawlCandidates.id, candidate.id)))[0]).toEqual(candidate);
 });
