@@ -40,10 +40,91 @@ ALL_ROLES = ('publisher', 'reviewer', 'crawler', 'text', 'maintenance')
 TOOL_FILES = ('deploy_release.py', 'deploy_shared_images.py', 'deploy_git_apps.py',
               'deployment_scope.py', 'release_runtime.py', 'release_readiness.py',
               'release_observer.py', 'release_monitor.py', 'release_catalog.py')
+# The only env lines a release rewrites; every other saved setting must already be live in the service spec.
+RELEASE_SETTINGS = ('RELEASE_TAG', 'NEXT_DEPLOYMENT_ID')
+# A failure code safe to print: no spaces, quotes, URLs or free text that could carry a secret value.
+SAFE_CODE = re.compile(r'[A-Za-z0-9_:.-]{3,160}')
+HIDDEN_REASON = 'inspect-private-receipts'
+# Plan failures happen before any private directory exists; this safe record keeps code, class, stage and names only.
+PLAN_FAILURE_DIR = Path.home() / '.local/state/nomorevibe-releases/plan-failures'
 
 
 def now():
     return datetime.now(timezone.utc).isoformat()
+
+
+class PlanRefused(ValueError):
+    """A plan-time refusal whose message is a safe code and whose detail holds names, never values."""
+
+    def __init__(self, code, safe_detail=None):
+        super().__init__(code)
+        self.code = code
+        self.safe_detail = safe_detail or {}
+
+
+def env_drift(app, runtime):
+    """Names (never values) of saved Dokploy settings that differ from the live Swarm service spec.
+
+    A Dokploy env saved without a redeploy leaves the running service on the old spec. The
+    release would then rewrite only RELEASE_TAG/NEXT_DEPLOYMENT_ID and the post-deploy contract
+    check (runtime_contract_matches) would reject the new spec after the full verification timeout.
+    """
+    saved = shared.dotenv_settings(app.get('env'))
+    spec = runtime.get('serviceSpec') if isinstance(runtime, dict) else None
+    container = ((spec or {}).get('TaskTemplate') or {}).get('ContainerSpec') or {}
+    live = fleet._env(container.get('Env') or [])
+    for key in RELEASE_SETTINGS:
+        saved.pop(key, None)
+        live.pop(key, None)
+    return {'missingInService': sorted(set(saved) - set(live)),
+            'unexpectedInService': sorted(set(live) - set(saved)),
+            'valueChanged': sorted(key for key in set(saved) & set(live) if saved[key] != live[key])}
+
+
+def env_drift_preflight(snapshot, selected):
+    """Refuse to plan while any selected app's saved env is not what its service runs (Git and Docker apps alike)."""
+    drift = {}
+    for short in selected:
+        found = env_drift(snapshot['apps'][short], snapshot['runtime'][short])
+        if any(found.values()):
+            drift[short] = found
+    if drift:
+        raise PlanRefused(next(iter(drift)) + '_env_drift_redeploy_required', {'envDrift': drift})
+    return {'checkedApps': list(selected), 'ignoredSettings': list(RELEASE_SETTINGS), 'checkedAt': now()}
+
+
+def safe_code(value):
+    return value if isinstance(value, str) and SAFE_CODE.fullmatch(value) else None
+
+
+def failure_reason(error):
+    """The stop code when the message is a bare code; anything with spaces, quotes or URLs stays private."""
+    return safe_code(getattr(error, 'code', None)) or safe_code(str(error)) or HIDDEN_REASON
+
+
+def failure_report(error):
+    report = {'status': 'release-not-complete', 'errorClass': type(error).__name__,
+              'reason': failure_reason(error), 'automaticRetry': False}
+    record = getattr(error, 'failure_record', None)
+    if isinstance(record, str):
+        report['failureRecord'] = record
+    return report
+
+
+def record_plan_failure(error, stage, directory=None):
+    """Durable safe record for a failure before the private plan directory exists; never raises, never holds values."""
+    record = {'status': 'release-not-complete', 'stage': stage, 'at': now(), 'errorClass': type(error).__name__,
+              'reason': failure_reason(error),
+              'detail': error.safe_detail if isinstance(error, PlanRefused) else None}
+    try:
+        directory = Path(directory or PLAN_FAILURE_DIR)
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ')
+        path = directory / (stamp + '-' + str(os.getpid()) + '.safe.json')
+        write_private(path, record)
+        return str(path)
+    except Exception:
+        return None
 
 
 def execution_source_hashes():
@@ -232,6 +313,8 @@ def create_plan(sha, output, *, baseline_path=None, baseline_sha=None, migration
             'snapshot': snapshot, 'target': {'sha': sha}, 'steps': [], 'migrationVerified': migration_verified,
             'toolSources': execution_source_hashes()}
     if selected:
+        # Saved-but-undeployed Dokploy env stops the plan here, before credentials, images or any wait.
+        plan['envPreflight'] = env_drift_preflight(snapshot, selected)
         client = new_client()
         proof = readiness.resolve_readiness(sha, required_kinds=required_kinds(selected))
         target = merged_target(snapshot, proof)
@@ -539,18 +622,30 @@ def main(argv=None):
     elif args.action == 'plan':
         if bool(args.baseline) != bool(args.baseline_sha):
             parser.error('--baseline and --baseline-sha must be provided together')
-        result = create_plan(args.sha, args.out, baseline_path=args.baseline,
-                             baseline_sha=args.baseline_sha, migration_verified=args.migration_verified)
+        try:
+            result = create_plan(args.sha, args.out, baseline_path=args.baseline,
+                                 baseline_sha=args.baseline_sha, migration_verified=args.migration_verified)
+        except Exception as error:
+            record = record_plan_failure(error, 'plan')
+            try:
+                error.failure_record = record
+            except AttributeError:
+                pass
+            raise
     else:
         plan = read_private(args.plan, args.plan_sha)
         result = run_release(plan, args.plan.parent / 'execution')
     print(json.dumps(result, ensure_ascii=False))
 
 
-if __name__ == '__main__':
+def cli(argv=None):
     try:
-        main()
+        main(argv)
     except Exception as error:
-        print(json.dumps({'status': 'release-not-complete', 'errorClass': type(error).__name__,
-                          'reason': getattr(error, 'code', 'inspect-private-receipts'), 'automaticRetry': False}))
-        sys.exit(1)
+        print(json.dumps(failure_report(error)))
+        return 1
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(cli())

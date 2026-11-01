@@ -49,6 +49,19 @@ npm run deploy -- run --plan "$PLAN" --plan-sha "$PLAN_SHA256"
 `.claude/prod.sh scope|plan|run`도 같은 진입점이며 `prod.sh deploy`는 검증된 `run`의 별칭이다.
 기존 개별 API 요청은 복구용 `legacy-deploy`로 명시해야 한다.
 
+### Dokploy env 를 바꿨으면 plan 전에 spec 을 맞춘다
+
+Dokploy 앱 env(예: `DB_POOL_MAX`)를 저장만 하고 재배포하지 않으면 Swarm 서비스 spec 은 옛 env 로 돈다.
+`plan`은 선택된 앱마다(Git 빌드·Docker 앱 모두) 저장된 env 와 라이브 서비스 spec env 를
+`RELEASE_TAG`·`NEXT_DEPLOYMENT_ID` 만 빼고 이름 집합·값까지 비교해, 하나라도 다르면 자격 증명·이미지 준비 전에
+`<app>_env_drift_redeploy_required` 로 즉시 멈춘다. 그러므로 env 를 바꿨으면 **plan 전에 그 앱을 같은 릴리스로
+재배포해 spec 을 맞추거나, 릴리스가 끝난 뒤 env 절차로 바꾼다.** 어긴 채 진행하면 2026-10-31 처럼 text-mini 가
+정상 배포돼도 계약 검증이 480초 뒤 `_verification_timeout` 으로 서고 같은 묶음의 동료 앱만 새 판이 되어 fleet 이 섞인다.
+달라진 변수 **이름**(값 없음)은 `~/.local/state/nomorevibe-releases/plan-failures/<utc>-<pid>.safe.json` 에 남고,
+최상위 출력의 `reason` 은 멈춤 코드가 공백·URL·따옴표 없는 코드 문자열이면 그대로 보이며(`failureRecord` 에 기록 경로),
+그 밖의 메시지는 지금처럼 `inspect-private-receipts` 로 숨긴다. plan 이 private 디렉터리를 만들기 전에 실패해도
+이 기록은 남는다(코드·시각·단계·변수 이름만, 비밀값 없음).
+
 준비 단계에서는 서비스를 변경하지 않고 필요한 이미지 cache를 두 호스트에 받는다.
 main의 최신 trusted CI 실행에서 필수 `check`와 필요한 image publish가 성공하고
 `release-image-{worker|web}-<SHA>` artifact의 run/attempt/tree/profile/version/digest가 일치해야 한다.
