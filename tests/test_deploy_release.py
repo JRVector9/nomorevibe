@@ -3,6 +3,7 @@ import importlib.util
 import io
 import json
 import os
+import stat
 import subprocess
 import tempfile
 import unittest
@@ -15,6 +16,22 @@ release = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release)
 OLD, NEW = 'a' * 40, 'b' * 40
 SECRET = 'synthetic-secret-value'
+
+
+@contextlib.contextmanager
+def observer_source_modes(mode):
+    """Pin checkout tool modes for one test, then put the previous mode back."""
+    module = release.load('observer_source_modes', 'release_observer.py')
+    saved = []
+    try:
+        for relative in module.SOURCE_FILES:
+            path = release.ROOT / relative
+            saved.append((path, stat.S_IMODE(path.stat().st_mode)))
+            os.chmod(path, mode)
+        yield [path for path, _mode in saved]
+    finally:
+        for path, original in saved:
+            os.chmod(path, original)
 
 
 def saved_env(kind, **settings):
@@ -160,6 +177,131 @@ class EnvDriftPreflightTests(unittest.TestCase):
             self.assertEqual(record['detail']['envDrift']['text-mini']['valueChanged'], ['DB_POOL_MAX'])
             self.assertFalse(output.exists())
             self.assertNotIn(SECRET, stdout.getvalue())
+
+
+class ObserverSourcePreflightTests(unittest.TestCase):
+    def fill(self, root, mode=0o644):
+        module = release.load('observer_source_fill', 'release_observer.py')
+        for relative in module.SOURCE_FILES:
+            path = Path(root) / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('source\n')
+            os.chmod(path, mode)
+        return module
+
+    def test_preflight_accepts_owner_0644_and_refuses_group_writable_with_a_safe_detail(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            module = self.fill(root)
+            receipt = release.observer_source_preflight(root)
+            self.assertEqual(receipt['checkedFiles'], list(module.SOURCE_FILES))
+            self.assertNotIn(str(root), json.dumps(receipt))
+            self.assertNotIn(str(release.ROOT), json.dumps(receipt))
+            os.chmod(root / module.SOURCE_FILES[0], 0o664)
+            (root / module.SOURCE_FILES[1]).unlink()
+            with self.assertRaises(release.PlanRefused) as caught:
+                release.observer_source_preflight(root)
+        self.assertEqual(caught.exception.code, 'observer_source_group_writable')
+        self.assertTrue(release.SAFE_CODE.fullmatch(caught.exception.code))
+        self.assertEqual(caught.exception.safe_detail['observerSources'][:2], [
+            {'file': module.SOURCE_FILES[0], 'problem': 'group_or_world_writable'},
+            {'file': module.SOURCE_FILES[1], 'problem': 'missing'}])
+        text = json.dumps(caught.exception.safe_detail)
+        self.assertNotIn(str(root), text)
+        self.assertNotIn(str(release.ROOT), text)
+        self.assertNotIn(SECRET, text)
+
+    def test_each_problem_kind_has_its_own_plan_code(self):
+        first_cases = (
+            ('group', 0o664, 'observer_source_group_writable', 'group_or_world_writable'),
+            ('world', 0o606, 'observer_source_group_writable', 'group_or_world_writable'),
+        )
+        for name, mode, code, problem in first_cases:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                module = self.fill(root)
+                os.chmod(root / module.SOURCE_FILES[0], mode)
+                with self.assertRaises(release.PlanRefused) as caught:
+                    release.observer_source_preflight(root)
+                self.assertEqual(caught.exception.code, code)
+                self.assertEqual(caught.exception.safe_detail, {'observerSources': [
+                    {'file': module.SOURCE_FILES[0], 'problem': problem}]})
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            module = self.fill(root)
+            (root / module.SOURCE_FILES[0]).unlink()
+            with self.assertRaises(release.PlanRefused) as caught:
+                release.observer_source_preflight(root)
+            self.assertEqual(caught.exception.code, 'observer_source_missing')
+            self.assertEqual(caught.exception.safe_detail['observerSources'][0]['problem'], 'missing')
+            self.fill(root)
+            target = root / module.SOURCE_FILES[0]
+            target.unlink()
+            target.symlink_to(root / module.SOURCE_FILES[1])
+            with self.assertRaises(release.PlanRefused) as caught:
+                release.observer_source_preflight(root)
+            self.assertEqual(caught.exception.code, 'observer_source_not_regular')
+            self.assertEqual(caught.exception.safe_detail['observerSources'][0],
+                             {'file': module.SOURCE_FILES[0], 'problem': 'not_regular'})
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            module = self.fill(root)
+            with patch.object(os, 'getuid', return_value=os.getuid() + 1), \
+                    self.assertRaises(release.PlanRefused) as caught:
+                release.observer_source_preflight(root)
+            self.assertEqual(caught.exception.code, 'observer_source_not_owned')
+            self.assertEqual(caught.exception.safe_detail['observerSources'][0]['problem'], 'not_owned')
+            self.assertNotIn(str(root), json.dumps(caught.exception.safe_detail))
+
+    def test_create_plan_stops_on_a_group_writable_observer_source_before_credentials(self):
+        snapshot = drift_snapshot()
+        decision = {'selectedApps': ['text-mini', 'text-m3'], 'retainedApps': [], 'mode': 'role', 'rulesVersion': 'v2'}
+        with observer_source_modes(0o644) as paths, tempfile.TemporaryDirectory() as directory, \
+                patch.object(release.shared, 'run', side_effect=lambda command, **kwargs: NEW if 'rev-parse' in command else ''), \
+                patch.object(release, 'read_private', return_value=snapshot), \
+                patch.object(release, 'impact', return_value=decision), \
+                patch.object(release, 'new_client', side_effect=AssertionError('credential accessed')), \
+                patch.object(release.readiness, 'resolve_readiness', side_effect=AssertionError('CI read')), \
+                patch.object(release.shared, 'ssh_python', side_effect=AssertionError('remote call')):
+            os.chmod(paths[0], 0o664)
+            output = Path(directory) / 'release-out'
+            with self.assertRaises(release.PlanRefused) as caught:
+                release.create_plan(NEW, output, baseline_path=Path(directory) / 'baseline.json', baseline_sha='0' * 64)
+            self.assertEqual(str(caught.exception), 'observer_source_group_writable')
+            self.assertEqual(caught.exception.safe_detail, {'observerSources': [
+                {'file': 'scripts/ops/release_observer.py', 'problem': 'group_or_world_writable'}]})
+            self.assertFalse(output.exists())
+            recorded = release.record_plan_failure(caught.exception, 'plan', Path(directory) / 'plan-failures')
+            text = Path(recorded).read_text()
+            record = json.loads(text)
+            self.assertEqual((record['stage'], record['reason'], record['errorClass']),
+                             ('plan', 'observer_source_group_writable', 'PlanRefused'))
+            self.assertEqual(record['detail']['observerSources'][0]['file'], 'scripts/ops/release_observer.py')
+            self.assertNotIn(str(release.ROOT), text)
+            self.assertNotIn(SECRET, text)
+
+    def test_schedule_failure_receipt_keeps_the_reason_code_and_relative_file_only(self):
+        module = release.load('observer_schedule_failure', 'release_observer.py')
+        with observer_source_modes(0o644) as paths:
+            os.chmod(paths[0], 0o664)
+            with self.assertRaises(module.ObserverError) as caught:
+                module._source_hashes()
+        record = release.observation_failure(caught.exception)
+        self.assertEqual(record['status'], 'schedule-failed')
+        self.assertEqual(record['errorClass'], 'ObserverError')
+        self.assertEqual(record['reason'], 'observer_source_group_writable')
+        self.assertEqual(record['file'], 'scripts/ops/release_observer.py')
+        self.assertNotIn(str(release.ROOT), json.dumps(record))
+        absolute = module.ObserverError('observer_source_not_owned', source=str(paths[0]))
+        hidden_path = release.observation_failure(absolute)
+        self.assertEqual(hidden_path['reason'], 'observer_source_not_owned')
+        self.assertNotIn('file', hidden_path)
+        self.assertNotIn(str(release.ROOT), json.dumps(hidden_path))
+        leaked = release.observation_failure(OSError('SECRET=' + SECRET))
+        self.assertNotIn('reason', leaked)
+        self.assertNotIn('file', leaked)
+        self.assertNotIn(SECRET, json.dumps(leaked))
+        self.assertEqual(leaked['errorClass'], 'OSError')
 
 
 WORKER = release.shared.IMAGE_PREFIX['worker'] + 'sha256:' + 'c' * 64
@@ -310,7 +452,7 @@ class RetireSettingTests(unittest.TestCase):
             prepared.update(kwargs, selected=list(selected)); return {'skipped': [], 'retiredSettings': list(kwargs.get('retired_settings', ()))}
         def verify_fleet(client, snapshot, target, selected, receipts, repo, **kwargs):
             verified.append((list(selected), kwargs)); return {}
-        with tempfile.TemporaryDirectory() as directory:
+        with observer_source_modes(0o644), tempfile.TemporaryDirectory() as directory:
             with patch.object(release.shared, 'run', side_effect=lambda command, **kwargs: NEW if 'rev-parse' in command else ''), \
                     patch.object(release, 'read_private', return_value=snapshot), \
                     patch.object(release, 'impact', return_value=decision) as impact, \
@@ -338,6 +480,10 @@ class RetireSettingTests(unittest.TestCase):
         self.assertEqual((prepared['retired_settings'], prepared['selected']), (retired, ['text-mini', 'text-m3']))
         # The baseline is reproved as it is; retirement only applies to what the run writes.
         self.assertEqual(verified, [([], {})])
+        self.assertEqual(plan['observerSourcePreflight']['checkedFiles'], list(release.load(
+            'observer_files_for_plan', 'release_observer.py').SOURCE_FILES))
+        self.assertNotIn(str(release.ROOT), json.dumps(plan['observerSourcePreflight']))
+        self.assertNotIn(SECRET, json.dumps(plan['observerSourcePreflight']))
         self.assertEqual(release.plan_retired_settings(plan), retired)
         for corrupt in ({'retiredSettings': ['CRAWL_REVIEW_MODEL', 'ABCLLM_API_KEY']}, {'retiredSettings': 'ABCLLM_API_KEY'},
                         {'retiredSettings': ['ABCLLM_API_KEY', 'ABCLLM_API_KEY']}, {'retiredSettings': ['RELEASE_TAG']},

@@ -515,12 +515,36 @@ class CoordinatorFlowTests(unittest.TestCase):
         saved_observation = json.loads((self.execution / 'observation.safe.json').read_text())
         self.assertEqual(saved_result['status'], 'deployed-and-verified')
         self.assertEqual(saved_observation['status'], 'schedule-failed')
+        self.assertNotIn('reason', saved_observation)
+        self.assertNotIn('synthetic process launch failure', json.dumps(saved_observation))
         self.assertTrue((self.execution / 'final.private.json').is_file())
         self.assertFalse((self.execution / 'stopped.safe.json').exists())
         self.assertEqual(len(self.client.posts), 6)
         self.assertEqual(self.health.call_count, 2)
         self.assertEqual(self.fleet.call_count, 2)
         self.assertIn('final-monitor', self.events)
+
+    def test_observer_source_failure_records_reason_and_relative_file_without_losing_verified_status(self):
+        observer = load('flow_observer_error', ROOT / 'scripts/ops/release_observer.py')
+
+        def fail_launch(*args, **kwargs):
+            raise observer.ObserverError('observer_source_group_writable', source='scripts/ops/release_observer.py')
+
+        self.launch.side_effect = lambda name, filename: SimpleNamespace(launch_observer=fail_launch)
+        result = release.run_release(self.plan, self.execution)
+        self.assertEqual(result['status'], 'deployed-and-verified')
+        self.assertEqual(result['observation']['status'], 'schedule-failed')
+        self.assertEqual(result['observation']['reason'], 'observer_source_group_writable')
+        self.assertEqual(result['observation']['file'], 'scripts/ops/release_observer.py')
+        self.assertEqual(result['observation']['errorClass'], 'ObserverError')
+        saved_result = json.loads((self.execution / 'result.safe.json').read_text())
+        saved_observation = json.loads((self.execution / 'observation.safe.json').read_text())
+        self.assertEqual(saved_result['status'], 'deployed-and-verified')
+        self.assertNotIn('observation', saved_result)
+        self.assertEqual(saved_observation['reason'], 'observer_source_group_writable')
+        self.assertEqual(saved_observation['file'], 'scripts/ops/release_observer.py')
+        self.assertNotIn(str(self.directory), json.dumps(saved_observation))
+        self.assertFalse((self.execution / 'stopped.safe.json').exists())
 
     def test_ambiguous_provider_failure_stops_before_second_web_and_never_launches_observation(self):
         self.client.fail_app, self.client.fail_endpoint = 'web-mini', 'application.saveDockerProvider'

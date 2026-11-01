@@ -166,6 +166,14 @@ CHECK를 다시 짜는 migration(0155·0157·0158·0160)은 이 DRAIN 아래에�
 원 final snapshot과 hash로 관측만 별도로 시작한다.
 run 트리 도구 파일은 0644여야 한다. group-writable(0664, umask 002 체크아웃)이면 `release_observer` `_source_hashes`의 `st_mode & 0o022`에 걸려 예약이 `schedule-failed`로 남는다([2026-11-01 창 #4](2026-11-01-deploy-window-4.md#교훈)).
 
+`run` 트리의 `scripts/ops` 도구 파일은 현재 사용자 소유의 정규 파일이어야 하고 그룹·기타 쓰기 비트(`0o022`)가 없어야 한다.
+권장 모드는 소유자 `0644`다. `umask 002`로 체크아웃하면 `0664`(group-writable)가 되므로 `chmod -R g-w scripts/ops`로 맞춘다.
+`plan`이 `observer_source_group_writable`·`observer_source_not_owned`·`observer_source_missing`·`observer_source_not_regular`
+(`observer_source_*`)로 멈추면 그 검사다. 자격 증명·이미지 준비 전에 멈추고, plan-failures 기록의 detail에는 저장소 상대 경로와
+문제 종류(`group_or_world_writable`·`not_owned`·`missing`·`not_regular`)만 남는다. 값·절대 경로·사용자 이름은 적지 않는다.
+이미 `deployed-and-verified`인 뒤 예약만 실패하면 `observation.safe.json`의 `schedule-failed`에 `reason`(같은 안전 코드)과
+`file`(상대 경로)이 함께 남고, 완료된 앱은 재배포하지 않는다.
+
 ### monitor 검증은 5분, 넘으면 사람 판별(`deployed-human-review-required`)
 
 마지막 단계 monitor-m3 는 새 deploymentId·done, runtime 계약, 이미지 revision·RELEASE_TAG·healthy 를 확인한 뒤

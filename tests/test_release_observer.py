@@ -6,6 +6,7 @@ import io
 import json
 import os
 import signal
+import stat
 import subprocess
 import tempfile
 import unittest
@@ -50,6 +51,16 @@ class Process:
 
 class ObserverTests(unittest.TestCase):
     def setUp(self):
+        # Launch pins the real checkout. A umask 002 tree is 0664 and would fail every case; force the
+        # ownership rule for this process and put the original mode back afterwards.
+        self._source_mode_restore = []
+        for relative in observer.SOURCE_FILES:
+            path = observer.REPO / relative
+            mode = stat.S_IMODE(path.stat().st_mode)
+            self._source_mode_restore.append((path, mode))
+            if mode & 0o022:
+                os.chmod(path, mode & ~0o022)
+        self.addCleanup(self._restore_observer_source_modes)
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.private = Path(self.directory.name).resolve()
@@ -67,6 +78,10 @@ class ObserverTests(unittest.TestCase):
         self.out = self.private / 'observations'
         self.clock = Clock()
         self.calls = []
+
+    def _restore_observer_source_modes(self):
+        for path, mode in self._source_mode_restore:
+            os.chmod(path, mode)
 
     def prepare(self, offsets=(300, 600, 900, 21600)):
         return observer._prepare_launch(self.snapshot_path, self.digest, self.out,
@@ -386,6 +401,56 @@ class ObserverTests(unittest.TestCase):
         self.assertFalse(record['passed'])
         self.assertEqual(record['errorCode'], 'observer_source_changed')
         self.assertEqual(len(self.calls), 1)
+
+    def source_tree(self, mode=0o644):
+        root = self.private / 'source-tree'
+        for relative in observer.SOURCE_FILES:
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('pinned\n')
+            os.chmod(path, mode)
+        return root
+
+    def test_source_problems_name_a_relative_file_and_distinguish_mode_owner_and_presence(self):
+        root = self.source_tree()
+        self.assertEqual(observer.observer_source_problems(root), [])
+        for mode in (0o600, 0o644, 0o755):
+            with self.subTest(mode=oct(mode)):
+                for relative in observer.SOURCE_FILES:
+                    os.chmod(root / relative, mode)
+                self.assertEqual(observer.observer_source_problems(root), [])
+        first, second = observer.SOURCE_FILES[0], observer.SOURCE_FILES[1]
+        os.chmod(root / first, 0o644)
+        for mode in (0o664, 0o646, 0o606, 0o622):
+            with self.subTest(writable=oct(mode)):
+                os.chmod(root / first, mode)
+                self.assertEqual(observer.observer_source_problems(root), [
+                    {'file': first, 'problem': 'group_or_world_writable'}])
+        os.chmod(root / first, 0o664)
+        with patch.object(observer.os, 'getuid', return_value=os.getuid() + 1):
+            unowned = observer.observer_source_problems(root)
+        self.assertTrue(unowned)
+        self.assertTrue(all(item['problem'] == 'not_owned' for item in unowned))
+        self.assertEqual(unowned[0]['file'], first)
+        self.assertNotIn(str(root), json.dumps(unowned))
+        os.chmod(root / first, 0o644)
+        (root / first).unlink()
+        self.assertEqual(observer.observer_source_problems(root)[0], {'file': first, 'problem': 'missing'})
+        (root / first).symlink_to(root / second)
+        self.assertEqual(observer.observer_source_problems(root)[0], {'file': first, 'problem': 'not_regular'})
+        (root / first).unlink()
+        (root / first).mkdir()
+        self.assertEqual(observer.observer_source_problems(root)[0], {'file': first, 'problem': 'not_regular'})
+
+    def test_group_writable_checkout_raises_a_specific_code_and_the_relative_path(self):
+        relative = observer.SOURCE_FILES[0]
+        os.chmod(observer.REPO / relative, 0o664)
+        with self.assertRaises(observer.ObserverError) as caught:
+            observer._source_hashes()
+        self.assertEqual((caught.exception.code, caught.exception.source),
+                         ('observer_source_group_writable', relative))
+        self.assertNotIn(str(observer.REPO), str(caught.exception))
+        self.assertNotIn('/', str(caught.exception))
 
 
 if __name__ == '__main__':

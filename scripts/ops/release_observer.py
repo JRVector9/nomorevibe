@@ -38,9 +38,19 @@ SAMPLE_TIMEOUT_SECONDS = 300
 STARTUP_TIMEOUT_SECONDS = 2
 
 
+# Plan and launch use one code per cause. Group/world write is not reported as not_owned.
+SOURCE_PROBLEM_CODE = {
+    'missing': 'observer_source_missing',
+    'not_regular': 'observer_source_not_regular',
+    'not_owned': 'observer_source_not_owned',
+    'group_or_world_writable': 'observer_source_group_writable',
+}
+
+
 class ObserverError(RuntimeError):
-    def __init__(self, code):
+    def __init__(self, code, *, source=None):
         self.code = code
+        self.source = source
         super().__init__(code)
 
 
@@ -160,13 +170,50 @@ def _snapshot(path, digest):
     return snapshot
 
 
+def _classify_source(root, relative):
+    """`missing`, `not_regular`, `not_owned`, `group_or_world_writable`, or None.
+
+    The final path is lstat'd, so a symlink is not a regular file. Group/world write is `st_mode & 0o022`.
+    """
+    relative_path = Path(relative)
+    if relative_path.is_absolute() or '..' in relative_path.parts:
+        return 'missing'
+    path = Path(root) / relative_path
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return 'missing'
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+        return 'not_regular'
+    if info.st_uid != os.getuid():
+        return 'not_owned'
+    if info.st_mode & 0o022:
+        return 'group_or_world_writable'
+    return None
+
+
+def observer_source_problems(root=None):
+    """Repo-relative sources that fail the launch ownership rule. Empty when every file is safe to pin."""
+    root = REPO if root is None else root
+    problems = []
+    for relative in SOURCE_FILES:
+        problem = _classify_source(root, relative)
+        if problem:
+            problems.append({'file': relative, 'problem': problem})
+    return problems
+
+
 def _source_hashes():
+    problems = observer_source_problems()
+    if problems:
+        first = problems[0]
+        raise ObserverError(SOURCE_PROBLEM_CODE[first['problem']], source=first['file'])
     result = {}
     for relative in SOURCE_FILES:
-        path = _path(REPO / relative)
-        info = path.stat()
-        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o022:
-            raise ObserverError('observer_source_not_owned')
+        try:
+            path = _path(REPO / relative)
+        except ObserverError as error:
+            raise ObserverError(error.code, source=relative) from None
         result[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
     return result
 
