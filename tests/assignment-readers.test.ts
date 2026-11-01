@@ -227,25 +227,28 @@ describe("AI1 reviewers from the table", () => {
     expect(selectTableFirstReviewer([], 1)).toBeNull();
   });
 
-  it("pins active intents and retries to their model (fallbacks included) and never moves sent work", () => {
+  it("pins live intents and live calls to their model (fallbacks included) and moves everything else to the current table", () => {
     expect(selectTableFirstReviewer(rows, 1, [reviewer(fallback)])).toEqual(reviewer(fallback));
     expect(selectTableFirstReviewer(rows, 1, [], [reviewer(c)])).toEqual(reviewer(c));
-    expect(selectTableFirstReviewer(rows, 1, [legacyFirst])).toBeNull();                       // removed model, state unknown: protected
-    expect(selectTableFirstReviewer(rows, 1, [{ ...legacyFirst, state: "running" }])).toBeNull(); // removed model, still running: protected
-    // removed model, settled attempt: the fixed table slot (2026-11-01 AI1 stall)
-    expect(selectTableFirstReviewer(rows, 1, [{ ...legacyFirst, state: "failed" }])).toEqual(selectTableFirstReviewer(rows, 1));
+    // 2026-11-01: a model that left the table holds the candidate only while its call may still be in flight
+    expect(selectTableFirstReviewer(rows, 1, [{ ...legacyFirst, state: "running", live: true }])).toBeNull();
+    for (const attempt of [legacyFirst, { ...legacyFirst, state: "running", live: false }, { ...legacyFirst, state: "failed" },
+      { provider: null, model: null }])
+      expect(selectTableFirstReviewer(rows, 1, [attempt])).toEqual(selectTableFirstReviewer(rows, 1));
     expect(selectTableFirstReviewer(rows, 1, [], [reviewer(a), reviewer(b)])).toBeNull();
     const blocked = new Set([firstReviewerKey(a)]);
-    expect(selectTableFirstReviewer(rows, 1, [], [reviewer(a)], { blocked, untouched: true })).toEqual(reviewer(a));
+    expect(selectTableFirstReviewer(rows, 1, [], [reviewer(a)], { blocked })).toEqual(reviewer(a));
+    // a live call on a blocked model stays; a settled retry on it moves to the next row
+    expect(selectTableFirstReviewer(rows, 1, [{ ...reviewer(a), state: "running", live: true }], [], { blocked })).toEqual(reviewer(a));
+    expect(selectTableFirstReviewer(rows, 1, [{ ...reviewer(a), state: "failed" }], [], { blocked })).toEqual(reviewer(b));
   });
 
-  it("reroutes only untouched candidates: next rank-1 row, then the rank-2 fallback, else waits on the fixed slot", () => {
-    const untouched = (keys: ModelAssignmentRow[]) => ({ blocked: new Set(keys.map(entry => firstReviewerKey(entry))), untouched: true });
-    expect(selectTableFirstReviewer(rows, 1, [], [], untouched([a]))).toEqual(reviewer(b));
-    expect(selectTableFirstReviewer(rows, 3, [], [], untouched([c]))).toEqual(reviewer(a));
-    expect(selectTableFirstReviewer(rows, 1, [], [], { ...untouched([a]), untouched: false })).toEqual(reviewer(a));
-    expect(selectTableFirstReviewer(rows, 2, [], [], untouched([a, b, c]))).toEqual(reviewer(fallback));
-    expect(selectTableFirstReviewer(rows, 2, [], [], untouched([a, b, c, fallback]))).toEqual(reviewer(b));
+  it("reroutes around blocked models: next rank-1 row, then the rank-2 fallback, else waits on the fixed slot", () => {
+    const avoid = (keys: ModelAssignmentRow[]) => ({ blocked: new Set(keys.map(entry => firstReviewerKey(entry))) });
+    expect(selectTableFirstReviewer(rows, 1, [], [], avoid([a]))).toEqual(reviewer(b));
+    expect(selectTableFirstReviewer(rows, 3, [], [], avoid([c]))).toEqual(reviewer(a));
+    expect(selectTableFirstReviewer(rows, 2, [], [], avoid([a, b, c]))).toEqual(reviewer(fallback));
+    expect(selectTableFirstReviewer(rows, 2, [], [], avoid([a, b, c, fallback]))).toEqual(reviewer(b));
   });
 });
 

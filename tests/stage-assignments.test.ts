@@ -25,7 +25,7 @@ describe('chooseModelForItem', () => {
     const blocked = new Set([JSON.stringify(['abcllm', 'second-model'])]);
     for (let candidateId = 1; candidateId <= 12; candidateId++)
       expect(chooseModelForItem(pool, candidateId, { excludeModels: ['second-model'] })?.model)
-        .toBe(selectFirstReviewer(reviewers, candidateId, [], [], { blocked, untouched: true })?.model);
+        .toBe(selectFirstReviewer(reviewers, candidateId, [], [], { blocked })?.model);
   });
 
   it('is deterministic, ignores off/shadow/helper rows and falls back to the next rank only when the whole rank is excluded', () => {

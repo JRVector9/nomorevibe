@@ -532,22 +532,24 @@ it("legacy pool reroutes untouched candidates around persisted unknown occupancy
   mocks.settings = { ...mocks.settings!, firstReview: primary, firstReviewAdditional: [extra], reviewConcurrency: 1 };
   mocks.blocked.mockResolvedValue(new Set([firstReviewerKey(primary)]));
   mocks.choose.mockImplementation(async ({ candidate, settings }, _executor, blocked) =>
-    selectFirstReviewer(firstReviewers(settings), candidate.id, [], [], { blocked, untouched: true }));
+    selectFirstReviewer(firstReviewers(settings), candidate.id, [], [], { blocked }));
   mocks.gateway.mockResolvedValue({ ok: true, outcome: { decision: "approve", reason: "Deployed tracker", evidenceIds: ["product"] } });
   await reviewCrawlCandidates(context());
   expect(mocks.claim).toHaveBeenCalledExactlyOnceWith(expect.objectContaining(extra));
   expect(mocks.gateway).toHaveBeenCalledExactlyOnceWith(expect.anything(), expect.objectContaining({ model: extra.model }));
 });
 
-it("legacy pool keeps a sent candidate pinned even when that model's physical group is blocked", async () => {
-  const primary = { provider: "abcllm" as const, model: "primary-model" };
-  const extra = { provider: "abcllm" as const, model: "extra-model" };
-  mocks.settings = { ...mocks.settings!, firstReview: primary, firstReviewAdditional: [extra], reviewConcurrency: 1 };
-  mocks.blocked.mockResolvedValue(new Set([firstReviewerKey(primary)]));
-  mocks.choose.mockImplementation(async ({ candidate, settings }, _executor, blocked) =>
-    selectFirstReviewer(firstReviewers(settings), candidate.id, [primary], [], { blocked, untouched: false }));
-  mocks.claim.mockRejectedValue(new ModelCapacityDeferredError("capacity"));
-  await reviewCrawlCandidates(context());
-  expect(mocks.claim).toHaveBeenCalledExactlyOnceWith(expect.objectContaining(primary));
-  expect(mocks.gateway).not.toHaveBeenCalled();
-});
+// 2026-11-01 운영자 결정: 지금 보내진 중인 호출만 후보를 막힌 모델에 묶는다. 끝난 재시도는 다음 칸으로 간다.
+it.each([[false, "extra-model"], [true, "primary-model"]] as const)(
+  "legacy pool with a blocked retry model (live call: %s) claims %s", async (live, claimed) => {
+    const primary = { provider: "abcllm" as const, model: "primary-model" };
+    const extra = { provider: "abcllm" as const, model: "extra-model" };
+    mocks.settings = { ...mocks.settings!, firstReview: primary, firstReviewAdditional: [extra], reviewConcurrency: 1 };
+    mocks.blocked.mockResolvedValue(new Set([firstReviewerKey(primary)]));
+    mocks.choose.mockImplementation(async ({ candidate, settings }, _executor, blocked) =>
+      selectFirstReviewer(firstReviewers(settings), candidate.id, [{ ...primary, state: live ? "running" : "failed", live }], [], { blocked }));
+    mocks.claim.mockRejectedValue(new ModelCapacityDeferredError("capacity"));
+    await reviewCrawlCandidates(context());
+    expect(mocks.claim).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ model: claimed }));
+    expect(mocks.gateway).not.toHaveBeenCalled();
+  });

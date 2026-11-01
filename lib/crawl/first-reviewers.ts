@@ -76,52 +76,54 @@ export function firstReviewIdentitySql(pool: FirstReviewer[], columns: { provide
   return pool.length ? sql`(${sql.join(pool.map(reviewer => sql`(${columns.provider} = ${reviewer.provider} AND ${columns.model} = ${reviewer.model})`), sql` OR `)})` : sql`false`;
 }
 
-/** 1차 고르기가 읽는 이 입력의 가장 최근 모델 시도. state 를 모르면(옛 호출자) 끝났다고 보지 않는다. */
-export type FirstReviewAttemptIdentity = { provider: string | null; model: string | null; state?: string | null };
 /**
- * 풀에서 빠진 모델의 시도를 지금 풀의 고정 칸으로 다시 배정해도 되는가. 끝난 시도(failed·superseded·succeeded)는 보낸 일이 남아 있지 않다 —
- * 막을 것이 없는데 null 로 두면 그 후보는 대기열에 남은 채 매 틱 조용히 건너뛰어진다(2026-11-01 AI1 정체: admitted 14 · calls 0).
- * 진행 중(running)·상태 모름·식별 불가(provider/model 없음)는 그대로 보호한다(null). 시도 예산은 모델과 무관하게 이어진다(retryReviewIdentity).
+ * 1차 고르기가 읽는 이 입력의 가장 최근 모델 시도. live 는 지금 보내진 중일 수 있는 시도(running 이고 그 공급자의 호출 기한 + 여유 안에 시작)다 —
+ * 고르기(chooseFirstReviewForCandidate)가 DB 시각으로 채운다. 없으면 보내진 중이 아니다.
  */
-const settledRemovedAttempt = (attempt: FirstReviewAttemptIdentity): boolean => typeof attempt.provider === "string"
-  && typeof attempt.model === "string" && (attempt.state === "failed" || attempt.state === "superseded" || attempt.state === "succeeded");
+export type FirstReviewAttemptIdentity = { provider: string | null; model: string | null; state?: string | null; live?: boolean };
+/** 이 틱에 쓸 수 없는 모델(firstReviewerKey): 미확인 점유로 꽉 찬 모델·이 틱에 쉬는 모델. claim 재확인에서는 고른 모델 말고 모두다. */
+export type FirstReviewAvoid = { blocked: ReadonlySet<string> };
 
 /**
- * Pin active intents and retries before assigning untouched candidates. No state is reclaimed here.
- * Only a candidate with no intent and no attempt at all (`untouched`) may skip a blocked model,
- * rotating from its fixed slot. If every model is blocked it keeps the fixed slot and waits.
+ * 1차 심사자 고르기(순수). 2026-11-01 운영자 결정: 「지금 정말 보내진 중인 호출이 없으면 후보는 언제나 지금 풀로 간다」 —
+ * 10-28 의 「보낸 일은 옮기지 않는다(풀에서 빠진 모델의 재시도는 null)」 보호를 뒤집는다(docs/operations/review-stall-backlog.md).
+ * 1. 살아 있는 의도(active — 고르기가 기한 안의 reserved·dispatched 와 풀 모델의 waiting 만 넘긴다)는 그 모델에 묶는다. 둘 이상이거나 풀 밖이면 null(기다린다).
+ * 2. 마지막 시도가 지금 보내진 중(live)이면 그 모델에 묶는다 — 풀에서 빠졌으면 null. 같은 후보에 살아 있는 호출을 둘 만들지 않는다.
+ * 3. 아니면 마지막 시도의 모델이 풀에 있고 막히지 않았으면 그 모델(재시도 고정).
+ * 4. 아니면(풀에서 빠졌거나 막혔거나 시도가 없다) 고정 칸 (candidateId − 1) mod n 부터 막히지 않은 첫 모델. 모두 막혔으면 고정한 모델·고정 칸에서 기다린다.
+ * 시도 예산·재시도 시각은 모델과 무관하게 이어진다(retryReviewIdentity).
  */
 export function selectFirstReviewer(pool: FirstReviewer[], candidateId: number,
   attempts: FirstReviewAttemptIdentity[] = [],
   active: { provider: string | null; model: string | null }[] = [],
-  avoid: { blocked: ReadonlySet<string>; untouched: boolean } = { blocked: new Set(), untouched: false }): FirstReviewer | null {
+  avoid: FirstReviewAvoid = { blocked: new Set() }): FirstReviewer | null {
   if (!pool.length || !Number.isSafeInteger(candidateId) || candidateId < 1) return null;
   if (active.length) {
     const identities = new Set(active.map(row => JSON.stringify([row.provider, row.model])));
     if (identities.size !== 1 || !hasFirstReviewer(pool, active[0])) return null;
     return pool.find(row => row.provider === active[0].provider && row.model === active[0].model)!;
   }
+  const latest = attempts[0];
+  const pinned = latest ? pool.find(row => row.provider === latest.provider && row.model === latest.model) : undefined;
+  if (latest?.live === true) return pinned ?? null;
+  if (pinned && !avoid.blocked.has(firstReviewerKey(pinned))) return pinned;
   const start = (candidateId - 1) % pool.length;
-  // The latest attempt pins a retry to its model. A settled attempt of a model removed from the pool
-  // takes the fixed slot (no blocked-model rotation: it is not untouched); an unsettled or unreadable one stays protected.
-  if (attempts.length) return pool.find(row => row.provider === attempts[0].provider && row.model === attempts[0].model)
-    ?? (settledRemovedAttempt(attempts[0]) ? pool[start] : null);
-  if (avoid.untouched && attempts.length === 0) for (let offset = 0; offset < pool.length; offset++) {
+  for (let offset = 0; offset < pool.length; offset++) {
     const reviewer = pool[(start + offset) % pool.length];
     if (!avoid.blocked.has(firstReviewerKey(reviewer))) return reviewer;
   }
-  return pool[start];
+  return pinned ?? pool[start];
 }
 
 /**
- * 배정 표 판 selectFirstReviewer(PR 3b-B, 순수). 고정(활성 의도·재시도)은 같다 — 표의 어느 행(대체 포함)이든 그 심사자에 묶는다.
- * 새 후보는 chooseModelForItem 의 칸: 가장 낮은 rank 의 행들에서 (candidateId − 1) mod n. 손대지 않은 후보만 막힌 모델(blocked)을 비켜 가고,
- * 그 rank 가 모두 막혔으면 다음 rank(대체)로 간다. 모두 막혔으면 고정 칸에서 기다린다.
+ * 배정 표 판 selectFirstReviewer(PR 3b-B, 순수). 규칙은 같다 — 살아 있는 의도·보내진 중인 시도는 표의 어느 행(대체 포함)이든 그 심사자에 묶고,
+ * 아니면 마지막 시도의 모델(표에 있고 막히지 않았을 때), 그다음 chooseModelForItem 의 칸: 가장 낮은 rank 의 행들에서 (candidateId − 1) mod n,
+ * 막힌 모델은 비켜 가며 그 rank 가 모두 막혔으면 다음 rank(대체)로 간다. 모두 막혔으면 고정한 모델·고정 칸에서 기다린다.
  */
 export function selectTableFirstReviewer(rows: readonly FirstReviewTableRow[], candidateId: number,
   attempts: FirstReviewAttemptIdentity[] = [],
   active: { provider: string | null; model: string | null }[] = [],
-  avoid: { blocked: ReadonlySet<string>; untouched: boolean } = { blocked: new Set(), untouched: false }): FirstReviewer | null {
+  avoid: FirstReviewAvoid = { blocked: new Set() }): FirstReviewer | null {
   const usable = stageTableRows("ai1", rows), pool = tableFirstReviewers(usable);
   if (!pool.length || !Number.isSafeInteger(candidateId) || candidateId < 1) return null;
   if (active.length) {
@@ -129,15 +131,17 @@ export function selectTableFirstReviewer(rows: readonly FirstReviewTableRow[], c
     if (identities.size !== 1 || !hasFirstReviewer(pool, active[0])) return null;
     return pool.find(row => row.provider === active[0].provider && row.model === active[0].model)!;
   }
-  const fixed = chooseModelForItem(usable, candidateId);
-  if (attempts.length) return pool.find(row => row.provider === attempts[0].provider && row.model === attempts[0].model)
-    ?? (settledRemovedAttempt(attempts[0]) && fixed ? tableReviewer(fixed) : null);
-  if (avoid.untouched && avoid.blocked.size) {
+  const latest = attempts[0];
+  const pinned = latest ? pool.find(row => row.provider === latest.provider && row.model === latest.model) : undefined;
+  if (latest?.live === true) return pinned ?? null;
+  if (pinned && !avoid.blocked.has(firstReviewerKey(pinned))) return pinned;
+  if (avoid.blocked.size) {
     const excludeModels = usable.filter(row => avoid.blocked.has(firstReviewerKey(row))).map(row => row.model);
     const rerouted = chooseModelForItem(usable, candidateId, { excludeModels });
     if (rerouted) return tableReviewer(rerouted);
   }
-  return fixed ? tableReviewer(fixed) : null;
+  const fixed = chooseModelForItem(usable, candidateId);
+  return pinned ?? (fixed ? tableReviewer(fixed) : null);
 }
 
 /**
