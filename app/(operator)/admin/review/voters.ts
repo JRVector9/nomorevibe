@@ -2,8 +2,8 @@ import { modelForPurpose } from "@/lib/llm/model-registry";
 import { sameReviewModel } from "@/lib/crawl/review-model-identity";
 
 /**
- * 2차 표 빠른 전환의 선택지 — 심사 큐 머리에서 고른다(2026-10-06, Grok 주간 한도가 바닥나 사내 게이트웨이로 바꿔야 했다).
- * 서버 액션과 화면이 같은 목록을 쓴다. 게이트웨이 모델은 그때그때 /v1/models 에서 읽는다.
+ * 2차 표 빠른 전환의 선택지 — 심사 큐 머리에서 고른다.
+ * 서버 액션과 화면이 같은 목록을 쓴다. abcllm 선택지는 심사 경로의 직접 연결 계약으로 열리는 모델만이다(listReviewEngineModels). 네트워크로 모델 목록을 묻지 않는다.
  */
 
 export type VoterProvider = "grok-cli" | "abcllm" | "claude-cli" | "local-direct";
@@ -24,7 +24,7 @@ export function parseVoterValue(value: unknown): { provider: VoterProvider; mode
 }
 
 /**
- * 고를 수 있는 것: Grok(구독), 게이트웨이에 지금 있는 모델(한도 없음), Claude(구독). 1차와 같은 모델은 막는다 —
+ * 고를 수 있는 것: Grok(구독), 심사 경로의 직접 연결 계약으로 열리는 abcllm 모델, Claude(구독). 1차와 같은 모델은 막는다 —
  * 같은 모델의 표는 메아리라 두 모델 관문이 서지 않는다(second-review.ts). 지금 세운 표는 목록에 없어도 보인다.
  */
 export function voterChoices(gatewayModels: readonly string[] | null, current: { provider: string; model: string } | null,
@@ -35,7 +35,7 @@ export function voterChoices(gatewayModels: readonly string[] | null, current: {
   });
   const choices = [
     ...GROK_MODELS.map((model) => choice("grok-cli", model, `Grok ${model.replace(/^grok-/, "")}`, "Grok CLI — 구독, 주간 한도")),
-    ...(gatewayModels ?? []).map((model) => choice("abcllm", model, model, "사내 게이트웨이 — 한도 없음")),
+    ...(gatewayModels ?? []).map((model) => choice("abcllm", model, model, "abcllm · 직접 연결 계약")),
     ...CLAUDE_MODELS.map((model) => choice("claude-cli", model, `Claude ${model}`, "Claude CLI — 구독 한도")),
   ];
   if (current && !choices.some((item) => item.provider === current.provider && item.model === current.model)) {

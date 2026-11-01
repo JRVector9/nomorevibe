@@ -197,7 +197,7 @@ export function ReviewDetail({ entry, reasons, onDecided }: {
         <div className="rounded-lg border border-line bg-bg-soft px-2.5 py-2 text-[13px] leading-[1.6] text-fg-2">
           <b className="font-semibold text-fg">AI 한 줄 소개</b>
           {!entry.tagline ? <span className="ml-1.5">아직 짓지 않았습니다 — 다음 틱에 시도합니다</span>
-            : entry.tagline.errorCode ? <span className="ml-1.5">게이트웨이 실패 · <span className="font-mono">{entry.tagline.errorCode}</span> · 시도 {entry.tagline.attempts}회 — 다시 볼 때가 되면 자동으로 재시도합니다</span>
+            : entry.tagline.errorCode ? <span className="ml-1.5">모델 호출 실패 · <span className="font-mono">{entry.tagline.errorCode}</span> · 시도 {entry.tagline.attempts}회 — 다시 볼 때가 되면 자동으로 재시도합니다</span>
             : entry.tagline.text ? <span className="ml-1.5">지어 두었습니다 — 발행할 때 이 줄로 올라갑니다</span>
             : <span className="ml-1.5">증거로는 무엇인지 알 수 없다고 했습니다</span>}
           {entry.tagline?.text && <p className="mt-1 font-semibold text-fg">{entry.tagline.text}</p>}

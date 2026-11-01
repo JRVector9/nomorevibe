@@ -190,7 +190,7 @@ export function SwitchAuditModel({ campaignId, from, to, unanswered }: {
   return (
     <ConfirmAction tone="neutral" title={`감사 #${campaignId}의 남은 것을 ${to.label}(으)로 묻습니다`} confirmLabel="남은 감사 모델 바꾸기"
       summary={<ul>
-        <li>모델: {from.label} → {to.label} ({to.model}, {to.server} 직접 — 게이트웨이를 거치지 않습니다)</li>
+        <li>모델: {from.label} → {to.label} ({to.model}, {to.server}에 직접 묻습니다)</li>
         <li>아직 답이 없는 {unanswered.toLocaleString('ko-KR')}건을 새 모델이 묻습니다. 이미 답한 것은 그대로 남고, 답마다 어느 모델이 답했는지 기록됩니다.</li>
         <li>Qwen 의 확신은 늘 0.95 나 1.00 이라 거절은 대부분 자동 보류 문턱을 넘습니다. 카탈로그·디렉터리 같은 거절은 보류하지 않고 목록에 둔 채 사람이 봅니다.</li>
         <li>되돌리는 버튼은 없습니다. 멈추려면 &lsquo;이 감사 중단&rsquo;을 누르세요.</li>

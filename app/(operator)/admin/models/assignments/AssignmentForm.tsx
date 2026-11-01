@@ -83,7 +83,7 @@ export function AssignmentForm({ options, initial, prefill = {}, readOnly }: { o
           <select aria-label="전송" value={effectiveTransport} disabled={readOnly} onChange={event => setTransport(event.target.value)} className={SELECT}>
             {transports.length === 0 && <option value="">없음</option>}
             {transports.map(option => <option key={option} value={option}>{options.transportLabels[option]}</option>)}</select>
-          <span className="text-fg-3">CLI 는 connect 장비 모델만 · 단계가 허락한 전송만</span></label>
+          <span className="text-fg-3">CLI 는 connect 장비 모델만 · 단계가 허락한 전송만. 장비 표지는 요청 이름 앞의 대괄호입니다. 텍스트 경로는 「모델 연결」의 직접 연결 계약만 열립니다.</span></label>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <label className={LABEL}><span className={CAPTION}>순위</span>

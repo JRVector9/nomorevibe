@@ -207,7 +207,7 @@ describe("거절 코드 → 한국어", () => {
     expect(runtimeSettingsIssueMessage("batch_exceeds_source_cap")).toBe("묶음 글자 수가 원문 상한보다 큽니다");
     expect(runtimeSettingsIssueMessage("deadline_order_inverted")).toBe("기한 사다리 순서가 어긋났습니다(엔진 < 중계 < 게이트웨이 < 클라이언트, 층 사이 2초 이상)");
     expect(runtimeSettingsIssueMessage("model_timeout_ladder_mismatch")).toBe("호출 상한이 같은 경로 사다리의 클라이언트 기한과 다릅니다");
-    expect(runtimeSettingsIssueMessage("timeout_below_engine_bound:review-gateway")).toBe("AI 심사 게이트웨이 호출 상한이 엔진 기한 + 2초보다 짧습니다");
+    expect(runtimeSettingsIssueMessage("timeout_below_engine_bound:review-gateway")).toBe("AI 심사 호출 상한이 엔진 기한 + 2초보다 짧습니다");
     expect(runtimeSettingsIssueMessage("runtime_settings_invalid:translation.product.batchChars")).toBe("공개 번역 묶음 글자 임계: 범위를 벗어났습니다");
     expect(runtimeSettingsIssueMessage("unknown_job_knob:crawl-tagline.callMs")).toBe("소개 생성 에 없는 손잡이입니다: callMs");
     expect(runtimeSettingsIssueMessage("something_new:detail")).toBe("something_new:detail");
@@ -258,7 +258,7 @@ describe("폼 그리기", () => {
     expect(html).toContain('name="reset:routes.limits.product-translate.timeoutMs"');
     expect(html).toContain("기본값으로");
     expect(html).toContain("m1:translation");
-    expect(html).toContain("엔진·게이트웨이 값은 선언이며 외부 강제가 아닙니다");
+    expect(html).toContain("이 숫자를 강제하는 게이트웨이는 없습니다");
     expect(html).toContain("모델 자체의 상한은 모델 연결 → 등록부 덮어쓰기");
     expect(html).toContain("이 묶음 저장");
   });

@@ -64,7 +64,7 @@ const BROKEN_CONTRACT: ContractRow[] = [
   ["second", "hold", 16, "건", "2차 심사 확인",
     "확정만 하면 됨 12건(거부 0 · 승인 12, 그중 만장일치 0)은 한 번에 확정 · 공개분 4건은 사람이 봅니다. 엇갈린 것은 직접 판단에 들어 있습니다.", "2차 심사", ACTION_LINKS.reviewAgreed],
   ["second-failed", "critical", 5, "건", "2차 심사가 실패하고 있습니다",
-    "최근 24시간 미해결 오류 · qwen3.6 timeout 4건 · 모델 미상 model_unavailable 1건 — 설정한 모델을 게이트웨이가 더 이상 갖고 있지 않습니다.", "2차 심사 설정", ACTION_LINKS.secondSettings],
+    "최근 24시간 미해결 오류 · qwen3.6 timeout 4건 · 모델 미상 model_unavailable 1건 — 설정한 모델의 직접 연결 계약이 없거나 엔진이 그 모델을 갖고 있지 않습니다. 「모델 연결」에서 행을 확인하세요.", "2차 심사 설정", ACTION_LINKS.secondSettings],
   // attention.tsx:268
   ["held", "hold", 5, "건", "분류를 못 정해 발행이 멈춘 후보",
     "승인은 끝났고 카테고리만 없습니다. 1시간 뒤 저절로 다시 분류합니다 — 다음 14:19 (41분 후). 급하면 수동으로 지정합니다.", "수동 분류", ACTION_LINKS.manual],

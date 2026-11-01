@@ -20,5 +20,6 @@ export function ModelRegistryTable({ env = process.env }: { env?: ModelEnvironme
       </tr>)}</tbody></table>
     </div>
     <p className="mt-3 text-[13px] text-fg-3">단계별 출력·동시 실행 예산은 등록된 모델 상한 안에서 적용합니다. 기존 개별 환경변수 설정은 위 단계별 표에 반영됩니다. 기한은 레지스트리의 모델·용도별 예산을 따르며, 선언된 사다리는 로드 시 순서를 검증합니다. 서버에서 실제로 강제하는지는 별도 검증이 필요합니다.</p>
+    {registry.models.some(model => model.gatewayLabel || model.baseUrl?.includes("abcllm-api.brut.bot")) && <p className="mt-2 text-[13px] text-fg-3">요청 이름 앞의 대괄호(예: [m1])는 등록부 장비 표지이고, 주소 abcllm-api.brut.bot 은 코드 기본값입니다. 그 주소만으로는 호출이 열리지 않습니다. 열리는 계약은 「모델 연결」의 직접 연결 행입니다.</p>}
   </details>;
 }

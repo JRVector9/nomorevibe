@@ -17,7 +17,7 @@ export function refreshPolicy(pathname: string): RefreshPolicy {
   if (under("/admin/status")) return { intervalMs: 10_000, idleMs: 0 };
   // 심사 큐 — 갈래 셈이 보류 후보를 모두 다시 판정해 무겁고, 결정하는 화면이다. 손을 뗀 지 1분 지나야 다시 읽는다
   if (under("/admin/review")) return { intervalMs: 30_000, idleMs: 60_000 };
-  // 크롤 설정 — 2차 표 모델 목록을 게이트웨이에 묻는다. 30초
+  // 크롤 설정 — 2차 표 선택지는 직접 연결 계약에서 읽는다. 30초
   if (pathname === "/admin") return { intervalMs: 30_000, idleMs: 15_000 };
   // 오늘 할 일 — 칸 열네 개를 주 DB 에서 센다(사람 몫·조치 수). 30초·손 뗀 지 1분
   if (under("/admin/inbox")) return { intervalMs: 30_000, idleMs: 60_000 };

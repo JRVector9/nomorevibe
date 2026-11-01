@@ -38,7 +38,7 @@ export function findModelDefinition(row: { provider: string; model: string }, mo
  * 행의 서버 이름(2026-10-31 소유자 요청 "장비 미확인 뜨는 거 전부 장비 서버명 맞춰놓자"). 찾는 순서:
  * 1) 주소의 호스트가 이름 표에 있음(관리 계약 endpoint → 등록부 baseUrl), 2) 등록부 장비 값(이름 표 → 원문), 3) 제공 방식이 달라도 같은 모델
  * 이름의 유일한 등록부 항목(예: 1차 검수 abcllm 계약이 gpu3090 의 local-direct 항목과 같은 vLLM 을 쓴다)의 주소·장비, 4) 이 행이 쓰는 장비
- * 그룹(model_capacity_devices)이 이름 표에 있음, 5) 옛 게이트웨이 대괄호 라벨, 6) 이름 표에 없어도 엔진 직접 계약의 주소 host:port 원문,
+ * 그룹(model_capacity_devices)이 이름 표에 있음, 5) 요청 이름 앞의 장비 표지(대괄호), 6) 이름 표에 없어도 엔진 직접 계약의 주소 host:port 원문,
  * 7) 정책 route 의 groupId 원문, 8) 그래도 없으면 「장비 미확인」. 표시용 이름이다 — 복구 판정(modelRecoveryBlocked)은 등록부 장비 값을 그대로 쓴다.
  *
  * 운영자가 이름을 붙이는 곳: 등록부 항목의 equipment(`/admin/models/contracts` 「모델 등록부 덮어쓰기」, MODEL_REGISTRY_CONFIG)이나 이 표.
@@ -99,14 +99,24 @@ export function modelServerName(identity: { provider: string; model: string }, d
   models: readonly ModelDefinition[], groups: readonly string[], contracts: readonly ModelContractLink[] = []): string {
   return modelServer(identity, definition, models, groups, contracts).name;
 }
-/** 이 행의 전송 방식(한국어). 관리 계약이 있으면 그 transport, 없으면 제공자로 — 엔진 직접 / CLI. abcllm 은 계약 행으로만 열린다(env 게이트웨이 대체는 2026-10-31 제거) — 계약이 없으면 「계약 없음」. */
+/** 코드 기본 등록부(model-registry.ts)의 abcllm 주소 호스트. 화면에서만 가려 설명한다 — 송신 주소는 바꾸지 않는다. */
+export const CODE_DEFAULT_GATEWAY_HOST = "abcllm-api.brut.bot";
+export const isCodeDefaultGatewayHost = (host: string) => host.split(":")[0] === CODE_DEFAULT_GATEWAY_HOST;
+/** 전송 칸에 코드 기본 주소만 있을 때. 그 주소만으로는 경로가 열리지 않는다. */
+export const CODE_DEFAULT_GATEWAY_NOTE = "코드 기본 주소(abcllm-api)만으로는 열리지 않습니다. 「모델 연결」에서 직접 연결 계약을 추가하세요.";
+/**
+ * 전송 칸. 열리는 쪽만 적는다 — 직접 / CLI / 계약 없음(또는 직접 연결 계약 필요).
+ * 직접 연결 계약(transport direct)이 있으면 「엔진 직접(계약)」. local-direct·llama-server 는 저장 전송 칸과 무관하게 직접이다.
+ * CLI 는 「CLI」. abcllm 은 직접 연결 계약이 없으면 열리지 않는다 — 행이 없으면 「계약 없음」, 옛 전송(gateway) 행만 있으면 「직접 연결 계약 필요」.
+ */
 export function modelTransportLabel(provider: string, contracts: readonly ModelContractLink[]): string {
-  const kinds = [...new Set(contracts.map(row => row.transport))];
-  if (kinds.length === 1) return kinds[0] === "direct" ? "엔진 직접(계약)" : "게이트웨이(계약)";
-  if (kinds.length > 1) return "엔진 직접·게이트웨이(계약)";
-  if (provider === "local-direct" || provider === "llama-server") return "엔진 직접";
+  const local = provider === "local-direct" || provider === "llama-server";
+  const direct = contracts.some(row => row.transport === "direct");
+  if (local) return contracts.length ? "엔진 직접(계약)" : "엔진 직접";
+  if (direct) return "엔진 직접(계약)";
   if (provider.endsWith("-cli")) return "CLI";
-  return provider === "abcllm" ? "계약 없음" : "미확인";
+  if (provider === "abcllm") return contracts.length ? "직접 연결 계약 필요" : "계약 없음";
+  return contracts.length ? "직접 연결 계약 필요" : "미확인";
 }
 export function buildModelCards(observation: AdminModelsObservation, models: readonly ModelDefinition[], assignments: ModelStageAssignment[] = [],
   contracts: readonly ModelContractLink[] = []): ModelCard[] {
@@ -223,7 +233,7 @@ export function modelRowStatus(input: { unknown: number; held: number; waiting: 
   return input.lastSuccessAt || input.probe?.listed ? "connected" : "down";
 }
 
-/** 장비(groupId) → 서버 이름과 그 장비의 엔진 주소(host:port). 등록부 항목의 equipment 가 같은 서버로 풀리는 것만 모은다. 게이트웨이 주소는 엔진이 아니라 빼고, 키는 없다. */
+/** 장비(groupId) → 서버 이름과 그 장비의 엔진 주소(host:port). 등록부 항목의 equipment 가 같은 서버로 풀리는 것만 모은다. 이름 표에 없는 주소(코드 기본 abcllm-api 포함)는 엔진 주소로 세지 않고, 키는 없다. */
 export function deviceServer(deviceId: string, models: readonly ModelDefinition[]): { name: string; hosts: string[] } {
   const target = serverByName(deviceId) ?? deviceId.toLowerCase();
   const mine = models.filter(model => model.equipment.toLowerCase() === deviceId.toLowerCase() || (serverByName(model.equipment) ?? model.equipment.toLowerCase()) === target);

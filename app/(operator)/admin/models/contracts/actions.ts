@@ -16,7 +16,7 @@ const REASONS: Record<string, string> = {
   secret_box_key_missing: "서버에 키 암호화 설정(NMV_SECRET_BOX_KEY)이 없어 키를 저장할 수 없습니다.",
   serving_contract_input_invalid: "입력 값을 확인해주세요.", site_fenced: "이 사이트는 지금 쓰기가 막혀 있습니다(DR).",
   engine_base_url_invalid: "주소는 https://호스트/v1 형태여야 합니다.", engine_routes_invalid: "쓰는 경로를 하나 이상 골라주세요.",
-  registry_key_unknown: "등록부에 없는 모델입니다.", engine_connect_provider_unsupported: "게이트웨이형(abcllm) 등록부 모델만 엔진 연결로 바꿀 수 있습니다.",
+  registry_key_unknown: "등록부에 없는 모델입니다.", engine_connect_provider_unsupported: "abcllm 등록부 모델만 엔진 연결로 바꿀 수 있습니다.",
   engine_model_not_found: "엔진의 모델 목록에 그 모델이 없습니다. 「엔진 확인」으로 이름을 확인해주세요.",
   engine_max_len_unknown: "엔진의 /models 가 이 모델의 최대 길이(max_model_len)를 주지 않습니다. 「컨텍스트 상한(토큰)」에 모델의 컨텍스트 길이를 직접 넣어 주세요.",
   engine_max_len_invalid: "컨텍스트 상한은 1 이상 2,097,152 이하의 정수여야 합니다.",

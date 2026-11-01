@@ -172,7 +172,7 @@ function ladderRows(stored: unknown, effective: RuntimeSettings, defaults: Runti
     const ladder = effective.routes.deadlines[route], base = defaults.routes.deadlines[route];
     const part = (key: keyof DeadlineLadder, note?: string) => field(stored, `routes.deadlines.${route}.${key}`, ladder[key], base?.[key], note ? { note } : {});
     return { route, label: ROUTE_LABELS[route] ?? route, fields: { engineMs: part("engineMs", "선언만 — 엔진이 강제하지 않습니다"), relayMs: part("relayMs", "비우면 중계 층 없음"),
-      gatewayMs: part("gatewayMs", "선언만 — 게이트웨이가 강제하지 않습니다"), clientMs: part("clientMs", "이 경로의 호출 상한") } };
+      gatewayMs: part("gatewayMs", "선언만 — 이 칸을 강제하는 게이트웨이는 없습니다"), clientMs: part("clientMs", "이 경로의 호출 상한") } };
   });
 }
 

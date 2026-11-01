@@ -111,7 +111,7 @@ describe("맡은 장비·LLM·일정", () => {
   it("2차 심사 — 설정의 투표 모델(게이트웨이 실행기)과 켜진 Qwen 갈림 판가름(split-tiebreak), 그 서버를 장비로 보인다", () => {
     const owners = resolveWorkOwners({ jobs: ["second-review", "split-tiebreak"] }, context())!;
     expect(owners.models.map((model) => model.name)).toEqual(["Qwen3.8-27B-NVFP4", "qwen3.8-flash-next"]);
-    expect(owners.models[0].rows).toEqual([{ slot: "2차 · 투표 1", job: "2차 심사", provider: "abcllm", runsOn: "abcllm 게이트웨이 · 실행기 supa",
+    expect(owners.models[0].rows).toEqual([{ slot: "2차 · 투표 1", job: "2차 심사", provider: "abcllm", runsOn: "abcllm · 직접 연결 계약 · 장비 표지 supa",
       source: "크롤 설정 secondReview.voters[0]", stats: "최근 1시간(2차 투표) 호출 34 · 실패 8" }]);
     expect(owners.models[1].rows[0]).toMatchObject({ slot: "2차 갈림 판가름", runsOn: "Qwen 직접 서버 gpu3090" });
     expect(owners.hosts.map((host) => host.name)).toEqual(["M3", "gpu3090"]);
