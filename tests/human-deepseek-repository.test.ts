@@ -4,7 +4,8 @@ import type { HumanReviewClaim } from '@/lib/crawl/human-review-repository';
 
 const mocks = vi.hoisted(() => ({ transaction: vi.fn(), current: vi.fn(), lease: vi.fn(), stage: vi.fn(), request: vi.fn() }));
 vi.mock('@/lib/db', () => ({ db: { transaction: mocks.transaction } }));
-vi.mock('@/lib/jobs/control', () => ({ assertJobLeaseAtWallTime: mocks.lease, requestJob: mocks.request }));
+vi.mock('@/lib/jobs/control', () => ({ assertJobLeaseAtWallTime: mocks.lease, requestJob: mocks.request,
+  withJobLeaseWrite: (_lease: unknown, write: unknown) => mocks.transaction(write) }));
 vi.mock('@/lib/jobs/items/repository', () => ({ readItemStage: mocks.stage }));
 vi.mock('@/lib/crawl/admin-review', () => ({ lockedInput: mocks.current, candidateRevisionHash: (candidate: unknown) => JSON.stringify(candidate) }));
 vi.mock('@/lib/crawl/pipeline-stage-context', () => ({ lockPipelineInputStages: async () => ({ ai1: {}, ai2: {} }) }));
@@ -12,7 +13,7 @@ vi.mock('@/lib/crawl/settings', () => ({ getSettings: vi.fn() }));
 vi.mock('@/lib/crawl/agent-review-repository', () => ({ reviewApprovalPredicate: vi.fn() }));
 vi.mock('@/lib/crawl/rules', () => ({ judgeRevision: () => 'document-revision' }));
 
-import { claimHumanReview, recordHumanReview } from '@/lib/crawl/human-review-repository';
+import { claimHumanReview, deferHumanReviewBeforeTransport, recordHumanReview } from '@/lib/crawl/human-review-repository';
 
 const input = { inputHash: 'a'.repeat(64), policyHash: 'b'.repeat(64), sourceRevisionHash: 'c'.repeat(64),
   source: {}, snapshot: { evidence: [], policy: { enforceEligibility: false } }, validUntil: new Date(Date.now() + 3600_000),
@@ -20,7 +21,8 @@ const input = { inputHash: 'a'.repeat(64), policyHash: 'b'.repeat(64), sourceRev
 const lease = { name: 'human-deepseek-review', token: 'owned', requestedVersion: 1 };
 const candidate = { id: 5, repo: 'owner/app', state: 'needs_review', decidedBy: 'auto', reason: 'second_review_split',
   productUrl: 'https://example.test', publishedSlug: null, signals: {}, judgedAt: new Date('2026-10-19T00:00:00Z') };
-const claim = { repo: candidate.repo, attemptId: 7, generation: 3, input, lease, candidateRevision: JSON.stringify(candidate) } as HumanReviewClaim;
+const claim = { repo: candidate.repo, candidateId: candidate.id, attemptId: 7, generation: 3, input, lease,
+  candidateRevision: JSON.stringify(candidate) } as HumanReviewClaim;
 const success = { ok: true as const, outcome: { decision: 'approve' as const, reason: 'Working product page', evidenceIds: ['product'], confidence: 0.97 } };
 let current: { candidate: typeof candidate; settings: { enabled: boolean; humanReview: { enabled: boolean; generation: number } }; input: ReviewInput; document: { productUrl: string } };
 let reads: unknown[][];
@@ -92,6 +94,35 @@ describe('delegated claim', () => {
       expect(await claimHumanReview(candidate.repo, lease)).toBeNull();
     }
     expect(writes).toHaveLength(0);
+  });
+  it('temporarily throttles abandoned owners without exhausting model failures forever', async () => {
+    const interrupted = Array.from({ length: 3 }, () => ({ state: 'failed', errorCode: 'owner_lost', completedAt: new Date() }));
+    reads = [[], [], interrupted];
+    expect(await claimHumanReview(candidate.repo, lease)).toBeNull();
+    expect(writes).toHaveLength(0);
+    reads = [[], [], interrupted.map(row => ({ ...row, completedAt: new Date(Date.now() - 25 * 3600_000) }))];
+    expect(await claimHumanReview(candidate.repo, lease)).toMatchObject({ attemptId: 7 });
+    expect(writes[0].values.attemptNumber).toBe(4);
+  });
+  it('counts cancelled results that may have reached transport as model attempts', async () => {
+    reads = [[], [], Array.from({ length: 3 }, () => ({ state: 'failed', errorCode: 'cancelled' }))];
+    expect(await claimHumanReview(candidate.repo, lease)).toBeNull();
+    expect(writes).toHaveLength(0);
+  });
+  it('does not reset an exhausted model budget when old infrastructure interruptions expire', async () => {
+    reads = [[], [], [
+      ...Array.from({ length: 3 }, () => ({ state: 'failed', errorCode: 'timeout' })),
+      ...Array.from({ length: 3 }, () => ({ state: 'failed', errorCode: 'owner_lost', completedAt: new Date(0) })),
+    ]];
+    expect(await claimHumanReview(candidate.repo, lease)).toBeNull();
+    expect(writes).toHaveLength(0);
+  });
+  it('records a proven unsent claim separately with a short cooldown', async () => {
+    await deferHumanReviewBeforeTransport(claim);
+    expect(writes).toHaveLength(1);
+    expect(writes[0].values).toMatchObject({ state: 'superseded', errorCode: 'not_started_before_transport' });
+    expect((writes[0].values.retryAfter as Date).getTime()).toBeGreaterThan(Date.now() + 50_000);
+    expect(mocks.lease).toHaveBeenCalledWith(expect.anything(), lease);
   });
   it('does not interrupt a live AI1 or pending AI2', async () => {
     reads = [[], [{ kind: 'automatic' }]];

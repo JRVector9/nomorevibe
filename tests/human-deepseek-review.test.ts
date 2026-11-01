@@ -4,6 +4,7 @@ import type { ReviewInput } from '@/lib/crawl/agent-review-contract';
 const mocks = vi.hoisted(() => ({
   admin: vi.fn(), save: vi.fn(), ready: vi.fn(), settings: vi.fn(), overview: vi.fn(), repos: vi.fn(),
   claim: vi.fn(), record: vi.fn(), requeue: vi.fn(), infer: vi.fn(), revalidate: vi.fn(),
+  unsent: vi.fn(), capacityDeferred: vi.fn(), capacity: vi.fn(), slot: vi.fn(),
 }));
 // 2026-10-31(PR 3a-C): 보류 Qwen-v2 재심사(held-qwen-retry)와 갈림 판가름의 DeepSeek 확인(split-confirm)은 자기 잡이다 — 이 잡은 둘을 부르지 않는다
 vi.mock('@/lib/crawl/held-qwen-retry', () => ({ runHeldQwenRetry: () => { throw new Error('human_review_must_not_run_held_qwen'); } }));
@@ -15,8 +16,11 @@ vi.mock('@/lib/crawl/settings', () => ({ setHumanReviewEnabled: mocks.save, getS
 vi.mock('@/lib/crawl/review-overview', () => ({ humanQueueOverview: mocks.overview }));
 vi.mock('@/lib/crawl/human-review-repository', () => ({
   claimHumanReview: mocks.claim, recordHumanReview: mocks.record, requeueInvalidHumanApprovals: mocks.requeue,
-  humanReviewRepos: mocks.repos,
+  humanReviewRepos: mocks.repos, deferHumanReviewBeforeTransport: mocks.unsent,
+  deferHumanReviewForModelCapacity: mocks.capacityDeferred,
 }));
+vi.mock('@/lib/crawl/deepseek-slot', () => ({ withDeepSeekSlot: mocks.slot }));
+vi.mock('@/lib/llm/local-model-capacity', () => ({ withLocalModelCapacity: mocks.capacity }));
 vi.mock('@/lib/crawl/deepseek-review', async importOriginal => {
   const original = await importOriginal<typeof import('@/lib/crawl/deepseek-review')>();
   return { ...original, deepseekReviewReady: mocks.ready, reviewWithDeepSeek: mocks.infer };
@@ -140,6 +144,9 @@ describe('human queue worker', () => {
     mocks.repos.mockResolvedValue(['a/one', 'b/two', 'c/three']);
     mocks.claim.mockResolvedValue({ input }); mocks.infer.mockResolvedValue({ ok: true, outcome: verdict });
     mocks.record.mockResolvedValue('applied');
+    mocks.unsent.mockResolvedValue(undefined);
+    mocks.slot.mockImplementation(async run => run());
+    mocks.capacity.mockImplementation(async (_identity, run) => run(vi.fn()));
   });
   it('delegates up to two candidates per tick and reports remaining work', async () => {
     expect(await reviewHumanQueue(ctx())).toEqual({ done: false });
@@ -179,6 +186,29 @@ describe('human queue worker', () => {
   it('records failure once and stops the tick', async () => {
     mocks.infer.mockResolvedValue({ ok: false, error: 'timeout' }); mocks.record.mockResolvedValue('failed');
     await reviewHumanQueue(ctx()); expect(mocks.infer).toHaveBeenCalledTimes(1); expect(mocks.record).toHaveBeenCalledTimes(1);
+  });
+  it('does not spend a model attempt when the budget closes after the claim', async () => {
+    let available = true;
+    mocks.claim.mockImplementationOnce(async () => { available = false; return { input }; });
+    await reviewHumanQueue({ ...ctx(), hasBudget: () => available });
+    expect(mocks.unsent).toHaveBeenCalledTimes(1);
+    expect(mocks.capacity).not.toHaveBeenCalled(); expect(mocks.infer).not.toHaveBeenCalled();
+    expect(mocks.record).not.toHaveBeenCalled();
+  });
+  it('keeps proof of no transport when its budget expires waiting for the local slot', async () => {
+    let available = true;
+    mocks.slot.mockImplementationOnce(async run => { available = false; return run(); });
+    await reviewHumanQueue({ ...ctx(), hasBudget: () => available });
+    expect(mocks.unsent).toHaveBeenCalledTimes(1);
+    expect(mocks.capacity).not.toHaveBeenCalled(); expect(mocks.infer).not.toHaveBeenCalled();
+    expect(mocks.record).not.toHaveBeenCalled();
+  });
+  it('keeps ordinary cancellation after the capacity wrapper on the existing result path', async () => {
+    mocks.infer.mockResolvedValueOnce({ ok: false, error: 'cancelled' }); mocks.record.mockResolvedValueOnce('failed');
+    await reviewHumanQueue(ctx());
+    expect(mocks.capacity).toHaveBeenCalledTimes(1); expect(mocks.infer).toHaveBeenCalledTimes(1);
+    expect(mocks.record).toHaveBeenCalledWith(expect.anything(), { ok: false, error: 'cancelled' });
+    expect(mocks.unsent).not.toHaveBeenCalled();
   });
   // 2026-10-31(PR 3a-B+3a-C): 한 단계의 오류가 다음 단계를 건너뛰게 하지 않는다 — 보류 재심사·갈림 확인은 자기 잡이라(tests/split-jobs.test.ts 가 줄·잡 단위로 본다)
   // 이 잡에는 단계가 하나뿐이다. lease 잃음·DR fence 는 그대로 던져 쓰기를 멈춘다

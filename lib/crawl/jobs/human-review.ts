@@ -1,7 +1,8 @@
 import type { JobContext, JobOutcome } from '@/lib/jobs/runner';
 import { getSettings } from '../settings';
 import { humanQueueOverview } from '../review-overview';
-import { claimHumanReview, recordHumanReview, requeueInvalidHumanApprovals, humanReviewRepos, deferHumanReviewForModelCapacity } from '../human-review-repository';
+import { claimHumanReview, recordHumanReview, requeueInvalidHumanApprovals, humanReviewRepos, deferHumanReviewForModelCapacity,
+  deferHumanReviewBeforeTransport } from '../human-review-repository';
 import { withLocalModelCapacity } from '@/lib/llm/local-model-capacity';
 import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
 import { REVIEW_PROMPT_VERSION } from '../agent-review-contract';
@@ -11,7 +12,7 @@ import { withDeepSeekSlot } from '../deepseek-slot';
 import { heldQwenOwnedReasons } from '../held-qwen-retry-policy';
 
 /**
- * 사람 큐 위임 — 사람 몫으로 넘어온 후보를 M3 DeepSeek 이 대신 본다(One local inference at a time; at most two per tick, three attempts per input).
+ * 사람 큐 위임 — 사람 몫으로 넘어온 후보를 M3 DeepSeek 이 대신 본다(One local inference at a time; at most two per tick, three model attempts per input).
  * 보류 Qwen-v2 재심사(held-qwen-retry.ts)가 맡은 사유는 집지 않는다.
  *
  * 2026-10-31(PR 3a-C) 전에는 이 틱이 보류 Qwen-v2 재심사(gpu3090) → DeepSeek 위임(M3) → 갈림 판가름의 DeepSeek 확인(M3)을 차례로 돌았다 —
@@ -47,18 +48,19 @@ async function delegateToDeepSeek(ctx: JobContext<null>, lease: NonNullable<JobC
     const claim = await claimHumanReview(repo, lease);
     if (!claim) continue;
     if (!room()) {
-      await recordHumanReview(claim, { ok: false, error: 'cancelled' });
+      await deferHumanReviewBeforeTransport(claim);
       break;
     }
     started++;
     const controller = new AbortController();
     const poll = setInterval(() => { if (!ctx.hasBudget()) controller.abort(); }, 250);
     poll.unref?.();
-    let result: Awaited<ReturnType<typeof reviewWithDeepSeek>>;
+    let result: Awaited<ReturnType<typeof reviewWithDeepSeek>> | null;
     try {
-      // M3 자리를 얻은 뒤 남은 예산을 다시 본다 — 갈림 확인(split-confirm)이 45초 호출을 붙잡고 있었을 수 있다. 못 부르면 멈춤으로 적는다(실패가 아니다)
+      // No capacity wrapper or transport has been entered when this returns
+      // null. Keep that proof separate from cancelled replies after dispatch.
       result = await withDeepSeekSlot(async () => {
-        if (!room()) return { ok: false as const, error: 'cancelled' as const };
+        if (!room()) return null;
         return withLocalModelCapacity({ target: { kind: 'candidate', purpose: 'human_deepseek', attemptId: claim.attemptId,
           candidateId: claim.candidateId, repo: claim.repo }, input: claim.input, lease, promptVersion: REVIEW_PROMPT_VERSION },
         request => reviewWithDeepSeek(claim.input, { request,
@@ -70,6 +72,10 @@ async function delegateToDeepSeek(ctx: JobContext<null>, lease: NonNullable<JobC
       ctx.log('crawl.human_review_capacity_deferred', { reason: error.reason });
       break;
     } finally { clearInterval(poll); }
+    if (result === null) {
+      await deferHumanReviewBeforeTransport(claim);
+      break;
+    }
     const state = await recordHumanReview(claim, result);
     if (state === 'applied') applied++;
     if (state === 'held') held++;
