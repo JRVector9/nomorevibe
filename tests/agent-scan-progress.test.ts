@@ -1,14 +1,17 @@
 import { expect, it } from 'vitest';
 import type { ThroughputSnapshot } from '@/lib/operations/throughput-model';
-import { buildWorkerProgress } from '@/lib/operations/worker-progress-query';
+import { agentScanProviderPause, buildWorkerProgress } from '@/lib/operations/worker-progress-query';
 
 // 리뷰 P3(agent-scan 10): items 에서 consumer 가 모두 공급자 대기(rate_limited·인증 대기)로 쉬면 legacy 의 잡 커서 retryAfter 처럼 backoff 다.
 // 마지막 대상이 스캔 행 없는 저장소면 claim 행에 실패 코드가 남지 않아(공급자 대기는 실패로 세지 않는다) 5분 뒤 no_progress 경보가 났다.
 const now = new Date('2026-10-19T06:00:00Z');
 const ago = (seconds: number) => new Date(now.getTime() - seconds * 1_000);
 const later = (minutes: number) => new Date(now.getTime() + minutes * 60_000).toISOString();
-const running = (key: string, at = ago(5)) => ({ key, value: { status: 'running' }, observedAt: at });
-const consumer = (instance: string, pausedUntil: string | null, at = ago(20)) => ({ key: `agent-scan:${instance}`, value: { instanceId: instance, pausedUntil }, observedAt: at });
+const pid = (instance: string) => instance.endsWith('oracle') ? 102 : 101;
+const running = (key: string, at = ago(5)) => ({ key, value: { status: 'running', childPid: pid(key), bootedAt: ago(60).getTime() }, observedAt: at });
+const consumer = (instance: string, pausedUntil: string | null, at = ago(20)) => ({ key: `agent-scan:${instance}`,
+  value: { instanceId: instance, pausedUntil, running: 0, pid: pid(instance), bootedAt: ago(55).getTime(),
+    bootId: 'f70bfcce-92d0-4ed8-a5db-bfd092d17950' }, observedAt: at });
 const roles = ['scheduler', 'crawler', 'reviewer', 'publisher', 'maintenance', 'text'].map(role => running(`service:${role}:m3-${role}`));
 const stage = { key: 'agent-evidence' as const, enabled: true, waiting: 3, oldestMinutes: 12, completed5m: 0, progress5m: 0, errors5m: 0, deferred: 0,
   providerErrors: 0, providerErrorMinutes: null };
@@ -30,6 +33,39 @@ it('treats every live consumer waiting on the provider as backoff instead of a s
   // 2분 넘게 갱신되지 않은 대기 관측(멈춘 consumer)은 근거가 아니다. 지난 재개 시각도 아니다
   expect(agentStage([...alive, consumer('agent-scan-consumer-m3', later(10), ago(180))])).toMatchObject({ reason: 'no_progress' });
   expect(agentStage([...alive, consumer('agent-scan-consumer-m3', ago(1).toISOString())])).toMatchObject({ reason: 'no_progress' });
+  // 한 live consumer의 관측만으로 전체가 쉰다고 주장하지 않는다.
+  expect(agentStage([...alive, consumer('agent-scan-consumer-m3', later(10))])).toMatchObject({ reason: 'no_progress', alarm: true });
   // legacy 는 잡 커서의 retryAfter 를 쓴다 — consumer 관측을 보지 않는다
   expect(agentStage([consumer('agent-scan-consumer-m3', later(10))], 'legacy')).toMatchObject({ reason: 'no_progress', restartEligible: true });
+});
+
+it('excludes explicitly disabled consumers but requires fresh current-child coverage for every enabled consumer', () => {
+  const active = running('service:crawler:agent-scan-consumer-m3');
+  const paused = consumer('agent-scan-consumer-m3', later(10));
+  const disabled = { ...running('service:crawler:agent-scan-consumer-oracle'), value: { status: 'disabled' } };
+  expect(agentScanProviderPause([active, paused, disabled, consumer('agent-scan-consumer-oracle', null)], now)).toEqual(new Date(later(10)));
+  for (const value of [
+    { ...paused.value, pid: 999 },
+    { ...paused.value, bootedAt: ago(61).getTime() },
+    { ...paused.value, bootId: undefined },
+    { ...paused.value, running: 1 },
+    { ...paused.value, haltedUntil: later(1) },
+  ]) expect(agentScanProviderPause([active, { ...paused, value }], now)).toBeNull();
+  expect(agentScanProviderPause([active, { ...paused, observedAt: new Date(now.getTime() + 1_000) }], now)).toBeNull();
+  expect(agentScanProviderPause([active, paused, running('service:crawler:agent-scan-consumer-oracle', ago(180))], now)).toBeNull();
+});
+
+it('recognizes only the actual bounded next headroom poll and keeps provider failures alarmed', () => {
+  const active = running('service:crawler:agent-scan-consumer-m3');
+  const base = consumer('agent-scan-consumer-m3', null, ago(5));
+  const paused = { ...base, value: { ...base.value, lastIdleReason: 'github_headroom_low', headroomPausedUntil: later(.5) } };
+  expect(agentStage([active, paused])).toMatchObject({ reason: 'backoff', alarm: false, restartEligible: false });
+  expect(agentScanProviderPause([active, { ...paused, value: { ...paused.value, headroomPausedUntil: later(5) } }], now)).toBeNull();
+  expect(agentScanProviderPause([active, { ...paused, value: { ...paused.value, headroomPausedUntil: ago(1).toISOString() } }], now)).toBeNull();
+  const report = buildWorkerProgress({ measuredAt: now.toISOString(), stages: [] } as unknown as ThroughputSnapshot,
+    [{ name: 'agent-evidence-refresh', nextScheduledAt: null, notBefore: null }], [...roles, active, paused], now,
+    { mode: 'legacy', writerContractVersion: 0 }, [{ ...stage, providerErrors: 1, providerErrorMinutes: 40 }], { mode: 'items', drainingFrom: null });
+  expect(report.stages.find(row => row.stage === 'agent-evidence')).toMatchObject({ reason: 'upstream_stalled', alarm: true, restartEligible: false });
+  // A pause observation alone never creates a live consumer or silences consumer_missing.
+  expect(agentStage([paused])).toMatchObject({ reason: 'consumer_missing', alarm: true });
 });

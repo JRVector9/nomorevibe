@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { modelCapacityPolicyHash, parseModelCapacityPolicy, type ModelCapacityPolicy, type ModelCapacityState } from "@/lib/llm/capacity";
 import { deviceFallbackLimit } from "@/lib/llm/capacity-devices";
+import { MODEL_CAPACITY_OCCUPYING_STATES } from "@/lib/llm/capacity-states";
 
 /**
  * PR17a 운영 관측(설계 §7.5: 30분 canary 뒤 24시간). 수집은 읽기 전용이고 이 모듈은 수집물의 일관성 검사·요약만 한다.
@@ -103,12 +104,13 @@ export function parsePipelineObservation(value: unknown): PipelineObservation {
   return artifact;
 }
 
-const ACTIVE = new Set<string | null>(["reserved", "dispatched", "indeterminate"]);
+const ACTIVE = new Set<string | null>(MODEL_CAPACITY_OCCUPYING_STATES);
 export type ModelEvent = { toState: ModelCapacityState | null; atMs: number };
 /**
  * 한 요청의 장부 이벤트(id 순)를 대기 구간 하나와 점유 구간 하나로 바꾼다. 상태기계상 대기로 되돌아가지 않는다.
  * 대기는 queue_until, 아직 보내지 않은 예약은 reserved_until에서 끝난 것으로 본다 — 다음 승인 TX가 그 전에 같은 행을 회수한다
  * (expireRequests). 회수 이벤트가 늦게 남아도 그 사이를 대기·점유로 세지 않아 포화를 부풀리지 않는다.
+ * 미확인(indeterminate)으로 옮긴 시각에는 점유를 끝낸다 — 늦은 정산 시각까지 슬롯을 잡는 것으로 세지 않는다(2026-10-30 소유자 결정).
  */
 export function modelRequestIntervals(events: readonly ModelEvent[], caps: { queueUntilMs: number; reservedUntilMs: number | null }) {
   let current: string | null = null, waitFrom: number | null = null, waitTo: number | null = null;

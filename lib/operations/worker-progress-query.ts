@@ -15,7 +15,7 @@ import { AGENT_DETECTOR_VERSION } from "@/lib/domain/evidence/agents/types";
 import { AI_LEVEL_RULES_VERSION } from "@/lib/domain/evidence/ai-level-labels";
 import { agentLimitedSettledSql, agentRefreshDueAtSql } from "@/lib/domain/evidence/agents/refresh-policy";
 import { evidenceSourceTargetCtesSql } from "@/lib/domain/evidence/source-demand";
-import { AGENT_SCAN_CONSUMER_HEARTBEAT_MS, AGENT_SCAN_CONSUMER_LIVE_STATUSES, AGENT_SCAN_CONSUMER_PREFIX, agentScanByClaims, readAgentScanMode,
+import { AGENT_SCAN_CONSUMER_HEARTBEAT_MS, AGENT_SCAN_CONSUMER_LIVE_STATUSES, AGENT_SCAN_CONSUMER_PREFIX, AGENT_SCAN_HEADROOM_WAIT_MS, agentScanByClaims, readAgentScanMode,
   type AgentScanModeState } from "@/lib/domain/evidence/agents/claim-control";
 import { latestServiceInstance, serviceInstancesFromObservations } from "./instance";
 import { pipelineThroughput } from "./throughput";
@@ -180,17 +180,45 @@ export function buildWorkerProgress(
 }
 
 /**
- * items·draining 에서 consumer 가 모두 공급자 대기(rate_limited·인증 대기의 재개 시각, consumer.ts pausedUntil)로 쉬면 그중 가장 이른
- * 재개 시각. 2분(CONSUMER_HEARTBEAT_MS) 안의 관측(agent-scan:<instance>, 1분마다)만 본다. 하나라도 대기가 아니면 null — 일할 consumer 가 있다.
+ * items·draining 에서 켜진 live consumer 가 모두 공급자 대기 또는 GitHub headroom 관문의 다음 poll을 기다리면 그중 가장 이른 재개 시각.
+ * live service마다 신선한 agent-scan 관측이 완전히 있어야 한다. 같은 supervisor의 childPid와 scan pid, child 시작 시각을 결속한다 —
+ * supervisor/child boot UUID는 서로 별개다. 이전 boot·꺼진 consumer·부분 관측으로 전체 대기를 주장하지 않는다.
+ * headroom은 실제 다음 poll(60초)까지만 인정하며 provider reset 시각을 지어내지 않는다. 이미 도는 scan이 있으면 전체 대기가 아니다.
  * DB·자격 오류로 쉬는 것(systemic)은 여기 넣지 않는다 — 고쳐야 할 일이라 진행 없음 경보로 남긴다.
  */
 export function agentScanProviderPause(observations: Array<{ key: string; value: Record<string, unknown>; observedAt: Date | string }>,
   now: Date): Date | null {
-  const recent = observations.filter(row => row.key.startsWith(`agent-scan:${AGENT_SCAN_CONSUMER_PREFIX}`)
-    && now.getTime() - new Date(row.observedAt).getTime() <= CONSUMER_HEARTBEAT_MS);
-  const until = recent.map(row => typeof row.value.pausedUntil === "string" ? Date.parse(row.value.pausedUntil) : NaN);
-  if (!until.length || until.some(value => !Number.isFinite(value) || value <= now.getTime())) return null;
-  return new Date(Math.min(...until));
+  const at = now.getTime();
+  const fresh = (row: { observedAt: Date | string }) => {
+    const age = at - new Date(row.observedAt).getTime();
+    return age >= 0 && age <= CONSUMER_HEARTBEAT_MS;
+  };
+  const live = serviceInstancesFromObservations(observations).filter(row => row.role === 'crawler'
+    && row.instanceId.startsWith(AGENT_SCAN_CONSUMER_PREFIX) && row.value.enabled !== false
+    && (AGENT_SCAN_CONSUMER_LIVE_STATUSES as readonly unknown[]).includes(row.value.status));
+  if (!live.length || live.some(row => !fresh(row))) return null;
+  const resumes: number[] = [];
+  for (const service of live) {
+    const scan = observations.find(row => row.key === `agent-scan:${service.instanceId}`);
+    if (!scan || !fresh(scan) || scan.value.instanceId !== service.instanceId || scan.value.running !== 0) return null;
+    const parentStart = service.value.bootedAt, childStart = scan.value.bootedAt, childPid = service.value.childPid;
+    // Both PIDs are emitted by the parent and its spawned child in the same PID namespace. Boot clocks reject recycled PIDs.
+    if (typeof childPid !== 'number' || !Number.isSafeInteger(childPid) || childPid < 1 || scan.value.pid !== childPid
+      || typeof parentStart !== 'number' || !Number.isSafeInteger(parentStart) || parentStart < 0
+      || typeof childStart !== 'number' || !Number.isSafeInteger(childStart) || childStart < parentStart
+      || childStart > new Date(scan.observedAt).getTime() || childStart > at
+      || typeof scan.value.bootId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(scan.value.bootId)) return null;
+    const halted = typeof scan.value.haltedUntil === 'string' ? Date.parse(scan.value.haltedUntil) : NaN;
+    if (halted > at) return null;
+    const provider = typeof scan.value.pausedUntil === 'string' ? Date.parse(scan.value.pausedUntil) : NaN;
+    const headroom = typeof scan.value.headroomPausedUntil === 'string' ? Date.parse(scan.value.headroomPausedUntil) : NaN;
+    const boundedHeadroom = scan.value.lastIdleReason === 'github_headroom_low' && headroom > at
+      && headroom <= new Date(scan.observedAt).getTime() + AGENT_SCAN_HEADROOM_WAIT_MS;
+    const resume = provider > at ? provider : boundedHeadroom ? headroom : NaN;
+    if (!Number.isFinite(resume)) return null;
+    resumes.push(resume);
+  }
+  return new Date(Math.min(...resumes));
 }
 
 /**

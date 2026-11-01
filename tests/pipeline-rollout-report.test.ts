@@ -15,10 +15,18 @@ const request = (values: Partial<SlotRequest>): SlotRequest => ({ routeId: "r", 
   policyHash, waitFromMs: null, waitToMs: null, activeFromMs: null, activeToMs: null, ...values });
 
 describe("modelRequestIntervals", () => {
-  it("turns ledger transitions into one waiting and one active interval", () => {
+  it("ends occupancy at indeterminate even when terminal evidence arrives later", () => {
     expect(modelRequestIntervals([{ toState: "waiting", atMs: 100 }, { toState: "reserved", atMs: 400 }, { toState: "dispatched", atMs: 450 },
       { toState: "indeterminate", atMs: 900 }, { toState: "settled", atMs: 1_500 }], { queueUntilMs: 10_000, reservedUntilMs: 1_000 }))
-      .toEqual({ waitFromMs: 100, waitToMs: 400, activeFromMs: 400, activeToMs: 1_500 });
+      .toEqual({ waitFromMs: 100, waitToMs: 400, activeFromMs: 400, activeToMs: 900 });
+  });
+  it("does not keep an unsettled indeterminate dispatch occupying a device", () => {
+    const intervals = modelRequestIntervals([{ toState: "waiting", atMs: 0 }, { toState: "reserved", atMs: 100 },
+      { toState: "dispatched", atMs: 200 }, { toState: "indeterminate", atMs: 300 }],
+    { queueUntilMs: 10_000, reservedUntilMs: 150 });
+    expect(intervals).toEqual({ waitFromMs: 0, waitToMs: 100, activeFromMs: 100, activeToMs: 300 });
+    expect(integrateModelSlots([request(intervals), request({ waitFromMs: 200, waitToMs: 500 })], policy, 1_000, { g: 1 }).all)
+      .toEqual({ waitingMs: 400, freeWhileWaitingMs: 300, fullWhileWaitingMs: 100, unknownWhileWaitingMs: 0, busyMs: 200 });
   });
   it("ends waiting at queue_until and an undispatched reservation at reserved_until even before the lazy expiry event", () => {
     expect(modelRequestIntervals([{ toState: "waiting", atMs: 0 }, { toState: "withdrawn", atMs: 9_000 }], { queueUntilMs: 5_000, reservedUntilMs: null }))

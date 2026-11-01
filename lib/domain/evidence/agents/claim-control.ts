@@ -36,6 +36,8 @@ export const AGENT_SCAN_CONSUMER_PREFIX = consumerInstancePrefix('agent-scan');
  * pipeline-control status 의 consumers 가 같은 기준으로 센다(크래시 루프 중인 consumer 를 살아 있다고 세지 않는다).
  */
 export const AGENT_SCAN_CONSUMER_HEARTBEAT_MS = 120_000;
+/** Low GitHub headroom is rechecked after this bounded sleep; monitoring must not extend that decision beyond its actual next poll. */
+export const AGENT_SCAN_HEADROOM_WAIT_MS = 60_000;
 export const AGENT_SCAN_CONSUMER_LIVE_STATUSES = ['running', 'starting'] as const;
 export type AgentScanModeState = Pick<AgentScanControlRow, 'mode' | 'drainingFrom'>;
 /** 잠그지 않고 읽는 지금 모드 — 잡의 갈래(legacy 스캔·컨트롤러)와 진행 표시만 쓴다. 쓰기 권한은 각 TX 의 관문이 다시 본다 */

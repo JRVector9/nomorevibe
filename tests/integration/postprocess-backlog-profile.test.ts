@@ -46,3 +46,24 @@ it("never selects a product another request already holds, so one product has on
   await setCapacityMode("disabled");
   expect((await ids(self)).sort((a, b) => a - b)).toEqual([held.id, free.id, third.id]);
 });
+
+it("reselects the final product after its previous boot's reservation expires without another admission expiring it first", async () => {
+  const product = await seed();
+  await setCapacityMode("open", policy(routes));
+  const previous = fixtureOwner("profile-expired"), current = fixtureOwner("profile-successor");
+  const held = await holdProfile(previous, product.id);
+  expect(held.kind).toBe("granted");
+  if (held.kind !== "granted") throw new Error("fixture_reservation_missing");
+  expect(await ids(current)).toEqual([]);
+  await admin`UPDATE model_capacity_requests SET reserved_until=clock_timestamp()-interval '1 second'
+    WHERE request_id=${held.reservation.requestId}::uuid`;
+  expect(await ids(current)).toEqual([product.id]);
+  // Selection only reads. The canonical admission still owns reservation_expired and the next reservation.
+  const [retainedState] = await admin`SELECT state FROM model_capacity_requests WHERE request_id=${held.reservation.requestId}::uuid`;
+  expect(retainedState.state).toBe("reserved");
+  expect(await holdProfile(current, product.id)).toMatchObject({ kind: "granted" });
+  const [expiredState] = await admin`SELECT state FROM model_capacity_requests WHERE request_id=${held.reservation.requestId}::uuid`;
+  expect(expiredState.state).toBe("withdrawn");
+  expect((await admin`SELECT kind FROM model_capacity_events WHERE request_id=${held.reservation.requestId}::uuid ORDER BY id`)
+    .map(row => row.kind)).toEqual(["queued", "reserved", "reservation_expired"]);
+});

@@ -35,7 +35,12 @@ export async function capacityRefusalReason(request: ModelCapacityRequest,
 export type CapacityOwner = Readonly<{ instanceId: string; bootId: string }>;
 
 // 미확인(indeterminate)은 살아 있는 행이 아니다(capacity-states.ts) — 선택기가 그 대상을 숨기지 않는다.
-const ACTIVE = liveStateSql("r.state");
+// 만료된 미전송 행도 숨기지 않는다. 새 boot 가 마지막 일감을 고르지 못하면 requestSlot 의 lazy expiry 에 도달할 수 없다.
+// 선택은 읽기만 하고, 실제 만료·중복·소유권 판정은 admission 이 control 잠금 아래 다시 한다. 보낸 요청은 기한으로 빼지 않는다.
+// NULL 은 스키마상 waiting.queue_until / reserved.reserved_until 에 올 수 없지만, 읽기 경계에서는 보수적으로 busy 를 유지한다.
+const ACTIVE = sql`(${liveStateSql("r.state")}
+  AND (r.state <> 'waiting' OR r.queue_until IS NULL OR r.queue_until > clock_timestamp())
+  AND (r.state <> 'reserved' OR r.reserved_until IS NULL OR r.reserved_until > clock_timestamp()))`;
 const OPEN = sql`EXISTS (SELECT 1 FROM model_capacity_control c WHERE c.id = 1 AND c.mode = 'open')`;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

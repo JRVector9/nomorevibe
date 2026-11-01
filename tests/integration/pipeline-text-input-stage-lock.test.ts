@@ -251,6 +251,18 @@ it("category hold and manual category wait for S3 before decision/audit/request"
   expect((await db.select().from(categoryDecisions).where(eq(categoryDecisions.repo, fixture.repo)))[0].category).toBe("Dev");
 });
 
+it("rejects a publisher classification hold when its job lease expires during the stage wait", async () => {
+  const fixture = await taglineFixture("category-expired-worker");
+  const [candidate] = await db.update(crawlCandidates).set({ state: "approved", reason: "passed" })
+    .where(eq(crawlCandidates.id, fixture.task.candidate.id)).returning();
+  const lease = await leaseFor("crawl-publish");
+  await expect(behindStage(candidate.id, () => holdClassification(candidate, fixture.task.document, lease), async () => {
+    await raw`UPDATE jobs SET locked_at=clock_timestamp()-(${STALE_LOCK_MS}+1000)*interval '1 millisecond' WHERE name=${lease.name}`;
+  })).rejects.toMatchObject({ name: "JobLeaseLostError" });
+  expect(await db.select().from(categoryDecisions).where(eq(categoryDecisions.repo, fixture.repo))).toEqual([]);
+  expect((await db.select().from(crawlCandidates).where(eq(crawlCandidates.id, candidate.id)))[0]).toEqual(candidate);
+});
+
 it("intro editor waits for S3 before generation/product/check locks", async () => {
   const product = await productFixture("editor");
   await db.insert(productIntroChecks).values({ productId: product.id, checkedTagline: product.tagline, outcome: "needs_editor" });

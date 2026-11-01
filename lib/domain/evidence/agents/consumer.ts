@@ -12,6 +12,7 @@ import { abandonAgentRepositoryClaim, AGENT_SCAN_RECORD_CUTOFF_MS, claimAgentRep
   type AgentScanIdleReason, type AgentScanLease, type AgentScanRecordOutcome } from './claims';
 import type { AgentGitHubRequest, CollectResult } from './collect';
 import { collectRepositoryAgentScan, getLatestRepositoryAgentScan } from './repository';
+import { AGENT_SCAN_HEADROOM_WAIT_MS } from './claim-control';
 
 /**
  * 제작 근거 스캔 consumer(일꾼). M3 Dokploy 앱과 Oracle unit 이 같은 코드로 agent_repository_claims 큐를 나눠 맡는다.
@@ -32,7 +33,7 @@ export const AGENT_SCAN_JOB = 'agent-evidence-refresh';
 export const AGENT_SCAN_CONCURRENCY_MAX = 4;
 /** 이만큼의 claim 마다 한 번은 order 'due'(priority 무시) — 정기 도래(5)·오류 반복(6)도 앞으로 나아간다 */
 export const AGENT_SCAN_DUE_EVERY = 5;
-export const AGENT_SCAN_WAIT_MS = { empty: 10_000, mode: 30_000, quota: 60_000, host: 5_000, error: 30_000, systemic: 60_000 } as const;
+export const AGENT_SCAN_WAIT_MS = { empty: 10_000, mode: 30_000, quota: AGENT_SCAN_HEADROOM_WAIT_MS, host: 5_000, error: 30_000, systemic: 60_000 } as const;
 /** 처리 중 예외로 푼 저장소를 다시 잡기까지 */
 export const AGENT_SCAN_ERROR_RETRY_MS = 15 * 60_000;
 /** 공급자 한도가 다시 열릴 시각을 모를 때(잡의 retryAfter 와 같은 15분) */
@@ -96,7 +97,7 @@ export async function runAgentScanConsumer(input: AgentScanConsumerInput): Promi
   const stats = emptyStats(), bootedAt = Date.now();
   const running = new Map<number, number>();
   // pausedUntil: 공급자 대기(진행 판정이 backoff 로 읽는다) · haltedUntil: 저장소 탓 아닌 오류 뒤 쉼(고쳐야 할 일이라 경보로 남긴다)
-  let pausedUntil = 0, haltedUntil = 0, attempts = 0, observedAt = 0, observing: Promise<void> | null = null;
+  let pausedUntil = 0, headroomPausedUntil = 0, haltedUntil = 0, attempts = 0, observedAt = 0, observing: Promise<void> | null = null;
   const last: { claimAt: number | null; recordAt: number | null; idle: string | null; error: string | null } = { claimAt: null, recordAt: null, idle: null, error: null };
 
   // 일꾼이 여럿이면 감독에게는 합쳐 알린다 — 도는 스캔이 있으면 가장 오래 돈 것의 시작(job_timeout 이 그것으로 잰다)
@@ -105,8 +106,9 @@ export async function runAgentScanConsumer(input: AgentScanConsumerInput): Promi
     if (started.length) report?.('running', AGENT_SCAN_JOB, Math.min(...started));
     else report?.('idle');
   };
-  const snapshot = () => ({ instanceId: owner.instanceId, bootId: owner.bootId, bootedAt, concurrency, release: process.env.RELEASE_TAG ?? 'unknown',
+  const snapshot = () => ({ instanceId: owner.instanceId, bootId: owner.bootId, bootedAt, pid: process.pid, concurrency, release: process.env.RELEASE_TAG ?? 'unknown',
     ...structuredClone(stats), running: running.size, pausedUntil: pausedUntil > Date.now() ? new Date(pausedUntil).toISOString() : null,
+    headroomPausedUntil: headroomPausedUntil > Date.now() ? new Date(headroomPausedUntil).toISOString() : null,
     haltedUntil: haltedUntil > Date.now() ? new Date(haltedUntil).toISOString() : null,
     lastClaimAt: last.claimAt && new Date(last.claimAt).toISOString(), lastRecordAt: last.recordAt && new Date(last.recordAt).toISOString(),
     lastIdleReason: last.idle, lastErrorCode: last.error });
@@ -182,9 +184,12 @@ export async function runAgentScanConsumer(input: AgentScanConsumerInput): Promi
     if (signal?.aborted) return null;
     if (headroom?.low) {
       stats.deferred.quota++; last.idle = 'github_headroom_low'; deferred('github_headroom_low');
+      // Observation only: the quota guard and next check stay unchanged. Do not infer the provider's reset time.
+      headroomPausedUntil = Date.now() + AGENT_SCAN_WAIT_MS.quota;
       logger.info('agent_scan.github_headroom_low', { remaining: headroom.remaining, limit: headroom.limit });
       return AGENT_SCAN_WAIT_MS.quota;
     }
+    headroomPausedUntil = 0;
     const host = input.admit ? await input.admit(AGENT_SCAN_JOB).catch(() => ({ admitted: false as const, reason: 'host_budget_unavailable' as const })) : null;
     if (host?.admitted === false) {
       stats.deferred.host++; last.idle = host.reason; deferred(host.reason);
@@ -214,9 +219,10 @@ export async function runAgentScanConsumer(input: AgentScanConsumerInput): Promi
   /** 일꾼 하나. once 면 처음 쉬게 되는 곳에서 끝난다 */
   const worker = async (slot: number) => {
     while (!signal?.aborted) {
-      void observeNow();
       let pause: number | null;
       try { pause = await step(slot); } catch (error) { failed(error, null); pause = afterError(error); }
+      // Publish the decision just made before sleeping, so the first quota wait is visible during that wait.
+      void observeNow();
       if (pause === null) continue;
       if (once) return;
       await wait(pause);

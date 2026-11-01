@@ -3,7 +3,9 @@ import { eq, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { categoryDecisions, crawlCandidates, crawlDocuments, operationsAudit, type CrawlCandidate, type CrawlDocument } from '@/lib/db/schema';
 import { CATEGORIES, type Category } from '@/lib/domain/products/schema';
-import { requestJob } from '@/lib/jobs/control';
+import { assertJobLeaseAtWallTime, requestJob, withJobLeaseWrite, type JobLease } from '@/lib/jobs/control';
+import { currentReplayDb } from '@/lib/db/replay-scope';
+import { DrWriterFencedError, writerSiteActive } from '@/lib/operations/dr/epoch';
 import { adminAuditRow } from './admin-log';
 import { lockPipelineInputStages } from '@/lib/crawl/pipeline-stage-context';
 
@@ -20,17 +22,21 @@ export async function decisionFor(candidate: CrawlCandidate, document: CrawlDocu
   const decision=await db.query.categoryDecisions.findFirst({where:eq(categoryDecisions.repo,candidate.repo)});
   return decision ? { ...decision, category: decision.sourceHash===categorySourceHash(candidate,document) ? decision.category : null } : null;
 }
-export async function holdClassification(candidate: CrawlCandidate, document: CrawlDocument) {
+export async function holdClassification(candidate: CrawlCandidate, document: CrawlDocument, lease?: JobLease) {
   const sourceHash=categorySourceHash(candidate,document);
-  await db.transaction(async tx=>{
+  await withJobLeaseWrite(lease, async tx=>{
+    // Worker holds use the canonical fence-first writer. Direct controller calls need the same site guard before stage/domain locks.
+    if (!lease && !currentReplayDb() && !await writerSiteActive(tx)) throw new DrWriterFencedError('site_fenced');
     await lockPipelineInputStages(tx);
     const [c]=await tx.select().from(crawlCandidates).where(eq(crawlCandidates.id,candidate.id)).for('update');
     const [d]=await tx.select().from(crawlDocuments).where(eq(crawlDocuments.repo,candidate.repo)).for('share');
     if(!c||!d||c.state!=='approved'||categorySourceHash(c,d)!==sourceHash)return;
     const [existing]=await tx.select().from(categoryDecisions).where(eq(categoryDecisions.repo,c.repo)).for('update');
     if(existing?.category && existing.sourceHash===sourceHash)return;
+    if (lease) await assertJobLeaseAtWallTime(tx, lease);
     const values={sourceHash,category:null,reason:'AI 분류 실패 또는 미연결 · 수동 분류 대기',actor:'publisher',retryAt:sql`now() + interval '1 hour'`,updatedAt:sql`clock_timestamp()`};
     await tx.insert(categoryDecisions).values({repo:c.repo,...values}).onConflictDoUpdate({target:categoryDecisions.repo,set:{...values,revision:sql`${categoryDecisions.revision}+1`}});
+    if (lease) await assertJobLeaseAtWallTime(tx, lease);
   });
 }
 export async function setManualCategory(input:{repo:string;sourceHash:string;category:Category;reason:string;actor:string}) {

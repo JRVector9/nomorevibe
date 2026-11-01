@@ -56,11 +56,14 @@ export async function cleanupCapacityFixture() {
 }
 
 /** 장부 fence 와 같은 상태 판정을 실제 표 대신 이 행들로 — dispatched·indeterminate 는 결속 증명 없이 만들 수 없어 CTE 로 가린다 */
-export function shadowRequests(rows: { state: string; owner: string; boot: string; members?: string[]; logical?: string }[], mode = "open") {
+export function shadowRequests(rows: { state: string; owner: string; boot: string; members?: string[]; logical?: string;
+  queueMs?: number | null; reservedMs?: number | null }[], mode = "open") {
   const values = rows.map(row => sql`(${row.state}::text, ${row.owner}::text, ${row.boot}::uuid,
     ${row.members ? sql`ARRAY[${sql.join(row.members.map(key => sql`${key}`), sql`, `)}]::text[]` : sql`NULL::text[]`},
-    ${row.logical ?? null}::text)`);
+    ${row.logical ?? null}::text,
+    ${row.queueMs === null ? sql`NULL::timestamptz` : sql`clock_timestamp() + ${row.queueMs ?? 60_000} * interval '1 millisecond'`},
+    ${row.reservedMs === null ? sql`NULL::timestamptz` : sql`clock_timestamp() + ${row.reservedMs ?? 60_000} * interval '1 millisecond'`})`);
   return sql`WITH model_capacity_requests AS (SELECT * FROM (VALUES ${sql.join(values, sql`, `)})
-      AS r(state, owner_instance_id, owner_boot_id, logical_member_keys, logical_work_key)),
+      AS r(state, owner_instance_id, owner_boot_id, logical_member_keys, logical_work_key, queue_until, reserved_until)),
     model_capacity_control AS (SELECT 1 AS id, ${mode}::text AS mode)`;
 }
