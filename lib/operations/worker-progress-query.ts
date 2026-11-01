@@ -25,6 +25,7 @@ import { classifyLiveness, classifyScheduler, classifyStage, laneForJob, parseAg
 import { readUptimeSplitStage } from "./uptime-split-repository";
 import { readTextStageProgress } from './text-stage-progress';
 import { readPublisherClassificationDrain } from './publisher-drain-progress';
+import { AGENT_REVIEW_ALL_SKIPPED } from '@/lib/crawl/agent-review-skip';
 
 type ProgressJob = { name: string; nextScheduledAt: Date | null; notBefore: Date | null; lockedAt?: Date | null;
   leaseToken?: string | null; cursor?: unknown; lastError?: string | null };
@@ -46,7 +47,7 @@ const sqlTextList = (values: string[]) => sql.join(values.map(value => sql`${val
 const CONSUMER_HEARTBEAT_MS = AGENT_SCAN_CONSUMER_HEARTBEAT_MS;
 type ReviewStageMode = Pick<typeof pipelineStageModes.$inferSelect, 'stage' | 'mode' | 'drainingFrom'>;
 
-export type WorkerProgressStage = StageProgress & { admissionBlock?: StageAdmissionDetail };
+export type WorkerProgressStage = StageProgress & { admissionBlock?: StageAdmissionDetail; skipBlock?: StageSkipDetail };
 export type WorkerProgressReport = { measuredAt: string; overall: "alarm" | "unknown" | "ok";
   stages: WorkerProgressStage[]; scheduler: ReturnType<typeof classifyScheduler>; liveness: ReturnType<typeof classifyLiveness>[];
   /** Optional for readers/fixtures written before lane metadata was introduced. */
@@ -170,13 +171,46 @@ export function buildWorkerProgress(
       if (healthyRun) next = { ...stage, reason: "running" as const, alarm: false, restartEligible: false };
     }
     // 미임대(admission defer) 단계도 여기 온다. 경보·reason·줄 재시작은 유지한다.
-    return applyCapacityAdmissionBlock(next, admissionBlocks);
+    return applyAllSkippedBlock(applyCapacityAdmissionBlock(next, admissionBlocks), observations, now);
   });
   const scheduler = classifyScheduler(jobs, isObserved("scheduler"), now, batch);
   const alarm = liveness.some(row => row.alarm) || stages.some(row => row.alarm) || lanes.some(row => row.alarm) || scheduler.alarm;
   const unknown = stages.some(row => row.reason === "unknown_age") || scheduler.reason === "unknown_schedule";
   return { measuredAt: throughput.measuredAt, overall: alarm ? "alarm" as const : unknown ? "unknown" as const : "ok" as const,
     stages, scheduler, liveness, lanes, activeJobs };
+}
+
+/** 단계가 들인 일을 모두 이름 붙은 까닭으로 건너뛴다는 job 관측(runner 의 degraded)과 그 코드. 이 잡만 쓴다. */
+const ALL_SKIPPED_CODES: Readonly<Record<string, string>> = { "crawl-agent-review": AGENT_REVIEW_ALL_SKIPPED };
+/**
+ * 그 관측을 믿는 시간. 1차 틱(최대 108초)과 scheduler 의 다음 요청(60초)을 한 번 담는다 — 그 뒤로 새 틱 관측이 없으면(틱이 멈춘 워커)
+ * 지금처럼 재시작한다. 미래 쪽은 호스트 사이 시계 차이만 30초까지 받는다.
+ */
+export const ALL_SKIPPED_FRESH_MS = 180_000;
+const ALL_SKIPPED_CLOCK_SKEW_MS = 30_000;
+export type StageSkipDetail = { reason: 'all_skipped'; code: string; detail: string | null; streak: number | null };
+
+/**
+ * 막 끝난 틱이 들인 일을 모두 건너뛰었다고(degraded: agent_review_all_skipped) 알린 단계는 재시작 대상에서 뺀다. 워커는 틱을 끝내고 있고
+ * 건너뛴 까닭(배정 없음·입력 만료 등)은 같은 입력으로 다시 떠도 그대로라 재시작이 고치지 못한다 — 2026-11-01 reviewer 가 그 정체로
+ * 5분에 세 번 재시작해 primary_quarantined 가 되고, 예비도 같은 까닭으로 멈췄다. reason·alarm 은 그대로 두고(capacity-admission-block 과 같다),
+ * 줄 정지(lane)·관측이 끊긴 틱은 지금처럼 재시작한다.
+ */
+export function applyAllSkippedBlock<T extends { job?: string; reason: string; restartEligible?: boolean }>(
+  stage: T, observations: ReadonlyArray<{ key: string; value: Record<string, unknown>; observedAt: Date | string }>, now: Date,
+): T & { skipBlock?: StageSkipDetail } {
+  if (stage.restartEligible !== true || stage.reason !== 'no_progress' || !stage.job) return stage;
+  const code = ALL_SKIPPED_CODES[stage.job];
+  const row = code ? observations.find(item => item.key === `job:${stage.job}`) : undefined;
+  if (!row) return stage;
+  const age = now.getTime() - new Date(row.observedAt).getTime();
+  if (!(age >= -ALL_SKIPPED_CLOCK_SKEW_MS && age <= ALL_SKIPPED_FRESH_MS)) return stage;
+  const degraded = row.value.degraded as { code?: unknown; detail?: unknown; streak?: unknown } | null | undefined;
+  if (!degraded || typeof degraded !== 'object' || degraded.code !== code) return stage;
+  const skipBlock: StageSkipDetail = { reason: 'all_skipped', code,
+    detail: typeof degraded.detail === 'string' ? degraded.detail.slice(0, 300) : null,
+    streak: typeof degraded.streak === 'number' && Number.isSafeInteger(degraded.streak) ? degraded.streak : null };
+  return { ...stage, restartEligible: false, skipBlock };
 }
 
 /**

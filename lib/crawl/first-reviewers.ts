@@ -76,13 +76,23 @@ export function firstReviewIdentitySql(pool: FirstReviewer[], columns: { provide
   return pool.length ? sql`(${sql.join(pool.map(reviewer => sql`(${columns.provider} = ${reviewer.provider} AND ${columns.model} = ${reviewer.model})`), sql` OR `)})` : sql`false`;
 }
 
+/** 1차 고르기가 읽는 이 입력의 가장 최근 모델 시도. state 를 모르면(옛 호출자) 끝났다고 보지 않는다. */
+export type FirstReviewAttemptIdentity = { provider: string | null; model: string | null; state?: string | null };
+/**
+ * 풀에서 빠진 모델의 시도를 지금 풀의 고정 칸으로 다시 배정해도 되는가. 끝난 시도(failed·superseded·succeeded)는 보낸 일이 남아 있지 않다 —
+ * 막을 것이 없는데 null 로 두면 그 후보는 대기열에 남은 채 매 틱 조용히 건너뛰어진다(2026-11-01 AI1 정체: admitted 14 · calls 0).
+ * 진행 중(running)·상태 모름·식별 불가(provider/model 없음)는 그대로 보호한다(null). 시도 예산은 모델과 무관하게 이어진다(retryReviewIdentity).
+ */
+const settledRemovedAttempt = (attempt: FirstReviewAttemptIdentity): boolean => typeof attempt.provider === "string"
+  && typeof attempt.model === "string" && (attempt.state === "failed" || attempt.state === "superseded" || attempt.state === "succeeded");
+
 /**
  * Pin active intents and retries before assigning untouched candidates. No state is reclaimed here.
  * Only a candidate with no intent and no attempt at all (`untouched`) may skip a blocked model,
  * rotating from its fixed slot. If every model is blocked it keeps the fixed slot and waits.
  */
 export function selectFirstReviewer(pool: FirstReviewer[], candidateId: number,
-  attempts: { provider: string | null; model: string | null }[] = [],
+  attempts: FirstReviewAttemptIdentity[] = [],
   active: { provider: string | null; model: string | null }[] = [],
   avoid: { blocked: ReadonlySet<string>; untouched: boolean } = { blocked: new Set(), untouched: false }): FirstReviewer | null {
   if (!pool.length || !Number.isSafeInteger(candidateId) || candidateId < 1) return null;
@@ -91,9 +101,11 @@ export function selectFirstReviewer(pool: FirstReviewer[], candidateId: number,
     if (identities.size !== 1 || !hasFirstReviewer(pool, active[0])) return null;
     return pool.find(row => row.provider === active[0].provider && row.model === active[0].model)!;
   }
-  // The latest sent attempt pins a retry even if its model was removed from the pool.
-  if (attempts.length) return pool.find(row => row.provider === attempts[0].provider && row.model === attempts[0].model) ?? null;
   const start = (candidateId - 1) % pool.length;
+  // The latest attempt pins a retry to its model. A settled attempt of a model removed from the pool
+  // takes the fixed slot (no blocked-model rotation: it is not untouched); an unsettled or unreadable one stays protected.
+  if (attempts.length) return pool.find(row => row.provider === attempts[0].provider && row.model === attempts[0].model)
+    ?? (settledRemovedAttempt(attempts[0]) ? pool[start] : null);
   if (avoid.untouched && attempts.length === 0) for (let offset = 0; offset < pool.length; offset++) {
     const reviewer = pool[(start + offset) % pool.length];
     if (!avoid.blocked.has(firstReviewerKey(reviewer))) return reviewer;
@@ -107,7 +119,7 @@ export function selectFirstReviewer(pool: FirstReviewer[], candidateId: number,
  * 그 rank 가 모두 막혔으면 다음 rank(대체)로 간다. 모두 막혔으면 고정 칸에서 기다린다.
  */
 export function selectTableFirstReviewer(rows: readonly FirstReviewTableRow[], candidateId: number,
-  attempts: { provider: string | null; model: string | null }[] = [],
+  attempts: FirstReviewAttemptIdentity[] = [],
   active: { provider: string | null; model: string | null }[] = [],
   avoid: { blocked: ReadonlySet<string>; untouched: boolean } = { blocked: new Set(), untouched: false }): FirstReviewer | null {
   const usable = stageTableRows("ai1", rows), pool = tableFirstReviewers(usable);
@@ -117,8 +129,9 @@ export function selectTableFirstReviewer(rows: readonly FirstReviewTableRow[], c
     if (identities.size !== 1 || !hasFirstReviewer(pool, active[0])) return null;
     return pool.find(row => row.provider === active[0].provider && row.model === active[0].model)!;
   }
-  if (attempts.length) return pool.find(row => row.provider === attempts[0].provider && row.model === attempts[0].model) ?? null;
   const fixed = chooseModelForItem(usable, candidateId);
+  if (attempts.length) return pool.find(row => row.provider === attempts[0].provider && row.model === attempts[0].model)
+    ?? (settledRemovedAttempt(attempts[0]) && fixed ? tableReviewer(fixed) : null);
   if (avoid.untouched && avoid.blocked.size) {
     const excludeModels = usable.filter(row => avoid.blocked.has(firstReviewerKey(row))).map(row => row.model);
     const rerouted = chooseModelForItem(usable, candidateId, { excludeModels });

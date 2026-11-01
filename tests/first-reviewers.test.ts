@@ -97,6 +97,24 @@ it("does not move retries from removed or unreadable models to an available pool
   expect(selectFirstReviewer([primary, extra], 2, [{ ...extra, model: "removed" }, primary], [], avoid)).toBeNull();
 });
 
+it("reassigns a settled retry of a removed model to the fixed slot and keeps unsettled or unreadable ones protected", () => {
+  const avoid = { blocked: new Set([firstReviewerKey(extra)]), untouched: true };
+  const removed = { provider: "abcllm" as const, model: "removed-review-model" };
+  // 2026-11-01: 끝난 시도(failed·superseded·succeeded)의 모델이 풀에서 빠졌으면 고정 칸으로 — 빈 추가 풀([])은 primary 하나다
+  for (const state of ["failed", "superseded", "succeeded"]) {
+    expect(selectFirstReviewer([primary], 2, [{ ...removed, state }])).toEqual(primary);
+    expect([1, 2].map(id => selectFirstReviewer([primary, extra], id, [{ ...removed, state }], [], avoid))).toEqual([primary, extra]);
+  }
+  // 풀에 남은 모델의 시도는 그대로 고정한다
+  expect(selectFirstReviewer([primary, extra], 1, [{ ...extra, state: "failed" }])).toEqual(extra);
+  // 진행 중·상태 모름·식별 불가는 보호한다
+  expect(selectFirstReviewer([primary], 2, [{ ...removed, state: "running" }])).toBeNull();
+  expect(selectFirstReviewer([primary], 2, [{ ...removed, state: null }])).toBeNull();
+  expect(selectFirstReviewer([primary], 2, [{ provider: null, model: null, state: "failed" }])).toBeNull();
+  // 다른 모델의 활성 의도는 끝난 시도보다 앞선다
+  expect(selectFirstReviewer([primary], 2, [{ ...removed, state: "failed" }], [removed])).toBeNull();
+});
+
 it("configures candidate suggestions while preserving the stored pool and all retry assignment rules", () => {
   const defaults = firstReviewCandidates({});
   expect(defaults.map(row => row.model)).toEqual(["[supa] Qwen3.8-27B-NVFP4", "[MLX] gpt-oss-120b", "sonnet", "opus", "grok-4.7"]);

@@ -127,10 +127,14 @@ it('chooses AI1 reviewers from the table with the (id − 1) mod n slot and fall
   for (const { id, model } of chosen) expect(model).toBe(tableAi1[(id - 1) % 2].model);
   const blocked = new Set(tableAi1.filter(row => row.rank === 1).map(row => firstReviewerKey(row)));
   expect((await chooseFirstReviewForCandidate(await context('rdr/one'), undefined, blocked))?.model).toBe('sonnet');
-  // a retry stays pinned to its model; a model that left the table is not reassigned
+  // a retry stays pinned to its model
   await firstAttempt('rdr/two', { provider: 'claude-cli', model: 'sonnet' });
   expect((await chooseFirstReviewForCandidate(await context('rdr/two'), undefined, blocked))?.model).toBe('sonnet');
+  // a settled attempt of a model that left the table takes the fixed slot (2026-11-01 AI1 stall); a running one stays protected
   await db.update(crawlReviewAttempts).set({ provider: 'abcllm', model: 'legacy-first' }).where(sql`true`);
+  const two = await context('rdr/two');
+  expect((await chooseFirstReviewForCandidate(two))?.model).toBe(tableAi1[(two.candidate.id - 1) % 2].model);
+  await db.update(crawlReviewAttempts).set({ state: 'running', completedAt: null }).where(sql`true`);
   expect(await chooseFirstReviewForCandidate(await context('rdr/two'))).toBeNull();
 });
 

@@ -230,7 +230,10 @@ describe("AI1 reviewers from the table", () => {
   it("pins active intents and retries to their model (fallbacks included) and never moves sent work", () => {
     expect(selectTableFirstReviewer(rows, 1, [reviewer(fallback)])).toEqual(reviewer(fallback));
     expect(selectTableFirstReviewer(rows, 1, [], [reviewer(c)])).toEqual(reviewer(c));
-    expect(selectTableFirstReviewer(rows, 1, [legacyFirst])).toBeNull();                       // removed model: no reassignment
+    expect(selectTableFirstReviewer(rows, 1, [legacyFirst])).toBeNull();                       // removed model, state unknown: protected
+    expect(selectTableFirstReviewer(rows, 1, [{ ...legacyFirst, state: "running" }])).toBeNull(); // removed model, still running: protected
+    // removed model, settled attempt: the fixed table slot (2026-11-01 AI1 stall)
+    expect(selectTableFirstReviewer(rows, 1, [{ ...legacyFirst, state: "failed" }])).toEqual(selectTableFirstReviewer(rows, 1));
     expect(selectTableFirstReviewer(rows, 1, [], [reviewer(a), reviewer(b)])).toBeNull();
     const blocked = new Set([firstReviewerKey(a)]);
     expect(selectTableFirstReviewer(rows, 1, [], [reviewer(a)], { blocked, untouched: true })).toEqual(reviewer(a));

@@ -66,7 +66,7 @@ export async function chooseFirstReviewForCandidate(context: ReviewDomainContext
   const pool = table ? tableFirstReviewers(table) : firstReviewers(context.settings, firstReviewer(context.settings));
   // Preserve the original query footprint for installations which never enabled a pool.
   if (context.settings.firstReviewAdditional === undefined) return pool[0] ?? null;
-  const attempts = await executor.select({ provider: crawlReviewAttempts.provider, model: crawlReviewAttempts.model })
+  const attempts = await executor.select({ provider: crawlReviewAttempts.provider, model: crawlReviewAttempts.model, state: crawlReviewAttempts.state })
     .from(crawlReviewAttempts).where(and(eq(crawlReviewAttempts.candidateId, context.candidate.id),
       eq(crawlReviewAttempts.kind, "automatic"), ne(crawlReviewAttempts.provider, "rules"),
       eq(crawlReviewAttempts.inputHash, context.input.inputHash))).orderBy(desc(crawlReviewAttempts.id)).limit(1);

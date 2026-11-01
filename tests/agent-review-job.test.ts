@@ -326,7 +326,9 @@ it("runs bounded controllers but does not read README or call a provider when le
 
 it("checks candidate admission before README when a logical item is owned", async () => {
   mocks.canStart.mockResolvedValueOnce(true).mockResolvedValueOnce(false).mockResolvedValue(true);
-  expect(await reviewCrawlCandidates(context())).toEqual({ done: false });
+  // 들인 한 건을 이름 붙은 까닭으로 건너뛰었다 — 제 일 못 한 틱으로 남는다(2026-11-01)
+  expect(await reviewCrawlCandidates(context())).toEqual({ done: false,
+    degraded: { code: "agent_review_all_skipped", detail: "item_owned=1" } });
   expect(mocks.canStart).toHaveBeenCalledWith(context().lease, 1);
   expect(mocks.document).not.toHaveBeenCalled();
   expect(mocks.readme).not.toHaveBeenCalled();
