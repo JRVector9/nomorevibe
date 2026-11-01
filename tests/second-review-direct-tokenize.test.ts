@@ -67,11 +67,26 @@ it("keeps the old boolean helper false for unknown evidence, never a truthy resu
 });
 
 it("classifies a deadline during tokenizer transport as unavailable, and caller cancellation as cancelled", async () => {
-  fixture.request.mockImplementation((_endpoint, init) => new Promise((_resolve, reject) => {
-    init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true });
-  }));
+  const signals: AbortSignal[] = [];
+  fixture.request.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+    // Fetch accepts both (url, init) and Request. Observe the effective transport signal in either form.
+    const signal = new Request(input, init).signal;
+    signals.push(signal);
+    return new Promise((_resolve, reject) => {
+      if (signal.aborted) reject(signal.reason);
+      else signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    });
+  });
   expect(await run(wire(), { timeoutMs: 1 })).toEqual({ kind: "unavailable", reason: "timeout" });
+  expect(signals).toHaveLength(1);
+  expect(signals[0].aborted).toBe(true);
+  expect(signals[0].reason).toMatchObject({ name: "TimeoutError" });
   const controller = new AbortController(), running = run(wire(), { timeoutMs: 1_000, signal: controller.signal });
-  controller.abort(new Error("caller cancellation"));
+  const cancellation = new Error("caller cancellation");
+  controller.abort(cancellation);
   expect(await running).toEqual({ kind: "cancelled" });
+  expect(signals).toHaveLength(2);
+  expect(signals[1].aborted).toBe(true);
+  expect(signals[1].reason).toBe(cancellation);
+  expect(fixture.request).toHaveBeenCalledTimes(2);
 });
