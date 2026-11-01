@@ -295,10 +295,11 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
   if (lastPagePosition) await ctx.save({ ...ctx.cursor, firstReviewPoolScan: lastPagePosition });
   else if (page && !page.length && after) await ctx.save({ ...ctx.cursor, firstReviewPoolScan: null });
   if (stageBlocked) return { done: false, deferred: "stage_blocked" };
-  // 심사를 남긴 틱은 완료 틱이다 — 미룸(deferred)은 "일을 인정하지 않음"이라 성공 시각을 옮기지 않는다. 풀의 모델 하나가 멈춰
-  // (포화·실패·미매핑) 매 틱 미룸으로 끝나면 시간당 1천여 건을 남기면서도 last_success_at 이 멈췄다(2026-10-31 01:26Z~).
-  // 한 모델만 멈췄으면 남은 일이 있으니 곧바로 다시 요청한다(미룸과 같이 다음 틱이 바로 돈다). 전역 미룸(draining·owner 등)이면
-  // 완료로 적되 다시 요청하지 않는다 — scheduler 의 다음 요청을 기다린다. 아무것도 남기지 못한 틱은 예전처럼 미룸이다.
+  // 심사를 남긴 틱은 완료 틱이다 — 요청(processedVersion)도 인정한다. 미룸은 처리 건수를 안 실으면 성공 시각을 옮기지 않고
+  // 요청도 인정하지 않는다. 풀의 모델 하나가 멈춰(포화·실패·미매핑) 매 틱 미룸으로 끝나면 시간당 1천여 건을 남기면서도
+  // last_success_at 이 멈췄다(2026-10-31 01:26Z~). 한 모델만 멈췄으면 남은 일이 있으니 곧바로 다시 요청한다.
+  // 전역 미룸(draining·owner 등)이면 완료로 적되 다시 요청하지 않는다 — scheduler 의 다음 요청을 기다린다.
+  // 아무것도 남기지 못한 틱은 예전처럼 미룸이다(processed 없음 → 성공 시각 유지).
   if (modelDeferred || pausedModels.size) {
     if (!progress) return { done: false, deferred: "model_capacity" };
     return !modelDeferred && !stopped && !ctx.signal?.aborted && ctx.hasBudget() ? { done: false, continuation: "ready" } : { done: false };

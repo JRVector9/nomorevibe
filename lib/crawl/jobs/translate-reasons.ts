@@ -1,5 +1,5 @@
 import { modelTimeoutMs, scopedModel } from "@/lib/llm/model-registry";
-import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
+import { deferredJob, type JobContext, type JobOutcome } from "@/lib/jobs/runner";
 import { tickRemaining } from "@/lib/jobs/tick-deadline";
 import { translateReasonsWithModelCapacity } from '@/lib/crawl/reason-translation-model-capacity';
 import { TRANSLATE_MODEL } from "@/lib/crawl/translate";
@@ -103,7 +103,11 @@ export async function translateReasons(ctx: JobContext<null>): Promise<JobOutcom
           { timeoutMs: Math.max(1_000, Math.min(callMs, remaining() - 1_000)), signal });
       } catch (error) {
         // 미룸 사유(capacity·dispatched·unmapped…)를 남긴다 — 러너는 'model_capacity' 하나로만 적는다
-        if (error instanceof ModelCapacityDeferredError) ctx.log("translate.capacity_deferred", { translated, failed, reason: error.reason });
+        if (error instanceof ModelCapacityDeferredError) {
+          ctx.log("translate.capacity_deferred", { translated, failed, reason: error.reason });
+          const processed = translated + failed;
+          if (processed >= 1) return deferredJob("model_capacity", processed);
+        }
         throw error;
       }
       if (prepared.kind === 'skipped') return { done: false };

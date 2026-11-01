@@ -125,8 +125,8 @@ it.each(scenarios)("$name drains existing calls without aborting peers or admitt
   scenario.call.mockRejectedValueOnce(deferred).mockImplementation(async (_input, options: { signal: AbortSignal }) => {
     signals.push(options.signal); entered.resolve(); await finish.promise; return scenario.result;
   });
-  let ended = false, failure: unknown;
-  const work = scenario.run(context(scenario.name)).catch(error => { failure = error; }).finally(() => { ended = true; });
+  let ended = false, failure: unknown, outcome: unknown;
+  const work = scenario.run(context(scenario.name)).then(value => { outcome = value; }, error => { failure = error; }).finally(() => { ended = true; });
   try {
     await Promise.race([entered.promise, work]);
     await Promise.resolve();
@@ -134,7 +134,9 @@ it.each(scenarios)("$name drains existing calls without aborting peers or admitt
     expect(signals.every(signal => !signal.aborted)).toBe(true);
     expect(ended).toBe(false);
   } finally { finish.resolve(); await work; }
-  expect(failure).toBe(deferred);
+  // 동료가 항목을 끝낸 뒤의 포화 미룸은 던지지 않고 건수를 돌려준다 — 러너가 lastSuccessAt 을 옮긴다. 0건이면 종전대로 던진다.
+  expect(failure).toBeUndefined();
+  expect(outcome).toEqual({ done: false, deferred: "model_capacity", processed: scenario.concurrency - 1 });
   expect(scenario.call).toHaveBeenCalledTimes(scenario.concurrency);
   expect(scenario.write).toHaveBeenCalledTimes(scenario.concurrency - 1);
   expect(scenario.write.mock.calls.every(call => call[0].candidate?.repo !== "fixture/doc-1" && call[0].product?.id !== 1)).toBe(true);

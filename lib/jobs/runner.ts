@@ -46,8 +46,22 @@ export type JobDeferredReason = "stage_blocked" | "http_origin_permit" | "model_
  * - critical: 기다려도 풀리지 않고 해가 큰 것(자격 거절 등) — 연속 횟수를 기다리지 않고 바로 긴급으로 올린다
  */
 export type JobDegraded = { code: string; detail?: string | null; critical?: boolean };
-export type JobOutcome<C> = { done: boolean; cursor?: C | null; continuation?: "ready"; deferred?: never; degraded?: JobDegraded }
-  | { done: false; deferred: JobDeferredReason; cursor?: never; continuation?: never; degraded?: never };
+export type JobOutcome<C> = { done: boolean; cursor?: C | null; continuation?: "ready"; deferred?: never; degraded?: JobDegraded; processed?: never }
+  | { done: false; deferred: JobDeferredReason;
+    /**
+     * 이 틱이 끝낸 항목 수. 1 이상이면 lastSuccessAt(마지막으로 실제 일을 한 시각)을 옮긴다.
+     * 없거나 0이면 — 한 건도 못 끝내고 미루기만 한 틱 — 성공 시각은 그대로 둔다.
+     */
+    processed?: number; cursor?: never; continuation?: never; degraded?: never };
+
+/**
+ * 미룸 결과. 끝낸 항목이 1건 이상이면 processed 를 실어 러너가 성공 시각을 옮기게 한다.
+ * 0·수가 아니면 칸을 빼서, 처리 없이 미룬 틱과 같은 모양을 유지한다.
+ */
+export function deferredJob<C>(reason: JobDeferredReason, processed = 0): JobOutcome<C> {
+  if (Number.isFinite(processed) && processed >= 1) return { done: false, deferred: reason, processed: Math.floor(processed) };
+  return { done: false, deferred: reason };
+}
 /**
  * sourceContinuation: 원본 수집 줄이 예산을 다 쓰고 남은 일을 알려 다시 요청해 두었다(줄은 쉬지 않고 이어 돈다).
  * continuation: 이어 돌 수 있는 잡(아래 CONTINUATION_JOBS)이 continuation:"ready" 를 돌려 같은 잡을 다시 요청해 두었다 — 워커 줄은
@@ -224,16 +238,20 @@ export async function runJob<C>(
     await stopHeartbeat();
     if (lost) throw new JobLeaseLostError();
     if (outcome.deferred) {
-      // No work was acknowledged. Preserve producer signals, cursor, pause and
-      // historical success fields, including changes made during this tick.
-      // lastError 는 "마지막 회차가 던졌다"이다 — 던지지 않고 끝난 이 틱은 사유를 가리지 않고 지운다. 처음에는 stage_blocked 만
-      // 지웠다(2026-10-29: item 소비자 단계로 넘어간 잡은 완료 틱을 다시 내지 못해 교착 한 번이 영원히 "마지막 회차 실패"로 남았다).
-      // 그런데 일시적 미룸도 같았다 — 모델 자리가 막힌 동안(model_capacity) 잡은 틱마다 미루기만 하고 완료 틱이 오지 않아, 며칠 전
-      // 던진 "[55P03] …" 이 그대로 남아 관리자 상태 "오류"·긴급 "마지막 회차가 실패한 작업"으로 보였다(2026-10-31 실측: 30분간
-      // 미룸 260회·던짐 0회). 지금 미루는 까닭은 defer:<job> 관측(onDeferred)이 따로 말한다. 성공 시각은 어느 미룸도 옮기지 않는다.
+      // 요청·커서·멈춤은 인정하지 않는다(이 틱이 ctx.save 로 옮긴 커서도 유지). lastError 는 "마지막 회차가 던졌다"이다 —
+      // 던지지 않고 끝난 이 틱은 사유를 가리지 않고 지운다. 처음에는 stage_blocked 만 지웠다(2026-10-29: item 소비자 단계로 넘어간
+      // 잡은 완료 틱을 다시 내지 못해 교착 한 번이 영원히 "마지막 회차 실패"로 남았다). 일시적 미룸도 같았다 — 모델 자리가 막힌
+      // 동안(model_capacity) 잡은 틱마다 미루기만 하고 완료 틱이 오지 않아, 며칠 전 던진 "[55P03] …" 이 그대로 남아 관리자 상태
+      // "오류"로 보였다(2026-10-31). 지금 미루는 까닭은 defer:<job> 관측(onDeferred)이 따로 말한다.
+      // lastSuccessAt 은 "마지막으로 실제 일을 한 시각"이다. 미룸이라도 끝낸 항목이 1건 이상이면(processed) 옮긴다 — 모델 한도에
+      // 걸려 틱마다 몇 건을 처리한 뒤 미루는 잡이 며칠째 "성공 없음"으로 보이지 않게(2026-11-01). 신호가 없거나 0이면 그대로 둔다.
+      // 던진 오류(ModelCapacityDeferredError·HttpOriginPermitError 가 아닌 것)는 아래 실패 경로가 종전대로 적는다.
+      const progressed = typeof outcome.processed === "number" && Number.isFinite(outcome.processed) && outcome.processed >= 1;
       const release = async (tx: typeof db | ProductTransaction) => {
-        return tx.update(jobs).set({ lockedAt: null, leaseToken: null, lastError: null })
-          .where(owned).returning({ name: jobs.name });
+        return tx.update(jobs).set({
+          lockedAt: null, leaseToken: null, lastError: null,
+          ...(progressed ? { lastSuccessAt: sql`now()`, updatedAt: sql`now()` } : {}),
+        }).where(owned).returning({ name: jobs.name });
       };
       const [row] = outcome.deferred === "http_origin_permit" || outcome.deferred === "model_capacity" || outcome.deferred === "source_buffer"
         ? await db.transaction(async tx => {
@@ -244,7 +262,7 @@ export async function runJob<C>(
         }) : await release(db);
       if (!row) throw new JobLeaseLostError();
       const durationMs = Date.now() - startedAt;
-      logger.info("job.deferred", { job: name, reason: outcome.deferred, durationMs });
+      logger.info("job.deferred", { job: name, reason: outcome.deferred, durationMs, ...(progressed ? { processed: outcome.processed } : {}) });
       await noteDeferred(outcome.deferred);
       return { status: "deferred", reason: outcome.deferred, durationMs };
     }

@@ -268,7 +268,7 @@ it("settles an admitted lane after another fresh admission defers and starts no 
   void pending.catch(() => {});
   try { await dispatched; await vi.waitFor(() => expect(mocks.admit).toHaveBeenCalledTimes(4)); }
   finally { release(); await Promise.allSettled([pending]); }
-  expect(await pending).toEqual({ done: false, deferred: "model_capacity" });
+  expect(await pending).toEqual({ done: false, deferred: "model_capacity", processed: 1 });
   expect(mocks.admit).toHaveBeenCalledTimes(4);
   expect(mocks.review).toHaveBeenCalledOnce();
   expect(mocks.record).toHaveBeenCalledExactlyOnceWith({ receipt,

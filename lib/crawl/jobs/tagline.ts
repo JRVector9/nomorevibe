@@ -1,5 +1,5 @@
 import { modelLimits, modelTimeoutMs, scopedModel } from "@/lib/llm/model-registry";
-import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
+import { deferredJob, type JobContext, type JobOutcome } from "@/lib/jobs/runner";
 import { EngineDownTally } from "@/lib/jobs/engine-down";
 import { tickRemaining } from "@/lib/jobs/tick-deadline";
 import { ModelCapacityDeferredError, modelCapacityDeferralIsPerWork } from "@/lib/llm/capacity-deferred";
@@ -159,7 +159,11 @@ export async function writeTaglines(ctx: JobContext<null>): Promise<JobOutcome<n
       }));
       const failures = settled.filter((result): result is PromiseRejectedResult => result.status === "rejected");
       const failure = failures.find(result => !(result.reason instanceof ModelCapacityDeferredError)) ?? failures[0];
-      if (failure) throw failure.reason;
+      if (failure) {
+        const processed = written + empty + failed;
+        if (failure.reason instanceof ModelCapacityDeferredError && processed >= 1) return deferredJob("model_capacity", processed);
+        throw failure.reason;
+      }
       if (skipped) return { done: false };
       if (blocked) {
         ctx.log("tagline.gateway_blocked", { error: blocked, written, empty, failed, released });

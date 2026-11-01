@@ -1,5 +1,5 @@
 import { modelLimits, modelTimeoutMs, scopedModel } from "@/lib/llm/model-registry";
-import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
+import { deferredJob, type JobContext, type JobOutcome } from "@/lib/jobs/runner";
 import { EngineDownTally } from "@/lib/jobs/engine-down";
 import { tickRemaining } from "@/lib/jobs/tick-deadline";
 import { ModelCapacityDeferredError, modelCapacityDeferralIsPerWork } from "@/lib/llm/capacity-deferred";
@@ -117,7 +117,11 @@ export async function verifySearchKeywords(ctx: JobContext<null>, request?: type
       }));
       const failures = settled.filter((item): item is PromiseRejectedResult => item.status === "rejected");
       const failure = failures.find(item => !(item.reason instanceof ModelCapacityDeferredError)) ?? failures[0];
-      if (failure) throw failure.reason;
+      if (failure) {
+        const processed = verified + failed;
+        if (failure.reason instanceof ModelCapacityDeferredError && processed >= 1) return deferredJob("model_capacity", processed);
+        throw failure.reason;
+      }
       if (blocked === "deadline_expired") {
         ctx.log("search_verify.deadline_deferred", { verified, removed, failed });
         return { done: false };
