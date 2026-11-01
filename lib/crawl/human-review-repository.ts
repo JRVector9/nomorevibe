@@ -2,7 +2,7 @@ import { scopedModel, registeredPoolModelNames } from "@/lib/llm/model-registry"
 import { and, asc, desc, eq, inArray, isNull, not, notInArray, or, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { crawlCandidates, crawlReviewAttempts, operationsAudit, jobs, secondReviews, type DecisionReason } from '@/lib/db/schema';
-import { assertJobLeaseAtWallTime, requestJob, type JobLease } from '@/lib/jobs/control';
+import { assertJobLeaseAtWallTime, requestJob, withJobLeaseWrite, type JobLease } from '@/lib/jobs/control';
 import { readItemStage } from '@/lib/jobs/items/repository';
 import { candidateRevisionHash, lockedInput } from './admin-review';
 import { lockPipelineInputStages } from './pipeline-stage-context';
@@ -18,6 +18,17 @@ export type HumanReviewClaim = {
   attemptId: number; candidateId: number; repo: string; candidateRevision: string; input: ReviewInput; generation: number; lease: JobLease;
 };
 const JOB = 'human-deepseek-review';
+const MAX_FAILURES = 3;
+const MAX_INFRASTRUCTURE_INTERRUPTS = 3;
+const INFRASTRUCTURE_WINDOW_MS = 24 * 60 * 60_000;
+const BEFORE_TRANSPORT_RETRY_MS = 60_000;
+const BEFORE_TRANSPORT_ERROR = 'not_started_before_transport';
+/** Only repository-proven abandonment or the worker's pre-capacity branch is
+ * infrastructure. An ordinary cancelled result may already have been sent. */
+function infrastructureInterrupt(row: Pick<typeof crawlReviewAttempts.$inferSelect, 'state' | 'errorCode'>): boolean {
+  return row.state === 'failed' && row.errorCode === 'owner_lost'
+    || row.state === 'superseded' && row.errorCode === BEFORE_TRANSPORT_ERROR;
+}
 
 /** skipReasons — 보류 Qwen-v2 재심사가 맡은 사유(heldQwenOwnedReasons). 같은 후보를 두 모델이 따로 가르지 않는다 */
 export async function humanReviewRepos(ids: number[], skipReasons: readonly string[] = []): Promise<string[]> {
@@ -32,7 +43,7 @@ export async function humanReviewRepos(ids: number[], skipReasons: readonly stri
 /** Claim the same candidate slot used by AI1; no DB transaction spans inference. */
 export async function claimHumanReview(repo: string, lease: JobLease): Promise<HumanReviewClaim | null> {
   if (lease.name !== JOB) throw new Error('human_review_job_required');
-  return db.transaction(async tx => {
+  return withJobLeaseWrite(lease, async tx => {
     const stages = await lockPipelineInputStages(tx);
     const [ai1, ai2] = await Promise.all([readItemStage(tx, stages.ai1), readItemStage(tx, stages.ai2)]);
     if (ai1.mode === 'draining' || ai2.mode === 'draining') return null;
@@ -68,9 +79,17 @@ export async function claimHumanReview(repo: string, lease: JobLease): Promise<H
       eq(crawlReviewAttempts.actor, deepseekActor(generation)),
       sql`not (${crawlReviewAttempts.state} = 'superseded' and ${crawlReviewAttempts.errorCode} is not distinct from 'model_capacity_deferred')`,
     )).orderBy(desc(crawlReviewAttempts.id));
-    // A model's abstention is final for this input. Failures have bounded retries.
-    if (attempts.some(row => row.state === 'succeeded') || attempts.length >= 3
-      || attempts[0]?.retryAfter && attempts[0].retryAfter > new Date()) return null;
+    // A model's abstention is final for this input. Lost owners and proven
+    // unsent claims do not exhaust its three model attempts permanently after
+    // a DB outage. Like AI1 owner changes, three interruptions instead impose
+    // a rolling 24-hour infrastructure throttle; the same input resumes later.
+    const now = new Date();
+    const failures = attempts.filter(row => !infrastructureInterrupt(row)).length;
+    const interruptions = attempts.filter(row => infrastructureInterrupt(row)
+      && row.completedAt && row.completedAt.getTime() > now.getTime() - INFRASTRUCTURE_WINDOW_MS).length;
+    if (attempts.some(row => row.state === 'succeeded') || failures >= MAX_FAILURES
+      || interruptions >= MAX_INFRASTRUCTURE_INTERRUPTS
+      || attempts[0]?.retryAfter && attempts[0].retryAfter > now) return null;
     const [attempt] = await tx.insert(crawlReviewAttempts).values({
       candidateId: candidate.id, kind: 'delegated', state: 'running', inputHash: input.inputHash,
       sourceRevisionHash: input.sourceRevisionHash, policyHash: input.policyHash, source: input.source, snapshot: input.snapshot,
@@ -80,6 +99,21 @@ export async function claimHumanReview(repo: string, lease: JobLease): Promise<H
     }).returning({ id: crawlReviewAttempts.id });
     await assertJobLeaseAtWallTime(tx, lease);
     return { attemptId: attempt.id, candidateId: candidate.id, repo, candidateRevision: candidateRevisionHash(candidate), input, generation, lease };
+  });
+}
+
+/** Only call before entering model capacity/transport. Preserve the abandoned
+ * claim as evidence, with a short cooldown and the separate infrastructure cap. */
+export async function deferHumanReviewBeforeTransport(claim: HumanReviewClaim): Promise<void> {
+  if (claim.lease.name !== JOB) throw new Error('human_review_job_required');
+  await withJobLeaseWrite(claim.lease, async tx => {
+    await lockPipelineInputStages(tx);
+    await tx.update(crawlReviewAttempts).set({ state: 'superseded', errorCode: BEFORE_TRANSPORT_ERROR,
+      completedAt: new Date(), retryAfter: new Date(Date.now() + BEFORE_TRANSPORT_RETRY_MS) })
+      .where(and(eq(crawlReviewAttempts.id, claim.attemptId), eq(crawlReviewAttempts.candidateId, claim.candidateId),
+        eq(crawlReviewAttempts.kind, 'delegated'), eq(crawlReviewAttempts.actor, deepseekActor(claim.generation)),
+        eq(crawlReviewAttempts.state, 'running'), eq(crawlReviewAttempts.leaseToken, claim.lease.token)));
+    await assertJobLeaseAtWallTime(tx, claim.lease);
   });
 }
 
