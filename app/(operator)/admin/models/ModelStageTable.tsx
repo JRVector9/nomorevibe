@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { AdminModelsObservation } from "@/lib/operations/admin-models-observation";
-import { elapsedModelTime, kstClock, MODEL_ROW_STATUS, MODEL_TABLE_COLUMNS, modelCardAnchor, modelRecoveryBlocked, modelRowGroups, modelRowStatus, modelTransportLabel,
+import { CODE_DEFAULT_GATEWAY_NOTE, elapsedModelTime, isCodeDefaultGatewayHost, kstClock, MODEL_ROW_STATUS, MODEL_TABLE_COLUMNS, modelCardAnchor, modelRecoveryBlocked, modelRowGroups, modelRowStatus, modelTransportLabel,
   probeIdentityOf, type ModelCard, type ModelRowGroup, type ModelRowStatus } from "@/lib/operations/admin-models-view";
 import { probeObservationKey, probeResultLabel, probeSourceLabel, type ProbeObservation } from "@/lib/operations/admin-models-probe";
 import type { ModelProbeResult } from "./operation-actions";
@@ -65,6 +65,7 @@ function CardRows({ card, observation, controls, probe, busy, onProbe, recovery 
   card: ModelCard; observation: AdminModelsObservation; controls: ModelOpsControls; probe: ProbeView | null; busy: boolean; onProbe: () => void; recovery?: { key: string; blockedReason?: string };
 }) {
   const groups = modelRowGroups(card), provider = cardProvider(card), probeable = PROBE_PROVIDERS.includes(provider), label = `[${card.equipment}] ${card.name}`;
+  const engineHosts = card.hosts.filter(host => !isCodeDefaultGatewayHost(host)), codeDefaultHost = card.hosts.some(isCodeDefaultGatewayHost);
   const blocked = !card.definition ? "등록부에서 장비·실행 대상을 확인하지 못했습니다." : recovery ? recovery.blockedReason : modelRecoveryBlocked(card.definition.equipment, card.definition.provider);
   const cell = "border-b border-line px-2.5 py-1.5 align-top", span = `${cell} border-l border-line bg-bg-card`;
   const limitOf = (group: ModelRowGroup) => { const groupsOf = observation.groups.filter(row => group.groupIds.includes(row.groupId));
@@ -86,10 +87,12 @@ function CardRows({ card, observation, controls, probe, busy, onProbe, recovery 
               {card.requests.map(row => <p key={row.requestId}>requestId {row.requestId}<br />state {row.state} · 상태 경과 {elapsedModelTime(row.stateSince, observation.observedAt)} · 요청 시작 {kstClock(row.dispatchedAt ?? row.queuedAt)} KST{row.localEndRecorded ? " · 로컬 호출 종료 기록 있음" : ""}<br />owner {row.ownerInstanceId} · 예약 기한 {row.reservedUntil ? `${kstClock(row.reservedUntil)} KST` : "없음"}</p>)}
               {card.contracts.map(row => <p key={`${row.routeId}:${row.model}`}>계약 routeId {row.routeId} · {row.transport} · {row.host ?? "주소 없음"}</p>)}</div></details></td>}
         {si === 0 && <td rowSpan={group.stages.length} className={first ? cell : span}><span className="block font-semibold">{card.equipment}</span>
-          {card.equipmentSource ? <span className="block text-fg-2">출처 {card.equipmentSource}{card.hosts[0] ? ` · ${card.hosts[0].split(":")[0]}` : ""}</span>
+          {card.equipmentSource ? <span className="block text-fg-2">출처 {card.equipmentSource}{engineHosts[0] ? ` · ${engineHosts[0].split(":")[0]}` : ""}</span>
             : <Link href="/admin/models/contracts" prefetch={false} className="block text-accent-ink underline underline-offset-[3px]">등록부에 장비 이름 붙이기 →</Link>}</td>}
         {si === 0 && <td rowSpan={group.stages.length} className={first ? cell : span}><span className="block">{modelTransportLabel(provider, card.contracts)}{provider ? <span className="text-fg-2"> ({provider})</span> : " · 제공자 미확인"}</span>
-          {card.hosts.length ? card.hosts.map(host => <code key={host} className="block break-all font-mono text-fg-2">{host}</code>) : <span className="block font-mono text-fg-2">{provider.endsWith("-cli") ? "connect · 로컬 프로세스" : "주소 없음"}</span>}</td>}
+          {engineHosts.map(host => <code key={host} className="block break-all font-mono text-fg-2">{host}</code>)}
+          {codeDefaultHost && <span className="block text-fg-2">{CODE_DEFAULT_GATEWAY_NOTE}</span>}
+          {!engineHosts.length && !codeDefaultHost && <span className="block font-mono text-fg-2">{provider.endsWith("-cli") ? "connect · 로컬 프로세스" : "주소 없음"}</span>}</td>}
         <td className={cell}><ModelStatusBadge status={status}>{status === "unknown" ? `확인 못함 ${stage.unknown}` : spec.label}</ModelStatusBadge>
           {status === "down" && !probe && <span className="mt-0.5 block text-fg-2">최근 성공·연결 확인 기록 없음</span>}
           {status === "hold" && full && <span className="mt-0.5 block text-fg-2">슬롯 상한 도달</span>}</td>

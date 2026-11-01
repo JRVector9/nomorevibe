@@ -12,7 +12,9 @@ export function StagePoolFields({ draft, models, defaults, update }: {
   draft: AdminStagePools; models: readonly ModelDefinition[]; defaults: Record<string, string>;
   update: (id: keyof AdminStagePools, keys: string[]) => void;
 }) {
-  return <div className="grid min-w-0 gap-3 md:grid-cols-2">{ADMIN_MODEL_STAGES.map(stage => {
+  return <div className="grid min-w-0 gap-3">
+    <p className="text-[13px] text-fg-2">선택지 앞의 대괄호는 등록부 장비 표지입니다. 호출은 「모델 연결」의 직접 연결 계약이 엽니다.</p>
+    <div className="grid min-w-0 gap-3 md:grid-cols-2">{ADMIN_MODEL_STAGES.map(stage => {
     const keys = draft[stage.id] ?? [];
     const choices = models.filter(model => model.provider === stage.provider && (!(stage.id.startsWith("assist-") || stage.id === "screen-review") || model.purposes.includes(stage.purpose)));
     return <div key={stage.id} className="flex min-w-0 flex-col gap-2 rounded-lg border border-line p-3">
@@ -23,7 +25,7 @@ export function StagePoolFields({ draft, models, defaults, update }: {
       {!keys.length && <span className="w-fit max-w-full break-words rounded-full border border-line bg-bg-soft px-3 py-2 text-[13px]">기본 · {defaults[stage.id] ?? "미확인"}</span>}
       {!choices.length && <p className="text-[13px] text-fg-2">용도·실행 계약 등록 후 모델을 추가할 수 있습니다.</p>}
     </div>;
-  })}</div>;
+  })}</div></div>;
 }
 export const changedStagePools = (before: AdminStagePools, after: AdminStagePools) => ADMIN_MODEL_STAGES.filter(stage =>
   JSON.stringify(before[stage.id] ?? []) !== JSON.stringify(after[stage.id] ?? [])).map(stage => stage.label);

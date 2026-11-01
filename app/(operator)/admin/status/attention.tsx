@@ -260,7 +260,7 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
   }
 
   /**
-   * AI 연결(connect-agent)은 발행 워커의 카테고리 분류만 맡는다 — 1차·2차 심사는 게이트웨이로 간다.
+   * AI 연결(connect-agent)은 발행 워커의 카테고리 분류만 맡는다. 1차·2차 심사는 이 연결이 아니다.
    * 2026-10-07 Codex 가 access_denied 인데 Claude 예비가 분류를 이어 받아 화면에 아무 경보도 없었다.
    * 그 뒤 재로그인하자 적용 전까지 분류가 통째로 막혔는데, 제목은 "연결돼 있지 않습니다"였다.
    */
@@ -365,7 +365,7 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
   /**
    * 2차가 실패하고 있으면 대기 수만 보여 줘선 안 된다.
    *
-   * 게이트웨이는 모델 목록이 예고 없이 바뀌어, 없는 모델을 적어 두면 매 틱 404 로 끝난다 —
+   * 직접 연결 계약에 없거나 엔진이 모르는 모델을 적어 두면 매 틱 실패로 끝난다 —
    * 화면에는 "대기 N건"만 늘어나 멈춘 줄 모른다. 어느 모델이 무슨 까닭으로 실패했는지 적는다.
    */
   if (secondFailures.length > 0) {
@@ -375,7 +375,7 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
       key: "second-failed", tone: gone ? "critical" : "hold", count: total, unit: "건", title: "2차 심사가 실패하고 있습니다",
       detail: <>
         최근 24시간 미해결 오류 · {secondFailures.slice(0, 3).map((row) => `${row.model ? modelName(row.model) : "모델 미상"} ${row.errorCode} ${row.count}건`).join(" · ")}
-        {gone && <> — 설정한 모델을 게이트웨이가 더 이상 갖고 있지 않습니다.</>}
+        {gone && <> — 설정한 모델의 직접 연결 계약이 없거나 엔진이 그 모델을 갖고 있지 않습니다. 「모델 연결」에서 행을 확인하세요.</>}
       </>,
       action: { label: "2차 심사 설정", href: ACTION_LINKS.secondSettings }, work: { jobs: ["second-review"] },
     });

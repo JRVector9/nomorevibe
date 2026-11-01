@@ -76,8 +76,8 @@ export const JOB_HOW: Readonly<Record<string, string>> = {
   "human-deepseek-review": "사람 몫(직접 판단)으로 넘어온 후보를 M3 로컬 DeepSeek 이 대신 봅니다(관리자 스위치를 켰을 때만).",
   "held-qwen-retry": "소개 없음·재시도 소진·판단 보류로 사람 큐에 남은 후보를 Qwen 직접 서버(gpu3090)에 다시 묻습니다(보류 재심사 스위치를 켰을 때만).",
   "split-confirm": "갈림 판가름이 거부한 후보를 M3 로컬 DeepSeek 에 관문 입력 그대로 다시 묻고, DeepSeek 도 거부해야 닫습니다. M3 에는 한 번에 한 호출입니다.",
-  "product-audit": "사람이 연 감사가 있을 때 공개 제품을 1차 심사 글로 다시 봅니다(게이트웨이·CLI 심사자). 거절 판정은 적기만 하고 내리는 것은 사람입니다. 1차 후보 큐를 보고 양보하지 않고(장비 순위가 대신합니다), 감사 보류를 틱마다 조금씩 겁니다.",
-  "audit-qwen": "남은 감사 모델을 Qwen 으로 바꾼 감사의 남은 항목을 Qwen 직접 서버(gpu3090)에 게이트웨이 없이 묻습니다. 게이트웨이·CLI 심사자의 감사에는 할 일이 없습니다.",
+  "product-audit": "사람이 연 감사가 있을 때 공개 제품을 1차 심사 글로 다시 봅니다(abcllm 계약·CLI 심사자). 거절 판정은 적기만 하고 내리는 것은 사람입니다. 1차 후보 큐를 보고 양보하지 않고(장비 순위가 대신합니다), 감사 보류를 틱마다 조금씩 겁니다.",
+  "audit-qwen": "남은 감사 모델을 Qwen 으로 바꾼 감사의 남은 항목을 Qwen 직접 서버(gpu3090)에 묻습니다. abcllm 계약·CLI 심사자의 감사에는 할 일이 없습니다.",
   "audit-second-opinion": "감사 거절에 Qwen 직접 서버(gpu3090)의 두 번째 의견을 적고(스위치를 켰을 때만, 켜 두면 그 답으로 닫기도 합니다), 공개분 2차의 사람 확인 행을 한 번 더 봅니다.",
   "audit-screen-review": "글이 얇은 감사 거절을 화면 서버(m1-studio)에서 그려 글과 첫 화면을 Qwen 에 묻습니다. 따로 도는 줄이라 심사·감사를 막지 않습니다.",
   "crawl-publish": "승인된 후보의 카테고리를 AI 연결 서비스에 물어 정한 뒤 공개 목록에 올립니다. 분류를 못 하면 1시간 뒤 다시 합니다.",
@@ -87,9 +87,9 @@ export const JOB_HOW: Readonly<Record<string, string>> = {
   "crawl-tagline": "소개가 없어 발행 앞에서 멈춘 후보의 한 줄 소개를 모델이 짓습니다. 다 지으면 발행 대기로 돌아갑니다.",
   "product-search-profile": "공개 제품마다 한·영 검색 키워드를 모델이 적습니다. 새 제품과 30일 지난 것만 봅니다.",
   "product-search-verify": "모델이 적은 검색 키워드를 다른 모델이 검수합니다.",
-  "product-embedding": "제품 글을 의미 검색 벡터로 바꿉니다. 키워드가 바뀌면 다시 임베딩합니다. 게이트웨이를 쓰지 않습니다.",
+  "product-embedding": "제품 글을 의미 검색 벡터로 바꿉니다. 키워드가 바뀌면 다시 임베딩합니다.",
   "product-repo-review": "저장소가 사라진 공개 제품의 github.com 을 다시 열어 정말 없으면 내립니다(5분마다 8건, 하루 100건까지). 옮겨 간 흔적이 있으면 사람 확인으로 남깁니다.",
-  "product-tagline-ko": "전용 실행 줄에서 공개 제품 소개를 한국어 한 줄로 옮깁니다(최대 8건·3,600자). 게이트웨이 모델과 직접 연결 모델이 서로 다른 항목을 맡고, 새 제품·홈에 보이는 제품이 먼저입니다.",
+  "product-tagline-ko": "전용 실행 줄에서 공개 제품 소개를 한국어 한 줄로 옮깁니다(최대 8건·3,600자). 등록부 모델과 엔진 직접 모델이 서로 다른 항목을 맡고, 새 제품·홈에 보이는 제품이 먼저입니다.",
   "product-translate": "보이는 공개 제품의 정보를 정해진 양만큼 번역합니다.",
   "product-intro-check": "AI 소개와 쓸모없어 보이는 메이커 소개를 근거와 대조합니다. 근거로 알 수 없으면 사람 확인으로 남깁니다.",
   "grok-session-check": "Grok 로그인 토큰이 만료되지 않게 가장 짧은 호출을 한 번 합니다(심사에 Grok 을 쓸 때만).",
@@ -250,7 +250,7 @@ function runsOn(provider: string | null, model: string): string {
   if (provider === "local-direct") return "모델 서버 직접 연결";
   if (provider === "vllm" && model === KOREAN_TRANSLATION_QWEN_MODEL) return "gpu3090 Qwen 직접 연결";
   const runner = /^\[([^\]]+)\]/.exec(model)?.[1];
-  if (provider === "abcllm") return `abcllm 게이트웨이${runner ? ` · 실행기 ${runner}` : ""}`;
+  if (provider === "abcllm") return `abcllm · 직접 연결 계약${runner ? ` · 장비 표지 ${runner}` : ""}`;
   if (provider === "claude-cli") return "Claude CLI — 작업을 돌리는 워커 장비에서 실행";
   if (provider === "grok-cli") return "Grok CLI — 작업을 돌리는 워커 장비에서 실행";
   if (provider === "llama-server") return "M3 llama-server(launchd bot.brut.nmv-*)";

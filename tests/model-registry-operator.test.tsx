@@ -14,7 +14,7 @@ describe("configured operator model identities", () => {
     const env = { MODEL_REGISTRY_CONFIG: JSON.stringify({ version: 1, models: [{ ...DEFAULT_MODEL_DEFINITIONS[2],
       model: "replacement", maxTokens: 2048, concurrency: 3, baseUrl: "https://replacement.example/v1" }] }) };
     const html = renderToStaticMarkup(createElement(ModelRegistryTable, { env }));
-    for (const value of ["m1:translation", "[m1] replacement", "https://replacement.example/v1", "2,048", "로드 시 순서를 검증"]) expect(html).toContain(value);
+    for (const value of ["m1:translation", "[m1] replacement", "https://replacement.example/v1", "2,048", "로드 시 순서를 검증", "등록부 장비 표지", "직접 연결 행"]) expect(html).toContain(value);
     expect(html).not.toContain("qwen3.8-flash-next");
   });
   it("shows independent Korean tagline and query selections from the same runtime constants", async () => {

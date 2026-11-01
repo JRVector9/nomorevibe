@@ -172,7 +172,7 @@ describe("화면 모형 — 단계별 묶음", () => {
 
 describe("고를 수 있는 것 — 단계 × 등록부 × 전송", () => {
   const def = (key: string) => MODELS.find(entry => entry.key === key)!;
-  it("cli 는 connect 장비 모델에만, 단계가 허락한 전송만, 게이트웨이 표지가 있으면 게이트웨이가 먼저", () => {
+  it("cli 는 connect 장비 모델에만, 단계가 허락한 전송만, 장비 표지(gatewayLabel)가 있으면 그 전송이 먼저", () => {
     expect(assignmentTransportsFor("ai1", def("connect:sonnet"))).toEqual(["cli"]);
     expect(assignmentTransportsFor("ai1", ODD_CLI)).toEqual([]);
     expect(assignmentTransportsFor("intro", def("connect:sonnet"))).toEqual(["cli"]);

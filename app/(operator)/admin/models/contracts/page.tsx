@@ -50,8 +50,8 @@ export default async function ServingContractsPage() {
         <tbody>{enabled.map(row => <tr key={row.id} className="border-b border-line align-top">
           <td className="py-2 pr-3">{row.routeId}<br /><code>{row.model}</code></td>
           <td className="py-2 pr-3"><code>{String(row.contract.endpoint ?? "")}</code></td>
-          <td className="py-2 pr-3">{row.auth === "stored" ? `저장 키${row.hasKey ? "" : " (없음)"}` : row.auth === "none" ? "키 없음" : "게이트웨이 키 — 호출 안 됨"}
-            <br />{row.transport === "direct" ? "엔진 직접" : "게이트웨이 — 호출 안 됨"}</td>
+          <td className="py-2 pr-3">{row.auth === "stored" ? `저장 키${row.hasKey ? "" : " (없음)"}` : row.auth === "none" ? "키 없음" : "호출 안 됨 — 키 없음 또는 저장 키로 다시 저장"}
+            <br />{row.transport === "direct" ? "엔진 직접" : "호출 안 됨 — 직접 연결 계약이 필요합니다"}</td>
           <td className="py-2 pr-3">{row.updatedBy}<br />{row.updatedAt.slice(0, 16).replace("T", " ")} · {row.contractHash.slice(0, 12)}</td>
           <td className="py-2"><DisableButton routeId={row.routeId} model={row.model} /></td></tr>)}</tbody></table></div>
     </section>
@@ -61,7 +61,8 @@ export default async function ServingContractsPage() {
     </section>
     <section className="grid gap-2">
       <h2 className="text-[18px] font-semibold">모델 등록부 덮어쓰기 ({overridden.length})</h2>
-      <p className="text-[13px] text-fg-3">코드 기본 정의 대신 쓰는 정의입니다. 되돌리면 코드 기본값이 다시 쓰입니다.</p>
+      <p className="text-[13px] text-fg-3">코드 기본 정의 대신 쓰는 정의입니다. 되돌리면 코드 기본값이 다시 쓰입니다.
+        요청 이름 앞의 대괄호는 장비 표지이고, 주소가 abcllm-api.brut.bot 이면 코드 기본 주소입니다. 그 주소만으로는 호출이 열리지 않습니다. 열리는 것은 위의 직접 연결 계약입니다.</p>
       {overridden.length > 0 && <div className="overflow-x-auto"><table className="w-full min-w-[720px] text-left text-[13px]"><thead><tr className="border-b border-line">
         <th className="py-2 pr-3">키</th><th className="py-2 pr-3">요청 모델 · 주소</th><th className="py-2 pr-3">변경</th><th className="py-2" /></tr></thead>
         <tbody>{overridden.map(row => <tr key={row.id} className="border-b border-line align-top">

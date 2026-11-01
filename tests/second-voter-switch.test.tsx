@@ -36,7 +36,7 @@ describe('2차 표 선택지', () => {
   });
   it('Grok·게이트웨이·Claude 를 묶어 보이고, 1차와 같은 모델은 막는다', () => {
     const choices = voterChoices(ENGINES, settings.secondReview.voters[0], settings.firstReview.model);
-    expect(choices.map((choice) => choice.group)).toEqual(expect.arrayContaining(['Grok CLI — 구독, 주간 한도', '사내 게이트웨이 — 한도 없음', 'Claude CLI — 구독 한도']));
+    expect(choices.map((choice) => choice.group)).toEqual(expect.arrayContaining(['Grok CLI — 구독, 주간 한도', 'abcllm · 직접 연결 계약', 'Claude CLI — 구독 한도']));
     expect(choices.find((choice) => choice.model === '[MLX] gpt-oss-120b')?.disabled).toBe('1차와 같은 모델');
     expect(choices.find((choice) => choice.model === '[supa] Qwen3.8-27B-NVFP4')?.disabled).toBeNull();
   });

@@ -254,7 +254,7 @@ function SettingsFormBody({ settings, version, yields, secondControls, assignmen
           <div className="flex flex-col gap-1.5">
             <span className={labelClass}>부르는 곳</span>
             <Segmented name="firstReviewProvider" label="1차 심사를 부르는 곳" defaultValue={settings.firstReview?.provider ?? "abcllm"}
-              options={[{ value: "abcllm", label: "사내 게이트웨이" }, { value: "claude-cli", label: "Claude CLI" }, { value: "grok-cli", label: "Grok CLI" }]} />
+              options={[{ value: "abcllm", label: "abcllm · 직접 연결 계약" }, { value: "claude-cli", label: "Claude CLI" }, { value: "grok-cli", label: "Grok CLI" }]} />
           </div>
           <div className="flex min-w-0 flex-[1_1_260px] flex-col gap-1.5">
             <label htmlFor="firstReviewModel" className={labelClass}>모델</label>
@@ -284,7 +284,7 @@ function SettingsFormBody({ settings, version, yields, secondControls, assignmen
               ))}
             </div>
           </div>
-          <p className={hintClass}>실측 2026-09-18 · 사내 게이트웨이. 실패율이 오르면 한 단계 내리세요. 1차와 2차는 같은 워커가 차례로 돌려 겹치지 않습니다.</p>
+          <p className={hintClass}>실측 2026-09-18. 실패율이 오르면 한 단계 내리세요. 1차와 2차는 같은 워커가 차례로 돌려 겹치지 않습니다. 호출이 열리는지는 「모델 연결」의 직접 연결 계약이 정합니다.</p>
         </div>
       </SettingsCard>
 
@@ -297,7 +297,7 @@ function SettingsFormBody({ settings, version, yields, secondControls, assignmen
             <span className={labelClass}>다시 볼 모델 <span className="font-normal text-fg-3">최대 3</span></span>
             <ModelRows prefix="voter" initial={secondReview.voters} max={3} placeholder="장비가 표시된 모델 이름"
               addLabel="+ 모델 세우기 (성향이 다른 모델일수록 좋습니다)" readOnly={assignmentLocked} />
-            <p className={hintClass}>게이트웨이는 모델 목록이 바뀝니다. 없는 모델을 적으면 그 표만 실패로 남고 운영센터에 뜹니다.</p>
+            <p className={hintClass}>직접 연결 계약에 없는 모델을 적으면 그 표만 실패로 남고 운영센터에 뜹니다. 모델은 「모델 연결」에서 확인하세요.</p>
           </div>
           <div className="flex min-w-0 flex-col gap-1.5">
             <span className={labelClass}>실패 시 대체 <span className="font-normal text-fg-3">순서대로 최대 2</span></span>

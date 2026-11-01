@@ -54,7 +54,7 @@ const LISTS: Record<string, string> = {
 
 const SORTS: Record<string, string> = { recent: "최신 활동순", relevance: "관련도" };
 const STUB_TEXT_MODES: Record<string, string> = { off: "꺼짐", shadow: "관측", enforce: "적용" };
-const PROVIDERS: Record<string, string> = { abcllm: "사내 게이트웨이", "claude-cli": "Claude CLI", "grok-cli": "Grok CLI" };
+const PROVIDERS: Record<string, string> = { abcllm: "abcllm · 직접 연결 계약", "claude-cli": "Claude CLI", "grok-cli": "Grok CLI" };
 
 const CHECKBOXES = new Set(["excludeForks", "excludeOrganizations", "holdAmbiguous", "agentEvidenceEnabled",
   "agentEvidenceEnforce", "secondReviewEnabled", "secondReviewIncludeAiHeld", "showHn.enabled", "showHn.requireEvidence"]);
