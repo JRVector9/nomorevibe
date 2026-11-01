@@ -79,7 +79,7 @@ export const clearModelHelperStop = webWriteAction(async function clearModelHelp
 });
 
 /**
- * 감시자 전체 스위치(kill switch). enabled=true 는 운영자 단계(계정·GRANT·rev14·배정)를 마쳤다는 확인 칸을 받아야 한다. 끄기는 확인 없이 바로 —
+ * 감시자 전체 스위치(kill switch). enabled=true 는 운영자 단계(계정·GRANT·정책의 도우미 경로·배정)를 마쳤다는 확인 칸을 받아야 한다. 끄기는 확인 없이 바로 —
  * 다음 입장 판정부터 모든 도우미가 닫힌다(돌고 있는 호출은 끝까지 간다). 감사 줄(model-supervisor-toggle)은 저장소가 쓴다.
  */
 export const switchCapacitySupervisor = webWriteAction(async function switchCapacitySupervisor(_previous: HelperActionState, form: FormData): Promise<HelperActionState> {
@@ -88,7 +88,7 @@ export const switchCapacitySupervisor = webWriteAction(async function switchCapa
   const raw = field(form, "enabled");
   if (raw !== "true" && raw !== "false") return { issues: [modelHelperIssueMessage("model_supervisor_invalid:enabled")] };
   const enabled = raw === "true";
-  if (enabled && field(form, "confirm") !== "yes") return { issues: ["켜기 전에 확인 칸에 표시해 주세요(감시자 계정·GRANT·정책 rev14·배정을 마쳤는지)."] };
+  if (enabled && field(form, "confirm") !== "yes") return { issues: ["켜기 전에 확인 칸에 표시해 주세요(감시자 계정·GRANT·정책의 도우미 경로·배정을 마쳤는지)."] };
   try {
     const result = await setAdminSupervisorControl({ enabled }, admin.login);
     if (!result.ok) return { issues: result.issues.map(modelHelperIssueMessage) };
