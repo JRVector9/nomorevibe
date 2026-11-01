@@ -11,7 +11,7 @@ const reply = (count = 100, change: Record<string, unknown> = {}) => new Respons
   max_model_len: contract.totalTokenBound, tokens: Array.from({ length: count }, () => 1), ...change }));
 const run = (value = wire(), options: { timeoutMs: number; signal?: AbortSignal } = { timeoutMs: 1_000 }) =>
   checkAi2TokenBudget(contract, value, options);
-beforeEach(() => fixture.request.mockReset());
+beforeEach(() => { fixture.request.mockReset(); });
 afterEach(() => vi.restoreAllMocks());
 
 it("proves overflow only from a complete matching response, including the exact request boundary", async () => {
