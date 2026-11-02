@@ -15,7 +15,8 @@ import type { ModelEnv } from "@/lib/operations/pipeline-control";
 import { JOB_NAMES } from "@/lib/jobs/catalog";
 import {
   AI_RANK_SLOT_NAMES, AI_TASK_AUDIT_ACTIONS, aiConnectionBaseUrl, aiConnectionInputFromForm, aiImportPlanDigestInput, aiRankPendingText, aiRankReadiness, aiRanksReadiness,
-  aiSameUnderlyingModel, aiTaskIssueMessage, aiTaskRankNotices, aiTaskRankOptions, aiTaskRanksInputFromForm, buildAiImportPlan, validateAiTaskRanks,
+  aiRankOptionBlocked, aiSameUnderlyingModel, aiTaskIssueMessage, aiTaskRankNotices, aiTaskRankOptions, aiTaskRanksInputFromForm, aiUnreadConnections, buildAiImportPlan,
+  validateAiTaskRanks,
   type AiConnectionView, type AiCurrentSlot, type AiCurrentUse, type AiReadinessInput, type AiTaskRankRow,
 } from "@/lib/operations/admin-ai-tasks";
 
@@ -144,6 +145,34 @@ describe("선택지와 검증", () => {
       "supa · qwen3.8-flash-next", "검색 서버 · bge-m3", "검색 서버 · bge-m3-q8", "Claude CLI · sonnet", "Claude CLI · opus", "Grok CLI · grok-4.7",
       "supa · old-model (저장된 값 · 지금 목록에 없음)"]);
     expect(aiTaskRankOptions(aiTask("product-intro-check")!, CONNECTIONS, []).map(option => option.label)).toEqual(["Claude CLI · sonnet", "Claude CLI · opus"]);
+    // 드롭다운은 서버(연결)마다 묶고 그 안에 모델 이름만 보인다(2026-11-02 화면 단순화) — 목록에 없는 저장 값도 그 서버 묶음에 「지금 목록에 없음」으로 남는다
+    expect(options.map(option => [option.group, option.text])).toEqual([["gpu3090", "qwen3.8-flash-next"], ["gpu3090", "qwen-vision"],
+      ["supa", "Inferact/Qwen3.8-27B-NVFP4"], ["supa", "qwen3.8-flash-next"], ["검색 서버", "bge-m3"], ["검색 서버", "bge-m3-q8"], ["Claude CLI", "sonnet"],
+      ["Claude CLI", "opus"], ["Grok CLI", "grok-4.7"], ["supa", "old-model (목록에 없음)"]]);
+    const gone = aiTaskRankOptions(aiTask("crawl-tagline")!, CONNECTIONS, [row("crawl-tagline", 1, 1, "66666666-6666-4666-8666-666666666666", "x")]);
+    expect(gone.at(-1)).toMatchObject({ group: "지워진 연결", text: "x (목록에 없음)", saved: true });
+  });
+  it("드롭다운에서 흐리게 둘 선택지: 벡터 2·3순위는 1순위와 같은 모델만, 2차 투표자는 다른 칸의 모델(같은 가중치 포함)을 못 고른다; 지금 칸의 값은 늘 고를 수 있다", () => {
+    const embedding = aiTask("product-embedding")!, second = aiTask("second-review")!, tagline = aiTask("crawl-tagline")!;
+    const slots = [pick(EMB, "bge-m3"), null, null];
+    expect(aiRankOptionBlocked(embedding, 1, 1, pick(EMB, "bge-m3-q8"), slots, [])).toBe(true);
+    expect(aiRankOptionBlocked(embedding, 1, 1, pick(GPU, "bge-m3"), slots, [])).toBe(false);
+    expect(aiRankOptionBlocked(embedding, 1, 0, pick(EMB, "bge-m3-q8"), slots, [])).toBe(false);
+    const voters = [row("second-review", 2, 1, SUPA, "Inferact/Qwen3.8-27B-NVFP4")];
+    expect(aiRankOptionBlocked(second, 1, 0, pick(GPU, "Qwen3.8-27B-NVFP4"), [null], voters)).toBe(true);
+    expect(aiRankOptionBlocked(second, 2, 0, pick(SUPA, "Inferact/Qwen3.8-27B-NVFP4"), [pick(SUPA, "Inferact/Qwen3.8-27B-NVFP4")], voters)).toBe(false);
+    expect(aiRankOptionBlocked(second, 1, 0, pick(GPU, "qwen3.8-flash-next"), [null], voters)).toBe(false);
+    expect(aiRankOptionBlocked(tagline, 1, 1, pick(GPU, "anything"), [pick(SUPA, "qwen3.8-flash-next")], voters)).toBe(false);
+  });
+  it("모델 목록을 못 읽은 켜진 API 서버와 그 까닭(키 없음·마지막 오류)을 낸다 — CLI·꺼진 연결·목록이 있는 서버는 빼고", () => {
+    expect(aiUnreadConnections(CONNECTIONS)).toEqual([]);
+    const m3 = connection({ id: "77777777-7777-4777-8777-777777777777", label: "m3-mlx", kind: "api", baseUrl: "http://m3.test:8014/v1", modelsError: "http_401" });
+    const fresh = connection({ id: "88888888-8888-4888-8888-888888888888", label: "새 서버", kind: "api", baseUrl: "http://new.test/v1", hasKey: true });
+    const off = connection({ id: "99999999-9999-4999-8999-999999999999", label: "꺼짐", kind: "api", baseUrl: "http://off.test/v1", enabled: false });
+    const empty = connection({ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", label: "빈 서버", kind: "api", baseUrl: "http://empty.test/v1", hasKey: true, models: [] });
+    expect(aiUnreadConnections([...CONNECTIONS, m3, fresh, off, empty])).toEqual([
+      { id: m3.id, label: "m3-mlx", reason: "키 없음 · 거절됨(HTTP 401 — 키 확인)" }, { id: fresh.id, label: "새 서버", reason: "아직 못 읽음" },
+      { id: empty.id, label: "빈 서버", reason: "모델 0개" }]);
   });
   it("빈 칸 뒤 순위·같은 연결·모델·받지 않는 연결·목록에 없는 모델을 막는다", () => {
     expect(validateAiTaskRanks("crawl-tagline", 1, [pick(GPU, "qwen3.8-flash-next"), pick(SUPA, "qwen3.8-flash-next"), null], context())).toEqual([]);
@@ -444,13 +473,37 @@ describe("RankSelects — 작업 ↔ 모델 꼴(provider 칸 = 연결 id)", () =
     const html = renderToStaticMarkup(createElement(RankSelects<{ provider: string; model: string }>, { stage: { id: "crawl-tagline-1", label: "수집 소개 짓기", slots: 3 }, options,
       value: [pick(GPU, "qwen3.8-flash-next"), null, pick(SUPA, "qwen3.8-flash-next")], slotNames: AI_RANK_SLOT_NAMES, onChange: () => {}, showProvider: false,
       validate: slots => validateAiTaskRanks("crawl-tagline", 1, slots, { connections: CONNECTIONS, rows: [] }), note: createElement("p", null, "안내") }));
-    expect(html).toContain(">gpu3090 · qwen3.8-flash-next</option>");
+    // 서버마다 묶고(optgroup) 그 안에는 모델 이름만
+    expect(html).toContain(`<optgroup label="gpu3090"><option value="${GPU}\u0000qwen3.8-flash-next" selected="">qwen3.8-flash-next</option>`);
+    expect(html).toContain('<optgroup label="검색 서버"><option value="55555555-5555-4555-8555-555555555555\u0000bge-m3">bge-m3</option>');
+    expect(html).not.toContain("gpu3090 · qwen3.8-flash-next");
+    // 닫힌 드롭다운에는 모델 이름만 보이므로 고른 값의 서버를 밑에 적는다(1순위 gpu3090, 3순위 supa — 같은 모델 이름)
+    expect(html.match(/data-rank-server="true">([^<]*)</g)).toEqual(['data-rank-server="true">gpu3090<', 'data-rank-server="true">supa<']);
     expect(html).not.toContain("(abcllm)");
     expect(html).toContain(`name="rank1Connection" value="${GPU}"`);
     expect(html).toContain('name="rank3Model" value="qwen3.8-flash-next"');
     expect(html).toContain("2순위를 비우고 그 뒤 순위만 고를 수 없습니다.");
     expect(html).toContain("<p>안내</p>");
     expect(html).not.toContain("저장하면 다음 틱부터 적용됩니다");
+    // 묶음이 없는 선택지(1차 AI 검수 꼴)는 예전처럼 한 줄 이름 그대로
+    const flat = renderToStaticMarkup(createElement(RankSelects<{ provider: string; model: string }>, { stage: { id: "x-1", label: "x", slots: 1 },
+      options: [{ provider: "supa", model: "m", label: "supa · m" }], value: [null], slotNames: AI_RANK_SLOT_NAMES, onChange: () => {}, validate: () => [] }));
+    expect(flat).not.toContain("<optgroup");
+    expect(flat).toContain(">supa · m (supa)</option>");
+  });
+  it("compact 는 넓은 화면에서 「N순위」 글을 숨기고, blocked 는 그 칸의 선택지를 흐리게 둔다(지금 값은 그대로)", () => {
+    const options = aiTaskRankOptions(aiTask("product-embedding")!, CONNECTIONS, []);
+    const html = renderToStaticMarkup(createElement(RankSelects<{ provider: string; model: string }>, { stage: { id: "product-embedding-1", label: "제품 의미 검색 벡터", slots: 3 },
+      options, value: [pick(EMB, "bge-m3"), null, null], slotNames: AI_RANK_SLOT_NAMES, onChange: () => {}, showProvider: false, compact: true, note: null,
+      validate: () => [], blocked: (option, index, slots) => aiRankOptionBlocked(aiTask("product-embedding")!, 1, index, option, slots, []) }));
+    expect(html).toContain('<span class="font-semibold sm:sr-only">1순위</span>');
+    const second = html.slice(html.indexOf('name="product-embedding-1-rank-2"'), html.indexOf('name="product-embedding-1-rank-3"'));
+    expect(second).toContain(`value="${EMB}\u0000bge-m3-q8" disabled=""`);
+    expect(second).toContain(`value="${GPU}\u0000qwen3.8-flash-next" disabled=""`);
+    // 1순위 bge-m3 는 같은 칸 중복(taken)이라 2순위에서도 흐리다 — 다른 서버의 같은 모델만 대체로 둘 수 있다
+    expect(second).toContain(`value="${EMB}\u0000bge-m3" disabled=""`);
+    const first = html.slice(0, html.indexOf('name="product-embedding-1-rank-2"'));
+    expect(first).not.toContain('disabled=""');
   });
 });
 

@@ -36,7 +36,7 @@ describe("작업 ↔ AI 모델 화면", () => {
     expect(renderToStaticMarkup(createElement(ConnectionForm, { initial: null, secretBox: false })))
       .toContain("이 서버에는 키 암호화 설정이 없어 키를 저장할 수 없습니다");
   });
-  it("작업 표: 줄마다 1·2·3순위(「연결 · 모델」)·지금 실제로 쓰는 모델·준비 상태; 저장 전에는 바뀐 것이 없다", () => {
+  it("작업 표: 줄마다 1·2·3순위와 저장·한 줄 상태만 보이고, 지금 실제로 쓰는 모델·준비 상태는 「자세히」에 접는다", () => {
     const html = renderToStaticMarkup(createElement(TaskRanksBoard, { lines: [line(), line({ task: "audit-review", label: "발행분 감사 · 직접 모델", group: "audit",
       rows: [], current: { labels: [], source: "등록부·env 기본값", notes: [], error: null, skip: "지금 꺼져 있습니다." }, sameAsCurrent: null, readiness: [], live: false })],
       connections: [gpu], rows: line().rows }));
@@ -48,7 +48,14 @@ describe("작업 ↔ AI 모델 화면", () => {
     expect(html).toContain("저장한 순위 = 지금 동작");
     expect(html).toContain("저장한 순위의 계약·경로·장비가 있습니다.");
     expect(html).toContain("지금 꺼져 있습니다.");
-    expect(html).toContain("바뀐 것이 없습니다.");
+    // 한 줄 상태: 순위가 있고 준비된 text 작업 = 준비됨, 순위가 없는 아직 옮기지 않은 작업 = 순위 없음. 바뀐 것이 없으면 저장 버튼이 꺼져 있다
+    expect(html).toContain('data-status="ok">준비됨</span>');
+    expect(html).toContain('data-status="muted">순위 없음</span>');
+    expect(html).toMatch(/<button type="submit" disabled=""[^>]*>저장<\/button>/);
+    expect(html).not.toContain("바뀐 것이 없습니다.");
+    // 자세한 것은 줄마다 접힌 「자세히」 안 — 표 위의 긴 안내는 없다
+    expect(html.match(/<details class="text-\[13px\] md:col-span-3"><summary class="cursor-pointer text-fg-3">자세히<\/summary>/g)).toHaveLength(2);
+    expect(html.indexOf("지금 실제로 쓰는 모델")).toBeGreaterThan(html.indexOf("자세히</summary>"));
     // text 작업(PR B)은 실행 쪽이 순위를 읽는다 — 아직 돈 기록이 없으면 그렇게 보인다. 감사 작업은 아직 읽지 않는다(다음 단계)
     expect(html).toContain("실행 쪽이 이 순위를 읽습니다 — 1순위를 쓸 수 없으면 같은 일을 2순위, 그다음 3순위로 넘깁니다.");
     expect(html).toContain("이 작업의 실행 쪽은 아직 이 순위를 읽지 않습니다(다음 단계).");
@@ -58,9 +65,36 @@ describe("작업 ↔ AI 모델 화면", () => {
     // 가져온 순위처럼 아직 없는 것이 있으면 바뀐 것이 없어도 다시 저장할 수 있다
     const pending = renderToStaticMarkup(createElement(TaskRanksBoard, { lines: [line({ readiness: [{ rank: 1, blocking: [], warnings: [],
       pending: ["1순위 qwen3.8-flash-next: crawl-tagline 엔진 직접 계약이 없습니다 — 이 줄을 저장하면 엔진을 확인하고 만듭니다."] }] })], connections: [gpu], rows: line().rows }));
-    expect(pending).toContain("다시 저장해 빠진 것 만들기");
+    expect(pending).toMatch(/<button type="submit"[^>]*>다시 저장<\/button>/);
+    expect(pending).not.toMatch(/<button type="submit" disabled=""/);
+    expect(pending).toContain('data-status="warn">빠진 것이 있습니다 — 다시 저장하면 만듭니다</span>');
     expect(pending).toContain("엔진 직접 계약이 없습니다 — 이 줄을 저장하면");
     expect(pending).not.toContain("저장한 순위의 계약·경로·장비가 있습니다.");
+  });
+  it("드롭다운은 서버마다 묶여 그 서버가 서비스하는 모델 이름만 나오고, 2차 투표자는 다른 투표자의 모델을 흐리게 둔다", () => {
+    const options = [{ provider: GPU, model: "qwen3.8-flash-next", label: "gpu3090 · qwen3.8-flash-next", group: "gpu3090", text: "qwen3.8-flash-next" },
+      { provider: GPU, model: "gpt-oss-120b", label: "gpu3090 · gpt-oss-120b", group: "gpu3090", text: "gpt-oss-120b" }];
+    const voters = [{ task: "second-review", slot: 1, rank: 1, connectionId: GPU, model: "qwen3.8-flash-next", options: {}, enabled: true }];
+    const html = renderToStaticMarkup(createElement(TaskRanksBoard, { lines: [line({ task: "second-review", slot: 2, label: "2차 AI 검수 · 투표자 2", group: "review",
+      rows: [], options, current: null, sameAsCurrent: null, readiness: [], runtime: null })], connections: [gpu], rows: voters }));
+    expect(html).toContain('aria-label="2차 AI 검수 · 투표자 2 1순위"');
+    expect(html).toContain(`<optgroup label="gpu3090"><option value="${GPU}\u0000qwen3.8-flash-next" disabled="">qwen3.8-flash-next</option>`
+      + `<option value="${GPU}\u0000gpt-oss-120b">gpt-oss-120b</option></optgroup>`);
+    expect(html).not.toContain("gpu3090 · ");
+    expect(html).toContain('data-status="bad">순위 없음 — 이 작업은 돌지 않습니다</span>');
+  });
+  it("한 줄 상태: 막힘·실행 멈춤·목록에 없는 저장 값·옛 설정으로 도는 작업·마지막 실행 건수", () => {
+    const status = (patch: Partial<TaskRankLine>) => /data-status="(\w+)">([^<]*)</.exec(renderToStaticMarkup(createElement(TaskRanksBoard,
+      { lines: [line(patch)], connections: [gpu], rows: line().rows })))!.slice(1);
+    expect(status({ readiness: [{ rank: 1, blocking: ["막힘"], warnings: [], pending: [] }] })).toEqual(["bad", "쓸 수 없는 순위가 있습니다 — 자세히"]);
+    expect(status({ runtime: { from: "job", at: "11-02", served: [], unusable: [], degraded: { code: "all_ranks_unusable", detail: null } } }))
+      .toEqual(["bad", "실행 멈춤 — 자세히"]);
+    expect(status({ options: [{ provider: GPU, model: "qwen3.8-flash-next", label: "x", saved: true, group: "gpu3090", text: "qwen3.8-flash-next (목록에 없음)" }] }))
+      .toEqual(["warn", "저장한 모델이 지금 서버 목록에 없습니다"]);
+    expect(status({ readiness: [{ rank: 1, blocking: [], warnings: ["알림"], pending: [] }] })).toEqual(["warn", "알림이 있습니다 — 자세히"]);
+    expect(status({ live: false })).toEqual(["muted", "저장됨 · 실행 쪽은 아직 옛 설정"]);
+    expect(status({ runtime: { from: "job", at: "11-02", served: [{ rank: 1, count: 3 }, { rank: 2, count: 0 }], unusable: [], degraded: null } }))
+      .toEqual(["ok", "준비됨 · 마지막 실행 1순위 3건"]);
   });
   it("실행 쪽 순위 사정: 순위마다 맡은 수와 아래 순위를 쓴 까닭, 제 일 못 한 틱을 보인다", () => {
     const served = renderToStaticMarkup(createElement(TaskRanksBoard, { lines: [line({ runtime: { from: "job", at: "11-02 12:00", served: [{ rank: 1, count: 3 },

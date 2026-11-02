@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { currentAdmin } from "@/lib/auth/admin";
 import { formatListTime } from "@/lib/format/time";
 import { AI_CLI_TOOL_LABELS } from "@/lib/llm/ai-tasks";
-import { AI_TASK_IMPORT_CONFIRM, aiModelsErrorText, aiRankPendingText, aiTaskIssueMessage } from "@/lib/operations/admin-ai-tasks";
+import { AI_TASK_IMPORT_CONFIRM, aiModelsErrorText, aiRankPendingText, aiTaskIssueMessage, aiUnreadConnections } from "@/lib/operations/admin-ai-tasks";
 import { aiTaskTargetLabel, previewAiTaskImport, readAiTasksAdminView } from "@/lib/operations/admin-ai-tasks-repository";
 import { PageStamp } from "../../components/PageStamp";
 import { DeleteConnectionButton, RereadModelsButton } from "./ConnectionButtons";
@@ -22,10 +22,13 @@ const ERROR_LABELS: Record<string, string> = { connections: "AI 연결", rows: "
 const ACTION_LABELS: Record<string, string> = { "ai-connection-save": "연결 저장", "ai-connection-models-read": "모델 목록 읽기", "ai-connection-delete": "연결 지움",
   "ai-task-models-save": "순위 저장", "ai-task-models-import": "가져오기" };
 
+const FOLD = "min-w-0 rounded-xl border border-line bg-bg-card scroll-mt-6";
+const SUMMARY = "flex cursor-pointer flex-wrap items-baseline gap-x-3 gap-y-1 px-4 py-2.5 text-[15px] font-semibold";
+
 /**
- * 작업 ↔ AI 모델(2026-11-02 소유자 결정, PR A·B) — 「AI 연결」(API 주소·키 또는 CLI)을 저장하고, 작업마다(2차는 투표자마다) 1·2·3순위를 고른다.
- * 모델 선택지는 각 연결이 실제로 내놓는 모델(GET /models)과 CLI 모델 이름이다. 하드코딩한 주소·모델·환경변수로 고르지 않는다.
- * PR B 부터 글 짓기·번역·검색 text 일곱 작업은 실행 쪽이 이 순위만 읽는다(오른쪽에 지금 몇 순위가 일하는지·아래 순위를 쓴 까닭). 나머지는 PR C~D 가 옮긴다.
+ * 작업 ↔ AI 모델(2026-11-02 소유자 결정, PR A·B·C1) — 작업마다(2차는 투표자마다) 1·2·3순위를 고른다.
+ * 화면 단순화(2026-11-02 소유자 지시): 맨 위는 작업 한 줄마다 1·2·3순위 드롭다운과 저장뿐이고, 드롭다운은 서버(AI 연결)마다 그 서버가 서비스하는 모델(GET /models·CLI 모델 이름)만 보인다.
+ * 「AI 연결 관리」(주소·키·CLI)·「지금 설정 가져오기」·「최근 기록」은 아래에 접어 둔다(고치기·계획 보기·연결이 없을 때는 펼친다). 하드코딩한 주소·모델·환경변수로 고르지 않는다.
  */
 export default async function AiTasksPage({ searchParams }: Props) {
   if (!await currentAdmin()) redirect("/admin/login");
@@ -42,24 +45,31 @@ export default async function AiTasksPage({ searchParams }: Props) {
       pending: aiRankPendingText(row) })), live: slot.live,
     runtime: slot.runtime ? { ...slot.runtime, at: formatListTime(slot.runtime.at, now), served: [...slot.runtime.served], unusable: [...slot.runtime.unusable] } : null }));
   const errors = Object.entries(view.errors);
+  const unread = aiUnreadConnections(view.connections);
   return <main className="mx-auto grid max-w-7xl gap-6 p-4">
     <PageStamp />
     <header className="grid gap-1">
-      <p className="flex flex-wrap gap-4 text-[13px] text-fg-3"><Link href="/admin/models">← 모델 운영 현황</Link><Link href="/admin/models/devices">장비 한도 →</Link>
-        <Link href="/admin/models/contracts">모델 연결(계약) →</Link><Link href="/admin/models/assignments">모델 배정 →</Link></p>
+      <p className="text-[13px] text-fg-3"><Link href="/admin/models">← 모델 운영 현황</Link></p>
       <h1 className="text-[22px] font-semibold">작업 ↔ AI 모델</h1>
-      <p className="text-[13px] text-fg-3">AI 를 쓰는 작업마다 1·2·3순위 모델을 정합니다. 1순위를 쓸 수 없으면 2순위, 그다음 3순위입니다. 모델은 아래 「AI 연결」에 저장한 서버(주소·키)가
-        실제로 내놓는 목록과 CLI 모델 이름에서만 고릅니다 — 코드에 박은 주소나 환경변수로 고르지 않습니다. 2차 AI 검수는 투표자마다 따로 정합니다.</p>
-      <p role="status" className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[13px] font-semibold text-amber-900">
-        글 짓기·번역·검색의 text 작업 일곱(수집 소개 짓기·심사 사유 번역·제품 다국어 번역·한국어 소개 번역·검색어 번역·검색 키워드 짓기·검색 키워드 검수)은
-        실행 쪽이 이 순위만 읽습니다 — 순위가 없거나 모두 쓸 수 없으면 기본값으로 대신 부르지 않고 멈추며 그 까닭이 상태 화면에 보입니다.
-        심사·보강·벡터 작업은 아직 오늘의 설정으로 고릅니다(다음 단계에서 옮깁니다).</p>
+      <p className="text-[13px] text-fg-3">작업마다 1·2·3순위 모델을 고르고 그 줄의 「저장」을 누릅니다. 1순위를 쓸 수 없으면 2순위, 그다음 3순위로 넘어갑니다.
+        드롭다운에는 서버마다 그 서버가 지금 서비스하는 모델만 나옵니다.</p>
       {errors.map(([key, error]) => <p key={key} role="alert" className="text-[13px] text-red-600">{ERROR_LABELS[key] ?? key}을(를) 읽지 못했습니다({aiTaskIssueMessage(error)}).</p>)}
+      {unread.length > 0 && <p role="status" data-unread={unread.length} className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[13px] text-amber-900">
+        모델 목록을 못 읽은 서버 — {unread.map((row, index) => <span key={row.id}>{index > 0 && ", "}<Link href={`/admin/models/tasks?edit=${row.id}#connection-form`} prefetch={false}
+          className="font-semibold underline">{row.label}</Link>({row.reason})</span>)}. 이 서버의 모델은 드롭다운에 없습니다 — 이름을 눌러 키를 넣거나 「다시 읽기」를 누르세요.</p>}
     </header>
-    <section id="connections" className="grid gap-3 scroll-mt-6">
-      <h2 className="text-[18px] font-semibold">AI 연결 ({view.connections.length})</h2>
+    <section id="tasks" className="grid gap-3 scroll-mt-6" aria-label="작업 ↔ 모델">
+      <TaskRanksBoard lines={lines} connections={[...view.connections]} rows={[...view.rows]} />
+    </section>
+    <details id="connections" className={FOLD} open={!!editId || view.connections.length === 0}>
+      <summary className={SUMMARY}><h2>AI 연결 관리</h2><span className="text-[13px] font-normal text-fg-3">서버 {view.connections.length}개
+        {unread.length > 0 && <> · <span className="text-amber-700">목록 못 읽음 {unread.length}</span></>} · 주소·키·CLI 모델 이름</span></summary>
+      <div className="grid gap-3 px-4 pb-4">
       <p className="text-[13px] text-fg-3">API 연결은 저장할 때 GET /models 로 모델 목록을 읽습니다(「다시 읽기」는 1분에 한 번). 키는 암호화해 두고 화면에 다시 보이지 않습니다.
-        장비 이름은 용량 장비(장비 한도 화면)의 이름입니다.</p>
+        장비 이름은 용량 장비(장비 한도 화면)의 이름입니다. 작업 줄을 저장하면 없는 장비 행·엔진 직접 계약(엔진에 1토큰 시험)·용량 경로(덧붙이기만, DRAIN 없음)를 함께 만들고,
+        기존 계약·경로·장비 값·장비 역할 순위는 바꾸지 않습니다.{view.policyMode && <> 용량 정책 {view.policyMode.toUpperCase()}.</>}</p>
+      <p className="flex flex-wrap gap-4 text-[13px] text-fg-3"><Link href="/admin/models/devices">장비 한도 →</Link>
+        <Link href="/admin/models/contracts">모델 연결(계약) →</Link><Link href="/admin/models/assignments">모델 배정 →</Link></p>
       {view.connections.length === 0 ? <p className="text-[13px] text-fg-3">아직 연결이 없습니다. 아래에서 만들거나 「지금 설정 가져오기」로 오늘 쓰는 서버를 옮기세요.</p>
         : <div className="overflow-x-auto"><table className="w-full min-w-[980px] text-left text-[13px]"><thead><tr className="border-b border-line">
           <th className="py-2 pr-3">이름</th><th className="py-2 pr-3">주소 · 도구</th><th className="py-2 pr-3">모델</th><th className="py-2 pr-3">장비 · 칸</th>
@@ -90,20 +100,15 @@ export default async function AiTasksPage({ searchParams }: Props) {
         {editId && !editing && <p role="alert" className="text-[13px] text-amber-700">고칠 연결을 찾지 못했습니다 — 새 연결로 엽니다.</p>}
         <ConnectionForm key={editing?.id ?? "new"} initial={editing} secretBox={view.secretBox} />
       </div>
-    </section>
-    <section id="tasks" className="grid gap-3 scroll-mt-6">
-      <h2 className="text-[18px] font-semibold">작업 ↔ 모델</h2>
-      <p className="text-[13px] text-fg-3">줄마다 저장합니다. 저장하면 그 순위가 오늘 실행 쪽에서 쓰일 수 있게 없는 장비 행·엔진 직접 계약(엔진에 1토큰 시험)·용량 경로(덧붙이기만, DRAIN 없음)를
-        함께 만듭니다. 만들 수 없는 것이 빠졌으면 저장하지 않고 무엇이 없는지 보입니다. 기존 계약·경로·장비 값·장비 역할 순위는 바꾸지 않습니다.
-        {view.policyMode && <> 용량 정책 {view.policyMode.toUpperCase()}.</>}</p>
-      <TaskRanksBoard lines={lines} connections={[...view.connections]} rows={[...view.rows]} />
-    </section>
-    <section id="import" className="grid gap-2 scroll-mt-6">
-      <h2 className="text-[18px] font-semibold">지금 설정 → 작업 ↔ 모델 가져오기</h2>
-      <TaskImportCard preview={preview} confirmWord={AI_TASK_IMPORT_CONFIRM} />
-    </section>
-    <section id="audit" className="grid gap-2 scroll-mt-6">
-      <h2 className="text-[18px] font-semibold">최근 기록 ({view.audit.length})</h2>
+      </div>
+    </details>
+    <details id="import" className={FOLD} open={one(params.import) === "plan"}>
+      <summary className={SUMMARY}><h2>지금 설정 가져오기</h2><span className="text-[13px] font-normal text-fg-3">옛 설정의 모델을 연결·순위로 옮깁니다(빈 칸만)</span></summary>
+      <div className="px-4 pb-4"><TaskImportCard preview={preview} confirmWord={AI_TASK_IMPORT_CONFIRM} /></div>
+    </details>
+    <details id="audit" className={FOLD}>
+      <summary className={SUMMARY}><h2>최근 기록</h2><span className="text-[13px] font-normal text-fg-3">{view.audit.length}건</span></summary>
+      <div className="grid gap-2 px-4 pb-4">
       {view.audit.length === 0 ? <p className="text-[13px] text-fg-3">아직 기록이 없습니다.</p>
         : <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-[13px]"><thead><tr className="border-b border-line">
           <th className="py-2 pr-3">시각</th><th className="py-2 pr-3">누가</th><th className="py-2 pr-3">무엇</th><th className="py-2 pr-3">대상</th><th className="py-2 pr-3">내용</th></tr></thead>
@@ -114,6 +119,7 @@ export default async function AiTasksPage({ searchParams }: Props) {
             <td className={`py-2 pr-3 ${row.ok ? "" : "text-red-600"}`}>{row.summary}</td>
           </tr>)}</tbody></table></div>}
       <Link href="/admin/activity" prefetch={false} className="text-[13px] font-semibold text-accent-ink">작업 로그에서 전체 보기 →</Link>
-    </section>
+      </div>
+    </details>
   </main>;
 }
