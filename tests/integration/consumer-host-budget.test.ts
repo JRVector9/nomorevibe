@@ -38,8 +38,11 @@ function environment(enforced: boolean): NodeJS.ProcessEnv {
     ...(enforced ? { HOST_BUDGET_ENFORCEMENT: JSON.stringify({ mode: 'enabled', pressure: relaxed }), HTTP_ORIGIN_PERMITS: '1' } : {}) };
 }
 function consumer(env: NodeJS.ProcessEnv, once: boolean) {
-  const child = spawn(process.execPath, ['--import', 'tsx', 'scripts/pipeline-consumer.ts', '--stage=ai2', ...(once ? ['--once'] : [])],
-    { cwd: process.cwd(), env, stdio: ['ignore', 'pipe', 'pipe'] });
+  // PR C1: 2차 소비자는 「작업 ↔ 모델」 투표자 순위가 없으면 쉰다 — 자식 프로세스에 이 시험의 투표자(표의 provider·model)를 순위로 고정한다
+  const child = spawn(process.execPath, ['--import', 'tsx', '--import', './tests/integration/fixtures/review-ranks-child-preload.ts',
+    'scripts/pipeline-consumer.ts', '--stage=ai2', ...(once ? ['--once'] : [])],
+    { cwd: process.cwd(), env: { ...env, NMV_TEST_REVIEW_RANKS: JSON.stringify({ second: [[{ provider: 'abcllm', model: 'pr06e-host-model' }]] }) },
+      stdio: ['ignore', 'pipe', 'pipe'] });
   let stdout = '', stderr = '';
   child.stdout.on('data', data => { stdout = (stdout + String(data)).slice(-65_536); });
   child.stderr.on('data', data => { stderr = (stderr + String(data)).slice(-8_192); });
@@ -116,7 +119,10 @@ it('with enforcement off writes no ledger row, leaves the database unchanged and
   const before = await whole();
   const once = consumer(environment(false), true);
   expect(await once.closed).toBe(0);
-  expect(once.output()).toEqual({ stdout: '', stderr: '' });
+  // reviewer 워커는 시작할 때 CLI 도구 버전 확인 결과(cli_contract.probe — PR C1, 운영자가 연결에 적을 버전)를 남긴다. 그 밖에는 아무것도 찍지 않는다
+  const printed = once.output();
+  expect({ stdout: printed.stdout.split('\n').filter(line => line && !line.includes('"event":"cli_contract.probe"')).join('\n'), stderr: printed.stderr })
+    .toEqual({ stdout: '', stderr: '' });
   expect(await admin`SELECT key FROM operations_observations WHERE key LIKE 'host-slot:%'`)
     .toEqual(baseline.operations_observations.filter(row => String(row.key).startsWith('host-slot:')).map(row => ({ key: row.key })));
   expect(await whole()).toEqual(before);
