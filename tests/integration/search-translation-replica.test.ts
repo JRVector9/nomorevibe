@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { TEST_DATABASE_URL, ensureSchema } from "./setup";
+import { pinTextRanks, textContract } from "../text-task-ranks-fixture";
 
 /**
  * 관련도순 검색은 결과가 0건이면 공개 읽기(복제본, lib/domain/products/public-reads.ts) 안에서 번역을 기다린다
@@ -14,20 +15,27 @@ vi.mock("@/lib/crawl/translate", async (importOriginal) => ({
 }));
 
 const globalForDb = globalThis as unknown as { readDb?: unknown };
+// 검색어 번역은 「작업 ↔ 모델」 순위(PR B)로만 부른다 — 순위가 없으면 번역 없이 찾는다
+const MODEL = "gpt-oss-120b";
 
 beforeAll(() => {
   ensureSchema();
   process.env.READ_DATABASE_URL = `${TEST_DATABASE_URL}?default_transaction_read_only=on`;
   globalForDb.readDb = undefined;
+  pinTextRanks({ "search-query-translate": MODEL });
+  setServingContractSnapshotForTest([textContract("search-query-translate", MODEL)]);
 });
 afterAll(() => {
   delete process.env.READ_DATABASE_URL;
   globalForDb.readDb = undefined;
+  pinTextRanks(null);
+  setServingContractSnapshotForTest(null);
 });
 
 const { db, onReplica } = await import("@/lib/db");
 const { textTranslations } = await import("@/lib/db/schema");
 const { queryTranslationKey, resolveSearchQuery } = await import("@/lib/domain/products/search-translation");
+const { setServingContractSnapshotForTest } = await import("@/lib/llm/serving-contract-store");
 
 describe("복제본 안에서 기다린 검색어 번역", () => {
   it("번역을 붙이고 번역 기록은 주 DB 에 남긴다", async () => {

@@ -11,13 +11,13 @@ import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import * as schema from "@/lib/db/schema";
 import { db } from "@/lib/db";
-import { SEARCH_QUERY_MODEL, QUERY_PROMPT_VERSION, GLOSSARY_VERSION, glossaryHints } from "@/lib/crawl/translate";
+import { QUERY_PROMPT_VERSION, GLOSSARY_VERSION, glossaryHints } from "@/lib/crawl/translate";
 import { modelCapacityPolicyHash, type ModelCapacityPolicy } from "@/lib/llm/capacity";
 import type { WebsearchQueryServingContract } from "@/lib/llm/websearch-query-serving-contract";
 import { httpOriginPolicyHash } from "@/lib/net/http-origin-policy";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
-import { directContractRow } from "./direct-engine-fixtures";
+import { inTextRank, textContract } from "../text-task-ranks-fixture";
 
 /*
  * PR15d 실제 PostgreSQL. 이 파일이 만들고 지우는 임시 DB 세 개만 쓴다(공유 test DB 의 행·제어값은 건드리지 않는다).
@@ -34,6 +34,8 @@ vi.mock("@/lib/llm/websearch-query-serving-contract", async original => ({
 vi.mock("@/lib/llm/websearch-process-owner", () => ({ websearchProcessOwner: () => fixture.owner }));
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
+// 「작업 ↔ 모델」 순위(PR B)의 모델 — 예전 SEARCH_QUERY_MODEL(등록부 기본값)과 같은 이름이다
+const SEARCH_QUERY_MODEL = "gpt-oss-120b";
 const tag = randomBytes(6).toString("hex"), prefix = `pr15d-${tag}`;
 const names = { ledger: `nomorevibe_test_pr15d_l_${tag}`, fenced: `nomorevibe_test_pr15d_f_${tag}`, step: `nomorevibe_test_pr15d_s_${tag}` } as const;
 type Side = keyof typeof names;
@@ -135,7 +137,7 @@ beforeAll(async () => {
     responseModel: "served-query", endpoint: `${gateway}/v1/chat/completions`, deploymentRevision: "local-only", totalTokenBound: 4096 };
   fixture.owner = { instanceId: `${prefix}-web`, bootId: randomUUID(), release: "pr15d-fixture" };
   // The loopback engine is connected directly (admin row, no key) — the abcLLM gateway and its key were removed on 2026-10-30.
-  setServingContractSnapshotForTest([directContractRow("search-query-translate", SEARCH_QUERY_MODEL)]);
+  setServingContractSnapshotForTest([textContract("search-query-translate", SEARCH_QUERY_MODEL)]);
   for (const side of ["ledger", "fenced"] as const)
     await pool(side)`UPDATE model_capacity_control SET mode = 'open', policy = ${JSON.stringify(policy)}::text::jsonb, policy_hash = ${modelCapacityPolicyHash(policy)} WHERE id = 1`;
   console.info("pr15d_migrations", { journal: journal.entries.length });
@@ -238,7 +240,10 @@ it("local_call_ended: a live process whose gateway call timed out records its ow
   use("ledger");
   vi.stubEnv("MODEL_CAPACITY_LOCAL_END", "1");
   const l = pool("ledger"), ledger = await import("@/lib/llm/capacity-repository"), gateway = await import("@/lib/crawl/agent-review-gateway");
-  const { translateQueryWithModelCapacity } = await import("@/lib/domain/products/search-query-model-capacity");
+  const { translateQueryWithModelCapacity: translateInRank } = await import("@/lib/domain/products/search-query-model-capacity");
+  // 검색 요청이 여는 것과 같은 순위 범위에서 부른다(PR B — 깊은 함수는 textTaskModel 로 그 순위의 모델을 읽는다)
+  const translateQueryWithModelCapacity = (value: Parameters<typeof translateInRank>[0], timeoutMs: number) =>
+    inTextRank("search-query-translate", SEARCH_QUERY_MODEL, () => translateInRank(value, timeoutMs));
   const { prepareWebsearchQueryDispatch } = await import("@/lib/domain/products/search-query-capacity-repository");
   const searchTranslation = await import("@/lib/domain/products/search-translation");
   const { releaseEvidencedDispatches, readReclaimReport } = await import("@/lib/operations/dr/reclaim");

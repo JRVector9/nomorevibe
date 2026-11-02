@@ -1,4 +1,3 @@
-import { scopedModel } from "@/lib/llm/model-registry";
 import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
@@ -14,7 +13,6 @@ import { RoleLeaseLostError, type RoleLease } from "@/lib/jobs/role-leader";
 import { assertJobBatchAdmission } from "@/lib/jobs/batch-repository";
 import { currentReplayDb } from "@/lib/db/replay-scope";
 import { reviewHash } from "@/lib/crawl/agent-review-contract";
-import { PRODUCT_TRANSLATE_MODEL } from "@/lib/crawl/translate";
 import type { PreparedProductTranslationGatewayCall } from "@/lib/crawl/agent-review-gateway";
 import { lockProductGeneration } from "./generation";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
@@ -27,6 +25,7 @@ import { busyMemberKeysSql, capacityOwnerFromEnv, type CapacityOwner } from "@/l
 import { detectTranslationSourceLocale, isProductTranslationField, productTranslationSourceHash, translationSourceText,
   PRODUCT_TRANSLATION_POLICY, productTranslationPolicy,
   type ProductTranslationReadiness, type ProductTranslationSource } from "./translation-policy";
+import { textTaskModel } from "@/lib/llm/ai-task-rank-scope";
 
 export { selectProductTranslation, productTranslationSourceHash, detectTranslationSourceLocale } from "./translation-policy";
 export type { ProductTranslationSource, ProductTranslationSelection } from "./translation-policy";
@@ -293,7 +292,7 @@ export async function prepareProductTranslationDispatch(value: readonly ProductT
       const control = lock?.control ?? await lockModelCapacityCallerControl(tx);
       if (!reserved && control.mode === "disabled") return { kind: "disabled" } as const;
       if (control.mode !== "open") throw new ModelCapacityDeferredError(control.mode === "draining" ? "draining" : "disabled");
-      if (call.model !== scopedModel("product-translate", PRODUCT_TRANSLATE_MODEL) || !control.policy?.routes.some(route => route.routeId === PRODUCT_TRANSLATION_JOB
+      if (call.model !== textTaskModel("product-translate") || !control.policy?.routes.some(route => route.routeId === PRODUCT_TRANSLATION_JOB
         && route.provider === call.provider && route.model === call.model)) throw new ModelCapacityDeferredError("unmapped");
       if (!roleLease || !["text", "translation"].includes(roleLease.role)) throw new ModelCapacityDeferredError("owner_unavailable");
       await assertJobBatchAdmission(tx, PRODUCT_TRANSLATION_JOB, roleLease);

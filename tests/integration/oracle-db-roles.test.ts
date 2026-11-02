@@ -9,6 +9,7 @@ import { productTranslationSourceHash } from '@/lib/domain/products/translation-
 import { configuredModel } from '@/lib/llm/model-registry';
 import { ORACLE_DB_PRINCIPALS, ORACLE_REFRESH_PRINCIPAL, oracleDbGrantStatements, type OracleDbService } from '@/lib/runtime/oracle-db-profile';
 import { ensureSchema, TEST_DATABASE_URL } from './setup';
+import { textContract } from '../text-task-ranks-fixture';
 
 // Real PostgreSQL privileges. Capability/result rows seeded below are FIXTURE admission seeds that let the
 // restricted child be elected; they are not Oracle canary evidence. External HTTP/model calls are loopback only.
@@ -24,7 +25,7 @@ const services: OracleDbService[] = [...ROLES, 'scheduler', 'attest'];
 const policy = { version: 1 as const, release, instances: [...ROLES, 'scheduler' as const].map(role => ({ instanceId: instance(role), host: 'oracle-osaka-smoke' as const })) };
 const httpPolicy = { version: 1 as const, instanceHosts: Object.fromEntries(policy.instances.map(row => [row.instanceId, 'oracle-osaka-smoke' as const])) };
 // Children first for deletes; every row present before the file is restored byte-for-byte afterwards.
-const RESTORED = ['model_capacity_events', 'model_capacity_requests', 'http_origin_events', 'http_origin_hops', 'uptime_observations', 'uptime_gates', 'product_health', 'product_evidence_audit',
+const RESTORED = ['ai_task_models', 'ai_connections', 'model_capacity_events', 'model_capacity_requests', 'http_origin_events', 'http_origin_hops', 'uptime_observations', 'uptime_gates', 'product_health', 'product_evidence_audit',
   'product_links', 'product_evidence_sources', 'evidence_source_claims', 'product_refresh_requests', 'product_korean_taglines',
   'product_translations', 'text_translations', 'news_items', 'second_reviews', 'crawl_candidates', 'products', 'cdn_purges',
   'job_batch_candidates', 'operations_observations', 'jobs', 'role_leases', 'job_batch_control', 'http_origin_control', 'uptime_control',
@@ -125,14 +126,18 @@ async function seed() {
   await admin`UPDATE uptime_control SET observations_enabled=true,gate_enabled=false,sources=${admin.json([{ host: 'oracle-osaka-smoke', instanceId: instance('product-health'), region: 'ap-osaka-1' }])} WHERE id=1`;
   await admin`UPDATE evidence_source_control SET enabled=true WHERE id=1`;
   await admin`INSERT INTO evidence_settings(id,values) VALUES(1,'{}') ON CONFLICT(id) DO NOTHING`;
-  // The abcLLM gateway was removed on 2026-10-30: a text route runs only on an admin engine connection (transport direct, no key)
-  // for its model, which the translation principal reads. FIXTURE rows: each contract body carries only its identity, so every
-  // translation serving contract still resolves to null and no native call can be prepared; with capacity disabled the jobs take
-  // the original leaf, which no longer sends, and the principal writes the provider-side no_key failures.
+  // The abcLLM gateway was removed on 2026-10-30, and since PR B (2026-11-02) a text route calls only the ranks saved in
+  // 작업 ↔ 모델 (ai_task_models JOIN ai_connections), each bound to the admin engine contract (transport direct, no key) whose endpoint is
+  // that connection's address — the translation principal reads all three tables (least-privilege GRANTs). FIXTURE rows: one loopback
+  // connection and one rank per route; with capacity disabled the jobs take the original leaf, which no longer sends (no native call is
+  // prepared), and the principal writes the provider-side no_key failures.
+  const connectionId = randomUUID(), connectionBase = `${base}/v1`;
+  await admin`INSERT INTO ai_connections(id,label,kind,base_url,device_id,updated_by) VALUES(${connectionId},${`${prefix}-engine`},'api',${connectionBase},${`${prefix}-device`},${prefix})`;
   for (const routeId of ['reason-translate', 'product-tagline-ko', 'product-translate'] as const) {
     const model = configuredModel(routeId, {});
     await admin`INSERT INTO model_serving_contracts(route_id,model,contract,contract_hash,auth,transport,updated_by)
-      VALUES(${routeId},${model},${admin.json({ routeId, model })},${'d'.repeat(64)},'none','direct',${prefix})`;
+      VALUES(${routeId},${model},${admin.json(textContract(routeId, model, { baseUrl: connectionBase }).contract as Parameters<typeof admin.json>[0])},${'d'.repeat(64)},'none','direct',${prefix})`;
+    await admin`INSERT INTO ai_task_models(task,rank,connection_id,model,updated_by) VALUES(${routeId},1,${connectionId},${model},${prefix})`;
   }
   for (const role of ROLES) {
     const job = JOBS[role][0], at = clock.at as string, id = instance(role);

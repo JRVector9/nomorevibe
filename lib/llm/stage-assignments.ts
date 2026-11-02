@@ -4,7 +4,7 @@ import type { AssignmentRole, AssignmentStage, HelperMode, ModelAssignmentRow } 
 
 /**
  * 단계별 배정 표 읽기와 고르기(PR 3b-A). 고르기는 순수 함수다(DB 없이 시험한다). 3b-B 부터 MODEL_ASSIGNMENT_TABLE 뒤에서 1차 심사자 고르기
- * (lib/crawl/first-reviewers.ts selectTableFirstReviewer)·2차 투표자 목록(lib/crawl/second-review-voters.ts)·단계 풀·등록부 기본값이 이것을 쓴다
+ * 단계 풀·등록부 기본값이 이것을 쓴다(1차·2차는 PR C1 부터 「작업 ↔ 모델」 순위라 이 표를 읽지 않는다)
  * (스냅숏은 stage-assignment-snapshot.ts).
  *
  * - 순서: rank 오름차순, 같은 rank 안에서는 assignment_id 순(안정). 1차 오늘 풀의 순서(주 심사자 → 추가 심사자)를 그대로 옮기려면
@@ -80,16 +80,17 @@ export function votersForItem<T extends StageAssignmentCandidate>(rows: readonly
  */
 export type AssignmentSource = "table" | "legacy" | "legacy_empty_table";
 
-/** 1차 심사자(FirstReviewer)가 받는 공급자. 그 밖(codex-cli)의 ai1 행은 고르기에 쓰지 않는다. */
-export const AI1_TABLE_PROVIDERS: ReadonlySet<string> = Object.freeze(new Set(["abcllm", "claude-cli", "grok-cli"]));
-/** 2차 투표자(secondReviewVoterSchema)가 받는 공급자. */
-export const AI2_TABLE_PROVIDERS: ReadonlySet<string> = Object.freeze(new Set(["abcllm", "claude-cli", "grok-cli", "local-direct"]));
+/**
+ * 배정 표로 고르지 않는 단계(2026-11-02 소유자 결정, PR C1) — 1차(ai1)·2차(ai2)는 「작업 ↔ 모델」 순위만 읽는다(lib/crawl/review-task-ranks.ts).
+ * 표에 ai1·ai2 행이 남아 있어도 쓸 수 있는 행으로 세지 않는다(출처는 늘 legacy_empty_table·legacy 로 보인다). 예전의 AI1_TABLE_PROVIDERS·AI2_TABLE_PROVIDERS 는 없앴다.
+ */
+export const RANKED_STAGES: ReadonlySet<string> = Object.freeze(new Set(["ai1", "ai2"]));
 
-/** 단계의 쓸 수 있는 행: 그 단계 · role 'primary' · mode 'live' · (ai1·ai2 는) 받는 공급자, rank → assignment_id 순. */
+/** 단계의 쓸 수 있는 행: 그 단계 · role 'primary' · mode 'live', rank → assignment_id 순. 1차·2차(RANKED_STAGES)는 늘 빈 목록이다. */
 export function stageTableRows<T extends StageAssignmentCandidate & { stage: AssignmentStage; provider: string }>(stage: AssignmentStage,
   rows: readonly T[]): T[] {
-  return orderStageAssignments(rows.filter(row => row.stage === stage && usable(row)
-    && (stage === "ai1" ? AI1_TABLE_PROVIDERS.has(row.provider) : stage === "ai2" ? AI2_TABLE_PROVIDERS.has(row.provider) : true)));
+  if (RANKED_STAGES.has(stage)) return [];
+  return orderStageAssignments(rows.filter(row => row.stage === stage && usable(row)));
 }
 
 /** 출처 판정. ai2 는 투표자(rank 1 · vote)가 하나 이상이어야 'table' 이다 — 투표자 없는 2차는 아무 표도 올리지 못한다. */

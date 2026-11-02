@@ -1,4 +1,4 @@
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { PgDialect } from "drizzle-orm/pg-core";
 import type { AgentRepositoryScan, CrawlCandidate, CrawlDocument, CrawlReviewAttempt, SecondReview } from "@/lib/db/schema";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
@@ -9,6 +9,7 @@ import { loadReviewDocument } from "@/lib/crawl/jobs/review-document";
 import { secondReviewGeneration, secondReviewInputMatches } from "@/lib/crawl/second-review-input";
 import { README_SAMPLE_VERSION } from "@/lib/crawl/readme";
 import { reviewSemanticNow, reviewSemanticNowSql, storedReviewEvidenceRequired, withReviewReplayContext } from "@/lib/crawl/review-replay-context";
+import { pinReviewRanks, pinReviewRanksFromSettings } from "./review-task-ranks-fixture";
 
 const boundary = vi.hoisted(() => ({ document: vi.fn(), save: vi.fn(), fetch: vi.fn() }));
 vi.mock("@/lib/crawl/repository", () => ({ getDocument: boundary.document, setReadmeSample: boundary.save }));
@@ -32,6 +33,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   boundary.fetch.mockRejectedValue(new Error("unexpected_readme_fetch"));
 });
+afterEach(() => pinReviewRanks(null));
 
 it("freezes only semantic time and returns independent Date objects", async () => {
   const wallBefore = Date.now(), supplied = new Date(referenceTime);
@@ -109,6 +111,8 @@ it("validates the AI2 generation at reference time while preserving first-attemp
     provider: "abcllm", model: "second", firstAttemptId: first.id, firstDecision: "approve", firstModel: "first",
     inputHash: input.inputHash, generationKey: secondReviewGeneration(first.id, input, "ai_approved"), fallbackForId: null } as SecondReview;
   const current = { candidate, document: stored, settings, input, first };
+  // 기준 시각 범위는 격리 replay DB 가 아니다 — 1차·2차 심사자는 「작업 ↔ 모델」 순위로 읽는다(PR C1). 설정과 같은 모델을 순위로 고정한다
+  pinReviewRanksFromSettings(settings);
   expect(secondReviewInputMatches(vote, current)).toBe(false);
   await withReviewReplayContext({ referenceTime }, async () => {
     expect(secondReviewInputMatches(vote, current)).toBe(true);

@@ -1,18 +1,17 @@
-import { modelLimits, modelTimeoutMs, scopedModel } from "@/lib/llm/model-registry";
+import { modelRequestBudget, modelRouteTimeoutMs } from "@/lib/llm/model-registry";
 import { roleLeaseFromEnv } from "@/lib/jobs/role-leader";
 import { writeKeywordsWithModelCapacity } from "@/lib/domain/products/search-profile-model-capacity";
 import { deferredJob, type JobContext, type JobOutcome } from "@/lib/jobs/runner";
-import { EngineDownTally } from "@/lib/jobs/engine-down";
 import { tickRemaining } from "@/lib/jobs/tick-deadline";
 import { ModelCapacityDeferredError, modelCapacityDeferralIsPerWork } from "@/lib/llm/capacity-deferred";
-import { PROFILE_MODEL, profileEvidence, profileHash } from "@/lib/domain/products/search-profile";
-import { pendingProfiles, recordProfileResult } from "@/lib/domain/products/search-profiles";
+import { profileEvidence, profileHash } from "@/lib/domain/products/search-profile";
+import { pendingProfiles, recordProfileResult, resumedProfileModel } from "@/lib/domain/products/search-profiles";
 import { isLockNotAvailable, readControlLockHolders } from "@/lib/llm/capacity-lock-diagnostics";
-import { TEXT_ROUTE_BLOCK_DETAIL, textRouteAccess } from "@/lib/llm/serving-contract-store";
-import { textProfileServingProvider } from "@/lib/llm/text-profile-serving-contract";
 import { logger } from "@/lib/observability/logger";
 import { jobKnob } from "@/lib/operations/runtime-settings-schema";
 import { runtimeSettings } from "@/lib/operations/runtime-settings-store";
+import { textTaskModel } from "@/lib/llm/ai-task-rank-scope";
+import { TextTaskRanks, type TextRankRun } from "@/lib/llm/ai-task-resolver";
 
 /**
  * 검색 키워드 짓기 — 공개 제품마다 모델이 한·영 검색어를 적는다(search-profile.ts).
@@ -40,11 +39,19 @@ const JOB = "product-search-profile";
  */
 
 export async function writeSearchProfiles(ctx: JobContext<null>): Promise<JobOutcome<null>> {
-  const model = scopedModel("product-search-profile", PROFILE_MODEL);
-  const blocked = textRouteAccess("product-search-profile", model, textProfileServingProvider(model)).block;
-  if (blocked) {
-    ctx.log("search_profile.skipped", { reason: blocked });
-    return { done: true, degraded: { code: blocked, detail: TEXT_ROUTE_BLOCK_DETAIL[blocked] } };
+  // 「작업 ↔ 모델」 순위(PR B)만 부른다 — 순위가 없거나 모두 쓸 수 없으면 기본값으로 부르지 않고 제 일 못 한 틱으로 남긴다
+  const ranks = await TextTaskRanks.open(JOB);
+  try { return await writeSearchProfilesWithRanks(ctx, ranks); }
+  finally { ctx.log("ai_task.ranks", ranks.summary()); }
+}
+
+type Flow = "next" | "stop";
+
+async function writeSearchProfilesWithRanks(ctx: JobContext<null>, ranks: TextTaskRanks): Promise<JobOutcome<null>> {
+  const early = ranks.earlyDegraded();
+  if (early) {
+    ctx.log("search_profile.skipped", { reason: early.code });
+    return { done: true, degraded: early };
   }
   const lease = ctx.lease;
   if (!lease) throw new Error("Search profile worker requires a job lease");
@@ -58,14 +65,14 @@ export async function writeSearchProfiles(ctx: JobContext<null>): Promise<JobOut
     const remaining = tickRemaining(ctx, JOB, startedAt);
     const knobs = runtimeSettings();
     const batch = jobKnob(knobs, JOB, "batch"), minCallMs = jobKnob(knobs, JOB, "minCallMs");
-    const concurrency = modelLimits(JOB).concurrency, callMs = modelTimeoutMs(JOB);
+    const concurrency = modelRequestBudget(JOB).concurrency, callMs = modelRouteTimeoutMs(JOB);
     let written = 0, reused = 0, failed = 0, passed = 0, blocked = "";
-    const engine = new EngineDownTally();
     // 이번 틱에 이미 집은 제품은 다시 고르지 않는다 — 적지 못하고 돌아온(skipped·쓰기 경합·이 제품만의 미룸) 머리가 남은 틱을 같은 조회로 맴돌게 하지 않는다
     const visited = new Set<number>();
 
     while (!signal.aborted && ctx.hasBudget() && remaining() >= minCallMs) {
-      const tasks = await pendingProfiles(batch, roleLease, [...visited]);
+      // 순위마다 이 프로세스가 줄에 세워 둔 요청을 먼저 이어받는다(쉬는 순위는 빼고)
+      const tasks = await pendingProfiles(batch, roleLease, [...visited], ranks.usable());
       if (tasks.length === 0) {
         ctx.log("search_profile.done", { written, reused, failed, passed, drained: true });
         return { done: true };
@@ -74,7 +81,7 @@ export async function writeSearchProfiles(ctx: JobContext<null>): Promise<JobOut
       const settled = await Promise.allSettled(Array.from({ length: concurrency }, async () => {
         try {
           for (let index = next++; index < tasks.length; index = next++) {
-            if (blocked || signal.aborted || !ctx.hasBudget() || remaining() < minCallMs) return;
+            if (blocked || ranks.exhausted || signal.aborted || !ctx.hasBudget() || remaining() < minCallMs) return;
             const task = tasks[index];
             visited.add(task.product.id);
             const evidence = profileEvidence(task.product, task.reviewerNote);
@@ -86,9 +93,37 @@ export async function writeSearchProfiles(ctx: JobContext<null>): Promise<JobOut
               continue;
             }
             const timeoutMs = Math.max(1_000, Math.min(callMs, remaining() - 1_000));
-            let outcome: Awaited<ReturnType<typeof writeKeywordsWithModelCapacity>>;
-            try { outcome = await writeKeywordsWithModelCapacity(task, lease, { signal, timeoutMs, roleLease }); }
-            catch (error) {
+            let attempt: TextRankRun<Flow>;
+            try {
+              // 순위 차례로 부른다 — 이 모델만의 까닭(경로 없음·장비 행 없음·계약 닫힘·포화)이면 같은 제품을 다음 순위로(TextTaskRanks.run)
+              attempt = await ranks.run(async (binding): Promise<Flow> => {
+                const outcome = await writeKeywordsWithModelCapacity(task, lease, { signal, timeoutMs, roleLease });
+                if (outcome.kind === "skipped") return "stop";
+                const result = outcome.result;
+                if (signal.aborted) return "stop";
+                if (!result.ok) {
+                  // A shorter deadline comes from this tick's remaining time, not the product.
+                  // Keep it eligible for the next tick instead of consuming a retry.
+                  if (result.error === "timeout" && timeoutMs < callMs) {
+                    blocked = "tick_budget";
+                    return "stop";
+                  }
+                  const failure = { kind: "failure" as const, error: result.error };
+                  if (!await (outcome.expectedProfile ? recordProfileResult(task, lease, failure, outcome.expectedProfile)
+                    : recordProfileResult(task, lease, failure))) return "stop";
+                  failed++;
+                  // 그 제품의 실패로 남겼다. 엔진이 모든 제품에 대해 내려갔음이 증명되면(engine-down.ts) 이 순위만 쉬고 다음 제품은 다음 순위로 간다
+                  if (ranks.failed(binding, result.error)) ctx.log("search_profile.rank_down", { rank: binding.rank });
+                  return "next";
+                }
+                ranks.answered(binding);
+                const success = { kind: "success" as const, en: result.en, ko: result.ko, model: textTaskModel(JOB) };
+                if (!await (outcome.expectedProfile ? recordProfileResult(task, lease, success, outcome.expectedProfile)
+                  : recordProfileResult(task, lease, success))) return "stop";
+                written++;
+                return "next";
+              }, { prefer: resumedProfileModel(task) });
+            } catch (error) {
               // 이 제품만의 미룸 — 앞선 호출이 보내진 중(dispatched)·같은 제품이 다른 요청에 묶임(work_busy)·장부 세대 어긋남(ledger_mismatch).
               // 제품 하나를 건너뛰고 틱을 계속 돈다(호출·시도·실패 기록 없음; visited 가 이 틱에 다시 집지 않게 한다).
               if (error instanceof ModelCapacityDeferredError && modelCapacityDeferralIsPerWork(error.reason)) {
@@ -98,34 +133,12 @@ export async function writeSearchProfiles(ctx: JobContext<null>): Promise<JobOut
               }
               throw error;
             }
-            if (outcome.kind === "skipped") return;
-            const result = outcome.result;
-            if (signal.aborted) return;
-            if (!result.ok) {
-              // A shorter deadline comes from this tick's remaining time, not the product.
-              // Keep it eligible for the next tick instead of consuming a retry.
-              if (result.error === "timeout" && timeoutMs < callMs) {
-                blocked = "tick_budget";
-                return;
-              }
-              const failure = { kind: "failure" as const, error: result.error };
-              if (!await (outcome.expectedProfile ? recordProfileResult(task, lease, failure, outcome.expectedProfile)
-                : recordProfileResult(task, lease, failure))) return;
-              failed++;
-              // 그 제품의 실패로 남겼다. 엔진이 모든 제품에 대해 내려갔음이 증명될 때만 틱을 접는다(engine-down.ts)
-              const down = engine.failed(result.error);
-              if (down) blocked = down;
-              continue;
-            }
-            engine.answered();
-            const success = { kind: "success" as const, en: result.en, ko: result.ko, model: scopedModel("product-search-profile", PROFILE_MODEL) };
-            if (!await (outcome.expectedProfile ? recordProfileResult(task, lease, success, outcome.expectedProfile)
-              : recordProfileResult(task, lease, success))) return;
-            written++;
+            // 모든 순위를 이 틱에 쓸 수 없다 — 이 제품은 그대로 두고(호출·시도 기록 없음) 틱을 접는다
+            if (attempt.kind === "unusable" || attempt.value === "stop") return;
           }
         } catch (error) {
           if (error instanceof ModelCapacityDeferredError) {
-            // 모델·전역 미룸(capacity·draining…)을 남긴다 — 러너는 'model_capacity' 하나로만 적는다
+            // 전역 미룸(draining·owner…)을 남긴다 — 러너는 'model_capacity' 하나로만 적는다
             if (!blocked) ctx.log("search_profile.capacity_deferred", { written, reused, failed, passed, reason: error.reason });
             blocked ||= "model_capacity";
           }
@@ -156,9 +169,18 @@ export async function writeSearchProfiles(ctx: JobContext<null>): Promise<JobOut
         ctx.log("search_profile.budget_deferred", { written, reused, failed, passed });
         return { done: false };
       }
-      if (blocked) {
-        ctx.log("search_profile.gateway_blocked", { error: blocked, written, reused, failed, passed });
-        return { done: true };
+      if (ranks.exhausted || !ranks.usable().length) {
+        // 모든 순위가 이 틱에 쉰다. 포화면 예전처럼 미루고, 아니면 일을 했을 때만 보통 틱 — 한 건도 못 했으면 까닭을 남긴다
+        const processed = written + reused + failed;
+        if (ranks.saturated()) return deferredJob("model_capacity", processed);
+        // 쓸 수 있던 순위가 모두 엔진 쪽 까닭으로 쉰다 — 예전의 「엔진이 내려가 틱을 접는다」(engine-down.ts)와 같다
+        const down = ranks.engineDown();
+        if (down) {
+          ctx.log("search_profile.gateway_blocked", { error: down, written, reused, failed, passed });
+          return { done: true };
+        }
+        ctx.log("search_profile.all_ranks_unusable", { written, reused, failed, passed });
+        return processed ? { done: false } : { done: true, degraded: ranks.degraded() };
       }
     }
     ctx.log("search_profile.done", { written, reused, failed, passed, drained: false });

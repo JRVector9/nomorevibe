@@ -3,12 +3,13 @@ import { translateReasons } from "@/lib/crawl/jobs/translate-reasons";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { classifyStage } from "@/lib/operations/worker-progress";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
+import { pinTextRanks, textContract } from "./text-task-ranks-fixture";
 
 const mocks = vi.hoisted(() => ({ untried: vi.fn(), retry: vi.fn(), record: vi.fn(), capacity: vi.fn() }));
 vi.mock("@/lib/crawl/translations", () => ({
   untriedTranslations: mocks.untried, retryableTranslations: mocks.retry, recordWorkerTranslations: mocks.record,
 }));
-vi.mock("@/lib/crawl/translate", () => ({ TRANSLATE_MODEL: "[M1] gemma", translateToKorean: vi.fn() }));
+vi.mock("@/lib/crawl/translate", () => ({ translateToKorean: vi.fn() }));
 vi.mock("@/lib/crawl/reason-translation-model-capacity", () => ({ translateReasonsWithModelCapacity: mocks.capacity }));
 
 const context = () => ({ cursor: null, hasBudget: () => true, save: vi.fn(), log: vi.fn(),
@@ -16,11 +17,12 @@ const context = () => ({ cursor: null, hasBudget: () => true, save: vi.fn(), log
 const item = (hash: string) => ({ hash, body: `English reason ${hash}`, attempts: 0 });
 beforeEach(() => {
   vi.resetAllMocks();
-  // The route opens only on a directly connected engine (admin contract, transport direct) for the job's model.
-  setServingContractSnapshotForTest([{ routeId: "reason-translate", model: "[M1] gemma", contract: {}, auth: "none", apiKey: null, transport: "direct" }]);
+  // The route opens only on a directly connected engine (admin contract, transport direct) for the rank's model (PR B: 「작업 ↔ 모델」 순위).
+  pinTextRanks({ "reason-translate": "[M1] gemma" });
+  setServingContractSnapshotForTest([textContract("reason-translate", "[M1] gemma")]);
   mocks.untried.mockResolvedValue([]); mocks.retry.mockResolvedValue([]); mocks.record.mockResolvedValue(1);
 });
-afterEach(() => { setServingContractSnapshotForTest(null); });
+afterEach(() => { setServingContractSnapshotForTest(null); pinTextRanks(null); });
 
 it("logs the exact capacity deferral reason, writes nothing and defers the tick", async () => {
   mocks.untried.mockResolvedValue([item("a")]);

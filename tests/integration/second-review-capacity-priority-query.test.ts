@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import postgres from 'postgres';
 import { eq } from 'drizzle-orm';
-import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { db } from '@/lib/db';
 import { crawlCandidates, modelCapacityRequests, secondReviews } from '@/lib/db/schema';
 import { runSecondReviewConsumer } from '@/lib/crawl/consumers/second';
 import { ensureSchema, TEST_DATABASE_URL } from './setup';
+import { pinReviewRanks } from '../review-task-ranks-fixture';
 
 // Query-only fixtures: admission/dispatch authority is exercised by the separate
 // capacity-wait-fallback integration suite. Every hint SELECT here is real PG.
@@ -35,6 +36,8 @@ afterEach(async () => {
   requests.clear(); votes.clear(); candidates.clear(); lifecycle.execute.mockReset();
   expect(await ledger()).toEqual(baseline);
 });
+// PR C1: 2차 소비자는 「작업 ↔ 모델」 투표자 순위가 없으면 쉰다 — 이 시험의 투표자(query-direct, 대체 query-backup)를 칸 1 의 1·2순위로 고정한다
+beforeEach(() => { pinReviewRanks({ second: [[{ provider: 'local-direct', model: 'query-direct' }, { provider: 'local-direct', model: 'query-backup' }]] }); });
 afterAll(async () => { await (globalThis as { pgClient?: postgres.Sql }).pgClient?.end(); await admin.end(); });
 async function vote(fallback = false) {
   const repo = `${prefix}/app-${++serial}`;
@@ -67,8 +70,9 @@ function run() {
   return runSecondReviewConsumer({ owner, once: true });
 }
 const calls = () => lifecycle.execute.mock.calls.map(([input]) => input.secondReviewId as number);
-it('selects only live owned root local waiters aged 15 seconds and runs a reservation first', async () => {
-  // Every negative has an earlier queue ordinal than the eligible waiter.
+it('selects only live owned root engine-direct waiters aged 15 seconds and runs a reservation first', async () => {
+  // Every negative has an earlier queue ordinal than the eligible waiters. PR C1: abcllm-shaped engine-direct votes (made by a rank save)
+  // can hand a long wait to the same voter slot's next rank too, so the aged abcllm root waiter is eligible and comes before `waiting`.
   const young = await vote(); await request(young, { ageMs: 1_000 });
   const expired = await vote(); await request(expired, { ttlMs: -1_000 });
   const otherOwner = await vote(); await request(otherOwner, { instanceId: `${owner.instanceId}-other` });
@@ -85,7 +89,7 @@ it('selects only live owned root local waiters aged 15 seconds and runs a reserv
   const reserved = await vote(); await request(reserved, { state: 'reserved' });
   const before = await ledger();
   expect(await run()).toMatchObject({ attempted: 12, deferred: 0 });
-  expect(calls().slice(0, 3)).toEqual([reserved.id, waiting.id, fallback.id]);
+  expect(calls().slice(0, 3)).toEqual([reserved.id, abc.id, fallback.id]);
   expect(new Set(calls()).size).toBe(12); expect(await ledger()).toEqual(before);
 });
 it('rotates multiple aged waiters behind the normal cursor while reservations keep arriving first', async () => {

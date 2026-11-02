@@ -15,8 +15,10 @@ import { checkProductIntros } from "@/lib/jobs/products/intro-check";
 import { INTRO_CHECK_MODEL } from "@/lib/domain/products/intro-check";
 import { modelCapacityPolicyHash, type ModelCapacityPolicy } from "@/lib/llm/capacity";
 import { runJob } from "@/lib/jobs/runner";
+import { jobTallyKey } from "@/lib/jobs/tally";
 import { jobRunOptions } from "@/scripts/worker";
 import { ensureSchema, resetTables } from "./setup";
+import { cliRankRow, pinTaskRanks } from "../fake-cli-path";
 
 // admission 거절과 runner readback 만 본다. 슬롯 허가·종료 증거가 아니다.
 // 바꾸는 것은 CLI·게이트웨이 호출뿐이고 control·job·도메인 TX 는 실제 PostgreSQL 로 돈다.
@@ -131,8 +133,9 @@ const callers = [
     written: async () => (await db.select().from(productIntroChecks)).length },
   { name: "product-audit claude-cli", ...audit("claude-cli", "sonnet", spies.agent) },
   { name: "product-audit abcllm gateway", ...audit("abcllm", GATEWAY_MODEL, spies.gateway) },
+  // Grok 로그인 유지의 모델은 그 작업의 「작업 ↔ 모델」 순위다(PR C1) — 1·2차 설정(firstReview·voters)은 읽지 않는다
   { name: "grok-session grok-cli", job: "grok-session-check", route: { routeId: "grok-session-check", provider: "grok-cli", model: GROK_MODEL },
-    cli: grokCli, prepare: async () => { await saveSettings({ enabled: true, firstReview: { provider: "grok-cli", model: GROK_MODEL } }, "test"); },
+    cli: grokCli, prepare: async () => { pinTaskRanks([cliRankRow("grok-session-check", GROK_MODEL)]); },
     tick: () => runJob<null>("grok-session-check", ctx => checkGrokSession(ctx, { run: grokCli }), { requestedOnly: true }),
     written: async () => (await db.select().from(operationsObservations).where(like(operationsObservations.key, "service:grok:%"))).length },
 ];
@@ -141,8 +144,15 @@ const modes = [
   { mode: "open" as const, routes: (route: Route) => [{ ...route, provider: route.provider === "abcllm" ? "claude-cli" : "abcllm" }, { ...route, model: "other" }] },
   { mode: "open" as const, routes: (route: Route) => [route] },
 ];
-const matrix = callers.flatMap(caller => modes.map((mode, index) => ({ ...caller, ...mode,
+const combinations = callers.flatMap(caller => modes.map((mode, index) => ({ ...caller, ...mode,
   label: `${caller.name} ${mode.mode}${index === 1 ? " unmapped" : index === 2 ? " mapped" : ""}` })));
+/**
+ * Grok 로그인 유지는 순위 대체를 한다(PR C1): open 의 거절 중 그 모델만의 까닭(정책에 경로 없음 unmapped·CLI 계약 없음 — mapped 여도 DB 계약 행
+ * cli:grok-cli:grok-session-check 가 없다)은 다음 순위로 넘기고, 순위가 모두 그러면 미루지 않고 제 일 못 함(all_ranks_unusable)으로 끝난다. 전역 거절(draining)은 그대로 미룬다.
+ */
+const grokRankRefusal = (row: (typeof combinations)[number]) => row.job === "grok-session-check" && row.mode === "open";
+const matrix = combinations.filter(row => !grokRankRefusal(row));
+const grokRankRefusals = combinations.filter(grokRankRefusal);
 
 beforeAll(async () => {
   ensureSchema();
@@ -158,7 +168,7 @@ beforeEach(async () => {
   await restoreControl();
   await clean();
 });
-afterEach(async () => { try { await restoreControl(); await clean(); } finally { vi.unstubAllEnvs(); } });
+afterEach(async () => { try { await restoreControl(); await clean(); } finally { vi.unstubAllEnvs(); pinTaskRanks(null); } });
 afterAll(async () => { await restoreControl(); });
 
 it.each(matrix)("$label: a real tick defers before the call and keeps producer, cursor, history and every other row", async scenario => {
@@ -182,6 +192,32 @@ it.each(matrix)("$label: a real tick defers before the call and keeps producer, 
   expect(jobAfter).toMatchObject({ requested_version: 10, processed_version: 8, cursor: { fixture: scenario.job }, not_before: null,
     last_error: null });
   delete before.jobs; delete after.jobs;
+  expect(after).toStrictEqual(before);
+});
+
+it.each(grokRankRefusals)("$label: a real tick does not call and ends degraded all_ranks_unusable — the last success time and every domain row stay", async scenario => {
+  await scenario.prepare();
+  await pendingJob(scenario.job);
+  await setControl(scenario.mode, scenario.routes(scenario.route));
+  const before = await whole();
+  const jobBefore = await jobRow(scenario.job);
+
+  expect(await scenario.tick()).toMatchObject({ status: "completed", done: true, degraded: "all_ranks_unusable" });
+
+  expect(scenario.cli).not.toHaveBeenCalled();
+  expect(await scenario.written()).toBe(0);
+  // 제 일 못 한 틱은 성공이 아니다 — 요청은 인정하지만 마지막 성공 시각은 그대로다(runner.ts)
+  const jobAfter = await jobRow(scenario.job);
+  expect(jobAfter).toMatchObject({ requested_version: 10, processed_version: 10, cursor: null, last_error: null, locked_at: null, lease_token: null,
+    last_success_at: jobBefore.last_success_at });
+  const [observation] = await db.select().from(operationsObservations).where(eq(operationsObservations.key, `job:${scenario.job}`));
+  expect(observation.value).toMatchObject({ degraded: { code: "all_ranks_unusable", detail: expect.stringContaining(`1순위 test-grok-cli · ${GROK_MODEL}`) } });
+  // 잡 행과 그 관측(마지막 회차 job:<name>·누적) 말고는 아무것도 바뀌지 않는다
+  const after = await whole(), own = new Set([`job:${scenario.job}`, jobTallyKey(scenario.job)]);
+  for (const value of [before, after]) {
+    delete value.jobs;
+    value.operations_observations = value.operations_observations.filter(row => !own.has(String(row.key)));
+  }
   expect(after).toStrictEqual(before);
 });
 

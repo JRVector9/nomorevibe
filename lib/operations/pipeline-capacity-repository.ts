@@ -3,13 +3,13 @@ import { db, onPrimary } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, crawlReviewAttempts, crawlSettings, secondReviews,
   type CrawlReviewAttempt, type SecondReview } from "@/lib/db/schema";
 import { loadReviewInput, secondGateRequired, secondReviewApprovalPredicate } from "@/lib/crawl/agent-review-repository";
-import { firstReviewer } from "@/lib/crawl/agent-review";
 import { firstReviewers, hasFirstReviewer } from "@/lib/crawl/first-reviewers";
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, reviewPolicyHash, type ReviewInput } from "@/lib/crawl/agent-review-contract";
 import { secondReviewInputMatches } from "@/lib/crawl/second-review-input";
 import { canonicalReviewModel, sameReviewModel } from "@/lib/crawl/review-model-identity";
 import { mergeWithDefaults } from "@/lib/crawl/settings";
-import { assignmentSource, requireStageAssignments } from "@/lib/llm/stage-assignment-snapshot";
+import { requireReviewTaskRanks } from "@/lib/crawl/review-task-ranks";
+import { secondReviewFallbacks, secondReviewVoters } from "@/lib/crawl/second-review-voters";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import { fullReviewPolicyHash, comparisonReviewPolicyHash, type CapacityManifest, type GenerationRecord } from "./pipeline-capacity";
 
@@ -43,27 +43,26 @@ export async function snapshotPipelineGenerations(candidateIds: number[], expect
   expected?: Pick<CapacityManifest, "models" | "inputPolicyHash" | "comparisonPolicyHash">) {
   if (!candidateIds.length || candidateIds.length > 1000 || new Set(candidateIds).size !== candidateIds.length
     || candidateIds.some(id => !Number.isSafeInteger(id) || id <= 0)) throw new Error("invalid_snapshot_candidates");
-  if (expected) await requireStageAssignments();
+  if (expected) await requireReviewTaskRanks();
   return onPrimary(() => db.transaction(async tx => {
     const [saved] = await tx.select().from(crawlSettings).where(eq(crawlSettings.id, 1));
     const settings = mergeWithDefaults(saved?.values);
     const policyHash = fullReviewPolicyHash(settings);
     if (policyHash !== expectedPolicyHash) throw new Error("snapshot_policy_mismatch");
-    const reviewer = firstReviewer(settings);
-    const reviewers = firstReviewers(settings, reviewer);
+    // 1차·2차 심사자는 「작업 ↔ 모델」 순위(PR C1) — 실행 쪽이 읽는 그대로 견준다(격리 replay 는 설정 행)
+    const reviewers = firstReviewers(settings);
+    const reviewer = reviewers[0] ?? null;
     if (expected) {
-      // The certified manifest declares one AI1 model; it does not authorize an additive pool.
-      if (settings.firstReviewAdditional?.length) throw new Error("unsupported_capacity_first_review_pool");
-      // 배정 표(PR 3b-B)가 고르는 모델은 이 manifest 가 선언한 설정 모델이 아니다 — 인증 경로를 넓히지 않고 거절한다
-      if (assignmentSource("ai1") === "table" || assignmentSource("ai2") === "table") throw new Error("unsupported_capacity_assignment_table");
+      // The certified manifest declares one AI1 model; it does not authorize an additive pool(1차 순위가 둘 이상이면 거절한다).
+      if (reviewers.length > 1) throw new Error("unsupported_capacity_first_review_pool");
       if (expected.inputPolicyHash !== reviewPolicyHash(settings)
         || expected.comparisonPolicyHash !== comparisonReviewPolicyHash(settings)) throw new Error("snapshot_policy_mismatch");
       const identity = (row: { provider: string; model: string }) => ({ provider: row.provider, model: row.model,
         canonicalModel: canonicalReviewModel(row.model) });
       const pool = (rows: { provider: string; model: string }[]) => rows.map(identity)
         .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
-      const models = { first: reviewer ? identity(reviewer) : null, second: pool(settings.secondReview.voters),
-        fallbacks: pool(settings.secondReview.fallbacks ?? []) };
+      const models = { first: reviewer ? identity(reviewer) : null, second: pool(secondReviewVoters(settings)),
+        fallbacks: pool(secondReviewFallbacks(settings)) };
       const declared = { first: identity(expected.models.first), second: pool(expected.models.second),
         fallbacks: pool(expected.models.fallbacks) };
       if (JSON.stringify(models) !== JSON.stringify(declared)) throw new Error("snapshot_model_mismatch");

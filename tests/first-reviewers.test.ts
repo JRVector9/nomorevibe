@@ -1,6 +1,9 @@
-import { DEFAULT_MODEL_DEFINITIONS } from "@/lib/llm/model-registry";
-import { expect, it } from "vitest";
-import { firstReviewers, firstReviewerKey, hasFirstReviewer, selectFirstReviewer, firstReviewDeferralIsLocal, firstReviewPoolPosition, firstReviewCandidates } from "@/lib/crawl/first-reviewers";
+import { DEFAULT_MODEL_CANDIDATES } from "@/lib/llm/model-registry";
+import { afterEach, expect, it } from "vitest";
+import { firstReviewers, firstReviewerKey, hasFirstReviewer, selectFirstReviewer, firstReviewDeferralIsLocal, firstReviewPoolPosition,
+  legacyFirstReviewers } from "@/lib/crawl/first-reviewers";
+import { firstReviewer } from "@/lib/crawl/agent-review";
+import { pinReviewRanks } from "./review-task-ranks-fixture";
 import { crawlSettingsSchema, DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 import { reviewPolicyHash } from "@/lib/crawl/agent-review-contract";
 import { secondReviewPolicyHash } from "@/lib/crawl/second-review-ownership";
@@ -10,16 +13,33 @@ const primary = { provider: "abcllm" as const, model: "primary-review-model" };
 const extra = { provider: "abcllm" as const, model: "extra-review-model" };
 const settings = { ...DEFAULT_CRAWL_SETTINGS, firstReview: primary };
 const expanded = { ...settings, firstReviewAdditional: [extra] };
+afterEach(() => pinReviewRanks(null));
 
 it("adds bounded workers without replacing the primary or changing input/AI2 policy generations", () => {
-  expect(firstReviewers(settings)).toEqual([primary]);
-  expect(firstReviewers(expanded)).toEqual([primary, extra]);
-  expect(firstReviewers({}, primary)).toEqual([primary]);
+  // 옛 설정 꼴의 풀(가져오기·격리 replay 만 읽는다)
+  expect(legacyFirstReviewers(settings)).toEqual([primary]);
+  expect(legacyFirstReviewers(expanded)).toEqual([primary, extra]);
+  expect(legacyFirstReviewers({}, primary)).toEqual([primary]);
   expect(reviewPolicyHash(expanded)).toBe(reviewPolicyHash(settings));
   expect(secondReviewPolicyHash(expanded)).toBe(secondReviewPolicyHash(settings));
+  // 실행 쪽의 1차 자리는 「작업 ↔ 모델」 순위다(PR C1) — 발행분 감사 자리만 아직 옛 설정(firstReview)을 읽는다
+  pinReviewRanks({ first: [primary, extra] });
   expect(resolveModelSlots(expanded, {}).filter(slot => slot.stage === "first").map(slot => slot.model))
     .toEqual([primary.model, extra.model]);
+  expect(resolveModelSlots(expanded, {}).filter(slot => slot.stage === "first").map(slot => slot.source)).toEqual(["ranks", "ranks"]);
   expect(resolveModelSlots(expanded, {}).find(slot => slot.stage === "audit")?.model).toBe(primary.model);
+});
+
+it("the live pool is the rank pool only — stored firstReview·firstReviewAdditional are ignored outside replay (PR C1)", () => {
+  pinReviewRanks({ first: [extra] });
+  expect(firstReviewers(expanded)).toEqual([extra]);
+  expect(firstReviewers()).toEqual([extra]);
+  // 순위가 없으면 빈 풀이다 — 옛 설정·코드 기본값으로 대신 채우지 않는다
+  pinReviewRanks({});
+  expect(firstReviewers(expanded)).toEqual([]);
+  expect(resolveModelSlots(expanded, {}).filter(slot => slot.stage === "first")).toEqual([expect.objectContaining({ model: null, source: "unset" })]);
+  // 옛 설정 값(replay·감사·정책 hash 만 읽는다)은 그대로 돌려준다
+  expect(firstReviewer(expanded)).toEqual(primary);
 });
 
 it("validates at most two extras and rejects aliases of the same underlying model", () => {
@@ -102,12 +122,8 @@ it("moves a retry of a removed or unreadable model to the current pool unless it
   expect(selectFirstReviewer([primary], 2, [{ ...removed, state: "failed" }], [removed])).toBeNull();
 });
 
-it("configures candidate suggestions while preserving the stored pool and all retry assignment rules", () => {
-  const defaults = firstReviewCandidates({});
-  expect(defaults.map(row => row.model)).toEqual(["[supa] Qwen3.8-27B-NVFP4", "[MLX] gpt-oss-120b", "sonnet", "opus", "grok-4.7"]);
-  const env = { MODEL_REGISTRY_CONFIG: JSON.stringify({ version: 1, models: DEFAULT_MODEL_DEFINITIONS,
-    candidates: { "first-review": ["connect:opus"] } }) };
-  expect(firstReviewCandidates(env)).toEqual([{ provider: "claude-cli", model: "opus" }]);
-  expect(firstReviewers(expanded)).toEqual([primary, extra]);
+// PR C1: 등록부의 1차 심사 후보 목록(firstReviewCandidates·DEFAULT_MODEL_CANDIDATES["first-review"])은 없앴다 — 화면의 선택지는 연결이 내놓는 모델이다
+it("has no code-default first-review candidates", () => {
+  expect(DEFAULT_MODEL_CANDIDATES).toEqual({});
   expect(selectFirstReviewer([primary, extra], 1, [extra])).toEqual(primary);
 });

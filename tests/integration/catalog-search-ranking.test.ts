@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, expect, it } from "vitest";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, products, textTranslations } from "@/lib/db/schema";
@@ -6,7 +6,17 @@ import { listProducts } from "@/lib/domain/products/repository";
 import { queryTranslationKey, resolveSearchQuery, warmQueryTranslation } from "@/lib/domain/products/search-translation";
 import { searchQueries } from "@/lib/domain/products/search";
 import { refreshProductSearchDocuments } from "@/lib/jobs/products/search-refresh";
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
+import { pinTextRanks, textContract } from "../text-task-ranks-fixture";
 import { ensureSchema, resetTables } from "./setup";
+
+// 검색어 번역의 「작업 ↔ 모델」 1순위(PR B) — 예전 SEARCH_QUERY_MODEL(등록부 기본값)과 같은 이름이다
+const QUERY_MODEL = "gpt-oss-120b";
+/** 검색어 번역 순위와 그 연결의 엔진 직접 계약 — 용량을 끈(disabled) 시험 DB 에서는 옛 잎으로 부르고, 그 잎은 이제 보내지 않고 no_key 로 끝난다 */
+function queryRank() {
+  pinTextRanks({ "search-query-translate": QUERY_MODEL });
+  setServingContractSnapshotForTest([textContract("search-query-translate", QUERY_MODEL)]);
+}
 
 beforeAll(() => ensureSchema());
 beforeEach(async () => {
@@ -15,6 +25,7 @@ beforeEach(async () => {
   await db.delete(crawlDocuments);
   await db.delete(textTranslations).where(eq(textTranslations.targetLang, "en"));
 });
+afterEach(() => { pinTextRanks(null); setServingContractSnapshotForTest(null); });
 
 async function seed(slug: string, values: Partial<typeof products.$inferInsert> = {}) {
   await db.insert(products).values({
@@ -112,21 +123,32 @@ it("한국어로 친 말이 원문으로 많이 맞아도 번역을 붙인다 �
 });
 
 it("번역이 안 되면 친 그대로 찾는다 — 오류 화면이 되지 않는다", async () => {
-  // 검색어 번역 경로의 직접 연결 계약이 없으면 부르지 못한다(abcLLM 게이트웨이는 2026-10-30 제거). 그래도 검색은 돌아야 한다
   await seed("korean-page", { name: "한글 도구", tagline: "PDF 합치는 도구", description: "PDF 합치는 도구" });
+  const row = async () => (await db.select().from(textTranslations)
+    .where(and(eq(textTranslations.sourceHash, queryTranslationKey("PDF 합치는 도구")), eq(textTranslations.targetLang, "en"))))[0];
 
+  // PR B: 순위가 없거나(no_task_models) 순위의 연결을 가리키는 직접 계약이 없으면(all_ranks_unusable) 부르지 않는다 — 그래도 검색은
+  // 친 그대로 돈다. 부르지 않았으니 실패 기록도 없다(순위를 저장하면 다음 검색이 부른다)
+  pinTextRanks([]);
+  expect(await resolveSearchQuery("PDF 합치는 도구")).toMatchObject({ translated: null });
+  pinTextRanks({ "search-query-translate": QUERY_MODEL }); setServingContractSnapshotForTest([]);
+  const unbound = await resolveSearchQuery("PDF 합치는 도구");
+  expect(unbound.translated).toBe(null);
+  expect(searchQueries(unbound.queries)).toEqual(["PDF 합치는 도구"]);
+  expect(await row()).toBeUndefined();
+
+  // 부를 순위가 있어도 번역이 실패하면(용량을 끈 옛 잎은 abcLLM 게이트웨이 제거(2026-10-30) 뒤 no_key 로 끝난다) 친 그대로 찾는다
+  queryRank();
   const resolved = await resolveSearchQuery("PDF 합치는 도구");
   expect(resolved.translated).toBe(null);
   // 친 그대로 한 줄만 찾는다(번역한 말이 붙지 않는다)
   expect(searchQueries(resolved.queries)).toEqual(["PDF 합치는 도구"]);
   // 실패도 남겨 둔다 — 같은 말로 매번 다시 부르지 않게
-  const [row] = await db.select().from(textTranslations)
-    .where(and(eq(textTranslations.sourceHash, queryTranslationKey("PDF 합치는 도구")), eq(textTranslations.targetLang, "en")));
-  expect(row.status).toBe("failed");
-  expect(row.errorCode).toBe("no_key");
+  expect(await row()).toMatchObject({ status: "failed", errorCode: "no_key", model: QUERY_MODEL });
 });
 
 it("관련도순은 번역을 기다리지 않는다 — 옮겨 둔 것은 쓰고, 없으면 친 그대로 찾고 응답 뒤에 옮겨 둔다", async () => {
+  queryRank();
   const translationRow = (query: string) => db.select().from(textTranslations)
     .where(and(eq(textTranslations.sourceHash, queryTranslationKey(query)), eq(textTranslations.targetLang, "en")));
   await db.insert(textTranslations).values({ sourceHash: queryTranslationKey("PDF 합치는 도구"), targetLang: "en", status: "done", translated: "merge pdf" });

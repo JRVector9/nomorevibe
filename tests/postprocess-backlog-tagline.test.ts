@@ -9,11 +9,11 @@ vi.mock("@/lib/domain/products/korean-taglines", () => ({ homeListSlugs: async (
 vi.mock("@/lib/domain/products/korean-tagline-model-capacity", () => ({ translateKoreanTaglinesWithModelCapacity: m.gpt }));
 vi.mock("@/lib/crawl/korean-translation-qwen", () => ({ translateKoreanTaglinesWithQwen: vi.fn() }));
 vi.mock("@/lib/llm/capacity-repository", () => ({ readModelCapacityCallerControl: m.control }));
-vi.mock("@/lib/crawl/translate", () => ({ KOREAN_TAGLINE_MODEL: "[MLX] gpt-oss-120b" }));
 const { checkKoreanTagline, checkKoreanTaglineOutput, leadClause, KOREAN_TAGLINE_MAX } = await import("@/lib/domain/products/korean-tagline");
 const { writeKoreanTaglines } = await import("@/lib/jobs/products/korean-tagline");
 const { capacityOwnerFromEnv } = await import("@/lib/llm/capacity-busy-targets");
 const { setServingContractSnapshotForTest } = await import("@/lib/llm/serving-contract-store");
+const { pinTextRanks, textContract } = await import("./text-task-ranks-fixture");
 
 const source = { name: "Toolkit", tagline: "Toolkit helps teams organize documents and share notes across projects" };
 const core = "Toolkit으로 팀 문서를 정리하고 프로젝트 사이에 메모를 공유하는 도구";
@@ -124,12 +124,14 @@ describe("writeKoreanTaglines — 정리된 줄을 저장하고 미룸 사유를
     hasBudget: () => true, log: vi.fn(), signal: undefined }) as unknown as JobContext<null> & { log: ReturnType<typeof vi.fn> };
   beforeEach(() => {
     vi.clearAllMocks(); vi.stubEnv("KOREAN_TRANSLATION_QWEN_ENABLED", "false");
-    // GPT opens only on an admin engine row connected directly (transport direct); the abcLLM gateway key was removed (2026-10-30)
-    setServingContractSnapshotForTest([{ routeId: "product-tagline-ko", model: "[MLX] gpt-oss-120b", contract: {}, auth: "none", apiKey: null, transport: "direct" }]);
+    // GPT opens only on an admin engine row connected directly (transport direct); the abcLLM gateway key was removed (2026-10-30).
+    // PR B: 모델은 「작업 ↔ 모델」 순위가 고른다 — 그 순위의 연결을 가리키는 계약이 있어야 연다
+    pinTextRanks({ "product-tagline-ko": "[MLX] gpt-oss-120b" });
+    setServingContractSnapshotForTest([textContract("product-tagline-ko", "[MLX] gpt-oss-120b")]);
     m.control.mockResolvedValue({ mode: "disabled" });
     m.write.mockImplementation(async entries => entries.length);
   });
-  afterEach(() => { vi.unstubAllEnvs(); setServingContractSnapshotForTest(null); });
+  afterEach(() => { vi.unstubAllEnvs(); setServingContractSnapshotForTest(null); pinTextRanks(null); });
 
   it("stores the cleaned line as a success instead of another too_long rejection", async () => {
     m.pending.mockResolvedValueOnce([task(1), task(2)]).mockResolvedValue([]);

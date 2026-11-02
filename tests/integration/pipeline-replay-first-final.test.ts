@@ -237,7 +237,8 @@ it.each(["human", "input"] as const)("excludes an in-flight %s change", async ch
 it("records a model failure without inventing a final decision", async () => {
   const value = await prepare();
   const result = await run(value, async () => ({ result: { ok: false, error: "auth" }, receipt: { inputTokens: 0, outputTokens: 0 } }));
-  expect(result.jobs[0].result.status).toBe("completed");
+  // PR C1: 1차는 늘 순위 고르기다 — 실패한 모델은 이 틱에 쉬고(예전 단일 모드의 「틱 멈춤」은 없다), 남긴 심사가 없는 틱은 model_capacity 미룸이다
+  expect(result.jobs[0].result).toMatchObject({ status: "deferred", reason: "model_capacity" });
   expect((await admin`SELECT state FROM crawl_review_attempts`)[0].state).toBe("failed");
   expect(await finals()).toHaveLength(0);
   expect(await admin`SELECT 1 FROM pipeline_replay.capacity_transitions WHERE kind = 'review_write'`).toHaveLength(1);
@@ -310,7 +311,8 @@ it("rejects a forged approval after the actual settled call failed", async () =>
     await expect(recordAgentReview({ candidate, document, settings, input, receipt, outcome: outcome("approve") }))
       .rejects.toThrow("replay_final_result_mismatch");
   });
-  expect(result.status).toBe("completed");
+  // 실패한 호출만 남긴 틱 — 그 모델이 쉬어 model_capacity 미룸이다(PR C1, 늘 순위 고르기)
+  expect(result).toMatchObject({ status: "deferred", reason: "model_capacity" });
   expect((await admin`SELECT state, signals FROM crawl_candidates`)[0]).toEqual({ state: "approved", signals: null });
   expect((await admin`SELECT state FROM crawl_review_attempts`)[0].state).toBe("running");
   expect(await admin`SELECT 1 FROM jobs WHERE name = 'crawl-publish'`).toHaveLength(0);

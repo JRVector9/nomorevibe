@@ -4,6 +4,7 @@ import { ai1GatewayServingContractSchema, resolveAi1GatewayServingContract } fro
 import { ai2GatewayServingContractSchema, resolveAi2GatewayServingContract } from "@/lib/crawl/second-review-serving-contract";
 import { mergeWithDefaults, settingsUnreadable } from "@/lib/crawl/settings";
 import { firstReviewers } from "@/lib/crawl/first-reviewers";
+import { taskModels } from "@/lib/llm/ai-task-resolver";
 import { QWEN_AUDIT_PROVIDER } from "@/lib/crawl/product-audit-reviewer";
 import { batchPolicyHash, batchPolicySchema } from "@/lib/jobs/batches";
 import { modelCapacityPolicyHash, modelCapacityPolicySchema, type ModelCapacityPolicy } from "@/lib/llm/capacity";
@@ -234,9 +235,9 @@ const MODEL_ROUTES: readonly RouteSpec[] = [
 ];
 
 /**
- * 호출 지점 상수가 이 프로세스 env에서 받는 model 값(각 상수와 같은 `값 || 기본값`). 1차 심사는 관리자 설정만 본다(설정이 없으면 model null).
- * pooled: 관리자 단계 선택이 있는 text route의 실제 호출 이름(선택한 키마다 하나). text 잡은 저장된 선택 안에서 돌므로(lib/jobs/registry.ts
- * MODEL_POOL_JOBS) 그 route는 env 상수 대신 이 이름들로 판정한다.
+ * 호출 지점이 resolver 에 넘기는 model 값. 1차 심사는 관리자 설정만 본다(설정이 없으면 model null). 소개 검수는 이 프로세스 env 의 상수다.
+ * pooled: text 일곱 route 의 「작업 ↔ 모델」 순위마다 장부 이름(순위 차례, PR B — lib/operations/model-env.ts). 잡이 같은 resolver 로 고르므로
+ * 그 route 는 이 이름들로 판정한다. 순위가 없는 route 는 이름이 비어 「모름」이다.
  */
 export type ModelEnv = { translate: string; productTranslate: string; koreanTagline?: string; searchQuery?: string; tagline: string; profile: string; verify: string; introCheck: string;
   pooled?: Partial<Record<TextModelRoute, readonly string[]>> };
@@ -256,13 +257,14 @@ export function usedModelRoutes(snapshot: ControlSnapshot, models: ModelEnv | nu
   // 손상된 행은 기본값으로 돌아온다 — 읽지 못한 것으로 본다
   if (settingsUnreadable(settings)) for (const routeId of ["crawl-agent-review", "second-review", "grok-session-check"]) add(routeId, "unknown", null);
   else {
+    // 1차·2차·Grok 로그인 유지는 「작업 ↔ 모델」 순위(PR C1) — 이 프로세스가 순위를 읽을 때만(앱 DATABASE_URL) 안다. 모르면 「모름」(unknown)으로 막는다
     const first = firstReviewers(settings);
     if (first.length) for (const reviewer of first) add("crawl-agent-review", reviewer.provider, reviewer.model);
     else add("crawl-agent-review", "claude-cli", null);
     const second = [...secondReviewVoters(settings), ...secondReviewFallbacks(settings)];
     for (const voter of second) add("second-review", voter.provider, voter.model);
-    const grok = [...second, ...first].find(voter => voter.provider === "grok-cli");
-    if (grok) add("grok-session-check", "grok-cli", grok.model);
+    for (const rank of taskModels("grok-session-check").filter(row => row.enabled && row.connection.kind === "cli" && row.connection.cliTool === "grok"))
+      add("grok-session-check", "grok-cli", rank.model);
   }
   for (const [routeId, key] of TEXT_ROUTES) {
     const pooled = models?.pooled?.[routeId];

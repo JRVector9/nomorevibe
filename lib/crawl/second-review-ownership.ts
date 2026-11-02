@@ -17,7 +17,7 @@ import type { ReviewInput } from "./agent-review-contract";
 import { firstReviewer } from "./agent-review";
 import { parseItemBinding, type Ai2ItemBinding } from "@/lib/jobs/items/types";
 import { lockSecondReviewDomain, secondReviewGeneration, type SecondReviewDomainContext } from "./second-review-input";
-import { secondReviewFallbacks, secondReviewVoters } from "./second-review-voters";
+import { secondReviewFallbacksFor, secondReviewVoters, withoutTakenModels } from "./second-review-voters";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
 import type { CrawlSettings } from "./settings-schema";
 import { lockModelCapacityCallerControl, lockAi2ItemModelCapacityDispatch, finishAi2ItemModelCapacityDispatch,
@@ -30,7 +30,7 @@ import { resolveAi2GatewayServingContract, ai2ServingContractMatches, ai2Gateway
 import type { PreparedAi2GatewayCall } from "./agent-review-gateway";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { isReviewCliProvider, reviewCliCallRefSchema, reviewCliContractMatches, reviewCliServingContract } from "./review-cli-call";
-import { sameReviewModel, sameUnderlyingModel } from "./review-model-identity";
+import { sameUnderlyingModel } from "./review-model-identity";
 
 export type Ai2ItemLease = ItemLease & { stage: "ai2"; binding: Ai2ItemBinding };
 export type SecondReviewReceipt = Readonly<{
@@ -463,6 +463,7 @@ export function secondReviewPolicyHash(settings: CrawlSettings): string {
   // Extra AI1 workers do not invalidate every existing AI2 receipt. Its source
   // binds the actual first attempt; input validation checks active pool membership.
   return reviewHash({ version: "second-review-policy-v1", inputPolicyHash: reviewPolicyHash(settings),
+    // firstReview·secondReview 는 저장된 옛 설정 값 그대로다(PR C1 부터 실행 쪽은 순위만 읽고 편집 화면은 없다) — 배포만으로 진행 중 2차 receipt 가 깨지지 않게 hash 입력을 바꾸지 않는다
     enabled: settings.enabled, reviewMode: settings.reviewMode, firstReview: firstReviewer(settings),
     secondReview: settings.secondReview, promptVersion: REVIEW_PROMPT_VERSION, rulesVersion: REVIEW_RULES_VERSION });
 }
@@ -505,7 +506,9 @@ export async function fallbackWaitingSecondReview(intent: SecondReviewModelReser
   if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
   if (!(intent instanceof SecondReviewModelReservationRequired)) throw new Error("invalid_second_review_model_intent");
   const expected = snapshotModelIntent(intent.intent), { binding, owner } = expected;
-  if (binding.reviewer.provider !== "local-direct" || binding.fallbackForId !== null || binding.vote !== binding.secondReviewId) return false;
+  // 엔진 직접 표(local-direct, 또는 PR C1 의 순위 저장이 만든 abcllm 형 직접 계약)만 — 줄에 선 장부 행을 물리고 같은 칸의 다음 순위로 넘긴다
+  if (binding.reviewer.provider !== "local-direct" && binding.reviewer.provider !== "abcllm" || binding.fallbackForId !== null
+    || binding.vote !== binding.secondReviewId) return false;
   const identity = modelCapacityRequestIdentitySchema.parse({ owner, class: "second", pool: "reviewer",
     routeId: "second-review", provider: binding.reviewer.provider, model: binding.reviewer.model,
     workKey: `ai2:${binding.candidateId}:${binding.vote}:${itemBindingHash(binding)}` });
@@ -528,11 +531,13 @@ export async function fallbackWaitingSecondReview(intent: SecondReviewModelReser
       const attempted = await tx.select({ model: secondReviews.model }).from(secondReviews).where(and(
         eq(secondReviews.candidateId, row.candidateId), eq(secondReviews.generationKey, row.generationKey)));
       const excluded = [...secondReviewVoters(context.settings).map(voter => voter.model), ...attempted.map(vote => vote.model)];
-      const eligible = secondReviewFallbacks(context.settings).filter(voter => voter.provider === "abcllm"
-        && !excluded.some(model => sameReviewModel(model, voter.model))
-        && capacity.policy?.routes.some(route => route.routeId === "second-review" && route.provider === voter.provider && route.model === voter.model)
-        && (() => { const serving = resolveAi2GatewayServingContract(voter.model, voter.provider);
-          return serving?.provider === voter.provider && ai2ServingContractMatches(serving, voter.model); })());
+      // 같은 투표자 칸의 다음 순위(PR C1 — 칸마다 1·2·3순위, 예전에는 투표자 모두가 나눠 쓰는 abcllm 대체만 받았다). 이 칸에 곧 표를 낼 수 있는 것만:
+      // 정책 route 가 있고 API 는 계약이 그 모델을 가리키며 CLI 는 CLI 계약이 있다. 이미 표를 낸·지금 투표자인 모델은 뺀다(런타임 가드)
+      const eligible = withoutTakenModels(secondReviewFallbacksFor(context.settings, row.model), excluded).filter(voter =>
+        capacity.policy?.routes.some(route => route.routeId === "second-review" && route.provider === voter.provider && route.model === voter.model)
+        && (voter.provider === "claude-cli" || voter.provider === "grok-cli" ? reviewCliServingContract("second-review", voter.provider, voter.model) !== null
+          : (() => { const serving = resolveAi2GatewayServingContract(voter.model, voter.provider);
+            return serving?.provider === voter.provider && ai2ServingContractMatches(serving, voter.model); })()));
       const backup = eligible.find(voter => !sameUnderlyingModel(row.firstModel, voter.model)) ?? eligible[0];
       if (!backup) throw new WaitingFallbackRefused();
       await tx.insert(secondReviews).values({ ...backup, candidateId: row.candidateId, repo: row.repo,

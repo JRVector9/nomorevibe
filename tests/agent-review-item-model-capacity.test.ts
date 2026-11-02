@@ -7,9 +7,12 @@ import { itemBindingHash } from '@/lib/jobs/items/types';
 import type { CrawlCandidate, CrawlDocument, CrawlReviewAttempt } from '@/lib/db/schema';
 import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
 import { modelCapacityDispatchSchema } from '@/lib/llm/capacity';
+import { FirstReviewModelDeferredError, firstReviewerKey, firstReviewers, selectFirstReviewer } from '@/lib/crawl/first-reviewers';
+import { createProviderCircuits } from '@/lib/llm/provider-circuit-breaker';
+import { pinReviewRanks } from './review-task-ranks-fixture';
 const mocks = vi.hoisted(() => ({ pending: vi.fn(), request: vi.fn(), cancel: vi.fn(), unknown: vi.fn(), reconcile: vi.fn(),
   prepare: vi.fn(), native: vi.fn(), atomic: vi.fn(), claim: vi.fn(), load: vi.fn(), preparation: vi.fn(), observe: vi.fn(),
-  renew: vi.fn(), record: vi.fn(), spam: vi.fn() }));
+  renew: vi.fn(), record: vi.fn(), spam: vi.fn(), choose: vi.fn() }));
 vi.mock('@/lib/llm/capacity-repository', () => ({ findOwnPendingModelRequest: mocks.pending, requestAi1ModelSlot: mocks.request,
   cancelReservedModelSlot: mocks.cancel, markModelDispatchIndeterminate: mocks.unknown, reconcileAi1ItemGatewayTerminal: mocks.reconcile,
   reconcileAi1GatewayTerminal: vi.fn() }));
@@ -18,10 +21,10 @@ vi.mock('@/lib/crawl/agent-review-gateway', () => ({ prepareAi1GatewayCall: mock
 vi.mock('@/lib/crawl/agent-review-repository', async load => ({ ...await load<typeof import('@/lib/crawl/agent-review-repository')>(),
   claimConsumerItemAgentReviewWithModelReservation: mocks.atomic, claimConsumerItemAgentReview: mocks.claim,
   loadFirstReviewConsumerContext: mocks.load, observeAgentReviewItemDispatch: mocks.observe,
-  renewAgentReviewItemOwnership: mocks.renew, recordAgentReview: mocks.record, recordConsumerSuspectedSpam: mocks.spam }));
+  renewAgentReviewItemOwnership: mocks.renew, recordAgentReview: mocks.record, recordConsumerSuspectedSpam: mocks.spam,
+  // 소비자 항목은 늘 순위 고르기다(PR C1) — 시도·의도 읽기(DB) 없이 순위 차례로 고른다
+  chooseFirstReviewForCandidate: mocks.choose }));
 vi.mock('@/lib/crawl/agent-review-preparation', () => ({ prepareAgentReview: mocks.preparation }));
-vi.mock('@/lib/crawl/agent-review', async load => ({ ...await load<typeof import('@/lib/crawl/agent-review')>(),
-  firstReviewer: () => ({ provider: 'abcllm', model: 'Exact Model' }) }));
 import { AgentReviewItemModelReservationRequired } from '@/lib/crawl/agent-review-repository';
 import { claimAgentReviewItemModelCapacity, reviewAgentReviewItemModelCapacity, abandonAgentReviewItemModelCapacity } from '@/lib/crawl/agent-review-model-capacity';
 import { executeFirstReviewConsumerItem } from '@/lib/crawl/agent-review-item-lifecycle';
@@ -61,8 +64,12 @@ beforeEach(() => {
   mocks.claim.mockRejectedValue(value.intent); mocks.observe.mockResolvedValue({ kind: 'current' }); mocks.renew.mockResolvedValue(value.receipt.ownership.lease);
   mocks.native.mockResolvedValue({ result: success, terminal }); mocks.reconcile.mockResolvedValue({ kind: 'settled' }); mocks.unknown.mockResolvedValue(true);
   mocks.record.mockResolvedValue({ applied: true, state: 'succeeded' }); mocks.spam.mockResolvedValue({ applied: true, state: 'succeeded' });
+  // 1차 심사자는 「작업 ↔ 모델」 순위뿐이다 — 1순위 abcllm · Exact Model
+  pinReviewRanks({ first: [{ provider: 'abcllm', model: 'Exact Model' }] });
+  mocks.choose.mockImplementation(async ({ candidate }, _executor, blocked) =>
+    selectFirstReviewer(firstReviewers(), candidate.id, [], [], { blocked: blocked ?? new Set() }));
 });
-afterEach(() => vi.useRealTimers());
+afterEach(() => { vi.useRealTimers(); pinReviewRanks(null); });
 it('keeps strict cloned intent input serialization and rejects malformed identity', () => {
   expect(value.intent.intent.context.input).toEqual(value.input);
   expect(JSON.stringify(value.intent.intent.context.input)).toBe(JSON.stringify(value.input));
@@ -219,4 +226,51 @@ it('preserves a returned native failure together with an unexpected renewal erro
     // 2026-10-30: 게이트웨이가 `timeout` 결과를 돌려주면 사유는 client_timeout 이다(중단 신호가 함께 있어도 호출자 기한이 원인이다).
     expect(mocks.unknown).toHaveBeenCalledExactlyOnceWith(value.dispatch, 'client_timeout'); expect(mocks.record).not.toHaveBeenCalled();
   } finally { native.resolve({ result: failure, terminal: null }); await Promise.allSettled([run]); }
+});
+
+// ── PR C1: 소비자 항목은 늘 순위 고르기다(「작업 ↔ 모델」 1차 AI 검수 1·2·3순위) ─────────────────────────────────────────
+it('chooses through the rank chooser with paused and blocked reviewers avoided', async () => {
+  const exact = { provider: 'abcllm' as const, model: 'Exact Model' }, other = { provider: 'abcllm' as const, model: 'Other Model' };
+  pinReviewRanks({ first: [other, exact] });
+  await executeFirstReviewConsumerItem({ candidateId: 3, owner, pausedReviewers: new Set([firstReviewerKey(other)]), blockedReviewers: new Set(['blocked']) });
+  expect(mocks.choose).toHaveBeenCalledExactlyOnceWith(value.context, undefined, new Set([firstReviewerKey(other), 'blocked']));
+  // 1순위가 쉬니 2순위(Exact Model)로 준비·claim 한다
+  expect(mocks.preparation).toHaveBeenCalledExactlyOnceWith(value.context, exact);
+  expect(mocks.record).toHaveBeenCalledOnce();
+});
+it.each([
+  ['no ranks', {}, undefined, 'no_task_models'],
+  ['every rank paused', { first: [{ provider: 'abcllm', model: 'Exact Model' }] }, new Set([firstReviewerKey({ provider: 'abcllm', model: 'Exact Model' })]), 'all_ranks_unusable'],
+] as const)('skips without a claim or default reviewer when the chooser finds none (%s)', async (_name, ranks, paused, reason) => {
+  pinReviewRanks(ranks);
+  expect(await executeFirstReviewConsumerItem({ candidateId: 3, owner, ...(paused ? { pausedReviewers: paused } : {}) })).toEqual({ state: 'skipped', reason });
+  expect(mocks.preparation).not.toHaveBeenCalled(); expect(mocks.claim).not.toHaveBeenCalled(); expect(mocks.request).not.toHaveBeenCalled();
+});
+it('a live intent bound outside the free ranks is protected, not all-unusable', async () => {
+  // 고르기가 null 인데 쓸 수 있는 순위가 남았다 — 살아 있는 의도·호출이 이 후보를 다른 모델에 묶었다
+  mocks.choose.mockResolvedValue(null);
+  expect(await executeFirstReviewConsumerItem({ candidateId: 3, owner })).toEqual({ state: 'skipped', reason: 'model_intent_protected' });
+  expect(mocks.claim).not.toHaveBeenCalled();
+});
+it('always wraps a capacity refusal as a per-model deferral carrying the chosen reviewer', async () => {
+  mocks.prepare.mockReturnValue({ kind: 'unsupported', reason: 'provider_contract_unavailable' });
+  const error = await executeFirstReviewConsumerItem({ candidateId: 3, owner }).catch(error => error);
+  expect(error).toBeInstanceOf(FirstReviewModelDeferredError);
+  expect(error).toMatchObject({ reason: 'provider_contract_unavailable', reviewer: { provider: 'abcllm', model: 'Exact Model' } });
+  expect(mocks.atomic).not.toHaveBeenCalled();
+});
+it('opens the chosen model circuit only on technical failures and then skips that model before any claim', async () => {
+  const keys: string[] = [];
+  const circuits = createProviderCircuits({ mode: 'enabled', failures: 1, openMs: 60_000 }, { log: (event, fields) => keys.push(`${event}:${fields.key}`) });
+  // 판정 실패(invalid_output)는 세지 않는다
+  mocks.native.mockResolvedValueOnce({ result: { ok: false, error: 'invalid_output' }, terminal });
+  await executeFirstReviewConsumerItem({ candidateId: 3, owner, reviewerCircuits: circuits });
+  expect(keys).toEqual([]);
+  // 기술 장애(timeout)는 고른 모델의 회로('ai1:<모델>')를 연다
+  mocks.native.mockResolvedValueOnce({ result: { ok: false, error: 'timeout' }, terminal: null });
+  await executeFirstReviewConsumerItem({ candidateId: 3, owner, reviewerCircuits: circuits });
+  expect(keys).toEqual([`provider_circuit.opened:ai1:${firstReviewerKey({ provider: 'abcllm', model: 'Exact Model' })}`]);
+  mocks.claim.mockClear(); mocks.preparation.mockClear();
+  expect(await executeFirstReviewConsumerItem({ candidateId: 3, owner, reviewerCircuits: circuits })).toEqual({ state: 'skipped', reason: 'provider_circuit_open' });
+  expect(mocks.preparation).not.toHaveBeenCalled(); expect(mocks.claim).not.toHaveBeenCalled();
 });

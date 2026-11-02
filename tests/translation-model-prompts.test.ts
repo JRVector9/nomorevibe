@@ -1,12 +1,14 @@
 import { createHash } from "node:crypto";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { productTaglineKoGatewayWire, productTaglineKoLegacyWire, productTranslationGatewayWire,
-  translateProductFields, translateTaglinesToKorean, websearchQueryGatewayWire } from "@/lib/crawl/translate";
+import { productTaglineKoGatewayWire, productTaglineKoLegacyWire, productTranslationGatewayWire, reasonTranslationGatewayWire,
+  translateProductFields, translateQueryToEnglish, translateTaglinesToKorean, translateToKorean, websearchQueryGatewayWire } from "@/lib/crawl/translate";
 import { koreanTranslationRuntimePrompt } from "@/lib/crawl/korean-translation-prompts";
 import { prepareProductTaglineKoGatewayCall, prepareProductTranslationGatewayCall } from "@/lib/crawl/agent-review-gateway";
 import { checkKoreanTagline, parseKoreanTaglines } from "@/lib/domain/products/korean-tagline";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { checkProductTranslation } from "@/lib/domain/products/translation-policy";
+import { TextTaskRankMissingError } from "@/lib/llm/ai-task-rank-scope";
+import { inTextRank } from "./text-task-ranks-fixture";
 
 vi.mock("@/lib/llm/text-capacity-admission", () => ({ assertTextModelAdmission: vi.fn() }));
 vi.mock("@/lib/llm/product-translation-serving-contract", async original => ({
@@ -134,17 +136,17 @@ it.each([
 it("leaves reason and live search query wires unchanged across GPT-OSS and Qwen", async () => {
   const recordings: Record<string, unknown>[][] = [];
   for (const model of ["[MLX] gpt-oss-120b", "[supa] Qwen3.8-27B-NVFP4"]) {
-    vi.resetModules(); vi.stubEnv("ABCLLM_MODEL", model);
-    const { TRANSLATE_MODEL, SEARCH_QUERY_MODEL, reasonTranslationGatewayWire, websearchQueryGatewayWire: queryWire,
-      translateToKorean, translateQueryToEnglish } = await import("@/lib/crawl/translate");
-    expect([TRANSLATE_MODEL, SEARCH_QUERY_MODEL]).toEqual([model, model]);
+    // 2026-11-02(PR B): 모델은 「작업 ↔ 모델」 순위가 고른다 — ABCLLM_MODEL 은 더 읽지 않는다. 순위 범위 밖의 검색어 번역은 env 로 떨어지지 않고 던진다.
+    vi.stubEnv("ABCLLM_MODEL", model);
+    await expect(translateQueryToEnglish("문서 관리", 1000, vi.fn<typeof fetch>())).rejects.toThrow(TextTaskRankMissingError);
     // The legacy senders no longer send; the native reason and Korean search paths send exactly these builders' bytes.
     const request = vi.fn<typeof fetch>();
     expect(await translateToKorean(["A tool that manages documents"], 1000, request)).toEqual({ ok: false, error: "no_key" });
-    expect(await translateQueryToEnglish("문서 관리", 1000, request)).toEqual({ ok: false, error: "no_key" });
+    expect(await inTextRank("search-query-translate", model, () => translateQueryToEnglish("문서 관리", 1000, request)))
+      .toEqual({ ok: false, error: "no_key" });
     expect(request).not.toHaveBeenCalled();
-    const bodies = [reasonTranslationGatewayWire(["A tool that manages documents"], TRANSLATE_MODEL),
-      queryWire({ sourceLocale: "ko", query: "문서 관리" }, SEARCH_QUERY_MODEL)].map(wire => JSON.parse(wire) as Record<string, unknown>);
+    const bodies = [reasonTranslationGatewayWire(["A tool that manages documents"], model),
+      websearchQueryGatewayWire({ sourceLocale: "ko", query: "문서 관리" }, model)].map(wire => JSON.parse(wire) as Record<string, unknown>);
     expect(bodies.map(body => body.model)).toEqual([model, model]);
     recordings.push(bodies.map(body => ({ ...body, model: "same-model-for-comparison" })));
   }

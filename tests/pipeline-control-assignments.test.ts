@@ -4,8 +4,13 @@ import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 import { setAssignmentTableEnabledForTest } from "@/lib/llm/assignment-flag";
 import { setStageAssignmentsForTest } from "@/lib/llm/stage-assignment-snapshot";
 import type { ModelAssignmentRow } from "@/lib/llm/capacity-helpers";
+import { pinReviewRanks } from "./review-task-ranks-fixture";
+import { cliRankRow, pinTaskRanks } from "./fake-cli-path";
 
-/** PR 3b-B — pipeline-control 스냅숏의 선택 칸 assignments 와, 스위치가 켜졌을 때 route 목록이 배정 표를 따르는가. */
+/**
+ * PR 3b-B — pipeline-control 스냅숏의 선택 칸 assignments. PR C1 부터 1차·2차·Grok 로그인 유지의 route 목록은 「작업 ↔ 모델」 순위만 따른다
+ * (옛 설정·배정 표·스위치와 무관하다).
+ */
 function snapshot(overrides: Partial<ControlSnapshot> = {}): ControlSnapshot {
   const stage = (name: "ai1" | "ai2") => ({ stage: name, mode: "legacy" as const, drainingFrom: null, epoch: 1, contract: 1,
     live: 0, unsettled: 0, legacyJobLive: false, consumers: 1 });
@@ -19,7 +24,7 @@ function snapshot(overrides: Partial<ControlSnapshot> = {}): ControlSnapshot {
 const row = (value: Partial<ModelAssignmentRow> & Pick<ModelAssignmentRow, "assignmentId" | "stage" | "model" | "provider">): ModelAssignmentRow => ({
   deviceId: "dev-a", registryKey: "supa:review", transport: "gateway", rank: 1, role: "primary", vote: false, mode: "live", routeId: "route", maxSlots: 1,
   evidenceKey: "e".repeat(64), version: 1, note: null, updatedBy: "fixture", createdAt: "2026-10-31T00:00:00.000Z", updatedAt: "2026-10-31T00:00:00.000Z", ...value });
-afterEach(() => { setAssignmentTableEnabledForTest(null); setStageAssignmentsForTest(null); });
+afterEach(() => { setAssignmentTableEnabledForTest(null); setStageAssignmentsForTest(null); pinReviewRanks(null); pinTaskRanks(null); });
 
 it("keeps old snapshots valid and accepts the optional assignments field (strict inside)", () => {
   expect(controlSnapshotSchema.parse(snapshot())).not.toHaveProperty("assignments");
@@ -42,16 +47,29 @@ it("keeps old snapshots valid and accepts the optional assignments field (strict
   expect(controlSnapshotSchema.safeParse(snapshot({ assignments: { ...assignments, flagSource: "file" } as never })).success).toBe(false);
 });
 
-it("lists the table's first reviewers and AI2 voters/fallbacks as used routes when the flag is on", () => {
+it("lists the task ranks' first reviewers, AI2 voters/fallbacks and the Grok session model as used routes — never the legacy settings or the table", () => {
   const reviewSettings = { ...DEFAULT_CRAWL_SETTINGS, firstReview: { provider: "abcllm", model: "legacy-first" }, firstReviewAdditional: [],
-    secondReview: { ...DEFAULT_CRAWL_SETTINGS.secondReview, voters: [{ provider: "claude-cli", model: "opus" }] } };
+    secondReview: { ...DEFAULT_CRAWL_SETTINGS.secondReview, voters: [{ provider: "grok-cli", model: "legacy-grok" }] } };
   setStageAssignmentsForTest([row({ assignmentId: "ai1:01", stage: "ai1", model: "[supa] Qwen", provider: "abcllm" }),
-    row({ assignmentId: "ai2:01", stage: "ai2", model: "deep-1", provider: "local-direct", vote: true }),
-    row({ assignmentId: "ai2:02", stage: "ai2", model: "[MLX] gpt", provider: "abcllm", rank: 2 })]);
-  const routes = (routeId: string) => usedModelRoutes(snapshot({ reviewSettings }), null).filter(use => use.routeId === routeId).map(use => use.model);
-  expect(routes("crawl-agent-review")).toEqual(["legacy-first"]);
-  expect(routes("second-review")).toEqual(["opus"]);
+    row({ assignmentId: "ai2:01", stage: "ai2", model: "deep-1", provider: "local-direct", vote: true })]);
+  pinReviewRanks({ first: [{ provider: "abcllm", model: "rank-first" }, { provider: "claude-cli", model: "sonnet" }],
+    second: [[{ provider: "local-direct", model: "deep-1" }, { provider: "abcllm", model: "[MLX] gpt" }], [{ provider: "claude-cli", model: "opus" }]] });
+  pinTaskRanks([cliRankRow("grok-session-check", "grok-4.7")]);
+  const routes = (routeId: string) => usedModelRoutes(snapshot({ reviewSettings }), null).filter(use => use.routeId === routeId)
+    .map(use => `${use.provider}/${use.model}`);
+  const expected = () => {
+    expect(routes("crawl-agent-review")).toEqual(["abcllm/rank-first", "claude-cli/sonnet"]);
+    // 투표자(칸마다 지금 표를 내는 순위) 다음에 대체(그 밖의 순위)
+    expect(routes("second-review")).toEqual(["local-direct/deep-1", "claude-cli/opus", "abcllm/[MLX] gpt"]);
+    // Grok 로그인 유지는 그 작업의 순위 — 옛 2차 투표자(legacy-grok)에서 찾지 않는다
+    expect(routes("grok-session-check")).toEqual(["grok-cli/grok-4.7"]);
+  };
+  expected();
   setAssignmentTableEnabledForTest(true);
-  expect(routes("crawl-agent-review")).toEqual(["[supa] Qwen"]);
-  expect(routes("second-review")).toEqual(["deep-1", "[MLX] gpt"]);
+  expected();
+  // 순위가 없으면 1차는 claude-cli 의 모델 미상(null)이고 2차·Grok 로그인 유지는 쓰지 않는다
+  pinReviewRanks({ first: [], second: [] }); pinTaskRanks([]);
+  expect(routes("crawl-agent-review")).toEqual(["claude-cli/null"]);
+  expect(routes("second-review")).toEqual([]);
+  expect(routes("grok-session-check")).toEqual([]);
 });

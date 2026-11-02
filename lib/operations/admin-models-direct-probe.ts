@@ -57,7 +57,8 @@ export function directProbeTargets(cards: readonly CardLike[], rows: readonly St
     const open = mine.find(entry => entry.access.block === null && entry.endpoint);
     if (open) {
       targets.set(key, { key, identity: { routeId: open.row.routeId, ...identity }, endpoint: open.endpoint, bearer: open.access.bearer ?? null, blocked: null,
-        names: [...new Set([open.row.model, field(open.row.contract, "model")].filter((name): name is string => !!name))] });
+        // 연결로 가른 장부 이름의 계약(PR B)은 엔진 목록에 engineModel 로 나온다
+        names: [...new Set([open.row.model, field(open.row.contract, "model"), field(open.row.contract, "engineModel")].filter((name): name is string => !!name))] });
       continue;
     }
     const block = mine.find(entry => entry.access.block !== null)?.access.block;

@@ -7,6 +7,7 @@ import * as itemLifecycle from '@/lib/crawl/second-review-item-lifecycle';
 import { runSecondReviewConsumer } from '@/lib/crawl/consumers/second';
 import { parsePipelineConsumerArgs, runPipelineConsumer } from '@/scripts/pipeline-consumer';
 import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
+import { pinReviewRanks } from './review-task-ranks-fixture';
 
 const mocks = vi.hoisted(() => ({
   pages: [] as { id: number; fallback: boolean; provider?: string; model?: string }[][], where: vi.fn(), limit: vi.fn(), select: vi.fn(),
@@ -37,6 +38,8 @@ function gate<T>() {
   return { promise, resolve, reject };
 }
 beforeEach(() => {
+  // PR C1: 2차 소비자는 「작업 ↔ 모델」 투표자 순위가 없으면 쉰다(no_task_models) — 이 시험들은 순위가 있는 소비자를 본다
+  pinReviewRanks({ second: [[{ provider: 'local-direct', model: 'qwen3.8-flash-next' }]] });
   vi.resetAllMocks(); mocks.pages = []; mocks.reservedPages = []; mocks.waitingPages = [];
   mocks.limit.mockImplementation(async () => mocks.pages.shift() ?? []);
   mocks.reservedLimit.mockImplementation(async () => { const hint = mocks.reservedPages.shift(); return hint ? [hint] : []; });
@@ -57,7 +60,7 @@ beforeEach(() => {
   mocks.dispatch.mockResolvedValue(success);
   mocks.runtime.mockImplementation(async (_role, load) => load(new AbortController().signal, mocks.report));
 });
-afterEach(() => { vi.useRealTimers(); });
+afterEach(() => { vi.useRealTimers(); pinReviewRanks(null); });
 
 it('parses only the fixed AI2 command and rejects duplicate or arbitrary flags', () => {
   expect(parsePipelineConsumerArgs(['--stage=ai2', '--once'])).toEqual({ stage: 'ai2', once: true });

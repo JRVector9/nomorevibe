@@ -221,13 +221,12 @@ describe("server action → saveModelAssignment(PR 3b-A) — 한 TX", () => {
 });
 
 describe("현재 설정 → 배정 표 가져오기", () => {
-  it("3b-B 실제 계획(기본 설정 — 1차 없음, 2차 opus 는 정책 경로·장비 없음): 빈 계획 + 경고, 적용은 아무것도 쓰지 않는다; hash 가 다르면 거절, 확인 글자가 없으면 거절", async () => {
+  // PR C1: 2차 기본 투표자(등록부 ai2-cli opus)는 없앴다 — 기본 설정의 secondReview.voters 는 비어 있어 2차 경고도 없다
+  it("3b-B 실제 계획(기본 설정 — 1차 없음, 2차 투표자 없음): 빈 계획 + 1차 경고, 적용은 아무것도 쓰지 않는다; hash 가 다르면 거절, 확인 글자가 없으면 거절", async () => {
     const { applyAssignmentImportAction } = await actions();
     const preview = await previewAdminAssignmentImport();
     expect(preview).toMatchObject({ rows: [], error: null, warnings: [
-      "firstReview: 1차 모델이 설정에 없어 1차는 옮기지 않습니다 — 관리자 설정에서 1차 심사자를 고른 뒤 다시 가져온다(환경변수 대체는 2026-10-31 제거)",
-      "secondReview.voters[0]: 정책에 이 경로가 없어 꺼짐으로 옮깁니다(저장하면 계약을 확인하고 경로를 덧붙입니다) — second-review / claude-cli / opus",
-      "secondReview.voters[0]: 장비 행이 없거나 꺼져 있어 옮기지 않습니다(장비 한도에서 먼저 저장) — connect"] });
+      "firstReview: 1차 모델이 설정에 없어 1차는 옮기지 않습니다 — 관리자 설정에서 1차 심사자를 고른 뒤 다시 가져온다(환경변수 대체는 2026-10-31 제거)"] });
     const state = await snapshot();
     expect(await applyAssignmentImportAction(null, form({ planHash: preview.hash!, confirm: "배정" })))
       .toEqual({ ok: true, rows: [], message: `가져올 행이 없습니다. 경고: ${preview.warnings.join(" · ")}` });

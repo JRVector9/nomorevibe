@@ -7,6 +7,7 @@ import { parsePipelineFirstConsumerArgs, runPipelineFirstConsumer } from '@/scri
 import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
 import { DEFAULT_CRAWL_SETTINGS } from '@/lib/crawl/settings-schema';
 import { consumerHealthPath, supervisorCommand, supervisorHealthPath } from '@/scripts/worker-supervisor';
+import { pinReviewRanks } from './review-task-ranks-fixture';
 
 const mocks = vi.hoisted(() => ({ choose: vi.fn(), load: vi.fn(), prepare: vi.fn(), claim: vi.fn(), observe: vi.fn(), renew: vi.fn(),
   record: vi.fn(), spam: vi.fn(), select: vi.fn(), where: vi.fn(), pages: [] as unknown[][], limit: vi.fn(),
@@ -20,8 +21,10 @@ vi.mock('@/lib/crawl/agent-review-repository', () => ({ chooseFirstReviewForCand
   recordConsumerSuspectedSpam: mocks.spam, reviewCandidatePredicate: mocks.predicate }));
 vi.mock('@/lib/crawl/agent-review-preparation', () => ({ prepareAgentReview: mocks.prepare }));
 vi.mock('@/lib/crawl/agent-review', () => ({ firstReviewer: () => ({ provider: 'abcllm', model: 'same-model' }) }));
-// 배정 표 스냅숏(3b-E): 소비자 쪽마다 토글·행을 새로 받는 길목만 가짜다(고르기는 위 chooseFirstReviewForCandidate 가짜가 받는다)
-vi.mock('@/lib/llm/stage-assignment-snapshot', () => ({ ensureStageAssignments: mocks.ensureAssignments, noteAssignmentOnce: vi.fn(), stageAssignmentRows: () => null }));
+// 「작업 ↔ 모델」 순위 스냅숏(PR C1, 예전 3b-E 배정 표): 소비자 쪽마다 순위를 새로 받는 길목만 가짜다(고르기는 위 chooseFirstReviewForCandidate 가짜가 받는다).
+// 순위 자체는 pinReviewRanks 로 고정한다 — 순위가 없으면 소비자가 no_task_models 로 쉰다(그 경우는 아래 시험이 본다).
+vi.mock('@/lib/crawl/review-task-ranks', async (importOriginal) => ({ ...await importOriginal<typeof import('@/lib/crawl/review-task-ranks')>(),
+  ensureReviewTaskRanks: mocks.ensureAssignments }));
 vi.mock('@/scripts/worker', () => ({ withRuntimeProcess: mocks.runtime, interruptibleSleep: mocks.sleep }));
 vi.mock('@/lib/operations/observations', () => ({ observeService: vi.fn() }));
 const owner = () => ({ instanceId: 'ai1-consumer-unit', bootId: 'f70bfcce-92d0-4ed8-a5db-bfd092d17950' });
@@ -33,6 +36,9 @@ function gate<T>() { let resolve!: (value: T) => void, reject!: (error: unknown)
   const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; }); return { promise, resolve, reject }; }
 beforeEach(() => {
   vi.resetAllMocks(); mocks.pages = [];
+  pinReviewRanks({ first: [{ provider: 'abcllm', model: 'same-model' }] });
+  // PR C1: 소비자는 늘 순위 고르기다(단일 모델 길이 없어졌다) — 기본 고르기는 1순위 same-model
+  mocks.choose.mockResolvedValue({ provider: 'abcllm', model: 'same-model' });
   mocks.load.mockResolvedValue({ kind: 'current', context });
   mocks.prepare.mockResolvedValue({ provider: 'rules', model: 'rules-version', outcome, spam: false, ruleRejection: { reason: 'not_a_product' } });
   mocks.claim.mockResolvedValue({ kind: 'claimed', receipt, attempt: { id: 3, outcome: null } });
@@ -45,7 +51,7 @@ beforeEach(() => {
     return { orderBy: () => ({ limit: mocks.limit }) }; } }) }));
   mocks.runtime.mockImplementation(async (_role, run) => run(new AbortController().signal, mocks.report));
 });
-afterEach(() => vi.useRealTimers());
+afterEach(() => { vi.useRealTimers(); pinReviewRanks(null); });
 it('has a separate fixed AI1 parser and default opt-out before runtime/database work', async () => {
   expect(parsePipelineFirstConsumerArgs(['--once'])).toEqual({ once: true });
   for (const args of [['--stage=ai1'], ['--stage=ai2'], ['--once', '--once'], ['--script=x']]) expect(() => parsePipelineFirstConsumerArgs(args)).toThrow();
@@ -76,29 +82,34 @@ it('stopClaims ends the AI1 loop after the current item without a backoff', asyn
   expect(mocks.load.mock.calls.map(call => call[0])).toEqual([4]); expect(mocks.sleep).not.toHaveBeenCalled(); expect(cancel.signal.aborted).toBe(false);
 });
 
-it('an additive item pool isolates local capacity waits and provider circuits by selected model', async () => {
+it('an item pool isolates local capacity waits by selected model and moves the same candidate to the next rank (PR C1)', async () => {
   const primary = { provider: 'abcllm' as const, model: 'primary-model' };
   const extra = { provider: 'abcllm' as const, model: 'extra-model' };
   const settings = { ...DEFAULT_CRAWL_SETTINGS, enabled: true, reviewMode: 'enforce' as const,
     firstReview: primary, firstReviewAdditional: [extra] };
   mocks.settings.mockResolvedValue(settings);
+  pinReviewRanks({ first: [primary, extra] });
   mocks.pages = [[hint(4), hint(5), hint(6)]];
   mocks.load.mockImplementation(async id => ({ kind: 'current', context: { ...context, candidate: { id }, settings } }));
-  mocks.choose.mockImplementation(async ({ candidate }) => candidate.id === 5 ? extra : primary);
+  // 고르기는 쉬는 모델(avoid)을 비켜 다음 순위를 준다 — 실제 chooseFirstReviewForCandidate 와 같은 뜻
+  const keyOf = (value: { provider: string; model: string }) => JSON.stringify([value.provider, value.model]);
+  mocks.choose.mockImplementation(async ({ candidate }, _ownership, avoid: Set<string>) =>
+    candidate.id === 5 || avoid.has(keyOf(primary)) ? extra : primary);
   mocks.prepare.mockImplementation(async (_context, reviewer) => ({ ...reviewer, spam: false }));
-  mocks.claim.mockImplementation(async ({ candidate }) => {
-    if (candidate.id === 4) throw new ModelCapacityDeferredError('capacity');
+  mocks.claim.mockImplementation(async ({ candidate, model }) => {
+    if (candidate.id === 4 && model === primary.model) throw new ModelCapacityDeferredError('capacity');
     return { kind: 'reused', receipt, attempt: { id: 3, outcome } };
   });
   const circuit = { admitted: true as const, record: vi.fn(), done: vi.fn() };
   const circuits = { admit: vi.fn((key: string) => { void key; return circuit; }) };
+  // 4: 1순위 primary 가 capacity 로 미뤄져 primary 만 이 패스 동안 쉬고, 같은 후보 4 를 2순위 extra 로 다시 고른다(claim 이 reused). 6 도 extra.
   expect(await runFirstReviewConsumer({ owner: owner(), once: true, circuits }))
-    .toEqual({ attempted: 3, recorded: 1, skipped: 1, deferred: 1 });
-  expect(mocks.claim.mock.calls.map(call => call[0].candidate.id)).toEqual([4, 5]);
-  expect(circuits.admit.mock.calls.map(call => call[0])).toEqual([
-    'ai1:' + JSON.stringify([primary.provider, primary.model]), 'ai1:' + JSON.stringify([extra.provider, extra.model]),
-  ]);
-  expect(circuit.done).toHaveBeenCalledTimes(2);
+    .toEqual({ attempted: 3, recorded: 3, skipped: 0, deferred: 1 });
+  expect(mocks.claim.mock.calls.map(call => [call[0].candidate.id, call[0].model])).toEqual([[4, primary.model], [4, extra.model], [5, extra.model], [6, extra.model]]);
+  // 회로는 고른 모델마다 따로다(primary 한 번, extra 세 번 — 후보 4 의 2순위·5·6)
+  const ai1 = (value: { provider: string; model: string }) => 'ai1:' + JSON.stringify([value.provider, value.model]);
+  expect(circuits.admit.mock.calls.map(call => call[0])).toEqual([ai1(primary), ai1(extra), ai1(extra), ai1(extra)]);
+  expect(circuit.done).toHaveBeenCalledTimes(4);
 });
 // 2026-10-30 결정: 한 후보의 fence 거절(work_busy)은 그 후보만 건너뛴다 — 같은 모델의 다음 후보도 claim 한다(모델 pause 없음).
 it('a per-candidate fence refusal skips only that candidate and keeps its model admitting (D1)', async () => {
@@ -181,7 +192,9 @@ it('unprepared source and explicit settings stops never claim', async () => {
 it('propagates fresh model typed refusal and genuine claim errors without a writer', async () => {
   const deferred = new ModelCapacityDeferredError('disabled'), original = new Error('actual SQL error');
   mocks.claim.mockRejectedValueOnce(deferred).mockRejectedValueOnce(original);
-  await expect(executeFirstReviewConsumerItem({ candidateId: 4, owner: owner() })).rejects.toBe(deferred);
+  // PR C1: 늘 순위 고르기라 모델 미룸은 고른 심사자를 실은 FirstReviewModelDeferredError 로 올라간다(소비자가 그 모델만 쉬게 하거나 쪽을 접는다)
+  await expect(executeFirstReviewConsumerItem({ candidateId: 4, owner: owner() })).rejects.toMatchObject({
+    reason: 'disabled', reviewer: { provider: 'abcllm', model: 'same-model' } });
   await expect(executeFirstReviewConsumerItem({ candidateId: 4, owner: owner() })).rejects.toBe(original);
   expect(mocks.record).not.toHaveBeenCalled();
 });
@@ -207,7 +220,7 @@ it('renewal error survives drain with writer zero', async () => {
   await vi.advanceTimersByTimeAsync(15_000); observed.resolve({ kind: 'current' });
   await expect(running).rejects.toBe(original); expect(mocks.record).not.toHaveBeenCalled();
 });
-// PR 3b-E: 소비자는 틱이 없어 쪽마다 토글(runtime_settings)·배정 표 스냅숏을 새로 받는다 — 관리자가 켜면 재시작 없이 다음 쪽부터 표를 본다
+// 소비자는 틱이 없어 쪽마다 「작업 ↔ 모델」 순위 스냅숏을 새로 받는다(PR C1, 예전 3b-E 배정 표) — 관리자가 저장하면 재시작 없이 다음 쪽부터 쓴다
 it('refreshes the assignment toggle and table snapshot before every page, and a global assignments_unavailable deferral folds the page', async () => {
   mocks.pages = [Array.from({ length: 24 }, (_, n) => hint(n + 1)), [hint(30)]];
   mocks.claim.mockResolvedValue({ kind: 'skipped', reason: 'running' });
@@ -259,4 +272,10 @@ it('routes fixed AI1 supervisor and health independently of legacy and AI2 files
   expect(supervisorHealthPath({ consumer: 'ai1' }, env)).toBe('/tmp/nomorevibe-ai1-consumer-health.json');
   for (const path of ['/tmp/nomorevibe-worker-health.json', '/tmp/./nomorevibe-ai2-consumer-health.json'])
     expect(() => supervisorHealthPath({ consumer: 'ai1', healthPath: path }, env)).toThrow();
+});
+
+it('ranks absent: the consumer rests with no_task_models instead of a code default, and never claims', async () => {
+  pinReviewRanks({ first: [] }); mocks.pages = [[hint(4)]];
+  expect(await runFirstReviewConsumer({ owner: owner(), once: true })).toEqual({ attempted: 0, recorded: 0, skipped: 0, deferred: 1 });
+  expect(mocks.claim).not.toHaveBeenCalled(); expect(mocks.choose).not.toHaveBeenCalled();
 });

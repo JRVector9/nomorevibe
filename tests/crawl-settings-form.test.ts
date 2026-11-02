@@ -74,26 +74,32 @@ describe("검색 신호 편집", () => {
     expect(saveSettings.mock.calls[0][0].discover).not.toHaveProperty("maxReviewBacklog");
   });
 
-  it("추가 1차 모델을 표시하고 명시적으로 비우되 옛 폼은 해당 설정을 건드리지 않는다", async () => {
+  // PR C1: 1차·2차 모델은 「작업 ↔ 모델」 순위뿐이다 — 이 폼은 그 칸을 그리지 않고, 옛 폼이 보내도 저장에 싣지 않는다(키가 없어 저장된 옛 값이 남는다)
+  it("추가 1차 모델 칸을 그리지 않고, 옛 폼이 보내도(비운 것 포함) 그 설정을 건드리지 않는다", async () => {
     const html = render({ ...twoSignals, firstReview: { provider: "abcllm", model: "[MLX] gpt-oss-120b" },
       firstReviewAdditional: [{ provider: "abcllm", model: "[supa] Qwen3.8-27B-NVFP4" }] });
-    expect(html).toContain('name="firstAdditionalModel0"');
-    expect(html).toContain('value="[supa] Qwen3.8-27B-NVFP4"');
+    expect(html).not.toContain('name="firstAdditionalModel0"');
+    expect(html).not.toContain('name="firstAdditionalPresent"');
+    expect(html).not.toContain('value="[supa] Qwen3.8-27B-NVFP4"');
+    expect(html).toContain('data-task-ranks-pointer="true"');
     await saveCrawlSettings(null, submitted({ firstAdditionalPresent: "1", firstAdditionalProvider0: "abcllm", firstAdditionalModel0: "[supa] Qwen3.8-27B-NVFP4" }));
-    expect(saveSettings.mock.calls[0][0].firstReviewAdditional).toEqual([{ provider: "abcllm", model: "[supa] Qwen3.8-27B-NVFP4" }]);
+    expect(saveSettings.mock.calls[0][0]).not.toHaveProperty("firstReviewAdditional");
     saveSettings.mockClear();
     await saveCrawlSettings(null, submitted({ firstAdditionalPresent: "1" }));
-    expect(saveSettings.mock.calls[0][0].firstReviewAdditional).toEqual([]);
-    saveSettings.mockClear();
-    await saveCrawlSettings(null, submitted());
     expect(saveSettings.mock.calls[0][0]).not.toHaveProperty("firstReviewAdditional");
   });
-  it("직접 AI2 모델을 선택된 제공자로 표시하고 저장할 때 보존한다", async () => {
+  it("2차 투표 모델 칸을 그리지 않고, 옛 폼이 투표자를 보내도 저장하지 않는다 — 나머지 2차 값은 그대로 보낸다", async () => {
     const html = render({ ...twoSignals, secondReview: { ...twoSignals.secondReview,
       voters: [{ provider: "local-direct", model: "qwen3.8-flash-next" }] } });
-    expect(html).toContain('<option value="local-direct" selected="">모델 서버 직접 연결</option>');
-    await saveCrawlSettings(null, submitted({ voterProvider0: "local-direct", voterModel0: "qwen3.8-flash-next" }));
-    expect(saveSettings.mock.calls[0][0].secondReview.voters).toEqual([{ provider: "local-direct", model: "qwen3.8-flash-next" }]);
+    expect(html).not.toContain('name="voterModel0"');
+    expect(html).not.toContain('name="voterProvider0"');
+    expect(html).not.toContain('<option value="local-direct" selected="">모델 서버 직접 연결</option>');
+    expect(html.slice(html.indexOf('id="second"'))).toContain('data-task-ranks-pointer="true"');
+    await saveCrawlSettings(null, submitted({ voterProvider0: "local-direct", voterModel0: "qwen3.8-flash-next", secondReviewEnabled: "on" }));
+    const second = saveSettings.mock.calls[0][0].secondReview;
+    expect(second).not.toHaveProperty("voters");
+    expect(second).not.toHaveProperty("fallbacks");
+    expect(second.enabled).toBe(true);
   });
   it("관리자가 500스타 이상 자동 승인 기준을 조정하고 기존 상한은 표시하지 않는다", async () => {
     const html = render(twoSignals);
@@ -195,21 +201,21 @@ describe("검색 신호 편집", () => {
   });
 });
 
-it('세운 대체 모델만 칸으로 그리고, 없으면 더하기 버튼을 둔다 · 입력 순서대로 저장한다', async () => {
+// PR C1: 2차 대체 모델도 「작업 ↔ 모델」 투표자 칸의 2·3순위다 — 칸·더하기 버튼이 없고, 옛 폼이 보내도 저장하지 않는다
+it('2차 대체 모델 칸·더하기 버튼을 그리지 않고, 옛 폼이 대체 모델을 보내도 저장하지 않는다', async () => {
   const withFallback: CrawlSettings = { ...twoSignals, secondReview: { ...twoSignals.secondReview, fallbacks: [{ provider: 'abcllm', model: 'qwen3-coder:30b' }] } };
-  expect(render(withFallback)).toContain('name="fallbackModel0"');
-  expect(render(withFallback)).not.toContain('name="fallbackModel1"');
-  expect(render({ ...twoSignals, secondReview: { ...twoSignals.secondReview, fallbacks: [] } })).toContain('+ 대체 모델 더하기');
+  expect(render(withFallback)).not.toContain('name="fallbackModel0"');
+  expect(render(withFallback)).not.toContain('qwen3-coder:30b');
+  expect(render({ ...twoSignals, secondReview: { ...twoSignals.secondReview, fallbacks: [] } })).not.toContain('+ 대체 모델 더하기');
   const form = submitted({ fallbackProvider0: 'claude-cli', fallbackModel0: 'opus', fallbackProvider1: 'abcllm', fallbackModel1: 'qwen3-coder:30b' });
   await saveCrawlSettings(null, form);
-  expect(saveSettings.mock.calls.at(-1)?.[0].secondReview.fallbacks).toEqual([
-    { provider: 'claude-cli', model: 'opus' },{ provider: 'abcllm', model: 'qwen3-coder:30b' },
-  ]);
+  expect(saveSettings.mock.calls.at(-1)?.[0].secondReview).not.toHaveProperty('fallbacks');
 });
 
 /**
  * 1차 심사자·동시 실행 수는 데이터로 뺐는데 한동안 화면에 없어 스크립트로만 바꿀 수 있었다.
  * 배포 없이 조정하려고 뺀 값이라 화면이 그것을 그리고, 저장이 그것을 되돌려 보내야 한다.
+ * PR C1 부터 1차 심사자는 「작업 ↔ 모델」 순위뿐이다 — 이 폼은 동시 실행 수만 그리고 보내며, 1차 심사자는 안내만 둔다.
  */
 describe("1차 심사 설정", () => {
   const withReviewer: CrawlSettings = {
@@ -218,28 +224,29 @@ describe("1차 심사 설정", () => {
     reviewConcurrency: 4,
   };
 
-  it("지금 값을 그대로 그린다 — 손대지 않고 저장해도 바뀌면 안 된다", () => {
+  it("동시 실행 수는 지금 값을 그대로 그리고, 1차 모델 칸 대신 「작업 ↔ 모델」 안내를 둔다", () => {
     const html = render(withReviewer);
-    expect(html).toContain('name="firstReviewModel"');
-    expect(html).toContain('value="[MLX] gpt-oss-120b"');
+    expect(html).not.toContain('name="firstReviewModel"');
+    expect(html).not.toContain('name="firstReviewProvider"');
+    expect(html).not.toContain('value="[MLX] gpt-oss-120b"');
+    expect(html.slice(html.indexOf('id="first"'), html.indexOf('id="second"'))).toContain('data-task-ranks-pointer="true"');
     expect(html).toMatch(/name="reviewConcurrency"[^>]*value="4"/);
   });
 
-  it("저장하면 두 값을 보낸다", async () => {
+  it("저장하면 동시 실행 수만 보낸다 — 옛 폼이 1차 모델을 보내도 싣지 않는다", async () => {
     await saveCrawlSettings(null, submitted({
       firstReviewProvider: "abcllm", firstReviewModel: "[MLX] gpt-oss-120b", reviewConcurrency: "4",
     }));
     const patch = saveSettings.mock.calls[0][0];
-    expect(patch.firstReview).toEqual({ provider: "abcllm", model: "[MLX] gpt-oss-120b" });
+    expect(patch).not.toHaveProperty("firstReview");
     expect(patch.reviewConcurrency).toBe(4);
   });
 
-  it("모델 칸을 비우면 설정을 지운다 — 키를 빼면 기존 값에 덮여 되돌릴 길이 없다", async () => {
+  it("모델 칸을 비워 보내도 1차 심사자를 지우지 않는다 — 키가 없어 저장된 옛 값(가져오기 출처)이 남는다", async () => {
     await saveCrawlSettings(null, submitted({ firstReviewProvider: "abcllm", firstReviewModel: "  ", reviewConcurrency: "2" }));
     const patch = saveSettings.mock.calls[0][0];
-    // 키가 있고 값이 undefined 여야 {...지금, ...바꾼 것} 에서 지금 값을 덮는다
-    expect("firstReview" in patch).toBe(true);
-    expect(patch.firstReview).toBeUndefined();
+    expect("firstReview" in patch).toBe(false);
+    expect(patch.reviewConcurrency).toBe(2);
   });
 });
 

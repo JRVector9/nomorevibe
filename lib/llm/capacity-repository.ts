@@ -2665,7 +2665,8 @@ export async function withdrawUndispatchedAi2ItemForFallback(tx: ProductTransact
   const reason = ["capacity_wait_timeout", "primary_preflight_failed"].includes(value.reason) ? value.reason : fail("invalid_ai2_fallback_reason");
   const identity = modelCapacityRequestIdentitySchema.parse(value.identity), target = fixedAi2Target(value.target);
   const logical = fixedAi2Identity(identity, target);
-  if (identity.provider !== "local-direct") return null;
+  // 엔진 직접 표만(local-direct, 또는 「작업 ↔ 모델」 순위 저장이 만든 abcllm 형 직접 계약 — PR C1). CLI 표는 물리지 않는다
+  if (identity.provider !== "local-direct" && identity.provider !== "abcllm") return null;
   const state = await control(tx), snapshot = callerControlSnapshot(state);
   const [row] = await tx.select().from(modelCapacityRequests)
     .where(eq(modelCapacityRequests.requestId, requestId)).for("update");

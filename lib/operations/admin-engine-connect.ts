@@ -127,7 +127,7 @@ export async function readServedContractModels(request: typeof fetch = fetch): P
 
 /** The plain total-bound contract of one gateway route for a directly connected (or gateway) engine model; null when the route schema refuses it. */
 export function engineRouteContract(routeId: GatewayServingRoute, model: string, responseModel: string, endpoint: string, totalTokenBound: number, equipment: string,
-  boundFrom: EngineConnectBoundOrigin) {
+  boundFrom: EngineConnectBoundOrigin, engineModel: string | null = null) {
   // The route's plain total-bound gateway shape: crawl-agent-review also accepts a direct-openai-chat-v1 contract (PR 3b-C), which this
   // connection does not write — it needs the engine's tokenizer read back and is configured separately, like AI2's direct contract.
   const shape = (registeredGatewayContractShape(routeId) as unknown as { shape?: Record<string, { value?: unknown }> } | null)?.shape;
@@ -139,6 +139,11 @@ export function engineRouteContract(routeId: GatewayServingRoute, model: string,
     deploymentRevision: `direct-${equipment}-${model}`.slice(0, 200 - tail.length) + tail, endpoint, totalTokenBound };
   // The four translation routes open only with the strict-terminal mark; a direct engine's own completion is terminal.
   if (shape && "strictTerminalOptIn" in shape) contract.strictTerminalOptIn = "abcllm-strict-terminal-v1";
+  // 같은 모델을 다른 연결에도 둔 순위(PR B): model 은 연결로 가른 장부 이름, 엔진에는 engineModel 이 나간다(text 경로 계약만 이 칸을 받는다)
+  if (engineModel && engineModel !== model) {
+    if (!shape || !("engineModel" in shape)) return null;
+    contract.engineModel = engineModel;
+  }
   const checked = validateAdminServingContract(routeId, contract);
   return checked.ok ? checked.contract : null;
 }

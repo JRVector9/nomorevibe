@@ -3,13 +3,13 @@ import { readFileSync } from "node:fs";
 import { createServer, type Server, type ServerResponse } from "node:http";
 import postgres from "postgres";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
-import { SEARCH_QUERY_MODEL, QUERY_PROMPT_VERSION, GLOSSARY_VERSION, glossaryHints } from "@/lib/crawl/translate";
+import { QUERY_PROMPT_VERSION, GLOSSARY_VERSION, glossaryHints } from "@/lib/crawl/translate";
 import { modelCapacityPolicyHash, modelCapacityRequestIdentitySchema, websearchQueryInputHash, websearchQueryLogicalWorkKey,
   type ModelCapacityPolicy, type WebsearchQueryInput } from "@/lib/llm/capacity";
 import type { WebsearchQueryServingContract } from "@/lib/llm/websearch-query-serving-contract";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
-import { directContractRow } from "./direct-engine-fixtures";
+import { inTextRank, pinTextRanks, textContract, textRankRow } from "../text-task-ranks-fixture";
 
 // 실제 PostgreSQL + loopback 게이트웨이. 실제 provider·운영 resolver 는 쓰지 않는다 — 계약은 이 파일의 fixture 만 연다.
 const fixture = vi.hoisted(() => ({ contract: null as WebsearchQueryServingContract | null,
@@ -18,6 +18,8 @@ vi.mock("@/lib/llm/websearch-query-serving-contract", async original => ({
   ...await original<typeof import("@/lib/llm/websearch-query-serving-contract")>(), resolveWebsearchQueryServingContract: () => fixture.contract,
 }));
 vi.mock("@/lib/llm/websearch-process-owner", () => ({ websearchProcessOwner: () => fixture.owner }));
+// 검색어 번역의 모델·주소는 「작업 ↔ 모델」 순위가 고른다(PR B) — 이 파일은 loopback 엔진 연결 하나를 1순위로 고정한다
+const SEARCH_QUERY_MODEL = "gpt-oss-120b";
 
 const prefix = `wsq-${randomUUID().slice(0, 8)}`, busyRoute = `${prefix}-busy`, modelB = `${prefix}-model-b`;
 const admin = postgres(TEST_DATABASE_URL, { max: 1, prepare: false, onnotice: () => {}, connection: { application_name: prefix } });
@@ -36,6 +38,8 @@ function envelope(content: string) {
     choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }],
     usage: { prompt_tokens: 60, completion_tokens: 9, total_tokens: 69 }, usage_provenance: "upstream_reported" };
 }
+/** 깊은 함수(translateQueryWithModelCapacity)는 순위 범위 안에서만 모델을 읽는다 — 검색 요청이 여는 범위와 같은 1순위로 부른다. */
+const inRank = <T>(run: () => Promise<T>) => inTextRank("search-query-translate", SEARCH_QUERY_MODEL, run);
 function latch() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }
 
 const { onReplica, db } = await import("@/lib/db");
@@ -106,7 +110,10 @@ beforeAll(async () => {
   fixture.contract = { version: 1, protocol: "abcllm-websearch-query-total-bound-v1", routeId: "search-query-translate", provider: "abcllm", model: SEARCH_QUERY_MODEL,
     responseModel: "served-query", endpoint: `http://127.0.0.1:${address.port}/v1/chat/completions`, deploymentRevision: "local-only", totalTokenBound: 4096 };
   // The loopback engine is connected directly (admin rows, no key) — the abcLLM gateway and its key were removed on 2026-10-30.
-  fixture.owner = ownerA; setServingContractSnapshotForTest([SEARCH_QUERY_MODEL, modelB].map(model => directContractRow("search-query-translate", model)));
+  // 순위 1 = loopback 연결 · SEARCH_QUERY_MODEL. 그 연결을 가리키는 직접 계약 행이 있어야 순위가 묶인다(계약 본문은 위 resolver mock 이 연다).
+  const engineBase = `http://127.0.0.1:${address.port}/v1`;
+  fixture.owner = ownerA; setServingContractSnapshotForTest([SEARCH_QUERY_MODEL, modelB].map(model => textContract("search-query-translate", model, { baseUrl: engineBase })));
+  pinTextRanks([textRankRow("search-query-translate", SEARCH_QUERY_MODEL, { baseUrl: engineBase })]);
   process.env.READ_DATABASE_URL = `${TEST_DATABASE_URL}?default_transaction_read_only=on`; globalForDb.readDb = undefined;
   await admin`UPDATE model_capacity_control SET mode='open',policy=${JSON.stringify(policy)}::text::jsonb,policy_hash=${modelCapacityPolicyHash(policy)},
     cursor=0,updated_at=clock_timestamp() WHERE id=1`;
@@ -131,7 +138,7 @@ afterAll(async () => {
       expect(await tx`SELECT 1 FROM model_capacity_requests`).toHaveLength(0); expect(await tx`SELECT 1 FROM model_capacity_events`).toHaveLength(0);
     });
   } finally {
-    delete process.env.READ_DATABASE_URL; globalForDb.readDb = undefined; fixture.contract = null; vi.unstubAllEnvs(); setServingContractSnapshotForTest(null);
+    delete process.env.READ_DATABASE_URL; globalForDb.readDb = undefined; fixture.contract = null; vi.unstubAllEnvs(); setServingContractSnapshotForTest(null); pinTextRanks(null);
     await new Promise<void>(resolve => http.close(() => resolve())); await admin.end();
   }
 });
@@ -153,7 +160,7 @@ it("settles one native POST and writes the cache on primary even inside a read-o
 it("rechecks the primary cache missed by a lagging replica and does not POST", async () => {
   const goal = target("영수증 정리 앱 지연"), before = bodies.length;
   await admin`INSERT INTO text_translations (source_hash,target_lang,status,translated,model,attempts) VALUES (${goal.cacheKey},'en','done','receipt organizer','m',1)`;
-  expect(await translateQueryWithModelCapacity(goal, 8_000)).toEqual({ kind: "cached", text: "receipt organizer" });
+  expect(await inRank(() => translateQueryWithModelCapacity(goal, 8_000))).toEqual({ kind: "cached", text: "receipt organizer" });
   expect(bodies.length).toBe(before); expect(await rows(goal.cacheKey)).toEqual([]);
 });
 
@@ -206,13 +213,13 @@ it("reports forged settled evidence as broken and defers only that query as ledg
   try {
     expect(await admin`UPDATE model_capacity_requests SET terminal_evidence_hash=${"f".repeat(64)} WHERE request_id=${stored.request_id as string}::uuid RETURNING request_id`).toHaveLength(1);
     expect(await db.transaction(tx => ledger.readWebsearchQueryContinuation(tx, input))).toEqual({ kind: "broken" });
-    await expect(translateQueryWithModelCapacity(target(query), 2_000)).rejects.toMatchObject({ name: "ModelCapacityDeferredError", reason: "ledger_mismatch" });
+    await expect(inRank(() => translateQueryWithModelCapacity(target(query), 2_000))).rejects.toMatchObject({ name: "ModelCapacityDeferredError", reason: "ledger_mismatch" });
     expect(bodies.length).toBe(before); expect(await cache(key)).toBeUndefined();
   } finally {
     expect(await admin`UPDATE model_capacity_requests SET terminal_evidence_hash=${hash} WHERE request_id=${stored.request_id as string}::uuid RETURNING request_id`).toHaveLength(1);
   }
   expect(await db.transaction(tx => ledger.readWebsearchQueryContinuation(tx, input))).toMatchObject({ kind: "settled", requestId: stored.request_id });
-  expect(await translateQueryWithModelCapacity(target(query), 2_000)).toMatchObject({ kind: "result" });
+  expect(await inRank(() => translateQueryWithModelCapacity(target(query), 2_000))).toMatchObject({ kind: "result" });
   expect(bodies.length).toBe(before); expect((await cache(key)).row).toMatchObject({ status: "done", translated: "merge pdf | merge pdf files" });
 });
 

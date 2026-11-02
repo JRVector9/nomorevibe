@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { TRANSLATE_MODEL, needsKorean, parseTranslations, reasonTranslationGatewayWire, textHash, translateToKorean } from "@/lib/crawl/translate";
+import { needsKorean, parseTranslations, reasonTranslationGatewayWire, textHash, translateToKorean } from "@/lib/crawl/translate";
 
 // These legacy transport units do not open a database; actual disabled SQL is covered separately.
 vi.mock("@/lib/llm/capacity-repository", () => ({
@@ -62,11 +62,12 @@ describe("translateToKorean — 옛 게이트웨이 경로", () => {
     }
   });
 
-  it("엔진 직접 경로가 보낼 글은 스트리밍을 끄고 M1 Gemma 기본값을 담으며 키를 싣지 않는다", () => {
+  // 2026-11-02(PR B): 등록부 기본값(M1 Gemma)은 없어졌다 — 모델은 「작업 ↔ 모델」 순위가 고르고, wire 는 받은 이름을 그대로 싣는다
+  it("엔진 직접 경로가 보낼 글은 스트리밍을 끄고 순위가 고른 모델을 그대로 담으며 키를 싣지 않는다", () => {
     vi.stubEnv("ABCLLM_API_KEY", "test-key");
-    expect(TRANSLATE_MODEL).toBe("[m1] mlx-community--gemma-4-26b-a4b-it-4bit");
-    const wire = reasonTranslationGatewayWire([EN], TRANSLATE_MODEL), body = JSON.parse(wire);
-    expect(body).toMatchObject({ model: "[m1] mlx-community--gemma-4-26b-a4b-it-4bit", stream: false });
+    const model = "mlx-community--gemma-4-26b-a4b-it-4bit";
+    const wire = reasonTranslationGatewayWire([EN], model), body = JSON.parse(wire);
+    expect(body).toMatchObject({ model, stream: false });
     expect(JSON.parse(body.messages[1].content)).toEqual([EN]);
     expect(wire).not.toContain("test-key");
   });

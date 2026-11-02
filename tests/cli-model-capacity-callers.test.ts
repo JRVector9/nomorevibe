@@ -1,4 +1,4 @@
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { JobContext } from "@/lib/jobs/runner";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { checkProductIntros } from "@/lib/jobs/products/intro-check";
@@ -7,6 +7,8 @@ import { auditPublishedProducts } from "@/lib/crawl/jobs/product-audit";
 import { checkGrokSession, grokSessionArgs } from "@/lib/crawl/jobs/grok-session";
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
+import { textRankUnusableText } from "@/lib/llm/ai-task-resolver";
+import { cliRankRow, pinTaskRanks } from "./fake-cli-path";
 
 // CLI·게이트웨이 호출과 도메인 기록만 바꾼다. 실제 control SQL·runner 처리는 tests/integration/cli-model-capacity-admission.test.ts 가 본다.
 const mocks = vi.hoisted(() => ({ read: vi.fn(), settings: vi.fn(), pendingIntro: vi.fn(), recordIntro: vi.fn(),
@@ -78,14 +80,19 @@ const modes = [
   { mode: "open", reason: "provider_contract_unavailable", routes: (route: Route) => [...others(route), route] },
 ];
 const matrix = callers.flatMap(caller => modes.map(mode => ({ ...caller, ...mode, label: `${caller.name} ${mode.mode}/${mode.reason}` })));
+// Grok 로그인 유지는 「작업 ↔ 모델」 순위를 읽는다(PR C1) — 그 모델만의 거절(정책에 없음·CLI 계약 없음)은 다음 순위로 넘기고, 모든 순위가 그렇면
+// 미룸이 아니라 제 일 못 함(all_ranks_unusable)으로 끝난다. 전역 거절(draining)·control 오류는 예전처럼 던진다
+const ranksRefuse = (scenario: { routeId: string; mode: string; reason: string }) =>
+  scenario.routeId === "grok-session-check" && scenario.mode === "open";
 
 beforeEach(() => {
   vi.resetAllMocks();
   vi.stubEnv("SERVICE_INSTANCE_ID", "m3-reviewer");
   vi.stubEnv("GROK_AUTH_PATH", "/nonexistent/auth.json");
   mocks.read.mockResolvedValue(disabled);
-  mocks.settings.mockResolvedValue({ ...DEFAULT_CRAWL_SETTINGS, enabled: true, reviewConcurrency: 1,
-    secondReview: { ...DEFAULT_CRAWL_SETTINGS.secondReview, voters: [{ provider: "grok-cli", model: "grok-4.7" }] } });
+  mocks.settings.mockResolvedValue({ ...DEFAULT_CRAWL_SETTINGS, enabled: true, reviewConcurrency: 1 });
+  // Grok 로그인 유지의 모델 = 「작업 ↔ 모델」 1순위(grok CLI 연결)
+  pinTaskRanks([cliRankRow("grok-session-check", "grok-4.7")]);
   mocks.recordIntro.mockResolvedValue("kept");
   mocks.campaign.mockResolvedValue(campaign("claude-cli", "sonnet"));
   mocks.candidates.mockResolvedValue([]);
@@ -94,6 +101,7 @@ beforeEach(() => {
   mocks.gateway.mockResolvedValue(verdict);
   mocks.agent.mockResolvedValue(verdict);
 });
+afterEach(() => { pinTaskRanks(null); vi.unstubAllEnvs(); });
 
 it.each(matrix)("$label defers before any CLI or gateway call and leaves attempts, fallback and observations unwritten", async scenario => {
   scenario.setup();
@@ -101,9 +109,34 @@ it.each(matrix)("$label defers before any CLI or gateway call and leaves attempt
   const outcome = await settle(scenario.run());
   expect(scenario.cli).not.toHaveBeenCalled();
   for (const write of scenario.writes) expect(write).not.toHaveBeenCalled();
-  expect(outcome.error).toBeInstanceOf(ModelCapacityDeferredError);
-  expect(outcome.error).toMatchObject({ reason: scenario.reason });
+  if (ranksRefuse({ ...scenario.route, ...scenario })) {
+    expect(outcome.error).toBeUndefined();
+    expect(outcome.value).toEqual({ done: true, degraded: { code: "all_ranks_unusable",
+      detail: `Grok 로그인 유지: 1순위 test-grok-cli · grok-4.7: ${textRankUnusableText(scenario.reason)}` } });
+  } else {
+    expect(outcome.error).toBeInstanceOf(ModelCapacityDeferredError);
+    expect(outcome.error).toMatchObject({ reason: scenario.reason });
+  }
   expect(mocks.read).toHaveBeenCalledTimes(1);
+});
+
+it("grok session: 1순위가 그 모델만의 까닭으로 거절되면 같은 틱에 2순위를 묻고, 모두 거절되면 순위마다 까닭을 남긴 제 일 못 함이다", async () => {
+  pinTaskRanks([cliRankRow("grok-session-check", "grok-4.7"), cliRankRow("grok-session-check", "grok-4.8", { rank: 2 })]);
+  // 2순위 모델만 정책에 있다 — 1순위는 unmapped, 2순위는 CLI 계약이 없어(DB 행 없음) provider_contract_unavailable 이다
+  mocks.read.mockResolvedValue(control("open", [{ routeId: "grok-session-check", provider: "grok-cli", model: "grok-4.8" }]));
+  const ctx = context("grok-session-check");
+  expect(await checkGrokSession(ctx, { run: grokCli, record: grokRecord })).toEqual({ done: true, degraded: { code: "all_ranks_unusable",
+    detail: `Grok 로그인 유지: 1순위 test-grok-cli · grok-4.7: ${textRankUnusableText("unmapped")} / 2순위 test-grok-cli · grok-4.8: ${textRankUnusableText("provider_contract_unavailable")}` } });
+  expect(mocks.read).toHaveBeenCalledTimes(2);
+  expect(grokCli).not.toHaveBeenCalled();
+  // 장부가 꺼져 있으면(disabled) 첫 순위에서 바로 부른다 — 꺼진 순위·꺼진 연결·CLI 가 아닌 연결은 건너뛴다
+  pinTaskRanks([cliRankRow("grok-session-check", "grok-off", { enabled: false }),
+    cliRankRow("grok-session-check", "grok-conn-off", { rank: 2, connectionEnabled: false }),
+    cliRankRow("grok-session-check", "grok-4.8", { rank: 3 })]);
+  mocks.read.mockReset(); mocks.read.mockResolvedValue(disabled);
+  expect(await checkGrokSession(ctx, { run: grokCli, record: grokRecord })).toEqual({ done: true });
+  expect(grokCli.mock.calls).toEqual([[grokSessionArgs("grok-4.8"), expect.objectContaining({ command: "grok" })]]);
+  expect(grokRecord).toHaveBeenCalledWith("service:grok:m3-reviewer", expect.objectContaining({ model: "grok-4.8", result: "success" }));
 });
 
 it.each(callers)("$name keeps the original control failure and starts no call", async scenario => {
@@ -229,7 +262,7 @@ it("disabled grok session keeps the exact CLI call and observation", async () =>
   expect(await checkGrokSession(context("grok-session-check"), { run: grokCli, record: grokRecord })).toEqual({ done: true });
   expect(grokCli.mock.calls).toEqual([[grokSessionArgs("grok-4.7"), { cwd: expect.stringMatching(/nomorevibe-grok-session-/),
     env: expect.objectContaining({ GROK_HOME: expect.stringMatching(/nomorevibe-grok-session-.*\/home$/), GROK_AUTH_PATH: "/nonexistent/auth.json",
-      RUST_LOG: "off", NO_COLOR: "1" }), timeoutMs: 60_000, signal: undefined }]]);
+      RUST_LOG: "off", NO_COLOR: "1" }), timeoutMs: 60_000, signal: undefined, command: "grok" }]]);
   expect(grokRecord.mock.calls).toEqual([["service:grok:m3-reviewer", { provider: "grok-cli", model: "grok-4.7", resolvedModel: "grok-4.7-build",
     result: "success", checkedAt: expect.any(String), durationMs: expect.any(Number), authFile: { exists: false, modifiedAt: null } }]]);
   expect(mocks.read).toHaveBeenCalledTimes(1);
@@ -244,7 +277,8 @@ it("jobs with no model work never read the capacity control", async () => {
   expect(await auditPublishedProducts(context("product-audit"))).toEqual({ done: true });
   mocks.candidates.mockResolvedValue([{ id: 99 }]);
   expect(await auditPublishedProducts(context("product-audit"))).toEqual({ done: true });
-  mocks.settings.mockResolvedValue({ ...DEFAULT_CRAWL_SETTINGS, enabled: true });
+  // Grok 을 아무 순위에서도 쓰지 않으면(로그인 유지·1차·2차 순위 없음) 조용히 넘긴다
+  pinTaskRanks([]);
   expect(await checkGrokSession(context("grok-session-check"), { run: grokCli, record: grokRecord })).toEqual({ done: true });
   expect(mocks.read).not.toHaveBeenCalled();
   expect(introCli).not.toHaveBeenCalled();

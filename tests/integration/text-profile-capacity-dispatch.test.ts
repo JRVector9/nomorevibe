@@ -5,7 +5,6 @@ import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vite
 import { eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { productSearchProfiles, products } from "@/lib/db/schema";
-import { PROFILE_MODEL } from "@/lib/domain/products/search-profile";
 import { pendingProfiles, prepareProfileModelDispatch, recordProfileResult, type ProfileTask } from "@/lib/domain/products/search-profiles";
 import { writeSearchProfiles } from "@/lib/jobs/products/search-profile";
 import { runJob, type JobContext } from "@/lib/jobs/runner";
@@ -19,13 +18,17 @@ import { modelCapacityPolicyHash, textProfileInputHash, type ModelCapacityPolicy
 import type { TextProfileServingContract } from "@/lib/llm/text-profile-serving-contract";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
-import { directContractRow } from "./direct-engine-fixtures";
+import { inTextRank, pinTextRanks, textContract } from "../text-task-ranks-fixture";
 
 const serving = vi.hoisted(() => ({ contract: null as TextProfileServingContract | null }));
 vi.mock("@/lib/llm/text-profile-serving-contract", async original => ({
   ...await original<typeof import("@/lib/llm/text-profile-serving-contract")>(), resolveTextProfileServingContract: () => serving.contract,
 }));
 type Raw = Record<string, unknown>;
+// 검색 키워드의 모델·주소는 「작업 ↔ 모델」 순위가 고른다(PR B) — 이 파일은 순위 하나(이 모델)를 고정한다.
+// 선택기(pendingProfiles)는 순위마다 이 프로세스가 줄에 세운 요청을 이어받는다 — 잡이 넘기는 것과 같은 순위(장부 이름·provider)를 넘긴다.
+const PROFILE_MODEL = "gpt-oss-120b";
+const RANKS = [{ identity: PROFILE_MODEL, provider: "abcllm" as const }];
 const prefix = `profile-native-${randomUUID().slice(0, 12)}`, jobName = "product-search-profile";
 const admin = postgres(TEST_DATABASE_URL, { max: 1, prepare: false, onnotice: () => {}, connection: { application_name: prefix } });
 const managedJobs = jobsForRole("text"), ownerBoots = new Set<string>(), ownProducts = new Map<number, string>(), ownRequests = new Map<string, Raw>();
@@ -194,9 +197,11 @@ async function reserve(task: ProfileTask, lease: JobLease) {
   expect(result.kind).toBe("granted"); if (result.kind !== "granted") throw new Error("fixture_reservation_required");
   return { ready, request, handle: result.reservation };
 }
+// 직접 부르는 장부·전송 단계(prepareProfileModelDispatch 등)는 순위 범위 안에서만 모델을 읽는다 — 잡이 여는 1순위 범위와 같게 연다
 async function custom(_task: ProfileTask, run: (lease: JobLease) => Promise<void>) {
   await tracked(requestJob(jobName));
-  return tracked(runJob(jobName, async (ctx: JobContext<null>) => { expect(ctx.lease).toBeDefined(); await run(ctx.lease!); return { done: true }; }, { requestedOnly: true, roleLease: role }));
+  return tracked(runJob(jobName, async (ctx: JobContext<null>) => { expect(ctx.lease).toBeDefined();
+    await inTextRank(jobName, PROFILE_MODEL, () => run(ctx.lease!)); return { done: true }; }, { requestedOnly: true, roleLease: role }));
 }
 async function until(check: () => Promise<boolean>) {
   const end = Date.now() + 3000; while (!await check()) { if (Date.now() >= end) throw new Error("fixture_barrier_deadline"); await new Promise(resolve => setTimeout(resolve, 10)); }
@@ -211,9 +216,11 @@ beforeAll(() => tracked((async () => {
   expect(baseline("job_batch_control")[0]).toMatchObject({ mode: "legacy", writer_contract_version: 0 }); initialized = true;
 })(), hooks));
 // The route opens only on a direct admin contract for its model (the abcLLM gateway was removed 2026-10-30); the contract body is the mock above.
-beforeEach(() => tracked((async () => { setServingContractSnapshotForTest([directContractRow(jobName, PROFILE_MODEL)]); await install(); await elect(); })(), hooks));
+// PR B: 1순위(시험 연결 · 이 모델)는 그 연결을 가리키는 직접 계약 행에 묶인다 — 전송 계약 본문은 여전히 위 mock 이 연다.
+beforeEach(() => tracked((async () => { setServingContractSnapshotForTest([textContract(jobName, PROFILE_MODEL)]); pinTextRanks({ [jobName]: PROFILE_MODEL });
+  await install(); await elect(); })(), hooks));
 afterEach(() => tracked(steps([() => drain(exercises), () => drain(work), cleanup, async () => { serving.contract = null; setServingContractSnapshotForTest(null);
-  vi.unstubAllEnvs(); vi.unstubAllGlobals(); }]), hooks));
+  pinTextRanks(null); vi.unstubAllEnvs(); vi.unstubAllGlobals(); }]), hooks));
 afterAll(async () => { await steps([() => drain(exercises), () => drain(work), () => drain(hooks), cleanup, () => admin.end()]); });
 
 it("commits real text role/job dispatch, one native POST, historical terminal, original keyword writer and ACK", exercise(async () => {
@@ -235,7 +242,10 @@ it("commits real text role/job dispatch, one native POST, historical terminal, o
   });
 }));
 it("preserves production unsupported, a disabled original leaf that no longer sends, and source-hash reuse without capacity rows", exercise(async () => {
-  const task = await seed(); expect(await tick()).toMatchObject({ status: "deferred", reason: "model_capacity" }); expect(await admin`SELECT request_id FROM model_capacity_requests`).toEqual([]);
+  // PR B: 전송 계약이 아직 없다(mock resolver null) — 그 모델만의 까닭(provider_contract_unavailable)이라 1순위를 쉬게 하고, 다른 순위가 없으니
+  // 예전처럼 틱 전체를 미루지 않고 「모든 순위를 쓸 수 없음」으로 제 일 못 한 틱을 남긴다. 장부 행은 없다.
+  const task = await seed(); expect(await tick()).toMatchObject({ status: "completed", done: true, degraded: "all_ranks_unusable" });
+  expect(await admin`SELECT request_id FROM model_capacity_requests`).toEqual([]);
   // Disabled still selects the original leaf, but the abcLLM gateway it used is gone (2026-10-30): no HTTP at all, a provider-side
   // no_key failure that does not count an attempt, and no capacity row.
   await install(basePolicy, "disabled"); const legacy = vi.fn(async () => new Response(JSON.stringify(replyBody()))); vi.stubGlobal("fetch", legacy);
@@ -273,7 +283,7 @@ it("resumes its existing reservation after new arrivals push the product outside
     await custom(task, async lease => { requestId = (await reserve(task, lease)).request.requestId; });
     await olderArrivals(13);
     expect((await pendingProfiles(12)).map(row => row.product.id)).not.toContain(task.product.id);
-    const resumed = await pendingProfiles(12, role);
+    const resumed = await pendingProfiles(12, role, [], RANKS);
     expect(resumed).toHaveLength(12); expect(resumed[0].product.id).toBe(task.product.id);
     expect(new Set(resumed.map(row => row.product.id)).size).toBe(12);
     await tick();
@@ -309,7 +319,7 @@ it("does not prioritize a stale owned input or mutate that unused reservation", 
     await olderArrivals(13);
     await db.update(products).set({ tagline: "Changed source while waiting" }).where(eq(products.id, task.product.id));
     const [before] = await admin`SELECT to_jsonb(r) AS row FROM model_capacity_requests r WHERE request_id=${requestId}::uuid`;
-    expect((await pendingProfiles(12, role)).map(row => row.product.id)).not.toContain(task.product.id);
+    expect((await pendingProfiles(12, role, [], RANKS)).map(row => row.product.id)).not.toContain(task.product.id);
     expect((await admin`SELECT to_jsonb(r) AS row FROM model_capacity_requests r WHERE request_id=${requestId}::uuid`)[0]).toEqual(before);
     expect(bodies).toHaveLength(0);
   });
@@ -400,7 +410,7 @@ it("keeps the EOF unknown row for review while a new boot retries the changed so
     expect(afterSource).toEqual({ attempts: 0, source_revision: beforeSource.source_revision + 1 });
     await admin`UPDATE product_search_profiles SET error_code=NULL,retry_at=NULL,needs_refresh=true WHERE product_id=${task.product.id}`;
     // 2026-10-30: 미확인 행은 이 제품을 더 fence 하지 않는다 — 선택기가 다시 고르고 새 요청으로 다시 보낸다(원 미확인 행은 사람 검토용으로 남는다).
-    expect((await pendingProfiles(12, role)).some(row => row.product.id === task.product.id)).toBe(true);
+    expect((await pendingProfiles(12, role, [], RANKS)).some(row => row.product.id === task.product.id)).toBe(true);
     setReply(response => { response.end(JSON.stringify(replyBody())); });
     expect(await tick()).toMatchObject({ status: "completed" }); expect(bodies).toHaveLength(2);
     expect((await admin`SELECT state FROM model_capacity_requests WHERE request_id=${unknown.request_id}::uuid`)[0].state).toBe("indeterminate");
@@ -424,7 +434,7 @@ it("the profile priority readback never waits on a control FOR UPDATE holder (20
     const started = Date.now();
     // 예전: control FOR SHARE 를 기다리다 lock_timeout(5초, 55P03)으로 끝났다 — 매 틱 첫 잠금 문장이 이것이다(pendingProfiles).
     expect(await tracked(findOwnPendingTextProfileRequests({ owner: { instanceId: role.instanceId, bootId: role.bootId }, model: PROFILE_MODEL }))).toEqual([]);
-    expect((await tracked(pendingProfiles(12, role))).some(row => row.product.id === task.product.id)).toBe(true);
+    expect((await tracked(pendingProfiles(12, role, [], RANKS))).some(row => row.product.id === task.product.id)).toBe(true);
     expect(Date.now() - started).toBeLessThan(2_000);
     // 55P03 뒤 진단: 그 행을 잡은 세션(이 fixture 의 admin 연결)이 TX 나이와 함께 보인다
     const holders = await tracked(readControlLockHolders());

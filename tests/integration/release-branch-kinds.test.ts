@@ -174,7 +174,9 @@ it("0161 은 text local-direct 가지를 세 제약의 다음 rules ordinal 로 
   const after0160 = await defs(), snapshot = await client`SELECT to_jsonb(r) value FROM model_capacity_requests r ORDER BY request_id`;
   await migrate(drizzle(client), { migrationsFolder: path.join(root, "drizzle") });
   expect((await client`SELECT count(*)::int n FROM drizzle.__drizzle_migrations`)[0].n).toBe(journal.entries.length);
-  expect(journal.entries.at(-1)).toMatchObject({ idx: 161, tag: "0161_text_local_direct_binding" });
+  // 0161 뒤에는 그 뒤 번호만 붙는다(0162 작업 ↔ 모델 순위, 2026-11-02) — 끝까지 올린 DB 에서 0161 가지를 본다
+  expect(journal.entries.find(entry => entry.idx === 161)).toMatchObject({ tag: "0161_text_local_direct_binding" });
+  expect(journal.entries.slice(journal.entries.findIndex(entry => entry.idx === 161) + 1).every(entry => entry.idx > 161)).toBe(true);
   const text: Record<string, string> = { model_capacity_requests_dispatch_check: textLocalDirectDispatchSql,
     model_capacity_requests_terminal_check: textLocalDirectTerminalSql, model_capacity_events_terminal_check: textLocalDirectEventTerminalSql };
   const rules = await client<{ constraint_name: string; ordinal: number; predicate: string; source: string }[]>`SELECT constraint_name, ordinal, predicate, source

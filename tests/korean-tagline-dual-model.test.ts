@@ -6,24 +6,29 @@ vi.mock("@/lib/domain/products/korean-taglines", () => ({ homeListSlugs: async (
 vi.mock("@/lib/domain/products/korean-tagline-model-capacity", () => ({ translateKoreanTaglinesWithModelCapacity: m.gpt }));
 vi.mock("@/lib/crawl/korean-translation-qwen", () => ({ translateKoreanTaglinesWithQwen: m.qwen }));
 vi.mock("@/lib/llm/capacity-repository", () => ({ readModelCapacityCallerControl: m.control }));
-vi.mock("@/lib/crawl/translate", () => ({ KOREAN_TAGLINE_MODEL: "[MLX] gpt-oss-120b" }));
 import { writeKoreanTaglines } from "@/lib/jobs/products/korean-tagline";
 import { KOREAN_TRANSLATION_QWEN_MODEL } from "@/lib/crawl/korean-translation-config";
-import { setServingContractSnapshotForTest, TEXT_ROUTE_BLOCK_DETAIL } from "@/lib/llm/serving-contract-store";
-/** GPT opens only on a directly connected engine (admin contract, transport direct) for its model; legacy Qwen needs none. */
-const gptDirectRow = { routeId: "product-tagline-ko", model: "[MLX] gpt-oss-120b", contract: {}, auth: "none" as const, apiKey: null, transport: "direct" as const };
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
+import { TEXT_RANK_UNUSABLE_TEXT } from "@/lib/llm/ai-task-resolver";
+import { pinTextRanks, textContract } from "./text-task-ranks-fixture";
+/**
+ * GPT opens only on a directly connected engine (admin contract, transport direct) for its model; legacy Qwen needs none.
+ * GPT 의 모델은 「작업 ↔ 모델」 순위가 고른다(PR B) — 순위 하나와 그 연결을 가리키는 엔진 직접 계약 하나.
+ */
+const GPT_MODEL = "gpt-oss-120b";
+const gptDirectRow = textContract("product-tagline-ko", GPT_MODEL);
 const task = (id: number, attempts = 0) => ({ productId: id, name: "Tool", tagline: "Track tasks for your team", repoUrl: null, attempts });
 const outputs = (n: number) => ({ ok: true as const, outputs: Array.from({ length: n }, () => "팀의 할 일을 기록하는 도구") });
 const ctx = (signal?: AbortSignal) => ({ lease: { name: "product-tagline-ko", token: "lease", requestedVersion: 1 },
   hasBudget: () => true, log: vi.fn(), signal }) as unknown as JobContext<null>;
 beforeEach(() => {
-  vi.clearAllMocks(); setServingContractSnapshotForTest([gptDirectRow]); vi.stubEnv("KOREAN_TRANSLATION_QWEN_ENABLED", "true"); vi.stubEnv("KOREAN_TRANSLATION_QWEN_RECOVERY_ENABLED", "false");
+  vi.clearAllMocks(); setServingContractSnapshotForTest([gptDirectRow]); pinTextRanks({ "product-tagline-ko": GPT_MODEL }); vi.stubEnv("KOREAN_TRANSLATION_QWEN_ENABLED", "true"); vi.stubEnv("KOREAN_TRANSLATION_QWEN_RECOVERY_ENABLED", "false");
   m.control.mockResolvedValue({ mode: "disabled" }); m.pending.mockResolvedValue([]); m.recovery.mockResolvedValue([]);
   m.write.mockImplementation(async entries => entries.length);
   m.gpt.mockImplementation(async batch => ({ kind: "result", result: outputs(batch.length) }));
   m.qwen.mockImplementation(async items => outputs(items.length));
 });
-afterEach(() => { setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
+afterEach(() => { setServingContractSnapshotForTest(null); pinTextRanks(null); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 it("starts disjoint GPT and Qwen batches concurrently and stores exact model provenance once per row", async () => {
   m.pending.mockResolvedValueOnce(Array.from({ length: 16 }, (_, i) => task(i + 1)));
   let finish!: (result: unknown) => void;
@@ -33,7 +38,7 @@ it("starts disjoint GPT and Qwen batches concurrently and stores exact model pro
   expect(m.gpt).toHaveBeenCalledOnce(); finish({ kind: "result", result: outputs(8) }); await running;
   const writes = m.write.mock.calls.flatMap(([entries]) => entries);
   expect(writes).toHaveLength(16); expect(new Set(writes.map(e => e.task.productId)).size).toBe(16);
-  expect(writes.slice(0, 8).every(e => e.result.model === "[MLX] gpt-oss-120b")).toBe(true);
+  expect(writes.slice(0, 8).every(e => e.result.model === GPT_MODEL)).toBe(true);
   expect(writes.slice(8).every(e => e.result.model === KOREAN_TRANSLATION_QWEN_MODEL)).toBe(true);
 });
 it("stores GPT successes even when Qwen is unreachable, recording Qwen failures with its model", async () => {
@@ -82,8 +87,9 @@ it("uses keyless Qwen in disabled mode but does not call a native path without a
   m.pending.mockResolvedValueOnce([task(1)]);
   await writeKoreanTaglines(ctx()); expect(m.gpt).not.toHaveBeenCalled(); expect(m.qwen).toHaveBeenCalledOnce();
   m.qwen.mockClear(); m.control.mockResolvedValue({ mode: "open" });
-  expect(await writeKoreanTaglines(ctx())).toMatchObject({ done: true,
-    degraded: { code: "no_direct_contract", detail: TEXT_ROUTE_BLOCK_DETAIL.no_direct_contract } });
+  // 순위는 있으나 그 연결의 계약이 없다 — 예전 no_direct_contract 대신 순위마다 까닭을 적은 all_ranks_unusable
+  expect(await writeKoreanTaglines(ctx())).toMatchObject({ done: true, degraded: { code: "all_ranks_unusable",
+    detail: expect.stringContaining(`1순위 test-engine · ${GPT_MODEL}: ${TEXT_RANK_UNUSABLE_TEXT.no_direct_contract}`) } });
   expect(m.qwen).not.toHaveBeenCalled(); expect(m.gpt).not.toHaveBeenCalled();
 });
 it("defers recovery before selection when an earlier regular round leaves less than a full call budget", async () => {

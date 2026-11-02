@@ -1,7 +1,10 @@
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { secondReviewCandidates, type SecondReviewCursor } from "@/lib/crawl/jobs/second-review";
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from "@/lib/crawl/settings-schema";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
+import { setAiTaskModelsForTest } from "@/lib/llm/ai-task-models-snapshot";
+import { pinReviewRanks } from "./review-task-ranks-fixture";
+import { cliRankRow } from "./fake-cli-path";
 
 const mocks = vi.hoisted(() => ({
   settings: null as CrawlSettings | null, enqueue: vi.fn(), close: vi.fn(), reopen: vi.fn(async () => 0), retry: vi.fn(), pending: vi.fn(), record: vi.fn(), reconcile: vi.fn(),
@@ -26,9 +29,13 @@ vi.mock("@/lib/crawl/second-review", async (importOriginal) => ({
 const context = () => ({ cursor: null, hasBudget: () => true, save: vi.fn(), log: vi.fn(), lease: { name: "second-review", token: "t", requestedVersion: 1 } });
 const row = (over: Record<string, unknown> = {}) => ({ id: 7, candidateId: 1, repo: "acme/demo", publishedSlug: null, firstDecision: "reject", firstConfidence: 0.9, provider: "claude-cli", model: "opus", ...over });
 
+/** 「작업 ↔ 모델」 2차 AI 검수 투표자 칸 1 의 1순위(PR C1) — 잡은 투표자를 이 순위로만 안다(옛 설정 secondReview.voters 는 읽지 않는다) */
+const voter = (provider: string, model: string) => pinReviewRanks({ second: [[{ provider, model }]] });
+afterEach(() => { pinReviewRanks(null); setAiTaskModelsForTest(null); });
 beforeEach(() => {
   vi.resetAllMocks();
   mocks.settings = { ...DEFAULT_CRAWL_SETTINGS, enabled: true };
+  voter("claude-cli", "opus");
   mocks.enqueue.mockResolvedValue(1);
   mocks.close.mockResolvedValue(0);
   mocks.pending.mockResolvedValue([row()]);
@@ -55,6 +62,44 @@ it("꺼져 있으면 아무것도 올리지도 부르지도 않는다", async ()
   expect(await secondReviewCandidates(context())).toEqual({ done: true });
   expect(mocks.enqueue).not.toHaveBeenCalled();
   expect(mocks.review).not.toHaveBeenCalled();
+});
+
+it("투표자 순위가 없거나·표를 못 읽었거나·모든 칸을 쓸 수 없으면 올리기·정리·표 심사 없이 제 일 못 함으로 끝나고 cursor 를 지킨다", async () => {
+  const cursor: SecondReviewCursor = { marker: "kept", staleReviewAfterCandidateId: 9 };
+  const tick = async () => { const ctx = { ...context(), cursor }; return { ctx, outcome: await secondReviewCandidates(ctx) }; };
+  const nothingRan = () => {
+    for (const mock of [mocks.enqueue, mocks.close, mocks.reconcile, mocks.reopen, mocks.retry, mocks.pending, mocks.admit, mocks.review, mocks.gateway, mocks.grok,
+      mocks.record]) expect(mock).not.toHaveBeenCalled();
+  };
+  // 순위 없음 — 옛 설정의 투표자(secondReview.voters)가 있어도 대신 부르지 않는다
+  mocks.settings!.secondReview = { ...mocks.settings!.secondReview, voters: [{ provider: "claude-cli", model: "opus" }] };
+  pinReviewRanks({ second: [] });
+  let { ctx, outcome } = await tick();
+  expect(outcome).toEqual({ done: true, cursor, degraded: { code: "no_task_models", detail: expect.stringContaining("투표자 순위가 없습니다") } });
+  expect(ctx.log).toHaveBeenCalledWith("crawl.second_review_skipped", { reason: "no_task_models" });
+  nothingRan();
+  // 표를 한 번도 읽지 못했다
+  pinReviewRanks(null); setAiTaskModelsForTest(null);
+  ({ ctx, outcome } = await tick());
+  expect(outcome).toMatchObject({ done: true, cursor, degraded: { code: "task_models_unreadable" } });
+  nothingRan();
+  // 칸 1 의 1순위가 CLI 인데 CLI 계약(DB 행 cli:claude-cli:second-review)이 없다 — 표를 낼 칸이 없다
+  setAiTaskModelsForTest([cliRankRow("second-review", "opus", { cliTool: "claude" })]);
+  ({ ctx, outcome } = await tick());
+  expect(outcome).toMatchObject({ done: true, cursor, degraded: { code: "all_ranks_unusable", detail: expect.stringContaining("1순위 test-claude-cli · opus") } });
+  expect(ctx.log).toHaveBeenCalledWith("ai_task.ranks", { ranks: 1, "unusable.1.cli_contract_missing": 1 });
+  expect(ctx.log).toHaveBeenCalledWith("crawl.second_review_skipped", { reason: "all_ranks_unusable" });
+  nothingRan();
+});
+
+it("칸마다 지금 표를 내는 순위를 틱 요약(ai_task.ranks)에 남기고 정비를 이어 간다", async () => {
+  pinReviewRanks({ second: [[{ provider: "claude-cli", model: "opus" }, { provider: "abcllm", model: "gw" }], [{ provider: "grok-cli", model: "grok-4.7" }]] });
+  mocks.pending.mockResolvedValue([]);
+  const ctx = context();
+  expect(await secondReviewCandidates(ctx)).toEqual({ done: true });
+  expect(ctx.log).toHaveBeenCalledWith("ai_task.ranks", { ranks: 3, "served.1": 2 });
+  expect(mocks.enqueue).toHaveBeenCalledOnce();
+  expect(mocks.close).toHaveBeenCalledOnce();
 });
 
 it("persists the stale candidate cursor and preserves other job cursor fields", async () => {
@@ -112,7 +157,7 @@ it("한 틱에 일감을 넉넉히 집어 끝나는 대로 이어 본다", async
 });
 
 it("남은 시간에 끝낼 수 없는 호출은 시작하지 않는다 — 잘린 호출은 한 시간을 버린다", async () => {
-  mocks.settings!.secondReview = { ...mocks.settings!.secondReview, voters: [{ provider: "abcllm", model: "[MLX] gemma4-26b" }] };
+  voter("abcllm", "[MLX] gemma4-26b");
   mocks.pending.mockResolvedValue([row({ provider: "abcllm", model: "[MLX] gemma4-26b" })]);
   // 예산이 이미 다 된 틱
   const spent = { ...context(), hasBudget: () => false };
@@ -123,7 +168,7 @@ it("남은 시간에 끝낼 수 없는 호출은 시작하지 않는다 — 잘�
 });
 
 it("사내 게이트웨이로 설정하면 CLI 대신 그쪽으로 묻고, 누가 봤는지 함께 적는다", async () => {
-  mocks.settings!.secondReview = { ...mocks.settings!.secondReview, voters: [{ provider: "abcllm", model: "[MLX] gemma4-26b" }] };
+  voter("abcllm", "[MLX] gemma4-26b");
   mocks.pending.mockResolvedValue([row({ provider: "abcllm", model: "[MLX] gemma4-26b" })]);
   await secondReviewCandidates(context());
 
@@ -135,7 +180,7 @@ it("사내 게이트웨이로 설정하면 CLI 대신 그쪽으로 묻고, 누�
 });
 
 it("게이트웨이에 모델이 없으면 판단을 지어내지 않고 그 까닭으로 적는다", async () => {
-  mocks.settings!.secondReview = { ...mocks.settings!.secondReview, voters: [{ provider: "abcllm", model: "[MLX] 사라진모델" }] };
+  voter("abcllm", "[MLX] 사라진모델");
   mocks.pending.mockResolvedValue([row({ provider: "abcllm", model: "[MLX] 사라진모델" })]);
   mocks.gateway.mockResolvedValue({ ok: false, error: "model_unavailable" });
   await secondReviewCandidates(context());
@@ -144,7 +189,7 @@ it("게이트웨이에 모델이 없으면 판단을 지어내지 않고 그 까
 });
 
 it("이미 중지된 워커는 모델을 새로 부르거나 실패로 기록하지 않는다", async () => {
-  mocks.settings!.secondReview = { ...mocks.settings!.secondReview, voters: [{ provider: "abcllm", model: "[MLX] gemma4-26b" }] };
+  voter("abcllm", "[MLX] gemma4-26b");
   mocks.pending.mockResolvedValue([row({ provider: "abcllm", model: "[MLX] gemma4-26b" })]);
   mocks.gateway.mockResolvedValue({ ok: false, error: "cancelled" });
   const stopping = new AbortController();
@@ -180,7 +225,7 @@ it("settles a successful response arriving after shutdown as cancelled", async (
 });
 
 it("grok-cli 표는 Grok CLI 로 보고 그 제한 시간을 준다", async () => {
-  mocks.settings!.secondReview = { ...mocks.settings!.secondReview, voters: [{ provider: "grok-cli", model: "grok-4.7" }] };
+  voter("grok-cli", "grok-4.7");
   mocks.pending.mockResolvedValue([row({ provider: "grok-cli", model: "grok-4.7", firstDecision: "approve" })]);
   mocks.input.mockResolvedValue({ snapshot: {}, inputHash: "h", policyHash: "p" });
   mocks.grok.mockResolvedValue({ ok: true, outcome: { decision: "approve", confidence: 0.9, reason: "pageText introduces software." }, usage: {} });

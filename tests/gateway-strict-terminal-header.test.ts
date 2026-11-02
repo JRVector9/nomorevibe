@@ -19,6 +19,7 @@ import { productTranslationServingContractHash } from "@/lib/llm/product-transla
 import { productTaglineKoServingContractHash } from "@/lib/llm/product-tagline-ko-serving-contract";
 import { websearchQueryServingContractHash } from "@/lib/llm/websearch-query-serving-contract";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
+import { inTextRank } from "./text-task-ranks-fixture";
 
 const fixture = vi.hoisted(() => ({ contracts: {} as Record<string, unknown> }));
 vi.mock("@/lib/llm/reason-translation-serving-contract", async original => ({
@@ -192,8 +193,9 @@ it("the legacy translation leaves send nothing at all — no header, no request 
   expect(await translateToKorean(texts, 1000, request)).toEqual(noKey);
   expect(await translateProductFields(products, 1000, request)).toEqual(noKey);
   expect(await translateTaglinesToKorean(taglines, 1000, request)).toEqual(noKey);
-  expect(await translateQueryToEnglish(query.query, 1000, request)).toEqual(noKey);
-  expect(await translateChineseQueryToEnglish("健身房签到", "zh-Hans", 1000, request)).toEqual(noKey);
+  // 검색어 번역의 모델은 「작업 ↔ 모델」 순위 범위에서만 읽힌다(PR B) — 범위 안에서도 옛 경로는 보내지 않는다
+  expect(await inTextRank("search-query-translate", model, () => translateQueryToEnglish(query.query, 1000, request))).toEqual(noKey);
+  expect(await inTextRank("search-query-translate", model, () => translateChineseQueryToEnglish("健身房签到", "zh-Hans", 1000, request))).toEqual(noKey);
   expect(seen).toHaveLength(0);
 });
 
@@ -219,10 +221,10 @@ it("an admin contract marked direct (the engine itself, 0148) is terminal withou
 
 it("the legacy leaf refuses a model connected straight to its engine instead of sending anything there", async () => {
   vi.stubEnv("ABCLLM_API_KEY", "local-test-only");
-  const { TRANSLATE_MODEL } = await import("@/lib/crawl/translate");
+  // 옛 TRANSLATE_MODEL 상수는 없어졌다(PR B, 순위가 모델을 고른다) — 엔진에 바로 연결한 계약 행이 있어도 옛 경로는 보내지 않는다
   const seen: unknown[] = [];
   const request = (async (url: unknown) => { seen.push(url); return new Response(envelope("[]")); }) as typeof fetch;
-  setServingContractSnapshotForTest([{ routeId: "reason-translate", model: TRANSLATE_MODEL, contract: {}, auth: "stored", apiKey: "engine-key", transport: "direct" }]);
+  setServingContractSnapshotForTest([{ routeId: "reason-translate", model, contract: {}, auth: "stored", apiKey: "engine-key", transport: "direct" }]);
   expect(await translateToKorean(texts, 1000, request)).toEqual({ ok: false, error: "no_key" });
   expect(seen).toHaveLength(0);
 });

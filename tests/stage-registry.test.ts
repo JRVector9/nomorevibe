@@ -4,14 +4,16 @@ import { firstReviewer } from "@/lib/crawl/agent-review";
 import { JOB_CATALOG } from "@/lib/jobs/catalog";
 import type { ThroughputSnapshot } from "@/lib/operations/throughput-model";
 import { buildWorkerProgress } from "@/lib/operations/worker-progress-query";
-import { ENV_MODEL_SLOTS, PIPELINE_STAGES, STAGE_EXCLUDED_JOBS, resolveModelSlots, stageForJob } from "@/lib/operations/stage-registry";
+import { ENV_MODEL_SLOTS, PIPELINE_STAGES, STAGE_EXCLUDED_JOBS, TASK_MODEL_SLOTS, resolveModelSlots, stageForJob } from "@/lib/operations/stage-registry";
+import { pinReviewRanks } from "./review-task-ranks-fixture";
+import { pinTextRanks, textRankRow } from "./text-task-ranks-fixture";
 
 /**
  * 단계 레지스트리(운영센터 개편 v8 PR2) — 흐름 상세·레일 옆 칸이 읽을 순수 표.
  *
  * 첫 describe 가 "미등록 잡 CI"다: 카탈로그에 잡을 더하면 단계에 넣거나 제외 까닭을 적기 전에는 CI 가 빨갛다.
  */
-afterEach(() => { vi.unstubAllEnvs(); vi.resetModules(); });
+afterEach(() => { vi.unstubAllEnvs(); vi.resetModules(); pinTextRanks(null); pinReviewRanks(null); });
 
 describe("미등록 잡 — 카탈로그의 잡은 정확히 한 단계에 들어가거나, 까닭과 함께 제외 목록에 있다", () => {
   it.each(JOB_CATALOG.map((job) => job.name))("%s", (name) => {
@@ -98,66 +100,79 @@ describe("단계 표", () => {
   });
 });
 
-describe("모델 자리 — 설정만으로 정해진다", () => {
+describe("모델 자리 — 1차·2차는 「작업 ↔ 모델」 순위, 그 밖은 설정·환경변수로 정해진다", () => {
   const settings = (review: Partial<Pick<CrawlSettings, "firstReview" | "secondReview">> = {}) =>
     ({ ...DEFAULT_CRAWL_SETTINGS, firstReview: { provider: "abcllm", model: "[MLX] gpt-oss-120b" }, ...review }) as CrawlSettings;
   const second = (voters: CrawlSettings["secondReview"]["voters"], fallbacks?: CrawlSettings["secondReview"]["fallbacks"]) =>
     ({ secondReview: { ...DEFAULT_CRAWL_SETTINGS.secondReview, voters, fallbacks } });
   const pick = (slots: ReturnType<typeof resolveModelSlots>, stage: string) =>
     slots.filter((slot) => slot.stage === stage).map(({ key, label, code, provider, model, source }) => ({ key, label, code, provider, model, source }));
+  const MLX = { provider: "abcllm", model: "[MLX] gpt-oss-120b" };
 
-  it("2차 투표·예비는 저장된 목록 전부다 — 투표자를 더하면 설정만으로 자리가 생긴다", () => {
-    const one = resolveModelSlots(settings(second([{ provider: "abcllm", model: "[supa] Qwen3.8-27B-NVFP4" }], [{ provider: "abcllm", model: "qwen3-coder:30b" }])), {});
-    expect(pick(one, "second")).toEqual([
-      { key: "second-voter-1", label: "투표 1", code: "secondReview.voters[0]", provider: "abcllm", model: "[supa] Qwen3.8-27B-NVFP4", source: "settings" },
-      { key: "second-fallback-1", label: "예비 1", code: "secondReview.fallbacks[0]", provider: "abcllm", model: "qwen3-coder:30b", source: "settings" },
+  it("2차 투표·예비는 순위 전부다 — 칸마다 지금 표를 내는 순위가 투표, 그 밖의 순위가 예비; 옛 설정 voters·fallbacks 는 읽지 않는다(PR C1)", () => {
+    // 옛 설정에는 다른 투표자·대체가 있다 — 자리는 순위만 따른다
+    const legacy = settings(second([{ provider: "claude-cli", model: "legacy-voter" }], [{ provider: "claude-cli", model: "legacy-fallback" }]));
+    pinReviewRanks({ first: [MLX], second: [[{ provider: "abcllm", model: "[supa] Qwen3.8-27B-NVFP4" }, { provider: "abcllm", model: "qwen3-coder:30b" }]] });
+    expect(pick(resolveModelSlots(legacy, {}), "second")).toEqual([
+      { key: "second-voter-1", label: "투표 1", code: "ai-task:second-review", provider: "abcllm", model: "[supa] Qwen3.8-27B-NVFP4", source: "ranks" },
+      { key: "second-fallback-1", label: "예비 1", code: "ai-task:second-review", provider: "abcllm", model: "qwen3-coder:30b", source: "ranks" },
     ]);
-    const three = resolveModelSlots(settings(second([
-      { provider: "abcllm", model: "[supa] Qwen3.8-27B-NVFP4" }, { provider: "grok-cli", model: "grok-4.7" }, { provider: "claude-cli", model: "opus" },
-    ], [{ provider: "abcllm", model: "qwen3-coder:30b" }, { provider: "claude-cli", model: "sonnet" }])), {});
-    expect(pick(three, "second").map((slot) => [slot.label, slot.provider, slot.model])).toEqual([
+    pinReviewRanks({ first: [MLX], second: [
+      [{ provider: "abcllm", model: "[supa] Qwen3.8-27B-NVFP4" }, { provider: "abcllm", model: "qwen3-coder:30b" }, { provider: "claude-cli", model: "sonnet" }],
+      [{ provider: "grok-cli", model: "grok-4.7" }], [{ provider: "claude-cli", model: "opus" }]] });
+    expect(pick(resolveModelSlots(legacy, {}), "second").map((slot) => [slot.label, slot.provider, slot.model])).toEqual([
       ["투표 1", "abcllm", "[supa] Qwen3.8-27B-NVFP4"], ["투표 2", "grok-cli", "grok-4.7"], ["투표 3", "claude-cli", "opus"],
       ["예비 1", "abcllm", "qwen3-coder:30b"], ["예비 2", "claude-cli", "sonnet"],
     ]);
     // 1차와 같은 모델도 자리로는 남긴다 — 그 후보에 표를 낼지는 2차 심사가 후보마다 정한다
-    const echo = resolveModelSlots(settings(second([{ provider: "abcllm", model: "gpt-oss-120b" }])), {});
-    expect(pick(echo, "second").map((slot) => slot.model)).toEqual(["gpt-oss-120b"]);
+    pinReviewRanks({ first: [MLX], second: [[{ provider: "abcllm", model: "gpt-oss-120b" }]] });
+    expect(pick(resolveModelSlots(settings(), {}), "second").map((slot) => slot.model)).toEqual(["gpt-oss-120b"]);
+    // 순위가 없으면 2차 자리는 없다 — 옛 설정의 투표자로 채우지 않는다
+    pinReviewRanks({ first: [MLX] });
+    expect(pick(resolveModelSlots(legacy, {}), "second")).toEqual([]);
   });
 
-  it("1차는 설정 → 없음 — CRAWL_REVIEW_MODEL 은 읽지 않는다. agent-review 의 firstReviewer 와 같고, 새 감사도 그 심사자를 쓴다", () => {
+  it("1차는 순위 → 없음 — 옛 설정·CRAWL_REVIEW_MODEL 은 읽지 않는다; 발행분 감사는 아직 옛 설정 firstReview(agent-review firstReviewer, PR C2)", () => {
     const withFirst = settings();
+    pinReviewRanks({ first: [{ provider: "abcllm", model: "[supa] Qwen3.8-27B-NVFP4" }, { provider: "claude-cli", model: "sonnet" }] });
     expect(pick(resolveModelSlots(withFirst, {}), "first")).toEqual([
-      { key: "first", label: "주", code: "firstReview", provider: "abcllm", model: "[MLX] gpt-oss-120b", source: "settings" }]);
+      { key: "first", label: "주", code: "ai-task:first-review#1", provider: "abcllm", model: "[supa] Qwen3.8-27B-NVFP4", source: "ranks" },
+      { key: "first-additional-1", label: "2순위", code: "ai-task:first-review#2", provider: "claude-cli", model: "sonnet", source: "ranks" }]);
+    expect(pick(resolveModelSlots(withFirst, {}), "audit")).toEqual([
+      { key: "audit", label: "발행분 감사", code: "firstReview", provider: "abcllm", model: "[MLX] gpt-oss-120b", source: "settings" }]);
+    pinReviewRanks({});
     const withoutFirst = { ...withFirst, firstReview: undefined } as CrawlSettings;
     for (const value of ["sonnet", " opus ", "bad model!", undefined]) {
       if (value === undefined) vi.stubEnv("CRAWL_REVIEW_MODEL", undefined); else vi.stubEnv("CRAWL_REVIEW_MODEL", value);
-      const [slot] = pick(resolveModelSlots(withoutFirst, process.env), "first");
+      // 옛 설정에 1차 심사자가 있어도 순위가 없으면 자리는 비어 있다
+      for (const current of [withFirst, withoutFirst]) {
+        const [slot] = pick(resolveModelSlots(current, process.env), "first");
+        expect(slot, String(value)).toEqual({ key: "first", label: "주", code: "ai-task:first-review#1", provider: null, model: null, source: "unset" });
+      }
       expect(firstReviewer(withoutFirst), String(value)).toBeNull();
-      expect(slot, String(value)).toEqual({ key: "first", label: "주", code: "firstReview", provider: null, model: null, source: "unset" });
       expect(pick(resolveModelSlots(withoutFirst, process.env), "audit").map(({ provider, model }) => ({ provider, model })))
         .toEqual([{ provider: null, model: null }]);
     }
   });
 
-  /** 환경변수 모델 — 각 잡 모듈은 import 할 때 환경변수를 읽는다. 같은 환경에서 모듈을 다시 읽어 레지스트리와 견준다 */
+  /**
+   * 환경변수 모델 — 각 잡 모듈은 import 할 때 환경변수를 읽는다. 같은 환경에서 모듈을 다시 읽어 레지스트리와 견준다.
+   * text 여섯 자리(소개 짓기·키워드 짓기·검수·제품 번역·사유 번역·한국어 소개)는 「작업 ↔ 모델」 순위로 옮겨 여기 없다(PR B, 아래 TASK_MODEL_SLOTS).
+   */
   const MODULE_CONSTANTS: Record<string, () => Promise<string>> = {
-    tagline: async () => (await import("@/lib/crawl/tagline")).TAGLINE_MODEL,
-    keywords: async () => (await import("@/lib/domain/products/search-profile")).PROFILE_MODEL,
-    "keyword-verify": async () => (await import("@/lib/domain/products/search-verify")).VERIFY_MODEL,
     embedding: async () => (await import("@/lib/domain/products/embedding")).EMBEDDING_MODEL,
-    "product-translate": async () => (await import("@/lib/crawl/translate")).PRODUCT_TRANSLATE_MODEL,
-    "reason-translate": async () => (await import("@/lib/crawl/translate")).TRANSLATE_MODEL,
-    "tagline-ko": async () => (await import("@/lib/crawl/translate")).KOREAN_TAGLINE_MODEL,
     "intro-check": async () => (await import("@/lib/domain/products/intro-check")).INTRO_CHECK_MODEL,
   };
 
-  /** env 가 없는 자리(소개 짓기·제품 번역)는 등록부·단계 풀이 고른다 — 예전 환경변수 이름은 읽지 않는다(2026-10-31) */
-  const REGISTRY_CODES: Record<string, string> = { tagline: "registry:crawl-tagline", "product-translate": "registry:product-translate" };
-  const REMOVED_ENV = ["ABCLLM_TAGLINE_MODEL", "PRODUCT_TRANSLATION_MODEL"];
+  /** env 가 없는 자리는 등록부·단계 풀이 고른다(code `registry:<용도>`) — 지금은 벡터 말고는 없다 */
+  const REGISTRY_CODES: Record<string, string> = {};
+  /** 지운 이름(2026-10-31)과 순위로 옮긴 text 자리의 옛 이름(PR B) — 값이 있어도 어느 자리도 바꾸지 않는다 */
+  const REMOVED_ENV = ["ABCLLM_TAGLINE_MODEL", "PRODUCT_TRANSLATION_MODEL", "ABCLLM_PROFILE_MODEL", "SEARCH_VERIFY_MODEL", "ABCLLM_MODEL"];
 
   it("환경변수 모델 자리는 잡 모듈 상수와 같은 환경변수·기본값을 읽는다", async () => {
     expect(ENV_MODEL_SLOTS.map((slot) => slot.key).sort()).toEqual(Object.keys(MODULE_CONSTANTS).sort());
-    expect(ENV_MODEL_SLOTS.filter((slot) => !slot.env && slot.key !== "embedding").map((slot) => slot.key).sort()).toEqual(Object.keys(REGISTRY_CODES).sort());
+    const slots: readonly { key: string; env: string | null }[] = ENV_MODEL_SLOTS;
+    expect(slots.filter((slot) => !slot.env && slot.key !== "embedding").map((slot) => slot.key).sort()).toEqual(Object.keys(REGISTRY_CODES).sort());
     for (const name of new Set(ENV_MODEL_SLOTS.flatMap((slot) => slot.env ? [slot.env] : []))) vi.stubEnv(name, undefined);
     vi.resetModules();
     const defaults = resolveModelSlots(settings(), process.env);
@@ -180,8 +195,32 @@ describe("모델 자리 — 설정만으로 정해진다", () => {
     }
   });
 
+  it("text 자리는 「작업 ↔ 모델」 1순위를 보인다 — 순위가 없으면 비어 있고, 옛 환경변수는 읽지 않는다(PR B)", () => {
+    expect(TASK_MODEL_SLOTS.map((slot) => [slot.key, slot.task])).toEqual([["tagline", "crawl-tagline"], ["keywords", "product-search-profile"],
+      ["keyword-verify", "product-search-verify"], ["product-translate", "product-translate"], ["reason-translate", "reason-translate"], ["tagline-ko", "product-tagline-ko"]]);
+    const text = (slots: ReturnType<typeof resolveModelSlots>) => TASK_MODEL_SLOTS.map((task) => {
+      const { key, code, provider, model, source } = slots.find((slot) => slot.key === task.key)!;
+      return { key, code, provider, model, source };
+    });
+    // 순위가 없으면 코드 기본값·환경변수로 채우지 않는다
+    for (const name of REMOVED_ENV) vi.stubEnv(name, `env:${name}`);
+    expect(text(resolveModelSlots(settings(), process.env))).toEqual(TASK_MODEL_SLOTS.map((slot) =>
+      ({ key: slot.key, code: `ai-task:${slot.task}`, provider: null, model: null, source: "unset" })));
+    // 1순위의 모델이 자리의 모델이다(2·3순위·다른 칸·다른 작업은 보지 않는다)
+    pinTextRanks([textRankRow("crawl-tagline", "tagline-second", { rank: 2 }), textRankRow("crawl-tagline", "tagline-first"),
+      textRankRow("product-search-profile", "profile-first"), textRankRow("product-search-verify", "verify-first"),
+      textRankRow("product-translate", "translate-first"), textRankRow("reason-translate", "reason-first"),
+      textRankRow("product-tagline-ko", "ko-first"), textRankRow("product-tagline-ko", "ko-slot-2", { slot: 2 }), textRankRow("search-query-translate", "query-first")]);
+    const ranked = resolveModelSlots(settings(), process.env);
+    expect(text(ranked).map(({ key, provider, model, source }) => [key, provider, model, source])).toEqual([
+      ["tagline", "abcllm", "tagline-first", "ranks"], ["keywords", "abcllm", "profile-first", "ranks"], ["keyword-verify", "abcllm", "verify-first", "ranks"],
+      ["product-translate", "abcllm", "translate-first", "ranks"], ["reason-translate", "abcllm", "reason-first", "ranks"], ["tagline-ko", "abcllm", "ko-first", "ranks"]]);
+    expect(ranked.some((slot) => slot.model?.startsWith("env:"))).toBe(false);
+  });
+
   it("호출마다 남는 기록이 없는 텍스트·벡터 자리만 근사다 — 1차·2차·감사(호출 기록)와 키워드 짓기(지금 카드 판정)는 아니다", () => {
-    const slots = resolveModelSlots(settings(second([{ provider: "abcllm", model: "a" }], [{ provider: "abcllm", model: "b" }])), {});
+    pinReviewRanks({ first: [MLX], second: [[{ provider: "abcllm", model: "a" }, { provider: "abcllm", model: "b" }]] });
+    const slots = resolveModelSlots(settings(), {});
     expect(slots.filter((slot) => slot.approximated).map((slot) => slot.key))
       .toEqual(["tagline", "keyword-verify", "embedding", "product-translate", "reason-translate", "intro-check", "tagline-ko"]);
     expect(slots.filter((slot) => !slot.approximated).map((slot) => slot.key))
@@ -189,7 +228,9 @@ describe("모델 자리 — 설정만으로 정해진다", () => {
   });
 
   it("자리 열쇠는 겹치지 않고, 자리의 단계는 표에 있으며, 흐름 차례로 나온다", () => {
-    const slots = resolveModelSlots(settings(second([{ provider: "abcllm", model: "a" }, { provider: "abcllm", model: "b" }], [{ provider: "abcllm", model: "c" }])), {});
+    pinReviewRanks({ first: [MLX, { provider: "claude-cli", model: "sonnet" }], second: [[{ provider: "abcllm", model: "a" }, { provider: "abcllm", model: "c" }],
+      [{ provider: "abcllm", model: "b" }]] });
+    const slots = resolveModelSlots(settings(), {});
     expect(new Set(slots.map((slot) => slot.key)).size).toBe(slots.length);
     const order = PIPELINE_STAGES.map((row) => row.key);
     const stages = slots.map((slot) => order.indexOf(slot.stage));

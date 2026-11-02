@@ -5,6 +5,8 @@ import { storedSettingsVersion } from "@/lib/operations/runtime-settings-schema"
 import { publishRuntimeSettingsSnapshot, runtimeSettings, runtimeSettingsSnapshotFromStored, setRuntimeSettingsLoader,
   type RuntimeSettingsSnapshot } from "@/lib/operations/runtime-settings-store";
 import { overlaidModelDefinitions, setModelRegistryOverlay, setModelRoutePolicyOverlay } from "./model-registry";
+import { activeTextTaskRank } from "./ai-task-rank-scope";
+import { aiTaskModelRows, type AiTaskConnectionSnapshot } from "./ai-task-models-snapshot";
 // The assignment-table default reader (PR 3b-B) installs itself next to the registry overlays; it reads nothing unless the runtime_settings
 // toggle assignments.tableReads is on (or MODEL_ASSIGNMENT_TABLE=1 forces it — PR 3b-E, lib/llm/assignment-flag.ts).
 import "./stage-assignment-snapshot";
@@ -190,7 +192,42 @@ const contractProvider = (contract: unknown): string | null =>
  * (korean-translation-config, env switch) is outside this gate until the route→engine assignment table (PR 3b-B/3b-D) absorbs it.
  */
 export function textRouteAccess(routeId: string, model: string, provider?: string): TextRouteAccess {
-  return servingContractRowAccess(servingContractSnapshot().rows.find(entry => entry.routeId === routeId && entry.model === model), provider);
+  const row = servingContractSnapshot().rows.find(entry => entry.routeId === routeId && entry.model === model);
+  const access = servingContractRowAccess(row, provider);
+  // 「작업 ↔ 모델」 순위로 부르는 중이면(PR B) 보내는 키는 그 연결(ai_connections)의 키다 — 계약 행의 키가 아니다. 계약이 닫힌 까닭(계약 없음·
+  // 게이트웨이 인증)은 그대로 막는다. 계약 행의 키가 열리지 않는 것은 상관없다(연결의 키를 보낸다).
+  const rank = activeTextTaskRank(routeId);
+  if (rank && rank.identity === model) {
+    if (access.block && access.block !== "stored_key_unreadable") return access;
+    return { block: null, bearer: rank.bearer };
+  }
+  // 심사 두 경로(PR C1): 계약이 가리키는 엔진 주소의 연결이 그 작업의 순위에 있으면 그 연결의 키를 보낸다(순위 범위 없이 — 1차·2차의 모든 길이 같은 키를 쓴다)
+  const connection = reviewRankConnection(routeId, row);
+  if (!connection) return access;
+  if (access.block && access.block !== "stored_key_unreadable") return access;
+  return connection.keyUnreadable ? { block: "stored_key_unreadable" } : { block: null, bearer: connection.apiKey };
+}
+
+/** 심사 경로 → 그 경로를 쓰는 「작업 ↔ 모델」 작업(lib/llm/ai-tasks.ts). */
+const REVIEW_ROUTE_TASKS: Readonly<Record<string, string>> = Object.freeze({ "crawl-agent-review": "first-review", "second-review": "second-review" });
+/**
+ * 심사 계약 행이 가리키는 연결(PR C1): 그 작업의 켜진 순위 중 연결 주소 = 계약 끝점의 `origin/v1`, 순위 모델 = 계약의 엔진 모델(engineModel 또는 model)인 API 연결.
+ * 연결 주소는 하나뿐이라(ai_connections_base_url_idx) 많아야 연결 하나다. 순위 스냅숏을 읽지 못한 프로세스(replay·DB 없음)는 null — 계약 행의 규칙 그대로다.
+ */
+function reviewRankConnection(routeId: string, row: StoredServingContract | undefined): AiTaskConnectionSnapshot | null {
+  const task = REVIEW_ROUTE_TASKS[routeId];
+  if (!task || !row || !row.contract || typeof row.contract !== "object") return null;
+  const contract = row.contract as Record<string, unknown>;
+  const field = (name: string) => typeof contract[name] === "string" && contract[name] ? contract[name] as string : null;
+  let base: string | null = null;
+  try {
+    const url = new URL(field("endpoint") ?? "");
+    base = url.pathname === "/v1/chat/completions" ? `${url.origin}/v1` : null;
+  } catch { base = null; }
+  if (!base) return null;
+  const wire = field("provider") === "local-direct" ? field("model") : field("engineModel") ?? field("model");
+  return aiTaskModelRows().find(rank => rank.task === task && rank.enabled && rank.connection.enabled && rank.connection.kind === "api"
+    && rank.connection.baseUrl === base && rank.model === wire)?.connection ?? null;
 }
 /**
  * textRouteAccess for one already-found row (or none) — the same rule without the snapshot lookup. The admin models page's automatic

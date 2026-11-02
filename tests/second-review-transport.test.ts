@@ -19,10 +19,11 @@ vi.mock("@/lib/crawl/agent-review-grok", async original => ({
 }));
 vi.mock("@/lib/crawl/review-fixture-transport", () => ({ dispatchReviewFixtureCall: adapters.fixture }));
 
+// CLI 는 PATH 의 도구 이름으로 띄운다(PR C1 — env 경로 CLAUDE_CLI·GROK_CLI 를 읽지 않는다) — 어댑터가 받는 명령이다. 게이트웨이는 명령이 없다
 const routes = [
-  { provider: "abcllm", adapter: "gateway", model: "[MLX] second model", timeout: 60_000 },
-  { provider: "grok-cli", adapter: "grok", model: "grok-4.7", timeout: 90_000 },
-  { provider: "claude-cli", adapter: "cli", model: "opus", timeout: 20_000 },
+  { provider: "abcllm", adapter: "gateway", model: "[MLX] second model", timeout: 60_000, command: null },
+  { provider: "grok-cli", adapter: "grok", model: "grok-4.7", timeout: 90_000, command: "grok" },
+  { provider: "claude-cli", adapter: "cli", model: "opus", timeout: 20_000, command: "claude" },
 ] as const;
 const answer: AgentReviewResult = { ok: true, outcome: { decision: "approve", confidence: .96,
   reason: "The captured page introduces a task tracker.", evidenceIds: ["product"] },
@@ -75,11 +76,13 @@ it("returns a structured fixture failure without retrying a live adapter", async
   noLiveCall();
 });
 
-it.each(routes)("routes undefined fixture output only to the actual $provider and preserves input/options", async ({ provider, model, adapter }) => {
+it.each(routes)("routes undefined fixture output only to the actual $provider and preserves input/options", async ({ provider, model, adapter, command }) => {
   const request = binding(provider, model), value = input(), signal = new AbortController().signal;
+  vi.stubEnv("CLAUDE_CLI", "/nonexistent/claude"); vi.stubEnv("GROK_CLI", "/nonexistent/grok");
   // Caller-selected time is passed unchanged; the original adapter owns its cap.
   expect(await dispatchSecondReviewTransport(request, value, { timeoutMs: 1_234, signal })).toBe(answer);
-  expect(adapters[adapter]).toHaveBeenCalledExactlyOnceWith(value, { model, timeoutMs: 1_234, signal });
+  vi.unstubAllEnvs();
+  expect(adapters[adapter]).toHaveBeenCalledExactlyOnceWith(value, { model, timeoutMs: 1_234, signal, ...(command ? { command } : {}) });
   expect(adapters[adapter].mock.calls[0][0]).toBe(value);
   for (const other of routes.filter(route => route.adapter !== adapter)) expect(adapters[other.adapter]).not.toHaveBeenCalled();
   expect(adapters.fixture).toHaveBeenCalledExactlyOnceWith(request, value, { timeoutMs: 1_234, signal });

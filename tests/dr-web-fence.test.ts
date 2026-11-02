@@ -378,7 +378,9 @@ it("every admin server action and every write route handler goes through the web
   // 셋이 함께 들어와 92 — closeUnknownReview(0151) + saveRuntimeSettingsGroup(0152) + saveCapacityDevice(0153)
   // admin/models/helpers(도우미 장비, PR 2a 0154): 배정 저장·모드 바꾸기·자동 정지 해제·감시자 스위치·감시자 순환 설정 다섯이 더해져 97
   // admin/models/assignments(모델 배정, PR 3b-D): 배정 저장·끄기·가져오기 적용 셋이 더해져 100
-  expect(wrapped).toBe(100);
+  // admin/models/tasks(작업 ↔ AI 모델, 0162 PR A): 연결 저장·모델 다시 읽기·연결 지우기·순위 저장·가져오기 적용 다섯이 더해져 105
+  // PR C1: 운영센터 「2차 표 바로 바꾸기」(switchSecondVoter)를 없애 104 — 2차 투표자는 작업 ↔ 모델에서만 바꾼다
+  expect(wrapped).toBe(104);
   const routes = files.filter(file => file.endsWith(`${path.sep}route.ts`));
   for (const file of routes) {
     const source = readFileSync(file, "utf8");

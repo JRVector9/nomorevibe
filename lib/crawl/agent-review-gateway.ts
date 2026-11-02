@@ -193,7 +193,9 @@ function directBudgetResult(contract: { protocol: string; requestTokenBound?: nu
 
 /** text 7경로의 계약 — abcLLM 총량 상한(raw) 모양 또는 공통 direct-openai-chat-v1 모양(PR 3b-E). 직접 계약만 tokenizer·요청 상한 칸이 있다. */
 type TextRouteContract = Readonly<{ routeId: string; provider: string; protocol: string; model: string; endpoint: string; totalTokenBound: number;
-  tokenizerEndpoint?: string; requestTokenBound?: typeof DIRECT_REQUEST_TOKEN_BOUND; maxOutputTokens?: number; strictTerminalOptIn?: string }>;
+  tokenizerEndpoint?: string; requestTokenBound?: typeof DIRECT_REQUEST_TOKEN_BOUND; maxOutputTokens?: number; strictTerminalOptIn?: string;
+  /** abcllm 형 계약의 엔진 모델 이름(PR B — model 이 연결로 가른 장부 이름일 때만 있다) */
+  engineModel?: string }>;
 /**
  * text 7경로의 엔진 직접(local-direct) wire(PR 3b-E) — 그 경로의 게이트웨이 wire 에서 게이트웨이 전용 칸(context_strategy·reasoning_effort)만 빼고
  * 계약의 엔진 모델 이름(라벨 없음)을 넣는다. max_tokens 는 경로의 출력 상한과 계약 maxOutputTokens 중 작은 쪽, thinking 은 AI1·AI2 직접 wire 와
@@ -210,10 +212,13 @@ export function directTextWire(contract: { model: string; maxOutputTokens: numbe
   body.chat_template_kwargs = { enable_thinking: false };
   return JSON.stringify(body);
 }
-/** 계약에 맞는 wire: local-direct 직접 계약이면 엔진 이름의 직접 wire, abcllm(게이트웨이·직접 연결)이면 그 경로의 게이트웨이 wire 를 선택 이름으로 그대로. */
+/**
+ * 계약에 맞는 wire: local-direct 직접 계약이면 엔진 이름의 직접 wire, abcllm(게이트웨이·직접 연결)이면 그 경로의 게이트웨이 wire 를 선택 이름으로 그대로.
+ * abcllm 형 계약에 engineModel 이 있으면(같은 모델을 다른 연결에도 둔 순위, PR B) 선택 이름(연결로 가른 장부 이름) 대신 그 엔진 이름을 보낸다.
+ */
 function textWireFor(contract: TextRouteContract, selection: string, build: (model: string) => string): string {
   return contract.provider === "local-direct" && contract.maxOutputTokens !== undefined
-    ? directTextWire({ model: contract.model, maxOutputTokens: contract.maxOutputTokens }, build(contract.model)) : build(selection);
+    ? directTextWire({ model: contract.model, maxOutputTokens: contract.maxOutputTokens }, build(contract.model)) : build(contract.engineModel ?? selection);
 }
 const wireMaxTokens = (wire: string): number | undefined => {
   const value = (JSON.parse(wire) as { max_tokens?: unknown }).max_tokens;
@@ -393,7 +398,8 @@ export function prepareAi1GatewayCall(input: ReviewInput, options: { model: stri
   if (contract.provider !== "abcllm" || contractBearer(contract) === undefined) return unsupported;
   const serialized = JSON.stringify(snapshot.snapshot);
   if (contract.model !== model || Buffer.byteLength(serialized, "utf8") > MAX_REVIEW_INPUT_BYTES) return unsupported;
-  const wire = gatewayWire(model, serialized);
+  // 같은 모델을 다른 연결에도 둔 순위(PR C1): model 은 연결로 가른 장부 이름이고 엔진에는 계약의 engineModel 이 나간다
+  const wire = gatewayWire(contract.provider === "abcllm" && "engineModel" in contract && contract.engineModel ? contract.engineModel : model, serialized);
   const call = Object.freeze({ kind: "prepared" as const, wireHash: sha(wire),
     servingContractHash: ai1GatewayServingContractHash(contract), totalTokenBound: contract.totalTokenBound,
     model, inputHash: snapshot.inputHash });
@@ -544,7 +550,8 @@ export async function prepareAi2GatewayCall(input: ReviewInput, options: {
   if (contractBearer(contract) === undefined) return unsupported;
   const serialized = JSON.stringify(snapshot.snapshot);
   if (contract.provider !== provider || !ai2ServingContractMatches(contract, model) || Buffer.byteLength(serialized, "utf8") > MAX_REVIEW_INPUT_BYTES) return unsupported;
-  let wire = gatewayWire(contract.model, serialized);
+  // 같은 모델을 다른 연결에도 둔 순위(PR C1): 엔진에는 계약의 engineModel 이 나간다(없으면 예전 그대로 model)
+  let wire = gatewayWire(contract.provider === "abcllm" && contract.engineModel ? contract.engineModel : contract.model, serialized);
   if (contract.provider === "local-direct") {
     wire = directReviewWire(contract, serialized);
     if ((await checkAi2TokenBudget(contract, wire, { timeoutMs, signal: options.signal })).kind !== "within_budget") return unsupported;

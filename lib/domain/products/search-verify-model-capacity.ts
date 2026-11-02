@@ -1,5 +1,3 @@
-import { scopedRequestTimeout } from "@/lib/llm/model-registry";
-import { scopedModel } from "@/lib/llm/model-registry";
 import { randomUUID } from "node:crypto";
 import { prepareSearchVerifyGatewayCall, verifyKeywordsWithReservedGateway, readSearchVerifyGatewayTerminal } from "@/lib/crawl/agent-review-gateway";
 import { reconcileGatewayNotStarted, readModelCapacityCallerControl, findOwnPendingModelRequest, requestSearchVerifyModelSlot, cancelReservedModelSlot,
@@ -13,9 +11,10 @@ import { roleLeaseFromEnv, type RoleLease } from "@/lib/jobs/role-leader";
 import type { JobLease } from "@/lib/jobs/control";
 import { profileEvidence } from "./search-profile";
 import { prepareSearchVerifyModelDispatch, sealSearchVerifyWriteExpectation, type ProfileTask, type SearchVerifyWriteExpectation } from "./search-profiles";
-import { VERIFY_MODEL, verifyKeywords, verifyKeywordsInChunks, type VerifyResult } from "./search-verify";
+import { verifyKeywords, verifyKeywordsInChunks, type VerifyResult } from "./search-verify";
 import { textRouteCallable } from "@/lib/llm/serving-contract-store";
 import { searchVerifyServingProvider } from "@/lib/llm/search-verify-serving-contract";
+import { textTaskModel } from "@/lib/llm/ai-task-rank-scope";
 
 /**
  * "expired": the original shared deadline ended while the next permit was unavailable, or a resumed execution ran out.
@@ -30,18 +29,19 @@ export async function verifyKeywordsWithModelCapacity(task: ProfileTask, lease: 
   timeoutMs: number; chunked: boolean; signal?: AbortSignal; request?: typeof fetch; roleLease?: RoleLease;
 }): Promise<SearchVerifyCapacityResult> {
   const snapshot = structuredClone(task), job = structuredClone(lease);
-  const options = { timeoutMs: scopedRequestTimeout("product-search-verify", valueOptions.timeoutMs), chunked: valueOptions.chunked, signal: valueOptions.signal, request: valueOptions.request,
+  const options = { timeoutMs: valueOptions.timeoutMs, chunked: valueOptions.chunked, signal: valueOptions.signal, request: valueOptions.request,
     roleLease: valueOptions.roleLease && structuredClone(valueOptions.roleLease) };
   const item = { evidence: profileEvidence(snapshot.product, snapshot.reviewerNote),
     keywords: [...snapshot.profile!.keywordsEn, ...snapshot.profile!.keywordsKo] };
   const legacy = async () => ({ kind: "result" as const, result: await (options.chunked ? verifyKeywordsInChunks : verifyKeywords)(item,
-    { request: options.request, signal: options.signal, timeoutMs: scopedRequestTimeout("product-search-verify", options.timeoutMs) }) });
-  const provider = searchVerifyServingProvider(scopedModel("product-search-verify", VERIFY_MODEL));
-  if (!textRouteCallable("product-search-verify", scopedModel("product-search-verify", VERIFY_MODEL), provider)) return legacy();
+    { request: options.request, signal: options.signal, timeoutMs: options.timeoutMs }) });
+  const provider = searchVerifyServingProvider(textTaskModel("product-search-verify"));
+  // 순위(PR B)가 계약을 확인하고 범위를 열었다 — 그 사이 계약이 닫혔으면 이 모델만의 일이라 다음 순위로 넘긴다(옛 게이트웨이 길로 떨어지지 않는다)
+  if (!textRouteCallable("product-search-verify", textTaskModel("product-search-verify"), provider)) throw new ModelCapacityDeferredError("provider_contract_unavailable");
   const control = await readModelCapacityCallerControl();
   if (control.mode === "disabled") return legacy();
   if (control.mode !== "open") throw new ModelCapacityDeferredError("draining");
-  if (!control.policy?.routes.some(route => route.routeId === "product-search-verify" && route.provider === provider && route.model === scopedModel("product-search-verify", VERIFY_MODEL)))
+  if (!control.policy?.routes.some(route => route.routeId === "product-search-verify" && route.provider === provider && route.model === textTaskModel("product-search-verify")))
     throw new ModelCapacityDeferredError("unmapped");
   const roleLease = options.roleLease ?? roleLeaseFromEnv("text", process.env);
   if (!roleLease) throw new ModelCapacityDeferredError("owner_unavailable");
@@ -50,7 +50,7 @@ export async function verifyKeywordsWithModelCapacity(task: ProfileTask, lease: 
   const initial = await prepareSearchVerifyModelDispatch(snapshot, job, { roleLease, keywords: item.keywords, mode });
   if (initial.kind === "disabled") return legacy();
   if (initial.kind !== "ready" || !("member" in initial)) return { kind: "skipped" };
-  const { member, role, expectation } = initial, model = scopedModel("product-search-verify", VERIFY_MODEL);
+  const { member, role, expectation } = initial, model = textTaskModel("product-search-verify");
   const continuation = await readSearchVerifyContinuation({ member, model });
   if (continuation.unresolved) throw new ModelCapacityDeferredError("dispatched");
   // A row of this generation has no readable execution: only this product is skipped, the job goes on (no call, attempt or failure).
@@ -59,7 +59,7 @@ export async function verifyKeywordsWithModelCapacity(task: ProfileTask, lease: 
   const latest = continuation.latest && continuation.latest.deadlineAt > continuation.nowMs ? continuation.latest : null;
   const resumed = !!latest, execution = latest ? latest.execution : continuation.nextExecution;
   sealSearchVerifyWriteExpectation(expectation, execution);
-  const deadline = startedAt + Math.max(1, latest ? Math.min(scopedRequestTimeout("product-search-verify", options.timeoutMs), latest.deadlineAt - continuation.nowMs) : scopedRequestTimeout("product-search-verify", options.timeoutMs));
+  const deadline = startedAt + Math.max(1, latest ? Math.min(options.timeoutMs, latest.deadlineAt - continuation.nowMs) : options.timeoutMs);
   let step: SearchVerifyStep | "done" | "stop" = latest ? latest.next : firstSearchVerifyStep(mode);
   let parent: SearchVerifyParent | null = latest ? latest.parent : null;
   const removed = latest ? latest.outcomes.flatMap(({ outcome }) => outcome.ok ? outcome.removed : []) : [];
@@ -73,7 +73,7 @@ export async function verifyKeywordsWithModelCapacity(task: ProfileTask, lease: 
     if (step === "done") return { kind: "result", result: { ok: true, unsupported: [...removed] }, expectation };
     if (step === "stop") return { kind: "result", result: { ok: false, error: "invalid_output" }, expectation };
     const before = stopped(); if (before) return finish(before);
-    const sent = searchVerifyStepKeywords(keywords, step), timeoutMs = Math.max(1, full ? scopedRequestTimeout("product-search-verify", options.timeoutMs) : deadline - Date.now());
+    const sent = searchVerifyStepKeywords(keywords, step), timeoutMs = Math.max(1, full ? options.timeoutMs : deadline - Date.now());
     const call = prepareSearchVerifyGatewayCall({ evidence: item.evidence, keywords: sent }, { model, timeoutMs, provider });
     if (call.kind !== "prepared") throw new ModelCapacityDeferredError(call.reason);
     const input: SearchVerifyInput = { member, model, execution, step, parent };

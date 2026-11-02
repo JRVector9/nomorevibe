@@ -8,7 +8,7 @@ vi.mock('@/lib/llm/capacity-repository', () => ({ readModelCapacityCallerControl
   cancelReservedModelSlot: mocks.cancel, markModelDispatchIndeterminate: mocks.unknown,
   reconcileReasonTranslationGatewayTerminal: mocks.reconcile }));
 vi.mock('@/lib/crawl/translate', async () => { const { createHash } = await import('node:crypto'); return {
-  TRANSLATE_MODEL: 'Reason Model', translateToKorean: mocks.legacy,
+  translateToKorean: mocks.legacy,
   textHash: (value: string) => createHash('sha256').update(value).digest('hex') }; });
 vi.mock('@/lib/crawl/translations', () => ({ prepareReasonTranslationDispatch: mocks.domain, pendingReasonTranslationBatch: mocks.batch }));
 vi.mock('@/lib/crawl/agent-review-gateway', () => ({ prepareReasonTranslationGatewayCall: mocks.prepare,
@@ -16,6 +16,11 @@ vi.mock('@/lib/crawl/agent-review-gateway', () => ({ prepareReasonTranslationGat
 vi.mock('@/lib/jobs/role-leader', () => ({ roleLeaseFromEnv: mocks.role }));
 import { translateReasonsWithModelCapacity } from '@/lib/crawl/reason-translation-model-capacity';
 import { setServingContractSnapshotForTest } from '@/lib/llm/serving-contract-store';
+import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
+import { inTextRank } from './text-task-ranks-fixture';
+// 모델은 「작업 ↔ 모델」 순위가 고른다(PR B) — 잡이 여는 순위 범위(Reason Model) 안에서 부른다
+const translate = (...args: Parameters<typeof translateReasonsWithModelCapacity>) =>
+  inTextRank('reason-translate', 'Reason Model', () => translateReasonsWithModelCapacity(...args));
 const body = 'This original reason describes a deployed useful task tracker.';
 const hash = createHash('sha256').update(body).digest('hex');
 const batch = () => [{ hash, body, attempts: 0 }];
@@ -44,33 +49,35 @@ beforeEach(() => {
 });
 afterEach(() => { setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); });
 it('ignores a process gateway key: without a direct contract it never reads capacity, prepares or reserves', async () => {
+  // PR B: 순위 범위 안에서 계약이 닫혔으면 옛 길(legacy)로 떨어지지 않고 이 모델만의 미룸으로 던진다 — 잡이 같은 묶음을 다음 순위로 넘긴다
   setServingContractSnapshotForTest([]); vi.stubEnv('ABCLLM_API_KEY', 'ignored-gateway-key');
-  expect(await translateReasonsWithModelCapacity(batch(), lease, options()))
-    .toEqual({ kind: 'disabled', result: { ok: true, translations: ['기존 번역'] } });
+  const error = await translate(batch(), lease, options()).catch((value: unknown) => value);
+  expect(error).toBeInstanceOf(ModelCapacityDeferredError); expect(error).toMatchObject({ reason: 'provider_contract_unavailable' });
+  expect(mocks.legacy).not.toHaveBeenCalled();
   expect(mocks.control).not.toHaveBeenCalled(); expect(mocks.prepare).not.toHaveBeenCalled();
   expect(mocks.request).not.toHaveBeenCalled(); expect(mocks.native).not.toHaveBeenCalled();
 });
 it('preserves disabled transport and the original ordered timeout/signal arguments', async () => {
   mocks.control.mockResolvedValue({ mode: 'disabled' });
   const controller = new AbortController();
-  expect(await translateReasonsWithModelCapacity(batch(), lease, { ...options(), signal: controller.signal }))
+  expect(await translate(batch(), lease, { ...options(), signal: controller.signal }))
     .toEqual({ kind: 'disabled', result: { ok: true, translations: ['기존 번역'] } });
   expect(mocks.legacy).toHaveBeenCalledExactlyOnceWith([body], 45000, undefined, controller.signal);
   expect(mocks.prepare).not.toHaveBeenCalled(); expect(mocks.request).not.toHaveBeenCalled();
 });
 it('fails closed before a request or native call when the serving contract is unsupported', async () => {
   mocks.prepare.mockReturnValue({ kind: 'unsupported' });
-  await expect(translateReasonsWithModelCapacity(batch(), lease, options())).rejects.toMatchObject({ reason: 'provider_contract_unavailable' });
+  await expect(translate(batch(), lease, options())).rejects.toMatchObject({ reason: 'provider_contract_unavailable' });
   expect(mocks.request).not.toHaveBeenCalled(); expect(mocks.native).not.toHaveBeenCalled();
 });
 it('preserves draining as typed defer without consuming an attempt', async () => {
   mocks.control.mockResolvedValue({ mode: 'draining' });
-  await expect(translateReasonsWithModelCapacity(batch(), lease, options())).rejects.toMatchObject({ reason: 'draining' });
+  await expect(translate(batch(), lease, options())).rejects.toMatchObject({ reason: 'draining' });
   expect(mocks.domain).not.toHaveBeenCalled(); expect(mocks.legacy).not.toHaveBeenCalled();
 });
 it('resumes the exact pending ID and sends only the committed domain dispatch', async () => {
   mocks.pending.mockResolvedValue({ requestId: reservation.requestId, state: 'waiting' });
-  const response = await translateReasonsWithModelCapacity(batch(), lease, options());
+  const response = await translate(batch(), lease, options());
   expect(response).toMatchObject({ kind: 'ready', expectation, result: { ok: true } });
   expect(mocks.request).toHaveBeenCalledWith(expect.objectContaining({ requestId: reservation.requestId,
     owner: reservation.owner, class: 'background', pool: 'text', workKey: expect.stringMatching(/^text:reason:ko:[a-f0-9]{64}:[a-f0-9]{64}$/) }), members);
@@ -79,37 +86,37 @@ it('resumes the exact pending ID and sends only the committed domain dispatch', 
 });
 it('retains waiting and opens no native call when the slot is not granted', async () => {
   mocks.request.mockResolvedValue({ kind: 'deferred', reason: 'capacity' });
-  await expect(translateReasonsWithModelCapacity(batch(), lease, options())).rejects.toMatchObject({ reason: 'capacity' });
+  await expect(translate(batch(), lease, options())).rejects.toMatchObject({ reason: 'capacity' });
   expect(mocks.native).not.toHaveBeenCalled(); expect(mocks.cancel).not.toHaveBeenCalled();
 });
 it('refuses to re-dispatch an existing in-flight same-work request, but re-admits one whose call went indeterminate (2026-10-30)', async () => {
   mocks.pending.mockResolvedValue({ requestId: reservation.requestId, state: 'dispatched' });
-  await expect(translateReasonsWithModelCapacity(batch(), lease, options())).rejects.toMatchObject({ reason: 'dispatched' });
+  await expect(translate(batch(), lease, options())).rejects.toMatchObject({ reason: 'dispatched' });
   expect(mocks.request).not.toHaveBeenCalled(); expect(mocks.native).not.toHaveBeenCalled();
   // 조정기 readback 은 미확인 행을 돌려주지 않는다(null) → 새 requestId 로 다시 접수한다.
   mocks.pending.mockResolvedValue(null);
-  expect(await translateReasonsWithModelCapacity(batch(), lease, options())).toMatchObject({ kind: 'ready' });
+  expect(await translate(batch(), lease, options())).toMatchObject({ kind: 'ready' });
   expect(mocks.request).toHaveBeenCalledOnce(); expect(mocks.request.mock.calls[0][0].requestId).not.toBe(reservation.requestId);
 });
 it('cancels only the original reservation when the locked cache changed', async () => {
   mocks.domain.mockResolvedValueOnce({ kind: 'ready', members, role }).mockResolvedValueOnce({ kind: 'skipped' });
-  expect(await translateReasonsWithModelCapacity(batch(), lease, options())).toEqual({ kind: 'skipped' });
+  expect(await translate(batch(), lease, options())).toEqual({ kind: 'skipped' });
   expect(mocks.cancel).toHaveBeenCalledExactlyOnceWith(reservation); expect(mocks.native).not.toHaveBeenCalled();
 });
 it('settles the issued terminal even when native completion aborts the business signal', async () => {
   const controller = new AbortController(), terminal = Object.freeze({ native: 'opaque' });
   mocks.native.mockImplementation(async () => { controller.abort(); return { result: { ok: true, translations: ['번역'] }, terminal }; });
-  expect(await translateReasonsWithModelCapacity(batch(), lease, { ...options(), signal: controller.signal })).toMatchObject({ kind: 'ready', unknown: false });
+  expect(await translate(batch(), lease, { ...options(), signal: controller.signal })).toMatchObject({ kind: 'ready', unknown: false });
   expect(mocks.reconcile).toHaveBeenCalledExactlyOnceWith(terminal); expect(mocks.unknown).not.toHaveBeenCalled();
 });
 it('preserves full-charge unknown independently of a local failure result', async () => {
   const result = { ok: false, error: 'timeout' }; mocks.native.mockResolvedValue({ result, terminal: null });
-  expect(await translateReasonsWithModelCapacity(batch(), lease, options())).toMatchObject({ kind: 'ready', result, unknown: true });
+  expect(await translate(batch(), lease, options())).toMatchObject({ kind: 'ready', result, unknown: true });
   expect(mocks.unknown).toHaveBeenCalledExactlyOnceWith(dispatch, 'client_timeout');
 });
 it('preserves returned failure and settlement error identities together', async () => {
   const result = { ok: false, error: 'invalid_output' }, cleanup = new Error('settlement failed');
   mocks.native.mockResolvedValue({ result, terminal: {} }); mocks.reconcile.mockRejectedValue(cleanup);
-  const error = await translateReasonsWithModelCapacity(batch(), lease, options()).catch(value => value);
+  const error = await translate(batch(), lease, options()).catch(value => value);
   expect(error).toBeInstanceOf(AggregateError); expect(error.errors[0]).toBe(result); expect(error.errors[1]).toBe(cleanup);
 });

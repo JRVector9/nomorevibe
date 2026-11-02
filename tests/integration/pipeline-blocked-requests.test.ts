@@ -219,12 +219,13 @@ function registerBlockedStageTests<C>(stage: "fetch" | "ai1", name: string,
     expect(await db.select().from(jobs).where(inArray(jobs.name, downstream))).toEqual(beforeRequests);
   });
 
-  it(`${stage} normal empty queue keeps its existing ACK and cursor-reset behavior`, async () => {
+  // PR C1: 1차는 늘 순위(쪽 커서) 고르기다 — 빈 대기열의 done 도 쪽 커서와 상관없는 저장 칸을 지우지 않고 그대로 넘긴다(예전 풀 모드와 같다). fetch 는 예전처럼 지운다
+  it(`${stage} normal empty queue keeps its existing ACK and cursor ${stage === "ai1" ? "carry-over" : "reset"} behavior`, async () => {
     const before = await requestedJob(name);
     expect(await runJob(name, handler, { requestedOnly: true })).toMatchObject({ status: "completed", done: true });
     expect(await db.select().from(jobs).where(eq(jobs.name, name)))
       .toMatchObject([{ requestedVersion: before.requestedVersion, processedVersion: before.requestedVersion,
-        cursor: null, leaseToken: null, lockedAt: null, lastError: null }]);
+        cursor: stage === "ai1" ? before.cursor : null, leaseToken: null, lockedAt: null, lastError: null }]);
     for (const mock of Object.values(transport)) expect(mock).not.toHaveBeenCalled();
   });
 
@@ -325,7 +326,10 @@ it("preserves the request when AI1 stage closure during README blocks the actual
   expect(await runJob("crawl-agent-review", reviewCrawlCandidates, { requestedOnly: true }))
     .toMatchObject({ status: "deferred", reason: "stage_blocked" });
   const [after] = await db.select().from(jobs).where(eq(jobs.name, before.name));
-  expect(preservedRequest(after)).toEqual(preservedRequest(before));
+  // PR C1: 1차는 늘 쪽 커서로 고른다 — 살펴본 후보까지 쪽 위치(firstReviewPoolScan)만 나아가고, 요청·일정·성공 기록과 커서의 다른 칸은 그대로다
+  const { firstReviewPoolScan, ...cursor } = (after.cursor ?? {}) as Record<string, unknown>;
+  expect(preservedRequest({ ...after, cursor })).toEqual(preservedRequest(before));
+  expect(firstReviewPoolScan).toMatchObject({ id: source.candidate!.id, reviewed: false });
   expect(after.lastError).toBeNull();
   expect(transport.readme).toHaveBeenCalledOnce();
   for (const mock of [transport.cli, transport.gateway, transport.grok]) expect(mock).not.toHaveBeenCalled();

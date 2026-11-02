@@ -19,7 +19,8 @@ it("registers 0160 immediately before 0161 and right after 0158, with a strictly
   expect(journal.entries[index]).toMatchObject({ idx: 160, when: 1794086401071, tag, breakpoints: true, version: "7" });
   expect(journal.entries[index - 1]).toMatchObject({ idx: 158, when: 1794086401069, tag: "0158_release_branch_kinds" });
   expect(journal.entries[index + 1]).toMatchObject({ idx: 161, when: 1794086401072, tag: "0161_text_local_direct_binding", breakpoints: true, version: "7" });
-  expect(journal.entries.at(-1)?.tag).toBe("0161_text_local_direct_binding");
+  // 0161 뒤에는 그 뒤 번호만 붙는다(0162 작업 ↔ 모델 순위, 2026-11-02)
+  expect(journal.entries.slice(index + 2).every(entry => entry.idx > 161)).toBe(true);
   expect(journal.entries.filter(entry => entry.idx === 159)).toEqual([]);
   for (let i = 1; i < journal.entries.length; i++) expect(journal.entries[i].when, `when strictly increases at ${journal.entries[i].tag}`).toBeGreaterThan(journal.entries[i - 1].when);
   expect(migration.split("\n")[0]).toContain("0160");

@@ -75,6 +75,15 @@ Object.assign(LIVE_SETTINGS, DEVICE_SETTINGS);
 const HELPER_GATE_SETTINGS: Record<string, TableGrant> = { model_supervisor_control: read, model_helper_assignments: read, model_helper_signals: read,
   model_helper_stops: read, model_device_signals: read };
 Object.assign(LIVE_SETTINGS, HELPER_GATE_SETTINGS);
+/**
+ * PR B (0162, 2026-11-02 「작업 ↔ 모델」 1~3순위): the text routes pick their model, address and key only from the admin ranks
+ * (lib/llm/ai-task-models-snapshot.ts: one SELECT of ai_task_models JOIN ai_connections per 30 s). Read-only for every job-running principal.
+ * ai_connections.api_key_ciphertext is only ciphertext (secret-box, AAD bound to the row id) — the same decision as model_serving_contracts:
+ * Oracle holds no NMV_SECRET_BOX_KEY, so a rank whose connection needs a key reads as stored_key_unreadable there and is skipped, never sent
+ * without its key. Without these GRANTs an Oracle text job reports task_models_unreadable (degraded) instead of calling a default model.
+ */
+const TASK_MODEL_SETTINGS: Record<string, TableGrant> = { ai_task_models: read, ai_connections: read };
+Object.assign(LIVE_SETTINGS, TASK_MODEL_SETTINGS);
 
 export const ORACLE_DB_PROFILES: Record<OracleDbService, Profile> = {
   'official-news': { statementTimeout: '60s', sequences: ['http_origin_events_id_seq', 'news_items_id_seq', 'dr_process_group_events_id_seq'],

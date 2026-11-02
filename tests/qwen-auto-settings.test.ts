@@ -12,8 +12,13 @@ const enabledEverywhere: QwenAutoSettings = {
   auditSecondOpinion: { enabled: true, perTick: 7, scope: "hold", autoClose: false }, publishedFilter: { enabled: true, perTick: 5 }, splitTiebreak: { enabled: true, perTick: 12, dailyRejectCap: 30 },
   heldRetry: { enabled: true, perTick: 4, budgetSeconds: 30, reasons: ["ambiguous"] }, screenReview: { enabled: true, perTick: 3, autoClose: false },
 };
-/** 새 코드가 운영자 문턱을 바꾸고 네 단계를 켠 뒤 저장한 행 — saveSettings 는 파싱한 설정 전체를 쓴다 */
+/**
+ * 새 코드가 운영자 문턱을 바꾸고 네 단계를 켠 뒤 저장한 행 — saveSettings 는 파싱한 설정 전체를 쓴다.
+ * 2차 투표자 칸(secondReview.voters)은 PR C1 부터 실행 쪽이 읽지 않는 옛 설정이고 기본값은 비었다 — 운영 행은 저장돼 있던 투표자를 그대로 지닌다
+ * (편집 화면이 없어 새 코드가 비우지 않는다). 옛 스키마는 투표자 하나 이상을 요구하므로 저장된 투표자가 있는 행으로 본다.
+ */
 const writtenByNewCode = crawlSettingsSchema.parse({ ...DEFAULT_CRAWL_SETTINGS, enabled: true,
+  secondReview: { ...DEFAULT_CRAWL_SETTINGS.secondReview, voters: [{ provider: "claude-cli", model: "sonnet" }] },
   auditHold: { ...DEFAULT_AUDIT_HOLD, minConfidence: 0.97, categories: ["company"] }, qwenAuto: enabledEverywhere });
 
 describe("기본값", () => {

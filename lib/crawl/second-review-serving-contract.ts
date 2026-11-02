@@ -25,6 +25,8 @@ const legacyAi2GatewayServingContractSchema = z.object({
   // Explicit read-back mapping from this raw gateway alias to its actual engine/tokenizer.
   // Absence preserves the historical contract hash and wire exactly.
   requestBudget: requestBudgetSchema.optional(),
+  /** 엔진에 보내는 모델 이름 — model 이 연결로 가른 장부 이름(`<모델>@<연결 8자>`)일 때만(PR C1). 없으면 예전 계약과 hash·wire 가 같다 */
+  engineModel: identity.optional(),
 }).strict().superRefine((value, context) => {
   if (value.requestBudget && value.totalTokenBound < value.requestBudget.requestTokenBound)
     context.addIssue({ code: "custom", message: "invalid_request_token_bound" });
@@ -46,21 +48,13 @@ export function ai2GatewayServingContractHash(value: Ai2GatewayServingContract):
   return createHash("sha256").update(JSON.stringify(ai2GatewayServingContractSchema.parse(value))).digest("hex");
 }
 
-const configured = startupGatewayServingContracts("second-review", legacyAi2GatewayServingContractSchema);
-export function ai2DirectServingContractsFromConfig(raw: string | undefined): ReadonlyMap<string, Ai2DirectServingContract> {
-  const none = new Map<string, Ai2DirectServingContract>();
-  if (raw === undefined || Buffer.byteLength(raw, "utf8") > 16 * 1024) return none;
-  try {
-    const config = z.object({ version: z.literal(1), contracts: z.array(ai2DirectServingContractSchema).max(8) }).strict().parse(JSON.parse(raw));
-    const contracts = new Map<string, Ai2DirectServingContract>();
-    for (const contract of config.contracts) {
-      if (contracts.has(contract.backendId)) return none;
-      contracts.set(contract.backendId, Object.freeze(contract));
-    }
-    return contracts;
-  } catch { return none; }
-}
-const directConfigured = ai2DirectServingContractsFromConfig(process.env.AI2_DIRECT_SERVING_CONTRACTS);
+/**
+ * 관리 화면(model_serving_contracts)의 2차 계약 — abcllm 형(total-bound, transport direct 면 엔진에 바로)과 직접 계약(direct-openai-chat-v1, local-direct) 둘 다 받는다.
+ * 2026-11-02 PR C1: 예전 env AI2_DIRECT_SERVING_CONTRACTS 는 읽지 않는다 — 2차 계약은 「작업 ↔ 모델」 순위 저장이 만든 행(또는 모델 연결 화면이 저장한 행)뿐이다.
+ * 엔진 연결이 채우는 칸은 abcllm 형이다(gatewayShape).
+ */
+const configured = startupGatewayServingContracts("second-review", ai2GatewayServingContractSchema,
+  { gatewayShape: legacyAi2GatewayServingContractSchema });
 /** A key binds the exact configured device endpoint and actual wire name; it never rewrites the verified contract. */
 export function ai2ServingContractMatches(contract: Ai2GatewayServingContract, selection: string): boolean {
   return servingContractMatchesSelection(contract, selection);
@@ -71,5 +65,5 @@ export function selectAi2ServingContract(contracts: readonly Ai2GatewayServingCo
 /** Read-back approved contracts only. Ambiguous bare models close; an equipment key chooses an exact contract. */
 export function resolveAi2GatewayServingContract(model: string, provider: string = "abcllm"): Ai2GatewayServingContract | null {
   if (provider !== "abcllm" && provider !== "local-direct") return null;
-  return selectAi2ServingContract([...(provider === "local-direct" ? directConfigured : configured).values()], model, provider);
+  return selectAi2ServingContract([...configured.values()], model, provider);
 }

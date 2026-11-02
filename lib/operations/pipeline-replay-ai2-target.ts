@@ -6,6 +6,7 @@ import { createReviewInput } from "@/lib/crawl/agent-review-contract";
 import { README_SAMPLE_VERSION } from "@/lib/crawl/readme";
 import { reviewSemanticNow } from "@/lib/crawl/review-replay-context";
 import { secondReviewInputMatches } from "@/lib/crawl/second-review-input";
+import { withSettingsReviewers } from "@/lib/crawl/review-task-ranks";
 import { secondReviewBinding } from "@/lib/crawl/second-review-ownership";
 import { mergeWithDefaults } from "@/lib/crawl/settings";
 import { repositoryUrl } from "@/lib/domain/products/access";
@@ -34,7 +35,14 @@ function microseconds(value: string): bigint {
 }
 
 /** Snapshot logic only: no claim, lock availability or execution authority. */
+/**
+ * 스냅숏의 crawl_settings 행이 심사자를 선언한다(PR C1) — 지금 프로세스의 「작업 ↔ 모델」 순위가 아니라 그 행의 firstReview·voters·fallbacks 로 판정한다
+ * (withSettingsReviewers). 운영 1·2차가 순위를 읽게 된 뒤에도 이 판정은 결정적이다.
+ */
 export function assessReplayAi2Target(value: unknown, targetId: number, wallTime: string): ReplayAi2TargetAssessment {
+  return withSettingsReviewers(() => assessReplayAi2TargetIn(value, targetId, wallTime));
+}
+function assessReplayAi2TargetIn(value: unknown, targetId: number, wallTime: string): ReplayAi2TargetAssessment {
   const state = combinedStateSchema.parse(value);
   targetSchema.parse(targetId); wallSchema.parse(wallTime);
   const domain = applyReplayChanges(state.domain, []), items = canonicalReplayItemState(state.items);

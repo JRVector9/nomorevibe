@@ -127,6 +127,12 @@ export async function runFixedInputReplay(options: { manifest: unknown; artifact
   const release = installReplayEgressGuard(manifest.upstream, meter, () => { guardRejected++; });
   const savedCli = { CLAUDE_CLI: process.env.CLAUDE_CLI, GROK_CLI: process.env.GROK_CLI };
   process.env.CLAUDE_CLI = BLOCKED_CLI; process.env.GROK_CLI = BLOCKED_CLI;
+  // 1차·2차는 「작업 ↔ 모델」 순위만 읽는다(PR C1) — 격리 DB 에는 순위가 없으므로 manifest 가 선언한 모델(이 실행의 설정)을 이 실행 동안 순위로 고정한다.
+  // 1차 = 옛 풀 차례, 2차 = 투표자 k → 칸 k 의 1순위, 대체 → 칸 1 의 2·3순위(한 모델은 한 칸). replay 는 게이트웨이 모델만 받는다(위 관문) — CLI 는 없다.
+  const { pinReviewTaskRanks } = await import("@/lib/crawl/review-task-ranks");
+  const { legacyFirstReviewers } = await import("@/lib/crawl/first-reviewers");
+  pinReviewTaskRanks({ first: legacyFirstReviewers(settings), second: settings.secondReview.voters.map((voter, index) =>
+    index === 0 ? [voter, ...settings.secondReview.fallbacks ?? []].slice(0, 3) : [voter]) });
   const windowTimer = setTimeout(() => stop("window_end"), Math.max(0, Date.parse(endedAt) - Date.parse(await dbClockIso())));
   const wallTimer = setTimeout(() => stop("wall_cap"), Math.max(0, startedHost + manifest.limits.maxWallMs - Date.now()));
   let drainMs = 0, windowDrain: ReplayMeterDrain | null = null;
@@ -161,6 +167,7 @@ export async function runFixedInputReplay(options: { manifest: unknown; artifact
     // 정지와 함께 시작한 계량기 drain(구간 끝만)을 마저 기다린다. 상한에서 끊으므로 drain 한도·벽시간을 넘지 않는다.
     if (halted.drain) windowDrain = await halted.drain;
   } finally {
+    pinReviewTaskRanks(null);
     clearTimeout(windowTimer); clearTimeout(wallTimer); clearTimeout(consumerCancelTimer);
     for (const [key, value] of Object.entries(savedCli)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
     await release();

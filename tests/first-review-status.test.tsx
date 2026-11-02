@@ -1,12 +1,13 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { PgDialect } from "drizzle-orm/pg-core";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FirstReviewStatusCard, type FirstReviewStatusProps } from "@/app/(operator)/admin/status/FirstReviewStatus";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 import { firstReviewStatusSql, FIRST_REVIEW_SAMPLE_LIMIT, type FirstReviewStatus } from "@/lib/operations/first-review-status";
 import { buildPipelineCompletions } from "@/lib/operations/pipeline-completions";
 import { buildPipelineControlStatus } from "@/lib/operations/pipeline-control-status";
+import { pinReviewRanks, pinReviewRanksFromSettings } from "./review-task-ranks-fixture";
 
 const NOW = "2026-10-27T07:30:00.000Z";
 const settings = { ...DEFAULT_CRAWL_SETTINGS, firstReview: { provider: "abcllm" as const, model: "first-model" },
@@ -21,6 +22,10 @@ const sample = (): FirstReviewStatus => ({ at: NOW, sampled: FIRST_REVIEW_SAMPLE
 const html = (over: Partial<FirstReviewStatusProps> = {}) => renderToStaticMarkup(createElement(FirstReviewStatusCard, { ...props(), ...over }));
 
 describe("AI 1차 상세 상태", () => {
+  // 화면의 1차·2차 모델 자리는 「작업 ↔ 모델」 순위를 읽는다(PR C1) — 시험 설정과 같은 모델을 1차 1순위·2차 칸 1 의 1순위로 고정한다
+  beforeEach(() => pinReviewRanksFromSettings(settings));
+  afterEach(() => pinReviewRanks(null));
+
   it("복제 지연과 집계 0건을 구분하고 설정·목적을 남긴다", () => {
     const out = html();
     expect(out).toContain("복제본이 10초 넘게 밀렸습니다");

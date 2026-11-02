@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createServer, type ServerResponse } from "node:http";
 import { afterEach, expect, it, vi } from "vitest";
-import { SEARCH_QUERY_MODEL, parseQueryTranslation, textHash, translateChineseQueryToEnglish, translateQueryToEnglish,
+import { parseQueryTranslation, textHash, translateChineseQueryToEnglish, translateQueryToEnglish,
   websearchQueryGatewayWire, type WebsearchQueryGatewayInput } from "@/lib/crawl/translate";
 import { websearchQueryLogicalWorkKey, websearchQueryInputHash, websearchQueryDispatchBindingHash, websearchQueryModelDispatchSchema,
   type WebsearchQueryInput } from "@/lib/llm/capacity";
@@ -9,13 +9,15 @@ import { prepareWebsearchQueryGatewayCall, translateQueryWithReservedGateway, re
   readCrawlTaglineGatewayTerminal, type PreparedWebsearchQueryGatewayCall } from "@/lib/crawl/agent-review-gateway";
 import type { WebsearchQueryServingContract } from "@/lib/llm/websearch-query-serving-contract";
 import { setServingContractSnapshotForTest, type ServingContractAuth } from "@/lib/llm/serving-contract-store";
+import { inTextRank } from "./text-task-ranks-fixture";
 
 const fixture = vi.hoisted(() => ({ contract: null as WebsearchQueryServingContract | null }));
 vi.mock("@/lib/llm/websearch-query-serving-contract", async original => ({
   ...await original<typeof import("@/lib/llm/websearch-query-serving-contract")>(), resolveWebsearchQueryServingContract: () => fixture.contract,
 }));
 vi.mock("@/lib/llm/text-capacity-admission", () => ({ assertTextModelAdmission: vi.fn() }));
-const model = SEARCH_QUERY_MODEL, requests = new Set<Promise<unknown>>();
+// 모델은 「작업 ↔ 모델」 순위가 고른다(PR B, import 때 정하는 상수가 없다) — 시험의 모델 이름 하나를 쓴다.
+const model = "search-query-original-model", requests = new Set<Promise<unknown>>();
 const korean: WebsearchQueryGatewayInput = { sourceLocale: "ko", query: "헬스장 출석 체크" };
 const content = "Gym attendance | gym attendance check-in app";
 function envelope(change: Record<string, unknown> = {}) {
@@ -30,11 +32,12 @@ function envelope(change: Record<string, unknown> = {}) {
 function pinDirect(auth: ServingContractAuth = "none", apiKey: string | null = null, transport: "direct" | "gateway" = "direct") {
   setServingContractSnapshotForTest([{ routeId: "search-query-translate", model, contract: {}, auth, apiKey, transport }]);
 }
-/** The legacy gateway leaf no longer sends anything: no_key without touching its injected request. */
+/** The legacy gateway leaf no longer sends anything: no_key without touching its injected request. 순위 범위 안에서만 모델을 읽는다. */
 async function legacyLeaf(input: WebsearchQueryGatewayInput) {
   const request = vi.fn(async () => new Response(JSON.stringify(envelope())));
-  const result = input.sourceLocale === "ko" ? await translateQueryToEnglish(input.query, 1000, request as unknown as typeof fetch)
-    : await translateChineseQueryToEnglish(input.query, input.sourceLocale, 1000, request as unknown as typeof fetch);
+  const result = await inTextRank("search-query-translate", model, () => input.sourceLocale === "ko"
+    ? translateQueryToEnglish(input.query, 1000, request as unknown as typeof fetch)
+    : translateChineseQueryToEnglish(input.query, input.sourceLocale, 1000, request as unknown as typeof fetch));
   return { result, request };
 }
 function prepared(input: WebsearchQueryGatewayInput, timeoutMs = 1000) {

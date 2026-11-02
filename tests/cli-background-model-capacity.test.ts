@@ -17,10 +17,13 @@ import { INTRO_CHECK_MODEL, introCheckCliArgs, introEvidence } from "@/lib/domai
 import { auditPublishedProducts } from "@/lib/crawl/jobs/product-audit";
 import { checkGrokSession, grokSessionArgs } from "@/lib/crawl/jobs/grok-session";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
+import { cliRankRow, fakeToolDir, pinTaskRanks } from "./fake-cli-path";
 
 /*
  * 05c-5 — 소개 검수·Claude 감사·Grok 세션 점검이 공통 모델 슬롯을 실제로 거치는지. 장부(capacity-repository)·DB 핸들·도메인 잠금/기록만
  * 바꾸고, runner 는 진짜로 가짜 CLI(tests/fixtures/fake-cli/background.mjs)를 자식 프로세스로 띄운다. 자식 PATH 는 빈 디렉터리다.
+ * Grok 세션 점검만은 PATH 의 grok 을 띄우고(PR C1 — GROK_CLI 를 읽지 않는다) 모델을 「작업 ↔ 모델」의 Grok 로그인 유지 순위에서 읽는다 —
+ * 그 시험은 가짜 CLI 를 grok 이름으로 링크한 디렉터리를 PATH 로 쓰고 순위를 고정한다.
  * 실제 장부·잠금·runJob 은 tests/integration/cli-background-model-capacity.test.ts 가 본다.
  */
 const mocks = vi.hoisted(() => ({ contracts: [] as CliServingContract[], read: vi.fn(), pending: vi.fn(), request: vi.fn(), lock: vi.fn(),
@@ -65,7 +68,7 @@ const control = (mode: string) => ({ mode, epoch: 1, revision: 1, policyHash: "a
 const sha = (value: string) => createHash("sha256").update(value).digest("hex");
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const settle = (work: Promise<unknown>) => work.then(value => ({ value, error: undefined }), (error: unknown) => ({ value: undefined, error }));
-let root = "", bin = "", empty = "", records = "", bootId = "";
+let root = "", bin = "", empty = "", records = "", bootId = "", grokTools = "";
 
 type Recorded = { mode: string; pid: number; argv: string[]; env: Record<string, string | null>; realCliOnPath: boolean; stdin?: string; grandchild?: number };
 async function recorded(): Promise<Recorded[]> {
@@ -106,6 +109,7 @@ beforeAll(async () => {
   for (const value of [root, script, process.execPath]) expect(value).not.toContain("'");
   bin = path.join(root, "fake-cli");
   await writeFile(bin, `#!/bin/sh\nexec '${process.execPath}' '${script}' "$@"\n`); await chmod(bin, 0o755);
+  grokTools = await fakeToolDir(path.join(root, "grok-tools"), { grok: bin });
 });
 afterAll(() => rm(root, { recursive: true, force: true }));
 beforeEach(async () => {
@@ -135,7 +139,12 @@ beforeEach(async () => {
   mocks.input.mockResolvedValue(auditInput);
   mocks.auditItem.mockResolvedValue({ productId: 70, attempts: 1 });
 });
-afterEach(() => { vi.unstubAllEnvs(); });
+afterEach(() => { vi.unstubAllEnvs(); pinTaskRanks(null); });
+/** Grok 세션 점검: 「작업 ↔ 모델」 Grok 로그인 유지 1순위 = GROK_MODEL(grok CLI 연결), 자식 PATH = grok 이름의 가짜 CLI 뿐, GROK_CLI 는 없는 파일 */
+function grokSessionWorld() {
+  pinTaskRanks([cliRankRow("grok-session-check", GROK_MODEL)]);
+  vi.stubEnv("PATH", grokTools); vi.stubEnv("GROK_CLI", path.join(empty, "absent-grok"));
+}
 
 it("intro: open with a contract takes a background slot, runs the fake CLI once with the legacy argv/stdin/env, settles, then records", async () => {
   fake("intro-ok");
@@ -313,7 +322,7 @@ it("audit: a slot defer records nothing for that lane and defers the job", async
 });
 
 it("grok session: open with a contract runs the session call in the instance's slot, settles, then observes", async () => {
-  fake("grok-ok");
+  fake("grok-ok"); grokSessionWorld();
   const ctx = context("grok-session-check");
 
   expect(await checkGrokSession(ctx)).toEqual({ done: true });
@@ -328,12 +337,14 @@ it("grok session: open with a contract runs the session call in the instance's s
   expect(mocks.observe.mock.calls).toEqual([[`service:grok:${INSTANCE}`, expect.objectContaining({ provider: "grok-cli", model: GROK_MODEL,
     resolvedModel: "grok-4.7-build", result: "success" })]]);
   const [spawned] = await recorded();
-  expect(spawned).toMatchObject({ argv: grokSessionArgs(GROK_MODEL), env: { NO_COLOR: "1", RUST_LOG: "off" }, realCliOnPath: false });
+  // PATH 의 grok(가짜 CLI 링크)이 떴다 — realCliOnPath 는 그 이름을 본다
+  expect(spawned).toMatchObject({ argv: grokSessionArgs(GROK_MODEL), env: { PATH: grokTools, NO_COLOR: "1", RUST_LOG: "off" }, realCliOnPath: true });
 }, PROCESS_TEST_MS);
 
 it("grok session (D3): while its slot is deferred nothing runs and no observation is written — a long defer lets the 6h Grok token expire", async () => {
   // 위험(설계 D3): 세션 점검은 토큰 갱신을 위해 4시간마다 부르는 호출이다. 슬롯이 오래 막히면 갱신 호출도 없고 관측도 늙는다 —
   // 그 사이 6시간 토큰이 만료되면 다음 Grok 심사가 auth 로 실패한다. 그래서 policy 에서 background 가중을 최소로 두되 0 으로 막지 않는다.
+  grokSessionWorld();
   mocks.request.mockResolvedValue({ kind: "deferred", reason: "capacity" });
   const outcome = await settle(checkGrokSession(context("grok-session-check")));
   expect(outcome.error).toMatchObject({ name: "ModelCapacityDeferredError", reason: "capacity" });
@@ -343,6 +354,7 @@ it("grok session (D3): while its slot is deferred nothing runs and no observatio
 });
 
 it("grok session: the slot owner must be this service instance (the auth file and observation key are per instance)", async () => {
+  grokSessionWorld();
   vi.stubEnv("ROLE_LEASE_INSTANCE_ID", "mini-reviewer");
   const outcome = await settle(checkGrokSession(context("grok-session-check")));
   expect(outcome.error).toMatchObject({ name: "ModelCapacityDeferredError", reason: "owner_unavailable" });

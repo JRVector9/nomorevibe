@@ -2,18 +2,20 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { eq, sql } from "drizzle-orm";
 import { readFile } from "node:fs/promises";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
-import { directContractRow } from "./direct-engine-fixtures";
+import { pinTextRanks, textContract } from "../text-task-ranks-fixture";
 
 /**
  * 게이트웨이(abcLLM)는 2026-10-30 제거됐다. GPT 묶음은 이 경로·모델의 직접 연결 계약이 있어야 열리고, 용량을 끈(disabled) 잡이 부르는
  * 옛 잎 translateTaglinesToKorean 은 이제 보내지 않고 no_key 로 끝난다(파일 끝 두 시험). 이 파일은 잡이 답을 받은 뒤의 판단(차례·품질 검사·
  * 재시도 간격·한도)을 보므로, 그 잎만 같은 wire(productTaglineKoLegacyWire)를 이 파일의 fetch 목으로 보내는 대역으로 바꾼다.
+ * 2026-11-02(PR B): GPT 의 모델·주소는 「작업 ↔ 모델」 순위가 고른다 — 이 파일은 순위 하나(KOREAN_TAGLINE_MODEL)와 그 연결의 직접 계약을 고정한다.
  */
+const { KOREAN_TAGLINE_MODEL } = vi.hoisted(() => ({ KOREAN_TAGLINE_MODEL: "gpt-oss-120b" }));
 vi.mock("@/lib/crawl/translate", async load => {
   const original = await load<typeof import("@/lib/crawl/translate")>();
   const { parseKoreanTaglines } = await import("@/lib/domain/products/korean-tagline");
   const { askRemovedGatewayLeaf, replyContent } = await import("./direct-engine-fixtures");
-  const translateTaglinesToKorean: typeof original.translateTaglinesToKorean = (items, timeoutMs, request = fetch, signal, model = original.KOREAN_TAGLINE_MODEL) =>
+  const translateTaglinesToKorean: typeof original.translateTaglinesToKorean = (items, timeoutMs, request = fetch, signal, model = KOREAN_TAGLINE_MODEL) =>
     askRemovedGatewayLeaf(original.translateTaglinesToKorean(items, timeoutMs, request, signal, model), request,
       original.productTaglineKoLegacyWire(items, model), async response => parseKoreanTaglines(await replyContent(response), items.length), { timeoutMs, signal });
   return { ...original, translateTaglinesToKorean };
@@ -26,7 +28,6 @@ const { koreanTaglineProgress, koreanTaglineSample, pendingKoreanTaglines, recor
 const { getPublicList, getDiscoveryList } = await import("@/lib/domain/products/view");
 const { getPopularGroups } = await import("@/lib/domain/products/popular");
 const { runJob } = await import("@/lib/jobs/runner");
-const { KOREAN_TAGLINE_MODEL } = await import("@/lib/crawl/translate");
 const { clearAllMemos } = await import("@/lib/cache/memo");
 const { ensureSchema, resetTables } = await import("./setup");
 
@@ -63,12 +64,13 @@ beforeEach(async () => {
   clearAllMemos();
   seen.length = 0;
   gateway.mockReset();
-  setServingContractSnapshotForTest([directContractRow("product-tagline-ko", KOREAN_TAGLINE_MODEL)]);
+  setServingContractSnapshotForTest([textContract("product-tagline-ko", KOREAN_TAGLINE_MODEL)]);
+  pinTextRanks({ "product-tagline-ko": KOREAN_TAGLINE_MODEL });
   vi.stubEnv("KOREAN_TRANSLATION_QWEN_ENABLED", "false");
   vi.stubEnv("KOREAN_TRANSLATION_QWEN_RECOVERY_ENABLED", "false");
   vi.stubGlobal("fetch", gateway);
 });
-afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); setServingContractSnapshotForTest(null); });
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); setServingContractSnapshotForTest(null); pinTextRanks(null); });
 
 describe("한국어 한 줄 소개 잡", () => {
   it("does not charge or create a Korean tagline from unavailable tokenizer evidence", async () => {
@@ -361,14 +363,17 @@ describe("한국어 한 줄 소개 잡", () => {
     expect(sent).toEqual([tagline, "Notes is a fast editor for teams", "Notes is a fast editor for teams"]);
   });
 
-  it("직접 연결 계약이 없으면 부르지 않고, 성공이 아니라 제 일 못 함(no_direct_contract)으로 남는다 — 마지막 성공 시각을 옮기지 않는다", async () => {
+  // PR B: 계약이 없는 순위는 쓸 수 없다 — 순위가 모두 그러면 예전의 no_direct_contract 대신 all_ranks_unusable(순위마다 까닭)로 남는다
+  it("순위의 직접 연결 계약이 없으면 부르지 않고, 성공이 아니라 제 일 못 함(all_ranks_unusable)으로 남는다 — 마지막 성공 시각을 옮기지 않는다", async () => {
     await seed({ slug: "nokey" });
     setServingContractSnapshotForTest([]);
-    expect(await tick()).toMatchObject({ status: "completed", done: true, degraded: "no_direct_contract" });
+    expect(await tick()).toMatchObject({ status: "completed", done: true, degraded: "all_ranks_unusable" });
     expect(gateway).not.toHaveBeenCalled();
     const [state] = await db.select().from(jobs).where(eq(jobs.name, "product-tagline-ko"));
     expect(state).toMatchObject({ lastSuccessAt: null, lastError: null });
     expect(state.processedVersion).toBe(state.requestedVersion);
+    const [observed] = await db.execute<{ value: { degraded?: { detail?: string } } }>(sql`SELECT value FROM operations_observations WHERE key = 'job:product-tagline-ko'`);
+    expect(observed.value.degraded?.detail).toContain(`1순위 test-engine · ${KOREAN_TAGLINE_MODEL}: 이 연결·모델의 엔진 직접 계약이 없음`);
   });
 
   it("옛 잎(translateTaglinesToKorean)은 계약이 있어도 게이트웨이로 보내지 않고 no_key 로 끝난다", async () => {

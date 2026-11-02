@@ -9,7 +9,6 @@ import { judgementQueuePredicate } from "./repository";
 import { reviewApprovalPredicate, reviewCandidatePredicate, starAutoApprovalPredicate } from "./agent-review-repository";
 import { createReviewInput, REVIEW_FRESH_MS, REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, reviewPolicyHash } from "./agent-review-contract";
 import { agentCoverageRevisionSql } from "@/lib/domain/evidence/agents/coverage";
-import { firstReviewer } from "./agent-review";
 import { firstReviewers, firstReviewIdentitySql } from "./first-reviewers";
 import { README_SAMPLE_LIMIT } from "./readme";
 import { firstReviewProviderPredicate, secondReviewInputMatches } from "./second-review-input";
@@ -77,8 +76,8 @@ async function readAdmissionRows(tx: ProductTransaction, settings: CrawlSettings
   const at = sql`${now.toISOString()}::timestamp`;
   const available = (name: string) => sql`not exists(select 1 from ${jobs} where ${jobs.name} = ${name} and ${jobs.notBefore} > ${at})`;
   const age = (column: SQL) => sql`extract(epoch from (${at} - min(${column}))) / 60`;
-  const reviewers = firstReviewers(settings, firstReviewer(settings));
-  const modelName = (model: SQL) => sql`regexp_replace(lower(trim(${model})), '^\\[mlx\\][[:space:]]*', '', 'i')`;
+  const reviewers = firstReviewers(settings);
+  const modelName = (model: SQL) => sql`regexp_replace(regexp_replace(lower(trim(${model})), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i')`;
   const voterMatches = (provider: SQL, model: SQL, pool: CrawlSettings["secondReview"]["voters"]) => sql`exists(
     select 1 from jsonb_array_elements(${JSON.stringify(pool)}::jsonb) voter
     where voter->>'provider'=${provider} and ${modelName(sql`voter->>'model'`)}=${modelName(model)})`;

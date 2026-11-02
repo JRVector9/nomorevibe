@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { createServer, type ServerResponse } from 'node:http';
 import postgres from 'postgres';
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
-import { TRANSLATE_MODEL, textHash } from '@/lib/crawl/translate';
+import { textHash } from '@/lib/crawl/translate';
 import { translateReasons } from '@/lib/crawl/jobs/translate-reasons';
 import { prepareReasonTranslationDispatch, retryableTranslations,
   untriedTranslations, type PendingTranslation } from '@/lib/crawl/translations';
@@ -19,7 +19,7 @@ import { modelCapacityPolicyHash, reasonTranslationLogicalWorkKey, reasonTransla
 import type { ReasonTranslationServingContract } from '@/lib/llm/reason-translation-serving-contract';
 import { setServingContractSnapshotForTest } from '@/lib/llm/serving-contract-store';
 import { ensureSchema, TEST_DATABASE_URL } from './setup';
-import { directContractRow } from './direct-engine-fixtures';
+import { inTextRank, pinTextRanks, textContract } from '../text-task-ranks-fixture';
 
 const legacyTransport = vi.fn(async () => { throw new Error('fixture_unexpected_legacy_transport'); });
 const serving = vi.hoisted(() => ({ contract: null as ReasonTranslationServingContract | null }));
@@ -27,6 +27,8 @@ vi.mock('@/lib/llm/reason-translation-serving-contract', async original => ({
   ...await original<typeof import('@/lib/llm/reason-translation-serving-contract')>(), resolveReasonTranslationServingContract: () => serving.contract,
 }));
 type Raw = Record<string, unknown>;
+// 「작업 ↔ 모델」 순위(PR B)의 1순위 모델 — 예전 TRANSLATE_MODEL(등록부 기본값)과 같은 이름이다
+const TRANSLATE_MODEL = 'mlx-community--gemma-4-26b-a4b-it-4bit';
 const prefix = `reason-native-${randomUUID().slice(0, 12)}`, jobName = 'reason-translate';
 const managedJobs = [...new Set([...jobsForRole('text'), 'product-translate', 'product-tagline-ko'])].sort();
 const admin = postgres(TEST_DATABASE_URL, { max: 1, prepare: false, onnotice: () => {}, connection: { application_name: prefix } });
@@ -171,7 +173,8 @@ async function server(run: (state: { bodies: string[]; setReply: (reply: (respon
 async function tick() { await tracked(requestJob(jobName)); return tracked(runJob(jobName, translateReasons, { requestedOnly: true, roleLease: role, budgetMs: 55000 })); }
 async function custom(run: (lease: JobLease) => Promise<void>) {
   await tracked(requestJob(jobName)); return tracked(runJob(jobName, async (ctx: JobContext<null>) => {
-    expect(ctx.lease).toBeDefined(); await run(ctx.lease!); return { done: true };
+    // 깊은 함수(prepareReasonTranslationDispatch·장부 요청)는 잡이 여는 것과 같은 순위 범위에서 부른다
+    expect(ctx.lease).toBeDefined(); const lease = ctx.lease!; await inTextRank(jobName, TRANSLATE_MODEL, () => run(lease)); return { done: true };
   }, { requestedOnly: true, roleLease: role }));
 }
 function latch() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }
@@ -207,21 +210,27 @@ beforeAll(() => tracked((async () => {
 })(), setups));
 beforeEach(() => tracked((async () => {
   // The route opens only on a direct admin contract for its model (abcLLM gateway removed 2026-10-30); the contract body is the mock above.
-  setServingContractSnapshotForTest([directContractRow(jobName, TRANSLATE_MODEL)]); legacyTransport.mockClear(); vi.stubGlobal('fetch', legacyTransport);
+  // 순위(PR B)는 그 순위의 연결을 가리키는 엔진 직접 계약 행이 있어야 묶인다(textContract) — 실제로 보내는 끝점은 위의 mock 이 정한다.
+  pinTextRanks({ [jobName]: TRANSLATE_MODEL }); setServingContractSnapshotForTest([textContract(jobName, TRANSLATE_MODEL)]); legacyTransport.mockClear(); vi.stubGlobal('fetch', legacyTransport);
   await install(); await elect();
 })(), setups));
-afterEach(() => tracked(steps([() => drain(setups), () => drain(exercises), () => drain(work), cleanup, async () => { serving.contract = null; setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); vi.unstubAllGlobals(); }]), hooks));
+afterEach(() => tracked(steps([() => drain(setups), () => drain(exercises), () => drain(work), cleanup, async () => { serving.contract = null; setServingContractSnapshotForTest(null); pinTextRanks(null); vi.unstubAllEnvs(); vi.unstubAllGlobals(); }]), hooks));
 afterAll(async () => { await steps([() => drain(setups), () => drain(exercises), () => drain(work), () => drain(hooks), cleanup,
   () => admin.end(), async () => { await (globalThis as { pgClient?: ReturnType<typeof postgres> }).pgClient?.end(); }]); });
 
-it('keeps production unsupported before any request, cache attempt, provider call or producer ACK', exercise(async () => {
+// PR B: 계약 본문이 없는(전송 계약 닫힘, provider_contract_unavailable) 순위는 그 순위만 쉰다 — 순위가 하나뿐이니 묶음은 갈 곳이 없고
+// 틱은 제 일 못 한 틱(all_ranks_unusable)으로 끝난다. 예전에는 model_capacity 로 미뤄 producer ACK 를 남겨 두었다 — 이제는 순위 없음과 같이
+// degraded 로 ACK 하고 까닭을 관리자 상태 화면에 남긴다. 요청·캐시 시도·호출은 그대로 없다.
+it('keeps production unsupported before any request, cache attempt or provider call and ends the tick as all_ranks_unusable', exercise(async () => {
   const item = await seed();
-  expect(await tick()).toMatchObject({ status: 'deferred', reason: 'model_capacity' });
+  expect(await tick()).toMatchObject({ status: 'completed', done: true, degraded: 'all_ranks_unusable' });
   expect(legacyTransport).not.toHaveBeenCalled();
   expect(await admin`SELECT request_id FROM model_capacity_requests WHERE owner_instance_id=${prefix}`).toEqual([]);
   expect(await admin`SELECT source_hash FROM text_translations WHERE source_hash=${item.hash}`).toEqual([]);
   const [job] = await admin`SELECT requested_version,processed_version,lease_token,last_error FROM jobs WHERE name=${jobName}`;
-  expect(Number(job.processed_version)).toBeLessThan(Number(job.requested_version)); expect(job.lease_token).toBeNull(); expect(job.last_error).toBeNull();
+  expect(Number(job.processed_version)).toBe(Number(job.requested_version)); expect(job.lease_token).toBeNull(); expect(job.last_error).toBeNull();
+  const [observed] = await admin`SELECT value->'degraded'->>'code' AS code,value->'degraded'->>'detail' AS detail FROM operations_observations WHERE key=${`job:${jobName}`}`;
+  expect(observed.code).toBe('all_ranks_unusable'); expect(observed.detail).toContain(`1순위 test-engine · ${TRANSLATE_MODEL}: 전송 계약이 닫힘`);
 }));
 it('preserves the disabled original path, which no longer sends, and the original three-argument cache writer', exercise(async () => {
   // Disabled still selects the original transport, but the abcLLM gateway it used is gone (2026-10-30): no HTTP at all, no ledger

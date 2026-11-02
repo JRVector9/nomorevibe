@@ -1,15 +1,16 @@
-import { modelTimeoutMs, scopedModel } from "@/lib/llm/model-registry";
+import { modelRouteTimeoutMs } from "@/lib/llm/model-registry";
 import { and, eq, sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import { textTranslations } from "@/lib/db/schema";
-import { CHINESE_QUERY_PROMPT_VERSION, GLOSSARY_VERSION, glossaryHints, QUERY_PROMPT_VERSION, queryExpansions, queryTranslationPhrases, textHash, SEARCH_QUERY_MODEL,
-  translateChineseQueryToEnglish, translateQueryToEnglish } from "@/lib/crawl/translate";
+import { CHINESE_QUERY_PROMPT_VERSION, GLOSSARY_VERSION, glossaryHints, QUERY_PROMPT_VERSION, queryExpansions, queryTranslationPhrases, textHash, translateChineseQueryToEnglish, translateQueryToEnglish } from "@/lib/crawl/translate";
 import { isLocale, type Locale } from "@/lib/i18n/locales";
 import { recordTranslations } from "@/lib/crawl/translations";
 import { logger } from "@/lib/observability/logger";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { planTerms, RELAX_MIN_TERMS, type SearchPlan, type SearchQuery } from "./search";
 import { translateQueryWithModelCapacity } from "./search-query-model-capacity";
+import { textTaskModel } from "@/lib/llm/ai-task-rank-scope";
+import { TextTaskRanks } from "@/lib/llm/ai-task-resolver";
 
 /**
  * 한국어·확실한 중국어 검색어를 영어 낱말로 바꿔 같은 제품 색인에서 한 번 더 찾는다.
@@ -30,7 +31,7 @@ import { translateQueryWithModelCapacity } from "./search-query-model-capacity";
  * 검색 한 번이 이보다 오래 걸리면 기다리는 것보다 번역 없는 결과가 낫다.
  * 요청마다 등록부 경로 search-query-translate 을 읽는다(관리자 실시간 한도 — 저장하면 다음 요청에 반영).
  */
-const searchQueryTranslateTimeoutMs = () => modelTimeoutMs("search-query-translate");
+const searchQueryTranslateTimeoutMs = () => modelRouteTimeoutMs("search-query-translate");
 
 export type ResolvedSearch = {
   /** 색인에 물어볼 말 — 원문 하나, 번역이 붙었으면 그 표현(한둘)까지 */
@@ -120,6 +121,17 @@ export async function planSearch(texts: readonly string[]): Promise<SearchPlan> 
  */
 type QueryTranslation = { kind: "translated"; text: string } | { kind: "unavailable" } | { kind: "deferred" };
 
+/** 검색 요청은 순위·계약 스냅숏을 처음 한 번만 기다린다 — 그 뒤로는 30초마다 뒤에서 새로 읽는다(요청이 DB 를 기다리지 않는다). */
+const WEB_RANKS_MAX_AGE_MS = 10 * 60_000;
+/** 순위가 없거나 모두 쓸 수 없어 번역 없이 찾았다 — 요청마다 남기지 않고 이 프로세스에서 1분에 한 번만 남긴다. */
+let queryRanksNotedAt = 0;
+function noteQueryRanksUnusable(code: string): void {
+  const now = Date.now();
+  if (now - queryRanksNotedAt < 60_000) return;
+  queryRanksNotedAt = now;
+  logger.warn("search.translate_ranks_unusable", { code });
+}
+
 async function translateDetectedQuery(raw: string): Promise<QueryTranslation> {
   const sourceLocale = searchQuerySourceLocale(raw);
   if (!sourceLocale) return { kind: "unavailable" };
@@ -128,21 +140,40 @@ async function translateDetectedQuery(raw: string): Promise<QueryTranslation> {
     const cached = await cachedTranslation(hash);
     if (cached) return { kind: "translated", text: cached };
 
+    // 「작업 ↔ 모델」 순위(PR B)만 부른다. 순위가 없거나 모두 쓸 수 없으면 기본값으로 부르지 않고 번역 없이 찾는다(이 프로세스의 순위 사정은
+    // 관리 화면이 보인다 — textTaskRankStatus). 한 순위만의 까닭(경로 없음·장비 행 없음·계약 닫힘·포화)이면 같은 검색어를 다음 순위로 넘긴다.
+    const ranks = await TextTaskRanks.open("search-query-translate", WEB_RANKS_MAX_AGE_MS);
+    const early = ranks.earlyDegraded();
+    if (early) {
+      ranks.publish();
+      noteQueryRanksUnusable(early.code);
+      return { kind: "unavailable" };
+    }
     // 공통 슬롯이 켜져 있으면 그 길로만 부른다(장부·캐시 기록은 그 안에서 주 DB 로). 꺼져 있으면 legacy — 아래 원래 길 그대로다
     const { prompt, glossary } = queryTranslationPolicy(raw, sourceLocale);
     const timeoutMs = searchQueryTranslateTimeoutMs();
-    const reserved = await translateQueryWithModelCapacity({ query: raw, sourceLocale, cacheKey: hash, promptVersion: prompt,
-      glossaryVersion: glossary }, timeoutMs);
-    if (reserved.kind === "cached") return { kind: "translated", text: reserved.text };
-    const result = reserved.kind === "result" ? reserved.result : sourceLocale === "ko" ? await translateQueryToEnglish(raw, timeoutMs)
-      : await translateChineseQueryToEnglish(raw, sourceLocale, timeoutMs);
-    // 관련도순 검색은 0건이면 공개 읽기(복제본) 안에서 번역을 기다린다 — 기록은 쓰기라 늘 주 DB 로 보낸다.
-    // 복제본에서 쓰면 25006 으로 실패하고, 아래 catch 가 받아 온 번역까지 버렸다
-    if (reserved.kind === "legacy") await onPrimary(() => recordTranslations(
-      [{ hash, translated: result.ok ? result.keywords : null, error: result.ok ? undefined : result.error }],
-      scopedModel("search-query-translate", SEARCH_QUERY_MODEL),
-      "en",
-    ));
+    const attempt = await ranks.run(async (): Promise<QueryTranslation | { kind: "result"; result: Awaited<ReturnType<typeof translateQueryToEnglish>> }> => {
+      const reserved = await translateQueryWithModelCapacity({ query: raw, sourceLocale, cacheKey: hash, promptVersion: prompt,
+        glossaryVersion: glossary }, timeoutMs);
+      if (reserved.kind === "cached") return { kind: "translated", text: reserved.text };
+      const result = reserved.kind === "result" ? reserved.result : sourceLocale === "ko" ? await translateQueryToEnglish(raw, timeoutMs)
+        : await translateChineseQueryToEnglish(raw, sourceLocale, timeoutMs);
+      // 관련도순 검색은 0건이면 공개 읽기(복제본) 안에서 번역을 기다린다 — 기록은 쓰기라 늘 주 DB 로 보낸다.
+      // 복제본에서 쓰면 25006 으로 실패하고, 아래 catch 가 받아 온 번역까지 버렸다
+      if (reserved.kind === "legacy") await onPrimary(() => recordTranslations(
+        [{ hash, translated: result.ok ? result.keywords : null, error: result.ok ? undefined : result.error }],
+        textTaskModel("search-query-translate"),
+        "en",
+      ));
+      return { kind: "result", result };
+    }).finally(() => ranks.publish());
+    if (attempt.kind === "unusable") {
+      // 모든 순위가 이 요청에 쓸 수 없다 — 포화면 다음에 다시(pending), 아니면 번역 없이 찾는다
+      noteQueryRanksUnusable("all_ranks_unusable");
+      return ranks.saturated() ? { kind: "deferred" } : { kind: "unavailable" };
+    }
+    if (attempt.value.kind !== "result") return attempt.value;
+    const result = attempt.value.result;
     if (!result.ok) {
       logger.warn("search.translate_failed", { error: result.error });
       return { kind: "unavailable" };

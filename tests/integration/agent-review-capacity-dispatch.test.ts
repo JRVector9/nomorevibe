@@ -242,14 +242,21 @@ afterAll(async () => {
   () => admin.end(), () => observer.end(), async () => { await (globalThis as { pgClient?: ReturnType<typeof postgres> }).pgClient?.end(); }]);
 });
 
-it('production unsupported fresh admission has no POST, queue row, attempt, or producer ACK', () => exercise(async () => {
+// PR C1: 1차는 늘 순위 고르기다 — 하나뿐인 순위가 이 모델만의 까닭(1차 계약 없음 — provider_contract_unavailable)으로 거절되면 그 순위가 쉬고 후보는
+// all_ranks_unusable 로 건너뛴다. 틱은 미룸이 아니라 제 일 못 한 완료(degraded)다 — 요청은 인정하되(processed) 성공 시각은 옮기지 않는다.
+it('production unsupported fresh admission has no POST, queue row or attempt, and reports all_ranks_unusable without a success time', () => exercise(async () => {
   const context = await source(); await mode('open');
   const before = (await raw('jobs')).find(row => row.name === 'crawl-agent-review');
-  expect(await tick()).toMatchObject({ status: 'deferred', reason: 'model_capacity' });
+  expect(await tick()).toMatchObject({ status: 'completed', done: false, degraded: 'all_ranks_unusable' });
   expect(await attempts(context.candidate.id)).toHaveLength(0); expect(await requests()).toHaveLength(0);
   const after = (await raw('jobs')).find(row => row.name === 'crawl-agent-review');
-  for (const key of ['requested_version', 'processed_version', 'cursor', 'not_before', 'last_success_at']) expect(after![key]).toEqual(before![key]);
-  // 던지지 않고 끝난 미룸 틱은 지난 실패 기록(last_error)을 지운다(runner.ts) — fixture 의 'prior-error'
+  for (const key of ['requested_version', 'not_before', 'last_success_at']) expect(after![key]).toEqual(before![key]);
+  expect(after!.processed_version).toEqual(before!.requested_version);
+  // 살펴본 후보까지 쪽 커서(firstReviewPoolScan)만 나아가고 커서의 다른 칸은 그대로다
+  const { firstReviewPoolScan, ...cursor } = after!.cursor as Raw;
+  expect(cursor).toEqual(before!.cursor); expect(firstReviewPoolScan).toMatchObject({ id: context.candidate.id, reviewed: false });
+  expect((await admin`SELECT value->'degraded'->>'code' AS code FROM operations_observations WHERE key='job:crawl-agent-review'`)[0].code).toBe('all_ranks_unusable');
+  // 던지지 않고 끝난 틱은 지난 실패 기록(last_error)을 지운다(runner.ts) — fixture 의 'prior-error'
   expect(before).toMatchObject({ last_error: 'prior-error' });
   expect(after).toMatchObject({ lease_token: null, locked_at: null, last_error: null }); expect(fetch).not.toHaveBeenCalled();
 }));
@@ -344,7 +351,8 @@ it('reserved expiry during a live-start domain wait rolls back the fresh attempt
 it('native EOF without a terminal retains charge and a new actual tick cannot POST again', () => exercise(async () => {
   const context = await source(); await mode('open');
   await serve(async (_endpoint, calls) => {
-    expect(await tick()).toMatchObject({ status: 'completed' }); expect(calls.count).toBe(1);
+    // PR C1: 실패한 호출의 모델은 이 틱에 쉬고(늘 순위 고르기), 남긴 심사가 없는 틱은 model_capacity 미룸이다
+    expect(await tick()).toMatchObject({ status: 'deferred', reason: 'model_capacity' }); expect(calls.count).toBe(1);
     const [unknown] = await requests(); expect(unknown.state).toBe('indeterminate');
     expect(unknown.dispatch_binding).toMatchObject({ candidateId: context.candidate.id, chargedTokens: 8192, totalTokenBound: 8192 });
     expect(unknown.terminal_evidence).toBeNull(); expect(unknown.settled_at).toBeNull();
@@ -370,7 +378,8 @@ it('caller abort after native POST retains unknown charge and a fresh-signal tic
     try {
       await Promise.race([calls.received, execution.then(() => { throw new Error('abort_job_ended_before_post'); })]);
       const [dispatched] = await requests(); expect(dispatched.state).toBe('dispatched'); expect(calls.count).toBe(1);
-      controller.abort(); expect(await execution).toMatchObject({ status: 'completed' });
+      // PR C1: 취소된 호출의 모델도 이 틱에 쉰다(늘 순위 고르기) — 남긴 심사가 없는 틱은 model_capacity 미룸이다
+      controller.abort(); expect(await execution).toMatchObject({ status: 'deferred', reason: 'model_capacity' });
       const [unknown] = await requests(); expect(unknown.state).toBe('indeterminate');
       for (const key of ['request_id','owner_instance_id','owner_boot_id','token','epoch','revision','policy_hash','dispatch_binding','dispatch_binding_hash','dispatched_at']) expect(unknown[key]).toEqual(dispatched[key]);
       expect(unknown.terminal_evidence).toBeNull(); expect(unknown.settled_at).toBeNull();

@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest';
 import { and, eq, gt, like, max } from 'drizzle-orm';
 import { db } from '@/lib/db';
-import { agentRepositoryScans, crawlCandidates, crawlDocuments, crawlFrontier, crawlReviewAttempts, crawlSettings, jobs, operationsAudit, secondReviews } from '@/lib/db/schema';
+import { agentRepositoryScans, aiConnections, aiTaskModels, crawlCandidates, crawlDocuments, crawlFrontier, crawlReviewAttempts, crawlSettings, jobs,
+  modelServingContracts, operationsAudit, secondReviews } from '@/lib/db/schema';
 import * as crawl from '@/lib/crawl/repository';
 import { getSettings, saveSettings } from '@/lib/crawl/settings';
 import { loadReviewInput } from '@/lib/crawl/agent-review-repository';
@@ -11,7 +12,10 @@ import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from '@/lib/crawl/agent-r
 import { ensureSchema } from './setup';
 import { TEST_DATABASE_URL } from './test-database-url';
 import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
+import { cliDbContract } from '@/lib/llm/cli-db-contracts';
+import { cliContractRouteId, cliServingContractHash } from '@/lib/llm/cli-serving-contract';
 import { closeSettledSecondReviewsFixture as closeSettled, enqueueSecondReviewsFixture as enqueue, withLegacySecondReviewJob } from './second-review-receipt-fixtures';
 
 /**
@@ -71,6 +75,31 @@ async function firstReview(candidateId: number, decision: 'approve' | 'reject' |
 }
 
 const reconcile = () => withLegacySecondReviewJob(lease => reconcileStaleSecondReviews(undefined, lease));
+
+/**
+ * 운영자 도구(scripts/reconcile-ai2-stale.ts)는 자식 프로세스라 이 시험 프로세스의 순위 고정(tests/integration/env.ts)을 받지 않는다 — 실행 쪽처럼
+ * DB 의 「작업 ↔ 모델」 순위를 읽는다(PR C1). 그래서 CLI 연결 하나와 1차 1순위(sonnet)·2차 투표자 칸 1 의 1순위(opus), 순위 저장이 만드는
+ * DB CLI 계약(cli:claude-cli:<route>)을 실제 행으로 둔다. 도구는 CLI 버전을 확인하지 않는 프로세스라 계약이 있으면 쓸 수 있는 순위로 본다.
+ * 되돌리기 함수를 돌려준다.
+ */
+async function seedReviewRanksForChild(): Promise<() => Promise<void>> {
+  const connectionId = randomUUID(), actor = `${PREFIX}fixture`;
+  await db.insert(aiConnections).values({ id: connectionId, label: `${PREFIX}claude`, kind: 'cli', cliTool: 'claude', cliModels: ['sonnet', 'opus'],
+    deviceId: 'claude-sub', updatedBy: actor });
+  const ranks = [{ task: 'first-review', routeId: 'crawl-agent-review', model: 'sonnet' }, { task: 'second-review', routeId: 'second-review', model: 'opus' }];
+  for (const { task, routeId, model } of ranks) {
+    await db.insert(aiTaskModels).values({ task, slot: 1, rank: 1, connectionId, model, updatedBy: actor });
+    const contract = cliDbContract(routeId, 'claude-cli', model, 'fixture-claude 1.0.0')!;
+    const stored = cliContractRouteId('claude-cli', routeId);
+    await db.insert(modelServingContracts).values({ routeId: stored, model, contract: { ...contract, routeId: stored },
+      contractHash: cliServingContractHash(contract), auth: 'none', transport: 'direct', enabled: true, updatedBy: actor });
+  }
+  return async () => {
+    await db.delete(aiTaskModels).where(eq(aiTaskModels.connectionId, connectionId));
+    await db.delete(aiConnections).where(eq(aiConnections.id, connectionId));
+    await db.delete(modelServingContracts).where(eq(modelServingContracts.updatedBy, actor));
+  };
+}
 const votes = (candidateId: number) => db.select().from(secondReviews).where(eq(secondReviews.candidateId, candidateId)).orderBy(secondReviews.id);
 const demote = (candidateId: number, reason: 'ambiguous' | 'second_review_split' = 'ambiguous') =>
   db.update(crawlCandidates).set({ state: 'needs_review', reason }).where(eq(crawlCandidates.id, candidateId));
@@ -206,17 +235,22 @@ it('runs the operator script: dry-run writes nothing, --apply writes through the
   await demote(candidate.id);
   const run = (...args: string[]) => promisify(execFile)(process.execPath, ['--import', 'tsx', 'scripts/reconcile-ai2-stale.ts', ...args],
     { env: { ...process.env, DATABASE_URL: TEST_DATABASE_URL, LOG_LEVEL: 'error' }, timeout: 60_000 });
-  const before = await snapshot();
-  const dry = JSON.parse((await run('--limit', '5')).stdout);
-  expect(dry).toMatchObject({ mode: 'dry-run', limit: 5, summary: { close: 1, reinsert: 1 } });
-  expect(await snapshot()).toEqual(before);
-  await expect(run('--apply')).rejects.toMatchObject({ stderr: expect.stringContaining('actor_required_for_apply') });
-  const applied = JSON.parse((await run('--apply', '--actor', 'script-operator', '--limit', '5')).stdout);
-  expect(applied).toMatchObject({ mode: 'apply', changed: 2, job: { status: 'completed' } });
-  expect((await votes(candidate.id)).map(row => [row.id === vote.id, row.status])).toEqual([[true, 'resolved'], [false, 'pending']]);
-  const [job] = await db.select().from(jobs).where(eq(jobs.name, 'second-review'));
-  // 실제 잡이 다음 틱에 원래 일을 이어 하도록 요청을 남긴다
-  expect(job.requestedVersion).toBeGreaterThan(job.processedVersion);
+  // 순위 표가 비어 있으면 도구는 투표자를 모른다 — 오래된 관문 표는 닫지만 옛 설정의 투표자(opus)로 다시 올리지 않는다
+  expect(JSON.parse((await run('--limit', '5')).stdout)).toMatchObject({ mode: 'dry-run', limit: 5, summary: { close: 1, reinsert: 0 } });
+  const unseed = await seedReviewRanksForChild();
+  try {
+    const before = await snapshot();
+    const dry = JSON.parse((await run('--limit', '5')).stdout);
+    expect(dry).toMatchObject({ mode: 'dry-run', limit: 5, summary: { close: 1, reinsert: 1 } });
+    expect(await snapshot()).toEqual(before);
+    await expect(run('--apply')).rejects.toMatchObject({ stderr: expect.stringContaining('actor_required_for_apply') });
+    const applied = JSON.parse((await run('--apply', '--actor', 'script-operator', '--limit', '5')).stdout);
+    expect(applied).toMatchObject({ mode: 'apply', changed: 2, job: { status: 'completed' } });
+    expect((await votes(candidate.id)).map(row => [row.id === vote.id, row.status, row.model])).toEqual([[true, 'resolved', 'opus'], [false, 'pending', 'opus']]);
+    const [job] = await db.select().from(jobs).where(eq(jobs.name, 'second-review'));
+    // 실제 잡이 다음 틱에 원래 일을 이어 하도록 요청을 남긴다
+    expect(job.requestedVersion).toBeGreaterThan(job.processedVersion);
+  } finally { await unseed(); }
 }, 120_000);
 
 it('re-enqueues one row per configured model and stays single across enqueue, cleanup and repeated reconcile ticks', async () => {

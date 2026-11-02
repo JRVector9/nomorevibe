@@ -1,9 +1,11 @@
-import { beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { createReviewInput } from '@/lib/crawl/agent-review-contract';
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from '@/lib/crawl/settings-schema';
 import type { CrawlCandidate, CrawlDocument } from '@/lib/db/schema';
 import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
+import { firstReviewers, selectFirstReviewer } from '@/lib/crawl/first-reviewers';
+import { pinReviewRanks, pinReviewRanksFromSettings } from './review-task-ranks-fixture';
 
 /**
  * F2 결함 1·2 의 AI1 job 경로(mock 경계, tests/agent-review-model-capacity.test.ts 와 같은 고정 mock).
@@ -12,14 +14,20 @@ import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
  * - native 계약 위반 결과의 detail 을 결과 기록기에 넘긴다.
  */
 const mocks = vi.hoisted(() => ({ settings: null as CrawlSettings | null, list: vi.fn(), document: vi.fn(), input: vi.fn(),
-  claim: vi.fn(), record: vi.fn(), resume: vi.fn(), reservedReview: vi.fn(), abandon: vi.fn(), gateway: vi.fn() }));
+  claim: vi.fn(), record: vi.fn(), resume: vi.fn(), reservedReview: vi.fn(), abandon: vi.fn(), gateway: vi.fn(), choose: vi.fn() }));
 vi.mock('@/lib/crawl/settings', () => ({ getSettings: async () => mocks.settings }));
 vi.mock('@/lib/crawl/repository', () => ({ getDocument: mocks.document, setReadmeSample: vi.fn() }));
 vi.mock('@/lib/crawl/readme', () => ({ fetchReadmeSample: async () => '', README_SAMPLE_LIMIT: 3000, README_SAMPLE_VERSION: '2026-09-14.1' }));
 vi.mock('@/lib/domain/products/repository', () => ({ findRepositoryProduct: async () => null }));
+// 1차 잡은 늘 순위 고르기다(PR C1): 자기 대기 행·풀 쪽(keyset)·후보별 고르기·막힌 모델 읽기를 경계 mock 으로 둔다
 vi.mock('@/lib/crawl/agent-review-repository', () => ({ canStartLegacyAgentReview: async () => true,
   requeueStaleReviewSources: async () => 0, handOffExhaustedFirstReviews: async () => 0,
+  listOwnPendingFirstReviewCandidates: async () => [],
+  listFirstReviewPoolCandidates: async (settings: CrawlSettings, limit: number) => ((await mocks.list(settings, limit)) as CrawlCandidate[]).map(candidate =>
+    ({ candidate, position: { id: candidate.id, reviewed: false, updatedAt: '2026-10-27 00:00:00.000001', ceiling: 1000 } })),
+  chooseFirstReviewForCandidate: mocks.choose,
   listReviewCandidates: mocks.list, loadReviewInput: mocks.input, claimAgentReview: mocks.claim, recordAgentReview: mocks.record }));
+vi.mock('@/lib/crawl/first-reviewer-blocks', () => ({ readBlockedFirstReviewerKeys: async () => new Set<string>() }));
 vi.mock('@/lib/crawl/agent-review-model-capacity', () => ({ claimAgentReviewModelCapacity: mocks.resume,
   reviewAgentReviewModelCapacity: mocks.reservedReview, abandonAgentReviewModelCapacity: mocks.abandon }));
 vi.mock('@/lib/crawl/agent-review', () => ({ firstReviewer: (s: CrawlSettings) => s.firstReview, reviewWithAgent: vi.fn(), REVIEW_CLI_TIMEOUT_MS: 20_000, reviewCliTimeoutMs: () => 20_000, reviewCliMaxOutputTokens: () => 2_000 }));
@@ -53,7 +61,12 @@ beforeEach(() => {
   mocks.claim.mockRejectedValue(reservationRequired());
   mocks.reservedReview.mockResolvedValue({ ok: true, outcome, usage: {} });
   mocks.record.mockResolvedValue({ applied: false, state: 'succeeded' });
+  mocks.choose.mockImplementation(async ({ candidate }, _executor, blocked) =>
+    selectFirstReviewer(firstReviewers(), candidate.id, [], [], { blocked: blocked ?? new Set() }));
+  // 1차 심사자는 「작업 ↔ 모델」 순위뿐이다 — 시험 설정의 firstReview 를 1순위로 고정한다
+  pinReviewRanksFromSettings(() => mocks.settings);
 });
+afterEach(() => pinReviewRanks(null));
 
 it('abandons a committed dispatch with its unused preparation when the tick has no room after the claim', async () => {
   mocks.list.mockResolvedValue([candidate(1)]);
@@ -87,6 +100,7 @@ it('hands the native contract diagnostic to the result writer', async () => {
   mocks.list.mockResolvedValue([candidate(1)]); mocks.resume.mockResolvedValue(positive());
   mocks.reservedReview.mockResolvedValue({ ok: false, error: 'invalid_output', detail: 'invalid_native_terminal' });
   mocks.record.mockResolvedValue({ applied: false, state: 'failed' });
-  expect(await reviewCrawlCandidates(context())).toEqual({ done: false });
+  // 실패한 호출은 그 모델을 이 틱 동안 쉬게 한다(늘 순위 고르기, PR C1) — 남긴 심사가 없으니 미룸으로 끝난다
+  expect(await reviewCrawlCandidates(context())).toEqual({ done: false, deferred: 'model_capacity' });
   expect(mocks.record).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ receipt, error: 'invalid_output', detail: 'invalid_native_terminal' }));
 });

@@ -8,7 +8,7 @@ import { formatAgo } from "@/lib/format/time";
 import { jobHref } from "../action-links";
 import type { OwnerContext, WorkOwners } from "../work-owners";
 import { WorkOwnerButtons } from "./WorkOwnerButtons";
-import { KOREAN_TAGLINE_MODEL } from "@/lib/crawl/translate";
+import { taskModels } from "@/lib/llm/ai-task-resolver";
 import { KOREAN_TRANSLATION_LEGACY_MAX_CHARS, KOREAN_TRANSLATION_MAX_ITEMS, KOREAN_TRANSLATION_QWEN_MODEL, KOREAN_TRANSLATION_QWEN_SERVER,
   koreanTranslationMaxOutputTokens, koreanTranslationQwenEnabled, koreanTranslationQwenRecoveryEnabled } from "@/lib/crawl/korean-translation-config";
 
@@ -47,13 +47,15 @@ export function KoreanTranslationStatus({ queue, owners, runtime, hasLastError, 
 }) {
   const stats = queue?.ok ? queue.value : null;
   const job = owners?.jobs.find((row) => row.name === JOB);
+  // GPT 경로의 모델은 「작업 ↔ 모델」 순위다(PR B) — 이 화면을 그린 프로세스의 순위 스냅숏
+  const ranked = taskModels(JOB).map((row) => `${row.rank}순위 ${row.connection.label} · ${row.model}`).join(", ") || "작업 ↔ 모델 순위 없음";
   return <section id="korean-translation" className="dash-card dash-8" aria-label="제품 소개 한국어 번역">
     <div className="dash-card-h"><h2>제품 소개 한국어 번역</h2><small>{stats ? `집계 ${formatAgo(stats.measuredAt, now)}` : "집계 미확인"}</small></div>
     <p className="dash-note">공개 제품의 기존 소개를 한국어 한 줄로 옮깁니다. 다국어 제품 정보 번역·심사 사유 번역과 별도 작업입니다.</p>
     <p className="dash-note">번역 요청 한도: 최대 {KOREAN_TRANSLATION_MAX_ITEMS}건·소개 합계 {n(KOREAN_TRANSLATION_LEGACY_MAX_CHARS)}자,
       출력 {n(koreanTranslationMaxOutputTokens(1))}~{n(koreanTranslationMaxOutputTokens(KOREAN_TRANSLATION_MAX_ITEMS))}토큰.
       {" "}엄격 용량 제어에서는 기존 요청 한도를 유지합니다.</p>
-    <p className="dash-note">사용 모델 설정: {KOREAN_TAGLINE_MODEL}{koreanTranslationQwenEnabled() ? ` + ${KOREAN_TRANSLATION_QWEN_SERVER} · ${KOREAN_TRANSLATION_QWEN_MODEL} 직접 연결` : " (Qwen 추가 연결 꺼짐)"}.
+    <p className="dash-note">사용 모델 설정: {ranked}{koreanTranslationQwenEnabled() ? ` + ${KOREAN_TRANSLATION_QWEN_SERVER} · ${KOREAN_TRANSLATION_QWEN_MODEL} 직접 연결` : " (Qwen 추가 연결 꺼짐)"}.
       {koreanTranslationQwenRecoveryEnabled() && " 품질 검사 기준을 유지하며 한도 도달 항목을 Qwen으로 제한 재검토합니다."}</p>
     {stats ? <dl className="mt-3 grid grid-cols-2 gap-3 text-[13px] sm:grid-cols-4">
       <div><dt className="text-fg-3">즉시 처리</dt><dd className="font-mono text-lg">{n(stats.ready)}건</dd></div>

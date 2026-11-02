@@ -122,9 +122,11 @@ export const DEFAULT_MODEL_TIMEOUTS: Readonly<Record<string, number>> = {
 export const DEFAULT_MODEL_DEADLINES: Readonly<Record<string, DeadlineLadder>> = {
   "review-gateway": { engineMs: 50_000, relayMs: null, gatewayMs: 55_000, clientMs: 60_000 },
 };
-export const DEFAULT_MODEL_CANDIDATES: Readonly<Record<string, readonly string[]>> = {
-  "first-review": ["supa:review", "mlx:text", "connect:sonnet", "connect:opus", "connect:grok"],
-};
+/**
+ * 용도별 코드 기본 후보. 1차 심사(first-review)의 후보 목록은 없앴다(PR C1) — 1차 심사자는 「작업 ↔ 모델」 순위뿐이고, 화면의 선택지도 연결이 내놓는 모델이다.
+ * 등록부 문서의 candidates 칸은 그대로 받는다(덮어쓰기 검사에만 쓴다).
+ */
+export const DEFAULT_MODEL_CANDIDATES: Readonly<Record<string, readonly string[]>> = {};
 const registrySchema = z.object({ version: z.literal(1), models: z.array(modelDefinitionSchema).min(1).max(64),
   selections: z.record(z.string(), z.string()).default({}), limits: z.record(z.string(), purposeLimitSchema).default({}),
   deadlines: z.record(z.string(), deadlineLadderSchema).default({}),
@@ -141,7 +143,7 @@ const registrySchema = z.object({ version: z.literal(1), models: z.array(modelDe
     if (new Set(candidates).size !== candidates.length || candidates.some(key => !value.models.some(model => model.key === key)))
       context.addIssue({ code: "custom", path: ["candidates", purpose], message: "invalid_model_candidates" });
   }
-  const reviewCandidates = value.candidates["first-review"] ?? DEFAULT_MODEL_CANDIDATES["first-review"];
+  const reviewCandidates = value.candidates["first-review"] ?? DEFAULT_MODEL_CANDIDATES["first-review"] ?? [];
   for (const model of value.models) {
     if (model.provider !== "abcllm" || !(reviewCandidates.includes(model.key) || model.purposes.some(purpose => ["first-review", "second-review", "ai1-preset", "ai2-gateway"].includes(purpose)))) continue;
     const ladder = model.deadlineLadder ?? value.deadlines["review-gateway"] ?? DEFAULT_MODEL_DEADLINES["review-gateway"];
@@ -385,6 +387,19 @@ export function modelTimeoutMs(purpose: string, env: ModelEnvironment = process.
   }
   const model = purpose in MODEL_PURPOSE_ENV ? configuredModelDefinition(purpose as keyof typeof MODEL_PURPOSE_ENV, env) : modelForPurpose(purpose, env);
   return model.deadlineLadder?.clientMs ?? Math.min(model.timeoutMs, timeout ?? model.timeoutMs);
+}
+
+/**
+ * 경로 한도만으로 정한 한 번 부르는 시간(PR B, 「작업 ↔ 모델」 순위를 읽는 text 경로). 등록부의 모델 정의(환경변수·용도 기본값이 고르는 모델)를
+ * 읽지 않는다 — 모델은 순위가 고르고, 시간은 경로(runtime_settings routes·코드 기본 경로 한도)가 정한다. 코드 기본값에서는 modelTimeoutMs 와 같다.
+ */
+export function modelRouteTimeoutMs(route: string, env: ModelEnvironment = process.env): number {
+  const registry = readModelRegistry(env);
+  if (registry.deadlines[route] || DEFAULT_MODEL_DEADLINES[route]) return modelDeadlineLadder(route, env).clientMs;
+  const budget = registry.limits[route] ?? DEFAULT_MODEL_PURPOSE_LIMITS[route];
+  const timeout = registry.timeouts[route] ?? budget?.timeoutMs ?? DEFAULT_MODEL_TIMEOUTS[route];
+  if (!timeout) throw new Error(`model_timeout_missing:${route}`);
+  return timeout;
 }
 
 /** Known equipment models may shorten the role budget or declare their own complete ladder. */

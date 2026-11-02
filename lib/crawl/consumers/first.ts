@@ -7,12 +7,12 @@ import { ModelCapacityDeferredError, modelCapacityDeferralIsPerWork } from '@/li
 import type { ProviderCircuits } from '@/lib/llm/provider-circuit-breaker';
 import { logger } from '@/lib/observability/logger';
 import type { HostAdmission } from '@/lib/operations/host-budget-runtime';
-import { ensureStageAssignments } from '@/lib/llm/stage-assignment-snapshot';
 import { interruptibleSleep, type RuntimeReport } from '@/scripts/worker';
 import { getSettings } from '../settings';
 import { reviewCandidatePredicate } from '../agent-review-repository';
 import { executeFirstReviewConsumerItem } from '../agent-review-item-lifecycle';
-import { FirstReviewModelDeferredError, firstReviewDeferralIsLocal, firstReviewerKey } from '../first-reviewers';
+import { FirstReviewModelDeferredError, firstReviewDeferralIsLocal, firstReviewRankState, firstReviewerKey } from '../first-reviewers';
+import { ensureReviewTaskRanks } from '../review-task-ranks';
 import { readBlockedFirstReviewerKeys } from '../first-reviewer-blocks';
 
 const PAGE_SIZE = 24, MAX_PAGES = 4, IDLE_MS = 5_000;
@@ -31,16 +31,18 @@ async function hints(cursor: Cursor | null) {
           sql`${crawlCandidates.updatedAt} > (${cursor.updatedAt}::text)::timestamp`,
           and(sql`${crawlCandidates.updatedAt} = (${cursor.updatedAt}::text)::timestamp`, gt(crawlCandidates.id, cursor.id)),
         ))) : undefined)).orderBy(asc(reviewed), asc(crawlCandidates.updatedAt), asc(crawlCandidates.id)).limit(PAGE_SIZE);
-    return { rows, poolEnabled: settings.firstReviewAdditional !== undefined };
+    return { rows, settings };
   });
 }
+/** 같은 후보를 다음 순위로 다시 고르는 상한 — 순위 수(3)만큼(PR #792 의 잡 쪽 순위 대체와 같다) */
+const MAX_RANK_RETRIES = 3;
 export async function runFirstReviewConsumer(input: {
   owner: ItemOwner; signal?: AbortSignal; once?: boolean; report?: RuntimeReport;
   /** 새 hint·claim 만 멈추는 신호. 이미 보낸 호출은 signal 이 끊을 때까지 끝낸다(replay 구간 끝 drain). 없으면 signal 과 같다 */
   stopClaims?: AbortSignal;
   /** host 합계 장부(PR10e). 없으면 기존처럼 바로 claim 한다 */
   admit?: (job: string) => Promise<HostAdmission>;
-  /** 기존 단일 회로를 유지하고, additive pool은 선택된 모델별로 회로를 나눈다. */
+  /** 고른 모델별 회로(늘 순위 고르기다 — PR C1 에서 단일 모델 회로는 없앴다). */
   circuits?: ProviderCircuits;
 }): Promise<{ attempted: number; recorded: number; skipped: number; deferred: number }> {
   const owner = itemOwnerSchema.parse(input.owner), { signal, once, report, stopClaims } = input;
@@ -49,54 +51,67 @@ export async function runFirstReviewConsumer(input: {
   const result = { attempted: 0, recorded: 0, skipped: 0, deferred: 0 };
   let cursor: Cursor | null = null, pages = 0;
   const pausedReviewers = new Set<string>();
+  let degradedCode: string | null = null;
   while (!halt?.aborted) {
     report?.('polling');
-    // 배정 표 읽기(PR 3b-E): 이 소비자는 틱이 없어 쪽마다 토글(runtime_settings)·배정 표 스냅숏을 같은 30초 주기로 새로 받는다 — 관리자가 켜면 재시작 없이
-    // 다음 쪽부터 hints 의 심사자 판정과 후보별 고르기(chooseFirstReviewForCandidate, 풀 모드만)가 표를 본다. 못 읽으면 고르기가 assignments_unavailable 로 미룬다.
-    await ensureStageAssignments();
-    const { rows: queue, poolEnabled } = await hints(cursor);
-    const blockedReviewers = poolEnabled && queue.length ? await readBlockedFirstReviewerKeys() : new Set<string>();
+    // 「작업 ↔ 모델」 순위·계약 스냅숏(PR C1): 이 소비자는 틱이 없어 쪽마다 같은 30초 주기로 새로 받는다 — 관리자가 순위를 저장하면 재시작 없이 다음 쪽부터 쓴다.
+    // 순위가 없거나·표를 못 읽었거나·모두 쓸 수 없으면 기본값으로 대신 부르지 않고 쉰다(까닭은 로그와 1차 잡의 제 일 못 함으로 보인다).
+    await ensureReviewTaskRanks();
+    const { rows: queue, settings } = await hints(cursor);
+    const ranks = firstReviewRankState(settings);
+    if (ranks.degraded && queue.length) {
+      if (degradedCode !== ranks.degraded.code) { degradedCode = ranks.degraded.code; logger.warn('pipeline_consumer.degraded', { stage: 'ai1', ...ranks.degraded }); }
+      result.deferred++;
+      if (halt?.aborted || once) break;
+      report?.('idle'); await interruptibleSleep(IDLE_MS, halt); pages = 0; pausedReviewers.clear();
+      continue;
+    }
+    degradedCode = null;
+    const blockedReviewers = queue.length ? await readBlockedFirstReviewerKeys() : new Set<string>();
     let deferred = false, completed = false;
     for (const hint of queue) {
       if (halt?.aborted) break;
-      // claim 전 관문: 단일 모델의 회로가 열렸으면(모델 하나뿐 = 그 모델 skip = 쪽 끝) claim·실패 기록 없이 이 hint 앞에서 쉰다(cursor 를 넘기지 않음)
-      const circuit = poolEnabled ? undefined : input.circuits?.admit('ai1');
-      if (circuit?.admitted === false) { result.deferred++; deferred = true; break; }
       // host 예산 거절은 이 hint 하나만 넘기고 쪽을 계속 본다(2026-10-31 결정 "하나가 잘못되면 다음 작업도 안 되는 구조는 이유가 없다") —
       // cursor 는 넘기지 않아 다음 패스가 다시 집고, 쪽 끝의 5초 쉼이 되풀이를 막는다
       const host = input.admit
         ? await input.admit('crawl-agent-review').catch(() => ({ admitted: false as const, reason: 'host_budget_unavailable' as const })) : null;
       if (host?.admitted === false) {
-        if (circuit?.admitted) circuit.done();
         logger.info('pipeline_consumer.deferred', { stage: 'ai1', reason: host.reason });
         result.deferred++; deferred = true; continue;
       }
       cursor = hint;
       result.attempted++; report?.('running', 'crawl-agent-review', Date.now());
+      let stop = false;
       try {
-        const written = await executeFirstReviewConsumerItem({ candidateId: hint.id, owner, signal,
-          ...(stopClaims ? { stopClaims } : {}), ...(circuit?.admitted ? { onProviderResult: circuit.record } : {}),
-          ...(poolEnabled ? { pausedReviewers, blockedReviewers, reviewerCircuits: input.circuits } : {}) });
-        if (written.state === 'succeeded') { result.recorded++; completed = true; }
-        else result.skipped++;
-      } catch (error) {
-        if (!(error instanceof ModelCapacityDeferredError)) throw error;
-        // 이 후보의 앞선 호출만 아직 보내진 중이거나(dispatched) 같은 후보가 다른 요청에 묶였다(work_busy, fence) — 후보 하나를 건너뛰고
-        // 쪽을 계속 본다. 모델을 pause 하지 않는다(2026-10-30 결정; 미확인 행은 더 이상 이 사유를 내지 않는다).
-        if (modelCapacityDeferralIsPerWork(error.reason)) { result.skipped++; continue; }
-        result.deferred++; deferred = true;
-        // 그 모델만의 미룸(포화·대기열·정책에 없음·계약 없음·장비 없음): 풀이면 그 모델만 이 패스 동안 쉬고 다른 모델의 후보는 계속 본다.
-        // 모델이 하나뿐이면 남은 후보도 같은 모델이라 쪽을 접는다(= 그 모델 skip). 전역 미룸(draining·disabled·정책·owner)도 쪽을 접는다.
-        if (error instanceof FirstReviewModelDeferredError && firstReviewDeferralIsLocal(error.reason)) {
-          pausedReviewers.add(firstReviewerKey(error.reviewer));
-          continue;
+        // 순위 대체(PR #792 의 뜻, PR C1 에서 소비자도): 고른 모델이 그 모델만의 까닭으로 거절되면 그 모델을 이 패스 동안 쉬게 하고 같은 후보를 다음 순위로 다시 고른다
+        for (let retry = 0; retry <= MAX_RANK_RETRIES; retry++) {
+          try {
+            const written = await executeFirstReviewConsumerItem({ candidateId: hint.id, owner, signal,
+              ...(stopClaims ? { stopClaims } : {}), pausedReviewers, blockedReviewers, reviewerCircuits: input.circuits });
+            if (written.state === 'succeeded') { result.recorded++; completed = true; }
+            else result.skipped++;
+            break;
+          } catch (error) {
+            if (!(error instanceof ModelCapacityDeferredError)) throw error;
+            // 이 후보의 앞선 호출만 아직 보내진 중이거나(dispatched) 같은 후보가 다른 요청에 묶였다(work_busy, fence) — 후보 하나를 건너뛰고
+            // 쪽을 계속 본다. 모델을 pause 하지 않는다(2026-10-30 결정; 미확인 행은 더 이상 이 사유를 내지 않는다).
+            if (modelCapacityDeferralIsPerWork(error.reason)) { result.skipped++; break; }
+            result.deferred++; deferred = true;
+            // 그 모델만의 미룸(포화·대기열·정책에 없음·계약 없음·장비 없음): 그 모델만 이 패스 동안 쉬고 같은 후보를 다음 순위로 다시 고른다.
+            // 전역 미룸(draining·disabled·정책·owner)은 쪽을 접는다.
+            if (error instanceof FirstReviewModelDeferredError && firstReviewDeferralIsLocal(error.reason)) {
+              pausedReviewers.add(firstReviewerKey(error.reviewer));
+              continue;
+            }
+            stop = true;
+            break;
+          }
         }
-        break;
       } finally {
-        if (circuit?.admitted) circuit.done();
         if (host?.admitted) await host.release().catch(() => {});
         report?.('idle');
       }
+      if (stop) break;
     }
     pages++;
     const end = queue.length < PAGE_SIZE;

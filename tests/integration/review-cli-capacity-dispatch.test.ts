@@ -26,11 +26,16 @@ import { requestJob } from '@/lib/jobs/control';
 import { tryAcquireRole, releaseRole, type RoleLease } from '@/lib/jobs/role-leader';
 import { jobsForRole } from '@/lib/jobs/catalog';
 import { ensureSchema, TEST_DATABASE_URL } from './setup';
+import { fakeToolDir } from '../fake-cli-path';
+import { pinReviewRanks } from '../review-task-ranks-fixture';
 
 /*
  * PR05c-4 실제 DB driver. 실제 AI1 legacy job(runJob)·AI1/AI2 item consumer·claim TX·장부·runner 를 쓰고, 바꾸는 것은 CLI 계약
- * allowlist(resolveCliServingContract) 하나뿐이다. 모델 CLI 는 tests/fixtures/fake-cli/fake.mjs(가짜) 이고 자식 PATH 는 빈 디렉터리다 —
- * 실제 claude/grok·provider·운영 DB 는 쓰지 않는다. 각 시험 뒤 DB 전체를 시작 상태와 같게 되돌린다(CI 공유 DB 이식성).
+ * allowlist(resolveCliServingContract) 하나뿐이다. 모델 CLI 는 tests/fixtures/fake-cli/fake.mjs(가짜) 다 — 1차·2차의 CLI 는 PATH 의 도구 이름
+ * (claude·grok, PR C1)으로 뜨므로 자식 PATH 는 가짜 래퍼를 그 이름으로 링크한 디렉터리뿐이고, env 경로(CLAUDE_CLI·GROK_CLI)는 없는 파일을 가리켜
+ * 읽지 않음을 함께 본다. 실제 claude/grok·provider·운영 DB 는 쓰지 않는다. 각 시험 뒤 DB 전체를 시작 상태와 같게 되돌린다(CI 공유 DB 이식성).
+ * 심사자는 「작업 ↔ 모델」 순위다(PR C1) — 1차 1순위 fake-model, 2차 투표자 칸 1 = [fake-model, fake-backup]. AI2 원 표의 1차 판단(first-model)은
+ * 지금 1차 심사자의 것이어야 표가 유효하므로 AI2 시험은 1차 순위를 first-model 로 둔다(pinAi2Ranks).
  */
 const fixture = vi.hoisted(() => ({ contracts: [] as CliServingContract[] }));
 vi.mock('@/lib/llm/cli-serving-contract', async original => ({
@@ -48,7 +53,7 @@ const managedJobs = ['crawl-agent-review', 'second-review', 'crawl-publish'];
 const candidates = new Map<number, string>(), documents = new Map<number, string>();
 const work = new Set<Promise<unknown>>();
 let baseline: Snapshot, held: Raw[] = [], role: RoleLease | null = null, initialized = false, serial = 0;
-let root = '', bin = '', records = '', tmp = '', empty = '';
+let root = '', bin = '', records = '', tmp = '', empty = '', tools = '';
 const createdJobs = new Set<string>(), createdObservations = new Set<string>();
 
 const claudeShape = { maxTurns: 2, inputByteCap: 200_000, overheadTokenBound: 20_000, outputTokensPerTurn: 2_000 };
@@ -70,6 +75,12 @@ const settings = (second = false): CrawlSettings => ({ ...structuredClone(DEFAUL
   secondReview: { ...structuredClone(DEFAULT_CRAWL_SETTINGS.secondReview), enabled: second,
     voters: [{ provider: 'claude-cli', model }], fallbacks: [{ provider: 'claude-cli', model: backup }] } });
 
+/** 1차 = fake-model 하나, 2차 투표자 칸 1 = [fake-model, fake-backup](옛 settings() 의 firstReview·voters·fallbacks 와 같은 심사자) */
+const pinAi1Ranks = () => pinReviewRanks({ first: [{ provider: 'claude-cli', model }],
+  second: [[{ provider: 'claude-cli', model }, { provider: 'claude-cli', model: backup }]] });
+/** AI2 시험: 원 표의 1차 판단(vote() 의 first-model)이 지금 1차 심사자다 — 2차 칸 1 은 같다 */
+const pinAi2Ranks = () => pinReviewRanks({ first: [{ provider: 'claude-cli', model: 'first-model' }],
+  second: [[{ provider: 'claude-cli', model }, { provider: 'claude-cli', model: backup }]] });
 function track<T>(value: Promise<T>): Promise<T> { work.add(value); void value.catch(() => {}); return value; }
 async function drain() { const pending = [...work]; await Promise.allSettled(pending); pending.forEach(value => work.delete(value)); }
 async function steps(loads: readonly (() => Promise<unknown>)[], prior: readonly unknown[] = []) {
@@ -221,13 +232,16 @@ beforeAll(async () => {
   const fake = path.resolve('tests/fixtures/fake-cli/fake.mjs');
   for (const value of [root, fake, process.execPath]) expect(value).not.toContain("'");
   bin = path.join(root, 'fake-cli'); await writeFile(bin, `#!/bin/sh\nexec '${process.execPath}' '${fake}' "$@"\n`); await chmod(bin, 0o755);
+  tools = await fakeToolDir(path.join(root, 'tools'), { claude: bin, grok: bin });
   initialized = true;
 });
 beforeEach(async () => {
   fixture.contracts = [...CONTRACTS];
   vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('unexpected_external_http'); }));
-  vi.stubEnv('TMPDIR', tmp); vi.stubEnv('PATH', empty); vi.stubEnv('FAKE_CLI_MODE', 'ok'); vi.stubEnv('FAKE_CLI_RECORD', records);
-  vi.stubEnv('CLAUDE_CLI', bin); vi.stubEnv('GROK_CLI', bin);
+  vi.stubEnv('TMPDIR', tmp); vi.stubEnv('PATH', tools); vi.stubEnv('FAKE_CLI_MODE', 'ok'); vi.stubEnv('FAKE_CLI_RECORD', records);
+  // env 경로는 1차·2차가 읽지 않는다 — 없는 파일을 가리켜도 PATH 의 claude 가 뜬다
+  vi.stubEnv('CLAUDE_CLI', path.join(empty, 'absent-claude')); vi.stubEnv('GROK_CLI', path.join(empty, 'absent-grok'));
+  pinAi1Ranks();
   await admin.begin(async tx => {
     for (const name of managedJobs) {
       const [current] = await tx`SELECT name FROM jobs WHERE name=${name} FOR UPDATE`;
@@ -298,9 +312,11 @@ const events = async (id: unknown) => (await admin`SELECT kind,reason FROM model
 const votes = async (candidateId: number) => (await admin`SELECT to_jsonb(s) AS row FROM second_reviews s WHERE candidate_id=${candidateId} ORDER BY id`).map(row => row.row as Raw);
 const evidence = (row: Raw) => (row.terminal_evidence as { process: Raw } | null)?.process;
 
-it('AI1 legacy job: open 이지만 운영 resolver(null)면 slot·attempt·spawn 없이 model_capacity 로 미룬다', async () => {
+it('AI1 legacy job: open 이지만 운영 resolver(null)면 slot·attempt·spawn 없이 그 순위를 쉬게 하고, 남은 순위가 없으면 all_ranks_unusable 로 적는다', async () => {
   const { candidate } = await source(); await install('open'); await withRole(); fixture.contracts = [];
-  expect(await tick()).toMatchObject({ status: 'deferred', reason: 'model_capacity' });
+  // PR C1: 1차는 늘 순위 고르기다 — 계약 없음은 그 모델만의 거절이라 그 순위를 쉬게 하고 다음 순위로 간다. 순위가 하나뿐이면 들인 후보가 모두
+  // 「모든 순위를 쓸 수 없음」으로 건너뛰어져 틱이 제 일 못 함(degraded)으로 끝난다(예전 단일 심사자의 model_capacity 미룸 자리)
+  expect(await tick()).toMatchObject({ status: 'completed', done: false, degraded: 'all_ranks_unusable' });
   expect(await attempts(candidate.id)).toEqual([]); expect(await requests()).toEqual([]); expect(await recorded()).toEqual([]);
 });
 
@@ -310,7 +326,8 @@ it('AI1 legacy job: disabled 는 원 legacy CLI 경로 그대로(장부 0) — a
   expect(await requests()).toEqual([]);
   expect(await attempts(candidate.id)).toMatchObject([{ state: 'succeeded', provider: 'claude-cli', model, attempt_number: 1 }]);
   const [child] = await recorded();
-  expect(child).toMatchObject({ argv: reviewCliArgs(model), realCliOnPath: false, env: { PATH: empty, CLAUDE_CODE_MAX_OUTPUT_TOKENS: '2000', CLAUDECODE: null } });
+  // 자식 PATH 는 가짜 래퍼를 claude·grok 이름으로 링크한 디렉터리뿐이다(realCliOnPath 는 그 이름을 본다)
+  expect(child).toMatchObject({ argv: reviewCliArgs(model), realCliOnPath: true, env: { PATH: tools, CLAUDE_CODE_MAX_OUTPUT_TOKENS: '2000', CLAUDECODE: null } });
   const input = await loadReviewInput(candidate, document, settings());
   expect(Buffer.from(child.stdin!, 'base64').toString('utf8')).toBe(reviewCliPrompt(JSON.stringify(input.snapshot)));
 });
@@ -328,14 +345,15 @@ it('AI1 legacy job: open+계약이면 slot → 같은 TX attempt·dispatch → �
   expect(evidence(row)).toMatchObject({ ending: 'exited', exitCode: 0, provenance: 'cli_reported' });
   expect(await events(row.request_id)).toEqual(['queued', 'reserved', 'dispatch_started', 'dispatch_settled']);
   const [child] = await recorded();
-  expect(child).toMatchObject({ argv: reviewCliArgs(model), realCliOnPath: false, env: { PATH: empty, CLAUDE_CODE_MAX_OUTPUT_TOKENS: '2000', CLAUDECODE: null } });
+  expect(child).toMatchObject({ argv: reviewCliArgs(model), realCliOnPath: true, env: { PATH: tools, CLAUDE_CODE_MAX_OUTPUT_TOKENS: '2000', CLAUDECODE: null } });
   const input = await loadReviewInput(candidate, document, settings());
   expect(Buffer.from(child.stdin!, 'base64').toString('utf8')).toBe(reviewCliPrompt(JSON.stringify(input.snapshot)));
 });
 
 it('AI1 legacy job: 출력 초과 kill 도 물리 종료라 정산하고, 결과는 기존 output_too_large 실패·backoff 그대로다', async () => {
   const { candidate } = await source(); await install('open'); await withRole(); vi.stubEnv('FAKE_CLI_MODE', 'flood');
-  expect(await tick()).toMatchObject({ status: 'completed' });
+  // PR C1: 1차는 늘 순위 고르기다 — 실패한 호출은 그 순위를 이 틱에 쉬게 하고, 심사를 남기지 못한 틱은 미룸으로 끝난다(결과 기록·backoff 는 그대로)
+  expect(await tick()).toMatchObject({ status: 'deferred', reason: 'model_capacity' });
   const [row] = await requests();
   expect(row.state).toBe('settled'); expect(evidence(row)).toMatchObject({ ending: 'killed', killReason: 'output_too_large', signal: 'SIGKILL' });
   const [attempt] = await attempts(candidate.id);
@@ -346,7 +364,8 @@ it('AI1 legacy job: 출력 초과 kill 도 물리 종료라 정산하고, 결과
 
 it('AI1 legacy job: pipe 쥔 손자면 process_exit indeterminate 로 점유를 유지하고, 재진입·gateway 모두 spawn 없이 미뤄진다', async () => {
   const { candidate, document } = await source(); await install('open'); await withRole(); vi.stubEnv('FAKE_CLI_MODE', 'grandchild-hold');
-  expect(await tick()).toMatchObject({ status: 'completed' });
+  // 실패(cli_error)로 끝난 순위는 이 틱에 쉰다 — 심사를 남기지 못한 틱은 미룸이다(PR C1, 위와 같다)
+  expect(await tick()).toMatchObject({ status: 'deferred', reason: 'model_capacity' });
   const [unknown] = await requests();
   expect(unknown).toMatchObject({ state: 'indeterminate', terminal_evidence: null, dispatch_binding: { kind: 'ai1_legacy_cli', chargedTokens: C } });
   expect(await events(unknown.request_id)).toEqual(['queued', 'reserved', 'dispatch_started', 'dispatch_indeterminate:process_exit']);
@@ -414,14 +433,14 @@ it('AI1 item consumer: CLI 의도 → slot → attempt·item·dispatch → 가�
 });
 
 it('AI2 consumer: 운영 resolver(null)면 item·요청·표 변화 없이 provider_contract_unavailable', async () => {
-  const f = await vote(); await install('open', { second: true, stage: { ai2: 'items' } }); fixture.contracts = [];
+  const f = await vote(); pinAi2Ranks(); await install('open', { second: true, stage: { ai2: 'items' } }); fixture.contracts = [];
   const before = await whole();
   await expect(track(executeSecondReviewConsumerItem({ secondReviewId: f.row.id, owner }))).rejects.toMatchObject({ reason: 'provider_contract_unavailable' });
   expect(await whole()).toEqual(before); expect(await recorded()).toEqual([]);
 });
 
 it('AI2 consumer: CLI 표는 slot → item·dispatch → 가짜 CLI → 정산 뒤에만 표를 적는다', async () => {
-  const f = await vote(); await install('open', { second: true, stage: { ai2: 'items' } });
+  const f = await vote(); pinAi2Ranks(); await install('open', { second: true, stage: { ai2: 'items' } });
   expect(await track(executeSecondReviewConsumerItem({ secondReviewId: f.row.id, owner }))).toEqual({ state: 'recorded' });
   const [row] = await requests();
   expect(row).toMatchObject({ state: 'settled', class: 'second', logical_work_key: `ai2:${f.candidate.id}:${f.row.id}`,
@@ -433,7 +452,7 @@ it('AI2 consumer: CLI 표는 slot → item·dispatch → 가짜 CLI → 정산 �
 });
 
 it('AI2 consumer: 실제 CLI 실패(exit 1)는 정산하고 기존 규칙대로 실패 수+1·예비모델 행 하나를 만든다', async () => {
-  const f = await vote(); await install('open', { second: true, stage: { ai2: 'items' } }); vi.stubEnv('FAKE_CLI_MODE', 'fail');
+  const f = await vote(); pinAi2Ranks(); await install('open', { second: true, stage: { ai2: 'items' } }); vi.stubEnv('FAKE_CLI_MODE', 'fail');
   expect(await track(executeSecondReviewConsumerItem({ secondReviewId: f.row.id, owner }))).toEqual({ state: 'recorded' });
   const [row] = await requests();
   expect(row.state).toBe('settled'); expect(evidence(row)).toMatchObject({ ending: 'exited', exitCode: 1 });
@@ -444,7 +463,7 @@ it('AI2 consumer: 실제 CLI 실패(exit 1)는 정산하고 기존 규칙대로 
 });
 
 it('AI2 consumer: 슬롯 대기면 item·표·예비모델 행 변화 0 으로 미루고 대기 요청만 남긴다', async () => {
-  const f = await vote(); const other = await vote(); await install('open', { second: true, stage: { ai2: 'items' }, claudeLimit: 1 });
+  const f = await vote(); pinAi2Ranks(); const other = await vote(); await install('open', { second: true, stage: { ai2: 'items' }, claudeLimit: 1 });
   // 다른 표가 Claude 계정 한도 1 을 차지한다
   const binding = { stage: 'ai2' as const, secondReviewId: other.row.id, candidateId: other.candidate.id,
     source: { kind: 'first_attempt' as const, firstAttemptId: other.first.id }, inputHash: other.input.inputHash, sourceRevisionHash: other.input.sourceRevisionHash,
@@ -464,7 +483,7 @@ it('AI2 consumer: 슬롯 대기면 item·표·예비모델 행 변화 0 으로 �
 });
 
 it('AI2 consumer: pipe 쥔 손자로 원 표가 indeterminate 면 실패 기록이 만든 예비모델 행도 새 boot 에서 spawn 없이 미뤄진다', async () => {
-  const f = await vote(); await install('open', { second: true, stage: { ai2: 'items' } }); vi.stubEnv('FAKE_CLI_MODE', 'grandchild-hold');
+  const f = await vote(); pinAi2Ranks(); await install('open', { second: true, stage: { ai2: 'items' } }); vi.stubEnv('FAKE_CLI_MODE', 'grandchild-hold');
   expect(await track(executeSecondReviewConsumerItem({ secondReviewId: f.row.id, owner }))).toEqual({ state: 'recorded' });
   const [unknown] = await requests();
   expect(unknown).toMatchObject({ state: 'indeterminate', terminal_evidence: null });

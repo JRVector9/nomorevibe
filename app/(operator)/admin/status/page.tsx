@@ -1,4 +1,6 @@
 import { cache, Suspense } from "react";
+import { firstReviewers } from "@/lib/crawl/first-reviewers";
+import { secondReviewVoterSets } from "@/lib/crawl/second-review-voters";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { cookies } from "next/headers";
@@ -19,6 +21,7 @@ import { PipelineControlStatus } from "./PipelineControlStatus";
 import { PipelineCompletions } from "./PipelineCompletions";
 import { FirstReviewStatusCard } from "./FirstReviewStatus";
 import { ModelRouteContracts } from "./ModelRouteContracts";
+import { TextTaskRanksStatus } from "./TextTaskRanksStatus";
 import { readModelRouteStatus } from "@/lib/operations/model-route-status";
 import { currentModelEnv } from "@/lib/operations/model-env";
 import { SOURCE_BUFFER_OBSERVATION_KEY, SourceBufferCard } from "./SourceBufferCard";
@@ -132,6 +135,17 @@ async function PipelineControlSlot() {
 /** 모델 경로 계약·전환 진행(ops-v8 PR8) — 운영 CLI status 와 같은 readback 을 복제본에서만. 못 읽으면 보류 */
 async function ModelRouteSlot() {
   return <ModelRouteContracts status={await readModelRouteStatus(await currentModelEnv())} />;
+}
+
+/** 작업 ↔ 모델 text 작업 순위(PR B) — 저장한 순위·쓸 수 없는 까닭(이 웹 프로세스의 스냅숏)과 잡의 마지막 틱의 순위 사정. 실행 기록을 못 읽어도 순위는 보인다 */
+async function TextTaskRanksSlot() {
+  const [{ AI_TEXT_TASK_IDS }, { TextTaskRanks }, { readAiTaskRuntime }] = await Promise.all([import("@/lib/llm/ai-tasks"),
+    import("@/lib/llm/ai-task-resolver"), import("@/lib/operations/admin-ai-tasks-repository")]);
+  const read = await readAiTaskRuntime().then(value => ({ value, error: null }),
+    (cause: unknown) => ({ value: {} as Awaited<ReturnType<typeof readAiTaskRuntime>>, error: cause instanceof Error ? cause.message.slice(0, 120) : "read_failed" }));
+  const lines = await Promise.all(AI_TEXT_TASK_IDS.map(async task => ({ task, resolution: (await TextTaskRanks.open(task)).resolution,
+    runtime: read.value[task] ?? null })));
+  return <TextTaskRanksStatus lines={lines} error={read.error} />;
 }
 
 /** PR13c 처리 지표 — 복제본에서 따로 센다. 못 읽으면 칸마다 미확인으로 남는다 */
@@ -498,7 +512,9 @@ export default async function StatusPage() {
   }));
   // Grok 은 reviewer 의 grok-session-check 잡이 4시간마다 남기는 관측(service:grok:<instance>) — 가장 최근 것 하나.
   // 심사에 Grok 을 쓰지 않으면 잡이 아무것도 남기지 않아 옛 관측이 초록으로 남았다(2026-10-08, 34시간 전 것) — 쓸 때만, 5시간 넘으면 오래됨
-  const grokConfigured = [settings.firstReview, ...settings.secondReview.voters, ...(settings.secondReview.fallbacks ?? [])]
+  // 1차·2차의 Grok 은 「작업 ↔ 모델」 순위(PR C1)에서 본다
+  const secondSets = secondReviewVoterSets(settings);
+  const grokConfigured = [...firstReviewers(settings), ...secondSets.voters, ...secondSets.fallbacks]
     .some((voter) => voter?.provider === "grok-cli");
   const grok = ops.observations.filter((row) => row.key.startsWith("service:grok:"))
     .sort((a, b) => new Date(b.observedAt).getTime() - new Date(a.observedAt).getTime())[0];
@@ -574,6 +590,7 @@ export default async function StatusPage() {
       <SourceBufferCard enabled={settings.discover.sourceBuffer.enabled}
         observation={ops.observations.find((row) => row.key === SOURCE_BUFFER_OBSERVATION_KEY)}
         csrf={secret ? { token: sourceBufferCsrf(admin, secret), expiresAt: admin.exp } : null} />
+      <Suspense fallback={<p className="text-[13px] text-fg-3" aria-busy="true">작업 ↔ 모델 순위를 읽는 중…</p>}><TextTaskRanksSlot /></Suspense>
       <Suspense fallback={<p className="text-[13px] text-fg-3" aria-busy="true">모델 경로 계약을 읽는 중…</p>}><ModelRouteSlot /></Suspense>
     </div>
   );

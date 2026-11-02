@@ -3,6 +3,8 @@ import { modelCapacityPolicyHash, type ModelCapacityPolicy } from "@/lib/llm/cap
 import { deferredRoutes, modelRouteContracts, parsePipelineControlArgs, planPipelineControl, usedModelRoutes, type ControlSnapshot, type ModelEnv,
   type TransitionCommand } from "@/lib/operations/pipeline-control";
 import type { Ai2DirectServingContract } from "@/lib/crawl/second-review-serving-contract";
+import { pinReviewRanks, pinReviewRanksFromSettings } from "./review-task-ranks-fixture";
+import { cliRankRow, pinTaskRanks } from "./fake-cli-path";
 
 // 이 WT의 serving 계약 resolver는 모두 null이다. served에 넣은 model만 계약이 있는 배포처럼 답하게 한다.
 const mocks = vi.hoisted(() => {
@@ -96,8 +98,17 @@ const policyFor = (routes: readonly (readonly [string, string, string])[]): Mode
 const capacity = (mode: "draining" | "open", policy: ModelCapacityPolicy) =>
   ({ ...snapshot().capacity, mode, revision: 2, policy, policyHash: modelCapacityPolicyHash(policy) });
 
-beforeEach(() => { mocks.served.clear(); mocks.ai2Contracts.clear(); });
-afterEach(() => vi.unstubAllEnvs());
+/**
+ * 1차·2차·Grok 로그인 유지의 조합은 「작업 ↔ 모델」 순위에서 온다(PR C1). 기본 순위는 SETTINGS 와 같은 심사자다 — 1차 1순위 ai1-gw,
+ * 2차 칸 1 = ai2-gw → grok-4 → opus, 칸 2 = opus(투표자 ai2-gw·opus, 대체 grok-4), Grok 로그인 유지 1순위 grok-4. 스냅숏의 reviewSettings 는
+ * 읽기 가능 여부(settingsUnreadable)만 정한다.
+ */
+const pinSettingsRanks = (settings: Parameters<typeof pinReviewRanksFromSettings>[0] = SETTINGS) => pinReviewRanksFromSettings(settings);
+beforeEach(() => {
+  mocks.served.clear(); mocks.ai2Contracts.clear();
+  pinSettingsRanks(); pinTaskRanks([cliRankRow("grok-session-check", "grok-4")]);
+});
+afterEach(() => { vi.unstubAllEnvs(); pinReviewRanks(null); pinTaskRanks(null); });
 
 const direct: Ai2DirectServingContract = { version: 1, protocol: "ai2-direct-openai-chat-v1", routeId: "second-review",
   provider: "local-direct", model: "direct-ai2", responseModel: "direct-engine", deploymentRevision: "direct-v1",
@@ -119,6 +130,7 @@ describe("AI2 direct provider reopen contracts", () => {
     ALL_SERVED.forEach(model => mocks.served.add(model)); mocks.ai2Contracts.set(key, direct);
     const reviewSettings = { ...SETTINGS, secondReview: { voters: [{ provider: direct.provider, model: direct.model }],
       fallbacks: [{ provider: "abcllm", model: "ai2-gw" }] } };
+    pinSettingsRanks(reviewSettings);
     const policy = directPolicy();
     const state = snapshot({ reviewSettings, capacity: capacity("draining", policy) }, { mode: "items" });
     const allowed = planPipelineControl(transition(...open), state, undefined, MODELS);
@@ -219,12 +231,19 @@ describe("capacity open is judged only on the combinations in use", () => {
   });
   const open = ["capacity", "mode", "--to=open", "--from-mode=draining", "--expect-epoch=1", "--expect-revision=2"];
 
-  it("reads what each call site passes its resolver from the review settings, model env and the running audit", () => {
+  it("reads what each call site passes its resolver from the task ranks, model env and the running audit", () => {
     const uses = usedModelRoutes(snapshot(), MODELS);
     expect(uses).toHaveLength(IN_USE.length);
     expect(uses).toEqual(expect.arrayContaining(IN_USE.map(([routeId, provider, model]) => expect.objectContaining({ routeId, provider, model }))));
-    // 1차 심사자 설정이 없으면 claude-cli 의 모델 미상(null)이다 — CRAWL_REVIEW_MODEL 은 2026-10-31부터 읽지 않는다
+    // 순위가 고르는 것이다 — 스냅숏의 옛 설정이 다른 심사자를 적어도 route 목록은 순위를 따른다
+    const legacy = usedModelRoutes(snapshot({ reviewSettings: { firstReview: { provider: "grok-cli", model: "legacy-grok" },
+      secondReview: { voters: [{ provider: "grok-cli", model: "legacy-grok" }] } } }), MODELS);
+    expect(legacy).toHaveLength(IN_USE.length);
+    expect(legacy.some(use => use.model === "legacy-grok")).toBe(false);
+    // 1차 순위가 없으면 claude-cli 의 모델 미상(null)이다 — CRAWL_REVIEW_MODEL 은 2026-10-31부터 읽지 않는다.
+    // Grok 로그인 유지 순위가 없으면 그 route 는 쓰지 않는다
     vi.stubEnv("CRAWL_REVIEW_MODEL", "env-ai1");
+    pinReviewRanks({ second: [[{ provider: "abcllm", model: "ai2-gw" }]] }); pinTaskRanks([]);
     const implicit = usedModelRoutes(snapshot({ reviewSettings: { secondReview: { voters: [{ provider: "abcllm", model: "ai2-gw" }] } },
       auditCampaign: { provider: "abcllm", model: "audit-gw" } }), MODELS);
     expect(implicit).toEqual(expect.arrayContaining([{ routeId: "crawl-agent-review", provider: "claude-cli", model: null },
@@ -241,7 +260,9 @@ describe("capacity open is judged only on the combinations in use", () => {
     const corrupt = usedModelRoutes(snapshot({ reviewSettings: { reviewConcurrency: 99 } }), MODELS);
     expect(corrupt).toEqual(expect.arrayContaining([{ routeId: "crawl-agent-review", provider: "unknown", model: null },
       { routeId: "second-review", provider: "unknown", model: null }, { routeId: "grok-session-check", provider: "unknown", model: null }]));
+    pinReviewRanks({ first: [] });
     const empty = usedModelRoutes(snapshot({ reviewSettings: {} }), { ...MODELS, tagline: "" });
+    pinSettingsRanks();
     expect(empty).toEqual(expect.arrayContaining([{ routeId: "crawl-agent-review", provider: "claude-cli", model: null },
       { routeId: "crawl-tagline", provider: "abcllm", model: null }]));
     ALL_SERVED.forEach(model => mocks.served.add(model));

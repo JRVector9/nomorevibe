@@ -1,4 +1,3 @@
-import { scopedModel, scopedRequestTimeout } from "@/lib/llm/model-registry";
 import { randomUUID } from "node:crypto";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { modelCapacityIndeterminateReason } from "@/lib/llm/capacity";
@@ -8,21 +7,23 @@ import { markUnsettledDispatch } from "@/lib/llm/capacity-unsettled";
 import { writeKeywordsWithReservedGateway } from "@/lib/crawl/agent-review-gateway";
 import { textProfileInputHash, type ModelCapacityRequestIdentity } from "@/lib/llm/capacity";
 import { prepareProfileModelDispatch, type ProfileTask, type ProfileWriteExpectation } from "./search-profiles";
-import { PROFILE_MODEL, profileEvidence, writeKeywords, type KeywordResult } from "./search-profile";
+import { profileEvidence, writeKeywords, type KeywordResult } from "./search-profile";
 import type { JobLease } from "@/lib/jobs/control";
 import type { RoleLease } from "@/lib/jobs/role-leader";
 import { textRouteCallable } from "@/lib/llm/serving-contract-store";
 import { textProfileServingProvider } from "@/lib/llm/text-profile-serving-contract";
+import { textTaskModel } from "@/lib/llm/ai-task-rank-scope";
 
 export type ProfileCapacityResult = { kind: "skipped" } | { kind: "result"; result: KeywordResult; expectedProfile?: ProfileWriteExpectation };
 /** Fixed route coordinator. No callback, JSON shape or timeout is dispatch authority. */
 export async function writeKeywordsWithModelCapacity(task: ProfileTask, lease: JobLease,
   options: { timeoutMs: number; signal?: AbortSignal; roleLease?: RoleLease }): Promise<ProfileCapacityResult> {
-  const snapshot = structuredClone(task), ownedLease = structuredClone(lease), captured = { ...options, timeoutMs: scopedRequestTimeout("product-search-profile", options.timeoutMs),
+  const snapshot = structuredClone(task), ownedLease = structuredClone(lease), captured = { ...options, timeoutMs: options.timeoutMs,
     roleLease: options.roleLease && structuredClone(options.roleLease) };
   // provider 는 계약 모듈이 정한다(abcllm 계약이 있으면 abcllm, 없고 local-direct 직접 계약이 닿으면 local-direct — PR 3b-E)
-  const model = scopedModel("product-search-profile", PROFILE_MODEL), provider = textProfileServingProvider(model);
-  if (!textRouteCallable("product-search-profile", model, provider)) return { kind: "result", result: { ok: false, error: "no_key" } };
+  const model = textTaskModel("product-search-profile"), provider = textProfileServingProvider(model);
+  // 순위(PR B)가 계약을 확인하고 범위를 열었다 — 그 사이 계약이 닫혔으면 이 모델만의 일이라 다음 순위로 넘긴다(옛 게이트웨이 길로 떨어지지 않는다)
+  if (!textRouteCallable("product-search-profile", model, provider)) throw new ModelCapacityDeferredError("provider_contract_unavailable");
   const prepared = await prepareProfileModelDispatch(snapshot, ownedLease, captured);
   if (prepared.kind === "disabled") return { kind: "result", result: await writeKeywords(profileEvidence(snapshot.product, snapshot.reviewerNote), options) };
   if (prepared.kind === "skipped") return prepared;

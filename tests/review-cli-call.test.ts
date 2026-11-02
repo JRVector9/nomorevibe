@@ -13,11 +13,13 @@ import { readCliProcessTerminal } from "@/lib/llm/cli-process-runner";
 import { claudeCliTokenBound, type CliServingContract } from "@/lib/llm/cli-serving-contract";
 import { prepareReviewCliCall, releaseReviewCliCall, reviewWithReservedCli, settleReviewCliNotStarted,
   type PreparedReviewCliCall } from "@/lib/crawl/review-cli-call";
+import { fakeToolDir } from "./fake-cli-path";
 
 /*
  * 05c-4 의 프로세스 쪽 절반: 공통 슬롯 경로(native)가 legacy reviewWithAgent·reviewWithGrokCli 와 같은 명령·argv·stdin·env·
  * 제한 시간으로 자식을 띄우고 같은 parser 결과를 내는지 실제 가짜 CLI 프로세스로 맞춘다. 실제 claude/grok 는 부르지 않는다 —
- * 명령은 절대경로 sh 래퍼이고 자식의 PATH 는 빈 디렉터리다. 장부(DB)는 쓰지 않는다.
+ * 1차·2차의 명령은 PATH 의 도구 이름(claude·grok, PR C1)이라 자식의 PATH 는 가짜 CLI 래퍼를 그 이름으로 링크한 디렉터리뿐이다.
+ * env 경로(CLAUDE_CLI·GROK_CLI)는 없는 파일을 가리켜 읽지 않음을 함께 본다. legacy 쪽도 1차·2차처럼 도구 이름을 넘긴다. 장부(DB)는 쓰지 않는다.
  */
 const fixture = vi.hoisted(() => ({ contracts: [] as CliServingContract[] }));
 vi.mock("@/lib/llm/cli-serving-contract", async original => ({
@@ -31,7 +33,7 @@ const claude = (routeId: string): CliServingContract => ({ version: 1, protocol:
   cliVersion: "fake 0.0.0", totalTokenBound: claudeCliTokenBound(claudeShape), costBoundUsdMicros: 150_000, boundProvenance: "derived", ...claudeShape });
 const grok = (routeId: string): CliServingContract => ({ version: 1, protocol: "cli-process-v1", routeId, provider: "grok-cli", model,
   cliVersion: "fake 0.0.0", inputByteCap: 200_000, totalTokenBound: 300_000, costBoundUsdMicros: null, boundProvenance: "declared" });
-let root = "", bin = "", grokAnswer = "", empty = "", records = "", files = "", tmp = "";
+let root = "", bin = "", grokAnswer = "", empty = "", records = "", files = "", tmp = "", tools = "", answerTools = "";
 
 beforeAll(async () => {
   root = await mkdtemp(path.join(os.tmpdir(), "nmv-review-cli-call-"));
@@ -56,12 +58,16 @@ exec '${process.execPath}' '${fake}' "$@"
 exec '${process.execPath}' -e 'process.stdout.write(process.argv[1])' '${answer}'
 `);
   await chmod(grokAnswer, 0o755);
+  tools = await fakeToolDir(path.join(root, "tools"), { claude: bin, grok: bin });
+  answerTools = await fakeToolDir(path.join(root, "answer-tools"), { grok: grokAnswer });
 });
 afterAll(() => rm(root, { recursive: true, force: true }));
 beforeEach(() => {
   fixture.contracts = [claude("crawl-agent-review"), claude("second-review"), grok("crawl-agent-review"), grok("second-review")];
-  vi.stubEnv("TMPDIR", tmp); vi.stubEnv("PATH", empty); vi.stubEnv("FAKE_CLI_RECORD", records); vi.stubEnv("CLAUDECODE", "1");
-  vi.stubEnv("CLAUDE_CLI", bin); vi.stubEnv("GROK_CLI", bin); vi.stubEnv("GROK_AUTH_PATH", path.join(root, "auth.json")); vi.stubEnv("GROK_HOME", undefined);
+  vi.stubEnv("TMPDIR", tmp); vi.stubEnv("PATH", tools); vi.stubEnv("FAKE_CLI_RECORD", records); vi.stubEnv("CLAUDECODE", "1");
+  // env 경로는 1차·2차가 읽지 않는다 — 없는 파일을 가리켜도 PATH 의 claude·grok 이 뜬다
+  vi.stubEnv("CLAUDE_CLI", path.join(empty, "absent-claude")); vi.stubEnv("GROK_CLI", path.join(empty, "absent-grok"));
+  vi.stubEnv("GROK_AUTH_PATH", path.join(root, "auth.json")); vi.stubEnv("GROK_HOME", undefined);
 });
 afterEach(async () => {
   vi.unstubAllEnvs();
@@ -104,7 +110,7 @@ async function prepared(provider: "claude-cli" | "grok-cli", timeoutMs: number, 
 it.skipIf(process.platform === "win32")("Claude: native 는 legacy reviewWithAgent 와 같은 argv·stdin·env·제한 시간으로 띄우고 같은 결과를 낸다", async () => {
   for (const [mode, timeoutMs] of [["ok", 20_000], ["fail", 20_000], ["empty", 20_000], ["hang", 300], ["flood", 20_000]] as const) {
     vi.stubEnv("FAKE_CLI_MODE", mode);
-    const value = input(), legacy = await reviewWithAgent(value, { model, timeoutMs });
+    const value = input(), legacy = await reviewWithAgent(value, { model, timeoutMs, command: "claude" });
     const legacyRecords = await recorded(); await clear();
     const call = await prepared("claude-cli", timeoutMs, value), dispatch = dispatchFor(call, value);
     expect(call.transport).toMatchObject({ provider: "claude-cli", model, timeoutMs, maxStdoutBytes: 65_536, maxStderrBytes: 16_384 });
@@ -113,8 +119,9 @@ it.skipIf(process.platform === "win32")("Claude: native 는 legacy reviewWithAge
     expect(native.result, mode).toEqual(legacy);
     expect(nativeRecords.map(record => ({ ...record, pid: 0 })), mode).toEqual(legacyRecords.map(record => ({ ...record, pid: 0 })));
     expect(nativeRecords).toHaveLength(1);
-    expect(nativeRecords[0]).toMatchObject({ argv: reviewCliArgs(model), realCliOnPath: false,
-      env: { PATH: empty, CLAUDE_CODE_MAX_OUTPUT_TOKENS: "2000", CLAUDECODE: null } });
+    // 자식 PATH 는 가짜 래퍼를 claude·grok 이름으로 링크한 디렉터리뿐이다(realCliOnPath 는 그 이름을 본다)
+    expect(nativeRecords[0]).toMatchObject({ argv: reviewCliArgs(model), realCliOnPath: true,
+      env: { PATH: tools, CLAUDE_CODE_MAX_OUTPUT_TOKENS: "2000", CLAUDECODE: null } });
     expect(native.indeterminate).toBeNull();
     expect(readCliProcessTerminal(native.terminal)).toMatchObject({ requestId: dispatch.requestId, transport: call.transport,
       ending: mode === "hang" || mode === "flood" ? "killed" : "exited" });
@@ -129,7 +136,7 @@ it.skipIf(process.platform === "win32")("Claude: native 는 legacy reviewWithAge
 it.skipIf(process.platform === "win32")("Grok: native 는 legacy reviewWithGrokCli 와 임시 경로만 다르고 argv·prompt·agent 파일·env·결과가 같다", async () => {
   for (const mode of ["ok", "fail", "stderr-only"] as const) {
     vi.stubEnv("FAKE_CLI_MODE", mode);
-    const value = input(), legacy = await reviewWithGrokCli(value, { model });
+    const value = input(), legacy = await reviewWithGrokCli(value, { model, command: "grok" });
     const [legacyRecord] = await recorded(), legacyFiles = await captured(legacyRecord.pid); await clear();
     const call = await prepared("grok-cli", 90_000, value);
     const native = await reviewWithReservedCli(value, dispatchFor(call, value), call);
@@ -144,8 +151,8 @@ it.skipIf(process.platform === "win32")("Grok: native 는 legacy reviewWithGrokC
     expect(call.transport.timeoutMs).toBe(90_000);
     expect(readCliProcessTerminal(native.terminal)).toMatchObject({ ending: "exited" });
   }
-  vi.stubEnv("GROK_CLI", grokAnswer);
-  const value = input(), legacy = await reviewWithGrokCli(value, { model }), call = await prepared("grok-cli", 90_000, value);
+  vi.stubEnv("PATH", answerTools);
+  const value = input(), legacy = await reviewWithGrokCli(value, { model, command: "grok" }), call = await prepared("grok-cli", 90_000, value);
   const native = await reviewWithReservedCli(value, dispatchFor(call, value), call);
   expect(legacy).toMatchObject({ ok: true, outcome: { decision: "approve", confidence: 0.8 } });
   expect(native.result).toEqual(legacy);

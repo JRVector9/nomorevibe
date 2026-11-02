@@ -21,12 +21,17 @@ const schema = await import("@/lib/db/schema");
 const { jobDeferralKey, writeJobDeferral } = await import("@/lib/jobs/deferral-observation");
 const { readDeferrals, readModelSlotWeek, readModelSlotWindows } = await import("@/lib/operations/flow-reads");
 const { resolveModelSlots } = await import("@/lib/operations/stage-registry");
+const { pinReviewRanks } = await import("../review-task-ranks-fixture");
 
 /** 오늘(2026-10-18) 운영 설정과 같은 모델 자리 — 1차 [MLX] gpt-oss-120b, 2차 투표 [gpu3090] qwen3.8-flash-next, 예비 qwen3-coder:30b */
 const FIRST = "[MLX] gpt-oss-120b", VOTER = "[gpu3090] qwen3.8-flash-next", FALLBACK = "qwen3-coder:30b";
-const settings: CrawlSettings = { ...DEFAULT_CRAWL_SETTINGS, firstReview: { provider: "abcllm", model: FIRST },
-  secondReview: { ...DEFAULT_CRAWL_SETTINGS.secondReview, voters: [{ provider: "abcllm", model: VOTER }], fallbacks: [{ provider: "abcllm", model: FALLBACK }] } };
+// 1차·2차 자리는 「작업 ↔ 모델」 순위다(PR C1) — 1차 1순위 FIRST, 2차 투표자 칸 1 = [VOTER, FALLBACK(그 칸의 2순위 = 예비)].
+// 발행분 감사 자리만 아직 옛 설정(firstReview)을 읽는다(stage-registry firstReviewSlot, PR C2 가 순위로 옮긴다)
+const settings: CrawlSettings = { ...DEFAULT_CRAWL_SETTINGS, firstReview: { provider: "abcllm", model: FIRST } };
+const ranks = (second: { provider: string; model: string }[][]) => { pinReviewRanks({ first: [{ provider: "abcllm", model: FIRST }], second }); };
+ranks([[{ provider: "abcllm", model: VOTER }, { provider: "abcllm", model: FALLBACK }]]);
 const slots = resolveModelSlots(settings, {});
+pinReviewRanks(null);
 const deferJob = `v8-defer-${tag}`;
 
 const base = Date.now();
@@ -172,8 +177,10 @@ describe("모델 자리 24h(+최근 1시간) — UNION 가지마다", () => {
     expect(by["reason-translate"]).toMatchObject({ calls: 2, failed: 1 });
   });
 
-  it("2차 자리가 없는 설정도 읽힌다(가지가 빠져도 문장이 선다)", async () => {
-    const lone = resolveModelSlots({ ...settings, secondReview: { ...settings.secondReview, voters: [], fallbacks: [] } }, {});
+  it("2차 순위가 없어도 읽힌다(가지가 빠져도 문장이 선다)", async () => {
+    ranks([]);
+    const lone = resolveModelSlots(settings, {});
+    expect(lone.filter((slot) => slot.stage === "first").map((slot) => slot.model)).toEqual([FIRST]);
     const read = await readModelSlotWindows(lone);
     expect(read.ok).toBe(true);
     if (read.ok) expect(read.value.rows.some((row) => row.slot.startsWith("second-"))).toBe(false);

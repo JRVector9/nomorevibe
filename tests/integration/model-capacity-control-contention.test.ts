@@ -22,16 +22,14 @@ vi.stubEnv("DB_LOCK_TIMEOUT_MS", "300");
 const admin = postgres(TEST_DATABASE_URL, { max: 2, prepare: false, onnotice: () => {}, connection: { application_name: "ledger-lock-fixture" } });
 const owner = { instanceId: `ledger-lock-${randomUUID().slice(0, 8)}`, bootId: randomUUID() };
 const inserted = new Set<string>();
-let saved: Record<string, unknown>, profileModel: string, reasonModel: string;
+// 장부 행의 모델 이름 — 예전 등록부 기본값(PROFILE_MODEL·TRANSLATE_MODEL)과 같은 이름이다. PR B 부터 이 두 경로의 모델은 「작업 ↔ 모델」
+// 순위가 고르지만, 이 파일은 장부 읽기·쓰기의 잠금만 보므로 모델은 정책 route 와 같은 아무 이름이면 된다.
+const profileModel = "gpt-oss-120b", reasonModel = "mlx-community--gemma-4-26b-a4b-it-4bit";
+let saved: Record<string, unknown>;
 
 beforeAll(async () => {
   ensureSchema();
   const { modelCapacityPolicyHash } = await import("@/lib/llm/capacity");
-  const { scopedModel } = await import("@/lib/llm/model-registry");
-  const { PROFILE_MODEL } = await import("@/lib/domain/products/search-profile");
-  const { TRANSLATE_MODEL } = await import("@/lib/crawl/translate");
-  profileModel = scopedModel("product-search-profile", PROFILE_MODEL);
-  reasonModel = scopedModel("reason-translate", TRANSLATE_MODEL);
   [{ saved }] = await admin`SELECT to_jsonb(c) AS saved FROM model_capacity_control c WHERE id=1` as unknown as [{ saved: Record<string, unknown> }];
   expect(await admin`SELECT state FROM dr_writer_fence WHERE id=1`).toEqual([{ state: "active" }]);
   const policy: ModelCapacityPolicy = { version: 1, globalLimit: 2, providerLimits: { account: 2 }, groupLimits: { engine: 2 }, poolLimits: { reviewer: 2, text: 2 },

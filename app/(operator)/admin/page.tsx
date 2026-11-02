@@ -4,7 +4,6 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import { currentAdmin } from "@/lib/auth/admin";
-import { listReviewEngineModels } from "@/lib/crawl/agent-review-gateway";
 import { getSettings, getSettingsMeta, resetChanges, settingsDrift, settingsFormVersion } from "@/lib/crawl/settings";
 import { candidateCounts } from "@/lib/crawl/repository";
 import { formatListTime } from "@/lib/format/time";
@@ -19,8 +18,7 @@ import { ScrollToHash } from "./ScrollToHash";
 import { ReviewModeForm } from "./review/ReviewModeForm";
 import { HumanReviewSwitch } from "./review/HumanReviewSwitch";
 import { configuredHumanModelsReady, humanReviewModelDisplay } from "@/lib/operations/admin-models-human";
-import { SecondVoterSwitch } from "./review/SecondVoterSwitch";
-import { voterChoices } from "./review/voters";
+import { TaskRanksPointer } from "./settings/TaskRanksPointer";
 import { LIST_KEYS, missingDefaults, searchUsage } from "./settings/model";
 import { describeReset } from "./settings/reset-diff";
 import { SettingsApplyLine } from "./settings/SettingsApplyLine";
@@ -85,7 +83,6 @@ export default async function AdminPage() {
       return null;
     }),
   ]);
-  const currentVoter = settings.secondReview.voters[0] ?? null;
   const waiting = counts.needs_review ?? 0;
   const drift = settingsDrift(settings);
 
@@ -160,13 +157,8 @@ export default async function AdminPage() {
                 keys={settings.stageModelPools?.["human-review"] ?? []} />
             </Suspense>
             <ReviewModeForm key={settings.reviewMode} mode={settings.reviewMode} ready={process.env.CRAWL_REVIEW_READY === "true"} />
-            {/* 게이트웨이 모델 목록을 기다리는 동안에도 나머지 설정은 먼저 그린다 */}
-            {/* 2차 표 바로 바꾸기도 투표 모델을 바꾸므로 배정 표로 옮겨진 뒤에는 그리지 않는다(PR 3b-D) */}
-            {!assignmentLocked && <Suspense fallback={<p aria-busy="true" className="rounded-[10px] border border-line px-4 py-3 text-[13px] font-semibold text-fg-2">
-              2차 표 · <span className="font-mono">{currentVoter?.model ?? "없음"}</span> · 모델 목록을 읽는 중…</p>}>
-              <VoterSwitchSlot key={currentVoter ? `${currentVoter.provider}|${currentVoter.model}` : "none"} current={currentVoter}
-                firstModel={settings.firstReview?.model ?? null} />
-            </Suspense>}
+            {/* 예전 2차 표 바로 바꾸기 자리 — 2차 투표자는 「작업 ↔ 모델」 투표자 칸 순위뿐이다(PR C1) */}
+            <TaskRanksPointer what="2차 투표 모델" />
           </>} />
           <SettingsDriftNotice drift={drift} reset={drift.length > 0 ? describeReset(resetChanges(settings)) : []} />
         </div>
@@ -179,10 +171,4 @@ export default async function AdminPage() {
 async function HumanReviewSwitchSlot({ enabled, generation, keys }: { enabled: boolean; generation: number; keys: string[] }) {
   return <HumanReviewSwitch key={generation} enabled={enabled} generation={generation} ready={await configuredHumanModelsReady(keys)}
     {...humanReviewModelDisplay(keys)} />;
-}
-
-/** 2차 표 바로 바꾸기 — 직접 연결 계약이 있는 심사 모델을 그린다(없으면 Grok·Claude 만) */
-async function VoterSwitchSlot({ current, firstModel }: { current: { provider: string; model: string } | null; firstModel: string | null }) {
-  const models = await listReviewEngineModels();
-  return <SecondVoterSwitch current={current} choices={voterChoices(models, current, firstModel)} gatewayReachable={models.length > 0} />;
 }

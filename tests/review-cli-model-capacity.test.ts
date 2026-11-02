@@ -13,15 +13,18 @@ import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
 import { readCliProcessTerminal } from '@/lib/llm/cli-process-runner';
 import { claudeCliTokenBound, type CliServingContract } from '@/lib/llm/cli-serving-contract';
 import type { PreparedReviewCliCall } from '@/lib/crawl/review-cli-call';
+import { fakeToolDir } from './fake-cli-path';
 
 /*
  * 05c-4 coordinator 와 consumer 접점. 장부·claim TX·도메인 writer 는 경계에서 mock 이다(실제 DB 증거는 통합 driver 가 낸다).
  * CLI 실행은 실제 runner + 가짜 CLI 프로세스이고, 실제 claude/grok·provider 는 부르지 않는다. 계약은 이 파일의 fixture 만 연다.
+ * 1차·2차의 CLI 는 PATH 의 도구 이름(claude·grok, PR C1)으로 뜬다 — 자식 PATH 는 가짜 CLI 를 그 이름으로 링크한 디렉터리이고 env 경로는 없는 파일이다.
  */
 const fixture = vi.hoisted(() => ({ contracts: [] as CliServingContract[] }));
 const mocks = vi.hoisted(() => ({ pending: vi.fn(), request: vi.fn(), cancel: vi.fn(), unknown: vi.fn(), reconcile: vi.fn(),
   gatewayRequest: vi.fn(), ai1Claim: vi.fn(), ai1ItemClaim: vi.fn(), ai1Consumer: vi.fn(), load: vi.fn(), observe1: vi.fn(), renew1: vi.fn(),
-  record1: vi.fn(), spam: vi.fn(), preparation: vi.fn(), ai2Claim: vi.fn(), ai2Consumer: vi.fn(), observe2: vi.fn(), renew2: vi.fn(), record2: vi.fn() }));
+  record1: vi.fn(), spam: vi.fn(), preparation: vi.fn(), ai2Claim: vi.fn(), ai2Consumer: vi.fn(), observe2: vi.fn(), renew2: vi.fn(), record2: vi.fn(),
+  choose: vi.fn() }));
 vi.mock('@/lib/llm/cli-serving-contract', async original => ({
   ...await original<typeof import('@/lib/llm/cli-serving-contract')>(),
   resolveCliServingContract: (routeId: string, provider: string, model: string) =>
@@ -33,7 +36,9 @@ vi.mock('@/lib/llm/capacity-repository', () => ({ findOwnPendingModelRequest: mo
 vi.mock('@/lib/crawl/agent-review-repository', async load => ({ ...await load<typeof import('@/lib/crawl/agent-review-repository')>(),
   claimAgentReviewWithCliModelReservation: mocks.ai1Claim, claimConsumerItemAgentReviewWithCliModelReservation: mocks.ai1ItemClaim,
   claimConsumerItemAgentReview: mocks.ai1Consumer, loadFirstReviewConsumerContext: mocks.load, observeAgentReviewItemDispatch: mocks.observe1,
-  renewAgentReviewItemOwnership: mocks.renew1, recordAgentReview: mocks.record1, recordConsumerSuspectedSpam: mocks.spam }));
+  renewAgentReviewItemOwnership: mocks.renew1, recordAgentReview: mocks.record1, recordConsumerSuspectedSpam: mocks.spam,
+  // 1차 소비자는 늘 순위 고르기다(PR C1) — 고르기의 DB 읽기(시도·의도)는 경계에서 대신한다
+  chooseFirstReviewForCandidate: mocks.choose }));
 vi.mock('@/lib/crawl/agent-review-preparation', () => ({ prepareAgentReview: mocks.preparation }));
 vi.mock('@/lib/crawl/agent-review', async load => ({ ...await load<typeof import('@/lib/crawl/agent-review')>(),
   firstReviewer: () => ({ provider: 'claude-cli', model: 'fake-model' }) }));
@@ -47,6 +52,7 @@ import { claimAgentReviewCliModelCapacity, claimAgentReviewItemCliModelCapacity,
   reviewCliModelCapacity, abandonCliModelCapacity } from '@/lib/crawl/review-cli-model-capacity';
 import { executeFirstReviewConsumerItem } from '@/lib/crawl/agent-review-item-lifecycle';
 import { executeSecondReviewConsumerItem } from '@/lib/crawl/second-review-item-lifecycle';
+import { pinReviewRanks } from './review-task-ranks-fixture';
 
 const model = 'fake-model', owner = { instanceId: 'cli-capacity-unit', bootId: randomUUID() };
 const lease = { name: 'crawl-agent-review', token: randomUUID(), requestedVersion: 4 };
@@ -55,7 +61,7 @@ const claude = (routeId: string): CliServingContract => ({ version: 1, protocol:
   cliVersion: 'fake 0.0.0', totalTokenBound: claudeCliTokenBound(claudeShape), costBoundUsdMicros: 150_000, boundProvenance: 'derived', ...claudeShape });
 const grok = (routeId: string): CliServingContract => ({ version: 1, protocol: 'cli-process-v1', routeId, provider: 'grok-cli', model,
   cliVersion: 'fake 0.0.0', inputByteCap: 200_000, totalTokenBound: 300_000, costBoundUsdMicros: null, boundProvenance: 'declared' });
-let root = '', bin = '', records = '', tmp = '', empty = '';
+let root = '', bin = '', records = '', tmp = '', empty = '', tools = '';
 const PROCESS_TEST_MS = 20_000;
 
 beforeAll(async () => {
@@ -65,12 +71,13 @@ beforeAll(async () => {
   const fake = path.resolve('tests/fixtures/fake-cli/fake.mjs');
   for (const value of [root, fake, process.execPath]) expect(value).not.toContain("'");
   bin = path.join(root, 'fake-cli'); await writeFile(bin, `#!/bin/sh\nexec '${process.execPath}' '${fake}' "$@"\n`); await chmod(bin, 0o755);
+  tools = await fakeToolDir(path.join(root, 'tools'), { claude: bin, grok: bin });
 });
 afterAll(() => rm(root, { recursive: true, force: true }));
 const grandchildren: number[] = [];
 afterEach(async () => {
   for (const pid of grandchildren.splice(0)) try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ }
-  vi.unstubAllEnvs();
+  vi.unstubAllEnvs(); pinReviewRanks(null);
   for (const name of await readdir(records)) await rm(path.join(records, name));
 });
 type Recorded = { pid: number; argv: string[]; grandchild?: number };
@@ -78,8 +85,8 @@ async function recorded(): Promise<Recorded[]> {
   return Promise.all((await readdir(records)).map(async name => JSON.parse(await readFile(path.join(records, name), 'utf8')) as Recorded));
 }
 function stub(mode: string) {
-  vi.stubEnv('TMPDIR', tmp); vi.stubEnv('PATH', empty); vi.stubEnv('FAKE_CLI_MODE', mode); vi.stubEnv('FAKE_CLI_RECORD', records);
-  vi.stubEnv('CLAUDE_CLI', bin); vi.stubEnv('GROK_CLI', bin); vi.stubEnv('GROK_HOME', undefined);
+  vi.stubEnv('TMPDIR', tmp); vi.stubEnv('PATH', tools); vi.stubEnv('FAKE_CLI_MODE', mode); vi.stubEnv('FAKE_CLI_RECORD', records);
+  vi.stubEnv('CLAUDE_CLI', path.join(empty, 'absent-claude')); vi.stubEnv('GROK_CLI', path.join(empty, 'absent-grok')); vi.stubEnv('GROK_HOME', undefined);
   vi.stubEnv('ROLE_LEASE_ROLE', 'reviewer'); vi.stubEnv('ROLE_LEASE_INSTANCE_ID', owner.instanceId); vi.stubEnv('ROLE_LEASE_BOOT_ID', owner.bootId);
   vi.stubEnv('ROLE_LEASE_RELEASE', 'cli-capacity-unit-release'); vi.stubEnv('ROLE_LEASE_EPOCH', '1');
 }
@@ -293,6 +300,9 @@ it.skipIf(process.platform === 'win32')('AI1 consumer: CLI 의도 → item dispa
     stageEpoch: 1, itemEpoch: 1, leaseUntil: new Date(Date.now() + 90_000) };
   const receipt = { attemptId: 7, origin: 'fresh' as const, ownership: { kind: 'item' as const, lease: itemLease } };
   mocks.load.mockResolvedValue({ kind: 'current', context: value });
+  // 「작업 ↔ 모델」 1차 AI 검수 1순위 = 이 CLI 모델
+  pinReviewRanks({ first: [{ provider: 'claude-cli', model }] });
+  mocks.choose.mockResolvedValue({ provider: 'claude-cli', model });
   mocks.preparation.mockResolvedValue({ provider: 'claude-cli', model, spam: false });
   mocks.ai1Consumer.mockRejectedValue(new AgentReviewItemCliModelReservationRequired({ context: value, provider: 'claude-cli', model, owner }));
   mocks.ai1ItemClaim.mockImplementation(async (input: { reservation: ReturnType<typeof reservation>; call: PreparedReviewCliCall }) => ({ kind: 'claimed',

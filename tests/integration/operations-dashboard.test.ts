@@ -1,13 +1,17 @@
-import { beforeAll, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { roleOverview } from "@/lib/operations/roles";
 import { roleLeases, crawlCandidates, crawlDocuments, crawlFrontier, crawlPublicationChanges, crawlReviewAttempts, productAuditCampaigns,
   productAuditItems, productHealth, productIntroChecks, productSearchProfiles, products, secondReviews } from "@/lib/db/schema";
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from "@/lib/crawl/settings-schema";
-import { PROFILE_MODEL } from "@/lib/domain/products/search-profile";
+import { pinTextRanks } from "../text-task-ranks-fixture";
+import { pinReviewRanks } from "../review-task-ranks-fixture";
 import { attentionCounts, hourlyThroughput, modelHealth, signalYields, todayPublications } from "@/lib/operations/dashboard";
 import { ensureSchema, resetTables } from "./setup";
+
+// 키워드 짓기의 모델은 「작업 ↔ 모델」 1순위다(PR B) — 예전 PROFILE_MODEL(등록부 기본값)과 같은 이름으로 순위를 고정한다
+const PROFILE_MODEL = "gpt-oss-120b";
 
 // 이번 시(時)의 30분 — 몇 분 전에 심은 행이 늘 마지막 칸에 들어간다
 const HOUR_MS = 3_600_000;
@@ -19,15 +23,12 @@ const KST_MS = 9 * HOUR_MS;
 const kstMidnight = (at: Date) => Math.floor((at.getTime() + KST_MS) / 86_400_000) * 86_400_000 - KST_MS;
 const today = (...times: Date[]) => times.filter((time) => time.getTime() >= kstMidnight(now)).length;
 
+// 1차·2차 모델 자리는 「작업 ↔ 모델」 순위다(PR C1) — 1차 1순위, 2차 투표자 칸 1 = [gpt-oss-120b, sonnet(예비)], 칸 2 = [qwen].
+// 칸 1 의 투표자는 1차와 같은 모델(접두어만 다름)이라 메아리 — 실제 2차 표는 qwen
+const REVIEW_RANKS = { first: [{ provider: "abcllm", model: "[MLX] gpt-oss-120b" }],
+  second: [[{ provider: "abcllm", model: "gpt-oss-120b" }, { provider: "claude-cli", model: "sonnet" }], [{ provider: "abcllm", model: "qwen" }]] };
 const settings: CrawlSettings = {
   ...DEFAULT_CRAWL_SETTINGS,
-  firstReview: { provider: "abcllm", model: "[MLX] gpt-oss-120b" },
-  secondReview: {
-    ...DEFAULT_CRAWL_SETTINGS.secondReview,
-    // 첫 투표자는 1차와 같은 모델(접두어만 다름)이라 메아리 — 실제 2차 표는 qwen
-    voters: [{ provider: "abcllm", model: "gpt-oss-120b" }, { provider: "abcllm", model: "qwen" }],
-    fallbacks: [{ provider: "claude-cli", model: "sonnet" }],
-  },
   discover: {
     ...DEFAULT_CRAWL_SETTINGS.discover,
     queries: [...DEFAULT_CRAWL_SETTINGS.discover.queries,
@@ -42,7 +43,10 @@ const product = (slug: string, overrides: Partial<typeof products.$inferInsert> 
 });
 
 beforeAll(ensureSchema);
+afterAll(() => pinTextRanks(null));
+beforeEach(() => pinReviewRanks(REVIEW_RANKS));
 beforeAll(async () => {
+  pinTextRanks({ "product-search-profile": PROFILE_MODEL });
   await resetTables();
   for (const table of [secondReviews, crawlCandidates, crawlDocuments, crawlFrontier, crawlPublicationChanges]) await db.delete(table);
 
@@ -147,9 +151,23 @@ it("reports each model slot over the last hour", async () => {
     { key: "keywords", label: "키워드 짓기", model: PROFILE_MODEL, calls1h: 1, failed1h: 0, avgSeconds: null,
       agreement1h: null, lastSuccessAt: ago(3).toISOString() },
   ]);
-  // 1차 모델을 설정하지 않았으면 지난 1시간에 실제로 본 모델
-  const [first] = await modelHealth({ ...settings, firstReview: undefined }, now);
+  // 옛 설정 칸(firstReview·secondReview.voters·fallbacks)은 읽지 않는다 — 순위가 같으면 같은 자리다
+  expect(await modelHealth({ ...settings, firstReview: { provider: "abcllm", model: "legacy-first" },
+    secondReview: { ...settings.secondReview, voters: [{ provider: "abcllm", model: "legacy-voter" }], fallbacks: [] } }, now))
+    .toEqual(await modelHealth(settings, now));
+  // 1차 순위가 없으면 지난 1시간에 실제로 본 모델. 2차 순위가 없으면 투표·예비 자리는 모델이 없고 호출도 세지 않는다
+  pinReviewRanks({ first: [], second: [] });
+  const [first, second, fallback] = await modelHealth(settings, now);
   expect(first.model).toBe("[MLX] gpt-oss-120b");
+  expect([second, fallback].map(slot => [slot.model, slot.calls1h])).toEqual([[null, 0], [null, 0]]);
+  pinReviewRanks(REVIEW_RANKS);
+  // 키워드 짓기 자리는 순위 1의 모델을 보인다 — 순위가 없으면 지난 1시간에 실제로 본 모델
+  try {
+    pinTextRanks({ "product-search-profile": ["rank-profile-model", PROFILE_MODEL] });
+    expect((await modelHealth(settings, now)).find(slot => slot.key === "keywords")?.model).toBe("rank-profile-model");
+    pinTextRanks([]);
+    expect((await modelHealth(settings, now)).find(slot => slot.key === "keywords")?.model).toBe(PROFILE_MODEL);
+  } finally { pinTextRanks({ "product-search-profile": PROFILE_MODEL }); }
 });
 
 it("yields per discovery signal over the last 7 days", async () => {

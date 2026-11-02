@@ -15,17 +15,22 @@ import type { JobLease } from '@/lib/jobs/control';
 import { ensureSchema, resetTables } from './setup';
 import { readMaintenanceUptimeProgress } from '@/lib/operations/maintenance-progress';
 import { readTextProgress } from '@/lib/operations/text-progress';
-import { TRANSLATE_MODEL } from '@/lib/crawl/translate';
-import { TAGLINE_MODEL } from '@/lib/crawl/tagline';
-import { PROFILE_MODEL } from '@/lib/domain/products/search-profile';
-import { VERIFY_MODEL } from '@/lib/domain/products/search-verify';
 import { setServingContractSnapshotForTest } from '@/lib/llm/serving-contract-store';
-import { directContractRow } from './direct-engine-fixtures';
+import { pinTextRanks, textContract } from '../text-task-ranks-fixture';
 
-/** The main text routes run only on a direct admin contract (abcLLM gateway removed 2026-10-30); a route without one is not demand. */
-const directTextRoutes = () => setServingContractSnapshotForTest([directContractRow('reason-translate', TRANSLATE_MODEL),
-  directContractRow('crawl-tagline', TAGLINE_MODEL), directContractRow('product-search-profile', PROFILE_MODEL),
-  directContractRow('product-search-verify', VERIFY_MODEL)]);
+// 「작업 ↔ 모델」 순위(PR B)의 모델 — 예전 등록부 기본값(TRANSLATE_MODEL·TAGLINE_MODEL·PROFILE_MODEL·VERIFY_MODEL)과 같은 이름이다
+const TRANSLATE_MODEL = 'mlx-community--gemma-4-26b-a4b-it-4bit', TAGLINE_MODEL = 'qwen3.6-35b-heretic',
+  PROFILE_MODEL = 'gpt-oss-120b', VERIFY_MODEL = 'Qwen3.8-27B-NVFP4';
+/**
+ * The main text routes run only on a direct admin contract (abcLLM gateway removed 2026-10-30); a route without one is not demand.
+ * PR B: 경로마다 순위를 고정하고, 그 순위의 연결을 가리키는 엔진 직접 계약 행을 넣는다 — 순위가 그 계약에 묶여야 부를 수 있는 경로다.
+ */
+const directTextRoutes = () => {
+  pinTextRanks({ 'reason-translate': TRANSLATE_MODEL, 'crawl-tagline': TAGLINE_MODEL, 'product-search-profile': PROFILE_MODEL,
+    'product-search-verify': VERIFY_MODEL });
+  setServingContractSnapshotForTest([textContract('reason-translate', TRANSLATE_MODEL), textContract('crawl-tagline', TAGLINE_MODEL),
+    textContract('product-search-profile', PROFILE_MODEL), textContract('product-search-verify', VERIFY_MODEL)]);
+};
 
 beforeAll(ensureSchema);
 beforeEach(async () => {
@@ -40,7 +45,7 @@ beforeEach(async () => {
   directTextRoutes();
 });
 afterEach(async () => {
-  setServingContractSnapshotForTest(null);
+  setServingContractSnapshotForTest(null); pinTextRanks(null);
   await db.delete(rateLimits).where(eq(rateLimits.key, 'late-cleanup'));
   await db.delete(searchQueries).where(eq(searchQueries.query, 'maintenance-late-cleanup'));
 });

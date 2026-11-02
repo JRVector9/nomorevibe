@@ -4,7 +4,7 @@ import { JobLeaseLostError, STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { RoleLeaseLostError, type RoleLease } from "@/lib/jobs/role-leader";
 import { assertJobBatchAdmission } from "@/lib/jobs/batch-repository";
 import { reviewHash } from "@/lib/crawl/agent-review-contract";
-import { KOREAN_TAGLINE_MODEL, productTaglineKoSourceHash } from "@/lib/crawl/translate";
+import { productTaglineKoSourceHash } from "@/lib/crawl/translate";
 import { KOREAN_TRANSLATION_QWEN_MODEL, koreanTranslationQwenRecoveryEnabled } from "@/lib/crawl/korean-translation-config";
 import type { PreparedProductTaglineKoGatewayCall } from "@/lib/crawl/agent-review-gateway";
 import { displayProjectName } from "./display-name";
@@ -26,6 +26,7 @@ import { leadClause, NEEDS_KOREAN } from "./korean-tagline";
 import { getPopularGroups } from "./popular";
 import { listProductSlugs } from "./repository";
 import { busyMemberKeysSql, capacityOwnerFromEnv, type CapacityOwner } from "@/lib/llm/capacity-busy-targets";
+import { textTaskModel } from "@/lib/llm/ai-task-rank-scope";
 
 /**
  * 한국어 한 줄 소개의 대기열과 저장. 옮기는 일(게이트웨이)은 lib/crawl/translate.ts, 검사는 korean-tagline.ts 에 있다.
@@ -450,7 +451,7 @@ export async function prepareKoreanTaglineDispatch(value: readonly KoreanTagline
       const control = lock?.control ?? await lockModelCapacityCallerControl(tx);
       if (!reserved && control.mode === "disabled") return { kind: "disabled" } as const;
       if (control.mode !== "open") throw new ModelCapacityDeferredError(control.mode === "draining" ? "draining" : "disabled");
-      if (call.model !== scopedModel("product-tagline-ko", KOREAN_TAGLINE_MODEL) || !control.policy?.routes.some(route => route.routeId === "product-tagline-ko"
+      if (call.model !== textTaskModel("product-tagline-ko") || !control.policy?.routes.some(route => route.routeId === "product-tagline-ko"
         && route.provider === call.provider && route.model === call.model)) throw new ModelCapacityDeferredError("unmapped");
       if (!roleLease || !["text", "translation"].includes(roleLease.role)) throw new ModelCapacityDeferredError("owner_unavailable");
       await assertJobBatchAdmission(tx, "product-tagline-ko", roleLease);

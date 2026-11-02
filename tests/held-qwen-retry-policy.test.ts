@@ -1,9 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { heldQwenGateable, heldQwenGateFirst, heldQwenIndependentVoters, heldQwenOwnedReasons, heldQwenOwns, heldQwenSameModelFallback } from "@/lib/crawl/held-qwen-retry-policy";
 import { sameReviewModel, sameUnderlyingModel } from "@/lib/crawl/review-model-identity";
 import { combineVerdicts } from "@/lib/crawl/second-review";
 import { mergeWithDefaults, storedQwenAuto } from "@/lib/crawl/settings";
 import { DEFAULT_CRAWL_SETTINGS, DEFAULT_HELD_QWEN_RETRY, DEFAULT_QWEN_AUTO, type CrawlSettings } from "@/lib/crawl/settings-schema";
+import { pinReviewRanks } from "./review-task-ranks-fixture";
 
 /** 보류 재심사를 켠 설정 — 기본은 꺼짐이다(qwenAuto.heldRetry) */
 const ON = { ...DEFAULT_HELD_QWEN_RETRY, enabled: true };
@@ -16,8 +17,17 @@ const attempt: Row = { id: 41, kind: "delegated", provider: "qwen-direct", actor
   outcome: { decision: "approve", reason: "ok", evidenceIds: ["product"], confidence: 0.95 }, model: "qwen3.8-flash-next" };
 /** applyOutcome 이 관문에 넣은 승인 — 후보 signals.heldQwenAttemptId 가 그 시도 id 다 */
 const applied = { signals: { heldQwenAttemptId: 41 } };
+/**
+ * 2차 투표자·대체는 「작업 ↔ 모델」의 투표자 칸 순위다(PR C1) — 설정의 voters 는 읽지 않는다. 기본: 칸 1 = gpu3090 Qwen, 칸 2 = gpt-oss.
+ * 칸마다 2·3순위가 그 칸의 대체다(다른 칸의 모델은 대체가 되지 않는다).
+ */
+const QWEN = { provider: "abcllm", model: "[gpu3090] qwen3.8-flash-next" }, GPT = { provider: "abcllm", model: "[MLX] gpt-oss-120b" };
+const voterSlots = (...slots: { provider: string; model: string }[][]) => pinReviewRanks({ second: slots });
 
 describe("보류 Qwen-v2 재심사 정책", () => {
+  beforeEach(() => voterSlots([QWEN], [GPT]));
+  afterEach(() => pinReviewRanks(null));
+
   it("기본값은 꺼짐·세 사유·한 틱 10건이고, 켜도 적용 모드에서만 맡는다", () => {
     expect(DEFAULT_CRAWL_SETTINGS.qwenAuto.heldRetry).toEqual({ enabled: false, perTick: 10, budgetSeconds: 40,
       reasons: ["no_description", "ai_review_exhausted", "ambiguous"] });
@@ -33,9 +43,14 @@ describe("보류 Qwen-v2 재심사 정책", () => {
 
   it("게이트웨이 이름표만 다른 같은 Qwen 은 독립 투표자가 아니다", () => {
     expect(heldQwenIndependentVoters(settings(), "qwen3.8-flash-next").map((voter) => voter.model)).toEqual(["[MLX] gpt-oss-120b"]);
-    const onlyQwen = settings({ secondReview: { ...settings().secondReview, voters: [{ provider: "abcllm", model: "[gpu3090] qwen3.8-flash-next" }] } });
-    expect(heldQwenGateable(onlyQwen, "qwen3.8-flash-next")).toBe(false);
-    expect(heldQwenGateFirst(onlyQwen, attempt, applied)).toBe(false);
+    // 투표자 칸이 Qwen 하나뿐이면 독립 표가 서지 않는다
+    voterSlots([QWEN]);
+    expect(heldQwenGateable(settings(), "qwen3.8-flash-next")).toBe(false);
+    expect(heldQwenGateFirst(settings(), attempt, applied)).toBe(false);
+    // 연결로 가른 장부 이름(@<연결 8자>)도 같은 Qwen 이다
+    voterSlots([{ provider: "abcllm", model: "qwen3.8-flash-next@0a1b2c3d" }]);
+    expect(heldQwenIndependentVoters(settings(), "qwen3.8-flash-next")).toEqual([]);
+    voterSlots([QWEN], [GPT]);
     expect(heldQwenGateable(settings(), "qwen3.8-flash-next")).toBe(true);
   });
 
@@ -58,13 +73,14 @@ describe("보류 Qwen-v2 재심사 정책", () => {
   });
 
   it("같은 Qwen 의 대체 모델이 있으면 관문에 넣지 않는다 — 독립 칸이 실패하면 그 대체 모델이 칸을 채운다", () => {
-    const withFallback = settings({ secondReview: { ...settings().secondReview, fallbacks: [{ provider: "abcllm", model: "[gpu3090] qwen3.8-flash-next" }] } });
-    expect(heldQwenSameModelFallback(withFallback, "qwen3.8-flash-next")).toBe(true);
-    expect(heldQwenGateable(withFallback, "qwen3.8-flash-next")).toBe(false);
-    expect(heldQwenGateFirst(withFallback, attempt, applied)).toBe(false);
+    // 독립 칸(gpt-oss)의 2순위가 다른 자리 표시의 같은 Qwen 이다 — gpt-oss 가 실패하면 그 Qwen 이 칸을 채운다
+    voterSlots([QWEN], [GPT, { provider: "abcllm", model: "[supa] qwen3.8-flash-next" }]);
+    expect(heldQwenSameModelFallback(settings(), "qwen3.8-flash-next")).toBe(true);
+    expect(heldQwenGateable(settings(), "qwen3.8-flash-next")).toBe(false);
+    expect(heldQwenGateFirst(settings(), attempt, applied)).toBe(false);
     // 운영의 대체 모델(qwen3-coder:30b)은 다른 모델이다
-    const coder = settings({ secondReview: { ...settings().secondReview, fallbacks: [{ provider: "abcllm", model: "qwen3-coder:30b" }] } });
-    expect(heldQwenGateable(coder, "qwen3.8-flash-next")).toBe(true);
+    voterSlots([QWEN], [GPT, { provider: "abcllm", model: "qwen3-coder:30b" }]);
+    expect(heldQwenGateable(settings(), "qwen3.8-flash-next")).toBe(true);
   });
 
   it("독립 표인지는 자리 표시를 모두 떼고 가른다 — 칸 맞추기(sameReviewModel)는 [MLX] 만 뗀다", () => {

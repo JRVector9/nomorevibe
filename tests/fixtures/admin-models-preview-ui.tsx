@@ -13,7 +13,7 @@ export default function AdminModelsPreviewUI({ data }: { data: AdminModelsPrevie
       <header><h1 className="text-[26px] font-bold">단계별 모델</h1><p className="mt-2 text-[13px] text-fg-2">고정 시험 데이터 · 운영 DB·모델 호출 없음</p></header>
       <LiveModels observation={data.observation} models={data.models} assignments={data.assignments} probeAction={previewProbe}
         opsActions={{ submitAction: previewOpsSubmit, readAction: previewOpsRead }} />
-      <ReviewModelsForm settings={data.settings} version="fixture-cas" firstChoices={data.choices} secondChoices={data.choices} models={data.models} defaults={{}} saveAction={previewSave} />
+      <ReviewModelsForm settings={data.settings} version="fixture-cas" models={data.models} defaults={{}} saveAction={previewSave} />
       <details className="rounded-xl border border-line p-4"><summary>참고 · 카테고리 분류 / 검색 모델 / 모델 등록부 / 다른 LLM 단계</summary><p>이 파일은 화면 검토용 고정 데이터입니다.</p></details>
     </main></div>;
 }
