@@ -28,7 +28,8 @@ const candidate = () => ({id:1,repo:"acme/demo",productUrl:"https://demo.example
 beforeEach(() => {
   vi.resetAllMocks();
   mocks.settings = {...DEFAULT_CRAWL_SETTINGS,enabled:true,reviewMode:"observe"};
-  mocks.choose.mockImplementation(async ({ candidate, settings }) => selectFirstReviewer(firstReviewers(settings), candidate.id));
+  mocks.choose.mockImplementation(async ({ candidate, settings }, _executor, blocked) =>
+    selectFirstReviewer(firstReviewers(settings), candidate.id, [], [], { blocked: blocked ?? new Set() }));
   mocks.canStart.mockResolvedValue(true);
   mocks.blocked.mockResolvedValue(new Set());
   mocks.pendingList.mockResolvedValue([]);
@@ -424,7 +425,7 @@ it("preserves a genuine lane failure after settling a concurrent capacity refusa
   await expect(reviewCrawlCandidates(context())).rejects.toBe(original);
 });
 
-it("a local model capacity wait leaves the extra reviewer working without rerouting pinned candidates", async () => {
+it("a local model capacity wait on rank 1 sends the same and later candidates to rank 2 in the same tick (2026-11-01)", async () => {
   const primary = { provider: "abcllm" as const, model: "primary-model" };
   const extra = { provider: "abcllm" as const, model: "extra-model" };
   mocks.settings = { ...mocks.settings!, firstReview: primary, firstReviewAdditional: [extra], reviewConcurrency: 1 };
@@ -435,8 +436,10 @@ it("a local model capacity wait leaves the extra reviewer working without rerout
   });
   mocks.gateway.mockResolvedValue({ ok: true, outcome: { decision: "approve", reason: "Deployed tracker", evidenceIds: ["product"] } });
   expect(await reviewCrawlCandidates(context())).toEqual({ done: false, continuation: "ready" });
-  expect(mocks.claim.mock.calls.map(call => call[0].candidate.id)).toEqual([1, 2]);
-  expect(mocks.gateway).toHaveBeenCalledExactlyOnceWith(expect.anything(), expect.objectContaining({ model: extra.model }));
+  expect(mocks.claim.mock.calls.map(call => [call[0].candidate.id, call[0].model]))
+    .toEqual([[1, primary.model], [1, extra.model], [2, extra.model], [3, extra.model]]);
+  expect(mocks.gateway).toHaveBeenCalledTimes(3);
+  expect(mocks.gateway.mock.calls.every(([, options]) => options.model === extra.model)).toBe(true);
 });
 
 it("a tick that recorded no review while a pool model is paused stays deferred (no success time)", async () => {
@@ -553,3 +556,37 @@ it.each([[false, "extra-model"], [true, "primary-model"]] as const)(
     expect(mocks.claim).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ model: claimed }));
     expect(mocks.gateway).not.toHaveBeenCalled();
   });
+
+// 2026-11-01 순위 대체: 1순위 장비가 설정되지 않았고 마지막 순위(grok-cli)의 용량 경로도 아직 없다 — 둘 다 이 모델만의 거절이다.
+it("tries every rank for the same candidate on model-local refusals and ends all-skipped (no restart signal) when none can take it", async () => {
+  const primary = { provider: "abcllm" as const, model: "primary-model" };
+  const grokRank = { provider: "grok-cli" as const, model: "grok-4.7" };
+  mocks.settings = { ...mocks.settings!, firstReview: primary, firstReviewAdditional: [grokRank], reviewConcurrency: 1 };
+  mocks.list.mockResolvedValue([candidate(), { ...candidate(), id: 2 }]);
+  mocks.claim.mockImplementation(async ({ model }) => {
+    throw new ModelCapacityDeferredError(model === primary.model ? "device_unconfigured" : "unmapped");
+  });
+  const ctx = context();
+  const result = await reviewCrawlCandidates(ctx);
+  expect(result).toEqual({ done: false, degraded: { code: "agent_review_all_skipped", detail: "all_ranks_unusable=2" } });
+  // 첫 후보가 두 순위를 차례로 시도하고, 둘째 후보는 두 순위가 모두 쉬어 바로 건너뛴다
+  expect(mocks.claim.mock.calls.map(call => [call[0].candidate.id, call[0].model])).toEqual([[1, primary.model], [1, grokRank.model]]);
+  expect(ctx.log).toHaveBeenCalledWith("crawl.agent_review_deferred", { reason: "unmapped", provider: "grok-cli", model: grokRank.model });
+  expect(ctx.log).toHaveBeenCalledWith("crawl.agent_review_skipped", expect.objectContaining({ reason: "all_ranks_unusable", ranks: 2, unusable: 2 }));
+  expect(mocks.gateway).not.toHaveBeenCalled(); expect(mocks.grok).not.toHaveBeenCalled();
+});
+
+it("calls the grok-cli rank when rank 1's direct contract is closed", async () => {
+  const primary = { provider: "abcllm" as const, model: "primary-model" };
+  const grokRank = { provider: "grok-cli" as const, model: "grok-4.7" };
+  mocks.settings = { ...mocks.settings!, firstReview: primary, firstReviewAdditional: [grokRank], reviewConcurrency: 1 };
+  mocks.list.mockResolvedValue([candidate()]);
+  mocks.claim.mockImplementation(async ({ model }) => {
+    if (model === primary.model) throw new ModelCapacityDeferredError("provider_contract_unavailable");
+    return { kind: "claimed", attempt: { id: 2, attemptNumber: 1 }, receipt: receipt(2) };
+  });
+  mocks.grok.mockResolvedValue({ ok: true, outcome: { decision: "approve", reason: "Deployed tracker", evidenceIds: ["product"], confidence: 0.9 } });
+  await reviewCrawlCandidates(context());
+  expect(mocks.grok).toHaveBeenCalledExactlyOnceWith(expect.anything(), expect.objectContaining({ model: grokRank.model }));
+  expect(mocks.gateway).not.toHaveBeenCalled();
+});

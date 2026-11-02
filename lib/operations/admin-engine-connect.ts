@@ -89,8 +89,16 @@ export async function probeEngineContract(input: { endpoint: string; engineModel
   return Object.freeze({ endpoint, requestModel: engineModel, responseModel, totalTokenBound, totalTokenBoundFrom });
 }
 
-/** 저장된 직접 연결 계약의 주소로 GET /models. 이름과 주소는 응답과 계약에만 있고, 키는 돌려주지 않는다. */
-export type ServedContractModels = { routeId: string; storedModel: string; servedIds: string[] | null; reason: string | null };
+/**
+ * 저장된 직접 연결 계약의 주소로 GET /models. 이름과 주소는 응답과 계약에만 있고, 키는 돌려주지 않는다.
+ * host 는 그 주소의 host:port, equipment 는 같은 host 를 baseUrl 로 둔 등록부 모델의 장비 이름(없으면 null) — 「장비 · 모델」 선택지 표시용이다.
+ */
+export type ServedContractModels = { routeId: string; storedModel: string; servedIds: string[] | null; reason: string | null;
+  host?: string | null; equipment?: string | null };
+const endpointHost = (value: string | null | undefined): string | null => {
+  if (!value) return null;
+  try { return new URL(value).host || null; } catch { return null; }
+};
 export async function readServedContractModels(request: typeof fetch = fetch): Promise<ServedContractModels[]> {
   const rows = servingContractSnapshot().rows.filter(row => row.transport === "direct");
   const endpointOf = (contract: unknown) => contract && typeof contract === "object" && typeof (contract as { endpoint?: unknown }).endpoint === "string"
@@ -107,10 +115,13 @@ export async function readServedContractModels(request: typeof fetch = fetch): P
     const result = await readbackServingEndpoint(endpoint, auth?.apiKey ?? null, request);
     read.set(endpoint, result.ok ? { ids: result.models.map(model => model.id), reason: null } : { ids: null, reason: result.reason });
   }));
+  const registry = readModelRegistry().models;
   return rows.flatMap(row => {
     const endpoint = endpointOf(row.contract);
     const got = endpoint ? read.get(endpoint) : undefined;
-    return got ? [{ routeId: row.routeId, storedModel: row.model, servedIds: got.ids, reason: got.reason }] : [];
+    const host = endpointHost(endpoint);
+    const equipment = host ? registry.find(model => endpointHost(model.baseUrl) === host)?.equipment ?? null : null;
+    return got ? [{ routeId: row.routeId, storedModel: row.model, servedIds: got.ids, reason: got.reason, host, equipment }] : [];
   });
 }
 

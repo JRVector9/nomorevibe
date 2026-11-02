@@ -85,13 +85,13 @@ export type FirstReviewAttemptIdentity = { provider: string | null; model: strin
 export type FirstReviewAvoid = { blocked: ReadonlySet<string> };
 
 /**
- * 1차 심사자 고르기(순수). 2026-11-01 운영자 결정: 「지금 정말 보내진 중인 호출이 없으면 후보는 언제나 지금 풀로 간다」 —
- * 10-28 의 「보낸 일은 옮기지 않는다(풀에서 빠진 모델의 재시도는 null)」 보호를 뒤집는다(docs/operations/review-stall-backlog.md).
+ * 1차 심사자 고르기(순수) — 순위 대체(2026-11-01 운영자 결정). 풀은 순위 순서다: 설정 풀(배정 표가 꺼졌을 때)은 firstReview 가 1순위,
+ * firstReviewAdditional 이 적은 순서대로 2·3순위다. 10-28 의 「보낸 일은 옮기지 않는다」와 후보 id 로 풀 전체에 나누던 고정 칸은 없앴다
+ * (docs/operations/review-stall-backlog.md).
  * 1. 살아 있는 의도(active — 고르기가 기한 안의 reserved·dispatched 와 풀 모델의 waiting 만 넘긴다)는 그 모델에 묶는다. 둘 이상이거나 풀 밖이면 null(기다린다).
  * 2. 마지막 시도가 지금 보내진 중(live)이면 그 모델에 묶는다 — 풀에서 빠졌으면 null. 같은 후보에 살아 있는 호출을 둘 만들지 않는다.
- * 3. 아니면 마지막 시도의 모델이 풀에 있고 막히지 않았으면 그 모델(재시도 고정).
- * 4. 아니면(풀에서 빠졌거나 막혔거나 시도가 없다) 고정 칸 (candidateId − 1) mod n 부터 막히지 않은 첫 모델. 모두 막혔으면 고정한 모델·고정 칸에서 기다린다.
- * 시도 예산·재시도 시각은 모델과 무관하게 이어진다(retryReviewIdentity).
+ * 3. 아니면 이 틱에 쓸 수 있는(막히지·쉬지 않은) 가장 높은 순위. 모두 쓸 수 없으면 null — 잡이 all_ranks_unusable 로 건너뛰고 대기열은 지나간다.
+ * 끝난 재시도는 모델에 묶지 않는다 — 시도 예산·재시도 시각은 모델과 무관하게 이어진다(retryReviewIdentity). candidateId 는 배정 표의 같은 순위 안 나눔에만 쓴다.
  */
 export function selectFirstReviewer(pool: FirstReviewer[], candidateId: number,
   attempts: FirstReviewAttemptIdentity[] = [],
@@ -104,21 +104,14 @@ export function selectFirstReviewer(pool: FirstReviewer[], candidateId: number,
     return pool.find(row => row.provider === active[0].provider && row.model === active[0].model)!;
   }
   const latest = attempts[0];
-  const pinned = latest ? pool.find(row => row.provider === latest.provider && row.model === latest.model) : undefined;
-  if (latest?.live === true) return pinned ?? null;
-  if (pinned && !avoid.blocked.has(firstReviewerKey(pinned))) return pinned;
-  const start = (candidateId - 1) % pool.length;
-  for (let offset = 0; offset < pool.length; offset++) {
-    const reviewer = pool[(start + offset) % pool.length];
-    if (!avoid.blocked.has(firstReviewerKey(reviewer))) return reviewer;
-  }
-  return pinned ?? pool[start];
+  if (latest?.live === true) return pool.find(row => row.provider === latest.provider && row.model === latest.model) ?? null;
+  return pool.find(reviewer => !avoid.blocked.has(firstReviewerKey(reviewer))) ?? null;
 }
 
 /**
  * 배정 표 판 selectFirstReviewer(PR 3b-B, 순수). 규칙은 같다 — 살아 있는 의도·보내진 중인 시도는 표의 어느 행(대체 포함)이든 그 심사자에 묶고,
- * 아니면 마지막 시도의 모델(표에 있고 막히지 않았을 때), 그다음 chooseModelForItem 의 칸: 가장 낮은 rank 의 행들에서 (candidateId − 1) mod n,
- * 막힌 모델은 비켜 가며 그 rank 가 모두 막혔으면 다음 rank(대체)로 간다. 모두 막혔으면 고정한 모델·고정 칸에서 기다린다.
+ * 아니면 chooseModelForItem: 가장 낮은 rank 의 쓸 수 있는 행들에서 (candidateId − 1) mod n 칸부터(같은 순위 안 나눔), 그 rank 가 모두
+ * 막혔으면 다음 rank. 모두 막혔으면 null.
  */
 export function selectTableFirstReviewer(rows: readonly FirstReviewTableRow[], candidateId: number,
   attempts: FirstReviewAttemptIdentity[] = [],
@@ -132,16 +125,11 @@ export function selectTableFirstReviewer(rows: readonly FirstReviewTableRow[], c
     return pool.find(row => row.provider === active[0].provider && row.model === active[0].model)!;
   }
   const latest = attempts[0];
-  const pinned = latest ? pool.find(row => row.provider === latest.provider && row.model === latest.model) : undefined;
-  if (latest?.live === true) return pinned ?? null;
-  if (pinned && !avoid.blocked.has(firstReviewerKey(pinned))) return pinned;
-  if (avoid.blocked.size) {
-    const excludeModels = usable.filter(row => avoid.blocked.has(firstReviewerKey(row))).map(row => row.model);
-    const rerouted = chooseModelForItem(usable, candidateId, { excludeModels });
-    if (rerouted) return tableReviewer(rerouted);
-  }
-  const fixed = chooseModelForItem(usable, candidateId);
-  return pinned ?? (fixed ? tableReviewer(fixed) : null);
+  if (latest?.live === true) return pool.find(row => row.provider === latest.provider && row.model === latest.model) ?? null;
+  // 같은 모델 이름이 다른 공급자로 있을 수 있어 행 단위로 거른다(chooseModelForItem 의 excludeModels 는 모델 이름이다)
+  const open = usable.filter(row => !avoid.blocked.has(firstReviewerKey(row)));
+  const pick = chooseModelForItem(open, candidateId);
+  return pick ? tableReviewer(pick) : null;
 }
 
 /**

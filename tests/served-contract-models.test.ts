@@ -12,7 +12,8 @@ describe("saved engine APIs", () => {
     }]);
     const request = vi.fn(async () => new Response(JSON.stringify({ data: [{ id: "served-by-api", max_model_len: 1000 }] })));
     await expect(readServedContractModels(request)).resolves.toEqual([
-      { routeId: "crawl-agent-review", storedModel: "stored-name", servedIds: ["served-by-api"], reason: null },
+      // host 는 키 없이 host:port 만, 장비 이름은 같은 host 를 baseUrl 로 둔 등록부 모델이 없으면 null 이다(「장비 · 모델」 표시용)
+      { routeId: "crawl-agent-review", storedModel: "stored-name", servedIds: ["served-by-api"], reason: null, host: "engine.test", equipment: null },
     ]);
     expect(request).toHaveBeenCalledWith("http://engine.test/v1/models", expect.objectContaining({ method: "GET" }));
   });

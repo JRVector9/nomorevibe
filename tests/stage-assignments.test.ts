@@ -17,14 +17,15 @@ describe('stage assignment order', () => {
 describe('chooseModelForItem', () => {
   const pool = [row('ai1:1', 'primary-model'), row('ai1:2', 'second-model'), row('ai1:3', 'third-model')];
 
-  it('picks the same slot as the 1st reviewer pool for every candidate id (the flag flip keeps AI1 identical)', () => {
+  it('keeps the settings pool and an imported table identical: the pool order is the rank order (2026-11-01)', () => {
     const reviewers = pool.map(value => ({ provider: 'abcllm' as const, model: value.model }));
+    const ranked = pool.map((value, index) => ({ ...value, rank: index + 1 }));
     for (let candidateId = 1; candidateId <= 12; candidateId++)
-      expect(chooseModelForItem(pool, candidateId)?.model).toBe(selectFirstReviewer(reviewers, candidateId)?.model);
-    // the untouched-candidate rotation past a blocked model matches too
-    const blocked = new Set([JSON.stringify(['abcllm', 'second-model'])]);
+      expect(chooseModelForItem(ranked, candidateId)?.model).toBe(selectFirstReviewer(reviewers, candidateId)?.model);
+    // past a blocked rank both go to the next rank
+    const blocked = new Set([JSON.stringify(['abcllm', 'primary-model'])]);
     for (let candidateId = 1; candidateId <= 12; candidateId++)
-      expect(chooseModelForItem(pool, candidateId, { excludeModels: ['second-model'] })?.model)
+      expect(chooseModelForItem(ranked, candidateId, { excludeModels: ['primary-model'] })?.model)
         .toBe(selectFirstReviewer(reviewers, candidateId, [], [], { blocked })?.model);
   });
 

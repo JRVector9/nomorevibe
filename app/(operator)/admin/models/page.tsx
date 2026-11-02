@@ -13,6 +13,7 @@ import { PageStamp } from "../components/PageStamp";
 import { HumanReviewSwitch } from "../review/HumanReviewSwitch";
 import { ReviewModelsForm } from "./ReviewModelsForm";
 import { reviewModelOptions } from "./model-options";
+import { FIRST_REVIEW_RANK_STAGE, rankOptions } from "@/lib/operations/admin-first-review-ranks";
 import { readAdminModelsObservation } from "@/lib/operations/admin-models-repository";
 import { LiveModels } from "./LiveModels";
 import { ModelsTopBar } from "./RefreshBar";
@@ -112,7 +113,9 @@ export default async function ModelsPage() {
         <section className="flex min-w-0 flex-col gap-3" aria-labelledby="model-settings">
           <h2 id="model-settings" className="text-[15px] font-semibold">단계별 모델 선택(설정)</h2>
           <ReviewModelsForm settings={settings} version={settingsFormVersion(settings)} models={registry.models} defaults={defaults} locked={assignmentLocked}
-            firstChoices={reviewModelOptions([...new Set(servedModels.flatMap(row => row.servedIds ?? []))].sort(), false)} secondChoices={reviewModelOptions([...new Set(servedModels.flatMap(row => row.servedIds ?? []))].sort(), true)} />
+            firstChoices={reviewModelOptions([...new Set(servedModels.flatMap(row => row.servedIds ?? []))].sort(), false)} secondChoices={reviewModelOptions([...new Set(servedModels.flatMap(row => row.servedIds ?? []))].sort(), true)}
+            firstRankOptions={rankOptions(FIRST_REVIEW_RANK_STAGE, { served: servedModels, contracts: servingContractSnapshot().rows, registry: registry.models,
+              current: [settings.firstReview, ...(settings.firstReviewAdditional ?? [])] })} />
         </section>
       </div>
     </details>

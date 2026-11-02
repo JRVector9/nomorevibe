@@ -88,7 +88,7 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
   const controllers = new Set<AbortController>();
   const pausedModels = new Set<string>();
   let lastPagePosition: NonNullable<typeof page>[number]["position"] | undefined;
-  let next = 0, admitted = 0, progress = 0, windowLeft = 0, stopped = false, stageBlocked = false, modelDeferred = false;
+  let next = 0, admitted = 0, progress = 0, windowLeft = 0, stopped = false, stageBlocked = false, modelDeferred = false, saturated = false;
   // 틱 요약(crawl.agent_review_tick) — 배포 뒤 한 시간 안에 틱당 호출·예약 대기를 잴 수 있게 남긴다. 결과·장부에는 끼어들지 않는다
   const tally = { calls: 0, waits: 0, waitGranted: 0, waitPolls: 0, waitMs: 0, waitWindowClosed: 0, waitCapped: 0 };
   const perModel = new Map<string, { calls: number; waits: number; waitGranted: number }>();
@@ -114,165 +114,178 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
     if (!document) return skip(candidate.repo, "document_missing");
     const input = await loadReviewInput(candidate, document, settings);
     if (input.validUntil <= reviewSemanticNow()) return skip(candidate.repo, "input_expired");
-    const reviewer = settings.firstReviewAdditional === undefined ? primary
-      : await chooseFirstReviewForCandidate({ candidate, document, settings, input }, undefined,
-        new Set([...blockedModels, ...pausedModels]));
-    // 진행 중·식별 불가 시도나 다른 모델의 활성 의도에 묶여 지금 풀에서 고를 심사자가 없다(first-reviewers.ts selectFirstReviewer)
-    if (!reviewer) return skip(candidate.repo, "reviewer_unassigned");
-    const { provider: reviewProvider, model } = reviewer;
-    if (hint && (hint.reviewer.provider !== reviewProvider || hint.reviewer.model !== model
-      || hint.workKey !== `ai1:${candidate.id}:${itemBindingHash(agentReviewBinding(candidate.id, input, reviewer))}`))
-      return skip(candidate.repo, "pending_hint_mismatch", { provider: reviewProvider, model });
-    const key = firstReviewerKey(reviewer), ceiling = timeoutFor(reviewProvider);
-    const canExecuteClaim = () => canStart() && remaining() >= ceiling + 2_000;
-    const canStartModel = () => canExecuteClaim() && !pausedModels.has(key);
-    const notStartable = () => pausedModels.has(key) ? "model_paused" : modelDeferred ? "model_deferred"
-      : stageBlocked ? "stage_inactive" : "tick_window_closed";
-    if (!canStartModel()) return skip(candidate.repo, notStartable(), { provider: reviewProvider, model });
-    const preparation = await prepareAgentReview({ candidate, document, settings, input }, reviewer);
-    const { verdict, hardReason, evidenceHold, provider } = preparation;
-    // README 를 받고 나서 드러난 스팸·악성 의심은 모델에게 보내지 않고 사람에게 넘긴다
-    if (preparation.spam) {
-      const held = await holdSuspectedSpam(candidate, verdict, lease);
-      ctx.log("crawl.agent_review_suspected_spam", { repo: candidate.repo, held });
-      return;
-    }
-    if (!canAdmit() || !canStartModel()) return skip(candidate.repo, notStartable(), { provider: reviewProvider, model });
-    const context = { candidate, document, settings, input };
-    let claim: ModelCapacityReviewClaim | CliModelCapacityReviewClaim;
-    let prepared: PreparedAi1GatewayCall | undefined;
-    let waitEnded: Ai1ReservationWaitEvent["ended"] | undefined;
-    // CLI 심사자(05c-4)는 같은 되감은 claim 에서 CLI coordinator 로 간다. gateway·disabled 경로는 그대로다.
-    let cli: { capacity: typeof import("../review-cli-model-capacity"); call: PreparedReviewCliCall } | undefined;
-    try {
-      try {
-        claim = await claimAgentReview({ ...context, lease, provider, model: provider === "rules" ? REVIEW_RULES_VERSION : model });
-      } catch (error) {
-        if (!(error instanceof ModelCapacityDeferredError) || error.reason !== "reservation_required") throw error;
-        if (provider === "claude-cli" || provider === "grok-cli") {
-          const capacity = await import("../review-cli-model-capacity");
-          const resumed = await capacity.claimAgentReviewCliModelCapacity({ ...context, lease, provider, model, timeoutMs: ceiling, signal: ctx.signal });
-          claim = resumed.claim; cli = { capacity, call: resumed.call };
-        } else {
-          // 줄에 선 이 후보의 예약을 틱 안에서 기다린다 — 미루고 떠나면 그 사이 받은 예약이 TTL 로 만료된다. 모든 물리 칸이 미확인
-          // 점유로 막힌 모델(blockedModels)은 기다려도 풀리지 않으므로 기존처럼 바로 미룬다.
-          const wait = blockedModels.has(key) ? undefined : {
-            until: deadlineAt - ceiling - 2_000 - RESERVATION_CLAIM_MARGIN_MS,
-            active: () => canAdmit() && !pausedModels.has(key),
-            observe: (event: Ai1ReservationWaitEvent) => {
-              waitEnded = event.ended;
-              if (event.ended === "deadline") tally.waitWindowClosed++;
-              if (event.ended === "cap") tally.waitCapped++;
-              if (!event.queued) return;
-              const row = modelTally(model);
-              tally.waits++; row.waits++; tally.waitPolls += event.polls; tally.waitMs += event.waitedMs;
-              if (event.granted) { tally.waitGranted++; row.waitGranted++; }
-            },
-          };
-          const resumed = await claimAgentReviewModelCapacity({ ...context, lease, provider, model, signal: ctx.signal }, wait);
-          claim = resumed.claim; prepared = resumed.call;
-        }
-      }
-    } catch (error) {
-      if (!(error instanceof ModelCapacityDeferredError)) throw error;
-      // 틱의 시작 가능 시각이 지나 기다림을 그친 것은 슬롯 거절이 아니다 — 모델을 pause 하지 않는다. 줄에 선 행은 그대로 두고
-      // 다음 틱이 맨 먼저 다시 본다(listOwnPendingFirstReviewCandidates). 그 틱이 늦지 않도록 이 틱은 요청을 남긴다(아래 windowLeft).
-      if (error.reason === "capacity" && waitEnded === "deadline") {
-        windowLeft++;
-        ctx.log("crawl.agent_review_wait_window_closed", { repo: candidate.repo, provider: reviewProvider, model });
+    // 순위대로 고른다: 고른 모델이 이 틱에 이 모델만의 까닭으로 거절되면 그 모델을 쉬게 하고 다음 순위로 — 순위 수만큼만 돈다
+    for (let rank = 0; rank <= pool.length; rank++) {
+      const avoid = new Set([...blockedModels, ...pausedModels]);
+      const reviewer = settings.firstReviewAdditional === undefined ? primary
+        : await chooseFirstReviewForCandidate({ candidate, document, settings, input }, undefined, avoid);
+      // 모든 순위가 이 틱에 쓸 수 없다(쉬는·막힌 모델) — 또는 살아 있는 호출·의도가 이 후보를 풀 밖 모델에 묶었다(first-reviewers.ts)
+      if (!reviewer) return skip(candidate.repo, pool.every(row => avoid.has(firstReviewerKey(row))) ? "all_ranks_unusable" : "reviewer_unassigned",
+        { ranks: pool.length, unusable: pool.filter(row => avoid.has(firstReviewerKey(row))).length });
+      const { provider: reviewProvider, model } = reviewer;
+      if (hint && (hint.reviewer.provider !== reviewProvider || hint.reviewer.model !== model
+        || hint.workKey !== `ai1:${candidate.id}:${itemBindingHash(agentReviewBinding(candidate.id, input, reviewer))}`))
+        return skip(candidate.repo, "pending_hint_mismatch", { provider: reviewProvider, model });
+      const key = firstReviewerKey(reviewer), ceiling = timeoutFor(reviewProvider);
+      const canExecuteClaim = () => canStart() && remaining() >= ceiling + 2_000;
+      const canStartModel = () => canExecuteClaim() && !pausedModels.has(key);
+      const notStartable = () => pausedModels.has(key) ? "model_paused" : modelDeferred ? "model_deferred"
+        : stageBlocked ? "stage_inactive" : "tick_window_closed";
+      // 다른 줄이 방금 이 모델을 쉬게 했다 — 다음 순위로 다시 고른다
+      if (!canStartModel() && canExecuteClaim() && pausedModels.has(key)) continue;
+      if (!canStartModel()) return skip(candidate.repo, notStartable(), { provider: reviewProvider, model });
+      const preparation = await prepareAgentReview({ candidate, document, settings, input }, reviewer);
+      const { verdict, hardReason, evidenceHold, provider } = preparation;
+      // README 를 받고 나서 드러난 스팸·악성 의심은 모델에게 보내지 않고 사람에게 넘긴다
+      if (preparation.spam) {
+        const held = await holdSuspectedSpam(candidate, verdict, lease);
+        ctx.log("crawl.agent_review_suspected_spam", { repo: candidate.repo, held });
         return;
       }
-      // 이 후보의 앞선 호출이 아직 보내진 중이거나(dispatched) 같은 후보가 다른 요청에 묶였다(work_busy, fence) — 이 후보만 건너뛴다.
-      // 모델을 pause 하거나 틱 전체를 미루면 목록 맨 앞에 남은 한 건이 매 틱 다른 후보까지 막는다(2026-10-30 결정).
-      // claim TX 는 되감겼고 호출·시도·실패 기록은 없다.
-      if (modelCapacityDeferralIsPerWork(error.reason)) return skip(candidate.repo, error.reason);
-      // The claim TX has rolled back. Stop new claims without cancelling any
-      // already admitted lane; all real work settles before returning deferred.
-      if (settings.firstReviewAdditional !== undefined && firstReviewDeferralIsLocal(error.reason)) pausedModels.add(key);
-      else modelDeferred = true;
-      ctx.log("crawl.agent_review_deferred", { reason: error.reason, provider: reviewProvider, model });
-      return;
-    }
-    if (claim.kind === "skipped") {
-      if (claim.reason === "stage_inactive") stageBlocked = true;
-      return skip(candidate.repo, claim.reason);
-    }
-    if (!canExecuteClaim()) {
-      ctx.log("crawl.agent_review_claim_cancelled_before_transport", { provider: reviewProvider, model,
-        elapsedMs: Date.now() - startedAt, remainingMs: remaining(), modelPaused: pausedModels.has(key),
-        globalDeferred: modelDeferred, stageBlocked });
-      // CLI 는 spawn 하지 않은, gateway 는 fetch 를 부르지 않은 dispatch 를 not_started 로 정산한다(D5) — 결과 기록은 기존 cancelled+60s 그대로다
-      if (claim.dispatch && cli) await cli.capacity.abandonCliModelCapacity(claim.dispatch as CliModelDispatch, cli.call);
-      else if (claim.dispatch) await abandonAgentReviewModelCapacity(claim.dispatch as Ai1ModelDispatch, prepared);
-      await recordAgentReview({ ...context, receipt: claim.receipt,
-        error: "cancelled", retryAfter: new Date(Date.now() + 60_000) });
-      return;
-    }
-    const telemetry = { stage: "first" as const, candidateId: candidate.id, firstAttemptId: claim.attempt.id,
-      sourceRevisionHash: input.sourceRevisionHash, provider, model, job: lease.name, runId: String(lease.requestedVersion) };
-    if (claim.kind === "reused") emitPipelineEvent("reused", telemetry, ctx.log);
-    if (claim.kind === "claimed") emitPipelineEvent("queue", { ...telemetry, waitMs: Date.now() - (candidate.updatedAt ?? candidate.judgedAt).getTime() }, ctx.log);
-    if (hardReason || evidenceHold || claim.kind === "reused") {
-      const outcome = preparation.outcome ?? claim.attempt.outcome ?? undefined;
-      const recorded = await recordAgentReview({ ...context, receipt: claim.receipt, outcome,
-        ruleRejection: preparation.ruleRejection });
-      if (recorded.state === "succeeded") progress++;
-      if (recorded.state !== "superseded") emitPipelineEvent("committed", { ...telemetry, state: recorded.state }, ctx.log);
-      ctx.log("crawl.agent_reviewed", { repo: candidate.repo, provider, reused: claim.kind === "reused", ...recorded });
-      return;
-    }
-
-    const controller = new AbortController();
-    controllers.add(controller);
-    const abort = () => controller.abort();
-    ctx.signal?.addEventListener("abort", abort, { once: true });
-    const ownershipPoll = setInterval(() => { if (!ctx.hasBudget()) controller.abort(); }, 250);
-    ownershipPoll.unref?.();
-    try {
-      // Claim may have waited on a lock. Cancel and record it instead of leaving a running row.
-      // A peer's local capacity wait stops new admission, never this committed claim.
-      if (!canExecuteClaim()) controller.abort();
-      const options = { model, timeoutMs: ceiling, signal: controller.signal };
-      const dispatch = claim.dispatch;
-      const call = prepared;
-      tally.calls++; modelTally(model).calls++;
-      let result = await measureReviewCall(telemetry, async () => {
-        // CLI 제한 시간은 준비한 호출에 묶여 spawn 부터 센다. 틱 여유는 바로 위 canStart 가 spawn 직전에 다시 본다.
-        if (dispatch && cli) return cli.capacity.reviewCliModelCapacity(input, dispatch as CliModelDispatch, cli.call, { signal: controller.signal });
-        if (dispatch) {
-          if (!call) throw new Error("ai1_model_prepared_call_missing");
-          return reviewAgentReviewModelCapacity(input, dispatch as Ai1ModelDispatch, call, options);
+      if (!canAdmit() || !canStartModel()) return skip(candidate.repo, notStartable(), { provider: reviewProvider, model });
+      const context = { candidate, document, settings, input };
+      let claim: ModelCapacityReviewClaim | CliModelCapacityReviewClaim;
+      let prepared: PreparedAi1GatewayCall | undefined;
+      let waitEnded: Ai1ReservationWaitEvent["ended"] | undefined;
+      // CLI 심사자(05c-4)는 같은 되감은 claim 에서 CLI coordinator 로 간다. gateway·disabled 경로는 그대로다.
+      let cli: { capacity: typeof import("../review-cli-model-capacity"); call: PreparedReviewCliCall } | undefined;
+      try {
+        try {
+          claim = await claimAgentReview({ ...context, lease, provider, model: provider === "rules" ? REVIEW_RULES_VERSION : model });
+        } catch (error) {
+          if (!(error instanceof ModelCapacityDeferredError) || error.reason !== "reservation_required") throw error;
+          if (provider === "claude-cli" || provider === "grok-cli") {
+            const capacity = await import("../review-cli-model-capacity");
+            const resumed = await capacity.claimAgentReviewCliModelCapacity({ ...context, lease, provider, model, timeoutMs: ceiling, signal: ctx.signal });
+            claim = resumed.claim; cli = { capacity, call: resumed.call };
+          } else {
+            // 줄에 선 이 후보의 예약을 틱 안에서 기다린다 — 미루고 떠나면 그 사이 받은 예약이 TTL 로 만료된다. 모든 물리 칸이 미확인
+            // 점유로 막힌 모델(blockedModels)은 기다려도 풀리지 않으므로 기존처럼 바로 미룬다.
+            const wait = blockedModels.has(key) ? undefined : {
+              until: deadlineAt - ceiling - 2_000 - RESERVATION_CLAIM_MARGIN_MS,
+              active: () => canAdmit() && !pausedModels.has(key),
+              observe: (event: Ai1ReservationWaitEvent) => {
+                waitEnded = event.ended;
+                if (event.ended === "deadline") tally.waitWindowClosed++;
+                if (event.ended === "cap") tally.waitCapped++;
+                if (!event.queued) return;
+                const row = modelTally(model);
+                tally.waits++; row.waits++; tally.waitPolls += event.polls; tally.waitMs += event.waitedMs;
+                if (event.granted) { tally.waitGranted++; row.waitGranted++; }
+              },
+            };
+            const resumed = await claimAgentReviewModelCapacity({ ...context, lease, provider, model, signal: ctx.signal }, wait);
+            claim = resumed.claim; prepared = resumed.call;
+          }
         }
-        return (await dispatchReviewFixtureCall({ stage: "first",
-        candidateId: candidate.id, firstAttemptId: claim.attempt.id, provider: reviewProvider, model }, input, options)) ?? (reviewProvider === "abcllm"
-        ? reviewWithGateway(input, options)
-        // 엔진 직접(local-direct) 1차는 공통 장부의 dispatch 로만 보낸다 — 장부 밖 호환 경로로는 보내지 않는다(AI2 와 같다, PR 3b-C)
-        : reviewProvider === "local-direct" ? { ok: false as const, error: "not_configured" as const }
-        : reviewProvider === "grok-cli" ? reviewWithGrokCli(input, options) : reviewWithAgent(input, options));
-      }, ctx.log);
-      if (controller.signal.aborted) result = { ok: false, error: "cancelled" };
-      if (!result.ok) {
-        if (settings.firstReviewAdditional !== undefined) pausedModels.add(key);
-        else stopped = true;
+      } catch (error) {
+        if (!(error instanceof ModelCapacityDeferredError)) throw error;
+        // 틱의 시작 가능 시각이 지나 기다림을 그친 것은 슬롯 거절이 아니다 — 모델을 pause 하지 않는다. 줄에 선 행은 그대로 두고
+        // 다음 틱이 맨 먼저 다시 본다(listOwnPendingFirstReviewCandidates). 그 틱이 늦지 않도록 이 틱은 요청을 남긴다(아래 windowLeft).
+        if (error.reason === "capacity" && waitEnded === "deadline") {
+          windowLeft++;
+          ctx.log("crawl.agent_review_wait_window_closed", { repo: candidate.repo, provider: reviewProvider, model });
+          return;
+        }
+        // 이 후보의 앞선 호출이 아직 보내진 중이거나(dispatched) 같은 후보가 다른 요청에 묶였다(work_busy, fence) — 이 후보만 건너뛴다.
+        // 모델을 pause 하거나 틱 전체를 미루면 목록 맨 앞에 남은 한 건이 매 틱 다른 후보까지 막는다(2026-10-30 결정).
+        // claim TX 는 되감겼고 호출·시도·실패 기록은 없다.
+        if (modelCapacityDeferralIsPerWork(error.reason)) return skip(candidate.repo, error.reason);
+        // The claim TX has rolled back. Stop new claims without cancelling any
+        // already admitted lane; all real work settles before returning deferred.
+        const local = settings.firstReviewAdditional !== undefined && firstReviewDeferralIsLocal(error.reason);
+        if (local) pausedModels.add(key);
+        else modelDeferred = true;
+        // 진짜 포화(이 요청이 줄에 섰다)는 틱 결과를 예전처럼 미룸으로 둔다 — 줄의 대기 행이 진행 감시의 재시작을 막는다(capacity-admission-block)
+        if (error.reason === "capacity") saturated = true;
+        ctx.log("crawl.agent_review_deferred", { reason: error.reason, provider: reviewProvider, model });
+        // 이 모델만의 거절(경로 없음·장비 미설정·계약 닫힘·포화 등)이면 같은 후보를 다음 순위로 다시 고른다(2026-11-01 순위 대체)
+        if (local) continue;
+        return;
       }
-      const recorded = await recordAgentReview({
-        ...context, receipt: claim.receipt,
-        ...(result.ok ? { outcome: result.outcome, usage: result.usage } : {
-          error: result.error, detail: result.detail, usage: result.usage,
-          retryAfter: new Date(Date.now() + Math.min(30 * 60_000, 60_000 * 2 ** Math.max(0, claim.attempt.attemptNumber - 1))),
-        }),
-      });
-      if (recorded.state === "succeeded") progress++;
-      if (recorded.state !== "superseded") emitPipelineEvent("committed", { ...telemetry, state: recorded.state }, ctx.log);
-      ctx.log("crawl.agent_reviewed", {
-        repo: candidate.repo, provider, mode: settings.reviewMode, ...recorded,
-        ...(result.ok ? { decision: result.outcome.decision } : { error: result.error }),
-      });
-    } finally {
-      clearInterval(ownershipPoll);
-      ctx.signal?.removeEventListener("abort", abort);
-      controllers.delete(controller);
+      if (claim.kind === "skipped") {
+        if (claim.reason === "stage_inactive") stageBlocked = true;
+        return skip(candidate.repo, claim.reason);
+      }
+      if (!canExecuteClaim()) {
+        ctx.log("crawl.agent_review_claim_cancelled_before_transport", { provider: reviewProvider, model,
+          elapsedMs: Date.now() - startedAt, remainingMs: remaining(), modelPaused: pausedModels.has(key),
+          globalDeferred: modelDeferred, stageBlocked });
+        // CLI 는 spawn 하지 않은, gateway 는 fetch 를 부르지 않은 dispatch 를 not_started 로 정산한다(D5) — 결과 기록은 기존 cancelled+60s 그대로다
+        if (claim.dispatch && cli) await cli.capacity.abandonCliModelCapacity(claim.dispatch as CliModelDispatch, cli.call);
+        else if (claim.dispatch) await abandonAgentReviewModelCapacity(claim.dispatch as Ai1ModelDispatch, prepared);
+        await recordAgentReview({ ...context, receipt: claim.receipt,
+          error: "cancelled", retryAfter: new Date(Date.now() + 60_000) });
+        return;
+      }
+      const telemetry = { stage: "first" as const, candidateId: candidate.id, firstAttemptId: claim.attempt.id,
+        sourceRevisionHash: input.sourceRevisionHash, provider, model, job: lease.name, runId: String(lease.requestedVersion) };
+      if (claim.kind === "reused") emitPipelineEvent("reused", telemetry, ctx.log);
+      if (claim.kind === "claimed") emitPipelineEvent("queue", { ...telemetry, waitMs: Date.now() - (candidate.updatedAt ?? candidate.judgedAt).getTime() }, ctx.log);
+      if (hardReason || evidenceHold || claim.kind === "reused") {
+        const outcome = preparation.outcome ?? claim.attempt.outcome ?? undefined;
+        const recorded = await recordAgentReview({ ...context, receipt: claim.receipt, outcome,
+          ruleRejection: preparation.ruleRejection });
+        if (recorded.state === "succeeded") progress++;
+        if (recorded.state !== "superseded") emitPipelineEvent("committed", { ...telemetry, state: recorded.state }, ctx.log);
+        ctx.log("crawl.agent_reviewed", { repo: candidate.repo, provider, reused: claim.kind === "reused", ...recorded });
+        return;
+      }
+
+      const controller = new AbortController();
+      controllers.add(controller);
+      const abort = () => controller.abort();
+      ctx.signal?.addEventListener("abort", abort, { once: true });
+      const ownershipPoll = setInterval(() => { if (!ctx.hasBudget()) controller.abort(); }, 250);
+      ownershipPoll.unref?.();
+      try {
+        // Claim may have waited on a lock. Cancel and record it instead of leaving a running row.
+        // A peer's local capacity wait stops new admission, never this committed claim.
+        if (!canExecuteClaim()) controller.abort();
+        const options = { model, timeoutMs: ceiling, signal: controller.signal };
+        const dispatch = claim.dispatch;
+        const call = prepared;
+        tally.calls++; modelTally(model).calls++;
+        let result = await measureReviewCall(telemetry, async () => {
+          // CLI 제한 시간은 준비한 호출에 묶여 spawn 부터 센다. 틱 여유는 바로 위 canStart 가 spawn 직전에 다시 본다.
+          if (dispatch && cli) return cli.capacity.reviewCliModelCapacity(input, dispatch as CliModelDispatch, cli.call, { signal: controller.signal });
+          if (dispatch) {
+            if (!call) throw new Error("ai1_model_prepared_call_missing");
+            return reviewAgentReviewModelCapacity(input, dispatch as Ai1ModelDispatch, call, options);
+          }
+          return (await dispatchReviewFixtureCall({ stage: "first",
+          candidateId: candidate.id, firstAttemptId: claim.attempt.id, provider: reviewProvider, model }, input, options)) ?? (reviewProvider === "abcllm"
+          ? reviewWithGateway(input, options)
+          // 엔진 직접(local-direct) 1차는 공통 장부의 dispatch 로만 보낸다 — 장부 밖 호환 경로로는 보내지 않는다(AI2 와 같다, PR 3b-C)
+          : reviewProvider === "local-direct" ? { ok: false as const, error: "not_configured" as const }
+          : reviewProvider === "grok-cli" ? reviewWithGrokCli(input, options) : reviewWithAgent(input, options));
+        }, ctx.log);
+        if (controller.signal.aborted) result = { ok: false, error: "cancelled" };
+        if (!result.ok) {
+          if (settings.firstReviewAdditional !== undefined) pausedModels.add(key);
+          else stopped = true;
+        }
+        const recorded = await recordAgentReview({
+          ...context, receipt: claim.receipt,
+          ...(result.ok ? { outcome: result.outcome, usage: result.usage } : {
+            error: result.error, detail: result.detail, usage: result.usage,
+            retryAfter: new Date(Date.now() + Math.min(30 * 60_000, 60_000 * 2 ** Math.max(0, claim.attempt.attemptNumber - 1))),
+          }),
+        });
+        if (recorded.state === "succeeded") progress++;
+        if (recorded.state !== "superseded") emitPipelineEvent("committed", { ...telemetry, state: recorded.state }, ctx.log);
+        ctx.log("crawl.agent_reviewed", {
+          repo: candidate.repo, provider, mode: settings.reviewMode, ...recorded,
+          ...(result.ok ? { decision: result.outcome.decision } : { error: result.error }),
+        });
+      } finally {
+        clearInterval(ownershipPoll);
+        ctx.signal?.removeEventListener("abort", abort);
+        controllers.delete(controller);
+      }
+      return;
     }
+    return skip(candidate.repo, "all_ranks_unusable", { ranks: pool.length, unusable: pool.length });
   };
   const lanes = Array.from({ length: concurrency }, async () => {
     try {
@@ -308,6 +321,13 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
   // last_success_at 이 멈췄다(2026-10-31 01:26Z~). 한 모델만 멈췄으면 남은 일이 있으니 곧바로 다시 요청한다.
   // 전역 미룸(draining·owner 등)이면 완료로 적되 다시 요청하지 않는다 — scheduler 의 다음 요청을 기다린다.
   // 아무것도 남기지 못한 틱은 예전처럼 미룸이다(processed 없음 → 성공 시각 유지).
+  // 들인 후보가 모두 이름 붙은 까닭으로 건너뛰어졌다 — 호출도 진전도 없다. 프로세스 결함이 아니라 입력·배정의 일이라 재시작으로 고쳐지지
+  // 않는다. 제 일 못 한 틱(degraded)으로 적어 성공 시각을 옮기지 않고(조치할 일 경보), 진행 감시는 이것을 보고 reviewer 를 재시작하지 않는다
+  // (worker-progress-query.ts applyAllSkippedBlock). 순위의 모든 모델이 이 틱에 쓸 수 없어 건너뛴 후보(all_ranks_unusable — 경로 없음·장비 미설정·
+  // 계약 닫힘·실패로 쉼)도 여기 든다. 전역 미룸(draining·owner 등)·진짜 포화·줄에 선 채 끝난 후보가 있는 틱은 예전처럼 미룸이다.
+  const skippedTotal = Object.values(skipped).reduce((sum, n) => sum + n, 0);
+  if (admitted > 0 && !progress && !tally.calls && skippedTotal === admitted && !modelDeferred && !windowLeft && !saturated) return { done: false, degraded: {
+    code: AGENT_REVIEW_ALL_SKIPPED, detail: Object.entries(skipped).sort(([a], [b]) => a.localeCompare(b)).map(([reason, n]) => `${reason}=${n}`).join(" ") } };
   if (modelDeferred || pausedModels.size) {
     if (!progress) return { done: false, deferred: "model_capacity" };
     return !modelDeferred && !stopped && !ctx.signal?.aborted && ctx.hasBudget() ? { done: false, continuation: "ready" } : { done: false };
@@ -320,11 +340,5 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
     const ready = await listReviewCandidates(settings, 1, { excludeCandidateIds: [...visited], readyOnly: true });
     if (ready.some(candidate => !visited.has(candidate.id))) return { done: false, continuation: "ready" };
   }
-  // 들인 후보가 모두 이름 붙은 까닭으로 건너뛰어졌다 — 호출도 진전도 없다. 프로세스 결함이 아니라 입력·배정의 일이라 재시작으로 고쳐지지
-  // 않는다. 제 일 못 한 틱(degraded)으로 적어 성공 시각을 옮기지 않고(조치할 일 경보), 진행 감시는 이것을 보고 reviewer 를 재시작하지 않는다
-  // (worker-progress-query.ts applyAllSkippedBlock).
-  const skippedTotal = Object.values(skipped).reduce((sum, n) => sum + n, 0);
-  if (admitted > 0 && !progress && !tally.calls && skippedTotal === admitted) return { done: false, degraded: {
-    code: AGENT_REVIEW_ALL_SKIPPED, detail: Object.entries(skipped).sort(([a], [b]) => a.localeCompare(b)).map(([reason, n]) => `${reason}=${n}`).join(" ") } };
   return { done: false };
 }

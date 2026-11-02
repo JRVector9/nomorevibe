@@ -309,9 +309,19 @@ AI1/AI2 저장 증가 명령은 두 측정 mjs를 기존 M3 text 컨테이너에
 - 묶는 것은 살아 있는 것뿐: 기한 안의 `reserved`, 그 공급자 호출 기한(게이트웨이는 review-gateway 사다리 clientMs, CLI 는 review-cli·grok-review)
   + 60초 안의 `dispatched`, 지금 풀 모델의 `waiting`, 같은 창 안에 시작한 `running` 시도(`lib/crawl/ai1-live-call.ts`). 이보다 오래된
   dispatched·indeterminate·running(주인이 죽은 boot)과 풀 밖 모델의 waiting 은 후보를 묶지 않는다.
-- 마지막 시도의 모델이 풀에 없으면(끝난·죽은 running·상태 모름·식별 불가) 고정 칸, 풀에 있어도 이 틱에 쉬거나 막혔으면 다음 칸으로 돈다.
-  모두 막혔을 때만 고정 칸에서 기다린다. 시도 예산·재시도 시각은 모델과 무관하게 이어진다.
-- 남는 null(살아 있는 호출 보호)은 `crawl.agent_review_skipped reason=reviewer_unassigned` 로 남고, 키셋 커서는 그 후보를 지나 같은 틱에 다음 후보를 본다.
+- **순위 대체(단계 × 모델 순위)**: 1차는 순위 순으로 고른다. 배정 표가 꺼져 있으면(지금 운영) 설정 풀이 순위다 — `firstReview` 1순위,
+  `firstReviewAdditional` 을 적은 순서대로 2·3순위(예전의 「후보를 id 로 나눠 처리」는 없어졌다). 배정 표가 켜져 있으면 `/admin/models/assignments` 의
+  rank 칸이 순위이고, 같은 rank 안에서만 (후보 id − 1) mod n 으로 나눈다. 가장 높은 순위를 이 틱에 쓸 수 없을 때만 다음 순위로 간다 —
+  쓸 수 없음 = 미확인 점유로 꽉 참·이 틱에 쉼(호출 실패·엔진 내려감) 또는 그 모델만의 거절(경로 없음 `unmapped`·장비 미설정·연결 계약 닫힘
+  `provider_contract_unavailable`·진짜 포화). 그런 거절이면 **같은 후보**를 곧바로 다음 순위로 다시 고른다. 모든 순위를 쓸 수 없으면
+  `reason=all_ranks_unusable` 로 건너뛰고 대기열은 지나간다. 끝난 재시도는 모델에 묶지 않는다(시도 예산·재시도 시각은 모델과 무관하게 이어진다).
+- **grok-cli 를 마지막 순위로**: `/admin/models` 「1차 AI 검수」의 1·2·3순위 드롭다운에서 3순위(또는 마지막 칸)에 `grok-cli · grok-4.7` 을 고른다.
+  드롭다운은 모든 서버의 엔진 API(GET /models, 화면이 이미 읽는 `readServedContractModels`)가 내놓는 모델을 「장비 · 모델」로, CLI 모델(claude-cli·grok-cli)과 함께 보인다.
+  같은 모델 두 순위·앞 순위를 비운 뒤 순위는 저장하지 않는다. 저장하면 다음 틱부터 적용된다(재배포 없음).
+  **운영자가 할 일**: 용량 정책에 `crawl-agent-review / grok-cli / grok-4.7` 경로와 그 장비(group) 한도를 넣어야 grok 순위가 실제로 쓰인다 —
+  그 전에는 `unmapped` 로 그 순위를 건너뛴다. 저장 응답이 순위마다 없는 것(1차 연결 계약·용량 경로·장비 한도)을 한국어로 알린다.
+  연결 계약·경로·장비는 저장이 자동으로 만들지 않는다(계약은 엔진 probe·키가 필요한 「엔진 연결」, 경로·장비는 용량 정책·장비 화면).
+- 남는 null(살아 있는 호출 보호)은 `crawl.agent_review_skipped reason=reviewer_unassigned`(모든 순위를 쓸 수 없으면 `all_ranks_unusable`)로 남고, 키셋 커서는 그 후보를 지나 같은 틱에 다음 후보를 본다.
   들인 후보를 모두 건너뛴 틱은 `degraded: agent_review_all_skipped` 이며 진행 감시는 그것으로 reviewer 를 재시작하지 않는다.
 - 이중 전송 보장은 장부가 지킨다: 같은 후보 fence(`ai1Fence`·`cliKeyFence`)와 점유 유일 색인(`model_capacity_requests_logical_active_idx`)은 바꾸지 않았다.
   그래서 주인이 죽은 오래된 dispatched 행이 남은 후보는 고르기가 지금 풀로 옮겨도 claim 이 `work_busy` 로 그 후보만 넘긴다 —
