@@ -675,3 +675,77 @@ export const runtimeSettings = pgTable('runtime_settings', {
   check('runtime_settings_values_check', sql`jsonb_typeof(${table.values}) = 'object' AND coalesce(${table.values}->>'version', '') = '1' AND pg_column_size(${table.values}) <= 65536`),
   check('runtime_settings_revision_check', sql`${table.revision} BETWEEN 1 AND 9007199254740991`),
 ]);
+
+/** 마지막 GET {base_url}/models 결과 한 줄(0162). maxModelLen 은 엔진이 알려 줄 때만(mlx_lm.server 등은 없다). */
+export type AiConnectionModel = { id: string; maxModelLen: number | null };
+/** 연결별 덧붙임(0162). contextTokens = /models 가 최대 길이를 주지 않는 모델의 운영자 입력 상한(토큰). */
+export type AiConnectionOptions = { contextTokens?: number };
+
+/**
+ * AI 연결(0162, 2026-11-02 작업 ↔ 모델 순위 설계 PR A). 엔진 하나(OpenAI 호환 `/v1` 주소 + 선택 키) 또는 CLI 도구 하나(claude·codex·grok + 운영자가 적은 모델 이름).
+ * 서버 목록은 코드에 없다 — 운영자가 여기 저장한 것만 연결이다. 키는 secret-box 암호문(AAD = aiConnectionKeyAad(id))이고 화면·감사에 다시 나가지 않는다.
+ * device_id 는 용량 장비(model_capacity_devices) 이름이다. 이 판에서는 잡이 이 표를 읽지 않는다(PR B 부터).
+ */
+export const aiConnections = pgTable('ai_connections', {
+  id: uuid('id').primaryKey(),
+  label: varchar('label', { length: 80 }).notNull(),
+  kind: varchar('kind', { length: 8 }).$type<'api' | 'cli'>().notNull(),
+  baseUrl: varchar('base_url', { length: 400 }),
+  apiKeyCiphertext: text('api_key_ciphertext'),
+  cliTool: varchar('cli_tool', { length: 16 }).$type<'claude' | 'codex' | 'grok'>(),
+  cliModels: text('cli_models').array().notNull().default(sql`'{}'::text[]`),
+  models: jsonb('models').$type<AiConnectionModel[]>(),
+  modelsReadAt: timestamp('models_read_at', { withTimezone: true, precision: 3 }),
+  modelsError: varchar('models_error', { length: 200 }),
+  deviceId: varchar('device_id', { length: 120 }).notNull(),
+  capacitySlots: integer('capacity_slots').notNull().default(1),
+  options: jsonb('options').$type<AiConnectionOptions>().notNull().default(sql`'{}'::jsonb`),
+  enabled: boolean('enabled').notNull().default(true),
+  version: bigint('version', { mode: 'number' }).notNull().default(1),
+  note: varchar('note', { length: 400 }),
+  updatedBy: varchar('updated_by', { length: 120 }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
+  updatedAt: timestamp('updated_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
+}, table => [
+  check('ai_connections_kind_check', sql`${table.kind} IN ('api','cli')`),
+  check('ai_connections_label_check', sql`char_length(${table.label}) BETWEEN 1 AND 80 AND ${table.label} = btrim(${table.label}) AND ${table.label} !~ '[[:cntrl:]]'`),
+  check('ai_connections_api_check', sql`${table.kind} <> 'api' OR (${table.baseUrl} IS NOT NULL AND ${table.cliTool} IS NULL AND cardinality(${table.cliModels}) = 0)`),
+  check('ai_connections_cli_check', sql`${table.kind} <> 'cli' OR (${table.baseUrl} IS NULL AND ${table.apiKeyCiphertext} IS NULL AND ${table.cliTool} IN ('claude','codex','grok') AND cardinality(${table.cliModels}) BETWEEN 1 AND 32 AND array_position(${table.cliModels}, NULL) IS NULL AND ${table.models} IS NULL AND ${table.modelsReadAt} IS NULL AND ${table.modelsError} IS NULL)`),
+  check('ai_connections_base_url_check', sql`${table.baseUrl} IS NULL OR ${table.baseUrl} ~ '^https?://[^/?#@[:space:][:cntrl:]]+/v1$'`),
+  check('ai_connections_models_check', sql`${table.models} IS NULL OR (jsonb_typeof(${table.models}) = 'array' AND jsonb_array_length(${table.models}) <= 512 AND pg_column_size(${table.models}) <= 131072)`),
+  check('ai_connections_device_check', sql`char_length(${table.deviceId}) BETWEEN 1 AND 120 AND ${table.deviceId} = btrim(${table.deviceId}) AND ${table.deviceId} !~ '[[:cntrl:]]'`),
+  check('ai_connections_slots_check', sql`${table.capacitySlots} BETWEEN 1 AND 256`),
+  check('ai_connections_options_check', sql`jsonb_typeof(${table.options}) = 'object' AND pg_column_size(${table.options}) <= 8192`),
+  check('ai_connections_version_check', sql`${table.version} BETWEEN 1 AND 9007199254740991`),
+  uniqueIndex('ai_connections_label_idx').on(sql`lower(${table.label})`),
+  uniqueIndex('ai_connections_base_url_idx').on(table.baseUrl).where(sql`${table.baseUrl} IS NOT NULL`),
+]);
+
+/**
+ * 작업 ↔ 모델 순위(0162). (작업, 칸, 순위) 하나에 (연결, 모델) 하나 — 1순위를 먼저 쓰고, 쓸 수 없으면 2·3순위. 칸(slot)은 2차 투표자 1·2·3처럼 한 작업 안의
+ * 나란한 자리이고 다른 작업은 1이다. 작업 이름·칸 수·받는 연결 종류는 코드 목록(lib/llm/ai-tasks.ts)이 정한다. 이 판에서는 잡이 읽지 않는다(PR B 부터).
+ */
+export const aiTaskModels = pgTable('ai_task_models', {
+  id: bigserial('id', { mode: 'number' }).primaryKey(),
+  task: varchar('task', { length: 64 }).notNull(),
+  slot: integer('slot').notNull().default(1),
+  rank: integer('rank').notNull(),
+  connectionId: uuid('connection_id').notNull(),
+  model: varchar('model', { length: 200 }).notNull(),
+  options: jsonb('options').$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  enabled: boolean('enabled').notNull().default(true),
+  note: varchar('note', { length: 400 }),
+  updatedBy: varchar('updated_by', { length: 120 }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
+  updatedAt: timestamp('updated_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
+}, table => [
+  foreignKey({ columns: [table.connectionId], foreignColumns: [aiConnections.id], name: 'ai_task_models_connection_fk' }).onDelete('restrict'),
+  check('ai_task_models_task_check', sql`${table.task} ~ '^[a-z0-9][a-z0-9-]{0,63}$'`),
+  check('ai_task_models_slot_check', sql`${table.slot} BETWEEN 1 AND 8`),
+  check('ai_task_models_rank_check', sql`${table.rank} BETWEEN 1 AND 3`),
+  check('ai_task_models_model_check', sql`char_length(${table.model}) BETWEEN 1 AND 200 AND ${table.model} = btrim(${table.model}) AND ${table.model} !~ '[[:cntrl:]]'`),
+  check('ai_task_models_options_check', sql`jsonb_typeof(${table.options}) = 'object' AND pg_column_size(${table.options}) <= 4096`),
+  unique('ai_task_models_rank_key').on(table.task, table.slot, table.rank),
+  unique('ai_task_models_model_key').on(table.task, table.slot, table.connectionId, table.model),
+  index('ai_task_models_connection_idx').on(table.connectionId),
+]);

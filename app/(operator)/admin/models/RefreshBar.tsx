@@ -58,6 +58,7 @@ export function ModelsTopBar({ renderedAt }: { renderedAt: string }) {
           {" · "}<Link href="/admin/models/contracts" prefetch={false} className="underline underline-offset-[3px]">모델 연결 →</Link>
           {" · "}<Link href="/admin/models/limits" prefetch={false} className="underline underline-offset-[3px]">실시간 한도 →</Link>
           {" · "}<Link href="/admin/models/assignments" prefetch={false} className="underline underline-offset-[3px]">모델 배정 →</Link>
+          {" · "}<Link href="/admin/models/tasks" prefetch={false} className="underline underline-offset-[3px]">작업 ↔ 모델 →</Link>
           {" · "}<Link href="/admin/status" prefetch={false} className="underline underline-offset-[3px]">운영센터 →</Link></span>
       </div>
       <RefreshBar renderedAt={renderedAt} />

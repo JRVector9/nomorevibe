@@ -1128,6 +1128,13 @@
       "when": 1794086401072,
       "tag": "0161_text_local_direct_binding",
       "breakpoints": true
+    },
+    {
+      "idx": 162,
+      "version": "7",
+      "when": 1794086401073,
+      "tag": "0162_ai_task_model_ranks",
+      "breakpoints": true
     }
   ]
 }

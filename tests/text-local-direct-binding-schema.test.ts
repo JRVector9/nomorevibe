@@ -59,7 +59,7 @@ function migrationBranches() {
   });
 }
 
-it("registers 0161 last, immediately after 0160, at the agreed journal position", () => {
+it("registers 0161 immediately after 0160, at the agreed journal position (later migrations only follow it)", () => {
   const journal = JSON.parse(readFileSync("drizzle/meta/_journal.json", "utf8")) as { entries: { idx: number; when: number; tag: string; breakpoints?: boolean; version?: string }[] };
   const entry = journal.entries.find(entry => entry.tag === tag);
   expect(entry).toMatchObject({ idx: 161, when: 1794086401072, tag, breakpoints: true, version: "7" });
@@ -67,7 +67,7 @@ it("registers 0161 last, immediately after 0160, at the agreed journal position"
   expect(rules).toMatchObject({ idx: 160, when: 1794086401071 });
   expect(rules.when).toBeLessThan(entry!.when);
   expect(journal.entries.indexOf(entry!), "0161 sits right after 0160").toBe(journal.entries.indexOf(rules) + 1);
-  expect(journal.entries.at(-1)).toBe(entry);
+  expect(journal.entries.slice(journal.entries.indexOf(entry!) + 1).every(next => next.idx > 161 && next.when > entry!.when)).toBe(true);
   expect(journal.entries.filter(entry => entry.idx === 159 || entry.tag === "0159_text_local_direct_binding")).toEqual([]);
   expect(journal.entries.map(entry => entry.when)).toEqual([...journal.entries.map(entry => entry.when)].sort((a, b) => a - b));
   expect(journal.entries.map(entry => entry.idx)).toEqual([...journal.entries.map(entry => entry.idx)].sort((a, b) => a - b));
