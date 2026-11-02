@@ -176,7 +176,7 @@ it("0161 은 text local-direct 가지를 세 제약의 다음 rules ordinal 로 
   expect((await client`SELECT count(*)::int n FROM drizzle.__drizzle_migrations`)[0].n).toBe(journal.entries.length);
   // 0161 뒤에는 그 뒤 번호만 붙는다(0162 작업 ↔ 모델 순위, 2026-11-02) — 끝까지 올린 DB 에서 0161 가지를 본다
   expect(journal.entries.find(entry => entry.idx === 161)).toMatchObject({ tag: "0161_text_local_direct_binding" });
-  expect(journal.entries.filter(entry => entry.idx > 161).every(entry => entry.when > 1794086401072)).toBe(true);
+  expect(journal.entries.slice(journal.entries.findIndex(entry => entry.idx === 161) + 1).every(entry => entry.idx > 161)).toBe(true);
   const text: Record<string, string> = { model_capacity_requests_dispatch_check: textLocalDirectDispatchSql,
     model_capacity_requests_terminal_check: textLocalDirectTerminalSql, model_capacity_events_terminal_check: textLocalDirectEventTerminalSql };
   const rules = await client<{ constraint_name: string; ordinal: number; predicate: string; source: string }[]>`SELECT constraint_name, ordinal, predicate, source
