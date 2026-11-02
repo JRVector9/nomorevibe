@@ -53,7 +53,7 @@ export function RankSelects<T extends RankValue>({ stage, options, value, onChan
             {groups ? groups.map(([name, list]) => <optgroup key={name} label={name}>{list.map(item)}</optgroup>) : options.map(item)}
           </select>
           {/* 묶은 목록에서는 닫힌 드롭다운에 모델 이름만 보이므로, 고른 값의 서버를 밑에 적는다(같은 모델을 두 서버에 둘 때 가린다) */}
-          {groups && row && <span className="truncate text-[12px] text-fg-3" data-rank-server="true">{options.find(option => rankOptionKey(option) === key)?.group ?? ""}</span>}
+          {groups && row && <span className="truncate text-[13px] text-fg-3" data-rank-server="true">{options.find(option => rankOptionKey(option) === key)?.group ?? ""}</span>}
           {row && <><input type="hidden" name={slotNames[index].provider} value={row.provider} /><input type="hidden" name={slotNames[index].model} value={row.model} /></>}
         </label>;
       })}

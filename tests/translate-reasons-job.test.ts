@@ -77,6 +77,8 @@ it.each([
   ["gateway_auth", [direct({ auth: "gateway" })], undefined],
   // 보내는 키는 연결의 키다(PR B) — 연결에 저장한 키가 열리지 않으면 그 순위를 쓸 수 없다
   ["stored_key_unreadable", [direct()], { keyUnreadable: true }],
+  // 키가 필요한 서버(계약 auth stored)에 키 없는 연결 — 키 없이 부르지 않는다(2026-11-02 키 없는 연결 사고)
+  ["connection_key_missing", [direct({ auth: "stored", apiKey: "engine-key" })], undefined],
 ] as const)("순위의 직접 연결 계약으로 열리지 않으면(%s) 아무것도 하지 않는다 — ABCLLM_API_KEY 는 읽지 않는다", async (code, rows, rank) => {
   if (rank) pinTextRanks([textRankRow("reason-translate", MODEL, rank)]);
   setServingContractSnapshotForTest(rows);
@@ -105,6 +107,8 @@ it.each([
   // 계약 행의 저장 키가 열리지 않아도 상관없다 — 보내는 키는 연결의 키다(PR B)
   ["열리지 않는 계약 행 키", { auth: "stored" as const, apiKey: null }],
 ])("엔진 직접 연결 계약(%s)이 있으면 ABCLLM_API_KEY 없이도 옮긴다", async (_name, change) => {
+  // 키가 필요한 서버(auth stored)다 — 연결에 키가 있어야 한다(보내는 키는 연결의 키)
+  pinTextRanks([textRankRow("reason-translate", MODEL, { apiKey: "connection-key" })]);
   setServingContractSnapshotForTest([direct(change)]);
   vi.stubEnv("ABCLLM_API_KEY", undefined);
   mocks.untried.mockResolvedValueOnce([item("a")]).mockResolvedValue([]);
