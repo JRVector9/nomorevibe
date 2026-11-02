@@ -12,7 +12,7 @@ import { modelCapacityOwnerSchema, type CliDispatchBinding, type CliModelDispatc
 import { cancelReservedModelSlot, findOwnPendingModelRequest, finishCliModelCapacityDispatch, lockCliModelCapacityDispatch,
   markModelDispatchIndeterminate, readModelCapacityCallerControl, reconcileCliProcessTerminal, requestCliModelSlot, type CliTarget } from "./capacity-repository";
 import { markUnsettledDispatch } from "./capacity-unsettled";
-import { resolveCliServingContract } from "./cli-serving-contract";
+import { cliCommandFor, resolveCliServingContract } from "./cli-serving-contract";
 import { prepareCliCall, readCliProcessTerminal, runReservedCliCall, settleCliNotStarted, type CliCallInput, type CliCallOutcome,
   type CliProcessResult, type PreparedCliCall } from "./cli-process-runner";
 
@@ -55,14 +55,14 @@ export function claudeCliCallInput(routeId: string, model: string, args: string[
   options: { timeoutMs: number; maxOutputTokens?: number }, cwd: string): CliCallInput {
   const env: Record<string, string | undefined> = { ...process.env, CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(options.maxOutputTokens ?? CLAUDE_OUTPUT_TOKENS) };
   delete env.CLAUDECODE;
-  return { routeId, provider: "claude-cli", model, command: process.env.CLAUDE_CLI ?? "claude", args, stdin, cwd, env,
+  return { routeId, provider: "claude-cli", model, command: cliCommandFor(routeId, "claude-cli"), args, stdin, cwd, env,
     boundEnvKeys: ["CLAUDE_CODE_MAX_OUTPUT_TOKENS"], timeoutMs: options.timeoutMs, maxStdoutBytes: MAX_STDOUT_BYTES, maxStderrBytes: MAX_STDERR_BYTES };
 }
 
 /** runGrokCli 와 같은 명령·stdin 없음·env·출력 상한. 값이 binding 에 묶이는 env 는 동작 설정(NO_COLOR·RUST_LOG)뿐이다 */
 export function grokCliCallInput(routeId: string, model: string, args: string[],
   options: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs: number }): CliCallInput {
-  return { routeId, provider: "grok-cli", model, command: process.env.GROK_CLI ?? "grok", args, stdin: null, cwd: options.cwd, env: options.env,
+  return { routeId, provider: "grok-cli", model, command: cliCommandFor(routeId, "grok-cli"), args, stdin: null, cwd: options.cwd, env: options.env,
     boundEnvKeys: ["NO_COLOR", "RUST_LOG"], timeoutMs: options.timeoutMs, maxStdoutBytes: MAX_STDOUT_BYTES, maxStderrBytes: MAX_STDERR_BYTES };
 }
 

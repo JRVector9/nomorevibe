@@ -5,7 +5,7 @@
  * 「작업 ↔ 모델」(ai_task_models)에 저장한 것만이다. 여기 있는 것은 작업 id·쉬운 이름·종류(chat·vision·embedding·rerank)·받는 연결 종류·칸 수와,
  * 오늘의 실행 경로를 가리키는 이름(용량 route id·지금 고르기 출처의 단계 id·잡 이름)뿐이다. 이 이름들은 PR B~D 가 실행 쪽을 옮길 때 같은 작업을 찾는 열쇠다.
  *
- * 이 판(PR A)에서는 잡이 이 목록도 표도 읽지 않는다 — 관리 화면이 순위를 저장·비교만 한다.
+ * PR B 부터 text 일곱 작업, PR C1 부터 심사 둘(1차·2차)과 Grok 로그인 유지가 이 목록과 표를 읽는다. 나머지는 관리 화면이 저장·비교만 한다.
  */
 
 export const AI_CLI_TOOLS = Object.freeze(["claude", "codex", "grok"] as const);
@@ -24,8 +24,9 @@ export const AI_TASK_KIND_LABELS: Readonly<Record<AiTaskKind, string>> = Object.
 /**
  * API 연결로 부를 때 오늘 실행 쪽이 요구하는 것(PR A 순위 저장이 확인·준비한다):
  * - engine-route: 엔진 직접 계약(경로, 모델; abcllm 형 total-bound)과 정책 route(경로 / abcllm / 모델 / 장비). 없으면 저장이 엔진을 확인하고 만든다.
- * - review-ai1: 1차 — 엔진 직접 계약(없으면 engine-route 처럼 만든다) 또는 이미 있는 local-direct 계약.
- * - review-ai2: 2차 — 이미 있는 2차 계약(abcllm 또는 local-direct)만. 2차 계약 꼴은 따로라 만들지 않는다.
+ * - review-ai1: 1차 — 엔진 직접 계약(abcllm 형 total-bound, transport direct — 없으면 engine-route 처럼 만든다) 또는 이미 있는 local-direct 계약.
+ *   같은 모델을 다른 연결에도 두면 연결로 가른 장부 이름(PR C1). CLI 순위는 연결의 CLI 버전으로 CLI 계약 행을 만든다(PR C1).
+ * - review-ai2: 2차 — 1차와 같다(PR C1: 2차 계약도 순위 저장이 만든다 — 예전에는 이미 있는 계약만 받았다).
  * - local-direct: 고정 로컬 경로(local-*) — 이미 있는 정책 route 와 로컬 계약(장비 backend)만. 예산·장비 이름이 계약과 같아야 열려 만들지 않는다.
  * - uncapped: 용량 장부를 거치지 않는다(임베딩·재정렬·한국어 Qwen 직접 경로). 확인할 계약·경로가 없다.
  * - deferred: 경로 규칙이 아직 없다(보강 assist 는 작업·장비마다 route 가 다르고, 감사 캠페인은 시작할 때 모델을 굳힌다) — 저장은 받고 확인하지 않았다고 알린다.
@@ -143,11 +144,20 @@ export function aiTaskAliasIdentity(model: string, connectionId: string): string
   const alias = `${model}@${connectionId.slice(0, 8)}`;
   return alias.length <= 200 ? alias : null;
 }
+/**
+ * 실행 쪽이 순위를 읽는 심사 작업(PR C1) — 1차 AI 검수(용량 route crawl-agent-review, 칸 1)·2차 AI 검수(route second-review, 투표자 칸 1·2·3).
+ * 순위마다 그 연결을 가리키는 계약(API: 끝점 = 연결 주소, CLI: 연결 도구·모델의 CLI 계약)에 묶는다(lib/crawl/review-task-ranks.ts).
+ */
+export const AI_REVIEW_TASK_IDS = Object.freeze(["first-review", "second-review"] as const);
+export type AiReviewTaskId = (typeof AI_REVIEW_TASK_IDS)[number];
+export const isAiReviewTask = (id: string): id is AiReviewTaskId => (AI_REVIEW_TASK_IDS as readonly string[]).includes(id);
 /** 실행 쪽이 순위를 읽는 text 작업(PR B) — 작업 id = 용량 route id. 나머지 작업은 PR C~D 가 옮긴다. */
 export const AI_TEXT_TASK_IDS = Object.freeze(["crawl-tagline", "reason-translate", "product-translate", "product-tagline-ko",
   "search-query-translate", "product-search-profile", "product-search-verify"] as const);
 export type AiTextTaskId = (typeof AI_TEXT_TASK_IDS)[number];
 export const isAiTextTask = (id: string): id is AiTextTaskId => (AI_TEXT_TASK_IDS as readonly string[]).includes(id);
+/** 순위를 실행 쪽이 읽는 작업(PR B text 일곱 + PR C1 심사 둘 + Grok 로그인 유지). 화면이 「실행」 줄을 보인다. */
+export const isAiLiveTask = (id: string): boolean => isAiTextTask(id) || isAiReviewTask(id) || id === "grok-session-check";
 /**
  * 순위가 없거나(no_task_models)·표를 못 읽었거나(task_models_unreadable)·모든 순위를 쓸 수 없을 때(all_ranks_unusable) 잡이 남기는 degraded 코드.
  * 재시작으로 고쳐지지 않는 설정의 일이라 진행 감시가 재시작하지 않는다(lib/operations/worker-progress-query.ts applyAllSkippedBlock).

@@ -118,6 +118,30 @@ export async function saveLocalServingContractTx(tx: Tx, input: { routeId: strin
   return { id: row.id, contractHash };
 }
 
+/**
+ * CLI 계약 행 저장(PR C1 — 「작업 ↔ 모델」 순위 저장이 1차·2차·Grok 로그인 유지 CLI 순위에 만든다). route_id 는 `cli:<provider>:<route>`(cliContractRouteId)라
+ * 같은 이름의 API 계약·다른 CLI 의 계약과 겹치지 않고, 계약 JSON 의 routeId 도 그 값이다(표의 identity CHECK). hash 는 원래 계약(routeId = route)의
+ * cliServingContractHash 다(호출 binding 의 cliContractHash 와 같다). auth none·transport direct(키 없음). 앞의 켜진 행은 꺼서 남기고 감사 한 줄을 쓴다.
+ */
+export async function saveCliServingContractTx(tx: Tx, input: { contract: unknown; note?: string | null }, actor: string): Promise<{ id: number; contractHash: string }> {
+  const { CLI_DB_CONTRACT_ROUTES, cliContractRouteId, cliServingContractHash, cliServingContractSchema } = await import("@/lib/llm/cli-serving-contract");
+  const parsed = cliServingContractSchema.safeParse(input.contract);
+  if (!parsed.success || !CLI_DB_CONTRACT_ROUTES.has(parsed.data.routeId)) throw new Error("contract_schema_invalid");
+  if (!actor.trim()) throw new Error("serving_contract_input_invalid");
+  const contract = parsed.data, routeId = cliContractRouteId(contract.provider, contract.routeId), model = contract.model;
+  const contractHash = cliServingContractHash(contract);
+  const note = input.note?.trim() ? input.note.trim().slice(0, 400) : null;
+  const [previous] = await tx.select().from(modelServingContracts)
+    .where(and(eq(modelServingContracts.routeId, routeId), eq(modelServingContracts.model, model), eq(modelServingContracts.enabled, true))).for("update");
+  if (previous) await tx.update(modelServingContracts).set({ enabled: false, updatedBy: actor, updatedAt: new Date() }).where(eq(modelServingContracts.id, previous.id));
+  const [row] = await tx.insert(modelServingContracts).values({ routeId, model, contract: { ...contract, routeId }, contractHash, auth: "none",
+    transport: "direct", apiKeyCiphertext: null, enabled: true, note, updatedBy: actor }).returning({ id: modelServingContracts.id });
+  await tx.insert(operationsAudit).values(await adminAuditRow(actor, { action: "model-serving-contract-save", target: `${routeId}:${model}`,
+    detail: { id: row.id, previousId: previous?.id ?? null, contractHash, previousHash: previous?.contractHash ?? null, auth: "none", transport: "direct",
+      keyChanged: false, endpoint: null, protocol: contract.protocol, cliVersion: contract.cliVersion, note } }));
+  return { id: row.id, contractHash };
+}
+
 /** Turn an admin contract off: that route+model then has no contract (its calls defer) until one is saved again. */
 export async function disableAdminServingContract(routeId: string, model: string, actor: string): Promise<boolean> {
   if (!isRoute(routeId) || !actor.trim()) throw new Error("serving_contract_input_invalid");

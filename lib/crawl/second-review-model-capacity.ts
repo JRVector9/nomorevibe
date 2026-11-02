@@ -31,7 +31,8 @@ export async function claimSecondReviewModelCapacity(intent: SecondReviewModelRe
   const requestId = pending?.requestId ?? randomUUID();
   if (call.kind !== 'prepared') {
     const contract = resolveAi2GatewayServingContract(binding.reviewer.model, binding.reviewer.provider);
-    if (signal?.aborted || binding.reviewer.provider !== 'local-direct' || !contract
+    // 준비가 실패한 엔진 직접 표(토큰 상한 확인 실패 등): 계약은 있으면 같은 투표자 칸의 다음 순위로 넘긴다(PR C1 — 예전에는 local-direct 만)
+    if (signal?.aborted || binding.reviewer.provider !== 'local-direct' && binding.reviewer.provider !== 'abcllm' || !contract
       || contract.provider !== binding.reviewer.provider || !ai2ServingContractMatches(contract, binding.reviewer.model))
       throw new ModelCapacityDeferredError('provider_contract_unavailable');
     const slot = await requestAi2ItemModelSlot({ ...identity, requestId }, { candidateId: binding.candidateId, vote: binding.vote });

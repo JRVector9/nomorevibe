@@ -10,6 +10,7 @@ import { firstReviewer } from "@/lib/crawl/agent-review";
 import { candidateStarAutoApproval } from "@/lib/crawl/star-auto-approval";
 import { accessFromDocument, judgeStoredDocument } from "@/lib/crawl/rules";
 import { secondReviewInputMatches } from "@/lib/crawl/second-review-input";
+import { withSettingsReviewers } from "@/lib/crawl/review-task-ranks";
 import { agentCoverageRevision } from "@/lib/domain/evidence/agents/coverage";
 import { repositoryUrl } from "@/lib/domain/products/access";
 import { reviewSemanticNow } from "@/lib/crawl/review-replay-context";
@@ -166,7 +167,12 @@ export type ReplayReadinessState = { first: { eligible: number; modelReady: numb
 export function deriveReplayReadiness(value: ReplayReadinessProjection, wallNow: string): ReplayReadinessState {
   return deriveWithFailureHistory(value, wallNow);
 }
+/** 스냅숏의 crawl_settings 행이 심사자를 선언한다(PR C1) — 프로세스의 「작업 ↔ 모델」 순위가 아니라 그 행으로 판정한다(withSettingsReviewers). */
 function deriveWithFailureHistory(value: ReplayReadinessProjection, wallNow: string,
+  failureBaseline?: ReadonlyMap<number, number>, currentOwners?: ReadonlyMap<string, string>): ReplayReadinessState {
+  return withSettingsReviewers(() => deriveWithFailureHistoryIn(value, wallNow, failureBaseline, currentOwners));
+}
+function deriveWithFailureHistoryIn(value: ReplayReadinessProjection, wallNow: string,
   failureBaseline?: ReadonlyMap<number, number>, currentOwners?: ReadonlyMap<string, string>): ReplayReadinessState {
   const projection = canonicalProjection(value), wall = time(date.parse(wallNow)), reference = time(projection.referenceTime);
   ensure(+reviewSemanticNow(new Date(reference / 1000)) * 1000 === reference, "replay_readiness_reference_scope_mismatch");

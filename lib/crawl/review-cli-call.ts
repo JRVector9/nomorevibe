@@ -7,7 +7,7 @@ import { z } from "zod";
 import { cliModelDispatchSchema, type CliModelDispatch } from "@/lib/llm/capacity";
 import { prepareCliCall, runReservedCliCall, settleCliNotStarted, type CliCallOutcome, type CliProcessTerminal,
   type PreparedCliCall } from "@/lib/llm/cli-process-runner";
-import { cliServingContractHash, cliServingContractSchema, cliTransportSchema, resolveCliServingContract,
+import { cliCommandFor, cliServingContractHash, cliServingContractSchema, cliTransportSchema, resolveCliServingContract,
   type CliServingContract, type CliTransport } from "@/lib/llm/cli-serving-contract";
 import { reviewCliArgs, reviewCliMaxOutputTokens, reviewCliPrompt, reviewCliTimeoutMs, cliReviewModel, reviewWithAgent,
   type AgentReviewResult, type ReviewCliRun } from "./agent-review";
@@ -83,12 +83,13 @@ export async function prepareReviewCliCall(input: ReviewInput, options: { routeI
       const env: Record<string, string | undefined> = { ...process.env, CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(reviewCliMaxOutputTokens()) };
       delete env.CLAUDECODE;
       args = reviewCliArgs(model); stdin = prompt;
-      prepared = prepareCliCall({ routeId, provider, model, command: process.env.CLAUDE_CLI ?? "claude", args, stdin, cwd: directory, env,
+      // 1차·2차의 CLI 는 PATH 의 도구 이름으로 띄운다(env 경로 CLAUDE_CLI 를 읽지 않는다, PR C1) — 계약의 버전 확인도 같은 명령이다
+      prepared = prepareCliCall({ routeId, provider, model, command: cliCommandFor(routeId, provider), args, stdin, cwd: directory, env,
         boundEnvKeys: ["CLAUDE_CODE_MAX_OUTPUT_TOKENS"], timeoutMs, maxStdoutBytes: MAX_STDOUT_BYTES, maxStderrBytes: MAX_STDERR_BYTES });
     } else {
       const env = { ...process.env, GROK_HOME: path.join(directory, "home"), GROK_AUTH_PATH: grokAuthPath(), RUST_LOG: "off", NO_COLOR: "1" };
       args = grokReviewArgs(model, path.join(directory, "prompt.txt")); stdin = null;
-      prepared = prepareCliCall({ routeId, provider, model, command: process.env.GROK_CLI ?? "grok", args, stdin,
+      prepared = prepareCliCall({ routeId, provider, model, command: cliCommandFor(routeId, provider), args, stdin,
         files: [{ path: "prompt.txt", content: prompt }, { path: path.join("home", "agents", `${GROK_REVIEW_AGENT}.md`), content: grokReviewAgentDefinition() }],
         cwd: directory, env, boundEnvKeys: ["NO_COLOR", "RUST_LOG"], timeoutMs, maxStdoutBytes: MAX_STDOUT_BYTES, maxStderrBytes: MAX_STDERR_BYTES });
     }

@@ -1,4 +1,6 @@
 import { humanBacklogged, humanFlowLabel, humanWaitLabel, type HumanQueueOverview } from "@/lib/crawl/human-queue";
+import { firstReviewers } from "@/lib/crawl/first-reviewers";
+import { secondReviewVoterSets } from "@/lib/crawl/second-review-voters";
 import { REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import { JOB_CATALOG } from "@/lib/jobs/catalog";
 import { sameReviewModel } from "@/lib/crawl/review-model-identity";
@@ -244,8 +246,9 @@ export function transitionSummary(status: PipelineControlStatus): CellSummary & 
  * 모델 카드 네 줄의 자리 → modelHealth 열쇠. 카드의 2차 투표는 1차와 다른 첫 투표자다(modelHealth 와 같다), 2차 예비는 첫 예비.
  */
 export function cardSlotKeys(settings: Pick<CrawlSettings, "firstReview" | "secondReview">): Map<string, ModelHealth["key"]> {
-  const first = settings.firstReview?.model ?? null;
-  const voter = settings.secondReview.voters.findIndex((row) => !sameReviewModel(row.model, first));
+  // 1차·2차는 「작업 ↔ 모델」 순위(PR C1, stage-registry resolveModelSlots 와 같다)
+  const first = firstReviewers(settings)[0]?.model ?? null;
+  const voter = secondReviewVoterSets(settings).voters.findIndex((row) => !sameReviewModel(row.model, first));
   return new Map<string, ModelHealth["key"]>([["first", "first"], ["keywords", "keywords"], ["second-fallback-1", "fallback"],
     ...(voter >= 0 ? [[`second-voter-${voter + 1}`, "second"] as [string, ModelHealth["key"]]] : [])]);
 }

@@ -67,7 +67,9 @@ const OUTPUT_SCHEMA = {
 
 export type GrokCliResult = { kind: "exit"; code: number | null; stdout: string; stderr: string }
   | { kind: "timeout" | "cancelled" | "output_too_large" | "missing_cli" | "cli_error" };
-export type GrokCliRun = (args: string[], options: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs: number; signal?: AbortSignal }) => Promise<GrokCliResult>;
+export type GrokCliRun = (args: string[], options: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs: number; signal?: AbortSignal;
+  /** 띄울 명령. 1차·2차·Grok 로그인 유지는 PATH 의 grok(PR C1) — 없으면 예전 그대로 GROK_CLI 또는 grok */
+  command?: string }) => Promise<GrokCliResult>;
 
 /** 로그인 파일 — 기본은 ~/.grok/auth.json(`grok login --device-auth` 가 쓰는 자리) */
 export function grokAuthPath(env: Readonly<Record<string, string | undefined>> = process.env): string {
@@ -100,7 +102,7 @@ export function grokFailure(stdout: string, stderr: string): ReviewFailure {
 export const runGrokCli: GrokCliRun = (args, options) => new Promise((resolve) => {
   assertLiveReviewAdapterAllowed();
   if (options.signal?.aborted) { resolve({ kind: "cancelled" }); return; }
-  const child = spawn(process.env.GROK_CLI ?? "grok", args, { cwd: options.cwd, env: options.env, stdio: ["ignore", "pipe", "pipe"], detached: false });
+  const child = spawn(options.command ?? process.env.GROK_CLI ?? "grok", args, { cwd: options.cwd, env: options.env, stdio: ["ignore", "pipe", "pipe"], detached: false });
   const stdout: Buffer[] = [], stderr: Buffer[] = [];
   let stdoutBytes = 0, stderrBytes = 0;
   let stopped: Exclude<GrokCliResult, { kind: "exit" }> | null = null;
@@ -122,7 +124,9 @@ export const runGrokCli: GrokCliRun = (args, options) => new Promise((resolve) =
   });
 });
 
-export async function reviewWithGrokCli(input: ReviewInput, options: { model: string; timeoutMs?: number; signal?: AbortSignal; run?: GrokCliRun }): Promise<AgentReviewResult> {
+export async function reviewWithGrokCli(input: ReviewInput, options: { model: string; timeoutMs?: number; signal?: AbortSignal; run?: GrokCliRun;
+  /** 띄울 명령(1차·2차는 PATH 의 grok — PR C1) */
+  command?: string }): Promise<AgentReviewResult> {
   assertLiveReviewAdapterAllowed();
   const model = options.model.trim();
   if (!MODEL_NAME.test(model)) return { ok: false, error: "not_configured" };
@@ -142,6 +146,7 @@ export async function reviewWithGrokCli(input: ReviewInput, options: { model: st
     try {
       result = await (options.run ?? runGrokCli)(grokReviewArgs(model, promptFile), {
         cwd: directory, env, timeoutMs: Math.max(1, Math.min(options.timeoutMs ?? ceiling, ceiling)), signal: options.signal,
+        ...(options.command ? { command: options.command } : {}),
       });
     } catch { return { ok: false, error: "cli_error" }; }
     return grokReviewResult(input, result);

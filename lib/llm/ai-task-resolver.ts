@@ -63,6 +63,14 @@ export const TEXT_RANK_UNUSABLE_TEXT: Readonly<Record<string, string>> = Object.
   engine_failed: "이 틱의 호출이 실패해 쉼",
   engine_unknown: "이 틱의 호출 결과를 몰라 쉼",
   engine_slow: "이 틱의 호출이 느려 쉼",
+  // 심사 묶음(PR C1)
+  cli_tool_unsupported: "이 작업이 받지 않는 CLI 도구",
+  cli_model_invalid: "CLI 에 넘길 수 없는 모델 이름",
+  cli_contract_missing: "CLI 계약이 없음(연결에 CLI 버전을 적고 그 줄을 다시 저장하면 만듦)",
+  cli_version_mismatch: "워커의 CLI 버전이 계약과 다름(연결의 CLI 버전을 고치고 다시 저장)",
+  cli_contract_unavailable: "CLI 계약을 쓸 수 없음(버전 확인 실패 등)",
+  model_paused: "이 틱에 쉬는 중",
+  blocked_unconfirmed: "미확인 점유로 장비 칸이 가득 참",
 });
 export const textRankUnusableText = (code: string) => TEXT_RANK_UNUSABLE_TEXT[code] ?? code;
 

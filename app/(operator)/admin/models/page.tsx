@@ -12,8 +12,9 @@ import { currentModelEnv } from "@/lib/operations/model-env";
 import { PageStamp } from "../components/PageStamp";
 import { HumanReviewSwitch } from "../review/HumanReviewSwitch";
 import { ReviewModelsForm } from "./ReviewModelsForm";
-import { reviewModelOptions } from "./model-options";
-import { FIRST_REVIEW_RANK_STAGE, rankOptions } from "@/lib/operations/admin-first-review-ranks";
+import { firstReviewers } from "@/lib/crawl/first-reviewers";
+import { ensureReviewTaskRanks } from "@/lib/crawl/review-task-ranks";
+import { secondReviewVoterSets } from "@/lib/crawl/second-review-voters";
 import { readAdminModelsObservation } from "@/lib/operations/admin-models-repository";
 import { LiveModels } from "./LiveModels";
 import { ModelsTopBar } from "./RefreshBar";
@@ -58,7 +59,7 @@ async function timed<T>(run: () => Promise<T>): Promise<{ value: T; ms: number }
 export default async function ModelsPage() {
   if (!await currentAdmin()) redirect("/admin/login");
   // Admin registry overrides (0148) are part of the registry this page shows and validates against.
-  await ensureServingContracts();
+  await Promise.all([ensureServingContracts(), ensureReviewTaskRanks()]);
   const renderedAt = renderClock().toISOString();
   const [settings, servedModels, models, assignmentLocked] = await Promise.all([getSettings(), readServedContractModels(), currentModelEnv(),
     // 배정 표 플래그(3b-B) — 켜졌으면 아래 모델 선택 폼을 읽기 전용으로(PR 3b-D). 못 읽으면 꺼짐(편집 가능)
@@ -67,9 +68,11 @@ export default async function ModelsPage() {
   const registry = readModelRegistry();
   const defaults = Object.fromEntries(ADMIN_MODEL_STAGES.map(stage => [stage.id, stage.purpose === "screen-review" ? screenModelConfig()?.model ?? "미설정"
     : stage.purpose in MODEL_PURPOSE_ENV ? configuredModel(stage.purpose as keyof typeof MODEL_PURPOSE_ENV) : modelRequestName(modelForPurpose(stage.purpose))]));
+  // 1차·2차는 「작업 ↔ 모델」 순위(PR C1) — 실행 쪽이 읽는 그대로(1차 1·2·3순위, 2차 칸마다 지금 표를 내는 순위 → 그 밖의 순위)
+  const secondSets = secondReviewVoterSets(settings);
   const assignments: ModelStageAssignment[] = [
-    { id: "first-review", label: "1차 검수", models: [settings.firstReview ?? { provider: "abcllm", model: modelRequestName(modelForPurpose("ai1-preset")) }, ...(settings.firstReviewAdditional ?? [])] },
-    { id: "second-review", label: "2차 검수", models: [...settings.secondReview.voters, ...(settings.secondReview.fallbacks ?? [])] },
+    { id: "first-review", label: "1차 검수", models: firstReviewers(settings) },
+    { id: "second-review", label: "2차 검수", models: [...secondSets.voters, ...secondSets.fallbacks] },
     ...ADMIN_MODEL_STAGES.map(stage => ({ id: stage.id, label: stage.label, models: (settings.stageModelPools?.[stage.id]?.length
       ? settings.stageModelPools[stage.id]! : [defaults[stage.id]]).map(model => ({ provider: stage.provider, model })) })),
   ];
@@ -114,10 +117,7 @@ export default async function ModelsPage() {
         <ModelRegistryTable />
         <section className="flex min-w-0 flex-col gap-3" aria-labelledby="model-settings">
           <h2 id="model-settings" className="text-[15px] font-semibold">단계별 모델 선택(설정)</h2>
-          <ReviewModelsForm settings={settings} version={settingsFormVersion(settings)} models={registry.models} defaults={defaults} locked={assignmentLocked}
-            firstChoices={reviewModelOptions([...new Set(servedModels.flatMap(row => row.servedIds ?? []))].sort(), false)} secondChoices={reviewModelOptions([...new Set(servedModels.flatMap(row => row.servedIds ?? []))].sort(), true)}
-            firstRankOptions={rankOptions(FIRST_REVIEW_RANK_STAGE, { served: servedModels, contracts: servingContractSnapshot().rows, registry: registry.models,
-              current: [settings.firstReview, ...(settings.firstReviewAdditional ?? [])] })} />
+          <ReviewModelsForm settings={settings} version={settingsFormVersion(settings)} models={registry.models} defaults={defaults} locked={assignmentLocked} />
         </section>
       </div>
     </details>

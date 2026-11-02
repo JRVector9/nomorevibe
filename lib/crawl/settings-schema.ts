@@ -1,4 +1,3 @@
-import { modelForPurpose } from "@/lib/llm/model-registry";
 import { adminStagePoolsSchema } from "@/lib/llm/admin-model-stages";
 import { z } from "zod";
 import { CATEGORIES, type Category } from "@/lib/domain/products/categories";
@@ -356,7 +355,12 @@ export const splitTiebreakSchema = z.object({
   dailyRejectCap: z.number().int().min(0).max(500).default(SPLIT_TIEBREAK_DEFAULT_DAILY_REJECT_CAP),
 }).strict();
 
-const defaultSecondReview = { enabled: true, voters: [{ provider: "claude-cli" as const, model: modelForPurpose("ai2-cli").model }], includeAiHeld: false, sampleRate: 0.05, agreeAt: 0.85 };
+/**
+ * 2차 기본값. 투표자는 비어 있다(PR C1) — 2차 투표자는 「작업 ↔ 모델」의 2차 AI 검수 투표자 칸 1·2·3 순위뿐이고(lib/crawl/second-review-voters.ts),
+ * 이 칸(voters·fallbacks)은 실행 쪽이 읽지 않는 옛 설정이다(가져오기·격리 replay·정책 hash 만). 예전의 등록부 기본 투표자(ai2-cli)는 없앴다.
+ */
+const defaultSecondReview = { enabled: true, voters: [] as { provider: "claude-cli" | "abcllm" | "grok-cli" | "local-direct"; model: string }[],
+  includeAiHeld: false, sampleRate: 0.05, agreeAt: 0.85 };
 
 /** local-direct(PR 3b-C): 엔진 직접 계약으로 보는 1차 심사자 — AI2 와 같은 엔진을 같은 장부 kind 로 쓴다. */
 export const reviewVoterSchema = z.object({
@@ -542,8 +546,9 @@ export const crawlSettingsSchema = z.object({
      * 예고 없이 바뀐다. 그래서 배포 없이 갈아 끼울 수 있어야 한다. 성향이 서로 다른 모델을
      * 세울수록 좋다 — 관대한 모델과 엄격한 모델이 같은 결론을 내면 실수가 상쇄된다(2026-09-12 평가).
      */
+    // 옛 설정(PR C1 부터 실행 쪽은 읽지 않는다) — 비어도 된다
     voters: z.array(secondReviewVoterSchema)
-      .min(1).max(3)
+      .max(3)
       /*
        * 같은 모델을 두 번 세우면 표가 아니라 메아리다. 제공자가 달라도 막는다 —
        * 2차 기록의 유일 색인이 (후보, 입력, 모델)이라 한쪽 행이 조용히 사라진다.

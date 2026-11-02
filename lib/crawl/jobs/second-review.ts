@@ -8,6 +8,7 @@ import { closeSettledSecondReviews, enqueueSecondReviews, pendingSecondReviews, 
 import { admitLegacySecondReview, canStartLegacySecondReview } from "@/lib/crawl/second-review-ownership";
 import { assertReviewFixtureSettings } from "../review-fixture-transport";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
+import { secondReviewRankTick } from "@/lib/crawl/second-review-voters";
 
 /**
  * 한 틱에 함께 부르는 수와 틱의 길이.
@@ -42,6 +43,15 @@ export async function secondReviewCandidates(ctx: JobContext<SecondReviewCursor>
   }
   const lease = ctx.lease;
   if (!lease) throw new Error("Second review requires a valid worker job lease");
+  // 투표자 = 「작업 ↔ 모델」의 2차 AI 검수 투표자 칸 1·2·3(PR C1). 순위가 없거나·표를 못 읽었거나·모든 칸을 쓸 수 없으면 옛 설정·기본 투표자로 대신 부르지 않고
+  // 이 틱의 정비(올리기·정리)도 하지 않는다 — 빈 목록으로 대기 표를 model_removed 로 닫지 않는다. 제 일 못 한 틱(degraded)으로 적어 상태 화면에 보이고
+  // 진행 감시는 재시작하지 않는다(worker-progress-query ALL_SKIPPED_CODES).
+  const ranks = await secondReviewRankTick();
+  if (ranks) ctx.log("ai_task.ranks", ranks.summary);
+  if (ranks?.degraded) {
+    ctx.log("crawl.second_review_skipped", { reason: ranks.degraded.code });
+    return { done: true, degraded: ranks.degraded, ...(ctx.cursor ? { cursor: ctx.cursor } : {}) };
+  }
   const enqueued = await enqueueSecondReviews(settings, undefined, lease);
   const closed = await closeSettledSecondReviews(undefined, lease);
   // 세대가 어긋난 대기 표를 닫고, 근거가 오래되면 기존 큐로 새로 받은 뒤 맞는 세대만 다시 넣는다.

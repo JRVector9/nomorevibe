@@ -1,7 +1,14 @@
 import { readModelRegistry } from "@/lib/llm/model-registry";
-/** The gateway exposes the same model with and without its routing prefix. */
+/**
+ * 같은 모델을 다른 연결에도 둔 순위의 장부 이름(`<모델>@<연결 id 앞 8자>`, lib/llm/ai-tasks.ts aiTaskAliasIdentity, PR B·C1)의 꼬리.
+ * 장부·계약·결과 행의 model 은 이 이름이지만 같은 모델이다 — 같은 모델인가를 가를 때는 꼬리를 뗀다(SQL 짝: held-qwen-retry-policy.ts underlyingModelSql).
+ */
+export const AI_TASK_ALIAS_SUFFIX = /@[0-9a-f]{8}$/;
+export const withoutAliasSuffix = (model: string): string => model.trim().replace(AI_TASK_ALIAS_SUFFIX, "");
+
+/** The gateway exposes the same model with and without its routing prefix. 연결로 가른 장부 이름의 꼬리(@<연결 8자>)도 뗀다. */
 export function canonicalReviewModel(model: string): string {
-  return model.trim().replace(/^\[MLX\]\s*/i, "").toLowerCase();
+  return withoutAliasSuffix(model).replace(/^\[MLX\]\s*/i, "").toLowerCase();
 }
 
 export function sameReviewModel(a?: string | null, b?: string | null): boolean {
@@ -25,7 +32,7 @@ export function underlyingReviewModel(model: string): string {
  * SQL 짝은 held-qwen-retry-policy.ts underlyingModelSql·audit-second-opinion-auto.ts bareModel.
  */
 export function bareModelName(model: string): string {
-  return model.trim().replace(/^\[[^\]]*\]\s*/, "").replace(/^[^/\s]+\//, "").toLowerCase();
+  return withoutAliasSuffix(model).replace(/^\[[^\]]*\]\s*/, "").replace(/^[^/\s]+\//, "").toLowerCase();
 }
 
 export function sameUnderlyingModel(a?: string | null, b?: string | null): boolean {

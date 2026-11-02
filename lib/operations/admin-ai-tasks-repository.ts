@@ -3,8 +3,10 @@ import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import { aiConnections, aiTaskModels, modelCapacityControl, modelCapacityDevices, operationsAudit, operationsObservations, type AiConnectionModel } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
-import { resolveAi2GatewayServingContract } from "@/lib/crawl/second-review-serving-contract";
-import { AI_TEXT_TASK_IDS, aiTask, aiTaskSlotLabel, aiTaskSlots, isAiTextTask, type AiTaskDef } from "@/lib/llm/ai-tasks";
+import { REVIEW_TASK_ROUTES, ensureReviewTaskRanks, resolveReviewTaskRanks, reviewRankUnusableText } from "@/lib/crawl/review-task-ranks";
+import { AI_TEXT_TASK_IDS, aiTask, aiTaskSlotLabel, aiTaskSlots, isAiLiveTask, isAiReviewTask, type AiTaskDef } from "@/lib/llm/ai-tasks";
+import { cliDbContract } from "@/lib/llm/cli-db-contracts";
+import { CLI_DB_CONTRACT_ROUTES, type CliProvider } from "@/lib/llm/cli-serving-contract";
 import { textRankStatusFromCounts, textRankUnusableText, textTaskRankStatus, type TextRankStatus } from "@/lib/llm/ai-task-resolver";
 import { listModelCapacityDevices, saveModelCapacityDevice } from "@/lib/llm/capacity-devices-repository";
 import type { GatewayServingRoute } from "@/lib/llm/gateway-serving-contract-config";
@@ -25,7 +27,7 @@ import { readCapacityDevicesControl } from "./admin-capacity-devices";
 import { engineRouteContract, ENGINE_CONNECT_ROUTES, probeEngineContract } from "./admin-engine-connect";
 import { adminAuditRow, adminLog, type AdminLogRow } from "./admin-log";
 import { DIRECT_PROBE_INTERVAL_MS, directProbeDue, directProbeGate } from "./admin-models-direct-probe";
-import { readbackServingEndpoint, saveServingContractTx } from "./admin-serving-contracts";
+import { readbackServingEndpoint, saveCliServingContractTx, saveServingContractTx } from "./admin-serving-contracts";
 import { DrWriterFencedError, writerSiteActive } from "./dr/epoch";
 
 /**
@@ -81,7 +83,8 @@ export function aiConnectionView(row: ConnectionRecord): AiConnectionView {
   return Object.freeze({ id: row.id, label: row.label, kind: row.kind, baseUrl: row.baseUrl, host: aiConnectionHost(row.baseUrl), hasKey: row.apiKeyCiphertext !== null,
     cliTool: row.cliTool, cliModels: Object.freeze([...row.cliModels]), models: models && Object.freeze(models), modelsReadAt: iso(row.modelsReadAt), modelsError: row.modelsError,
     deviceId: row.deviceId, capacitySlots: row.capacitySlots, contextTokens: typeof row.options?.contextTokens === "number" ? row.options.contextTokens : null,
-    enabled: row.enabled, version: Number(row.version), note: row.note, updatedBy: row.updatedBy, updatedAt: new Date(row.updatedAt).toISOString() });
+    enabled: row.enabled, version: Number(row.version), note: row.note, updatedBy: row.updatedBy, updatedAt: new Date(row.updatedAt).toISOString(),
+    cliVersion: row.kind === "cli" && typeof (row.options as Record<string, unknown> | null)?.cliVersion === "string" ? (row.options as Record<string, string>).cliVersion : null });
 }
 export async function listAiConnections(reader?: Reader): Promise<AiConnectionView[]> {
   const load = async (from: Reader) => (await from.select().from(aiConnections).orderBy(asc(aiConnections.kind), asc(aiConnections.label))).map(aiConnectionView);
@@ -105,7 +108,8 @@ async function readReadinessInput(): Promise<AiReadinessInput & { policyError: s
     const contract = row.contract && typeof row.contract === "object" ? row.contract as Record<string, unknown> : {};
     return { routeId: row.routeId, model: row.model, transport: row.transport,
       provider: typeof contract.provider === "string" ? contract.provider : null, endpoint: typeof contract.endpoint === "string" ? contract.endpoint : null,
-      engineModel: typeof contract.engineModel === "string" ? contract.engineModel : null };
+      engineModel: typeof contract.engineModel === "string" ? contract.engineModel : null,
+      cliVersion: typeof contract.cliVersion === "string" ? contract.cliVersion : null };
   });
   let policy: AiReadinessInput["policy"] = null, policyError: string | null = null;
   try {
@@ -116,15 +120,8 @@ async function readReadinessInput(): Promise<AiReadinessInput & { policyError: s
     else policyError = control.policyVerified ? "model_capacity_policy_missing" : "model_capacity_policy_unverified";
   } catch (error) { policyError = error instanceof Error ? error.message : "read_failed"; }
   const devices = new Map((await listModelCapacityDevices().catch(() => [])).map(device => [device.deviceId, { enabled: device.enabled, limitSlots: device.limitSlots }]));
-  const endpointOf = (value: unknown) => value && typeof value === "object" && typeof (value as { endpoint?: unknown }).endpoint === "string"
-    ? (value as { endpoint: string }).endpoint : null;
-  return { contracts, policy, policyError, devices, engineRoutes: ENGINE_CONNECT_ROUTES,
-    ai2Contract: model => {
-      const abc = resolveAi2GatewayServingContract(model, "abcllm");
-      if (abc) return { provider: "abcllm", endpoint: endpointOf(abc) };
-      const local = resolveAi2GatewayServingContract(model, "local-direct");
-      return local ? { provider: "local-direct", endpoint: endpointOf(local) } : null;
-    },
+  // 2차(second-review)도 순위 저장이 엔진 직접 계약(abcllm 형 total-bound, transport direct)을 만든다(PR C1 — 예전에는 env·모델 연결 화면의 계약만 받았다)
+  return { contracts, policy, policyError, devices, engineRoutes: [...ENGINE_CONNECT_ROUTES, "second-review"], cliContractRoutes: [...CLI_DB_CONTRACT_ROUTES],
     localContract: backendId => {
       const contract = resolveLocalModelContract(backendId);
       return contract ? { model: contract.model, endpoint: contract.endpoint } : null;
@@ -132,9 +129,9 @@ async function readReadinessInput(): Promise<AiReadinessInput & { policyError: s
 }
 
 /**
- * 같은 작업 안에서 계약·정책 route 가 (경로, provider, 장부 이름) 하나에 서버 하나다. 글 짓기·번역·검색 text 경로(engine-route)는 PR B 부터 순위마다
- * 연결을 가리키는 계약을 찾고 같은 모델을 다른 연결에 두면 연결로 가른 이름을 쓰므로(aiRankReadiness) 장부 이름이 겹칠 때만 막는다.
- * 심사 묶음(1차·2차·직접 모델 단계)은 아직 예전 실행 쪽이라 같은 모델을 다른 서버로 두 순위에 둘 수 없다(PR C).
+ * 같은 작업 안에서 계약·정책 route 가 (경로, provider, 장부 이름) 하나에 서버 하나다. 글 짓기·번역·검색 text 경로(engine-route, PR B)와 1차·2차(review-ai1·ai2, PR C1)는
+ * 순위마다 연결을 가리키는 계약을 찾고 같은 모델을 다른 연결에 두면 연결로 가른 이름을 쓰므로(aiRankReadiness) 장부 이름이 겹칠 때만 막는다.
+ * 직접 모델 단계(local-direct)는 아직 예전 실행 쪽이라 같은 모델을 다른 서버로 두 순위에 둘 수 없다(PR C2).
  */
 function crossRankIssues(task: AiTaskDef, readiness: readonly AiRankReadiness[]): string[] {
   if (!task.routeId || task.wiring === "uncapped" || task.wiring === "deferred") return [];
@@ -142,10 +139,10 @@ function crossRankIssues(task: AiTaskDef, readiness: readonly AiRankReadiness[])
   readiness.forEach((row, index) => {
     const earlier = readiness.slice(0, index).find(other => other.provider === row.provider && other.identity === row.identity && other.connectionId !== row.connectionId);
     if (!earlier) return;
-    issues.push(task.wiring === "engine-route"
+    issues.push(task.wiring === "engine-route" || task.wiring === "review-ai1" || task.wiring === "review-ai2"
       ? `${earlier.rank}순위와 ${row.rank}순위가 같은 계약(${row.identity})을 다른 서버로 가리킵니다. 모델 연결 화면에서 계약을 고친 뒤 다시 저장하세요.`
-      : `${earlier.rank}순위와 ${row.rank}순위가 같은 모델(${row.model})을 다른 서버로 씁니다. 심사 묶음의 실행 쪽은 아직 경로·모델마다 서버 하나만 알아 `
-        + "두 순위를 가를 수 없습니다 — 다음 단계(PR C)에서 풀립니다. 지금은 다른 모델을 고르세요.");
+      : `${earlier.rank}순위와 ${row.rank}순위가 같은 모델(${row.model})을 다른 서버로 씁니다. 직접 모델 단계의 실행 쪽은 아직 경로·모델마다 서버 하나만 알아 `
+        + "두 순위를 가를 수 없습니다 — 다음 단계(PR C2)에서 풀립니다. 지금은 다른 모델을 고르세요.");
   });
   return issues;
 }
@@ -172,6 +169,21 @@ export type AiTasksAdminView = Readonly<{
   connections: readonly AiConnectionView[]; rows: readonly AiTaskRankRow[]; slots: readonly AiTaskSlotView[];
   audit: readonly AiTaskAuditView[]; errors: Readonly<Record<string, string>>; secretBox: boolean; policyMode: string | null;
 }>;
+
+/** 1차·2차 한 칸의 「지금 실제로 쓰는 모델」 — 저장한 순위와 실행 쪽 묶기 결과(PR C1, lib/crawl/review-task-ranks.ts). */
+function reviewCurrentSlot(task: AiTaskDef, slot: number): AiCurrentSlot {
+  const resolution = resolveReviewTaskRanks(task.id as keyof typeof REVIEW_TASK_ROUTES, slot);
+  const uses = resolution.candidates.map(candidate => Object.freeze({ kind: candidate.rank.connection.kind, baseUrl: candidate.rank.connection.baseUrl,
+    cliTool: (candidate.rank.connection.cliTool ?? null) as AiCurrentSlot["uses"][number]["cliTool"], model: candidate.rank.model,
+    provider: candidate.binding?.provider ?? (candidate.rank.connection.kind === "cli" ? `${candidate.rank.connection.cliTool}-cli` : "abcllm"),
+    origin: `작업 ↔ 모델 ${candidate.rank.rank}순위`, deviceId: candidate.rank.connection.deviceId, keyFrom: null,
+    ...(candidate.unusable ? { note: reviewRankUnusableText(candidate.unusable, candidate.detail) }
+      : candidate.binding && candidate.binding.identity !== candidate.rank.model ? { note: `장부 이름 ${candidate.binding.identity}` } : {}) }));
+  return Object.freeze({ task: task.id, slot, uses: Object.freeze(uses), source: "작업 ↔ 모델(실행 쪽이 이 표를 읽는다)", error: null, notes: Object.freeze([]),
+    skip: resolution.status === "ok" ? null : resolution.status === "no_task_models"
+      ? "작업 ↔ 모델에 순위가 없습니다 — 이 심사는 돌지 않습니다(no_task_models). 옛 설정·기본값으로 대신 부르지 않습니다."
+      : "작업 ↔ 모델 표를 아직 읽지 못했습니다(task_models_unreadable)." });
+}
 
 /** 「지금 실제로 쓰는 모델」 한 줄의 글: 연결이 있으면 그 이름, 없으면 호스트(또는 CLI 도구) · 모델. */
 function currentLabel(use: AiCurrentSlot["uses"][number], connections: readonly AiConnectionView[]): string {
@@ -221,18 +233,22 @@ function runtimeView(status: TextRankStatus, from: AiTaskRuntimeView["from"], de
  * 이 웹 프로세스가 마지막으로 남긴 사정이다(다른 웹 복제본과 다를 수 있다).
  */
 export async function readAiTaskRuntime(): Promise<Record<string, AiTaskRuntimeView>> {
-  const jobs = AI_TEXT_TASK_IDS.filter(task => task !== "search-query-translate");
+  // 작업 → 그 순위를 읽는 잡(text 일곱은 작업 id = 잡 이름, PR C1: 1차·2차·Grok 로그인 유지)
+  const jobOf = new Map<string, string>([...AI_TEXT_TASK_IDS.filter(task => task !== "search-query-translate").map(task => [task, task] as const),
+    ["first-review", "crawl-agent-review"], ["second-review", "second-review"], ["grok-session-check", "grok-session-check"]]);
+  const taskOf = new Map([...jobOf].map(([task, job]) => [`job:${job}`, task]));
   const rows = await onPrimary(() => db.select({ key: operationsObservations.key, value: operationsObservations.value, observedAt: operationsObservations.observedAt })
-    .from(operationsObservations).where(inArray(operationsObservations.key, jobs.map(job => `job:${job}`))));
+    .from(operationsObservations).where(inArray(operationsObservations.key, [...taskOf.keys()])));
   const out: Record<string, AiTaskRuntimeView> = {};
   for (const row of rows) {
-    const task = row.key.slice("job:".length);
+    const task = taskOf.get(row.key) ?? row.key.slice("job:".length);
     const value = (row.value ?? {}) as { events?: unknown; degraded?: unknown };
     const events = Array.isArray(value.events) ? value.events as { event?: unknown; counts?: unknown }[] : [];
     const last = [...events].reverse().find(entry => entry?.event === "ai_task.ranks");
-    if (!last || !last.counts || typeof last.counts !== "object") continue;
     const degraded = value.degraded && typeof value.degraded === "object" ? value.degraded as { code?: unknown; detail?: unknown } : null;
-    out[task] = runtimeView(textRankStatusFromCounts(task, new Date(row.observedAt).toISOString(), last.counts as Record<string, unknown>), "job",
+    // Grok 로그인 유지는 순위 요약을 남기지 않는다 — 그 틱의 degraded 만 보인다
+    if ((!last || !last.counts || typeof last.counts !== "object") && !(task === "grok-session-check" && degraded)) continue;
+    out[task] = runtimeView(textRankStatusFromCounts(task, new Date(row.observedAt).toISOString(), (last?.counts ?? {}) as Record<string, unknown>), "job",
       degraded && typeof degraded.code === "string" ? { code: degraded.code, detail: typeof degraded.detail === "string" ? degraded.detail : null } : null);
   }
   const web = textTaskRankStatus("search-query-translate");
@@ -246,6 +262,7 @@ export async function readAiTasksAdminView(): Promise<AiTasksAdminView> {
   const settle = async <T>(key: string, work: () => Promise<T>, fallback: T): Promise<T> => {
     try { return await work(); } catch (error) { errors[key] = error instanceof Error ? error.message.slice(0, 160) : "read_failed"; return fallback; }
   };
+  await settle("review_ranks", () => ensureReviewTaskRanks(0), undefined);
   const [connections, rows, readiness, audit, runtime] = await Promise.all([settle("connections", () => listAiConnections(), [] as AiConnectionView[]),
     settle("rows", () => listAiTaskRows(), [] as AiTaskRankRow[]), settle("readiness", readReadinessInput, null),
     settle("audit", () => adminLog({ actions: [...AI_TASK_AUDIT_ACTIONS] }), [] as AdminLogRow[]), settle("runtime", readAiTaskRuntime, {} as Record<string, AiTaskRuntimeView>)]);
@@ -254,15 +271,17 @@ export async function readAiTasksAdminView(): Promise<AiTasksAdminView> {
     : buildAiCurrentSlots(await readAiCurrentSources((await readCapacityDevicesControl().catch(() => null))?.policy ?? null)), [] as AiCurrentSlot[]);
   const slots = aiTaskSlots().map(({ task, slot }): AiTaskSlotView => {
     const own = rows.filter(row => row.task === task.id && row.slot === slot).sort((a, b) => a.rank - b.rank);
-    const cur = current.find(entry => entry.task === task.id && entry.slot === slot) ?? null;
+    // 1차·2차는 실행 쪽이 이 표를 읽는다(PR C1) — 「지금 실제로 쓰는 모델」은 저장한 순위 그대로(쓸 수 없는 순위는 그 까닭). 가져오기 출처(옛 설정)는 가져오기 계획에만 쓴다
+    const cur = isAiReviewTask(task.id) ? reviewCurrentSlot(task, slot) : current.find(entry => entry.task === task.id && entry.slot === slot) ?? null;
     const ready = readiness ? aiRanksReadiness(task, own.flatMap(row => {
       const connection = connections.find(entry => entry.id === row.connectionId);
       return connection ? [{ rank: row.rank, connection, model: row.model }] : [];
     }), readiness) : [];
     return Object.freeze({ task, slot, label: aiTaskSlotLabel(task, slot), revision: aiTaskSlotRevision(own), rows: Object.freeze(own),
       options: Object.freeze(aiTaskRankOptions(task, connections, own)), current: cur,
-      currentLabels: Object.freeze((cur?.uses ?? []).slice(0, 3).map(use => currentLabel(use, connections))), sameAsCurrent: sameAsCurrent(own, cur, connections),
-      readiness: Object.freeze(ready), live: isAiTextTask(task.id), runtime: runtime[task.id] ?? null });
+      currentLabels: Object.freeze((cur?.uses ?? []).slice(0, 3).map(use => currentLabel(use, connections))),
+      sameAsCurrent: isAiReviewTask(task.id) ? null : sameAsCurrent(own, cur, connections),
+      readiness: Object.freeze(ready), live: isAiLiveTask(task.id), runtime: runtime[task.id] ?? null });
   });
   return Object.freeze({ connections: Object.freeze(connections), rows: Object.freeze(rows), slots: Object.freeze(slots), errors: Object.freeze(errors),
     secretBox: secretBoxReady(), policyMode: readiness?.policy?.mode ?? null,
@@ -316,7 +335,9 @@ export async function saveAiConnection(input: AiConnectionInput, actor: string):
         cliTool: input.kind === "cli" ? input.cliTool : null, cliModels: input.kind === "cli" ? input.cliModels : [], models,
         modelsReadAt: input.kind !== "api" ? null : read?.ok ? new Date(now()) : sameBase ? locked?.modelsReadAt ?? null : null,
         modelsError: input.kind !== "api" ? null : read && !read.ok ? read.reason : null, deviceId: input.deviceId, capacitySlots: input.capacitySlots,
-        options: input.contextTokens ? { contextTokens: input.contextTokens } : {}, enabled: input.enabled, note: input.note, updatedBy: actor };
+        options: { ...(input.contextTokens ? { contextTokens: input.contextTokens } : {}),
+          // CLI 버전(PR C1) — 1차·2차·Grok 로그인 유지 순위의 CLI 계약이 이 값으로 만들어진다. 바꾸면 그 줄을 다시 저장해 계약을 바꾼다
+          ...(input.kind === "cli" && input.cliVersion ? { cliVersion: input.cliVersion } : {}) }, enabled: input.enabled, note: input.note, updatedBy: actor };
       const [row] = locked
         ? await tx.update(aiConnections).set({ ...values, version: sql`${aiConnections.version} + 1`, updatedAt: sql`clock_timestamp()` })
           .where(and(eq(aiConnections.id, id), eq(aiConnections.version, Number(locked.version)))).returning()
@@ -431,6 +452,15 @@ export async function saveAiTaskRanks(input: AiTaskRanksInput, actor: string): P
       if (!contract) return { ok: false, issues: [`ai_task_contract_probe_failed:${ready.createContract.routeId}:contract_schema_invalid`] };
       contracts.push({ routeId: ready.createContract.routeId, model: ready.createContract.identity, contract, key, label: connection.label });
     }
+    // CLI 계약(PR C1 — 1차·2차·Grok 로그인 유지): 연결의 CLI 버전과 route 의 argv 상한으로 만든다(네트워크 없음)
+    const cliContracts = readiness.flatMap(ready => {
+      if (!ready.createCliContract) return [];
+      const contract = cliDbContract(ready.createCliContract.routeId, ready.createCliContract.provider as CliProvider, ready.createCliContract.model,
+        ready.createCliContract.cliVersion);
+      return [{ ready, contract }];
+    });
+    const brokenCli = cliContracts.find(entry => !entry.contract);
+    if (brokenCli) return { ok: false, issues: [`${brokenCli.ready.rank}순위 ${brokenCli.ready.model}: CLI 계약을 만들 수 없습니다(이 작업이 받지 않는 CLI 이거나 버전 글이 맞지 않음).`] };
     const result = await onPrimary(() => db.transaction(async tx => {
       if (!await writerSiteActive(tx)) throw new DrWriterFencedError("site_fenced");
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('ai_task_models'), hashtext(${`${task.id}#${input.slot}`}))`);
@@ -445,6 +475,10 @@ export async function saveAiTaskRanks(input: AiTaskRanksInput, actor: string): P
         const saved = await saveServingContractTx(tx, { routeId: entry.routeId, contract: entry.contract, auth: entry.key ? "stored" : "none", transport: "direct",
           apiKey: entry.key ?? undefined, note: `작업 ↔ 모델 저장(${task.label}) · 연결 ${entry.label}` }, actor);
         madeContracts.push(`${entry.routeId} · ${entry.model} (#${saved.id})`);
+      }
+      for (const entry of cliContracts) {
+        const saved = await saveCliServingContractTx(tx, { contract: entry.contract!, note: `작업 ↔ 모델 저장(${task.label}) · CLI 버전 ${entry.contract!.cliVersion}` }, actor);
+        madeContracts.push(`${entry.contract!.routeId} · ${entry.contract!.provider} · ${entry.contract!.model} CLI (#${saved.id})`);
       }
       const madeDevices: string[] = [];
       const wantDevices = [...new Map(readiness.flatMap(row => row.createDevice ? [[row.createDevice.deviceId, row.createDevice] as const] : [])).values()];

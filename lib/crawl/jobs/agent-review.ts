@@ -8,7 +8,7 @@ import { listReviewCandidates, loadReviewInput, claimAgentReview, recordAgentRev
   type CliModelCapacityReviewClaim, chooseFirstReviewForCandidate, listFirstReviewPoolCandidates,
   listOwnPendingFirstReviewCandidates, type PendingFirstReviewCandidate } from "@/lib/crawl/agent-review-repository";
 import { holdSuspectedSpam } from "@/lib/crawl/repository";
-import { firstReviewer, reviewCliTimeoutMs, reviewWithAgent } from "@/lib/crawl/agent-review";
+import { reviewCliTimeoutMs, reviewWithAgent } from "@/lib/crawl/agent-review";
 import { reviewGatewayTimeoutMs, reviewWithGateway, type PreparedAi1GatewayCall } from "@/lib/crawl/agent-review-gateway";
 import { grokReviewTimeoutMs, reviewWithGrokCli } from "@/lib/crawl/agent-review-grok";
 import { reviewSemanticNow } from "../review-replay-context";
@@ -19,7 +19,9 @@ import { claimAgentReviewModelCapacity, reviewAgentReviewModelCapacity, abandonA
   type Ai1ReservationWaitEvent } from "../agent-review-model-capacity";
 import type { Ai1ModelDispatch, CliModelDispatch } from "@/lib/llm/capacity";
 import type { PreparedReviewCliCall } from "../review-cli-call";
-import { firstReviewers, firstReviewerKey, firstReviewDeferralIsLocal, firstReviewPoolPosition, type FirstReviewCursor } from "../first-reviewers";
+import { firstReviewRankState, firstReviewerKey, firstReviewDeferralIsLocal, firstReviewPoolPosition, type FirstReviewCursor } from "../first-reviewers";
+import { ensureReviewTaskRanks, reviewRankUnusableText, reviewRanksSummary, type ReviewRankResolution } from "../review-task-ranks";
+import { CLI_TOOL_COMMANDS } from "@/lib/llm/cli-serving-contract";
 import { readBlockedFirstReviewerKeys } from "../first-reviewer-blocks";
 import { agentReviewBinding } from "../agent-review-ownership";
 import { itemBindingHash } from "@/lib/jobs/items/types";
@@ -41,13 +43,21 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
   const startedAt = Date.now();
   const settings = await getSettings();
   assertReviewFixtureSettings(settings);
-  const poolEnabled = settings.firstReviewAdditional !== undefined;
   if (!settings.enabled || settings.reviewMode === "off") {
     ctx.log("crawl.agent_review_skipped", { reason: !settings.enabled ? "disabled" : "review_off" });
-    return { done: true, ...(poolEnabled && ctx.cursor ? { cursor: ctx.cursor } : {}) };
+    return { done: true, ...(ctx.cursor ? { cursor: ctx.cursor } : {}) };
   }
   const lease = ctx.lease;
   if (!lease) throw new Error("AI review requires a valid worker job lease");
+  // 1차 심사자 = 「작업 ↔ 모델」의 1차 AI 검수 1·2·3순위뿐이다(PR C1). 순위가 없거나·표를 못 읽었거나·모두 쓸 수 없으면 기본값·옛 설정으로 대신 부르지 않고
+  // 제 일 못 한 틱(degraded)으로 적는다 — 상태 화면 「조치할 일」에 보이고, 진행 감시는 재시작하지 않는다(worker-progress-query ALL_SKIPPED_CODES).
+  await ensureReviewTaskRanks();
+  const ranks = firstReviewRankState(settings);
+  if (ranks.degraded) {
+    if (ranks.resolution) ctx.log("ai_task.ranks", reviewRanksSummary([ranks.resolution]));
+    ctx.log("crawl.agent_review_skipped", { reason: ranks.degraded.code });
+    return { done: true, degraded: ranks.degraded, ...(ctx.cursor ? { cursor: ctx.cursor } : {}) };
+  }
   const requeued = await requeueStaleReviewSources(settings, lease, 20);
   if (requeued) ctx.log("crawl.agent_review_sources_queued", { count: requeued });
   const handedOff = await handOffExhaustedFirstReviews(settings, lease, 20);
@@ -56,23 +66,23 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
     ctx.log("crawl.agent_review_skipped", { reason: "stage_inactive" });
     return { done: false, deferred: "stage_blocked" };
   }
-  const primary = firstReviewer(settings);
-  if (!primary) throw new Error("관리자 설정에서 1차 심사자를 골라야 AI 심사를 켤 수 있습니다");
-  const pool = firstReviewers(settings, primary);
-  const blockedModels = poolEnabled ? await readBlockedFirstReviewerKeys() : new Set<string>();
+  const pool = ranks.pool;
+  const blockedModels = await readBlockedFirstReviewerKeys();
   const concurrency = Math.min(settings.reviewConcurrency || 2, MAX_CONCURRENT_REVIEWS);
-  const pending = poolEnabled ? await listOwnPendingFirstReviewCandidates(settings, lease) : [];
+  const pending = await listOwnPendingFirstReviewCandidates(settings, lease);
   if (pending.length) ctx.log("crawl.agent_review_pending_revisited", { count: pending.length,
     reserved: pending.filter(row => row.state === "reserved").length, waiting: pending.filter(row => row.state === "waiting").length });
-  const after = poolEnabled ? firstReviewPoolPosition(ctx.cursor?.firstReviewPoolScan) : null;
+  // 격리 replay(순위 대신 설정 행 — ranks.resolution null)는 예전 단일 고르기의 후보 목록 그대로다. 운영은 늘 쪽 커서(pool)다
+  const replay = ranks.resolution === null;
+  const after = replay ? null : firstReviewPoolPosition(ctx.cursor?.firstReviewPoolScan);
   const pageLimit = Math.min(Math.max(20, concurrency * 2), 32 - pending.length);
-  const page = poolEnabled ? await listFirstReviewPoolCandidates(settings, pageLimit, after) : null;
+  const page = replay ? null : await listFirstReviewPoolCandidates(settings, pageLimit, after);
   const candidates = page ? page.map(row => row.candidate) : await listReviewCandidates(settings, Math.max(20, concurrency * 2));
   const work = [...pending.map(hint => ({ candidate: hint.candidate, hint, position: undefined })),
     ...candidates.map((candidate, index) => ({ candidate, hint: undefined, position: page?.[index].position }))];
   if (!work.length) {
     if (after) { await ctx.save({ ...ctx.cursor, firstReviewPoolScan: null }); return { done: false, continuation: "ready" }; }
-    return { done: true, ...(poolEnabled && ctx.cursor ? { cursor: ctx.cursor } : {}) };
+    return { done: true, ...(ctx.cursor ? { cursor: ctx.cursor } : {}) };
   }
   const tickMs = pool.some(reviewer => reviewer.provider === "grok-cli") ? GROK_TICK_MS
     : pool.some(reviewer => reviewer.provider === "abcllm" || reviewer.provider === "local-direct") ? GATEWAY_TICK_MS : TICK_MS;
@@ -86,7 +96,8 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
   const minimumCeiling = Math.min(...pool.map(reviewer => timeoutFor(reviewer.provider)));
   const visited = new Set<number>();
   const controllers = new Set<AbortController>();
-  const pausedModels = new Set<string>();
+  // 쓸 수 없는 순위(계약 닫힘·CLI 계약 없음 등)는 틱 처음부터 쉰다 — 고르기가 비켜 가고 그 까닭이 틱 요약(ai_task.ranks)에 남는다
+  const pausedModels = new Set<string>(ranks.unusable.keys());
   let lastPagePosition: NonNullable<typeof page>[number]["position"] | undefined;
   let next = 0, admitted = 0, progress = 0, windowLeft = 0, stopped = false, stageBlocked = false, modelDeferred = false, saturated = false;
   // 틱 요약(crawl.agent_review_tick) — 배포 뒤 한 시간 안에 틱당 호출·예약 대기를 잴 수 있게 남긴다. 결과·장부에는 끼어들지 않는다
@@ -117,8 +128,7 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
     // 순위대로 고른다: 고른 모델이 이 틱에 이 모델만의 까닭으로 거절되면 그 모델을 쉬게 하고 다음 순위로 — 순위 수만큼만 돈다
     for (let rank = 0; rank <= pool.length; rank++) {
       const avoid = new Set([...blockedModels, ...pausedModels]);
-      const reviewer = settings.firstReviewAdditional === undefined ? primary
-        : await chooseFirstReviewForCandidate({ candidate, document, settings, input }, undefined, avoid);
+      const reviewer = await chooseFirstReviewForCandidate({ candidate, document, settings, input }, undefined, avoid);
       // 모든 순위가 이 틱에 쓸 수 없다(쉬는·막힌 모델) — 또는 살아 있는 호출·의도가 이 후보를 풀 밖 모델에 묶었다(first-reviewers.ts)
       if (!reviewer) return skip(candidate.repo, pool.every(row => avoid.has(firstReviewerKey(row))) ? "all_ranks_unusable" : "reviewer_unassigned",
         { ranks: pool.length, unusable: pool.filter(row => avoid.has(firstReviewerKey(row))).length });
@@ -193,7 +203,7 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
         if (modelCapacityDeferralIsPerWork(error.reason)) return skip(candidate.repo, error.reason);
         // The claim TX has rolled back. Stop new claims without cancelling any
         // already admitted lane; all real work settles before returning deferred.
-        const local = settings.firstReviewAdditional !== undefined && firstReviewDeferralIsLocal(error.reason);
+        const local = firstReviewDeferralIsLocal(error.reason);
         if (local) pausedModels.add(key);
         else modelDeferred = true;
         // 진짜 포화(이 요청이 줄에 섰다)는 틱 결과를 예전처럼 미룸으로 둔다 — 줄의 대기 행이 진행 감시의 재시작을 막는다(capacity-admission-block)
@@ -258,13 +268,12 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
           ? reviewWithGateway(input, options)
           // 엔진 직접(local-direct) 1차는 공통 장부의 dispatch 로만 보낸다 — 장부 밖 호환 경로로는 보내지 않는다(AI2 와 같다, PR 3b-C)
           : reviewProvider === "local-direct" ? { ok: false as const, error: "not_configured" as const }
-          : reviewProvider === "grok-cli" ? reviewWithGrokCli(input, options) : reviewWithAgent(input, options));
+          // CLI 는 PATH 의 도구 이름으로 띄운다(env 경로 CLAUDE_CLI·GROK_CLI 를 읽지 않는다, PR C1)
+          : reviewProvider === "grok-cli" ? reviewWithGrokCli(input, { ...options, command: CLI_TOOL_COMMANDS["grok-cli"] })
+            : reviewWithAgent(input, { ...options, command: CLI_TOOL_COMMANDS["claude-cli"] }));
         }, ctx.log);
         if (controller.signal.aborted) result = { ok: false, error: "cancelled" };
-        if (!result.ok) {
-          if (settings.firstReviewAdditional !== undefined) pausedModels.add(key);
-          else stopped = true;
-        }
+        if (!result.ok) pausedModels.add(key);
         const recorded = await recordAgentReview({
           ...context, receipt: claim.receipt,
           ...(result.ok ? { outcome: result.outcome, usage: result.usage } : {
@@ -309,6 +318,15 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
     waitWindowClosed: tally.waitWindowClosed, waitCapped: tally.waitCapped, pausedModels: pausedModels.size, modelDeferred, stageBlocked,
     durationMs: Date.now() - startedAt, skipped,
     models: Object.fromEntries(perModel) });
+  // 순위 사정(관리 화면 「실행」 줄): 순위마다 부른 수와 쓸 수 없던 까닭 — 관측 job:crawl-agent-review 의 마지막 ai_task.ranks
+  if (ranks.resolution) {
+    const served = new Map<number, number>();
+    for (const candidate of ranks.resolution.candidates) {
+      const calls = candidate.binding ? perModel.get(candidate.binding.identity)?.calls ?? 0 : 0;
+      if (calls) served.set(candidate.rank.rank, (served.get(candidate.rank.rank) ?? 0) + calls);
+    }
+    ctx.log("ai_task.ranks", reviewRanksSummary([ranks.resolution], served));
+  }
   const failure = settled.find(result => result.status === "rejected");
   if (failure) throw failure.reason;
   // Advance only examined hints. A paused model prefix must not repeat forever on later ticks.
@@ -316,6 +334,10 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
   if (lastPagePosition) await ctx.save({ ...ctx.cursor, firstReviewPoolScan: lastPagePosition });
   else if (page && !page.length && after) await ctx.save({ ...ctx.cursor, firstReviewPoolScan: null });
   if (stageBlocked) return { done: false, deferred: "stage_blocked" };
+  // 이 틱에 들인 후보가 모두 「모든 순위를 쓸 수 없음」으로 건너뛰어졌다 — 순위의 일이다(all_ranks_unusable, 재시작이 고치지 못한다)
+  const skippedTotalRanks = Object.values(skipped).reduce((sum, n) => sum + n, 0);
+  if (admitted > 0 && !progress && !tally.calls && skippedTotalRanks === admitted && skipped.all_ranks_unusable === admitted
+    && !modelDeferred && !windowLeft && !saturated) return { done: false, degraded: { code: "all_ranks_unusable", detail: firstReviewTickRanksDetail(ranks.resolution, pausedModels) } };
   // 심사를 남긴 틱은 완료 틱이다 — 요청(processedVersion)도 인정한다. 미룸은 처리 건수를 안 실으면 성공 시각을 옮기지 않고
   // 요청도 인정하지 않는다. 풀의 모델 하나가 멈춰(포화·실패·미매핑) 매 틱 미룸으로 끝나면 시간당 1천여 건을 남기면서도
   // last_success_at 이 멈췄다(2026-10-31 01:26Z~). 한 모델만 멈췄으면 남은 일이 있으니 곧바로 다시 요청한다.
@@ -328,7 +350,9 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
   const skippedTotal = Object.values(skipped).reduce((sum, n) => sum + n, 0);
   if (admitted > 0 && !progress && !tally.calls && skippedTotal === admitted && !modelDeferred && !windowLeft && !saturated) return { done: false, degraded: {
     code: AGENT_REVIEW_ALL_SKIPPED, detail: Object.entries(skipped).sort(([a], [b]) => a.localeCompare(b)).map(([reason, n]) => `${reason}=${n}`).join(" ") } };
-  if (modelDeferred || pausedModels.size) {
+  // 틱 안에서 쉬게 된 모델(처음부터 쓸 수 없던 순위는 빼고) — 남은 일이 있으면 곧바로 다시 요청한다
+  const pausedInTick = [...pausedModels].some(key => !ranks.unusable.has(key));
+  if (modelDeferred || pausedInTick) {
     if (!progress) return { done: false, deferred: "model_capacity" };
     return !modelDeferred && !stopped && !ctx.signal?.aborted && ctx.hasBudget() ? { done: false, continuation: "ready" } : { done: false };
   }
@@ -341,4 +365,15 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
     if (ready.some(candidate => !visited.has(candidate.id))) return { done: false, continuation: "ready" };
   }
   return { done: false };
+}
+
+/** 순위마다 「N순위 연결 · 모델: 까닭」(all_ranks_unusable 의 detail, 300자). 틱 안에서 쉬게 된 순위는 「이 틱에 쉬는 중」이다. */
+function firstReviewTickRanksDetail(resolution: ReviewRankResolution | null, paused: ReadonlySet<string>): string {
+  if (!resolution) return "모든 순위를 이 틱에 쓸 수 없습니다";
+  const parts = resolution.candidates.map(candidate => {
+    const key = candidate.binding ? firstReviewerKey({ provider: candidate.binding.provider, model: candidate.binding.identity }) : null;
+    const reason = candidate.unusable ? reviewRankUnusableText(candidate.unusable, candidate.detail) : key && paused.has(key) ? reviewRankUnusableText("model_paused") : "쓸 수 있음";
+    return `${candidate.rank.rank}순위 ${candidate.rank.connection.label} · ${candidate.rank.model}: ${reason}`;
+  });
+  return `1차 AI 검수: ${parts.join(" / ")}`.slice(0, 300);
 }

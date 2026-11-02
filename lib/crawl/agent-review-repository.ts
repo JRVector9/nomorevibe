@@ -36,11 +36,11 @@ import { agentReviewBinding, assertAgentReviewJob, assertAgentReviewOwnership, f
 export type { Ai1ItemLease, Ai1ReviewOrigin, Ai1ReviewReceipt } from "./agent-review-ownership";
 import { mergeWithDefaults } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
-import { firstReviewer, type FirstReviewer } from "./agent-review";
+import type { FirstReviewer } from "./agent-review";
 import { ai1WithinLiveCallWindowSql } from "./ai1-live-call";
-import { firstReviewers, firstReviewerKey, firstReviewIdentitySql, firstReviewTableRows, hasFirstReviewer, selectFirstReviewer, selectTableFirstReviewer,
-  tableFirstReviewers, type FirstReviewPoolPosition } from "./first-reviewers";
-import { requireStageAssignments } from "@/lib/llm/stage-assignment-snapshot";
+import { firstReviewRankState, firstReviewers, firstReviewerKey, firstReviewIdentitySql, hasFirstReviewer, selectFirstReviewer,
+  type FirstReviewPoolPosition } from "./first-reviewers";
+import { ensureReviewTaskRanks } from "./review-task-ranks";
 import { secondReviewFallbacks, secondReviewVoters } from "./second-review-voters";
 import { candidateStarAutoApproval } from "./star-auto-approval";
 import { README_SAMPLE_LIMIT, README_SAMPLE_VERSION } from "./readme";
@@ -56,16 +56,20 @@ import {
 
 type Executor = typeof db | ProductTransaction;
 
-/** Selection is a hint; the existing candidate/item/capacity locks still grant all authority. */
+/**
+ * Selection is a hint; the existing candidate/item/capacity locks still grant all authority.
+ * 1차 고르기는 늘 순위 고르기다(PR C1): 「작업 ↔ 모델」 1차 AI 검수 1·2·3순위(firstReviewers). TX 밖의 첫 고르기(executor = db)는 순위·계약 스냅숏을 새로 받고,
+ * 지금 쓸 수 없는 순위(계약 닫힘·CLI 계약 없음 등, firstReviewRankState().unusable)도 비켜 간다. 잠금 아래 재확인은 부르는 쪽이 준 blocked 만 본다.
+ */
 export async function chooseFirstReviewForCandidate(context: ReviewDomainContext, executor: Executor = db,
   blocked: ReadonlySet<string> = new Set()): Promise<FirstReviewer | null> {
-  // 배정 표(PR 3b-B): TX 밖의 첫 고르기만 토글·스냅숏을 새로 받는다(스위치가 켜졌는데 못 읽었거나, 토글 자체를 아직 못 읽었으면 assignments_unavailable 로
-  // 미룬다 — PR 3b-E). 꺼졌으면 곧 돌아온다. 잠금 아래 재확인은 같은 판을 다시 쓴다.
-  if (executor === db) await requireStageAssignments();
-  const table = firstReviewTableRows(context.settings);
-  const pool = table ? tableFirstReviewers(table) : firstReviewers(context.settings, firstReviewer(context.settings));
-  // Preserve the original query footprint for installations which never enabled a pool.
-  if (context.settings.firstReviewAdditional === undefined) return pool[0] ?? null;
+  if (executor === db) await ensureReviewTaskRanks();
+  const state = firstReviewRankState(context.settings);
+  const pool = state.pool;
+  if (!pool.length) return null;
+  // 격리 replay(설정 행의 1차 하나 — replay 는 추가 1차를 받지 않는다)는 예전 단일 고르기의 질의 그대로다
+  if (state.resolution === null && pool.length === 1) return pool[0];
+  if (executor === db && state.unusable.size) blocked = new Set([...blocked, ...state.unusable.keys()]);
   // live: 지금 보내진 중일 수 있는 시도(running · 그 공급자의 호출 기한 + 여유 안에 시작) — 이보다 오래된 running 은 주인이 죽은 시도다
   const attempts = await executor.select({ provider: crawlReviewAttempts.provider, model: crawlReviewAttempts.model, state: crawlReviewAttempts.state,
     live: sql<boolean>`(${crawlReviewAttempts.state} = 'running' AND ${ai1WithinLiveCallWindowSql(crawlReviewAttempts.provider, crawlReviewAttempts.startedAt)})` })
@@ -85,8 +89,7 @@ export async function chooseFirstReviewForCandidate(context: ReviewDomainContext
     UNION ALL (SELECT provider, model FROM model_capacity_requests
       WHERE logical_work_key = ${logicalKey} AND state = 'waiting' AND queue_until > clock_timestamp()
         AND ${firstReviewIdentitySql(pool, { provider: sql`provider`, model: sql`model` })})) ai1_intents LIMIT 2`);
-  return table ? selectTableFirstReviewer(table, context.candidate.id, attempts, Array.from(active), { blocked })
-    : selectFirstReviewer(pool, context.candidate.id, attempts, Array.from(active), { blocked });
+  return selectFirstReviewer(pool, context.candidate.id, attempts, Array.from(active), { blocked });
 }
 export async function loadReviewInput(
   candidate: CrawlCandidate, document: CrawlDocument, settings: CrawlSettings, executor: Executor = db,
@@ -201,7 +204,7 @@ export async function renewAgentReviewItemOwnership(context: ReviewDomainContext
  * 갈아 끼운 뒤 첫 회차부터 새 심사자의 답으로만 발행되게 한다.
  */
 function activeReviewIdentity(settings: CrawlSettings): SQL {
-  const pool = firstReviewers(settings, firstReviewer(settings));
+  const pool = firstReviewers(settings);
   return or(and(eq(crawlReviewAttempts.provider, "rules"), eq(crawlReviewAttempts.model, REVIEW_RULES_VERSION)),
     firstReviewIdentitySql(pool, crawlReviewAttempts))!;
 }
@@ -263,7 +266,7 @@ export function secondGateRequired(settings: CrawlSettings): boolean {
 }
 
 /** 모델 이름을 같은 모델로 본다 — "[MLX] x" 와 "x" 는 같다(review-model-identity.ts 와 같은 규칙) */
-const sameModelName = (name: SQL) => sql`regexp_replace(lower(trim(${name})), '^\\[mlx\\][[:space:]]*', '', 'i')`;
+const sameModelName = (name: SQL) => sql`regexp_replace(regexp_replace(lower(trim(${name})), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i')`;
 
 /**
  * 이 1차 승인에 대해, 지금 세운 2차 모델마다 승인 표가 있는가.
@@ -507,7 +510,7 @@ export async function handOffExhaustedFirstReviews(
         eq(crawlReviewAttempts.rulesVersion, REVIEW_RULES_VERSION),
       )).for("share");
       if (attempts.some(attempt => attempt.state === "succeeded" && attempt.validUntil > reviewSemanticNow()
-        && (attempt.provider === "rules" || hasFirstReviewer(firstReviewers(settings, firstReviewer(settings)), attempt)))) continue;
+        && (attempt.provider === "rules" || hasFirstReviewer(firstReviewers(settings), attempt)))) continue;
       if (attempts.filter(attempt => ["failed", "superseded"].includes(attempt.state)
         && attempt.errorCode !== "owner_changed" && attempt.errorCode !== NATIVE_TERMINAL_FAILURE).length >= MAX_REVIEW_ATTEMPTS) exhausted.push(candidate.id);
     }
@@ -555,7 +558,7 @@ export type ReviewCandidateOptions = {
  * 1차가 잠깐 실패해 기다리는 중(1차 대상에서 잠시 빠진 것)인 후보는 맡지 않는다 — 그 후보는 1차가 다시 본다.
  */
 export function firstReviewAbstainedPredicate(settings: CrawlSettings): SQL {
-  const pool = firstReviewers(settings, firstReviewer(settings));
+  const pool = firstReviewers(settings);
   if (!pool.length) return sql`false`;
   return sql`EXISTS (SELECT 1 FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings)}
     AND ${crawlReviewAttempts.kind} = 'automatic' AND ${firstReviewIdentitySql(pool, crawlReviewAttempts)} AND ${crawlReviewAttempts.state} = 'succeeded'
@@ -648,10 +651,10 @@ export type PendingFirstReviewCandidate = {
 /** Revisit this live legacy owner's unstarted queue before walking a new keyset page.
  * These bounded hints grant no reservation/dispatch authority and never expire or cancel a row. */
 export async function listOwnPendingFirstReviewCandidates(settings: CrawlSettings, job: JobLease): Promise<PendingFirstReviewCandidate[]> {
-  if (settings.firstReviewAdditional === undefined || currentReplayDb()) return [];
+  if (currentReplayDb()) return [];
   const role = roleLeaseFromEnv("reviewer", process.env);
   if (!role) return [];
-  const lease = structuredClone(job), pool = firstReviewers(settings, firstReviewer(settings)).filter(row => isGatewayReviewProvider(row.provider));
+  const lease = structuredClone(job), pool = firstReviewers(settings).filter(row => isGatewayReviewProvider(row.provider));
   if (!pool.length) return [];
   return onPrimary(() => db.transaction(async tx => {
     const control = await lockModelCapacityCallerControl(tx);
@@ -925,12 +928,12 @@ async function claimReview(input: ClaimContext, authority: ClaimAuthority, reser
       return { kind: "skipped", reason: "input_changed" };
     }
     const current = locked.input;
-    const configuredPool = firstReviewers(locked.settings, firstReviewer(locked.settings));
+    const configuredPool = firstReviewers(locked.settings);
     if (reserved && "expected" in reserved && (!isDeepStrictEqual(current, reserved.expected.context.input)
       || !isDeepStrictEqual(locked, reserved.expected.context) || authority.kind !== "item"
       || !isDeepStrictEqual(authority.owner, reserved.expected.owner)
       || !hasFirstReviewer(configuredPool, input))) return { kind: "skipped", reason: "input_changed" };
-    if (locked.settings.firstReviewAdditional !== undefined && input.provider !== "rules") {
+    if (input.provider !== "rules") {
       // Under the candidate lock: pinned work must keep its model; a never-sent candidate may keep the
       // reviewer it was rerouted to (every other pool model is treated as "avoid" for this re-check only).
       const others = new Set(configuredPool.filter(row => row.provider !== input.provider || row.model !== input.model).map(firstReviewerKey));

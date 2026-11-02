@@ -4,6 +4,7 @@ import { ai1GatewayServingContractSchema, resolveAi1GatewayServingContract } fro
 import { ai2GatewayServingContractSchema, resolveAi2GatewayServingContract } from "@/lib/crawl/second-review-serving-contract";
 import { mergeWithDefaults, settingsUnreadable } from "@/lib/crawl/settings";
 import { firstReviewers } from "@/lib/crawl/first-reviewers";
+import { taskModels } from "@/lib/llm/ai-task-resolver";
 import { QWEN_AUDIT_PROVIDER } from "@/lib/crawl/product-audit-reviewer";
 import { batchPolicyHash, batchPolicySchema } from "@/lib/jobs/batches";
 import { modelCapacityPolicyHash, modelCapacityPolicySchema, type ModelCapacityPolicy } from "@/lib/llm/capacity";
@@ -256,13 +257,14 @@ export function usedModelRoutes(snapshot: ControlSnapshot, models: ModelEnv | nu
   // 손상된 행은 기본값으로 돌아온다 — 읽지 못한 것으로 본다
   if (settingsUnreadable(settings)) for (const routeId of ["crawl-agent-review", "second-review", "grok-session-check"]) add(routeId, "unknown", null);
   else {
+    // 1차·2차·Grok 로그인 유지는 「작업 ↔ 모델」 순위(PR C1) — 이 프로세스가 순위를 읽을 때만(앱 DATABASE_URL) 안다. 모르면 「모름」(unknown)으로 막는다
     const first = firstReviewers(settings);
     if (first.length) for (const reviewer of first) add("crawl-agent-review", reviewer.provider, reviewer.model);
     else add("crawl-agent-review", "claude-cli", null);
     const second = [...secondReviewVoters(settings), ...secondReviewFallbacks(settings)];
     for (const voter of second) add("second-review", voter.provider, voter.model);
-    const grok = [...second, ...first].find(voter => voter.provider === "grok-cli");
-    if (grok) add("grok-session-check", "grok-cli", grok.model);
+    for (const rank of taskModels("grok-session-check").filter(row => row.enabled && row.connection.kind === "cli" && row.connection.cliTool === "grok"))
+      add("grok-session-check", "grok-cli", rank.model);
   }
   for (const [routeId, key] of TEXT_ROUTES) {
     const pooled = models?.pooled?.[routeId];

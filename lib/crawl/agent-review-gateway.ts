@@ -398,7 +398,8 @@ export function prepareAi1GatewayCall(input: ReviewInput, options: { model: stri
   if (contract.provider !== "abcllm" || contractBearer(contract) === undefined) return unsupported;
   const serialized = JSON.stringify(snapshot.snapshot);
   if (contract.model !== model || Buffer.byteLength(serialized, "utf8") > MAX_REVIEW_INPUT_BYTES) return unsupported;
-  const wire = gatewayWire(model, serialized);
+  // 같은 모델을 다른 연결에도 둔 순위(PR C1): model 은 연결로 가른 장부 이름이고 엔진에는 계약의 engineModel 이 나간다
+  const wire = gatewayWire(contract.provider === "abcllm" && "engineModel" in contract && contract.engineModel ? contract.engineModel : model, serialized);
   const call = Object.freeze({ kind: "prepared" as const, wireHash: sha(wire),
     servingContractHash: ai1GatewayServingContractHash(contract), totalTokenBound: contract.totalTokenBound,
     model, inputHash: snapshot.inputHash });
@@ -549,7 +550,8 @@ export async function prepareAi2GatewayCall(input: ReviewInput, options: {
   if (contractBearer(contract) === undefined) return unsupported;
   const serialized = JSON.stringify(snapshot.snapshot);
   if (contract.provider !== provider || !ai2ServingContractMatches(contract, model) || Buffer.byteLength(serialized, "utf8") > MAX_REVIEW_INPUT_BYTES) return unsupported;
-  let wire = gatewayWire(contract.model, serialized);
+  // 같은 모델을 다른 연결에도 둔 순위(PR C1): 엔진에는 계약의 engineModel 이 나간다(없으면 예전 그대로 model)
+  let wire = gatewayWire(contract.provider === "abcllm" && contract.engineModel ? contract.engineModel : contract.model, serialized);
   if (contract.provider === "local-direct") {
     wire = directReviewWire(contract, serialized);
     if ((await checkAi2TokenBudget(contract, wire, { timeoutMs, signal: options.signal })).kind !== "within_budget") return unsupported;

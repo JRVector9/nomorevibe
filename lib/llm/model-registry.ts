@@ -122,9 +122,11 @@ export const DEFAULT_MODEL_TIMEOUTS: Readonly<Record<string, number>> = {
 export const DEFAULT_MODEL_DEADLINES: Readonly<Record<string, DeadlineLadder>> = {
   "review-gateway": { engineMs: 50_000, relayMs: null, gatewayMs: 55_000, clientMs: 60_000 },
 };
-export const DEFAULT_MODEL_CANDIDATES: Readonly<Record<string, readonly string[]>> = {
-  "first-review": ["supa:review", "mlx:text", "connect:sonnet", "connect:opus", "connect:grok"],
-};
+/**
+ * 용도별 코드 기본 후보. 1차 심사(first-review)의 후보 목록은 없앴다(PR C1) — 1차 심사자는 「작업 ↔ 모델」 순위뿐이고, 화면의 선택지도 연결이 내놓는 모델이다.
+ * 등록부 문서의 candidates 칸은 그대로 받는다(덮어쓰기 검사에만 쓴다).
+ */
+export const DEFAULT_MODEL_CANDIDATES: Readonly<Record<string, readonly string[]>> = {};
 const registrySchema = z.object({ version: z.literal(1), models: z.array(modelDefinitionSchema).min(1).max(64),
   selections: z.record(z.string(), z.string()).default({}), limits: z.record(z.string(), purposeLimitSchema).default({}),
   deadlines: z.record(z.string(), deadlineLadderSchema).default({}),
@@ -141,7 +143,7 @@ const registrySchema = z.object({ version: z.literal(1), models: z.array(modelDe
     if (new Set(candidates).size !== candidates.length || candidates.some(key => !value.models.some(model => model.key === key)))
       context.addIssue({ code: "custom", path: ["candidates", purpose], message: "invalid_model_candidates" });
   }
-  const reviewCandidates = value.candidates["first-review"] ?? DEFAULT_MODEL_CANDIDATES["first-review"];
+  const reviewCandidates = value.candidates["first-review"] ?? DEFAULT_MODEL_CANDIDATES["first-review"] ?? [];
   for (const model of value.models) {
     if (model.provider !== "abcllm" || !(reviewCandidates.includes(model.key) || model.purposes.some(purpose => ["first-review", "second-review", "ai1-preset", "ai2-gateway"].includes(purpose)))) continue;
     const ladder = model.deadlineLadder ?? value.deadlines["review-gateway"] ?? DEFAULT_MODEL_DEADLINES["review-gateway"];

@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import os from "node:os";
 import { z } from "zod";
+import { servingContractSnapshot } from "./serving-contract-store";
 
 /**
  * CLI 모델 호출(claude/grok/codex 자식 프로세스)의 serving 계약과 물리 종료 증거 모양.
@@ -40,13 +41,16 @@ export function cliServingContractHash(value: CliServingContract): string {
 }
 
 /**
- * 계약은 운영자가 reviewer 에 넣는 CLI_SERVING_CONTRACTS(계약 JSON 배열)에서만 온다. 비어 있으면 모든 CLI 경로가 open 에서 미뤄진다.
+ * 계약은 운영자가 reviewer 에 넣는 CLI_SERVING_CONTRACTS(계약 JSON 배열)에서만 온다 — DB 계약 route(아래 CLI_DB_CONTRACT_ROUTES, PR C1)는 빼고.
+ * 비어 있으면 그 밖의 모든 CLI 경로가 open 에서 미뤄진다.
  * 항목마다 따로 검증하고, 같은 route·provider·model 이 둘 이상이면 어느 것도 열지 않는다(오류 항목이 끼어도 같다).
  * D7: 프로세스 시작 때 한 번 호출자가 띄울 명령의 --version 을 띄워, 출력(앞뒤 공백 제외)이 cliVersion 과 같은 계약만 연다.
  * probe 를 마치기 전과 probe 하지 않은 프로세스에서는 계약이 없다. CLI 업그레이드는 계약 갱신이다.
  */
 export type CliServingContractStatus = "ready" | "probe_pending" | "not_configured" | "invalid_config" | "invalid_entry"
-  | "duplicate_entry" | "cli_version_probe_failed" | "cli_version_probe_timeout" | "cli_version_mismatch" | "cli_command_changed";
+  | "duplicate_entry" | "cli_version_probe_failed" | "cli_version_probe_timeout" | "cli_version_mismatch" | "cli_command_changed"
+  /** env CLI_SERVING_CONTRACTS 의 항목이 DB 계약 route(CLI_DB_CONTRACT_ROUTES)의 것이다 — 읽지 않는다(PR C1) */
+  | "route_reads_db";
 export type CliServingContractProbeReport = Readonly<{ index: number | null; routeId: string | null; provider: string | null;
   model: string | null; status: CliServingContractStatus; observedVersion: string | null }>;
 export const CLI_VERSION_PROBE_TIMEOUT_MS = 5_000;
@@ -58,9 +62,66 @@ const CLI_CONTRACT_ROUTES: Readonly<Record<string, readonly CliProvider[]>> = {
   "product-audit": ["claude-cli"], "product-intro-check": ["claude-cli"], "grok-session-check": ["grok-cli"],
   "crawl-publish-classify": ["claude-cli", "codex-cli"],
 };
-/** 호출자(review-cli-call·cli-model-capacity·classify)가 띄우는 명령과 같은 식 */
+/** 호출자(review-cli-call·cli-model-capacity·classify)가 띄우는 명령과 같은 식 — env 계약 route(감사·소개 검수·분류)만. DB 계약 route 는 cliCommandFor */
 const cliCommand = (provider: CliProvider) => ({ "claude-cli": process.env.CLAUDE_CLI ?? "claude",
   "grok-cli": process.env.GROK_CLI ?? "grok", "codex-cli": process.env.CODEX_CLI ?? "codex" })[provider];
+
+/**
+ * CLI 계약을 DB(model_serving_contracts 의 `cli:<provider>:<route>` 행 — 「작업 ↔ 모델」 순위 저장이 CLI 연결의 버전으로 만든다)에서만 읽는 route
+ * (2026-11-02 소유자 결정, PR C1: 1차·2차 심사와 Grok 로그인 유지). 이 route 들에는 env CLI_SERVING_CONTRACTS 를 읽지 않고, 실행 파일도 env 경로
+ * (CLAUDE_CLI·GROK_CLI)가 아니라 PATH 의 도구 이름이다. 로그인은 그 CLI 가 호스트에서 스스로 쓰는 것이다(PR E 가 env 를 정리한다).
+ * cliVersion 은 웹이 확인할 수 없다(CLI 를 띄우지 않는다) — 운영자가 연결에 적은 버전으로 행을 만들고, 워커가 부를 때 예전처럼 `--version` 으로 견준다.
+ */
+export const CLI_DB_CONTRACT_ROUTES: ReadonlySet<string> = Object.freeze(new Set(["crawl-agent-review", "second-review", "grok-session-check"]));
+/** DB 계약 행의 route_id — (도구, route) 마다 따로라 같은 이름의 API 계약·다른 CLI 의 계약과 겹치지 않는다. 계약 JSON 의 routeId 도 이 값이다(표의 CHECK) */
+export const cliContractRouteId = (provider: CliProvider, routeId: string) => `cli:${provider}:${routeId}`;
+/** DB 계약 route 의 실행 파일 — PATH 의 도구 이름(env 경로를 읽지 않는다). */
+export const CLI_TOOL_COMMANDS: Readonly<Record<CliProvider, string>> = Object.freeze({ "claude-cli": "claude", "grok-cli": "grok", "codex-cli": "codex" });
+/** 그 route 의 CLI 를 띄울 명령 — DB 계약 route 는 PATH 의 도구 이름, 그 밖은 예전 그대로(env 경로 또는 이름). */
+export const cliCommandFor = (routeId: string, provider: CliProvider): string =>
+  CLI_DB_CONTRACT_ROUTES.has(routeId) ? CLI_TOOL_COMMANDS[provider] : cliCommand(provider);
+/** route 가 받는 CLI(장부 CLI kind). */
+export const cliContractRouteAccepts = (routeId: string, provider: string): boolean =>
+  Object.hasOwn(CLI_CONTRACT_ROUTES, routeId) && (CLI_CONTRACT_ROUTES[routeId] as readonly string[]).includes(provider);
+
+/** DB 계약 route 의 도구 버전(프로세스마다 한 번 `<도구> --version`). probeCliServingContracts 를 부른 프로세스(워커·connect)만 띄운다 — 웹은 띄우지 않는다. */
+const toolVersions = new Map<string, VersionProbe | "pending">();
+let toolProbesEnabled = false, toolVersionEpoch = 0;
+/** 도구 버전 확인 결과가 바뀔 때마다 오르는 수 — 순위 묶기의 기억(review-task-ranks)이 이것으로 낡음을 안다. */
+export const cliToolVersionEpoch = (): number => toolVersionEpoch;
+function toolVersion(command: string): VersionProbe | "pending" | null {
+  const known = toolVersions.get(command);
+  if (known) return known;
+  if (!toolProbesEnabled) return null;
+  toolVersions.set(command, "pending");
+  toolVersionEpoch++;
+  void probeCliVersion(command).then(result => { toolVersions.set(command, result); toolVersionEpoch++; });
+  return "pending";
+}
+/** 이 프로세스가 마지막으로 본 도구 버전(진단·화면) — 보지 않았으면 null. */
+export function observedCliToolVersion(provider: CliProvider): string | null {
+  const known = toolVersions.get(CLI_TOOL_COMMANDS[provider]);
+  return known && known !== "pending" && known.kind === "ok" ? known.version : null;
+}
+/** DB 계약 행 하나 → 계약(검사에 통과한 것) 또는 null. */
+export function cliContractFromRow(row: { routeId: string; model: string; contract: unknown }): CliServingContract | null {
+  const match = /^cli:(claude-cli|grok-cli|codex-cli):(.+)$/.exec(row.routeId);
+  if (!match || !CLI_DB_CONTRACT_ROUTES.has(match[2]) || !row.contract || typeof row.contract !== "object") return null;
+  const parsed = cliServingContractSchema.safeParse({ ...(row.contract as Record<string, unknown>), routeId: match[2] });
+  return parsed.success && parsed.data.provider === match[1] && parsed.data.model === row.model && cliContractRouteAccepts(match[2], match[1])
+    ? Object.freeze(parsed.data) : null;
+}
+function dbLookup(routeId: string, provider: CliProvider, model: string): { status: CliServingContractStatus; contract: CliServingContract | null; observed?: string | null } {
+  const row = servingContractSnapshot().rows.find(entry => entry.routeId === cliContractRouteId(provider, routeId) && entry.model === model);
+  if (!row) return { status: "not_configured", contract: null };
+  const contract = cliContractFromRow(row);
+  if (!contract) return { status: "invalid_entry", contract: null };
+  const version = toolVersion(CLI_TOOL_COMMANDS[provider]);
+  if (version === null || version === "pending") return { status: "probe_pending", contract: null };
+  if (version.kind !== "ok") return { status: version.kind === "timeout" ? "cli_version_probe_timeout" : "cli_version_probe_failed", contract: null };
+  if (version.version !== contract.cliVersion) return { status: "cli_version_mismatch", contract: null, observed: version.version };
+  return { status: "ready", contract };
+}
 const contractKey = (routeId: unknown, provider: unknown, model: unknown) => JSON.stringify([routeId, provider, model]);
 type Configured = { kind: "not_configured" | "invalid_config" }
   | { kind: "loaded"; entries: ReadonlyMap<string, { status: CliServingContractStatus; contract: CliServingContract | null; command: string | null }> };
@@ -68,7 +129,8 @@ type VersionProbe = { kind: "ok"; version: string } | { kind: "failed" | "timeou
 let configured: Configured | null = null;
 let probed: Promise<readonly CliServingContractProbeReport[]> | null = null;
 
-function lookup(routeId: string, provider: CliProvider, model: string): { status: CliServingContractStatus; contract: CliServingContract | null } {
+function lookup(routeId: string, provider: CliProvider, model: string): { status: CliServingContractStatus; contract: CliServingContract | null; observed?: string | null } {
+  if (CLI_DB_CONTRACT_ROUTES.has(routeId)) return dbLookup(routeId, provider, model);
   if (!configured) return { status: "probe_pending", contract: null };
   if (configured.kind !== "loaded") return { status: configured.kind, contract: null };
   const entry = configured.entries.get(contractKey(routeId, provider, model));
@@ -82,11 +144,33 @@ export function resolveCliServingContract(routeId: string, provider: CliProvider
 export function cliServingContractStatus(routeId: string, provider: CliProvider, model: string): CliServingContractStatus {
   return lookup(routeId, provider, model).status;
 }
+/** 까닭과, 버전이 다르면 이 프로세스가 본 버전(진단 문장용). */
+export function cliServingContractDiagnosis(routeId: string, provider: CliProvider, model: string): { status: CliServingContractStatus; observedVersion: string | null } {
+  const found = lookup(routeId, provider, model);
+  return { status: found.status, observedVersion: found.observed ?? null };
+}
 
-/** 프로세스당 한 번만 읽고 띄운다. 다시 불러도 같은 결과(같은 promise)다 */
+/**
+ * 프로세스당 한 번만 읽고 띄운다. 다시 불러도 같은 결과(같은 promise)다. DB 계약 route 의 도구(claude·grok)도 이때 한 번 `--version` 을 띄운다 —
+ * 보고에는 routeId null·model null 로 그 도구의 결과와 본 버전이 실린다(워커 로그 cli_contract.probe — 운영자가 연결에 적을 버전).
+ */
 export function probeCliServingContracts(): Promise<readonly CliServingContractProbeReport[]> {
-  probed ??= loadCliServingContracts();
+  probed ??= Promise.all([loadCliServingContracts(), probeDbCliTools()]).then(([env, tools]) => Object.freeze([...env, ...tools]));
   return probed;
+}
+async function probeDbCliTools(): Promise<CliServingContractProbeReport[]> {
+  toolProbesEnabled = true;
+  const providers: CliProvider[] = ["claude-cli", "grok-cli"];
+  return Promise.all(providers.map(async provider => {
+    const command = CLI_TOOL_COMMANDS[provider];
+    const known = toolVersions.get(command);
+    const result = known && known !== "pending" ? known : await probeCliVersion(command);
+    toolVersions.set(command, result);
+    toolVersionEpoch++;
+    const status: CliServingContractStatus = result.kind === "ok" ? "ready" : result.kind === "timeout" ? "cli_version_probe_timeout" : "cli_version_probe_failed";
+    const observedVersion = result.kind === "ok" && contractBase.cliVersion.safeParse(result.version).success ? result.version : null;
+    return { index: null, routeId: null, provider, model: null, status, observedVersion };
+  }));
 }
 async function loadCliServingContracts(): Promise<readonly CliServingContractProbeReport[]> {
   const raw = process.env.CLI_SERVING_CONTRACTS;
@@ -108,6 +192,8 @@ async function loadCliServingContracts(): Promise<readonly CliServingContractPro
   for (const key of keys) if (key) counts.set(key, (counts.get(key) ?? 0) + 1);
   const checked = values.map((value, index) => {
     const key = keys[index];
+    // DB 계약 route(1차·2차·Grok 로그인 유지)의 env 항목은 읽지 않는다 — 계약은 순위 저장이 만든 행뿐이다(PR C1)
+    if (fields[index].routeId !== null && CLI_DB_CONTRACT_ROUTES.has(fields[index].routeId!)) return { status: "route_reads_db" as const };
     if (key && counts.get(key)! > 1) return { status: "duplicate_entry" as const };
     const parsed = cliServingContractSchema.safeParse(value);
     return parsed.success && Object.hasOwn(CLI_CONTRACT_ROUTES, parsed.data.routeId)

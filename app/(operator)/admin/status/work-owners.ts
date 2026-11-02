@@ -263,6 +263,12 @@ function slotSource(slot: ModelSlot): string {
   if (slot.source === "settings") return `크롤 설정 ${slot.code}`;
   if (slot.source === "env") return `환경변수 ${slot.code}(웹 기준)`;
   if (slot.source === "default") return `코드 기본값 — ${slot.code} 없음(웹 기준)`;
+  // 1차·2차(PR C1): 1차는 그 순위 그대로, 2차 투표는 칸마다 지금 표를 내는 순위, 2차 예비는 그 밖의 순위다
+  const firstRank = /^ai-task:first-review#(\d)$/.exec(slot.code);
+  if (slot.source === "ranks" && firstRank) return `작업 ↔ 모델 1차 ${firstRank[1]}순위(웹 기준 — 쓸 수 없으면 다음 순위가 맡는다)`;
+  if (slot.source === "ranks" && slot.key.startsWith("second-voter"))
+    return "작업 ↔ 모델 2차 투표자 칸 — 쓸 수 있는 가장 높은 순위(웹 기준 — 1순위를 쓸 수 없으면 그 칸의 2·3순위가 표를 낸다)";
+  if (slot.source === "ranks" && slot.key.startsWith("second-fallback")) return "작업 ↔ 모델 2차 대체 — 표가 실패한 칸의 다음 순위(웹 기준)";
   if (slot.source === "ranks") return "작업 ↔ 모델 1순위(웹 기준 — 쓸 수 없으면 아래 순위가 맡는다)";
   if (slot.code.startsWith("ai-task:")) return "작업 ↔ 모델에 순위가 없습니다 — 이 작업은 돌지 않습니다";
   return "정해진 모델 없음";

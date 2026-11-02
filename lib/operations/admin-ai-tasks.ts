@@ -16,6 +16,8 @@ export type AiConnectionView = Readonly<{
   models: readonly AiServedModel[] | null; modelsReadAt: string | null; modelsError: string | null;
   deviceId: string; capacitySlots: number; contextTokens: number | null; enabled: boolean; version: number; note: string | null;
   updatedBy: string; updatedAt: string;
+  /** CLI 만: 운영자가 적은 CLI 버전(`<도구> --version` 출력 그대로). 1차·2차·Grok 로그인 유지 순위의 CLI 계약이 이 버전으로 만들어진다(PR C1) */
+  cliVersion: string | null;
 }>;
 export type AiTaskRankRow = Readonly<{ task: string; slot: number; rank: number; connectionId: string; model: string;
   options: Readonly<Record<string, unknown>>; enabled: boolean }>;
@@ -64,6 +66,8 @@ export type AiConnectionInput = Readonly<{
   /** keep = 저장된 키 그대로, set = 새 키, clear = 키 지움 */
   key: { mode: "keep" } | { mode: "set"; value: string } | { mode: "clear" };
   cliTool: AiCliTool | null; cliModels: string[]; deviceId: string; capacitySlots: number; contextTokens: number | null; enabled: boolean; note: string | null;
+  /** CLI 만, 선택: `<도구> --version` 출력 그대로(PR C1) */
+  cliVersion: string | null;
 }>;
 type FormLike = { get(name: string): FormDataEntryValue | null };
 const text = (form: FormLike, name: string) => { const value = form.get(name); return typeof value === "string" ? value.trim() : ""; };
@@ -79,7 +83,7 @@ export function aiConnectionInputFromForm(form: FormLike): { input: AiConnection
   const label = text(form, "label");
   if (!label || label.length > LABEL_MAX || CONTROL.test(label)) issues.push("ai_connection_invalid:label");
   const kind = text(form, "kind") === "cli" ? "cli" : text(form, "kind") === "api" ? "api" : (issues.push("ai_connection_invalid:kind"), "api");
-  let baseUrl: string | null = null, cliTool: AiCliTool | null = null, cliModels: string[] = [];
+  let baseUrl: string | null = null, cliTool: AiCliTool | null = null, cliModels: string[] = [], cliVersion: string | null = null;
   let key: AiConnectionInput["key"] = { mode: "keep" };
   if (kind === "api") {
     baseUrl = aiConnectionBaseUrl(text(form, "baseUrl"));
@@ -95,6 +99,8 @@ export function aiConnectionInputFromForm(form: FormLike): { input: AiConnection
     cliTool = (AI_CLI_TOOLS as readonly string[]).includes(tool) ? tool as AiCliTool : (issues.push("ai_connection_invalid:cliTool"), null);
     cliModels = [...new Set(text(form, "cliModels").split(/[\s,]+/).map(value => value.trim()).filter(Boolean))];
     if (!cliModels.length || cliModels.length > 32 || cliModels.some(model => !CLI_MODEL.test(model))) issues.push("ai_connection_invalid:cliModels");
+    cliVersion = text(form, "cliVersion") || null;
+    if (cliVersion && (cliVersion.length > 80 || CONTROL.test(cliVersion))) issues.push("ai_connection_invalid:cliVersion");
     key = { mode: "clear" };
   }
   const deviceId = text(form, "deviceId") || aiDeviceSlug(label);
@@ -108,7 +114,7 @@ export function aiConnectionInputFromForm(form: FormLike): { input: AiConnection
   if (note && (note.length > NOTE_MAX || CONTROL.test(note))) issues.push("ai_connection_invalid:note");
   const enabled = text(form, "enabled") !== "0";
   if (issues.length) return { input: null, issues };
-  return { input: Object.freeze({ id, expectedVersion, label, kind, baseUrl, key, cliTool, cliModels, deviceId, capacitySlots, contextTokens, enabled, note }), issues };
+  return { input: Object.freeze({ id, expectedVersion, label, kind, baseUrl, key, cliTool, cliModels, deviceId, capacitySlots, contextTokens, enabled, note, cliVersion }), issues };
 }
 
 /** 「작업 ↔ 모델」 한 줄의 폼 칸 이름(RankSelects slotNames). */
@@ -224,11 +230,25 @@ export function validateAiTaskRanks(taskId: string, slot: number, ranks: readonl
     if (anchor && anchor.model !== first.model)
       issues.push(`${task.label}은(는) ${other?.label ?? task.sameModelAs}의 1순위 모델(${anchor.model})과 같은 모델이어야 합니다.`);
   }
-  if (task.slots > 1 && first) {
-    const clash = context.rows.find(row => row.task === task.id && row.slot !== slot && row.rank === 1 && row.model === first.model);
-    if (clash) issues.push(`${task.slotLabel ?? "칸"} ${clash.slot}의 1순위와 같은 모델(${first.model})입니다. 같은 모델이 두 표를 낼 수 없습니다.`);
-  }
+  // 나란한 칸(2차 투표자 1·2·3): 한 모델은 한 칸에만 둔다(PR C1) — 칸마다 1순위를 쓸 수 없으면 그 칸의 2·3순위가 표를 내므로, 같은 모델(같은 가중치·
+  // 다른 서버 포함)이 두 칸에 있으면 한 항목에 같은 모델이 두 표를 낼 수 있다(예전에는 대체 목록을 투표자 모두가 나눠 써서 이 일이 생겼다)
+  if (task.slots > 1) ranks.forEach((row, index) => {
+    if (!row) return;
+    const clash = context.rows.find(other => other.task === task.id && other.slot !== slot && aiSameUnderlyingModel(other.model, row.model));
+    if (clash) issues.push(`${index + 1}순위: ${task.slotLabel ?? "칸"} ${clash.slot}의 ${clash.rank}순위와 같은 모델(${row.model})입니다. 한 모델은 한 ${task.slotLabel ?? "칸"} 칸에만 둘 수 있습니다 — `
+      + "같은 모델이 한 항목에 두 표를 낼 수 없습니다.");
+  });
   return [...new Set(issues)];
+}
+
+/**
+ * 같은 가중치의 모델인가(순수 — review-model-identity.ts bareModelName 과 같은 규칙): 연결로 가른 장부 이름의 꼬리(@<8자>)·앞의 자리 표시 대괄호·배포자 접두어(xxx/)·
+ * 이미지 판별 꼬리를 떼고 소문자로 견준다. 화면이 그대로 읽어야 해서 등록부를 보지 않는다(순위의 모델은 엔진 이름이다).
+ */
+export function aiSameUnderlyingModel(a: string, b: string): boolean {
+  const bare = (model: string) => model.trim().replace(/@[0-9a-f]{8}$/, "").replace(/^\[[^\]]*\]\s*/, "").replace(/^[^/\s]+\//, "").toLowerCase()
+    .replace(/\+(?:vision(?:-shot2)?|prompt-v3)$/, "");
+  return bare(a) !== "" && bare(a) === bare(b);
 }
 
 /** 저장은 받되 알릴 것(막지 않는다): 제품 벡터를 바꾸면 검색어 벡터도 맞춰야 한다 등. */
@@ -248,13 +268,15 @@ export function aiTaskRankNotices(taskId: string, ranks: readonly (AiRankChoice 
 export type AiPolicyRoute = Readonly<{ routeId: string; provider: string; model: string; providerBudgetId: string; groupId: string }>;
 export type AiReadinessInput = Readonly<{
   /** 켜진 계약 행(model_serving_contracts, 키 없이). provider·endpoint·engineModel 은 계약 JSON 의 값(engineModel 은 연결로 가른 이름의 계약만, PR B) */
-  contracts: readonly Readonly<{ routeId: string; model: string; provider: string | null; endpoint: string | null; transport: string; engineModel?: string | null }>[];
-  /** 2차 계약(abcllm 먼저, 없으면 local-direct) — 오늘 2차가 쓰는 resolver 의 결과 */
-  ai2Contract: (model: string) => Readonly<{ provider: "abcllm" | "local-direct"; endpoint: string | null }> | null;
+  contracts: readonly Readonly<{ routeId: string; model: string; provider: string | null; endpoint: string | null; transport: string; engineModel?: string | null;
+    /** CLI 계약 행(`cli:<provider>:<route>`)의 버전(PR C1) */
+    cliVersion?: string | null }>[];
   /** 고정 로컬 경로의 계약(backendId = 정책 route 의 providerBudgetId) */
   localContract: (backendId: string) => Readonly<{ model: string; endpoint: string | null }> | null;
-  /** 엔진 직접 계약을 만들 수 있는 경로(admin-engine-connect ENGINE_CONNECT_ROUTES) */
+  /** 엔진 직접 계약을 만들 수 있는 경로(admin-engine-connect ENGINE_CONNECT_ROUTES + 2차 second-review, PR C1) */
   engineRoutes: readonly string[];
+  /** CLI 계약을 DB 행으로 만드는 route(cli-serving-contract CLI_DB_CONTRACT_ROUTES — 1차·2차·Grok 로그인 유지, PR C1). 없으면 빈 목록 */
+  cliContractRoutes?: readonly string[];
   policy: Readonly<{ mode: string; routes: readonly AiPolicyRoute[]; groupLimits: Readonly<Record<string, number>> }> | null;
   devices: ReadonlyMap<string, Readonly<{ enabled: boolean; limitSlots: number }>>;
 }>;
@@ -271,6 +293,8 @@ export type AiRankReadiness = Readonly<{
   /** identity = 만들 계약의 model 열쇠, engineModel = 엔진에 보낼 이름(identity 가 연결로 가른 이름일 때만) */
   createContract: Readonly<{ routeId: string; replacesGateway: boolean; identity: string; engineModel: string | null }> | null;
   appendRoute: AiPolicyRoute | null;
+  /** 저장이 만들(또는 버전을 바꿀) CLI 계약 행(PR C1 — 1차·2차·Grok 로그인 유지 route 만, 연결의 CLI 버전으로) */
+  createCliContract: Readonly<{ routeId: string; provider: string; model: string; cliVersion: string; replaces: string | null }> | null;
   /** 이 순위를 부를 provider(장부·계약 이름) */
   provider: string | null;
 }>;
@@ -285,10 +309,11 @@ const contractBase = (endpoint: string | null) => endpoint ? aiConnectionBaseUrl
 export function aiRankReadiness(task: AiTaskDef, rank: number, connection: AiConnectionView, model: string, input: AiReadinessInput): AiRankReadiness {
   const blocking: string[] = [], warnings: string[] = [];
   let createDevice: AiRankReadiness["createDevice"] = null, createContract: AiRankReadiness["createContract"] = null, appendRoute: AiPolicyRoute | null = null;
+  let createCliContract: AiRankReadiness["createCliContract"] = null;
   let provider: string | null = null, identity = model;
   const head = `${rank}순위 ${connection.label} · ${model}`;
   const result = () => Object.freeze({ rank, connectionId: connection.id, model, identity, blocking: Object.freeze(blocking), warnings: Object.freeze(warnings),
-    createDevice, createContract, appendRoute, provider });
+    createDevice, createContract, appendRoute, createCliContract, provider });
   const routeId = task.routeId;
   const policyRoutes = input.policy?.routes ?? [];
   const budgetFor = (deviceId: string) => policyRoutes.find(route => route.groupId === deviceId)?.providerBudgetId ?? deviceId;
@@ -324,7 +349,15 @@ export function aiRankReadiness(task: AiTaskDef, rank: number, connection: AiCon
     provider = connection.cliTool ? AI_CLI_TOOL_PROVIDERS[connection.cliTool] : null;
     if (!provider) { blocking.push(`${head}: CLI 도구를 알 수 없습니다.`); return result(); }
     checkDevice(checkRoute(provider, true, ""));
-    if (routeId) warnings.push(`${head}: CLI 계약(connect 에이전트 쪽)은 이 화면이 확인하지 못합니다. 계약이 없으면 이 순위는 쓰이지 않습니다.`);
+    if (routeId && (input.cliContractRoutes ?? []).includes(routeId)) {
+      // 1차·2차·Grok 로그인 유지(PR C1): CLI 계약은 이 저장이 연결의 CLI 버전으로 만든다(env CLI_SERVING_CONTRACTS 는 읽지 않는다). 버전은 워커가 부를 때 견준다
+      const version = connection.cliVersion?.trim() || null;
+      const row = input.contracts.find(entry => entry.routeId === `cli:${provider}:${routeId}` && entry.model === model);
+      if (!version) blocking.push(`${head}: 연결에 CLI 버전이 없습니다. AI 연결에서 「CLI 버전」(워커의 \`${connection.cliTool} --version\` 출력 그대로)을 적은 뒤 저장하세요.`);
+      else if (!row || row.cliVersion !== version)
+        createCliContract = Object.freeze({ routeId, provider, model, cliVersion: version, replaces: row?.cliVersion ?? null });
+      if (version) warnings.push(`${head}: CLI 버전(${version})은 이 화면이 확인하지 못합니다 — 워커가 부를 때 \`--version\` 과 다르면 이 순위는 쓰이지 않습니다(상태 화면에 까닭).`);
+    } else if (routeId) warnings.push(`${head}: CLI 계약(connect 에이전트 쪽)은 이 화면이 확인하지 못합니다. 계약이 없으면 이 순위는 쓰이지 않습니다.`);
     return result();
   }
   const base = connection.baseUrl;
@@ -333,8 +366,9 @@ export function aiRankReadiness(task: AiTaskDef, rank: number, connection: AiCon
     case "deferred":
       warnings.push(`${head}: 이 작업의 연결 계약·용량 경로 규칙은 아직 정해지지 않아 확인하지 않았습니다(다음 단계에서 정합니다).`);
       return result();
-    case "engine-route": {
-      // PR B: 실행 쪽이 순위마다 「그 연결을 가리키는 계약」(끝점 = 연결 주소, 엔진 모델 = 순위 모델)을 찾는다(lib/llm/ai-task-resolver.ts).
+    case "engine-route": case "review-ai1": case "review-ai2": {
+      // PR B(text)·PR C1(1차·2차): 실행 쪽이 순위마다 「그 연결을 가리키는 계약」(끝점 = 연결 주소, 엔진 모델 = 순위 모델)을 찾는다
+      // (lib/llm/ai-task-resolver.ts·lib/crawl/review-task-ranks.ts). 1차·2차는 abcllm 형 total-bound 계약(transport direct — 엔진에 바로)을 만든다.
       // 같은 모델 이름의 계약이 다른 서버에 있으면 연결로 가른 이름(<모델>@<연결 id 앞 8자>)으로 따로 계약·용량 경로를 둔다 — 두 서버를 두 순위로 쓸 수 있다.
       const isDirect = (entry: AiReadinessInput["contracts"][number]) => entry.transport === "direct" || entry.provider === "local-direct";
       const wireOf = (entry: AiReadinessInput["contracts"][number]) => entry.provider === "local-direct" ? entry.model : entry.engineModel ?? entry.model;
@@ -364,29 +398,6 @@ export function aiRankReadiness(task: AiTaskDef, rank: number, connection: AiCon
         }
       }
       checkDevice(checkRoute(provider, provider === "abcllm", "로컬 직접 경로는 예산·장비 이름이 계약과 같아야 해서 자동으로 만들지 않습니다."));
-      return result();
-    }
-    case "review-ai1": {
-      const row = input.contracts.find(entry => entry.routeId === routeId && entry.model === model);
-      // 1차·text 경로는 엔진 직접 계약(abcllm 형) 또는 local-direct 계약(direct-openai-chat-v1, PR 3b-C·3b-E) 둘 다 받는다 — 있는 계약의 provider 를 따른다
-      const local = row?.provider === "local-direct";
-      provider = local ? "local-direct" : "abcllm";
-      if (row && row.transport === "direct" || local) {
-        const served = contractBase(row!.endpoint);
-        if (served !== base) blocking.push(`${head}: ${routeId} 경로의 같은 모델 계약이 다른 서버(${aiConnectionHost(served) ?? "주소 없음"})를 가리킵니다. `
-          + "같은 모델 이름은 한 경로에 서버 하나만 둘 수 있습니다 — 모델 연결 화면에서 계약을 고치세요.");
-      } else if (routeId && input.engineRoutes.includes(routeId)) {
-        createContract = Object.freeze({ routeId, replacesGateway: !!row, identity: model, engineModel: null });
-      } else blocking.push(`${head}: ${routeId} 경로의 연결 계약이 없고 자동으로 만들 수 없습니다.`);
-      checkDevice(checkRoute(provider, provider === "abcllm", "로컬 직접 경로는 예산·장비 이름이 계약과 같아야 해서 자동으로 만들지 않습니다."));
-      return result();
-    }
-    case "review-ai2": {
-      const contract = input.ai2Contract(model);
-      provider = contract?.provider ?? null;
-      if (!contract) blocking.push(`${head}: 2차 연결 계약이 없습니다. 2차 계약은 꼴이 따로라 자동으로 만들지 않습니다(모델 연결 화면).`);
-      else if (contractBase(contract.endpoint) !== base) blocking.push(`${head}: 2차 계약이 다른 서버(${aiConnectionHost(contractBase(contract.endpoint)) ?? "주소 없음"})를 가리킵니다.`);
-      if (provider) checkDevice(checkRoute(provider, provider === "abcllm", "로컬 직접 경로는 예산·장비 이름이 계약과 같아야 해서 자동으로 만들지 않습니다."));
       return result();
     }
     case "local-direct": {
@@ -422,8 +433,10 @@ export function aiRanksReadiness(task: AiTaskDef, ranks: readonly Readonly<{ ran
 }
 
 /** 저장된 순위에 아직 없는 것(그 줄을 다시 저장하면 만든다) — 화면의 준비 상태 문장. */
-export function aiRankPendingText(ready: Pick<AiRankReadiness, "rank" | "model" | "createContract" | "appendRoute" | "createDevice">): string[] {
+export function aiRankPendingText(ready: Pick<AiRankReadiness, "rank" | "model" | "createContract" | "appendRoute" | "createDevice"> & Partial<Pick<AiRankReadiness, "createCliContract">>): string[] {
   const out: string[] = [];
+  if (ready.createCliContract) out.push(`${ready.rank}순위 ${ready.model}: ${ready.createCliContract.routeId} CLI 계약이 ${ready.createCliContract.replaces
+    ? `버전 ${ready.createCliContract.replaces}입니다` : "없습니다"} — 이 줄을 저장하면 연결의 CLI 버전(${ready.createCliContract.cliVersion})으로 ${ready.createCliContract.replaces ? "바꿉니다" : "만듭니다"}.`);
   if (ready.createContract) out.push(`${ready.rank}순위 ${ready.model}: ${ready.createContract.routeId} 엔진 직접 계약이 ${ready.createContract.replacesGateway
     ? "게이트웨이 계약뿐입니다" : "없습니다"} — 이 줄을 저장하면 엔진을 확인하고 만듭니다${ready.createContract.engineModel
     ? `(같은 모델이 다른 서버에도 있어 장부 이름 ${ready.createContract.identity})` : ""}.`);
@@ -593,7 +606,8 @@ export function aiTaskSlotDigestInput(rows: readonly Pick<AiTaskRankRow, "rank" 
 
 const FIELD_LABELS: Readonly<Record<string, string>> = {
   id: "연결 id", expectedVersion: "판", label: "이름(1~80자)", kind: "종류(API·CLI)", baseUrl: "주소(http(s)://호스트[:포트]/v1)", apiKey: "API 키(공백 없이 4096자까지)",
-  cliTool: "CLI 도구(claude·codex·grok)", cliModels: "CLI 모델 이름(영숫자와 . _ : / -, 1~32개)", deviceId: "장비 이름(공백 없이 120자까지)",
+  cliTool: "CLI 도구(claude·codex·grok)", cliModels: "CLI 모델 이름(영숫자와 . _ : / -, 1~32개)", cliVersion: "CLI 버전(80자까지, `--version` 출력 그대로)",
+  deviceId: "장비 이름(공백 없이 120자까지)",
   capacitySlots: "칸 수(1~256)", contextTokens: "컨텍스트 상한(1~2097152 토큰)", note: "메모(400자까지)",
   task: "작업", slot: "칸", revision: "화면 판", rank: "순위 칸",
 };

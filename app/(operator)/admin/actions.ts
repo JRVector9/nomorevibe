@@ -95,32 +95,12 @@ export const saveCrawlSettings = webWriteAction(async function saveCrawlSettings
     },
     secondReview: {
       enabled: form.get("secondReviewEnabled") === "on",
-      // 모델을 비운 칸은 세우지 않는다 — 표를 지우는 방법이 칸을 비우는 것이어야 한다
-      voters: [0, 1, 2].flatMap((index) => {
-        const model = String(form.get(`voterModel${index}`) ?? "").trim();
-        return model ? [{ provider: String(form.get(`voterProvider${index}`) ?? "claude-cli"), model }] : [];
-      }),
-      fallbacks: [0, 1].flatMap((index) => {
-        const model = String(form.get(`fallbackModel${index}`) ?? "").trim();
-        return model ? [{ provider: String(form.get(`fallbackProvider${index}`) ?? "claude-cli"), model }] : [];
-      }),
+      // 투표·대체 모델(voters·fallbacks)은 폼에서 읽지 않는다 — 「작업 ↔ 모델」 순위뿐이다(PR C1). 키를 빼면 저장된 옛 값(가져오기 출처)이 그대로 남는다
       includeAiHeld: form.get("secondReviewIncludeAiHeld") === "on",
       sampleRate: num(form.get("secondReviewSamplePercent")) / 100,
       agreeAt: num(form.get("secondReviewAgreeAt")),
     },
-    /*
-     * 모델 칸을 비우면 설정을 지운다(1차 심사자가 없어져 AI 심사가 멈춘다).
-     * 키를 빼 버리면 저장이 기존 값에 덮여 한 번 넣은 심사자를 화면에서 되돌릴 길이 없다 —
-     * saveSettings 가 {...지금, ...바꾼 것} 으로 합치기 때문이다. 그래서 undefined 를 명시한다.
-     */
-    firstReview: (() => {
-      const model = String(form.get("firstReviewModel") ?? "").trim();
-      return model ? { provider: String(form.get("firstReviewProvider") ?? "abcllm"), model } : undefined;
-    })(),
-    ...(form.has("firstAdditionalPresent") ? { firstReviewAdditional: [0, 1].flatMap(index => {
-      const model = String(form.get(`firstAdditionalModel${index}`) ?? "").trim();
-      return model ? [{ provider: String(form.get(`firstAdditionalProvider${index}`) ?? "abcllm"), model }] : [];
-    }) } : {}),
+    // 1차 심사 모델(firstReview·firstReviewAdditional)은 폼에서 읽지 않는다 — 「작업 ↔ 모델」 순위뿐이다(PR C1). 키를 빼면 저장된 옛 값이 그대로 남는다
     reviewConcurrency: num(form.get("reviewConcurrency")),
     // 수집을 켜는 것과 그것을 발행 조건으로 삼는 것은 다른 결정이다 — 따로 둔다
     agentEvidence: {

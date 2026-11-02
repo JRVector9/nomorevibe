@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, isNull, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, isNull, or, sql } from 'drizzle-orm';
 import { db, onPrimary } from '@/lib/db';
 import { currentReplayDb } from '@/lib/db/replay-scope';
 import { modelCapacityRequests, secondReviews } from '@/lib/db/schema';
@@ -9,6 +9,8 @@ import { logger } from '@/lib/observability/logger';
 import type { HostAdmission } from '@/lib/operations/host-budget-runtime';
 import { interruptibleSleep, type RuntimeReport } from '@/scripts/worker';
 import { executeSecondReviewConsumerItem } from '../second-review-item-lifecycle';
+import { ensureReviewTaskRanks } from '../review-task-ranks';
+import { secondReviewVotersDegraded } from '../second-review-voters';
 
 // 빈 큐는 1초 뒤 다시 본다 — AI2 행이 생긴 뒤 집기까지의 대기가 종단 지연에 그대로 더해진다. 슬롯 미룸·회로 열림은 5초를 기다린다.
 const PAGE_SIZE = 24, MAX_PAGES = 4, IDLE_MS = 1_000, DEFERRED_MS = 5_000;
@@ -27,7 +29,8 @@ async function priorityHint(owner: ItemOwner, cursor: PriorityCursor | null, res
       sql`${request.logicalWorkKey} = 'ai2:' || ${secondReviews.candidateId}::text || ':' || coalesce(${secondReviews.fallbackForId}, ${secondReviews.id})::text`,
     )).where(and(eq(request.ownerInstanceId, owner.instanceId), eq(request.ownerBootId, owner.bootId),
       eq(request.class, 'second'), eq(request.pool, 'reviewer'), eq(request.routeId, 'second-review'), eq(request.state, reserved ? 'reserved' : 'waiting'),
-      reserved ? sql`${request.reservedUntil} > clock_timestamp()` : and(eq(request.provider, 'local-direct'), isNull(secondReviews.fallbackForId),
+      // 오래 기다린 엔진 직접 표(local-direct, PR C1 부터 순위 저장이 만든 abcllm 형 직접 계약도)는 같은 투표자 칸의 다음 순위로 넘길 수 있다
+      reserved ? sql`${request.reservedUntil} > clock_timestamp()` : and(inArray(request.provider, ['local-direct', 'abcllm']), isNull(secondReviews.fallbackForId),
         sql`${request.queueUntil} > clock_timestamp()`, sql`${request.queuedAt} <= clock_timestamp() - interval '15 seconds'`),
       cursor ? or(gt(request.queueOrdinal, cursor.ordinal),
         and(eq(request.queueOrdinal, cursor.ordinal), gt(secondReviews.id, cursor.id))) : undefined,
@@ -60,8 +63,21 @@ export async function runSecondReviewConsumer(input: {
   const result = { attempted: 0, recorded: 0, skipped: 0, deferred: 0 };
   let cursor: Cursor | null = null, pages = 0;
   let reservedCursor: PriorityCursor | null = null, waitingCursor: PriorityCursor | null = null, resumeFallback = false;
+  let degradedCode: string | null = null;
   while (!halt?.aborted) {
     report?.('polling');
+    // 「작업 ↔ 모델」 투표자 순위(PR C1): 쪽마다 30초 스냅숏을 새로 받는다. 순위가 없거나·표를 못 읽었거나·모든 칸을 쓸 수 없으면 기본 투표자로 대신 부르지 않고 쉰다
+    // (까닭은 로그와 2차 잡의 제 일 못 함으로 보인다)
+    await ensureReviewTaskRanks();
+    const degraded = secondReviewVotersDegraded();
+    if (degraded) {
+      if (degradedCode !== degraded.code) { degradedCode = degraded.code; logger.warn('pipeline_consumer.degraded', { stage: 'ai2', ...degraded }); }
+      result.deferred++;
+      if (halt?.aborted || once) break;
+      report?.('idle'); await interruptibleSleep(DEFERRED_MS, halt);
+      continue;
+    }
+    degradedCode = null;
     let reserved = await priorityHint(owner, reservedCursor, true);
     if (!reserved && reservedCursor) {
       reservedCursor = null;

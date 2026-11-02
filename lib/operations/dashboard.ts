@@ -11,6 +11,9 @@ import { RECHECK_AFTER_MINUTES } from "@/lib/domain/products/health-freshness";
 import { countProducts, repoGone, SPAM_AUTO_BAN_ACTOR, SPAM_AUTO_BAN_REASON, spamAutoBanned } from "@/lib/domain/products/repository";
 import { repoReviewOpen } from "@/lib/domain/products/repo-reviews";
 import { loadTaskModels } from "@/lib/llm/ai-task-resolver";
+import { firstReviewers } from "@/lib/crawl/first-reviewers";
+import { ensureReviewTaskRanks } from "@/lib/crawl/review-task-ranks";
+import { secondReviewVoterSets } from "@/lib/crawl/second-review-voters";
 import { sharedStore } from "@/lib/cache/shared";
 import { sharedLoader } from "./shared-cache";
 import { kstDayStart, type FreshWindows } from "./windows";
@@ -249,11 +252,14 @@ const MODEL_SLOTS = [
  * 키워드 실패는 따로 남지 않아, 지난 1시간에 실패로 고쳐 쓴 행을 센다.
  */
 export async function modelHealth(settings: CrawlSettings, now = new Date()): Promise<ModelHealth[]> {
-  const firstModel = settings.firstReview?.model ?? null;
+  // 1차·2차는 「작업 ↔ 모델」 순위(PR C1) — 1차 1순위, 2차는 1차와 다른 첫 투표자·첫 예비
+  await ensureReviewTaskRanks();
+  const firstModel = firstReviewers(settings)[0]?.model ?? null;
+  const second = secondReviewVoterSets(settings);
   const configured: Record<ModelHealth["key"], string | null> = {
     first: firstModel,
-    second: settings.secondReview.voters.find((voter) => !sameReviewModel(voter.model, firstModel))?.model ?? null,
-    fallback: settings.secondReview.fallbacks?.[0]?.model ?? null,
+    second: second.voters.find((voter) => !sameReviewModel(voter.model, firstModel))?.model ?? null,
+    fallback: second.fallbacks[0]?.model ?? null,
     // 키워드 짓기의 모델은 「작업 ↔ 모델」 1순위다(PR B) — 순위가 없으면 모름
     keywords: (await loadTaskModels("product-search-profile"))[0]?.model ?? null,
   };

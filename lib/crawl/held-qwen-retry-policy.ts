@@ -95,10 +95,10 @@ export const appliedHeldQwenAttemptSql = (candidate: { signals?: unknown } | nul
 /** 테이블의 후보 열로 heldQwenGateFirstSql 의 appliedAttemptId 를 — signals->>'heldQwenAttemptId' */
 export const appliedHeldQwenAttemptColumn = (signals: AnyPgColumn | SQL): SQL => sql`(${signals}->>'heldQwenAttemptId')`;
 
-/** 앞의 대괄호 덩이를 모두 뗀 모델 이름 — sameOpinionModel·review-model-identity.ts sameUnderlyingModel 의 SQL 짝 */
+/** 앞의 대괄호 덩이를 모두 뗀 모델 이름 — sameOpinionModel·review-model-identity.ts sameUnderlyingModel 의 SQL 짝. 연결로 가른 장부 이름의 꼬리(@<연결 8자>)도 뗀다(C1) */
 export const underlyingModelSql = (name: SQL): SQL => {
   const aliases = readModelRegistry().models.map(model => sql`WHEN ${model.key} THEN ${underlyingReviewModel(model.model)}`);
-  return sql`CASE lower(trim(${name})) ${sql.join(aliases, sql` `)} ELSE regexp_replace(regexp_replace(regexp_replace(lower(trim(${name})), '^\\[[^]]*\\][[:space:]]*', ''), '^[^/[:space:]]+/', ''), '[+](vision(-shot2)?|prompt-v3)$', '') END`;
+  return sql`CASE lower(trim(${name})) ${sql.join(aliases, sql` `)} ELSE regexp_replace(regexp_replace(regexp_replace(regexp_replace(lower(trim(${name})), '@[0-9a-f]{8}$', ''), '^\\[[^]]*\\][[:space:]]*', ''), '^[^/[:space:]]+/', ''), '[+](vision(-shot2)?|prompt-v3)$', '') END`;
 };
 
 /**

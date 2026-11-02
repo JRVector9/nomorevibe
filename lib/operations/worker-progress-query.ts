@@ -186,7 +186,10 @@ export function buildWorkerProgress(
  * 순위 없음·표 못 읽음·모든 순위를 쓸 수 없음 — 설정의 일이라 재시작이 고치지 못한다)이 쓴다.
  */
 const ALL_SKIPPED_CODES: Readonly<Record<string, readonly string[]>> = {
-  "crawl-agent-review": [AGENT_REVIEW_ALL_SKIPPED],
+  // 1차·2차·Grok 로그인 유지(PR C1): 순위 없음·표 못 읽음·모든 순위를 쓸 수 없음도 설정의 일이다
+  "crawl-agent-review": [AGENT_REVIEW_ALL_SKIPPED, ...AI_TASK_RANK_DEGRADED_CODES],
+  "second-review": AI_TASK_RANK_DEGRADED_CODES,
+  "grok-session-check": AI_TASK_RANK_DEGRADED_CODES,
   ...Object.fromEntries(AI_TEXT_TASK_IDS.filter(job => job !== "search-query-translate").map(job => [job, AI_TASK_RANK_DEGRADED_CODES])),
 };
 /**

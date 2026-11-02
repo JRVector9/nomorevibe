@@ -25,9 +25,8 @@ import { JOB_CATALOG } from "@/lib/jobs/catalog";
 import { dbErrorFields, isDbDeadlock } from "@/lib/db/error-fields";
 import { writerSiteActive } from "@/lib/operations/dr/epoch";
 import { canonicalReviewModel, sameReviewModel, sameUnderlyingModel } from "./review-model-identity";
-import { secondReviewFallbacks, secondReviewVoters } from "./second-review-voters";
-import { requireStageAssignments } from "@/lib/llm/stage-assignment-snapshot";
-import { firstReviewer } from "./agent-review";
+import { secondReviewFallbacks, secondReviewFallbacksFor, secondReviewVoters, withoutTakenModels } from "./second-review-voters";
+import { requireReviewTaskRanks } from "./review-task-ranks";
 import { firstReviewers, firstReviewIdentitySql, hasFirstReviewer } from "./first-reviewers";
 import { reviewSemanticNow } from "./review-replay-context";
 import { appliedHeldQwenAttemptColumn, heldQwenGateFirst, heldQwenGateFirstSql, underlyingModelSql } from "./held-qwen-retry-policy";
@@ -223,7 +222,7 @@ async function wakeStaleSourceJobs(wakes: ReadonlySet<StaleSourceWake>): Promise
 }
 
 function currentFirst(domain: ControllerDomain, gate = false): CrawlReviewAttempt | undefined {
-  const pool = firstReviewers(domain.settings, firstReviewer(domain.settings));
+  const pool = firstReviewers(domain.settings);
   return [...domain.attempts].reverse().find(row => row.kind === "automatic" && row.state === "succeeded"
     && (row.provider === "claude-cli" || row.provider === "abcllm" || hasFirstReviewer(pool, row))
     && (!gate || hasFirstReviewer(pool, row))
@@ -242,7 +241,7 @@ function controllerInputMatches(domain: ControllerDomain, row: SecondReview, now
   const { candidate, document, input, settings } = domain;
   if (!candidate || !document || !input) return false;
   const identity = domain.attempts.find(first => first.id === row.firstAttemptId);
-  const pool = firstReviewers(settings, firstReviewer(settings));
+  const pool = firstReviewers(settings);
   const first = [...domain.attempts].reverse().find(attempt => (attempt.kind === "automatic" && attempt.state === "succeeded"
     && (attempt.provider === "claude-cli" || attempt.provider === "abcllm" || hasFirstReviewer(pool, attempt))
     || row.trigger === "ai_approved" && heldQwenGateFirst(settings, attempt, candidate))
@@ -431,7 +430,7 @@ const PUBLISHED_LIMIT = 25;
  * 같은 후보에 새 1차 판단이 오면 앞의 것은 superseded 로 닫는다 — 한 후보가 두 칩에 겹쳐 세어지지 않게.
  */
 export async function enqueueSecondReviews(_settingsHint: CrawlSettings, now: Date | undefined, lease: JobLease): Promise<number> {
-  await requireStageAssignments(); // 배정 표(PR 3b-B): 켜졌는데 못 읽었으면 미룬다 — 예전 투표자 목록으로 올리거나 닫지 않는다
+  await requireReviewTaskRanks(); // 「작업 ↔ 모델」 순위를 한 번도 못 읽었으면 미룬다 — 빈 투표자 목록으로 올리거나 닫지 않는다(PR C1)
   now ??= new Date();
   const [saved] = await db.select().from(crawlSettings).where(eq(crawlSettings.id, 1));
   const settings = mergeWithDefaults(saved?.values);
@@ -476,8 +475,8 @@ export async function enqueueSecondReviews(_settingsHint: CrawlSettings, now: Da
       where s.candidate_id = ${latest.candidateId} and s.input_hash = ${latest.inputHash}
         and s.first_attempt_id = ${latest.firstAttemptId}
         and exists(select 1 from jsonb_array_elements(${JSON.stringify(voters)}::jsonb) v
-          where v->>'provider'=s.provider and regexp_replace(lower(trim(v->>'model')), '^\\[mlx\\][[:space:]]*', '', 'i')
-            = regexp_replace(lower(trim(s.model)), '^\\[mlx\\][[:space:]]*', '', 'i'))) < ${required}`))
+          where v->>'provider'=s.provider and regexp_replace(regexp_replace(lower(trim(v->>'model')), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i')
+            = regexp_replace(regexp_replace(lower(trim(s.model)), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i'))) < ${required}`))
     .limit(ENQUEUE_LIMIT * 4);
   /**
    * 세워 둔 모델마다 한 행. 누가 볼지를 올릴 때 적는다 — 유일 색인이 (후보, 입력, 모델)이라
@@ -499,7 +498,7 @@ export async function enqueueSecondReviews(_settingsHint: CrawlSettings, now: Da
    * 발행된다 — reviewApprovalPredicate·assertReviewApproval 이 이 행들을 본다. 1차와 같은 모델의 표는 되풀이라
    * 올리지 않는다. 실측(블라인드 159건): 1차 혼자 승인하면 124건 중 오답 9, 둘 다 승인하면 116건 중 5.
    */
-  const pool = firstReviewers(settings, firstReviewer(settings));
+  const pool = firstReviewers(settings);
   if (settings.reviewMode === "enforce" && pool.length) {
     // 지금 1차 심사자의 판단만 본다 — 발행 조건(activeReviewIdentity)과 같은 기준이어야 관문이 엉뚱한 판단에 붙지 않는다
     const approved = db.selectDistinctOn([crawlReviewAttempts.candidateId], {
@@ -523,8 +522,8 @@ export async function enqueueSecondReviews(_settingsHint: CrawlSettings, now: Da
         gt(approved.validUntil, semanticNow), sql`${gateRequired} > 0`, sql`(select count(*) from ${secondReviews} s
           where s.candidate_id = ${approved.candidateId} and s.first_attempt_id = ${approved.firstAttemptId} and s.trigger = 'ai_approved'
             and exists(select 1 from jsonb_array_elements(${JSON.stringify(voters)}::jsonb) v
-              where v->>'provider'=s.provider and regexp_replace(lower(trim(v->>'model')), '^\\[mlx\\][[:space:]]*', '', 'i')
-                = regexp_replace(lower(trim(s.model)), '^\\[mlx\\][[:space:]]*', '', 'i'))) < ${gateRequired}`))
+              where v->>'provider'=s.provider and regexp_replace(regexp_replace(lower(trim(v->>'model')), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i')
+                = regexp_replace(regexp_replace(lower(trim(s.model)), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i'))) < ${gateRequired}`))
       .limit(ENQUEUE_LIMIT);
     /*
      * 2차에 1차와 다른 모델이 하나도 없으면 두 모델 승인을 할 수 없다 — 발행도 재심사도 안 되는 채로 멈추지 않게
@@ -544,7 +543,7 @@ export async function enqueueSecondReviews(_settingsHint: CrawlSettings, now: Da
   // 지금 세운 모델 중 이 공개분을 아직 안 본 것이 있다 — 다 본 것이 2,000건 상한을 차지하지 않게 SQL 에서 거른다
   const unsampled = sql`exists(select 1 from jsonb_array_elements_text(${JSON.stringify(voters.map(voter => canonicalReviewModel(voter.model)))}::jsonb) as v(model)
     where not exists(select 1 from ${secondReviews} s where s.candidate_id = ${crawlCandidates.id} and s.published_slug = ${crawlCandidates.publishedSlug}
-      and regexp_replace(lower(trim(s.model)), '^\\[mlx\\][[:space:]]*', '', 'i') = v.model
+      and regexp_replace(regexp_replace(lower(trim(s.model)), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i') = v.model
       and not (s.status = 'resolved' and coalesce(s.resolution, '') in ('superseded', 'model_removed'))))`;
   const published = await db.select({ id: crawlCandidates.id, repo: crawlCandidates.repo, slug: crawlCandidates.publishedSlug,
     productUrl: crawlCandidates.productUrl, pageMeta: crawlDocuments.pageMeta, pageStatus: crawlDocuments.pageStatus, documentUrl: crawlDocuments.productUrl })
@@ -643,7 +642,7 @@ export async function enqueueSecondReviews(_settingsHint: CrawlSettings, now: Da
  * 지우지 않는다. 몇 건을 누가 어떻게 끝냈는지가 2차 심사의 정확도다.
  */
 export async function closeSettledSecondReviews(now: Date | undefined, lease: JobLease): Promise<number> {
-  await requireStageAssignments(); // 배정 표(PR 3b-B): 켜졌는데 못 읽었으면 미룬다 — 예전 투표자 목록으로 올리거나 닫지 않는다
+  await requireReviewTaskRanks(); // 「작업 ↔ 모델」 순위를 한 번도 못 읽었으면 미룬다 — 빈 투표자 목록으로 올리거나 닫지 않는다(PR C1)
   now ??= new Date();
   const semanticNow = reviewSemanticNow(now);
   const active = ["pending", "failed", "agreed", "needs_human"] as const;
@@ -654,23 +653,23 @@ export async function closeSettledSecondReviews(now: Date | undefined, lease: Jo
   const removedPredicate = and(inArray(secondReviews.status, ["pending", "failed", "agreed", "needs_human"]),
       sql`not exists(select 1 from jsonb_array_elements(case when ${secondReviews.fallbackForId} is null then ${JSON.stringify(voters)}::jsonb else ${JSON.stringify(fallbacks)}::jsonb end) v
         where v->>'provider'=coalesce(${secondReviews.provider}, 'claude-cli')
-          and regexp_replace(lower(trim(v->>'model')), '^\\[mlx\\][[:space:]]*', '', 'i')
-            = regexp_replace(lower(trim(${secondReviews.model})), '^\\[mlx\\][[:space:]]*', '', 'i')
+          and regexp_replace(regexp_replace(lower(trim(v->>'model')), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i')
+            = regexp_replace(regexp_replace(lower(trim(${secondReviews.model})), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i')
           and (${secondReviews.fallbackForId} is null or exists(select 1 from second_reviews root
             where root.id=${secondReviews.fallbackForId} and root.fallback_for_id is null
               and root.candidate_id=${secondReviews.candidateId} and root.generation_key=${secondReviews.generationKey}
               and root.input_hash=${secondReviews.inputHash} and root.status='resolved' and root.resolution='fallback'
               and exists(select 1 from jsonb_array_elements(${JSON.stringify(voters)}::jsonb) primary_v
                 where primary_v->>'provider'=root.provider
-                  and regexp_replace(lower(trim(primary_v->>'model')), '^\\[mlx\\][[:space:]]*', '', 'i')
-                    = regexp_replace(lower(trim(root.model)), '^\\[mlx\\][[:space:]]*', '', 'i')))))`);
+                  and regexp_replace(regexp_replace(lower(trim(primary_v->>'model')), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i')
+                    = regexp_replace(regexp_replace(lower(trim(root.model)), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i')))))`);
   const orphanedPredicate = and(eq(secondReviews.status, "resolved"), eq(secondReviews.resolution, "fallback"), isNull(secondReviews.fallbackForId),
       sql`exists(select 1 from second_reviews child where child.fallback_for_id=${secondReviews.id} and child.resolution='model_removed')`,
       sql`not exists(select 1 from second_reviews child where child.fallback_for_id=${secondReviews.id} and child.status in ('pending','failed','agreed','needs_human'))`,
       sql`exists(select 1 from jsonb_array_elements(${JSON.stringify(voters)}::jsonb) v
         where v->>'provider'=${secondReviews.provider}
-          and regexp_replace(lower(trim(v->>'model')), '^\\[mlx\\][[:space:]]*', '', 'i')
-            = regexp_replace(lower(trim(${secondReviews.model})), '^\\[mlx\\][[:space:]]*', '', 'i'))`);
+          and regexp_replace(regexp_replace(lower(trim(v->>'model')), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i')
+            = regexp_replace(regexp_replace(lower(trim(${secondReviews.model})), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i'))`);
   const obsoletePredicate = and(inArray(secondReviews.status, ["pending", "failed"]), or(eq(secondReviews.generationKey, "legacy"),
       sql`exists(select 1 from ${crawlReviewAttempts} a where a.id=${secondReviews.firstAttemptId}
         and (a.prompt_version<>${REVIEW_PROMPT_VERSION} or a.rules_version<>${REVIEW_RULES_VERSION} or a.valid_until<=${semanticNow.toISOString()}::timestamp))`));
@@ -1071,7 +1070,7 @@ function proposeCurrentStaleGeneration(domain: ControllerDomain, closedIds: Set<
 export async function reconcileStaleSecondReviews(now: Date | undefined, lease: JobLease, progress?: {
   afterCandidateId?: number; save: (afterCandidateId: number) => Promise<void>;
 }): Promise<number> {
-  await requireStageAssignments(); // 배정 표(PR 3b-B): 켜졌는데 못 읽었으면 미룬다 — 예전 투표자 목록으로 올리거나 닫지 않는다
+  await requireReviewTaskRanks(); // 「작업 ↔ 모델」 순위를 한 번도 못 읽었으면 미룬다 — 빈 투표자 목록으로 올리거나 닫지 않는다(PR C1)
   now ??= new Date();
   if (currentReplayDb()) return controllerWrite(lease, null, async () => 0);
   const [saved] = await db.select().from(crawlSettings).where(eq(crawlSettings.id, 1));
@@ -1169,7 +1168,7 @@ async function readControllerDomain(tx: ProductTransaction, candidateId: number)
 export async function previewStaleSecondReviews(options: { afterCandidateId?: number; limit?: number; now?: Date } = {}) {
   const limit = staleToolLimit(options.limit), after = staleToolCursor(options.afterCandidateId), now = options.now ?? new Date();
   if (currentReplayDb()) throw new Error("stale_reconcile_replay_unsupported");
-  await requireStageAssignments(); // 배정 표(PR 3b-B): 켜졌는데 못 읽었으면 미룬다 — 예전 투표자 목록으로 올리거나 닫지 않는다
+  await requireReviewTaskRanks(); // 「작업 ↔ 모델」 순위를 한 번도 못 읽었으면 미룬다 — 빈 투표자 목록으로 올리거나 닫지 않는다(PR C1)
   return db.transaction(async tx => {
     await tx.execute(sql`SET TRANSACTION READ ONLY`);
     const hints = await tx.execute<{ candidate_id: number | string }>(staleSecondReviewHintSql(after, limit));
@@ -1225,7 +1224,7 @@ export async function applyStaleSecondReviews(options: { lease: JobLease; actor:
   if (!actor || actor.length > 120) throw new Error("invalid_actor");
   const limit = staleToolLimit(options.limit), after = staleToolCursor(options.afterCandidateId), now = options.now ?? new Date();
   if (currentReplayDb()) throw new Error("stale_reconcile_replay_unsupported");
-  await requireStageAssignments(); // 배정 표(PR 3b-B): 켜졌는데 못 읽었으면 미룬다 — 예전 투표자 목록으로 올리거나 닫지 않는다
+  await requireReviewTaskRanks(); // 「작업 ↔ 모델」 순위를 한 번도 못 읽었으면 미룬다 — 빈 투표자 목록으로 올리거나 닫지 않는다(PR C1)
   const [saved] = await db.select().from(crawlSettings).where(eq(crawlSettings.id, 1));
   const settings = mergeWithDefaults(saved?.values);
   if (!settings.enabled || !settings.secondReview.enabled) {
@@ -1276,7 +1275,7 @@ export type SecondReviewWriteResult =
 export async function recordSecondReview(input: {
   receipt: SecondReviewReceipt; result: SecondReviewResult; now?: Date;
 }): Promise<SecondReviewWriteResult> {
-  await requireStageAssignments(); // 배정 표(PR 3b-B): 켜졌는데 못 읽었으면 미룬다 — 예전 투표자 목록으로 올리거나 닫지 않는다
+  await requireReviewTaskRanks(); // 「작업 ↔ 모델」 순위를 한 번도 못 읽었으면 미룬다 — 빈 투표자 목록으로 올리거나 닫지 않는다(PR C1)
   const { receipt, result, now = new Date() } = input;
   if (!receipt?.binding) throw new Error("invalid_second_review_receipt");
   const id = receipt.binding.secondReviewId;
@@ -1322,8 +1321,12 @@ export async function recordSecondReview(input: {
       // The domain candidate lock serializes allocation across primary slots.
       const attempted = await tx.select({model: secondReviews.model}).from(secondReviews).where(and(
         eq(secondReviews.candidateId, row.candidateId), eq(secondReviews.generationKey, row.generationKey)));
+      // 대체는 첫 표(root)가 든 투표자 칸의 다음 순위에서만 고른다(PR C1 — 칸마다 1·2·3순위). 이미 표를 낸·지금 투표자인 모델은 다시 빼서
+      // (런타임 가드) 한 모델이 한 항목에 두 표를 내지 않는다
+      const rootModel = row.fallbackForId ? (await tx.select({ model: secondReviews.model }).from(secondReviews)
+        .where(eq(secondReviews.id, row.fallbackForId)))[0]?.model ?? null : row.model;
       const excluded = [...secondReviewVoters(settings).map(v => v.model), ...attempted.map(v => v.model)];
-      const eligible = secondReviewFallbacks(settings).filter(v => !excluded.some(model => sameReviewModel(model, v.model)));
+      const eligible = withoutTakenModels(secondReviewFallbacksFor(settings, rootModel), excluded);
       // Prefer an independent model. This also covers an extra AI1 worker using
       // the configured AI2 fallback: a same-first fallback is reference-only and must end in human review.
       // 같은 가중치는 자리 표시가 달라도 같은 모델이다('[gpu3090] qwen3.8-flash-next' 와 보류 재심사의 'qwen3.8-flash-next')

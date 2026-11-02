@@ -12,17 +12,16 @@ import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, type ReviewInput } from ".
 import { mergeWithDefaults } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
 import { sameReviewModel, sameUnderlyingModel } from "./review-model-identity";
-import { firstReviewer } from "./agent-review";
 import { firstReviewers, firstReviewIdentitySql, hasFirstReviewer } from "./first-reviewers";
 import { secondReviewFallbacks, secondReviewVoters } from "./second-review-voters";
-import { requireStageAssignments } from "@/lib/llm/stage-assignment-snapshot";
+import { requireReviewTaskRanks } from "./review-task-ranks";
 import { reviewSemanticNow } from "./review-replay-context";
 import { appliedHeldQwenAttemptSql, heldQwenGateFirst, heldQwenGateFirstSql } from "./held-qwen-retry-policy";
 
 /** Grok upstream decisions are usable only while that exact first reviewer is configured. */
 export function firstReviewProviderPredicate(settings: CrawlSettings,
   attempts: { provider: AnyPgColumn; model: AnyPgColumn } = crawlReviewAttempts) {
-  const pool = firstReviewers(settings, firstReviewer(settings));
+  const pool = firstReviewers(settings);
   return or(inArray(attempts.provider, ["claude-cli", "abcllm"]),
     firstReviewIdentitySql(pool.filter(reviewer => reviewer.provider === "grok-cli"), attempts))!;
 }
@@ -54,10 +53,10 @@ export function secondReviewInputMatches(row: SecondReview, current: {
   if (secondReviewGeneration(row.firstAttemptId, input, row.trigger) !== row.generationKey
     || (!row.fallbackForId && sameUnderlyingModel(row.firstModel, row.model))) return false;
   if (!row.publishedSlug) {
-    const pool = firstReviewers(settings, firstReviewer(settings));
+    const pool = firstReviewers(settings);
     // 관문 행은 보류 Qwen-v2 의 승인에도 붙는다(held-qwen-retry-policy.ts) — 그 밖의 행은 지금처럼 1차 심사자의 판단에만
     const heldQwen = Boolean(first && row.trigger === "ai_approved" && heldQwenGateFirst(settings, first, candidate));
-    if (settings.firstReviewAdditional !== undefined && row.trigger === "ai_approved" && !heldQwen
+    if (row.trigger === "ai_approved" && !heldQwen
       && first && !hasFirstReviewer(pool, first)) return false;
     if (!first || !first.model?.trim() || first.id !== row.firstAttemptId || first.candidateId !== row.candidateId
       || !heldQwen && (first.kind !== "automatic" || first.state !== "succeeded"
@@ -139,8 +138,8 @@ export async function lockSecondReviewDomain(tx: ProductTransaction, id: number)
 }
 
 async function secondReviewInputContext(row: SecondReview, tx?: ProductTransaction, lockGate = false): Promise<SecondReviewDomainContext | null> {
-  // 배정 표 스위치가 켜졌는데 표를 못 읽었으면 어느 투표자가 맞는지 모른다 — 예전 목록으로 거르지 않고 미룬다(assignments_unavailable)
-  await requireStageAssignments();
+  // 「작업 ↔ 모델」 순위를 한 번도 못 읽었으면 어느 투표자가 맞는지 모른다 — 빈 목록으로 거르지 않고 미룬다(assignments_unavailable, PR C1)
+  await requireReviewTaskRanks();
   const executor = tx ?? db;
   const candidateQuery = executor.select().from(crawlCandidates).where(eq(crawlCandidates.id, row.candidateId)).limit(1);
   const [candidate] = await (tx ? candidateQuery.for("update") : candidateQuery);

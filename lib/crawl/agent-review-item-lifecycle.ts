@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { itemOwnerSchema, type ItemOwner } from '@/lib/jobs/items/types';
 import { STALE_LOCK_MS } from '@/lib/jobs/lease';
-import { firstReviewer, type AgentReviewResult } from './agent-review';
+import type { AgentReviewResult } from './agent-review';
 import type { Ai1ItemModelDispatch, CliModelDispatch } from '@/lib/llm/capacity';
 import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
 import type { PreparedAi1GatewayCall } from './agent-review-gateway';
@@ -9,7 +9,7 @@ import { agentReviewBinding } from './agent-review-ownership';
 import { isDeepStrictEqual } from 'node:util';
 import { prepareAgentReview } from './agent-review-preparation';
 import type { ProviderCircuits } from '@/lib/llm/provider-circuit-breaker';
-import { FirstReviewModelDeferredError, firstReviewerKey } from './first-reviewers';
+import { FirstReviewModelDeferredError, firstReviewRankState, firstReviewerKey } from './first-reviewers';
 import { claimConsumerItemAgentReview, loadFirstReviewConsumerContext, observeAgentReviewItemDispatch,
   renewAgentReviewItemOwnership, recordAgentReview, recordConsumerSuspectedSpam, AgentReviewItemCliModelReservationRequired,
   chooseFirstReviewForCandidate, type AgentReviewItemModelReservationRequired, type ItemModelCapacityReviewClaim, type CliModelCapacityReviewClaim } from './agent-review-repository';
@@ -37,11 +37,15 @@ export async function executeFirstReviewConsumerItem(input: {
   const loaded = await loadFirstReviewConsumerContext(candidateId);
   if (loaded.kind === 'skipped') return { state: 'skipped', reason: loaded.reason };
   const context = loaded.context;
-  const reviewer = context.settings.firstReviewAdditional === undefined ? firstReviewer(context.settings)
-    : await chooseFirstReviewForCandidate(context, undefined,
-      new Set([...input.pausedReviewers ?? [], ...input.blockedReviewers ?? []]));
-  if (!reviewer && context.settings.firstReviewAdditional !== undefined) return { state: 'skipped', reason: 'model_intent_protected' };
-  if (!reviewer) throw new Error('관리자 설정에서 1차 심사자를 골라야 AI 심사를 켤 수 있습니다');
+  // 늘 순위 고르기다(PR C1 — 「작업 ↔ 모델」 1차 AI 검수 1·2·3순위). 쓸 수 없는·쉬는·막힌 순위는 비켜 간다
+  const avoid = new Set([...input.pausedReviewers ?? [], ...input.blockedReviewers ?? []]);
+  const reviewer = await chooseFirstReviewForCandidate(context, undefined, avoid);
+  if (!reviewer) {
+    const ranks = firstReviewRankState(context.settings);
+    if (ranks.degraded) return { state: 'skipped', reason: ranks.degraded.code };
+    return { state: 'skipped', reason: ranks.pool.every(row => avoid.has(firstReviewerKey(row)) || ranks.unusable.has(firstReviewerKey(row)))
+      ? 'all_ranks_unusable' : 'model_intent_protected' };
+  }
   if (input.pausedReviewers?.has(firstReviewerKey(reviewer))) return { state: 'skipped', reason: 'model_paused' };
   const circuit = input.reviewerCircuits?.admit('ai1:' + firstReviewerKey(reviewer));
   if (circuit?.admitted === false) return { state: 'skipped', reason: 'provider_circuit_open' };
@@ -126,8 +130,7 @@ export async function executeFirstReviewConsumerItem(input: {
     return recordAgentReview({ ...context, receipt, outcome: prepared.outcome ?? claim.attempt.outcome ?? undefined,
       ...(prepared.ruleRejection ? { ruleRejection: prepared.ruleRejection } : {}) });
   } catch (error) {
-    if (context.settings.firstReviewAdditional !== undefined && error instanceof ModelCapacityDeferredError)
-      throw new FirstReviewModelDeferredError(error.reason, reviewer);
+    if (error instanceof ModelCapacityDeferredError) throw new FirstReviewModelDeferredError(error.reason, reviewer);
     throw error;
   } finally { if (circuit?.admitted) circuit.done(); }
 }

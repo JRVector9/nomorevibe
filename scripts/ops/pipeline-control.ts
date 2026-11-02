@@ -39,6 +39,8 @@ export async function pipelineControlMain(args: readonly string[], env: Readonly
   try {
     // Route judgments (status table, OPEN) use admin serving contracts too: this process's DATABASE_URL, env-only when absent.
     await (await import("@/lib/llm/serving-contract-store")).ensureServingContracts(0);
+    // 1차·2차·Grok 로그인 유지 route 의 모델은 「작업 ↔ 모델」 순위다(PR C1) — 같은 DATABASE_URL 로 순위를 읽는다(없으면 「모름」)
+    await (await import("@/lib/llm/ai-task-models-snapshot")).ensureAiTaskModels(0);
     if (command.name === "status") {
       // The runtime-settings 판 this process reads (same reload family as the serving contracts; 'default' until the row is readable).
       const [{ ensureRuntimeSettings }, { formatRuntimeSettingsLine, runtimeSettingsReadback }] = await Promise.all([

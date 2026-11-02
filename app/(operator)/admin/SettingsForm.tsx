@@ -9,8 +9,7 @@ import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import { describeChanges, formValues, type FieldValues } from "./settings/changes";
 import { searchUsage, SEED_INTERVAL_MINUTES } from "./settings/model";
 import { FilterLists } from "./settings/FilterLists";
-import { AssignmentMovedNotice } from "./settings/AssignmentMovedNotice";
-import { ModelRows } from "./settings/ModelRows";
+import { TaskRanksPointer } from "./settings/TaskRanksPointer";
 import { SignalsTable, type SignalYieldView } from "./settings/SignalsTable";
 import { chipClass, hintClass, inputBase, inputClass, labelClass, SettingsCard, Switch } from "./settings/Switch";
 
@@ -130,7 +129,7 @@ function useLeaveGuard(dirty: boolean, onLeave: (href: string) => void) {
   }, [dirty, onLeave]);
 }
 
-function SettingsFormBody({ settings, version, yields, secondControls, assignmentLocked = false, onRevert, onDirtyChange, onSaved }: {
+function SettingsFormBody({ settings, version, yields, secondControls, onRevert, onDirtyChange, onSaved }: {
   settings: CrawlSettings; version: string; yields: Record<string, SignalYieldView>; secondControls?: React.ReactNode; assignmentLocked?: boolean; onRevert: () => void;
   onDirtyChange?: (dirty: boolean) => void; onSaved?: (version: string) => void;
 }) {
@@ -243,32 +242,9 @@ function SettingsFormBody({ settings, version, yields, secondControls, assignmen
 
       <SettingsCard id="first" title="1차 심사" note="규칙이 통과시킨 후보를 AI가 한 번 더 봅니다 · 발행을 막을지(발행 보호)는 아래 2차 심사 칸에서 정합니다"
         actions={<a href="#second" className={`${chipClass} bg-bg-hover text-fg-2 hover:text-fg`}>발행 보호 {REVIEW_MODE_LABELS[settings.reviewMode]}</a>}>
-        {assignmentLocked && <AssignmentMovedNotice />}
-        {assignmentLocked ? <div className="flex flex-col gap-1.5" data-readonly="true">
-          <span className={labelClass}>모델</span>
-          <input type="hidden" name="firstReviewProvider" value={settings.firstReview?.provider ?? "abcllm"} />
-          <input type="hidden" name="firstReviewModel" value={settings.firstReview?.model ?? ""} />
-          <code className="w-fit rounded-[9px] border border-line bg-bg-soft px-2.5 py-2 text-[13px]">{settings.firstReview
-            ? `${settings.firstReview.provider} · ${settings.firstReview.model}` : "없음 — 1차 심사가 멈춥니다"}</code>
-        </div> : <div className="flex flex-wrap items-end gap-3">
-          <div className="flex flex-col gap-1.5">
-            <span className={labelClass}>부르는 곳</span>
-            <Segmented name="firstReviewProvider" label="1차 심사를 부르는 곳" defaultValue={settings.firstReview?.provider ?? "abcllm"}
-              options={[{ value: "abcllm", label: "abcllm · 직접 연결 계약" }, { value: "claude-cli", label: "Claude CLI" }, { value: "grok-cli", label: "Grok CLI" }]} />
-          </div>
-          <div className="flex min-w-0 flex-[1_1_260px] flex-col gap-1.5">
-            <label htmlFor="firstReviewModel" className={labelClass}>모델</label>
-            <input id="firstReviewModel" name="firstReviewModel" defaultValue={settings.firstReview?.model ?? ""}
-              placeholder="장비가 표시된 모델 이름 · 비우면 1차 심사가 멈춥니다" className={`${inputClass} font-mono`} />
-          </div>
-        </div>}
-        <div className="flex flex-col gap-1.5">
-          <span className={labelClass}>추가 1차 모델 · 후보를 나눠 처리</span>
-          <input type="hidden" name="firstAdditionalPresent" value="1" />
-          <ModelRows prefix="firstAdditional" initial={settings.firstReviewAdditional ?? []} max={2} allowDirect={false}
-            placeholder="장비가 표시된 모델 이름" addLabel="+ 추가 1차 모델" readOnly={assignmentLocked} />
-          <Link href="/admin/models" prefetch={false} className="text-[13px] font-semibold text-accent-ink hover:underline">단계별 모델 선택 · Supa 1차 / GPU3090 2차 구성 →</Link>
-        </div>
+        {/* 1차 심사 모델은 「작업 ↔ 모델」 순위뿐이다(PR C1) — 이 폼은 바꾸지 않는다 */}
+        <TaskRanksPointer what="1차 심사 모델(1·2·3순위)" />
+        <Link href="/admin/models" prefetch={false} className="text-[13px] font-semibold text-accent-ink hover:underline">모델 운영 현황 →</Link>
         <div className="flex flex-col gap-1.5">
           <label htmlFor="reviewConcurrency" className={labelClass}>동시 실행 수</label>
           <div className="flex flex-wrap items-start gap-4">
@@ -291,21 +267,8 @@ function SettingsFormBody({ settings, version, yields, secondControls, assignmen
       <SettingsCard id="second" title="2차 심사" note="다른 모델이 다시 봅니다 · 결과는 제안일 뿐 판정을 바꾸지 않습니다"
         actions={<span className="flex items-center gap-2 text-[13px] font-semibold"><Switch name="secondReviewEnabled" defaultChecked={secondReview.enabled} label="2차 심사 켜기" />켜기</span>}>
         {secondControls && <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">{secondControls}</div>}
-        {assignmentLocked && <AssignmentMovedNotice />}
-        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-          <div className="flex min-w-0 flex-col gap-1.5">
-            <span className={labelClass}>다시 볼 모델 <span className="font-normal text-fg-3">최대 3</span></span>
-            <ModelRows prefix="voter" initial={secondReview.voters} max={3} placeholder="장비가 표시된 모델 이름"
-              addLabel="+ 모델 세우기 (성향이 다른 모델일수록 좋습니다)" readOnly={assignmentLocked} />
-            <p className={hintClass}>직접 연결 계약에 없는 모델을 적으면 그 표만 실패로 남고 운영센터에 뜹니다. 모델은 「모델 연결」에서 확인하세요.</p>
-          </div>
-          <div className="flex min-w-0 flex-col gap-1.5">
-            <span className={labelClass}>실패 시 대체 <span className="font-normal text-fg-3">순서대로 최대 2</span></span>
-            <ModelRows prefix="fallback" initial={secondReview.fallbacks ?? []} max={2} placeholder="장비가 표시된 모델 이름" addLabel="+ 대체 모델 더하기"
-              readOnly={assignmentLocked} />
-            <p className={hintClass}>시간 초과·응답 오류에만 씁니다. 세 번 실패하면 사람 확인으로 넘깁니다. 1차와 같은 모델의 대체 결과는 참고 의견입니다.</p>
-          </div>
-        </div>
+        {/* 2차 투표·대체 모델은 「작업 ↔ 모델」 투표자 칸 1·2·3 순위뿐이다(PR C1) — 이 폼은 바꾸지 않는다 */}
+        <TaskRanksPointer what="2차 투표 모델(투표자 칸마다 1·2·3순위 — 1순위를 쓸 수 없으면 그 칸의 2·3순위가 표를 냅니다)" />
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
           <NumberField id="secondReviewSamplePercent" label="공개분 표본" defaultValue={Math.round(secondReview.sampleRate * 100)} min={0} max={50} step={1}
             suffix="%" hint="규칙만 통과해 공개된 것 중 다시 볼 비율" />

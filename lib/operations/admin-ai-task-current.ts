@@ -1,8 +1,8 @@
 import { eq } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import { productAuditCampaigns } from "@/lib/db/schema";
-import { firstReviewers, firstReviewTableRows } from "@/lib/crawl/first-reviewers";
-import { secondReviewVoterSets } from "@/lib/crawl/second-review-voters";
+import { legacyFirstReviewers } from "@/lib/crawl/first-reviewers";
+import { underlyingReviewModel } from "@/lib/crawl/review-model-identity";
 import { resolveAi1GatewayServingContract } from "@/lib/crawl/agent-review-serving-contract";
 import { resolveAi2GatewayServingContract } from "@/lib/crawl/second-review-serving-contract";
 import { koreanTranslationQwenEnabled } from "@/lib/crawl/korean-translation-config";
@@ -30,7 +30,8 @@ import type { ModelEnv } from "./pipeline-control";
 
 /**
  * 「지금 실제로 쓰는 모델」 — 작업 × 칸마다 오늘 실행 쪽이 고르는 모델과 그 서버(2026-11-02, PR A). 새 표(ai_task_models)는 읽지 않는다.
- * 고르기는 오늘의 코드 그대로를 부른다: 1차 firstReviewers(배정 표 또는 설정)·2차 secondReviewVoterSets·text 일곱 경로는 PR B 부터 실행 쪽이 이 표를 읽으므로
+ * 고르기는 오늘의 코드 그대로를 부른다: 1차·2차·Grok 로그인 유지는 PR C1 부터 실행 쪽이 순위만 읽으므로 가져오기 출처인 옛 설정(1차 firstReview·
+ * firstReviewAdditional, 2차 voters·fallbacks — 같은 대체 모델은 첫 칸에만)·text 일곱 경로는 PR B 부터 실행 쪽이 이 표를 읽으므로
  * 저장한 순위 그대로(resolveTextTaskRanks — 쓸 수 없는 순위는 그 까닭)·
  * 직접 모델 단계의 withAdminStagePools/withAdminModelStage 안의 configuredModel·modelBaseUrl(등록부·env·단계 풀)·화면 판별 screenModelConfig·
  * 보강 assistBackendDrains·분류 connect 에이전트 설정·감사 캠페인 행·임베딩/재정렬 EMBEDDING_URL·RERANK_URL.
@@ -123,23 +124,35 @@ export function buildAiCurrentSlots(sources: AiCurrentSources): AiCurrentSlot[] 
     try {
       switch (task.id) {
         case "first-review": {
-          const table = firstReviewTableRows(sources.settings);
-          const pool = firstReviewers(sources.settings);
-          out.push(slot(task, { source: table ? "배정 표(ai1)" : "설정 firstReview · firstReviewAdditional", uses: pool.map((row, index) =>
-            reviewer(task, row, table ? `배정 표 ai1 ${index + 1}번째` : index === 0 ? "firstReview" : `firstReviewAdditional[${index - 1}]`)),
-            ...(pool.length ? {} : { skip: "1차 심사자가 설정에 없습니다." }) }));
+          // 가져오기 출처 = 옛 설정(PR C1 부터 실행 쪽은 작업 ↔ 모델 순위만 읽는다 — 이 칸은 순위를 처음 채우는 데만 쓴다). 화면의 「지금 실제로 쓰는 모델」은
+          // 저장한 순위다(admin-ai-tasks-repository live 줄).
+          const pool = legacyFirstReviewers(sources.settings);
+          out.push(slot(task, { source: "옛 설정 firstReview · firstReviewAdditional(가져오기 출처)", uses: pool.map((row, index) =>
+            reviewer(task, row, index === 0 ? "firstReview" : `firstReviewAdditional[${index - 1}]`)),
+            ...(pool.length ? {} : { skip: "옛 설정에 1차 심사자가 없습니다." }) }));
           break;
         }
         case "second-review": {
-          const sets = secondReviewVoterSets(sources.settings);
+          // 가져오기 출처 = 옛 설정 voters·fallbacks. 옛 대체 목록은 투표자 모두가 나눠 썼다 — 순위로 옮기면 칸마다 따로라, 같은 대체 모델을 두 칸에 넣으면
+          // 한 항목에 같은 모델이 두 표를 낼 수 있다. 그래서 대체 모델은 그것을 받을 수 있는 첫 칸에만 넣고 다음 칸에서는 뺀다(경고). 투표자와 같은 모델의 대체도 뺀다.
+          const voters = sources.settings.secondReview.voters, fallbacks = sources.settings.secondReview.fallbacks ?? [];
+          const placed = new Set<string>(voters.map(voter => underlyingReviewModel(voter.model)));
           for (let index = 1; index <= task.slots; index++) {
-            const voter = sets.voters[index - 1];
-            if (!voter) { out.push(slot(task, { source: sets.source === "table" ? "배정 표(ai2)" : "설정 secondReview", skip: `투표자 ${index}이(가) 없습니다.` }, index)); continue; }
-            const fallbacks = sets.fallbacks.map((row, at) => ({ row, at })).filter(entry => entry.row.model !== voter.model);
-            out.push(slot(task, { source: sets.source === "table" ? "배정 표(ai2)" : "설정 secondReview", uses: [reviewer(task, voter, sets.source === "table"
-              ? `배정 표 ai2 투표 ${index}` : `secondReview.voters[${index - 1}]`), ...fallbacks.map(entry => reviewer(task, entry.row, sets.source === "table"
-              ? `배정 표 ai2 대체 ${entry.at + 1}` : `secondReview.fallbacks[${entry.at}]`))],
-              notes: fallbacks.length ? ["2·3순위는 오늘의 2차 대체 목록입니다 — 오늘은 투표자 모두가 같은 대체 목록을 나눠 씁니다."] : [] }, index));
+            const voter = voters[index - 1];
+            if (!voter) { out.push(slot(task, { source: "옛 설정 secondReview(가져오기 출처)", skip: `투표자 ${index}이(가) 없습니다.` }, index)); continue; }
+            const notes: string[] = [];
+            const mine = fallbacks.map((row, at) => ({ row, at })).filter(entry => {
+              const key = underlyingReviewModel(entry.row.model);
+              if (key === underlyingReviewModel(voter.model) || voters.some(other => underlyingReviewModel(other.model) === key)) {
+                notes.push(`대체 ${entry.row.model}은(는) 투표자와 같은 모델이라 옮기지 않습니다.`); return false;
+              }
+              if (placed.has(key)) { notes.push(`대체 ${entry.row.model}은(는) 앞 투표자 칸의 2·3순위로만 옮깁니다 — 한 모델이 한 항목에 두 표를 내지 않게 이 칸에서는 뺍니다.`); return false; }
+              return true;
+            }).slice(0, 2);
+            for (const entry of mine) placed.add(underlyingReviewModel(entry.row.model));
+            out.push(slot(task, { source: "옛 설정 secondReview(가져오기 출처)", uses: [reviewer(task, voter, `secondReview.voters[${index - 1}]`),
+              ...mine.map(entry => reviewer(task, entry.row, `secondReview.fallbacks[${entry.at}]`))],
+              notes: [...(mine.length ? ["2·3순위는 옛 2차 대체 목록입니다 — 순위로 옮기면 이 칸의 투표자가 쓸 수 없을 때만 이 칸의 표를 냅니다."] : []), ...notes] }, index));
           }
           break;
         }
@@ -215,10 +228,11 @@ export function buildAiCurrentSlots(sources: AiCurrentSources): AiCurrentSlot[] 
           break;
         }
         case "grok-session-check": {
-          const sets = secondReviewVoterSets(sources.settings);
-          const grok = [...sets.voters, ...sets.fallbacks, ...firstReviewers(sources.settings)].find(row => row.provider === "grok-cli");
-          out.push(grok ? slot(task, { source: "Grok 심사자(1·2차 설정)", uses: [cli(task, "grok-cli", grok.model, "Grok 심사자")] })
-            : slot(task, { source: "Grok 심사자(1·2차 설정)", skip: "Grok 심사자가 없어 지금 돌지 않습니다." }));
+          // 가져오기 출처 = 옛 1·2차 설정의 Grok 심사자(PR C1 부터 잡은 이 작업의 순위만 읽는다)
+          const review = sources.settings.secondReview;
+          const grok = [...review.voters, ...review.fallbacks ?? [], ...legacyFirstReviewers(sources.settings)].find(row => row.provider === "grok-cli");
+          out.push(grok ? slot(task, { source: "옛 설정의 Grok 심사자(가져오기 출처)", uses: [cli(task, "grok-cli", grok.model, "Grok 심사자")] })
+            : slot(task, { source: "옛 설정의 Grok 심사자(가져오기 출처)", skip: "옛 설정에 Grok 심사자가 없습니다." }));
           break;
         }
         case "product-embedding": case "search-embedding": case "search-rerank": {

@@ -18,6 +18,11 @@ export const ai1RawGatewayServingContractSchema = z.object({
       && !url.search && !url.hash && url.pathname === "/v1/chat/completions";
   }),
   totalTokenBound: z.number().int().positive().safe(),
+  /**
+   * 엔진에 보내는 모델 이름 — model 이 같은 모델을 다른 연결에도 둔 순위의 장부 이름(`<모델>@<연결 8자>`)일 때만 있다(PR C1, text 경로의 PR B 와 같은 규칙).
+   * 없으면 칸이 없는 예전 계약과 parse 결과·hash 가 같다.
+   */
+  engineModel: identity.optional(),
 }).strict();
 /** AI1 의 직접 계약 — AI2 와 같은 공통 direct-openai-chat-v1 모양(tokenizer 로 요청 상한을 확인한다). */
 export const ai1DirectServingContractSchema = directServingContractSchema("crawl-agent-review", [DIRECT_OPENAI_CHAT_PROTOCOL] as const);

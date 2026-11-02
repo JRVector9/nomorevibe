@@ -1,4 +1,6 @@
 import { cache, Suspense } from "react";
+import { firstReviewers } from "@/lib/crawl/first-reviewers";
+import { secondReviewVoterSets } from "@/lib/crawl/second-review-voters";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { cookies } from "next/headers";
@@ -510,7 +512,9 @@ export default async function StatusPage() {
   }));
   // Grok 은 reviewer 의 grok-session-check 잡이 4시간마다 남기는 관측(service:grok:<instance>) — 가장 최근 것 하나.
   // 심사에 Grok 을 쓰지 않으면 잡이 아무것도 남기지 않아 옛 관측이 초록으로 남았다(2026-10-08, 34시간 전 것) — 쓸 때만, 5시간 넘으면 오래됨
-  const grokConfigured = [settings.firstReview, ...settings.secondReview.voters, ...(settings.secondReview.fallbacks ?? [])]
+  // 1차·2차의 Grok 은 「작업 ↔ 모델」 순위(PR C1)에서 본다
+  const secondSets = secondReviewVoterSets(settings);
+  const grokConfigured = [...firstReviewers(settings), ...secondSets.voters, ...secondSets.fallbacks]
     .some((voter) => voter?.provider === "grok-cli");
   const grok = ops.observations.filter((row) => row.key.startsWith("service:grok:"))
     .sort((a, b) => new Date(b.observedAt).getTime() - new Date(a.observedAt).getTime())[0];

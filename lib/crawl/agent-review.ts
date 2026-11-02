@@ -29,6 +29,8 @@ export type ReviewCliRun = (args: string[], stdin: string, options: {
   timeoutMs: number; signal?: AbortSignal;
   /** 생각을 길게 하는 호출(검색 키워드 검수, effort high)은 2천 토큰으로 모자란다 */
   maxOutputTokens?: number;
+  /** 띄울 명령. 1차·2차 심사는 PATH 의 도구 이름(claude)을 준다(PR C1) — 없으면 예전 그대로 CLAUDE_CLI 또는 claude */
+  command?: string;
 }) => Promise<ReviewCliResult>;
 
 const OUTPUT_SCHEMA = {
@@ -153,8 +155,9 @@ export function cliReviewModel(value: string | null | undefined): string | null 
 /** local-direct: 엔진 직접 계약으로 공통 장부의 AI1 게이트웨이 kind 를 쓰는 1차 심사자(PR 3b-C). */
 export type FirstReviewer = { provider: "claude-cli" | "abcllm" | "grok-cli" | "local-direct"; model: string };
 /**
- * 1차 심사를 누가 볼지 — 관리자 설정(firstReview)만 본다. 없으면 null(잡이 "1차 심사자를 설정해야" 로 멈춘다).
- * 예전의 환경변수 대체는 2026-10-31 abcLLM 정리 때 지웠다 — 모델은 재배포 없이 설정에서 바꾼다.
+ * 옛 설정의 1차 심사자(crawl_settings.firstReview) — 1차 심사의 실행 쪽은 이것을 읽지 않는다(PR C1: 「작업 ↔ 모델」 1차 AI 검수 순위, first-reviewers.ts).
+ * 남은 쓰임: 격리 replay·인증 용량 스냅숏(설정이 manifest 의 모델을 선언한다)과 발행분 감사 캠페인 시작(PR C2 가 그 작업의 순위로 옮긴다).
+ * 편집 화면은 없앴다 — 값은 마지막으로 저장된 그대로다.
  */
 export function firstReviewer(settings: { firstReview?: FirstReviewer }): FirstReviewer | null {
   return settings.firstReview ?? null;
@@ -176,7 +179,7 @@ export const runReviewCli: ReviewCliRun = async (args, stdin, options) => {
     return await new Promise<ReviewCliResult>((resolve) => {
       const env = { ...process.env, CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(options.maxOutputTokens ?? reviewCliMaxOutputTokens()) };
       delete (env as NodeJS.ProcessEnv).CLAUDECODE;
-      const child = spawn(process.env.CLAUDE_CLI ?? "claude", args, {
+      const child = spawn(options.command ?? process.env.CLAUDE_CLI ?? "claude", args, {
         // Inherit the worker process group so supervisor shutdown also reaches this child.
         cwd: directory, env, stdio: ["pipe", "pipe", "pipe"], detached: false,
       });
@@ -245,7 +248,9 @@ export function reviewCliPrompt(serialized: string): string {
   return `<untrusted_evidence_json>\n${serialized.replace(/</g, "\\u003c").replace(/>/g, "\\u003e")}\n</untrusted_evidence_json>`;
 }
 
-export async function reviewWithAgent(input: ReviewInput, options: { model?: string; run?: ReviewCliRun; timeoutMs?: number; signal?: AbortSignal } = {}): Promise<AgentReviewResult> {
+export async function reviewWithAgent(input: ReviewInput, options: { model?: string; run?: ReviewCliRun; timeoutMs?: number; signal?: AbortSignal;
+  /** 띄울 명령(1차·2차는 PATH 의 claude — PR C1). 없으면 runReviewCli 의 예전 기본 */
+  command?: string } = {}): Promise<AgentReviewResult> {
   assertLiveReviewAdapterAllowed();
   const model = options.model;
   if (!model || cliReviewModel(model) !== model) return { ok: false, error: "not_configured" };
@@ -258,6 +263,7 @@ export async function reviewWithAgent(input: ReviewInput, options: { model?: str
   try {
     result = await (options.run ?? runReviewCli)(reviewCliArgs(model), prompt, {
       timeoutMs: Math.max(1, Math.min(options.timeoutMs ?? ceiling, ceiling)), signal: options.signal,
+      ...(options.command ? { command: options.command } : {}),
     });
   } catch { return { ok: false, error: "cli_error" }; }
   if (result.kind !== "exit") return { ok: false, error: result.kind };

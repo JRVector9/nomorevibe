@@ -207,8 +207,8 @@ const carriedDemandSql = (s: SQL) => sql`(${s}.status = 'resolved' AND ${s}.reso
   AND ${s}.resolved_by = ${STALE_REVIEW_OWNER} AND ${s}.fallback_for_id IS NULL
   AND NOT EXISTS (SELECT 1 FROM second_reviews taken
     WHERE taken.candidate_id = ${s}.candidate_id AND taken.published_slug IS NOT DISTINCT FROM ${s}.published_slug
-      AND regexp_replace(lower(trim(taken.model)), '^[[]mlx[]][[:space:]]*', '', 'i')
-        = regexp_replace(lower(trim(${s}.model)), '^[[]mlx[]][[:space:]]*', '', 'i')
+      AND regexp_replace(regexp_replace(lower(trim(taken.model)), '@[0-9a-f]{8}$', ''), '^[[]mlx[]][[:space:]]*', '', 'i')
+        = regexp_replace(regexp_replace(lower(trim(${s}.model)), '@[0-9a-f]{8}$', ''), '^[[]mlx[]][[:space:]]*', '', 'i')
       AND NOT (taken.status = 'resolved' AND coalesce(taken.resolution, '') IN ('superseded', 'model_removed'))))`;
 
 /** Existing pending/failed fallback votes count as demand. Old unrelated superseded samples do not. */

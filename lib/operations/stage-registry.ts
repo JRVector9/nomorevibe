@@ -1,4 +1,6 @@
 import { configuredModel, configuredModelDefinition, modelForPurpose, modelRequestName } from "@/lib/llm/model-registry";
+import { firstReviewers } from "@/lib/crawl/first-reviewers";
+import { secondReviewVoterSets } from "@/lib/crawl/second-review-voters";
 import { taskModels } from "@/lib/llm/ai-task-resolver";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import type { CatalogRole } from "@/lib/jobs/catalog";
@@ -132,6 +134,7 @@ export function stageForJob(job: string): PipelineStageDef | null {
 }
 
 type ModelSettings = Pick<CrawlSettings, "firstReview" | "firstReviewAdditional" | "secondReview">;
+// 1차·2차 자리는 「작업 ↔ 모델」 순위를 읽는다(PR C1) — 설정 인자는 격리 replay·감사 자리에만 쓴다
 type Env = Readonly<Record<string, string | undefined>>;
 
 export type ModelSlot = Readonly<{
@@ -176,7 +179,7 @@ export const ENV_MODEL_SLOTS = [
   { stage: "intro-check", key: "intro-check", label: "소개 검수", env: "INTRO_CHECK_MODEL", fallback: modelRequestName(modelForPurpose("product-intro-check")), provider: "claude-cli", approximated: true },
 ] as const satisfies readonly { stage: StageKey; key: string; label: string; env: string | null; fallback: string; provider: string; approximated: boolean }[];
 
-/** 1차 심사자 — 관리자 설정(firstReview)만 본다. agent-review.ts firstReviewer 와 같다(환경변수 대체는 2026-10-31 제거) */
+/** 발행분 감사의 심사자 — 감사 캠페인 시작이 아직 옛 설정(firstReview)을 읽는다(product-audit.ts, PR C2 가 순위로 옮긴다) */
 function firstReviewSlot(settings: ModelSettings) {
   return settings.firstReview
     ? { code: "firstReview", provider: settings.firstReview.provider, model: settings.firstReview.model, source: "settings" as const }
@@ -189,15 +192,18 @@ function firstReviewSlot(settings: ModelSettings) {
  */
 export function resolveModelSlots(settings: ModelSettings, env: Env = process.env): ModelSlot[] {
   const first = firstReviewSlot(settings);
+  // 1차·2차는 「작업 ↔ 모델」 순위(PR C1) — 1차는 1·2·3순위, 2차는 칸마다 지금 표를 내는 순위(투표)와 그 밖의 순위(예비). 순위가 없으면 「정해진 모델 없음」
+  const pool = firstReviewers(settings), second = secondReviewVoterSets(settings);
   const slots: ModelSlot[] = [
-    { stage: "first", key: "first", label: "주", ...first, approximated: false },
-    ...(settings.firstReviewAdditional ?? []).map((reviewer, index): ModelSlot => ({ stage: "first", key: `first-additional-${index + 1}`,
-      label: `추가 ${index + 1}`, code: `firstReviewAdditional[${index}]`, provider: reviewer.provider, model: reviewer.model,
-      source: "settings", approximated: false })),
-    ...settings.secondReview.voters.map((voter, index): ModelSlot => ({ stage: "second", key: `second-voter-${index + 1}`, label: `투표 ${index + 1}`,
-      code: `secondReview.voters[${index}]`, provider: voter.provider, model: voter.model, source: "settings", approximated: false })),
-    ...(settings.secondReview.fallbacks ?? []).map((voter, index): ModelSlot => ({ stage: "second", key: `second-fallback-${index + 1}`, label: `예비 ${index + 1}`,
-      code: `secondReview.fallbacks[${index}]`, provider: voter.provider, model: voter.model, source: "settings", approximated: false })),
+    pool[0] ? { stage: "first", key: "first", label: "주", code: "ai-task:first-review#1", provider: pool[0].provider, model: pool[0].model, source: "ranks", approximated: false }
+      : { stage: "first", key: "first", label: "주", code: "ai-task:first-review#1", provider: null, model: null, source: "unset", approximated: false },
+    ...pool.slice(1).map((reviewer, index): ModelSlot => ({ stage: "first", key: `first-additional-${index + 1}`,
+      label: `${index + 2}순위`, code: `ai-task:first-review#${index + 2}`, provider: reviewer.provider, model: reviewer.model,
+      source: "ranks", approximated: false })),
+    ...second.voters.map((voter, index): ModelSlot => ({ stage: "second", key: `second-voter-${index + 1}`, label: `투표 ${index + 1}`,
+      code: "ai-task:second-review", provider: voter.provider, model: voter.model, source: "ranks", approximated: false })),
+    ...second.fallbacks.map((voter, index): ModelSlot => ({ stage: "second", key: `second-fallback-${index + 1}`, label: `예비 ${index + 1}`,
+      code: "ai-task:second-review", provider: voter.provider, model: voter.model, source: "ranks", approximated: false })),
     // 새 감사는 시작할 때의 1차 심사자로 고정된다(product-audit.ts) — 도는 중인 감사의 모델은 product_audit_campaigns.model 이다
     { stage: "audit", key: "audit", label: "발행분 감사", ...first, approximated: false },
     ...TASK_MODEL_SLOTS.map((slot): ModelSlot => {

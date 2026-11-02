@@ -11,7 +11,7 @@ const INPUT = "rounded border border-line bg-bg p-2 text-[13px]";
 /**
  * 「AI 연결」 만들기·고치기. API = 주소(OpenAI 호환 …/v1) + 선택 키 — 저장하면 서버가 GET /models 로 목록을 읽어 함께 저장한다(못 읽으면 이유를 보인다).
  * 키는 다시 보이지 않는다: 비워 두면 저장된 키 그대로, 「키 지우기」로만 지운다. CLI = 도구 + 운영자가 적은 모델 이름(CLI 에는 /models 가 없다).
- * 장비 이름은 용량 장비(장비 한도 화면의 이름)다 — 비우면 이름에서 만든다. 저장해도 잡은 아직 이 연결을 읽지 않는다.
+ * 장비 이름은 용량 장비(장비 한도 화면의 이름)다 — 비우면 이름에서 만든다. CLI 버전은 1차·2차·Grok 로그인 유지 순위의 CLI 계약에 쓰인다(PR C1).
  */
 export function ConnectionForm({ initial, secretBox }: { initial: AiConnectionView | null; secretBox: boolean }) {
   const [state, action, pending] = useActionState<AiTaskActionState, FormData>(saveAiConnectionAction, null);
@@ -45,6 +45,11 @@ export function ConnectionForm({ initial, secretBox }: { initial: AiConnectionVi
           {AI_CLI_TOOLS.map(tool => <option key={tool} value={tool}>{AI_CLI_TOOL_LABELS[tool]}</option>)}</select></label>
       <label className="grid gap-1">모델 이름(띄어쓰기·쉼표로 나눔 — CLI 에는 목록이 없어 직접 적습니다)
         <textarea name="cliModels" required rows={2} defaultValue={initial?.cliModels.join(" ") ?? ""} placeholder="sonnet opus" className={`${INPUT} font-mono`} /></label>
+      <label className="grid gap-1">CLI 버전 — 1차·2차 심사·Grok 로그인 유지에 쓰려면 필요합니다
+        <input name="cliVersion" maxLength={80} defaultValue={initial?.cliVersion ?? ""} placeholder="워커에서 claude --version 을 실행한 출력 그대로" autoComplete="off"
+          className={`${INPUT} font-mono`} />
+        <span className="text-[13px] text-fg-3">이 화면은 CLI 를 띄우지 않아 버전을 확인하지 못합니다. 워커 로그 cli_contract.probe 의 observedVersion 을 그대로 적으세요 —
+          부를 때 워커의 버전과 다르면 그 순위는 쓰이지 않고 상태 화면에 까닭이 보입니다. 바꾼 뒤에는 그 CLI 를 쓰는 순위 줄을 다시 저장해 계약을 바꿉니다.</span></label>
     </>}
     <div className="grid gap-3 sm:grid-cols-2">
       <label className="grid gap-1">장비 이름(용량)
