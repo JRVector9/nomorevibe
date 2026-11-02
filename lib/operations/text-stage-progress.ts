@@ -143,13 +143,18 @@ export function textStageProgressSql(homeSlugs: readonly string[], group: 'all' 
     FROM targets ${filter} GROUP BY key`;
 }
 
-/** Two exact read-only statements, each bounded by the same three-second SQL limit as evidence monitoring. */
+/**
+ * Two exact read-only statements. The other text stages keep the three-second SQL limit of evidence monitoring; the reason group hashes every
+ * distinct model reason and crossed 3 s in production on 2026-11-02 (3.2 s measured), which made worker progress `unknown` and blocked every
+ * deploy gate. It gets 10 s — still bounded, well inside the 80 s monitor call.
+ */
+export const TEXT_PROGRESS_STATEMENT_TIMEOUT = { reason: '10s', other: '3s' } as const;
 export async function readTextStageProgress(): Promise<ProgressStageInput[]> {
   const home = await homeListSlugs();
   const read = (group: 'reason' | 'other') => db.transaction(async tx => {
     await tx.execute(sql`SET LOCAL jit = off`);
     await tx.execute(sql`SET LOCAL work_mem = '32MB'`);
-    await tx.execute(sql`SET LOCAL statement_timeout = '3s'`);
+    await tx.execute(sql.raw(`SET LOCAL statement_timeout = '${TEXT_PROGRESS_STATEMENT_TIMEOUT[group]}'`));
     return tx.execute<{ key: TextProgressStageKey; waiting: number; oldest: string | null; completed: number; errors: number;
       deferred: number; blocked: number; provider_errors: number; error_age: string | null }>(textStageProgressSql(home, group));
   }, { accessMode: 'read only' });
