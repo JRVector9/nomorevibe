@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createServer, type ServerResponse } from "node:http";
 import { afterEach, expect, it, vi } from "vitest";
-import { KOREAN_TAGLINE_MODEL, translateTaglinesToKorean, productTaglineKoSourceHash, productTaglineKoGatewayWire,
+import { translateTaglinesToKorean, productTaglineKoSourceHash, productTaglineKoGatewayWire,
   productTaglineKoLegacyWire, type ProductTaglineKoGatewayItem } from "@/lib/crawl/translate";
 import { parseKoreanTaglines } from "@/lib/domain/products/korean-tagline";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
@@ -115,9 +115,10 @@ it("triples only legacy output tokens while preserving the frozen native wire an
   expect(await translateTaglinesToKorean(batch, 1000, request as unknown as typeof fetch)).toEqual({ ok: false, error: "no_key" });
   expect(request).not.toHaveBeenCalled();
   expect(parseKoreanTaglines(JSON.stringify(outputs), batch.length)).toEqual({ ok: true, outputs });
-  const wire = productTaglineKoLegacyWire(batch, KOREAN_TAGLINE_MODEL);
-  const original = originalWire(batch, KOREAN_TAGLINE_MODEL), frozen = JSON.parse(original);
-  expect(productTaglineKoGatewayWire(batch, KOREAN_TAGLINE_MODEL)).toBe(original);
+  // 모델은 「작업 ↔ 모델」 순위가 고른다(PR B, import 때 정하는 상수가 없다) — 넘겨받은 모델 그대로 같은 wire 를 짓는다.
+  const wire = productTaglineKoLegacyWire(batch, model);
+  const original = originalWire(batch, model), frozen = JSON.parse(original);
+  expect(productTaglineKoGatewayWire(batch, model)).toBe(original);
   expect(wire).toBe(JSON.stringify({ ...frozen, max_tokens: frozen.max_tokens * 3 }));
   expect(JSON.parse(wire).max_tokens).toBe(2700);
   expect({ ...JSON.parse(wire), max_tokens: frozen.max_tokens }).toEqual(frozen);

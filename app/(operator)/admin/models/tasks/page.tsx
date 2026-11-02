@@ -18,14 +18,14 @@ export const metadata: Metadata = { title: "작업 ↔ AI 모델 — NoMoreVibe"
 type Props = { searchParams: Promise<Record<string, string | string[] | undefined>> };
 const one = (value: string | string[] | undefined) => typeof value === "string" ? value.trim() : Array.isArray(value) ? (value[0] ?? "").trim() : "";
 const ERROR_LABELS: Record<string, string> = { connections: "AI 연결", rows: "작업 ↔ 모델 순위", readiness: "계약·정책·장비", policy: "용량 정책", current: "지금 실제로 쓰는 모델",
-  audit: "최근 기록" };
+  audit: "최근 기록", runtime: "실행 쪽 순위 사정" };
 const ACTION_LABELS: Record<string, string> = { "ai-connection-save": "연결 저장", "ai-connection-models-read": "모델 목록 읽기", "ai-connection-delete": "연결 지움",
   "ai-task-models-save": "순위 저장", "ai-task-models-import": "가져오기" };
 
 /**
- * 작업 ↔ AI 모델(2026-11-02 소유자 결정, PR A) — 「AI 연결」(API 주소·키 또는 CLI)을 저장하고, 작업마다(2차는 투표자마다) 1·2·3순위를 고른다.
+ * 작업 ↔ AI 모델(2026-11-02 소유자 결정, PR A·B) — 「AI 연결」(API 주소·키 또는 CLI)을 저장하고, 작업마다(2차는 투표자마다) 1·2·3순위를 고른다.
  * 모델 선택지는 각 연결이 실제로 내놓는 모델(GET /models)과 CLI 모델 이름이다. 하드코딩한 주소·모델·환경변수로 고르지 않는다.
- * 이 판에서는 잡이 이 표를 아직 읽지 않는다 — 오른쪽 「지금 실제로 쓰는 모델」(오늘의 고르기 코드)과 견주어 보고, 다음 단계(PR B~)가 실행 쪽을 옮긴다.
+ * PR B 부터 글 짓기·번역·검색 text 일곱 작업은 실행 쪽이 이 순위만 읽는다(오른쪽에 지금 몇 순위가 일하는지·아래 순위를 쓴 까닭). 나머지는 PR C~D 가 옮긴다.
  */
 export default async function AiTasksPage({ searchParams }: Props) {
   if (!await currentAdmin()) redirect("/admin/login");
@@ -39,7 +39,8 @@ export default async function AiTasksPage({ searchParams }: Props) {
     accepts: [slot.task.api ? "API 주소" : "", ...slot.task.cliTools.map(tool => AI_CLI_TOOL_LABELS[tool])].filter(Boolean).join(" · "),
     current: slot.current ? { labels: [...slot.currentLabels], source: slot.current.source, notes: [...slot.current.notes], error: slot.current.error, skip: slot.current.skip } : null,
     sameAsCurrent: slot.sameAsCurrent, readiness: slot.readiness.map(row => ({ rank: row.rank, blocking: [...row.blocking], warnings: [...row.warnings],
-      pending: aiRankPendingText(row) })) }));
+      pending: aiRankPendingText(row) })), live: slot.live,
+    runtime: slot.runtime ? { ...slot.runtime, at: formatListTime(slot.runtime.at, now), served: [...slot.runtime.served], unusable: [...slot.runtime.unusable] } : null }));
   const errors = Object.entries(view.errors);
   return <main className="mx-auto grid max-w-7xl gap-6 p-4">
     <PageStamp />
@@ -50,7 +51,9 @@ export default async function AiTasksPage({ searchParams }: Props) {
       <p className="text-[13px] text-fg-3">AI 를 쓰는 작업마다 1·2·3순위 모델을 정합니다. 1순위를 쓸 수 없으면 2순위, 그다음 3순위입니다. 모델은 아래 「AI 연결」에 저장한 서버(주소·키)가
         실제로 내놓는 목록과 CLI 모델 이름에서만 고릅니다 — 코드에 박은 주소나 환경변수로 고르지 않습니다. 2차 AI 검수는 투표자마다 따로 정합니다.</p>
       <p role="status" className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[13px] font-semibold text-amber-900">
-        지금은 저장만 합니다 — 잡은 아직 이 순위를 읽지 않고 오늘의 설정으로 고릅니다. 오른쪽 「지금 실제로 쓰는 모델」과 견주어 확인한 뒤, 다음 단계에서 실행 쪽을 이 표로 옮깁니다.</p>
+        글 짓기·번역·검색의 text 작업 일곱(수집 소개 짓기·심사 사유 번역·제품 다국어 번역·한국어 소개 번역·검색어 번역·검색 키워드 짓기·검색 키워드 검수)은
+        실행 쪽이 이 순위만 읽습니다 — 순위가 없거나 모두 쓸 수 없으면 기본값으로 대신 부르지 않고 멈추며 그 까닭이 상태 화면에 보입니다.
+        심사·보강·벡터 작업은 아직 오늘의 설정으로 고릅니다(다음 단계에서 옮깁니다).</p>
       {errors.map(([key, error]) => <p key={key} role="alert" className="text-[13px] text-red-600">{ERROR_LABELS[key] ?? key}을(를) 읽지 못했습니다({aiTaskIssueMessage(error)}).</p>)}
     </header>
     <section id="connections" className="grid gap-3 scroll-mt-6">

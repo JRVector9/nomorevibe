@@ -1,16 +1,15 @@
-import { modelLimits, modelTimeoutMs, scopedModel } from "@/lib/llm/model-registry";
-import { crawlTaglineServingProvider } from "@/lib/llm/crawl-tagline-serving-contract";
+import { modelRequestBudget, modelRouteTimeoutMs } from "@/lib/llm/model-registry";
 import { deferredJob, type JobContext, type JobOutcome } from "@/lib/jobs/runner";
-import { EngineDownTally } from "@/lib/jobs/engine-down";
 import { tickRemaining } from "@/lib/jobs/tick-deadline";
-import { ModelCapacityDeferredError, modelCapacityDeferralIsPerWork } from "@/lib/llm/capacity-deferred";
+import { ModelCapacityDeferredError, modelCapacityDeferralIsPerModel, modelCapacityDeferralIsPerWork } from "@/lib/llm/capacity-deferred";
 import { getSettings } from "@/lib/crawl/settings";
-import { TAGLINE_MODEL, taglineEvidence, taglineHash, writeTagline } from "@/lib/crawl/tagline";
+import { taglineEvidence, taglineHash, writeTagline } from "@/lib/crawl/tagline";
 import { writeCrawlTaglineWithModelCapacity } from "@/lib/crawl/tagline-model-capacity";
 import { pendingTaglines, recordTaglineResult } from "@/lib/crawl/taglines";
 import { jobKnob } from "@/lib/operations/runtime-settings-schema";
 import { runtimeSettings } from "@/lib/operations/runtime-settings-store";
-import { TEXT_ROUTE_BLOCK_DETAIL, textRouteAccess } from "@/lib/llm/serving-contract-store";
+import { textTaskModel } from "@/lib/llm/ai-task-rank-scope";
+import { TextTaskRanks } from "@/lib/llm/ai-task-resolver";
 
 /**
  * 소개 짓기 — 페이지에도 레포에도 소개가 없어 발행이 멈춘 후보의 한 줄을 모델이 짓는다.
@@ -31,17 +30,27 @@ import { TEXT_ROUTE_BLOCK_DETAIL, textRouteAccess } from "@/lib/llm/serving-cont
  * 뺀다(pendingTaglines skipBusy). 포화·정책·owner 미룸만 예전처럼 틱을 미룬다.
  * 2026-10-31(PR 3a-B): 한 후보의 실패(시간 초과·429·5xx)는 그 후보의 시도로만 남고 다음 후보를 본다 — 예전의 "잇따라 둘이 막히면 틱을 접는다"는
  * 없앴다. 틱을 접는 것은 엔진이 모든 후보에 대해 내려갔음이 증명될 때만이다(lib/jobs/engine-down.ts).
+ * 2026-11-02(PR B, 「작업 ↔ 모델」 1~3순위): 모델·주소·키는 순위가 고른다(lib/llm/ai-task-resolver.ts). 한 순위만의 까닭(경로 없음·장비 행 없음·
+ * 계약 닫힘·포화·엔진 내려감)이면 그 순위를 이 틱 동안 쉬게 하고 같은 후보를 다음 순위로 넘긴다. 순위가 없으면 no_task_models, 모두 쓸 수 없으면
+ * all_ranks_unusable 로 제 일 못 한 틱을 남긴다(관리자 상태 화면). 틱 끝의 ai_task.ranks 가 순위마다 맡은 수·쉰 까닭을 센다.
  */
 const JOB = "crawl-tagline";
 
+type Flow = "next" | "stop";
+
 export async function writeTaglines(ctx: JobContext<null>): Promise<JobOutcome<null>> {
-  // 이 경로의 직접 연결 계약(관리자 엔진 연결, 엔진에 바로 — 키 없이도 부른다)이 있어야 부를 수 있다. 다른 text 잡과 같은 관문이다
-  // (textRouteAccess). provider 는 계약 모듈이 고른다 — local-direct 직접 계약이면 그 장비로 기록한다(PR 3b-E).
-  const model = scopedModel(JOB, TAGLINE_MODEL);
-  const blocked = textRouteAccess(JOB, model, crawlTaglineServingProvider(model)).block;
-  if (blocked) {
-    ctx.log("tagline.skipped", { reason: blocked });
-    return { done: true, degraded: { code: blocked, detail: TEXT_ROUTE_BLOCK_DETAIL[blocked] } };
+  // 「작업 ↔ 모델」 순위(PR B)만 부른다 — 순위마다 그 연결을 가리키는 엔진 직접 계약(관리자 엔진 연결·순위 저장이 만든다)이 있어야 쓸 수 있다.
+  // 순위가 없거나 모두 쓸 수 없으면 코드 기본값·환경변수로 부르지 않고 제 일 못 한 틱(degraded)으로 남긴다 — 관리자 상태 화면에 보인다.
+  const ranks = await TextTaskRanks.open(JOB);
+  try { return await writeTaglinesWithRanks(ctx, ranks); }
+  finally { ctx.log("ai_task.ranks", ranks.summary()); }
+}
+
+async function writeTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTaskRanks): Promise<JobOutcome<null>> {
+  const early = ranks.earlyDegraded();
+  if (early) {
+    ctx.log("tagline.skipped", { reason: early.code });
+    return { done: true, degraded: early };
   }
   const settings = await getSettings();
   if (!settings.enabled) {
@@ -60,9 +69,8 @@ export async function writeTaglines(ctx: JobContext<null>): Promise<JobOutcome<n
     const remaining = tickRemaining(ctx, JOB, startedAt);
     const knobs = runtimeSettings();
     const batch = jobKnob(knobs, JOB, "batch"), minCallMs = jobKnob(knobs, JOB, "minCallMs");
-    const concurrency = modelLimits(JOB).concurrency, callMs = modelTimeoutMs(JOB);
+    const concurrency = modelRequestBudget(JOB).concurrency, callMs = modelRouteTimeoutMs(JOB);
     let written = 0, empty = 0, failed = 0, released = 0, blocked = "";
-    const engine = new EngineDownTally();
     /** 이 틱에 넘긴 후보(같은 작업의 미룸) — 다시 고르지 않는다 */
     const passed = new Set<number>();
 
@@ -78,7 +86,7 @@ export async function writeTaglines(ctx: JobContext<null>): Promise<JobOutcome<n
       const settled = await Promise.allSettled(Array.from({ length: concurrency }, async () => {
         try {
           for (let index = next++; index < tasks.length; index = next++) {
-            if (skipped || blocked || signal.aborted || !ctx.hasBudget() || remaining() < minCallMs) return;
+            if (skipped || blocked || ranks.exhausted || signal.aborted || !ctx.hasBudget() || remaining() < minCallMs) return;
             const task = tasks[index];
             try {
               const { candidate, document, written: stored } = task;
@@ -106,46 +114,61 @@ export async function writeTaglines(ctx: JobContext<null>): Promise<JobOutcome<n
                 continue;
               }
 
-              const ask = () => writeTagline(evidence, { signal, timeoutMs: Math.max(1_000, Math.min(callMs, remaining() - 1_000)) });
-              let capacity = await writeCrawlTaglineWithModelCapacity(task, lease,
-                { signal, timeoutMs: Math.max(1_000, Math.min(callMs, remaining() - 1_000)) });
-              if (capacity.kind === "skipped") { skipped = true; return; }
-              let result = capacity.kind === "disabled" ? await ask() : capacity.result;
-              /**
-               * 빈 줄("증거로는 무엇인지 알 수 없다")은 흔들리는 답이다 — 같은 증거로 다시 물으면 멀쩡한
-               * 줄이 오는 때가 14건 중 3~4건이었다(2026-09-20 프로드 실측, 온도 0인데도 그렇다).
-               * 한 번만 더 묻는다. 두 번 다 빈 줄이면 그 후보는 사람이 본다.
-               */
-              if (result.ok && !result.tagline && !signal.aborted && ctx.hasBudget() && remaining() >= minCallMs
-                && (capacity.kind === "disabled" || capacity.askOrdinal === 1)) {
-                if (capacity.kind === "disabled") result = await ask();
-                else {
-                  capacity = await writeCrawlTaglineWithModelCapacity(task, lease,
-                    { signal, timeoutMs: Math.max(1_000, Math.min(callMs, remaining() - 1_000)), previous: capacity });
-                  if (capacity.kind === "skipped") { skipped = true; return; }
-                  if (capacity.kind === "disabled") throw new ModelCapacityDeferredError("disabled");
-                  result = capacity.result;
+              // 순위 차례로 부른다 — 이 모델만의 까닭(경로 없음·장비 행 없음·계약 닫힘·포화)이면 같은 후보를 다음 순위로(TextTaskRanks.run)
+              const attempt = await ranks.run(async (binding): Promise<Flow> => {
+                const ask = () => writeTagline(evidence, { signal, timeoutMs: Math.max(1_000, Math.min(callMs, remaining() - 1_000)) });
+                let capacity = await writeCrawlTaglineWithModelCapacity(task, lease,
+                  { signal, timeoutMs: Math.max(1_000, Math.min(callMs, remaining() - 1_000)) });
+                if (capacity.kind === "skipped") { skipped = true; return "stop"; }
+                let result = capacity.kind === "disabled" ? await ask() : capacity.result;
+                /**
+                 * 빈 줄("증거로는 무엇인지 알 수 없다")은 흔들리는 답이다 — 같은 증거로 다시 물으면 멀쩡한
+                 * 줄이 오는 때가 14건 중 3~4건이었다(2026-09-20 프로드 실측, 온도 0인데도 그렇다).
+                 * 한 번만 더 묻는다. 두 번 다 빈 줄이면 그 후보는 사람이 본다. 둘째 물음은 첫 물음과 같은 순위다(장부의 이어 묻기는 모델에 묶인다).
+                 */
+                if (result.ok && !result.tagline && !signal.aborted && ctx.hasBudget() && remaining() >= minCallMs
+                  && (capacity.kind === "disabled" || capacity.askOrdinal === 1)) {
+                  if (capacity.kind === "disabled") result = await ask();
+                  else {
+                    try {
+                      capacity = await writeCrawlTaglineWithModelCapacity(task, lease,
+                        { signal, timeoutMs: Math.max(1_000, Math.min(callMs, remaining() - 1_000)), previous: capacity });
+                    } catch (error) {
+                      // 첫 물음은 이 순위로 끝났다 — 둘째 물음을 다른 순위로 옮기지 않는다. 이 순위를 쉬게 하고 이 후보만 넘긴다(다음 틱이 이어 묻는다)
+                      if (error instanceof ModelCapacityDeferredError && modelCapacityDeferralIsPerModel(error.reason)) {
+                        ranks.pause(binding, error.reason);
+                        throw new ModelCapacityDeferredError("reservation_lost");
+                      }
+                      throw error;
+                    }
+                    if (capacity.kind === "skipped") { skipped = true; return "stop"; }
+                    if (capacity.kind === "disabled") throw new ModelCapacityDeferredError("disabled");
+                    result = capacity.result;
+                  }
                 }
-              }
-              const save = (value: Parameters<typeof recordTaglineResult>[2]) => capacity.kind === "result" && capacity.expectation
-                ? recordTaglineResult(task, lease, value, capacity.expectation) : recordTaglineResult(task, lease, value);
-              if (signal.aborted) return;
-              if (!result.ok) {
-                const saved = await save({ kind: "failure", error: result.error });
-                if (!saved.stored) { skipped = capacity.kind === "result"; return; }
-                failed++;
-                // 그 후보의 실패로 남겼다(같은 증거에만 502 를 돌려주는 긴 페이지 글이 있었다 — 2026-09-20). 엔진이 모든 후보에 대해
-                // 내려갔음이 증명될 때만 틱을 접는다(engine-down.ts)
-                const down = engine.failed(result.error);
-                if (down) blocked = down;
-                continue;
-              }
-              engine.answered();
-              const saved = await save({ kind: "success", tagline: result.tagline, source: result.source, model: scopedModel("crawl-tagline", TAGLINE_MODEL) });
-              if (!saved.stored) { skipped = capacity.kind === "result"; return; }
-              if (!result.tagline) { empty++; continue; }
-              written++;
-              if (saved.released) released++;
+                const save = (value: Parameters<typeof recordTaglineResult>[2]) => capacity.kind === "result" && capacity.expectation
+                  ? recordTaglineResult(task, lease, value, capacity.expectation) : recordTaglineResult(task, lease, value);
+                if (signal.aborted) return "stop";
+                if (!result.ok) {
+                  const saved = await save({ kind: "failure", error: result.error });
+                  if (!saved.stored) { skipped = capacity.kind === "result"; return "stop"; }
+                  failed++;
+                  // 그 후보의 실패로 남겼다(같은 증거에만 502 를 돌려주는 긴 페이지 글이 있었다 — 2026-09-20). 엔진이 모든 후보에 대해
+                  // 내려갔음이 증명되면(engine-down.ts) 이 순위만 쉬고 다음 후보는 다음 순위로 간다
+                  if (ranks.failed(binding, result.error)) ctx.log("tagline.rank_down", { rank: binding.rank });
+                  return "next";
+                }
+                ranks.answered(binding);
+                const saved = await save({ kind: "success", tagline: result.tagline, source: result.source, model: textTaskModel(JOB) });
+                if (!saved.stored) { skipped = capacity.kind === "result"; return "stop"; }
+                if (!result.tagline) { empty++; return "next"; }
+                written++;
+                if (saved.released) released++;
+                return "next";
+              });
+              // 모든 순위를 이 틱에 쓸 수 없다 — 이 후보는 그대로 두고(호출·시도 기록 없음) 틱을 접는다
+              if (attempt.kind === "unusable") return;
+              if (attempt.value === "stop") return;
             } catch (error) {
               if (!(error instanceof ModelCapacityDeferredError) || !modelCapacityDeferralIsPerWork(error.reason)) throw error;
               // 이 후보만의 미룸이다(호출·시도·실패 기록 없음) — 이 후보를 넘기고 같은 줄의 다음 후보로 간다.
@@ -167,9 +190,18 @@ export async function writeTaglines(ctx: JobContext<null>): Promise<JobOutcome<n
         throw failure.reason;
       }
       if (skipped) return { done: false };
-      if (blocked) {
-        ctx.log("tagline.gateway_blocked", { error: blocked, written, empty, failed, released });
-        return { done: true };
+      if (ranks.exhausted || !ranks.usable().length) {
+        // 모든 순위가 이 틱에 쉰다. 포화면 예전처럼 미루고(줄이 풀리면 곧 다시), 아니면 일을 했을 때만 보통 틱 — 한 건도 못 했으면 까닭을 남긴다
+        const processed = written + empty + failed;
+        if (ranks.saturated()) return deferredJob("model_capacity", processed);
+        // 쓸 수 있던 순위가 모두 엔진 쪽 까닭으로 쉰다 — 예전의 「엔진이 내려가 틱을 접는다」(engine-down.ts)와 같다
+        const down = ranks.engineDown();
+        if (down) {
+          ctx.log("tagline.gateway_blocked", { error: down, written, empty, failed, released });
+          return { done: true };
+        }
+        ctx.log("tagline.all_ranks_unusable", { written, empty, failed, released, processed });
+        return processed ? { done: false } : { done: true, degraded: ranks.degraded() };
       }
     }
 

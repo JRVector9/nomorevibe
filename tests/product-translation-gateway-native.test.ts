@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createServer, type ServerResponse } from "node:http";
 import { afterEach, expect, it, vi } from "vitest";
-import { PRODUCT_TRANSLATE_MODEL, productTranslationGatewayWire, translateProductFields, type ProductTranslationGatewayItem } from "@/lib/crawl/translate";
+import { productTranslationGatewayWire, translateProductFields, type ProductTranslationGatewayItem } from "@/lib/crawl/translate";
 import { parseKoreanTaglines } from "@/lib/domain/products/korean-tagline";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { productTranslationSourceHash } from "@/lib/domain/products/translation-policy";
@@ -121,7 +121,8 @@ it("keeps the aligned product wire identical across legacy and native transport 
   // The legacy gateway sender no longer sends anything (gateway removed); the native builder keeps the same wire and parser.
   expect(await translateProductFields(batch, 1000, request as unknown as typeof fetch)).toEqual({ ok: false, error: "no_key" });
   expect(request).not.toHaveBeenCalled();
-  expect(productTranslationGatewayWire(batch, PRODUCT_TRANSLATE_MODEL)).toBe(originalWire(batch, PRODUCT_TRANSLATE_MODEL));
+  // 모델은 「작업 ↔ 모델」 순위가 고른다(PR B, import 때 정하는 상수가 없다) — 넘겨받은 모델 그대로 같은 wire 를 짓는다.
+  expect(productTranslationGatewayWire(batch, model)).toBe(originalWire(batch, model));
   expect(parseKoreanTaglines(JSON.stringify(outputs), batch.length, batch)).toEqual({ ok: true, outputs });
 });
 it("keeps production unsupported and malformed or missing-key batches incapable of native authority", async () => {

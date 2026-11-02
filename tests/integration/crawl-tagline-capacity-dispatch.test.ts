@@ -5,7 +5,7 @@ import postgres from "postgres";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments } from "@/lib/db/schema";
-import { TAGLINE_MODEL, taglineEvidence, crawlTaglineGatewayWire } from "@/lib/crawl/tagline";
+import { taglineEvidence, crawlTaglineGatewayWire } from "@/lib/crawl/tagline";
 import { pendingTaglines, prepareCrawlTaglineDispatch, recordTaglineResult, type TaglineTask } from "@/lib/crawl/taglines";
 import { writeCrawlTaglineWithModelCapacity } from "@/lib/crawl/tagline-model-capacity";
 import { writeTaglines } from "@/lib/crawl/jobs/tagline";
@@ -22,7 +22,7 @@ import { batchCanaryAnchorKey, batchPolicyHash } from "@/lib/jobs/batches";
 import { STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
-import { directContractRow } from "./direct-engine-fixtures";
+import { inTextRank, pinTextRanks, textContract } from "../text-task-ranks-fixture";
 
 // fresh 전용 테스트 DB만 허용한다(setup이 localhost·nomorevibe_test를 강제). 이 파일은 reset/truncate하지 않는다.
 if (process.env.TEST_DATABASE_URL !== TEST_DATABASE_URL) throw new Error("crawl_tagline_runtime_test_database_required");
@@ -30,6 +30,8 @@ const serving = vi.hoisted(() => ({ contract: null as CrawlTaglineServingContrac
 vi.mock("@/lib/llm/crawl-tagline-serving-contract", async load => ({ ...await load<typeof import("@/lib/llm/crawl-tagline-serving-contract")>(),
   resolveCrawlTaglineServingContract: () => serving.contract }));
 type Raw = Record<string, unknown>;
+// 「작업 ↔ 모델」 순위(PR B)의 1순위 모델 — 예전 TAGLINE_MODEL(등록부 기본값)과 같은 이름이다
+const TAGLINE_MODEL = "qwen3.6-35b-heretic";
 const prefix = `crawl-runtime-${randomUUID().slice(0, 12)}`, jobName = "crawl-tagline", ownRepos = new Set<string>(), boots = new Set<string>();
 const managedJobs = [...new Set([...jobsForRole("text"), "crawl-publish"])].sort();
 const admin = postgres(TEST_DATABASE_URL, { max: 1, prepare: false, onnotice: () => {}, connection: { application_name: prefix } });
@@ -145,7 +147,9 @@ async function server(run: (state: { bodies: string[]; setReply: (reply: (respon
 }
 async function tick() { await tracked(requestJob(jobName)); return tracked(runJob(jobName, writeTaglines, { requestedOnly: true, roleLease: role })); }
 async function custom(run: (lease: JobLease) => Promise<void>) { await tracked(requestJob(jobName));
-  return tracked(runJob(jobName, async (ctx: JobContext<null>) => { if (!ctx.lease) throw new Error("fixture_job_required"); await run(ctx.lease); return { done: true }; }, { requestedOnly: true, roleLease: role })); }
+  // 깊은 함수(writeCrawlTaglineWithModelCapacity·prepareCrawlTaglineDispatch·recordTaglineResult)는 잡이 여는 것과 같은 순위 범위에서 부른다
+  return tracked(runJob(jobName, async (ctx: JobContext<null>) => { if (!ctx.lease) throw new Error("fixture_job_required"); const lease = ctx.lease;
+    await inTextRank(jobName, TAGLINE_MODEL, () => run(lease)); return { done: true }; }, { requestedOnly: true, roleLease: role })); }
 async function reserve(task: TaglineTask, lease: JobLease) {
   const call = prepareCrawlTaglineGatewayCall(taglineEvidence(task.candidate.repo, task.document), { model: TAGLINE_MODEL, timeoutMs: 45_000 });
   if (call.kind !== "prepared") throw new Error("fixture_call_required");
@@ -169,18 +173,21 @@ beforeAll(async () => {
   expect(await admin`SELECT count(*)::int AS n FROM drizzle.__drizzle_migrations`).toEqual([{ n: journal.entries.length }]); initialized = true;
 });
 // The route opens only on a direct admin contract for its model (abcLLM gateway removed 2026-10-30); the contract body is the mock above.
-beforeEach(async () => { setServingContractSnapshotForTest([directContractRow(jobName, TAGLINE_MODEL)]); await admin`UPDATE model_capacity_control SET mode='open',policy=${JSON.stringify(policy)}::text::jsonb,
+// 순위(PR B)는 그 순위의 연결을 가리키는 엔진 직접 계약 행이 있어야 묶인다(textContract) — 실제로 보내는 끝점은 위의 mock 이 정한다.
+beforeEach(async () => { pinTextRanks({ [jobName]: TAGLINE_MODEL }); setServingContractSnapshotForTest([textContract(jobName, TAGLINE_MODEL)]); await admin`UPDATE model_capacity_control SET mode='open',policy=${JSON.stringify(policy)}::text::jsonb,
   policy_hash=${modelCapacityPolicyHash(policy)},cursor=0 WHERE id=1`;
   await admin`INSERT INTO crawl_settings(id,values) VALUES(1,'{"enabled":true}') ON CONFLICT(id) DO UPDATE SET values=crawl_settings.values||'{"enabled":true}'::jsonb`;
   await elect();
 });
-afterEach(() => tracked(steps([() => drain(exercises), () => drain(work), cleanup, async () => { serving.contract = null; setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); }]), hooks));
+afterEach(() => tracked(steps([() => drain(exercises), () => drain(work), cleanup, async () => { serving.contract = null; setServingContractSnapshotForTest(null); pinTextRanks(null); vi.unstubAllEnvs(); }]), hooks));
 afterAll(async () => { await steps([() => drain(exercises), () => drain(work), () => drain(hooks), cleanup, () => admin.end({ timeout: 5 }),
   async () => { await (globalThis as { pgClient?: ReturnType<typeof postgres> }).pgClient?.end({ timeout: 5 }); }]); });
 
 it("uses two independent actual requests/native proofs but one attempt and publish wakeup", exercise(async () => {
   const task = await seed();
-  expect(await tick()).toMatchObject({ status: "deferred", reason: "model_capacity" });
+  // 계약 본문이 없는(전송 계약 닫힘, provider_contract_unavailable) 1순위는 그 순위만 쉬고, 다른 순위가 없으니 틱은 제 일 못 한 틱
+  // (all_ranks_unusable)으로 끝난다 — 예전에는 model_capacity 로 미뤘다(PR B). 요청 행·시도는 그대로 없다.
+  expect(await tick()).toMatchObject({ status: "completed", done: true, degraded: "all_ranks_unusable" });
   expect(await admin`SELECT request_id FROM model_capacity_requests WHERE owner_instance_id=${prefix}`).toEqual([]);
   await server(async ({ bodies, setReply }) => { let asks = 0; setReply(response => response.end(JSON.stringify(replyBody(++asks === 1 ? "" : "Document manager"))));
     const before = await admin`SELECT requested_version FROM jobs WHERE name='crawl-publish'`;

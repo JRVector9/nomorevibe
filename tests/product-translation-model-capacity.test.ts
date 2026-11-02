@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({ control: vi.fn(), prepare: vi.fn(), legacy: vi
 vi.mock("@/lib/domain/products/translations", () => ({ prepareProductTranslationDispatch: mocks.prepare,
   pendingProductTranslationBatch: mocks.restore,
   pendingProductTranslations: mocks.tasks, recordProductTranslations: mocks.write }));
-vi.mock("@/lib/crawl/translate", async original => ({ ...await original<typeof import("@/lib/crawl/translate")>(), PRODUCT_TRANSLATE_MODEL: "product-translation-unit", translateProductFields: mocks.legacy }));
+vi.mock("@/lib/crawl/translate", async original => ({ ...await original<typeof import("@/lib/crawl/translate")>(), translateProductFields: mocks.legacy }));
 vi.mock("@/lib/llm/capacity-repository", () => ({ readModelCapacityCallerControl: mocks.control,
   findOwnPendingModelRequest: mocks.pending, requestProductTranslationModelSlot: mocks.request, cancelReservedModelSlot: mocks.cancel,
   findOwnPendingProductTextRequests: mocks.batches, cancelOwnPendingProductTextRequest: mocks.abandon,
@@ -24,9 +24,13 @@ vi.mock("@/lib/jobs/control", () => ({ assertJobLease: mocks.jobWall, assertJobL
 vi.mock("@/lib/domain/products/generation", () => ({ lockProductGeneration: mocks.generation }));
 vi.mock("@/lib/domain/products/repository", () => ({ findBySlug: mocks.product }));
 vi.mock("@/lib/observability/logger", () => ({ logger: { info: mocks.log } }));
-import { translateProductFieldsWithModelCapacity } from "@/lib/domain/products/product-translation-model-capacity";
-import { PRODUCT_TRANSLATE_MODEL } from "@/lib/crawl/translate";
+import { translateProductFieldsWithModelCapacity as translateInRank } from "@/lib/domain/products/product-translation-model-capacity";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
+import { inTextRank, pinTextRanks, textContract } from "./text-task-ranks-fixture";
+// 모델은 「작업 ↔ 모델」 순위가 고른다(PR B) — 깊은 함수는 순위 범위 안에서 부르고, 잡은 순위 스냅숏을 읽는다.
+const PRODUCT_TRANSLATE_MODEL = "product-translation-unit";
+const inRank = <T>(run: () => T): T => inTextRank("product-translate", PRODUCT_TRANSLATE_MODEL, run);
+const translateProductFieldsWithModelCapacity = (...args: Parameters<typeof translateInRank>) => inRank(() => translateInRank(...args));
 const source = { id: 17, name: "Doc", tagline: "문서를 관리하는 도구" };
 const task = { source, locale: "en" as const, field: "tagline" as const, sourceHash: productTranslationSourceHash(source, "tagline"), attempts: 0, eligible: true };
 const item = { name: source.name, locale: task.locale, field: task.field, text: source.tagline };
@@ -46,7 +50,9 @@ const options = () => ({ timeoutMs: 20_000, roleLease: role });
 beforeEach(() => {
   vi.resetAllMocks();
   // The native route opens only on a directly connected engine (admin contract, transport direct); the gateway call is mocked.
-  setServingContractSnapshotForTest([{ routeId: "product-translate", model: PRODUCT_TRANSLATE_MODEL, contract: {}, auth: "none", apiKey: null, transport: "direct" }]);
+  // 순위(PR B)는 그 연결을 가리키는 엔진 직접 계약에 묶인다 — 잡 시험도 같은 행으로 순위를 연다.
+  setServingContractSnapshotForTest([textContract("product-translate", PRODUCT_TRANSLATE_MODEL)]);
+  pinTextRanks({ "product-translate": PRODUCT_TRANSLATE_MODEL });
   mocks.control.mockResolvedValue({ mode: "open", policy: { routes: [{ provider: "abcllm", routeId: "product-translate", model: PRODUCT_TRANSLATE_MODEL }] } });
   mocks.call.mockReturnValue(call); mocks.prepare.mockResolvedValueOnce({ kind: "ready", members, role: boundRole })
     .mockResolvedValue({ kind: "ready", dispatch, expectation });
@@ -55,7 +61,7 @@ beforeEach(() => {
   mocks.native.mockResolvedValue({ result, terminal }); mocks.reconcile.mockResolvedValue({ kind: "settled" });
   mocks.cancel.mockResolvedValue(true); mocks.unknown.mockResolvedValue(true); mocks.legacy.mockResolvedValue(result);
 });
-afterEach(() => { setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); });
+afterEach(() => { setServingContractSnapshotForTest(null); pinTextRanks(null); vi.unstubAllEnvs(); });
 it("preserves disabled legacy wire order and requires no new role", async () => {
   mocks.control.mockResolvedValue({ mode: "disabled" });
   expect(await translateProductFieldsWithModelCapacity([task], job, { timeoutMs: 20_000 })).toEqual({ kind: "result", result });
@@ -63,10 +69,14 @@ it("preserves disabled legacy wire order and requires no new role", async () => 
   expect(Object.keys(mocks.legacy.mock.calls[0][0][0])).toEqual(["name", "locale", "field", "text"]);
   expect(mocks.request).not.toHaveBeenCalled(); expect(mocks.prepare).not.toHaveBeenCalled();
 });
-it("preserves the legacy no_key result without a direct contract and without a model control read", async () => {
+it("defers only this model without a direct contract, before a model control read and without the legacy sender", async () => {
+  // 순위(PR B)를 연 뒤 계약이 닫혔다 — 옛 게이트웨이 길(no_key)로 떨어지지 않고 이 모델만의 미룸으로 다음 순위에 넘긴다.
   setServingContractSnapshotForTest([]); mocks.legacy.mockResolvedValue({ ok: false, error: "no_key" });
-  expect(await translateProductFieldsWithModelCapacity([task], job, { timeoutMs: 20_000 })).toEqual({ kind: "result", result: { ok: false, error: "no_key" } });
+  const refused = translateProductFieldsWithModelCapacity([task], job, { timeoutMs: 20_000 });
+  await expect(refused).rejects.toBeInstanceOf(ModelCapacityDeferredError);
+  await expect(refused).rejects.toMatchObject({ reason: "provider_contract_unavailable" });
   expect(mocks.control).not.toHaveBeenCalled(); expect(mocks.call).not.toHaveBeenCalled(); expect(mocks.request).not.toHaveBeenCalled();
+  expect(mocks.legacy).not.toHaveBeenCalled();
 });
 it("reuses the pending ID and settles the actual terminal before returning the writer expectation", async () => {
   mocks.pending.mockResolvedValue({ requestId: reservation.requestId, state: "waiting" });
@@ -82,7 +92,8 @@ it("refuses the unsupported production contract before reserving or writing", as
   expect(mocks.request).not.toHaveBeenCalled(); expect(mocks.native).not.toHaveBeenCalled();
 });
 it("does not reuse another text model's policy mapping for the product-specific model", async () => {
-  const { TRANSLATE_MODEL } = await import("@/lib/crawl/translate");
+  // 사유 번역 순위의 모델(다른 이름)이 제품 번역 경로에 적혀 있어도 이 순위의 모델 길이 아니다.
+  const TRANSLATE_MODEL = "reason-translation-unit";
   expect(PRODUCT_TRANSLATE_MODEL).not.toBe(TRANSLATE_MODEL);
   mocks.control.mockResolvedValue({ mode: "open", policy: { routes: [{
     provider: "abcllm", routeId: "product-translate", model: TRANSLATE_MODEL,
@@ -127,7 +138,7 @@ function domainTx(raw = { product_id: source.id, locale: "en", field: "tagline",
 it("reads locked demand microseconds and actual standby identity after the product generation barrier", async () => {
   const tx = domainTx();
   const domain = await vi.importActual<typeof import("@/lib/domain/products/translations")>("@/lib/domain/products/translations");
-  const actual = await domain.prepareProductTranslationDispatch([task], job, { roleLease: role, call });
+  const actual = await inRank(() => domain.prepareProductTranslationDispatch([task], job, { roleLease: role, call }));
   expect(actual).toMatchObject({ kind: "ready", members: [{ ...members[0], demand: { attempts: 0, rowIdentityHash: reviewHash(tx.raw) } }],
     role: { kind: "standby", instanceId: role.instanceId } });
   expect(mocks.generation).toHaveBeenCalledWith(expect.anything(), source.id, "product-unit");
@@ -140,8 +151,8 @@ it("rejects a microsecond-only demand replacement before finishing a reserved di
   const domain = await vi.importActual<typeof import("@/lib/domain/products/translations")>("@/lib/domain/products/translations");
   const identity = { owner: reservation.owner, workKey: `${productTranslationLogicalWorkKey(members)}:${productTranslationInputHash({ members, model: PRODUCT_TRANSLATE_MODEL })}`,
     class: "background" as const, pool: "text" as const, provider: "abcllm", routeId: "product-translate", model: PRODUCT_TRANSLATE_MODEL };
-  expect(await domain.prepareProductTranslationDispatch([task], job, { roleLease: role, call,
-    reserved: { reservation, identity, members, role: { ...boundRole, kind: "standby" } } })).toEqual({ kind: "skipped" });
+  expect(await inRank(() => domain.prepareProductTranslationDispatch([task], job, { roleLease: role, call,
+    reserved: { reservation, identity, members, role: { ...boundRole, kind: "standby" } } }))).toEqual({ kind: "skipped" });
   expect(mocks.finish).not.toHaveBeenCalled();
 });
 it("returns a failed generation recheck from takedown without inserting or logging success", async () => {
@@ -169,8 +180,8 @@ it("does not overwrite a microsecond-only demand replacement after native dispat
   const identity = { owner: reservation.owner,
     workKey: `${productTranslationLogicalWorkKey(actualMembers)}:${productTranslationInputHash({ members: actualMembers, model: PRODUCT_TRANSLATE_MODEL })}`,
     class: "background" as const, pool: "text" as const, provider: "abcllm", routeId: "product-translate", model: PRODUCT_TRANSLATE_MODEL };
-  const prepared = await domain.prepareProductTranslationDispatch([task], job, { roleLease: role, call,
-    reserved: { reservation, identity, members: actualMembers, role: { ...boundRole, kind: "standby" } } });
+  const prepared = await inRank(() => domain.prepareProductTranslationDispatch([task], job, { roleLease: role, call,
+    reserved: { reservation, identity, members: actualMembers, role: { ...boundRole, kind: "standby" } } }));
   expect(prepared.kind).toBe("ready"); if (!("expectation" in prepared)) throw new Error("unit_missing_dispatch");
   tx.raw.updated_at = "2026-10-16T01:02:03.000124";
   expect(await domain.recordProductTranslations([{ task, result: { ok: true, text: result.outputs[0], model: PRODUCT_TRANSLATE_MODEL } }], job, prepared.expectation)).toBe(0);
@@ -284,9 +295,9 @@ it("defers after admission locks when the full HTTP ceiling no longer fits", asy
   const identity = { owner: reservation.owner,
     workKey: `${productTranslationLogicalWorkKey(currentMembers)}:${productTranslationInputHash({ members: currentMembers, model: PRODUCT_TRANSLATE_MODEL })}`,
     class: "background" as const, pool: "text" as const, provider: "abcllm", routeId: "product-translate", model: PRODUCT_TRANSLATE_MODEL };
-  await expect(domain.prepareProductTranslationDispatch([task], job, { roleLease: role, call,
+  await expect(inRank(() => domain.prepareProductTranslationDispatch([task], job, { roleLease: role, call,
     callBudget: { deadlineAt: Date.now() + 1_000, minimumRemainingMs: 22_000 },
-    reserved: { reservation, identity, members: currentMembers, role: { ...boundRole, kind: "standby" } } }))
+    reserved: { reservation, identity, members: currentMembers, role: { ...boundRole, kind: "standby" } } })))
     .rejects.toMatchObject({ name: "ModelCapacityDeferredError", reason: "capacity" });
   expect(mocks.finish).not.toHaveBeenCalled();
   expect(mocks.native).not.toHaveBeenCalled();

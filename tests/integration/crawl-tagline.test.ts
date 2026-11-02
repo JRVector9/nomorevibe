@@ -1,18 +1,21 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
-import { directContractRow } from "./direct-engine-fixtures";
+import { pinTextRanks, textContract } from "../text-task-ranks-fixture";
 
 /**
  * 게이트웨이(abcLLM)는 2026-10-30 제거됐다. 잡은 이 경로·모델의 직접 연결 계약이 있어야 돌고, 용량을 끈(disabled) 잡이 부르는 옛 잎
  * writeTagline 은 이제 보내지 않고 no_key 로 끝난다(파일 끝 두 시험). 이 파일은 잡이 답을 받은 뒤의 판단(빈 줄 재질문·실패 시각·사람의 줄·
  * 원본 해시)을 보므로, 그 잎만 같은 wire 를 이 파일의 fetch 목(gateway)으로 보내는 대역으로 바꾼다(direct-engine-fixtures).
+ * 2026-11-02(PR B): 모델은 「작업 ↔ 모델」 순위가 고른다 — 순위를 고정하고(pinTextRanks) 그 연결의 엔진 직접 계약 행(textContract)을 넣는다.
  */
+// 1순위 모델 — 예전 TAGLINE_MODEL(등록부 기본값)과 같은 이름이다
+const { TAGLINE_MODEL } = vi.hoisted(() => ({ TAGLINE_MODEL: "qwen3.6-35b-heretic" }));
 vi.mock("@/lib/crawl/tagline", async load => {
   const original = await load<typeof import("@/lib/crawl/tagline")>();
   const { askRemovedGatewayLeaf, replyContent } = await import("./direct-engine-fixtures");
   const writeTagline: typeof original.writeTagline = (evidence, options) => askRemovedGatewayLeaf(original.writeTagline(evidence, options),
-    options.request ?? fetch, original.crawlTaglineGatewayWire(evidence, options.model ?? original.TAGLINE_MODEL),
+    options.request ?? fetch, original.crawlTaglineGatewayWire(evidence, options.model ?? TAGLINE_MODEL),
     async response => original.parseTagline(await replyContent(response), evidence), options);
   return { ...original, writeTagline };
 });
@@ -23,7 +26,7 @@ const { crawlCandidates, crawlDocuments, crawlFrontier, crawlSettings, crawlTagl
 const crawl = await import("@/lib/crawl/repository");
 const { saveSettings } = await import("@/lib/crawl/settings");
 const { writeTaglines } = await import("@/lib/crawl/jobs/tagline");
-const { TAGLINE_MODEL, taglineEvidence } = await import("@/lib/crawl/tagline");
+const { taglineEvidence } = await import("@/lib/crawl/tagline");
 const { pendingTaglines, recordTaglineResult } = await import("@/lib/crawl/taglines");
 const { runJob } = await import("@/lib/jobs/runner");
 const { ensureSchema, resetTables } = await import("./setup");
@@ -54,12 +57,13 @@ beforeEach(async () => {
   await db.delete(jobs);
   await resetTables();
   await saveSettings({ enabled: true }, "테스트");
-  setServingContractSnapshotForTest([directContractRow("crawl-tagline", TAGLINE_MODEL)]);
+  pinTextRanks({ "crawl-tagline": TAGLINE_MODEL });
+  setServingContractSnapshotForTest([textContract("crawl-tagline", TAGLINE_MODEL)]);
   gateway.mockReset();
   gateway.mockResolvedValue(answer("바를 등록하면 손님이 찾습니다"));
   vi.stubGlobal("fetch", gateway);
 });
-afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); setServingContractSnapshotForTest(null); });
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); setServingContractSnapshotForTest(null); pinTextRanks(null); });
 
 describe("소개 짓기 잡", () => {
   it("preserves the tagline retry budget when its tokenizer is unavailable", async () => {
@@ -263,15 +267,29 @@ describe("소개 짓기 잡", () => {
     expect(await minutes(35)).toBeCloseTo(24 * 60, 2);
   });
 
-  it("직접 연결 계약이 없으면 부르지 않고 no_direct_contract 로 넘긴다 — 성공이 아니다", async () => {
+  // PR B: 순위의 연결을 가리키는 직접 계약이 없으면 그 순위를 쓸 수 없다 — 순위가 하나뿐이니 all_ranks_unusable(예전 no_direct_contract)
+  it("직접 연결 계약이 없으면 부르지 않고 all_ranks_unusable 로 넘긴다 — 성공이 아니다", async () => {
     await held("someone/no-contract");
     setServingContractSnapshotForTest([]);
 
-    expect(await tick()).toMatchObject({ status: "completed", done: true, degraded: "no_direct_contract" });
+    expect(await tick()).toMatchObject({ status: "completed", done: true, degraded: "all_ranks_unusable" });
 
     expect(gateway).not.toHaveBeenCalled();
     expect(await db.select().from(crawlTaglines)).toEqual([]);
     expect(await crawl.getCandidate("someone/no-contract")).toMatchObject({ state: "needs_review", reason: "no_description" });
+    // 관리자 상태 화면이 읽는 까닭 — 순위마다 쓸 수 없는 까닭을 적는다
+    const [observed] = await db.execute<{ detail: string }>(sql`select value->'degraded'->>'detail' as detail from operations_observations where key = 'job:crawl-tagline'`);
+    expect(observed.detail).toContain(`1순위 test-engine · ${TAGLINE_MODEL}: 이 연결·모델의 엔진 직접 계약이 없음`);
+  });
+
+  it("순위가 없으면 코드 기본값으로 부르지 않고 no_task_models 로 넘긴다 — 성공이 아니다", async () => {
+    await held("someone/no-ranks");
+    pinTextRanks([]);
+
+    expect(await tick()).toMatchObject({ status: "completed", done: true, degraded: "no_task_models" });
+
+    expect(gateway).not.toHaveBeenCalled();
+    expect(await db.select().from(crawlTaglines)).toEqual([]);
   });
 
   it("옛 잎(writeTagline)은 계약이 있어도 게이트웨이로 보내지 않고 no_key 로 끝난다", async () => {

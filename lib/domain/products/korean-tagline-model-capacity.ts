@@ -1,7 +1,5 @@
-import { scopedRequestTimeout } from "@/lib/llm/model-registry";
-import { scopedModel } from "@/lib/llm/model-registry";
 import { randomUUID } from "node:crypto";
-import { KOREAN_TAGLINE_MODEL, translateTaglinesToKorean } from "@/lib/crawl/translate";
+import { translateTaglinesToKorean } from "@/lib/crawl/translate";
 import { prepareProductTaglineKoGatewayCall, translateTaglinesWithReservedGateway } from "@/lib/crawl/agent-review-gateway";
 import { reconcileGatewayNotStarted, readModelCapacityCallerControl, findOwnPendingModelRequest, requestProductTaglineKoModelSlot,
   findOwnPendingProductTextRequests, cancelOwnPendingProductTextRequest,
@@ -18,6 +16,7 @@ import type { KoreanTaglineBatch } from "./korean-tagline";
 import type { KoreanTaglineWriteExpectation } from "./korean-taglines";
 import { textRouteCallable } from "@/lib/llm/serving-contract-store";
 import { productTaglineKoServingProvider } from "@/lib/llm/product-tagline-ko-serving-contract";
+import { textTaskModel } from "@/lib/llm/ai-task-rank-scope";
 
 export type KoreanTaglineCapacityResult = { kind: "skipped" } | {
   kind: "result"; result: KoreanTaglineBatch; expectation?: KoreanTaglineWriteExpectation; batch?: readonly KoreanTaglineTask[];
@@ -28,21 +27,22 @@ export async function translateKoreanTaglinesWithModelCapacity(value: readonly K
   valueOptions: { timeoutMs: number; signal?: AbortSignal; roleLease?: RoleLease }): Promise<KoreanTaglineCapacityResult> {
   let tasks = structuredClone(value);
   const home = structuredClone(homeSlugs), lease = structuredClone(job);
-  const options = { timeoutMs: scopedRequestTimeout("product-tagline-ko", valueOptions.timeoutMs), signal: valueOptions.signal,
+  const options = { timeoutMs: valueOptions.timeoutMs, signal: valueOptions.signal,
     roleLease: valueOptions.roleLease && structuredClone(valueOptions.roleLease) };
   const env = Object.fromEntries(["ROLE_LEASE_ROLE", "ROLE_LEASE_INSTANCE_ID", "ROLE_LEASE_BOOT_ID", "ROLE_LEASE_RELEASE",
     "ROLE_LEASE_EPOCH", "ROLE_LEASE_BATCH_VERSION", "ROLE_LEASE_BATCH_EPOCH", "ROLE_LEASE_HOST"].map(key => [key, process.env[key]]));
   let items = tasks.map(task => ({ name: displayProjectName(task.name, task.repoUrl), tagline: koreanTaglineSource(task) }));
   const legacy = async () => ({ kind: "result" as const,
-    result: await translateTaglinesToKorean(items, scopedRequestTimeout("product-tagline-ko", options.timeoutMs), undefined, options.signal) });
-  const provider = productTaglineKoServingProvider(scopedModel("product-tagline-ko", KOREAN_TAGLINE_MODEL));
-  if (!textRouteCallable("product-tagline-ko", scopedModel("product-tagline-ko", KOREAN_TAGLINE_MODEL), provider)) return legacy();
+    result: await translateTaglinesToKorean(items, options.timeoutMs, undefined, options.signal) });
+  const provider = productTaglineKoServingProvider(textTaskModel("product-tagline-ko"));
+  // 순위(PR B)가 계약을 확인하고 범위를 열었다 — 그 사이 계약이 닫혔으면 이 모델만의 일이라 다음 순위로 넘긴다(옛 게이트웨이 길로 떨어지지 않는다)
+  if (!textRouteCallable("product-tagline-ko", textTaskModel("product-tagline-ko"), provider)) throw new ModelCapacityDeferredError("provider_contract_unavailable");
   const control = await readModelCapacityCallerControl();
   if (control.mode === "disabled") return legacy();
   if (control.mode !== "open") throw new ModelCapacityDeferredError("draining");
-  if (!control.policy?.routes.some(route => route.routeId === "product-tagline-ko" && route.provider === provider && route.model === scopedModel("product-tagline-ko", KOREAN_TAGLINE_MODEL)))
+  if (!control.policy?.routes.some(route => route.routeId === "product-tagline-ko" && route.provider === provider && route.model === textTaskModel("product-tagline-ko")))
     throw new ModelCapacityDeferredError("unmapped");
-  let call = prepareProductTaglineKoGatewayCall(items, { model: scopedModel("product-tagline-ko", KOREAN_TAGLINE_MODEL), timeoutMs: scopedRequestTimeout("product-tagline-ko", options.timeoutMs), provider });
+  let call = prepareProductTaglineKoGatewayCall(items, { model: textTaskModel("product-tagline-ko"), timeoutMs: options.timeoutMs, provider });
   if (call.kind !== "prepared") throw new ModelCapacityDeferredError(call.reason);
   const roleLease = options.roleLease ?? (env.ROLE_LEASE_ROLE === "text" || env.ROLE_LEASE_ROLE === "translation"
     ? roleLeaseFromEnv(env.ROLE_LEASE_ROLE, env) : undefined);
@@ -52,28 +52,28 @@ export async function translateKoreanTaglinesWithModelCapacity(value: readonly K
   if (initial.kind === "skipped") return initial;
   if (!("members" in initial)) throw new Error("product_tagline_ko_preparation_invalid");
   const expected = { owner: { instanceId: initial.role.instanceId, bootId: initial.role.bootId },
-    model: scopedModel("product-tagline-ko", KOREAN_TAGLINE_MODEL), routeId: "product-tagline-ko" as const, provider };
+    model: textTaskModel("product-tagline-ko"), routeId: "product-tagline-ko" as const, provider };
   let adopted: { requestId: string; state: "waiting" | "reserved" } | undefined;
   for (const candidate of await findOwnPendingProductTextRequests(expected)) {
     if (options.signal?.aborted) throw new ModelCapacityDeferredError("reservation_lost");
     const recovered = await pendingKoreanTaglineBatch(candidate.memberKeys, home);
     if (!recovered) { await cancelOwnPendingProductTextRequest(candidate, expected); continue; }
     const recoveredItems = recovered.map(task => ({ name: displayProjectName(task.name, task.repoUrl), tagline: koreanTaglineSource(task) }));
-    const recoveredCall = prepareProductTaglineKoGatewayCall(recoveredItems, { model: scopedModel("product-tagline-ko", KOREAN_TAGLINE_MODEL), timeoutMs: scopedRequestTimeout("product-tagline-ko", options.timeoutMs), provider });
+    const recoveredCall = prepareProductTaglineKoGatewayCall(recoveredItems, { model: textTaskModel("product-tagline-ko"), timeoutMs: options.timeoutMs, provider });
     if (recoveredCall.kind !== "prepared") throw new ModelCapacityDeferredError(recoveredCall.reason);
     const current = await prepareKoreanTaglineDispatch(recovered, home, lease, { roleLease, call: recoveredCall });
     if (current.kind === "disabled") return legacy();
     if (current.kind === "skipped") { await cancelOwnPendingProductTextRequest(candidate, expected); continue; }
     if (!("members" in current)) throw new Error("product_tagline_ko_preparation_invalid");
-    const recoveredKey = `${productTaglineKoLogicalWorkKey(current.members)}:${productTaglineKoInputHash({ members: current.members, model: scopedModel("product-tagline-ko", KOREAN_TAGLINE_MODEL) })}`;
+    const recoveredKey = `${productTaglineKoLogicalWorkKey(current.members)}:${productTaglineKoInputHash({ members: current.members, model: textTaskModel("product-tagline-ko") })}`;
     if (candidate.request.workKey !== recoveredKey) { await cancelOwnPendingProductTextRequest(candidate, expected); continue; }
     tasks = recovered; items = recoveredItems; call = recoveredCall; initial = current;
     adopted = { requestId: candidate.request.requestId, state: candidate.state }; break;
   }
   const { members, role } = initial;
   const identity = modelCapacityRequestIdentitySchema.parse({ owner: { instanceId: role.instanceId, bootId: role.bootId },
-    class: "background", pool: "text", routeId: "product-tagline-ko", provider: call.provider, model: scopedModel("product-tagline-ko", KOREAN_TAGLINE_MODEL),
-    workKey: `${productTaglineKoLogicalWorkKey(members)}:${productTaglineKoInputHash({ members, model: scopedModel("product-tagline-ko", KOREAN_TAGLINE_MODEL) })}` });
+    class: "background", pool: "text", routeId: "product-tagline-ko", provider: call.provider, model: textTaskModel("product-tagline-ko"),
+    workKey: `${productTaglineKoLogicalWorkKey(members)}:${productTaglineKoInputHash({ members, model: textTaskModel("product-tagline-ko") })}` });
   const pending = adopted ?? await findOwnPendingModelRequest(identity);
   if (pending?.state === "dispatched") throw new ModelCapacityDeferredError("dispatched");
   const slot = await requestProductTaglineKoModelSlot({ ...identity, requestId: pending?.requestId ?? randomUUID() }, members);
@@ -95,7 +95,7 @@ export async function translateKoreanTaglinesWithModelCapacity(value: readonly K
   }
   let native: Awaited<ReturnType<typeof translateTaglinesWithReservedGateway>>;
   try { native = await translateTaglinesWithReservedGateway(items, prepared.dispatch, call,
-    { signal: options.signal, timeoutMs: scopedRequestTimeout("product-tagline-ko", options.timeoutMs) }); }
+    { signal: options.signal, timeoutMs: options.timeoutMs }); }
   catch (error) {
     try {
       if (!await markModelDispatchIndeterminate(prepared.dispatch, modelCapacityIndeterminateReason({ signal: options.signal, error })))

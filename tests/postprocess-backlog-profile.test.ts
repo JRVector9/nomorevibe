@@ -1,13 +1,15 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { JobContext } from "@/lib/jobs/runner";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
-import { scopedModel } from "@/lib/llm/model-registry";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
+import { pinTextRanks, textContract } from "./text-task-ranks-fixture";
 
 const m = vi.hoisted(() => ({ pending: vi.fn(), record: vi.fn(), write: vi.fn() }));
-vi.mock("@/lib/domain/products/search-profiles", () => ({ pendingProfiles: m.pending, recordProfileResult: m.record }));
+vi.mock("@/lib/domain/products/search-profiles", () => ({ pendingProfiles: m.pending, recordProfileResult: m.record, resumedProfileModel: () => null }));
 vi.mock("@/lib/domain/products/search-profile-model-capacity", () => ({ writeKeywordsWithModelCapacity: m.write }));
-vi.mock("@/lib/domain/products/search-profile", () => ({ PROFILE_MODEL: "[MLX] gpt-oss-120b", profileEvidence: () => ({}), profileHash: () => "hash" }));
+vi.mock("@/lib/domain/products/search-profile", () => ({ profileEvidence: () => ({}), profileHash: () => "hash" }));
+/** 키워드 경로의 모델은 「작업 ↔ 모델」 순위가 고른다(PR B) — 1순위 하나만 둔다. */
+const MODEL = "gpt-oss-120b";
 const { writeSearchProfiles } = await import("@/lib/jobs/products/search-profile");
 
 const task = (id: number) => ({ product: { id, name: `p${id}` }, profile: null, reviewerNote: null });
@@ -19,8 +21,9 @@ let active = 0, peak = 0;
 beforeEach(() => {
   vi.clearAllMocks(); active = 0; peak = 0;
   // The job opens only on an engine connected directly (admin contract, transport direct); the gateway key was removed 2026-10-30.
-  setServingContractSnapshotForTest([{ routeId: "product-search-profile", model: scopedModel("product-search-profile", "[MLX] gpt-oss-120b"),
-    contract: {}, auth: "none", apiKey: null, transport: "direct" }]);
+  // 순위 하나(시험 연결 · MODEL)와 그 연결을 가리키는 직접 계약
+  pinTextRanks({ "product-search-profile": MODEL });
+  setServingContractSnapshotForTest([textContract("product-search-profile", MODEL)]);
   for (const [key, value] of Object.entries(roleEnv)) vi.stubEnv(key, value);
   m.pending.mockResolvedValueOnce([task(1), task(2), task(3), task(4)]).mockResolvedValue([]);
   m.record.mockResolvedValue(true);
@@ -30,7 +33,7 @@ beforeEach(() => {
     active--; return { kind: "result", result: { ok: true, en: ["list"], ko: ["목록"] } };
   });
 });
-afterEach(() => { setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); });
+afterEach(() => { setServingContractSnapshotForTest(null); pinTextRanks(null); vi.unstubAllEnvs(); });
 
 // 2026-10-31 결정: 다른 route 가 같은 장비에서 기다려도 일꾼을 줄이지 않는다(otherRoutesWaitingOnGroup 양보 삭제) — 하나가 잘못되면 다음 작업도 안 되는 구조는 이유가 없다
 it("keeps the registered concurrency and never consults another route's queue to yield", async () => {
@@ -52,7 +55,8 @@ it("processes each product at most once per tick and logs the exact deferral rea
   expect((outcome as { processed?: number }).processed).toBeGreaterThanOrEqual(1);
   const ids = m.write.mock.calls.map(([value]) => value.product.id);
   expect(new Set(ids).size).toBe(ids.length);
-  expect(context.log).toHaveBeenCalledWith("search_profile.capacity_deferred", expect.objectContaining({ reason: "capacity" }));
+  // 포화는 이 모델만의 까닭이라(PR B) 1순위를 이 틱 동안 쉬게 한다 — 까닭은 틱 끝 순위 요약(ai_task.ranks)에 그대로 남는다
+  expect(context.log).toHaveBeenLastCalledWith("ai_task.ranks", expect.objectContaining({ ranks: 1, "unusable.1.capacity": 1 }));
 });
 
 // 2026-10-31 결정: 한 제품만의 미룸(work_busy·dispatched·ledger_mismatch)은 그 제품만 넘기고 나머지를 짓는다

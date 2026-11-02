@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createServer, type ServerResponse } from "node:http";
 import { afterEach, expect, it, vi } from "vitest";
-import { textHash, translateToKorean, parseTranslations, reasonTranslationGatewayWire, TRANSLATE_MODEL } from "@/lib/crawl/translate";
+import { textHash, translateToKorean, parseTranslations, reasonTranslationGatewayWire } from "@/lib/crawl/translate";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { reasonTranslationInputHash, reasonTranslationLogicalWorkKey, reasonTranslationDispatchBindingHash,
   reasonTranslationModelDispatchSchema } from "@/lib/llm/capacity";
@@ -195,13 +195,14 @@ it("drains actual caller abort with no terminal authority", async () => {
     controller.abort(); expect(await pending).toEqual({ result: { ok: false, error: "network" }, terminal: null }); expect(bodies).toHaveLength(1);
   });
 });
-it("keeps the legacy wire format with the registry's M1 default", async () => {
+// 2026-11-02(PR B): 등록부의 M1 기본값(TRANSLATE_MODEL)은 없어졌다 — 모델은 「작업 ↔ 모델」 순위가 고르고, wire 는 받은 이름을 그대로 싣는다
+it("keeps the legacy wire format with the model the rank chose", async () => {
   const texts = sources(), request = vi.fn(async () => new Response(JSON.stringify(envelope())));
   // The legacy gateway sender no longer sends anything (gateway removed); its wire stays the native builder's.
   expect(await translateToKorean(texts, 1000, request as unknown as typeof fetch)).toEqual({ ok: false, error: "no_key" });
   expect(request).not.toHaveBeenCalled();
-  expect(TRANSLATE_MODEL).toBe("[m1] mlx-community--gemma-4-26b-a4b-it-4bit");
-  expect(reasonTranslationGatewayWire(texts, TRANSLATE_MODEL)).toBe(originalWire(texts, "[m1] mlx-community--gemma-4-26b-a4b-it-4bit"));
+  const ranked = "mlx-community--gemma-4-26b-a4b-it-4bit";
+  expect(reasonTranslationGatewayWire(texts, ranked)).toBe(originalWire(texts, ranked));
 });
 it("rejects sparse source arrays before preparation or native HTTP", async () => {
   await server(async ({ bodies }) => {

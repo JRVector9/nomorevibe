@@ -10,7 +10,7 @@ import { SHOW_HN_SIGNAL, type CrawlSettings } from "@/lib/crawl/settings-schema"
 import { RECHECK_AFTER_MINUTES } from "@/lib/domain/products/health-freshness";
 import { countProducts, repoGone, SPAM_AUTO_BAN_ACTOR, SPAM_AUTO_BAN_REASON, spamAutoBanned } from "@/lib/domain/products/repository";
 import { repoReviewOpen } from "@/lib/domain/products/repo-reviews";
-import { PROFILE_MODEL } from "@/lib/domain/products/search-profile";
+import { loadTaskModels } from "@/lib/llm/ai-task-resolver";
 import { sharedStore } from "@/lib/cache/shared";
 import { sharedLoader } from "./shared-cache";
 import { kstDayStart, type FreshWindows } from "./windows";
@@ -254,7 +254,8 @@ export async function modelHealth(settings: CrawlSettings, now = new Date()): Pr
     first: firstModel,
     second: settings.secondReview.voters.find((voter) => !sameReviewModel(voter.model, firstModel))?.model ?? null,
     fallback: settings.secondReview.fallbacks?.[0]?.model ?? null,
-    keywords: PROFILE_MODEL,
+    // 키워드 짓기의 모델은 「작업 ↔ 모델」 1순위다(PR B) — 순위가 없으면 모름
+    keywords: (await loadTaskModels("product-search-profile"))[0]?.model ?? null,
   };
   const end = at(now);
   const within = (column: AnyPgColumn) => sql`${column} > ${end} - interval '24 hours' AND ${column} <= ${end}`;

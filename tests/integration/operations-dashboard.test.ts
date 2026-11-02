@@ -1,13 +1,16 @@
-import { beforeAll, expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { roleOverview } from "@/lib/operations/roles";
 import { roleLeases, crawlCandidates, crawlDocuments, crawlFrontier, crawlPublicationChanges, crawlReviewAttempts, productAuditCampaigns,
   productAuditItems, productHealth, productIntroChecks, productSearchProfiles, products, secondReviews } from "@/lib/db/schema";
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from "@/lib/crawl/settings-schema";
-import { PROFILE_MODEL } from "@/lib/domain/products/search-profile";
+import { pinTextRanks } from "../text-task-ranks-fixture";
 import { attentionCounts, hourlyThroughput, modelHealth, signalYields, todayPublications } from "@/lib/operations/dashboard";
 import { ensureSchema, resetTables } from "./setup";
+
+// 키워드 짓기의 모델은 「작업 ↔ 모델」 1순위다(PR B) — 예전 PROFILE_MODEL(등록부 기본값)과 같은 이름으로 순위를 고정한다
+const PROFILE_MODEL = "gpt-oss-120b";
 
 // 이번 시(時)의 30분 — 몇 분 전에 심은 행이 늘 마지막 칸에 들어간다
 const HOUR_MS = 3_600_000;
@@ -42,7 +45,9 @@ const product = (slug: string, overrides: Partial<typeof products.$inferInsert> 
 });
 
 beforeAll(ensureSchema);
+afterAll(() => pinTextRanks(null));
 beforeAll(async () => {
+  pinTextRanks({ "product-search-profile": PROFILE_MODEL });
   await resetTables();
   for (const table of [secondReviews, crawlCandidates, crawlDocuments, crawlFrontier, crawlPublicationChanges]) await db.delete(table);
 
@@ -150,6 +155,13 @@ it("reports each model slot over the last hour", async () => {
   // 1차 모델을 설정하지 않았으면 지난 1시간에 실제로 본 모델
   const [first] = await modelHealth({ ...settings, firstReview: undefined }, now);
   expect(first.model).toBe("[MLX] gpt-oss-120b");
+  // 키워드 짓기 자리는 순위 1의 모델을 보인다 — 순위가 없으면 지난 1시간에 실제로 본 모델
+  try {
+    pinTextRanks({ "product-search-profile": ["rank-profile-model", PROFILE_MODEL] });
+    expect((await modelHealth(settings, now)).find(slot => slot.key === "keywords")?.model).toBe("rank-profile-model");
+    pinTextRanks([]);
+    expect((await modelHealth(settings, now)).find(slot => slot.key === "keywords")?.model).toBe(PROFILE_MODEL);
+  } finally { pinTextRanks({ "product-search-profile": PROFILE_MODEL }); }
 });
 
 it("yields per discovery signal over the last 7 days", async () => {

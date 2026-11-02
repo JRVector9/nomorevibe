@@ -26,6 +26,7 @@ import { readUptimeSplitStage } from "./uptime-split-repository";
 import { readTextStageProgress } from './text-stage-progress';
 import { readPublisherClassificationDrain } from './publisher-drain-progress';
 import { AGENT_REVIEW_ALL_SKIPPED } from '@/lib/crawl/agent-review-skip';
+import { AI_TASK_RANK_DEGRADED_CODES, AI_TEXT_TASK_IDS } from '@/lib/llm/ai-tasks';
 
 type ProgressJob = { name: string; nextScheduledAt: Date | null; notBefore: Date | null; lockedAt?: Date | null;
   leaseToken?: string | null; cursor?: unknown; lastError?: string | null };
@@ -180,8 +181,14 @@ export function buildWorkerProgress(
     stages, scheduler, liveness, lanes, activeJobs };
 }
 
-/** 단계가 들인 일을 모두 이름 붙은 까닭으로 건너뛴다는 job 관측(runner 의 degraded)과 그 코드. 이 잡만 쓴다. */
-const ALL_SKIPPED_CODES: Readonly<Record<string, string>> = { "crawl-agent-review": AGENT_REVIEW_ALL_SKIPPED };
+/**
+ * 단계가 들인 일을 모두 이름 붙은 까닭으로 건너뛴다는 job 관측(runner 의 degraded)과 그 코드. 1차 심사와, 「작업 ↔ 모델」 순위를 읽는 text 잡(PR B:
+ * 순위 없음·표 못 읽음·모든 순위를 쓸 수 없음 — 설정의 일이라 재시작이 고치지 못한다)이 쓴다.
+ */
+const ALL_SKIPPED_CODES: Readonly<Record<string, readonly string[]>> = {
+  "crawl-agent-review": [AGENT_REVIEW_ALL_SKIPPED],
+  ...Object.fromEntries(AI_TEXT_TASK_IDS.filter(job => job !== "search-query-translate").map(job => [job, AI_TASK_RANK_DEGRADED_CODES])),
+};
 /**
  * 그 관측을 믿는 시간. 1차 틱(최대 108초)과 scheduler 의 다음 요청(60초)을 한 번 담는다 — 그 뒤로 새 틱 관측이 없으면(틱이 멈춘 워커)
  * 지금처럼 재시작한다. 미래 쪽은 호스트 사이 시계 차이만 30초까지 받는다.
@@ -200,13 +207,14 @@ export function applyAllSkippedBlock<T extends { job?: string; reason: string; r
   stage: T, observations: ReadonlyArray<{ key: string; value: Record<string, unknown>; observedAt: Date | string }>, now: Date,
 ): T & { skipBlock?: StageSkipDetail } {
   if (stage.restartEligible !== true || stage.reason !== 'no_progress' || !stage.job) return stage;
-  const code = ALL_SKIPPED_CODES[stage.job];
-  const row = code ? observations.find(item => item.key === `job:${stage.job}`) : undefined;
+  const codes = ALL_SKIPPED_CODES[stage.job];
+  const row = codes ? observations.find(item => item.key === `job:${stage.job}`) : undefined;
   if (!row) return stage;
   const age = now.getTime() - new Date(row.observedAt).getTime();
   if (!(age >= -ALL_SKIPPED_CLOCK_SKEW_MS && age <= ALL_SKIPPED_FRESH_MS)) return stage;
   const degraded = row.value.degraded as { code?: unknown; detail?: unknown; streak?: unknown } | null | undefined;
-  if (!degraded || typeof degraded !== 'object' || degraded.code !== code) return stage;
+  if (!degraded || typeof degraded !== 'object' || typeof degraded.code !== 'string' || !codes!.includes(degraded.code)) return stage;
+  const code = degraded.code;
   const skipBlock: StageSkipDetail = { reason: 'all_skipped', code,
     detail: typeof degraded.detail === 'string' ? degraded.detail.slice(0, 300) : null,
     streak: typeof degraded.streak === 'number' && Number.isSafeInteger(degraded.streak) ? degraded.streak : null };

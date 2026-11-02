@@ -7,7 +7,6 @@ import { markWorkerSeen, pendingJobNames, requestJob, withJobLeaseWrite } from '
 import { runJob, type JobContext, type JobOutcome } from '@/lib/jobs/runner';
 import { tryAcquireRole, type RoleLease } from '@/lib/jobs/role-leader';
 import { backgroundConsumerLanes } from '@/lib/jobs/background-consumer';
-import { KOREAN_TAGLINE_MODEL } from '@/lib/crawl/translate';
 import { translateKoreanTaglinesWithModelCapacity } from '@/lib/domain/products/korean-tagline-model-capacity';
 import { setServingContractSnapshotForTest } from '@/lib/llm/serving-contract-store';
 import { INTRO_CHECK_MODEL } from '@/lib/domain/products/intro-check';
@@ -18,7 +17,7 @@ import { readModelCapacityCallerControl } from '@/lib/llm/capacity-repository';
 import { backgroundCliPath } from '@/lib/llm/cli-model-capacity';
 import { jobRunOptions, runWorker } from '@/scripts/worker';
 import { ensureSchema, TEST_DATABASE_URL } from './setup';
-import { directContractRow } from './direct-engine-fixtures';
+import { inTextRank, textContract } from '../text-task-ranks-fixture';
 
 /*
  * PR06c 실제 DB driver — 실제 runJob(job lease·heartbeat·ACK)·pendingJobNames·requestJob·역할 선출(role_leases)·
@@ -26,6 +25,8 @@ import { directContractRow } from './direct-engine-fixtures';
  * (번역 transport 는 주입한 request mock 만, CLI 는 경로 판정까지만). 손대는 행(jobs·관측·role_leases·control)은 시작 값으로 되돌린다.
  */
 type Raw = Record<string, unknown>;
+// 「작업 ↔ 모델」 순위(PR B)의 1순위 모델 — 예전 KOREAN_TAGLINE_MODEL(등록부 기본값)과 같은 이름이다
+const KOREAN_TAGLINE_MODEL = 'gpt-oss-120b';
 const JOB = 'product-tagline-ko', MARKER = `pr06c-${randomUUID().slice(0, 8)}`;
 const admin = postgres(TEST_DATABASE_URL, { max: 1, prepare: false, onnotice: () => {} });
 const policy: ModelCapacityPolicy = { version: 1, globalLimit: 1, providerLimits: { fixture: 1 }, groupLimits: { fixture: 1 },
@@ -60,11 +61,13 @@ const pass = (handler: Handler) => runWorker({ role: 'text', once: true }, deps(
 const fixtureResponse = () => new Response(JSON.stringify({ choices: [{ message: { content: '["번역"]' } }] }), { status: 200 });
 /**
  * 한국어 소개 경로가 disabled 원 경로를 고르는 지점(용량 조정자). 이 경로·모델의 직접 연결 계약이 있어야 그 지점까지 간다 — 계약이 없으면
- * 원 경로로 곧장 간다. 원 경로의 게이트웨이 전송은 2026-10-30 제거돼 이제 보내지 않고 no_key 로 끝난다.
+ * (PR B) 그 순위만의 미룸(provider_contract_unavailable)으로 끝난다. 원 경로의 게이트웨이 전송은 2026-10-30 제거돼 이제 보내지 않고 no_key 로 끝난다.
+ * 깊은 함수는 잡이 여는 것과 같은 순위 범위(inTextRank)에서 부른다.
  */
-const directKoreanRoute = () => setServingContractSnapshotForTest([directContractRow(JOB, KOREAN_TAGLINE_MODEL)]);
-const translateOne = () => translateKoreanTaglinesWithModelCapacity([{ productId: 1, name: 'Fixture', tagline: 'hello', repoUrl: null, attempts: 0 }],
-  [], { name: JOB, token: `${MARKER}-fixture`, requestedVersion: 1 }, { timeoutMs: 1_000 });
+const directKoreanRoute = () => setServingContractSnapshotForTest([textContract(JOB, KOREAN_TAGLINE_MODEL)]);
+const translateOne = () => inTextRank(JOB, KOREAN_TAGLINE_MODEL, () => translateKoreanTaglinesWithModelCapacity(
+  [{ productId: 1, name: 'Fixture', tagline: 'hello', repoUrl: null, attempts: 0 }],
+  [], { name: JOB, token: `${MARKER}-fixture`, requestedVersion: 1 }, { timeoutMs: 1_000 }));
 
 beforeAll(async () => {
   ensureSchema();

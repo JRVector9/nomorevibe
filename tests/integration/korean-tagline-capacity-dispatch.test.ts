@@ -5,7 +5,6 @@ import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vite
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { products } from "@/lib/db/schema";
-import { KOREAN_TAGLINE_MODEL } from "@/lib/crawl/translate";
 import { reviewHash } from "@/lib/crawl/agent-review-contract";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { pendingKoreanTaglines, prepareKoreanTaglineDispatch, recordKoreanTaglines, koreanTaglineSource,
@@ -26,13 +25,15 @@ import { modelCapacityPolicyHash, productTaglineKoInputHash, productTaglineKoLog
 import type { ProductTaglineKoServingContract } from "@/lib/llm/product-tagline-ko-serving-contract";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
-import { directContractRow } from "./direct-engine-fixtures";
+import { inTextRank, pinTextRanks, textContract } from "../text-task-ranks-fixture";
 
 const serving = vi.hoisted(() => ({ contract: null as ProductTaglineKoServingContract | null }));
 vi.mock("@/lib/llm/product-tagline-ko-serving-contract", async original => ({
   ...await original<typeof import("@/lib/llm/product-tagline-ko-serving-contract")>(), resolveProductTaglineKoServingContract: () => serving.contract,
 }));
 type Raw = Record<string, unknown>;
+// 한국어 소개 GPT 경로의 모델·주소는 「작업 ↔ 모델」 순위가 고른다(PR B) — 이 파일은 순위 하나(이 모델)를 고정한다
+const KOREAN_TAGLINE_MODEL = "gpt-oss-120b";
 const prefix = `korean-native-${randomUUID().slice(0, 12)}`, jobName = "product-tagline-ko";
 const admin = postgres(TEST_DATABASE_URL, { max: 1, prepare: false, onnotice: () => {}, connection: { application_name: prefix } });
 const managedJobs = [...new Set(jobsForRole("text"))].sort();
@@ -177,8 +178,10 @@ async function server(run: (state: { bodies: string[]; setReply: (reply: (respon
     () => new Promise<void>((resolve, reject) => http.listening ? http.close(error => error ? reject(error) : resolve()) : resolve()), () => drain(responses, true)], failures); }
 }
 async function tick() { await tracked(requestJob(jobName)); return tracked(runJob(jobName, writeKoreanTaglines, { requestedOnly: true, roleLease: role })); }
+// 직접 부르는 장부·전송 단계(prepareKoreanTaglineDispatch 등)는 순위 범위 안에서만 모델을 읽는다 — 잡이 여는 1순위 범위와 같게 연다
 async function custom(run: (lease: JobLease) => Promise<void>) { await tracked(requestJob(jobName));
-  return tracked(runJob(jobName, async (ctx: JobContext<null>) => { expect(ctx.lease).toBeDefined(); await run(ctx.lease!); return { done: true }; }, { requestedOnly: true, roleLease: role })); }
+  return tracked(runJob(jobName, async (ctx: JobContext<null>) => { expect(ctx.lease).toBeDefined();
+    await inTextRank(jobName, KOREAN_TAGLINE_MODEL, () => run(ctx.lease!)); return { done: true }; }, { requestedOnly: true, roleLease: role })); }
 function latch() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }
 async function until(check: () => Promise<boolean>) { const deadline = Date.now() + 3000;
   while (!await check()) { if (Date.now() >= deadline) throw new Error("fixture_barrier_deadline"); await new Promise(resolve => setTimeout(resolve, 10)); } }
@@ -213,18 +216,23 @@ beforeAll(() => tracked((async () => {
   expect(baseline("job_batch_candidates").some(row => row.instance_id === prefix)).toBe(false); initialized = true;
 })(), setups));
 // The route opens only on a direct admin contract for its model (abcLLM gateway removed 2026-10-30); the contract body is the mock above.
-beforeEach(() => tracked((async () => { setServingContractSnapshotForTest([directContractRow(jobName, KOREAN_TAGLINE_MODEL)]); await install(); await elect(); })(), setups));
+// PR B: 1순위(시험 연결 · 이 모델)는 그 연결을 가리키는 직접 계약 행에 묶인다 — 전송 계약 본문은 여전히 위 mock 이 연다.
+beforeEach(() => tracked((async () => { setServingContractSnapshotForTest([textContract(jobName, KOREAN_TAGLINE_MODEL)]);
+  pinTextRanks({ [jobName]: KOREAN_TAGLINE_MODEL }); await install(); await elect(); })(), setups));
 afterEach(() => tracked(steps([() => drain(setups), () => drain(exercises), () => drain(work), cleanup,
-  async () => { serving.contract = null; setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); vi.unstubAllGlobals(); }]), hooks));
+  async () => { serving.contract = null; setServingContractSnapshotForTest(null); pinTextRanks(null); vi.unstubAllEnvs(); vi.unstubAllGlobals(); }]), hooks));
 afterAll(async () => { await steps([() => drain(setups), () => drain(exercises), () => drain(work), () => drain(hooks), cleanup,
   () => admin.end({ timeout: 5 }), async () => { await (globalThis as { pgClient?: ReturnType<typeof postgres> }).pgClient?.end({ timeout: 5 }); }]); });
 
 it("dispatches the real ordered eight-member Korean job and ACKs only quality-checked stored results", exercise(async () => {
   const seeded = await seed(8); await tracked(requestJob(jobName));
-  const [original] = await admin`SELECT processed_version FROM jobs WHERE name=${jobName}`;
-  expect(await tick()).toMatchObject({ status: "deferred", reason: "model_capacity" });
+  // 전송 계약이 아직 없다(mock resolver null). PR B: 그것(provider_contract_unavailable)은 그 모델만의 까닭이라 1순위를 쉬게 하고 같은 묶음을
+  // 다음 순위로 넘긴다 — 다른 순위가 없으니 「모든 순위를 쓸 수 없음」으로 제 일 못 한 틱을 남긴다(예전처럼 틱 전체를 미루지 않는다). 장부·소개는 그대로다.
+  expect(await tick()).toMatchObject({ status: "completed", done: true, degraded: "all_ranks_unusable" });
   expect(await admin`SELECT request_id FROM model_capacity_requests WHERE owner_instance_id=${prefix}`).toEqual([]);
-  expect((await admin`SELECT processed_version FROM jobs WHERE name=${jobName}`)[0].processed_version).toBe(original.processed_version);
+  expect(await admin`SELECT product_id FROM product_korean_taglines WHERE product_id=ANY(${seeded.products.map(row => row.id)}::int[])`).toEqual([]);
+  const [observed] = await admin`SELECT value FROM operations_observations WHERE key=${`job:${jobName}`}`;
+  expect(observed.value.degraded).toMatchObject({ code: "all_ranks_unusable", detail: expect.stringContaining("전송 계약이 닫힘") });
   await server(async ({ bodies, setReply }) => {
     setReply(response => response.end(JSON.stringify(replyBody(Array.from({ length: 8 }, (_, index) => index === 7 ? "" : "문서를 관리하는 도구")))));
     expect(await tick()).toMatchObject({ status: "completed", done: true }); expect(bodies).toHaveLength(1);

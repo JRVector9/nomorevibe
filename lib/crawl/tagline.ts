@@ -1,9 +1,9 @@
-import { configuredModel, modelLimits } from "@/lib/llm/model-registry";
+import { modelRequestBudget } from "@/lib/llm/model-registry";
 import { createHash } from "node:crypto";
 import type { CrawlDocument } from "@/lib/db/schema";
 
 /**
- * 소개가 없는 후보의 한 줄 소개를 짓는다 — 사내 게이트웨이(abcllm)의 qwen3.6-35b.
+ * 소개가 없는 후보의 한 줄 소개를 짓는다. 모델·주소·키는 「작업 ↔ 모델」 순위가 고른다(PR B, lib/llm/ai-task-resolver.ts) — 환경변수·등록부 기본값은 읽지 않는다.
  *
  * 발행은 페이지 설명도 레포 설명도 없으면 멈춘다(publish.ts no_description). "없는 값을 지어내지
  * 않는다"는 원칙이 그 자리에 있어서인데, 2026-09-20 프로드에 466건이 쌓였고 그 전부를 사람이 읽어야
@@ -19,8 +19,6 @@ import type { CrawlDocument } from "@/lib/db/schema";
  * 게이트웨이는 스트리밍이 기본이라 stream:false 를, 기본 어댑터가 증거를 요약해 버리므로
  * context_strategy:"raw" 를 꼭 보낸다(agent-review-gateway.ts 와 같은 이유).
  */
-export const TAGLINE_MODEL = configuredModel("crawl-tagline");
-
 /** 목록에서 이름 밑에 한 줄로 서는 길이 — 여기까지는 짧게 끊을 자리를 찾는다 */
 export const TAGLINE_LIMIT = 100;
 /** 제품 칸(products.tagline)이 받는 길이. 끊을 자리가 없으면 문장을 여기까지 그대로 둔다 */
@@ -162,7 +160,7 @@ export function crawlTaglineGatewayWire(evidence: TaglineEvidence, model: string
   const prompt = JSON.stringify(evidence).replace(/</g, "\\u003c").replace(/>/g, "\\u003e");
   return JSON.stringify({
     context_strategy: "raw",
-    model, stream: false, temperature: 0, max_tokens: modelLimits("crawl-tagline").maxTokens,
+    model, stream: false, temperature: 0, max_tokens: modelRequestBudget("crawl-tagline").maxTokens,
     reasoning_effort: "low", chat_template_kwargs: { enable_thinking: false },
     response_format: { type: "json_schema", json_schema: { name: "tagline", schema: SCHEMA } },
     messages: [

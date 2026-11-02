@@ -1,4 +1,4 @@
-import { AI_CLI_TOOL_LABELS, AI_CLI_TOOL_PROVIDERS, AI_CLI_TOOLS, AI_TASK_RANK_MAX, AI_TASKS, aiTask, aiTaskAccepts, aiTaskSlotLabel,
+import { AI_CLI_TOOL_LABELS, AI_CLI_TOOL_PROVIDERS, AI_CLI_TOOLS, AI_TASK_RANK_MAX, AI_TASKS, aiTask, aiTaskAccepts, aiTaskAliasIdentity, aiTaskSlotLabel,
   type AiCliTool, type AiTaskDef } from "@/lib/llm/ai-tasks";
 
 /**
@@ -247,8 +247,8 @@ export function aiTaskRankNotices(taskId: string, ranks: readonly (AiRankChoice 
 
 export type AiPolicyRoute = Readonly<{ routeId: string; provider: string; model: string; providerBudgetId: string; groupId: string }>;
 export type AiReadinessInput = Readonly<{
-  /** 켜진 계약 행(model_serving_contracts, 키 없이). provider·endpoint 는 계약 JSON 의 값 */
-  contracts: readonly Readonly<{ routeId: string; model: string; provider: string | null; endpoint: string | null; transport: string }>[];
+  /** 켜진 계약 행(model_serving_contracts, 키 없이). provider·endpoint·engineModel 은 계약 JSON 의 값(engineModel 은 연결로 가른 이름의 계약만, PR B) */
+  contracts: readonly Readonly<{ routeId: string; model: string; provider: string | null; endpoint: string | null; transport: string; engineModel?: string | null }>[];
   /** 2차 계약(abcllm 먼저, 없으면 local-direct) — 오늘 2차가 쓰는 resolver 의 결과 */
   ai2Contract: (model: string) => Readonly<{ provider: "abcllm" | "local-direct"; endpoint: string | null }> | null;
   /** 고정 로컬 경로의 계약(backendId = 정책 route 의 providerBudgetId) */
@@ -260,13 +260,16 @@ export type AiReadinessInput = Readonly<{
 }>;
 export type AiRankReadiness = Readonly<{
   rank: number; connectionId: string; model: string;
+  /** 장부·정책 route·계약 행의 model 열쇠(보통 model 그대로, 같은 모델을 다른 연결에도 둔 순위는 연결로 가른 이름 — PR B) */
+  identity: string;
   /** 저장을 막는 것(한국어) */
   blocking: readonly string[];
   /** 막지 않지만 알릴 것 */
   warnings: readonly string[];
   /** 저장이 만들 것 */
   createDevice: Readonly<{ deviceId: string; limitSlots: number }> | null;
-  createContract: Readonly<{ routeId: string; replacesGateway: boolean }> | null;
+  /** identity = 만들 계약의 model 열쇠, engineModel = 엔진에 보낼 이름(identity 가 연결로 가른 이름일 때만) */
+  createContract: Readonly<{ routeId: string; replacesGateway: boolean; identity: string; engineModel: string | null }> | null;
   appendRoute: AiPolicyRoute | null;
   /** 이 순위를 부를 provider(장부·계약 이름) */
   provider: string | null;
@@ -282,9 +285,9 @@ const contractBase = (endpoint: string | null) => endpoint ? aiConnectionBaseUrl
 export function aiRankReadiness(task: AiTaskDef, rank: number, connection: AiConnectionView, model: string, input: AiReadinessInput): AiRankReadiness {
   const blocking: string[] = [], warnings: string[] = [];
   let createDevice: AiRankReadiness["createDevice"] = null, createContract: AiRankReadiness["createContract"] = null, appendRoute: AiPolicyRoute | null = null;
-  let provider: string | null = null;
+  let provider: string | null = null, identity = model;
   const head = `${rank}순위 ${connection.label} · ${model}`;
-  const result = () => Object.freeze({ rank, connectionId: connection.id, model, blocking: Object.freeze(blocking), warnings: Object.freeze(warnings),
+  const result = () => Object.freeze({ rank, connectionId: connection.id, model, identity, blocking: Object.freeze(blocking), warnings: Object.freeze(warnings),
     createDevice, createContract, appendRoute, provider });
   const routeId = task.routeId;
   const policyRoutes = input.policy?.routes ?? [];
@@ -294,19 +297,19 @@ export function aiRankReadiness(task: AiTaskDef, rank: number, connection: AiCon
     if (!routeId) return null;
     if (input.policy === null) { blocking.push(`${head}: 용량 정책을 읽지 못해 경로를 확인하지 못했습니다. 잠시 뒤 다시 저장하세요.`); return null; }
     if (input.policy.mode === "disabled") { warnings.push(`${head}: 용량 관리가 꺼져 있어 경로를 확인하지 않았습니다.`); return null; }
-    const known = policyRoutes.find(route => route.routeId === routeId && route.provider === routeProvider && route.model === model);
+    const known = policyRoutes.find(route => route.routeId === routeId && route.provider === routeProvider && route.model === identity);
     if (known) {
       if (known.groupId !== connection.deviceId)
-        blocking.push(`${head}: 용량 정책의 ${routeId} / ${routeProvider} / ${model} 경로는 장비 ${known.groupId}에 있습니다. 연결의 장비 이름을 ${known.groupId}(으)로 바꾸거나 용량 정책을 고치세요.`);
+        blocking.push(`${head}: 용량 정책의 ${routeId} / ${routeProvider} / ${identity} 경로는 장비 ${known.groupId}에 있습니다. 연결의 장비 이름을 ${known.groupId}(으)로 바꾸거나 용량 정책을 고치세요.`);
       return known.groupId;
     }
-    if (!appendable) { blocking.push(`${head}: 용량 정책에 ${routeId} / ${routeProvider} / ${model} 경로가 없습니다. ${why}`); return null; }
+    if (!appendable) { blocking.push(`${head}: 용량 정책에 ${routeId} / ${routeProvider} / ${identity} 경로가 없습니다. ${why}`); return null; }
     const sibling = policyRoutes.find(route => route.routeId === routeId && route.provider === routeProvider);
     if (routeProvider !== "abcllm" && sibling && sibling.groupId !== connection.deviceId) {
       blocking.push(`${head}: 같은 경로의 다른 모델이 장비 ${sibling.groupId}에 있습니다. 연결의 장비 이름을 ${sibling.groupId}(으)로 맞추세요.`);
       return null;
     }
-    appendRoute = Object.freeze({ routeId, provider: routeProvider, model, groupId: connection.deviceId,
+    appendRoute = Object.freeze({ routeId, provider: routeProvider, model: identity, groupId: connection.deviceId,
       providerBudgetId: routeProvider === "abcllm" ? budgetFor(connection.deviceId) : sibling?.providerBudgetId ?? budgetFor(connection.deviceId) });
     return connection.deviceId;
   };
@@ -330,7 +333,39 @@ export function aiRankReadiness(task: AiTaskDef, rank: number, connection: AiCon
     case "deferred":
       warnings.push(`${head}: 이 작업의 연결 계약·용량 경로 규칙은 아직 정해지지 않아 확인하지 않았습니다(다음 단계에서 정합니다).`);
       return result();
-    case "engine-route":
+    case "engine-route": {
+      // PR B: 실행 쪽이 순위마다 「그 연결을 가리키는 계약」(끝점 = 연결 주소, 엔진 모델 = 순위 모델)을 찾는다(lib/llm/ai-task-resolver.ts).
+      // 같은 모델 이름의 계약이 다른 서버에 있으면 연결로 가른 이름(<모델>@<연결 id 앞 8자>)으로 따로 계약·용량 경로를 둔다 — 두 서버를 두 순위로 쓸 수 있다.
+      const isDirect = (entry: AiReadinessInput["contracts"][number]) => entry.transport === "direct" || entry.provider === "local-direct";
+      const wireOf = (entry: AiReadinessInput["contracts"][number]) => entry.provider === "local-direct" ? entry.model : entry.engineModel ?? entry.model;
+      const own = input.contracts.filter(entry => entry.routeId === routeId && isDirect(entry) && contractBase(entry.endpoint) === base && wireOf(entry) === model)
+        .sort((a, b) => Number(a.provider === "local-direct") - Number(b.provider === "local-direct") || Number(a.model !== model) - Number(b.model !== model));
+      provider = "abcllm";
+      if (own.length) {
+        identity = own[0].model;
+        provider = own[0].provider === "local-direct" ? "local-direct" : "abcllm";
+      } else if (!routeId || !input.engineRoutes.includes(routeId)) {
+        blocking.push(`${head}: ${routeId} 경로의 연결 계약이 없고 자동으로 만들 수 없습니다.`);
+      } else {
+        const plain = input.contracts.find(entry => entry.routeId === routeId && entry.model === model);
+        if (!plain || !isDirect(plain)) createContract = Object.freeze({ routeId, replacesGateway: !!plain, identity: model, engineModel: null });
+        else {
+          const alias = aiTaskAliasIdentity(model, connection.id);
+          const taken = alias ? input.contracts.find(entry => entry.routeId === routeId && entry.model === alias) : undefined;
+          if (!alias) blocking.push(`${head}: 같은 모델 이름의 계약이 다른 서버에 있는데 모델 이름이 길어 연결로 가른 이름을 만들 수 없습니다.`);
+          else if (taken) blocking.push(`${head}: ${routeId} 경로의 ${alias} 계약이 다른 서버(${aiConnectionHost(contractBase(taken.endpoint)) ?? "주소 없음"})를 가리킵니다. `
+            + "모델 연결 화면에서 그 계약을 고치세요.");
+          else {
+            identity = alias;
+            createContract = Object.freeze({ routeId, replacesGateway: false, identity: alias, engineModel: model });
+            warnings.push(`${head}: 같은 모델 이름의 계약이 다른 서버(${aiConnectionHost(contractBase(plain.endpoint)) ?? "주소 없음"})에 있어 이 연결은 장부 이름 ${alias}(으)로 `
+              + `따로 계약·용량 경로를 둡니다 — 엔진에는 ${model}이(가) 나갑니다.`);
+          }
+        }
+      }
+      checkDevice(checkRoute(provider, provider === "abcllm", "로컬 직접 경로는 예산·장비 이름이 계약과 같아야 해서 자동으로 만들지 않습니다."));
+      return result();
+    }
     case "review-ai1": {
       const row = input.contracts.find(entry => entry.routeId === routeId && entry.model === model);
       // 1차·text 경로는 엔진 직접 계약(abcllm 형) 또는 local-direct 계약(direct-openai-chat-v1, PR 3b-C·3b-E) 둘 다 받는다 — 있는 계약의 provider 를 따른다
@@ -341,7 +376,7 @@ export function aiRankReadiness(task: AiTaskDef, rank: number, connection: AiCon
         if (served !== base) blocking.push(`${head}: ${routeId} 경로의 같은 모델 계약이 다른 서버(${aiConnectionHost(served) ?? "주소 없음"})를 가리킵니다. `
           + "같은 모델 이름은 한 경로에 서버 하나만 둘 수 있습니다 — 모델 연결 화면에서 계약을 고치세요.");
       } else if (routeId && input.engineRoutes.includes(routeId)) {
-        createContract = Object.freeze({ routeId, replacesGateway: !!row });
+        createContract = Object.freeze({ routeId, replacesGateway: !!row, identity: model, engineModel: null });
       } else blocking.push(`${head}: ${routeId} 경로의 연결 계약이 없고 자동으로 만들 수 없습니다.`);
       checkDevice(checkRoute(provider, provider === "abcllm", "로컬 직접 경로는 예산·장비 이름이 계약과 같아야 해서 자동으로 만들지 않습니다."));
       return result();
@@ -370,11 +405,28 @@ export function aiRankReadiness(task: AiTaskDef, rank: number, connection: AiCon
   }
 }
 
+/**
+ * 한 줄(작업 × 칸)의 순위들을 차례로 확인한다 — 앞 순위가 만들 계약을 뒤 순위가 본다(PR B). 둘 다 계약이 없는 같은 모델을 다른 연결로 고르면
+ * 1순위는 모델 이름 그대로, 2순위는 연결로 가른 이름으로 계약을 만든다(한 저장에서 같은 계약 열쇠를 두 서버로 만들지 않는다).
+ */
+export function aiRanksReadiness(task: AiTaskDef, ranks: readonly Readonly<{ rank: number; connection: AiConnectionView; model: string }>[],
+  input: AiReadinessInput): AiRankReadiness[] {
+  const contracts = [...input.contracts];
+  return ranks.map(entry => {
+    const ready = aiRankReadiness(task, entry.rank, entry.connection, entry.model, { ...input, contracts });
+    if (ready.createContract && entry.connection.baseUrl)
+      contracts.push({ routeId: ready.createContract.routeId, model: ready.createContract.identity, provider: "abcllm",
+        endpoint: `${entry.connection.baseUrl}/chat/completions`, transport: "direct", engineModel: ready.createContract.engineModel });
+    return ready;
+  });
+}
+
 /** 저장된 순위에 아직 없는 것(그 줄을 다시 저장하면 만든다) — 화면의 준비 상태 문장. */
 export function aiRankPendingText(ready: Pick<AiRankReadiness, "rank" | "model" | "createContract" | "appendRoute" | "createDevice">): string[] {
   const out: string[] = [];
   if (ready.createContract) out.push(`${ready.rank}순위 ${ready.model}: ${ready.createContract.routeId} 엔진 직접 계약이 ${ready.createContract.replacesGateway
-    ? "게이트웨이 계약뿐입니다" : "없습니다"} — 이 줄을 저장하면 엔진을 확인하고 만듭니다.`);
+    ? "게이트웨이 계약뿐입니다" : "없습니다"} — 이 줄을 저장하면 엔진을 확인하고 만듭니다${ready.createContract.engineModel
+    ? `(같은 모델이 다른 서버에도 있어 장부 이름 ${ready.createContract.identity})` : ""}.`);
   if (ready.appendRoute) out.push(`${ready.rank}순위 ${ready.model}: 용량 정책에 ${ready.appendRoute.routeId} / ${ready.appendRoute.provider} 경로가 없습니다 — 저장하면 덧붙입니다(DRAIN 없음).`);
   if (ready.createDevice) out.push(`${ready.rank}순위 ${ready.model}: 장비 행 ${ready.createDevice.deviceId}이(가) 없습니다 — 저장하면 ${ready.createDevice.limitSlots}칸으로 만듭니다.`);
   return out;

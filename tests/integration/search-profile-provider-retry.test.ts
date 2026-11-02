@@ -2,7 +2,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlTaglines, jobs, products, productSearchProfiles, secondReviews, textTranslations } from "@/lib/db/schema";
-import { PROFILE_MODEL, profileEvidence, profileHash } from "@/lib/domain/products/search-profile";
+import { profileEvidence, profileHash } from "@/lib/domain/products/search-profile";
 import { pendingProfiles, recordProfileResult } from "@/lib/domain/products/search-profiles";
 import { collectSearchHealth } from "@/lib/domain/products/search-health";
 import { readTextProgress } from "@/lib/operations/text-progress";
@@ -10,10 +10,13 @@ import { JobLeaseLostError, type JobLease } from "@/lib/jobs/control";
 import { runJob } from "@/lib/jobs/runner";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { ensureSchema, resetTables } from "./setup";
-import { directContractRow } from "./direct-engine-fixtures";
+import { pinTextRanks, textContract } from "../text-task-ranks-fixture";
+
+// 검색 키워드의 모델·주소는 「작업 ↔ 모델」 순위가 고른다(PR B)
+const PROFILE_MODEL = "gpt-oss-120b";
 
 beforeAll(ensureSchema);
-afterEach(() => setServingContractSnapshotForTest(null));
+afterEach(() => { setServingContractSnapshotForTest(null); pinTextRanks(null); });
 beforeEach(async () => {
   await resetTables();
   await db.delete(jobs);
@@ -96,8 +99,10 @@ describe("generation provider failures remain retryable without rewriting histor
     await seed("quality-exhausted", { errorCode: "invalid_output" });
     expect(await collectSearchHealth()).toMatchObject({ pendingGeneration: 2, exhausted: 1, repeatedFailures: 3 });
     // The stall monitor counts a text route only while it can run: a direct admin contract (abcLLM gateway removed 2026-10-30).
+    // PR B: 순위가 있어도 그 연결을 가리키는 직접 계약에 묶이지 않으면 부를 수 없다 — 묶인 순위가 생겨야 센다
+    pinTextRanks({ "product-search-profile": PROFILE_MODEL });
     expect((await readTextProgress()).oldestReadyMinutes).toBeNull();
-    setServingContractSnapshotForTest([directContractRow("product-search-profile", PROFILE_MODEL)]);
+    setServingContractSnapshotForTest([textContract("product-search-profile", PROFILE_MODEL)]);
     expect(await readTextProgress()).toMatchObject({ oldestReadyMinutes: expect.any(Number) });
     expect((await readTextProgress()).oldestReadyMinutes).toBeGreaterThanOrEqual(19);
     await db.update(productSearchProfiles).set({ retryAt: sql`now() + interval '1 hour'` })

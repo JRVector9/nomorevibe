@@ -13,7 +13,9 @@ import { assistBackendDrains } from "@/lib/domain/llm-assist/config";
 import { EMBEDDING_MODEL } from "@/lib/domain/products/embedding";
 import { withAdminModelStage, withAdminStagePools } from "@/lib/llm/admin-model-pools";
 import { ADMIN_MODEL_STAGES, type AdminModelStage } from "@/lib/llm/admin-model-stages";
-import { AI_TASKS, aiCliToolOfProvider, type AiTaskDef } from "@/lib/llm/ai-tasks";
+import { AI_TASKS, aiCliToolOfProvider, type AiTaskDef, type AiTextTaskId } from "@/lib/llm/ai-tasks";
+import { ensureAiTaskModels } from "@/lib/llm/ai-task-models-snapshot";
+import { resolveTextTaskRanks, textRankUnusableText } from "@/lib/llm/ai-task-resolver";
 import type { ModelCapacityPolicy } from "@/lib/llm/capacity";
 import type { AssignmentStage } from "@/lib/llm/capacity-helpers";
 import { configuredModel, modelBaseUrl, modelForPurpose, modelRequestName, MODEL_PURPOSE_ENV } from "@/lib/llm/model-registry";
@@ -28,7 +30,8 @@ import type { ModelEnv } from "./pipeline-control";
 
 /**
  * 「지금 실제로 쓰는 모델」 — 작업 × 칸마다 오늘 실행 쪽이 고르는 모델과 그 서버(2026-11-02, PR A). 새 표(ai_task_models)는 읽지 않는다.
- * 고르기는 오늘의 코드 그대로를 부른다: 1차 firstReviewers(배정 표 또는 설정)·2차 secondReviewVoterSets·text 경로의 currentModelEnv(단계 풀 + 등록부·env)·
+ * 고르기는 오늘의 코드 그대로를 부른다: 1차 firstReviewers(배정 표 또는 설정)·2차 secondReviewVoterSets·text 일곱 경로는 PR B 부터 실행 쪽이 이 표를 읽으므로
+ * 저장한 순위 그대로(resolveTextTaskRanks — 쓸 수 없는 순위는 그 까닭)·
  * 직접 모델 단계의 withAdminStagePools/withAdminModelStage 안의 configuredModel·modelBaseUrl(등록부·env·단계 풀)·화면 판별 screenModelConfig·
  * 보강 assistBackendDrains·분류 connect 에이전트 설정·감사 캠페인 행·임베딩/재정렬 EMBEDDING_URL·RERANK_URL.
  * 서버 주소는 지어내지 않는다: text·1차·2차는 켜진 연결 계약의 endpoint, 직접 모델 단계는 그 단계가 실제로 부르는 등록부·env 주소다. 모르면 null(가져오기가 건너뛴다).
@@ -50,11 +53,6 @@ const field = (contract: unknown, name: string): string | null => {
 };
 const baseOf = (endpoint: string | null | undefined) => endpoint ? aiConnectionBaseUrl(endpoint) : null;
 const errorText = (error: unknown) => error instanceof Error ? error.message.slice(0, 120) : "read_failed";
-
-/** 텍스트 경로 → currentModelEnv 의 칸(pipeline-control usedModelRoutes 와 같다). */
-const TEXT_ENV_KEYS: Readonly<Record<string, keyof ModelEnv>> = {
-  "product-search-profile": "profile", "product-search-verify": "verify", "reason-translate": "translate", "product-translate": "productTranslate",
-  "product-tagline-ko": "koreanTagline", "search-query-translate": "searchQuery", "crawl-tagline": "tagline" };
 
 export function buildAiCurrentSlots(sources: AiCurrentSources): AiCurrentSlot[] {
   const contracts = servingContractSnapshot().rows;
@@ -147,20 +145,14 @@ export function buildAiCurrentSlots(sources: AiCurrentSources): AiCurrentSlot[] 
         }
         case "crawl-tagline": case "reason-translate": case "product-translate": case "product-tagline-ko": case "search-query-translate":
         case "product-search-profile": case "product-search-verify": {
-          const routeId = task.routeId!, table = tableRows(task.assignmentStage);
-          const pooled = sources.modelEnv.pooled?.[routeId as keyof NonNullable<ModelEnv["pooled"]>];
-          const key = TEXT_ENV_KEYS[routeId];
-          const fallback = (sources.modelEnv[key] as string | undefined) ?? (key === "koreanTagline" || key === "searchQuery" ? sources.modelEnv.translate : undefined);
-          const models = table ? table.map(row => ({ model: row.model, origin: `배정 표 ${task.assignmentStage} rank ${row.rank}` }))
-            : pooled?.length ? pooled.map((model, index) => ({ model, origin: `stageModelPools.${routeId}[${index}]` }))
-            : fallback ? [{ model: fallback, origin: "등록부·env 기본값" }] : [];
-          out.push(slot(task, { source: table ? "배정 표" : pooled?.length ? "단계 풀" : "등록부·env 기본값", uses: models.map(entry => {
-            const row = contractRow(routeId, entry.model);
-            const local = field(row?.contract, "provider") === "local-direct";
-            const endpoint = row?.transport === "direct" || local ? baseOf(field(row?.contract, "endpoint")) : null;
-            return api(task, entry.model, local ? "local-direct" : "abcllm", entry.origin, endpoint,
-              { keyFrom: keyFromRow(row), ...(endpoint ? {} : { note: "엔진 직접 계약 없음(지금 호출이 미뤄집니다)" }) });
-          }), notes: !table && (pooled?.length ?? 0) > 1 ? ["오늘은 단계 풀의 모델을 잡마다 돌아가며 나눠 씁니다 — 순위로 옮기면 1순위를 먼저 쓰고 나머지는 대체가 됩니다."] : [] }));
+          // PR B: 실행 쪽이 이 표(작업 ↔ 모델)를 읽는다 — 지금 쓰는 모델 = 저장한 순위. 쓸 수 없는 순위는 그 까닭을 붙인다.
+          const resolution = resolveTextTaskRanks(task.id as AiTextTaskId);
+          out.push(slot(task, { source: "작업 ↔ 모델(실행 쪽이 이 표를 읽는다)", uses: resolution.candidates.map(candidate => api(task, candidate.rank.model,
+            candidate.binding?.provider ?? "abcllm", `작업 ↔ 모델 ${candidate.rank.rank}순위`, candidate.rank.connection.baseUrl,
+            { deviceId: candidate.rank.connection.deviceId, ...(candidate.unusable ? { note: textRankUnusableText(candidate.unusable) } : {}) })),
+            ...(resolution.status === "ok" ? {} : { skip: resolution.status === "no_task_models"
+              ? "작업 ↔ 모델에 순위가 없습니다 — 이 작업은 돌지 않습니다(no_task_models). 기본값으로 대신 부르지 않습니다."
+              : "작업 ↔ 모델 표를 아직 읽지 못했습니다(task_models_unreadable)." }) }));
           break;
         }
         case "korean-translation-direct":
@@ -248,7 +240,7 @@ export function buildAiCurrentSlots(sources: AiCurrentSources): AiCurrentSlot[] 
 
 /** 현재 값의 출처를 모아(설정·text 경로 이름·정책·connect 상태·실행 중 감사·배정 표 스위치) buildAiCurrentSlots 에 넘긴다. 읽기만 한다. */
 export async function readAiCurrentSources(policy: ModelCapacityPolicy | null): Promise<AiCurrentSources> {
-  await ensureServingContracts(0);
+  await Promise.all([ensureServingContracts(0), ensureAiTaskModels(0)]);
   const [{ getSettings }, { currentModelEnv }, { agentRequest }] = await Promise.all([import("@/lib/crawl/settings"), import("./model-env"), import("./agent-client")]);
   const [settings, modelEnv, agent, auditCampaign, flag] = await Promise.all([onPrimary(getSettings), currentModelEnv(),
     agentRequest<AgentStatus>("status").catch(() => null),

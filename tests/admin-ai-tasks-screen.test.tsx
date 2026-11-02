@@ -22,7 +22,7 @@ const line = (patch: Partial<TaskRankLine> = {}): TaskRankLine => ({ task: "craw
   description: "소개를 짓습니다.", accepts: "API 주소", revision: "a".repeat(64), rows: [{ task: "crawl-tagline", slot: 1, rank: 1, connectionId: GPU, model: "qwen3.8-flash-next",
     options: {}, enabled: true }], options: [{ provider: GPU, model: "qwen3.8-flash-next", label: "gpu3090 · qwen3.8-flash-next" }],
   current: { labels: ["gpu3090 · qwen3.8-flash-next"], source: "단계 풀", notes: [], error: null, skip: null }, sameAsCurrent: true,
-  readiness: [{ rank: 1, blocking: [], warnings: [], pending: [] }], ...patch });
+  readiness: [{ rank: 1, blocking: [], warnings: [], pending: [] }], live: true, runtime: null, ...patch });
 
 describe("작업 ↔ AI 모델 화면", () => {
   it("연결 폼: 고치기에서는 종류를 못 바꾸고, 저장된 키는 다시 보이지 않는다(「키 지우기」만)", () => {
@@ -38,7 +38,7 @@ describe("작업 ↔ AI 모델 화면", () => {
   });
   it("작업 표: 줄마다 1·2·3순위(「연결 · 모델」)·지금 실제로 쓰는 모델·준비 상태; 저장 전에는 바뀐 것이 없다", () => {
     const html = renderToStaticMarkup(createElement(TaskRanksBoard, { lines: [line(), line({ task: "audit-review", label: "발행분 감사 · 직접 모델", group: "audit",
-      rows: [], current: { labels: [], source: "등록부·env 기본값", notes: [], error: null, skip: "지금 꺼져 있습니다." }, sameAsCurrent: null, readiness: [] })],
+      rows: [], current: { labels: [], source: "등록부·env 기본값", notes: [], error: null, skip: "지금 꺼져 있습니다." }, sameAsCurrent: null, readiness: [], live: false })],
       connections: [gpu], rows: line().rows }));
     expect(html).toContain("글 짓기·번역");
     expect(html).toContain("감사·보강");
@@ -49,13 +49,36 @@ describe("작업 ↔ AI 모델 화면", () => {
     expect(html).toContain("저장한 순위의 계약·경로·장비가 있습니다.");
     expect(html).toContain("지금 꺼져 있습니다.");
     expect(html).toContain("바뀐 것이 없습니다.");
-    expect(html).toContain("잡은 아직 이 순위를 읽지 않습니다");
+    // text 작업(PR B)은 실행 쪽이 순위를 읽는다 — 아직 돈 기록이 없으면 그렇게 보인다. 감사 작업은 아직 읽지 않는다(다음 단계)
+    expect(html).toContain("실행 쪽이 이 순위를 읽습니다 — 1순위를 쓸 수 없으면 같은 일을 2순위, 그다음 3순위로 넘깁니다.");
+    expect(html).toContain("이 작업의 실행 쪽은 아직 이 순위를 읽지 않습니다(다음 단계).");
+    expect(html).toContain('data-runtime="none"');
+    expect(html).toContain("실행: 아직 이 순위로 돈 기록이 없습니다.");
+    expect(html.match(/data-runtime=/g)).toHaveLength(1);
     // 가져온 순위처럼 아직 없는 것이 있으면 바뀐 것이 없어도 다시 저장할 수 있다
     const pending = renderToStaticMarkup(createElement(TaskRanksBoard, { lines: [line({ readiness: [{ rank: 1, blocking: [], warnings: [],
       pending: ["1순위 qwen3.8-flash-next: crawl-tagline 엔진 직접 계약이 없습니다 — 이 줄을 저장하면 엔진을 확인하고 만듭니다."] }] })], connections: [gpu], rows: line().rows }));
     expect(pending).toContain("다시 저장해 빠진 것 만들기");
     expect(pending).toContain("엔진 직접 계약이 없습니다 — 이 줄을 저장하면");
     expect(pending).not.toContain("저장한 순위의 계약·경로·장비가 있습니다.");
+  });
+  it("실행 쪽 순위 사정: 순위마다 맡은 수와 아래 순위를 쓴 까닭, 제 일 못 한 틱을 보인다", () => {
+    const served = renderToStaticMarkup(createElement(TaskRanksBoard, { lines: [line({ runtime: { from: "job", at: "11-02 12:00", served: [{ rank: 1, count: 3 },
+      { rank: 2, count: 2 }, { rank: 3, count: 0 }], unusable: [{ rank: 1, code: "capacity", text: "포화(빈 칸 없음)", count: 2 }], degraded: null } })],
+      connections: [gpu], rows: line().rows }));
+    expect(served).toContain('data-runtime="job"');
+    expect(served).toContain("실행(마지막 틱 · 11-02 12:00): 1순위 3건 · 2순위 2건");
+    expect(served).not.toContain("3순위 0건");
+    expect(served).toContain("아래 순위를 쓴 까닭 — 1순위: 포화(빈 칸 없음) ×2");
+    expect(served).not.toContain("제 일 못 함");
+    // 웹(검색어 번역)의 마지막 요청 — 모든 순위를 쓸 수 없었으면 맡은 순위 없음과 그 까닭
+    const degraded = renderToStaticMarkup(createElement(TaskRanksBoard, { lines: [line({ task: "search-query-translate", label: "검색어 번역", runtime: { from: "web",
+      at: "11-02 12:01", served: [], unusable: [{ rank: 1, code: "provider_contract_unavailable", text: "전송 계약이 닫힘", count: 1 }],
+      degraded: { code: "all_ranks_unusable", detail: "검색어 번역: 1순위 gpu3090 · qwen3.8-flash-next: 전송 계약이 닫힘" } } })], connections: [gpu], rows: line().rows }));
+    expect(degraded).toContain('data-runtime="web"');
+    expect(degraded).toContain("실행(이 웹 프로세스의 마지막 요청 · 11-02 12:01): 맡은 순위 없음");
+    expect(degraded).toContain("쉰 순위 — 1순위: 전송 계약이 닫힘");
+    expect(degraded).toContain("제 일 못 함 <code>all_ranks_unusable</code> — 검색어 번역: 1순위 gpu3090 · qwen3.8-flash-next: 전송 계약이 닫힘");
   });
   it("가져오기 카드: 계획이 없으면 「계획 보기」만, 있으면 만들 연결·칸과 확인 칸", () => {
     expect(renderToStaticMarkup(createElement(TaskImportCard, { preview: null, confirmWord: "가져오기" }))).toContain("계획 보기");

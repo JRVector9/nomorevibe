@@ -2,6 +2,9 @@ import http from "node:http";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_MODEL_DEFINITIONS, configuredModel, configuredModelDefinition, configuredModelRoute,
   type ModelDefinition } from "@/lib/llm/model-registry";
+import { aiTaskAliasIdentity } from "@/lib/llm/ai-tasks";
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
+import { inTextRank, pinTextRanks, TEST_CONNECTION_ID, textContract, textRankRow } from "./text-task-ranks-fixture";
 
 vi.mock("@/lib/llm/text-capacity-admission", () => ({ assertTextModelAdmission: async () => {} }));
 
@@ -23,13 +26,18 @@ const triplets = (purposes: { supa?: string[] } = {}) => [
 const servers: http.Server[] = [];
 afterEach(async () => {
   vi.unstubAllEnvs();
+  pinTextRanks(null); setServingContractSnapshotForTest(null);
   for (const server of servers.splice(0)) {
     server.closeAllConnections();
     await new Promise<void>(resolve => server.close(() => resolve()));
   }
 });
 
-describe("product translation reads model, equipment and route from the registry", () => {
+/**
+ * 2026-11-02(PR B): 제품 번역 잡이 부르는 연결·모델은 「작업 ↔ 모델」 순위가 고른다. 아래 등록부 항목(용도·선택)은 관리 화면의 기본값 설명으로
+ * 남아 있을 뿐 잡의 모델을 정하지 않는다 — 등록부 함수 자체의 규칙(옛 env 무시·모호하면 닫힘)만 본다.
+ */
+describe("the registry's product-translate entry (description only — the job reads its rank)", () => {
   const defaultRoute = { routeId: "product-translate", key: "m1:translation", equipment: "m1",
     provider: "abcllm", requestModel: `[m1] ${GEMMA}`, baseUrl: m1.baseUrl };
   it("defaults to the actual M1 Gemma entry through the M1 gateway label", () => {
@@ -61,18 +69,17 @@ describe("product translation reads model, equipment and route from the registry
     expect(configuredModelRoute("product-translate", selected).equipment).toBe("supa");
   });
 
-  it("follows the admin stage pool selection inside a job scope and ignores the removed env there too", async () => {
+  // 예전: 관리자 단계 풀(stageModelPools.product-translate)이 잡 범위에서 모델을 골랐다. PR B 에서 이 잡은 단계 풀을 열지 않고 순위만 읽는다.
+  it("opens no admin stage pool for the product job, and its model inside a pool scope is still the rank's", async () => {
     vi.stubEnv("MODEL_REGISTRY_CONFIG", registry(triplets()).MODEL_REGISTRY_CONFIG);
     vi.stubEnv("PRODUCT_TRANSLATION_MODEL_KEY", "m1:translation");
     vi.stubEnv("PRODUCT_TRANSLATION_MODEL", "[m1] shared-weights");
     vi.resetModules();
-    const { withAdminStagePools } = await import("@/lib/llm/admin-model-pools");
-    const scoped = await import("@/lib/llm/model-registry");
-    expect(scoped.configuredModelRoute("product-translate")).toMatchObject({ key: "m1:translation", requestModel: "[m1] shared-weights" });
-    expect(withAdminStagePools({ "product-translate": ["supa:translation"] }, "fixture", () => ({
-      route: scoped.configuredModelRoute("product-translate"), scoped: scoped.scopedModel("product-translate", "[m1] shared-weights") })))
-      .toEqual({ route: { routeId: "product-translate", key: "supa:translation", equipment: "supa", provider: "abcllm",
-        requestModel: "[supa] shared-weights", baseUrl: supa.baseUrl }, scoped: "[supa] shared-weights" });
+    const { MODEL_POOL_JOBS, withAdminStagePools } = await import("@/lib/llm/admin-model-pools");
+    const { textTaskModel } = await import("@/lib/llm/ai-task-rank-scope");
+    expect(MODEL_POOL_JOBS.has("product-translate")).toBe(false);
+    expect(withAdminStagePools({ "product-translate": ["supa:translation"] }, "fixture", () =>
+      inTextRank("product-translate", "rank-weights", () => textTaskModel("product-translate")))).toBe("rank-weights");
   });
 });
 
@@ -91,53 +98,81 @@ async function server() {
   return { baseUrl: `http://127.0.0.1:${address.port}/v1`, models };
 }
 const items = [{ name: "Doc", text: "문서 관리 도구", locale: "en" as const, field: "tagline" as const }];
+const SUPA_CONNECTION = "0b0c0d0e-0000-4000-8000-00000000a5a0";
+const SUPA_IDENTITY = aiTaskAliasIdentity("shared-weights", SUPA_CONNECTION)!;
 
-async function translateWith(env: Record<string, string | undefined>) {
+/** 순위를 고정하고(연결 하나·모델 하나) 그 순위로 부른다 — 묶인 순위, 장부 이름·wire·옛 sender 의 결과, 등록부가 고른 경로를 돌려준다. */
+async function translateWith(env: Record<string, string | undefined>, rank: Parameters<typeof textRankRow>[2] & { model: string }) {
   vi.stubEnv("ABCLLM_API_KEY", "ignored-gateway-key");
   vi.stubEnv("ABCLLM_BASE_URL", undefined);
   vi.stubEnv("PRODUCT_TRANSLATION_MODEL_KEY", undefined);
   vi.stubEnv("PRODUCT_TRANSLATION_MODEL", undefined);
   for (const [key, value] of Object.entries(env)) vi.stubEnv(key, value);
+  pinTextRanks([textRankRow("product-translate", rank.model, rank)]);
   vi.resetModules();
   const translate = await import("@/lib/crawl/translate");
   const { configuredModelRoute: route } = await import("@/lib/llm/model-registry");
-  return { constant: translate.PRODUCT_TRANSLATE_MODEL, route: route("product-translate"),
-    wire: JSON.parse(translate.productTranslationGatewayWire(items, translate.PRODUCT_TRANSLATE_MODEL)) as { model: string },
-    result: await translate.translateProductFields(items, 1000) };
+  const { TextTaskRanks } = await import("@/lib/llm/ai-task-resolver");
+  const { textTaskModel } = await import("@/lib/llm/ai-task-rank-scope");
+  const { prepareProductTranslationGatewayCall } = await import("@/lib/crawl/agent-review-gateway");
+  const ranks = await TextTaskRanks.open("product-translate");
+  const served = await ranks.run(async binding => {
+    const model = textTaskModel("product-translate");
+    return { binding, model, prepared: prepareProductTranslationGatewayCall(items, { model, timeoutMs: 1000 }).kind,
+      wire: JSON.parse(translate.productTranslationGatewayWire(items, binding.engineModel)) as { model: string },
+      result: await translate.translateProductFields(items, 1000, undefined, undefined, model) };
+  });
+  if (served.kind !== "served") throw new Error("unit_rank_unusable");
+  return { ...served.value, route: route("product-translate"), constant: "PRODUCT_TRANSLATE_MODEL" in translate };
+}
+/** 두 장비(M1·Supa)에 같은 가중치 — 연결마다 그 주소를 가리키는 엔진 직접 계약(Supa 는 연결로 가른 장부 이름). */
+function pinDeviceContracts(m1Base: string, supaBase: string) {
+  setServingContractSnapshotForTest([textContract("product-translate", "shared-weights", { baseUrl: m1Base }),
+    textContract("product-translate", SUPA_IDENTITY, { baseUrl: supaBase, engineModel: "shared-weights" })]);
 }
 
 /**
- * The legacy gateway sender is gone (2026-10-30): it sends to no device, whatever the registry address says. The registry still
- * names the device and model the engine contract path serves (the contract endpoint itself comes from the admin contract).
+ * The legacy gateway sender is gone (2026-10-30): it sends to no device, whatever the registry address says.
+ * 2026-11-02(PR B): 부르는 장비는 순위의 연결이 정한다(그 연결 주소를 가리키는 계약에 묶인다) — 등록부의 용도·선택·옛 env 는 장비를 옮기지 않는다.
+ * 예전 시험은 등록부가 장비를 고르는 것을 보았다. 그 길은 없앴으므로 같은 뜻(지정한 장비만, 옛 sender 는 어디에도 닿지 않음)을 순위로 본다.
  */
-describe("product translation follows the registry device route and the legacy sender reaches no device", () => {
+describe("product translation follows its rank's connection and the legacy sender reaches no device", () => {
   it.each([
-    ["registry purpose", {}, {}, "m1"],
-    ["ignored bare shared name", {}, { PRODUCT_TRANSLATION_MODEL: "shared-weights" }, "m1"],
-    ["ignored equipment key", {}, { PRODUCT_TRANSLATION_MODEL_KEY: "supa:translation" }, "m1"],
-    ["registry selection", { "product-translate": "supa:translation" }, { PRODUCT_TRANSLATION_MODEL_KEY: "m1:translation" }, "supa"],
+    ["rank on m1 with the registry purpose", {}, {}, "m1"],
+    ["rank on supa despite the registry purpose on m1", {}, {}, "supa"],
+    ["rank on m1 with an ignored bare shared name", {}, { PRODUCT_TRANSLATION_MODEL: "shared-weights" }, "m1"],
+    ["rank on m1 with an ignored equipment key", {}, { PRODUCT_TRANSLATION_MODEL_KEY: "supa:translation" }, "m1"],
+    ["rank on m1 despite a registry selection on supa", { "product-translate": "supa:translation" }, { PRODUCT_TRANSLATION_MODEL_KEY: "m1:translation" }, "m1"],
   ] as const)("selects only the designated device by %s", async (_label, selection, env, device) => {
     const m1Server = await server(), supaServer = await server();
     const models = triplets({ supa: ["ai1-preset", "product-translate"] }).map(model => model.equipment === "m1" ? { ...model, baseUrl: m1Server.baseUrl }
       : model.equipment === "supa" ? { ...model, baseUrl: supaServer.baseUrl } : model);
     const selections = { "product-translate": "m1:translation", ...selection };
-    const outcome = await translateWith({ ...registry(edited(models), { selections }), ...env });
+    pinDeviceContracts(m1Server.baseUrl, supaServer.baseUrl);
+    const outcome = await translateWith({ ...registry(edited(models), { selections }), ...env }, device === "m1"
+      ? { model: "shared-weights", baseUrl: m1Server.baseUrl, deviceId: "m1", label: "m1" }
+      : { model: "shared-weights", baseUrl: supaServer.baseUrl, deviceId: "supa", label: "supa", connectionId: SUPA_CONNECTION });
     expect(outcome.result).toEqual({ ok: false, error: "no_key" });
-    expect(outcome.constant).toBe(`[${device}] shared-weights`);
-    expect(outcome.wire.model).toBe(`[${device}] shared-weights`);
-    expect(outcome.route).toMatchObject({ key: `${device}:translation`, equipment: device,
-      baseUrl: device === "m1" ? m1Server.baseUrl : supaServer.baseUrl });
+    expect(outcome.constant).toBe(false);
+    expect(outcome.binding).toMatchObject({ deviceId: device, connectionId: device === "m1" ? TEST_CONNECTION_ID : SUPA_CONNECTION,
+      identity: device === "m1" ? "shared-weights" : SUPA_IDENTITY, engineModel: "shared-weights" });
+    expect(outcome.model).toBe(outcome.binding.identity);
+    expect(outcome.prepared).toBe("prepared");
+    expect(outcome.wire.model).toBe("shared-weights");
+    // 등록부는 제 규칙대로 장비를 적지만(관리 화면 기본값) 잡의 장비를 옮기지 않는다
+    expect(outcome.route).toMatchObject({ equipment: "product-translate" in selection ? "supa" : "m1" });
     expect([m1Server.models, supaServer.models]).toEqual([[], []]);
   });
 
-  it("picks up a changed registry model id and address without code changes", async () => {
+  it("picks up a changed rank model and connection address without code changes", async () => {
     const first = await server(), second = await server();
-    const before = await translateWith(registry(edited([{ ...m1, baseUrl: first.baseUrl }])));
-    expect(before.constant).toBe(`[m1] ${GEMMA}`);
-    expect(before.route.baseUrl).toBe(first.baseUrl);
-    const after = await translateWith(registry(edited([{ ...m1, model: "gemma-next-id", family: "gemma-next", baseUrl: second.baseUrl }])));
-    expect(after.constant).toBe("[m1] gemma-next-id");
-    expect([after.route.baseUrl, after.wire.model]).toEqual([second.baseUrl, "[m1] gemma-next-id"]);
+    setServingContractSnapshotForTest([textContract("product-translate", GEMMA, { baseUrl: first.baseUrl })]);
+    const before = await translateWith(registry(edited([{ ...m1, baseUrl: first.baseUrl }])), { model: GEMMA, baseUrl: first.baseUrl });
+    expect(before.binding).toMatchObject({ identity: GEMMA, engineModel: GEMMA });
+    setServingContractSnapshotForTest([textContract("product-translate", "gemma-next-id", { baseUrl: second.baseUrl })]);
+    const after = await translateWith(registry(edited([{ ...m1, baseUrl: first.baseUrl }])), { model: "gemma-next-id", baseUrl: second.baseUrl });
+    expect(after.binding).toMatchObject({ identity: "gemma-next-id", engineModel: "gemma-next-id" });
+    expect([after.wire.model, after.prepared]).toEqual(["gemma-next-id", "prepared"]);
     expect([before.result, after.result]).toEqual([{ ok: false, error: "no_key" }, { ok: false, error: "no_key" }]);
     expect([first.models, second.models]).toEqual([[], []]);
   });

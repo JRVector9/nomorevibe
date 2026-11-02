@@ -5,7 +5,8 @@ const domain = vi.hoisted(() => ({
   recordProfileResult: vi.fn(), recordVerificationResult: vi.fn(),
   writeKeywords: vi.fn(), verifyKeywords: vi.fn(), verifyKeywordsInChunks: vi.fn(),
 }));
-vi.mock("@/lib/domain/products/search-profiles", () => domain);
+// 이어받은 일감의 순위(resumedProfileModel)는 없다 — 잡이 1순위부터 부른다
+vi.mock("@/lib/domain/products/search-profiles", () => ({ ...domain, resumedProfileModel: () => null }));
 vi.mock("@/lib/domain/products/search-profile-model-capacity", () => ({
   writeKeywordsWithModelCapacity: async (_task: unknown, _lease: unknown, options: { timeoutMs: number; signal?: AbortSignal }) => ({
     kind: "result", result: await domain.writeKeywords({}, options),
@@ -18,17 +19,17 @@ vi.mock("@/lib/domain/products/search-verify-model-capacity", () => ({
   }),
 }));
 vi.mock("@/lib/domain/products/search-profile", () => ({
-  PROFILE_MODEL: "generator", profileEvidence: () => ({}), profileHash: () => "hash",
+  profileEvidence: () => ({}), profileHash: () => "hash",
   writeKeywords: domain.writeKeywords,
 }));
-vi.mock("@/lib/domain/products/search-verify", () => ({ VERIFY_MODEL: "verifier", verifyKeywords: domain.verifyKeywords,
+vi.mock("@/lib/domain/products/search-verify", () => ({ verifyKeywords: domain.verifyKeywords,
   verifyKeywordsInChunks: domain.verifyKeywordsInChunks }));
 import { writeSearchProfiles } from "@/lib/jobs/products/search-profile";
 import { verifySearchKeywords } from "@/lib/jobs/products/search-verify";
 import type { JobContext } from "@/lib/jobs/runner";
 import { setRuntimeSettingsForTest } from "@/lib/operations/runtime-settings-store";
-import { scopedModel } from "@/lib/llm/model-registry";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
+import { pinTextRanks, textContract } from "./text-task-ranks-fixture";
 
 const tasks = (count: number) => Array.from({ length: count }, (_, id) => ({
   product: { id }, reviewerNote: null,
@@ -39,16 +40,16 @@ const ctx = (): JobContext<null> => ({
   hasBudget: () => true, log: vi.fn(), save: vi.fn(),
 });
 // Both jobs open only on an engine connected directly (admin contract, transport direct); the gateway key env is gone (2026-10-30).
-const direct = (routeId: string, model: string) => ({ routeId, model: scopedModel(routeId, model), contract: {}, auth: "none" as const,
-  apiKey: null, transport: "direct" as const });
+// 모델은 「작업 ↔ 모델」 순위가 고른다(PR B) — 두 작업에 순위 하나씩과 그 연결을 가리키는 직접 계약을 둔다.
 beforeEach(() => {
   vi.resetAllMocks();
-  setServingContractSnapshotForTest([direct("product-search-profile", "generator"), direct("product-search-verify", "verifier")]);
+  pinTextRanks({ "product-search-profile": "generator", "product-search-verify": "verifier" });
+  setServingContractSnapshotForTest([textContract("product-search-profile", "generator"), textContract("product-search-verify", "verifier")]);
   vi.useFakeTimers({ toFake: ["Date"] });
   domain.recordProfileResult.mockResolvedValue(true);
   domain.recordVerificationResult.mockResolvedValue(true);
 });
-afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); setRuntimeSettingsForTest(null); setServingContractSnapshotForTest(null); });
+afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); setRuntimeSettingsForTest(null); setServingContractSnapshotForTest(null); pinTextRanks(null); });
 
 describe("search job time budget", () => {
   it.each(["invalid_output", "timeout"])("uses chunk verification only on a later %s retry", async (verifyError) => {

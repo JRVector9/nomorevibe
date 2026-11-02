@@ -5,6 +5,7 @@ import { storedSettingsVersion } from "@/lib/operations/runtime-settings-schema"
 import { publishRuntimeSettingsSnapshot, runtimeSettings, runtimeSettingsSnapshotFromStored, setRuntimeSettingsLoader,
   type RuntimeSettingsSnapshot } from "@/lib/operations/runtime-settings-store";
 import { overlaidModelDefinitions, setModelRegistryOverlay, setModelRoutePolicyOverlay } from "./model-registry";
+import { activeTextTaskRank } from "./ai-task-rank-scope";
 // The assignment-table default reader (PR 3b-B) installs itself next to the registry overlays; it reads nothing unless the runtime_settings
 // toggle assignments.tableReads is on (or MODEL_ASSIGNMENT_TABLE=1 forces it — PR 3b-E, lib/llm/assignment-flag.ts).
 import "./stage-assignment-snapshot";
@@ -190,7 +191,13 @@ const contractProvider = (contract: unknown): string | null =>
  * (korean-translation-config, env switch) is outside this gate until the route→engine assignment table (PR 3b-B/3b-D) absorbs it.
  */
 export function textRouteAccess(routeId: string, model: string, provider?: string): TextRouteAccess {
-  return servingContractRowAccess(servingContractSnapshot().rows.find(entry => entry.routeId === routeId && entry.model === model), provider);
+  const access = servingContractRowAccess(servingContractSnapshot().rows.find(entry => entry.routeId === routeId && entry.model === model), provider);
+  // 「작업 ↔ 모델」 순위로 부르는 중이면(PR B) 보내는 키는 그 연결(ai_connections)의 키다 — 계약 행의 키가 아니다. 계약이 닫힌 까닭(계약 없음·
+  // 게이트웨이 인증)은 그대로 막는다. 계약 행의 키가 열리지 않는 것은 상관없다(연결의 키를 보낸다).
+  const rank = activeTextTaskRank(routeId);
+  if (!rank || rank.identity !== model) return access;
+  if (access.block && access.block !== "stored_key_unreadable") return access;
+  return { block: null, bearer: rank.bearer };
 }
 /**
  * textRouteAccess for one already-found row (or none) — the same rule without the snapshot lookup. The admin models page's automatic

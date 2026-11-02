@@ -7,7 +7,6 @@ import { db } from "@/lib/db";
 import { reviewHash } from "@/lib/crawl/agent-review-contract";
 import { products, productSearchProfiles } from "@/lib/db/schema";
 import { profileEvidence, profileHash } from "@/lib/domain/products/search-profile";
-import { VERIFY_MODEL } from "@/lib/domain/products/search-verify";
 import { pendingVerifications, prepareSearchVerifyModelDispatch, recordVerificationResult, type ProfileTask } from "@/lib/domain/products/search-profiles";
 import { verifyKeywordsWithModelCapacity } from "@/lib/domain/products/search-verify-model-capacity";
 import { prepareSearchVerifyGatewayCall } from "@/lib/crawl/agent-review-gateway";
@@ -23,7 +22,7 @@ import { modelCapacityPolicyHash, searchVerifyInputHash, searchVerifyLogicalWork
 import type { SearchVerifyServingContract } from "@/lib/llm/search-verify-serving-contract";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
-import { directContractRow } from "./direct-engine-fixtures";
+import { inTextRank, pinTextRanks, textContract } from "../text-task-ranks-fixture";
 
 // 실제 PostgreSQL + loopback native 전용. provider/serving 계약은 fixture이며 실제 C·배포를 주장하지 않는다.
 const serving = vi.hoisted(() => ({ contract: null as SearchVerifyServingContract | null }));
@@ -31,6 +30,8 @@ vi.mock("@/lib/llm/search-verify-serving-contract", async original => ({
   ...await original<typeof import("@/lib/llm/search-verify-serving-contract")>(), resolveSearchVerifyServingContract: () => serving.contract,
 }));
 type Raw = Record<string, unknown>;
+// 검색 키워드 검수의 모델·주소는 「작업 ↔ 모델」 순위가 고른다(PR B) — 이 파일은 순위 하나(이 모델)를 고정한다
+const VERIFY_MODEL = "Qwen3.8-27B-NVFP4";
 const prefix = `sv-native-${randomUUID().slice(0, 12)}`, jobName = "product-search-verify", busyRoute = `${prefix}-busy`;
 const admin = postgres(TEST_DATABASE_URL, { max: 1, prepare: false, onnotice: () => {}, connection: { application_name: prefix } });
 const ownBoots = new Set<string>(), ownProducts = new Map<number, string>();
@@ -155,8 +156,10 @@ async function server(run: (state: { bodies: string[][]; idle: number[]; visible
   finally { serving.contract = null; await steps([() => drain(work),
     () => new Promise<void>((resolve, reject) => http.listening ? http.close(error => error ? reject(error) : resolve()) : resolve()), () => drain(responses, true)], failures); }
 }
+// 직접 부르는 장부·전송 단계(verifyKeywordsWithModelCapacity·prepareSearchVerifyModelDispatch)는 순위 범위 안에서만 모델을 읽는다 — 잡이 여는 1순위 범위와 같게 연다
 async function custom(run: (lease: JobLease) => Promise<void>) { await tracked(requestJob(jobName));
-  return tracked(runJob(jobName, async (ctx: JobContext<null>) => { expect(ctx.lease).toBeDefined(); await run(ctx.lease!); return { done: true }; }, { requestedOnly: true, roleLease: role })); }
+  return tracked(runJob(jobName, async (ctx: JobContext<null>) => { expect(ctx.lease).toBeDefined();
+    await inTextRank(jobName, VERIFY_MODEL, () => run(ctx.lease!)); return { done: true }; }, { requestedOnly: true, roleLease: role })); }
 const verify = (task: ProfileTask, lease: JobLease, timeoutMs = 60_000, request?: typeof fetch) => tracked(verifyKeywordsWithModelCapacity(task, lease,
   { timeoutMs, chunked: !!task.profile!.verifyError, roleLease: role, request }));
 const ledger = async (productId: number) => Array.from(await admin`SELECT request_id,state,dispatch_binding AS binding,terminal_evidence->'outcome' AS outcome,
@@ -182,9 +185,11 @@ beforeAll(() => tracked((async () => {
   initialized = true;
 })(), setups));
 // The route opens only on a direct admin contract for its model (abcLLM gateway removed 2026-10-30); the contract body is the mock above.
-beforeEach(() => tracked((async () => { setServingContractSnapshotForTest([directContractRow(jobName, VERIFY_MODEL)]); await install(); await elect(); })(), setups));
+// PR B: 1순위(시험 연결 · 이 모델)는 그 연결을 가리키는 직접 계약 행에 묶인다 — 전송 계약 본문은 여전히 위 mock 이 연다.
+beforeEach(() => tracked((async () => { setServingContractSnapshotForTest([textContract(jobName, VERIFY_MODEL)]); pinTextRanks({ [jobName]: VERIFY_MODEL });
+  await install(); await elect(); })(), setups));
 afterEach(() => tracked(steps([() => drain(setups), () => drain(exercises), () => drain(work), cleanup,
-  async () => { serving.contract = null; setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); }]), hooks));
+  async () => { serving.contract = null; setServingContractSnapshotForTest(null); pinTextRanks(null); vi.unstubAllEnvs(); }]), hooks));
 afterAll(async () => { await steps([() => drain(setups), () => drain(exercises), () => drain(work), () => drain(hooks), cleanup,
   () => admin.end({ timeout: 5 }), async () => { await (globalThis as { pgClient?: ReturnType<typeof postgres> }).pgClient?.end({ timeout: 5 }); }]); });
 

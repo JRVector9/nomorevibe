@@ -19,7 +19,7 @@ vi.mock("@/lib/db", () => ({ db: { transaction: (load: (tx: unknown) => unknown)
 vi.mock("@/lib/crawl/agent-review-gateway", () => ({ prepareReasonTranslationGatewayCall: mocks.reasonPrepare,
   translateWithReservedReasonGateway: mocks.reasonNative }));
 vi.mock("@/lib/crawl/translations", () => ({ prepareReasonTranslationDispatch: mocks.domain }));
-vi.mock("@/lib/crawl/translate", () => ({ TRANSLATE_MODEL: "Reason Model", translateToKorean: vi.fn(),
+vi.mock("@/lib/crawl/translate", () => ({ translateToKorean: vi.fn(),
   textHash: (value: string) => createHash("sha256").update(value).digest("hex") }));
 vi.mock("@/lib/jobs/role-leader", () => ({ roleLeaseFromEnv: mocks.role }));
 vi.mock("@/lib/observability/logger", () => ({ logger: { info: vi.fn(), warn: mocks.warn, error: vi.fn() } }));
@@ -27,6 +27,7 @@ import { markUnsettledDispatch } from "@/lib/llm/capacity-unsettled";
 import { runCliWithModelCapacity } from "@/lib/llm/cli-model-capacity";
 import { translateReasonsWithModelCapacity } from "@/lib/crawl/reason-translation-model-capacity";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
+import { inTextRank } from "./text-task-ranks-fixture";
 
 const dispatch = Object.freeze({ requestId: randomUUID(), binding: { transport: { boundary: "transport" } }, boundary: "committed-dispatch" });
 const terminal = Object.freeze({ kind: "cli_process_terminal" }), cleanup = new Error("settlement write failed");
@@ -101,8 +102,9 @@ it("text coordinator (reason translation): a failed terminal settlement is marke
   const failed = { ok: false, error: "invalid_output" };
   mocks.reasonNative.mockResolvedValue({ result: failed, terminal: Object.freeze({ native: "opaque" }) });
   mocks.reconcileReason.mockRejectedValue(cleanup);
-  const error = await translateReasonsWithModelCapacity([{ hash, body, attempts: 0 }], { name: "reason-translate", token: randomUUID(), requestedVersion: 1 },
-    { timeoutMs: 45_000 }).catch(value => value);
+  // 모델은 「작업 ↔ 모델」 순위가 고른다(PR B) — 잡이 여는 순위 범위 안에서 부른다
+  const error = await inTextRank("reason-translate", "Reason Model", () => translateReasonsWithModelCapacity([{ hash, body, attempts: 0 }],
+    { name: "reason-translate", token: randomUUID(), requestedVersion: 1 }, { timeoutMs: 45_000 })).catch(value => value);
   expect(error).toBeInstanceOf(AggregateError); expect(error.errors).toEqual([failed, cleanup]);
   expect(mocks.unknown).toHaveBeenCalledExactlyOnceWith(reasonDispatch, "commit_unknown");
 });

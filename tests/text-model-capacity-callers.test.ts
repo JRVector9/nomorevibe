@@ -11,10 +11,13 @@ import { translateDemandedProductFields } from "@/lib/jobs/products/translations
 import { productTranslationSourceHash } from "@/lib/domain/products/translation-policy";
 import { resolveSearchQuery, warmQueryTranslation } from "@/lib/domain/products/search-translation";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
-import { TAGLINE_MODEL } from "@/lib/crawl/tagline";
-import { PROFILE_MODEL } from "@/lib/domain/products/search-profile";
-import { VERIFY_MODEL } from "@/lib/domain/products/search-verify";
-import { KOREAN_TAGLINE_MODEL, PRODUCT_TRANSLATE_MODEL, SEARCH_QUERY_MODEL, TRANSLATE_MODEL } from "@/lib/crawl/translate";
+import type { AiTextTaskId } from "@/lib/llm/ai-tasks";
+import { pinTextRanks, textContract } from "./text-task-ranks-fixture";
+
+/** 모델은 「작업 ↔ 모델」 순위가 고른다(PR B) — 작업마다 1순위 하나(시험 연결)를 둔다. */
+const MODELS: Readonly<Record<AiTextTaskId, string>> = { "crawl-tagline": "qwen3.6-35b-heretic", "product-search-profile": "gpt-oss-120b",
+  "product-search-verify": "Qwen3.8-27B-NVFP4", "product-tagline-ko": "gpt-oss-120b", "product-translate": "gemma-4-26b",
+  "reason-translate": "gemma-4-26b", "search-query-translate": "gpt-oss-120b" };
 
 const mocks = vi.hoisted(() => ({ tagline: vi.fn(), profile: vi.fn(), verify: vi.fn(), korean: vi.fn(), product: vi.fn(), query: vi.fn(),
   tagTasks: vi.fn(), profiles: vi.fn(), verifications: vi.fn(), koreanTasks: vi.fn(), productTasks: vi.fn(),
@@ -53,7 +56,7 @@ vi.mock("@/lib/crawl/translate", async (load) => ({ ...await load<typeof import(
   translateQueryToEnglish: mocks.query, translateChineseQueryToEnglish: mocks.query }));
 vi.mock("@/lib/crawl/taglines", () => ({ pendingTaglines: mocks.tagTasks, recordTaglineResult: mocks.tagWrite }));
 vi.mock("@/lib/domain/products/search-profiles", () => ({ pendingProfiles: mocks.profiles, pendingVerifications: mocks.verifications,
-  recordProfileResult: mocks.profileWrite, recordVerificationResult: mocks.verifyWrite }));
+  recordProfileResult: mocks.profileWrite, recordVerificationResult: mocks.verifyWrite, resumedProfileModel: () => null }));
 vi.mock("@/lib/domain/products/korean-taglines", async load => ({
   ...await load<typeof import("@/lib/domain/products/korean-taglines")>(), homeListSlugs: async () => [], pendingKoreanTaglines: mocks.koreanTasks,
   recordKoreanTaglines: mocks.koreanWrite }));
@@ -102,10 +105,9 @@ const scenarios = [
 beforeEach(() => {
   vi.resetAllMocks();
   // Each text route is served by a directly connected engine (admin contract, transport direct); no gateway key exists.
-  setServingContractSnapshotForTest(([["crawl-tagline", TAGLINE_MODEL], ["product-search-profile", PROFILE_MODEL],
-    ["product-search-verify", VERIFY_MODEL], ["product-tagline-ko", KOREAN_TAGLINE_MODEL], ["product-translate", PRODUCT_TRANSLATE_MODEL],
-    ["reason-translate", TRANSLATE_MODEL], ["search-query-translate", SEARCH_QUERY_MODEL]] as const).map(([routeId, model]) =>
-    ({ routeId, model, contract: {}, auth: "none" as const, apiKey: null, transport: "direct" as const })));
+  // 순위 하나씩과 그 연결을 가리키는 직접 계약
+  pinTextRanks(MODELS);
+  setServingContractSnapshotForTest((Object.entries(MODELS) as [AiTextTaskId, string][]).map(([routeId, model]) => textContract(routeId, model)));
   vi.stubEnv("KOREAN_TRANSLATION_QWEN_ENABLED", "false");
   vi.stubEnv("KOREAN_TRANSLATION_QWEN_RECOVERY_ENABLED", "false");
   mocks.control.mockResolvedValue({ mode: "disabled" });
@@ -115,7 +117,7 @@ beforeEach(() => {
   mocks.cache.mockResolvedValue([]);
   mocks.primary.mockImplementation(async (load: () => Promise<unknown>) => load());
 });
-afterEach(() => { vi.unstubAllEnvs(); setServingContractSnapshotForTest(null); });
+afterEach(() => { vi.unstubAllEnvs(); setServingContractSnapshotForTest(null); pinTextRanks(null); });
 
 it.each(scenarios)("$name drains existing calls without aborting peers or admitting another after capacity defer", async scenario => {
   const finish = latch(), entered = latch();
@@ -155,11 +157,13 @@ it.each(scenarios)("$name preserves a genuine peer error ahead of a capacity rej
   expect(scenario.write).not.toHaveBeenCalled();
 });
 
+// 포화는 이 모델만의 까닭이라(PR B) 그 순위를 쉬게 하고 같은 일을 다음 순위로 넘긴다 — 순위가 하나뿐이면 쉬는 순위만 남아 예전처럼 틱을
+// model_capacity 로 미룬다(러너가 던진 미룸을 받아 적던 것과 같은 결과)
 it("Korean tagline admission does not consume a product attempt or backoff", async () => {
   const failure = new ModelCapacityDeferredError("capacity");
   mocks.koreanTasks.mockResolvedValue([{ productId: 1, name: "Doc", tagline: "Document tool", repoUrl: null, attempts: 0 }]);
   mocks.korean.mockRejectedValue(failure);
-  await expect(writeKoreanTaglines(context("product-tagline-ko"))).rejects.toBe(failure);
+  await expect(writeKoreanTaglines(context("product-tagline-ko"))).resolves.toEqual({ done: false, deferred: "model_capacity" });
   expect(mocks.control).toHaveBeenCalledOnce();
   expect(mocks.korean).toHaveBeenCalledOnce();
   expect(mocks.koreanWrite).not.toHaveBeenCalled();
@@ -170,7 +174,7 @@ it("product field admission leaves an eligible demand untouched", async () => {
   const failure = new ModelCapacityDeferredError("capacity");
   mocks.productTasks.mockResolvedValue([{ source, field: "tagline", locale: "en", sourceHash: productTranslationSourceHash(source, "tagline"), eligible: true }]);
   mocks.product.mockRejectedValue(failure);
-  await expect(translateDemandedProductFields(context("product-translate"))).rejects.toBe(failure);
+  await expect(translateDemandedProductFields(context("product-translate"))).resolves.toEqual({ done: false, deferred: "model_capacity" });
   expect(mocks.productWrite).not.toHaveBeenCalled();
 });
 
@@ -194,8 +198,10 @@ it("crawl-tagline still defers the whole tick on a saturation capacity refusal",
   const deferred = new ModelCapacityDeferredError("capacity");
   mocks.tagTasks.mockResolvedValueOnce(tasks).mockResolvedValue([]);
   mocks.tagline.mockRejectedValue(deferred);
-  await expect(writeTaglines(context("crawl-tagline"))).rejects.toBe(deferred);
+  const ctx = context("crawl-tagline");
+  await expect(writeTaglines(ctx)).resolves.toEqual({ done: false, deferred: "model_capacity" });
   expect(mocks.tagWrite).not.toHaveBeenCalled();
+  expect(ctx.log).toHaveBeenLastCalledWith("ai_task.ranks", expect.objectContaining({ ranks: 1, "unusable.1.capacity": expect.any(Number) }));
 });
 
 it.each(["dispatched", "work_busy"] as const)("product-translate passes a %s batch and translates the next demanded field in the same tick", async reason => {
@@ -213,11 +219,24 @@ it.each(["dispatched", "work_busy"] as const)("product-translate passes a %s bat
   expect(mocks.productWrite.mock.calls[0][0].map((entry: { task: { source: { id: number } } }) => entry.task.source.id)).toEqual([2]);
 });
 
+// 순위가 모두 포화면(PR B) 다음에 다시 — 원문으로 찾고 번역은 기다리는 중으로 남긴다
 it.each(["문서 정리", "代码编辑器", "程式碼編輯器"])("query defer keeps original search and pending without caching failure: %s", async query => {
-  mocks.query.mockRejectedValue(new ModelCapacityDeferredError("provider_contract_unavailable"));
+  mocks.query.mockRejectedValue(new ModelCapacityDeferredError("capacity"));
   const result = await resolveSearchQuery(query, { waitForTranslation: true });
   expect(result).toMatchObject({ translated: null, translationPending: true });
   expect(result.queries).toMatchObject({ texts: [query] });
+  expect(mocks.cacheWrite).not.toHaveBeenCalled();
+  expect(mocks.primary).not.toHaveBeenCalled();
+});
+
+// 계약이 닫힌 것은 그 순위만의 까닭이다 — 모든 순위가 그렇게 쉬면 기다릴 것이 없어 번역 없이 찾는다(기다리는 중도, 실패 캐시도 남기지 않는다)
+it("a closed contract on every rank searches the original query untranslated, neither pending nor caching failure", async () => {
+  mocks.query.mockRejectedValue(new ModelCapacityDeferredError("provider_contract_unavailable"));
+  const result = await resolveSearchQuery("문서 정리", { waitForTranslation: true });
+  expect(result.translated).toBeNull();
+  expect(result.translationPending).toBeUndefined();
+  expect(result.queries).toMatchObject({ texts: ["문서 정리"] });
+  expect(mocks.query).toHaveBeenCalledTimes(1);
   expect(mocks.cacheWrite).not.toHaveBeenCalled();
   expect(mocks.primary).not.toHaveBeenCalled();
 });

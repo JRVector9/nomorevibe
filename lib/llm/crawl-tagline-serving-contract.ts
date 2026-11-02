@@ -17,6 +17,9 @@ export const crawlTaglineServingContractSchema = z.object({
         && !url.search && !url.hash && url.pathname === "/v1/chat/completions";
     } catch { return false; }
   }), totalTokenBound: z.number().int().positive().safe(),
+  // 같은 모델 이름을 다른 연결에도 둔 순위(PR B)의 계약은 model 이 연결로 가른 장부 이름이고, 엔진에는 이 이름이 나간다. 없으면 model 이 나간다
+  // (없는 칸은 parse 결과에 들지 않아 지금 계약의 hash 는 그대로다).
+  engineModel: identity.optional(),
 }).strict();
 export type CrawlTaglineGatewayServingContract = Readonly<z.infer<typeof crawlTaglineServingContractSchema>>;
 /** 엔진 직접 계약(PR 3b-E) — AI1·AI2 와 같은 direct-openai-chat-v1 모양, provider local-direct. 같은 route_id 아래 관리 화면(model_serving_contracts)에 둔다. */

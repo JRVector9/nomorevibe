@@ -5,19 +5,21 @@ import postgres from "postgres";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { readModelCapacityCallerControl } from "@/lib/llm/capacity-repository";
 import { modelCapacityPolicyHash, type ModelCapacityPolicy } from "@/lib/llm/capacity";
-import { TRANSLATE_MODEL, textHash } from "@/lib/crawl/translate";
+import { textHash } from "@/lib/crawl/translate";
 import { translateReasons } from "@/lib/crawl/jobs/translate-reasons";
 import { translateReasonsWithModelCapacity } from "@/lib/crawl/reason-translation-model-capacity";
 import { requestJob } from "@/lib/jobs/control";
 import { runJob } from "@/lib/jobs/runner";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
-import { directContractRow } from "./direct-engine-fixtures";
+import { inTextRank, pinTextRanks, textContract } from "../text-task-ranks-fixture";
 
 // This is admission/readback, not a positive serving contract or terminal proof.
 // Only global HTTP is stubbed (and must stay unused); the selectors, control, job and TXs are real.
 // The abcLLM gateway was removed on 2026-10-30: the route reaches its capacity coordinator only with a direct admin contract
 // for its model, and the original leaf the coordinator takes while disabled no longer sends anything (no_key).
+// 2026-11-02(PR B): 모델·주소는 「작업 ↔ 모델」 순위가 고른다 — 잡은 고정한 순위로, 깊은 함수는 그 순위의 범위(inTextRank) 안에서 부른다.
+const TRANSLATE_MODEL = "mlx-community--gemma-4-26b-a4b-it-4bit";
 type Raw = Record<string, unknown>;
 type Snapshot = Record<string, Raw[]>;
 type Sql = postgres.Sql | postgres.TransactionSql;
@@ -151,8 +153,8 @@ beforeAll(() => tracked((async () => {
   await writeFile(`/tmp/${prefix}-baseline.json`, JSON.stringify(baseline), { mode: 0o600 });
 })()));
 beforeEach(async () => { await cleanup(); request.mockReset(); vi.stubGlobal("fetch", request);
-  setServingContractSnapshotForTest([directContractRow("reason-translate", TRANSLATE_MODEL)]); });
-afterEach(async () => { try { await cleanup(); } finally { vi.unstubAllEnvs(); vi.unstubAllGlobals(); setServingContractSnapshotForTest(null); } });
+  setServingContractSnapshotForTest([textContract("reason-translate", TRANSLATE_MODEL)]); pinTextRanks({ "reason-translate": TRANSLATE_MODEL }); });
+afterEach(async () => { try { await cleanup(); } finally { vi.unstubAllEnvs(); vi.unstubAllGlobals(); setServingContractSnapshotForTest(null); pinTextRanks(null); } });
 const batch = () => [{ hash: textHash("A document management tool"), body: "A document management tool", attempts: 0 }];
 const lease = { name: "reason-translate", token: `${prefix}-lease`, requestedVersion: 1 };
 afterAll(async () => {
@@ -172,7 +174,7 @@ it("disabled actual SHARE read settles before the original leaf, which no longer
   const control = await readModelCapacityCallerControl();
   expect(control.mode).toBe("disabled");
   request.mockImplementation(async () => new Response(JSON.stringify({ choices: [{ message: { content: '["문서 관리 도구"]' } }] })));
-  expect(await translateReasonsWithModelCapacity(batch(), lease, { timeoutMs: 1_000 }))
+  expect(await inTextRank("reason-translate", TRANSLATE_MODEL, () => translateReasonsWithModelCapacity(batch(), lease, { timeoutMs: 1_000 })))
     .toEqual({ kind: "disabled", result: { ok: false, error: "no_key" } });
   const [row] = await observer`SELECT count(*)::int AS count FROM pg_stat_activity
     WHERE datname=current_database() AND pid<>pg_backend_pid() AND state='idle in transaction'`;
@@ -257,7 +259,8 @@ it("a real reason job defers without consuming attempts or a concurrent producer
 it("malformed current policy is the original error, with no POST, slot or business write", () => exercise(async () => {
   await setMode("open", "d".repeat(64));
   const before = await whole();
-  await expect(translateReasonsWithModelCapacity(batch(), lease, { timeoutMs: 1_000 })).rejects.toThrow("model_capacity_policy_hash_mismatch");
+  await expect(inTextRank("reason-translate", TRANSLATE_MODEL, () => translateReasonsWithModelCapacity(batch(), lease, { timeoutMs: 1_000 })))
+    .rejects.toThrow("model_capacity_policy_hash_mismatch");
   expect(request).not.toHaveBeenCalled();
   expect(isDeepStrictEqual(await whole(), before)).toBe(true);
 }));

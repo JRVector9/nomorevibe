@@ -1,14 +1,16 @@
 import type { ModelEnv } from "@/lib/operations/pipeline-control";
 
+/** text 일곱 단계는 「작업 ↔ 모델」 1순위(PR B — 그 연결의 계약에 묶인 순위의 장부 이름), 소개 검수는 아직 이 프로세스의 env 다(PR C). */
+const ranked = (model: string | undefined) => model || "순위 없음 — 돌지 않음";
 export function TextModelStagesTable({ models }: { models: ModelEnv }) {
   const stages = [
-    ["검색 프로필 생성", models.profile, "ABCLLM_PROFILE_MODEL"],
-    ["검색 키워드 검수", models.verify, "SEARCH_VERIFY_MODEL"],
-    ["심사 사유 번역", models.translate, "ABCLLM_MODEL"],
-    ["제품 다국어 번역", models.productTranslate, "등록부 · product-translate"],
-    ["한국어 소개 번역", models.koreanTagline ?? models.translate, "MODEL_REGISTRY_CONFIG · product-tagline-ko / ABCLLM_MODEL"],
-    ["검색 질의 번역", models.searchQuery ?? models.translate, "MODEL_REGISTRY_CONFIG · search-query-translate / ABCLLM_MODEL"],
-    ["수집 소개 생성", models.tagline, "등록부 · crawl-tagline"],
+    ["검색 프로필 생성", ranked(models.profile), "작업 ↔ 모델 · product-search-profile"],
+    ["검색 키워드 검수", ranked(models.verify), "작업 ↔ 모델 · product-search-verify"],
+    ["심사 사유 번역", ranked(models.translate), "작업 ↔ 모델 · reason-translate"],
+    ["제품 다국어 번역", ranked(models.productTranslate), "작업 ↔ 모델 · product-translate"],
+    ["한국어 소개 번역", ranked(models.koreanTagline), "작업 ↔ 모델 · product-tagline-ko (GPT 경로)"],
+    ["검색 질의 번역", ranked(models.searchQuery), "작업 ↔ 모델 · search-query-translate"],
+    ["수집 소개 생성", ranked(models.tagline), "작업 ↔ 모델 · crawl-tagline"],
     ["소개 검수", models.introCheck, "INTRO_CHECK_MODEL · Claude CLI"],
   ];
   return <>

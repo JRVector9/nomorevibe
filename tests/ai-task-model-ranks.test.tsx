@@ -5,12 +5,12 @@ import { describe, expect, it } from "vitest";
 import { ACTION_GROUPS, ACTION_LABELS } from "@/app/(operator)/admin/activity/labels";
 import { RankSelects } from "@/app/(operator)/admin/models/RankSelects";
 import { ADMIN_MODEL_STAGES } from "@/lib/llm/admin-model-stages";
-import { AI_TASKS, aiTask, aiTaskAccepts, aiTaskSlots } from "@/lib/llm/ai-tasks";
+import { AI_TASKS, aiTask, aiTaskAccepts, aiTaskAliasIdentity, aiTaskSlots } from "@/lib/llm/ai-tasks";
 import { ASSIGNMENT_STAGE_IDS } from "@/lib/llm/capacity-helpers";
 import { GATEWAY_SERVING_CONTRACT_ROUTES } from "@/lib/llm/gateway-serving-contract-config";
 import { JOB_NAMES } from "@/lib/jobs/catalog";
 import {
-  AI_RANK_SLOT_NAMES, AI_TASK_AUDIT_ACTIONS, aiConnectionBaseUrl, aiConnectionInputFromForm, aiImportPlanDigestInput, aiRankReadiness, aiTaskIssueMessage, aiTaskRankNotices,
+  AI_RANK_SLOT_NAMES, AI_TASK_AUDIT_ACTIONS, aiConnectionBaseUrl, aiConnectionInputFromForm, aiImportPlanDigestInput, aiRankReadiness, aiRanksReadiness, aiTaskIssueMessage, aiTaskRankNotices,
   aiTaskRankOptions, aiTaskRanksInputFromForm, buildAiImportPlan, validateAiTaskRanks,
   type AiConnectionView, type AiCurrentSlot, type AiCurrentUse, type AiReadinessInput, type AiTaskRankRow,
 } from "@/lib/operations/admin-ai-tasks";
@@ -184,12 +184,31 @@ describe("저장 전 준비 확인(aiRankReadiness)", () => {
       model: "Inferact/Qwen3.8-27B-NVFP4", provider: "abcllm", endpoint: "http://supa.test:8000/v1/chat/completions", transport: "direct" }] }));
     expect(supaReady).toMatchObject({ blocking: [], createContract: null, appendRoute: null, createDevice: null });
   });
-  it("엔진 경로: 같은 경로·모델 계약이 다른 서버면, 정책 route 가 다른 장비면 막는다", () => {
+  it("엔진 경로(PR B): 같은 경로·모델 계약이 다른 서버면 연결로 가른 장부 이름으로 따로 계약·경로를 만든다; 정책 route 가 다른 장비면 막는다", () => {
     const other = aiRankReadiness(aiTask("crawl-tagline")!, 2, gpu, "qwen3.8-flash-next", input({ contracts: [{ routeId: "crawl-tagline", model: "qwen3.8-flash-next",
       provider: "abcllm", endpoint: "http://supa.test:8000/v1/chat/completions", transport: "direct" }] }));
-    expect(other.blocking).toEqual([expect.stringContaining("2순위 gpu3090 · qwen3.8-flash-next: crawl-tagline 경로의 같은 모델 계약이 다른 서버(supa.test:8000)를 가리킵니다.")]);
+    const alias = aiTaskAliasIdentity("qwen3.8-flash-next", GPU)!;
+    expect(other).toMatchObject({ blocking: [], identity: alias, createContract: { routeId: "crawl-tagline", identity: alias, engineModel: "qwen3.8-flash-next" },
+      appendRoute: { routeId: "crawl-tagline", provider: "abcllm", model: alias, groupId: "gpu3090-qwen" } });
+    expect(other.warnings).toEqual([expect.stringContaining(`같은 모델 이름의 계약이 다른 서버(supa.test:8000)에 있어 이 연결은 장부 이름 ${alias}(으)로`)]);
+    // 그 별칭 계약이 이미 이 연결을 가리키면 그것을 쓴다(만들지 않는다)
+    const own = aiRankReadiness(aiTask("crawl-tagline")!, 2, gpu, "qwen3.8-flash-next", input({ contracts: [
+      { routeId: "crawl-tagline", model: "qwen3.8-flash-next", provider: "abcllm", endpoint: "http://supa.test:8000/v1/chat/completions", transport: "direct" },
+      { routeId: "crawl-tagline", model: alias, provider: "abcllm", endpoint: "http://100.77.43.63:8090/v1/chat/completions", transport: "direct", engineModel: "qwen3.8-flash-next" }] }));
+    expect(own).toMatchObject({ blocking: [], identity: alias, createContract: null });
+    // 1차(심사 묶음)는 아직 예전 실행 쪽이라 같은 모델 계약이 다른 서버면 막는다(PR C)
+    const review = aiRankReadiness(aiTask("first-review")!, 2, gpu, "qwen3.8-flash-next", input({ contracts: [{ routeId: "crawl-agent-review", model: "qwen3.8-flash-next",
+      provider: "abcllm", endpoint: "http://supa.test:8000/v1/chat/completions", transport: "direct" }] }));
+    expect(review.blocking).toEqual([expect.stringContaining("2순위 gpu3090 · qwen3.8-flash-next: crawl-agent-review 경로의 같은 모델 계약이 다른 서버(supa.test:8000)를 가리킵니다.")]);
     const routed = aiRankReadiness(aiTask("crawl-tagline")!, 1, gpu, "Inferact/Qwen3.8-27B-NVFP4", input());
     expect(routed.blocking).toEqual([expect.stringContaining("경로는 장비 supa에 있습니다. 연결의 장비 이름을 supa(으)로 바꾸거나")]);
+  });
+  it("엔진 경로(PR B): 한 줄의 두 순위가 계약 없는 같은 모델을 다른 연결로 고르면 1순위는 이름 그대로, 2순위는 연결로 가른 이름으로 만든다", () => {
+    const supaConnection = { ...supa, baseUrl: "http://supa.test:8000/v1" };
+    const ready = aiRanksReadiness(aiTask("crawl-tagline")!, [{ rank: 1, connection: gpu, model: "qwen3.8-flash-next" },
+      { rank: 2, connection: supaConnection, model: "qwen3.8-flash-next" }], input());
+    expect(ready.map(row => [row.identity, row.createContract?.identity, row.createContract?.engineModel])).toEqual([
+      ["qwen3.8-flash-next", "qwen3.8-flash-next", null], [aiTaskAliasIdentity("qwen3.8-flash-next", SUPA), aiTaskAliasIdentity("qwen3.8-flash-next", SUPA), "qwen3.8-flash-next"]]);
   });
   it("로컬 직접 경로: 정책 route 와 로컬 계약이 있어야 한다(만들지 않는다)", () => {
     const task = aiTask("audit-review")!;

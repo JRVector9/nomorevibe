@@ -9,21 +9,23 @@ import { pendingTaglines, writeTaglineByHand, recordTaglineResult } from "@/lib/
 import { runJob, getJobState } from "@/lib/jobs/runner";
 import { recordWorkerTranslations, recordTranslations } from "@/lib/crawl/translations";
 import { textHash } from "@/lib/crawl/translate";
-import { TAGLINE_MODEL } from "@/lib/crawl/tagline";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { ensureSchema } from "./setup";
-import { directContractRow } from "./direct-engine-fixtures";
+import { pinTextRanks, textContract } from "../text-task-ranks-fixture";
 
 /**
  * 게이트웨이(abcLLM)는 2026-10-30 제거됐다 — 소개 짓기 잡은 직접 연결 계약이 있어야 돌고, 용량을 끈 잡이 부르는 옛 잎 writeTagline 은
  * 보내지 않고 no_key 로 끝난다(crawl-tagline.test.ts 가 본다). 이 파일은 늦게 온 답의 쓰기 울타리를 보므로, 그 잎만 같은 wire 를 전역 fetch
  * 목으로 보내는 대역으로 바꾼다(direct-engine-fixtures).
+ * 2026-11-02(PR B): 모델은 「작업 ↔ 모델」 순위가 고른다 — 순위를 고정하고(pinTextRanks) 그 연결의 엔진 직접 계약 행(textContract)을 넣는다.
  */
+// 1순위 모델 — 예전 TAGLINE_MODEL(등록부 기본값)과 같은 이름이다
+const { TAGLINE_MODEL } = vi.hoisted(() => ({ TAGLINE_MODEL: "qwen3.6-35b-heretic" }));
 vi.mock("@/lib/crawl/tagline", async load => {
   const original = await load<typeof import("@/lib/crawl/tagline")>();
   const { askRemovedGatewayLeaf, replyContent } = await import("./direct-engine-fixtures");
   const writeTagline: typeof original.writeTagline = (evidence, options) => askRemovedGatewayLeaf(original.writeTagline(evidence, options),
-    options.request ?? fetch, original.crawlTaglineGatewayWire(evidence, options.model ?? original.TAGLINE_MODEL),
+    options.request ?? fetch, original.crawlTaglineGatewayWire(evidence, options.model ?? TAGLINE_MODEL),
     async response => original.parseTagline(await replyContent(response), evidence), options);
   return { ...original, writeTagline };
 });
@@ -32,12 +34,13 @@ beforeAll(ensureSchema);
 beforeEach(async () => {
   for (const table of [crawlTaglines, crawlCandidates, crawlDocuments, crawlSettings, jobs, textTranslations]) await db.delete(table);
   await saveSettings({ enabled: true }, "fixture");
-  setServingContractSnapshotForTest([directContractRow("crawl-tagline", TAGLINE_MODEL)]);
+  pinTextRanks({ "crawl-tagline": TAGLINE_MODEL });
+  setServingContractSnapshotForTest([textContract("crawl-tagline", TAGLINE_MODEL)]);
   await crawl.putDocument({ repo: "fence/app", productUrl: "https://fence.example", repoMeta: {}, pageStatus: 200,
     pageMeta: { title: "My App", textSample: "A task management application" } });
   await crawl.recordJudgement({ repo: "fence/app", productUrl: "https://fence.example", state: "needs_review", reason: "no_description", decidedBy: "auto" });
 });
-afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); setServingContractSnapshotForTest(null); });
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); setServingContractSnapshotForTest(null); pinTextRanks(null); });
 const answer = () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ tagline: "업무를 관리하는 앱", source: "page" }) } }] }));
 
 it.each(["success", "failure"])("late AI %s preserves a manual insert made during the call", async kind => {

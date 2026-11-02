@@ -1,20 +1,22 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
-import { directContractRow } from "./direct-engine-fixtures";
+import { pinTextRanks, textContract } from "../text-task-ranks-fixture";
 
 /**
  * 게이트웨이(abcLLM)는 2026-10-30 제거됐다. 잡은 이 경로·모델의 직접 연결 계약이 있어야 돌고, 용량을 끈(disabled) 잡이 부르는 옛 잎
  * verifyKeywords·verifyKeywordsInChunks 는 이제 보내지 않고 no_key 로 끝난다. 이 파일은 잡이 답을 받은 뒤의 판단(차례·실패 시각·색인 사본)을
  * 보므로, 한 번에 묻는 잎만 같은 wire(searchVerifyGatewayWire)를 이 파일의 fetch 목으로 보내는 대역으로 바꾼다(direct-engine-fixtures).
  * 묶음 잎은 진짜 그대로 두고 부른 것만 센다 — 묶음 단계의 전송·완결 기록은 native 경로가 맡는다(search-verify-capacity-dispatch).
+ * 2026-11-02(PR B): 모델·주소는 「작업 ↔ 모델」 순위가 고른다 — 이 파일은 검수·키워드 짓기 순위 하나씩과 그 연결의 직접 계약을 고정한다.
  */
+const { VERIFY_MODEL, PROFILE_MODEL } = vi.hoisted(() => ({ VERIFY_MODEL: "Qwen3.8-27B-NVFP4", PROFILE_MODEL: "gpt-oss-120b" }));
 const leaves = vi.hoisted(() => ({ chunks: [] as string[][] }));
 vi.mock("@/lib/domain/products/search-verify", async load => {
   const original = await load<typeof import("@/lib/domain/products/search-verify")>();
   const { askRemovedGatewayLeaf, replyContent } = await import("./direct-engine-fixtures");
   const verifyKeywords: typeof original.verifyKeywords = (item, options) => askRemovedGatewayLeaf(original.verifyKeywords(item, options),
-    options.request ?? fetch, original.searchVerifyGatewayWire(item, options.model ?? original.VERIFY_MODEL), async response => {
+    options.request ?? fetch, original.searchVerifyGatewayWire(item, options.model ?? VERIFY_MODEL), async response => {
       const content = await replyContent(response);
       try { return { ok: true as const, unsupported: original.parseVerification(item.keywords, content) }; }
       catch { return { ok: false as const, error: "invalid_output" }; }
@@ -30,7 +32,7 @@ vi.mock("@/lib/domain/products/search-profile", async load => {
   const original = await load<typeof import("@/lib/domain/products/search-profile")>();
   const { askRemovedGatewayLeaf } = await import("./direct-engine-fixtures");
   const writeKeywords: typeof original.writeKeywords = (evidence, options) => askRemovedGatewayLeaf(original.writeKeywords(evidence, options),
-    options.request ?? fetch, original.profileGatewayWire(evidence, options.model ?? original.PROFILE_MODEL),
+    options.request ?? fetch, original.profileGatewayWire(evidence, options.model ?? PROFILE_MODEL),
     async response => original.parseProfileGatewayBody(await response.text(), evidence.name), options);
   return { ...original, writeKeywords };
 });
@@ -39,8 +41,7 @@ const { db } = await import("@/lib/db");
 const { jobs, products, productSearchProfiles } = await import("@/lib/db/schema");
 const { verifySearchKeywords } = await import("@/lib/jobs/products/search-verify");
 const { writeSearchProfiles } = await import("@/lib/jobs/products/search-profile");
-const { PROFILE_MODEL, profileEvidence, profileHash } = await import("@/lib/domain/products/search-profile");
-const { VERIFY_MODEL } = await import("@/lib/domain/products/search-verify");
+const { profileEvidence, profileHash } = await import("@/lib/domain/products/search-profile");
 const { runJob } = await import("@/lib/jobs/runner");
 const { pendingVerifications, recordVerificationResult, reconcileSearchProfileBatch } = await import("@/lib/domain/products/search-profiles");
 const { ensureSchema, resetTables } = await import("./setup");
@@ -77,8 +78,9 @@ const keywordsOf = async (id: number) => (await db.select({ k: products.searchKe
 
 beforeAll(() => ensureSchema());
 beforeEach(async () => { await resetTables(); await db.delete(productSearchProfiles); await db.delete(jobs); leaves.chunks.length = 0;
-  setServingContractSnapshotForTest([directContractRow("product-search-verify", VERIFY_MODEL)]); });
-afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); setServingContractSnapshotForTest(null); });
+  setServingContractSnapshotForTest([textContract("product-search-verify", VERIFY_MODEL)]);
+  pinTextRanks({ "product-search-verify": VERIFY_MODEL, "product-search-profile": PROFILE_MODEL }); });
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); setServingContractSnapshotForTest(null); pinTextRanks(null); });
 
 describe("검색 키워드 검수 잡", () => {
   it("keeps unavailable tokenizer evidence retryable without verifying or exhausting a product", async () => {
@@ -153,7 +155,8 @@ describe("검색 키워드 검수 잡", () => {
 
     const row = await profile(id);
     expect(row.verifiedAt).not.toBeNull();
-    expect(row).toMatchObject({ removedKeywords: ["membership bonuses", "보너스 관리"], verifyModel: "[supa] Qwen3.8-27B-NVFP4",
+    // PR B: 본 모델은 부른 순위의 장부 이름이다(예전의 게이트웨이 표시 이름 「[supa] …」이 아니다)
+    expect(row).toMatchObject({ removedKeywords: ["membership bonuses", "보너스 관리"], verifyModel: VERIFY_MODEL,
       keywordsEn: ["sports academy management", "membership bonuses"] });
     expect(await keywordsOf(id)).toBe("sports academy management · 스포츠 학원 관리");
 
@@ -218,7 +221,7 @@ describe("검색 키워드 검수 잡", () => {
     await db.update(products).set({ tagline: "Class packs for a football academy" }).where(eq(products.id, id));
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ choices: [{ message: { content:
       JSON.stringify({ keywords_en: ["class pass management"], keywords_ko: ["수강권 관리"] }) } }] })));
-    setServingContractSnapshotForTest([directContractRow("product-search-verify", VERIFY_MODEL), directContractRow("product-search-profile", PROFILE_MODEL)]);
+    setServingContractSnapshotForTest([textContract("product-search-verify", VERIFY_MODEL), textContract("product-search-profile", PROFILE_MODEL)]);
     await runJob("product-search-profile", writeSearchProfiles);
 
     expect(await profile(id)).toMatchObject({ verifiedAt: null, removedKeywords: [], keywordsEn: ["class pass management"] });
@@ -269,11 +272,12 @@ describe("검색 키워드 검수 잡", () => {
     expect(request.calls).toHaveLength(0);
   });
 
-  it("직접 연결 계약이 없으면 부르지 않고 no_direct_contract 로 넘긴다 — 성공이 아니다", async () => {
+  // PR B: 계약이 없는 순위는 쓸 수 없다 — 순위가 모두 그러면 예전의 no_direct_contract 대신 all_ranks_unusable 로 남는다
+  it("순위의 직접 연결 계약이 없으면 부르지 않고 all_ranks_unusable 로 넘긴다 — 성공이 아니다", async () => {
     const id = await seed("no-contract", ["coffee shop"], []);
     setServingContractSnapshotForTest([]);
     const request = gateway(() => ({}));
-    expect(await tick(request)).toMatchObject({ status: "completed", done: true, degraded: "no_direct_contract" });
+    expect(await tick(request)).toMatchObject({ status: "completed", done: true, degraded: "all_ranks_unusable" });
     expect(request.calls).toHaveLength(0);
     expect(await profile(id)).toMatchObject({ verifiedAt: null, verifyError: null, verifyAttempts: 0 });
   });

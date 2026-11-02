@@ -1,7 +1,11 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
-import { TAGLINE_MODEL, crawlTaglineGatewayWire, parseTagline, taglineEvidence, taglineHash, tidyTagline, writeTagline,
+import { crawlTaglineGatewayWire, parseTagline, taglineEvidence, taglineHash, tidyTagline, writeTagline,
   type TaglineEvidence } from "@/lib/crawl/tagline";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
+import { textContract } from "./text-task-ranks-fixture";
+
+// 모델은 「작업 ↔ 모델」 순위가 고른다(PR B) — 여기서는 wire 에 그대로 실리는지만 본다
+const TAGLINE_MODEL = "qwen3.6-35b-heretic";
 
 // These legacy transport units do not open a database; actual disabled SQL is covered separately.
 vi.mock("@/lib/llm/capacity-repository", () => ({
@@ -117,7 +121,7 @@ describe("게이트웨이 호출", () => {
   });
 
   it("게이트웨이는 없어졌다(2026-10-30) — 옛 경로는 직접 연결 계약이 있어도 부르지 않고 no_key 로 끝낸다", async () => {
-    setServingContractSnapshotForTest([{ routeId: "crawl-tagline", model: TAGLINE_MODEL, contract: {}, auth: "none", apiKey: null, transport: "direct" }]);
+    setServingContractSnapshotForTest([textContract("crawl-tagline", TAGLINE_MODEL)]);
     const request = vi.fn<typeof fetch>();
     expect(await writeTagline(evidence(), { timeoutMs: 1_000, model: TAGLINE_MODEL, request })).toEqual({ ok: false, error: "no_key" });
     expect(request).not.toHaveBeenCalled();

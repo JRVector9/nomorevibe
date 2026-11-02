@@ -263,6 +263,8 @@ function slotSource(slot: ModelSlot): string {
   if (slot.source === "settings") return `크롤 설정 ${slot.code}`;
   if (slot.source === "env") return `환경변수 ${slot.code}(웹 기준)`;
   if (slot.source === "default") return `코드 기본값 — ${slot.code} 없음(웹 기준)`;
+  if (slot.source === "ranks") return "작업 ↔ 모델 1순위(웹 기준 — 쓸 수 없으면 아래 순위가 맡는다)";
+  if (slot.code.startsWith("ai-task:")) return "작업 ↔ 모델에 순위가 없습니다 — 이 작업은 돌지 않습니다";
   return "정해진 모델 없음";
 }
 

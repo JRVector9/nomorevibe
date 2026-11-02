@@ -387,6 +387,19 @@ export function modelTimeoutMs(purpose: string, env: ModelEnvironment = process.
   return model.deadlineLadder?.clientMs ?? Math.min(model.timeoutMs, timeout ?? model.timeoutMs);
 }
 
+/**
+ * 경로 한도만으로 정한 한 번 부르는 시간(PR B, 「작업 ↔ 모델」 순위를 읽는 text 경로). 등록부의 모델 정의(환경변수·용도 기본값이 고르는 모델)를
+ * 읽지 않는다 — 모델은 순위가 고르고, 시간은 경로(runtime_settings routes·코드 기본 경로 한도)가 정한다. 코드 기본값에서는 modelTimeoutMs 와 같다.
+ */
+export function modelRouteTimeoutMs(route: string, env: ModelEnvironment = process.env): number {
+  const registry = readModelRegistry(env);
+  if (registry.deadlines[route] || DEFAULT_MODEL_DEADLINES[route]) return modelDeadlineLadder(route, env).clientMs;
+  const budget = registry.limits[route] ?? DEFAULT_MODEL_PURPOSE_LIMITS[route];
+  const timeout = registry.timeouts[route] ?? budget?.timeoutMs ?? DEFAULT_MODEL_TIMEOUTS[route];
+  if (!timeout) throw new Error(`model_timeout_missing:${route}`);
+  return timeout;
+}
+
 /** Known equipment models may shorten the role budget or declare their own complete ladder. */
 export function modelCallTimeoutMs(route: string, requestModel: string, env: ModelEnvironment = process.env): number {
   const definition = resolveRegistryModel(requestModel, env), routeTimeout = modelTimeoutMs(route, env);

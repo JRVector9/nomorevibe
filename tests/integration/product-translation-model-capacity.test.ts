@@ -5,7 +5,6 @@ import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vite
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { products } from "@/lib/db/schema";
-import { PRODUCT_TRANSLATE_MODEL } from "@/lib/crawl/translate";
 import { PRODUCT_TRANSLATION_JOB_BUDGET_MS } from "@/lib/llm/deadline-ladder";
 import { reviewHash } from "@/lib/crawl/agent-review-contract";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
@@ -27,13 +26,15 @@ import type { ProductTranslationServingContract } from "@/lib/llm/product-transl
 import { setRuntimeSettingsForTest } from "@/lib/operations/runtime-settings-store";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
-import { directContractRow } from "./direct-engine-fixtures";
+import { inTextRank, pinTextRanks, textContract } from "../text-task-ranks-fixture";
 
 const serving = vi.hoisted(() => ({ contract: null as ProductTranslationServingContract | null }));
 vi.mock("@/lib/llm/product-translation-serving-contract", async original => ({
   ...await original<typeof import("@/lib/llm/product-translation-serving-contract")>(), resolveProductTranslationServingContract: () => serving.contract,
 }));
 type Raw = Record<string, unknown>;
+// 제품 번역의 모델·주소는 「작업 ↔ 모델」 순위가 고른다(PR B) — 이 파일은 순위 하나(이 모델)를 고정한다
+const PRODUCT_TRANSLATE_MODEL = "mlx-community--gemma-4-26b-a4b-it-4bit";
 const prefix = `product-native-${randomUUID().slice(0, 12)}`, jobName = "product-translate";
 const admin = postgres(TEST_DATABASE_URL, { max: 1, prepare: false, onnotice: () => {}, connection: { application_name: prefix } });
 const managedJobs = [...new Set([...jobsForRole("text"), "product-intro-check"])].sort();
@@ -169,8 +170,10 @@ async function server(run: (state: { bodies: string[]; setReply: (reply: (respon
     () => new Promise<void>((resolve, reject) => http.listening ? http.close(error => error ? reject(error) : resolve()) : resolve()), () => drain(responses, true)], failures); }
 }
 async function tick() { await tracked(requestJob(jobName)); return tracked(runJob(jobName, translateDemandedProductFields, { requestedOnly: true, roleLease: role, budgetMs: PRODUCT_TRANSLATION_JOB_BUDGET_MS })); }
+// 직접 부르는 장부·전송 단계(prepareProductTranslationDispatch 등)는 순위 범위 안에서만 모델을 읽는다 — 잡이 여는 1순위 범위와 같게 연다
 async function custom(run: (lease: JobLease) => Promise<void>) { await tracked(requestJob(jobName));
-  return tracked(runJob(jobName, async (ctx: JobContext<null>) => { expect(ctx.lease).toBeDefined(); await run(ctx.lease!); return { done: true }; }, { requestedOnly: true, roleLease: role })); }
+  return tracked(runJob(jobName, async (ctx: JobContext<null>) => { expect(ctx.lease).toBeDefined();
+    await inTextRank(jobName, PRODUCT_TRANSLATE_MODEL, () => run(ctx.lease!)); return { done: true }; }, { requestedOnly: true, roleLease: role })); }
 function latch() { let resolve!: () => void; const promise = new Promise<void>(done => { resolve = done; }); return { promise, resolve }; }
 async function until(check: () => Promise<boolean>) { const deadline = Date.now() + 3000;
   while (!await check()) { if (Date.now() >= deadline) throw new Error("fixture_barrier_deadline"); await new Promise(resolve => setTimeout(resolve, 10)); } }
@@ -205,9 +208,11 @@ beforeAll(() => tracked((async () => {
   expect(baseline("job_batch_control")[0]).toMatchObject({ mode: "legacy", writer_contract_version: 0 }); initialized = true;
 })(), setups));
 // The route opens only on a direct admin contract for its model (abcLLM gateway removed 2026-10-30); the contract body is the mock above.
-beforeEach(() => tracked((async () => { setServingContractSnapshotForTest([directContractRow(jobName, PRODUCT_TRANSLATE_MODEL)]); await install(); await elect(); })(), setups));
+// PR B: 1순위(시험 연결 · 이 모델)는 그 연결을 가리키는 직접 계약 행에 묶인다 — 전송 계약 본문은 여전히 위 mock 이 연다.
+beforeEach(() => tracked((async () => { setServingContractSnapshotForTest([textContract(jobName, PRODUCT_TRANSLATE_MODEL)]);
+  pinTextRanks({ [jobName]: PRODUCT_TRANSLATE_MODEL }); await install(); await elect(); })(), setups));
 afterEach(() => tracked(steps([() => drain(setups), () => drain(exercises), () => drain(work), cleanup,
-  async () => { serving.contract = null; setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); vi.unstubAllGlobals(); }]), hooks));
+  async () => { serving.contract = null; setServingContractSnapshotForTest(null); pinTextRanks(null); vi.unstubAllEnvs(); vi.unstubAllGlobals(); }]), hooks));
 afterAll(async () => { await steps([() => drain(setups), () => drain(exercises), () => drain(work), () => drain(hooks), cleanup,
   () => admin.end({ timeout: 5 }), async () => { await (globalThis as { pgClient?: ReturnType<typeof postgres> }).pgClient?.end({ timeout: 5 }); }]); });
 
@@ -231,12 +236,14 @@ it("keeps tokenizer outages retryable without charging a demanded field attempt,
 it("dispatches one ordered demanded batch through actual role/runJob, native terminal and original writer/ACK", exercise(async () => {
   const { product, tasks } = await seed(["tagline", "description"]);
   const before = await admin`SELECT to_jsonb(t) AS row FROM product_translations t WHERE product_id=${product.id} ORDER BY locale,field`;
-  const [requested] = await admin`SELECT requested_version,processed_version FROM jobs WHERE name=${jobName}`;
-  // Production resolver is still null: actual admission leaves demand, cursor and ACK untouched.
-  expect(await tick()).toMatchObject({ status: "deferred", reason: "model_capacity" });
+  // Production resolver is still null: actual admission leaves demand untouched.
+  // PR B: 전송 계약이 닫힌 것(provider_contract_unavailable)은 그 모델만의 까닭이라 1순위를 쉬게 하고 같은 묶음을 다음 순위로 넘긴다 —
+  // 다른 순위가 없으니 「모든 순위를 쓸 수 없음」으로 제 일 못 한 틱을 남긴다(예전처럼 틱 전체를 미루지 않는다). 수요·장부는 그대로다.
+  expect(await tick()).toMatchObject({ status: "completed", done: true, degraded: "all_ranks_unusable" });
   expect(await admin`SELECT to_jsonb(t) AS row FROM product_translations t WHERE product_id=${product.id} ORDER BY locale,field`).toEqual(before);
   expect(await admin`SELECT request_id FROM model_capacity_requests WHERE owner_instance_id=${prefix}`).toEqual([]);
-  expect((await admin`SELECT processed_version FROM jobs WHERE name=${jobName}`)[0].processed_version).toBe(requested.processed_version);
+  const [observed] = await admin`SELECT value FROM operations_observations WHERE key=${`job:${jobName}`}`;
+  expect(observed.value.degraded).toMatchObject({ code: "all_ranks_unusable", detail: expect.stringContaining("전송 계약이 닫힘") });
   await server(async ({ bodies }) => {
     expect(await tick()).toMatchObject({ status: "completed", done: true }); expect(bodies).toHaveLength(1);
     const sent = JSON.parse(bodies[0]); expect(sent.stream).toBe(false);

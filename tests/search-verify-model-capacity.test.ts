@@ -4,10 +4,12 @@ import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import type { SearchVerifyInput, SearchVerifyMember, SearchVerifyOutcome, SearchVerifyParent, SearchVerifyStep } from "@/lib/llm/capacity";
 import type { ProfileTask } from "@/lib/domain/products/search-profiles";
 import type { JobContext } from "@/lib/jobs/runner";
-import { scopedModel } from "@/lib/llm/model-registry";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
+import { inTextRank, pinTextRanks, textContract } from "./text-task-ranks-fixture";
 
 // Coordinator boundary only: the ledger, domain TX and native leaf are scripted fixtures, never DB or provider authority.
+/** 검수 모델은 「작업 ↔ 모델」 순위가 고른다(PR B) — 순위의 장부 이름이 정책 route·장부·결과 기록에 그대로 실린다. */
+const VERIFY_MODEL = vi.hoisted(() => "Qwen3.8-27B-NVFP4");
 const state = vi.hoisted(() => ({
   mode: "open" as "open" | "disabled" | "draining", mapped: true,
   continuation: null as null | Record<string, unknown>,
@@ -20,7 +22,7 @@ const state = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/llm/capacity-repository", () => ({
   readModelCapacityCallerControl: async () => ({ mode: state.mode, epoch: 1, revision: 1, policyHash: null,
-    policy: { routes: state.mapped ? [{ routeId: "product-search-verify", provider: "abcllm", model: "[supa] Qwen3.8-27B-NVFP4" }] : [] } }),
+    policy: { routes: state.mapped ? [{ routeId: "product-search-verify", provider: "abcllm", model: VERIFY_MODEL }] : [] } }),
   findOwnPendingModelRequest: async () => null,
   requestSearchVerifyModelSlot: async (request: { requestId: string }, input: SearchVerifyInput) => {
     state.inputs.push(structuredClone(input));
@@ -59,10 +61,8 @@ vi.mock("@/lib/domain/products/search-verify", async load => ({ ...await load<ty
   verifyKeywordsInChunks: async (item: { keywords: string[] }) => { state.legacy.push(`chunk:${item.keywords.length}`); return { ok: true, unsupported: [] }; } }));
 const { verifyKeywordsWithModelCapacity } = await import("@/lib/domain/products/search-verify-model-capacity");
 const { verifySearchKeywords } = await import("@/lib/jobs/products/search-verify");
-const { VERIFY_MODEL } = await import("@/lib/domain/products/search-verify");
 /** The route opens only on an engine connected directly (admin contract, transport direct); the gateway key env is gone (2026-10-30). */
-const pinDirectContract = () => setServingContractSnapshotForTest([{ routeId: "product-search-verify",
-  model: scopedModel("product-search-verify", VERIFY_MODEL), contract: {}, auth: "none", apiKey: null, transport: "direct" }]);
+const pinDirectContract = () => setServingContractSnapshotForTest([textContract("product-search-verify", VERIFY_MODEL)]);
 
 const boot = randomUUID(), expectation = Object.freeze({ kind: "search_verify_write" as const });
 const keywords = Array.from({ length: 12 }, (_, index) => `keyword-${index}`);
@@ -79,8 +79,9 @@ const lease = { name: "product-search-verify", token: randomUUID(), requestedVer
 const role = { role: "text" as const, instanceId: "text-unit", bootId: boot, release: "unit", epoch: 1, kind: "primary" as const };
 const ok = (removed: string[] = []) => ({ result: { ok: true as const, unsupported: removed }, outcome: { ok: true as const, removed } });
 const invalid = () => ({ result: { ok: false as const, error: "invalid_output" }, outcome: { ok: false as const, error: "invalid_output" as const } });
+// 깊은 함수는 잡이 여는 순위 범위(1순위 · VERIFY_MODEL) 안에서 부른다
 const run = (overrides: Partial<Parameters<typeof verifyKeywordsWithModelCapacity>[2]> = {}, value = task()) =>
-  verifyKeywordsWithModelCapacity(value, lease, { timeoutMs: 60_000, chunked: true, roleLease: role, ...overrides });
+  inTextRank("product-search-verify", VERIFY_MODEL, () => verifyKeywordsWithModelCapacity(value, lease, { timeoutMs: 60_000, chunked: true, roleLease: role, ...overrides }));
 const parent = (): SearchVerifyParent => ({ requestId: randomUUID(), bindingHash: "b".repeat(64), responseHash: "d".repeat(64) });
 function resumable(next: SearchVerifyStep | "done" | "stop", deadlineInMs: number, outcomes: { step: SearchVerifyStep; outcome: SearchVerifyOutcome }[]) {
   const now = Date.now();
@@ -89,12 +90,12 @@ function resumable(next: SearchVerifyStep | "done" | "stop", deadlineInMs: numbe
 }
 
 beforeEach(() => {
-  vi.useFakeTimers({ toFake: ["Date"] }); pinDirectContract();
+  vi.useFakeTimers({ toFake: ["Date"] }); pinDirectContract(); pinTextRanks({ "product-search-verify": VERIFY_MODEL });
   Object.assign(state, { mode: "open", mapped: true, continuation: null, slots: [], prepares: [], replies: [], posts: [], inputs: [], reserved: [],
     cancelled: 0, marked: [], settled: [], legacy: [] });
   state.writes.mockReset(); state.pending.mockReset(); state.writes.mockResolvedValue(true);
 });
-afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); setServingContractSnapshotForTest(null); });
+afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); setServingContractSnapshotForTest(null); pinTextRanks(null); });
 
 describe("one permit, one physical POST, legacy step order", () => {
   it("keeps the disabled leaf and both legacy entry points without any ledger call", async () => {
@@ -103,10 +104,11 @@ describe("one permit, one physical POST, legacy step order", () => {
     expect(await run({ chunked: false })).toEqual({ kind: "result", result: { ok: true, unsupported: [] } });
     expect(state.legacy).toEqual(["chunk:12", "full:12"]); expect(state.inputs).toEqual([]); expect(state.posts).toEqual([]);
   });
-  it("keeps the legacy leaf without any ledger call when the route has no direct contract, even if a gateway key env is set", async () => {
+  it("defers this rank without the legacy leaf or any ledger call when the route has no direct contract, even if a gateway key env is set", async () => {
+    // 순위가 고른 계약이 그 사이 닫혔으면 옛 길로 떨어지지 않고 이 모델만의 미룸으로 다음 순위에 넘긴다(PR B)
     vi.stubEnv("ABCLLM_API_KEY", "old-gateway-key"); setServingContractSnapshotForTest([]);
-    expect(await run()).toEqual({ kind: "result", result: { ok: true, unsupported: [] } });
-    expect(state.legacy).toEqual(["chunk:12"]); expect(state.inputs).toEqual([]); expect(state.posts).toEqual([]);
+    await expect(run()).rejects.toEqual(new ModelCapacityDeferredError("provider_contract_unavailable"));
+    expect(state.legacy).toEqual([]); expect(state.inputs).toEqual([]); expect(state.posts).toEqual([]);
   });
   it("sends full mode once with the original order, duplicates and unshortened legacy timeout", async () => {
     const words = ["b", "a", "b"]; state.replies = [ok(["a"])];
@@ -219,14 +221,17 @@ describe("job wiring keeps deferred and expired unconsumed", () => {
     expect(await verifySearchKeywords(ctx())).toEqual({ done: false });
     expect(state.writes).not.toHaveBeenCalled(); expect(state.posts).toEqual([]);
   });
-  it("records nothing on a capacity deferral and rethrows it", async () => {
+  it("records nothing on a capacity deferral and defers the tick as model_capacity", async () => {
+    // 포화는 이 모델만의 까닭이라(PR B) 그 순위를 쉬게 하고, 쉬는 순위만 남으면 예전처럼 model_capacity 로 미룬다(러너가 받던 것과 같은 미룸)
     stubRole(); state.pending.mockResolvedValue([task()]); state.slots = ["capacity"];
-    await expect(verifySearchKeywords(ctx())).rejects.toBeInstanceOf(ModelCapacityDeferredError);
+    const context = ctx();
+    expect(await verifySearchKeywords(context)).toEqual({ done: false, deferred: "model_capacity" });
     expect(state.writes).not.toHaveBeenCalled();
+    expect(context.log).toHaveBeenLastCalledWith("ai_task.ranks", expect.objectContaining({ ranks: 1, "unusable.1.capacity": 1 }));
   });
   it("passes the one-use expectation only on the positive path", async () => {
     stubRole(); state.pending.mockResolvedValueOnce([task(["a"], null)]).mockResolvedValue([]); state.replies = [ok(["a"])];
     await verifySearchKeywords(ctx());
-    expect(state.writes).toHaveBeenCalledWith(expect.anything(), lease, { kind: "success", removed: ["a"], model: "[supa] Qwen3.8-27B-NVFP4" }, expectation);
+    expect(state.writes).toHaveBeenCalledWith(expect.anything(), lease, { kind: "success", removed: ["a"], model: VERIFY_MODEL }, expectation);
   });
 });

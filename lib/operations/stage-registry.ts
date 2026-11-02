@@ -1,4 +1,5 @@
 import { configuredModel, configuredModelDefinition, modelForPurpose, modelRequestName } from "@/lib/llm/model-registry";
+import { taskModels } from "@/lib/llm/ai-task-resolver";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import type { CatalogRole } from "@/lib/jobs/catalog";
 import type { StageKey as CompletionStageKey } from "./pipeline-completions";
@@ -143,8 +144,8 @@ export type ModelSlot = Readonly<{
   code: string;
   provider: string | null;
   model: string | null;
-  /** settings: 저장된 크롤 설정 · env: 이 프로세스의 환경변수 · default: 코드 기본값 · unset: 정해진 모델이 없음 */
-  source: "settings" | "env" | "default" | "unset";
+  /** settings: 저장된 크롤 설정 · env: 이 프로세스의 환경변수 · default: 코드 기본값 · ranks: 「작업 ↔ 모델」 1순위(PR B) · unset: 정해진 모델이 없음 */
+  source: "settings" | "env" | "default" | "ranks" | "unset";
   /**
    * 호출마다 남는 기록이 없어 결과 행으로 센다 — 화면은 중립 색 참고로만 보인다(v8 검토 H).
    * 키워드 짓기도 결과 행으로 세지만 지금 모델 카드 4자리 판정을 그대로 두므로 근사로 두지 않는다.
@@ -153,20 +154,26 @@ export type ModelSlot = Readonly<{
 }>;
 
 /**
- * 환경변수로 고르는 텍스트·벡터 모델 — 이름과 기본값은 각 잡 모듈의 상수와 같다(테스트가 모듈을 다시 읽어 견준다).
+ * 「작업 ↔ 모델」 순위가 고르는 text 모델(PR B) — 자리의 모델은 그 작업의 1순위(연결 · 모델)다. 환경변수·등록부 기본값을 읽지 않는다.
+ * 순위는 이 프로세스의 스냅숏(30초)이다 — 워커가 쓴 모델은 결과 행의 model(관측)이 더 정확하다.
+ */
+export const TASK_MODEL_SLOTS = [
+  { stage: "publish", key: "tagline", label: "소개 짓기", task: "crawl-tagline", provider: "abcllm", approximated: true },
+  { stage: "keywords", key: "keywords", label: "키워드 짓기", task: "product-search-profile", provider: "abcllm", approximated: false },
+  { stage: "keyword-verify", key: "keyword-verify", label: "키워드 검수", task: "product-search-verify", provider: "abcllm", approximated: true },
+  { stage: "product-translate", key: "product-translate", label: "제품 번역", task: "product-translate", provider: "abcllm", approximated: true },
+  { stage: "reason-translate", key: "reason-translate", label: "사유 번역", task: "reason-translate", provider: "abcllm", approximated: true },
+  { stage: "tagline-ko", key: "tagline-ko", label: "한국어 소개", task: "product-tagline-ko", provider: "abcllm", approximated: true },
+] as const satisfies readonly { stage: StageKey; key: string; label: string; task: string; provider: string; approximated: boolean }[];
+
+/**
+ * 환경변수로 고르는 모델 — 이름과 기본값은 각 잡 모듈의 상수와 같다(테스트가 모듈을 다시 읽어 견준다). 소개 검수는 PR C, 벡터는 PR D 가 순위로 옮긴다.
  * 환경변수는 이 프로세스의 것이다 — 웹과 워커의 환경이 다르면 관측한 모델(결과 행의 model)이 더 정확하다.
- * env null 인 소개 짓기·제품 번역은 환경변수를 읽지 않는다 — 등록부(관리자 덮어쓰기)와 단계 풀이 고른다(code `registry:<용도>`).
  */
 export const ENV_MODEL_SLOTS = [
-  { stage: "publish", key: "tagline", label: "소개 짓기", env: null, fallback: modelRequestName(modelForPurpose("crawl-tagline")), provider: "abcllm", approximated: true },
-  { stage: "keywords", key: "keywords", label: "키워드 짓기", env: "ABCLLM_PROFILE_MODEL", fallback: modelRequestName(modelForPurpose("reason-translate")), provider: "abcllm", approximated: false },
-  { stage: "keyword-verify", key: "keyword-verify", label: "키워드 검수", env: "SEARCH_VERIFY_MODEL", fallback: modelRequestName(modelForPurpose("product-search-verify")), provider: "abcllm", approximated: true },
   // 벡터 모델은 환경변수로 바꾸지 않는다 — 바꾸면 전부 다시 임베딩한다(embedding.ts EMBEDDING_MODEL)
   { stage: "embedding", key: "embedding", label: "의미 검색 벡터", env: null, fallback: "bge-m3-f16@daec91ff", provider: "llama-server", approximated: true },
-  { stage: "product-translate", key: "product-translate", label: "제품 번역", env: null, fallback: modelRequestName(modelForPurpose("product-translate")), provider: "abcllm", approximated: true },
-  { stage: "reason-translate", key: "reason-translate", label: "사유 번역", env: "ABCLLM_MODEL", fallback: modelRequestName(modelForPurpose("reason-translate")), provider: "abcllm", approximated: true },
   { stage: "intro-check", key: "intro-check", label: "소개 검수", env: "INTRO_CHECK_MODEL", fallback: modelRequestName(modelForPurpose("product-intro-check")), provider: "claude-cli", approximated: true },
-  { stage: "tagline-ko", key: "tagline-ko", label: "한국어 소개", env: "ABCLLM_MODEL", fallback: modelRequestName(modelForPurpose("reason-translate")), provider: "abcllm", approximated: true },
 ] as const satisfies readonly { stage: StageKey; key: string; label: string; env: string | null; fallback: string; provider: string; approximated: boolean }[];
 
 /** 1차 심사자 — 관리자 설정(firstReview)만 본다. agent-review.ts firstReviewer 와 같다(환경변수 대체는 2026-10-31 제거) */
@@ -193,10 +200,13 @@ export function resolveModelSlots(settings: ModelSettings, env: Env = process.en
       code: `secondReview.fallbacks[${index}]`, provider: voter.provider, model: voter.model, source: "settings", approximated: false })),
     // 새 감사는 시작할 때의 1차 심사자로 고정된다(product-audit.ts) — 도는 중인 감사의 모델은 product_audit_campaigns.model 이다
     { stage: "audit", key: "audit", label: "발행분 감사", ...first, approximated: false },
+    ...TASK_MODEL_SLOTS.map((slot): ModelSlot => {
+      const first = taskModels(slot.task)[0];
+      return { stage: slot.stage, key: slot.key, label: slot.label, code: `ai-task:${slot.task}`, provider: first ? slot.provider : null,
+        model: first ? first.model : null, source: first ? "ranks" : "unset", approximated: slot.approximated };
+    }),
     ...ENV_MODEL_SLOTS.map((slot): ModelSlot => {
-      const purpose = ({ tagline: "crawl-tagline", keywords: "product-search-profile", "keyword-verify": "product-search-verify",
-        "product-translate": "product-translate", "reason-translate": "reason-translate", "intro-check": "product-intro-check",
-        "tagline-ko": "product-tagline-ko" } as const)[slot.key as Exclude<typeof slot.key, "embedding">];
+      const purpose = slot.key === "intro-check" ? "product-intro-check" as const : null;
       const value = slot.env ? env[slot.env]?.trim() || env[`${slot.env}_KEY`]?.trim() : undefined;
       const selected = purpose ? configuredModelDefinition(purpose, env) : null;
       return { stage: slot.stage, key: slot.key, label: slot.label, code: slot.env ?? (purpose ? `registry:${purpose}` : "EMBEDDING_MODEL"), provider: selected?.provider ?? slot.provider,

@@ -1,8 +1,7 @@
-import { modelTimeoutMs, scopedModel } from "@/lib/llm/model-registry";
+import { modelRouteTimeoutMs, scopedModel } from "@/lib/llm/model-registry";
 import { translateKoreanTaglinesWithModelCapacity, type KoreanTaglineCapacityResult } from "@/lib/domain/products/korean-tagline-model-capacity";
 import { deferredJob, type JobContext, type JobOutcome } from "@/lib/jobs/runner";
 import { tickRemaining } from "@/lib/jobs/tick-deadline";
-import { KOREAN_TAGLINE_MODEL } from "@/lib/crawl/translate";
 import { displayProjectName } from "@/lib/domain/products/display-name";
 import { checkKoreanTaglineOutput } from "@/lib/domain/products/korean-tagline";
 import { homeListSlugs, pendingKoreanTaglines, pendingKoreanTaglineRecovery, recordKoreanTaglines, koreanTaglineSource as taglineSource, type KoreanTaglineResult, type KoreanTaglineTask } from "@/lib/domain/products/korean-taglines";
@@ -11,10 +10,9 @@ import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { translateKoreanTaglinesWithQwen } from "@/lib/crawl/korean-translation-qwen";
 import { KOREAN_TRANSLATION_NATIVE_MAX_CHARS,
   KOREAN_TRANSLATION_QWEN_MODEL, koreanTranslationQwenEnabled, koreanTranslationQwenRecoveryEnabled } from "@/lib/crawl/korean-translation-config";
-import { TEXT_ROUTE_BLOCK_DETAIL, textRouteAccess } from "@/lib/llm/serving-contract-store";
-import { productTaglineKoServingProvider } from "@/lib/llm/product-tagline-ko-serving-contract";
 import { jobKnob } from "@/lib/operations/runtime-settings-schema";
 import { runtimeSettings } from "@/lib/operations/runtime-settings-store";
+import { TextTaskRanks } from "@/lib/llm/ai-task-resolver";
 
 /**
  * 한국어 한 줄 소개 짓기(UX-13) — 공개 제품의 지금 소개를 한국어 한 줄로 옮긴다. 새 제품·홈에 보이는 제품부터, 나머지는 스타 순.
@@ -61,16 +59,20 @@ export function packTaglineBatch(tasks: KoreanTaglineTask[], maxChars?: number):
 }
 
 export async function writeKoreanTaglines(ctx: JobContext<null>): Promise<JobOutcome<null>> {
-  // Only a directly connected engine (admin contract, transport direct) opens GPT; legacy Qwen does not need one.
-  // provider 는 계약 모듈이 고른다 — local-direct 직접 계약이면 그 장비로 기록한다(PR 3b-E).
-  const taglineModel = scopedModel("product-tagline-ko", KOREAN_TAGLINE_MODEL);
-  const gptBlock = () => textRouteAccess("product-tagline-ko", taglineModel, productTaglineKoServingProvider(taglineModel)).block;
-  const gptCallable = () => gptBlock() === null;
-  const initialBlock = gptBlock();
-  if (initialBlock && !koreanTranslationQwenEnabled()) {
-    ctx.log("tagline_ko.skipped", { reason: initialBlock });
+  // GPT 경로는 「작업 ↔ 모델」 순위(PR B)만 부른다 — 순위마다 그 연결을 가리키는 엔진 직접 계약이 있어야 한다. Qwen 직접 경로(korean-translation-direct)는
+  // 아직 예전 설정(PR C 가 옮긴다)이라 계약이 필요 없다.
+  const ranks = await TextTaskRanks.open(JOB);
+  try { return await writeKoreanTaglinesWithRanks(ctx, ranks); }
+  finally { ctx.log("ai_task.ranks", ranks.summary()); }
+}
+
+async function writeKoreanTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTaskRanks): Promise<JobOutcome<null>> {
+  const gptCallable = () => ranks.usable().length > 0;
+  const early = ranks.earlyDegraded();
+  if (early && !koreanTranslationQwenEnabled()) {
+    ctx.log("tagline_ko.skipped", { reason: early.code });
     // 부를 길이 없으면 아무것도 하지 않는다 — 성공이 아니다(러너가 성공 시각을 옮기지 않고 조치할 일이 올린다)
-    return { done: true, degraded: { code: initialBlock, detail: TEXT_ROUTE_BLOCK_DETAIL[initialBlock] } };
+    return { done: true, degraded: early };
   }
   const lease = ctx.lease;
   if (!lease) throw new Error("Korean tagline worker requires a job lease");
@@ -83,7 +85,7 @@ export async function writeKoreanTaglines(ctx: JobContext<null>): Promise<JobOut
     const remaining = tickRemaining(ctx, JOB, startedAt);
     const knobs = runtimeSettings();
     const batchSize = jobKnob(knobs, JOB, "batch"), legacyMaxChars = jobKnob(knobs, JOB, "batchChars"), minCallMs = jobKnob(knobs, JOB, "minCallMs"),
-      slowCallMs = jobKnob(knobs, JOB, "slowCallMs"), callMs = modelTimeoutMs(JOB);
+      slowCallMs = jobKnob(knobs, JOB, "slowCallMs"), callMs = modelRouteTimeoutMs(JOB);
     let written = 0, failed = 0;
     const rejected: Record<string, number> = {}, cleaned: Record<string, number> = {};
     const counts = () => ({ written, failed, rejected, cleaned });
@@ -102,8 +104,12 @@ export async function writeKoreanTaglines(ctx: JobContext<null>): Promise<JobOut
       }
       const legacy = control.mode === "disabled";
       const qwen = legacy && koreanTranslationQwenEnabled() && !stopped.has("qwen");
-      const nativeBlock = legacy ? null : gptBlock();
-      if (nativeBlock) return { done: true, degraded: { code: nativeBlock, detail: TEXT_ROUTE_BLOCK_DETAIL[nativeBlock] } };
+      // 용량 장부가 열려 있으면 GPT 순위만 부른다(Qwen 은 장부가 꺼졌을 때만) — 쓸 순위가 없으면 이 틱의 사정을 남긴다
+      if (!legacy && !gptCallable()) {
+        const processed = written + failed + Object.values(rejected).reduce((sum, count) => sum + count, 0);
+        if (ranks.saturated()) return deferredJob("model_capacity", processed);
+        return processed ? { done: true } : { done: true, degraded: ranks.degraded() };
+      }
       const candidates = (await pendingKoreanTaglines(batchSize * 4, homeSlugs)).filter(task => !visited.has(task.productId));
       const gptBatch = gptCallable() && !stopped.has("gpt")
         ? packTaglineBatch(candidates, legacy ? legacyMaxChars : KOREAN_TRANSLATION_NATIVE_MAX_CHARS) : [];
@@ -122,7 +128,8 @@ export async function writeKoreanTaglines(ctx: JobContext<null>): Promise<JobOut
         }
       }
       const work = [
-        ...(gptBatch.length ? [{ backend: "gpt" as const, model: scopedModel("product-tagline-ko", KOREAN_TAGLINE_MODEL), batch: gptBatch, recovery: false }] : []),
+        // GPT 의 모델(장부 이름)은 순위가 정한다 — 부른 순위의 이름으로 아래에서 채운다
+        ...(gptBatch.length ? [{ backend: "gpt" as const, model: "", batch: gptBatch, recovery: false }] : []),
         ...(qwenBatch.length ? [{ backend: "qwen" as const, model: scopedModel("korean-translation-direct", KOREAN_TRANSLATION_QWEN_MODEL), batch: qwenBatch, recovery: recoveryBatch }] : []),
       ];
       if (!work.length) {
@@ -146,13 +153,19 @@ export async function writeKoreanTaglines(ctx: JobContext<null>): Promise<JobOut
       work.forEach(({ batch }) => batch.forEach(task => visited.add(task.productId)));
       const outcomes = await Promise.allSettled(work.map(async entry => {
         const items = entry.batch.map(task => ({ name: displayProjectName(task.name, task.repoUrl), tagline: taglineSource(task) }));
-        const outcome: KoreanTaglineCapacityResult = entry.backend === "gpt"
-          ? await translateKoreanTaglinesWithModelCapacity(entry.batch, homeSlugs, lease, { timeoutMs, signal })
-          : { kind: "result" as const, result: await translateKoreanTaglinesWithQwen(items, { timeoutMs, signal }) };
+        let model = entry.model;
+        let outcome: KoreanTaglineCapacityResult | { kind: "unusable" };
+        if (entry.backend === "gpt") {
+          // 순위 차례로 부른다 — 이 모델만의 까닭(경로 없음·장비 행 없음·계약 닫힘·포화)이면 같은 묶음을 다음 순위로(TextTaskRanks.run)
+          const attempt = await ranks.run(binding => translateKoreanTaglinesWithModelCapacity(entry.batch, homeSlugs, lease, { timeoutMs, signal })
+            .then(value => ({ value, model: binding.identity })));
+          if (attempt.kind === "unusable") outcome = { kind: "unusable" };
+          else { outcome = attempt.value.value; model = attempt.value.model; }
+        } else outcome = { kind: "result" as const, result: await translateKoreanTaglinesWithQwen(items, { timeoutMs, signal }) };
         const completedBatch = outcome.kind === "result" ? outcome.batch ?? entry.batch : entry.batch;
         completedBatch.forEach(task => visited.add(task.productId));
         const completedItems = completedBatch.map(task => ({ name: displayProjectName(task.name, task.repoUrl), tagline: taglineSource(task) }));
-        return { ...entry, batch: completedBatch, items: completedItems, outcome, elapsedMs: Date.now() - calledAt };
+        return { ...entry, model, batch: completedBatch, items: completedItems, outcome, elapsedMs: Date.now() - calledAt };
       }));
       if (signal.aborted || !ctx.hasBudget()) return { done: false };
       let skipped = false;
@@ -162,6 +175,8 @@ export async function writeKoreanTaglines(ctx: JobContext<null>): Promise<JobOut
         if (settled.status === "rejected") { errors.push(settled.reason); continue; }
         const { batch, backend, model, items, outcome, elapsedMs, recovery } = settled.value;
         if (outcome.kind === "skipped") { skipped = true; continue; }
+        // GPT 의 모든 순위가 이 틱에 쉰다 — 이 묶음은 그대로 두고(호출·시도 기록 없음) GPT 는 이 틱에서 멈춘다
+        if (outcome.kind === "unusable") { stopped.add(backend); continue; }
         const result = outcome.result;
         // 틱 끝이라 짧아진 제한에 걸린 것은 소개 탓이 아니다 — 시도로 세지 않고 다음 틱에 다시
         if (!result.ok && result.error === "timeout" && timeoutMs < callMs && !recovery) {
@@ -184,10 +199,12 @@ export async function writeKoreanTaglines(ctx: JobContext<null>): Promise<JobOut
           else if (entry.error.startsWith("rejected:")) rejected[entry.error.slice(9)] = (rejected[entry.error.slice(9)] ?? 0) + 1;
           else failed++;
         }
-        // 게이트웨이가 막혔거나 밀렸으면 이번 틱은 여기서 — 같은 실패를 되풀이하지 않고 심사에 자리를 준다
+        // 엔진이 막혔거나 밀렸으면 이번 틱은 여기서 — 같은 실패를 되풀이하지 않고 심사에 자리를 준다. GPT 는 그 순위만 쉬고 다음 묶음은 다음 순위가 맡는다
         if (!result.ok || elapsedMs >= slowCallMs) {
           ctx.log("tagline_ko.gateway_blocked", { ...counts(), backend, model, error: result.ok ? "slow" : result.error });
-          stopped.add(backend);
+          const binding = backend === "gpt" ? ranks.bindings().find(row => row.identity === model) : undefined;
+          if (binding) ranks.pause(binding, result.ok ? "engine_slow" : "engine_failed");
+          if (!binding || !gptCallable()) stopped.add(backend);
         }
       }
       if (errors.length) {
@@ -201,6 +218,13 @@ export async function writeKoreanTaglines(ctx: JobContext<null>): Promise<JobOut
         throw first;
       }
       if (skipped || recoveryDeferred) return { done: false };
+      if (ranks.exhausted && !qwen) {
+        // GPT 의 모든 순위가 이 틱에 쉰다(Qwen 도 돌지 않는다). 포화면 예전처럼 미루고, 아니면 일을 했을 때만 보통 틱 — 한 건도 못 했으면 까닭을 남긴다
+        const processed = written + failed + Object.values(rejected).reduce((sum, count) => sum + count, 0);
+        ctx.log("tagline_ko.all_ranks_unusable", counts());
+        if (ranks.saturated()) return deferredJob("model_capacity", processed);
+        return processed ? { done: true } : { done: true, degraded: ranks.degraded() };
+      }
       if (stopped.has("gpt") && (!qwen || stopped.has("qwen"))) return { done: true };
     }
     ctx.log("tagline_ko.done", { ...counts(), drained: false });

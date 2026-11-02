@@ -21,10 +21,13 @@ vi.mock("@/lib/jobs/control", async load => ({ ...await load<typeof import("@/li
 vi.mock("@/lib/crawl/pipeline-stage-context", () => ({ lockPipelineInputStages: mocks.stage }));
 vi.mock("@/lib/crawl/settings", async load => ({ ...await load<typeof import("@/lib/crawl/settings")>(), getSettings: mocks.settings }));
 import { writeCrawlTaglineWithModelCapacity } from "@/lib/crawl/tagline-model-capacity";
-import { TAGLINE_MODEL, taglineEvidence, taglineHash } from "@/lib/crawl/tagline";
-import { scopedModel } from "@/lib/llm/model-registry";
-import { setServingContractSnapshotForTest, TEXT_ROUTE_BLOCK_DETAIL } from "@/lib/llm/serving-contract-store";
+import { taglineEvidence, taglineHash } from "@/lib/crawl/tagline";
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
+import { textRankUnusableText } from "@/lib/llm/ai-task-resolver";
+import { inTextRank, pinTextRanks, textContract } from "./text-task-ranks-fixture";
 import type { TaglineTask } from "@/lib/crawl/taglines";
+/** 「작업 ↔ 모델」 순위(PR B)의 모델 — 잡은 이 순위의 범위에서 부르고, 깊은 함수는 그 범위의 이름(textTaskModel)을 읽는다. */
+const TAGLINE_MODEL = "[MLX] qwen3.6-35b-heretic";
 const at = new Date("2026-10-17T01:02:03.000Z"), task: TaglineTask = { candidate: { id: 17, repo: "fixture/doc", productUrl: "https://doc.test",
   state: "needs_review", reason: "no_description", decidedBy: "auto", signals: null, publishedSlug: null, judgedAt: null, decidedAt: null, updatedAt: at },
   document: { id: 18, repo: "fixture/doc", repoMeta: {}, productUrl: "https://doc.test", pageStatus: 200,
@@ -42,10 +45,11 @@ const parent = { requestId: reservation.requestId, bindingHash: "f".repeat(64), 
 const terminal = { kind: "crawl_tagline_gateway_terminal" };
 const options = () => ({ timeoutMs: 45_000, roleLease: role });
 /** The route opens only on an admin engine row connected directly (transport direct); the abcLLM gateway key was removed (2026-10-30). */
-const pinDirect = () => setServingContractSnapshotForTest([{ routeId: "crawl-tagline", model: scopedModel("crawl-tagline", TAGLINE_MODEL),
-  contract: {}, auth: "none", apiKey: null, transport: "direct" }]);
+const pinDirect = () => setServingContractSnapshotForTest([textContract("crawl-tagline", TAGLINE_MODEL)]);
+/** 깊은 함수는 잡이 TextTaskRanks.run 으로 여는 순위 범위 안에서 부른다(PR B) — 범위 밖이면 모델을 읽지 못하고 던진다. */
+const inRank = <T>(run: () => T): T => inTextRank("crawl-tagline", TAGLINE_MODEL, run);
 beforeEach(() => {
-  vi.resetAllMocks(); pinDirect();
+  vi.resetAllMocks(); pinDirect(); pinTextRanks({ "crawl-tagline": TAGLINE_MODEL });
   mocks.control.mockResolvedValue({ mode: "open", policy: { routes: [{ routeId: "crawl-tagline", provider: "abcllm", model: TAGLINE_MODEL }] } });
   mocks.call.mockReturnValue(call); mocks.prepare.mockResolvedValueOnce({ kind: "ready", member, role: boundRole, snapshot: {} })
     .mockResolvedValue({ kind: "ready", dispatch, expectation });
@@ -55,23 +59,26 @@ beforeEach(() => {
   mocks.resume.mockResolvedValue({ kind: "result", result: empty, askOrdinal: 1, parent, expectation });
   mocks.settings.mockResolvedValue({ enabled: true }); mocks.write.mockResolvedValue({ stored: true, released: true });
 });
-afterEach(() => setServingContractSnapshotForTest(null));
-it("defers an unsupported production contract before request, attempt or POST", async () => {
+afterEach(() => { setServingContractSnapshotForTest(null); pinTextRanks(null); });
+it("defers an unsupported production contract before request, attempt or POST", () => inRank(async () => {
   mocks.call.mockReturnValue({ kind: "unsupported", reason: "provider_contract_unavailable" });
   await expect(writeCrawlTaglineWithModelCapacity(task, job, options())).rejects.toMatchObject({ reason: "provider_contract_unavailable" });
   expect(mocks.request).not.toHaveBeenCalled(); expect(mocks.native).not.toHaveBeenCalled(); expect(mocks.write).not.toHaveBeenCalled();
-});
-it("returns disabled without reading positive history or preparing a model", async () => {
+}));
+it("returns disabled without reading positive history or preparing a model", () => inRank(async () => {
   mocks.control.mockResolvedValue({ mode: "disabled" });
   expect(await writeCrawlTaglineWithModelCapacity(task, job, options())).toEqual({ kind: "disabled" });
   expect(mocks.call).not.toHaveBeenCalled(); expect(mocks.prepare).not.toHaveBeenCalled(); expect(mocks.history).not.toHaveBeenCalled();
-});
-it("returns disabled without a direct engine contract before reading the control or preparing a model", async () => {
+}));
+// PR B: 순위 범위 안에서 계약이 닫혔으면 옛 길(disabled → legacy)로 떨어지지 않고 이 모델만의 미룸으로 던진다 — 잡이 같은 후보를 다음 순위로 넘긴다
+it("defers as provider_contract_unavailable without a direct engine contract before reading the control or preparing a model", () => inRank(async () => {
   setServingContractSnapshotForTest([]);
-  expect(await writeCrawlTaglineWithModelCapacity(task, job, options())).toEqual({ kind: "disabled" });
+  const error = await writeCrawlTaglineWithModelCapacity(task, job, options()).catch((value: unknown) => value);
+  expect(error).toBeInstanceOf(ModelCapacityDeferredError); expect(error).toMatchObject({ reason: "provider_contract_unavailable" });
   expect(mocks.control).not.toHaveBeenCalled(); expect(mocks.call).not.toHaveBeenCalled(); expect(mocks.request).not.toHaveBeenCalled();
-});
-it("reuses the same waiting ID with exact phase input", async () => {
+  expect(mocks.legacy).not.toHaveBeenCalled();
+}));
+it("reuses the same waiting ID with exact phase input", () => inRank(async () => {
   mocks.pending.mockResolvedValue({ requestId: reservation.requestId, state: "waiting" });
   mocks.request.mockResolvedValue({ kind: "deferred", reason: "capacity" });
   await expect(writeCrawlTaglineWithModelCapacity(task, job, options())).rejects.toBeInstanceOf(ModelCapacityDeferredError);
@@ -79,8 +86,8 @@ it("reuses the same waiting ID with exact phase input", async () => {
   expect(mocks.request).toHaveBeenCalledWith(expect.objectContaining({ requestId: reservation.requestId,
     workKey: `${crawlTaglineLogicalWorkKey(input)}:${crawlTaglineInputHash(input)}` }), input);
   expect(mocks.native).not.toHaveBeenCalled();
-});
-it("never retransmits a dispatched full work key, but re-admits one whose call went indeterminate (2026-10-30)", async () => {
+}));
+it("never retransmits a dispatched full work key, but re-admits one whose call went indeterminate (2026-10-30)", () => inRank(async () => {
   mocks.pending.mockResolvedValue({ requestId: reservation.requestId, state: "dispatched" });
   await expect(writeCrawlTaglineWithModelCapacity(task, job, options())).rejects.toMatchObject({ reason: "dispatched" });
   expect(mocks.request).not.toHaveBeenCalled(); expect(mocks.native).not.toHaveBeenCalled();
@@ -88,19 +95,19 @@ it("never retransmits a dispatched full work key, but re-admits one whose call w
   mocks.pending.mockResolvedValue(null); mocks.prepare.mockResolvedValueOnce({ kind: "ready", member, role: boundRole, snapshot: {} });
   expect(await writeCrawlTaglineWithModelCapacity(task, job, options())).toMatchObject({ kind: "result" });
   expect(mocks.request).toHaveBeenCalledOnce(); expect(mocks.request.mock.calls[0][0].requestId).not.toBe(reservation.requestId);
-});
-it("settles physical history before returning a current writer", async () => {
+}));
+it("settles physical history before returning a current writer", () => inRank(async () => {
   expect(await writeCrawlTaglineWithModelCapacity(task, job, options())).toMatchObject({ kind: "result", askOrdinal: 1, result, expectation });
   expect(mocks.reconcile).toHaveBeenCalledWith(terminal);
   expect(mocks.native.mock.invocationCallOrder[0]).toBeGreaterThan(mocks.prepare.mock.invocationCallOrder.at(-1)!);
-});
-it("keeps the returned failure identity ahead of cleanup error", async () => {
+}));
+it("keeps the returned failure identity ahead of cleanup error", () => inRank(async () => {
   const failure = { ok: false, error: "network" }, cleanup = new Error("cleanup");
   mocks.native.mockResolvedValue({ result: failure, terminal: null }); mocks.unknown.mockRejectedValue(cleanup);
   const error = await writeCrawlTaglineWithModelCapacity(task, job, options()).catch(error => error);
   expect(error).toBeInstanceOf(AggregateError); expect(error.errors[0]).toBe(failure); expect(error.errors[1]).toBe(cleanup);
-});
-it("preserves reservation rejection and cleanup identity", async () => {
+}));
+it("preserves reservation rejection and cleanup identity", () => inRank(async () => {
   const failure = new Error("admission"), cleanup = new Error("cancel"); mocks.prepare.mockReset().mockRejectedValueOnce(failure); // initial read failure owns no slot
   await expect(writeCrawlTaglineWithModelCapacity(task, job, options())).rejects.toBe(failure);
   expect(mocks.cancel).not.toHaveBeenCalled();
@@ -108,35 +115,35 @@ it("preserves reservation rejection and cleanup identity", async () => {
   mocks.cancel.mockRejectedValueOnce(cleanup);
   const error = await writeCrawlTaglineWithModelCapacity(task, job, options()).catch(error => error);
   expect(error.errors).toEqual([failure, cleanup]);
-});
-it("resumes a settled second with writer only and no third ask", async () => {
+}));
+it("resumes a settled second with writer only and no third ask", () => inRank(async () => {
   const second = { ...parent, requestId: randomUUID() }; mocks.history.mockResolvedValue({ first: { ...parent, outcome: empty }, second: { ...second, outcome: result } });
   mocks.resume.mockResolvedValue({ kind: "result", askOrdinal: 2, result, parent: second, expectation });
   expect(await writeCrawlTaglineWithModelCapacity(task, job, options())).toMatchObject({ askOrdinal: 2, result });
   expect(mocks.resume).toHaveBeenCalled(); expect(mocks.request).not.toHaveBeenCalled(); expect(mocks.native).not.toHaveBeenCalled();
-});
-it("resumes a settled first nonempty with writer only", async () => {
+}));
+it("resumes a settled first nonempty with writer only", () => inRank(async () => {
   mocks.history.mockResolvedValue({ first: { ...parent, outcome: result }, second: null });
   mocks.resume.mockResolvedValue({ kind: "result", askOrdinal: 1, result, parent, expectation });
   expect(await writeCrawlTaglineWithModelCapacity(task, job, options())).toMatchObject({ result });
   expect(mocks.native).not.toHaveBeenCalled();
-});
-it("rejects outcome JSON as writer authority before any SQL", async () => {
+}));
+it("rejects outcome JSON as writer authority before any SQL", () => inRank(async () => {
   const domain = await vi.importActual<typeof import("@/lib/crawl/taglines")>("@/lib/crawl/taglines");
   const failure = await domain.recordTaglineResult(task, job, { kind: "success", tagline: result.tagline, source: "page", model: TAGLINE_MODEL },
     { kind: "crawl_tagline_write" }).catch(error => error);
   expect(mocks.transaction).not.toHaveBeenCalled();
   expect(failure.message).toBe("invalid_crawl_tagline_write_expectation");
-});
-it("does not downgrade a positive first to legacy ask2 after disabled transition", async () => {
+}));
+it("does not downgrade a positive first to legacy ask2 after disabled transition", () => inRank(async () => {
   mocks.native.mockResolvedValue({ result: empty, terminal });
   const first = await writeCrawlTaglineWithModelCapacity(task, job, options());
   if (first.kind !== "result") throw new Error("unit_first_required");
   mocks.control.mockResolvedValue({ mode: "disabled" });
   await expect(writeCrawlTaglineWithModelCapacity(task, job, { ...options(), previous: first })).rejects.toMatchObject({ reason: "disabled" });
   expect(mocks.native).toHaveBeenCalledTimes(1); expect(mocks.legacy).not.toHaveBeenCalled();
-});
-it("re-enters a deferred second on the next tick without asking first again", async () => {
+}));
+it("re-enters a deferred second on the next tick without asking first again", () => inRank(async () => {
   mocks.history.mockResolvedValue({ first: { ...parent, outcome: empty }, second: null });
   const first = await writeCrawlTaglineWithModelCapacity(task, job, options());
   if (first.kind !== "result") throw new Error("unit_history_first_required");
@@ -152,14 +159,15 @@ it("re-enters a deferred second on the next tick without asking first again", as
   expect(await writeCrawlTaglineWithModelCapacity(task, job, { ...options(), previous: resumed })).toMatchObject({ askOrdinal: 2, result });
   expect(mocks.request.mock.calls.map(([request, input]) => [request.requestId, input.askOrdinal])).toEqual([[waiting, 2], [waiting, 2]]);
   expect(mocks.native).toHaveBeenCalledTimes(1); expect(mocks.write).not.toHaveBeenCalled();
-});
+}));
 it("no-contract, settings-disabled, reuse and no-evidence jobs remain model-free", async () => {
   const { writeTaglines } = await import("@/lib/crawl/jobs/tagline");
   // 소개 생성은 jobRunOptions 에 예산 줄이 없어 러너 기본 25초로 돈다 — 상한 45초를 온전히 주는 창을 보려면 틱 예산을 준다(러너가 deadlineAt 을 준다)
   const ctx = { lease: job, cursor: null, hasBudget: () => true, deadlineAt: Date.now() + 55_000, save: vi.fn(), log: vi.fn() };
-  // 직접 연결 계약이 없으면 부르지 않는다 — 성공이 아니라 제 일 못 함(no_direct_contract)으로 넘긴다(게이트웨이는 2026-10-30 제거)
+  // 순위의 직접 연결 계약이 없으면 부르지 않는다 — 성공이 아니라 제 일 못 함(all_ranks_unusable)으로 넘긴다(게이트웨이는 2026-10-30 제거, 순위는 PR B)
   setServingContractSnapshotForTest([]);
-  expect(await writeTaglines(ctx)).toEqual({ done: true, degraded: { code: "no_direct_contract", detail: TEXT_ROUTE_BLOCK_DETAIL.no_direct_contract } });
+  expect(await writeTaglines(ctx)).toEqual({ done: true, degraded: { code: "all_ranks_unusable",
+    detail: `수집 소개 짓기: 1순위 test-engine · ${TAGLINE_MODEL}: ${textRankUnusableText("no_direct_contract")}` } });
   expect(mocks.settings).not.toHaveBeenCalled(); expect(mocks.tasks).not.toHaveBeenCalled();
   pinDirect(); mocks.settings.mockResolvedValueOnce({ enabled: false });
   expect(await writeTaglines(ctx)).toEqual({ done: true });
@@ -245,40 +253,40 @@ async function domainDispatch(t: ReturnType<typeof domainTx>) {
     workKey: `${d.binding.logicalWorkKey}:${d.binding.inputHash}`, logicalWorkKey: d.binding.logicalWorkKey, logicalMemberKeys: crawlTaglineMemberKeys(d.binding.member) };
   return { domain, initial, prepared, reserved };
 }
-it("uses locked raw microseconds and actual standby kind and checks the wall after dispatch event", async () => {
+it("uses locked raw microseconds and actual standby kind and checks the wall after dispatch event", () => inRank(async () => {
   const t = domainTx(), { initial, prepared } = await domainDispatch(t);
   expect(initial.member.candidateRowIdentityHash).toBe(reviewHash(t.candidate.raw));
   expect(initial.role.kind).toBe("standby"); expect(prepared.dispatch.binding.role.kind).toBe("standby");
   expect(t.tx.execute.mock.invocationCallOrder.at(-1)).toBeGreaterThan(mocks.finish.mock.invocationCallOrder[0]);
   expect(t.queries.at(-1)!.sql).toContain("reserved_until>clock_timestamp()");
   expect(t.tables.slice(0, 5)).toEqual(["crawl_candidates", "crawl_documents", "crawl_settings", "crawl_taglines", "jobs"]);
-});
-it("rejects a microsecond-only change before POST reentry", async () => {
+}));
+it("rejects a microsecond-only change before POST reentry", () => inRank(async () => {
   const t = domainTx(true), { domain, reserved } = await domainDispatch(t);
   t.state.cache!.raw.updated_at = "2026-10-17T01:02:03.000124";
   mocks.finish.mockClear();
   expect(await domain.prepareCrawlTaglineDispatch(t.task, job, { roleLease: role, call, reserved })).toMatchObject({ kind: "skipped" });
   expect(mocks.finish).not.toHaveBeenCalled();
-});
-it("lets disabled legacy replacement win against an older positive full raw writer", async () => {
+}));
+it("lets disabled legacy replacement win against an older positive full raw writer", () => inRank(async () => {
   const t = domainTx(true), { domain, prepared } = await domainDispatch(t);
   mocks.control.mockResolvedValue({ mode: "disabled" }); t.state.cache!.raw.updated_at = "2026-10-17T01:02:03.000124";
   expect(await domain.recordTaglineResult(t.task, job, { kind: "failure", error: "network" }, prepared.expectation)).toEqual({ stored: false, released: false });
   expect(t.writes).toEqual([]); expect(mocks.wake).not.toHaveBeenCalled();
-});
-it("preserves an absent-cache insert winner and never wakes publish", async () => {
+}));
+it("preserves an absent-cache insert winner and never wakes publish", () => inRank(async () => {
   const t = domainTx(), { domain, prepared } = await domainDispatch(t); t.state.insertWins = false;
   expect(await domain.recordTaglineResult(t.task, job, { kind: "success", tagline: result.tagline, source: "page", model: TAGLINE_MODEL }, prepared.expectation))
     .toEqual({ stored: false, released: false });
   expect(t.writes).toEqual(["cache"]); expect(mocks.wake).not.toHaveBeenCalled();
-});
-it.each(["waiting", "reserved", "dispatched", "indeterminate", "settled"])("never writes final first-empty past a %s second", async state => {
+}));
+it.each(["waiting", "reserved", "dispatched", "indeterminate", "settled"])("never writes final first-empty past a %s second", state => inRank(async () => {
   const t = domainTx(), { domain, prepared } = await domainDispatch(t); t.state.second = state;
   await expect(domain.recordTaglineResult(t.task, job, { kind: "success", tagline: "", source: "page", model: TAGLINE_MODEL }, prepared.expectation))
     .rejects.toMatchObject({ reason: "dispatched" });
   expect(t.writes).toEqual([]); expect(mocks.wake).not.toHaveBeenCalled();
-});
-it("keeps full raw cache CAS and caps the backoff exponent before the interval multiply", async () => {
+}));
+it("keeps full raw cache CAS and caps the backoff exponent before the interval multiply", () => inRank(async () => {
   const t = domainTx(true), { domain, prepared } = await domainDispatch(t);
   expect(await domain.recordTaglineResult(t.task, job, { kind: "failure", error: "network" }, prepared.expectation)).toEqual({ stored: true, released: false });
   const cas = t.queries.find(q => q.sql.includes("to_jsonb(\"crawl_taglines\")="));
@@ -287,7 +295,7 @@ it("keeps full raw cache CAS and caps the backoff exponent before the interval m
   expect(new PgDialect().sqlToQuery(retryAt as Parameters<PgDialect["sqlToQuery"]>[0]).sql).toBe(
     `now() + least(interval '24 hours', interval '5 minutes' * power(2, least("crawl_taglines"."attempts", 9)))`);
   await expect(domain.recordTaglineResult(t.task, job, { kind: "failure", error: "network" }, prepared.expectation)).rejects.toThrow("invalid_crawl_tagline_write_expectation");
-});
+}));
 function settleDomain(t: ReturnType<typeof domainTx>, prepared: Awaited<ReturnType<typeof domainDispatch>>["prepared"], outcome = result) {
   const d = prepared.dispatch, evidence = { version: 1, kind: "crawl_tagline_gateway_terminal", dispatch: d, finishReason: "stop",
     responseHash: parent.responseHash, actualUsage: null, provenance: "unknown", outcome };
@@ -296,15 +304,15 @@ function settleDomain(t: ReturnType<typeof domainTx>, prepared: Awaited<ReturnTy
     workKey: `${d.binding.logicalWorkKey}:${d.binding.inputHash}`, logicalWorkKey: d.binding.logicalWorkKey, logicalMemberKeys: [`crawl-tagline:${task.candidate.id}`] };
   return { generationHash: crawlTaglineGenerationHash(d.binding), first: { requestId: d.requestId, bindingHash: d.bindingHash, responseHash: evidence.responseHash, outcome }, second: null };
 }
-it("rereads actual terminal rows before issuing a historical writer and denies a copied outcome", async () => {
+it("rereads actual terminal rows before issuing a historical writer and denies a copied outcome", () => inRank(async () => {
   const t = domainTx(), { domain, initial, prepared } = await domainDispatch(t), history = settleDomain(t, prepared);
   const forged = structuredClone(history); forged.first.outcome.tagline = "Forged line";
   expect(await domain.prepareCrawlTaglineHistory(t.task, job, { initial, history: forged })).toMatchObject({ kind: "skipped" });
   const resumed = await domain.prepareCrawlTaglineHistory(t.task, job, { initial, history });
   expect(resumed).toMatchObject({ kind: "result", result, askOrdinal: 1 });
   expect(t.writes).toEqual([]); expect(mocks.native).not.toHaveBeenCalled();
-});
-it("allows first-empty to resume waiting phase2 but refuses its final writer", async () => {
+}));
+it("allows first-empty to resume waiting phase2 but refuses its final writer", () => inRank(async () => {
   const t = domainTx(), { domain, initial, prepared } = await domainDispatch(t), history = settleDomain(t, prepared, empty);
   t.state.second = "waiting";
   const resumed = await domain.prepareCrawlTaglineHistory(t.task, job, { initial, history });
@@ -313,26 +321,26 @@ it("allows first-empty to resume waiting phase2 but refuses its final writer", a
   await expect(domain.recordTaglineResult(t.task, job, { kind: "success", tagline: "", source: "page", model: TAGLINE_MODEL }, resumed.expectation))
     .rejects.toMatchObject({ reason: "dispatched" });
   expect(t.writes).toEqual([]);
-});
-it("withholds current business write after settled history when the final job wall is expired", async () => {
+}));
+it("withholds current business write after settled history when the final job wall is expired", () => inRank(async () => {
   const t = domainTx(), { domain, prepared } = await domainDispatch(t); settleDomain(t, prepared); t.state.jobLive = false;
   await expect(domain.recordTaglineResult(t.task, job, { kind: "success", tagline: result.tagline, source: "page", model: TAGLINE_MODEL }, prepared.expectation))
     .rejects.toThrow("job_lease_lost");
   // Recording TX cannot prove rollback; actual PostgreSQL driver asserts final domain/outbox absence.
   expect(t.state.request?.state).toBe("settled");
-});
-it("never creates a third ask or retries an empty unknown transport", async () => {
+}));
+it("never creates a third ask or retries an empty unknown transport", () => inRank(async () => {
   const previous = { kind: "result" as const, result: empty, parent, askOrdinal: 2 as const, expectation };
   await expect(writeCrawlTaglineWithModelCapacity(task, job, { ...options(), previous })).rejects.toThrow("invalid_crawl_tagline_second_ask");
   await expect(writeCrawlTaglineWithModelCapacity(task, job, { ...options(), previous: { ...previous, askOrdinal: 1, parent: null } }))
     .rejects.toMatchObject({ reason: "dispatched" });
   expect(mocks.request).not.toHaveBeenCalled(); expect(mocks.native).not.toHaveBeenCalled();
-});
-it("refuses a mutated historical result even with its genuine writer capability", async () => {
+}));
+it("refuses a mutated historical result even with its genuine writer capability", () => inRank(async () => {
   const t = domainTx(), { domain, initial, prepared } = await domainDispatch(t), history = settleDomain(t, prepared);
   const resumed = await domain.prepareCrawlTaglineHistory(t.task, job, { initial, history });
   if (resumed.kind !== "result") throw new Error("unit_history_required");
   expect(await domain.recordTaglineResult(t.task, job, { kind: "success", tagline: "Forged line", source: "page", model: TAGLINE_MODEL }, resumed.expectation))
     .toEqual({ stored: false, released: false });
   expect(t.writes).toEqual([]); expect(mocks.wake).not.toHaveBeenCalled();
-});
+}));

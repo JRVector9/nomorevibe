@@ -26,7 +26,7 @@ let created = false;
 const root = path.resolve(".");
 const basePolicy: ModelCapacityPolicy = { version: 1, maxWaiting: 64, queueTtlMs: 60_000, reservationTtlMs: 60_000,
   routes: [{ routeId: "base-a", provider: "fixture", model: "m", providerBudgetId: "acct", groupId: "dev-a" }] };
-const ENGINE = "http://eng.test:8000/v1", EMB = "http://emb.test:18081/v1";
+const ENGINE = "http://eng.test:8000/v1", ENGINE2 = "http://eng2.test:8000/v1", EMB = "http://emb.test:18081/v1";
 const KEY = "sk-engine-secret-1";
 let clock = Date.parse("2026-11-02T03:00:00.000Z");
 let calls: { url: string; method: string; auth: string | null }[] = [];
@@ -37,8 +37,9 @@ const fakeFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   calls.push({ url: target, method, auth: headers.get("authorization") });
   if (target.startsWith("http://down.test")) throw new TypeError("fetch failed");
   if (target === `${ENGINE}/models`) return Response.json({ data: [{ id: "Qwen-X", max_model_len: 32768 }, { id: "Qwen-Y" }] });
+  if (target === `${ENGINE2}/models`) return Response.json({ data: [{ id: "Qwen-X", max_model_len: 16384 }] });
   if (target === `${EMB}/models`) return Response.json({ data: [{ id: "bge-m3" }] });
-  if (target === `${ENGINE}/chat/completions` && method === "POST") {
+  if ((target === `${ENGINE}/chat/completions` || target === `${ENGINE2}/chat/completions`) && method === "POST") {
     const body = JSON.parse(String(init?.body)) as { model: string };
     return Response.json({ object: "chat.completion", model: `${body.model}-served`, choices: [{ message: { content: "OK" } }] });
   }
@@ -215,15 +216,17 @@ describe("작업 ↔ 모델 순위 저장", () => {
     expect(stale?.issues).toEqual(["그 사이 이 줄이 바뀌었습니다. 새로고침한 뒤 다시 저장하세요."]);
     const gap = await saveAiTaskRanksAction(null, form({ task: "crawl-tagline", slot: "1", revision: EMPTY_REVISION, rank2Connection: engine.id, rank2Model: "Qwen-X" }));
     expect(gap?.issues).toEqual(["1순위를 비우고 그 뒤 순위만 고를 수 없습니다. 1순위부터 차례로 골라주세요."]);
+    // 심사 묶음(1차)은 아직 예전 실행 쪽이라 같은 모델을 다른 서버로 두 순위에 둘 수 없다(PR C) — text 경로는 아래 별칭 시험이 본다
     const twoServers = await (async () => {
       const { saveAiConnectionAction } = await actions();
       await saveAiConnectionAction(null, form({ kind: "api", label: "엔진 B", baseUrl: "http://down.test:1/v1" }));
       await client`UPDATE ai_connections SET models = '[{"id":"Qwen-X","maxModelLen":null}]'::jsonb WHERE label = '엔진 B'`;
       const other = (await connections()).find(row => row.label === "엔진 B")!;
-      return saveAiTaskRanksAction(null, form({ task: "crawl-tagline", slot: "1", revision: EMPTY_REVISION, rank1Connection: engine.id, rank1Model: "Qwen-X",
+      return saveAiTaskRanksAction(null, form({ task: "first-review", slot: "1", revision: EMPTY_REVISION, rank1Connection: engine.id, rank1Model: "Qwen-X",
         rank2Connection: other.id, rank2Model: "Qwen-X" }));
     })();
-    expect(twoServers?.issues).toEqual([expect.stringContaining("1순위와 2순위가 같은 모델(Qwen-X)을 다른 서버로 씁니다.")]);
+    expect(twoServers?.issues).toEqual([expect.stringContaining("2순위 엔진 B · Qwen-X: crawl-agent-review 경로의 같은 모델 계약이 다른 서버(eng.test:8000)"),
+      expect.stringContaining("1순위와 2순위가 같은 모델(Qwen-X)을 다른 서버로 씁니다.")]);
     const now = await tableState();
     expect({ ...now, connections: now.connections.filter(row => row.label !== "엔진 B"), audits: snapshot.audits })
       .toEqual({ ...snapshot, connections: snapshot.connections });
@@ -244,6 +247,40 @@ describe("작업 ↔ 모델 순위 저장", () => {
   });
 });
 
+describe("실행 쪽 resolver(PR B) — 저장한 순위를 DB 스냅숏으로 읽어 그 연결의 계약에 묶는다", () => {
+  it("1순위 엔진 A · Qwen-X, 2순위 엔진 B · Qwen-X: B 는 연결로 가른 장부 이름의 계약·정책 경로를 따로 두고 엔진에는 Qwen-X 를 보낸다", async () => {
+    const engine = await makeEngine();
+    const { saveAiConnectionAction, saveAiTaskRanksAction } = await actions();
+    expect(await saveAiConnectionAction(null, form({ kind: "api", label: "엔진 B", baseUrl: ENGINE2, deviceId: "eng2-dev", capacitySlots: "1" }))).toMatchObject({ ok: true });
+    const second = (await connections()).find(row => row.label === "엔진 B")!;
+    calls = [];
+    const saved = await saveAiTaskRanksAction(null, form({ task: "crawl-tagline", slot: "1", revision: EMPTY_REVISION, rank1Connection: engine.id, rank1Model: "Qwen-X",
+      rank2Connection: second.id, rank2Model: "Qwen-X" }));
+    expect(saved).toMatchObject({ ok: true });
+    const { aiTaskAliasIdentity } = await import("@/lib/llm/ai-tasks");
+    const alias = aiTaskAliasIdentity("Qwen-X", second.id)!;
+    // 두 서버 모두 엔진 이름 Qwen-X 로 1토큰 시험을 받았다
+    expect(calls.filter(call => call.method === "POST").map(call => call.url)).toEqual([`${ENGINE}/chat/completions`, `${ENGINE2}/chat/completions`]);
+    const contracts = await client<{ model: string; contract: Record<string, unknown> }[]>`SELECT model, contract FROM model_serving_contracts WHERE enabled ORDER BY id`;
+    expect(contracts.map(row => [row.model, row.contract.endpoint, row.contract.engineModel ?? null])).toEqual([
+      ["Qwen-X", `${ENGINE}/chat/completions`, null], [alias, `${ENGINE2}/chat/completions`, "Qwen-X"]]);
+    expect((await controlRow()).policy.routes).toEqual(expect.arrayContaining([
+      { routeId: "crawl-tagline", provider: "abcllm", model: "Qwen-X", providerBudgetId: "eng-dev", groupId: "eng-dev" },
+      { routeId: "crawl-tagline", provider: "abcllm", model: alias, providerBudgetId: "eng2-dev", groupId: "eng2-dev" }]));
+    // 실행 쪽: DB 스냅숏(순위 JOIN 연결, 키는 메모리에서만 연다) → 계약 스냅숏 → 순위마다 장부 이름·키
+    const [{ ensureAiTaskModels }, { ensureServingContracts }, { resolveTextTaskRanks, taskModels }] = await Promise.all([
+      import("@/lib/llm/ai-task-models-snapshot"), import("@/lib/llm/serving-contract-store"), import("@/lib/llm/ai-task-resolver")]);
+    await Promise.all([ensureAiTaskModels(0), ensureServingContracts(0)]);
+    expect(taskModels("crawl-tagline").map(row => [row.rank, row.connection.label, row.model, row.connection.apiKey])).toEqual([[1, "엔진", "Qwen-X", KEY], [2, "엔진 B", "Qwen-X", null]]);
+    const resolved = resolveTextTaskRanks("crawl-tagline");
+    expect(resolved.status).toBe("ok");
+    expect(resolved.candidates.map(candidate => [candidate.unusable, candidate.binding?.identity, candidate.binding?.engineModel, candidate.binding?.bearer,
+      candidate.binding?.deviceId])).toEqual([[null, "Qwen-X", "Qwen-X", KEY, "eng-dev"], [null, alias, "Qwen-X", null, "eng2-dev"]]);
+    // 다른 작업에는 순위가 없다 — 그 작업은 no_task_models 로 멈춘다
+    expect(resolveTextTaskRanks("reason-translate").status).toBe("no_task_models");
+  });
+});
+
 describe("지금 실제로 쓰는 모델(오늘의 고르기 코드 그대로)", () => {
   it("모든 작업 × 칸을 내고, 주소는 계약·등록부·env 에서만 온다(계약 없는 text 경로는 주소 모름)", async () => {
     vi.stubEnv("CONNECT_AGENT_URL", "http://down.test:1");
@@ -258,9 +295,8 @@ describe("지금 실제로 쓰는 모델(오늘의 고르기 코드 그대로)",
     expect(by("second-review").uses.map(use => [use.kind, use.cliTool])).toEqual([["cli", "claude"]]);
     expect(by("second-review", 2).skip).toBe("투표자 2이(가) 없습니다.");
     expect(by("product-intro-check").uses.map(use => [use.kind, use.cliTool])).toEqual([["cli", "claude"]]);
-    // 계약이 없는 text 경로는 서버 주소를 모른다(지어내지 않는다)
-    expect(by("crawl-tagline").uses.length).toBeGreaterThan(0);
-    expect(by("crawl-tagline").uses.every(use => use.baseUrl === null && use.note?.includes("엔진 직접 계약 없음"))).toBe(true);
+    // PR B: text 경로는 실행 쪽이 작업 ↔ 모델 순위를 읽는다 — 순위가 없으면 지금 쓰는 모델도 없다(기본값으로 대신 부르지 않는다)
+    expect(by("crawl-tagline")).toMatchObject({ uses: [], skip: expect.stringContaining("no_task_models") });
     // 직접 모델 단계는 그 단계가 실제로 부르는 등록부 주소
     expect(by("audit-review").uses.every(use => use.kind === "api" && use.provider === "local-direct" && use.baseUrl?.endsWith("/v1"))).toBe(true);
     expect(by("product-embedding").uses).toEqual([expect.objectContaining({ baseUrl: "http://emb.test:18081/v1", serverNamed: true })]);

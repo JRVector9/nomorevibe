@@ -135,6 +135,25 @@ export const AI_TASKS: readonly AiTaskDef[] = Object.freeze([
     wiring: "deferred", jobs: ["grok-session-check"], description: "Grok CLI 로그인이 끊기지 않게 짧게 부릅니다." }),
 ]);
 
+/**
+ * 같은 모델 이름을 다른 연결에도 둔 순위의 장부 이름(PR B) — 계약 행·정책 route·장부의 model 열쇠가 (경로, 모델)마다 하나라 연결로 가른다.
+ * 엔진에는 계약의 engineModel(= 순위의 모델)이 나간다. 연결 id(uuid)의 앞 8자 — 연결 이름이 바뀌어도 그대로다. 200자를 넘으면 null(만들 수 없다).
+ */
+export function aiTaskAliasIdentity(model: string, connectionId: string): string | null {
+  const alias = `${model}@${connectionId.slice(0, 8)}`;
+  return alias.length <= 200 ? alias : null;
+}
+/** 실행 쪽이 순위를 읽는 text 작업(PR B) — 작업 id = 용량 route id. 나머지 작업은 PR C~D 가 옮긴다. */
+export const AI_TEXT_TASK_IDS = Object.freeze(["crawl-tagline", "reason-translate", "product-translate", "product-tagline-ko",
+  "search-query-translate", "product-search-profile", "product-search-verify"] as const);
+export type AiTextTaskId = (typeof AI_TEXT_TASK_IDS)[number];
+export const isAiTextTask = (id: string): id is AiTextTaskId => (AI_TEXT_TASK_IDS as readonly string[]).includes(id);
+/**
+ * 순위가 없거나(no_task_models)·표를 못 읽었거나(task_models_unreadable)·모든 순위를 쓸 수 없을 때(all_ranks_unusable) 잡이 남기는 degraded 코드.
+ * 재시작으로 고쳐지지 않는 설정의 일이라 진행 감시가 재시작하지 않는다(lib/operations/worker-progress-query.ts applyAllSkippedBlock).
+ */
+export const AI_TASK_RANK_DEGRADED_CODES = Object.freeze(["no_task_models", "task_models_unreadable", "all_ranks_unusable"] as const);
+
 export const AI_TASK_RANK_MAX = 3;
 export const AI_TASK_SLOT_MAX = 8;
 export const aiTask = (id: string): AiTaskDef | null => AI_TASKS.find(row => row.id === id) ?? null;

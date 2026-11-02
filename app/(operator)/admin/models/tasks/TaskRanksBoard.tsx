@@ -14,6 +14,11 @@ export type TaskRankLine = {
   sameAsCurrent: boolean | null;
   /** 저장된 순위의 준비 상태: 막힘·경고·아직 없는 것(그 줄을 다시 저장하면 만든다) */
   readiness: { rank: number; blocking: string[]; warnings: string[]; pending: string[] }[];
+  /** 실행 쪽이 이 순위를 읽는가(PR B: text 일곱 작업) */
+  live: boolean;
+  /** 실행 쪽의 순위 사정 — 잡의 마지막 틱(from job) 또는 이 웹 프로세스의 마지막 검색어 번역(from web). at 은 화면 글(서버가 만든다) */
+  runtime: { from: "job" | "web"; at: string; served: { rank: number; count: number }[]; unusable: { rank: number; code: string; text: string; count: number }[];
+    degraded: { code: string; detail: string | null } | null } | null;
 };
 
 const GRID = "grid gap-3 md:[grid-template-columns:minmax(0,2fr)_minmax(0,5fr)_minmax(0,3fr)]";
@@ -55,7 +60,9 @@ function TaskRankLineForm({ line, connections, rows, readOnly }: { line: TaskRan
         slotNames={AI_RANK_SLOT_NAMES} disabled={saving || readOnly} showProvider={false}
         validate={slots => validateAiTaskRanks(line.task, line.slot, slots, { connections, rows })}
         note={<p className="text-[13px] text-fg-2">{task.sameModelAcrossRanks ? "2·3순위는 1순위와 같은 모델을 다른 서버에 둘 때만 씁니다. " : ""}
-          저장하면 없는 장비 행·엔진 직접 계약·용량 경로를 함께 만듭니다(만들 수 없으면 저장하지 않고 이유를 보입니다). 잡은 아직 이 순위를 읽지 않습니다.</p>} />
+          저장하면 없는 장비 행·엔진 직접 계약·용량 경로를 함께 만듭니다(만들 수 없으면 저장하지 않고 이유를 보입니다).
+          {line.live ? " 실행 쪽이 이 순위를 읽습니다 — 1순위를 쓸 수 없으면 같은 일을 2순위, 그다음 3순위로 넘깁니다."
+            : " 이 작업의 실행 쪽은 아직 이 순위를 읽지 않습니다(다음 단계)."}</p>} />
       <div className="flex flex-wrap items-center gap-3">
         <button type="submit" disabled={saving || readOnly || issues.length > 0 || !changed && !pending} className="rounded bg-fg px-3 py-1.5 text-[13px] text-bg disabled:opacity-50">
           {saving ? "확인·저장 중…" : !changed && pending ? "다시 저장해 빠진 것 만들기" : "이 줄 저장"}</button>
@@ -79,6 +86,21 @@ function TaskRankLineForm({ line, connections, rows, readOnly }: { line: TaskRan
         {[...row.blocking, ...row.pending, ...row.warnings].map(text => <span key={text} className="block">{text}</span>)}</span>)}
       {line.rows.length > 0 && line.readiness.every(row => !row.blocking.length && !row.warnings.length && !row.pending.length)
         && <span className="text-emerald-700">저장한 순위의 계약·경로·장비가 있습니다.</span>}
+      {line.live && <RuntimeLine runtime={line.runtime} />}
     </div>
   </form>;
+}
+
+/** 실행 쪽의 순위 사정 — 어느 순위가 몇 건을 맡았고, 아래 순위를 쓴 까닭(위 순위가 쉰 까닭)은 무엇인가. */
+function RuntimeLine({ runtime }: { runtime: TaskRankLine["runtime"] }) {
+  if (!runtime) return <span className="text-fg-3" data-runtime="none">실행: 아직 이 순위로 돈 기록이 없습니다.</span>;
+  const served = runtime.served.filter(row => row.count > 0);
+  const lower = served.some(row => row.rank > 1);
+  return <span className="grid gap-0.5" data-runtime={runtime.from}>
+    <span className="font-semibold">실행({runtime.from === "job" ? "마지막 틱" : "이 웹 프로세스의 마지막 요청"} · {runtime.at}):{" "}
+      {served.length ? served.map(row => `${row.rank}순위 ${row.count}건`).join(" · ") : "맡은 순위 없음"}</span>
+    {runtime.unusable.length > 0 && <span className={lower || !served.length ? "text-amber-700" : "text-fg-3"}>
+      {lower ? "아래 순위를 쓴 까닭 — " : "쉰 순위 — "}{runtime.unusable.map(row => `${row.rank}순위: ${row.text}${row.count > 1 ? ` ×${row.count}` : ""}`).join(" / ")}</span>}
+    {runtime.degraded && <span className="text-red-600">제 일 못 함 <code>{runtime.degraded.code}</code>{runtime.degraded.detail ? ` — ${runtime.degraded.detail}` : ""}</span>}
+  </span>;
 }

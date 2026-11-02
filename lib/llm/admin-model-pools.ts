@@ -97,9 +97,13 @@ export function withAdminModelStage<T>(stageId: AdminModelStage, run: () => T): 
   return scope.run({ env, selected: { ...active.selected, [stage.purpose]: key }, registry }, run);
 }
 
+/**
+ * 2026-11-02(PR B): 글 짓기·번역·검색 text 잡(reason-translate·crawl-tagline·product-translate·product-search-profile·product-search-verify)은
+ * 「작업 ↔ 모델」 순위(lib/llm/ai-task-resolver.ts)가 모델을 고르므로 단계 풀 범위를 열지 않는다. product-tagline-ko 는 Qwen 직접 경로
+ * (korean-translation-direct, PR C 가 옮긴다)가 아직 단계 풀을 읽어 남긴다 — 그 잡의 GPT 경로는 풀을 읽지 않는다.
+ */
 export const MODEL_POOL_JOBS = new Set(["human-deepseek-review", "held-qwen-retry", "split-confirm", "product-audit", "audit-qwen", "audit-second-opinion",
-  "audit-screen-review", "second-review", "split-tiebreak",
-  "reason-translate", "crawl-tagline", "product-translate", "product-tagline-ko", "product-search-profile", "product-search-verify",
+  "audit-screen-review", "second-review", "split-tiebreak", "product-tagline-ko",
   "product-intro-check", "product-llm-assist-review", "product-llm-assist-audit-review", "product-automated-action-audit"]);
 /**
  * 잡 lease 마다 한 번 고정하는 관리자 단계 풀. 2026-10-31(PR 3a-C) 합성 잡을 나눠 잡 하나가 자기 단계 하나를 연다 — 갈림 판가름은 split-tiebreak 잡,

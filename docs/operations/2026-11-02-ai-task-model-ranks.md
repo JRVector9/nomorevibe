@@ -1,6 +1,7 @@
 # 작업 ↔ AI 모델 1~3순위 (2026-11-02)
 
-상태: **PR A — 표·관리 화면·가져오기만.** 잡은 아직 이 표를 읽지 않는다. 운영 적용(배포·migration)은 이 문서가 하지 않는다.
+상태: **PR A — 표·관리 화면·가져오기(#794).** **PR B — 글 짓기·번역·검색 text 일곱 작업이 이 표만 읽는다(공통 resolver·순위 대체).**
+심사·보강·벡터 작업은 아직 오늘의 설정으로 고른다(PR C~D). 운영 적용(배포·migration)은 이 문서가 하지 않는다 — 순서는 아래 「운영 적용 순서」.
 
 ## 소유자 결정 (2026-11-02)
 
@@ -69,7 +70,7 @@ CHECK: 종류별 칸(API 는 주소, CLI 는 도구·모델 이름 1~32개이고
 | PR | 하는 일 |
 | --- | --- |
 | **A (이 PR)** | 표 0162 · 작업 목록 · 관리 화면(AI 연결, 작업 ↔ 모델, 「지금 실제로 쓰는 모델」 비교) · 오늘 설정 가져오기. 실행 쪽 동작은 바꾸지 않는다 |
-| B | 공통 실행 resolver(순위 대체) — 글 짓기·번역·검색 text 작업이 이 표를 읽는다 |
+| **B** | 공통 실행 resolver(순위 대체) — 글 짓기·번역·검색 text 일곱 작업이 이 표를 읽는다. migration 없음 |
 | C | 심사 묶음(1차·2차 투표자·직접 모델 단계·CLI 작업)이 이 표를 읽는다 |
 | D | 임베딩·재정렬이 이 표를 읽는다 |
 | E | 환경변수·코드 기본값 등록부를 지우고, 다시 생기지 않게 CI 검사를 더한다 |
@@ -119,18 +120,120 @@ CHECK: 종류별 칸(API 는 주소, CLI 는 도구·모델 이름 1~32개이고
 - 잡이 고르는 모델·부르는 주소·용량 입장 판정. (순위 저장이 만든 새 계약·정책 route·장비 행은 그 모델이 오늘 이미 고르는 모델일 때만 쓰인다.)
 - 배포 도구·운영 DB.
 
-## PR B~E 가 알아야 할 것
+## PR B 가 바꾸는 것
 
-1. **같은 모델 이름을 두 서버에 둘 수 없다(오늘).** 계약은 (경로, 모델), 정책 route 는 (경로, provider, 모델)마다 하나라
-   1순위 gpu3090·qwen 과 2순위 supa·qwen 을 가를 수 없다. PR A 는 막는다. PR B 는 계약·route 를 연결 단위로 나눠야 한다(예: 연결 id 를 route 이름이나 계약 열쇠에 넣기).
+대상: 수집 소개 짓기(`crawl-tagline`)·심사 사유 번역(`reason-translate`)·제품 다국어 번역(`product-translate`)·한국어 소개 번역(`product-tagline-ko`, GPT 경로만 —
+Qwen 직접 경로는 PR C)·검색어 번역(`search-query-translate`, 웹 요청)·검색 키워드 짓기(`product-search-profile`)·검색 키워드 검수(`product-search-verify`).
+작업 id = 용량 route id 다(`AI_TEXT_TASK_IDS`, lib/llm/ai-tasks.ts).
+
+### 실행 쪽 resolver
+
+- **스냅숏** `lib/llm/ai-task-models-snapshot.ts`: `ai_task_models JOIN ai_connections` 를 30초마다 한 번 읽는다(serving-contract-store 와 같은 규칙, 실패하면 마지막 값).
+  워커와 웹 둘 다 읽는다. 연결 키(secret-box 암호문, AAD `ai_connections\n<id>`)는 이 프로세스 메모리에서만 연다. 한 번도 못 읽었으면 「순위 없음」과 갈라
+  `task_models_unreadable` 이다. `MODEL_SERVING_CONTRACTS_DB=0` 이면 읽지 않는다(계약과 같은 끄기 스위치 — 모든 text 작업이 멈춘다).
+- **resolver** `lib/llm/ai-task-resolver.ts`: `taskModels(task, slot)` = 순위 차례의 (연결, 모델). text 작업은 순위마다 **그 연결을 가리키는 엔진 직접 계약**
+  (그 경로의 켜진 계약 중 끝점 = `<연결 주소>/chat/completions`, 엔진 모델 = 순위 모델, abcllm 형은 transport direct)에 묶는다 →
+  장부 이름(identity = 계약 행 열쇠)·provider·**연결의 키**. 계약이 없거나 닫혔으면 그 순위는 쓸 수 없다(까닭을 남긴다).
+- **범위** `lib/llm/ai-task-rank-scope.ts`: 순위 하나로 부르는 동안 AsyncLocalStorage 범위를 연다. 깊은 코드(장부 요청·계약 고르기·결과 기록)는 예전
+  `scopedModel(route, 환경변수 상수)` 자리에서 `textTaskModel(route)` 를 읽는다 — **범위 밖이면 던진다**(코드 기본값·환경변수로 떨어지지 않는다).
+  범위 안의 `textRouteAccess` 는 계약 행의 키가 아니라 연결의 키를 보낸다(계약이 닫힌 까닭은 그대로 막는다).
+- 일곱 작업에서 지운 읽기: `TAGLINE_MODEL`·`TRANSLATE_MODEL`·`KOREAN_TAGLINE_MODEL`·`SEARCH_QUERY_MODEL`·`PRODUCT_TRANSLATE_MODEL`·`PROFILE_MODEL`·`VERIFY_MODEL`
+  (= `MODEL_PURPOSE_ENV`·`ABCLLM_MODEL*`·`ABCLLM_PROFILE_MODEL*`·`SEARCH_VERIFY_MODEL*`·등록부 용도 기본값·배정 표 기본값), 단계 풀(`stageModelPools`, 다섯 잡을
+  `MODEL_POOL_JOBS` 에서 뺐다 — product-tagline-ko 는 Qwen 경로 때문에 남는다), `pooledTextModels`. 한도·시간은 경로 한도만 읽는다
+  (`modelRequestBudget`·`modelRouteTimeoutMs` — runtime_settings routes 와 코드 기본 경로 한도. 등록부의 모델별 상한은 읽지 않는다; 코드 기본값에서는 예전 값과 같다).
+
+### 순위 대체(한 틱)
+
+`TextTaskRanks`(resolver) — PR #792 의 1차 순위 대체와 같은 뜻이다.
+
+- 1순위부터 부른다. **그 모델만의 까닭**(`ModelCapacityDeferredError` 범위 model: 용량 정책에 경로 없음 `unmapped`·장비 행 없음 `device_unconfigured`·
+  전송 계약 닫힘 `provider_contract_unavailable`·포화 `capacity`·대기열 가득 `queue_full`·도우미 경로 닫힘)이면 **같은 일**(후보·제품·묶음)을 2순위로,
+  그다음 3순위로 넘기고 그 순위는 이 틱 동안 쉰다. 범위 안에서 계약이 닫힌 것도(예전에는 게이트웨이 길 → no_key) 이제 `provider_contract_unavailable` 이다.
+- 이 일만의 미룸(`dispatched`·`work_busy`·`ledger_mismatch`…)은 다음 순위로 넘기지 않는다 — 그 일만 넘긴다(예전 그대로). 전역 미룸(`draining`·`owner_unavailable`…)도 예전 그대로.
+- 엔진이 내려갔음이 증명되면(`engine-down.ts`: no_key·model_unavailable·tokenizer_unavailable 한 번, 연결 거절 세 번) **그 순위만** 쉬고 다음 일은 다음 순위로 간다
+  (그 일의 실패 시도는 이미 적혔다 — 같은 틱에 다른 순위로 다시 묻지 않는다). 쓸 수 있던 순위가 모두 엔진 까닭으로 쉬면 예전처럼 틱을 접는다(`done: true`).
+  사유 번역·한국어 소개 번역은 예전에 실패·느린 묶음 하나로 틱을 접었다 — 이제 그 순위만 쉰다(순위가 하나면 예전과 같다).
+- 수집 소개 짓기의 둘째 물음(빈 줄 다시 묻기)은 첫 물음과 같은 순위다(장부의 이어 묻기가 모델에 묶인다) — 둘째 물음에서 그 순위를 쓸 수 없으면 그 순위를 쉬게 하고 그 후보만 넘긴다.
+- 검색 키워드 짓기는 순위마다 이 프로세스가 줄에 세워 둔 요청을 먼저 이어받고, 그 일은 그 순위로 먼저 부른다(`prefer`).
+- 검색어 번역(웹)은 요청마다 순위를 연다: 순위가 없거나 모두 쓸 수 없으면 번역 없이 찾는다(포화면 `translationPending` — 나중에 다시). 1분에 한 번 `search.translate_ranks_unusable` 경고.
+
+### 순위가 없거나 모두 쓸 수 없을 때(조용히 대신 부르지 않는다)
+
+| 코드 | 언제 | 잡 결과 |
+| --- | --- | --- |
+| `no_task_models` | 이 작업에 순위가 없다 | `{ done: true, degraded }` — 성공 시각을 옮기지 않고 상태 화면 「조치할 일」에 「제 일 못 함 no_task_models」 |
+| `task_models_unreadable` | 순위 표를 아직 한 번도 못 읽었다(권한·migration) | 같다 |
+| `all_ranks_unusable` | 틱을 시작할 때 모든 순위를 쓸 수 없다(계약 없음 등), 또는 틱 안에서 모든 순위가 쉬었고 한 건도 못 했다 | 같다. detail 에 순위마다 「N순위 연결 · 모델: 까닭」 |
+| (포화) | 모든 순위가 쉬었고 그중 포화가 있다 | 예전처럼 `deferred: model_capacity`(장부의 대기 행 → 진행 감시의 capacity-admission-block) |
+
+- 진행 감시: 이 세 코드는 1차의 `agent_review_all_skipped` 처럼 「설정의 일 — 재시작이 고치지 못한다」로 본다(`worker-progress-query.ts` `ALL_SKIPPED_CODES`,
+  text 단계는 원래 재시작 대상이 아니지만 같은 표에 넣어 둔다). 틱마다 마지막 이벤트로 `ai_task.ranks`(순위 수·`served.<순위>`·`unusable.<순위>.<까닭>`)를 남긴다.
+
+### 같은 모델을 두 연결에(연결별 장부 이름 — PR A 의 남은 일 1)
+
+- 계약 행은 (경로, model), 정책 route 는 (경로, provider, model) 하나라 같은 모델 이름을 두 서버에 둘 수 없었다. PR B 는 **schema 를 바꾸지 않고**
+  연결로 가른 장부 이름을 쓴다: `<모델>@<연결 id 앞 8자>`(`aiTaskAliasIdentity`). 그 계약의 `model` 이 이 이름이고 새 칸 `engineModel` 이 엔진 모델 이름이다
+  (text 일곱 경로의 abcllm 형 계약 스키마에 선택 칸으로 더했다 — 없는 계약의 parse 결과·hash 는 그대로다). wire 에는 `engineModel` 이 나간다.
+  장부(`model_capacity_requests.model`)·binding·정책 route 의 model 은 장부 이름이다 — **migration·CHECK 재구성 없음**(0161 의 `binding->>'model'=model` 은 그대로 맞는다).
+- 순위 저장(`aiRanksReadiness`): 그 연결을 가리키는 계약이 있으면 그것을 쓴다. 없고 같은 모델 이름의 직접 계약이 **다른 서버**에 있으면 별칭 계약·정책 route 를
+  만든다(경고로 알린다). 한 줄의 두 순위가 계약 없는 같은 모델을 다른 연결로 고르면 1순위는 이름 그대로, 2순위는 별칭이다. 별칭 이름의 계약이 다른 서버를 가리키면 막는다.
+- 심사 묶음(1차·2차·직접 모델 단계)은 아직 예전 실행 쪽이라 같은 모델을 다른 서버로 두 순위에 둘 수 없다 — 그대로 막는다(PR C).
+- 결과 행(예: `crawl_taglines.model`·`product_search_profiles.model`)에는 장부 이름이 적힌다(별칭이면 `@…` 가 붙는다).
+
+### 화면
+
+- `/admin/models/tasks`: text 일곱 줄의 오른쪽에 「실행(마지막 틱 · 시각): N순위 M건」·「아래 순위를 쓴 까닭 — 1순위: 용량 정책에 이 경로·모델이 없음 ×3」·
+  그 틱의 degraded(제 일 못 함)를 보인다. 잡 여섯은 `job:<잡>` 관측의 마지막 `ai_task.ranks`, 검색어 번역은 이 웹 프로세스의 마지막 요청(다른 웹 복제본과 다를 수 있다).
+  text 일곱 줄의 「지금 실제로 쓰는 모델」은 저장한 순위 그대로다(쓸 수 없는 순위에는 까닭).
+- 상태 화면 진단 탭의 「작업 ↔ 모델 · text 작업 순위」 칸(`TextTaskRanksStatus`): 일곱 작업마다 저장한 순위·쓸 수 없는 순위의 까닭·마지막 틱에서 몇 순위가 일했고 아래 순위를 쓴 까닭.
+  그 밖에 잡 health 의 「제 일 못 함 <코드>(detail) 연속 N회」, 흐름 상세의 text 자리(`TASK_MODEL_SLOTS`, 출처 「작업 ↔ 모델 1순위」), 한국어 번역 카드의 「사용 모델 설정」,
+  모델 1시간 집계의 키워드 짓기 모델, `pipeline-control`·`currentModelEnv` 의 text route 판정(순위마다 장부 이름)이 순위를 읽는다.
+
+### Oracle 소비자 권한(PR A 의 남은 일 6)
+
+- 일을 도는 모든 Oracle 역할(`LIVE_SETTINGS`)에 `ai_task_models`·`ai_connections` SELECT 를 더했다(`lib/runtime/oracle-db-profile.ts`, `deploy/oracle/least-privilege.sql` 다시 만듦).
+  `api_key_ciphertext` 는 암호문뿐이고 Oracle 에는 `NMV_SECRET_BOX_KEY` 가 없다 — `model_serving_contracts` 와 같은 결정. 키가 필요한 연결의 순위는 Oracle 에서
+  `stored_key_unreadable` 로 쓸 수 없고(키 없이 보내지 않는다), GRANT 가 없으면 `task_models_unreadable` 로 멈춘다(기본값으로 대신 부르지 않는다). 운영자가 B 배포 전에 적용한다.
+
+## 운영 적용 순서
+
+1. **PR A 배포**(migration 0162 — 새 표 둘, 기존 표·CHECK 는 그대로라 DRAIN 이 필요 없다).
+2. **가져오기**(운영자): `/admin/models/tasks#import` 에서 「계획 보기」(쓰지 않는다) → 경고를 읽는다 → 확인 「가져오기」 + 적용.
+3. **확인**: text 일곱 줄마다 「저장한 순위 = 지금 동작」(PR A 화면 — 웹 프로세스 env 기준이다)인지, 준비 상태에 빨간 줄이 없는지 본다. 빠진 계약·경로·장비가 있으면
+   그 줄을 다시 저장해 만든다. 워커의 env 가 웹과 다르면(예전 `ABCLLM_MODEL`) 워커가 실제로 쓰던 모델(결과 행의 model·장부)과도 견준다.
+4. **Oracle GRANT**(Oracle 소비자를 돌리면): `deploy/oracle/least-privilege.sql` 의 `ai_task_models`·`ai_connections` SELECT 를 적용한다.
+5. **PR B 배포**. 배포 뒤 상태 화면에 `no_task_models`·`all_ranks_unusable` 이 없는지, `/admin/models/tasks` 의 「실행」 줄이 1순위로 도는지 본다.
+
+**가져오기 전에 PR B 를 배포하면** 일곱 작업이 모두 `no_task_models` 로 멈춘다 — 의도한 동작이다(조용히 기본값으로 부르지 않고 상태 화면에 보인다). 가져오기·순위 저장이
+끝나면 30초 안에(스냅숏) 다시 돈다. 되돌리기는 PR B 를 되돌려 배포하는 것이다(표·계약·정책 route 는 그대로 두어도 예전 코드는 읽지 않는다 — 별칭 계약은 예전 코드에서
+그 모델의 선택이 없어 쓰이지 않는다).
+
+## PR C~E 가 알아야 할 것(PR B 이후)
+
+1. **연결별 장부 이름은 text 일곱 경로만**(abcllm 형 계약의 `engineModel`). 1차(`crawl-agent-review`)·2차·로컬 직접 경로(`local-*`, 계약 `backendId`·`physicalGroup`)는
+   PR C 가 같은 규칙(별칭 identity + 엔진 이름)을 옮겨야 같은 모델을 두 서버에 둘 수 있다. `aiRankReadiness` 의 review-ai1·review-ai2·local-direct 갈래는 아직 막는다.
+2. **resolver 는 text 일곱 작업만 계약에 묶는다**(`bindTextTaskRank`). 심사 묶음은 provider(abcllm·local-direct·CLI)·계약 꼴이 달라 PR C 가 묶기 함수를 더한다.
+   `TextTaskRanks` 의 순위 대체·degraded·`ai_task.ranks` 요약은 그대로 쓸 수 있다(이름의 text 는 역사적 — 필요하면 일반화).
+3. 순위 대체가 포화(`capacity`) 때 다음 순위로 넘기면 앞 순위의 대기 행이 장부에 남는다(그 일이 다른 순위로 끝나면 TTL 로 사라진다). 1차 #792 와 같은 성질이다 — PR C 에서
+   대기 행을 물리는 길이 필요한지 본다.
+4. `korean-translation-direct`(한국어 Qwen 직접 경로)는 아직 `KOREAN_TRANSLATION_QWEN_ENABLED`·단계 풀을 읽는다(PR C). product-tagline-ko 잡이 `MODEL_POOL_JOBS` 에 남은 까닭이다.
+5. PR E: 일곱 경로는 env·등록부 기본값을 더 읽지 않는다 — `ABCLLM_MODEL`·`ABCLLM_PROFILE_MODEL`·`SEARCH_VERIFY_MODEL`(+`_KEY`)은 소개 검수(`INTRO_CHECK_MODEL`)·
+   직접 모델 단계가 더 읽지 않는지 확인한 뒤 지운다. `pipeline-control` 의 text route 판정은 provider 를 늘 `abcllm` 으로 적는다(local-direct 계약이면 「경로 없음」으로 보일 수 있다 — 예전 그대로).
+6. 「지금 실제로 쓰는 모델」(PR A)은 text 일곱 줄에서 이제 저장한 순위 그대로다 — 가져오기 계획도 그 줄은 「그대로」다.
+7. 운영 CLI `scripts/ops/pipeline-control.ts` 의 route 판정은 그 프로세스가 순위를 읽을 때만(앱 `DATABASE_URL` 이 있을 때) text 경로를 「계약 있음」으로 본다.
+   `DATABASE_URL` 없이(`PIPELINE_CONTROL_DATABASE_URL` 만) 돌리면 text 일곱 경로는 모델 「모름」(unknown)이라 capacity OPEN 이 `deferred_routes` 로 막힌다 —
+   예전에도 그 경우 계약을 읽지 못해 「계약 없음」으로 막혔다(같은 결과). 배포 도구가 이 CLI 로 OPEN 을 판정하면 `DATABASE_URL` 을 함께 준다.
+
+## PR A 가 남긴 것(B 가 푼 것은 표시)
+
+1. ~~같은 모델 이름을 두 서버에 둘 수 없다~~ — **PR B 가 text 일곱 경로에서 풀었다**(위 「같은 모델을 두 연결에」). 심사 묶음은 PR C.
 2. **2차 대체 목록은 오늘 투표자 모두가 나눠 쓴다.** 가져오기는 각 칸의 2·3순위에 같은 대체 모델을 넣는다. PR C 는 한 항목에서 같은 대체 모델이 두 표를 내지 않게 해야 한다.
 3. **로컬 직접 경로(`local-*`)** 는 예산 = 계약 `backendId`, 장비 = `physicalGroup` 이어야 열린다. PR C 가 연결에서 로컬 계약(`local-model:<backendId>`)을 만들어야 한다.
    주의: `local-direct:<route>` 꼴의 계약 행(배정 표 저장 `saveModelAssignment` 의 local-direct 갈래가 쓴다)은 `tableLocalModelContracts` 에서 계약이 null 로 읽혀,
    같은 주소·모델의 env 계약을 `verifiedLocalModelContract` 에서 닫는다. PR A 는 로컬 계약을 쓰지 않는다.
 4. **CLI 계약**(`CLI_SERVING_CONTRACTS`)은 connect 에이전트 쪽이라 웹이 확인하지 못한다. PR C/E 가 연결(`cli_tool`·`cli_models`)에서 만들게 옮긴다.
 5. **보강 assist** 는 route 가 작업·장비마다 다르고(`local-assist-<작업>-<backend>`), **감사 캠페인** 은 시작할 때 모델을 굳힌다. PR C 가 규칙을 정한다.
-6. **Oracle 소비자 권한**: 새 표는 아직 아무 역할도 읽지 않아 `deploy/oracle/least-privilege.sql`·`ORACLE_DB_PROFILES` 에 넣지 않았다. PR B 가 읽기 권한을 더한다
-   (`api_key_ciphertext` 는 암호문이고 box key 는 Oracle 에 없다 — `model_serving_contracts` 와 같은 결정).
+6. ~~Oracle 소비자 권한~~ — **PR B 가 더했다**(위 「Oracle 소비자 권한」).
 7. 「지금 실제로 쓰는 모델」은 **웹 프로세스 env** 기준이다. 워커의 env 가 다르면(예: `EMBEDDING_URL`) 다를 수 있다.
 8. 임베딩·재정렬은 요청에 모델 이름을 싣지 않는다. PR D 가 순위의 모델 이름을 서버 확인(목록에 있는가)에 쓴다.
 
@@ -163,7 +266,13 @@ CHECK: 종류별 칸(API 는 주소, CLI 는 도구·모델 이름 1~32개이고
 1. `/admin/models/tasks#import` 에서 「계획 보기」 → 경고를 읽는다(주소 모름·꺼짐·풀 나눠 쓰기).
 2. 확인 「가져오기」 + 적용 → 연결과 순위가 생긴다.
 3. 「작업 ↔ 모델」 줄마다 「저장한 순위 = 지금 동작」인지, 준비 상태에 빨간 줄이 없는지 본다.
-4. 필요하면 줄을 고쳐 저장한다(저장이 없는 계약·경로·장비를 만든다). 잡은 PR B 배포 전까지 이 순위를 읽지 않는다.
+4. 필요하면 줄을 고쳐 저장한다(저장이 없는 계약·경로·장비를 만든다). 잡은 PR B 배포 전까지 이 순위를 읽지 않는다 — PR B 배포 뒤 text 일곱 작업은 저장 30초 안에 새 순위로 돈다.
+
+## 검증 (PR B)
+
+- `npx tsc --noEmit`, 바뀐 파일의 eslint, 새 단위 시험 `tests/ai-task-resolver.test.ts`(묶기·순위 대체·degraded·키·진행 감시)·`tests/ai-task-alias-wire.test.ts`
+  (별칭 계약의 wire = 엔진 이름), `tests/ai-task-model-ranks.test.tsx`(별칭 준비 확인), 바뀐 범위의 기존 단위·통합 시험(일곱 작업의 잡·깊은 모듈·화면),
+  통합 시험 `tests/integration/ai-task-model-ranks.test.ts`(두 연결 같은 모델 저장 → DB 스냅숏 → resolver, 자기 DB). 전체 단위·전체 DB 시험은 정책대로 통합 단계에서 돈다.
 
 ## 검증 (PR A)
 

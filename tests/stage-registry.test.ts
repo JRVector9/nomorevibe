@@ -4,14 +4,15 @@ import { firstReviewer } from "@/lib/crawl/agent-review";
 import { JOB_CATALOG } from "@/lib/jobs/catalog";
 import type { ThroughputSnapshot } from "@/lib/operations/throughput-model";
 import { buildWorkerProgress } from "@/lib/operations/worker-progress-query";
-import { ENV_MODEL_SLOTS, PIPELINE_STAGES, STAGE_EXCLUDED_JOBS, resolveModelSlots, stageForJob } from "@/lib/operations/stage-registry";
+import { ENV_MODEL_SLOTS, PIPELINE_STAGES, STAGE_EXCLUDED_JOBS, TASK_MODEL_SLOTS, resolveModelSlots, stageForJob } from "@/lib/operations/stage-registry";
+import { pinTextRanks, textRankRow } from "./text-task-ranks-fixture";
 
 /**
  * 단계 레지스트리(운영센터 개편 v8 PR2) — 흐름 상세·레일 옆 칸이 읽을 순수 표.
  *
  * 첫 describe 가 "미등록 잡 CI"다: 카탈로그에 잡을 더하면 단계에 넣거나 제외 까닭을 적기 전에는 CI 가 빨갛다.
  */
-afterEach(() => { vi.unstubAllEnvs(); vi.resetModules(); });
+afterEach(() => { vi.unstubAllEnvs(); vi.resetModules(); pinTextRanks(null); });
 
 describe("미등록 잡 — 카탈로그의 잡은 정확히 한 단계에 들어가거나, 까닭과 함께 제외 목록에 있다", () => {
   it.each(JOB_CATALOG.map((job) => job.name))("%s", (name) => {
@@ -139,25 +140,24 @@ describe("모델 자리 — 설정만으로 정해진다", () => {
     }
   });
 
-  /** 환경변수 모델 — 각 잡 모듈은 import 할 때 환경변수를 읽는다. 같은 환경에서 모듈을 다시 읽어 레지스트리와 견준다 */
+  /**
+   * 환경변수 모델 — 각 잡 모듈은 import 할 때 환경변수를 읽는다. 같은 환경에서 모듈을 다시 읽어 레지스트리와 견준다.
+   * text 여섯 자리(소개 짓기·키워드 짓기·검수·제품 번역·사유 번역·한국어 소개)는 「작업 ↔ 모델」 순위로 옮겨 여기 없다(PR B, 아래 TASK_MODEL_SLOTS).
+   */
   const MODULE_CONSTANTS: Record<string, () => Promise<string>> = {
-    tagline: async () => (await import("@/lib/crawl/tagline")).TAGLINE_MODEL,
-    keywords: async () => (await import("@/lib/domain/products/search-profile")).PROFILE_MODEL,
-    "keyword-verify": async () => (await import("@/lib/domain/products/search-verify")).VERIFY_MODEL,
     embedding: async () => (await import("@/lib/domain/products/embedding")).EMBEDDING_MODEL,
-    "product-translate": async () => (await import("@/lib/crawl/translate")).PRODUCT_TRANSLATE_MODEL,
-    "reason-translate": async () => (await import("@/lib/crawl/translate")).TRANSLATE_MODEL,
-    "tagline-ko": async () => (await import("@/lib/crawl/translate")).KOREAN_TAGLINE_MODEL,
     "intro-check": async () => (await import("@/lib/domain/products/intro-check")).INTRO_CHECK_MODEL,
   };
 
-  /** env 가 없는 자리(소개 짓기·제품 번역)는 등록부·단계 풀이 고른다 — 예전 환경변수 이름은 읽지 않는다(2026-10-31) */
-  const REGISTRY_CODES: Record<string, string> = { tagline: "registry:crawl-tagline", "product-translate": "registry:product-translate" };
-  const REMOVED_ENV = ["ABCLLM_TAGLINE_MODEL", "PRODUCT_TRANSLATION_MODEL"];
+  /** env 가 없는 자리는 등록부·단계 풀이 고른다(code `registry:<용도>`) — 지금은 벡터 말고는 없다 */
+  const REGISTRY_CODES: Record<string, string> = {};
+  /** 지운 이름(2026-10-31)과 순위로 옮긴 text 자리의 옛 이름(PR B) — 값이 있어도 어느 자리도 바꾸지 않는다 */
+  const REMOVED_ENV = ["ABCLLM_TAGLINE_MODEL", "PRODUCT_TRANSLATION_MODEL", "ABCLLM_PROFILE_MODEL", "SEARCH_VERIFY_MODEL", "ABCLLM_MODEL"];
 
   it("환경변수 모델 자리는 잡 모듈 상수와 같은 환경변수·기본값을 읽는다", async () => {
     expect(ENV_MODEL_SLOTS.map((slot) => slot.key).sort()).toEqual(Object.keys(MODULE_CONSTANTS).sort());
-    expect(ENV_MODEL_SLOTS.filter((slot) => !slot.env && slot.key !== "embedding").map((slot) => slot.key).sort()).toEqual(Object.keys(REGISTRY_CODES).sort());
+    const slots: readonly { key: string; env: string | null }[] = ENV_MODEL_SLOTS;
+    expect(slots.filter((slot) => !slot.env && slot.key !== "embedding").map((slot) => slot.key).sort()).toEqual(Object.keys(REGISTRY_CODES).sort());
     for (const name of new Set(ENV_MODEL_SLOTS.flatMap((slot) => slot.env ? [slot.env] : []))) vi.stubEnv(name, undefined);
     vi.resetModules();
     const defaults = resolveModelSlots(settings(), process.env);
@@ -178,6 +178,29 @@ describe("모델 자리 — 설정만으로 정해진다", () => {
       expect(found.code, slot.key).toBe(slot.env ?? REGISTRY_CODES[slot.key] ?? "EMBEDDING_MODEL");
       if (!slot.env) expect(found.model, slot.key).not.toMatch(/^env:/);
     }
+  });
+
+  it("text 자리는 「작업 ↔ 모델」 1순위를 보인다 — 순위가 없으면 비어 있고, 옛 환경변수는 읽지 않는다(PR B)", () => {
+    expect(TASK_MODEL_SLOTS.map((slot) => [slot.key, slot.task])).toEqual([["tagline", "crawl-tagline"], ["keywords", "product-search-profile"],
+      ["keyword-verify", "product-search-verify"], ["product-translate", "product-translate"], ["reason-translate", "reason-translate"], ["tagline-ko", "product-tagline-ko"]]);
+    const text = (slots: ReturnType<typeof resolveModelSlots>) => TASK_MODEL_SLOTS.map((task) => {
+      const { key, code, provider, model, source } = slots.find((slot) => slot.key === task.key)!;
+      return { key, code, provider, model, source };
+    });
+    // 순위가 없으면 코드 기본값·환경변수로 채우지 않는다
+    for (const name of REMOVED_ENV) vi.stubEnv(name, `env:${name}`);
+    expect(text(resolveModelSlots(settings(), process.env))).toEqual(TASK_MODEL_SLOTS.map((slot) =>
+      ({ key: slot.key, code: `ai-task:${slot.task}`, provider: null, model: null, source: "unset" })));
+    // 1순위의 모델이 자리의 모델이다(2·3순위·다른 칸·다른 작업은 보지 않는다)
+    pinTextRanks([textRankRow("crawl-tagline", "tagline-second", { rank: 2 }), textRankRow("crawl-tagline", "tagline-first"),
+      textRankRow("product-search-profile", "profile-first"), textRankRow("product-search-verify", "verify-first"),
+      textRankRow("product-translate", "translate-first"), textRankRow("reason-translate", "reason-first"),
+      textRankRow("product-tagline-ko", "ko-first"), textRankRow("product-tagline-ko", "ko-slot-2", { slot: 2 }), textRankRow("search-query-translate", "query-first")]);
+    const ranked = resolveModelSlots(settings(), process.env);
+    expect(text(ranked).map(({ key, provider, model, source }) => [key, provider, model, source])).toEqual([
+      ["tagline", "abcllm", "tagline-first", "ranks"], ["keywords", "abcllm", "profile-first", "ranks"], ["keyword-verify", "abcllm", "verify-first", "ranks"],
+      ["product-translate", "abcllm", "translate-first", "ranks"], ["reason-translate", "abcllm", "reason-first", "ranks"], ["tagline-ko", "abcllm", "ko-first", "ranks"]]);
+    expect(ranked.some((slot) => slot.model?.startsWith("env:"))).toBe(false);
   });
 
   it("호출마다 남는 기록이 없는 텍스트·벡터 자리만 근사다 — 1차·2차·감사(호출 기록)와 키워드 짓기(지금 카드 판정)는 아니다", () => {

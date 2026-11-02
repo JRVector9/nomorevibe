@@ -1,14 +1,13 @@
-import { modelTimeoutMs, scopedModel } from "@/lib/llm/model-registry";
-import { reasonTranslationServingProvider } from "@/lib/llm/reason-translation-serving-contract";
+import { modelRouteTimeoutMs } from "@/lib/llm/model-registry";
 import { deferredJob, type JobContext, type JobOutcome } from "@/lib/jobs/runner";
 import { tickRemaining } from "@/lib/jobs/tick-deadline";
 import { translateReasonsWithModelCapacity } from '@/lib/crawl/reason-translation-model-capacity';
-import { TRANSLATE_MODEL } from "@/lib/crawl/translate";
 import { recordWorkerTranslations, retryableTranslations, untriedTranslations } from "@/lib/crawl/translations";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { jobKnob, type RuntimeSettings } from "@/lib/operations/runtime-settings-schema";
 import { runtimeSettings } from "@/lib/operations/runtime-settings-store";
-import { TEXT_ROUTE_BLOCK_DETAIL, textRouteAccess } from "@/lib/llm/serving-contract-store";
+import { textTaskModel } from "@/lib/llm/ai-task-rank-scope";
+import { TextTaskRanks, type TextRankRun } from "@/lib/llm/ai-task-resolver";
 
 const JOB = "reason-translate";
 /**
@@ -59,15 +58,22 @@ export function packBatch<T extends { body: string; attempts?: number }>(items: 
  * 사유 번역. 심사 화면의 영어 사유를 미리 한국어로 옮겨 둔다 — 느려도 매 틱 조금씩 이어 간다.
  *
  * 전용 text 워커에서 번역·소개 생성이 차례로 돈다. 발행 워커는 이 호출을 기다리지 않는다.
+ * 2026-11-02(PR B): 모델·주소·키는 「작업 ↔ 모델」 순위가 고른다. 한 순위만의 까닭이면 같은 묶음을 다음 순위로 넘기고 그 순위는 이 틱 동안 쉰다.
+ * 순위가 없거나 모두 쓸 수 없으면 기본값으로 부르지 않고 제 일 못 한 틱(no_task_models·all_ranks_unusable)으로 남긴다.
  */
 export async function translateReasons(ctx: JobContext<null>): Promise<JobOutcome<null>> {
-  // 이 경로의 직접 연결 계약(관리자 엔진 연결, 엔진에 바로 — 키 없이도 부른다)이 있어야 부를 수 있다. 다른 text 잡과 같은 관문이다
-  // (textRouteAccess). provider 는 계약 모듈이 고른다 — local-direct 직접 계약이면 그 장비로 기록한다(PR 3b-E).
-  const model = scopedModel(JOB, TRANSLATE_MODEL);
-  const blocked = textRouteAccess(JOB, model, reasonTranslationServingProvider(model)).block;
-  if (blocked) {
-    ctx.log("translate.skipped", { reason: blocked });
-    return { done: true, degraded: { code: blocked, detail: TEXT_ROUTE_BLOCK_DETAIL[blocked] } };
+  const ranks = await TextTaskRanks.open(JOB);
+  try { return await translateReasonsWithRanks(ctx, ranks); }
+  finally { ctx.log("ai_task.ranks", ranks.summary()); }
+}
+
+type Flow = { kind: "stop" } | { kind: "recorded"; ok: boolean; unknown: boolean; translated: number; failed: number };
+
+async function translateReasonsWithRanks(ctx: JobContext<null>, ranks: TextTaskRanks): Promise<JobOutcome<null>> {
+  const early = ranks.earlyDegraded();
+  if (early) {
+    ctx.log("translate.skipped", { reason: early.code });
+    return { done: true, degraded: early };
   }
   const lease = ctx.lease;
   if (!lease) throw new Error("Translation worker requires a job lease");
@@ -78,7 +84,7 @@ export async function translateReasons(ctx: JobContext<null>): Promise<JobOutcom
   try {
     const startedAt = Date.now();
     const remaining = tickRemaining(ctx, JOB, startedAt);
-    const knobs = reasonTranslateKnobs(), callMs = modelTimeoutMs(JOB);
+    const knobs = reasonTranslateKnobs(), callMs = modelRouteTimeoutMs(JOB);
     let translated = 0, failed = 0;
 
     /**
@@ -99,10 +105,27 @@ export async function translateReasons(ctx: JobContext<null>): Promise<JobOutcom
         return { done: true };
       }
       const batch = pending[0].attempts >= knobs.soloAttempts ? [pending[0]] : packBatch(pending, knobs);
-      let prepared: Awaited<ReturnType<typeof translateReasonsWithModelCapacity>>;
+      let attempt: TextRankRun<Flow>;
       try {
-        prepared = await translateReasonsWithModelCapacity(batch, lease,
-          { timeoutMs: Math.max(1_000, Math.min(callMs, remaining() - 1_000)), signal });
+        // 순위 차례로 부른다 — 이 모델만의 까닭(경로 없음·장비 행 없음·계약 닫힘·포화)이면 같은 묶음을 다음 순위로(TextTaskRanks.run)
+        attempt = await ranks.run(async (): Promise<Flow> => {
+          const prepared = await translateReasonsWithModelCapacity(batch, lease,
+            { timeoutMs: Math.max(1_000, Math.min(callMs, remaining() - 1_000)), signal });
+          if (prepared.kind === 'skipped') return { kind: "stop" };
+          const result = prepared.result;
+          if (signal.aborted) return { kind: "stop" };
+          const rows = (prepared.kind === 'ready' ? prepared.batch : batch).map((item, index) => ({
+            hash: item.hash,
+            translated: result.ok ? result.translations[index] : null,
+            error: result.ok ? undefined : result.error,
+          }));
+          if (prepared.kind === 'ready') {
+            const stored = await recordWorkerTranslations(rows, textTaskModel(JOB), lease, prepared.expectation);
+            if (stored === 0) return { kind: "stop" };
+          } else await recordWorkerTranslations(rows, textTaskModel(JOB), lease);
+          return { kind: "recorded", ok: result.ok, unknown: prepared.kind === 'ready' && prepared.unknown,
+            translated: rows.filter((row) => row.translated !== null).length, failed: rows.filter((row) => row.translated === null).length };
+        });
       } catch (error) {
         // 미룸 사유(capacity·dispatched·unmapped…)를 남긴다 — 러너는 'model_capacity' 하나로만 적는다
         if (error instanceof ModelCapacityDeferredError) {
@@ -112,22 +135,22 @@ export async function translateReasons(ctx: JobContext<null>): Promise<JobOutcom
         }
         throw error;
       }
-      if (prepared.kind === 'skipped') return { done: false };
-      const result = prepared.result;
-      if (signal.aborted) return { done: false };
-      const rows = (prepared.kind === 'ready' ? prepared.batch : batch).map((item, index) => ({
-        hash: item.hash,
-        translated: result.ok ? result.translations[index] : null,
-        error: result.ok ? undefined : result.error,
-      }));
-      if (prepared.kind === 'ready') {
-        const stored = await recordWorkerTranslations(rows, scopedModel("reason-translate", TRANSLATE_MODEL), lease, prepared.expectation);
-        if (stored === 0) return { done: false };
-      } else await recordWorkerTranslations(rows, scopedModel("reason-translate", TRANSLATE_MODEL), lease);
-      translated += rows.filter((row) => row.translated !== null).length;
-      failed += rows.filter((row) => row.translated === null).length;
-      // 게이트웨이가 막혔으면 이번 틱은 여기서 — 같은 실패를 되풀이하지 않는다
-      if (!result.ok || prepared.kind === 'ready' && prepared.unknown) break;
+      if (attempt.kind === "unusable") {
+        // 모든 순위가 이 틱에 쉰다. 포화면 예전처럼 미루고, 아니면 일을 했을 때만 보통 틱 — 한 건도 못 했으면 까닭을 남긴다
+        const processed = translated + failed;
+        ctx.log("translate.all_ranks_unusable", { translated, failed });
+        if (ranks.saturated()) return deferredJob("model_capacity", processed);
+        return processed ? { done: false } : { done: true, degraded: ranks.degraded() };
+      }
+      const flow = attempt.value;
+      if (flow.kind === "stop") return { done: false };
+      translated += flow.translated;
+      failed += flow.failed;
+      // 이 순위의 엔진이 막혔으면 그 순위는 이 틱에서 쉰다 — 같은 실패를 되풀이하지 않고, 다음 묶음은 다음 순위가 맡는다
+      if (!flow.ok || flow.unknown) {
+        ranks.pause(attempt.binding, flow.ok ? "engine_unknown" : "engine_failed");
+        if (!ranks.usable().length) break;
+      }
     }
 
     ctx.log("translate.done", { translated, failed, drained: false });

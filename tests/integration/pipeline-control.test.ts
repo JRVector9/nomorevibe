@@ -8,7 +8,6 @@ import { join } from "node:path";
 import { batchPolicyHash } from "@/lib/jobs/batches";
 import { modelCapacityPolicyHash, type ModelCapacityPolicy } from "@/lib/llm/capacity";
 import { httpOriginPolicyHash } from "@/lib/net/http-origin-policy";
-import { configuredModel } from "@/lib/llm/model-registry";
 import type { ControlResult, ControlSnapshot } from "@/lib/operations/pipeline-control";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
 
@@ -23,7 +22,9 @@ let directory = "";
 // CLI는 앱 DATABASE_URL·PG* 없이 전용 변수만으로 붙어야 한다. 호출 지점 model env는 route 행이 셸에 따라 바뀌지 않게 고정한다.
 const MODEL_ENV = { ABCLLM_MODEL: "pr06d-model", ABCLLM_PROFILE_MODEL: "pr06d-profile", SEARCH_VERIFY_MODEL: "pr06d-verify", INTRO_CHECK_MODEL: "pr06d-intro" };
 // 소개 짓기·제품 번역의 모델과 1차 심사자는 env 를 읽지 않는다(2026-10-31 abcLLM 정리 — 등록부·관리자 단계 선택과 관리자 설정만 본다).
-// 옛 이름에 값을 넣어 두고 route 행이 그 값을 쓰지 않는 것을 본다.
+// 옛 이름에 값을 넣어 두고 route 행이 그 값을 쓰지 않는 것을 본다. PR B(2026-11-02)부터 text 일곱 경로는 「작업 ↔ 모델」 순위만 읽는다 —
+// ABCLLM_MODEL·ABCLLM_PROFILE_MODEL·SEARCH_VERIFY_MODEL 도 text 경로에는 쓰이지 않는다(남은 쓰임: 소개 검수 INTRO_CHECK_MODEL).
+// 이 CLI 는 앱 DATABASE_URL 없이 돌아 순위를 읽지 못한다 — text 경로는 모델 「모름」(null · unknown)으로 판정되어 OPEN 을 막는다(기본값으로 대신 판정하지 않는다).
 const IGNORED_MODEL_ENV = { PRODUCT_TRANSLATION_MODEL: "pr06d-product", ABCLLM_TAGLINE_MODEL: "pr06d-tagline", CRAWL_REVIEW_MODEL: "pr06d-env-ai1" };
 const env: NodeJS.ProcessEnv = { ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(PG|DATABASE_URL$|READ_DATABASE_URL$)/.test(key))),
   ...MODEL_ENV, ...IGNORED_MODEL_ENV, NODE_ENV: "test", PIPELINE_CONTROL_DATABASE_URL: TEST_DATABASE_URL };
@@ -209,7 +210,9 @@ it("refuses capacity open while routes would be deferred and opens only with --a
   expect(refused.status).toBe(3);
   const routes = refused.out?.plan.routes ?? [];
   expect(routes).toContainEqual({ routeId: "second-review", provider: "abcllm", model: "pr06d-model", status: "unused" });
-  expect(routes).toContainEqual({ routeId: "reason-translate", provider: "abcllm", model: "pr06d-model", status: "no_contract" });
+  // text 경로는 순위를 읽지 못해 모델 모름(null) — 정책의 env 이름 route 는 아무도 쓰지 않는다(unused)
+  expect(routes).toContainEqual({ routeId: "reason-translate", provider: "abcllm", model: null, status: "unknown" });
+  expect(routes).toContainEqual({ routeId: "reason-translate", provider: "abcllm", model: "pr06d-model", status: "unused" });
   expect(routes).toContainEqual({ routeId: "product-intro-check", provider: "claude-cli", model: MODEL_ENV.INTRO_CHECK_MODEL, status: "unmapped" });
   expect(routes).toContainEqual({ routeId: "second-review", provider: "legacy-job", model: null, status: "stage_legacy" });
   const deferred = routes.filter(row => row.status !== "serving" && row.status !== "unused").length;
@@ -324,13 +327,14 @@ it("judges capacity open only on the (route, provider, model) combinations the s
     expect(deferred.filter(row => row.routeId !== "product-audit")).toEqual([
       { routeId: "crawl-agent-review", provider: "abcllm", model: "pr06d-ai1", status: "unmapped" },
       { routeId: "second-review", provider: "abcllm", model: "pr06d-ai2", status: "no_contract" },
-      { routeId: "product-search-profile", provider: "abcllm", model: MODEL_ENV.ABCLLM_PROFILE_MODEL, status: "unmapped" },
-      { routeId: "product-search-verify", provider: "abcllm", model: MODEL_ENV.SEARCH_VERIFY_MODEL, status: "unmapped" },
-      { routeId: "reason-translate", provider: "abcllm", model: MODEL_ENV.ABCLLM_MODEL, status: "no_contract" },
-      { routeId: "product-translate", provider: "abcllm", model: configuredModel("product-translate", env), status: "unmapped" },
-      { routeId: "product-tagline-ko", provider: "abcllm", model: MODEL_ENV.ABCLLM_MODEL, status: "unmapped" },
-      { routeId: "search-query-translate", provider: "abcllm", model: MODEL_ENV.ABCLLM_MODEL, status: "unmapped" },
-      { routeId: "crawl-tagline", provider: "abcllm", model: configuredModel("crawl-tagline", env), status: "unmapped" },
+      // text 일곱 경로: 순위를 읽지 못한 이 프로세스에서는 모델 모름 — env(ABCLLM_MODEL 등)·등록부 기본값으로 대신 판정하지 않는다
+      { routeId: "product-search-profile", provider: "abcllm", model: null, status: "unknown" },
+      { routeId: "product-search-verify", provider: "abcllm", model: null, status: "unknown" },
+      { routeId: "reason-translate", provider: "abcllm", model: null, status: "unknown" },
+      { routeId: "product-translate", provider: "abcllm", model: null, status: "unknown" },
+      { routeId: "product-tagline-ko", provider: "abcllm", model: null, status: "unknown" },
+      { routeId: "search-query-translate", provider: "abcllm", model: null, status: "unknown" },
+      { routeId: "crawl-tagline", provider: "abcllm", model: null, status: "unknown" },
       { routeId: "product-intro-check", provider: "claude-cli", model: MODEL_ENV.INTRO_CHECK_MODEL, status: "unmapped" },
       { routeId: "crawl-publish-classify", provider: "unknown", model: null, status: "unknown" },
       { routeId: "second-review", provider: "legacy-job", model: null, status: "stage_legacy" },

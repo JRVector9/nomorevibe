@@ -24,9 +24,13 @@ vi.mock("@/lib/jobs/batch-repository", () => ({ assertJobBatchAdmission: mocks.b
 vi.mock("@/lib/jobs/control", () => ({ assertJobLease: mocks.jobWall, assertJobLeaseAtWallTime: mocks.jobWall }));
 vi.mock("@/lib/domain/products/repository", () => ({ listProductSlugs: vi.fn() }));
 vi.mock("@/lib/domain/products/popular", () => ({ getPopularGroups: vi.fn() }));
-import { translateKoreanTaglinesWithModelCapacity } from "@/lib/domain/products/korean-tagline-model-capacity";
-import { KOREAN_TAGLINE_MODEL } from "@/lib/crawl/translate";
+import { translateKoreanTaglinesWithModelCapacity as translateInRank } from "@/lib/domain/products/korean-tagline-model-capacity";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
+import { inTextRank, pinTextRanks, textContract } from "./text-task-ranks-fixture";
+// GPT 경로의 모델은 「작업 ↔ 모델」 순위가 고른다(PR B) — 깊은 함수는 순위 범위 안에서 부르고, 잡은 순위 스냅숏을 읽는다.
+const KOREAN_TAGLINE_MODEL = "korean-tagline-unit";
+const inRank = <T>(run: () => T): T => inTextRank("product-tagline-ko", KOREAN_TAGLINE_MODEL, run);
+const translateKoreanTaglinesWithModelCapacity = (...args: Parameters<typeof translateInRank>) => inRank(() => translateInRank(...args));
 const task = { productId: 17, name: "owner/Doc", tagline: "Document management tools. Additional details for teams.", repoUrl: "https://github.com/owner/Doc", attempts: 9, lastError: "rejected:too_long" };
 const item = { name: "Doc", tagline: leadClause(task.tagline) };
 const role = { role: "text" as const, instanceId: "korean-unit", bootId: randomUUID(), release: "unit", epoch: 1, kind: "primary" as const };
@@ -45,7 +49,9 @@ const options = () => ({ timeoutMs: 45_000, roleLease: role });
 beforeEach(() => {
   vi.resetAllMocks();
   // The native route opens only on a directly connected engine (admin contract, transport direct); the gateway call is mocked.
-  setServingContractSnapshotForTest([{ routeId: "product-tagline-ko", model: KOREAN_TAGLINE_MODEL, contract: {}, auth: "none", apiKey: null, transport: "direct" }]);
+  // 순위(PR B)는 그 연결을 가리키는 엔진 직접 계약에 묶인다 — 잡 시험도 같은 행으로 순위를 연다.
+  setServingContractSnapshotForTest([textContract("product-tagline-ko", KOREAN_TAGLINE_MODEL)]);
+  pinTextRanks({ "product-tagline-ko": KOREAN_TAGLINE_MODEL });
   mocks.control.mockResolvedValue({ mode: "open", policy: { routes: [{ provider: "abcllm", routeId: "product-tagline-ko", model: KOREAN_TAGLINE_MODEL }] } });
   mocks.call.mockReturnValue(call); mocks.prepare.mockResolvedValueOnce({ kind: "ready", members, role: boundRole })
     .mockResolvedValue({ kind: "ready", dispatch, expectation });
@@ -54,7 +60,7 @@ beforeEach(() => {
   mocks.native.mockResolvedValue({ result, terminal }); mocks.reconcile.mockResolvedValue({ kind: "settled" });
   mocks.cancel.mockResolvedValue(true); mocks.unknown.mockResolvedValue(true); mocks.legacy.mockResolvedValue(result);
 });
-afterEach(() => { setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); });
+afterEach(() => { setServingContractSnapshotForTest(null); pinTextRanks(null); vi.unstubAllEnvs(); });
 it("preserves the disabled legacy ordered shortened wire and original rejection identity", async () => {
   mocks.control.mockResolvedValue({ mode: "disabled" });
   expect(await translateKoreanTaglinesWithModelCapacity([task], ["korean-unit"], job, { timeoutMs: 45_000 })).toEqual({ kind: "result", result });
@@ -64,10 +70,14 @@ it("preserves the disabled legacy ordered shortened wire and original rejection 
   await expect(translateKoreanTaglinesWithModelCapacity([task], [], job, options())).rejects.toBe(original);
   expect(mocks.request).not.toHaveBeenCalled(); expect(mocks.prepare).not.toHaveBeenCalled();
 });
-it("preserves the legacy no_key result without a direct contract and without a model control read", async () => {
+it("defers only this model without a direct contract, before a model control read and without the legacy sender", async () => {
+  // 순위(PR B)를 연 뒤 계약이 닫혔다 — 옛 게이트웨이 길(no_key)로 떨어지지 않고 이 모델만의 미룸으로 다음 순위에 넘긴다.
   setServingContractSnapshotForTest([]); mocks.legacy.mockResolvedValue({ ok: false, error: "no_key" });
-  expect(await translateKoreanTaglinesWithModelCapacity([task], [], job, options())).toEqual({ kind: "result", result: { ok: false, error: "no_key" } });
+  const refused = translateKoreanTaglinesWithModelCapacity([task], [], job, options());
+  await expect(refused).rejects.toBeInstanceOf(ModelCapacityDeferredError);
+  await expect(refused).rejects.toMatchObject({ reason: "provider_contract_unavailable" });
   expect(mocks.control).not.toHaveBeenCalled(); expect(mocks.call).not.toHaveBeenCalled(); expect(mocks.request).not.toHaveBeenCalled();
+  expect(mocks.legacy).not.toHaveBeenCalled();
 });
 it("reuses the same pending ID and settles before returning a committed writer expectation", async () => {
   mocks.pending.mockResolvedValue({ requestId: reservation.requestId, state: "waiting" });
@@ -138,14 +148,14 @@ function domainTx(raw: Record<string, unknown> | null = { product_id: task.produ
 it("derives home extra eligibility and raw counts beyond six from actual locked rows", async () => {
   const t = domainTx();
   const domain = await vi.importActual<typeof import("@/lib/domain/products/korean-taglines")>("@/lib/domain/products/korean-taglines");
-  expect(await domain.prepareKoreanTaglineDispatch([task], ["korean-unit"], job, { roleLease: role, call })).toMatchObject({ kind: "ready",
+  expect(await inRank(() => domain.prepareKoreanTaglineDispatch([task], ["korean-unit"], job, { roleLease: role, call }))).toMatchObject({ kind: "ready",
     members: [{ productId: task.productId, cache: { kind: "present", attempts: 9, qualityRejections: 4, rowIdentityHash: reviewHash(t.raw) } }], role: { kind: "standby" } });
   expect(t.queries.findIndex(q => q.sql.includes("FROM products"))).toBeLessThan(t.queries.findIndex(q => q.sql.includes("to_jsonb(k)")));
 });
 it("keeps the ordinary four-rejection limit outside the home list", async () => {
   domainTx();
   const domain = await vi.importActual<typeof import("@/lib/domain/products/korean-taglines")>("@/lib/domain/products/korean-taglines");
-  expect(await domain.prepareKoreanTaglineDispatch([task], [], job, { roleLease: role, call })).toEqual({ kind: "skipped" });
+  expect(await inRank(() => domain.prepareKoreanTaglineDispatch([task], [], job, { roleLease: role, call }))).toEqual({ kind: "skipped" });
   expect(mocks.finish).not.toHaveBeenCalled();
 });
 it("locks every legacy product in sorted order before any cache upsert", async () => {
@@ -164,14 +174,14 @@ it("rejects a copied writer capability before SQL", async () => {
 });
 async function realDispatch(t: ReturnType<typeof domainTx>) {
   const domain = await vi.importActual<typeof import("@/lib/domain/products/korean-taglines")>("@/lib/domain/products/korean-taglines");
-  const initial = await domain.prepareKoreanTaglineDispatch([task], ["korean-unit"], job, { roleLease: role, call });
+  const initial = await inRank(() => domain.prepareKoreanTaglineDispatch([task], ["korean-unit"], job, { roleLease: role, call }));
   if (!("members" in initial)) throw new Error("unit_missing_members");
   mocks.prefix.mockResolvedValue({ control: await mocks.control() });
   mocks.finish.mockImplementation(async (_tx, _lock, binding) => ({ ...reservation, binding, bindingHash: "f".repeat(64) }));
   const identity = { owner: reservation.owner, class: "background" as const, pool: "text" as const, provider: "abcllm", routeId: "product-tagline-ko", model: KOREAN_TAGLINE_MODEL,
     workKey: `${productTaglineKoLogicalWorkKey(initial.members)}:${productTaglineKoInputHash({ members: initial.members, model: KOREAN_TAGLINE_MODEL })}` };
-  const prepared = await domain.prepareKoreanTaglineDispatch([task], ["korean-unit"], job, { roleLease: role, call,
-    reserved: { reservation, identity, members: initial.members, role: initial.role } });
+  const prepared = await inRank(() => domain.prepareKoreanTaglineDispatch([task], ["korean-unit"], job, { roleLease: role, call,
+    reserved: { reservation, identity, members: initial.members, role: initial.role } }));
   if (!("expectation" in prepared)) throw new Error("unit_missing_dispatch");
   expect(t.queries.at(-1)?.sql).toContain("reserved_until>clock_timestamp()");
   return { domain, prepared };

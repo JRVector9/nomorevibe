@@ -19,6 +19,9 @@ export const reasonTranslationServingContractSchema = z.object({
   }), totalTokenBound: z.number().int().positive().safe(),
   // PR3 엄격 terminal opt-in 표시. 설정 resolver 는 이 표시가 있어야만 연다(gateway-serving-contract-config.ts)
   strictTerminalOptIn: z.literal(ABCLLM_STRICT_TERMINAL_OPT_IN).optional(),
+  // 같은 모델 이름을 다른 연결에도 둔 순위(PR B)의 계약은 model 이 연결로 가른 장부 이름이고, 엔진에는 이 이름이 나간다. 없으면 model 이 나간다
+  // (없는 칸은 parse 결과에 들지 않아 지금 계약의 hash 는 그대로다).
+  engineModel: identity.optional(),
 }).strict();
 export type ReasonTranslationGatewayServingContract = Readonly<z.infer<typeof reasonTranslationServingContractSchema>>;
 /** 엔진 직접 계약(PR 3b-E) — direct-openai-chat-v1, provider local-direct. 게이트웨이가 없어 엄격 terminal opt-in 표시가 없다(엔진 완결 응답이 terminal). */

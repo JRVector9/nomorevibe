@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import type { ProfileTask } from "@/lib/domain/products/search-profiles";
-import { PROFILE_MODEL, profileHash, profileEvidence } from "@/lib/domain/products/search-profile";
+import { profileHash, profileEvidence } from "@/lib/domain/products/search-profile";
 import { textProfileInputHash, modelCapacityReservationSchema } from "@/lib/llm/capacity";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
-import { scopedModel } from "@/lib/llm/model-registry";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
+import { inTextRank, textContract } from "./text-task-ranks-fixture";
 const mocks = vi.hoisted(() => ({ prepare: vi.fn(), legacy: vi.fn(), pending: vi.fn(), request: vi.fn(),
   cancel: vi.fn(), native: vi.fn(), reconcile: vi.fn(), unknown: vi.fn(), transaction: vi.fn(), control: vi.fn(),
   prefix: vi.fn(), finish: vi.fn(), jobWall: vi.fn(), role: vi.fn(), batch: vi.fn(), generation: vi.fn(), gatewayPrepare: vi.fn() }));
@@ -20,7 +20,10 @@ vi.mock("@/lib/jobs/control", () => ({ assertJobLease: mocks.jobWall, assertJobL
 vi.mock("@/lib/jobs/role-leader", () => ({ assertRoleLease: mocks.role }));
 vi.mock("@/lib/jobs/batch-repository", () => ({ assertJobBatchAdmission: mocks.batch }));
 vi.mock("@/lib/domain/products/generation", () => ({ lockProductGeneration: mocks.generation }));
-import { writeKeywordsWithModelCapacity } from "@/lib/domain/products/search-profile-model-capacity";
+import { writeKeywordsWithModelCapacity as writeKeywordsInRank } from "@/lib/domain/products/search-profile-model-capacity";
+/** 키워드 경로의 모델은 「작업 ↔ 모델」 순위가 고른다(PR B) — 깊은 함수는 잡이 여는 순위 범위 안에서 부른다. */
+const PROFILE_MODEL = "gpt-oss-120b";
+const writeKeywordsWithModelCapacity: typeof writeKeywordsInRank = (...args) => inTextRank("product-search-profile", PROFILE_MODEL, () => writeKeywordsInRank(...args));
 const task = { product: { id: 3, slug: "unit-profile", name: "Demo", url: "https://demo.test", category: "Tools", tagline: "Budget app",
   description: "Budget app", status: "verified", searchTopics: null, searchPageText: null, searchReadme: null }, profile: null, reviewerNote: null } as ProfileTask;
 const role = { role: "text" as const, instanceId: "text-unit", bootId: randomUUID(), release: "unit-release", kind: "primary" as const, epoch: 1 };
@@ -38,8 +41,7 @@ function first() {
 }
 const options = () => ({ timeoutMs: 1000, roleLease: role });
 /** The route opens only on an engine connected directly (admin contract, transport direct); the gateway key was removed 2026-10-30. */
-const pinDirect = () => setServingContractSnapshotForTest([{ routeId: "product-search-profile",
-  model: scopedModel("product-search-profile", PROFILE_MODEL), contract: {}, auth: "none", apiKey: null, transport: "direct" }]);
+const pinDirect = () => setServingContractSnapshotForTest([textContract("product-search-profile", PROFILE_MODEL)]);
 beforeEach(() => {
   vi.resetAllMocks(); pinDirect();
   const ready = first(); mocks.prepare.mockResolvedValueOnce(ready).mockResolvedValue({ ...ready, dispatch: nativeDispatch });
@@ -48,11 +50,11 @@ beforeEach(() => {
   mocks.reconcile.mockResolvedValue({ kind: "settled" }); mocks.cancel.mockResolvedValue(true); mocks.unknown.mockResolvedValue(true);
 });
 afterEach(() => { setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); });
-it("returns no_key before DB without a direct contract and preserves disabled legacy execution without a role", async () => {
-  // A leftover gateway key does not stand in for the direct contract.
+it("defers this rank before DB without a direct contract and preserves disabled legacy execution without a role", async () => {
+  // A leftover gateway key does not stand in for the direct contract. 순위가 고른 계약이 그 사이 닫혔으면 이 모델만의 미룸이다(다음 순위로 넘긴다).
   setServingContractSnapshotForTest([]); vi.stubEnv("ABCLLM_API_KEY", "old-gateway-key");
-  expect(await writeKeywordsWithModelCapacity(task, lease, { timeoutMs: 1000 }))
-    .toEqual({ kind: "result", result: { ok: false, error: "no_key" } }); expect(mocks.prepare).not.toHaveBeenCalled();
+  await expect(writeKeywordsWithModelCapacity(task, lease, { timeoutMs: 1000 }))
+    .rejects.toEqual(new ModelCapacityDeferredError("provider_contract_unavailable")); expect(mocks.prepare).not.toHaveBeenCalled();
   pinDirect(); mocks.prepare.mockReset().mockResolvedValue({ kind: "disabled" }); mocks.legacy.mockResolvedValue(result);
   expect(await writeKeywordsWithModelCapacity(task, lease, { timeoutMs: 1000 })).toEqual({ kind: "result", result });
   expect(mocks.request).not.toHaveBeenCalled(); expect(mocks.legacy).toHaveBeenCalledWith(profileEvidence(task.product, null), { timeoutMs: 1000 });
@@ -121,7 +123,7 @@ it("captures actual current profile/source and validates role/job walls before r
   mocks.transaction.mockImplementation(async (run: (tx: unknown) => Promise<unknown>) => run(tx));
   mocks.control.mockResolvedValue({ mode: "open", policy: { routes: [{ routeId: "product-search-profile", provider: "abcllm", model: PROFILE_MODEL }] } });
   mocks.generation.mockResolvedValue(true); mocks.gatewayPrepare.mockReturnValue({ ...first().call, model: PROFILE_MODEL });
-  const prepared = await actual.prepareProfileModelDispatch(task, lease, options());
+  const prepared = await inTextRank("product-search-profile", PROFILE_MODEL, () => actual.prepareProfileModelDispatch(task, lease, options()));
   expect(prepared).toMatchObject({ kind: "ready", intent: { input: { ...first().intent.input, model: PROFILE_MODEL } } });
   expect(mocks.batch).toHaveBeenCalledWith(tx, lease.name, role); expect(mocks.role).toHaveBeenCalledWith(tx, role);
   expect(mocks.jobWall).toHaveBeenCalledWith(tx, lease, "update");
