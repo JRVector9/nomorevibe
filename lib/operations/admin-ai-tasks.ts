@@ -23,15 +23,20 @@ export type AiTaskRankRow = Readonly<{ task: string; slot: number; rank: number;
   options: Readonly<Record<string, unknown>>; enabled: boolean }>;
 /** RankSelects 의 값 한 칸 — provider 칸에 연결 id 를 둔다(폼 칸 이름 rank<N>Connection·rank<N>Model). */
 export type AiRankChoice = { provider: string; model: string };
-export type AiRankOption = AiRankChoice & { label: string; saved?: boolean };
+/**
+ * 드롭다운 한 칸. label = 「연결 이름 · 모델」(묶지 않은 목록·기록용), group = 서버(연결) 이름 — 드롭다운은 서버마다 묶고(optgroup) 그 안에 text(모델 이름)만 보인다.
+ */
+export type AiRankOption = AiRankChoice & { label: string; saved?: boolean; group?: string; text?: string };
 
 export const AI_CONNECTION_SAVE_AUDIT_ACTION = "ai-connection-save";
 export const AI_CONNECTION_MODELS_AUDIT_ACTION = "ai-connection-models-read";
 export const AI_CONNECTION_DELETE_AUDIT_ACTION = "ai-connection-delete";
 export const AI_TASK_MODELS_SAVE_AUDIT_ACTION = "ai-task-models-save";
 export const AI_TASK_MODELS_IMPORT_AUDIT_ACTION = "ai-task-models-import";
+/** 같은 주소 계약 키로 연결 키를 채움(lib/operations/ai-connection-key-fill.ts — 사람이 아니라 상자 키가 있는 프로세스가 쓴다) */
+export const AI_CONNECTION_KEY_FILL_AUDIT_ACTION = "ai-connection-key-fill";
 export const AI_TASK_AUDIT_ACTIONS = Object.freeze([AI_CONNECTION_SAVE_AUDIT_ACTION, AI_CONNECTION_MODELS_AUDIT_ACTION, AI_CONNECTION_DELETE_AUDIT_ACTION,
-  AI_TASK_MODELS_SAVE_AUDIT_ACTION, AI_TASK_MODELS_IMPORT_AUDIT_ACTION] as const);
+  AI_TASK_MODELS_SAVE_AUDIT_ACTION, AI_TASK_MODELS_IMPORT_AUDIT_ACTION, AI_CONNECTION_KEY_FILL_AUDIT_ACTION] as const);
 export const AI_TASK_IMPORT_CONFIRM = "가져오기";
 export const AI_TASKS_PAGE = "/admin/models/tasks";
 /** 키 암호문의 AAD — 행 id 에 묶는다(다른 행으로 옮긴 암호문은 열리지 않는다). */
@@ -167,18 +172,42 @@ export function aiTaskRankOptions(task: AiTaskDef, connections: readonly AiConne
       const key = `${connection.id}\u0000${model}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      options.push({ provider: connection.id, model, label: `${aiConnectionLabel(connection)} · ${model}` });
+      options.push({ provider: connection.id, model, label: `${aiConnectionLabel(connection)} · ${model}`, group: aiConnectionLabel(connection), text: model });
     }
   }
   for (const row of saved) {
     const key = `${row.connectionId}\u0000${row.model}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    const connection = connections.find(entry => entry.id === row.connectionId);
-    options.push({ provider: row.connectionId, model: row.model, saved: true,
-      label: `${connection ? aiConnectionLabel(connection) : "지워진 연결"} · ${row.model} (저장된 값 · 지금 목록에 없음)` });
+    const connection = connections.find(entry => entry.id === row.connectionId), group = connection ? aiConnectionLabel(connection) : "지워진 연결";
+    options.push({ provider: row.connectionId, model: row.model, saved: true, group, text: `${row.model} (목록에 없음)`,
+      label: `${group} · ${row.model} (저장된 값 · 지금 목록에 없음)` });
   }
   return options;
+}
+
+/**
+ * 이 칸(rank = index + 1)에서 고를 수 없는 선택지인가(순수, 화면이 드롭다운에서 흐리게 둔다 — 저장 검증 validateAiTaskRanks 는 그대로 막는다):
+ * 벡터·재정렬의 2·3순위는 1순위와 같은 모델만, 나란한 칸(2차 투표자)은 다른 칸에 저장된 모델(같은 가중치 포함)을 고를 수 없다. 지금 이 칸의 값은 늘 고를 수 있다.
+ */
+export function aiRankOptionBlocked(task: Pick<AiTaskDef, "id" | "slots" | "sameModelAcrossRanks">, slot: number, index: number, option: AiRankChoice,
+  slots: readonly (AiRankChoice | null)[], rows: readonly Pick<AiTaskRankRow, "task" | "slot" | "model">[]): boolean {
+  const mine = slots[index];
+  if (mine && mine.provider === option.provider && mine.model === option.model) return false;
+  if (task.sameModelAcrossRanks && index > 0 && slots[0] && slots[0].model !== option.model) return true;
+  return task.slots > 1 && rows.some(row => row.task === task.id && row.slot !== slot && aiSameUnderlyingModel(row.model, option.model));
+}
+
+export const AI_KEY_CONFLICT_TEXT = "같은 주소의 계약 키가 서로 다름";
+/**
+ * 켜진 API 연결 중 모델 목록을 못 읽은 것 — 그 서버의 모델은 드롭다운에 없다(화면이 까닭과 함께 위에 알린다).
+ * keyConflicts = 키가 없고 같은 주소의 계약 키가 서로 달라 자동으로 채우지 않은 연결 id(목록을 읽었어도 키가 필요해 순위를 쓸 수 없으니 함께 알린다).
+ */
+export function aiUnreadConnections(connections: readonly AiConnectionView[], keyConflicts: readonly string[] = []): { id: string; label: string; reason: string }[] {
+  const conflict = new Set(keyConflicts);
+  return connections.filter(row => row.enabled && row.kind === "api" && (row.models === null || row.models.length === 0 || (!row.hasKey && conflict.has(row.id))))
+    .map(row => ({ id: row.id, label: row.label, reason: [row.hasKey ? "" : "키 없음", !row.hasKey && conflict.has(row.id) ? AI_KEY_CONFLICT_TEXT : "",
+      row.models === null || row.models.length === 0 ? aiModelsErrorText(row.modelsError) ?? (row.models === null ? "아직 못 읽음" : "모델 0개") : ""].filter(Boolean).join(" · ") }));
 }
 
 // ── 검증 ───────────────────────────────────────────────────────────────────────────────────────────────

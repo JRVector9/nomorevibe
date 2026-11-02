@@ -7,7 +7,7 @@ import "./websearch-query-serving-contract";
 import "./text-profile-serving-contract";
 import "./search-verify-serving-contract";
 import { EngineDownTally } from "@/lib/jobs/engine-down";
-import { aiTask, isAiTextTask, type AiTextTaskId } from "./ai-tasks";
+import { AI_TASK_KEY_MISSING_CAUSE, aiTask, isAiTextTask, onlyKeyMissing, type AiTextTaskId } from "./ai-tasks";
 import { aiTaskModelRows, aiTaskModelsReadState, ensureAiTaskModels, type AiTaskConnectionSnapshot } from "./ai-task-models-snapshot";
 import { runInTextTaskRank, type TextTaskRankBinding } from "./ai-task-rank-scope";
 import { ModelCapacityDeferredError, modelCapacityDeferralIsPerModel } from "./capacity-deferred";
@@ -48,6 +48,7 @@ export const TEXT_RANK_UNUSABLE_TEXT: Readonly<Record<string, string>> = Object.
   connection_disabled: "연결이 꺼져 있음",
   connection_not_api: "API 주소 연결이 아님(이 작업은 CLI 를 받지 않음)",
   stored_key_unreadable: "연결에 저장한 키를 열 수 없음(암호 상자 키 확인)",
+  connection_key_missing: "연결에 키가 없음 — 이 서버의 계약은 키를 씀(같은 주소의 계약 키로도 채우지 못함, 연결에 키를 넣으세요)",
   no_direct_contract: "이 연결·모델의 엔진 직접 계약이 없음(그 줄을 다시 저장하면 만듦)",
   gateway_auth: "계약 인증이 게이트웨이 키로 되어 있음",
   unmapped: "용량 정책에 이 경로·모델이 없음",
@@ -125,6 +126,8 @@ export function bindTextTaskRank(routeId: AiTextTaskId, rank: AiTaskRank, contra
   const access = servingContractRowAccess(picked.row, picked.provider);
   // 계약 행의 키가 열리지 않는 것은 상관없다 — 보내는 키는 연결의 키다
   if (access.block && access.block !== "stored_key_unreadable") return unusable(access.block);
+  // 키가 필요한 서버(계약 auth stored)인데 연결에 키가 없으면 키 없이 부르지 않는다(2026-11-02 키 없는 연결로 401 → 결과 미확정). 키 없이 도는 서버(auth none)는 그대로다
+  if (picked.row.auth === "stored" && connection.apiKey === null) return unusable("connection_key_missing");
   return Object.freeze({ rank, unusable: null, binding: Object.freeze({ routeId, rank: rank.rank, connectionId: connection.id, connectionLabel: connection.label,
     identity: picked.row.model, engineModel: rank.model, provider: picked.provider, bearer: connection.apiKey, deviceId: connection.deviceId }) });
 }
@@ -142,7 +145,7 @@ export function resolveTextTaskRanks(routeId: AiTextTaskId): TextRankResolution 
 // ── 한 틱의 순위 대체 ─────────────────────────────────────────────────────────────────────────────────────
 
 /** 잡 degraded 와 같은 모양(lib/jobs/runner JobDegraded) — 웹 경로가 runner 를 끌어오지 않게 여기 따로 적는다. */
-export type TextRankDegraded = { code: "no_task_models" | "task_models_unreadable" | "all_ranks_unusable"; detail: string };
+export type TextRankDegraded = { code: "no_task_models" | "task_models_unreadable" | "all_ranks_unusable"; detail: string; cause?: typeof AI_TASK_KEY_MISSING_CAUSE };
 export type TextRankRun<T> = { kind: "served"; binding: TextTaskRankBinding; value: T } | { kind: "unusable" };
 /** 이 틱(또는 이 프로세스의 마지막 요청)의 순위 사정 — 관리 화면이 「지금 몇 순위가 일하나 · 아래 순위를 쓴 까닭」으로 보인다. */
 export type TextRankStatus = Readonly<{ routeId: string; at: string; status: TextRankResolution["status"]; ranks: number;
@@ -246,11 +249,11 @@ export class TextTaskRanks {
       return { code: "no_task_models", detail: `${task}: 작업 ↔ 모델(/admin/models/tasks)에 순위가 없습니다 — 코드 기본값·환경변수로 대신 부르지 않습니다` };
     if (this.resolution.status === "task_models_unreadable")
       return { code: "task_models_unreadable", detail: `${task}: 작업 ↔ 모델 표를 아직 읽지 못했습니다(권한·migration 0162 확인) — 기본값으로 대신 부르지 않습니다` };
-    const parts = this.resolution.candidates.map(candidate => {
-      const reason = this.paused.get(candidate.rank.rank) ?? candidate.unusable;
-      return `${candidate.rank.rank}순위 ${candidate.rank.connection.label} · ${candidate.rank.model}: ${reason ? textRankUnusableText(reason) : "쓸 수 있음"}`;
-    });
-    return { code: "all_ranks_unusable", detail: `${task}: ${parts.join(" / ")}`.slice(0, 300) };
+    const reasons = this.resolution.candidates.map(candidate => this.paused.get(candidate.rank.rank) ?? candidate.unusable);
+    const parts = this.resolution.candidates.map((candidate, index) =>
+      `${candidate.rank.rank}순위 ${candidate.rank.connection.label} · ${candidate.rank.model}: ${reasons[index] ? textRankUnusableText(reasons[index]!) : "쓸 수 있음"}`);
+    // 모든 순위가 키 없는 연결뿐이면 설정의 일(cause) — 진행 감시·OPEN 이 배포를 막지 않는다(AI_TASK_KEY_MISSING_CAUSE)
+    return { code: "all_ranks_unusable", detail: `${task}: ${parts.join(" / ")}`.slice(0, 300), ...(onlyKeyMissing(reasons) ? { cause: AI_TASK_KEY_MISSING_CAUSE } : {}) };
   }
 
   /** 틱 끝 요약 — ctx.log("ai_task.ranks", …) 의 숫자 칸. 관측(job:<잡>)의 마지막 이벤트로 남아 관리 화면이 읽는다. */

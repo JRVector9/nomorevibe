@@ -2,12 +2,16 @@
  * 「작업 ↔ 모델」 순위를 배포 창 안에서(capacity DRAINING) 화면 없이 다룬다 — 화면(/admin/models/tasks)과 같은 함수를 부른다.
  *
  *   node --import tsx scripts/ops/ai-task-ranks.ts status [--json]
- *   node --import tsx scripts/ops/ai-task-ranks.ts preview [--json]                 가져오기 계획(쓰지 않는다, 키는 이름만)
- *   node --import tsx scripts/ops/ai-task-ranks.ts apply --hash=<64hex> --operator=<이름>  계획 hash 가 같을 때만 적용
+ *   node --import tsx scripts/ops/ai-task-ranks.ts preview [--json]                 가져오기 계획(쓰지 않는다, 키는 이름만). 계획을 못 만들 때만 종료 코드 1
+ *   node --import tsx scripts/ops/ai-task-ranks.ts apply --hash=<64hex> --operator=<이름>  계획 hash 가 같을 때만 적용(경고는 stderr 「경고 …」 줄)
  *   node --import tsx scripts/ops/ai-task-ranks.ts resave --operator=<이름> [--task=a,b]  저장된 순위를 그대로 다시 저장(빠진 계약·정책 route·장비를 만든다)
  *   node --import tsx scripts/ops/ai-task-ranks.ts set --operator=<이름> --task=<작업> [--slot=N] --rank1='<연결 이름>|<모델>' [--rank2=…]  한 칸을 화면처럼 저장
  *
  * DATABASE_URL 은 앱과 같은 것을 쓴다(웹·워커가 읽는 env 로 「지금 실제로 쓰는 모델」을 판정하므로 운영 컨테이너 안에서 돌린다).
+ * 가져오기는 키가 필요한 새 연결의 키를 옮길 수 없어도(이 컨테이너에 키 암호화 설정 NMV_SECRET_BOX_KEY 가 없거나 그 키를 읽지 못함) 멈추지 않는다 —
+ * 그 연결을 키 없이 만들고 순위도 적용한 뒤 연결 이름마다 경고를 싣는다(종료 코드 0, 2026-11-02 사람 결정 「키 없어도 배포는 되게」). 키 없는 연결은 실행 쪽이
+ * 부르지 않고 다음 순위로 넘기고(connection_key_missing), 웹·워커가 같은 주소의 계약 키로 채우며(ai-connection-key-fill), 관리자가 다른 모델을 고를 수도 있다.
+ * 키를 옮겨 두려면 키 암호화 설정이 있는 웹·워커 컨테이너에서 돌린다.
  */
 import { applyAiTaskImport, previewAiTaskImport, readAiTasksAdminView, saveAiTaskRanks } from "@/lib/operations/admin-ai-tasks-repository";
 
@@ -30,7 +34,8 @@ export function parseAiTaskRanksArgs(argv: readonly string[]): Args {
     tasks: tasks ? tasks.split(",").map(task => task.trim()).filter(Boolean) : null, slot: value("slot"), ranks };
 }
 
-async function main(argv: readonly string[]): Promise<number> {
+/** 명령 하나를 돌려 종료 코드를 돌려준다(0 성공 — 경고만 있어도, 1 거절·실패, 2 사용법). */
+export async function runAiTaskRanks(argv: readonly string[]): Promise<number> {
   const args = parseAiTaskRanksArgs(argv);
   if (args.command === "status") {
     const view = await readAiTasksAdminView();
@@ -54,12 +59,15 @@ async function main(argv: readonly string[]): Promise<number> {
       for (const row of preview.plan?.slots ?? []) console.log(`칸 ${row.action} ${row.task}#${row.slot} ${row.ranks.map(rank => `${rank.rank}:${rank.connectionKey}·${rank.model}`).join(" ")}`);
       for (const warning of preview.plan?.warnings ?? []) console.log(`경고 ${warning}`);
     }
+    // 키를 옮기지 못하는 연결(keyWarnings)은 경고일 뿐이다 — 경고 맨 앞 줄에 보이고 종료 코드는 0(계획을 못 만들었을 때만 1)
     return preview.error ? 1 : 0;
   }
   if (args.command === "apply") {
     if (!args.hash || !args.operator) { console.error("usage: apply --hash=<64hex> --operator=<이름>"); return 2; }
     const result = await applyAiTaskImport(args.hash, args.operator);
     console.log(JSON.stringify(result));
+    // stdout 은 결과 JSON 한 줄 그대로 두고, 경고(키 없이 만든 연결 등)는 사람이 보도록 stderr 에 한 줄씩
+    if (result.ok) for (const warning of result.warnings) console.error(`경고 ${warning}`);
     return result.ok ? 0 : 1;
   }
   if (args.command === "resave") {
@@ -98,5 +106,5 @@ async function main(argv: readonly string[]): Promise<number> {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  main(process.argv.slice(2)).then(code => process.exit(code), error => { console.error(error instanceof Error ? error.message : String(error)); process.exit(1); });
+  runAiTaskRanks(process.argv.slice(2)).then(code => process.exit(code), error => { console.error(error instanceof Error ? error.message : String(error)); process.exit(1); });
 }

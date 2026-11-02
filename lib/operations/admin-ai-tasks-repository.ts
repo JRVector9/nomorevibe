@@ -16,18 +16,20 @@ import { ensureServingContracts, servingContractSnapshot } from "@/lib/llm/servi
 import { logger } from "@/lib/observability/logger";
 import { openSecret, sealSecret, secretBoxReady } from "@/lib/security/secret-box";
 import {
-  AI_CONNECTION_DELETE_AUDIT_ACTION, AI_CONNECTION_MODELS_AUDIT_ACTION, AI_CONNECTION_SAVE_AUDIT_ACTION, AI_TASK_AUDIT_ACTIONS, AI_TASK_MODELS_IMPORT_AUDIT_ACTION,
+  AI_CONNECTION_DELETE_AUDIT_ACTION, AI_CONNECTION_KEY_FILL_AUDIT_ACTION, AI_CONNECTION_MODELS_AUDIT_ACTION, AI_CONNECTION_SAVE_AUDIT_ACTION, AI_TASK_AUDIT_ACTIONS,
+  AI_TASK_MODELS_IMPORT_AUDIT_ACTION,
   AI_TASK_MODELS_SAVE_AUDIT_ACTION, aiConnectionBaseUrl, aiConnectionHost, aiConnectionKeyAad, aiImportPlanDigestInput, aiRanksReadiness, aiTaskRankNotices,
   aiTaskRankOptions, aiTaskSlotDigestInput, buildAiImportPlan, validateAiTaskRanks,
   type AiConnectionInput, type AiConnectionView, type AiCurrentSlot, type AiImportPlan, type AiPolicyRoute, type AiRankChoice, type AiRankOption,
-  type AiRankReadiness, type AiReadinessInput, type AiTaskRankRow, type AiTaskRanksInput,
+  type AiImportConnection, type AiRankReadiness, type AiReadinessInput, type AiTaskRankRow, type AiTaskRanksInput,
 } from "./admin-ai-tasks";
+import { contractKeyMatch, maybeFillConnectionKeys, readConnectionModels } from "./ai-connection-key-fill";
 import { buildAiCurrentSlots, readAiCurrentSources } from "./admin-ai-task-current";
 import { readCapacityDevicesControl } from "./admin-capacity-devices";
 import { engineRouteContract, ENGINE_CONNECT_ROUTES, probeEngineContract } from "./admin-engine-connect";
 import { adminAuditRow, adminLog, type AdminLogRow } from "./admin-log";
 import { DIRECT_PROBE_INTERVAL_MS, directProbeDue, directProbeGate } from "./admin-models-direct-probe";
-import { readbackServingEndpoint, saveCliServingContractTx, saveServingContractTx } from "./admin-serving-contracts";
+import { saveCliServingContractTx, saveServingContractTx } from "./admin-serving-contracts";
 import { DrWriterFencedError, writerSiteActive } from "./dr/epoch";
 
 /**
@@ -168,6 +170,8 @@ export type AiTaskAuditView = Readonly<{ id: number; at: string; actor: string; 
 export type AiTasksAdminView = Readonly<{
   connections: readonly AiConnectionView[]; rows: readonly AiTaskRankRow[]; slots: readonly AiTaskSlotView[];
   audit: readonly AiTaskAuditView[]; errors: Readonly<Record<string, string>>; secretBox: boolean; policyMode: string | null;
+  /** 키가 없고 같은 주소의 계약 키가 서로 달라 자동으로 채우지 않은 켜진 API 연결 id(화면 위 알림의 까닭) */
+  keyConflicts: readonly string[];
 }>;
 
 /** 1차·2차 한 칸의 「지금 실제로 쓰는 모델」 — 저장한 순위와 실행 쪽 묶기 결과(PR C1, lib/crawl/review-task-ranks.ts). */
@@ -219,6 +223,7 @@ function auditSummary(row: AdminLogRow): string {
       return `${after.length ? after.map(entry => `${entry.rank}순위 ${entry.model}`).join(", ") : "순위 비움"}${extra ? ` · 만듦: ${extra}` : ""}`;
     }
     case AI_TASK_MODELS_IMPORT_AUDIT_ACTION: return `가져오기 · 연결 ${String((detail.connections as unknown[] | undefined)?.length ?? 0)} · 칸 ${String((detail.slots as unknown[] | undefined)?.length ?? 0)}`;
+    case AI_CONNECTION_KEY_FILL_AUDIT_ACTION: return `키 자동 채움 · ${String(detail.label ?? "")} · 같은 주소 계약 ${String((detail.sources as unknown[] | undefined)?.length ?? 0)}개`;
     default: return "—";
   }
 }
@@ -263,10 +268,15 @@ export async function readAiTasksAdminView(): Promise<AiTasksAdminView> {
     try { return await work(); } catch (error) { errors[key] = error instanceof Error ? error.message.slice(0, 160) : "read_failed"; return fallback; }
   };
   await settle("review_ranks", () => ensureReviewTaskRanks(0), undefined);
+  // 키 없는 API 연결을 같은 주소의 계약 키로 채운다(프로세스마다 5분에 한 번 이하, 상자 키가 있을 때만 — 실패해도 화면은 그대로 뜬다)
+  await maybeFillConnectionKeys().catch(() => null);
   const [connections, rows, readiness, audit, runtime] = await Promise.all([settle("connections", () => listAiConnections(), [] as AiConnectionView[]),
     settle("rows", () => listAiTaskRows(), [] as AiTaskRankRow[]), settle("readiness", readReadinessInput, null),
     settle("audit", () => adminLog({ actions: [...AI_TASK_AUDIT_ACTIONS] }), [] as AdminLogRow[]), settle("runtime", readAiTaskRuntime, {} as Record<string, AiTaskRuntimeView>)]);
   if (readiness?.policyError) errors.policy = readiness.policyError;
+  const contractRows = servingContractSnapshot().rows;
+  const keyConflicts = connections.filter(row => row.enabled && row.kind === "api" && !row.hasKey && contractKeyMatch(row.baseUrl, contractRows).status === "conflict")
+    .map(row => row.id);
   const current = await settle("current", async () => depsForTest?.current ? depsForTest.current()
     : buildAiCurrentSlots(await readAiCurrentSources((await readCapacityDevicesControl().catch(() => null))?.policy ?? null)), [] as AiCurrentSlot[]);
   const slots = aiTaskSlots().map(({ task, slot }): AiTaskSlotView => {
@@ -284,7 +294,7 @@ export async function readAiTasksAdminView(): Promise<AiTasksAdminView> {
       readiness: Object.freeze(ready), live: isAiLiveTask(task.id), runtime: runtime[task.id] ?? null });
   });
   return Object.freeze({ connections: Object.freeze(connections), rows: Object.freeze(rows), slots: Object.freeze(slots), errors: Object.freeze(errors),
-    secretBox: secretBoxReady(), policyMode: readiness?.policy?.mode ?? null,
+    secretBox: secretBoxReady(), policyMode: readiness?.policy?.mode ?? null, keyConflicts: Object.freeze(keyConflicts),
     audit: Object.freeze(audit.slice(0, 30).map(row => Object.freeze({ id: row.id, at: new Date(row.createdAt).toISOString(), actor: row.actor, action: row.action,
       target: row.target, ok: row.ok, summary: auditSummary(row) }))) });
 }
@@ -293,11 +303,7 @@ export async function readAiTasksAdminView(): Promise<AiTasksAdminView> {
 
 type ModelsRead = { ok: true; models: AiConnectionModel[] } | { ok: false; reason: string };
 /** GET {base}/models — 5초, 리다이렉트 없음, 키는 Bearer 로만(readbackServingEndpoint 그대로). */
-async function readModels(baseUrl: string, key: string | null): Promise<ModelsRead> {
-  const result = await readbackServingEndpoint(`${baseUrl}/chat/completions`, key, request()).catch(() => ({ ok: false as const, reason: "unreachable" }));
-  return result.ok ? { ok: true, models: result.models.slice(0, 512).map(model => ({ id: model.id.slice(0, 200), maxModelLen: model.maxModelLen })) }
-    : { ok: false, reason: /^[a-z0-9_]{1,40}$/.test(result.reason) ? result.reason : "unreachable" };
-}
+const readModels = (baseUrl: string, key: string | null): Promise<ModelsRead> => readConnectionModels(baseUrl, key, request());
 
 const connectionAudit = (row: ConnectionRecord | null) => row && { label: row.label, kind: row.kind, baseUrl: row.baseUrl, hasKey: row.apiKeyCiphertext !== null,
   cliTool: row.cliTool, cliModels: [...row.cliModels], deviceId: row.deviceId, capacitySlots: row.capacitySlots, options: { ...row.options }, enabled: row.enabled,
@@ -523,7 +529,9 @@ export async function saveAiTaskRanks(input: AiTaskRanksInput, actor: string): P
 
 export type AiImportServerRead = Readonly<{ baseUrl: string; host: string | null; count: number | null; error: string | null }>;
 export type AiImportPreview = Readonly<{ hash: string | null; plan: AiImportPlan | null; servers: readonly AiImportServerRead[]; error: string | null;
-  connectionLabels: Readonly<Record<string, string>> }>;
+  connectionLabels: Readonly<Record<string, string>>;
+  /** 키를 옮기지 못해 키 없이 만들 새 연결의 경고(연결 이름마다 한 줄) — 적용을 막지 않는다. 계획의 경고 맨 앞에도 싣는다 */
+  keyWarnings: readonly string[] }>;
 type BuiltImport = { plan: AiImportPlan; served: Map<string, AiConnectionModel[]>; servers: AiImportServerRead[] };
 
 /**
@@ -561,14 +569,40 @@ async function buildImport(): Promise<BuiltImport> {
   return { plan, served, servers };
 }
 
+/** 새 연결이 옮길 키(평문, 메모리 안) — 계약 스냅숏의 저장 키 또는 env 이름. 키가 필요 없거나 읽지 못하면 null. */
+function importKey(entry: AiImportConnection, snapshot: ReturnType<typeof servingContractSnapshot>["rows"]): string | null {
+  return entry.keyFrom ? snapshot.find(row => row.routeId === entry.keyFrom!.routeId && row.model === entry.keyFrom!.model)?.apiKey ?? null
+    : entry.keyEnv ? process.env[entry.keyEnv]?.trim() || null : null;
+}
+type ImportKeyMissing = { labels: readonly string[]; reason: "secret_box_key_missing" | "key_unreadable" | null; warnings: readonly string[] };
+/**
+ * 키를 옮기지 못하는 새 연결 — 키가 필요한 새 API 연결(keyFrom·keyEnv)인데 이 프로세스에 상자 키가 없거나 그 키를 읽지 못한 것. 가져오기는 이 때문에 멈추지 않는다
+ * (2026-11-02 사람 결정 「키 없어도 배포는 되게」): 그 연결은 키 없이 만들고 순위도 그대로 적용한 뒤, 연결 이름마다 한국어 경고를 맨 앞에 싣는다.
+ * 키 없는 연결은 ②(connection_key_missing)가 부르지 않고 다음 순위로 넘기고, ①(ai-connection-key-fill)이 같은 주소의 계약 키로 나중에 채우며,
+ * 그사이 관리자가 다른 모델을 고를 수 있다. 문구는 계획(만듭니다)·적용(만들었습니다)만 다르다. 키 값·암호문은 싣지 않는다.
+ */
+function importKeyMissing(plan: AiImportPlan, snapshot: ReturnType<typeof servingContractSnapshot>["rows"], done: boolean): ImportKeyMissing {
+  const needing = plan.connections.filter(entry => entry.action === "create" && entry.kind === "api" && (!!entry.keyFrom || !!entry.keyEnv));
+  const boxReady = secretBoxReady();
+  const missing = boxReady ? needing.filter(entry => !importKey(entry, snapshot)) : needing;
+  const why = (entry: AiImportConnection) => !boxReady ? "이 프로세스에 키 암호화 설정(NMV_SECRET_BOX_KEY)이 없음"
+    : `${entry.keyFrom ? `계약 ${entry.keyFrom.routeId} · ${entry.keyFrom.model} 의 저장 키` : `환경변수 ${entry.keyEnv}`}를 이 프로세스에서 읽지 못함`;
+  return { labels: missing.map(entry => entry.label), reason: !missing.length ? null : boxReady ? "key_unreadable" : "secret_box_key_missing",
+    warnings: missing.map(entry => `${entry.label}: 키를 옮기지 못해 키 없이 ${done ? "만들었습니다" : "만듭니다"}(${why(entry)}) — 이 연결은 키가 채워질 때까지 `
+      + "부르지 않고 다음 순위로 넘깁니다. 웹·워커가 같은 주소의 계약 키로 자동으로 채우거나, 연결에 키를 넣거나, 다른 모델을 고르세요") };
+}
+
 export async function previewAiTaskImport(): Promise<AiImportPreview> {
   try {
     const { plan, servers } = await buildImport();
     const connections = await listAiConnections();
     const connectionLabels = Object.fromEntries(plan.connections.map(row => [row.key, row.label]));
     for (const connection of connections) connectionLabels[connection.kind === "cli" ? `cli:${connection.cliTool}` : `api:${connection.baseUrl}`] ??= connection.label;
-    return { hash: aiImportPlanHash(plan), plan, servers, error: null, connectionLabels };
-  } catch (error) { return { hash: null, plan: null, servers: [], error: issueOf(error), connectionLabels: {} }; }
+    const keyWarnings = importKeyMissing(plan, servingContractSnapshot().rows, false).warnings;
+    // hash 는 연결·순위의 쓰는 칸만 본다 — 경고 앞에 키 경고를 실어도 적용이 다시 만드는 계획의 hash 와 같다
+    return { hash: aiImportPlanHash(plan), plan: keyWarnings.length ? Object.freeze({ ...plan, warnings: Object.freeze([...keyWarnings, ...plan.warnings]) }) : plan,
+      servers, error: null, connectionLabels, keyWarnings: Object.freeze([...keyWarnings]) };
+  } catch (error) { return { hash: null, plan: null, servers: [], error: issueOf(error), connectionLabels: {}, keyWarnings: [] }; }
 }
 
 export type ApplyAiTaskImportResult = { ok: true; connections: number; slots: number; skipped: number; warnings: string[] } | { ok: false; issues: string[] };
@@ -576,6 +610,7 @@ export type ApplyAiTaskImportResult = { ok: true; connections: number; slots: nu
  * 가져오기 적용 — 계획을 다시 만들어 보여 준 hash 와 같을 때만, 한 TX 에서: 새 연결(목록·키 포함)·CLI 모델 이름 더하기·비어 있던 칸의 순위 행을 쓴다.
  * 계약·정책 route·장비는 만들지 않는다(오늘 설정을 그대로 옮기는 것이라 오늘 없는 것은 오늘도 없다 — 표의 「준비 상태」가 알린다).
  * 이미 순위가 있는 칸은 건너뛴다. 감사 한 줄(가져온 연결·칸 전부).
+ * 키가 필요한 새 연결의 키를 옮길 수 없으면(상자 키 없음·키를 못 읽음) 거절하지 않고 그 연결을 키 없이 만든다 — 결과 warnings 맨 앞에 연결 이름별 경고(importKeyMissing).
  */
 export async function applyAiTaskImport(expectedHash: string, actor: string): Promise<ApplyAiTaskImportResult> {
   if (!validActor(actor)) return { ok: false, issues: ["invalid_actor"] };
@@ -584,7 +619,10 @@ export async function applyAiTaskImport(expectedHash: string, actor: string): Pr
     const { plan, served } = await buildImport();
     if (aiImportPlanHash(plan) !== expectedHash) return { ok: false, issues: ["ai_task_import_plan_changed"] };
     const snapshot = servingContractSnapshot().rows;
-    const warnings = [...plan.warnings];
+    // 키를 옮길 수 없는 새 연결은 키 없이 만든다(가져오기·배포를 멈추지 않는다) — 경고를 맨 앞에, 로그에는 이유 코드와 개수만
+    const keyMissing = importKeyMissing(plan, snapshot, true);
+    const sealKeys = secretBoxReady();
+    const warnings = [...keyMissing.warnings, ...plan.warnings];
     const result = await onPrimary(() => db.transaction(async tx => {
       if (!await writerSiteActive(tx)) throw new DrWriterFencedError("site_fenced");
       const ids = new Map<string, string>();
@@ -600,18 +638,16 @@ export async function applyAiTaskImport(expectedHash: string, actor: string): Pr
           continue;
         }
         const id = randomUUID();
-        const plain = entry.keyFrom ? snapshot.find(row => row.routeId === entry.keyFrom!.routeId && row.model === entry.keyFrom!.model)?.apiKey ?? null
-          : entry.keyEnv ? process.env[entry.keyEnv]?.trim() || null : null;
-        const keyWanted = !!entry.keyFrom || !!entry.keyEnv;
-        if (keyWanted && (!plain || !secretBoxReady())) warnings.push(`${entry.label}: 키를 옮기지 못했습니다(${!plain ? "키를 읽지 못함" : "암호화 설정 없음"}) — 연결에서 키를 넣으세요.`);
+        // 상자 키가 있고 키를 읽었을 때만 옮겨 잠근다 — 아니면 키 없이 만든다(위 keyMissing 경고)
+        const plain = entry.kind === "api" && sealKeys ? importKey(entry, snapshot) : null;
         const models = entry.baseUrl ? served.get(entry.baseUrl) ?? null : null;
         await tx.insert(aiConnections).values({ id, label: entry.label, kind: entry.kind, baseUrl: entry.baseUrl, cliTool: entry.cliTool, cliModels: [...entry.cliModels],
-          apiKeyCiphertext: plain && secretBoxReady() ? sealSecret(plain, aiConnectionKeyAad(id)) : null, models,
+          apiKeyCiphertext: plain ? sealSecret(plain, aiConnectionKeyAad(id)) : null, models,
           modelsReadAt: models ? new Date(now()) : null, modelsError: entry.kind === "api" && !models ? "unreachable" : null, deviceId: entry.deviceId,
           capacitySlots: entry.capacitySlots, options: {}, enabled: true, note: "지금 설정 가져오기로 만듦", updatedBy: actor });
         ids.set(entry.key, id);
         written.push({ key: entry.key, action: "create", id, label: entry.label, kind: entry.kind, baseUrl: entry.baseUrl, cliTool: entry.cliTool,
-          cliModels: [...entry.cliModels], deviceId: entry.deviceId, capacitySlots: entry.capacitySlots, keyMoved: !!plain && secretBoxReady(), models: models?.length ?? null });
+          cliModels: [...entry.cliModels], deviceId: entry.deviceId, capacitySlots: entry.capacitySlots, keyMoved: !!plain, models: models?.length ?? null });
       }
       const slots: Record<string, unknown>[] = [];
       let skipped = 0;
@@ -628,6 +664,7 @@ export async function applyAiTaskImport(expectedHash: string, actor: string): Pr
         detail: { hash: expectedHash, connections: written, slots, skipped, warnings: warnings.length } }));
       return { connections: written.length, slots: slots.length, skipped };
     }));
+    if (keyMissing.reason) logger.warn("ai_tasks.import_key_missing", { actor, reason: keyMissing.reason, connections: keyMissing.labels.length });
     logger.info("ai_tasks.import_applied", { actor, ...result });
     return { ok: true, ...result, warnings };
   } catch (error) { return { ok: false, issues: [issueOf(error)] }; }

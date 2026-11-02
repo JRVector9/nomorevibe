@@ -33,8 +33,9 @@ const JOBS: readonly (readonly [AiTextTaskId, string, string, Handler])[] = [
   ["product-tagline-ko", "gpt-oss-120b", "tagline_ko.skipped", writeKoreanTaglines],
   ["product-translate", "mlx-community--gemma-4-26b-a4b-it-4bit", "product_translation.deferred", translateDemandedProductFields],
 ];
+// 모든 순위가 키 없는 연결뿐이면 cause 가 붙는다 — 진행 감시가 설정의 일로 보아 배포 관문을 막지 않는다(2026-11-02)
 const unusable = (route: AiTextTaskId, model: string, code: string) => ({ done: true, degraded: { code: "all_ranks_unusable",
-  detail: `${aiTask(route)!.label}: 1순위 test-engine · ${model}: ${textRankUnusableText(code)}` } });
+  detail: `${aiTask(route)!.label}: 1순위 test-engine · ${model}: ${textRankUnusableText(code)}`, ...(code === "connection_key_missing" ? { cause: code } : {}) } });
 
 it.each(JOBS)("%s — 순위가 없으면 게이트웨이 키·계약이 있어도 부르지 않고 no_task_models 로 넘긴다", async (route, model, event, handler) => {
   vi.stubEnv("ABCLLM_API_KEY", "old-gateway-key");
@@ -65,10 +66,18 @@ it.each(JOBS)("%s — 계약의 인증이 게이트웨이 키거나 연결 키�
   expect(await handler(context())).toEqual(unusable(route, model, "stored_key_unreadable"));
 });
 
+it.each(JOBS)("%s — 키가 필요한 서버(계약 auth stored)에 키 없는 연결이면 키 없이 부르지 않고 connection_key_missing 으로 넘긴다", async (route, model, _event, handler) => {
+  vi.stubEnv("ABCLLM_API_KEY", "old-gateway-key");
+  pinTextRanks({ [route]: model });
+  setServingContractSnapshotForTest([textContract(route, model, { auth: "stored", apiKey: "contract-key" })]);
+  expect(await handler(context())).toEqual(unusable(route, model, "connection_key_missing"));
+});
+
 it.each(JOBS)("%s — 직접 연결 계약이 있으면 키 없이 문을 지난다(계약 행의 저장 키가 열리지 않아도 연결의 키를 보낸다)", async (route, model, event, handler) => {
   vi.stubEnv("ABCLLM_API_KEY", undefined);
-  pinTextRanks({ [route]: model });
-  for (const contract of [textContract(route, model), textContract(route, model, { auth: "stored", apiKey: null })]) {
+  // auth none 계약은 키 없는 연결로, auth stored 계약(키가 필요한 서버)은 키 있는 연결로 — 계약 행의 키가 열리지 않아도 연결의 키를 보낸다
+  for (const [contract, apiKey] of [[textContract(route, model), null], [textContract(route, model, { auth: "stored", apiKey: null }), "connection-key"]] as const) {
+    pinTextRanks([textRankRow(route, model, { apiKey })]);
     setServingContractSnapshotForTest([contract]);
     const ctx = context();
     // 다음 단계에서 멈춘다: lease 가 없는 잡은 lease 오류, 소개 짓기는 수집이 멈춰 있어 일 없이 끝난다 — 어느 쪽도 계약 이유로 접지 않는다.

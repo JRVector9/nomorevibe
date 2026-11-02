@@ -79,6 +79,7 @@ export const ACTION_LABELS: Record<string, string> = {
   "ai-connection-delete": "AI 연결 지우기",
   "ai-task-models-save": "작업 ↔ 모델 순위 저장",
   "ai-task-models-import": "작업 ↔ 모델 가져오기",
+  "ai-connection-key-fill": "AI 연결 키 자동 채움",
   "export": "목록 내보내기",
   "operator-name": "내 이름 적기",
   // 검수·재요청 화면(피드백 검수·써봤어요 검수·공개 번역)과 SNS 화제 — 전에는 이름이 없어 코드 그대로 어느 갈래에도 들지 않았다
@@ -159,7 +160,7 @@ export const ACTION_GROUPS = {
     "github-collector-token-save", "github-collector-enable", "github-collector-disable",
     "github-collector-app-save", "github-collector-app-enable", "github-collector-app-disable",
     "ai-connect", "ai-input", "ai-cancel", "ai-probe", "ai-test", "ai-apply",
-    "ai-connection-save", "ai-connection-models-read", "ai-connection-delete", "ai-task-models-save", "ai-task-models-import"] },
+    "ai-connection-save", "ai-connection-models-read", "ai-connection-delete", "ai-task-models-save", "ai-task-models-import", "ai-connection-key-fill"] },
   content: { label: "제품·소식·작업", actions: ["claim-invite", "intro-keep", "intro-edit", "intro-request-edit", "intro-request-fixed", "intro-request-dismissed", "product-refresh", "update-hide", "update-restore", "news-approve", "news-hide", "request-job", "job-pause", "job-resume",
     "retry-exhausted-transport-once", "resume-after-github-redirect-fix", "export", "operator-name",
     "normalize-product-names", "revert-product-names",

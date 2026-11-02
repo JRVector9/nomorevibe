@@ -85,7 +85,7 @@ CHECK: 종류별 칸(API 는 주소, CLI 는 도구·모델 이름 1~32개이고
 - 관리 화면 `/admin/models/tasks`(모델 운영 현황 상단 띠의 「작업 ↔ 모델 →」).
   - **AI 연결**: API(주소 + 선택 키 — 저장할 때 `GET /models` 를 읽어 목록을 둔다, 못 읽으면 이유를 한국어로) 또는 CLI(도구 + 모델 이름).
     「다시 읽기」는 엔진 자동 확인(#791)과 같은 1분 간격이다. 쓰는 순위가 없을 때만 지울 수 있다.
-  - **작업 ↔ 모델**: 줄마다 1·2·3순위 드롭다운(「연결 이름 · 모델」 + 「없음」, 기존 `RankSelects` 를 그대로 쓴다)·「지금 실제로 쓰는 모델」·준비 상태.
+  - **작업 ↔ 모델**: 줄마다 1·2·3순위 드롭다운(「없음」 + 서버마다 묶은 모델 이름, 기존 `RankSelects` 를 쓴다)과 저장. 「지금 실제로 쓰는 모델」·준비 상태는 줄의 「자세히」(아래 「화면」).
   - **지금 설정 가져오기**: 계획 보기(쓰지 않는다) → 확인 「가져오기」 + 적용.
 - 모든 저장이 `operations_audit` 에 한 줄을 남긴다: `ai-connection-save`·`ai-connection-models-read`·`ai-connection-delete`·`ai-task-models-save`·`ai-task-models-import`.
 
@@ -186,7 +186,13 @@ Qwen 직접 경로는 PR C)·검색어 번역(`search-query-translate`, 웹 요�
 
 ### 화면
 
-- `/admin/models/tasks`: text 일곱 줄의 오른쪽에 「실행(마지막 틱 · 시각): N순위 M건」·「아래 순위를 쓴 까닭 — 1순위: 용량 정책에 이 경로·모델이 없음 ×3」·
+- `/admin/models/tasks` 화면 단순화(2026-11-02 소유자 지시 「작업 한 줄마다 1·2·3순위 드롭다운만, 드롭다운에는 각 서버가 서비스하는 모델 목록만」):
+  - 맨 위는 작업 한 줄마다 **1·2·3순위 드롭다운 + 「저장」 + 한 줄 상태**(준비됨·바꿈 — 저장 전·순위 없음·쓸 수 없는 순위·실행 멈춤·저장한 모델이 목록에 없음·옛 설정으로 돎)뿐이다.
+  - 드롭다운은 서버(AI 연결)마다 묶고(`<optgroup>` = 연결 이름) 그 안에 그 서버가 서비스하는 모델 이름만 보인다(API = 마지막 `GET /models`, CLI = 적은 모델 이름).
+    목록에 없는 저장 값은 지우지 않고 그 서버 묶음에 「(저장된 값 · 지금 목록에 없음)」으로 남는다. 그 칸에서 고를 수 없는 것(벡터 2·3순위의 다른 모델, 2차 투표자의 다른 칸 모델)은 흐리게 둔다 — 저장 검증은 그대로.
+  - 모델 목록을 못 읽은 켜진 API 서버(키 없음·HTTP 401 등)는 위에 이름과 까닭을 띄우고, 이름을 누르면 그 연결 고치기로 간다.
+  - 「지금 실제로 쓰는 모델」·준비 상태·실행 사정은 줄마다 「자세히」에, 「AI 연결 관리」·「지금 설정 가져오기」·「최근 기록」은 아래에 접는다(고치기·계획 보기·연결 0개면 펼친다).
+- `/admin/models/tasks` 「자세히」: 「실행(마지막 틱 · 시각): N순위 M건」·「아래 순위를 쓴 까닭 — 1순위: 용량 정책에 이 경로·모델이 없음 ×3」·
   그 틱의 degraded(제 일 못 함)를 보인다. 잡 여섯은 `job:<잡>` 관측의 마지막 `ai_task.ranks`, 검색어 번역은 이 웹 프로세스의 마지막 요청(다른 웹 복제본과 다를 수 있다).
   text 일곱 줄의 「지금 실제로 쓰는 모델」은 저장한 순위 그대로다(쓸 수 없는 순위에는 까닭).
 - 상태 화면 진단 탭의 「작업 ↔ 모델 · text 작업 순위」 칸(`TextTaskRanksStatus`): 일곱 작업마다 저장한 순위·쓸 수 없는 순위의 까닭·마지막 틱에서 몇 순위가 일했고 아래 순위를 쓴 까닭.
@@ -295,6 +301,70 @@ Grok 로그인 유지(`grok-session-check`). migration 없음 — 계약 행은 
   (`pipeline-capacity-repository.ts`)은 순위를 견준다(1차 순위가 둘 이상이면 `unsupported_capacity_first_review_pool`).
 - 로그인: Claude 는 CLI 가 스스로 읽는 env `CLAUDE_CODE_OAUTH_TOKEN`(compose reviewer)·자기 로그인, Grok 은 `GROK_AUTH_PATH`(운영 `/var/lib/nomorevibe-grok/auth.json`,
   기본 `~/.grok/auth.json`)를 그대로 쓴다 — 모델·계약·실행 파일 선택이 아니라 그 CLI 의 로그인 자리라 PR E 가 정한다(지금 지우면 운영 Grok 이 auth 로 실패한다).
+
+## 키 없는 연결(2026-11-02 사고 뒤)
+
+11-02 10:46Z 「지금 설정 가져오기」를 상자 키(`NMV_SECRET_BOX_KEY`)가 없는 유지보수 컨테이너에서 돌려 `m3-mlx`·`m3-mlx (2)` 연결이 키 없이 만들어졌고,
+실행 쪽이 그 연결로 키 없이 불러 M3 가 401 → 결과 미확정 3건, M3 text 잡 셋(reason-translate·product-tagline-ko·product-search-profile)이 멈췄다. migration 없이 세 가지를 고쳤고,
+키 없음이 배포를 막지 않게 했다(아래 「배포 관문」).
+
+### ① 같은 주소 계약 키로 연결 키 채우기(`lib/operations/ai-connection-key-fill.ts`)
+
+- 대상: 켜진 API 연결 중 키 암호문이 없는 것. 출처: 켜진 모델 계약 중 auth stored 이고 endpoint 의 `origin/v1` = 연결 주소이고 이 프로세스에서 키가 열리는 것.
+  출처가 하나 이상이고 열린 키가 모두 같을 때만 채운다. 서로 다르면 채우지 않고 화면 위 「모델 목록을 못 읽은 서버」 알림에 「같은 주소의 계약 키가 서로 다름」.
+  출처가 없으면(키 없이 도는 서버 — auth none 계약뿐) 아무것도 하지 않는다.
+- 쓰기: 상자 키가 있을 때만, `onPrimary` + `writerSiteActive` 울타리 안에서 `id·키 없음·판` 조건부 갱신(판 + 1). 여러 프로세스가 함께 돌아도 한 번만 써진다.
+  키로 먼저 `GET /models` 를 읽어 같은 갱신에 목록을 넣는다(드롭다운에 그 서버 모델이 나온다). 써진 TX 에만 감사 `ai-connection-key-fill` 한 줄
+  (actor `system:ai-connection-key-fill`, detail = 연결 id·이름·주소·출처 `[{routeId, model}]` — 키·암호문·키 해시 없음).
+- 언제: 프로세스마다 5분에 한 번 이하(`maybeFillConnectionKeys`). ⓐ 웹 관리 화면 읽기(`readAiTasksAdminView`), ⓑ 순위 스냅숏(`ai-task-models-snapshot.ts`)을 다시 읽었는데
+  키 없는 켜진 API 연결이 순위에 있는 프로세스(text·심사 잡을 도는 워커, 검색어 번역 웹). 배포 뒤 사람이 화면을 열지 않아도 그 순위를 읽는 워커가 스스로 고치고,
+  채웠으면 다음 읽기에서 바로 스냅숏을 다시 읽어 키를 쓴다. 상자 키가 없는 프로세스(Oracle 등)는 DB 를 읽지도 않는다. 키 없는 연결이 순위에 없으면 워커는 아무것도 하지 않는다.
+- 실행 경로(호출 순간)에서 계약 키를 대신 보내지 않는다 — 키가 두 곳에 남고 화면과 동작이 어긋난다.
+
+### ② 키 없는 연결 미리 막기
+
+- text(`bindTextTaskRank`)·심사(`bindReviewTaskRank`): 고른 계약 행이 auth stored(키가 필요한 서버)인데 연결 키가 없으면(열지 못한 것이 아님) `connection_key_missing`
+  — 그 순위를 쉬고 다음 순위로 넘긴다(모두 그러면 `all_ranks_unusable`). 문구: 「연결에 키가 없음 — 이 서버의 계약은 키를 씀…」(`TEXT_RANK_UNUSABLE_TEXT`).
+- 보내는 길(`textRouteAccess`)의 순위 범위 분기와 심사(`reviewRankConnection`) 분기도 같은 규칙으로 `block: "connection_key_missing"`(`TextRouteBlock`·`TEXT_ROUTE_BLOCK_DETAIL`).
+  예전에는 심사 분기가 키 없는 연결로 bearer null 을 보냈다.
+- 키 없이 도는 서버(계약 auth none, local-direct — gpu3090 qwen·M1 mlx_lm.server)는 예전 그대로 Authorization 없이 부른다.
+
+### ③ 가져오기 경고 — 키 없이 만들고 계속한다(2026-11-02 사람 결정 「키 없어도 배포는 되게, 모델은 관리자가 지정」)
+
+처음에는 거절(fail closed)했으나, 키가 없다는 까닭으로 가져오기·배포가 멈추면 안 된다는 결정으로 경고로 바꿨다.
+키 없는 연결은 ②가 부르지 않고 다음 순위로 넘기고, ①이 같은 주소의 계약 키로 나중에 채우며, 그사이 관리자가 드롭다운에서 다른 모델을 고르면 된다.
+
+- `applyAiTaskImport`: 키가 필요한 새 연결(keyFrom·keyEnv)의 키를 옮길 수 없어도(상자 키 없음·키를 못 읽음) 거절하지 않는다. 그 연결은 키 없이 만들고 순위도 그대로 적용한다.
+  결과 `warnings` 맨 앞에 연결 이름마다 한국어 경고 — 「m3-mlx: 키를 옮기지 못해 키 없이 만들었습니다(까닭) — 이 연결은 키가 채워질 때까지 부르지 않고 다음 순위로
+  넘깁니다. 웹·워커가 같은 주소의 계약 키로 자동으로 채우거나, 연결에 키를 넣거나, 다른 모델을 고르세요」. 로그 `ai_tasks.import_key_missing` 에는 이유 코드
+  (`secret_box_key_missing`·`key_unreadable`)와 개수만 남긴다(키 값·암호문 없음). 감사 행의 연결마다 `keyMoved`.
+- 상자 키가 있고 키를 읽으면 예전처럼 키를 옮겨 잠근다.
+- `previewAiTaskImport` 는 같은 경고(「…키 없이 만듭니다…」)를 `keyWarnings` 와 계획 경고 맨 앞에 싣는다. hash 는 연결·순위의 쓰는 칸만 본다(경고는 hash 밖).
+  화면 「지금 설정 가져오기」는 계획의 「경고 —」 줄과 적용 결과의 「알림 —」 줄로 보인다(적용 단추는 막지 않는다).
+- `scripts/ops/ai-task-ranks.ts`: `preview` 는 키 경고만 있으면 종료 코드 0(계획을 못 만들 때만 1), `apply` 는 결과 JSON 을 stdout 한 줄로, 경고를 stderr 「경고 …」 줄로
+  찍고 성공이면 0. 키를 옮겨 두려면 키 암호화 설정이 있는 웹·워커 컨테이너에서 돌린다.
+
+### 배포 관문 — 키 없음은 설정의 일이다
+
+모든 순위가 키 없는 연결뿐이라 일을 못 하는 작업이 배포 도구를 막지 않게 했다(재시작도 하지 않는다, 관리 화면에는 계속 보인다).
+
+- 잡 degraded: `all_ranks_unusable` 의 모든 순위 까닭이 `connection_key_missing` 뿐이면 `cause: "connection_key_missing"` 을 싣는다(text `TextTaskRanks.degraded`,
+  1차·2차 `firstReviewRanksDegraded`·`secondReviewRanksDegraded`). 다른 까닭이 하나라도 섞이면 cause 가 없다. job 관측(`degradedObservation`)이 그대로 싣는다.
+- 진행 감시(`worker-progress-query.ts` `applyKeyMissingHold`): 그 잡의 신선한(3분 안) 관측에 cause 가 있으면 그 단계의 `no_progress`(그리고 5분 안 새 실패·잡 오류가 없는
+  `upstream_stalled` — 키 없이 부른 401 이 남긴 옛 실패만 있는 대기)를 `held` + `backoff`(경보·재시작 없음) + `skipBlock: key_missing` 으로 바꾼다.
+  그래서 worker progress `overall` 이 그 단계 때문에 alarm 이 되지 않고, 배포 도구의 사전·사후 관문(`monitor_gate` → `gate_verdict` 의 `progress=ok`)이 막히지 않는다.
+  예전에는 text 단계가 `no_progress` 경보로 남아 overall=alarm → `crawler_monitor_gate_timeout:…progress=alarm` 이었다(`applyAllSkippedBlock` 은 재시작만 끄고,
+  text 단계는 처음부터 재시작 대상이 아니라 아무것도 바꾸지 않았다). worker_missing·consumer_missing·cause 없는 all_ranks_unusable·오래된 관측은 그대로 경보다.
+- OPEN(`pipeline-control capacity mode --to=open`, ops-runner 포함): text 경로의 모든 순위가 키 없는 연결이면 묶인 이름이 없어 그 경로가 「모름」(unknown)으로
+  `deferred_routes` 에 세어져 OPEN 이 거절됐다. 이제 `currentModelEnv().keyMissing`(`rankedTextRoutes`)이 그 경로를 알려 `key_missing` 상태가 되고 미룸으로 세지 않는다
+  (잡이 그 경로를 부르지 않는다). 상태 화면 「모델 경로 계약」에 「연결 키 없음 — 키를 채우거나 모델을 고르세요(key_missing)」로 보인다.
+- text 워커 자체 재시작 판정(`text-progress.ts`)은 원래 「부를 수 있는 경로가 없음」을 정체로 보지 않는다 — 그대로.
+
+### 배포 뒤 확인
+
+- 키 없이도 배포할 수 있다 — 배포 뒤 `m3-mlx` 키가 비어 있어도 그 순위는 건너뛰고 다음 순위로 돈다(다음 순위가 없으면 그 작업은 「제 일 못 함」으로 보이고 관문은 막지 않는다).
+- `m3-mlx`·`m3-mlx (2)` 연결 hasKey·모델 목록(화면 위 알림이 사라짐, 최근 기록 「키 자동 채움」), 멈춘 잡 셋 재개(상태 화면 「제 일 못 함」이 사라짐).
+- 결과 미확정 3건은 이 변경이 회수하지 않는다 — 정식 회수 CLI 로 처리한다.
 
 ## 운영 적용 순서
 

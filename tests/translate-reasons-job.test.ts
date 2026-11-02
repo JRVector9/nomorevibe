@@ -25,8 +25,9 @@ const SECOND = "[m1] gemma-second";
 const SECOND_CONNECTION = "0b0c0d0e-0000-4000-8000-0000000000bb", SECOND_BASE = "http://second.test:8000/v1";
 /** The admin engine contract for the rank's model — the only thing that opens the route since the gateway was removed (2026-10-30). */
 const direct = (change: Partial<StoredServingContract> = {}): StoredServingContract => ({ ...textContract("reason-translate", MODEL), ...change });
-const unusable = (code: string, model = MODEL) =>
-  ({ done: true, degraded: { code: "all_ranks_unusable", detail: `심사 사유 번역: 1순위 test-engine · ${model}: ${textRankUnusableText(code)}` } });
+// 모든 순위가 키 없는 연결뿐이면 cause 가 붙는다 — 진행 감시가 설정의 일로 보아 배포 관문을 막지 않는다(2026-11-02)
+const unusable = (code: string, model = MODEL) => ({ done: true, degraded: { code: "all_ranks_unusable",
+  detail: `심사 사유 번역: 1순위 test-engine · ${model}: ${textRankUnusableText(code)}`, ...(code === "connection_key_missing" ? { cause: code } : {}) } });
 
 it("capacity admission preserves the pending reason and consumes no attempt or write", async () => {
   // PR B: 계약이 닫힌 것(provider_contract_unavailable)은 이 모델만의 미룸이다 — 순위가 하나뿐이면 그 순위를 쉬게 하고, 한 건도 못 했으니 까닭을 남긴다
@@ -77,6 +78,8 @@ it.each([
   ["gateway_auth", [direct({ auth: "gateway" })], undefined],
   // 보내는 키는 연결의 키다(PR B) — 연결에 저장한 키가 열리지 않으면 그 순위를 쓸 수 없다
   ["stored_key_unreadable", [direct()], { keyUnreadable: true }],
+  // 키가 필요한 서버(계약 auth stored)에 키 없는 연결 — 키 없이 부르지 않는다(2026-11-02 키 없는 연결 사고)
+  ["connection_key_missing", [direct({ auth: "stored", apiKey: "engine-key" })], undefined],
 ] as const)("순위의 직접 연결 계약으로 열리지 않으면(%s) 아무것도 하지 않는다 — ABCLLM_API_KEY 는 읽지 않는다", async (code, rows, rank) => {
   if (rank) pinTextRanks([textRankRow("reason-translate", MODEL, rank)]);
   setServingContractSnapshotForTest(rows);
@@ -105,6 +108,8 @@ it.each([
   // 계약 행의 저장 키가 열리지 않아도 상관없다 — 보내는 키는 연결의 키다(PR B)
   ["열리지 않는 계약 행 키", { auth: "stored" as const, apiKey: null }],
 ])("엔진 직접 연결 계약(%s)이 있으면 ABCLLM_API_KEY 없이도 옮긴다", async (_name, change) => {
+  // 키가 필요한 서버(auth stored)다 — 연결에 키가 있어야 한다(보내는 키는 연결의 키)
+  pinTextRanks([textRankRow("reason-translate", MODEL, { apiKey: "connection-key" })]);
   setServingContractSnapshotForTest([direct(change)]);
   vi.stubEnv("ABCLLM_API_KEY", undefined);
   mocks.untried.mockResolvedValueOnce([item("a")]).mockResolvedValue([]);

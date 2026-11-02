@@ -163,6 +163,15 @@ export const isAiLiveTask = (id: string): boolean => isAiTextTask(id) || isAiRev
  * 재시작으로 고쳐지지 않는 설정의 일이라 진행 감시가 재시작하지 않는다(lib/operations/worker-progress-query.ts applyAllSkippedBlock).
  */
 export const AI_TASK_RANK_DEGRADED_CODES = Object.freeze(["no_task_models", "task_models_unreadable", "all_ranks_unusable"] as const);
+/**
+ * all_ranks_unusable 의 모든 순위가 「연결에 키가 없음」(connection_key_missing)뿐일 때 degraded 에 싣는 cause. 키 없는 연결은 부르지 않고(②)
+ * 같은 주소의 계약 키로 채워지거나(①) 관리자가 다른 모델을 고르면 풀리는 설정의 일이다(2026-11-02 사람 결정 「키 없어도 배포는 되게」) —
+ * 진행 감시는 그 단계를 경보·재시작하지 않고(applyKeyMissingHold), OPEN 은 그 경로를 미룸으로 세지 않는다(key_missing). 관리 화면에는 그대로 보인다.
+ */
+export const AI_TASK_KEY_MISSING_CAUSE = "connection_key_missing" as const;
+/** 순위 까닭 목록이 비어 있지 않고 모두 connection_key_missing 인가(그때만 cause 를 싣는다 — 다른 까닭이 하나라도 섞이면 예전처럼 경보다). */
+export const onlyKeyMissing = (reasons: readonly (string | null | undefined)[]): boolean =>
+  reasons.length > 0 && reasons.every(reason => reason === AI_TASK_KEY_MISSING_CAUSE);
 
 export const AI_TASK_RANK_MAX = 3;
 export const AI_TASK_SLOT_MAX = 8;
