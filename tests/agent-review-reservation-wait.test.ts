@@ -59,8 +59,8 @@ vi.mock('@/lib/crawl/agent-review-repository', () => ({
     options?.readyOnly ? [] : ((await mocks.list()) as CrawlCandidate[]).slice(0, limit),
   listFirstReviewPoolCandidates: async (_settings: unknown, limit: number) => ((await mocks.list()) as CrawlCandidate[]).slice(0, limit)
     .map(candidate => ({ candidate, position: { id: candidate.id, reviewed: false, updatedAt: '2026-10-29 00:00:00.000001', ceiling: 1000 } })),
-  chooseFirstReviewForCandidate: async ({ candidate, settings }: { candidate: CrawlCandidate; settings: CrawlSettings }) =>
-    selectFirstReviewer(firstReviewers(settings), candidate.id),
+  chooseFirstReviewForCandidate: async ({ candidate, settings }: { candidate: CrawlCandidate; settings: CrawlSettings }, _executor?: unknown,
+    blocked: ReadonlySet<string> = new Set()) => selectFirstReviewer(firstReviewers(settings), candidate.id, [], [], { blocked }),
   loadReviewInput: async (candidate: CrawlCandidate, doc: CrawlDocument, settings: CrawlSettings) =>
     createReviewInput(candidate, doc, settings, { scan: null, observations: [] }),
   claimAgentReview: async () => { throw Reflect.construct(ModelCapacityDeferredError, ['reservation_required']); },
@@ -133,16 +133,16 @@ beforeEach(() => {
 });
 afterAll(() => vi.unstubAllEnvs());
 
-it('keeps dispatching several candidates per model in one tick while lanes wait for the one physical slot', async () => {
+// 2026-11-01 순위 대체: 설정 풀은 순위다 — 1순위가 쓸 수 있으면(줄에 서 기다릴 수 있으면) 모두 1순위로 간다. 2순위는 1순위를 쓸 수 없을 때만.
+it('keeps dispatching several candidates to the rank-1 model in one tick while lanes wait for its one physical slot', async () => {
   mocks.list.mockResolvedValue(candidates(8));
   const ctx = context();
   const result = await reviewCrawlCandidates(ctx);
   // 같은 모델의 둘째 후보가 pause 대신 기다려, 여덟 후보가 한 틱에 모두 호출된다(예전: 모델당 1건 뒤 deferred)
   expect(result).not.toHaveProperty('deferred');
-  expect(mocks.gatewayCalls.filter(model => model === 'model-a')).toHaveLength(4);
-  expect(mocks.gatewayCalls.filter(model => model === 'model-b')).toHaveLength(4);
+  expect(mocks.gatewayCalls).toEqual(Array(8).fill('model-a'));
   // 물리 한도(모델당 1)는 그대로다
-  expect(mocks.gatewayPeak.get('model-a')).toBe(1); expect(mocks.gatewayPeak.get('model-b')).toBe(1);
+  expect(mocks.gatewayPeak.get('model-a')).toBe(1);
   expect(mocks.record).toHaveBeenCalledTimes(8);
   expect(mocks.cancel).not.toHaveBeenCalled(); expect(mocks.unknown).not.toHaveBeenCalled();
   expect(ledger.rows.size).toBe(0);
@@ -150,7 +150,7 @@ it('keeps dispatching several candidates per model in one tick while lanes wait 
   expect(summary).toMatchObject({ admitted: 8, calls: 8, succeeded: 8, pausedModels: 0, modelDeferred: false, waitCapped: 0, waitWindowClosed: 0 });
   expect(summary.waits).toBeGreaterThan(0);
   expect(summary.waitGranted).toBe(summary.waits);
-  expect(summary.models).toMatchObject({ 'model-a': { calls: 4 }, 'model-b': { calls: 4 } });
+  expect(summary.models).toMatchObject({ 'model-a': { calls: 8 } });
 }, 20_000);
 
 it('takes a slot released by another route mid-wait instead of pausing the model for the tick', async () => {
@@ -165,37 +165,37 @@ it('takes a slot released by another route mid-wait instead of pausing the model
   expect(tickSummary(ctx.log)).toMatchObject({ calls: 2, waits: 1, waitGranted: 1, modelDeferred: false });
 }, 20_000);
 
-it('does not wait on a model whose physical slots are all unknown-occupied; the other model keeps working', async () => {
+it('does not wait on a rank-1 model whose physical slots are all unknown-occupied; rank 2 takes every candidate', async () => {
   mocks.blocked.mockResolvedValue(new Set([firstReviewerKey(primary)]));
   mocks.list.mockResolvedValue(candidates(4));
   foreignHolder('model-a');
   const started = Date.now();
   const ctx = context();
-  // 다른 모델이 심사를 남겼으니 완료 틱이다(성공 시각이 움직인다) — 남은 일은 곧바로 다시 요청한다(2026-10-31)
-  expect(await reviewCrawlCandidates(ctx)).toEqual({ done: false, continuation: 'ready' });
-  expect(Date.now() - started).toBeLessThan(2_000);
-  expect(mocks.gatewayCalls).toEqual(['model-b', 'model-b']);
+  // 2순위가 심사를 남겼으니 완료 틱이다(성공 시각이 움직인다)
+  expect(await reviewCrawlCandidates(ctx)).not.toHaveProperty('deferred');
+  expect(Date.now() - started).toBeLessThan(5_000);
+  expect(mocks.gatewayCalls).toEqual(Array(4).fill('model-b'));
   const summary = tickSummary(ctx.log);
-  expect(summary).toMatchObject({ pausedModels: 1, waitCapped: 0 });
+  expect(summary).toMatchObject({ pausedModels: 0, waitCapped: 0 });
   expect(summary.models['model-a']?.waits ?? 0).toBe(0);
-});
+}, 20_000);
 
-it('leaves a still-queued candidate for the next tick without pausing its model when the tick window closes', async () => {
+it('leaves still-queued rank-1 candidates for the next tick without pausing the model when the tick window closes', async () => {
   mocks.settings = { ...mocks.settings!, reviewConcurrency: 2 };
   mocks.list.mockResolvedValue(candidates(2));
   const release = foreignHolder('model-a');
   // 시작 가능 창 약 0.8초: 60초 호출 제한 + 2초 기록 여유 + 3초 claim 여유 뒤
   const ctx = context(Date.now() + 65_800);
   try {
-    const result = await reviewCrawlCandidates(ctx);
-    // 다른 모델의 진전이 있으므로 runner 가 곧바로 다시 요청하게 한다(전용 줄 1초 refill)
-    expect(result).toEqual({ done: false, continuation: 'ready' });
+    // 줄에 선 채 끝났고 진전이 없다 — 요청을 남겨 둔다(예약이 TTL 로 만료되기 전에 다음 틱이 다시 본다)
+    expect(await reviewCrawlCandidates(ctx)).toEqual({ done: false, deferred: 'model_capacity' });
   } finally { release(); }
-  expect(mocks.gatewayCalls).toEqual(['model-b']);
+  expect(mocks.gatewayCalls).toEqual([]);
   const left = [...ledger.rows.values()].filter(row => !row.foreign);
-  expect(left).toEqual([expect.objectContaining({ model: 'model-a', state: 'waiting' })]);
+  expect(left.length).toBeGreaterThan(0);
+  expect(left.every(row => row.model === 'model-a' && row.state === 'waiting')).toBe(true);
   expect(mocks.cancel).not.toHaveBeenCalled();
-  expect(tickSummary(ctx.log)).toMatchObject({ waitWindowClosed: 1, pausedModels: 0 });
+  expect(tickSummary(ctx.log)).toMatchObject({ pausedModels: 0 });
   expect(ctx.log).toHaveBeenCalledWith('crawl.agent_review_wait_window_closed', expect.objectContaining({ model: 'model-a' }));
 }, 20_000);
 
@@ -213,12 +213,12 @@ it('keeps the request (deferred) when the window closes with a queued row and no
 // 2026-10-30 결정: 한 후보의 fence 거절(행 없는 capacity → work_busy)은 그 후보만 건너뛴다 — 모델을 pause 하지도, 틱을 미루지도 않는다.
 it('skips only the fenced candidate and keeps admitting the same model in the pool tick (D1)', async () => {
   mocks.settings = { ...mocks.settings!, reviewConcurrency: 1 };
-  mocks.list.mockResolvedValue(candidates(4)); // 1·3 → model-a, 2·4 → model-b
+  mocks.list.mockResolvedValue(candidates(4)); // 순위 대체: 모두 1순위(model-a)
   ledger.fenced.add(1);
   const ctx = context();
   const result = await reviewCrawlCandidates(ctx);
   expect(result).not.toHaveProperty('deferred');
-  expect(mocks.gatewayCalls).toEqual(['model-b', 'model-a', 'model-b']);
+  expect(mocks.gatewayCalls).toEqual(['model-a', 'model-a', 'model-a']);
   expect(ctx.log).toHaveBeenCalledWith('crawl.agent_review_skipped', expect.objectContaining({ repo: 'wait-unit/app-1', reason: 'work_busy' }));
   expect(tickSummary(ctx.log)).toMatchObject({ pausedModels: 0, modelDeferred: false });
   expect(mocks.cancel).not.toHaveBeenCalled(); expect(ledger.rows.size).toBe(0);
@@ -235,14 +235,12 @@ it('a fenced candidate on the single configured model does not defer the rest of
   expect(tickSummary(ctx.log)).toMatchObject({ modelDeferred: false });
 }, 20_000);
 
-it('true saturation (a queued row) still pauses that model for the tick while the other model keeps working', async () => {
-  mocks.blocked.mockResolvedValue(new Set([firstReviewerKey(primary)]));
-  mocks.settings = { ...mocks.settings!, reviewConcurrency: 1 };
-  mocks.list.mockResolvedValue(candidates(4));
+it('true saturation (a queued row) on the only remaining rank keeps the request deferred instead of an all-skipped tick', async () => {
+  mocks.settings = { ...mocks.settings!, reviewConcurrency: 1, firstReviewAdditional: [] };
+  mocks.list.mockResolvedValue(candidates(1));
   const release = foreignHolder('model-a');
-  const ctx = context();
-  try { expect(await reviewCrawlCandidates(ctx)).toEqual({ done: false, continuation: 'ready' }); }
+  const ctx = context(Date.now() + 65_800);
+  try { expect(await reviewCrawlCandidates(ctx)).toEqual({ done: false, deferred: 'model_capacity' }); }
   finally { release(); }
-  expect(mocks.gatewayCalls).toEqual(['model-b', 'model-b']);
-  expect(tickSummary(ctx.log)).toMatchObject({ pausedModels: 1 });
+  expect(mocks.gatewayCalls).toEqual([]);
 }, 20_000);

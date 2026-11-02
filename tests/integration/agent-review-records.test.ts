@@ -355,7 +355,7 @@ it("keeps the current-input attempt budget when the selected model changes", asy
   expect(await claimAgentReview({...context, model: "other-model"})).toMatchObject({kind: "skipped", reason: "attempts_exhausted"});
 });
 
-it("removing a sent reviewer prevents rerouting and restoring it preserves backoff and the shared attempt limit", async () => {
+it("removing a sent reviewer moves its settled retry to the remaining model and preserves backoff and the shared attempt limit", async () => {
   const original = await fixture("enforce");
   for (let number = 0; number < 2; number++) {
     const claim = await claimAgentReview(original); if (claim.kind === "skipped") throw new Error(claim.reason);
@@ -367,21 +367,21 @@ it("removing a sent reviewer prevents rerouting and restoring it preserves backo
   const settings = await getSettings(), context = { ...original, settings, model: "other-model",
     input: await loadReviewInput(original.candidate, original.document, settings) };
   expect(await listReviewCandidates(settings)).toEqual([]);
-  expect(await claimAgentReview(context)).toMatchObject({ kind: "skipped", reason: "input_changed" });
-  // Even after backoff, a sent candidate cannot switch to the remaining model.
+  // The removed model's backoff still holds for the remaining model.
+  expect(await claimAgentReview(context)).toMatchObject({ kind: "skipped", reason: "retry_wait" });
+  // 2026-11-01: after backoff the queue lists it again, so the settled retry must not stay pinned to the removed model —
+  // that was the silent AI1 stall (admitted, never claimed). The attempt budget is shared across models.
   await db.update(crawlReviewAttempts).set({ retryAfter: new Date(0) });
-  expect(await claimAgentReview(context)).toMatchObject({ kind: "skipped", reason: "input_changed" });
-  expect(await db.select().from(crawlReviewAttempts)).toHaveLength(2);
-  await db.update(crawlReviewAttempts).set({ retryAfter: new Date(Date.now() + 60_000) });
+  expect((await listReviewCandidates(settings)).map(row => row.id)).toEqual([original.candidate.id]);
+  const third = await claimAgentReview(context); if (third.kind === "skipped") throw new Error(third.reason);
+  expect(third.attempt).toMatchObject({ attemptNumber: 3, model: "other-model" });
+  await recordAgentReview({ ...context, receipt: third.receipt, error: "timeout", retryAfter: new Date(0) });
+  expect(await claimAgentReview(context)).toMatchObject({ kind: "skipped", reason: "attempts_exhausted" });
+  // Restoring the original model does not reset the shared limit either.
   await saveSettings({ firstReviewAdditional: [{ provider: original.provider, model: original.model }] }, "test");
   const restoredSettings = await getSettings(), restored = { ...original, settings: restoredSettings,
     input: await loadReviewInput(original.candidate, original.document, restoredSettings) };
-  expect(await claimAgentReview(restored)).toMatchObject({ kind: "skipped", reason: "retry_wait" });
-  await db.update(crawlReviewAttempts).set({ retryAfter: new Date(0) });
-  const third = await claimAgentReview(restored); if (third.kind === "skipped") throw new Error(third.reason);
-  expect(third.attempt.attemptNumber).toBe(3);
-  await recordAgentReview({ ...restored, receipt: third.receipt, error: "timeout", retryAfter: new Date(0) });
-  expect(await claimAgentReview(restored)).toMatchObject({ kind: "skipped", reason: "attempts_exhausted" });
+  expect(await claimAgentReview({ ...restored, model: "other-model" })).toMatchObject({ kind: "skipped", reason: "attempts_exhausted" });
   expect(await listReviewCandidates(restoredSettings)).toEqual([]);
   expect(await handOffExhaustedFirstReviews(restoredSettings, restored.lease)).toBe(1);
 });

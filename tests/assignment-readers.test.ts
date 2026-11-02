@@ -8,7 +8,7 @@ import { assignmentSource, ensureStageAssignments, requireStageAssignments, setS
 import { replayRuntimeSettingsSnapshot, runtimeSettingsSnapshotFromStored, setRuntimeSettingsForTest, setRuntimeSettingsLoader,
   withRuntimeSettings, type RuntimeSettingsLoader } from "@/lib/operations/runtime-settings-store";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
-import { firstReviewTableRows, firstReviewers, firstReviewerKey, hasFirstReviewer, selectFirstReviewer, selectTableFirstReviewer,
+import { firstReviewTableRows, firstReviewers, firstReviewerKey, hasFirstReviewer, selectTableFirstReviewer,
   tableFirstReviewers } from "@/lib/crawl/first-reviewers";
 import { secondReviewFallbacks, secondReviewVoterSets, secondReviewVoters, tableSecondReviewVoters } from "@/lib/crawl/second-review-voters";
 import { createReviewInput, REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
@@ -219,30 +219,36 @@ describe("AI1 reviewers from the table", () => {
     expect(firstReviewers(poolSettings)).toEqual([legacyFirst]);
   });
 
-  it("uses the same (id − 1) mod n slot as selectFirstReviewer over the rank-1 rows", () => {
-    const legacyPool = [reviewer(a), reviewer(b), reviewer(c)] as Parameters<typeof selectFirstReviewer>[0];
-    for (const id of [1, 2, 3, 4, 5, 6, 7, 100])
-      expect(selectTableFirstReviewer(rows, id)).toEqual(selectFirstReviewer(legacyPool, id));
+  it("spreads candidates over the rank-1 rows by the (id − 1) mod n slot", () => {
+    const rankOne = [reviewer(a), reviewer(b), reviewer(c)];
+    for (const id of [1, 2, 3, 4, 5, 6, 7, 100]) expect(selectTableFirstReviewer(rows, id)).toEqual(rankOne[(id - 1) % 3]);
     expect(selectTableFirstReviewer(rows, 0)).toBeNull();
     expect(selectTableFirstReviewer([], 1)).toBeNull();
   });
 
-  it("pins active intents and retries to their model (fallbacks included) and never moves sent work", () => {
-    expect(selectTableFirstReviewer(rows, 1, [reviewer(fallback)])).toEqual(reviewer(fallback));
+  it("pins live intents and live calls to their model (fallbacks included) and moves everything else to the current table", () => {
     expect(selectTableFirstReviewer(rows, 1, [], [reviewer(c)])).toEqual(reviewer(c));
-    expect(selectTableFirstReviewer(rows, 1, [legacyFirst])).toBeNull();                       // removed model: no reassignment
+    expect(selectTableFirstReviewer(rows, 1, [{ ...reviewer(fallback), state: "running", live: true }])).toEqual(reviewer(fallback));
+    // 2026-11-01: a model that left the table holds the candidate only while its call may still be in flight
+    expect(selectTableFirstReviewer(rows, 1, [{ ...legacyFirst, state: "running", live: true }])).toBeNull();
+    for (const attempt of [legacyFirst, reviewer(fallback), { ...legacyFirst, state: "running", live: false }, { ...legacyFirst, state: "failed" },
+      { provider: null, model: null }])
+      expect(selectTableFirstReviewer(rows, 1, [attempt])).toEqual(selectTableFirstReviewer(rows, 1));
     expect(selectTableFirstReviewer(rows, 1, [], [reviewer(a), reviewer(b)])).toBeNull();
     const blocked = new Set([firstReviewerKey(a)]);
-    expect(selectTableFirstReviewer(rows, 1, [], [reviewer(a)], { blocked, untouched: true })).toEqual(reviewer(a));
+    expect(selectTableFirstReviewer(rows, 1, [], [reviewer(a)], { blocked })).toEqual(reviewer(a));
+    // a live call on a blocked model stays; a settled retry on it goes to the next usable row of the same rank
+    expect(selectTableFirstReviewer(rows, 1, [{ ...reviewer(a), state: "running", live: true }], [], { blocked })).toEqual(reviewer(a));
+    expect(selectTableFirstReviewer(rows, 1, [{ ...reviewer(a), state: "failed" }], [], { blocked })).not.toEqual(reviewer(a));
   });
 
-  it("reroutes only untouched candidates: next rank-1 row, then the rank-2 fallback, else waits on the fixed slot", () => {
-    const untouched = (keys: ModelAssignmentRow[]) => ({ blocked: new Set(keys.map(entry => firstReviewerKey(entry))), untouched: true });
-    expect(selectTableFirstReviewer(rows, 1, [], [], untouched([a]))).toEqual(reviewer(b));
-    expect(selectTableFirstReviewer(rows, 3, [], [], untouched([c]))).toEqual(reviewer(a));
-    expect(selectTableFirstReviewer(rows, 1, [], [], { ...untouched([a]), untouched: false })).toEqual(reviewer(a));
-    expect(selectTableFirstReviewer(rows, 2, [], [], untouched([a, b, c]))).toEqual(reviewer(fallback));
-    expect(selectTableFirstReviewer(rows, 2, [], [], untouched([a, b, c, fallback]))).toEqual(reviewer(b));
+  it("moves to the next rank only when the whole rank is unusable, and returns null when every rank is", () => {
+    const avoid = (keys: ModelAssignmentRow[]) => ({ blocked: new Set(keys.map(entry => firstReviewerKey(entry))) });
+    // rank 1 keeps spreading over its usable rows
+    expect([1, 2, 3, 4].map(id => selectTableFirstReviewer(rows, id, [], [], avoid([a]))?.model)).toEqual([b.model, c.model, b.model, c.model]);
+    // the grok-cli rank-2 row is chosen only when every rank-1 row is unusable
+    for (const id of [1, 2, 3]) expect(selectTableFirstReviewer(rows, id, [], [], avoid([a, b, c]))).toEqual(reviewer(fallback));
+    expect(selectTableFirstReviewer(rows, 2, [], [], avoid([a, b, c, fallback]))).toBeNull();
   });
 });
 

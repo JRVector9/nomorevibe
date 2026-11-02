@@ -33,7 +33,7 @@ describe("buildAssignmentImportPlan", () => {
     const plan = buildAssignmentImportPlan(settings, policy, registry);
     expect(summary(plan)).toEqual([
       ["create", "ai1:01:supa-review", "ai1", "supa", "supa:review", "gateway", 1, false, "live"],
-      ["create", "ai1:02:mlx-text", "ai1", "mlx", "mlx:text", "gateway", 1, false, "live"],
+      ["create", "ai1:02:mlx-text", "ai1", "mlx", "mlx:text", "gateway", 2, false, "live"],
       ["create", "ai2:01:gpu3090-review", "ai2", "gpu3090", "gpu3090:review", "local-direct", 1, true, "live"],
       ["create", "ai2:02:connect-opus", "ai2", "connect", "connect:opus", "cli", 1, true, "live"],
       ["create", "ai2:01:mlx-text", "ai2", "mlx", "mlx:text", "gateway", 2, false, "live"],

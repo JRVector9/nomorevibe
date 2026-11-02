@@ -3,7 +3,6 @@ import { emitPipelineEvent } from "@/lib/observability/review-pipeline";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { and, asc, desc, eq, gt, inArray, lte, ne, not, notInArray, or, sql, type SQL } from "drizzle-orm";
-import { occupyingStateSql } from "@/lib/llm/capacity-states";
 import { db, onPrimary } from "@/lib/db";
 import { currentReplayDb } from "@/lib/db/replay-scope";
 import { lockAi1ModelCapacityDispatch, finishAi1ModelCapacityDispatch, finishAi1ItemModelCapacityDispatch, type Ai1CapacityDispatchLock, lockModelCapacityCallerControl,
@@ -38,6 +37,7 @@ export type { Ai1ItemLease, Ai1ReviewOrigin, Ai1ReviewReceipt } from "./agent-re
 import { mergeWithDefaults } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
 import { firstReviewer, type FirstReviewer } from "./agent-review";
+import { ai1WithinLiveCallWindowSql } from "./ai1-live-call";
 import { firstReviewers, firstReviewerKey, firstReviewIdentitySql, firstReviewTableRows, hasFirstReviewer, selectFirstReviewer, selectTableFirstReviewer,
   tableFirstReviewers, type FirstReviewPoolPosition } from "./first-reviewers";
 import { requireStageAssignments } from "@/lib/llm/stage-assignment-snapshot";
@@ -66,23 +66,27 @@ export async function chooseFirstReviewForCandidate(context: ReviewDomainContext
   const pool = table ? tableFirstReviewers(table) : firstReviewers(context.settings, firstReviewer(context.settings));
   // Preserve the original query footprint for installations which never enabled a pool.
   if (context.settings.firstReviewAdditional === undefined) return pool[0] ?? null;
-  const attempts = await executor.select({ provider: crawlReviewAttempts.provider, model: crawlReviewAttempts.model })
+  // live: 지금 보내진 중일 수 있는 시도(running · 그 공급자의 호출 기한 + 여유 안에 시작) — 이보다 오래된 running 은 주인이 죽은 시도다
+  const attempts = await executor.select({ provider: crawlReviewAttempts.provider, model: crawlReviewAttempts.model, state: crawlReviewAttempts.state,
+    live: sql<boolean>`(${crawlReviewAttempts.state} = 'running' AND ${ai1WithinLiveCallWindowSql(crawlReviewAttempts.provider, crawlReviewAttempts.startedAt)})` })
     .from(crawlReviewAttempts).where(and(eq(crawlReviewAttempts.candidateId, context.candidate.id),
       eq(crawlReviewAttempts.kind, "automatic"), ne(crawlReviewAttempts.provider, "rules"),
       eq(crawlReviewAttempts.inputHash, context.input.inputHash))).orderBy(desc(crawlReviewAttempts.id)).limit(1);
-  // Separate branches retain the existing active/waiting partial-index predicates.
-  // 미확인(indeterminate) 호출은 더 이상 후보를 그 모델에 묶지 않는다(2026-10-30) — 점유 행(reserved·dispatched)만 의도다.
+  // 살아 있는 의도만 후보를 묶는다(2026-11-01): 기한 안의 예약(reserved), 호출 기한 + 여유 안의 보냄(dispatched), 지금 풀 모델의 줄(waiting).
+  // 주인이 죽은 오래된 dispatched·미확인(indeterminate)·풀 밖 모델의 waiting 은 묶지 않는다. 장부의 같은 후보 fence 와 점유 유일 색인은 그대로라
+  // 그런 행이 남아 있으면 claim 이 work_busy 로 이 후보만 넘긴다(로그·커서는 지나간다) — 두 호출이 함께 보내지지 않는다.
+  const logicalKey = `ai1:${context.candidate.id}`;
   const active = currentReplayDb() ? [] : await executor.execute<{ provider: string; model: string }>(sql`
     SELECT DISTINCT provider, model FROM ((SELECT provider, model FROM model_capacity_requests
-      WHERE logical_work_key = ${`ai1:${context.candidate.id}`} AND ${occupyingStateSql('state')})
+      WHERE logical_work_key = ${logicalKey} AND state = 'reserved' AND reserved_until > clock_timestamp())
     UNION ALL (SELECT provider, model FROM model_capacity_requests
-      WHERE logical_work_key = ${`ai1:${context.candidate.id}`} AND state = 'waiting')) ai1_intents LIMIT 2`);
-  // Rerouting needs "never sent": no model attempt for any input, not only the current one.
-  const untouched = blocked.size > 0 && !active.length && !attempts.length && !(await executor.select({ id: crawlReviewAttempts.id })
-    .from(crawlReviewAttempts).where(and(eq(crawlReviewAttempts.candidateId, context.candidate.id),
-      ne(crawlReviewAttempts.provider, "rules"))).limit(1)).length;
-  return table ? selectTableFirstReviewer(table, context.candidate.id, attempts, Array.from(active), { blocked, untouched })
-    : selectFirstReviewer(pool, context.candidate.id, attempts, Array.from(active), { blocked, untouched });
+      WHERE logical_work_key = ${logicalKey} AND state = 'dispatched'
+        AND ${ai1WithinLiveCallWindowSql(sql`provider`, sql`coalesce(dispatched_at, updated_at)`)})
+    UNION ALL (SELECT provider, model FROM model_capacity_requests
+      WHERE logical_work_key = ${logicalKey} AND state = 'waiting' AND queue_until > clock_timestamp()
+        AND ${firstReviewIdentitySql(pool, { provider: sql`provider`, model: sql`model` })})) ai1_intents LIMIT 2`);
+  return table ? selectTableFirstReviewer(table, context.candidate.id, attempts, Array.from(active), { blocked })
+    : selectFirstReviewer(pool, context.candidate.id, attempts, Array.from(active), { blocked });
 }
 export async function loadReviewInput(
   candidate: CrawlCandidate, document: CrawlDocument, settings: CrawlSettings, executor: Executor = db,

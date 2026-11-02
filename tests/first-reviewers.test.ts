@@ -29,47 +29,43 @@ it("validates at most two extras and rejects aliases of the same underlying mode
   expect(crawlSettingsSchema.safeParse({ ...DEFAULT_CRAWL_SETTINGS, firstReviewAdditional: [extra] }).success).toBe(false);
 });
 
-it("assigns untouched candidates stably and pins previous attempts even when pool order differs", () => {
-  expect([1, 2, 3, 4].map(id => selectFirstReviewer([primary, extra], id))).toEqual([primary, extra, primary, extra]);
-  expect(selectFirstReviewer([primary, extra], 1, [extra])).toEqual(extra);
-  expect(selectFirstReviewer([extra, primary], 1, [primary])).toEqual(primary);
+it("picks the highest usable rank: firstReview first, then firstReviewAdditional in listed order (2026-11-01)", () => {
+  const third = { provider: "grok-cli" as const, model: "grok-4.7" };
+  // Every candidate goes to rank 1 while it is usable — no spreading across ranks.
+  expect([1, 2, 3, 4].map(id => selectFirstReviewer([primary, extra, third], id))).toEqual([primary, primary, primary, primary]);
+  // Rank 1 paused/blocked this tick → rank 2; ranks 1 and 2 → rank 3 (grok-cli last); all → null (the job skips and advances).
+  const avoid = (...rows: { provider: string; model: string }[]) => ({ blocked: new Set(rows.map(firstReviewerKey)) });
+  expect(selectFirstReviewer([primary, extra, third], 1, [], [], avoid(primary))).toEqual(extra);
+  expect(selectFirstReviewer([primary, extra, third], 1, [], [], avoid(primary, extra))).toEqual(third);
+  expect(selectFirstReviewer([primary, extra, third], 1, [], [], avoid(primary, extra, third))).toBeNull();
+  // A settled retry is not pinned to its model: rank 1 takes it.
+  expect(selectFirstReviewer([primary, extra], 1, [{ ...extra, state: "failed" }])).toEqual(primary);
   expect(hasFirstReviewer([primary, extra], extra)).toBe(true);
 });
 
-it("protects active/indeterminate intents of removed or unreadable models without reassignment", () => {
+it("protects live intents of removed or unreadable models without reassignment", () => {
+  // The chooser passes only live intents (unexpired reserved, dispatched within the call window, waiting on a pool model).
   expect(selectFirstReviewer([primary, extra], 1, [primary], [extra])).toEqual(extra);
   expect(selectFirstReviewer([primary], 1, [primary], [extra])).toBeNull();
   expect(selectFirstReviewer([primary, extra], 1, [], [{ provider: null, model: null }])).toBeNull();
   expect(selectFirstReviewer([primary, extra], 1, [], [primary, extra])).toBeNull();
+  // A live intent or a live call stays on its model even when that model is blocked this tick.
+  const avoid = { blocked: new Set([firstReviewerKey(extra)]) };
+  expect(selectFirstReviewer([primary, extra], 2, [], [extra], avoid)).toEqual(extra);
+  expect(selectFirstReviewer([primary, extra], 2, [{ ...extra, state: "running", live: true }], [], avoid)).toEqual(extra);
+  // A dead running attempt (outside its call window) does not pin.
+  expect(selectFirstReviewer([primary, extra], 2, [{ ...primary, state: "running", live: false }], [], { blocked: new Set([firstReviewerKey(primary)]) })).toEqual(extra);
 });
 
-it("moves only never-sent candidates off a blocked model and never unpins sent or retried work", () => {
-  const third = { provider: "abcllm" as const, model: "third-review-model" };
-  const blocked = new Set([firstReviewerKey(extra)]);
-  const untouched = { blocked, untouched: true };
-  // Candidate 2 would go to `extra`; it rotates to the next unblocked model.
-  expect(selectFirstReviewer([primary, extra, third], 2, [], [], untouched)).toEqual(third);
-  expect(selectFirstReviewer([primary, extra], 2, [], [], untouched)).toEqual(primary);
-  // Unblocked fixed slots are unchanged.
-  expect([1, 3].map(id => selectFirstReviewer([primary, extra], id, [], [], untouched))).toEqual([primary, primary]);
-  // Already sent (active intent incl. indeterminate) or retried candidates stay pinned to the blocked model.
-  expect(selectFirstReviewer([primary, extra], 2, [], [extra], untouched)).toEqual(extra);
-  expect(selectFirstReviewer([primary, extra], 2, [extra], [], untouched)).toEqual(extra);
-  // An attempt anywhere in history (caller's untouched=false) keeps the fixed slot.
-  expect(selectFirstReviewer([primary, extra], 2, [], [], { blocked, untouched: false })).toEqual(extra);
-  // When every model is blocked, keep the fixed slot and wait instead of overloading another.
-  expect(selectFirstReviewer([primary, extra], 2, [], [], { blocked: new Set([firstReviewerKey(primary), firstReviewerKey(extra)]), untouched: true }))
-    .toEqual(extra);
-});
-
-it("claim-time re-check keeps a rerouted never-sent candidate and still refuses a pinned one", () => {
+it("claim-time re-check accepts the chosen rank and still refuses one a live intent or live call pins elsewhere", () => {
   // The claim re-check treats every pool model except the claimed one as "avoid".
-  const others = (claimed: typeof primary) => new Set([primary, extra].filter(row => row.model !== claimed.model).map(firstReviewerKey));
-  expect(selectFirstReviewer([primary, extra], 2, [], [], { blocked: others(primary), untouched: true })).toEqual(primary);
-  expect(selectFirstReviewer([primary, extra], 2, [], [], { blocked: others(extra), untouched: true })).toEqual(extra);
-  // A candidate with an attempt or an active intent on `extra` cannot be claimed for `primary`.
-  expect(selectFirstReviewer([primary, extra], 2, [extra], [], { blocked: others(primary), untouched: false })).toEqual(extra);
-  expect(selectFirstReviewer([primary, extra], 2, [], [extra], { blocked: others(primary), untouched: false })).toEqual(extra);
+  const others = (claimed: typeof primary) => ({ blocked: new Set([primary, extra].filter(row => row.model !== claimed.model).map(firstReviewerKey)) });
+  expect(selectFirstReviewer([primary, extra], 2, [], [], others(primary))).toEqual(primary);
+  expect(selectFirstReviewer([primary, extra], 2, [], [], others(extra))).toEqual(extra);
+  expect(selectFirstReviewer([primary, extra], 2, [{ ...primary, state: "failed" }], [], others(extra))).toEqual(extra);
+  // A live call or an active intent on `extra` cannot be claimed for `primary`.
+  expect(selectFirstReviewer([primary, extra], 2, [{ ...extra, state: "running", live: true }], [], others(primary))).toEqual(extra);
+  expect(selectFirstReviewer([primary, extra], 2, [], [extra], others(primary))).toEqual(extra);
 });
 
 it("keeps global draining/policy/owner refusals global while allowing another model past a local capacity wait", () => {
@@ -90,11 +86,20 @@ it("accepts only bounded, lossless keyset timestamps and ignores malformed curso
 });
 
 
-it("does not move retries from removed or unreadable models to an available pool member", () => {
-  const avoid = { blocked: new Set([firstReviewerKey(extra)]), untouched: true };
-  expect(selectFirstReviewer([primary], 2, [extra], [], avoid)).toBeNull();
-  expect(selectFirstReviewer([primary, extra], 2, [{ provider: null, model: null }], [], avoid)).toBeNull();
-  expect(selectFirstReviewer([primary, extra], 2, [{ ...extra, model: "removed" }, primary], [], avoid)).toBeNull();
+it("moves a retry of a removed or unreadable model to the current pool unless its call may still be in flight (2026-11-01)", () => {
+  const avoid = { blocked: new Set([firstReviewerKey(primary)]) };
+  const removed = { provider: "abcllm" as const, model: "removed-review-model" };
+  // 빈 추가 풀([])은 primary 하나다 — 끝난 시도·주인이 죽은 running·상태 모름·식별 불가 모두 지금 풀로 간다
+  for (const attempt of [{ ...removed, state: "failed" }, { ...removed, state: "superseded" }, { ...removed, state: "succeeded" },
+    { ...removed, state: "running", live: false }, { ...removed, state: null }, removed, { provider: null, model: null, state: "failed" }]) {
+    expect(selectFirstReviewer([primary], 2, [attempt])).toEqual(primary);
+    // 1순위가 막혔으면 2순위
+    expect(selectFirstReviewer([primary, extra], 2, [attempt], [], avoid)).toEqual(extra);
+  }
+  // 지금 보내진 중일 수 있는 시도(live)는 보호한다 — 같은 후보에 살아 있는 호출을 둘 만들지 않는다
+  expect(selectFirstReviewer([primary], 2, [{ ...removed, state: "running", live: true }])).toBeNull();
+  // 다른 모델의 살아 있는 의도는 시도보다 앞선다
+  expect(selectFirstReviewer([primary], 2, [{ ...removed, state: "failed" }], [removed])).toBeNull();
 });
 
 it("configures candidate suggestions while preserving the stored pool and all retry assignment rules", () => {
@@ -104,5 +109,5 @@ it("configures candidate suggestions while preserving the stored pool and all re
     candidates: { "first-review": ["connect:opus"] } }) };
   expect(firstReviewCandidates(env)).toEqual([{ provider: "claude-cli", model: "opus" }]);
   expect(firstReviewers(expanded)).toEqual([primary, extra]);
-  expect(selectFirstReviewer([primary, extra], 1, [extra])).toEqual(extra);
+  expect(selectFirstReviewer([primary, extra], 1, [extra])).toEqual(primary);
 });

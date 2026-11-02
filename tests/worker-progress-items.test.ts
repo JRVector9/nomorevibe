@@ -135,3 +135,39 @@ it('does not apply another job capacity block to FIRST recovery', () => {
   expect(selectUnexplainedStall(report, 'reviewer')).toMatchObject({ kind: 'stage', reason: 'no_progress',
     job: 'crawl-agent-review', age: 468, wait: 3, progress: 0, restartEligible: true });
 });
+
+// 2026-11-01: AI1 틱이 들인 14건을 모두 건너뛰는 동안(배정 없음) reviewer 가 5분에 세 번 재시작해 primary_quarantined 가 됐다.
+const allSkipped = (ageMs: number, code = 'agent_review_all_skipped') => ({ key: 'job:crawl-agent-review',
+  value: { done: false, degraded: { code, detail: 'reviewer_unassigned=14', streak: 6 } }, observedAt: new Date(now.getTime() - ageMs) });
+
+it('keeps a FIRST stage whose fresh ticks skip every admitted item alarmed without restarting reviewer', () => {
+  const report = buildWorkerProgress({ measuredAt: now.toISOString(), stages: [stage('first')] }, jobs,
+    [...observations, allSkipped(60_000)], now, batch, [], null, [{ stage: 'ai1', mode: 'legacy', drainingFrom: null }]);
+  expect(report.stages[0]).toMatchObject({ reason: 'no_progress', alarm: true, restartEligible: false,
+    skipBlock: { reason: 'all_skipped', code: 'agent_review_all_skipped', detail: 'reviewer_unassigned=14', streak: 6 } });
+  expect(report.overall).toBe('alarm');
+  expect(selectUnexplainedStall(report, 'reviewer')).toBeNull();
+});
+
+it.each([
+  ['stale (no tick finished since)', allSkipped(181_000)],
+  ['a different degraded code', allSkipped(60_000, 'something_else')],
+  ['a healthy last tick (lastDegraded only)', { key: 'job:crawl-agent-review',
+    value: { done: false, lastDegraded: { code: 'agent_review_all_skipped' } }, observedAt: now }],
+  ['another job', { ...allSkipped(60_000), key: 'job:second-review' }],
+])('still restarts a stalled FIRST stage for %s', (_label, observation) => {
+  const report = buildWorkerProgress({ measuredAt: now.toISOString(), stages: [stage('first')] }, jobs,
+    [...observations, observation], now, batch, [], null, [{ stage: 'ai1', mode: 'legacy', drainingFrom: null }]);
+  expect(report.stages[0]).toMatchObject({ reason: 'no_progress', restartEligible: true });
+  expect(report.stages[0]).not.toHaveProperty('skipBlock');
+  expect(selectUnexplainedStall(report, 'reviewer')).toMatchObject({ kind: 'stage', job: 'crawl-agent-review', restartEligible: true });
+});
+
+it('still restarts a hung reviewer lane while FIRST ticks report all-skipped', () => {
+  const report = buildWorkerProgress({ measuredAt: now.toISOString(), stages: [stage('first')] }, jobs,
+    [...observations, allSkipped(30_000)], now, batch);
+  report.lanes = [{ role: 'reviewer', name: 'audit-screen-review', jobs: ['crawl-agent-review'], state: 'running',
+    currentJob: 'crawl-agent-review', startedAt: now.getTime() - 400_000, pollStartedAt: null, lastProgressAt: now.getTime() - 400_000,
+    pollAgeMs: null, progressAgeMs: 400_000, reason: 'job_timeout', alarm: true, restartEligible: true }];
+  expect(selectUnexplainedStall(report, 'reviewer')).toMatchObject({ kind: 'lane', reason: 'job_timeout', restartEligible: true });
+});

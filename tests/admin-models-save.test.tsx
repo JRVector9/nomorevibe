@@ -8,6 +8,10 @@ vi.mock("@/lib/crawl/settings", () => ({ saveSettings, settingsFormVersion: () =
 vi.mock("@/lib/operations/dr/web-gate", () => ({ webWriteAction: (fn: unknown) => fn }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
+// 저장 뒤 순위 준비 확인(연결 계약·용량 경로) — 이 시험은 저장 경로만 본다. 고른 모델의 연결 계약이 있는 상태라 경고가 없다
+vi.mock("@/lib/operations/admin-first-review-ranks-read", () => ({ readRankReadinessInput: async () => ({
+  contracts: ["[MLX] gpt-oss-120b", "[supa] Qwen3.8-27B-NVFP4"].map(model => ({ routeId: "crawl-agent-review", model, contract: {}, transport: "direct" })),
+  capacity: { mode: "disabled", routes: [], devices: new Map(), groupLimits: {} } }) }));
 import { saveReviewModels } from "@/app/(operator)/admin/models/actions";
 import { ReviewModelsForm, ModelSaveNotice } from "@/app/(operator)/admin/models/ReviewModelsForm";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";

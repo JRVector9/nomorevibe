@@ -298,3 +298,32 @@ AI1/AI2 저장 증가 명령은 두 측정 mjs를 기존 M3 text 컨테이너에
 
 - 운영 DB 읽기·SSH·배포·push: 이번 지시가 금지(작업자 SSH 22 차단, 배포는 사람 승인). 그래서 실제 원인 분포(Q0·Q1 해당 여부,
   too_long 중 후처리로 살릴 비율)는 재지 못했다.
+
+## AI1 고정 모델 정체 해소 규칙 (2026-11-01, 브랜치 `claude/ai1-stale-input-hol`)
+
+운영자 결정(2026-11-01): **「지금 정말 보내진 중인 호출이 없으면 1차 후보는 언제나 지금 풀로 간다」.** 위 「단계3」의
+「최신 시도 모델이 풀에서 제거되었거나 읽을 수 없어도 다른 모델로 재시도하지 않고 보호(null)」(10-28)를 이 결정으로 뒤집는다.
+원인: 풀 모드(`firstReviewAdditional: []` 포함)에서 같은 입력의 마지막 시도가 풀에 없는 모델(`supa`·`[MLX] gpt-oss-120b`·`[supa] Qwen3.8-27B-NVFP4`)이면
+고르기가 null 을 돌려 틱이 `admitted 14 · calls 0` 으로 말없이 끝났고, 진행 감시가 reviewer 를 5분에 세 번 재시작해 `primary_quarantined` 가 됐다.
+
+- 묶는 것은 살아 있는 것뿐: 기한 안의 `reserved`, 그 공급자 호출 기한(게이트웨이는 review-gateway 사다리 clientMs, CLI 는 review-cli·grok-review)
+  + 60초 안의 `dispatched`, 지금 풀 모델의 `waiting`, 같은 창 안에 시작한 `running` 시도(`lib/crawl/ai1-live-call.ts`). 이보다 오래된
+  dispatched·indeterminate·running(주인이 죽은 boot)과 풀 밖 모델의 waiting 은 후보를 묶지 않는다.
+- **순위 대체(단계 × 모델 순위)**: 1차는 순위 순으로 고른다. 배정 표가 꺼져 있으면(지금 운영) 설정 풀이 순위다 — `firstReview` 1순위,
+  `firstReviewAdditional` 을 적은 순서대로 2·3순위(예전의 「후보를 id 로 나눠 처리」는 없어졌다). 배정 표가 켜져 있으면 `/admin/models/assignments` 의
+  rank 칸이 순위이고, 같은 rank 안에서만 (후보 id − 1) mod n 으로 나눈다. 가장 높은 순위를 이 틱에 쓸 수 없을 때만 다음 순위로 간다 —
+  쓸 수 없음 = 미확인 점유로 꽉 참·이 틱에 쉼(호출 실패·엔진 내려감) 또는 그 모델만의 거절(경로 없음 `unmapped`·장비 미설정·연결 계약 닫힘
+  `provider_contract_unavailable`·진짜 포화). 그런 거절이면 **같은 후보**를 곧바로 다음 순위로 다시 고른다. 모든 순위를 쓸 수 없으면
+  `reason=all_ranks_unusable` 로 건너뛰고 대기열은 지나간다. 끝난 재시도는 모델에 묶지 않는다(시도 예산·재시도 시각은 모델과 무관하게 이어진다).
+- **grok-cli 를 마지막 순위로**: `/admin/models` 「1차 AI 검수」의 1·2·3순위 드롭다운에서 3순위(또는 마지막 칸)에 `grok-cli · grok-4.7` 을 고른다.
+  드롭다운은 모든 서버의 엔진 API(GET /models, 화면이 이미 읽는 `readServedContractModels`)가 내놓는 모델을 「장비 · 모델」로, CLI 모델(claude-cli·grok-cli)과 함께 보인다.
+  같은 모델 두 순위·앞 순위를 비운 뒤 순위는 저장하지 않는다. 저장하면 다음 틱부터 적용된다(재배포 없음).
+  **운영자가 할 일**: 용량 정책에 `crawl-agent-review / grok-cli / grok-4.7` 경로와 그 장비(group) 한도를 넣어야 grok 순위가 실제로 쓰인다 —
+  그 전에는 `unmapped` 로 그 순위를 건너뛴다. 저장 응답이 순위마다 없는 것(1차 연결 계약·용량 경로·장비 한도)을 한국어로 알린다.
+  연결 계약·경로·장비는 저장이 자동으로 만들지 않는다(계약은 엔진 probe·키가 필요한 「엔진 연결」, 경로·장비는 용량 정책·장비 화면).
+- 남는 null(살아 있는 호출 보호)은 `crawl.agent_review_skipped reason=reviewer_unassigned`(모든 순위를 쓸 수 없으면 `all_ranks_unusable`)로 남고, 키셋 커서는 그 후보를 지나 같은 틱에 다음 후보를 본다.
+  들인 후보를 모두 건너뛴 틱은 `degraded: agent_review_all_skipped` 이며 진행 감시는 그것으로 reviewer 를 재시작하지 않는다.
+- 이중 전송 보장은 장부가 지킨다: 같은 후보 fence(`ai1Fence`·`cliKeyFence`)와 점유 유일 색인(`model_capacity_requests_logical_active_idx`)은 바꾸지 않았다.
+  그래서 주인이 죽은 오래된 dispatched 행이 남은 후보는 고르기가 지금 풀로 옮겨도 claim 이 `work_busy` 로 그 후보만 넘긴다 —
+  그 행은 기존 증거 기반 회수(`model-capacity-reclaim`, `MODEL_CAPACITY_AUTO_RECLAIM` 선언) 또는 운영자 미확인 처리로 풀어야 한다.
+  풀 밖 모델의 waiting 행은 queue TTL 로 만료될 때까지 같은 `work_busy` 다(남의 대기 행을 고르기가 거두지 않는다).

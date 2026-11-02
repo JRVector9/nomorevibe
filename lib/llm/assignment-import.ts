@@ -16,8 +16,8 @@ import { ADMIN_STAGE_ASSIGNMENTS } from "./stage-assignments";
  * `planAssignmentImport(sources)` = 3b-D 화면 계약(`AssignmentImportPlan` — 행의 출처·입력·사람이 읽는 바뀐 칸, 경고 문장)으로 옮긴 것.
  *
  * 옮기는 것과 rank:
- * - ai1: 오늘 1차 풀(`legacyFirstReviewers` — firstReview(없으면 호출자가 준 env 대체)·firstReviewAdditional, 최대 3·같은 가중치 한 번) → 모두 rank 1.
- *   assignment_id 의 두 자리 순번이 풀 순서다(rank 1 안에서는 assignment_id 순으로 돈다 — 오늘 `(id − 1) mod n` 칸과 같다).
+ * - ai1: 오늘 1차 풀(`legacyFirstReviewers` — firstReview(없으면 호출자가 준 env 대체)·firstReviewAdditional, 최대 3·같은 가중치 한 번) → 풀 순서가 순위다
+ *   (firstReview rank 1, firstReviewAdditional[i] rank 2 + i). 2026-11-01 순위 대체: 설정 풀도 같은 순위로 고른다(first-reviewers.ts selectFirstReviewer).
  * - ai2: voters → rank 1 · vote, fallbacks[i] → rank 2 + i(오늘 순서대로 먼저 고른다).
  * - stageModelPools: 대응하는 관리자 단계(ADMIN_STAGE_ASSIGNMENTS)의 key → 그 단계 rank 1(풀 순서).
  * 장비(device_id) = 정책 route `(단계 route, provider, wire 모델)` 의 groupId. 그런 route 가 없으면 `mode off` + 경고(`route_missing`) — 장비는 등록부
@@ -108,7 +108,7 @@ export function buildAssignmentImportPlan(settings: AssignmentImportSettings, po
   if (!settings.firstReview && options.firstReviewFallback) warn("firstReview", "first_review_from_env", options.firstReviewFallback.model);
   if (!settings.firstReview && !options.firstReviewFallback) warn("firstReview", "first_review_unset", "관리자 설정에서 1차 심사자를 고른 뒤 다시 가져온다(환경변수 대체는 2026-10-31 제거)");
   legacyFirstReviewers(settings, options.firstReviewFallback ?? null).forEach((reviewer, index) =>
-    addReviewer(index === 0 ? "firstReview" : `firstReviewAdditional[${index - 1}]`, "ai1", reviewer, 1, false, index + 1));
+    addReviewer(index === 0 ? "firstReview" : `firstReviewAdditional[${index - 1}]`, "ai1", reviewer, index + 1, false, index + 1));
   settings.secondReview.voters.forEach((voter, index) => addReviewer(`secondReview.voters[${index}]`, "ai2", voter, 1, true, index + 1));
   (settings.secondReview.fallbacks ?? []).forEach((voter, index) =>
     addReviewer(`secondReview.fallbacks[${index}]`, "ai2", voter, 2 + index, false, index + 1));
