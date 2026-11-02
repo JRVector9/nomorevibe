@@ -1,4 +1,6 @@
-**결론: 순환 의존은 코드상 실제였다. 해소는 두 가지 정식 도구로 했다. ① 운영 웹(199a3ebb)에 버튼이 없어도 Supa job을 웹과 같은 함수·감사·직렬화로 접수하는 운영자 셸 CLI(`scripts/ops/admin-models-ops-submit.ts`). ② runner가 마지막에 OPEN하지 않고 **자기가 건 DRAIN을 그대로 인계**하는 검토된 profile 선택(`finalAdmission:"draining"`, 마지막 단계 `handoff`). 이 둘로 순서는 한 줄이 된다. 0143(+0144) → OPEN 상태에서 Supa runner가 DRAIN을 건다 → Supa 해제 → 그 DRAIN을 인계받아 M1 해제 → 미확인 0 → 배포 → M1 relay 재설치 → OPEN. 배포 전에는 OPEN을 한 번도 하지 않는다. 관문 면제·시간 경과 해제·DB 직접 UPDATE는 쓰지 않았다.**
+**결론: 순환 의존은 코드상 실제였다. 해소는 두 가지 정식 도구로 했다. ① 운영 웹(199a3ebb)에 버튼이 없어도 Supa job을 웹과 같은 함수·감사·직렬화로 접수하는 운영자 셸 CLI(`scripts/ops/admin-models-ops-submit.ts`). ② runner가 마지막에 OPEN하지 않고 **자기가 건 DRAIN을 그대로 인계**하는 검토된 profile 선택(`finalAdmission:"draining"`, 마지막 단계 `handoff`). 이 둘로 순서는 한 줄이 된다. 0143(+0144) → OPEN 상태에서 Supa runner가 DRAIN을 건다 → Supa 해제 → 그 DRAIN을 인계받아 M1 해제 → 미확인 0 → 배포 → M1 relay 재설치 → OPEN → job-resume → AI2 정합 → 텍스트 적체 확인. 배포 전에는 OPEN을 한 번도 하지 않는다. 관문 면제·시간 경과 해제·DB 직접 UPDATE는 쓰지 않았다.**
+
+> **2026-10-29 3판(PR #735 병합 `f4fe5958` 기준)**: 도구 소스 `REL`을 `f4fe5958…`로 옮기고 표 3을 다시 계산했다. 배포 `TARGET`은 고정값이 아니라 **plan·run 시점의 main 머리**다(3절 「배포 TARGET」). 그 사이 main에 들어온 PR #732(M1 relay 허용 모델 등록부화)·#734(AI2 정체 정합 도구)·#735(번역·후처리 적체 수정)의 배포 뒤 단계를 17단계와 새 21·22단계에 넣고, 14·19단계 잡 목록을 다시 확인했다. 1~20단계 번호는 바꾸지 않았다.
 
 # 미확인 2건 해제와 배포의 실행 순서 확정본 (2026-10-29)
 
@@ -32,16 +34,30 @@ M1 쪽 코드는 바꾸지 않았다. M1 plan은 `capacity_draining`만 검사�
 
 | 이름 | 값 |
 | --- | --- |
-| 도구 소스 | **`REL=1f52c9efea0bfab555567c17889cf919f41938be`** = PR #730 병합 main SHA. 이 값이 배포 `TARGET`이기도 하다(15·16·17·20단계). `SRC=/home/ubuntu/projects/nomorevibe`(또는 같은 저장소의 아무 checkout. `git -C "$SRC" fetch origin main` 뒤 `git -C "$SRC" merge-base --is-ancestor "$REL" origin/main`이 성공해야 한다). 실행서 A절의 `SHA`와 B절의 `T` 모두 이 `REL`을 쓴다. `$SRC`는 `git -C "$SRC" show/archive`로만 쓴다(작업 트리 파일을 직접 실행하지 않는다). Node 실행은 모두 `node_modules`를 연결한 `$T`에서 한다. 이전 판의 `xaegis/7b7a2d23` 작업 공간은 쓰지 않는다 |
+| 도구 소스 | **`REL=f4fe5958290713d95e2ce618126fbbf651cd3d95`** = PR #735 병합 main SHA. 스테이징 tar·runner 트리·M1 스크립트는 모두 이 커밋에서 만든다. `SRC=/home/ubuntu/projects/nomorevibe`(또는 같은 저장소의 아무 checkout. `git -C "$SRC" fetch origin main` 뒤 `git -C "$SRC" merge-base --is-ancestor "$REL" origin/main`이 성공해야 한다). 실행서 A절의 `SHA`와 B절의 `T` 모두 이 `REL`을 쓴다. `$SRC`는 `git -C "$SRC" show/archive`로만 쓴다(작업 트리 파일을 직접 실행하지 않는다). Node 실행은 모두 `node_modules`를 연결한 `$T`에서 한다. 이전 판의 `REL=1f52c9ef…`와 비교하면 표 3과 사전 점검 묶음 0절의 파일 17개 해시와 `drizzle`·`package-lock.json`은 같다. `git diff 1f52c9ef f4fe5958 -- drizzle package-lock.json package.json scripts/ops lib/operations` 결과도 비어 있다. 바뀐 값은 커밋 머리가 들어가는 스테이징 tar 해시뿐이다 |
+| 배포 TARGET | **plan·run 시점의 main 머리**이고 고정값이 아니다. 배포 도구가 `gh api repos/JRVector9/nomorevibe/commits/main`이 `--sha`와 다르면 `main_sha_mismatch`로 멈추기 때문이다(`scripts/ops/deploy_shared_images.py` `main_sha_and_token`, readiness `target_not_main`). 또 그 커밋의 main CI가 `release-image-{worker,web}-<TARGET>` artifact를 남겼어야 한다. **문서만 바뀐 main 커밋에는 이미지가 없다**(CI `code_changed=false`). PR #731 `49cd9330`·PR #733 `be5d1d53`의 main CI artifact는 실제로 0개였다. 그래서 이전 판의 고정 `TARGET=1f52c9ef`는 PR #731이 병합된 순간 main 머리가 아니게 되어 plan에서 거절될 값이었다. 이 판을 병합한 커밋은 시험 파일을 포함하므로 이미지가 만들어진다. 그 뒤 main이 더 움직이지 않으면 이 커밋이 `TARGET`이다. 아래 확인은 사전 점검 묶음 1절(0143 전)과 15단계 plan 직전에 한 번씩 한다 |
 | runner 실행 트리 | `T=/home/ubuntu/ops/nmv-runner-$REL`(실행서 S1의 `git archive 75b8aa31` 대신 `git -C "$SRC" archive "$REL"`). runner와 접수 CLI가 이 커밋 코드여야 handoff를 쓸 수 있다 |
+| M1 relay 설치본 | **`RELAY_SHA=279e596ee267e39b311d329ef828f4d9fe9946e7`** = PR #732 병합 main([등록부 연결 안내](2026-10-29-m1-relay-registry-rollout.md) 1절). relay가 읽는 파일(`scripts/local-model-relay/`, `lib/llm/model-registry.ts`·`deadline-policy.ts`·`local-model-serving-contract.ts`, `scripts/ops/local-model-relay.sh`, `package*.json`)은 `279e596e`와 `REL` 사이에 차이가 없다(`git diff --stat 279e596e f4fe5958 -- scripts/local-model-relay scripts/ops/local-model-relay.sh lib/llm package.json package-lock.json`에는 relay가 import하지 않는 `lib/llm/capacity-busy-targets.ts` 1개만 나온다). 17단계에서만 쓴다 |
 | 요청 | M1 `29877f65-9f95-4efb-88f9-aea5f39a28b2`, Supa `65f8c399-ff4b-47bc-8f4d-6e4a682cf6a7` |
 | 유지보수 컨테이너 | m3ultra Swarm `app-navigate-neural-system-yf43c7`. `DK='env PATH=/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin docker'` |
 | 직접 primary | `100.99.209.55:5432/nomorevibe`(PgBouncer 아님) |
 
-검토할 SHA-256(`git show $REL:<파일> | sha256sum`, `REL=1f52c9efea0bfab555567c17889cf919f41938be`에서 다시 계산해 모두 확인했다). 스테이징 tar와 M1 스크립트를 포함한 전체 표와 0143 전 사전 점검 명령은 **[사전 점검 묶음](2026-10-29-pre-0143-check-bundle.md)**에 있다.
+배포 TARGET 확인([gpu3090], 쓰기 0). 사전 점검 묶음 1절의 셸(`SRC`·`REL`)에서 친다.
+```sh
+TARGET=$(gh api repos/JRVector9/nomorevibe/commits/main --jq .sha); echo "$TARGET"
+git -C "$SRC" fetch origin main && test "$(git -C "$SRC" rev-parse origin/main)" = "$TARGET" && echo target_is_main
+git -C "$SRC" merge-base --is-ancestor "$REL" "$TARGET" && git -C "$SRC" diff --quiet "$REL" "$TARGET" -- lib scripts drizzle messages tsconfig.json package.json package-lock.json && echo target_same_staged_tree
+gh run list --workflow ci.yml --branch main --event push --commit "$TARGET" -L 1 --json databaseId,conclusion -q '.[0]|"\(.databaseId) \(.conclusion)"'
+```
+- 성공: `target_is_main`과 `target_same_staged_tree`가 나온다. 마지막 줄의 conclusion이 `success`다(아직 진행 중이면 plan 전에 기다린다). 이 경우 `REL`로 만든 스테이징 tar의 코드·`package-lock.json`이 `TARGET` 이미지와 같다. 그래서 2(b)의 route 판정과 18단계 OPEN이 새 이미지와 같은 코드로 판정한다.
+- `target_same_staged_tree`가 안 나오면 `REL` 뒤에 `lib`·`scripts`·`drizzle` 등 스테이징 경로를 바꾼 커밋이 main에 들어온 것이다. **시작(또는 배포)하지 않는다.** 그대로 진행하면 스테이징 소스(`REL`)와 새 이미지(`TARGET`)의 코드가 달라 route·OPEN 판정이 이미지와 어긋날 수 있다. 새 main 기준으로 표 3·묶음 0절·`TAR_SHA`를 다시 계산한 판을 받는다(시험 `tests/release-order-hashes.test.ts`가 표와 코드의 어긋남을 잡는다). 문서만 바뀐 커밋이 머리면 `target_same_staged_tree`는 나와도 이미지가 없어 plan이 readiness 미준비로 멈춘다. 그때도 배포 요청은 하지 않는다.
+
+검토할 SHA-256(`git show $REL:<파일> | sha256sum`, `REL=f4fe5958290713d95e2ce618126fbbf651cd3d95`에서 gpu3090 git 2.53.0으로 다시 계산했다). M1 수집 스크립트 등 0143 전 사전 점검에만 쓰는 나머지 파일과 명령은 **[사전 점검 묶음](2026-10-29-pre-0143-check-bundle.md)** 0절에 있다. 두 표의 같은 파일은 같은 값이고, 시험이 이를 대조한다.
 
 | 파일 | SHA-256 |
 | --- | --- |
+| 스테이징 tar `TAR_SHA`(`git archive --format=tar "$REL" lib scripts drizzle messages tsconfig.json package.json package-lock.json \| sha256sum`. 같은 명령으로 `1f52c9ef`의 `75f388d4…`와 `279e596e`의 `9ab8a624…`도 재현했다. git 버전이 다르면 tar 바이트가 다를 수 있으니, 판정은 대표가 직접 계산한 값과 컨테이너가 받은 파일의 sha256이 같은지로 한다) | `cdff13dda155a0eeaab4a9a57a0a95a38199ce509e71510997de61cb9822399c` |
+| `package-lock.json`(`LOCK_SHA`, 1f52c9ef·279e596e·199a3ebb와 같음 → C5·18단계 `same_as_image` 전제 유지) | `f609ff6e3159975cce362809a50bc335afb2a812502fb74d70c8ab3a203296d5` |
 | `scripts/ops/admin-models-ops-submit.ts` (신규) | `b9f2bb1a8c56cc4eecb86c8ec206a3f38f76830c9d00711b3c9ffc9174ba94ea` |
 | `scripts/ops/release-order/capacity-control.sh` (신규, `/tmp` 스테이징판. 옛 `3ae03fe3…`판은 `/app/scripts/ops`를 전제해 운영 이미지에서 실패한다) | `92d59f78927f5fbb983eb309ea4d9aa3c2a3e6f5c44eeade29f08cc5685f4c5a` |
 | `scripts/ops/release-65f8c399/build-manifest.py` (변경) | `1d974717b4b6b45ffa1e6119f05edfca003cb217dcb92feafbf26e692c2285c7` |
@@ -52,6 +68,13 @@ M1 쪽 코드는 바꾸지 않았다. M1 plan은 `capacity_draining`만 검사�
 | `lib/operations/ops-runner/contract.ts` (변경) | `0fb66a9c36fc65a544d892af2ce67000c9357f89a31659311b98e3b6e1aebfb3` |
 | `scripts/ops/admin-models-ops-runner.ts` (main 그대로) | `78df32f4cbaeef344dc4a09a784cb6523306f04fc54b15cb27f666531e271034` |
 | `scripts/ops/admin-models-boundary-adapter.py` (main 그대로) | `f51d5ef76232bf74e652a27627aabed97236029ae1c17742a55df55311707f61` |
+| `scripts/local-model-relay/config.ts` (17단계 relay 설치본, `RELAY_SHA`와 같음) | `9c8fdbf814417332096b1d294a00232e7c025b6ad62f661ed1c07f9ea9bff8d5` |
+| `scripts/local-model-relay/server.ts` (17단계 relay 설치본) | `210456e7f9c10f43a76512c1e9308f760447828aa792df0943c5cee86d458404` |
+| `scripts/local-model-relay/service.ts` (17단계 relay 설치본) | `cf79a0ff5b3d6455bfe41aeb9add7b036f75a925524956e27809d76b65385b3a` |
+| `lib/llm/model-registry.ts` (17단계 relay 설치본) | `c2cef4a646f906ada5f9443d1a7da70c76f8693870431471bf8de8d74ec7def8` |
+| `scripts/ops/local-model-relay.sh` (17단계 relay 설치본의 `status`) | `3b6415c84aa84f734157075f8346058fafa3e33421e08d7a89ffe1947828f102` |
+| `scripts/reconcile-ai2-stale.ts` (21단계, 새 이미지 `/app/scripts`에 있다. `scripts/ops` 밖이라 `.dockerignore`에 빠지지 않는다) | `d764a74054a0ce65ebe4b291a63ab4feec18056df06e87f4aa2d1268594a15d3` |
+| `scripts/check-worker-progress.ts` (R1, 14·19·22단계, 이미지 `/app/scripts`) | `fb1a199b7711281613dcb2a9be6d66f6077878331d0e335fd55d32dc0dd58577` |
 
 ## 4. 실행 순서
 
@@ -162,10 +185,20 @@ SELECT pg_is_in_recovery() AS replica, (SELECT mode FROM model_capacity_control 
 - 명령: 관문 문서 R1로 `overall`과 경보 단계를 보고, **경보인 잡만** 하나씩 멈춘다. 기본 후보는 `product-translate`·`product-tagline-ko`·`crawl-tagline`·`product-search-profile`이고, 경보일 때만 `reason-translate`·`product-search-verify`·`product-intro-check`를 더한다. 잡마다 S7로 `job-pause` 감사 행을 확인한다.
 - 성공: R1 `overall == "ok"`.
 - 실패 시: 관문 문서 3절에서 pause 대상이 「아니오」인 경보가 남으면 배포를 멈춘다(면제 금지). `job_control_unsupported_mode`이면 2절 ①을 따른다.
+- **PR #732·#734·#735 영향 재확인(3판)**: 멈춤 후보 목록은 바뀌지 않는다. 새 잡은 없고, `second-review`는 계속 pause 대상이 아니다. 바뀐 것은 아래 재개 조건과 배포 뒤 확인이다. 잡 이름은 `/admin/status` 작업 표 이름과 같다.
+
+| 잡(R1 단계) | 들어온 변경 | 14단계 멈춤 | 19단계 재개 때 더 볼 것 |
+| --- | --- | --- | --- |
+| `product-translate`(product-translate) | #732: 옛 `[m1] qwen3.8-flash-next` 설정을 등록부 `m1:translation` Gemma로 해석한다 | 경보면 멈춤(기존) | **17단계 `check`·health `matched` 확인 뒤에만** 재개(M1 사용). 재개 뒤 [등록부 연결 안내](2026-10-29-m1-relay-registry-rollout.md) 5절 P2·P3로 번역 저장 증가를 본다 |
+| `reason-translate`(reason-translate) | #735: 장부에 묶인 사유를 두 대기열에서 건너뛴다. #732: 기본 모델이 같은 `m1:translation`이다(`ABCLLM_MODEL` 재정의가 없을 때) | 경보일 때만(기존) | 17단계 뒤에만 재개(M1 사용). 22단계 T5 |
+| `product-tagline-ko`(tagline-ko) | #735: 출력 정리 뒤 다시 검사하고, 품질 외 실패가 10회면 `failure_limit`로 끝낸다 | 경보면 멈춤(기존) | 재개 직후 수동(blocked) 수가 `failure_limit` 수만큼 늘 수 있다. 의도된 변화이고 22단계 T3로 나눠 본다. 22단계 T2·T4 |
+| `product-search-profile`(keywords) | #735: 묶인 제품을 건너뛰고, 같은 그룹에 다른 route 대기가 있으면 일꾼 하나만 쓴다 | 경보면 멈춤(기존) | `search_profile.fair_share` 로그가 계속 찍히면 처리량이 일꾼 하나로 준 것이다(결함 아님). 22단계 T7·T8·T9 |
+| `crawl-tagline`·`product-search-verify`·`product-intro-check` | 없음 | 기존과 같음 | 기존과 같음 |
+| `second-review`(second) | #734: 매분 정체 표를 정리하고 다시 넣는다 | **하지 않는다**(관문 문서 3절 「아니오」, DRAIN의 held) | 배포 뒤 다시 넣은 표가 대기열 끝에 붙는다. 그래서 R1 `second`의 대기 수가 잠시 늘 수 있다. 경보면 21단계 A2·A5로 정리 때문인지 먼저 가른다 |
 
 ### 15. 배포 plan
 - 위치: gpu3090(배포 대상 main SHA를 checkout한 깨끗한 트리, `deployment-fast-path.md`)
-- 전제: 배포 대상 `TARGET=1f52c9efea0bfab555567c17889cf919f41938be`(= `REL`, PR #730 병합 main SHA)이다. 그 main `check`와 이미지 publish가 끝났는지 `deployment-fast-path.md`대로 확인한다. 0143·0144를 포함하므로 `--migration-verified`가 필요하다. `REL = TARGET`이므로 18단계 재스테이징 tar의 `package-lock.json`은 새 이미지의 것과 같다.
+- 전제: 3절 「배포 TARGET 확인」 블록을 **지금** 다시 쳐서 `TARGET`을 정하고 `target_is_main`·`target_same_staged_tree`·CI `success`를 본다(사전 점검 때의 값을 그대로 쓰지 않는다. 그 사이 main이 움직였을 수 있다). 그 main `check`와 이미지 publish가 끝났는지 `deployment-fast-path.md`대로 확인한다. 0143·0144를 포함하므로 `--migration-verified`가 필요하다. `target_same_staged_tree`이므로 18단계 재스테이징 tar(`REL`)의 `package-lock.json`은 새 이미지의 것과 같다. 상품 번역 env `PRODUCT_TRANSLATION_MODEL_KEY=m1:translation`을 넣을 거라면 이 배포 전에 Dokploy env에 넣어 같은 배포로 반영한다([등록부 연결 안내](2026-10-29-m1-relay-registry-rollout.md) 3절). 선택 사항이다. `TARGET`에는 #732가 들어 있어 KEY가 없어도 옛 Qwen 설정을 Gemma로 해석한다.
 ```sh
 xa-key exec DOKPLOY_API_KEY=gpu3090/dokploy -- env NMV_DEPLOY_SSH_USER=jr npm run deploy -- plan --sha "$TARGET" --migration-verified \
   --out "$HOME/.local/state/nomorevibe-releases/release-order-20261029-<처음 쓰는 이름>"
@@ -179,15 +212,37 @@ xa-key exec DOKPLOY_API_KEY=gpu3090/dokploy -- env NMV_DEPLOY_SSH_USER=jr npm ru
 - 실패 시: `model_replacement_requires_explicit_drain_and_zero_active_calls`는 13단계 조건이 깨진 것이다. 서비스 변경은 0이지만 execution 디렉터리가 소모됐으므로 새 plan이 필요하다. 그 밖의 중단은 `stopped.safe.json`을 보고 marker를 다시 쓰지 않는다(deployment-fast-path).
 
 ### 17. [승인] M1 relay 재설치 (device_admin, m1studio)
-- 전제: 12단계 M1 해제가 끝났다(그 전에는 절대 하지 않는다). capacity가 아직 `draining`이다.
-- 설치본: `<REVIEWED_SHA>` = `TARGET`. 대표가 `/var/tmp/nmv-relay-reviewed/$TARGET`에 그 SHA의 완전한 설치본(의존성 포함)을 준비한다. 준비할 때 `find /var/tmp/nmv-relay-reviewed/$TARGET -type f -print0 | sort -z | xargs -0 shasum -a 256 | shasum -a 256`을 기록하고, ditto 직전에 같은 값인지 다시 확인한다.
-- 명령: `2026-10-29-m1-relay-model-handoff.md` 「대표용 M1 argv」 jsonl을 한 줄씩 실행한다(backup·release 목적지는 처음 쓰는 경로).
-- 성공: launchd readback이 `state = running`과 새 pid를 보인다. `/v1/models` id가 `mlx-community--gemma-4-26b-a4b-it-4bit`이다. plist의 `LOCAL_MODEL_RELAY_VERSION`이 `TARGET`이다.
-- 실패 시: bootout 뒤 bootstrap이 실패하면 relay가 없는 상태다. backup으로 되돌릴지는 대표가 판단한다. capacity는 DRAIN이므로 M1 요청은 들어오지 않는다.
+- 전제: 12단계 M1 해제가 끝났다(그 전에는 절대 하지 않는다. 재시작하면 `m1_current_relay_is_recovered_process`로 해제 경로가 영구히 막힌다). 16단계 배포가 `deployed-and-verified`로 끝났다. capacity가 아직 `draining`이다(M1 요청이 들어오지 않는다).
+- 설치본(PR #732): `<REVIEWED_SHA>` = **`RELAY_SHA=279e596ee267e39b311d329ef828f4d9fe9946e7`**(3절). Dokploy `TARGET`과 같을 필요는 없다. relay는 M1에 따로 설치하고, relay가 읽는 파일은 `279e596e`와 `REL` 사이에 같다. 경로는 준비 `/var/tmp/nmv-relay-reviewed/279e596ee267e39b311d329ef828f4d9fe9946e7` → 설치 `/usr/local/nmv-llm-relay/releases/279e596ee267e39b311d329ef828f4d9fe9946e7`이다. 대표가 준비 경로에 그 SHA의 완전한 설치본(의존성 포함)을 둔다. 준비할 때 `find /var/tmp/nmv-relay-reviewed/279e596ee267e39b311d329ef828f4d9fe9946e7 -type f -print0 | sort -z | xargs -0 shasum -a 256 | shasum -a 256`을 기록하고, ditto 직전에 같은 값인지 다시 확인한다. 준비본의 relay 파일 5개를 `shasum -a 256`으로 표 3과 대조한다.
+- 순서([m1 device_admin], 각 줄 55초 alarm, 응답이 불명확하면 같은 줄을 다시 치지 않고 다음 읽기 줄로 확인한다):
+  1. **전 읽기(쓰기 0)**: [등록부 연결 안내](2026-10-29-m1-relay-registry-rollout.md) 1절 「재설치 전 읽기」 argv. 기대값은 `MODEL_REGISTRY_CONFIG unset`, `LOCAL_MODEL_RELAY_EQUIPMENT None`이다. `set`이면 그 JSON의 M1 entry에 `relay` 용도가 있는지 먼저 본다(없으면 새 relay가 `relay_model_not_registered`로 시작하지 않는다. 안내 2절). 이어서 아래 두 줄로 되돌릴 곳을 적고 `config.env`를 백업한다(목적지는 처음 쓰는 경로).
+```jsonl
+{"executable":"/usr/bin/perl","args":["-e","alarm 55; exec @ARGV; die $!","/usr/bin/readlink","/usr/local/nmv-llm-relay/current"]}
+{"executable":"/usr/bin/perl","args":["-e","alarm 55; exec @ARGV; die $!","/bin/cp","-p","/usr/local/nmv-llm-relay/config.env","/usr/local/nmv-llm-relay/config-before-model-fix.env"]}
+```
+  2. **설치**: [M1 relay 인계](2026-10-29-m1-relay-model-handoff.md) 「대표용 M1 argv」 jsonl을 `<REVIEWED_SHA>`만 `279e596ee267e39b311d329ef828f4d9fe9946e7`로 바꿔 한 줄씩 친다(backup·release 목적지는 처음 쓰는 경로). **`plutil -lint` 줄 다음, `launchctl bootstrap` 줄 앞에서 멈추고** 3을 친다.
+  3. **`server.ts check` — 허용 모델 확인(쓰기 0, bootstrap 전)**: 갱신한 plist의 실행 인자·작업 폴더·env 그대로 `check`만 실행한다. 설치기(`scripts/ops/local-model-relay.sh` `write_service`)가 bootstrap 전에 `run_entry check`를 하는 것과 같은 검사다. `TMPDIR`은 relay 계정 폴더에 root 파일을 만들지 않도록 뺀다.
+```jsonl
+{"executable":"/usr/bin/perl","args":["-e","alarm 55; exec @ARGV; die $!","/usr/bin/python3","-I","-c","import plistlib,subprocess; d=plistlib.load(open('/Library/LaunchDaemons/bot.brut.nmv-llm-relay.plist','rb')); e={k:v for k,v in d['EnvironmentVariables'].items() if k!='TMPDIR'}; r=subprocess.run(d['ProgramArguments']+['check'],cwd=d['WorkingDirectory'],env=e,capture_output=True,text=True,timeout=45); print('check_exit',r.returncode); print(r.stdout.strip()); print(r.stderr.strip()[-400:])"]}
+```
+     - 성공: `check_exit 0`이고 JSON이 `"event":"local_model_relay.config_valid"`, `"equipment":"m1"`, `"model":"mlx-community--gemma-4-26b-a4b-it-4bit"`, `"allowedModels":["mlx-community--gemma-4-26b-a4b-it-4bit"]`, `"relayRevision":"279e596ee267e39b311d329ef828f4d9fe9946e7"`를 보인다. 그다음 2의 남은 줄(`bootstrap`, 필요할 때만 `kickstart`, launchd readback)을 친다.
+     - 실패: stderr가 `{"event":"local_model_relay.refused","code":"invalid_config"}`이면 아래 「되돌리기」로 간다. 원인 후보는 `relay_model_not_allowed`(plist 모델이 M1 relay entry가 아님, 갱신 줄 누락)·`relay_model_not_registered`·`relay_invalid_equipment`·`relay_model_family_mismatch`다. `allowedModels`에 다른 모델이 있거나 `relayRevision`이 다르면 bootstrap하지 않는다.
+  4. **후 읽기(쓰기 0)**: 안내 1절 「재설치 후 읽기」 argv(`local-model-relay.sh status`).
+- 성공: launchd readback이 `state = running`과 새 pid를 보이고 `last exit code`가 0이다. status JSON이 `"allowedModels":["mlx-community--gemma-4-26b-a4b-it-4bit"]`, `"upstreamModelMatch":true`, **`"upstreamModelReason":"matched"`**, `"relayRevision":"279e596ee267e39b311d329ef828f4d9fe9946e7"`를 보인다. `not_checked`면 상류 목록을 아직 읽지 않은 것이다. 10초 뒤 같은 status를 한 번 더 읽는다(읽기라 다시 쳐도 된다). plist의 `LOCAL_MODEL_RELAY_VERSION`이 `RELAY_SHA`다.
+- 실패 시: `upstream_model_mismatch`이면 oMLX가 다른 모델을 서빙 중이다. relay가 전송 전에 거절하므로 미확인은 생기지 않는다. DRAIN을 유지한 채 멈추고 oMLX `/v1/models`를 본다(18단계로 가지 않는다). `upstream_models_unavailable`도 같다. `status_unavailable`이거나 `last exit code`가 0이 아니면 `relay.log`의 거절 코드를 보고 「되돌리기」로 간다.
+- **되돌리기**(relay가 없는 상태면 바로 한다. capacity는 DRAIN이라 M1 요청은 없다): 아래 argv로 1에서 적은 이전 release와 백업 plist·config.env로 돌린 뒤 bootstrap한다. `bootout`은 서비스가 올라와 있을 때만 친다. 이전 relay로 돌아가면 M1은 옛 모델 고정 그대로다. 그러면 18단계 `routes`의 `product-translate`가 non-serving으로 남을 수 있다. 그 상태로 OPEN할지는 대표가 정한다(허용 플래그는 쓰지 않는다).
+```jsonl
+{"executable":"/usr/bin/perl","args":["-e","alarm 55; exec @ARGV; die $!","/bin/launchctl","bootout","system/bot.brut.nmv-llm-relay"]}
+{"executable":"/usr/bin/perl","args":["-e","alarm 55; exec @ARGV; die $!","/bin/ln","-sfn","<1에서 읽은 이전 release 경로>","/usr/local/nmv-llm-relay/current"]}
+{"executable":"/usr/bin/perl","args":["-e","alarm 55; exec @ARGV; die $!","/bin/cp","-p","/usr/local/nmv-llm-relay/plist-before-model-fix.plist","/Library/LaunchDaemons/bot.brut.nmv-llm-relay.plist"]}
+{"executable":"/usr/bin/perl","args":["-e","alarm 55; exec @ARGV; die $!","/bin/cp","-p","/usr/local/nmv-llm-relay/config-before-model-fix.env","/usr/local/nmv-llm-relay/config.env"]}
+{"executable":"/usr/bin/perl","args":["-e","alarm 55; exec @ARGV; die $!","/bin/launchctl","bootstrap","system","/Library/LaunchDaemons/bot.brut.nmv-llm-relay.plist"]}
+```
 
 ### 18. [승인] 접수 OPEN — 새 컨테이너에 C5 재스테이징 + `in-container.sh open`
 - 위치: gpu3090 → **배포 뒤 새** m3ultra 유지보수 컨테이너
 - 전제: 배포가 유지보수 컨테이너를 교체했으므로 2단계·C5의 `/tmp` 스테이징은 없다. 새 이미지에도 `scripts/ops`는 없다(`.dockerignore` 7행). 그래서 `/app`에서 직접 실행하지 않고, **실행서 C5를 새 컨테이너에 다시 한다**(같은 `$W/src.tar`·`$TAR_SHA`, 표 3의 `REL`). `REL`이 배포 `TARGET`과 같은 main SHA이므로 tar의 `package-lock.json`은 새 이미지의 것과 같다. 다르면 두 stage가 `package_lock_differs_from_image`로 아무것도 쓰지 않고 멈춘다. 그때는 OPEN하지 않고 DRAIN을 유지한 채 `REL`·`TARGET`을 다시 확인한다.
+- 17단계 status가 `upstreamModelReason:"matched"`였다(아니면 OPEN하지 않는다). `routes` 표에서 `product-translate`·`reason-translate` 줄의 status가 `serving`이어야 한다(#732. 정책 route 모델이 `[m1] mlx-community--gemma-4-26b-a4b-it-4bit`가 아니면 `unmapped`로 non-serving이 된다. 그때는 [등록부 연결 안내](2026-10-29-m1-relay-registry-rollout.md) 4절 P1로 정책 값을 보고, 정책 갱신은 별도 승인한다).
 - OPEN은 실행서 D10과 같은 `in-container.sh open`(정식 `pipeline-control capacity mode --to=open --from-mode=draining` CAS, 기본 dry-run, 허용 플래그 없음)으로 한다. route 표는 `capacity-control.sh routes`로 같은 스테이징 소스·새 컨테이너 env에서 본다.
 ```sh
 NCID=$(xa-ssh m3ultra $DK ps -q --no-trunc --filter label=com.docker.swarm.service.name=app-navigate-neural-system-yf43c7); echo "$NCID"   # 정확히 1줄, 2단계의 $CID와 다르다
@@ -206,8 +261,10 @@ xa-ssh m3ultra "$DK exec -i $NCID sh -s -- status" < "$W/in-container.sh"       
 
 ### 19. job-resume (순서대로)
 - 위치: `/admin/status` → 「이 작업 재개」
-- 명령·조건: 관문 문서 6절 「resume 순서와 정상 복귀 조건」을 따른다. `product-search-profile` → `crawl-tagline` → `product-tagline-ko` → `product-translate` → 조건부 3개 순서로, 한 번에 하나씩 재개하고 2분에 1차 확인, 5분에 판정한다. M1을 쓰는 잡은 17단계가 확인된 뒤에만 재개한다.
-- 실패 시: 10분 안에도 완료가 0이면 다음 재개를 멈추고 R1·S2~S6을 기록한다.
+- 재개 전(쓰기 0): 22단계의 준비 블록과 **T0·T1**을 먼저 친다. T0이 0행이 아니거나 T1에서 어떤 그룹의 `indeterminate`가 `group_limit`와 같으면, 그 route를 쓰는 잡(`reason-translate`·`product-tagline-ko`·`product-search-profile`)은 재개해도 진척하지 않는다. 그 잡은 멈춘 채로 두고 미확인 회수 차선(`review-stall-backlog.md`)으로 넘긴다. 나머지 잡만 재개한다.
+- 명령·조건: 관문 문서 6절 「resume 순서와 정상 복귀 조건」을 따른다. `product-search-profile` → `crawl-tagline` → `product-tagline-ko` → `product-translate` → 조건부 3개 순서로, 한 번에 하나씩 재개하고 2분에 1차 확인, 5분에 판정한다. M1을 쓰는 `product-translate`·`reason-translate`는 17단계 `check`와 health `matched`가 확인된 뒤에만 재개한다. 잡마다 재개 시각(UTC)을 적는다(22단계 60분 판정의 기준).
+- 14단계 표의 「19단계 재개 때 더 볼 것」을 같이 본다. 특히 `product-tagline-ko`의 수동 수 증가는 `failure_limit` 때문이면 실패가 아니다(22단계 T3).
+- 실패 시: 10분 안에도 완료가 0이면 다음 재개를 멈추고 R1·S2~S6을 기록한다. 다시 멈출지는 대표가 정한다(관문 문서 6절). 다시 멈출 때는 같은 「이 작업 멈춤」으로 하고 실패 사실을 사유에 적는다.
 
 ### 20. 운영 판 확인
 - 위치: gpu3090(`TARGET`이 있는 checkout)
@@ -215,11 +272,98 @@ xa-ssh m3ultra "$DK exec -i $NCID sh -s -- status" < "$W/in-container.sh"       
 - 성공: exit 0이고 두 웹 인스턴스 모두 `TARGET`이다.
 - 이어서: 배포 관측(5·10·15분·6시간) 영수증과 해제 뒤 30분 동안 모델별 성공·새 미확인 0건을 **실제 영수증으로만** 기록한다. 멈췄던 단계의 관측 통과는 재개 뒤 시각부터 따로 센다.
 
+### 21. AI2 정체 정합 — 자동 정리 확인 → dry-run → [승인] apply (PR #734)
+- 근거: [AI2 정체 정합 런북](2026-10-27-ai2-stale-reconcile.md) 「2026-10-29 정리 공백 보완과 정합 도구」의 「대표가 칠 명령」(Q1~Q5, 「[배포 뒤에만] 정리 잡의 자동 반영」, 「[배포 뒤에만] 도구 dry-run → apply」). 이 단계는 그 명령을 이 셸의 `xa-ssh`·`$DK` 형식으로 옮긴 것이다. SQL은 런북 원문을 `REL`에서 그대로 뽑아 쓴다.
+- 위치: gpu3090 → m3ultra crawler-m3(READ ONLY SQL), reviewer-m3(도구). 도구는 새 이미지의 `/app/scripts/reconcile-ai2-stale.ts`다. `scripts/ops` 밖이라 이미지에 있고 스테이징이 필요 없다.
+- 전제: 18단계 OPEN과 20단계가 성공했다(다시 넣은 표는 OPEN이어야 처리된다). `$W/sql/run.mjs`가 있다(사전 점검 묶음 5절 (c). 셸을 새로 열었으면 묶음 1절과 5절 (c)의 `run.mjs` 블록을 다시 친다). 배포가 컨테이너를 바꿨으므로 CID를 새로 읽는다.
+```sh
+mkdir -p "$W/post"
+CCID=$(xa-ssh m3ultra $DK ps -q --no-trunc --filter label=com.docker.swarm.service.name=app-generate-haptic-card-vjqgv4); echo "$CCID"   # crawler-m3, 정확히 1줄
+RCID=$(xa-ssh m3ultra $DK ps -q --no-trunc --filter label=com.docker.swarm.service.name=app-copy-primary-hard-drive-b5fhzd); echo "$RCID"  # reviewer-m3, 정확히 1줄
+xa-ssh m3ultra "$DK exec $RCID sh -c 'printenv SERVICE_INSTANCE_ID; sha256sum /app/scripts/reconcile-ai2-stale.ts'"   # reviewer-m3, 표 3 값
+git -C "$SRC" show "$REL:docs/operations/2026-10-27-ai2-stale-reconcile.md" > "$W/post/ai2-runbook.md"
+python3 -I - "$W/post/ai2-runbook.md" "$W/post" <<'PY'
+import pathlib, re, sys
+doc, out = pathlib.Path(sys.argv[1]).read_text(), pathlib.Path(sys.argv[2])
+qs = re.findall(r"^\*\*Q(\d) — .*?^```sql\n(.*?)^```", doc, re.S | re.M)
+assert [n for n, _ in qs] == ["1", "2", "3", "4", "5"], [n for n, _ in qs]
+for n, body in qs: (out / f"A{n}.sql").write_text(body)
+print("ai2_sql", len(qs))
+PY
+for n in 1 2 3 4 5; do python3 -I -c 'import json,sys;print("const text="+json.dumps(open(sys.argv[1]).read())+";");print(open(sys.argv[2]).read())' "$W/post/A$n.sql" "$W/sql/run.mjs" > "$W/post/A$n.mjs"; done
+for n in 1 2 3; do echo "== A$n"; xa-ssh m3ultra "$DK exec -i $CCID node --input-type=module -" < "$W/post/A$n.mjs" | tee "$W/post/A$n-$(date -u +%H%M).json"; done
+```
+- 순서와 확인 조건:
+  1. **배포 5분 뒤, 자동 정리 확인(쓰기 0)**: 위 블록의 A1·A2·A3. 실행기 앱 이름이 런북의 reviewer-m3 대신 crawler-m3인 것은 사전 점검 묶음과 같은 READ ONLY 실행기를 쓰기 위해서다. 같은 DB를 읽는다. 기대: A1에서 후보 357316의 관문 표(138985)가 `resolved/superseded`(다시 넣음) 또는 `not_required`다. A2 `stranded_gate_votes`가 0이거나 줄고 있다. A3은 0행이다. 그대로 남아 있으면 2로 간다.
+  2. **dry-run(쓰기·잠금 0)**: `nextAfterCandidateId`가 0이 될 때까지 이어 본다.
+```sh
+A=0; while :; do xa-ssh m3ultra "$DK exec $RCID node --import tsx scripts/reconcile-ai2-stale.ts --limit 25 --after $A" > "$W/post/ai2-dry-$A.json" || { echo "dry_run_exit=$?"; break; }
+  A=$(python3 -I -c 'import json,sys;d=json.load(open(sys.argv[1]));print(d["mode"],d["examined"],d["summary"],file=sys.stderr);print(d["nextAfterCandidateId"])' "$W/post/ai2-dry-$A.json"); [ "$A" = 0 ] && break; done
+```
+     - 성공: 모든 묶음이 `mode dry-run`이다. `summary`의 `close`·`retire`·`reinsert`·`refresh` 합이 0이면 잡이 이미 정리한 것이다. **apply하지 않고 4로 간다.** 0이 아니면 `entries`의 `close`·`reinsert` 대상과 사유(`reasons`)가 런북 「판별 규칙」과 맞는지 본다. 사람 결정(`decided_by<>'auto'`)이나 갈림 보류(`second_review_split`) 후보가 `close`에 있으면 apply하지 않는다(규칙상 `protected`여야 한다).
+     - `dry_run_exit`가 나오면 stderr 메시지를 남기고 멈춘다(읽기만 했으므로 운영 변화는 없다).
+  3. **[승인] apply**: dry-run을 검토한 뒤 25개 묶음으로, 같은 커서 순서로 한 번씩 친다. `<OP>`는 대표 이름이다.
+```sh
+xa-ssh m3ultra "$DK exec $RCID node --import tsx scripts/reconcile-ai2-stale.ts --apply --actor <OP> --limit 25 --after 0" | tee "$W/post/ai2-apply-0.json"; echo "apply_exit=${PIPESTATUS[0]}"
+#   다음 묶음은 바로 앞 출력의 nextAfterCandidateId를 --after에 넣는다. 0이면 끝이다
+```
+     - 성공: exit 0, `mode:"apply"`, `disabled:false`, `changed`가 그 묶음의 dry-run `candidatesWithChanges` 이하다. `skipped`는 `input_too_large`뿐이다. `job.status:"completed"`는 쓰기가 끝났다는 뜻일 뿐이고 모델 결과가 아니다.
+     - exit 3이면 잡이 lease를 쥐고 있었던 것이다(stderr `written:false`, 쓰기 0). 1분 뒤 **같은 명령**을 다시 친다. exit 1이면 stderr 한 줄을 남기고 멈춘다. 같은 apply를 반복하지 말고 2의 dry-run으로 지금 상태부터 다시 본다. 실패한 출력은 지우지 않는다.
+  4. **확인(쓰기 0)**: 1의 블록에서 마지막 줄의 `1 2 3`을 `1 2 3 4 5`로 바꿔 다시 친다. 성공 기준은 A2=0(용량·item 보호로 dry-run `blocked`에 나온 후보만 남을 수 있다), A3=0행, A4 `carried_demand`가 늘지 않음, A5의 감사 줄 수가 apply `changed` 합과 같음이다. 다시 넣은 표의 실제 모델 결과(`agreed`·`needs_human`)는 이후 `second_reviews.status`로 따로 본다.
+- 되돌리기: 이 도구에는 되돌리는 명령이 없다. SQL로 `second_reviews`를 고치지 않는다. 잘못 닫힌 표가 보이면(A1·A5에서 사람 결정·갈림 보류 후보가 닫힘) 다음 apply 묶음을 멈추고 A5의 `closedIds`·`insertedIds`를 기록한다. `second-review` 잡도 1분마다 같은 정리를 한다. 그 잡을 멈출지는 대표가 정한다(14단계와 같은 「이 작업 멈춤」. 멈추면 AI2 표 처리도 멈춘다). R1 `second` 경보가 다시 넣은 표의 대기 증가 때문이면 A2·A5로 확인하고 기다린다.
+
+### 22. 번역·후처리 적체 확인 Q0~Q10 (PR #735, READ ONLY)
+- 근거: [텍스트 적체 런북](2026-10-29-text-backlog-runbook.md) 「배포 뒤 확인 — READ ONLY SQL과 기대값」. 런북 SQL은 psql 변수(`\set deploy_at`, `:'deploy_at'`)를 쓴다. 이 셸의 실행기(`run.mjs`, READ ONLY 트랜잭션·5초 제한)에는 psql 변수가 없다. 그래서 아래 블록이 `REL`의 런북 원문에서 Q0~Q9를 뽑아 `:'deploy_at'`을 실제 시각 리터럴로 바꾼 `T0`~`T9`를 만든다. `BEGIN`·`SET`·`ROLLBACK` 줄은 쓰지 않는다(실행기가 READ ONLY 트랜잭션을 연다).
+- `deploy_at` 치환: text-m3 새 컨테이너의 시작 시각(docker `StartedAt`, UTC `…Z`)을 그대로 쓴다. mini 예비 text가 먼저 배포되므로 M3 쪽이 더 늦다. 늦은 시각을 쓰면 배포 전 행을 세지 않는다. 시각 형식이 docker `StartedAt`과 다르면 블록이 `deploy_at_must_be_docker_startedat_utc`로 멈춘다. KST나 손으로 적은 값은 넣지 않는다.
+- 위치: gpu3090 → m3ultra crawler-m3(READ ONLY SQL, 21단계와 같은 `$CCID`), text-m3(시작 시각만 읽기).
+- 시점: **준비 블록과 T0·T1은 19단계 재개 전에** 친다. T2~T9는 각 잡 재개 60분 뒤에 친다(기준은 19단계에서 적은 재개 시각이다. `deploy_at`은 세는 시작점일 뿐이고 그 잡이 멈춰 있던 시간은 진척 기대에서 뺀다). T10(R1)은 재개 5분 판정과 60분 뒤에 친다.
+```sh
+mkdir -p "$W/post"
+TCID=$(xa-ssh m3ultra $DK ps -q --no-trunc --filter label=com.docker.swarm.service.name=nomorevibe-text-m3-ebmybu); echo "$TCID"   # text-m3, 정확히 1줄
+xa-ssh m3ultra "$DK exec $TCID printenv SERVICE_INSTANCE_ID"
+DEPLOY_AT=$(xa-ssh m3ultra "$DK inspect -f '{{.State.StartedAt}}' $TCID"); echo "$DEPLOY_AT"   # 16단계 배포 시각 뒤여야 한다
+git -C "$SRC" show "$REL:docs/operations/2026-10-29-text-backlog-runbook.md" > "$W/post/text-runbook.md"
+python3 -I - "$W/post/text-runbook.md" "$W/post" "$DEPLOY_AT" <<'PY'
+import pathlib, re, sys
+doc, out, at = pathlib.Path(sys.argv[1]).read_text(), pathlib.Path(sys.argv[2]), sys.argv[3].strip()
+if not re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{1,9})?Z", at): sys.exit("deploy_at_must_be_docker_startedat_utc")
+qs = re.findall(r"^\*\*Q(\d+)\. .*?^```sql\n(.*?)^```", doc, re.S | re.M)
+assert [n for n, _ in qs] == [str(i) for i in range(10)], [n for n, _ in qs]
+for n, body in qs:
+    body = body.replace(":'deploy_at'", "'%s'::timestamptz" % at)
+    assert not re.search(r":'[A-Za-z_]\w*'|\\set", body), n
+    (out / f"T{n}.sql").write_text(body)
+print("text_sql", len(qs), "deploy_at", at)
+PY
+for n in 0 1 2 3 4 5 6 7 8 9; do python3 -I -c 'import json,sys;print("const text="+json.dumps(open(sys.argv[1]).read())+";");print(open(sys.argv[2]).read())' "$W/post/T$n.sql" "$W/sql/run.mjs" > "$W/post/T$n.mjs"; done
+for n in 0 1 6 8; do echo "== T$n"; xa-ssh m3ultra "$DK exec -i $CCID node --input-type=module -" < "$W/post/T$n.mjs" | tee "$W/post/T$n-$(date -u +%H%M).json"; done   # 재개 전
+#   재개 60분 뒤: 같은 for 줄을 "for n in 2 3 4 5 6 7 8 9"로 친다
+```
+- T10(R1): 사전 점검 묶음 5절 (e)의 R1 명령을 새 `$CCID`로 친다. 세 단계 `tagline-ko`·`reason-translate`·`keywords`를 본다.
+- 확인 조건(런북 기대값 그대로):
+
+| 번호 | 무엇 | 통과 | 아니면 |
+| --- | --- | --- | --- |
+| T0 | route 전체를 막는 옛 형식 미확인 | **0행** | 그 route는 이 수정으로 풀리지 않는다. 그 잡은 재개하지 않고 회수 차선으로 넘긴다 |
+| T1 | 물리 그룹 점유 | 그룹마다 `indeterminate < group_limit` | 같으면 미확인이 그룹을 다 쥔 것이다(결함 아님). 회수 차선으로 넘긴다 |
+| T2 | tagline-ko 진척·길이 | 재개 60분 뒤 `ok_since_deploy > 0`, `max_len <= 80` | T0·T1·로그 `tagline_ko.capacity_deferred` 사유를 본다 |
+| T3 | tagline-ko 종료 사유 | `quality_limit:*`와 `failure_limit:*`가 나뉘어 보인다 | 수동 수 증가가 `failure_limit` 수 이내면 의도된 변화다 |
+| T4 | tagline-ko 무한 재시도 | **0** | 0이 아니면 결함 신고(런북 차선). 잡을 다시 멈출지는 대표가 정한다 |
+| T5 | reason-translate 진척 | T0·T1이 정상이면 재개 60분 안에 `done_since_deploy > 0` | `translate.capacity_deferred` 사유를 본다 |
+| T6 | 세 route 장부 점유(참고) | 미확인이 남아도 T2·T5·T7 진척이 이어진다 | — |
+| T7 | search-profile 진척 | 재개 60분 뒤 `generated_since_deploy > 0` | `search_profile.capacity_deferred` 사유를 본다 |
+| T8 | 같은 제품 활성 요청 중복 | **0행** | 결함 신고. 잡을 다시 멈출지는 대표가 정한다 |
+| T9 | 같은 그룹 예약 배분(60분) | tagline-ko도 대기가 있으면 `reserved_60m > 0` | `search_profile.fair_share` 로그를 본다 |
+| T10 | R1 | 진척이 있으면 세 단계가 `progressing`, `alarm:false` | 진척 0이면 `no_progress`·`upstream_stalled`가 그대로다. T0·T1과 `*.capacity_deferred`를 본다 |
+
+- 되돌리기: 이 단계는 읽기만 한다. 되돌릴 쓰기가 없다. 기대와 다르면 19단계 실패 규칙(10분 완료 0 → 다음 재개 중단)과 위 표의 「아니면」을 따른다. `statement_timeout`(5초)에 걸린 질의는 그 번호를 「측정 없음」으로 적는다. 읽기라 나중에 다시 쳐도 된다. 결과 JSON은 `$W/post/`에 남기고 [review-stall-backlog.md](review-stall-backlog.md) 「번역·후처리 3잡 적체 차선」에 실제 값으로만 기록한다.
+
 ## 5. 실패 경로 (어디서 멈추든 지킬 것)
 
 - **7단계 이전**에 멈추면 운영(capacity·서비스)은 바뀌지 않았다. 다만 4단계에서 접수한 job은 `queued`이다. `opsHoldsBoundary`가 참이므로 **다른 ops-runner job 접수를 막는다**. 취소 경로는 없다. prepare가 `blocked`/`manual`로 끝난 job만 막지 않는다. 그러므로 4단계 접수는 3단계가 모두 끝나고 4~11단계를 한 창에서 이어 갈 수 있을 때만 한다.
 - **7~11단계 사이**에는 runner가 DRAIN과 물리 경계를 쥐고 있다. 같은 `$JOB`으로 `run`을 이어가는 것만 허용한다. 수동 OPEN, 다른 job 접수, 배포는 하지 않는다(`ops_runner_unfinished_operation`이 막는다).
 - **11단계 뒤 M1이 막히면**(12단계 실패): 배포는 관문 때문에 할 수 없다. 운영을 되살리는 정식 방법은 OPEN 하나뿐이다. 유지보수 컨테이너(배포 전이므로 2단계와 같은 `$CID`, C5 스테이징이 남아 있다. 컨테이너가 바뀌었으면 C5를 다시 한다)에서 실행서 D10 형식으로 `xa-ssh m3ultra "$DK exec -i $CID sh -s -- open $EPOCH1 $REV1 <OP> <REASON>" < "$W/in-container.sh"` dry-run을 먼저 실행한다. `/app`에는 `scripts/ops`가 없으므로 스테이징 없이 직접 실행하지 않는다. 2단계 (b)에서 non-serving route가 있었다면(`NONSERVING0 > 0`) 이 OPEN은 같은 판정으로 `deferred_routes:N`에 거절된다(스테이징한 `REL` 코드 + 199a3ebb 컨테이너 env). 그때는 허용 플래그를 쓰지 말고 DRAIN을 유지한 채 대표가 판단한다. M1 미확인은 그대로 남고, M1 relay는 재시작하지 않는다(경로 보존).
+- **16단계 뒤**(배포 완료, DRAIN 유지)에 멈추면 정식으로 되살리는 방법은 18단계 OPEN 하나다. 17단계 relay 재설치가 실패하면 17단계 「되돌리기」로 이전 relay를 살린 뒤 18단계 `routes`를 본다. `product-translate`·`reason-translate`가 non-serving이면 OPEN은 `deferred_routes:N`으로 거절된다. 그때는 허용 플래그 없이 DRAIN을 유지하고 대표가 정한다. M1 잡은 멈춘 채로 둔다. 18단계가 끝나면(OPEN) 21·22단계는 접수 상태를 바꾸지 않는다. 21단계 apply는 AI2 표만 쓰고, 22단계는 읽기만 한다. 거기서 멈춰도 운영 접수는 그대로다.
 - 어떤 단계에서도 시간 경과로 해제하지 않는다. `model_capacity_*`나 `jobs`를 SQL로 바꾸지 않는다. 관문 면제·`--allow-deferred-routes`를 쓰지 않는다. 실패한 once 디렉터리(배포 execution, M1 RUN, manifest out-dir)는 다시 쓰지 않는다.
 
 ## 6. 이 문서의 검증
@@ -231,3 +375,10 @@ xa-ssh m3ultra "$DK exec -i $NCID sh -s -- status" < "$W/in-container.sh"       
 - 대표 실측 결함 수정(2026-10-29, 작업 공간 `xaegis/13018003`, `xaegis/da3bd4a3`와 origin/main `c7dad56b` 병합): 운영 이미지에는 `scripts/ops`가 없다(`.dockerignore` 7행). m3ultra 유지보수 컨테이너에서 옛 `capacity-control.sh routes`가 `ERR_MODULE_NOT_FOUND '/app/scripts/ops/pipeline-control.ts'`로 실패해 2단계 (b)와 18단계를 실행할 수 없었다. `capacity-control.sh`를 `/tmp` 스테이징 방식으로 고쳤고(2절 3번), 2단계 (b)·18단계·5절 실패 경로와 실행서 표 0·C5·D10·B-1, 관문 문서 6절 3·8번을 고쳤다. 18단계는 「새 컨테이너에 C5 재스테이징 + `in-container.sh open`」이다. 시험 `tests/release-order-capacity-control.test.ts`는 이미지 `/app`에 `scripts/ops`가 없는 조건에서 스테이징 경로로만 성공함을 보인다. tar sha·lock 불일치·pipeline-control 없는 tar·`/app/node_modules` 없음·다른 tar 재스테이징·스테이징 뒤 lock 변경을 쓰기 없이 거절함도 보인다. busybox 도구만으로 도는 경우와 실제 `git archive` tar(pax 머리)도 시험하고, 2단계 (b) awk 집계가 OPEN의 `deferred_routes` 판정과 같음도 확인한다. 이 파일은 2 → 11시험이다.
 - 같은 작업에서 실제 DB 통합 시험(로컬 일회용 PostgreSQL 17 + pgvector, CI와 같은 `127.0.0.1:55435`)으로 결함 하나를 더 찾았다. 접수 CLI 미리 보기가 READ ONLY TX에서 `FOR SHARE`를 써 `25006`으로 실패했다(4단계 미리 보기·`--execute` 모두 exit 1). `readWriterFence`로 고쳤다. 새 통합 시험 `tests/integration/ops-runner-drain-handoff.test.ts`(2건)는 정식 CAS DRAIN → handoff의 감사 핀 왕복, 재실행 시 중복 없음, 남의 DRAIN(`handoff_drain_not_owned`), 바뀐 DRAIN(`handoff_drain_changed`), 미리 보기 READ ONLY와 비 indeterminate 거절(감사 행 0)을 확인한다. 고치기 전 코드에서는 1/2가 `25006`으로 실패했다. 관련 통합 `provider-boundary-release`·`replaced-provider-boundary-release`·`pipeline-control-status`와 함께 4파일/17시험 PASS다. `assemble.ts preflight`·`readback`과 `pipeline-control status`도 같은 시험 DB(0144까지 적용, 145행)에서 SQL 오류 없이 실행됐다(요청 행이 없으므로 exit 3이 정상).
 - 시험 수(전 = 병합 커밋 `69b830a5`, 후 = 수정 커밋): 지정 7파일 40 → 49, ops-runner·admin-models-ops·release·worker-progress·pipeline-control 18파일 175 → 184, Python unittest 20건 PASS, `next typegen` 뒤 `tsc --noEmit` 0, 바뀐 파일 ESLint 0.
+- 3판(2026-10-29, 작업 공간 `xaegis/87e232d6`, origin/main `f4fe5958`에 fast-forward, node_modules 연결, 운영 접근 없음):
+  - 해시: 표 3과 묶음 0절의 파일 해시를 `REL=f4fe5958…`에서 다시 계산했다. 1f52c9ef 판과 모두 같고 스테이징 tar만 `75f388d4…` → `cdff13dd…`로 바뀌었다. 같은 명령으로 `1f52c9ef`·`279e596e`의 이전 tar 값(`75f388d4…`·`9ab8a624…`)도 재현했다. 묶음 1절 블록을 이 저장소에서 그대로 쳐서 `rel_on_main`, 네 해시, `TAR_SHA`, `LOCK_SHA`가 표와 같음을 확인했다. 3절 「배포 TARGET 확인」 블록도 병합 전 main(`f4fe5958`)에 쳐서 `target_is_main`·`target_same_staged_tree`·CI `40885469282 success`를 확인했다. 병합 뒤 main에서는 대표가 다시 친다.
+  - 새 시험 `tests/release-order-hashes.test.ts`(10건): 확정본·묶음·실행서·relay 안내 네 표의 파일 해시를 작업 트리 파일과 대조한다. 같은 파일이 네 문서에서 같은 값인지, `REL`·`RELAY_SHA`·`TAR_SHA`가 문서 사이에 같은지, `TARGET`을 고정하지 않았는지 본다. REL 커밋이 있는 checkout에서는 `git archive` tar sha256도 대조한다(단위 CI는 얕은 checkout이라 그 1건은 건너뛴다). 21·22단계 SQL 생성기를 실제 런북에 돌려 A1~A5·T0~T9가 원문 그대로이고 psql 변수가 남지 않는지, 잘못된 `deploy_at`을 쓰기 없이 거절하는지도 본다. 통합 시험 `tests/integration/release-order-post-deploy-sql.test.ts`(2건)는 그 SQL 15개를 READ ONLY 실행기 방식으로 마이그레이션 0144까지 적용한 일회용 PostgreSQL 17(pgvector 0.8.6)에서 오류 없이 실행한다.
+  - 17단계 `check` argv: macOS 밖에서 가짜 plist(같은 키)·토큰 파일·작업 트리 코드로 실제 `server.ts check`를 돌렸다. `check_exit 0`, `equipment:"m1"`, `allowedModels:["mlx-community--gemma-4-26b-a4b-it-4bit"]`, `relayRevision:"279e596e…"`가 나왔다. plist 모델을 `qwen3.8-flash-next`로 바꾸면 `check_exit 1`, `invalid_config`였다. 실제 M1 launchd·health는 측정 없음.
+  - 문서 안 `sh` 블록 10개는 `bash -n`, `jsonl` 3개는 JSON 파싱을 통과했다.
+  - 시험 수: 관련 단위 10파일 64건 → 새 파일을 더해 11파일 74건 PASS(`release-order-capacity-control`·`release-29877f65`·`release-65f8c399-manifest`·`postprocess-backlog-*` 3·`ai2-stale-*` 3·`m1-relay-model-config`). 통합 `release-order-post-deploy-sql`·`ai2-stale-reconcile`·`postprocess-backlog-*` 3·`ops-runner-drain-handoff` 6파일 22건 PASS. 바뀐 TS 파일 ESLint 0, `next typegen` 뒤 `tsc --noEmit` 0. 전체 unit·전체 DB·종합 시험은 AGENTS.md 정책상 통합 단계 몫이라 돌리지 않았다.
+  - 운영(DB·M1·M3·배포·0143)에서는 아무것도 실행하지 않았다. 21·22단계의 운영 결과와 relay health는 측정 없음이다.

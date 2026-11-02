@@ -12,10 +12,10 @@
 
 남은 일(대표 몫, 미실행):
 
-1. push·PR·CI `check`·main 병합. relay 재설치용 `<REVIEWED_SHA>`는 **병합된 main 커밋**이다(로컬 `a900db03`은 후보일 뿐 설치본으로 쓰지 않는다). 설치본 경로는 그대로 `/var/tmp/nmv-relay-reviewed/<REVIEWED_SHA>` → `/usr/local/nmv-llm-relay/releases/<REVIEWED_SHA>`. 절차·argv는 [M1 relay 인계](2026-10-29-m1-relay-model-handoff.md).
-2. M1 relay 재설치 후 `server.ts check` 출력의 `equipment:"m1"`, `allowedModels:["mlx-community--gemma-4-26b-a4b-it-4bit"]`와 health의 `upstreamModelReason:"matched"` 확인.
+1. ~~push·PR·CI `check`·main 병합~~ **끝남**: PR #732 일반 병합 → main `279e596ee267e39b311d329ef828f4d9fe9946e7`(main CI 40864428582 `check`·두 이미지 success). relay 재설치용 `<REVIEWED_SHA>`는 이 값이다. 설치본 경로는 `/var/tmp/nmv-relay-reviewed/279e596ee267e39b311d329ef828f4d9fe9946e7` → `/usr/local/nmv-llm-relay/releases/279e596ee267e39b311d329ef828f4d9fe9946e7`. 실행 위치·순서는 [확정본](2026-10-29-release-order.md) 17단계다(배포 뒤, M1 해제 뒤).
+2. (대표, 미실행) M1 relay 재설치 후 `server.ts check` 출력의 `equipment:"m1"`, `allowedModels:["mlx-community--gemma-4-26b-a4b-it-4bit"]`와 health의 `upstreamModelReason:"matched"` 확인. `check` argv(bootstrap 전)와 되돌리기는 확정본 17단계에 있다.
 3. 운영 `MODEL_REGISTRY_CONFIG`를 쓰는 경우 M1 entry에 `relay` 용도가 없으면 새 relay가 `relay_model_not_registered`로 시작하지 않는다 → migration 도구 후보 JSON 검토 후 반영.
-4. 운영 text·translation 소비자에 `PRODUCT_TRANSLATION_MODEL_KEY=m1:translation` 설정(옛 `[m1] qwen…`은 코드가 Gemma로 해석하지만 설정 정리는 별도), capacity policy의 `product-translate` route 모델이 `[m1] mlx-community--gemma-4-26b-a4b-it-4bit`인지 확인(다르면 `unmapped`로 보류된다), 표준 배포.
+4. 운영 text·translation 소비자에 `PRODUCT_TRANSLATION_MODEL_KEY=m1:translation` 설정(선택, 확정본 15단계 전), capacity policy의 `product-translate` route 모델이 `[m1] mlx-community--gemma-4-26b-a4b-it-4bit`인지 확인(확정본 18단계 `routes`, 다르면 `unmapped`로 보류된다), 표준 배포(확정본 15·16단계, TARGET은 plan 시점 main 머리).
 5. 배포 후 실제 M1 dispatch·terminal·번역 저장 건수 증가 실측(현재 측정 없음).
 6. `lib/llm/replaced-provider-boundary-contract.ts`의 `[m1] qwen3.8-flash-next` 고정값은 이미 보낸 옛 요청 경계 해제용이라 이 차선에서 바꾸지 않았다.
 
@@ -288,8 +288,8 @@ AI1/AI2 저장 증가 명령은 두 측정 mjs를 기존 M3 text 컨테이너에
 
 ### 남은 것
 
-1. (대표) PR·CI·병합·표준 배포(`npm run deploy -- scope|plan|run`, text 공통 worker digest).
-2. (대표) 배포 뒤 런북 Q0~Q10 실행, 결과를 이 절에 기록. 특히 Q0(route 전체 옛 형식 fence)·Q1(그룹 한도를 미확인이 다 쥠)이
+1. ~~PR·CI·병합~~ **끝남**: PR #735 일반 병합 → main `f4fe5958290713d95e2ce618126fbbf651cd3d95`(main CI 40885469282 success, 이미지 artifact 2개). (대표) 표준 배포는 확정본 15·16단계로 한다.
+2. (대표) 배포 뒤 런북 Q0~Q10 실행, 결과를 이 절에 기록. 실행 위치·순서는 확정본 22단계다(T0~T10. T0·T1은 19단계 재개 전, 나머지는 재개 60분 뒤. `deploy_at`은 text-m3 새 컨테이너 docker `StartedAt`). 특히 Q0(route 전체 옛 형식 fence)·Q1(그룹 한도를 미확인이 다 쥠)이
    걸리면 이 수정으로 풀리지 않는다 — 미확인 요청 회수(`model-capacity-reclaim`, 위 차선 4단계) 선언이 필요하다.
 3. 운영 실측 전에는 효과 크기(시간당 저장 수 변화)를 말할 수 없다. 측정 없음.
 4. 수동 전체 unit·전체 DB·종합 시험은 통합 단계(AGENTS.md 검증 정책).

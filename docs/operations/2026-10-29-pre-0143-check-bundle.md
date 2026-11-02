@@ -1,4 +1,4 @@
-**결론: 0143 승인 전에 대표가 이 문서를 위에서 아래로 그대로 친다.** 쓰는 곳은 gpu3090 `$W`와 두 컨테이너의 `/tmp`뿐이다. 운영 DB 쓰기·DRAIN·OPEN·배포는 없다. 판정은 두 수로 한다. M1 preflight의 **`blockedNow`가 `[]`**이어야 하고, 2(b) route 표의 **`non_serving`** 수를 적어 둔다. 0이 아니면 배포 전 OPEN(실패 경로)을 쓸 수 없다. 기준 SHA는 PR #730 병합 main `1f52c9efea0bfab555567c17889cf919f41938be`이다. 이 값이 확정본의 `REL`이자 배포 `TARGET`이다.
+**결론: 0143 승인 전에 대표가 이 문서를 위에서 아래로 그대로 친다.** 쓰는 곳은 gpu3090 `$W`와 두 컨테이너의 `/tmp`뿐이다. 운영 DB 쓰기·DRAIN·OPEN·배포는 없다. 판정은 두 수로 한다. M1 preflight의 **`blockedNow`가 `[]`**이어야 하고, 2(b) route 표의 **`non_serving`** 수를 적어 둔다. 0이 아니면 배포 전 OPEN(실패 경로)을 쓸 수 없다. 기준 SHA는 PR #735 병합 main `f4fe5958290713d95e2ce618126fbbf651cd3d95`이다. 이 값이 확정본의 `REL`(스테이징·runner·M1 스크립트의 소스)이다. 배포 `TARGET`은 고정값이 아니고 plan 시점의 main 머리다. 1절 끝에서 확정본 3절 「배포 TARGET 확인」으로 `REL`과 스테이징 경로가 같은지 본다.
 
 # 0143 전 사전 점검 묶음 — 대표용 (2026-10-29)
 
@@ -7,7 +7,7 @@
 - 위치 표기: **[gpu3090]** 대표 셸, **[m3]** `xa-ssh m3ultra`, **[mini]** `xa-ssh mini`, **[m1]** m1studio device_admin(root).
 - 하나라도 성공 조건과 다르면 거기서 멈추고 0143을 승인하지 않는다. 응답이 불명확하면 같은 명령을 다시 치기 전에 읽기로 먼저 확인한다(stage는 같은 tar면 다시 쳐도 `existing:true`로 그대로 둔다. `in-container.sh stage`는 두 번째에 `source_dir_exists_use_new_base`를 낸다. 이때 3-2의 확인으로 같은 tar인지 본다).
 
-## 0. 기준 값 (`1f52c9efea0bfab555567c17889cf919f41938be` 기준, gpu3090에서 계산)
+## 0. 기준 값 (`f4fe5958290713d95e2ce618126fbbf651cd3d95` 기준, gpu3090에서 계산)
 
 | 항목 | SHA-256 |
 | --- | --- |
@@ -28,19 +28,19 @@
 | `scripts/ops/admin-models-boundary-adapter.py` | `f51d5ef76232bf74e652a27627aabed97236029ae1c17742a55df55311707f61` |
 | `scripts/ops/model-replaced-provider-boundary-release.ts` | `c9e1ae002ecb49ad7e7cf1382adbdf7f41228f10a7262eafee5114f513463771` |
 | `package-lock.json` | `f609ff6e3159975cce362809a50bc335afb2a812502fb74d70c8ab3a203296d5` |
-| 스테이징 tar `TAR_SHA` (`lib scripts drizzle messages tsconfig.json package.json package-lock.json`) | `75f388d402097478ab6a794b39e4b4f64d7fb497ece16a431f53833107cc8b5d` |
+| 스테이징 tar `TAR_SHA` (`lib scripts drizzle messages tsconfig.json package.json package-lock.json`) | `cdff13dda155a0eeaab4a9a57a0a95a38199ce509e71510997de61cb9822399c` |
 
-`TAR_SHA`는 `git archive --format=tar "$REL" lib scripts drizzle messages tsconfig.json package.json package-lock.json | sha256sum` 결과다(gpu3090 git version 2.53.0). tar 바이트는 git 버전에 따라 달라질 수 있다. 그래서 판정은 1단계에서 직접 계산한 `$TAR_SHA`와 컨테이너가 받은 파일의 sha256이 같은지로 한다. 표 값은 참고다. 표 값과 다르면 git 버전부터 본다.
+`TAR_SHA`는 `git archive --format=tar "$REL" lib scripts drizzle messages tsconfig.json package.json package-lock.json | sha256sum` 결과다(gpu3090 git version 2.53.0). 파일 17개와 `package-lock.json`은 이전 기준 `1f52c9ef`와 같다. tar 해시만 커밋 머리가 들어가서 바뀐다(`1f52c9ef`는 `75f388d4…`였다). tar 바이트는 git 버전에 따라 달라질 수 있다. 그래서 판정은 1단계에서 직접 계산한 `$TAR_SHA`와 컨테이너가 받은 파일의 sha256이 같은지로 한다. 표 값은 참고다. 표 값과 다르면 git 버전부터 본다.
 
 ## 1. 준비와 도구 해시 (C1) — [gpu3090]
 
 ```sh
 SRC=/home/ubuntu/projects/nomorevibe
 git -C "$SRC" fetch origin main
-REL=1f52c9efea0bfab555567c17889cf919f41938be
+REL=f4fe5958290713d95e2ce618126fbbf651cd3d95
 git -C "$SRC" merge-base --is-ancestor "$REL" origin/main && echo rel_on_main
 SHA=$REL
-W=$HOME/nmv-release-29877f65-1f52c9efea0b
+W=$HOME/nmv-release-29877f65-f4fe59582907
 (umask 077; mkdir -p "$W/pre" "$W/sql")
 DK='env PATH=/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin docker'
 for f in scripts/ops/release-29877f65/collect-m1.sh scripts/ops/release-29877f65/collect-docker.sh scripts/ops/release-29877f65/in-container.sh scripts/ops/release-order/capacity-control.sh; do git -C "$SRC" show "$REL:$f" | sha256sum; done
@@ -54,6 +54,7 @@ TAR_SHA=$(sha256sum "$W/src.tar" | cut -c1-64); echo "$TAR_SHA"
 LOCK_SHA=$(git -C "$SRC" show "$REL:package-lock.json" | sha256sum | cut -c1-64); echo "$LOCK_SHA"
 ```
 - 성공: `rel_on_main`이 나온다. 네 스크립트 해시가 0절 표와 같다(두 번 나오는 값이 서로 같다). `$TAR_SHA`·`$LOCK_SHA`를 적는다.
+- 이어서 [확정본](2026-10-29-release-order.md) 3절 「배포 TARGET 확인」 블록을 이 셸에서 친다. `target_same_staged_tree`가 안 나오면 `REL` 뒤에 스테이징 경로를 바꾼 커밋이 main에 들어온 것이다. 이 묶음을 더 진행하지 않고 새 기준의 판을 받는다. 이전 기준(`1f52c9ef`)으로 만든 `$W`나 `/tmp` 스테이징이 있으면 쓰지 않는다. 이 판은 새 `$W` 경로를 쓴다.
 - 이 셸의 `SRC`·`REL`·`SHA`·`W`·`DK`·`TAR_SHA`는 확정본 3단계 이후에도 그대로 쓴다. 셸을 새로 열면 이 블록을 다시 친다(같은 값이 나온다).
 
 ## 2. 근거 수집 (C2~C4, 읽기 전용)
@@ -227,7 +228,7 @@ print("scheduler", r["scheduler"]["reason"], r["scheduler"]["overdueJobs"])' "$W
 
 ## 7. 이 문서의 검증 (작업자, 운영 접근 없음)
 
-- 0절 표는 `REL=1f52c9ef…`(PR #730 병합 main)에서 gpu3090 git으로 계산했다. 파일 해시는 확정본 표 3·실행서 표 0의 값과 같다. `package-lock.json`은 운영 이미지 199a3ebb의 것과 같다(`git diff 199a3ebb 1f52c9ef -- package-lock.json` 차이 없음). 그러므로 3-1의 `$LOCK_SHA` 비교는 통과할 것으로 예상된다. 실제 판정은 대표가 컨테이너에서 한다.
+- 0절 표는 `REL=f4fe5958…`(PR #735 병합 main)에서 gpu3090 git으로 다시 계산했다(이전 판은 `1f52c9ef…`). 파일 해시는 확정본 표 3·실행서 표 0의 값과 같고, `tests/release-order-hashes.test.ts`가 두 표와 코드를 대조한다. `package-lock.json`은 운영 이미지 199a3ebb의 것과 같다(`git diff 199a3ebb f4fe5958 -- package-lock.json` 차이 없음). 그러므로 3-1의 `$LOCK_SHA` 비교는 통과할 것으로 예상된다. 실제 판정은 대표가 컨테이너에서 한다.
 - 1절 블록을 이 저장소에서 그대로 실행했다. `rel_on_main`과 네 해시, `TAR_SHA`가 표와 같았다. 같은 `src.tar`로 다음 둘을 확인했다.
   - busybox `sh`로 `capacity-control.sh stage`를 실행했다. `/app`에 `scripts/ops`가 없고 lock이 같은 모의 이미지에서 `lock:"same_as_image"`가 나왔다.
   - 그 스테이징 소스에서 `pipeline-control status`가 로컬 시험 DB로 실행됐다(`node_modules`는 이미지 쪽 심링크만 사용).

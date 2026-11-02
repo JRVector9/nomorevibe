@@ -6,8 +6,8 @@
 
 ## 0. 확정본(release-order)과의 관계 — 먼저 읽기
 
-- 확정본·사전 점검 묶음의 `REL`/배포 `TARGET`은 **`1f52c9ef…` 그대로다.** 이 안내는 그 값을 바꾸지 않는다. 배포 TARGET을 새 main으로 옮길지와 그때 다시 계산할 해시는 [unknown-release-backlog.md](unknown-release-backlog.md)의 「배포 TARGET을 새 main으로 옮길 경우」에 실제 값과 함께 있다.
-- relay는 Dokploy 배포와 별개로 M1에 따로 설치한다. 그래서 **relay 설치본 SHA는 `279e596ee267e39b311d329ef828f4d9fe9946e7`**로 하고(이 변경이 들어 있는 main), Dokploy `TARGET`은 `1f52c9ef`로 둘 수 있다. 이 경우 확정본 17단계의 `<REVIEWED_SHA>`와 성공 조건 「plist `LOCAL_MODEL_RELAY_VERSION`이 `TARGET`」을 `279e596ee267e39b311d329ef828f4d9fe9946e7`로 읽는다.
+- (2026-10-29 확정본 3판에서 갱신) 확정본·사전 점검 묶음의 `REL`은 이 변경이 들어 있는 `f4fe5958290713d95e2ce618126fbbf651cd3d95`(PR #735 병합 main)이다. 배포 `TARGET`은 고정값이 아니고 plan 시점의 main 머리다(확정본 3절 「배포 TARGET」). 이전 판의 `1f52c9ef…`는 더 쓰지 않는다. 확정본 17단계가 이 안내 1절(설치본 `279e596e…`, 전·후 읽기)을 그대로 쓰고, bootstrap 전 `server.ts check`와 되돌리기를 더했다.
+- relay는 Dokploy 배포와 별개로 M1에 따로 설치한다. 그래서 **relay 설치본 SHA는 `279e596ee267e39b311d329ef828f4d9fe9946e7`**로 한다(이 변경이 들어 있는 main). Dokploy `TARGET`과 같을 필요는 없다. relay가 읽는 파일은 `279e596e`와 확정본 `REL` 사이에 차이가 없다. 확정본 17단계의 `<REVIEWED_SHA>`와 성공 조건 「plist `LOCAL_MODEL_RELAY_VERSION`」은 이 값이다.
 - `1f52c9ef` relay도 plist에 `LOCAL_MODEL_RELAY_MODEL=mlx-community--gemma-4-26b-a4b-it-4bit`를 주면 Gemma를 허용한다(인계 argv가 그렇게 쓴다). 새 SHA에서 더해진 것은 장비 한정(다른 장비 모델 거절)과 추론 전 상류 `/v1/models` 대조(`503 upstream_model_mismatch`/`upstream_models_unavailable`), health의 `allowedModels`·`upstreamModelReason`이다.
 - **relay 재시작 시점 제약은 그대로다**: M1 미확인 해제(확정본 12단계) 전에 재시작하면 `recovery.newRelayPid ≠ 현재 PID`가 되어 해제 경로가 영구히 막힌다. 재설치는 확정본 17단계 자리에서만 한다.
 
