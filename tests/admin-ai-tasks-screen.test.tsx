@@ -10,7 +10,7 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 import { ConnectionForm } from "@/app/(operator)/admin/models/tasks/ConnectionForm";
 import { TaskImportCard } from "@/app/(operator)/admin/models/tasks/TaskImportCard";
-import { TaskRanksBoard, type TaskRankLine } from "@/app/(operator)/admin/models/tasks/TaskRanksBoard";
+import { TaskRanksBoard, clearConfirmText, type TaskRankLine } from "@/app/(operator)/admin/models/tasks/TaskRanksBoard";
 import * as actions from "@/app/(operator)/admin/models/tasks/actions";
 import type { AiConnectionView } from "@/lib/operations/admin-ai-tasks";
 
@@ -78,10 +78,14 @@ describe("작업 ↔ AI 모델 화면", () => {
     const html = renderToStaticMarkup(createElement(TaskRanksBoard, { lines: [line({ task: "second-review", slot: 2, label: "2차 AI 검수 · 투표자 2", group: "review",
       rows: [], options, current: null, sameAsCurrent: null, readiness: [], runtime: null })], connections: [gpu], rows: voters }));
     expect(html).toContain('aria-label="2차 AI 검수 · 투표자 2 1순위"');
-    expect(html).toContain(`<optgroup label="gpu3090"><option value="${GPU}\u0000qwen3.8-flash-next" disabled="">qwen3.8-flash-next</option>`
-      + `<option value="${GPU}\u0000gpt-oss-120b">gpt-oss-120b</option></optgroup>`);
+    expect(html).toContain(`<optgroup label="gpu3090"><option value="${GPU}/qwen3.8-flash-next" disabled="">qwen3.8-flash-next</option>`
+      + `<option value="${GPU}/gpt-oss-120b">gpt-oss-120b</option></optgroup>`);
     expect(html).not.toContain("gpu3090 · ");
     expect(html).toContain('data-status="bad">순위 없음 — 이 작업은 돌지 않습니다</span>');
+  });
+  it("순위를 모두 비우는 저장은 한 번 더 묻는다 — 실행 쪽이 읽는 작업은 멈춘다고 적는다", () => {
+    expect(clearConfirmText({ label: "1차 AI 검수", live: true })).toContain("저장하면 이 작업은 모델을 부르지 않고 멈춥니다");
+    expect(clearConfirmText({ label: "소개 검수", live: false })).toBe("「소개 검수」의 1·2·3순위를 모두 비웁니다. 정말 비울까요?");
   });
   it("한 줄 상태: 막힘·실행 멈춤·목록에 없는 저장 값·옛 설정으로 도는 작업·마지막 실행 건수", () => {
     const status = (patch: Partial<TaskRankLine>) => /data-status="(\w+)">([^<]*)</.exec(renderToStaticMarkup(createElement(TaskRanksBoard,
