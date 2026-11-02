@@ -172,4 +172,3 @@ async function HumanReviewSwitchSlot({ enabled, generation, keys }: { enabled: b
   return <HumanReviewSwitch key={generation} enabled={enabled} generation={generation} ready={await configuredHumanModelsReady(keys)}
     {...humanReviewModelDisplay(keys)} />;
 }
-
