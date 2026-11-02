@@ -24,10 +24,13 @@ import { claudeCliTokenBound, type CliServingContract } from "@/lib/llm/cli-serv
 import { runJob } from "@/lib/jobs/runner";
 import { jobRunOptions } from "@/scripts/worker";
 import { ensureSchema, resetTables, TEST_DATABASE_URL } from "./setup";
+import { cliRankRow, fakeToolDir, pinTaskRanks } from "../fake-cli-path";
 
 /*
  * 05c-5 실제 DB driver — 실제 runJob·장부(model_capacity_*)·도메인 TX 위에서 소개 검수·Claude 감사·Grok 세션 점검이 공통 슬롯을 거친다.
- * 자식 프로세스는 tests/fixtures/fake-cli/background.mjs(가짜 CLI)뿐이고 PATH 는 빈 디렉터리다. 실제 claude/grok·provider·운영 resolver 는
+ * 자식 프로세스는 tests/fixtures/fake-cli/background.mjs(가짜 CLI)뿐이다. 소개 검수·감사는 env 경로(CLAUDE_CLI)로 띄워 PATH 는 빈 디렉터리이고,
+ * Grok 세션 점검은 PATH 의 grok 으로 띄운다(PR C1 — GROK_CLI 를 읽지 않는다) — 그 시험만 가짜 래퍼를 grok 이름으로 링크한 디렉터리를 PATH 로 쓰고,
+ * 모델은 그 작업의 「작업 ↔ 모델」 순위(grok-session-check 1순위)로 고정한다. 실제 claude/grok·provider·운영 resolver 는
  * 쓰지 않는다 — CLI 계약은 이 파일의 fixture 만 연다(운영 resolver 는 null 이라 open 이어도 미룬다).
  */
 const fixture = vi.hoisted(() => ({ contracts: [] as CliServingContract[] }));
@@ -57,7 +60,7 @@ const policy: ModelCapacityPolicy = { version: 1, globalLimit: 4, providerLimits
   routes: [{ routeId: "product-intro-check", provider: "claude-cli", model: INTRO_CHECK_MODEL, providerBudgetId: "claude-sub", groupId: "reviewers" },
     { routeId: "product-audit", provider: "claude-cli", model: AUDIT_MODEL, providerBudgetId: "claude-sub", groupId: "reviewers" },
     { routeId: "grok-session-check", provider: "grok-cli", model: GROK_MODEL, providerBudgetId: "grok-sub", groupId: "reviewers" }] };
-let root = "", bin = "", empty = "", records = "", originalControl: Raw, sequence = 0;
+let root = "", bin = "", empty = "", records = "", tools = "", originalControl: Raw, sequence = 0;
 const grandchildren: number[] = [];
 
 beforeAll(async () => {
@@ -74,11 +77,13 @@ beforeAll(async () => {
   const script = path.resolve("tests/fixtures/fake-cli/background.mjs");
   for (const value of [root, script, process.execPath]) expect(value).not.toContain("'");
   bin = path.join(root, "fake-cli"); await writeFile(bin, `#!/bin/sh\nexec '${process.execPath}' '${script}' "$@"\n`); await chmod(bin, 0o755);
+  tools = await fakeToolDir(path.join(root, "tools"), { grok: bin });
   console.info("cli_background_migrations", { journal: journal.entries.length, applied: applied.count });
 });
 beforeEach(async () => {
   fixture.contracts = CONTRACTS;
-  for (const [key, value] of Object.entries({ PATH: empty, CLAUDE_CLI: bin, GROK_CLI: bin, FAKE_CLI_RECORD: records, SERVICE_INSTANCE_ID: prefix,
+  // GROK_CLI 는 Grok 세션 점검이 읽지 않는다 — 없는 파일을 가리켜 둔다
+  for (const [key, value] of Object.entries({ PATH: empty, CLAUDE_CLI: bin, GROK_CLI: path.join(empty, "absent-grok"), FAKE_CLI_RECORD: records, SERVICE_INSTANCE_ID: prefix,
     GROK_AUTH_PATH: "/nonexistent/auth.json", ROLE_LEASE_ROLE: "reviewer", ROLE_LEASE_INSTANCE_ID: prefix, ROLE_LEASE_BOOT_ID: randomUUID(),
     ROLE_LEASE_RELEASE: "local-cli-background", ROLE_LEASE_EPOCH: "1" })) vi.stubEnv(key, value);
   await cleanLedger(); await cleanDomain();
@@ -90,8 +95,13 @@ afterEach(async () => {
     reap();
     for (const name of await readdir(records)) await rm(path.join(records, name));
     await cleanLedger(); await restoreControl(); await cleanDomain();
-  } finally { vi.unstubAllEnvs(); }
+  } finally { vi.unstubAllEnvs(); pinTaskRanks(null); }
 });
+/** Grok 세션 점검: 모델 = 그 작업의 1순위(Grok CLI 연결), 실행 파일 = PATH 의 grok(가짜 래퍼) */
+function grokSessionRanks() {
+  pinTaskRanks([cliRankRow("grok-session-check", GROK_MODEL)]);
+  vi.stubEnv("PATH", tools);
+}
 afterAll(async () => {
   try { await cleanLedger(); await restoreControl(); }
   finally { fixture.contracts = []; await rm(root, { recursive: true, force: true }); await admin.end(); }
@@ -336,7 +346,7 @@ it("audit: a real tick binds the audit item, runs the fake Claude once with revi
 
 it("grok session: a real tick runs the session call in this instance's slot and observes success after the terminal settles", async () => {
   vi.stubEnv("FAKE_CLI_MODE", "grok-ok");
-  await saveSettings({ enabled: true, firstReview: { provider: "grok-cli", model: GROK_MODEL } }, "test");
+  grokSessionRanks();
   await pendingJob("grok-session-check");
 
   expect(await runJob<null>("grok-session-check", ctx => checkGrokSession(ctx), { requestedOnly: true })).toMatchObject({ status: "completed", done: true });
@@ -349,14 +359,15 @@ it("grok session: a real tick runs the session call in this instance's slot and 
   const [observation] = await db.select().from(operationsObservations).where(eq(operationsObservations.key, `service:grok:${prefix}`));
   expect(observation.value).toMatchObject({ provider: "grok-cli", model: GROK_MODEL, resolvedModel: "grok-4.7-build", result: "success" });
   const [spawned] = await recorded();
-  expect(spawned).toMatchObject({ argv: grokSessionArgs(GROK_MODEL), env: { NO_COLOR: "1", RUST_LOG: "off" } });
+  // PATH 의 grok(가짜 래퍼 링크)으로 떴다 — realCliOnPath 는 그 이름을 본다
+  expect(spawned).toMatchObject({ argv: grokSessionArgs(GROK_MODEL), env: { PATH: tools, NO_COLOR: "1", RUST_LOG: "off" }, realCliOnPath: true });
 }, PROCESS_TEST_MS);
 
 it("grok session (D3): an earlier held session call stays unknown for review, and the next check still runs and moves the observation (2026-10-30)", async () => {
   // 위험: 세션 점검은 4시간마다 토큰을 갱신하는 호출이다. 예전에는 미확인 점유가 풀리지 않으면 갱신 호출도 관측 갱신도 없었다 —
   // 6시간 토큰이 그사이 만료되면 다음 Grok 심사가 auth 로 실패했다(설계 D3). 2026-10-30 결정: 미확인은 점유가 아니므로 다음 점검이 그대로 돈다.
   vi.stubEnv("FAKE_CLI_MODE", "grandchild-hold");
-  await saveSettings({ enabled: true, firstReview: { provider: "grok-cli", model: GROK_MODEL } }, "test");
+  grokSessionRanks();
   await pendingJob("grok-session-check");
   expect(await runJob<null>("grok-session-check", ctx => checkGrokSession(ctx), { requestedOnly: true })).toMatchObject({ status: "completed" });
   const [first] = await recorded();

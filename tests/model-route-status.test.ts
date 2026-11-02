@@ -11,6 +11,7 @@ vi.mock("@/lib/observability/logger", () => ({ logger: { warn: mocks.warn, info:
 
 import { readModelRouteStatus } from "@/lib/operations/model-route-status";
 import { formatControlStatus, statusRouteContracts } from "@/lib/operations/pipeline-control";
+import { pinReviewRanks } from "./review-task-ranks-fixture";
 
 const MODELS: ModelEnv = { translate: "tr", productTranslate: "product-tr", tagline: "tg", profile: "pf", verify: "vf", introCheck: "intro" };
 type Stage = ControlSnapshot["stages"][number];
@@ -24,8 +25,9 @@ const SNAPSHOT: ControlSnapshot = { now: "2026-10-18T00:44:02.000Z", fence: { st
   agentScan: { mode: "legacy", drainingFrom: null, epoch: 1, contract: 0, live: 0, unsettled: 0, legacyJobLive: false, consumers: 0, queue: [] },
   recentInstances: [], uptimeSplitMode: "legacy", reviewSettings: { firstReview: { provider: "abcllm", model: "ai1-gw" } }, auditCampaign: null };
 
-beforeEach(() => { vi.clearAllMocks(); });
-afterEach(() => vi.unstubAllEnvs());
+// 1차 심사자는 「작업 ↔ 모델」 순위다(PR C1) — 스냅숏의 옛 설정(firstReview)과 같은 모델을 1순위로 고정한다
+beforeEach(() => { vi.clearAllMocks(); pinReviewRanks({ first: [{ provider: "abcllm", model: "ai1-gw" }] }); });
+afterEach(() => { vi.unstubAllEnvs(); pinReviewRanks(null); });
 
 /**
  * 모델 경로 계약·전환 진행은 운영 CLI(status)에만 있었다(ops-v8 PR8). 관리자 화면도 같은 readback·같은 판정을 쓰되,
@@ -68,10 +70,11 @@ describe("모델 경로 계약 읽기", () => {
     ]));
   });
 
-  it("1차 심사자 설정이 없으면 CRAWL_REVIEW_MODEL 을 읽지 않고 claude-cli 모델 미상으로 판정한다", () => {
+  it("1차 순위가 없으면 옛 설정(firstReview)·CRAWL_REVIEW_MODEL 을 읽지 않고 claude-cli 모델 미상으로 판정한다", () => {
     vi.stubEnv("CRAWL_REVIEW_MODEL", "env-ai1");
-    const routes = statusRouteContracts({ ...SNAPSHOT, reviewSettings: {} }, MODELS);
+    pinReviewRanks({ first: [] });
+    const routes = statusRouteContracts(SNAPSHOT, MODELS);
     expect(routes).toContainEqual({ routeId: "crawl-agent-review", provider: "claude-cli", model: null, status: "unknown" });
-    expect(routes.some(row => row.model === "env-ai1")).toBe(false);
+    expect(routes.some(row => row.model === "env-ai1" || row.model === "ai1-gw")).toBe(false);
   });
 });

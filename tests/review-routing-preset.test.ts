@@ -1,6 +1,10 @@
-import { expect, it } from "vitest";
+import { afterEach, expect, it } from "vitest";
 import { crawlSettingsSchema, DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
-import { firstReviewers } from "@/lib/crawl/first-reviewers";
+import { firstReviewers, legacyFirstReviewers } from "@/lib/crawl/first-reviewers";
+import { secondReviewVoters } from "@/lib/crawl/second-review-voters";
+import { pinReviewRanks } from "./review-task-ranks-fixture";
+
+afterEach(() => pinReviewRanks(null));
 import { combineVerdicts, combineVotes } from "@/lib/crawl/second-review";
 import { applyReviewRoutingPreset, GPU_SECOND_REVIEWER, SUPA_FIRST_REVIEWER } from "@/lib/crawl/review-routing-preset";
 
@@ -24,7 +28,8 @@ it("replaces the AI1 pool and AI2 fallback pool while keeping existing operation
   const before = structuredClone(current);
   const next = applyReviewRoutingPreset(current);
   expect(crawlSettingsSchema.parse(next)).toEqual(next);
-  expect(firstReviewers(next)).toEqual([SUPA_FIRST_REVIEWER]);
+  // 프리셋은 옛 설정 칸만 쓴다(PR C1) — 그 칸의 풀이 Supa 하나로 바뀐다
+  expect(legacyFirstReviewers(next)).toEqual([SUPA_FIRST_REVIEWER]);
   expect(next.secondReview.voters).toEqual([GPU_SECOND_REVIEWER]);
   expect(next.secondReview.fallbacks).toEqual([]);
   expect({ ...next, firstReview: current.firstReview, firstReviewAdditional: current.firstReviewAdditional,
@@ -32,6 +37,14 @@ it("replaces the AI1 pool and AI2 fallback pool while keeping existing operation
   expect({ ...next.secondReview, voters: current.secondReview.voters, fallbacks: current.secondReview.fallbacks })
     .toEqual(current.secondReview);
   expect(current).toEqual(before);
+});
+
+it("has no live effect: the running AI1 pool and AI2 voters stay on the task ranks (PR C1)", () => {
+  const ranked = { first: [{ provider: "abcllm", model: "ranked-first" }], second: [[{ provider: "local-direct", model: "ranked-second" }]] };
+  pinReviewRanks(ranked);
+  const next = applyReviewRoutingPreset(structuredClone(DEFAULT_CRAWL_SETTINGS));
+  expect(firstReviewers(next)).toEqual(ranked.first);
+  expect(secondReviewVoters(next)).toEqual(ranked.second[0]);
 });
 
 it("does not enable collection, AI2 or human automation when selecting a model preset", () => {

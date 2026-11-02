@@ -9,7 +9,8 @@ import { itemBindingHash, type Ai2ItemBinding } from "@/lib/jobs/items/types";
 import { ai2DispatchBindingHash, ai2ModelDispatchSchema } from "@/lib/llm/capacity";
 import { prepareAi2GatewayCall, readAi2GatewayTerminal, readGatewayNotStarted, reviewWithReservedAi2Gateway,
   type PreparedAi2GatewayCall } from "@/lib/crawl/agent-review-gateway";
-import { ai2DirectServingContractsFromConfig, ai2GatewayServingContractHash, type Ai2DirectServingContract } from "@/lib/crawl/second-review-serving-contract";
+import { ai2DirectServingContractSchema, ai2GatewayServingContractHash, ai2GatewayServingContractSchema,
+  type Ai2DirectServingContract } from "@/lib/crawl/second-review-serving-contract";
 
 const fixture = vi.hoisted(() => ({ contract: null as Ai2DirectServingContract | null }));
 vi.mock("@/lib/crawl/second-review-serving-contract", async original => ({
@@ -162,13 +163,15 @@ it("records actual physical completion when a server violates the smaller reques
   });
 });
 
-it("keeps direct contract configuration separate, strict and tied to the engine C", async () => {
+// 예전 env AI2_DIRECT_SERVING_CONTRACTS 해석(ai2DirectServingContractsFromConfig)은 없앴다(PR C1) — 직접 계약은 DB 행만이고 그 행의 모양 검사가 같은 규칙을 진다
+it("keeps the direct contract shape strict and tied to the engine C", async () => {
   await server(async () => {
     const contract = fixture.contract!;
-    expect(ai2DirectServingContractsFromConfig(JSON.stringify({ version: 1, contracts: [contract] })).get(contract.backendId)).toEqual(contract);
-    for (const contracts of [[contract, contract], [{ ...contract, tokenizerEndpoint: "http://other.example/tokenize" }],
-      [{ ...contract, requestTokenBound: 50_000 }], [{ ...contract, totalTokenBound: 24_999 }], [{ ...contract, secret: "no" }]])
-      expect(ai2DirectServingContractsFromConfig(JSON.stringify({ version: 1, contracts })).size).toBe(0);
+    expect(ai2DirectServingContractSchema.parse(contract)).toEqual(contract);
+    expect(ai2GatewayServingContractSchema.parse(contract)).toEqual(contract);
+    for (const changed of [{ ...contract, tokenizerEndpoint: "http://other.example/tokenize" }, { ...contract, requestTokenBound: 50_000 },
+      { ...contract, totalTokenBound: 24_999 }, { ...contract, secret: "no" }])
+      expect(ai2GatewayServingContractSchema.safeParse(changed).success, JSON.stringify(changed)).toBe(false);
     expect(ai2GatewayServingContractHash({ ...contract, deploymentRevision: "changed" })).not.toEqual(ai2GatewayServingContractHash(contract));
   });
 });

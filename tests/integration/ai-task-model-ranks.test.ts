@@ -216,7 +216,7 @@ describe("작업 ↔ 모델 순위 저장", () => {
     expect(stale?.issues).toEqual(["그 사이 이 줄이 바뀌었습니다. 새로고침한 뒤 다시 저장하세요."]);
     const gap = await saveAiTaskRanksAction(null, form({ task: "crawl-tagline", slot: "1", revision: EMPTY_REVISION, rank2Connection: engine.id, rank2Model: "Qwen-X" }));
     expect(gap?.issues).toEqual(["1순위를 비우고 그 뒤 순위만 고를 수 없습니다. 1순위부터 차례로 골라주세요."]);
-    // 심사 묶음(1차)은 아직 예전 실행 쪽이라 같은 모델을 다른 서버로 두 순위에 둘 수 없다(PR C) — text 경로는 아래 별칭 시험이 본다
+    // 1차도 같은 모델을 다른 서버로 두 순위에 둘 수 있다(PR C1 — 2순위는 연결로 가른 장부 이름) — 그 서버가 닿지 않으면 계약을 만들지 못해 아무것도 쓰지 않는다
     const twoServers = await (async () => {
       const { saveAiConnectionAction } = await actions();
       await saveAiConnectionAction(null, form({ kind: "api", label: "엔진 B", baseUrl: "http://down.test:1/v1" }));
@@ -225,8 +225,7 @@ describe("작업 ↔ 모델 순위 저장", () => {
       return saveAiTaskRanksAction(null, form({ task: "first-review", slot: "1", revision: EMPTY_REVISION, rank1Connection: engine.id, rank1Model: "Qwen-X",
         rank2Connection: other.id, rank2Model: "Qwen-X" }));
     })();
-    expect(twoServers?.issues).toEqual([expect.stringContaining("2순위 엔진 B · Qwen-X: crawl-agent-review 경로의 같은 모델 계약이 다른 서버(eng.test:8000)"),
-      expect.stringContaining("1순위와 2순위가 같은 모델(Qwen-X)을 다른 서버로 씁니다.")]);
+    expect(twoServers?.issues).toEqual([expect.stringContaining("crawl-agent-review 경로의 엔진 직접 계약을 만들지 못했습니다: 엔진에 닿지 않습니다")]);
     const now = await tableState();
     expect({ ...now, connections: now.connections.filter(row => row.label !== "엔진 B"), audits: snapshot.audits })
       .toEqual({ ...snapshot, connections: snapshot.connections });
@@ -281,6 +280,77 @@ describe("실행 쪽 resolver(PR B) — 저장한 순위를 DB 스냅숏으로 �
   });
 });
 
+describe("1차·2차 심사(PR C1) — 순위 저장이 심사 계약·CLI 계약을 만들고, 실행 쪽이 DB 스냅숏으로 묶는다", () => {
+  it("2차 투표자 칸마다 엔진 직접 계약(abcllm 형, transport direct)·정책 경로를 만들고, 한 모델은 한 칸에만 — 실행 쪽은 칸마다 1순위, 키는 연결의 키", async () => {
+    const { pinReviewRanks } = await import("../review-task-ranks-fixture");
+    pinReviewRanks(null); // 통합 시험의 설정 기반 고정을 풀고 진짜 순위 표·계약 스냅숏을 읽는다
+    // Qwen-Y 는 /models 가 최대 길이를 알려 주지 않는다 — 연결의 컨텍스트 상한(Qwen-X 의 32768 과 같은 값)으로 계약을 만든다
+    const engine = await makeEngine({ contextTokens: "32768" });
+    const { saveAiTaskRanksAction } = await actions();
+    expect(await saveAiTaskRanksAction(null, form({ task: "second-review", slot: "1", revision: EMPTY_REVISION, rank1Connection: engine.id, rank1Model: "Qwen-X" })))
+      .toMatchObject({ ok: true });
+    const contracts = await client<{ route_id: string; model: string; transport: string; auth: string; contract: Record<string, unknown> }[]>`
+      SELECT route_id, model, transport, auth, contract FROM model_serving_contracts WHERE enabled ORDER BY id`;
+    expect(contracts.map(row => [row.route_id, row.model, row.transport, row.auth, row.contract.provider, row.contract.protocol, row.contract.endpoint])).toEqual([
+      ["second-review", "Qwen-X", "direct", "stored", "abcllm", "abcllm-raw-total-bound-v1", `${ENGINE}/chat/completions`]]);
+    expect((await controlRow()).policy.routes).toEqual(expect.arrayContaining([
+      { routeId: "second-review", provider: "abcllm", model: "Qwen-X", providerBudgetId: "eng-dev", groupId: "eng-dev" }]));
+    // 같은 모델은 다른 투표자 칸에 둘 수 없다(2·3순위도) — 한 항목에 두 표를 낼 수 있어서
+    const clash = await saveAiTaskRanksAction(null, form({ task: "second-review", slot: "2", revision: EMPTY_REVISION, rank1Connection: engine.id, rank1Model: "Qwen-Y",
+      rank2Connection: engine.id, rank2Model: "Qwen-X" }));
+    expect(clash?.issues).toEqual([expect.stringContaining("2순위: 투표자 1의 1순위와 같은 모델(Qwen-X)입니다")]);
+    expect(await saveAiTaskRanksAction(null, form({ task: "second-review", slot: "2", revision: EMPTY_REVISION, rank1Connection: engine.id, rank1Model: "Qwen-Y" })))
+      .toMatchObject({ ok: true });
+    const [{ ensureAiTaskModels }, { ensureServingContracts, textRouteAccess }, { secondReviewRanks, secondReviewRankSets }] = await Promise.all([
+      import("@/lib/llm/ai-task-models-snapshot"), import("@/lib/llm/serving-contract-store"), import("@/lib/crawl/review-task-ranks")]);
+    await Promise.all([ensureAiTaskModels(0), ensureServingContracts(0)]);
+    const ranks = secondReviewRanks();
+    expect(ranks.status).toBe("ok");
+    expect(ranks.slots.map(slot => [slot.slot, slot.voter?.provider ?? null, slot.voter?.identity ?? null])).toEqual([
+      [1, "abcllm", "Qwen-X"], [2, "abcllm", "Qwen-Y"], [3, null, null]]);
+    expect(secondReviewRankSets(ranks)).toEqual({ voters: [{ provider: "abcllm", model: "Qwen-X" }, { provider: "abcllm", model: "Qwen-Y" }], fallbacks: [] });
+    // 보내는 키 = 연결에 저장한 키(계약 행의 키가 아니라 연결의 키 — 같은 값으로 만들었지만 판정은 연결에서 온다)
+    expect(textRouteAccess("second-review", "Qwen-X")).toEqual({ block: null, bearer: KEY });
+  });
+  it("CLI 순위: 연결에 CLI 버전이 없으면 막고, 있으면 cli:<provider>:<route> 계약 행을 만든다 — 실행 쪽은 그 행으로 묶고 버전은 워커가 견준다", async () => {
+    const { pinReviewRanks } = await import("../review-task-ranks-fixture");
+    pinReviewRanks(null);
+    const { saveAiConnectionAction, saveAiTaskRanksAction } = await actions();
+    expect(await saveAiConnectionAction(null, form({ kind: "cli", label: "Claude CLI", cliTool: "claude", cliModels: "sonnet", deviceId: "anthropic-cli" })))
+      .toMatchObject({ ok: true });
+    const cli = (await connections()).find(entry => entry.kind === "cli")!;
+    const missing = await saveAiTaskRanksAction(null, form({ task: "first-review", slot: "1", revision: EMPTY_REVISION, rank1Connection: cli.id, rank1Model: "sonnet" }));
+    expect(missing?.issues).toEqual([expect.stringContaining("1순위 Claude CLI · sonnet: 연결에 CLI 버전이 없습니다.")]);
+    expect(await saveAiConnectionAction(null, form({ id: cli.id, expectedVersion: "1", kind: "cli", label: "Claude CLI", cliTool: "claude", cliModels: "sonnet",
+      cliVersion: "2.1.263 (Claude Code)", deviceId: "anthropic-cli" }))).toMatchObject({ ok: true });
+    const saved = await saveAiTaskRanksAction(null, form({ task: "first-review", slot: "1", revision: EMPTY_REVISION, rank1Connection: cli.id, rank1Model: "sonnet" }));
+    expect(saved).toMatchObject({ ok: true });
+    const rows = await client<{ route_id: string; model: string; transport: string; auth: string; contract: Record<string, unknown> }[]>`
+      SELECT route_id, model, transport, auth, contract FROM model_serving_contracts WHERE enabled ORDER BY id`;
+    expect(rows.map(row => [row.route_id, row.model, row.transport, row.auth, row.contract.routeId, row.contract.provider, row.contract.cliVersion,
+      row.contract.boundProvenance])).toEqual([["cli:claude-cli:crawl-agent-review", "sonnet", "direct", "none", "cli:claude-cli:crawl-agent-review", "claude-cli",
+      "2.1.263 (Claude Code)", "derived"]]);
+    expect((await controlRow()).policy.routes).toEqual(expect.arrayContaining([expect.objectContaining({ routeId: "crawl-agent-review", provider: "claude-cli",
+      model: "sonnet", groupId: "anthropic-cli" })]));
+    const [{ ensureAiTaskModels }, { ensureServingContracts }, { cliContractFromRow, cliServingContractStatus }, { firstReviewRanks }] = await Promise.all([
+      import("@/lib/llm/ai-task-models-snapshot"), import("@/lib/llm/serving-contract-store"), import("@/lib/llm/cli-serving-contract"),
+      import("@/lib/crawl/review-task-ranks")]);
+    await Promise.all([ensureAiTaskModels(0), ensureServingContracts(0)]);
+    expect(cliContractFromRow({ routeId: rows[0].route_id, model: rows[0].model, contract: rows[0].contract })).toMatchObject({ routeId: "crawl-agent-review",
+      provider: "claude-cli", model: "sonnet" });
+    // 이 시험 프로세스는 CLI 버전 확인을 띄우지 않았다(워커만 띄운다) — 확인 전이라 쓸 수 있는 것으로 둔다
+    expect(cliServingContractStatus("crawl-agent-review", "claude-cli", "sonnet")).toBe("probe_pending");
+    const first = firstReviewRanks();
+    expect(first.pool).toEqual([{ provider: "claude-cli", model: "sonnet" }]);
+    expect(first.unusable.size).toBe(0);
+    // 같은 버전으로 다시 저장하면 계약 행을 바꾸지 않는다
+    const { aiTaskSlotRevision, listAiTaskRows } = await import("@/lib/operations/admin-ai-tasks-repository");
+    const revision = aiTaskSlotRevision((await listAiTaskRows()).filter(row => row.task === "first-review"));
+    expect(await saveAiTaskRanksAction(null, form({ task: "first-review", slot: "1", revision, rank1Connection: cli.id, rank1Model: "sonnet" }))).toMatchObject({ ok: true });
+    expect((await client`SELECT count(*)::int AS n FROM model_serving_contracts WHERE route_id = 'cli:claude-cli:crawl-agent-review'`)[0].n).toBe(1);
+  });
+});
+
 describe("지금 실제로 쓰는 모델(오늘의 고르기 코드 그대로)", () => {
   it("모든 작업 × 칸을 내고, 주소는 계약·등록부·env 에서만 온다(계약 없는 text 경로는 주소 모름)", async () => {
     vi.stubEnv("CONNECT_AGENT_URL", "http://down.test:1");
@@ -291,8 +361,8 @@ describe("지금 실제로 쓰는 모델(오늘의 고르기 코드 그대로)",
     expect(slots.map(slot => `${slot.task}#${slot.slot}`)).toEqual((await import("@/lib/llm/ai-tasks")).aiTaskSlots().map(({ task, slot }) => `${task.id}#${slot}`));
     expect(slots.filter(slot => slot.error === "task_unmapped" || slot.error === "stage_unmapped")).toEqual([]);
     const by = (task: string, slot = 1) => slots.find(entry => entry.task === task && entry.slot === slot)!;
-    // 2차 기본 투표자는 Claude CLI 하나 — 투표자 2·3 은 비어 있다
-    expect(by("second-review").uses.map(use => [use.kind, use.cliTool])).toEqual([["cli", "claude"]]);
+    // 2차 가져오기 출처는 옛 설정이다(PR C1) — 기본 투표자는 없다(예전의 등록부 기본 Claude CLI 투표자를 없앴다)
+    expect(by("second-review")).toMatchObject({ uses: [], skip: "투표자 1이(가) 없습니다." });
     expect(by("second-review", 2).skip).toBe("투표자 2이(가) 없습니다.");
     expect(by("product-intro-check").uses.map(use => [use.kind, use.cliTool])).toEqual([["cli", "claude"]]);
     // PR B: text 경로는 실행 쪽이 작업 ↔ 모델 순위를 읽는다 — 순위가 없으면 지금 쓰는 모델도 없다(기본값으로 대신 부르지 않는다)

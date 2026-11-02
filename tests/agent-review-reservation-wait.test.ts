@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { createReviewInput, REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from '@/lib/crawl/agent-review-contract';
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from '@/lib/crawl/settings-schema';
@@ -6,6 +6,7 @@ import type { CrawlCandidate, CrawlDocument } from '@/lib/db/schema';
 import { ai1DispatchBindingHash, ai1ModelDispatchSchema, type ModelCapacityRequest } from '@/lib/llm/capacity';
 import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
 import { firstReviewerKey, firstReviewers, selectFirstReviewer } from '@/lib/crawl/first-reviewers';
+import { pinReviewRanks, pinReviewRanksFromSettings } from './review-task-ranks-fixture';
 
 /**
  * AI1 틱 안의 예약 대기(2026-10-29) — 실제 coordinator(lib/crawl/agent-review-model-capacity.ts)와 job 을 그대로 돌리고, 장부만
@@ -54,7 +55,7 @@ vi.mock('@/lib/crawl/first-reviewer-blocks', () => ({ readBlockedFirstReviewerKe
 vi.mock('@/lib/crawl/agent-review-repository', () => ({
   canStartLegacyAgentReview: async () => true, requeueStaleReviewSources: async () => 0, handOffExhaustedFirstReviews: async () => 0,
   listOwnPendingFirstReviewCandidates: async () => [],
-  // 단일 모델(pool 없음)은 이 목록에서 후보를 읽는다. 틱 끝의 이어 하기 확인(readyOnly)은 남은 후보가 없다고 답한다
+  // 틱 끝의 이어 하기 확인(readyOnly)만 이 목록을 읽는다 — 남은 후보가 없다고 답한다(후보는 늘 풀 쪽에서 읽는다, PR C1)
   listReviewCandidates: async (_settings: unknown, limit: number, options?: { readyOnly?: boolean }) =>
     options?.readyOnly ? [] : ((await mocks.list()) as CrawlCandidate[]).slice(0, limit),
   listFirstReviewPoolCandidates: async (_settings: unknown, limit: number) => ((await mocks.list()) as CrawlCandidate[]).slice(0, limit)
@@ -128,9 +129,12 @@ beforeEach(() => {
   mocks.gatewayActive.clear(); mocks.gatewayPeak.clear(); mocks.gatewayCalls.length = 0; mocks.callMs = 30;
   mocks.settings = { ...DEFAULT_CRAWL_SETTINGS, enabled: true, reviewMode: 'observe', reviewConcurrency: 4, firstReview: primary, firstReviewAdditional: [extra] };
   mocks.blocked.mockResolvedValue(new Set());
+  // 1차 심사자는 「작업 ↔ 모델」 순위뿐이다(PR C1) — 시험 설정의 firstReview·firstReviewAdditional 꼴을 부를 때마다 1·2순위로 옮긴다
+  pinReviewRanksFromSettings(() => mocks.settings);
   for (const [key, value] of Object.entries({ ROLE_LEASE_ROLE: 'reviewer', ROLE_LEASE_INSTANCE_ID: owner.instanceId, ROLE_LEASE_BOOT_ID: owner.bootId,
     ROLE_LEASE_RELEASE: 'ai1-wait-unit-release', ROLE_LEASE_EPOCH: '1' })) vi.stubEnv(key, value);
 });
+afterEach(() => pinReviewRanks(null));
 afterAll(() => vi.unstubAllEnvs());
 
 // 2026-11-01 순위 대체: 설정 풀은 순위다 — 1순위가 쓸 수 있으면(줄에 서 기다릴 수 있으면) 모두 1순위로 간다. 2순위는 1순위를 쓸 수 없을 때만.

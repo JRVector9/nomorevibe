@@ -8,6 +8,7 @@ import { loadReviewInput, claimAgentReview, recordAgentReview,
   requeueStaleReviewSources, handOffExhaustedFirstReviews, listReviewCandidates,
   reviewCandidatePredicate, reviewApprovalPredicate, assertReviewApproval } from "@/lib/crawl/agent-review-repository";
 import { ensureSchema } from "./setup";
+import { pinReviewRanks } from "../review-task-ranks-fixture";
 
 const managedJobs = ["crawl-agent-review", "crawl-fetch", "crawl-publish", "second-review"];
 // These replacements are made explicitly by the immutable test bodies below.
@@ -95,8 +96,11 @@ beforeEach(async () => {
 afterEach(restoreJobs);
 afterAll(restoreJobs);
 const outcome = { decision: "approve" as const, reason: "A deployed service", evidenceIds: ["product"] };
+// 1차 심사자는 「작업 ↔ 모델」 순위뿐이다(PR C1) — claim 은 잠금 아래에서 순위가 다시 고르는 심사자여야 한다. 시험 심사자(claude-cli test-model)를
+// 설정의 1차로 두면 통합 시험 shim(tests/integration/env.ts)이 그것을 1차 1순위로 고정한다. 다른 모델을 쓰는 시험은 순위를 직접 고정한다.
+const reviewer = { provider: "claude-cli" as const, model: "test-model" }, otherReviewer = { provider: "claude-cli" as const, model: "other-model" };
 async function fixture(mode: "observe" | "enforce" = "observe") {
-  await saveSettings({ enabled: true }, "test");
+  await saveSettings({ enabled: true, firstReview: reviewer }, "test");
   const previous = process.env.CRAWL_REVIEW_READY;
   process.env.CRAWL_REVIEW_READY = "true";
   try { expect(await changeReviewMode({ mode, expectedMode: "off", actor: "test", reason: "Integration test" })).toMatchObject({ ok: true }); }
@@ -115,7 +119,7 @@ async function fixture(mode: "observe" | "enforce" = "observe") {
   const candidate = (await crawl.getCandidate("owner/review-app"))!;
   const document = (await crawl.getDocument(candidate.repo))!;
   const settings = await getSettings();
-  return { candidate, document, settings, lease, input: await loadReviewInput(candidate, document, settings), provider: "claude-cli", model: "test-model" };
+  return { candidate, document, settings, lease, input: await loadReviewInput(candidate, document, settings), ...reviewer };
 }
 
 it("stores observed reviews without mutating the candidate and reuses immutable success", async () => {
@@ -341,13 +345,14 @@ it("preserves enforce across a stale settings form and reset; mode changes use C
 });
 
 it("does not reuse another model's success on the same or a refreshed source", async () => {
-  const context = await fixture(); const first = await claimAgentReview(context);
+  const context = await fixture(); pinReviewRanks({ first: [reviewer, otherReviewer] });            // 1·2순위 — 2순위도 지금 1차 심사자다
+  const first = await claimAgentReview(context);
   if (first.kind === "skipped") throw new Error(first.reason);
   await recordAgentReview({...context, receipt: first.receipt, outcome});
   expect(await claimAgentReview({...context, model: "other-model"})).toMatchObject({kind: "claimed", attempt: {reusedFromAttemptId: null, outcome: null}});
 });
 it("keeps the current-input attempt budget when the selected model changes", async () => {
-  const context = await fixture();
+  const context = await fixture(); pinReviewRanks({ first: [reviewer, otherReviewer] });
   for (let i = 0; i < 3; i++) {
     const attempt = await claimAgentReview(context); if (attempt.kind === "skipped") throw new Error(attempt.reason);
     await recordAgentReview({...context, receipt: attempt.receipt, error: "timeout", retryAfter: new Date(0)});
@@ -389,8 +394,9 @@ it("does not let an old model approval suppress review or satisfy enforce public
   const context = await fixture("enforce"); const first = await claimAgentReview(context);
   if (first.kind === "skipped") throw new Error(first.reason);
   await recordAgentReview({...context, receipt: first.receipt, outcome});
-  // 1차 심사자를 다른 모델로 바꾼다 — 관리자 설정(firstReview)만 본다(CRAWL_REVIEW_MODEL 대체는 2026-10-31 제거)
-  const settings = {...context.settings, firstReview: {provider: "claude-cli" as const, model: "other-model"}};
+  // 1차 심사자를 다른 모델로 바꾼다 — 「작업 ↔ 모델」 순위만 본다(PR C1, 설정의 firstReview 는 읽지 않는다)
+  pinReviewRanks({ first: [otherReviewer] });
+  const settings = context.settings;
   expect((await listReviewCandidates(settings)).map(row => row.id)).toContain(context.candidate.id);
   expect(await db.select().from(crawlCandidates).where(reviewApprovalPredicate(settings))).toEqual([]);
   const candidate = (await crawl.getCandidate(context.candidate.repo))!;

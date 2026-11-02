@@ -1,25 +1,27 @@
-import { beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { runFirstReviewConsumer } from '@/lib/crawl/consumers/first';
 import { runSecondReviewConsumer } from '@/lib/crawl/consumers/second';
 import { createProviderCircuits } from '@/lib/llm/provider-circuit-breaker';
 import { DEFAULT_CRAWL_SETTINGS } from '@/lib/crawl/settings-schema';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import type { SQL } from 'drizzle-orm';
+import { pinReviewRanks } from './review-task-ranks-fixture';
 
 /*
  * PR06e AI1/AI2 consumer 의 claim 전 관문 — provider 회로와 host 장부 admission. lifecycle 은 경계만 흉내 낸다(실제 claim 은 integration).
  * 관문이 없으면 lifecycle 인자가 지금과 같고, 관문이 미루면 lifecycle(=claim)을 부르지 않는다.
  */
 const mocks = vi.hoisted(() => ({ pages: [] as unknown[][], reservedPages: [] as unknown[][], select: vi.fn(), limit: vi.fn(), reservedLimit: vi.fn(), sleep: vi.fn(), first: vi.fn(), second: vi.fn(),
-  settings: vi.fn(), info: vi.fn() }));
+  settings: vi.fn(), info: vi.fn(), warn: vi.fn() }));
 vi.mock('@/lib/db', () => ({ db: { select: mocks.select }, onPrimary: (load: () => unknown) => load() }));
 vi.mock('@/lib/db/replay-scope', () => ({ currentReplayDb: () => null }));
 vi.mock('@/lib/crawl/settings', () => ({ getSettings: mocks.settings }));
 vi.mock('@/lib/crawl/agent-review-repository', () => ({ reviewCandidatePredicate: () => undefined }));
 vi.mock('@/lib/crawl/agent-review-item-lifecycle', () => ({ executeFirstReviewConsumerItem: mocks.first }));
 vi.mock('@/lib/crawl/second-review-item-lifecycle', () => ({ executeSecondReviewConsumerItem: mocks.second }));
+vi.mock('@/lib/crawl/first-reviewer-blocks', () => ({ readBlockedFirstReviewerKeys: async () => new Set<string>() }));
 vi.mock('@/scripts/worker', () => ({ interruptibleSleep: mocks.sleep }));
-vi.mock('@/lib/observability/logger', () => ({ logger: { info: mocks.info, warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
+vi.mock('@/lib/observability/logger', () => ({ logger: { info: mocks.info, warn: mocks.warn, error: vi.fn(), debug: vi.fn() } }));
 
 const owner = { instanceId: 'pr06e-unit', bootId: 'f70bfcce-92d0-4ed8-a5db-bfd092d17950' };
 const first = (id: number) => ({ id, reviewed: false, updatedAt: '2026-10-17 00:00:00.000001', ceiling: 100 });
@@ -41,47 +43,47 @@ beforeEach(() => {
     where: () => ({ orderBy: () => ({ limit: mocks.limit }) }),
   }) }));
   mocks.settings.mockResolvedValue({ ...DEFAULT_CRAWL_SETTINGS, enabled: true });
+  // 두 소비자는 「작업 ↔ 모델」 순위만 읽는다(PR C1) — 순위가 없으면 쪽을 보지 않고 쉰다(아래 degraded 시험)
+  pinReviewRanks({ first: [{ provider: 'abcllm', model: 'first-model' }], second: [[{ provider: 'abcllm', model: 'fallback-model' }]] });
 });
+afterEach(() => pinReviewRanks(null));
 
 it('without gates passes the exact previous lifecycle arguments', async () => {
   mocks.pages = [[first(4)]]; mocks.first.mockResolvedValue({ applied: true, state: 'succeeded' });
   mocks.second.mockResolvedValue({ state: 'recorded' });
   expect(await runFirstReviewConsumer({ owner, once: true })).toEqual({ attempted: 1, recorded: 1, skipped: 0, deferred: 0 });
-  expect(mocks.first).toHaveBeenCalledExactlyOnceWith({ candidateId: 4, owner, signal: undefined });
+  // AI1 은 늘 순위 고르기다(PR C1): 쉬는·막힌 모델 집합과 모델별 회로를 항목에 넘긴다(관문이 없으면 회로는 undefined)
+  expect(mocks.first).toHaveBeenCalledExactlyOnceWith({ candidateId: 4, owner, signal: undefined,
+    pausedReviewers: new Set(), blockedReviewers: new Set(), reviewerCircuits: undefined });
   mocks.pages = [[{ id: 9, fallback: false, provider: 'abcllm' }]];
   expect(await runSecondReviewConsumer({ owner, once: true })).toEqual({ attempted: 1, recorded: 1, skipped: 0, deferred: 0 });
   expect(mocks.second).toHaveBeenCalledExactlyOnceWith({ secondReviewId: 9, owner, signal: undefined });
   expect(mocks.info).not.toHaveBeenCalled();
 });
 
-it('AI1 stops claiming once technical failures open the circuit and resumes the same hint through one half-open trial', async () => {
-  const clock = { now: 0 }, logs: string[] = [];
-  const circuits = createProviderCircuits({ mode: 'enabled', failures: 2, openMs: 60_000 }, { now: () => clock.now, log: event => logs.push(event) });
-  const page = [first(4), first(5), first(6), first(7)];
-  mocks.pages = [page];
-  mocks.first.mockImplementation(replies([{ ok: false, error: 'timeout' }, { ok: false, error: 'gateway_error' }], { applied: true, state: 'failed' }));
-  expect(await runFirstReviewConsumer({ owner, once: true, circuits })).toEqual({ attempted: 2, recorded: 0, skipped: 2, deferred: 1 });
-  expect(mocks.first.mock.calls.map(call => call[0].candidateId)).toEqual([4, 5]);
-  expect(logs).toEqual(['provider_circuit.opened']);
-  // 열린 동안: 같은 hint 부터 다시 보지만 claim(=lifecycle)은 0
-  mocks.pages = [page.slice(2)];
-  expect(await runFirstReviewConsumer({ owner, once: true, circuits })).toEqual({ attempted: 0, recorded: 0, skipped: 0, deferred: 1 });
-  expect(mocks.first).toHaveBeenCalledTimes(2);
-  clock.now = 60_000; mocks.pages = [page.slice(2)];
-  mocks.first.mockImplementation(replies([{ ok: true }, { ok: true }], { applied: true, state: 'succeeded' }));
-  expect(await runFirstReviewConsumer({ owner, once: true, circuits })).toEqual({ attempted: 2, recorded: 2, skipped: 0, deferred: 0 });
-  expect(mocks.first.mock.calls.map(call => call[0].candidateId)).toEqual([4, 5, 6, 7]);
-  expect(logs).toEqual(['provider_circuit.opened', 'provider_circuit.half_open', 'provider_circuit.closed']);
+// PR C1: 소비자 쪽의 AI1 단일 회로(쪽 끝 쉼)는 없앴다 — 회로는 고른 모델마다 항목 생애(agent-review-item-lifecycle)가 'ai1:<모델>' 로 연다
+// (tests/agent-review-item-model-capacity.test.ts). 소비자는 같은 회로 묶음을 모든 항목에 넘기고, 회로가 열린 항목의 건너뜀은 쪽을 멈추지 않는다.
+it('AI1 hands the same per-model circuits to every item and keeps scanning past a circuit-held item', async () => {
+  const circuits = createProviderCircuits({ mode: 'enabled', failures: 1, openMs: 60_000 }, { log: () => {} });
+  mocks.pages = [[first(4), first(5), first(6)]];
+  mocks.first.mockResolvedValueOnce({ state: 'skipped', reason: 'provider_circuit_open' }).mockResolvedValue({ applied: true, state: 'succeeded' });
+  expect(await runFirstReviewConsumer({ owner, once: true, circuits })).toEqual({ attempted: 3, recorded: 2, skipped: 1, deferred: 0 });
+  expect(mocks.first.mock.calls.map(call => call[0].candidateId)).toEqual([4, 5, 6]);
+  expect(mocks.first.mock.calls.every(call => call[0].reviewerCircuits === circuits)).toBe(true);
+  // 예전 단일 회로의 결과 콜백은 넘기지 않는다
+  expect(mocks.first.mock.calls.some(call => 'onProviderResult' in call[0])).toBe(false);
 });
 
-it('AI1 judgment, input and no-call results never open the circuit', async () => {
-  const logs: string[] = [];
-  const circuits = createProviderCircuits({ mode: 'enabled', failures: 1, openMs: 60_000 }, { log: event => logs.push(event) });
-  mocks.pages = [[first(1), first(2), first(3), first(4)]];
-  mocks.first.mockImplementation(replies([{ ok: false, error: 'invalid_output' }, { ok: false, error: 'input_too_large' }, null,
-    { ok: false, error: 'cancelled' }], { applied: true, state: 'failed' }));
-  expect(await runFirstReviewConsumer({ owner, once: true, circuits })).toEqual({ attempted: 4, recorded: 0, skipped: 4, deferred: 0 });
-  expect(logs).toEqual([]);
+it('a consumer without ranks rests without claiming — no default reviewer or voter is called', async () => {
+  pinReviewRanks({});
+  mocks.pages = [[first(4)]];
+  expect(await runFirstReviewConsumer({ owner, once: true })).toEqual({ attempted: 0, recorded: 0, skipped: 0, deferred: 1 });
+  expect(mocks.first).not.toHaveBeenCalled();
+  expect(mocks.warn).toHaveBeenCalledWith('pipeline_consumer.degraded', expect.objectContaining({ stage: 'ai1', code: 'no_task_models' }));
+  mocks.pages = [[{ id: 9, fallback: false, provider: 'abcllm' }]];
+  expect(await runSecondReviewConsumer({ owner, once: true })).toEqual({ attempted: 0, recorded: 0, skipped: 0, deferred: 1 });
+  expect(mocks.second).not.toHaveBeenCalled();
+  expect(mocks.warn).toHaveBeenCalledWith('pipeline_consumer.degraded', expect.objectContaining({ stage: 'ai2', code: 'no_task_models' }));
 });
 
 it('AI2 holds only the failing provider and keeps claiming the healthy provider', async () => {
@@ -127,11 +129,13 @@ it.each(['ai1', 'ai2'] as const)('%s host admission defers before any claim, log
   expect(events).toEqual(['item', 'release']);
 });
 
-it('an open circuit is checked before the host ledger, so no host slot is taken for a held item', async () => {
+// PR C1: AI1 의 「host 장부 전에 회로」 관문(단일 회로)은 없앴다 — 회로는 고른 모델마다 항목 안에서 본다. host 자리는 항목이 끝나면 돌려준다.
+it('AI1 releases its host slot after an item held by its model circuit', async () => {
   const circuits = createProviderCircuits({ mode: 'enabled', failures: 1, openMs: 60_000 }, { log: () => {} });
-  const admit = vi.fn().mockResolvedValue({ admitted: true, release: async () => {} });
+  const released: number[] = [];
+  const admit = vi.fn().mockImplementation(async () => ({ admitted: true, release: async () => { released.push(1); } }));
   mocks.pages = [[first(4), first(5)]];
-  mocks.first.mockImplementation(replies([{ ok: false, error: 'rate_limited' }], { applied: true, state: 'failed' }));
-  expect(await runFirstReviewConsumer({ owner, once: true, circuits, admit })).toEqual({ attempted: 1, recorded: 0, skipped: 1, deferred: 1 });
-  expect(admit).toHaveBeenCalledOnce();
+  mocks.first.mockResolvedValue({ state: 'skipped', reason: 'provider_circuit_open' });
+  expect(await runFirstReviewConsumer({ owner, once: true, circuits, admit })).toEqual({ attempted: 2, recorded: 0, skipped: 2, deferred: 0 });
+  expect(admit).toHaveBeenCalledTimes(2); expect(released).toEqual([1, 1]);
 });

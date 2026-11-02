@@ -8,9 +8,9 @@ import { assignmentSource, ensureStageAssignments, requireStageAssignments, setS
 import { replayRuntimeSettingsSnapshot, runtimeSettingsSnapshotFromStored, setRuntimeSettingsForTest, setRuntimeSettingsLoader,
   withRuntimeSettings, type RuntimeSettingsLoader } from "@/lib/operations/runtime-settings-store";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
-import { firstReviewTableRows, firstReviewers, firstReviewerKey, hasFirstReviewer, selectTableFirstReviewer,
-  tableFirstReviewers } from "@/lib/crawl/first-reviewers";
-import { secondReviewFallbacks, secondReviewVoterSets, secondReviewVoters, tableSecondReviewVoters } from "@/lib/crawl/second-review-voters";
+import { firstReviewers, hasFirstReviewer } from "@/lib/crawl/first-reviewers";
+import { secondReviewFallbacks, secondReviewVoterSets, secondReviewVoters } from "@/lib/crawl/second-review-voters";
+import { pinReviewRanks } from "./review-task-ranks-fixture";
 import { createReviewInput, REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from "@/lib/crawl/settings-schema";
 import { secondReviewGeneration, secondReviewInputMatches } from "@/lib/crawl/second-review-input";
@@ -40,7 +40,7 @@ const TOGGLE_ON = { version: 1, assignments: { tableReads: "on" } }, TOGGLE_OFF 
 
 beforeEach(() => { seq = 0; vi.stubEnv(MODEL_ASSIGNMENT_TABLE_ENV, ""); setAssignmentTableEnabledForTest(null); });
 afterEach(() => { setAssignmentTableEnabledForTest(null); setStageAssignmentsForTest(null); setRuntimeSettingsForTest(null); setServingContractSnapshotForTest(null);
-  vi.unstubAllEnvs(); });
+  pinReviewRanks(null); vi.unstubAllEnvs(); });
 
 describe("assignment-table switch — runtime_settings toggle, env override (PR 3b-E)", () => {
   it("env MODEL_ASSIGNMENT_TABLE is an override only: '1' forces on, '0' forces off, blank follows the toggle, anything else is ignored", () => {
@@ -143,40 +143,51 @@ describe("assignment-table switch — runtime_settings toggle, env override (PR 
 });
 
 describe("assignment source (pure)", () => {
-  const rows = [row({ stage: "ai1", model: "[supa] q", provider: "abcllm" }), row({ stage: "ai1", model: "spark", provider: "codex-cli" }),
-    row({ stage: "ai2", model: "[supa] q", provider: "abcllm", rank: 2 }), row({ stage: "tagline", model: "[MLX] t", provider: "abcllm", mode: "off" })];
+  const rows = [row({ stage: "reason", model: "[supa] q", provider: "abcllm" }), row({ stage: "ai1", model: "[supa] q", provider: "abcllm" }),
+    row({ stage: "ai2", model: "deep", provider: "local-direct", vote: true }), row({ stage: "tagline", model: "[MLX] t", provider: "abcllm", mode: "off" })];
   it("is legacy when off or unread, legacy_empty_table without usable rows, table otherwise", () => {
-    expect(assignmentSourceFor("ai1", false, rows)).toBe("legacy");
-    expect(assignmentSourceFor("ai1", true, null)).toBe("legacy");
-    expect(assignmentSourceFor("ai1", true, rows)).toBe("table");
+    expect(assignmentSourceFor("reason", false, rows)).toBe("legacy");
+    expect(assignmentSourceFor("reason", true, null)).toBe("legacy");
+    expect(assignmentSourceFor("reason", true, rows)).toBe("table");
     expect(assignmentSourceFor("tagline", true, rows)).toBe("legacy_empty_table");             // only an off row
-    expect(assignmentSourceFor("ai2", true, rows)).toBe("legacy_empty_table");                 // a fallback but no voter
-    expect(assignmentSourceFor("ai2", true, [...rows, row({ stage: "ai2", model: "deep", provider: "local-direct", vote: true })])).toBe("table");
-    expect(assignmentSourceFor("ai1", true, [rows[1]])).toBe("legacy_empty_table");            // codex-cli cannot be a first reviewer
+    // PR C1: 1차·2차는 「작업 ↔ 모델」 순위만 읽는다 — 표에 쓸 수 있는 ai1 행·ai2 투표 행이 있어도 출처가 되지 않는다
+    expect(assignmentSourceFor("ai1", true, rows)).toBe("legacy_empty_table");
+    expect(assignmentSourceFor("ai2", true, rows)).toBe("legacy_empty_table");
+    expect(assignmentSourceFor("ai1", false, rows)).toBe("legacy");
   });
-  it("orders usable rows by rank then assignment id and drops helper, off and unsupported rows", () => {
-    const ordered = stageTableRows("ai1", [row({ assignmentId: "b", stage: "ai1", model: "b", provider: "abcllm", rank: 2 }),
-      row({ assignmentId: "c", stage: "ai1", model: "c", provider: "abcllm" }), row({ assignmentId: "a", stage: "ai1", model: "a", provider: "abcllm" }),
-      row({ assignmentId: "h", stage: "ai1", model: "h", provider: "abcllm", role: "helper" as never }),
-      row({ assignmentId: "x", stage: "ai1", model: "x", provider: "codex-cli" })]);
+  it("orders usable rows by rank then assignment id and drops helper and off rows", () => {
+    const ordered = stageTableRows("reason", [row({ assignmentId: "b", stage: "reason", model: "b", provider: "abcllm", rank: 2 }),
+      row({ assignmentId: "c", stage: "reason", model: "c", provider: "abcllm" }), row({ assignmentId: "a", stage: "reason", model: "a", provider: "abcllm" }),
+      row({ assignmentId: "h", stage: "reason", model: "h", provider: "abcllm", role: "helper" as never }),
+      row({ assignmentId: "o", stage: "reason", model: "o", provider: "abcllm", mode: "off" }),
+      row({ assignmentId: "x", stage: "ai1", model: "x", provider: "abcllm" })]);
     expect(ordered.map(entry => entry.assignmentId)).toEqual(["a", "c", "b"]);
+  });
+  it("never serves ai1 or ai2 rows (PR C1 — the review stages read task ranks)", () => {
+    expect(stageTableRows("ai1", [row({ stage: "ai1", model: "a", provider: "abcllm" }), row({ stage: "ai1", model: "s", provider: "claude-cli" })])).toEqual([]);
+    expect(stageTableRows("ai2", [row({ stage: "ai2", model: "v", provider: "local-direct", vote: true }),
+      row({ stage: "ai2", model: "f", provider: "abcllm", rank: 2 })])).toEqual([]);
   });
 });
 
 describe("snapshot gate", () => {
   it("returns no rows while off; with the switch on (toggle or override) it serves the pinned snapshot per stage", () => {
-    setStageAssignmentsForTest([row({ stage: "ai1", model: "[supa] q", provider: "abcllm" })]);
-    expect(assignmentSource("ai1")).toBe("legacy");
-    expect(stageAssignmentRows("ai1")).toBeNull();
+    setStageAssignmentsForTest([row({ stage: "reason", model: "[supa] q", provider: "abcllm" }), row({ stage: "ai1", model: "[supa] q", provider: "abcllm" })]);
+    expect(assignmentSource("reason")).toBe("legacy");
+    expect(stageAssignmentRows("reason")).toBeNull();
     setRuntimeSettingsForTest(TOGGLE_ON);                                                          // the saved toggle, no env
-    expect(assignmentSource("ai1")).toBe("table");
-    expect(assignmentSource("ai2")).toBe("legacy_empty_table");
-    expect(stageAssignmentRows("ai1")?.map(entry => entry.model)).toEqual(["[supa] q"]);
+    expect(assignmentSource("reason")).toBe("table");
+    expect(assignmentSource("tagline")).toBe("legacy_empty_table");
+    expect(stageAssignmentRows("reason")?.map(entry => entry.model)).toEqual(["[supa] q"]);
+    expect(stageAssignmentRows("tagline")).toBeNull();
+    // PR C1: 켜져 있어도 1차·2차는 표를 내지 않는다
+    expect(assignmentSource("ai1")).toBe("legacy_empty_table");
+    expect(stageAssignmentRows("ai1")).toBeNull();
     expect(stageAssignmentRows("ai2")).toBeNull();
     setRuntimeSettingsForTest(TOGGLE_OFF);
-    expect(assignmentSource("ai1")).toBe("legacy");
+    expect(assignmentSource("reason")).toBe("legacy");
     setAssignmentTableEnabledForTest(true);
-    expect(assignmentSource("ai1")).toBe("table");
+    expect(assignmentSource("reason")).toBe("table");
   });
 
   it("defers async entry points with assignments_unavailable when on but never read, and passes when off or loaded", async () => {
@@ -192,63 +203,20 @@ describe("snapshot gate", () => {
   });
 });
 
-describe("AI1 reviewers from the table", () => {
-  const a = row({ assignmentId: "ai1:01", stage: "ai1", model: "[supa] Qwen", provider: "abcllm" });
-  const b = row({ assignmentId: "ai1:02", stage: "ai1", model: "[MLX] gpt", provider: "abcllm" });
-  const c = row({ assignmentId: "ai1:03", stage: "ai1", model: "sonnet", provider: "claude-cli" });
-  const fallback = row({ assignmentId: "ai1:04", stage: "ai1", model: "grok-4.7", provider: "grok-cli", rank: 2 });
-  const rows = [fallback, c, a, b];
-  const reviewer = (entry: ModelAssignmentRow) => ({ provider: entry.provider, model: entry.model });
-
-  it("builds the pool from the table and ignores firstReview/firstReviewAdditional (pool mode required)", () => {
-    expect(tableFirstReviewers(rows)).toEqual([reviewer(a), reviewer(b), reviewer(c), reviewer(fallback)]);
-    for (const value of tableFirstReviewers(rows)) expect(Object.keys(value).sort()).toEqual(["model", "provider"]);
-    setStageAssignmentsForTest(rows);
-    expect(firstReviewers(poolSettings)).toEqual([legacyFirst]);                               // flag off
+// PR C1: 1차 배정 표 읽기(tableFirstReviewers·selectTableFirstReviewer·firstReviewTableRows)는 없앴다 — 표가 켜져 있고 ai1 행이 있어도 1차 풀은 「작업 ↔ 모델」 순위다.
+// 순위 고르기 자체는 tests/first-reviewers.test.ts, 묶기는 tests/review-task-ranks.test.ts 가 본다.
+describe("AI1 reviewers ignore the table", () => {
+  it("serves the rank pool whether the table is on or off and never the table or firstReview/firstReviewAdditional", () => {
+    const ranked = { provider: "abcllm" as const, model: "ranked-first" };
+    const table = [row({ stage: "ai1", model: "[supa] Qwen", provider: "abcllm" }), row({ stage: "ai1", model: "grok-4.7", provider: "grok-cli", rank: 2 })];
+    pinReviewRanks({ first: [ranked] });
+    setStageAssignmentsForTest(table);
+    expect(firstReviewers(poolSettings)).toEqual([ranked]);
     setAssignmentTableEnabledForTest(true);
-    expect(firstReviewers(poolSettings)).toEqual(tableFirstReviewers(rows));
-    expect(firstReviewers({ ...poolSettings, firstReviewAdditional: [{ provider: "abcllm", model: "legacy-extra" }] }, legacyFirst))
-      .toEqual(tableFirstReviewers(rows));
-    expect(hasFirstReviewer(firstReviewers(poolSettings), reviewer(fallback))).toBe(true);    // a fallback's result is a current first reviewer
+    expect(firstReviewers(poolSettings)).toEqual([ranked]);
+    expect(firstReviewers({ firstReview: legacyFirst })).toEqual([ranked]);
+    expect(hasFirstReviewer(firstReviewers(poolSettings), { provider: "grok-cli", model: "grok-4.7" })).toBe(false);
     expect(hasFirstReviewer(firstReviewers(poolSettings), legacyFirst)).toBe(false);
-    // not pool mode: the consumer/legacy job would send firstReviewer(settings) alone — stay legacy
-    expect(firstReviewTableRows({ firstReview: legacyFirst })).toBeNull();
-    expect(firstReviewers({ firstReview: legacyFirst })).toEqual([legacyFirst]);
-    // no usable ai1 rows: legacy
-    setStageAssignmentsForTest([row({ stage: "ai1", model: "spark", provider: "codex-cli" })]);
-    expect(firstReviewers(poolSettings)).toEqual([legacyFirst]);
-  });
-
-  it("spreads candidates over the rank-1 rows by the (id − 1) mod n slot", () => {
-    const rankOne = [reviewer(a), reviewer(b), reviewer(c)];
-    for (const id of [1, 2, 3, 4, 5, 6, 7, 100]) expect(selectTableFirstReviewer(rows, id)).toEqual(rankOne[(id - 1) % 3]);
-    expect(selectTableFirstReviewer(rows, 0)).toBeNull();
-    expect(selectTableFirstReviewer([], 1)).toBeNull();
-  });
-
-  it("pins live intents and live calls to their model (fallbacks included) and moves everything else to the current table", () => {
-    expect(selectTableFirstReviewer(rows, 1, [], [reviewer(c)])).toEqual(reviewer(c));
-    expect(selectTableFirstReviewer(rows, 1, [{ ...reviewer(fallback), state: "running", live: true }])).toEqual(reviewer(fallback));
-    // 2026-11-01: a model that left the table holds the candidate only while its call may still be in flight
-    expect(selectTableFirstReviewer(rows, 1, [{ ...legacyFirst, state: "running", live: true }])).toBeNull();
-    for (const attempt of [legacyFirst, reviewer(fallback), { ...legacyFirst, state: "running", live: false }, { ...legacyFirst, state: "failed" },
-      { provider: null, model: null }])
-      expect(selectTableFirstReviewer(rows, 1, [attempt])).toEqual(selectTableFirstReviewer(rows, 1));
-    expect(selectTableFirstReviewer(rows, 1, [], [reviewer(a), reviewer(b)])).toBeNull();
-    const blocked = new Set([firstReviewerKey(a)]);
-    expect(selectTableFirstReviewer(rows, 1, [], [reviewer(a)], { blocked })).toEqual(reviewer(a));
-    // a live call on a blocked model stays; a settled retry on it goes to the next usable row of the same rank
-    expect(selectTableFirstReviewer(rows, 1, [{ ...reviewer(a), state: "running", live: true }], [], { blocked })).toEqual(reviewer(a));
-    expect(selectTableFirstReviewer(rows, 1, [{ ...reviewer(a), state: "failed" }], [], { blocked })).not.toEqual(reviewer(a));
-  });
-
-  it("moves to the next rank only when the whole rank is unusable, and returns null when every rank is", () => {
-    const avoid = (keys: ModelAssignmentRow[]) => ({ blocked: new Set(keys.map(entry => firstReviewerKey(entry))) });
-    // rank 1 keeps spreading over its usable rows
-    expect([1, 2, 3, 4].map(id => selectTableFirstReviewer(rows, id, [], [], avoid([a]))?.model)).toEqual([b.model, c.model, b.model, c.model]);
-    // the grok-cli rank-2 row is chosen only when every rank-1 row is unusable
-    for (const id of [1, 2, 3]) expect(selectTableFirstReviewer(rows, id, [], [], avoid([a, b, c]))).toEqual(reviewer(fallback));
-    expect(selectTableFirstReviewer(rows, 2, [], [], avoid([a, b, c, fallback]))).toBeNull();
   });
 });
 
@@ -263,24 +231,24 @@ describe("AI2 voters from the table", () => {
   const dup = row({ assignmentId: "ai2:06", stage: "ai2", model: "[mlx] GPT", provider: "abcllm", rank: 4 });
   const cli = row({ assignmentId: "ai2:07", stage: "ai2", model: "spark", provider: "codex-cli", rank: 2 });
 
-  it("voters = rank 1 · vote rows, fallbacks = rank ≥ 2 by rank, one row per model, plain { provider, model } objects", () => {
-    expect(tableSecondReviewVoters([f1, idle, v2, dup, cli, f2, v1])).toEqual({
-      voters: [{ provider: "local-direct", model: "deep-1" }, { provider: "abcllm", model: "[supa] Qwen" }],
-      fallbacks: [{ provider: "abcllm", model: "backup" }, { provider: "abcllm", model: "[MLX] gpt" }] });
+  // PR C1: 2차 배정 표 읽기(tableSecondReviewVoters)는 없앴다 — 투표자·대체는 「작업 ↔ 모델」의 투표자 칸 순위다(표·설정 배열을 읽지 않는다)
+  it("every reader follows the voter-slot ranks, never the table or the settings arrays", () => {
+    pinReviewRanks({ second: [[{ provider: "local-direct", model: "deep-1" }, { provider: "abcllm", model: "backup" }]] });
+    setStageAssignmentsForTest([v1, v2, f2, f1, idle, dup, cli]);
+    for (const enabled of [false, true]) {
+      setAssignmentTableEnabledForTest(enabled);
+      expect(secondReviewVoterSets(settings)).toEqual({ source: "ranks", voters: [{ provider: "local-direct", model: "deep-1" }],
+        fallbacks: [{ provider: "abcllm", model: "backup" }] });
+      expect(secondReviewVoters(settings)).not.toBe(settings.secondReview.voters);
+      expect(secondReviewFallbacks(settings)).toEqual([{ provider: "abcllm", model: "backup" }]);
+    }
+    for (const value of secondReviewVoters(settings)) expect(Object.keys(value).sort()).toEqual(["model", "provider"]);
+    // 순위가 없으면 빈 목록이다 — 설정의 voters·fallbacks 로 대신 채우지 않는다
+    pinReviewRanks({});
+    expect(secondReviewVoterSets(settings)).toEqual({ source: "ranks", voters: [], fallbacks: [] });
   });
 
-  it("switches every reader together and keeps the settings arrays when off or without a voter", () => {
-    setStageAssignmentsForTest([v1, f2]);
-    expect(secondReviewVoters(settings)).toBe(settings.secondReview.voters);
-    expect(secondReviewFallbacks(settings)).toBe(settings.secondReview.fallbacks);
-    setAssignmentTableEnabledForTest(true);
-    expect(secondReviewVoterSets(settings)).toEqual({ source: "table", voters: [{ provider: "local-direct", model: "deep-1" }],
-      fallbacks: [{ provider: "abcllm", model: "backup" }] });
-    setStageAssignmentsForTest([f2]);
-    expect(secondReviewVoterSets(settings).source).toBe("settings");
-  });
-
-  it("accepts a table voter and its table fallback in input validation, refuses the settings-only voter, and keeps the AI2 policy hash", () => {
+  it("accepts a ranked voter and its same-slot fallback in input validation, refuses the settings-only voter, and keeps the AI2 policy hash", () => {
     const now = new Date("2026-10-16T03:00:00.000Z");
     const crawl: CrawlSettings = { ...structuredClone(DEFAULT_CRAWL_SETTINGS), enabled: true, reviewMode: "enforce",
       firstReview: { provider: "abcllm", model: "first-model" },
@@ -306,11 +274,17 @@ describe("AI2 voters from the table", () => {
       createdAt: now, reviewedAt: null, resolvedAt: null, ...extra });
     const current = { candidate, document, settings: crawl, input, first };
     const hash = secondReviewPolicyHash(crawl);
+    // 1차 1순위 = first-model. 2차 칸 1 = second-model 하나면 그 투표자만 맞다
+    pinReviewRanks({ first: [{ provider: "abcllm", model: "first-model" }], second: [[{ provider: "abcllm", model: "second-model" }]] });
     expect(secondReviewInputMatches(vote("second-model", "abcllm"), current, now)).toBe(true);
     expect(secondReviewInputMatches(vote("deep-1", "local-direct"), current, now)).toBe(false);
-    setStageAssignmentsForTest([v1, f2]);
+    // 순위를 바꾸면(칸 1 = deep-1 → backup) 설정에만 남은 second-model 은 더 이상 맞지 않는다 — 켜진 배정 표의 투표 행(v2)도 보지 않는다
+    setStageAssignmentsForTest([v2]);
     setAssignmentTableEnabledForTest(true);
+    pinReviewRanks({ first: [{ provider: "abcllm", model: "first-model" }],
+      second: [[{ provider: "local-direct", model: "deep-1" }, { provider: "abcllm", model: "backup" }]] });
     expect(secondReviewInputMatches(vote("deep-1", "local-direct"), current, now)).toBe(true);
+    expect(secondReviewInputMatches(vote("[supa] Qwen", "abcllm"), current, now)).toBe(false);
     expect(secondReviewInputMatches(vote("second-model", "abcllm"), current, now)).toBe(false);
     const root = vote("deep-1", "local-direct", { status: "resolved", resolution: "fallback", failureCount: 1 });
     expect(secondReviewInputMatches(vote("backup", "abcllm", { id: 202, fallbackForId: 201, failureCount: 1 }), { ...current, root }, now)).toBe(true);

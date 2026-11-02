@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createReviewInput } from '@/lib/crawl/agent-review-contract';
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from '@/lib/crawl/settings-schema';
 import type { CrawlCandidate, CrawlDocument } from '@/lib/db/schema';
@@ -6,16 +6,24 @@ import { randomUUID } from 'node:crypto';
 import { ai1DispatchBindingHash, ai1ModelDispatchSchema } from '@/lib/llm/capacity';
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from '@/lib/crawl/agent-review-contract';
 import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
+import { firstReviewers, selectFirstReviewer } from '@/lib/crawl/first-reviewers';
+import { pinReviewRanks, pinReviewRanksFromSettings } from './review-task-ranks-fixture';
 
 const mocks = vi.hoisted(() => ({ settings: null as CrawlSettings | null, list: vi.fn(), document: vi.fn(), input: vi.fn(),
-  atomic: vi.fn(), prepare: vi.fn(), native: vi.fn(), pending: vi.fn(), request: vi.fn(), cancel: vi.fn(), unknown: vi.fn(), reconcile: vi.fn(), claim: vi.fn(), record: vi.fn(), resume: vi.fn(), reservedReview: vi.fn(), abandon: vi.fn(), gateway: vi.fn(), cli: vi.fn() }));
+  atomic: vi.fn(), prepare: vi.fn(), native: vi.fn(), pending: vi.fn(), request: vi.fn(), cancel: vi.fn(), unknown: vi.fn(), reconcile: vi.fn(), claim: vi.fn(), record: vi.fn(), resume: vi.fn(), reservedReview: vi.fn(), abandon: vi.fn(), gateway: vi.fn(), cli: vi.fn(), choose: vi.fn() }));
 vi.mock('@/lib/crawl/settings', () => ({ getSettings: async () => mocks.settings }));
 vi.mock('@/lib/crawl/repository', () => ({ getDocument: mocks.document, setReadmeSample: vi.fn() }));
 vi.mock('@/lib/crawl/readme', () => ({ fetchReadmeSample: async () => '', README_SAMPLE_LIMIT: 3000, README_SAMPLE_VERSION: '2026-09-14.1' }));
 vi.mock('@/lib/domain/products/repository', () => ({ findRepositoryProduct: async () => null }));
+// 1차 잡은 늘 순위 고르기다(PR C1): 자기 대기 행·풀 쪽(keyset)·후보별 고르기·막힌 모델 읽기를 경계 mock 으로 둔다
 vi.mock('@/lib/crawl/agent-review-repository', () => ({ canStartLegacyAgentReview: async () => true,
   requeueStaleReviewSources: async () => 0, handOffExhaustedFirstReviews: async () => 0,
+  listOwnPendingFirstReviewCandidates: async () => [],
+  listFirstReviewPoolCandidates: async (settings: CrawlSettings, limit: number) => ((await mocks.list(settings, limit)) as CrawlCandidate[]).map(candidate =>
+    ({ candidate, position: { id: candidate.id, reviewed: false, updatedAt: '2026-10-27 00:00:00.000001', ceiling: 1000 } })),
+  chooseFirstReviewForCandidate: mocks.choose,
   listReviewCandidates: mocks.list, loadReviewInput: mocks.input, claimAgentReviewWithModelReservation: mocks.atomic, claimAgentReview: mocks.claim, recordAgentReview: mocks.record }));
+vi.mock('@/lib/crawl/first-reviewer-blocks', () => ({ readBlockedFirstReviewerKeys: async () => new Set<string>() }));
 vi.mock('@/lib/crawl/agent-review-model-capacity', () => ({ claimAgentReviewModelCapacity: mocks.resume,
   reviewAgentReviewModelCapacity: mocks.reservedReview, abandonAgentReviewModelCapacity: mocks.abandon }));
 vi.mock('@/lib/crawl/agent-review', () => ({ firstReviewer: (s: CrawlSettings) => s.firstReview,
@@ -49,10 +57,17 @@ beforeEach(() => {
   mocks.reservedReview.mockResolvedValue({ ok: true, outcome, usage: {} });
   mocks.gateway.mockResolvedValue({ ok: true, outcome, usage: {} });
   mocks.record.mockResolvedValue({ applied: false, state: 'succeeded' });
+  mocks.choose.mockImplementation(async ({ candidate }, _executor, blocked) =>
+    selectFirstReviewer(firstReviewers(), candidate.id, [], [], { blocked: blocked ?? new Set() }));
+  // 1차 심사자는 「작업 ↔ 모델」 순위뿐이다 — 시험 설정의 firstReview 를 1순위로 고정한다
+  pinReviewRanksFromSettings(() => mocks.settings);
 });
-it('keeps an unsupported fresh admission deferred without calling a model or allocating a request', async () => {
+afterEach(() => pinReviewRanks(null));
+// 계약 닫힘은 그 모델만의 거절이다(늘 순위 고르기, PR C1) — 하나뿐인 순위가 쉬면 미룸이 아니라 「모든 순위를 쓸 수 없음」으로 남는다
+it('keeps an unsupported fresh admission unrun (all ranks unusable) without calling a model or allocating a request', async () => {
   mocks.claim.mockRejectedValue(new ModelCapacityDeferredError('provider_contract_unavailable'));
-  expect(await reviewCrawlCandidates(context())).toEqual({ done: false, deferred: 'model_capacity' });
+  expect(await reviewCrawlCandidates(context())).toEqual({ done: false,
+    degraded: { code: 'all_ranks_unusable', detail: '1차 AI 검수: 1순위 test-abcllm · Exact Model: 이 틱에 쉬는 중' } });
   expect(mocks.resume).not.toHaveBeenCalled(); expect(mocks.gateway).not.toHaveBeenCalled(); expect(mocks.record).not.toHaveBeenCalled();
 });
 it('keeps the disabled legacy gateway path and its existing result writer unchanged', async () => {
@@ -78,7 +93,8 @@ it('settles physical terminal before a caller abort changes the domain result to
   const controller = new AbortController(); const order: string[] = [];
   mocks.reservedReview.mockImplementation(async () => { order.push('physical_terminal_settled'); controller.abort(); return { ok: true, outcome, usage: {} }; });
   mocks.record.mockImplementation(async value => { order.push(value.error); return { applied: false, state: 'failed' }; });
-  expect(await reviewCrawlCandidates(context(controller.signal))).toEqual({ done: false });
+  // 취소된 결과도 그 모델을 이 틱 동안 쉬게 한다(늘 순위 고르기, PR C1) — 남긴 심사가 없으니 미룸으로 끝난다
+  expect(await reviewCrawlCandidates(context(controller.signal))).toEqual({ done: false, deferred: 'model_capacity' });
   expect(order).toEqual(['physical_terminal_settled', 'cancelled']);
   expect(mocks.gateway).not.toHaveBeenCalled();
 });

@@ -177,6 +177,8 @@ it("hashes complete settings independent of object-key order and includes nested
 it("separates exact DB settings binding from the approved concurrency experiment", () => {
   const beforeSettings = structuredClone(DEFAULT_CRAWL_SETTINGS), afterSettings = structuredClone(DEFAULT_CRAWL_SETTINGS);
   beforeSettings.reviewConcurrency = 2; afterSettings.reviewConcurrency = 4;
+  // 기본 투표자는 비어 있다(PR C1) — replay 설정(manifest 가 선언한 모델)처럼 두 실행에 같은 투표자를 둔다
+  for (const value of [beforeSettings, afterSettings]) value.secondReview.voters = [{ provider: "abcllm", model: "second" }];
   expect(fullReviewPolicyHash(beforeSettings)).not.toBe(fullReviewPolicyHash(afterSettings));
   expect(comparisonReviewPolicyHash(beforeSettings)).toBe(comparisonReviewPolicyHash(afterSettings));
   const before = final(), after = final();

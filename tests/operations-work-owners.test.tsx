@@ -6,6 +6,7 @@ import { buildActions, deriveStatus, type ActionInputs, type DerivedStatus } fro
 import { AttentionList, type SplitItem } from "@/app/(operator)/admin/status/dashboard/AttentionList";
 import { JOB_HOW, hostName, resolveWorkOwners, workOwnersByAction, type OwnerContext } from "@/app/(operator)/admin/status/work-owners";
 import { ACTION_NOW, brokenActionInputs, brokenWorkerProgress } from "./fixtures/operations-actions";
+import { pinReviewRanks, pinReviewRanksFromSettings } from "./review-task-ranks-fixture";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh() {} }) }));
 vi.mock("server-only", () => ({}));
@@ -13,12 +14,14 @@ vi.mock("server-only", () => ({}));
 /**
  * 조치 칸의 장비·LLM 버튼(work-owners.ts) — 칸마다 그 일을 맡은 작업을 달고, 작업에서 장비(역할 담당·consumer·모델 서버)·LLM·일정을 모은다.
  * 입력 모양은 2026-10-23 운영에서 읽은 것(다섯 역할 모두 M3 주, 제작 근거 consumer M3·Oracle, 2차 [supa] Qwen3.8 한 표, AI 연결 Codex→Sonnet)이다.
+ * 1차·2차 모델 자리는 「작업 ↔ 모델」 순위만 읽는다(PR C1) — 같은 모양을 순위로 고정한다(1차 [MLX] gpt-oss-120b, 2차 투표자 칸 1 = [supa] Qwen3.8).
  */
 beforeAll(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(ACTION_NOW);
+  pinReviewRanksFromSettings(context().settings);
 });
-afterAll(() => vi.useRealTimers());
+afterAll(() => { vi.useRealTimers(); pinReviewRanks(null); });
 
 const NOW = ACTION_NOW.toISOString();
 const ago = (seconds: number) => new Date(ACTION_NOW.getTime() - seconds * 1_000).toISOString();
@@ -108,15 +111,20 @@ describe("맡은 장비·LLM·일정", () => {
   });
 
   // 갈림 판가름은 2026-10-31(PR 3a-C) 부터 자기 잡 split-tiebreak 이다 — 2차 심사 칸은 두 잡을 함께 단다
-  it("2차 심사 — 설정의 투표 모델(게이트웨이 실행기)과 켜진 Qwen 갈림 판가름(split-tiebreak), 그 서버를 장비로 보인다", () => {
+  it("2차 심사 — 「작업 ↔ 모델」 순위의 투표 모델(엔진 직접 계약)과 켜진 Qwen 갈림 판가름(split-tiebreak), 그 서버를 장비로 보인다", () => {
     const owners = resolveWorkOwners({ jobs: ["second-review", "split-tiebreak"] }, context())!;
     expect(owners.models.map((model) => model.name)).toEqual(["Qwen3.8-27B-NVFP4", "qwen3.8-flash-next"]);
     expect(owners.models[0].rows).toEqual([{ slot: "2차 · 투표 1", job: "2차 심사", provider: "abcllm", runsOn: "abcllm · 직접 연결 계약 · 장비 표지 supa",
-      source: "크롤 설정 secondReview.voters[0]", stats: "최근 1시간(2차 투표) 호출 34 · 실패 8" }]);
+      source: "작업 ↔ 모델 2차 투표자 칸 — 쓸 수 있는 가장 높은 순위(웹 기준 — 1순위를 쓸 수 없으면 그 칸의 2·3순위가 표를 낸다)", stats: "최근 1시간(2차 투표) 호출 34 · 실패 8" }]);
     expect(owners.models[1].rows[0]).toMatchObject({ slot: "2차 갈림 판가름", runsOn: "Qwen 직접 서버 gpu3090" });
     expect(owners.hosts.map((host) => host.name)).toEqual(["M3", "gpu3090"]);
     // 2차 consumer(ai2)는 관측되지 않았다 — 장비로 세지 않는다
     expect(owners.hosts[0].rows.map((row) => row.instanceId)).toEqual(["m3-reviewer"]);
+    // 순위가 없으면 옛 설정(secondReview.voters)의 투표자를 모델로 보이지 않는다
+    pinReviewRanks({});
+    try {
+      expect(resolveWorkOwners({ jobs: ["second-review", "split-tiebreak"] }, context())!.models.map((model) => model.name)).toEqual(["qwen3.8-flash-next"]);
+    } finally { pinReviewRanksFromSettings(context().settings); }
   });
 
   it("화면 shot2의 판과 recordedModel을 표시하고 렌더 서버와 추론 서버를 구분한다", () => {

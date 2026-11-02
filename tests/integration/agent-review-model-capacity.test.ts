@@ -36,6 +36,7 @@ import { runFixtureReviewReplay } from "@/lib/operations/pipeline-replay-runner"
 import { withReplayDatabaseScope } from "@/lib/db/replay-scope";
 import { getReplayHandlerIdentityPath } from "./replay-handler-setup";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
+import { pinReviewRanks } from "../review-task-ranks-fixture";
 
 type Raw = Record<string, unknown>;
 const admin = postgres(TEST_DATABASE_URL, { max: 1, prepare: false, onnotice: () => {},
@@ -224,6 +225,8 @@ it("keeps a disabled legacy model control on the actual claim, transport and res
 it("reads own live unstarted AI1 reservations before waits without granting, expiring or touching a foreign boot", () => exercise(async () => {
   const primary = settings().firstReview!, extra = { ...primary, model: "pr05b-extra-fixture" };
   const configured = { ...settings(), firstReviewAdditional: [extra] };
+  // 1차 심사자는 「작업 ↔ 모델」 순위다(PR C1) — 1·2순위를 둔다
+  pinReviewRanks({ first: [primary, extra] });
   const dualPolicy = { ...policy, routes: [...policy.routes, { ...policy.routes[0], model: extra.model }] };
   await mode("open", dualPolicy);
   const owner = { instanceId: "pr05b-own-priority", bootId: randomUUID() }, token = randomUUID(), ids: string[] = [];
@@ -273,17 +276,24 @@ it("reads own live unstarted AI1 reservations before waits without granting, exp
   }
 }));
 
-it.each(["open", "draining"] as const)("defers fresh AI1 in %s without consuming a model attempt or acknowledging the request", value => exercise(async () => {
+// PR C1: 1차는 늘 순위 고르기다. open 에서는 하나뿐인 순위가 이 모델만의 까닭(1차 계약 없음 — provider_contract_unavailable)으로 거절돼 그 순위가 쉬고,
+// 다음 순위가 없어 후보는 all_ranks_unusable 로 건너뛴다 — 틱은 미룸이 아니라 제 일 못 한 완료(degraded)라 요청은 인정하되 성공 시각은 옮기지 않는다.
+// draining 은 전역 미룸이라 예전처럼 요청을 인정하지 않는다. 둘 다 살펴본 후보까지 쪽 커서(firstReviewPoolScan)만 나아간다.
+it.each(["open", "draining"] as const)("leaves fresh AI1 in %s without consuming a model attempt — open: degraded all_ranks_unusable, draining: deferred", value => exercise(async () => {
   const context = await source();
   await mode(value);
   const before = await jobRow();
   const result = await tick();
-  expect(result).toMatchObject({ status: "deferred", reason: "model_capacity" });
+  expect(result).toMatchObject(value === "open" ? { status: "completed", done: false, degraded: "all_ranks_unusable" }
+    : { status: "deferred", reason: "model_capacity" });
   expect(await attemptRows(context.candidate.id)).toHaveLength(0);
   for (const mock of [transport.gateway, transport.cli, transport.grok]) expect(mock).not.toHaveBeenCalled();
   const after = await jobRow();
-  for (const key of ["requested_version", "processed_version", "cursor", "not_before", "last_success_at"])
-    expect(after[key], key).toEqual(before[key]);
+  for (const key of ["requested_version", "not_before", "last_success_at"]) expect(after[key], key).toEqual(before[key]);
+  expect(after.processed_version).toEqual(value === "open" ? before.requested_version : before.processed_version);
+  const { firstReviewPoolScan, ...cursor } = after.cursor as Raw;
+  expect(cursor).toEqual(before.cursor);
+  expect(firstReviewPoolScan).toMatchObject({ id: context.candidate.id, reviewed: false });
   // 던지지 않고 끝난 틱이라 지난 실패 기록은 지운다(runner.ts) — fixture 의 "prior site error"
   expect(after).toMatchObject({ locked_at: null, lease_token: null, last_error: null });
   expect(await rows("model_capacity_requests")).toEqual(baseline!.model_capacity_requests);

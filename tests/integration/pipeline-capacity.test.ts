@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { snapshotPipelineGenerations } from "@/lib/operations/pipeline-capacity-repository";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
+import { pinReviewRanks } from "../review-task-ranks-fixture";
 
 beforeAll(ensureSchema);
 beforeEach(async () => {
@@ -172,12 +173,18 @@ it("local export keeps only frozen manifest inputs and reports copied reuse sepa
   // CI resolves the fixture URL in setup without setting this optional override.
   const originalTestDatabaseUrl = process.env.TEST_DATABASE_URL;
   vi.stubEnv("TEST_DATABASE_URL", undefined);
+  // 1차·2차 심사자는 「작업 ↔ 모델」 순위다(PR C1) — 자식 스크립트에는 env.ts 의 고정이 없으니 같은 순위(설정의 1차 → 1차 1순위, 투표자·대체 → 칸 1 의
+  // 1·2순위)를 preload 로 건넨다. 인증 snapshot 은 manifest 의 모델을 이 순위에서 나온 심사자와 견준다.
+  const ranks = { first: [{ provider: "claude-cli", model: "first-fixture" }],
+    second: [[{ provider: "abcllm", model: "second-a" }, { provider: "abcllm", model: "backup" }]] };
+  const exportScript = ["--import", "tsx", "--import", "./tests/integration/fixtures/review-ranks-child-preload.ts", "scripts/export-pipeline-capacity.ts"];
   try {
     const path = join(directory, "template.json"), output = join(directory, "export.json");
     writeFileSync(path, JSON.stringify(template));
     const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(PG|READ_DATABASE_URL$)/.test(key)));
-    const child = spawnSync(process.execPath, ["--import", "tsx", "scripts/export-pipeline-capacity.ts", path, output], {
-      encoding: "utf8", env: { ...env, NODE_ENV: "test", TEST_DATABASE_URL }, timeout: 10_000,
+    const childEnv = (value: typeof ranks) => ({ ...env, NODE_ENV: "test" as const, TEST_DATABASE_URL, NMV_TEST_REVIEW_RANKS: JSON.stringify(value) });
+    const child = spawnSync(process.execPath, [...exportScript, path, output], {
+      encoding: "utf8", env: childEnv(ranks), timeout: 10_000,
     });
     expect(child.stderr).toBe("");
     expect(child.status).toBe(0);
@@ -186,10 +193,23 @@ it("local export keeps only frozen manifest inputs and reports copied reuse sepa
     expect(artifact.source).toMatchObject({ kind: "local-postgres", scope: "as_of_snapshot_only" });
     expect(reportCapacityRun(artifact)).toMatchObject({ finalCandidates: 0, exclusions: { reuse: 1 } });
     expect(await db.select().from(crawlReviewAttempts)).toHaveLength(2);
+    // 같은 snapshot 을 이 프로세스에서: 순위가 manifest 와 같으면 받고, 1차 순위가 둘이면 manifest 가 선언한 1차 하나를 넘는 풀이라 거절한다
+    pinReviewRanks(ranks);
+    await expect(snapshotPipelineGenerations([f.candidate.id], fullReviewPolicyHash(f.settings), template.manifest))
+      .resolves.toMatchObject({ generations: expect.any(Array) });
+    pinReviewRanks({ ...ranks, first: [...ranks.first, { provider: "abcllm", model: "first-extra" }] });
+    await expect(snapshotPipelineGenerations([f.candidate.id], fullReviewPolicyHash(f.settings), template.manifest))
+      .rejects.toThrow("unsupported_capacity_first_review_pool");
+    // 순위의 2차 투표자가 manifest 와 다르면 거절한다(설정의 voters 는 같아도) — 자식 스크립트도 순위로 견준다
+    const reranked = spawnSync(process.execPath, [...exportScript, path, join(directory, "reranked.json")], {
+      encoding: "utf8", env: childEnv({ ...ranks, second: [[{ provider: "abcllm", model: "second-other" }, { provider: "abcllm", model: "backup" }]] }), timeout: 10_000,
+    });
+    expect(reranked.status).toBe(1);
+    expect(reranked.stderr.trim()).toBe("snapshot_model_mismatch");
     template.manifest.models.second[0] = identity("unconfigured-model");
     writeFileSync(path, JSON.stringify(template));
-    const mismatched = spawnSync(process.execPath, ["--import", "tsx", "scripts/export-pipeline-capacity.ts", path, join(directory, "wrong-model.json")], {
-      encoding: "utf8", env: { ...env, NODE_ENV: "test", TEST_DATABASE_URL }, timeout: 10_000,
+    const mismatched = spawnSync(process.execPath, [...exportScript, path, join(directory, "wrong-model.json")], {
+      encoding: "utf8", env: childEnv(ranks), timeout: 10_000,
     });
     expect(mismatched.status).toBe(1);
     expect(mismatched.stderr.trim()).toBe("snapshot_model_mismatch");

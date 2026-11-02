@@ -20,7 +20,6 @@ import { AssignmentStageTable } from "@/app/(operator)/admin/models/assignments/
 import { ImportCard } from "@/app/(operator)/admin/models/assignments/ImportCard";
 import { SettingsForm } from "@/app/(operator)/admin/SettingsForm";
 import { ReviewModelsForm } from "@/app/(operator)/admin/models/ReviewModelsForm";
-import { reviewModelOptions } from "@/app/(operator)/admin/models/model-options";
 import { NAV_GROUPS } from "@/app/(operator)/admin/AdminNav";
 import { engineConnectAssignmentHref } from "@/lib/operations/admin-engine-connect";
 import { planAssignmentImport, type AssignmentImportSources } from "@/lib/llm/assignment-import";
@@ -445,29 +444,29 @@ describe("설정 폼 — 배정 표 플래그가 켜졌을 때만 읽기 전용"
   const settings: CrawlSettings = { ...DEFAULT_CRAWL_SETTINGS, firstReview: { provider: "abcllm", model: "[supa] Qwen3.8-27B-NVFP4" },
     firstReviewAdditional: [{ provider: "abcllm", model: "[m1] gemma" }],
     secondReview: { ...DEFAULT_CRAWL_SETTINGS.secondReview, voters: [{ provider: "claude-cli", model: "opus" }], fallbacks: [{ provider: "local-direct", model: "qwen" }] } };
-  it("크롤 설정: 기본(꺼짐)은 편집 칸 그대로, 켜지면 알림 + 같은 이름의 숨은 칸(값 유지)·편집 칸 없음", () => {
-    const editable = renderToStaticMarkup(createElement(SettingsForm, { settings }));
-    expect(editable).not.toContain("배정 표로 옮겨짐");
-    expect(editable).toContain('id="firstReviewModel"');
-    expect(editable).toContain('aria-label="1번째 모델"');
-    const locked = renderToStaticMarkup(createElement(SettingsForm, { settings, assignmentLocked: true }));
-    expect(locked).toContain("배정 표로 옮겨짐");
-    expect(locked).toContain('href="/admin/models/assignments"');
-    expect(locked).not.toContain('id="firstReviewModel"');
-    for (const [name, value] of [["firstReviewProvider", "abcllm"], ["firstReviewModel", "[supa] Qwen3.8-27B-NVFP4"], ["firstAdditionalProvider0", "abcllm"],
-      ["firstAdditionalModel0", "[m1] gemma"], ["voterProvider0", "claude-cli"], ["voterModel0", "opus"], ["fallbackProvider0", "local-direct"], ["fallbackModel0", "qwen"]])
-      expect(locked, name).toContain(`<input type="hidden" name="${name}" value="${value}"/>`);
-    expect(locked).not.toContain('aria-label="1번째 모델"');
-    expect(locked).not.toContain("+ 대체 모델 더하기");
+  it("크롤 설정: 1차·2차 모델 칸은 플래그와 무관하게 없고(PR C1) 「작업 ↔ 모델」 안내만 — 옛 값을 숨은 칸으로도 보내지 않는다", () => {
+    for (const assignmentLocked of [false, true]) {
+      const html = renderToStaticMarkup(createElement(SettingsForm, { settings, assignmentLocked }));
+      expect(html, String(assignmentLocked)).not.toContain("배정 표로 옮겨짐");
+      expect(html, String(assignmentLocked)).toContain('data-task-ranks-pointer="true"');
+      expect(html, String(assignmentLocked)).toContain('href="/admin/models/tasks#tasks"');
+      expect(html, String(assignmentLocked)).not.toContain('id="firstReviewModel"');
+      for (const name of ["firstReviewProvider", "firstReviewModel", "firstAdditionalProvider0", "firstAdditionalModel0", "firstAdditionalPresent", "voterProvider0",
+        "voterModel0", "fallbackProvider0", "fallbackModel0"]) expect(html, `${assignmentLocked} ${name}`).not.toContain(`name="${name}"`);
+      expect(html, String(assignmentLocked)).not.toContain('aria-label="1번째 모델"');
+      expect(html, String(assignmentLocked)).not.toContain("+ 대체 모델 더하기");
+    }
   });
-  it("단계별 모델: 켜지면 알림·칸 잠금·저장 바 없음, 꺼지면 그대로", () => {
-    const props = { settings, version: "v1", firstChoices: reviewModelOptions(null, false), secondChoices: reviewModelOptions(null, true), models: MODELS };
+  it("단계별 모델: 켜지면 알림·칸 잠금·저장 바 없음, 꺼지면 그대로; 1차·2차 칸 대신 「작업 ↔ 모델」 안내는 둘 다", () => {
+    const props = { settings, version: "v1", models: MODELS };
     const open = renderToStaticMarkup(createElement(ReviewModelsForm, props));
     expect(open).not.toContain("배정 표로 옮겨짐");
     expect(open).toContain("모델 설정 저장");
+    expect(open).toContain('data-task-ranks-pointer="true"');
     const locked = renderToStaticMarkup(createElement(ReviewModelsForm, { ...props, locked: true }));
     expect(locked).toContain("배정 표로 옮겨짐");
     expect(locked).toContain('data-readonly="true"');
     expect(locked).not.toContain("모델 설정 저장");
+    expect(locked).toContain('data-task-ranks-pointer="true"');
   });
 });

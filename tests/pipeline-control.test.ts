@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { PgDialect } from "drizzle-orm/pg-core";
 import type { SQL } from "drizzle-orm";
 import { batchPolicyHash } from "@/lib/jobs/batches";
@@ -7,6 +7,7 @@ import { controlSnapshotSchema, deferredRoutes, formatControlResult, formatContr
   pipelineControlDatabaseUrl, planPipelineControl, usedModelRoutes, type ControlSnapshot, type TransitionCommand } from "@/lib/operations/pipeline-control";
 import { runPipelineControl } from "@/lib/operations/pipeline-control-repository";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
+import { pinReviewRanks } from "./review-task-ranks-fixture";
 
 const audit = ["--operator=jr", "--reason=pr06d unit"];
 function transition(...args: string[]): TransitionCommand {
@@ -28,9 +29,12 @@ const policy: ModelCapacityPolicy = { version: 1, globalLimit: 4, providerLimits
   poolLimits: { reviewer: 2, text: 2 }, weights: { first: 1, second: 1, background: 1 }, maxWaiting: 16, queueTtlMs: 60_000, reservationTtlMs: 30_000,
   routes: [{ routeId: "second-review", provider: "abcllm", model: "m", providerBudgetId: "abcllm", groupId: "gateway" }] };
 
-it("includes every additive first reviewer in route admission and route status", () => {
-  const reviewSettings = { ...DEFAULT_CRAWL_SETTINGS, firstReview: { provider: "abcllm", model: "primary-model" },
-    firstReviewAdditional: [{ provider: "abcllm", model: "extra-model" }] };
+afterEach(() => pinReviewRanks(null));
+
+it("includes every ranked first reviewer in route admission and route status", () => {
+  // 1차 심사자 = 「작업 ↔ 모델」 1차 AI 검수 1·2순위(PR C1) — 옛 설정(firstReview·firstReviewAdditional)은 읽지 않는다
+  pinReviewRanks({ first: [{ provider: "abcllm", model: "primary-model" }, { provider: "abcllm", model: "extra-model" }] });
+  const reviewSettings = { ...DEFAULT_CRAWL_SETTINGS, firstReview: { provider: "abcllm", model: "legacy-model" } };
   const uses = usedModelRoutes(snapshot({ reviewSettings }), null);
   expect(uses.filter(row => row.routeId === "crawl-agent-review").map(row => row.model)).toEqual(["primary-model", "extra-model"]);
   expect(modelRouteContracts(policy, "legacy", uses)).toContainEqual({ routeId: "crawl-agent-review", provider: "abcllm", model: "extra-model", status: "unmapped" });
@@ -88,6 +92,8 @@ describe("pipeline control plan", () => {
   });
 
   it("requires a drained stage and warns before items without a consumer heartbeat", () => {
+    // 2차 투표자 칸 1 의 1순위(CLI 계약 없음) — open 이어도 그 조합이 serving 이 아니다
+    pinReviewRanks({ second: [[{ provider: "claude-cli", model: "opus" }]] });
     const stages = snapshot().stages.map(row => row.stage === "ai2"
       ? { ...row, mode: "draining" as const, drainingFrom: "legacy" as const, live: 2, consumers: 0, legacyJobLive: true } : row);
     const plan = planPipelineControl(transition("stage", "complete", "--stage=ai2", "--draining-from=legacy", "--to=items", "--expect-epoch=1",

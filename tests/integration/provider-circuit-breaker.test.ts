@@ -15,6 +15,7 @@ import { createProviderCircuits } from '@/lib/llm/provider-circuit-breaker';
 import { setServingContractSnapshotForTest } from '@/lib/llm/serving-contract-store';
 import { ensureSchema, TEST_DATABASE_URL } from './setup';
 import { directContractRow } from './direct-engine-fixtures';
+import { pinReviewRanks } from '../review-task-ranks-fixture';
 
 /*
  * PR06e provider circuit breaker 를 실제 AI2 consumer 경로(실제 hint·item claim·공통 슬롯·native HTTP·필수 writer)에 건다.
@@ -171,10 +172,12 @@ beforeAll(() => {
   })(); return tracked(setupWork, hooks);
 });
 // The loopback engine is connected directly (admin row, no key) — the abcLLM gateway and its key were removed on 2026-10-30.
+// 1차·2차 심사자는 「작업 ↔ 모델」 순위다(PR C1) — 설정 행을 SQL 로 넣으므로 그 1차·투표자를 순위로 직접 고정한다(대체 순위 없음)
 beforeEach(() => tracked((async () => { await setupWork; await cleanup(); await install();
+  pinReviewRanks({ first: [policy().firstReview!], second: [policy().secondReview.voters] });
   setServingContractSnapshotForTest([directContractRow('second-review', model)]); })(), hooks));
 afterEach(() => tracked(steps([async () => { await setupWork; }, () => drain(bodies), () => drain(work), cleanup,
-  async () => { serving.contract = null; setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); }]), hooks));
+  async () => { serving.contract = null; setServingContractSnapshotForTest(null); pinReviewRanks(null); vi.unstubAllEnvs(); }]), hooks));
 afterAll(() => steps([async () => { await setupWork; }, () => drain(hooks, true), () => drain(bodies, true),
   () => drain(work), cleanup, async () => { await (globalThis as { pgClient?: postgres.Sql }).pgClient?.end(); }, () => admin.end()]));
 

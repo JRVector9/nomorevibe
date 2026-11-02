@@ -14,6 +14,7 @@ import { withLegacySecondReviewJob, admitSecondReviewFixture, recordSecondReview
   closeSettledSecondReviewsFixture as closeSettledSecondReviews, reopenOrphanedGateHoldsFixture as reopenOrphanedGateHolds,
   retryFailedSecondReviewsFixture as retryFailedSecondReviews } from './second-review-receipt-fixtures';
 import { decidePublishedSecondReview } from '@/lib/crawl/published-second-review';
+import { pinReviewRanks } from '../review-task-ranks-fixture';
 
 const productSlug = (name: string) => `pr04b-second-${name}`;
 async function cleanFixtureProducts() {
@@ -824,8 +825,11 @@ it('대체 모델에도 실패 횟수를 이어받아 세 번째 실패에서 �
 });
 
 it('첫 모델·다른 기본 표·이미 배정된 대체 모델을 중복 투표에 쓰지 않는다', async () => {
-  await saveSettings({ secondReview: { voters: [{ provider: 'abcllm', model: 'primary-a' },{ provider: 'abcllm', model: 'primary-b' }],
-    fallbacks: [{ provider: 'claude-cli', model: 'sonnet' },{ provider: 'abcllm', model: 'backup' }] } }, 'fixture');
+  // PR C1: 대체는 첫 표 모델이 든 투표자 칸의 다음 순위에서만 고른다 — 칸 1 = [primary-a, sonnet], 칸 2 = [primary-b, sonnet, backup].
+  // 옛 행·가져오기로 sonnet 이 두 칸에 있어도 앞 칸(칸 1)의 것이라 칸 2 의 대체는 sonnet 을 건너뛰고 backup 이다 — 한 모델이 한 항목에 두 표를 내지 않는다
+  pinReviewRanks({ first: [{ provider: 'claude-cli', model: 'sonnet' }], second: [
+    [{ provider: 'abcllm', model: 'primary-a' }, { provider: 'claude-cli', model: 'sonnet' }],
+    [{ provider: 'abcllm', model: 'primary-b' }, { provider: 'claude-cli', model: 'sonnet' }, { provider: 'abcllm', model: 'backup' }]] });
   await held('pr04b-second/independent'); await firstReview('pr04b-second/independent', 'approve'); await enqueueSecondReviews(await getSettings());
   const roots = await pendingSecondReviews(10);
   await withLegacySecondReviewJob(async lease => {
@@ -836,6 +840,10 @@ it('첫 모델·다른 기본 표·이미 배정된 대체 모델을 중복 투�
   expect(rows.filter(r=>r.model==='backup')).toHaveLength(1);
   expect(rows.filter(r=>r.model==='sonnet')).toHaveLength(1);
   expect(rows.filter(r=>r.model==='backup')[0].fallbackForId).not.toBe(rows.filter(r=>r.model==='sonnet')[0].fallbackForId);
+  // 각 대체는 제 칸의 첫 표를 잇는다
+  const root = (model: string) => rows.find(r => r.model === model)!.id;
+  expect(rows.filter(r=>r.model==='sonnet')[0].fallbackForId).toBe(root('primary-a'));
+  expect(rows.filter(r=>r.model==='backup')[0].fallbackForId).toBe(root('primary-b'));
 });
 
 it.each(['reject', 'needs_review'])('정상 %s 판단은 대체 모델로 다시 묻지 않는다', async decision => {
@@ -912,7 +920,9 @@ it('Sonnet 대체가 1차와 같으면 참고 의견만 남기고 독립 합의 
 });
 
 it('다른 독립 표가 일치해도 Sonnet 중복 대체를 완료한 후보는 사람 확인을 생략하지 않는다', async () => {
-  await saveSettings({secondReview:{voters:[{provider:'abcllm',model:'a'},{provider:'abcllm',model:'b'}],fallbacks:[{provider:'claude-cli',model:'sonnet'}]}},'fixture');
+  // 투표자 칸 1 = [a], 칸 2 = [b, sonnet] — b 가 실패하면 그 칸의 2순위 sonnet(1차와 같은 모델)이 대체한다(PR C1: 대체는 같은 칸 안에서만)
+  pinReviewRanks({ first: [{ provider: 'claude-cli', model: 'sonnet' }],
+    second: [[{ provider: 'abcllm', model: 'a' }], [{ provider: 'abcllm', model: 'b' }, { provider: 'claude-cli', model: 'sonnet' }]] });
   await held('pr04b-second/reference-only');await firstReview('pr04b-second/reference-only','approve');await enqueueSecondReviews(await getSettings());
   const [a,b]=await pendingSecondReviews(2);
   await recordSecondReviewFixture(a.id,{ok:true,decision:'approve',confidence:1,reason:'usable',provider:'abcllm',model:'a',status:'agreed'});

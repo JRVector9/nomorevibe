@@ -1,4 +1,4 @@
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { CrawlCandidate, CrawlDocument, SecondReview } from "@/lib/db/schema";
 import { createReviewInput, type ReviewInput } from "@/lib/crawl/agent-review-contract";
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from "@/lib/crawl/settings-schema";
@@ -7,6 +7,8 @@ import { withReviewFixtureTransport, type ReviewFixtureLedger } from "@/lib/craw
 import type { ReplayRun } from "@/lib/operations/pipeline-replay-ledger";
 import { reviewCrawlCandidates } from "@/lib/crawl/jobs/agent-review";
 import { secondReviewCandidates } from "@/lib/crawl/jobs/second-review";
+import { firstReviewers, selectFirstReviewer } from "@/lib/crawl/first-reviewers";
+import { pinReviewRanks } from "./review-task-ranks-fixture";
 
 const mocks = vi.hoisted(() => ({ settings: null as CrawlSettings | null, input: null as ReviewInput | null,
   candidate: null as CrawlCandidate | null, document: null as CrawlDocument | null, row: null as SecondReview | null,
@@ -15,10 +17,17 @@ vi.mock("@/lib/crawl/settings", () => ({ getSettings: async () => mocks.settings
 vi.mock("@/lib/crawl/jobs/review-document", () => ({ loadReviewDocument: async () => mocks.document }));
 vi.mock("@/lib/domain/products/repository", () => ({ findRepositoryProduct: async () => null }));
 vi.mock("@/lib/crawl/repository", () => ({ holdSuspectedSpam: vi.fn() }));
+// 1차 잡은 늘 순위 고르기다(PR C1): 자기 대기 행·풀 쪽(keyset)·후보별 고르기·막힌 모델 읽기를 경계 mock 으로 둔다
 vi.mock("@/lib/crawl/agent-review-repository", () => ({ requeueStaleReviewSources: async () => 0,
   canStartLegacyAgentReview: async () => true,
   handOffExhaustedFirstReviews: async () => 0, listReviewCandidates: async () => [mocks.candidate],
+  listOwnPendingFirstReviewCandidates: async () => [],
+  listFirstReviewPoolCandidates: async () => [{ candidate: mocks.candidate,
+    position: { id: mocks.candidate!.id, reviewed: false, updatedAt: "2026-10-27 00:00:00.000001", ceiling: 1000 } }],
+  chooseFirstReviewForCandidate: async ({ candidate }: { candidate: CrawlCandidate }, _executor: unknown, blocked: ReadonlySet<string> = new Set()) =>
+    selectFirstReviewer(firstReviewers(), candidate.id, [], [], { blocked }),
   loadReviewInput: async () => mocks.input, claimAgentReview: mocks.claim, recordAgentReview: mocks.recordFirst }));
+vi.mock("@/lib/crawl/first-reviewer-blocks", () => ({ readBlockedFirstReviewerKeys: async () => new Set<string>() }));
 vi.mock("@/lib/crawl/second-review-ownership", () => ({ canStartLegacySecondReview: async () => true, admitLegacySecondReview: mocks.admitSecond }));
 vi.mock("@/lib/crawl/second-review", () => ({ enqueueSecondReviews: async () => 0, closeSettledSecondReviews: async () => 0,
   reopenOrphanedGateHolds: async () => 0, retryFailedSecondReviews: async () => 0, pendingSecondReviews: async () => [mocks.row],
@@ -50,6 +59,7 @@ beforeEach(() => {
     receipt: Object.freeze({ admittedVoteId: mocks.row!.id }) }));
   mocks.external.mockRejectedValue(new Error("raw_model_adapter_reached"));
 });
+afterEach(() => pinReviewRanks(null));
 function harness() {
   const events: string[] = [];
   const ledger = { fixtureMode: vi.fn(async () => {}), reserve: vi.fn(async () => {}), markDispatching: vi.fn(async () => {}),
@@ -64,6 +74,8 @@ function harness() {
 
 it.each(["abcllm", "claude-cli", "grok-cli"] as const)("routes AI1 %s through fixture and the existing result writer", async provider => {
   mocks.settings!.firstReview = { provider, model: "first-model" };
+  // 1차 심사자는 「작업 ↔ 모델」 순위뿐이다(PR C1) — 같은 모델을 1순위로 고정한다
+  pinReviewRanks({ first: [{ provider, model: "first-model" }] });
   const h = harness();
   mocks.recordFirst.mockImplementation(async () => { h.events.push("writer"); return { state: "succeeded", applied: false }; });
   await withReviewFixtureTransport(h, () => reviewCrawlCandidates(context("crawl-agent-review")));
@@ -91,6 +103,8 @@ it.each(["crawl-agent-review", "second-review"] as const)("rejects changed setti
 
 it.each(["abcllm", "claude-cli", "grok-cli"] as const)("routes AI2 %s through fixture with actual row and root slot", async provider => {
   mocks.row!.provider = provider;
+  // 2차 투표자는 「작업 ↔ 모델」 투표자 칸 순위뿐이다(PR C1) — 순위가 없으면 잡이 정비 전에 no_task_models 로 멈춘다
+  pinReviewRanks({ second: [[{ provider, model: "second-model" }]] });
   const h = harness();
   mocks.recordSecond.mockImplementation(async () => { h.events.push("writer"); return { state: "recorded" }; });
   await withReviewFixtureTransport(h, () => secondReviewCandidates(context("second-review")));

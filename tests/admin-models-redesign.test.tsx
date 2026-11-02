@@ -107,11 +107,13 @@ describe("admin models 한 화면 렌더(2026-10-31 승인 시안)", () => {
     const html = renderToStaticMarkup(createElement(ModelSaveBar, { changes, pending }));
     expect(/<button[^>]*disabled=""/.test(html)).toBe(disabled); if (changes.length) expect(html).toContain("1차 검수");
   });
-  it("운영과 같은 Supa 주 모델 + 추가 MLX 값을 그대로 칩과 hidden input으로 보존한다", () => {
+  it("옛 1차 설정(Supa 주 + 추가 MLX)이 있어도 1차·2차 칸은 그리지 않고 「작업 ↔ 모델」 안내만 둔다(PR C1) — 단계 풀 저장 바는 그대로", () => {
     const settings = { ...DEFAULT_CRAWL_SETTINGS, firstReview: { provider: "abcllm" as const, model: "[supa] Qwen3.8-27B-NVFP4" }, firstReviewAdditional: [{ provider: "abcllm" as const, model: "[MLX] gpt-oss-120b" }] };
-    const html = renderToStaticMarkup(createElement(ReviewModelsForm, { settings, version: "fixture-cas", firstChoices: [], secondChoices: [], models: redesignModels }));
-    expect(html).toContain('name="primaryModel0" value="[supa] Qwen3.8-27B-NVFP4"');
-    expect(html).toContain('name="firstAdditionalModel0" value="[MLX] gpt-oss-120b"');
+    const html = renderToStaticMarkup(createElement(ReviewModelsForm, { settings, version: "fixture-cas", models: redesignModels }));
+    expect(html).not.toContain('name="primaryModel0"');
+    expect(html).not.toContain('name="firstAdditionalModel0"');
+    expect(html).toContain('data-task-ranks-pointer="true"'); expect(html).toContain('href="/admin/models/tasks#tasks"');
+    expect(html).toContain('name="stageModelPools"');
     expect(html).toContain("설정 바꾸기"); expect(html).toContain("저장된 설정과 같습니다");
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>모델 설정 저장<\/button>/);
   });

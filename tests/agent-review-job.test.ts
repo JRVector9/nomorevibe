@@ -1,4 +1,4 @@
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { reviewCrawlCandidates } from "@/lib/crawl/jobs/agent-review";
 import { createReviewInput } from "@/lib/crawl/agent-review-contract";
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from "@/lib/crawl/settings-schema";
@@ -7,6 +7,10 @@ import { firstReviewers, firstReviewerKey, selectFirstReviewer, type FirstReview
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { agentReviewBinding } from "@/lib/crawl/agent-review-ownership";
 import { itemBindingHash } from "@/lib/jobs/items/types";
+import { pinReviewRanks, pinReviewRanksFromSettings } from "./review-task-ranks-fixture";
+import { setAiTaskModelsForTest, type AiTaskModelSnapshotRow } from "@/lib/llm/ai-task-models-snapshot";
+import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
+import { TEST_TEXT_BASE_URL, textRankRow } from "./text-task-ranks-fixture";
 const mocks = vi.hoisted(() => ({settings:null as CrawlSettings|null,blocked:vi.fn(),pendingList:vi.fn(),poolList:vi.fn(),choose:vi.fn(),canStart:vi.fn(),readme:vi.fn(),saveReadme:vi.fn(),requeue:vi.fn(),handOff:vi.fn(),list:vi.fn(),document:vi.fn(),input:vi.fn(),claim:vi.fn(),record:vi.fn(),review:vi.fn(),gateway:vi.fn(),grok:vi.fn(),existing:vi.fn(),requestJob:vi.fn()}));
 vi.mock("@/lib/crawl/first-reviewer-blocks", () => ({readBlockedFirstReviewerKeys:mocks.blocked}));
 vi.mock("@/lib/crawl/settings", () => ({getSettings:async () => mocks.settings}));
@@ -25,9 +29,13 @@ const receipt = (attemptId = 1, origin: "fresh" | "direct_reuse" | "semantic_reu
   attemptId, origin, ownership: { kind: "legacy" as const, stageEpoch: 1, job: context().lease },
 });
 const candidate = () => ({id:1,repo:"acme/demo",productUrl:"https://demo.example",state:"approved",decidedBy:"auto",judgedAt:new Date()} as CrawlCandidate);
+// 1차 심사자는 「작업 ↔ 모델」 순위뿐이다(PR C1) — 시험은 설정의 firstReview·firstReviewAdditional 꼴을 부를 때마다 순위로 옮겨 고정한다.
+// firstReview 가 없으면 예전 시험 기본 심사자(claude-cli tested-model) 하나가 1순위다.
+const DEFAULT_REVIEWER = { provider: "claude-cli" as const, model: "tested-model" };
 beforeEach(() => {
   vi.resetAllMocks();
   mocks.settings = {...DEFAULT_CRAWL_SETTINGS,enabled:true,reviewMode:"observe"};
+  pinReviewRanksFromSettings(() => mocks.settings && { ...mocks.settings, firstReview: mocks.settings.firstReview ?? DEFAULT_REVIEWER });
   mocks.choose.mockImplementation(async ({ candidate, settings }, _executor, blocked) =>
     selectFirstReviewer(firstReviewers(settings), candidate.id, [], [], { blocked: blocked ?? new Set() }));
   mocks.canStart.mockResolvedValue(true);
@@ -48,6 +56,7 @@ beforeEach(() => {
   mocks.record.mockResolvedValue({applied:false,state:"succeeded"});
   mocks.review.mockResolvedValue({ok:true,outcome:{decision:"approve",reason:"Deployed task tracker",evidenceIds:["product"]},usage:{}});
 });
+afterEach(() => { pinReviewRanks(null); setAiTaskModelsForTest(null); setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); });
 it("does not select or call AI when review mode is off", async () => {
   mocks.settings!.reviewMode = "off";
   expect(await reviewCrawlCandidates(context())).toEqual({done:true});
@@ -382,8 +391,17 @@ it("README permit holds stop before an attempt or model dispatch", async () => {
 // Admission waiting is a job request outcome, not a model failure/cancellation.
 it("defers a fresh capacity refusal without a result writer or model dispatch", async () => {
   const { ModelCapacityDeferredError } = await import("@/lib/llm/capacity-deferred");
-  mocks.claim.mockRejectedValue(new ModelCapacityDeferredError("provider_contract_unavailable"));
+  mocks.claim.mockRejectedValue(new ModelCapacityDeferredError("draining"));
   expect(await reviewCrawlCandidates(context())).toEqual({ done: false, deferred: "model_capacity" });
+  expect(mocks.record).not.toHaveBeenCalled(); expect(mocks.review).not.toHaveBeenCalled();
+});
+// 늘 순위 고르기다(PR C1): 그 모델만의 거절(계약 닫힘)은 그 순위를 쉬게 하고, 하나뿐인 순위가 쉬면 미룸이 아니라 「모든 순위를 쓸 수 없음」으로 남는다
+it("a model-local refusal on the only rank ends the tick as all_ranks_unusable without a result writer or model dispatch", async () => {
+  const { ModelCapacityDeferredError } = await import("@/lib/llm/capacity-deferred");
+  mocks.claim.mockRejectedValue(new ModelCapacityDeferredError("provider_contract_unavailable"));
+  expect(await reviewCrawlCandidates(context())).toEqual({ done: false,
+    degraded: { code: "all_ranks_unusable", detail: "1차 AI 검수: 1순위 test-claude-cli · tested-model: 이 틱에 쉬는 중" } });
+  expect(mocks.claim).toHaveBeenCalledTimes(1);
   expect(mocks.record).not.toHaveBeenCalled(); expect(mocks.review).not.toHaveBeenCalled();
 });
 it("stops new admission while settling an already running lane without aborting it", async () => {
@@ -568,7 +586,9 @@ it("tries every rank for the same candidate on model-local refusals and ends all
   });
   const ctx = context();
   const result = await reviewCrawlCandidates(ctx);
-  expect(result).toEqual({ done: false, degraded: { code: "agent_review_all_skipped", detail: "all_ranks_unusable=2" } });
+  // 들인 후보가 모두 「모든 순위를 쓸 수 없음」으로 건너뛰어졌다 — 순위의 일이라 all_ranks_unusable 로 남는다(진행 감시는 재시작하지 않는다)
+  expect(result).toEqual({ done: false, degraded: { code: "all_ranks_unusable",
+    detail: "1차 AI 검수: 1순위 test-abcllm · primary-model: 이 틱에 쉬는 중 / 2순위 test-grok-cli · grok-4.7: 이 틱에 쉬는 중" } });
   // 첫 후보가 두 순위를 차례로 시도하고, 둘째 후보는 두 순위가 모두 쉬어 바로 건너뛴다
   expect(mocks.claim.mock.calls.map(call => [call[0].candidate.id, call[0].model])).toEqual([[1, primary.model], [1, grokRank.model]]);
   expect(ctx.log).toHaveBeenCalledWith("crawl.agent_review_deferred", { reason: "unmapped", provider: "grok-cli", model: grokRank.model });
@@ -589,4 +609,60 @@ it("calls the grok-cli rank when rank 1's direct contract is closed", async () =
   await reviewCrawlCandidates(context());
   expect(mocks.grok).toHaveBeenCalledExactlyOnceWith(expect.anything(), expect.objectContaining({ model: grokRank.model }));
   expect(mocks.gateway).not.toHaveBeenCalled();
+});
+
+// ── PR C1: 1차 심사자는 「작업 ↔ 모델」 순위뿐이다 — 순위가 없거나·표를 못 읽었거나·모두 쓸 수 없으면 일하기 전에 제 일 못 한 틱으로 끝난다 ──
+const firstContract = (model: string) => ({ routeId: "crawl-agent-review", model, auth: "none" as const, apiKey: null, transport: "direct" as const,
+  contract: { version: 1, protocol: "abcllm-raw-total-bound-v1", routeId: "crawl-agent-review", provider: "abcllm", model, responseModel: model,
+    deploymentRevision: `test-${model}`, endpoint: `${TEST_TEXT_BASE_URL}/chat/completions`, totalTokenBound: 32_768 } });
+const cliRank = (model: string, rank = 1): AiTaskModelSnapshotRow => Object.freeze({ task: "first-review", slot: 1, rank, model, enabled: true,
+  options: Object.freeze({}), connection: Object.freeze({ id: "0c0d0e0f-0000-4000-8000-000000000001", label: "test-cli", kind: "cli" as const,
+    baseUrl: null, cliTool: "claude", deviceId: "test-device", enabled: true, models: null, contextTokens: null, apiKey: null, keyUnreadable: false }) });
+const expectNoWork = () => {
+  expect(mocks.requeue).not.toHaveBeenCalled(); expect(mocks.handOff).not.toHaveBeenCalled();
+  expect(mocks.pendingList).not.toHaveBeenCalled(); expect(mocks.poolList).not.toHaveBeenCalled(); expect(mocks.list).not.toHaveBeenCalled();
+  expect(mocks.claim).not.toHaveBeenCalled(); expect(mocks.review).not.toHaveBeenCalled(); expect(mocks.gateway).not.toHaveBeenCalled();
+};
+it("ends the tick degraded (no_task_models) before any work when there are no first-review ranks, ignoring firstReview", async () => {
+  mocks.settings = { ...mocks.settings!, firstReview: { provider: "abcllm", model: "legacy-first" } };
+  pinReviewRanks({});
+  const ctx = { ...context(), cursor: { sentinel: "keep" } };
+  expect(await reviewCrawlCandidates(ctx)).toEqual({ done: true, cursor: { sentinel: "keep" },
+    degraded: { code: "no_task_models", detail: expect.stringContaining("작업 ↔ 모델") } });
+  expect(ctx.log).toHaveBeenCalledWith("crawl.agent_review_skipped", { reason: "no_task_models" });
+  expectNoWork();
+});
+it("ends the tick degraded (task_models_unreadable) when the rank table was never read", async () => {
+  vi.stubEnv("DATABASE_URL", "");
+  pinReviewRanks(null); setAiTaskModelsForTest(null);
+  expect(await reviewCrawlCandidates(context())).toEqual({ done: true, degraded: { code: "task_models_unreadable", detail: expect.any(String) } });
+  expectNoWork();
+});
+it("ends the tick degraded (all_ranks_unusable) before work when every rank is unusable, with a per-rank summary", async () => {
+  pinReviewRanks(null);
+  setServingContractSnapshotForTest([]);
+  setAiTaskModelsForTest([cliRank("sonnet"), textRankRow("first-review", "no-contract", { rank: 2 })]);
+  const ctx = context();
+  expect(await reviewCrawlCandidates(ctx)).toEqual({ done: true,
+    degraded: { code: "all_ranks_unusable", detail: expect.stringContaining("1순위 test-cli · sonnet") } });
+  expect(ctx.log).toHaveBeenCalledWith("ai_task.ranks", expect.objectContaining({ ranks: 2, "unusable.1.cli_contract_missing": 1,
+    "unusable.2.no_direct_contract": 1 }));
+  expectNoWork();
+});
+it("pre-pauses an unusable rank and sends every candidate to the next usable rank", async () => {
+  pinReviewRanks(null);
+  setServingContractSnapshotForTest([firstContract("qwen-review")]);
+  setAiTaskModelsForTest([cliRank("sonnet"), textRankRow("first-review", "qwen-review", { rank: 2 })]);
+  mocks.list.mockResolvedValue([candidate(), { ...candidate(), id: 2 }]);
+  mocks.gateway.mockResolvedValue({ ok: true, outcome: { decision: "approve", reason: "Deployed tracker", evidenceIds: ["product"] }, usage: {} });
+  const ctx = context();
+  const result = await reviewCrawlCandidates(ctx);
+  expect(result).not.toHaveProperty("degraded");
+  // 1순위(CLI 계약 없음)는 틱 처음부터 쉰다 — 고르기는 받는 쪽에서 그것을 비켜 간다
+  expect(mocks.choose.mock.calls.every(([, , avoid]) => avoid.has(firstReviewerKey({ provider: "claude-cli", model: "sonnet" })))).toBe(true);
+  expect(mocks.claim.mock.calls.map(([value]) => [value.candidate.id, value.provider, value.model])).toEqual([[1, "abcllm", "qwen-review"], [2, "abcllm", "qwen-review"]]);
+  expect(mocks.review).not.toHaveBeenCalled();
+  expect(mocks.gateway).toHaveBeenCalledTimes(2);
+  // 틱 요약: 1순위의 까닭과 2순위가 부른 수
+  expect(ctx.log).toHaveBeenCalledWith("ai_task.ranks", expect.objectContaining({ ranks: 2, "unusable.1.cli_contract_missing": 1, "served.2": 2 }));
 });

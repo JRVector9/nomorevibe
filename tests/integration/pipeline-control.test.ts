@@ -30,8 +30,9 @@ const env: NodeJS.ProcessEnv = { ...Object.fromEntries(Object.entries(process.en
   ...MODEL_ENV, ...IGNORED_MODEL_ENV, NODE_ENV: "test", PIPELINE_CONTROL_DATABASE_URL: TEST_DATABASE_URL };
 const CLI = ["--import", "tsx", "scripts/ops/pipeline-control.ts"];
 type CliRun = { status: number | null; stderr: string; out: (ControlResult & { snapshot: ControlSnapshot }) | null };
-function cli(...args: string[]): CliRun {
-  const run = spawnSync(process.execPath, [...CLI, ...args, "--json"], { encoding: "utf8", env, timeout: 60_000 });
+function cli(...args: string[]): CliRun { return cliWith(env, ...args); }
+function cliWith(processEnv: NodeJS.ProcessEnv, ...args: string[]): CliRun {
+  const run = spawnSync(process.execPath, [...CLI, ...args, "--json"], { encoding: "utf8", env: processEnv, timeout: 60_000 });
   return { status: run.status, stderr: run.stderr, out: run.stdout.trim() ? JSON.parse(run.stdout) : null };
 }
 
@@ -300,7 +301,27 @@ it("refuses AI2 → items in dry-run and --execute while its consumer would defe
   expect(await stage("ai2")).toEqual({ mode: "legacy", draining_from: null, epoch: epoch + 2, contract: 1 });
 }, 180_000);
 
-it("judges capacity open only on the (route, provider, model) combinations the stored review settings and model env use", async () => {
+/**
+ * 1차·2차·Grok 로그인 유지 route 의 모델은 「작업 ↔ 모델」 순위다(PR C1) — 저장된 설정의 firstReview·secondReview.voters 는 읽지 않는다. 이 CLI 는 순위를
+ * 앱 DATABASE_URL 로 읽는다(serving 계약과 같은 길). 그 주소가 없으면 순위를 모르니 1차는 「모름」(unknown)으로 OPEN 을 막고, 주소가 있으면 순위의 조합으로 판정한다.
+ * 순위 행은 CLI 연결(claude·grok)을 가리킨다 — DB CLI 계약(cli:<provider>:<route>)이 없으니 CLI 순위는 「계약 없음」이고(identity 는 알아 route 목록에 든다),
+ * 2차 칸에 표를 낼 순위가 없어 그 순위는 대체 목록으로 든다.
+ */
+async function seedReviewRanks(): Promise<() => Promise<void>> {
+  const claude = randomUUID(), grok = randomUUID();
+  await client`INSERT INTO ai_connections (id, label, kind, cli_tool, cli_models, device_id, updated_by) VALUES
+    (${claude}, ${`pr06d-${tag}-claude`}, 'cli', 'claude', ${["pr06d-rank-ai1"]}, 'claude-sub', ${operator}),
+    (${grok}, ${`pr06d-${tag}-grok`}, 'cli', 'grok', ${["pr06d-grok", "pr06d-grok-session"]}, 'grok-sub', ${operator})`;
+  await client`INSERT INTO ai_task_models (task, slot, rank, connection_id, model, updated_by) VALUES
+    ('first-review', 1, 1, ${claude}, 'pr06d-rank-ai1', ${operator}), ('second-review', 1, 1, ${grok}, 'pr06d-grok', ${operator}),
+    ('grok-session-check', 1, 1, ${grok}, 'pr06d-grok-session', ${operator})`;
+  return async () => {
+    await client`DELETE FROM ai_task_models WHERE connection_id IN (${claude}, ${grok})`;
+    await client`DELETE FROM ai_connections WHERE id IN (${claude}, ${grok})`;
+  };
+}
+
+it("judges capacity open only on the (route, provider, model) combinations the review task ranks and model env use", async () => {
   const readSettings = async () => (await client`SELECT id, "values"::text AS "values", updated_by, updated_at::text AS updated_at
     FROM crawl_settings ORDER BY id`).map(row => ({ ...row }));
   const saved = await readSettings();
@@ -320,32 +341,50 @@ it("judges capacity open only on the (route, provider, model) combinations the s
     expect(cli("capacity", "mode", "--to=draining", "--from-mode=disabled", ...expect1, ...audit, "--execute").status).toBe(0);
     const before = await controlRows(), auditBefore = await auditMax();
 
-    const dry = cli("capacity", "mode", "--to=open", "--from-mode=draining", ...expect1, ...audit);
-    const routes = dry.out?.plan.routes ?? [];
-    const deferred = routes.filter(row => row.status !== "serving" && row.status !== "unused");
-    // 실행 중인 감사가 있으면 그 행도 쓰는 조합이다(다른 파일이 남긴 감사에 기대지 않는다)
-    expect(deferred.filter(row => row.routeId !== "product-audit")).toEqual([
-      { routeId: "crawl-agent-review", provider: "abcllm", model: "pr06d-ai1", status: "unmapped" },
-      { routeId: "second-review", provider: "abcllm", model: "pr06d-ai2", status: "no_contract" },
-      // text 일곱 경로: 순위를 읽지 못한 이 프로세스에서는 모델 모름 — env(ABCLLM_MODEL 등)·등록부 기본값으로 대신 판정하지 않는다
-      { routeId: "product-search-profile", provider: "abcllm", model: null, status: "unknown" },
-      { routeId: "product-search-verify", provider: "abcllm", model: null, status: "unknown" },
-      { routeId: "reason-translate", provider: "abcllm", model: null, status: "unknown" },
-      { routeId: "product-translate", provider: "abcllm", model: null, status: "unknown" },
-      { routeId: "product-tagline-ko", provider: "abcllm", model: null, status: "unknown" },
-      { routeId: "search-query-translate", provider: "abcllm", model: null, status: "unknown" },
-      { routeId: "crawl-tagline", provider: "abcllm", model: null, status: "unknown" },
+    // text 일곱 경로: 순위를 읽지 못한(또는 순위가 없는) 프로세스에서는 모델 모름 — env(ABCLLM_MODEL 등)·등록부 기본값으로 대신 판정하지 않는다
+    const TEXT_UNKNOWN = ["product-search-profile", "product-search-verify", "reason-translate", "product-translate", "product-tagline-ko",
+      "search-query-translate", "crawl-tagline"].map(routeId => ({ routeId, provider: "abcllm", model: null, status: "unknown" }));
+    const TAIL = [
       { routeId: "product-intro-check", provider: "claude-cli", model: MODEL_ENV.INTRO_CHECK_MODEL, status: "unmapped" },
       { routeId: "crawl-publish-classify", provider: "unknown", model: null, status: "unknown" },
       { routeId: "second-review", provider: "legacy-job", model: null, status: "stage_legacy" },
-    ]);
-    expect(routes).toEqual(expect.arrayContaining([
+    ];
+    // 실행 중인 감사가 있으면 그 행도 쓰는 조합이다(다른 파일이 남긴 감사에 기대지 않는다)
+    const judged = (run: CliRun) => {
+      const routes = run.out?.plan.routes ?? [];
+      const deferred = routes.filter(row => row.status !== "serving" && row.status !== "unused");
+      expect([run.status, run.stderr, run.out?.plan.blocked]).toEqual([3, "", [`deferred_routes:${deferred.length}`]]);
+      expect(routes.filter(row => Object.values(IGNORED_MODEL_ENV).includes(String(row.model)))).toEqual([]);
+      // 저장된 설정의 1차·2차 모델(pr06d-ai1·pr06d-ai2)은 쓰는 조합이 아니다 — 정책에 적힌 pr06d-ai2 는 「안 씀」으로만 남는다
+      expect(routes.filter(row => row.model === "pr06d-ai1" || row.model === "pr06d-ai2"))
+        .toEqual([{ routeId: "second-review", provider: "abcllm", model: "pr06d-ai2", status: "unused" }]);
+      return { routes, deferred: deferred.filter(row => row.routeId !== "product-audit") };
+    };
+
+    // 앱 DATABASE_URL 이 없다 — 순위를 모른다: 1차는 「모름」으로 막고, 2차·Grok 로그인 유지는 쓰는 조합이 없다
+    const dry = judged(cli("capacity", "mode", "--to=open", "--from-mode=draining", ...expect1, ...audit));
+    expect(dry.deferred).toEqual([{ routeId: "crawl-agent-review", provider: "claude-cli", model: null, status: "unknown" }, ...TEXT_UNKNOWN, ...TAIL]);
+    expect(dry.routes).toEqual(expect.arrayContaining([
       { routeId: "second-review", provider: "grok-cli", model: "pr06d-grok", status: "unused" },
       { routeId: "crawl-agent-review", provider: "grok-cli", model: null, status: "unused" },
       { routeId: "grok-session-check", provider: "grok-cli", model: null, status: "unused" },
     ]));
-    expect([dry.status, dry.stderr, dry.out?.plan.blocked]).toEqual([3, "", [`deferred_routes:${deferred.length}`]]);
-    expect(routes.filter(row => Object.values(IGNORED_MODEL_ENV).includes(String(row.model)))).toEqual([]);
+
+    // 앱 DATABASE_URL 로 순위를 읽는다 — 1차 1순위·2차 칸 1·Grok 로그인 유지 1순위의 조합으로 판정한다(정책에 있는 2차 Grok 은 계약 없음, 나머지는 정책에 없음)
+    const unseed = await seedReviewRanks();
+    try {
+      const ranked = judged(cliWith({ ...env, DATABASE_URL: TEST_DATABASE_URL }, "capacity", "mode", "--to=open", "--from-mode=draining", ...expect1, ...audit));
+      expect(ranked.deferred).toEqual([
+        { routeId: "crawl-agent-review", provider: "claude-cli", model: "pr06d-rank-ai1", status: "unmapped" },
+        { routeId: "second-review", provider: "grok-cli", model: "pr06d-grok", status: "no_contract" },
+        { routeId: "grok-session-check", provider: "grok-cli", model: "pr06d-grok-session", status: "unmapped" },
+        ...TEXT_UNKNOWN, ...TAIL]);
+      expect(ranked.routes).toEqual(expect.arrayContaining([
+        { routeId: "crawl-agent-review", provider: "abcllm", model: null, status: "unused" },
+        { routeId: "crawl-agent-review", provider: "grok-cli", model: null, status: "unused" },
+      ]));
+    } finally { await unseed(); }
+    expect([await controlRows(), await auditMax()]).toEqual([before, auditBefore]);
 
     // 설정을 읽을 수 없으면 심사 route는 미상이다 — 쓰는 조합을 모르므로 거절한다
     await writeSettings({ reviewConcurrency: 99 });

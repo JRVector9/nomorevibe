@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 import type { ModelHealth } from "@/lib/operations/dashboard";
@@ -14,6 +14,7 @@ import type { StageProgress } from "@/lib/operations/worker-progress";
 import { readXStatus } from "@/lib/operations/x-status";
 import { humanOverview } from "./fixtures/human-queue";
 import { AI1_EXPECTED, AI2_EXPECTED } from "./pipeline-completions-fixture";
+import { pinReviewRanks, pinReviewRanksFromSettings } from "./review-task-ranks-fixture";
 
 const nav = vi.hoisted(() => ({ params: new URLSearchParams() }));
 vi.mock("next/navigation", () => ({ useSearchParams: () => nav.params, useRouter: () => ({ refresh: vi.fn() }) }));
@@ -35,6 +36,9 @@ const ago = (minutes: number) => new Date(Date.parse(NOW) - minutes * 60_000).to
 const settings = { ...DEFAULT_CRAWL_SETTINGS, firstReview: { provider: "abcllm", model: "[MLX] gpt-oss-120b" },
   secondReview: { ...DEFAULT_CRAWL_SETTINGS.secondReview, voters: [{ provider: "abcllm", model: "[supa] Qwen3.8-27B-NVFP4" }, { provider: "abcllm", model: "[MLX] qwen3.6" }],
     fallbacks: [{ provider: "abcllm", model: "qwen3-coder:30b" }] } } as typeof DEFAULT_CRAWL_SETTINGS;
+// 1차·2차 모델 자리는 「작업 ↔ 모델」 순위만 읽는다(PR C1) — 위 설정 모양을 순위로 고정한다(1차 [MLX] gpt-oss-120b, 투표자 칸 1·2, 칸 1 의 2순위 = 예비)
+pinReviewRanksFromSettings(settings);
+afterAll(() => pinReviewRanks(null));
 const slots = resolveModelSlots(settings, {});
 const models: ModelHealth[] = [
   { key: "first", label: "1차 심사", model: "[MLX] gpt-oss-120b", calls1h: 70, failed1h: 0, avgSeconds: 10, agreement1h: null, lastSuccessAt: null },

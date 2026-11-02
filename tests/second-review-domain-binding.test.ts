@@ -1,13 +1,24 @@
-import { expect, it } from "vitest";
+import { afterEach, expect, it } from "vitest";
 import type { CrawlCandidate, CrawlDocument, CrawlReviewAttempt, SecondReview } from "@/lib/db/schema";
 import { createReviewInput, REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from "@/lib/crawl/settings-schema";
 import { publishedInputHash } from "@/lib/crawl/second-review";
 import { secondReviewGeneration, secondReviewInputMatches } from "@/lib/crawl/second-review-input";
+import { pinReviewRanks } from "./review-task-ranks-fixture";
 
 const now = new Date("2026-10-16T03:00:00.000Z");
+/**
+ * 지금 1차 심사자·2차 투표자·대체는 「작업 ↔ 모델」 순위다(PR C1) — 1차 1순위 first-model, 2차 칸 1 = second-model(투표자) → backup-model(대체).
+ * 설정의 firstReview·secondReview.voters·fallbacks 는 입력 검증이 읽지 않는다(아래 시험이 일부러 다르게 둔다).
+ */
+type Reviewer = { provider: string; model: string };
+const abc = (model: string): Reviewer => ({ provider: "abcllm", model });
+const pinRanks = (first: Reviewer[] = [abc("first-model")], second: Reviewer[][] = [[abc("second-model"), abc("backup-model")]]) =>
+  pinReviewRanks({ first, second });
+afterEach(() => pinReviewRanks(null));
 
 function fixture(published = false) {
+  pinRanks();
   const settings: CrawlSettings = {
     ...structuredClone(DEFAULT_CRAWL_SETTINGS), enabled: true, reviewMode: "enforce",
     firstReview: { provider: "abcllm", model: "first-model" },
@@ -58,13 +69,30 @@ it("accepts the actual first verdict and current primary vote", () => {
   expect(secondReviewInputMatches(row, current, now)).toBe(true);
 });
 
-it("accepts a first result from an added worker and refuses it after that worker is removed", () => {
+it("accepts a first result from a lower-ranked first reviewer and refuses it after that rank is removed", () => {
   const { row, current } = fixture();
-  current.settings.firstReviewAdditional = [current.settings.firstReview!];
-  current.settings.firstReview = { provider: "abcllm", model: "another-primary" };
+  pinRanks([abc("another-primary"), abc("first-model")]);
   expect(secondReviewInputMatches(row, current, now)).toBe(true);
-  current.settings.firstReviewAdditional = [];
+  pinRanks([abc("another-primary")]);
   expect(secondReviewInputMatches(row, current, now)).toBe(false);
+  // 옛 설정(firstReview)이 그 모델이어도 순위에 없으면 지금 1차 심사자가 아니다
+  expect(current.settings.firstReview).toEqual(abc("first-model"));
+});
+
+it("reads the voters and fallbacks only from the task ranks, not from the legacy settings", () => {
+  const { row, current } = fixture();
+  // 순위에서 빠진 투표자의 표는 설정에 남아 있어도 입력이 아니다
+  pinRanks(undefined, [[abc("other-voter")]]);
+  expect(secondReviewInputMatches(row, current, now)).toBe(false);
+  // 설정에 없어도 다른 칸의 투표자면 입력이다
+  pinRanks(undefined, [[abc("other-voter")], [abc("second-model")]]);
+  expect(secondReviewInputMatches(row, current, now)).toBe(true);
+  // 대체 표는 순위의 대체(투표자 밖의 순위)여야 한다 — 그 모델이 투표자면 대체가 아니다
+  const fallback = fallbackFixture();
+  pinRanks(undefined, [[abc("second-model")], [abc("backup-model")]]);
+  expect(secondReviewInputMatches(fallback.row, fallback.current, now)).toBe(false);
+  pinRanks(undefined, [[abc("second-model"), abc("third-model"), abc("backup-model")]]);
+  expect(secondReviewInputMatches(fallback.row, fallback.current, now)).toBe(true);
 });
 
 it("accepts a fallback bound to its actual resolved primary root", () => {
@@ -222,14 +250,12 @@ it("keeps rejecting a changed published slug", () => {
 
 it("keeps primary aliases of the first model out of independent voting", () => {
   const { row, current } = fixture();
-  const settings = { ...current.settings, secondReview: { ...current.settings.secondReview,
-    voters: [{ provider: "abcllm" as const, model: "[MLX] FIRST-MODEL" }] } };
-  expect(secondReviewInputMatches({ ...row, model: "[MLX] FIRST-MODEL" }, { ...current, settings }, now)).toBe(false);
+  pinRanks(undefined, [[abc("[MLX] FIRST-MODEL")]]);
+  expect(secondReviewInputMatches({ ...row, model: "[MLX] FIRST-MODEL" }, current, now)).toBe(false);
 });
 
 it("preserves same-first fallback input admission as a reference-only opinion", () => {
   const { row, current } = fallbackFixture();
-  const settings = { ...current.settings, secondReview: { ...current.settings.secondReview,
-    fallbacks: [{ provider: "abcllm" as const, model: "[MLX] FIRST-MODEL" }] } };
-  expect(secondReviewInputMatches({ ...row, model: "[MLX] FIRST-MODEL" }, { ...current, settings }, now)).toBe(true);
+  pinRanks(undefined, [[abc("second-model"), abc("[MLX] FIRST-MODEL")]]);
+  expect(secondReviewInputMatches({ ...row, model: "[MLX] FIRST-MODEL" }, current, now)).toBe(true);
 });

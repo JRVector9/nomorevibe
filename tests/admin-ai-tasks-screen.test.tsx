@@ -17,7 +17,7 @@ import type { AiConnectionView } from "@/lib/operations/admin-ai-tasks";
 const GPU = "11111111-1111-4111-8111-111111111111";
 const gpu: AiConnectionView = { id: GPU, label: "gpu3090", kind: "api", baseUrl: "http://100.77.43.63:8090/v1", host: "100.77.43.63:8090", hasKey: true, cliTool: null,
   cliModels: [], models: [{ id: "qwen3.8-flash-next", maxModelLen: 131072 }], modelsReadAt: null, modelsError: null, deviceId: "gpu3090-qwen", capacitySlots: 4,
-  contextTokens: null, enabled: true, version: 3, note: null, updatedBy: "t", updatedAt: "2026-11-02T00:00:00.000Z" };
+  contextTokens: null, enabled: true, version: 3, note: null, updatedBy: "t", updatedAt: "2026-11-02T00:00:00.000Z", cliVersion: null };
 const line = (patch: Partial<TaskRankLine> = {}): TaskRankLine => ({ task: "crawl-tagline", slot: 1, label: "수집 소개 짓기", group: "text", kind: "chat",
   description: "소개를 짓습니다.", accepts: "API 주소", revision: "a".repeat(64), rows: [{ task: "crawl-tagline", slot: 1, rank: 1, connectionId: GPU, model: "qwen3.8-flash-next",
     options: {}, enabled: true }], options: [{ provider: GPU, model: "qwen3.8-flash-next", label: "gpu3090 · qwen3.8-flash-next" }],
