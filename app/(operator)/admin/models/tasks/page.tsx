@@ -20,7 +20,7 @@ const one = (value: string | string[] | undefined) => typeof value === "string" 
 const ERROR_LABELS: Record<string, string> = { connections: "AI 연결", rows: "작업 ↔ 모델 순위", readiness: "계약·정책·장비", policy: "용량 정책", current: "지금 실제로 쓰는 모델",
   audit: "최근 기록", runtime: "실행 쪽 순위 사정" };
 const ACTION_LABELS: Record<string, string> = { "ai-connection-save": "연결 저장", "ai-connection-models-read": "모델 목록 읽기", "ai-connection-delete": "연결 지움",
-  "ai-task-models-save": "순위 저장", "ai-task-models-import": "가져오기" };
+  "ai-task-models-save": "순위 저장", "ai-task-models-import": "가져오기", "ai-connection-key-fill": "키 자동 채움" };
 
 const FOLD = "min-w-0 rounded-xl border border-line bg-bg-card scroll-mt-6";
 const SUMMARY = "flex cursor-pointer flex-wrap items-baseline gap-x-3 gap-y-1 px-4 py-2.5 text-[15px] font-semibold";
@@ -45,7 +45,7 @@ export default async function AiTasksPage({ searchParams }: Props) {
       pending: aiRankPendingText(row) })), live: slot.live,
     runtime: slot.runtime ? { ...slot.runtime, at: formatListTime(slot.runtime.at, now), served: [...slot.runtime.served], unusable: [...slot.runtime.unusable] } : null }));
   const errors = Object.entries(view.errors);
-  const unread = aiUnreadConnections(view.connections);
+  const unread = aiUnreadConnections(view.connections, view.keyConflicts);
   return <main className="mx-auto grid max-w-7xl gap-6 p-4">
     <PageStamp />
     <header className="grid gap-1">

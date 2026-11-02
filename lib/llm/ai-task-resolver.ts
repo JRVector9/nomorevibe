@@ -48,6 +48,7 @@ export const TEXT_RANK_UNUSABLE_TEXT: Readonly<Record<string, string>> = Object.
   connection_disabled: "연결이 꺼져 있음",
   connection_not_api: "API 주소 연결이 아님(이 작업은 CLI 를 받지 않음)",
   stored_key_unreadable: "연결에 저장한 키를 열 수 없음(암호 상자 키 확인)",
+  connection_key_missing: "연결에 키가 없음 — 이 서버의 계약은 키를 씀(같은 주소의 계약 키로도 채우지 못함, 연결에 키를 넣으세요)",
   no_direct_contract: "이 연결·모델의 엔진 직접 계약이 없음(그 줄을 다시 저장하면 만듦)",
   gateway_auth: "계약 인증이 게이트웨이 키로 되어 있음",
   unmapped: "용량 정책에 이 경로·모델이 없음",
@@ -125,6 +126,8 @@ export function bindTextTaskRank(routeId: AiTextTaskId, rank: AiTaskRank, contra
   const access = servingContractRowAccess(picked.row, picked.provider);
   // 계약 행의 키가 열리지 않는 것은 상관없다 — 보내는 키는 연결의 키다
   if (access.block && access.block !== "stored_key_unreadable") return unusable(access.block);
+  // 키가 필요한 서버(계약 auth stored)인데 연결에 키가 없으면 키 없이 부르지 않는다(2026-11-02 키 없는 연결로 401 → 결과 미확정). 키 없이 도는 서버(auth none)는 그대로다
+  if (picked.row.auth === "stored" && connection.apiKey === null) return unusable("connection_key_missing");
   return Object.freeze({ rank, unusable: null, binding: Object.freeze({ routeId, rank: rank.rank, connectionId: connection.id, connectionLabel: connection.label,
     identity: picked.row.model, engineModel: rank.model, provider: picked.provider, bearer: connection.apiKey, deviceId: connection.deviceId }) });
 }

@@ -2,12 +2,14 @@
  * 「작업 ↔ 모델」 순위를 배포 창 안에서(capacity DRAINING) 화면 없이 다룬다 — 화면(/admin/models/tasks)과 같은 함수를 부른다.
  *
  *   node --import tsx scripts/ops/ai-task-ranks.ts status [--json]
- *   node --import tsx scripts/ops/ai-task-ranks.ts preview [--json]                 가져오기 계획(쓰지 않는다, 키는 이름만)
+ *   node --import tsx scripts/ops/ai-task-ranks.ts preview [--json]                 가져오기 계획(쓰지 않는다, 키는 이름만). 적용이 거절될 까닭이 있으면 종료 코드 1
  *   node --import tsx scripts/ops/ai-task-ranks.ts apply --hash=<64hex> --operator=<이름>  계획 hash 가 같을 때만 적용
  *   node --import tsx scripts/ops/ai-task-ranks.ts resave --operator=<이름> [--task=a,b]  저장된 순위를 그대로 다시 저장(빠진 계약·정책 route·장비를 만든다)
  *   node --import tsx scripts/ops/ai-task-ranks.ts set --operator=<이름> --task=<작업> [--slot=N] --rank1='<연결 이름>|<모델>' [--rank2=…]  한 칸을 화면처럼 저장
  *
  * DATABASE_URL 은 앱과 같은 것을 쓴다(웹·워커가 읽는 env 로 「지금 실제로 쓰는 모델」을 판정하므로 운영 컨테이너 안에서 돌린다).
+ * 가져오기는 키가 필요한 새 연결이 있는데 이 컨테이너에 키 암호화 설정(NMV_SECRET_BOX_KEY)이 없거나 그 키를 읽지 못하면 아무것도 쓰지 않고 거절한다(종료 코드 1) —
+ * 2026-11-02 상자 키 없는 유지보수 컨테이너에서 가져와 키 없는 연결이 만들어진 사고. 키 암호화 설정이 있는 웹·워커 컨테이너에서 돌린다.
  */
 import { applyAiTaskImport, previewAiTaskImport, readAiTasksAdminView, saveAiTaskRanks } from "@/lib/operations/admin-ai-tasks-repository";
 
@@ -30,7 +32,8 @@ export function parseAiTaskRanksArgs(argv: readonly string[]): Args {
     tasks: tasks ? tasks.split(",").map(task => task.trim()).filter(Boolean) : null, slot: value("slot"), ranks };
 }
 
-async function main(argv: readonly string[]): Promise<number> {
+/** 명령 하나를 돌려 종료 코드를 돌려준다(0 성공, 1 거절·실패, 2 사용법). */
+export async function runAiTaskRanks(argv: readonly string[]): Promise<number> {
   const args = parseAiTaskRanksArgs(argv);
   if (args.command === "status") {
     const view = await readAiTasksAdminView();
@@ -54,7 +57,8 @@ async function main(argv: readonly string[]): Promise<number> {
       for (const row of preview.plan?.slots ?? []) console.log(`칸 ${row.action} ${row.task}#${row.slot} ${row.ranks.map(rank => `${rank.rank}:${rank.connectionKey}·${rank.model}`).join(" ")}`);
       for (const warning of preview.plan?.warnings ?? []) console.log(`경고 ${warning}`);
     }
-    return preview.error ? 1 : 0;
+    // 적용이 거절될 계획(키를 옮길 수 없음)도 0 이 아닌 코드로 알린다 — 사유는 경고 맨 앞 줄이다
+    return preview.error || preview.blocked.length ? 1 : 0;
   }
   if (args.command === "apply") {
     if (!args.hash || !args.operator) { console.error("usage: apply --hash=<64hex> --operator=<이름>"); return 2; }
@@ -98,5 +102,5 @@ async function main(argv: readonly string[]): Promise<number> {
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  main(process.argv.slice(2)).then(code => process.exit(code), error => { console.error(error instanceof Error ? error.message : String(error)); process.exit(1); });
+  runAiTaskRanks(process.argv.slice(2)).then(code => process.exit(code), error => { console.error(error instanceof Error ? error.message : String(error)); process.exit(1); });
 }

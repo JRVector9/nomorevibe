@@ -302,6 +302,43 @@ Grok 로그인 유지(`grok-session-check`). migration 없음 — 계약 행은 
 - 로그인: Claude 는 CLI 가 스스로 읽는 env `CLAUDE_CODE_OAUTH_TOKEN`(compose reviewer)·자기 로그인, Grok 은 `GROK_AUTH_PATH`(운영 `/var/lib/nomorevibe-grok/auth.json`,
   기본 `~/.grok/auth.json`)를 그대로 쓴다 — 모델·계약·실행 파일 선택이 아니라 그 CLI 의 로그인 자리라 PR E 가 정한다(지금 지우면 운영 Grok 이 auth 로 실패한다).
 
+## 키 없는 연결(2026-11-02 사고 뒤)
+
+11-02 10:46Z 「지금 설정 가져오기」를 상자 키(`NMV_SECRET_BOX_KEY`)가 없는 유지보수 컨테이너에서 돌려 `m3-mlx`·`m3-mlx (2)` 연결이 키 없이 만들어졌고,
+실행 쪽이 그 연결로 키 없이 불러 M3 가 401 → 결과 미확정 3건, M3 text 잡 셋(reason-translate·product-tagline-ko·product-search-profile)이 멈췄다. migration 없이 세 가지를 고쳤다.
+
+### ① 같은 주소 계약 키로 연결 키 채우기(`lib/operations/ai-connection-key-fill.ts`)
+
+- 대상: 켜진 API 연결 중 키 암호문이 없는 것. 출처: 켜진 모델 계약 중 auth stored 이고 endpoint 의 `origin/v1` = 연결 주소이고 이 프로세스에서 키가 열리는 것.
+  출처가 하나 이상이고 열린 키가 모두 같을 때만 채운다. 서로 다르면 채우지 않고 화면 위 「모델 목록을 못 읽은 서버」 알림에 「같은 주소의 계약 키가 서로 다름」.
+  출처가 없으면(키 없이 도는 서버 — auth none 계약뿐) 아무것도 하지 않는다.
+- 쓰기: 상자 키가 있을 때만, `onPrimary` + `writerSiteActive` 울타리 안에서 `id·키 없음·판` 조건부 갱신(판 + 1). 여러 프로세스가 함께 돌아도 한 번만 써진다.
+  키로 먼저 `GET /models` 를 읽어 같은 갱신에 목록을 넣는다(드롭다운에 그 서버 모델이 나온다). 써진 TX 에만 감사 `ai-connection-key-fill` 한 줄
+  (actor `system:ai-connection-key-fill`, detail = 연결 id·이름·주소·출처 `[{routeId, model}]` — 키·암호문·키 해시 없음).
+- 언제: 프로세스마다 5분에 한 번 이하(`maybeFillConnectionKeys`). ⓐ 웹 관리 화면 읽기(`readAiTasksAdminView`), ⓑ 순위 스냅숏(`ai-task-models-snapshot.ts`)을 다시 읽었는데
+  키 없는 켜진 API 연결이 순위에 있는 프로세스(text·심사 잡을 도는 워커, 검색어 번역 웹). 배포 뒤 사람이 화면을 열지 않아도 그 순위를 읽는 워커가 스스로 고치고,
+  채웠으면 다음 읽기에서 바로 스냅숏을 다시 읽어 키를 쓴다. 상자 키가 없는 프로세스(Oracle 등)는 DB 를 읽지도 않는다. 키 없는 연결이 순위에 없으면 워커는 아무것도 하지 않는다.
+- 실행 경로(호출 순간)에서 계약 키를 대신 보내지 않는다 — 키가 두 곳에 남고 화면과 동작이 어긋난다.
+
+### ② 키 없는 연결 미리 막기
+
+- text(`bindTextTaskRank`)·심사(`bindReviewTaskRank`): 고른 계약 행이 auth stored(키가 필요한 서버)인데 연결 키가 없으면(열지 못한 것이 아님) `connection_key_missing`
+  — 그 순위를 쉬고 다음 순위로 넘긴다(모두 그러면 `all_ranks_unusable`). 문구: 「연결에 키가 없음 — 이 서버의 계약은 키를 씀…」(`TEXT_RANK_UNUSABLE_TEXT`).
+- 보내는 길(`textRouteAccess`)의 순위 범위 분기와 심사(`reviewRankConnection`) 분기도 같은 규칙으로 `block: "connection_key_missing"`(`TextRouteBlock`·`TEXT_ROUTE_BLOCK_DETAIL`).
+  예전에는 심사 분기가 키 없는 연결로 bearer null 을 보냈다.
+- 키 없이 도는 서버(계약 auth none, local-direct — gpu3090 qwen·M1 mlx_lm.server)는 예전 그대로 Authorization 없이 부른다.
+
+### ③ 가져오기 거절(fail closed)
+
+- `applyAiTaskImport`: 키가 필요한 새 연결(keyFrom·keyEnv)이 하나라도 있는데 상자 키가 없거나 그 키를 읽지 못하면 **아무것도 쓰지 않고** `{ ok: false, issues }`(한국어 까닭).
+  예전에는 경고만 남기고 키 없는 연결을 만들었다. `previewAiTaskImport` 는 같은 까닭을 `blocked` 와 계획 경고 맨 앞에 싣는다.
+- `scripts/ops/ai-task-ranks.ts` 는 `apply` 거절이면 종료 코드 1, `preview` 도 거절될 계획이면 1 이다. 키 암호화 설정이 있는 웹·워커 컨테이너에서 돌린다.
+
+### 배포 뒤 확인
+
+- `m3-mlx`·`m3-mlx (2)` 연결 hasKey·모델 목록(화면 위 알림이 사라짐, 최근 기록 「키 자동 채움」), 멈춘 잡 셋 재개(상태 화면 「제 일 못 함」이 사라짐).
+- 결과 미확정 3건은 이 변경이 회수하지 않는다 — 정식 회수 CLI 로 처리한다.
+
 ## 운영 적용 순서
 
 1. **PR A 배포**(migration 0162 — 새 표 둘, 기존 표·CHECK 는 그대로라 DRAIN 이 필요 없다).

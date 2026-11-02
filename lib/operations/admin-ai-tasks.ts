@@ -33,8 +33,10 @@ export const AI_CONNECTION_MODELS_AUDIT_ACTION = "ai-connection-models-read";
 export const AI_CONNECTION_DELETE_AUDIT_ACTION = "ai-connection-delete";
 export const AI_TASK_MODELS_SAVE_AUDIT_ACTION = "ai-task-models-save";
 export const AI_TASK_MODELS_IMPORT_AUDIT_ACTION = "ai-task-models-import";
+/** 같은 주소 계약 키로 연결 키를 채움(lib/operations/ai-connection-key-fill.ts — 사람이 아니라 상자 키가 있는 프로세스가 쓴다) */
+export const AI_CONNECTION_KEY_FILL_AUDIT_ACTION = "ai-connection-key-fill";
 export const AI_TASK_AUDIT_ACTIONS = Object.freeze([AI_CONNECTION_SAVE_AUDIT_ACTION, AI_CONNECTION_MODELS_AUDIT_ACTION, AI_CONNECTION_DELETE_AUDIT_ACTION,
-  AI_TASK_MODELS_SAVE_AUDIT_ACTION, AI_TASK_MODELS_IMPORT_AUDIT_ACTION] as const);
+  AI_TASK_MODELS_SAVE_AUDIT_ACTION, AI_TASK_MODELS_IMPORT_AUDIT_ACTION, AI_CONNECTION_KEY_FILL_AUDIT_ACTION] as const);
 export const AI_TASK_IMPORT_CONFIRM = "가져오기";
 export const AI_TASKS_PAGE = "/admin/models/tasks";
 /** 키 암호문의 AAD — 행 id 에 묶는다(다른 행으로 옮긴 암호문은 열리지 않는다). */
@@ -196,10 +198,16 @@ export function aiRankOptionBlocked(task: Pick<AiTaskDef, "id" | "slots" | "same
   return task.slots > 1 && rows.some(row => row.task === task.id && row.slot !== slot && aiSameUnderlyingModel(row.model, option.model));
 }
 
-/** 켜진 API 연결 중 모델 목록을 못 읽은 것 — 그 서버의 모델은 드롭다운에 없다(화면이 까닭과 함께 위에 알린다). */
-export function aiUnreadConnections(connections: readonly AiConnectionView[]): { id: string; label: string; reason: string }[] {
-  return connections.filter(row => row.enabled && row.kind === "api" && (row.models === null || row.models.length === 0)).map(row => ({ id: row.id, label: row.label,
-    reason: [row.hasKey ? "" : "키 없음", aiModelsErrorText(row.modelsError) ?? (row.models === null ? "아직 못 읽음" : "모델 0개")].filter(Boolean).join(" · ") }));
+export const AI_KEY_CONFLICT_TEXT = "같은 주소의 계약 키가 서로 다름";
+/**
+ * 켜진 API 연결 중 모델 목록을 못 읽은 것 — 그 서버의 모델은 드롭다운에 없다(화면이 까닭과 함께 위에 알린다).
+ * keyConflicts = 키가 없고 같은 주소의 계약 키가 서로 달라 자동으로 채우지 않은 연결 id(목록을 읽었어도 키가 필요해 순위를 쓸 수 없으니 함께 알린다).
+ */
+export function aiUnreadConnections(connections: readonly AiConnectionView[], keyConflicts: readonly string[] = []): { id: string; label: string; reason: string }[] {
+  const conflict = new Set(keyConflicts);
+  return connections.filter(row => row.enabled && row.kind === "api" && (row.models === null || row.models.length === 0 || (!row.hasKey && conflict.has(row.id))))
+    .map(row => ({ id: row.id, label: row.label, reason: [row.hasKey ? "" : "키 없음", !row.hasKey && conflict.has(row.id) ? AI_KEY_CONFLICT_TEXT : "",
+      row.models === null || row.models.length === 0 ? aiModelsErrorText(row.modelsError) ?? (row.models === null ? "아직 못 읽음" : "모델 0개") : ""].filter(Boolean).join(" · ") }));
 }
 
 // ── 검증 ───────────────────────────────────────────────────────────────────────────────────────────────

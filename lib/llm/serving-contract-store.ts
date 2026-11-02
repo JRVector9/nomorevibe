@@ -165,12 +165,13 @@ export function servingContractAuth(routeId: string, model: string): { mode: Ser
 }
 
 /** Why a route cannot call its model; see textRouteAccess. */
-export type TextRouteBlock = "no_direct_contract" | "gateway_auth" | "stored_key_unreadable";
+export type TextRouteBlock = "no_direct_contract" | "gateway_auth" | "stored_key_unreadable" | "connection_key_missing";
 /** Operator-facing detail for each block (job degraded detail, status lines). */
 export const TEXT_ROUTE_BLOCK_DETAIL: Readonly<Record<TextRouteBlock, string>> = {
   no_direct_contract: "이 경로·모델의 직접 연결 계약(관리자 엔진 연결, transport direct)이 없습니다",
   gateway_auth: "직접 연결 계약의 인증이 게이트웨이 키로 되어 있습니다 — 게이트웨이는 제거됐으니 키 없음 또는 저장한 키로 다시 저장하세요",
   stored_key_unreadable: "직접 연결 계약에 저장한 키를 열 수 없습니다(암호 상자 키 확인)",
+  connection_key_missing: "이 서버의 계약은 키를 쓰는데 「작업 ↔ 모델」 연결에 키가 없습니다 — 연결에 키를 넣으세요(같은 주소의 계약 키가 하나뿐이면 자동으로 채웁니다)",
 };
 /** The access decision: blocked with a reason, or open with the bearer to send (null = no Authorization header). */
 export type TextRouteAccess = Readonly<{ block: TextRouteBlock; bearer?: undefined } | { block: null; bearer: string | null }>;
@@ -199,13 +200,18 @@ export function textRouteAccess(routeId: string, model: string, provider?: strin
   const rank = activeTextTaskRank(routeId);
   if (rank && rank.identity === model) {
     if (access.block && access.block !== "stored_key_unreadable") return access;
+    // 키가 필요한 서버(계약 auth stored)에 키 없는 연결로 보내지 않는다 — 묶기(bindTextTaskRank)가 먼저 막지만 보내는 길도 같은 규칙이다
+    if (row?.auth === "stored" && rank.bearer === null) return { block: "connection_key_missing" };
     return { block: null, bearer: rank.bearer };
   }
   // 심사 두 경로(PR C1): 계약이 가리키는 엔진 주소의 연결이 그 작업의 순위에 있으면 그 연결의 키를 보낸다(순위 범위 없이 — 1차·2차의 모든 길이 같은 키를 쓴다)
   const connection = reviewRankConnection(routeId, row);
   if (!connection) return access;
   if (access.block && access.block !== "stored_key_unreadable") return access;
-  return connection.keyUnreadable ? { block: "stored_key_unreadable" } : { block: null, bearer: connection.apiKey };
+  if (connection.keyUnreadable) return { block: "stored_key_unreadable" };
+  // 키가 필요한 서버(계약 auth stored)인데 연결에 키가 없다 — 키 없이 보내 401 로 결과를 모르게 만들지 않는다(2026-11-02). 키 없이 도는 서버(auth none)는 그대로다
+  if (row?.auth === "stored" && connection.apiKey === null) return { block: "connection_key_missing" };
+  return { block: null, bearer: connection.apiKey };
 }
 
 /** 심사 경로 → 그 경로를 쓰는 「작업 ↔ 모델」 작업(lib/llm/ai-tasks.ts). */

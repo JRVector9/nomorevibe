@@ -108,6 +108,8 @@ export function bindReviewTaskRank(task: AiReviewTaskId, rank: AiTaskRank, contr
   const access = servingContractRowAccess(picked.row, picked.provider);
   // 계약 행의 키가 열리지 않는 것은 상관없다 — 보내는 키는 연결의 키다
   if (access.block && access.block !== "stored_key_unreadable") return result(binding, access.block);
+  // 키가 필요한 서버(계약 auth stored)인데 연결에 키가 없다 — 키 없이 보내지 않는다(text 작업 bindTextTaskRank 와 같은 규칙)
+  if (picked.row.auth === "stored" && connection.apiKey === null) return result(binding, "connection_key_missing");
   return result(binding, null);
 }
 
