@@ -32,9 +32,10 @@ it('merges exact reason and other queues from separate bounded read-only stateme
   expect(rows.find(row => row.key === 'reason-translate')).toMatchObject({ waiting: 3, oldestMinutes: 120 });
   expect(rows.find(row => row.key === 'intro-check')).toMatchObject({ waiting: 1, completed5m: 2 });
   expect(fixture.transactions).toHaveLength(2);
-  for (const tx of fixture.transactions) {
+  // reason 묶음은 운영에서 3.2초(2026-11-02)라 10초, 나머지는 3초 — 읽는 순서도 reason → other
+  for (const [index, tx] of fixture.transactions.entries()) {
     expect(tx.config).toEqual({ accessMode: 'read only' });
-    expect(tx.statements).toContain("SET LOCAL statement_timeout = '3s'");
+    expect(tx.statements).toContain(index === 0 ? "SET LOCAL statement_timeout = '10s'" : "SET LOCAL statement_timeout = '3s'");
     expect(tx.statements).toContain("SET LOCAL work_mem = '32MB'");
   }
 });
