@@ -796,6 +796,45 @@ export async function closeModelCapacityUnknownReview(value: { requestId: string
   });
 }
 
+export type OwnerGoneCandidate = Readonly<{ requestId: string; queueOrdinal: number; owner: Readonly<{ instanceId: string; bootId: string }>;
+  state: ModelCapacityState; providerBudgetId: string; dispatchAt: string | null; now: string }>;
+/** owner_gone 근거가 이 행에 묶이는 최소 모양(전체 스키마는 lib/operations/dr/owner-gone.ts). */
+export type OwnerGoneBoundEvidence = Readonly<{ kind: "owner_gone"; requestId: string; owner: Readonly<{ instanceId: string; bootId: string }>;
+  fromState: "dispatched"; dispatchAt: string; evaluatedAt: string }>;
+export type OwnerGoneMarkResult<E> = { kind: "marked"; evidence: E } | { kind: "blocked"; reason: string }
+  | { kind: "not_dispatched"; state: ModelCapacityState | null };
+
+/**
+ * 소유 프로세스 부재(owner_gone) 운영자 전환 hook(2026-11-02). caller TX(fence SHARE 뒤) 안에서 요청 행만 FOR UPDATE 로 잠그고 — control 은 잠그지
+ * 않는다(이 전환은 점유를 줄이기만 하고 control 을 쓰지 않는다; 다른 경로의 fence → control → 행 순서와 교착하지 않는다) — 같은 TX·DB clock 으로
+ * verify 가 소유자 부재 근거를 다시 읽어 판정한다. dispatched 일 때만 indeterminate 로 바꾸고(released 아님 — 제공자 쪽 생성이 끝났는지 모른다),
+ * 같은 근거를 dispatch_indeterminate event(reason process_exit)에 남긴다. 행의 binding·token·terminal 칸은 그대로라 늦은 종료 근거는 여전히 정산하고,
+ * 사람 검토(closeModelCapacityUnknownReview)가 닫을 수 있다. 이미 다른 상태면 아무것도 쓰지 않는다.
+ */
+export async function markOwnerGoneDispatchIndeterminate<E extends OwnerGoneBoundEvidence>(tx: ProductTransaction, requestId: string,
+  verify: (candidate: OwnerGoneCandidate) => Promise<E | { blocked: string }>): Promise<OwnerGoneMarkResult<E>> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const id = z.uuid().parse(requestId);
+  const [row] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, id)).for("update");
+  if (!row || row.state !== "dispatched") return { kind: "not_dispatched", state: row?.state ?? null };
+  const iso = (value: unknown) => sql`to_char((${value}) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
+  const [clock] = await tx.execute<{ dispatch_at: string | null; now: string }>(sql`SELECT ${iso(sql`coalesce(r.dispatched_at, (SELECT min(e.created_at)
+    FROM model_capacity_events e WHERE e.request_id = r.request_id AND e.kind = 'dispatch_started'))`)} AS dispatch_at, ${iso(sql`clock_timestamp()`)} AS now
+    FROM model_capacity_requests r WHERE r.request_id = ${row.requestId}::uuid`);
+  const owner = Object.freeze({ instanceId: row.ownerInstanceId, bootId: row.ownerBootId });
+  const verdict = await verify(Object.freeze({ requestId: row.requestId, queueOrdinal: row.queueOrdinal, owner, state: row.state,
+    providerBudgetId: row.providerBudgetId, dispatchAt: clock.dispatch_at, now: clock.now }));
+  if ("blocked" in verdict) return { kind: "blocked", reason: verdict.blocked };
+  if (verdict.kind !== "owner_gone" || verdict.requestId !== row.requestId || verdict.owner.instanceId !== owner.instanceId
+    || verdict.owner.bootId !== owner.bootId || verdict.fromState !== "dispatched" || verdict.dispatchAt !== clock.dispatch_at
+    || verdict.evaluatedAt !== clock.now) fail("model_capacity_owner_gone_evidence_mismatch");
+  const [changed] = await tx.update(modelCapacityRequests).set({ state: "indeterminate", updatedAt: sql`clock_timestamp()` })
+    .where(and(eq(modelCapacityRequests.requestId, row.requestId), eq(modelCapacityRequests.state, "dispatched"))).returning();
+  if (!changed) fail("model_capacity_owner_gone_state_changed");
+  await event(tx, changed, "dispatch_indeterminate", "dispatched", "indeterminate", "process_exit", verdict);
+  return { kind: "marked", evidence: verdict };
+}
+
 /** 소유 handle 이 잠긴 행과 같고 행이 indeterminate 일 때만, 요청당 한 번 dispatch_local_ended 사실을 쓴다(lock 순서: fence → control → 행).
  * 두 번째 기록은 0099 부분 unique index 에서 조용히 빠진다. 대상 없는 ON CONFLICT 라 events SELECT 권한이 없는 최소권한 principal 도 쓸 수 있다. */
 async function recordModelDispatchLocalEnd(checked: ModelCapacityDispatch, bindingHash: string | null, witness: GatewayLocalEnd): Promise<void> {
