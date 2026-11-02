@@ -1,5 +1,13 @@
 # 남은 작업
 
+## 소유 프로세스가 사라진 dispatched 5건 → 미확정 → 사람 검토 — 2026-11-02, 운영 미적용(코드·단위·일회용 DB 시험만)
+
+- `scripts/ops/model-owner-gone.ts`(`mark`·`close-review`, 기본 dry-run, `--apply`·`--operator` 필수, id 명시 최대 20건, DB URL stdin). 판정은 같은 instance 의
+  다른 boot 가 전송 뒤에 시작한 기록(`owner_opened`·역할 lease 취득) 또는 옛 boot 의 종료 기록 + 옛 boot 기록 30분 이상 없음 + 옛 boot lease 없음. 마이그레이션 없음.
+- **병합 뒤(대표)**: [근거 확인 SELECT → mark dry-run → apply → close-review → 결과 SELECT](docs/operations/2026-11-02-owner-gone-indeterminate.md#대표용-실행-순서).
+  대상 578b94ac·aac34be2·a3955d87·f0e53895·4054e658. 운영 DB 에 후속 boot 의 `owner_opened` 가 실제로 있는지는 아직 확인하지 않았다(읽기 전용 SELECT 를 대표가 돌린다).
+  끝나면 supa-direct 점유 4 → 실제 일하는 행 수, gpu3090-qwen 1 감소, 모니터 `stuck_dispatched` 5 → 0. mark 와 close-review 사이에는 `review_stale` 경보가 난다(전송 시각 기준 24시간 초과).
+
 ## search-verify·crawl-tagline·crawl-agent-review 성공 기록 멈춤(continuation_mismatch)·search-profile 55P03 — 2026-10-31, 운영 미적용(코드·단위·일회용 DB 시험만)
 
 - 원인: #747(0149)의 `gateway_not_started` 정산 행을 search-verify·crawl-tagline 장부 사슬이 몰라 세대 전체를 불일치로 던졌다(같은 제품·후보가 매 틱 잡을 멈춤).
