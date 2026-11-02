@@ -21,7 +21,12 @@ const contractProvider = (row: ContractRow | undefined): FirstReviewer["provider
   const provider = row && row.contract && typeof row.contract === "object" ? (row.contract as { provider?: unknown }).provider : undefined;
   return provider === "local-direct" ? "local-direct" : row ? "abcllm" : null;
 };
-export const rankOptionKey = (row: { provider: string; model: string }) => `${row.provider}\u0000${row.model}`;
+/**
+ * 드롭다운 <option value> 에 그대로 들어가는 열쇠. 두 칸을 encodeURIComponent 해 「/」로 잇는다 — 결과에는 영숫자·`-_.!~*'()%/` 만 남아 HTML 이 바꾸지 않는다.
+ * 예전 NUL(U+0000) 구분자는 서버가 그린 HTML 을 브라우저가 읽을 때 U+FFFD 로 바뀌어(HTML 파서 규칙) 고른 값이 선택지와 맞지 않았다 → 드롭다운이 늘 「없음」으로
+ * 돌아가고 그대로 저장하면 순위가 비워졌다(2026-11-02 1차 AI 검수·소개 검수 순위가 지워짐). 두 칸 모두 「/」를 품지 않으므로 서로 다른 값이 같은 열쇠가 되지 않는다.
+ */
+export const rankOptionKey = (row: { provider: string; model: string }) => `${encodeURIComponent(row.provider)}/${encodeURIComponent(row.model)}`;
 
 /**
  * 선택지: 지금 모든 서버가 실제로 내놓는 모델(엔진 API GET /models — readServedContractModels, 화면이 이미 한 번 읽은 결과) + 이 단계가 받는 CLI 제공자 모델.
