@@ -2,7 +2,8 @@
 import "./agent-review-serving-contract";
 import "./second-review-serving-contract";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { AI_CLI_TOOL_PROVIDERS, AI_TASK_RANK_DEGRADED_CODES, aiTask, aiTaskSlotLabel, type AiCliTool, type AiReviewTaskId } from "@/lib/llm/ai-tasks";
+import { AI_CLI_TOOL_PROVIDERS, AI_TASK_KEY_MISSING_CAUSE, AI_TASK_RANK_DEGRADED_CODES, aiTask, aiTaskSlotLabel, onlyKeyMissing, type AiCliTool,
+  type AiReviewTaskId } from "@/lib/llm/ai-tasks";
 import { aiTaskModelsReadState, ensureAiTaskModels } from "@/lib/llm/ai-task-models-snapshot";
 import { taskModels, textRankUnusableText, type AiTaskRank } from "@/lib/llm/ai-task-resolver";
 import { cliServingContractDiagnosis, cliToolVersionEpoch, type CliProvider } from "@/lib/llm/cli-serving-contract";
@@ -275,7 +276,10 @@ export function secondReviewSlotFallbacks(rootModel: string, ranks: SecondReview
 
 // ── 제 일 못 함(degraded)·틱 요약 ───────────────────────────────────────────────────────────────────────
 
-export type ReviewRankDegraded = { code: (typeof AI_TASK_RANK_DEGRADED_CODES)[number]; detail: string };
+export type ReviewRankDegraded = { code: (typeof AI_TASK_RANK_DEGRADED_CODES)[number]; detail: string; cause?: typeof AI_TASK_KEY_MISSING_CAUSE };
+/** 모든 순위가 키 없는 연결뿐이면 cause(설정의 일 — 진행 감시가 배포를 막지 않는다, AI_TASK_KEY_MISSING_CAUSE). */
+const keyMissingCause = (candidates: readonly ReviewRankCandidate[]) => onlyKeyMissing(candidates.map(candidate => candidate.unusable))
+  ? { cause: AI_TASK_KEY_MISSING_CAUSE } : {};
 const candidateText = (candidate: ReviewRankCandidate) =>
   `${candidate.rank.rank}순위 ${candidate.rank.connection.label} · ${candidate.rank.model}: ${candidate.unusable ? reviewRankUnusableText(candidate.unusable, candidate.detail) : "쓸 수 있음"}`;
 /** 1차: 순위 없음·표 못 읽음·모든 순위를 쓸 수 없음이면 그 degraded, 부를 순위가 있으면 null. */
@@ -287,7 +291,7 @@ export function firstReviewRanksDegraded(ranks: FirstReviewRanks): ReviewRankDeg
   if (resolution.status === "task_models_unreadable")
     return { code: "task_models_unreadable", detail: `${name}: 작업 ↔ 모델 표를 아직 읽지 못했습니다(권한·migration 0162 확인) — 기본값으로 대신 부르지 않습니다` };
   if (ranks.usable > 0) return null;
-  return { code: "all_ranks_unusable", detail: `${name}: ${resolution.candidates.map(candidateText).join(" / ")}`.slice(0, 300) };
+  return { code: "all_ranks_unusable", detail: `${name}: ${resolution.candidates.map(candidateText).join(" / ")}`.slice(0, 300), ...keyMissingCause(resolution.candidates) };
 }
 /** 2차: 순위 없음·표 못 읽음, 또는 표를 낼 칸이 하나도 없음(모든 칸의 모든 순위를 쓸 수 없음). */
 export function secondReviewRanksDegraded(ranks: SecondReviewRanks): ReviewRankDegraded | null {
@@ -300,7 +304,8 @@ export function secondReviewRanksDegraded(ranks: SecondReviewRanks): ReviewRankD
   if (ranks.slots.some(slot => slot.voter)) return null;
   const parts = ranks.slots.filter(slot => slot.resolution.candidates.length).map(slot =>
     `${task ? aiTaskSlotLabel(task, slot.slot) : `투표자 ${slot.slot}`} — ${slot.resolution.candidates.map(candidateText).join(", ")}`);
-  return { code: "all_ranks_unusable", detail: `${name}: ${parts.join(" / ")}`.slice(0, 300) };
+  return { code: "all_ranks_unusable", detail: `${name}: ${parts.join(" / ")}`.slice(0, 300),
+    ...keyMissingCause(ranks.slots.flatMap(slot => slot.resolution.candidates)) };
 }
 /** 틱 끝 요약(ai_task.ranks 의 숫자 칸) — 칸·순위마다 쓸 수 없는 까닭과 지금 표를 내는 순위. text 작업의 summary 와 같은 이름을 쓴다(관리 화면이 읽는다). */
 export function reviewRanksSummary(resolutions: readonly ReviewRankResolution[], served: ReadonlyMap<number, number> = new Map()): Record<string, number> {

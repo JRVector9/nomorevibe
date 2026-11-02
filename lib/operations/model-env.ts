@@ -9,22 +9,31 @@ import type { ModelEnv, TextModelRoute } from "./pipeline-control";
  * 소개 검수(introCheck)는 아직 예전 설정이다(PR C).
  */
 export async function currentModelEnv(): Promise<ModelEnv> {
-  const [{ INTRO_CHECK_MODEL }, pooled] = await Promise.all([import("@/lib/domain/products/intro-check"), rankedTextModels()]);
+  const [{ INTRO_CHECK_MODEL }, { pooled, keyMissing }] = await Promise.all([import("@/lib/domain/products/intro-check"), rankedTextRoutes()]);
   const first = (route: TextModelRoute) => pooled[route]?.[0] ?? "";
   return { translate: first("reason-translate"), koreanTagline: first("product-tagline-ko"), searchQuery: first("search-query-translate"),
     productTranslate: first("product-translate"), tagline: first("crawl-tagline"), profile: first("product-search-profile"),
-    verify: first("product-search-verify"), introCheck: INTRO_CHECK_MODEL, pooled };
+    verify: first("product-search-verify"), introCheck: INTRO_CHECK_MODEL, pooled, ...(keyMissing.length ? { keyMissing } : {}) };
 }
 
 /** text 일곱 경로의 묶인 순위 → 장부 이름(순위 차례). 읽지 못하면 빈 목록. */
 export async function rankedTextModels(): Promise<Partial<Record<TextModelRoute, readonly string[]>>> {
+  return (await rankedTextRoutes()).pooled;
+}
+
+/**
+ * rankedTextModels 와 같은 읽기 + 묶인 순위가 하나도 없고 모든 순위가 「연결에 키가 없음」뿐인 경로(keyMissing) — OPEN 이 그 경로를
+ * 「모름」(미룸)으로 세어 배포를 막지 않게 한다(key_missing, 2026-11-02 사람 결정 「키 없어도 배포는 되게」). 읽지 못하면 둘 다 비어 있다.
+ */
+export async function rankedTextRoutes(): Promise<{ pooled: Partial<Record<TextModelRoute, readonly string[]>>; keyMissing: TextModelRoute[] }> {
   try {
-    const [{ TextTaskRanks }, { AI_TEXT_TASK_IDS }] = await Promise.all([import("@/lib/llm/ai-task-resolver"), import("@/lib/llm/ai-tasks")]);
-    const out: Partial<Record<TextModelRoute, readonly string[]>> = {};
+    const [{ TextTaskRanks }, { AI_TEXT_TASK_IDS, onlyKeyMissing }] = await Promise.all([import("@/lib/llm/ai-task-resolver"), import("@/lib/llm/ai-tasks")]);
+    const pooled: Partial<Record<TextModelRoute, readonly string[]>> = {}, keyMissing: TextModelRoute[] = [];
     for (const route of AI_TEXT_TASK_IDS) {
       const ranks = await TextTaskRanks.open(route);
-      out[route] = ranks.bindings().map(binding => binding.identity);
+      pooled[route] = ranks.bindings().map(binding => binding.identity);
+      if (!pooled[route]!.length && onlyKeyMissing(ranks.resolution.candidates.map(candidate => candidate.unusable))) keyMissing.push(route);
     }
-    return out;
-  } catch { return {}; }
+    return { pooled, keyMissing };
+  } catch { return { pooled: {}, keyMissing: [] }; }
 }

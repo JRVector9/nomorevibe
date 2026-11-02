@@ -26,7 +26,7 @@ import { readUptimeSplitStage } from "./uptime-split-repository";
 import { readTextStageProgress } from './text-stage-progress';
 import { readPublisherClassificationDrain } from './publisher-drain-progress';
 import { AGENT_REVIEW_ALL_SKIPPED } from '@/lib/crawl/agent-review-skip';
-import { AI_TASK_RANK_DEGRADED_CODES, AI_TEXT_TASK_IDS } from '@/lib/llm/ai-tasks';
+import { AI_TASK_KEY_MISSING_CAUSE, AI_TASK_RANK_DEGRADED_CODES, AI_TEXT_TASK_IDS } from '@/lib/llm/ai-tasks';
 
 type ProgressJob = { name: string; nextScheduledAt: Date | null; notBefore: Date | null; lockedAt?: Date | null;
   leaseToken?: string | null; cursor?: unknown; lastError?: string | null };
@@ -172,7 +172,9 @@ export function buildWorkerProgress(
       if (healthyRun) next = { ...stage, reason: "running" as const, alarm: false, restartEligible: false };
     }
     // 미임대(admission defer) 단계도 여기 온다. 경보·reason·줄 재시작은 유지한다.
-    return applyAllSkippedBlock(applyCapacityAdmissionBlock(next, admissionBlocks), observations, now);
+    // 키 없는 연결뿐이라 모든 순위를 못 쓰는 단계는 설정의 일로 보류(경보·재시작 없음, applyKeyMissingHold) — 그 밖은 applyAllSkippedBlock 그대로
+    return applyAllSkippedBlock(applyKeyMissingHold(applyCapacityAdmissionBlock(next, admissionBlocks), observations, now,
+      stage.job ? states.get(stage.job)?.lastError ?? null : null), observations, now);
   });
   const scheduler = classifyScheduler(jobs, isObserved("scheduler"), now, batch);
   const alarm = liveness.some(row => row.alarm) || stages.some(row => row.alarm) || lanes.some(row => row.alarm) || scheduler.alarm;
@@ -198,7 +200,7 @@ const ALL_SKIPPED_CODES: Readonly<Record<string, readonly string[]>> = {
  */
 export const ALL_SKIPPED_FRESH_MS = 180_000;
 const ALL_SKIPPED_CLOCK_SKEW_MS = 30_000;
-export type StageSkipDetail = { reason: 'all_skipped'; code: string; detail: string | null; streak: number | null };
+export type StageSkipDetail = { reason: 'all_skipped' | 'key_missing'; code: string; detail: string | null; streak: number | null };
 
 /**
  * 막 끝난 틱이 들인 일을 모두 건너뛰었다고(degraded: agent_review_all_skipped) 알린 단계는 재시작 대상에서 뺀다. 워커는 틱을 끝내고 있고
@@ -222,6 +224,34 @@ export function applyAllSkippedBlock<T extends { job?: string; reason: string; r
     detail: typeof degraded.detail === 'string' ? degraded.detail.slice(0, 300) : null,
     streak: typeof degraded.streak === 'number' && Number.isSafeInteger(degraded.streak) ? degraded.streak : null };
   return { ...stage, restartEligible: false, skipBlock };
+}
+
+/**
+ * 키 없는 연결 보류(2026-11-02 사람 결정 「키 없어도 배포는 되게 — 모델은 관리자가 지정」). 막 끝난 틱이 모든 순위를 쓸 수 없다고 알렸고
+ * (degraded all_ranks_unusable) 그 순위가 모두 「연결에 키가 없음」뿐이면(cause connection_key_missing) 그 단계의 정체는 설정의 일이다 —
+ * 키 없는 연결은 부르지 않고(②), 같은 주소의 계약 키로 채워지거나(①) 관리자가 다른 모델을 고르면 풀린다. 재시작이 고치지 못하고 배포도
+ * 고치지 못하므로, 경보(→ worker progress overall → 배포 사전·사후 관문)도 재시작도 하지 않는다: held + backoff(용량 DRAIN·발행 분류 drain 과 같은
+ * 보류 꼴) + skipBlock key_missing. 관리 화면 「제 일 못 함」은 job 관측을 그대로 읽으므로 계속 보인다.
+ * 좁게만 푼다: no_progress, 그리고 5분 안의 새 실패·잡 오류가 없는 upstream_stalled(키 없는 호출 401 이 남긴 옛 실패만 있는 대기)만.
+ * worker_missing·consumer_missing·다른 까닭이 섞인 all_ranks_unusable·cause 없는 관측·오래된 관측(틱이 멈춘 워커)은 그대로 경보다.
+ */
+export function applyKeyMissingHold<T extends { job?: string; reason: string; alarm: boolean; restartEligible?: boolean; held?: boolean;
+  errors5m?: number | null }>(
+  stage: T, observations: ReadonlyArray<{ key: string; value: Record<string, unknown>; observedAt: Date | string }>, now: Date,
+  jobLastError: string | null = null,
+): T & { skipBlock?: StageSkipDetail } {
+  if (!stage.job || !ALL_SKIPPED_CODES[stage.job]?.includes('all_ranks_unusable')) return stage;
+  if (!(stage.reason === 'no_progress' || (stage.reason === 'upstream_stalled' && !stage.errors5m && !jobLastError))) return stage;
+  const row = observations.find(item => item.key === `job:${stage.job}`);
+  if (!row) return stage;
+  const age = now.getTime() - new Date(row.observedAt).getTime();
+  if (!(age >= -ALL_SKIPPED_CLOCK_SKEW_MS && age <= ALL_SKIPPED_FRESH_MS)) return stage;
+  const degraded = row.value.degraded as { code?: unknown; cause?: unknown; detail?: unknown; streak?: unknown } | null | undefined;
+  if (!degraded || typeof degraded !== 'object' || degraded.code !== 'all_ranks_unusable' || degraded.cause !== AI_TASK_KEY_MISSING_CAUSE) return stage;
+  const skipBlock: StageSkipDetail = { reason: 'key_missing', code: 'all_ranks_unusable',
+    detail: typeof degraded.detail === 'string' ? degraded.detail.slice(0, 300) : null,
+    streak: typeof degraded.streak === 'number' && Number.isSafeInteger(degraded.streak) ? degraded.streak : null };
+  return { ...stage, held: true, reason: 'backoff', alarm: false, restartEligible: false, skipBlock };
 }
 
 /**

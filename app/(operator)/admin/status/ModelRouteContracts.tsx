@@ -8,6 +8,7 @@ import { ScrollTable } from '../components/ScrollTable';
 const ROUTE_STATUS: Record<RouteStatus, string> = {
   serving: '계약 있음(serving)', no_contract: '계약 없음(no_contract)', unmapped: '슬롯 정책에 없음(unmapped)',
   admission_only: '자리 확인만(admission_only)', stage_legacy: '기존 방식 단계(stage_legacy)', unknown: '모름(unknown)', unused: '지금 안 씀(unused)',
+  key_missing: '연결 키 없음 — 키를 채우거나 모델을 고르세요(key_missing)',
 };
 const MODES: Record<string, string> = { legacy: '기존 방식(legacy)', draining: '비우는 중(draining)', items: '항목 처리(items)',
   versioned: '분리 방식(versioned)', disabled: '꺼짐(disabled)', open: '열림(open)' };

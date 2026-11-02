@@ -319,3 +319,29 @@ describe("capacity open is judged only on the combinations in use", () => {
     expect(deferredRoutes(legacy.routes ?? []).map(row => row.status)).toEqual(["no_contract", "stage_legacy"]);
   });
 });
+
+describe("키 없는 연결뿐인 text 경로(key_missing) — OPEN 을 막지 않는다(2026-11-02 사람 결정: 키 없어도 배포는 되게)", () => {
+  const open = ["capacity", "mode", "--to=open", "--from-mode=draining", "--expect-epoch=1", "--expect-revision=2"];
+  // 사유 번역의 모든 순위가 키 없는 연결 → 묶인 이름이 없다(pooled 빈 목록). 다른 번역 경로는 제 이름을 그대로 쓴다
+  const keyless: ModelEnv = { ...MODELS, translate: "", koreanTagline: "tr", searchQuery: "tr", pooled: { "reason-translate": [] } };
+  it("keyMissing 이면 그 경로는 key_missing(미룸 아님) — OPEN 이 열린다; 아니면 예전처럼 「모름」으로 막는다", () => {
+    ALL_SERVED.forEach(model => mocks.served.add(model));
+    const state = snapshot({ capacity: capacity("draining", policyFor(IN_USE)) }, { mode: "items" });
+    const refused = planPipelineControl(transition(...open), state, undefined, keyless);
+    expect(refused.blocked).toEqual(["deferred_routes:1"]);
+    expect(deferredRoutes(refused.routes ?? [])).toEqual([{ routeId: "reason-translate", provider: "abcllm", model: null, status: "unknown" }]);
+
+    const models = { ...keyless, keyMissing: ["reason-translate"] as const };
+    expect(usedModelRoutes(snapshot(), models)).toContainEqual({ routeId: "reason-translate", provider: "abcllm", model: null, keyMissing: true });
+    const opened = planPipelineControl(transition(...open), state, undefined, models);
+    expect(opened.blocked).toEqual([]);
+    expect(opened.routes).toContainEqual({ routeId: "reason-translate", provider: "abcllm", model: null, status: "key_missing" });
+    expect(deferredRoutes(opened.routes ?? [])).toEqual([]);
+  });
+  it("회귀: 묶인 순위가 하나라도 있으면 keyMissing 을 보지 않는다(그 이름으로 serving 판정)", () => {
+    ALL_SERVED.forEach(model => mocks.served.add(model));
+    const models: ModelEnv = { ...MODELS, pooled: { "reason-translate": ["tr"] }, keyMissing: ["reason-translate"] };
+    const uses = usedModelRoutes(snapshot(), models).filter(use => use.routeId === "reason-translate");
+    expect(uses).toEqual([{ routeId: "reason-translate", provider: "abcllm", model: "tr" }]);
+  });
+});

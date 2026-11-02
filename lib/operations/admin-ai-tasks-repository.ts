@@ -530,8 +530,8 @@ export async function saveAiTaskRanks(input: AiTaskRanksInput, actor: string): P
 export type AiImportServerRead = Readonly<{ baseUrl: string; host: string | null; count: number | null; error: string | null }>;
 export type AiImportPreview = Readonly<{ hash: string | null; plan: AiImportPlan | null; servers: readonly AiImportServerRead[]; error: string | null;
   connectionLabels: Readonly<Record<string, string>>;
-  /** 적용을 거절할 까닭(키가 필요한 새 연결의 키를 이 프로세스에서 옮길 수 없음) — 있으면 적용은 아무것도 쓰지 않는다. 계획의 경고 맨 앞에도 싣는다 */
-  blocked: readonly string[] }>;
+  /** 키를 옮기지 못해 키 없이 만들 새 연결의 경고(연결 이름마다 한 줄) — 적용을 막지 않는다. 계획의 경고 맨 앞에도 싣는다 */
+  keyWarnings: readonly string[] }>;
 type BuiltImport = { plan: AiImportPlan; served: Map<string, AiConnectionModel[]>; servers: AiImportServerRead[] };
 
 /**
@@ -574,17 +574,22 @@ function importKey(entry: AiImportConnection, snapshot: ReturnType<typeof servin
   return entry.keyFrom ? snapshot.find(row => row.routeId === entry.keyFrom!.routeId && row.model === entry.keyFrom!.model)?.apiKey ?? null
     : entry.keyEnv ? process.env[entry.keyEnv]?.trim() || null : null;
 }
+type ImportKeyMissing = { labels: readonly string[]; reason: "secret_box_key_missing" | "key_unreadable" | null; warnings: readonly string[] };
 /**
- * 가져오기를 거절할 까닭(한국어 문장). 키가 필요한 새 연결(keyFrom·keyEnv)이 하나라도 있는데 이 프로세스에 상자 키가 없거나 그 키를 읽지 못하면 —
- * 키 없는 연결을 만들지 않는다(fail closed, 2026-11-02 상자 키 없는 유지보수 컨테이너에서 가져와 m3-mlx 연결 둘이 키 없이 만들어진 사고).
+ * 키를 옮기지 못하는 새 연결 — 키가 필요한 새 API 연결(keyFrom·keyEnv)인데 이 프로세스에 상자 키가 없거나 그 키를 읽지 못한 것. 가져오기는 이 때문에 멈추지 않는다
+ * (2026-11-02 사람 결정 「키 없어도 배포는 되게」): 그 연결은 키 없이 만들고 순위도 그대로 적용한 뒤, 연결 이름마다 한국어 경고를 맨 앞에 싣는다.
+ * 키 없는 연결은 ②(connection_key_missing)가 부르지 않고 다음 순위로 넘기고, ①(ai-connection-key-fill)이 같은 주소의 계약 키로 나중에 채우며,
+ * 그사이 관리자가 다른 모델을 고를 수 있다. 문구는 계획(만듭니다)·적용(만들었습니다)만 다르다. 키 값·암호문은 싣지 않는다.
  */
-function importKeyIssues(plan: AiImportPlan, snapshot: ReturnType<typeof servingContractSnapshot>["rows"]): string[] {
+function importKeyMissing(plan: AiImportPlan, snapshot: ReturnType<typeof servingContractSnapshot>["rows"], done: boolean): ImportKeyMissing {
   const needing = plan.connections.filter(entry => entry.action === "create" && entry.kind === "api" && (!!entry.keyFrom || !!entry.keyEnv));
-  if (!needing.length) return [];
-  if (!secretBoxReady()) return [`가져오기를 할 수 없습니다 — 키가 필요한 연결(${needing.map(entry => entry.label).join(", ")})의 키를 옮겨야 하는데 이 프로세스에는 `
-    + "키 암호화 설정(NMV_SECRET_BOX_KEY)이 없습니다. 키 암호화 설정이 있는 웹·워커에서 가져오세요(아무것도 쓰지 않았습니다)."];
-  return needing.filter(entry => !importKey(entry, snapshot)).map(entry => `가져오기를 할 수 없습니다 — ${entry.label}: 키가 필요한데 그 키(${entry.keyFrom
-    ? `계약 ${entry.keyFrom.routeId} · ${entry.keyFrom.model} 의 저장 키` : `환경변수 ${entry.keyEnv}`})를 이 프로세스에서 읽지 못했습니다(아무것도 쓰지 않았습니다).`);
+  const boxReady = secretBoxReady();
+  const missing = boxReady ? needing.filter(entry => !importKey(entry, snapshot)) : needing;
+  const why = (entry: AiImportConnection) => !boxReady ? "이 프로세스에 키 암호화 설정(NMV_SECRET_BOX_KEY)이 없음"
+    : `${entry.keyFrom ? `계약 ${entry.keyFrom.routeId} · ${entry.keyFrom.model} 의 저장 키` : `환경변수 ${entry.keyEnv}`}를 이 프로세스에서 읽지 못함`;
+  return { labels: missing.map(entry => entry.label), reason: !missing.length ? null : boxReady ? "key_unreadable" : "secret_box_key_missing",
+    warnings: missing.map(entry => `${entry.label}: 키를 옮기지 못해 키 없이 ${done ? "만들었습니다" : "만듭니다"}(${why(entry)}) — 이 연결은 키가 채워질 때까지 `
+      + "부르지 않고 다음 순위로 넘깁니다. 웹·워커가 같은 주소의 계약 키로 자동으로 채우거나, 연결에 키를 넣거나, 다른 모델을 고르세요") };
 }
 
 export async function previewAiTaskImport(): Promise<AiImportPreview> {
@@ -593,11 +598,11 @@ export async function previewAiTaskImport(): Promise<AiImportPreview> {
     const connections = await listAiConnections();
     const connectionLabels = Object.fromEntries(plan.connections.map(row => [row.key, row.label]));
     for (const connection of connections) connectionLabels[connection.kind === "cli" ? `cli:${connection.cliTool}` : `api:${connection.baseUrl}`] ??= connection.label;
-    const blocked = importKeyIssues(plan, servingContractSnapshot().rows);
-    // hash 는 연결·순위의 쓰는 칸만 본다 — 경고 앞에 거절 까닭을 실어도 적용이 다시 만드는 계획의 hash 와 같다
-    return { hash: aiImportPlanHash(plan), plan: blocked.length ? Object.freeze({ ...plan, warnings: Object.freeze([...blocked, ...plan.warnings]) }) : plan,
-      servers, error: null, connectionLabels, blocked: Object.freeze(blocked) };
-  } catch (error) { return { hash: null, plan: null, servers: [], error: issueOf(error), connectionLabels: {}, blocked: [] }; }
+    const keyWarnings = importKeyMissing(plan, servingContractSnapshot().rows, false).warnings;
+    // hash 는 연결·순위의 쓰는 칸만 본다 — 경고 앞에 키 경고를 실어도 적용이 다시 만드는 계획의 hash 와 같다
+    return { hash: aiImportPlanHash(plan), plan: keyWarnings.length ? Object.freeze({ ...plan, warnings: Object.freeze([...keyWarnings, ...plan.warnings]) }) : plan,
+      servers, error: null, connectionLabels, keyWarnings: Object.freeze([...keyWarnings]) };
+  } catch (error) { return { hash: null, plan: null, servers: [], error: issueOf(error), connectionLabels: {}, keyWarnings: [] }; }
 }
 
 export type ApplyAiTaskImportResult = { ok: true; connections: number; slots: number; skipped: number; warnings: string[] } | { ok: false; issues: string[] };
@@ -605,6 +610,7 @@ export type ApplyAiTaskImportResult = { ok: true; connections: number; slots: nu
  * 가져오기 적용 — 계획을 다시 만들어 보여 준 hash 와 같을 때만, 한 TX 에서: 새 연결(목록·키 포함)·CLI 모델 이름 더하기·비어 있던 칸의 순위 행을 쓴다.
  * 계약·정책 route·장비는 만들지 않는다(오늘 설정을 그대로 옮기는 것이라 오늘 없는 것은 오늘도 없다 — 표의 「준비 상태」가 알린다).
  * 이미 순위가 있는 칸은 건너뛴다. 감사 한 줄(가져온 연결·칸 전부).
+ * 키가 필요한 새 연결의 키를 옮길 수 없으면(상자 키 없음·키를 못 읽음) 거절하지 않고 그 연결을 키 없이 만든다 — 결과 warnings 맨 앞에 연결 이름별 경고(importKeyMissing).
  */
 export async function applyAiTaskImport(expectedHash: string, actor: string): Promise<ApplyAiTaskImportResult> {
   if (!validActor(actor)) return { ok: false, issues: ["invalid_actor"] };
@@ -613,13 +619,10 @@ export async function applyAiTaskImport(expectedHash: string, actor: string): Pr
     const { plan, served } = await buildImport();
     if (aiImportPlanHash(plan) !== expectedHash) return { ok: false, issues: ["ai_task_import_plan_changed"] };
     const snapshot = servingContractSnapshot().rows;
-    // 키가 필요한 새 연결의 키를 옮길 수 없으면 아무것도 쓰지 않는다(키 없는 연결을 만들지 않는다)
-    const keyIssues = importKeyIssues(plan, snapshot);
-    if (keyIssues.length) {
-      logger.warn("ai_tasks.import_refused", { actor, reason: secretBoxReady() ? "key_unreadable" : "secret_box_key_missing", connections: keyIssues.length });
-      return { ok: false, issues: keyIssues };
-    }
-    const warnings = [...plan.warnings];
+    // 키를 옮길 수 없는 새 연결은 키 없이 만든다(가져오기·배포를 멈추지 않는다) — 경고를 맨 앞에, 로그에는 이유 코드와 개수만
+    const keyMissing = importKeyMissing(plan, snapshot, true);
+    const sealKeys = secretBoxReady();
+    const warnings = [...keyMissing.warnings, ...plan.warnings];
     const result = await onPrimary(() => db.transaction(async tx => {
       if (!await writerSiteActive(tx)) throw new DrWriterFencedError("site_fenced");
       const ids = new Map<string, string>();
@@ -635,8 +638,8 @@ export async function applyAiTaskImport(expectedHash: string, actor: string): Pr
           continue;
         }
         const id = randomUUID();
-        // 키가 필요한 연결은 위(importKeyIssues)에서 키를 읽고 상자 키가 있음을 확인했다
-        const plain = entry.kind === "api" ? importKey(entry, snapshot) : null;
+        // 상자 키가 있고 키를 읽었을 때만 옮겨 잠근다 — 아니면 키 없이 만든다(위 keyMissing 경고)
+        const plain = entry.kind === "api" && sealKeys ? importKey(entry, snapshot) : null;
         const models = entry.baseUrl ? served.get(entry.baseUrl) ?? null : null;
         await tx.insert(aiConnections).values({ id, label: entry.label, kind: entry.kind, baseUrl: entry.baseUrl, cliTool: entry.cliTool, cliModels: [...entry.cliModels],
           apiKeyCiphertext: plain ? sealSecret(plain, aiConnectionKeyAad(id)) : null, models,
@@ -661,6 +664,7 @@ export async function applyAiTaskImport(expectedHash: string, actor: string): Pr
         detail: { hash: expectedHash, connections: written, slots, skipped, warnings: warnings.length } }));
       return { connections: written.length, slots: slots.length, skipped };
     }));
+    if (keyMissing.reason) logger.warn("ai_tasks.import_key_missing", { actor, reason: keyMissing.reason, connections: keyMissing.labels.length });
     logger.info("ai_tasks.import_applied", { actor, ...result });
     return { ok: true, ...result, warnings };
   } catch (error) { return { ok: false, issues: [issueOf(error)] }; }

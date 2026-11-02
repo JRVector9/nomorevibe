@@ -33,8 +33,9 @@ const JOBS: readonly (readonly [AiTextTaskId, string, string, Handler])[] = [
   ["product-tagline-ko", "gpt-oss-120b", "tagline_ko.skipped", writeKoreanTaglines],
   ["product-translate", "mlx-community--gemma-4-26b-a4b-it-4bit", "product_translation.deferred", translateDemandedProductFields],
 ];
+// 모든 순위가 키 없는 연결뿐이면 cause 가 붙는다 — 진행 감시가 설정의 일로 보아 배포 관문을 막지 않는다(2026-11-02)
 const unusable = (route: AiTextTaskId, model: string, code: string) => ({ done: true, degraded: { code: "all_ranks_unusable",
-  detail: `${aiTask(route)!.label}: 1순위 test-engine · ${model}: ${textRankUnusableText(code)}` } });
+  detail: `${aiTask(route)!.label}: 1순위 test-engine · ${model}: ${textRankUnusableText(code)}`, ...(code === "connection_key_missing" ? { cause: code } : {}) } });
 
 it.each(JOBS)("%s — 순위가 없으면 게이트웨이 키·계약이 있어도 부르지 않고 no_task_models 로 넘긴다", async (route, model, event, handler) => {
   vi.stubEnv("ABCLLM_API_KEY", "old-gateway-key");

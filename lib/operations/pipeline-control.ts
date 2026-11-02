@@ -193,8 +193,12 @@ export const controlSnapshotSchema = z.object({
 export type ControlSnapshot = z.infer<typeof controlSnapshotSchema>;
 type StageRow = ControlSnapshot["stages"][number];
 
-export type RouteStatus = "serving" | "no_contract" | "unmapped" | "admission_only" | "stage_legacy" | "unknown" | "unused";
-export type RouteUse = { routeId: string; provider: string; model: string | null; remoteContractReady?: boolean };
+/**
+ * key_missing: text 경로의 모든 순위가 키 없는 연결뿐이다 — 잡은 그 경로를 부르지 않고(connection_key_missing) 「제 일 못 함」으로 남긴다.
+ * 설정의 일(키가 채워지거나 관리자가 모델을 고르면 풀림)이라 OPEN 이 미룸으로 세지 않는다(2026-11-02 사람 결정 「키 없어도 배포는 되게」).
+ */
+export type RouteStatus = "serving" | "no_contract" | "unmapped" | "admission_only" | "stage_legacy" | "unknown" | "unused" | "key_missing";
+export type RouteUse = { routeId: string; provider: string; model: string | null; remoteContractReady?: boolean; keyMissing?: true };
 export type RouteContract = RouteUse & { status: RouteStatus };
 type RouteSpec = { routeId: string; provider: string;
   served: ((model: string, mapping: ModelCapacityPolicy["routes"][number]) => boolean) | null };
@@ -240,7 +244,9 @@ const MODEL_ROUTES: readonly RouteSpec[] = [
  * 그 route 는 이 이름들로 판정한다. 순위가 없는 route 는 이름이 비어 「모름」이다.
  */
 export type ModelEnv = { translate: string; productTranslate: string; koreanTagline?: string; searchQuery?: string; tagline: string; profile: string; verify: string; introCheck: string;
-  pooled?: Partial<Record<TextModelRoute, readonly string[]>> };
+  pooled?: Partial<Record<TextModelRoute, readonly string[]>>;
+  /** 묶인 순위가 없고 모든 순위가 키 없는 연결뿐인 text 경로(model-env.ts rankedTextRoutes) — 「모름」 대신 key_missing 이다 */
+  keyMissing?: readonly TextModelRoute[] };
 export const TEXT_ROUTES = [["product-search-profile", "profile"], ["product-search-verify", "verify"], ["reason-translate", "translate"],
   ["product-translate", "productTranslate"], ["product-tagline-ko", "koreanTagline"], ["search-query-translate", "searchQuery"], ["crawl-tagline", "tagline"]] as const;
 export type TextModelRoute = (typeof TEXT_ROUTES)[number][0];
@@ -269,6 +275,7 @@ export function usedModelRoutes(snapshot: ControlSnapshot, models: ModelEnv | nu
   for (const [routeId, key] of TEXT_ROUTES) {
     const pooled = models?.pooled?.[routeId];
     if (pooled?.length) for (const model of pooled) add(routeId, "abcllm", model);
+    else if (models?.keyMissing?.includes(routeId)) uses.set(JSON.stringify([routeId, "abcllm", null]), { routeId, provider: "abcllm", model: null, keyMissing: true });
     else add(routeId, "abcllm", models?.[key] ?? (key === "koreanTagline" || key === "searchQuery" ? models?.translate : null));
   }
   add("product-intro-check", "claude-cli", models?.introCheck);
@@ -305,7 +312,7 @@ export function modelRouteContracts(policy: ModelCapacityPolicy | null, ai2Mode:
     const spec = MODEL_ROUTES.find(row => row.routeId === use.routeId && row.provider === use.provider);
     const mapping = policy?.routes.find(route => sameRoute(route, use));
     const remote = use.routeId === 'crawl-publish-classify' && spec;
-    const status: RouteStatus = use.model === null || !spec ? "unknown" : remote
+    const status: RouteStatus = use.keyMissing ? "key_missing" : use.model === null || !spec ? "unknown" : remote
       ? !mapping ? 'unmapped' : use.remoteContractReady === true ? 'serving' : 'no_contract'
       : !spec.served ? "admission_only"
       : !mapping ? "unmapped" : spec.served(use.model, mapping) ? "serving" : "no_contract";
@@ -322,7 +329,8 @@ export function modelRouteContracts(policy: ModelCapacityPolicy | null, ai2Mode:
   if (ai2Mode === "legacy") rows.push({ routeId: "second-review", provider: "legacy-job", model: null, status: "stage_legacy" });
   return rows;
 }
-export const deferredRoutes = (rows: readonly RouteContract[]) => rows.filter(row => row.status !== "serving" && row.status !== "unused");
+// key_missing 은 미룸이 아니다 — 잡이 그 경로를 부르지 않는다(설정의 일, 관리 화면이 보인다)
+export const deferredRoutes = (rows: readonly RouteContract[]) => rows.filter(row => row.status !== "serving" && row.status !== "unused" && row.status !== "key_missing");
 
 function storedCapacityPolicy(snapshot: ControlSnapshot): ModelCapacityPolicy | null {
   const parsed = modelCapacityPolicySchema.safeParse(snapshot.capacity.policy);

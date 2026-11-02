@@ -23,25 +23,28 @@ describe("set 명령 인자", () => {
   });
 });
 
-describe("가져오기 거절 → 종료 코드", () => {
+describe("가져오기 키 경고 → 종료 코드(2026-11-02 사람 결정: 키가 없어도 가져오기·배포는 멈추지 않는다)", () => {
   afterEach(() => { vi.restoreAllMocks(); repo.preview.mockReset(); repo.apply.mockReset(); });
-  const REFUSED = "가져오기를 할 수 없습니다 — 키가 필요한 연결(m3-mlx)의 키를 옮겨야 하는데 이 프로세스에는 키 암호화 설정(NMV_SECRET_BOX_KEY)이 없습니다.";
-  it("apply: 키를 옮길 수 없어 거절되면(아무것도 쓰지 않음) 1 과 그 까닭을 찍는다", async () => {
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    repo.apply.mockResolvedValue({ ok: false, issues: [REFUSED] });
-    expect(await runAiTaskRanks(["apply", `--hash=${"a".repeat(64)}`, "--operator=claude"])).toBe(1);
-    expect(repo.apply).toHaveBeenCalledWith("a".repeat(64), "claude");
-    expect(log.mock.calls.flat().join("\n")).toContain(REFUSED);
-    repo.apply.mockResolvedValue({ ok: true, connections: 1, slots: 1, skipped: 0, warnings: [] });
+  const WARNED = "m3-mlx: 키를 옮기지 못해 키 없이 만들었습니다(이 프로세스에 키 암호화 설정(NMV_SECRET_BOX_KEY)이 없음) — 이 연결은 키가 채워질 때까지 부르지 않고 다음 순위로 넘깁니다.";
+  it("apply: 키 없이 만들었다는 경고가 있어도 성공이면 0 — 결과 JSON 은 stdout 한 줄, 경고는 stderr 「경고 …」", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {}), err = vi.spyOn(console, "error").mockImplementation(() => {});
+    repo.apply.mockResolvedValue({ ok: true, connections: 1, slots: 1, skipped: 0, warnings: [WARNED] });
     expect(await runAiTaskRanks(["apply", `--hash=${"a".repeat(64)}`, "--operator=claude"])).toBe(0);
+    expect(repo.apply).toHaveBeenCalledWith("a".repeat(64), "claude");
+    expect(log.mock.calls).toHaveLength(1);
+    expect(JSON.parse(String(log.mock.calls[0][0]))).toMatchObject({ ok: true, warnings: [WARNED] });
+    expect(err.mock.calls.flat()).toContain(`경고 ${WARNED}`);
+    // 진짜 실패(계획이 바뀜 등)는 여전히 1
+    repo.apply.mockResolvedValue({ ok: false, issues: ["ai_task_import_plan_changed"] });
+    expect(await runAiTaskRanks(["apply", `--hash=${"a".repeat(64)}`, "--operator=claude"])).toBe(1);
   });
-  it("preview: 적용이 거절될 계획이면 1(까닭은 경고 맨 앞 줄), 아니면 0", async () => {
+  it("preview: 키 경고만 있으면 0(경고 맨 앞 줄에 보임), 계획을 못 만들면 1", async () => {
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    const plan = { connections: [], slots: [], warnings: [REFUSED] };
-    repo.preview.mockResolvedValue({ hash: "b".repeat(64), plan, servers: [], error: null, connectionLabels: {}, blocked: [REFUSED] });
-    expect(await runAiTaskRanks(["preview"])).toBe(1);
-    expect(log.mock.calls.flat()).toContain(`경고 ${REFUSED}`);
-    repo.preview.mockResolvedValue({ hash: "b".repeat(64), plan: { ...plan, warnings: [] }, servers: [], error: null, connectionLabels: {}, blocked: [] });
+    const plan = { connections: [], slots: [], warnings: [WARNED] };
+    repo.preview.mockResolvedValue({ hash: "b".repeat(64), plan, servers: [], error: null, connectionLabels: {}, keyWarnings: [WARNED] });
     expect(await runAiTaskRanks(["preview"])).toBe(0);
+    expect(log.mock.calls.flat()).toContain(`경고 ${WARNED}`);
+    repo.preview.mockResolvedValue({ hash: null, plan: null, servers: [], error: "db_unavailable", connectionLabels: {}, keyWarnings: [] });
+    expect(await runAiTaskRanks(["preview"])).toBe(1);
   });
 });

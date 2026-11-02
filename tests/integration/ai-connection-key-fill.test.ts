@@ -10,12 +10,13 @@ import { aiConnectionKeyAad, aiUnreadConnections, AI_KEY_CONFLICT_TEXT, type AiC
 import { applyAiTaskImport, previewAiTaskImport, readAiTasksAdminView, setAiTaskDepsForTest } from "@/lib/operations/admin-ai-tasks-repository";
 import { AI_CONNECTION_KEY_FILL_ACTOR, fillConnectionKeysFromContracts, maybeFillConnectionKeys, resetConnectionKeyFillGateForTest,
   setConnectionKeyFillDepsForTest } from "@/lib/operations/ai-connection-key-fill";
+import { logger } from "@/lib/observability/logger";
 import { openSecret, sealSecret } from "@/lib/security/secret-box";
 import { TEST_DATABASE_URL } from "./setup";
 
 /**
  * 키 없는 연결(2026-11-02 사고) — ① 같은 주소 계약 키로 연결 키 채우기(조건부 갱신·감사·목록 다시 읽기·동시 실행·순위 스냅숏 경로)와
- * ③ 키를 옮길 수 없는 가져오기 거절을 진짜 DB(자기 DB, 끝까지 migrate)로 본다. 계약 키는 계약 스냅숏 고정(평문은 메모리 안)으로 준다. 키는 모두 가짜다.
+ * ③ 키를 옮길 수 없는 가져오기(거절하지 않고 키 없이 만들고 경고)를 진짜 DB(자기 DB, 끝까지 migrate)로 본다. 계약 키는 계약 스냅숏 고정(평문은 메모리 안)으로 준다. 키는 모두 가짜다.
  */
 vi.mock("@/lib/auth/admin", () => ({ currentAdmin: async () => ({ login: "operator" }), localOperatorName: async () => null }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
@@ -179,46 +180,76 @@ describe("① 같은 주소 계약 키로 연결 키 채우기", () => {
   });
 });
 
-describe("③ 가져오기 거절 — 키가 필요한 연결의 키를 옮길 수 없으면 아무것도 쓰지 않는다", () => {
+describe("③ 가져오기 키 경고 — 키를 옮길 수 없어도 거절하지 않고 키 없이 만든다(2026-11-02 사람 결정: 키 없어도 배포는 되게)", () => {
   const keyedUse = (keyEnv: string | null, keyFrom: { routeId: string; model: string } | null = null): AiCurrentSlot => ({ task: "reason-translate", slot: 1,
     source: "설정", error: null, skip: null, notes: [], uses: [{ kind: "api", baseUrl: M3, cliTool: null, model: "m3-model", provider: "abcllm", origin: "test",
       deviceId: "m3-mlx", keyFrom, ...(keyEnv ? { keyEnv } : {}) }] });
   const counts = async () => ({ connections: Number((await client`SELECT count(*) AS n FROM ai_connections`)[0].n),
     ranks: Number((await client`SELECT count(*) AS n FROM ai_task_models`)[0].n), imports: (await audits("ai-task-models-import")).length });
-
-  it("상자 키가 없는 프로세스(11-02 유지보수 컨테이너): 계획은 그 까닭을 보이고, 적용은 ok:false — 연결·순위·감사 0", async () => {
-    vi.stubEnv("TEST_IMPORT_KEY", FAKE_KEY);
-    current = [keyedUse("TEST_IMPORT_KEY")];
-    vi.stubEnv("NMV_SECRET_BOX_KEY", "");
+  const made = async () => (await client<{ id: string; label: string; api_key_ciphertext: string | null }[]>`SELECT id, label, api_key_ciphertext FROM ai_connections`);
+  /** 키 없이 만든 연결 하나·순위 한 줄·감사 한 줄(keyMoved false), 결과 경고 맨 앞이 그 연결 이름의 경고, 로그는 이유 코드·개수만 */
+  async function expectKeylessImport(reason: string, why: string) {
+    const warn = vi.spyOn(logger, "warn");
     const preview = await previewAiTaskImport();
     expect(preview.error).toBeNull();
-    expect(preview.blocked).toHaveLength(1);
-    expect(preview.blocked[0]).toContain("NMV_SECRET_BOX_KEY");
-    expect(preview.plan!.warnings[0]).toBe(preview.blocked[0]);
+    const [connection] = preview.plan!.connections;
+    expect(preview.keyWarnings).toEqual([expect.stringContaining(`${connection.label}: 키를 옮기지 못해 키 없이 만듭니다(${why}`)]);
+    expect(preview.keyWarnings[0]).toContain("부르지 않고 다음 순위로 넘깁니다");
+    expect(preview.plan!.warnings[0]).toBe(preview.keyWarnings[0]);
     const applied = await applyAiTaskImport(preview.hash!, "operator");
-    expect(applied).toEqual({ ok: false, issues: preview.blocked });
-    expect(await counts()).toEqual({ connections: 0, ranks: 0, imports: 0 });
+    expect(applied).toMatchObject({ ok: true, connections: 1, slots: 1, skipped: 0 });
+    if (!applied.ok) throw new Error("import_failed");
+    expect(applied.warnings[0]).toBe(`${connection.label}: 키를 옮기지 못해 키 없이 만들었습니다(${preview.keyWarnings[0].split("만듭니다(")[1]}`);
+    expect(await counts()).toEqual({ connections: 1, ranks: 1, imports: 1 });
+    const [row] = await made();
+    expect(row).toMatchObject({ label: connection.label, api_key_ciphertext: null });
+    expect((await client`SELECT connection_id FROM ai_task_models WHERE task = 'reason-translate'`)[0].connection_id).toBe(row.id);
+    const [audit] = await audits("ai-task-models-import");
+    expect(audit.detail.connections).toEqual([expect.objectContaining({ label: connection.label, keyMoved: false })]);
+    expect(JSON.stringify(audit)).not.toContain(FAKE_KEY);
+    expect(warn).toHaveBeenCalledWith("ai_tasks.import_key_missing", { actor: "operator", reason, connections: 1 });
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(FAKE_KEY);
+    warn.mockRestore();
+    return row;
+  }
+
+  it("상자 키가 없는 프로세스(11-02 유지보수 컨테이너): 키를 읽어도 잠글 수 없어 키 없이 만들고 순위를 적용 — 상자 키가 있는 프로세스의 ①이 나중에 채운다", async () => {
+    vi.stubEnv("TEST_IMPORT_KEY", FAKE_KEY);
+    current = [keyedUse("TEST_IMPORT_KEY")];
+    const box = process.env.NMV_SECRET_BOX_KEY!;
+    vi.stubEnv("NMV_SECRET_BOX_KEY", "");
+    const row = await expectKeylessImport("secret_box_key_missing", "이 프로세스에 키 암호화 설정(NMV_SECRET_BOX_KEY)이 없음");
+    // ① 같은 주소의 계약 키가 있는 웹·워커(상자 키 있음)가 채운다
+    vi.stubEnv("NMV_SECRET_BOX_KEY", box);
+    setServingContractSnapshotForTest([contract("reason-translate", "m3-model", M3, "stored", FAKE_KEY)]);
+    expect((await fillConnectionKeysFromContracts()).filled.map(entry => entry.id)).toEqual([row.id]);
+    expect(openSecret((await made())[0].api_key_ciphertext!, aiConnectionKeyAad(row.id))).toBe(FAKE_KEY);
   });
 
-  it("상자 키는 있어도 그 키(env·계약 저장 키)를 읽지 못하면 거절; 읽으면 키를 담아 만든다", async () => {
+  it("상자 키는 있어도 env 키를 읽지 못하면 키 없이 만들고 순위를 적용한다", async () => {
     current = [keyedUse("TEST_IMPORT_KEY_MISSING")];
-    const preview = await previewAiTaskImport();
-    expect(preview.blocked).toEqual([expect.stringContaining("환경변수 TEST_IMPORT_KEY_MISSING")]);
-    expect(await applyAiTaskImport(preview.hash!, "operator")).toMatchObject({ ok: false });
+    await expectKeylessImport("key_unreadable", "환경변수 TEST_IMPORT_KEY_MISSING를 이 프로세스에서 읽지 못함");
+  });
+
+  it("상자 키는 있어도 계약 저장 키를 열지 못하면 키 없이 만들고 순위를 적용한다", async () => {
     current = [keyedUse(null, { routeId: "reason-translate", model: "m3-model" })];
     setServingContractSnapshotForTest([contract("reason-translate", "m3-model", M3, "stored", null)]);
-    const unread = await previewAiTaskImport();
-    expect(unread.blocked).toEqual([expect.stringContaining("계약 reason-translate · m3-model 의 저장 키")]);
-    expect(await applyAiTaskImport(unread.hash!, "operator")).toMatchObject({ ok: false });
-    expect(await counts()).toEqual({ connections: 0, ranks: 0, imports: 0 });
+    await expectKeylessImport("key_unreadable", "계약 reason-translate · m3-model 의 저장 키를 이 프로세스에서 읽지 못함");
+  });
 
+  it("회귀: 상자 키가 있고 키를 읽으면 지금처럼 키를 옮겨 잠그고 경고가 없다", async () => {
+    current = [keyedUse(null, { routeId: "reason-translate", model: "m3-model" })];
     setServingContractSnapshotForTest([contract("reason-translate", "m3-model", M3, "stored", FAKE_KEY)]);
     const ready = await previewAiTaskImport();
-    expect(ready.blocked).toEqual([]);
-    expect(await applyAiTaskImport(ready.hash!, "operator")).toMatchObject({ ok: true, connections: 1, slots: 1 });
-    const [created] = await client<{ id: string; api_key_ciphertext: string | null }[]>`SELECT id, api_key_ciphertext FROM ai_connections`;
+    expect(ready.keyWarnings).toEqual([]);
+    const applied = await applyAiTaskImport(ready.hash!, "operator");
+    expect(applied).toMatchObject({ ok: true, connections: 1, slots: 1 });
+    expect(applied.ok && applied.warnings.some(text => text.includes("키 없이"))).toBe(false);
+    const [created] = await made();
     expect(openSecret(created.api_key_ciphertext!, aiConnectionKeyAad(created.id))).toBe(FAKE_KEY);
-    expect(JSON.stringify((await audits("ai-task-models-import"))[0].detail)).not.toContain(FAKE_KEY);
+    const [audit] = await audits("ai-task-models-import");
+    expect(audit.detail.connections).toEqual([expect.objectContaining({ keyMoved: true })]);
+    expect(JSON.stringify(audit.detail)).not.toContain(FAKE_KEY);
   });
 
   it("회귀: 키가 필요 없는 연결(키 없는 엔진·CLI)만이면 상자 키가 없어도 가져온다", async () => {
@@ -226,7 +257,7 @@ describe("③ 가져오기 거절 — 키가 필요한 연결의 키를 옮길 �
     current = [{ task: "crawl-tagline", slot: 1, source: "설정", error: null, skip: null, notes: [], uses: [
       { kind: "api", baseUrl: GPU, cliTool: null, model: "qwen3.8-flash-next", provider: "abcllm", origin: "test", deviceId: "gpu3090-qwen", keyFrom: null }] }];
     const preview = await previewAiTaskImport();
-    expect(preview.blocked).toEqual([]);
+    expect(preview.keyWarnings).toEqual([]);
     expect(await applyAiTaskImport(preview.hash!, "operator")).toMatchObject({ ok: true, connections: 1, slots: 1 });
     expect(await counts()).toMatchObject({ connections: 1, ranks: 1, imports: 1 });
   });

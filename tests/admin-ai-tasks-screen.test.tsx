@@ -114,17 +114,21 @@ describe("작업 ↔ AI 모델 화면", () => {
     expect(degraded).toContain("쉰 순위 — 1순위: 전송 계약이 닫힘");
     expect(degraded).toContain("제 일 못 함 <code>all_ranks_unusable</code> — 검색어 번역: 1순위 gpu3090 · qwen3.8-flash-next: 전송 계약이 닫힘");
   });
-  it("가져오기 카드: 계획이 없으면 「계획 보기」만, 있으면 만들 연결·칸과 확인 칸", () => {
+  it("가져오기 카드: 계획이 없으면 「계획 보기」만, 있으면 만들 연결·칸과 확인 칸 — 키 경고는 경고 맨 앞 줄이고 적용 버튼은 막지 않는다", () => {
     expect(renderToStaticMarkup(createElement(TaskImportCard, { preview: null, confirmWord: "가져오기" }))).toContain("계획 보기");
-    const html = renderToStaticMarkup(createElement(TaskImportCard, { confirmWord: "가져오기", preview: { hash: "f".repeat(64), error: null, servers: [], blocked: [],
-      connectionLabels: { [`api:${gpu.baseUrl}`]: "gpu3090" }, plan: { warnings: ["경고 하나"], connections: [{ key: `api:${gpu.baseUrl}`, action: "create", id: null, label: "gpu3090",
+    const keyWarning = "gpu3090: 키를 옮기지 못해 키 없이 만듭니다(이 프로세스에 키 암호화 설정(NMV_SECRET_BOX_KEY)이 없음) — 이 연결은 키가 채워질 때까지 부르지 않고 다음 순위로 넘깁니다.";
+    const html = renderToStaticMarkup(createElement(TaskImportCard, { confirmWord: "가져오기", preview: { hash: "f".repeat(64), error: null, servers: [], keyWarnings: [keyWarning],
+      connectionLabels: { [`api:${gpu.baseUrl}`]: "gpu3090" }, plan: { warnings: [keyWarning, "경고 하나"], connections: [{ key: `api:${gpu.baseUrl}`, action: "create", id: null, label: "gpu3090",
         kind: "api", baseUrl: gpu.baseUrl, cliTool: null, cliModels: [], deviceId: "gpu3090-qwen", capacitySlots: 4, keyFrom: null, keyEnv: "AUDIT_SECOND_OPINION_API_KEY" }],
       slots: [{ task: "audit-review", slot: 1, action: "create", ranks: [{ rank: 1, connectionKey: `api:${gpu.baseUrl}`, model: "qwen3.8-flash-next", origin: "등록부·env 기본값", options: {} }] }] } } }));
     expect(html).toContain("연결 1개 만들기 · 순위 채울 칸 1개");
     expect(html).toContain("env AUDIT_SECOND_OPINION_API_KEY 를 옮김");
     expect(html).toContain("1. gpu3090 · <code>qwen3.8-flash-next</code>");
     expect(html).toContain("경고 — 경고 하나");
+    expect(html.indexOf(`경고 — ${keyWarning}`)).toBeGreaterThan(-1);
+    expect(html.indexOf(`경고 — ${keyWarning}`)).toBeLessThan(html.indexOf("경고 — 경고 하나"));
     expect(html).toContain("적용(쓰기 2건)");
+    expect(html).not.toMatch(/<button type="submit" disabled=""/);
   });
   it("서버 액션은 관리자가 아니면 아무것도 하지 않고 거절한다; 모든 쓰기는 쓰기 관문을 지난다", async () => {
     mocks.admin.mockResolvedValue(null);

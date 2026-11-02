@@ -45,7 +45,8 @@ export type JobDeferredReason = "stage_blocked" | "http_origin_permit" | "model_
  * - detail: 사람이 읽을 짧은 까닭(300자까지). 비밀·주소·본문을 넣지 않는다
  * - critical: 기다려도 풀리지 않고 해가 큰 것(자격 거절 등) — 연속 횟수를 기다리지 않고 바로 긴급으로 올린다
  */
-export type JobDegraded = { code: string; detail?: string | null; critical?: boolean };
+/** cause: 그 code 의 더 좁은 까닭(예: all_ranks_unusable 인데 모든 순위가 connection_key_missing — 진행 감시가 설정의 일로 본다). 없으면 관측에도 없다 */
+export type JobDegraded = { code: string; detail?: string | null; critical?: boolean; cause?: string };
 export type JobOutcome<C> = { done: boolean; cursor?: C | null; continuation?: "ready"; deferred?: never; degraded?: JobDegraded; processed?: never }
   | { done: false; deferred: JobDeferredReason;
     /**
@@ -99,7 +100,8 @@ export function degradedObservation(degraded: JobDegraded, at: Date) {
   const detail = typeof degraded.detail === "string" ? degraded.detail.replaceAll("\0", "").slice(0, 300) : "";
   const iso = at.toISOString();
   return { code: DEGRADED_CODE.test(degraded.code) ? degraded.code : "unknown", detail: detail || null,
-    critical: degraded.critical === true, at: iso, streak: 1, since: iso };
+    critical: degraded.critical === true, at: iso, streak: 1, since: iso,
+    ...(typeof degraded.cause === "string" && DEGRADED_CODE.test(degraded.cause) ? { cause: degraded.cause } : {}) };
 }
 
 /**

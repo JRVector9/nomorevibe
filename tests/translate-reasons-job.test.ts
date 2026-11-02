@@ -25,8 +25,9 @@ const SECOND = "[m1] gemma-second";
 const SECOND_CONNECTION = "0b0c0d0e-0000-4000-8000-0000000000bb", SECOND_BASE = "http://second.test:8000/v1";
 /** The admin engine contract for the rank's model — the only thing that opens the route since the gateway was removed (2026-10-30). */
 const direct = (change: Partial<StoredServingContract> = {}): StoredServingContract => ({ ...textContract("reason-translate", MODEL), ...change });
-const unusable = (code: string, model = MODEL) =>
-  ({ done: true, degraded: { code: "all_ranks_unusable", detail: `심사 사유 번역: 1순위 test-engine · ${model}: ${textRankUnusableText(code)}` } });
+// 모든 순위가 키 없는 연결뿐이면 cause 가 붙는다 — 진행 감시가 설정의 일로 보아 배포 관문을 막지 않는다(2026-11-02)
+const unusable = (code: string, model = MODEL) => ({ done: true, degraded: { code: "all_ranks_unusable",
+  detail: `심사 사유 번역: 1순위 test-engine · ${model}: ${textRankUnusableText(code)}`, ...(code === "connection_key_missing" ? { cause: code } : {}) } });
 
 it("capacity admission preserves the pending reason and consumes no attempt or write", async () => {
   // PR B: 계약이 닫힌 것(provider_contract_unavailable)은 이 모델만의 미룸이다 — 순위가 하나뿐이면 그 순위를 쉬게 하고, 한 건도 못 했으니 까닭을 남긴다

@@ -305,7 +305,8 @@ Grok 로그인 유지(`grok-session-check`). migration 없음 — 계약 행은 
 ## 키 없는 연결(2026-11-02 사고 뒤)
 
 11-02 10:46Z 「지금 설정 가져오기」를 상자 키(`NMV_SECRET_BOX_KEY`)가 없는 유지보수 컨테이너에서 돌려 `m3-mlx`·`m3-mlx (2)` 연결이 키 없이 만들어졌고,
-실행 쪽이 그 연결로 키 없이 불러 M3 가 401 → 결과 미확정 3건, M3 text 잡 셋(reason-translate·product-tagline-ko·product-search-profile)이 멈췄다. migration 없이 세 가지를 고쳤다.
+실행 쪽이 그 연결로 키 없이 불러 M3 가 401 → 결과 미확정 3건, M3 text 잡 셋(reason-translate·product-tagline-ko·product-search-profile)이 멈췄다. migration 없이 세 가지를 고쳤고,
+키 없음이 배포를 막지 않게 했다(아래 「배포 관문」).
 
 ### ① 같은 주소 계약 키로 연결 키 채우기(`lib/operations/ai-connection-key-fill.ts`)
 
@@ -328,14 +329,40 @@ Grok 로그인 유지(`grok-session-check`). migration 없음 — 계약 행은 
   예전에는 심사 분기가 키 없는 연결로 bearer null 을 보냈다.
 - 키 없이 도는 서버(계약 auth none, local-direct — gpu3090 qwen·M1 mlx_lm.server)는 예전 그대로 Authorization 없이 부른다.
 
-### ③ 가져오기 거절(fail closed)
+### ③ 가져오기 경고 — 키 없이 만들고 계속한다(2026-11-02 사람 결정 「키 없어도 배포는 되게, 모델은 관리자가 지정」)
 
-- `applyAiTaskImport`: 키가 필요한 새 연결(keyFrom·keyEnv)이 하나라도 있는데 상자 키가 없거나 그 키를 읽지 못하면 **아무것도 쓰지 않고** `{ ok: false, issues }`(한국어 까닭).
-  예전에는 경고만 남기고 키 없는 연결을 만들었다. `previewAiTaskImport` 는 같은 까닭을 `blocked` 와 계획 경고 맨 앞에 싣는다.
-- `scripts/ops/ai-task-ranks.ts` 는 `apply` 거절이면 종료 코드 1, `preview` 도 거절될 계획이면 1 이다. 키 암호화 설정이 있는 웹·워커 컨테이너에서 돌린다.
+처음에는 거절(fail closed)했으나, 키가 없다는 까닭으로 가져오기·배포가 멈추면 안 된다는 결정으로 경고로 바꿨다.
+키 없는 연결은 ②가 부르지 않고 다음 순위로 넘기고, ①이 같은 주소의 계약 키로 나중에 채우며, 그사이 관리자가 드롭다운에서 다른 모델을 고르면 된다.
+
+- `applyAiTaskImport`: 키가 필요한 새 연결(keyFrom·keyEnv)의 키를 옮길 수 없어도(상자 키 없음·키를 못 읽음) 거절하지 않는다. 그 연결은 키 없이 만들고 순위도 그대로 적용한다.
+  결과 `warnings` 맨 앞에 연결 이름마다 한국어 경고 — 「m3-mlx: 키를 옮기지 못해 키 없이 만들었습니다(까닭) — 이 연결은 키가 채워질 때까지 부르지 않고 다음 순위로
+  넘깁니다. 웹·워커가 같은 주소의 계약 키로 자동으로 채우거나, 연결에 키를 넣거나, 다른 모델을 고르세요」. 로그 `ai_tasks.import_key_missing` 에는 이유 코드
+  (`secret_box_key_missing`·`key_unreadable`)와 개수만 남긴다(키 값·암호문 없음). 감사 행의 연결마다 `keyMoved`.
+- 상자 키가 있고 키를 읽으면 예전처럼 키를 옮겨 잠근다.
+- `previewAiTaskImport` 는 같은 경고(「…키 없이 만듭니다…」)를 `keyWarnings` 와 계획 경고 맨 앞에 싣는다. hash 는 연결·순위의 쓰는 칸만 본다(경고는 hash 밖).
+  화면 「지금 설정 가져오기」는 계획의 「경고 —」 줄과 적용 결과의 「알림 —」 줄로 보인다(적용 단추는 막지 않는다).
+- `scripts/ops/ai-task-ranks.ts`: `preview` 는 키 경고만 있으면 종료 코드 0(계획을 못 만들 때만 1), `apply` 는 결과 JSON 을 stdout 한 줄로, 경고를 stderr 「경고 …」 줄로
+  찍고 성공이면 0. 키를 옮겨 두려면 키 암호화 설정이 있는 웹·워커 컨테이너에서 돌린다.
+
+### 배포 관문 — 키 없음은 설정의 일이다
+
+모든 순위가 키 없는 연결뿐이라 일을 못 하는 작업이 배포 도구를 막지 않게 했다(재시작도 하지 않는다, 관리 화면에는 계속 보인다).
+
+- 잡 degraded: `all_ranks_unusable` 의 모든 순위 까닭이 `connection_key_missing` 뿐이면 `cause: "connection_key_missing"` 을 싣는다(text `TextTaskRanks.degraded`,
+  1차·2차 `firstReviewRanksDegraded`·`secondReviewRanksDegraded`). 다른 까닭이 하나라도 섞이면 cause 가 없다. job 관측(`degradedObservation`)이 그대로 싣는다.
+- 진행 감시(`worker-progress-query.ts` `applyKeyMissingHold`): 그 잡의 신선한(3분 안) 관측에 cause 가 있으면 그 단계의 `no_progress`(그리고 5분 안 새 실패·잡 오류가 없는
+  `upstream_stalled` — 키 없이 부른 401 이 남긴 옛 실패만 있는 대기)를 `held` + `backoff`(경보·재시작 없음) + `skipBlock: key_missing` 으로 바꾼다.
+  그래서 worker progress `overall` 이 그 단계 때문에 alarm 이 되지 않고, 배포 도구의 사전·사후 관문(`monitor_gate` → `gate_verdict` 의 `progress=ok`)이 막히지 않는다.
+  예전에는 text 단계가 `no_progress` 경보로 남아 overall=alarm → `crawler_monitor_gate_timeout:…progress=alarm` 이었다(`applyAllSkippedBlock` 은 재시작만 끄고,
+  text 단계는 처음부터 재시작 대상이 아니라 아무것도 바꾸지 않았다). worker_missing·consumer_missing·cause 없는 all_ranks_unusable·오래된 관측은 그대로 경보다.
+- OPEN(`pipeline-control capacity mode --to=open`, ops-runner 포함): text 경로의 모든 순위가 키 없는 연결이면 묶인 이름이 없어 그 경로가 「모름」(unknown)으로
+  `deferred_routes` 에 세어져 OPEN 이 거절됐다. 이제 `currentModelEnv().keyMissing`(`rankedTextRoutes`)이 그 경로를 알려 `key_missing` 상태가 되고 미룸으로 세지 않는다
+  (잡이 그 경로를 부르지 않는다). 상태 화면 「모델 경로 계약」에 「연결 키 없음 — 키를 채우거나 모델을 고르세요(key_missing)」로 보인다.
+- text 워커 자체 재시작 판정(`text-progress.ts`)은 원래 「부를 수 있는 경로가 없음」을 정체로 보지 않는다 — 그대로.
 
 ### 배포 뒤 확인
 
+- 키 없이도 배포할 수 있다 — 배포 뒤 `m3-mlx` 키가 비어 있어도 그 순위는 건너뛰고 다음 순위로 돈다(다음 순위가 없으면 그 작업은 「제 일 못 함」으로 보이고 관문은 막지 않는다).
 - `m3-mlx`·`m3-mlx (2)` 연결 hasKey·모델 목록(화면 위 알림이 사라짐, 최근 기록 「키 자동 채움」), 멈춘 잡 셋 재개(상태 화면 「제 일 못 함」이 사라짐).
 - 결과 미확정 3건은 이 변경이 회수하지 않는다 — 정식 회수 CLI 로 처리한다.
 

@@ -53,7 +53,7 @@ describe("② text 작업 — 키가 필요한 서버에 키 없는 연결이면
     setAiTaskModelsForTest([textRankRow("product-tagline-ko", "m3-model", { label: "m3-mlx" })]);
     const ranks = new TextTaskRanks(resolveTextTaskRanks("product-tagline-ko"));
     expect(ranks.earlyDegraded()).toEqual({ code: "all_ranks_unusable",
-      detail: `한국어 소개 번역: 1순위 m3-mlx · m3-model: ${TEXT_RANK_UNUSABLE_TEXT.connection_key_missing}`.slice(0, 300) });
+      detail: `한국어 소개 번역: 1순위 m3-mlx · m3-model: ${TEXT_RANK_UNUSABLE_TEXT.connection_key_missing}`.slice(0, 300), cause: "connection_key_missing" });
     expect(textRankUnusableText("connection_key_missing")).toMatch(/^연결에 키가 없음/);
   });
 
