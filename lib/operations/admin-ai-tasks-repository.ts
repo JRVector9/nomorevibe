@@ -41,6 +41,7 @@ const VERSION_MAX = 9007199254740991;
 const fail = (code: string): never => { throw new Error(code); };
 const SAFE_CODE = /^[a-z0-9_:./-]{1,160}$/;
 const validActor = (actor: string) => typeof actor === "string" && !!actor.trim() && actor.length <= 120;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
 export const aiTaskSlotRevision = (rows: readonly Pick<AiTaskRankRow, "rank" | "connectionId" | "model" | "options" | "enabled">[]) => sha256(aiTaskSlotDigestInput(rows));
 export const aiImportPlanHash = (plan: AiImportPlan) => sha256(aiImportPlanDigestInput(plan));
@@ -289,6 +290,7 @@ export type ReadAiConnectionModelsResult = { ok: true; count: number } | { ok: f
  */
 export async function readAiConnectionModels(id: string, actor: string): Promise<ReadAiConnectionModelsResult> {
   if (!validActor(actor)) return { ok: false, issues: ["invalid_actor"] };
+  if (!UUID.test(id)) return { ok: false, issues: ["ai_connection_missing"] };
   try {
     const [row] = await onPrimary(() => db.select().from(aiConnections).where(eq(aiConnections.id, id)));
     if (!row) return { ok: false, issues: ["ai_connection_missing"] };
@@ -313,6 +315,7 @@ export async function readAiConnectionModels(id: string, actor: string): Promise
 /** 쓰는 순위가 없는 연결만 지운다(FK RESTRICT). 판 compare-and-set, 감사 한 줄. */
 export async function deleteAiConnection(id: string, expectedVersion: number, actor: string): Promise<{ ok: true } | { ok: false; issues: string[] }> {
   if (!validActor(actor)) return { ok: false, issues: ["invalid_actor"] };
+  if (!UUID.test(id)) return { ok: false, issues: ["ai_connection_missing"] };
   try {
     await onPrimary(() => db.transaction(async tx => {
       if (!await writerSiteActive(tx)) throw new DrWriterFencedError("site_fenced");
