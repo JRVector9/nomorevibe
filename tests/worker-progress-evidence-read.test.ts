@@ -222,3 +222,10 @@ describe("근거 재시도 보정(withProviderBackoff)", () => {
     result.forEach((row, index) => expect(row).toBe(jobs[index]));
   });
 });
+
+describe('text stage progress SQL limits', () => {
+  it('gives the reason group 10 s (3.2 s measured in production 2026-11-02) and keeps 3 s for the other text stages', async () => {
+    const actual = await vi.importActual<typeof import('@/lib/operations/text-stage-progress')>('@/lib/operations/text-stage-progress');
+    expect(actual.TEXT_PROGRESS_STATEMENT_TIMEOUT).toEqual({ reason: '10s', other: '3s' });
+  });
+});
