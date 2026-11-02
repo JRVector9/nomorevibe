@@ -54,3 +54,7 @@ next-env.d.ts
 
 # ESLint 캐시(CI lint 잡이 --cache-location 으로 쓴다)
 .eslintcache
+
+# 사업·발표 자료는 공개 저장소에 두지 않는다
+/docs/PT/
+*.zip
