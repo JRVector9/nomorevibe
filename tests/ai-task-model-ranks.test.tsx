@@ -453,3 +453,34 @@ describe("RankSelects — 작업 ↔ 모델 꼴(provider 칸 = 연결 id)", () =
     expect(html).not.toContain("저장하면 다음 틱부터 적용됩니다");
   });
 });
+
+describe("text 경로에 순위가 없을 때 가져오기 출처 = 켜진 엔진 직접 계약 하나(합친 배포 — A·B·C1 을 한 번에 올려도 가져오기가 비지 않게)", () => {
+  const MODEL_ENV = { translate: "", productTranslate: "", tagline: "", profile: "", verify: "", introCheck: "" } satisfies ModelEnv;
+  const current = () => buildAiCurrentSlots({ settings: DEFAULT_CRAWL_SETTINGS, modelEnv: MODEL_ENV, policy: null, agent: null, auditCampaign: null, tableOn: false, env: {} });
+  it("계약이 하나면 그 계약(주소·저장 키)을 1순위로 옮기고, 둘 이상이거나 없으면 지어내지 않고 건너뛴다", async () => {
+    const { setServingContractSnapshotForTest } = await import("@/lib/llm/serving-contract-store");
+    const { setAiTaskModelsForTest } = await import("@/lib/llm/ai-task-models-snapshot");
+    const direct = (routeId: string, model: string, endpoint: string, apiKey: string | null = null) =>
+      ({ routeId, model, contract: { routeId, model, endpoint }, auth: apiKey ? "stored" as const : "none" as const, apiKey, transport: "direct" as const });
+    setAiTaskModelsForTest([]);
+    setServingContractSnapshotForTest([
+      direct("reason-translate", "gpt-oss-120b", "http://m3.test:8014/v1/chat/completions", "k"),
+      direct("crawl-tagline", "supa", "http://supa.test:8000/v1/chat/completions"),
+      direct("product-search-verify", "supa", "http://supa.test:8000/v1/chat/completions"),
+      direct("product-search-verify", "other", "http://other.test:8000/v1/chat/completions"),
+    ]);
+    try {
+      const slots = current();
+      const by = (task: string) => slots.find(slot => slot.task === task)!;
+      expect(by("reason-translate").skip).toBeNull();
+      expect(by("reason-translate").uses.map(use => [use.baseUrl, use.model, use.keyFrom])).toEqual([["http://m3.test:8014/v1", "gpt-oss-120b", { routeId: "reason-translate", model: "gpt-oss-120b" }]]);
+      expect(by("crawl-tagline").uses.map(use => [use.baseUrl, use.model, use.keyFrom])).toEqual([["http://supa.test:8000/v1", "supa", null]]);
+      expect(by("product-search-verify").uses).toEqual([]);
+      expect(by("product-search-verify").skip).toContain("no_task_models");
+      expect(by("product-translate").uses).toEqual([]);
+    } finally {
+      setServingContractSnapshotForTest(null);
+      setAiTaskModelsForTest(null);
+    }
+  });
+});

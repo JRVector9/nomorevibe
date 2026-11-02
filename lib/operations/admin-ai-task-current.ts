@@ -160,6 +160,18 @@ export function buildAiCurrentSlots(sources: AiCurrentSources): AiCurrentSlot[] 
         case "product-search-profile": case "product-search-verify": {
           // PR B: 실행 쪽이 이 표(작업 ↔ 모델)를 읽는다 — 지금 쓰는 모델 = 저장한 순위. 쓸 수 없는 순위는 그 까닭을 붙인다.
           const resolution = resolveTextTaskRanks(task.id as AiTextTaskId);
+          // 순위가 아직 없으면(배포 직후·가져오기 전) 가져오기 출처는 이 경로의 켜진 엔진 직접 계약이다 — PR B 전에도 text 경로는 이 계약으로만 열렸다.
+          // 정확히 하나일 때만 옮긴다(둘 이상이면 어느 것이 1순위인지 지어내지 않고 건너뛴다). 실행 쪽은 순위가 생길 때까지 no_task_models 로 멈춰 있다.
+          if (resolution.status === "no_task_models") {
+            const own = contracts.filter(row => row.routeId === task.routeId && row.transport === "direct" && !row.model.includes("@"));
+            const endpoint = own.length === 1 ? baseOf(field(own[0].contract, "endpoint")) : null;
+            if (own.length === 1 && endpoint) {
+              out.push(slot(task, { source: "켜진 엔진 직접 계약(순위 없음 — 가져오기 출처)", uses: [api(task, own[0].model, "abcllm", `${task.routeId} 계약`, endpoint,
+                { keyFrom: keyFromRow(own[0]) })],
+                notes: ["작업 ↔ 모델에 순위가 없어 지금 이 작업은 돌지 않습니다(no_task_models) — 가져오기가 이 계약을 1순위로 옮깁니다."] }));
+              break;
+            }
+          }
           out.push(slot(task, { source: "작업 ↔ 모델(실행 쪽이 이 표를 읽는다)", uses: resolution.candidates.map(candidate => api(task, candidate.rank.model,
             candidate.binding?.provider ?? "abcllm", `작업 ↔ 모델 ${candidate.rank.rank}순위`, candidate.rank.connection.baseUrl,
             { deviceId: candidate.rank.connection.deviceId, ...(candidate.unusable ? { note: textRankUnusableText(candidate.unusable) } : {}) })),
