@@ -18,6 +18,7 @@ import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-r
 import { deepseekActor } from "@/lib/crawl/deepseek-review-policy";
 import { heldQwenActor, heldQwenOwns } from "@/lib/crawl/held-qwen-retry-policy";
 import { QWEN_V2_PROMPT_VERSION } from "@/lib/crawl/qwen-direct-review";
+import type { LocalModelDomainCheck, LocalModelDomainRefusal } from "./local-model-domain-refusal";
 
 /** 관리자 재판정 loader는 발행 후보를 거절한다. direct 감사에는 발행 원본도 잠가야 한다. */
 async function lockDirectInput(tx: ProductTransaction, repo: string) {
@@ -37,76 +38,89 @@ async function lockDirectInput(tx: ProductTransaction, repo: string) {
 /** 예약을 잠근 같은 TX에서 실제 행·원본·설정·lease를 다시 증명한다. 외부 boolean 검증기를 받지 않는다. */
 export async function proveLocalModelDomain(tx: ProductTransaction, target: LocalModelTarget, input: LocalModelInput,
   job: JobLease, role: RoleLease, model: string, requestId?: string, screenProof?: LocalModelScreenProof): Promise<boolean> {
-  if (job.name !== localModelJob(target) || role.role !== "reviewer") return false;
+  return await localModelDomainRefusal(tx, target, input, job, role, model, requestId, screenProof) === null;
+}
+
+/** proveLocalModelDomain 과 같은 증명 — 통과면 null, 거절이면 처음 걸린 검사(검사 차례와 잠금 차례는 예전 그대로다) */
+export async function localModelDomainRefusal(tx: ProductTransaction, target: LocalModelTarget, input: LocalModelInput,
+  job: JobLease, role: RoleLease, model: string, requestId?: string, screenProof?: LocalModelScreenProof): Promise<LocalModelDomainRefusal | null> {
+  const refuse = (check: LocalModelDomainCheck, validUntil?: Date): LocalModelDomainRefusal =>
+    validUntil ? { check, validUntil: validUntil.toISOString() } : { check };
+  if (job.name !== localModelJob(target) || role.role !== "reviewer") return refuse("job_mismatch");
   if (target.kind === "assist") {
-    if (!isAssistCapacityInput(input) || !requestId) return false;
+    if (!isAssistCapacityInput(input) || !requestId) return refuse("assist_input_mismatch");
     if (target.purpose === "intro_correction") {
-      if (input.kind !== "llm_assist_correction" || target.task !== "intro_recheck") return false;
+      if (input.kind !== "llm_assist_correction" || target.task !== "intro_recheck") return refuse("assist_input_mismatch");
       const { proveIntroCorrectionDomain } = await import("@/lib/domain/products/intro-assist-runtime");
-      return proveIntroCorrectionDomain(tx, { ...target, task: "intro_recheck" }, input, job, role);
+      return await proveIntroCorrectionDomain(tx, { ...target, task: "intro_recheck" }, input, job, role) ? null : refuse("assist_domain");
     }
-    if (input.kind !== "llm_assist") return false;
+    if (input.kind !== "llm_assist") return refuse("assist_input_mismatch");
     const { proveAssistModelDomain } = await import("@/lib/domain/llm-assist/model-domain");
-    return proveAssistModelDomain(tx, target, input, job, role, requestId, model);
+    return await proveAssistModelDomain(tx, target, input, job, role, requestId, model) ? null : refuse("assist_domain");
   }
-  if (isAssistCapacityInput(input)) return false;
+  if (isAssistCapacityInput(input)) return refuse("assist_input_mismatch");
   const stages = await lockPipelineInputStages(tx);
   if (target.kind === "candidate" || target.kind === "split") {
     const ai1 = await readItemStage(tx, stages.ai1), ai2 = await readItemStage(tx, stages.ai2);
-    if (ai1.mode === "draining" || ai2.mode === "draining") return false;
+    if (ai1.mode === "draining" || ai2.mode === "draining") return refuse("pipeline_draining");
   }
   const current = await lockDirectInput(tx, input.snapshot.product.repo);
   const now = new Date(), screen = target.kind === "audit" && target.purpose === "screen";
+  if (!current) return refuse("source_missing");
+  if (!current.settings.enabled) return refuse("crawl_disabled");
   // A screen review judges a just-rendered page. Its archived crawl baseline still must match exactly,
   // but the candidate review's 24h baseline expiry cannot veto that fresh screenshot.
-  if (!current || !current.settings.enabled || (screen
-    ? !freshLocalModelScreenProof(screenProof, input.snapshot.product.url, now.getTime()) || current.document.fetchedAt > now
-      || Boolean(current.scan?.completedAt && current.scan.completedAt > now)
-    : current.input.validUntil <= now)
-    || current.input.sourceRevisionHash !== input.sourceRevisionHash) return false;
+  if (screen) {
+    if (!freshLocalModelScreenProof(screenProof, input.snapshot.product.url, now.getTime())) return refuse("screen_proof_stale");
+    if (current.document.fetchedAt > now || Boolean(current.scan?.completedAt && current.scan.completedAt > now)) return refuse("screen_source_future");
+  } else if (current.input.validUntil <= now) return refuse("input_expired", current.input.validUntil);
+  if (current.input.sourceRevisionHash !== input.sourceRevisionHash) return refuse("source_changed");
   let expected = target.kind === "audit"
     ? await loadReviewInput(current.candidate, current.document, auditSettings(current.settings), tx) : current.input;
   let splitFirstAttemptId: number | null = null;
   if (target.kind === "split") {
     const { currentGate } = await import("@/lib/crawl/gate-split-tiebreak");
     const gate = await currentGate(tx, current, target);
-    if (!("rows" in gate)) return false;
+    if (!("rows" in gate)) return refuse("split_gate_closed");
     expected = gate.input; splitFirstAttemptId = gate.first.id;
   }
   const supplied = structuredClone(input.snapshot);
   // 첫 화면은 이 호출이 새로 받은 외부 근거다. 그 외의 원본 필드는 잠긴 DB 사진과 같아야 한다.
   if (target.purpose === "screen") supplied.product.pageText = expected.snapshot.product.pageText;
   if (expected.inputHash !== input.inputHash || expected.policyHash !== input.policyHash
-    || !isDeepStrictEqual(expected.snapshot, supplied)) return false;
+    || !isDeepStrictEqual(expected.snapshot, supplied)) return refuse("input_changed");
 
   let valid = false;
   if (target.kind === "audit") {
     // 감사 결과 writer는 product → item 순서다. 그 순서를 뒤집어 행 잠금 교착을 만들지 않는다.
     const [product] = await tx.select().from(products).where(eq(products.slug, target.slug)).for("share");
-    if (!product || !["seeded", "verified"].includes(product.status)) return false;
-    if (screen && !freshLocalModelScreenProof(screenProof, product.url)) return false;
+    if (!product || !["seeded", "verified"].includes(product.status)) return refuse("product_unavailable");
+    if (screen && !freshLocalModelScreenProof(screenProof, product.url)) return refuse("screen_proof_stale");
     const [item] = await tx.select().from(productAuditItems).where(eq(productAuditItems.id, target.itemId)).for("update");
-    if (!item || item.productId !== product.id || item.slug !== target.slug || current.candidate.publishedSlug !== target.slug) return false;
+    if (!item || item.productId !== product.id || item.slug !== target.slug || current.candidate.publishedSlug !== target.slug)
+      return refuse("item_mismatch");
     if (target.purpose === "audit") {
       const [campaign] = await tx.select().from(productAuditCampaigns).where(eq(productAuditCampaigns.id, item.campaignId));
-      if (!campaign) return false;
+      if (!campaign) return refuse("campaign_missing");
       const reviewer = auditReviewer(campaign);
       valid = reviewer.provider === "qwen-direct" && reviewer.model === model
         && Boolean(await lockAuditDispatchItem(tx, { itemId: item.id, slug: target.slug, campaign: { ...campaign, ...reviewer } }));
     } else {
-      valid = item.aiDecision === "reject" && item.humanDecision === null
-        && (target.purpose === "screen" ? current.settings.qwenAuto.screenReview.enabled
-          : current.settings.qwenAuto.auditSecondOpinion.enabled);
+      if (!(target.purpose === "screen" ? current.settings.qwenAuto.screenReview.enabled
+        : current.settings.qwenAuto.auditSecondOpinion.enabled)) return refuse("step_disabled");
+      valid = item.aiDecision === "reject" && item.humanDecision === null;
     }
   } else if (target.kind === "published") {
     const [row] = await tx.select().from(secondReviews).where(eq(secondReviews.id, target.secondReviewId)).for("update");
+    if (!current.settings.qwenAuto.publishedFilter.enabled) return refuse("step_disabled");
     valid = Boolean(row && row.candidateId === current.candidate.id && row.status === "needs_human"
-      && current.candidate.publishedSlug === target.slug && current.settings.qwenAuto.publishedFilter.enabled);
+      && current.candidate.publishedSlug === target.slug);
   } else if (target.kind === "candidate") {
-    if (current.candidate.state !== "needs_review" || current.candidate.decidedBy !== "auto" || current.candidate.publishedSlug) return false;
+    if (current.candidate.state !== "needs_review" || current.candidate.decidedBy !== "auto" || current.candidate.publishedSlug)
+      return refuse("target_not_open");
     const pending = await tx.select({ id: secondReviews.id }).from(secondReviews)
       .where(and(eq(secondReviews.candidateId, current.candidate.id), eq(secondReviews.status, "pending"))).for("share");
-    if (pending.length) return false;
+    if (pending.length) return refuse("target_not_open");
     const [row] = await tx.select().from(crawlReviewAttempts).where(eq(crawlReviewAttempts.id, target.attemptId)).for("update");
     valid = Boolean(row && row.candidateId === current.candidate.id && row.candidateId === target.candidateId && current.candidate.repo === target.repo
       && row.state === "running" && row.kind === "delegated" && row.leaseToken === job.token
@@ -118,7 +132,7 @@ export async function proveLocalModelDomain(tx: ProductTransaction, target: Loca
         : row.provider === "qwen-direct" && heldQwenOwns(current.settings, current.candidate.reason)
           && row.actor === heldQwenActor(QWEN_V2_PROMPT_VERSION)));
   } else {
-    if (current.candidate.state === "published" || current.candidate.publishedSlug) return false;
+    if (current.candidate.state === "published" || current.candidate.publishedSlug) return refuse("target_not_open");
     const [row] = await tx.select().from(gateSplitTiebreaks).where(eq(gateSplitTiebreaks.id, target.tiebreakId)).for("update");
     valid = Boolean(row && row.candidateId === current.candidate.id && row.candidateId === target.candidateId
       && row.repo === target.repo && row.generationKey === target.generationKey
@@ -129,9 +143,9 @@ export async function proveLocalModelDomain(tx: ProductTransaction, target: Loca
         && row.applied === "awaiting_deepseek" && row.decision === "reject" && row.deepseekState === "running" && row.deepseekLeaseToken === job.token
         && row.deepseekModel === model : row.state === "running" && row.leaseToken === job.token && row.model === model));
   }
-  if (!valid) return false;
+  if (!valid) return refuse("target_not_open");
   await assertJobLeaseAtWallTime(tx, job, "update");
   await assertRoleLease(tx, role);
   // Row/job/role locks may have waited since admission. Never dispatch an aged render.
-  return !screen || freshLocalModelScreenProof(screenProof, input.snapshot.product.url);
+  return !screen || freshLocalModelScreenProof(screenProof, input.snapshot.product.url) ? null : refuse("screen_proof_stale");
 }

@@ -46,7 +46,8 @@ type Status = { text: string; tone: "ok" | "warn" | "bad" | "muted" };
 const TONE: Record<Status["tone"], string> = { ok: "text-emerald-700", warn: "text-amber-700", bad: "text-red-600", muted: "text-fg-3" };
 
 /** 한 줄 상태(작업 이름 밑) — 고칠 일이 있으면 그것 하나, 없으면 「준비됨」. 자세한 까닭은 「자세히」에 있다. */
-function lineStatus(line: TaskRankLine, changed: boolean): Status {
+function lineStatus(line: TaskRankLine, changed: boolean, cleared: boolean): Status {
+  if (cleared) return line.live ? { text: "모두 비움 — 저장하면 이 작업이 멈춥니다", tone: "bad" } : { text: "모두 비움 — 저장 전", tone: "warn" };
   if (changed) return { text: "바꿈 — 저장 전", tone: "warn" };
   if (!line.rows.length) return line.live ? { text: "순위 없음 — 이 작업은 돌지 않습니다", tone: "bad" } : { text: "순위 없음", tone: "muted" };
   if (line.readiness.some(row => row.blocking.length)) return { text: "쓸 수 없는 순위가 있습니다 — 자세히", tone: "bad" };
@@ -59,6 +60,11 @@ function lineStatus(line: TaskRankLine, changed: boolean): Status {
   return { text: served.length ? `준비됨 · 마지막 실행 ${served.map(row => `${row.rank}순위 ${row.count}건`).join(" · ")}` : "준비됨", tone: "ok" };
 }
 
+/** 순위를 모두 비우는 저장 앞의 확인 글(브라우저 confirm). 취소하면 폼 동작이 돌지 않는다(onSubmit preventDefault). */
+export const clearConfirmText = (line: Pick<TaskRankLine, "label" | "live">) => line.live
+  ? `「${line.label}」의 1·2·3순위를 모두 비웁니다. 저장하면 이 작업은 모델을 부르지 않고 멈춥니다. 정말 비울까요?`
+  : `「${line.label}」의 1·2·3순위를 모두 비웁니다. 정말 비울까요?`;
+
 function TaskRankLineForm({ line, connections, rows, readOnly }: { line: TaskRankLine; connections: AiConnectionView[]; rows: AiTaskRankRow[]; readOnly: boolean }) {
   const [state, action, saving] = useActionState<AiTaskActionState, FormData>(saveAiTaskRanksAction, null);
   const initial = line.rows.map(row => ({ provider: row.connectionId, model: row.model }));
@@ -68,8 +74,13 @@ function TaskRankLineForm({ line, connections, rows, readOnly }: { line: TaskRan
   const changed = JSON.stringify(value.filter(Boolean)) !== JSON.stringify(initial);
   // 가져온 순위처럼 계약·경로·장비가 아직 없는 줄은 바뀐 것이 없어도 다시 저장해 만든다
   const pending = line.readiness.some(row => row.pending.length > 0);
-  const status = lineStatus(line, changed);
-  return <form action={action} className={`${GRID} border-b border-line px-4 py-3 last:border-b-0`} data-task={line.task} data-slot={line.slot}>
+  // 저장된 순위를 모두 비우는 저장 — 실행 쪽이 읽는 작업은 그 순간 멈추므로 한 번 더 묻는다(2026-11-02 드롭다운 결함으로 1차 AI 검수가 비워져 멈춘 일)
+  const cleared = line.rows.length > 0 && value.every(row => !row);
+  const status = lineStatus(line, changed, cleared);
+  const confirmClear = (event: { preventDefault(): void }) => {
+    if (cleared && !window.confirm(clearConfirmText(line))) event.preventDefault();
+  };
+  return <form action={action} onSubmit={confirmClear} className={`${GRID} border-b border-line px-4 py-3 last:border-b-0`} data-task={line.task} data-slot={line.slot}>
     <input type="hidden" name="task" value={line.task} /><input type="hidden" name="slot" value={line.slot} /><input type="hidden" name="revision" value={line.revision} />
     <div className="grid content-start gap-0.5 text-[13px]">
       <span className="text-[14px] font-semibold" title={line.description}>{line.label}</span>

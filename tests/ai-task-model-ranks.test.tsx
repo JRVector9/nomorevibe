@@ -11,6 +11,7 @@ import { CLI_DB_CONTRACT_ROUTES } from "@/lib/llm/cli-serving-contract";
 import { GATEWAY_SERVING_CONTRACT_ROUTES } from "@/lib/llm/gateway-serving-contract-config";
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from "@/lib/crawl/settings-schema";
 import { buildAiCurrentSlots } from "@/lib/operations/admin-ai-task-current";
+import { rankOptionKey } from "@/lib/operations/admin-first-review-ranks";
 import type { ModelEnv } from "@/lib/operations/pipeline-control";
 import { JOB_NAMES } from "@/lib/jobs/catalog";
 import {
@@ -474,8 +475,8 @@ describe("RankSelects — 작업 ↔ 모델 꼴(provider 칸 = 연결 id)", () =
       value: [pick(GPU, "qwen3.8-flash-next"), null, pick(SUPA, "qwen3.8-flash-next")], slotNames: AI_RANK_SLOT_NAMES, onChange: () => {}, showProvider: false,
       validate: slots => validateAiTaskRanks("crawl-tagline", 1, slots, { connections: CONNECTIONS, rows: [] }), note: createElement("p", null, "안내") }));
     // 서버마다 묶고(optgroup) 그 안에는 모델 이름만
-    expect(html).toContain(`<optgroup label="gpu3090"><option value="${GPU}\u0000qwen3.8-flash-next" selected="">qwen3.8-flash-next</option>`);
-    expect(html).toContain('<optgroup label="검색 서버"><option value="55555555-5555-4555-8555-555555555555\u0000bge-m3">bge-m3</option>');
+    expect(html).toContain(`<optgroup label="gpu3090"><option value="${GPU}/qwen3.8-flash-next" selected="">qwen3.8-flash-next</option>`);
+    expect(html).toContain('<optgroup label="검색 서버"><option value="55555555-5555-4555-8555-555555555555/bge-m3">bge-m3</option>');
     expect(html).not.toContain("gpu3090 · qwen3.8-flash-next");
     // 닫힌 드롭다운에는 모델 이름만 보이므로 고른 값의 서버를 밑에 적는다(1순위 gpu3090, 3순위 supa — 같은 모델 이름)
     expect(html.match(/data-rank-server="true">([^<]*)</g)).toEqual(['data-rank-server="true">gpu3090<', 'data-rank-server="true">supa<']);
@@ -498,12 +499,49 @@ describe("RankSelects — 작업 ↔ 모델 꼴(provider 칸 = 연결 id)", () =
       validate: () => [], blocked: (option, index, slots) => aiRankOptionBlocked(aiTask("product-embedding")!, 1, index, option, slots, []) }));
     expect(html).toContain('<span class="font-semibold sm:sr-only">1순위</span>');
     const second = html.slice(html.indexOf('name="product-embedding-1-rank-2"'), html.indexOf('name="product-embedding-1-rank-3"'));
-    expect(second).toContain(`value="${EMB}\u0000bge-m3-q8" disabled=""`);
-    expect(second).toContain(`value="${GPU}\u0000qwen3.8-flash-next" disabled=""`);
+    expect(second).toContain(`value="${EMB}/bge-m3-q8" disabled=""`);
+    expect(second).toContain(`value="${GPU}/qwen3.8-flash-next" disabled=""`);
     // 1순위 bge-m3 는 같은 칸 중복(taken)이라 2순위에서도 흐리다 — 다른 서버의 같은 모델만 대체로 둘 수 있다
-    expect(second).toContain(`value="${EMB}\u0000bge-m3" disabled=""`);
+    expect(second).toContain(`value="${EMB}/bge-m3" disabled=""`);
     const first = html.slice(0, html.indexOf('name="product-embedding-1-rank-2"'));
     expect(first).not.toContain('disabled=""');
+  });
+  it("드롭다운 열쇠는 HTML 이 바꾸지 않는 글자만 쓴다 — 서버가 그린 <option value> 를 브라우저가 읽어도 rankOptionKey 와 같다(2026-11-02 NUL 사고)", () => {
+    // 예전 열쇠(provider\u0000model)는 HTML 파서가 U+FFFD 로 바꿔 고른 값이 선택지와 맞지 않았고, 드롭다운이 「없음」으로 돌아가 저장 한 번에 순위가 비워졌다
+    const tricky = [pick(GPU, "qwen3.8-flash-next"), pick("claude-cli", "sonnet"), pick(GPU, "mlx-community/gemma-4 26b"), pick(GPU, "a&b<c>\"d'e"), pick(GPU, "모델")];
+    for (const row of tricky) expect(rankOptionKey(row)).toMatch(/^[A-Za-z0-9\-_.!~*'()%/]+$/);
+    // 「/」를 품은 값도 서로 다른 짝이 같은 열쇠가 되지 않는다
+    expect(rankOptionKey(pick("a/b", "c"))).not.toBe(rankOptionKey(pick("a", "b/c")));
+    const options = [...aiTaskRankOptions(aiTask("crawl-tagline")!, CONNECTIONS, []), { provider: GPU, model: "mlx-community/gemma 4", label: "gpu3090 · x", group: "gpu3090", text: "x" }];
+    const html = renderToStaticMarkup(createElement(RankSelects<{ provider: string; model: string }>, { stage: { id: "crawl-tagline-1", label: "수집 소개 짓기", slots: 3 }, options,
+      value: [pick(GPU, "qwen3.8-flash-next"), null, null], slotNames: AI_RANK_SLOT_NAMES, onChange: () => {}, showProvider: false, validate: () => [], note: null }));
+    const values = [...html.matchAll(/<option value="([^"]*)"/g)].map(match => match[1]);
+    expect(values.filter(Boolean)).toEqual(expect.arrayContaining(options.map(option => rankOptionKey(option).replaceAll("'", "&#x27;"))));
+    // 제어 글자(NUL 등)는 하나도 없다
+    expect(values.some(value => /[\u0000-\u001f\u007f]/.test(value))).toBe(false);
+  });
+  it("「없음」이 아닌데 선택지에 없는 값이 오면 칸을 비우지 않는다 — 조용히 비운 채 저장되지 않게", () => {
+    const options = aiTaskRankOptions(aiTask("crawl-tagline")!, CONNECTIONS, []);
+    const changes: unknown[] = [];
+    const tree = RankSelects<{ provider: string; model: string }>({ stage: { id: "crawl-tagline-1", label: "수집 소개 짓기", slots: 3 }, options,
+      value: [pick(GPU, "qwen3.8-flash-next"), null, null], slotNames: AI_RANK_SLOT_NAMES, onChange: value => changes.push(value), showProvider: false, validate: () => [], note: null });
+    const selects: { props: { name: string; onChange: (event: { target: { value: string } }) => void } }[] = [];
+    const walk = (node: unknown): void => {
+      if (Array.isArray(node)) { node.forEach(walk); return; }
+      if (!node || typeof node !== "object" || !("props" in node)) return;
+      const element = node as { type: unknown; props: { children?: unknown } };
+      if (element.type === "select") selects.push(element as never);
+      walk(element.props.children);
+    };
+    walk(tree);
+    expect(selects).toHaveLength(3);
+    // 브라우저가 바꾼 옛 열쇠 꼴(U+FFFD) — 찾지 못하므로 아무것도 바꾸지 않는다
+    selects[0].props.onChange({ target: { value: `${GPU}\ufffdqwen3.8-flash-next` } });
+    expect(changes).toEqual([]);
+    // 맞는 열쇠는 그 값으로, 「없음」(빈 값)은 그 칸만 비운다
+    selects[1].props.onChange({ target: { value: rankOptionKey(pick(SUPA, "qwen3.8-flash-next")) } });
+    selects[0].props.onChange({ target: { value: "" } });
+    expect(changes).toEqual([[pick(GPU, "qwen3.8-flash-next"), pick(SUPA, "qwen3.8-flash-next"), null], [null, null, null]]);
   });
 });
 

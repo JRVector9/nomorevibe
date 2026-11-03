@@ -162,6 +162,9 @@ const call = async (context: Awaited<ReturnType<typeof fixture>>, signal?: Abort
     if (String(url) !== endpoint) throw new Error("fixture_endpoint_required");
     return request(url, init);
   }) as typeof fetch }));
+/** 예약을 물린 이벤트(reservation_cancelled) — 증명 거절이면 evidence 에 검사가 있다 */
+const refusalEvents = async (requestId: string) => Array.from(await admin`SELECT from_state, to_state, reason, evidence FROM model_capacity_events
+  WHERE request_id=${requestId}::uuid AND kind='reservation_cancelled' ORDER BY id`);
 const rows = async () => Array.from(await admin`SELECT to_jsonb(r) AS row FROM model_capacity_requests r
   WHERE owner_instance_id LIKE ${prefix + "%"} ORDER BY queue_ordinal`).map(result => result.row);
 
@@ -242,9 +245,13 @@ it("오래된 감사 원본도 방금 렌더한 화면은 원본 CAS·스크린�
   expect(slot.kind).toBe("granted");
   if (slot.kind === "granted") {
     const expired = new Date(Date.now() - 61_000).toISOString();
-    expect(await dispatchLocalModelCapacity({ reservation: slot.reservation, identity, binding: row.dispatch_binding,
-      input, job: screenLease, role, screenProof: { ...screen.screenProof, requestedAt: expired, receivedAt: expired } })).toBeNull();
-    expect(await cancelReservedModelSlot(slot.reservation)).toBe(true);
+    // 증명이 거절한 예약은 dispatch 가 같은 TX 에서 물리고 거절한 검사를 evidence 에 남긴다(호출자 정리는 할 일이 없다)
+    await expect(dispatchLocalModelCapacity({ reservation: slot.reservation, identity, binding: row.dispatch_binding,
+      input, job: screenLease, role, screenProof: { ...screen.screenProof, requestedAt: expired, receivedAt: expired } }))
+      .rejects.toMatchObject({ name: "LocalModelDomainRefusedError", reason: "reservation_lost", refusal: { check: "screen_proof_stale" } });
+    expect(await cancelReservedModelSlot(slot.reservation)).toBe(false);
+    expect(await refusalEvents(slot.reservation.requestId)).toEqual([{ from_state: "reserved", to_state: "withdrawn", reason: null,
+      evidence: { version: 1, kind: "local_model_domain_refused", check: "screen_proof_stale" } }]);
   }
   expect(calls).toBe(1);
   await db.update(products).set({ url: "https://changed-product.example" }).where(eq(products.slug, screen.target.slug));
@@ -260,8 +267,14 @@ it("화면 외 감사는 오래된 원본을 전송하지 않는다", async () =
   const context = await fixture();
   await db.update(crawlDocuments).set({ fetchedAt: new Date(Date.now() - 7 * 86400_000) }).where(eq(crawlDocuments.repo, context.repo));
   const input = await loadAuditInput(context.target.slug, await getSettings()); if (!input) throw new Error("fixture_input");
-  await expect(call({ ...context, input })).rejects.toMatchObject({ reason: "reservation_lost" });
+  // 2026-11-03 운영: 입력 기한이 지난 대상은 늘 이 길로 물렸는데 withdrawn 이벤트에 까닭이 없었다 — 이제 어느 검사인지와 그 기한을 남긴다
+  await expect(call({ ...context, input })).rejects.toMatchObject({ name: "LocalModelDomainRefusedError", reason: "reservation_lost",
+    refusal: { check: "input_expired", validUntil: input.validUntil.toISOString() } });
   expect(calls).toBe(0);
+  const row = (await rows()).at(-1);
+  expect(row).toMatchObject({ state: "withdrawn", dispatched_at: null, dispatch_binding: null });
+  expect(await refusalEvents(row.request_id)).toEqual([{ from_state: "reserved", to_state: "withdrawn", reason: null,
+    evidence: { version: 1, kind: "local_model_domain_refused", check: "input_expired", validUntil: input.validUntil.toISOString() } }]);
 });
 
 function child(value: unknown): Promise<unknown> {

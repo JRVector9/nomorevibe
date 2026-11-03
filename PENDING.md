@@ -1,5 +1,20 @@
 # 남은 작업
 
+## 공개분 추가 검수·감사 두 번째 의견 줄 머리 막힘(입력 기한 지남) — 2026-11-03, 운영 미적용(코드·단위·일회용 DB 시험만)
+
+- 원인: 입력 유효 기한(`validUntil` = min(수집, 스캔) + 24시간)이 지난 대상은 호출 직전 증명(`lib/llm/local-model-domain.ts`)이 늘 거절하는데,
+  그 거절이 `reservation_lost` 로 와서 `runStep` 이 틱을 멈추고(break) 항목에 아무것도 적지 않았다 → 다음 틱에도 같은 대상이 맨 앞에서 자리를 잡고 물렸다.
+  11-03 운영: `direct:published:149299:published_filter` 866회·`direct:audit:78443:second_opinion` 338회 withdrawn(evidence·reason 없음), 24시간 settled 10건.
+- 고침: 자리 잡기 전에 입력 기한을 보고(60초 여유) 지난 대상은 넘긴다(관측 `qwen-second-opinion` failures 의 `input_stale`, 시도 횟수에 세지 않음, 1시간 뒤 다시 고름).
+  증명 거절은 이제 dispatch 가 같은 TX 에서 예약을 물리고 withdrawn(`reservation_cancelled`) 이벤트 evidence 에 `{kind:"local_model_domain_refused", check, validUntil?}` 를 남긴다.
+  장부의 일시 거절(자리 경합·정책·예약 만료)은 예전처럼 다음 틱으로 미룬다. 운영 데이터 손질은 필요 없다(이미 물린 행은 끝난 행이고, 대상 행은 그대로 사람 확인에 남는다).
+- **배포 뒤(대표, READ ONLY)**:
+  1. 증명 거절 까닭 분포 — `select e.evidence->>'check' as check, r.route_id, count(*) from model_capacity_events e join model_capacity_requests r using (request_id) where e.kind='reservation_cancelled' and e.evidence->>'kind'='local_model_domain_refused' and e.created_at > now() - interval '6 hours' group by 1, 2 order by 3 desc;`
+  2. 같은 작업 키가 되풀이해 물리지 않는지 — `select r.logical_work_key, count(*) from model_capacity_requests r where r.route_id in ('local-published-filter','local-second-opinion') and r.state='withdrawn' and r.updated_at > now() - interval '6 hours' group by 1 having count(*) > 3 order by 2 desc limit 20;` (0행이면 정상)
+  3. 실제 호출이 다시 도는지 — `select r.route_id, r.state, count(*) from model_capacity_requests r where r.route_id in ('local-published-filter','local-second-opinion') and r.updated_at > now() - interval '6 hours' group by 1, 2;` (settled 증가)
+  4. 건너뛴 대상 — `select k, v->>'code', v->>'validUntil', v->>'at' from operations_observations o, jsonb_each(o.value->'failures') as f(k, v) where o.key='qwen-second-opinion' and v->>'code'='input_stale' order by v->>'at' desc limit 20;`
+- 남은 일: 기한 지난 공개분 사람 확인 행(149299 등)은 원본이 다시 수집되기 전까지 추가 의견을 받지 못한다(사람 확인 목록에는 그대로 있다). 다시 수집할지는 별도 결정.
+
 ## 소유 프로세스가 사라진 dispatched 5건 → 미확정 → 사람 검토 — 2026-11-02, 운영 미적용(코드·단위·일회용 DB 시험만)
 
 - `scripts/ops/model-owner-gone.ts`(`mark`·`close-review`, 기본 dry-run, `--apply`·`--operator` 필수, id 명시 최대 20건, DB URL stdin). 판정은 같은 instance 의

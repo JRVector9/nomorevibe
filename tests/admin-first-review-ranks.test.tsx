@@ -63,7 +63,7 @@ describe("RankSelects 구성 요소", () => {
     expect(html).toContain('name="firstAdditionalModel0" value="grok-4.7"');
     expect(html).not.toContain('name="firstAdditionalModel1"');
     // 다른 칸에서 고른 모델은 이 칸에서 고를 수 없다 — 3순위 칸에서 grok 과 qwen 선택지는 막혀 있다
-    expect((html.match(/<option value="grok-cli\u0000grok-4.7" disabled="">/g) ?? []).length).toBe(2);
+    expect((html.match(/<option value="grok-cli\/grok-4.7" disabled="">/g) ?? []).length).toBe(2);
     expect(html).not.toContain('role="alert"');
   });
   it("앞 순위를 비운 선택을 한국어 오류로 보인다", () => {

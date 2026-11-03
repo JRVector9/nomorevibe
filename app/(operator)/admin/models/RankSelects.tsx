@@ -30,6 +30,8 @@ export function RankSelects<T extends RankValue>({ stage, options, value, onChan
   const issues = validate ? validate(slots) : validateRanks(stage as RankStage, slots as unknown as (FirstReviewer | null)[]);
   const set = (index: number, key: string) => {
     const choice = options.find(option => rankOptionKey(option) === key) ?? null;
+    // 「없음」이 아닌데 선택지에서 못 찾은 값이면 바꾸지 않는다 — 조용히 빈 칸이 되어 저장 한 번에 순위가 지워지지 않게(2026-11-02 NUL 열쇠 사고)
+    if (key !== "" && !choice) return;
     // 값은 { provider, model } 두 칸뿐이다(선택지의 label·saved 를 싣지 않는다)
     onChange(slots.map((row, at) => at === index ? (choice ? { provider: choice.provider, model: choice.model } as T : null) : row));
   };
