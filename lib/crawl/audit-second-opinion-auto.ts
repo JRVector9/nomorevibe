@@ -4,6 +4,7 @@ import { bareModelName } from "./review-model-identity";
 import { and, eq, sql, type SQL } from "drizzle-orm";
 import { withLocalModelCapacity } from "@/lib/llm/local-model-capacity";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
+import { LocalModelDomainRefusedError, type LocalModelDomainCheck } from "@/lib/llm/local-model-domain-refusal";
 import { db } from "@/lib/db";
 import { cdnPurges, crawlCandidates, crawlDocuments, operationsObservations, productAuditAttempts, productAuditCampaigns, productAuditItems,
   productAuditPolicyRunItems, productAuditPolicyRuns, productAuditSecondOpinions, products, secondReviews, type SecondReviewAutoOpinion } from "@/lib/db/schema";
@@ -59,6 +60,14 @@ import { screenReviewCounts, type ScreenReviewCounts } from "./audit-screen-revi
  * 성공 없이 세 번 잇달아)이면 이 틱의 나머지를 멈추고 함께 쓰는 물러나기(1분부터 두 배씩 15분까지)를 걸며 마지막 오류를 관측에 남긴다.
  * 항목만의 실패(형식 오류·400·입력 초과·원본 없음, 탈이 아닌 한 번의 진짜 시간 초과)는 그 항목을 두 번까지만 묻는다(관측의 failures).
  * 탈이 아닌 429 는 항목 탓이 아니라 세지 않고 다음 항목으로 간다. 이 단계는 잡을 실패시키지 않는다.
+ *
+ * 입력 기한(2026-11-03): 호출 직전 증명(local-model-domain.ts)은 입력 유효 기한(validUntil = min(수집, 스캔) + 24시간)이 지난 대상을 늘 거절한다.
+ * 예전에는 그 거절이 reservation_lost 로 와서 이 단계가 틱을 멈췄고(break) 항목에 아무것도 적지 않아, 다음 틱에도 같은 대상이 줄 맨 앞에서
+ * 자리를 잡고 물렸다 — 운영에서 공개분 2차 행 하나가 14시간 동안 866번 물리며 두 줄 전체를 막았다. 이제 입력을 만든 뒤 자리를 잡기 전에
+ * 기한을 보고(INPUT_FRESH_MARGIN_MS 안에 끝나면 지난 것으로 본다) 지난 대상은 자리를 잡지 않고 건너뛴다(관측 failures 의 input_stale,
+ * 시도 횟수에 세지 않는다). 그 대상은 INPUT_STALE_RETRY_MS 동안 고르지 않고, 그 뒤 원본이 다시 수집됐으면 다시 묻는다. 증명이 같은 까닭이나
+ * 대상이 닫혀서 거절한 것(LocalModelDomainRefusedError)도 그 항목만 넘기고 같은 틱의 다음 대상으로 간다. 장부의 일시 거절(자리 경합·정책·
+ * 예약 만료)은 예전처럼 이 틱을 멈추고 다음 틱에 다시 본다.
  */
 export const QWEN_AUTO_OBSERVATION = "qwen-second-opinion";
 export const QWEN_V2_AUTO_ACTOR = QWEN_V2_AUTO_SOURCE;
@@ -78,6 +87,12 @@ const WRITE_MARGIN_MS = 2_000;
 const CATCH_UP_MS = 3_000;
 /** 항목만의 실패를 몇 번까지 다시 묻나 */
 export const QWEN_AUTO_ITEM_ATTEMPTS = 2;
+/** 입력 유효 기한이 이만큼 안에 끝나면 지난 것으로 본다 — 두 번째 자리를 기다리는 동안(STEP_MS 안)에 지나 증명이 거절하지 않게 */
+export const INPUT_FRESH_MARGIN_MS = 60_000;
+/** 입력 기한이 지난 대상을 다시 고르기까지 — 그동안 원본이 다시 수집되면 그 뒤 첫 틱에 묻는다 */
+export const INPUT_STALE_RETRY_MS = 60 * 60_000;
+/** 관측 failures 의 입력 기한 지남 코드 — 시도 횟수에 세지 않는다(항목 탓이 아니라 원본이 오래됐다) */
+export const QWEN_AUTO_INPUT_STALE = "input_stale";
 /** 관측에 남기는 항목 실패의 수 — 넘으면 오래된 것부터 버린다 */
 const FAILURE_MEMORY = 500;
 
@@ -89,8 +104,8 @@ type Target = AuditTarget | PublishedTarget;
 export type QwenAutoObservation = {
   model: string; promptVersion: string; lastRunAt: string | null; lastSuccessAt: string | null;
   lastError: { code: string; detail: string | null; target: Kind; at: string } | null;
-  /** 항목만의 실패 — 키 a:<감사 항목 id>·p:<공개분 2차 행 id> */
-  failures: Record<string, { code: string; count: number; at: string }>;
+  /** 항목만의 실패 — 키 a:<감사 항목 id>·p:<공개분 2차 행 id>. input_stale 은 validUntil(그 입력의 유효 기한)을 함께 적는다 */
+  failures: Record<string, { code: string; count: number; at: string; validUntil?: string }>;
 };
 
 export type QwenAutoTally = {
@@ -101,11 +116,13 @@ export type QwenAutoTally = {
     leftThin: number; leftSplit: number };
   published: { asked: number; kept: number; noted: number; skipped: number };
   failed: number; endpointError: string | null;
+  /** 입력 유효 기한이 지나 자리를 잡지 않고 건너뛴 대상 */
+  inputStale: number;
 };
 
 const emptyTally = (): QwenAutoTally => ({ audit: { asked: 0, approve: 0, reject: 0, needsReview: 0, released: 0, skipped: 0, autoKept: 0, autoHeld: 0, caughtUp: 0,
   leftThin: 0, leftSplit: 0 },
-  published: { asked: 0, kept: 0, noted: 0, skipped: 0 }, failed: 0, endpointError: null });
+  published: { asked: 0, kept: 0, noted: 0, skipped: 0 }, failed: 0, endpointError: null, inputStale: 0 });
 
 /** 앞의 게이트웨이 자리 표시('[gpu3090] ')와 배포자 접두어('Inferact/')를 뗀 소문자 모델 이름 — review-model-identity.ts bareModelName 과 같다 */
 const bareModel = (model: SQL) => sql`lower(regexp_replace(regexp_replace(trim(${model}), '^\\[[^]]*\\]\\s*', ''), '^[^/[:space:]]+/', ''))`;
@@ -203,12 +220,28 @@ async function saveObservation(lease: JobLease, value: QwenAutoObservation): Pro
   });
 }
 
-/** 항목만의 실패로 더 묻지 않는 것 — prefix 는 a:(감사 항목)·p:(공개분 2차 행) */
+/** 항목만의 실패로 더 묻지 않는 것 — prefix 는 a:(감사 항목)·p:(공개분 2차 행). 입력 기한 지남(input_stale)은 세지 않는다 */
 function givenUp(observation: QwenAutoObservation, prefix: "a:" | "p:"): number[] {
   return Object.entries(observation.failures)
-    .flatMap(([key, failure]) => key.startsWith(prefix) && failure.count >= QWEN_AUTO_ITEM_ATTEMPTS ? [Number(key.slice(prefix.length))] : [])
+    .flatMap(([key, failure]) => key.startsWith(prefix) && failure.code !== QWEN_AUTO_INPUT_STALE && failure.count >= QWEN_AUTO_ITEM_ATTEMPTS
+      ? [Number(key.slice(prefix.length))] : [])
     .filter(Number.isSafeInteger);
 }
+
+/** 입력 기한이 지나 잠시 고르지 않는 것 — 마지막으로 본 때부터 INPUT_STALE_RETRY_MS 안 */
+function staleCooling(observation: QwenAutoObservation, prefix: "a:" | "p:", now = Date.now()): number[] {
+  return Object.entries(observation.failures)
+    .flatMap(([key, failure]) => key.startsWith(prefix) && failure.code === QWEN_AUTO_INPUT_STALE
+      && now - Date.parse(failure.at) < INPUT_STALE_RETRY_MS ? [Number(key.slice(prefix.length))] : [])
+    .filter(Number.isSafeInteger);
+}
+
+/**
+ * 호출 직전 증명의 거절 가운데 이 단계 전체를 멈출 것 — 설정이 꺼졌거나(수집 스위치·이 단계) 잡·역할이 맞지 않는다. 나머지(대상이 닫힘·
+ * 원본이 바뀜·대상 행이 맞지 않음)는 그 항목 하나의 일이라 넘기고 다음 대상으로 간다. 입력 기한 지남은 따로 다룬다(input_stale)
+ */
+const STEP_WIDE_REFUSALS: ReadonlySet<LocalModelDomainCheck> = new Set<LocalModelDomainCheck>(["job_mismatch", "crawl_disabled", "step_disabled",
+  "pipeline_draining", "assist_input_mismatch", "assist_domain"]);
 
 /** 두 갈래를 번갈아 한 줄로 */
 function interleave(left: Target[], right: Target[]): Target[] {
@@ -277,7 +310,8 @@ async function runStep(ctx: JobContext<null>, settings: CrawlSettings, tally: Qw
     }
   }
   const startedAt = Date.now();
-  const given = (prefix: "a:" | "p:") => givenUp(observation, prefix);
+  // 고르지 않는 것 — 항목 실패로 그만 물은 것과 입력 기한이 지나 잠시 쉬는 것
+  const given = (prefix: "a:" | "p:") => [...givenUp(observation, prefix), ...staleCooling(observation, prefix, startedAt)];
   const queue = interleave(
     published.enabled ? await publishedTargets(config.model, given("p:"), published.perTick) : [],
     audit.enabled ? await auditTargets(audit.scope, settings.auditHold, config.model, given("a:"), audit.perTick) : [],
@@ -291,6 +325,12 @@ async function runStep(ctx: JobContext<null>, settings: CrawlSettings, tally: Qw
   const failItem = (target: Target, code: string) => {
     tally.failed += 1;
     observation.failures[target.key] = { code, count: (observation.failures[target.key]?.count ?? 0) + 1, at: now() };
+  };
+  // 입력 기한이 지난 대상 — 자리를 잡지 않고 넘긴다. 시도 횟수는 그대로 두고(항목 탓이 아니다) 그 입력의 기한을 남긴다
+  const noteStale = (target: Target, validUntil: string | undefined) => {
+    tally.inputStale += 1;
+    observation.failures[target.key] = { code: QWEN_AUTO_INPUT_STALE, count: observation.failures[target.key]?.count ?? 0, at: now(),
+      ...(validUntil ? { validUntil } : {}) };
   };
   let ran = false;
   for (const target of queue) {
@@ -307,6 +347,12 @@ async function runStep(ctx: JobContext<null>, settings: CrawlSettings, tally: Qw
       continue;
     }
     if (!input) { failItem(target, "no_source"); ran = true; continue; }
+    // 입력 유효 기한이 지났으면(곧 지나면) 호출 직전 증명이 늘 거절한다 — 자리를 잡지 않고 다음 대상으로(줄 머리가 막히지 않게)
+    if (input.validUntil.getTime() - Date.now() < INPUT_FRESH_MARGIN_MS) {
+      noteStale(target, input.validUntil.toISOString());
+      ran = true;
+      continue;
+    }
     if (!canStart()) break;
     ran = true;
     let review: QwenDirectReview | null;
@@ -327,6 +373,15 @@ async function runStep(ctx: JobContext<null>, settings: CrawlSettings, tally: Qw
         request => reviewWithQwenDirect(input, { timeoutMs, signal: ctx.signal, request }));
       });
     } catch (error) {
+      // 호출 직전 증명이 거절했다 — 그 예약은 dispatch 가 이미 물렸다(evidence 에 검사). 항목 하나의 일이면 넘기고 다음 대상으로 간다
+      if (error instanceof LocalModelDomainRefusedError) {
+        ctx.log("qwen_auto.domain_refused", { check: error.check });
+        if (error.check === "input_expired") { noteStale(target, error.refusal.validUntil); continue; }
+        if (STEP_WIDE_REFUSALS.has(error.check)) break;
+        failItem(target, error.check === "target_not_open" ? "not_open" : error.check);
+        continue;
+      }
+      // 장부의 일시 거절(자리 경합·정책·예약 만료 등) — 지금처럼 이 틱을 멈추고 다음 틱에 다시 본다
       if (error instanceof ModelCapacityDeferredError) { ctx.log("qwen_auto.model_deferred", { reason: error.reason }); break; }
       if (!(error instanceof QwenDirectError)) throw error;
       if (error.code === "qwen_cancelled") break;
@@ -359,7 +414,7 @@ async function runStep(ctx: JobContext<null>, settings: CrawlSettings, tally: Qw
   ctx.log("qwen_second_opinion.ran", { auditAsked: tally.audit.asked, auditReleased: tally.audit.released, auditKept: tally.audit.autoKept,
     auditHeld: tally.audit.autoHeld, auditCaughtUp: tally.audit.caughtUp, auditLeftThin: tally.audit.leftThin, auditLeftSplit: tally.audit.leftSplit,
     publishedAsked: tally.published.asked,
-    publishedKept: tally.published.kept, failed: tally.failed, endpointError: tally.endpointError !== null });
+    publishedKept: tally.published.kept, failed: tally.failed, inputStale: tally.inputStale, endpointError: tally.endpointError !== null });
   await saveObservation(lease, { ...observation, lastRunAt: now() });
 }
 
@@ -504,7 +559,8 @@ export async function qwenSecondOpinionStatus(settings: Pick<CrawlSettings, "aud
     published: { enabled: steps.publishedFilter.enabled, perTick: steps.publishedFilter.perTick, lastHour: publishedRow?.hour ?? 0,
       lastDay: publishedRow?.day ?? 0, keptHour: publishedRow?.keptHour ?? 0, keptDay: publishedRow?.keptDay ?? 0, remaining: publishedLeft?.count ?? 0 },
     lastRunAt: observation.lastRunAt, lastSuccessAt: observation.lastSuccessAt, lastError: observation.lastError,
-    givenUp: Object.values(observation.failures).filter((failure) => failure.count >= QWEN_AUTO_ITEM_ATTEMPTS).length,
+    givenUp: Object.values(observation.failures).filter((failure) => failure.code !== QWEN_AUTO_INPUT_STALE
+      && failure.count >= QWEN_AUTO_ITEM_ATTEMPTS).length,
     endpointBackoff: endpointBackoffActive(backoff) ? { until: backoff.retryAt, code: backoff.lastError, failures: backoff.failures } : null,
   };
 }

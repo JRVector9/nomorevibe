@@ -42,6 +42,7 @@ import {
   type Ai2DispatchBinding, type Ai2ModelDispatch,
 } from "./capacity";
 import { ModelCapacityDeferredError } from "./capacity-deferred";
+import { LocalModelDomainRefusedError, localModelDomainRefusalEvidence } from "./local-model-domain-refusal";
 import { liveStateSql, occupyingStateSql, inFlightStateSql, sentStateSql } from "./capacity-states";
 import { deviceCandidateSql, deviceFallbackLimit, type ModelCapacityGeneration } from "./capacity-devices";
 import { helperGateStateFromRow, helperGateStatesSql, type HelperGateState, type HelperGateStateRow } from "./capacity-helpers";
@@ -451,6 +452,10 @@ export function consumeLocalModelDispatch(value: unknown): LocalModelDispatch | 
   return value as LocalModelDispatch;
 }
 
+/**
+ * 예약을 이 대상의 실제 전송으로 바꾼다. 장부 쪽 경합(정책·예약 만료·소유권·같은 작업 fence)은 null(일시 — 다음 틱),
+ * 도메인 증명의 거절은 그 예약을 물리고(evidence 에 검사) LocalModelDomainRefusedError(reason reservation_lost)를 던진다.
+ */
 export async function dispatchLocalModelCapacity(value: {
   reservation: ModelCapacityReservation; identity: ModelCapacityRequestIdentity; binding: LocalModelBinding;
   input: import("./local-model-input").LocalModelInput; job: JobLease; role: RoleLease; screenProof?: LocalModelScreenProof;
@@ -475,8 +480,16 @@ export async function dispatchLocalModelCapacity(value: {
       || row.groupId !== route.groupId || row.providerBudgetId !== route.providerBudgetId || row.state !== "reserved"
       || row.logicalWorkKey !== binding.logicalWorkKey || row.epoch !== state.epoch || row.revision !== state.revision
       || row.policyHash !== state.policyHash || await localModelFence(tx, binding.logicalWorkKey, row.requestId)) return null;
-    const { proveLocalModelDomain } = await import("./local-model-domain");
-    if (!await proveLocalModelDomain(tx, binding.target, value.input, value.job, value.role, binding.model, row.requestId, value.screenProof)) return null;
+    const { localModelDomainRefusal } = await import("./local-model-domain");
+    const refusal = await localModelDomainRefusal(tx, binding.target, value.input, value.job, value.role, binding.model, row.requestId, value.screenProof);
+    if (refusal) {
+      // 증명이 거절한 예약은 같은 TX 에서 물리고 어느 검사인지 evidence 에 남긴다(2026-11-03 — 예전에는 호출자 정리가 evidence 없이 물렸다)
+      const [withdrawn] = await tx.update(modelCapacityRequests).set({ state: "withdrawn", updatedAt: sql`clock_timestamp()` })
+        .where(and(eq(modelCapacityRequests.requestId, row.requestId), eq(modelCapacityRequests.state, "reserved"),
+          eq(modelCapacityRequests.token, row.token!))).returning();
+      if (withdrawn) await event(tx, withdrawn, "reservation_cancelled", "reserved", "withdrawn", null, localModelDomainRefusalEvidence(refusal));
+      return { refused: refusal };
+    }
     const bindingHash = localModelBindingHash(binding);
     const [changed] = await tx.update(modelCapacityRequests).set({ state: "dispatched", dispatchBinding: binding, dispatchBindingHash: bindingHash,
       dispatchedAt: sql`clock_timestamp()`, updatedAt: sql`clock_timestamp()` }).where(and(eq(modelCapacityRequests.requestId, row.requestId),
@@ -491,6 +504,7 @@ export async function dispatchLocalModelCapacity(value: {
     await event(tx, changed, "dispatch_started", "reserved", "dispatched", null, { dispatch });
     return dispatch;
   });
+  if (committed && "refused" in committed) throw new LocalModelDomainRefusedError(committed.refused);
   if (committed) localDispatches.add(committed);
   return committed;
 }
