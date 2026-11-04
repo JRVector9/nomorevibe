@@ -3,7 +3,7 @@ import { useRouter } from "next/navigation";
 import { useActionState } from "react";
 import { markClaimInvite } from "../actions";
 import { editIntroAction } from "./actions";
-import { LIMITS } from "@/lib/domain/products/schema";
+import { LIMITS } from "@/lib/domain/products/limits";
 
 export function PrototypeIntroForm({ slug, tagline }: { slug: string; tagline: string }) {
   const router = useRouter();
