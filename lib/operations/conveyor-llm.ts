@@ -1,6 +1,6 @@
 import { AI_TASKS, aiTaskAliasIdentity, isAiLiveTask, type AiTaskDef } from "@/lib/llm/ai-tasks";
 import { bareModelName, sameUnderlyingModel } from "@/lib/crawl/review-model-identity";
-import { deviceServer } from "./admin-models-view";
+import { deviceServer, isLocalModelHost } from "./admin-models-view";
 import { NO_MODEL_TEXT, type StationKey } from "./conveyor-model";
 
 /**
@@ -48,7 +48,7 @@ export const NO_LLM: Readonly<Record<"discover" | "fetch" | "judge" | "sink", { 
 
 // ── 입력 ─────────────────────────────────────────────────────────────────────────────────────────
 
-export type LlmConnection = { id: string; label: string; kind: "api" | "cli"; cliTool: string | null; hasKey: boolean; enabled: boolean };
+export type LlmConnection = { id: string; label: string; kind: "api" | "cli"; baseUrl?: string | null; cliTool: string | null; hasKey: boolean; enabled: boolean };
 export type LlmRankRow = { task: string; slot: number; rank: number; connectionId: string; model: string; enabled: boolean };
 /**
  * 최근 1시간 장부(model_capacity_requests state=settled)를 route·provider·model 로 센 것. groups 는 그 호출들이 잡은 장비 그룹(group_id) —
@@ -124,7 +124,8 @@ function problemOf(row: LlmRankRow, connection: LlmConnection | undefined): stri
   if (!row.enabled) return "순위가 꺼져 있음";
   if (!connection) return "연결을 찾을 수 없음";
   if (!connection.enabled) return "연결이 꺼져 있음";
-  if (connection.kind === "api" && !connection.hasKey) return "연결에 키가 없음 — 건너뜀";
+  // 로컬 직접 연결(gpu3090-qwen·supa-direct·m3-mlx)은 키 없이 부른다 — hasKey=false 를 멈춤으로 오해하지 않는다
+  if (connection.kind === "api" && !connection.hasKey && !isLocalModelHost(connection.baseUrl)) return "연결에 키가 없음 — 건너뜀";
   return null;
 }
 

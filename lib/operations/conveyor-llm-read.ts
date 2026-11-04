@@ -39,8 +39,8 @@ export async function readLedgerUse(): Promise<LlmUsedRow[]> {
 
 export async function readLlmInputs(now: string): Promise<LlmInputs> {
   const [connections, rows, used, runtime] = await Promise.all([
-    listAiConnections().then((list): LlmConnection[] => list.map((row) => ({ id: row.id, label: row.label, kind: row.kind, cliTool: row.cliTool,
-      hasKey: row.hasKey, enabled: row.enabled }))).catch(warn("conveyor.llm_connections_unavailable")),
+    listAiConnections().then((list): LlmConnection[] => list.map((row) => ({ id: row.id, label: row.label, kind: row.kind, baseUrl: row.baseUrl,
+      cliTool: row.cliTool, hasKey: row.hasKey, enabled: row.enabled }))).catch(warn("conveyor.llm_connections_unavailable")),
     listAiTaskRows().then((list): LlmRankRow[] => list.map((row) => ({ task: row.task, slot: row.slot, rank: row.rank, connectionId: row.connectionId,
       model: row.model, enabled: row.enabled }))).catch(warn("conveyor.llm_ranks_unavailable")),
     readLedgerUse().catch(warn("conveyor.llm_ledger_unavailable")),

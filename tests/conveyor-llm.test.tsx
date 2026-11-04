@@ -93,6 +93,19 @@ describe("configured rank vs the model actually used in the last hour", () => {
     expect(first.head.slots[0].ranks[0].problem).toContain("키가 없음");
   });
 
+  it("does not call a keyless local-direct connection stopped — gpu3090-qwen serves without a key", () => {
+    // 운영 2026-11-04: 1차는 gpu3090-qwen 직접 연결로 5분에 20건 처리 중인데, hasKey=false 를 멈춤으로 보였다
+    const local = conn(QWEN.id, QWEN.label, { hasKey: false, baseUrl: "http://100.77.43.63:8090/v1" });
+    const first = buildStationLlm(healthy({ connections: [local, M3, CLAUDE],
+      rows: [rank("first-review", 1, local, "qwen3.8-flash-next"), rank("second-review", 1, M3, "gpt-oss-120b")],
+      used: [used("crawl-agent-review", "local-direct", "qwen3.8-flash-next", 236)] })).first;
+    if (first.kind !== "llm") throw new Error("llm");
+    expect(first.stopped).toEqual([]);
+    expect(first.head.state).toBe("ok");
+    expect(first.head.slots[0].ranks[0].problem).toBeNull();
+    expect(first.head.head).toMatchObject({ model: "qwen3.8-flash-next", where: "gpu3090-qwen", rank: 1, source: "used" });
+  });
+
   it("names the skipped rank from the worker's own last tick when it is fresh, and ignores a stale one", () => {
     const runtime = (at: string): Record<string, LlmRuntime> => ({ "first-review": { at, degraded: null, unusable: [{ rank: 1, code: "engine_no_key", text: "엔진이 키를 거절함" }] } });
     const rows = [rank("first-review", 1, QWEN, "qwen3.8-flash-next"), rank("first-review", 2, M3, "gpt-oss-120b"), rank("second-review", 1, M3, "gpt-oss-120b")];

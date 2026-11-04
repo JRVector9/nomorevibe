@@ -30,7 +30,7 @@ afterAll(async () => {
 it("reads the configured ranks and connections without opening keys, and the 1-hour ledger aggregate runs read-only", async () => {
   const inputs = await readLlmInputs(new Date().toISOString());
   const connection = inputs.connections?.find((row) => row.id === connectionId);
-  expect(connection).toEqual({ id: connectionId, label, kind: "api", cliTool: null, hasKey: false, enabled: true });
+  expect(connection).toEqual({ id: connectionId, label, kind: "api", baseUrl: `http://it-llm-${run.slice(0, 8)}.test/v1`, cliTool: null, hasKey: false, enabled: true });
   expect(inputs.rows).toContainEqual({ task: "screen-review", slot: 8, rank: 1, connectionId, model: "it-model", enabled: true });
   expect(Array.isArray(inputs.used)).toBe(true);
   expect(inputs.runtime).not.toBeNull();

@@ -66,6 +66,14 @@ function serverByHost(url: string | null | undefined): string | undefined {
   if (!url) return undefined;
   try { return SERVER_BY_HOST[new URL(url).hostname]; } catch { return undefined; }
 }
+/**
+ * 키 없이 부를 수 있는 로컬 직접 연결인가 — Tailscale IP·MagicDNS·localhost 로 우리 장비가 직접 서빙하는 주소다.
+ * 이 주소들은 ai_connections 에 키 암호문이 없어도(hasKey=false) 정상 동작한다. 외부 API 주소는 키가 필요하다.
+ */
+export function isLocalModelHost(url: string | null | undefined): boolean {
+  if (!url) return false;
+  try { return !!SERVER_BY_HOST[new URL(url).hostname]; } catch { return false; }
+}
 /** 관리 계약 행 → 표시용 요약. contract 의 endpoint 만 읽고 host:port 로 줄인다. apiKey 등 다른 필드는 읽지 않는다. */
 export function modelContractLinks(rows: readonly { routeId: string; model: string; contract: unknown; transport: "direct" | "gateway" }[]): ModelContractLink[] {
   return rows.map(row => {
