@@ -2686,6 +2686,7 @@ html:not([data-admin-theme="light"]) .admin-prototype .callout p {
 .admin-prototype .flow-state,
 .admin-prototype .flow-model,
 .admin-prototype .worker-card small,
+.admin-prototype .callout,
 .admin-prototype [data-admin-type="status"] {
   --admin-font-delta: 0px;
 }
