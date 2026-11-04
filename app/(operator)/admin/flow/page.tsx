@@ -6,6 +6,7 @@ import { listJobStates } from "@/lib/jobs/runner";
 import { isPausedJob } from "@/lib/jobs/status";
 import { adminJobControlVersions } from "@/lib/operations/admin-job-control";
 import { readConveyor } from "@/lib/operations/conveyor";
+import { readFlowRankEditor } from "@/lib/operations/flow-rank-editor-read";
 import { STATION_JOBS } from "@/lib/operations/flow-response";
 import { logger } from "@/lib/observability/logger";
 import { PageStamp } from "@/app/(operator)/admin/components/PageStamp";
@@ -46,10 +47,11 @@ export default async function AdminFlowPage() {
   const admin = await currentAdmin();
   if (!admin) redirect("/admin/login");
   const fresh = (await cookies()).has(OPS_FRESH_COOKIE);
-  const [conveyor, desk, controls] = await Promise.all([
+  const [conveyor, desk, controls, editor] = await Promise.all([
     readConveyor(fresh).catch(quiet("conveyor.unavailable")),
     readOperatorDesk(admin.login, fresh).catch(quiet("desk.unavailable")),
     readControls(admin).catch(quiet("flow.controls_unavailable")),
+    readFlowRankEditor(),
   ]);
   return (
     <main className="flex flex-col gap-4 pb-10 pt-6"><PageStamp />
@@ -57,7 +59,7 @@ export default async function AdminFlowPage() {
         <h1 className="text-[22px] font-extrabold tracking-tight">전체 흐름</h1>
         <p className="text-[13px] text-fg-3">칸을 누르면 자세히와 장애 대응이 열립니다.</p>
       </div>
-      {conveyor ? <FlowBoard data={conveyor} desk={desk} controls={controls ?? undefined} />
+      {conveyor ? <FlowBoard data={conveyor} desk={desk} controls={controls ?? undefined} editor={editor} />
         : <p role="status" className="rounded-[12px] border border-line bg-bg-card px-5 py-8 text-center text-[14px] text-fg-2">
           흐름을 읽지 못했습니다 — 다음 자동 갱신에서 다시 읽습니다.</p>}
     </main>

@@ -1,3 +1,5 @@
+import { aiTask, aiTaskSlotLabel } from "@/lib/llm/ai-tasks";
+
 /**
  * 운영자 책상 — 전체 흐름(/admin/flow) 한 장의 "1인 관리자 필수 칸" 모양과 순수 판정. DB 를 읽지 않는다(읽기는 app/(operator)/admin/flow/desk.ts).
  *
@@ -49,7 +51,7 @@ export type OperatorDesk = {
  * 이전 값은 작업 로그 줄의 detail(전·후)에 있다. 되돌릴 수 없는 것은 그렇게 적는다(href null).
  */
 export const CHANGE_UNDO: Readonly<Record<string, (target: string) => DeskUndo>> = {
-  "ai-task-models-save": () => ({ text: "「작업 ↔ AI 모델」 최근 기록에서 이전 순위를 보고 다시 저장", href: "/admin/models/tasks" }),
+  "ai-task-models-save": () => ({ text: "이전 순위로 다시 저장(「바꾸기」 되돌리기·작업 ↔ AI 모델)", href: "/admin/models/tasks" }),
   "ai-task-models-import": () => ({ text: "「작업 ↔ AI 모델」에서 칸별로 이전 순위로 다시 저장", href: "/admin/models/tasks" }),
   "ai-connection-save": () => ({ text: "「작업 ↔ AI 모델」 연결 편집에서 이전 값으로 저장", href: "/admin/models/tasks" }),
   "ai-connection-delete": () => ({ text: "지운 연결은 다시 만들어야 합니다(키는 다시 넣음)", href: "/admin/models/tasks" }),
@@ -76,11 +78,19 @@ export const CHANGE_UNDO: Readonly<Record<string, (target: string) => DeskUndo>>
 };
 export const CHANGE_ACTIONS = Object.keys(CHANGE_UNDO);
 
+/** 순위 저장의 대상(감사 target `task#slot`)은 사람 말 작업 이름으로(「2차 AI 검수 · 투표자 1」). 모르는 작업·다른 동작은 그대로 */
+function changeTarget(action: string, target: string): string {
+  if (action !== "ai-task-models-save") return target;
+  const [id, slot] = target.split("#");
+  const task = aiTask(id);
+  return task ? aiTaskSlotLabel(task, Number(slot) || 1) : target;
+}
+
 /** 작업 로그 줄 → 바뀐 설정 한 줄. 이름표는 작업 로그 화면과 같은 것(labels.ts)을 넘겨받는다 */
 export function deskChange(row: { id: number; createdAt: string; actor: string; action: string; target: string; ok: boolean },
   label: (action: string) => string): DeskChange {
   const undo = CHANGE_UNDO[row.action]?.(row.target) ?? { text: "작업 로그에서 전·후 값을 보고 그 화면에서 다시 저장", href: `/admin/activity?target=${encodeURIComponent(row.target)}` };
-  return { id: row.id, at: row.createdAt, actor: row.actor, action: row.action, label: label(row.action), target: row.target, ok: row.ok, undo };
+  return { id: row.id, at: row.createdAt, actor: row.actor, action: row.action, label: label(row.action), target: changeTarget(row.action, row.target), ok: row.ok, undo };
 }
 
 /** 부재 중의 시작 — 내가 마지막으로 작업 로그에 남긴 때. 없거나 72시간보다 오래면 72시간 전, 1시간 안이면 1시간 전(너무 짧은 창은 볼 것이 없다) */
