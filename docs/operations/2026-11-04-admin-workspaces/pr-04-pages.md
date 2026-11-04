@@ -5,3 +5,7 @@
 검증: 관련 실제 form parser/경계/원본 연결 회귀·ESLint·TypeScript, [원본 시안 대조](https://github.com/JRVector9/nomorevibe/blob/codex/admin-workspaces-20261104/docs/operations/2026-11-04-admin-workspaces/prototype-fidelity.md)에서 28탭·상세8탭·품질4모드·모바일·자동 갱신 통과. 최종 통합 범위 26파일·326테스트 통과. 운영 변경·배포는 실행하지 않았습니다.
 
 시안 검토용 초안이며 기존 draft CI 정책을 유지합니다.
+
+후속 글자 조정: 본문과 기존 요청·검수·랭킹 편집 폼을 현재 크기에서 정확히 2 CSS px 키우는 전용 CSS를 적용합니다. 프로젝트 상세 이름은 실제 기준 22→24px이며, 관측·상태 정보는 원래 크기를 유지합니다. 기능·데이터·레이아웃은 이 후속 변경의 범위에 추가하지 않습니다.
+
+이번 글자 조정의 기준과 실제 검증은 [폰트 검증 기록](https://github.com/JRVector9/nomorevibe/blob/codex/admin-workspaces-20261104/docs/operations/2026-11-04-admin-workspaces/typography-validation.md)에 별도로 기록합니다.

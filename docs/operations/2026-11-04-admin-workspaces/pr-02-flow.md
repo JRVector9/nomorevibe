@@ -5,3 +5,7 @@
 검증: 관련 흐름·LLM·순위·단계 링크 회귀와 ESLint/TypeScript, 실제 데이터의 원본 UI 대조·선택/기간/서랍/자동 갱신. [최종 통합 검증](https://github.com/JRVector9/nomorevibe/blob/codex/admin-workspaces-20261104/docs/operations/2026-11-04-admin-workspaces/prototype-fidelity.md)은 26파일·326테스트와 실제 브라우저 결과를 구분해 기록합니다. 운영 변경·모델 시험 호출은 실행하지 않았습니다.
 
 시안 검토용 초안이며 기존 draft CI 정책을 유지합니다.
+
+후속 글자 조정: 일반 본문과 수치의 확대에서 접수 상태 OPEN·흐름 관측 상태·모델 작업 진행 상태를 제외하는 표시 마커만 추가합니다. 데이터 집계·자동 갱신·실제 제어와 조회 계약은 변경하지 않습니다.
+
+이번 글자 조정의 기준과 실제 검증은 [폰트 검증 기록](https://github.com/JRVector9/nomorevibe/blob/codex/admin-workspaces-20261104/docs/operations/2026-11-04-admin-workspaces/typography-validation.md)에 별도로 기록합니다.
