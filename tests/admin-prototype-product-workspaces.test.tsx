@@ -32,7 +32,9 @@ describe("prototype quality sources",()=>{
     expect(prototypeQualityMode("constructor")).toBe("audit");
     const html=await render(await PrototypeQualityWorkspace({mode:"audit"}));
     for(const label of ["AI 감사·정책","공개분 2차","규칙 재검수","생존·저장소"])expect(html).toContain(label);
-    expect(html).toMatch(/<button(?=[^>]*value="audit")(?=[^>]*aria-pressed="true")(?=[^>]*name="mode")[^>]*>/);
+    for(const mode of ["audit","second","rules","uptime"])expect(html).toContain(`href="/admin/products?tab=quality&amp;mode=${mode}"`);
+    expect(html).toMatch(/<a(?=[^>]*href="\/admin\/products\?tab=quality&amp;mode=audit")(?=[^>]*aria-current="page")[^>]*>/);
+    expect(html).not.toContain('name="mode"');
   });
   it("shows actual audit evidence and additional opinions and carries the original item ID to actions",async()=>{
     fake.held.mockResolvedValue([{id:81,slug:"actual-project",name:"Actual Project",url:"https://actual.example",reviewedAt:null,heldAt:new Date(),reason:"원본 근거",confidence:.91,screenJudged:true,second:[{model:"observed-model",decision:"approve",source:"api",reason:"독립 의견"}]}]);
