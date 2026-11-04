@@ -11,7 +11,7 @@ import { ModelSaveBar } from "@/app/(operator)/admin/models/ModelChips";
 import { ReviewModelsForm } from "@/app/(operator)/admin/models/ReviewModelsForm";
 import { addressHost, buildModelCards, MODEL_DASHBOARD_STAGES, MODEL_TABLE_COLUMNS, modelContractLinks, modelServer, modelTransportLabel, stageHealth } from "@/lib/operations/admin-models-view";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
-import { redesignObservation, redesignModels, redesignAssignments, redesignMetrics, redesignRequests } from "./fixtures/admin-models-redesign";
+import { redesignObservation, redesignModels, redesignAssignments, redesignMetrics, redesignRequests, redesignRoutes } from "./fixtures/admin-models-redesign";
 const render = () => renderToStaticMarkup(createElement(LiveModels, { observation: redesignObservation(), models: redesignModels, assignments: redesignAssignments }));
 const tbodies = (html: string) => html.match(/<tbody id="model-[^"]+"[\s\S]*?<\/tbody>/g) ?? [];
 describe("admin models 한 화면 렌더(2026-10-31 승인 시안)", () => {
@@ -40,8 +40,8 @@ describe("admin models 한 화면 렌더(2026-10-31 승인 시안)", () => {
     expect(html).toContain("models-stage-head");
     // 모델 하나 = tbody 하나(단계 행 묶음) — 경보 칩·옛 링크의 # 앵커가 그 tbody 로 간다
     const rows = tbodies(html); expect(rows).toHaveLength(3);
-    const supa = rows.find(row => row.includes("Qwen3.8-27B-NVFP4"))!;
-    for (const value of ["1차 검수", "Supa", "출처 등록부", "계약 없음", "확인 못함 1", "연결 확인", "모델 재시작", 'data-state="unknown"', "model-row-unknown"]) expect(supa).toContain(value);
+    const supa = rows.find(row => row.includes(redesignRoutes[0].model))!;
+    for (const value of ["1차 검수", "Supa", "출처 주소", "계약 없음", "확인 못함 1", "연결 확인", "모델 재시작", 'data-state="unknown"', "model-row-unknown"]) expect(supa).toContain(value);
     expect(supa).not.toContain("(abcllm)"); expect(supa).not.toContain("게이트웨이");
     expect(html).toContain("접수 일시중지"); expect(html).not.toContain("표를 좌우로 밀어"); expect(html).not.toContain("min-w-[1360px]");
     // 상태는 색+글자+글리프 — 범례에 여섯 상태가 모두 있다

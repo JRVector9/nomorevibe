@@ -19,7 +19,7 @@ setModelEnvironmentResolver((env, purpose) => {
   // A purpose without a process env (null) is selected by the scope registry's selections alone.
   const variable = MODEL_PURPOSE_ENV[purpose as keyof typeof MODEL_PURPOSE_ENV];
   return { ...active.env, ...(variable ? { [`${variable}_KEY`]: key } : {}),
-    ...(purpose === "direct-review" ? { AUDIT_SECOND_OPINION_URL: undefined } : {}), ABCLLM_BASE_URL: undefined };
+    ...(purpose === "direct-review" ? { AUDIT_SECOND_OPINION_URL: undefined } : {}) };
 });
 
 export function validateAdminStagePools(value: unknown, registry = readModelRegistry()): AdminStagePools {

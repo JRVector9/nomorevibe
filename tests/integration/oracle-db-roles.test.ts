@@ -6,7 +6,7 @@ import { afterAll, beforeAll, expect, it } from 'vitest';
 import { batchCanaryAnchorKey, batchPolicyHash } from '@/lib/jobs/batches';
 import { httpOriginPolicyHash } from '@/lib/net/http-origin-policy';
 import { productTranslationSourceHash } from '@/lib/domain/products/translation-policy';
-import { configuredModel } from '@/lib/llm/model-registry';
+import { configuredModel, DEFAULT_MODEL_DEFINITIONS } from '@/lib/llm/model-registry';
 import { ORACLE_DB_PRINCIPALS, ORACLE_REFRESH_PRINCIPAL, oracleDbGrantStatements, type OracleDbService } from '@/lib/runtime/oracle-db-profile';
 import { ensureSchema, TEST_DATABASE_URL } from './setup';
 import { textContract } from '../text-task-ranks-fixture';
@@ -33,6 +33,9 @@ const RESTORED = ['ai_task_models', 'ai_connections', 'model_capacity_events', '
 const APPEND_ONLY = [['http_origin_events', 'http_origin_events_no_change'], ['uptime_observations', 'uptime_observations_no_change'],
   ['model_capacity_events', 'model_capacity_events_no_change']];
 let server: Server, base = '', roleCatalog: unknown, baseline: Record<string, unknown[]> = {}, gatewayPosts = 0;
+/** ABCLLM_BASE_URL is retired; the child's gateway calls still point at the fixture's loopback /gateway route through the registry. */
+const gatewayModelRegistry = () => JSON.stringify({ version: 1, models: DEFAULT_MODEL_DEFINITIONS.map(model =>
+  model.provider === 'abcllm' ? { ...model, baseUrl: `${base}/gateway/v1` } : model) });
 const keys: Record<string, string[]> = {};
 const ids = { health: 0, site: 0, candidate: 0 };
 type Canary = { ready: boolean; reason: string; bootId: string; anchorInvalidated: boolean; readbackRows: number; requestedVersion: number;
@@ -73,7 +76,7 @@ function child(service: OracleDbService, input: Record<string, unknown>, attestS
       env: { PATH: process.env.PATH, NODE_ENV: process.env.NODE_ENV ?? 'test', LOG_LEVEL: 'error', DATABASE_URL: principalUrl(service),
         DB_POOL_MAX: '3', WORKER_ROLE: role, SERVICE_INSTANCE_ID: instanceId ?? instance(role), RELEASE_TAG: release, JOB_BATCH_VERSION: '1',
         PHYSICAL_HOST: 'oracle-osaka-smoke', HTTP_ORIGIN_PERMITS: '1', ALLOW_PRIVATE_URLS: '1',
-        ABCLLM_BASE_URL: `${base}/gateway`, ORACLE_ATTEST_DATABASE_URL: principalUrl(attestService), ORACLE_DRIVER_INPUT: JSON.stringify(input),
+        MODEL_REGISTRY_CONFIG: gatewayModelRegistry(), ORACLE_ATTEST_DATABASE_URL: principalUrl(attestService), ORACLE_DRIVER_INPUT: JSON.stringify(input),
         ...extraEnv },
     });
     let stdout = '', stderr = '';

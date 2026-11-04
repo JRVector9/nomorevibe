@@ -5,7 +5,7 @@ import { DEFAULT_MODEL_DEFINITIONS, configuredModel, modelBaseUrl, modelForPurpo
 
 const twins = () => ({ MODEL_REGISTRY_CONFIG: JSON.stringify({ version: 1, models: [
   { ...DEFAULT_MODEL_DEFINITIONS[0], key: "gpu3090:review", equipment: "gpu3090", model: "same-model", gatewayLabel: undefined },
-  { ...DEFAULT_MODEL_DEFINITIONS[2], model: "same-model" },
+  { ...DEFAULT_MODEL_DEFINITIONS[2], model: "same-model", gatewayLabel: "m1" },
 ] }) });
 describe("model registry equipment identity", () => {
   it("resolves M1 and GPU3090 independently even when the request model is identical", () => {
@@ -17,15 +17,22 @@ describe("model registry equipment identity", () => {
     expect(configuredModel("product-translate", env)).toBe("[m1] same-model");
     expect(resolveRegistryModel("[other] same-model", env)).toBeNull();
   });
-  it("preserves the equipment label on legacy overrides and resolves explicit keys", () => {
+  it("ignores the retired abcLLM model selectors and keeps the registry route", () => {
     const env = twins();
-    // reason-translate keeps its env (ABCLLM_MODEL / ABCLLM_MODEL_KEY): labels survive and explicit keys resolve.
-    expect(configuredModel("reason-translate", { ...env, ABCLLM_MODEL: "[m1] same-model" })).toBe("[m1] same-model");
-    expect(configuredModel("reason-translate", { ...env, ABCLLM_MODEL_KEY: "m1:translation", ABCLLM_MODEL: "obsolete" })).toBe("[m1] same-model");
-    // A shared bare name follows the registry route: only M1 serves translation; GPU3090 keeps direct review.
-    expect(configuredModel("reason-translate", { ...env, ABCLLM_MODEL: "same-model" })).toBe("[m1] same-model");
+    // reason-translate no longer reads ABCLLM_MODEL / ABCLLM_MODEL_KEY: labels and explicit keys do not move it.
+    for (const ignored of [{ ABCLLM_MODEL: "[m1] same-model" }, { ABCLLM_MODEL_KEY: "m1:translation", ABCLLM_MODEL: "obsolete" },
+      { ABCLLM_MODEL: "same-model" }, { ABCLLM_MODEL_KEY: "gpu3090:review" }, { ABCLLM_MODEL_KEY: "missing:key" }])
+      expect(configuredModel("reason-translate", { ...env, ...ignored })).toBe("[m1] same-model");
     expect(configuredModel("direct-review", { ...env, AUDIT_SECOND_OPINION_MODEL: "same-model" })).toBe("same-model");
-    expect(() => configuredModel("reason-translate", { ...env, ABCLLM_MODEL_KEY: "gpu3090:review" })).toThrow("invalid_model_key");
+  });
+  it("ignores ABCLLM_MODEL, ABCLLM_PROFILE_MODEL and their *_KEY selectors for every purpose that used them", () => {
+    for (const purpose of ["product-search-profile", "reason-translate", "product-tagline-ko", "search-query-translate"] as const) {
+      expect(MODEL_PURPOSE_ENV[purpose]).toBeNull();
+      const expected = configuredModel(purpose, {});
+      for (const ignored of [{ ABCLLM_MODEL: "retired-model" }, { ABCLLM_MODEL_KEY: "missing:key" },
+        { ABCLLM_PROFILE_MODEL: "retired-profile" }, { ABCLLM_PROFILE_MODEL_KEY: "missing:key" }])
+        expect(configuredModel(purpose, ignored)).toBe(expected);
+    }
   });
   it("selects product-translate and crawl-tagline from the registry alone and ignores their removed env names", () => {
     const env = twins();
@@ -41,22 +48,30 @@ describe("model registry equipment identity", () => {
     expect(configuredModel("product-translate", { ...selections({ "product-translate": "m1:translation" }), PRODUCT_TRANSLATION_MODEL_KEY: "gpu3090:review" }))
       .toBe("[m1] same-model");
     expect(() => configuredModel("product-translate", selections({ "product-translate": "gpu3090:review" }))).toThrow("invalid_model_registry");
-    for (const ignored of [{}, { ABCLLM_TAGLINE_MODEL: "[MLX] gpt-oss-120b" }, { ABCLLM_TAGLINE_MODEL_KEY: "mlx:text" }, { ABCLLM_TAGLINE_MODEL: "unregistered-alias" }])
-      expect(configuredModel("crawl-tagline", ignored)).toBe("[MLX] qwen3.6-35b-heretic");
+    for (const ignored of [{}, { ABCLLM_TAGLINE_MODEL: "gpt-oss-120b" }, { ABCLLM_TAGLINE_MODEL_KEY: "mlx:text" }, { ABCLLM_TAGLINE_MODEL: "unregistered-alias" }])
+      expect(configuredModel("crawl-tagline", ignored)).toBe("supa");
   });
   it("replaces model, provider, address and resource configuration without editing consumers", () => {
     const definition = { ...DEFAULT_MODEL_DEFINITIONS[2], model: "replacement", baseUrl: "https://gateway.example/v1",
       maxTokens: 2048, concurrency: 3, timeoutMs: 4321, displayName: "M1 replacement" };
     const env = { MODEL_REGISTRY_CONFIG: JSON.stringify({ version: 1, models: [definition] }) };
     expect(modelForPurpose("product-translate", env)).toEqual(definition);
-    expect(configuredModel("product-translate", env)).toBe("[m1] replacement");
+    expect(configuredModel("product-translate", env)).toBe("replacement");
     expect(modelBaseUrl("product-translate", env)).toBe(definition.baseUrl);
   });
-  it("defaults public translation to equipment-qualified M1 Gemma and keeps other text roles independent", () => {
-    expect(configuredModel("product-translate", {})).toBe("[m1] mlx-community--gemma-4-26b-a4b-it-4bit");
+  it("defaults public translation to the direct M1 Gemma entry and keeps other text roles independent", () => {
+    expect(configuredModel("product-translate", {})).toBe("mlx-community--gemma-4-26b-a4b-it-4bit");
     expect(modelForPurpose("reason-translate", {}).key).toBe("m1:translation");
     expect(modelRequestName(modelForPurpose("direct-review", {}))).toBe("qwen3.8-flash-next");
-    expect(modelBaseUrl("reason-translate", { ABCLLM_BASE_URL: "https://gateway.example/" })).toBe("https://gateway.example/v1");
+    expect(modelBaseUrl("reason-translate", { ABCLLM_BASE_URL: "https://retired-gateway.example/" })).toBe("https://m1-studio.tail02799e.ts.net/v1");
+    expect(modelBaseUrl("direct-review", { AUDIT_SECOND_OPINION_URL: "https://audit.example/" })).toBe("https://audit.example/v1");
+    // The retired gateway is not a code default: every abcllm entry names its engine and no entry carries a gateway label.
+    for (const model of DEFAULT_MODEL_DEFINITIONS) {
+      expect(model.gatewayLabel).toBeUndefined();
+      expect(model.baseUrl ?? "").not.toContain("abcllm-api.brut.bot");
+    }
+    expect(DEFAULT_MODEL_DEFINITIONS.some(model => model.key === "mlx:tagline")).toBe(false);
+    expect(configuredModel("crawl-tagline", {})).toBe("supa");
   });
   it("applies configured purpose budgets beneath the selected model ceiling", () => {
     const env = { MODEL_REGISTRY_CONFIG: JSON.stringify({ version: 1, models: DEFAULT_MODEL_DEFINITIONS,
@@ -87,8 +102,8 @@ describe("registry deadline and request policies", () => {
     expect(modelTimeoutMs("product-translate", {})).toBe(300_000);
     expect(modelRequestBudget("product-translate", {})).toEqual({ maxTokens: 30_000, concurrency: 1, timeoutMs: 300_000 });
     const modelEnv = config({ models: DEFAULT_MODEL_DEFINITIONS.map(model => model.key === "supa:review" ? { ...model, timeoutMs: 30_000, maxTokens: 700, deadlineLadder: { engineMs: 20_000, relayMs: null, gatewayMs: 25_000, clientMs: 30_000 } } : model) });
-    expect(modelCallTimeoutMs("review-gateway", "[supa] Qwen3.8-27B-NVFP4", modelEnv)).toBe(30_000);
-    expect(modelCallMaxTokens("gateway-review", "[supa] Qwen3.8-27B-NVFP4", modelEnv)).toBe(700);
+    expect(modelCallTimeoutMs("review-gateway", "supa", modelEnv)).toBe(30_000);
+    expect(modelCallMaxTokens("gateway-review", "supa", modelEnv)).toBe(700);
     expect(modelTimeoutMs("relay", {})).toBe(90_000);
     const env = config({ deadlines: { "review-gateway": { engineMs: 20_000, relayMs: 25_000, gatewayMs: 30_000, clientMs: 35_000 } },
       limits: { "gateway-review": { maxTokens: 900, concurrency: 1 } } });

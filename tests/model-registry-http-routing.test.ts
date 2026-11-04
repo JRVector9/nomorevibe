@@ -4,7 +4,6 @@ import { DEFAULT_MODEL_DEFINITIONS } from "@/lib/llm/model-registry";
 import { aiTaskAliasIdentity } from "@/lib/llm/ai-tasks";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { pinTextRanks, textContract, textRankRow } from "./text-task-ranks-fixture";
-vi.mock("@/lib/llm/text-capacity-admission", () => ({ assertTextModelAdmission: async () => {} }));
 const servers: http.Server[] = [];
 const GPU_CONNECTION = "0b0c0d0e-0000-4000-8000-0000000030a0";
 afterEach(async () => {
@@ -65,7 +64,7 @@ it.each([
   const { textTaskModel } = await import("@/lib/llm/ai-task-rank-scope");
   expect(qwenDirectConfig()?.baseUrl).toBe(gpu.baseUrl);
   const items = [{ name: "Doc", text: "문서 관리 도구", locale: "en" as const, field: "tagline" as const }];
-  expect(configuredModelRoute("product-translate")).toMatchObject({ key: "m1:translation", equipment: "m1", requestModel: "[m1] qwen3.8-flash-next",
+  expect(configuredModelRoute("product-translate")).toMatchObject({ key: "m1:translation", equipment: "m1", requestModel: "qwen3.8-flash-next",
     baseUrl: m1.baseUrl });
   const ranks = await TextTaskRanks.open("product-translate");
   expect(ranks.bindings()).toEqual([expect.objectContaining({ rank: 1, identity: "qwen3.8-flash-next", engineModel: "qwen3.8-flash-next", deviceId: "m1" })]);

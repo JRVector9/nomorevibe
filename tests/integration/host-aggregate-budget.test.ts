@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import postgres from 'postgres';
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { batchJobsForRole } from '@/lib/jobs/batches';
+import { DEFAULT_MODEL_DEFINITIONS } from '@/lib/llm/model-registry';
 import { httpOriginPolicyHash } from '@/lib/net/http-origin-policy';
 import { ensureSchema, TEST_DATABASE_URL } from './setup';
 
@@ -29,6 +30,9 @@ host.settled.then(() => process.send({ started: true }));
 type Reply = Record<string, unknown>;
 const RELEASE = 'pr10e-fixture';
 const relaxed = { maxLoadPerCpu: 1_000, maxHostRssBytes: 2 ** 40, maxEventLoopDelayMs: 60_000, maxHeartbeatGapMs: 60_000 };
+/** ABCLLM_BASE_URL is retired; keep the child's gateway calls on a closed loopback port through the registry instead. */
+const CLOSED_MODEL_REGISTRY = JSON.stringify({ version: 1, models: DEFAULT_MODEL_DEFINITIONS.map(model =>
+  model.provider === 'abcllm' ? { ...model, baseUrl: 'http://127.0.0.1:9/v1' } : model) });
 const timing = { leaseMs: 2_000, renewMs: 200, holdMs: 400 };
 const instanceHosts: Record<string, string> = { 'pr10e-mini-a': 'mini', 'pr10e-mini-b': 'mini', 'pr10e-mini-c': 'mini',
   'pr10e-osaka-a': 'oracle-osaka-smoke', 'pr10e-osaka-b': 'oracle-osaka-smoke', 'pr10e-m3-a': 'm3', 'pr10e-m3-b': 'm3', 'pr10e-wrong': 'm3' };
@@ -41,7 +45,7 @@ function environment(host: string, roles: string[], role: string, instance: stri
   const policy = { version: 1, host, release: RELEASE, roles, schedulerReplicas: 0, webReplicas: 0, webReadReplica: false,
     monitor: false, connectAgent: false, preflightProcesses: 0, migrationProcesses: 0, rolloutCopies: options.rolloutCopies ?? 1 };
   // 자식은 최소 env 만 받는다 — 개발자 셸의 provider 키를 물려받지 않고, 혹시 잡이 돌아도 모델 주소는 닫힌 로컬 포트다
-  return { NODE_ENV: process.env.NODE_ENV, PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: process.env.TMPDIR, LOG_LEVEL: 'error', ABCLLM_BASE_URL: 'http://127.0.0.1:9',
+  return { NODE_ENV: process.env.NODE_ENV, PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: process.env.TMPDIR, LOG_LEVEL: 'error', MODEL_REGISTRY_CONFIG: CLOSED_MODEL_REGISTRY,
     DATABASE_URL: TEST_DATABASE_URL, WORKER_ROLE: role, PHYSICAL_HOST: host,
     RELEASE_TAG: RELEASE, SERVICE_INSTANCE_ID: instance, HTTP_ORIGIN_PERMITS: '1', DB_POOLER_MODE: 'direct',
     DB_POOL_MAX: undefined, READ_DB_POOL_MAX: undefined, DB_STATEMENT_TIMEOUT_MS: '5000', DB_LOCK_TIMEOUT_MS: '2000',

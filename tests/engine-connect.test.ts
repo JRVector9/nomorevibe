@@ -65,11 +65,15 @@ describe("registry overrides", () => {
     delete direct.gatewayLabel;
     try {
       store.setServingContractSnapshotForTest([], [direct]);
-      expect(modelRequestName(readModelRegistry().models.find(model => model.key === "m1:translation")!)).toBe(m1.model);
+      const overlaid = readModelRegistry().models.find(model => model.key === "m1:translation")!;
+      expect(overlaid.baseUrl).toBe("https://m1.tail0.ts.net/v1");
+      expect(modelRequestName(overlaid)).toBe(m1.model);
       expect(readModelRegistry({ MODEL_REGISTRY_CONFIG: JSON.stringify({ version: 1, models: DEFAULT_MODEL_DEFINITIONS }) })
-        .models.find(model => model.key === "m1:translation")?.gatewayLabel).toBe("m1");
+        .models.find(model => model.key === "m1:translation")?.baseUrl).toBe("https://m1-studio.tail02799e.ts.net/v1");
     } finally { store.setServingContractSnapshotForTest(null); }
-    expect(readModelRegistry().models.find(model => model.key === "m1:translation")?.gatewayLabel).toBe("m1");
+    const fallback = readModelRegistry().models.find(model => model.key === "m1:translation")!;
+    expect(fallback.gatewayLabel).toBeUndefined();
+    expect(fallback.baseUrl).toBe("https://m1-studio.tail02799e.ts.net/v1");
   });
   it("refuse a save that would make a purpose ambiguous or break a saved stage selection", async () => {
     const { checkRegistryOverrides } = await import("@/lib/operations/admin-model-registry");

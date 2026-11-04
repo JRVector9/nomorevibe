@@ -67,7 +67,9 @@ export const modelDefinitionSchema = z.object({
   if (model.gatewayLabel && model.provider !== "abcllm") context.addIssue({ code: "custom", message: "gateway_label_provider_mismatch" });
 });
 export type ModelDefinition = Readonly<z.infer<typeof modelDefinitionSchema>>;
-const gateway = "https://abcllm-api.brut.bot/v1";
+const m1 = "https://m1-studio.tail02799e.ts.net/v1";
+const supa = "http://100.78.219.124:8000/v1";
+const m3Mlx = "http://100.92.77.66:8014/v1";
 const local = "http://100.77.43.63:8090/v1";
 
 /** All compatibility defaults live here. Selection never grants capacity or verified serving authority. */
@@ -78,16 +80,14 @@ export const DEFAULT_MODEL_DEFINITIONS: readonly ModelDefinition[] = [
   { key: "m3:review", equipment: "m3", displayName: "M3 · DeepSeek", provider: "local-direct", baseUrl: "http://100.92.77.66:8010/v1",
     model: "deepseek-v4.1-flash-1017", family: "deepseek-v4.1-flash-1017", timeoutMs: 60_000, maxTokens: 8_000, concurrency: 1,
     purposes: ["human-review", "assist-audit"] },
-  { key: "m1:translation", equipment: "m1", displayName: "M1 · Gemma 4 26B", provider: "abcllm", baseUrl: gateway, gatewayLabel: "m1",
+  { key: "m1:translation", equipment: "m1", displayName: "M1 · Gemma 4 26B", provider: "abcllm", baseUrl: m1,
     model: "mlx-community--gemma-4-26b-a4b-it-4bit", family: "gemma4-26b", timeoutMs: 300_000, maxTokens: 30_000, concurrency: 1, purposes: ["product-translate", "reason-translate", "relay"] },
-  { key: "supa:review", equipment: "supa", displayName: "Supa · Qwen", provider: "abcllm", baseUrl: gateway, gatewayLabel: "supa",
-    model: "Qwen3.8-27B-NVFP4", family: "Qwen3.8-27B-NVFP4", timeoutMs: 60_000, maxTokens: 8_000, concurrency: 4,
-    purposes: ["ai1-preset", "product-search-verify"] },
-  { key: "mlx:text", equipment: "mlx", displayName: "MLX · GPT OSS", provider: "abcllm", baseUrl: gateway, gatewayLabel: "MLX",
+  { key: "supa:review", equipment: "supa", displayName: "Supa · Qwen", provider: "abcllm", baseUrl: supa,
+    model: "supa", family: "qwen3.8-27b-nvfp4", timeoutMs: 60_000, maxTokens: 8_000, concurrency: 4,
+    purposes: ["ai1-preset", "product-search-verify", "crawl-tagline"] },
+  { key: "mlx:text", equipment: "mlx", displayName: "MLX · GPT OSS", provider: "abcllm", baseUrl: m3Mlx,
     model: "gpt-oss-120b", family: "gpt-oss-120b", timeoutMs: 60_000, maxTokens: 8_000, concurrency: 2,
     purposes: ["product-search-profile", "product-tagline-ko", "search-query-translate", "assist-legacy-family"] },
-  { key: "mlx:tagline", equipment: "mlx", displayName: "MLX · 소개 생성", provider: "abcllm", baseUrl: gateway, gatewayLabel: "MLX",
-    model: "qwen3.6-35b-heretic", family: "qwen3.6-35b-heretic", timeoutMs: 60_000, maxTokens: 400, concurrency: 2, purposes: ["crawl-tagline"] },
   { key: "connect:sonnet", equipment: "connect", displayName: "Claude CLI · sonnet", provider: "claude-cli", baseUrl: null,
     model: "sonnet", family: "sonnet", timeoutMs: 60_000, maxTokens: 8_000, concurrency: 1, purposes: ["product-intro-check", "classify-claude"] },
   { key: "connect:opus", equipment: "connect", displayName: "Claude CLI · opus", provider: "claude-cli", baseUrl: null,
@@ -236,12 +236,14 @@ export function resolveRegistryModel(value: string, env: ModelEnvironment = proc
 /**
  * Keep established per-purpose env names; new *_MODEL_KEY selectors take precedence. null = no process env for that purpose: the
  * registry (code defaults + admin model_registry_overrides) and the admin stage pools select its model. crawl-tagline and
- * product-translate lost their env (2026-10-31, abcLLM gateway removal) so a stale gateway alias in an app env cannot pick the model.
+ * product-translate lost their env (2026-10-31, abcLLM gateway removal), and the retired ABCLLM_MODEL / ABCLLM_PROFILE_MODEL
+ * names are no longer read for product-search-profile, reason-translate, product-tagline-ko and search-query-translate either
+ * (2026-11-04) so a stale gateway alias in an app env cannot pick the model.
  */
 export const MODEL_PURPOSE_ENV: Readonly<Record<"product-search-profile" | "product-search-verify" | "crawl-tagline" | "reason-translate"
   | "product-tagline-ko" | "search-query-translate" | "product-translate" | "product-intro-check" | "direct-review" | "relay", string | null>> = {
-  "product-search-profile": "ABCLLM_PROFILE_MODEL", "product-search-verify": "SEARCH_VERIFY_MODEL", "crawl-tagline": null,
-  "reason-translate": "ABCLLM_MODEL", "product-tagline-ko": "ABCLLM_MODEL", "search-query-translate": "ABCLLM_MODEL",
+  "product-search-profile": null, "product-search-verify": "SEARCH_VERIFY_MODEL", "crawl-tagline": null,
+  "reason-translate": null, "product-tagline-ko": null, "search-query-translate": null,
   "product-translate": null, "product-intro-check": "INTRO_CHECK_MODEL",
   "direct-review": "AUDIT_SECOND_OPINION_MODEL", "relay": "LOCAL_MODEL_RELAY_MODEL",
 };
@@ -337,8 +339,7 @@ export function modelBaseUrl(purpose: string, env: ModelEnvironment = process.en
   env = modelEnvironment(env, purpose);
   const definition = purpose in MODEL_PURPOSE_ENV ? configuredModelDefinition(purpose as keyof typeof MODEL_PURPOSE_ENV, env) : modelForPurpose(purpose, env);
   if (expectedProvider && definition.provider !== expectedProvider) throw new Error("model_provider_adapter_mismatch");
-  const legacy = definition.provider === "abcllm" ? env.ABCLLM_BASE_URL?.trim()
-    : purpose === "direct-review" ? env.AUDIT_SECOND_OPINION_URL?.trim() : undefined;
+  const legacy = purpose === "direct-review" ? env.AUDIT_SECOND_OPINION_URL?.trim() : undefined;
   const base = legacy || definition.baseUrl;
   if (!base) throw new Error(`model_base_url_missing:${purpose}`);
   const url = new URL(base);
