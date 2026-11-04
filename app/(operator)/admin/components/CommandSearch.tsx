@@ -29,7 +29,7 @@ export function searchItems(result: AdminSearchResult | null): { group: string; 
  * 제품 이름·slug·주소·저장소, 후보 저장소·배포 주소, 작업 로그 대상을 한 창에서 찾고, 줄을 고르면 그 화면으로 간다.
  * 화살표로 줄을 옮기고 Enter 로 연다. 줄 끝의 작은 링크(공개 페이지·기록)는 마우스로 고른다.
  */
-export function CommandSearch() {
+export function CommandSearch({ appearance }: { appearance?: "prototype" } = {}) {
   const router = useRouter();
   const dialog = useRef<HTMLDialogElement>(null);
   const input = useRef<HTMLInputElement>(null);
@@ -89,8 +89,8 @@ export function CommandSearch() {
   const activeItem = short ? null : items[active];
 
   return <>
-    <button type="button" className="admin-search-trigger" onClick={open} aria-haspopup="dialog" aria-keyshortcuts="Meta+K Control+K" title="제품·후보·작업 로그 찾기 (⌘K)">
-      <AdminIcon name="search" size={15} /><span className="admin-sidebar-label">찾기</span><kbd className="admin-sidebar-label">⌘K</kbd>
+    <button type="button" className={appearance === "prototype" ? "search-launch" : "admin-search-trigger"} onClick={open} aria-haspopup="dialog" aria-keyshortcuts="Meta+K Control+K" title="제품·후보·작업 로그 찾기 (⌘K)">
+      <AdminIcon name="search" size={15} /><span className="admin-sidebar-label">{appearance === "prototype" ? "전체 검색" : "찾기"}</span><kbd className="admin-sidebar-label">⌘K</kbd>
     </button>
     <dialog ref={dialog} className="admin-confirm admin-search" aria-label="관리자 전역 검색"
       onClick={(event) => { if (event.target === event.currentTarget) dialog.current?.close(); }}>

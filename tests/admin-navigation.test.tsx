@@ -93,7 +93,7 @@ describe('workspace tabs and legacy deep links', () => {
     const location = resolveWorkspace('/admin/models/helpers');
     const html = renderToStaticMarkup(<WorkspaceTabs location={location} pathname="/admin/models/helpers" search="" />);
     for (const href of ['/admin/models/devices', '/admin/models/limits', '/admin/models/helpers']) expect(html).toContain(`href="${href}"`);
-    expectActiveLink(html, '/admin/models/devices');
+    expectActiveLink(html, '/admin/models?tab=capacity');
     expectActiveLink(html, '/admin/models/helpers');
     expect(html).toContain('조치 기록');
   });
@@ -195,5 +195,21 @@ describe('workspace badge units', () => {
     expect(workspaceBadge('projects', { '/admin/audit': requests })).toEqual({ label: '확인', tone: 'warn', title: '감사 거절 7일 넘게 기다림 800건(가장 오래 12일)' });
     expect(workspaceBadge('requests', { '/admin/audit': auditBadge(null, 0, { overdue: 20, oldestWaitDays: 8 }) })).toBeUndefined();
     expect(workspaceBadge('projects', { '/admin/audit': auditBadge(null, 1) })).toBeUndefined();
+  });
+});
+
+
+describe('approved prototype workspace tabs', () => {
+  it.each([
+    ['/admin/flow', 'diagnostics', 'home'], ['/admin/flow', 'changes', 'home'],
+    ['/admin/products', 'quality', 'projects'], ['/admin/products', 'translations', 'projects'],
+    ['/admin/models', 'tasks', 'models'], ['/admin/models', 'capacity', 'models'],
+    ['/admin/models', 'connections', 'models'], ['/admin/models', 'history', 'models'],
+  ])('keeps %s?tab=%s inside the designed workspace', (pathname, tab, owner) => {
+    const location = resolveWorkspace(pathname, query(`tab=${tab}`));
+    expect(location.workspace.id).toBe(owner); expect(location.tab).toBe(tab);
+    expect(location.secondary).toEqual([]);
+    const html = renderToStaticMarkup(<WorkspaceTabs location={location} pathname={pathname} search={`tab=${tab}`} />);
+    expectActiveLink(html, `${pathname}?tab=${tab}`);
   });
 });

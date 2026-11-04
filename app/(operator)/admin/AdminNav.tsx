@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Fragment } from "react";
 import { takedownSignal } from "@/lib/domain/products/takedown-view";
 import { AdminIcon, type AdminIconName } from "./components/AdminIcon";
 import { WORKSPACE_GROUPS, resolveWorkspace, type WorkspaceId } from "./workspace-navigation";
@@ -137,27 +138,18 @@ export function workspaceBadge(id: WorkspaceId, badges: NavBadges): NavBadge | u
 
 export function AdminNav({ current, search = "", badges = {} }: { current: string; search?: string; badges?: NavBadges }) {
   const active = resolveWorkspace(current, new URLSearchParams(search)).workspace.id;
-  return (
-    <nav className="admin-navigation" aria-label="관리자 메뉴">
-      {WORKSPACE_GROUPS.map((group, index) => (
-        <div key={group.title} className="admin-nav-group">
-          <p className="admin-nav-group-title" id={`admin-nav-group-${index}`}>{group.title}</p>
-          <ul aria-labelledby={`admin-nav-group-${index}`}>
-            {group.pages.map(page => {
-              const badge = workspaceBadge(page.id, badges);
-              return <li key={page.id}>
-                <Link href={page.href} aria-current={page.id === active ? "page" : undefined} prefetch={false} title={page.label}>
-                  <AdminIcon name={page.icon} />
-                  <span className="admin-nav-text"><span>{page.label}</span></span>
-                  {badge && <b className="admin-nav-badge" data-tone={badge.tone} title={badge.title}>
-                    {badge.title ? <><span aria-hidden="true">{badge.label}</span><span className="admin-vh">{badge.title}</span></> : badge.label}
-                  </b>}
-                </Link>
-              </li>;
-            })}
-          </ul>
-        </div>
-      ))}
-    </nav>
-  );
+  return <nav aria-label="관리자 메뉴" className="prototype-navigation">
+    {WORKSPACE_GROUPS.map((group, index) => <Fragment key={group.title}>
+      <p className="nav-label" id={`admin-nav-group-${index}`}>{group.title}</p>
+      {group.pages.map(page => {
+        const badge = workspaceBadge(page.id, badges);
+        return <Link key={page.id} href={page.href} aria-current={page.id === active ? "page" : undefined} prefetch={false} title={page.label}>
+          <span className="nav-icon" aria-hidden="true"><AdminIcon name={page.icon} /></span><span>{page.label}</span>
+          {badge && <b className="nav-badge" data-tone={badge.tone} title={badge.title}>
+            {badge.title ? <><span aria-hidden="true">{badge.label}</span><span className="admin-vh">{badge.title}</span></> : badge.label}
+          </b>}
+        </Link>;
+      })}
+    </Fragment>)}
+  </nav>;
 }
