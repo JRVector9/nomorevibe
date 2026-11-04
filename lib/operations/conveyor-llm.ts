@@ -23,7 +23,7 @@ export const STATION_TASKS: Readonly<Record<LlmStationKey, readonly string[]>> =
   discover: [], fetch: [], judge: [],
   first: ["first-review"],
   second: ["second-review"],
-  // 프로필 준비 — 소개 짓기·번역·소개 검수. 카테고리 분류는 발행 잡(crawl-publish) 안에서 하므로 발행 칸이다
+  // 순위 편집의 기존 묶음을 보존한다. 흐름 관측은 아래 buildStationLlm 에서 공개 전 소개 / 공개 후·보조 작업을 분리한다.
   profile: ["crawl-tagline", "product-tagline-ko", "korean-translation-direct", "product-translate", "reason-translate", "product-intro-check"],
   publish: ["publish-classify"],
   // 키워드 등록 — 검색 키워드 짓기·검수(잡 product-search-profile·verify)와 제품 벡터(product-embedding)
@@ -278,20 +278,24 @@ function stationLlm(tasks: TaskLlm[]): StationLlm {
 }
 
 /** 칸마다 지금 쓰는 모델 — 읽지 못한 입력은 그 칸을 「확인 못함」으로 둔다(0 이나 정상으로 보이지 않게) */
-export function buildStationLlm(inputs: LlmInputs): Record<LlmStationKey | "sink", StationLlm> {
-  const out = {} as Record<LlmStationKey | "sink", StationLlm>;
+export function buildStationLlm(inputs: LlmInputs): Record<LlmStationKey | "sink" | "support", StationLlm> {
+  const out = {} as Record<LlmStationKey | "sink" | "support", StationLlm>;
   const unreadable = inputs.rows === null || inputs.connections === null;
+  const summarize = (ids: readonly string[]): StationLlm => {
+    if (unreadable) return { kind: "unknown", why: "작업 ↔ AI 모델 순위를 읽지 못했습니다" };
+    return stationLlm(ids.flatMap((id) => { const def = taskDef(id); return def ? [taskLlm(def, inputs)] : []; }));
+  };
   for (const key of Object.keys(STATION_TASKS) as LlmStationKey[]) {
-    const ids = STATION_TASKS[key];
+    // 공개된 제품의 번역·소개 검수나 판정 사유 번역은 공개 전 소개 준비의 선행 조건이 아니다.
+    const ids = key === "profile" ? STATION_TASKS.profile.filter((id) => id === "crawl-tagline") : STATION_TASKS[key];
     if (!ids.length) {
       const none = NO_LLM[key as "discover" | "fetch" | "judge"];
       out[key] = { kind: "none", short: none.short, why: none.why };
       continue;
     }
-    if (unreadable) { out[key] = { kind: "unknown", why: "작업 ↔ AI 모델 순위를 읽지 못했습니다" }; continue; }
-    const tasks = ids.flatMap((id) => { const def = taskDef(id); return def ? [taskLlm(def, inputs)] : []; });
-    out[key] = stationLlm(tasks);
+    out[key] = summarize(ids);
   }
+  out.support = summarize(STATION_TASKS.profile.filter((id) => id !== "crawl-tagline"));
   out.sink = { kind: "none", short: NO_LLM.sink.short, why: NO_LLM.sink.why };
 
   // 1차와 2차가 같은 모델 — 2차 관문은 1차와 다른 모델의 투표자가 없으면 표를 내지 못한다(lib/crawl/second-review.ts)
