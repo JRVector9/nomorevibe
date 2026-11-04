@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import Link from "next/link";
+import { Suspense } from "react";
 import { authSecret, currentAdmin } from "@/lib/auth/admin";
 import { listJobStates } from "@/lib/jobs/runner";
 import { STALE_LOCK_MS } from "@/lib/jobs/lease";
@@ -15,9 +17,11 @@ import { logger } from "@/lib/observability/logger";
 import { PageStamp } from "@/app/(operator)/admin/components/PageStamp";
 import { OPS_FRESH_COOKIE } from "../status/fresh";
 import { jobControlCsrf } from "../status/job-control-csrf";
-import { readOperatorDesk } from "./desk";
+import { readOperatorAway, readOperatorChanges, readOperatorDeskShared, readOperatorDiagnostics } from "./desk";
 import type { FlowControls } from "./FlowBoard";
-import { PrototypeFlow } from "./PrototypeFlow";
+import { FlowBoard } from "./FlowBoard";
+import { PrototypeFlow, PrototypeFlowAway, PrototypeFlowChanges } from "./PrototypeFlow";
+import type { OperatorDesk } from "@/lib/operations/operator-desk-model";
 import "./flow.css";
 
 export const dynamic = "force-dynamic";
@@ -57,19 +61,63 @@ export default async function AdminFlowPage({ searchParams }: { searchParams?: P
   const fresh = (await cookies()).has(OPS_FRESH_COOKIE);
   const params = await searchParams;
   const tab = typeof params?.tab === "string" ? params.tab : "flow";
-  const [conveyor, desk, controls, editor, reactions] = await Promise.all([
-    readConveyor(fresh).catch(quiet("conveyor.unavailable")),
-    readOperatorDesk(admin.login, fresh).catch(quiet("desk.unavailable")),
-    readControls(admin).catch(quiet("flow.controls_unavailable")),
-    readFlowRankEditor(),
-    heldReactionComments(1).catch(quiet("flow.reactions_unavailable")),
-  ]);
+  const advanced = params?.advanced === "1";
   return (
     <main className="stack pb-10 pt-4"><PageStamp />
       <h1 className="admin-vh">운영 홈 · 실시간 전체 흐름</h1>
-      {conveyor ? <PrototypeFlow data={conveyor} desk={desk} controls={controls ?? { jobs: {}, csrf: null }} editor={editor} tab={tab} reactionRequests={reactions?.count ?? null} />
-        : <p role="status" className="rounded-[12px] border border-line bg-bg-card px-5 py-8 text-center text-[14px] text-fg-2">
-          흐름을 읽지 못했습니다 — 다음 자동 갱신에서 다시 읽습니다.</p>}
+      <Suspense fallback={<p className="notice" aria-busy="true">운영 흐름을 읽는 중…</p>}>
+        <FlowWorkspace admin={admin} fresh={fresh} tab={tab} advanced={advanced} />
+      </Suspense>
     </main>
   );
+}
+
+type DeskRead = Promise<OperatorDesk | null>;
+
+async function FlowWorkspace({ admin, fresh, tab, advanced }: {
+  admin: NonNullable<Awaited<ReturnType<typeof currentAdmin>>>; fresh: boolean; tab: string; advanced: boolean;
+}) {
+  if (tab === "changes") {
+    const desk = await readOperatorChanges(admin.login).catch(quiet("desk.changes_unavailable"));
+    return <PrototypeFlowChanges desk={desk} />;
+  }
+  const diagnostics = tab === "diagnostics";
+  const sharedDeskRead = (diagnostics ? readOperatorDiagnostics() : readOperatorDeskShared(fresh))
+    .catch(quiet("desk.unavailable"));
+  // Personal history streams into its panel; it never blocks the live belt or enters shared cache.
+  const fullDeskRead: DeskRead | null = diagnostics ? null : sharedDeskRead.then(async base => base
+    ? { ...base, away: await readOperatorAway(admin.login, base.measuredAt) } : null);
+  const [conveyor, base, control, editor, reactions] = await Promise.all([
+    readConveyor(fresh).catch(quiet("conveyor.unavailable")),
+    sharedDeskRead,
+    readControls(admin).catch(quiet("flow.controls_unavailable")),
+    diagnostics ? Promise.resolve(null) : readFlowRankEditor(),
+    diagnostics ? Promise.resolve(null) : heldReactionComments(1).catch(quiet("flow.reactions_unavailable")),
+  ]);
+  if (!conveyor) return <p role="status" className="notice">흐름을 읽지 못했습니다 — 다음 자동 갱신에서 다시 읽습니다.</p>;
+  const desk: OperatorDesk | null = base ? { ...base, away: null } : null;
+  const controls = control ?? { jobs: {}, csrf: null };
+  const advancedContent = diagnostics && !advanced
+    ? <><p className="small muted">전체 업무·장비·변경 기록과 모델 순위를 포함한 기존 고급 화면입니다.</p><Link prefetch={false} className="button mt" href="/admin/flow?tab=diagnostics&advanced=1#flow-advanced">고급 전체 흐름 불러오기 →</Link></>
+    : <Suspense fallback={<p className="small muted" aria-busy="true">고급 운영 관측을 읽는 중…</p>}>
+        <AdvancedFlow data={conveyor} controls={controls} deskRead={fullDeskRead} editor={editor} readRanks={diagnostics} login={admin.login} fresh={fresh} />
+      </Suspense>;
+  return <PrototypeFlow data={conveyor} desk={desk} controls={controls} editor={editor} tab={tab}
+    reactionRequests={reactions?.count ?? null} advancedContent={advancedContent}
+    awayContent={fullDeskRead ? <Suspense fallback={<p className="small muted" aria-busy="true">부재 중 기록을 읽는 중…</p>}><AwayPanel deskRead={fullDeskRead} /></Suspense> : undefined} />;
+}
+
+async function AwayPanel({ deskRead }: { deskRead: DeskRead }) {
+  return <PrototypeFlowAway desk={await deskRead} />;
+}
+
+async function AdvancedFlow({ data, controls, deskRead, editor, readRanks, login, fresh }: {
+  data: Awaited<ReturnType<typeof readConveyor>>; controls: FlowControls; deskRead: DeskRead | null;
+  editor: Awaited<ReturnType<typeof readFlowRankEditor>>; readRanks: boolean; login: string; fresh: boolean;
+}) {
+  const [desk, ranks] = await Promise.all([
+    deskRead ?? readOperatorDeskShared(fresh).then(async base => ({ ...base, away: await readOperatorAway(login, base.measuredAt) })).catch(quiet("desk.unavailable")),
+    readRanks ? readFlowRankEditor() : Promise.resolve(editor),
+  ]);
+  return <FlowBoard data={data} desk={desk} controls={controls} editor={ranks} />;
 }

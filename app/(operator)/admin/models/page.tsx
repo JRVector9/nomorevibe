@@ -28,7 +28,7 @@ import { buildModelCards, modelContractLinks, modelRecoveryBlocked, type Capacit
 import { AI_TEXT_TASK_IDS } from "@/lib/llm/ai-tasks";
 import { TextTaskRanks } from "@/lib/llm/ai-task-resolver";
 import { configuredModel, modelForPurpose, modelRequestName, MODEL_PURPOSE_ENV, readModelRegistry } from "@/lib/llm/model-registry";
-import { ensureServingContracts, servingContractSnapshot } from "@/lib/llm/serving-contract-store";
+import { servingContractSnapshot } from "@/lib/llm/serving-contract-store";
 import { AiConnection } from "../status/AiConnection";
 import { agentRequest } from "@/lib/operations/agent-client";
 import type { AgentStatus } from "@/lib/operations/contracts";
@@ -74,14 +74,24 @@ export default async function ModelsPage({ searchParams }: { searchParams?: Prom
   const tab = typeof params?.tab === "string" ? params.tab : "live";
   const advanced = params?.advanced === "1";
   const readOnly = adminWorkspaceReadOnly();
+  return <main className="stack"><PageStamp /><h1 className="admin-vh">LLM 운영</h1>
+    <Suspense fallback={<p aria-busy="true" className="notice">모델 설정·운영 관측을 읽는 중…</p>}>
+      <ModelsWorkspace tab={tab} advanced={advanced} readOnly={readOnly} />
+    </Suspense>
+  </main>;
+}
+
+/** Bootstrap lives inside the boundary so cold contract/rank snapshots do not hide its fallback. */
+async function ModelsWorkspace({ tab, advanced, readOnly }: { tab: string; advanced: boolean; readOnly: boolean }) {
   // Admin registry overrides (0148) are part of the registry this page shows and validates against.
-  await Promise.all([ensureServingContracts(), ensureReviewTaskRanks()]);
-  const [settings, servedModels, models, assignmentLocked] = await Promise.all([getSettings(), advanced && !readOnly ? readServedContractModels() : Promise.resolve([]), currentModelEnv(),
+  // ensureReviewTaskRanks already waits for both contracts and task ranks.
+  const [settings, assignmentLocked] = await Promise.all([getSettings(),
     // 배정 표 플래그(3b-B) — 켜졌으면 아래 모델 선택 폼을 읽기 전용으로(PR 3b-D). 못 읽으면 꺼짐(편집 가능)
-    assignmentTableFlag()]);
+    assignmentTableFlag(), ensureReviewTaskRanks()]);
+  const [models, bindings] = await Promise.all([currentModelEnv(), textStageBindings()]);
 
   const registry = readModelRegistry();
-  const { defaults, assignments: stageAssignments } = adminModelStageView({ models, pools: settings.stageModelPools, bindings: await textStageBindings(),
+  const { defaults, assignments: stageAssignments } = adminModelStageView({ models, pools: settings.stageModelPools, bindings,
     legacyDefault: stage => stage.purpose === "screen-review" ? screenModelConfig()?.model ?? "미설정"
       : stage.purpose in MODEL_PURPOSE_ENV ? configuredModel(stage.purpose as keyof typeof MODEL_PURPOSE_ENV) : modelRequestName(modelForPurpose(stage.purpose)) });
   // 1차·2차는 「작업 ↔ 모델」 순위(PR C1) — 실행 쪽이 읽는 그대로(1차 1·2·3순위, 2차 칸마다 지금 표를 내는 순위 → 그 밖의 순위)
@@ -93,13 +103,12 @@ export default async function ModelsPage({ searchParams }: { searchParams?: Prom
   ];
   // 관리 계약(0147)의 주소는 host:port 만 넘긴다 — 장비 칸의 「장비 미확인」을 줄이고 전송 방식을 보이기 위해서다. 키는 ModelContractLink 에 없다.
   const contracts = modelContractLinks(servingContractSnapshot().rows);
-  const observationRead = readAdminModelsObservation();
+  const observationRead = readAdminModelsObservation({ throughput: advanced });
+  const servedModels = advanced && !readOnly ? readServedContractModels() : Promise.resolve([]);
   // 사람 위임 슬롯의 자동 연결 확인은 한 번만 — 표(연결 확인 열)와 참고의 사람 검토 단계가 같은 약속을 기다린다.
   const humanKeys = settings.stageModelPools?.["human-review"] ?? [];
   const humanProbe = advanced && !readOnly ? configuredHumanModelsProbe(humanKeys).catch((): HumanModelProbe[] => []) : Promise.resolve([] as HumanModelProbe[]);
-  return <main className="stack">
-    <PageStamp />
-    <h1 className="admin-vh">LLM 운영</h1>
+  return <>
     <Suspense fallback={<p aria-busy="true" className="notice">운영 DB 실측을 읽는 중…</p>}><PrototypeModelsSlot observationRead={observationRead} assignments={assignments} models={registry.models} contracts={contracts} tab={tab} readOnly={readOnly} /></Suspense>
     <details className="panel" id="model-advanced" open={advanced}>
       <summary>고급 운영·기존 제어·모델 설정</summary>
@@ -144,7 +153,7 @@ export default async function ModelsPage({ searchParams }: { searchParams?: Prom
     <p className="text-[13px] leading-relaxed text-fg-2">처리 시간은 장부 접수 → 실제 종료(대기 포함). 1시간 성공·실패는 최근 1시간의 실제 종료만 집계. 철회·미확인 요청은 처리량에 넣지 않음. 접수 일시중지/재개는 모든 공통 모델에 적용. 저장한 설정은 배포 없이 30초 안에 각 앱이 다음 작업부터 사용.</p>
       </div> : <div className="panel-body"><p className="small muted">기존 단계별 모델 표·장비 상세·미확정 검토 폼·도우미·모델 선택·분류·검색 연결을 보존합니다. 명시적으로 열 때 기존 고급 화면을 읽습니다.</p><div className="decision-bar"><Link className="button" href={`/admin/models?tab=${tab}&advanced=1#model-advanced`} prefetch={false}>고급 화면 불러오기 →</Link><Link className="button" href="/admin/models/tasks">작업별 순위 원본 →</Link><Link className="button" href="/admin/models/devices">장비 한도 원본 →</Link></div></div>}
     </details>
-  </main>;
+  </>;
 }
 
 async function PrototypeModelsSlot({ observationRead, assignments, models, contracts, tab, readOnly }: {
@@ -168,20 +177,20 @@ async function readAlarmSummary(): Promise<CapacityAlarmSummary> {
   return { status: report.status, count: report.count, oldestAgeSeconds: report.oldestAgeSeconds, stuckDispatched: report.stuckDispatched, alarmReasons: [...report.alarmReasons], thresholds };
 }
 
-async function LiveModelsSlot({ assignments, models, contracts, humanProbe, served, read, readOnly = false }: { assignments: ModelStageAssignment[]; models: ReturnType<typeof readModelRegistry>["models"]; contracts: ModelContractLink[]; humanProbe: Promise<HumanModelProbe[]>; served: Awaited<ReturnType<typeof readServedContractModels>>; read?: ReturnType<typeof readAdminModelsObservation>; readOnly?: boolean }) {
+async function LiveModelsSlot({ assignments, models, contracts, humanProbe, served, read, readOnly = false }: { assignments: ModelStageAssignment[]; models: ReturnType<typeof readModelRegistry>["models"]; contracts: ModelContractLink[]; humanProbe: Promise<HumanModelProbe[]>; served: ReturnType<typeof readServedContractModels>; read?: ReturnType<typeof readAdminModelsObservation>; readOnly?: boolean }) {
   const { readModelOpsStates } = await import("@/lib/operations/ops-runner/repository");
   const observationRead = read ?? readAdminModelsObservation();
   // 엔진 직접 연결 계약의 자동 확인(GET /models, 슬롯마다 1분에 한 번) — 장부를 읽자마자 다른 읽기·사람 위임 확인과 나란히 돈다. 던지지 않는다.
   const directProbes = readOnly ? Promise.resolve(0) : observationRead.then(observation => autoProbeDirectEngines(buildModelCards(observation, models, assignments, contracts),
     servingContractSnapshot().rows, readbackServingEndpoint)).catch(() => 0);
-  const [observation, states, roles, alarms, human] = await Promise.all([observationRead, readModelOpsStates().catch(() => []),
-    roleOverview().catch(() => null), readAlarmSummary(), humanProbe]);
+  const [observation, states, roles, alarms, human, servedModels] = await Promise.all([observationRead, readModelOpsStates().catch(() => []),
+    roleOverview().catch(() => null), readAlarmSummary(), humanProbe, served]);
   // 사람 위임 슬롯의 자동 확인 결과를 같은 키(probe:<provider>:<key>)에 남긴 뒤 읽는다 — 표의 연결 확인 열이 「자동(렌더)」으로 보인다.
   await Promise.all([readOnly ? Promise.resolve(0) : recordAutoProbes(human.map(probe => ({ identity: { routeId: "human-deepseek-review", provider: probe.provider, model: probe.key },
     result: { listed: probe.ready ? true : null, listMs: probe.ms, callBlocked: "유료 DeepSeek 시험 호출은 허용되지 않습니다.", error: probe.ready ? null : "사람 위임 모델 목록 확인 실패(연결 또는 목록 없음)" },
     detail: "사람 위임 슬롯 · GET /models" }))), directProbes]);
   const probes = await readProbeObservations();
-  return <LiveModels observation={observation} opsStates={states} assignments={assignments} models={models} contracts={contracts} served={served} probes={probes}
+  return <LiveModels observation={observation} opsStates={states} assignments={assignments} models={models} contracts={contracts} served={servedModels} probes={probes}
     leases={roles?.roles ?? []} readiness={roles?.overall ?? null} alarms={alarms}
     restartModels={models.map(row => ({ key: row.key, label: row.displayName, blockedReason: modelRecoveryBlocked(row.equipment, row.provider) }))} />;
 }

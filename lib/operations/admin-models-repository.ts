@@ -8,8 +8,12 @@ import { withDbDeadline } from "@/lib/db/pool";
 import { buildAdminModelsObservation, unavailableAdminModels, type AdminModelsObservation } from "./admin-models-observation";
 import { readModelCapacityDeviceStates } from "@/lib/llm/capacity-devices-repository";
 
-/** Read-only primary snapshot. Expired reservations and historical unknowns remain visible and occupied. */
-export async function readAdminModelsObservation(): Promise<AdminModelsObservation> {
+/**
+ * Read-only primary snapshot. Expired reservations and historical unknowns remain visible and occupied.
+ * Basic status boards can skip the completion sample used only by advanced throughput charts.
+ * The default/full reader retains its sample bound and one repeatable-read snapshot.
+ */
+export async function readAdminModelsObservation(options: { throughput?: boolean } = {}): Promise<AdminModelsObservation> {
   try {
     return await withDbDeadline(Date.now() + 4000, () => onPrimary(() => db.transaction(async tx => {
       await tx.execute(sql`SET LOCAL statement_timeout = '3s'`);
@@ -58,7 +62,7 @@ export async function readAdminModelsObservation(): Promise<AdminModelsObservati
           EXISTS(SELECT 1 FROM model_capacity_events e WHERE e.request_id=r.request_id AND e.kind='dispatch_local_ended') AS "localEndRecorded"
         FROM model_capacity_requests r WHERE r.state IN ('waiting','reserved','dispatched','indeterminate')
         ORDER BY CASE WHEN r.state='indeterminate' THEN 0 ELSE 1 END,r.queue_ordinal LIMIT 101`);
-      const completions = await tx.execute<ModelCompletion>(sql`
+      const completions = options.throughput === false ? null : await tx.execute<ModelCompletion>(sql`
         SELECT route_id AS "routeId", provider, model, state,
           to_char(queued_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "queuedAt",
           to_char(settled_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "settledAt",
@@ -70,11 +74,13 @@ export async function readAdminModelsObservation(): Promise<AdminModelsObservati
         WHERE state='settled' AND settled_at >= transaction_timestamp()-interval '24 hours' AND settled_at <= transaction_timestamp()
         ORDER BY settled_at DESC LIMIT 50001`);
       // Never render a partial sample as a complete rate or percentile.
-      if (completions.length > 50000) return unavailableAdminModels();
+      if (completions && completions.length > 50000) return unavailableAdminModels();
       // 장비별 한도·점유·빌려 쓰기(PR 1b) — 같은 읽기 전용 스냅숏 안에서 읽는다. 못 읽으면 null(한도 미확인; 0 이나 정책값으로 꾸미지 않는다).
       const devices = await readModelCapacityDeviceStates(tx).catch(() => null);
+      const observation = buildAdminModelsObservation({ observedAt: control.observedAt, control, metrics: Array.from(metrics), requests: Array.from(requests), devices });
+      if (!completions) return observation;
       const registry = readModelRegistry();
-      return { ...buildAdminModelsObservation({ observedAt: control.observedAt, control, metrics: Array.from(metrics), requests: Array.from(requests), devices }),
+      return { ...observation,
         throughput: buildModelThroughput(Array.from(completions, row => ({ ...row, routeId: modelStageId(row.routeId), model: findModelDefinition(row, registry.models)?.key ?? row.model })), control.observedAt) };
     }, { accessMode: "read only", isolationLevel: "repeatable read" })));
   } catch { return unavailableAdminModels(); }
