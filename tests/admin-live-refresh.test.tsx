@@ -90,7 +90,8 @@ describe("화면마다 다시 읽는 규칙", () => {
   it("저장하지 않은 변경([data-dirty])과 열린 확인 창이 있으면 멈춘다", () => {
     const root = (found: string | null) => ({ querySelector: (selector: string) => { expect(selector).toBe(UNSAVED_SELECTOR); return found; } });
     expect(UNSAVED_SELECTOR).toContain("[data-dirty]");
-    expect(UNSAVED_SELECTOR).toContain("dialog.admin-confirm[open]");
+    // RankDrawer (.fr) and other native modal dialogs need the same protection as ConfirmAction.
+    expect(UNSAVED_SELECTOR).toContain("dialog[open]");
     expect(hasUnsaved(root("dialog") as never)).toBe(true);
     expect(hasUnsaved(root(null) as never)).toBe(false);
     expect(hasUnsaved(null)).toBe(false);

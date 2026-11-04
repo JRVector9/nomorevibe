@@ -51,9 +51,9 @@ export const hasPendingContent = (root: Pick<ParentNode, "querySelector"> | null
 
 /**
  * 저장하지 않은 변경이 있는가 — 화면이 직접 알리는 [data-dirty](설정 폼·감사 보류·일괄 선택·준비한 결정 등)와
- * 열린 확인 창(ConfirmAction, dialog.admin-confirm[open]). 창 아래 화면이 다시 그려지면 확인한 대상·상태가 바뀔 수 있다.
+ * 열린 대화상자(ConfirmAction·RankDrawer 등). 창 아래 화면이 다시 그려지면 확인한 대상·상태가 바뀔 수 있다.
  */
-export const UNSAVED_SELECTOR = "[data-dirty], dialog.admin-confirm[open]";
+export const UNSAVED_SELECTOR = "[data-dirty], dialog[open]";
 export function hasUnsaved(root: Pick<ParentNode, "querySelector"> | null | undefined): boolean {
   return !!root?.querySelector(UNSAVED_SELECTOR);
 }
