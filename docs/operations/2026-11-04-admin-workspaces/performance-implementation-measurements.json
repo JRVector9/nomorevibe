@@ -1,0 +1,313 @@
+{
+  "before": {
+    "head": "8af25463",
+    "startedAt": "2026-11-04T23:09:49.796Z",
+    "finishedAt": "2026-11-04T23:10:48.784Z",
+    "clicks": [
+      {
+        "pass": 1,
+        "page": "home",
+        "path": "/admin/flow",
+        "bodyReadyMs": 5459,
+        "terminalFallback": false,
+        "partialReadFailure": false
+      },
+      {
+        "pass": 1,
+        "page": "review",
+        "path": "/admin/review",
+        "bodyReadyMs": 10800.9,
+        "terminalFallback": false,
+        "partialReadFailure": false
+      },
+      {
+        "pass": 1,
+        "page": "requests",
+        "path": "/admin/requests",
+        "bodyReadyMs": 372.6,
+        "terminalFallback": false,
+        "partialReadFailure": false
+      },
+      {
+        "pass": 1,
+        "page": "projects",
+        "path": "/admin/products",
+        "bodyReadyMs": 1938.6,
+        "terminalFallback": false,
+        "partialReadFailure": false
+      },
+      {
+        "pass": 1,
+        "page": "models",
+        "path": "/admin/models",
+        "bodyReadyMs": 1835.9,
+        "terminalFallback": false,
+        "partialReadFailure": false
+      },
+      {
+        "pass": 1,
+        "page": "content",
+        "path": "/admin/content",
+        "bodyReadyMs": 363.7,
+        "terminalFallback": false,
+        "partialReadFailure": false
+      },
+      {
+        "pass": 1,
+        "page": "settings",
+        "path": "/admin/settings",
+        "bodyReadyMs": 349.5,
+        "terminalFallback": false,
+        "partialReadFailure": false
+      },
+      {
+        "pass": 2,
+        "page": "home",
+        "path": "/admin/flow",
+        "bodyReadyMs": 2839.5,
+        "terminalFallback": false,
+        "partialReadFailure": false
+      },
+      {
+        "pass": 2,
+        "page": "review",
+        "path": "/admin/review",
+        "bodyReadyMs": 11000.5,
+        "terminalFallback": false,
+        "partialReadFailure": false
+      },
+      {
+        "pass": 2,
+        "page": "requests",
+        "path": "/admin/requests",
+        "bodyReadyMs": 352.2,
+        "terminalFallback": false,
+        "partialReadFailure": false
+      },
+      {
+        "pass": 2,
+        "page": "projects",
+        "path": "/admin/products",
+        "bodyReadyMs": 1356.8,
+        "terminalFallback": false,
+        "partialReadFailure": false
+      },
+      {
+        "pass": 2,
+        "page": "models",
+        "path": "/admin/models",
+        "bodyReadyMs": 1944.7,
+        "terminalFallback": false,
+        "partialReadFailure": false
+      },
+      {
+        "pass": 2,
+        "page": "content",
+        "path": "/admin/content",
+        "bodyReadyMs": 336.2,
+        "terminalFallback": false,
+        "partialReadFailure": false
+      },
+      {
+        "pass": 2,
+        "page": "settings",
+        "path": "/admin/settings",
+        "bodyReadyMs": 350.4,
+        "terminalFallback": false,
+        "partialReadFailure": false
+      }
+    ],
+    "fullGets": [
+      {
+        "path": "/admin/flow",
+        "http": 200,
+        "ttfbMs": 99.2,
+        "totalMs": 4193.8,
+        "bytes": 234990,
+        "cacheControl": "private, no-store",
+        "serverTiming": null
+      },
+      {
+        "path": "/admin/review",
+        "http": 200,
+        "ttfbMs": 66.9,
+        "totalMs": 10870,
+        "bytes": 402523,
+        "cacheControl": "private, no-store",
+        "serverTiming": null
+      },
+      {
+        "path": "/admin/models",
+        "http": 200,
+        "ttfbMs": 74.5,
+        "totalMs": 1819.4,
+        "bytes": 110063,
+        "cacheControl": "private, no-store",
+        "serverTiming": null
+      }
+    ],
+    "pageErrors": 0,
+    "consoleErrors": 0,
+    "safety": {
+      "nonReadRequestsBlocked": 0,
+      "postSent": 0,
+      "probeRequests": 0
+    }
+  },
+  "after": {
+    "head": "4f5ae044",
+    "startedAt": "2026-11-04T23:44:34.520Z",
+    "finishedAt": "2026-11-04T23:44:54.388Z",
+    "clicks": [
+      {
+        "pass": 1,
+        "page": "home",
+        "path": "/admin/flow",
+        "bodyReadyMs": 1495.5,
+        "terminalFallback": false,
+        "partialReadFailure": false
+      },
+      {
+        "pass": 1,
+        "page": "review",
+        "path": "/admin/review",
+        "bodyReadyMs": 1439.7,
+        "terminalFallback": false,
+        "partialReadFailure": false
+      },
+      {
+        "pass": 1,
+        "page": "requests",
+        "path": "/admin/requests",
+        "bodyReadyMs": 373,
+        "terminalFallback": false,
+        "partialReadFailure": false
+      },
+      {
+        "pass": 1,
+        "page": "projects",
+        "path": "/admin/products",
+        "bodyReadyMs": 1993,
+        "terminalFallback": false,
+        "partialReadFailure": false
+      },
+      {
+        "pass": 1,
+        "page": "models",
+        "path": "/admin/models",
+        "bodyReadyMs": 1394.4,
+        "terminalFallback": false,
+        "partialReadFailure": false
+      },
+      {
+        "pass": 1,
+        "page": "content",
+        "path": "/admin/content",
+        "bodyReadyMs": 359.8,
+        "terminalFallback": false,
+        "partialReadFailure": false
+      },
+      {
+        "pass": 1,
+        "page": "settings",
+        "path": "/admin/settings",
+        "bodyReadyMs": 350.6,
+        "terminalFallback": false,
+        "partialReadFailure": false
+      },
+      {
+        "pass": 2,
+        "page": "home",
+        "path": "/admin/flow",
+        "bodyReadyMs": 363.9,
+        "terminalFallback": false,
+        "partialReadFailure": false
+      },
+      {
+        "pass": 2,
+        "page": "review",
+        "path": "/admin/review",
+        "bodyReadyMs": 1432.3,
+        "terminalFallback": false,
+        "partialReadFailure": false
+      },
+      {
+        "pass": 2,
+        "page": "requests",
+        "path": "/admin/requests",
+        "bodyReadyMs": 335.9,
+        "terminalFallback": false,
+        "partialReadFailure": false
+      },
+      {
+        "pass": 2,
+        "page": "projects",
+        "path": "/admin/products",
+        "bodyReadyMs": 340.1,
+        "terminalFallback": false,
+        "partialReadFailure": false
+      },
+      {
+        "pass": 2,
+        "page": "models",
+        "path": "/admin/models",
+        "bodyReadyMs": 1446.1,
+        "terminalFallback": false,
+        "partialReadFailure": false
+      },
+      {
+        "pass": 2,
+        "page": "content",
+        "path": "/admin/content",
+        "bodyReadyMs": 335.9,
+        "terminalFallback": false,
+        "partialReadFailure": false
+      },
+      {
+        "pass": 2,
+        "page": "settings",
+        "path": "/admin/settings",
+        "bodyReadyMs": 346.7,
+        "terminalFallback": false,
+        "partialReadFailure": false
+      }
+    ],
+    "fullGets": [
+      {
+        "path": "/admin/flow",
+        "http": 200,
+        "ttfbMs": 104.5,
+        "totalMs": 2811.5,
+        "bytes": 234787,
+        "cacheControl": "private, no-store",
+        "serverTiming": null
+      },
+      {
+        "path": "/admin/review",
+        "http": 200,
+        "ttfbMs": 77,
+        "totalMs": 1516.4,
+        "bytes": 384328,
+        "cacheControl": "private, no-store",
+        "serverTiming": null
+      },
+      {
+        "path": "/admin/models",
+        "http": 200,
+        "ttfbMs": 73.1,
+        "totalMs": 1394.5,
+        "bytes": 103826,
+        "cacheControl": "private, no-store",
+        "serverTiming": null
+      }
+    ],
+    "pageErrors": 0,
+    "consoleErrors": 0,
+    "safety": {
+      "nonReadRequestsBlocked": 0,
+      "postSent": 0,
+      "probeRequests": 0
+    }
+  },
+  "method": "Same sidebar default hrefs, two sequential passes, dev server, remote read-only replica, automatic refresh off, same-host Tailscale browser. Not production latency or cache-hit/p95 evidence. Review default server filter is human."
+}
