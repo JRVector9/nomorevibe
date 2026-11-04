@@ -2649,4 +2649,9 @@ html:not([data-admin-theme="light"]) .admin-prototype .callout p {
 /* The public home page also defines .tabs. Its pill treatment is outside this design. */
 .admin-prototype .tabs { background:transparent; border-radius:0; padding:0; overflow:visible; }
 /* Restore the reference document's heading weight after the app's Tailwind preflight. */
-.admin-prototype h1,.admin-prototype h2,.admin-prototype h3,.admin-prototype h4 { font-weight:700; }
+.admin-prototype h2,.admin-prototype h3,.admin-prototype h4 { font-weight:700; }
+
+/* A project name is content and keeps the reference hero typography. */
+.admin-prototype[data-admin-detail=product] .project-hero h1 { font-size:28px; font-weight:750; }
+@media(max-width:850px) { .admin-prototype[data-admin-detail=product] .project-hero h1 { font-size:25px; } }
+@media(max-width:500px) { .admin-prototype[data-admin-detail=product] .project-hero h1 { font-size:24px; } }
