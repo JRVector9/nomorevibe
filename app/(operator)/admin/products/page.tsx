@@ -34,7 +34,7 @@ const PAGE_SIZE = 25;
  */
 const allFilterCounts = createMemo<Record<ProductFilterName, number>>({ ttlMs: 60_000, max: 1 });
 
-type Props = { searchParams: Promise<{ filter?: string; page?: string; q?: string; sort?: string; pending?: string; tab?: string }> };
+type Props = { searchParams: Promise<{ filter?: string; page?: string; q?: string; sort?: string; pending?: string; tab?: string; mode?: string; offset?: string; cursor?: string }> };
 
 /** "오늘 13시"·"내일 9시"·"10/12 9시" — 한국 시각 */
 function dayHour(at: Date, now: Date): string {
@@ -49,8 +49,8 @@ export default async function AdminProductsPage({ searchParams }: Props) {
   if (!admin) redirect("/admin/login");
 
   const params = await searchParams;
-  if (params.tab === "quality") return <PrototypeQualityWorkspace />;
-  if (params.tab === "translations") return <PrototypeTranslationsWorkspace admin={admin} query={typeof params.q === "string" ? params.q : ""} />;
+  if (params.tab === "quality") return <PrototypeQualityWorkspace mode={typeof params.mode === "string" ? params.mode : undefined} offset={typeof params.offset === "string" ? params.offset : undefined} />;
+  if (params.tab === "translations") return <PrototypeTranslationsWorkspace admin={admin} query={typeof params.q === "string" ? params.q : ""} cursor={typeof params.cursor === "string" ? params.cursor : undefined} />;
   const { filter, page: rawPage, q: rawQuery, sort: rawSort, pending: rawPending } = params;
   // 목록·등록 시각의 '지금' — 서버가 읽은 시각 하나로 그린다
   const now = new Date();
