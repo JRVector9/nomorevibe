@@ -46,6 +46,13 @@ describe('seven operational workspaces', () => {
     ['/admin/review', '', 'review', 'all'],
     ['/admin/requests', 'tab=registration', 'requests', 'registration'],
     ['/admin/requests', 'tab=history', 'requests', 'history'],
+    ['/admin/requests', 'state=all', 'requests', 'contact'],
+    ['/admin/requests', 'offset=20', 'requests', 'contact'],
+    ['/admin/requests', 'state=&offset=', 'requests', 'contact'],
+    ['/admin/requests', 'tab=posts&state=held', 'requests', 'posts'],
+    ['/admin/requests', 'tab=open&offset=20', 'requests', 'open'],
+    ['/admin/requests', 'tab=unknown&state=all', 'requests', 'open'],
+    ['/admin/requests', 'tab=&offset=20', 'requests', 'open'],
     ['/admin/requests', 'tab=constructor', 'requests', 'open'],
     ['/admin/maker-replies', '', 'requests', 'posts'],
     ['/admin/reactions', '', 'requests', 'posts'],
@@ -119,6 +126,28 @@ describe('workspace tabs and legacy deep links', () => {
     expect(secondaryIsActive(link, '/admin/audit', query('tab=policy'))).toBe(true);
     expect(secondaryIsActive(link, '/admin/audit', query())).toBe(true);
     expect(secondaryIsActive(link, '/admin/audit', query('tab=requests'))).toBe(false);
+  });
+
+  it.each(['evidence', 'integrations'])('lets canonical settings render its own %s subnavigation', tab => {
+    const pathname = '/admin/settings', search = `tab=${tab}`;
+    const location = resolveWorkspace(pathname, query(search));
+    expect(location.tab).toBe(tab);
+    expect(location.secondary).toEqual([]);
+    const html = renderToStaticMarkup(<WorkspaceTabs location={location} pathname={pathname} search={search} />);
+    expect(html).not.toContain('admin-workspace-secondary');
+  });
+
+  it.each([
+    ['/admin/categories', '/admin/evidence'],
+    ['/admin/evidence', '/admin/categories'],
+    ['/admin/github-accounts', '/admin/github-integrations'],
+    ['/admin/github-integrations', '/admin/github-accounts'],
+  ])('keeps sibling settings screens reachable on legacy %s', (pathname, sibling) => {
+    const location = resolveWorkspace(pathname);
+    const html = renderToStaticMarkup(<WorkspaceTabs location={location} pathname={pathname} search="" />);
+    expect(html).toContain('admin-workspace-secondary');
+    expect(html).toContain(`href="${sibling}"`);
+    expectActiveLink(html, pathname);
   });
 });
 

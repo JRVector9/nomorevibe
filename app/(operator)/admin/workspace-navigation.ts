@@ -126,7 +126,11 @@ export function resolveWorkspace(pathname: string, search: Search = none): Works
     const stage = search.get("stage"), state = search.get("state");
     tab = stage === "human" || stage === "agreed" ? "human" : stage === "publish" || state === "approved" ? "publish" : stage === "rejected" || state === "rejected" ? "rejected" : "all";
   } else if (pathname === "/admin/requests") {
-    id = "requests"; tab = validTab(id, search.get("tab"), "open");
+    id = "requests";
+    const requested = search.get("tab");
+    // Match the server adapter: old state/offset-only bookmarks open contacts; an explicit invalid tab opens the queue.
+    const fallback = requested === null && (search.get("state") !== null || search.get("offset") !== null) ? "contact" : "open";
+    tab = validTab(id, requested, fallback);
   } else if (["/admin/feedback", "/admin/maker-replies", "/admin/reactions"].includes(pathname)) {
     id = "requests"; tab = "posts";
   } else if (pathname === "/admin/translations") {
@@ -159,8 +163,8 @@ export function resolveWorkspace(pathname: string, search: Search = none): Works
     : id === "models" && tab === "tasks" ? WORKSPACE_SECONDARY.modelTasks
     : id === "projects" && tab === "quality" ? WORKSPACE_SECONDARY.projectQuality
     : id === "requests" && tab === "posts" ? WORKSPACE_SECONDARY.posts
-    : id === "settings" && tab === "evidence" ? WORKSPACE_SECONDARY.evidence
-    : id === "settings" && tab === "integrations" ? WORKSPACE_SECONDARY.integrations : [];
+    : id === "settings" && tab === "evidence" && pathname !== "/admin/settings" ? WORKSPACE_SECONDARY.evidence
+    : id === "settings" && tab === "integrations" && pathname !== "/admin/settings" ? WORKSPACE_SECONDARY.integrations : [];
   return { workspace: get(id), tab, detail: pathname.startsWith("/admin/products/") && pathname !== "/admin/products/recheck" ? "product" : null, secondary };
 }
 
