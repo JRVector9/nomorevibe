@@ -95,7 +95,7 @@ DB0137/journal138 적용·사후 검증, 6c 요청 감사20474 withdrawn, Connec
 - **기존 미완료**: 독립 사람 라벨5개·assist `apply_enabled=false`, 미복구 후보3건·보강 적체 품질, 불명확한 개인 Star 잠금, 전체 호스트/저장 정체/반복 부팅·알림 수신 드릴·예비 publisher 적격 신규 발행을 유지한다.
 - **백업·용량**: 과거 보관본 복원/PITR·보존기간·볼륨/WAL 여유·PgBouncer 용량·실제 nonempty media_assets 바이너리 복원이 남아 있다. 이미 확인한9월29일 논리 dump·og_images 격리복원은 다시 미실행으로 표시하지 않는다.
 
-AI2의 GPU3090 직접 기본 `qwen3.8-flash-next`·abcLLM Supa Qwen3.8 대체·no-thinking·총32k/출력10k와 품질 기준은 그대로다. **2026-10-26 14:37 UTC 이후 추가 수동 테스트·lint·tsc·컴파일은 하지 않았고 필수 자동 CI는 유지했다.** PR686 첫 CI의 strict owner projection 실패·수정·후속 성공 이력은 [보고서](docs/operations/2026-10-26-pr-priority-progress.md)에 남겼다. [정확한 인계·다음 명령](docs/CODEX_HANDOFF.md)이 아래 과거 상태보다 우선한다. 아래2026-10-25 이하 기존 본문은 그대로 보존한다.
+AI2의 GPU3090 직접 기본 `qwen3.8-flash-next`·abcLLM Supa Qwen3.8 대체·no-thinking·총32k/출력10k와 품질 기준은 2026-10-26 당시 상태다. (abcLLM Supa 게이트웨이는 2026-10-30 은퇴했고, `provider: "abcllm"`은 장부 label로만 남는다.) **2026-10-26 14:37 UTC 이후 추가 수동 테스트·lint·tsc·컴파일은 하지 않았고 필수 자동 CI는 유지했다.** PR686 첫 CI의 strict owner projection 실패·수정·후속 성공 이력은 [보고서](docs/operations/2026-10-26-pr-priority-progress.md)에 남겼다. [정확한 인계·다음 명령](docs/CODEX_HANDOFF.md)이 아래 과거 상태보다 우선한다. 아래2026-10-25 이하 기존 본문은 그대로 보존한다.
 
 ## LLM 보강 운영 전환 — 2026-10-25
 

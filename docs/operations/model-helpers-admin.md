@@ -190,7 +190,7 @@ migration `0156_model_assignments`(PR 3b-A)는 같은 표 `model_helper_assignme
 | 열 | 뜻 | 기존(도우미) 행 |
 | --- | --- | --- |
 | `registry_key text` | 관리자 모델 등록부 key(`equipment:name`, 1~200자). 배정 표 행은 필수(`primary_registry_check`) | NULL |
-| `transport text` | `gateway` · `direct` · `local-direct` · `cli` | `gateway`(기본값, 뜻 없음) |
+| `transport text` | `gateway` · `direct` · `local-direct` · `cli` | `gateway`(기본값, 뜻 없음 — abcLLM 계약을 열지 않는다) |
 | `rank integer` | 단계 안 순위(≥ 1, 저장은 1~64 — 장비 순위 CHECK 와 같다). 1 = 먼저 고른다 | 1 |
 | `role text` | `primary` = 배정 표 행, `helper` = PR 2a 도우미 행 | `helper` |
 | `vote boolean` | 2차 투표자. `stage = 'ai2' AND rank = 1` 일 때만(`vote_check`) | false |
@@ -452,8 +452,8 @@ CLI = `probeCliServingContracts`)을 쓴다. 감사 줄(`model-assignment-save`)
 
 - 각 경로의 계약 모양은 둘이다: abcLLM 총량 상한(raw — 칸 순서·hash 불변, `<route>ServingContractSchema`)과 AI1·AI2 와 같은 공통 `direct-openai-chat-v1`
   (`<route>DirectServingContractSchema`: provider `local-direct`, backendId = 정책 route 의 providerBudgetId, physicalGroup = 장비, tokenizerEndpoint 같은 origin,
-  requestTokenBound 32000). 합 스키마 `<route>RouteServingContractSchema` 가 관리 화면(`model_serving_contracts` — **route_id = 그 text route**, model = 엔진 이름)과
-  env `ABCLLM_SERVING_CONTRACTS` 를 모두 받는다. 엔진 연결이 채우는 모양은 여전히 raw 다. 번역 4경로의 엄격 terminal opt-in 표시는 abcllm 계약에만 요구한다
+  requestTokenBound 32000). 합 스키마 `<route>RouteServingContractSchema` 가 관리 화면(`model_serving_contracts` — **route_id = 그 text route**, model = 엔진 이름)의
+  DB 계약만 받는다. env `ABCLLM_SERVING_CONTRACTS` 는 2026-11-01 PR #767 이후 코드가 읽지 않는다. 엔진 연결이 채우는 모양은 여전히 raw 다. 번역 4경로의 엄격 terminal opt-in 표시는 abcllm 계약에만 요구한다
   (게이트웨이가 없는 직접 계약은 엔진의 완결 응답이 terminal).
 - provider 는 계약 모듈이 정한다 — `<route>ServingProvider(model)`: 그 선택(설정·배정 표의 모델)에 abcllm 계약이 있으면 `abcllm`, 없고 local-direct 계약 하나가
   닿으면(엔진 이름 또는 등록부 키 — AI1 과 같은 `selectServingContract` 규칙) `local-direct`, 둘 다 없으면 `abcllm`(그 뒤 준비가 예전처럼

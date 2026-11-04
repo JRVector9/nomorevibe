@@ -128,8 +128,9 @@ rev12 저장본(`model_capacity_control.policy`)은 저장소에 없다. 이 초
    2차 대체 설정의 모델 이름도 새 이름이어야 한다(binding 이 `reviewer.model === model` 을 요구한다). `supa` 장비에서 순위를 줄지(지금은 순위 없음)도 소유자가 정한다.
 6. **사유 번역(`reason-translate`)이 M1 인가.** 소유자 목록과 등록부 기본값(`m1:translation` 용도)은 M1 이다. 10-28 장부에는 gpt-oss 였다.
    소비자가 실제로 부르는 이름(단계 선택, 없으면 `ABCLLM_MODEL` env)이 gemma 이름이 아니면 `unmapped` 다. 문자 경로라 OPEN dry-run 에 보인다.
-7. **수집 소개(`crawl-tagline`).** 소유자 목록·직접 연결 문서·10-28 장부 모두 Supa 다. 코드 기본값(`mlx:tagline`)은 아직 `[MLX] qwen3.6-35b-heretic` 이다.
-   이 모델은 M3 직접 주소 목록에 없다. 단계 선택(`supa:review`)이 없으면 기본값을 불러 `unmapped` 가 된다. heretic 경로는 넣지 않았다.
+7. **수집 소개(`crawl-tagline`).** 소유자 목록·직접 연결 문서·10-28 장부 모두 Supa 다. 2026-11-04 코드 기본값은
+   `supa:review`(`supa`, Supa 직접 주소)이고 `mlx:tagline`은 제거됐다. 단계 선택이 없어도 Supa 기본값을 부르므로
+   heretic 경로는 넣지 않는다.
 8. **gpt-oss 엔진이 `:8014` 인가.** 직접 연결 문서는 M3 mlx-serve `:8014` 의 `gpt-oss-120b` 를 적는다. M3 oMLX `:8010` 도 `gpt-oss-120b` 를 낸다(대표 작업 기억).
    계약이 `:8010` 을 가리키면 DeepSeek 과 같은 엔진이라 장비를 나눈 뜻이 없다.
 9. **예산 이름.** Supa 를 `abcllm-supa`(문서)로 할지 rev12 의 `supa-direct` 로 할지, `abcllm-` 접두를 지금 정리할지. 한도에는 영향이 없다. replaced-path 위상은 `abcllm-supa`·`supa-direct`·`abcllm-m1-qwen` 만 안다.
@@ -157,8 +158,9 @@ rev12 저장본(`model_capacity_control.policy`)은 저장소에 없다. 이 초
   - `LOCAL_MODEL_PHYSICAL_LIMITS` 의 키를 `m3-deepseek` 로.
   - `LOCAL_MODEL_VERIFIED_CONTRACT_HASHES` 를 다시 계산한다. 계약 hash 가 `physicalGroup` 을 포함한다.
   - 안 하면 OPEN 뒤 두 경로가 `provider_contract_unavailable` 로 미뤄진다. OPEN dry-run 에는 보이지 않는다.
-- **부르는 이름.** 각 잡이 정책과 똑같은 이름을 불러야 한다(단계 선택 → env → 등록부 기본값 순). 코드 기본값은 아직 이름표(`gatewayLabel`)가 있어 `[MLX] gpt-oss-120b`·`[supa] Qwen3.8-27B-NVFP4`·`[m1] …` 를 만든다.
-  관리 화면 덮어쓰기나 단계 선택이 없는 잡은 rev13 에서 `unmapped` 다.
+- **부르는 이름.** 각 잡이 정책과 똑같은 이름을 불러야 한다(단계 선택 → 등록부 기본값 순). 2026-11-04부터 코드 기본값에는
+  `gatewayLabel`이 없어 `gpt-oss-120b`·`supa`·`mlx-community--gemma-4-26b-a4b-it-4bit` 같은 직접 이름을 만든다.
+  관리 화면 덮어쓰기나 단계 선택이 없는 잡도 새 이름으로 맞춘다.
 - **옛 세대 행.** rev12 세대의 reserved·dispatched 행이 끝날 때까지 새 입장은 `policy_changed` 로 미뤄진다. 그동안 `m3-mlx`·`supa-direct` 의 잡힌 행과 새 장비 칸이 겹쳐 엔진을 넘기는 일은 없다.
 
 ## 적용 순서 (운영자가 한다 · 이 PR 은 하지 않는다)

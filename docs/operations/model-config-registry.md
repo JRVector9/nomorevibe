@@ -2,7 +2,8 @@
 
 > 2026-10-31 abcLLM 정리: `crawl-tagline`·`product-translate`는 env 선택(`ABCLLM_TAGLINE_MODEL`, 상품 번역 모델 env와 그 `_KEY`)을
 > 더 읽지 않는다(`MODEL_PURPOSE_ENV` 값 null). 모델은 등록부 purposes·관리자 등록부 덮어쓰기·단계 풀이 정한다. 아래의 env 우선순위
-> 설명은 이 두 경로에는 해당하지 않는다. 텍스트 경로는 엔진 직접 연결 계약(transport direct)이 있을 때만 호출된다.
+> 설명은 은퇴한 과거 동작이며, 현재 모델 선택은 DB(`ai_task_models`/`ai_connections`·`model_serving_contracts`·`model_registry_overrides`)와
+> 관리자 모델 설정이 정한다. 텍스트 경로는 엔진 직접 연결 계약(transport direct)이 있을 때만 호출된다.
 
 이 문서는 설정 준비 절차다. 이 차선은 배포·운영 DB 갱신·실제 모델 서버 호출을 수행하지 않았다. 현재 모델의 운영 참여는 실제 dispatch, terminal, 품질 검사 및 저장 영수증으로 따로 확인한다.
 
@@ -36,7 +37,7 @@ node --import tsx -e 'const {readModelRegistry}=require("./lib/llm/model-registr
 
 `limits[용도]`는 `{maxTokens, concurrency, timeoutMs?}`이며 기존 요청별 예산 기본값을 대체한다. env 없이 바꾸려면 관리자 「실시간 한도」(`/admin/models/limits`) 경로 한도 묶음에서 저장한다(같은 키, 저장 즉시 다음 틱부터). 모델 상한과 더 작은 값을 사용한다. 번역처럼 입력 크기에 따라 계산하는 요청은 그 예산보다 작을 수 있다. 네트워크·수집·DB 대기열 동시성, 문맥 상한 C, tokenizer 증명, byte 제한은 모델의 요청 예산과 별개다.
 
-텍스트·직접 심사의 우선순위는 해당 기존 변수의 `*_MODEL_KEY` → 기존 모델 env → registry selection → 중앙 기본 entry다. 예를 들어 `PRODUCT_TRANSLATION_MODEL_KEY=m1:translation`이 옛 `PRODUCT_TRANSLATION_MODEL`보다 우선한다. `ABCLLM_MODEL_KEY`는 공용 사유·한국어 소개·검색 질의에 적용한다. 기존 `ABCLLM_BASE_URL`, `AUDIT_SECOND_OPINION_URL`의 명시적 override는 보존한다. 모델별 주소를 사용할 때는 오래된 공용 URL override도 확인한다. 옛 모델 env 값은 그 용도의 route로 해석한다(`resolvePurposeModel`). 여러 장비에 있는 bare 이름은 그 용도의 selection(없으면 purposes)이 가리키는 entry가 정확히 하나일 때만 그 entry로 정하고, 아니면 `ambiguous_model_identity`로 거절한다. 첫 번째 장비로 추측하지 않는다. 등록된 장비 label인데 그 장비에 등록되지 않은 모델(예: `[m1] qwen3.8-flash-next`)은 같은 장비에서 그 용도의 현재 등록 모델로 해석한다. 다른 장비 label과 등록되지 않은 label·기존 모델 이름은 호환 목적으로 그대로 유지한다. `configuredModelRoute(용도)`가 key·장비·route·wire 이름·주소를 함께 돌려준다.
+텍스트·직접 심사의 모델 선택은 DB(`ai_task_models`/`ai_connections`·`model_serving_contracts`·`model_registry_overrides`)와 관리자 모델 설정, registry selection·중앙 기본 entry가 정한다. 과거 env 우선순위(`*_MODEL_KEY` → 기존 모델 env → registry selection → 중앙 기본 entry)는 은퇴했다. `PRODUCT_TRANSLATION_MODEL`·`ABCLLM_MODEL`·`ABCLLM_MODEL_KEY`·`ABCLLM_PROFILE_MODEL`·`ABCLLM_PROFILE_MODEL_KEY`·`ABCLLM_BASE_URL`은 코드가 더 읽지 않는다. `AUDIT_SECOND_OPINION_URL`의 명시적 override는 보존한다. 과거에는 옛 모델 env 값을 그 용도의 route로 해석했다(`resolvePurposeModel`). 여러 장비에 있는 bare 이름은 그 용도의 selection(없으면 purposes)이 가리키는 entry가 정확히 하나일 때만 그 entry로 정하고, 아니면 `ambiguous_model_identity`로 거절한다. 첫 번째 장비로 추측하지 않는다. 등록된 장비 label인데 그 장비에 등록되지 않은 모델(예: `[m1] qwen3.8-flash-next`)은 같은 장비에서 그 용도의 현재 등록 모델로 해석한다. 다른 장비 label과 등록되지 않은 label·기존 모델 이름은 호환 목적으로 그대로 유지한다. `configuredModelRoute(용도)`가 key·장비·route·wire 이름·주소를 함께 돌려준다.
 
 M1 relay의 허용 모델도 같은 등록부에서 읽는다: `LOCAL_MODEL_RELAY_EQUIPMENT`(기본 `m1`) 장비의 `relay` 용도 entry. 중앙 기본값에서 `relay` 용도는 `m1:translation`에 있다. 기존 JSON을 쓰면 M1 entry에 `relay` 용도를 넣는다(`scripts/migrate-model-registry-m1.ts --print-migration`이 함께 준비한다).
 
@@ -44,16 +45,16 @@ M1 relay의 허용 모델도 같은 등록부에서 읽는다: `LOCAL_MODEL_RELA
 
 대표가 실제로 실행할 순서·읽기 명령·성공 조건은 [M1 relay·상품 번역 등록부 연결 — 대표 실행 안내](2026-10-29-m1-relay-registry-rollout.md)가 기준이다. 이 절은 그 안내가 기대는 코드 기본값과 우선순위만 정리한다.
 
-현재 코드 기본 entry는 `m1:translation`(표시 이름 `M1 · Gemma 4 26B`, provider=abcllm, gatewayLabel=m1, 공용 gateway 주소, timeoutMs 40초)이고 wire 이름은 `[m1] mlx-community--gemma-4-26b-a4b-it-4bit`다. purposes는 `product-translate`·`reason-translate`·`relay`다. 확인되지 않은 M1 직접 주소는 만들지 않으며, HTTP entry의 baseUrl 누락은 `model_base_url_required`로 거절한다.
+코드 기본 entry는 `m1:translation`(표시 이름 `M1 · Gemma 4 26B`, provider=abcllm(legacy 장부 label), **직접 M1 주소 `https://m1-studio.tail02799e.ts.net/v1`, gatewayLabel 없음**, timeoutMs 40초)이고 wire 이름은 `mlx-community--gemma-4-26b-a4b-it-4bit`다. purposes는 `product-translate`·`reason-translate`·`relay`다. 확인되지 않은 M1 직접 주소는 만들지 않으며, HTTP entry의 baseUrl 누락은 `model_base_url_required`로 거절한다.
 
 `MODEL_REGISTRY_CONFIG`가 **없을 때** 실제 해석(2026-10-29 이 저장소에서 `configuredModel` 실행으로 확인):
 
 | 설정 | 상품 번역 | 사유 번역 | 한국어 소개·검색 질의 |
 | --- | --- | --- | --- |
-| 아무 env 없음 | `[m1] mlx-community--gemma-4-26b-a4b-it-4bit` | 같음 | `[MLX] gpt-oss-120b` |
+| 아무 env 없음 | `mlx-community--gemma-4-26b-a4b-it-4bit` | 같음 | `gpt-oss-120b` |
 | 옛 `PRODUCT_TRANSLATION_MODEL=[m1] qwen3.8-flash-next`만 남음 | 같은 M1 장비의 현재 등록 모델(Gemma)로 해석 | Gemma | gpt-oss |
 | `PRODUCT_TRANSLATION_MODEL_KEY=m1:translation` | Gemma(KEY가 옛 변수보다 우선) | Gemma | gpt-oss |
-| `ABCLLM_MODEL=gpt-oss-120b`가 설정됨 | Gemma | **gpt-oss**(공용 env가 등록부 기본값보다 우선) | gpt-oss |
+| (과거) `ABCLLM_MODEL=gpt-oss-120b`가 설정됨 | Gemma | gpt-oss(당시 공용 env가 등록부 기본값보다 우선; 지금은 읽지 않음) | gpt-oss |
 
 따라서 운영 반영에 필요한 설정은 다음뿐이다. 모두 대표가 승인된 절차로 수행하며, 이 차선은 운영 env·DB·relay를 바꾸지 않았다.
 
@@ -64,8 +65,8 @@ M1 relay의 허용 모델도 같은 등록부에서 읽는다: `LOCAL_MODEL_RELA
    node --import tsx scripts/migrate-model-registry-m1.ts --print-migration < registry-before.json > registry-candidate.json
    ```
 
-3. 사유 번역도 M1로 옮기려면 그 소비자의 `ABCLLM_MODEL`/`ABCLLM_MODEL_KEY`와 DB 단계 풀을 먼저 확인한다. 우선순위는 `*_MODEL_KEY` → 모델 env → `selections` → 기본값이므로, `ABCLLM_MODEL`이 설정된 소비자에서는 `selections["reason-translate"]`만으로는 바뀌지 않는다(확인: selection+`ABCLLM_MODEL=gpt-oss-120b` → `[MLX] gpt-oss-120b`). 공용 변수를 바꾸면 한국어 소개·검색 질의도 함께 바뀐다. 사유 번역만 옮기려면 `/admin/models`의 «심사 사유 번역» 단계 풀에 `m1:translation`을 저장한다(그 용도의 실행 범위에만 KEY를 준다). 공용 env가 없는 소비자는 JSON `selections["reason-translate"]`로도 된다.
-4. 용량 정책의 `product-translate`(필요 시 `reason-translate`) route 모델이 `[m1] mlx-community--gemma-4-26b-a4b-it-4bit`여야 하고, 호출은 같은 모델의 DB `model_serving_contracts` 직접 연결 계약이 있을 때만 열린다. `ABCLLM_SERVING_CONTRACTS`는 2026-11-01 PR #767 이후 코드가 읽지 않으므로 넣지 않는다. 계약이 없으면 호출은 deferred이며 레지스트리 등록만으로 OPEN/ready가 되지 않는다. 정책 변경은 기존 감사된 DRAINING → 검증된 계약/정책 → OPEN 절차로만 한다. `ABCLLM_MODEL`·`ABCLLM_PROFILE_MODEL`은 3번처럼 아직 모델 이름 선택에 쓴다.
+3. 사유 번역도 M1로 옮기려면 `/admin/models`의 «심사 사유 번역» 단계 풀에 `m1:translation`을 저장한다(그 용도의 실행 범위에만 적용된다). `ABCLLM_MODEL`·`ABCLLM_MODEL_KEY`는 병행 코드 변경으로 더 읽지 않으므로 이 변수로는 바뀌지 않는다. 과거(2026-10-29)에는 우선순위가 `*_MODEL_KEY` → 모델 env → `selections` → 기본값이어서 `ABCLLM_MODEL`이 있으면 `selections["reason-translate"]`만으로는 바뀌지 않았다(확인: selection+`ABCLLM_MODEL=gpt-oss-120b` → `[MLX] gpt-oss-120b`). `MODEL_REGISTRY_CONFIG` JSON을 쓰는 소비자는 `selections["reason-translate"]`로도 된다.
+4. 용량 정책의 `product-translate`(필요 시 `reason-translate`) route 모델이 `mlx-community--gemma-4-26b-a4b-it-4bit`(예전 `[m1]` 표기)여야 하고, 호출은 같은 모델의 DB `model_serving_contracts` 직접 연결 계약이 있을 때만 열린다. `ABCLLM_SERVING_CONTRACTS`는 2026-11-01 PR #767 이후 코드가 읽지 않으므로 넣지 않는다. 계약이 없으면 호출은 deferred이며 레지스트리 등록만으로 OPEN/ready가 되지 않는다. 정책 변경은 기존 감사된 DRAINING → 검증된 계약/정책 → OPEN 절차로만 한다. `ABCLLM_MODEL`·`ABCLLM_PROFILE_MODEL`도 병행 코드 변경으로 읽지 않으므로 모델 이름 선택에 쓰지 않는다. 모델은 DB 단계 풀·`ai_task_models`/`ai_connections`·등록부가 정한다.
 5. M1 relay는 설치기 plist가 `MODEL_REGISTRY_CONFIG`를 넘기지 않으므로 중앙 기본값(`relay` 용도 = `m1:translation`)을 읽는다. 재설치 SHA·plist 모델 값·시점 제약은 위 대표 실행 안내를 따른다.
 6. 이미 전송된 요청과 unknown은 원래 세대/모델/정책에 남는다. 이름을 바꿨다고 취소·정산·재전송하지 않는다. 실제 참여는 M1 dispatch·strict terminal·번역 저장 model label 증가로만 기록한다.
 

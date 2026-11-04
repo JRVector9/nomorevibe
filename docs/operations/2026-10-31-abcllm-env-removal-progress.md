@@ -46,6 +46,10 @@ PR #758 의 여섯 커밋을 main acbe6948(#756~#764, 그중 3b-C #762 전송 �
 - fixed-input replay 의 legacy abcllm 모드는 이제 보낼 수 없는데 사전 점검이 받아 준다 — 거절하도록.
 - Oracle 번역 canary 는 native 번역 틱이 성공해야 인증된다(no_key 틱은 결과를 인증하지 않는다).
 
+> 2026-11-04 후속: 위 남은 것 중 **코드 기본 등록부 정리(1)·legacy replay 거절(4)·죽은 송신기/disabled 정리(5)** 를 완료했다.
+> 기본 등록부는 직접 엔진 주소만 쓰고 `gatewayLabel`/`abcllm-api` 기본값이 없으며, fixed-input replay의 `legacy` 모드는
+> `replay_legacy_abcllm_unsupported`로 거절하고, capacity `disabled`는 옛 `no_key` 송신 대신 명시적 defer로 접는다.
+
 ## 막힌 것
 
 - 없음. 관리자 화면 문구 변경은 로그인·DB 가 필요해 앱을 띄워 눌러 보지 못했다(컴포넌트 시험으로만 확인).

@@ -56,7 +56,7 @@ node --import tsx scripts/report-review-latency.ts /absolute/path/to/worker.json
 2. 계측을 먼저 배포하고 새 심사100건 및30분 이상 기준선을 확보한다. 정책/모델/원문이 같은 집단으로 비교한다.
 3. 다음 단계 신호와 슬롯 재사용을 순차 적용한다. 2차 대기 p95·시간당 처리 건수·timeout/429를 함께 본다.
 4. 텍스트 저장 보호 이후 구형 publisher를 drain/중지하고 새 publisher를 교체한다. 소유 작업이 crawl-publish 하나인지 확인한다.
-5. 새 text 앱을 별도 컨테이너로 시작한다. `npm run worker:supervised -- --role=text`, worker target, pool3, hard timeout180초, 별도 SERVICE_INSTANCE_ID, 승인된 ABCLLM 키를 비밀 저장소에서 주입한다. Compose와 동일하게 init을 사용한다.
+5. 새 text 앱을 별도 컨테이너로 시작한다. `npm run worker:supervised -- --role=text`, worker target, pool3, hard timeout180초, 별도 SERVICE_INSTANCE_ID. abcLLM 게이트웨이 키는 주입하지 않는다(게이트웨이 은퇴). Compose와 동일하게 init을 사용한다.
 6. 실제 host CPU/RAM/DB 여유, text health, backlog 감소와 publisher 텍스트 실행0을 확인한다. 기본 연결 상한은 웹1개+connect-agent 포함27, 웹2개 각8이면35, 각6이면31이다. 2026-09-21 실제 운영은 reviewer가12(기본3과 다름)라 text 추가 전40→추가 후43이다. reviewer 설정은 유지했다. DB max150, 관측 시 총111/app8 연결이며 text RSS 약115MiB/512MiB였다.
 7. 각 단계마다 새 심사100건/30분 이상 관측한다. 오류율+2%p 또는2차 대기 p95+20%면 원인을 확인하고 슬롯 재사용을 우선 되돌린다. 중복 발행·승인 우회·관리자 덮어쓰기는 진행 중단 조건이다.
 
