@@ -10,6 +10,7 @@ import { attachFixedInputLabels, compareFixedInputRuns, fixedInputSetHash, repor
   type FixedInputRunResult } from "@/lib/operations/pipeline-replay-fixed-input";
 import { installReplayEgressGuard, startReplayModelMeter } from "@/lib/operations/pipeline-replay-model-meter";
 import { mergeWithDefaults } from "@/lib/crawl/settings";
+import { DEFAULT_MODEL_DEFINITIONS } from "@/lib/llm/model-registry";
 
 /**
  * F1 판정 무결성 RED 모음. 모든 fixture는 수정 전(origin/main) artifact·결과 모양이다 — 수정 전 코드에서는 각 사례가 거짓 passed(또는
@@ -196,10 +197,29 @@ describe("F1 RED: replay egress", () => {
         provider: "abcllm", model: "m" }, anchorAt: "2026-10-13T01:00:00.000Z", inputHash: sha256("i"),
         document: { repoMeta: {}, productUrl: "https://example.com", pageStatus: 200, pageMeta: { readmeSample: "# old", readmeSampleVersion: "2020-01-01.1" },
           fetchedAgeUs: 1_000_000 }, scan: null, observations: [] }] };
-    const manifest = { version: 1, runId: "legacy-a", mode: "legacy", artifactSha256: sha256("artifact"), upstream: "https://abcllm-api.brut.bot",
+    // legacy 모드는 이제 지원하지 않으므로, 아래 artifact·upstream 검사는 남아 있는 items 모드로 본다.
+    const policy = { version: 1, maxWaiting: 16, queueTtlMs: 60_000, reservationTtlMs: 60_000,
+      routes: [{ routeId: "crawl-agent-review", provider: "abcllm", model: "m", providerBudgetId: "unit", groupId: "unit" },
+        { routeId: "second-review", provider: "abcllm", model: "s", providerBudgetId: "unit", groupId: "unit" }] };
+    const manifest = { version: 1, runId: "items-a", mode: "items", artifactSha256: sha256("artifact"), upstream: "https://registry.example",
+      durationMs: 1_800_000, limits: { maxCalls: 800, maxTokens: 800 * 32_768, perCallTokenUpperBound: 32_768, maxWallMs: 2_700_000 },
+      items: { ai1Consumers: 1, ai2Consumers: 1, capacityPolicy: policy } };
+    // ABCLLM_BASE_URL is retired: the ai1-preset address comes from the registry, and a conflicting env value is ignored.
+    const registry = (baseUrl: string) => ({ MODEL_REGISTRY_CONFIG: JSON.stringify({ version: 1,
+      models: DEFAULT_MODEL_DEFINITIONS.map(entry => entry.key === "supa:review" ? { ...entry, baseUrl } : entry) }) });
+    expect(() => fixedInputPreflight(manifest, artifact, { ...registry("https://registry.example/v1"),
+      ABCLLM_BASE_URL: "https://retired.example", ABCLLM_API_KEY: "k" })).toThrow("replay_readme_sample_version_mismatch");
+    // A registry origin that differs from the manifest is refused before the README check.
+    expect(() => fixedInputPreflight(manifest, artifact, registry("https://other.example/v1")))
+      .toThrow("replay_upstream_mismatch");
+  });
+  it("#9b refuses legacy abcLLM mode after parsing the manifest and before artifact, settings, or upstream checks", async () => {
+    const { fixedInputPreflight } = await import("@/lib/operations/pipeline-replay-model-runner");
+    const legacy = { version: 1, runId: "legacy-a", mode: "legacy", artifactSha256: sha256("artifact"), upstream: "https://abcllm-api.brut.bot",
       durationMs: 1_800_000, limits: { maxCalls: 800, maxTokens: 800 * 32_768, perCallTokenUpperBound: 32_768, maxWallMs: 2_700_000 } };
-    expect(() => fixedInputPreflight(manifest, artifact, { ABCLLM_BASE_URL: "https://abcllm-api.brut.bot", ABCLLM_API_KEY: "k" }))
-      .toThrow("replay_readme_sample_version_mismatch");
+    // artifact를 주지 않아도(파싱 전), upstream이 달라도 legacy 거절이 먼저다.
+    expect(() => fixedInputPreflight(legacy, null)).toThrow("replay_legacy_abcllm_unsupported");
+    expect(() => fixedInputPreflight({ ...legacy, upstream: "http://127.0.0.1:9" }, null)).toThrow("replay_legacy_abcllm_unsupported");
   });
 });
 
