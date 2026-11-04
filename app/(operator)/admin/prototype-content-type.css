@@ -4,6 +4,11 @@
   font-size: calc(13px + var(--admin-font-delta, 0px));
 }
 
+/* The preserved admin detail rule currently renders project names at 22px. */
+.admin-prototype.admin-area[data-admin-detail="product"] .project-hero h1 {
+  font-size: calc(22px + var(--admin-font-delta, 0px));
+}
+
 /*
  * Keep utility specificity unchanged. Prototype buttons/fields retain their own
  * font rules, while reused forms with a Tailwind font size receive the delta.
