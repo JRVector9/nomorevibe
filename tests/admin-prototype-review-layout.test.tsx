@@ -29,6 +29,15 @@ it("기록된 모델과 실제 확신을 표시하며 긴 근거는 닫힌 detai
   const html = renderToStaticMarkup(<PrototypeReviewDetail entry={entry} reasons={[]} />);
   expect(html).toContain("actual-model"); expect(html).toContain("0.42"); expect(html).toContain("원문·규칙·AI 근거·시도 이력"); expect(html).not.toContain('<details class="panel" open'); expect(html).toContain("승인 → 발행 대기"); expect(html).toContain("반려 사유");
 });
+it("승인된 후보에서 원본 수동 분류·발행 검토 화면으로 이동하며 원본 해시를 조립하지 않는다", () => {
+  const approved = { ...entry, candidate: { ...entry.candidate, state: "approved" as const } };
+  const html = renderToStaticMarkup(<PrototypeReviewDetail entry={approved} reasons={[]} />);
+  expect(html).toContain('href="/admin/status?tab=manual"');
+  expect(html).toContain("수동 카테고리 지정·발행 검토 열기");
+  expect(html).not.toContain("sourceHash=");
+  const held = renderToStaticMarkup(<PrototypeReviewDetail entry={entry} reasons={[]} />);
+  expect(held).not.toContain('href="/admin/status?tab=manual"');
+});
 
 it("공개 후 확인도 시안 선택 상세에서 기존 ID·slug·결정을 제출한다", () => {
   const html = renderToStaticMarkup(<PrototypeReviewPublished rows={[{ id: 9, slug: "real-project", repo: "real/project", decision: "reject", confidence: .81, reason: "원본 판단", reasonKo: null, trigger: "risk", signals: [] }]} />);
