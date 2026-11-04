@@ -2699,3 +2699,6 @@ html:not([data-admin-theme="light"]) .admin-prototype .callout p {
 .admin-prototype #apply,
 .admin-prototype .admin-status,
 .admin-prototype .panel-head .small.muted { --admin-font-delta:0px; }
+.admin-prototype .callout {
+  font-size: calc(13px + var(--admin-font-delta, 0px));
+}
