@@ -1,67 +1,29 @@
-import type { ReactNode } from "react";
 import Link from "next/link";
 import { formatDetailTime } from "@/lib/format/time";
-import { readCorrectionRequests, readRegistrationWorkspace, readRequestHistory, readRequestOverview } from "@/lib/operations/admin-request-workspace";
+import { readRegistrationWorkspace, readRequestHistory } from "@/lib/operations/admin-request-workspace";
 import { REQUEST_HISTORY_LABELS } from "@/lib/operations/admin-request-workspace-model";
-import { IntroRequestList, TakedownQueue } from "../audit/TakedownQueue";
 
 export function ReadUnavailable({ title }: { title: string }) {
-  return <p className="rw-unavailable" role="status">{title}을(를) 불러오지 못했습니다. 0건이 아닙니다. 현재 상태를 다시 확인하세요.</p>;
+  return <div className="notice amber" role="status">{title} 정보를 불러오지 못했습니다. 현재 상태와 건수는 알 수 없습니다.</div>;
 }
-function Panel({ title, note, children, id }: { title: string; note?: string; children: ReactNode; id?: string }) {
-  return <section className="rw-panel" id={id}><header className="rw-panel-head"><h2>{title}</h2>{note && <span className="rw-meta">{note}</span>}</header><div className="rw-panel-body">{children}</div></section>;
-}
-const makerMethods: Record<string, string> = { github_repo_owner: "GitHub 저장소 주인", github_repo_admin: "GitHub 저장소 관리자", repo_file: "저장소 확인 파일", edit_token: "수정 키", admin: "관리자 확인" };
-const time = (value: string | Date | null) => value ? formatDetailTime(value instanceof Date ? value : new Date(value)) : "확인 안 됨";
-
-export async function OpenRequestsPanel({ fresh }: { fresh: boolean }) {
-  const overview = await readRequestOverview(fresh);
-  return <div className="rw-stack">
-    <div className="rw-summary" role="status"><div><b>열린 사용자 요청 {overview.failed === overview.sections.length ? <span>확인 불가</span> : <><span>{overview.knownCount.toLocaleString("ko-KR")}</span>건{overview.failed > 0 ? " 이상" : ""}</>}</b><p>요청 유형별로 기다리는 일을 확인하고 원본을 검토하세요.</p></div>
-      <span className="rw-meta">{overview.observedAt ? `${time(overview.observedAt)} 집계` : "요청 집계 시각 확인 불가"}</span></div>
-    {overview.failed > 0 && <p className="rw-unavailable" role="status">{overview.failed}개 유형의 조회를 완료하지 못했습니다. 표시된 합계는 확인된 요청만 포함합니다.</p>}
-    <div className="rw-card-grid">{overview.sections.map(section => <section className="rw-panel" key={section.key}>
-      <header className="rw-panel-head"><h2>{section.title}</h2><span className={`rw-state${section.overdue ? " is-late" : ""}`}>{section.count === null ? "확인 불가" : `${section.count.toLocaleString("ko-KR")}건`}</span></header>
-      <div className="rw-panel-body"><p className="rw-meta">{section.note}</p>{section.overdue ? <p className="rw-late">24시간 넘음 {section.overdue.toLocaleString("ko-KR")}건</p> : null}
-        {section.count === null ? <ReadUnavailable title={section.title} /> : section.items.length ? <ul className="rw-preview">{section.items.map(item => <li key={item.id}><b>{item.name}</b><p>{item.why}</p><small>{time(item.since)}</small></li>)}</ul> : <p className="rw-empty compact">기다리는 요청이 없습니다.</p>}
-        <Link href={section.href} prefetch={false} className="rw-button">{section.action} →</Link>
-      </div>
-    </section>)}</div>
-  </div>;
-}
-
-export async function CorrectionRequestsPanel() {
-  const { takedowns, intros } = await readCorrectionRequests();
-  return <div className="rw-stack">
-    <section id="takedowns" className="rw-stack"><div className="rw-section-line"><h2>내려달라는 요청</h2>{takedowns.ok && <span className="rw-meta">대기 {takedowns.data.summary.pending.toLocaleString("ko-KR")}건 · 24시간 넘음 {takedowns.data.summary.overdue.toLocaleString("ko-KR")}건</span>}</div>
-      {!takedowns.ok ? <ReadUnavailable title="내림 요청" /> : takedowns.data.items.length ? <TakedownQueue entries={takedowns.data.items} /> : <p className="rw-empty">기다리는 내림 요청이 없습니다.</p>}
-      {takedowns.ok && takedowns.data.summary.pending > takedowns.data.items.length && <Link href="/admin/audit?tab=requests" className="rw-meta underline">내림 요청 {takedowns.data.summary.pending.toLocaleString("ko-KR")}건 중 오래된 {takedowns.data.items.length}건 표시 · 기존 요청 화면</Link>}
-    </section>
-    <section id="intro-requests" className="rw-stack"><div className="rw-section-line"><h2>소개 수정 요청</h2>{intros.ok && <span className="rw-meta">대기 {intros.data.count.toLocaleString("ko-KR")}건</span>}</div>
-      {!intros.ok ? <ReadUnavailable title="소개 수정 요청" /> : intros.data.items.length ? <IntroRequestList entries={intros.data.items} /> : <p className="rw-empty">기다리는 소개 수정 요청이 없습니다.</p>}
-      {intros.ok && intros.data.count > intros.data.items.length && <p className="rw-meta">오래된 {intros.data.items.length}건을 표시합니다. 요청 처리 뒤 다음 자동 갱신에서 나머지를 확인할 수 있습니다.</p>}
-    </section>
-  </div>;
-}
-
+const time = (at: Date | string | null) => at ? formatDetailTime(at) : "—";
+const methods: Record<string, string> = { github_repo_owner: "GitHub 저장소 소유자", github_repo_admin: "GitHub 저장소 관리자", repo_file: "저장소 확인 파일", edit_token: "수정 키", admin: "관리자 확인" };
 export async function RegistrationPanel() {
   const { pending, makerChecks } = await readRegistrationWorkspace();
-  return <div className="rw-stack">
-    <div className="rw-note">도메인 소유권과 GitHub 메이커 권한은 자동으로 확인합니다. 검증이 끝나지 않은 등록과 최근 메이커 확인 상태를 살펴보세요. 개별 상황은 프로젝트 상세에서 확인할 수 있습니다.</div>
-    <Panel title="등록 · 도메인 검증 대기" note={pending.ok ? `${pending.data.count.toLocaleString("ko-KR")}건 · 오래된 25건까지 표시` : undefined}>
-      {!pending.ok ? <ReadUnavailable title="등록·검증 상태" /> : !pending.data.items.length ? <p className="rw-empty compact">검증 대기 상태의 등록 프로젝트가 없습니다.</p> : <div className="rw-table-scroll"><table><thead><tr><th>프로젝트</th><th>등록 경로</th><th>현재 상태</th><th>등록 시각</th><th>확인</th></tr></thead><tbody>{pending.data.items.map(item => <tr key={item.id}><td><b>{item.name}</b><p>/{item.slug}</p></td><td>{item.source === "skill" ? "직접 등록" : item.source}</td><td><span className="rw-state">도메인 검증 대기</span><p>자동 검증 · 승인 개입 없음</p></td><td>{time(item.createdAt)}</td><td><Link href={`/admin/products/${item.slug}`} className="rw-button">프로젝트 상세</Link></td></tr>)}</tbody></table></div>}
-    </Panel>
-    <Panel title="메이커 확인 기록" note="최근 확인 25건 · 계정 연락처·수정 키는 표시하지 않음">
-      {!makerChecks.ok ? <ReadUnavailable title="메이커 확인 기록" /> : !makerChecks.data.length ? <p className="rw-empty compact">메이커 확인 기록이 없습니다.</p> : <div className="rw-table-scroll"><table><thead><tr><th>프로젝트</th><th>확인 방식</th><th>현재 확인</th><th>확인·다음 재확인</th><th>상세</th></tr></thead><tbody>{makerChecks.data.map((item, index) => <tr key={`${item.productId}-${item.verifiedAt.toISOString()}-${index}`}><td><b>{item.name}</b><p>역할 {item.role === "owner" ? "소유자" : "편집자"}</p></td><td>{makerMethods[item.method] ?? item.method}</td><td><span className="rw-state">{item.revokedAt ? "확인 해제" : "확인됨"}</span>{item.revokedReason && <p>{item.revokedReason}</p>}</td><td>{time(item.verifiedAt)}<p>다음 재확인 {item.recheckAt ? time(item.recheckAt) : "미기록"}</p></td><td><Link href={`/admin/products/${item.slug}`} className="rw-button">메이커·출처 보기</Link></td></tr>)}</tbody></table></div>}
-    </Panel>
-    <Link href="/admin/requests?tab=contact" className="rw-button rw-next">인증 관련 문의 처리</Link>
+  return <div className="stack"><div className="notice blue"><b>자동 등록·인증의 현재 상태를 확인합니다.</b> 정상 대기와 성공은 관찰하고 실패·분쟁·문의는 별도로 처리합니다. 모든 등록이 관리자 승인 대기가 되는 것은 아닙니다.</div>
+    <section className="panel"><div className="panel-head"><h3>등록·인증 현황</h3><span className="small muted">검증 대기 {pending.ok ? `${pending.data.count.toLocaleString("ko-KR")}건` : "—"} · 원본별 최대 25건</span></div>
+      {!pending.ok && <ReadUnavailable title="도메인 검증 대기" />}{!makerChecks.ok && <ReadUnavailable title="메이커 확인" />}
+      <div className="table-scroll" role="region" aria-label="등록 및 인증 현황" tabIndex={0}><table><thead><tr><th>프로젝트</th><th>진입 경로</th><th>등록 / 인증 상태</th><th>다음 행동</th><th>운영자 개입</th></tr></thead><tbody>
+        {pending.ok && pending.data.items.map(item => <tr key={`pending-${item.id}`}><td><Link href={`/admin/products/${item.slug}`} className="text-button name">{item.name}</Link><p>/{item.slug}</p></td><td>{item.source === "skill" ? "직접 등록" : item.source}<p>{time(item.createdAt)}</p></td><td><span className="tag gray">도메인 검증 대기</span><p>unverified</p></td><td>{item.verifyMethod === "file" ? "도메인 확인 파일 검증" : item.verifyMethod === "meta" ? "사이트 메타 태그 검증" : "검증 방식 확인"}</td><td>정상 검증 대기<p><Link href={`/admin/products/${item.slug}`} className="text-button">프로젝트 확인</Link></p></td></tr>)}
+        {makerChecks.ok && makerChecks.data.map((item, index) => <tr key={`maker-${item.productId}-${index}`}><td><Link href={`/admin/products/${item.slug}`} className="text-button name">{item.name}</Link><p>{item.role === "owner" ? "소유자" : "편집자"} · {time(item.verifiedAt)}</p></td><td>{methods[item.method] ?? item.method}</td><td><span className={`tag ${item.revokedAt ? "amber" : "green"}`}>{item.revokedAt ? "메이커 확인 해제" : "메이커 확인 완료"}</span>{item.revokedReason && <p>{item.revokedReason}</p>}</td><td>{item.revokedAt ? "해제 사유 확인" : "현재 권한 유지"}<p>다음 재확인 {time(item.recheckAt)}</p></td><td>{item.revokedAt ? <Link href={`/admin/products/${item.slug}`} className="text-button">상세 확인</Link> : "현재 개입 불필요"}</td></tr>)}
+      </tbody></table></div>{pending.ok && makerChecks.ok && !pending.data.items.length && !makerChecks.data.length && <div className="empty"><b>표시할 등록·인증 기록이 없습니다.</b></div>}<p className="table-note">공개 상태와 메이커 소유권은 서로 다릅니다. 자동 검증 상태를 관리자의 수동 승인 대기열로 바꾸지 않습니다.</p>
+    </section><section className="panel"><div className="panel-head"><h3>등록과 소유권의 구분</h3></div><div className="panel-body grid three"><div className="notice"><b>직접 등록</b><br />검증 전에는 unverified 상태를 유지합니다.</div><div className="notice"><b>자동 수집</b><br />미클레임 공개 상태와 소유권 인증을 구분합니다.</div><div className="notice"><b>메이커 확인</b><br />GitHub 확인·재확인·해제와 기존 권한 경계를 유지합니다.</div></div></section>
+    <Link href="/admin/requests?tab=contact" className="text-button">등록·인증 관련 문의 처리 →</Link>
   </div>;
 }
 
-export async function RequestHistoryPanel() {
-  const result = await readRequestHistory();
-  return <div className="rw-stack"><div className="rw-toolbar"><span className="rw-meta">원본 감사 기록의 최근 100개 접수·처리 동작 · 실패한 처리도 별도 표시</span><Link href="/admin/activity" className="rw-button">전체 운영 기록</Link></div>
-    <Panel title="요청 접수·처리 기록">
-      {!result.ok ? <ReadUnavailable title="요청 처리 기록" /> : !result.data.length ? <p className="rw-empty compact">기록된 요청 접수·처리 동작이 없습니다.</p> : <div className="rw-table-scroll"><table><thead><tr><th>시각</th><th>동작</th><th>대상</th><th>처리자</th><th>결과·근거</th></tr></thead><tbody>{result.data.map(item => <tr key={item.id}><td>{time(item.at)}</td><td>{REQUEST_HISTORY_LABELS[item.action] ?? item.action}</td><td className="rw-target">{item.target}</td><td>{item.actor}</td><td><span className={`rw-state${item.ok ? "" : " is-late"}`}>{item.ok ? "기록됨" : "실패·거절"}</span><p><Link href={`/admin/activity?target=${encodeURIComponent(item.target)}`}>감사 기록 #{item.id}</Link></p></td></tr>)}</tbody></table></div>}
-    </Panel></div>;
+export async function RequestHistoryPanel({ params = {} }: { params?: Record<string, string | string[] | undefined> }) {
+  const result = await readRequestHistory(); if (!result.ok) return <ReadUnavailable title="요청 처리 기록" />;
+  const id = typeof params.id === "string" ? params.id : "", selected = id ? result.data.find(item => String(item.id) === id) : result.data[0];
+  return <div className="stack"><div className="toolbar"><span className="small muted">원본 감사 기록의 최근 100개 접수·처리 동작 · 실패 기록 포함</span><Link href="/admin/activity" className="button spacer">전체 운영 기록</Link></div><div className="grid detail"><section className="panel"><div className="table-scroll" tabIndex={0} role="region" aria-label="요청 접수와 처리 이력"><table style={{ minWidth: 570 }}><thead><tr><th>요청·대상</th><th>처리 결과</th><th>시각</th><th>기록</th></tr></thead><tbody>{result.data.map(item => <tr className={selected?.id === item.id ? "selected" : undefined} key={item.id}><td><Link className="text-button name" href={`/admin/requests?tab=history&id=${item.id}`} prefetch={false} scroll={false}>{item.target}</Link><p>{REQUEST_HISTORY_LABELS[item.action] ?? item.action}</p></td><td><span className={`tag ${item.ok ? "green" : "red"}`}>{item.ok ? "기록됨" : "실패·거절"}</span></td><td>{time(item.at)}</td><td><Link className="button small" href={`/admin/requests?tab=history&id=${item.id}`} scroll={false}>처리 결과</Link></td></tr>)}</tbody></table></div>{!result.data.length && <div className="empty"><b>기록된 요청 접수·처리 동작이 없습니다.</b></div>}<p className="table-note">접수·처리 동작을 그대로 표시합니다. 실패한 시도를 처리 완료로 표시하지 않습니다.</p></section><section className="panel pad sticky-detail">{selected ? <div className="stack"><div className="detail-header"><div><div className="eyebrow">감사 기록 #{selected.id}</div><h2>{REQUEST_HISTORY_LABELS[selected.action] ?? selected.action}</h2><p>{selected.target}</p></div><span className={`tag ${selected.ok ? "green" : "red"}`}>{selected.ok ? "기록됨" : "실패·거절"}</span></div><dl className="facts"><dt>대상</dt><dd>{selected.target}</dd><dt>처리자</dt><dd>{selected.actor}</dd><dt>처리 시각</dt><dd>{time(selected.at)}</dd><dt>원본 동작</dt><dd>{selected.action}</dd></dl><div className="notice">상세 사유와 관련 변경은 원본 운영 기록에서 확인하세요.</div><Link className="button" href={`/admin/activity?target=${encodeURIComponent(selected.target)}`}>관련 감사 기록 확인</Link></div> : <div className="empty"><b>{id ? "선택한 기록이 조회 범위에 없습니다." : "기록을 선택하세요."}</b></div>}</section></div></div>;
 }

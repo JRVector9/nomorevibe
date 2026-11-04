@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { adminReviewRequestSchema, candidateRevisionHash, currentReviewStatus } from '@/lib/crawl/admin-review';
+import { adminReviewCandidateStates, adminReviewRequestSchema, candidateRevisionHash, currentReviewStatus } from '@/lib/crawl/admin-review';
 import type { CrawlCandidate, CrawlReviewAttempt } from '@/lib/db/schema';
 import type { ReviewInput } from '@/lib/crawl/agent-review-contract';
 const now = new Date('2026-09-08T00:00:00Z');
@@ -8,6 +8,13 @@ const attempt = (id: number, patch: Partial<CrawlReviewAttempt> = {}) => ({
   id, kind: 'automatic', inputHash: input.inputHash, sourceRevisionHash: input.sourceRevisionHash,
   state: 'failed', validUntil: new Date(now.getTime() + 60_000), ...patch,
 }) as CrawlReviewAttempt;
+it('explicit all-stage reads include results while pending and held filters retain their original scopes', () => {
+  expect(adminReviewCandidateStates('all')).toEqual(['new', 'approved', 'needs_review', 'rejected', 'published']);
+  expect(adminReviewCandidateStates()).toEqual(['new', 'approved', 'needs_review']);
+  expect(adminReviewCandidateStates('pending')).toEqual(['new', 'approved', 'needs_review']);
+  expect(adminReviewCandidateStates('needs_review')).toEqual(['needs_review']);
+  expect(adminReviewCandidateStates('published')).toEqual(['published']);
+});
 it('requires nonblank bounded reasons and all stale-input guards', () => {
   const valid = { repo: 'acme/product', actor: 'jr', reason: '제품과 근거 확인', inputHash: input.inputHash,
     sourceRevisionHash: input.sourceRevisionHash, candidateRevisionHash: 'c'.repeat(64) };
