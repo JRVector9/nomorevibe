@@ -43,6 +43,6 @@ export const saveCategoryDefinitions = webWriteAction(async function saveCategor
 
   if (!result.ok) return { issues: result.issues };
 
-  revalidatePath("/admin/categories");
+  revalidatePath("/admin/categories"); revalidatePath("/admin/settings");
   return { ok: true };
 });

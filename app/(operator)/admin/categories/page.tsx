@@ -33,7 +33,7 @@ export default async function AdminCategoriesPage() {
     <main className="mx-auto max-w-[1100px] px-6 pb-20"><PageStamp />
       <div className="flex flex-wrap items-baseline gap-3 pt-6">
         <h1 className="text-[22px] font-extrabold tracking-tight">카테고리 기준</h1>
-        <p className="text-[13px] text-fg-3">분류 모델에 전달되는 문장</p>
+        <p className="admin-page-lead text-[13px] text-fg-3">분류 모델에 전달되는 문장</p>
       </div>
 
       <p className="mt-4 max-w-[68ch] text-[13.5px] leading-[1.7] text-fg-2">

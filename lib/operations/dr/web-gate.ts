@@ -3,6 +3,7 @@ import { db, onPrimary, withTransactionPrelude } from "@/lib/db";
 import { withDbDeadline } from "@/lib/db/pool";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { DrWriterFencedError, readWriterFence, writerSiteActive } from "./epoch";
+import { adminWorkspaceReadOnly } from "../admin-workspace-preview";
 
 /**
  * 웹 쓰기 관문(PR15e). fenced DB(옛 primary·승격 전 복원본)에 붙은 웹은 쓰기 요청을 쓰기 전에 거절한다.
@@ -38,11 +39,13 @@ async function readFenceWithinBound(): Promise<boolean> {
 }
 
 export async function assertWebWritable(): Promise<void> {
+  if (adminWorkspaceReadOnly()) throw new DrWriterFencedError("site_fenced");
   if (!await siteActive()) throw new DrWriterFencedError("site_fenced");
 }
 
 /** hot path 용: 거절 대신 쓰기를 건너뛴다. 읽지 못해도 건너뛴다(fail-closed). */
 export async function webWritable(): Promise<boolean> {
+  if (adminWorkspaceReadOnly()) return false;
   return siteActive().catch(() => false);
 }
 

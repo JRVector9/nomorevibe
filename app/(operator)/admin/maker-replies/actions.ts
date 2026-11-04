@@ -16,6 +16,6 @@ export const reviewMakerReplyAction = webWriteAction(async function reviewMakerR
       ? "작성자 또는 다른 관리자가 바꿨습니다. 새로고침해 주세요." : "답장과 공개할 대상을 확인해 주세요."
       : "처리하지 못했습니다. 새로고침하고 로그인 상태를 확인해 주세요." };
   }
-  revalidatePath("/admin/maker-replies"); revalidatePath("/admin/inbox"); revalidatePath("/me");
+  revalidatePath("/admin/maker-replies"); revalidatePath("/admin/requests"); revalidatePath("/admin/inbox"); revalidatePath("/me");
   return { ok: true };
 });

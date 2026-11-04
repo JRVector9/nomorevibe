@@ -21,9 +21,9 @@ async function authorized(form: FormData) {
 }
 export const requeryGithubIntegrationAction = webWriteAction(async function requeryGithubIntegrationAction(form: FormData): Promise<void> {
   await requestGithubIntegrationRequery(await authorized(form));
-  revalidatePath("/admin/github-integrations");
+  revalidatePath("/admin/github-integrations"); revalidatePath("/admin/settings");
 });
 export const retransmitGithubIntegrationAction = webWriteAction(async function retransmitGithubIntegrationAction(form: FormData): Promise<void> {
   await requestGithubIntegrationRetransmit({ ...await authorized(form), expectedBindingRevision: Number(field(form, "expectedBindingRevision")), expectedPayloadHash: field(form, "expectedPayloadHash"), duplicateRiskAcknowledged: form.getAll("duplicateRiskAcknowledged").length === 1 && form.get("duplicateRiskAcknowledged") === "yes" });
-  revalidatePath("/admin/github-integrations");
+  revalidatePath("/admin/github-integrations"); revalidatePath("/admin/settings");
 });

@@ -64,7 +64,7 @@ export default async function AdminEvidenceProductPage({ params }: Props) {
   const activityHref = `/admin/activity?target=${encodeURIComponent(view.product.slug)}`;
 
   return (
-    <main className="mx-auto max-w-[980px] px-4 pb-20 sm:px-6"><PageStamp />
+    <main data-admin-detail="product" className="mx-auto max-w-[980px] px-4 pb-20 sm:px-6"><PageStamp />
       <div className="flex flex-wrap items-baseline gap-3 pt-6">
         <h1 className="min-w-0 break-words text-[22px] font-extrabold tracking-tight">{view.product.name}</h1>
         <span className="font-mono text-[13px] text-fg-3">{view.product.slug}</span>

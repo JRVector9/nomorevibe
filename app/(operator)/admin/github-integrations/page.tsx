@@ -23,7 +23,7 @@ export default async function GithubIntegrationsPage() {
   const csrfToken = adminRecoveryCsrf(admin, secret), rows = await githubIntegrationAdminRows(), now = new Date();
   return <main className="mx-auto max-w-4xl space-y-5 p-5"><PageStamp />
     <h1 className="text-[22px] font-semibold">GitHub 연동</h1>
-    <p className="text-[14px] leading-6 text-fg-2">최근 전송 100건입니다. 재조회는 GitHub의 현재 상태를 확인합니다. 이슈가 닫혀도 작성자의 문제가 해결됐다고 판단하지 않습니다.</p>
+    <p className="admin-page-lead text-[14px] leading-6 text-fg-2">최근 전송 100건입니다. 재조회는 GitHub의 현재 상태를 확인합니다. 이슈가 닫혀도 작성자의 문제가 해결됐다고 판단하지 않습니다.</p>
     {rows.length === 0 && <p className="text-[14px]">전송 기록이 없습니다.</p>}
     {rows.map(row => {
       const repository = parseGithubRepository(row.repositoryUrl);

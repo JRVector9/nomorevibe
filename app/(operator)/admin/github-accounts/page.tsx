@@ -29,7 +29,7 @@ export default async function GitHubAccountsPage() {
   return <main className="mx-auto max-w-[1100px] px-6 pb-20"><PageStamp />
     <div className="pt-6">
       <h1 className="text-[22px] font-extrabold tracking-tight">GitHub 수집 계정</h1>
-      <p className="mt-2 text-[13px] leading-6 text-fg-2">계정마다 독립된 REST 한도가 있습니다. 같은 GitHub 계정의 토큰을 교체해도 한도는 추가되지 않습니다 — 같은 계정으로 한도를 늘리려면 아래 GitHub App 을 등록합니다(설치마다 따로 한도).</p>
+      <p className="admin-page-lead mt-2 text-[13px] leading-6 text-fg-2">계정마다 독립된 REST 한도가 있습니다. 같은 GitHub 계정의 토큰을 교체해도 한도는 추가되지 않습니다 — 같은 계정으로 한도를 늘리려면 아래 GitHub App 을 등록합니다(설치마다 따로 한도).</p>
     </div>
 
     <section className="mt-6 grid gap-3 sm:grid-cols-2" aria-label="최근 수집 결과">

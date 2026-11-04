@@ -30,7 +30,7 @@ export const saveCollectorToken = webWriteAction(async function saveCollectorTok
   if (expectedId !== undefined && (!Number.isSafeInteger(expectedId) || expectedId <= 0)) return { error: "교체 계정이 잘못됐습니다." };
   try {
     const identity = await saveGitHubCollectorAccount(token.trim(), admin.login, expectedId);
-    revalidatePath("/admin/github-accounts");
+    revalidatePath("/admin/github-accounts"); revalidatePath("/admin/settings");
     return { ok: `${identity.login} 계정의 수집 토큰을 저장했습니다.` };
   } catch (error) {
     // 저장한 것은 저장 트랜잭션이 남긴다. 토큰 값은 어디에도 남기지 않는다
@@ -47,7 +47,7 @@ export const toggleCollectorAccount = webWriteAction(async function toggleCollec
   if (!Number.isSafeInteger(userId) || userId <= 0) throw new Error("invalid_user_id");
   const enabled = form.get("enabled") === "true";
   await setGitHubCollectorAccountEnabled(userId, enabled, admin.login);
-  revalidatePath("/admin/github-accounts");
+  revalidatePath("/admin/github-accounts"); revalidatePath("/admin/settings");
 });
 
 /** GitHub App 등록 — 같은 계정이어도 설치마다 한도가 따로다. 개인 키는 확인 뒤 암호화해 두고, 원문은 어디에도 남기지 않는다 */
@@ -62,7 +62,7 @@ export const saveCollectorApp = webWriteAction(async function saveCollectorApp(_
   if (typeof privateKeyPem !== "string" || !privateKeyPem.includes("PRIVATE KEY") || privateKeyPem.length > 10_000) return { error: "개인 키(.pem) 내용을 붙여 넣으세요." };
   try {
     const identity = await saveGitHubCollectorApp({ appId, installationId, privateKeyPem: privateKeyPem.trim() }, admin.login);
-    revalidatePath("/admin/github-accounts");
+    revalidatePath("/admin/github-accounts"); revalidatePath("/admin/settings");
     return { ok: `${identity.appSlug} App(${identity.accountLogin} 설치)을 수집에 추가했습니다.` };
   } catch (error) {
     await recordAdminAction(admin.login, { action: "github-collector-app-save", target: String(installationId),
@@ -77,5 +77,5 @@ export const toggleCollectorApp = webWriteAction(async function toggleCollectorA
   const installationId = Number(form.get("installationId"));
   if (!Number.isSafeInteger(installationId) || installationId <= 0) throw new Error("invalid_installation_id");
   await setGitHubCollectorAppEnabled(installationId, form.get("enabled") === "true", admin.login);
-  revalidatePath("/admin/github-accounts");
+  revalidatePath("/admin/github-accounts"); revalidatePath("/admin/settings");
 });

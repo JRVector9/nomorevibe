@@ -31,6 +31,6 @@ export const reviewReactionCommentAction = webWriteAction(async function reviewR
     if (error instanceof ReactionError) return { error: error.code === "reaction_conflict" ? "이미 처리했거나 글쓴이가 고쳤습니다. 새로고침해 주세요." : "한 줄을 찾을 수 없습니다." };
     throw error;
   }
-  revalidatePath("/admin/reactions");
+  revalidatePath("/admin/reactions"); revalidatePath("/admin/requests");
   return { ok: true };
 });

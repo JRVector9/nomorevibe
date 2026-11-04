@@ -41,6 +41,7 @@ import { autoProbeDirectEngines, readProbeObservations, recordAutoProbes } from 
 import { readbackServingEndpoint } from "@/lib/operations/admin-serving-contracts";
 import { roleOverview } from "@/lib/operations/roles";
 import { SearchModelConstraints } from "./SearchModelConstraints";
+import { adminWorkspaceReadOnly } from "@/lib/operations/admin-workspace-preview";
 import "../status/operations.css";
 import "./models.css";
 
@@ -80,7 +81,8 @@ export default async function ModelsPage() {
   const contracts = modelContractLinks(servingContractSnapshot().rows);
   // 사람 위임 슬롯의 자동 연결 확인은 한 번만 — 표(연결 확인 열)와 참고의 사람 검토 단계가 같은 약속을 기다린다.
   const humanKeys = settings.stageModelPools?.["human-review"] ?? [];
-  const humanProbe = configuredHumanModelsProbe(humanKeys).catch((): HumanModelProbe[] => []);
+  const humanProbe = adminWorkspaceReadOnly() ? Promise.resolve([] as HumanModelProbe[])
+    : configuredHumanModelsProbe(humanKeys).catch((): HumanModelProbe[] => []);
   return <main className="mx-auto flex max-w-[1440px] flex-col gap-3 px-8 pb-28 max-sm:px-4">
     <PageStamp />
     <ModelsTopBar renderedAt={renderedAt} />
@@ -136,12 +138,12 @@ async function LiveModelsSlot({ assignments, models, contracts, humanProbe, serv
   const { readModelOpsStates } = await import("@/lib/operations/ops-runner/repository");
   const observationRead = readAdminModelsObservation();
   // 엔진 직접 연결 계약의 자동 확인(GET /models, 슬롯마다 1분에 한 번) — 장부를 읽자마자 다른 읽기·사람 위임 확인과 나란히 돈다. 던지지 않는다.
-  const directProbes = observationRead.then(observation => autoProbeDirectEngines(buildModelCards(observation, models, assignments, contracts),
+  const directProbes = adminWorkspaceReadOnly() ? Promise.resolve(0) : observationRead.then(observation => autoProbeDirectEngines(buildModelCards(observation, models, assignments, contracts),
     servingContractSnapshot().rows, readbackServingEndpoint)).catch(() => 0);
   const [observation, states, roles, alarms, human] = await Promise.all([observationRead, readModelOpsStates().catch(() => []),
     roleOverview().catch(() => null), readAlarmSummary(), humanProbe]);
   // 사람 위임 슬롯의 자동 확인 결과를 같은 키(probe:<provider>:<key>)에 남긴 뒤 읽는다 — 표의 연결 확인 열이 「자동(렌더)」으로 보인다.
-  await Promise.all([recordAutoProbes(human.map(probe => ({ identity: { routeId: "human-deepseek-review", provider: probe.provider, model: probe.key },
+  if (!adminWorkspaceReadOnly()) await Promise.all([recordAutoProbes(human.map(probe => ({ identity: { routeId: "human-deepseek-review", provider: probe.provider, model: probe.key },
     result: { listed: probe.ready ? true : null, listMs: probe.ms, callBlocked: "유료 DeepSeek 시험 호출은 허용되지 않습니다.", error: probe.ready ? null : "사람 위임 모델 목록 확인 실패(연결 또는 목록 없음)" },
     detail: "사람 위임 슬롯 · GET /models" }))), directProbes]);
   const probes = await readProbeObservations();
@@ -164,6 +166,7 @@ async function HelpersSlot({ contracts }: { contracts: ModelContractLink[] }) {
 }
 
 async function CategoryModelsSlot({ reviewMode }: { reviewMode: string }) {
+  if (adminWorkspaceReadOnly()) return <SavedProbeNote label="카테고리 분류 모델" />;
   const { value: initial, ms } = await timed(() => agentRequest<AgentStatus>("status").catch(() => null));
   // 카테고리 분류(connect CLI)의 자동 확인 — 우선·예비 모델을 probe:<provider>:<model> 로 남긴다. 연결 안 됨은 목록 null + 오류다.
   const configured = initial ? [initial.config.primary, initial.config.fallback].filter((row): row is NonNullable<typeof row> => !!row) : [];
@@ -177,6 +180,7 @@ async function CategoryModelsSlot({ reviewMode }: { reviewMode: string }) {
 }
 
 async function SearchModelsSlot() {
+  if (adminWorkspaceReadOnly()) return <SavedProbeNote label="검색 모델 서버" />;
   const { value: health, ms } = await timed(() => modelServerHealth());
   const saved = await recordAutoProbes(health.map(row => ({ identity: { routeId: null, provider: "search-server", model: row.name === "임베딩" ? "embedding" : "rerank" },
     result: { listed: row.ok ? true : null, listMs: ms, error: row.ok ? null : `서버 확인 실패 · ${row.error ?? "미확인"}` }, detail: "검색 모델 서버 · GET /health" })));
@@ -185,10 +189,15 @@ async function SearchModelsSlot() {
 
 async function HumanSlot({ enabled, generation, keys, humanProbe }: { enabled: boolean; generation: number; keys: string[]; humanProbe: Promise<HumanModelProbe[]> }) {
   const probes = await humanProbe;
-  const ready = probes.length ? probes.every(probe => probe.ready) : await configuredHumanModelsReady(keys);
+  const ready = probes.length ? probes.every(probe => probe.ready) : !adminWorkspaceReadOnly() && await configuredHumanModelsReady(keys);
   return <HumanReviewSwitch key={generation} enabled={enabled} generation={generation} ready={ready} {...humanReviewModelDisplay(keys)} />;
 }
 
 async function UnknownReviewSlot() {
   return <UnknownReviewList queue={await readModelCapacityReviewQueue()} />;
+}
+
+function SavedProbeNote({ label }: { label: string }) {
+  return <section className="rounded-xl border border-line bg-bg-card p-4"><h2 className="text-[15px] font-semibold">{label}</h2>
+    <p className="mt-2 text-[13px] text-fg-2">읽기 전용 미리보기에서는 새 연결 확인을 실행하지 않습니다. 위 모델 표에 저장된 실제 관측 시각과 결과를 표시합니다.</p></section>;
 }

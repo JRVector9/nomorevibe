@@ -149,7 +149,7 @@ export default async function AdminTalkPage({ searchParams }: Props) {
         <h1 className="text-[22px] font-extrabold tracking-tight">SNS 화제</h1>
         <span className="text-[13px] text-fg-3">{admin.login}</span>
       </div>
-      <p className="mt-2 max-w-[80ch] text-[13.5px] leading-[1.7] text-fg-2">
+      <p className="admin-page-lead mt-2 max-w-[80ch] text-[13.5px] leading-[1.7] text-fg-2">
         Hacker News에서 주소가 github.com인 글을 {every("hn-talk")}마다(hn-talk), Bluesky에서 GitHub를 가리킨 게시물을 {every("bluesky-talk")}마다(bluesky-talk) 기록합니다.
         X는 osaka 서버의 X 수집기가 {X_COLLECTOR_SCHEDULE}에 한 번 GitHub 주소가 있고 많이 퍼진 글
         {xMinLikes !== null && <>(<code className="font-mono text-[13px]">url:github.com min_likes:{xMinLikes}</code> — 좋아요 {xMinLikes} 이상)</>}을 검색해 보내 준 게시물을 기록합니다.
