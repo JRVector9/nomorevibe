@@ -1,5 +1,4 @@
 import Link from "next/link";
-import Form from "next/form";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { llmAssistControls } from "@/lib/db/llm-assist-schema";
@@ -29,7 +28,7 @@ const notice:Record<Mode,string> = {
 export async function PrototypeQualityWorkspace({ mode: rawMode, offset: rawOffset }: { mode?:string;offset?:string }={}) {
   const mode=prototypeQualityMode(rawMode), parsed=Number(rawOffset), offset=Number.isSafeInteger(parsed)&&parsed>=0?Math.min(parsed,100000):0;
   return <main><PageStamp /><div className="page-heading"><div className="heading-actions"><Link className="button small" href="/admin/products/recheck">규칙 재검수</Link><Link className="button small" href="/admin/audit?tab=audit">AI 감사 시작·관리</Link></div></div>
-    <div className="toolbar"><Form action="/admin/products" className="segmented" aria-label="품질 검사 종류"><input type="hidden" name="tab" value="quality"/>{QUALITY_MODES.map(([key,label])=><button key={key} type="submit" name="mode" value={key} aria-pressed={mode===key}>{label}</button>)}</Form><span className="spacer flex">{mode==="audit"?<><Link className="button small" href="/admin/audit?tab=policy">의견 가져오기</Link><Link className="button small" href="/admin/audit?tab=policy">유지 기한 연장</Link><Link className="button small" href="/admin/audit?tab=policy">정책 미리보기</Link></>:mode==="rules"?<Link className="button small primary" href={`/admin/products?tab=quality&mode=rules&offset=${offset}`}>현재 규칙으로 확인</Link>:null}</span></div>
+    <div className="toolbar"><nav className="segmented" aria-label="품질 검사 종류">{QUALITY_MODES.map(([key,label])=><Link key={key} href={`/admin/products?tab=quality&mode=${key}`} prefetch={false} aria-current={mode===key?"page":undefined}>{label}</Link>)}</nav><span className="spacer flex">{mode==="audit"?<><Link className="button small" href="/admin/audit?tab=policy">의견 가져오기</Link><Link className="button small" href="/admin/audit?tab=policy">유지 기한 연장</Link><Link className="button small" href="/admin/audit?tab=policy">정책 미리보기</Link></>:mode==="rules"?<Link className="button small primary" href={`/admin/products?tab=quality&mode=rules&offset=${offset}`}>현재 규칙으로 확인</Link>:null}</span></div>
     <div className="stack">{mode!=="uptime"&&<div className={`notice ${mode==="audit"?"":"blue"}`}>{notice[mode]}</div>}{mode==="audit"?<AuditQuality/>:mode==="second"?<PublishedQuality/>:mode==="rules"?<RulesQuality offset={offset}/>:<UptimeQuality/>}</div>
   </main>;
 }
