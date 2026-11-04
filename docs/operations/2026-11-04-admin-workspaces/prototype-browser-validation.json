@@ -1,0 +1,198 @@
+{
+  "at": "2026-11-04T22:20:20.510Z",
+  "testedHead": "e62df6b7b7921cb747eb3e28bc502b81f988a67f",
+  "reference": "http://gpu3090.tail02799e.ts.net:8788/final/index.html#/home",
+  "actual": "http://gpu3090.tail02799e.ts.net:8789/admin/flow",
+  "scope": "Read-only real-data design fidelity and browser behavior. No application write or model probe executed.",
+  "result": "pass",
+  "layout": {
+    "referenceTabs": 28,
+    "actualTabs": 28,
+    "allActualHttp200": true,
+    "home": {
+      "stats": 4,
+      "flowCards": 9,
+      "branches": 3,
+      "details": 1,
+      "controlBoxes": 1,
+      "workers": 5,
+      "stageTableRows": 9,
+      "publicResultRows": 1,
+      "allStageSelections": 9
+    },
+    "llm": {
+      "summaryCards": 4,
+      "representativeTaskRows": 6,
+      "actualRequestRows": 12,
+      "fullTaskInventoryRows": 27
+    },
+    "quality": {
+      "modes": [
+        {
+          "mode": "audit",
+          "tableColumns": 5,
+          "rows": 25,
+          "selectedByUrl": true
+        },
+        {
+          "mode": "second",
+          "tableColumns": 5,
+          "rows": 14,
+          "selectedByUrl": true
+        },
+        {
+          "mode": "rules",
+          "tableColumns": 5,
+          "rows": 0,
+          "selectedByUrl": true
+        },
+        {
+          "mode": "uptime",
+          "tableColumns": 5,
+          "rows": 50,
+          "selectedByUrl": true
+        }
+      ],
+      "auditSettings": true,
+      "translations": {
+        "cards": 3,
+        "headers": [
+          "프로젝트",
+          "현재 소개",
+          "언어·원본",
+          "후처리 상태",
+          "다음 행동"
+        ],
+        "jobPanel": true
+      }
+    },
+    "genericPageHeadings": [],
+    "legacyPrimaryVisible": 0,
+    "exampleStatMarkers": 0,
+    "mobile": [
+      {
+        "workspace": "home",
+        "viewport": 390,
+        "document": 390
+      },
+      {
+        "workspace": "review",
+        "viewport": 390,
+        "document": 390
+      },
+      {
+        "workspace": "requests",
+        "viewport": 390,
+        "document": 390
+      },
+      {
+        "workspace": "projects",
+        "viewport": 390,
+        "document": 390
+      },
+      {
+        "workspace": "llm",
+        "viewport": 390,
+        "document": 390
+      },
+      {
+        "workspace": "content",
+        "viewport": 390,
+        "document": 390
+      },
+      {
+        "workspace": "settings",
+        "viewport": 390,
+        "document": 390
+      }
+    ],
+    "headingWeight700": true
+  },
+  "client": {
+    "tabNavigations": 28,
+    "interactions": {
+      "stageSelect": true,
+      "rangeSelect": true,
+      "rankDrawer": true,
+      "themeRestored": true,
+      "searchStatus": 200,
+      "reviewSelection": true,
+      "socialSelection": true,
+      "requestEvidence": true,
+      "mobileOpen": true,
+      "mobileClosed": true,
+      "mobileOverflow": false
+    },
+    "projectDetailTabs": 8,
+    "allProjectTabsLoaded": true,
+    "projectMobile": {
+      "width": 390,
+      "documentWidth": 390
+    }
+  },
+  "realtime": {
+    "updated": true,
+    "elapsedMs": 25855,
+    "initial": {
+      "renderedAt": "2026-11-04T22:09:55.253Z",
+      "flowStamp": "● 관측 11. 05. 07:09:58 KST",
+      "status": "15초 자동 관측",
+      "auto": "true",
+      "visibility": "visible"
+    },
+    "after": {
+      "renderedAt": "2026-11-04T22:10:25.686Z",
+      "flowStamp": "● 관측 11. 05. 07:10:18 KST",
+      "status": "15초 자동 관측",
+      "auto": "true",
+      "visibility": "visible"
+    },
+    "automaticRscReads": 2
+  },
+  "errors": {
+    "matrix": {
+      "page": 0,
+      "console": 0,
+      "http": 0
+    },
+    "client": {
+      "page": 0,
+      "console": 0,
+      "http": 0
+    },
+    "project": {
+      "page": 0,
+      "console": 0,
+      "http": 0
+    },
+    "quality": {
+      "page": 0,
+      "console": 0,
+      "http": 0
+    }
+  },
+  "security": {
+    "post": 405,
+    "unauthorizedNext": 404
+  },
+  "applicationWrites": 0,
+  "evidence": {
+    "comparison": "prototype-comparison.json",
+    "matrix": "prototype-actual-matrix.json",
+    "referenceMatrix": "prototype-reference-matrix.json",
+    "client": "prototype-client-qa.json",
+    "project": "prototype-project-detail-qa.json",
+    "quality": "prototype-quality-qa.json",
+    "flow": "prototype-flow-final.json",
+    "screenshots": "prototype-reference-* and prototype-actual-* desktop/mobile PNGs in private tmp"
+  },
+  "resolvedFindings": [
+    "Heading font weight inherited 400 after Tailwind preflight; restored reference heading weights.",
+    "Project detail bundled node:net through browser editor limits; browser-safe constants now render all eight sections.",
+    "Pagination page/gap React keys collided; separated namespaces, final console errors zero.",
+    "Quality and translation tab structures initially differed; restored four quality modes and three-card project translation composition.",
+    "Quality submit button value was dropped by Next Form; explicit mode links now preserve selection.",
+    "Detailed flow table omitted public result; nine stages now include one real public result row.",
+    "Private proxy HMR EPIPE interrupted preview; handled aborted connections, final browser runs stable."
+  ]
+}
