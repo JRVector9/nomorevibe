@@ -2694,3 +2694,7 @@ html:not([data-admin-theme="light"]) .admin-prototype .callout p {
   --admin-font-delta: 0px;
   font-size: calc(13px + var(--admin-font-delta, 0px));
 }
+/* Application/observation annotations retain their existing type scale. */
+.admin-prototype #apply,
+.admin-prototype .admin-status,
+.admin-prototype .panel-head .small.muted { --admin-font-delta:0px; }
