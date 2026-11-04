@@ -28,7 +28,7 @@ mini와 외부 Oracle Osaka의 Kuma 수신기 연결·장애 드릴 결과는 [�
 - 공개 근거 `product-evidence-refresh`는 crawler의 `sources` lane에서 55초 예산으로 실행한다.
   제품 내부의 부분 수집을 재개하되 다음 제품 순회를 막지 않는다. 다른 crawler lane과 같은 역할
   lease·DB pool·GitHub 계정별 쿼터를 사용하므로 앱을 추가해 처리량을 늘리는 설정은 아니다.
-  AI1 worker 예산은 Grok의 90초 호출을 수용하도록 110초이며, 현재 abcllm/Claude handler의
+  AI1 worker 예산은 Grok의 90초 호출을 수용하도록 110초이며, 현재 엔진 직접·Claude CLI handler의
   내부 틱 예산은 40초다. provider 설정이 바뀌면 현재 입력과 동일 provider/model의 심사만 유효하다.
 - `crawl-seed`는 실제 새 후보와 실행 가능한 후속 대기량으로 유입을 제한한다. 제한 중에도 최소
   탐색과 cursor를 보존한다. 사람 보류·정책 중단·미래 backoff를 실행 대기와 합산하지 않는다.
@@ -486,7 +486,7 @@ DB_POOLER_MODE=pgbouncer npx tsx scripts/reconsider-star-auto.ts --apply .crawl-
 | 크롤러 | 4 | 1536 MiB | 1 | GitHub token |
 | 리뷰 | 6 | 2 GiB | 1 | 리뷰용 Claude CLI token |
 | 발행 | 3 | 1536 MiB | 1 | Codex access token 또는 OpenAI API key |
-| 소개·사유 번역 | 6 | 512 MiB | 1 | ABCLLM API key |
+| 소개·사유 번역 | 6 | 512 MiB | 1 | 없음(게이트웨이 키 불필요; 엔진 키는 DB 계약) |
 | 집계 | 3 | 1 GiB | 1 | GitHub Feedback App 키; 메일을 켤 때 웹과 같은 `LOGIN_EMAIL_API_KEY`·`LOGIN_EMAIL_FROM`·`PUBLIC_AUTH_SECRET` |
 | 스케줄러 | 2 | 256 MiB | 0.25 | 없음 |
 | 로컬 DB | 별도 | 4 GiB | 2 | 로컬 DB 계정 |
@@ -815,7 +815,7 @@ B 심사 장애는 신규 자동 발행을 보류하며 조용히 AI 심사를 �
 
 ## 2026-09-21 text 역할 분리
 
-`publisher`는 `crawl-publish`만, `text`는 `reason-translate`와 `crawl-tagline`을 직렬로 실행한다. 기존 job 이름과 요청·lease 행을 그대로 사용한다. 번역 동시성1/예산55초, 소개 동시성2/worker 예산25초를 유지한다. 1차 심사는 별도 변경으로40초/호출24초(gateway)·20초(CLI)다.
+`publisher`는 `crawl-publish`만, `text`는 `reason-translate`와 `crawl-tagline`을 직렬로 실행한다. 기존 job 이름과 요청·lease 행을 그대로 사용한다. 번역 동시성1/예산55초, 소개 동시성2/worker 예산25초를 유지한다. 1차 심사는 별도 변경으로40초/호출24초(엔진 직접 계약)·20초(CLI)다.
 
 배포 준비: 기존 publisher를 정상 drain→새 publisher 교체 및 소유 잡 확인→새 text 컨테이너 시작. 신규 text는 worker target/위 명령, memory512MiB·DB pool3·hard timeout180초, 별도 instance ID/health를 사용한다. 실제 서버 여유는 배포 전에 확인한다. 구형 publisher와 새 text를 함께 유지하지 않는다. rollback은 text drain/중지 후 구형 publisher 복구이며 DB 요청·결과를 삭제하지 않는다.
 

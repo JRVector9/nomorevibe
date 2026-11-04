@@ -73,15 +73,18 @@ main의 최신 trusted CI 실행에서 필수 `check`와 필요한 image publish
 
 ### 설정 폐기는 릴리스에 싸서: `--retire-setting`
 
-코드가 더 읽지 않는 Dokploy 설정(예: abcLLM 게이트웨이 제거 뒤의 `ABCLLM_API_KEY`·`ABCLLM_SERVING_CONTRACTS`·
-`ABCLLM_TAGLINE_MODEL`·`PRODUCT_TRANSLATION_MODEL`·`CRAWL_REVIEW_MODEL`)은 Dokploy 에서 먼저 지우지 않는다 — 지우면 위 drift 로
+abcLLM 게이트웨이 은퇴 뒤 아래 열 이름은 코드가 더 읽지 않는다:
+`ABCLLM_API_KEY`·`ABCLLM_SERVING_CONTRACTS`·`ABCLLM_TAGLINE_MODEL`·`ABCLLM_BASE_URL`·`ABCLLM_MODEL`·`ABCLLM_MODEL_KEY`·
+`ABCLLM_PROFILE_MODEL`·`ABCLLM_PROFILE_MODEL_KEY`·`PRODUCT_TRANSLATION_MODEL`·`CRAWL_REVIEW_MODEL`. 이 설정들은 Dokploy 에서 먼저 지우지 않는다 — 지우면 위 drift 로
 plan 이 멈추고 앱마다 같은 릴리스 재배포가 하나씩 더 든다. 대신 plan 에 이름을 준다(이름마다 한 번, `^[A-Z][A-Z0-9_]*$`).
 
 ```bash
 npm run deploy -- plan --sha "$SHA" --out "$OUT" \
   --retire-setting ABCLLM_API_KEY --retire-setting ABCLLM_SERVING_CONTRACTS \
-  --retire-setting ABCLLM_TAGLINE_MODEL --retire-setting PRODUCT_TRANSLATION_MODEL \
-  --retire-setting CRAWL_REVIEW_MODEL
+  --retire-setting ABCLLM_TAGLINE_MODEL --retire-setting ABCLLM_BASE_URL \
+  --retire-setting ABCLLM_MODEL --retire-setting ABCLLM_MODEL_KEY \
+  --retire-setting ABCLLM_PROFILE_MODEL --retire-setting ABCLLM_PROFILE_MODEL_KEY \
+  --retire-setting PRODUCT_TRANSLATION_MODEL --retire-setting CRAWL_REVIEW_MODEL
 npm run deploy -- run --plan "$PLAN" --plan-sha "$PLAN_SHA256"   # run 에는 옵션이 없다 — plan 에 적힌 이름을 따른다
 ```
 

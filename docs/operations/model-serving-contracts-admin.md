@@ -12,12 +12,12 @@
 | 용량 경로·한도 | DB 정책 | 지금은 `pipeline-control capacity policy`(DRAIN 필요). 관리 화면은 다음 작업이다 |
 | AI2 직접·local·CLI 계약 | env | 다음 작업이다 |
 
-- 켜진 DB 행은 같은 경로·모델의 env 계약을 대신한다. 끄면 env 계약이 다시 쓰인다.
+- 켜진 DB 행이 같은 경로·모델의 유일한 계약이다. 끄면 그 경로·모델은 계약 없음으로 남아 호출을 보류(deferred)한다. env 계약으로 되돌아가지 않는다.
 - DB 행이 그 경로의 계약 형식에 맞지 않으면 **그 모델만 닫는다**(호출 보류). env로 되돌아가지 않는다.
 - 저장할 때 같은 경로·모델의 이전 행은 비활성 이력으로 남는다. 감사 기록 `model-serving-contract-save`/`-disable`에 해시, 주소, 인증 방식을 남기고 키는 남기지 않는다.
 - 앱은 잡을 시작하기 전에 계약을 다시 읽는다. 그 밖의 호출은 30초마다 백그라운드에서 다시 읽는다. DB 읽기가 실패하면 마지막 값을 계속 쓴다.
-  - 되돌림 스위치: env `MODEL_SERVING_CONTRACTS_DB=0`이면 env 계약만 쓴다.
-- `pipeline-control`(status, OPEN 판정)도 판정 전에 DB 계약을 읽는다. 그 프로세스의 `DATABASE_URL`을 쓰고, 없으면 env 계약만 쓴다.
+  - 되돌림 스위치: env `MODEL_SERVING_CONTRACTS_DB=0`이면 DB 계약을 읽지 않아 모든 계약 경로가 호출을 보류한다(코드 기본 등록부는 그대로 쓴다).
+- `pipeline-control`(status, OPEN 판정)도 판정 전에 DB 계약을 읽는다. 그 프로세스의 `DATABASE_URL`을 쓰고, 없으면 계약 없음으로 판정한다.
 
 ## 인증
 
@@ -58,7 +58,7 @@
 
 - abcLLM이 붙이는 `usage_provenance`가 없어도 엔진의 완결 응답을 정상 종료로 본다. 엔진이 알려 준 토큰 사용량(입력+출력=합, 한도 이하)을 그대로 센다.
 - 게이트웨이 전송으로 저장된 계약은 이전과 같다. `usage_provenance`가 없는 응답은 종료가 아니다.
-- 옛 번역 경로(용량 제어가 꺼졌을 때만 쓰는 경로)는 직접 연결 모델을 부르지 않는다. 그 경로는 abcLLM 키를 보내기 때문이다.
+- 옛 번역 경로(용량 제어가 꺼졌을 때만 쓰던 경로)는 직접 연결 모델을 부르지 않았다. 그 경로는 abcLLM 게이트웨이 키를 보냈고, 게이트웨이는 2026-10-30 제거됐다.
 - `/admin/models`의 「연결 확인」 열은 2026-11-01부터 직접 연결 엔진도 자동으로 확인한다. 켜진 계약 중 `transport direct`이거나 local-direct(`direct-openai-chat-v1`) 계약을 가진 모델 슬롯마다 `GET <endpoint>/models` 한 번을 보낸다. 생성 요청은 보내지 않는다. 저장한 키는 Bearer로만 쓰고, 제한 시간 5초와 결과 문구는 수동 버튼과 같다. 같은 슬롯은 1분에 한 번만 확인한다. 저장된 결과가 수동이든 자동이든 1분이 안 됐으면 건너뛰므로 방금 누른 수동 결과를 덮지 않는다. 같은 `/models` 주소는 한 번만 부르고 결과를 나눠 쓴다. 저장한 키를 열 수 없거나 인증이 게이트웨이로 저장된 계약은 엔진을 부르지 않는다. 그런 계약은 기존 키 오류 문구만 남긴다. 게이트웨이 전송 행은 대상이 아니다. 관측 값(`probe:<provider>:<model>`, 출처 「자동(렌더)」)에는 결과·소요·provider·model·routeId만 남고, 주소·키·헤더는 남지 않는다. 구현은 `lib/operations/admin-models-direct-probe.ts`에 있다.
 
 ### Tailscale 이름(`*.ts.net`)
@@ -111,7 +111,7 @@
    ```
    - 1차 어댑터는 계약의 `endpoint`로 바로 보낸다. 요청 본문의 `model`은 계약의 `model`과 같아야 하므로, vLLM이 쓰는 이름(`qwen3.8-flash-next`)을 그대로 쓴다.
 2. 용량 정책에 경로 `crawl-agent-review / abcllm / qwen3.8-flash-next`(그룹 `gpu3090-qwen`)를 추가한다. 지금은 DRAIN → 정책 → OPEN 순서로 한다.
-3. `/admin/models`에서 1차 추가 모델로 `abcllm / qwen3.8-flash-next`를 고른다. 2차에는 Supa(`[supa] Qwen3.8-27B-NVFP4`)를 더한다.
+3. `/admin/models`에서 1차 추가 모델로 `abcllm / qwen3.8-flash-next`를 고른다. 2차에는 Supa(`supa`, 엔진 이름 `Inferact/Qwen3.8-27B-NVFP4`)를 더한다.
    - 1차와 같은 모델의 2차 표는 독립 표가 아니다. 그래서 qwen이 1차로 본 건은 Supa가, Supa가 1차로 본 건은 qwen이 2차를 본다.
 
 ## 첫 반영 (한 번만 배포 필요)

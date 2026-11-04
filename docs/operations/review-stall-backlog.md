@@ -101,7 +101,7 @@
 | --- | --- | --- | --- | --- |
 | 1 재시작 보호(cca48837) | 작업 공간에 `8513cff8` 내용 그대로 반영 | 미실행(막힘) | 못 함(막힘) | 못 함(막힘) |
 | 2 막힌 모델 우회 배정 | 끝 | 미실행(막힘) | 못 함 | 못 함 |
-| 3 기한 사다리·M1 중계기 | 이 저장소 몫 끝, abcLLM 게이트웨이·엔진 설정은 저장소 밖 | 미실행 | 못 함 | 못 함 |
+| 3 기한 사다리·M1 중계기 | 이 저장소 몫 끝, abcLLM 게이트웨이·엔진 설정은 저장소 밖(게이트웨이는 2026-10-30 은퇴 — 종료) | 미실행 | 못 함 | 못 함 |
 | 4 자동 해제 | 워커 잡·Oracle 지연 경보 끝, 선언(실측 후)은 남음 | 미실행 | 못 함 | 못 함·드릴 못 함 |
 | 5 1차 심사 보고서 | 끝(`2026-10-28-first-review-content-and-rule-worker.md`), 비율 실측 없음 | — | 못 함 | — |
 
@@ -127,8 +127,8 @@
 
 1. (사람·권한 필요) 아래 막힌 명령 실행: 커밋, origin/main 기준 브랜치 정리, PR707 → PR(1단계) → PR(2~4단계) 순 push·PR·CI·병합.
 2. `scripts/verify-review-stall.sh`를 node_modules가 있는 곳에서 실행해 0 종료 확인, 실패하면 고친다.
-3. abcLLM 게이트웨이 요청별 기한·vLLM abort·종료 기록(별도 저장소).
-4. 운영 실측(p95/p99, decode 속도, 게이트웨이 끊김 드릴) 후 `MODEL_CAPACITY_AUTO_RECLAIM`·`LOCAL_MODEL_RELAY_ENGINE_DEADLINE_MS`·`LOCAL_MODEL_RELAY_MAX_OUTPUT_TOKENS` 선언.
+3. ~~abcLLM 게이트웨이 요청별 기한·vLLM abort·종료 기록(별도 저장소)~~ — 종료: 게이트웨이 2026-10-30 은퇴.
+4. 운영 실측(p95/p99, decode 속도, 엔진 연결 끊김 드릴) 후 `MODEL_CAPACITY_AUTO_RECLAIM`·`LOCAL_MODEL_RELAY_ENGINE_DEADLINE_MS`·`LOCAL_MODEL_RELAY_MAX_OUTPUT_TOKENS` 선언.
 5. 표준 배포(`npm run deploy -- scope|plan|run`, PR707 drain 보호) → M3·mini 반영 → DB의 새 AI1·AI2 저장 건수 증가 확인.
 6. 드릴(timeout·연결 끊김·owner 교체·응답 유실) 5분 내 자동 해제·재개, 이후 60분 AI1·AI2 저장 증가, 수동 해제 0.
 7. 1차 심사 보고서의 대체 가능 비율 실측(측정 SQL은 보고서에 있음).
