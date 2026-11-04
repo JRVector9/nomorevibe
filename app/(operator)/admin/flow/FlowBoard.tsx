@@ -460,13 +460,13 @@ function llmText(llm: StationLlm | null): string {
   return `${head ? `${head.where} · ${head.model}` : "모델 없음"}${llm.more ? ` 외 ${llm.more}` : ""}${llm.flag ? ` (${llm.flag.text})` : ""}`;
 }
 
-const STATION_ROLE: Record<Station["key"], string> = {
+export const STATION_ROLE: Record<Station["key"], string> = {
   discover: "crawler", fetch: "crawler", judge: "reviewer", first: "reviewer", second: "reviewer",
   profile: "text", publish: "publisher", keywords: "text",
 };
 
 /** This summarizes the already-loaded job rows. An unlocked job is not proof that a model is running. */
-function jobObservation(key: Station["key"], controls: FlowControls) {
+export function jobObservation(key: Station["key"], controls: FlowControls) {
   const rows = STATION_JOBS[key].map(({ job, label }) => ({ job, label, state: controls.jobs[job] }));
   const known = rows.filter((row) => row.state !== undefined);
   const complete = known.length === rows.length && rows.length > 0;
