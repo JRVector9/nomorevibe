@@ -72,7 +72,11 @@ const supa = "http://100.78.219.124:8000/v1";
 const m3Mlx = "http://100.92.77.66:8014/v1";
 const local = "http://100.77.43.63:8090/v1";
 
-/** All compatibility defaults live here. Selection never grants capacity or verified serving authority. */
+/**
+ * All compatibility defaults live here. Selection never grants capacity or verified serving authority.
+ * These are direct engine addresses only: the retired abcLLM gateway is not a fallback, and enabled DB
+ * overrides or admin engine contracts remain authoritative.
+ */
 export const DEFAULT_MODEL_DEFINITIONS: readonly ModelDefinition[] = [
   { key: "gpu3090:review", equipment: "gpu3090", displayName: "GPU3090 · Qwen · 직접 연결", provider: "local-direct", baseUrl: local,
     model: "qwen3.8-flash-next", family: "qwen3.8-flash-next", timeoutMs: 60_000, maxTokens: 10_000, concurrency: 2,
