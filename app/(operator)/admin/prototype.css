@@ -2646,3 +2646,5 @@ html:not([data-admin-theme="light"]) .admin-prototype .callout p {
 .admin-prototype .legacy-advanced[open]>summary { margin-bottom:16px; }
 @media(max-width:850px) { .admin-prototype .prototype-live { gap:8px; } }
 @media(max-width:500px) { .admin-prototype .prototype-live { gap:5px; } }
+/* The public home page also defines .tabs. Its pill treatment is outside this design. */
+.admin-prototype .tabs { background:transparent; border-radius:0; padding:0; overflow:visible; }
