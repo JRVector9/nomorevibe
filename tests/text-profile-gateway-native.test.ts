@@ -13,7 +13,6 @@ vi.mock("@/lib/llm/text-profile-serving-contract", async original => ({
   ...await original<typeof import("@/lib/llm/text-profile-serving-contract")>(),
   resolveTextProfileServingContract: () => fixture.contract,
 }));
-vi.mock("@/lib/llm/text-capacity-admission", () => ({ assertTextModelAdmission: vi.fn() }));
 const requests = new Set<Promise<unknown>>();
 function send(...args: Parameters<typeof writeKeywordsWithReservedGateway>) {
   const promise = writeKeywordsWithReservedGateway(...args); requests.add(promise); void promise.catch(() => {}); return promise;

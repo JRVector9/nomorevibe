@@ -10,7 +10,6 @@ import { checkProductTranslation } from "@/lib/domain/products/translation-polic
 import { TextTaskRankMissingError } from "@/lib/llm/ai-task-rank-scope";
 import { inTextRank } from "./text-task-ranks-fixture";
 
-vi.mock("@/lib/llm/text-capacity-admission", () => ({ assertTextModelAdmission: vi.fn() }));
 vi.mock("@/lib/llm/product-translation-serving-contract", async original => ({
   ...await original<typeof import("@/lib/llm/product-translation-serving-contract")>(),
   resolveProductTranslationServingContract: (model: string) => ({ version: 1, protocol: "abcllm-product-translation-total-bound-v1",

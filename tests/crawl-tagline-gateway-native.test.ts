@@ -13,7 +13,6 @@ const fixture = vi.hoisted(() => ({ contract: null as CrawlTaglineServingContrac
 vi.mock("@/lib/llm/crawl-tagline-serving-contract", async original => ({
   ...await original<typeof import("@/lib/llm/crawl-tagline-serving-contract")>(), resolveCrawlTaglineServingContract: () => fixture.contract,
 }));
-vi.mock("@/lib/llm/text-capacity-admission", () => ({ assertTextModelAdmission: vi.fn() }));
 const model = "crawl-original-model", requests = new Set<Promise<unknown>>();
 /**
  * The abcLLM gateway was removed (2026-10-30): a crawl-tagline contract sends only when the admin pins a direct engine row

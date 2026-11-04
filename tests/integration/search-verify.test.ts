@@ -4,10 +4,10 @@ import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-st
 import { pinTextRanks, textContract } from "../text-task-ranks-fixture";
 
 /**
- * 게이트웨이(abcLLM)는 2026-10-30 제거됐다. 잡은 이 경로·모델의 직접 연결 계약이 있어야 돌고, 용량을 끈(disabled) 잡이 부르는 옛 잎
- * verifyKeywords·verifyKeywordsInChunks 는 이제 보내지 않고 no_key 로 끝난다. 이 파일은 잡이 답을 받은 뒤의 판단(차례·실패 시각·색인 사본)을
- * 보므로, 한 번에 묻는 잎만 같은 wire(searchVerifyGatewayWire)를 이 파일의 fetch 목으로 보내는 대역으로 바꾼다(direct-engine-fixtures).
- * 묶음 잎은 진짜 그대로 두고 부른 것만 센다 — 묶음 단계의 전송·완결 기록은 native 경로가 맡는다(search-verify-capacity-dispatch).
+ * 게이트웨이(abcLLM)는 2026-10-30 제거됐다. 잡은 이 경로·모델의 직접 연결 계약이 있어야 돌고, 옛 잎 verifyKeywords·verifyKeywordsInChunks 는
+ * 이제 보내지 않고 no_key 로 끝난다. 이 파일은 잡이 답을 받은 뒤의 판단(차례·실패 시각·색인 사본)을 보므로, 한 번에 묻는 잎만 같은 wire
+ * (searchVerifyGatewayWire)를 이 파일의 fetch 목으로 보내는 대역으로 바꾸고, 용량 조정기는 그 잎의 결과를 그대로 돌려주는 대역으로 둔다
+ * (장부·예약·native 단계는 search-verify-capacity-dispatch 가 본다). 용량 disabled 는 이제 옛 길로 떨어지지 않고 미룬다.
  * 2026-11-02(PR B): 모델·주소는 「작업 ↔ 모델」 순위가 고른다 — 이 파일은 검수·키워드 짓기 순위 하나씩과 그 연결의 직접 계약을 고정한다.
  */
 const { VERIFY_MODEL, PROFILE_MODEL } = vi.hoisted(() => ({ VERIFY_MODEL: "Qwen3.8-27B-NVFP4", PROFILE_MODEL: "gpt-oss-120b" }));
@@ -27,6 +27,12 @@ vi.mock("@/lib/domain/products/search-verify", async load => {
   };
   return { ...original, verifyKeywords, verifyKeywordsInChunks };
 });
+const capacityHook = vi.hoisted(() => ({ verify: null as null | ((task: import("@/lib/domain/products/search-profiles").ProfileTask,
+  options: { timeoutMs: number; chunked: boolean; signal?: AbortSignal; request?: typeof fetch }) => Promise<unknown>) }));
+vi.mock("@/lib/domain/products/search-verify-model-capacity", () => ({
+  verifyKeywordsWithModelCapacity: async (task: import("@/lib/domain/products/search-profiles").ProfileTask, _lease: unknown,
+    options: { timeoutMs: number; chunked: boolean; signal?: AbortSignal; request?: typeof fetch }) => capacityHook.verify!(task, options),
+}));
 // 키워드를 다시 짓는 잡(writeSearchProfiles)의 옛 잎도 같은 대역이다(search-profile.test.ts 와 같다)
 vi.mock("@/lib/domain/products/search-profile", async load => {
   const original = await load<typeof import("@/lib/domain/products/search-profile")>();
@@ -42,6 +48,13 @@ const { jobs, products, productSearchProfiles } = await import("@/lib/db/schema"
 const { verifySearchKeywords } = await import("@/lib/jobs/products/search-verify");
 const { writeSearchProfiles } = await import("@/lib/jobs/products/search-profile");
 const { profileEvidence, profileHash } = await import("@/lib/domain/products/search-profile");
+const { verifyKeywords, verifyKeywordsInChunks } = await import("@/lib/domain/products/search-verify");
+capacityHook.verify = async (task, options) => {
+  const item = { evidence: profileEvidence(task.product, task.reviewerNote),
+    keywords: [...task.profile!.keywordsEn, ...task.profile!.keywordsKo] };
+  return { kind: "result", result: await (options.chunked ? verifyKeywordsInChunks : verifyKeywords)(item,
+    { request: options.request, signal: options.signal, timeoutMs: options.timeoutMs }) };
+};
 const { runJob } = await import("@/lib/jobs/runner");
 const { pendingVerifications, recordVerificationResult, reconcileSearchProfileBatch } = await import("@/lib/domain/products/search-profiles");
 const { ensureSchema, resetTables } = await import("./setup");

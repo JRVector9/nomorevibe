@@ -14,7 +14,6 @@ const fixture = vi.hoisted(() => ({ contract: null as SearchVerifyServingContrac
 vi.mock("@/lib/llm/search-verify-serving-contract", async original => ({
   ...await original<typeof import("@/lib/llm/search-verify-serving-contract")>(), resolveSearchVerifyServingContract: () => fixture.contract,
 }));
-vi.mock("@/lib/llm/text-capacity-admission", () => ({ assertTextModelAdmission: vi.fn() }));
 const model = "verify-original-model", requests = new Set<Promise<unknown>>();
 const evidence = { name: "Academy", url: "https://a.test", category: "Sports", topics: "", tagline: "Bonos de clases <b>", pageText: "", readme: "", evidenceLevel: "thin" as const };
 const item = (): VerifyItem => ({ evidence: structuredClone(evidence), keywords: ["sports academy", "membership bonuses", "보너스 관리"] });

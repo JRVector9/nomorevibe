@@ -17,7 +17,6 @@ vi.mock("@/lib/llm/product-translation-serving-contract", async original => ({
   ...await original<typeof import("@/lib/llm/product-translation-serving-contract")>(),
   resolveProductTranslationServingContract: () => fixture.contract,
 }));
-vi.mock("@/lib/llm/text-capacity-admission", () => ({ assertTextModelAdmission: vi.fn() }));
 const model = "product-original-model", requests = new Set<Promise<unknown>>();
 const items = (): ProductTranslationGatewayItem[] => [
   { name: "Toolkit", locale: "en", field: "tagline", text: "Toolkit은 문서 정리를 돕는 도구입니다" },

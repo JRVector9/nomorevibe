@@ -366,17 +366,15 @@ it("rejects a forged parent and an expired reservation before any POST", exercis
   });
 }), 20_000);
 
-it("keeps the disabled legacy leaf (which no longer sends) and the writer with no ledger row", exercise(async () => {
+it("keeps disabled capacity as an explicit defer and the writer with no ledger row", exercise(async () => {
   await install("disabled");
   const words = keywords(3), task = await seed(words, null);
   await server(async ({ bodies, setReply }) => {
     setReply(fits([words[0]]));
-    // Disabled still selects the original leaf, but the abcLLM gateway it used is gone (2026-10-30): even with its HTTP boundary
-    // redirected to this loopback it sends nothing and ends no_key. The original writer still records without a ledger row.
+    // Disabled no longer selects the retired original leaf; it ends before any request or ledger row. The original writer still records.
     const request = vi.fn((_url: RequestInfo | URL, init?: RequestInit) => fetch(serving.contract!.endpoint, init)) as unknown as typeof fetch;
     expect(await custom(async lease => {
-      const outcome = await verify(task, lease, 60_000, request);
-      expect(outcome).toEqual({ kind: "result", result: { ok: false, error: "no_key" } });
+      await expect(verify(task, lease, 60_000, request)).rejects.toEqual(new ModelCapacityDeferredError("disabled"));
       expect(await tracked(recordVerificationResult(task, lease, { kind: "success", removed: [words[0]], model: VERIFY_MODEL }))).toBe(true);
     })).toMatchObject({ status: "completed" });
     expect(bodies).toEqual([]); expect(request).not.toHaveBeenCalled();

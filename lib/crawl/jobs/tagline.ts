@@ -3,7 +3,7 @@ import { deferredJob, type JobContext, type JobOutcome } from "@/lib/jobs/runner
 import { tickRemaining } from "@/lib/jobs/tick-deadline";
 import { ModelCapacityDeferredError, modelCapacityDeferralIsPerModel, modelCapacityDeferralIsPerWork } from "@/lib/llm/capacity-deferred";
 import { getSettings } from "@/lib/crawl/settings";
-import { taglineEvidence, taglineHash, writeTagline } from "@/lib/crawl/tagline";
+import { taglineEvidence, taglineHash } from "@/lib/crawl/tagline";
 import { writeCrawlTaglineWithModelCapacity } from "@/lib/crawl/tagline-model-capacity";
 import { pendingTaglines, recordTaglineResult } from "@/lib/crawl/taglines";
 import { jobKnob } from "@/lib/operations/runtime-settings-schema";
@@ -116,35 +116,30 @@ async function writeTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTaskRank
 
               // 순위 차례로 부른다 — 이 모델만의 까닭(경로 없음·장비 행 없음·계약 닫힘·포화)이면 같은 후보를 다음 순위로(TextTaskRanks.run)
               const attempt = await ranks.run(async (binding): Promise<Flow> => {
-                const ask = () => writeTagline(evidence, { signal, timeoutMs: Math.max(1_000, Math.min(callMs, remaining() - 1_000)) });
                 let capacity = await writeCrawlTaglineWithModelCapacity(task, lease,
                   { signal, timeoutMs: Math.max(1_000, Math.min(callMs, remaining() - 1_000)) });
                 if (capacity.kind === "skipped") { skipped = true; return "stop"; }
-                let result = capacity.kind === "disabled" ? await ask() : capacity.result;
+                let result = capacity.result;
                 /**
                  * 빈 줄("증거로는 무엇인지 알 수 없다")은 흔들리는 답이다 — 같은 증거로 다시 물으면 멀쩡한
                  * 줄이 오는 때가 14건 중 3~4건이었다(2026-09-20 프로드 실측, 온도 0인데도 그렇다).
                  * 한 번만 더 묻는다. 두 번 다 빈 줄이면 그 후보는 사람이 본다. 둘째 물음은 첫 물음과 같은 순위다(장부의 이어 묻기는 모델에 묶인다).
                  */
                 if (result.ok && !result.tagline && !signal.aborted && ctx.hasBudget() && remaining() >= minCallMs
-                  && (capacity.kind === "disabled" || capacity.askOrdinal === 1)) {
-                  if (capacity.kind === "disabled") result = await ask();
-                  else {
-                    try {
-                      capacity = await writeCrawlTaglineWithModelCapacity(task, lease,
-                        { signal, timeoutMs: Math.max(1_000, Math.min(callMs, remaining() - 1_000)), previous: capacity });
-                    } catch (error) {
-                      // 첫 물음은 이 순위로 끝났다 — 둘째 물음을 다른 순위로 옮기지 않는다. 이 순위를 쉬게 하고 이 후보만 넘긴다(다음 틱이 이어 묻는다)
-                      if (error instanceof ModelCapacityDeferredError && modelCapacityDeferralIsPerModel(error.reason)) {
-                        ranks.pause(binding, error.reason);
-                        throw new ModelCapacityDeferredError("reservation_lost");
-                      }
-                      throw error;
+                  && capacity.askOrdinal === 1) {
+                  try {
+                    capacity = await writeCrawlTaglineWithModelCapacity(task, lease,
+                      { signal, timeoutMs: Math.max(1_000, Math.min(callMs, remaining() - 1_000)), previous: capacity });
+                  } catch (error) {
+                    // 첫 물음은 이 순위로 끝났다 — 둘째 물음을 다른 순위로 옮기지 않는다. 이 순위를 쉬게 하고 이 후보만 넘긴다(다음 틱이 이어 묻는다)
+                    if (error instanceof ModelCapacityDeferredError && modelCapacityDeferralIsPerModel(error.reason)) {
+                      ranks.pause(binding, error.reason);
+                      throw new ModelCapacityDeferredError("reservation_lost");
                     }
-                    if (capacity.kind === "skipped") { skipped = true; return "stop"; }
-                    if (capacity.kind === "disabled") throw new ModelCapacityDeferredError("disabled");
-                    result = capacity.result;
+                    throw error;
                   }
+                  if (capacity.kind === "skipped") { skipped = true; return "stop"; }
+                  result = capacity.result;
                 }
                 const save = (value: Parameters<typeof recordTaglineResult>[2]) => capacity.kind === "result" && capacity.expectation
                   ? recordTaglineResult(task, lease, value, capacity.expectation) : recordTaglineResult(task, lease, value);

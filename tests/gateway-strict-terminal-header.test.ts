@@ -34,7 +34,6 @@ vi.mock("@/lib/llm/product-tagline-ko-serving-contract", async original => ({
 vi.mock("@/lib/llm/websearch-query-serving-contract", async original => ({
   ...await original<typeof import("@/lib/llm/websearch-query-serving-contract")>(),
   resolveWebsearchQueryServingContract: () => fixture.contracts["search-query-translate"] ?? null }));
-vi.mock("@/lib/llm/text-capacity-admission", () => ({ assertTextModelAdmission: vi.fn() }));
 
 const model = "strict-header-model", HEADER = "x-abcllm-strict-terminal";
 const sha = (value: string) => createHash("sha256").update(value).digest("hex");

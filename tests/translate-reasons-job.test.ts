@@ -11,9 +11,10 @@ vi.mock("@/lib/crawl/translations", () => ({
   untriedTranslations: mocks.untried, retryableTranslations: mocks.retry, recordWorkerTranslations: mocks.record,
 }));
 vi.mock("@/lib/crawl/translate", () => ({ translateToKorean: mocks.translate }));
+const expectation = Object.freeze({ kind: "reason_translation_write" as const });
 vi.mock("@/lib/crawl/reason-translation-model-capacity", () => ({
   translateReasonsWithModelCapacity: async (batch: { body: string }[], _lease: unknown,
-    options: { timeoutMs: number; signal?: AbortSignal }) => ({ kind: "disabled",
+    options: { timeoutMs: number; signal?: AbortSignal }) => ({ kind: "ready", batch, expectation,
     result: await mocks.translate(batch.map(item => item.body), options.timeoutMs, undefined, options.signal) }),
 }));
 
@@ -56,7 +57,7 @@ it("그 모델만의 미룸이면 같은 묶음을 다음 순위로 넘기고 2�
   const ctx = context();
   expect(await translateReasons(ctx)).toEqual({ done: true });
   expect(seen).toEqual([MODEL, SECOND]);
-  expect(mocks.record).toHaveBeenCalledExactlyOnceWith([{ hash: "a", translated: "가", error: undefined }], SECOND, context().lease);
+  expect(mocks.record).toHaveBeenCalledExactlyOnceWith([{ hash: "a", translated: "가", error: undefined }], SECOND, context().lease, expectation);
   expect(ctx.log).toHaveBeenLastCalledWith("ai_task.ranks", { ranks: 2, "served.2": 1, "unusable.1.unmapped": 1 });
 });
 
@@ -116,7 +117,7 @@ it.each([
   mocks.translate.mockResolvedValue({ ok: true, translations: ["가"] });
   expect(await translateReasons(context())).toEqual({ done: true });
   expect(mocks.translate).toHaveBeenCalledTimes(1);
-  expect(mocks.record).toHaveBeenCalledWith([{ hash: "a", translated: "가", error: undefined }], MODEL, context().lease);
+  expect(mocks.record).toHaveBeenCalledWith([{ hash: "a", translated: "가", error: undefined }], MODEL, context().lease, expectation);
 });
 
 it("처음 보는 글을 묶어 옮기고, 남은 것이 없으면 끝낸다", async () => {
@@ -129,7 +130,7 @@ it("처음 보는 글을 묶어 옮기고, 남은 것이 없으면 끝낸다", a
   // 한 항목이 비면 그것만 실패로 — 나머지는 남긴다
   expect(mocks.record).toHaveBeenCalledWith([
     { hash: "a", translated: "가", error: undefined }, { hash: "b", translated: "나", error: undefined }, { hash: "c", translated: null, error: undefined },
-  ], MODEL, context().lease);
+  ], MODEL, context().lease, expectation);
 });
 
 it("여러 번 실패한 글은 묶지 않고 혼자 옮긴다 — 옆의 멀쩡한 글까지 끌고 실패하지 않게", async () => {
@@ -144,7 +145,7 @@ it("게이트웨이가 막히면 실패로 남기고 이번 틱을 멈춘다 —
   mocks.translate.mockResolvedValue({ ok: false, error: "timeout" });
   expect(await translateReasons(context())).toEqual({ done: false });
   expect(mocks.translate).toHaveBeenCalledTimes(1);
-  expect(mocks.record).toHaveBeenCalledWith([{ hash: "a", translated: null, error: "timeout" }, { hash: "b", translated: null, error: "timeout" }], MODEL, context().lease);
+  expect(mocks.record).toHaveBeenCalledWith([{ hash: "a", translated: null, error: "timeout" }, { hash: "b", translated: null, error: "timeout" }], MODEL, context().lease, expectation);
 });
 
 it("순위가 둘이면 실패한 묶음의 순위만 이 틱 동안 쉬고 다음 묶음은 2순위가 맡는다", async () => {

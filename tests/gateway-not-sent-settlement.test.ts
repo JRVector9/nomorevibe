@@ -26,7 +26,6 @@ vi.mock("@/lib/llm/reason-translation-serving-contract", async importOriginal =>
   ...await importOriginal<typeof import("@/lib/llm/reason-translation-serving-contract")>(),
   resolveReasonTranslationServingContract: () => fixture.reason,
 }));
-vi.mock("@/lib/llm/text-capacity-admission", () => ({ assertTextModelAdmission: vi.fn() }));
 
 const model = "[MLX] not-sent-model";
 function input(): ReviewInput {
