@@ -13,7 +13,7 @@ export function PrototypeSpark({ values, label }: { values?: readonly number[] |
   return <svg className="spark" viewBox="0 0 85 24" role="img" aria-label={label}><path className="area" d={`${points} L85,24 L0,24 Z`} /><path d={points} /></svg>;
 }
 export function Panel({ title, description, tool, children, note, id, flush = false }: { title: ReactNode; description?: ReactNode; tool?: ReactNode; children: ReactNode; note?: ReactNode; id?: string; flush?: boolean }) {
-  return <section className="panel" id={id}><div className="panel-head"><div><h3>{title}</h3>{description && <p>{description}</p>}</div>{tool}</div>{flush ? children : <div className="panel-body">{children}</div>}{note && <div className="panel-foot">{note}</div>}</section>;
+  return <section className="panel" id={id}><div className="panel-head"><div><h3>{title}</h3>{description && <p>{description}</p>}</div>{tool && <div className="right">{tool}</div>}</div>{flush ? children : <div className="panel-body">{children}</div>}{note && <div className="panel-foot">{note}</div>}</section>;
 }
 export function Facts({ rows }: { rows: [string, ReactNode][] }) { return <dl className="facts">{rows.map(([label, value]) => <Fragment key={label}><dt>{label}</dt><dd>{value}</dd></Fragment>)}</dl>; }
 export function DataTable({ heads, children, note, min = 850 }: { heads: string[]; children: ReactNode; note?: ReactNode; min?: number }) {
