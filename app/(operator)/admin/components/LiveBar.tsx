@@ -50,7 +50,8 @@ const SCROLL_THROTTLE_MS = 500;
  * 뒤로·앞으로 가기는 담아 둔 화면을 보이므로 곧바로 다시 읽는다.
  * "마지막 갱신"은 화면(페이지)을 서버가 그린 시각이다(PageStamp) — 레이아웃 시각(fallbackAt)은 아직 화면이 알리기 전에만 쓴다.
  */
-export function LiveBar({ fallbackAt }: {
+export function LiveBar({ fallbackAt, appearance }: {
+  appearance?: "prototype";
   /** 레이아웃을 그린 서버 시각 — 화면이 그린 시각을 알리기 전의 자리 */
   fallbackAt: string;
 }) {
@@ -151,6 +152,13 @@ export function LiveBar({ fallbackAt }: {
   const status = manualPending || autoPending ? "다시 읽는 중…" : !live ? "자동 갱신을 껐습니다 — 새로고침을 눌러 읽습니다"
     : pausedReason ? PAUSE_LABELS[pausedReason] : `${seconds}초마다 다시 읽음`;
   const rule = `이 화면은 ${seconds}초마다 다시 읽습니다${idle ? ` — 누르거나 키를 치거나 스크롤한 뒤 ${idle >= 60 ? `${idle / 60}분` : `${idle}초`} 동안은 쉽니다` : ""}.`;
+  if (appearance === "prototype") return <div className="prototype-live" role="group" aria-label="화면 갱신">
+    <span className={`live-indicator${!live || pausedReason ? " paused" : ""}`} title={status}><i />{manualPending || autoPending ? "관측 갱신 중" : !live ? "자동 갱신 멈춤" : pausedReason ? PAUSE_LABELS[pausedReason] : `${seconds}초 자동 관측`}</span>
+    <span className="freshness">관측 <time dateTime={shownAt}>{clockLabel(shownAt)}</time></span>
+    <button type="button" className="button small" role="switch" aria-checked={live} aria-label="자동 갱신" onClick={toggle} title={rule}>{live ? "갱신 멈춤" : "갱신 재개"}</button>
+    <button type="button" className="icon-button" aria-label="지금 새로고침" title="지금 새로고침" aria-disabled={manualPending || undefined} onClick={refreshNow}>↻</button>
+  </div>;
+
   return (
     <div className="admin-live-bar" role="group" aria-label="화면 갱신">
       {/* 알림 영역(aria-live)으로 두지 않는다 — 10초마다 "다시 읽는 중"을 읽어 주면 화면 낭독기가 쉬지 못한다 */}

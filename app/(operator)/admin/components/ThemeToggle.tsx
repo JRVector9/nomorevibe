@@ -44,7 +44,7 @@ function subscribe(onChange: () => void) {
   };
 }
 
-export function ThemeToggle() {
+export function ThemeToggle({ compact = false }: { compact?: boolean } = {}) {
   // 서버는 저장값을 모르니 "시스템"으로 그리고, hydration 뒤 저장값으로 바꾼다(불일치 오류 없이)
   const theme = useSyncExternalStore(subscribe, storedTheme, () => "system" as const);
   // 개발 모드 Strict Mode 재마운트가 html 의 속성을 지운다 — 그리기 전에 저장값으로 다시 단다(운영에서는 같은 값을 다시 다는 것뿐)
@@ -60,6 +60,9 @@ export function ThemeToggle() {
     applyTheme(next);
     window.dispatchEvent(new Event(CHANGE_EVENT));
   };
+
+  if (compact) return <button type="button" className="icon-button" aria-label={`테마 전환 · 현재 ${theme}`} title={`테마: ${theme} · 누르면 전환`}
+    onClick={() => choose(theme === "light" ? "dark" : theme === "dark" ? "system" : "light")}><AdminIcon name={theme === "dark" ? "moon" : theme === "light" ? "sun" : "monitor"} size={15} /></button>;
 
   return (
     <div className="admin-theme" role="group" aria-label="화면 테마">

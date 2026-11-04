@@ -174,12 +174,12 @@ describe("갱신 줄", () => {
   it("관리자 틀이 모든 화면 머리에 갱신 줄을 두고, 로그인 화면에는 두지 않는다", () => {
     router.pathname = "/admin/inbox";
     const shell = renderToStaticMarkup(<AdminShell renderedAt="2026-10-21T04:38:20.000Z" badges={{}}><main>PAGE-BODY</main></AdminShell>);
-    expect(shell).toContain("admin-live-bar");
-    expect(shell).toContain("자동 갱신 켜짐 · 30초");
-    expect(shell.indexOf("admin-live-bar")).toBeLessThan(shell.indexOf("PAGE-BODY"));
+    expect(shell).toContain("prototype-live");
+    expect(shell).toContain("30초 자동 관측");
+    expect(shell.indexOf("prototype-live")).toBeLessThan(shell.indexOf("PAGE-BODY"));
     router.pathname = "/admin/login";
     const login = renderToStaticMarkup(<AdminShell renderedAt="2026-10-21T04:38:20.000Z"><main>로그인</main></AdminShell>);
-    expect(login).not.toContain("admin-live-bar");
+    expect(login).not.toContain("prototype-live");
   });
 
   it("같은 기존 URL도 query에 따라 작업 공간을 고르고 계정과 검색을 유지한다", () => {
@@ -188,7 +188,7 @@ describe("갱신 줄", () => {
     const requests = renderToStaticMarkup(<AdminShell renderedAt="2026-10-21T04:38:20.000Z" account="operator@example.com"><main>실제 화면 본문</main></AdminShell>);
     expect(requests).toContain('data-workspace="requests"');
     expect(requests).toContain('admin-workspace-tabs');
-    expect(requests).toContain('admin-search-trigger');
+    expect(requests).toContain('search-launch');
     expect(requests).toContain('operator@example.com');
     expect(requests).toContain('action="/api/auth/logout"');
     router.search = "tab=policy";
