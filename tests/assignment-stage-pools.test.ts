@@ -16,9 +16,9 @@ const row = (value: Partial<ModelAssignmentRow> & Pick<ModelAssignmentRow, "stag
   assignmentId: value.assignmentId ?? `row-${String(++seq).padStart(3, "0")}`, deviceId: "dev-a", transport: "gateway", rank: 1, role: "primary",
   vote: false, mode: "live", routeId: "route", provider: "abcllm", maxSlots: 1, evidenceKey: "e".repeat(64), version: 1, note: null,
   updatedBy: "fixture", createdAt: "2026-10-31T00:00:00.000Z", updatedAt: "2026-10-31T00:00:00.000Z", ...value });
-const mlx = row({ assignmentId: "reason:01", stage: "reason", registryKey: "mlx:text", model: "[MLX] gpt-oss-120b" });
-const supa = row({ assignmentId: "reason:02", stage: "reason", registryKey: "supa:review", model: "[supa] Qwen3.8-27B-NVFP4" });
-const m1 = row({ assignmentId: "reason:03", stage: "reason", registryKey: "m1:translation", model: "[m1] mlx-community--gemma-4-26b-a4b-it-4bit", rank: 2 });
+const mlx = row({ assignmentId: "reason:01", stage: "reason", registryKey: "mlx:text", model: "gpt-oss-120b" });
+const supa = row({ assignmentId: "reason:02", stage: "reason", registryKey: "supa:review", model: "supa" });
+const m1 = row({ assignmentId: "reason:03", stage: "reason", registryKey: "m1:translation", model: "mlx-community--gemma-4-26b-a4b-it-4bit", rank: 2 });
 const slot = (assignment: string, stage: string) => createHash("sha256").update(`${assignment}:${stage}`).digest().readUInt32BE(0);
 
 afterEach(() => { setAssignmentTableEnabledForTest(null); setStageAssignmentsForTest(null); stored.pools = {}; vi.unstubAllEnvs(); seq = 0; });
@@ -33,7 +33,7 @@ describe("stage pools from the table", () => {
       expect(Object.keys(picked)).toEqual(["reason-translate"]);
     }
     // a wire name that is not the registry request name, an unknown key and another adapter are not usable; rank 2 serves when rank 1 is gone
-    const odd = [row({ stage: "reason", registryKey: "mlx:text", model: "gpt-oss-120b" }), row({ stage: "reason", registryKey: "none:missing", model: "x" }),
+    const odd = [row({ stage: "reason", registryKey: "mlx:text", model: "not-the-registry-name" }), row({ stage: "reason", registryKey: "none:missing", model: "x" }),
       row({ stage: "reason", registryKey: "connect:sonnet", model: "sonnet", provider: "claude-cli" }), m1];
     expect(tableStageSelections(stage => stage === "reason" ? odd : null, "reason-translate:a", registry)).toEqual({ "reason-translate": "m1:translation" });
     expect(tableStageSelections(stage => stage === "reason" ? odd.slice(0, 3) : null, "reason-translate:a", registry)).toEqual({});
@@ -43,41 +43,46 @@ describe("stage pools from the table", () => {
     stored.pools = { "reason-translate": ["m1:translation"], "product-tagline-ko": ["supa:review"] };
     setStageAssignmentsForTest([mlx]);
     const read = () => withStoredAdminStagePools("reason-translate:lease", async () => [configuredModel("reason-translate"), configuredModel("product-tagline-ko")]);
-    expect(await read()).toEqual(["[m1] mlx-community--gemma-4-26b-a4b-it-4bit", "[supa] Qwen3.8-27B-NVFP4"]);
+    expect(await read()).toEqual(["mlx-community--gemma-4-26b-a4b-it-4bit", "supa"]);
     setAssignmentTableEnabledForTest(true);
-    expect(await read()).toEqual(["[MLX] gpt-oss-120b", "[supa] Qwen3.8-27B-NVFP4"]);
+    expect(await read()).toEqual(["gpt-oss-120b", "supa"]);
     // explicit pools (readiness checks) are never replaced by the table
     expect(withAdminStagePools({ "reason-translate": ["m1:translation"] }, "x", () => configuredModel("reason-translate")))
-      .toBe("[m1] mlx-community--gemma-4-26b-a4b-it-4bit");
+      .toBe("mlx-community--gemma-4-26b-a4b-it-4bit");
   });
 });
 
 describe("registry default order", () => {
-  const tagline = row({ assignmentId: "tagline:01", stage: "tagline", registryKey: "supa:review", model: "[supa] Qwen3.8-27B-NVFP4" });
-  it("makes a live table row the default ahead of *_KEY and the legacy env, only for the unscoped process env", () => {
-    // crawl-tagline has no process env since 2026-10-31 (abcLLM cleanup: its *_MODEL / *_MODEL_KEY are not read) — its legacy order is the registry default;
-    // the *_KEY precedence is checked below on reason-translate, which still has one.
+  const tagline = row({ assignmentId: "tagline:01", stage: "tagline", registryKey: "mlx:text", model: "gpt-oss-120b" });
+  it("makes a live table row the default ahead of the legacy env, only for the unscoped process env", () => {
+    // crawl-tagline and reason-translate have no process env since the abcLLM cleanup: their *_MODEL / *_MODEL_KEY names are not read,
+    // so their legacy order is the registry default (crawl-tagline now uses supa:review in production).
     const legacy = configuredModel("crawl-tagline");
-    expect(legacy).toBe("[MLX] qwen3.6-35b-heretic");
+    expect(legacy).toBe("supa");
     setStageAssignmentsForTest([tagline]);
     expect(configuredModel("crawl-tagline")).toBe(legacy);                                   // flag off
     setAssignmentTableEnabledForTest(true);
-    expect(configuredModel("crawl-tagline")).toBe("[supa] Qwen3.8-27B-NVFP4");
-    expect(configuredModelDefinition("crawl-tagline").key).toBe("supa:review");
+    expect(configuredModel("crawl-tagline")).toBe("gpt-oss-120b");
+    expect(configuredModelDefinition("crawl-tagline").key).toBe("mlx:text");
     expect(configuredModel("crawl-tagline", { ...process.env })).toBe(legacy);               // an explicit environment keeps its key
     // an admin stage-pool scope keeps its own selection
-    expect(withAdminStagePools({ "crawl-tagline": ["mlx:tagline"] }, "x", () => configuredModel("crawl-tagline"))).toBe(legacy);
+    expect(withAdminStagePools({ "crawl-tagline": ["mlx:text"] }, "x", () => configuredModel("crawl-tagline"))).toBe("gpt-oss-120b");
     // purposes without a stage mapping stay on the legacy order
     expect(configuredModel("search-query-translate")).toBe(configuredModel("search-query-translate", { ...process.env }));
-    // a live row also beats an explicit *_KEY selector, again only for the unscoped process env
-    vi.stubEnv("ABCLLM_MODEL_KEY", "m1:translation");
-    expect(configuredModel("reason-translate", { ...process.env })).toBe("[m1] mlx-community--gemma-4-26b-a4b-it-4bit");
+    // the retired abcLLM selectors are ignored: even an invalid key neither throws nor moves reason-translate
+    vi.stubEnv("ABCLLM_MODEL_KEY", "missing:key");
+    vi.stubEnv("ABCLLM_MODEL", "retired-alias");
+    expect(configuredModel("reason-translate", { ...process.env })).toBe("mlx-community--gemma-4-26b-a4b-it-4bit");
+    // a still-active selector is honoured, and a live row also beats it only for the unscoped process env
+    vi.stubEnv("SEARCH_VERIFY_MODEL_KEY", "supa:review");
+    expect(configuredModel("product-search-verify", { ...process.env })).toBe("supa");
     setStageAssignmentsForTest([tagline, supa]);
-    expect(configuredModel("reason-translate")).toBe("[supa] Qwen3.8-27B-NVFP4");
+    expect(configuredModel("reason-translate")).toBe("supa");
   });
   it("ignores a row whose wire name is not the registry request name", () => {
     setAssignmentTableEnabledForTest(true);
-    setStageAssignmentsForTest([{ ...tagline, model: "Qwen3.8-27B-NVFP4", transport: "direct" }]);
+    setStageAssignmentsForTest([{ ...tagline, model: "not-the-registry-name", transport: "direct" }]);
     expect(configuredModel("crawl-tagline")).toBe(configuredModel("crawl-tagline", { ...process.env }));
+    expect(configuredModelDefinition("crawl-tagline").key).toBe("supa:review");
   });
 });

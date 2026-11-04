@@ -82,7 +82,9 @@ afterEach(() => { fixture.contract = null; vi.unstubAllEnvs(); });
 
 it("uses exact direct chat tokenization and a single no-thinking inference without abcLLM credentials", async () => {
   vi.stubEnv("ABCLLM_API_KEY", "must-never-leave");
-  vi.stubEnv("ABCLLM_BASE_URL", "http://127.0.0.1:1");
+  // ABCLLM_BASE_URL is retired; a closed registry gateway keeps any accidental gateway call off the real host.
+  vi.stubEnv("MODEL_REGISTRY_CONFIG", JSON.stringify({ version: 1, models: DEFAULT_MODEL_DEFINITIONS.map(definition =>
+    definition.provider === "abcllm" ? { ...definition, baseUrl: "http://127.0.0.1:1/v1" } : definition) }));
   await server(async ({ seen, token }) => {
     token({ count: 22_000, max_model_len: 50_000, tokens: Array(22_000).fill(1) });
     const value = input(), call = await prepared(value), owned = dispatch(value, call);

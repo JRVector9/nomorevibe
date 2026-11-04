@@ -37,8 +37,9 @@ const DEVICES = ["dev-a", "dev-b", "eng-dev", "loc-dev", "connect-dev"];
 const definition = (key: string, model: string, provider: ModelDefinition["provider"], baseUrl: string | null): ModelDefinition =>
   ({ key, equipment: key.slice(0, key.indexOf(":")), displayName: key, provider, baseUrl, model, family: model.toLowerCase(), timeoutMs: 60_000,
     maxTokens: 8_000, concurrency: 1, purposes: ["fixture"] });
-const FIXTURE_MODELS = [definition("eng:qwen", "Qwen-X", "abcllm", "http://eng.test:8000/v1"), definition("eng:qwen-y", "Qwen-Y", "abcllm", "http://eng.test:8000/v1"),
-  definition("eng:qwen-z", "Qwen-Z", "abcllm", "http://eng.test:8000/v1"), definition("loc:deep", "deep-1", "local-direct", "http://loc.test:8010/v1")];
+const FIXTURE_MODELS: ModelDefinition[] = [definition("eng:qwen", "Qwen-X", "abcllm", "http://eng.test:8000/v1"), definition("eng:qwen-y", "Qwen-Y", "abcllm", "http://eng.test:8000/v1"),
+  definition("eng:qwen-z", "Qwen-Z", "abcllm", "http://eng.test:8000/v1"), definition("loc:deep", "deep-1", "local-direct", "http://loc.test:8010/v1"),
+  { ...definition("eng:tagline", "qwen3.6-35b-heretic", "abcllm", "http://eng.test:8000/v1"), gatewayLabel: "eng" }];
 const registry = (): ModelRegistry => ({ ...readModelRegistry(), models: [...DEFAULT_MODEL_DEFINITIONS, ...FIXTURE_MODELS] });
 
 /** 주입하는 readback + probe: 부른 것을 적고, `failWith` 가 있으면 던진다. */
@@ -442,10 +443,10 @@ describe("saveModelAssignment (PR 3b-A)", () => {
     // the same model on another device cannot reuse that device-bound local contract
     await unchanged(() => save({ assignmentId: "eng-dev:ai2:deep", expectedVersion: null, stage: "ai2", deviceId: "eng-dev", registryKey: "loc:deep",
       transport: "local-direct" }), "model_assignment_refused:contract_device_mismatch");
-    // a gateway-labelled wire name for the gateway transport
-    const tagline = await save({ assignmentId: "eng-dev:tagline:mlx", expectedVersion: null, stage: "tagline", deviceId: "eng-dev", registryKey: "mlx:tagline",
+    // a gateway-labelled wire name for the gateway transport (fixture model; code defaults no longer carry gatewayLabel)
+    const tagline = await save({ assignmentId: "eng-dev:tagline:eng", expectedVersion: null, stage: "tagline", deviceId: "eng-dev", registryKey: "eng:tagline",
       transport: "gateway" });
-    expect(tagline.route).toEqual({ routeId: "crawl-tagline", provider: "abcllm", model: "[MLX] qwen3.6-35b-heretic", providerBudgetId: "mlx", groupId: "eng-dev" });
-    expect((await contracts()).find(row => row.route_id === "crawl-tagline")).toMatchObject({ transport: "gateway", auth: "gateway", model: "[MLX] qwen3.6-35b-heretic" });
+    expect(tagline.route).toEqual({ routeId: "crawl-tagline", provider: "abcllm", model: "[eng] qwen3.6-35b-heretic", providerBudgetId: "eng", groupId: "eng-dev" });
+    expect((await contracts()).find(row => row.route_id === "crawl-tagline")).toMatchObject({ transport: "gateway", auth: "gateway", model: "[eng] qwen3.6-35b-heretic" });
   });
 });

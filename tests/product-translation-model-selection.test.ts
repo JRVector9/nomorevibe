@@ -2,12 +2,8 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { inTextRank, pinTextRanks, textContract } from "./text-task-ranks-fixture";
 
-const admission = vi.hoisted(() => vi.fn<(value: {routeId: string; model: string}) => Promise<void>>(async () => {}));
-vi.mock("@/lib/llm/text-capacity-admission", () => ({ assertTextModelAdmission: admission }));
-
 beforeEach(() => {
   vi.resetModules();
-  admission.mockClear();
   vi.stubEnv("ABCLLM_MODEL", "shared-text-fixture");
   vi.stubEnv("PRODUCT_TRANSLATION_MODEL", undefined);
   vi.stubEnv("PRODUCT_TRANSLATION_MODEL_KEY", undefined);
@@ -34,7 +30,7 @@ function recorder() {
   }) as typeof fetch;
   return { bodies, request };
 }
-/** The legacy gateway senders are gone (2026-10-30): none of them reaches admission or HTTP, whatever model it is given. */
+/** The legacy gateway senders are gone (2026-10-30): none of them reaches HTTP, whatever model it is given. */
 async function legacySendsNothing(translate: typeof import("@/lib/crawl/translate"), productModel?: string) {
   const recorded = recorder();
   expect(await translate.translateProductFields(items, 1000, recorded.request, undefined, productModel)).toEqual({ ok: false, error: "no_key" });
@@ -44,7 +40,7 @@ async function legacySendsNothing(translate: typeof import("@/lib/crawl/translat
   // 검색어 번역은 순위 범위 안에서만 모델을 읽는다(범위 밖이면 기본값으로 떨어지지 않고 던진다)
   expect(await inTextRank("search-query-translate", "query-rank-fixture", () => translate.translateQueryToEnglish("문서 도구", 1000, recorded.request)))
     .toEqual({ ok: false, error: "no_key" });
-  expect(recorded.bodies).toEqual([]); expect(admission).not.toHaveBeenCalled();
+  expect(recorded.bodies).toEqual([]);
 }
 
 it.each([undefined, "   ", "configured-product-fixture", `[supa] ${SUPA}`])("takes the product model from its rank and ignores the removed product env (%j)", async override => {
@@ -89,7 +85,7 @@ it("ignores the admin stage pool for product-field translation and preserves the
   expect({ ...pooled, model: base.model, messages: [base.messages[0], pooled.messages[1]] }).toEqual(base);
 });
 
-it("passes an explicit product model to neither admission nor legacy HTTP and does not change the rank's model", async () => {
+it("passes an explicit product model to neither legacy HTTP nor the rank's model", async () => {
   vi.stubEnv("PRODUCT_TRANSLATION_MODEL", "configured-product-fixture");
   const translate = await import("@/lib/crawl/translate");
   const { textTaskModel, TextTaskRankMissingError } = await import("@/lib/llm/ai-task-rank-scope");

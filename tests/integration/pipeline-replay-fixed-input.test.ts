@@ -11,6 +11,7 @@ import { eq, sql } from "drizzle-orm";
 import * as schema from "@/lib/db/schema";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, crawlSettings, jobs } from "@/lib/db/schema";
+import { DEFAULT_MODEL_DEFINITIONS } from "@/lib/llm/model-registry";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { ensureSchema, resetTables, TEST_DATABASE_URL } from "./setup";
 import { directContractRow } from "./direct-engine-fixtures";
@@ -25,29 +26,28 @@ vi.mock("@/lib/crawl/second-review-serving-contract", async load => ({ ...await 
   resolveAi2GatewayServingContract: (model: string) => fake.contracts ? contract("second-review", model) : null }));
 /**
  * abcLLM 게이트웨이는 2026-10-30 제거됐다 — 옛 심사 잎(reviewWithGateway)은 이제 엔진 주소를 받을 때만 보내고 게이트웨이 기본 주소가 없다.
- * legacy replay 는 abcllm 심사자에게 그 잎을 그대로 부르므로, 이 파일은 없어진 기본 주소 자리에 replay upstream(ABCLLM_BASE_URL — replay
- * preflight 가 여전히 맞춰 보는 값)을 엔진 주소로 넣는다. 같은 wire 가 같은 replay egress 계량기를 지나간다. items 는 아래 직접 연결 계약 행으로 연다.
+ * item 모드의 2차 심사 잎도 같은 주소 규칙을 따르므로, 이 파일은 mock 으로 그 주소를 fake loopback 으로 채운다. 같은 wire 가 같은
+ * replay egress 계량기를 지나간다. items 는 아래 직접 연결 계약 행으로 연다(legacy 는 preflight 가 실행 전에 거절한다).
  */
 vi.mock("@/lib/crawl/agent-review-gateway", async load => {
   const original = await load<typeof import("@/lib/crawl/agent-review-gateway")>();
-  const { modelBaseUrl } = await import("@/lib/llm/model-registry");
   const reviewWithGateway: typeof original.reviewWithGateway = (input, options) => original.reviewWithGateway(input,
-    options.endpoint ? options : { ...options, endpoint: { baseUrl: modelBaseUrl("ai1-preset", process.env, "abcllm"), apiKey: null } });
+    options.endpoint ? options : { ...options, endpoint: { baseUrl: `${fake.origin}/v1`, apiKey: null } });
   return { ...original, reviewWithGateway };
 });
 
 const FIRST = "replay-first", SECOND = "replay-second", REPOS = ["fixture/good-one", "fixture/bad-two", "fixture/good-three", "fixture/good-four", "fixture/bad-five", "fixture/good-six"];
 // 시험 시간 값. 2026-10-22 사용자 결정으로 실시간 구간을 줄였다(전: 구간 40초·lead 1.5초·drain 60초·최소 구간 10초, 파일 약 300초).
 // 운영 replay 는 FIXED_INPUT_TIMING(lead 5분·drain 3분·최소 구간 30분, 워커 기본 폴링) 그대로이고 같은 runner·워커·consumer·계량기 경로를 돈다.
-// - workerIntervalMs: reviewer 워커만 운영 5초 대신 1초로 잡을 본다. legacy AI2 잡이 다음 폴링을 5초 기다리지 않을 뿐 실행 경로는 같다.
-// - FULL_WINDOW_MS: 고정 입력 10건이 모두 구간 안에 끝나야 한다. 실측 마지막 호출은 legacy 1.6초·items 3.6~5.0초다
-//   (워커 5초 폴링 때는 5.5초·7.6초). 남는 3초는 consumer 대기(1초)·워커 폴링(1초) 어긋남과 느린 러너 몫이다.
+// - workerIntervalMs: reviewer 워커만 운영 5초 대신 1초로 잡을 본다. item consumer가 다음 폴링을 5초 기다리지 않을 뿐 실행 경로는 같다.
+// - FULL_WINDOW_MS: 고정 입력 10건이 모두 구간 안에 끝나야 한다. 실측 마지막 items 호출은 3.6~5.0초다(워커 5초 폴링 때는 7.6초).
+//   남는 3초는 consumer 대기(1초)·워커 폴링(1초) 어긋남과 느린 러너 몫이다.
 // - leadMs: 적재(실측 0.2초 안팎)와 0097 marker 가 구간 시작 전에 끝나야 한다.
 // - drainMs: 구간 끝에 진행 중인 호출이 이 상한 안에 끝나는지만 가른다. 호출이 없으면 기다리지 않는다.
 const TIMING = { minimumWindowMs: 1_000, leadMs: 1_000, drainMs: 20_000, collectMs: 10_000, workerIntervalMs: 1_000 };
 const FULL_WINDOW_MS = 8_000;
 let server: Server, original: { stages: Record<string, unknown>[]; capacity: Record<string, unknown> };
-let modules: Awaited<ReturnType<typeof load>>, savedEnv: Record<string, string | undefined> = {};
+let modules: Awaited<ReturnType<typeof load>>;
 async function load() {
   const [repository, settings, review, crawl, fixed, runner, schema, readme] = await Promise.all([
     import("@/lib/operations/pipeline-replay-fixed-input-repository"), import("@/lib/crawl/settings-schema"),
@@ -96,9 +96,6 @@ beforeAll(async () => {
   });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()));
   fake.origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  // 게이트웨이 모듈은 주소를 import 때 읽는다. 아래 동적 import 전에 정한다.
-  savedEnv = { ABCLLM_BASE_URL: process.env.ABCLLM_BASE_URL };
-  process.env.ABCLLM_BASE_URL = fake.origin;
   // items 모드의 native 호출은 엔진 직접 연결 계약(관리자 행, 키 없음)이 있어야 나간다 — 계약 본문은 위 resolver mock 이다
   setServingContractSnapshotForTest([directContractRow("crawl-agent-review", FIRST), directContractRow("second-review", SECOND)]);
   modules = await load();
@@ -124,7 +121,6 @@ async function restoreControls() {
 beforeEach(async () => { await wipe(); await restoreControls(); fake.contracts = false; fake.requests.length = 0; fake.delayMs = 20; });
 afterAll(async () => {
   await wipe(); await restoreControls(); await db.delete(crawlSettings);
-  for (const [key, value] of Object.entries(savedEnv)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
   setServingContractSnapshotForTest(null);
   await new Promise<void>(resolve => server.close(() => resolve()));
 });
@@ -175,78 +171,76 @@ const manifest = (sha: string, mode: "legacy" | "items", patch: Record<string, u
   artifactSha256: sha, upstream: fake.origin, durationMs: FULL_WINDOW_MS,
   limits: { maxCalls: 60, maxTokens: 60 * 40_000, perCallTokenUpperBound: 40_000, maxWallMs: 120_000 },
   ...(mode === "items" ? { items: { ai1Consumers: 1, ai2Consumers: 1, capacityPolicy: policy } } : {}), ...patch });
-const env = () => ({ DATABASE_URL: TEST_DATABASE_URL, ABCLLM_BASE_URL: fake.origin });
+// The replay preflight reads the gateway origin from the registry (ABCLLM_BASE_URL is retired). Inject the fake loopback
+// gateway for the ai1-preset route so the upstream check and the egress meter still point at this file's server.
+const modelRegistry = () => ({ MODEL_REGISTRY_CONFIG: JSON.stringify({ version: 1, models: DEFAULT_MODEL_DEFINITIONS.map(model =>
+  model.key === "supa:review" ? { ...model, baseUrl: `${fake.origin}/v1` } : model) }) });
+const env = () => ({ DATABASE_URL: TEST_DATABASE_URL, ...modelRegistry() });
 const run = (artifact: Awaited<ReturnType<typeof exported>>, value: Record<string, unknown>, timing = TIMING) => modules.runner.runFixedInputReplay({
   manifest: value, artifact: artifact.artifact, artifactSha256: artifact.sha, manifestSha256: modules.fixed.sha256(JSON.stringify(value)),
   revision: "abcdef1", env: env(), timing });
 
-it("records the 0097 marker before the window and proves the legacy budget from the meter; items stay unverified (PR01b-9)", async () => {
+it("rejects legacy abcLLM replay after manifest parsing and before any load, marker, or call", async () => {
   const source = await exported();
-  expect(await db.execute(sql`select count(*)::int as count from pipeline_evidence_events`)).toEqual([{ count: 0 }]);
-  const legacy = await run(source, manifest(source.sha, "legacy", { budget: { maxConcurrentCalls: 8 } }));
+  const before = (await db.execute<{ count: number }>(sql`select count(*)::int as count from pipeline_evidence_events`))[0].count;
+  // artifact가 깨져 있어도 manifest 단계에서 먼저 거절해야 한다 — artifact 파싱·설정·upstream 검사 전이다.
+  await expect(run({ artifact: {} as never, sha: source.sha }, manifest(source.sha, "legacy")))
+    .rejects.toThrow("replay_legacy_abcllm_unsupported");
+  await expect(run(source, manifest(source.sha, "legacy", { upstream: "http://127.0.0.1:9" })))
+    .rejects.toThrow("replay_legacy_abcllm_unsupported");
+  expect(fake.requests).toEqual([]);
+  expect(await db.select().from(crawlCandidates)).toEqual([]);
+  expect(await db.select().from(crawlDocuments)).toEqual([]);
+  expect(await db.select().from(jobs)).toEqual([]);
+  expect(await db.execute(sql`select count(*)::int as count from pipeline_evidence_events`)).toEqual([{ count: before }]);
+}, 120_000);
+
+it("records the 0097 marker before the window for item consumers and leaves the short replay budget unverified (PR01b-9)", async () => {
+  const source = await exported();
+  fake.contracts = true;
+  const items = await run(source, manifest(source.sha, "items", { budget: { maxConcurrentCalls: 8 } }));
   const [marker] = await db.execute<{ at: string; revision: string; operator: string }>(sql`select revision, operator,
-    to_char(created_at at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as at from pipeline_evidence_events where kind = 'recorder_started'`);
+    to_char(created_at at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as at from pipeline_evidence_events
+    where kind = 'recorder_started' order by created_at desc limit 1`);
   // 적재(anchor) 뒤·구간 시작 전에 이 실행이 남겼다. 30분 실행에서는 수집 시작 = 구간 시작이라 장부가 구간을 덮는다.
   expect(marker).toMatchObject({ revision: "abcdef1", operator: "pipeline-replay" });
-  expect([Date.parse(marker.at) >= Date.parse(legacy.window.anchorAt), Date.parse(marker.at) < Date.parse(legacy.window.startedAt)]).toEqual([true, true]);
+  expect([Date.parse(marker.at) >= Date.parse(items.window.anchorAt), Date.parse(marker.at) < Date.parse(items.window.startedAt)]).toEqual([true, true]);
   // 구간 안 AI2 호출 4건이 격리 DB의 0097 장부에 쌓였다(전에는 replay에서 아무것도 기록하지 않았다).
   expect(await db.execute(sql`select count(*)::int as count from pipeline_evidence_events
-    where kind = 'ai2_attempt' and created_at > ${legacy.window.startedAt}::timestamptz`)).toEqual([{ count: 4 }]);
-  expect(legacy.budget).toEqual({ declaredConcurrentCalls: 8, callsAtStop: 10 });
-  expect(legacy.meter).toMatchObject({ calls: 10, upstreamReportedCalls: 10, upstreamReportedTokens: 12_400 });
-  expect(modules.fixed.reportFixedInputRun(legacy).budget).toEqual({ status: "verified", source: "replay_meter", calls: 10, chargedTokens: 12_400,
-    reportedCalls: 10, boundCalls: 0, concurrency: { limit: 8, peak: legacy.meter.maxInFlight } });
-  // 이 시험 구간은 30분보다 짧아 수집이 marker보다 앞에서 시작한다 — 장부 미적용으로 남는다.
-  expect(legacy.live.ledger).toBeNull();
-
-  // items: 이 시험 구간은 30분보다 짧아 수집 시작(끝−30분)이 적재보다 앞선다. 적재가 슬롯 모드를 연 갱신 시각이 수집 구간 안이라 '시작 뒤 바뀜',
+    where kind = 'ai2_attempt' and created_at > ${items.window.startedAt}::timestamptz`)).toEqual([{ count: 4 }]);
+  expect(items.budget).toEqual({ declaredConcurrentCalls: 8, callsAtStop: 10 });
+  expect(items.meter).toMatchObject({ calls: 10, upstreamReportedCalls: 10, upstreamReportedTokens: 12_400 });
+  // 이 시험 구간은 30분보다 짧아 수집 시작(끝−30분)이 적재보다 앞선다. 적재가 슬롯 모드를 연 갱신 시각이 수집 구간 안이라 '시작 뒤 바뀜',
   // 이 실행이 남긴 marker도 수집 시작 뒤라 AI2 호출 기록이 미검증이다(grant는 #524 이후 control.cursor만 쓴다). 실제 runner·수집기로
   // verified가 되는 경로는 파일 끝 F1 시험이 보인다.
-  await wipe(); fake.requests.length = 0; fake.contracts = true;
-  const items = await run(source, manifest(source.sha, "items", { budget: { maxConcurrentCalls: 8 } }));
-  expect(await db.execute(sql`select count(*)::int as count from pipeline_evidence_events where kind = 'recorder_started'`)).toEqual([{ count: 1 }]);
   expect(modules.fixed.reportFixedInputRun(items).budget).toEqual({ status: "unverified", source: "model_capacity_ledger",
     issues: ["model_capacity_changed_since_window_start", "ai2_call_records_unverified"] });
+  // 이 시험 구간은 30분보다 짧아 수집이 marker보다 앞에서 시작한다 — 장부 미적용으로 남는다.
+  expect(items.live.ledger).toBeNull();
 }, 300_000);
 
-it("exports only reproducible model-reviewed inputs and replays legacy then item consumers to one judgment", async () => {
+it("exports only reproducible model-reviewed inputs and replays item consumers to one judgment", async () => {
   const source = await exported();
   expect(source.artifact.inputs.map(row => row.repo).sort()).toEqual([...REPOS].sort());
   expect(source.artifact.export).toMatchObject({ population: 6, selected: 6, exclusions: { inputDrift: 0, documentChanged: 0, readmeMissing: 0 } });
   expect(source.artifact.inputs.every(row => row.inputHash === row.production.inputHash)).toBe(true);
 
-  const legacy = await run(source, manifest(source.sha, "legacy"));
-  const legacyRequests = fake.requests.length;
-  expect(legacy).toMatchObject({ mode: "legacy", stop: { reason: "window_end", drainExceeded: false }, writes: { products: 0, publishRuns: 0 }, failures: [],
-    inputs: { loaded: 6, excluded: { notReviewable: 0, inputDrift: 0 } } });
-  expect(legacy.inputs.items).toHaveLength(6);
-  expect(legacy.meter.calls).toBe(legacyRequests);
-  expect(fake.requests.filter(row => row.model === FIRST)).toHaveLength(6);
-  expect(fake.requests.filter(row => row.model === SECOND)).toHaveLength(4);
-  expect(legacy.meter).toMatchObject({ refused: 0, egressRejected: 0, usageKnownCalls: legacyRequests, chargedTokens: 1_240 * legacyRequests });
-  const legacyReport = modules.fixed.reportFixedInputRun(legacy);
-  expect(legacyReport.finals).toMatchObject({ newCandidates: 6, approvals: 4, rejections: 2 });
-  expect(legacyReport.evidenceIssues).toContain("replay_window_under_30_minutes");
-  expect(legacyReport.stageModes.every(row => row.mode === "legacy")).toBe(true);
-
-  await wipe(); fake.requests.length = 0; fake.contracts = true;
+  fake.contracts = true;
   const items = await run(source, manifest(source.sha, "items"));
   expect(items).toMatchObject({ mode: "items", stop: { reason: "window_end" }, writes: { products: 0, publishRuns: 0 }, failures: [],
-    inputSetHash: legacy.inputSetHash });
+    inputs: { loaded: 6, excluded: { notReviewable: 0, inputDrift: 0 } } });
+  expect(items.inputs.items).toHaveLength(6);
+  expect(items.meter.calls).toBe(fake.requests.length);
   expect(fake.requests.filter(row => row.model === FIRST)).toHaveLength(6);
   expect(fake.requests.filter(row => row.model === SECOND)).toHaveLength(4);
+  expect(items.meter).toMatchObject({ refused: 0, egressRejected: 0, usageKnownCalls: fake.requests.length, chargedTokens: 1_240 * fake.requests.length });
   const itemsReport = modules.fixed.reportFixedInputRun(items);
   expect(itemsReport.finals).toMatchObject({ newCandidates: 6, approvals: 4, rejections: 2 });
+  expect(itemsReport.evidenceIssues).toContain("replay_window_under_30_minutes");
   expect(itemsReport.stageModes.filter(row => row.stage !== "fetch").every(row => row.mode === "items")).toBe(true);
   expect(itemsReport.modelCapacity).toMatchObject({ mode: "open" });
   const leases = await db.execute<{ count: number }>(sql`select count(*)::int as count from pipeline_item_leases where stage in ('ai1', 'ai2')`);
   expect(leases[0].count).toBeGreaterThan(0);
-
-  const compared = modules.fixed.compareFixedInputRuns(legacy, items);
-  expect(compared).toMatchObject({ status: "incomplete", performance: "incomplete", modes: { baseline: "legacy", candidate: "items" } });
-  expect(compared.reasons).toEqual(expect.arrayContaining(["replay_window_under_30_minutes", "quality_unverified", "budget_evidence_unverified"]));
-  expect(compared.reasons).not.toContain("replay_input_set_mismatch");
-  expect(compared.labelTemplate).toHaveLength(6);
 
   // 재사용 DB에서 attempt 번호가 되감기면 지울 수 없는 슬롯 장부와 겹친다. 적재 전에 거부해야 한다.
   await wipe(); fake.requests.length = 0;
@@ -255,9 +249,10 @@ it("exports only reproducible model-reviewed inputs and replays legacy then item
   expect(fake.requests).toEqual([]);
 }, 300_000);
 
-it("stops at the call cap without sending the refused call and marks the run incomparable", async () => {
+it("stops item replay at the call cap without sending the refused call and marks the run incomparable", async () => {
   const source = await exported();
-  const capped = await run(source, manifest(source.sha, "legacy", { durationMs: 60_000,
+  fake.contracts = true;
+  const capped = await run(source, manifest(source.sha, "items", { durationMs: 60_000,
     limits: { maxCalls: 2, maxTokens: 2 * 40_000, perCallTokenUpperBound: 40_000, maxWallMs: 180_000 } }));
   expect(fake.requests.length).toBeLessThanOrEqual(2);
   expect(capped.meter.calls).toBe(fake.requests.length);
@@ -266,53 +261,32 @@ it("stops at the call cap without sending the refused call and marks the run inc
   expect(modules.fixed.reportFixedInputRun(capped).evidenceIssues).toContain("replay_stopped_early");
 }, 240_000);
 
-it("refuses item consumers before loading or any call while the serving resolvers stay null", async () => {
+it("refuses legacy mode and item consumers before loading or any call", async () => {
   const source = await exported();
   await expect(run(source, manifest(source.sha, "items"))).rejects.toThrow("consumer_mode_blocked");
   const preflight = modules.runner.fixedInputPreflight(manifest(source.sha, "items"), source.artifact, env(), TIMING);
   expect(preflight.blocked).toEqual(["ai1_serving_contract_unavailable", "ai2_serving_contract_unavailable"]);
   expect(fake.requests).toEqual([]);
   expect(await db.select().from(crawlCandidates)).toEqual([]);
-  await expect(run(source, manifest(source.sha, "legacy", { upstream: "http://127.0.0.1:9" }))).rejects.toThrow("replay_upstream_mismatch");
-  await expect(run(source, manifest("0".repeat(64), "legacy"))).rejects.toThrow("replay_artifact_sha_mismatch");
+  const events = (await db.execute<{ count: number }>(sql`select count(*)::int as count from pipeline_evidence_events`))[0].count;
+  await expect(run(source, manifest(source.sha, "legacy"))).rejects.toThrow("replay_legacy_abcllm_unsupported");
+  expect(await db.select().from(crawlCandidates)).toEqual([]);
+  expect(await db.execute(sql`select count(*)::int as count from pipeline_evidence_events`)).toEqual([{ count: events }]);
+  fake.contracts = true;
+  await expect(run(source, manifest(source.sha, "items", { upstream: "http://127.0.0.1:9" }))).rejects.toThrow("replay_upstream_mismatch");
+  await expect(run(source, manifest("0".repeat(64), "items"))).rejects.toThrow("replay_artifact_sha_mismatch");
   await db.insert(crawlDocuments).values({ repo: "other/existing", repoMeta: {} });
-  await expect(run(source, manifest(source.sha, "legacy"))).rejects.toThrow("replay_database_not_empty");
+  await expect(run(source, manifest(source.sha, "items"))).rejects.toThrow("replay_database_not_empty");
   expect(fake.requests).toEqual([]);
   await db.delete(crawlDocuments).where(eq(crawlDocuments.repo, "other/existing"));
 }, 120_000);
 
 // 구간 끝 drain: 정지 신호는 새 claim·새 호출만 막고, 구간 안에서 이미 보낸 호출은 drain 상한 안에서 upstream이 끝나 usage가 남는다.
 // 가짜 게이트웨이가 모든 답을 구간보다 늦게 주므로 첫 호출들이 구간 끝에 반드시 진행 중이다(첫 호출은 실측 구간 시작 뒤 0.1~0.4초).
-// 그 수는 legacy가 심사 동시 수(reviewConcurrency 2), items가 AI1 consumer 하나의 호출 1건이다.
+// 그 수는 items가 AI1 consumer 하나의 호출 1건이다.
 // 끊는 실행은 구간 끝+CUT_DRAIN_MS 에 끊고, 답은 그보다 늦은 HELD_DELAY_MS 에 온다(2026-10-22 전: 구간 12초·답 20초·끊기 2초).
 const HELD_WINDOW_MS = 2_000, HELD_DELAY_MS = 4_000, CUT_DRAIN_MS = 1_000;
 const HELD = { durationMs: HELD_WINDOW_MS, budget: { maxConcurrentCalls: 8 } };
-it("drains legacy calls in flight at the window end into the budget, never into finals, and cuts what outlives the drain limit", async () => {
-  const source = await exported();
-  fake.delayMs = HELD_DELAY_MS;
-  const legacy = await run(source, manifest(source.sha, "legacy", HELD)), calls = legacy.meter.calls;
-  expect(fake.requests.length).toBe(2);
-  expect(calls).toBe(2);
-  expect(legacy).toMatchObject({ stop: { reason: "window_end", drainExceeded: false }, budget: { declaredConcurrentCalls: 8, callsAtStop: calls },
-    windowEndDrain: { limitMs: TIMING.drainMs, inFlightAtStop: calls, cutAtLimit: 0, meterStop: null, accounting: "drain_calls_in_budget_not_in_finals" },
-    meter: { refused: 0, indeterminate: 0, upstreamFailed: 0, upstreamReportedCalls: calls, upstreamReportedTokens: 1_240 * calls },
-    writes: { products: 0, publishRuns: 0 }, failures: [] });
-  const report = modules.fixed.reportFixedInputRun(legacy);
-  expect(report.budget).toEqual({ status: "verified", source: "replay_meter", calls, chargedTokens: 1_240 * calls, reportedCalls: calls,
-    boundCalls: 0, concurrency: { limit: 8, peak: legacy.meter.maxInFlight } });
-  // drain 중 끝난 답은 워커가 이미 놓았다. 구간 안 최종·처리량은 0이다.
-  expect(report.finals).toMatchObject({ newCandidates: 0 });
-  expect(report.evidenceIssues).not.toContain("replay_calls_refused");
-
-  await wipe(); fake.requests.length = 0;
-  const cut = await run(source, manifest(source.sha, "legacy", HELD), { ...TIMING, drainMs: CUT_DRAIN_MS }), cutCalls = cut.meter.calls;
-  expect(cutCalls).toBe(2);
-  expect(cut).toMatchObject({ stop: { reason: "window_end" }, windowEndDrain: { limitMs: CUT_DRAIN_MS, inFlightAtStop: cutCalls, cutAtLimit: cutCalls },
-    meter: { indeterminate: cutCalls, upstreamReportedCalls: 0, chargedTokens: 40_000 * cutCalls } });
-  expect(modules.fixed.reportFixedInputRun(cut).budget).toEqual({ status: "unverified", source: "replay_meter",
-    issues: ["usage_unreported_without_bound", "replay_drain_calls_cut"] });
-}, 300_000);
-
 it("applies the same window-end drain rule to item consumers", async () => {
   const source = await exported();
   fake.contracts = true; fake.delayMs = HELD_DELAY_MS;
@@ -347,7 +321,7 @@ it("refuses an artifact whose README sample is another code version before loadi
   const stale = structuredClone(source.artifact);
   stale.inputs[0].document.pageMeta = { ...stale.inputs[0].document.pageMeta, readmeSampleVersion: "2020-01-01.1" };
   const sha = modules.fixed.sha256(JSON.stringify(stale));
-  await expect(run({ artifact: stale, sha }, manifest(sha, "legacy"))).rejects.toThrow("replay_readme_sample_version_mismatch");
+  await expect(run({ artifact: stale, sha }, manifest(sha, "items"))).rejects.toThrow("replay_readme_sample_version_mismatch");
   expect(fake.requests).toEqual([]);
   expect(await db.select().from(crawlCandidates)).toEqual([]);
   expect(await db.select().from(crawlDocuments)).toEqual([]);

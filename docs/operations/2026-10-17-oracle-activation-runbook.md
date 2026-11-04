@@ -306,9 +306,8 @@ HTTP_ORIGIN_PERMITS=1
 - **translation만:**
 
 ```env
-ABCLLM_BASE_URL=
-ABCLLM_MODEL=
-# 2026-10-31: 게이트웨이 키·계약 env 는 없어졌다. 계약은 관리자 「모델 연결」(model_serving_contracts)의 엔진 직접 연결 행만 쓴다.
+# 2026-11-04: ABCLLM_BASE_URL·ABCLLM_MODEL은 코드가 더 읽지 않는다. 넣지 않는다.
+# 게이트웨이 키·계약 env 도 없어졌다. 계약은 관리자 「모델 연결」(model_serving_contracts)의 엔진 직접 연결 행만 쓴다.
 ```
 
 - **refresh.env(D1=A):**

@@ -75,7 +75,8 @@ describe("M1 relay allowed models come from the model registry", () => {
   });
 
   it("migrates an older registry (relay purpose on GPU3090, M1 still Qwen) to an M1 Gemma relay entry", () => {
-    const older = { version: 1, models: [{ ...m1, model: QWEN, family: QWEN, purposes: ["product-translate", "reason-translate"] },
+    // The historical registry still carried the gateway label; the current M1 default is a direct engine.
+    const older = { version: 1, models: [{ ...m1, model: QWEN, family: QWEN, gatewayLabel: "m1", purposes: ["product-translate", "reason-translate"] },
       { ...gpu, purposes: [...gpu.purposes, "relay"] }] };
     const env = relayEnv();
     expect(() => localModelRelayConfig({ ...env, MODEL_REGISTRY_CONFIG: JSON.stringify(older) })).toThrow("relay_model_not_registered");

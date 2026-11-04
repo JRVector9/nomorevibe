@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import postgres from 'postgres';
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
+import { DEFAULT_MODEL_DEFINITIONS } from '@/lib/llm/model-registry';
 import { ensureSchema, TEST_DATABASE_URL } from './setup';
 
 /*
@@ -17,6 +18,9 @@ const children = new Set<() => Promise<void>>();
 const fixture = { candidates: [] as number[], votes: [] as number[] };
 let baseline: Record<string, Raw[]>;
 const relaxed = { maxLoadPerCpu: 1_000, maxHostRssBytes: 2 ** 40, maxEventLoopDelayMs: 60_000, maxHeartbeatGapMs: 60_000 };
+/** ABCLLM_BASE_URL is retired; keep the child's gateway calls on a closed loopback port through the registry instead. */
+const CLOSED_MODEL_REGISTRY = JSON.stringify({ version: 1, models: DEFAULT_MODEL_DEFINITIONS.map(model =>
+  model.provider === 'abcllm' ? { ...model, baseUrl: 'http://127.0.0.1:9/v1' } : model) });
 
 async function whole(): Promise<Record<string, Raw[]>> {
   const result: Record<string, Raw[]> = {};
@@ -31,7 +35,7 @@ function environment(enforced: boolean): NodeJS.ProcessEnv {
   const policy = { version: 1, host: 'mini', release: RELEASE, roles: ['reviewer'], reviewerConsumers: ['ai2'], schedulerReplicas: 0,
     webReplicas: 0, webReadReplica: false, monitor: false, connectAgent: false, preflightProcesses: 0, migrationProcesses: 0, rolloutCopies: 1 };
   return { NODE_ENV: process.env.NODE_ENV, PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: process.env.TMPDIR, LOG_LEVEL: 'info',
-    ABCLLM_BASE_URL: 'http://127.0.0.1:9', DATABASE_URL: TEST_DATABASE_URL, DB_POOLER_MODE: 'direct', DB_STATEMENT_TIMEOUT_MS: '5000',
+    MODEL_REGISTRY_CONFIG: CLOSED_MODEL_REGISTRY, DATABASE_URL: TEST_DATABASE_URL, DB_POOLER_MODE: 'direct', DB_STATEMENT_TIMEOUT_MS: '5000',
     DB_LOCK_TIMEOUT_MS: '2000', WORKER_ROLE: 'reviewer', PHYSICAL_HOST: 'mini', RELEASE_TAG: RELEASE, SERVICE_INSTANCE_ID: instance,
     PIPELINE_ITEM_CONSUMER_VERSION: '1', PIPELINE_ITEM_CONSUMER_INSTANCE_ID: instance,
     HOST_DB_BUDGET: JSON.stringify({ mode: 'enabled', policy, process: { kind: 'worker', role: 'reviewer', consumer: 'ai2', host: 'mini', release: RELEASE, replica: 1, copy: 1 } }),

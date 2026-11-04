@@ -6,7 +6,6 @@ import { aiTaskAliasIdentity } from "@/lib/llm/ai-tasks";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { inTextRank, pinTextRanks, TEST_CONNECTION_ID, textContract, textRankRow } from "./text-task-ranks-fixture";
 
-vi.mock("@/lib/llm/text-capacity-admission", () => ({ assertTextModelAdmission: async () => {} }));
 
 const GEMMA = "mlx-community--gemma-4-26b-a4b-it-4bit";
 const m1 = DEFAULT_MODEL_DEFINITIONS.find(model => model.key === "m1:translation")!;
@@ -18,8 +17,8 @@ const edited = (changes: readonly ModelDefinition[]) => [...DEFAULT_MODEL_DEFINI
   ...changes.filter(change => !DEFAULT_MODEL_DEFINITIONS.some(model => model.key === change.key))];
 /** The same weights on M1 (gateway label m1), Supa (label supa) and GPU3090 (direct, no label). */
 const triplets = (purposes: { supa?: string[] } = {}) => [
-  { ...m1, model: "shared-weights", family: "shared" },
-  { ...supa, key: "supa:translation", model: "shared-weights", family: "shared", purposes: purposes.supa ?? ["ai1-preset"] },
+  { ...m1, model: "shared-weights", family: "shared", gatewayLabel: "m1" },
+  { ...supa, key: "supa:translation", model: "shared-weights", family: "shared", gatewayLabel: "supa", purposes: purposes.supa ?? ["ai1-preset"] },
   { ...gpu, model: "shared-weights", family: "shared" },
 ];
 
@@ -39,8 +38,8 @@ afterEach(async () => {
  */
 describe("the registry's product-translate entry (description only — the job reads its rank)", () => {
   const defaultRoute = { routeId: "product-translate", key: "m1:translation", equipment: "m1",
-    provider: "abcllm", requestModel: `[m1] ${GEMMA}`, baseUrl: m1.baseUrl };
-  it("defaults to the actual M1 Gemma entry through the M1 gateway label", () => {
+    provider: "abcllm", requestModel: GEMMA, baseUrl: m1.baseUrl };
+  it("defaults to the actual M1 Gemma entry through the direct M1 engine", () => {
     expect(configuredModelRoute("product-translate", {})).toEqual(defaultRoute);
     // The removed env selectors (2026-10-31) neither pick nor break the route.
     expect(configuredModelRoute("product-translate", { PRODUCT_TRANSLATION_MODEL_KEY: "m1:translation", PRODUCT_TRANSLATION_MODEL: "[m1] obsolete" }))
@@ -49,11 +48,11 @@ describe("the registry's product-translate entry (description only — the job r
   });
 
   it("keeps the model the registry assigns to M1 whatever a stale PRODUCT_TRANSLATION_MODEL says", () => {
-    expect(configuredModel("product-translate", { PRODUCT_TRANSLATION_MODEL: "[m1] qwen3.8-flash-next" })).toBe(`[m1] ${GEMMA}`);
+    expect(configuredModel("product-translate", { PRODUCT_TRANSLATION_MODEL: "[m1] qwen3.8-flash-next" })).toBe(GEMMA);
     expect(configuredModelDefinition("product-translate", { PRODUCT_TRANSLATION_MODEL: "[m1] qwen3.8-flash-next" }).key).toBe("m1:translation");
     // A label for other equipment no longer moves the route either; only the registry or an admin stage pool does.
-    expect(configuredModel("product-translate", { PRODUCT_TRANSLATION_MODEL: "[supa] unregistered-model" })).toBe(`[m1] ${GEMMA}`);
-    expect(configuredModel("product-translate", { PRODUCT_TRANSLATION_MODEL: "[other] unregistered-model" })).toBe(`[m1] ${GEMMA}`);
+    expect(configuredModel("product-translate", { PRODUCT_TRANSLATION_MODEL: "[supa] unregistered-model" })).toBe(GEMMA);
+    expect(configuredModel("product-translate", { PRODUCT_TRANSLATION_MODEL: "[other] unregistered-model" })).toBe(GEMMA);
   });
 
   it("resolves a model name shared by several devices by the registry route, and fails closed when the route is ambiguous", () => {

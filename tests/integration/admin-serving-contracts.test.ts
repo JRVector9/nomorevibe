@@ -120,7 +120,10 @@ it("engine connect repoints one registry key, writes direct contracts with the s
   expect(seen.slice(-2).map(row => row.auth)).toEqual(["Bearer engine-secret-1", "Bearer engine-secret-1"]);
   expect(await disableAdminRegistryOverride("m1:translation", "jr")).toBe(true);
   await store.refreshServingContracts();
-  expect(readModelRegistry().models.find(model => model.key === "m1:translation")?.gatewayLabel).toBe("m1");
+  const codeDefault = readModelRegistry().models.find(model => model.key === "m1:translation");
+  expect(codeDefault?.gatewayLabel).toBeUndefined();
+  expect(codeDefault?.baseUrl).toBe("https://m1-studio.tail02799e.ts.net/v1");
+  expect(modelRequestName(codeDefault!)).toBe("mlx-community--gemma-4-26b-a4b-it-4bit");
 });
 
 it("engine connect for Supa: keyless direct contracts for AI1 and text routes, and the 1차 selection follows the new engine name", async () => {
@@ -129,7 +132,7 @@ it("engine connect for Supa: keyless direct contracts for AI1 and text routes, a
   const { listAdminServingContracts } = await import("@/lib/operations/admin-serving-contracts");
   const ENGINE = "Inferact/Qwen3.8-27B-NVFP4", BASE = "http://100.78.219.124:8000/v1";
   vi.stubEnv("DATABASE_URL", url.toString());
-  expect(await saveSettings({ firstReview: { provider: "abcllm", model: "[supa] Qwen3.8-27B-NVFP4" } }, "jr")).toMatchObject({ ok: true });
+  expect(await saveSettings({ firstReview: { provider: "abcllm", model: "supa" } }, "jr")).toMatchObject({ ok: true });
   const auth: (string | null)[] = [];
   const vllm = (async (_target: string, init?: RequestInit) => {
     auth.push(new Headers(init?.headers).get("authorization"));

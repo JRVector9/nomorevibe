@@ -9,22 +9,22 @@ const registryFull = () => readModelRegistry();
 /** PR 3b-B — 배정 표 가져오기 계획(순수). 운영과 같은 모양의 설정·정책·등록부(코드 기본 등록부)로 본다. */
 const registry = { models: [...DEFAULT_MODEL_DEFINITIONS] };
 const settings: AssignmentImportSettings = {
-  firstReview: { provider: "abcllm", model: "[supa] Qwen3.8-27B-NVFP4" },
-  firstReviewAdditional: [{ provider: "abcllm", model: "[MLX] gpt-oss-120b" }],
+  firstReview: { provider: "abcllm", model: "supa" },
+  firstReviewAdditional: [{ provider: "abcllm", model: "gpt-oss-120b" }],
   secondReview: { ...DEFAULT_CRAWL_SETTINGS.secondReview, enabled: true,
     voters: [{ provider: "local-direct", model: "qwen3.8-flash-next" }, { provider: "claude-cli", model: "opus" }],
-    fallbacks: [{ provider: "abcllm", model: "[MLX] gpt-oss-120b" }, { provider: "grok-cli", model: "grok-4.7" }] },
-  stageModelPools: { "reason-translate": ["m1:translation", "supa:review"], "product-translate": ["m1:translation"], "crawl-tagline": ["mlx:tagline"],
+    fallbacks: [{ provider: "abcllm", model: "gpt-oss-120b" }, { provider: "grok-cli", model: "grok-4.7" }] },
+  stageModelPools: { "reason-translate": ["m1:translation", "supa:review"], "product-translate": ["m1:translation"], "crawl-tagline": ["supa:review"],
     "human-review": ["m3:review"], "direct-review": ["gpu3090:review"], "product-intro-check": ["connect:sonnet"] },
 };
 const route = (routeId: string, provider: string, model: string, groupId: string, providerBudgetId = groupId) => ({ routeId, provider, model, providerBudgetId, groupId });
 const policy: ModelCapacityPolicy = { version: 1, maxWaiting: 256, queueTtlMs: 60_000, reservationTtlMs: 30_000, routes: [
-  route("crawl-agent-review", "abcllm", "[supa] Qwen3.8-27B-NVFP4", "supa"), route("crawl-agent-review", "abcllm", "[MLX] gpt-oss-120b", "mlx"),
+  route("crawl-agent-review", "abcllm", "supa", "supa"), route("crawl-agent-review", "abcllm", "gpt-oss-120b", "mlx"),
   route("second-review", "local-direct", "qwen3.8-flash-next", "gpu3090", "gpu3090-review"), route("second-review", "claude-cli", "opus", "connect"),
-  route("second-review", "abcllm", "[MLX] gpt-oss-120b", "mlx"),
-  route("reason-translate", "abcllm", "[m1] mlx-community--gemma-4-26b-a4b-it-4bit", "m1"),
-  route("product-translate", "abcllm", "[m1] mlx-community--gemma-4-26b-a4b-it-4bit", "m1"),
-  route("crawl-tagline", "abcllm", "[MLX] qwen3.6-35b-heretic", "mlx"), route("product-intro-check", "claude-cli", "sonnet", "connect")] };
+  route("second-review", "abcllm", "gpt-oss-120b", "mlx"),
+  route("reason-translate", "abcllm", "mlx-community--gemma-4-26b-a4b-it-4bit", "m1"),
+  route("product-translate", "abcllm", "mlx-community--gemma-4-26b-a4b-it-4bit", "m1"),
+  route("crawl-tagline", "abcllm", "supa", "supa"), route("product-intro-check", "claude-cli", "sonnet", "connect")] };
 const summary = (plan: ReturnType<typeof buildAssignmentImportPlan>) => plan.entries.map(entry => [entry.action, entry.input.assignmentId, entry.input.stage,
   entry.input.deviceId, entry.input.registryKey, entry.input.transport, entry.input.rank, entry.input.vote, entry.input.mode]);
 
@@ -32,17 +32,17 @@ describe("buildAssignmentImportPlan", () => {
   it("reproduces today's AI1 pool, AI2 voters/fallbacks and stage pools as live primary rows on the policy route's device", () => {
     const plan = buildAssignmentImportPlan(settings, policy, registry);
     expect(summary(plan)).toEqual([
-      ["create", "ai1:01:supa-review", "ai1", "supa", "supa:review", "gateway", 1, false, "live"],
-      ["create", "ai1:02:mlx-text", "ai1", "mlx", "mlx:text", "gateway", 2, false, "live"],
+      ["create", "ai1:01:supa-review", "ai1", "supa", "supa:review", "direct", 1, false, "live"],
+      ["create", "ai1:02:mlx-text", "ai1", "mlx", "mlx:text", "direct", 2, false, "live"],
       ["create", "ai2:01:gpu3090-review", "ai2", "gpu3090", "gpu3090:review", "local-direct", 1, true, "live"],
       ["create", "ai2:02:connect-opus", "ai2", "connect", "connect:opus", "cli", 1, true, "live"],
-      ["create", "ai2:01:mlx-text", "ai2", "mlx", "mlx:text", "gateway", 2, false, "live"],
+      ["create", "ai2:01:mlx-text", "ai2", "mlx", "mlx:text", "direct", 2, false, "live"],
       ["create", "ai2:02:connect-grok", "ai2", "connect", "connect:grok", "cli", 3, false, "off"],
       ["create", "human:01:m3-review", "human", "m3", "m3:review", "local-direct", 1, false, "off"],
-      ["create", "reason:01:m1-translation", "reason", "m1", "m1:translation", "gateway", 1, false, "live"],
-      ["create", "reason:02:supa-review", "reason", "supa", "supa:review", "gateway", 1, false, "off"],
-      ["create", "translate:01:m1-translation", "translate", "m1", "m1:translation", "gateway", 1, false, "live"],
-      ["create", "tagline:01:mlx-tagline", "tagline", "mlx", "mlx:tagline", "gateway", 1, false, "live"],
+      ["create", "reason:01:m1-translation", "reason", "m1", "m1:translation", "direct", 1, false, "live"],
+      ["create", "reason:02:supa-review", "reason", "supa", "supa:review", "direct", 1, false, "off"],
+      ["create", "translate:01:m1-translation", "translate", "m1", "m1:translation", "direct", 1, false, "live"],
+      ["create", "tagline:01:supa-review", "tagline", "supa", "supa:review", "direct", 1, false, "live"],
       ["create", "intro:01:connect-sonnet", "intro", "connect", "connect:sonnet", "cli", 1, false, "live"],
     ]);
     expect(plan.warnings.map(warning => [warning.source, warning.code])).toEqual([
@@ -62,7 +62,7 @@ describe("buildAssignmentImportPlan", () => {
 
   it("diffs against the current table by (stage, device, wire model): unchanged, update with the changed fields, keeps the row id and version", () => {
     const existing = (value: Partial<ModelAssignmentRow>): ModelAssignmentRow => ({ assignmentId: "kept-id", stage: "ai1", deviceId: "supa",
-      registryKey: "supa:review", transport: "gateway", rank: 1, role: "primary", vote: false, mode: "live", model: "[supa] Qwen3.8-27B-NVFP4",
+      registryKey: "supa:review", transport: "direct", rank: 1, role: "primary", vote: false, mode: "live", model: "supa",
       routeId: "crawl-agent-review", provider: "abcllm", maxSlots: 2, evidenceKey: "e".repeat(64), version: 7, note: "운영자 메모", updatedBy: "jr",
       createdAt: "2026-10-31T00:00:00.000Z", updatedAt: "2026-10-31T00:00:00.000Z", ...value });
     const plan = buildAssignmentImportPlan(settings, policy, registry, { existing: [existing({}),
@@ -77,7 +77,7 @@ describe("buildAssignmentImportPlan", () => {
 
   it("warns instead of guessing: unknown models, duplicates, the env first reviewer and inputs the save would refuse", () => {
     const plan = buildAssignmentImportPlan({ firstReview: undefined, firstReviewAdditional: [{ provider: "abcllm", model: "[ghost] model" }],
-      secondReview: { ...settings.secondReview, voters: [{ provider: "abcllm", model: "[MLX] gpt-oss-120b" }],
+      secondReview: { ...settings.secondReview, voters: [{ provider: "abcllm", model: "gpt-oss-120b" }],
         fallbacks: [{ provider: "abcllm", model: "[mlx] GPT-OSS-120B" }] },
       stageModelPools: { "screen-review": ["supa:review"] } }, policy, registry, { firstReviewFallback: { provider: "claude-cli", model: "sonnet" } });
     expect(plan.warnings.map(warning => [warning.source, warning.code])).toEqual([
@@ -89,11 +89,11 @@ describe("buildAssignmentImportPlan", () => {
     ]);
     expect(summary(plan)).toEqual([
       ["create", "ai1:01:connect-sonnet", "ai1", "connect", "connect:sonnet", "cli", 1, false, "off"],
-      ["create", "ai2:01:mlx-text", "ai2", "mlx", "mlx:text", "gateway", 1, true, "live"],
+      ["create", "ai2:01:mlx-text", "ai2", "mlx", "mlx:text", "direct", 1, true, "live"],
     ]);
     // the same model twice for AI2 (canonical name) is one row
     const twice = buildAssignmentImportPlan({ ...settings, firstReviewAdditional: [], stageModelPools: {},
-      secondReview: { ...settings.secondReview, voters: [{ provider: "abcllm", model: "[MLX] gpt-oss-120b" }], fallbacks: [{ provider: "abcllm", model: "[MLX] gpt-oss-120b" }] } },
+      secondReview: { ...settings.secondReview, voters: [{ provider: "abcllm", model: "gpt-oss-120b" }], fallbacks: [{ provider: "abcllm", model: "gpt-oss-120b" }] } },
     policy, registry);
     expect(twice.warnings.map(warning => [warning.source, warning.code])).toEqual([["secondReview.fallbacks[0]", "duplicate"]]);
     // no policy at all: every row is off on its registry equipment

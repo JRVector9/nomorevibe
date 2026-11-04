@@ -176,8 +176,10 @@ describe("고를 수 있는 것 — 단계 × 등록부 × 전송", () => {
     expect(assignmentTransportsFor("ai1", ODD_CLI)).toEqual([]);
     expect(assignmentTransportsFor("intro", def("connect:sonnet"))).toEqual(["cli"]);
     expect(assignmentTransportsFor("intro", ENG)).toEqual([]);
-    expect(assignmentTransportsFor("ai1", def("supa:review"))).toEqual(["gateway", "direct"]);
+    expect(assignmentTransportsFor("ai1", def("supa:review"))).toEqual(["direct", "gateway"]);
     expect(assignmentTransportsFor("ai1", ENG)).toEqual(["direct", "gateway"]);
+    // A legacy gateway label still recommends the gateway transport.
+    expect(assignmentTransportsFor("ai1", { ...ENG, gatewayLabel: "eng" })).toEqual(["gateway", "direct"]);
     expect(assignmentTransportsFor("ai1", def("m3:review"))).toEqual([]);
     expect(assignmentTransportsFor("ai2", def("m3:review"))).toEqual(["local-direct"]);
     expect(assignmentTransportsFor("human", def("m3:review"))).toEqual(["local-direct"]);
@@ -188,7 +190,7 @@ describe("고를 수 있는 것 — 단계 × 등록부 × 전송", () => {
     expect(options.registry.find(entry => entry.key === "odd:claude")).toBeUndefined();
     expect(options.registry.find(entry => entry.key === "connect:sonnet")).toMatchObject({ wire: { cli: "sonnet" }, transportsByStage: { ai1: ["cli"], ai2: ["cli"], intro: ["cli"],
       "publish-classify": ["cli"] } });
-    expect(options.registry.find(entry => entry.key === "supa:review")!.wire).toEqual({ gateway: "[supa] Qwen3.8-27B-NVFP4", direct: "Qwen3.8-27B-NVFP4" });
+    expect(options.registry.find(entry => entry.key === "supa:review")!.wire).toEqual({ gateway: "supa", direct: "supa" });
     expect(Object.keys(options.registry.find(entry => entry.key === "m3:review")!.transportsByStage)).toEqual(["ai2", "human", "audit", "audit-second-opinion", "screen"]);
     expect(options.devices.map(entry => entry.id)).toEqual(["connect", "eng-dev", "m3-deepseek", "supa", "old-box"]);
     expect(options.stages.filter(stage => stage.vote).map(stage => stage.id)).toEqual(["ai2"]);

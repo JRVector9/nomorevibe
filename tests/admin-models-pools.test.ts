@@ -21,6 +21,15 @@ it("기존 설정과 빈 풀은 환경 기본값을 보존한다", () => {
   expect(withAdminStagePools({}, "fixture", () => configuredModel("reason-translate"))).toBe(before);
   expect(withAdminStagePools({ "reason-translate": [] }, "fixture", () => configuredModel("reason-translate"))).toBe(before);
 });
+it("은퇴한 abcLLM env 가 없어도 네 용도는 단계 풀의 등록부 선택을 쓴다", () => {
+  for (const [purpose, key, expected] of [
+    ["product-search-profile", "supa:review", "supa"],
+    ["reason-translate", "mlx:text", "gpt-oss-120b"],
+    ["product-tagline-ko", "supa:review", "supa"],
+    ["search-query-translate", "mlx:text", "gpt-oss-120b"],
+  ] as const)
+    expect(withAdminStagePools({ [purpose]: [key] }, "fixture", () => configuredModel(purpose))).toBe(expected);
+});
 it("등록부의 같은 어댑터 모델을 선택하고 임의 키·제공자 변경·중복을 거절한다", () => {
   expect(validateAdminStagePools({ "reason-translate": ["mlx:text", "supa:review"] })).toEqual({ "reason-translate": ["mlx:text", "supa:review"] });
   for (const pools of [{ "reason-translate": ["connect:sonnet"] }, { "reason-translate": ["none:missing"] },
@@ -30,7 +39,7 @@ it("등록부의 같은 어댑터 모델을 선택하고 임의 키·제공자 �
 it("저장한 번역 선택은 같은 환경변수를 공유하는 검색 질의 모델을 바꾸지 않는다", () => {
   // 검색 질의 자리는 고르지 않았다 — 범위 안에서도 부른 쪽이 준 기본값 그대로다
   withAdminStagePools({ "reason-translate": ["supa:review"] }, "fixture", () => {
-    expect(configuredModel("reason-translate")).toBe("[supa] Qwen3.8-27B-NVFP4");
+    expect(configuredModel("reason-translate")).toBe("supa");
     expect(scopedModel("search-query-translate", "query-fallback")).toBe("query-fallback");
   });
 });
@@ -44,9 +53,11 @@ it("사유 번역 wire 이름은 저장한 단계 풀이 아니라 순위가 정
   // 순위 범위 안의 장부 이름·wire 이름은 순위의 모델이다
   vi.stubEnv("ABCLLM_BASE_URL", "http://old-fixture.test/v1");
   vi.stubEnv("ABCLLM_API_KEY", "fixture-key");
+  // ABCLLM_BASE_URL is retired: the route keeps the registry's M1 address.
+  expect(modelBaseUrl("reason-translate")).toBe("https://m1-studio.tail02799e.ts.net/v1");
   const request = vi.fn();
   await withAdminStagePools({ "reason-translate": ["supa:review"] }, "fixture", () => inTextRank("reason-translate", RANK_MODEL, async () => {
-    expect(configuredModel("reason-translate")).toBe("[supa] Qwen3.8-27B-NVFP4");
+    expect(configuredModel("reason-translate")).toBe("supa");
     const model = textTaskModel("reason-translate");
     expect(model).toBe(RANK_MODEL);
     expect(JSON.parse(reasonTranslationGatewayWire(["Document tool"], model)).model).toBe(RANK_MODEL);
@@ -64,7 +75,7 @@ it("동시에 실행하는 작업 묶음의 모델 선택을 섞지 않고 범�
   const second = withAdminStagePools({ "reason-translate": ["mlx:text"] }, "fixture-b", async () => {
     release(); await Promise.resolve(); return configuredModel("reason-translate");
   });
-  expect(await Promise.all([first, second])).toEqual(["[supa] Qwen3.8-27B-NVFP4", "[MLX] gpt-oss-120b"]);
+  expect(await Promise.all([first, second])).toEqual(["supa", "gpt-oss-120b"]);
   expect(configuredModel("reason-translate")).toBe(original);
 });
 it("같은 업무 배정은 같은 모델·주소를 유지하고 여러 배정은 풀을 나눠 쓴다", () => {
@@ -72,7 +83,7 @@ it("같은 업무 배정은 같은 모델·주소를 유지하고 여러 배정�
   const results = Array.from({ length: 30 }, (_, i) => withAdminStagePools(pools, String(i), () => configuredModel("reason-translate")));
   expect(new Set(results).size).toBe(2);
   expect(withAdminStagePools(pools, "0", () => configuredModel("reason-translate"))).toBe(results[0]);
-  expect(withAdminStagePools({ "product-translate": ["m1:translation"] }, "fixture", () => modelBaseUrl("product-translate"))).toBe("https://abcllm-api.brut.bot/v1");
+  expect(withAdminStagePools({ "product-translate": ["m1:translation"] }, "fixture", () => modelBaseUrl("product-translate"))).toBe("https://m1-studio.tail02799e.ts.net/v1");
 });
 it("공통 용량 제어가 켜져 있으면 순위로 고른 모델도 정식 dispatch 계약 없이 호출하지 않는다", async () => {
   control.mockResolvedValue({ mode: "draining" });

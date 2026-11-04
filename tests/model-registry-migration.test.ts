@@ -2,8 +2,9 @@ import { expect, it } from "vitest";
 import { DEFAULT_MODEL_DEFINITIONS } from "@/lib/llm/model-registry";
 import { migrateM1TranslationRegistry } from "@/scripts/migrate-model-registry-m1";
 it("migrates only M1 model metadata and translation selection, preserving addresses and all existing resource policies", () => {
+  // The input is the historical gateway-shaped registry, so it still carries the M1 gateway label.
   const original = { version: 1, models: DEFAULT_MODEL_DEFINITIONS.map(model => model.key === "m1:translation"
-    ? { ...model, model: "old-model", family: "old-family", baseUrl: "https://m1-fixture.example/v1", timeoutMs: 19_000, maxTokens: 700, concurrency: 1 } : model),
+    ? { ...model, model: "old-model", family: "old-family", gatewayLabel: "m1", baseUrl: "https://m1-fixture.example/v1", timeoutMs: 19_000, maxTokens: 700, concurrency: 1 } : model),
     limits: { "product-translate": { maxTokens: 600, concurrency: 1 } }, candidates: { "first-review": ["mlx:text", "supa:review"] } };
   const migrated = migrateM1TranslationRegistry(JSON.stringify(original));
   expect(migrated.models.filter(model => model.key !== "m1:translation")).toEqual(original.models.filter(model => model.key !== "m1:translation"));
