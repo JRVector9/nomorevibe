@@ -1,6 +1,7 @@
 'use client';
 
 import { useActionState, useEffect, useEffectEvent, useRef, useState, useTransition } from 'react';
+import Link from 'next/link';
 import type { AdminReviewEntry } from '@/lib/crawl/admin-review';
 import type { StoppedAt } from '@/lib/crawl/rules';
 import { formatDetailTime } from '@/lib/format/time';
@@ -160,6 +161,7 @@ export function PrototypeReviewDetail({ entry, reasons, onDecided }: {
     <div className="evidence-box"><b>수집 원문 · 제품 소개</b><p>{entry.description ? `${entry.description.slice(0, 650)}${entry.description.length > 650 ? "…" : ""}` : "원문 소개 —"}</p><div className="flex"><a className="text-button" href={`https://github.com/${candidate.repo}`} target="_blank" rel="noreferrer noopener">저장소 원문 ↗</a>{productUrl && <a className="text-button" href={productUrl} target="_blank" rel="noreferrer noopener">제품 페이지 ↗</a>}</div></div>
     <div className="vote-grid"><div className="vote"><span className="small muted">AI 1차 · {entry.review?.model ?? "—"}</span><b>{verdict?.label ?? STATUS[entry.status] ?? "—"}</b><span className="tag gray">확신 {entry.review?.confidence?.toFixed(2) ?? "—"}</span><p>{entry.review?.reason ? <ReasonText text={entry.review.reason} korean={entry.review.reasonKo} limit={130} /> : "기록된 판단 사유 —"}</p></div><div className="vote"><span className="small muted">AI 2차 · {entry.seconds.length ? `${entry.seconds.length}개 판단 기록` : "—"}</span>{entry.seconds.length ? entry.seconds.map((vote, index) => <div key={index}><b>{vote.decision === "approve" ? "승인" : vote.decision === "reject" ? "반려 의견" : vote.decision === "needs_review" ? "보류" : vote.status === "pending" ? "판단 대기" : vote.status === "failed" ? "호출 실패" : vote.status}</b><p>{vote.model ?? "모델 —"} · {vote.echo ? "1차와 같은 모델 · 합의 제외" : vote.status === "agreed" ? "1차와 일치" : "독립 판단"}</p></div>) : <b>기록 —</b>}</div></div>
     <dl className="facts"><dt>확인 사유</dt><dd>{bucket ? causeLabel(bucket) : REASON_LABELS[candidate.reason ?? ""] ?? candidate.reason ?? "—"}</dd><dt>개발 근거</dt><dd>별 {facts.stars ?? "—"} · 최근 푸시 {facts.pushDays === null ? "—" : `${facts.pushDays}일 전`} · HTTP {facts.status ?? "—"}</dd><dt>다음 단계</dt><dd>{candidate.state === "approved" ? "분류·출처·중복·차단 검사 후 공개" : candidate.state === "published" ? "공개 프로젝트 상태 확인" : canDecide ? "판단 후 발행 대기 또는 반려 기록" : "자동 작업의 진행·완료 확인"}</dd></dl>
+    {candidate.state === "approved" && <div className="notice blue"><p>발행 전 카테고리를 직접 지정하고 발행 조건의 재검토를 요청할 수 있습니다.</p><Link href="/admin/status?tab=manual" prefetch={false} className="button mt-sm">수동 카테고리 지정·발행 검토 열기 →</Link></div>}
     <details className="panel"><summary>원문·규칙·AI 근거·시도 이력</summary><div className="panel-body stack">
       {entry.description.length > 650 && <div className="evidence-box"><b>수집한 소개 전체</b><p>{entry.description}</p></div>}
       {entry.verdict ? <RuleTrace verdict={entry.verdict} /> : <p className="small muted">규칙 재판정 근거 —</p>}
