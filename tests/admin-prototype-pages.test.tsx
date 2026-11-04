@@ -33,6 +33,21 @@ describe("original HTML prototype layout with real-loader contracts", () => {
     expect(html).not.toMatch(/모델 A|Orbit Notes|가상 관측|시안 상황|NaN|undefined/);
   });
 
+  it.each([
+    ["judge", "/admin/review?tab=all&stage=judge"], ["first", "/admin/review?tab=all&stage=ai"],
+    ["second", "/admin/review?tab=all&stage=second"], ["publish", "/admin/review?tab=publish&stage=publish"],
+  ] as const)("opens the actual %s stage queue from selected-stage detail", (stage, target) => {
+    const html = renderToStaticMarkup(<PrototypeFlow data={{ ...data, bottleneck: stage }} desk={null} controls={controls} editor={null} />);
+    const detail = html.match(/class="stage-detail"[^]*?<\/aside>/)?.[0];
+    expect(detail).toContain(`href="${target.replaceAll("&", "&amp;")}"`);
+    expect(html).toContain('href="/admin/review?tab=human"');
+  });
+  it("links translation diagnosis to the real translation workspace", () => {
+    const html = renderToStaticMarkup(<PrototypeFlow data={data} desk={null} controls={controls} editor={null} tab="diagnostics" />);
+    expect(html).toContain('href="/admin/products?tab=translations"');
+    expect(html).not.toContain('filter=translations-failed');
+  });
+
   it("does not borrow a different station's spark when a station has no hourly measurement", () => {
     const measured = { ...data, stations: data.stations.map(station => station.key === "publish" ? { ...station, spark: [1, 2, 3] } : station) };
     const html = renderToStaticMarkup(<PrototypeFlow data={measured} desk={null} controls={controls} editor={null} />);
