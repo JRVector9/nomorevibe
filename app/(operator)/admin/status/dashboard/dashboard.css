@@ -185,6 +185,14 @@
 .dash-job[data-tone=warn]{border-color:color-mix(in srgb,var(--color-warn) 50%,var(--color-line))}
 .dash-note{font-size:13px;color:var(--color-fg-3);margin-top:8px}
 
+/* 업타임 LLM 확인 — 머리의 수집 스위치와 같은 모양. 여기서는 상태만 보인다 */
+.confirm-switches{display:flex;flex-wrap:wrap;gap:12px;margin-top:10px}
+.confirm-switch{display:flex;align-items:flex-start;gap:10px;flex:1 1 260px;border:1px solid var(--color-line);border-radius:12px;padding:10px 12px}
+.confirm-switch .ops-collection{display:inline-flex;margin-top:2px}
+.confirm-switch b{display:block;font-size:14px}
+.confirm-switch small{display:block;margin-top:2px;font-size:12px;line-height:1.45;color:var(--color-fg-3)}
+.confirm-switch[data-on="false"]{background:color-mix(in srgb,var(--color-warn) 8%,var(--color-bg-card))}
+
 /* 머리의 수집 스위치(ADM-18) */
 .ops-center button.ops-collection{display:inline-flex;align-items:center;gap:8px}
 .ops-collection-track{position:relative;flex:none;width:30px;height:18px;border-radius:999px;background:var(--color-fg-3)}

@@ -49,6 +49,7 @@ import { RolesTable } from "./dashboard/RolesTable";
 import { KoreanTranslationStatus, koreanTranslationRuntime } from "./dashboard/KoreanTranslationStatus";
 import { ModelCards, type ConnectionProbe } from "./dashboard/ModelCards";
 import { AttentionList } from "./dashboard/AttentionList";
+import { UptimeConfirmControls } from "./dashboard/UptimeConfirmControls";
 import { SignalTable } from "./dashboard/SignalTable";
 import { TodayFeed } from "./dashboard/TodayFeed";
 import { RepoHealthCard } from "./dashboard/RepoHealthCard";
@@ -538,6 +539,7 @@ export default async function StatusPage() {
   const attentionCards = (
     <>
       <AttentionList urgent={split.urgent} backlog={split.backlog} hidden={split.hidden} now={now} owners={owners} />
+      <UptimeConfirmControls controls={inputs.assistControls} queue={inputs.assistQueue} />
       <p className="dash-card dash-12 ops-human-line">
         사람 확인 <b>{n(overview.stages.human)}</b>건 · {humanWaitLabel(overview)}
         <Link href={ACTION_LINKS.reviewHuman}>→ 심사 큐</Link>
