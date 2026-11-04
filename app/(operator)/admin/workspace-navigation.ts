@@ -126,7 +126,7 @@ export function resolveWorkspace(pathname: string, search: Search = none): Works
   } else if (pathname === "/admin/review") {
     id = "review";
     const stage = search.get("stage"), state = search.get("state");
-    const inferred = stage === "human" || stage === "agreed" ? "human" : stage === "publish" || state === "approved" ? "publish" : stage === "rejected" || state === "rejected" ? "rejected" : "all";
+    const inferred = stage === "human" || stage === "agreed" ? "human" : stage === "publish" || state === "approved" ? "publish" : stage === "rejected" || state === "rejected" ? "rejected" : stage || state ? "all" : "human";
     tab = validTab(id, search.get("tab"), inferred);
   } else if (pathname === "/admin/requests") {
     id = "requests";

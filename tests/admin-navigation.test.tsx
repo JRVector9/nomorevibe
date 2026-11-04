@@ -43,7 +43,7 @@ describe('seven operational workspaces', () => {
     ['/admin/review', 'stage=publish', 'review', 'publish'],
     ['/admin/review', 'state=approved', 'review', 'publish'],
     ['/admin/review', 'stage=rejected', 'review', 'rejected'],
-    ['/admin/review', '', 'review', 'all'],
+    ['/admin/review', '', 'review', 'human'],
     ['/admin/requests', 'tab=registration', 'requests', 'registration'],
     ['/admin/requests', 'tab=history', 'requests', 'history'],
     ['/admin/requests', 'state=all', 'requests', 'contact'],

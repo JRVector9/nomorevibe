@@ -136,14 +136,15 @@ export function workspaceBadge(id: WorkspaceId, badges: NavBadges): NavBadge | u
   };
 }
 
-export function AdminNav({ current, search = "", badges = {} }: { current: string; search?: string; badges?: NavBadges }) {
+export function AdminNav({ current, search = "", badges = {}, onNavigate }: { current: string; search?: string; badges?: NavBadges; onNavigate?: (href: string) => void }) {
   const active = resolveWorkspace(current, new URLSearchParams(search)).workspace.id;
   return <nav aria-label="관리자 메뉴" className="prototype-navigation">
     {WORKSPACE_GROUPS.map((group, index) => <Fragment key={group.title}>
       <p className="nav-label" id={`admin-nav-group-${index}`}>{group.title}</p>
       {group.pages.map(page => {
         const badge = workspaceBadge(page.id, badges);
-        return <Link key={page.id} href={page.href} aria-current={page.id === active ? "page" : undefined} prefetch={false} title={page.label}>
+        return <Link key={page.id} href={page.href} aria-current={page.id === active ? "page" : undefined} prefetch={false} title={page.label}
+          onNavigate={onNavigate ? () => onNavigate(page.href) : undefined}>
           <span className="nav-icon" aria-hidden="true"><AdminIcon name={page.icon} /></span><span>{page.label}</span>
           {badge && <b className="nav-badge" data-tone={badge.tone} title={badge.title}>
             {badge.title ? <><span aria-hidden="true">{badge.label}</span><span className="admin-vh">{badge.title}</span></> : badge.label}

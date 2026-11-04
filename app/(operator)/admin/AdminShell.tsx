@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { AdminNav, type NavBadges } from "./AdminNav";
-import { mergeBadges } from "./live-refresh";
+import { adminRouteKey, createNavigationGuard, mergeBadges } from "./live-refresh";
 import { CommandSearch } from "./components/CommandSearch";
 import { LiveBar } from "./components/LiveBar";
 import { ADMIN_THEME_SCRIPT, ThemeToggle } from "./components/ThemeToggle";
@@ -60,7 +60,15 @@ function AdminWorkspaceShell({ children, badges, unknownBadges, account, rendere
   analyticsUrl?: string | null }) {
   const pathname = usePathname();
   const search = useSearchParams().toString();
-  const routeKey = `${pathname}?${search}`;
+  const routeKey = adminRouteKey(pathname, search);
+  const [navigation] = useState(() => createNavigationGuard());
+  const navigationPending = useCallback(() => navigation.pending(), [navigation]);
+  const onNavigate = (href: string) => {
+    const target = new URL(href, window.location.href);
+    const key = adminRouteKey(target.pathname, target.search);
+    navigation.begin(routeKey, key);
+  };
+  useEffect(() => { navigation.committed(routeKey); }, [navigation, routeKey]);
   const location = resolveWorkspace(pathname, new URLSearchParams(search));
   const [expandedOn, setExpandedOn] = useState<string | null>(null);
   // 761~1279px 의 접힌 메뉴를 펼쳤는가 — 페이지를 옮겨도 그대로 둔다
@@ -79,11 +87,11 @@ function AdminWorkspaceShell({ children, badges, unknownBadges, account, rendere
       <a className="skip admin-skip" href="#admin-content">본문으로 이동</a>
       <div className="app-shell">
         <aside className={`sidebar${expanded ? " open" : ""}`} id="admin-sidebar-menu" aria-label="관리자 사이드바">
-          <Link href="/admin/flow" className="brand">NoMore<span>Vibe</span><small>OPERATOR WORKSPACE</small></Link>
+          <Link href="/admin/flow" className="brand" onNavigate={() => onNavigate("/admin/flow")}>NoMore<span>Vibe</span><small>OPERATOR WORKSPACE</small></Link>
           <CommandSearch appearance="prototype" />
-          <AdminNav current={pathname} search={search} badges={liveBadges} />
+          <AdminNav current={pathname} search={search} badges={liveBadges} onNavigate={onNavigate} />
           <div className="sidebar-bottom">
-            <Link href="/admin/settings?tab=history">▧ &nbsp; 전체 운영 기록</Link>
+            <Link href="/admin/settings?tab=history" onNavigate={() => onNavigate("/admin/settings?tab=history")}>▧ &nbsp; 전체 운영 기록</Link>
             {analyticsUrl ? <a href={analyticsUrl} target="_blank" rel="noopener noreferrer">↗ &nbsp; 방문·전환 분석</a>
               : <Link href="/">↗ &nbsp; 공개 사이트로 이동</Link>}
             <div className="account"><span className="avatar">{initials}</span><span><b>{account || "관리자"}</b><small>운영 관리자 · KST</small></span><ThemeToggle compact /></div>
@@ -95,10 +103,10 @@ function AdminWorkspaceShell({ children, badges, unknownBadges, account, rendere
           <header className="topbar">
             <div className="top-left"><button type="button" className="mobile-menu icon-button admin-menu-toggle" aria-label="메뉴 열기" aria-expanded={expanded}
               aria-controls="admin-sidebar-menu" onClick={() => setExpandedOn(expanded ? null : routeKey)}>☰</button><span id="breadcrumb">운영 / {location.workspace.label}</span></div>
-            <div className="top-tools"><LiveBar fallbackAt={renderedAt} appearance="prototype" /><span className="top-avatar">{initials}</span></div>
+            <div className="top-tools"><LiveBar fallbackAt={renderedAt} appearance="prototype" navigationPending={navigationPending} /><span className="top-avatar">{initials}</span></div>
           </header>
           <div id="page" tabIndex={-1}>
-            <WorkspaceTabs location={location} pathname={pathname} search={search} />
+            <WorkspaceTabs location={location} pathname={pathname} search={search} onNavigate={onNavigate} />
             <div className="admin-workspace-view">{children}</div>
           </div>
           <footer className="app-footer"><span>NO MORE VIBE / ADMIN WORKSPACE</span><span>실제 운영 원본 · 관측 시각 KST</span></footer>
