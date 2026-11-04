@@ -4,6 +4,7 @@ import { currentAdmin } from "@/lib/auth/admin";
 import { analyticsPropertyUrl } from "@/lib/analytics/property-url";
 import { adminWorkspaceReadOnly } from "@/lib/operations/admin-workspace-preview";
 import "./admin.css";
+import "./prototype-content-type.css";
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   // Each page and mutation retains its server-side authorization check.
