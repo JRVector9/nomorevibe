@@ -61,7 +61,7 @@ export default async function AdminFlowPage({ searchParams }: { searchParams?: P
     readConveyor(fresh).catch(quiet("conveyor.unavailable")),
     readOperatorDesk(admin.login, fresh).catch(quiet("desk.unavailable")),
     readControls(admin).catch(quiet("flow.controls_unavailable")),
-    adminWorkspaceReadOnly() ? Promise.resolve(null) : readFlowRankEditor(),
+    readFlowRankEditor(),
     heldReactionComments(1).catch(quiet("flow.reactions_unavailable")),
   ]);
   return (

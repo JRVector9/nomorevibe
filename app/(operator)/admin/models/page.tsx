@@ -76,7 +76,7 @@ export default async function ModelsPage({ searchParams }: { searchParams?: Prom
   const advanced = params?.advanced === "1";
   const readOnly = adminWorkspaceReadOnly();
   // Admin registry overrides (0148) are part of the registry this page shows and validates against.
-  if (!readOnly) await Promise.all([ensureServingContracts(), ensureReviewTaskRanks()]);
+  await Promise.all([ensureServingContracts(), ensureReviewTaskRanks()]);
   const renderedAt = renderClock().toISOString();
   const [settings, servedModels, models, assignmentLocked] = await Promise.all([getSettings(), advanced && !readOnly ? readServedContractModels() : Promise.resolve([]), currentModelEnv(),
     // 배정 표 플래그(3b-B) — 켜졌으면 아래 모델 선택 폼을 읽기 전용으로(PR 3b-D). 못 읽으면 꺼짐(편집 가능)
