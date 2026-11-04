@@ -17,7 +17,6 @@ import { ensureReviewTaskRanks } from "@/lib/crawl/review-task-ranks";
 import { secondReviewVoterSets } from "@/lib/crawl/second-review-voters";
 import { readAdminModelsObservation } from "@/lib/operations/admin-models-repository";
 import { LiveModels } from "./LiveModels";
-import { ModelsTopBar } from "./RefreshBar";
 import { UnknownReviewList } from "./UnknownReviewList";
 import { DevicesPanel } from "./DevicesPanel";
 import { HelpersFold, type AssignmentSourceView } from "./HelpersFold";
@@ -61,7 +60,6 @@ export default async function ModelsPage() {
   if (!await currentAdmin()) redirect("/admin/login");
   // Admin registry overrides (0148) are part of the registry this page shows and validates against.
   await Promise.all([ensureServingContracts(), ensureReviewTaskRanks()]);
-  const renderedAt = renderClock().toISOString();
   const [settings, servedModels, models, assignmentLocked] = await Promise.all([getSettings(), readServedContractModels(), currentModelEnv(),
     // 배정 표 플래그(3b-B) — 켜졌으면 아래 모델 선택 폼을 읽기 전용으로(PR 3b-D). 못 읽으면 꺼짐(편집 가능)
     assignmentTableFlag()]);
@@ -85,7 +83,6 @@ export default async function ModelsPage() {
     : configuredHumanModelsProbe(humanKeys).catch((): HumanModelProbe[] => []);
   return <main className="mx-auto flex max-w-[1440px] flex-col gap-3 px-8 pb-28 max-sm:px-4">
     <PageStamp />
-    <ModelsTopBar renderedAt={renderedAt} />
     <Suspense fallback={<p aria-busy="true" className="text-[13px]">운영 DB 실측 확인 중…</p>}><LiveModelsSlot assignments={assignments} models={registry.models} contracts={contracts} humanProbe={humanProbe} served={servedModels} /></Suspense>
     <div className="grid gap-3 [grid-template-columns:minmax(0,7fr)_minmax(0,5fr)] max-[980px]:grid-cols-1">
       <Suspense fallback={<p aria-busy="true" className="text-[13px]">장비 한도 확인 중…</p>}><DevicesSlot models={registry.models} /></Suspense>

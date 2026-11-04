@@ -149,7 +149,19 @@ describe("마지막 갱신 = 화면을 그린 시각", () => {
     const pages = execSync('find "app/(operator)/admin" -name page.tsx', { cwd: root }).toString().trim().split("\n")
       .filter((file) => !file.includes("/login/"));
     expect(pages.length).toBeGreaterThan(15);
-    for (const file of pages) expect(readFileSync(path.join(root, file), "utf8"), file).toContain("<PageStamp />");
+    const verifyStamp = (file: string, parents = new Set<string>()) => {
+      expect(parents.has(file), `cyclic page delegation: ${file}`).toBe(false);
+      const source = readFileSync(file, "utf8");
+      if (source.includes("<PageStamp />")) return;
+      // Workspace entrypoints render the original stamped server pages. Check every delegate instead of mounting a second stamp.
+      const delegates = [...source.matchAll(/import (\w+) from "(\.\.[^"]*\/page)";/g)];
+      expect(delegates.length, `missing PageStamp or page delegation: ${file}`).toBeGreaterThan(0);
+      for (const [, name, relative] of delegates) {
+        expect(source, `unused page delegate: ${file}`).toContain(`<${name}`);
+        verifyStamp(path.resolve(path.dirname(file), relative + ".tsx"), new Set([...parents, file]));
+      }
+    };
+    for (const file of pages) verifyStamp(path.join(root, file));
   });
 });
 
