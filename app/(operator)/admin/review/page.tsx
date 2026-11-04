@@ -1,297 +1,84 @@
-import { configuredModel } from "@/lib/llm/model-registry";
-import { Suspense } from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { currentAdmin } from "@/lib/auth/admin";
-import { candidateStateCounts, publicationChange24h, listAdminReviewEntries, reviewQueueCauses, REVIEW_QUEUE_SCAN_LIMIT, REVIEW_SORTS, type ReviewAiDecision, type ReviewSort } from "@/lib/crawl/admin-review";
+import { currentModelEnv } from "@/lib/operations/model-env";
+import { listAdminReviewEntries, reviewQueueCauses } from "@/lib/crawl/admin-review";
 import { getSettings } from "@/lib/crawl/settings";
 import { REVIEW_REJECT_REASONS } from "@/lib/crawl/review";
-import { takedownSummary } from "@/lib/domain/products/takedown";
-import { TakedownStrip } from "../TakedownStrip";
-import { RequeueResolved } from "./RequeueResolved";
-import { ReviewConsole } from "./ReviewConsole";
-import { CAUSE_GUIDE, causeShort, type CauseKey } from "./causes";
-import { SECOND_FILTER_KEYS, SECOND_FILTERS, STAGE_GROUPS, STAGE_KEYS, STAGE_STATE, type SecondFilter, type StageKey } from "./stages";
-import { ListToolbar, UPDATED_DAYS, UPDATED_WINDOWS, type UpdatedWindow } from "./ListToolbar";
-import { pageWindow } from "../paging";
+import { humanQueueOverview } from "@/lib/crawl/review-overview";
 import { publishedSecondReviews } from "@/lib/crawl/second-review";
-import { PublishedSecondReviews } from "./PublishedSecondReviews";
-import { ReasonLanguageToggle } from "./ReasonText";
-import { translationProgress, translationsFor } from "@/lib/crawl/translations";
-import { modelHealth } from "@/lib/operations/dashboard";
-import { humanQueueOverview, taglineProgress } from "@/lib/crawl/review-overview";
-import { ReviewStatusChips } from "./ReviewStatusChips";
-import { ReviewStageRail } from "./ReviewStageRail";
+import { translationsFor } from "@/lib/crawl/translations";
+import { heldQwenRetryStatus } from "@/lib/crawl/held-qwen-retry";
 import { splitTiebreakStatus } from "@/lib/crawl/gate-split-tiebreak-read";
+import { PageStamp } from "../components/PageStamp";
+import { pageWindow } from "../paging";
+import { CAUSE_GUIDE } from "./causes";
+import { SECOND_FILTERS, STAGE_GROUPS } from "./stages";
+import { UPDATED_WINDOWS } from "./ListToolbar";
+import { PrototypeReviewConsole } from "./PrototypeReviewConsole";
+import { prototypeReviewFilter, prototypeReviewOptions, PROTOTYPE_AI_FILTERS } from "./PrototypeReviewQuery";
+import { PrototypeReviewPublished } from "./PrototypeReviewPublished";
+import { ReasonLanguageToggle } from "./ReasonText";
+import { RequeueResolved } from "./RequeueResolved";
 import { SplitTiebreakSwitch } from "./SplitTiebreakSwitch";
-import { ScrollToHash } from "../ScrollToHash";
-import "../status/dashboard/dashboard.css";
-import "./review.css";
-import { PageStamp } from "@/app/(operator)/admin/components/PageStamp";
-import { heldQwenBadges, heldQwenRetryStatus } from "@/lib/crawl/held-qwen-retry";
 import { HeldQwenRetryPanel } from "./HeldQwenRetryPanel";
-import { humanReviewModelDisplay } from "@/lib/operations/admin-models-human";
+import "./PrototypeReview.css";
 
 export const dynamic = "force-dynamic";
-export const metadata: Metadata = { title: "심사 큐 — NoMoreVibe", robots: { index: false } };
-
-/**
- * 한 쪽에 보이는 수.
- *
- * 25는 1,150px 화면을 기준으로 잡은 값이라, 더 큰 화면에서는 목록이 끝난 뒤 쪽 번호까지
- * 빈 자리가 남았다. 목록이 화면을 채우도록 늘린다 — 작은 화면에서는 스크롤이 생기지만
- * 그쪽은 어차피 25로도 스크롤이었다.
- */
+export const metadata: Metadata = { title: "검수 및 발행 — NoMoreVibe", robots: { index: false } };
+type Search = Record<string, string | string[] | undefined>;
+const one = (value: string | string[] | undefined) => typeof value === "string" ? value : "";
 const PAGE_SIZE = 50;
-const AI_FILTERS: [ReviewAiDecision, string][] = [['reject', '거부'], ['approve', '승인'], ['needs_review', '보류'], ['none', '판단 없음']];
-/** 머리의 읽기 전용 칩에 적는 리뷰 운영 모드 — 바꾸는 곳은 설정 화면 #second 한 곳이다(ADM-24) */
-const MODE_LABEL = { off: '끄기', observe: '관측', enforce: '적용' } as const;
-
-type Search = { state?: string | string[]; stage?: string | string[]; q?: string | string[]; updated?: string | string[]; page?: string | string[]; cause?: string | string[]; ai?: string | string[]; second?: string | string[]; focus?: string | string[]; sort?: string | string[] };
-const one = (value: string | string[] | undefined) => (typeof value === 'string' ? value : '');
 
 export default async function ReviewPage({ searchParams }: { searchParams: Promise<Search> }) {
-  const admin = await currentAdmin();
-  if (!admin) redirect("/admin/login");
-
+  const admin = await currentAdmin(); if (!admin) redirect("/admin/login");
   const params = await searchParams;
-  const rawState = one(params.state);
-  const state = rawState === 'needs_review' || rawState === 'rejected' || rawState === 'published' ? rawState : 'pending';
-  const rawStage = one(params.stage);
-  const stage = ((STAGE_KEYS as string[]).includes(rawStage) ? rawStage : '') as StageKey | '';
-  const rawCause = one(params.cause);
-  const cause = (Object.hasOwn(CAUSE_GUIDE, rawCause) ? rawCause : '') as CauseKey | '';
-  const ai = (AI_FILTERS.some(([key]) => key === one(params.ai)) ? one(params.ai) : '') as ReviewAiDecision | '';
-  const rawPage = Number(one(params.page) || 1);
-  const page = Number.isSafeInteger(rawPage) && rawPage > 0 ? rawPage : 1;
-  const focus = Number(one(params.focus)) || undefined;
-  const second = (SECOND_FILTER_KEYS as readonly string[]).includes(one(params.second)) ? one(params.second) as SecondFilter : '';
-  const q = one(params.q).trim().slice(0, 100);
-  const updated = (UPDATED_WINDOWS.some(([value]) => value === one(params.updated)) ? one(params.updated) : '') as UpdatedWindow;
-  const sort = ((REVIEW_SORTS as readonly string[]).includes(one(params.sort)) ? one(params.sort) : '') as ReviewSort;
+  try { return await Workspace({ params }); }
+  catch { return <main className="stack"><PageStamp /><h1 className="sr-only">검수 및 발행</h1><div className="notice amber" role="status">검수 데이터를 불러오지 못했습니다. 현재 후보 수와 상태는 확인할 수 없습니다. 새로고침해 다시 확인하세요.</div></main>; }
+}
 
+async function Workspace({ params }: { params: Search }) {
+  const observedAt = new Date().getTime();
+  const filter = prototypeReviewFilter(params);
+  const { tab, stage, cause, ai, second, q, updated, sort, rawState } = filter;
+  const rawPage = Number(one(params.page) || 1), page = Number.isSafeInteger(rawPage) && rawPage > 0 ? rawPage : 1;
+  const focusNumber = Number(one(params.focus) || one(params.id)), focus = Number.isSafeInteger(focusNumber) && focusNumber > 0 ? focusNumber : undefined;
   const settings = await getSettings();
-  // 머리의 번역 진행은 느린 바깥 읽기다(번역 집계 캐시가 비면 2.2초) — 먼저 띄워 두고 그 자리만 따로 흘려보낸다.
-  // 모델 상태도 갈래 셈을 기다릴 까닭이 없어 같이 띄운다
-  const translation = translationProgress().catch(() => null);
-  const modelsLoad = modelHealth(settings).catch(() => null);
-  // 갈림 판가름(Qwen-v2) 줄 — 못 읽어도 큐는 그린다
-  const tiebreakLoad = splitTiebreakStatus().catch(() => null);
-  // 보류 Qwen-v2 재심사 줄 — 못 읽어도 큐는 그린다
-  const heldQwenLoad = heldQwenRetryStatus(settings).catch(() => null);
-  // 구간·2차 칩·사람 몫의 수는 운영센터와 같은 humanQueueOverview 하나에서 온다 — 두 화면의 숫자가 갈리지 않게
-  const [takedowns, causes, overview, stateCounts, publicationChange] = await Promise.all([takedownSummary().catch(() => null), reviewQueueCauses(settings), humanQueueOverview(settings), candidateStateCounts(), publicationChange24h()]);
-  const decisions = overview.aiDecisions;
-  const stageCount: Record<StageKey, number> = {
-    judge: stateCounts.new, ...overview.stages, publish: stateCounts.approved, published: stateCounts.published, rejected: stateCounts.rejected,
+  const [causes, overview] = await Promise.all([reviewQueueCauses(settings), humanQueueOverview(settings)]);
+  const options = prototypeReviewOptions(filter, causes, overview);
+  const state = options.state!;
+  const publishedSource = second === "published" ? await (async () => { const rows = await publishedSecondReviews(); const korean = await translationsFor(rows.flatMap(row => [row.secondReason, row.autoOpinion?.reason ?? null])); return rows.map(row => ({ id: row.id, slug: row.publishedSlug ?? "", repo: row.repo, decision: row.secondDecision, confidence: row.secondConfidence, reason: row.secondReason, reasonKo: row.secondReason ? korean.get(row.secondReason) ?? null : null, trigger: row.trigger, signals: row.signals, qwen: row.autoOpinion ? { decision: row.autoOpinion.decision, confidence: row.autoOpinion.confidence, reason: row.autoOpinion.reason, reasonKo: row.autoOpinion.reason ? korean.get(row.autoOpinion.reason) ?? null : null } : null })); })() : null;
+  const publishedRows = publishedSource?.filter(row => !q || `${row.slug} ${row.repo} ${row.reason ?? ""}`.toLocaleLowerCase().includes(q.toLocaleLowerCase())) ?? null;
+  const queue = publishedRows ? { entries: [], total: publishedRows.length, hiddenByAge: 0 } : await listAdminReviewEntries(settings, { ...options, limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE });
+  const pages = Math.max(1, Math.ceil(queue.total / PAGE_SIZE));
+  const query = (patch: Record<string, string | number | undefined> = {}) => {
+    const search = new URLSearchParams(); const values = { tab, state: rawState || undefined, stage: stage || undefined, cause: cause || undefined, ai: ai || undefined,
+      second: second || undefined, q: q || undefined, updated: updated || undefined, sort: sort || undefined, ...patch };
+    for (const [key, value] of Object.entries(values)) if (value !== undefined && value !== "") search.set(key, String(value));
+    return `/admin/review?${search}`;
   };
-  // 머리 칩·할 일 카드의 숫자. 하나가 실패해도 큐는 그려야 하므로 각각 비운 채 넘긴다
-  const [models, taglines, tiebreak] = await Promise.all([
-    modelsLoad,
-    taglineProgress(causes.ids.get('no_description') ?? []).catch(() => null),
-    tiebreakLoad,
-  ]);
-
-  /*
-   * 구간과 세부 거르기는 겹쳐 고를 수 있다(겹치는 것만 남는다). 세부 거르기는 보류 안에서만 뜻이 있어,
-   * 결과 구간(판정 대기·발행 대기·발행 완료·거부)을 고르면 닿지 않는다.
-   * 갈래·AI 판단은 계산으로 얻은 값이라 SQL로 거를 수 없다 — 해당하는 id 만 넘긴다.
-   */
-  const heldStage = stage === 'ai' || stage === 'second' || stage === 'agreed' || stage === 'human' ? stage : null;
-  const detailable = !stage || heldStage !== null;
-  const causeIds = detailable && cause ? (causes.ids.get(cause) ?? []) : undefined;
-  const aiIds = detailable && ai ? (decisions.ids.get(ai) ?? []) : undefined;
-  const secondIds = detailable && second && second !== 'published' ? overview.secondIds[second] : undefined;
-  const ids = [heldStage ? overview.ids[heldStage] : undefined, causeIds, aiIds, secondIds].filter((list): list is number[] => Boolean(list))
-    .reduce<number[] | undefined>((acc, list) => { if (!acc) return list; const keep = new Set(list); return acc.filter((id) => keep.has(id)); }, undefined);
-  const detailed = detailable && Boolean(cause || ai || second);
-  const filtered = Boolean(stage) || detailed;
-  const { entries, total, hiddenByAge } = await listAdminReviewEntries(settings, {
-    state: stage ? STAGE_STATE[stage] : detailed ? 'needs_review' : state, offset: (page - 1) * PAGE_SIZE, limit: PAGE_SIZE, ids,
-    search: q || undefined, pushedWithinDays: updated ? UPDATED_DAYS[updated] : undefined, sort,
-  });
-  // 보류 줄의 Qwen-v2 배지 — 그 줄의 지금 입력에 맞는 마지막 시도(held-qwen-retry.ts). 못 읽으면 배지 없이 그린다
-  const [qwenBadges, heldQwen] = await Promise.all([
-    heldQwenBadges(entries.filter((entry) => entry.candidate.state === 'needs_review').map((entry) => ({ candidateId: entry.candidate.id,
-      reason: entry.candidate.reason, inputHash: entry.inputHash, sourceRevisionHash: entry.sourceRevisionHash }))).catch(() => ({})),
-    heldQwenLoad,
-  ]);
-  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const listParams = (next: Partial<Record<'state' | 'stage' | 'cause' | 'ai' | 'second' | 'q' | 'updated' | 'sort' | 'page', string | number | undefined>>) => {
-    const merged = { state: filtered || state === 'pending' ? undefined : state, stage: stage || undefined,
-      cause: cause || undefined, ai: ai || undefined, second: second || undefined, q: q || undefined,
-      updated: updated || undefined, sort: sort || undefined, ...next };
-    const search = new URLSearchParams();
-    for (const [key, value] of Object.entries(merged)) if (value !== undefined && value !== '' && !(key === 'page' && value === 1)) search.set(key, String(value));
-    return search;
-  };
-  const query = (next: Parameters<typeof listParams>[0]) => {
-    const search = listParams(next);
-    return `/admin/review${search.size ? `?${search}` : ''}`;
-  };
-  // 지금 거르기 그대로 내보낸다(계약 C1) — 쪽 번호 없이 거르기만
-  const exportSearch = listParams({});
-  const exportHref = `/admin/export?view=review&format=csv${exportSearch.size ? `&${exportSearch}` : ''}`;
-  // 0건인 칩은 흐리게 — 자리는 그대로 두어 칩이 날마다 옮겨 다니지 않게 하고, 볼 것이 있는 칩만 눈에 띄게 한다
-  const chip = (active: boolean, count?: number) => `rounded-full border px-2.5 py-1 text-[13px] ${active ? 'border-accent bg-accent-soft font-semibold text-accent'
-    : count === 0 ? 'border-line bg-bg-card text-fg-3 hover:bg-bg-hover' : 'border-line bg-bg-card text-fg-2 hover:bg-bg-hover'}`;
-  const resolved = causes.counts.find((row) => row.cause === "resolved");
-
-  const n = (value: number) => value.toLocaleString("ko-KR");
-  const causeCount = (key: CauseKey) => causes.counts.find((row) => row.cause === key)?.count ?? 0;
-  // 할 일 카드는 구간 탭의 배지로 합쳤다(ADM-09) — 카드가 말하던 갈래 수는 직접 판단 탭의 title 로
-  const humanDetail = `2차 갈림 ${n(causeCount('second_review_split'))} · 재시도 소진 ${n(causeCount('ai_review_exhausted'))} · 스팸·악성 의심 ${n(causeCount('suspected_spam'))}`
-    + ` · 소개 없음 ${n(causeCount('no_description'))}${taglines ? `(AI 소개 지음 ${n(taglines.written)} · 근거로는 모름 ${n(taglines.unknown)} · 실패 ${n(taglines.failed)} · 시도 전 ${n(taglines.untried)})` : ''}`;
-  // 내려달라는 요청은 머리의 한 줄(TakedownStrip)과 내릴 후보 화면이 맡는다 — 여기서는 2차가 다시 본 공개분만
-  const todoTabs = [{ key: 'published', label: '공개분 확인', count: overview.secondPublished, active: second === 'published',
-    title: `2차가 다시 본 공개분 — 내릴지 둘지 사람이 정합니다 · ${n(overview.secondPublished)}건`, tone: overview.secondPublished > 0 ? 'warn' as const : undefined,
-    href: second === 'published' ? '/admin/review#review-list' : '/admin/review?second=published#review-list' }];
-  // 지금 걸린 세부 거르기 — 하나씩 풀 수 있게 거르기 ▾ 옆에 칩으로 보인다
-  const activeFilters = [
-    cause && { key: 'cause', label: `갈래 · ${causeShort(cause)}`, href: query({ cause: undefined, page: 1 }) },
-    ai && { key: 'ai', label: `1차 AI · ${AI_FILTERS.find(([key]) => key === ai)?.[1]}`, href: query({ ai: undefined, page: 1 }) },
-    second && second !== 'published' && { key: 'second', label: `2차 · ${SECOND_FILTERS.find(([key]) => key === second)?.[1]}`, href: query({ second: undefined, page: 1 }) },
-  ].filter((item): item is { key: string; label: string; href: string } => Boolean(item));
-  const voters = settings.secondReview.voters.map((voter) => voter.model).join(', ');
-  const fallbacks = (settings.secondReview.fallbacks ?? []).map((voter) => voter.model).join(', ');
-  const listTitle = `${stage ? STAGE_GROUPS.flatMap(group => group.stages).find(item => item.key === stage)?.label : '심사 후보'} · ${total.toLocaleString("ko-KR")}건`;
-  const pagination = pages > 1 ? (
-    <nav aria-label="심사 목록 쪽 이동" className="ml-auto flex flex-wrap items-center gap-1 text-[13px]">
-      {page > 1 && <Link href={query({ page: page - 1 })} className="rounded-lg border border-line px-2.5 py-1">이전</Link>}
-      {pageWindow(page, pages).map((item, i) => item === null
-        ? <span key={`gap-${i}`} className="px-1 text-fg-3">…</span>
-        : <Link key={item} href={query({ page: item })} aria-current={item === page ? 'page' : undefined}
-            className={`min-w-8 rounded-lg border px-2.5 py-1 text-center font-mono ${item === page ? 'border-accent bg-accent text-white' : 'border-line text-fg-2'}`}>{item}</Link>)}
-      {page < pages && <Link href={query({ page: page + 1 })} className="rounded-lg border border-line px-2.5 py-1">다음</Link>}
-    </nav>
-  ) : null;
-  const pageHref = { prev: page > 1 ? query({ page: page - 1 }) : null, next: page < pages ? query({ page: page + 1 }) : null };
-
-  return (
-    <main className="rq"><PageStamp />
-      <header className="rq-top">
-        <div className="l">
-          <h1 className="text-[22px] font-extrabold tracking-tight">심사 큐</h1>
-          <span className="text-[13px] text-fg-3">
-            <Link href="/admin/review?state=needs_review" className="hover:text-fg">보류 {causes.total.toLocaleString("ko-KR")}건</Link>
-            {causes.truncated && ` 이상 (${REVIEW_QUEUE_SCAN_LIMIT.toLocaleString("ko-KR")}건까지 셈)`} · 이 조건 {total.toLocaleString("ko-KR")}건 · {page}/{pages}쪽
-            {(filtered || state !== 'pending' || q || updated || sort) && <Link href="/admin/review" className="ml-2 text-accent hover:text-fg">거르기 지우기</Link>}
-          </span>
-        </div>
-        <div className="r">
-          <Suspense fallback={<ReasonLanguageToggle model={configuredModel("reason-translate")} done={null} total={null} />}>
-            <TranslationToggleSlot progress={translation} />
-          </Suspense>
-          {/* 2차 표·운영 모드는 읽기만 — 바꾸는 폼은 설정 화면 한 곳에 있다(ADM-24) */}
-          <Link href="/admin#second" className="dash-pill hover:text-fg" title="2차 심사 모델과 AI 리뷰 운영 모드 — 설정에서 바꿉니다">
-            2차: <span className="font-mono">{voters || '없음'}</span> · {MODE_LABEL[settings.reviewMode]} 모드
-          </Link>
-          <a href={exportHref} className="dash-pill hover:text-fg" title="지금 거르기 그대로 CSV 로 내려받습니다(최대 10,000행)">CSV 내보내기</a>
-        </div>
-      </header>
-
-      <ReviewStatusChips models={models} human={overview.decided24h} publication={publicationChange} takedowns={takedowns?.pending ?? 0} takedownsOverdue={takedowns?.overdue ?? 0}
-        inflow={overview.wait?.in24h ?? null} />
-      <Link href="/admin#human-review" className="dash-pill">사람 검토 위임: {settings.humanReview.enabled ? `켜짐 · ${humanReviewModelDisplay(settings.stageModelPools?.["human-review"]).modelLabel}` : '꺼짐'} · 설정 →</Link>
-      {/* 사람 큐를 거르는 gpu3090 Qwen-v2 둘 — 관문 갈림 판가름(2차 잡)과 보류 재심사(사람 검토 잡). 배지도 따로다: 판가름 «Qwen-v2 승인 — 발행 후보»,
-          재심사 «Qwen-v2: 승인 의견»·«Qwen-v2: 판단 보류» */}
-      <SplitTiebreakSwitch value={settings.qwenAuto.splitTiebreak} status={tiebreak} />
-      <HeldQwenRetryPanel key={heldQwen ? JSON.stringify([heldQwen.enabled, heldQwen.perTick, heldQwen.budgetSeconds, heldQwen.reasons]) : 'none'} status={heldQwen} />
-
-      <TakedownStrip summary={takedowns} />
-
-      <ReviewStageRail stage={stage} counts={stageCount} overview={overview} publication={publicationChange} todo={todoTabs} humanDetail={humanDetail} />
-
-      {/* 거르기 — 구간 안에서 더 좁힌다(겹쳐 고르면 겹치는 것만). 갈래는 표 머리의 드롭다운이 고른다 */}
-      <div className="rq-bar">
-        <details className="rq-filter">
-          <summary className={chip(activeFilters.length > 0)}>거르기{activeFilters.length ? ` ${activeFilters.length}` : ''} ▾</summary>
-          <div className="rq-filters" role="group" aria-label="거르기">
-            <FilterRow label="1차 AI" hint="마지막 심사의 결론">
-              {AI_FILTERS.map(([key, label]) => (
-                <Link key={key} href={query({ ai: ai === key ? undefined : key, state: undefined, page: 1 })}
-                  aria-current={ai === key ? 'page' : undefined} className={chip(ai === key, decisions.counts[key])}>
-                  {label} <span className="font-mono">{decisions.counts[key].toLocaleString("ko-KR")}</span>
-                </Link>
-              ))}
-            </FilterRow>
-            <FilterRow label="2차 표" hint={fallbacks ? `${voters} · 대체 ${fallbacks}` : voters}>
-              {SECOND_FILTERS.map(([key, label]) => {
-                // 보류 안의 후보로 좁힌 수 — 칩을 누른 목록의 건수와 같다
-                const count = overview.second[key];
-                return (
-                  <Link key={key} href={query({ second: second === key ? undefined : key, state: undefined, page: 1 })}
-                    aria-current={second === key ? 'page' : undefined} className={chip(second === key, count)}>
-                    {label} <span className="font-mono">{count.toLocaleString("ko-KR")}</span>
-                  </Link>
-                );
-              })}
-            </FilterRow>
-          </div>
-        </details>
-        {activeFilters.map((item) => (
-          <Link key={item.key} href={item.href} className={chip(true)} title="이 거르기 풀기">{item.label} ✕</Link>
-        ))}
-        {second !== 'published' && (
-          <ListToolbar q={q} updated={updated} sort={sort} total={total} hiddenByAge={hiddenByAge}
-            keep={{ state: filtered || state === 'pending' ? undefined : state, stage: stage || undefined, cause: cause || undefined, ai: ai || undefined, second: second || undefined }}
-            clearHref={query({ q: undefined, updated: undefined, sort: undefined, page: 1 })} />
-        )}
-      </div>
-
-      {resolved && (!cause || cause === "resolved") ? <RequeueResolved count={resolved.count} /> : null}
-
-      <div id="review-list" className="flex scroll-mt-4 flex-col gap-3">
-        {second === 'published' ? (
-          <>
-            <h2 className="text-[15px] font-bold text-fg">공개분 확인</h2>
-            <PublishedSecondReviews rows={await (async () => {
-              const rows = await publishedSecondReviews();
-              const korean = await translationsFor(rows.flatMap((row) => [row.secondReason, row.autoOpinion?.reason ?? null]));
-              return rows.map((row) => ({ id: row.id, slug: row.publishedSlug ?? '', repo: row.repo, decision: row.secondDecision,
-                confidence: row.secondConfidence, reason: row.secondReason, reasonKo: row.secondReason ? korean.get(row.secondReason) ?? null : null,
-                trigger: row.trigger, signals: row.signals,
-                // Qwen-v2 가 한 번 더 본 판단(승인이 아닌 것만 여기 남는다) — 배지와 사유
-                qwen: row.autoOpinion ? { decision: row.autoOpinion.decision, confidence: row.autoOpinion.confidence, reason: row.autoOpinion.reason,
-                  reasonKo: row.autoOpinion.reason ? korean.get(row.autoOpinion.reason) ?? null : null } : null }));
-            })()} />
-          </>
-        ) : entries.length === 0 ? (
-          <>
-            <h2 className="text-[15px] font-bold text-fg">{listTitle}</h2>
-            <p className="rounded-[12px] border border-line bg-bg-card px-5 py-8 text-center text-[13px] text-fg-3">
-              {filtered ? '이 조건에 해당하는 후보가 없습니다.' : '심사할 후보가 없습니다.'}
-            </p>
-          </>
-        ) : (
-          <ReviewConsole key={`${page}:${state}:${stage}:${cause}:${ai}:${second}:${q}:${updated}:${sort}`}
-            entries={entries} reasons={REVIEW_REJECT_REASONS} focus={focus} title={listTitle} qwenBadges={qwenBadges}
-            footer={pagination} pageHref={pageHref}
-            sort={sort} sortHref={Object.fromEntries(REVIEW_SORTS.map((key) => [key, query({ sort: key || undefined, page: 1 })])) as Record<ReviewSort, string>}
-            cause={cause} causes={[{ value: '', label: '갈래 전체', count: causes.total, href: query({ cause: undefined, state: undefined, page: 1 }) },
-              ...causes.counts.map(({ cause: key, count }) => ({ value: key, label: CAUSE_GUIDE[key].label, count,
-                href: query({ cause: key, state: undefined, page: 1 }) }))]} />
-        )}
-        {(second === 'published' || entries.length === 0) && pagination}
-      </div>
-      <ScrollToHash />
-    </main>
-  );
-}
-
-/** 번역 진행이 오면 수를 붙인다 — 못 세면 수 없이 단추만 */
-async function TranslationToggleSlot({ progress }: { progress: Promise<{ done: number; total: number } | null> }) {
-  const value = await progress;
-  return <ReasonLanguageToggle model={configuredModel("reason-translate")} done={value?.done ?? null} total={value?.total ?? null} />;
-}
-
-/** 거르기 한 줄 — 이름 칸과 값 칸. rq-filters 격자의 두 칸에 그대로 선다(좁은 화면에서는 이름이 위로) */
-function FilterRow({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
-  return (
-    <>
-      <p className="k">{label}{hint ? <small>{hint}</small> : null}</p>
-      <div className="v">{children}</div>
-    </>
-  );
+  const listTitle = second === "published" ? "공개 후 다시 확인할 프로젝트" : tab === "human" ? "지금 사람이 확인할 후보"
+    : tab === "publish" ? "승인 후 발행을 기다리는 후보" : tab === "rejected" ? "반려 기록" : "모든 단계의 후보";
+  const resolved = causes.counts.find(row => row.cause === "resolved");
+  const [heldQwen, tiebreak, modelEnv] = await Promise.all([heldQwenRetryStatus(settings).catch(() => null), splitTiebreakStatus().catch(() => null), currentModelEnv().catch(() => null)]);
+  const exportQuery = new URLSearchParams(query().split("?")[1]); exportQuery.set("state", state);
+  const pagination = pages > 1 ? <nav aria-label="검수 목록 페이지" className="flex">{page > 1 && <Link className="button small" href={query({ page: page - 1 })}>이전</Link>}{pageWindow(page, pages).map((item, index) => item === null ? <span key={index}>…</span> : <Link className={`button small${page === item ? " primary" : ""}`} key={item} aria-current={page === item ? "page" : undefined} href={query({ page: item })}>{item}</Link>)}{page < pages && <Link className="button small" href={query({ page: page + 1 })}>다음</Link>}</nav> : null;
+  return <main className="stack prototype-review"><PageStamp /><h1 className="sr-only">검수 및 발행</h1>
+    <div className="toolbar"><Link href="/admin/settings?tab=collection" className="button">심사 운영 설정</Link>{second !== "published" && <a href={`/admin/export?view=review&format=csv&${exportQuery}`} className="button">CSV 내보내기</a>}<span className="spacer" /><ReasonLanguageToggle model={modelEnv?.translate || "작업별 순위에서 확인"} done={null} total={null} /></div>
+    <form action="/admin/review" className="toolbar"><input type="hidden" name="tab" value={tab} />{rawState && <input type="hidden" name="state" value={rawState} />}<input className="search-input" type="search" name="q" defaultValue={q} maxLength={100} aria-label="후보 검색" placeholder="후보명·저장소 검색 후 Enter" />
+      {second !== "published" && <select name="stage" defaultValue={stage} aria-label="후보 단계"><option value="">{tab === "human" ? "사람 확인 대상 전체" : "단계 전체"}</option>{STAGE_GROUPS.flatMap(group => group.stages).map(item => <option key={item.key} value={item.key}>{item.label}</option>)}</select>}
+      {second !== "published" && <select name="sort" defaultValue={sort} aria-label="후보 정렬"><option value="wait">오래 기다린 순</option><option value="wait_short">최근 대기순</option><option value="">들어온 순</option><option value="stars">별 많은 순</option><option value="push">최근 푸시순</option><option value="push_old">오래된 푸시순</option></select>}
+      {cause && <input type="hidden" name="cause" value={cause} />}{ai && <input type="hidden" name="ai" value={ai} />}{second && <input type="hidden" name="second" value={second} />}{updated && <input type="hidden" name="updated" value={updated} />}<button className="button">조회</button><span className="spacer small muted">{second === "published" ? `공개분 확인 ${queue.total.toLocaleString("ko-KR")}건` : `전체 ${queue.total.toLocaleString("ko-KR")}건 · ${page}/${pages}쪽`}</span>
+    </form>
+    {second !== "published" ? <details className="panel"><summary>갈래·AI 판단·기간으로 더 좁히기</summary><form action="/admin/review" className="panel-body toolbar"><input type="hidden" name="tab" value={tab} />{rawState && <input type="hidden" name="state" value={rawState} />}<input type="hidden" name="stage" value={stage} /><input type="hidden" name="q" value={q} /><input type="hidden" name="sort" value={sort} />
+      <select name="cause" defaultValue={cause} aria-label="검수 갈래"><option value="">갈래 전체</option>{causes.counts.map(row => <option value={row.cause} key={row.cause}>{CAUSE_GUIDE[row.cause].label} · {row.count}</option>)}</select>
+      <select name="ai" defaultValue={ai} aria-label="1차 AI 판단"><option value="">1차 판단 전체</option>{PROTOTYPE_AI_FILTERS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select><select name="second" defaultValue={second} aria-label="2차 판단"><option value="">2차 판단 전체</option>{SECOND_FILTERS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}<option value="published">공개분 확인</option></select>
+      <select name="updated" defaultValue={updated} aria-label="최근 푸시 기간">{UPDATED_WINDOWS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select><button className="button">적용</button><Link className="text-button" href={`/admin/review?tab=${tab}`}>조건 초기화</Link>
+    </form></details> : <Link className="text-button" href={`/admin/review?tab=${tab}`}>후보 단계 검수로 돌아가기 →</Link>}
+    {queue.hiddenByAge > 0 && <p className="small muted">최근 푸시 조건으로 {queue.hiddenByAge.toLocaleString("ko-KR")}건을 목록에서 제외했습니다. 후보 상태는 유지됩니다.</p>}
+    {second === "published" ? <PrototypeReviewPublished rows={publishedRows ?? []} />
+      : <PrototypeReviewConsole key={`${page}:${tab}:${state}:${stage}:${cause}:${ai}:${second}:${q}:${updated}:${sort}`} now={observedAt} entries={queue.entries} reasons={REVIEW_REJECT_REASONS} focus={focus} title={listTitle} total={queue.total} footer={pagination} />}
+    <details className="panel"><summary>심사 운영·보류 재심사 관리</summary><div className="panel-body stack">{resolved && <RequeueResolved count={resolved.count} />}<SplitTiebreakSwitch value={settings.qwenAuto.splitTiebreak} status={tiebreak} /><HeldQwenRetryPanel status={heldQwen} /><p className="small muted">운영 설정은 현재 값을 다시 확인하고 변경 사유를 남기는 기존 절차를 사용합니다.</p></div></details>
+  </main>;
 }

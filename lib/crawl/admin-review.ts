@@ -509,6 +509,14 @@ export type AdminReviewEntry = {
 export const REVIEW_SORTS = ["", "stars", "push", "push_old", "wait", "wait_short"] as const;
 export type ReviewSort = typeof REVIEW_SORTS[number];
 
+export type AdminReviewFilterState = 'all' | 'pending' | 'new' | 'approved' | 'needs_review' | 'rejected' | 'published';
+/** Explicit all-stage reads include completed states. Existing pending reads retain their original three states. */
+export function adminReviewCandidateStates(state?: AdminReviewFilterState): readonly CandidateState[] {
+  if (state === 'all') return ['new', 'approved', 'needs_review', 'rejected', 'published'];
+  if (state === 'rejected' || state === 'published' || state === 'needs_review' || state === 'new' || state === 'approved') return [state];
+  return ['new', 'approved', 'needs_review'];
+}
+
 /** 원본의 값을 후보 한 줄마다 꺼낸다. repo 는 crawl_documents 의 고유 키라 한 건만 나온다 */
 const repoNumber = (key: string) => sql`(select case when d.repo_meta->>${key} ~ '^[0-9]+$'
   then (d.repo_meta->>${key})::bigint end from ${crawlDocuments} d where d.repo = ${crawlCandidates.repo})`;
@@ -531,7 +539,7 @@ function orderBy(sort: ReviewSort): SQL {
 }
 
 export async function listAdminReviewEntries(settings: CrawlSettings, options: {
-  state?: 'pending' | 'new' | 'approved' | 'needs_review' | 'rejected' | 'published'; after?: number; offset?: number; limit?: number;
+  state?: AdminReviewFilterState; after?: number; offset?: number; limit?: number;
   /** 갈래로 걸러 볼 때. 계산으로 얻은 값이라 SQL로 거를 수 없어 id 를 받는다 */
   ids?: number[];
   /** 이름(페이지 제목)·레포·주소에 이 글자가 들어간 것만 */
@@ -547,9 +555,7 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: {
   sort?: ReviewSort;
 } = {}) {
   const limit = Math.max(1, Math.min(options.limit ?? 50, 50));
-  const states = options.state === 'rejected' ? ['rejected'] as const : options.state === 'published' ? ['published'] as const :
-    options.state === 'needs_review' ? ['needs_review'] as const : options.state === 'new' ? ['new'] as const
-      : options.state === 'approved' ? ['approved'] as const : ['new', 'approved', 'needs_review'] as const;
+  const states = adminReviewCandidateStates(options.state);
   if (options.ids?.length === 0) return { entries: [] as AdminReviewEntry[], nextAfter: null, total: 0, hiddenByAge: 0 };
   const term = options.search?.trim().slice(0, 100);
   // ILIKE 의 % _ \ 는 글자 그대로 찾는다

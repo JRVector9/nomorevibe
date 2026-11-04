@@ -1,14 +1,12 @@
 import { getSettings } from "@/lib/crawl/settings";
-import { listAdminReviewEntries, REVIEW_SORTS, reviewQueueCauses, type ReviewAiDecision, type ReviewSort } from "@/lib/crawl/admin-review";
+import { listAdminReviewEntries, reviewQueueCauses } from "@/lib/crawl/admin-review";
 import { humanQueueOverview } from "@/lib/crawl/review-overview";
 import { listAuditFindings, productAuditOverview } from "@/lib/crawl/product-audit";
 import { listProducts } from "@/lib/domain/products/repository";
 import { formatDetailTime } from "@/lib/format/time";
 import { newsSource } from "@/lib/news/sources";
 import { PRODUCT_FILTERS, PRODUCT_SORTS, type ProductAdminSort, type ProductFilterName } from "../products/filters";
-import { CAUSE_GUIDE, type CauseKey } from "../review/causes";
-import { UPDATED_DAYS, UPDATED_WINDOWS, type UpdatedWindow } from "../review/ListToolbar";
-import { SECOND_FILTER_KEYS, STAGE_KEYS, STAGE_STATE, type SecondFilter, type StageKey } from "../review/stages";
+import { prototypeReviewFilter, prototypeReviewOptions } from "../review/PrototypeReviewQuery";
 import { actionLabel, targetLabel } from "../activity/labels";
 import { activityFilter, activityLog } from "../activity/query";
 import { isScriptRow, summaryLine } from "../activity/summary";
@@ -59,49 +57,26 @@ const products: ExportView = {
 
 // ─────────────────────────── 심사 큐 (/admin/review?state·stage·cause·ai·second·q·updated·sort) ───────────────────────────
 
-/** 심사 화면의 AI 판단 칩 값 — app/admin/review/page.tsx 의 AI_FILTERS 와 같다(그 화면이 내보내지 않는다) */
-const REVIEW_AI_KEYS: readonly ReviewAiDecision[] = ["reject", "approve", "needs_review", "none"];
 /** 심사 목록 한 번에 읽는 수 — listAdminReviewEntries 가 50 을 넘겨 주지 않는다. 네 쪽씩 함께 읽는다 */
 const REVIEW_BATCH = 50;
 const REVIEW_PARALLEL = 4;
 
-/** app/admin/review/page.tsx 가 주소를 읽고 갈래 id 를 겹치는 식과 같다 — 그 화면은 줄 안에서 읽어 여기 옮겨 두었다 */
+/** 화면과 공유하는 필터 조립으로 같은 원본 범위를 내보낸다. 페이지 번호만 제외한다. */
 async function reviewQuery(params: URLSearchParams) {
-  const rawState = text(params, "state");
-  const state: "needs_review" | "rejected" | "published" | "pending" =
-    rawState === "needs_review" || rawState === "rejected" || rawState === "published" ? rawState : "pending";
-  const stage = ((STAGE_KEYS as string[]).includes(text(params, "stage")) ? text(params, "stage") : "") as StageKey | "";
-  const cause = (Object.hasOwn(CAUSE_GUIDE, text(params, "cause")) ? text(params, "cause") : "") as CauseKey | "";
-  const ai = ((REVIEW_AI_KEYS as string[]).includes(text(params, "ai")) ? text(params, "ai") : "") as ReviewAiDecision | "";
-  const second = ((SECOND_FILTER_KEYS as readonly string[]).includes(text(params, "second")) ? text(params, "second") : "") as SecondFilter | "";
-  const q = text(params, "q").trim().slice(0, 100);
-  const updated = (UPDATED_WINDOWS.some(([value]) => value === text(params, "updated")) ? text(params, "updated") : "") as UpdatedWindow;
-  const sort = ((REVIEW_SORTS as readonly string[]).includes(text(params, "sort")) ? text(params, "sort") : "") as ReviewSort;
-
-  const settings = await getSettings();
-  const heldStage = stage === "ai" || stage === "second" || stage === "agreed" || stage === "human" ? stage : null;
-  const detailable = !stage || heldStage !== null;
-  const needsOverview = heldStage !== null || (detailable && Boolean(ai || (second && second !== "published")));
+  const values = Object.fromEntries([...new Set(params.keys())].map(key => [key, params.get(key) ?? ""]));
+  // Old direct export links retain their pending default; new screens always send an explicit tab.
+  if (!params.has("tab") && !params.has("state") && !params.has("stage")) { values.tab = "all"; values.state = "pending"; }
+  const filter = prototypeReviewFilter(values), settings = await getSettings();
+  const held = ["ai", "second", "agreed", "human"].includes(filter.stage);
+  const detailable = !filter.stage || held;
   const [causes, overview] = await Promise.all([
-    detailable && cause ? reviewQueueCauses(settings) : null,
-    needsOverview ? humanQueueOverview(settings) : null,
+    detailable && filter.cause ? reviewQueueCauses(settings) : null,
+    held || filter.tab === "human" || (detailable && (filter.ai || (filter.second && filter.second !== "published"))) ? humanQueueOverview(settings) : null,
   ]);
-  const ids = [
-    heldStage && overview ? overview.ids[heldStage] : undefined,
-    causes && cause ? causes.ids.get(cause) ?? [] : undefined,
-    detailable && ai && overview ? overview.aiDecisions.ids.get(ai) ?? [] : undefined,
-    detailable && second && second !== "published" && overview ? overview.secondIds[second] : undefined,
-  ].filter((list): list is number[] => Boolean(list))
-    .reduce<number[] | undefined>((acc, list) => { if (!acc) return list; const keep = new Set(list); return acc.filter((id) => keep.has(id)); }, undefined);
-  const detailed = detailable && Boolean(cause || ai || second);
-  return { settings, options: {
-    state: stage ? STAGE_STATE[stage] : detailed ? "needs_review" : state, ids,
-    search: q || undefined, pushedWithinDays: updated ? UPDATED_DAYS[updated] : undefined, sort,
-  } };
+  return { settings, options: prototypeReviewOptions(filter, causes, overview) };
 }
 
 type ReviewEntry = Awaited<ReturnType<typeof listAdminReviewEntries>>["entries"][number];
-
 const review: ExportView = {
   columns: [
     { key: "id", label: "후보 id" }, { key: "repo", label: "저장소" }, { key: "name", label: "이름" }, { key: "state", label: "상태" },
