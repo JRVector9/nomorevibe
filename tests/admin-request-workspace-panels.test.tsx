@@ -1,4 +1,5 @@
 import { createHmac } from "node:crypto";
+import { Children, isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, expect, it, vi } from "vitest";
 import { adminRequestToken } from "@/lib/operations/admin-requests-csrf";
@@ -14,6 +15,14 @@ const { PrototypeRequestWorkspace } = await import("@/app/(operator)/admin/reque
 const admin = { login: "operator", exp: 5000 }, secret = "test-secret", now = new Date("2026-11-04T12:00:00Z");
 const row = (kind: WorkspaceRequest["kind"], patch: object = {}) => ({ key: `${kind}:id`, kind, name: "프로젝트 원본", type: kind, status: "보류", waitHours: 27, at: now.toISOString(), next: "원본 확인", body: "읽은 원문", slug: "product", record: {}, ...patch }) as WorkspaceRequest;
 function queue(items: WorkspaceRequest[]) { return { count: items.length, items, failed: [], results: [{ kind: items[0]?.kind ?? "contact", result: { ok: true, data: { count: items.length, items, nextOffset: null } } }] }; }
+type DetailBoundary = ReactElement<{ children?: ReactNode; item?: WorkspaceRequest }>;
+function detailBoundary(node: ReactNode): DetailBoundary | undefined {
+  if (!isValidElement<DetailBoundary["props"]>(node)) return undefined;
+  if (typeof node.type === "function" && node.type.name === "RequestDetail") return node;
+  let found: DetailBoundary | undefined;
+  Children.forEach(node.props.children, child => { if (!found) found = detailBoundary(child); });
+  return found;
+}
 beforeEach(() => { vi.clearAllMocks(); for (const form of [fake.contact, fake.feedback, fake.reply, fake.reaction, fake.takedown, fake.intro]) form.mockImplementation(() => null); fake.read.mockResolvedValue(queue([])); });
 it("선택된 문의 한 건에 기존 CSRF·원본 판만 전달하고 원본 ID로 목록을 이동한다", async () => {
   fake.read.mockResolvedValue(queue([row("contact", { record: { id: "contact-id", version: 7, status: "waiting", handlingNote: "기존 메모", senderEmail: "person@example.com", updatedBy: "op", updatedAt: now } })]));
@@ -24,6 +33,14 @@ it("선택된 문의 한 건에 기존 CSRF·원본 판만 전달하고 원본 I
 it("선택한 원본이 빠지면 다른 요청의 처리 폼으로 자동 전환하지 않는다", async () => {
   fake.read.mockResolvedValue(queue([row("contact")])); const html = renderToStaticMarkup(await PrototypeRequestWorkspace({ tab: "contact", params: { id: "contact:removed" }, admin, secret }));
   expect(html).toContain("선택한 요청이 현재 목록에 없습니다"); expect(fake.contact).not.toHaveBeenCalled();
+});
+it("같은 종류의 A→B 선택은 상세 경계를 바꿔 입력값과 읽은 원문의 상태를 초기화한다", async () => {
+  fake.read.mockResolvedValue(queue([row("contact", { key: "contact:a", body: "A 원문" }), row("contact", { key: "contact:b", body: "B 원문" })]));
+  const a = detailBoundary(await PrototypeRequestWorkspace({ tab: "contact", params: { id: "contact:a" }, admin, secret }));
+  const b = detailBoundary(await PrototypeRequestWorkspace({ tab: "contact", params: { id: "contact:b" }, admin, secret }));
+  expect(a?.key).toBe("contact:a"); expect(a?.props.item?.body).toBe("A 원문");
+  expect(b?.key).toBe("contact:b"); expect(b?.props.item?.body).toBe("B 원문");
+  expect(a?.key).not.toBe(b?.key);
 });
 it("조회 실패를 0건으로 표시하지 않는다", async () => {
   fake.read.mockResolvedValue({ count: 0, items: [], failed: ["contact"], results: [{ kind: "contact", result: { ok: false } }] });
