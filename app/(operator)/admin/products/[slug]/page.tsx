@@ -7,21 +7,30 @@ import { getProductRefreshRequest } from "@/lib/domain/evidence/refresh-requests
 import { EVIDENCE_LABELS } from "@/lib/domain/evidence/provenance";
 import { productHistory } from "@/lib/domain/products/history";
 import { formatDetailTime } from "@/lib/format/time";
-import { Panel } from "@/components/Panel";
-import { ScrollTable } from "../../components/ScrollTable";
 import { BanAction } from "../BanAction";
 import { ForceRefreshForm, UpdateVisibilityForm } from "./EvidenceProductActions";
-import { makerMembersOf, MakerMembersPanel } from "./MakerMembers";
+import { makerMembersOf } from "./MakerMembers";
 import {
   DECLARATION_LABELS, EVIDENCE_AUDIT_LABELS, FACT_LABELS, HISTORY_KIND_LABELS, LINK_KIND_LABELS, PRODUCT_STATUS_LABELS,
   RELATIONSHIP_LABELS, SOURCE_STATE_LABELS, UPDATE_SOURCE_LABELS, historyActionLabel, historyNote, labelOf,
 } from "./labels";
+import { introEditorNotes } from "@/lib/domain/products/intro-editor";
+import { categoryLabel } from "@/lib/domain/products/labels";
+import { findBySlug } from "@/lib/domain/products/repository";
+import { productTranslationAdminQueue } from "@/lib/domain/products/translation-admin";
+import { claimInviteUrl } from "@/lib/domain/products/claim-invite";
+import { siteOrigin } from "@/lib/site";
+import { db } from "@/lib/db";
+import { eq, desc } from "drizzle-orm";
+import { takedownRequests, introCorrectionRequests } from "@/lib/db/schema";
+import { PrototypePanel, PrototypeFacts, PrototypeTag, PrototypeEmpty, prototypeRepositoryStatus } from "../PrototypeParts";
+import { PrototypeIntroForm, PrototypeClaimInvite } from "../PrototypeProductForms";
 import { PageStamp } from "@/app/(operator)/admin/components/PageStamp";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "제품 근거 — NoMoreVibe", robots: { index: false } };
 
-type Props = { params: Promise<{ slug: string }> };
+type Props = { params: Promise<{ slug: string }>; searchParams?: Promise<Record<string, string | string[] | undefined>> };
 
 /** 상세 시각 "2026-10-08 13:38:13 KST"(lib/format/time) */
 const date = (value: Date | null) => formatDetailTime(value);
@@ -48,161 +57,36 @@ function FactList({ facts }: { facts: Awaited<ReturnType<typeof getEvidenceAdmin
   ));
 }
 
-export default async function AdminEvidenceProductPage({ params }: Props) {
+export default async function AdminEvidenceProductPage({ params, searchParams }: Props) {
   const admin = await currentAdmin();
   if (!admin) redirect("/admin/login");
   const { slug } = await params;
-  const view = await getEvidenceAdminProduct(slug);
-  if (!view) notFound();
-  const [refresh, history, makers] = await Promise.all([
-    getProductRefreshRequest(slug),
-    // 기록을 못 읽어도 상세는 그린다
-    productHistory(view.product.slug).catch(() => null),
-    makerMembersOf(view.product.slug).catch(() => null),
-  ]);
-  const refreshPending = refresh && refresh.requestedVersion > refresh.completedVersion;
-  const activityHref = `/admin/activity?target=${encodeURIComponent(view.product.slug)}`;
-
-  return (
-    <main data-admin-detail="product" className="mx-auto max-w-[980px] px-4 pb-20 sm:px-6"><PageStamp />
-      <div className="flex flex-wrap items-baseline gap-3 pt-6">
-        <h1 className="min-w-0 break-words text-[22px] font-extrabold tracking-tight">{view.product.name}</h1>
-        <span className="font-mono text-[13px] text-fg-3">{view.product.slug}</span>
-        <span className="text-[13px] font-semibold text-fg-2"><Code labels={PRODUCT_STATUS_LABELS} code={view.product.status} /></span>
-        {/* 목록 ⋯ 메뉴와 같은 차단 — 사유를 고르고, 끝나면 알림에 되돌리기(2026-10-08 UX 감사 ADM-20) */}
-        <span className="ml-auto">
-          <BanAction slug={view.product.slug} name={view.product.name} banned={view.product.status === "banned"}
-            className={`rounded-lg border px-3 py-1.5 text-[13px] font-semibold hover:bg-bg-hover disabled:opacity-50 ${
-              view.product.status === "banned" ? "border-line text-fg-2" : "border-down/40 text-down"}`} />
-        </span>
-      </div>
-      <div className="mt-3 flex flex-wrap items-center gap-4 text-[13px]">
-        <a href={view.product.url} target="_blank" rel="noreferrer noopener" className="min-w-0 break-all text-accent hover:underline">
-          {view.product.url}
-        </a>
-        <a href={`/p/${view.product.slug}`} target="_blank" rel="noreferrer noopener" className="font-semibold text-fg-2 hover:text-fg">
-          공개 화면
-        </a>
-      </div>
-      <div className="mt-5"><ForceRefreshForm slug={view.product.slug} /></div>
-      {view.product.status === "banned" && <p className="mt-2 text-[13px] text-fg-3">
-        차단 해제 뒤에도 설치형의 저장소 소실이나 사이트 응답 없음 등 공개 목록 조건에 따라 노출되지 않을 수 있습니다.
-        현재 출처를 확인하고 필요한 경우 근거 갱신을 요청하세요.
-      </p>}
-      {refresh && (
-        <div className="mt-3 rounded-[10px] border border-line p-3 text-[13px]" aria-live="polite">
-          <strong>{refreshPending ? (refresh.activeVersion ? "갱신 진행 중" : "갱신 예약됨") : "갱신 완료"}</strong>
-          <span className="ml-3 text-fg-2">요청 #{refresh.requestedVersion} · 완료 #{refresh.completedVersion}</span>
-          {refreshPending && <p className="mt-1 text-fg-2">출처 {refresh.progress.completedKeys.length}개 처리 · 다음 확인 {date(refresh.nextAttemptAt)}</p>}
-          {refresh.completedAt && <p className="mt-1 text-fg-2">최근 완료 {date(refresh.completedAt)}</p>}
-          {refresh.lastError && <p className="mt-1 text-down">{refresh.lastError}</p>}
-          <a href={`/admin/products/${slug}`} className="mt-2 inline-block text-accent hover:underline">진행 상태 새로고침</a>
-        </div>
-      )}
-
-      <div className="mt-6 flex flex-col gap-4">
-        <Panel title="이 제품의 기록" note="관리자 작업 로그, 후보 심사, 발행분 감사, 저장소 확인, 차단·해제를 최근 것부터 합쳐 봅니다."
-          actions={<Link href={activityHref} prefetch={false} className="ml-auto text-[13px] font-semibold text-accent hover:underline">모두 보기</Link>}>
-          {history === null ? <p className="mt-2 text-[13px] text-down">기록을 읽지 못했습니다.</p>
-            : history.length === 0 ? <p className="mt-2 text-[13px] text-fg-3">남은 기록이 없습니다.</p> : (
-            <ol className="mt-2 space-y-1.5 text-[13px]">{history.map((entry, index) => {
-              const note = historyNote(entry.kind, entry.action, entry.note);
-              return (
-                <li key={`${entry.kind}-${entry.at.getTime()}-${index}`} className="grid gap-x-3 rounded-[10px] bg-bg-soft px-3 py-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-                  <span className="min-w-0 break-words">
-                    <span className="text-fg-3">{HISTORY_KIND_LABELS[entry.kind]}</span>{" · "}
-                    <strong title={entry.action}>{historyActionLabel(entry.kind, entry.action)}</strong>
-                    {!entry.ok && <span className="font-semibold text-down"> · 실패</span>}
-                    {entry.actor && <span className="text-fg-2"> · {entry.actor}</span>}
-                    {note && <span className="text-fg-2"> · {note}</span>}
-                  </span>
-                  <time className="font-mono text-fg-3" dateTime={entry.at.toISOString()}>{formatDetailTime(entry.at)}</time>
-                </li>
-              );
-            })}</ol>
-          )}
-        </Panel>
-
-        <MakerMembersPanel rows={makers} />
-
-        <Panel title="메이커와 관측값 충돌" note="메이커 제공값을 숨기지 않고 객관적 출처의 값과 나란히 봅니다.">
-          {view.conflicts.length === 0 ? (
-            <p className="text-[13px] text-fg-3">확인된 충돌이 없습니다.</p>
-          ) : view.conflicts.map((conflict) => (
-            <div key={conflict.field} className="rounded-[10px] border border-down/30 bg-down/5 p-3 text-[13px]">
-              <strong>라이선스 충돌</strong>
-              <span className="ml-3 text-fg-2">메이커 {conflict.makerValue} · 관측 {conflict.observedValue}</span>
-            </div>
-          ))}
-        </Panel>
-
-        <Panel title="선언 링크" note="메이커 선언과 확인된 연결 상태를 분리합니다.">
-          <ScrollTable label="선언 링크">
-            <table className="w-full min-w-[680px] text-[13px]">
-              <thead className="text-left text-fg-3"><tr><th className="pb-2">종류</th><th>선언</th><th>확인</th><th>관계</th><th>URL</th></tr></thead>
-              <tbody>{view.links.map((link) => (
-                <tr key={link.id} className="border-t border-line">
-                  <td className="py-2"><Code labels={LINK_KIND_LABELS} code={link.kind} /></td>
-                  <td><Code labels={DECLARATION_LABELS} code={link.declarationSource} /></td>
-                  <td><Code labels={SOURCE_STATE_LABELS} code={link.verificationState} /></td>
-                  <td><Code labels={RELATIONSHIP_LABELS} code={link.relationshipState} /></td><td className="max-w-[360px] truncate">{link.url}</td>
-                </tr>
-              ))}</tbody>
-            </table>
-          </ScrollTable>
-        </Panel>
-
-        <Panel title="외부 출처 상태" note="원문 응답 대신 정규화한 사실과 안전한 실패 코드만 표시합니다.">
-          {view.sources.length === 0 ? <p className="text-[13px] text-fg-3">아직 수집한 출처가 없습니다.</p> : (
-            <ScrollTable label="외부 출처 상태"><table className="w-full min-w-[820px] text-[13px]">
-              <thead className="text-left text-fg-3"><tr><th className="pb-2">출처</th><th>상태</th><th>마지막 성공</th><th>마지막 실패</th><th>다음 시도</th><th>시도</th><th>오류</th></tr></thead>
-              <tbody>{view.sources.map((source) => (
-                <tr key={source.id} className="border-t border-line align-top">
-                  <td className="py-2"><strong><Code labels={LINK_KIND_LABELS} code={source.kind} /></strong><p className="mt-1 text-fg-3"><FactList facts={source.facts} /></p></td>
-                  <td><Code labels={SOURCE_STATE_LABELS} code={source.state} /></td><td>{date(source.lastSuccessAt)}</td><td>{date(source.lastFailureAt)}</td>
-                  <td>{date(source.nextAttemptAt)}</td><td>{source.attempts}</td><td>{source.lastErrorCode ?? "—"}</td>
-                </tr>
-              ))}</tbody>
-            </table></ScrollTable>
-          )}
-        </Panel>
-
-        <Panel title="내부 미디어" note="외부 URL 선언과 내부 복사본 버전을 함께 봅니다.">
-          <div className="grid gap-3 md:grid-cols-2">
-            <div><h3 className="text-[13px] font-bold">수집 선언</h3><ul className="mt-2 space-y-2 text-[13px]">
-              {view.declarations.map((item) => <li key={item.id} className="break-all rounded-[10px] bg-bg-soft p-3">#{item.position + 1} · rev {item.revision}<br />{item.sourceUrl}</li>)}
-            </ul></div>
-            <div><h3 className="text-[13px] font-bold">복사본 버전</h3><ul className="mt-2 space-y-2 text-[13px]">
-              {view.media.map((item) => <li key={item.id} className="break-all rounded-[10px] bg-bg-soft p-3">v{item.version} · {item.current ? "현재" : "이전"} · {item.visible ? "표시" : "숨김"}{item.missingAt ? " · 원본 누락" : ""}<br />{item.sourceUrl}</li>)}
-            </ul></div>
-          </div>
-        </Panel>
-
-        <Panel title="업데이트" note="자동 감지 항목만 관리자가 숨기고 복원합니다. 메이커 항목은 메이커 API가 관리합니다.">
-          <ul className="space-y-3 text-[13px]">{view.updates.map((update) => (
-            <li key={update.id} className="rounded-[10px] border border-line p-3">
-              <div className="flex flex-wrap gap-2"><strong>{update.title}</strong><span className="text-fg-3"><Code labels={UPDATE_SOURCE_LABELS} code={update.sourceKind} /> · {update.visible ? "표시" : "숨김"}</span></div>
-              {update.sourceKind !== "maker" && <UpdateVisibilityForm slug={view.product.slug} updateId={update.id} visible={update.visible} />}
-            </li>
-          ))}</ul>
-        </Panel>
-
-        <Panel title="빌드 출처" note="표시된 근거 수준은 작성 주체와 증명 강도를 구분합니다.">
-          <div className="grid gap-4 md:grid-cols-2 text-[13px]">
-            <div><h3 className="font-bold">에이전트</h3><ul className="mt-2 space-y-1">{view.agents.map((agent) => <li key={agent.id}>{agent.provider} · {agent.roles.join(", ")} · <Code labels={EVIDENCE_LABELS} code={agent.evidenceLevel} /></li>)}</ul></div>
-            <div><h3 className="font-bold">스킬</h3><ul className="mt-2 space-y-1">{view.skills.map((skill) => <li key={skill.id}>{skill.namespace}/{skill.name} · <Code labels={EVIDENCE_LABELS} code={skill.evidenceLevel} /></li>)}</ul></div>
-          </div>
-        </Panel>
-
-        <Panel title="감사 기록" note="이력은 수정하거나 지우지 않고 새 행으로 추가합니다.">
-          <ul className="space-y-2 text-[13px]">{view.audits.map((audit) => (
-            <li key={audit.id} className="grid gap-1 rounded-[10px] bg-bg-soft p-3 sm:grid-cols-[1fr_auto]">
-              <span className="min-w-0 break-words"><strong><Code labels={EVIDENCE_AUDIT_LABELS} code={audit.action} /></strong> · {audit.actor}{audit.reason ? ` · ${historyNote("status", audit.action, audit.reason)}` : ""}</span>
-              <time className="font-mono text-fg-3">{date(audit.createdAt)}</time>
-            </li>
-          ))}</ul>
-        </Panel>
-      </div>
-    </main>
-  );
+  const query = await searchParams ?? {};
+  const sections = [["overview","개요"],["intro","소개·번역"],["evidence","출처·근거"],["maker","메이커"],["quality","품질"],["requests","관련 요청"],["updates","업데이트"],["history","변경 기록"]] as const;
+  const section = typeof query.section === "string" && sections.some(([key]) => key === query.section) ? query.section : "overview";
+  const [view, product] = await Promise.all([getEvidenceAdminProduct(slug), findBySlug(slug)]);
+  if (!view || !product) notFound();
+  const [refresh, history, makers] = await Promise.all([getProductRefreshRequest(slug).catch(() => null), productHistory(slug).catch(() => null), makerMembersOf(slug).catch(() => null)]);
+  const translation = section === "intro" ? await productTranslationAdminQueue({ state: "all", q: slug, limit: 30 }).catch(() => null) : null;
+  const introNotes = section === "intro" ? await introEditorNotes([product.id]).catch(() => null) : null;
+  const requestData = section === "requests" ? await Promise.all([
+    db.select({ at: takedownRequests.requestedAt, handled: takedownRequests.handledAt, outcome: takedownRequests.outcome, reason: takedownRequests.reason }).from(takedownRequests).where(eq(takedownRequests.slug, slug)),
+    db.select({ at: introCorrectionRequests.createdAt, handled: introCorrectionRequests.handledAt }).from(introCorrectionRequests).where(eq(introCorrectionRequests.slug, slug)).orderBy(desc(introCorrectionRequests.createdAt)).limit(30),
+  ]).catch(() => null) : null;
+  const activityHref = `/admin/activity?target=${encodeURIComponent(slug)}`;
+  const historyPanel = <PrototypePanel title="프로젝트 변경·감사 기록" actions={<Link className="text-button" href={activityHref}>전체 기록 →</Link>}>{history === null ? <PrototypeEmpty>기록을 읽지 못했습니다.</PrototypeEmpty> : history.length === 0 ? <PrototypeEmpty>남은 변경 기록이 없습니다.</PrototypeEmpty> : <ol className="timeline">{history.map((entry, index) => <li key={`${entry.kind}-${index}`}><time>{date(entry.at)}</time><div><b>{historyActionLabel(entry.kind, entry.action)}</b><p>{HISTORY_KIND_LABELS[entry.kind]} · {entry.actor ?? "자동 / 이전 기록"} · {entry.ok ? "완료" : "실패"}</p>{entry.note && <p>{historyNote(entry.kind, entry.action, entry.note)}</p>}</div></li>)}</ol>}</PrototypePanel>;
+  const sourcePanel = <PrototypePanel title="외부 출처·선언 링크" actions={<ForceRefreshForm slug={slug} />}><div className="table-scroll"><table style={{ minWidth: 720 }}><thead><tr><th>출처</th><th>선언 / 관측</th><th>확인</th><th>관계</th></tr></thead><tbody>{view.links.map(link => <tr key={link.id}><td><Code labels={LINK_KIND_LABELS} code={link.kind} /></td><td><a href={link.url} target="_blank" rel="noopener noreferrer">{link.url}</a><p><Code labels={DECLARATION_LABELS} code={link.declarationSource} /></p></td><td><Code labels={SOURCE_STATE_LABELS} code={link.verificationState} /></td><td><Code labels={RELATIONSHIP_LABELS} code={link.relationshipState} /></td></tr>)}</tbody></table></div><div className="table-scroll mt"><table style={{ minWidth: 850 }}><thead><tr><th>관측 출처</th><th>상태 / 사실</th><th>최근 성공</th><th>다음 확인</th><th>실패</th></tr></thead><tbody>{view.sources.map(source => <tr key={source.id}><td><Code labels={LINK_KIND_LABELS} code={source.kind} /></td><td><Code labels={SOURCE_STATE_LABELS} code={source.state} /><p><FactList facts={source.facts} /></p></td><td>{date(source.lastSuccessAt)}</td><td>{date(source.nextAttemptAt)}</td><td>{source.lastErrorCode ?? "—"}<p>{date(source.lastFailureAt)} · {source.attempts}회</p></td></tr>)}</tbody></table></div>{view.links.length + view.sources.length === 0 && <PrototypeEmpty>아직 수집한 출처가 없습니다.</PrototypeEmpty>}</PrototypePanel>;
+  return <main data-admin-detail="product"><PageStamp />
+    <div className="page-heading"><div className="project-hero"><span className="project-avatar">{product.name.slice(0,2)}</span><div><div className="eyebrow">프로젝트 #{product.id} / {product.source === "crawler" ? "자동 수집" : "직접 등록"}</div><h1>{product.name}</h1><p>{product.url} · <Code labels={PRODUCT_STATUS_LABELS} code={product.status} /></p></div></div><div className="heading-actions"><Link className="button small" href="/admin/products">목록으로</Link><Link className="button" href={`/admin/products/${slug}?section=intro`}>소개·번역 관리</Link><BanAction slug={slug} name={product.name} banned={product.status === "banned"} className="button danger" /></div></div>
+    <div className="flex mb"><PrototypeTag tone={product.status === "banned" ? "gray" : "green"}><Code labels={PRODUCT_STATUS_LABELS} code={product.status} /></PrototypeTag><PrototypeTag>메이커 {makers === null ? "확인 못함" : makers.some(row => !row.revokedAt) ? "확인 기록 있음" : "미확인"}</PrototypeTag><PrototypeTag tone={view.conflicts.length ? "amber" : "gray"}>{view.conflicts.length ? `선언 충돌 ${view.conflicts.length}건` : "확인된 선언 충돌 없음"}</PrototypeTag></div>
+    <nav className="tabs" aria-label="프로젝트 상세">{sections.map(([id,label]) => <Link key={id} href={`/admin/products/${slug}?section=${id}`} aria-current={section === id ? "page" : undefined}>{label}</Link>)}</nav>
+    {section === "overview" && <><div className="grid split"><PrototypePanel title="프로젝트 정보" actions={<ForceRefreshForm slug={slug} />}><PrototypeFacts rows={[["현재 소개",product.tagline || "아직 소개 없음"],["카테고리",categoryLabel(product.category)],["공개 상태",<Code key="status" labels={PRODUCT_STATUS_LABELS} code={product.status} />],["소유권 확인",makers === null ? "확인 못함" : makers.some(row => !row.revokedAt) ? "현재 확인된 운영자 있음 · 노출과 별도" : "현재 확인된 운영자 없음"],["사이트",<a key="url" href={product.url} target="_blank" rel="noopener noreferrer">{product.url}</a>]]} /></PrototypePanel><PrototypePanel title="공개 카드 미리보기"><div className="project-preview"><div className="preview-window"><div className="flex"><span className="project-avatar">{product.name.slice(0,2)}</span><h3>{product.name}</h3></div><p className="small muted mt">{product.tagline || "소개가 등록되지 않았습니다."}</p><div className="flex mt"><PrototypeTag>{categoryLabel(product.category)}</PrototypeTag><PrototypeTag>{product.accessMode === "website" ? "웹 서비스" : "설치·실행형"}</PrototypeTag></div></div><p className="small muted mt-sm">현재 원본으로 구성한 카드 · 실제 노출은 공개 조건에 따릅니다.</p><a className="text-button" href={`/p/${slug}`} target="_blank" rel="noopener noreferrer">공개 화면 확인 ↗</a></div></PrototypePanel></div><div className="mt">{historyPanel}</div></>}
+    {section === "intro" && <div className="stack"><PrototypePanel title="현재 소개·출처와 언어별 상태"><div className="grid two"><div><div className="field"><label>현재 공개 소개</label><div className="evidence-box">{product.tagline || "비어 있음"}</div><p>소개 출처 {({maker:"메이커 입력",ai_page:"사이트 기반 AI 소개",ai_readme:"문서 기반 AI 소개",ai_both:"사이트·문서 기반 AI 소개",ai_fixed:"근거로 보완한 AI 소개",editor:"운영자 편집"})[product.taglineSource]}</p></div><details className="mt"><summary className="text-button">소개 편집</summary>{introNotes?.has(product.id) ? <PrototypeIntroForm slug={slug} tagline={product.tagline} /> : <div className="notice">현재 소개 편집 검토 대상이 아닙니다. 메이커의 원문 수정 권한과 운영자 소개 확인 처리는 구분합니다.</div>}</details></div><div><h4>언어별 후처리</h4>{translation === null ? <PrototypeEmpty>언어별 상태를 읽지 못했습니다.</PrototypeEmpty> : <ul className="list-rows">{translation.items.filter(row => row.slug === slug).map(row => <li key={`${row.locale}-${row.field}`}><div className="main"><b>{row.locale} · {row.field}</b><p>{row.sourceMatches ? "현재 원문과 일치" : "원문 변경됨"} · {formatDetailTime(row.updatedAt)}</p></div><PrototypeTag tone={row.status === "failed" ? "red" : row.status === "pending" ? "amber" : "green"}>{({pending:"대기",ready:"저장됨",reviewed:"검토값 저장됨",failed:"실패"})[row.status]}</PrototypeTag></li>)}{translation.items.filter(row => row.slug === slug).length === 0 && <li>저장된 언어별 수요가 없습니다.</li>}</ul>}</div></div><div className="decision-bar"><Link className="button" href={`/admin/translations?q=${encodeURIComponent(slug)}`}>원문·번역 대조 및 실패 재요청</Link></div></PrototypePanel></div>}
+    {section === "evidence" && <div className="stack">{sourcePanel}{refresh && <PrototypePanel title="근거 갱신 진행"><PrototypeFacts rows={[["요청 / 완료",`#${refresh.requestedVersion} / #${refresh.completedVersion}`],["처리한 출처",refresh.progress.completedKeys.length],["최근 완료",date(refresh.completedAt)],["다음 시도",date(refresh.nextAttemptAt)],["최근 오류",refresh.lastError ?? "없음"]]} /></PrototypePanel>}<PrototypePanel title="내부 미디어·빌드 출처"><div className="grid two"><div><h4>선언 / 복사본</h4><ul className="list-rows">{view.declarations.map(item => <li key={item.id}><div className="main"><b>선언 rev {item.revision}</b><p>{item.sourceUrl}</p></div></li>)}{view.media.map(item => <li key={item.id}><div className="main"><b>복사본 v{item.version} · {item.current ? "현재" : "이전"}</b><p>{item.sourceUrl}</p></div><PrototypeTag tone={item.visible ? "green" : "gray"}>{item.visible ? "표시" : "숨김"}</PrototypeTag></li>)}</ul></div><div><h4>에이전트 / 스킬</h4><ul className="list-rows">{view.agents.map(agent => <li key={agent.id}><div className="main"><b>{agent.provider}</b><p>{agent.roles.join(", ")} · {EVIDENCE_LABELS[agent.evidenceLevel]}</p></div></li>)}{view.skills.map(skill => <li key={skill.id}><div className="main"><b>{skill.namespace}/{skill.name}</b><p>{EVIDENCE_LABELS[skill.evidenceLevel]}</p></div></li>)}</ul></div></div>{view.conflicts.length > 0 && <div className="notice amber mt"><b>라이선스 충돌</b>{view.conflicts.map(c => <p key={c.field}>메이커 {c.makerValue} · 관측 {c.observedValue}</p>)}</div>}</PrototypePanel></div>}
+    {section === "maker" && <PrototypePanel title="운영자 확인·클레임">{makers === null ? <PrototypeEmpty>운영자 확인을 읽지 못했습니다.</PrototypeEmpty> : makers.length === 0 ? <PrototypeEmpty>현재 확인된 운영자 기록이 없습니다.</PrototypeEmpty> : <div className="table-scroll"><table><thead><tr><th>운영자</th><th>확인 방식</th><th>확인 / 재확인</th><th>상태</th></tr></thead><tbody>{makers.map(row => <tr key={row.userId}><td>{row.displayName}<p>{row.role === "owner" ? "운영자" : "편집자"}</p></td><td>{({ github_repo_owner:"GitHub 저장소 주인",github_repo_admin:"GitHub 저장소 관리자",repo_file:"저장소 확인 파일",edit_token:"수정 키",admin:"관리자 확인" })[row.method] ?? "확인 방식 상세"}</td><td>{date(row.verifiedAt)}<p>{date(row.recheckAt)}</p></td><td><PrototypeTag tone={row.revokedAt ? "gray" : "green"}>{row.revokedAt ? "해제됨" : "확인됨"}</PrototypeTag><p>{row.revokedReason}</p></td></tr>)}</tbody></table></div>}<div className="mt"><PrototypeClaimInvite slug={slug} inviteUrl={claimInviteUrl(product, siteOrigin())} invitedAt={product.claimInvitedAt ? date(product.claimInvitedAt) : null} /></div></PrototypePanel>}
+    {section === "quality" && <PrototypePanel title="이 프로젝트의 품질·검사"><PrototypeFacts rows={[["공개 상태",<Code key="status" labels={PRODUCT_STATUS_LABELS} code={product.status} />],["저장소 상태",prototypeRepositoryStatus(product.repoStatus)],["저장소 확인",date(product.repoCheckedAt)],["확인된 선언 충돌",view.conflicts.length],["검사 종류","AI 감사 / 공개분 2차 / 규칙 / 저장소·생존"]]} /><div className="decision-bar"><Link className="button" href={`/admin/audit?q=${encodeURIComponent(slug)}`}>감사 근거·유지·내림 결정</Link><Link className="button" href="/admin/products?tab=quality">전체 품질 큐</Link><Link className="button" href="/admin/products/recheck">규칙 재검수</Link></div></PrototypePanel>}
+    {section === "requests" && <PrototypePanel title="연결된 사용자 요청">{requestData === null ? <PrototypeEmpty>요청 기록을 읽지 못했습니다.</PrototypeEmpty> : <div className="table-scroll"><table><thead><tr><th>요청</th><th>원본 상태</th><th>접수</th><th>처리 장소</th></tr></thead><tbody>{requestData[0].map((row,i) => <tr key={`down-${i}`}><td>내림 요청<p>{row.reason}</p></td><td>{row.handled ? row.outcome ?? "처리됨" : "처리 대기"}</td><td>{date(row.at)}</td><td><Link className="button small" href="/admin/requests?tab=correction">요청함에서 처리</Link></td></tr>)}{requestData[1].map((row,i) => <tr key={`intro-${i}`}><td>소개 수정 요청</td><td>{row.handled ? "처리됨" : "처리 대기"}</td><td>{date(row.at)}</td><td><Link className="button small" href="/admin/requests?tab=correction">요청함에서 처리</Link></td></tr>)}</tbody></table>{requestData[0].length + requestData[1].length === 0 && <PrototypeEmpty>연결된 내림·소개 수정 요청 기록이 없습니다.</PrototypeEmpty>}</div>}</PrototypePanel>}
+    {section === "updates" && <PrototypePanel title="업데이트"><div className="table-scroll"><table><thead><tr><th>출처</th><th>업데이트</th><th>노출</th><th>관리</th></tr></thead><tbody>{view.updates.map(update => <tr key={update.id}><td><Code labels={UPDATE_SOURCE_LABELS} code={update.sourceKind} /></td><td>{update.title}</td><td><PrototypeTag tone={update.visible ? "green" : "gray"}>{update.visible ? "표시" : "숨김"}</PrototypeTag></td><td>{update.sourceKind === "maker" ? "메이커 API 관리" : <UpdateVisibilityForm slug={slug} updateId={update.id} visible={update.visible} />}</td></tr>)}</tbody></table>{view.updates.length === 0 && <PrototypeEmpty>등록된 업데이트가 없습니다.</PrototypeEmpty>}</div></PrototypePanel>}
+    {section === "history" && <div className="stack">{historyPanel}<PrototypePanel title="근거 감사 기록"><ul className="timeline">{view.audits.map(audit => <li key={audit.id}><time>{date(audit.createdAt)}</time><div><b><Code labels={EVIDENCE_AUDIT_LABELS} code={audit.action} /></b><p>{audit.actor} · {audit.reason ?? "사유 없음"}</p></div></li>)}</ul></PrototypePanel></div>}
+  </main>;
 }

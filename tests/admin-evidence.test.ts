@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   revalidatePath: vi.fn(),
   saveEvidenceSettingsValue: vi.fn(),
   setAutomaticUpdateVisibility: vi.fn(),
+  findProduct: vi.fn(),
 }));
 
 vi.mock("@/lib/operations/dr/epoch", async original => ({ ...await original<typeof import("@/lib/operations/dr/epoch")>(), readWriterFence: async () => ({ state: "active" }) })); // PR15e: 웹 쓰기 관문은 dr-web-fence 테스트가 본다(이 fixture 의 요청 흐름 불변)
@@ -20,6 +21,9 @@ vi.mock("next/navigation", () => ({
   redirect: mocks.redirect,
 }));
 vi.mock("@/lib/auth/admin", () => ({ currentAdmin: mocks.currentAdmin }));
+vi.mock("@/lib/domain/products/repository", async original => ({ ...await original<typeof import("@/lib/domain/products/repository")>(), findBySlug: mocks.findProduct }));
+vi.mock("@/lib/domain/products/history", () => ({ productHistory: async () => [] }));
+vi.mock("@/app/(operator)/admin/products/[slug]/MakerMembers", () => ({ makerMembersOf: async () => [] }));
 vi.mock("@/lib/domain/evidence/settings-store", () => ({
   currentEvidenceSettings: mocks.currentEvidenceSettings,
 }));
@@ -154,9 +158,11 @@ describe("evidence administrator product page", () => {
       audits: [{ id: 1, actor: "maker:1", action: "maker.profile.save", reason: null, createdAt: new Date("2026-08-20T00:00:00Z") }],
     });
 
-    const html = renderToStaticMarkup(await AdminEvidenceProductPage({
-      params: Promise.resolve({ slug: "alpha" }),
-    }));
+    mocks.getProductRefreshRequest.mockResolvedValue(null);
+    mocks.findProduct.mockResolvedValue({ id: 1, slug: "alpha", name: "Alpha", url: "https://alpha.example", status: "verified", source: "crawler", category: "Dev", tagline: "Alpha actual introduction", taglineSource: "editor", accessMode: "website", repoStatus: "ok", repoCheckedAt: null, claimedAt: null, claimInvitedAt: null });
+    const html = (await Promise.all(["evidence", "updates", "history"].map(async section => renderToStaticMarkup(await AdminEvidenceProductPage({
+      params: Promise.resolve({ slug: "alpha" }), searchParams: Promise.resolve({ section }),
+    }))))).join("");
 
     for (const text of ["Apache-2.0", "MIT", "bidirectional", "timeout", "v1.0", "OpenAI", "openai/review", "maker.profile.save"]) {
       expect(html).toContain(text);
