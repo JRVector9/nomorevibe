@@ -123,14 +123,17 @@ async function seed() {
   await admin`UPDATE products SET access_mode='installable' WHERE access_mode='website'`;
   await admin`UPDATE job_batch_control SET mode='versioned',draining_from=NULL,writer_contract_version=1,policy=${admin.json(policy)},policy_hash=${batchPolicyHash(policy)} WHERE id=1`;
   await admin`UPDATE http_origin_control SET mode='open',policy=${admin.json(httpPolicy)},policy_hash=${httpOriginPolicyHash(httpPolicy)} WHERE id=1`;
+  // This fixture checks DB principals, not text dispatch. Pin capacity off so the job path deterministically defers
+  // instead of depending on the shared test DB's previous capacity mode.
+  await admin`UPDATE model_capacity_control SET mode='disabled',policy=NULL,policy_hash=NULL WHERE id=1`;
   await admin`UPDATE uptime_control SET observations_enabled=true,gate_enabled=false,sources=${admin.json([{ host: 'oracle-osaka-smoke', instanceId: instance('product-health'), region: 'ap-osaka-1' }])} WHERE id=1`;
   await admin`UPDATE evidence_source_control SET enabled=true WHERE id=1`;
   await admin`INSERT INTO evidence_settings(id,values) VALUES(1,'{}') ON CONFLICT(id) DO NOTHING`;
   // The abcLLM gateway was removed on 2026-10-30, and since PR B (2026-11-02) a text route calls only the ranks saved in
   // 작업 ↔ 모델 (ai_task_models JOIN ai_connections), each bound to the admin engine contract (transport direct, no key) whose endpoint is
   // that connection's address — the translation principal reads all three tables (least-privilege GRANTs). FIXTURE rows: one loopback
-  // connection and one rank per route; with capacity disabled the jobs take the original leaf, which no longer sends (no native call is
-  // prepared), and the principal writes the provider-side no_key failures.
+  // connection and one rank per route; capacity is disabled in this fixture, and the current code defers before any write instead of
+  // falling back to the retired no_key leaf.
   const connectionId = randomUUID(), connectionBase = `${base}/v1`;
   await admin`INSERT INTO ai_connections(id,label,kind,base_url,device_id,updated_by) VALUES(${connectionId},${`${prefix}-engine`},'api',${connectionBase},${`${prefix}-device`},${prefix})`;
   for (const routeId of ['reason-translate', 'product-tagline-ko', 'product-translate'] as const) {
@@ -224,7 +227,13 @@ it.each(ROLES)('runs the actual %s role path with only its least-privilege princ
   if ('error' in output) throw new Error(`driver_failed:${JSON.stringify(output)}`);
   expect(code).toBe(0);
   expect(output.principal).toBe(ORACLE_DB_PRINCIPALS[role]);
-  for (const job of JOBS[role]) expect((output.runs as Record<string, { status: string }>)[job].status).toBe('completed');
+  // Translation runs with capacity off: the job may end completed(degraded) or deferred by tick shape, but never writes
+  // the retired no_key rows. The other roles complete. Both prove the principal can enter the path.
+  for (const job of JOBS[role]) {
+    const status = (output.runs as Record<string, { status: string }>)[job].status;
+    if (role === 'translation') expect(['completed', 'deferred']).toContain(status);
+    else expect(status).toBe('completed');
+  }
   expect(output.renewed).toBe(true); expect(output.released).toBe(true);
   const preflight = output.preflight as { checks: Record<string, { status: string; reason: string }> };
   expect(preflight.checks.database).toMatchObject({ status: 'verified', reason: 'approved_privilege_profile_matches' });
@@ -235,7 +244,8 @@ it.each(ROLES)('runs the actual %s role path with only its least-privilege princ
     'official-news': admin`SELECT count(*)::int AS n FROM news_items WHERE url=${`https://openai.com/index/${prefix}`}`,
     'product-health': admin`SELECT count(*)::int AS n FROM uptime_observations WHERE instance_id=${instance(role)} AND status=200 AND disposition='raw_only'`,
     'site-evidence': admin`SELECT count(*)::int AS n FROM product_evidence_sources WHERE slug=${`${prefix}-site`} AND state='ok'`,
-    // The gateway is gone: each text job's write is its provider-side no_key failure (nothing was sent anywhere).
+    // Capacity is off: these translation routes still record their provider-side no_key failures (the changed text
+    // routes may defer before writing). No gateway POST is made either way.
     translation: admin`SELECT ((SELECT count(*) FROM text_translations t JOIN second_reviews s ON t.source_hash=encode(sha256(convert_to(s.second_reason,'UTF8')),'hex')
       WHERE s.candidate_id=${ids.candidate} AND t.status='failed' AND t.error_code='no_key')
       + (SELECT count(*) FROM product_korean_taglines WHERE product_id=${ids.health} AND error_code='no_key')
