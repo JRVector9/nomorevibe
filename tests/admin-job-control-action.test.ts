@@ -56,7 +56,7 @@ describe('administrator job control action authorization', () => {
     const request = input({ actor: 'forged' });
     expect(await (await action())(request)).toMatchObject({ message: expect.stringContaining('실행 중인 작업은 끝까지') });
     expect(mocks.control).toHaveBeenCalledExactlyOnceWith(request, ADMIN.login);
-    expect(mocks.revalidate.mock.calls).toEqual([['/admin/status'], ['/admin/activity']]);
+    expect(mocks.revalidate.mock.calls).toEqual([['/admin/status'], ['/admin/activity'], ['/admin/flow']]);
   });
 
   it.each([

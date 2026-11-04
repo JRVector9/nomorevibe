@@ -24,5 +24,7 @@ export const controlJobAction = webWriteAction(async function controlJobAction(i
   }
   revalidatePath('/admin/status');
   revalidatePath('/admin/activity');
+  // 전체 흐름의 장애 대응 칸도 같은 폼으로 멈추고 재개한다
+  revalidatePath('/admin/flow');
   return { message: input.pause ? '다음 실행부터 멈춥니다. 실행 중인 작업은 끝까지 처리합니다.' : '작업을 재개했습니다. 기존 요청·예약·재시도 대기를 따릅니다.' };
 });
