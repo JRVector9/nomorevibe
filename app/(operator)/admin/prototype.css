@@ -2655,3 +2655,13 @@ html:not([data-admin-theme="light"]) .admin-prototype .callout p {
 .admin-prototype[data-admin-detail=product] .project-hero h1 { font-size:28px; font-weight:750; }
 @media(max-width:850px) { .admin-prototype[data-admin-detail=product] .project-hero h1 { font-size:25px; } }
 @media(max-width:500px) { .admin-prototype[data-admin-detail=product] .project-hero h1 { font-size:24px; } }
+
+/* Quality modes navigate to real server views through links with the reference button appearance. */
+.admin-prototype .segmented>a,.admin-prototype .segmented a {
+  background: transparent;
+  padding: 5px 10px;
+  color: var(--muted);
+  font-size: 10px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
