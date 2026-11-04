@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { FlowBoard } from "@/app/(operator)/admin/flow/FlowBoard";
+import { FlowBoard, PublicTranslations, StationRuntime, type FlowControls } from "@/app/(operator)/admin/flow/FlowBoard";
 import { TodoPanel, todoRows } from "@/app/(operator)/admin/flow/OperatorDesk";
 import { refreshPolicy } from "@/app/(operator)/admin/live-refresh";
 import { buildConveyor, holdHref, type ConveyorInputs } from "@/lib/operations/conveyor-model";
@@ -138,7 +138,7 @@ describe("conveyor model", () => {
   it("puts each throughput figure on its own line so narrow cards wrap instead of clipping (2026-11-02 「24시간 6,99…」)", () => {
     const conveyor = buildConveyor(inputs({ hourly: hourly({ firstReviews: 291 }) }));
     const html = renderToStaticMarkup(<FlowBoard data={conveyor} />);
-    expect(html).toContain('<span class="cv-rate"><span>1시간 <b>291</b></span><span>24시간 <b>6,984</b>건</span></span>');
+    expect(html).toContain('<span class="cv-rate"><span>5분 <b>5</b>건</span><span>1시간 <b>291</b>건</span><span>24시간 <b>6,984</b>건</span></span>');
     const css = readFileSync(path.resolve(__dirname, "../app/(operator)/admin/flow/flow.css"), "utf8");
     expect(css).not.toMatch(/\.cv-rate>span\{white-space:nowrap\}/);
     expect(css).toContain(".cv-rate{display:flex;flex-direction:column");
@@ -179,7 +179,8 @@ describe("flow board", () => {
     expect(html).toContain('id="cv-detail-title"><small>검수</small>AI 2차');
     expect(html).toContain("3,701");
     expect(html).toContain('href="/admin/models/tasks"');
-    expect(html).toContain("<summary>통과 수·보류 사유·표로 보기</summary>");
+    expect(html).toContain("<summary>24시간 통과 수·보류 사유 더 보기</summary>");
+    expect(html.indexOf('id="cv-stage-table-title"')).toBeLessThan(html.indexOf('<details class="cv-more">'));
     // 장애 대응은 자세히 옆에 같이 열린다 — 2차는 모델 순위 화면으로, 보류 묶음 재개는 화면 조치 없음으로 정직하게
     expect(html).toContain('id="rs-title">장애 대응</h3>');
     expect(html).toContain("2차 모델을 1차와 다른 모델로");
@@ -193,9 +194,59 @@ describe("flow board", () => {
     const page = readFileSync(path.resolve(__dirname, "../app/(operator)/admin/flow/page.tsx"), "utf8");
     expect(page).toContain("<PageStamp />");
     expect(page).toContain('redirect("/admin/login")');
-    expect(page).toMatch(/<h1[^>]*>전체 흐름<\/h1>/);
+    expect(page).toContain('<h1 className="admin-vh">운영 홈 · 실시간 전체 흐름</h1>');
+    expect(page).not.toContain("발행 전 과정의 흐름·처리량");
     expect(page).not.toMatch(/use server|action=/);
     expect(refreshPolicy("/admin/flow")).toEqual({ intervalMs: 15_000, idleMs: 0 });
+  });
+
+  it("ends the candidate belt at publication and branches search and translation after the public sink", () => {
+    const html = renderToStaticMarkup(<FlowBoard data={buildConveyor(inputs())} />);
+    const mainBelt = html.slice(html.indexOf('<ol class="cv-board">'), html.indexOf('</ol>'));
+    expect(mainBelt).toContain('data-key="publish"');
+    expect(mainBelt).toContain('data-key="sink"');
+    expect(mainBelt).not.toContain('data-key="keywords"');
+    expect(html.indexOf('data-key="sink"')).toBeLessThan(html.indexOf('aria-label="공개 후 검색·번역 분기"'));
+    expect(html).toContain('class="cv-post-keywords" data-key="keywords"');
+    expect(html).toContain("후보 대기·2차 표·후처리 수를 합산하지 않습니다.");
+    expect(html).toContain('href="/admin/status?tab=jobs&amp;job=product-translate"');
+  });
+
+  it("keeps job locks, paused admission, AI2 ownership and model calls as distinct observations", () => {
+    const conveyor = { ...buildConveyor(inputs()), bottleneck: "second" as const };
+    const controls: FlowControls = { measuredAt: NOW, csrf: null, jobs: { "second-review": {
+      paused: true, notBefore: "2100-01-01T00:00:00.000Z", version: 3, lastSuccessAt: NOW, lastError: false,
+      lastRunAt: NOW, workerSeenAt: NOW, execution: "locked", runtimeLabel: "멈춤(사람이 중단)",
+    } } };
+    const html = renderToStaticMarkup(<FlowBoard data={conveyor} controls={controls} desk={desk()} />);
+    expect(html).toContain("실행 잡 1개 · 소비자 별도");
+    expect(html).toContain("잡 일시 중지");
+    expect(html).toContain("second-review: 실행 중(잠금 관측)");
+    expect(html).toContain("mini · 예비가 일함");
+    expect(html).toContain("AI2 소비자 실행 장비와 별도");
+    expect(html).toContain("이 집계에서는 확인하지 않음");
+    expect(html).toContain('href="/admin/models"');
+    const stale: FlowControls = { ...controls, jobs: { "second-review": { ...controls.jobs["second-review"], execution: "stale" } } };
+    const staleHtml = renderToStaticMarkup(<FlowBoard data={conveyor} controls={stale} />);
+    expect(staleHtml).toContain("실행 잡 미확인 · 잠금 오래됨 · 소비자 별도");
+    expect(staleHtml).not.toContain("실행 잡 0개");
+    const missing = renderToStaticMarkup(<StationRuntime station={conveyor.stations.find((row) => row.key === "second")!} controls={{ jobs: {}, csrf: null }} desk={null} />);
+    expect(missing).toContain("잡 상태 일부 미확인");
+    expect(missing).toContain("역할 관측을 읽지 못함");
+    expect(missing).not.toMatch(/NaN|undefined/);
+  });
+
+  it("preserves unknown holds and post-public translation metrics without claiming zero or saved-language completion", () => {
+    const html = renderToStaticMarkup(<FlowBoard data={buildConveyor(inputs({ throughput: null, flow: null, hourly: null,
+      human: null, progress: null, search: null, holds: null, rejected: null, classification: null, sources: [] }))} />);
+    expect(html).toContain("보류 집계를 읽지 못했습니다 — 0건이 아닙니다.");
+    expect(html).not.toContain("보류가 없습니다.");
+    expect(html).toContain('class="cv-big"><b>—</b><small>대기 건');
+    const translation = renderToStaticMarkup(<PublicTranslations controls={{ jobs: {}, csrf: null }} />);
+    expect(translation).toContain("잡 관측 미확인");
+    expect(translation).toContain("최근 잡 성공 확인 못함");
+    expect(translation).toContain("번역 대기·언어별 저장 완료는 이 흐름에서 집계하지 않습니다.");
+    expect(translation).not.toContain("0건");
   });
 });
 

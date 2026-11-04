@@ -88,6 +88,8 @@ export type Conveyor = {
   holdsByReason: (HoldChip & { station: StationKey | "human" })[];
   /** 끝 칸(공개)의 모델 답 — LLM 없음 */
   sinkLlm: StationLlm | null;
+  /** 공개 후 제품 번역·소개 검수와 검수 사유 번역. 공개 전 프로필 준비의 병목으로 합치지 않는다. */
+  supportLlm?: StationLlm | null;
 };
 
 export type ConveyorInputs = {
@@ -108,7 +110,7 @@ export type ConveyorInputs = {
   /** 탐색 소스 잡 */
   sources: { job: string; label: string; lastSuccessAt: string | null; paused: boolean; failing: boolean }[];
   /** 칸마다 지금 쓰는 모델(buildStationLlm). 없으면(읽지 못함) 모델 칸은 「확인 못함」 */
-  models?: Record<LlmStationKey | "sink", StationLlm> | null;
+  models?: (Record<LlmStationKey | "sink", StationLlm> & { support?: StationLlm }) | null;
 };
 
 /** 보류 사유 → 그 사유를 만든 칸. 표에 없는 사유는 사람 심사 칸(규칙·근거로 못 가른 것)으로 센다 */
@@ -436,5 +438,6 @@ export function buildConveyor(inputs: ConveyorInputs): Conveyor {
   return {
     measuredAt: inputs.now, hours: inputs.hourly?.points.length ? inputs.hourly.points.map((point) => point.hour) : null, stations, human, held, rejected: inputs.rejected, published, publishedHour,
     bottleneck, headline: headlineFor(stations, human, bottleneck, publishedHour), funnel, holdsByReason, sinkLlm: models?.sink ?? null,
+    supportLlm: models?.support ?? null,
   };
 }
