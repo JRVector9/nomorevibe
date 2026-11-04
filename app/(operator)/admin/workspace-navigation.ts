@@ -15,7 +15,7 @@ export const WORKSPACES: readonly Workspace[] = [
     { id: "changes", label: "할 일·변경 기록", href: "/admin/flow?tab=changes" },
   ] },
   { id: "review", label: "검수 및 발행", href: "/admin/review", icon: "check", tabs: [
-    { id: "human", label: "사람 확인", href: "/admin/review?tab=human&stage=human" },
+    { id: "human", label: "사람 확인", href: "/admin/review?tab=human" },
     { id: "all", label: "전체 단계", href: "/admin/review?tab=all" },
     { id: "publish", label: "발행 대기", href: "/admin/review?tab=publish&stage=publish" },
     { id: "rejected", label: "반려 기록", href: "/admin/review?tab=rejected&stage=rejected" },

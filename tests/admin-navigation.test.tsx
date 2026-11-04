@@ -213,3 +213,9 @@ describe('approved prototype workspace tabs', () => {
     expectActiveLink(html, `${pathname}?tab=${tab}`);
   });
 });
+
+it('keeps agreed and direct decisions together in the canonical human tab', () => {
+  const review = WORKSPACES.find(workspace => workspace.id === 'review')!;
+  expect(review.tabs.find(tab => tab.id === 'human')?.href).toBe('/admin/review?tab=human');
+  expect(resolveWorkspace('/admin/review', query('stage=human')).tab).toBe('human');
+});
