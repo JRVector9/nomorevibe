@@ -17,8 +17,9 @@ import { siteOrigin } from "@/lib/site";
 import { ScrollTable } from "../components/ScrollTable";
 import { ProductRow } from "./ProductRow";
 import { repoReviewView } from "./repo-review-view";
-import { pageWindow } from "../paging";
 import { PRODUCT_FILTERS, PRODUCT_SORTS, type ProductAdminSort, type ProductFilterName } from "./filters";
+import { PrototypePanel, PrototypeStat, PrototypeTag, n, prototypeRepositoryStatus } from "./PrototypeParts";
+import { PrototypeQualityWorkspace, PrototypeTranslationsWorkspace } from "./PrototypeProductWorkspaces";
 import { PageStamp } from "@/app/(operator)/admin/components/PageStamp";
 
 export const dynamic = "force-dynamic";
@@ -33,7 +34,7 @@ const PAGE_SIZE = 25;
  */
 const allFilterCounts = createMemo<Record<ProductFilterName, number>>({ ttlMs: 60_000, max: 1 });
 
-type Props = { searchParams: Promise<{ filter?: string; page?: string; q?: string; sort?: string; pending?: string }> };
+type Props = { searchParams: Promise<{ filter?: string; page?: string; q?: string; sort?: string; pending?: string; tab?: string }> };
 
 /** "오늘 13시"·"내일 9시"·"10/12 9시" — 한국 시각 */
 function dayHour(at: Date, now: Date): string {
@@ -47,7 +48,10 @@ export default async function AdminProductsPage({ searchParams }: Props) {
   const admin = await currentAdmin();
   if (!admin) redirect("/admin/login");
 
-  const { filter, page: rawPage, q: rawQuery, sort: rawSort, pending: rawPending } = await searchParams;
+  const params = await searchParams;
+  if (params.tab === "quality") return <PrototypeQualityWorkspace />;
+  if (params.tab === "translations") return <PrototypeTranslationsWorkspace admin={admin} query={typeof params.q === "string" ? params.q : ""} />;
+  const { filter, page: rawPage, q: rawQuery, sort: rawSort, pending: rawPending } = params;
   // 목록·등록 시각의 '지금' — 서버가 읽은 시각 하나로 그린다
   const now = new Date();
   // `in`은 프로토타입 키까지 통과시킨다 — ?filter=constructor 하나로 500이 났다
@@ -111,143 +115,31 @@ export default async function AdminProductsPage({ searchParams }: Props) {
   const origin = siteOrigin();
   const publicOriginMissing = !isPublicOrigin(origin);
 
-  return (
-    <main className="flex flex-col gap-2.5 pb-10 pt-6"><PageStamp />
-      <div className="flex flex-wrap items-baseline gap-3">
-        <h1 className="text-[22px] font-extrabold tracking-tight">제품</h1>
-        <span className="text-[13px] text-fg-3">
-          {products.length
-            ? `${total.toLocaleString("ko-KR")}건 중 ${((page - 1) * PAGE_SIZE + 1).toLocaleString("ko-KR")}–${((page - 1) * PAGE_SIZE + products.length).toLocaleString("ko-KR")}`
-            : `${total.toLocaleString("ko-KR")}건`}
-          {pages > 1 && ` · ${page}/${pages} 쪽`}
-        </span>
-        <a href={exportHref} className="ml-auto text-[13px] font-semibold text-accent hover:underline">CSV 내보내기</a>
-      </div>
-
-      <p className="text-[13px] leading-[1.6] text-fg-3">
-        ⋯ 메뉴: <b className="font-semibold text-fg-2">차단</b>(사유를 고른다 · 행은 남아 같은 URL의 재등록·재수집을 막음) ·{" "}
-        <b className="font-semibold text-fg-2">클레임 초대</b>(레포에 미리 채운 이슈를 직접 제출한 뒤 표시) ·{" "}
-        <b className="font-semibold text-fg-2">근거·업데이트 관리</b>. 기준을 고친 뒤에는{" "}
-        <Link href="/admin/products/recheck" className="font-semibold text-accent">발행분 재검수</Link>로 이미 올라간 것에도 지금 기준을 태웁니다.
-      </p>
-
-      {/* 찾기 — 지금 거르기를 지키고 첫 쪽부터. 신고·메일로 이름만 들었을 때 목록에서 바로 찾는다(2026-10-08 감사 ADM-05) */}
-      <Form action="/admin/products" className="flex flex-wrap items-center gap-2 text-[13px]">
-        {active !== "전체" && <input type="hidden" name="filter" value={active} />}
-        <label className="flex min-w-0 flex-1 basis-[260px] items-center gap-2">
-          <span className="shrink-0 font-semibold text-fg-2">찾기</span>
-          <input type="search" name="q" defaultValue={q} maxLength={100} placeholder="이름 · 주소(slug) · URL · 저장소"
-            className="min-w-0 flex-1 rounded-lg border border-line bg-bg-card px-2.5 py-1.5 text-[13px] text-fg focus:outline-2 focus:outline-accent" />
-        </label>
-        <label className="flex items-center gap-2">
-          <span className="font-semibold text-fg-2">정렬</span>
-          <select name="sort" defaultValue={sort} className="rounded-lg border border-line bg-bg-card px-2 py-1.5 text-[13px] text-fg">
-            {Object.entries(PRODUCT_SORTS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-          </select>
-        </label>
-        <button type="submit" className="rounded-lg border border-accent bg-accent px-3 py-1.5 font-semibold text-white">찾기</button>
-        {(q || sort !== "recent") && <Link href={active === "전체" ? "/admin/products" : `/admin/products?filter=${encodeURIComponent(active)}`}
-          className="px-1 py-1.5 text-fg-2 underline">지우기</Link>}
-      </Form>
-
-      <nav className="flex flex-wrap gap-1.5" aria-label="제품 거르기">
-        {(Object.keys(PRODUCT_FILTERS) as ProductFilterName[]).map((name) => (
-          <Link
-            key={name}
-            href={href(1, name)}
-            aria-current={name === active ? "page" : undefined}
-            className={`rounded-full border px-2.5 py-1 text-[13px] ${
-              name === active ? "border-accent bg-accent-soft font-semibold text-accent"
-                : counts?.[name] === 0 ? "border-line bg-bg-card text-fg-3 hover:bg-bg-hover" : "border-line bg-bg-card text-fg-2 hover:bg-bg-hover"
-            }`}
-          >
-            {name}{counts && <> <span className="font-mono">{counts[name].toLocaleString("ko-KR")}</span></>}
-          </Link>
-        ))}
-      </nav>
-
-      {pending && (
-        <p className="text-[13px] text-fg-3">
-          24시간이 지나지 않은 &lsquo;지금 없음&rsquo;까지 보는 중입니다 — 하루 확인에서 다시 있으면 저절로 빠집니다.{" "}
-          <Link href={href(1)} className="font-semibold text-accent">확정된 것만 보기</Link>
-        </p>
-      )}
-      {waiting && waiting.count > 0 && products.length > 0 && (
-        <p className="text-[13px] text-fg-3">
-          이 밖에 아직 24시간이 지나지 않은 &lsquo;지금 없음&rsquo; {waiting.count.toLocaleString("ko-KR")}건 —{" "}
-          <Link href={pendingHref} className="font-semibold text-accent">함께 보기</Link>
-        </p>
-      )}
-
-      {products.length === 0 ? (
-        <div className="rounded-[12px] border border-line bg-bg-card px-5 py-8 text-center text-[13px] text-fg-3">
-          <p>{q ? `"${q}"에 해당하는 제품이 없습니다.` : "해당하는 제품이 없습니다."}</p>
-          {/* 저장소 사라짐은 하루 넘게 이어진 것만 든다 — 운영센터의 '없음'과 수가 다른 까닭을 말한다(ADM-33) */}
-          {repoGone && !pending && <p className="mt-2 leading-[1.6]">저장소가 없거나 빈 채로 <b className="font-semibold text-fg-2">24시간 넘게</b> 이어진 공개 제품만 여기 나타납니다.</p>}
-          {waiting && waiting.count > 0 && (
-            <p className="mt-1 leading-[1.6]">
-              지금 없음 {waiting.count.toLocaleString("ko-KR")}건은 아직 24시간이 지나지 않았습니다
-              {waiting.firstAt && ` — ${waiting.firstAt > now ? `${dayHour(waiting.firstAt, now)}부터` : "다음 하루 확인부터"} 여기에 나타납니다`}.{" "}
-              <Link href={pendingHref} className="font-semibold text-accent">지금 보기</Link>
-            </p>
-          )}
-        </div>
-      ) : (
-        <div className="rounded-[12px] border border-line bg-bg-card">
-        <ScrollTable label="제품 목록">
-        <table className="w-full min-w-[720px] table-fixed text-[13px] tabular-nums">
-          <colgroup><col /><col className="w-[84px]" /><col className="w-[200px]" /><col className="w-[136px]" /><col className="w-12" /></colgroup>
-          <thead className="bg-bg-soft text-left text-fg-3">
-            <tr><th className="px-3 py-2 font-semibold">제품 · 주소</th><th className="px-2 py-2 font-semibold">상태</th>
-              <th className="px-2 py-2 font-semibold">들어온 길</th><th className="px-2 py-2 text-right font-semibold">등록</th>{/* relative — sr-only(absolute)가 스크롤 상자 밖 문서 폭을 늘리지 않게 */}<th className="relative w-12 px-2 py-2"><span className="sr-only">관리</span></th></tr>
-          </thead>
-          <tbody>
-          {products.map((product, index) => (
-            <ProductRow
-              key={product.slug}
-              // 위로 열 자리(줄 셋)가 없으면 아래로 — 스크롤 상자 위로 넘친 메뉴는 닿을 수 없지만 아래로 넘친 것은 상자를 내려 닿는다
-              dropUp={index >= 3 && index >= products.length - 6}
-              product={{
-                slug: product.slug,
-                name: product.name,
-                url: product.url,
-                status: product.status,
-                source: product.source,
-                unclaimed: isUnclaimed(product),
-                listedAt: formatListTime(product.verifiedAt ?? product.createdAt, now),
-                inviteUrl: claimInviteUrl(product, origin),
-                publicOriginMissing,
-                invitedAt: time(product.claimInvitedAt),
-                repoGone: repoGone || repoAutoBanned ? [
-                  repoAutoBanned && "저장소 소실로 자동 차단 · 잘못 내렸으면 차단 해제",
-                  repoAutoBanned ? "공개 목록 차단 중" : product.accessMode === "website" ? "웹 · GitHub 표시만 뺌" : "설치형 · 목록에서 가려짐",
-                  product.repoMissingSince && `${time(product.repoMissingSince)}부터 ${product.repoStatus === "empty" ? "빈 저장소" : "없음"}`,
-                  pending && !confirmedGone(product) && "24시간 확인 대기 — 아직 공개 화면은 그대로",
-                ].filter(Boolean).join(" · ") : null,
-                ...(reviews ? { repoReview: reviews.has(product.id) ? repoReviewView(reviews.get(product.id)!, now) : null } : {}),
-                repoNote: repoArchived ? `보관됨 · 마지막 push ${time(product.repoPushedAt) ?? "모름"}`
-                  : repoRenamed ? `이름 바뀜 → ${product.repoRenamedTo} (repo_url 은 옛 이름 그대로)`
-                  : nameNote(product.slug),
-                ...(introNotes ? { intro: { tagline: product.tagline, problem: introNotes.get(product.id)?.problem ?? "" } } : {}),
-              }}
-            />
-          ))}
-          </tbody>
-        </table>
-        </ScrollTable>
-        </div>
-      )}
-
-      {pages > 1 && (
-        <nav aria-label="제품 목록 쪽 이동" className="flex flex-wrap items-center gap-1 text-[13px]">
-          {page > 1 && <Link href={href(page - 1)} className="rounded-lg border border-line px-2.5 py-1">이전</Link>}
-          {pageWindow(page, pages).map((item, i) => item === null
-            ? <span key={`gap-${i}`} className="px-1 text-fg-3">…</span>
-            : <Link key={item} href={href(item)} aria-current={item === page ? "page" : undefined}
-                className={`min-w-8 rounded-lg border px-2.5 py-1 text-center font-mono ${item === page ? "border-accent bg-accent text-white" : "border-line text-fg-2"}`}>{item}</Link>)}
-          {page < pages && <Link href={href(page + 1)} className="rounded-lg border border-line px-2.5 py-1">다음</Link>}
-        </nav>
-      )}
-    </main>
-  );
+  return <main><PageStamp />
+    <div className="page-heading"><div className="heading-actions"><a className="button small" href={exportHref}>CSV 내보내기</a></div></div>
+    <div className="grid four mb">
+      <PrototypeStat label="등록 프로젝트" value={n(counts?.전체)} note={q ? "현재 검색어의 전체 상태" : "검증·미클레임·검증 대기·차단 포함"} />
+      <PrototypeStat label="공개 대상 상태" value={counts ? n(counts.검증됨 + counts.미클레임) : "—"} note="실제 노출은 생존·보류 조건도 적용" tone="good" />
+      <PrototypeStat label="생존 확인 필요" value={n(counts?.["응답 없음"])} note="공개 대상 중 연속 응답 실패" tone="warn" />
+      <PrototypeStat label="소개 확인 필요" value={n(counts?.["소개 확인 필요"])} note="현재 소개의 편집 보류" />
+    </div>
+    <Form action="/admin/products" className="toolbar">
+      <input type="search" name="q" className="search-input" defaultValue={q} maxLength={100} placeholder="프로젝트명·주소 검색" aria-label="프로젝트 검색" />
+      <select name="filter" defaultValue={active} aria-label="프로젝트 필터">{(Object.keys(PRODUCT_FILTERS) as ProductFilterName[]).map(name => <option key={name} value={name}>{name}{counts ? ` (${n(counts[name])})` : ""}</option>)}</select>
+      <select name="sort" defaultValue={sort} aria-label="프로젝트 정렬">{Object.entries(PRODUCT_SORTS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>
+      <button className="button small" type="submit">조회</button><span className="small muted spacer">{n(total)}개 · {page}/{pages}쪽</span>
+    </Form>
+    <section className="panel"><div className="table-scroll"><table style={{ minWidth: 920 }}><thead><tr><th>프로젝트</th><th>공개 상태 / 원본</th><th>메이커 확인</th><th>품질·후처리</th><th>최근 관측</th><th>관리</th></tr></thead><tbody>
+      {products.map(product => <tr key={product.slug}><td><div className="flex"><span className="project-avatar">{product.name.slice(0,2)}</span><div><Link className="name" href={`/admin/products/${product.slug}`}>{product.name}</Link><p>{product.source === "crawler" ? "자동 수집" : "직접 등록"} · /{product.slug}</p></div></div></td>
+        <td><PrototypeTag tone={product.status === "banned" ? "gray" : product.status === "unverified" ? "amber" : "green"}>{({ verified: "검증됨", seeded: "미클레임", unverified: "검증 대기", banned: "차단" })[product.status]}</PrototypeTag><p>{product.source === "crawler" ? "자동 수집 원본" : "직접 등록 원본"}</p></td>
+        <td>{product.claimedAt ? "클레임됨" : isUnclaimed(product) ? "미클레임" : "미확인"}<p><Link href={`/admin/products/${product.slug}?section=maker`}>확인 기록 →</Link></p></td>
+        <td><PrototypeTag tone={product.repoStatus === "not_found" || product.repoStatus === "empty" ? "amber" : "gray"}>{prototypeRepositoryStatus(product.repoStatus)}</PrototypeTag><p><Link href={`/admin/products/${product.slug}?section=intro`}>소개·번역 상태</Link></p></td>
+        <td>{formatListTime(product.repoCheckedAt ?? product.createdAt, now)}<p>{product.repoCheckedAt ? "저장소 확인" : "등록 시각"}</p></td><td><Link className="button small" href={`/admin/products/${product.slug}`}>상세 관리</Link></td></tr>)}
+      {products.length === 0 && <tr><td colSpan={6}><div className="empty">조건에 맞는 프로젝트가 없습니다.</div></td></tr>}
+    </tbody></table></div><div className="table-note">공개 대상 상태와 실제 공개 노출, 메이커 소유권 확인을 구분합니다. 차단·클레임 초대·이름/소개 확인의 원본 조치는 아래 상세 관리에서 유지합니다.</div></section>
+    <div className="flex mt"><Link className="button small" href={href(Math.max(1, page - 1))}>이전</Link><span className="small muted">{page}/{pages}</span>{page < pages && <Link className="button small" href={href(page + 1)}>다음</Link>}</div>
+    {pending && <div className="notice mt">24시간 확인 전의 저장소 누락도 함께 표시합니다.</div>}
+    {waiting && waiting.count > 0 && <div className="notice mt">24시간 확인 대기 {n(waiting.count)}건 · {waiting.firstAt ? dayHour(waiting.firstAt, now) : "다음 관측"} <Link href={pendingHref}>함께 보기 →</Link></div>}
+    <details className="mt"><summary className="text-button">차단·클레임 초대·이름/소개·저장소 상세 관리</summary><PrototypePanel title="원본 조건과 관리 조치"><ScrollTable label="프로젝트 상세 관리"><table className="w-full min-w-[720px] text-[13px]"><thead><tr><th>프로젝트</th><th>상태</th><th>유입</th><th>등록</th><th>관리</th></tr></thead><tbody>{products.map((product, index) => <ProductRow key={product.slug} dropUp={index >= 3 && index >= products.length - 6} product={{ slug: product.slug, name: product.name, url: product.url, status: product.status, source: product.source, unclaimed: isUnclaimed(product), listedAt: formatListTime(product.verifiedAt ?? product.createdAt, now), inviteUrl: claimInviteUrl(product, origin), publicOriginMissing, invitedAt: time(product.claimInvitedAt), repoGone: repoGone || repoAutoBanned ? [repoAutoBanned && "저장소 소실 자동 차단", product.repoMissingSince && `${time(product.repoMissingSince)}부터 없음`, pending && !confirmedGone(product) && "24시간 확인 대기"].filter(Boolean).join(" · ") : null, ...(reviews ? { repoReview: reviews.has(product.id) ? repoReviewView(reviews.get(product.id)!, now) : null } : {}), repoNote: repoArchived ? `보관됨 · 마지막 push ${time(product.repoPushedAt) ?? "모름"}` : repoRenamed ? `이름 바뀜 → ${product.repoRenamedTo}` : nameNote(product.slug), ...(introNotes ? { intro: { tagline: product.tagline, problem: introNotes.get(product.id)?.problem ?? "" } } : {}) }} />)}</tbody></table></ScrollTable></PrototypePanel></details>
+  </main>;
 }
