@@ -336,6 +336,7 @@ const fixedErrors = new Set([
   "replay_artifact_sha_mismatch", "replay_database_not_empty", "replay_settings_invalid", "replay_settings_not_enforced",
   "replay_cli_provider_unsupported", "replay_upstream_mismatch", "replay_api_key_missing", "consumer_mode_blocked", "replay_load_exceeded_lead",
   "replay_inputs_empty", "replay_candidate_unmapped", "replay_label_unknown_input", "replay_runner_scope_conflict",
+  "replay_legacy_abcllm_unsupported",
   "fixed_input_export_window_invalid", "fixed_input_first_reviewer_unpinned", "fixed_input_population_limit", "fixed_input_export_write_detected",
   "replay_live_collection_failed", "replay_readme_sample_version_mismatch",
 ]);

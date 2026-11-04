@@ -18,7 +18,6 @@ import { installReplayEgressGuard, startReplayModelMeter, type ReplayMeterDrain,
 import { DEFAULT_RUNTIME_SETTINGS } from "./runtime-settings-schema";
 import { replayRuntimeSettingsSnapshot } from "./runtime-settings-store";
 
-const DEFAULT_GATEWAY = modelBaseUrl("ai1-preset", {}, "abcllm").replace(/\/v1$/, "");
 /** 같은 reviewer 역할 워커지만 고정 입력 밖(소개 검수·발행분 감사·판정)을 부르는 잡은 돌리지 않는다. 기준선을 낮추지 않는 쪽이다. */
 const REPLAY_JOBS = ["crawl-agent-review", "second-review"] as const;
 const BLOCKED_CLI = "/nonexistent/nomorevibe-replay-cli-blocked";
@@ -28,12 +27,16 @@ const plus = (iso: string, ms: number) => new Date(Date.parse(iso) + ms).toISOSt
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, Math.max(0, ms)));
 
 /**
- * 네트워크·DB 없이 실행 조건을 판정한다. legacy는 설정·키·upstream만 보면 되고, item 모드는 실제 consumer가 요구하는
- * serving 계약(resolver)과 모델 슬롯 route가 모든 1차·2차·대체 모델에 있어야 한다. 막히면 이유 목록을 돌려준다.
+ * 네트워크·DB 없이 실행 조건을 판정한다. legacy 모드는 실행할 수 없어 manifest 파싱 직후 거절하고, item 모드는 실제 consumer가
+ * 요구하는 serving 계약(resolver)과 모델 슬롯 route가 모든 1차·2차·대체 모델에 있어야 한다. 막히면 이유 목록을 돌려준다.
  */
 export function fixedInputPreflight(manifestValue: unknown, artifactValue: unknown, env: Env = process.env,
   timing: FixedInputTiming = FIXED_INPUT_TIMING) {
-  const manifest = parseFixedInputRunManifest(manifestValue, timing), artifact = parseFixedInputArtifact(artifactValue);
+  const manifest = parseFixedInputRunManifest(manifestValue, timing);
+  // 옛 legacy 심사 잎은 이제 게이트웨이/엔드포인트가 없어 이 모드를 지원하지 않는다. artifact·설정·upstream을 읽기 전에 거절한다
+  // (과거 artifact·결과의 파싱·비교는 그대로 허용한다).
+  ensure(manifest.mode !== "legacy", "replay_legacy_abcllm_unsupported");
+  const artifact = parseFixedInputArtifact(artifactValue);
   const stored = mergeWithDefaults(artifact.settings);
   ensure(isDeepStrictEqual(JSON.parse(JSON.stringify(stored)), artifact.settings), "replay_settings_invalid");
   const settings: CrawlSettings = manifest.secondReviewFallbacks
@@ -43,8 +46,9 @@ export function fixedInputPreflight(manifestValue: unknown, artifactValue: unkno
   const first = settings.firstReview, second = [...settings.secondReview.voters, ...settings.secondReview.fallbacks ?? []];
   // CLI 심사자는 계량기·상한 밖에서 외부로 나가고 item consumer 계약도 없다. 두 실행 모두 게이트웨이 모델만 받는다.
   ensure([first, ...second].every(row => row.provider === "abcllm"), "replay_cli_provider_unsupported");
-  // 게이트웨이 모듈은 이 값을 그대로 이어 붙인다. origin만 같고 경로·슬래시가 붙으면 egress 관문이 모든 호출을 막는다.
-  ensure((env.ABCLLM_BASE_URL?.trim() || DEFAULT_GATEWAY) === manifest.upstream, "replay_upstream_mismatch");
+  // 게이트웨이 모듈은 등록부의 ai1-preset 주소에 /v1 을 붙여 부른다. origin만 같은지 보고, 경로·슬래시가 다르면
+  // egress 관문이 모든 호출을 막으므로 실행 전에 거절한다.
+  ensure(modelBaseUrl("ai1-preset", env, "abcllm").replace(/\/v1$/, "") === manifest.upstream, "replay_upstream_mismatch");
   // 키는 env 가 아니라 각 경로의 직접 연결 계약이 정한다(contractBearer) — 계약이 없으면 그 호출이 보내기 전에 거절된다.
   // 심사 잡은 README 표본이 없거나 판이 다르면 원본 옆 표본을 새로 받는다(lib/crawl/jobs/review-document.ts). 그 요청은 명시 dispatcher로
   // 나가 egress 관문·계량기를 거치지 않는다. 이 코드 판과 다른 표본이 하나라도 있으면 실행 전에 거절한다(F1).
