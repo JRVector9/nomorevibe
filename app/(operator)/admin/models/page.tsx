@@ -10,6 +10,8 @@ import { readServedContractModels } from "@/lib/operations/admin-engine-connect"
 import { configuredHumanModelsProbe, configuredHumanModelsReady, humanReviewModelDisplay, type HumanModelProbe } from "@/lib/operations/admin-models-human";
 import { currentModelEnv } from "@/lib/operations/model-env";
 import { adminModelStageView, type TextStageBindings } from "@/lib/operations/admin-model-stage-view";
+import { adminWorkspaceReadOnly } from "@/lib/operations/admin-workspace-preview";
+import { readFlowRankEditor } from "@/lib/operations/flow-rank-editor-read";
 import { PageStamp } from "../components/PageStamp";
 import { HumanReviewSwitch } from "../review/HumanReviewSwitch";
 import { ReviewModelsForm } from "./ReviewModelsForm";
@@ -43,6 +45,7 @@ import { autoProbeDirectEngines, readProbeObservations, recordAutoProbes } from 
 import { readbackServingEndpoint } from "@/lib/operations/admin-serving-contracts";
 import { roleOverview } from "@/lib/operations/roles";
 import { SearchModelConstraints } from "./SearchModelConstraints";
+import { PrototypeModels } from "./PrototypeModels";
 import "../status/operations.css";
 import "./models.css";
 
@@ -66,12 +69,16 @@ async function textStageBindings(): Promise<TextStageBindings> {
  * /admin/models 한 화면(2026-10-31 승인 시안): 고정 상단 띠 → 요약 타일 4 → 단계 × 모델 표 → 장비 표 | 확인 못함 목록 → 접기 2(도우미·감시자·배정 출처·새 잡 / 참고).
  * 모든 구획이 실제 출처만 읽는다 — 장부 관측·장비 로더·도우미 로더·배정 출처·역할 lease·장부 경보 요약·jobs 표·연결 확인 관측. 하위 화면은 그대로 두고 여기서는 요약+링크다.
  */
-export default async function ModelsPage() {
+export default async function ModelsPage({ searchParams }: { searchParams?: Promise<Record<string, string | string[] | undefined>> } = {}) {
   if (!await currentAdmin()) redirect("/admin/login");
+  const params = await searchParams;
+  const tab = typeof params?.tab === "string" ? params.tab : "live";
+  const advanced = params?.advanced === "1";
+  const readOnly = adminWorkspaceReadOnly();
   // Admin registry overrides (0148) are part of the registry this page shows and validates against.
-  await Promise.all([ensureServingContracts(), ensureReviewTaskRanks()]);
+  if (!readOnly) await Promise.all([ensureServingContracts(), ensureReviewTaskRanks()]);
   const renderedAt = renderClock().toISOString();
-  const [settings, servedModels, models, assignmentLocked] = await Promise.all([getSettings(), readServedContractModels(), currentModelEnv(),
+  const [settings, servedModels, models, assignmentLocked] = await Promise.all([getSettings(), advanced && !readOnly ? readServedContractModels() : Promise.resolve([]), currentModelEnv(),
     // 배정 표 플래그(3b-B) — 켜졌으면 아래 모델 선택 폼을 읽기 전용으로(PR 3b-D). 못 읽으면 꺼짐(편집 가능)
     assignmentTableFlag()]);
 
@@ -88,13 +95,19 @@ export default async function ModelsPage() {
   ];
   // 관리 계약(0147)의 주소는 host:port 만 넘긴다 — 장비 칸의 「장비 미확인」을 줄이고 전송 방식을 보이기 위해서다. 키는 ModelContractLink 에 없다.
   const contracts = modelContractLinks(servingContractSnapshot().rows);
+  const observationRead = readAdminModelsObservation();
   // 사람 위임 슬롯의 자동 연결 확인은 한 번만 — 표(연결 확인 열)와 참고의 사람 검토 단계가 같은 약속을 기다린다.
   const humanKeys = settings.stageModelPools?.["human-review"] ?? [];
-  const humanProbe = configuredHumanModelsProbe(humanKeys).catch((): HumanModelProbe[] => []);
-  return <main className="mx-auto flex max-w-[1440px] flex-col gap-3 px-8 pb-28 max-sm:px-4">
+  const humanProbe = advanced && !readOnly ? configuredHumanModelsProbe(humanKeys).catch((): HumanModelProbe[] => []) : Promise.resolve([] as HumanModelProbe[]);
+  return <main className="stack">
     <PageStamp />
+    <h1 className="admin-vh">LLM 운영</h1>
+    <Suspense fallback={<p aria-busy="true" className="notice">운영 DB 실측을 읽는 중…</p>}><PrototypeModelsSlot observationRead={observationRead} assignments={assignments} models={registry.models} contracts={contracts} tab={tab} readOnly={readOnly} /></Suspense>
+    <details className="panel" id="model-advanced" open={advanced}>
+      <summary>고급 운영·기존 제어·모델 설정</summary>
+      {advanced ? <div className="panel-body stack">
     <ModelsTopBar renderedAt={renderedAt} />
-    <Suspense fallback={<p aria-busy="true" className="text-[13px]">운영 DB 실측 확인 중…</p>}><LiveModelsSlot assignments={assignments} models={registry.models} contracts={contracts} humanProbe={humanProbe} served={servedModels} /></Suspense>
+    <Suspense fallback={<p aria-busy="true" className="text-[13px]">운영 DB 실측 확인 중…</p>}><LiveModelsSlot assignments={assignments} models={registry.models} contracts={contracts} humanProbe={humanProbe} served={servedModels} read={observationRead} readOnly={readOnly} /></Suspense>
     <div className="grid gap-3 [grid-template-columns:minmax(0,7fr)_minmax(0,5fr)] max-[980px]:grid-cols-1">
       <Suspense fallback={<p aria-busy="true" className="text-[13px]">장비 한도 확인 중…</p>}><DevicesSlot models={registry.models} /></Suspense>
       <Suspense fallback={<p aria-busy="true" className="text-[13px]">사람 검토 목록 확인 중…</p>}><UnknownReviewSlot /></Suspense>
@@ -105,14 +118,14 @@ export default async function ModelsPage() {
         <span className="text-[13px] font-normal text-fg-2">관리 계약 <span className="font-mono tabular-nums">{contracts.length}</span> · 등록부 <span className="font-mono tabular-nums">{registry.models.length}</span>{assignmentLocked ? " · 모델 선택 폼은 배정 표로 옮겨져 읽기 전용" : ""}</span></summary>
       <div className="flex min-w-0 flex-col gap-4 px-3 pb-3">
         <div className="grid gap-2.5 [grid-template-columns:repeat(auto-fit,minmax(280px,1fr))]">
-          <Suspense fallback={<p aria-busy="true" className="text-[13px]">카테고리 분류 모델 확인 중…</p>}><CategoryModelsSlot reviewMode={settings.reviewMode} /></Suspense>
-          <Suspense fallback={<p aria-busy="true" className="text-[13px]">검색 모델 서버 확인 중…</p>}><SearchModelsSlot /></Suspense>
+          {readOnly ? <p className="notice">읽기 전용 프리뷰에서는 분류 연결 확인을 실행하지 않습니다.</p> : <Suspense fallback={<p aria-busy="true" className="text-[13px]">카테고리 분류 모델 확인 중…</p>}><CategoryModelsSlot reviewMode={settings.reviewMode} /></Suspense>}
+          {readOnly ? <p className="notice">읽기 전용 프리뷰에서는 검색 서버 확인을 실행하지 않습니다.</p> : <Suspense fallback={<p aria-busy="true" className="text-[13px]">검색 모델 서버 확인 중…</p>}><SearchModelsSlot /></Suspense>}
         </div>
         <section className="flex flex-col gap-3 rounded-xl border border-line bg-bg-card p-4" aria-labelledby="human-model-heading">
           <h2 id="human-model-heading" className="text-[15px] font-semibold">사람 검토 단계</h2>
           <p className="text-[13px] text-fg-2">직접 판단: 사람이 심사 큐에서 결정합니다. 사람 위임 검수 모델을 켜면 기존 정책에 따라 자동 판단하고, 불확실하거나 실패한 항목은 사람이 검토합니다.</p>
           <Suspense fallback={<p aria-busy="true" className="text-[13px]">사람 위임 모델 연결 확인 중…</p>}>
-            <HumanSlot enabled={settings.humanReview.enabled} generation={settings.humanReview.generation} keys={humanKeys} humanProbe={humanProbe} />
+            {readOnly ? <p className="notice">읽기 전용 프리뷰 · 사람 위임 연결 확인·제어를 실행하지 않습니다.</p> : <HumanSlot enabled={settings.humanReview.enabled} generation={settings.humanReview.generation} keys={humanKeys} humanProbe={humanProbe} />}
           </Suspense>
           <Link prefetch={false} href="/admin/review" className="text-[13px] font-semibold text-accent-ink">사람이 검토할 심사 큐 열기 →</Link>
         </section>
@@ -127,12 +140,28 @@ export default async function ModelsPage() {
         <ModelRegistryTable />
         <section className="flex min-w-0 flex-col gap-3" aria-labelledby="model-settings">
           <h2 id="model-settings" className="text-[15px] font-semibold">단계별 모델 선택(설정)</h2>
-          <ReviewModelsForm settings={settings} version={settingsFormVersion(settings)} models={registry.models} defaults={defaults} locked={assignmentLocked} />
+          <ReviewModelsForm settings={settings} version={settingsFormVersion(settings)} models={registry.models} defaults={defaults} locked={assignmentLocked || readOnly} />
         </section>
       </div>
     </details>
     <p className="text-[13px] leading-relaxed text-fg-2">처리 시간은 장부 접수 → 실제 종료(대기 포함). 1시간 성공·실패는 최근 1시간의 실제 종료만 집계. 철회·미확인 요청은 처리량에 넣지 않음. 접수 일시중지/재개는 모든 공통 모델에 적용. 저장한 설정은 배포 없이 30초 안에 각 앱이 다음 작업부터 사용.</p>
+      </div> : <div className="panel-body"><p className="small muted">기존 단계별 모델 표·장비 상세·미확정 검토 폼·도우미·모델 선택·분류·검색 연결을 보존합니다. 명시적으로 열 때 기존 고급 화면을 읽습니다.</p><div className="decision-bar"><Link className="button" href={`/admin/models?tab=${tab}&advanced=1#model-advanced`} prefetch={false}>고급 화면 불러오기 →</Link><Link className="button" href="/admin/models/tasks">작업별 순위 원본 →</Link><Link className="button" href="/admin/models/devices">장비 한도 원본 →</Link></div></div>}
+    </details>
   </main>;
+}
+
+async function PrototypeModelsSlot({ observationRead, assignments, models, contracts, tab, readOnly }: {
+  observationRead: ReturnType<typeof readAdminModelsObservation>; assignments: ModelStageAssignment[];
+  models: ReturnType<typeof readModelRegistry>["models"]; contracts: ModelContractLink[]; tab: string; readOnly: boolean;
+}) {
+  const { readModelOpsStates } = await import("@/lib/operations/ops-runner/repository");
+  const [observation, editor, devices, helpers, opsStates] = await Promise.all([observationRead,
+    tab === "tasks" || tab === "connections" ? readFlowRankEditor() : Promise.resolve(null),
+    tab === "capacity" ? readCapacityDevicesAdminView(renderClock()).catch(() => null) : Promise.resolve(null),
+    tab === "capacity" ? readModelHelpersAdminView().catch(() => null) : Promise.resolve(null),
+    readModelOpsStates().catch(() => []),
+  ]);
+  return <PrototypeModels observation={observation} assignments={assignments} models={models} contracts={contracts} editor={editor} devices={devices} helpers={helpers} tab={tab} readOnly={readOnly} opsStates={opsStates} />;
 }
 
 /** 장부 경보 요약 — monitor 와 같은 읽기(readModelCapacityUnknowns)·같은 문턱. 못 읽었으면 unknown(0건으로 보지 않는다). */
@@ -142,16 +171,16 @@ async function readAlarmSummary(): Promise<CapacityAlarmSummary> {
   return { status: report.status, count: report.count, oldestAgeSeconds: report.oldestAgeSeconds, stuckDispatched: report.stuckDispatched, alarmReasons: [...report.alarmReasons], thresholds };
 }
 
-async function LiveModelsSlot({ assignments, models, contracts, humanProbe, served }: { assignments: ModelStageAssignment[]; models: ReturnType<typeof readModelRegistry>["models"]; contracts: ModelContractLink[]; humanProbe: Promise<HumanModelProbe[]>; served: Awaited<ReturnType<typeof readServedContractModels>> }) {
+async function LiveModelsSlot({ assignments, models, contracts, humanProbe, served, read, readOnly = false }: { assignments: ModelStageAssignment[]; models: ReturnType<typeof readModelRegistry>["models"]; contracts: ModelContractLink[]; humanProbe: Promise<HumanModelProbe[]>; served: Awaited<ReturnType<typeof readServedContractModels>>; read?: ReturnType<typeof readAdminModelsObservation>; readOnly?: boolean }) {
   const { readModelOpsStates } = await import("@/lib/operations/ops-runner/repository");
-  const observationRead = readAdminModelsObservation();
+  const observationRead = read ?? readAdminModelsObservation();
   // 엔진 직접 연결 계약의 자동 확인(GET /models, 슬롯마다 1분에 한 번) — 장부를 읽자마자 다른 읽기·사람 위임 확인과 나란히 돈다. 던지지 않는다.
-  const directProbes = observationRead.then(observation => autoProbeDirectEngines(buildModelCards(observation, models, assignments, contracts),
+  const directProbes = readOnly ? Promise.resolve(0) : observationRead.then(observation => autoProbeDirectEngines(buildModelCards(observation, models, assignments, contracts),
     servingContractSnapshot().rows, readbackServingEndpoint)).catch(() => 0);
   const [observation, states, roles, alarms, human] = await Promise.all([observationRead, readModelOpsStates().catch(() => []),
     roleOverview().catch(() => null), readAlarmSummary(), humanProbe]);
   // 사람 위임 슬롯의 자동 확인 결과를 같은 키(probe:<provider>:<key>)에 남긴 뒤 읽는다 — 표의 연결 확인 열이 「자동(렌더)」으로 보인다.
-  await Promise.all([recordAutoProbes(human.map(probe => ({ identity: { routeId: "human-deepseek-review", provider: probe.provider, model: probe.key },
+  await Promise.all([readOnly ? Promise.resolve(0) : recordAutoProbes(human.map(probe => ({ identity: { routeId: "human-deepseek-review", provider: probe.provider, model: probe.key },
     result: { listed: probe.ready ? true : null, listMs: probe.ms, callBlocked: "유료 DeepSeek 시험 호출은 허용되지 않습니다.", error: probe.ready ? null : "사람 위임 모델 목록 확인 실패(연결 또는 목록 없음)" },
     detail: "사람 위임 슬롯 · GET /models" }))), directProbes]);
   const probes = await readProbeObservations();
