@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { currentAdmin } from "@/lib/auth/admin";
-import { aiTask, aiTaskSlotLabel } from "@/lib/llm/ai-tasks";
+import { aiTask, aiTaskSlotLabel, isAiLiveTask } from "@/lib/llm/ai-tasks";
 import { AI_TASK_IMPORT_CONFIRM, aiConnectionInputFromForm, aiModelsErrorText, aiTaskIssueMessage, aiTaskRanksInputFromForm } from "@/lib/operations/admin-ai-tasks";
 import { applyAiTaskImport, deleteAiConnection, readAiConnectionModels, saveAiConnection, saveAiTaskRanks } from "@/lib/operations/admin-ai-tasks-repository";
 import { webWriteAction } from "@/lib/operations/dr/web-gate";
@@ -10,7 +10,8 @@ import { webWriteAction } from "@/lib/operations/dr/web-gate";
 export type AiTaskActionState = { ok?: true; message?: string; issues?: string[]; warnings?: string[] } | null;
 
 const DENIED: AiTaskActionState = { issues: [aiTaskIssueMessage("denied")] };
-const PATHS = ["/admin/models/tasks", "/admin/models", "/admin/models/contracts", "/admin/models/devices"];
+// 전체 흐름(/admin/flow)의 「바꾸기」 서랍도 같은 순위 저장을 부른다 — 저장 뒤 그 화면의 칸 모델·최근 바뀐 설정도 새로 읽는다
+const PATHS = ["/admin/models/tasks", "/admin/models", "/admin/models/contracts", "/admin/models/devices", "/admin/flow"];
 const revalidate = () => { for (const path of PATHS) revalidatePath(path); };
 const field = (form: FormData, name: string) => { const value = form.get(name); return typeof value === "string" ? value.trim() : ""; };
 const messages = (issues: readonly string[]) => issues.map(aiTaskIssueMessage);
@@ -73,7 +74,7 @@ export const saveAiTaskRanksAction = webWriteAction(async function saveAiTaskRan
   const count = parsed.input.ranks.filter(Boolean).length;
   return { ok: true, warnings: saved.warnings,
     message: `${aiTaskSlotLabel(task, parsed.input.slot)}: ${count ? `${count}개 순위를 저장했습니다` : "순위를 비웠습니다"}.${made.length ? ` 함께 만든 것: ${made.join(" · ")}.` : ""}`
-      + " 잡은 아직 이 순위를 읽지 않습니다(다음 단계에서 바꿉니다)." };
+      + (isAiLiveTask(task.id) ? " 다음 틱부터 이 순위를 씁니다." : " 이 작업의 실행 쪽은 아직 이 순위를 읽지 않습니다(설정값).") };
 });
 
 /** 「지금 설정 가져오기」 적용 — 보여 준 계획 hash 와 같을 때만, 확인 글자 「가져오기」. */

@@ -231,7 +231,7 @@ describe("operator desk", () => {
 
   it("names where to undo each setting change, and says so when it cannot be undone", () => {
     expect(deskChange({ id: 1, createdAt: DESK_NOW, actor: "jr", action: "ai-task-models-save", target: "first-review", ok: true }, (a) => a).undo)
-      .toEqual({ text: "「작업 ↔ AI 모델」 최근 기록에서 이전 순위를 보고 다시 저장", href: "/admin/models/tasks" });
+      .toEqual({ text: "이전 순위로 다시 저장(「바꾸기」 되돌리기·작업 ↔ AI 모델)", href: "/admin/models/tasks" });
     expect(deskChange({ id: 2, createdAt: DESK_NOW, actor: "jr", action: "job-pause", target: "crawl-publish", ok: true }, (a) => a).undo.href).toBe("/admin/status?tab=jobs&job=crawl-publish");
     expect(deskChange({ id: 3, createdAt: DESK_NOW, actor: "jr", action: "model-capacity-unknown-reviewed", target: "x", ok: true }, (a) => a).undo.href).toBeNull();
     expect(deskChange({ id: 4, createdAt: DESK_NOW, actor: "jr", action: "something-else", target: "a/b", ok: true }, (a) => a).undo.href).toBe("/admin/activity?target=a%2Fb");

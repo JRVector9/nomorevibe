@@ -39,3 +39,16 @@ it("reads the configured ranks and connections without opening keys, and the 1-h
   expect(models.judge.kind).toBe("none");
   expect(models.first.kind).toBe("llm");
 });
+
+it("reads the 바꾸기 drawer from the same lists and line revision as 작업 ↔ AI 모델, read-only", async () => {
+  const { readFlowRankEditor } = await import("@/lib/operations/flow-rank-editor-read");
+  const editor = await readFlowRankEditor();
+  expect(editor).not.toBeNull();
+  // 키 없이 목록도 못 읽은 연결 — 상태가 「응답 없음」으로 보인다(0 이나 정상으로 보이지 않는다)
+  expect(editor!.states.find((row) => row.id === connectionId)).toMatchObject({ label, state: "no_list" });
+  expect(editor!.lines.map((line) => line.key)).toEqual(expect.arrayContaining(["first-review#1", "second-review#3", "product-intro-check#1"]));
+  for (const line of editor!.lines) expect(line.revision).toMatch(/^[a-f0-9]{64}$/);
+  // 벨트 밖 작업(화면 판별)의 행은 서랍 줄에 섞이지 않는다
+  expect(editor!.lines.some((line) => line.task === "screen-review")).toBe(false);
+  expect(editor!.rows).toContainEqual(expect.objectContaining({ task: "screen-review", slot: 8, connectionId }));
+});

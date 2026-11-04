@@ -3,11 +3,13 @@
 import Link from "next/link";
 import { useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { ageText, PHASES, TONE_LABELS, type BeltTone, type Conveyor, type HumanBox, type Station } from "@/lib/operations/conveyor-model";
-import type { StationLlm, TaskLlm } from "@/lib/operations/conveyor-llm";
+import type { LlmStationKey, StationLlm, TaskLlm } from "@/lib/operations/conveyor-llm";
+import { flowRankLinesFor, type FlowRankEditor } from "@/lib/operations/flow-rank-editor";
 import { stationResponse, type ResponseStep } from "@/lib/operations/flow-response";
 import type { OperatorDesk } from "@/lib/operations/operator-desk-model";
 import { JobControl } from "../status/JobControl";
 import { ChangesPanel, EquipmentPanel, kstShort, TodoPanel, WindowPanel } from "./OperatorDesk";
+import { RankDrawer } from "./RankDrawer";
 
 /**
  * 전체 흐름 — 발행 전 과정 한 장(/admin/flow). 2026-11-02 2차: 병목 판정 + 장애 대응 + 1인 관리자 필수 칸.
@@ -155,25 +157,31 @@ function llmAria(llm: StationLlm | null): string {
   return `, 모델 ${llm.head.head?.model ?? "없음"}${llm.flag ? ` ${llm.flag.text}` : ""}`;
 }
 
-function StationCard({ station, hours, selected, onSelect }: { station: Station; hours: string[] | null; selected: boolean; onSelect: () => void }) {
+function StationCard({ station, hours, selected, onSelect, onChange }: {
+  station: Station; hours: string[] | null; selected: boolean; onSelect: () => void; onChange?: () => void;
+}) {
   const queue = station.waiting !== null;
   const rate = [
     queue && station.doneHour !== null ? <>1시간 <b>{n(station.doneHour)}</b></> : !queue ? null : station.done5m !== null ? <>5분 <b>{n(station.done5m)}</b></> : null,
     station.done24h !== null ? <>24시간 <b>{n(station.done24h)}</b>{station.unit}</> : null,
   ].filter(Boolean);
   return (
-    <button type="button" className="cv-card" data-tone={station.tone} aria-pressed={selected} onClick={onSelect}
-      aria-label={`${station.label} — ${station.status}${queue ? `, 대기 ${num(station.waiting)}` : ""}${llmAria(station.llm)}. 자세히와 장애 대응 보기`}>
-      <span className="cv-card-top"><span className="cv-card-name">{station.label}</span><ToneBadge tone={station.tone} text={station.status} /></span>
-      {queue
-        ? <span className="cv-big"><b>{num(station.waiting)}</b><small>대기{station.oldestMinutes !== null && station.waiting ? ` · 최장 ${ageText(station.oldestMinutes)}` : ""}</small></span>
-        : <span className="cv-big"><b>{num(station.doneHour)}</b><small>최근 1시간 발견</small></span>}
-      {station.spark ? <span className="cv-spark-wrap">{station.rateLabel && <small className="cv-spark-what">선: {station.rateLabel}</small>}
-        <Spark values={station.spark} hours={hours} unit={station.unit} label={station.rateLabel ? `${station.label}(${station.rateLabel})` : station.label} /></span>
-        : <span className="cv-spark cv-spark-none">시간별 기록 없음 · 24시간 합계만</span>}
-      {rate.length > 0 && <span className="cv-rate">{rate.map((part, index) => <span key={index}>{part}</span>)}</span>}
-      <LlmLine llm={station.llm} />
-    </button>
+    <div className="cv-card" data-tone={station.tone} data-selected={selected ? "yes" : undefined} data-change={onChange ? "yes" : undefined}>
+      <button type="button" className="cv-card-hit" aria-pressed={selected} onClick={onSelect}
+        aria-label={`${station.label} — ${station.status}${queue ? `, 대기 ${num(station.waiting)}` : ""}${llmAria(station.llm)}. 자세히와 장애 대응 보기`} />
+      <span className="cv-card-body">
+        <span className="cv-card-top"><span className="cv-card-name">{station.label}</span><ToneBadge tone={station.tone} text={station.status} /></span>
+        {queue
+          ? <span className="cv-big"><b>{num(station.waiting)}</b><small>대기{station.oldestMinutes !== null && station.waiting ? ` · 최장 ${ageText(station.oldestMinutes)}` : ""}</small></span>
+          : <span className="cv-big"><b>{num(station.doneHour)}</b><small>최근 1시간 발견</small></span>}
+        {station.spark ? <span className="cv-spark-wrap">{station.rateLabel && <small className="cv-spark-what">선: {station.rateLabel}</small>}
+          <Spark values={station.spark} hours={hours} unit={station.unit} label={station.rateLabel ? `${station.label}(${station.rateLabel})` : station.label} /></span>
+          : <span className="cv-spark cv-spark-none">시간별 기록 없음 · 24시간 합계만</span>}
+        {rate.length > 0 && <span className="cv-rate">{rate.map((part, index) => <span key={index}>{part}</span>)}</span>}
+        <LlmLine llm={station.llm} />
+      </span>
+      {onChange && <ChangeButton label={station.label} onClick={onChange} className="cv-card-change" />}
+    </div>
   );
 }
 
@@ -191,18 +199,24 @@ function Belt({ station }: { station: Station }) {
   );
 }
 
-function HumanCard({ human, selected, onSelect }: { human: HumanBox; selected: boolean; onSelect: () => void }) {
+function HumanCard({ human, selected, onSelect, onChange }: {
+  human: HumanBox; selected: boolean; onSelect: () => void; onChange?: () => void;
+}) {
   return (
-    <button type="button" className="cv-card cv-human" data-tone={human.tone} aria-pressed={selected} onClick={onSelect}
-      aria-label={`사람 심사 — ${human.status}, 사람 몫 ${n(human.waiting)}건. 자세히와 장애 대응 보기`}>
-      <span className="cv-card-top"><span className="cv-card-name">사람 심사</span><ToneBadge tone={human.tone} text={human.status} /></span>
-      <span className="cv-human-nums">
-        <span className="cv-big"><b>{n(human.waiting)}</b><small>사람 몫</small></span>
-        <span className="cv-rate"><span>직접 판단 <b>{n(human.direct)}</b></span><span>확정만 <b>{n(human.agreed)}</b></span></span>
-        <span className="cv-rate"><span>24시간 처리 <b>{num(human.decided24h)}</b></span>{human.oldestDays !== null && human.direct > 0 ? <span>최장 {n(human.oldestDays)}일</span> : null}</span>
+    <div className="cv-card cv-human" data-tone={human.tone} data-selected={selected ? "yes" : undefined} data-change={onChange ? "yes" : undefined}>
+      <button type="button" className="cv-card-hit" aria-pressed={selected} onClick={onSelect}
+        aria-label={`사람 심사 — ${human.status}, 사람 몫 ${n(human.waiting)}건. 자세히와 장애 대응 보기`} />
+      <span className="cv-card-body">
+        <span className="cv-card-top"><span className="cv-card-name">사람 심사</span><ToneBadge tone={human.tone} text={human.status} /></span>
+        <span className="cv-human-nums">
+          <span className="cv-big"><b>{n(human.waiting)}</b><small>사람 몫</small></span>
+          <span className="cv-rate"><span>직접 판단 <b>{n(human.direct)}</b></span><span>확정만 <b>{n(human.agreed)}</b></span></span>
+          <span className="cv-rate"><span>24시간 처리 <b>{num(human.decided24h)}</b></span>{human.oldestDays !== null && human.direct > 0 ? <span>최장 {n(human.oldestDays)}일</span> : null}</span>
+        </span>
+        <LlmLine llm={human.llm} />
       </span>
-      <LlmLine llm={human.llm} />
-    </button>
+      {onChange && <ChangeButton label="사람 심사" onClick={onChange} className="cv-card-change" />}
+    </div>
   );
 }
 
@@ -214,8 +228,15 @@ function Facts({ items }: { items: { label: string; value: string; tone?: "warn"
 }
 
 /** 자세히의 섹션 하나 — 제목 + 내용. 섹션 사이 간격·구분선은 CSS 하나(.cv-sec)가 정한다 */
-function Section({ id, title, children }: { id: string; title: string; children: ReactNode }) {
-  return <section className="cv-sec" aria-labelledby={id}><h3 className="cv-sec-h" id={id}>{title}</h3>{children}</section>;
+function Section({ id, title, tool, children }: { id: string; title: string; tool?: ReactNode; children: ReactNode }) {
+  const head = <h3 className="cv-sec-h" id={id}>{title}</h3>;
+  return <section className="cv-sec" aria-labelledby={id}>{tool ? <div className="cv-sec-head">{head}{tool}</div> : head}{children}</section>;
+}
+
+/** 「바꾸기」 — 카드의 LLM 줄과 자세히 「지금 쓰는 모델」에 같은 모양으로 둔다 */
+function ChangeButton({ label, onClick, className = "" }: { label: string; onClick: () => void; className?: string }) {
+  return <button type="button" className={`cv-change${className ? ` ${className}` : ""}`} aria-label={`${label} 처리 LLM 바꾸기`}
+    onClick={(event) => { event.stopPropagation(); onClick(); }}>바꾸기</button>;
 }
 
 /**
@@ -246,7 +267,7 @@ function Kpis({ items }: { items: { label: string; value: string }[] }) {
  * 칸 자세히 — 모든 칸이 같은 틀(2026-11-04 4차): ① 상태 ② 지금 쓰는 모델 ③ 처리량 ④ 이 칸에서 빠진 보류 ⑤ 바로 가기.
  * 섹션은 늘 같은 차례로 다 있다 — 없는 것은 「없음」 한 줄로 답한다(칸마다 자리가 바뀌지 않게).
  */
-export function StationDetail({ station, hours }: { station: Station; hours: string[] | null }) {
+export function StationDetail({ station, hours, onChangeModels }: { station: Station; hours: string[] | null; onChangeModels?: () => void }) {
   const phase = PHASES.find((row) => row.key === station.phase)?.label;
   const lines = statusLines(station.reason, station.llm);
   const kpis = [
@@ -265,7 +286,8 @@ export function StationDetail({ station, hours }: { station: Station; hours: str
       </header>
       <p className="cv-what">{station.what}</p>
       <StatusSection tone={station.tone} status={station.status} lines={lines} />
-      <Section id="cv-sec-model" title="지금 쓰는 모델 — 설정과 실제(최근 1시간 장부)"><LlmDetail llm={station.llm} shown={lines} /></Section>
+      <Section id="cv-sec-model" title="지금 쓰는 모델 — 설정과 실제(최근 1시간 장부)"
+        tool={onChangeModels ? <ChangeButton label={station.label} onClick={onChangeModels} /> : undefined}><LlmDetail llm={station.llm} shown={lines} /></Section>
       <Section id="cv-sec-rate" title="처리량">
         <Kpis items={kpis} />
         {station.spark ? <div className="cv-detail-chart"><p className="cv-sub">시간별 {station.rateLabel ?? "처리"} · 최근 24시간</p>
@@ -293,14 +315,15 @@ export function StationDetail({ station, hours }: { station: Station; hours: str
 }
 
 /** 사람 심사 자세히 — 칸과 같은 틀. 보류는 이 칸으로 모이는 쪽이라 ④ 대신 처리량에 단계별 수를 둔다 */
-export function HumanDetail({ human }: { human: HumanBox }) {
+export function HumanDetail({ human, onChangeModels }: { human: HumanBox; onChangeModels?: () => void }) {
   const lines = statusLines(human.reason, human.llm);
   return (
     <div className="cv-detail-main">
       <header className="cv-detail-h"><h2 id="cv-detail-title"><small>검수</small>사람 심사</h2><ToneBadge tone={human.tone} text={human.status} /></header>
       <p className="cv-what">규칙·AI가 가르지 못한 후보(보류)를 사람이 승인하거나 거절합니다. 승인하면 프로필 준비로 돌아갑니다.</p>
       <StatusSection tone={human.tone} status={human.status} lines={lines} />
-      <Section id="cv-sec-model" title="지금 쓰는 모델 — 설정과 실제(최근 1시간 장부)"><LlmDetail llm={human.llm} shown={lines} /></Section>
+      <Section id="cv-sec-model" title="지금 쓰는 모델 — 설정과 실제(최근 1시간 장부)"
+        tool={onChangeModels ? <ChangeButton label="사람 심사" onClick={onChangeModels} /> : undefined}><LlmDetail llm={human.llm} shown={lines} /></Section>
       <Section id="cv-sec-rate" title="처리량">
         <Kpis items={[{ label: "직접 판단", value: n(human.direct) }, { label: "확정만 하면 됨", value: n(human.agreed) }, { label: "2차 결론 대기", value: n(human.awaitingSecond) },
           { label: "AI 결론 대기", value: n(human.awaitingAi) }, { label: "24시간 사람 결정", value: num(human.decided24h) },
@@ -447,16 +470,25 @@ function TableView({ data }: { data: Conveyor }) {
 const firstOfPhase = (stations: Station[], index: number) => index === 0 || stations[index - 1].phase !== stations[index].phase;
 
 const EMPTY_CONTROLS: FlowControls = { jobs: {}, csrf: null };
+const STATION_LABEL = (data: Conveyor, key: LlmStationKey) => key === "human"
+  ? "사람 심사" : data.stations.find((station) => station.key === key)?.label ?? key;
 
-export function FlowBoard({ data, desk = null, controls = EMPTY_CONTROLS }: { data: Conveyor; desk?: OperatorDesk | null; controls?: FlowControls }) {
+export function FlowBoard({ data, desk = null, controls = EMPTY_CONTROLS, editor = null }: {
+  data: Conveyor; desk?: OperatorDesk | null; controls?: FlowControls;
+  /** 「바꾸기」 서랍의 순위·선택지(읽기). null 이면 바꾸기를 두지 않고 「작업 ↔ AI 모델」 링크만 남긴다 */
+  editor?: FlowRankEditor | null;
+}) {
   // 처음 여는 칸 — 가장 막힌 곳, 없으면 미확인 칸, 그것도 없으면 맨 앞(탐색)
   const [selected, setSelected] = useState<Selected>(data.bottleneck ?? data.stations.find((station) => station.tone === "unknown")?.key ?? "discover");
+  const [changing, setChanging] = useState<LlmStationKey | null>(null);
   const current = selected === "human" ? null : data.stations.find((station) => station.key === selected) ?? null;
   const tone = current?.tone ?? data.human?.tone ?? "unknown";
   const response = stationResponse(selected, data, desk);
   // 머리 줄 바로 할 일 — 가장 막힌 곳의 조치 중 화면으로 가는 앞 두 개
   const quick = data.bottleneck ? stationResponse(data.bottleneck, data, desk).steps.filter((step): step is Extract<ResponseStep, { kind: "link" }> => step.kind === "link").slice(0, 2) : [];
   const pick = (key: Selected) => setSelected(key);
+  const canChange = (key: LlmStationKey) => flowRankLinesFor(editor, key).length > 0;
+  const secondWaiting = data.stations.find((station) => station.key === "second")?.waiting ?? null;
   return (
     <div className="cv">
       <section className="cv-headline" data-tone={data.headline.tone} aria-live="polite">
@@ -477,7 +509,8 @@ export function FlowBoard({ data, desk = null, controls = EMPTY_CONTROLS }: { da
             <li key={station.key} className="cv-cell" data-key={station.key}>
               <p className="cv-phase" data-first={firstOfPhase(data.stations, index) ? "yes" : undefined}>
                 <span>{firstOfPhase(data.stations, index) ? PHASES.find((phase) => phase.key === station.phase)?.label : " "}</span></p>
-              <StationCard station={station} hours={data.hours} selected={selected === station.key} onSelect={() => pick(station.key)} />
+              <StationCard station={station} hours={data.hours} selected={selected === station.key} onSelect={() => pick(station.key)}
+                onChange={canChange(station.key) ? () => setChanging(station.key) : undefined} />
               <Belt station={station} />
               <div className="cv-drop" data-has={station.holds.length ? "yes" : "no"}>
                 {station.holds.length > 0 && <>
@@ -504,7 +537,8 @@ export function FlowBoard({ data, desk = null, controls = EMPTY_CONTROLS }: { da
         </ol>
         <div className="cv-human-row">
           <span className="cv-lane"><span aria-hidden="true">↳</span> 칸 아래로 빠진 보류는 모두 사람 심사로 모입니다{data.held !== null ? ` · 보류 전체 ${n(data.held)}건` : ""}</span>
-          {data.human ? <HumanCard human={data.human} selected={selected === "human"} onSelect={() => pick("human")} />
+          {data.human ? <HumanCard human={data.human} selected={selected === "human"} onSelect={() => pick("human")}
+            onChange={canChange("human") ? () => setChanging("human") : undefined} />
             : <p className="cv-card cv-human" data-tone="unknown">사람 심사 수를 읽지 못했습니다</p>}
           <span className="cv-return" aria-hidden="true"><span>승인 → 프로필 준비</span><span>거절 → 끝</span></span>
         </div>
@@ -513,7 +547,10 @@ export function FlowBoard({ data, desk = null, controls = EMPTY_CONTROLS }: { da
       <p className="cv-legend">벨트가 움직이면 처리 중(빠를수록 많이), 짐이 촘촘하면 쌓임, 빨갛게 멈췄으면 막힘입니다. 칸 아래로 떨어진 수는 보류입니다.</p>
 
       <section className="cv-detail" data-tone={tone} aria-labelledby="cv-detail-title">
-        {current ? <StationDetail key={current.key} station={current} hours={data.hours} /> : data.human ? <HumanDetail human={data.human} /> : <div className="cv-detail-main"><h2 id="cv-detail-title">사람 심사</h2></div>}
+        {current ? <StationDetail key={current.key} station={current} hours={data.hours}
+            onChangeModels={canChange(current.key) ? () => setChanging(current.key) : undefined} />
+          : data.human ? <HumanDetail human={data.human} onChangeModels={canChange("human") ? () => setChanging("human") : undefined} />
+          : <div className="cv-detail-main"><h2 id="cv-detail-title">사람 심사</h2></div>}
         <ResponsePanel steps={response.steps} checks={response.checks} controls={controls} />
       </section>
 
@@ -532,6 +569,8 @@ export function FlowBoard({ data, desk = null, controls = EMPTY_CONTROLS }: { da
         <TableView data={data} />
       </details>
       {desk && <p className="cv-foot">책상 칸 기준 {kstShort(desk.measuredAt)} · 흐름 기준 {kstShort(data.measuredAt)}</p>}
+      {changing && editor && <RankDrawer key={changing} editor={editor} lines={flowRankLinesFor(editor, changing)}
+        title={STATION_LABEL(data, changing)} secondWaiting={secondWaiting} onClose={() => setChanging(null)} />}
     </div>
   );
 }
