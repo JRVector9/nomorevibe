@@ -137,6 +137,22 @@ describe('workspace tabs and legacy deep links', () => {
     expect(html).not.toContain('admin-workspace-secondary');
   });
 
+  it('lets canonical post review render its own kind tabs', () => {
+    const pathname = '/admin/requests', search = 'tab=posts&kind=feedback';
+    const location = resolveWorkspace(pathname, query(search));
+    expect(location.tab).toBe('posts');
+    expect(location.secondary).toEqual([]);
+    const html = renderToStaticMarkup(<WorkspaceTabs location={location} pathname={pathname} search={search} />);
+    expect(html).not.toContain('admin-workspace-secondary');
+  });
+
+  it.each(['/admin/feedback', '/admin/maker-replies', '/admin/reactions'])('preserves every legacy post review link on %s', pathname => {
+    const location = resolveWorkspace(pathname);
+    const html = renderToStaticMarkup(<WorkspaceTabs location={location} pathname={pathname} search="" />);
+    for (const href of ['/admin/feedback', '/admin/maker-replies', '/admin/reactions']) expect(html).toContain(`href="${href}"`);
+    expectActiveLink(html, pathname);
+  });
+
   it.each([
     ['/admin/categories', '/admin/evidence'],
     ['/admin/evidence', '/admin/categories'],

@@ -162,7 +162,7 @@ export function resolveWorkspace(pathname: string, search: Search = none): Works
     : id === "models" && tab === "capacity" ? WORKSPACE_SECONDARY.modelsCapacity
     : id === "models" && tab === "tasks" ? WORKSPACE_SECONDARY.modelTasks
     : id === "projects" && tab === "quality" ? WORKSPACE_SECONDARY.projectQuality
-    : id === "requests" && tab === "posts" ? WORKSPACE_SECONDARY.posts
+    : id === "requests" && tab === "posts" && pathname !== "/admin/requests" ? WORKSPACE_SECONDARY.posts
     : id === "settings" && tab === "evidence" && pathname !== "/admin/settings" ? WORKSPACE_SECONDARY.evidence
     : id === "settings" && tab === "integrations" && pathname !== "/admin/settings" ? WORKSPACE_SECONDARY.integrations : [];
   return { workspace: get(id), tab, detail: pathname.startsWith("/admin/products/") && pathname !== "/admin/products/recheck" ? "product" : null, secondary };
