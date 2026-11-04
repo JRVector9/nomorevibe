@@ -15,6 +15,7 @@ import { PrototypeReviewConsole } from "./PrototypeReviewConsole";
 import { prototypeReviewFilter, prototypeReviewNeeds, prototypeReviewOptions } from "./PrototypeReviewQuery";
 import { STAGE_GROUPS } from "./stages";
 import { PrototypeReviewFilters, PrototypeReviewLanguage, PrototypeReviewManagement } from "./PrototypeReviewPanels";
+import { DeferredReviewPanel } from "./DeferredReviewPanel";
 import { PrototypeReviewPublished } from "./PrototypeReviewPublished";
 import "./PrototypeReview.css";
 
@@ -34,6 +35,7 @@ export default async function ReviewPage({ searchParams }: { searchParams: Promi
 async function Workspace({ params }: { params: Search }) {
   const observedAt = new Date().getTime();
   const filter = prototypeReviewFilter(params);
+  const filtersOpen = one(params.review_filters) === "1", managementOpen = one(params.review_management) === "1";
   const { tab, stage, cause, ai, second, q, updated, sort, rawState } = filter;
   const rawPage = Number(one(params.page) || 1), page = Number.isSafeInteger(rawPage) && rawPage > 0 ? rawPage : 1;
   const focusNumber = Number(one(params.focus) || one(params.id)), focus = Number.isSafeInteger(focusNumber) && focusNumber > 0 ? focusNumber : undefined;
@@ -54,7 +56,8 @@ async function Workspace({ params }: { params: Search }) {
   const pages = Math.max(1, Math.ceil(queue.total / PAGE_SIZE));
   const query = (patch: Record<string, string | number | undefined> = {}) => {
     const search = new URLSearchParams(); const values = { tab, state: rawState || undefined, stage: stage || undefined, cause: cause || undefined, ai: ai || undefined,
-      second: second || undefined, q: q || undefined, updated: updated || undefined, sort: sort || undefined, ...patch };
+      second: second || undefined, q: q || undefined, updated: updated || undefined, sort: sort || undefined,
+      review_filters: filtersOpen ? "1" : undefined, review_management: managementOpen ? "1" : undefined, ...patch };
     for (const [key, value] of Object.entries(values)) if (value !== undefined && value !== "") search.set(key, String(value));
     return `/admin/review?${search}`;
   };
@@ -64,15 +67,15 @@ async function Workspace({ params }: { params: Search }) {
   const pagination = pages > 1 ? <nav aria-label="검수 목록 페이지" className="flex">{page > 1 && <Link className="button small" href={query({ page: page - 1 })}>이전</Link>}{pageWindow(page, pages).map((item, index) => item === null ? <span key={`gap:${index}`}>…</span> : <Link className={`button small${page === item ? " primary" : ""}`} key={`page:${item}`} aria-current={page === item ? "page" : undefined} href={query({ page: item })}>{item}</Link>)}{page < pages && <Link className="button small" href={query({ page: page + 1 })}>다음</Link>}</nav> : null;
   return <main className="stack prototype-review"><PageStamp /><h1 className="sr-only">검수 및 발행</h1>
     <div className="toolbar"><Link href="/admin/settings?tab=collection" className="button">심사 운영 설정</Link>{(tab === "publish" || stage === "publish") && second !== "published" && <Link href="/admin/status?tab=manual" prefetch={false} className="button">수동 카테고리 지정·발행 검토</Link>}{second !== "published" && <a href={`/admin/export?view=review&format=csv&${exportQuery}`} className="button">CSV 내보내기</a>}<span className="spacer" /><Suspense fallback={null}><PrototypeReviewLanguage /></Suspense></div>
-    <form action="/admin/review" className="toolbar"><input type="hidden" name="tab" value={tab} />{rawState && <input type="hidden" name="state" value={rawState} />}<input className="search-input" type="search" name="q" defaultValue={q} maxLength={100} aria-label="후보 검색" placeholder="후보명·저장소 검색 후 Enter" />
+    <form action="/admin/review" className="toolbar"><input type="hidden" name="tab" value={tab} />{filtersOpen && <input type="hidden" name="review_filters" value="1" />}{managementOpen && <input type="hidden" name="review_management" value="1" />}{rawState && <input type="hidden" name="state" value={rawState} />}<input className="search-input" type="search" name="q" defaultValue={q} maxLength={100} aria-label="후보 검색" placeholder="후보명·저장소 검색 후 Enter" />
       {second !== "published" && <select name="stage" defaultValue={stage} aria-label="후보 단계"><option value="">{tab === "human" ? "사람 확인 대상 전체" : "단계 전체"}</option>{STAGE_GROUPS.flatMap(group => group.stages).map(item => <option key={item.key} value={item.key}>{item.label}</option>)}</select>}
       {second !== "published" && <select name="sort" defaultValue={sort} aria-label="후보 정렬"><option value="wait">오래 기다린 순</option><option value="wait_short">최근 대기순</option><option value="">들어온 순</option><option value="stars">별 많은 순</option><option value="push">최근 푸시순</option><option value="push_old">오래된 푸시순</option></select>}
       {cause && <input type="hidden" name="cause" value={cause} />}{ai && <input type="hidden" name="ai" value={ai} />}{second && <input type="hidden" name="second" value={second} />}{updated && <input type="hidden" name="updated" value={updated} />}<button className="button">조회</button><span className="spacer small muted">{second === "published" ? `공개분 확인 ${queue.total.toLocaleString("ko-KR")}건` : `전체 ${queue.total.toLocaleString("ko-KR")}건 · ${page}/${pages}쪽`}</span>
     </form>
-    {second !== "published" ? <details className="panel"><summary>갈래·AI 판단·기간으로 더 좁히기</summary><Suspense fallback={<p className="panel-body small muted" role="status">갈래 집계를 읽는 중입니다.</p>}><PrototypeReviewFilters filter={filter} loadCauses={loadCauses} /></Suspense></details> : <Link className="text-button" href={`/admin/review?tab=${tab}`}>후보 단계 검수로 돌아가기 →</Link>}
+    {second !== "published" ? <DeferredReviewPanel panel="filters" expanded={filtersOpen} title="갈래·AI 판단·기간으로 더 좁히기">{filtersOpen && <Suspense fallback={<p className="panel-body small muted" role="status">갈래 집계를 읽는 중입니다.</p>}><PrototypeReviewFilters filter={filter} loadCauses={loadCauses} /></Suspense>}</DeferredReviewPanel> : <Link className="text-button" href={`/admin/review?tab=${tab}`}>후보 단계 검수로 돌아가기 →</Link>}
     {queue.hiddenByAge > 0 && <p className="small muted">최근 푸시 조건으로 {queue.hiddenByAge.toLocaleString("ko-KR")}건을 목록에서 제외했습니다. 후보 상태는 유지됩니다.</p>}
     {second === "published" ? <PrototypeReviewPublished rows={publishedRows ?? []} />
       : <PrototypeReviewConsole key={`${page}:${tab}:${state}:${stage}:${cause}:${ai}:${second}:${q}:${updated}:${sort}`} now={observedAt} entries={queue.entries} reasons={REVIEW_REJECT_REASONS} focus={focus} title={listTitle} total={queue.total} footer={pagination} />}
-    <details className="panel"><summary>심사 운영·보류 재심사 관리</summary><Suspense fallback={<p className="panel-body small muted" role="status">심사 운영 상태를 읽는 중입니다.</p>}><PrototypeReviewManagement settings={settings} loadCauses={loadCauses} /></Suspense></details>
+    <DeferredReviewPanel panel="management" expanded={managementOpen} title="심사 운영·보류 재심사 관리">{managementOpen && <Suspense fallback={<p className="panel-body small muted" role="status">심사 운영 상태를 읽는 중입니다.</p>}><PrototypeReviewManagement settings={settings} loadCauses={loadCauses} /></Suspense>}</DeferredReviewPanel>
   </main>;
 }
