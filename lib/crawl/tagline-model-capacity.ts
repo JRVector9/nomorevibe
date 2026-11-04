@@ -18,7 +18,7 @@ import { textTaskModel } from "@/lib/llm/ai-task-rank-scope";
 
 export type CrawlTaglineCapacityOutcome = { kind: "result"; result: TaglineResult; askOrdinal: 1 | 2;
   parent: CrawlTaglineParent | null; expectation: CrawlTaglineWriteExpectation };
-export type CrawlTaglineCapacityResult = { kind: "disabled" } | { kind: "skipped"; reason: string } | CrawlTaglineCapacityOutcome;
+export type CrawlTaglineCapacityResult = { kind: "skipped"; reason: string } | CrawlTaglineCapacityOutcome;
 type Options = { timeoutMs: number; signal?: AbortSignal; roleLease?: RoleLease; previous?: CrawlTaglineCapacityOutcome };
 
 /** 큐와 HTTP 사이에는 열린 TX/connection이 없다. 재질문 조건과 시간 계산은 job이 소유한다. */
@@ -34,17 +34,14 @@ export async function writeCrawlTaglineWithModelCapacity(value: TaglineTask, job
   // 순위(PR B)가 계약을 확인하고 범위를 열었다 — 그 사이 계약이 닫혔으면 이 모델만의 일이라 다음 순위로 넘긴다(옛 게이트웨이 길로 떨어지지 않는다)
   if (!textRouteCallable("crawl-tagline", textTaskModel("crawl-tagline"), provider)) throw new ModelCapacityDeferredError("provider_contract_unavailable");
   const control = await readModelCapacityCallerControl();
-  if (control.mode === "disabled" && !previous) return { kind: "disabled" };
-  if (control.mode !== "open") throw new ModelCapacityDeferredError(control.mode === "draining" ? "draining" : "disabled");
+  if (control.mode === "disabled") throw new ModelCapacityDeferredError("disabled");
+  if (control.mode !== "open") throw new ModelCapacityDeferredError("draining");
   if (!control.policy?.routes.some(route => route.routeId === "crawl-tagline" && route.provider === provider && route.model === textTaskModel("crawl-tagline")))
     throw new ModelCapacityDeferredError("unmapped");
   const roleLease = options.roleLease ?? (env.ROLE_LEASE_ROLE === "text" ? roleLeaseFromEnv("text", env) : undefined);
   if (!roleLease || roleLease.role !== "text") throw new ModelCapacityDeferredError("owner_unavailable");
   const initial = await prepareCrawlTaglineDispatch(task, lease, { roleLease, previous: previous?.expectation });
-  if (initial.kind === "disabled") {
-    if (previous) throw new ModelCapacityDeferredError("disabled");
-    return initial;
-  }
+  if (initial.kind === "disabled") throw new ModelCapacityDeferredError("disabled");
   if (initial.kind === "skipped") return initial;
   if (!("snapshot" in initial)) throw new Error("crawl_tagline_preparation_invalid");
   const history = await readCrawlTaglineContinuation({ member: initial.member, model: textTaskModel("crawl-tagline") });

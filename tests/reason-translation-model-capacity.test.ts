@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createHash, randomUUID } from 'node:crypto';
-const mocks = vi.hoisted(() => ({ control: vi.fn(), legacy: vi.fn(), prepare: vi.fn(), domain: vi.fn(),
+const mocks = vi.hoisted(() => ({ control: vi.fn(), prepare: vi.fn(), domain: vi.fn(),
   pending: vi.fn(), batches: vi.fn(), batch: vi.fn(), abandon: vi.fn(), request: vi.fn(), cancel: vi.fn(), native: vi.fn(), unknown: vi.fn(), reconcile: vi.fn(), role: vi.fn() }));
 vi.mock('@/lib/llm/capacity-repository', () => ({ readModelCapacityCallerControl: mocks.control,
   findOwnPendingModelRequest: mocks.pending, requestReasonTranslationModelSlot: mocks.request,
@@ -8,7 +8,6 @@ vi.mock('@/lib/llm/capacity-repository', () => ({ readModelCapacityCallerControl
   cancelReservedModelSlot: mocks.cancel, markModelDispatchIndeterminate: mocks.unknown,
   reconcileReasonTranslationGatewayTerminal: mocks.reconcile }));
 vi.mock('@/lib/crawl/translate', async () => { const { createHash } = await import('node:crypto'); return {
-  translateToKorean: mocks.legacy,
   textHash: (value: string) => createHash('sha256').update(value).digest('hex') }; });
 vi.mock('@/lib/crawl/translations', () => ({ prepareReasonTranslationDispatch: mocks.domain, pendingReasonTranslationBatch: mocks.batch }));
 vi.mock('@/lib/crawl/agent-review-gateway', () => ({ prepareReasonTranslationGatewayCall: mocks.prepare,
@@ -45,7 +44,6 @@ beforeEach(() => {
     ? { kind: 'ready', dispatch, expectation } : { kind: 'ready', members, role });
   mocks.request.mockResolvedValue({ kind: 'granted', reservation });
   mocks.native.mockResolvedValue({ result: { ok: true, translations: ['한국어 사유'] }, terminal: Object.freeze({ native: 'opaque' }) });
-  mocks.legacy.mockResolvedValue({ ok: true, translations: ['기존 번역'] });
 });
 afterEach(() => { setServingContractSnapshotForTest(null); vi.unstubAllEnvs(); });
 it('ignores a process gateway key: without a direct contract it never reads capacity, prepares or reserves', async () => {
@@ -53,17 +51,28 @@ it('ignores a process gateway key: without a direct contract it never reads capa
   setServingContractSnapshotForTest([]); vi.stubEnv('ABCLLM_API_KEY', 'ignored-gateway-key');
   const error = await translate(batch(), lease, options()).catch((value: unknown) => value);
   expect(error).toBeInstanceOf(ModelCapacityDeferredError); expect(error).toMatchObject({ reason: 'provider_contract_unavailable' });
-  expect(mocks.legacy).not.toHaveBeenCalled();
   expect(mocks.control).not.toHaveBeenCalled(); expect(mocks.prepare).not.toHaveBeenCalled();
   expect(mocks.request).not.toHaveBeenCalled(); expect(mocks.native).not.toHaveBeenCalled();
 });
-it('preserves disabled transport and the original ordered timeout/signal arguments', async () => {
+it('defers as disabled instead of sending the retired original transport', async () => {
   mocks.control.mockResolvedValue({ mode: 'disabled' });
   const controller = new AbortController();
-  expect(await translate(batch(), lease, { ...options(), signal: controller.signal }))
-    .toEqual({ kind: 'disabled', result: { ok: true, translations: ['기존 번역'] } });
-  expect(mocks.legacy).toHaveBeenCalledExactlyOnceWith([body], 45000, undefined, controller.signal);
+  await expect(translate(batch(), lease, { ...options(), signal: controller.signal }))
+    .rejects.toEqual(new ModelCapacityDeferredError('disabled'));
   expect(mocks.prepare).not.toHaveBeenCalled(); expect(mocks.request).not.toHaveBeenCalled();
+});
+it('defers as disabled when the domain preparation says disabled', async () => {
+  mocks.domain.mockResolvedValueOnce({ kind: 'disabled' });
+  await expect(translate(batch(), lease, options())).rejects.toEqual(new ModelCapacityDeferredError('disabled'));
+  expect(mocks.request).not.toHaveBeenCalled(); expect(mocks.native).not.toHaveBeenCalled();
+});
+it('defers as disabled when a recovered own pending request says disabled', async () => {
+  const pending = { request: { requestId: randomUUID(), workKey: 'text:reason:ko:fixture' }, memberKeys: ['ko:' + hash], state: 'waiting' };
+  mocks.batches.mockResolvedValue([pending]); mocks.batch.mockResolvedValue(batch());
+  mocks.domain.mockResolvedValueOnce({ kind: 'ready', members, role }).mockResolvedValueOnce({ kind: 'disabled' });
+  await expect(translate(batch(), lease, options())).rejects.toEqual(new ModelCapacityDeferredError('disabled'));
+  expect(mocks.request).not.toHaveBeenCalled(); expect(mocks.cancel).not.toHaveBeenCalled();
+  expect(mocks.native).not.toHaveBeenCalled();
 });
 it('fails closed before a request or native call when the serving contract is unsupported', async () => {
   mocks.prepare.mockReturnValue({ kind: 'unsupported' });
@@ -73,7 +82,7 @@ it('fails closed before a request or native call when the serving contract is un
 it('preserves draining as typed defer without consuming an attempt', async () => {
   mocks.control.mockResolvedValue({ mode: 'draining' });
   await expect(translate(batch(), lease, options())).rejects.toMatchObject({ reason: 'draining' });
-  expect(mocks.domain).not.toHaveBeenCalled(); expect(mocks.legacy).not.toHaveBeenCalled();
+  expect(mocks.domain).not.toHaveBeenCalled();
 });
 it('resumes the exact pending ID and sends only the committed domain dispatch', async () => {
   mocks.pending.mockResolvedValue({ requestId: reservation.requestId, state: 'waiting' });

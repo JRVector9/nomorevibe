@@ -13,7 +13,6 @@ vi.mock("@/lib/llm/reason-translation-serving-contract", async original => ({
   ...await original<typeof import("@/lib/llm/reason-translation-serving-contract")>(),
   resolveReasonTranslationServingContract: () => fixture.contract,
 }));
-vi.mock("@/lib/llm/text-capacity-admission", () => ({ assertTextModelAdmission: vi.fn() }));
 const model = "reason-original-model", requests = new Set<Promise<unknown>>();
 const sources = () => ["Repository has no visible deployment evidence.", "The product URL shows a working documentation site."];
 const translated = ["저장소에는 배포 근거가 없습니다", "제품 URL에 동작하는 문서 사이트가 있습니다"];

@@ -11,13 +11,13 @@ import { inTextRank, pinTextRanks, textContract } from "./text-task-ranks-fixtur
 /** 검수 모델은 「작업 ↔ 모델」 순위가 고른다(PR B) — 순위의 장부 이름이 정책 route·장부·결과 기록에 그대로 실린다. */
 const VERIFY_MODEL = vi.hoisted(() => "Qwen3.8-27B-NVFP4");
 const state = vi.hoisted(() => ({
-  mode: "open" as "open" | "disabled" | "draining", mapped: true,
+  mode: "open" as "open" | "disabled" | "draining", initial: "ready" as "ready" | "disabled", mapped: true,
   continuation: null as null | Record<string, unknown>,
   slots: [] as ("granted" | "capacity")[], prepares: [] as ("ready" | "expired" | "skipped")[],
   replies: [] as ({ result: { ok: true; unsupported: string[] } | { ok: false; error: string }; outcome: SearchVerifyOutcome | null; delayMs?: number })[],
   posts: [] as { keywords: string[]; timeoutMs: number; requestId: string }[],
   inputs: [] as SearchVerifyInput[], reserved: [] as { remainingMs: number; input: SearchVerifyInput }[],
-  cancelled: 0, marked: [] as string[], settled: [] as string[], legacy: [] as string[],
+  cancelled: 0, marked: [] as string[], settled: [] as string[],
   writes: vi.fn(), pending: vi.fn(),
 }));
 vi.mock("@/lib/llm/capacity-repository", () => ({
@@ -38,7 +38,7 @@ vi.mock("@/lib/domain/products/search-profiles", () => ({
   pendingVerifications: state.pending, recordVerificationResult: state.writes, sealSearchVerifyWriteExpectation: () => {},
   prepareSearchVerifyModelDispatch: async (_task: unknown, _lease: unknown, options: { mode: "full" | "chunk"; keywords: string[];
     reserved?: { remainingMs: number; input: SearchVerifyInput; reservation: { requestId: string } } }) => {
-    if (!options.reserved) return state.mode === "disabled" ? { kind: "disabled" } : { kind: "ready", role: { instanceId: "text-unit", bootId: boot }, expectation,
+    if (!options.reserved) return state.initial === "disabled" ? { kind: "disabled" } : { kind: "ready", role: { instanceId: "text-unit", bootId: boot }, expectation,
       member: member(options.mode, options.mode === "chunk" ? new Set(options.keywords).size : options.keywords.length) };
     state.reserved.push({ remainingMs: options.reserved.remainingMs, input: structuredClone(options.reserved.input) });
     const next = state.prepares.shift() ?? "ready";
@@ -56,9 +56,6 @@ vi.mock("@/lib/crawl/agent-review-gateway", () => ({
   readSearchVerifyGatewayTerminal: (terminal: { requestId: string; outcome: SearchVerifyOutcome } | null) =>
     terminal ? { responseHash: "d".repeat(64), outcome: terminal.outcome } : null,
 }));
-vi.mock("@/lib/domain/products/search-verify", async load => ({ ...await load<typeof import("@/lib/domain/products/search-verify")>(),
-  verifyKeywords: async (item: { keywords: string[] }) => { state.legacy.push(`full:${item.keywords.length}`); return { ok: true, unsupported: [] }; },
-  verifyKeywordsInChunks: async (item: { keywords: string[] }) => { state.legacy.push(`chunk:${item.keywords.length}`); return { ok: true, unsupported: [] }; } }));
 const { verifyKeywordsWithModelCapacity } = await import("@/lib/domain/products/search-verify-model-capacity");
 const { verifySearchKeywords } = await import("@/lib/jobs/products/search-verify");
 /** The route opens only on an engine connected directly (admin contract, transport direct); the gateway key env is gone (2026-10-30). */
@@ -91,24 +88,29 @@ function resumable(next: SearchVerifyStep | "done" | "stop", deadlineInMs: numbe
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] }); pinDirectContract(); pinTextRanks({ "product-search-verify": VERIFY_MODEL });
-  Object.assign(state, { mode: "open", mapped: true, continuation: null, slots: [], prepares: [], replies: [], posts: [], inputs: [], reserved: [],
-    cancelled: 0, marked: [], settled: [], legacy: [] });
+  Object.assign(state, { mode: "open", initial: "ready", mapped: true, continuation: null, slots: [], prepares: [], replies: [], posts: [], inputs: [], reserved: [],
+    cancelled: 0, marked: [], settled: [] });
   state.writes.mockReset(); state.pending.mockReset(); state.writes.mockResolvedValue(true);
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); setServingContractSnapshotForTest(null); pinTextRanks(null); });
 
 describe("one permit, one physical POST, legacy step order", () => {
-  it("keeps the disabled leaf and both legacy entry points without any ledger call", async () => {
+  it("defers as disabled without any ledger call", async () => {
     state.mode = "disabled";
-    expect(await run()).toEqual({ kind: "result", result: { ok: true, unsupported: [] } });
-    expect(await run({ chunked: false })).toEqual({ kind: "result", result: { ok: true, unsupported: [] } });
-    expect(state.legacy).toEqual(["chunk:12", "full:12"]); expect(state.inputs).toEqual([]); expect(state.posts).toEqual([]);
+    await expect(run()).rejects.toEqual(new ModelCapacityDeferredError("disabled"));
+    await expect(run({ chunked: false })).rejects.toEqual(new ModelCapacityDeferredError("disabled"));
+    expect(state.inputs).toEqual([]); expect(state.posts).toEqual([]);
+  });
+  it("defers as disabled when the domain preparation says disabled", async () => {
+    state.initial = "disabled";
+    await expect(run()).rejects.toEqual(new ModelCapacityDeferredError("disabled"));
+    expect(state.inputs).toEqual([]); expect(state.posts).toEqual([]);
   });
   it("defers this rank without the legacy leaf or any ledger call when the route has no direct contract, even if a gateway key env is set", async () => {
     // 순위가 고른 계약이 그 사이 닫혔으면 옛 길로 떨어지지 않고 이 모델만의 미룸으로 다음 순위에 넘긴다(PR B)
     vi.stubEnv("ABCLLM_API_KEY", "old-gateway-key"); setServingContractSnapshotForTest([]);
     await expect(run()).rejects.toEqual(new ModelCapacityDeferredError("provider_contract_unavailable"));
-    expect(state.legacy).toEqual([]); expect(state.inputs).toEqual([]); expect(state.posts).toEqual([]);
+    expect(state.inputs).toEqual([]); expect(state.posts).toEqual([]);
   });
   it("sends full mode once with the original order, duplicates and unshortened legacy timeout", async () => {
     const words = ["b", "a", "b"]; state.replies = [ok(["a"])];

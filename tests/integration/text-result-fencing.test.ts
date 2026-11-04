@@ -9,6 +9,7 @@ import { pendingTaglines, writeTaglineByHand, recordTaglineResult } from "@/lib/
 import { runJob, getJobState } from "@/lib/jobs/runner";
 import { recordWorkerTranslations, recordTranslations } from "@/lib/crawl/translations";
 import { textHash } from "@/lib/crawl/translate";
+import { taglineEvidence, writeTagline } from "@/lib/crawl/tagline";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { ensureSchema } from "./setup";
 import { pinTextRanks, textContract } from "../text-task-ranks-fixture";
@@ -21,6 +22,14 @@ import { pinTextRanks, textContract } from "../text-task-ranks-fixture";
  */
 // 1순위 모델 — 예전 TAGLINE_MODEL(등록부 기본값)과 같은 이름이다
 const { TAGLINE_MODEL } = vi.hoisted(() => ({ TAGLINE_MODEL: "qwen3.6-35b-heretic" }));
+const capacityHook = vi.hoisted(() => ({ tagline: null as null | ((task: { candidate: { repo: string };
+  document: Parameters<typeof import("@/lib/crawl/tagline").taglineEvidence>[1] },
+  options: { timeoutMs: number; signal?: AbortSignal; previous?: unknown }) => Promise<unknown>) }));
+vi.mock("@/lib/crawl/tagline-model-capacity", () => ({
+  writeCrawlTaglineWithModelCapacity: (task: { candidate: { repo: string };
+    document: Parameters<typeof import("@/lib/crawl/tagline").taglineEvidence>[1] },
+  _job: unknown, options: { timeoutMs: number; signal?: AbortSignal; previous?: unknown }) => capacityHook.tagline!(task, options),
+}));
 vi.mock("@/lib/crawl/tagline", async load => {
   const original = await load<typeof import("@/lib/crawl/tagline")>();
   const { askRemovedGatewayLeaf, replyContent } = await import("./direct-engine-fixtures");
@@ -29,6 +38,9 @@ vi.mock("@/lib/crawl/tagline", async load => {
     async response => original.parseTagline(await replyContent(response), evidence), options);
   return { ...original, writeTagline };
 });
+capacityHook.tagline = async (task, options) => ({ kind: "result",
+  result: await writeTagline(taglineEvidence(task.candidate.repo, task.document), { signal: options.signal, timeoutMs: options.timeoutMs }),
+  askOrdinal: options.previous ? 2 as const : 1 as const, parent: null, expectation: undefined });
 
 beforeAll(ensureSchema);
 beforeEach(async () => {

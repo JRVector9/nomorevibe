@@ -1,12 +1,13 @@
-import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach, afterAll, vi } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
 import { pinTextRanks, textContract } from "../text-task-ranks-fixture";
 
 /**
- * 게이트웨이(abcLLM)는 2026-10-30 제거됐다. 잡은 이 경로·모델의 직접 연결 계약이 있어야 돌고, 용량을 끈(disabled) 잡이 부르는 옛 잎
- * writeTagline 은 이제 보내지 않고 no_key 로 끝난다(파일 끝 두 시험). 이 파일은 잡이 답을 받은 뒤의 판단(빈 줄 재질문·실패 시각·사람의 줄·
- * 원본 해시)을 보므로, 그 잎만 같은 wire 를 이 파일의 fetch 목(gateway)으로 보내는 대역으로 바꾼다(direct-engine-fixtures).
+ * 게이트웨이(abcLLM)는 2026-10-30 제거됐다. 잡은 이 경로·모델의 직접 연결 계약이 있어야 돌고, 옛 잎 writeTagline 은 이제 보내지 않고
+ * no_key 로 끝난다(파일 끝 두 시험). 이 파일은 잡이 답을 받은 뒤의 판단(빈 줄 재질문·실패 시각·사람의 줄·원본 해시)을 보므로, 그 잎만
+ * 같은 wire 를 이 파일의 fetch 목(gateway)으로 보내는 대역으로 바꾸고, 용량 조정기는 그 잎의 결과를 그대로 돌려주는 대역으로 둔다
+ * (장부·예약·native 경로는 crawl-tagline-capacity-dispatch 가 본다). 용량 disabled 는 이제 옛 길로 떨어지지 않고 미룬다.
  * 2026-11-02(PR B): 모델은 「작업 ↔ 모델」 순위가 고른다 — 순위를 고정하고(pinTextRanks) 그 연결의 엔진 직접 계약 행(textContract)을 넣는다.
  */
 // 1순위 모델 — 예전 TAGLINE_MODEL(등록부 기본값)과 같은 이름이다
@@ -19,6 +20,13 @@ vi.mock("@/lib/crawl/tagline", async load => {
     async response => original.parseTagline(await replyContent(response), evidence), options);
   return { ...original, writeTagline };
 });
+const capacityHook = vi.hoisted(() => ({ tagline: null as null | ((task: { candidate: { repo: string }; document: Parameters<typeof import("@/lib/crawl/tagline").taglineEvidence>[1] },
+  options: { timeoutMs: number; signal?: AbortSignal; previous?: unknown }) => Promise<unknown>) }));
+vi.mock("@/lib/crawl/tagline-model-capacity", () => ({
+  writeCrawlTaglineWithModelCapacity: async (task: { candidate: { repo: string }; document: Parameters<typeof import("@/lib/crawl/tagline").taglineEvidence>[1] },
+    _job: unknown, options: { timeoutMs: number; signal?: AbortSignal; previous?: unknown }) =>
+    capacityHook.tagline!(task, options),
+}));
 
 const { db } = await import("@/lib/db");
 const { retryBackoffSql } = await import("@/lib/db/retry-backoff");
@@ -26,7 +34,9 @@ const { crawlCandidates, crawlDocuments, crawlFrontier, crawlSettings, crawlTagl
 const crawl = await import("@/lib/crawl/repository");
 const { saveSettings } = await import("@/lib/crawl/settings");
 const { writeTaglines } = await import("@/lib/crawl/jobs/tagline");
-const { taglineEvidence } = await import("@/lib/crawl/tagline");
+const { taglineEvidence, writeTagline } = await import("@/lib/crawl/tagline");
+capacityHook.tagline = async (task, options) => ({ kind: "result", result: await writeTagline(taglineEvidence(task.candidate.repo, task.document),
+  { signal: options.signal, timeoutMs: options.timeoutMs }), askOrdinal: options.previous ? 2 as const : 1 as const, parent: null, expectation: undefined });
 const { pendingTaglines, recordTaglineResult } = await import("@/lib/crawl/taglines");
 const { runJob } = await import("@/lib/jobs/runner");
 const { ensureSchema, resetTables } = await import("./setup");
@@ -64,6 +74,11 @@ beforeEach(async () => {
   vi.stubGlobal("fetch", gateway);
 });
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); setServingContractSnapshotForTest(null); pinTextRanks(null); });
+afterAll(async () => {
+  // 마지막 옛 잎 시험이 남긴 후보·문서를 지운다 — 다른 통합 파일의 beforeAll 이 빈 대기열을 먼저 볼 수 있다.
+  await db.delete(crawlCandidates).where(eq(crawlCandidates.repo, "someone/real-leaf"));
+  await db.delete(crawlDocuments).where(eq(crawlDocuments.repo, "someone/real-leaf"));
+});
 
 describe("소개 짓기 잡", () => {
   it("preserves the tagline retry budget when its tokenizer is unavailable", async () => {

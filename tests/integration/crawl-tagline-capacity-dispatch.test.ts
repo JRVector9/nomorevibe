@@ -349,13 +349,14 @@ it("passes a candidate fenced by its own unknown phase row and keeps writing the
   });
 }), 20_000);
 
-it("preserves disabled legacy cache against an older positive writer without consuming positive history", exercise(async () => {
+it("refuses disabled capacity without a legacy fallback while the original cache writer still wins", exercise(async () => {
   const task = await seed(); await server(async ({ bodies }) => {
     expect(await custom(async lease => {
       const outcome = await tracked(writeCrawlTaglineWithModelCapacity(task, lease, { roleLease: role, timeoutMs: 45_000 }));
       if (outcome.kind !== "result" || !outcome.result.ok) throw new Error("fixture_positive_required");
       await admin`UPDATE model_capacity_control SET mode='disabled' WHERE id=1`;
-      expect(await tracked(writeCrawlTaglineWithModelCapacity(task, lease, { roleLease: role, timeoutMs: 45_000 }))).toEqual({ kind: "disabled" });
+      await expect(tracked(writeCrawlTaglineWithModelCapacity(task, lease, { roleLease: role, timeoutMs: 45_000 })))
+        .rejects.toEqual(new ModelCapacityDeferredError("disabled"));
       expect(await tracked(recordTaglineResult(task, lease, { kind: "success", tagline: "Legacy line", source: "page", model: TAGLINE_MODEL }))).toMatchObject({ stored: true });
       const [legacy] = await admin`SELECT to_jsonb(t) AS row FROM crawl_taglines t WHERE repo=${task.candidate.repo}`;
       expect(await tracked(recordTaglineResult(task, lease, { kind: "success", tagline: outcome.result.tagline, source: outcome.result.source, model: TAGLINE_MODEL }, outcome.expectation)))

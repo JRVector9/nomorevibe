@@ -232,15 +232,13 @@ it('keeps production unsupported before any request, cache attempt or provider c
   const [observed] = await admin`SELECT value->'degraded'->>'code' AS code,value->'degraded'->>'detail' AS detail FROM operations_observations WHERE key=${`job:${jobName}`}`;
   expect(observed.code).toBe('all_ranks_unusable'); expect(observed.detail).toContain(`1순위 test-engine · ${TRANSLATE_MODEL}: 전송 계약이 닫힘`);
 }));
-it('preserves the disabled original path, which no longer sends, and the original three-argument cache writer', exercise(async () => {
-  // Disabled still selects the original transport, but the abcLLM gateway it used is gone (2026-10-30): no HTTP at all, no ledger
-  // row, and the original writer stores the batch as a no_key failure.
+it('defers disabled capacity without a retired transport or a no_key failure row', exercise(async () => {
+  // Disabled is an explicit defer now: no retired transport, no ledger row and no attempt/failure write.
   const first = await seed(), second = await seed(); await install(basePolicy, 'disabled');
   const legacy = vi.fn(async () => new Response(JSON.stringify(replyBody(['한국어 성공', null])))); vi.stubGlobal('fetch', legacy);
-  expect(await tick()).toMatchObject({ status: 'completed' }); expect(legacy).not.toHaveBeenCalled();
+  expect(await tick()).toMatchObject({ status: 'deferred', reason: 'model_capacity' }); expect(legacy).not.toHaveBeenCalled();
   expect(await admin`SELECT request_id FROM model_capacity_requests WHERE owner_instance_id=${prefix}`).toEqual([]);
-  const rows = await admin`SELECT status,attempts,error_code FROM text_translations WHERE source_hash=ANY(${[first.hash,second.hash]}::text[]) ORDER BY status`;
-  expect(Array.from(rows)).toEqual([{ status: 'failed', attempts: 1, error_code: 'no_key' }, { status: 'failed', attempts: 1, error_code: 'no_key' }]);
+  expect(await admin`SELECT source_hash FROM text_translations WHERE source_hash=ANY(${[first.hash,second.hash]}::text[])`).toEqual([]);
 }));
 it('commits actual legacy text role/job, one batch permit, native terminal, partial cache attempts and final ACK', exercise(async () => {
   const first = await seed(), second = await seed(); await server(async ({ bodies, setReply }) => {
@@ -294,7 +292,7 @@ it('abandons a stale complete cache binding and keeps the remaining/new eligible
     await admin`UPDATE text_translations SET updated_at=updated_at+interval '1 microsecond' WHERE source_hash=${first.hash} AND target_lang='ko'`;
     const latest = await seed();
     // Answer by the request, not the call order: which queue (retry or untried) the job reads first alternates per tick round
-    // across this file's ticks, and the disabled-path test above now ends its tick after one round (no_key) instead of two.
+    // across this file's ticks. The disabled-path test above now defers without writing any attempt.
     setReply(response => {
       const texts = JSON.parse(JSON.parse(bodies.at(-1)!).messages[1].content) as string[];
       response.end(JSON.stringify(replyBody(texts.map(text => text === first.body ? '재시도 번역' : '사유 번역'))));

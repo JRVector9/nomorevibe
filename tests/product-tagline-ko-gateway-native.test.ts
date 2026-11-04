@@ -17,7 +17,6 @@ vi.mock("@/lib/llm/product-tagline-ko-serving-contract", async original => ({
   ...await original<typeof import("@/lib/llm/product-tagline-ko-serving-contract")>(),
   resolveProductTaglineKoServingContract: () => fixture.contract,
 }));
-vi.mock("@/lib/llm/text-capacity-admission", () => ({ assertTextModelAdmission: vi.fn() }));
 const model = "tagline-original-model", requests = new Set<Promise<unknown>>();
 const items = (): ProductTaglineKoGatewayItem[] => [
   { name: "Toolkit", tagline: "Toolkit helps organize documents" },

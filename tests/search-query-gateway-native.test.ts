@@ -15,7 +15,6 @@ const fixture = vi.hoisted(() => ({ contract: null as WebsearchQueryServingContr
 vi.mock("@/lib/llm/websearch-query-serving-contract", async original => ({
   ...await original<typeof import("@/lib/llm/websearch-query-serving-contract")>(), resolveWebsearchQueryServingContract: () => fixture.contract,
 }));
-vi.mock("@/lib/llm/text-capacity-admission", () => ({ assertTextModelAdmission: vi.fn() }));
 // 모델은 「작업 ↔ 모델」 순위가 고른다(PR B, import 때 정하는 상수가 없다) — 시험의 모델 이름 하나를 쓴다.
 const model = "search-query-original-model", requests = new Set<Promise<unknown>>();
 const korean: WebsearchQueryGatewayInput = { sourceLocale: "ko", query: "헬스장 출석 체크" };

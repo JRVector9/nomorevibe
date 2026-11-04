@@ -11,7 +11,7 @@ import { roleLeaseFromEnv, type RoleLease } from "@/lib/jobs/role-leader";
 import type { JobLease } from "@/lib/jobs/control";
 import { profileEvidence } from "./search-profile";
 import { prepareSearchVerifyModelDispatch, sealSearchVerifyWriteExpectation, type ProfileTask, type SearchVerifyWriteExpectation } from "./search-profiles";
-import { verifyKeywords, verifyKeywordsInChunks, type VerifyResult } from "./search-verify";
+import type { VerifyResult } from "./search-verify";
 import { textRouteCallable } from "@/lib/llm/serving-contract-store";
 import { searchVerifyServingProvider } from "@/lib/llm/search-verify-serving-contract";
 import { textTaskModel } from "@/lib/llm/ai-task-rank-scope";
@@ -33,13 +33,11 @@ export async function verifyKeywordsWithModelCapacity(task: ProfileTask, lease: 
     roleLease: valueOptions.roleLease && structuredClone(valueOptions.roleLease) };
   const item = { evidence: profileEvidence(snapshot.product, snapshot.reviewerNote),
     keywords: [...snapshot.profile!.keywordsEn, ...snapshot.profile!.keywordsKo] };
-  const legacy = async () => ({ kind: "result" as const, result: await (options.chunked ? verifyKeywordsInChunks : verifyKeywords)(item,
-    { request: options.request, signal: options.signal, timeoutMs: options.timeoutMs }) });
   const provider = searchVerifyServingProvider(textTaskModel("product-search-verify"));
   // 순위(PR B)가 계약을 확인하고 범위를 열었다 — 그 사이 계약이 닫혔으면 이 모델만의 일이라 다음 순위로 넘긴다(옛 게이트웨이 길로 떨어지지 않는다)
   if (!textRouteCallable("product-search-verify", textTaskModel("product-search-verify"), provider)) throw new ModelCapacityDeferredError("provider_contract_unavailable");
   const control = await readModelCapacityCallerControl();
-  if (control.mode === "disabled") return legacy();
+  if (control.mode === "disabled") throw new ModelCapacityDeferredError("disabled");
   if (control.mode !== "open") throw new ModelCapacityDeferredError("draining");
   if (!control.policy?.routes.some(route => route.routeId === "product-search-verify" && route.provider === provider && route.model === textTaskModel("product-search-verify")))
     throw new ModelCapacityDeferredError("unmapped");
@@ -48,7 +46,7 @@ export async function verifyKeywordsWithModelCapacity(task: ProfileTask, lease: 
   const startedAt = Date.now(), mode = options.chunked ? "chunk" as const : "full" as const, full = mode === "full";
   const keywords = mode === "chunk" ? [...new Set(item.keywords)] : item.keywords;
   const initial = await prepareSearchVerifyModelDispatch(snapshot, job, { roleLease, keywords: item.keywords, mode });
-  if (initial.kind === "disabled") return legacy();
+  if (initial.kind === "disabled") throw new ModelCapacityDeferredError("disabled");
   if (initial.kind !== "ready" || !("member" in initial)) return { kind: "skipped" };
   const { member, role, expectation } = initial, model = textTaskModel("product-search-verify");
   const continuation = await readSearchVerifyContinuation({ member, model });

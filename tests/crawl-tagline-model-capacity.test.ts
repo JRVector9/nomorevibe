@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { crawlTaglineInputHash, crawlTaglineLogicalWorkKey, modelCapacityReservationSchema, crawlTaglineMemberKeys, type CrawlTaglineMember } from "@/lib/llm/capacity";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 const mocks = vi.hoisted(() => ({ control: vi.fn(), prepare: vi.fn(), history: vi.fn(), resume: vi.fn(), call: vi.fn(), pending: vi.fn(),
-  request: vi.fn(), cancel: vi.fn(), native: vi.fn(), reconcile: vi.fn(), unknown: vi.fn(), legacy: vi.fn(), transaction: vi.fn(),
+  request: vi.fn(), cancel: vi.fn(), native: vi.fn(), reconcile: vi.fn(), unknown: vi.fn(), transaction: vi.fn(),
   prefix: vi.fn(), finish: vi.fn(), batch: vi.fn(), jobWall: vi.fn(), tasks: vi.fn(), write: vi.fn(), settings: vi.fn(), stage: vi.fn(), wake: vi.fn() }));
 vi.mock("@/lib/crawl/taglines", () => ({ prepareCrawlTaglineDispatch: mocks.prepare, prepareCrawlTaglineHistory: mocks.resume,
   pendingTaglines: mocks.tasks, recordTaglineResult: mocks.write }));
@@ -13,7 +13,6 @@ vi.mock("@/lib/llm/capacity-repository", () => ({ readModelCapacityCallerControl
   readCrawlTaglineContinuation: mocks.history, lockCrawlTaglineModelCapacityDispatch: mocks.prefix, finishCrawlTaglineModelCapacityDispatch: mocks.finish }));
 vi.mock("@/lib/crawl/agent-review-gateway", () => ({ prepareCrawlTaglineGatewayCall: mocks.call, writeTaglineWithReservedGateway: mocks.native,
   readCrawlTaglineGatewayTerminal: () => ({ dispatch: { ...dispatch, bindingHash: parent.bindingHash }, responseHash: parent.responseHash }) }));
-vi.mock("@/lib/crawl/tagline", async load => ({ ...await load<typeof import("@/lib/crawl/tagline")>(), writeTagline: mocks.legacy }));
 vi.mock("@/lib/db", () => ({ db: { transaction: mocks.transaction }, onPrimary: (run: () => unknown) => run() }));
 vi.mock("@/lib/jobs/batch-repository", () => ({ assertJobBatchAdmission: mocks.batch }));
 vi.mock("@/lib/jobs/control", async load => ({ ...await load<typeof import("@/lib/jobs/control")>(),
@@ -65,10 +64,15 @@ it("defers an unsupported production contract before request, attempt or POST", 
   await expect(writeCrawlTaglineWithModelCapacity(task, job, options())).rejects.toMatchObject({ reason: "provider_contract_unavailable" });
   expect(mocks.request).not.toHaveBeenCalled(); expect(mocks.native).not.toHaveBeenCalled(); expect(mocks.write).not.toHaveBeenCalled();
 }));
-it("returns disabled without reading positive history or preparing a model", () => inRank(async () => {
+it("defers as disabled without reading positive history or preparing a model", () => inRank(async () => {
   mocks.control.mockResolvedValue({ mode: "disabled" });
-  expect(await writeCrawlTaglineWithModelCapacity(task, job, options())).toEqual({ kind: "disabled" });
+  await expect(writeCrawlTaglineWithModelCapacity(task, job, options())).rejects.toEqual(new ModelCapacityDeferredError("disabled"));
   expect(mocks.call).not.toHaveBeenCalled(); expect(mocks.prepare).not.toHaveBeenCalled(); expect(mocks.history).not.toHaveBeenCalled();
+}));
+it("defers as disabled when the domain preparation says disabled", () => inRank(async () => {
+  mocks.prepare.mockReset().mockResolvedValueOnce({ kind: "disabled" });
+  await expect(writeCrawlTaglineWithModelCapacity(task, job, options())).rejects.toEqual(new ModelCapacityDeferredError("disabled"));
+  expect(mocks.history).not.toHaveBeenCalled(); expect(mocks.request).not.toHaveBeenCalled(); expect(mocks.native).not.toHaveBeenCalled();
 }));
 // PR B: 순위 범위 안에서 계약이 닫혔으면 옛 길(disabled → legacy)로 떨어지지 않고 이 모델만의 미룸으로 던진다 — 잡이 같은 후보를 다음 순위로 넘긴다
 it("defers as provider_contract_unavailable without a direct engine contract before reading the control or preparing a model", () => inRank(async () => {
@@ -76,7 +80,6 @@ it("defers as provider_contract_unavailable without a direct engine contract bef
   const error = await writeCrawlTaglineWithModelCapacity(task, job, options()).catch((value: unknown) => value);
   expect(error).toBeInstanceOf(ModelCapacityDeferredError); expect(error).toMatchObject({ reason: "provider_contract_unavailable" });
   expect(mocks.control).not.toHaveBeenCalled(); expect(mocks.call).not.toHaveBeenCalled(); expect(mocks.request).not.toHaveBeenCalled();
-  expect(mocks.legacy).not.toHaveBeenCalled();
 }));
 it("reuses the same waiting ID with exact phase input", () => inRank(async () => {
   mocks.pending.mockResolvedValue({ requestId: reservation.requestId, state: "waiting" });
@@ -135,13 +138,13 @@ it("rejects outcome JSON as writer authority before any SQL", () => inRank(async
   expect(mocks.transaction).not.toHaveBeenCalled();
   expect(failure.message).toBe("invalid_crawl_tagline_write_expectation");
 }));
-it("does not downgrade a positive first to legacy ask2 after disabled transition", () => inRank(async () => {
+it("does not downgrade a positive first to a second ask after disabled transition", () => inRank(async () => {
   mocks.native.mockResolvedValue({ result: empty, terminal });
   const first = await writeCrawlTaglineWithModelCapacity(task, job, options());
   if (first.kind !== "result") throw new Error("unit_first_required");
   mocks.control.mockResolvedValue({ mode: "disabled" });
   await expect(writeCrawlTaglineWithModelCapacity(task, job, { ...options(), previous: first })).rejects.toMatchObject({ reason: "disabled" });
-  expect(mocks.native).toHaveBeenCalledTimes(1); expect(mocks.legacy).not.toHaveBeenCalled();
+  expect(mocks.native).toHaveBeenCalledTimes(1);
 }));
 it("re-enters a deferred second on the next tick without asking first again", () => inRank(async () => {
   mocks.history.mockResolvedValue({ first: { ...parent, outcome: empty }, second: null });
@@ -178,17 +181,12 @@ it("no-contract, settings-disabled, reuse and no-evidence jobs remain model-free
   expect(mocks.control).not.toHaveBeenCalled(); expect(mocks.native).not.toHaveBeenCalled();
   expect(mocks.write.mock.calls.map(call => call[2].kind)).toEqual(["reuse", "success"]);
 });
-it("disabled job forwards the original evidence, signal and recalculated timeout for two asks", async () => {
+it("disabled capacity defers the job without a retired ask or write", async () => {
   const { writeTaglines } = await import("@/lib/crawl/jobs/tagline"); mocks.control.mockResolvedValue({ mode: "disabled" });
-  mocks.tasks.mockResolvedValueOnce([task]).mockResolvedValue([]); mocks.legacy.mockResolvedValueOnce(empty).mockResolvedValueOnce(result);
-  const controller = new AbortController();
-  expect(await writeTaglines({ lease: job, cursor: null, hasBudget: () => true, deadlineAt: Date.now() + 55_000, save: vi.fn(), log: vi.fn(), signal: controller.signal })).toEqual({ done: true });
-  expect(mocks.legacy).toHaveBeenCalledTimes(2);
-  for (const [evidence, options] of mocks.legacy.mock.calls) {
-    expect(evidence).toEqual(taglineEvidence(task.candidate.repo, task.document)); expect(options.timeoutMs).toBe(45_000);
-    expect(options.signal).toBeInstanceOf(AbortSignal); expect(options.signal.aborted).toBe(false);
-  }
-  expect(mocks.write).toHaveBeenCalledTimes(1); expect(mocks.history).not.toHaveBeenCalled(); expect(mocks.request).not.toHaveBeenCalled();
+  mocks.tasks.mockResolvedValueOnce([task]).mockResolvedValue([]);
+  await expect(writeTaglines({ lease: job, cursor: null, hasBudget: () => true, deadlineAt: Date.now() + 55_000, save: vi.fn(), log: vi.fn() }))
+    .rejects.toEqual(new ModelCapacityDeferredError("disabled"));
+  expect(mocks.write).not.toHaveBeenCalled(); expect(mocks.history).not.toHaveBeenCalled(); expect(mocks.request).not.toHaveBeenCalled();
 });
 
 import { getTableName } from "drizzle-orm";
