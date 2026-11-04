@@ -2682,11 +2682,15 @@ html:not([data-admin-theme="light"]) .admin-prototype .callout p {
 .admin-prototype .tag,
 .admin-prototype .read-stamp,
 .admin-prototype .live-indicator,
-.admin-prototype .freshness {
+.admin-prototype .freshness,
+.admin-prototype .flow-state,
+.admin-prototype .flow-model,
+.admin-prototype .worker-card small,
+.admin-prototype [data-admin-type="status"] {
   --admin-font-delta: 0px;
 }
 /* A status group inherits a 13px baseline; its tag and adjacent text link keep their own 10px/11px baselines. */
-.admin-prototype .panel-head .right:has(> .tag) {
+.admin-prototype .panel-head .right:has(> .tag, > .read-stamp) {
   --admin-font-delta: 0px;
   font-size: calc(13px + var(--admin-font-delta, 0px));
 }
