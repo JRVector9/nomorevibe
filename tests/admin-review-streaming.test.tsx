@@ -83,12 +83,24 @@ it("streams the queue while explicitly opened panels load and shares their fresh
 it("opens and closes only the selected server panel without dropping queue filters or scrolling", () => {
   fake.search = "tab=human&cause=unknown&q=needle&review_management=1";
   const closed = DeferredReviewPanel({ panel: "filters", expanded: false, title: "필터" });
-  closed.props.onToggle({ currentTarget: { open: true } });
+  closed.props.onToggle({ currentTarget: { open: true, closest: () => null } });
   expect(fake.replace).toHaveBeenLastCalledWith("/admin/review?tab=human&cause=unknown&q=needle&review_management=1&review_filters=1", { scroll: false });
   fake.search += "&review_filters=1";
   const opened = DeferredReviewPanel({ panel: "filters", expanded: true, title: "필터" });
-  opened.props.onToggle({ currentTarget: { open: false } });
+  opened.props.onToggle({ currentTarget: { open: false, closest: () => null } });
   expect(fake.replace).toHaveBeenLastCalledWith("/admin/review?tab=human&cause=unknown&q=needle&review_management=1", { scroll: false });
+});
+
+it("keeps both native panels open when their toggles precede a URL commit", () => {
+  fake.search = "tab=all&stage=publish&sort=wait";
+  const details = [
+    { dataset: { reviewPanel: "filters" }, open: true },
+    { dataset: { reviewPanel: "management" }, open: true },
+  ];
+  const currentTarget = { open: true, closest: () => ({ querySelectorAll: () => details }) };
+  DeferredReviewPanel({ panel: "filters", expanded: false, title: "필터" }).props.onToggle({ currentTarget });
+  DeferredReviewPanel({ panel: "management", expanded: false, title: "관리" }).props.onToggle({ currentTarget });
+  expect(fake.replace).toHaveBeenLastCalledWith("/admin/review?tab=all&stage=publish&sort=wait&review_filters=1&review_management=1", { scroll: false });
 });
 
 it("still loads fresh human/agreed membership before reading the human queue", async () => {
