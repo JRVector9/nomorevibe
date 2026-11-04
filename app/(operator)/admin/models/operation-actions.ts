@@ -12,7 +12,7 @@ import { randomUUID } from "node:crypto";
 import { submitModelOpsCommand } from "@/lib/operations/ops-runner/repository";
 import { adminModelIdentitySchema, modelIdentityKey } from "@/lib/operations/admin-models-observation";
 import { readAdminModelsObservation } from "@/lib/operations/admin-models-repository";
-import { findModelDefinition } from "@/lib/operations/admin-models-view";
+import { findModelDefinition, isRetiredGatewayUrl } from "@/lib/operations/admin-models-view";
 import { ADMIN_MODEL_STAGES } from "@/lib/llm/admin-model-stages";
 import { readModelRegistry, modelRequestName } from "@/lib/llm/model-registry";
 import { saveProbeObservation } from "@/lib/operations/admin-models-probe-repository";
@@ -25,7 +25,7 @@ function directEngineKey(definition: ReturnType<typeof readModelRegistry>["model
 }
 
 async function listRegisteredModel(definition: ReturnType<typeof readModelRegistry>["models"][number]): Promise<boolean | null> {
-  if (!definition.baseUrl) return null;
+  if (!definition.baseUrl || isRetiredGatewayUrl(definition.baseUrl)) return null;
   try {
     const key = definition.provider === "abcllm" ? directEngineKey(definition) : null;
     const response = await fetch(`${definition.baseUrl.replace(/\/+$/, "")}/models`, { cache: "no-store", redirect: "error",

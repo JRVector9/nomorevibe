@@ -62,7 +62,7 @@ export default async function ServingContractsPage() {
     <section className="grid gap-2">
       <h2 className="text-[18px] font-semibold">모델 등록부 덮어쓰기 ({overridden.length})</h2>
       <p className="text-[13px] text-fg-3">코드 기본 정의 대신 쓰는 정의입니다. 되돌리면 코드 기본값이 다시 쓰입니다.
-        요청 이름 앞의 대괄호는 장비 표지이고, 주소가 abcllm-api.brut.bot 이면 코드 기본 주소입니다. 그 주소만으로는 호출이 열리지 않습니다. 열리는 것은 위의 직접 연결 계약입니다.</p>
+        요청 이름 앞의 대괄호는 장비 표지이고, 주소가 abcllm-api.brut.bot 이면 퇴역한 예전 코드 기본 주소입니다. 그 주소만으로는 호출이 열리지 않습니다. 열리는 것은 위의 직접 연결 계약입니다.</p>
       {overridden.length > 0 && <div className="overflow-x-auto"><table className="w-full min-w-[720px] text-left text-[13px]"><thead><tr className="border-b border-line">
         <th className="py-2 pr-3">키</th><th className="py-2 pr-3">요청 모델 · 주소</th><th className="py-2 pr-3">변경</th><th className="py-2" /></tr></thead>
         <tbody>{overridden.map(row => <tr key={row.id} className="border-b border-line align-top">
