@@ -1,0 +1,192 @@
+{
+  "head": "8af25463",
+  "startedAt": "2026-11-04T23:09:49.796Z",
+  "finishedAt": "2026-11-04T23:10:48.784Z",
+  "unit": "milliseconds",
+  "environment": {
+    "next": "16.4.1 dev",
+    "readOnly": true,
+    "dbPrimaryPoolMax": 2,
+    "dbReadPoolDefault": 4,
+    "statementTimeoutMs": 8000,
+    "valkeyConfigured": false,
+    "browser": "same host; Tailscale URL",
+    "automaticRefresh": "off for measurement context",
+    "parallelism": 1
+  },
+  "clickSamples": [
+    {
+      "pass": 1,
+      "page": "home",
+      "path": "/admin/flow",
+      "urlReadyMs": 70.3,
+      "mainBodyReadyMs": 5459,
+      "terminalFallback": false,
+      "partialReadFailure": false
+    },
+    {
+      "pass": 1,
+      "page": "review",
+      "path": "/admin/review",
+      "urlReadyMs": 45.9,
+      "mainBodyReadyMs": 10800.9,
+      "terminalFallback": false,
+      "partialReadFailure": false
+    },
+    {
+      "pass": 1,
+      "page": "requests",
+      "path": "/admin/requests",
+      "urlReadyMs": 67,
+      "mainBodyReadyMs": 372.6,
+      "terminalFallback": false,
+      "partialReadFailure": false
+    },
+    {
+      "pass": 1,
+      "page": "projects",
+      "path": "/admin/products",
+      "urlReadyMs": 53.6,
+      "mainBodyReadyMs": 1938.6,
+      "terminalFallback": false,
+      "partialReadFailure": false
+    },
+    {
+      "pass": 1,
+      "page": "models",
+      "path": "/admin/models",
+      "urlReadyMs": 73.4,
+      "mainBodyReadyMs": 1835.9,
+      "terminalFallback": false,
+      "partialReadFailure": false
+    },
+    {
+      "pass": 1,
+      "page": "content",
+      "path": "/admin/content",
+      "urlReadyMs": 51.8,
+      "mainBodyReadyMs": 363.7,
+      "terminalFallback": false,
+      "partialReadFailure": false
+    },
+    {
+      "pass": 1,
+      "page": "settings",
+      "path": "/admin/settings",
+      "urlReadyMs": 44.8,
+      "mainBodyReadyMs": 349.5,
+      "terminalFallback": false,
+      "partialReadFailure": false
+    },
+    {
+      "pass": 2,
+      "page": "home",
+      "path": "/admin/flow",
+      "urlReadyMs": 25.5,
+      "mainBodyReadyMs": 2839.5,
+      "terminalFallback": false,
+      "partialReadFailure": false
+    },
+    {
+      "pass": 2,
+      "page": "review",
+      "path": "/admin/review",
+      "urlReadyMs": 26.4,
+      "mainBodyReadyMs": 11000.5,
+      "terminalFallback": false,
+      "partialReadFailure": false
+    },
+    {
+      "pass": 2,
+      "page": "requests",
+      "path": "/admin/requests",
+      "urlReadyMs": 27.7,
+      "mainBodyReadyMs": 352.2,
+      "terminalFallback": false,
+      "partialReadFailure": false
+    },
+    {
+      "pass": 2,
+      "page": "projects",
+      "path": "/admin/products",
+      "urlReadyMs": 24.4,
+      "mainBodyReadyMs": 1356.8,
+      "terminalFallback": false,
+      "partialReadFailure": false
+    },
+    {
+      "pass": 2,
+      "page": "models",
+      "path": "/admin/models",
+      "urlReadyMs": 27.8,
+      "mainBodyReadyMs": 1944.7,
+      "terminalFallback": false,
+      "partialReadFailure": false
+    },
+    {
+      "pass": 2,
+      "page": "content",
+      "path": "/admin/content",
+      "urlReadyMs": 24.9,
+      "mainBodyReadyMs": 336.2,
+      "terminalFallback": false,
+      "partialReadFailure": false
+    },
+    {
+      "pass": 2,
+      "page": "settings",
+      "path": "/admin/settings",
+      "urlReadyMs": 39,
+      "mainBodyReadyMs": 350.4,
+      "terminalFallback": false,
+      "partialReadFailure": false
+    }
+  ],
+  "fullDocumentGets": [
+    {
+      "path": "/admin/flow",
+      "http": 200,
+      "ttfbMs": 99.2,
+      "totalMs": 4193.8,
+      "bytes": 234990,
+      "cacheControl": "private, no-store",
+      "serverTiming": null
+    },
+    {
+      "path": "/admin/review",
+      "http": 200,
+      "ttfbMs": 66.9,
+      "totalMs": 10870,
+      "bytes": 402523,
+      "cacheControl": "private, no-store",
+      "serverTiming": null
+    },
+    {
+      "path": "/admin/models",
+      "http": 200,
+      "ttfbMs": 74.5,
+      "totalMs": 1819.4,
+      "bytes": 110063,
+      "cacheControl": "private, no-store",
+      "serverTiming": null
+    }
+  ],
+  "limits": [
+    "Development server and compilation may contribute; no production latency claim.",
+    "Two samples per workspace; no statistical p95.",
+    "Browser runs on same host as preview and uses its Tailscale address; not a remote end-user network sample.",
+    "No DB query instrumentation or cache invalidation was added.",
+    "A ready body can still contain an explicitly flagged partial read failure.",
+    "Browser click timestamps and Node network timestamps use different clocks; do not subtract them.",
+    "Seven RSC streams were cancelled after body readiness on the next navigation; their full-stream completion is unmeasured.",
+    "Compile/render breakdown and a production build comparison were not measured."
+  ],
+  "pageErrors": 0,
+  "consoleErrors": 0,
+  "safety": {
+    "nonReadRequestsBlocked": 0,
+    "postSent": 0,
+    "probeRequests": 0
+  },
+  "viewScope": "Sidebar default hrefs were clicked without tab query parameters. /admin/review has the server-side default human filter; active UI tab href is not used to infer server query scope."
+}
