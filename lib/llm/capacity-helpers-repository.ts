@@ -5,6 +5,7 @@ import { modelCapacityControl, modelCapacityDeviceRoles, modelCapacityDevices, m
   modelHelperStops, modelRoleDemand, modelServingContracts, modelSupervisorControl, operationsAudit } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { adminAuditRow } from "@/lib/operations/admin-log";
+import { isRetiredGatewayUrl } from "@/lib/operations/admin-models-view";
 import { DrWriterFencedError, writerSiteActive } from "@/lib/operations/dr/epoch";
 import type { EngineContractProbe } from "@/lib/operations/admin-engine-connect";
 import { parseModelCapacityPolicy, type ModelCapacityPolicy, type ModelCapacityRoute } from "./capacity";
@@ -389,6 +390,8 @@ async function defaultAssignmentRegistry(): Promise<ModelRegistry> {
   return readModelRegistry();
 }
 async function defaultAssignmentProbe(entry: ModelDefinition, _routeId: string, transport: ModelAssignmentProbeTransport): Promise<EngineContractProbe> {
+  // 퇴역한 게이트웨이 주소로는 네트워크를 보내지 않는다 — 제공자(abcllm)가 아니라 호스트로만 가른다(직접 엔진도 abcllm 이다).
+  if (isRetiredGatewayUrl(entry.baseUrl)) throw new Error("retired_gateway_probe_blocked");
   const { engineBaseUrl, probeEngineContract } = await import("@/lib/operations/admin-engine-connect");
   const base = entry.baseUrl ? engineBaseUrl(entry.baseUrl) : null;
   if (!base) throw new Error("engine_base_url_invalid");

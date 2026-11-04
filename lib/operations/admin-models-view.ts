@@ -99,11 +99,16 @@ export function modelServerName(identity: { provider: string; model: string }, d
   models: readonly ModelDefinition[], groups: readonly string[], contracts: readonly ModelContractLink[] = []): string {
   return modelServer(identity, definition, models, groups, contracts).name;
 }
-/** 코드 기본 등록부(model-registry.ts)의 abcllm 주소 호스트. 화면에서만 가려 설명한다 — 송신 주소는 바꾸지 않는다. */
+/** 퇴역한 예전 코드 기본 등록부의 abcllm 주소 호스트. 화면에서만 가려 설명한다 — 송신 주소는 바꾸지 않는다. */
 export const CODE_DEFAULT_GATEWAY_HOST = "abcllm-api.brut.bot";
 export const isCodeDefaultGatewayHost = (host: string) => host.split(":")[0] === CODE_DEFAULT_GATEWAY_HOST;
-/** 전송 칸에 코드 기본 주소만 있을 때. 그 주소만으로는 경로가 열리지 않는다. */
-export const CODE_DEFAULT_GATEWAY_NOTE = "코드 기본 주소(abcllm-api)만으로는 열리지 않습니다. 「모델 연결」에서 직접 연결 계약을 추가하세요.";
+/** 2026-10-31 퇴역한 게이트웨이 주소 — 연결 확인·배정 probe 는 이 호스트로 네트워크를 보내지 않는다. */
+export function isRetiredGatewayUrl(value: string | null | undefined): boolean {
+  if (!value) return false;
+  try { return new URL(value).hostname === CODE_DEFAULT_GATEWAY_HOST; } catch { return false; }
+}
+/** 전송 칸에 퇴역한 예전 기본 주소만 있을 때. 그 주소만으로는 경로가 열리지 않는다. */
+export const CODE_DEFAULT_GATEWAY_NOTE = "퇴역한 예전 기본 주소(abcllm-api)입니다. 그 주소만으로는 열리지 않으며, 「모델 연결」에서 직접 연결 계약을 추가해야 합니다.";
 /**
  * 전송 칸. 열리는 쪽만 적는다 — 직접 / CLI / 계약 없음(또는 직접 연결 계약 필요).
  * 직접 연결 계약(transport direct)이 있으면 「엔진 직접(계약)」. local-direct·llama-server 는 저장 전송 칸과 무관하게 직접이다.
@@ -234,7 +239,7 @@ export function modelRowStatus(input: { unknown: number; held: number; waiting: 
   return input.lastSuccessAt || input.probe?.listed ? "connected" : "down";
 }
 
-/** 장비(groupId) → 서버 이름과 그 장비의 엔진 주소(host:port). 등록부 항목의 equipment 가 같은 서버로 풀리는 것만 모은다. 이름 표에 없는 주소(코드 기본 abcllm-api 포함)는 엔진 주소로 세지 않고, 키는 없다. */
+/** 장비(groupId) → 서버 이름과 그 장비의 엔진 주소(host:port). 등록부 항목의 equipment 가 같은 서버로 풀리는 것만 모은다. 이름 표에 없는 주소(퇴역한 예전 기본 abcllm-api 포함)는 엔진 주소로 세지 않고, 키는 없다. */
 export function deviceServer(deviceId: string, models: readonly ModelDefinition[]): { name: string; hosts: string[] } {
   const target = serverByName(deviceId) ?? deviceId.toLowerCase();
   const mine = models.filter(model => model.equipment.toLowerCase() === deviceId.toLowerCase() || (serverByName(model.equipment) ?? model.equipment.toLowerCase()) === target);
