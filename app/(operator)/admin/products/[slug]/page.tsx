@@ -63,16 +63,22 @@ export default async function AdminEvidenceProductPage({ params, searchParams }:
   const { slug } = await params;
   const query = await searchParams ?? {};
   const sections = [["overview","개요"],["intro","소개·번역"],["evidence","출처·근거"],["maker","메이커"],["quality","품질"],["requests","관련 요청"],["updates","업데이트"],["history","변경 기록"]] as const;
-  const section = typeof query.section === "string" && sections.some(([key]) => key === query.section) ? query.section : "overview";
-  const [view, product] = await Promise.all([getEvidenceAdminProduct(slug), findBySlug(slug)]);
-  if (!view || !product) notFound();
-  const [refresh, history, makers] = await Promise.all([getProductRefreshRequest(slug).catch(() => null), productHistory(slug).catch(() => null), makerMembersOf(slug).catch(() => null)]);
-  const translation = section === "intro" ? await productTranslationAdminQueue({ state: "all", q: slug, limit: 30 }).catch(() => null) : null;
-  const introNotes = section === "intro" ? await introEditorNotes([product.id]).catch(() => null) : null;
-  const requestData = section === "requests" ? await Promise.all([
-    db.select({ at: takedownRequests.requestedAt, handled: takedownRequests.handledAt, outcome: takedownRequests.outcome, reason: takedownRequests.reason }).from(takedownRequests).where(eq(takedownRequests.slug, slug)),
-    db.select({ at: introCorrectionRequests.createdAt, handled: introCorrectionRequests.handledAt }).from(introCorrectionRequests).where(eq(introCorrectionRequests.slug, slug)).orderBy(desc(introCorrectionRequests.createdAt)).limit(30),
-  ]).catch(() => null) : null;
+  const section = sections.find(([key]) => key === query.section)?.[0] ?? "overview";
+  const product = await findBySlug(slug);
+  if (!product) notFound();
+  const [view, refresh, history, makers, translation, introNotes, requestData] = await Promise.all([
+    getEvidenceAdminProduct(slug, { section, product }),
+    section === "evidence" ? getProductRefreshRequest(slug).catch(() => null) : null,
+    section === "overview" || section === "history" ? productHistory(slug).catch(() => null) : null,
+    makerMembersOf(slug).catch(() => null),
+    section === "intro" ? productTranslationAdminQueue({ state: "all", q: slug, limit: 30 }).catch(() => null) : null,
+    section === "intro" ? introEditorNotes([product.id]).catch(() => null) : null,
+    section === "requests" ? Promise.all([
+      db.select({ at: takedownRequests.requestedAt, handled: takedownRequests.handledAt, outcome: takedownRequests.outcome, reason: takedownRequests.reason }).from(takedownRequests).where(eq(takedownRequests.slug, slug)),
+      db.select({ at: introCorrectionRequests.createdAt, handled: introCorrectionRequests.handledAt }).from(introCorrectionRequests).where(eq(introCorrectionRequests.slug, slug)).orderBy(desc(introCorrectionRequests.createdAt)).limit(30),
+    ]).catch(() => null) : null,
+  ]);
+  if (!view) notFound();
   const activityHref = `/admin/activity?target=${encodeURIComponent(slug)}`;
   const historyPanel = <PrototypePanel title="프로젝트 변경·감사 기록" actions={<Link className="text-button" href={activityHref}>전체 기록 →</Link>}>{history === null ? <PrototypeEmpty>기록을 읽지 못했습니다.</PrototypeEmpty> : history.length === 0 ? <PrototypeEmpty>남은 변경 기록이 없습니다.</PrototypeEmpty> : <ol className="timeline">{history.map((entry, index) => <li key={`${entry.kind}-${index}`}><time>{date(entry.at)}</time><div><b>{historyActionLabel(entry.kind, entry.action)}</b><p>{HISTORY_KIND_LABELS[entry.kind]} · {entry.actor ?? "자동 / 이전 기록"} · {entry.ok ? "완료" : "실패"}</p>{entry.note && <p>{historyNote(entry.kind, entry.action, entry.note)}</p>}</div></li>)}</ol>}</PrototypePanel>;
   const sourcePanel = <PrototypePanel title="외부 출처·선언 링크" actions={<ForceRefreshForm slug={slug} />}><div className="table-scroll"><table style={{ minWidth: 720 }}><thead><tr><th>출처</th><th>선언 / 관측</th><th>확인</th><th>관계</th></tr></thead><tbody>{view.links.map(link => <tr key={link.id}><td><Code labels={LINK_KIND_LABELS} code={link.kind} /></td><td><a href={link.url} target="_blank" rel="noopener noreferrer">{link.url}</a><p><Code labels={DECLARATION_LABELS} code={link.declarationSource} /></p></td><td><Code labels={SOURCE_STATE_LABELS} code={link.verificationState} /></td><td><Code labels={RELATIONSHIP_LABELS} code={link.relationshipState} /></td></tr>)}</tbody></table></div><div className="table-scroll mt"><table style={{ minWidth: 850 }}><thead><tr><th>관측 출처</th><th>상태 / 사실</th><th>최근 성공</th><th>다음 확인</th><th>실패</th></tr></thead><tbody>{view.sources.map(source => <tr key={source.id}><td><Code labels={LINK_KIND_LABELS} code={source.kind} /></td><td><Code labels={SOURCE_STATE_LABELS} code={source.state} /><p><FactList facts={source.facts} /></p></td><td>{date(source.lastSuccessAt)}</td><td>{date(source.nextAttemptAt)}</td><td>{source.lastErrorCode ?? "—"}<p>{date(source.lastFailureAt)} · {source.attempts}회</p></td></tr>)}</tbody></table></div>{view.links.length + view.sources.length === 0 && <PrototypeEmpty>아직 수집한 출처가 없습니다.</PrototypeEmpty>}</PrototypePanel>;

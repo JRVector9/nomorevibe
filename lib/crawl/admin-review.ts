@@ -343,7 +343,9 @@ export async function reviewQueueCauses(settings: CrawlSettings): Promise<Review
         : null;
       const key = reviewQueueBucket(candidate.reason, verdict ? { cause: verdict.cause ?? null } : null,
         aiByCandidate.get(candidate.id)?.outcome?.decision === 'reject');
-      ids.set(key, [...(ids.get(key) ?? []), candidate.id]);
+      const bucket = ids.get(key);
+      if (bucket) bucket.push(candidate.id);
+      else ids.set(key, [candidate.id]);
     }
     total += page.length;
     after = page.at(-1)!.id;

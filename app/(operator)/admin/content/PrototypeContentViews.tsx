@@ -1,12 +1,12 @@
 import Link from "next/link";
-import { listTalkPostsPage, talkAdminFilter } from "@/lib/social/admin";
+import { listTalkPostsWorkspacePage, talkAdminFilter } from "@/lib/social/admin";
 import { listNewsPage, newsFilter } from "../news/list";
 import { discussionUrl, SOURCE_NAME } from "@/components/social/talk-format";
 import { formatDetailTime } from "@/lib/format/time";
 import { getSettings } from "@/lib/crawl/settings";
 import { NEWS_SOURCES } from "@/lib/news/sources";
 import { NewsSettingsForm } from "../news/NewsSettingsForm";
-import { getRankingAdminState } from "@/lib/domain/ranking/view";
+import { getRankingAdminOverview } from "@/lib/domain/ranking/view";
 import { DEFAULT_RANKING_POLICY, parseRankingPolicy } from "@/lib/domain/ranking/policy";
 import { RankingPolicyForm } from "../ranking/RankingPolicyForm";
 import { PrototypeEmpty, PrototypeFacts, PrototypePanel, PrototypeTag, n } from "../products/PrototypeParts";
@@ -18,7 +18,7 @@ const pageOf = (query: ContentQuery) => { const page=Number(value(query,"page"))
 
 export async function PrototypeSocialContent({ query }: { query: ContentQuery }) {
   const filter = talkAdminFilter(query), page = pageOf(query), now = new Date();
-  const listed = await listTalkPostsPage(filter, { now, page, pageSize: 25 }).catch(() => null);
+  const listed = await listTalkPostsWorkspacePage(filter, { now, page, pageSize: 25 }).catch(() => null);
   if (!listed) return <PrototypeEmpty>SNS 콘텐츠 원본을 읽지 못했습니다.</PrototypeEmpty>;
   const chosen = listed.rows.find(row => String(row.id) === value(query, "id")) ?? listed.rows[0];
   const href = (extra: Record<string,string>) => `/admin/content?${new URLSearchParams({ tab: "social", ...Object.fromEntries(Object.entries(filter)), page: String(page), ...extra })}`;
@@ -41,7 +41,7 @@ export async function PrototypeNewsContent({ query }: { query: ContentQuery }) {
 }
 
 export async function PrototypeRankingContent() {
-  const [state, settings] = await Promise.all([getRankingAdminState().catch(()=>null),getSettings()]);
+  const [state, settings] = await Promise.all([getRankingAdminOverview().catch(()=>null),getSettings()]);
   if (!state) return <PrototypeEmpty>랭킹 원본을 읽지 못했습니다.</PrototypeEmpty>;
   const policy = parseRankingPolicy(state.scheduled?.values ?? state.active?.policy ?? DEFAULT_RANKING_POLICY);
   return <div className="stack"><PrototypePanel title="랭킹 정책·적용 예약"><div className="grid two"><PrototypeFacts rows={[["현재 시즌",state.active?.key ?? "아직 생성되지 않음"],["현재 기준",state.active ? state.active.policy.scoring.mode === "unique_visitors" ? "고유 유입자" : "유효 방문" : "첫 집계 대기"],["마지막 집계",formatDetailTime(state.active?.refreshedAt ?? null)],["예약",state.scheduled ? `정책 #${state.scheduled.id}` : "예약 없음"],["변경 영향","집계 기준과 다음 시즌 적용 시점"]]} /><div><div className="token-grid"><div><small>참가 프로젝트</small><b>{n(state.activeMetrics.eligibleProducts)}</b></div><div><small>유효 방문</small><b>{n(state.activeMetrics.validClicks)}</b></div></div><p className="notice mt">현재 시즌의 정책은 잠겨 있습니다. 다음 시즌 정책을 예약하고 집계 결과를 비교합니다.</p><div className="decision-bar"><a className="button primary" href="#ranking-edit">다음 정책 예약</a><Link className="button" href="/admin/ranking">정책 비교·예약 취소</Link></div></div></div></PrototypePanel>

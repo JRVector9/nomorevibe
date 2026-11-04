@@ -20,12 +20,22 @@ export function prototypeReviewFilter(params: Record<string, string | string[] |
   };
 }
 type Filter = ReturnType<typeof prototypeReviewFilter>;
+/** Membership must remain fresh; display-only counts are not a prerequisite for every queue. */
+export function prototypeReviewNeeds(filter: Filter) {
+  const heldStage = ["ai", "second", "agreed", "human"].includes(filter.stage);
+  const detailable = !filter.stage || heldStage;
+  return {
+    overview: Boolean(heldStage || filter.tab === "human" || (detailable && (filter.ai || (filter.second && filter.second !== "published")))),
+    causes: Boolean(detailable && filter.cause),
+  };
+}
 export function prototypeReviewOptions(filter: Filter, causes: Awaited<ReturnType<typeof reviewQueueCauses>> | null, overview: Awaited<ReturnType<typeof humanQueueOverview>> | null): NonNullable<Parameters<typeof listAdminReviewEntries>[1]> {
   const { tab, stage, cause, ai, second, q, updated, sort, rawState } = filter;
   const heldStage = ["ai", "second", "agreed", "human"].includes(stage) ? stage as "ai" | "second" | "agreed" | "human" : null;
   const detailable = !stage || heldStage !== null;
-  if ((heldStage || tab === "human" || (detailable && (ai || (second && second !== "published")))) && !overview) throw new Error("review_overview_unavailable");
-  if (detailable && cause && !causes) throw new Error("review_causes_unavailable");
+  const needs = prototypeReviewNeeds(filter);
+  if (needs.overview && !overview) throw new Error("review_overview_unavailable");
+  if (needs.causes && !causes) throw new Error("review_causes_unavailable");
   const ids = [heldStage ? overview!.ids[heldStage] : tab === "human" ? [...overview!.ids.human, ...overview!.ids.agreed] : undefined,
     detailable && cause ? causes!.ids.get(cause) ?? [] : undefined,
     detailable && ai ? overview!.aiDecisions.ids.get(ai) ?? [] : undefined,

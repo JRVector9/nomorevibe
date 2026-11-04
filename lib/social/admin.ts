@@ -117,7 +117,20 @@ async function productsByKey(keys: readonly string[]): Promise<Map<string, TalkP
  * 보관은 90일(수집 잡이 지난 글을 지운다)이라 따로 창을 걸지 않는다.
  * 글마다 지금 /talk 에 보이는지와 아니면 왜인지(talkVerdict)를 붙인다. /talk 조건은 talkGroups 가 공개 화면과 같은 식으로 읽는다.
  */
-export async function listTalkPostsPage(filter: TalkAdminFilter, options: { now: Date; page: number; pageSize?: number }) {
+type TalkPageOptions = { now: Date; page: number; pageSize?: number };
+
+export async function listTalkPostsPage(filter: TalkAdminFilter, options: TalkPageOptions) {
+  const page = await readTalkPostsPage(filter, options, true);
+  // This branch requested the summary; the workspace-only reader below deliberately omits it.
+  return { ...page, summary: page.summary! };
+}
+
+export async function listTalkPostsWorkspacePage(filter: TalkAdminFilter, options: TalkPageOptions) {
+  const page = await readTalkPostsPage(filter, options, false);
+  return { total: page.total, rows: page.rows };
+}
+
+async function readTalkPostsPage(filter: TalkAdminFilter, options: TalkPageOptions, includeSummary: boolean) {
   const { now } = options;
   const pageSize = options.pageSize ?? TALK_ADMIN_PAGE_SIZE;
   const placement = talkPlacement(await talkGroups(now, "now"));
@@ -143,7 +156,7 @@ export async function listTalkPostsPage(filter: TalkAdminFilter, options: { now:
       .orderBy(...order)
       .limit(pageSize).offset(Math.max(0, options.page - 1) * pageSize),
     db.select({ total: sql<number>`count(*)::int` }).from(socialPosts).where(where),
-    talkAdminSummary(shown.length),
+    includeSummary ? talkAdminSummary(shown.length) : null,
   ]);
   const productByKey = await productsByKey([...new Set(rows.map(row => row.repositoryKey).filter((key): key is string => Boolean(key)))]);
   return {

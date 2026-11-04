@@ -6,7 +6,7 @@ import { listProducts } from "@/lib/domain/products/repository";
 import { formatDetailTime } from "@/lib/format/time";
 import { newsSource } from "@/lib/news/sources";
 import { PRODUCT_FILTERS, PRODUCT_SORTS, type ProductAdminSort, type ProductFilterName } from "../products/filters";
-import { prototypeReviewFilter, prototypeReviewOptions } from "../review/PrototypeReviewQuery";
+import { prototypeReviewFilter, prototypeReviewNeeds, prototypeReviewOptions } from "../review/PrototypeReviewQuery";
 import { actionLabel, targetLabel } from "../activity/labels";
 import { activityFilter, activityLog } from "../activity/query";
 import { isScriptRow, summaryLine } from "../activity/summary";
@@ -67,11 +67,10 @@ async function reviewQuery(params: URLSearchParams) {
   // Old direct export links retain their pending default; new screens always send an explicit tab.
   if (!params.has("tab") && !params.has("state") && !params.has("stage")) { values.tab = "all"; values.state = "pending"; }
   const filter = prototypeReviewFilter(values), settings = await getSettings();
-  const held = ["ai", "second", "agreed", "human"].includes(filter.stage);
-  const detailable = !filter.stage || held;
+  const needs = prototypeReviewNeeds(filter);
   const [causes, overview] = await Promise.all([
-    detailable && filter.cause ? reviewQueueCauses(settings) : null,
-    held || filter.tab === "human" || (detailable && (filter.ai || (filter.second && filter.second !== "published"))) ? humanQueueOverview(settings) : null,
+    needs.causes ? reviewQueueCauses(settings) : null,
+    needs.overview ? humanQueueOverview(settings) : null,
   ]);
   return { settings, options: prototypeReviewOptions(filter, causes, overview) };
 }
