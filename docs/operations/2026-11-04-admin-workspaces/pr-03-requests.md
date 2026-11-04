@@ -3,3 +3,5 @@
 검증: 요청함과 기존 문의 처리 관련 4개 파일·20개 테스트, ESLint, TypeScript를 실행했습니다. 원본 판·CSRF·읽은 글 검사·기존 문의 필터 주소를 보존했습니다.
 
 함께 적용: PR01의 상위 탭과 PR04의 요청함 경로 재검증을 사용합니다. DB 스키마·운영 데이터 변경은 없습니다.
+
+이 PR은 시안 검토용 초안입니다. 저장소 정책상 draft의 검사 잡은 실행하지 않고 필수 check에 실패를 남깁니다. 로컬·통합 시안 검증 결과는 [검증 기록](https://github.com/JRVector9/nomorevibe/blob/codex/admin-workspaces-20261104/docs/operations/2026-11-04-admin-workspaces/validation.md)을 참조하세요.

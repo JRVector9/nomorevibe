@@ -38,3 +38,8 @@
 - 실제 LLM 페이지가 이전된 text 작업의 옛 등록부 기본값을 찾다가 `model_purpose_not_unique:crawl-tagline`로 멈췄다. 작업별 실제 순위의 identity/provider를 사용하고, 불명확한 참조 기본값은 해당 단계만 미확인으로 남기도록 수정했다.
 - 모델 화면의 기존 상단 줄이 새 공통 메뉴·갱신과 겹쳤고 음수 margin으로 문서가 1–2px 넘쳤다. 중복 줄과 별도 타이머를 제거하고 화면 폭·모델 표시를 다시 확인했다.
 - private 개발 프록시의 HMR/font origin 처리 때문에 초기 상호작용·폰트 로딩이 실패했다. 인증을 유지한 내부 개발 자산 프록시를 바로잡고 실제 hydration·상세 조작·탐색을 다시 검증했다. 초기 `--webpack` 개발 서버의 stream 모듈 해석 실패는 로컬 의존성과 기본 Turbopack 실행으로 해소했다. 이를 빌드 성공으로 기록하지 않는다.
+
+
+## 초안 PR의 CI 상태
+
+네 PR은 시안 검토용 draft로 유지했다. 저장소 CI(`.github/workflows/ci.yml:290`)는 draft에서 검사 잡을 건너뛰고 필수 `check`를 `draft PR — CI not run; mark ready for review`로 의도적으로 실패시킨다. PR #812·#813에서 해당 결과를 확인했다. 따라서 이 기록의 254개 통과는 로컬 통합 범위 검사 결과이며, 원격 필수 CI 성공으로 기록하지 않는다. CI 규칙이나 필수 검사는 변경하지 않았다.

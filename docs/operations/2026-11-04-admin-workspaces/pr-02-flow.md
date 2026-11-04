@@ -5,3 +5,5 @@
 신규 DB 쿼리·모델 호출·스키마 변경 없이 기존 관측을 사용합니다. 상단 장식 제목과 설명은 제거합니다.
 
 실데이터 검증 중 발견한 LLM 화면의 `model_purpose_not_unique:crawl-tagline` 오류도 해결합니다. 이전된 text 7단계의 기본값·배정은 작업별 실제 순위의 identity/provider를 사용하고, 옛 단계 풀·등록부 첫 항목으로 대체하지 않습니다. 불명확한 참조 기본값은 해당 단계만 미확인으로 표시해 장부 현황을 계속 볼 수 있습니다. 관련 범위 회귀 5파일·57개와 정적 검사를 추가 실행했습니다.
+
+이 PR은 시안 검토용 초안입니다. 저장소 정책상 draft의 검사 잡은 실행하지 않고 필수 check에 실패를 남깁니다. 로컬·통합 시안 검증 결과는 [검증 기록](https://github.com/JRVector9/nomorevibe/blob/codex/admin-workspaces-20261104/docs/operations/2026-11-04-admin-workspaces/validation.md)을 참조하세요.

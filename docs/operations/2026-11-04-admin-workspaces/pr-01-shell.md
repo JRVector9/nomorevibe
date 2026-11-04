@@ -3,3 +3,5 @@
 검증: 메뉴·URL 소유·배지·자동 갱신 관련 범위 테스트와 ESLint/TypeScript를 실행했습니다. 후속 검증에서 기존 문의 URL과 중복 보조 탭을 수정했습니다. 통합 미리보기에서 데스크톱·모바일과 실제 탐색을 확인합니다.
 
 함께 적용: PR04가 새 콘텐츠/설정 진입점을 제공합니다. 운영 배포와 DB 변경은 포함하지 않습니다.
+
+이 PR은 시안 검토용 초안입니다. 저장소 정책상 draft의 검사 잡은 실행하지 않고 필수 check에 실패를 남깁니다. 로컬·통합 시안 검증 결과는 [검증 기록](https://github.com/JRVector9/nomorevibe/blob/codex/admin-workspaces-20261104/docs/operations/2026-11-04-admin-workspaces/validation.md)을 참조하세요.
