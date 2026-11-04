@@ -4,8 +4,8 @@ export const number = (value: number | null | undefined) => value == null ? "—
 export const clock = (value: string | null | undefined) => value ? new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Seoul", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(new Date(value)) : "확인 못함";
 export function Tag({ children, tone = "" }: { children: ReactNode; tone?: string }) { return <span className={`tag ${tone}`}>{children}</span>; }
 export function ReadStamp({ at }: { at?: string | null }) { return <span className={`read-stamp ${at ? "" : "stale"}`}>{at ? `● 관측 ${clock(at)} KST` : "? 관측을 읽지 못함"}</span>; }
-export function Stat({ label, value, foot, tone = "", spark }: { label: string; value: ReactNode; foot: ReactNode; tone?: string; spark?: number[] | null }) {
-  return <div className={`stat ${tone}`}><div className="stat-top"><span>{label}</span><Tag>실측</Tag></div><div className="stat-value mono">{value}</div><div className="stat-bottom"><span>{foot}</span><PrototypeSpark values={spark} label={`${label} 시간별 추이`} /></div></div>;
+export function Stat({ label, value, foot, tone = "", spark, status = false }: { label: string; value: ReactNode; foot: ReactNode; tone?: string; spark?: number[] | null; status?: boolean }) {
+  return <div className={`stat ${tone}`}><div className="stat-top"><span>{label}</span><Tag>실측</Tag></div><div className="stat-value mono" data-admin-type={status ? "status" : undefined}>{value}</div><div className="stat-bottom"><span>{foot}</span><PrototypeSpark values={spark} label={`${label} 시간별 추이`} /></div></div>;
 }
 export function PrototypeSpark({ values, label }: { values?: readonly number[] | null; label: string }) {
   if (!values?.length) return null;
