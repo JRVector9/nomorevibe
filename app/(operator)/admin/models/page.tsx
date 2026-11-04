@@ -9,6 +9,7 @@ import { getSettings, settingsFormVersion } from "@/lib/crawl/settings";
 import { readServedContractModels } from "@/lib/operations/admin-engine-connect";
 import { configuredHumanModelsProbe, configuredHumanModelsReady, humanReviewModelDisplay, type HumanModelProbe } from "@/lib/operations/admin-models-human";
 import { currentModelEnv } from "@/lib/operations/model-env";
+import { adminModelStageView, type TextStageBindings } from "@/lib/operations/admin-model-stage-view";
 import { PageStamp } from "../components/PageStamp";
 import { HumanReviewSwitch } from "../review/HumanReviewSwitch";
 import { ReviewModelsForm } from "./ReviewModelsForm";
@@ -23,7 +24,8 @@ import { DevicesPanel } from "./DevicesPanel";
 import { HelpersFold, type AssignmentSourceView } from "./HelpersFold";
 import { capacityMonitorThresholds, readModelCapacityReviewQueue, readModelCapacityUnknowns } from "@/lib/operations/model-capacity-unknowns";
 import { buildModelCards, modelContractLinks, modelRecoveryBlocked, type CapacityAlarmSummary, type ModelContractLink, type ModelStageAssignment } from "@/lib/operations/admin-models-view";
-import { ADMIN_MODEL_STAGES } from "@/lib/llm/admin-model-stages";
+import { AI_TEXT_TASK_IDS } from "@/lib/llm/ai-tasks";
+import { TextTaskRanks } from "@/lib/llm/ai-task-resolver";
 import { configuredModel, modelForPurpose, modelRequestName, MODEL_PURPOSE_ENV, readModelRegistry } from "@/lib/llm/model-registry";
 import { ensureServingContracts, servingContractSnapshot } from "@/lib/llm/serving-contract-store";
 import { AiConnection } from "../status/AiConnection";
@@ -53,6 +55,14 @@ const renderClock = () => new Date();
 /** 자동 확인 호출의 소요 ms — 결과와 함께 관측에 남긴다. */
 async function timed<T>(run: () => Promise<T>): Promise<{ value: T; ms: number }> { const started = Date.now(); const value = await run(); return { value, ms: Date.now() - started }; }
 
+/** currentModelEnv already opened these cached snapshots. Only the non-secret identity and actual provider reach the view. */
+async function textStageBindings(): Promise<TextStageBindings> {
+  return Object.fromEntries(await Promise.all(AI_TEXT_TASK_IDS.map(async route => {
+    try { return [route, (await TextTaskRanks.open(route)).bindings().map(({ identity, provider }) => ({ identity, provider }))] as const; }
+    catch { return [route, null] as const; }
+  })));
+}
+
 /**
  * /admin/models 한 화면(2026-10-31 승인 시안): 고정 상단 띠 → 요약 타일 4 → 단계 × 모델 표 → 장비 표 | 확인 못함 목록 → 접기 2(도우미·감시자·배정 출처·새 잡 / 참고).
  * 모든 구획이 실제 출처만 읽는다 — 장부 관측·장비 로더·도우미 로더·배정 출처·역할 lease·장부 경보 요약·jobs 표·연결 확인 관측. 하위 화면은 그대로 두고 여기서는 요약+링크다.
@@ -67,15 +77,15 @@ export default async function ModelsPage() {
     assignmentTableFlag()]);
 
   const registry = readModelRegistry();
-  const defaults = Object.fromEntries(ADMIN_MODEL_STAGES.map(stage => [stage.id, stage.purpose === "screen-review" ? screenModelConfig()?.model ?? "미설정"
-    : stage.purpose in MODEL_PURPOSE_ENV ? configuredModel(stage.purpose as keyof typeof MODEL_PURPOSE_ENV) : modelRequestName(modelForPurpose(stage.purpose))]));
+  const { defaults, assignments: stageAssignments } = adminModelStageView({ models, pools: settings.stageModelPools, bindings: await textStageBindings(),
+    legacyDefault: stage => stage.purpose === "screen-review" ? screenModelConfig()?.model ?? "미설정"
+      : stage.purpose in MODEL_PURPOSE_ENV ? configuredModel(stage.purpose as keyof typeof MODEL_PURPOSE_ENV) : modelRequestName(modelForPurpose(stage.purpose)) });
   // 1차·2차는 「작업 ↔ 모델」 순위(PR C1) — 실행 쪽이 읽는 그대로(1차 1·2·3순위, 2차 칸마다 지금 표를 내는 순위 → 그 밖의 순위)
   const secondSets = secondReviewVoterSets(settings);
   const assignments: ModelStageAssignment[] = [
     { id: "first-review", label: "1차 검수", models: firstReviewers(settings) },
     { id: "second-review", label: "2차 검수", models: [...secondSets.voters, ...secondSets.fallbacks] },
-    ...ADMIN_MODEL_STAGES.map(stage => ({ id: stage.id, label: stage.label, models: (settings.stageModelPools?.[stage.id]?.length
-      ? settings.stageModelPools[stage.id]! : [defaults[stage.id]]).map(model => ({ provider: stage.provider, model })) })),
+    ...stageAssignments,
   ];
   // 관리 계약(0147)의 주소는 host:port 만 넘긴다 — 장비 칸의 「장비 미확인」을 줄이고 전송 방식을 보이기 위해서다. 키는 ModelContractLink 에 없다.
   const contracts = modelContractLinks(servingContractSnapshot().rows);
