@@ -25,6 +25,9 @@ describe("original HTML prototype layout with real-loader contracts", () => {
     expect(html).toContain('class="grid four home-kpis"');
     expect(html.match(/class="flow-card"/g)).toHaveLength(9);
     expect(html.match(/class="branch"/g)).toHaveLength(3);
+    const stageTable = html.match(/id="prototype-stage-observations"[^]*?<\/tbody>/)?.[0]?.split("<tbody>")[1] ?? "";
+    expect(stageTable.match(/<tr>/g)).toHaveLength(9);
+    expect(stageTable).toContain(">공개 완료</button>");
     for (const className of ["flow-phases", "flow-grid", "stage-detail", "detail-summary", "control-box", "worker-grid"]) expect(html).toContain(`class="${className}"`);
     expect(html).toContain("확인된 7건 · 일부 조회 실패");
     expect(html).toContain('href="/admin/products?tab=quality"');
