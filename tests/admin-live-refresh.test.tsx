@@ -5,8 +5,9 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-const router = vi.hoisted(() => ({ refresh: vi.fn(), pathname: "/admin/review" }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: router.refresh }), usePathname: () => router.pathname }));
+const router = vi.hoisted(() => ({ refresh: vi.fn(), pathname: "/admin/review", search: "" }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: router.refresh }), usePathname: () => router.pathname,
+  useSearchParams: () => new URLSearchParams(router.search) }));
 
 import { BUSY_LIMIT_MS, clockLabel, createRefreshScheduler, freshCookie, hasUnsaved, isTextEntry, LIVE_STORAGE_KEY, mergeBadges, pauseReason,
   readLivePreference, refreshPolicy, UNSAVED_SELECTOR, writeLivePreference } from "@/app/(operator)/admin/live-refresh";
@@ -179,5 +180,21 @@ describe("갱신 줄", () => {
     router.pathname = "/admin/login";
     const login = renderToStaticMarkup(<AdminShell renderedAt="2026-10-21T04:38:20.000Z"><main>로그인</main></AdminShell>);
     expect(login).not.toContain("admin-live-bar");
+  });
+
+  it("같은 기존 URL도 query에 따라 작업 공간을 고르고 계정과 검색을 유지한다", () => {
+    router.pathname = "/admin/audit";
+    router.search = "tab=requests";
+    const requests = renderToStaticMarkup(<AdminShell renderedAt="2026-10-21T04:38:20.000Z" account="operator@example.com"><main>실제 화면 본문</main></AdminShell>);
+    expect(requests).toContain('data-workspace="requests"');
+    expect(requests).toContain('admin-workspace-tabs');
+    expect(requests).toContain('admin-search-trigger');
+    expect(requests).toContain('operator@example.com');
+    expect(requests).toContain('action="/api/auth/logout"');
+    router.search = "tab=policy";
+    const quality = renderToStaticMarkup(<AdminShell renderedAt="2026-10-21T04:38:20.000Z"><main>실제 화면 본문</main></AdminShell>);
+    expect(quality).toContain('data-workspace="projects"');
+    expect(quality).toContain('실제 화면 본문');
+    router.search = "";
   });
 });
