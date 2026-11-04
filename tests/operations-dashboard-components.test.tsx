@@ -27,7 +27,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh() {} }) }));
 const html = (element: React.ReactElement) => renderToStaticMarkup(element);
 
 function series(last: Partial<HourlySeries["points"][number]> = {}): HourlySeries {
-  const base = { discovered: 10, judged: 10, firstReviews: 8, firstFailed: 0, secondReviews: 6, secondAgreed: 5, published: 3, publishedKorean: 0, keywords: 4 };
+  const base = { discovered: 10, judged: 10, firstReviews: 8, firstFailed: 0, secondReviews: 6, secondAgreed: 5, published: 3, publishedKorean: 0, keywords: 4, taglines: 2 };
   const points = Array.from({ length: 24 }, (_, i) => ({ hour: `2026-10-02T${String(i).padStart(2, "0")}:00:00.000Z`, ...base }));
   points[23] = { ...points[23], ...last };
   return { measuredAt: "2026-10-02T23:30:00.000Z", points };

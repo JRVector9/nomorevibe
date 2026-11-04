@@ -137,7 +137,7 @@ describe("한 개념 한 규칙 — 심각도", () => {
 
 describe("지금 처리량 — 굴러가는 최근 1시간", () => {
   const point = (hour: string, over: Partial<HourlySeries["points"][number]> = {}) => ({ hour, discovered: 0, judged: 0, firstReviews: 0, firstFailed: 0,
-    secondReviews: 0, secondAgreed: 0, published: 0, publishedKorean: 0, keywords: 0, ...over });
+    secondReviews: 0, secondAgreed: 0, published: 0, publishedKorean: 0, keywords: 0, taglines: 0, ...over });
 
   it("큰 숫자는 lastHour(60분 전부터 지금까지)다 — 정각 직후에도 이번 시 칸으로 떨어지지 않는다", () => {
     const series: HourlySeries = { measuredAt: "2026-10-22T04:05:00.000Z",

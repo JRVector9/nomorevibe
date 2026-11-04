@@ -1,7 +1,7 @@
 import { sql, type SQL } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { db, onReplica } from "@/lib/db";
-import { cdnPurges, crawlCandidates, crawlFrontier, crawlReviewAttempts, productAuditCampaigns, productAuditItems, productEvidenceAudit, productHealth,
+import { cdnPurges, crawlCandidates, crawlFrontier, crawlTaglines, crawlReviewAttempts, productAuditCampaigns, productAuditItems, productEvidenceAudit, productHealth,
   productRepoReviews, productSearchProfiles, products, secondReviews } from "@/lib/db/schema";
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import { sameReviewModel } from "@/lib/crawl/review-model-identity";
@@ -33,6 +33,12 @@ export type HourPoint = {
   secondReviews: number; secondAgreed: number;   // secondAgreed = second_decision = first_decision (second_decision not null)
   published: number; publishedKorean: number;     // publishedKorean = products.name or tagline contains Hangul [가-힣]
   keywords: number;                               // product_search_profiles.generated_at in that hour
+  /**
+   * 프로필 준비 칸의 시간별 기록 — 그 시간에 한 줄 소개를 짓거나 다시 확인해 저장한 저장소 수
+   * (crawl_taglines.updated_at, 오류 없이 글이 있는 행). 저장소마다 한 행이라 같은 저장소를 다시 지으면 마지막 시각만 남는다.
+   * 분류는 발행 순간에 같이 정해져 따로 남는 시각이 없다 — 분류를 통과한 수는 발행 선이 곧 그 수다.
+   */
+  taglines: number;
 };
 /**
  * points — 정시 단위 24칸(선). lastHour — 굴러가는 최근 1시간(measuredAt 60분 전부터 지금까지)의 같은 수.
@@ -178,7 +184,7 @@ async function loadHourly(now: Date): Promise<HourlySeries> {
     : sql`count(*) FILTER (WHERE ${column} > ${end} - interval '1 hour')::int`;
 
   type Counts = { discovered: number; judged: number; first_reviews: number; first_failed: number;
-    second_reviews: number; second_agreed: number; published: number; published_korean: number; keywords: number };
+    second_reviews: number; second_agreed: number; published: number; published_korean: number; keywords: number; taglines: number };
   const rows = await readOnly<{ hour: string } & Counts & { [K in keyof Counts as `recent_${K}`]: number }>(sql`
     WITH hours AS (
       SELECT date_trunc('hour', ${end}) - g * interval '1 hour' AS hour FROM generate_series(23, 0, -1) AS g
@@ -208,19 +214,22 @@ async function loadHourly(now: Date): Promise<HourlySeries> {
     ), keywords AS (
       SELECT ${hourOf(productSearchProfiles.generatedAt)} AS hour, count(*)::int AS n, ${recent(productSearchProfiles.generatedAt)} AS recent
       FROM ${productSearchProfiles} WHERE ${within(productSearchProfiles.generatedAt)} GROUP BY 1
+    ), taglines AS (
+      SELECT ${hourOf(crawlTaglines.updatedAt)} AS hour, count(*)::int AS n, ${recent(crawlTaglines.updatedAt)} AS recent
+      FROM ${crawlTaglines} WHERE ${within(crawlTaglines.updatedAt)} AND ${crawlTaglines.errorCode} IS NULL AND ${crawlTaglines.tagline} <> '' GROUP BY 1
     )
     SELECT ${iso(sql`h.hour`)} AS hour, coalesce(d.n, 0) AS discovered, coalesce(j.n, 0) AS judged,
       coalesce(f.reviews, 0) AS first_reviews, coalesce(f.failed, 0) AS first_failed,
       coalesce(v.reviews, 0) AS second_reviews, coalesce(v.agreed, 0) AS second_agreed,
-      coalesce(l.n, 0) AS published, coalesce(l.korean, 0) AS published_korean, coalesce(k.n, 0) AS keywords,
+      coalesce(l.n, 0) AS published, coalesce(l.korean, 0) AS published_korean, coalesce(k.n, 0) AS keywords, coalesce(t.n, 0) AS taglines,
       coalesce(d.recent, 0) AS recent_discovered, coalesce(j.recent, 0) AS recent_judged,
       coalesce(f.recent_reviews, 0) AS recent_first_reviews, coalesce(f.recent_failed, 0) AS recent_first_failed,
       coalesce(v.recent_reviews, 0) AS recent_second_reviews, coalesce(v.recent_agreed, 0) AS recent_second_agreed,
-      coalesce(l.recent, 0) AS recent_published, coalesce(l.recent_korean, 0) AS recent_published_korean, coalesce(k.recent, 0) AS recent_keywords
+      coalesce(l.recent, 0) AS recent_published, coalesce(l.recent_korean, 0) AS recent_published_korean, coalesce(k.recent, 0) AS recent_keywords, coalesce(t.recent, 0) AS recent_taglines
     FROM hours h
     LEFT JOIN discovered d ON d.hour = h.hour LEFT JOIN judged j ON j.hour = h.hour
     LEFT JOIN first_done f ON f.hour = h.hour LEFT JOIN votes v ON v.hour = h.hour
-    LEFT JOIN listed l ON l.hour = h.hour LEFT JOIN keywords k ON k.hour = h.hour
+    LEFT JOIN listed l ON l.hour = h.hour LEFT JOIN keywords k ON k.hour = h.hour LEFT JOIN taglines t ON t.hour = h.hour
     ORDER BY h.hour
   `);
 
@@ -230,11 +239,13 @@ async function loadHourly(now: Date): Promise<HourlySeries> {
     firstReviews: Number(row.first_reviews), firstFailed: Number(row.first_failed),
     secondReviews: Number(row.second_reviews), secondAgreed: Number(row.second_agreed),
     published: Number(row.published), publishedKorean: Number(row.published_korean), keywords: Number(row.keywords),
+    taglines: Number(row.taglines),
   })), lastHour: {
     discovered: sum((row) => row.recent_discovered), judged: sum((row) => row.recent_judged),
     firstReviews: sum((row) => row.recent_first_reviews), firstFailed: sum((row) => row.recent_first_failed),
     secondReviews: sum((row) => row.recent_second_reviews), secondAgreed: sum((row) => row.recent_second_agreed),
     published: sum((row) => row.recent_published), publishedKorean: sum((row) => row.recent_published_korean), keywords: sum((row) => row.recent_keywords),
+    taglines: sum((row) => row.recent_taglines),
   } };
 }
 

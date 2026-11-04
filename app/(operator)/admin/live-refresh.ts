@@ -15,6 +15,8 @@ export function refreshPolicy(pathname: string): RefreshPolicy {
   const under = (path: string) => pathname === path || pathname.startsWith(`${path}/`);
   // 운영센터 — 워커 관측 15초에 맞춘 지금 그대로(10초). 조작 중에도 읽는다(전과 같다)
   if (under("/admin/status")) return { intervalMs: 10_000, idleMs: 0 };
+  // 전체 흐름 — 보는 화면이다(바꾸는 칸이 없다). 읽기는 웹들이 15초 나눠 쓰므로 15초마다, 조작 중에도 읽는다
+  if (under("/admin/flow")) return { intervalMs: 15_000, idleMs: 0 };
   // 심사 큐 — 갈래 셈이 보류 후보를 모두 다시 판정해 무겁고, 결정하는 화면이다. 손을 뗀 지 1분 지나야 다시 읽는다
   if (under("/admin/review")) return { intervalMs: 30_000, idleMs: 60_000 };
   // 크롤 설정 — 2차 표 선택지는 직접 연결 계약에서 읽는다. 30초

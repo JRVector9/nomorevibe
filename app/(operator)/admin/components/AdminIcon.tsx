@@ -4,6 +4,7 @@
  */
 const PATHS = {
   pulse: <path d="M3 12h4l3-7 4 14 3-7h4" />,
+  flow: <><rect x="4" y="6" width="5" height="5" rx="1" /><rect x="11" y="6" width="5" height="5" rx="1" /><path d="M3 15h18" /><circle cx="6" cy="18" r="1.6" /><circle cx="18" cy="18" r="1.6" /><path d="m18 6.5 2.5 2-2.5 2" /></>,
   check: <><rect x="4" y="4" width="16" height="16" rx="3" /><path d="m8.5 12 2.5 2.5 4.5-5" /></>,
   inbox: <><path d="M4 13h4l2 3h4l2-3h4" /><path d="M5.5 6h13L20 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-5z" /></>,
   down: <><path d="M12 4v11m-5-5 5 5 5-5" /><path d="M5 20h14" /></>,

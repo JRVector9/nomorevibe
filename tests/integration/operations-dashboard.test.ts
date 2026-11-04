@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { roleOverview } from "@/lib/operations/roles";
-import { roleLeases, crawlCandidates, crawlDocuments, crawlFrontier, crawlPublicationChanges, crawlReviewAttempts, productAuditCampaigns,
+import { roleLeases, crawlCandidates, crawlDocuments, crawlFrontier, crawlPublicationChanges, crawlReviewAttempts, crawlTaglines, productAuditCampaigns,
   productAuditItems, productHealth, productIntroChecks, productSearchProfiles, products, secondReviews } from "@/lib/db/schema";
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from "@/lib/crawl/settings-schema";
 import { pinTextRanks } from "../text-task-ranks-fixture";
@@ -48,7 +48,7 @@ beforeEach(() => pinReviewRanks(REVIEW_RANKS));
 beforeAll(async () => {
   pinTextRanks({ "product-search-profile": PROFILE_MODEL });
   await resetTables();
-  for (const table of [secondReviews, crawlCandidates, crawlDocuments, crawlFrontier, crawlPublicationChanges]) await db.delete(table);
+  for (const table of [secondReviews, crawlCandidates, crawlDocuments, crawlFrontier, crawlPublicationChanges, crawlTaglines]) await db.delete(table);
 
   await db.insert(crawlFrontier).values([
     { repo: "dash/korean", signal: "Claude 커밋 트레일러", state: "done", discoveredAt: ago(20) },
@@ -90,6 +90,15 @@ beforeAll(async () => {
   await db.insert(secondReviews).values([vote("agree", "approve", ago(9)), vote("split", "reject", ago(5))]);
 
   await db.insert(productSearchProfiles).values({ productId: koreanApp.id, model: PROFILE_MODEL, sourceHash: "x", generatedAt: ago(3) });
+  // 프로필 준비 칸의 시간별 기록 — 오류 없이 지은 소개만 센다(실패·빈 줄·24시간 밖은 빠진다)
+  const tagline = (repo: string, overrides: Partial<typeof crawlTaglines.$inferInsert>): typeof crawlTaglines.$inferInsert => ({
+    repo, tagline: "한 줄 소개", source: "readme", model: "m", sourceHash: "h", documentAt: ago(30), ...overrides });
+  await db.insert(crawlTaglines).values([
+    tagline("dash/tag-ok", { updatedAt: ago(4) }),
+    tagline("dash/tag-failed", { errorCode: "timeout", updatedAt: ago(4) }),
+    tagline("dash/tag-empty", { tagline: "", updatedAt: ago(4) }),
+    tagline("dash/tag-old", { updatedAt: ago(2 * DAY) }),
+  ]);
   await db.insert(productHealth).values({ slug: "korean-app", status: 200, checkedAt: ago(60) });
   await db.insert(productIntroChecks).values({ productId: englishApp.id, checkedTagline: "Plain notes", outcome: "needs_editor" });
 
@@ -114,7 +123,7 @@ it("buckets the last 24 hours oldest first and reuses the cached series", async 
 
   expect(series.points.at(-1)).toEqual({
     hour: new Date(hours.at(-1)!).toISOString(), discovered: 2, judged: 2, firstReviews: 1, firstFailed: 1,
-    secondReviews: 2, secondAgreed: 1, published: 1, publishedKorean: 1, keywords: 1,
+    secondReviews: 2, secondAgreed: 1, published: 1, publishedKorean: 1, keywords: 1, taglines: 1,
   });
   // 두 시간 전 영어 제품은 그 칸에, 차단된 제품과 24시간 밖 발견은 어디에도 없다
   expect(series.points[21]).toMatchObject({ published: 1, publishedKorean: 0 });
@@ -124,7 +133,7 @@ it("buckets the last 24 hours oldest first and reuses the cached series", async 
   expect(await hourlyThroughput(new Date(now.getTime() + 1000))).toBe(series);
   // 굴러가는 최근 1시간 — 지금은 모든 최근 행이 이번 시 칸 안이라 마지막 칸과 같다
   expect(series.lastHour).toEqual({ discovered: 2, judged: 2, firstReviews: 1, firstFailed: 1,
-    secondReviews: 2, secondAgreed: 1, published: 1, publishedKorean: 1, keywords: 1 });
+    secondReviews: 2, secondAgreed: 1, published: 1, publishedKorean: 1, keywords: 1, taglines: 1 });
 });
 
 it("lastHour is a rolling 60 minutes, the same window as modelHealth's 1h — not the hour since :00", async () => {
@@ -133,7 +142,7 @@ it("lastHour is a rolling 60 minutes, the same window as modelHealth's 1h — no
   const series = await hourlyThroughput(later);
   expect(series.points.at(-1)).toMatchObject({ discovered: 0, judged: 0, firstReviews: 0, firstFailed: 0, secondReviews: 0, keywords: 0 });
   expect(series.lastHour).toEqual({ discovered: 0, judged: 0, firstReviews: 0, firstFailed: 1,
-    secondReviews: 1, secondAgreed: 0, published: 0, publishedKorean: 0, keywords: 1 });
+    secondReviews: 1, secondAgreed: 0, published: 0, publishedKorean: 0, keywords: 1, taglines: 1 });
   // 심사 큐 칩·모델 연결 카드의 "1h"(modelHealth)와 같은 창 — 1차 호출 수 = 끝난 심사 + 실패
   const [first] = await modelHealth(settings, later);
   expect(first.calls1h).toBe(series.lastHour!.firstReviews + series.lastHour!.firstFailed);

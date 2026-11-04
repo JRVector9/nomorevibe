@@ -13,6 +13,7 @@ export const NAV_GROUPS: readonly { title: string; pages: readonly NavPage[] }[]
   {
     title: "일하기",
     pages: [
+      { href: "/admin/flow", label: "전체 흐름", hint: "발행 전 과정·병목·장애 대응", icon: "flow" },
       { href: "/admin/inbox", label: "오늘 할 일", hint: "지금 처리할 것", icon: "inbox" },
       { href: "/admin/status", label: "운영센터", hint: "서비스·작업 현황", icon: "pulse" },
       { href: "/admin/review", label: "심사 큐", hint: "후보 검토·승인", icon: "check" },
