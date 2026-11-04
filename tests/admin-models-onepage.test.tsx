@@ -205,7 +205,11 @@ describe("장비 표·검토 목록·접기·상단 띠", () => {
   });
   it("페이지는 접기 2개(#assign·#ref)·2열 구획·상단 띠·PageStamp 를 두고 숫자를 지어내지 않는다", () => {
     const source = readFileSync(path.resolve(__dirname, "../app/(operator)/admin/models/page.tsx"), "utf8");
-    expect(source).toContain("<PageStamp />"); expect(source).toContain("<ModelsTopBar renderedAt={renderedAt} />"); expect(source).toContain('<details id="ref"'); expect(source).toContain("<HelpersFold ");
+    expect(source).toContain("<PageStamp />");
+    // The shared workspace header owns refresh and navigation; a second timer used to overlap it and overflow the viewport.
+    expect(source).not.toContain("<ModelsTopBar");
+    expect(readFileSync(path.resolve(__dirname, "../app/(operator)/admin/AdminShell.tsx"), "utf8")).toContain("<LiveBar ");
+    expect(source).toContain('<details id="ref"'); expect(source).toContain("<HelpersFold ");
     expect(source).toContain("[grid-template-columns:minmax(0,7fr)_minmax(0,5fr)]"); expect(source).toContain("readProbeObservations()"); expect(source).toContain("recordAutoProbes(");
     expect(source).toContain("roleOverview()"); expect(source).toContain("readModelCapacityUnknowns("); expect(source).toContain("readCatalogJobRegistration()");
   });
