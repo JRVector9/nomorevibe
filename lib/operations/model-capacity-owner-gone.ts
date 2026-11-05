@@ -15,7 +15,7 @@ const SINGLETON_OWNERS = Object.freeze([
   ...["crawler", "reviewer", "publisher", "text", "maintenance"].flatMap(role => [`m3-${role}`, `mini-${role}-standby`]),
   "ai2-consumer-m3", "agent-scan-consumer-m3",
 ]);
-export type ModelCapacityReclaimCursor = { ownerGoneAfterQueueOrdinal: string };
+export type ModelCapacityReclaimCursor = { ownerGoneAfterQueueOrdinal: string; httpHopAfterId?: string };
 type Candidate = { requestId: string; queueOrdinal: string };
 
 function afterOrdinal(cursor: ModelCapacityReclaimCursor | null): string {
@@ -50,7 +50,10 @@ export async function markAutomaticOwnerGone(ctx: JobContext<ModelCapacityReclai
   let after = afterOrdinal(original);
   let candidates = await candidatesAfter(after);
   if (!candidates.length && after !== "0" && ready()) { after = "0"; candidates = await candidatesAfter(after); }
-  if (!candidates.length) return ready() ? null : original;
+  if (!candidates.length) {
+    if (!ready()) return original;
+    return original?.httpHopAfterId ? { ...original, ownerGoneAfterQueueOrdinal: "0" } : null;
+  }
   let scanned = 0, marked = 0, kept = 0, errors = 0;
   for (const candidate of candidates) {
     if (!ready()) break;
@@ -71,8 +74,8 @@ export async function markAutomaticOwnerGone(ctx: JobContext<ModelCapacityReclai
     }
     scanned++;
     after = candidate.queueOrdinal;
-    if (ready()) await ctx.save({ ownerGoneAfterQueueOrdinal: after });
+    if (ready()) await ctx.save({ ...original, ownerGoneAfterQueueOrdinal: after });
   }
   ctx.log("model_capacity.owner_gone_scan", { scanned, marked, kept, errors });
-  return scanned ? { ownerGoneAfterQueueOrdinal: after } : original;
+  return scanned ? { ...original, ownerGoneAfterQueueOrdinal: after } : original;
 }

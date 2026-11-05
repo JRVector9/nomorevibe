@@ -78,18 +78,21 @@ export async function fetchCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
   const defer = (reason: "stage_blocked" | "source_buffer" | "http_origin_permit") =>
     deferredJob<null>(reason, tally.fetched + tally.skipped + tally.failed + tally.gated);
   const oneAtATime = originQueue();
+  const deferredOrigins = new Set<string>(), deferredFrontierIds = new Set<number>();
 
   while (ctx.hasBudget()) {
-    const admission = await crawl.dequeueWithAdmission(BATCH, undefined, ctx.lease);
+    const admission = await crawl.dequeueWithAdmission(BATCH, undefined, ctx.lease, [...deferredFrontierIds]);
     if (admission.kind === "stage_blocked") return defer("stage_blocked");
     if (admission.kind === "buffer_blocked") return defer("source_buffer");
     const entries = admission.entries;
     if (entries.length === 0) {
+      if (deferredFrontierIds.size) return defer("http_origin_permit");
       ctx.log("crawl.fetched", { ...tally, drained: true });
       return { done: true };
     }
 
-    const { retryAt, pauseReason, deferred, permitBlocked } = await fetchBatch(entries, ctx, settings, evidenceRequired, oneAtATime, tally);
+    const { retryAt, pauseReason, deferred, permitBlocked } = await fetchBatch(entries, ctx, settings, evidenceRequired, oneAtATime, tally,
+      deferredOrigins, deferredFrontierIds);
     if (permitBlocked) return defer("http_origin_permit");
     if (retryAt) {
       ctx.log(pauseReason === "auth_unavailable" ? "crawl.fetch_auth_unavailable" : "crawl.fetch_rate_limited",
@@ -105,6 +108,7 @@ export async function fetchCrawlDocuments(ctx: JobContext<null>): Promise<JobOut
   const admission = await crawl.dequeueWithAdmission(0, undefined, ctx.lease);
   if (admission.kind === "stage_blocked") return defer("stage_blocked");
   if (admission.kind === "buffer_blocked") return defer("source_buffer");
+  if (deferredFrontierIds.size) return defer("http_origin_permit");
   ctx.log("crawl.fetched", { ...tally, drained: false });
   return { done: false };
 }
@@ -126,6 +130,8 @@ async function fetchBatch(
   evidenceRequired: ReadonlySet<string>,
   oneAtATime: OneAtATime,
   tally: Tally,
+  deferredOrigins: Set<string>,
+  deferredFrontierIds: Set<number>,
 ): Promise<{ retryAt: Date | null; pauseReason: "rate_limited" | "auth_unavailable" | null; deferred: boolean; permitBlocked: boolean }> {
   // 여러 칸이 함께 고치는 상태라 한 객체에 둔다
   const batch = {
@@ -156,11 +162,15 @@ async function fetchBatch(
         });
         if (!started) return;
 
-        const outcome = await fetchEntry(started.entry, started.result, ctx, settings, evidenceRequired, oneAtATime);
+        const outcome = await fetchEntry(started.entry, started.result, ctx, settings, evidenceRequired, oneAtATime, deferredOrigins);
         if (outcome.kind === "paused") {
           batch.stopped = true;
           if (!batch.retryAt || outcome.retryAt > batch.retryAt) batch.retryAt = outcome.retryAt;
           batch.pauseReason = outcome.reason;
+          batch.giveBack.add(started.entry);
+        } else if (outcome.kind === "origin_deferred") {
+          // An occupied homepage origin must not stop unrelated origins or be selected again in this tick.
+          deferredFrontierIds.add(started.entry.id);
           batch.giveBack.add(started.entry);
         } else if (outcome.kind === "deferred" || outcome.kind === "permit_deferred") {
           batch.stopped = true;
@@ -196,7 +206,7 @@ async function fetchBatch(
 
 type EntryOutcome =
   | { kind: "fetched"; needsJudgement: boolean }
-  | { kind: "skipped" | "failed" | "lost" | "deferred" | "permit_deferred" | "gated" }
+  | { kind: "skipped" | "failed" | "lost" | "deferred" | "permit_deferred" | "origin_deferred" | "gated" }
   | { kind: "paused"; reason: "rate_limited" | "auth_unavailable"; retryAt: Date };
 
 /** GitHub 응답을 받은 항목 하나를 끝낸다. 실패는 여기서 항목별로 남긴다 */
@@ -207,6 +217,7 @@ async function fetchEntry(
   settings: CrawlSettings,
   evidenceRequired: ReadonlySet<string>,
   oneAtATime: OneAtATime,
+  deferredOrigins: Set<string>,
 ): Promise<EntryOutcome> {
   if (!result.ok) {
     if (result.error.kind === "rate_limited" || result.error.kind === "auth_unavailable") {
@@ -307,10 +318,25 @@ async function fetchEntry(
 
   let page: Awaited<ReturnType<typeof visit>> | null = null;
   if (homepage) {
+    const origin = originOf(homepage);
+    if (deferredOrigins.has(origin)) return { kind: "origin_deferred" };
     try {
-      page = await visit(homepage, settings.judge.docsGenerators, oneAtATime);
+      page = await visit(homepage, settings.judge.docsGenerators, async (url, work) => oneAtATime(url, async () => {
+        // A sibling may have discovered the occupied origin while this entry waited its turn.
+        if (deferredOrigins.has(originOf(url))) throw new HttpOriginPermitError("waiting_aborted");
+        return work();
+      }));
     } catch (error) {
-      if (error instanceof HttpOriginPermitError) return { kind: "permit_deferred" };
+      if (error instanceof HttpOriginPermitError) {
+        // Only the request's permit-wait deadline is local. Configuration, writer/control loss,
+        // caller cancellation or job-budget exhaustion still stops all new work in this batch.
+        if (error.code === "waiting_aborted" && !ctx.signal?.aborted && ctx.hasBudget()) {
+          deferredOrigins.add(origin);
+          ctx.log("crawl.fetch_origin_deferred", { repo: entry.repo, origin });
+          return { kind: "origin_deferred" };
+        }
+        return { kind: "permit_deferred" };
+      }
       /**
        * 일시 페이지 오류와 본문 단절은 이 항목만의 실패다. 잡 전체로
        * 번지던 때는 markFailed가 불리지 않아, 항목이 fetching으로 남았다 10분 뒤 회수되기를
