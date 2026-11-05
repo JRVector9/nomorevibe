@@ -36,7 +36,13 @@ RUN addgroup -g 1001 -S nodejs && adduser -S worker -u 1001 -G nodejs
 ARG CLAUDE_CODE_VERSION=2.1.263
 ARG CODEX_CLI_VERSION=0.153.4
 ARG OPENCODE_CLI_VERSION=2.2.5
-RUN apk add --no-cache tini util-linux font-dejavu && npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} @openai/codex@${CODEX_CLI_VERSION} \
+# npm can omit the optional Claude native package and leave an error stub.
+# Repair only that failure with the pinned required package and vendor installer.
+RUN --mount=type=cache,id=nmv-cli-npm,target=/root/.npm,sharing=locked \
+  apk add --no-cache tini util-linux font-dejavu && npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} @openai/codex@${CODEX_CLI_VERSION} \
+  && (claude --version >/dev/null 2>&1 || \
+    (npm install -g "@anthropic-ai/claude-code-linux-$(node -p 'process.arch')-musl@${CLAUDE_CODE_VERSION}" \
+      && node "$(npm root -g)/@anthropic-ai/claude-code/install.cjs")) \
   && claude --version && codex --version
 RUN npm install -g @opencode/cli@${OPENCODE_CLI_VERSION} && opencode --version
 RUN --mount=type=bind,source=scripts/install-codex-native-entrypoint.mjs,target=/tmp/install-codex-native-entrypoint.mjs,readonly \
