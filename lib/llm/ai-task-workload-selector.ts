@@ -8,7 +8,7 @@ import { readModelCapacityDeviceStates, listModelCapacityDevices } from "./capac
 import { deviceFits, deviceRoleRank } from "./capacity-devices";
 import { ModelCapacityDeferredError } from "./capacity-deferred";
 import { taskPoolEngineKey } from "./ai-task-pool-identity";
-import type { AiTaskExecutionConfig, AiTaskWorkloadCandidate, AiTaskWorkloadChoice } from "./ai-task-execution-config";
+import { aiTaskSupportsWorkloadPool, type AiTaskExecutionConfig, type AiTaskWorkloadCandidate, type AiTaskWorkloadChoice } from "./ai-task-execution-config";
 
 const cursors = new Map<string, number>();
 /**
@@ -20,6 +20,7 @@ const cursors = new Map<string, number>();
 export async function chooseTaskWorkloadMember<T extends AiTaskWorkloadCandidate>(config: AiTaskExecutionConfig,
   candidates: readonly T[], options: Readonly<{ preferIdentity?: string | null; executor?: ProductTransaction }> = {}): Promise<AiTaskWorkloadChoice<T> | null> {
   if (config.mode !== "workload_pool") return null;
+  if (!aiTaskSupportsWorkloadPool(config.task, config.slot)) throw new ModelCapacityDeferredError("assignments_unavailable");
   if (config.revision === null || config.members.length < 1 || config.members.length > 4)
     throw new ModelCapacityDeferredError("assignments_unavailable");
   const task = aiTask(config.task);

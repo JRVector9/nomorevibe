@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { AiTaskPoolRuntime } from "@/lib/llm/ai-task-execution-config";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
-import { aiConnections, aiTaskModels, modelCapacityControl, modelCapacityDevices, operationsAudit, operationsObservations, type AiConnectionModel } from "@/lib/db/schema";
+import { aiConnections, aiTaskModels, aiTaskExecutionConfigs, modelCapacityControl, modelCapacityDevices, operationsAudit, operationsObservations, type AiConnectionModel } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { REVIEW_TASK_ROUTES, ensureReviewTaskRanks, resolveReviewTaskRanks, reviewRankUnusableText } from "@/lib/crawl/review-task-ranks";
 import { AI_TEXT_TASK_IDS, aiTask, aiTaskSlotLabel, aiTaskSlots, isAiLiveTask, isAiReviewTask, type AiTaskDef } from "@/lib/llm/ai-tasks";
@@ -503,7 +503,13 @@ export async function saveAiTaskRanks(input: AiTaskRanksInput, actor: string): P
     if (!resources.ok) return resources;
     const result = await onPrimary(() => db.transaction(async tx => {
       if (!await writerSiteActive(tx)) throw new DrWriterFencedError("site_fenced");
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('ai_task_execution_task'), hashtext(${task.id}))`);
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('ai_task_models'), hashtext(${`${task.id}#${input.slot}`}))`);
+      if (task.id === "second-review" && input.slot > 1 && chosen.length > 0) {
+        const [activePool] = await tx.select({ slot: aiTaskExecutionConfigs.slot }).from(aiTaskExecutionConfigs)
+          .where(and(eq(aiTaskExecutionConfigs.task, task.id), eq(aiTaskExecutionConfigs.mode, "workload_pool"))).limit(1);
+        if (activePool) fail("ai_task_pool_ai2_other_slots_configured");
+      }
       const before = (await tx.select().from(aiTaskModels).where(and(eq(aiTaskModels.task, task.id), eq(aiTaskModels.slot, input.slot)))
         .orderBy(asc(aiTaskModels.rank))).map(rankRowOf);
       if (aiTaskSlotRevision(before) !== input.revision) fail("ai_task_revision_mismatch");

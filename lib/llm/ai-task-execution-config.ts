@@ -7,7 +7,8 @@ export type AiTaskExecutionMode = (typeof AI_TASK_EXECUTION_MODES)[number];
 export const AI_TASK_POOL_MEMBER_MAX = 4;
 /** Expand only when a real execution adapter consumes the configuration. */
 export const AI_TASK_WORKLOAD_POOL_TASKS: readonly string[] = Object.freeze(["first-review", "second-review", ...AI_TEXT_TASK_IDS]);
-export const aiTaskSupportsWorkloadPool = (taskId: string): boolean => AI_TASK_WORKLOAD_POOL_TASKS.includes(taskId);
+export const aiTaskSupportsWorkloadPool = (taskId: string, slot = 1): boolean =>
+  AI_TASK_WORKLOAD_POOL_TASKS.includes(taskId) && (taskId !== "second-review" || slot === 1);
 export const AI_TASK_EXECUTION_SAVE_AUDIT_ACTION = "ai-task-execution-save";
 const identity = z.string().min(1).max(200).refine(value => value === value.trim() && !/[\p{Cc}]/u.test(value));
 export const aiTaskPoolMemberInputSchema = z.object({
@@ -21,8 +22,9 @@ export const aiTaskExecutionInputSchema = z.object({
 }).strict().superRefine((value, ctx) => {
   const task = aiTask(value.task);
   if (!task || value.slot > task.slots) ctx.addIssue({ code: "custom", message: "ai_task_execution_invalid_task_slot" });
-  if (value.mode === "workload_pool" && !aiTaskSupportsWorkloadPool(value.task))
-    ctx.addIssue({ code: "custom", message: "ai_task_pool_task_unsupported" });
+  if (value.mode === "workload_pool" && !aiTaskSupportsWorkloadPool(value.task, value.slot))
+    ctx.addIssue({ code: "custom", message: value.task === "second-review" && value.slot !== 1
+      ? "ai_task_pool_ai2_single_slot_only" : "ai_task_pool_task_unsupported" });
   if (value.mode === "workload_pool" && value.members.length === 0)
     ctx.addIssue({ code: "custom", message: "ai_task_pool_empty" });
   if (value.mode === "fallback" && value.members.length !== 0)

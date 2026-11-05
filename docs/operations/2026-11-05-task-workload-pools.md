@@ -3,7 +3,11 @@
 This adds configuration and a read-only selection hint. It does not enable any
 production pool, change capacity limits, run a migration, or claim a throughput
 increase. Existing fallback ranks remain in `ai_task_models`, with rank 1..3.
-The initial capability list is review2 + text7. Other tasks reject pool saves
+The initial capability list is review2 + text7. AI2 pool mode supports only
+slot1. It refuses coexistence with legacy slot2/3 configuration or another pool
+slot, without deleting either. Both pool and reverse legacy-rank saves check
+under the same task advisory lock; explicitly clearing an old slot remains
+possible. Legacy fallback still supports its existing three voter slots. Other tasks reject pool saves
 until their actual adapters are connected in later PRs. Ensemble/comparison is
 not part of this contract.
 

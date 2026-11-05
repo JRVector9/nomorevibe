@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
-import { aiConnections, aiTaskExecutionConfigs, aiTaskPoolMembers, operationsAudit } from "@/lib/db/schema";
+import type { ProductTransaction } from "@/lib/domain/products/generation";
+import { aiConnections, aiTaskExecutionConfigs, aiTaskPoolMembers, aiTaskModels, operationsAudit } from "@/lib/db/schema";
 import { aiTask, aiTaskAccepts, aiTaskSlots } from "@/lib/llm/ai-tasks";
 import { aiTaskExecutionInputSchema, AI_TASK_EXECUTION_SAVE_AUDIT_ACTION, type AiTaskExecutionInput } from "@/lib/llm/ai-task-execution-config";
 import { taskPoolEngineKey } from "@/lib/llm/ai-task-pool-identity";
@@ -18,6 +19,13 @@ import { ensureAiTaskExecutionConfigs } from "@/lib/llm/ai-task-execution-snapsh
 const fail = (code: string): never => { throw new Error(code); };
 const own = (task: string, slot: number) => and(eq(aiTaskExecutionConfigs.task, task), eq(aiTaskExecutionConfigs.slot, slot));
 const ownMembers = (task: string, slot: number) => and(eq(aiTaskPoolMembers.task, task), eq(aiTaskPoolMembers.slot, slot));
+async function otherAi2SlotsConfigured(tx: ProductTransaction): Promise<boolean> {
+  const [ranks] = await tx.select({ id: aiTaskModels.id }).from(aiTaskModels)
+    .where(and(eq(aiTaskModels.task, "second-review"), gt(aiTaskModels.slot, 1))).limit(1);
+  const [pools] = await tx.select({ slot: aiTaskExecutionConfigs.slot }).from(aiTaskExecutionConfigs)
+    .where(and(eq(aiTaskExecutionConfigs.task, "second-review"), gt(aiTaskExecutionConfigs.slot, 1), eq(aiTaskExecutionConfigs.mode, "workload_pool"))).limit(1);
+  return Boolean(ranks || pools);
+}
 export type AiTaskPoolMemberView = Readonly<Omit<typeof aiTaskPoolMembers.$inferSelect, "task" | "slot">>;
 export type AiTaskExecutionAdminView = Readonly<{
   task: string; slot: number; mode: "fallback" | "workload_pool"; revision: number | null; updatedAt: string | null;
@@ -69,6 +77,10 @@ export async function saveAiTaskExecutionConfig(input: unknown, actor: string): 
       fail("ai_task_pool_route_not_supported");
     const [before, storedConnections] = await Promise.all([readAiTaskExecutionAdminView(value.task, value.slot), listAiConnections()]);
     if (before.revision !== value.expectedRevision) fail("ai_task_execution_revision_mismatch");
+    // Refuse a known incompatible vote layout before catalog/probe work; repeat under the shared lock below.
+    if (task.id === "second-review" && value.mode === "workload_pool"
+      && await onPrimary(() => db.transaction(otherAi2SlotsConfigured, { accessMode: "read only" })))
+      fail("ai_task_pool_ai2_other_slots_configured");
     let connections = [...storedConnections];
     const ids = [...new Set(value.members.map(member => member.connectionId))];
     const records = ids.length ? await onPrimary(() => db.select().from(aiConnections).where(inArray(aiConnections.id, ids))) : [];
@@ -136,7 +148,12 @@ export async function saveAiTaskExecutionConfig(input: unknown, actor: string): 
     const warnings = readiness.flatMap(row => row.warnings);
     const saved = await onPrimary(() => db.transaction(async tx => {
       if (!await writerSiteActive(tx)) throw new DrWriterFencedError("site_fenced");
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('ai_task_execution_task'),hashtext(${task.id}))`);
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('ai_task_execution_configs'),hashtext(${`${task.id}#${value.slot}`}))`);
+      if (task.id === "second-review" && value.mode === "workload_pool") {
+        if (value.slot !== 1) fail("ai_task_pool_ai2_single_slot_only");
+        if (await otherAi2SlotsConfigured(tx)) fail("ai_task_pool_ai2_other_slots_configured");
+      }
       const [liveConfig] = await tx.select().from(aiTaskExecutionConfigs).where(own(task.id, value.slot)).for("update");
       if ((liveConfig?.revision ?? null) !== value.expectedRevision) fail("ai_task_execution_revision_mismatch");
       const revision = (liveConfig?.revision ?? 0) + 1;
