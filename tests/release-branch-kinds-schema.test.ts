@@ -5,6 +5,7 @@ import { modelCapacityRequests } from "@/lib/db/operations-schema";
 import { publicationClassifyLogicalSql } from "@/lib/llm/publication-classify-capacity-sql";
 import { dispatchReleaseAddedKindsSql, dispatchReleaseEvidenceKindsSql, publicationClassifyReleaseLogicalSql, releaseKindsDispatchSql } from "@/lib/llm/dispatch-release-kinds-sql";
 import { textLocalDirectDispatchSql } from "@/lib/llm/gateway-local-direct-binding-sql";
+import { opencodeCliLogicalSql, opencodeCliDispatchSql } from "@/lib/llm/opencode-cli-binding-sql";
 
 /**
  * 0158(2026-10-31): 종료 근거 회수(0096)의 kind 목록에 없던 publication_classify_cli(0125)·local_model_direct(0118)를 같은 회수 길에 올린다.
@@ -73,6 +74,13 @@ it("Drizzle composes the same three CHECKs as (previous) OR (branch) with the co
   const checks = getTableConfig(modelCapacityRequests).checks;
   for (const [name, branch] of Object.entries(targets)) {
     let expression = new PgDialect().sqlToQuery(checks.find(check => check.name === name)!.value).sql;
+    const opencode = name === "model_capacity_requests_dispatch_check" ? opencodeCliDispatchSql
+      : name === "model_capacity_requests_logical_check" ? opencodeCliLogicalSql : null;
+    if (opencode) {
+      const tail = `) OR (${opencode})`;
+      expect(expression.startsWith("(") && expression.endsWith(tail), `${name}: 0163 additive tail present`).toBe(true);
+      expression = expression.slice(1, -tail.length);
+    }
     if (name === "model_capacity_requests_dispatch_check") {
       // 0161 stores the text local-direct branch as the next rules ordinal. The TypeScript check() still ends with (0158 predicate) OR (text branches): strip that wrap first.
       const textTail = `) OR (${textLocalDirectDispatchSql})`;

@@ -56,13 +56,13 @@ function checkHistory(name: string) {
       history.push({ idx: migration.idx, tag: migration.tag,
         expression: `(${previous!.expression}) OR (${ai2Branch})` });
     }
-    // 0161 stores only the new branch as the next rules ordinal. The TypeScript check() still composes (previous) OR (branch).
+    // Rules migrations store only the new branch as the next ordinal. The TypeScript check() still composes (previous) OR (branch).
     const rule = /SELECT '(?:model_capacity_requests|model_capacity_events)', '([^']+)', COALESCE\(MAX\(ordinal\), 0\) \+ 1, \$branch\$([\s\S]*?)\$branch\$/.exec(statement);
     if (rule && rule[1] === name) {
       const previous = history.at(-1);
       expect(previous, `${name}: rules predecessor`).toBeDefined();
       expect(statement).toContain("INSERT INTO model_capacity_check_rules");
-      expect(statement).toContain("COUNT(*) FILTER (WHERE source = '0161_text_local_direct_binding') = 0");
+      expect(statement).toContain(`COUNT(*) FILTER (WHERE source = '${migration.tag}') = 0`);
       history.push({ idx: migration.idx, tag: migration.tag, expression: `(${previous!.expression}) OR (${rule[2]})` });
     }
   }

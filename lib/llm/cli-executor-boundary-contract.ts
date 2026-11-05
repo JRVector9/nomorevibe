@@ -20,7 +20,8 @@ export const cliExecutorPlanSchema = z.object({ version: z.literal(1), kind: z.l
   request: z.object({ requestId: z.uuid(), state: z.literal("dispatched"), owner, tokenHash: sha, epoch: positive, revision: positive, policyHash: sha,
     bindingHash: sha, dispatchAt: at, providerBudgetId: id(120), groupId: id(120), routeId: z.literal("crawl-publish-classify"),
     provider: z.enum(["codex-cli", "claude-cli"]), model: id(), logicalWorkKey: id(160), inputHash: sha, payloadHash: sha,
-    transport: cliTransportSchema, totalTokenBound: positive, chargedTokens: positive }).strict(),
+    // These privileged classification-only receipts keep their historical transport schema; review providers do not gain recovery authority here.
+    transport: cliTransportSchema.extend({ provider: z.enum(["claude-cli", "grok-cli", "codex-cli"]) }).strict(), totalTokenBound: positive, chargedTokens: positive }).strict(),
   writer: z.object({ lineageId: z.uuid(), writerEpoch: positive }).strict(),
   control: z.object({ mode: z.literal("draining"), epoch: positive, revision: positive, policyHash: sha, updatedAt: databaseAt }).strict(),
   executor, candidates: z.array(candidate).min(1).max(64), topology,

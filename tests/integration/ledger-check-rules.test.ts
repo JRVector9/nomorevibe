@@ -175,8 +175,9 @@ it("같은 INSERT 20 + UPDATE 20 묶음이 0160 뒤에 문장당 더 빠르다(�
 it("0161 은 text local-direct 가지 셋만 다음 ordinal 로 더하고 판정은 그대로이며 다시 실행해도 행이 늘지 않는다", async () => {
   const text: Record<string, string> = { model_capacity_requests_dispatch_check: textLocalDirectDispatchSql,
     model_capacity_requests_terminal_check: textLocalDirectTerminalSql, model_capacity_events_terminal_check: textLocalDirectEventTerminalSql };
-  await migrate(drizzle(client), { migrationsFolder: path.join(root, "drizzle") });
-  expect((await client`SELECT count(*)::int n FROM drizzle.__drizzle_migrations`)[0].n).toBe(journal.entries.length);
+  // This regression isolates 0161, even after later migrations append their own rules.
+  await migrateThrough(161);
+  expect((await client`SELECT count(*)::int n FROM drizzle.__drizzle_migrations`)[0].n).toBe(journal.entries.filter(entry => entry.idx <= 161).length);
   const rules = await client<{ constraint_name: string; ordinal: number; predicate: string; source: string }[]>`SELECT constraint_name, ordinal, predicate, source
     FROM model_capacity_check_rules WHERE source = '0161_text_local_direct_binding' ORDER BY constraint_name`;
   expect(rules.map(rule => [rule.constraint_name, Number(rule.ordinal), rule.source, rule.predicate])).toEqual(Object.entries(text).sort(([a], [b]) => a < b ? -1 : 1)
