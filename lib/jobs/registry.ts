@@ -53,6 +53,8 @@ import { pruneNotifications, sendCategoryDigest, sendDelistedNotifications } fro
 import { reclaimEvidencedModelCapacity } from "@/lib/jobs/model-capacity-reclaim";
 import { MODEL_POOL_JOBS, withStoredAdminStagePools } from "@/lib/llm/admin-model-pools";
 import { ensureServingContracts } from "@/lib/llm/serving-contract-store";
+import { ensureAiTaskModels } from "@/lib/llm/ai-task-models-snapshot";
+import { ensureAiTaskExecutionConfigs } from "@/lib/llm/ai-task-execution-snapshot";
 
 /**
  * 이름 → 작업 매핑.
@@ -180,11 +182,12 @@ const HANDLERS: Record<string, AnyJob> = {
 
 /**
  * Configure the real model handlers at their registration boundary; generic runners/replay fixtures keep their own contracts.
- * Every run first refreshes admin serving contracts (cheap when fresh), so a contract saved in the admin applies on the next tick.
+ * Every run first awaits contracts, ranks and execution configuration (cached while fresh).
+ * Cold publication workers need the same snapshots as review workers before building approval gates.
  */
 export const JOBS: Record<string, AnyJob> = Object.fromEntries(Object.entries(HANDLERS).map(([name, handler]) => [name,
   async (ctx: Parameters<AnyJob>[0]) => {
-    await ensureServingContracts();
+    await Promise.all([ensureServingContracts(), ensureAiTaskModels(), ensureAiTaskExecutionConfigs()]);
     return MODEL_POOL_JOBS.has(name) && ctx.lease ? withStoredAdminStagePools(`${name}:${ctx.lease.token}`, () => handler(ctx)) : handler(ctx);
   }]));
 
