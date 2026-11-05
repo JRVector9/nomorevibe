@@ -49,6 +49,9 @@ describe("flow overview reads and measurement scope", () => {
     expect(publicationChange(4, 0)).toEqual({ delta: 4, percent: null });
     const html = renderToStaticMarkup(<PublicationTrend overview={overview} />);
     expect(html.match(/<rect /g)).toHaveLength(24);
+    expect(html).not.toContain("<title");
+    expect(html).toContain('role="group"');
+    expect(html).toContain('role="img" aria-label=');
     expect(html).toContain("직전 24시간 20건");
     expect(html).toContain("+20건 (+100.0%)");
     expect(html).toContain("현재 시간의 부분 집계");
