@@ -335,7 +335,7 @@ async function fetchEntry(
           if (deferredOrigins.has(currentOrigin)) throw new HttpOriginPermitError("waiting_aborted");
           return await work();
         } catch (error) {
-          if (error instanceof HttpOriginPermitError && error.code === "waiting_aborted") waitingOrigin = currentOrigin;
+          if (error instanceof HttpOriginPermitError && error.code === "waiting_aborted") waitingOrigin = error.origin ?? currentOrigin;
           throw error;
         }
       }));
