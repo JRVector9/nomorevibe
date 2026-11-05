@@ -4,8 +4,17 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, expect, it, vi } from "vitest";
 import { adminRequestToken } from "@/lib/operations/admin-requests-csrf";
 import type { WorkspaceRequest } from "@/lib/operations/admin-request-workspace";
-const fake = vi.hoisted(() => ({ read: vi.fn(), contact: vi.fn(), feedback: vi.fn(), reply: vi.fn(), reaction: vi.fn(), takedown: vi.fn(), intro: vi.fn() }));
-vi.mock("@/lib/operations/admin-request-workspace", () => ({ readRequestWorkspaceQueues: fake.read }));
+const fake = vi.hoisted(() => ({ read: vi.fn(), contact: vi.fn(), feedback: vi.fn(), reply: vi.fn(), reaction: vi.fn(), takedown: vi.fn(), intro: vi.fn(), selected: vi.fn(), rows: [] as Array<{ key: string }> }));
+vi.mock("@/lib/operations/admin-request-workspace-feed", () => ({
+  readRequestWorkspaceFeed: async (filter: unknown) => {
+    const queue = await fake.read(filter); fake.rows = queue.items;
+    const takedown = queue.results.find((source: { kind: string }) => source.kind === "takedown")?.result;
+    return { count: queue.failed.length && !queue.items.length ? null : queue.count, failed: queue.failed,
+      items: queue.items.map((row: WorkspaceRequest) => ({ key: row.key, kind: row.kind, name: row.name, type: row.type, status: row.status, at: row.at, waitHours: row.waitHours, next: row.next, slug: row.slug, excerpt: null })),
+      nextCursor: null, takedown: takedown?.ok ? { pending: takedown.data.count, overdue: takedown.data.overdue ?? 0 } : null };
+  },
+  readSelectedWorkspaceRequest: fake.selected,
+}));
 vi.mock("@/app/(operator)/admin/requests/RequestForms", () => ({ ContactUpdateForm: fake.contact, MakerReplyReviewForm: fake.reply }));
 vi.mock("@/app/(operator)/admin/feedback/FeedbackReviewForm", () => ({ FeedbackReviewForm: fake.feedback }));
 vi.mock("@/app/(operator)/admin/reactions/ReactionReviewForm", () => ({ ReactionReviewForm: fake.reaction }));
@@ -23,11 +32,11 @@ function detailBoundary(node: ReactNode): DetailBoundary | undefined {
   Children.forEach(node.props.children, child => { if (!found) found = detailBoundary(child); });
   return found;
 }
-beforeEach(() => { vi.clearAllMocks(); for (const form of [fake.contact, fake.feedback, fake.reply, fake.reaction, fake.takedown, fake.intro]) form.mockImplementation(() => null); fake.read.mockResolvedValue(queue([])); });
+beforeEach(() => { vi.clearAllMocks(); for (const form of [fake.contact, fake.feedback, fake.reply, fake.reaction, fake.takedown, fake.intro]) form.mockImplementation(() => null); fake.read.mockResolvedValue(queue([])); fake.selected.mockImplementation(async (key: string) => fake.rows.find(row => row.key === key) ?? null); });
 it("선택된 문의 한 건에 기존 CSRF·원본 판만 전달하고 원본 ID로 목록을 이동한다", async () => {
   fake.read.mockResolvedValue(queue([row("contact", { record: { id: "contact-id", version: 7, status: "waiting", handlingNote: "기존 메모", senderEmail: "person@example.com", updatedBy: "op", updatedAt: now } })]));
   const html = renderToStaticMarkup(await PrototypeRequestWorkspace({ tab: "contact", params: { state: "waiting", offset: "50" }, admin, secret }));
-  expect(fake.read).toHaveBeenCalledWith(["contact"], "waiting", 50, undefined); expect(fake.contact.mock.calls[0][0]).toMatchObject({ id: "contact-id", version: 7, status: "waiting", handlingNote: "기존 메모", csrfToken: adminRequestToken("contact-requests", admin, secret) });
+  expect(fake.read).toHaveBeenCalledWith(expect.objectContaining({ kinds: ["contact"], state: "waiting" })); expect(fake.contact.mock.calls[0][0]).toMatchObject({ id: "contact-id", version: 7, status: "waiting", handlingNote: "기존 메모", csrfToken: adminRequestToken("contact-requests", admin, secret) });
   expect(html).toContain('class="grid detail"'); expect(html).toContain("person@example.com"); expect(html).toContain("id=contact%3Aid");
 });
 it("선택한 원본이 빠지면 다른 요청의 처리 폼으로 자동 전환하지 않는다", async () => {
@@ -58,10 +67,23 @@ it("메이커 답장의 대상 원문과 원본 판을 보존한다", async () =
 });
 it("써봤어요 처리 폼에는 검토한 글 자체를 전달한다", async () => {
   fake.read.mockResolvedValue(queue([row("reactions", { record: { id: "reaction-id", comment: "읽은 한 줄" } })]));
-  renderToStaticMarkup(await PrototypeRequestWorkspace({ tab: "posts", params: { kind: "reactions", state: "accepted" }, admin, secret })); expect(fake.reaction.mock.calls[0][0]).toMatchObject({ id: "reaction-id", comment: "읽은 한 줄", expiresAt: 5000 }); expect(fake.read).toHaveBeenCalledWith(["reactions"], "held", 0, undefined);
+  renderToStaticMarkup(await PrototypeRequestWorkspace({ tab: "posts", params: { kind: "reactions", state: "accepted" }, admin, secret })); expect(fake.reaction.mock.calls[0][0]).toMatchObject({ id: "reaction-id", comment: "읽은 한 줄", expiresAt: 5000 }); expect(fake.read).toHaveBeenCalledWith(expect.objectContaining({ kinds: ["reactions"], state: "held" }));
 });
 it("내림 요청의 24시간 기한을 일반 요청과 구분한다", async () => {
   const item = row("takedown", { record: { slug: "product", product: { name: "프로젝트 원본", status: "verified" }, previousOutcome: null, owner: null } }); fake.read.mockResolvedValue({ ...queue([item]), results: [{ kind: "takedown", result: { ok: true, data: { count: 1, items: [item], overdue: 1 } } }] });
   const html = renderToStaticMarkup(await PrototypeRequestWorkspace({ tab: "correction", params: {}, admin, secret })); expect(html).toContain("기한 초과 1건"); expect(html).toContain("24시간 초과"); expect(fake.takedown.mock.calls[0][0]).toMatchObject({ entry: { slug: "product", product: { name: "프로젝트 원본" } } }); expect(fake.takedown.mock.calls[0][0].entry).not.toHaveProperty("owner");
   expect(html).toContain('href="/admin/audit?tab=requests"'); expect(html).toContain("계정·보낸이·접수시각으로 묶어서 내림/유지");
+});
+
+it("최근 30개 밖의 선택 ID도 서버 상세 조회로 불러오며 목록 DTO에는 원본을 싣지 않는다", async () => {
+  fake.read.mockResolvedValue(queue([row("contact")]));
+  fake.selected.mockResolvedValue(row("contact", { key: "contact:older", record: { id: "older", version: 4, status: "waiting", handlingNote: "보존한 메모" } }));
+  const node = await PrototypeRequestWorkspace({ tab: "contact", params: { id: "contact:older" }, admin, secret });
+  expect(detailBoundary(node)?.props.item?.key).toBe("contact:older");
+  expect(fake.selected).toHaveBeenCalledWith("contact:older", expect.objectContaining({ kinds: ["contact"] }));
+});
+it("선택한 상세 조회 실패를 다른 요청의 처리 폼으로 대체하지 않는다", async () => {
+  fake.read.mockResolvedValue(queue([row("contact")])); fake.selected.mockRejectedValue(new Error("request_detail_unavailable"));
+  const html = renderToStaticMarkup(await PrototypeRequestWorkspace({ tab: "contact", params: { id: "contact:older" }, admin, secret }));
+  expect(html).toContain("선택한 요청을 읽지 못했습니다"); expect(fake.contact).not.toHaveBeenCalled();
 });

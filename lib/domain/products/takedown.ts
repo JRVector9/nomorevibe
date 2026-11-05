@@ -114,7 +114,7 @@ const GITHUB_OWNER = (column: unknown) => sql`case when ${column} ~* '^https?://
  *
  * 계정의 공개 제품 수는 대기 요청에 나온 계정만 센다(제품 3만 건 전체를 계정별로 묶지 않는다).
  */
-export async function takedownQueue(limit = 500): Promise<TakedownEntry[]> {
+export async function takedownQueue(limit = 500, selected?: { slug: string }): Promise<TakedownEntry[]> {
   const rows = await db.execute<{
     slug: string; reason: string | null; requested_iso: string; age_hours: number; requester_hash: string | null;
     request_count: number; previous_outcome: string | null; name: string | null; url: string | null; repo_url: string | null;
@@ -123,7 +123,7 @@ export async function takedownQueue(limit = 500): Promise<TakedownEntry[]> {
   }>(sql`
     with pending as (
       select t.*, extract(epoch from (${NOW} - t.requested_at)) / 3600 as age_hours
-      from takedown_requests t where t.handled_at is null order by t.requested_at asc limit ${limit}
+      from takedown_requests t where t.handled_at is null ${selected ? sql`and t.slug = ${selected.slug}` : sql``} order by t.requested_at asc limit ${limit}
     ), enriched as (
       select q.*, p.name, p.url, p.repo_url, p.category, p.status, p.stars,
         to_char(q.requested_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as requested_iso,

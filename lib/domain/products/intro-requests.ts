@@ -62,7 +62,7 @@ export async function pendingIntroRequestCount(): Promise<number> {
 }
 
 /** 처리 화면의 목록 — 처리 전 요청에 지금 소개를 붙인다. 오래 기다린 것부터 */
-export async function introRequestQueue(limit = 200): Promise<IntroRequestEntry[]> {
+export async function introRequestQueue(limit = 200, selected?: { id: number }): Promise<IntroRequestEntry[]> {
   const rows = await db.execute<{
     id: number; slug: string; message: string; created_iso: string; age_hours: number; requester_hash: string | null;
     name: string | null; url: string | null; tagline: string | null; status: string | null;
@@ -72,7 +72,7 @@ export async function introRequestQueue(limit = 200): Promise<IntroRequestEntry[
       extract(epoch from (${NOW} - r.created_at)) / 3600 as age_hours,
       p.name, p.url, p.tagline, p.status
     from intro_correction_requests r left join products p on p.id = r.product_id
-    where r.handled_at is null
+    where r.handled_at is null ${selected ? sql`and r.id = ${selected.id}` : sql``}
     order by r.created_at asc, r.id asc
     limit ${limit}
   `);
