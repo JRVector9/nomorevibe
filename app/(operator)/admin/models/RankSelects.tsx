@@ -1,8 +1,8 @@
 "use client";
 import type { ReactNode } from "react";
-import type { AiConnectionView } from "@/lib/operations/admin-ai-tasks";
 import type { FirstReviewer } from "@/lib/crawl/agent-review";
 import { rankOptionKey, validateRanks, type RankStage } from "@/lib/operations/admin-first-review-ranks";
+import { modelPickerChoiceKey, presentPickerOptions, type PickerConnection } from "./model-picker-display";
 
 type RankValue = { provider: string; model: string; reasoningEffort?: string };
 
@@ -20,7 +20,7 @@ export function RankSelects<T extends RankValue>({ stage, options, value, onChan
   options: readonly (T & { label: string; group?: string; text?: string; reasoningEfforts?: readonly string[] })[]; value: readonly (T | null)[]; onChange: (value: (T | null)[]) => void;
   slotNames: readonly { provider: string; model: string; reasoningEffort?: string }[]; disabled?: boolean;
   /** 화면 선택지만 제한한다. 실제 catalog·저장된 순위·서버 검증은 그대로 둔다. */
-  connections?: readonly Pick<AiConnectionView, "id" | "kind" | "cliTool">[];
+  connections?: readonly PickerConnection[];
   /** 기본 = 1차 AI 검수 규칙(validateRanks) */
   validate?: (slots: readonly (T | null)[]) => string[];
   /** 기본 = 1차 AI 검수의 순위 대체 안내 */
@@ -30,10 +30,7 @@ export function RankSelects<T extends RankValue>({ stage, options, value, onChan
   blocked?: (option: T, index: number, slots: readonly (T | null)[]) => boolean;
 }) {
   const slots = Array.from({ length: stage.slots }, (_, index) => value[index] ?? null);
-  const openCode = new Set(connections.filter(connection => connection.kind === "cli" && connection.cliTool === "opencode").map(connection => connection.id));
-  const pickerOptions = (index: number) => options.filter(option => !openCode.has(option.provider)
-    || /^deepseek(?:[-_.:]|$)/i.test(option.model.slice(option.model.lastIndexOf("/") + 1))
-    || slots[index]?.provider === option.provider && slots[index]?.model === option.model);
+  const pickerOptions = (index: number) => presentPickerOptions(options, connections, slots[index]);
 
   const issues = validate ? validate(slots) : validateRanks(stage as RankStage, slots as unknown as (FirstReviewer | null)[]);
   const set = (index: number, key: string) => {
@@ -57,9 +54,9 @@ export function RankSelects<T extends RankValue>({ stage, options, value, onChan
         const effortName = slotNames[index]?.reasoningEffort;
         const efforts = options.find(option => rankOptionKey(option) === key)?.reasoningEfforts ?? [];
         // 다른 칸에서 이미 고른 모델은 이 칸에서 고를 수 없다(중복 방지). 지금 이 칸의 값은 남긴다
-        const taken = new Set(slots.filter((other, at) => other && at !== index).map(other => rankOptionKey(other!)));
+        const taken = new Set(slots.filter((other, at) => other && at !== index).map(other => modelPickerChoiceKey(other!, connections)));
         const item = (option: (typeof options)[number]) => <option key={rankOptionKey(option)} value={rankOptionKey(option)}
-          disabled={taken.has(rankOptionKey(option)) || !!blocked?.(option, index, slots)}>
+          disabled={taken.has(modelPickerChoiceKey(option, connections)) || !!blocked?.(option, index, slots)}>
           {option.group !== undefined ? option.text ?? option.model : `${option.label}${!showProvider || option.provider.endsWith("-cli") ? "" : ` (${option.provider})`}`}</option>;
         return <label key={index} className="flex min-w-0 flex-col gap-1 text-[13px]">
           <span className={compact ? "font-semibold sm:sr-only" : "font-semibold"}>{index + 1}순위</span>
@@ -69,7 +66,7 @@ export function RankSelects<T extends RankValue>({ stage, options, value, onChan
             {groups ? groups.map(([name, list]) => <optgroup key={name} label={name}>{list.map(item)}</optgroup>) : choices.map(item)}
           </select>
           {/* 묶은 목록에서는 닫힌 드롭다운에 모델 이름만 보이므로, 고른 값의 서버를 밑에 적는다(같은 모델을 두 서버에 둘 때 가린다) */}
-          {groups && row && <span className="truncate text-[13px] text-fg-3" data-rank-server="true">{options.find(option => rankOptionKey(option) === key)?.group ?? ""}</span>}
+          {groups && row && <span className="truncate text-[13px] text-fg-3" data-rank-server="true">{choices.find(option => rankOptionKey(option) === key)?.group ?? ""}</span>}
           {row && effortName && <>
             <span className="text-fg-2">추론 강도</span>
             {efforts.length > 0 || row.reasoningEffort ? <select aria-label={`${stage.label} ${index + 1}순위 추론 강도`} value={row.reasoningEffort ?? ""}

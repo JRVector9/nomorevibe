@@ -11,6 +11,7 @@ import { DeleteConnectionButton, RereadModelsButton } from "./ConnectionButtons"
 import { ConnectionForm } from "./ConnectionForm";
 import { TaskImportCard } from "./TaskImportCard";
 import { TaskRanksBoard, type TaskRankLine } from "./TaskRanksBoard";
+import { modelPickerConnectionDevice, modelPickerConnectionLabel, modelPickerConnectionModels, modelPickerModelLabel, modelPickerVisibleText } from "../model-picker-display";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "작업 ↔ AI 모델 — NoMoreVibe", robots: { index: false } };
@@ -36,13 +37,14 @@ export default async function AiTasksPage({ searchParams }: Props) {
   const now = new Date();
   const [view, preview] = await Promise.all([readAiTasksAdminView(), one(params.import) === "plan" ? previewAiTaskImport() : Promise.resolve(null)]);
   const editId = one(params.edit), editing = editId ? view.connections.find(row => row.id === editId) ?? null : null;
+  const visibleText = (text: string) => modelPickerVisibleText(text, view.connections);
   const used = (id: string) => view.rows.filter(row => row.connectionId === id).length;
   const lines: TaskRankLine[] = view.slots.map(slot => ({ task: slot.task.id, slot: slot.slot, label: slot.label, group: slot.task.group, kind: slot.task.kind,
     description: slot.task.description, revision: slot.revision, rows: [...slot.rows], options: [...slot.options],
     accepts: [slot.task.api ? "API 주소" : "", ...slot.task.cliTools.map(tool => AI_CLI_TOOL_LABELS[tool])].filter(Boolean).join(" · "),
-    current: slot.current ? { labels: [...slot.currentLabels], source: slot.current.source, notes: [...slot.current.notes], error: slot.current.error, skip: slot.current.skip } : null,
-    sameAsCurrent: slot.sameAsCurrent, readiness: slot.readiness.map(row => ({ rank: row.rank, blocking: [...row.blocking], warnings: [...row.warnings],
-      pending: aiRankPendingText(row) })), live: slot.live,
+    current: slot.current ? { labels: slot.currentLabels.map(visibleText), source: slot.current.source, notes: slot.current.notes.map(visibleText), error: slot.current.error, skip: slot.current.skip } : null,
+    sameAsCurrent: slot.sameAsCurrent, readiness: slot.readiness.map(row => ({ rank: row.rank, blocking: row.blocking.map(visibleText), warnings: row.warnings.map(visibleText),
+      pending: aiRankPendingText(row).map(visibleText) })), live: slot.live,
     runtime: slot.runtime ? { ...slot.runtime, at: formatListTime(slot.runtime.at, now), served: [...slot.runtime.served], unusable: [...slot.runtime.unusable] } : null }));
   const errors = Object.entries(view.errors);
   const unread = aiUnreadConnections(view.connections, view.keyConflicts);
@@ -56,7 +58,7 @@ export default async function AiTasksPage({ searchParams }: Props) {
       {errors.map(([key, error]) => <p key={key} role="alert" className="text-[13px] text-red-600">{ERROR_LABELS[key] ?? key}을(를) 읽지 못했습니다({aiTaskIssueMessage(error)}).</p>)}
       {unread.length > 0 && <p role="status" data-unread={unread.length} className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[13px] text-amber-900">
         모델 목록을 못 읽은 서버 — {unread.map((row, index) => <span key={row.id}>{index > 0 && ", "}<Link href={`/admin/models/tasks?edit=${row.id}#connection-form`} prefetch={false}
-          className="font-semibold underline">{row.label}</Link>({row.reason})</span>)}. 이 서버의 모델은 드롭다운에 없습니다 — 이름을 눌러 키를 넣거나 「다시 읽기」를 누르세요.</p>}
+          className="font-semibold underline">{modelPickerConnectionLabel(view.connections.find(connection => connection.id === row.id)!)}</Link>({row.reason})</span>)}. 이 서버의 모델은 드롭다운에 없습니다 — 이름을 눌러 키를 넣거나 「다시 읽기」를 누르세요.</p>}
     </header>
     <section id="tasks" className="grid gap-3 scroll-mt-6" aria-label="작업 ↔ 모델">
       <TaskRanksBoard lines={lines} connections={[...view.connections]} rows={[...view.rows]} />
@@ -75,12 +77,12 @@ export default async function AiTasksPage({ searchParams }: Props) {
           <th className="py-2 pr-3">이름</th><th className="py-2 pr-3">주소 · 도구</th><th className="py-2 pr-3">모델</th><th className="py-2 pr-3">장비 · 칸</th>
           <th className="py-2 pr-3">상태</th><th className="py-2 pr-3">쓰는 순위</th><th className="py-2" /></tr></thead>
           <tbody>{view.connections.map(row => <tr key={row.id} className="border-b border-line align-top" data-connection={row.id}>
-            <td className="py-2 pr-3 font-semibold">{row.label}{row.note && <div className="font-normal text-fg-3">{row.note}</div>}</td>
+            <td className="py-2 pr-3 font-semibold">{modelPickerConnectionLabel(row)}{row.note && <div className="font-normal text-fg-3">{row.note}</div>}</td>
             <td className="py-2 pr-3">{row.kind === "api" ? <><code className="break-all">{row.baseUrl}</code><div className="text-fg-3">{row.hasKey ? "키 저장됨" : "키 없음"}
               {row.contextTokens ? ` · 상한 ${row.contextTokens} 토큰` : ""}</div></> : row.cliTool ? AI_CLI_TOOL_LABELS[row.cliTool] : "CLI"}</td>
             <td className="py-2 pr-3">{row.kind === "api" ? <>
-              {row.models ? <details><summary className="cursor-pointer">{row.models.length}개</summary><ul className="mt-1 grid gap-0.5">{row.models.map(model =>
-                <li key={model.id}><code className="break-all">{model.id}</code>{model.maxModelLen ? <span className="text-fg-3"> · {model.maxModelLen}</span> : null}</li>)}</ul></details>
+              {row.models ? <details><summary className="cursor-pointer">{modelPickerConnectionModels(row)!.length}개</summary><ul className="mt-1 grid gap-0.5">{modelPickerConnectionModels(row)!.map(model =>
+                <li key={model.id}><code className="break-all">{modelPickerModelLabel(row, model.id)}</code>{model.maxModelLen ? <span className="text-fg-3"> · {model.maxModelLen}</span> : null}</li>)}</ul></details>
                 : <span className="text-fg-3">아직 못 읽음</span>}
               <div className="text-fg-3">{row.modelsReadAt ? `읽음 ${formatListTime(row.modelsReadAt, now)}` : ""}</div>
               {row.modelsError && <div className="text-red-600">마지막 오류: {aiModelsErrorText(row.modelsError)}</div>}
@@ -89,7 +91,7 @@ export default async function AiTasksPage({ searchParams }: Props) {
               : <code className="break-all">{row.cliModels.join(" ")}</code>}
               <div className="text-fg-3">{row.cliVersion ? <>CLI 버전 <code>{row.cliVersion}</code></> : "CLI 버전 없음 — 1차·2차 순위에 쓰려면 적으세요"}</div>
               {row.cliTool === "opencode" && <div className="text-fg-3">{row.hasKey ? "호스트 RPC 인증 정보 저장됨" : "호스트 RPC 인증 정보 미확인"}</div>}</>}</td>
-            <td className="py-2 pr-3"><code>{row.deviceId}</code> · {row.capacitySlots}칸</td>
+            <td className="py-2 pr-3"><code>{modelPickerConnectionDevice(row)}</code> · {row.capacitySlots}칸</td>
             <td className="py-2 pr-3">{row.enabled ? "켜짐" : <span className="text-amber-700">꺼짐</span>}<div className="text-fg-3">판 {row.version}</div></td>
             <td className="py-2 pr-3 tabular-nums">{used(row.id)}</td>
             <td className="py-2"><div className="flex flex-col items-start gap-1">
@@ -99,7 +101,7 @@ export default async function AiTasksPage({ searchParams }: Props) {
             </div></td>
           </tr>)}</tbody></table></div>}
       <div id="connection-form" className="grid gap-2 scroll-mt-6">
-        <h3 className="text-[15px] font-semibold">{editing ? `연결 고치기 — ${editing.label}` : "연결 만들기"}</h3>
+        <h3 className="text-[15px] font-semibold">{editing ? `연결 고치기 — ${modelPickerConnectionLabel(editing)}` : "연결 만들기"}</h3>
         {editId && !editing && <p role="alert" className="text-[13px] text-amber-700">고칠 연결을 찾지 못했습니다 — 새 연결로 엽니다.</p>}
         <ConnectionForm key={editing?.id ?? "new"} initial={editing} secretBox={view.secretBox} />
       </div>
