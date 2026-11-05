@@ -36,7 +36,7 @@ export function RankSelects<T extends RankValue>({ stage, options, value, onChan
   const slots = Array.from({ length: stage.slots }, (_, index) => value[index] ?? null);
   const pickerOptions = (index: number) => presentPickerOptions(options, connections, slots[index]);
   const activityText = (choice: RankValue): string => {
-    if (!availability.value) return availability.loading ? "상태 확인 중" : "상태 확인 못함";
+    if (!availability.value) return availability.failed ? "상태 확인 못함" : "상태 확인 중";
     const connection = availability.value.connections.find(entry => entry.connectionId === choice.provider);
     if (!connection) return "슬롯 확인 못함";
     const key = modelPickerChoiceKey(choice, connections);
@@ -99,7 +99,7 @@ export function RankSelects<T extends RankValue>({ stage, options, value, onChan
         </label>;
       })}
     </div>
-    <span className="text-[11px] text-fg-3">{availability.value && <>관측 {new Date(availability.value.observedAt).toLocaleTimeString("ko-KR", { hour12: false, timeZone: "Asia/Seoul" })} KST · </>}
+    <span className="text-[13px] text-fg-3">{availability.value && <>관측 {new Date(availability.value.observedAt).toLocaleTimeString("ko-KR", { hour12: false, timeZone: "Asia/Seoul" })} KST · </>}
       슬롯은 장비 전체의 공유 여유입니다. 반복 선택해도 한도는 늘지 않으며 실행 시 다시 확인합니다.</span>
     {issues.length > 0 && <ul role="alert" className="text-[13px] text-down">{issues.map(issue => <li key={issue}>{issue}</li>)}</ul>}
     {note === undefined

@@ -32,11 +32,35 @@ export function modelPickerConnectionModels(connection: PickerConnection): AiCon
   return models;
 }
 
-/** The proven aliases share one engine. Use this only for picker duplicate prevention, not domain voting identities. */
+/** The proven aliases share one engine. Picker display identity only; domain voting identities are unchanged. */
 export function modelPickerChoiceKey(choice: Choice, connections: readonly PickerConnection[]): string {
   const connection = connections.find(entry => entry.id === choice.provider);
   const model = connection && supa(connection) && choice.model === "supa" ? SUPA : choice.model;
   return JSON.stringify([choice.provider, model]);
+}
+
+function pickerGroupName(connection: PickerConnection): string {
+  if (m1(connection)) return modelPickerConnectionDevice(connection);
+  return modelPickerConnectionLabel(connection) || modelPickerConnectionDevice(connection) || connection.cliTool || "";
+}
+
+/** Group headers identify only the connection and transport; live slot/status stays on the option itself. */
+function pickerGroupLabel(connection: PickerConnection, connections: readonly PickerConnection[]): string {
+  const name = pickerGroupName(connection);
+  if (!name) return "";
+  const classification = connection.kind === "api" ? "API" : "CLI";
+  const device = modelPickerConnectionDevice(connection);
+  const needsDevice = connections.some(entry => entry.id !== connection.id
+    && entry.kind === connection.kind
+    && pickerGroupName(entry) === name);
+  const usefulDevice = needsDevice && device !== "" && device !== name ? device : "";
+  return [name, usefulDevice, classification].filter(Boolean).join(" · ");
+}
+
+function withPickerGroup<T extends Option>(option: T, connection: PickerConnection, connections: readonly PickerConnection[], force = false): T {
+  if (!force && !option.group) return option;
+  const group = pickerGroupLabel(connection, connections);
+  return group ? { ...option, group } : option;
 }
 
 export function presentPickerOptions<T extends Option>(options: readonly T[], connections: readonly PickerConnection[], current: Choice | null): T[] {
@@ -49,9 +73,8 @@ export function presentPickerOptions<T extends Option>(options: readonly T[], co
       && !(current?.provider === option.provider && current.model === option.model)) continue;
     if (m1(connection)) {
       if (option.model !== GEMMA) continue;
-      const suffix = option.group?.startsWith(`${connection.label} · `)
-        ? option.group.slice(connection.label!.length).replace(` · 장비 ${connection.deviceId}`, "") : "";
-      result.push({ ...option, group: `${modelPickerConnectionLabel(connection)}${suffix}`, text: "Gemma 4 26B", label: "M1 Studio · Gemma 4 26B" });
+      const grouped = withPickerGroup(option, connection, connections, true);
+      result.push({ ...grouped, text: "Gemma 4 26B", label: "M1 Studio · Gemma 4 26B" });
       continue;
     }
     if (supa(connection) && (option.model === "supa" || option.model === SUPA)) {
@@ -63,10 +86,11 @@ export function presentPickerOptions<T extends Option>(options: readonly T[], co
       const key = modelPickerChoiceKey(selected, connections);
       if (seen.has(key)) continue;
       seen.add(key);
-      result.push({ ...selected, text: SUPA, label: `${connection.label} · ${SUPA}` });
+      const grouped = withPickerGroup(selected, connection, connections, Boolean(option.group));
+      result.push({ ...grouped, text: SUPA, label: `${connection.label} · ${SUPA}` });
       continue;
     }
-    result.push(option);
+    result.push(withPickerGroup(option, connection, connections));
   }
   return result;
 }
