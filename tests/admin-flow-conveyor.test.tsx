@@ -183,7 +183,7 @@ describe("flow board", () => {
     expect(html.indexOf('id="cv-stage-table-title"')).toBeLessThan(html.indexOf('<details class="cv-more">'));
     // 장애 대응은 자세히 옆에 같이 열린다 — 2차는 모델 순위 화면으로, 보류 묶음 재개는 화면 조치 없음으로 정직하게
     expect(html).toContain('id="rs-title">장애 대응</h3>');
-    expect(html).toContain("2차 모델을 1차와 다른 모델로");
+    expect(html).toContain("2차 실행 설정 확인·바꾸기");
     expect(html).toContain("이미 보류된 3,701건을 2차로 다시 보내기");
     expect(html).toContain("화면 조치 없음");
     // 색만으로 말하지 않는다 — 상태 알약마다 글자가 있다

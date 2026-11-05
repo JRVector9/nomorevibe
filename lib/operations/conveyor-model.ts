@@ -173,7 +173,6 @@ export const NO_MODEL_TEXT = "모델 없음 — 멈춤";
 /**
  * 칸의 판정에 모델 사정을 얹는다 — 읽기만 한다.
  * - 순위가 비어(또는 모두 못 써) 작업이 멈추면 칸을 막힘으로 올린다(여러 작업 중 일부면 쌓임). 이미 막힘이어도 까닭은 모델 쪽이 근본이라 바꾼다.
- * - 1차와 같은 모델이라 2차가 표를 못 내면 쌓임 이상으로 올린다(이미 막힘이면 그대로 — 갈림 보류가 늘고 있다는 까닭이 더 구체적이다).
  */
 export function applyStationLlm(station: Station, llm: StationLlm | null): Station {
   const next: Station = { ...station, llm };
@@ -190,9 +189,6 @@ export function applyStationLlm(station: Station, llm: StationLlm | null): Stati
         reason: `${llm.stopped.join(" · ")}: ${stoppedTasks[0]?.note ?? "모델 설정을 확인하세요"} 「작업 ↔ AI 모델」에서 ${guidance}` };
     }
     return next;
-  }
-  if (llm.sameModel && station.key === "second" && RANK[station.tone] < RANK.slow) {
-    return { ...next, tone: "slow", status: "1차와 같은 모델", reason: llm.warnings[0] ?? "1차와 같은 모델이라 2차가 표를 못 냅니다" };
   }
   return next;
 }
@@ -281,7 +277,7 @@ function discoverStation(inputs: ConveyorInputs): Station {
 
 function secondStation(inputs: ConveyorInputs): Station {
   const station = queueStation(inputs, "second", {
-    phase: "review", label: "AI 2차", what: "1차가 승인한 후보를 다른 모델이 한 번 더 보고 표를 냅니다",
+    phase: "review", label: "AI 2차", what: "1차가 승인한 후보를 별도 2차 호출로 다시 보고 표를 냅니다",
     hour: (point) => point.secondReviews,
     links: [{ href: "/admin/models/tasks", label: "2차 모델 정하기" }, { href: "/admin/review?stage=second#review-list", label: "2차 대기 보류 보기" }],
   });
@@ -293,7 +289,7 @@ function secondStation(inputs: ConveyorInputs): Station {
     const noVotes = (station.done24h ?? 0) === 0;
     return { ...station, tone: noVotes ? "jam" : "slow", status: noVotes ? "표 0 · 보류로 빠짐" : "갈림 보류 늘어남",
       reason: noVotes
-        ? `24시간 동안 2차 표가 하나도 없고, 1차 승인 후보가 "2차 갈림"으로 보류에 빠지고 있습니다(24시간 +${n(recent)} · 누적 ${n(total)}). 1차와 다른 2차 모델이 있는지 확인하세요`
+        ? `24시간 동안 2차 표가 하나도 없고, 1차 승인 후보가 "2차 갈림"으로 보류에 빠지고 있습니다(24시간 +${n(recent)} · 누적 ${n(total)}). 2차 실행 설정과 실제 호출·결과 저장을 확인하세요`
         : `2차 갈림 보류가 24시간 동안 ${n(recent)}건 늘었습니다(누적 ${n(total)})` };
   }
   return station;

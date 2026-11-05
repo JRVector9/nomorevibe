@@ -67,7 +67,7 @@
 .cv-inline-link{font-size:calc(12px + var(--admin-content-growth,0px));font-weight:700;color:var(--color-accent-ink);text-decoration:underline;text-underline-offset:3px}
 
 /* 칸 카드의 모델 줄 — 모든 칸이 같은 자리(카드 맨 아래)·같은 모양. 상자 없이 가는 선 하나 아래 두 줄(모델 / 어디서·얼마나).
-   문제가 있을 때만 색 글자(■ 모델 없음 — 멈춤 · ▲ 1차와 같은 모델)가 붙는다. 모델 이름은 잘리지 않고 줄을 바꾼다 */
+   문제가 있을 때만 색 글자(■ 모델 없음 — 멈춤 · ▲ 대체 순위 사용)가 붙는다. 모델 이름은 잘리지 않고 줄을 바꾼다 */
 .cv-llm{display:flex;flex-direction:column;gap:1px;margin-top:auto;padding-top:7px;min-width:0;text-align:left;border-top:1px solid var(--color-line)}
 .cv-llm[data-llm=ok]{--cv-llm-tone:var(--cv-ok)}
 .cv-llm[data-llm=warn]{--cv-llm-tone:var(--cv-warn)}

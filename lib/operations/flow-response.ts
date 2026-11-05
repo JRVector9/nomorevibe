@@ -62,7 +62,7 @@ function equipmentSteps(desk: OperatorDesk | null): { checks: string[]; steps: R
 }
 
 /**
- * 모델 사정에서 나온 점검과 조치 — 칸이 부르는 작업의 순위가 비었거나(no_task_models)·모두 못 쓰거나·1차와 같은 모델이거나·다른 순위로 넘어갔을 때.
+ * 모델 사정에서 나온 점검과 조치 — 칸이 부르는 작업의 순위가 비었거나(no_task_models)·모두 못 쓰거나·다른 순위로 넘어갔을 때.
  * 순위를 바꾸는 길은 「작업 ↔ AI 모델」 화면 하나뿐이라 링크로 보낸다. 이 화면에는 쓰기를 더하지 않는다.
  */
 function modelResponse(station: { llm: Station["llm"] } | undefined, steps: ResponseStep[]): string[] {
@@ -74,14 +74,13 @@ function modelResponse(station: { llm: Station["llm"] } | undefined, steps: Resp
     else if (task.state === "stuck") front.push(`「${task.label}」 ${task.note ?? "쓸 수 있는 순위가 없습니다"}`);
     else if (task.state === "fallback" || task.state === "other") back.push(`「${task.label}」 ${task.note ?? "설정과 다른 모델이 쓰이고 있습니다"}`);
   }
-  if (llm.sameModel) front.unshift(llm.warnings[0] ?? "1차와 2차가 같은 모델입니다");
-  const needsRanks = llm.tasks.some((task) => task.state === "none" || task.state === "stuck") || llm.sameModel
+  const needsRanks = llm.tasks.some((task) => task.state === "none" || task.state === "stuck")
     || llm.tasks.some((task) => task.state === "fallback" || task.state === "other");
   if (needsRanks && !steps.some((step) => step.kind === "link" && step.href.startsWith("/admin/models/tasks"))) {
     steps.unshift({ kind: "link", label: "작업 ↔ AI 모델에서 순위 고치기", href: "/admin/models/tasks#tasks", risk: "careful",
       why: "이 칸이 부르는 작업의 1·2·3순위를 정하는 화면입니다", undo: "「최근 기록」에 이전 순위가 남습니다 — 같은 화면에서 이전 값으로 다시 저장" });
   }
-  if ((llm.stopped.length || llm.sameModel) && !steps.some((step) => step.kind === "link" && step.href.startsWith("/admin/activity"))) {
+  if (llm.stopped.length && !steps.some((step) => step.kind === "link" && step.href.startsWith("/admin/activity"))) {
     steps.push({ kind: "link", label: "누가 언제 순위를 바꿨나", href: "/admin/activity?group=settings", risk: "read", why: "작업 로그의 설정·연결 갈래" });
   }
   return [...front, ...back];
@@ -131,10 +130,10 @@ export function stationResponse(key: StationKey | "human", conveyor: Conveyor, d
     case "second": {
       const splits = station?.holds.filter((hold) => hold.reason.startsWith("second_review_split")) ?? [];
       const total = splits.reduce((sum, hold) => sum + hold.count, 0);
-      checks.push("2차 투표자가 1차와 다른 모델인지 — 같은 모델이면 2차는 표를 내지 않고 1차 승인을 '2차 갈림'으로 보류합니다");
+      checks.push("2차 실행 설정과 실제 호출·결과 저장을 확인합니다 — 1차와 같은 모델도 쓸 수 있지만 별도 2차 결과가 필요합니다");
       checks.push("2차 진행은 잡 관측이 아니라 2차 표(second_reviews) 생성 수로 봅니다 — 이 칸 「처리량」의 숫자와 그래프가 그 수입니다");
-      steps.push({ kind: "link", label: "2차 모델을 1차와 다른 모델로", href: "/admin/models/tasks", risk: "careful",
-        why: "2차 투표자 1 이 1차와 같은 모델이면 두 모델 승인을 할 수 없습니다", undo: "「최근 기록」의 이전 순위로 다시 저장" });
+      steps.push({ kind: "link", label: "2차 실행 설정 확인·바꾸기", href: "/admin/models/tasks", risk: "careful",
+        why: "2차가 사용할 모델과 실행 방식을 확인합니다", undo: "「최근 기록」의 이전 순위로 다시 저장" });
       if (total > 0) {
         steps.push({ kind: "link", label: `'2차 갈림' 보류 ${n(total)}건 보기`, href: "/admin/review?cause=second_review_split#review-list", risk: "read", why: "모델을 바꿔도 이미 보류된 건은 저절로 다시 돌지 않습니다" });
         steps.push({ kind: "manual", label: `이미 보류된 ${n(total)}건을 2차로 다시 보내기`, why: "관문 행 없이 보류된 건은 자동 재개 대상이 아닙니다(reopenOrphanedGateHolds 가 일부러 건드리지 않음)",
@@ -162,11 +161,11 @@ export function stationResponse(key: StationKey | "human", conveyor: Conveyor, d
     case "human":
       checks.push("직접 판단 수와 24시간 사람 결정 수 — 자동 판가름이 꺼져 있으면 사람 몫이 늘기만 합니다");
       steps.push({ kind: "link", label: "직접 판단 처리", href: "/admin/review?stage=human&sort=wait#review-list", risk: "safe", why: "오래 기다린 것부터", undo: "결정 직후 10초 되돌리기 · 작업 로그 candidate-undo" });
-      steps.push({ kind: "link", label: "확정만 하면 됨", href: "/admin/review?stage=agreed#review-list", risk: "safe", why: "두 모델이 같은 결론을 낸 후보", undo: "결정 직후 10초 되돌리기" });
+      steps.push({ kind: "link", label: "확정만 하면 됨", href: "/admin/review?stage=agreed#review-list", risk: "safe", why: "1·2차 결과가 같은 결론을 낸 후보", undo: "결정 직후 10초 되돌리기" });
       steps.push(...jobSteps("human", "자동 판가름·재심사를 잠시 멈춤"));
       break;
   }
-  // 모델 사정(순위 비어 멈춤·모두 못 씀·1차와 같은 모델·다른 순위로 넘어감)은 근본 원인이라 점검 맨 앞에 둔다
+  // 모델 사정(순위 비어 멈춤·모두 못 씀·다른 순위로 넘어감)은 근본 원인이라 점검 맨 앞에 둔다
   const modelChecks = key === "human" ? modelResponse(conveyor.human ? { llm: conveyor.human.llm } : undefined, steps) : modelResponse(station, steps);
   checks.unshift(...modelChecks);
   // 모델을 부르는 칸이 막혔으면 장비·장부도 본다

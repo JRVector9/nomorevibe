@@ -167,7 +167,7 @@ export function rankChanges(editor: FlowRankEditor, lines: readonly FlowRankLine
 // ── 경고 ────────────────────────────────────────────────────────────────────────────────────────
 
 export type RankWarning = {
-  code: "same_model" | "same_model_fallback" | "first_cleared" | "set_only_cleared" | "voter_reopen";
+  code: "first_cleared" | "set_only_cleared" | "voter_reopen";
   /** bad = 저장하면 일이 멈추거나 보류로 빠진다(확인 칸을 눌러야 저장) · warn = 영향 안내 */
   tone: "bad" | "warn";
   /** 경고가 붙는 줄 */
@@ -177,12 +177,11 @@ export type RankWarning = {
   text: string;
 };
 
-const FIRST_KEY = "first-review#1";
 const rank1 = (ranks: readonly (AiRankChoice | null)[] | undefined) => ranks?.[0] ?? null;
 
 /**
- * 바꾼 뒤(drafts — 안 바꾼 줄은 저장된 값)를 보고 위험을 알린다. 사고에서 온 세 가지:
- * - 2차 투표자를 1차와 같은 모델로 — 2차 관문이 다른 모델 표를 못 받아 1차 승인이 「2차 갈림」 보류로 빠진다(2026-11-02 3,701건).
+ * 바꾼 뒤(drafts — 안 바꾼 줄은 저장된 값)를 보고 위험을 알린다.
+ * 1차·2차는 같은 모델을 쓸 수 있으며, 2차 결과는 별도 호출로 받아야 한다.
  * - 1순위를 비움 — 실행 쪽이 순위를 읽는 작업은 no_task_models 로 멈춘다(2026-11-02 21:13Z 드롭다운 저장으로 1차 순위가 지워져 1차 0건).
  * - 2차 투표자에서 모델을 뺌 — 옛 투표자의 열린 표가 model_removed 로 닫히고 새 투표자가 같은 대상을 다시 심사한다(2026-11-03 829행 닫힘·약 790건 재심사).
  * secondWaiting 은 지금 2차 대기(열린 표) — 다시 볼 양을 어림하게 같이 적는다.
@@ -192,29 +191,7 @@ export function rankWarnings(editor: FlowRankEditor, lines: readonly FlowRankLin
   const all = editor.lines;
   const now = (key: string) => all.find((line) => line.key === key)?.saved ?? [];
   const after = (key: string) => drafts[key] ? trim(drafts[key]) : now(key);
-  const shown = new Set(lines.map((line) => line.key));
-  const voters = all.filter((line) => line.task === "second-review" && line.execution?.mode !== "workload_pool");
-
-  // ① 1차와 같은 모델
-  const firstPool = all.find(line => line.key === FIRST_KEY)?.execution?.mode === "workload_pool";
-  const firstAfter = firstPool ? null : rank1(after(FIRST_KEY)), firstBefore = firstPool ? null : rank1(now(FIRST_KEY));
-  for (const voter of voters) {
-    const ranksAfter = after(voter.key), ranksBefore = now(voter.key);
-    const clashAfter = firstAfter ? ranksAfter.findIndex((row) => !!row && aiSameUnderlyingModel(row.model, firstAfter.model)) : -1;
-    if (clashAfter < 0) continue;
-    const clashBefore = firstBefore ? ranksBefore.findIndex((row) => !!row && aiSameUnderlyingModel(row.model, firstBefore.model)) : -1;
-    const model = ranksAfter[clashAfter]!.model;
-    const existing = clashBefore === clashAfter && aiSameUnderlyingModel(ranksBefore[clashBefore]!.model, model);
-    const target = shown.has(voter.key) ? voter.key : shown.has(FIRST_KEY) ? FIRST_KEY : null;
-    if (!target) continue;
-    warnings.push(clashAfter === 0
-      ? { code: "same_model", tone: "bad", line: target, existing,
-        text: `${existing ? "지금 " : ""}${voter.label}의 1순위가 1차 AI 검수와 같은 모델(${model})입니다 — 2차 관문이 1차와 다른 모델의 표를 받지 못해 1차 승인이 「2차 갈림」 보류로 빠집니다(2026-11-02 3,701건).` }
-      : { code: "same_model_fallback", tone: "warn", line: target, existing,
-        text: `${voter.label}의 ${clashAfter + 1}순위가 1차와 같은 모델(${model})입니다 — 위 순위를 쓸 수 없어 이 순위로 넘어가면 2차 표를 내지 못하고 보류로 빠집니다.` });
-  }
-
-  // ② 1순위를 비움 — 나란한 칸(2차 투표자 2·3)은 비어도 작업이 멈추지 않는다(투표자 1 이 표를 낸다). 첫 칸만 본다
+  // ① 1순위를 비움 — 나란한 칸(2차 투표자 2·3)은 비어도 작업이 멈추지 않는다(투표자 1 이 표를 낸다). 첫 칸만 본다
   for (const line of lines) {
     if (line.lock || line.slot > 1) continue;
     const before = rank1(line.saved), afterRank = rank1(after(line.key));
@@ -227,7 +204,7 @@ export function rankWarnings(editor: FlowRankEditor, lines: readonly FlowRankLin
       text: `${line.label}의 순위를 비웁니다 — 실행 쪽은 아직 이 순위를 읽지 않아 지금 동작은 그대로지만, 순위를 읽게 되는 날 이 작업이 멈춥니다.` });
   }
 
-  // ③ 2차 투표자에서 모델을 뺌 — 옛 투표자의 열린 표가 닫히고 다시 심사
+  // ② 2차 투표자에서 모델을 뺌 — 옛 투표자의 열린 표가 닫히고 다시 심사
   for (const line of lines) {
     if (line.task !== "second-review" || !drafts[line.key]) continue;
     const keep = after(line.key).filter((row): row is AiRankChoice => !!row);

@@ -129,7 +129,7 @@ export function RankDrawer({ editor, lines, title, secondWaiting, onClose, save 
   const changedKeys = new Set(changes.map((change) => change.line.key));
   const issues = changes.flatMap((change) => flowRankIssues(editor, change.line, change.after));
   const mustAck = needsAcknowledge(warnings);
-  // 확인 단계는 바꾼 줄의 경고와, 바꾸지 않았어도 바꾼 결과로 생기는 경고(같은 모델 등)를 함께 보인다
+  // 확인 단계는 바꾼 줄의 경고와, 바꾸지 않았어도 바꾼 결과로 생기는 경고를 함께 보인다
   const confirmWarnings = warnings.filter((warning) => changedKeys.has(warning.line) || !warning.existing);
 
   const close = () => { if (step !== "saving") onClose(); };
