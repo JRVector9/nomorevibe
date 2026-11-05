@@ -59,6 +59,8 @@ async function Workspace({ params }: { params: Search }) {
       second: second || undefined, q: q || undefined, updated: updated || undefined, sort: sort || undefined,
       review_filters: filtersOpen ? "1" : undefined, review_management: managementOpen ? "1" : undefined, ...patch };
     for (const [key, value] of Object.entries(values)) if (value !== undefined && value !== "") search.set(key, String(value));
+    // The empty sort is an explicit incoming-order choice; omitting it selects recent waiting order.
+    if (second !== "published") search.set("sort", sort);
     return `/admin/review?${search}`;
   };
   const listTitle = second === "published" ? "공개 후 다시 확인할 프로젝트" : tab === "human" ? "지금 사람이 확인할 후보"
