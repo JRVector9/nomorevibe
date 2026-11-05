@@ -13,6 +13,9 @@ import { runInTextTaskRank, type TextTaskRankBinding } from "./ai-task-rank-scop
 import { ModelCapacityDeferredError, modelCapacityDeferralIsPerModel } from "./capacity-deferred";
 import { parseGatewayServingContract, registeredGatewayServingContractSchema, type GatewayServingRoute } from "./gateway-serving-contract-config";
 import { ensureServingContracts, servingContractRowAccess, servingContractSnapshot, type StoredServingContract } from "./serving-contract-store";
+import type { AiTaskExecutionConfig, AiTaskPoolRuntime } from "./ai-task-execution-config";
+import { ensureAiTaskExecutionConfigs, readAiTaskExecutionConfig } from "./ai-task-execution-snapshot";
+import { chooseTaskWorkloadMember } from "./ai-task-workload-selector";
 
 /**
  * 공통 실행 resolver(2026-11-02 소유자 결정 「작업 ↔ AI 모델 1~3순위」, PR B).
@@ -75,7 +78,7 @@ export const TEXT_RANK_UNUSABLE_TEXT: Readonly<Record<string, string>> = Object.
 });
 export const textRankUnusableText = (code: string) => TEXT_RANK_UNUSABLE_TEXT[code] ?? code;
 
-export type TextRankCandidate = Readonly<{ rank: AiTaskRank; binding: TextTaskRankBinding | null; unusable: string | null }>;
+export type TextRankCandidate = Readonly<{ rank: AiTaskRank; binding: TextTaskRankBinding | null; unusable: string | null; memberId?: string }>;
 export type TextRankResolution = Readonly<{ routeId: AiTextTaskId; status: "ok" | "no_task_models" | "task_models_unreadable";
   candidates: readonly TextRankCandidate[] }>;
 
@@ -133,8 +136,21 @@ export function bindTextTaskRank(routeId: AiTextTaskId, rank: AiTaskRank, contra
 }
 
 /** text 작업 하나의 순위 → 묶음(1·2·3 차례). 스냅숏을 한 번도 읽지 못했으면 task_models_unreadable, 순위가 없으면 no_task_models. */
-export function resolveTextTaskRanks(routeId: AiTextTaskId): TextRankResolution {
+export function resolveTextTaskRanks(routeId: AiTextTaskId, execution?: AiTaskExecutionConfig): TextRankResolution {
   if (!isAiTextTask(routeId)) throw new Error(`not_text_task:${routeId}`);
+  if (execution?.mode === "workload_pool") {
+    if (execution.task !== routeId || execution.slot !== 1 || execution.revision === null)
+      throw new ModelCapacityDeferredError("assignments_unavailable");
+    const contracts = routeContracts(routeId);
+    const candidates = execution.members.map(member => {
+      const rank: AiTaskRank = Object.freeze({ task: routeId, slot: 1, rank: 0, model: member.model, enabled: true,
+        options: member.options, connection: member.connection });
+      const candidate = bindTextTaskRank(routeId, rank, contracts);
+      return Object.freeze({ ...candidate, memberId: member.memberId, binding: candidate.binding ? Object.freeze({ ...candidate.binding,
+        memberId: member.memberId, configRevision: execution.revision! }) : null });
+    });
+    return Object.freeze({ routeId, status: candidates.length ? "ok" : "no_task_models", candidates: Object.freeze(candidates) });
+  }
   const read = aiTaskModelsReadState();
   const ranks = taskModels(routeId);
   if (!ranks.length) return Object.freeze({ routeId, status: read.loaded ? "no_task_models" as const : "task_models_unreadable" as const, candidates: Object.freeze([]) });
@@ -149,7 +165,11 @@ export type TextRankDegraded = { code: "no_task_models" | "task_models_unreadabl
 export type TextRankRun<T> = { kind: "served"; binding: TextTaskRankBinding; value: T } | { kind: "unusable" };
 /** 이 틱(또는 이 프로세스의 마지막 요청)의 순위 사정 — 관리 화면이 「지금 몇 순위가 일하나 · 아래 순위를 쓴 까닭」으로 보인다. */
 export type TextRankStatus = Readonly<{ routeId: string; at: string; status: TextRankResolution["status"]; ranks: number;
-  served: Readonly<Record<string, number>>; unusable: readonly Readonly<{ rank: number; code: string; count: number }>[] }>;
+  served: Readonly<Record<string, number>>; unusable: readonly Readonly<{ rank: number; code: string; count: number }>[];
+  pool?: AiTaskPoolRuntime }>;
+
+const bindingKey = (binding: Pick<TextTaskRankBinding, "rank" | "memberId">): string => binding.memberId ? `member.${binding.memberId}` : String(binding.rank);
+const candidateKey = (candidate: TextRankCandidate): string => candidate.memberId ? `member.${candidate.memberId}` : String(candidate.rank.rank);
 
 const SATURATION = new Set(["capacity", "queue_full"]);
 const statusHolder = globalThis as unknown as { __nmvTextRankStatus?: Map<string, TextRankStatus> };
@@ -158,15 +178,15 @@ const statuses = () => (statusHolder.__nmvTextRankStatus ??= new Map());
 export function textTaskRankStatus(routeId: string): TextRankStatus | null { return statuses().get(routeId) ?? null; }
 
 export class TextTaskRanks {
-  private readonly paused = new Map<number, string>();
-  private readonly served = new Map<number, number>();
+  private readonly paused = new Map<string, string>();
+  private readonly served = new Map<string, number>();
   private readonly unusableCounts = new Map<string, number>();
-  private readonly engines = new Map<number, EngineDownTally>();
+  private readonly engines = new Map<string, EngineDownTally>();
   /** run 이 쓸 순위를 하나도 찾지 못해 돌려보낸 일이 있다 */
   exhausted = false;
 
-  constructor(readonly resolution: TextRankResolution) {
-    for (const candidate of resolution.candidates) if (candidate.unusable) this.mark(candidate.rank.rank, candidate.unusable);
+  constructor(readonly resolution: TextRankResolution, private readonly execution?: AiTaskExecutionConfig) {
+    for (const candidate of resolution.candidates) if (candidate.unusable) this.mark(candidateKey(candidate), candidate.unusable);
   }
 
   /**
@@ -174,15 +194,17 @@ export class TextTaskRanks {
    * maxAgeMs 를 길게 주어 처음 한 번만 기다린다 — 그 뒤로는 동기 읽기가 30초마다 뒤에서 새로 읽는다(요청이 DB 를 기다리지 않는다).
    */
   static async open(routeId: AiTextTaskId, maxAgeMs?: number): Promise<TextTaskRanks> {
-    await Promise.all([ensureServingContracts(maxAgeMs), ensureAiTaskModels(maxAgeMs)]);
-    return new TextTaskRanks(resolveTextTaskRanks(routeId));
+    await Promise.all([ensureServingContracts(maxAgeMs), ensureAiTaskModels(maxAgeMs), ensureAiTaskExecutionConfigs(maxAgeMs)]);
+    const execution = readAiTaskExecutionConfig(routeId);
+    return new TextTaskRanks(resolveTextTaskRanks(routeId, execution), execution);
   }
 
   get routeId(): AiTextTaskId { return this.resolution.routeId; }
+  get mode(): "fallback" | "workload_pool" { return this.execution?.mode ?? "fallback"; }
   /** 계약까지 묶인 순위(쉬는 것 포함), 순위 차례. */
   bindings(): TextTaskRankBinding[] { return this.resolution.candidates.flatMap(candidate => candidate.binding ? [candidate.binding] : []); }
   /** 지금 부를 수 있는 순위(쉬지 않는 것), 순위 차례. */
-  usable(): TextTaskRankBinding[] { return this.bindings().filter(binding => !this.paused.has(binding.rank)); }
+  usable(): TextTaskRankBinding[] { return this.bindings().filter(binding => !this.paused.has(bindingKey(binding))); }
 
   /** 일을 시작하기 전에 알릴 것: 순위 없음 · 표를 못 읽음 · 모든 순위를 쓸 수 없음(계약 없음 등). 부를 순위가 있으면 null. */
   earlyDegraded(): TextRankDegraded | null {
@@ -191,10 +213,10 @@ export class TextTaskRanks {
   }
 
   /** 순위를 쉬게 한다(이 틱 동안). 같은 순위의 둘째 까닭은 세기만 한다. */
-  pause(binding: Pick<TextTaskRankBinding, "rank">, reason: string): void { this.mark(binding.rank, reason); }
-  private mark(rank: number, reason: string) {
-    if (!this.paused.has(rank)) this.paused.set(rank, reason);
-    const key = `${rank}.${reason}`;
+  pause(binding: Pick<TextTaskRankBinding, "rank" | "memberId">, reason: string): void { this.mark(bindingKey(binding), reason); }
+  private mark(member: string, reason: string) {
+    if (!this.paused.has(member)) this.paused.set(member, reason);
+    const key = `${member}.${reason}`;
     this.unusableCounts.set(key, (this.unusableCounts.get(key) ?? 0) + 1);
   }
 
@@ -205,14 +227,16 @@ export class TextTaskRanks {
    * prefer(장부 이름)가 주어지면 그 순위를 먼저 본다(이 프로세스가 그 순위로 줄에 세워 둔 요청을 이어받을 때).
    */
   async run<T>(work: (binding: TextTaskRankBinding) => Promise<T>, options: Readonly<{ prefer?: string | null }> = {}): Promise<TextRankRun<T>> {
+    if (this.execution?.mode === "workload_pool") return this.runPool(work, options);
     const order = this.bindings();
     const preferred = options.prefer ? order.findIndex(binding => binding.identity === options.prefer) : -1;
     if (preferred > 0) order.unshift(...order.splice(preferred, 1));
     for (const binding of order) {
-      if (this.paused.has(binding.rank)) continue;
+      if (this.paused.has(bindingKey(binding))) continue;
       try {
         const value = await runInTextTaskRank(binding, () => work(binding));
-        this.served.set(binding.rank, (this.served.get(binding.rank) ?? 0) + 1);
+        const key = bindingKey(binding);
+        this.served.set(key, (this.served.get(key) ?? 0) + 1);
         return { kind: "served", binding, value };
       } catch (error) {
         if (error instanceof ModelCapacityDeferredError && modelCapacityDeferralIsPerModel(error.reason)) { this.pause(binding, error.reason); continue; }
@@ -223,21 +247,49 @@ export class TextTaskRanks {
     return { kind: "unusable" };
   }
 
+  /** Choose once per independent work/batch; never fan out one callback to several models. */
+  private async runPool<T>(work: (binding: TextTaskRankBinding) => Promise<T>, options: Readonly<{ prefer?: string | null }>): Promise<TextRankRun<T>> {
+    const execution = this.execution!;
+    const candidates = this.usable().flatMap(binding => binding.memberId ? [{ ...binding, memberId: binding.memberId }] : []);
+    if (!candidates.length) {
+      this.exhausted = true;
+      return { kind: "unusable" };
+    }
+    const selected = await chooseTaskWorkloadMember(execution, candidates, { preferIdentity: options.prefer });
+    // No eligible idle route is a capacity deferral, not proof that all configured models failed.
+    if (!selected) throw new ModelCapacityDeferredError("capacity");
+    const binding: TextTaskRankBinding = Object.freeze({ ...selected });
+    try {
+      const value = await runInTextTaskRank(binding, () => work(binding));
+      const key = bindingKey(binding);
+      this.served.set(key, (this.served.get(key) ?? 0) + 1);
+      return { kind: "served", binding, value };
+    } catch (error) {
+      if (error instanceof ModelCapacityDeferredError && modelCapacityDeferralIsPerModel(error.reason)) this.pause(binding, error.reason);
+      // requestSlot may have committed a waiting row and its logical fence
+      // before deferring. Never invoke this work on another member, even when
+      // it had no pending identity before this callback. A later independent
+      // work unit can choose another member; existing retries resume this one.
+      throw error;
+    }
+  }
+
   /** 엔진이 이 일에 실패했다(그 일의 시도는 이미 적혔다). 엔진이 내려갔음이 증명되면(engine-down.ts) 그 순위를 쉬게 하고 true. */
   failed(binding: TextTaskRankBinding, error: string): boolean {
-    const tally = this.engines.get(binding.rank) ?? this.engines.set(binding.rank, new EngineDownTally()).get(binding.rank)!;
+    const key = bindingKey(binding);
+    const tally = this.engines.get(key) ?? this.engines.set(key, new EngineDownTally()).get(key)!;
     const down = tally.failed(error);
     if (down) this.pause(binding, `engine_${down}`);
     return !!down;
   }
   /** 엔진이 답했다(성공이든 그 일의 실패든) — 연결 거절 연속을 처음부터 센다. */
-  answered(binding: TextTaskRankBinding): void { this.engines.get(binding.rank)?.answered(); }
+  answered(binding: TextTaskRankBinding): void { this.engines.get(bindingKey(binding))?.answered(); }
 
   /** 쉬는 까닭에 포화(capacity·queue_full)가 있다 — 줄이 풀리면 곧 다시 부를 수 있다(잡은 예전처럼 model_capacity 로 미룬다). */
   saturated(): boolean { return [...this.paused.values()].some(reason => SATURATION.has(reason)); }
   /** 쓸 수 있던 순위가 모두 엔진 쪽 까닭(engine_*)으로 쉰다 — 예전의 「엔진이 내려가 틱을 접는다」와 같다. 그 까닭(첫 순위의 것)을 돌려준다. */
   engineDown(): string | null {
-    const reasons = this.bindings().map(binding => this.paused.get(binding.rank));
+    const reasons = this.bindings().map(binding => this.paused.get(bindingKey(binding)));
     if (!reasons.length || reasons.some(reason => !reason?.startsWith("engine_"))) return null;
     return reasons[0]!.slice("engine_".length);
   }
@@ -249,29 +301,25 @@ export class TextTaskRanks {
       return { code: "no_task_models", detail: `${task}: 작업 ↔ 모델(/admin/models/tasks)에 순위가 없습니다 — 코드 기본값·환경변수로 대신 부르지 않습니다` };
     if (this.resolution.status === "task_models_unreadable")
       return { code: "task_models_unreadable", detail: `${task}: 작업 ↔ 모델 표를 아직 읽지 못했습니다(권한·migration 0162 확인) — 기본값으로 대신 부르지 않습니다` };
-    const reasons = this.resolution.candidates.map(candidate => this.paused.get(candidate.rank.rank) ?? candidate.unusable);
+    const reasons = this.resolution.candidates.map(candidate => this.paused.get(candidateKey(candidate)) ?? candidate.unusable);
     const parts = this.resolution.candidates.map((candidate, index) =>
-      `${candidate.rank.rank}순위 ${candidate.rank.connection.label} · ${candidate.rank.model}: ${reasons[index] ? textRankUnusableText(reasons[index]!) : "쓸 수 있음"}`);
+      `${candidate.memberId ? `구성원 ${candidate.memberId}` : `${candidate.rank.rank}순위`} ${candidate.rank.connection.label} · ${candidate.rank.model}: ${reasons[index] ? textRankUnusableText(reasons[index]!) : "쓸 수 있음"}`);
     // 모든 순위가 키 없는 연결뿐이면 설정의 일(cause) — 진행 감시·OPEN 이 배포를 막지 않는다(AI_TASK_KEY_MISSING_CAUSE)
     return { code: "all_ranks_unusable", detail: `${task}: ${parts.join(" / ")}`.slice(0, 300), ...(onlyKeyMissing(reasons) ? { cause: AI_TASK_KEY_MISSING_CAUSE } : {}) };
   }
 
   /** 틱 끝 요약 — ctx.log("ai_task.ranks", …) 의 숫자 칸. 관측(job:<잡>)의 마지막 이벤트로 남아 관리 화면이 읽는다. */
   summary(): Record<string, number> {
-    const out: Record<string, number> = { ranks: this.resolution.candidates.length };
-    for (const [rank, count] of this.served) out[`served.${rank}`] = count;
-    for (const [key, count] of this.unusableCounts) out[`unusable.${key}`] = count;
+    const out: Record<string, number> = { ranks: this.mode === "fallback" ? this.resolution.candidates.length : 0 };
+    if (this.mode === "workload_pool") { out.pool_members = this.resolution.candidates.length; out.pool_revision = this.execution!.revision!; }
+    for (const [key, count] of this.served) out[key.startsWith("member.") ? `member_served.${key.slice(7)}` : `served.${key}`] = count;
+    for (const [key, count] of this.unusableCounts) out[key.startsWith("member.") ? `member_unusable.${key.slice(7)}` : `unusable.${key}`] = count;
     return out;
   }
 
   /** 이 프로세스의 순위 사정을 남긴다(웹 경로 화면용). */
   publish(now = new Date()): TextRankStatus {
-    const status: TextRankStatus = Object.freeze({ routeId: this.routeId, at: now.toISOString(), status: this.resolution.status,
-      ranks: this.resolution.candidates.length, served: Object.freeze(Object.fromEntries([...this.served].map(([rank, count]) => [String(rank), count]))),
-      unusable: Object.freeze([...this.unusableCounts].map(([key, count]) => {
-        const [rank, ...code] = key.split(".");
-        return Object.freeze({ rank: Number(rank), code: code.join("."), count });
-      })) });
+    const status: TextRankStatus = Object.freeze({ ...textRankStatusFromCounts(this.routeId, now.toISOString(), this.summary()), status: this.resolution.status });
     statuses().set(this.routeId, status);
     return status;
   }
@@ -280,14 +328,23 @@ export class TextTaskRanks {
 /** 관측 이벤트(ai_task.ranks)의 숫자 칸 → 순위 사정(관리 화면). 모양이 틀린 칸은 버린다. */
 export function textRankStatusFromCounts(routeId: string, at: string, counts: Readonly<Record<string, unknown>>): TextRankStatus {
   const served: Record<string, number> = {}, unusable: { rank: number; code: string; count: number }[] = [];
+  const memberServed: Record<string, number> = {}, memberUnusable: { memberId: string; code: string; count: number }[] = [];
   for (const [key, value] of Object.entries(counts)) {
     if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) continue;
     const servedKey = /^served\.([1-3])$/.exec(key);
     if (servedKey) { served[servedKey[1]] = value; continue; }
     const unusableKey = /^unusable\.([1-3])\.([a-z_]{1,60})$/.exec(key);
     if (unusableKey) unusable.push({ rank: Number(unusableKey[1]), code: unusableKey[2], count: value });
+    const memberServedKey = /^member_served\.([0-9a-f-]{36})$/.exec(key);
+    if (memberServedKey) memberServed[memberServedKey[1]] = value;
+    const memberUnusableKey = /^member_unusable\.([0-9a-f-]{36})\.([a-z_]{1,60})$/.exec(key);
+    if (memberUnusableKey) memberUnusable.push({ memberId: memberUnusableKey[1], code: memberUnusableKey[2], count: value });
   }
   const ranks = typeof counts.ranks === "number" && Number.isSafeInteger(counts.ranks) ? counts.ranks : 0;
-  return Object.freeze({ routeId, at, status: ranks ? "ok" as const : "no_task_models" as const, ranks, served: Object.freeze(served),
-    unusable: Object.freeze(unusable.sort((a, b) => a.rank - b.rank || a.code.localeCompare(b.code))) });
+  const members = typeof counts.pool_members === "number" && Number.isInteger(counts.pool_members) && counts.pool_members >= 1 && counts.pool_members <= 4 ? counts.pool_members : 0;
+  const revision = typeof counts.pool_revision === "number" && Number.isSafeInteger(counts.pool_revision) && counts.pool_revision > 0 ? counts.pool_revision : null;
+  return Object.freeze({ routeId, at, status: ranks || members && revision !== null ? "ok" as const : "no_task_models" as const,
+    ranks, served: Object.freeze(served), unusable: Object.freeze(unusable.sort((a, b) => a.rank - b.rank || a.code.localeCompare(b.code))),
+    ...(members && revision !== null ? { pool: Object.freeze({ configRevision: revision, members, served: Object.freeze(memberServed),
+      unusable: Object.freeze(memberUnusable.sort((a, b) => a.memberId.localeCompare(b.memberId) || a.code.localeCompare(b.code))) }) } : {}) });
 }

@@ -5,10 +5,11 @@ import { ModelCapacityDeferredError, modelCapacityDeferralIsPerModel, modelCapac
 import { getSettings } from "@/lib/crawl/settings";
 import { taglineEvidence, taglineHash } from "@/lib/crawl/tagline";
 import { writeCrawlTaglineWithModelCapacity } from "@/lib/crawl/tagline-model-capacity";
-import { pendingTaglines, recordTaglineResult } from "@/lib/crawl/taglines";
+import { pendingTaglines, recordTaglineResult, readCrawlTaglineAffinityMember } from "@/lib/crawl/taglines";
 import { jobKnob } from "@/lib/operations/runtime-settings-schema";
 import { runtimeSettings } from "@/lib/operations/runtime-settings-store";
 import { textTaskModel } from "@/lib/llm/ai-task-rank-scope";
+import { pendingTextPoolTargetModel } from "@/lib/llm/text-task-pool-resume";
 import { TextTaskRanks } from "@/lib/llm/ai-task-resolver";
 
 /**
@@ -115,6 +116,12 @@ async function writeTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTaskRank
               }
 
               // 순위 차례로 부른다 — 이 모델만의 까닭(경로 없음·장비 행 없음·계약 닫힘·포화)이면 같은 후보를 다음 순위로(TextTaskRanks.run)
+              let prefer: string | null = null;
+              if (ranks.mode === 'workload_pool') {
+                const member = await readCrawlTaglineAffinityMember(task);
+                if (!member) { passed.add(task.candidate.id); continue; }
+                prefer = await pendingTextPoolTargetModel(ranks, { routeId: JOB, member });
+              }
               const attempt = await ranks.run(async (binding): Promise<Flow> => {
                 let capacity = await writeCrawlTaglineWithModelCapacity(task, lease,
                   { signal, timeoutMs: Math.max(1_000, Math.min(callMs, remaining() - 1_000)) });
@@ -150,7 +157,8 @@ async function writeTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTaskRank
                   failed++;
                   // 그 후보의 실패로 남겼다(같은 증거에만 502 를 돌려주는 긴 페이지 글이 있었다 — 2026-09-20). 엔진이 모든 후보에 대해
                   // 내려갔음이 증명되면(engine-down.ts) 이 순위만 쉬고 다음 후보는 다음 순위로 간다
-                  if (ranks.failed(binding, result.error)) ctx.log("tagline.rank_down", { rank: binding.rank });
+                  if (ranks.failed(binding, result.error)) ctx.log("tagline.rank_down", binding.memberId
+                    ? { memberId: binding.memberId, configRevision: binding.configRevision } : { rank: binding.rank });
                   return "next";
                 }
                 ranks.answered(binding);
@@ -160,7 +168,7 @@ async function writeTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTaskRank
                 written++;
                 if (saved.released) released++;
                 return "next";
-              });
+              }, { prefer });
               // 모든 순위를 이 틱에 쓸 수 없다 — 이 후보는 그대로 두고(호출·시도 기록 없음) 틱을 접는다
               if (attempt.kind === "unusable") return;
               if (attempt.value === "stop") return;
