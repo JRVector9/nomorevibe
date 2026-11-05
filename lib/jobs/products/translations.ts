@@ -1,13 +1,14 @@
 import { translateProductFieldsWithModelCapacity } from "@/lib/domain/products/product-translation-model-capacity";
 import { checkProductTranslation, packProductTranslationBatch, productTranslationPolicy, productTranslationSourceHash,
   productTranslationTaskKey, translationSourceText } from "@/lib/domain/products/translation-policy";
-import { pendingProductTranslations, recordProductTranslations, type ProductTranslationResult } from "@/lib/domain/products/translations";
+import { pendingProductTranslations, recordProductTranslations, type ProductTranslationResult, type ProductTranslationTask } from "@/lib/domain/products/translations";
 import { deferredJob, type JobContext, type JobOutcome } from "@/lib/jobs/runner";
 import { ModelCapacityDeferredError, modelCapacityDeferralIsPerWork } from "@/lib/llm/capacity-deferred";
 import { productTranslationClientTimeoutMs } from "@/lib/llm/deadline-ladder";
 import { textTaskModel } from "@/lib/llm/ai-task-rank-scope";
 import { TextTaskRanks, type TextRankRun } from "@/lib/llm/ai-task-resolver";
 import { pendingTextPoolModel } from "@/lib/llm/text-task-pool-resume";
+import { modelRequestBudget } from "@/lib/llm/model-registry";
 
 const JOB = "product-translate";
 
@@ -15,7 +16,8 @@ const JOB = "product-translate";
 const MAX_SELECTION_ROUNDS = 8;
 
 /**
- * One call / at most four demanded fields per text-role tick (budget: productTranslationJobBudgetMs — client timeout + jobMarginMs). No catalog backfill.
+ * One demanded batch per lane/tick, bounded by the route concurrency (default 1). Each call still contains at most four fields.
+ * Budget: productTranslationJobBudgetMs — client timeout + jobMarginMs. No catalog backfill.
  * Source cap and batch packing come from the tick's runtime_settings translation.product (productTranslationPolicy), so an admin save applies on the next tick.
  *
  * 2026-10-30 소유자 결정("미확인이 되어도 절대 멈추지 않는다"): 호출 없이 끝난 묶음 — 같은 작업이 다른 요청에 묶인 미룸(dispatched·work_busy)과
@@ -29,7 +31,7 @@ export async function translateDemandedProductFields(ctx: JobContext<null>): Pro
   finally { ctx.log("ai_task.ranks", ranks.summary()); }
 }
 
-type Flow = { kind: "skipped" } | { kind: "stopped" } | { kind: "recorded" };
+type Flow = { kind: "skipped" } | { kind: "stopped" } | { kind: "recorded"; stored: number };
 
 async function translateWithRanks(ctx: JobContext<null>, ranks: TextTaskRanks): Promise<JobOutcome<null>> {
   const early = ranks.earlyDegraded();
@@ -45,72 +47,105 @@ async function translateWithRanks(ctx: JobContext<null>, ranks: TextTaskRanks): 
   ownershipPoll.unref?.();
   try {
     const policy = productTranslationPolicy();
-    const passed = new Set<string>();
-    let recorded = 0;
-    for (let round = 0; round < MAX_SELECTION_ROUNDS; round++) {
-      const tasks = (await pendingProductTranslations(policy.batchMax, { exclude: [...passed] }))
-        .filter(task => !passed.has(productTranslationTaskKey(task)));
-      if (!tasks.length || !ctx.hasBudget() || signal.aborted) break;
-      const retired = tasks.filter((task) => !task.eligible || productTranslationSourceHash(task.source, task.field) !== task.sourceHash
-        || translationSourceText(task.source, task.field).length > policy.maxSourceChars);
-      if (retired.length) {
-        await recordProductTranslations(retired.map((task) => ({ task,
-          result: { ok: false, error: translationSourceText(task.source, task.field).length > policy.maxSourceChars ? "source_too_long" : "stale_source", model: "" } as ProductTranslationResult,
-        })), lease);
-        recorded += retired.length;
-      }
-      for (const task of retired) passed.add(productTranslationTaskKey(task));
-      // 긴 설명은 단독, 짧은 것만 묶인다(translation.product.batchChars) — 300초 상한 안에 끝나게.
-      const batch = packProductTranslationBatch(tasks.filter((task) => !retired.includes(task)), policy);
-      if (!batch.length) continue;
-      if (!ctx.hasBudget() || signal.aborted) break;
-      let attempt: TextRankRun<Flow>;
-      try {
-        const prefer = await pendingTextPoolModel(ranks);
-        // 순위 차례로 부른다 — 이 모델만의 까닭(경로 없음·장비 행 없음·계약 닫힘·포화)이면 같은 묶음을 다음 순위로(TextTaskRanks.run)
-        attempt = await ranks.run(async (): Promise<Flow> => {
-          // Outermost HTTP deadline (routes.limits.product-translate.timeoutMs, read per tick) fits the job budget; inner M1 bounds still require measurement and enforcement.
-          const outcome = await translateProductFieldsWithModelCapacity(batch, lease, { timeoutMs: productTranslationClientTimeoutMs(), signal, deadlineAt: ctx.deadlineAt });
-          if (outcome.kind === "skipped") return { kind: "skipped" };
-          const response = outcome.result;
-          const completedBatch = outcome.batch ?? batch;
-          if (ctx.signal?.aborted) return { kind: "stopped" };
-          // Account for calls aborted by the tick budget. The final lease check in
-          // recordProductTranslations rolls back writes if ownership was actually lost.
-          const model = textTaskModel(JOB);
-          const entries = completedBatch.map((task, index): { task: typeof task; result: ProductTranslationResult } => {
-            if (!response.ok) return { task, result: { ok: false, error: response.error, model } };
-            const checked = checkProductTranslation(response.outputs[index], task.source, task.locale, task.field);
-            return { task, result: checked.ok ? { ok: true, text: checked.text, model } : { ok: false, error: `rejected:${checked.reason}`, model } };
-          });
-          const stored = await (outcome.expectation ? recordProductTranslations(entries, lease, outcome.expectation)
-            : recordProductTranslations(entries, lease));
-          ctx.log("product_translation.tick", { model: textTaskModel(JOB), demanded: completedBatch.length, stored,
-            accepted: entries.filter(({ result }) => result.ok).length, gatewayError: response.ok ? null : response.error, passed: passed.size });
-          return { kind: "recorded" };
-        }, { prefer });
-      } catch (error) {
-        if (!(error instanceof ModelCapacityDeferredError) || !modelCapacityDeferralIsPerWork(error.reason)) {
-          if (error instanceof ModelCapacityDeferredError && recorded >= 1) return deferredJob("model_capacity", recorded);
-          throw error;
+    const passed = new Set<string>(), scheduled = new Set<string>();
+    const concurrency = Math.min(modelRequestBudget(JOB).concurrency, MAX_SELECTION_ROUNDS);
+    let recorded = 0, rounds = 0, stopClaims = false;
+    let selection: Promise<void> = Promise.resolve();
+    // Queue selection is serial even when HTTP is parallel. Reserve these task keys
+    // locally before releasing the next lane; durable admission remains in the existing capacity adapter.
+    const takeBatch = (): Promise<ProductTranslationTask[] | null> => {
+      const next = selection.then(async () => {
+        while (!stopClaims && rounds++ < MAX_SELECTION_ROUNDS && ctx.hasBudget() && !signal.aborted && !ranks.exhausted) {
+          const tasks = (await pendingProductTranslations(policy.batchMax, { exclude: [...passed, ...scheduled] }))
+            .filter(task => !passed.has(productTranslationTaskKey(task)) && !scheduled.has(productTranslationTaskKey(task)));
+          if (!tasks.length || !ctx.hasBudget() || signal.aborted || stopClaims) return null;
+          const retired = tasks.filter((task) => !task.eligible || productTranslationSourceHash(task.source, task.field) !== task.sourceHash
+            || translationSourceText(task.source, task.field).length > policy.maxSourceChars);
+          if (retired.length) {
+            recorded += await recordProductTranslations(retired.map((task) => ({ task,
+              result: { ok: false, error: translationSourceText(task.source, task.field).length > policy.maxSourceChars ? "source_too_long" : "stale_source", model: "" } as ProductTranslationResult,
+            })), lease);
+          }
+          for (const task of retired) passed.add(productTranslationTaskKey(task));
+          // Long descriptions remain single calls; short fields keep the existing batch bound.
+          const batch = packProductTranslationBatch(tasks.filter((task) => !retired.includes(task)), policy);
+          for (const task of batch) scheduled.add(productTranslationTaskKey(task));
+          if (batch.length) return batch;
         }
-        // 호출은 없었다. 이 멤버만 이 틱에서 넘기고(시도·실패 기록 없음) 뒤의 수요로 다시 고른다.
-        for (const task of batch) passed.add(productTranslationTaskKey(task));
-        ctx.log("product_translation.passed", { reason: error.reason, demanded: batch.length, passed: passed.size });
-        continue;
+        return null;
+      });
+      selection = next.then(() => {}, () => { stopClaims = true; });
+      return next;
+    };
+    const runLane = async () => {
+      while (!stopClaims && ctx.hasBudget() && !signal.aborted) {
+        const batch = await takeBatch();
+        if (!batch || stopClaims || !ctx.hasBudget() || signal.aborted) return;
+        let attempt: TextRankRun<Flow>;
+        try {
+          const prefer = await pendingTextPoolModel(ranks);
+          // 순위 차례로 부른다 — 이 모델만의 까닭(경로 없음·장비 행 없음·계약 닫힘·포화)이면 같은 묶음을 다음 순위로(TextTaskRanks.run)
+          attempt = await ranks.run(async (): Promise<Flow> => {
+            // Outermost HTTP deadline (routes.limits.product-translate.timeoutMs, read per tick) fits the job budget; inner M1 bounds still require measurement and enforcement.
+            const outcome = await translateProductFieldsWithModelCapacity(batch, lease, { timeoutMs: productTranslationClientTimeoutMs(), signal, deadlineAt: ctx.deadlineAt });
+            if (outcome.kind === "skipped") return { kind: "skipped" };
+            const response = outcome.result;
+            const completedBatch = outcome.batch ?? batch;
+            if (ctx.signal?.aborted) return { kind: "stopped" };
+            // Account for calls aborted by the tick budget. The final lease check in
+            // recordProductTranslations rolls back writes if ownership was actually lost.
+            const model = textTaskModel(JOB);
+            const entries = completedBatch.map((task, index): { task: typeof task; result: ProductTranslationResult } => {
+              if (!response.ok) return { task, result: { ok: false, error: response.error, model } };
+              const checked = checkProductTranslation(response.outputs[index], task.source, task.locale, task.field);
+              return { task, result: checked.ok ? { ok: true, text: checked.text, model } : { ok: false, error: `rejected:${checked.reason}`, model } };
+            });
+            const stored = await (outcome.expectation ? recordProductTranslations(entries, lease, outcome.expectation)
+              : recordProductTranslations(entries, lease));
+            ctx.log("product_translation.tick", { model: textTaskModel(JOB), demanded: completedBatch.length, stored,
+              accepted: entries.filter(({ result }) => result.ok).length, gatewayError: response.ok ? null : response.error, passed: passed.size });
+            return { kind: "recorded", stored };
+          }, { prefer });
+        } catch (error) {
+          if (!(error instanceof ModelCapacityDeferredError) || !modelCapacityDeferralIsPerWork(error.reason)) {
+            stopClaims = true;
+            throw error;
+          }
+          // 호출은 없었다. 이 멤버만 이 틱에서 넘기고(시도·실패 기록 없음) 뒤의 수요로 다시 고른다.
+          for (const task of batch) passed.add(productTranslationTaskKey(task));
+          ctx.log("product_translation.passed", { reason: error.reason, demanded: batch.length, passed: passed.size });
+          continue;
+        }
+        if (attempt.kind === "unusable") {
+          stopClaims = true;
+          return;
+        }
+        if (attempt.value.kind === "skipped") {
+          for (const task of batch) passed.add(productTranslationTaskKey(task));
+          continue;
+        }
+        if (attempt.value.kind === "stopped") { stopClaims = true; return; }
+        recorded += attempt.value.stored;
+        return;
       }
-      if (attempt.kind === "unusable") {
-        // 모든 순위가 이 틱에 쉰다. 포화면 예전처럼 미루고, 아니면 일을 했을 때만 보통 틱 — 한 건도 못 했으면 까닭을 남긴다
-        ctx.log("product_translation.all_ranks_unusable", { recorded, passed: passed.size });
-        if (ranks.saturated()) return deferredJob("model_capacity", recorded);
-        return recorded ? { done: true } : { done: true, degraded: ranks.degraded() };
-      }
-      if (attempt.value.kind === "skipped") {
-        for (const task of batch) passed.add(productTranslationTaskKey(task));
-        continue;
-      }
-      if (attempt.value.kind === "stopped") return { done: false };
-      return { done: true };
+    };
+    // A failed lane stops new claims. Already-dispatched siblings finish their
+    // existing terminal reconciliation and fenced writer before this tick returns.
+    const outcomes = await Promise.allSettled(Array.from({ length: concurrency }, async () => {
+      try { await runLane(); }
+      catch (error) { stopClaims = true; throw error; }
+    }));
+    const failures = outcomes.filter((outcome): outcome is PromiseRejectedResult => outcome.status === "rejected");
+    const failure = failures.find(outcome => !(outcome.reason instanceof ModelCapacityDeferredError)) ?? failures[0];
+    if (failure) {
+      if (failure.reason instanceof ModelCapacityDeferredError && recorded >= 1) return deferredJob("model_capacity", recorded);
+      throw failure.reason;
+    }
+    if (signal.aborted || !ctx.hasBudget()) return { done: false };
+    if (ranks.exhausted) {
+      ctx.log("product_translation.all_ranks_unusable", { recorded, passed: passed.size });
+      if (ranks.saturated()) return deferredJob("model_capacity", recorded);
+      return recorded ? { done: true } : { done: true, degraded: ranks.degraded() };
     }
     return { done: true };
   } finally {

@@ -1,4 +1,4 @@
-import { modelRouteTimeoutMs, scopedModel } from "@/lib/llm/model-registry";
+import { modelRequestBudget, modelRouteTimeoutMs, scopedModel } from "@/lib/llm/model-registry";
 import { translateKoreanTaglinesWithModelCapacity, type KoreanTaglineCapacityResult } from "@/lib/domain/products/korean-tagline-model-capacity";
 import { deferredJob, type JobContext, type JobOutcome } from "@/lib/jobs/runner";
 import { tickRemaining } from "@/lib/jobs/tick-deadline";
@@ -19,7 +19,8 @@ import { pendingTextPoolModel } from "@/lib/llm/text-task-pool-resume";
  * 한국어 한 줄 소개 짓기(UX-13) — 공개 제품의 지금 소개를 한국어 한 줄로 옮긴다. 새 제품·홈에 보이는 제품부터, 나머지는 스타 순.
  *
  * legacy text 워커의 한국어 전용 줄에서 단일 잡 lease로 돈다. 서로 다른 묶음을 GPT와 GPU Qwen에 나누며,
- * 각 backend는 한 번만 동시에 부른다. 느리거나 실패한 backend는 이번 틱에서 쉬고 다른 backend의 결과는 남긴다.
+ * 장부가 열리면 서로 다른 소개 묶음을 경로 동시 호출 한도만큼 실행한다. 장부가 꺼진 예전 경로는 backend당 한 묶음이다.
+ * 느리거나 실패한 backend는 이번 틱에서 쉬고 이미 보낸 다른 묶음의 결과는 남긴다.
  * 모델이 준 줄은 코드 검사를 통과한 것만 남기고, 버린 것은 사유를 적어 센다(korean-taglines.ts koreanTaglineProgress).
  */
 
@@ -112,9 +113,18 @@ async function writeKoreanTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTa
         return processed ? { done: true } : { done: true, degraded: ranks.degraded() };
       }
       const candidates = (await pendingKoreanTaglines(batchSize * 4, homeSlugs)).filter(task => !visited.has(task.productId));
-      const gptBatch = gptCallable() && !stopped.has("gpt")
-        ? packTaglineBatch(candidates, legacy ? legacyMaxChars : KOREAN_TRANSLATION_NATIVE_MAX_CHARS) : [];
-      const gptIds = new Set(gptBatch.map(task => task.productId));
+      const gptBatches: KoreanTaglineTask[][] = [];
+      const gptIds = new Set<number>();
+      const concurrency = legacy ? 1 : modelRequestBudget(JOB).concurrency;
+      if (gptCallable() && !stopped.has("gpt")) {
+        for (let lane = 0; lane < concurrency; lane++) {
+          const batch = packTaglineBatch(candidates.filter(task => !gptIds.has(task.productId)),
+            legacy ? legacyMaxChars : KOREAN_TRANSLATION_NATIVE_MAX_CHARS);
+          if (!batch.length) break;
+          gptBatches.push(batch);
+          batch.forEach(task => gptIds.add(task.productId));
+        }
+      }
       const qwenBatch = qwen ? packTaglineBatch(candidates.filter(task => !gptIds.has(task.productId)), legacyMaxChars) : [];
       const wantsRecovery = qwen && koreanTranslationQwenRecoveryEnabled() && !qwenBatch.length && recoverySelected < batchSize;
       let recoveryBatch = false, recoveryDeferred = wantsRecovery && remaining() < callMs + 1_000;
@@ -130,7 +140,7 @@ async function writeKoreanTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTa
       }
       const work = [
         // GPT 의 모델(장부 이름)은 순위가 정한다 — 부른 순위의 이름으로 아래에서 채운다
-        ...(gptBatch.length ? [{ backend: "gpt" as const, model: "", batch: gptBatch, recovery: false }] : []),
+        ...gptBatches.map(batch => ({ backend: "gpt" as const, model: "", batch, recovery: false })),
         ...(qwenBatch.length ? [{ backend: "qwen" as const, model: scopedModel("korean-translation-direct", KOREAN_TRANSLATION_QWEN_MODEL), batch: qwenBatch, recovery: recoveryBatch }] : []),
       ];
       if (!work.length) {
