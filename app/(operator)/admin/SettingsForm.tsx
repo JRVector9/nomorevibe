@@ -187,7 +187,7 @@ function SettingsFormBody({ settings, version, yields, secondControls, onRevert,
         <Link prefetch={false} href="/admin/status" className="ml-auto text-[13px] font-semibold text-accent-ink hover:underline">운영센터에서 켜고 끄기 →</Link>
       </section>
 
-      <SignalsTable discover={discover} yields={yields} />
+      <SignalsTable id="signals" discover={discover} yields={yields} />
 
       <SettingsCard id="scope" title="수집 범위" note="검색 한 번에 얼마나, 얼마 전 것까지 볼지">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">

@@ -43,7 +43,7 @@ export function PrototypeReviewConsole({ entries, reasons, focus, title, total, 
     setActive(next?.candidate.id ?? 0); setChecked(previous => { const copy = new Map(previous); copy.delete(entry.candidate.id); return copy; });
     toast.show({ message: `${result.decision === "approve" ? "승인" : "반려"} · ${entry.name}`, link: { label: "기록 보기", href: `/admin/activity?target=${encodeURIComponent(result.repo)}` }, undo: { run: () => undoCandidateDecisions([{ repo: result.repo, attemptId: result.attemptId }]) } });
   }
-  return <div className="grid detail" data-dirty={selection.send.length > 0 || undefined}>
+  return <div id="review-list" className="grid detail" data-dirty={selection.send.length > 0 || undefined}>
     <section className="panel"><div className="panel-head"><h3>{title}</h3><span className="tag gray">전체 {total.toLocaleString("ko-KR")}건</span></div>
       <div className="table-scroll" role="region" aria-label="검수 후보 목록" tabIndex={0}><table style={{ minWidth: 570 }}><thead><tr><th className="col-check">선택</th><th>후보·유입</th><th>대기 사유·시간</th><th>판정</th></tr></thead><tbody>
         {entries.map(entry => <tr key={entry.candidate.id} className={active === entry.candidate.id ? "selected" : undefined}>
