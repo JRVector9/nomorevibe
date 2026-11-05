@@ -15,7 +15,7 @@ import { pgTable, serial, integer, varchar, text, timestamp, doublePrecision, in
  */
 export type SecondReviewTrigger = "ai_decided" | "ai_held" | "ai_approved" | "risk" | "sample";
 export type SecondReviewStatus = "pending" | "agreed" | "needs_human" | "failed" | "resolved";
-export type SecondReviewProvider = "claude-cli" | "abcllm" | "grok-cli" | "local-direct";
+export type SecondReviewProvider = "claude-cli" | "abcllm" | "grok-cli" | "opencode-cli" | "local-direct";
 /** 공개분 사람 확인 행의 Qwen-v2 판단(0111) — by 는 늘 qwen-v2-auto, at 은 ISO 시각 */
 export type SecondReviewAutoOpinion = {
   by: string; model: string; promptVersion: string; decision: "approve" | "reject" | "needs_review";

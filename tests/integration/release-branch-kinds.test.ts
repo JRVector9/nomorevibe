@@ -172,9 +172,10 @@ it("0160 은 여섯 CHECK 를 model_capacity_check_rules 행·BEFORE 트리거�
 
 it("0161 은 text local-direct 가지를 세 제약의 다음 rules ordinal 로 더하고 회수 판정은 그대로 둔다", async () => {
   const after0160 = await defs(), snapshot = await client`SELECT to_jsonb(r) value FROM model_capacity_requests r ORDER BY request_id`;
-  await migrate(drizzle(client), { migrationsFolder: path.join(root, "drizzle") });
-  expect((await client`SELECT count(*)::int n FROM drizzle.__drizzle_migrations`)[0].n).toBe(journal.entries.length);
-  // 0161 뒤에는 그 뒤 번호만 붙는다(0162 작업 ↔ 모델 순위, 2026-11-02) — 끝까지 올린 DB 에서 0161 가지를 본다
+  // This test owns the historical 0161 window; later additive rules have separate regressions.
+  await migrateThrough(161, "0161_text_local_direct_binding");
+  expect((await client`SELECT count(*)::int n FROM drizzle.__drizzle_migrations`)[0].n).toBe(journal.entries.filter(entry => entry.idx <= 161).length);
+  // 0161 뒤에는 그 뒤 번호만 붙는다. 이 창은 0161 자체의 이전 술어 보존을 검증한다.
   expect(journal.entries.find(entry => entry.idx === 161)).toMatchObject({ tag: "0161_text_local_direct_binding" });
   expect(journal.entries.slice(journal.entries.findIndex(entry => entry.idx === 161) + 1).every(entry => entry.idx > 161)).toBe(true);
   const text: Record<string, string> = { model_capacity_requests_dispatch_check: textLocalDirectDispatchSql,
@@ -191,6 +192,8 @@ it("0161 은 text local-direct 가지를 세 제약의 다음 rules ordinal 로 
   }
   expect(await client`SELECT to_jsonb(r) value FROM model_capacity_requests r ORDER BY request_id`).toEqual(snapshot);
   expect(await judge(rows.publication, publisher, tickets.publisher.runId)).toEqual(Object.fromEntries(REQUESTS.map(name => [name, true])));
+  // Keep the following runtime-recovery tests on the current schema, after proving the historical window above.
+  await migrate(drizzle(client), { migrationsFolder: path.join(root, "drizzle") });
 });
 
 it("0158 뒤 releaseEvidencedDispatches 가 publication_classify_cli 행을 process_group_exit 근거로 withdrawn 으로 닫고 dispatch_released 사건을 남긴다", async () => {

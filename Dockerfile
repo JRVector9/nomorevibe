@@ -32,11 +32,13 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN addgroup -g 1001 -S nodejs && adduser -S worker -u 1001 -G nodejs
 # 도구 층(시스템 패키지·모델 CLI)은 소스보다 먼저 둔다 — 버전이 그대로면 커밋마다 다시 설치·압축·업로드하지 않고 캐시를 쓴다.
-# Reviewer uses Claude; publisher category classification uses Codex. Pin both inspected CLIs.
+# Reviewer uses Claude/OpenCode; publisher category classification uses Codex. Pin inspected CLIs.
 ARG CLAUDE_CODE_VERSION=2.1.263
 ARG CODEX_CLI_VERSION=0.153.4
+ARG OPENCODE_CLI_VERSION=2.2.5
 RUN apk add --no-cache tini util-linux font-dejavu && npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} @openai/codex@${CODEX_CLI_VERSION} \
   && claude --version && codex --version
+RUN npm install -g @opencode/cli@${OPENCODE_CLI_VERSION} && opencode --version
 RUN --mount=type=bind,source=scripts/install-codex-native-entrypoint.mjs,target=/tmp/install-codex-native-entrypoint.mjs,readonly \
   node /tmp/install-codex-native-entrypoint.mjs "${CODEX_CLI_VERSION}" && codex --version
 RUN mkdir -p /var/lib/nomorevibe-codex /var/lib/nomorevibe-grok && chown worker:nodejs /var/lib/nomorevibe-codex /var/lib/nomorevibe-grok
@@ -51,6 +53,11 @@ COPY --from=worker-deps --chown=worker:nodejs /app/node_modules ./node_modules
 COPY --chown=worker:nodejs package.json package-lock.json tsconfig.json ./
 COPY --chown=worker:nodejs lib ./lib
 COPY --chown=worker:nodejs scripts ./scripts
+# Keep the existing source-manifest COPY contract. Install the tracked policy as
+# a root-owned managed file before switching to the unprivileged runtime user.
+RUN mkdir -p /etc/opencode \
+  && cp /app/scripts/config/opencode-worker.json /etc/opencode/opencode.json \
+  && chown root:root /etc/opencode/opencode.json && chmod 444 /etc/opencode/opencode.json
 COPY --chown=worker:nodejs drizzle ./drizzle
 # 알림 메일 문구(lib/me/email-copy.ts) — 보낼 때만 늦게 읽는다. 잡 목록은 이 폴더 없이도 올라온다(Oracle release).
 COPY --chown=worker:nodejs messages ./messages

@@ -153,7 +153,7 @@ export function cliReviewModel(value: string | null | undefined): string | null 
 }
 
 /** local-direct: 엔진 직접 계약으로 공통 장부의 AI1 게이트웨이 kind 를 쓰는 1차 심사자(PR 3b-C). */
-export type FirstReviewer = { provider: "claude-cli" | "abcllm" | "grok-cli" | "local-direct"; model: string };
+export type FirstReviewer = { provider: "claude-cli" | "abcllm" | "grok-cli" | "opencode-cli" | "local-direct"; model: string };
 /**
  * 옛 설정의 1차 심사자(crawl_settings.firstReview) — 1차 심사의 실행 쪽은 이것을 읽지 않는다(PR C1: 「작업 ↔ 모델」 1차 AI 검수 순위, first-reviewers.ts).
  * 남은 쓰임: 격리 replay·인증 용량 스냅숏(설정이 manifest 의 모델을 선언한다)과 발행분 감사 캠페인 시작(PR C2 가 그 작업의 순위로 옮긴다).
@@ -162,11 +162,11 @@ export type FirstReviewer = { provider: "claude-cli" | "abcllm" | "grok-cli" | "
 export function firstReviewer(settings: { firstReview?: FirstReviewer }): FirstReviewer | null {
   return settings.firstReview ?? null;
 }
-export function reviewCliArgs(model: string): string[] {
+export function reviewCliArgs(model: string, effort = "low"): string[] {
   return ["-p", "--output-format", "json", "--json-schema", JSON.stringify(OUTPUT_SCHEMA),
     // 형식이 한 번 어긋나면 고쳐 쓸 한 턴을 준다. 비용은 --max-budget-usd, 시간은 제한 시간이 막는다
     "--tools", "", "--max-turns", "2", "--no-session-persistence", "--model", model,
-    "--effort", "low", "--max-budget-usd", "0.15", "--safe-mode", "--disable-slash-commands",
+    "--effort", effort, "--max-budget-usd", "0.15", "--safe-mode", "--disable-slash-commands",
     "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', "--no-chrome", "--system-prompt", REVIEW_SYSTEM_PROMPT];
 }
 
@@ -248,7 +248,7 @@ export function reviewCliPrompt(serialized: string): string {
   return `<untrusted_evidence_json>\n${serialized.replace(/</g, "\\u003c").replace(/>/g, "\\u003e")}\n</untrusted_evidence_json>`;
 }
 
-export async function reviewWithAgent(input: ReviewInput, options: { model?: string; run?: ReviewCliRun; timeoutMs?: number; signal?: AbortSignal;
+export async function reviewWithAgent(input: ReviewInput, options: { model?: string; reasoningEffort?: string; run?: ReviewCliRun; timeoutMs?: number; signal?: AbortSignal;
   /** 띄울 명령(1차·2차는 PATH 의 claude — PR C1). 없으면 runReviewCli 의 예전 기본 */
   command?: string } = {}): Promise<AgentReviewResult> {
   assertLiveReviewAdapterAllowed();
@@ -261,7 +261,7 @@ export async function reviewWithAgent(input: ReviewInput, options: { model?: str
   const ceiling = reviewCliTimeoutMs();
   let result: ReviewCliResult;
   try {
-    result = await (options.run ?? runReviewCli)(reviewCliArgs(model), prompt, {
+    result = await (options.run ?? runReviewCli)(reviewCliArgs(model, options.reasoningEffort), prompt, {
       timeoutMs: Math.max(1, Math.min(options.timeoutMs ?? ceiling, ceiling)), signal: options.signal,
       ...(options.command ? { command: options.command } : {}),
     });

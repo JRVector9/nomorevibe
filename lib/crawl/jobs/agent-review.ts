@@ -164,7 +164,7 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
           claim = await claimAgentReview({ ...context, lease, provider, model: provider === "rules" ? REVIEW_RULES_VERSION : model });
         } catch (error) {
           if (!(error instanceof ModelCapacityDeferredError) || error.reason !== "reservation_required") throw error;
-          if (provider === "claude-cli" || provider === "grok-cli") {
+          if (provider === "claude-cli" || provider === "grok-cli" || provider === "opencode-cli") {
             const capacity = await import("../review-cli-model-capacity");
             const resumed = await capacity.claimAgentReviewCliModelCapacity({ ...context, lease, provider, model, timeoutMs: ceiling, signal: ctx.signal });
             claim = resumed.claim; cli = { capacity, call: resumed.call };
@@ -267,7 +267,7 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
           candidateId: candidate.id, firstAttemptId: claim.attempt.id, provider: reviewProvider, model }, input, options)) ?? (reviewProvider === "abcllm"
           ? reviewWithGateway(input, options)
           // 엔진 직접(local-direct) 1차는 공통 장부의 dispatch 로만 보낸다 — 장부 밖 호환 경로로는 보내지 않는다(AI2 와 같다, PR 3b-C)
-          : reviewProvider === "local-direct" ? { ok: false as const, error: "not_configured" as const }
+          : reviewProvider === "local-direct" || reviewProvider === "opencode-cli" ? { ok: false as const, error: "not_configured" as const }
           // CLI 는 PATH 의 도구 이름으로 띄운다(env 경로 CLAUDE_CLI·GROK_CLI 를 읽지 않는다, PR C1)
           : reviewProvider === "grok-cli" ? reviewWithGrokCli(input, { ...options, command: CLI_TOOL_COMMANDS["grok-cli"] })
             : reviewWithAgent(input, { ...options, command: CLI_TOOL_COMMANDS["claude-cli"] }));

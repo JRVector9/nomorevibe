@@ -12,6 +12,7 @@ const VERSION = "2.1.0 (Claude Code)";
 
 it.each([
   ["crawl-agent-review", "claude-cli", "sonnet"], ["second-review", "claude-cli", "opus"],
+  ["crawl-agent-review", "opencode-cli", "opencode/deepseek-v4.1-flash"], ["second-review", "opencode-cli", "opencode-go/deepseek-v4.1-flash"],
   ["crawl-agent-review", "grok-cli", "grok-4.7"], ["second-review", "grok-cli", "grok-4.7"], ["grok-session-check", "grok-cli", "grok-4.7"],
 ] as const)("%s · %s 는 검사에 통과한 계약을 만든다", (routeId, provider, model) => {
   const contract = cliDbContract(routeId, provider, model, VERSION);
@@ -43,6 +44,7 @@ it.each([
   ["grok-session-check", "claude-cli"], ["crawl-agent-review", "codex-cli"], ["second-review", "codex-cli"], ["grok-session-check", "codex-cli"],
   // DB 계약 route 가 아닌 route(감사·소개 검수·분류는 env 계약 그대로)
   ["product-audit", "claude-cli"], ["product-intro-check", "claude-cli"], ["crawl-publish-classify", "claude-cli"], ["crawl-publish-classify", "codex-cli"],
+  ["grok-session-check", "opencode-cli"], ["product-audit", "opencode-cli"], ["product-intro-check", "opencode-cli"], ["crawl-publish-classify", "opencode-cli"],
   ["unknown-route", "claude-cli"],
 ] as const)("%s · %s 는 받지 않는다(null)", (routeId, provider) => {
   expect(cliDbContract(routeId, provider as CliProvider, "model", VERSION)).toBeNull();

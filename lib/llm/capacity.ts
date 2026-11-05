@@ -859,7 +859,7 @@ export type WebsearchQueryGatewayTerminalEvidence = Readonly<z.infer<typeof webs
  * 만든 transport 를 묶는다. AI1·AI2 는 gateway 와 같은 논리 키라 transport 가 달라도 한 후보·한 표에 활성 호출은 하나다.
  * 모양·해시만 본다 — 행·도메인 권한은 잠근 DB 행이, 물리 종료는 runner 의 opaque terminal 만 준다. C 는 개수 한도에 쓰지 않는 증거다.
  */
-const cliReviewerProvider = z.enum(["claude-cli", "grok-cli"]);
+const cliReviewerProvider = z.enum(["claude-cli", "grok-cli", "opencode-cli"]);
 const cliJob = <N extends string>(name: N) => z.object({ name: z.literal(name), token: z.uuid(),
   requestedVersion: z.number().int().nonnegative().safe() }).strict();
 const cliCanonical = (value: unknown) => JSON.stringify(canonical(value));

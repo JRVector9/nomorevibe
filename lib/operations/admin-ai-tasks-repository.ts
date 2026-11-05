@@ -19,7 +19,7 @@ import {
   AI_CONNECTION_DELETE_AUDIT_ACTION, AI_CONNECTION_KEY_FILL_AUDIT_ACTION, AI_CONNECTION_MODELS_AUDIT_ACTION, AI_CONNECTION_SAVE_AUDIT_ACTION, AI_TASK_AUDIT_ACTIONS,
   AI_TASK_MODELS_IMPORT_AUDIT_ACTION,
   AI_TASK_MODELS_SAVE_AUDIT_ACTION, aiConnectionBaseUrl, aiConnectionHost, aiConnectionKeyAad, aiImportPlanDigestInput, aiRanksReadiness, aiTaskRankNotices,
-  aiTaskRankOptions, aiTaskSlotDigestInput, buildAiImportPlan, validateAiTaskRanks,
+  aiRankSavedOptions, aiTaskRankOptions, aiTaskSlotDigestInput, buildAiImportPlan, validateAiTaskRanks,
   type AiConnectionInput, type AiConnectionView, type AiCurrentSlot, type AiImportPlan, type AiPolicyRoute, type AiRankChoice, type AiRankOption,
   type AiImportConnection, type AiRankReadiness, type AiReadinessInput, type AiTaskRankRow, type AiTaskRanksInput,
 } from "./admin-ai-tasks";
@@ -509,7 +509,7 @@ export async function saveAiTaskRanks(input: AiTaskRanksInput, actor: string): P
       await tx.delete(aiTaskModels).where(and(eq(aiTaskModels.task, task.id), eq(aiTaskModels.slot, input.slot)));
       const values = chosen.map(entry => {
         const kept = before.find(row => row.connectionId === entry.row.provider && row.model === entry.row.model);
-        return { task: task.id, slot: input.slot, rank: entry.rank, connectionId: entry.row.provider, model: entry.row.model, options: { ...kept?.options ?? {} },
+        return { task: task.id, slot: input.slot, rank: entry.rank, connectionId: entry.row.provider, model: entry.row.model, options: aiRankSavedOptions(entry.row, kept?.options),
           enabled: true, updatedBy: actor };
       });
       const after = values.length ? (await tx.insert(aiTaskModels).values(values).returning()).map(rankRowOf).sort((a, b) => a.rank - b.rank) : [];

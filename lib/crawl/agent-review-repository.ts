@@ -761,7 +761,7 @@ export class AgentReviewItemCliModelReservationRequired extends ModelCapacityDef
   readonly intent: AgentReviewItemCliModelIntent;
   constructor(value: AgentReviewItemCliModelIntent) {
     super("reservation_required");
-    this.intent = snapshotItemModelIntent(value, z.enum(["claude-cli", "grok-cli"]));
+    this.intent = snapshotItemModelIntent(value, z.enum(["claude-cli", "grok-cli", "opencode-cli"]));
   }
 }
 function snapshotItemModelIntent(value: AgentReviewItemModelIntent): AgentReviewItemModelIntent;
@@ -815,7 +815,7 @@ export async function claimConsumerItemAgentReviewWithCliModelReservation(input:
   call: z.infer<typeof reviewCliCallRefSchema>;
 }): Promise<CliModelCapacityReviewClaim> {
   if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
-  const expected = snapshotItemModelIntent(input.expected, z.enum(["claude-cli", "grok-cli"]));
+  const expected = snapshotItemModelIntent(input.expected, z.enum(["claude-cli", "grok-cli", "opencode-cli"]));
   const reservation = modelCapacityReservationSchema.parse(input.reservation), identity = modelCapacityRequestIdentitySchema.parse(input.identity);
   const call = reviewCliCallRefSchema.parse(input.call);
   if (!isDeepStrictEqual(expected.owner, reservation.owner) || !isDeepStrictEqual(expected.owner, identity.owner))

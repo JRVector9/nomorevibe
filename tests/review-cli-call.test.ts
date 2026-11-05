@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { createReviewInput } from "@/lib/crawl/agent-review-contract";
 import { reviewCliArgs, reviewWithAgent } from "@/lib/crawl/agent-review";
+import { opencodeReviewArgs, opencodeReviewConfig, opencodeReviewResult, opencodeReportedUsage } from "@/lib/crawl/agent-review-opencode";
 import { grokReviewArgs, reviewWithGrokCli } from "@/lib/crawl/agent-review-grok";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 import type { CrawlCandidate, CrawlDocument } from "@/lib/db/schema";
@@ -207,5 +208,75 @@ it.skipIf(process.platform === "win32")("pipe 쥔 손자: terminal 없이 proces
   try {
     expect(outcome).toEqual({ result: { ok: false, error: "cli_error" }, terminal: null, indeterminate: "process_exit" });
   } finally { if (child?.grandchild) try { process.kill(child.grandchild, "SIGKILL"); } catch { /* already gone */ } }
+  expect(await readdir(tmp)).toEqual([]);
+}, PROCESS_TEST_MS);
+
+
+it("OpenCode pinned v2 preparation binds model variants and rejects invalid effort/version before spawn", async () => {
+  const wireModel = "opencode/deepseek-v4.1-flash";
+  fixture.contracts = [{ ...grok("crawl-agent-review"), provider: "opencode-cli", boundProvenance: "declared", model: wireModel, cliVersion: "opencode v2.2.5" }];
+  const prepare = (reasoningEffort: string) => prepareReviewCliCall(input(), { routeId: "crawl-agent-review", provider: "opencode-cli", model: wireModel,
+    timeoutMs: 20_000, reasoningEffort });
+  expect(opencodeReviewArgs(wireModel, "high")).toEqual(["run", "--standalone", "--format", "json", "--agent", "nmv-review", "--model", `${wireModel}#high`]);
+  const low = await prepare("low"), high = await prepare("high");
+  expect(low.kind).toBe("prepared_cli"); expect(high.kind).toBe("prepared_cli");
+  if (low.kind !== "prepared_cli" || high.kind !== "prepared_cli") throw new Error("missing_fixture_contract");
+  expect(low.transport.argvHash).not.toBe(high.transport.argvHash);
+  expect(low.transport.cliContractHash).toBe(high.transport.cliContractHash);
+  await releaseReviewCliCall(low); await releaseReviewCliCall(high);
+  expect(await prepare("medium")).toMatchObject({ kind: "unsupported" });
+  fixture.contracts[0] = { ...fixture.contracts[0], cliVersion: "1.14.0" };
+  expect(await prepare("high")).toMatchObject({ kind: "unsupported" });
+  expect(await recorded()).toEqual([]);
+  expect(await readdir(tmp)).toEqual([]);
+  const config = JSON.parse(opencodeReviewConfig());
+  expect(config.policies).toContainEqual({ action: "tool.use", resource: "*", effect: "deny" });
+  expect(config.agents).toMatchObject({ title: { disabled: true }, summary: { disabled: true }, compaction: { disabled: true } });
+});
+
+it("OpenCode requires completed final JSON text; tool/error/missing-terminal streams cannot approve", () => {
+  const outcome = { decision: "approve", reason: "Product evidence", evidenceIds: ["product"], confidence: 0.8 };
+  const text = { type: "text", part: { id: "text1", messageID: "message1", text: JSON.stringify(outcome) } };
+  const finish = { type: "step_finish", part: { id: "step1", messageID: "message1", reason: "stop", tokens: { input: 40, output: 9, reasoning: 11, cache: { read: 7, write: 3 } }, cost: 0.001 } };
+  const stream = (values: unknown[]) => values.map(value => JSON.stringify(value)).join("\n") + "\n";
+  const parse = (values: unknown[]) => opencodeReviewResult(input(), { kind: "exit", code: 0, stderr: "", stdout: stream(values) });
+  expect(parse([text, finish])).toMatchObject({ ok: true, outcome: { decision: "approve" } });
+  for (const values of [[text], [text, { ...finish, part: { ...finish.part, reason: "length" } }], [text, finish, { type: "tool_use" }],
+    [text, finish, { type: "error", error: { message: "failed" } }],
+    [text, finish, { type: "step_finish", part: { ...finish.part, messageID: "message2", reason: "length" } }],
+    [text, finish, { type: "step_start", part: { messageID: "message2" } }, { ...text, part: { ...text.part, messageID: "message2" } }]]) expect(parse(values).ok).toBe(false);
+  expect(opencodeReportedUsage(stream([text, finish, finish]))).toEqual({ inputTokens: 50, outputTokens: 20, costUsd: 0.001 });
+});
+
+
+it.skipIf(process.platform === "win32")("OpenCode native fake process receives isolated review config/stdin and emits accounted terminal", async () => {
+  const wireModel = "opencode/deepseek-v4.1-flash", recordFile = path.join(root, "opencode-record.json");
+  const events = [
+    { type: "text", part: { id: "text1", messageID: "m1", text: JSON.stringify({ decision: "approve", reason: "Product evidence", evidenceIds: ["product"], confidence: 0.8 }) } },
+    { type: "step_finish", part: { messageID: "m1", reason: "stop", tokens: { input: 40, output: 9, reasoning: 11, cache: { read: 7, write: 3 } }, cost: 0.001 } },
+  ].map(event => JSON.stringify(event)).join("\n") + "\n";
+  const script = path.join(root, "opencode-answer.mjs"), wrapper = path.join(root, "opencode-answer");
+  await writeFile(script, `import fs from "node:fs";
+const prompt = fs.readFileSync(0, "utf8");
+fs.writeFileSync(${JSON.stringify(recordFile)}, JSON.stringify({ argv: process.argv.slice(2),
+  hasDatabase: !!process.env.DATABASE_URL, hasProviderKey: !!process.env.OPENCODE_API_KEY,
+  hasConfigOverride: !!process.env.OPENCODE_CONFIG_CONTENT, promptBytes: Buffer.byteLength(prompt),
+  config: JSON.parse(fs.readFileSync("opencode.json", "utf8")) }));
+process.stdout.write(${JSON.stringify(events)});
+`);
+  await writeFile(wrapper, `#!/bin/sh\nexec '${process.execPath}' '${script}' "$@"\n`); await chmod(wrapper, 0o755);
+  vi.stubEnv("PATH", await fakeToolDir(path.join(root, "opencode-tools"), { opencode: wrapper }));
+  vi.stubEnv("DATABASE_URL", "do-not-forward"); vi.stubEnv("OPENCODE_API_KEY", "fake-provider-key"); vi.stubEnv("OPENCODE_CONFIG_CONTENT", "do-not-forward");
+  fixture.contracts = [{ ...grok("crawl-agent-review"), provider: "opencode-cli", boundProvenance: "declared", model: wireModel, cliVersion: "opencode v2.2.5" }];
+  const call = await prepareReviewCliCall(input(), { routeId: "crawl-agent-review", provider: "opencode-cli", model: wireModel, reasoningEffort: "high", timeoutMs: 20_000 });
+  if (call.kind !== "prepared_cli") throw new Error("missing_fixture_contract");
+  const dispatch = dispatchFor(call), native = await reviewWithReservedCli(input(), dispatch, call);
+  const record = JSON.parse(await readFile(recordFile, "utf8"));
+  expect(record).toMatchObject({ argv: opencodeReviewArgs(wireModel, "high"), hasDatabase: false, hasProviderKey: true, hasConfigOverride: false });
+  expect(record.promptBytes).toBeGreaterThan(0);
+  expect(record.config).toEqual(JSON.parse(opencodeReviewConfig()));
+  expect(native.result).toMatchObject({ ok: true, outcome: { decision: "approve" }, usage: { inputTokens: 50, outputTokens: 20 } });
+  expect(readCliProcessTerminal(native.terminal)).toMatchObject({ ending: "exited", requestId: dispatch.requestId, provenance: "cli_reported",
+    actualUsage: { inputTokens: 50, outputTokens: 20, totalTokens: 70 }, reportedCostUsdMicros: 1000 });
   expect(await readdir(tmp)).toEqual([]);
 }, PROCESS_TEST_MS);

@@ -20,7 +20,7 @@ export async function dispatchSecondReviewTransport(binding: SecondReviewTranspo
   const fixture = await dispatchReviewFixtureCall(binding, input, options);
   if (fixture !== undefined) return fixture;
   // Direct AI2 requires an atomic item/model dispatch; compatibility paths never send it.
-  if (binding.provider === "local-direct") return { ok: false, error: "not_configured" };
+  if (binding.provider === "local-direct" || binding.provider === "opencode-cli") return { ok: false, error: "not_configured" };
   const adapterOptions = { model: binding.model, timeoutMs: options.timeoutMs, signal: options.signal };
   // CLI 는 PATH 의 도구 이름으로 띄운다(env 경로를 읽지 않는다, PR C1)
   return binding.provider === "abcllm" ? reviewWithGateway(input, adapterOptions)

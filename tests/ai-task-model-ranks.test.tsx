@@ -116,7 +116,7 @@ describe("연결 입력", () => {
     const bad = aiConnectionInputFromForm(form({ kind: "cli", label: "", cliTool: "gemini", cliModels: "bad model!" }));
     expect(bad.input).toBeNull();
     expect(bad.issues).toEqual(["ai_connection_invalid:label", "ai_connection_invalid:cliTool", "ai_connection_invalid:cliModels"]);
-    expect(aiTaskIssueMessage(bad.issues[1])).toBe("입력을 확인하세요: CLI 도구(claude·codex·grok).");
+    expect(aiTaskIssueMessage(bad.issues[1])).toBe("입력을 확인하세요: CLI 도구(claude·codex·grok·opencode).");
     expect(aiTaskIssueMessage("ai_task_contract_probe_failed:crawl-tagline:engine_unreachable:http_401"))
       .toBe("crawl-tagline 경로의 엔진 직접 계약을 만들지 못했습니다: 엔진에 닿지 않습니다(http_401).");
   });

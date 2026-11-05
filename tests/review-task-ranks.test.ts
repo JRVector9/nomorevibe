@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { sql } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { bindReviewTaskRank, firstReviewRanks, resolveReviewTaskRanks, reviewRouteContracts, secondReviewRankSets, secondReviewRanks,
-  secondReviewSlotFallbacks } from "@/lib/crawl/review-task-ranks";
+  secondReviewSlotFallbacks, reviewRankOptionsFor } from "@/lib/crawl/review-task-ranks";
 import { firstReviewRankState, firstReviewerKey, firstReviewers } from "@/lib/crawl/first-reviewers";
 import { bareModelName, canonicalReviewModel, sameReviewModel, sameUnderlyingModel } from "@/lib/crawl/review-model-identity";
 import { underlyingModelSql } from "@/lib/crawl/held-qwen-retry-policy";
@@ -247,4 +247,17 @@ describe("장부 이름의 연결 꼬리(@<8 hex>)", () => {
     const query = new PgDialect().sqlToQuery(underlyingModelSql(sql`model`));
     expect(query.sql).toContain("'@[0-9a-f]{8}$'");
   });
+});
+
+
+it("CLI effort belongs to the selected rank, never another connection of the same model", () => {
+  const first = cliRank("first-review", "sonnet");
+  const backup = cliRank("first-review", "sonnet", { rank: 2 });
+  const secondUnavailable = cliRank("second-review", "sonnet");
+  const secondVoter = cliRank("second-review", "sonnet", { rank: 2 });
+  setServingContractSnapshotForTest([cliContract("crawl-agent-review", "claude-cli", "sonnet"), cliContract("second-review", "claude-cli", "sonnet")]);
+  setAiTaskModelsForTest([{ ...first, options: { reasoningEffort: "low" } }, { ...backup, options: { reasoningEffort: "high" } },
+    { ...secondUnavailable, enabled: false, options: { reasoningEffort: "low" } }, { ...secondVoter, options: { reasoningEffort: "high" } }]);
+  expect(reviewRankOptionsFor("crawl-agent-review", "claude-cli", "sonnet")).toEqual({ reasoningEffort: "low" });
+  expect(reviewRankOptionsFor("second-review", "claude-cli", "sonnet")).toEqual({ reasoningEffort: "high" });
 });

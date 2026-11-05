@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import { opencodeReportedUsage } from "@/lib/crawl/agent-review-opencode";
 import { usageFrom } from "@/lib/crawl/agent-review";
 import { assertLiveReviewAdapterAllowed } from "@/lib/crawl/review-fixture-transport";
 import { CLI_PROTOCOL, cliProcessTerminalEvidenceSchema, cliProviderSchema, cliServingContractHash, cliServingContractSchema,
@@ -81,7 +82,12 @@ function single(args: readonly string[], ...flags: string[]): string | null {
 }
 /** 공식 C 는 실제 argv·env 가 계약의 턴·출력·비용 상한과 같을 때만 그 호출의 증거다 */
 function invocationMatches(spec: z.infer<typeof inputSchema>, contract: CliServingContract): boolean {
-  if (single(spec.args, "--model", "-m") !== contract.model) return false;
+  const wireModel = single(spec.args, "--model", "-m");
+  if (contract.provider === "opencode-cli") {
+    const [baseModel, variant, extra] = (wireModel ?? "").split("#");
+    if (baseModel !== contract.model || extra !== undefined || (variant !== undefined && !/^[a-z0-9_-]{1,32}$/.test(variant))
+      || !spec.args.includes("--standalone")) return false;
+  } else if (wireModel !== contract.model) return false;
   if (contract.boundProvenance === "declared") return true;
   const tokens = spec.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS, budget = single(spec.args, "--max-budget-usd");
   return single(spec.args, "--max-turns") === String(contract.maxTurns) && spec.boundEnvKeys.includes("CLAUDE_CODE_MAX_OUTPUT_TOKENS")
@@ -188,10 +194,15 @@ export async function runReservedCliCall(call: PreparedCliCall, dispatch: CliDis
 function reportedUsage(provider: CliProvider, stdout: string) {
   if (provider === "codex-cli") return null;
   let parsed: unknown;
+  if (provider === "opencode-cli") {
+    const usage = opencodeReportedUsage(stdout);
+    if (!usage) return null;
+    parsed = { usage: { input_tokens: usage.inputTokens, output_tokens: usage.outputTokens }, total_cost_usd: usage.costUsd };
+  }
   try {
     // Grok 은 legacy parser 처럼 첫 { 부터 읽는다
     const start = provider === "grok-cli" ? stdout.indexOf("{") : 0;
-    parsed = JSON.parse(start > 0 ? stdout.slice(start) : stdout);
+    if (provider !== "opencode-cli") parsed = JSON.parse(start > 0 ? stdout.slice(start) : stdout);
   } catch { return null; }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
   const usage = usageFrom(parsed as Record<string, unknown>);

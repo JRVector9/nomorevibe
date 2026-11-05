@@ -14,6 +14,7 @@ import { localModelSplitJobsDispatchSql, localModelSplitJobsEventTerminalSql, lo
 import { gatewayLocalDirectDispatchSql, gatewayLocalDirectEventTerminalSql, gatewayLocalDirectLogicalSql, gatewayLocalDirectMembersSql,
   gatewayLocalDirectTerminalSql } from "@/lib/llm/gateway-local-direct-sql";
 import { textLocalDirectDispatchSql, textLocalDirectEventTerminalSql, textLocalDirectTerminalSql } from "@/lib/llm/gateway-local-direct-binding-sql";
+import { opencodeCliLogicalSql, opencodeCliDispatchSql, opencodeCliEventTerminalSql } from "@/lib/llm/opencode-cli-binding-sql";
 import { db } from "@/lib/db";
 import { createReviewInput, reviewHash, type ReviewInput } from "@/lib/crawl/agent-review-contract";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
@@ -518,6 +519,12 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
       const localDirectTail = `) OR (${events ? gatewayLocalDirectEventTerminalSql : gatewayLocalDirectTerminalSql})`;
       const split = `) OR (coalesce((${events ? localModelSplitJobsEventTerminalSql : localModelSplitJobsTerminalSql}),false))`;
       let full = new PgDialect().sqlToQuery(check.value).sql;
+      // 0163 adds an OpenCode ordinal only to the events terminal; strip it before checking the historical 0161 tail.
+      if (events) {
+        const opencodeTail = `) OR (${opencodeCliEventTerminalSql})`;
+        expect(full.startsWith("(") && full.endsWith(opencodeTail), `${name}: 0163 tail present`).toBe(true);
+        full = full.slice(1, -opencodeTail.length);
+      }
       expect(full.startsWith("(") && full.endsWith(textLocalDirectTail), `${name}: 0161 tail present`).toBe(true);
       full = full.slice(1, -textLocalDirectTail.length);
       expect(full.startsWith("(") && full.endsWith(localDirectTail), `${name}: 0157 tail present`).toBe(true);
@@ -618,7 +625,7 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
     // ledgerCheckDefs joins ordinals as "(ordinal 1) OR (ordinal 2)" inside CHECK (...), the same text as "(0158 predicate) OR (branch)"
     // without parsing the branch again. logical/members stay as 0158 left them (0158 added no JSON local-direct literal).
     expect(journal.entries.find(entry => entry.idx === 161)!.tag).toBe("0161_text_local_direct_binding");
-    await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
+    await migrateThrough(161);
     const after0161 = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
     const textLocalDirect: Record<string, string> = { model_capacity_requests_dispatch_check: textLocalDirectDispatchSql,
       model_capacity_requests_terminal_check: textLocalDirectTerminalSql, model_capacity_events_terminal_check: textLocalDirectEventTerminalSql };
@@ -629,6 +636,18 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
       expect(jsonLocalDirectCount(after0158[name]), `${name}: 0157/0158 never widened the JSON provider`).toBe(0);
       expect(jsonLocalDirectCount(branch), `${name}: the 0161 branch widens the JSON provider of the seven text routes`).toBe(7);
       expect(after0161[name], `${name}: 0158 predicate plus the 0161 text local-direct branch`).toBe(`CHECK ((${inner(after0158[name])}) OR (${branch}))`);
+    }
+    expect((await step<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`)[0].count).toBe(journal.entries.filter(entry => entry.idx <= 161).length);
+    // Then compare the complete current rules without changing the exact historical 0161 assertions above.
+    await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
+    const after0163 = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
+    const opencode: Record<string, string> = { model_capacity_requests_logical_check: opencodeCliLogicalSql,
+      model_capacity_requests_dispatch_check: opencodeCliDispatchSql, model_capacity_events_terminal_check: opencodeCliEventTerminalSql };
+    for (const name of [...LEFT, ...UNTOUCHED]) {
+      const branch = opencode[name];
+      if (!branch) { expect(after0163[name], `${name}: unchanged by 0163`).toBe(after0161[name]); continue; }
+      const predecessor = textLocalDirect[name] ? inner(after0161[name]) : `(${inner(after0161[name])})`;
+      expect(after0163[name], `${name}: exact prior ordinals plus the 0163 review branch`).toBe(`CHECK (${predecessor} OR (${branch}))`);
     }
     expect((await step<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`)[0].count).toBe(journal.entries.length);
   } finally { rmSync(partial, { recursive: true, force: true }); await step.end({ timeout: 5 }); }

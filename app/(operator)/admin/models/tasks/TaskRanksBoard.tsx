@@ -1,4 +1,5 @@
 "use client";
+import { aiRankChoiceOfRow } from "@/lib/operations/admin-ai-tasks";
 import { useActionState, useState } from "react";
 import { AI_TASK_GROUP_LABELS, AI_TASK_KIND_LABELS, aiTask, type AiTaskGroup } from "@/lib/llm/ai-tasks";
 // 형과 순수 함수만 — 저장은 actions(서버)를 거친다
@@ -67,7 +68,7 @@ export const clearConfirmText = (line: Pick<TaskRankLine, "label" | "live">) => 
 
 function TaskRankLineForm({ line, connections, rows, readOnly }: { line: TaskRankLine; connections: AiConnectionView[]; rows: AiTaskRankRow[]; readOnly: boolean }) {
   const [state, action, saving] = useActionState<AiTaskActionState, FormData>(saveAiTaskRanksAction, null);
-  const initial = line.rows.map(row => ({ provider: row.connectionId, model: row.model }));
+  const initial = line.rows.map(aiRankChoiceOfRow);
   const [value, setValue] = useState<(AiRankChoice | null)[]>(initial);
   const task = aiTask(line.task)!;
   const issues = validateAiTaskRanks(line.task, line.slot, value, { connections, rows });

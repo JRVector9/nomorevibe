@@ -11,11 +11,11 @@ import { reserveSecondReviewItemReplayCall, type SecondReviewItemReceipt } from 
 import type { CrawlSettings } from "./settings-schema";
 
 const positive = z.number().int().positive().safe();
-const base = { candidateId: positive, provider: z.enum(["abcllm", "claude-cli", "grok-cli", "local-direct"]),
+const base = { candidateId: positive, provider: z.enum(["abcllm", "claude-cli", "grok-cli", "opencode-cli", "local-direct"]),
   model: z.string().min(1).max(160).refine(value => value === value.trim() && !/[\p{Cc}]/u.test(value)) };
 const bindingSchema = z.discriminatedUnion("stage", [
   z.object({ ...base, stage: z.literal("first"), firstAttemptId: positive }).strict(),
-  z.object({ ...base, provider: z.enum(["abcllm", "claude-cli", "grok-cli", "local-direct"]),
+  z.object({ ...base, provider: z.enum(["abcllm", "claude-cli", "grok-cli", "opencode-cli", "local-direct"]),
     stage: z.literal("second"), firstAttemptId: positive.nullable(), secondReviewId: positive,
     generationKey: z.string().min(1).max(160), vote: positive }).strict(),
 ]);

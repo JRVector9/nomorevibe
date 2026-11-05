@@ -76,7 +76,7 @@ describe("처리 LLM 바꾸기 — 서랍의 줄 (2026-11-04 5차)", () => {
     const voter = line(editor, "second-review#1");
     const form = rankForm(voter, [{ provider: SUPA, model: "supa" }, { provider: M3, model: "gpt-oss-120b" }, null]);
     expect(aiTaskRanksInputFromForm(form)).toEqual({ issues: [], input: { task: "second-review", slot: 1, revision: voter.revision,
-      ranks: [{ provider: SUPA, model: "supa" }, { provider: M3, model: "gpt-oss-120b" }, null] } });
+      ranks: [{ provider: SUPA, model: "supa", reasoningEffort: "" }, { provider: M3, model: "gpt-oss-120b", reasoningEffort: "" }, null] } });
   });
 
   it("does not reuse a new save path — the drawer imports the tasks screen's server action and the flow page writes nothing itself", () => {
@@ -144,7 +144,8 @@ describe("처리 LLM 바꾸기 — 서랍 그림", () => {
   it("edit step: a select per rank, the locked task disabled with its reason, a connection state table", () => {
     const html = renderToStaticMarkup(<RankDrawer editor={editor} lines={flowRankLinesFor(editor, "profile")} title="프로필 준비" secondWaiting={null} onClose={() => {}} />);
     expect(html).toContain("처리 LLM 바꾸기 — 프로필 준비");
-    expect(html.match(/<select /g)).toHaveLength(18);
+    expect(html.match(/aria-label="[^"]+ [123]순위"/g)).toHaveLength(18);
+    expect(html).toContain("추론 강도");
     expect(html).toMatch(/aria-label="소개 검수 1순위" disabled=""/);
     expect(html).toContain("바꿀 수 없음");
     expect(html).toContain("CLI_SERVING_CONTRACTS");

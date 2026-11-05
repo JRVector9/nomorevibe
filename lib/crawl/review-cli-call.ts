@@ -13,6 +13,9 @@ import { reviewCliArgs, reviewCliMaxOutputTokens, reviewCliPrompt, reviewCliTime
   type AgentReviewResult, type ReviewCliRun } from "./agent-review";
 import { grokAuthPath, grokReviewAgentDefinition, grokReviewArgs, grokReviewResult, grokReviewTimeoutMs,
   GROK_REVIEW_AGENT } from "./agent-review-grok";
+import { aiCliToolOfProvider } from "@/lib/llm/ai-tasks";
+import { aiTaskReasoningEfforts } from "@/lib/llm/ai-task-reasoning";
+import { opencodeReviewArgs, opencodeReviewConfig, opencodeReviewResult, OPENCODE_REVIEW_VERSION } from "./agent-review-opencode";
 import { MAX_REVIEW_INPUT_BYTES, type ReviewInput } from "./agent-review-contract";
 import { assertLiveReviewAdapterAllowed } from "./review-fixture-transport";
 
@@ -24,7 +27,7 @@ import { assertLiveReviewAdapterAllowed } from "./review-fixture-transport";
  * Claude 는 reviewWithAgent 의 run 자리에 runner 를 끼우고(넘어온 argv·stdin·제한 시간이 준비한 값과 다르면 spawn 하지 않는다),
  * Grok 은 legacy 와 같은 grokReviewResult 로 읽는다. 제한 시간은 spawn 부터 센다(runner). 임시 디렉터리는 호출마다 하나다.
  */
-export type ReviewCliProvider = "claude-cli" | "grok-cli";
+export type ReviewCliProvider = "claude-cli" | "grok-cli" | "opencode-cli";
 export type ReviewCliRoute = "crawl-agent-review" | "second-review";
 export type PreparedReviewCliCall = Readonly<{ kind: "prepared_cli"; routeId: ReviewCliRoute; provider: ReviewCliProvider; model: string;
   inputHash: string; transport: CliTransport; totalTokenBound: number }>;
@@ -32,7 +35,7 @@ export type ReviewCliOutcome = Readonly<{ result: AgentReviewResult; terminal: C
   indeterminate: "process_exit" | "transport_unknown" | null }>;
 /** 장부 claim TX 가 받는 모양 — prepared 객체의 값 사본이고 실행 권한은 아니다 */
 export const reviewCliCallRefSchema = z.object({ kind: z.literal("prepared_cli"), routeId: z.enum(["crawl-agent-review", "second-review"]),
-  provider: z.enum(["claude-cli", "grok-cli"]), model: z.string().min(1).max(160), inputHash: z.string().regex(/^[a-f0-9]{64}$/),
+  provider: z.enum(["claude-cli", "grok-cli", "opencode-cli"]), model: z.string().min(1).max(160), inputHash: z.string().regex(/^[a-f0-9]{64}$/),
   transport: cliTransportSchema, totalTokenBound: z.number().int().positive().safe() }).strict();
 
 // legacy runReviewCli·runGrokCli 와 같은 값이다 — 같은 입력에서 legacy 와 byte 단위로 같은지 테스트가 고정한다.
@@ -41,12 +44,12 @@ const MAX_STDOUT_BYTES = 64 * 1024;
 const MAX_STDERR_BYTES = 16 * 1024;
 
 type State = { cli: PreparedCliCall; directory: string; inputIdentity: string; args: readonly string[]; stdin: string | null;
-  timeoutMs: number; started: boolean; released: Promise<void> | null };
+  timeoutMs: number; reasoningEffort?: string; started: boolean; released: Promise<void> | null };
 const calls = new WeakMap<PreparedReviewCliCall, State>();
 const sha = (value: string) => createHash("sha256").update(value).digest("hex");
 
 export function isReviewCliProvider(value: unknown): value is ReviewCliProvider {
-  return value === "claude-cli" || value === "grok-cli";
+  return value === "claude-cli" || value === "grok-cli" || value === "opencode-cli";
 }
 
 /** 장부 claim TX 가 묻는 계약. 운영 resolver 는 null 이라 CLI 는 open 이면 계속 미뤄진다(05c-1 과 같은 결과). */
@@ -63,12 +66,17 @@ export function reviewCliContractMatches(call: z.infer<typeof reviewCliCallRefSc
 
 /** legacy 가 not_configured·input_too_large 로 끝낼 입력과 계약 밖 호출은 준비하지 않는다(gateway 선례처럼 미룬다). */
 export async function prepareReviewCliCall(input: ReviewInput, options: { routeId: ReviewCliRoute; provider: ReviewCliProvider;
-  model: string; timeoutMs: number }): Promise<PreparedReviewCliCall | { kind: "unsupported"; reason: "provider_contract_unavailable" }> {
+  model: string; timeoutMs: number; reasoningEffort?: string }): Promise<PreparedReviewCliCall | { kind: "unsupported"; reason: "provider_contract_unavailable" }> {
   assertLiveReviewAdapterAllowed();
   const unsupported = { kind: "unsupported", reason: "provider_contract_unavailable" } as const;
   const snapshot = structuredClone(input), { routeId, provider, model } = options;
   if (!isReviewCliProvider(provider) || (routeId !== "crawl-agent-review" && routeId !== "second-review")
     || cliReviewModel(model) !== model || !Number.isSafeInteger(options.timeoutMs)) return unsupported;
+  const task = routeId === "second-review" ? "second-review" : "first-review";
+  const cliTool = aiCliToolOfProvider(provider);
+  const reasoningEffort = options.reasoningEffort || undefined;
+  if (reasoningEffort && !aiTaskReasoningEfforts(task, cliTool, model).includes(reasoningEffort)) return unsupported;
+  if (provider === "opencode-cli" && reviewCliServingContract(routeId, provider, model)?.cliVersion !== OPENCODE_REVIEW_VERSION) return unsupported;
   const serialized = JSON.stringify(snapshot.snapshot);
   if (Buffer.byteLength(serialized, "utf8") > MAX_REVIEW_INPUT_BYTES) return unsupported;
   const prompt = reviewCliPrompt(serialized);
@@ -82,22 +90,33 @@ export async function prepareReviewCliCall(input: ReviewInput, options: { routeI
     if (provider === "claude-cli") {
       const env: Record<string, string | undefined> = { ...process.env, CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(reviewCliMaxOutputTokens()) };
       delete env.CLAUDECODE;
-      args = reviewCliArgs(model); stdin = prompt;
+      args = reviewCliArgs(model, reasoningEffort); stdin = prompt;
       // 1차·2차의 CLI 는 PATH 의 도구 이름으로 띄운다(env 경로 CLAUDE_CLI 를 읽지 않는다, PR C1) — 계약의 버전 확인도 같은 명령이다
       prepared = prepareCliCall({ routeId, provider, model, command: cliCommandFor(routeId, provider), args, stdin, cwd: directory, env,
         boundEnvKeys: ["CLAUDE_CODE_MAX_OUTPUT_TOKENS"], timeoutMs, maxStdoutBytes: MAX_STDOUT_BYTES, maxStderrBytes: MAX_STDERR_BYTES });
-    } else {
+    } else if (provider === "grok-cli") {
       const env = { ...process.env, GROK_HOME: path.join(directory, "home"), GROK_AUTH_PATH: grokAuthPath(), RUST_LOG: "off", NO_COLOR: "1" };
-      args = grokReviewArgs(model, path.join(directory, "prompt.txt")); stdin = null;
+      args = grokReviewArgs(model, path.join(directory, "prompt.txt"), reasoningEffort); stdin = null;
       prepared = prepareCliCall({ routeId, provider, model, command: cliCommandFor(routeId, provider), args, stdin,
         files: [{ path: "prompt.txt", content: prompt }, { path: path.join("home", "agents", `${GROK_REVIEW_AGENT}.md`), content: grokReviewAgentDefinition() }],
         cwd: directory, env, boundEnvKeys: ["NO_COLOR", "RUST_LOG"], timeoutMs, maxStdoutBytes: MAX_STDOUT_BYTES, maxStderrBytes: MAX_STDERR_BYTES });
+    } else {
+      // Forward CLI login/provider configuration, never worker DB/control credentials or arbitrary startup/config overrides.
+      const allowedEnv = ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE", "TZ",
+        "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS",
+        "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "OPENCODE_API_KEY"];
+      const env: Record<string, string | undefined> = Object.fromEntries(allowedEnv.filter(key => process.env[key] !== undefined).map(key => [key, process.env[key]]));
+      env.NO_COLOR = "1";
+      args = opencodeReviewArgs(model, reasoningEffort); stdin = prompt;
+      prepared = prepareCliCall({ routeId, provider, model, command: cliCommandFor(routeId, provider), args, stdin,
+        files: [{ path: "opencode.json", content: opencodeReviewConfig() }], cwd: directory, env, boundEnvKeys: ["NO_COLOR"],
+        timeoutMs, maxStdoutBytes: MAX_STDOUT_BYTES, maxStderrBytes: MAX_STDERR_BYTES });
     }
   } catch (error) { await rm(directory, { recursive: true, force: true }); throw error; }
   if (prepared.kind !== "prepared") { await rm(directory, { recursive: true, force: true }); return unsupported; }
   const call: PreparedReviewCliCall = Object.freeze({ kind: "prepared_cli" as const, routeId, provider, model, inputHash: snapshot.inputHash,
     transport: prepared.transport, totalTokenBound: prepared.totalTokenBound });
-  calls.set(call, { cli: prepared, directory, inputIdentity: sha(JSON.stringify(snapshot)), args: Object.freeze([...args]), stdin, timeoutMs,
+  calls.set(call, { cli: prepared, directory, inputIdentity: sha(JSON.stringify(snapshot)), args: Object.freeze([...args]), stdin, timeoutMs, reasoningEffort,
     started: false, released: null });
   return call;
 }
@@ -158,11 +177,11 @@ export async function reviewWithReservedCli(input: ReviewInput, dispatch: CliMod
         outcome = await runReservedCliCall(state.cli, ref, { signal: runOptions.signal });
         return outcome.result;
       };
-      result = await reviewWithAgent(snapshot, { model: call.model, timeoutMs: state.timeoutMs, signal, run });
+      result = await reviewWithAgent(snapshot, { model: call.model, timeoutMs: state.timeoutMs, reasoningEffort: state.reasoningEffort, signal, run });
     } else {
       try {
         outcome = await runReservedCliCall(state.cli, ref, { signal });
-        result = grokReviewResult(snapshot, outcome.result);
+        result = call.provider === "opencode-cli" ? opencodeReviewResult(snapshot, outcome.result) : grokReviewResult(snapshot, outcome.result);
       } catch { result = { ok: false, error: "cli_error" }; }
     }
     if (outcome) return { result, terminal: outcome.terminal, indeterminate: outcome.indeterminate };

@@ -535,7 +535,7 @@ export async function fallbackWaitingSecondReview(intent: SecondReviewModelReser
       // 정책 route 가 있고 API 는 계약이 그 모델을 가리키며 CLI 는 CLI 계약이 있다. 이미 표를 낸·지금 투표자인 모델은 뺀다(런타임 가드)
       const eligible = withoutTakenModels(secondReviewFallbacksFor(context.settings, row.model), excluded).filter(voter =>
         capacity.policy?.routes.some(route => route.routeId === "second-review" && route.provider === voter.provider && route.model === voter.model)
-        && (voter.provider === "claude-cli" || voter.provider === "grok-cli" ? reviewCliServingContract("second-review", voter.provider, voter.model) !== null
+        && (isReviewCliProvider(voter.provider) ? reviewCliServingContract("second-review", voter.provider, voter.model) !== null
           : (() => { const serving = resolveAi2GatewayServingContract(voter.model, voter.provider);
             return serving?.provider === voter.provider && ai2ServingContractMatches(serving, voter.model); })()));
       const backup = eligible.find(voter => !sameUnderlyingModel(row.firstModel, voter.model)) ?? eligible[0];

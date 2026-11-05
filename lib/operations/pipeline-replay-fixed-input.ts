@@ -30,8 +30,8 @@ const integer = z.number().int().nonnegative().safe();
 const positive = integer.positive();
 const json = z.record(z.string(), z.unknown());
 const repo = z.string().min(3).max(200).regex(/^[^\s/]+\/[^\s/]+$/);
-const reviewer = z.object({ provider: z.enum(["abcllm", "claude-cli", "grok-cli"]), model: text }).strict();
-const secondReviewer = reviewer.extend({ provider: z.enum(["abcllm", "claude-cli", "grok-cli", "local-direct"]) });
+const reviewer = z.object({ provider: z.enum(["abcllm", "claude-cli", "grok-cli", "opencode-cli"]), model: text }).strict();
+const secondReviewer = reviewer.extend({ provider: z.enum(["abcllm", "claude-cli", "grok-cli", "opencode-cli", "local-direct"]) });
 
 /** 근거 시각은 절대값이 아니라 원래 심사 시작(anchor) 기준 나이(µs)로 둔다. 적재가 같은 나이로 다시 세운다. */
 const fixedInputSchema = z.object({
