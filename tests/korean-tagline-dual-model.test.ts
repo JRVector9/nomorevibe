@@ -38,8 +38,9 @@ it("starts disjoint GPT and Qwen batches concurrently and stores exact model pro
   expect(m.gpt).toHaveBeenCalledOnce(); finish({ kind: "result", result: outputs(8) }); await running;
   const writes = m.write.mock.calls.flatMap(([entries]) => entries);
   expect(writes).toHaveLength(16); expect(new Set(writes.map(e => e.task.productId)).size).toBe(16);
-  expect(writes.slice(0, 8).every(e => e.result.model === GPT_MODEL)).toBe(true);
-  expect(writes.slice(8).every(e => e.result.model === KOREAN_TRANSLATION_QWEN_MODEL)).toBe(true);
+  // Each lane writes when it finishes; provenance follows the exact product IDs.
+  expect(writes.map(e => [e.task.productId, e.result.model]).sort((a, b) => Number(a[0]) - Number(b[0])))
+    .toEqual(Array.from({ length: 16 }, (_, index) => [index + 1, index < 8 ? GPT_MODEL : KOREAN_TRANSLATION_QWEN_MODEL]));
 });
 it("stores GPT successes even when Qwen is unreachable, recording Qwen failures with its model", async () => {
   m.pending.mockResolvedValueOnce(Array.from({ length: 9 }, (_, i) => task(i + 1)));
