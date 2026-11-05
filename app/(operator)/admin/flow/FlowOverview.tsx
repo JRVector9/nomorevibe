@@ -46,7 +46,7 @@ export function SocialFlowView({ data }: { data: SocialFlowOverview | null }) {
     { step: "01 / 수집", title: "외부 글 수집", value: data.stored, unit: "글", hint: `최근 24시간 새 글 ${number(data.new24h)}건`, foot: "보관 중인 SNS 글 · 숨김·원문 삭제 포함", href: "/admin/content?tab=social", label: "수집 글 확인" },
     { step: "02 / 연결", title: "프로젝트 연결", value: data.linked, unit: "글", hint: "등록 프로젝트에 저장소로 연결", foot: "보관 글 기준 · 공개 자격 판정과 별도", href: "/admin/talk?link=product", label: "연결 상태 확인" },
     { step: "03 / 공개 조건", title: "화제 발행 대상", value: data.qualifiedProjects, unit: "프로젝트", hint: "공개 제품·최근 글·반응 기준 통과", foot: `상위 ${TALK_LIMIT}개가 /talk 노출 대상`, href: "/admin/talk", label: "발행 조건 확인" },
-    { step: "04 / 홈 대표", title: "홈 1위 확인 대기", value: data.homeWaiting, unit: "프로젝트", hint: "홈 후보 상위 20개 중 대표 승인 대기", foot: "홈 1위만 승인 · 화제 목록 발행은 별도", href: "/admin/talk#home", label: "홈 대표 결정" },
+    { step: "04 / 홈 대표", title: "홈 1위 확인 대기", value: data.homeWaiting, unit: "프로젝트", hint: "홈 후보 상위 20개 중 대표 승인 대기", foot: "홈 1위만 승인 · 화제 목록 발행은 별도", href: "/admin/talk", label: "홈 대표 결정" },
     { step: "05 / 사이트 발행", title: "화제 목록 노출", value: data.publicEnabled ? data.talkProjects : 0, unit: "프로젝트", hint: data.publicEnabled ? `홈 노출 ${number(data.homeProjects)}개` : "일반 사용자 공개 꺼짐 · 관리자 미리보기", foot: data.publicEnabled ? "현재 공개 조건을 통과한 목록" : `화제 노출 가능 ${number(data.talkProjects)}개`, href: "/admin/content?tab=social", label: "콘텐츠·노출 관리" },
   ];
   return <Panel title="SNS 수집·사이트 발행 흐름" description="SNS에서 모은 글을 프로젝트에 연결해 사이트 화제로 발행합니다. 프로젝트 자동 수집과 별도 흐름입니다." tool={<ReadStamp at={data.measuredAt} />} note="홈 대표 승인은 별도 분기입니다. 외부 SNS에 게시물을 자동 송출하는 기능은 현재 없습니다.">
