@@ -14,7 +14,7 @@ const DENIED = { error: "권한이 없습니다. 다시 로그인해주세요." 
 
 /** 관리자 결정은 공개 화면 셋(홈·/talk·상세)에 바로 비친다 */
 function revalidateTalk() {
-  revalidatePath("/admin/talk");
+  revalidatePath("/admin/talk"); revalidatePath("/admin/content");
   revalidatePath("/talk");
   revalidatePath("/");
 }

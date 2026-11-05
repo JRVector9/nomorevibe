@@ -23,3 +23,24 @@ it("DB 오류나 완전하지 않은 종료 표본을 0건 성공으로 바꾸�
   mocks.execute.mockRejectedValueOnce(new Error("fixture_db_unavailable"));
   expect(await readAdminModelsObservation()).toMatchObject({ error: expect.stringContaining("0건으로 간주하지 않습니다"), observedAt: null });
 });
+it("기본 상태판은 현재 점유·열린 요청·성공/실패 집계를 유지하고 고급 종료 표본만 생략한다", async () => {
+  mocks.execute.mockResolvedValue([]).mockResolvedValueOnce([]).mockResolvedValueOnce([{ observedAt: redesignNow, mode: "open", epoch: 1, revision: 7,
+    policy: redesignPolicy, policyHash: redesignObservation().policyHash, updatedAt: redesignNow }])
+    .mockResolvedValueOnce(redesignMetrics).mockResolvedValueOnce(redesignRequests);
+  const result = await readAdminModelsObservation({ throughput: false });
+  expect(result).toMatchObject({ error: null, observedAt: redesignNow, mode: "open", epoch: 1, revision: 7 });
+  expect(result.rows).toEqual(expect.arrayContaining(redesignMetrics));
+  expect(result.requests).toEqual(redesignRequests);
+  expect(result.throughput).toBeUndefined();
+  const queries = mocks.execute.mock.calls.map(([query]) => new PgDialect().sqlToQuery(query).sql);
+  expect(queries.join(" ")).toContain('AS "succeeded1h"');
+  expect(queries.join(" ")).toContain("state IN ('waiting','reserved','dispatched','indeterminate')");
+  expect(queries.join(" ")).not.toContain("LIMIT 50001");
+  expect(queries.join(" ")).not.toMatch(/\b(UPDATE|DELETE|INSERT)\b/);
+});
+it("고급 기본 reader는 종료 표본 5만건 초과를 계속 미확인으로 처리한다", async () => {
+  mocks.execute.mockResolvedValueOnce([]).mockResolvedValueOnce([{ observedAt: redesignNow, mode: "open", epoch: 1, revision: 7,
+    policy: redesignPolicy, policyHash: redesignObservation().policyHash, updatedAt: redesignNow }])
+    .mockResolvedValueOnce(redesignMetrics).mockResolvedValueOnce(redesignRequests).mockResolvedValueOnce(Array(50_001).fill({}));
+  expect(await readAdminModelsObservation()).toMatchObject({ error: expect.stringContaining("0건으로 간주하지 않습니다"), observedAt: null });
+});

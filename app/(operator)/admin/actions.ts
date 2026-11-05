@@ -119,6 +119,7 @@ export const saveCrawlSettings = webWriteAction(async function saveCrawlSettings
   }
 
   revalidatePath("/admin");
+  revalidatePath("/admin/settings");
   return { ok: true, version: settingsFormVersion(result.settings) };
 });
 
@@ -310,6 +311,7 @@ export const resetCrawlSettings = webWriteAction(async function resetCrawlSettin
 
   logger.info("admin.settings_reset", { login: admin.login });
   revalidatePath("/admin");
+  revalidatePath("/admin/settings");
   return { ok: true };
 });
 

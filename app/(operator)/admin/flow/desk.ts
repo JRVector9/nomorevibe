@@ -101,7 +101,7 @@ async function readWindow(read: Promise<Observation>): Promise<OperatorDesk["win
 
 async function loadShared(): Promise<Omit<OperatorDesk, "away">> {
   // 장부 관측(주 DB, 4초 기한)은 한 번만 읽어 장비·점검 창이 같이 쓴다. 못 읽으면 error 가 찬 관측이 온다 — 0 으로 보이지 않게 아래에서 거른다
-  const observation = readAdminModelsObservation().then((value) => { if (value.error) throw new Error("observation_unavailable"); return value; });
+  const observation = readAdminModelsObservation({ throughput: false }).then((value) => { if (value.error) throw new Error("observation_unavailable"); return value; });
   const [alerts, decisions, changes, equipment, window] = await Promise.all([
     readAlerts().catch(quiet<OperatorDesk["alerts"]>("desk.alerts_unavailable")),
     readDecisions().catch(quiet<OperatorDesk["decisions"]>("desk.decisions_unavailable")),
@@ -112,7 +112,7 @@ async function loadShared(): Promise<Omit<OperatorDesk, "away">> {
   return { measuredAt: new Date().toISOString(), alerts, decisions, changes, equipment, window };
 }
 
-/** 부재 중 — 관리자마다 다르다(나눠 쓰지 않는다). 짧은 읽기 셋, 각 3초 */
+/** 부재 중 — 관리자마다 다르다(나눠 쓰지 않는다). SELECT 넷, 문장별 3초 상한. */
 async function readAway(login: string, now: string): Promise<OperatorDesk["away"]> {
   return db.transaction(async (tx) => {
     await tx.execute(sql`SET LOCAL statement_timeout = '3s'`);
@@ -134,7 +134,32 @@ async function readAway(login: string, now: string): Promise<OperatorDesk["away"
 }
 
 export async function readOperatorDesk(login: string, fresh = false): Promise<OperatorDesk> {
-  const base = await shared("desk", loadShared, fresh);
-  const away = await readAway(login, base.measuredAt).catch(quiet<OperatorDesk["away"]>("desk.away_unavailable"));
+  const base = await readOperatorDeskShared(fresh);
+  const away = await readOperatorAway(login, base.measuredAt);
   return { ...base, away };
+}
+
+/** Shared display data only; the operator-specific away query never enters this cache. */
+export function readOperatorDeskShared(fresh = false): Promise<Omit<OperatorDesk, "away">> {
+  return shared("desk", loadShared, fresh);
+}
+
+export function readOperatorAway(login: string, measuredAt: string): Promise<OperatorDesk["away"]> {
+  return readAway(login, measuredAt).catch(quiet<OperatorDesk["away"]>("desk.away_unavailable"));
+}
+
+/** The changes tab needs audit rows and this operator's window, not the live operations fan-out. */
+export async function readOperatorChanges(login: string): Promise<OperatorDesk> {
+  const measuredAt = new Date().toISOString();
+  const [changes, away] = await Promise.all([
+    readChanges().catch(quiet<OperatorDesk["changes"]>("desk.changes_unavailable")),
+    readOperatorAway(login, measuredAt),
+  ]);
+  return { measuredAt, alerts: null, decisions: null, equipment: null, window: null, changes, away };
+}
+
+/** Diagnostics displays role ownership/admission; inbox, alerts and personal history belong elsewhere. */
+export async function readOperatorDiagnostics(): Promise<OperatorDesk> {
+  const window = await readWindow(readAdminModelsObservation({ throughput: false }));
+  return { measuredAt: new Date().toISOString(), alerts: null, decisions: null, equipment: null, changes: null, away: null, window };
 }

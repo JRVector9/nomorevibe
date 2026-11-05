@@ -11,16 +11,22 @@ import { OPS_FRESH_COOKIE, OPS_FRESH_SECONDS } from "./status/fresh";
 /** 화면마다 다시 읽는 간격과, 마지막 조작(누르기·키) 뒤 기다리는 시간 */
 export type RefreshPolicy = { intervalMs: number; idleMs: number };
 
-export function refreshPolicy(pathname: string): RefreshPolicy {
+export function refreshPolicy(pathname: string, search: Pick<URLSearchParams, "get"> = { get: () => null }): RefreshPolicy {
   const under = (path: string) => pathname === path || pathname.startsWith(`${path}/`);
+  const tab = search.get("tab");
+  // 과거 기록·편집 화면은 실시간 상태판과 다른 주기로 읽는다. 기존 표시 캐시의 수명은 바꾸지 않는다.
+  if (pathname === "/admin/activity" || (pathname === "/admin/flow" && tab === "changes")
+    || (pathname === "/admin/requests" && tab === "history")) return { intervalMs: 60_000, idleMs: 15_000 };
+  if (pathname === "/admin/settings" || pathname === "/admin" || (pathname === "/admin/content" && tab === "ranking")
+    || ["/admin/categories", "/admin/evidence", "/admin/github-accounts", "/admin/ranking"].includes(pathname)) return { intervalMs: 60_000, idleMs: 15_000 };
+  if (under("/admin/models")) return pathname === "/admin/models" && !["tasks", "connections", "history"].includes(tab ?? "")
+    ? { intervalMs: 15_000, idleMs: 15_000 } : { intervalMs: 60_000, idleMs: 15_000 };
   // 운영센터 — 워커 관측 15초에 맞춘 지금 그대로(10초). 조작 중에도 읽는다(전과 같다)
   if (under("/admin/status")) return { intervalMs: 10_000, idleMs: 0 };
   // 전체 흐름 — 보는 화면이다(바꾸는 칸이 없다). 읽기는 웹들이 15초 나눠 쓰므로 15초마다, 조작 중에도 읽는다
   if (under("/admin/flow")) return { intervalMs: 15_000, idleMs: 0 };
   // 심사 큐 — 갈래 셈이 보류 후보를 모두 다시 판정해 무겁고, 결정하는 화면이다. 손을 뗀 지 1분 지나야 다시 읽는다
-  if (under("/admin/review")) return { intervalMs: 30_000, idleMs: 60_000 };
-  // 크롤 설정 — 2차 표 선택지는 직접 연결 계약에서 읽는다. 30초
-  if (pathname === "/admin") return { intervalMs: 30_000, idleMs: 15_000 };
+  if (under("/admin/review")) return { intervalMs: tab === "rejected" || search.get("stage") === "rejected" || search.get("state") === "rejected" ? 60_000 : 30_000, idleMs: 60_000 };
   // 오늘 할 일 — 칸 열네 개를 주 DB 에서 센다(사람 몫·조치 수). 30초·손 뗀 지 1분
   if (under("/admin/inbox")) return { intervalMs: 30_000, idleMs: 60_000 };
   // 나머지 목록 — 누르려던 줄이 다시 그려지며 밀리지 않게, 15초 동안 조작이 없을 때만
@@ -28,7 +34,7 @@ export function refreshPolicy(pathname: string): RefreshPolicy {
 }
 
 /** 이번 차례를 건너뛰는 까닭. null 이면 읽는다. stuck 은 다시 읽기가 오래 끝나지 않아 기다리는 것 */
-export type PauseReason = "hidden" | "editing" | "unsaved" | "active" | "stuck";
+export type PauseReason = "hidden" | "editing" | "unsaved" | "active" | "stuck" | "navigation";
 
 export const PAUSE_LABELS: Record<PauseReason, string> = {
   hidden: "창이 가려져 쉼",
@@ -36,13 +42,18 @@ export const PAUSE_LABELS: Record<PauseReason, string> = {
   unsaved: "저장하지 않은 변경·열린 확인 창이 있어 멈춤",
   active: "조작 중이라 잠시 멈춤",
   stuck: "다시 읽기가 오래 걸려 끝나기를 기다리는 중",
+  navigation: "페이지 이동 중",
 };
+
+/** Normalize URL encoding in both the committed router state and the browser location. */
+export const adminRouteKey = (pathname: string, search = "") => `${pathname}?${new URLSearchParams(search).toString()}`;
+export const hasPendingContent = (root: Pick<ParentNode, "querySelector"> | null | undefined) => !!root?.querySelector('[aria-busy="true"]');
 
 /**
  * 저장하지 않은 변경이 있는가 — 화면이 직접 알리는 [data-dirty](설정 폼·감사 보류·일괄 선택·준비한 결정 등)와
- * 열린 확인 창(ConfirmAction, dialog.admin-confirm[open]). 창 아래 화면이 다시 그려지면 확인한 대상·상태가 바뀔 수 있다.
+ * 열린 대화상자(ConfirmAction·RankDrawer 등). 창 아래 화면이 다시 그려지면 확인한 대상·상태가 바뀔 수 있다.
  */
-export const UNSAVED_SELECTOR = "[data-dirty], dialog.admin-confirm[open]";
+export const UNSAVED_SELECTOR = "[data-dirty], dialog[open]";
 export function hasUnsaved(root: Pick<ParentNode, "querySelector"> | null | undefined): boolean {
   return !!root?.querySelector(UNSAVED_SELECTOR);
 }
@@ -93,12 +104,23 @@ export function clockLabel(value: string | null | undefined): string {
 /** 다시 읽기가 이만큼 끝나지 않으면 막힌 것으로 보고 한 번만 다시 부른다(느린 조각 하나가 갱신을 영영 막지 않게) */
 export const BUSY_LIMIT_MS = 60_000;
 
+/** A redirected/interrupted navigation releases on any new commit; failed navigation cannot block refresh forever. */
+export function createNavigationGuard(now: () => number = () => Date.now()) {
+  let from: string | null = null;
+  let started = 0;
+  return {
+    begin(current: string, target: string) { if (current !== target) { from = current; started = now(); } },
+    committed(route: string) { if (route !== from) from = null; },
+    pending() { if (from !== null && now() - started >= BUSY_LIMIT_MS) from = null; return from !== null; },
+  };
+}
+
 /**
  * 자동 갱신의 차례 — 언제 다시 읽을지만 정한다(화면·라우터는 LiveBar 가 잇는다). 시험이 시계를 넘겨 확인한다.
  * - 조작(누르기·키·바퀴·스크롤)은 input() 으로 알린다 — 화면마다 정한 시간 동안 쉰다.
  * - 다시 읽는 중에는 또 부르지 않는다. 1분 넘게 끝나지 않으면 한 번만 다시 부르고, 그 뒤에는 끝날 때까지(settled) 쉰다 —
  *   막힌 렌더 위에 렌더를 끝없이 겹치지 않는다.
- * - 수동 새로고침은 이 차례와 따로다(LiveBar 의 다른 transition) — 자동 갱신이 도는 중에도 누를 수 있다.
+ * - 수동 새로고침도 now()로 같은 차례를 잡고 LiveBar의 공통 busy guard를 확인한다.
  */
 export function createRefreshScheduler(now: () => number = () => Date.now()) {
   let lastInput = -Infinity;
@@ -106,9 +128,10 @@ export function createRefreshScheduler(now: () => number = () => Date.now()) {
   let retried = false;
   return {
     input() { lastInput = now(); },
-    tick(state: { visible: boolean; editing: boolean; unsaved: boolean; idleMs: number; manualBusy?: boolean }): { refresh: boolean; paused: PauseReason | null } {
+    tick(state: { visible: boolean; editing: boolean; unsaved: boolean; idleMs: number; manualBusy?: boolean; navigationBusy?: boolean }): { refresh: boolean; paused: PauseReason | null } {
       const reason = pauseReason({ ...state, idleForMs: now() - lastInput });
       if (reason) return { refresh: false, paused: reason };
+      if (state.navigationBusy) return { refresh: false, paused: "navigation" };
       if (state.manualBusy) return { refresh: false, paused: null };
       if (started !== null) {
         const stuck = now() - started >= BUSY_LIMIT_MS;

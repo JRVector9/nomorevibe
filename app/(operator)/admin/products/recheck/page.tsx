@@ -43,7 +43,7 @@ export default async function RecheckPage({ searchParams }: {
         </span>
       </div>
 
-      <p className="mt-2 max-w-[68ch] text-[13.5px] leading-[1.7] text-fg-2">
+      <p className="admin-page-lead mt-2 max-w-[68ch] text-[13.5px] leading-[1.7] text-fg-2">
         발행되면 규칙이 다시 닿지 않습니다. 기준을 고쳐도 이미 올라간 것은 그대로 남습니다.
         보관한 원본으로 <b className="font-semibold">지금 기준을 다시 태워</b> 거부로 갈리는 것을 짚습니다.
         저절로 내려가지는 않습니다 — 기준을 실험하다 공개 목록이 흔들리면 안 되므로,

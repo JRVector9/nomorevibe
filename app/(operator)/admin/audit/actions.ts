@@ -43,7 +43,7 @@ export const decideAuditFinding = webWriteAction(async function decideAuditFindi
     detail: { itemId, note: String(form.get('note') ?? '') || null }, ok: result.ok, error: result.ok ? null : result.error });
   if (!result.ok) return { error: result.error };
   logger.info('admin.product_audit_decided', { slug, decision, login: admin.login });
-  revalidatePath('/admin/audit');
+  revalidatePath('/admin/audit'); revalidatePath('/admin/requests');
   revalidatePath('/admin/products');
   return { message: decision === 'remove' ? '내렸습니다.' : '그대로 둡니다.' };
 });
@@ -61,7 +61,7 @@ export const startAudit = webWriteAction(async function startAudit(_previous: Au
     : { action: 'audit-start', target: 'product_audit', detail: { reason, reauditKept }, ok: false, error: result.error });
   if (!result.ok) return { error: result.error };
   logger.info('admin.product_audit_started', { campaign: result.campaignId, enrolled: result.enrolled, login: admin.login });
-  revalidatePath('/admin/audit');
+  revalidatePath('/admin/audit'); revalidatePath('/admin/requests');
   revalidatePath('/admin/status');
   return { message: `${result.enrolled.toLocaleString('ko-KR')}건을 올렸습니다. 유지 판정으로 뺀 것 ${result.keptSkipped.toLocaleString('ko-KR')}건.` };
 });
@@ -74,7 +74,7 @@ export const cancelAudit = webWriteAction(async function cancelAudit(): Promise<
   await recordAdminAction(admin.login, { action: 'audit-cancel', target: 'product_audit', ok: cancelled,
     error: cancelled ? null : '진행 중인 감사가 없습니다' });
   logger.info('admin.product_audit_cancelled', { cancelled, login: admin.login });
-  revalidatePath('/admin/audit');
+  revalidatePath('/admin/audit'); revalidatePath('/admin/requests');
   return cancelled ? { message: '중단했습니다.' } : { error: '진행 중인 감사가 없습니다.' };
 });
 
@@ -104,7 +104,7 @@ export const removeAuditGroup = webWriteAction(async function removeAuditGroup(f
   await recordAdminActions(admin.login, items.map((item) => ({ action: 'audit-remove', target: item.slug,
     detail: { itemId: item.itemId, group, scope, bulk: items.length }, ok: !failed.has(item.slug), error: failed.get(item.slug) ?? null })));
   logger.info('admin.product_audit_group_removed', { group, scope, removed: result.removed.length, failed: result.failed.length, login: admin.login });
-  revalidatePath('/admin/audit');
+  revalidatePath('/admin/audit'); revalidatePath('/admin/requests');
   revalidatePath('/admin/products');
   return { removed: result.removed.length, failed: result.failed.length };
 });
@@ -128,7 +128,7 @@ export const restartStalledAudit = webWriteAction(async function restartStalledA
   ] : [{ action: 'audit-start', target: `campaign:${campaignId}`, detail: { reason, replacing: campaignId }, ok: false, error: result.error }]);
   if (!result.ok) return { error: result.error };
   logger.info('admin.product_audit_restarted', { replaced: campaignId, campaign: result.campaignId, enrolled: result.enrolled, login: admin.login });
-  revalidatePath('/admin/audit');
+  revalidatePath('/admin/audit'); revalidatePath('/admin/requests');
   revalidatePath('/admin/status');
   return { message: `감사 #${campaignId}을 닫고 #${result.campaignId}을 열었습니다 — ${result.enrolled.toLocaleString('ko-KR')}건.` };
 });
@@ -150,7 +150,7 @@ export const switchAuditModel = webWriteAction(async function switchAuditModel(f
   if (!result.ok) return { error: result.error };
   logger.info('admin.product_audit_reviewer_switched', { campaign: campaignId, from: result.from, to: result.to, unanswered: result.unanswered,
     login: admin.login });
-  revalidatePath('/admin/audit');
+  revalidatePath('/admin/audit'); revalidatePath('/admin/requests');
   revalidatePath('/admin/status');
   return { message: `감사 #${campaignId}의 남은 ${result.unanswered.toLocaleString('ko-KR')}건을 ${auditReviewerLabel(result.to)}(으)로 묻습니다. 이미 답한 것은 그대로입니다.` };
 });
@@ -174,7 +174,7 @@ export const saveAuditHold = webWriteAction(async function saveAuditHold(_previo
   const result = await setAuditHold({ next: next.data, expected: expected.data, actor: admin.login, reason: String(form.get('reason') ?? '') });
   if (!result.ok) return { error: result.issues.join(' · ') };
   logger.info('admin.audit_hold_saved', { login: admin.login, enabled: result.auditHold.enabled });
-  revalidatePath('/admin/audit');
+  revalidatePath('/admin/audit'); revalidatePath('/admin/requests');
   return { message: result.auditHold.enabled ? '보류 설정을 저장했습니다.' : '자동 보류를 껐습니다. 이미 건 보류는 남아 있습니다.' };
 });
 
@@ -204,7 +204,7 @@ export const fixIntroRequest = webWriteAction(async function fixIntroRequest(_pr
     ok: fixed !== null, error: fixed ? null : 'stale' });
   if (!fixed) return { error: '이미 처리했거나 고칠 수 없는 제품입니다(내려갔거나 주인이 생김). 새로고침해주세요.' };
   logger.info('admin.intro_request_fixed', { slug: fixed.slug, id, login: admin.login });
-  revalidatePath('/admin/audit');
+  revalidatePath('/admin/audit'); revalidatePath('/admin/requests');
   revalidatePath('/admin/products');
   revalidatePath(`/p/${fixed.slug}`);
   return { message: fixed.closed.length > 1 ? `소개를 고치고 요청 ${fixed.closed.length}건을 닫았습니다.` : '소개를 고쳤습니다.' };
@@ -224,6 +224,6 @@ export const resolveIntroRequestAction = webWriteAction(async function resolveIn
     detail: { requestId: id, note }, ok: done !== null, error: done ? null : 'stale' });
   if (!done) return { error: '이미 처리한 요청입니다. 새로고침해주세요.' };
   logger.info('admin.intro_request_resolved', { slug: done.slug, id, outcome, login: admin.login });
-  revalidatePath('/admin/audit');
+  revalidatePath('/admin/audit'); revalidatePath('/admin/requests');
   return { message: outcome === 'fixed' ? '처리함으로 닫았습니다.' : '두었습니다.' };
 });

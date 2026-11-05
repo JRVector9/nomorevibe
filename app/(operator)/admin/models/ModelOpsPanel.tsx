@@ -82,7 +82,7 @@ export function ModelOpsProgress({ state }: { state: OpsState }) {
     <p><strong>{titles[state.action]}</strong></p>
     <p>감사 번호: {state.auditId ? `#${state.auditId}` : "접수 기록 확인 중"}</p>
     <details><summary>자세히</summary><p className="break-all">대상 {state.targetId} · 작업 ID {state.id}</p></details>
-    <p role="status">{state.status === "queued" ? "운영 실행기 대기" : state.status === "completed" ? "완료" : state.status === "running" ? "진행 중" : "중단"}</p>
+    <p role="status" className="text-[14px]" data-admin-type="status">{state.status === "queued" ? "운영 실행기 대기" : state.status === "completed" ? "완료" : state.status === "running" ? "진행 중" : "중단"}</p>
     {state.finalAdmission === "draining" && <p>이 작업은 끝나도 접수를 DRAIN으로 둡니다. 다음 절차가 정식 명령으로 OPEN합니다.</p>}
     <ol className="list-inside list-decimal">{steps.map(step => <li key={step}>{OPS_STEP_LABELS[step]} · {state.steps[step] === "done" ? "완료" : state.steps[step] === "running" ? "진행 중" : state.steps[step] ? "중단" : "대기"}</li>)}</ol>
     {(state.status === "blocked" || state.status === "manual") && <div role="alert"><p>멈춘 단계: {OPS_STEP_LABELS[state.step]}</p>

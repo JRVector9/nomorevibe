@@ -1,0 +1,126 @@
+/* Content type grows by 2 CSS px; status markers reset the delta in prototype.css. */
+.admin-prototype #page {
+  --admin-font-delta: 2px;
+  font-size: calc(13px + var(--admin-font-delta, 0px));
+}
+
+/* The preserved admin detail rule currently renders project names at 22px. */
+.admin-prototype.admin-area[data-admin-detail="product"] .project-hero h1 {
+  font-size: calc(22px + var(--admin-font-delta, 0px));
+}
+
+/*
+ * Keep utility specificity unchanged. Prototype buttons/fields retain their own
+ * font rules, while reused forms with a Tailwind font size receive the delta.
+ */
+:where(.admin-prototype #page) .text-\[13px\] {
+  font-size: calc(13px + var(--admin-font-delta, 0px));
+}
+:where(.admin-prototype #page) .text-\[13\.5px\] {
+  font-size: calc(13.5px + var(--admin-font-delta, 0px));
+}
+:where(.admin-prototype #page) .text-\[14px\] {
+  font-size: calc(14px + var(--admin-font-delta, 0px));
+}
+:where(.admin-prototype #page) .text-\[14\.5px\] {
+  font-size: calc(14.5px + var(--admin-font-delta, 0px));
+}
+:where(.admin-prototype #page) .text-\[15px\] {
+  font-size: calc(15px + var(--admin-font-delta, 0px));
+}
+:where(.admin-prototype #page) .text-\[16px\] {
+  font-size: calc(16px + var(--admin-font-delta, 0px));
+}
+:where(.admin-prototype #page) .text-\[17px\] {
+  font-size: calc(17px + var(--admin-font-delta, 0px));
+}
+:where(.admin-prototype #page) .text-\[18px\] {
+  font-size: calc(18px + var(--admin-font-delta, 0px));
+}
+:where(.admin-prototype #page) .text-\[19px\] {
+  font-size: calc(19px + var(--admin-font-delta, 0px));
+}
+:where(.admin-prototype #page) .text-\[20px\] {
+  font-size: calc(20px + var(--admin-font-delta, 0px));
+}
+:where(.admin-prototype #page) .text-\[22px\] {
+  font-size: calc(22px + var(--admin-font-delta, 0px));
+}
+:where(.admin-prototype #page) .text-\[25px\] {
+  font-size: calc(25px + var(--admin-font-delta, 0px));
+}
+:where(.admin-prototype #page) .text-\[26px\] {
+  font-size: calc(26px + var(--admin-font-delta, 0px));
+}
+
+:where(.admin-prototype #page) .text-xs {
+  font-size: calc(var(--text-xs, .75rem) + var(--admin-font-delta, 0px));
+}
+:where(.admin-prototype #page) .text-sm {
+  font-size: calc(var(--text-sm, .875rem) + var(--admin-font-delta, 0px));
+}
+:where(.admin-prototype #page) .text-base {
+  font-size: calc(var(--text-base, 1rem) + var(--admin-font-delta, 0px));
+}
+:where(.admin-prototype #page) .text-lg {
+  font-size: calc(var(--text-lg, 1.125rem) + var(--admin-font-delta, 0px));
+}
+:where(.admin-prototype #page) .text-xl {
+  font-size: calc(var(--text-xl, 1.25rem) + var(--admin-font-delta, 0px));
+}
+:where(.admin-prototype #page) .text-2xl {
+  font-size: calc(var(--text-2xl, 1.5rem) + var(--admin-font-delta, 0px));
+}
+:where(.admin-prototype #page) .text-3xl {
+  font-size: calc(var(--text-3xl, 1.875rem) + var(--admin-font-delta, 0px));
+}
+:where(.admin-prototype #page) .text-4xl {
+  font-size: calc(var(--text-4xl, 2.25rem) + var(--admin-font-delta, 0px));
+}
+:where(.admin-prototype #page) .text-5xl {
+  font-size: calc(var(--text-5xl, 3rem) + var(--admin-font-delta, 0px));
+}
+:where(.admin-prototype #page) .text-6xl {
+  font-size: calc(var(--text-6xl, 3.75rem) + var(--admin-font-delta, 0px));
+}
+:where(.admin-prototype #page) .text-7xl {
+  font-size: calc(var(--text-7xl, 4.5rem) + var(--admin-font-delta, 0px));
+}
+:where(.admin-prototype #page) .text-8xl {
+  font-size: calc(var(--text-8xl, 6rem) + var(--admin-font-delta, 0px));
+}
+:where(.admin-prototype #page) .text-9xl {
+  font-size: calc(var(--text-9xl, 8rem) + var(--admin-font-delta, 0px));
+}
+
+/* Explicit sizes in the preserved request/review forms. */
+.admin-prototype #page .request-workspace .request-field,
+.admin-prototype #page .request-workspace form label,
+.admin-prototype #page .prototype-review .panel-foot h2 {
+  font-size: calc(11px + var(--admin-font-delta, 0px));
+}
+
+/* Confirmation body/actions come from admin.css, outside the prototype sheet. */
+.admin-prototype #page .admin-confirm-body,
+.admin-prototype #page .admin-button {
+  font-size: calc(13px + var(--admin-font-delta, 0px));
+}
+
+/*
+ * RankingPolicyForm has its own module typography. Its stable editor/ARIA
+ * structure covers labels, section numbers, units and hints without changing
+ * the prototype input/button rules or depending on a generated module hash.
+ */
+.admin-prototype #page #ranking-edit form label,
+.admin-prototype #page #ranking-edit form p,
+.admin-prototype #page #ranking-edit form section[aria-labelledby] span:has(+ p),
+.admin-prototype #page #ranking-edit form section[aria-labelledby] span[aria-hidden="true"] {
+  font-size: calc(13px + var(--admin-font-delta, 0px));
+}
+.admin-prototype #page #ranking-edit form section[aria-labelledby] h3 {
+  font-size: calc(16px + var(--admin-font-delta, 0px));
+}
+.admin-prototype #page #ranking-edit form section[aria-labelledby] span + p,
+.admin-prototype #page #ranking-edit form > div:last-child strong {
+  font-size: calc(14px + var(--admin-font-delta, 0px));
+}

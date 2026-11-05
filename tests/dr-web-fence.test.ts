@@ -71,6 +71,8 @@ beforeEach(() => {
   fake.rateLimit.mockResolvedValue(false);
 });
 
+
+
 it("cache gate: one unlocked fence read per 5 s — the hot path never row-locks the fence", async () => {
   vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-17T00:00:00.000Z") });
   const gate = await import("@/lib/operations/dr/web-gate");
@@ -392,4 +394,17 @@ it("every admin server action and every write route handler goes through the web
   for (const file of ["api/auth/user/github/callback", "api/auth/maker/github/callback", "api/github/installations/setup"]) {
     expect(readFileSync(path.join(root, "app", file, "route.ts"), "utf8"), file).toMatch(/^export const GET = webWriteRoute\(/m);
   }
+});
+
+it("read-only admin preview refuses before DB reads and before an action can dispatch", async () => {
+  const gate = await import("@/lib/operations/dr/web-gate");
+  const action = vi.fn();
+  vi.stubEnv("ADMIN_WORKSPACE_PREVIEW_READ_ONLY", "1");
+  try {
+    expect(await gate.webWritable()).toBe(false);
+    await expect(gate.assertWebWritable()).rejects.toMatchObject({ reason: "site_fenced" });
+    await expect(gate.webWriteAction(action)()).rejects.toMatchObject({ reason: "site_fenced" });
+    expect(action).not.toHaveBeenCalled();
+    expect(fake.calls).toEqual([]);
+  } finally { vi.unstubAllEnvs(); }
 });

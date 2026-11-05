@@ -35,7 +35,7 @@ export const saveRankingPolicy = webWriteAction(async function saveRankingPolicy
     : { action: "ranking-schedule", target: "ranking_policy", detail: { policy: raw as Record<string, unknown> }, ok: false, error: result.issues.join(" · ") });
   if (!result.ok) return { issues: result.issues };
 
-  revalidatePath("/admin/ranking");
+  revalidatePath("/admin/ranking"); revalidatePath("/admin/content");
   return { ok: true, warnings: result.warnings };
 });
 
@@ -45,5 +45,5 @@ export const cancelRankingPolicy = webWriteAction(async function cancelRankingPo
 
   await cancelScheduledPolicy(admin.login);
   await recordAdminAction(admin.login, { action: "ranking-cancel", target: "ranking_policy" });
-  revalidatePath("/admin/ranking");
+  revalidatePath("/admin/ranking"); revalidatePath("/admin/content");
 });

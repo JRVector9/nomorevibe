@@ -30,6 +30,12 @@ export const STATION_JOBS: Readonly<Record<StationKey | "human", readonly { job:
   human: [{ job: "split-tiebreak", label: "갈림 판가름" }, { job: "held-qwen-retry", label: "보류 재심사" }],
 };
 
+/** Public-product translation runs after publication, outside the candidate conveyor. Reuse the same jobs read. */
+export const PUBLIC_TRANSLATION_JOBS = [
+  { job: "product-tagline-ko", label: "한국어 소개" },
+  { job: "product-translate", label: "제품 정보 번역" },
+] as const;
+
 const JOB_UNDO = "같은 자리에서 사유를 적고 재개하면 멈추기 전 재시도 시각이 돌아옵니다(작업 로그 job-pause 에 전·후 값).";
 const n = (value: number) => value.toLocaleString("ko-KR");
 

@@ -121,7 +121,7 @@ export default async function AdminPage() {
             마지막 변경 <span className="font-mono">{formatListTime(meta.updatedAt, now)}</span> · {meta.updatedBy ?? "알 수 없음"}
           </span>}
         </div>
-        {apply && <SettingsApplyLine apply={apply} now={now} />}
+        {apply ? <SettingsApplyLine id="apply" apply={apply} now={now} /> : <p id="apply" className="scroll-mt-6 text-[13px] text-fg-3">역할별 설정 적용 상태를 읽지 못했습니다. 저장된 설정과 실제 적용 상태는 구분해 확인하세요.</p>}
         <p className="max-w-[72ch] text-[14px] text-fg-3">
           무엇을 찾아올지(검색 신호·수집 범위)와 무엇을 올릴지(판정·거르는 목록), 누가 다시 볼지(1·2차 심사)를 정합니다.
           저장하면 다음 틱부터 적용되고, 판정 기준은 보관한 원본으로 다시 판정합니다.

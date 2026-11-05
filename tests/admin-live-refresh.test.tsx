@@ -5,25 +5,40 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
-const router = vi.hoisted(() => ({ refresh: vi.fn(), pathname: "/admin/review" }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: router.refresh }), usePathname: () => router.pathname }));
+const router = vi.hoisted(() => ({ refresh: vi.fn(), pathname: "/admin/review", search: "" }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: router.refresh }), usePathname: () => router.pathname,
+  useSearchParams: () => new URLSearchParams(router.search) }));
 
-import { BUSY_LIMIT_MS, clockLabel, createRefreshScheduler, freshCookie, hasUnsaved, isTextEntry, LIVE_STORAGE_KEY, mergeBadges, pauseReason,
+import { BUSY_LIMIT_MS, clockLabel, createNavigationGuard, createRefreshScheduler, freshCookie, hasUnsaved, isTextEntry, LIVE_STORAGE_KEY, mergeBadges, pauseReason,
   readLivePreference, refreshPolicy, UNSAVED_SELECTOR, writeLivePreference } from "@/app/(operator)/admin/live-refresh";
 import { LiveBar } from "@/app/(operator)/admin/components/LiveBar";
 import { AdminShell } from "@/app/(operator)/admin/AdminShell";
 
 describe("화면마다 다시 읽는 규칙", () => {
-  it("운영센터는 10초·조작 중에도, 심사 큐·오늘 할 일은 30초·손 뗀 지 1분, 크롤 설정은 30초, 나머지는 15초", () => {
+  it("운영센터 10초, 심사·오늘 할 일 30초, 설정 60초, 일반 목록 15초를 유지한다", () => {
     expect(refreshPolicy("/admin/status")).toEqual({ intervalMs: 10_000, idleMs: 0 });
     expect(refreshPolicy("/admin/review")).toEqual({ intervalMs: 30_000, idleMs: 60_000 });
     expect(refreshPolicy("/admin/review/products")).toEqual({ intervalMs: 30_000, idleMs: 60_000 });
-    expect(refreshPolicy("/admin")).toEqual({ intervalMs: 30_000, idleMs: 15_000 });
+    expect(refreshPolicy("/admin")).toEqual({ intervalMs: 60_000, idleMs: 15_000 });
     // 오늘 할 일은 칸 열네 개를 주 DB 에서 센다 — 자주 읽지 않는다
     expect(refreshPolicy("/admin/inbox")).toEqual({ intervalMs: 30_000, idleMs: 60_000 });
     expect(refreshPolicy("/admin/audit")).toEqual({ intervalMs: 15_000, idleMs: 15_000 });
     // 이름이 같은 앞부분만으로 운영센터로 보지 않는다
     expect(refreshPolicy("/admin/statusx").intervalMs).toBe(15_000);
+  });
+
+  it.each([
+    ['/admin/flow', '', 15_000, 0], ['/admin/flow', 'tab=diagnostics', 15_000, 0],
+    ['/admin/flow', 'tab=changes', 60_000, 15_000], ['/admin/models', '', 15_000, 15_000],
+    ['/admin/models', 'tab=live', 15_000, 15_000], ['/admin/models', 'tab=capacity', 15_000, 15_000],
+    ['/admin/models', 'tab=unknown', 15_000, 15_000], ['/admin/models', 'tab=history', 60_000, 15_000],
+    ['/admin/models', 'tab=tasks', 60_000, 15_000], ['/admin/models', 'tab=connections', 60_000, 15_000],
+    ['/admin/review', 'tab=rejected', 60_000, 60_000], ['/admin/review', 'tab=human', 30_000, 60_000],
+    ['/admin/requests', 'tab=history', 60_000, 15_000], ['/admin/requests', 'tab=open', 15_000, 15_000],
+    ['/admin/settings', 'tab=collection', 60_000, 15_000], ['/admin/settings', 'tab=history', 60_000, 15_000],
+    ['/admin/content', 'tab=ranking', 60_000, 15_000], ['/admin/activity', '', 60_000, 15_000],
+  ])('%s?%s uses its current purpose', (pathname, query, intervalMs, idleMs) => {
+    expect(refreshPolicy(pathname, new URLSearchParams(query))).toEqual({ intervalMs, idleMs });
   });
 
   it("가려진 창 → 저장하지 않은 변경 → 입력 중 → 방금 조작 차례로 멈추고, 아니면 읽는다", () => {
@@ -75,7 +90,8 @@ describe("화면마다 다시 읽는 규칙", () => {
   it("저장하지 않은 변경([data-dirty])과 열린 확인 창이 있으면 멈춘다", () => {
     const root = (found: string | null) => ({ querySelector: (selector: string) => { expect(selector).toBe(UNSAVED_SELECTOR); return found; } });
     expect(UNSAVED_SELECTOR).toContain("[data-dirty]");
-    expect(UNSAVED_SELECTOR).toContain("dialog.admin-confirm[open]");
+    // RankDrawer (.fr) and other native modal dialogs need the same protection as ConfirmAction.
+    expect(UNSAVED_SELECTOR).toContain("dialog[open]");
     expect(hasUnsaved(root("dialog") as never)).toBe(true);
     expect(hasUnsaved(root(null) as never)).toBe(false);
     expect(hasUnsaved(null)).toBe(false);
@@ -111,7 +127,7 @@ describe("자동 갱신의 차례(createRefreshScheduler)", () => {
     expect(scheduler.tick(calm).refresh).toBe(true);
   });
 
-  it("수동 새로고침이 도는 동안 자동 갱신은 부르지 않는다 — 수동은 자동 갱신과 상관없이 돈다(LiveBar 의 다른 transition)", () => {
+  it("수동 새로고침이 도는 동안 자동 갱신은 부르지 않고, 진행 중 즉시 읽기도 겹치지 않는다", () => {
     let clock = 0;
     const scheduler = createRefreshScheduler(() => clock);
     expect(scheduler.tick({ ...calm, manualBusy: true })).toEqual({ refresh: false, paused: null });
@@ -123,14 +139,49 @@ describe("자동 갱신의 차례(createRefreshScheduler)", () => {
     expect(scheduler.now()).toBe(true);
   });
 
-  it("LiveBar 는 수동 새로고침을 자동 갱신과 다른 transition 으로, 막지 않고(aria-disabled) 부른다", () => {
+  it("탐색·loading 중에는 오래 걸린 자동 갱신 재시도도 새로 시작하지 않는다", () => {
+    let clock = 0;
+    const scheduler = createRefreshScheduler(() => clock);
+    expect(scheduler.tick({ ...calm, navigationBusy: true })).toEqual({ refresh: false, paused: "navigation" });
+    expect(scheduler.tick(calm).refresh).toBe(true);
+    clock += BUSY_LIMIT_MS * 2;
+    expect(scheduler.tick({ ...calm, navigationBusy: true })).toEqual({ refresh: false, paused: "navigation" });
+    scheduler.settled();
+    expect(scheduler.tick(calm).refresh).toBe(true);
+  });
+
+  it("LiveBar 는 갱신 중 포커스를 잃지 않도록 aria-disabled로 표시한다", () => {
     const source = readFileSync(path.resolve(__dirname, "../app/(operator)/admin/components/LiveBar.tsx"), "utf8");
     expect(source).toMatch(/const \[autoPending, startAuto\] = useTransition\(\)/);
     expect(source).toMatch(/const \[manualPending, startManual\] = useTransition\(\)/);
-    expect(source).toContain("aria-disabled={manualPending || undefined}");
+    expect(source).toContain('aria-disabled={manualPending || autoPending || pausedReason === "navigation" || undefined}');
     expect(source).not.toMatch(/admin-live-refresh"[^>]*\sdisabled=/);
     expect(source).toContain('addEventListener("popstate"');
     expect(source).toContain('addEventListener("wheel"');
+  });
+});
+
+describe("탐색 중 갱신 차단", () => {
+  it("목적지와 다른 redirect/interrupt commit도 차단을 해제한다", () => {
+    const guard = createNavigationGuard();
+    guard.begin('/admin/flow?', '/admin/models?');
+    expect(guard.pending()).toBe(true);
+    guard.committed('/admin/flow?');
+    expect(guard.pending()).toBe(true);
+    guard.committed('/admin/login?');
+    expect(guard.pending()).toBe(false);
+  });
+
+  it("URL이 바뀌지 않은 실패는 기한 후 풀고 같은 주소 클릭은 새 탐색으로 세지 않는다", () => {
+    let clock = 0;
+    const guard = createNavigationGuard(() => clock);
+    guard.begin('/admin/flow?', '/admin/flow?');
+    expect(guard.pending()).toBe(false);
+    guard.begin('/admin/flow?', '/admin/models?');
+    clock += BUSY_LIMIT_MS - 1;
+    expect(guard.pending()).toBe(true);
+    clock++;
+    expect(guard.pending()).toBe(false);
   });
 });
 
@@ -149,7 +200,19 @@ describe("마지막 갱신 = 화면을 그린 시각", () => {
     const pages = execSync('find "app/(operator)/admin" -name page.tsx', { cwd: root }).toString().trim().split("\n")
       .filter((file) => !file.includes("/login/"));
     expect(pages.length).toBeGreaterThan(15);
-    for (const file of pages) expect(readFileSync(path.join(root, file), "utf8"), file).toContain("<PageStamp />");
+    const verifyStamp = (file: string, parents = new Set<string>()) => {
+      expect(parents.has(file), `cyclic page delegation: ${file}`).toBe(false);
+      const source = readFileSync(file, "utf8");
+      if (source.includes("<PageStamp />")) return;
+      // Workspace entrypoints render the original stamped server pages. Check every delegate instead of mounting a second stamp.
+      const delegates = [...source.matchAll(/import (\w+) from "(\.\.[^"]*\/page)";/g)];
+      expect(delegates.length, `missing PageStamp or page delegation: ${file}`).toBeGreaterThan(0);
+      for (const [, name, relative] of delegates) {
+        expect(source, `unused page delegate: ${file}`).toContain(`<${name}`);
+        verifyStamp(path.resolve(path.dirname(file), relative + ".tsx"), new Set([...parents, file]));
+      }
+    };
+    for (const file of pages) verifyStamp(path.join(root, file));
   });
 });
 
@@ -173,11 +236,27 @@ describe("갱신 줄", () => {
   it("관리자 틀이 모든 화면 머리에 갱신 줄을 두고, 로그인 화면에는 두지 않는다", () => {
     router.pathname = "/admin/inbox";
     const shell = renderToStaticMarkup(<AdminShell renderedAt="2026-10-21T04:38:20.000Z" badges={{}}><main>PAGE-BODY</main></AdminShell>);
-    expect(shell).toContain("admin-live-bar");
-    expect(shell).toContain("자동 갱신 켜짐 · 30초");
-    expect(shell.indexOf("admin-live-bar")).toBeLessThan(shell.indexOf("PAGE-BODY"));
+    expect(shell).toContain("prototype-live");
+    expect(shell).toContain("30초 자동 관측");
+    expect(shell.indexOf("prototype-live")).toBeLessThan(shell.indexOf("PAGE-BODY"));
     router.pathname = "/admin/login";
     const login = renderToStaticMarkup(<AdminShell renderedAt="2026-10-21T04:38:20.000Z"><main>로그인</main></AdminShell>);
-    expect(login).not.toContain("admin-live-bar");
+    expect(login).not.toContain("prototype-live");
+  });
+
+  it("같은 기존 URL도 query에 따라 작업 공간을 고르고 계정과 검색을 유지한다", () => {
+    router.pathname = "/admin/audit";
+    router.search = "tab=requests";
+    const requests = renderToStaticMarkup(<AdminShell renderedAt="2026-10-21T04:38:20.000Z" account="operator@example.com"><main>실제 화면 본문</main></AdminShell>);
+    expect(requests).toContain('data-workspace="requests"');
+    expect(requests).toContain('admin-workspace-tabs');
+    expect(requests).toContain('search-launch');
+    expect(requests).toContain('operator@example.com');
+    expect(requests).toContain('action="/api/auth/logout"');
+    router.search = "tab=policy";
+    const quality = renderToStaticMarkup(<AdminShell renderedAt="2026-10-21T04:38:20.000Z"><main>실제 화면 본문</main></AdminShell>);
+    expect(quality).toContain('data-workspace="projects"');
+    expect(quality).toContain('실제 화면 본문');
+    router.search = "";
   });
 });

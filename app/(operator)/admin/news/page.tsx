@@ -73,7 +73,7 @@ export default async function AdminNewsPage({ searchParams }: Props) {
         <h1 className="text-[22px] font-extrabold tracking-tight">AI 소식</h1>
         <span className="text-[13px] text-fg-3">{admin.login}</span>
       </div>
-      <p className="mt-2 max-w-[68ch] text-[13.5px] leading-[1.7] text-fg-2">
+      <p className="admin-page-lead mt-2 max-w-[68ch] text-[13.5px] leading-[1.7] text-fg-2">
         회사 공식 피드에서 한 시간마다 모읍니다. 홈의 &ldquo;빌더를 위한 AI 소식&rdquo;에는 공식 발표만, 회사마다 가장 최근 것 하나씩 오릅니다.
         코딩 도구 릴리스는 모아 두기만 합니다.
       </p>

@@ -354,6 +354,28 @@ export async function getAllTimeRanking(options: {
   return withProductHealth(items);
 }
 
+function rankingAdminMetrics(activeSeason: RankingSeason | undefined) {
+  return activeSeason
+    ? db.select({
+      eligibleProducts: count(),
+      validClicks: sql<number>`coalesce(sum(${rankingEntries.validClicks}), 0)::integer`,
+    }).from(rankingEntries).where(eq(rankingEntries.seasonId, activeSeason.id)).then(([metrics]) => metrics)
+    : Promise.resolve({ eligibleProducts: 0, validClicks: 0 });
+}
+
+/** The content workspace does not render policy simulation or collection-readiness details. */
+export async function getRankingAdminOverview() {
+  const [activeSeason, scheduled, revisions] = await Promise.all([
+    findSeason(), getScheduledPolicy(), listPolicyRevisions(),
+  ]);
+  return {
+    active: activeSeason ? toSeasonSummary(activeSeason) : null,
+    activeMetrics: await rankingAdminMetrics(activeSeason),
+    scheduled: scheduled ?? null,
+    revisions,
+  };
+}
+
 export async function getRankingAdminState(now = new Date()): Promise<{
   active: SeasonSummary | null;
   activeMetrics: { eligibleProducts: number; validClicks: number };
@@ -371,16 +393,7 @@ export async function getRankingAdminState(now = new Date()): Promise<{
     getUniqueCollectionReadiness(now),
   ]);
   const active = activeSeason ? toSeasonSummary(activeSeason) : null;
-  const metricsPromise = activeSeason
-    ? db
-      .select({
-        eligibleProducts: count(),
-        validClicks: sql<number>`coalesce(sum(${rankingEntries.validClicks}), 0)::integer`,
-      })
-      .from(rankingEntries)
-      .where(eq(rankingEntries.seasonId, activeSeason.id))
-      .then(([metrics]) => metrics)
-    : Promise.resolve({ eligibleProducts: 0, validClicks: 0 });
+  const metricsPromise = rankingAdminMetrics(activeSeason);
   const activePolicy = active?.policy ?? DEFAULT_RANKING_POLICY;
   const comparisonPolicies = transitionPreviewPolicies(scheduled?.values ?? activePolicy);
   const policy = comparisonPolicies.form;

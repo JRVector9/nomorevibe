@@ -29,7 +29,7 @@ export const decideNews = webWriteAction(async function decideNews(_previous: Ne
   await recordAdminAction(admin.login, { action: `news-${decision === "approved" ? "approve" : "hide"}`,
     target: ids.length === 1 ? `news:${ids[0]}` : `news:${ids.length}건`, detail: { ids, changed } });
   logger.info("admin.news_decided", { login: admin.login, decision, changed });
-  revalidatePath("/admin/news");
+  revalidatePath("/admin/news"); revalidatePath("/admin/content");
   revalidatePath("/");
   return { ok: `${changed}건을 ${decision === "approved" ? "게시" : "숨김"}했습니다.` };
 });
@@ -46,7 +46,7 @@ export const saveNewsSettings = webWriteAction(async function saveNewsSettings(_
     },
   }, admin.login);
   if (!result.ok) return { error: result.issues.join(" · ") };
-  revalidatePath("/admin/news");
+  revalidatePath("/admin/news"); revalidatePath("/admin/content");
   return { ok: "저장했습니다. 다음 수집부터 적용됩니다." };
 });
 

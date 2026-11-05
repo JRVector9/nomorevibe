@@ -1,14 +1,12 @@
 import Link from "next/link";
+import { Fragment } from "react";
 import { takedownSignal } from "@/lib/domain/products/takedown-view";
 import { AdminIcon, type AdminIconName } from "./components/AdminIcon";
+import { WORKSPACE_GROUPS, resolveWorkspace, type WorkspaceId } from "./workspace-navigation";
 
 type NavPage = { href: string; label: string; hint: string; icon: AdminIconName };
 
-/**
- * 메뉴 두 묶음(2026-10-08 UX 감사 ADM-22) — 날마다 손대는 "일하기"와 가끔 여는 "설정·기록".
- * 이름은 각 페이지의 h1 과 같게 둔다(ADM-28). 메뉴를 하나 더하려면 해당 묶음에 한 줄을 넣는다 —
- * 예: { href: "/admin/inbox", label: "오늘 할 일", hint: "지금 처리할 것", icon: "inbox" }.
- */
+/** Legacy screen inventory retained for deep links and existing callers. Primary navigation uses WORKSPACE_GROUPS. */
 export const NAV_GROUPS: readonly { title: string; pages: readonly NavPage[] }[] = [
   {
     title: "일하기",
@@ -90,36 +88,69 @@ export function auditBadge(takedowns: { pending: number; overdue: number } | nul
   return { label, tone: pending && takedownSignal(pending)?.tone === "bad" ? "critical" : "warn", title };
 }
 
-const isActive = (current: string, href: string) => current === href || (href !== "/admin" && current.startsWith(`${href}/`));
-/** 메뉴가 서로 안긴 경로(/admin/models 와 /admin/models/limits)면 가장 긴 것 하나만 선택으로 표시한다 */
-function activeHref(current: string): string | undefined {
-  return NAV_GROUPS.flatMap((group) => group.pages).filter((page) => isActive(current, page.href))
-    .sort((a, b) => b.href.length - a.href.length)[0]?.href;
+const BADGE_SOURCES: Readonly<Record<WorkspaceId, readonly string[]>> = {
+  home: ["/admin/status"],
+  review: ["/admin/review"],
+  requests: ["/admin/audit", "/admin/requests", "/admin/feedback", "/admin/maker-replies", "/admin/reactions"],
+  projects: ["/admin/audit", "/admin/products", "/admin/translations"],
+  models: ["/admin/models", "/admin/models/tasks", "/admin/models/devices", "/admin/models/contracts"],
+  content: ["/admin/talk", "/admin/news", "/admin/ranking"],
+  settings: ["/admin/github-accounts", "/admin/github-integrations"],
+};
+const TONE_RANK: Record<NavBadgeTone, number> = { neutral: 0, warn: 1, critical: 2 };
+const LEGACY_LABELS = Object.fromEntries(NAV_GROUPS.flatMap(group => group.pages.map(page => [page.href, page.label])));
+
+/** The legacy audit badge contains request counts and an optional audit backlog; keep their workspace ownership separate. */
+function scopedAuditBadge(id: WorkspaceId, badge: NavBadge): NavBadge | undefined {
+  const title = badge.title ?? "";
+  // Older callers can provide a request badge without a description. Preserve that alarm in the request inbox.
+  if (!title) return id === "requests" ? badge : undefined;
+  const parts = title.split(" · ");
+  const requests = parts.filter(part => /내려달라는 요청|소개 수정 요청/.test(part));
+  const audits = parts.filter(part => /감사 거절/.test(part));
+  if (id === "requests") return requests.length ? { ...badge, title: requests.join(" · ") } : undefined;
+  if (id === "projects") {
+    if (!audits.length) return undefined;
+    // The original label counts requests when both kinds exist. Do not present it as an audit count.
+    return requests.length ? { label: "확인", tone: "warn", title: audits.join(" · ") } : badge;
+  }
+  return badge;
 }
 
-export function AdminNav({ current, badges = {} }: { current: string; badges?: NavBadges }) {
-  const active = activeHref(current);
-  return (
-    <nav className="admin-navigation" aria-label="관리자 메뉴">
-      {NAV_GROUPS.map((group, index) => (
-        <div key={group.title} className="admin-nav-group">
-          <p className="admin-nav-group-title" id={`admin-nav-group-${index}`}>{group.title}</p>
-          <ul aria-labelledby={`admin-nav-group-${index}`}>
-            {group.pages.map((page) => {
-              const badge = badges[page.href];
-              return <li key={page.href}>
-                <Link href={page.href} aria-current={page.href === active ? "page" : undefined} prefetch={false} title={page.label}>
-                  <AdminIcon name={page.icon} />
-                  <span className="admin-nav-text"><span>{page.label}</span><small>{page.hint}</small></span>
-                  {badge && <b className="admin-nav-badge" data-tone={badge.tone} title={badge.title}>
-                    {badge.title ? <><span aria-hidden="true">{badge.label}</span><span className="admin-vh">{badge.title}</span></> : badge.label}
-                  </b>}
-                </Link>
-              </li>;
-            })}
-          </ul>
-        </div>
-      ))}
-    </nav>
-  );
+/**
+ * A single source keeps its count. Multiple sources show the number of affected places, not a sum of overlapping
+ * alerts, projects, requests or model calls. Screen-reader text preserves every source and its own unit.
+ */
+export function workspaceBadge(id: WorkspaceId, badges: NavBadges): NavBadge | undefined {
+  const rows = [...new Set(BADGE_SOURCES[id])].flatMap(href => {
+    const original = badges[href];
+    const badge = original && (href === "/admin/audit" ? scopedAuditBadge(id, original) : original);
+    return badge ? [{ href, badge }] : [];
+  });
+  if (!rows.length) return undefined;
+  if (rows.length === 1) return rows[0].badge;
+  return {
+    label: `${rows.length}곳`,
+    tone: rows.reduce<NavBadgeTone>((tone, row) => TONE_RANK[row.badge.tone] > TONE_RANK[tone] ? row.badge.tone : tone, "neutral"),
+    title: rows.map(({ href, badge }) => `${LEGACY_LABELS[href] ?? href}: ${badge.title ?? badge.label}`).join(" · "),
+  };
+}
+
+export function AdminNav({ current, search = "", badges = {}, onNavigate }: { current: string; search?: string; badges?: NavBadges; onNavigate?: (href: string) => void }) {
+  const active = resolveWorkspace(current, new URLSearchParams(search)).workspace.id;
+  return <nav aria-label="관리자 메뉴" className="prototype-navigation">
+    {WORKSPACE_GROUPS.map((group, index) => <Fragment key={group.title}>
+      <p className="nav-label" id={`admin-nav-group-${index}`}>{group.title}</p>
+      {group.pages.map(page => {
+        const badge = workspaceBadge(page.id, badges);
+        return <Link key={page.id} href={page.href} aria-current={page.id === active ? "page" : undefined} prefetch={false} title={page.label}
+          onNavigate={onNavigate ? () => onNavigate(page.href) : undefined}>
+          <span className="nav-icon" aria-hidden="true"><AdminIcon name={page.icon} /></span><span>{page.label}</span>
+          {badge && <b className="nav-badge" data-tone={badge.tone} title={badge.title}>
+            {badge.title ? <><span aria-hidden="true">{badge.label}</span><span className="admin-vh">{badge.title}</span></> : badge.label}
+          </b>}
+        </Link>;
+      })}
+    </Fragment>)}
+  </nav>;
 }

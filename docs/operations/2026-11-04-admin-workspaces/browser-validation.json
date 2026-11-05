@@ -1,0 +1,108 @@
+{
+  "at": "2026-11-04T15:53:09.399Z",
+  "testedHead": "bd68015ba7b4e4bd026d9cb28f1986d937590b65",
+  "scope": "Private real-data read-only preview; no operating mutations executed",
+  "readOnlyGetRoutes": {
+    "count": 27,
+    "allHttp200": true
+  },
+  "finalClientNavigation": {
+    "workspaces": 7,
+    "allHydrated": true,
+    "allSingleOwner": true,
+    "overflow": 0,
+    "visibleIntros": 0,
+    "requestTabs": 6,
+    "flow": {
+      "selection": true,
+      "rankDrawer": true,
+      "rankDrawerClosed": true,
+      "stageRows": 9
+    },
+    "mobile": {
+      "opened": true,
+      "home": {
+        "primary": [
+          "/admin/flow"
+        ],
+        "tab": [
+          "/admin/flow"
+        ],
+        "overflow": false,
+        "hydrated": true,
+        "visibleIntros": 0
+      },
+      "closedAfterNavigation": true,
+      "requests": {
+        "primary": [
+          "/admin/requests"
+        ],
+        "tab": [
+          "/admin/requests?tab=open"
+        ],
+        "overflow": false,
+        "hydrated": true,
+        "visibleIntros": 0
+      }
+    }
+  },
+  "finalErrors": {
+    "page": 0,
+    "console": 0,
+    "http": 0,
+    "websocket": 0
+  },
+  "models": {
+    "settled": true,
+    "tables": 35,
+    "modelGroups": 11,
+    "skeletons": 0,
+    "desktop": {
+      "document": 1440,
+      "viewport": 1440
+    },
+    "mobile": {
+      "scroll": 390,
+      "view": 390
+    }
+  },
+  "realtime": {
+    "updated": true,
+    "elapsedMs": 26564,
+    "initial": {
+      "renderedAt": "2026-11-04T15:50:12.295Z",
+      "flowStamp": "00:50:11 기준",
+      "status": "15초마다 다시 읽음",
+      "auto": "true",
+      "visibility": "visible"
+    },
+    "after": {
+      "renderedAt": "2026-11-04T15:50:38.916Z",
+      "flowStamp": "00:50:38 기준",
+      "status": "15초마다 다시 읽음",
+      "auto": "true",
+      "visibility": "visible"
+    },
+    "serverReads": 3
+  },
+  "security": {
+    "postStatus": 405,
+    "unauthorizedNextStatus": 404
+  },
+  "screenshots": [
+    "home-desktop.png",
+    "flow-stages-desktop.png",
+    "requests-desktop.png",
+    "models-desktop.png",
+    "home-mobile.png",
+    "requests-mobile.png",
+    "models-mobile.png"
+  ],
+  "resolvedFindings": [
+    "Private development proxy HMR handshake prevented client hydration; normalized internal upgrade origin, rechecked actual interactions.",
+    "Private development font request returned 403; normalized development asset origin, final HTTP/console errors zero.",
+    "LLM page failed on nonunique registry purpose; task-rank data source fix now renders real observations.",
+    "ModelsTopBar negative margins caused 2px desktop/1px mobile overflow; redundant bar removed, final widths equal viewports."
+  ],
+  "testedSourceNote": "bd68015b plus the uncommitted ModelsTopBar removal and related regression tests; these source changes are preserved in the finalization commit. Screenshots remain private."
+}

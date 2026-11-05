@@ -22,9 +22,9 @@ export type ApplyBadges = Partial<Record<string, { label: string; title?: string
  * 모두 같은 판이면 초록 체크 하나, 아니면 역할마다 상태를 늘어놓는다. 10분 넘게 옛 판이면 운영센터 조치할 일에도 오른다.
  * 크롤 설정(crawl_settings)과 실시간 한도(runtime_settings)가 같은 줄을 쓴다 — apply 만 다르다.
  */
-export function SettingsApplyLine({ apply, now, badges = {} }: { apply: SettingsApply; now: Date; badges?: ApplyBadges }) {
+export function SettingsApplyLine({ id = "apply", apply, now, badges = {} }: { id?: string; apply: SettingsApply; now: Date; badges?: ApplyBadges }) {
   return (
-    <p id="apply" className="flex scroll-mt-6 flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-fg-2">
+    <p id={id} className="flex scroll-mt-6 flex-wrap items-center gap-x-3 gap-y-1 text-[13px] text-fg-2">
       <span className="font-semibold">저장 판 <span className="font-mono">{shortSettingsVersion(apply.savedVersion)}</span></span>
       {apply.allApplied && <StatusDot state="ok" label="모든 워커가 이 판으로 돕니다" />}
       {apply.roles.map((role) => {

@@ -49,7 +49,7 @@ export const saveEvidenceSettings = webWriteAction(async function saveEvidenceSe
 
   await saveEvidenceSettingsValue(parsed.data, admin.login);
   await recordAdminAction(admin.login, { action: "evidence-settings", target: "evidence_settings", detail: { values: parsed.data } });
-  revalidatePath("/admin/evidence");
+  revalidatePath("/admin/evidence"); revalidatePath("/admin/settings");
   revalidatePath("/admin/status");
   return { ok: true };
 });

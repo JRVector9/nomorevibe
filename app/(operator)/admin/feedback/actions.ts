@@ -26,7 +26,7 @@ export const reviewFeedbackAction = webWriteAction(async function reviewFeedback
   if (typeof id !== "string" || (decision !== "accepted" && decision !== "rejected") || typeof reason !== "string"
     || (expectedReviewState !== "accepted" && expectedReviewState !== "held" && expectedReviewState !== "rejected")) throw new FeedbackError("feedback_invalid", 400);
   await reviewFeedback({ id, expectedReviewState, decision, reason, adminLogin: admin.login });
-  revalidatePath("/admin/feedback");
+  revalidatePath("/admin/feedback"); revalidatePath("/admin/requests");
   revalidatePath("/admin/inbox");
   revalidatePath("/admin/github-integrations");
   revalidatePath(`/feedback/${id}`);

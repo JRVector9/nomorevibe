@@ -259,3 +259,109 @@ html[data-admin-theme="dark"] body:has(.admin-area) {
 .admin-search-extra{display:flex;gap:10px;justify-content:flex-end;font-size:12px}
 .admin-search-extra a{color:var(--color-accent-ink,var(--color-accent));text-decoration:underline}
 .admin-search-note{margin:2px 6px 0;font-size:12px;color:var(--color-fg-3)}
+
+/* Seven operational workspaces — shared shell only; pages keep their authenticated reads and actions. */
+body:has(.admin-area) {
+  --bg: #f3f5f1;
+  --bg-soft: #f7f9f5;
+  --bg-card: #ffffff;
+  --bg-hover: #edf2e8;
+  --border: #dce4d7;
+  --text: #253028;
+  --text-2: #586754;
+  --text-3: #657561;
+  --accent: #365bce;
+  --accent-ink: #365bce;
+  --accent-solid: #365bce;
+  --accent-soft: #eef2ff;
+  --brand: #bad4aa;
+}
+.admin-area{grid-template-columns:222px minmax(0,1fr);color:var(--color-fg)}
+.admin-sidebar{background:#26372d;border-color:#26372d;color:#d2dfca;padding:26px 14px 18px}
+.admin-sidebar .admin-brand{color:#f1f6ed;font-size:24px;padding:0 13px}
+.admin-sidebar .admin-brand small{color:#bacbb1;font-size:9px;font-weight:500;letter-spacing:.14em}
+.admin-sidebar .admin-brand-full>span,.admin-sidebar .admin-brand-short>span{color:#bad4aa}
+.admin-sidebar .admin-navigation{gap:22px;margin-top:25px}
+.admin-sidebar .admin-nav-group{gap:7px}
+.admin-sidebar .admin-nav-group-title{font-size:10px;font-weight:500;color:#b7c9ad;padding:0 12px 2px;letter-spacing:.08em}
+.admin-sidebar .admin-nav-group ul{gap:5px}
+.admin-sidebar .admin-navigation a{align-items:center;min-height:44px;font-size:13px;font-weight:500;padding:11px 12px;color:#d9e4d3;gap:10px}
+.admin-sidebar .admin-navigation a svg{margin-top:0}
+.admin-sidebar .admin-navigation a:hover{background:#3a4d39}
+.admin-sidebar .admin-navigation a[aria-current=page]{background:#e1edd9;color:#2b402c;font-weight:700}
+.admin-sidebar .admin-nav-badge{background:#506a48;color:#edf5e8;font-size:10px;border-radius:5px;padding:0 5px;line-height:17px}
+.admin-sidebar .admin-nav-badge[data-tone=critical]{background:#f1c6bc;color:#6e241c}
+.admin-sidebar .admin-nav-badge[data-tone=neutral]{background:#42583c;color:#d4e3cb}
+.admin-sidebar .admin-navigation a[aria-current=page] .admin-nav-badge{background:#c0d4b3;color:#304e28}
+.admin-sidebar .admin-navigation a[aria-current=page] .admin-nav-badge[data-tone=critical]{background:#f1c6bc;color:#6e241c}
+.admin-sidebar .admin-search-trigger{margin-top:24px;border-color:#53664c;background:#3a4c3d;color:#e3ecdd}
+.admin-sidebar .admin-search-trigger kbd{color:#bacfb0;background:#30442f;border-color:#53664c}
+.admin-sidebar .admin-sidebar-bottom{margin-top:auto;padding-top:22px;border-color:#52634a;color:#d2dfca}
+.admin-sidebar .admin-sidebar-bottom p{color:#bacbb1;font-size:10px}
+.admin-sidebar .admin-sidebar-button{color:#d2dfca;font-size:11px}
+.admin-sidebar .admin-sidebar-button:hover{background:#3a4d39;color:#fff}
+.admin-sidebar .admin-theme{border-color:#53664c}
+.admin-sidebar .admin-theme button{color:#d0dfc8;font-size:10px;min-height:29px}
+.admin-sidebar .admin-theme button[aria-pressed=true]{background:#e1edd9;color:#2b402c}
+.admin-sidebar .admin-account{font-size:11px}
+.admin-sidebar .admin-rail-toggle{color:#c8d9bf;border-color:#53664c}
+.admin-sidebar .admin-rail-toggle:hover{background:#3a4d39}
+.admin-content{max-width:1800px;padding:0 30px 30px}
+.admin-workspace-topbar{display:flex;align-items:center;justify-content:space-between;gap:20px;min-height:62px;border-bottom:1px solid var(--color-line);margin-bottom:16px}
+.admin-workspace-context{display:flex;align-items:center;gap:9px;color:var(--color-fg-3);font-size:11px;white-space:nowrap}
+.admin-workspace-topbar .admin-live-bar{padding:8px 0;font-size:11px;gap:6px 10px}
+.admin-workspace-topbar .admin-live-bar button{font-size:11px;min-height:30px;border-radius:6px}
+.admin-workspace-navigation{margin-bottom:18px}
+.admin-workspace-tabs{display:flex;align-items:center;gap:5px;flex-wrap:wrap;border-bottom:1px solid var(--color-line)}
+.admin-workspace-tabs a{display:inline-flex;align-items:center;min-height:43px;padding:9px 12px;border-bottom:2px solid transparent;color:var(--color-fg-3);font-size:12px;font-weight:500}
+.admin-workspace-tabs a:hover{color:var(--color-fg);background:var(--color-bg-soft)}
+.admin-workspace-tabs a[aria-current=page]{color:var(--color-accent);border-bottom-color:var(--color-accent);font-weight:700}
+.admin-workspace-secondary{display:flex;align-items:center;gap:7px;flex-wrap:wrap;padding-top:12px}
+.admin-workspace-secondary a{min-height:32px;display:inline-flex;align-items:center;padding:5px 10px;border:1px solid var(--color-line);border-radius:6px;background:var(--color-bg-card);font-size:11px;color:var(--color-fg-2)}
+.admin-workspace-secondary a[aria-current=page]{background:var(--color-accent-soft);border-color:var(--color-accent);color:var(--color-accent);font-weight:650}
+.admin-workspace-subtabs{display:flex;align-items:center;flex-wrap:wrap;gap:7px;margin:0 0 16px}
+.admin-workspace-subtabs a{display:inline-flex;align-items:center;min-height:32px;padding:5px 10px;border:1px solid var(--color-line);border-radius:6px;background:var(--color-bg-card);color:var(--color-fg-2);font-size:11px}
+.admin-workspace-subtabs a[aria-current=page]{border-color:var(--color-accent);background:var(--color-accent-soft);color:var(--color-accent);font-weight:650}
+.admin-workspace-view{min-width:0}
+.admin-workspace-view>main{width:100%;max-width:none;margin:0;padding-left:0;padding-right:0;padding-top:0}
+/* The workspace is named in navigation. Keep the semantic h1 without repeating a large page masthead. */
+.admin-workspace-view h1{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+.admin-workspace-view .admin-page-eyebrow,.admin-workspace-view .admin-page-lead{display:none}
+/* A project's own identity is content, not the removed generic workspace title. */
+.admin-area[data-admin-detail=product] .admin-workspace-view h1{position:static;width:auto;height:auto;margin:0;overflow:visible;clip:auto;white-space:normal;font-size:22px;font-weight:750}
+.admin-workspace-view .admin-page-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+.admin-workspace-view .admin-page-actions:empty{display:none}
+@media(min-width:761px) and (max-width:1279px){
+  .admin-area[data-rail=expanded]{grid-template-columns:200px minmax(0,1fr)}
+  .admin-sidebar .admin-rail-toggle{margin-top:15px}
+  .admin-content{padding:0 22px 26px}
+  .admin-workspace-topbar{align-items:flex-start;gap:10px}
+  .admin-workspace-context{padding-top:13px}
+  .admin-workspace-topbar .admin-live-bar{justify-content:flex-end;max-width:70%}
+}
+@media(max-width:760px){
+  .admin-area{display:block}
+  .admin-sidebar{padding:13px 16px;background:#26372d}
+  .admin-sidebar .admin-brand{font-size:20px;padding:0}
+  .admin-sidebar .admin-brand small{font-size:8px;letter-spacing:.12em;margin-top:3px}
+  .admin-sidebar .admin-menu-toggle{color:#e3eddb;border-color:#53664c;background:#30462f;font-size:11px}
+  .admin-sidebar-menu.is-expanded{max-height:74dvh;padding-bottom:7px}
+  .admin-sidebar .admin-search-trigger{margin-top:16px}
+  .admin-sidebar .admin-navigation{margin-top:17px;gap:17px}
+  .admin-sidebar .admin-nav-group ul{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+  .admin-sidebar .admin-navigation a{min-height:44px;font-size:12px;gap:8px;padding:10px 9px}
+  .admin-sidebar .admin-sidebar-bottom{margin-top:18px;padding-top:16px}
+  .admin-content{padding:0 15px 24px}
+  .admin-workspace-topbar{min-height:55px;gap:10px;flex-wrap:wrap;padding:8px 0 11px;margin-bottom:10px}
+  .admin-workspace-context{font-size:10px;gap:6px}
+  .admin-workspace-topbar .admin-live-bar{padding:0;gap:5px 8px;max-width:100%;font-size:10px}
+  .admin-workspace-topbar .admin-live-bar button{min-height:38px;font-size:10px;padding:0 8px}
+  .admin-workspace-topbar .admin-live-bar time{font-size:10px}
+  .admin-workspace-navigation{margin-bottom:15px}
+  .admin-workspace-tabs{gap:0}
+  .admin-workspace-tabs a{font-size:11px;padding:8px 10px;min-height:44px}
+  .admin-workspace-secondary{gap:6px;padding-top:10px}
+  .admin-workspace-secondary a{font-size:10px;min-height:38px;padding:5px 8px}
+  .admin-workspace-subtabs a{font-size:10px;min-height:38px;padding:5px 8px}
+}
+@media(prefers-reduced-motion:reduce){.admin-area *{scroll-behavior:auto}}

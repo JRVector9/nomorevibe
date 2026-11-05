@@ -96,5 +96,5 @@ async function loadConveyor(fresh: boolean): Promise<Conveyor> {
 }
 
 export function readConveyor(fresh = false): Promise<Conveyor> {
-  return conveyorCache("v2", () => loadConveyor(fresh), fresh);
+  return conveyorCache("v3", () => loadConveyor(fresh), fresh);
 }

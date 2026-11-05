@@ -1,15 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { AdminNav, type NavBadges } from "./AdminNav";
-import { mergeBadges } from "./live-refresh";
-import { AdminIcon } from "./components/AdminIcon";
+import { adminRouteKey, createNavigationGuard, mergeBadges } from "./live-refresh";
 import { CommandSearch } from "./components/CommandSearch";
 import { LiveBar } from "./components/LiveBar";
 import { ADMIN_THEME_SCRIPT, ThemeToggle } from "./components/ThemeToggle";
 import { AdminToastProvider } from "./components/Toast";
+import { resolveWorkspace } from "./workspace-navigation";
+import { WorkspaceTabs } from "./components/WorkspaceTabs";
+import "./prototype.css";
 
 /**
  * 서버가 그릴 때만 실행되는 인라인 스크립트(next 가이드 preventing-flash-before-hydration) — 클라이언트 이동에서는
@@ -35,7 +37,7 @@ function useLiveBadges(pathname: string, layout: BadgeSet, renderedAt: string) {
   const first = useRef(true);
   useEffect(() => {
     if (first.current) { first.current = false; return; }
-    if (pathname === "/admin/login") return;
+    if (pathname.split("?")[0] === "/admin/login") return;
     const controller = new AbortController();
     fetch("/admin/nav-badges", { cache: "no-store", signal: controller.signal })
       .then((response) => response.ok ? response.json() as Promise<BadgeSet> : null)
@@ -51,57 +53,72 @@ function useLiveBadges(pathname: string, layout: BadgeSet, renderedAt: string) {
  * account — 로그인한 관리자(사이드바 아래 로그아웃 옆에 보인다). badges — AdminNav 의 NavBadges(열쇠는 메뉴 href).
  * renderedAt — 레이아웃을 그린 서버 시각. 배지를 합칠 차례를 가르고, 화면이 그린 시각(PageStamp)이 오기 전 "마지막 갱신" 자리다.
  */
-export function AdminShell({ children, badges, unknownBadges, account, renderedAt, analyticsUrl }: { children: React.ReactNode; badges?: NavBadges;
+function AdminWorkspaceShell({ children, badges, unknownBadges, account, renderedAt, analyticsUrl }: { children: React.ReactNode; badges?: NavBadges;
   /** 이번에 셀 수 없었던 배지 칸 — 전에 보이던 값을 둔다 */
   unknownBadges?: string[]; account?: string | null; renderedAt: string;
   /** GA_PROPERTY_URL(analytics.google.com 일 때만) — 방문·여정·전환은 GA 에서 본다. 없으면 링크를 그리지 않는다 */
   analyticsUrl?: string | null }) {
   const pathname = usePathname();
+  const search = useSearchParams().toString();
+  const routeKey = adminRouteKey(pathname, search);
+  const [navigation] = useState(() => createNavigationGuard());
+  const navigationPending = useCallback(() => navigation.pending(), [navigation]);
+  const onNavigate = (href: string) => {
+    const target = new URL(href, window.location.href);
+    const key = adminRouteKey(target.pathname, target.search);
+    navigation.begin(routeKey, key);
+  };
+  useEffect(() => { navigation.committed(routeKey); }, [navigation, routeKey]);
+  const location = resolveWorkspace(pathname, new URLSearchParams(search));
   const [expandedOn, setExpandedOn] = useState<string | null>(null);
   // 761~1279px 의 접힌 메뉴를 펼쳤는가 — 페이지를 옮겨도 그대로 둔다
-  const [railExpanded, setRailExpanded] = useState(false);
-  const liveBadges = useLiveBadges(pathname, { badges, unknown: unknownBadges }, renderedAt);
+  const liveBadges = useLiveBadges(routeKey, { badges, unknown: unknownBadges }, renderedAt);
+  useEffect(() => {
+    const onEscape = (event: KeyboardEvent) => { if (event.key === "Escape") setExpandedOn(null); };
+    document.addEventListener("keydown", onEscape);
+    return () => document.removeEventListener("keydown", onEscape);
+  }, []);
   if (pathname === "/admin/login") return <div className="admin-login-area">{children}</div>;
-  const expanded = expandedOn === pathname;
+  const expanded = expandedOn === routeKey;
+  const initials = (account || "관리자").slice(0, 2).toUpperCase();
   return <AdminToastProvider>
     <InlineScript html={ADMIN_THEME_SCRIPT} />
-    <div className="admin-area" data-rail={railExpanded ? "expanded" : undefined}>
-      <a className="admin-skip" href="#admin-content">본문으로 건너뛰기</a>
-      <aside className="admin-sidebar" aria-label="관리자 사이드바">
-        <div className="admin-brand-row"><Link href="/admin/status" className="admin-brand">
-          <span className="admin-brand-full">NoMore<span>Vibe</span><small>ADMIN WORKSPACE</small></span>
-          <span className="admin-brand-short" aria-hidden="true">N<span>V</span></span>
-        </Link>
-          <button type="button" className="admin-menu-toggle" aria-expanded={expanded} aria-controls="admin-sidebar-menu"
-            onClick={() => setExpandedOn(expanded ? null : pathname)}>메뉴 {expanded ? "닫기" : "열기"}</button>
-        </div>
-        <button type="button" className="admin-rail-toggle" aria-expanded={railExpanded} aria-controls="admin-sidebar-menu"
-          title={railExpanded ? "메뉴 이름 접기" : "메뉴 이름 펼치기"} onClick={() => setRailExpanded(!railExpanded)}>
-          <AdminIcon name="panel" size={16} /><span className="admin-rail-label">{railExpanded ? "메뉴 이름 접기" : "메뉴 이름 펼치기"}</span>
-        </button>
-        <div id="admin-sidebar-menu" className={`admin-sidebar-menu${expanded ? " is-expanded" : ""}`}>
-          {/* 전역 검색(⌘K, ADM-05) — 메뉴 맨 위. 단축키는 어느 화면에서든 듣는다 */}
-          <CommandSearch />
-          <AdminNav current={pathname} badges={liveBadges} />
-          <div className="admin-sidebar-bottom">
-            <ThemeToggle />
-            {account && <div className="admin-account">
-              <span className="admin-sidebar-label" title={account}>{account}</span>
-              {/* 크롤 설정 머리의 로그아웃과 같은 경로 — POST 만 받는다 */}
-              <form action="/api/auth/logout" method="post">
-                <button type="submit" className="admin-sidebar-button" title="로그아웃"><AdminIcon name="logout" size={14} /><span className="admin-sidebar-label">로그아웃</span></button>
-              </form>
-            </div>}
-            {analyticsUrl && <a href={analyticsUrl} target="_blank" rel="noopener noreferrer" className="admin-sidebar-button" title="Google Analytics — 방문·여정·전환"><AdminIcon name="external" size={14} /><span className="admin-sidebar-label">Google Analytics</span></a>}
-            <Link href="/" className="admin-sidebar-button" title="공개 사이트로 이동"><AdminIcon name="external" size={14} /><span className="admin-sidebar-label">공개 사이트로 이동</span></Link>
-            <p>수집과 발행은 독립 워커에서 실행됩니다.</p>
+    <div className="admin-prototype admin-area" data-rail="expanded" data-workspace={location.workspace.id} data-admin-detail={location.detail ?? undefined}>
+      <a className="skip admin-skip" href="#admin-content">본문으로 이동</a>
+      <div className="app-shell">
+        <aside className={`sidebar${expanded ? " open" : ""}`} id="admin-sidebar-menu" aria-label="관리자 사이드바">
+          <Link href="/admin/flow" className="brand" onNavigate={() => onNavigate("/admin/flow")}>NoMore<span>Vibe</span><small>OPERATOR WORKSPACE</small></Link>
+          <CommandSearch appearance="prototype" />
+          <AdminNav current={pathname} search={search} badges={liveBadges} onNavigate={onNavigate} />
+          <div className="sidebar-bottom">
+            <Link href="/admin/settings?tab=history" onNavigate={() => onNavigate("/admin/settings?tab=history")}>▧ &nbsp; 전체 운영 기록</Link>
+            {analyticsUrl ? <a href={analyticsUrl} target="_blank" rel="noopener noreferrer">↗ &nbsp; 방문·전환 분석</a>
+              : <Link href="/">↗ &nbsp; 공개 사이트로 이동</Link>}
+            <div className="account"><span className="avatar">{initials}</span><span><b>{account || "관리자"}</b><small>운영 관리자 · KST</small></span><ThemeToggle compact /></div>
+            <form action="/api/auth/logout" method="post"><button type="submit" className="logout">로그아웃</button></form>
           </div>
+        </aside>
+        <button type="button" className="sidebar-backdrop" onClick={() => setExpandedOn(null)} tabIndex={-1} aria-label="메뉴 닫기" />
+        <div className="main-shell" id="admin-content" tabIndex={-1}>
+          <header className="topbar">
+            <div className="top-left"><button type="button" className="mobile-menu icon-button admin-menu-toggle" aria-label="메뉴 열기" aria-expanded={expanded}
+              aria-controls="admin-sidebar-menu" onClick={() => setExpandedOn(expanded ? null : routeKey)}>☰</button><span id="breadcrumb">운영 / {location.workspace.label}</span></div>
+            <div className="top-tools"><LiveBar fallbackAt={renderedAt} appearance="prototype" navigationPending={navigationPending} /><span className="top-avatar">{initials}</span></div>
+          </header>
+          <div id="page" tabIndex={-1}>
+            <WorkspaceTabs location={location} pathname={pathname} search={search} onNavigate={onNavigate} />
+            <div className="admin-workspace-view">{children}</div>
+          </div>
+          <footer className="app-footer"><span>NO MORE VIBE / ADMIN WORKSPACE</span><span>실제 운영 원본 · 관측 시각 KST</span></footer>
         </div>
-      </aside>
-      <div className="admin-content" id="admin-content" tabIndex={-1}>
-        <LiveBar fallbackAt={renderedAt} />
-        {children}
       </div>
     </div>
   </AdminToastProvider>;
+}
+
+/** URL hooks are kept below Suspense so login and any prerendered route keep a valid boundary. */
+export function AdminShell(props: Parameters<typeof AdminWorkspaceShell>[0]) {
+  return <Suspense fallback={<div className="admin-shell-pending">{props.children}</div>}>
+    <AdminWorkspaceShell {...props} />
+  </Suspense>;
 }

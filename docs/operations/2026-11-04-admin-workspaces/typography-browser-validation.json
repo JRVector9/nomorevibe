@@ -1,0 +1,246 @@
+{
+  "scope": "Typography only: sidebar and workspace body +2 CSS px; visual status annotations and artwork/outside-scope UI keep baseline.",
+  "baselineHead": "064984daa8288da93c290e90527e3c78dadbc6b1",
+  "finalHead": "f078c719b35b31b69791663bcc51e4d7ee8ee6b8",
+  "captureSources": {
+    "28312d4cab85443c5bf51a207d8587f26c7c5dff": 21,
+    "f078c719b35b31b69791663bcc51e4d7ee8ee6b8": 15
+  },
+  "baselineViews": {
+    "pages": 36,
+    "viewports": [
+      1440,
+      390
+    ],
+    "captures": 72
+  },
+  "comparison": {
+    "matched": 13751,
+    "regularPlusTwo": 10816,
+    "preserved": 2935,
+    "passed": 13751,
+    "failed": 0,
+    "unmatched": 0,
+    "newLiveDataNodesExcluded": 16,
+    "fontFamilyChanges": 0,
+    "fontWeightChanges": 0
+  },
+  "unmatchedAudit": {
+    "initial": 1460,
+    "reviewDataUnavailableFallback": 1438,
+    "differentFirstProject": 22,
+    "recoveredByReadRetryAndSameProject": 1460,
+    "finalUnmatched": 0,
+    "previouslyHiddenIncludedInPass": 0,
+    "newLiveDataExplanation": "One additional LLM call-history row in each viewport; 16 new text nodes lack a baseline and are excluded from delta pass counts."
+  },
+  "confirmedExceptions": {
+    "readStampPx": 9,
+    "openTagPx": 10,
+    "adjacentCapacityLinkPx": 11,
+    "largeOpenPx": 31,
+    "modelProgressStatuses": [
+      {
+        "tab": "live",
+        "viewport": "desktop",
+        "before": 14,
+        "after": 14
+      },
+      {
+        "tab": "live",
+        "viewport": "mobile",
+        "before": 14,
+        "after": 14
+      },
+      {
+        "tab": "tasks",
+        "viewport": "desktop",
+        "before": 14,
+        "after": 14
+      },
+      {
+        "tab": "tasks",
+        "viewport": "mobile",
+        "before": 14,
+        "after": 14
+      },
+      {
+        "tab": "capacity",
+        "viewport": "desktop",
+        "before": 14,
+        "after": 14
+      },
+      {
+        "tab": "capacity",
+        "viewport": "mobile",
+        "before": 14,
+        "after": 14
+      },
+      {
+        "tab": "connections",
+        "viewport": "desktop",
+        "before": 14,
+        "after": 14
+      },
+      {
+        "tab": "connections",
+        "viewport": "mobile",
+        "before": 14,
+        "after": 14
+      },
+      {
+        "tab": "history",
+        "viewport": "desktop",
+        "before": 14,
+        "after": 14
+      },
+      {
+        "tab": "history",
+        "viewport": "mobile",
+        "before": 14,
+        "after": 14
+      }
+    ],
+    "projectNames": [
+      {
+        "section": "overview",
+        "viewport": "desktop",
+        "before": 22,
+        "after": 24
+      },
+      {
+        "section": "overview",
+        "viewport": "mobile",
+        "before": 22,
+        "after": 24
+      },
+      {
+        "section": "intro",
+        "viewport": "desktop",
+        "before": 22,
+        "after": 24
+      },
+      {
+        "section": "intro",
+        "viewport": "mobile",
+        "before": 22,
+        "after": 24
+      },
+      {
+        "section": "evidence",
+        "viewport": "desktop",
+        "before": 22,
+        "after": 24
+      },
+      {
+        "section": "evidence",
+        "viewport": "mobile",
+        "before": 22,
+        "after": 24
+      },
+      {
+        "section": "maker",
+        "viewport": "desktop",
+        "before": 22,
+        "after": 24
+      },
+      {
+        "section": "maker",
+        "viewport": "mobile",
+        "before": 22,
+        "after": 24
+      },
+      {
+        "section": "quality",
+        "viewport": "desktop",
+        "before": 22,
+        "after": 24
+      },
+      {
+        "section": "quality",
+        "viewport": "mobile",
+        "before": 22,
+        "after": 24
+      },
+      {
+        "section": "requests",
+        "viewport": "desktop",
+        "before": 22,
+        "after": 24
+      },
+      {
+        "section": "requests",
+        "viewport": "mobile",
+        "before": 22,
+        "after": 24
+      },
+      {
+        "section": "updates",
+        "viewport": "desktop",
+        "before": 22,
+        "after": 24
+      },
+      {
+        "section": "updates",
+        "viewport": "mobile",
+        "before": 22,
+        "after": 24
+      },
+      {
+        "section": "history",
+        "viewport": "desktop",
+        "before": 22,
+        "after": 24
+      },
+      {
+        "section": "history",
+        "viewport": "mobile",
+        "before": 22,
+        "after": 24
+      }
+    ]
+  },
+  "layout": {
+    "pageOverflow": 0,
+    "mobileRepresentativePages": 7,
+    "mobileWidths": [
+      390,
+      390
+    ]
+  },
+  "behavior": {
+    "clientTabNavigations": 28,
+    "checks": {
+      "stageSelect": true,
+      "rangeSelect": true,
+      "rankDrawer": true,
+      "themeRestored": true,
+      "searchStatus": 200,
+      "reviewSelection": true,
+      "socialSelection": true,
+      "requestEvidence": true,
+      "mobileOpen": true,
+      "mobileClosed": true,
+      "mobileOverflow": false
+    },
+    "applicationWrites": 0,
+    "modelProbes": 0
+  },
+  "errors": {
+    "capturePage": 0,
+    "captureConsole": 0,
+    "captureHttp": 0,
+    "retakePage": 0,
+    "retakeConsole": 0,
+    "retakeHttp": 0,
+    "clientPage": 0,
+    "clientConsole": 0,
+    "clientHttp": 0
+  },
+  "measurementNotes": [
+    "21 page snapshots retain successful typography observations from 28312d4c; 15 affected/recovered pages were recaptured at f078c719.",
+    "The final corrections only preserved the 14px progress status and increased the existing 22px project name to 24px.",
+    "Raw snapshots, hashes and screenshots remain in private temporary storage; this summary contains aggregate counts and static labels only."
+  ],
+  "at": "2026-11-04T22:58:33.696Z"
+}

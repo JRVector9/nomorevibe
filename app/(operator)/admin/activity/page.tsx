@@ -16,7 +16,7 @@ import { PageStamp } from "@/app/(operator)/admin/components/PageStamp";
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "작업 로그 — NoMoreVibe", robots: { index: false } };
 
-type Props = { searchParams: Promise<{ group?: string; actor?: string; failed?: string; before?: string; target?: string }> };
+type Props = { searchParams: Promise<{ group?: string; actor?: string; failed?: string; before?: string; target?: string; workspace?: string }> };
 
 const count = (value: number) => value.toLocaleString("ko-KR");
 const KIND: Record<string, string> = { github: "GitHub", password: "아이디·비밀번호", local: "로컬 로그인", token: "API 토큰", model: "로컬 모델" };
@@ -32,7 +32,9 @@ export default async function AdminActivityPage({ searchParams }: Props) {
   const admin = await currentAdmin();
   if (!admin) redirect("/admin/login");
 
-  const filter = activityFilter(await searchParams);
+  const params = await searchParams;
+  const workspace = params.workspace === "home" || params.workspace === "models" ? params.workspace : null;
+  const filter = activityFilter(params);
   const { group, actor, failedOnly, before, target } = filter;
 
   const local = adminLocalLoginEnabled();
@@ -44,6 +46,7 @@ export default async function AdminActivityPage({ searchParams }: Props) {
   ]);
   const query = (next: { group?: ActionGroup | null; actor?: string | null; failed?: boolean; before?: number; target?: string | null }) => {
     const search = new URLSearchParams();
+    if (workspace) search.set("workspace", workspace);
     const g = next.group === undefined ? group : next.group;
     const a = next.actor === undefined ? actor : next.actor;
     const f = next.failed ?? failedOnly;
@@ -94,6 +97,7 @@ export default async function AdminActivityPage({ searchParams }: Props) {
 
       {/* 대상으로 찾기 — 제품 slug 나 owner/repo(GitHub 주소도 된다). 다른 거르기는 그대로 둔다 */}
       <Form action="/admin/activity" className="flex flex-wrap items-center gap-2 text-[13px]">
+        {workspace && <input type="hidden" name="workspace" value={workspace} />}
         {group && <input type="hidden" name="group" value={group} />}
         {actor && <input type="hidden" name="actor" value={actor} />}
         {failedOnly && <input type="hidden" name="failed" value="1" />}

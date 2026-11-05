@@ -37,7 +37,7 @@ function Yield({ value }: { value?: SignalYieldView }) {
   );
 }
 
-export function SignalsTable({ discover, yields }: { discover: CrawlSettings["discover"]; yields: Record<string, SignalYieldView> }) {
+export function SignalsTable({ id, discover, yields }: { id: string; discover: CrawlSettings["discover"]; yields: Record<string, SignalYieldView> }) {
   // 우선순위가 높은 것부터 — 조사하는 순서와 같다. 저장하면 이 순서로 남는다(동작은 우선순위로만 정해진다)
   const [rows, setRows] = useState<Query[]>(() => [...[...discover.queries].sort((a, b) => b.priority - a.priority), BLANK]);
   const showHn = discover.showHn;
@@ -69,7 +69,7 @@ export function SignalsTable({ discover, yields }: { discover: CrawlSettings["di
   );
 
   return (
-    <SettingsCard id="signals" title="검색 신호" note="AI로 만든 것을 찾는 단서 하나하나입니다. 높은 우선순위부터 조사합니다."
+    <SettingsCard id={id} title="검색 신호" note="AI로 만든 것을 찾는 단서 하나하나입니다. 높은 우선순위부터 조사합니다."
       actions={<>
         <span className={`${chipClass} bg-bg-hover text-fg-2`}>켜짐 {enabledCount} · 꺼짐 {total - enabledCount}</span>
         <button type="button" className={buttonClass} onClick={() => setRows((current) => [...current, BLANK])}>+ 신호 추가</button>

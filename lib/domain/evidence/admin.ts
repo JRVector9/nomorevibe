@@ -116,9 +116,14 @@ export async function setAutomaticUpdateVisibility(
   });
 }
 
-export async function getEvidenceAdminProduct(slugInput: string) {
+type EvidenceAdminSection = "all" | "overview" | "intro" | "evidence" | "maker" | "quality" | "requests" | "updates" | "history";
+type EvidenceAdminProduct = Pick<typeof products.$inferSelect, "id" | "slug" | "name" | "url" | "status">;
+
+export async function getEvidenceAdminProduct(slugInput: string, options: { section?: EvidenceAdminSection; product?: EvidenceAdminProduct } = {}) {
   const slug = slugSchema.parse(slugInput);
-  const product = await db.query.products.findFirst({
+  const section = options.section ?? "all";
+  const fullEvidence = section === "all" || section === "evidence";
+  const product = options.product?.slug === slug ? options.product : await db.query.products.findFirst({
     where: eq(products.slug, slug),
     columns: { id: true, slug: true, name: true, url: true, status: true },
   });
@@ -129,14 +134,14 @@ export async function getEvidenceAdminProduct(slugInput: string) {
       where: eq(productProfiles.slug, slug),
       columns: { makerLicense: true },
     }),
-    db.select({
+    fullEvidence ? db.select({
       id: productLinks.id,
       kind: productLinks.kind,
       url: productLinks.url,
       declarationSource: productLinks.declarationSource,
       verificationState: productLinks.verificationState,
       relationshipState: productLinks.relationshipState,
-    }).from(productLinks).where(eq(productLinks.slug, slug)).orderBy(asc(productLinks.id)),
+    }).from(productLinks).where(eq(productLinks.slug, slug)).orderBy(asc(productLinks.id)) : [],
     db.select({
       id: productEvidenceSources.id,
       kind: productEvidenceSources.kind,
@@ -149,8 +154,8 @@ export async function getEvidenceAdminProduct(slugInput: string) {
       attempts: productEvidenceSources.attempts,
       lastErrorCode: productEvidenceSources.lastErrorCode,
     }).from(productEvidenceSources)
-      .where(eq(productEvidenceSources.slug, slug)).orderBy(asc(productEvidenceSources.id)),
-    db.select({
+      .where(and(eq(productEvidenceSources.slug, slug), fullEvidence ? undefined : eq(productEvidenceSources.kind, "repository"))).orderBy(asc(productEvidenceSources.id)),
+    fullEvidence ? db.select({
       id: productMedia.id,
       sourceUrl: productMedia.sourceUrl,
       version: productMedia.version,
@@ -158,15 +163,15 @@ export async function getEvidenceAdminProduct(slugInput: string) {
       visible: productMedia.visible,
       missingAt: productMedia.missingAt,
     }).from(productMedia).where(eq(productMedia.slug, slug))
-      .orderBy(asc(productMedia.sourceUrl), desc(productMedia.version)),
-    db.select({
+      .orderBy(asc(productMedia.sourceUrl), desc(productMedia.version)) : [],
+    fullEvidence ? db.select({
       id: productMediaDeclarations.id,
       sourceUrl: productMediaDeclarations.sourceUrl,
       revision: productMediaDeclarations.revision,
       position: productMediaDeclarations.position,
     }).from(productMediaDeclarations).where(eq(productMediaDeclarations.slug, slug))
-      .orderBy(asc(productMediaDeclarations.position), asc(productMediaDeclarations.id)),
-    db.select({
+      .orderBy(asc(productMediaDeclarations.position), asc(productMediaDeclarations.id)) : [],
+    section === "all" || section === "updates" ? db.select({
       id: productUpdates.id,
       sourceKind: productUpdates.sourceKind,
       title: productUpdates.title,
@@ -174,27 +179,27 @@ export async function getEvidenceAdminProduct(slugInput: string) {
       makerEditedAt: productUpdates.makerEditedAt,
       makerDeletedAt: productUpdates.makerDeletedAt,
     }).from(productUpdates).where(eq(productUpdates.slug, slug))
-      .orderBy(desc(sql`coalesce(${productUpdates.publishedAt}, ${productUpdates.observedAt})`)),
-    db.select({
+      .orderBy(desc(sql`coalesce(${productUpdates.publishedAt}, ${productUpdates.observedAt})`)) : [],
+    fullEvidence ? db.select({
       id: productAgents.id,
       provider: productAgents.provider,
       roles: productAgents.roles,
       evidenceLevel: productAgents.evidenceLevel,
-    }).from(productAgents).where(eq(productAgents.slug, slug)).orderBy(asc(productAgents.id)),
-    db.select({
+    }).from(productAgents).where(eq(productAgents.slug, slug)).orderBy(asc(productAgents.id)) : [],
+    fullEvidence ? db.select({
       id: productSkills.id,
       namespace: productSkills.namespace,
       name: productSkills.name,
       evidenceLevel: productSkills.evidenceLevel,
-    }).from(productSkills).where(eq(productSkills.slug, slug)).orderBy(asc(productSkills.id)),
-    db.select({
+    }).from(productSkills).where(eq(productSkills.slug, slug)).orderBy(asc(productSkills.id)) : [],
+    section === "all" || section === "history" ? db.select({
       id: productEvidenceAudit.id,
       actor: productEvidenceAudit.actor,
       action: productEvidenceAudit.action,
       reason: productEvidenceAudit.reason,
       createdAt: productEvidenceAudit.createdAt,
     }).from(productEvidenceAudit).where(eq(productEvidenceAudit.slug, slug))
-      .orderBy(desc(productEvidenceAudit.id)).limit(100),
+      .orderBy(desc(productEvidenceAudit.id)).limit(100) : [],
   ]);
 
   const repository = sources.find((source) => source.kind === "repository");

@@ -64,7 +64,7 @@ describe("station → AI task map", () => {
     expect(models.discover.kind).toBe("none");
     expect(models.fetch.kind).toBe("none");
     expect(models.sink.kind).toBe("none");
-    for (const key of ["first", "second", "profile", "publish", "keywords", "human"] as const) expect(models[key].kind, key).toBe("llm");
+    for (const key of ["first", "second", "profile", "publish", "keywords", "human", "support"] as const) expect(models[key].kind, key).toBe("llm");
   });
 });
 
@@ -177,7 +177,7 @@ describe("empty ranks stop the job (no_task_models, 2026-11-02 21:13Z)", () => {
     expect(first.head.note).toContain("no_task_models");
     // 소개 검수는 실행 쪽이 아직 순위를 읽지 않는다 — 순위가 비어도 멈추지 않는다
     const rows = healthy().rows!.filter((row) => row.task !== "product-intro-check");
-    const profile = buildStationLlm(healthy({ rows })).profile;
+    const profile = buildStationLlm(healthy({ rows })).support;
     if (profile.kind !== "llm") throw new Error("llm");
     const intro = profile.tasks.find((task) => task.task === "product-intro-check")!;
     expect(intro).toMatchObject({ live: false, state: "set_only" });
@@ -193,13 +193,17 @@ describe("empty ranks stop the job (no_task_models, 2026-11-02 21:13Z)", () => {
     expect(conveyor.headline.title).toContain("AI 1차 — 모델 없음 — 멈춤");
   });
 
-  it("shows only part-stopped when one of several tasks lost its rank", () => {
+  it("keeps public translation model failures out of the pre-publication profile bottleneck", () => {
     const rows = healthy().rows!.filter((row) => row.task !== "product-translate");
     const conveyor = buildConveyor(conveyorInputs({ models: buildStationLlm(healthy({ rows })) }));
     const profile = conveyor.stations.find((station) => station.key === "profile")!;
-    expect(profile).toMatchObject({ tone: "slow", status: "모델 없음 — 일부 멈춤" });
-    expect(profile.reason).toContain("제품 다국어 번역");
-    expect(profile.llm).toMatchObject({ kind: "llm", stopped: ["제품 다국어 번역"], liveCount: 4 });
+    expect(profile).toMatchObject({ tone: "idle", reason: null });
+    expect(profile.llm).toMatchObject({ kind: "llm", stopped: [], liveCount: 1 });
+    expect(conveyor.supportLlm).toMatchObject({ kind: "llm", stopped: ["제품 다국어 번역"], liveCount: 3 });
+    expect(conveyor.bottleneck).not.toBe("profile");
+    const html = renderToStaticMarkup(<FlowBoard data={conveyor} />);
+    expect(html).toContain("제품 다국어 번역");
+    expect(html).toContain('data-llm="bad"');
   });
 
   it("links the incident response to the rank screen and tells what to compare in the work log", () => {
@@ -262,14 +266,16 @@ describe("1차 and 2차 on the same model", () => {
   });
 });
 
-describe("several tasks on one station (프로필 준비)", () => {
-  it("keeps the card short — representative model + 외 N — and every task in the detail", () => {
+describe("공개 전 소개와 공개 후·보조 작업", () => {
+  it("preserves all task observations and rank-editor tasks while splitting their actual execution scope", () => {
     const models = buildStationLlm(healthy());
     const profile = models.profile;
-    if (profile.kind !== "llm") throw new Error("llm");
-    expect(profile.tasks.map((task) => task.task)).toEqual(["crawl-tagline", "product-tagline-ko", "korean-translation-direct", "product-translate", "reason-translate", "product-intro-check"]);
-    // 대표는 정상 작업 중 앞 작업, 다른 모델을 쓰는 작업(gpt-oss·sonnet) 둘이 「외 2」
-    expect(profile.more).toBe(2);
+    const support = models.support;
+    if (profile.kind !== "llm" || support.kind !== "llm") throw new Error("llm");
+    expect(profile.tasks.map((task) => task.task)).toEqual(["crawl-tagline"]);
+    expect(support.tasks.map((task) => task.task)).toEqual(["product-tagline-ko", "korean-translation-direct", "product-translate", "reason-translate", "product-intro-check"]);
+    expect([...profile.tasks, ...support.tasks].map((task) => task.task)).toEqual(STATION_TASKS.profile);
+    expect(support.more).toBe(2);
     // 분류 대기가 있어 프로필 준비가 쌓임이면 자세히가 프로필 준비로 열린다
     const slow = conveyorInputs({ models, classification: { held: 5, nextRetryAt: null },
       throughput: { measuredAt: NOW, stages: [stage("fetch"), stage("judge"), stage("first"), stage("second"), stage("publish", { completed5m: 0 })] } });
@@ -280,7 +286,7 @@ describe("several tasks on one station (프로필 준비)", () => {
 
   it("puts a problem task first so the card never hides it behind a healthy one", () => {
     const rows = healthy().rows!.filter((row) => row.task !== "reason-translate");
-    const profile = buildStationLlm(healthy({ rows })).profile;
+    const profile = buildStationLlm(healthy({ rows })).support;
     if (profile.kind !== "llm") throw new Error("llm");
     expect(profile.head.task).toBe("reason-translate");
     expect(profile.flag?.text).toBe("모델 없음 — 멈춤");
@@ -292,6 +298,7 @@ describe("unreadable inputs", () => {
     const models = buildStationLlm(healthy({ rows: null }));
     expect(models.first).toMatchObject({ kind: "unknown" });
     expect(models.profile).toMatchObject({ kind: "unknown" });
+    expect(models.support).toMatchObject({ kind: "unknown" });
     expect(models.judge).toMatchObject({ kind: "none" });
     const conveyor = buildConveyor(conveyorInputs({ models }));
     expect(conveyor.stations.find((station) => station.key === "first")).toMatchObject({ tone: "flow" });
@@ -302,7 +309,7 @@ describe("unreadable inputs", () => {
 
   it("falls back to 확인 못함 on every card when no model read was passed at all", () => {
     const html = renderToStaticMarkup(<FlowBoard data={buildConveyor(conveyorInputs({ models: null }))} />);
-    expect(html.match(/class="cv-llm"/g)).toHaveLength(10);
+    expect(html.match(/class="cv-llm"/g)).toHaveLength(11);
     expect(html).toContain('data-llm="unknown"');
   });
 });
@@ -310,9 +317,9 @@ describe("unreadable inputs", () => {
 describe("card and detail", () => {
   const html = (models = buildStationLlm(healthy())) => renderToStaticMarkup(<FlowBoard data={buildConveyor(conveyorInputs({ models }))} />);
 
-  it("gives all ten cards (eight stations + 사람 심사 + 공개) the same model block in the same place", () => {
+  it("gives all station, human, public and support cards the same model observation block", () => {
     const page = html();
-    expect(page.match(/class="cv-llm"/g)).toHaveLength(10);
+    expect(page.match(/class="cv-llm"/g)).toHaveLength(11);
     expect(page).toContain("LLM 없음 · 규칙");
     expect(page).toContain("LLM 없음 · 탐색 API");
     expect(page).toContain("LLM 없음 · 내려받기");

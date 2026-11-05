@@ -163,9 +163,9 @@ export default async function AdminRankingPage() {
     <main className={styles.page}><PageStamp />
       <header className={styles.header}>
         <div>
-          <p className={styles.eyebrow}>시즌 운영</p>
+          <p className={"admin-page-eyebrow " + styles.eyebrow}>시즌 운영</p>
           <h1>랭킹 설정</h1>
-          <p className={styles.intro}>현재 시즌을 확인하고, 다음 시즌의 집계 기준을 준비하세요.</p>
+          <p className={"admin-page-lead " + styles.intro}>현재 시즌을 확인하고, 다음 시즌의 집계 기준을 준비하세요.</p>
         </div>
         <span className={styles.operator}>관리자 · {admin.login}</span>
       </header>
