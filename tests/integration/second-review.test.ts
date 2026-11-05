@@ -647,7 +647,7 @@ it('enqueues same-first-model candidates within the existing bounded limit', asy
   for (let i = 0; i < 55; i++) {await held(`pr04b-second/echo-${i}`); await firstReview(`pr04b-second/echo-${i}`, 'reject');}
   const eligible = await held('pr04b-second/independent'); await firstReview(eligible.repo, 'reject');
   await db.update(crawlReviewAttempts).set({model: 'another'}).where(eq(crawlReviewAttempts.candidateId, eligible.id));
-  expect(await enqueueSecondReviews(await getSettings())).toBe(25);
+  expect(await enqueueSecondReviews(await getSettings())).toBe(50);
   expect((await pendingSecondReviews(10)).map(row => row.repo)).toEqual(Array.from({ length: 10 }, (_, i) => `pr04b-second/echo-${i}`));
 });
 it('does not starve published samples beyond the first batch', async () => {

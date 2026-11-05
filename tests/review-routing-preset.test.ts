@@ -58,12 +58,12 @@ it("does not enable collection, AI2 or human automation when selecting a model p
   expect(next.humanReview).toEqual({ enabled: false, generation: 0 });
 });
 
-it("counts GPU as independent but keeps a same-Supa fallback in human review", () => {
+it("counts a separate second-stage result from either GPU or the same Supa model", () => {
   const first = { ...SUPA_FIRST_REVIEWER, decision: "approve", confidence: 0.99 };
   const gpu = { ...GPU_SECOND_REVIEWER, decision: "approve", confidence: 0.99 };
   const supa = { ...SUPA_FIRST_REVIEWER, decision: "approve", confidence: 0.99 };
   expect(combineVerdicts(first, gpu, 0.85, false)).toBe("agreed");
-  expect(combineVerdicts(first, supa, 0.85, false)).toBe("needs_human");
+  expect(combineVerdicts(first, supa, 0.85, false)).toBe("agreed");
   expect(combineVotes(first, [supa], { agreeAt: 0.85, published: false, pending: 0, firstModel: first.model }).status)
-    .toBe("needs_human");
+    .toBe("agreed");
 });

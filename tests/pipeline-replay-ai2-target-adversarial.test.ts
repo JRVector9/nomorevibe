@@ -288,8 +288,9 @@ describe("current source and upstream identity storage adapter", () => {
     ["first model absent", state => { state.domain.tables.crawl_review_attempts[0].model = null; vote(state).first_model = null; }],
     ["expired unpublished source", state => { document(state).fetched_at = "2001-10-01T00:00:00.000Z"; refresh(state, null, false); }],
   ];
-  it.each(invalid)("rejects current %s through the public domain rules", (_label, mutate) => {
-    const { state } = fixture(); mutate(state); expect(assessReplayAi2Target(state, target, wall)).toEqual(negative("input_changed"));
+  it.each(invalid)("checks current %s through the public domain rules", (label, mutate) => {
+    const { state, input } = fixture(); mutate(state);
+    expect(assessReplayAi2Target(state, target, wall)).toEqual(label === "same first model" ? eligible(state, input) : negative("input_changed"));
   });
   it.each(["other provider", "other model", "failed", "manual"])("keeps gate referenced reviewer when newer first is %s", variant => {
     const { state, input } = fixture(), newer: Raw = { ...state.domain.tables.crawl_review_attempts[0], id: 999 };
@@ -365,7 +366,7 @@ describe("current source and upstream identity storage adapter", () => {
 });
 
 describe("fallback and published product identity", () => {
-  it("accepts the exact fallback chain and preserves same-first fallback as reference-only", () => {
+  it("accepts the exact fallback chain including the first-stage model", () => {
     const { state, input } = fallback();
     expect(assessReplayAi2Target(state, 202, wall)).toEqual(eligible(state, input, 202));
     vote(state, 202).model = "first-model";

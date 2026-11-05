@@ -83,16 +83,16 @@ describe("보류 Qwen-v2 재심사 정책", () => {
     expect(heldQwenGateable(settings(), "qwen3.8-flash-next")).toBe(true);
   });
 
-  it("독립 표인지는 자리 표시를 모두 떼고 가른다 — 칸 맞추기(sameReviewModel)는 [MLX] 만 뗀다", () => {
+  it("보류 관문의 모델 독립성은 자리 표시를 떼고 가르며, 일반 2차 결과는 같은 1차 모델이어도 셈한다", () => {
     expect(sameReviewModel("[gpu3090] qwen3.8-flash-next", "qwen3.8-flash-next")).toBe(false);
     expect(sameUnderlyingModel("[gpu3090] qwen3.8-flash-next", "qwen3.8-flash-next")).toBe(true);
     expect(sameUnderlyingModel("[MLX] gpt-oss-120b", "gpt-oss-120b")).toBe(true);
     expect(sameUnderlyingModel("[supa] Qwen3.8-27B-NVFP4", "qwen3.8-flash-next")).toBe(false);
     expect(sameUnderlyingModel("", "")).toBe(false);
-    // 같은 Qwen 의 표는 자리 표시가 달라도 되풀이라 "일치"로 적지 않는다
+    // 보류 관문의 독립 투표자 요건과 별개로 일반 2차 판정은 실제 별도 응답이면 같은 1차 모델도 받는다.
     const first = { decision: "approve" as const, confidence: 0.95, model: "qwen3.8-flash-next" };
     expect(combineVerdicts(first, { decision: "approve", confidence: 0.9, provider: "abcllm", model: "[gpu3090] qwen3.8-flash-next" }, 0.85, false))
-      .toBe("needs_human");
+      .toBe("agreed");
     expect(combineVerdicts(first, { decision: "approve", confidence: 0.9, provider: "abcllm", model: "[supa] Qwen3.8-27B-NVFP4" }, 0.85, false)).toBe("agreed");
   });
 

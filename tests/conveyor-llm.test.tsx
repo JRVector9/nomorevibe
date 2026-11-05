@@ -468,12 +468,19 @@ describe("칸 자세히 · 장애 대응의 틀 (2026-11-04 4차: 섹션 나누�
   });
 
   it("writes a warning once — the status section holds it, the model section keeps only the state tag", () => {
-    const conveyor = buildConveyor(conveyorInputs({ models: buildStationLlm(same) }));
+    const models = buildStationLlm(same);
+    // 같은 모델 사용은 경고가 아니다. 표시 전용 fixture에 실제 연결 경고를 넣어 중복 표시 계약을 검증한다.
+    for (const key of ["first", "second"] as const) {
+      const model = models[key];
+      if (model.kind !== "llm") throw new Error("llm");
+      models[key] = { ...model, warnings: ["엔진 연결 상태를 확인하세요."] };
+    }
+    const conveyor = buildConveyor(conveyorInputs({ models }));
     for (const key of ["first", "second"] as const) {
       const station = conveyor.stations.find((row) => row.key === key)!;
       const markup = renderToStaticMarkup(<StationDetail station={station} hours={conveyor.hours} />);
       const warning = station.llm?.kind === "llm" ? station.llm.warnings[0] : "";
-      expect(warning, key).toContain("표를 못 냅니다");
+      expect(warning, key).toBe("엔진 연결 상태를 확인하세요.");
       const shown = station.reason ?? warning;
       expect(markup.split(shown).length - 1, key).toBe(1);
       expect(markup, key).not.toContain("cv-llmd-warn");
