@@ -701,7 +701,10 @@ export async function prepareAiTaskServingResources(task: AiTaskDef, chosen: rea
     if (!ready.createContract) continue;
     const { connection, row } = chosen[index];
     const [record] = await onPrimary(() => db.select().from(aiConnections).where(eq(aiConnections.id, connection.id)));
-    const key = record ? connectionKey(record) : null;
+    // Keep the selected endpoint and its credential on the same connection version before network I/O.
+    if (!record || Number(record.version) !== connection.version || !record.enabled)
+      return { ok: false as const, issues: ["ai_connection_version_mismatch"] };
+    const key = connectionKey(record);
     if (record?.apiKeyCiphertext && key === null) return { ok: false as const, issues: ["ai_connection_key_unreadable"] };
     const served = connection.models?.find(model => model.id === row.model);
     let probed;
