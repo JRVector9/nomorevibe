@@ -5,6 +5,8 @@ import { ai2GatewayServingContractSchema, resolveAi2GatewayServingContract } fro
 import { mergeWithDefaults, settingsUnreadable } from "@/lib/crawl/settings";
 import { firstReviewers } from "@/lib/crawl/first-reviewers";
 import { taskModels } from "@/lib/llm/ai-task-resolver";
+import { aiTaskModelsReadState } from "@/lib/llm/ai-task-models-snapshot";
+import { reviewTaskRanksPinned, settingsReviewersActive } from "@/lib/crawl/review-task-ranks";
 import { QWEN_AUDIT_PROVIDER } from "@/lib/crawl/product-audit-reviewer";
 import { batchPolicyHash, batchPolicySchema } from "@/lib/jobs/batches";
 import { modelCapacityPolicyHash, modelCapacityPolicySchema, type ModelCapacityPolicy } from "@/lib/llm/capacity";
@@ -262,7 +264,11 @@ export function usedModelRoutes(snapshot: ControlSnapshot, models: ModelEnv | nu
   const settings = mergeWithDefaults(snapshot.reviewSettings);
   // 손상된 행은 기본값으로 돌아온다 — 읽지 못한 것으로 본다
   if (settingsUnreadable(settings)) for (const routeId of ["crawl-agent-review", "second-review", "grok-session-check"]) add(routeId, "unknown", null);
-  else {
+  else if (!aiTaskModelsReadState().loaded && !reviewTaskRanksPinned() && !settingsReviewersActive()) {
+    // A dedicated control DB does not imply an app rank/config read. Preserve the existing unknown required route:
+    // it blocks OPEN rather than inventing fallback/default assignments or treating all routes as unused.
+    add("crawl-agent-review", "claude-cli", null);
+  } else {
     // 1차·2차·Grok 로그인 유지는 「작업 ↔ 모델」 순위(PR C1) — 이 프로세스가 순위를 읽을 때만(앱 DATABASE_URL) 안다. 모르면 「모름」(unknown)으로 막는다
     const first = firstReviewers(settings);
     if (first.length) for (const reviewer of first) add("crawl-agent-review", reviewer.provider, reviewer.model);

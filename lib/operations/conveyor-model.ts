@@ -183,8 +183,11 @@ export function applyStationLlm(station: Station, llm: StationLlm | null): Stati
     const tone: BeltTone = all ? "jam" : "slow";
     if (RANK[tone] >= RANK[station.tone]) {
       const stuck = llm.tasks.some((task) => task.state === "stuck" && llm.stopped.includes(task.label));
-      return { ...next, tone, status: all ? (stuck && !llm.tasks.some((task) => task.state === "none") ? "쓸 수 있는 순위 없음 — 멈춤" : NO_MODEL_TEXT) : "모델 없음 — 일부 멈춤",
-        reason: `${llm.stopped.join(" · ")}: ${llm.tasks.find((task) => llm.stopped.includes(task.label))?.note ?? "순위가 비어 있습니다"} 「작업 ↔ AI 모델」에서 순위를 채우세요` };
+      const stoppedTasks = llm.tasks.filter(task => llm.stopped.includes(task.label));
+      const poolOnly = stoppedTasks.every(task => !!task.pool);
+      const guidance = stoppedTasks.some(task => !!task.pool) ? "실행 방식·구성원 설정과 실행 오류를 확인하세요" : "순위를 채우세요";
+      return { ...next, tone, status: all ? (poolOnly ? "쓸 수 있는 분산 모델 없음 — 멈춤" : stuck && !llm.tasks.some((task) => task.state === "none") ? "쓸 수 있는 순위 없음 — 멈춤" : NO_MODEL_TEXT) : "모델 없음 — 일부 멈춤",
+        reason: `${llm.stopped.join(" · ")}: ${stoppedTasks[0]?.note ?? "모델 설정을 확인하세요"} 「작업 ↔ AI 모델」에서 ${guidance}` };
     }
     return next;
   }

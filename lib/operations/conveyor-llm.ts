@@ -48,7 +48,7 @@ export const NO_LLM: Readonly<Record<"discover" | "fetch" | "judge" | "sink", { 
 
 // ── 입력 ─────────────────────────────────────────────────────────────────────────────────────────
 
-export type LlmConnection = { id: string; label: string; kind: "api" | "cli"; baseUrl?: string | null; cliTool: string | null; hasKey: boolean; enabled: boolean };
+export type LlmConnection = { id: string; label: string; kind: "api" | "cli"; baseUrl?: string | null; cliTool: string | null; hasKey: boolean; enabled: boolean; updatedAt?: string };
 export type LlmRankRow = { task: string; slot: number; rank: number; connectionId: string; model: string; enabled: boolean; updatedAt?: string };
 /**
  * 최근 1시간 장부(model_capacity_requests state=settled)를 route·provider·model 로 센 것. groups 는 그 호출들이 잡은 장비 그룹(group_id) —
@@ -56,7 +56,13 @@ export type LlmRankRow = { task: string; slot: number; rank: number; connectionI
  */
 export type LlmUsedRow = { routeId: string; provider: string; model: string; count: number; lastAt: string | null; groups?: string[] };
 /** 실행 쪽 순위 사정(잡의 마지막 틱 관측 ai_task.ranks) — 오래됐으면 쓰지 않는다 */
-export type LlmRuntime = { at: string; startedAt?: string; degraded: { code: string; detail: string | null } | null; unusable: { rank: number; code: string; text: string }[] };
+export type LlmExecutionRow = {
+  task: string; slot: number; mode: "fallback" | "workload_pool"; revision: number | null; updatedAt: string | null;
+  members: readonly { memberId: string; position: number; connectionId: string; model: string; deviceId: string }[];
+};
+export type LlmPoolRuntime = { configRevision: number; members: number; served: Readonly<Record<string, number>>;
+  unusable: readonly { memberId: string; code: string; count: number }[] };
+export type LlmRuntime = { at: string; startedAt?: string; pool?: LlmPoolRuntime; degraded: { code: string; detail: string | null } | null; unusable: { rank: number; code: string; text: string }[] };
 export type LlmInputs = {
   now: string;
   /** null = 읽지 못함 */
@@ -64,6 +70,8 @@ export type LlmInputs = {
   rows: LlmRankRow[] | null;
   used: LlmUsedRow[] | null;
   runtime: Record<string, LlmRuntime> | null;
+  /** Explicit null means the mode read failed. Undefined preserves existing fallback-only pure fixtures. */
+  execution?: readonly LlmExecutionRow[] | null;
 };
 
 /** 실행 쪽 사정 관측을 믿는 시간 — 잡 관측이 멈춰 있어도(2차는 10:46Z 에 멈춘 채) 옛 오류를 지금 것으로 보이지 않게 한다 */
@@ -90,9 +98,16 @@ export type TaskState =
   /** 설정만 알 수 있다(장부 밖이거나 장부를 읽지 못함, 또는 실행 쪽이 아직 이 순위를 읽지 않는 작업) */
   | "set_only";
 export type TaskHead = { model: string; where: string; rank: number | null; source: "used" | "set"; count: number | null };
+export type TaskLlmPool = {
+  summary: string; modelCount: number; deviceCount: number;
+  members: { memberId: string; slot: number; configRevision: number | null; connection: string; model: string; deviceId: string; problem: string | null }[];
+  /** Only the exact current membership/revision may contribute member observations. */
+  runtime: (LlmPoolRuntime & { at: string }) | null;
+};
 export type TaskLlm = {
   task: string; label: string; live: boolean; state: TaskState;
   slots: SlotSeen[];
+  pool?: TaskLlmPool;
   /** null = 알 수 없음(장부 밖 route·읽지 못함) */
   used: UsedSeen[] | null;
   usedWhy: "no_ledger" | "unread" | null;
@@ -135,7 +150,21 @@ function currentRuntime(def: AiTaskDef, inputs: LlmInputs): LlmRuntime | null {
   if (!runtime || !(Date.parse(inputs.now) - Date.parse(runtime.at) <= RUNTIME_FRESH_MS)) return null;
   // A tick may start with the old ranks and only finish after the save.
   const observedAt = Date.parse(runtime.startedAt ?? runtime.at);
-  const changedSinceObservation = (inputs.rows ?? []).some(row => row.task === def.id && row.updatedAt
+  const pools = inputs.execution?.filter(row => row.task === def.id && row.mode === "workload_pool") ?? [];
+  if (pools.length) {
+    // Current adapters expose one task/slot observation; never apply an old rank/member failure to a new pool.
+    if (pools.length !== 1 || !runtime.pool || runtime.pool.configRevision !== pools[0].revision
+      || runtime.pool.members !== pools[0].members.length) return null;
+    const ids = new Set(pools[0].members.map(member => member.memberId));
+    if ([...Object.keys(runtime.pool.served), ...runtime.pool.unusable.map(member => member.memberId)].some(id => !ids.has(id))) return null;
+    const changed = pools[0].updatedAt && Date.parse(pools[0].updatedAt) > observedAt
+      || pools[0].members.some(member => inputs.connections?.some(connection => connection.id === member.connectionId
+        && connection.updatedAt && Date.parse(connection.updatedAt) > observedAt));
+    return changed ? null : runtime;
+  }
+  if (runtime.pool) return null;
+  const changedSinceObservation = (inputs.execution ?? []).some(row => row.task === def.id && row.updatedAt
+    && Date.parse(row.updatedAt) > observedAt) || (inputs.rows ?? []).some(row => row.task === def.id && row.updatedAt
     && Date.parse(row.updatedAt) > observedAt);
   return changedSinceObservation ? null : runtime;
 }
@@ -192,6 +221,34 @@ function placeOf(row: LlmUsedRow, inputs: LlmInputs): string {
 function taskLlm(def: AiTaskDef, inputs: LlmInputs): TaskLlm {
   const live = isAiLiveTask(def.id);
   const fresh = currentRuntime(def, inputs);
+  const poolConfigs = inputs.execution?.filter(row => row.task === def.id && row.mode === "workload_pool") ?? [];
+  if (poolConfigs.length) {
+    const members = poolConfigs.flatMap(config => config.members.map(member => {
+      const connection = inputs.connections?.find(row => row.id === member.connectionId);
+      return { memberId: member.memberId, slot: config.slot, configRevision: config.revision,
+        connection: connection?.label ?? "연결 없음", model: member.model, deviceId: member.deviceId,
+        problem: !connection ? "연결을 찾을 수 없음" : !connection.enabled ? "연결이 꺼져 있음" : null };
+    }));
+    const modelCount = new Set(members.map(member => member.model)).size, deviceCount = new Set(members.map(member => member.deviceId)).size;
+    const pool: TaskLlmPool = { members, modelCount, deviceCount,
+      summary: `작업 분산 · 모델 ${modelCount}개 · 장비 ${deviceCount}대`, runtime: fresh?.pool ? { ...fresh.pool, at: fresh.at } : null };
+    const usedWhy = !def.routeId ? "no_ledger" as const : inputs.used === null ? "unread" as const : null;
+    // Ledger use is route-wide historical evidence, not proof that this pool/member supplied a particular call.
+    const used: UsedSeen[] | null = usedWhy ? null : (inputs.used ?? []).filter(row => row.routeId === def.routeId)
+      .sort((a, b) => b.count - a.count).map(row => { const place = placeOf(row, inputs);
+        return { text: `${place} · ${row.model}`, model: row.model, where: place, count: row.count, rank: null, lastAt: row.lastAt }; });
+    const top = used?.[0];
+    // Only an explicit whole-pool failure, after currentRuntime's identity/time guards, stops the task.
+    // Individual member_unusable counters never imply that every member is unavailable.
+    const unavailable = fresh?.pool && fresh.degraded?.code === "all_ranks_unusable" ? fresh.degraded : null;
+    return { task: def.id, label: def.label, live, slots: [], pool, used, usedWhy,
+      state: unavailable ? "stuck" : used?.length === 0 ? "idle" : "set_only",
+      head: top ? { model: top.model, where: top.where, rank: null, source: "used", count: top.count }
+        : { model: `모델 ${pool.modelCount}개 · 작업 분산`, where: `장비 ${pool.deviceCount}대`, rank: null, source: "set", count: null },
+      note: unavailable ? `현재 작업 분산 구성의 최근 틱에서 모든 구성원을 사용할 수 없었습니다${unavailable.detail ? ` — ${unavailable.detail}` : ""}`
+        : used === null ? "작업 분산 설정입니다. 최근 실제 사용은 장부에서 확인하지 못했습니다."
+        : "작업 분산 설정입니다. 최근 1시간 장부는 설정 변경 전 호출도 포함하며 구성원별 실행을 확정하지 않습니다." };
+  }
   const slots = slotsOf(def, inputs, fresh);
   const configured = slots.flatMap((slot) => slot.ranks);
   const base = { task: def.id, label: def.label, live, slots };
@@ -278,7 +335,7 @@ function stationLlm(tasks: TaskLlm[]): StationLlm {
   const stopped = live.filter((task) => task.state === "none" || task.state === "stuck").map((task) => task.label);
   const flagFor = (): LlmFlag | null => {
     if (head.state === "none") return { tone: "bad", text: NO_MODEL_TEXT };
-    if (head.state === "stuck") return { tone: "bad", text: "쓸 수 있는 순위 없음 — 멈춤" };
+    if (head.state === "stuck") return { tone: "bad", text: head.pool ? "최근 틱 · 분산 구성원 전체 사용 불가" : "쓸 수 있는 순위 없음 — 멈춤" };
     if (head.state === "fallback") return { tone: "warn", text: `${head.head?.rank ?? 2}순위로 넘어감` };
     if (head.state === "other") return { tone: "warn", text: "순위에 없는 모델" };
     return null;
@@ -289,9 +346,10 @@ function stationLlm(tasks: TaskLlm[]): StationLlm {
 /** 칸마다 지금 쓰는 모델 — 읽지 못한 입력은 그 칸을 「확인 못함」으로 둔다(0 이나 정상으로 보이지 않게) */
 export function buildStationLlm(inputs: LlmInputs): Record<LlmStationKey | "sink" | "support", StationLlm> {
   const out = {} as Record<LlmStationKey | "sink" | "support", StationLlm>;
-  const unreadable = inputs.rows === null || inputs.connections === null;
+  const unreadable = inputs.rows === null || inputs.connections === null || inputs.execution === null;
   const summarize = (ids: readonly string[]): StationLlm => {
-    if (unreadable) return { kind: "unknown", why: "작업 ↔ AI 모델 순위를 읽지 못했습니다" };
+    if (unreadable) return { kind: "unknown", why: inputs.execution === null
+      ? "작업 ↔ AI 모델의 실행 모드를 읽지 못했습니다" : "작업 ↔ AI 모델 순위를 읽지 못했습니다" };
     return stationLlm(ids.flatMap((id) => { const def = taskDef(id); return def ? [taskLlm(def, inputs)] : []; }));
   };
   for (const key of Object.keys(STATION_TASKS) as LlmStationKey[]) {
@@ -313,7 +371,7 @@ export function buildStationLlm(inputs: LlmInputs): Record<LlmStationKey | "sink
     const firstTask = first.tasks[0], secondTask = second.tasks[0];
     const firstModel = firstTask.state === "none" || firstTask.state === "stuck" ? null : firstTask.used?.[0]?.model ?? modelOf(firstTask);
     const voters = secondTask.state === "none" || secondTask.state === "stuck" ? [] : secondModels(secondTask);
-    if (firstModel && voters.length && voters.every((model) => sameUnderlyingModel(firstModel, model))) {
+    if (!firstTask.pool && !secondTask.pool && firstModel && voters.length && voters.every((model) => sameUnderlyingModel(firstModel, model))) {
       const text = (side: "first" | "second") => side === "second"
         ? `1차(${firstModel})와 같은 모델이라 2차가 표를 못 냅니다 — 1차 승인 후보가 「2차 갈림」으로 보류됩니다. 2차 투표자를 1차와 다른 모델로 바꾸세요`
         : `2차 투표자도 같은 모델(${voters[0]})이라 2차가 표를 못 냅니다 — 1차 승인이 「2차 갈림」으로 보류됩니다`;

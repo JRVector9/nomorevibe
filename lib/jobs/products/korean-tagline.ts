@@ -13,6 +13,7 @@ import { KOREAN_TRANSLATION_NATIVE_MAX_CHARS,
 import { jobKnob } from "@/lib/operations/runtime-settings-schema";
 import { runtimeSettings } from "@/lib/operations/runtime-settings-store";
 import { TextTaskRanks } from "@/lib/llm/ai-task-resolver";
+import { pendingTextPoolModel } from "@/lib/llm/text-task-pool-resume";
 
 /**
  * 한국어 한 줄 소개 짓기(UX-13) — 공개 제품의 지금 소개를 한국어 한 줄로 옮긴다. 새 제품·홈에 보이는 제품부터, 나머지는 스타 순.
@@ -156,9 +157,10 @@ async function writeKoreanTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTa
         let model = entry.model;
         let outcome: KoreanTaglineCapacityResult | { kind: "unusable" };
         if (entry.backend === "gpt") {
+          const prefer = await pendingTextPoolModel(ranks);
           // 순위 차례로 부른다 — 이 모델만의 까닭(경로 없음·장비 행 없음·계약 닫힘·포화)이면 같은 묶음을 다음 순위로(TextTaskRanks.run)
           const attempt = await ranks.run(binding => translateKoreanTaglinesWithModelCapacity(entry.batch, homeSlugs, lease, { timeoutMs, signal })
-            .then(value => ({ value, model: binding.identity })));
+            .then(value => ({ value, model: binding.identity })), { prefer });
           if (attempt.kind === "unusable") outcome = { kind: "unusable" };
           else { outcome = attempt.value.value; model = attempt.value.model; }
         } else outcome = { kind: "result" as const, result: await translateKoreanTaglinesWithQwen(items, { timeoutMs, signal }) };

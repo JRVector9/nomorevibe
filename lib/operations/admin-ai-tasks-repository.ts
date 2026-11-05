@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
+import type { AiTaskPoolRuntime } from "@/lib/llm/ai-task-execution-config";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
-import { aiConnections, aiTaskModels, modelCapacityControl, modelCapacityDevices, operationsAudit, operationsObservations, type AiConnectionModel } from "@/lib/db/schema";
+import { aiConnections, aiTaskModels, aiTaskExecutionConfigs, modelCapacityControl, modelCapacityDevices, operationsAudit, operationsObservations, type AiConnectionModel } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { REVIEW_TASK_ROUTES, ensureReviewTaskRanks, resolveReviewTaskRanks, reviewRankUnusableText } from "@/lib/crawl/review-task-ranks";
 import { AI_TEXT_TASK_IDS, aiTask, aiTaskSlotLabel, aiTaskSlots, isAiLiveTask, isAiReviewTask, type AiTaskDef } from "@/lib/llm/ai-tasks";
@@ -71,7 +72,7 @@ function issueOf(error: unknown): string {
   const constraint = typeof pg.constraint_name === "string" ? pg.constraint_name : null;
   if (pg.code === "23505") return constraint === "ai_connections_label_idx" ? "ai_connection_label_taken" : constraint === "ai_connections_base_url_idx"
     ? "ai_connection_base_url_taken" : constraint?.startsWith("ai_task_models") ? "ai_task_revision_mismatch" : "ai_task_save_conflict";
-  if (pg.code === "23503" && constraint === "ai_task_models_connection_fk") return "ai_connection_in_use";
+  if (pg.code === "23503" && (constraint === "ai_task_models_connection_fk" || constraint === "ai_task_pool_members_connection_fk")) return "ai_connection_in_use";
   const message = error instanceof Error ? error.message : String(error);
   if (SAFE_CODE.test(message)) return message;
   logger.warn("ai_tasks.save_failed", { code: typeof pg.code === "string" ? pg.code : null, constraint,
@@ -159,6 +160,7 @@ function crossRankIssues(task: AiTaskDef, readiness: readonly AiRankReadiness[])
 /** 실행 쪽의 순위 사정(PR B, text 일곱 작업) — 잡의 마지막 틱(job:<잡> 관측의 ai_task.ranks)이나 이 웹 프로세스의 마지막 검색어 번역. */
 export type AiTaskRuntimeView = Readonly<{
   from: "job" | "web"; at: string;
+  pool?: AiTaskPoolRuntime;
   /** Job start derived from the existing observation duration, when valid. */
   startedAt?: string;
   served: readonly Readonly<{ rank: number; count: number }>[];
@@ -221,6 +223,8 @@ function auditSummary(row: AdminLogRow): string {
   const detail = (row.detail ?? {}) as Record<string, unknown>;
   if (!row.ok) return row.error ?? "거절";
   switch (row.action) {
+    case "ai-task-execution-save": return detail.mode === "workload_pool"
+      ? `작업 분산 · 모델 ${Array.isArray(detail.after) ? detail.after.length : 0}개` : "기존 대체 실행으로 전환";
     case AI_CONNECTION_SAVE_AUDIT_ACTION: return `${detail.created ? "만듦" : "고침"} · ${String((detail.after as { label?: unknown } | undefined)?.label ?? "")}${detail.keyChanged ? " · 키 바꿈" : ""}`;
     case AI_CONNECTION_MODELS_AUDIT_ACTION: return detail.error ? `목록 읽기 실패(${String(detail.error)})` : `모델 ${String(detail.count ?? 0)}개 읽음`;
     case AI_CONNECTION_DELETE_AUDIT_ACTION: return `지움 · ${String(detail.label ?? "")}`;
@@ -238,7 +242,8 @@ function auditSummary(row: AdminLogRow): string {
 }
 
 function runtimeView(status: TextRankStatus, from: AiTaskRuntimeView["from"], degraded: AiTaskRuntimeView["degraded"], startedAt?: string): AiTaskRuntimeView {
-  return Object.freeze({ from, at: status.at, degraded, ...(startedAt ? { startedAt } : {}),
+  const pool = (status as TextRankStatus & { pool?: AiTaskPoolRuntime }).pool;
+  return Object.freeze({ from, at: status.at, degraded, ...(startedAt ? { startedAt } : {}), ...(pool ? { pool } : {}),
     served: Object.freeze(Object.entries(status.served).map(([rank, count]) => Object.freeze({ rank: Number(rank), count })).sort((a, b) => a.rank - b.rank)),
     unusable: Object.freeze(status.unusable.map(row => Object.freeze({ ...row, text: textRankUnusableText(row.code) }))) });
 }
@@ -496,77 +501,25 @@ export async function saveAiTaskRanks(input: AiTaskRanksInput, actor: string): P
     const blocking = [...readiness.flatMap(row => row.blocking), ...crossRankIssues(task, readiness)];
     if (blocking.length) return { ok: false, issues: blocking };
     const warnings = [...readiness.flatMap(row => row.warnings), ...aiTaskRankNotices(task.id, ranks, rows)];
-    // 엔진 직접 계약 — 네트워크는 잠금 전에(엔진 연결·배정 저장과 같은 readback + 1토큰 시험)
-    const contracts: { routeId: string; model: string; contract: Readonly<Record<string, unknown>>; key: string | null; label: string }[] = [];
-    for (const [index, ready] of readiness.entries()) {
-      if (!ready.createContract) continue;
-      const { connection, row } = chosen[index];
-      const [record] = await onPrimary(() => db.select().from(aiConnections).where(eq(aiConnections.id, connection.id)));
-      const key = record ? connectionKey(record) : null;
-      if (record?.apiKeyCiphertext && key === null) return { ok: false, issues: ["ai_connection_key_unreadable"] };
-      const served = connection.models?.find(model => model.id === row.model);
-      let probed;
-      try {
-        probed = await probeEngineContract({ endpoint: `${connection.baseUrl}/chat/completions`, engineModel: row.model, apiKey: key,
-          maxModelLen: served?.maxModelLen ? null : connection.contextTokens }, request());
-      } catch (error) {
-        const reason = error instanceof Error && /^[a-z0-9_:.-]{1,80}$/.test(error.message) ? error.message : "error";
-        return { ok: false, issues: [`ai_task_contract_probe_failed:${ready.createContract.routeId}:${reason}`] };
-      }
-      // 장부 이름(identity)이 계약 행의 열쇠다. 같은 모델을 다른 연결에도 둔 순위는 연결로 가른 이름이고 엔진에는 engineModel(= 순위 모델)이 나간다(PR B)
-      const contract = engineRouteContract(ready.createContract.routeId as GatewayServingRoute, ready.createContract.identity, probed.responseModel, probed.endpoint,
-        probed.totalTokenBound, connection.deviceId, probed.totalTokenBoundFrom, ready.createContract.engineModel);
-      if (!contract) return { ok: false, issues: [`ai_task_contract_probe_failed:${ready.createContract.routeId}:contract_schema_invalid`] };
-      contracts.push({ routeId: ready.createContract.routeId, model: ready.createContract.identity, contract, key, label: connection.label });
-    }
-    // CLI 계약(PR C1 — 1차·2차·Grok 로그인 유지): 연결의 CLI 버전과 route 의 argv 상한으로 만든다(네트워크 없음)
-    const cliContracts = readiness.flatMap(ready => {
-      if (!ready.createCliContract) return [];
-      const contract = cliDbContract(ready.createCliContract.routeId, ready.createCliContract.provider as CliProvider, ready.createCliContract.model,
-        ready.createCliContract.cliVersion);
-      return [{ ready, contract }];
-    });
-    const brokenCli = cliContracts.find(entry => !entry.contract);
-    if (brokenCli) return { ok: false, issues: [`${brokenCli.ready.rank}순위 ${brokenCli.ready.model}: CLI 계약을 만들 수 없습니다(이 작업이 받지 않는 CLI 이거나 버전 글이 맞지 않음).`] };
+    const resources = await prepareAiTaskServingResources(task, chosen, readiness);
+    if (!resources.ok) return resources;
     const result = await onPrimary(() => db.transaction(async tx => {
       if (!await writerSiteActive(tx)) throw new DrWriterFencedError("site_fenced");
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('ai_task_execution_task'), hashtext(${task.id}))`);
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('ai_task_models'), hashtext(${`${task.id}#${input.slot}`}))`);
+      if (task.id === "second-review" && input.slot > 1 && chosen.length > 0) {
+        const [activePool] = await tx.select({ slot: aiTaskExecutionConfigs.slot }).from(aiTaskExecutionConfigs)
+          .where(and(eq(aiTaskExecutionConfigs.task, task.id), eq(aiTaskExecutionConfigs.mode, "workload_pool"))).limit(1);
+        if (activePool) fail("ai_task_pool_ai2_other_slots_configured");
+      }
       const before = (await tx.select().from(aiTaskModels).where(and(eq(aiTaskModels.task, task.id), eq(aiTaskModels.slot, input.slot)))
         .orderBy(asc(aiTaskModels.rank))).map(rankRowOf);
       if (aiTaskSlotRevision(before) !== input.revision) fail("ai_task_revision_mismatch");
       const ids = [...new Set(chosen.map(entry => entry.connection.id))];
       const live = ids.length ? await tx.select({ id: aiConnections.id, enabled: aiConnections.enabled }).from(aiConnections).where(inArray(aiConnections.id, ids)).for("share") : [];
       if (live.length !== ids.length || live.some(row => !row.enabled)) fail("ai_connection_version_mismatch");
-      const madeContracts: string[] = [];
-      for (const entry of contracts) {
-        const saved = await saveServingContractTx(tx, { routeId: entry.routeId, contract: entry.contract, auth: entry.key ? "stored" : "none", transport: "direct",
-          apiKey: entry.key ?? undefined, note: `작업 ↔ 모델 저장(${task.label}) · 연결 ${entry.label}` }, actor);
-        madeContracts.push(`${entry.routeId} · ${entry.model} (#${saved.id})`);
-      }
-      for (const entry of cliContracts) {
-        const saved = await saveCliServingContractTx(tx, { contract: entry.contract!, note: `작업 ↔ 모델 저장(${task.label}) · CLI 버전 ${entry.contract!.cliVersion}` }, actor);
-        madeContracts.push(`${entry.contract!.routeId} · ${entry.contract!.provider} · ${entry.contract!.model} CLI (#${saved.id})`);
-      }
-      const madeDevices: string[] = [];
-      const wantDevices = [...new Map(readiness.flatMap(row => row.createDevice ? [[row.createDevice.deviceId, row.createDevice] as const] : [])).values()];
-      if (wantDevices.length) {
-        // 모든 장비 저장이 control 을 먼저 잡는다 — 잡은 채로 없음을 다시 확인해야 다른 저장이 만든 행을 덮지 않는다
-        await tx.select({ id: modelCapacityControl.id }).from(modelCapacityControl).where(eq(modelCapacityControl.id, 1)).for("update");
-        for (const device of wantDevices) {
-          const [exists] = await tx.select({ id: modelCapacityDevices.deviceId }).from(modelCapacityDevices).where(eq(modelCapacityDevices.deviceId, device.deviceId)).for("update");
-          if (exists) continue;
-          await saveModelCapacityDevice(tx, { deviceId: device.deviceId, limitSlots: device.limitSlots, secondaryCap: device.limitSlots, idleMs: 60_000, reserveSlots: 0,
-            physicalLimit: null, roles: [], note: `작업 ↔ 모델 저장(${task.label})이 만듦` }, null, actor);
-          madeDevices.push(`${device.deviceId} (${device.limitSlots}칸)`);
-        }
-      }
-      const wantRoutes = readiness.flatMap(row => row.appendRoute ? [row.appendRoute] : []);
-      let appended: readonly { routeId: string; provider: string; model: string; groupId: string }[] = [], policyRevision: number | null = null;
-      if (wantRoutes.length) {
-        const { appendCompatibleRoutes } = await import("@/lib/llm/capacity-repository");
-        const done = await appendCompatibleRoutes(tx, wantRoutes);
-        appended = done.appended; policyRevision = done.policyRevision;
-      }
+      const { contracts: madeContracts, devices: madeDevices, routes: madeRoutes, policyRevision } =
+        await saveAiTaskServingResources(tx, task, readiness, resources, actor);
       await tx.delete(aiTaskModels).where(and(eq(aiTaskModels.task, task.id), eq(aiTaskModels.slot, input.slot)));
       const values = chosen.map(entry => {
         const kept = before.find(row => row.connectionId === entry.row.provider && row.model === entry.row.model);
@@ -575,7 +528,6 @@ export async function saveAiTaskRanks(input: AiTaskRanksInput, actor: string): P
       });
       const after = values.length ? (await tx.insert(aiTaskModels).values(values).returning()).map(rankRowOf).sort((a, b) => a.rank - b.rank) : [];
       const revision = aiTaskSlotRevision(after);
-      const madeRoutes = appended.map(route => `${route.routeId} / ${route.provider} / ${route.model} → ${route.groupId}`);
       await tx.insert(operationsAudit).values(await adminAuditRow(actor, { action: AI_TASK_MODELS_SAVE_AUDIT_ACTION, target: `${task.id}#${input.slot}`,
         detail: { task: task.id, slot: input.slot, revisionBefore: input.revision, revision, before: before.map(row => ({ ...row })), after: after.map(row => ({ ...row })),
           created: { devices: madeDevices, contracts: madeContracts, routes: madeRoutes, policyRevision }, warnings } }));
@@ -738,3 +690,86 @@ export function aiTaskTargetLabel(target: string): string {
   return task ? aiTaskSlotLabel(task, Number(slot) || 1) : target;
 }
 export type { AiRankChoice };
+
+
+export { readReadinessInput as readAiTaskReadinessInput, crossRankIssues as aiTaskCrossResourceIssues };
+export type AiTaskResourceChoice = Readonly<{ rank: number; row: AiRankChoice; connection: AiConnectionView }>;
+
+/** Existing contract readback/probe path shared by rank and pool saves; no inference during selection. */
+export async function prepareAiTaskServingResources(task: AiTaskDef, chosen: readonly AiTaskResourceChoice[], readiness: readonly AiRankReadiness[]) {
+// 엔진 직접 계약 — 네트워크는 잠금 전에(엔진 연결·배정 저장과 같은 readback + 1토큰 시험)
+  const contracts: { routeId: string; model: string; contract: Readonly<Record<string, unknown>>; key: string | null; label: string }[] = [];
+  for (const [index, ready] of readiness.entries()) {
+    if (!ready.createContract) continue;
+    const { connection, row } = chosen[index];
+    const [record] = await onPrimary(() => db.select().from(aiConnections).where(eq(aiConnections.id, connection.id)));
+    // Keep the selected endpoint and its credential on the same connection version before network I/O.
+    if (!record || Number(record.version) !== connection.version || !record.enabled)
+      return { ok: false as const, issues: ["ai_connection_version_mismatch"] };
+    const key = connectionKey(record);
+    if (record?.apiKeyCiphertext && key === null) return { ok: false as const, issues: ["ai_connection_key_unreadable"] };
+    const served = connection.models?.find(model => model.id === row.model);
+    let probed;
+    try {
+      probed = await probeEngineContract({ endpoint: `${connection.baseUrl}/chat/completions`, engineModel: row.model, apiKey: key,
+        maxModelLen: served?.maxModelLen ? null : connection.contextTokens }, request());
+    } catch (error) {
+      const reason = error instanceof Error && /^[a-z0-9_:.-]{1,80}$/.test(error.message) ? error.message : "error";
+      return { ok: false as const, issues: [`ai_task_contract_probe_failed:${ready.createContract.routeId}:${reason}`] };
+    }
+    // 장부 이름(identity)이 계약 행의 열쇠다. 같은 모델을 다른 연결에도 둔 순위는 연결로 가른 이름이고 엔진에는 engineModel(= 순위 모델)이 나간다(PR B)
+    const contract = engineRouteContract(ready.createContract.routeId as GatewayServingRoute, ready.createContract.identity, probed.responseModel, probed.endpoint,
+      probed.totalTokenBound, connection.deviceId, probed.totalTokenBoundFrom, ready.createContract.engineModel);
+    if (!contract) return { ok: false as const, issues: [`ai_task_contract_probe_failed:${ready.createContract.routeId}:contract_schema_invalid`] };
+    contracts.push({ routeId: ready.createContract.routeId, model: ready.createContract.identity, contract, key, label: connection.label });
+  }
+  // CLI 계약(PR C1 — 1차·2차·Grok 로그인 유지): 연결의 CLI 버전과 route 의 argv 상한으로 만든다(네트워크 없음)
+  const cliContracts = readiness.flatMap(ready => {
+    if (!ready.createCliContract) return [];
+    const contract = cliDbContract(ready.createCliContract.routeId, ready.createCliContract.provider as CliProvider, ready.createCliContract.model,
+      ready.createCliContract.cliVersion);
+    return [{ ready, contract }];
+  });
+  const brokenCli = cliContracts.find(entry => !entry.contract);
+  if (brokenCli) return { ok: false as const, issues: [`${brokenCli.ready.rank}순위 ${brokenCli.ready.model}: CLI 계약을 만들 수 없습니다(이 작업이 받지 않는 CLI 이거나 버전 글이 맞지 않음).`] };
+  return { ok: true as const, contracts, cliContracts };
+}
+
+export type AiTaskServingResources = Extract<Awaited<ReturnType<typeof prepareAiTaskServingResources>>, { ok: true }>;
+
+/** Caller owns its existing writer fence/config CAS. Resource semantics are the same for both save paths. */
+export async function saveAiTaskServingResources(tx: ProductTransaction, task: AiTaskDef, readiness: readonly AiRankReadiness[],
+  resources: AiTaskServingResources, actor: string) {
+  const { contracts, cliContracts } = resources;
+  const madeContracts: string[] = [];
+  for (const entry of contracts) {
+    const saved = await saveServingContractTx(tx, { routeId: entry.routeId, contract: entry.contract, auth: entry.key ? "stored" : "none", transport: "direct",
+      apiKey: entry.key ?? undefined, note: `작업 ↔ 모델 저장(${task.label}) · 연결 ${entry.label}` }, actor);
+    madeContracts.push(`${entry.routeId} · ${entry.model} (#${saved.id})`);
+  }
+  for (const entry of cliContracts) {
+    const saved = await saveCliServingContractTx(tx, { contract: entry.contract!, note: `작업 ↔ 모델 저장(${task.label}) · CLI 버전 ${entry.contract!.cliVersion}` }, actor);
+    madeContracts.push(`${entry.contract!.routeId} · ${entry.contract!.provider} · ${entry.contract!.model} CLI (#${saved.id})`);
+  }
+  const madeDevices: string[] = [];
+  const wantDevices = [...new Map(readiness.flatMap(row => row.createDevice ? [[row.createDevice.deviceId, row.createDevice] as const] : [])).values()];
+  if (wantDevices.length) {
+    // 모든 장비 저장이 control 을 먼저 잡는다 — 잡은 채로 없음을 다시 확인해야 다른 저장이 만든 행을 덮지 않는다
+    await tx.select({ id: modelCapacityControl.id }).from(modelCapacityControl).where(eq(modelCapacityControl.id, 1)).for("update");
+    for (const device of wantDevices) {
+      const [exists] = await tx.select({ id: modelCapacityDevices.deviceId }).from(modelCapacityDevices).where(eq(modelCapacityDevices.deviceId, device.deviceId)).for("update");
+      if (exists) continue;
+      await saveModelCapacityDevice(tx, { deviceId: device.deviceId, limitSlots: device.limitSlots, secondaryCap: device.limitSlots, idleMs: 60_000, reserveSlots: 0,
+        physicalLimit: null, roles: [], note: `작업 ↔ 모델 저장(${task.label})이 만듦` }, null, actor);
+      madeDevices.push(`${device.deviceId} (${device.limitSlots}칸)`);
+    }
+  }
+  const wantRoutes = readiness.flatMap(row => row.appendRoute ? [row.appendRoute] : []);
+  let appended: readonly { routeId: string; provider: string; model: string; groupId: string }[] = [], policyRevision: number | null = null;
+  if (wantRoutes.length) {
+    const { appendCompatibleRoutes } = await import("@/lib/llm/capacity-repository");
+    const done = await appendCompatibleRoutes(tx, wantRoutes);
+    appended = done.appended; policyRevision = done.policyRevision;
+  }
+  return { contracts: madeContracts, devices: madeDevices, routes: appended.map(route => `${route.routeId} / ${route.provider} / ${route.model} → ${route.groupId}`), policyRevision };
+}

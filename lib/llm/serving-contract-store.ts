@@ -7,6 +7,8 @@ import { publishRuntimeSettingsSnapshot, runtimeSettings, runtimeSettingsSnapsho
 import { overlaidModelDefinitions, setModelRegistryOverlay, setModelRoutePolicyOverlay } from "./model-registry";
 import { activeTextTaskRank } from "./ai-task-rank-scope";
 import { aiTaskModelRows, type AiTaskConnectionSnapshot } from "./ai-task-models-snapshot";
+import { aiTask } from "./ai-tasks";
+import { aiTaskExecutionReadState, readAiTaskExecutionConfig } from "./ai-task-execution-snapshot";
 // The assignment-table default reader (PR 3b-B) installs itself next to the registry overlays; it reads nothing unless the runtime_settings
 // toggle assignments.tableReads is on (or MODEL_ASSIGNMENT_TABLE=1 forces it — PR 3b-E, lib/llm/assignment-flag.ts).
 import "./stage-assignment-snapshot";
@@ -232,7 +234,22 @@ function reviewRankConnection(routeId: string, row: StoredServingContract | unde
   } catch { base = null; }
   if (!base) return null;
   const wire = field("provider") === "local-direct" ? field("model") : field("engineModel") ?? field("model");
-  return aiTaskModelRows().find(rank => rank.task === task && rank.enabled && rank.connection.enabled && rank.connection.kind === "api"
+  let candidates = aiTaskModelRows().filter(rank => rank.task === task && rank.enabled);
+  // Live review entrypoints ensure this snapshot before selecting a pool. Pure legacy accessors
+  // that have not selected any task member keep their existing contract-auth behavior.
+  if (aiTaskExecutionReadState().loaded) {
+    for (let slot = 1; slot <= (aiTask(task)?.slots ?? 1); slot++) {
+      const config = readAiTaskExecutionConfig(task, slot);
+      if (config.mode !== "workload_pool") continue;
+      // AI2 retains the exact saved legacy bindings for already-existing votes.
+      // This is credential lookup only: the domain claim requires an existing vote,
+      // while new pool enqueue selects exclusively from config.members.
+      if (task !== 'second-review') candidates = candidates.filter(rank => rank.slot !== slot);
+      candidates.push(...config.members.map(member => ({ task, slot, rank: 1, model: member.model,
+        enabled: true, options: member.options, connection: member.connection })));
+    }
+  }
+  return candidates.find(rank => rank.connection.enabled && rank.connection.kind === "api"
     && rank.connection.baseUrl === base && rank.model === wire)?.connection ?? null;
 }
 /**

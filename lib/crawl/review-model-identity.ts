@@ -38,3 +38,25 @@ export function bareModelName(model: string): string {
 export function sameUnderlyingModel(a?: string | null, b?: string | null): boolean {
   return Boolean(a && b && underlyingReviewModel(a) && underlyingReviewModel(a) === underlyingReviewModel(b));
 }
+
+/** Policy veto, NOT a statement that catalog entries have proven identical weights.
+ * The observed OpenCode catalog exposes provider/tier aliases but no weight fingerprints.
+ * Those aliases cannot supply independent votes for the same explicit DeepSeek model.
+ */
+const UNVERIFIED_REVIEW_FAMILIES: readonly (readonly string[])[] = [
+  ['opencode/deepseek-v4.1-flash', 'opencode/deepseek-v4.1-flash-free', 'opencode-go/deepseek-v4.1-flash'],
+  ['opencode/deepseek-v4-pro', 'opencode-go/deepseek-v4-pro'],
+];
+export function reviewIndependenceKey(model: string): string {
+  const value = withoutAliasSuffix(model).toLowerCase();
+  const family = UNVERIFIED_REVIEW_FAMILIES.findIndex(members => members.includes(value)
+    || underlyingReviewModel(model) === underlyingReviewModel(members[0]));
+  return family < 0 ? underlyingReviewModel(model) : `unverified-opencode-family:${family}`;
+}
+export function reviewModelsMayCountIndependently(a?: string | null, b?: string | null): boolean {
+  return Boolean(a && b && !sameUnderlyingModel(a, b) && reviewIndependenceKey(a) !== reviewIndependenceKey(b));
+}
+
+export function sameReviewIndependence(a?: string | null, b?: string | null): boolean {
+  return Boolean(a && b && reviewIndependenceKey(a) === reviewIndependenceKey(b));
+}

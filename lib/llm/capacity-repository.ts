@@ -2753,3 +2753,98 @@ export async function withdrawUndispatchedAi2ItemForFallback(tx: ProductTransact
   await event(tx, changed, row.state === "waiting" ? "wait_cancelled" : "reservation_cancelled", row.state, "withdrawn");
   return snapshot;
 }
+
+export type TextTargetPoolInput = Readonly<
+  { routeId: 'crawl-tagline'; member: CrawlTaglineInput['member'] }
+  | { routeId: 'product-search-verify'; member: SearchVerifyInput['member'] }
+  | { routeId: 'search-query-translate'; member: WebsearchQueryInput['member'] }
+>;
+/** Affinity metadata only. Exact current member hashes use existing live-work and generation/snapshot indexes.
+ * Never grants/cancels requests, issues native proof, or supplies a business writer. */
+export async function readTextTargetPoolAffinities(target: TextTargetPoolInput, models: readonly string[],
+  owner: ModelCapacityRequestIdentity['owner']): Promise<Readonly<{ model: string; provider: GatewayDispatchProvider }>[]> {
+  const checkedModels = [...new Set(models)];
+  if (!checkedModels.length) return [];
+  if (checkedModels.length > 8) throw new Error('invalid_text_pool_affinity_models');
+  const first = checkedModels.map(model => {
+    if (target.routeId === 'crawl-tagline') {
+      const input = crawlTaglineInputSchema.parse({ member: target.member, model, askOrdinal: 1, parent: null });
+      return { model, logical: crawlTaglineLogicalWorkKey(input), hash: crawlTaglineInputHash(input), generation: crawlTaglineGenerationHash(input) };
+    }
+    if (target.routeId === 'product-search-verify') {
+      const input = searchVerifyInputSchema.parse({ member: target.member, model, execution: 0,
+        step: firstSearchVerifyStep(target.member.mode), parent: null });
+      return { model, logical: searchVerifyLogicalWorkKey(input), hash: searchVerifyInputHash(input), generation: searchVerifyGenerationHash(input) };
+    }
+    const input = websearchQueryInputSchema.parse({ member: target.member, model });
+    return { model, logical: websearchQueryLogicalWorkKey(input.member), hash: websearchQueryInputHash(input), generation: '' };
+  });
+  const key = target.routeId === 'crawl-tagline' ? crawlTaglineMemberKeys(target.member)
+    : target.routeId === 'product-search-verify' ? searchVerifyMemberKeys(target.member) : websearchQueryMemberKeys(target.member);
+  const wanted = first.map(input => `${input.logical}:${input.hash}`);
+  return onPrimary(() => db.transaction(async tx => {
+    await tx.execute(sql`SET LOCAL statement_timeout='5s'`);
+    const state = await unlockedControl(tx);
+    if (state.fenced || state.mode !== 'open') throw new ModelCapacityDeferredError(state.mode === 'disabled' ? 'disabled' : 'draining');
+    const pending = await tx.select().from(modelCapacityRequests).where(and(
+      eq(modelCapacityRequests.ownerInstanceId, owner.instanceId), eq(modelCapacityRequests.ownerBootId, owner.bootId),
+      sql`${modelCapacityRequests.workKey} IN (${sql.join(wanted.map(value => sql`${value}`), sql`, `)})`,
+      eq(modelCapacityRequests.routeId, target.routeId), eq(modelCapacityRequests.class, 'background'), eq(modelCapacityRequests.pool, 'text'),
+      sql`${modelCapacityRequests.state} IN ('waiting','reserved')`,
+      eq(modelCapacityRequests.epoch, state.epoch), eq(modelCapacityRequests.revision, state.revision),
+      eq(modelCapacityRequests.policyHash, state.policyHash!),
+      sql`((${modelCapacityRequests.state}='waiting' AND ${modelCapacityRequests.queueUntil}>clock_timestamp())
+        OR (${modelCapacityRequests.state}='reserved' AND ${modelCapacityRequests.reservedUntil}>clock_timestamp()))`));
+    const matches: { model: string; provider: GatewayDispatchProvider }[] = [];
+    for (const row of pending) {
+      const expected = first.find(input => row.workKey === `${input.logical}:${input.hash}` && row.model === input.model);
+      const route = state.policy?.routes.find(route => route.routeId === row.routeId && route.provider === row.provider && route.model === row.model);
+      if (!expected || !route || route.groupId !== row.groupId || route.providerBudgetId !== row.providerBudgetId
+        || row.logicalWorkKey !== expected.logical || !isDeepStrictEqual(row.logicalMemberKeys, key)
+        || row.dispatchBinding !== null || !isGatewayDispatchProvider(row.provider)) throw new ModelCapacityDeferredError('ledger_mismatch');
+      matches.push({ model: row.model, provider: row.provider });
+    }
+    const prefixPredicate = target.routeId === 'search-query-translate'
+      ? sql`${modelCapacityRequests.dispatchBinding}->>'kind'='websearch_query_gateway'
+        AND ${modelCapacityRequests.dispatchBinding}->>'logicalWorkKey'=${websearchQueryLogicalWorkKey(target.member)}
+        AND ${modelCapacityRequests.dispatchBinding}->'member'->'cache'=${JSON.stringify(target.member.cache)}::text::jsonb`
+      : target.routeId === 'crawl-tagline' ? sql`${modelCapacityRequests.dispatchBinding}->>'kind'='crawl_tagline_gateway'
+        AND ${modelCapacityRequests.dispatchBinding}->>'generationHash' IN (${sql.join(first.map(input => sql`${input.generation}`), sql`, `)})`
+      : sql`${modelCapacityRequests.dispatchBinding}->>'kind'='search_verify_gateway'
+        AND ${modelCapacityRequests.dispatchBinding}->>'generationHash' IN (${sql.join(first.map(input => sql`${input.generation}`), sql`, `)})`;
+    const rows = await tx.select().from(modelCapacityRequests).where(sql`${prefixPredicate}
+      AND ${modelCapacityRequests.state} IN ('dispatched','indeterminate','settled') AND ${modelCapacityRequests.routeId}=${target.routeId}`);
+    for (const row of rows) {
+      const envelope = { requestId: row.requestId, owner: { instanceId: row.ownerInstanceId, bootId: row.ownerBootId },
+        token: row.token, epoch: row.epoch, revision: row.revision, policyHash: row.policyHash,
+        binding: row.dispatchBinding, bindingHash: row.dispatchBindingHash };
+      if (target.routeId === 'crawl-tagline') {
+        const parsed = crawlTaglineDispatchBindingSchema.safeParse(row.dispatchBinding);
+        const native = storedCrawlTaglineEvidence(row), unsent = storedCrawlTaglineNotStarted(row);
+        const dispatch = crawlTaglineModelDispatchSchema.safeParse(envelope);
+        if (!parsed.success || !isDeepStrictEqual(parsed.data.member, target.member)
+          || row.state === 'settled' && !native && !unsent
+          || row.state !== 'settled' && (!dispatch.success || !crawlTaglineRowMatches(row, dispatch.data)))
+          throw new ModelCapacityDeferredError('ledger_mismatch');
+        matches.push({ model: parsed.data.model, provider: parsed.data.provider });
+      } else if (target.routeId === 'product-search-verify') {
+        const parsed = searchVerifyDispatchBindingSchema.safeParse(row.dispatchBinding);
+        const dispatch = searchVerifyModelDispatchSchema.safeParse(envelope);
+        if (!parsed.success || !isDeepStrictEqual(parsed.data.member, target.member)
+          || row.state === 'settled' && !storedSearchVerifyEvidence(row) && !storedSearchVerifyNotStarted(row, parsed.data)
+          || row.state !== 'settled' && (!dispatch.success || !searchVerifyRowMatches(row, dispatch.data)))
+          throw new ModelCapacityDeferredError('ledger_mismatch');
+        matches.push({ model: parsed.data.model, provider: parsed.data.provider });
+      } else {
+        const parsed = websearchQueryDispatchBindingSchema.safeParse(row.dispatchBinding);
+        const dispatch = websearchQueryModelDispatchSchema.safeParse(envelope);
+        if (!parsed.success || !isDeepStrictEqual(parsed.data.member, target.member)
+          || row.state === 'settled' && !storedWebsearchQueryEvidence(row)
+          || row.state !== 'settled' && (!dispatch.success || !websearchQueryRowMatches(row, dispatch.data)))
+          throw new ModelCapacityDeferredError('ledger_mismatch');
+        matches.push({ model: parsed.data.model, provider: parsed.data.provider });
+      }
+    }
+    return [...new Map(matches.map(match => [JSON.stringify([match.provider, match.model]), match])).values()];
+  }, { accessMode: 'read only', isolationLevel: 'repeatable read' }));
+}

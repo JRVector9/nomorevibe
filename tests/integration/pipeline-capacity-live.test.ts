@@ -204,8 +204,12 @@ it("runs the collect CLI against an explicit database URL and writes a private a
     const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(PG|DATABASE_URL$|READ_DATABASE_URL$)/.test(key)));
     const start = new Date(Date.now() - 3_600_000).toISOString(), end = new Date(Date.now() - 60_000).toISOString();
     const output = join(directory, "live.json");
-    const run = (...args: string[]) => spawnSync(process.execPath, ["--import", "tsx", "scripts/pipeline-capacity-live.ts", ...args],
-      { encoding: "utf8", env: { ...env, NODE_ENV: "test", LIVE_CAPACITY_DATABASE_URL: TEST_DATABASE_URL }, timeout: 20_000 });
+    // Spawned CLI processes do not inherit the parent's explicit review-rank fixture.
+    const run = (...args: string[]) => spawnSync(process.execPath, ["--import", "tsx", "--import",
+      "./tests/integration/fixtures/review-ranks-child-preload.ts", "scripts/pipeline-capacity-live.ts", ...args],
+      { encoding: "utf8", env: { ...env, NODE_ENV: "test", LIVE_CAPACITY_DATABASE_URL: TEST_DATABASE_URL,
+        NMV_TEST_REVIEW_RANKS: JSON.stringify({ first: [{ provider: "claude-cli", model: "first-fixture" }],
+          second: [[{ provider: "abcllm", model: "second-a" }, { provider: "abcllm", model: "backup" }]] }) }, timeout: 20_000 });
     const collected = run("collect", "cli-run", start, end, "primary", output);
     expect(collected.stderr).toBe("");
     expect(collected.status).toBe(0);

@@ -3,7 +3,7 @@ import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, crawlReviewAttempts, crawlSettings, products, secondReviews,
-  type CrawlCandidate, type CrawlDocument, type CrawlReviewAttempt, type SecondReview } from "@/lib/db/schema";
+  type CrawlCandidate, type CrawlDocument, type CrawlReviewAttempt, type SecondReview, type SecondReviewWorkloadAssignment } from "@/lib/db/schema";
 import { lockProductGeneration, type ProductTransaction } from "@/lib/domain/products/generation";
 import { findRepositoryProduct } from "@/lib/domain/products/repository-identity";
 import { lockRepositoryAgentEvidence } from "@/lib/domain/evidence/agents/lock";
@@ -11,11 +11,13 @@ import { loadReviewInput } from "./agent-review-repository";
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, type ReviewInput } from "./agent-review-contract";
 import { mergeWithDefaults } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
-import { sameReviewModel, sameUnderlyingModel } from "./review-model-identity";
+import { sameReviewModel } from "./review-model-identity";
 import { firstReviewers, firstReviewIdentitySql, hasFirstReviewer } from "./first-reviewers";
 import { secondReviewFallbacks, secondReviewVoters } from "./second-review-voters";
 import { requireReviewTaskRanks } from "./review-task-ranks";
 import { reviewSemanticNow } from "./review-replay-context";
+import { secondReviewAssignmentMap, secondReviewHasWorkloadPool, secondReviewVoteIndependent, secondReviewWorkloadMembership } from "./second-review-workload";
+import { reviewModelsMayCountIndependently } from "./review-model-identity";
 import { appliedHeldQwenAttemptSql, heldQwenGateFirst, heldQwenGateFirstSql } from "./held-qwen-retry-policy";
 
 /** Grok upstream decisions are usable only while that exact first reviewer is configured. */
@@ -29,7 +31,7 @@ export function firstReviewProviderPredicate(settings: CrawlSettings,
 /** Shared pure validation for a locked worker input and the bounded admission snapshot. */
 export function secondReviewInputMatches(row: SecondReview, current: {
   candidate: CrawlCandidate; document: CrawlDocument; settings: CrawlSettings; input: ReviewInput;
-  first?: CrawlReviewAttempt | null; root?: SecondReview | null;
+  first?: CrawlReviewAttempt | null; root?: SecondReview | null; workloadAssignment?: SecondReviewWorkloadAssignment | null;
 }, now = new Date()): boolean {
   now = reviewSemanticNow(now);
   const { candidate, document, settings, input, first, root } = current;
@@ -42,16 +44,20 @@ export function secondReviewInputMatches(row: SecondReview, current: {
     : !["ai_decided", "ai_held", "ai_approved"].includes(row.trigger) || row.inputHash !== input.inputHash) return false;
   // 배정 표(PR 3b-B)가 출처면 그 표의 투표자·대체(second-review-voters.ts) — 올리는 쪽과 같은 목록이다
   const pool = row.fallbackForId ? secondReviewFallbacks(settings) : secondReviewVoters(settings);
-  if (!pool.some(voter => voter.provider === row.provider && sameReviewModel(voter.model, row.model))) return false;
+  if (secondReviewHasWorkloadPool()
+    ? !secondReviewWorkloadMembership(row, current.workloadAssignment)
+    : !pool.some(voter => voter.provider === row.provider && sameReviewModel(voter.model, row.model))) return false;
   if (row.fallbackForId && (!root || root.id !== row.fallbackForId || root.fallbackForId || root.candidateId !== row.candidateId
     || root.repo !== row.repo || root.firstAttemptId !== row.firstAttemptId || root.trigger !== row.trigger
     || root.publishedSlug !== row.publishedSlug || root.firstDecision !== row.firstDecision
     || (root.firstConfidence ?? null) !== (row.firstConfidence ?? null) || root.firstModel !== row.firstModel
     || root.generationKey !== row.generationKey || root.inputHash !== row.inputHash || root.status !== "resolved"
-    || root.resolution !== "fallback" || !secondReviewVoters(settings).some(voter => voter.provider === root.provider
-      && sameReviewModel(voter.model, root.model)))) return false;
+    || root.resolution !== "fallback" || (secondReviewHasWorkloadPool() ? !secondReviewWorkloadMembership(root, current.workloadAssignment)
+      : !secondReviewVoters(settings).some(voter => voter.provider === root.provider && sameReviewModel(voter.model, root.model))))) return false;
   if (secondReviewGeneration(row.firstAttemptId, input, row.trigger) !== row.generationKey
-    || (!row.fallbackForId && sameUnderlyingModel(row.firstModel, row.model))) return false;
+    || (!row.fallbackForId && row.firstModel && (secondReviewHasWorkloadPool()
+      ? !secondReviewVoteIndependent(row.firstModel, row.model, current.workloadAssignment)
+      : !reviewModelsMayCountIndependently(row.firstModel, row.model)))) return false;
   if (!row.publishedSlug) {
     const pool = firstReviewers(settings);
     // 관문 행은 보류 Qwen-v2 의 승인에도 붙는다(held-qwen-retry-policy.ts) — 그 밖의 행은 지금처럼 1차 심사자의 판단에만
@@ -102,6 +108,7 @@ export type SecondReviewDomainContext = {
   input: ReviewInput; first: CrawlReviewAttempt | null; root: SecondReview;
   /** Actual lifecycle-locked product generation; absent for unpublished inputs. */
   publishedProductId: number | null;
+  workloadAssignment?: SecondReviewWorkloadAssignment;
 };
 
 async function lockSecondReviewRows(tx: ProductTransaction, row: SecondReview): Promise<void> {
@@ -157,9 +164,14 @@ async function secondReviewInputContext(row: SecondReview, tx?: ProductTransacti
   const settings = mergeWithDefaults(saved?.values);
   if (!settings.enabled || !settings.secondReview.enabled) return null;
   const pool = row.fallbackForId ? secondReviewFallbacks(settings) : secondReviewVoters(settings);
-  if (!pool.some(voter => voter.provider === row.provider && sameReviewModel(voter.model, row.model))) return null;
+  const workloadAssignment = secondReviewHasWorkloadPool()
+    ? (await secondReviewAssignmentMap(executor, [row])).get(row.fallbackForId ?? row.id) : undefined;
+  if (secondReviewHasWorkloadPool() ? !secondReviewWorkloadMembership(row, workloadAssignment)
+    : !pool.some(voter => voter.provider === row.provider && sameReviewModel(voter.model, row.model))) return null;
   const input = await loadReviewInput(candidate, document, settings, executor);
-  if (secondReviewGeneration(row.firstAttemptId, input, row.trigger) !== row.generationKey || (!row.fallbackForId && sameUnderlyingModel(row.firstModel, row.model))) return null;
+  if (secondReviewGeneration(row.firstAttemptId, input, row.trigger) !== row.generationKey || (!row.fallbackForId && row.firstModel && (secondReviewHasWorkloadPool()
+      ? !secondReviewVoteIndependent(row.firstModel, row.model, workloadAssignment)
+      : !reviewModelsMayCountIndependently(row.firstModel, row.model)))) return null;
   let first: CrawlReviewAttempt | undefined;
   if (!row.publishedSlug) {
     // 관문은 그 1차 심사자(제공자·모델)의 최신 판단에 붙는다 — 다른 심사자의 더 새 판단과 견주지 않는다(codex 2차)
@@ -185,6 +197,6 @@ async function secondReviewInputContext(row: SecondReview, tx?: ProductTransacti
   }
   let root: SecondReview | undefined;
   if (row.fallbackForId) [root] = await executor.select().from(secondReviews).where(eq(secondReviews.id, row.fallbackForId));
-  return secondReviewInputMatches(row, { candidate, document, settings, input, first, root })
-    ? { row, candidate, document, settings, input, first: first ?? null, root: root ?? row, publishedProductId: null } : null;
+  return secondReviewInputMatches(row, { candidate, document, settings, input, first, root, workloadAssignment })
+    ? { row, candidate, document, settings, input, first: first ?? null, root: root ?? row, publishedProductId: null, ...(workloadAssignment ? { workloadAssignment } : {}) } : null;
 }

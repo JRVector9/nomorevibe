@@ -382,7 +382,8 @@ it("every admin server action and every write route handler goes through the web
   // admin/models/assignments(모델 배정, PR 3b-D): 배정 저장·끄기·가져오기 적용 셋이 더해져 100
   // admin/models/tasks(작업 ↔ AI 모델, 0162 PR A): 연결 저장·모델 다시 읽기·연결 지우기·순위 저장·가져오기 적용 다섯이 더해져 105
   // PR C1: 운영센터 「2차 표 바로 바꾸기」(switchSecondVoter)를 없애 104 — 2차 투표자는 작업 ↔ 모델에서만 바꾼다
-  expect(wrapped).toBe(104);
+  // 0165 workload pool settings add the guarded saveTaskExecutionAction in models/tasks/execution-actions.ts.
+  expect(wrapped).toBe(105);
   const routes = files.filter(file => file.endsWith(`${path.sep}route.ts`));
   for (const file of routes) {
     const source = readFileSync(file, "utf8");

@@ -750,3 +750,39 @@ export const aiTaskModels = pgTable('ai_task_models', {
   unique('ai_task_models_model_key').on(table.task, table.slot, table.connectionId, table.model),
   index('ai_task_models_connection_idx').on(table.connectionId),
 ]);
+
+/** Explicit task execution mode; absent rows retain the existing 1..3 fallback ranks. */
+export const aiTaskExecutionConfigs = pgTable('ai_task_execution_configs', {
+  task: varchar('task', { length: 64 }).notNull(), slot: integer('slot').notNull(),
+  mode: varchar('mode', { length: 16 }).$type<'fallback' | 'workload_pool'>().notNull(),
+  revision: bigint('revision', { mode: 'number' }).notNull().default(1),
+  updatedBy: varchar('updated_by', { length: 120 }).notNull(),
+  updatedAt: timestamp('updated_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
+}, table => [
+  primaryKey({ columns: [table.task, table.slot] }),
+  check('ai_task_execution_configs_task_check', sql`${table.task} ~ '^[a-z0-9][a-z0-9-]{0,63}$'`),
+  check('ai_task_execution_configs_slot_check', sql`${table.slot} BETWEEN 1 AND 8`),
+  check('ai_task_execution_configs_mode_check', sql`${table.mode} IN ('fallback','workload_pool')`),
+  check('ai_task_execution_configs_revision_check', sql`${table.revision} BETWEEN 1 AND 9007199254740991`),
+]);
+
+/** Pool positions are independent of ai_task_models.rank (which stays 1..3). */
+export const aiTaskPoolMembers = pgTable('ai_task_pool_members', {
+  memberId: uuid('member_id').primaryKey(), task: varchar('task', { length: 64 }).notNull(), slot: integer('slot').notNull(),
+  position: integer('position').notNull(), connectionId: uuid('connection_id').notNull(),
+  model: varchar('model', { length: 200 }).notNull(), options: jsonb('options').$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  canonicalModel: varchar('canonical_model', { length: 200 }).notNull(), deviceId: varchar('device_id', { length: 120 }).notNull(),
+  engineKey: varchar('engine_key', { length: 64 }).notNull(),
+}, table => [
+  foreignKey({ columns: [table.task, table.slot], foreignColumns: [aiTaskExecutionConfigs.task, aiTaskExecutionConfigs.slot], name: 'ai_task_pool_members_config_fk' }).onDelete('cascade'),
+  foreignKey({ columns: [table.connectionId], foreignColumns: [aiConnections.id], name: 'ai_task_pool_members_connection_fk' }).onDelete('restrict'),
+  unique('ai_task_pool_members_position_key').on(table.task, table.slot, table.position),
+  unique('ai_task_pool_members_engine_key').on(table.task, table.slot, table.engineKey),
+  check('ai_task_pool_members_position_check', sql`${table.position} BETWEEN 1 AND 4`),
+  check('ai_task_pool_members_model_check', sql`char_length(${table.model}) BETWEEN 1 AND 200 AND ${table.model} = btrim(${table.model}) AND ${table.model} !~ '[[:cntrl:]]'`),
+  check('ai_task_pool_members_canonical_check', sql`char_length(${table.canonicalModel}) BETWEEN 1 AND 200 AND ${table.canonicalModel} = btrim(${table.canonicalModel}) AND ${table.canonicalModel} !~ '[[:cntrl:]]'`),
+  check('ai_task_pool_members_device_check', sql`char_length(${table.deviceId}) BETWEEN 1 AND 120 AND ${table.deviceId} = btrim(${table.deviceId}) AND ${table.deviceId} !~ '[[:cntrl:]]'`),
+  check('ai_task_pool_members_engine_check', sql`${table.engineKey} ~ '^[a-f0-9]{64}$'`),
+  check('ai_task_pool_members_options_check', sql`jsonb_typeof(${table.options}) = 'object' AND pg_column_size(${table.options}) <= 4096`),
+  index('ai_task_pool_members_connection_idx').on(table.connectionId),
+]);

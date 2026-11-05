@@ -2,11 +2,12 @@ import { modelRequestBudget, modelRouteTimeoutMs } from "@/lib/llm/model-registr
 import { deferredJob, type JobContext, type JobOutcome } from "@/lib/jobs/runner";
 import { tickRemaining } from "@/lib/jobs/tick-deadline";
 import { ModelCapacityDeferredError, modelCapacityDeferralIsPerWork } from "@/lib/llm/capacity-deferred";
-import { pendingVerifications, recordVerificationResult } from "@/lib/domain/products/search-profiles";
+import { pendingVerifications, recordVerificationResult, readSearchVerifyAffinityMember } from "@/lib/domain/products/search-profiles";
 import { verifyKeywordsWithModelCapacity } from "@/lib/domain/products/search-verify-model-capacity";
 import { jobKnob } from "@/lib/operations/runtime-settings-schema";
 import { runtimeSettings } from "@/lib/operations/runtime-settings-store";
 import { textTaskModel } from "@/lib/llm/ai-task-rank-scope";
+import { pendingTextPoolTargetModel } from "@/lib/llm/text-task-pool-resume";
 import { TextTaskRanks, type TextRankRun } from "@/lib/llm/ai-task-resolver";
 
 /**
@@ -80,6 +81,12 @@ async function verifySearchKeywordsWithRanks(ctx: JobContext<null>, ranks: TextT
             let attempt: TextRankRun<Flow>;
             try {
               // 순위 차례로 부른다 — 이 모델만의 까닭(경로 없음·장비 행 없음·계약 닫힘·포화)이면 같은 제품을 다음 순위로(TextTaskRanks.run)
+              let prefer: string | null = null;
+              if (ranks.mode === 'workload_pool') {
+                const member = await readSearchVerifyAffinityMember(task);
+                if (!member) { passed.add(task.product.id); continue; }
+                prefer = await pendingTextPoolTargetModel(ranks, { routeId: JOB, member });
+              }
               attempt = await ranks.run(async (binding): Promise<Flow> => {
                 const outcome = await verifyKeywordsWithModelCapacity(task, lease, { request, signal, timeoutMs, chunked });
                 if (outcome.kind === "skipped") return "stop";
@@ -98,7 +105,8 @@ async function verifySearchKeywordsWithRanks(ctx: JobContext<null>, ranks: TextT
                   if (await (outcome.expectation ? recordVerificationResult(task, lease, failure, outcome.expectation)
                     : recordVerificationResult(task, lease, failure))) failed++;
                   // 그 제품의 실패로 남겼다. 엔진이 모든 제품에 대해 내려갔음이 증명되면(engine-down.ts) 이 순위만 쉬고 다음 제품은 다음 순위로 간다
-                  if (ranks.failed(binding, result.error)) ctx.log("search_verify.rank_down", { rank: binding.rank });
+                  if (ranks.failed(binding, result.error)) ctx.log("search_verify.rank_down", binding.memberId
+                    ? { memberId: binding.memberId, configRevision: binding.configRevision } : { rank: binding.rank });
                   return "next";
                 }
                 ranks.answered(binding);
@@ -108,7 +116,7 @@ async function verifySearchKeywordsWithRanks(ctx: JobContext<null>, ranks: TextT
                 verified++;
                 removed += result.unsupported.length;
                 return "next";
-              });
+              }, { prefer });
             } catch (error) {
               // 이 제품만의 미룸이다 — 앞선 호출이 아직 보내진 중이거나(dispatched) 이 제품 한 세대의 장부가 사슬로 읽히지 않는다(ledger_mismatch).
               // 제품 하나를 건너뛰고 틱을 계속 돈다(틱 전체를 접지 않는다, 2026-10-31).

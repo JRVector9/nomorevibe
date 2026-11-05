@@ -41,7 +41,7 @@ import { resolveModelSlots } from "@/lib/operations/stage-registry";
 import { completionsOnce, controlStatusOnce, flowOnce, hourlyOnce } from "@/app/(operator)/admin/status/render-reads";
 import { FlowDetailSlot } from "@/app/(operator)/admin/status/FlowDetail";
 
-const slots = resolveModelSlots(DEFAULT_CRAWL_SETTINGS, {});
+let slots: ReturnType<typeof resolveModelSlots>;
 const stamp = (seconds: number) => new Date(Date.UTC(2026, 9, 18, 0, 0, seconds)).toISOString();
 /** 복제본 실행기 — 문장마다 같은 행을 돌려준다 */
 function replicaWith(rows: unknown[]) {
@@ -52,6 +52,7 @@ function replicaWith(rows: unknown[]) {
 }
 
 beforeEach(() => {
+  slots = resolveModelSlots(DEFAULT_CRAWL_SETTINGS, {});
   vi.clearAllMocks();
   mocks.memo.clear();
   vi.useFakeTimers({ toFake: ["Date"] });

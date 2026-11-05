@@ -4,9 +4,9 @@ import type { JobKnobName } from "@/lib/operations/runtime-settings-schema";
 import { GroupForm, TD, TH, ValueCell } from "./fields";
 
 // 열 순서 — 클라이언트 번들이라 schema 모듈(node:crypto)을 값으로 import 하지 않고 이름만 적는다(JOB_KNOB_NAMES 와 같은 집합)
-const KNOB_ORDER: readonly JobKnobName[] = ["batch", "batchChars", "minCallMs", "slowCallMs", "soloAttempts", "callMs", "maxAttempts"];
+const KNOB_ORDER: readonly JobKnobName[] = ["batch", "batchChars", "minCallMs", "slowCallMs", "soloAttempts", "callMs", "maxAttempts", "consumerConcurrency"];
 const KNOB_HEADERS: Record<JobKnobName, string> = { batch: "묶음", batchChars: "묶음 글자", minCallMs: "최소 남은 시간(초)", slowCallMs: "느린 호출(초)",
-  soloAttempts: "혼자 보내는 실패 수", callMs: "호출 상한(초)", maxAttempts: "최대 시도" };
+  soloAttempts: "혼자 보내는 실패 수", callMs: "호출 상한(초)", maxAttempts: "최대 시도", consumerConcurrency: "소비자 동시 업무(1~4)" };
 
 /**
  * 번역·묶음 — 공개 번역 정책(translation 그룹)과 잡별 묶음(jobs 그룹)은 저장 묶음이 다르므로 폼이 둘이다.
@@ -27,7 +27,7 @@ export function TranslationForm({ translation, jobKnobs, revision, readOnly }: {
     </GroupForm>
     <GroupForm group="jobs" revision={revision} readOnly={readOnly}>
       <h3 className="text-[15px] font-semibold">잡별 묶음</h3>
-      <p className="text-[13px] text-fg-3">각 잡이 한 틱에 묶는 건수·글자와 호출을 시작할 최소 남은 시간입니다. 소개 생성의 동시 호출·호출 상한은 위 경로 한도의 <code>crawl-tagline</code> 줄입니다.</p>
+      <p className="text-[13px] text-fg-3">각 잡이 한 틱에 묶는 건수·글자와 호출을 시작할 최소 남은 시간입니다. 소개 생성의 동시 호출·호출 상한은 위 경로 한도의 <code>crawl-tagline</code> 줄입니다. 2차 심사의 소비자 동시 업무는 모델 수·장비 슬롯·투표 수와 별개이며 기본 1입니다.</p>
       <div className="overflow-x-auto"><table className="w-full min-w-[880px] text-left text-[13px]"><thead><tr className="border-b border-line">
         <th className={TH}>잡</th>{columns.map(knob => <th key={knob} className={TH}>{KNOB_HEADERS[knob]}</th>)}</tr></thead>
         <tbody>{jobKnobs.map(row => <tr key={row.job} className="border-b border-line">

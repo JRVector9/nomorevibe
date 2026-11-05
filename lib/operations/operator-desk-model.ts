@@ -52,6 +52,7 @@ export type OperatorDesk = {
  */
 export const CHANGE_UNDO: Readonly<Record<string, (target: string) => DeskUndo>> = {
   "ai-task-models-save": () => ({ text: "이전 순위로 다시 저장(「바꾸기」 되돌리기·작업 ↔ AI 모델)", href: "/admin/models/tasks" }),
+  "ai-task-execution-save": () => ({ text: "「작업 ↔ AI 모델」에서 이전 실행 방식·분산 모델로 다시 저장", href: "/admin/models/tasks" }),
   "ai-task-models-import": () => ({ text: "「작업 ↔ AI 모델」에서 칸별로 이전 순위로 다시 저장", href: "/admin/models/tasks" }),
   "ai-connection-save": () => ({ text: "「작업 ↔ AI 모델」 연결 편집에서 이전 값으로 저장", href: "/admin/models/tasks" }),
   "ai-connection-delete": () => ({ text: "지운 연결은 다시 만들어야 합니다(키는 다시 넣음)", href: "/admin/models/tasks" }),
@@ -80,7 +81,7 @@ export const CHANGE_ACTIONS = Object.keys(CHANGE_UNDO);
 
 /** 순위 저장의 대상(감사 target `task#slot`)은 사람 말 작업 이름으로(「2차 AI 검수 · 투표자 1」). 모르는 작업·다른 동작은 그대로 */
 function changeTarget(action: string, target: string): string {
-  if (action !== "ai-task-models-save") return target;
+  if (action !== "ai-task-models-save" && action !== "ai-task-execution-save") return target;
   const [id, slot] = target.split("#");
   const task = aiTask(id);
   return task ? aiTaskSlotLabel(task, Number(slot) || 1) : target;

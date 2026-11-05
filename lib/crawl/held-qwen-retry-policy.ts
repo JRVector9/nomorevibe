@@ -1,5 +1,5 @@
 import { readModelRegistry } from "@/lib/llm/model-registry";
-import { underlyingReviewModel } from "./review-model-identity";
+import { underlyingReviewModel, reviewIndependenceKey } from "./review-model-identity";
 import { sql, type SQL } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { crawlReviewAttempts, type CrawlReviewAttempt } from "@/lib/db/schema";
@@ -100,6 +100,18 @@ export const underlyingModelSql = (name: SQL): SQL => {
   const aliases = readModelRegistry().models.map(model => sql`WHEN ${model.key} THEN ${underlyingReviewModel(model.model)}`);
   return sql`CASE lower(trim(${name})) ${sql.join(aliases, sql` `)} ELSE regexp_replace(regexp_replace(regexp_replace(regexp_replace(lower(trim(${name})), '@[0-9a-f]{8}$', ''), '^\\[[^]]*\\][[:space:]]*', ''), '^[^/[:space:]]+/', ''), '[+](vision(-shot2)?|prompt-v3)$', '') END`;
 };
+
+/** Independence veto for observed catalog aliases; underlyingModelSql remains a weights-name projection. */
+export function reviewIndependenceSql(name: SQL): SQL {
+  const aliases = ['opencode/deepseek-v4.1-flash', 'opencode/deepseek-v4.1-flash-free',
+    'opencode-go/deepseek-v4.1-flash', 'opencode/deepseek-v4-pro', 'opencode-go/deepseek-v4-pro'];
+  return sql`CASE regexp_replace(lower(trim(${name})), '@[0-9a-f]{8}$', '')
+    ${sql.join(aliases.map(model => sql`WHEN ${model} THEN ${reviewIndependenceKey(model)}`), sql` `)}
+    ELSE CASE ${underlyingModelSql(name)}
+      WHEN 'deepseek-v4.1-flash' THEN ${reviewIndependenceKey('opencode/deepseek-v4.1-flash')}
+      WHEN 'deepseek-v4-pro' THEN ${reviewIndependenceKey('opencode/deepseek-v4-pro')}
+      ELSE ${underlyingModelSql(name)} END END`;
+}
 
 /**
  * heldQwenGateFirst 의 SQL — crawl_review_attempts 행(또는 같은 열을 가진 별칭)에 건다. appliedAttemptId 는 그 후보에 적용된 시도 id 의 글자 값이다
