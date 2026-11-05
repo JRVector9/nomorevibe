@@ -23,4 +23,4 @@
 
 운영 이전은 일반 앱 배포와 별도다. 공식 DRAINING 및 reserved/dispatched=0 확인 후 적용한다. `model_capacity_check_rules`에 SHARE ROW EXCLUSIVE 잠금, 5초 lock timeout이 있으며 기존 두 guard 함수 재생성 권한이 필요하다. ledger 전체 표를 재작성하거나 스캔하지 않는다. 사전 baseline 0160 행 수와 새 source 부재, 사후 새 source 각 1개와 정확 predicate hash를 검사해 drift/중복을 거절한다. 새 테이블/계정/GRANT·모델 배정·용량 변경·운영 pool 활성화는 없다.
 
-검증: 사용자 지시에 따라 새 테스트·수동 기능 검사·모델 호출·운영 접근을 하지 않았다. 정적 검사와 필수 CI는 통합 단계에서 수행한다.
+검증 범위: 사용자 지시에 따라 새 테스트·수동 발행/모델 기능 검사는 실행하지 않는다. 통합 단계에서는 필요한 정적 검사·기존 필수 CI와 실제 OpenCode DeepSeek V4.1 Flash max 코드 리뷰를 수행한다. 운영 migration·모델 구성 활성화·앱 배포 완료는 각 실행 영수증으로 별도 기록한다.
