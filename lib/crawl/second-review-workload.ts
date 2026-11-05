@@ -69,13 +69,13 @@ export function secondReviewWorkloadMembership(row: Pick<SecondReview, 'provider
   }
   return slot.candidates.some(candidate => candidate.binding && candidate.poolMember?.memberId === assignment.memberId
     && candidate.poolMember.canonicalModel === assignment.canonicalModel
-    && candidate.binding.provider === row.provider && sameReviewModel(candidate.binding.identity, row.model));
+    && candidate.binding.provider === row.provider && candidate.binding.identity === row.model);
 }
 const OPAQUE_MODEL = /^(?:auto|supa)$/i;
 function modelCanonical(task: 'first-review' | 'second-review', model: string): string | null {
-  const candidate = resolveReviewTaskRanks(task).candidates.find(candidate => sameReviewModel(candidate.binding?.identity, model));
+  const candidate = resolveReviewTaskRanks(task).candidates.find(candidate => candidate.binding?.identity === model);
   const contract = reviewRouteContracts(task === 'first-review' ? 'crawl-agent-review' : 'second-review')
-    .find(entry => sameReviewModel(entry.row.model, model));
+    .find(entry => entry.row.model === model);
   const metadata = contract?.row.contract;
   const responseModel = metadata && typeof metadata === 'object' && 'responseModel' in metadata && typeof metadata.responseModel === 'string'
     ? metadata.responseModel : null;
@@ -142,7 +142,7 @@ export function secondReviewPoolRootMembershipSql(root: SQL): SQL {
       jsonb_array_elements(${JSON.stringify(members)}::jsonb) m
       WHERE a.second_review_id = ${root}.id AND a.task_slot = 1 AND a.config_revision <= ${slot.config.revision}
         AND a.member_id::text = m->>'id' AND a.canonical_model = m->>'canonical'
-        AND ${root}.provider = m->>'provider' AND ${sameNameSql(sql`${root}.model`)} = ${sameNameSql(sql`m->>'model'`)})
+        AND ${root}.provider = m->>'provider' AND ${root}.model = m->>'model')
     OR (${Boolean(legacy)} AND NOT EXISTS (SELECT 1 FROM second_review_workload_assignments a WHERE a.second_review_id = ${root}.id)
       AND ${root}.provider IS NOT DISTINCT FROM ${legacy?.provider ?? null}
       AND ${sameNameSql(sql`${root}.model`)} IS NOT DISTINCT FROM ${sameNameSql(sql`${legacy?.identity ?? null}`)}))`;
