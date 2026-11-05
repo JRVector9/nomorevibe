@@ -15,9 +15,12 @@ import { grokAuthPath, grokReviewAgentDefinition, grokReviewArgs, grokReviewResu
   GROK_REVIEW_AGENT } from "./agent-review-grok";
 import { aiCliToolOfProvider } from "@/lib/llm/ai-tasks";
 import { aiTaskReasoningEfforts } from "@/lib/llm/ai-task-reasoning";
-import { opencodeReviewArgs, opencodeReviewConfig, opencodeReviewResult, OPENCODE_REVIEW_VERSION } from "./agent-review-opencode";
+import { opencodeReviewArgs, opencodeReviewProfile, releaseOpencodeReviewProfile, opencodeReviewResult, OPENCODE_REVIEW_VERSION } from "./agent-review-opencode";
 import { MAX_REVIEW_INPUT_BYTES, type ReviewInput } from "./agent-review-contract";
 import { assertLiveReviewAdapterAllowed } from "./review-fixture-transport";
+import type { CliHostSettlement } from "@/lib/operations/cli-host-protocol";
+import type { CliHostTarget } from "@/lib/operations/cli-host-target";
+import { isRemoteReviewCliCall, prepareRemoteReviewCliCall, releaseRemoteReviewCliCall, runRemoteReviewCliCall } from "./review-cli-remote";
 
 /**
  * AI1·AI2 심사의 CLI 호출을 공통 모델 슬롯에 묶는 프로세스 쪽 절반(PR05c-4). 장부는 모른다 — 호출자가 slot·dispatch 를 잡는다.
@@ -32,7 +35,7 @@ export type ReviewCliRoute = "crawl-agent-review" | "second-review";
 export type PreparedReviewCliCall = Readonly<{ kind: "prepared_cli"; routeId: ReviewCliRoute; provider: ReviewCliProvider; model: string;
   inputHash: string; transport: CliTransport; totalTokenBound: number }>;
 export type ReviewCliOutcome = Readonly<{ result: AgentReviewResult; terminal: CliProcessTerminal | null;
-  indeterminate: "process_exit" | "transport_unknown" | null }>;
+  indeterminate: "process_exit" | "transport_unknown" | null; remoteSettlement?: CliHostSettlement }>;
 /** 장부 claim TX 가 받는 모양 — prepared 객체의 값 사본이고 실행 권한은 아니다 */
 export const reviewCliCallRefSchema = z.object({ kind: z.literal("prepared_cli"), routeId: z.enum(["crawl-agent-review", "second-review"]),
   provider: z.enum(["claude-cli", "grok-cli", "opencode-cli"]), model: z.string().min(1).max(160), inputHash: z.string().regex(/^[a-f0-9]{64}$/),
@@ -65,8 +68,17 @@ export function reviewCliContractMatches(call: z.infer<typeof reviewCliCallRefSc
 }
 
 /** legacy 가 not_configured·input_too_large 로 끝낼 입력과 계약 밖 호출은 준비하지 않는다(gateway 선례처럼 미룬다). */
-export async function prepareReviewCliCall(input: ReviewInput, options: { routeId: ReviewCliRoute; provider: ReviewCliProvider;
-  model: string; timeoutMs: number; reasoningEffort?: string }): Promise<PreparedReviewCliCall | { kind: "unsupported"; reason: "provider_contract_unavailable" }> {
+type PrepareOptions = { routeId: ReviewCliRoute; provider: ReviewCliProvider; model: string; timeoutMs: number; reasoningEffort?: string;
+  connectionId?: string; catalogVariants?: readonly string[]; hostTarget?: CliHostTarget };
+export async function prepareReviewCliCall(input: ReviewInput, options: PrepareOptions): Promise<PreparedReviewCliCall | { kind: "unsupported"; reason: "provider_contract_unavailable" }> {
+  assertLiveReviewAdapterAllowed();
+  if (options.provider !== "opencode-cli") return prepareLocalReviewCliCall(input, options);
+  if (!options.connectionId || !options.hostTarget) return { kind: "unsupported", reason: "provider_contract_unavailable" };
+  return prepareRemoteReviewCliCall(input, { routeId: options.routeId, provider: "opencode-cli", model: options.model,
+    timeoutMs: options.timeoutMs, reasoningEffort: options.reasoningEffort, connectionId: options.connectionId }, options.hostTarget);
+}
+/** Native host only for OpenCode; the public worker adapter always delegates it remotely. */
+export async function prepareLocalReviewCliCall(input: ReviewInput, options: PrepareOptions): Promise<PreparedReviewCliCall | { kind: "unsupported"; reason: "provider_contract_unavailable" }> {
   assertLiveReviewAdapterAllowed();
   const unsupported = { kind: "unsupported", reason: "provider_contract_unavailable" } as const;
   const snapshot = structuredClone(input), { routeId, provider, model } = options;
@@ -75,7 +87,7 @@ export async function prepareReviewCliCall(input: ReviewInput, options: { routeI
   const task = routeId === "second-review" ? "second-review" : "first-review";
   const cliTool = aiCliToolOfProvider(provider);
   const reasoningEffort = options.reasoningEffort || undefined;
-  if (reasoningEffort && !aiTaskReasoningEfforts(task, cliTool, model).includes(reasoningEffort)) return unsupported;
+  if (reasoningEffort && !aiTaskReasoningEfforts(task, cliTool, model, options.catalogVariants).includes(reasoningEffort)) return unsupported;
   if (provider === "opencode-cli" && reviewCliServingContract(routeId, provider, model)?.cliVersion !== OPENCODE_REVIEW_VERSION) return unsupported;
   const serialized = JSON.stringify(snapshot.snapshot);
   if (Buffer.byteLength(serialized, "utf8") > MAX_REVIEW_INPUT_BYTES) return unsupported;
@@ -101,19 +113,20 @@ export async function prepareReviewCliCall(input: ReviewInput, options: { routeI
         files: [{ path: "prompt.txt", content: prompt }, { path: path.join("home", "agents", `${GROK_REVIEW_AGENT}.md`), content: grokReviewAgentDefinition() }],
         cwd: directory, env, boundEnvKeys: ["NO_COLOR", "RUST_LOG"], timeoutMs, maxStdoutBytes: MAX_STDOUT_BYTES, maxStderrBytes: MAX_STDERR_BYTES });
     } else {
-      // Forward CLI login/provider configuration, never worker DB/control credentials or arbitrary startup/config overrides.
-      const allowedEnv = ["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE", "TZ",
-        "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS",
-        "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "OPENCODE_API_KEY"];
-      const env: Record<string, string | undefined> = Object.fromEntries(allowedEnv.filter(key => process.env[key] !== undefined).map(key => [key, process.env[key]]));
-      env.NO_COLOR = "1";
+      const profile = await opencodeReviewProfile(directory);
       args = opencodeReviewArgs(model, reasoningEffort); stdin = prompt;
-      prepared = prepareCliCall({ routeId, provider, model, command: cliCommandFor(routeId, provider), args, stdin,
-        files: [{ path: "opencode.json", content: opencodeReviewConfig() }], cwd: directory, env, boundEnvKeys: ["NO_COLOR"],
+      prepared = prepareCliCall({ routeId, provider, model, command: profile.command, args, stdin,
+        files: profile.files, cwd: directory, env: profile.env, boundEnvKeys: profile.boundEnvKeys,
         timeoutMs, maxStdoutBytes: MAX_STDOUT_BYTES, maxStderrBytes: MAX_STDERR_BYTES });
     }
-  } catch (error) { await rm(directory, { recursive: true, force: true }); throw error; }
-  if (prepared.kind !== "prepared") { await rm(directory, { recursive: true, force: true }); return unsupported; }
+  } catch (error) {
+    if (provider === "opencode-cli") await releaseOpencodeReviewProfile(directory);
+    await rm(directory, { recursive: true, force: true }); throw error;
+  }
+  if (prepared.kind !== "prepared") {
+    if (provider === "opencode-cli") await releaseOpencodeReviewProfile(directory);
+    await rm(directory, { recursive: true, force: true }); return unsupported;
+  }
   const call: PreparedReviewCliCall = Object.freeze({ kind: "prepared_cli" as const, routeId, provider, model, inputHash: snapshot.inputHash,
     transport: prepared.transport, totalTokenBound: prepared.totalTokenBound });
   calls.set(call, { cli: prepared, directory, inputIdentity: sha(JSON.stringify(snapshot)), args: Object.freeze([...args]), stdin, timeoutMs, reasoningEffort,
@@ -122,11 +135,18 @@ export async function prepareReviewCliCall(input: ReviewInput, options: { routeI
 }
 
 function release(state: State): Promise<void> {
-  state.released ??= rm(state.directory, { recursive: true, force: true });
+  state.released ??= (async () => {
+    if (state.cli.transport.provider === "opencode-cli") await releaseOpencodeReviewProfile(state.directory);
+    await rm(state.directory, { recursive: true, force: true });
+  })();
   return state.released;
 }
 /** 실행하지 않고 버리는 호출의 임시 디렉터리를 지운다(여러 번 불러도 된다). dispatch 는 건드리지 않는다. */
 export async function releaseReviewCliCall(call: PreparedReviewCliCall): Promise<void> {
+  if (isRemoteReviewCliCall(call)) return releaseRemoteReviewCliCall(call);
+  return releaseLocalReviewCliCall(call);
+}
+export async function releaseLocalReviewCliCall(call: PreparedReviewCliCall): Promise<void> {
   const state = calls.get(call);
   if (state) await release(state);
 }
@@ -150,6 +170,10 @@ function owned(call: PreparedReviewCliCall, dispatch: CliModelDispatch): { state
  * 임시 디렉터리도 지운다.
  */
 export async function settleReviewCliNotStarted(call: PreparedReviewCliCall, dispatch: CliModelDispatch): Promise<CliProcessTerminal | null> {
+  if (isRemoteReviewCliCall(call)) throw new Error("remote_cli_terminal_unavailable");
+  return settleLocalReviewCliNotStarted(call, dispatch);
+}
+export async function settleLocalReviewCliNotStarted(call: PreparedReviewCliCall, dispatch: CliModelDispatch): Promise<CliProcessTerminal | null> {
   const { state, requestId } = owned(call, dispatch);
   try {
     if (state.started) return null;
@@ -160,6 +184,11 @@ export async function settleReviewCliNotStarted(call: PreparedReviewCliCall, dis
 
 /** 장부에 commit 된 dispatch 하나로 한 번만 실행한다. terminal 이 없으면 출력은 버려지고 결과는 legacy 의 중단 kind 다. */
 export async function reviewWithReservedCli(input: ReviewInput, dispatch: CliModelDispatch, call: PreparedReviewCliCall,
+  options: { signal?: AbortSignal } = {}): Promise<ReviewCliOutcome> {
+  if (isRemoteReviewCliCall(call)) return runRemoteReviewCliCall(input, dispatch, call, options);
+  return runLocalReviewWithReservedCli(input, dispatch, call, options);
+}
+export async function runLocalReviewWithReservedCli(input: ReviewInput, dispatch: CliModelDispatch, call: PreparedReviewCliCall,
   options: { signal?: AbortSignal } = {}): Promise<ReviewCliOutcome> {
   assertLiveReviewAdapterAllowed();
   const snapshot = structuredClone(input), signal = options.signal;

@@ -13,7 +13,7 @@ import { cliDispatchBindingHash, type CliDispatchBinding, type CliModelDispatch 
 import { readCliProcessTerminal } from "@/lib/llm/cli-process-runner";
 import { claudeCliTokenBound, type CliServingContract } from "@/lib/llm/cli-serving-contract";
 import { prepareReviewCliCall, releaseReviewCliCall, reviewWithReservedCli, settleReviewCliNotStarted,
-  type PreparedReviewCliCall } from "@/lib/crawl/review-cli-call";
+  prepareLocalReviewCliCall, releaseLocalReviewCliCall, runLocalReviewWithReservedCli, type PreparedReviewCliCall } from "@/lib/crawl/review-cli-call";
 import { fakeToolDir } from "./fake-cli-path";
 
 /*
@@ -22,12 +22,19 @@ import { fakeToolDir } from "./fake-cli-path";
  * 1차·2차의 명령은 PATH 의 도구 이름(claude·grok, PR C1)이라 자식의 PATH 는 가짜 CLI 래퍼를 그 이름으로 링크한 디렉터리뿐이다.
  * env 경로(CLAUDE_CLI·GROK_CLI)는 없는 파일을 가리켜 읽지 않음을 함께 본다. legacy 쪽도 1차·2차처럼 도구 이름을 넘긴다. 장부(DB)는 쓰지 않는다.
  */
-const fixture = vi.hoisted(() => ({ contracts: [] as CliServingContract[] }));
+const fixture = vi.hoisted(() => ({ contracts: [] as CliServingContract[], opencodeCommand: "" }));
 vi.mock("@/lib/llm/cli-serving-contract", async original => ({
   ...await original<typeof import("@/lib/llm/cli-serving-contract")>(),
   resolveCliServingContract: (routeId: string, provider: string, model: string) =>
     fixture.contracts.find(value => value.routeId === routeId && value.provider === provider && value.model === model) ?? null,
 }));
+vi.mock("@/lib/crawl/agent-review-opencode", async original => {
+  const actual = await original<typeof import("@/lib/crawl/agent-review-opencode")>();
+  return { ...actual, opencodeReviewProfile: async (directory: string) => {
+    const profile = await actual.opencodeReviewProfile(directory);
+    return { ...profile, command: fixture.opencodeCommand || profile.command };
+  } };
+});
 const model = "fake-model", PROCESS_TEST_MS = 20_000;
 const claudeShape = { maxTurns: 2, inputByteCap: 200_000, overheadTokenBound: 20_000, outputTokensPerTurn: 2_000 };
 const claude = (routeId: string): CliServingContract => ({ version: 1, protocol: "cli-process-v1", routeId, provider: "claude-cli", model,
@@ -64,6 +71,7 @@ exec '${process.execPath}' -e 'process.stdout.write(process.argv[1])' '${answer}
 });
 afterAll(() => rm(root, { recursive: true, force: true }));
 beforeEach(() => {
+  fixture.opencodeCommand = "";
   fixture.contracts = [claude("crawl-agent-review"), claude("second-review"), grok("crawl-agent-review"), grok("second-review")];
   vi.stubEnv("TMPDIR", tmp); vi.stubEnv("PATH", tools); vi.stubEnv("FAKE_CLI_RECORD", records); vi.stubEnv("CLAUDECODE", "1");
   // env 경로는 1차·2차가 읽지 않는다 — 없는 파일을 가리켜도 PATH 의 claude·grok 이 뜬다
@@ -167,6 +175,7 @@ it("운영 resolver(null)·계약 밖 입력은 준비하지 않고 임시 디�
   for (const provider of ["claude-cli", "grok-cli"] as const)
     expect(await prepareReviewCliCall(input(), { routeId: "crawl-agent-review", provider, model, timeoutMs: 20_000 }))
       .toEqual({ kind: "unsupported", reason: "provider_contract_unavailable" });
+  fixture.opencodeCommand = "";
   fixture.contracts = [claude("crawl-agent-review")];
   for (const change of [{ model: "bad model" }, { routeId: "product-audit" as "second-review" }, { provider: "abcllm" as "grok-cli" }, { timeoutMs: Number.NaN }])
     expect(await prepareReviewCliCall(input(), { routeId: "crawl-agent-review", provider: "claude-cli", model, timeoutMs: 20_000, ...change }))
@@ -212,26 +221,27 @@ it.skipIf(process.platform === "win32")("pipe 쥔 손자: terminal 없이 proces
 }, PROCESS_TEST_MS);
 
 
-it("OpenCode pinned v2 preparation binds model variants and rejects invalid effort/version before spawn", async () => {
+it("OpenCode existing v1 host preparation binds model variants and rejects invalid effort/version before spawn", async () => {
+  vi.stubEnv("HOME", "/Users/jr");
   const wireModel = "opencode/deepseek-v4.1-flash";
-  fixture.contracts = [{ ...grok("crawl-agent-review"), provider: "opencode-cli", boundProvenance: "declared", model: wireModel, cliVersion: "opencode v2.2.5" }];
-  const prepare = (reasoningEffort: string) => prepareReviewCliCall(input(), { routeId: "crawl-agent-review", provider: "opencode-cli", model: wireModel,
-    timeoutMs: 20_000, reasoningEffort });
-  expect(opencodeReviewArgs(wireModel, "high")).toEqual(["run", "--standalone", "--format", "json", "--agent", "nmv-review", "--model", `${wireModel}#high`]);
+  fixture.contracts = [{ ...grok("crawl-agent-review"), provider: "opencode-cli", boundProvenance: "declared", model: wireModel, cliVersion: "1.19.5" }];
+  const prepare = (reasoningEffort: string) => prepareLocalReviewCliCall(input(), { routeId: "crawl-agent-review", provider: "opencode-cli", model: wireModel,
+    timeoutMs: 20_000, reasoningEffort, catalogVariants: ["low", "high", "max"] });
+  expect(opencodeReviewArgs(wireModel, "high")).toEqual(["run", "--pure", "--format", "json", "--agent", "nmv-review", "--model", wireModel, "--variant", "high"]);
   const low = await prepare("low"), high = await prepare("high");
   expect(low.kind).toBe("prepared_cli"); expect(high.kind).toBe("prepared_cli");
   if (low.kind !== "prepared_cli" || high.kind !== "prepared_cli") throw new Error("missing_fixture_contract");
   expect(low.transport.argvHash).not.toBe(high.transport.argvHash);
   expect(low.transport.cliContractHash).toBe(high.transport.cliContractHash);
-  await releaseReviewCliCall(low); await releaseReviewCliCall(high);
+  await releaseLocalReviewCliCall(low); await releaseLocalReviewCliCall(high);
   expect(await prepare("medium")).toMatchObject({ kind: "unsupported" });
   fixture.contracts[0] = { ...fixture.contracts[0], cliVersion: "1.14.0" };
   expect(await prepare("high")).toMatchObject({ kind: "unsupported" });
   expect(await recorded()).toEqual([]);
   expect(await readdir(tmp)).toEqual([]);
   const config = JSON.parse(opencodeReviewConfig());
-  expect(config.policies).toContainEqual({ action: "tool.use", resource: "*", effect: "deny" });
-  expect(config.agents).toMatchObject({ title: { disabled: true }, summary: { disabled: true }, compaction: { disabled: true } });
+  expect(config.permission).toEqual({ "*": "deny" });
+  expect(config.agent).toMatchObject({ title: { disable: true }, summary: { disable: true }, compaction: { disable: true } });
 });
 
 it("OpenCode requires completed final JSON text; tool/error/missing-terminal streams cannot approve", () => {
@@ -250,6 +260,7 @@ it("OpenCode requires completed final JSON text; tool/error/missing-terminal str
 
 
 it.skipIf(process.platform === "win32")("OpenCode native fake process receives isolated review config/stdin and emits accounted terminal", async () => {
+  vi.stubEnv("HOME", "/Users/jr");
   const wireModel = "opencode/deepseek-v4.1-flash", recordFile = path.join(root, "opencode-record.json");
   const events = [
     { type: "text", part: { id: "text1", messageID: "m1", text: JSON.stringify({ decision: "approve", reason: "Product evidence", evidenceIds: ["product"], confidence: 0.8 }) } },
@@ -261,18 +272,19 @@ const prompt = fs.readFileSync(0, "utf8");
 fs.writeFileSync(${JSON.stringify(recordFile)}, JSON.stringify({ argv: process.argv.slice(2),
   hasDatabase: !!process.env.DATABASE_URL, hasProviderKey: !!process.env.OPENCODE_API_KEY,
   hasConfigOverride: !!process.env.OPENCODE_CONFIG_CONTENT, promptBytes: Buffer.byteLength(prompt),
-  config: JSON.parse(fs.readFileSync("opencode.json", "utf8")) }));
+  config: JSON.parse(fs.readFileSync(process.env.XDG_CONFIG_HOME + "/opencode/opencode.json", "utf8")) }));
 process.stdout.write(${JSON.stringify(events)});
 `);
   await writeFile(wrapper, `#!/bin/sh\nexec '${process.execPath}' '${script}' "$@"\n`); await chmod(wrapper, 0o755);
+  fixture.opencodeCommand = wrapper;
   vi.stubEnv("PATH", await fakeToolDir(path.join(root, "opencode-tools"), { opencode: wrapper }));
   vi.stubEnv("DATABASE_URL", "do-not-forward"); vi.stubEnv("OPENCODE_API_KEY", "fake-provider-key"); vi.stubEnv("OPENCODE_CONFIG_CONTENT", "do-not-forward");
-  fixture.contracts = [{ ...grok("crawl-agent-review"), provider: "opencode-cli", boundProvenance: "declared", model: wireModel, cliVersion: "opencode v2.2.5" }];
-  const call = await prepareReviewCliCall(input(), { routeId: "crawl-agent-review", provider: "opencode-cli", model: wireModel, reasoningEffort: "high", timeoutMs: 20_000 });
+  fixture.contracts = [{ ...grok("crawl-agent-review"), provider: "opencode-cli", boundProvenance: "declared", model: wireModel, cliVersion: "1.19.5" }];
+  const call = await prepareLocalReviewCliCall(input(), { routeId: "crawl-agent-review", provider: "opencode-cli", model: wireModel, reasoningEffort: "high", timeoutMs: 20_000, catalogVariants: ["low", "high", "max"] });
   if (call.kind !== "prepared_cli") throw new Error("missing_fixture_contract");
-  const dispatch = dispatchFor(call), native = await reviewWithReservedCli(input(), dispatch, call);
+  const dispatch = dispatchFor(call), native = await runLocalReviewWithReservedCli(input(), dispatch, call);
   const record = JSON.parse(await readFile(recordFile, "utf8"));
-  expect(record).toMatchObject({ argv: opencodeReviewArgs(wireModel, "high"), hasDatabase: false, hasProviderKey: true, hasConfigOverride: false });
+  expect(record).toMatchObject({ argv: opencodeReviewArgs(wireModel, "high"), hasDatabase: false, hasProviderKey: false, hasConfigOverride: true });
   expect(record.promptBytes).toBeGreaterThan(0);
   expect(record.config).toEqual(JSON.parse(opencodeReviewConfig()));
   expect(native.result).toMatchObject({ ok: true, outcome: { decision: "approve" }, usage: { inputTokens: 50, outputTokens: 20 } });

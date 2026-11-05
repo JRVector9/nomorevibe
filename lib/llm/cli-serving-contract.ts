@@ -79,7 +79,8 @@ export const cliContractRouteId = (provider: CliProvider, routeId: string) => `c
 export const CLI_TOOL_COMMANDS: Readonly<Record<CliProvider, string>> = Object.freeze({ "claude-cli": "claude", "grok-cli": "grok", "codex-cli": "codex", "opencode-cli": "opencode" });
 /** 그 route 의 CLI 를 띄울 명령 — DB 계약 route 는 PATH 의 도구 이름, 그 밖은 예전 그대로(env 경로 또는 이름). */
 export const cliCommandFor = (routeId: string, provider: CliProvider): string =>
-  CLI_DB_CONTRACT_ROUTES.has(routeId) ? CLI_TOOL_COMMANDS[provider] : cliCommand(provider);
+  provider === "opencode-cli" ? "/opt/homebrew/bin/opencode"
+    : CLI_DB_CONTRACT_ROUTES.has(routeId) ? CLI_TOOL_COMMANDS[provider] : cliCommand(provider);
 /** route 가 받는 CLI(장부 CLI kind). */
 export const cliContractRouteAccepts = (routeId: string, provider: string): boolean =>
   Object.hasOwn(CLI_CONTRACT_ROUTES, routeId) && (CLI_CONTRACT_ROUTES[routeId] as readonly string[]).includes(provider);
@@ -87,6 +88,14 @@ export const cliContractRouteAccepts = (routeId: string, provider: string): bool
 /** DB 계약 route 의 도구 버전(프로세스마다 한 번 `<도구> --version`). probeCliServingContracts 를 부른 프로세스(워커·connect)만 띄운다 — 웹은 띄우지 않는다. */
 const toolVersions = new Map<string, VersionProbe | "pending">();
 let toolProbesEnabled = false, toolVersionEpoch = 0;
+let cliHostVersion: { version: string; observedAt: number } | null = null;
+/** A worker learns this version from the authenticated native host catalog; it never probes OpenCode locally. */
+export function setCliHostObservedVersion(version: string): void {
+  if (!contractBase.cliVersion.safeParse(version).success) throw new Error("invalid_cli_host_version");
+  if (cliHostVersion?.version !== version) toolVersionEpoch++;
+  cliHostVersion = { version, observedAt: Date.now() };
+}
+const nativeOpencodeHost = (): boolean => process.env.OPENCODE_HOST_LOCAL === "1";
 /** 도구 버전 확인 결과가 바뀔 때마다 오르는 수 — 순위 묶기의 기억(review-task-ranks)이 이것으로 낡음을 안다. */
 export const cliToolVersionEpoch = (): number => toolVersionEpoch;
 function toolVersion(command: string): VersionProbe | "pending" | null {
@@ -100,7 +109,9 @@ function toolVersion(command: string): VersionProbe | "pending" | null {
 }
 /** 이 프로세스가 마지막으로 본 도구 버전(진단·화면) — 보지 않았으면 null. */
 export function observedCliToolVersion(provider: CliProvider): string | null {
-  const known = toolVersions.get(CLI_TOOL_COMMANDS[provider]);
+  if (provider === "opencode-cli" && !nativeOpencodeHost())
+    return cliHostVersion && Date.now() - cliHostVersion.observedAt <= 60_000 ? cliHostVersion.version : null;
+  const known = toolVersions.get(provider === "opencode-cli" ? cliCommandFor("crawl-agent-review", provider) : CLI_TOOL_COMMANDS[provider]);
   return known && known !== "pending" && known.kind === "ok" ? known.version : null;
 }
 /** DB 계약 행 하나 → 계약(검사에 통과한 것) 또는 null. */
@@ -116,7 +127,9 @@ function dbLookup(routeId: string, provider: CliProvider, model: string): { stat
   if (!row) return { status: "not_configured", contract: null };
   const contract = cliContractFromRow(row);
   if (!contract) return { status: "invalid_entry", contract: null };
-  const version = toolVersion(CLI_TOOL_COMMANDS[provider]);
+  const observed = provider === "opencode-cli" && !nativeOpencodeHost() ? observedCliToolVersion(provider) : null;
+  const version = provider === "opencode-cli" && !nativeOpencodeHost() ? observed ? { kind: "ok" as const, version: observed } : null
+    : toolVersion(provider === "opencode-cli" ? cliCommandFor(routeId, provider) : CLI_TOOL_COMMANDS[provider]);
   if (version === null || version === "pending") return { status: "probe_pending", contract: null };
   if (version.kind !== "ok") return { status: version.kind === "timeout" ? "cli_version_probe_timeout" : "cli_version_probe_failed", contract: null };
   if (version.version !== contract.cliVersion) return { status: "cli_version_mismatch", contract: null, observed: version.version };
@@ -155,14 +168,16 @@ export function cliServingContractDiagnosis(routeId: string, provider: CliProvid
  * 보고에는 routeId null·model null 로 그 도구의 결과와 본 버전이 실린다(워커 로그 cli_contract.probe — 운영자가 연결에 적을 버전).
  */
 export function probeCliServingContracts(): Promise<readonly CliServingContractProbeReport[]> {
-  probed ??= Promise.all([loadCliServingContracts(), probeDbCliTools()]).then(([env, tools]) => Object.freeze([...env, ...tools]));
+  // The dedicated native host runs only the existing OpenCode binary; worker env contracts are not its execution authority.
+  probed ??= nativeOpencodeHost() ? probeDbCliTools().then(tools => Object.freeze(tools))
+    : Promise.all([loadCliServingContracts(), probeDbCliTools()]).then(([env, tools]) => Object.freeze([...env, ...tools]));
   return probed;
 }
 async function probeDbCliTools(): Promise<CliServingContractProbeReport[]> {
   toolProbesEnabled = true;
-  const providers: CliProvider[] = ["claude-cli", "grok-cli", "opencode-cli"];
+  const providers: CliProvider[] = nativeOpencodeHost() ? ["opencode-cli"] : ["claude-cli", "grok-cli"];
   return Promise.all(providers.map(async provider => {
-    const command = CLI_TOOL_COMMANDS[provider];
+    const command = provider === "opencode-cli" ? cliCommandFor("crawl-agent-review", provider) : CLI_TOOL_COMMANDS[provider];
     const known = toolVersions.get(command);
     const result = known && known !== "pending" ? known : await probeCliVersion(command);
     toolVersions.set(command, result);
@@ -222,11 +237,14 @@ async function loadCliServingContracts(): Promise<readonly CliServingContractPro
 
 /** --version 만 띄운다(모델 호출이 아니다). 제한 시간 안에 close 까지 오지 않으면 죽이고 기다리지 않는다 */
 function probeCliVersion(command: string): Promise<VersionProbe> {
+  const native = nativeOpencodeHost();
+  if (native && command !== cliCommandFor("crawl-agent-review", "opencode-cli")) return Promise.resolve({ kind: "failed" });
   return new Promise(resolve => {
     let child: ChildProcess;
     try {
       // detached:false — 워커 그룹에 남아 슈퍼바이저의 그룹 kill 이 닿는다
-      child = spawn(command, ["--version"], { cwd: os.tmpdir(), stdio: ["ignore", "pipe", "pipe"], detached: false });
+      child = spawn(command, ["--version"], { cwd: os.tmpdir(), stdio: ["ignore", "pipe", "pipe"], detached: false,
+        ...(native ? { env: nativeOpenCodeProbeEnv() } : {}) });
     } catch { resolve({ kind: "failed" }); return; }
     const stdout: Buffer[] = [];
     let bytes = 0, done = false;
@@ -248,6 +266,16 @@ function probeCliVersion(command: string): Promise<VersionProbe> {
     child.on("error", () => finish({ kind: "failed" }));
     child.on("close", (code: number | null) => finish(code === 0 ? { kind: "ok", version: Buffer.concat(stdout).toString("utf8").trim() } : { kind: "failed" }));
   });
+}
+
+/** Version checks need host identity and networking settings, never the bridge's database/RPC credentials or startup overrides. */
+function nativeOpenCodeProbeEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { NODE_ENV: "production", HOME: "/Users/jr", USER: "jr", LOGNAME: "jr", NO_COLOR: "1", OPENCODE_DISABLE_AUTOUPDATE: "true" };
+  for (const key of ["PATH", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS",
+    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"]) {
+    if (process.env[key] !== undefined) env[key] = process.env[key];
+  }
+  return env;
 }
 
 /** 장부 binding 에 들어갈 CLI transport(05c-3). 해시는 실제 spawn 에 쓴 값으로 runner 가 만든다. */

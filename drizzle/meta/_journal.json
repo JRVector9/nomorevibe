@@ -1142,6 +1142,13 @@
       "when": 1794086401074,
       "tag": "0163_opencode_review_cli",
       "breakpoints": true
+    },
+    {
+      "idx": 164,
+      "version": "7",
+      "when": 1794086401075,
+      "tag": "0164_opencode_host_catalog",
+      "breakpoints": true
     }
   ]
 }

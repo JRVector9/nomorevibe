@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "cli-host:bundle": "node scripts/build-cli-host.mjs",
     "start": "next start",
     "deploy": "python3 -I scripts/ops/deploy_release.py",
     "lint": "eslint",

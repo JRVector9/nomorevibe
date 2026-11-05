@@ -60,6 +60,11 @@ beforeAll(async () => {
   await client.unsafe("CREATE TEMP TABLE opencode_events (LIKE model_capacity_events INCLUDING DEFAULTS INCLUDING CONSTRAINTS)");
   await client.unsafe("CREATE TRIGGER opencode_events_guard BEFORE INSERT ON opencode_events FOR EACH ROW EXECUTE FUNCTION nmv_model_capacity_events_check_guard()");
   await client.unsafe("CREATE TEMP TABLE opencode_connections (LIKE ai_connections INCLUDING DEFAULTS INCLUDING CONSTRAINTS)");
+  // Exercise the new host-connection DDL on a private clone, including when a developer's shared test DB predates it.
+  await client.begin(async tx => {
+    const ddl = readFileSync("drizzle/0164_opencode_host_catalog.sql", "utf8").replaceAll("ALTER TABLE ai_connections", "ALTER TABLE opencode_connections");
+    for (const statement of ddl.split("--> statement-breakpoint").map(part => part.trim()).filter(Boolean)) await tx.unsafe(statement);
+  });
   for (const [table, short] of [["model_capacity_requests", "request"], ["model_capacity_events", "event"]] as const) {
     const rules = await client<{ constraint_name: string; predicate: string }[]>`SELECT constraint_name,predicate FROM model_capacity_check_rules
       WHERE table_name=${table} AND source<>${tag} ORDER BY constraint_name,ordinal`;
@@ -205,7 +210,11 @@ it("accepts the OpenCode connection while retaining all existing CLI null/model-
   // jsonb_populate_record fills omitted NOT NULL defaults with NULL; supply timestamps explicitly.
   Object.assign(row, { created_at: "2026-11-05T00:00:00.000Z", updated_at: "2026-11-05T00:00:00.000Z" });
   for (const tool of ["claude", "codex", "grok", "opencode"]) expect(await insert("connections", { ...row, cli_tool: tool })).toBe("accepted");
-  for (const forged of [{ cli_tool: "unknown" }, { cli_models: [] }, { cli_models: [null] }, { cli_models: Array(33).fill("model") },
+  expect(await insert("connections", { ...row, base_url: "https://m3.test/v1", api_key_ciphertext: "encrypted-bridge-fixture" })).toBe("accepted");
+  for (const tool of ["claude", "codex", "grok"]) expect(await insert("connections", { ...row, cli_tool: tool, base_url: "https://m3.test/v1", api_key_ciphertext: "encrypted-bridge-fixture" })).toBe("23514:ai_connections_cli_check");
+  for (const count of [111, 512]) expect(await insert("connections", { ...row, cli_models: Array.from({ length: count }, (_, i) => `opencode/model-${i}`) })).toBe("accepted");
+  for (const tool of ["claude", "codex", "grok"]) expect(await insert("connections", { ...row, cli_tool: tool, cli_models: Array(33).fill("model") })).toBe("23514:ai_connections_cli_check");
+  for (const forged of [{ cli_tool: "unknown" }, { cli_models: [] }, { cli_models: [null] }, { cli_models: Array(513).fill("model") },
     { api_key_ciphertext: "fixture-only" }, { base_url: "https://example.test/v1" }, { models: [] }, { models_read_at: "2026-11-05T00:00:00.000Z" },
     { models_error: "fixture" }]) expect(await insert("connections", { ...row, ...forged })).toBe("23514:ai_connections_cli_check");
 });

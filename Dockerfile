@@ -35,7 +35,6 @@ RUN addgroup -g 1001 -S nodejs && adduser -S worker -u 1001 -G nodejs
 # Reviewer uses Claude/OpenCode; publisher category classification uses Codex. Pin inspected CLIs.
 ARG CLAUDE_CODE_VERSION=2.1.263
 ARG CODEX_CLI_VERSION=0.153.4
-ARG OPENCODE_CLI_VERSION=2.2.5
 # npm can omit the optional Claude native package and leave an error stub.
 # Repair only that failure with the pinned required package and vendor installer.
 RUN --mount=type=cache,id=nmv-cli-npm,target=/root/.npm,sharing=locked \
@@ -44,7 +43,6 @@ RUN --mount=type=cache,id=nmv-cli-npm,target=/root/.npm,sharing=locked \
     (npm install -g "@anthropic-ai/claude-code-linux-$(node -p 'process.arch')-musl@${CLAUDE_CODE_VERSION}" \
       && node "$(npm root -g)/@anthropic-ai/claude-code/install.cjs")) \
   && claude --version && codex --version
-RUN npm install -g @opencode/cli@${OPENCODE_CLI_VERSION} && opencode --version
 RUN --mount=type=bind,source=scripts/install-codex-native-entrypoint.mjs,target=/tmp/install-codex-native-entrypoint.mjs,readonly \
   node /tmp/install-codex-native-entrypoint.mjs "${CODEX_CLI_VERSION}" && codex --version
 RUN mkdir -p /var/lib/nomorevibe-codex /var/lib/nomorevibe-grok && chown worker:nodejs /var/lib/nomorevibe-codex /var/lib/nomorevibe-grok
@@ -53,17 +51,12 @@ RUN mkdir -p /var/lib/nomorevibe-codex /var/lib/nomorevibe-grok && chown worker:
 ARG GROK_CLI_VERSION=1.0.46
 RUN apk add --no-cache --virtual .grok-build bash curl \
   && curl -fsSL https://x.ai/cli/install.sh -o /tmp/grok-install.sh \
-  && HOME=/opt/grok GROK_BIN_DIR=/usr/local/bin TARGET=${GROK_CLI_VERSION} bash /tmp/grok-install.sh \
+  && HOME=/opt/grok GROK_BIN_DIR=/usr/local/bin bash /tmp/grok-install.sh "${GROK_CLI_VERSION}" \
   && rm -f /tmp/grok-install.sh && chmod -R a+rX /opt/grok && apk del .grok-build && grok --version
 COPY --from=worker-deps --chown=worker:nodejs /app/node_modules ./node_modules
 COPY --chown=worker:nodejs package.json package-lock.json tsconfig.json ./
 COPY --chown=worker:nodejs lib ./lib
 COPY --chown=worker:nodejs scripts ./scripts
-# Keep the existing source-manifest COPY contract. Install the tracked policy as
-# a root-owned managed file before switching to the unprivileged runtime user.
-RUN mkdir -p /etc/opencode \
-  && cp /app/scripts/config/opencode-worker.json /etc/opencode/opencode.json \
-  && chown root:root /etc/opencode/opencode.json && chmod 444 /etc/opencode/opencode.json
 COPY --chown=worker:nodejs drizzle ./drizzle
 # 알림 메일 문구(lib/me/email-copy.ts) — 보낼 때만 늦게 읽는다. 잡 목록은 이 폴더 없이도 올라온다(Oracle release).
 COPY --chown=worker:nodejs messages ./messages

@@ -15,7 +15,9 @@ import { claimAgentReviewWithCliModelReservation, claimConsumerItemAgentReviewWi
 import { claimSecondReviewItemWithCliModelReservation, SecondReviewCliModelReservationRequired, type SecondReviewCliModelClaim } from './second-review-ownership';
 import { isReviewCliProvider, prepareReviewCliCall, releaseReviewCliCall, reviewWithReservedCli, settleReviewCliNotStarted,
   type PreparedReviewCliCall, type ReviewCliOutcome } from './review-cli-call';
-import { reviewRankOptionsFor } from './review-task-ranks';
+import { reviewRankFor } from './review-task-ranks';
+import { isRemoteReviewCliCall, settleRemoteReviewCliNotStarted } from './review-cli-remote';
+import { cliHostTargetFromConnection, type CliHostTarget } from '@/lib/operations/cli-host-target';
 import { reviewCliTimeoutMs, type AgentReviewResult } from './agent-review';
 import { grokReviewTimeoutMs } from './agent-review-grok';
 import type { ReviewInput } from './agent-review-contract';
@@ -70,9 +72,16 @@ async function admit<C extends { kind: string; dispatch?: CliModelDispatch }>(ca
 }
 async function prepare(input: ReviewInput, routeId: 'crawl-agent-review' | 'second-review', provider: string, model: string, timeoutMs: number) {
   if (!isReviewCliProvider(provider)) throw new ModelCapacityDeferredError('provider_contract_unavailable');
-  const reasoningEffort = reviewRankOptionsFor(routeId, provider, model)?.reasoningEffort;
+  const rank = reviewRankFor(routeId, provider, model);
+  const reasoningEffort = rank?.options.reasoningEffort;
   if (reasoningEffort !== undefined && typeof reasoningEffort !== 'string') throw new ModelCapacityDeferredError('provider_contract_unavailable');
-  const call = await prepareReviewCliCall(input, { routeId, provider, model, timeoutMs, reasoningEffort });
+  let hostTarget: CliHostTarget | undefined;
+  if (provider === 'opencode-cli') {
+    if (!rank) throw new ModelCapacityDeferredError('provider_contract_unavailable');
+    try { hostTarget = cliHostTargetFromConnection(rank.connection); }
+    catch { throw new ModelCapacityDeferredError('provider_contract_unavailable'); }
+  }
+  const call = await prepareReviewCliCall(input, { routeId, provider, model, timeoutMs, reasoningEffort, connectionId: rank?.connection.id, hostTarget });
   if (call.kind !== 'prepared_cli') throw new ModelCapacityDeferredError('provider_contract_unavailable');
   return call;
 }
@@ -143,7 +152,8 @@ export async function reviewCliModelCapacity(input: ReviewInput, dispatch: CliMo
     throw error;
   }
   try {
-    if (response.terminal) await reconcileCliProcessTerminal(response.terminal);
+    if (response.remoteSettlement) { /* The remote adapter already verified the native host settlement on the primary DB. */ }
+    else if (response.terminal) await reconcileCliProcessTerminal(response.terminal);
     else await markModelDispatchIndeterminate(dispatch, response.indeterminate ?? 'transport_unknown');
   } catch (cleanup) {
     if (response.terminal) await markUnsettledDispatch(dispatch);
@@ -157,6 +167,15 @@ export async function reviewCliModelCapacity(input: ReviewInput, dispatch: CliMo
 export async function abandonCliModelCapacity(dispatch: CliModelDispatch, call: PreparedReviewCliCall,
   reason: 'local_abort' | 'transport_unknown' = 'local_abort'): Promise<boolean> {
   dispatch = cliModelDispatchSchema.parse(dispatch);
+  if (isRemoteReviewCliCall(call)) {
+    try {
+      const settled = await settleRemoteReviewCliNotStarted(call, dispatch);
+      return settled ? true : markModelDispatchIndeterminate(dispatch, reason);
+    } catch (error) {
+      await markModelDispatchIndeterminate(dispatch, 'transport_unknown');
+      throw error;
+    } finally { await releaseReviewCliCall(call); }
+  }
   const terminal = await settleReviewCliNotStarted(call, dispatch).catch(() => null);
   await releaseReviewCliCall(call);
   if (!terminal) return markModelDispatchIndeterminate(dispatch, reason);

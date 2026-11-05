@@ -1,4 +1,5 @@
 import { aiTaskReasoningEfforts } from "@/lib/llm/ai-task-reasoning";
+import type { CliCatalogMetadata } from "@/lib/llm/cli-catalog-metadata";
 import { AI_CLI_TOOL_LABELS, AI_CLI_TOOL_PROVIDERS, AI_CLI_TOOLS, AI_TASK_RANK_MAX, AI_TASKS, aiTask, aiTaskAccepts, aiTaskAliasIdentity, aiTaskSlotLabel,
   type AiCliTool, type AiTaskDef } from "@/lib/llm/ai-tasks";
 
@@ -10,23 +11,25 @@ import { AI_CLI_TOOL_LABELS, AI_CLI_TOOL_PROVIDERS, AI_CLI_TOOLS, AI_TASK_RANK_M
 
 export type AiConnectionKind = "api" | "cli";
 export type AiServedModel = Readonly<{ id: string; maxModelLen: number | null }>;
-/** 화면·검증이 보는 연결(키는 없다 — 저장됐는지만). */
+/** 화면·검증이 보는 연결(키는 없다 — 저장됐는지만). OpenCode의 hasKey는 호스트 RPC 인증 정보이며 provider API 키가 아니다. */
 export type AiConnectionView = Readonly<{
   id: string; label: string; kind: AiConnectionKind; baseUrl: string | null; host: string | null; hasKey: boolean;
   cliTool: AiCliTool | null; cliModels: readonly string[];
   models: readonly AiServedModel[] | null; modelsReadAt: string | null; modelsError: string | null;
   deviceId: string; capacitySlots: number; contextTokens: number | null; enabled: boolean; version: number; note: string | null;
   updatedBy: string; updatedAt: string;
-  /** CLI 만: 운영자가 적은 CLI 버전(`<도구> --version` 출력 그대로). 1차·2차·Grok 로그인 유지 순위의 CLI 계약이 이 버전으로 만들어진다(PR C1) */
+  /** CLI version for serving contracts. OpenCode uses the observed existing-host version; other tools retain manual input. */
   cliVersion: string | null;
+  /** Whitelisted metadata from the existing M3 CLI host, never provider configuration or keys. */
+  cliCatalog?: CliCatalogMetadata | null;
 }>;
 export type AiTaskRankRow = Readonly<{ task: string; slot: number; rank: number; connectionId: string; model: string;
   options: Readonly<Record<string, unknown>>; enabled: boolean }>;
 /** RankSelects 의 값 한 칸 — provider 칸에 연결 id 를 둔다(폼 칸 이름 rank<N>Connection·rank<N>Model). */
 export type AiRankChoice = { provider: string; model: string; reasoningEffort?: string };
 /** Only settings actually consumed by the review CLI adapter are offered. */
-export const aiRankReasoningEfforts = (task: string, connection: Pick<AiConnectionView, "kind" | "cliTool">, model: string): readonly string[] =>
-  connection.kind === "cli" ? aiTaskReasoningEfforts(task, connection.cliTool, model) : [];
+export const aiRankReasoningEfforts = (task: string, connection: Pick<AiConnectionView, "kind" | "cliTool" | "cliCatalog">, model: string): readonly string[] =>
+  connection.kind === "cli" ? aiTaskReasoningEfforts(task, connection.cliTool, model, connection.cliCatalog?.models.find(entry => entry.id === model)?.variants) : [];
 export const aiRankChoiceOfRow = (row: Pick<AiTaskRankRow, "connectionId" | "model" | "options">): AiRankChoice => ({
   provider: row.connectionId, model: row.model,
   ...(typeof row.options.reasoningEffort === "string" && row.options.reasoningEffort ? { reasoningEffort: row.options.reasoningEffort } : {}),
@@ -120,7 +123,7 @@ export function aiConnectionInputFromForm(form: FormLike): { input: AiConnection
     const tool = text(form, "cliTool");
     cliTool = (AI_CLI_TOOLS as readonly string[]).includes(tool) ? tool as AiCliTool : (issues.push("ai_connection_invalid:cliTool"), null);
     cliModels = [...new Set(text(form, "cliModels").split(/[\s,]+/).map(value => value.trim()).filter(Boolean))];
-    if (!cliModels.length || cliModels.length > 32 || cliModels.some(model => !CLI_MODEL.test(model))) issues.push("ai_connection_invalid:cliModels");
+    if (!cliModels.length || cliModels.length > (cliTool === "opencode" ? 512 : 32) || cliModels.some(model => !CLI_MODEL.test(model))) issues.push("ai_connection_invalid:cliModels");
     cliVersion = text(form, "cliVersion") || null;
     if (cliVersion && (cliVersion.length > 80 || CONTROL.test(cliVersion))) issues.push("ai_connection_invalid:cliVersion");
     key = { mode: "clear" };
@@ -172,9 +175,15 @@ export function stableJson(value: unknown): unknown {
 
 // ── 선택지 ───────────────────────────────────────────────────────────────────────────────────────────────
 
-/** 연결이 내놓는 모델: API 는 마지막 /models 목록, CLI 는 운영자가 적은 이름. */
-export const aiConnectionModelIds = (connection: Pick<AiConnectionView, "kind" | "models" | "cliModels">): string[] =>
-  connection.kind === "api" ? (connection.models ?? []).map(model => model.id) : [...connection.cliModels];
+/** API uses the last /models list; OpenCode requires verified host metadata; other CLI tools keep their registered names. */
+export const aiConnectionModelIds = (connection: Pick<AiConnectionView, "kind" | "models" | "cliModels"> & Partial<Pick<AiConnectionView, "cliTool" | "cliCatalog">>): string[] => {
+  if (connection.kind === "api") return (connection.models ?? []).map(model => model.id);
+  if (connection.cliTool === "opencode") {
+    const verified = new Set(connection.cliCatalog?.models.map(model => model.id) ?? []);
+    return connection.cliModels.filter(model => verified.has(model));
+  }
+  return [...connection.cliModels];
+};
 export const aiConnectionLabel = (connection: Pick<AiConnectionView, "label" | "kind" | "cliTool">) =>
   connection.kind === "cli" && connection.cliTool && !connection.label.toLowerCase().includes("cli") ? `${connection.label}(${AI_CLI_TOOL_LABELS[connection.cliTool]})` : connection.label;
 
@@ -404,10 +413,12 @@ export function aiRankReadiness(task: AiTaskDef, rank: number, connection: AiCon
       // 1차·2차·Grok 로그인 유지(PR C1): CLI 계약은 이 저장이 연결의 CLI 버전으로 만든다(env CLI_SERVING_CONTRACTS 는 읽지 않는다). 버전은 워커가 부를 때 견준다
       const version = connection.cliVersion?.trim() || null;
       const row = input.contracts.find(entry => entry.routeId === `cli:${provider}:${routeId}` && entry.model === model);
-      if (!version) blocking.push(`${head}: 연결에 CLI 버전이 없습니다. AI 연결에서 「CLI 버전」(워커의 \`${connection.cliTool} --version\` 출력 그대로)을 적은 뒤 저장하세요.`);
+      if (!version) blocking.push(connection.cliTool === "opencode" ? `${head}: M3 호스트의 CLI 버전이 없습니다. AI 연결에서 실제 목록을 조회한 뒤 연결을 저장하세요.`
+        : `${head}: 연결에 CLI 버전이 없습니다. AI 연결에서 「CLI 버전」(워커의 \`${connection.cliTool} --version\` 출력 그대로)을 적은 뒤 저장하세요.`);
       else if (!row || row.cliVersion !== version)
         createCliContract = Object.freeze({ routeId, provider, model, cliVersion: version, replaces: row?.cliVersion ?? null });
-      if (version) warnings.push(`${head}: CLI 버전(${version})은 이 화면이 확인하지 못합니다 — 워커가 부를 때 \`--version\` 과 다르면 이 순위는 쓰이지 않습니다(상태 화면에 까닭).`);
+      if (version) warnings.push(connection.cliTool === "opencode" ? `${head}: M3 호스트에서 조회한 CLI 버전(${version})을 사용합니다. 목록 확인은 모델 호출 성공과 별개이며, 실행 전에 호스트가 버전·모델을 다시 확인합니다.`
+        : `${head}: CLI 버전(${version})은 이 화면이 확인하지 못합니다 — 워커가 부를 때 \`--version\` 과 다르면 이 순위는 쓰이지 않습니다(상태 화면에 까닭).`);
     } else if (routeId) warnings.push(`${head}: CLI 계약(connect 에이전트 쪽)은 이 화면이 확인하지 못합니다. 계약이 없으면 이 순위는 쓰이지 않습니다.`);
     return result();
   }
@@ -657,7 +668,7 @@ export function aiTaskSlotDigestInput(rows: readonly Pick<AiTaskRankRow, "rank" 
 
 const FIELD_LABELS: Readonly<Record<string, string>> = {
   id: "연결 id", expectedVersion: "판", label: "이름(1~80자)", kind: "종류(API·CLI)", baseUrl: "주소(http(s)://호스트[:포트]/v1)", apiKey: "API 키(공백 없이 4096자까지)",
-  cliTool: "CLI 도구(claude·codex·grok·opencode)", cliModels: "CLI 모델 이름(영숫자와 . _ : / -, 1~32개)", cliVersion: "CLI 버전(80자까지, `--version` 출력 그대로)",
+  cliTool: "CLI 도구(claude·codex·grok·opencode)", cliModels: "CLI 모델 이름(일반 CLI 1~32개, M3 OpenCode 실제 목록 1~512개)", cliVersion: "CLI 버전(80자까지, `--version` 출력 그대로)",
   deviceId: "장비 이름(공백 없이 120자까지)",
   capacitySlots: "칸 수(1~256)", contextTokens: "컨텍스트 상한(1~2097152 토큰)", note: "메모(400자까지)",
   task: "작업", slot: "칸", revision: "화면 판", rank: "순위 칸",
@@ -671,6 +682,9 @@ const CODE_MESSAGES: Readonly<Record<string, string>> = {
   ai_connection_in_use: "이 연결을 쓰는 순위가 있어 지울 수 없습니다. 먼저 작업 ↔ 모델 표에서 빼거나 연결을 끄세요.",
   ai_connection_models_too_soon: "1분 안에 이미 목록을 읽었습니다. 잠시 뒤 다시 읽으세요.",
   ai_connection_not_api: "CLI 연결은 /models 목록이 없습니다. CLI 모델 이름을 직접 적으세요.",
+  ai_connection_cli_host_unavailable: "M3 OpenCode에 연결하지 못해 저장하지 않았습니다. 기존 선택은 유지됩니다. 실제 목록을 다시 조회하세요.",
+  ai_connection_cli_catalog_changed: "M3의 실제 모델 목록·버전이 바뀌었습니다. 연결 편집에서 목록을 다시 조회한 뒤 저장하세요.",
+  ai_connection_options_full: "기존 연결 옵션과 모델 메타데이터가 저장 한도를 넘습니다. 기존 옵션을 보존하기 위해 저장하지 않았습니다.",
   ai_connection_key_unreadable: "저장한 키를 열 수 없습니다(암호화 설정이 바뀌었을 수 있습니다). 키를 다시 넣으세요.",
   secret_box_key_missing: "이 서버에는 키 암호화 설정(NMV_SECRET_BOX_KEY)이 없어 키를 저장할 수 없습니다.",
   ai_task_revision_mismatch: "그 사이 이 줄이 바뀌었습니다. 새로고침한 뒤 다시 저장하세요.",

@@ -1,28 +1,75 @@
+import { chmod, lstat, mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { REVIEW_SYSTEM_PROMPT, type AgentReviewResult } from "./agent-review";
 import { validateReviewOutcome, type ReviewInput } from "./agent-review-contract";
 import type { CliProcessResult } from "@/lib/llm/cli-process-runner";
 
-/** Pinned OpenCode v2.2.5: run/noninteractive.ts emits text/step_finish/error JSONL. */
+/** Existing M3 host CLI, never installed or upgraded by workers. */
+export const OPENCODE_HOST_COMMAND = "/opt/homebrew/bin/opencode";
+export const OPENCODE_HOST_HOME = "/Users/jr";
 export const OPENCODE_REVIEW_AGENT = "nmv-review";
-export const OPENCODE_REVIEW_VERSION = "opencode v2.2.5";
+export const OPENCODE_REVIEW_VERSION = "1.19.5";
 export function opencodeReviewArgs(model: string, effort?: string): string[] {
-  return ["run", "--standalone", "--format", "json", "--agent", OPENCODE_REVIEW_AGENT,
-    "--model", `${model}${effort ? `#${effort}` : ""}`];
+  return ["run", "--pure", "--format", "json", "--agent", OPENCODE_REVIEW_AGENT, "--model", model,
+    ...(effort ? ["--variant", effort] : [])];
 }
 
-/** The image also installs these deny rules as managed /etc/opencode policy. */
+/** v1 configuration: deny every tool/MCP operation and prevent auxiliary LLM calls. */
 export function opencodeReviewConfig(): string {
-  const permissions = [{ action: "*", resource: "*", effect: "deny" }];
+  const permission = { "*": "deny" };
   return JSON.stringify({
-    permissions,
-    policies: ["tool.use", "mcp.use", "skill.use", "plugin.use"].map(action => ({ action, resource: "*", effect: "deny" })),
-    snapshots: false, warming: false, instructions: [], skills: [],
-    agents: {
-      [OPENCODE_REVIEW_AGENT]: { mode: "primary", steps: 1, permissions,
-        system: `${REVIEW_SYSTEM_PROMPT}\nReturn one JSON object with decision, reason, evidenceIds, confidence. Do not use tools.` },
-      title: { disabled: true }, summary: { disabled: true }, compaction: { disabled: true },
+    permission, plugin: [], mcp: {}, snapshot: false, autoupdate: false, instructions: [],
+    compaction: { auto: false, prune: false }, default_agent: OPENCODE_REVIEW_AGENT,
+    agent: {
+      [OPENCODE_REVIEW_AGENT]: { mode: "primary", steps: 1, permission,
+        prompt: `${REVIEW_SYSTEM_PROMPT}\nReturn one JSON object with decision, reason, evidenceIds, confidence. Do not use tools.` },
+      title: { disable: true }, summary: { disable: true }, compaction: { disable: true },
     },
   });
+}
+
+/** Child commands inherit the original jr auth data home, never the bridge's DB, RPC or startup/config credentials. */
+export function opencodeHostEnv(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  if (source.HOME !== OPENCODE_HOST_HOME) throw new Error("cli_host_identity_mismatch");
+  const keys = ["PATH", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE", "TZ",
+    "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME", "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS",
+    "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"];
+  const env = Object.fromEntries(keys.filter(key => source[key] !== undefined).map(key => [key, source[key]]));
+  return { ...env, NODE_ENV: "production", HOME: OPENCODE_HOST_HOME, NO_COLOR: "1", OPENCODE_DISABLE_AUTOUPDATE: "true", OPENCODE_PURE: "true" };
+}
+
+/**
+ * Keep jr's credentials in their existing data directory, while isolating project/user plugins, agents and MCP.
+ * v1 scans ~/.opencode even with project config disabled; refuse it rather than changing the user's directory.
+ * Its built-in npm bootstrap skips nonwritable config directories, so the isolated profile installs no packages.
+ */
+const ownedProfiles = new Set<string>();
+export async function opencodeReviewProfile(directory: string) {
+  const env = opencodeHostEnv(process.env);
+  try { await lstat(path.join(OPENCODE_HOST_HOME, ".opencode")); throw new Error("cli_host_user_profile_not_isolated"); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  const configRoot = path.join(directory, "config"), configDir = path.join(configRoot, "opencode");
+  const config = opencodeReviewConfig();
+  await mkdir(configDir, { recursive: true, mode: 0o700 });
+  ownedProfiles.add(directory);
+  await writeFile(path.join(configDir, "opencode.json"), config, { mode: 0o600 });
+  await chmod(configDir, 0o500);
+  const flags = { OPENCODE_DISABLE_PROJECT_CONFIG: "true", OPENCODE_DISABLE_EXTERNAL_SKILLS: "true",
+    OPENCODE_DISABLE_CLAUDE_CODE: "true", OPENCODE_DISABLE_AUTOCOMPACT: "true",
+    OPENCODE_DISABLE_LSP_DOWNLOAD: "true", OPENCODE_CONFIG_CONTENT: config, OPENCODE_PERMISSION: JSON.stringify({ "*": "deny" }) };
+  return { command: OPENCODE_HOST_COMMAND,
+    env: { ...env, ...flags, XDG_CONFIG_HOME: configRoot,
+      XDG_DATA_HOME: env.XDG_DATA_HOME ?? path.join(OPENCODE_HOST_HOME, ".local", "share"),
+      XDG_CACHE_HOME: path.join(directory, "cache"), XDG_STATE_HOME: path.join(directory, "state") },
+    files: [{ path: path.join("config", "opencode", "opencode.json"), content: config }],
+    boundEnvKeys: ["NO_COLOR", "OPENCODE_PURE", "OPENCODE_DISABLE_AUTOUPDATE", ...Object.keys(flags)] };
+}
+export async function releaseOpencodeReviewProfile(directory: string): Promise<void> {
+  if (!ownedProfiles.has(directory)) return;
+  await chmod(path.join(directory, "config", "opencode"), 0o700).catch(error => {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  });
+  ownedProfiles.delete(directory);
 }
 
 type Event = Record<string, unknown> & { part?: Record<string, unknown> };
@@ -50,7 +97,7 @@ export function opencodeReportedUsage(stdout: string): { inputTokens: number; ou
       const cache = tokens?.cache as Record<string, unknown> | undefined;
       if (!tokens || !count(tokens.input) || !count(tokens.output) || !count(tokens.reasoning)
         || !cache || !count(cache.read) || !count(cache.write)) return null;
-      // v2 TokenUsage.total includes cached input and reasoning, both excluded from visible input/output.
+      // Include cache and reasoning in the conservative capacity total, rather than counting visible text alone.
       inputTokens += tokens.input + cache.read + cache.write; outputTokens += tokens.output + tokens.reasoning;
       if (typeof part.cost === "number" && Number.isFinite(part.cost) && part.cost >= 0) costUsd += part.cost;
       else hasCost = false;

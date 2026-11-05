@@ -84,9 +84,9 @@ function single(args: readonly string[], ...flags: string[]): string | null {
 function invocationMatches(spec: z.infer<typeof inputSchema>, contract: CliServingContract): boolean {
   const wireModel = single(spec.args, "--model", "-m");
   if (contract.provider === "opencode-cli") {
-    const [baseModel, variant, extra] = (wireModel ?? "").split("#");
-    if (baseModel !== contract.model || extra !== undefined || (variant !== undefined && !/^[a-z0-9_-]{1,32}$/.test(variant))
-      || !spec.args.includes("--standalone")) return false;
+    const variants = flagValues(spec.args, "--variant");
+    if (wireModel !== contract.model || wireModel.includes("#") || spec.args.includes("--standalone")
+      || variants.length > 1 || variants.some(value => value === null || !/^[a-z0-9_-]{1,32}$/.test(value))) return false;
   } else if (wireModel !== contract.model) return false;
   if (contract.boundProvenance === "declared") return true;
   const tokens = spec.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS, budget = single(spec.args, "--max-budget-usd");

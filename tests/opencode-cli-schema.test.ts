@@ -51,7 +51,8 @@ it("widens only the connection tool list and preserves CLI-only null/model guard
   const sql = new PgDialect().sqlToQuery(check.value).sql;
   expect(sql).toContain("IN ('claude','codex','grok','opencode')");
   for (const key of ["base_url", "api_key_ciphertext", "models", "models_read_at", "models_error"]) expect(sql).toContain(`"ai_connections"."${key}" IS NULL`);
-  expect(sql).toContain('cardinality("ai_connections"."cli_models") BETWEEN 1 AND 32');
+  expect(sql).toContain('cardinality("ai_connections"."cli_models") BETWEEN 1 AND CASE WHEN "ai_connections"."cli_tool" = \'opencode\' THEN 512 ELSE 32 END');
+  expect(migration).toContain('cardinality(cli_models) BETWEEN 1 AND 32');
   expect(migration).toContain("SET LOCAL lock_timeout = '5s'");
 });
 
