@@ -9,6 +9,7 @@ import { STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { isPausedJob, jobStatusLabel } from "@/lib/jobs/status";
 import { adminJobControlVersions } from "@/lib/operations/admin-job-control";
 import { readConveyor } from "@/lib/operations/conveyor";
+import { SOCIAL_FLOW_JOBS } from "@/lib/operations/flow-overview-read";
 import { readFlowRankEditor } from "@/lib/operations/flow-rank-editor-read";
 import { adminWorkspaceReadOnly } from "@/lib/operations/admin-workspace-preview";
 import { heldReactionComments } from "@/lib/domain/reactions/review";
@@ -22,6 +23,7 @@ import type { FlowControls } from "./FlowBoard";
 import { FlowBoard } from "./FlowBoard";
 import { PrototypeFlow, PrototypeFlowAway, PrototypeFlowChanges } from "./PrototypeFlow";
 import type { OperatorDesk } from "@/lib/operations/operator-desk-model";
+import { FlowOverviewSummary, SocialFlowSummary } from "./FlowOverview";
 import "./flow.css";
 
 export const dynamic = "force-dynamic";
@@ -34,7 +36,7 @@ const quiet = (event: string) => (error: unknown) => {
 
 /** 칸마다 멈추고 다시 켤 수 있는 작업의 지금 상태 — 운영센터 작업 상세와 같은 읽기(jobs 행·작업 제어 판) */
 async function readControls(admin: { login: string; exp: number }): Promise<FlowControls> {
-  const names = new Set([...Object.values(STATION_JOBS).flat(), ...PUBLIC_TRANSLATION_JOBS].map((row) => row.job));
+  const names = new Set([...Object.values(STATION_JOBS).flat(), ...PUBLIC_TRANSLATION_JOBS].map((row) => row.job).concat([...SOCIAL_FLOW_JOBS]));
   const [states, versions] = await Promise.all([listJobStates(), adminJobControlVersions()]);
   const now = Date.now();
   const secret = authSecret();
@@ -104,6 +106,12 @@ async function FlowWorkspace({ admin, fresh, tab, advanced }: {
       </Suspense>;
   return <PrototypeFlow data={conveyor} desk={desk} controls={controls} editor={editor} tab={tab}
     reactionRequests={reactions?.count ?? null} advancedContent={advancedContent}
+    overviewContent={!diagnostics ? <Suspense fallback={<p className="notice" aria-busy="true">프로젝트 등록 수와 발행 추이를 읽는 중…</p>}>
+      <FlowOverviewSummary data={conveyor} desk={desk} reactionRequests={reactions?.count ?? null} />
+    </Suspense> : undefined}
+    socialContent={!diagnostics ? <Suspense fallback={<p className="notice" aria-busy="true">SNS 수집·사이트 발행 흐름을 읽는 중…</p>}>
+      <SocialFlowSummary jobs={controls.jobs} />
+    </Suspense> : undefined}
     awayContent={fullDeskRead ? <Suspense fallback={<p className="small muted" aria-busy="true">부재 중 기록을 읽는 중…</p>}><AwayPanel deskRead={fullDeskRead} /></Suspense> : undefined} />;
 }
 
