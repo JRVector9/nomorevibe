@@ -48,7 +48,7 @@ export default async function CapacityDevicesPage() {
       <h2 className="text-[18px] font-semibold">등록된 엔진 ({mapped.length})</h2>
       {engines.error && <p role="alert" className="text-[15px] text-amber-700">등록 연결과 공유 작업을 확인하지 못했습니다. 새로고침해 주세요. 기존 장비 설정은 아래에서 확인할 수 있습니다.</p>}
       <div className="grid gap-4 lg:grid-cols-2">{mapped.map(({ device, engine }) => <SharedLimitForm
-        key={device.deviceId} device={device} engine={engine} policyHash={engines.policyHash!}
+        key={`${device.deviceId}#${device.version ?? "new"}#${engines.policyHash}`} device={device} engine={engine} policyHash={engines.policyHash!}
         readOnly={readOnly || !view.policyVerified || !device.enabled} />)}</div>
       {!engines.error && !mapped.length && <p className="text-[15px] text-fg-3">현재 정책과 연결된 등록 엔진이 없습니다. 고급 설정에서 정책 그룹을 확인해 주세요.</p>}
       {mapped.length < view.devices.length && <p className="text-[13px] text-fg-3">등록 연결이 확인되지 않은 정책 그룹 {view.devices.length - mapped.length}개는 고급 설정에 표시합니다. 다른 그룹의 한도를 같은 엔진 한도로 대신 적용하지 않습니다.</p>}

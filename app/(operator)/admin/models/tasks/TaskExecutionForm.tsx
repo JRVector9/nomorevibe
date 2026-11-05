@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useActionState, useState } from "react";
 import { aiTaskSupportsWorkloadPool, aiTaskWorkloadPoolApiOnly, type AiTaskExecutionInput } from "@/lib/llm/ai-task-execution-config";
 import type { AiTaskExecutionAdminView } from "@/lib/operations/admin-ai-task-execution";
@@ -79,7 +80,7 @@ export function TaskExecutionForm({ view, label, options, connections, readOnly 
       </label>
       {mode === "workload_pool" ? <>
         <p className="text-[13px] text-fg-3">서로 다른 업무를 모델에 나눕니다. 업무마다 모델 하나를 선택하며, 동시 실행 수는 단계·장비 한도를 따릅니다.</p>
-        <a href="/admin/models/limits" className="text-[13px] text-accent-ink underline">동시 실행 수 설정 →</a>
+        <Link href="/admin/models/limits" prefetch={false} className="text-[13px] text-accent-ink underline">동시 실행 수 설정 →</Link>
         <RankSelects<AiRankChoice> stage={{ id: `pool-${view.task}-${view.slot}`, label, slots: 4 }} selectionKind="pool"
           options={choices} connections={connections} value={value} onChange={setValue} slotNames={MEMBER_FIELDS}
           disabled={saving || readOnly || !supported} showProvider={false} note={null} validate={issuesOf} />
