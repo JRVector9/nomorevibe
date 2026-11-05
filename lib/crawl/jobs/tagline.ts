@@ -150,7 +150,8 @@ async function writeTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTaskRank
                   failed++;
                   // 그 후보의 실패로 남겼다(같은 증거에만 502 를 돌려주는 긴 페이지 글이 있었다 — 2026-09-20). 엔진이 모든 후보에 대해
                   // 내려갔음이 증명되면(engine-down.ts) 이 순위만 쉬고 다음 후보는 다음 순위로 간다
-                  if (ranks.failed(binding, result.error)) ctx.log("tagline.rank_down", { rank: binding.rank });
+                  if (ranks.failed(binding, result.error)) ctx.log("tagline.rank_down", binding.memberId
+                    ? { memberId: binding.memberId, configRevision: binding.configRevision } : { rank: binding.rank });
                   return "next";
                 }
                 ranks.answered(binding);
