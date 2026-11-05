@@ -6,7 +6,7 @@ import { ensureServingContracts } from '@/lib/llm/serving-contract-store';
 import { runInTextTaskRank } from '@/lib/llm/ai-task-rank-scope';
 import { publicationClassifyApiInputHash, publicationClassifyLogicalWorkKey, modelCapacityIndeterminateReason,
   modelCapacityRequestIdentitySchema } from '@/lib/llm/capacity';
-import { readModelCapacityCallerControl, findOwnPendingModelRequest, requestPublicationApiSlot, cancelReservedModelSlot, cancelOwnPendingPublicationApiBatch, reconcilePublicationApiTerminal,
+import { readModelCapacityControlObservation, findOwnPendingModelRequest, requestPublicationApiSlot, cancelReservedModelSlot, cancelOwnPendingPublicationApiBatch, reconcilePublicationApiTerminal,
   reconcileGatewayNotStarted, markModelDispatchIndeterminate, type OwnPendingPublicationApiBatch } from '@/lib/llm/capacity-repository';
 import { markUnsettledDispatch } from '@/lib/llm/capacity-unsettled';
 import { capacityRefusalReason } from '@/lib/llm/capacity-busy-targets';
@@ -31,8 +31,9 @@ export async function classifyPublicationPool(expected: readonly PublicationClas
     await abandonResume();
     throw new ModelCapacityDeferredError('assignments_unavailable');
   }
-  // API pool never drops into uncapped CLI/legacy. Resume hints are not permission to dispatch while draining.
-  const control = await readModelCapacityCallerControl();
+  // Observe mode without the slot-only early throw so exact unstarted cleanup can run.
+  // API pool never enters legacy; admission/dispatch still recheck control under lock.
+  const control = await readModelCapacityControlObservation();
   if (control.mode !== 'open') {
     await abandonResume();
     throw new ModelCapacityDeferredError(control.mode === 'disabled' ? 'disabled' : 'draining');
