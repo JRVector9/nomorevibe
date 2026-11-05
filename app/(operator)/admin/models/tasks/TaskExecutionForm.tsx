@@ -23,6 +23,15 @@ export function TaskExecutionForm({ view, label, options, connections, readOnly 
     ...(typeof member.options.reasoningEffort === "string" && member.options.reasoningEffort ? { reasoningEffort: member.options.reasoningEffort } : {}) }));
   const [value, setValue] = useState<(AiRankChoice | null)[]>(initial);
   const supported = aiTaskSupportsWorkloadPool(view.task, view.slot);
+  const memberIds = new Set(view.members.map(member => member.memberId));
+  const lastSaved = Math.max(Date.parse(view.updatedAt ?? "") || 0, ...connections.filter(connection => view.members.some(member => member.connectionId === connection.id))
+    .map(connection => Date.parse(connection.updatedAt) || 0));
+  const startedAt = Date.parse(runtime?.startedAt ?? runtime?.observedAt ?? "");
+  const observedAt = Date.parse(runtime?.observedAt ?? "");
+  const currentRuntime = runtime?.pool?.configRevision === view.revision && runtime.pool.members === view.members.length
+    && [...Object.keys(runtime.pool.served), ...runtime.pool.unusable.map(row => row.memberId)].every(id => memberIds.has(id))
+    && Number.isFinite(startedAt) && startedAt >= lastSaved && Number.isFinite(observedAt) && runtime.fresh === true
+    ? runtime : null;
   if (!supported && view.mode === "fallback") return null;
   const membersOf = (values: readonly (AiRankChoice | null)[]): AiTaskExecutionInput["members"] => values.flatMap(choice => {
     if (!choice) return [];
@@ -73,10 +82,11 @@ export function TaskExecutionForm({ view, label, options, connections, readOnly 
         {view.task === "second-review" && <p className="text-[13px] text-fg-3">단일 투표자 구성에서 서로 다른 후보를 분산합니다. 후보마다 표 수는 늘리지 않습니다.</p>}
       </> : <p className="text-[13px] text-fg-3">기존 1·2·3순위를 사용합니다. 저장해 둔 분산 모델 목록은 보관됩니다.</p>}
       {view.mode === "workload_pool" && <div className="grid gap-1 text-[13px] text-fg-3">
-        {runtime?.pool?.configRevision === view.revision ? <>
-          <p>마지막 관측 · {runtime.at} · {runtime.from === "job" ? "마지막 작업 틱" : "이 웹 프로세스의 마지막 요청"}</p>
-          {view.members.map(member => <p key={member.memberId}>모델 {member.position} · 맡은 업무 {runtime.pool!.served[member.memberId] ?? 0}건
-            {runtime.pool!.unusable.filter(row => row.memberId === member.memberId).map(row => <span key={row.code}> · {row.code} {row.count}건</span>)}</p>)}
+        {currentRuntime?.pool ? <>
+          <p>마지막 관측 · {currentRuntime.at} · {currentRuntime.from === "job" ? "마지막 작업 틱" : "이 웹 프로세스의 마지막 요청"}</p>
+          {view.members.map(member => <p key={member.memberId}>모델 {member.position} · 맡은 업무 {currentRuntime.pool!.served[member.memberId] ?? 0}건
+            {currentRuntime.pool!.unusable.some(row => row.memberId === member.memberId) && <span> · 사용 불가 {currentRuntime.pool!.unusable.filter(row => row.memberId === member.memberId).reduce((sum, row) => sum + row.count, 0)}건</span>}</p>)}
+          {currentRuntime.degraded?.code === "all_ranks_unusable" && <p role="alert" className="text-red-600">현재 분산 모델을 모두 사용할 수 없습니다. {currentRuntime.degraded.detail}</p>}
         </> : <p>현재 분산 설정으로 관측된 실행 기록이 아직 없습니다.</p>}
       </div>}
       <div><button type="submit" disabled={saving || readOnly || !changed || issues.length > 0 || mode === "workload_pool" && !supported}
