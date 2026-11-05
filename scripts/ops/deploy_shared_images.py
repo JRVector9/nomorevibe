@@ -509,11 +509,18 @@ if len(matches)==1:
 if len(matches)==1 and (detail or not result['ready']):
  import re
  clean=lambda v:re.sub(r'[^A-Za-z0-9 :._/@()=,+-]','?',str(v or ''))[:160]
- try: status=json.loads(command('docker','service','inspect',service,'--format','{{json .UpdateStatus}}') or 'null')
- except Exception: status=None
- if isinstance(status,dict):
-  result['updateState']=clean(status.get('State'))
-  if status.get('Message'): result['updateMessage']=clean(status.get('Message'))
+ result['updateStatusInspected']=False
+ result['updateState']='unknown'
+ try:
+  status=json.loads(command('docker','service','inspect',service,'--format','{{json .UpdateStatus}}'))
+  if status is None:
+   result['updateStatusInspected']=True
+   result.pop('updateState')
+  elif isinstance(status,dict) and isinstance(status.get('State'),str) and status['State'].strip():
+   result['updateStatusInspected']=True
+   result['updateState']=clean(status['State'])
+   if status.get('Message'): result['updateMessage']=clean(status.get('Message'))
+ except Exception: pass
  errors=[]
  for line in command('docker','service','ps',service,'--no-trunc','--format','{{json .}}').splitlines()[:8]:
   try: task=json.loads(line)
@@ -585,7 +592,8 @@ def check_app_deployed(client, short, target, previous_id, *, timeout=None, paus
             if evidence.get('updateState') in SWARM_ROLLBACK_STATES + SWARM_STOP_STATES:
                 raise SwarmRollback(short, evidence)
             # A healthy task during Swarm's monitor window is not a completed update.
-            if evidence.get('ready') is True and evidence.get('updateState') in (None, 'completed'):
+            if (evidence.get('ready') is True and evidence.get('updateStatusInspected') is True
+                    and evidence.get('updateState') in (None, 'completed')):
                 return {'app': short, 'deployment': 'done', 'service': 'healthy',
                         'instanceId': evidence.get('instanceId')}
             last = evidence
