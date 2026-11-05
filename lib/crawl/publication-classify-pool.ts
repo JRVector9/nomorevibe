@@ -6,12 +6,13 @@ import { ensureServingContracts } from '@/lib/llm/serving-contract-store';
 import { runInTextTaskRank } from '@/lib/llm/ai-task-rank-scope';
 import { publicationClassifyApiInputHash, publicationClassifyLogicalWorkKey, modelCapacityIndeterminateReason,
   modelCapacityRequestIdentitySchema } from '@/lib/llm/capacity';
-import { readModelCapacityCallerControl, findOwnPendingModelRequest, requestPublicationApiSlot, cancelReservedModelSlot, reconcilePublicationApiTerminal,
+import { readModelCapacityCallerControl, findOwnPendingModelRequest, requestPublicationApiSlot, cancelReservedModelSlot, cancelOwnPendingPublicationApiBatch, reconcilePublicationApiTerminal,
   reconcileGatewayNotStarted, markModelDispatchIndeterminate, type OwnPendingPublicationApiBatch } from '@/lib/llm/capacity-repository';
 import { markUnsettledDispatch } from '@/lib/llm/capacity-unsettled';
 import { capacityRefusalReason } from '@/lib/llm/capacity-busy-targets';
 import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
 import type { JobContext } from '@/lib/jobs/runner';
+import { roleLeaseFromEnv } from '@/lib/jobs/role-leader';
 import { dispatchPublicationApi, publicationApiSources, type PublicationClassificationExpected } from './publication-classify-capacity';
 import { preparePublicationClassifyCall, runPublicationClassifyCall } from './publication-classify-gateway';
 import { reviewHash } from './agent-review-contract';
@@ -22,13 +23,25 @@ import '@/lib/llm/publication-classify-serving-contract';
 /** One distinct publication input batch selects one API route. Selection is a hint, never a dispatch permit. */
 export async function classifyPublicationPool(expected: readonly PublicationClassificationExpected[], payload: { inputs: ClassifyInput[]; definitions: CategoryDefinitions },
   config: AiTaskExecutionConfig, ctx: JobContext<null>, resume?: OwnPendingPublicationApiBatch) {
-  if (!ctx.lease || config.task !== 'publish-classify' || config.mode !== 'workload_pool' || config.revision === null)
+  const abandonResume = async () => {
+    const owner = roleLeaseFromEnv('publisher', process.env);
+    if (resume && owner) await cancelOwnPendingPublicationApiBatch(resume, { instanceId: owner.instanceId, bootId: owner.bootId });
+  };
+  if (!ctx.lease || config.task !== 'publish-classify' || config.mode !== 'workload_pool' || config.revision === null) {
+    await abandonResume();
     throw new ModelCapacityDeferredError('assignments_unavailable');
+  }
   // API pool never drops into uncapped CLI/legacy. Resume hints are not permission to dispatch while draining.
   const control = await readModelCapacityCallerControl();
-  if (control.mode !== 'open') throw new ModelCapacityDeferredError(control.mode === 'disabled' ? 'disabled' : 'draining');
+  if (control.mode !== 'open') {
+    await abandonResume();
+    throw new ModelCapacityDeferredError(control.mode === 'disabled' ? 'disabled' : 'draining');
+  }
   await ensureServingContracts();
-  const lease = ctx.lease, initial = await publicationApiSources(expected, payload, lease);
+  const lease = ctx.lease, initial = await publicationApiSources(expected, payload, lease).catch(async error => {
+    if (error instanceof ModelCapacityDeferredError && error.reason === 'reservation_lost') await abandonResume();
+    throw error;
+  });
   const candidates = config.members.flatMap(member => {
     const rank = { task: config.task, slot: 1, rank: 0, model: member.model, enabled: true, options: member.options, connection: member.connection };
     const resolved = bindApiTaskRank('crawl-publish-classify', rank), binding = resolved.binding;
@@ -45,14 +58,16 @@ export async function classifyPublicationPool(expected: readonly PublicationClas
     && candidate.requestIdentity.workKey === resume.workKey
     && publicationClassifyLogicalWorkKey(initial.members) === resume.logicalWorkKey);
   // A changed source/payload/member/config is never rebound to the old reservation or a newly selected route.
-  if (resume && !resumed) throw new ModelCapacityDeferredError('reservation_lost');
+  if (resume && !resumed) { await abandonResume(); throw new ModelCapacityDeferredError('reservation_lost'); }
   // Restore an exact own waiting/reserved identity before considering a newly idle connection.
   const pending = await Promise.all(candidates.map(async candidate => ({ candidate, row: await findOwnPendingModelRequest(candidate.requestIdentity) })));
   if (pending.some(item => item.row?.state === 'dispatched')) throw new ModelCapacityDeferredError('dispatched');
   const own = pending.filter(item => item.row && ['waiting', 'reserved'].includes(item.row.state));
   if (own.length > 1) throw new ModelCapacityDeferredError('ledger_mismatch');
-  if (resume && !own.some(item => item.candidate === resumed && item.row?.requestId === resume.requestId))
+  if (resume && !own.some(item => item.candidate === resumed && item.row?.requestId === resume.requestId)) {
+    await abandonResume();
     throw new ModelCapacityDeferredError('reservation_lost');
+  }
   const choice = await chooseTaskWorkloadMember(config, candidates, { preferIdentity: own[0]?.candidate.identity });
   if (!choice) throw new ModelCapacityDeferredError(candidates.length ? 'capacity' : 'provider_contract_unavailable');
   return runInTextTaskRank({ ...choice, poolSelection: choice.poolSelection }, async () => {

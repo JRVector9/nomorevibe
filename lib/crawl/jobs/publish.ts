@@ -1,4 +1,4 @@
-import { findOwnPendingPublicationApiBatches } from '@/lib/llm/capacity-repository';
+import { findOwnPendingPublicationApiBatches, cancelOwnPendingPublicationApiBatch, readModelCapacityControlObservation } from '@/lib/llm/capacity-repository';
 import { roleLeaseFromEnv } from '@/lib/jobs/role-leader';
 import { ensureAiTaskExecutionConfigs, readAiTaskExecutionConfig } from '@/lib/llm/ai-task-execution-snapshot';
 import { classifyPublicationPool } from '@/lib/crawl/publication-classify-pool';
@@ -78,7 +78,7 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
   const classifyConcurrency = pool ? jobKnob(runtimeSettings(), 'crawl-publish', 'classifierConcurrency') : 1;
   const classificationWaiting = new Set<number>();
   let classificationDrainObserved = false;
-  const role = pool ? roleLeaseFromEnv('publisher', process.env) : undefined;
+  const role = roleLeaseFromEnv('publisher', process.env);
   const pendingBatches = role ? await findOwnPendingPublicationApiBatches({ instanceId: role.instanceId, bootId: role.bootId }) : [];
   let published = 0;
   let skipped = 0;
@@ -88,6 +88,13 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
     ctx.log("crawl.publication_changed", { repo: candidate.repo, branch, conflicts: 1 });
   };
   const capacityDeferred = () => deferredJob<null>("model_capacity", published + skipped);
+  const abandonPending = async (batch: typeof pendingBatches[number]) => {
+    if (role) await cancelOwnPendingPublicationApiBatch(batch, { instanceId: role.instanceId, bootId: role.bootId });
+  };
+  if (pendingBatches.length && (!pool || (await readModelCapacityControlObservation()).mode !== 'open')) {
+    // Mode changes abandon only unstarted API work; native admission still enforces the global drain below.
+    for (const batch of pendingBatches.splice(0)) await abandonPending(batch);
+  }
 
   const poolCounts: Record<string, number> = { ranks: 0, pool_members: execution.members.length, pool_revision: execution.revision ?? 0 };
   const classifyCtx: JobContext<null> = { ...ctx, log(event, fields) {
@@ -109,7 +116,8 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
     // Stable input order is part of the payload hash. A new queue head must not split an existing batch.
     if (pool) candidates.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime() || b.id - a.id);
     if (resume && (candidates.length !== resume.candidateIds.length || candidates.some(candidate => !resume.candidateIds.includes(candidate.id)))) {
-      // Missing/ineligible/changed members close only this batch for the tick, never the queue behind it.
+      // Abandon the exact unstarted batch; keep unrelated queue work moving.
+      await abandonPending(resume);
       for (const id of resume.candidateIds) classificationWaiting.add(id);
       continue;
     }
@@ -126,6 +134,7 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
     const decisions = new Map(await Promise.all(prepared.map(async item => [item.candidate.repo, item.classification && (pool || process.env.CONNECT_AGENT_URL) ? await decisionFor(item.candidate, item.classification.snapshot.document) : null] as const)));
     const inputs = prepared.filter(item => !decisions.get(item.candidate.repo)?.category).flatMap(item => item.classification ? [item.classification.input] : []);
     let classified: (Category | null)[] = [];
+    if (resume && inputs.length === 0) await abandonPending(resume);
     if (inputs.length > 0) {
       if (pool) {
         // Complete all started batches before publishing; an unsuccessful batch does not hide another batch's result.

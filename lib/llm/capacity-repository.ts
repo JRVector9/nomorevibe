@@ -2941,6 +2941,7 @@ export async function reconcilePublicationApiTerminal(terminal: PublicationClass
 }
 
 export type OwnPendingPublicationApiBatch = Readonly<{
+  request: ModelCapacityRequest; state: 'waiting' | 'reserved'; token: string | null; epoch: number; revision: number; policyHash: string;
   requestId: string; provider: GatewayDispatchProvider; model: string; workKey: string;
   logicalWorkKey: string; memberKeys: readonly string[]; candidateIds: readonly number[];
 }>;
@@ -2973,7 +2974,43 @@ export async function findOwnPendingPublicationApiBatches(owner: ModelCapacityRe
     const logical = `bg:publication-classify:${reviewHash(keys)}`;
     if (row.logicalWorkKey !== logical || !new RegExp(`^${logical}:[a-f0-9]{64}$`).test(identity.workKey))
       throw new ModelCapacityDeferredError('ledger_mismatch');
-    return Object.freeze({ requestId: row.requestId, provider: identity.provider, model: identity.model, workKey: identity.workKey,
+    return Object.freeze({ request: Object.freeze({ ...identity, requestId: row.requestId }), state: row.state as 'waiting' | 'reserved',
+      token: row.token, epoch: row.epoch, revision: row.revision, policyHash: row.policyHash,
+      requestId: row.requestId, provider: identity.provider, model: identity.model, workKey: identity.workKey,
       logicalWorkKey: logical, memberKeys: Object.freeze([...keys]), candidateIds: Object.freeze(keys.map(key => Number(key.slice(9)))) });
+  });
+}
+
+/** Cancel only this publisher's exact unstarted readback, including while draining/disabled.
+ * This is abandonment, never physical end proof; a successor or any sent/bound row stays untouched. */
+export async function cancelOwnPendingPublicationApiBatch(value: OwnPendingPublicationApiBatch,
+  owner: ModelCapacityRequestIdentity['owner']): Promise<boolean> {
+  const snapshot = structuredClone(value), checked = modelCapacityRequestSchema.parse(snapshot.request);
+  const expectedOwner = modelCapacityRequestIdentitySchema.shape.owner.parse(owner), keys = snapshot.memberKeys;
+  if (checked.owner.instanceId !== expectedOwner.instanceId || checked.owner.bootId !== expectedOwner.bootId
+    || checked.class !== 'background' || checked.pool !== 'reviewer' || checked.routeId !== 'crawl-publish-classify'
+    || !isGatewayDispatchProvider(checked.provider) || checked.requestId !== snapshot.requestId
+    || checked.provider !== snapshot.provider || checked.model !== snapshot.model || checked.workKey !== snapshot.workKey
+    || !['waiting', 'reserved'].includes(snapshot.state) || keys.length < 1 || keys.length > 10 || new Set(keys).size !== keys.length
+    || keys.some((key, index) => !/^classify:[1-9][0-9]{0,15}$/.test(key) || !Number.isSafeInteger(Number(key.slice(9)))
+      || index > 0 && keys[index - 1] >= key)) return false;
+  const logical = `bg:publication-classify:${reviewHash(keys)}`;
+  if (snapshot.logicalWorkKey !== logical || !new RegExp(`^${logical}:[a-f0-9]{64}$`).test(checked.workKey)) return false;
+  return transaction(async tx => {
+    const state = await control(tx);
+    if (state.fenced) return false;
+    const [row] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, checked.requestId)).for('update');
+    if (!row || row.state !== snapshot.state || row.ownerInstanceId !== expectedOwner.instanceId || row.ownerBootId !== expectedOwner.bootId
+      || row.class !== checked.class || row.pool !== checked.pool || row.routeId !== checked.routeId
+      || row.provider !== checked.provider || row.model !== checked.model || row.workKey !== checked.workKey
+      || row.epoch !== snapshot.epoch || row.revision !== snapshot.revision || row.policyHash !== snapshot.policyHash || row.token !== snapshot.token
+      || row.logicalWorkKey !== logical || !isDeepStrictEqual(row.logicalMemberKeys, keys)
+      || row.dispatchBinding !== null || row.dispatchBindingHash !== null || row.dispatchedAt !== null
+      || row.terminalEvidence !== null || row.terminalEvidenceHash !== null || row.settledAt !== null) return false;
+    const [changed] = await tx.update(modelCapacityRequests).set({ state: 'withdrawn', updatedAt: sql`clock_timestamp()` })
+      .where(and(eq(modelCapacityRequests.requestId, row.requestId), eq(modelCapacityRequests.state, row.state))).returning();
+    if (!changed) return false;
+    await event(tx, changed, row.state === 'waiting' ? 'wait_cancelled' : 'reservation_cancelled', row.state, 'withdrawn');
+    return true;
   });
 }
