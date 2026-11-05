@@ -62,8 +62,11 @@ export function secondReviewWorkloadMembership(row: Pick<SecondReview, 'provider
   const slot = slots.find(slot => slot.slot === assignment.taskSlot);
   if (!slot || slot.config.mode !== 'workload_pool' || slot.config.revision === null
     || assignment.configRevision > slot.config.revision) return false;
-  if (row.fallbackForId) return slot.legacy.some(candidate => candidate.binding
-    && candidate.binding.provider === row.provider && sameReviewModel(candidate.binding.identity, row.model));
+  if (row.fallbackForId) {
+    const primary = slot.legacy.find(candidate => candidate.binding && !candidate.unusable);
+    return slot.legacy.some(candidate => candidate !== primary && candidate.binding
+      && candidate.binding.provider === row.provider && sameReviewModel(candidate.binding.identity, row.model));
+  }
   return slot.candidates.some(candidate => candidate.binding && candidate.poolMember?.memberId === assignment.memberId
     && candidate.poolMember.canonicalModel === assignment.canonicalModel
     && candidate.binding.provider === row.provider && sameReviewModel(candidate.binding.identity, row.model));
