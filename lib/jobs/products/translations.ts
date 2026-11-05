@@ -9,6 +9,7 @@ import { textTaskModel } from "@/lib/llm/ai-task-rank-scope";
 import { TextTaskRanks, type TextRankRun } from "@/lib/llm/ai-task-resolver";
 import { pendingTextPoolModel } from "@/lib/llm/text-task-pool-resume";
 import { modelRequestBudget } from "@/lib/llm/model-registry";
+import { readModelCapacityCallerControl } from "@/lib/llm/capacity-repository";
 
 const JOB = "product-translate";
 
@@ -49,7 +50,9 @@ async function translateWithRanks(ctx: JobContext<null>, ranks: TextTaskRanks): 
     const policy = productTranslationPolicy();
     const passed = new Set<string>(), scheduled = new Map<string, symbol>();
     const pendingRequestIds = new Set<string>();
-    const concurrency = Math.min(modelRequestBudget(JOB).concurrency, MAX_SELECTION_ROUNDS);
+    const control = await readModelCapacityCallerControl();
+    if (control.mode !== "disabled" && control.mode !== "open") throw new ModelCapacityDeferredError("draining");
+    const concurrency = control.mode === "disabled" ? 1 : Math.min(modelRequestBudget(JOB).concurrency, MAX_SELECTION_ROUNDS);
     let recorded = 0, rounds = 0, stopClaims = false;
     let selection: Promise<void> = Promise.resolve();
     // Queue selection is serial even when HTTP is parallel. Reserve these task keys
@@ -97,7 +100,7 @@ async function translateWithRanks(ctx: JobContext<null>, ranks: TextTaskRanks): 
           // 순위 차례로 부른다 — 이 모델만의 까닭(경로 없음·장비 행 없음·계약 닫힘·포화)이면 같은 묶음을 다음 순위로(TextTaskRanks.run)
           attempt = await ranks.run(async (): Promise<Flow> => {
             // Outermost HTTP deadline (routes.limits.product-translate.timeoutMs, read per tick) fits the job budget; inner M1 bounds still require measurement and enforcement.
-            const outcome = await translateProductFieldsWithModelCapacity(batch, lease, { timeoutMs: productTranslationClientTimeoutMs(), signal, deadlineAt: ctx.deadlineAt, pendingClaims });
+            const outcome = await translateProductFieldsWithModelCapacity(batch, lease, { timeoutMs: productTranslationClientTimeoutMs(), signal, deadlineAt: ctx.deadlineAt, pendingClaims, requireAdmission: concurrency > 1 });
             if (outcome.kind === "skipped") return { kind: "skipped" };
             const response = outcome.result;
             const completedBatch = outcome.batch ?? batch;

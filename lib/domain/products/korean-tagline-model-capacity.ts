@@ -61,19 +61,21 @@ export async function translateKoreanTaglinesWithModelCapacity(value: readonly K
     if (options.signal?.aborted) throw new ModelCapacityDeferredError("reservation_lost");
     if (pendingClaims?.requestIds.has(candidate.request.requestId)) continue;
     const recovered = await pendingKoreanTaglineBatch(candidate.memberKeys, home);
+    if (pendingClaims?.requestIds.has(candidate.request.requestId)) continue;
     if (!recovered) { await cancelOwnPendingProductTextRequest(candidate, expected); continue; }
-    // Claim synchronously after recovery, before another lane can adopt these members.
-    if (pendingClaims && !pendingClaims.claimBatch(recovered)) continue;
-    pendingClaims?.requestIds.add(candidate.request.requestId);
     const recoveredItems = recovered.map(task => ({ name: displayProjectName(task.name, task.repoUrl), tagline: koreanTaglineSource(task) }));
     const recoveredCall = prepareProductTaglineKoGatewayCall(recoveredItems, { model: textTaskModel("product-tagline-ko"), timeoutMs: options.timeoutMs, provider });
     if (recoveredCall.kind !== "prepared") throw new ModelCapacityDeferredError(recoveredCall.reason);
     const current = await prepareKoreanTaglineDispatch(recovered, home, lease, { roleLease, call: recoveredCall });
+    if (pendingClaims?.requestIds.has(candidate.request.requestId)) continue;
     if (current.kind === "disabled") return legacy();
     if (current.kind === "skipped") { await cancelOwnPendingProductTextRequest(candidate, expected); continue; }
     if (!("members" in current)) throw new Error("product_tagline_ko_preparation_invalid");
     const recoveredKey = `${productTaglineKoLogicalWorkKey(current.members)}:${productTaglineKoInputHash({ members: current.members, model: textTaskModel("product-tagline-ko") })}`;
     if (candidate.request.workKey !== recoveredKey) { await cancelOwnPendingProductTextRequest(candidate, expected); continue; }
+    // Only validated members enter the tick-local schedule; claim and adoption do not yield.
+    if (pendingClaims && !pendingClaims.claimBatch(recovered)) continue;
+    pendingClaims?.requestIds.add(candidate.request.requestId);
     tasks = recovered; items = recoveredItems; call = recoveredCall; initial = current;
     adopted = { requestId: candidate.request.requestId, state: candidate.state }; break;
   }
