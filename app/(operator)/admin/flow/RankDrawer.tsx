@@ -10,6 +10,7 @@ import {
 import { RankSelects } from "../models/RankSelects";
 import { modelPickerConnectionDevice, modelPickerConnectionLabel, modelPickerModelLabel } from "../models/model-picker-display";
 import { saveAiTaskRanksAction } from "../models/tasks/actions";
+import { aiTaskWorkloadPoolApiOnly } from "@/lib/llm/ai-task-execution-config";
 
 /**
  * 「바꾸기」 서랍(2026-11-04 5차) — 전체 흐름에서 칸의 처리 LLM 1·2·3순위를 그 자리에서 바꾼다.
@@ -28,6 +29,7 @@ const STEPS: { key: Step; text: string }[] = [{ key: "edit", text: "고르기" }
 
 function lineTag(line: FlowRankLine): { text: string; tone: "lock" | "set" | "live" } {
   if (line.execution?.mode === "workload_pool") return { text: `작업 분산 · 모델 ${line.execution.members.length}개`, tone: "live" };
+  if (aiTaskWorkloadPoolApiOnly(line.task)) return { text: "기존 CLI 분류", tone: "live" };
   if (line.lock) return { text: "바꿀 수 없음", tone: "lock" };
   if (!line.live) return { text: "설정값", tone: "set" };
   return { text: "실행이 이 순위를 읽음", tone: "live" };
@@ -57,6 +59,7 @@ function LineEditor({ editor, line, value, onChange, warnings, disabled }: {
   const tag = lineTag(line);
   const changed = rankChanges(editor, [line], { [line.key]: value }).length > 0;
   const pool = line.execution?.mode === "workload_pool" ? line.execution : null;
+  const apiOnly = aiTaskWorkloadPoolApiOnly(line.task);
   return (
     <section className="fr-line" data-key={line.key} data-tag={tag.tone} aria-labelledby={`fr-line-${line.key}`}>
       <header className="fr-line-h">
@@ -72,13 +75,16 @@ function LineEditor({ editor, line, value, onChange, warnings, disabled }: {
         })}</ul>
         <p className="fr-note">업무마다 모델 하나를 골라 나눠 처리합니다. 동시 실행 수는 단계·장비 한도를 따릅니다.</p>
         <Link href={`/admin/models/tasks#execution-${line.task}-${line.slot}`} prefetch={false} className="fr-link">분산 모델·실행 방식 변경 →</Link>
+      </> : apiOnly ? <>
+        <p className="fr-note">기존 CLI 분류를 사용합니다.</p>
+        <Link href={`/admin/models/tasks#execution-${line.task}-${line.slot}`} prefetch={false} className="fr-link">API 분산 모델 설정 →</Link>
       </> : <p className="fr-now"><span className="fr-k">지금</span> {displayRankChain(editor, line.saved)}</p>}
       {line.lock && <p className="fr-lock" role="note">{line.lock}</p>}
-      {!pool && <RankSelects<AiRankChoice> stage={{ id: `flow-${line.key}`, label: line.label, slots: 3 }} options={line.options} connections={editor.connections} value={value} onChange={onChange}
+      {!pool && !apiOnly && <RankSelects<AiRankChoice> stage={{ id: `flow-${line.key}`, label: line.label, slots: 3 }} options={line.options} connections={editor.connections} value={value} onChange={onChange}
         slotNames={AI_RANK_SLOT_NAMES} disabled={disabled || !!line.lock}
         showProvider={false} note={null} blocked={(option, index, slots) => flowOptionBlocked(editor, line, index, option, slots)}
         validate={(slots) => changed ? flowRankIssues(editor, line, slots) : []} />}
-      {!line.live && !line.lock && <p className="fr-note">{SET_ONLY_TEXT}</p>}
+      {!line.live && !line.lock && !apiOnly && <p className="fr-note">{SET_ONLY_TEXT}</p>}
       {!pool && <WarningList warnings={warnings} />}
     </section>
   );

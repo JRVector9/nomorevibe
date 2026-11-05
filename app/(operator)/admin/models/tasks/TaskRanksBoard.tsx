@@ -8,7 +8,7 @@ import { RankSelects } from "../RankSelects";
 import { saveAiTaskRanksAction, type AiTaskActionState } from "./actions";
 import type { AiTaskExecutionAdminView } from "@/lib/operations/admin-ai-task-execution";
 import { TaskExecutionForm } from "./TaskExecutionForm";
-import { aiTaskWorkloadPoolUnsupportedReason, type AiTaskPoolRuntime } from "@/lib/llm/ai-task-execution-config";
+import { aiTaskWorkloadPoolUnsupportedReason, aiTaskWorkloadPoolApiOnly, type AiTaskPoolRuntime } from "@/lib/llm/ai-task-execution-config";
 
 /** 한 줄(작업 × 칸)의 화면 값 — 서버(readAiTasksAdminView)가 만든다. */
 export type TaskRankLine = {
@@ -44,12 +44,13 @@ export function TaskRanksBoard({ lines, connections, rows, executions = [], read
       {lines.filter(line => line.group === group).map(line => {
         const execution = executions.find(view => view.task === line.task && view.slot === line.slot);
         const pool = execution?.mode === "workload_pool";
+        const apiOnly = aiTaskWorkloadPoolApiOnly(line.task);
         const ranks = <TaskRankLineForm line={line} connections={connections} rows={rows} readOnly={readOnly || pool} inactive={pool} />;
         return <Fragment key={`${line.task}#${line.slot}`}>
-          {!pool && ranks}
+          {!pool && !apiOnly && ranks}
           {execution && <TaskExecutionForm key={`${line.task}#${line.slot}#${execution.revision ?? "default"}`} view={execution}
             label={line.label} options={line.options} connections={connections} readOnly={readOnly} runtime={line.runtime} />}
-          {pool && <details className="border-b border-line px-4 py-2 text-[13px]">
+          {pool && !apiOnly && <details className="border-b border-line px-4 py-2 text-[13px]">
             <summary className="cursor-pointer text-fg-3">보관된 1·2·3순위 · 대체 실행으로 전환할 때 사용</summary>{ranks}
           </details>}
         </Fragment>;
