@@ -216,6 +216,56 @@ describe("empty ranks stop the job (no_task_models, 2026-11-02 21:13Z)", () => {
     for (const step of response.steps) if (step.kind === "link") expect(step.href.startsWith("/admin")).toBe(true);
   });
 
+  it("does not attach a previous rank's contract failure to a newly saved model", () => {
+    const runtime = { "first-review": { at: "2026-11-02T21:20:00.000Z",
+      degraded: { code: "all_ranks_unusable", detail: "old rank" },
+      unusable: [{ rank: 1, code: "no_direct_contract", text: "이 연결·모델의 엔진 직접 계약이 없음" }] } };
+    // The number stays 1, including when the same model is saved again to create its contract.
+    for (const model of ["Inferact/Qwen3.8-27B-NVFP4", "qwen3.8-flash-next"]) {
+      const first = buildStationLlm(healthy({ rows: [rank("first-review", 1, QWEN, model,
+        { updatedAt: "2026-11-02T21:21:00.000Z" })], runtime, used: [] })).first;
+      if (first.kind !== "llm") throw new Error("llm");
+      expect(first.head.state).toBe("idle");
+      expect(first.head.slots[0].ranks[0].problem).toBeNull();
+      expect(first.stopped).toEqual([]);
+    }
+  });
+
+  it("retains a contract failure observed after the current ranks were saved", () => {
+    const first = buildStationLlm(healthy({ rows: [rank("first-review", 1, QWEN, "qwen3.8-flash-next",
+      { updatedAt: "2026-11-02T21:20:00.000Z" })], used: [], runtime: { "first-review": {
+      at: "2026-11-02T21:21:00.000Z", degraded: { code: "all_ranks_unusable", detail: "current rank" },
+      unusable: [{ rank: 1, code: "no_direct_contract", text: "현재 계약 없음" }],
+    } } })).first;
+    if (first.kind !== "llm") throw new Error("llm");
+    expect(first.head.state).toBe("stuck");
+    expect(first.head.slots[0].ranks[0].problem).toBe("현재 계약 없음");
+  });
+
+  it("ignores an old tick that started before the save and finished afterwards", () => {
+    const first = buildStationLlm(healthy({ rows: [rank("first-review", 1, QWEN, "qwen3.8-flash-next",
+      { updatedAt: "2026-11-02T21:21:00.000Z" })], used: [], runtime: { "first-review": {
+      startedAt: "2026-11-02T21:20:00.000Z", at: "2026-11-02T21:22:00.000Z",
+      degraded: { code: "all_ranks_unusable", detail: "old tick" },
+      unusable: [{ rank: 1, code: "no_direct_contract", text: "old contract" }],
+    } } })).first;
+    if (first.kind !== "llm") throw new Error("llm");
+    expect(first.head.state).toBe("idle");
+    expect(first.head.slots[0].ranks[0].problem).toBeNull();
+    expect(first.stopped).toEqual([]);
+  });
+
+  it("keeps current disabled and empty ranks stopped despite a previous tick", () => {
+    const runtime = { "first-review": { at: "2026-11-02T21:20:00.000Z", degraded: null,
+      unusable: [{ rank: 1, code: "no_direct_contract", text: "old contract" }] } };
+    const stopped = buildStationLlm(healthy({ rows: [rank("first-review", 1, QWEN, "qwen3.8-flash-next",
+      { enabled: false, updatedAt: "2026-11-02T21:21:00.000Z" })], runtime, used: [] })).first;
+    if (stopped.kind !== "llm") throw new Error("llm");
+    expect(stopped.head.state).toBe("stuck");
+    expect(stopped.head.slots[0].ranks[0].problem).toBe("순위가 꺼져 있음");
+    expect(buildStationLlm(healthy({ rows: [], runtime, used: [] })).first).toMatchObject({ head: { state: "none" } });
+  });
+
   it("stops when every rank is unusable (all connections keyless or off)", () => {
     const keyless = conn(QWEN.id, QWEN.label, { hasKey: false });
     const off = conn(M3.id, M3.label, { enabled: false });

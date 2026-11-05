@@ -159,6 +159,8 @@ function crossRankIssues(task: AiTaskDef, readiness: readonly AiRankReadiness[])
 /** 실행 쪽의 순위 사정(PR B, text 일곱 작업) — 잡의 마지막 틱(job:<잡> 관측의 ai_task.ranks)이나 이 웹 프로세스의 마지막 검색어 번역. */
 export type AiTaskRuntimeView = Readonly<{
   from: "job" | "web"; at: string;
+  /** Job start derived from the existing observation duration, when valid. */
+  startedAt?: string;
   served: readonly Readonly<{ rank: number; count: number }>[];
   unusable: readonly Readonly<{ rank: number; code: string; text: string; count: number }>[];
   /** 그 틱이 제 일 못 한 까닭(no_task_models·all_ranks_unusable 등) */
@@ -235,8 +237,8 @@ function auditSummary(row: AdminLogRow): string {
   }
 }
 
-function runtimeView(status: TextRankStatus, from: AiTaskRuntimeView["from"], degraded: AiTaskRuntimeView["degraded"]): AiTaskRuntimeView {
-  return Object.freeze({ from, at: status.at, degraded,
+function runtimeView(status: TextRankStatus, from: AiTaskRuntimeView["from"], degraded: AiTaskRuntimeView["degraded"], startedAt?: string): AiTaskRuntimeView {
+  return Object.freeze({ from, at: status.at, degraded, ...(startedAt ? { startedAt } : {}),
     served: Object.freeze(Object.entries(status.served).map(([rank, count]) => Object.freeze({ rank: Number(rank), count })).sort((a, b) => a.rank - b.rank)),
     unusable: Object.freeze(status.unusable.map(row => Object.freeze({ ...row, text: textRankUnusableText(row.code) }))) });
 }
@@ -254,14 +256,18 @@ export async function readAiTaskRuntime(): Promise<Record<string, AiTaskRuntimeV
   const out: Record<string, AiTaskRuntimeView> = {};
   for (const row of rows) {
     const task = taskOf.get(row.key) ?? row.key.slice("job:".length);
-    const value = (row.value ?? {}) as { events?: unknown; degraded?: unknown };
+    const value = (row.value ?? {}) as { events?: unknown; degraded?: unknown; durationMs?: unknown };
     const events = Array.isArray(value.events) ? value.events as { event?: unknown; counts?: unknown }[] : [];
     const last = [...events].reverse().find(entry => entry?.event === "ai_task.ranks");
     const degraded = value.degraded && typeof value.degraded === "object" ? value.degraded as { code?: unknown; detail?: unknown } : null;
     // Grok 로그인 유지는 순위 요약을 남기지 않는다 — 그 틱의 degraded 만 보인다
     if ((!last || !last.counts || typeof last.counts !== "object") && !(task === "grok-session-check" && degraded)) continue;
-    out[task] = runtimeView(textRankStatusFromCounts(task, new Date(row.observedAt).toISOString(), (last?.counts ?? {}) as Record<string, unknown>), "job",
-      degraded && typeof degraded.code === "string" ? { code: degraded.code, detail: typeof degraded.detail === "string" ? degraded.detail : null } : null);
+    const observedAt = new Date(row.observedAt);
+    const duration = value.durationMs;
+    const startedAt = typeof duration === "number" && Number.isSafeInteger(duration) && duration >= 0 && duration <= observedAt.getTime()
+      ? new Date(observedAt.getTime() - duration).toISOString() : undefined;
+    out[task] = runtimeView(textRankStatusFromCounts(task, observedAt.toISOString(), (last?.counts ?? {}) as Record<string, unknown>), "job",
+      degraded && typeof degraded.code === "string" ? { code: degraded.code, detail: typeof degraded.detail === "string" ? degraded.detail : null } : null, startedAt);
   }
   const web = textTaskRankStatus("search-query-translate");
   if (web) out["search-query-translate"] = runtimeView(web, "web", web.status !== "ok" ? { code: web.status, detail: null } : null);
