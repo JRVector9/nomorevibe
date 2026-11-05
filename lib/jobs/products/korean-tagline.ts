@@ -223,7 +223,6 @@ async function writeKoreanTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTa
         }
       }));
       // Every dispatched lane settles and writes independently before waiting for its siblings.
-      if (signal.aborted || !ctx.hasBudget()) return { done: false };
       const errors: unknown[] = [];
       for (const settled of outcomes) {
         if (settled.status !== "rejected") continue;
@@ -235,7 +234,8 @@ async function writeKoreanTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTa
       }
       if (errors.length) {
         // 미룸 사유(capacity·unmapped·dispatched…)를 남긴다 — 러너는 'model_capacity' 하나로만 적는다
-        const first = errors[0];
+        // A sibling's capacity wait must not hide a writer/ownership failure.
+        const first = errors.find(error => !(error instanceof ModelCapacityDeferredError)) ?? errors[0];
         if (first instanceof ModelCapacityDeferredError) {
           ctx.log("tagline_ko.capacity_deferred", { ...counts(), reason: first.reason });
           const processed = written + failed + Object.values(rejected).reduce((sum, count) => sum + count, 0);
@@ -243,6 +243,7 @@ async function writeKoreanTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTa
         }
         throw first;
       }
+      if (signal.aborted || !ctx.hasBudget()) return { done: false };
       if (skipped || recoveryDeferred) return { done: false };
       if (ranks.exhausted && !qwen) {
         // GPT 의 모든 순위가 이 틱에 쉰다(Qwen 도 돌지 않는다). 포화면 예전처럼 미루고, 아니면 일을 했을 때만 보통 틱 — 한 건도 못 했으면 까닭을 남긴다
