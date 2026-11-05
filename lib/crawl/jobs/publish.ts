@@ -1,5 +1,6 @@
 import { emitPipelineEvent } from "@/lib/observability/review-pipeline";
-import { and, or } from 'drizzle-orm';
+import { and, notInArray, or } from 'drizzle-orm';
+import { crawlCandidates } from '@/lib/db/schema';
 import { agentRequest } from '@/lib/operations/agent-client';
 import { classificationReadyPredicate, decisionFor, holdClassification } from '@/lib/operations/categories';
 import type { Category } from '@/lib/domain/products/schema';
@@ -60,16 +61,24 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
 
   let published = 0;
   let skipped = 0;
+  const conflicts = new Set<number>();
+  const publicationChanged = (candidate: { id: number; repo: string }, branch: string) => {
+    conflicts.add(candidate.id);
+    ctx.log("crawl.publication_changed", { repo: candidate.repo, branch, conflicts: 1 });
+  };
   const capacityDeferred = () => deferredJob<null>("model_capacity", published + skipped);
 
   while (ctx.hasBudget()) {
     // Filter before LIMIT so pending reviews cannot starve approved products.
-    const candidates = await crawl.listCandidates(["approved"], BATCH, process.env.CONNECT_AGENT_URL
+    const eligible = process.env.CONNECT_AGENT_URL
       ? and(reviewApprovalPredicate(settings), or(classificationReadyPredicate(), starAutoApprovalPredicate(settings)))
-      : reviewApprovalPredicate(settings));
+      : reviewApprovalPredicate(settings);
+    // Exclude conflicting snapshots before LIMIT; they remain untouched for the next tick.
+    const candidates = await crawl.listCandidates(["approved"], BATCH,
+      and(eligible, conflicts.size ? notInArray(crawlCandidates.id, [...conflicts]) : undefined));
     if (candidates.length === 0) {
-      ctx.log("crawl.publish_done", { published, skipped, drained: true });
-      return { done: true };
+      ctx.log("crawl.publish_done", { published, skipped, conflicts: conflicts.size, drained: conflicts.size === 0 });
+      return { done: conflicts.size === 0 };
     }
 
     const prepared = await Promise.all(candidates.map(async candidate => ({
@@ -136,8 +145,8 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
             rule: "발행 조건 — 개인 프로필",
             detail: `${String(candidate.signals?.profilePattern)} 패턴으로 통과했지만 분류가 ${category ?? "없음"} — 개인 것이 아니면 읽을거리다`,
           } }, ctx.lease)) {
-            ctx.log("crawl.publication_changed", { repo: candidate.repo });
-            return { done: false };
+            publicationChanged(candidate, "profile_failure_cas");
+            continue;
           }
           ctx.log("crawl.publish_not_a_personal_profile", { repo: candidate.repo, category });
           skipped++; continue;
@@ -150,14 +159,14 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
 
         if (!result.ok) {
           if (result.reason === "publication_state_changed" || result.reason === "review_approval_changed") {
-            ctx.log("crawl.publication_changed", {repo:candidate.repo});
-            return {done:false}; // Preserve the newer human/source decision.
+            publicationChanged(candidate, result.reason);
+            continue; // Preserve the newer human/source decision, and process other candidates.
           }
           // 승인 뒤 바뀐 원본이 지금 규칙을 통과하지 못했다 — 사람에게 넘기지 않고 판정에 되돌린다
           if (result.reason === "stale_judgement") {
             if (!await recordPublicationFailure(candidate, { state: "new", reason: "source_changed" }, ctx.lease)) {
-              ctx.log("crawl.publication_changed", {repo:candidate.repo});
-              return {done:false};
+              publicationChanged(candidate, "rejudge_failure_cas");
+              continue;
             }
             ctx.log("crawl.publish_rejudge", { repo: candidate.repo });
             rejudge++;
@@ -183,8 +192,8 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
             stoppedAt: { rule: "발행 조건", detail: PUBLISH_STOPS[result.reason] ?? result.reason },
           }, ctx.lease);
           if (!recorded) {
-            ctx.log("crawl.publication_changed", {repo:candidate.repo});
-            return {done:false};
+            publicationChanged(candidate, "publication_failure_cas");
+            continue;
           }
           ctx.log("crawl.publish_skipped_candidate", { repo: candidate.repo, reason: result.reason });
           skipped++;
@@ -202,6 +211,6 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
     }
   }
 
-  ctx.log("crawl.publish_done", { published, skipped, drained: false });
+  ctx.log("crawl.publish_done", { published, skipped, conflicts: conflicts.size, drained: false });
   return { done: false };
 }
