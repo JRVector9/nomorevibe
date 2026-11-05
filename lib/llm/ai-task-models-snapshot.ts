@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { logger } from "@/lib/observability/logger";
 import { openSecret, secretBoxReady } from "@/lib/security/secret-box";
 
@@ -16,6 +17,13 @@ import { openSecret, secretBoxReady } from "@/lib/security/secret-box";
  * 프로세스마다 5분에 한 번 이하·조건부 갱신). 배포 뒤 사람이 화면을 열지 않아도 순위를 읽는 워커가 스스로 고친다. 채웠으면 다음 읽기에서 바로 다시 읽는다.
  */
 export const AI_TASK_MODELS_REFRESH_MS = 30_000;
+
+const readOnlyScope = new AsyncLocalStorage<true>();
+/** Monitoring/query readers may initialize and refresh ranks without starting credential-repair writes.
+ * Async descendants (including synchronous getters' background reloads) inherit this scope.
+ * Normal worker/admin initialization keeps the existing key-fill behavior.
+ */
+export function withReadOnlyAiTaskModels<T>(run: () => T): T { return readOnlyScope.run(true, run); }
 
 export type AiTaskConnectionSnapshot = Readonly<{
   id: string; label: string; kind: "api" | "cli"; baseUrl: string | null; cliTool: string | null; deviceId: string; enabled: boolean;
@@ -66,11 +74,15 @@ async function reload(current: State): Promise<void> {
   try {
     const [{ db }, { sql }, { currentReplayDb }] = await Promise.all([import("@/lib/db"), import("drizzle-orm"), import("@/lib/db/replay-scope")]);
     if (currentReplayDb()) return;
-    const rows = Array.from(await db.execute<RawRow>(sql`SELECT t.task, t.slot, t.rank, t.model, t.enabled, t.options,
+    const query = sql`SELECT t.task, t.slot, t.rank, t.model, t.enabled, t.options,
         c.id AS connection_id, c.label, c.kind, c.base_url, c.api_key_ciphertext, c.cli_tool, c.device_id, c.enabled AS connection_enabled,
         c.models, c.options AS connection_options
       FROM ai_task_models t JOIN ai_connections c ON c.id = t.connection_id
-      ORDER BY t.task, t.slot, t.rank`));
+      ORDER BY t.task, t.slot, t.rank`;
+    const rows = Array.from(readOnlyScope.getStore() ? await db.transaction(async tx => {
+      await tx.execute(sql`SET LOCAL statement_timeout='5s'`);
+      return tx.execute<RawRow>(query);
+    }, { accessMode: "read only" }) : await db.execute<RawRow>(query));
     current.rows = Object.freeze(aiTaskModelSnapshotRows(rows));
     current.loaded = true;
     if (current.error) { current.error = null; logger.info("ai_task_models.reload_recovered", {}); }
@@ -89,7 +101,7 @@ export function aiTaskKeylessApiConnection(rows: readonly AiTaskModelSnapshotRow
 }
 /** 뒤에서(기다리지 않고) 키 채우기를 한 번 부른다. 상자 키가 없거나 키 없는 API 연결이 없으면 아무것도 하지 않는다(DB·모듈을 읽지 않는다). */
 function scheduleKeyFill(current: State): void {
-  if (!secretBoxReady() || !aiTaskKeylessApiConnection(current.rows)) return;
+  if (readOnlyScope.getStore() || !secretBoxReady() || !aiTaskKeylessApiConnection(current.rows)) return;
   void import("@/lib/operations/ai-connection-key-fill").then(module => module.maybeFillConnectionKeys())
     .then(result => { if (result?.filled.length) current.loadedAt = 0; })
     .catch(() => { /* maybeFillConnectionKeys 는 던지지 않는다 — 모듈 읽기 실패만 여기로 온다 */ });

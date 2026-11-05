@@ -1,5 +1,8 @@
 import { and, inArray, or, sql, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
+import { ensureAiTaskExecutionConfigs } from "@/lib/llm/ai-task-execution-snapshot";
+import { ensureAiTaskModels, withReadOnlyAiTaskModels } from "@/lib/llm/ai-task-models-snapshot";
+import { ensureServingContracts } from "@/lib/llm/serving-contract-store";
 import { crawlCandidates, crawlDocuments, crawlFrontier, crawlPublicationChanges,
   crawlReviewAttempts, secondReviews } from "@/lib/db/schema";
 import { reviewApprovalPredicate, reviewCandidatePredicate, starAutoApprovalPredicate } from "@/lib/crawl/agent-review-repository";
@@ -15,6 +18,16 @@ import { throughputStatus, type ThroughputSnapshot, type ThroughputStage } from 
  * these rates intentionally do not claim to measure every retry/network call.
  */
 export async function pipelineThroughput(settings: CrawlSettings, now = new Date()): Promise<ThroughputSnapshot> {
+  return withReadOnlyAiTaskModels(async () => {
+    // Approval predicates synchronously resolve the current pool/legacy membership and contracts.
+    // A fresh monitor process must await those read-only snapshots before constructing SQL.
+    // Failed initialization retains the existing fail-closed resolver behavior; never invent fallback.
+    await Promise.all([ensureAiTaskExecutionConfigs(), ensureAiTaskModels(), ensureServingContracts()]);
+    return readPipelineThroughput(settings, now);
+  });
+}
+
+async function readPipelineThroughput(settings: CrawlSettings, now: Date): Promise<ThroughputSnapshot> {
   const at = sql`${now.toISOString()}::timestamp`;
   const recent = (column: SQL, minutes: number) => sql`${column} > ${at} - ${minutes} * interval '1 minute' AND ${column} <= ${at}`;
   const counts = (column: SQL) => sql`count(*) FILTER (WHERE ${recent(column, 1)})::int AS one,
