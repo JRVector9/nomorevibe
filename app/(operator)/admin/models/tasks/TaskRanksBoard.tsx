@@ -22,7 +22,7 @@ export type TaskRankLine = {
   live: boolean;
   /** 실행 쪽의 순위 사정 — 잡의 마지막 틱(from job) 또는 이 웹 프로세스의 마지막 검색어 번역(from web). at 은 화면 글(서버가 만든다) */
   runtime: { from: "job" | "web"; at: string; served: { rank: number; count: number }[]; unusable: { rank: number; code: string; text: string; count: number }[];
-    degraded: { code: string; detail: string | null } | null; pool?: AiTaskPoolRuntime } | null;
+    degraded: { code: string; detail: string | null } | null; pool?: AiTaskPoolRuntime; startedAt?: string; observedAt?: string; fresh?: boolean } | null;
 };
 
 /** 넓은 화면의 한 줄: 작업 | 1·2·3순위 | 저장 */

@@ -48,7 +48,9 @@ export default async function AiTasksPage({ searchParams }: Props) {
     current: slot.current ? { labels: slot.currentLabels.map(visibleText), source: slot.current.source, notes: slot.current.notes.map(visibleText), error: slot.current.error, skip: slot.current.skip } : null,
     sameAsCurrent: slot.sameAsCurrent, readiness: slot.readiness.map(row => ({ rank: row.rank, blocking: row.blocking.map(visibleText), warnings: row.warnings.map(visibleText),
       pending: aiRankPendingText(row).map(visibleText) })), live: slot.live,
-    runtime: slot.runtime ? { ...slot.runtime, at: formatListTime(slot.runtime.at, now), served: [...slot.runtime.served], unusable: [...slot.runtime.unusable] } : null }));
+    runtime: slot.runtime ? { ...slot.runtime, observedAt: slot.runtime.at,
+      fresh: now.getTime() >= Date.parse(slot.runtime.at) && now.getTime() - Date.parse(slot.runtime.at) <= 30 * 60_000,
+      at: formatListTime(slot.runtime.at, now), served: [...slot.runtime.served], unusable: [...slot.runtime.unusable] } : null }));
   const errors = Object.entries(view.errors);
   const unread = aiUnreadConnections(view.connections, view.keyConflicts);
   return <main className="mx-auto grid max-w-7xl gap-6 p-4">
