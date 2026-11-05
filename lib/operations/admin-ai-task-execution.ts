@@ -88,7 +88,8 @@ export async function saveAiTaskExecutionConfig(input: unknown, actor: string): 
       const connection = connections.find(row => row.id === id);
       if (!connection) return { ok: false, issues: ["ai_task_pool_connection_unsupported"] };
       const record = records.find(row => row.id === id);
-      if (!record || Number(record.version) !== connection.version) fail("ai_connection_version_mismatch");
+      if (!record) return { ok: false, issues: ["ai_connection_version_mismatch"] };
+      if (Number(record.version) !== connection.version) fail("ai_connection_version_mismatch");
       if (!connection.enabled || !record.enabled || !aiTaskAccepts(task, connection)) fail("ai_task_pool_connection_unsupported");
       if (connection.cliTool === "opencode") {
         const catalog = await readAdminCliCatalog({ fresh: true, connectionId: id });
