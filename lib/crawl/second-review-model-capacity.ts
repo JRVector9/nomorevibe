@@ -5,6 +5,7 @@ import { ai2ModelDispatchSchema, modelCapacityRequestIdentitySchema, type Ai2Mod
 import { findOwnPendingModelRequest, requestAi2ItemModelSlot, cancelReservedModelSlot,
   markModelDispatchIndeterminate, reconcileAi2GatewayTerminal, reconcileGatewayNotStarted } from '@/lib/llm/capacity-repository';
 import { markUnsettledDispatch } from '@/lib/llm/capacity-unsettled';
+import { capacityRefusalReason } from '@/lib/llm/capacity-busy-targets';
 import { itemBindingHash } from '@/lib/jobs/items/types';
 import { prepareAi2GatewayCall, reviewWithReservedAi2Gateway, settleAi2GatewayNotStarted, type GatewayNotStarted, type PreparedAi2GatewayCall } from './agent-review-gateway';
 import { SecondReviewModelReservationRequired, claimSecondReviewItemWithModelReservation, fallbackWaitingSecondReview, type SecondReviewModelClaim } from './second-review-ownership';
@@ -29,24 +30,31 @@ export async function claimSecondReviewModelCapacity(intent: SecondReviewModelRe
   const call = await prepareAi2GatewayCall(expected.input, { model: binding.reviewer.model,
     provider: binding.reviewer.provider as "abcllm" | "local-direct", signal });
   const requestId = pending?.requestId ?? randomUUID();
+  const request = { ...identity, requestId };
   if (call.kind !== 'prepared') {
     const contract = resolveAi2GatewayServingContract(binding.reviewer.model, binding.reviewer.provider);
     // 준비가 실패한 엔진 직접 표(토큰 상한 확인 실패 등): 계약은 있으면 같은 투표자 칸의 다음 순위로 넘긴다(PR C1 — 예전에는 local-direct 만)
     if (signal?.aborted || binding.reviewer.provider !== 'local-direct' && binding.reviewer.provider !== 'abcllm' || !contract
       || contract.provider !== binding.reviewer.provider || !ai2ServingContractMatches(contract, binding.reviewer.model))
       throw new ModelCapacityDeferredError('provider_contract_unavailable');
-    const slot = await requestAi2ItemModelSlot({ ...identity, requestId }, { candidateId: binding.candidateId, vote: binding.vote });
+    const slot = await requestAi2ItemModelSlot(request, { candidateId: binding.candidateId, vote: binding.vote });
+    // A target fence is not model saturation and must not reroute this vote.
+    if (slot.kind !== 'granted') {
+      const reason = await capacityRefusalReason(request, slot.reason);
+      if (reason !== 'capacity') throw new ModelCapacityDeferredError(reason);
+    }
     if ((slot.kind === 'granted' || slot.reason === 'capacity') && !signal?.aborted
       && await fallbackWaitingSecondReview(intent, requestId, 'primary_preflight_failed')) return { kind: 'capacity_fallback' };
     throw new ModelCapacityDeferredError(slot.kind === 'granted' ? 'provider_contract_unavailable' : slot.reason);
   }
-  const slot = await requestAi2ItemModelSlot({ ...identity, requestId },
+  const slot = await requestAi2ItemModelSlot(request,
     { candidateId: binding.candidateId, vote: binding.vote });
   if (slot.kind !== 'granted') {
-    if (slot.reason === 'capacity' && binding.reviewer.provider === 'local-direct' && pending?.state === 'waiting'
+    const reason = await capacityRefusalReason(request, slot.reason);
+    if (reason === 'capacity' && binding.reviewer.provider === 'local-direct' && pending?.state === 'waiting'
       && !signal?.aborted && await fallbackWaitingSecondReview(intent, pending.requestId))
       return { kind: 'capacity_fallback' };
-    throw new ModelCapacityDeferredError(slot.reason);
+    throw new ModelCapacityDeferredError(reason);
   }
   let claim: SecondReviewModelClaim;
   try {
