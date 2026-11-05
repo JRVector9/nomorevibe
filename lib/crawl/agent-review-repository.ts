@@ -1,3 +1,4 @@
+import { secondReviewHasWorkloadPool, secondReviewPoolApprovedSql } from "./second-review-workload";
 import { registeredPoolModelNames } from "@/lib/llm/model-registry";
 import { emitPipelineEvent } from "@/lib/observability/review-pipeline";
 import { isDeepStrictEqual } from "node:util";
@@ -30,7 +31,7 @@ import { STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { hasLiveFetchItem } from "./fetch-ownership";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
 import { DEEPSEEK_REVIEW_MODEL, DEEPSEEK_REVIEW_PROVIDER, deepseekActor } from './deepseek-review-policy';
-import { appliedHeldQwenAttemptColumn, appliedHeldQwenAttemptSql, heldQwenGateFirstSql, underlyingModelSql } from './held-qwen-retry-policy';
+import { appliedHeldQwenAttemptColumn, appliedHeldQwenAttemptSql, heldQwenGateFirstSql, reviewIndependenceSql } from './held-qwen-retry-policy';
 import { agentReviewBinding, assertAgentReviewJob, assertAgentReviewOwnership, finishAgentReviewOwnership,
   hasLiveAgentReviewItem, liveAgentReviewItem, type Ai1ItemLease, type Ai1ReviewOrigin, type Ai1ReviewReceipt } from "./agent-review-ownership";
 export type { Ai1ItemLease, Ai1ReviewOrigin, Ai1ReviewReceipt } from "./agent-review-ownership";
@@ -40,7 +41,8 @@ import type { FirstReviewer } from "./agent-review";
 import { ai1WithinLiveCallWindowSql } from "./ai1-live-call";
 import { firstReviewRankState, firstReviewers, firstReviewerKey, firstReviewIdentitySql, hasFirstReviewer, selectFirstReviewer,
   type FirstReviewPoolPosition } from "./first-reviewers";
-import { ensureReviewTaskRanks } from "./review-task-ranks";
+import { chooseReviewWorkloadMember, ensureReviewTaskRanks } from "./review-task-ranks";
+import { logger } from "@/lib/observability/logger";
 import { secondReviewFallbacks, secondReviewVoters } from "./second-review-voters";
 import { candidateStarAutoApproval } from "./star-auto-approval";
 import { README_SAMPLE_LIMIT, README_SAMPLE_VERSION } from "./readme";
@@ -89,6 +91,15 @@ export async function chooseFirstReviewForCandidate(context: ReviewDomainContext
     UNION ALL (SELECT provider, model FROM model_capacity_requests
       WHERE logical_work_key = ${logicalKey} AND state = 'waiting' AND queue_until > clock_timestamp()
         AND ${firstReviewIdentitySql(pool, { provider: sql`provider`, model: sql`model` })})) ai1_intents LIMIT 2`);
+  // New work only: retain every existing waiting/reserved/dispatched/live binding.
+  // The locked recheck below still receives exactly one selected reviewer.
+  if (executor === db && state.resolution?.execution?.mode === "workload_pool" && !active.length && !attempts[0]?.live) {
+    const chosen = await chooseReviewWorkloadMember(state.resolution, blocked);
+    if (!chosen) return null;
+    logger.info("ai_task.workload_hint_selected", { candidateId: context.candidate.id,
+      model: chosen.model, provider: chosen.provider, ...chosen.poolSelection });
+    return { provider: chosen.provider, model: chosen.model };
+  }
   return selectFirstReviewer(pool, context.candidate.id, attempts, Array.from(active), { blocked });
 }
 export async function loadReviewInput(
@@ -279,20 +290,21 @@ const sameModelName = (name: SQL) => sql`regexp_replace(regexp_replace(lower(tri
  */
 function secondApproved(attempt: { id: SQL; model: SQL }, voters: { provider: string; model: string }[],
   fallbacks: { provider: string; model: string }[] = []): SQL {
+  if (secondReviewHasWorkloadPool()) return secondReviewPoolApprovedSql(attempt);
   const slots = sql`jsonb_array_elements(${JSON.stringify(voters)}::jsonb) v`;
   // 대체 모델의 표는 그 모델이 지금도 대체 모델일 때만 칸을 채운다 — 설정에서 뺀 직후 정리 전에 옛 승인으로 발행되지 않게(codex 2차 P1)
   const currentFallback = sql`(g.fallback_for_id IS NULL OR EXISTS (SELECT 1 FROM jsonb_array_elements(${JSON.stringify(fallbacks)}::jsonb) f
     WHERE f->>'provider' = g.provider AND ${sameModelName(sql`f->>'model'`)} = ${sameModelName(sql`g.model`)}))`;
   // 1차와 같은 모델인지는 자리 표시([MLX]·[gpu3090] 등)를 모두 떼고 가른다 — 같은 가중치의 표는 칸이 달라도 독립 표가 아니다.
   // 칸을 채운 표를 실제로 낸 모델(대체 모델 포함, g.model)이 1차와 같은 모델이면 그 칸은 비어 있는 것으로 본다
-  const independent = sql`${underlyingModelSql(sql`v->>'model'`)} <> ${underlyingModelSql(sql`coalesce(${attempt.model}, '')`)}`;
+  const independent = sql`${reviewIndependenceSql(sql`v->>'model'`)} <> ${reviewIndependenceSql(sql`coalesce(${attempt.model}, '')`)}`;
   return sql`(EXISTS (SELECT 1 FROM ${slots} WHERE ${independent})
     AND NOT EXISTS (SELECT 1 FROM ${slots} WHERE ${independent}
       AND NOT EXISTS (SELECT 1 FROM ${secondReviews} g LEFT JOIN ${secondReviews} root ON root.id = g.fallback_for_id
         WHERE g.first_attempt_id = ${attempt.id} AND g.trigger = 'ai_approved' AND g.status = 'agreed' AND g.second_decision = 'approve'
           AND coalesce(root.provider, g.provider) = v->>'provider'
           AND ${sameModelName(sql`coalesce(root.model, g.model)`)} = ${sameModelName(sql`v->>'model'`)} AND ${currentFallback}
-          AND ${underlyingModelSql(sql`g.model`)} <> ${underlyingModelSql(sql`coalesce(${attempt.model}, '')`)}))
+          AND ${reviewIndependenceSql(sql`g.model`)} <> ${reviewIndependenceSql(sql`coalesce(${attempt.model}, '')`)}))
     AND NOT EXISTS (SELECT 1 FROM ${secondReviews} g WHERE g.first_attempt_id = ${attempt.id} AND g.trigger = 'ai_approved'
       AND g.status IN ('pending', 'failed', 'needs_human')))`;
 }

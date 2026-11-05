@@ -241,7 +241,10 @@ function reviewRankConnection(routeId: string, row: StoredServingContract | unde
     for (let slot = 1; slot <= (aiTask(task)?.slots ?? 1); slot++) {
       const config = readAiTaskExecutionConfig(task, slot);
       if (config.mode !== "workload_pool") continue;
-      candidates = candidates.filter(rank => rank.slot !== slot);
+      // AI2 retains the exact saved legacy bindings for already-existing votes.
+      // This is credential lookup only: the domain claim requires an existing vote,
+      // while new pool enqueue selects exclusively from config.members.
+      if (task !== 'second-review') candidates = candidates.filter(rank => rank.slot !== slot);
       candidates.push(...config.members.map(member => ({ task, slot, rank: 1, model: member.model,
         enabled: true, options: member.options, connection: member.connection })));
     }

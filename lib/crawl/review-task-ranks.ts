@@ -13,6 +13,9 @@ import { ensureServingContracts, servingContractRowAccess, servingContractSnapsh
 import { currentReplayDb } from "@/lib/db/replay-scope";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { canonicalReviewModel } from "./review-model-identity";
+import { aiTaskExecutionReadState, ensureAiTaskExecutionConfigs, readAiTaskExecutionConfig } from "@/lib/llm/ai-task-execution-snapshot";
+import { chooseTaskWorkloadMember } from "@/lib/llm/ai-task-workload-selector";
+import type { AiTaskExecutionConfig, AiTaskPoolMember, AiTaskPoolSelection } from "@/lib/llm/ai-task-execution-config";
 
 /**
  * 심사 묶음(1차 AI 검수·2차 AI 검수 투표자)의 「작업 ↔ 모델」 순위 → 실행 쪽 심사자(2026-11-02 소유자 결정, PR C1).
@@ -41,10 +44,10 @@ export type ReviewRankBinding = Readonly<{
   /** 엔진·CLI 에 보내는 모델 이름(순위 행의 model) */
   engineModel: string;
 }>;
-export type ReviewRankCandidate = Readonly<{ rank: AiTaskRank; binding: ReviewRankBinding | null; unusable: string | null; detail: string | null }>;
+export type ReviewRankCandidate = Readonly<{ rank: AiTaskRank; binding: ReviewRankBinding | null; unusable: string | null; detail: string | null; poolMember?: AiTaskPoolMember }>;
 export type ReviewRankStatus = "ok" | "no_task_models" | "task_models_unreadable";
 export type ReviewRankResolution = Readonly<{ task: AiReviewTaskId; slot: number; routeId: ReviewTaskRoute; status: ReviewRankStatus;
-  candidates: readonly ReviewRankCandidate[] }>;
+  candidates: readonly ReviewRankCandidate[]; execution?: AiTaskExecutionConfig }>;
 /** 심사자 하나(시도·장부·2차 행의 provider·model). */
 export type ReviewRankReviewer = { provider: ReviewRankProvider; model: string };
 
@@ -138,6 +141,7 @@ export function pinReviewTaskRanks(value: Partial<PinnedReviewRanks> | null): vo
 export function setReviewRanksForTest(value: Partial<PinnedReviewRanks> | (() => Partial<PinnedReviewRanks>) | null): void {
   pinHolder.__nmvReviewRanksPin = value === null ? null : typeof value === "function" ? () => normalizePin(value()) : normalizePin(value);
 }
+export const reviewTaskRanksPinned = (): boolean => !!currentPin();
 const currentPin = (): PinnedReviewRanks | null => {
   const pin = pinHolder.__nmvReviewRanksPin;
   return !pin ? null : typeof pin === "function" ? pin() : pin;
@@ -162,24 +166,30 @@ export function resolveReviewTaskRanks(task: AiReviewTaskId, slot = 1): ReviewRa
   const pin = currentPin();
   if (pin) return pinnedResolution(pin, task, slot);
   // 같은 스냅숏(계약·순위)·같은 CLI 버전 확인 결과면 묶기를 다시 하지 않는다 — 2차 입력 검사·SQL 조각이 한 틱에 여러 번 부른다
+  const execution = readAiTaskExecutionConfig(task, slot), executionLoadedAt = aiTaskExecutionReadState().loadedAt;
   const contractsToken = servingContractSnapshot().token, rows = aiTaskModelRows(), loaded = aiTaskModelsReadState().loaded, epoch = cliToolVersionEpoch();
-  if (!memo || memo.contractsToken !== contractsToken || memo.rows !== rows || memo.loaded !== loaded || memo.epoch !== epoch)
-    memo = { contractsToken, rows, loaded, epoch, results: new Map() };
+  if (!memo || memo.contractsToken !== contractsToken || memo.rows !== rows || memo.loaded !== loaded || memo.epoch !== epoch || memo.executionLoadedAt !== executionLoadedAt)
+    memo = { contractsToken, rows, loaded, epoch, executionLoadedAt, results: new Map() };
   const key = `${task}#${slot}`, known = memo.results.get(key);
   if (known) return known;
   const routeId = REVIEW_TASK_ROUTES[task];
-  const ranks = taskModels(task, slot);
+  const members = execution.mode === "workload_pool" ? execution.members : [];
+  // Positions here enumerate runtime candidates only; no fourth fallback-rank row is stored.
+  const ranks: AiTaskRank[] = execution.mode === "workload_pool" ? members.map(member => ({ task, slot,
+    rank: member.position, model: member.model, enabled: true, options: member.options, connection: member.connection })) : taskModels(task, slot);
   const contracts = ranks.length ? reviewRouteContracts(routeId) : [];
   const resolved: ReviewRankResolution = !ranks.length ? Object.freeze({ task, slot, routeId, candidates: Object.freeze([]),
     status: loaded ? "no_task_models" as const : "task_models_unreadable" as const })
-    : Object.freeze({ task, slot, routeId, status: "ok" as const, candidates: Object.freeze(ranks.map(rank => bindReviewTaskRank(task, rank, contracts))) });
+    : Object.freeze({ task, slot, routeId, execution, status: "ok" as const, candidates: Object.freeze(ranks.map((rank, index) => ({
+      ...bindReviewTaskRank(task, rank, contracts), ...(members[index] ? { poolMember: members[index] } : {}),
+    }))) });
   memo.results.set(key, resolved);
   return resolved;
 }
-let memo: { contractsToken: string; rows: readonly unknown[]; loaded: boolean; epoch: number; results: Map<string, ReviewRankResolution> } | null = null;
+let memo: { contractsToken: string; rows: readonly unknown[]; loaded: boolean; epoch: number; executionLoadedAt: number; results: Map<string, ReviewRankResolution> } | null = null;
 /** 계약·순위 스냅숏을 기다린 뒤(잡 틱·소비자 쪽의 길목). 던지지 않는다. */
 export async function ensureReviewTaskRanks(maxAgeMs?: number): Promise<void> {
-  await Promise.all([ensureServingContracts(maxAgeMs), ensureAiTaskModels(maxAgeMs)]);
+  await Promise.all([ensureServingContracts(maxAgeMs), ensureAiTaskModels(maxAgeMs), ensureAiTaskExecutionConfigs(maxAgeMs)]);
 }
 /**
  * 순위 표를 한 번도 읽지 못했으면 미룬다(ModelCapacityDeferredError assignments_unavailable) — 어느 투표자·심사자가 맞는지 모르는 채로 빈 목록으로
@@ -189,6 +199,22 @@ export async function requireReviewTaskRanks(): Promise<void> {
   if (currentReplayDb() || pinHolder.__nmvReviewRanksPin) return;
   await ensureReviewTaskRanks();
   if (!aiTaskModelsReadState().loaded) throw new ModelCapacityDeferredError("assignments_unavailable");
+}
+
+
+/** One workload choice for one new input. Existing intents are pinned by the caller before this hint. */
+export async function chooseReviewWorkloadMember(resolution: ReviewRankResolution,
+  blocked: ReadonlySet<string> = new Set()): Promise<(ReviewRankReviewer & { poolSelection: AiTaskPoolSelection }) | null> {
+  const config = resolution.execution;
+  if (!config || config.mode !== "workload_pool") return null;
+  const candidates = resolution.candidates.flatMap(candidate => {
+    const binding = candidate.binding, member = candidate.poolMember;
+    if (!binding || !member || candidate.unusable || blocked.has(JSON.stringify([binding.provider, binding.identity]))) return [];
+    return [{ memberId: member.memberId, routeId: binding.routeId, connectionId: binding.connectionId,
+      provider: binding.provider, identity: binding.identity, engineModel: binding.engineModel, deviceId: binding.deviceId }];
+  });
+  const chosen = await chooseTaskWorkloadMember(config, candidates);
+  return chosen ? { provider: chosen.provider as ReviewRankProvider, model: chosen.identity, poolSelection: chosen.poolSelection } : null;
 }
 
 const reviewerKey = (value: ReviewRankReviewer) => JSON.stringify([value.provider, value.model]);
@@ -268,7 +294,15 @@ export function reviewRankFor(routeId: ReviewTaskRoute, provider: string, model:
     return resolveReviewTaskRanks("first-review").candidates.find(candidate => candidate.binding?.provider === provider && candidate.binding.identity === model)?.rank ?? null;
   }
   const ranks = secondReviewRanks(), slot = secondReviewSlotOf(model, ranks);
-  if (!slot) return null;
+  if (!slot) {
+    // Existing slot1 votes still execute their saved legacy primary/fallback binding.
+    // New pool work is selected only from resolution.candidates above.
+    if (readAiTaskExecutionConfig('second-review', 1).mode !== 'workload_pool') return null;
+    return taskModels('second-review', 1).find(rank => {
+      const candidate = bindReviewTaskRank('second-review', rank);
+      return candidate.binding?.provider === provider && candidate.binding.identity === model;
+    }) ?? null;
+  }
   const voter = slot.voter?.provider === provider && slot.voter.identity === model ? slot.voter : null;
   return slot.resolution.candidates.find(candidate => candidate.binding?.provider === provider && candidate.binding.identity === model
     && (!voter || candidate.binding.connectionId === voter.connectionId && candidate.binding.rank === voter.rank))?.rank ?? null;
@@ -327,10 +361,19 @@ export function secondReviewRanksDegraded(ranks: SecondReviewRanks): ReviewRankD
 /** 틱 끝 요약(ai_task.ranks 의 숫자 칸) — 칸·순위마다 쓸 수 없는 까닭과 지금 표를 내는 순위. text 작업의 summary 와 같은 이름을 쓴다(관리 화면이 읽는다). */
 export function reviewRanksSummary(resolutions: readonly ReviewRankResolution[], served: ReadonlyMap<number, number> = new Map()): Record<string, number> {
   const out: Record<string, number> = { ranks: resolutions.reduce((sum, row) => sum + row.candidates.length, 0) };
-  for (const [rank, count] of served) out[`served.${rank}`] = count;
+  const pool = resolutions.find(resolution => resolution.execution?.mode === 'workload_pool');
+  if (pool?.execution?.revision) {
+    out.pool_revision = pool.execution.revision;
+    out.pool_members = pool.candidates.length;
+  } else for (const [rank, count] of served) out[`served.${rank}`] = count;
   for (const resolution of resolutions) for (const candidate of resolution.candidates) {
+    const member = resolution.execution?.mode === 'workload_pool' ? candidate.poolMember : null;
+    if (member) {
+      const count = served.get(candidate.rank.rank) ?? 0;
+      if (count > 0) out[`member_served.${member.memberId}`] = count;
+    }
     if (!candidate.unusable || !/^[a-z_]{1,60}$/.test(candidate.unusable)) continue;
-    const key = `unusable.${candidate.rank.rank}.${candidate.unusable}`;
+    const key = member ? `member_unusable.${member.memberId}.${candidate.unusable}` : `unusable.${candidate.rank.rank}.${candidate.unusable}`;
     out[key] = (out[key] ?? 0) + 1;
   }
   return out;

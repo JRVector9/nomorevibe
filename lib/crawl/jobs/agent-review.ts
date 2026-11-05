@@ -102,8 +102,8 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
   let next = 0, admitted = 0, progress = 0, windowLeft = 0, stopped = false, stageBlocked = false, modelDeferred = false, saturated = false;
   // 틱 요약(crawl.agent_review_tick) — 배포 뒤 한 시간 안에 틱당 호출·예약 대기를 잴 수 있게 남긴다. 결과·장부에는 끼어들지 않는다
   const tally = { calls: 0, waits: 0, waitGranted: 0, waitPolls: 0, waitMs: 0, waitWindowClosed: 0, waitCapped: 0 };
-  const perModel = new Map<string, { calls: number; waits: number; waitGranted: number }>();
-  const modelTally = (name: string) => perModel.get(name) ?? perModel.set(name, { calls: 0, waits: 0, waitGranted: 0 }).get(name)!;
+  const perModel = new Map<string, { calls: number; waits: number; waitGranted: number; succeeded: number }>();
+  const modelTally = (name: string) => perModel.get(name) ?? perModel.set(name, { calls: 0, waits: 0, waitGranted: 0, succeeded: 0 }).get(name)!;
   // 들인 후보가 호출 없이 끝난 까닭. 모든 건너뜀은 crawl.agent_review_skipped 로 남고 틱 요약(skipped)에 센다 — 2026-11-01 AI1 정체는
   // 들인 14건이 모두 말없이 return 해 틱 로그(admitted 14 · calls 0) 말고는 아무 흔적이 없었다
   const skipped: Record<string, number> = {};
@@ -210,7 +210,8 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
         if (error.reason === "capacity") saturated = true;
         ctx.log("crawl.agent_review_deferred", { reason: error.reason, provider: reviewProvider, model });
         // 이 모델만의 거절(경로 없음·장비 미설정·계약 닫힘·포화 등)이면 같은 후보를 다음 순위로 다시 고른다(2026-11-01 순위 대체)
-        if (local) continue;
+        // A workload choice may have left a durable waiting request. Do not spray this input across members.
+        if (local && ranks.resolution?.execution?.mode !== "workload_pool") continue;
         return;
       }
       if (claim.kind === "skipped") {
@@ -281,7 +282,10 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
             retryAfter: new Date(Date.now() + Math.min(30 * 60_000, 60_000 * 2 ** Math.max(0, claim.attempt.attemptNumber - 1))),
           }),
         });
-        if (recorded.state === "succeeded") progress++;
+        if (recorded.state === "succeeded") {
+          progress++;
+          if (result.ok) modelTally(model).succeeded++;
+        }
         if (recorded.state !== "superseded") emitPipelineEvent("committed", { ...telemetry, state: recorded.state }, ctx.log);
         ctx.log("crawl.agent_reviewed", {
           repo: candidate.repo, provider, mode: settings.reviewMode, ...recorded,
@@ -322,7 +326,8 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
   if (ranks.resolution) {
     const served = new Map<number, number>();
     for (const candidate of ranks.resolution.candidates) {
-      const calls = candidate.binding ? perModel.get(candidate.binding.identity)?.calls ?? 0 : 0;
+      const tally = candidate.binding ? perModel.get(candidate.binding.identity) : undefined;
+      const calls = ranks.resolution.execution?.mode === 'workload_pool' ? tally?.succeeded ?? 0 : tally?.calls ?? 0;
       if (calls) served.set(candidate.rank.rank, (served.get(candidate.rank.rank) ?? 0) + calls);
     }
     ctx.log("ai_task.ranks", reviewRanksSummary([ranks.resolution], served));
