@@ -32,6 +32,8 @@ import { starAutoApproval } from "@/lib/crawl/star-auto-approval";
 
 /** 한 번에 꺼내는 프론티어 항목 수. 예산이 남으면 다음 묶음을 또 꺼낸다. 동시성 두 파동분. */
 const BATCH = 24;
+/** Permit waits are not failed attempts; retry at most once per maintenance cycle. */
+const ORIGIN_RETRY_MS = 60_000;
 
 /**
  * 동시에 처리하는 항목 수.
@@ -197,7 +199,11 @@ async function fetchBatch(
   const lanes = await Promise.allSettled(Array.from({ length: Math.min(FETCH_CONCURRENCY, entries.length) }, lane));
 
   const unfinished = entries.filter((entry, index) => index >= batch.next || batch.giveBack.has(entry));
-  if (unfinished.length > 0) await crawl.deferFrontier(unfinished, batch.retryAt ?? undefined);
+  const originDeferred = unfinished.filter(entry => deferredFrontierIds.has(entry.id));
+  const otherDeferred = unfinished.filter(entry => !deferredFrontierIds.has(entry.id));
+  if (otherDeferred.length) await crawl.deferFrontier(otherDeferred, batch.retryAt ?? undefined);
+  if (originDeferred.length) await crawl.deferFrontier(originDeferred,
+    new Date(Math.max(Date.now() + ORIGIN_RETRY_MS, batch.retryAt?.getTime() ?? 0)));
 
   const failure = lanes.find((settled): settled is PromiseRejectedResult => settled.status === "rejected");
   if (failure) throw failure.reason;
@@ -320,19 +326,26 @@ async function fetchEntry(
   if (homepage) {
     const origin = originOf(homepage);
     if (deferredOrigins.has(origin)) return { kind: "origin_deferred" };
+    let waitingOrigin = origin;
     try {
       page = await visit(homepage, settings.judge.docsGenerators, async (url, work) => oneAtATime(url, async () => {
-        // A sibling may have discovered the occupied origin while this entry waited its turn.
-        if (deferredOrigins.has(originOf(url))) throw new HttpOriginPermitError("waiting_aborted");
-        return work();
+        // A meta-refresh target may have a different origin from the homepage.
+        const currentOrigin = originOf(url);
+        try {
+          if (deferredOrigins.has(currentOrigin)) throw new HttpOriginPermitError("waiting_aborted");
+          return await work();
+        } catch (error) {
+          if (error instanceof HttpOriginPermitError && error.code === "waiting_aborted") waitingOrigin = currentOrigin;
+          throw error;
+        }
       }));
     } catch (error) {
       if (error instanceof HttpOriginPermitError) {
         // Only the request's permit-wait deadline is local. Configuration, writer/control loss,
         // caller cancellation or job-budget exhaustion still stops all new work in this batch.
         if (error.code === "waiting_aborted" && !ctx.signal?.aborted && ctx.hasBudget()) {
-          deferredOrigins.add(origin);
-          ctx.log("crawl.fetch_origin_deferred", { repo: entry.repo, origin });
+          deferredOrigins.add(waitingOrigin);
+          ctx.log("crawl.fetch_origin_deferred", { repo: entry.repo, origin: waitingOrigin });
           return { kind: "origin_deferred" };
         }
         return { kind: "permit_deferred" };
