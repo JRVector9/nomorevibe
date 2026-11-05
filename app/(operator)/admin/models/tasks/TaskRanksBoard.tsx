@@ -1,11 +1,14 @@
 "use client";
 import { aiRankChoiceOfRow } from "@/lib/operations/admin-ai-tasks";
-import { useActionState, useState } from "react";
+import { Fragment, useActionState, useState } from "react";
 import { AI_TASK_GROUP_LABELS, AI_TASK_KIND_LABELS, aiTask, type AiTaskGroup } from "@/lib/llm/ai-tasks";
 // 형과 순수 함수만 — 저장은 actions(서버)를 거친다
 import { AI_RANK_SLOT_NAMES, aiRankOptionBlocked, validateAiTaskRanks, type AiConnectionView, type AiRankChoice, type AiRankOption, type AiTaskRankRow } from "@/lib/operations/admin-ai-tasks";
 import { RankSelects } from "../RankSelects";
 import { saveAiTaskRanksAction, type AiTaskActionState } from "./actions";
+import type { AiTaskExecutionAdminView } from "@/lib/operations/admin-ai-task-execution";
+import { TaskExecutionForm } from "./TaskExecutionForm";
+import { aiTaskWorkloadPoolUnsupportedReason, type AiTaskPoolRuntime } from "@/lib/llm/ai-task-execution-config";
 
 /** 한 줄(작업 × 칸)의 화면 값 — 서버(readAiTasksAdminView)가 만든다. */
 export type TaskRankLine = {
@@ -19,7 +22,7 @@ export type TaskRankLine = {
   live: boolean;
   /** 실행 쪽의 순위 사정 — 잡의 마지막 틱(from job) 또는 이 웹 프로세스의 마지막 검색어 번역(from web). at 은 화면 글(서버가 만든다) */
   runtime: { from: "job" | "web"; at: string; served: { rank: number; count: number }[]; unusable: { rank: number; code: string; text: string; count: number }[];
-    degraded: { code: string; detail: string | null } | null } | null;
+    degraded: { code: string; detail: string | null } | null; pool?: AiTaskPoolRuntime } | null;
 };
 
 /** 넓은 화면의 한 줄: 작업 | 1·2·3순위 | 저장 */
@@ -30,15 +33,27 @@ const GRID = "grid gap-x-3 gap-y-2 md:items-start md:[grid-template-columns:minm
  * 드롭다운은 서버(AI 연결)마다 묶여 그 서버가 서비스하는 모델 이름만 나온다(API 는 GET /models, CLI 는 적은 모델 이름). 지금 실제로 쓰는 모델·준비 상태·실행 기록은 줄마다 「자세히」에 접는다.
  * 줄마다 따로 저장한다(화면 판 compare-and-set). 검증은 서버와 같은 순수 함수(validateAiTaskRanks)를 그 자리에서 돌려 보인다.
  */
-export function TaskRanksBoard({ lines, connections, rows, readOnly = false }: { lines: TaskRankLine[]; connections: AiConnectionView[]; rows: AiTaskRankRow[]; readOnly?: boolean }) {
+export function TaskRanksBoard({ lines, connections, rows, executions = [], readOnly = false }: { lines: TaskRankLine[]; connections: AiConnectionView[]; rows: AiTaskRankRow[];
+  executions?: readonly AiTaskExecutionAdminView[]; readOnly?: boolean }) {
   const groups = [...new Set(lines.map(line => line.group))];
   return <div className="grid gap-4">
     {groups.map(group => <section key={group} className="grid gap-0 rounded-xl border border-line bg-bg-card" aria-labelledby={`task-group-${group}`}>
       <h3 id={`task-group-${group}`} className="border-b border-line px-4 py-2 text-[15px] font-semibold">{AI_TASK_GROUP_LABELS[group]}</h3>
       <div className={`${GRID} border-b border-line px-4 py-1.5 text-[13px] font-semibold text-fg-3 max-md:hidden`} aria-hidden="true">
         <span>작업</span><span className="grid grid-cols-3 gap-2"><span>1순위</span><span>2순위</span><span>3순위</span></span><span /></div>
-      {lines.filter(line => line.group === group).map(line =>
-        <TaskRankLineForm key={`${line.task}#${line.slot}`} line={line} connections={connections} rows={rows} readOnly={readOnly} />)}
+      {lines.filter(line => line.group === group).map(line => {
+        const execution = executions.find(view => view.task === line.task && view.slot === line.slot);
+        const pool = execution?.mode === "workload_pool";
+        const ranks = <TaskRankLineForm line={line} connections={connections} rows={rows} readOnly={readOnly || pool} inactive={pool} />;
+        return <Fragment key={`${line.task}#${line.slot}`}>
+          {!pool && ranks}
+          {execution && <TaskExecutionForm key={`${line.task}#${line.slot}#${execution.revision ?? "default"}`} view={execution}
+            label={line.label} options={line.options} connections={connections} readOnly={readOnly} runtime={line.runtime} />}
+          {pool && <details className="border-b border-line px-4 py-2 text-[13px]">
+            <summary className="cursor-pointer text-fg-3">보관된 1·2·3순위 · 대체 실행으로 전환할 때 사용</summary>{ranks}
+          </details>}
+        </Fragment>;
+      })}
     </section>)}
   </div>;
 }
@@ -66,7 +81,7 @@ export const clearConfirmText = (line: Pick<TaskRankLine, "label" | "live">) => 
   ? `「${line.label}」의 1·2·3순위를 모두 비웁니다. 저장하면 이 작업은 모델을 부르지 않고 멈춥니다. 정말 비울까요?`
   : `「${line.label}」의 1·2·3순위를 모두 비웁니다. 정말 비울까요?`;
 
-function TaskRankLineForm({ line, connections, rows, readOnly }: { line: TaskRankLine; connections: AiConnectionView[]; rows: AiTaskRankRow[]; readOnly: boolean }) {
+function TaskRankLineForm({ line, connections, rows, readOnly, inactive = false }: { line: TaskRankLine; connections: AiConnectionView[]; rows: AiTaskRankRow[]; readOnly: boolean; inactive?: boolean }) {
   const [state, action, saving] = useActionState<AiTaskActionState, FormData>(saveAiTaskRanksAction, null);
   const initial = line.rows.map(aiRankChoiceOfRow);
   const [value, setValue] = useState<(AiRankChoice | null)[]>(initial);
@@ -77,7 +92,7 @@ function TaskRankLineForm({ line, connections, rows, readOnly }: { line: TaskRan
   const pending = line.readiness.some(row => row.pending.length > 0);
   // 저장된 순위를 모두 비우는 저장 — 실행 쪽이 읽는 작업은 그 순간 멈추므로 한 번 더 묻는다(2026-11-02 드롭다운 결함으로 1차 AI 검수가 비워져 멈춘 일)
   const cleared = line.rows.length > 0 && value.every(row => !row);
-  const status = lineStatus(line, changed, cleared);
+  const status: Status = inactive ? { text: "보관된 대체 순위 · 현재 사용 안 함", tone: "muted" } : lineStatus(line, changed, cleared);
   const confirmClear = (event: { preventDefault(): void }) => {
     if (cleared && !window.confirm(clearConfirmText(line))) event.preventDefault();
   };
@@ -106,11 +121,12 @@ function TaskRankLineForm({ line, connections, rows, readOnly }: { line: TaskRan
       <div className="mt-1 grid gap-1 rounded-lg border border-line px-3 py-2">
         <span className="text-fg-2">{line.description}</span>
         <span className="text-fg-3">{AI_TASK_KIND_LABELS[line.kind]} · 받는 연결: {line.accepts}</span>
+        {aiTaskWorkloadPoolUnsupportedReason(line.task, line.slot) && <span className="text-fg-3">작업 분산: {aiTaskWorkloadPoolUnsupportedReason(line.task, line.slot)}</span>}
         {task.sameModelAcrossRanks && <span className="text-fg-3">2·3순위는 1순위와 같은 모델을 다른 서버에 둘 때만 씁니다.</span>}
         <span className="text-fg-3">{line.live ? "실행 쪽이 이 순위를 읽습니다 — 1순위를 쓸 수 없으면 같은 일을 2순위, 그다음 3순위로 넘깁니다."
           : "이 작업의 실행 쪽은 아직 이 순위를 읽지 않습니다(다음 단계)."} 저장하면 없는 장비 행·엔진 직접 계약·용량 경로를 함께 만듭니다(만들 수 없으면 저장하지 않고 이유를 보입니다).</span>
-        <CurrentDetail line={line} />
-        {line.live && <RuntimeLine runtime={line.runtime} />}
+        {!inactive && <CurrentDetail line={line} />}
+        {line.live && !inactive && <RuntimeLine runtime={line.runtime} />}
       </div>
     </details>
   </form>;

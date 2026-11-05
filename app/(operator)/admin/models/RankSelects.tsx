@@ -15,7 +15,7 @@ type RankValue = { provider: string; model: string; reasoningEffort?: string };
  * 선택지에 group(서버 = 연결 이름)이 있으면 서버마다 묶어(optgroup) 그 안에 text(모델 이름)만 보인다. compact 는 넓은 화면에서 칸 위 「N순위」 글을 숨긴다(표 머리에 있다).
  * blocked 는 그 칸에서 고를 수 없는 선택지를 흐리게 둔다(저장 검증은 validate 가 그대로 한다).
  */
-export function RankSelects<T extends RankValue>({ stage, options, value, onChange, slotNames, disabled = false, validate, note, showProvider = true, compact = false, blocked, connections = [] }: {
+export function RankSelects<T extends RankValue>({ stage, options, value, onChange, slotNames, disabled = false, validate, note, showProvider = true, compact = false, blocked, connections = [], selectionKind = "rank" }: {
   stage: Pick<RankStage, "id" | "label" | "slots"> & Partial<Pick<RankStage, "routeId" | "providers">>;
   options: readonly (T & { label: string; group?: string; text?: string; reasoningEfforts?: readonly string[] })[]; value: readonly (T | null)[]; onChange: (value: (T | null)[]) => void;
   slotNames: readonly { provider: string; model: string; reasoningEffort?: string }[]; disabled?: boolean;
@@ -28,6 +28,7 @@ export function RankSelects<T extends RankValue>({ stage, options, value, onChan
   showProvider?: boolean;
   compact?: boolean;
   blocked?: (option: T, index: number, slots: readonly (T | null)[]) => boolean;
+  selectionKind?: "rank" | "pool";
 }) {
   const slots = Array.from({ length: stage.slots }, (_, index) => value[index] ?? null);
   const pickerOptions = (index: number) => presentPickerOptions(options, connections, slots[index]);
@@ -43,8 +44,9 @@ export function RankSelects<T extends RankValue>({ stage, options, value, onChan
       next.reasoningEffort = previous.provider === next.provider && previous.model === next.model ? previous.reasoningEffort : "";
     onChange(slots.map((row, at) => at === index ? next : row));
   };
-  return <div className="flex min-w-0 flex-col gap-2" role="group" aria-label={`${stage.label} 모델 순위`}>
-    <div className="grid min-w-0 gap-2 sm:grid-cols-3">
+  const itemLabel = (index: number) => selectionKind === "pool" ? `모델 ${index + 1}` : `${index + 1}순위`;
+  return <div className="flex min-w-0 flex-col gap-2" role="group" aria-label={`${stage.label} ${selectionKind === "pool" ? "분산 모델" : "모델 순위"}`}>
+    <div className={selectionKind === "pool" ? "grid min-w-0 gap-2 sm:grid-cols-2 xl:grid-cols-4" : "grid min-w-0 gap-2 sm:grid-cols-3"}>
       {slots.map((row, index) => {
         const key = row ? rankOptionKey(row) : "";
         const choices = pickerOptions(index);
@@ -59,8 +61,8 @@ export function RankSelects<T extends RankValue>({ stage, options, value, onChan
           disabled={taken.has(modelPickerChoiceKey(option, connections)) || !!blocked?.(option, index, slots)}>
           {option.group !== undefined ? option.text ?? option.model : `${option.label}${!showProvider || option.provider.endsWith("-cli") ? "" : ` (${option.provider})`}`}</option>;
         return <label key={index} className="flex min-w-0 flex-col gap-1 text-[13px]">
-          <span className={compact ? "font-semibold sm:sr-only" : "font-semibold"}>{index + 1}순위</span>
-          <select name={`${stage.id}-rank-${index + 1}`} aria-label={`${stage.label} ${index + 1}순위`} value={key} disabled={disabled}
+          <span className={compact ? "font-semibold sm:sr-only" : "font-semibold"}>{itemLabel(index)}</span>
+          <select name={`${stage.id}-${selectionKind}-${index + 1}`} aria-label={`${stage.label} ${itemLabel(index)}`} value={key} disabled={disabled}
             className="min-h-9 w-full min-w-0 rounded-lg border border-line bg-bg-card px-2" onChange={event => set(index, event.target.value)}>
             <option value="">없음</option>
             {groups ? groups.map(([name, list]) => <optgroup key={name} label={name}>{list.map(item)}</optgroup>) : choices.map(item)}
@@ -69,7 +71,7 @@ export function RankSelects<T extends RankValue>({ stage, options, value, onChan
           {groups && row && <span className="truncate text-[13px] text-fg-3" data-rank-server="true">{choices.find(option => rankOptionKey(option) === key)?.group ?? ""}</span>}
           {row && effortName && <>
             <span className="text-fg-2">추론 강도</span>
-            {efforts.length > 0 || row.reasoningEffort ? <select aria-label={`${stage.label} ${index + 1}순위 추론 강도`} value={row.reasoningEffort ?? ""}
+            {efforts.length > 0 || row.reasoningEffort ? <select aria-label={`${stage.label} ${itemLabel(index)} 추론 강도`} value={row.reasoningEffort ?? ""}
               disabled={disabled} className="min-h-9 w-full min-w-0 rounded-lg border border-line bg-bg-card px-2"
               onChange={event => onChange(slots.map((entry, at) => at === index && entry ? { ...entry, reasoningEffort: event.target.value } : entry))}>
               <option value="">{efforts.length ? "기본값" : "설정 해제"}</option>

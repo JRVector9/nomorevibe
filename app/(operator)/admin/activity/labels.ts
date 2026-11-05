@@ -78,6 +78,7 @@ export const ACTION_LABELS: Record<string, string> = {
   "ai-connection-models-read": "AI 연결 모델 목록 읽기",
   "ai-connection-delete": "AI 연결 지우기",
   "ai-task-models-save": "작업 ↔ 모델 순위 저장",
+  "ai-task-execution-save": "작업 실행 방식·분산 모델 저장",
   "ai-task-models-import": "작업 ↔ 모델 가져오기",
   "ai-connection-key-fill": "AI 연결 키 자동 채움",
   // 모델 한도·장비·연결 화면의 저장 — 전에는 이름표·갈래가 없어 「설정·연결」로 거르면 보이지 않았다(2026-11-02)
@@ -171,7 +172,7 @@ export const ACTION_GROUPS = {
     "github-collector-token-save", "github-collector-enable", "github-collector-disable",
     "github-collector-app-save", "github-collector-app-enable", "github-collector-app-disable",
     "ai-connect", "ai-input", "ai-cancel", "ai-probe", "ai-test", "ai-apply",
-    "ai-connection-save", "ai-connection-models-read", "ai-connection-delete", "ai-task-models-save", "ai-task-models-import", "ai-connection-key-fill",
+    "ai-connection-save", "ai-connection-models-read", "ai-connection-delete", "ai-task-models-save", "ai-task-models-import", "ai-connection-key-fill", "ai-task-execution-save",
     "runtime-settings-save", "model-capacity-device-save", "model-serving-contract-save", "model-serving-contract-disable", "model-registry-override-save",
     "model-registry-override-disable", "model-assignment-save", "model-helper-save", "model-helper-mode", "model-capacity-unknown-reviewed", "job-pause", "job-resume"] },
   content: { label: "제품·소식·작업", actions: ["claim-invite", "intro-keep", "intro-edit", "intro-request-edit", "intro-request-fixed", "intro-request-dismissed", "product-refresh", "update-hide", "update-restore", "news-approve", "news-hide", "request-job",

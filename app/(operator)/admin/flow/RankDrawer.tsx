@@ -27,6 +27,7 @@ export type RankSave = (previous: null, form: FormData) => Promise<{ ok?: true; 
 const STEPS: { key: Step; text: string }[] = [{ key: "edit", text: "고르기" }, { key: "confirm", text: "확인" }, { key: "done", text: "저장됨" }];
 
 function lineTag(line: FlowRankLine): { text: string; tone: "lock" | "set" | "live" } {
+  if (line.execution?.mode === "workload_pool") return { text: `작업 분산 · 모델 ${line.execution.members.length}개`, tone: "live" };
   if (line.lock) return { text: "바꿀 수 없음", tone: "lock" };
   if (!line.live) return { text: "설정값", tone: "set" };
   return { text: "실행이 이 순위를 읽음", tone: "live" };
@@ -55,6 +56,7 @@ function LineEditor({ editor, line, value, onChange, warnings, disabled }: {
 }) {
   const tag = lineTag(line);
   const changed = rankChanges(editor, [line], { [line.key]: value }).length > 0;
+  const pool = line.execution?.mode === "workload_pool" ? line.execution : null;
   return (
     <section className="fr-line" data-key={line.key} data-tag={tag.tone} aria-labelledby={`fr-line-${line.key}`}>
       <header className="fr-line-h">
@@ -62,14 +64,22 @@ function LineEditor({ editor, line, value, onChange, warnings, disabled }: {
         <span className="fr-tag" data-tone={tag.tone}>{tag.text}</span>
         {changed && <span className="fr-tag" data-tone="changed">바꿈 — 저장 전</span>}
       </header>
-      <p className="fr-now"><span className="fr-k">지금</span> {displayRankChain(editor, line.saved)}</p>
+      {pool ? <>
+        <ul className="fr-note">{pool.members.map(member => {
+          const connection = editor.connections.find(row => row.id === member.connectionId);
+          return <li key={member.memberId}>모델 {member.position} · {connection ? modelPickerConnectionLabel(connection) : "연결 없음"} · {connection ? modelPickerModelLabel(connection, member.model) : member.model}
+            {typeof member.options.reasoningEffort === "string" && ` · 추론 ${member.options.reasoningEffort}`}</li>;
+        })}</ul>
+        <p className="fr-note">서로 다른 업무를 분산합니다. 실행 수는 단계 동시성과 장비 한도를 따릅니다.</p>
+        <Link href={`/admin/models/tasks#execution-${line.task}-${line.slot}`} prefetch={false} className="fr-link">분산 모델·실행 방식 변경 →</Link>
+      </> : <p className="fr-now"><span className="fr-k">지금</span> {displayRankChain(editor, line.saved)}</p>}
       {line.lock && <p className="fr-lock" role="note">{line.lock}</p>}
-      <RankSelects<AiRankChoice> stage={{ id: `flow-${line.key}`, label: line.label, slots: 3 }} options={line.options} connections={editor.connections} value={value} onChange={onChange}
+      {!pool && <RankSelects<AiRankChoice> stage={{ id: `flow-${line.key}`, label: line.label, slots: 3 }} options={line.options} connections={editor.connections} value={value} onChange={onChange}
         slotNames={AI_RANK_SLOT_NAMES} disabled={disabled || !!line.lock}
         showProvider={false} note={null} blocked={(option, index, slots) => flowOptionBlocked(editor, line, index, option, slots)}
-        validate={(slots) => changed ? flowRankIssues(editor, line, slots) : []} />
+        validate={(slots) => changed ? flowRankIssues(editor, line, slots) : []} />}
       {!line.live && !line.lock && <p className="fr-note">{SET_ONLY_TEXT}</p>}
-      <WarningList warnings={warnings} />
+      {!pool && <WarningList warnings={warnings} />}
     </section>
   );
 }

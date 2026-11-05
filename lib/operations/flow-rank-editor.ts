@@ -5,6 +5,7 @@ import {
 } from "./admin-ai-tasks";
 import { isLocalModelHost } from "./admin-models-view";
 import { STATION_TASKS, type LlmStationKey } from "./conveyor-llm";
+import type { AiTaskExecutionAdminView } from "./admin-ai-task-execution";
 
 /**
  * 전체 흐름에서 칸의 처리 LLM 을 그 자리에서 바꾸기(2026-11-04 5차) — 순수 함수만(DB·서버 동작 없음).
@@ -45,6 +46,8 @@ export type FlowRankLine = {
   live: boolean;
   /** 화면에서 바꿀 수 없는 까닭(선택 상자를 막는다) */
   lock: string | null;
+  /** Safe stored mode/member settings; never contains decrypted connection credentials. */
+  execution?: AiTaskExecutionAdminView;
 };
 
 export type FlowRankEditor = {
@@ -78,7 +81,7 @@ export function flowRankLinesFor(editor: FlowRankEditor | null, station: LlmStat
  * 선택지는 그 화면과 같은 aiTaskRankOptions(켜진 연결 · 이 작업이 받는 연결 · 실제로 내놓는 모델 · 저장된 값)에 꺼진 연결을 「고를 수 없음」으로 더한 것이다.
  */
 export function buildFlowRankEditor(connections: readonly AiConnectionView[], rows: readonly AiTaskRankRow[],
-  revisionOf: (rows: readonly AiTaskRankRow[]) => string): FlowRankEditor {
+  revisionOf: (rows: readonly AiTaskRankRow[]) => string, executions: readonly AiTaskExecutionAdminView[] = []): FlowRankEditor {
   const states = connections.map(flowConnectionState);
   const stateOf = new Map(states.map((state) => [state.id, state]));
   const group = (id: string, fallback: string) => {
@@ -92,6 +95,7 @@ export function buildFlowRankEditor(connections: readonly AiConnectionView[], ro
       const task = aiTask(id);
       if (!task) continue;
       for (let slot = 1; slot <= task.slots; slot += 1) {
+        const execution = executions.find(view => view.task === id && view.slot === slot);
         const own = rows.filter((row) => row.task === id && row.slot === slot).sort((a, b) => a.rank - b.rank);
         const options: FlowRankOption[] = aiTaskRankOptions(task, connections, own).map((option) => ({ ...option, group: group(option.provider, option.group ?? "지워진 연결") }));
         // 꺼진 연결도 보인다(상태 「꺼짐」) — 고를 수는 없다(저장 검증도 막는다)
@@ -103,7 +107,8 @@ export function buildFlowRankEditor(connections: readonly AiConnectionView[], ro
           }
         }
         lines.push({ key: `${id}#${slot}`, station, task: id, slot, label: aiTaskSlotLabel(task, slot), revision: revisionOf(own),
-          saved: own.map(aiRankChoiceOfRow), options, live: isAiLiveTask(id), lock: FLOW_RANK_LOCKS[id] ?? null });
+          saved: own.map(aiRankChoiceOfRow), options, live: isAiLiveTask(id), ...(execution ? { execution } : {}),
+          lock: execution?.mode === "workload_pool" ? "작업 분산 중입니다. 분산 모델과 실행 방식은 「작업 ↔ AI 모델」에서 변경하세요." : FLOW_RANK_LOCKS[id] ?? null });
       }
     }
   }
@@ -188,10 +193,11 @@ export function rankWarnings(editor: FlowRankEditor, lines: readonly FlowRankLin
   const now = (key: string) => all.find((line) => line.key === key)?.saved ?? [];
   const after = (key: string) => drafts[key] ? trim(drafts[key]) : now(key);
   const shown = new Set(lines.map((line) => line.key));
-  const voters = all.filter((line) => line.task === "second-review");
+  const voters = all.filter((line) => line.task === "second-review" && line.execution?.mode !== "workload_pool");
 
   // ① 1차와 같은 모델
-  const firstAfter = rank1(after(FIRST_KEY)), firstBefore = rank1(now(FIRST_KEY));
+  const firstPool = all.find(line => line.key === FIRST_KEY)?.execution?.mode === "workload_pool";
+  const firstAfter = firstPool ? null : rank1(after(FIRST_KEY)), firstBefore = firstPool ? null : rank1(now(FIRST_KEY));
   for (const voter of voters) {
     const ranksAfter = after(voter.key), ranksBefore = now(voter.key);
     const clashAfter = firstAfter ? ranksAfter.findIndex((row) => !!row && aiSameUnderlyingModel(row.model, firstAfter.model)) : -1;
