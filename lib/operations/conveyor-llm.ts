@@ -48,7 +48,7 @@ export const NO_LLM: Readonly<Record<"discover" | "fetch" | "judge" | "sink", { 
 
 // ── 입력 ─────────────────────────────────────────────────────────────────────────────────────────
 
-export type LlmConnection = { id: string; label: string; kind: "api" | "cli"; baseUrl?: string | null; cliTool: string | null; hasKey: boolean; enabled: boolean };
+export type LlmConnection = { id: string; label: string; kind: "api" | "cli"; baseUrl?: string | null; cliTool: string | null; hasKey: boolean; enabled: boolean; updatedAt?: string };
 export type LlmRankRow = { task: string; slot: number; rank: number; connectionId: string; model: string; enabled: boolean; updatedAt?: string };
 /**
  * 최근 1시간 장부(model_capacity_requests state=settled)를 route·provider·model 로 센 것. groups 는 그 호출들이 잡은 장비 그룹(group_id) —
@@ -157,7 +157,10 @@ function currentRuntime(def: AiTaskDef, inputs: LlmInputs): LlmRuntime | null {
       || runtime.pool.members !== pools[0].members.length) return null;
     const ids = new Set(pools[0].members.map(member => member.memberId));
     if ([...Object.keys(runtime.pool.served), ...runtime.pool.unusable.map(member => member.memberId)].some(id => !ids.has(id))) return null;
-    return pools[0].updatedAt && Date.parse(pools[0].updatedAt) > observedAt ? null : runtime;
+    const changed = pools[0].updatedAt && Date.parse(pools[0].updatedAt) > observedAt
+      || pools[0].members.some(member => inputs.connections?.some(connection => connection.id === member.connectionId
+        && connection.updatedAt && Date.parse(connection.updatedAt) > observedAt));
+    return changed ? null : runtime;
   }
   if (runtime.pool) return null;
   const changedSinceObservation = (inputs.execution ?? []).some(row => row.task === def.id && row.updatedAt

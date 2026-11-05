@@ -42,7 +42,7 @@ export async function readLedgerUse(): Promise<LlmUsedRow[]> {
 export async function readLlmInputs(now: string): Promise<LlmInputs> {
   const [connections, rows, used, runtime, execution] = await Promise.all([
     listAiConnections().then((list): LlmConnection[] => list.map((row) => ({ id: row.id, label: row.label, kind: row.kind, baseUrl: row.baseUrl,
-      cliTool: row.cliTool, hasKey: row.hasKey, enabled: row.enabled }))).catch(warn("conveyor.llm_connections_unavailable")),
+      cliTool: row.cliTool, hasKey: row.hasKey, enabled: row.enabled, updatedAt: row.updatedAt }))).catch(warn("conveyor.llm_connections_unavailable")),
     // Keep the save timestamp with the same primary read; old tick failures are about the old ranks.
     onPrimary(() => db.select({ task: aiTaskModels.task, slot: aiTaskModels.slot, rank: aiTaskModels.rank,
       connectionId: aiTaskModels.connectionId, model: aiTaskModels.model, enabled: aiTaskModels.enabled, updatedAt: aiTaskModels.updatedAt })
