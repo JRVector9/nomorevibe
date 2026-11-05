@@ -37,6 +37,9 @@ function gate<T>() {
   const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
   return { promise, resolve, reject };
 }
+// Each shorthand hint is a distinct logical vote unless it explicitly supplies the SQL projection.
+const projectAi2Hint = <T extends { id: number; candidateId?: number; vote?: number }>(hint: T) =>
+  ({ ...hint, candidateId: hint.candidateId ?? hint.id, vote: hint.vote ?? hint.id });
 beforeEach(() => {
   // PR C1: 2차 소비자는 「작업 ↔ 모델」 투표자 순위가 없으면 쉰다(no_task_models) — 이 시험들은 순위가 있는 소비자를 본다
   pinReviewRanks({ second: [[{ provider: 'local-direct', model: 'qwen3.8-flash-next' }]] });
@@ -47,11 +50,11 @@ beforeEach(() => {
   mocks.select.mockImplementation((fields: Record<string, unknown>) => ({ from: () => ({ where: (condition: SQL) => {
     const reserved = 'reserved' in fields;
     (reserved ? mocks.reservedWhere : mocks.where)(condition);
-    return { orderBy: () => ({ limit: reserved ? mocks.reservedLimit : mocks.limit }) };
+    return { orderBy: () => ({ limit: async (size: number) => (await (reserved ? mocks.reservedLimit : mocks.limit)(size)).map(projectAi2Hint) }) };
   }, innerJoin: (_table: unknown, condition: SQL) => {
     const waiting = new PgDialect().sqlToQuery(fields.reserved as SQL).params[0] === false;
     (waiting ? mocks.waitingJoin : mocks.reservedJoin)(condition); return { where: (condition: SQL) => {
-    (waiting ? mocks.waitingWhere : mocks.reservedWhere)(condition); return { orderBy: () => ({ limit: waiting ? mocks.waitingLimit : mocks.reservedLimit }) };
+    (waiting ? mocks.waitingWhere : mocks.reservedWhere)(condition); return { orderBy: () => ({ limit: async (size: number) => (await (waiting ? mocks.waitingLimit : mocks.reservedLimit)(size)).map(projectAi2Hint) }) };
   } }; } }) }));
   mocks.claim.mockResolvedValue({ kind: 'skipped', reason: 'running' });
   mocks.compatibility.mockResolvedValue({ kind: 'skipped', reason: 'running' });

@@ -11,6 +11,7 @@
  */
 import { beforeEach, vi } from "vitest";
 import { clearAllMemos } from "@/lib/cache/memo";
+import { setAiTaskExecutionConfigsForTest } from "@/lib/llm/ai-task-execution-snapshot";
 
 const DEV_ONLY = ["ALLOW_PRIVATE_URLS", "NEXT_PUBLIC_SITE_URL"];
 
@@ -19,7 +20,11 @@ for (const name of DEV_ONLY) delete process.env[name];
 delete process.env.ABCLLM_SERVING_CONTRACTS;
 
 // 공개 화면의 짧은 읽기 캐시(lib/cache/memo.ts)는 모듈에 남는다 — 앞 테스트의 값을 다음 테스트가 받지 않게
-beforeEach(() => clearAllMemos());
+// Unit fixtures explicitly model a successful execution-config read with no saved rows.
+// The DB integration config uses only tests/integration/env.ts and never loads this setup.
+// Pin before test-module evaluation too: some legacy read fixtures resolve model slots at import time.
+setAiTaskExecutionConfigsForTest([]);
+beforeEach(() => { clearAllMemos(); setAiTaskExecutionConfigsForTest([]); });
 
 // Existing standalone component fixtures exercise Korean output without a Next request.
 // Production keeps strict providers and server-selected dictionaries.
