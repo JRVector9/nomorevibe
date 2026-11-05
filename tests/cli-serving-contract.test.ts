@@ -22,9 +22,11 @@ it("Claude derived 계약은 turns·(입력+overhead) + Σk·출력 이상이어
   expect(ok({ ...derived, maxTurns: 100, inputByteCap: Number.MAX_SAFE_INTEGER, totalTokenBound: Number.MAX_SAFE_INTEGER })).toBe(false);
 });
 
-it("Grok·codex 는 declared 로만, Claude 는 derived 로만 들어오고 provenance 가 계약에 남는다", () => {
+it("Grok·codex·OpenCode 는 declared 로만, Claude 는 derived 로만 들어오고 provenance 가 계약에 남는다", () => {
   expect(cliServingContractSchema.parse(declared).boundProvenance).toBe("declared");
   expect(ok({ ...declared, provider: "codex-cli", model: "gpt-5.3-codex-spark" })).toBe(true);
+  expect(ok({ ...declared, provider: "opencode-cli", model: "opencode/deepseek-v4.1-flash", cliVersion: "opencode v2.2.5" })).toBe(true);
+  expect(ok({ ...derived, provider: "opencode-cli" })).toBe(false);
   expect(ok({ ...declared, provider: "claude-cli" })).toBe(false);
   expect(ok({ ...derived, provider: "grok-cli" })).toBe(false);
   // declared 에 공식 칸을 섞거나, derived 에서 공식 칸을 빼면 거절한다

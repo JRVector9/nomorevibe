@@ -33,7 +33,7 @@ const ai2 = { version: 1, protocol: "cli-process-v1", routeId: "second-review", 
   cliVersion: "grok 9.9.9", inputByteCap: 75_000, totalTokenBound: 120_000, costBoundUsdMicros: null, boundProvenance: "declared" } as const;
 const session = { ...ai2, routeId: "grok-session-check", inputByteCap: 16_384, totalTokenBound: 32_768 } as const;
 /** PATH 에 claude·grok 이 없을 때 DB 계약 route 의 도구 probe 보고(띄우지 못해 실패, 기록 없음) */
-const TOOLS_ABSENT = (["claude-cli", "grok-cli"] as const).map(provider => ({ index: null, routeId: null, provider, model: null,
+const TOOLS_ABSENT = (["claude-cli", "grok-cli", "opencode-cli"] as const).map(provider => ({ index: null, routeId: null, provider, model: null,
   status: "cli_version_probe_failed", observedVersion: null }));
 let root = "", empty = "", records = "", fake = "", wrappers = 0;
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -62,6 +62,8 @@ async function cli(mode: string, version = "", permissions = 0o755): Promise<str
 }
 /** 설정과 호출자가 띄울 명령을 세우고 모듈을 새로 읽는다. path 는 DB 계약 route 의 도구(claude·grok)를 찾을 PATH 다(없으면 빈 디렉터리) */
 async function load(contracts: unknown, commands: { claude?: string; grok?: string; codex?: string; path?: string } = {}): Promise<Contracts> {
+  // All DB contracts here are pinned snapshots; background reloads must not race the version probes.
+  vi.stubEnv("MODEL_SERVING_CONTRACTS_DB", "0");
   vi.stubEnv("PATH", commands.path ?? empty); vi.stubEnv("FAKE_CLI_RECORD", records);
   vi.stubEnv("CLI_SERVING_CONTRACTS", contracts === undefined ? undefined : typeof contracts === "string" ? contracts : JSON.stringify(contracts));
   vi.stubEnv("CLAUDE_CLI", commands.claude ?? path.join(root, "absent-claude"));
@@ -261,7 +263,7 @@ it.skipIf(process.platform === "win32")("1차·2차·Grok 로그인 유지: 계�
     expect(mod.cliCommandFor(routeId, "grok-cli")).toBe("grok");
   }
   expect(mod.cliCommandFor("product-audit", "claude-cli")).toBe(path.join(root, "absent-claude"));
-  expect(mod.CLI_TOOL_COMMANDS).toEqual({ "claude-cli": "claude", "grok-cli": "grok", "codex-cli": "codex" });
+  expect(mod.CLI_TOOL_COMMANDS).toEqual({ "claude-cli": "claude", "grok-cli": "grok", "codex-cli": "codex", "opencode-cli": "opencode" });
   // 행이 없으면 not_configured(probe 전에도)
   expect(status(mod, ai1)).toBe("not_configured");
   setServingContractSnapshotForTest([dbRow(ai1), dbRow(ai2), dbRow(session), dbRow({ ...ai1, model: "opus", cliVersion: "claude 9.9.8" })]);
@@ -281,6 +283,7 @@ it.skipIf(process.platform === "win32")("1차·2차·Grok 로그인 유지: 계�
     // 도구 probe 의 보고는 routeId·model 없이 본 버전을 싣는다(운영자가 연결에 적을 버전)
     { index: null, routeId: null, provider: "claude-cli", model: null, status: "ready", observedVersion: "claude 9.9.9" },
     { index: null, routeId: null, provider: "grok-cli", model: null, status: "ready", observedVersion: "grok 9.9.9" },
+    { index: null, routeId: null, provider: "opencode-cli", model: null, status: "cli_version_probe_failed", observedVersion: null },
   ]);
   // 계약 JSON 의 routeId 접두는 떼어 원래 route 의 계약으로 돌아온다
   for (const value of [ai1, ai2, session]) {
@@ -365,9 +368,25 @@ const { resolveCliServingContract } = require(${JSON.stringify(path.resolve("lib
   // reviewer 는 env 계약의 CLI 와 DB 계약 route 의 도구(claude·grok — PATH 가 비어 실패)를 함께 probe 해 로그에 남긴다
   expect(lines.map(line => line.event === "test.resolved" ? [line.role, line.contract] : [line.event, line.status])).toEqual([
     ["publisher", null], ["cli_contract.probe", "ready"], ["cli_contract.probe", "cli_version_probe_failed"],
-    ["cli_contract.probe", "cli_version_probe_failed"], ["reviewer", intro]]);
+    ["cli_contract.probe", "cli_version_probe_failed"], ["cli_contract.probe", "cli_version_probe_failed"], ["reviewer", intro]]);
   expect(lines[1]).toMatchObject({ index: 0, routeId: intro.routeId, provider: intro.provider, model: intro.model, observedVersion: null });
   expect(lines[2]).toMatchObject({ index: null, routeId: null, provider: "claude-cli", model: null, observedVersion: null });
   expect(lines[3]).toMatchObject({ index: null, routeId: null, provider: "grok-cli", model: null, observedVersion: null });
+  expect(lines[4]).toMatchObject({ index: null, routeId: null, provider: "opencode-cli", model: null, observedVersion: null });
   expect(await recorded()).toHaveLength(1);
+}, PROCESS_TEST_MS);
+
+
+it.skipIf(process.platform === "win32")("OpenCode review contracts open only after the PATH binary matches the stored exact version", async () => {
+  const contract = { ...ai2, routeId: "crawl-agent-review", provider: "opencode-cli", model: "opencode/deepseek-v4.1-flash", cliVersion: "opencode v2.2.5" };
+  const tools = await fakeToolDir(path.join(root, "opencode-db-tools"), { opencode: await cli("version", contract.cliVersion) });
+  const mod = await load(undefined, { path: tools });
+  setServingContractSnapshotForTest([dbRow(contract), dbRow({ ...contract, model: "opencode/deepseek-v4.1-flash-free", cliVersion: "opencode v2.2.4" })]);
+  expect(status(mod, contract)).toBe("probe_pending");
+  expect(resolved(mod, contract)).toBeNull();
+  expect(await mod.probeCliServingContracts()).toContainEqual({ index: null, routeId: null, provider: "opencode-cli", model: null,
+    status: "ready", observedVersion: "opencode v2.2.5" });
+  expect(resolved(mod, contract)).toEqual(contract);
+  expect(status(mod, { ...contract, model: "opencode/deepseek-v4.1-flash-free" })).toBe("cli_version_mismatch");
+  expect((await recorded()).map(record => record.argv)).toEqual([["--version"]]);
 }, PROCESS_TEST_MS);
