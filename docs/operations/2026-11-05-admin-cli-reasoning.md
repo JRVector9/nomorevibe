@@ -16,6 +16,8 @@ worker 이미지에 공식 npm 패키지 `@opencode/cli@2.2.5`를 고정 설치�
 
 호출은 `--standalone`으로 개인 서버를 사용하며, 임시 작업 디렉터리에 검수 전용 agent를 작성한다. `/etc/opencode/opencode.json`의 시스템 정책으로 도구·MCP·skills·plugins를 막고 제목·요약·압축 agent와 warming을 끈다. 검수 외 숨은 모델 호출을 만들지 않는다.
 
+검증한 운영 실행 경로는 위 시스템 정책을 가진 worker 이미지다. Console 설정은 프로젝트 설정보다 우선하므로 프로젝트의 deny 파일만으로 실행하지 않는다. 로컬 수동 job을 사용할 경우에도 동일한 시스템 관리 정책을 먼저 설치해야 하며, 정책 없는 로컬 실행은 검증 범위가 아니다.
+
 워커의 DB·제어 환경변수는 OpenCode에 전달하지 않는다. 표준 HOME/XDG 계정 저장소와 필요한 provider 환경변수만 사용한다. 임의 `OPENCODE_CONFIG*`·`OPENCODE_SERVER*` 재정의는 넘기지 않는다.
 
 ## 계정 연결과 운영 적용 경계
