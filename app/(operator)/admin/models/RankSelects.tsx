@@ -1,5 +1,6 @@
 "use client";
 import type { ReactNode } from "react";
+import type { AiConnectionView } from "@/lib/operations/admin-ai-tasks";
 import type { FirstReviewer } from "@/lib/crawl/agent-review";
 import { rankOptionKey, validateRanks, type RankStage } from "@/lib/operations/admin-first-review-ranks";
 
@@ -14,10 +15,12 @@ type RankValue = { provider: string; model: string; reasoningEffort?: string };
  * 선택지에 group(서버 = 연결 이름)이 있으면 서버마다 묶어(optgroup) 그 안에 text(모델 이름)만 보인다. compact 는 넓은 화면에서 칸 위 「N순위」 글을 숨긴다(표 머리에 있다).
  * blocked 는 그 칸에서 고를 수 없는 선택지를 흐리게 둔다(저장 검증은 validate 가 그대로 한다).
  */
-export function RankSelects<T extends RankValue>({ stage, options, value, onChange, slotNames, disabled = false, validate, note, showProvider = true, compact = false, blocked }: {
+export function RankSelects<T extends RankValue>({ stage, options, value, onChange, slotNames, disabled = false, validate, note, showProvider = true, compact = false, blocked, connections = [] }: {
   stage: Pick<RankStage, "id" | "label" | "slots"> & Partial<Pick<RankStage, "routeId" | "providers">>;
   options: readonly (T & { label: string; group?: string; text?: string; reasoningEfforts?: readonly string[] })[]; value: readonly (T | null)[]; onChange: (value: (T | null)[]) => void;
   slotNames: readonly { provider: string; model: string; reasoningEffort?: string }[]; disabled?: boolean;
+  /** 화면 선택지만 제한한다. 실제 catalog·저장된 순위·서버 검증은 그대로 둔다. */
+  connections?: readonly Pick<AiConnectionView, "id" | "kind" | "cliTool">[];
   /** 기본 = 1차 AI 검수 규칙(validateRanks) */
   validate?: (slots: readonly (T | null)[]) => string[];
   /** 기본 = 1차 AI 검수의 순위 대체 안내 */
@@ -27,9 +30,14 @@ export function RankSelects<T extends RankValue>({ stage, options, value, onChan
   blocked?: (option: T, index: number, slots: readonly (T | null)[]) => boolean;
 }) {
   const slots = Array.from({ length: stage.slots }, (_, index) => value[index] ?? null);
+  const openCode = new Set(connections.filter(connection => connection.kind === "cli" && connection.cliTool === "opencode").map(connection => connection.id));
+  const pickerOptions = (index: number) => options.filter(option => !openCode.has(option.provider)
+    || /^deepseek(?:[-_.:]|$)/i.test(option.model.slice(option.model.lastIndexOf("/") + 1))
+    || slots[index]?.provider === option.provider && slots[index]?.model === option.model);
+
   const issues = validate ? validate(slots) : validateRanks(stage as RankStage, slots as unknown as (FirstReviewer | null)[]);
   const set = (index: number, key: string) => {
-    const choice = options.find(option => rankOptionKey(option) === key) ?? null;
+    const choice = pickerOptions(index).find(option => rankOptionKey(option) === key) ?? null;
     // 「없음」이 아닌데 선택지에서 못 찾은 값이면 바꾸지 않는다 — 조용히 빈 칸이 되어 저장 한 번에 순위가 지워지지 않게(2026-11-02 NUL 열쇠 사고)
     if (key !== "" && !choice) return;
     // 선택지의 label·saved는 싣지 않는다. 모델이 바뀌면 이전 모델의 추론 설정을 해제한다.
@@ -38,13 +46,14 @@ export function RankSelects<T extends RankValue>({ stage, options, value, onChan
       next.reasoningEffort = previous.provider === next.provider && previous.model === next.model ? previous.reasoningEffort : "";
     onChange(slots.map((row, at) => at === index ? next : row));
   };
-  // 서버(group)마다 묶기 — 처음 나온 순서 그대로(선택지를 만든 쪽이 정한 순서)
-  const groups = options.some(option => option.group) ? [...options.reduce((map, option) => map.set(option.group ?? "", [...map.get(option.group ?? "") ?? [], option]),
-    new Map<string, (typeof options)[number][]>())] : null;
   return <div className="flex min-w-0 flex-col gap-2" role="group" aria-label={`${stage.label} 모델 순위`}>
     <div className="grid min-w-0 gap-2 sm:grid-cols-3">
       {slots.map((row, index) => {
         const key = row ? rankOptionKey(row) : "";
+        const choices = pickerOptions(index);
+        // 기존 비 DeepSeek 값은 그 칸에만 남겨, 숨겨진 값이 조용히 지워지거나 다른 칸에 새로 선택되지 않게 한다.
+        const groups = choices.some(option => option.group) ? [...choices.reduce((map, option) => map.set(option.group ?? "", [...map.get(option.group ?? "") ?? [], option]),
+          new Map<string, (typeof options)[number][]>())] : null;
         const effortName = slotNames[index]?.reasoningEffort;
         const efforts = options.find(option => rankOptionKey(option) === key)?.reasoningEfforts ?? [];
         // 다른 칸에서 이미 고른 모델은 이 칸에서 고를 수 없다(중복 방지). 지금 이 칸의 값은 남긴다
@@ -57,7 +66,7 @@ export function RankSelects<T extends RankValue>({ stage, options, value, onChan
           <select name={`${stage.id}-rank-${index + 1}`} aria-label={`${stage.label} ${index + 1}순위`} value={key} disabled={disabled}
             className="min-h-9 w-full min-w-0 rounded-lg border border-line bg-bg-card px-2" onChange={event => set(index, event.target.value)}>
             <option value="">없음</option>
-            {groups ? groups.map(([name, list]) => <optgroup key={name} label={name}>{list.map(item)}</optgroup>) : options.map(item)}
+            {groups ? groups.map(([name, list]) => <optgroup key={name} label={name}>{list.map(item)}</optgroup>) : choices.map(item)}
           </select>
           {/* 묶은 목록에서는 닫힌 드롭다운에 모델 이름만 보이므로, 고른 값의 서버를 밑에 적는다(같은 모델을 두 서버에 둘 때 가린다) */}
           {groups && row && <span className="truncate text-[13px] text-fg-3" data-rank-server="true">{options.find(option => rankOptionKey(option) === key)?.group ?? ""}</span>}
