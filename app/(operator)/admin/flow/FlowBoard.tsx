@@ -163,7 +163,7 @@ function llmAria(llm: StationLlm | null): string {
   if (!llm) return ", 모델 확인 못함";
   if (llm.kind === "none") return `, LLM 없음 ${llm.short}`;
   if (llm.kind === "unknown") return ", 모델 확인 못함";
-  return `, 모델 ${llm.head.head?.model ?? "없음"}${llm.flag ? ` ${llm.flag.text}` : ""}`;
+  return `, 모델 ${llm.head.head?.model ?? (llm.head.legacy ? "기존 CLI 설정 미확인" : "없음")}${llm.flag ? ` ${llm.flag.text}` : ""}`;
 }
 
 function StationCard({ station, hours, selected, onSelect, onChange, controls }: {
@@ -462,7 +462,7 @@ function llmText(llm: StationLlm | null): string {
   if (!llm || llm.kind === "unknown") return "확인 못함";
   if (llm.kind === "none") return `LLM 없음 · ${llm.short}`;
   const head = llm.head.head;
-  return `${head ? `${head.where} · ${head.model}` : "모델 없음"}${llm.more ? ` 외 ${llm.more}` : ""}${llm.flag ? ` (${llm.flag.text})` : ""}`;
+  return `${head ? `${head.where} · ${head.model}` : llm.head.legacy ? "기존 CLI 설정 미확인" : "모델 없음"}${llm.more ? ` 외 ${llm.more}` : ""}${llm.flag ? ` (${llm.flag.text})` : ""}`;
 }
 
 export const STATION_ROLE: Record<Station["key"], string> = {

@@ -1,7 +1,9 @@
+import { resolve } from "node:path";
+
 const config = {
   plugins: {
     "@tailwindcss/postcss": {},
-    "./scripts/styles/site-density.cjs": {},
+    [resolve(process.cwd(), "scripts/styles/site-density.cjs")]: {},
   },
 };
 

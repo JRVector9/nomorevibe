@@ -210,7 +210,7 @@ describe("4차 카드에서 바꾸기 (A안: 카드 유지)", () => {
 
   it("offers the same change control in the station detail's model section", () => {
     expect(html).toContain('class="cv-sec-head"');
-    expect(html).toMatch(/<h3 class="cv-sec-h" id="cv-sec-model">지금 쓰는 모델[^<]*<\/h3><button[^>]*aria-label="AI 2차 처리 LLM 바꾸기"/);
+    expect(html).toMatch(/<h3 class="cv-sec-h" id="cv-sec-model">모델 — 현재 호출·설정·최근 1시간<\/h3><button[^>]*aria-label="AI 2차 처리 LLM 바꾸기"/);
   });
 
   it("without the rank read there is no 바꾸기 — only the link to 작업 ↔ AI 모델", () => {
