@@ -24,19 +24,23 @@ export type KoreanTaglineCapacityResult = { kind: "skipped" } | {
 
 /** A single demanded batch; neither queue waiting nor HTTP retains a DB TX. */
 export async function translateKoreanTaglinesWithModelCapacity(value: readonly KoreanTaglineTask[], homeSlugs: readonly string[], job: JobLease,
-  valueOptions: { timeoutMs: number; signal?: AbortSignal; roleLease?: RoleLease;
+  valueOptions: { timeoutMs: number; signal?: AbortSignal; roleLease?: RoleLease; requireAdmission?: boolean;
     pendingClaims?: { requestIds: Set<string>; claimBatch: (tasks: readonly KoreanTaglineTask[]) => boolean } }): Promise<KoreanTaglineCapacityResult> {
   let tasks = structuredClone(value);
   // Tick-local scheduling only; durable source/admission/dispatch checks remain below.
   const pendingClaims = valueOptions.pendingClaims;
   const home = structuredClone(homeSlugs), lease = structuredClone(job);
   const options = { timeoutMs: valueOptions.timeoutMs, signal: valueOptions.signal,
+    requireAdmission: valueOptions.requireAdmission === true,
     roleLease: valueOptions.roleLease && structuredClone(valueOptions.roleLease) };
   const env = Object.fromEntries(["ROLE_LEASE_ROLE", "ROLE_LEASE_INSTANCE_ID", "ROLE_LEASE_BOOT_ID", "ROLE_LEASE_RELEASE",
     "ROLE_LEASE_EPOCH", "ROLE_LEASE_BATCH_VERSION", "ROLE_LEASE_BATCH_EPOCH", "ROLE_LEASE_HOST"].map(key => [key, process.env[key]]));
   let items = tasks.map(task => ({ name: displayProjectName(task.name, task.repoUrl), tagline: koreanTaglineSource(task) }));
-  const legacy = async () => ({ kind: "result" as const,
-    result: await translateTaglinesToKorean(items, options.timeoutMs, undefined, options.signal) });
+  const legacy = async () => {
+    // A tick launched with several lanes must never switch them to uncapped HTTP.
+    if (options.requireAdmission) throw new ModelCapacityDeferredError("disabled");
+    return { kind: "result" as const, result: await translateTaglinesToKorean(items, options.timeoutMs, undefined, options.signal) };
+  };
   const provider = productTaglineKoServingProvider(textTaskModel("product-tagline-ko"));
   // 순위(PR B)가 계약을 확인하고 범위를 열었다 — 그 사이 계약이 닫혔으면 이 모델만의 일이라 다음 순위로 넘긴다(옛 게이트웨이 길로 떨어지지 않는다)
   if (!textRouteCallable("product-tagline-ko", textTaskModel("product-tagline-ko"), provider)) throw new ModelCapacityDeferredError("provider_contract_unavailable");

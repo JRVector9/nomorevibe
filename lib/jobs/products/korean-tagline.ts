@@ -178,7 +178,7 @@ async function writeKoreanTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTa
         if (entry.backend === "gpt") {
           const prefer = await pendingTextPoolModel(ranks, pendingRequestIds);
           // 순위 차례로 부른다 — 이 모델만의 까닭(경로 없음·장비 행 없음·계약 닫힘·포화)이면 같은 묶음을 다음 순위로(TextTaskRanks.run)
-          const attempt = await ranks.run(binding => translateKoreanTaglinesWithModelCapacity(entry.batch, homeSlugs, lease, { timeoutMs, signal, pendingClaims })
+          const attempt = await ranks.run(binding => translateKoreanTaglinesWithModelCapacity(entry.batch, homeSlugs, lease, { timeoutMs, signal, pendingClaims, requireAdmission: concurrency > 1 })
             .then(value => ({ value, model: binding.identity })), { prefer });
           if (attempt.kind === "unusable") outcome = { kind: "unusable" };
           else { outcome = attempt.value.value; model = attempt.value.model; }
