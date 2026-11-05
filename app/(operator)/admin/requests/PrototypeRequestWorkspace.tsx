@@ -6,6 +6,8 @@ import { contactLabels } from "@/lib/operations/admin-requests-contract";
 import { formatWait } from "@/lib/domain/products/takedown-view";
 import { formatDetailTime } from "@/lib/format/time";
 import { FeedbackItem } from "@/components/product-detail/FeedbackList";
+import { I18nProvider } from "@/lib/i18n/context";
+import { getDictionary } from "@/lib/i18n/dictionary";
 import { FeedbackReviewForm } from "../feedback/FeedbackReviewForm";
 import { ReactionReviewForm } from "../reactions/ReactionReviewForm";
 import { reactionAdminCsrf } from "../reactions/csrf";
@@ -28,6 +30,9 @@ export async function PrototypeRequestWorkspace({ tab, params, admin, secret }: 
   const query = new URLSearchParams({ tab });
   if (kind) query.set("kind", kind); if (params.state) query.set("state", state); if (q) query.set("q", q);
   const takedown = queues.takedown;
+  const requestDetail = selected ? <RequestDetail key={selected.key} item={selected} admin={admin} secret={secret} /> : null;
+  const selectedDetail = selected?.kind === "feedback" ? <I18nProvider locale="ko"
+    dictionaries={{ detail: await getDictionary("ko", "detail") }} now={new Date().toISOString()}>{requestDetail}</I18nProvider> : requestDetail;
   return <div className="stack">
     {takedown && takedown.pending > 0 && <div className="callout"><div><h3>24시간 처리 약속이 있는 내림 요청을 먼저 확인하세요.</h3><p>일반 문의·소개 수정의 대기 시간과 내림 요청의 약속 기한을 구분합니다.</p></div><span className={`tag ${takedown.overdue ? "red" : "amber"}`}>{takedown.overdue ? `기한 초과 ${takedown.overdue}건` : `내림 요청 ${takedown.pending}건`}</span><Link className="button" prefetch={false} href="/admin/requests?tab=correction&kind=takedown">내림 요청 확인 →</Link></div>}
     {filter.kinds.includes("takedown") && !takedown && <div className="notice amber" role="status">내림 요청의 24시간 기한 집계를 읽지 못했습니다. <Link className="text-button" href="/admin/requests?tab=correction&kind=takedown" prefetch={false}>내림 요청 확인 →</Link></div>}
@@ -38,7 +43,7 @@ export async function PrototypeRequestWorkspace({ tab, params, admin, secret }: 
     </form>
     {queues.failed.length > 0 && <div className="notice amber" role="status">{queues.failed.map(value => names[value]).join(" · ")} 조회 실패 · 이 유형의 현재 상태와 건수는 알 수 없습니다.</div>}
     {tab === "posts" && <div className="notice blue">피드백·메이커 답장의 공개·숨김·복원은 원본 상태에 반영됩니다. 써봤어요는 자동 검사가 보류한 한 줄만 조회합니다.</div>}
-    <div className="grid detail"><RequestFeedList initial={queues} query={query.toString()} selectedKey={selected?.key ?? key} posts={tab === "posts"} /><section className="panel pad sticky-detail" aria-label="선택한 요청">{selected ? <RequestDetail key={selected.key} item={selected} admin={admin} secret={secret} /> : <div className="empty"><b>{selectionFailed ? "선택한 요청을 읽지 못했습니다." : id ? "선택한 요청이 현재 목록에 없습니다." : "요청을 선택하세요."}</b>{selectionFailed ? "새로고침해 다시 확인하세요. 다른 요청의 처리 폼으로 바꾸지 않습니다." : "다른 요청으로 자동 변경하지 않습니다. 목록에서 다시 선택하세요."}</div>}</section></div>
+    <div className="grid detail"><RequestFeedList initial={queues} query={query.toString()} selectedKey={selected?.key ?? key} posts={tab === "posts"} /><section className="panel pad sticky-detail" aria-label="선택한 요청">{selected ? selectedDetail : <div className="empty"><b>{selectionFailed ? "선택한 요청을 읽지 못했습니다." : id ? "선택한 요청이 현재 목록에 없습니다." : "요청을 선택하세요."}</b>{selectionFailed ? "새로고침해 다시 확인하세요. 다른 요청의 처리 폼으로 바꾸지 않습니다." : "다른 요청으로 자동 변경하지 않습니다. 목록에서 다시 선택하세요."}</div>}</section></div>
     {(tab === "open" || tab === "correction") && <details className="panel"><summary>고급 묶음 처리</summary><div className="panel-body"><p className="small muted">계정·보낸이·접수시각으로 묶어서 내림/유지할 때 사용합니다. 선택한 프로젝트 이름과 영향 범위를 확인한 뒤 처리하세요.</p><Link href="/admin/audit?tab=requests" prefetch={false} className="button mt-sm">내림 요청 묶음 처리 열기 →</Link></div></details>}
   </div>;
 }

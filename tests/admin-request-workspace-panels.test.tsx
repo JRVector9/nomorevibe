@@ -19,7 +19,10 @@ vi.mock("@/app/(operator)/admin/requests/RequestForms", () => ({ ContactUpdateFo
 vi.mock("@/app/(operator)/admin/feedback/FeedbackReviewForm", () => ({ FeedbackReviewForm: fake.feedback }));
 vi.mock("@/app/(operator)/admin/reactions/ReactionReviewForm", () => ({ ReactionReviewForm: fake.reaction }));
 vi.mock("@/app/(operator)/admin/requests/PrototypeRequestActions", () => ({ PrototypeTakedownAction: fake.takedown, PrototypeIntroAction: fake.intro }));
-vi.mock("@/components/product-detail/FeedbackList", () => ({ FeedbackItem: () => null }));
+vi.mock("@/components/product-detail/FeedbackList", async () => {
+  const { useTranslations } = await import("@/lib/i18n/context");
+  return { FeedbackItem: () => { useTranslations("detail"); return null; } };
+});
 const { PrototypeRequestWorkspace } = await import("@/app/(operator)/admin/requests/PrototypeRequestWorkspace");
 const admin = { login: "operator", exp: 5000 }, secret = "test-secret", now = new Date("2026-11-04T12:00:00Z");
 const row = (kind: WorkspaceRequest["kind"], patch: object = {}) => ({ key: `${kind}:id`, kind, name: "프로젝트 원본", type: kind, status: "보류", waitHours: 27, at: now.toISOString(), next: "원본 확인", body: "읽은 원문", slug: "product", record: {}, ...patch }) as WorkspaceRequest;
