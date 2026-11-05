@@ -20,7 +20,7 @@ pool 모드 전환만으로 association 없는 기존 slot1 primary/fallback 표
 
 구성원을 삭제하거나 동일 구성원 ID의 연결/모델을 바꾸는 경우는 다르다. 현재 구성원과 더 이상 일치하지 않는 association 표는 기존의 `model_removed`/재검수 경로를 따른다. 이전 표의 스냅샷·dispatch binding·이력은 덮어쓰지 않는다.
 
-pool 발행 관문은 한 slot의 현재 유효 root 또는 허용된 legacy fallback child의 승인 표 하나를 요구한다. root와 child의 후보·1차 판단·trigger·generation·input이 같아야 하고, fallback root는 실제 `resolved/fallback`이어야 한다. 1차와 독립된 실제 승인 표여야 하며 같은 1차 판단에 pending/failed/needs_human이 하나라도 있으면 공개하지 않는다. 반대·보류·입력 갱신·기존 발행 guard는 완화하지 않는다.
+pool 발행 관문은 한 slot의 현재 유효 root 또는 허용된 legacy fallback child의 승인 표 하나를 요구한다. root와 child의 후보·1차 판단·trigger·generation·input이 같아야 하고, fallback root는 실제 `resolved/fallback`이어야 한다. 1차와 독립된 실제 승인 표여야 하며 같은 1차 판단에 pending/failed/needs_human이 하나라도 있으면 공개하지 않는다. 반대·보류·입력 갱신·기존 발행 guard는 완화하지 않는다. 정리 작업의 사전 SQL도 같은 pool root/child membership을 사용하여 정상 완료된 공개분 표를 매 틱 다시 잠그지 않는다.
 
 새 pool 표의 모델 독립성 비교는 저장 당시 실제 canonical metadata와 기존 serving contract의 관측 `responseModel`을 사용한다. `supa`/`auto` 같은 불명확한 별칭만으로는 새로운 독립 표를 추정하지 않는다. 이 추가 조건을 association 없는 기존 fallback 표에 소급 적용하지 않는다.
 

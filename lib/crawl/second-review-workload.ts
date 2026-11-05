@@ -143,9 +143,24 @@ export function secondReviewPoolRootMembershipSql(root: SQL): SQL {
       WHERE a.second_review_id = ${root}.id AND a.task_slot = 1 AND a.config_revision <= ${slot.config.revision}
         AND a.member_id::text = m->>'id' AND a.canonical_model = m->>'canonical'
         AND ${root}.provider = m->>'provider' AND ${sameNameSql(sql`${root}.model`)} = ${sameNameSql(sql`m->>'model'`)})
-    OR (NOT EXISTS (SELECT 1 FROM second_review_workload_assignments a WHERE a.second_review_id = ${root}.id)
+    OR (${Boolean(legacy)} AND NOT EXISTS (SELECT 1 FROM second_review_workload_assignments a WHERE a.second_review_id = ${root}.id)
       AND ${root}.provider IS NOT DISTINCT FROM ${legacy?.provider ?? null}
       AND ${sameNameSql(sql`${root}.model`)} IS NOT DISTINCT FROM ${sameNameSql(sql`${legacy?.identity ?? null}`)}))`;
+}
+/** SQL discovery must match the controller membership; valid completed pool votes are not cleanup work. */
+export function secondReviewPoolMembershipSql(row: SQL): SQL {
+  const slot = secondReviewWorkloadSlots()[0];
+  const primary = slot.legacy.find(candidate => candidate.binding && !candidate.unusable);
+  const fallbacks = slot.legacy.flatMap(candidate => candidate !== primary && candidate.binding
+    ? [{ provider: candidate.binding.provider, model: candidate.binding.identity }] : []);
+  return sql`CASE WHEN ${row}.fallback_for_id IS NULL THEN ${secondReviewPoolRootMembershipSql(row)}
+    ELSE EXISTS (SELECT 1 FROM second_reviews workload_root
+      WHERE workload_root.id = ${row}.fallback_for_id AND workload_root.fallback_for_id IS NULL
+        AND workload_root.candidate_id = ${row}.candidate_id AND workload_root.generation_key = ${row}.generation_key
+        AND workload_root.input_hash = ${row}.input_hash AND workload_root.status = 'resolved' AND workload_root.resolution = 'fallback'
+        AND ${secondReviewPoolRootMembershipSql(sql`workload_root`)}
+        AND EXISTS (SELECT 1 FROM jsonb_array_elements(${JSON.stringify(fallbacks)}::jsonb) f
+          WHERE f->>'provider' = ${row}.provider AND ${sameNameSql(sql`f->>'model'`)} = ${sameNameSql(sql`${row}.model`)})) END`;
 }
 export function secondReviewPoolRootExistsSql(candidateId: SQL, firstAttemptId: SQL, inputHash: SQL, trigger?: string): SQL {
   return sql`EXISTS (SELECT 1 FROM second_reviews wr

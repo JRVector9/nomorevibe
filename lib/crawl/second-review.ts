@@ -28,7 +28,7 @@ import { canonicalReviewModel, sameReviewModel, sameReviewIndependence, reviewIn
 import { secondReviewFallbacks, secondReviewFallbacksFor, secondReviewVoters, withoutTakenModels } from "./second-review-voters";
 import { requireReviewTaskRanks } from "./review-task-ranks";
 import { insertSecondReviewWorkloadRows, secondReviewAssignmentMap, secondReviewHasWorkloadPool,
-  secondReviewPoolRequiredSql, secondReviewPoolRootExistsSql, secondReviewPoolRootMembershipSql,
+  secondReviewPoolRequiredSql, secondReviewPoolRootExistsSql, secondReviewPoolRootMembershipSql, secondReviewPoolMembershipSql,
   secondReviewWorkloadMembership, secondReviewPoolHasIndependentMember, secondReviewVoteIndependent,
   secondReviewAssignedVoteCanonical, secondReviewFirstCanonical } from "./second-review-workload";
 import { firstReviewers, firstReviewIdentitySql, hasFirstReviewer } from "./first-reviewers";
@@ -662,7 +662,7 @@ export async function closeSettledSecondReviews(now: Date | undefined, lease: Jo
   // Preserve each cleanup's SQL eligibility before selecting work. Normal human
   // waits and completed published history must never occupy the cleanup prefix.
   const removedPredicate = and(inArray(secondReviews.status, ["pending", "failed", "agreed", "needs_human"]),
-      sql`not exists(select 1 from jsonb_array_elements(case when ${secondReviews.fallbackForId} is null then ${JSON.stringify(voters)}::jsonb else ${JSON.stringify(fallbacks)}::jsonb end) v
+      secondReviewHasWorkloadPool() ? sql`NOT (${secondReviewPoolMembershipSql(sql`second_reviews`)})` : sql`not exists(select 1 from jsonb_array_elements(case when ${secondReviews.fallbackForId} is null then ${JSON.stringify(voters)}::jsonb else ${JSON.stringify(fallbacks)}::jsonb end) v
         where v->>'provider'=coalesce(${secondReviews.provider}, 'claude-cli')
           and regexp_replace(regexp_replace(lower(trim(v->>'model')), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i')
             = regexp_replace(regexp_replace(lower(trim(${secondReviews.model})), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i')
@@ -677,7 +677,8 @@ export async function closeSettledSecondReviews(now: Date | undefined, lease: Jo
   const orphanedPredicate = and(eq(secondReviews.status, "resolved"), eq(secondReviews.resolution, "fallback"), isNull(secondReviews.fallbackForId),
       sql`exists(select 1 from second_reviews child where child.fallback_for_id=${secondReviews.id} and child.resolution='model_removed')`,
       sql`not exists(select 1 from second_reviews child where child.fallback_for_id=${secondReviews.id} and child.status in ('pending','failed','agreed','needs_human'))`,
-      sql`exists(select 1 from jsonb_array_elements(${JSON.stringify(voters)}::jsonb) v
+      secondReviewHasWorkloadPool() ? secondReviewPoolRootMembershipSql(sql`second_reviews`)
+        : sql`exists(select 1 from jsonb_array_elements(${JSON.stringify(voters)}::jsonb) v
         where v->>'provider'=${secondReviews.provider}
           and regexp_replace(regexp_replace(lower(trim(v->>'model')), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i')
             = regexp_replace(regexp_replace(lower(trim(${secondReviews.model})), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i'))`);
