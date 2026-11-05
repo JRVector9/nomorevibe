@@ -2,6 +2,7 @@ import "server-only";
 import { logger } from "@/lib/observability/logger";
 import { aiTaskSlotRevision, listAiConnections, listAiTaskRows } from "./admin-ai-tasks-repository";
 import { buildFlowRankEditor, type FlowRankEditor } from "./flow-rank-editor";
+import { readAiTaskExecutionAdminViews } from "./admin-ai-task-execution";
 
 /**
  * 전체 흐름 「바꾸기」 서랍의 읽기 — 읽기만 한다. 「작업 ↔ AI 모델」 화면과 같은 목록(listAiConnections·listAiTaskRows)과 같은 줄 판(aiTaskSlotRevision)이다.
@@ -10,8 +11,8 @@ import { buildFlowRankEditor, type FlowRankEditor } from "./flow-rank-editor";
  */
 export async function readFlowRankEditor(): Promise<FlowRankEditor | null> {
   try {
-    const [connections, rows] = await Promise.all([listAiConnections(), listAiTaskRows()]);
-    return buildFlowRankEditor(connections, rows, aiTaskSlotRevision);
+    const [connections, rows, executions] = await Promise.all([listAiConnections(), listAiTaskRows(), readAiTaskExecutionAdminViews()]);
+    return buildFlowRankEditor(connections, rows, aiTaskSlotRevision, executions);
   } catch (error) {
     logger.warn("flow.rank_editor_unavailable", { errorName: error instanceof Error ? error.name : "unknown" });
     return null;

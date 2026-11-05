@@ -223,6 +223,8 @@ function auditSummary(row: AdminLogRow): string {
   const detail = (row.detail ?? {}) as Record<string, unknown>;
   if (!row.ok) return row.error ?? "거절";
   switch (row.action) {
+    case "ai-task-execution-save": return detail.mode === "workload_pool"
+      ? `작업 분산 · 모델 ${Array.isArray(detail.after) ? detail.after.length : 0}개` : "기존 대체 실행으로 전환";
     case AI_CONNECTION_SAVE_AUDIT_ACTION: return `${detail.created ? "만듦" : "고침"} · ${String((detail.after as { label?: unknown } | undefined)?.label ?? "")}${detail.keyChanged ? " · 키 바꿈" : ""}`;
     case AI_CONNECTION_MODELS_AUDIT_ACTION: return detail.error ? `목록 읽기 실패(${String(detail.error)})` : `모델 ${String(detail.count ?? 0)}개 읽음`;
     case AI_CONNECTION_DELETE_AUDIT_ACTION: return `지움 · ${String(detail.label ?? "")}`;

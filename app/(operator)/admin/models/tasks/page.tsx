@@ -6,6 +6,7 @@ import { formatListTime } from "@/lib/format/time";
 import { AI_CLI_TOOL_LABELS } from "@/lib/llm/ai-tasks";
 import { AI_TASK_IMPORT_CONFIRM, aiModelsErrorText, aiRankPendingText, aiTaskIssueMessage, aiUnreadConnections } from "@/lib/operations/admin-ai-tasks";
 import { aiTaskTargetLabel, previewAiTaskImport, readAiTasksAdminView } from "@/lib/operations/admin-ai-tasks-repository";
+import { readAiTaskExecutionAdminViews } from "@/lib/operations/admin-ai-task-execution";
 import { PageStamp } from "../../components/PageStamp";
 import { DeleteConnectionButton, RereadModelsButton } from "./ConnectionButtons";
 import { ConnectionForm } from "./ConnectionForm";
@@ -21,7 +22,7 @@ const one = (value: string | string[] | undefined) => typeof value === "string" 
 const ERROR_LABELS: Record<string, string> = { connections: "AI 연결", rows: "작업 ↔ 모델 순위", readiness: "계약·정책·장비", policy: "용량 정책", current: "지금 실제로 쓰는 모델",
   audit: "최근 기록", runtime: "실행 쪽 순위 사정" };
 const ACTION_LABELS: Record<string, string> = { "ai-connection-save": "연결 저장", "ai-connection-models-read": "모델 목록 읽기", "ai-connection-delete": "연결 지움",
-  "ai-task-models-save": "순위 저장", "ai-task-models-import": "가져오기", "ai-connection-key-fill": "키 자동 채움" };
+  "ai-task-models-save": "순위 저장", "ai-task-execution-save": "실행 설정 저장", "ai-task-models-import": "가져오기", "ai-connection-key-fill": "키 자동 채움" };
 
 const FOLD = "min-w-0 rounded-xl border border-line bg-bg-card scroll-mt-6";
 const SUMMARY = "flex cursor-pointer flex-wrap items-baseline gap-x-3 gap-y-1 px-4 py-2.5 text-[15px] font-semibold";
@@ -35,17 +36,21 @@ export default async function AiTasksPage({ searchParams }: Props) {
   if (!await currentAdmin()) redirect("/admin/login");
   const params = await searchParams;
   const now = new Date();
-  const [view, preview] = await Promise.all([readAiTasksAdminView(), one(params.import) === "plan" ? previewAiTaskImport() : Promise.resolve(null)]);
+  const [view, preview, executionRead] = await Promise.all([readAiTasksAdminView(), one(params.import) === "plan" ? previewAiTaskImport() : Promise.resolve(null),
+    readAiTaskExecutionAdminViews().then(executions => ({ executions, failed: false }), () => ({ executions: [], failed: true }))]);
   const editId = one(params.edit), editing = editId ? view.connections.find(row => row.id === editId) ?? null : null;
   const visibleText = (text: string) => modelPickerVisibleText(text, view.connections);
-  const used = (id: string) => view.rows.filter(row => row.connectionId === id).length;
+  const used = (id: string) => view.rows.filter(row => row.connectionId === id).length
+    + executionRead.executions.reduce((count, execution) => count + execution.members.filter(member => member.connectionId === id).length, 0);
   const lines: TaskRankLine[] = view.slots.map(slot => ({ task: slot.task.id, slot: slot.slot, label: slot.label, group: slot.task.group, kind: slot.task.kind,
     description: slot.task.description, revision: slot.revision, rows: [...slot.rows], options: [...slot.options],
     accepts: [slot.task.api ? "API 주소" : "", ...slot.task.cliTools.map(tool => AI_CLI_TOOL_LABELS[tool])].filter(Boolean).join(" · "),
     current: slot.current ? { labels: slot.currentLabels.map(visibleText), source: slot.current.source, notes: slot.current.notes.map(visibleText), error: slot.current.error, skip: slot.current.skip } : null,
     sameAsCurrent: slot.sameAsCurrent, readiness: slot.readiness.map(row => ({ rank: row.rank, blocking: row.blocking.map(visibleText), warnings: row.warnings.map(visibleText),
       pending: aiRankPendingText(row).map(visibleText) })), live: slot.live,
-    runtime: slot.runtime ? { ...slot.runtime, at: formatListTime(slot.runtime.at, now), served: [...slot.runtime.served], unusable: [...slot.runtime.unusable] } : null }));
+    runtime: slot.runtime ? { ...slot.runtime, observedAt: slot.runtime.at,
+      fresh: now.getTime() >= Date.parse(slot.runtime.at) && now.getTime() - Date.parse(slot.runtime.at) <= 30 * 60_000,
+      at: formatListTime(slot.runtime.at, now), served: [...slot.runtime.served], unusable: [...slot.runtime.unusable] } : null }));
   const errors = Object.entries(view.errors);
   const unread = aiUnreadConnections(view.connections, view.keyConflicts);
   return <main className="mx-auto grid max-w-7xl gap-6 p-4">
@@ -53,15 +58,16 @@ export default async function AiTasksPage({ searchParams }: Props) {
     <header className="grid gap-1">
       <p className="text-[13px] text-fg-3"><Link href="/admin/models">← 모델 운영 현황</Link></p>
       <h1 className="text-[22px] font-semibold">작업 ↔ AI 모델</h1>
-      <p className="text-[13px] text-fg-3">작업마다 1·2·3순위 모델을 고르고 그 줄의 「저장」을 누릅니다. 1순위를 쓸 수 없으면 2순위, 그다음 3순위로 넘어갑니다.
-        드롭다운에는 서버마다 그 서버가 지금 서비스하는 모델만 나옵니다.</p>
+      <p className="text-[13px] text-fg-3">대체 실행은 1·2·3순위를 사용합니다. 지원하는 작업은 「실행 방식」에서 최대 4개 모델에 서로 다른 업무를 분산하도록 바꿀 수 있습니다.
+        드롭다운에는 등록된 연결의 모델이 나옵니다.</p>
+      {executionRead.failed && <p role="alert" className="text-[13px] text-red-600">실행 방식을 읽지 못했습니다. 현재 방식을 확인할 때까지 작업 설정을 저장할 수 없습니다.</p>}
       {errors.map(([key, error]) => <p key={key} role="alert" className="text-[13px] text-red-600">{ERROR_LABELS[key] ?? key}을(를) 읽지 못했습니다({aiTaskIssueMessage(error)}).</p>)}
       {unread.length > 0 && <p role="status" data-unread={unread.length} className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[13px] text-amber-900">
         모델 목록을 못 읽은 서버 — {unread.map((row, index) => <span key={row.id}>{index > 0 && ", "}<Link href={`/admin/models/tasks?edit=${row.id}#connection-form`} prefetch={false}
           className="font-semibold underline">{modelPickerConnectionLabel(view.connections.find(connection => connection.id === row.id)!)}</Link>({row.reason})</span>)}. 이 서버의 모델은 드롭다운에 없습니다 — 이름을 눌러 키를 넣거나 「다시 읽기」를 누르세요.</p>}
     </header>
     <section id="tasks" className="grid gap-3 scroll-mt-6" aria-label="작업 ↔ 모델">
-      <TaskRanksBoard lines={lines} connections={[...view.connections]} rows={[...view.rows]} />
+      <TaskRanksBoard lines={lines} connections={[...view.connections]} rows={[...view.rows]} executions={executionRead.executions} readOnly={executionRead.failed} />
     </section>
     <details id="connections" className={FOLD} open={!!editId || view.connections.length === 0}>
       <summary className={SUMMARY}><h2>AI 연결 관리</h2><span className="text-[13px] font-normal text-fg-3">서버 {view.connections.length}개
@@ -75,7 +81,7 @@ export default async function AiTasksPage({ searchParams }: Props) {
       {view.connections.length === 0 ? <p className="text-[13px] text-fg-3">아직 연결이 없습니다. 아래에서 만들거나 「지금 설정 가져오기」로 오늘 쓰는 서버를 옮기세요.</p>
         : <div className="overflow-x-auto"><table className="w-full min-w-[980px] text-left text-[13px]"><thead><tr className="border-b border-line">
           <th className="py-2 pr-3">이름</th><th className="py-2 pr-3">주소 · 도구</th><th className="py-2 pr-3">모델</th><th className="py-2 pr-3">장비 · 칸</th>
-          <th className="py-2 pr-3">상태</th><th className="py-2 pr-3">쓰는 순위</th><th className="py-2" /></tr></thead>
+          <th className="py-2 pr-3">상태</th><th className="py-2 pr-3">저장된 순위·분산 모델</th><th className="py-2" /></tr></thead>
           <tbody>{view.connections.map(row => <tr key={row.id} className="border-b border-line align-top" data-connection={row.id}>
             <td className="py-2 pr-3 font-semibold">{modelPickerConnectionLabel(row)}{row.note && <div className="font-normal text-fg-3">{row.note}</div>}</td>
             <td className="py-2 pr-3">{row.kind === "api" ? <><code className="break-all">{row.baseUrl}</code><div className="text-fg-3">{row.hasKey ? "키 저장됨" : "키 없음"}
@@ -97,7 +103,7 @@ export default async function AiTasksPage({ searchParams }: Props) {
             <td className="py-2"><div className="flex flex-col items-start gap-1">
               <Link href={`/admin/models/tasks?edit=${row.id}#connection-form`} prefetch={false} className="font-semibold text-accent-ink underline">고치기</Link>
               {row.kind === "api" && <RereadModelsButton id={row.id} />}
-              {used(row.id) === 0 && <DeleteConnectionButton id={row.id} label={row.label} version={row.version} />}
+              {!executionRead.failed && used(row.id) === 0 && <DeleteConnectionButton id={row.id} label={row.label} version={row.version} />}
             </div></td>
           </tr>)}</tbody></table></div>}
       <div id="connection-form" className="grid gap-2 scroll-mt-6">
@@ -120,7 +126,7 @@ export default async function AiTasksPage({ searchParams }: Props) {
           <tbody>{view.audit.map(row => <tr key={row.id} className="border-b border-line align-top">
             <td className="py-2 pr-3 whitespace-nowrap">{formatListTime(row.at, now)}</td><td className="py-2 pr-3">{row.actor}</td>
             <td className="py-2 pr-3">{ACTION_LABELS[row.action] ?? row.action}</td>
-            <td className="py-2 pr-3">{row.action === "ai-task-models-save" ? aiTaskTargetLabel(row.target) : row.target}</td>
+            <td className="py-2 pr-3">{row.action === "ai-task-models-save" || row.action === "ai-task-execution-save" ? aiTaskTargetLabel(row.target) : row.target}</td>
             <td className={`py-2 pr-3 ${row.ok ? "" : "text-red-600"}`}>{row.summary}</td>
           </tr>)}</tbody></table></div>}
       <Link href="/admin/activity" prefetch={false} className="text-[13px] font-semibold text-accent-ink">작업 로그에서 전체 보기 →</Link>
