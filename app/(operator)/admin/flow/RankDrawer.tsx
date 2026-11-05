@@ -53,7 +53,7 @@ function LineEditor({ editor, line, value, onChange, warnings, disabled }: {
       </header>
       <p className="fr-now"><span className="fr-k">지금</span> {rankChainText(editor, line.saved)}</p>
       {line.lock && <p className="fr-lock" role="note">{line.lock}</p>}
-      <RankSelects<AiRankChoice> stage={{ id: `flow-${line.key}`, label: line.label, slots: 3 }} options={line.options} value={value} onChange={onChange}
+      <RankSelects<AiRankChoice> stage={{ id: `flow-${line.key}`, label: line.label, slots: 3 }} options={line.options} connections={editor.connections} value={value} onChange={onChange}
         slotNames={AI_RANK_SLOT_NAMES} disabled={disabled || !!line.lock}
         showProvider={false} note={null} blocked={(option, index, slots) => flowOptionBlocked(editor, line, index, option, slots)}
         validate={(slots) => changed ? flowRankIssues(editor, line, slots) : []} />

@@ -87,7 +87,7 @@ function TaskRankLineForm({ line, connections, rows, readOnly }: { line: TaskRan
       <span className="text-[14px] font-semibold" title={line.description}>{line.label}</span>
       <span className={TONE[status.tone]} data-status={status.tone}>{status.text}</span>
     </div>
-    <RankSelects<AiRankChoice> stage={{ id: `${line.task}-${line.slot}`, label: line.label, slots: 3 }} options={line.options} value={value} onChange={setValue}
+    <RankSelects<AiRankChoice> stage={{ id: `${line.task}-${line.slot}`, label: line.label, slots: 3 }} options={line.options} connections={connections} value={value} onChange={setValue}
       slotNames={AI_RANK_SLOT_NAMES} disabled={saving || readOnly} showProvider={false} compact note={null}
       blocked={(option, index, slots) => aiRankOptionBlocked(task, line.slot, index, option, slots, rows)}
       validate={slots => validateAiTaskRanks(line.task, line.slot, slots, { connections, rows })} />
