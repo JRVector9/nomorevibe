@@ -86,7 +86,7 @@ export function getFeedback(id: string, viewer: { userId?: number; admin?: boole
   });
 }
 
-export type FeedbackAdminFilter = { state?: FeedbackReviewState | "all"; q?: string; cursor?: string; limit?: number };
+export type FeedbackAdminFilter = { state?: FeedbackReviewState | "all"; q?: string; cursor?: string; limit?: number; id?: string };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function feedbackCursor(value?: string): { at: string; id: string } | null {
@@ -106,7 +106,7 @@ export function feedbackAdminQueue(input: FeedbackAdminFilter = {}): Promise<{ c
   const state = ["accepted", "held", "rejected", "all"].includes(input.state ?? "") ? input.state! : "held";
   const query = input.q?.trim().slice(0, 120);
   const pattern = query ? `%${query.replace(/[\\%_]/g, "\\$&")}%` : null;
-  const predicate = and(state === "all" ? undefined : eq(productFeedback.reviewState, state), pattern ? or(
+  const predicate = and(state === "all" ? undefined : eq(productFeedback.reviewState, state), input.id ? eq(productFeedback.id, input.id) : undefined, pattern ? or(
     ilike(products.slug, pattern), ilike(products.name, pattern), ilike(productFeedback.title, pattern),
     sql`${productFeedback.id}::text ilike ${pattern}`,
   ) : undefined);

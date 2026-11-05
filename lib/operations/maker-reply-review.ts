@@ -11,8 +11,8 @@ import { adminAuditRow } from "./admin-log";
 import { AdminRequestError, assertAdminActor, parseAdminRequest, replyReviewInput, type reviewStates } from "./admin-requests-contract";
 
 type ReviewState = typeof reviewStates[number];
-export async function makerReplyQueue(options: { state?: ReviewState | "all"; offset?: number; limit?: number } = {}) {
-  const where = options.state === "all" ? undefined : eq(makerReplies.reviewState, options.state ?? "held");
+export async function makerReplyQueue(options: { state?: ReviewState | "all"; offset?: number; limit?: number; id?: string } = {}) {
+  const where = and(options.state === "all" ? undefined : eq(makerReplies.reviewState, options.state ?? "held"), options.id ? eq(makerReplies.id, options.id) : undefined);
   const offset = Math.max(0, Math.min(100000, Math.trunc(options.offset ?? 0)));
   const limit = Math.max(1, Math.min(50, Math.trunc(options.limit ?? 25)));
   return onPrimary(async () => {

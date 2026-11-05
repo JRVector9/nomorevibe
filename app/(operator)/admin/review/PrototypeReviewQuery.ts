@@ -15,7 +15,7 @@ export function prototypeReviewFilter(params: Record<string, string | string[] |
     ai: (PROTOTYPE_AI_FILTERS.some(([key]) => key === one(params.ai)) ? one(params.ai) : "") as ReviewAiDecision | "",
     second: (SECOND_FILTER_KEYS.includes(one(params.second) as SecondFilter) ? one(params.second) : "") as SecondFilter | "",
     q: one(params.q).trim().slice(0, 100), updated: (UPDATED_WINDOWS.some(([key]) => key === one(params.updated)) ? one(params.updated) : "") as UpdatedWindow,
-    sort: (REVIEW_SORTS.includes(one(params.sort) as ReviewSort) ? one(params.sort) : "wait") as ReviewSort,
+    sort: (params.sort === undefined ? "wait_short" : REVIEW_SORTS.includes(one(params.sort) as ReviewSort) ? one(params.sort) : "wait_short") as ReviewSort,
     rawState: one(params.state),
   };
 }

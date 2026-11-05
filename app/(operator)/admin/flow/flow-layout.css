@@ -1,0 +1,175 @@
+/* The project conveyor stays in a single, aligned row; only this region scrolls. */
+.admin-prototype .flow-workspace {
+  min-width: 0;
+}
+.admin-prototype .flow-workspace > * {
+  min-width: 0;
+}
+.admin-prototype .flow-workspace .flow-conveyor-scroll {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-gutter: stable;
+}
+.admin-prototype .flow-workspace .flow-phases,
+.admin-prototype .flow-workspace .flow-grid {
+  display: grid;
+  grid-template-columns: repeat(9, minmax(0, 1fr));
+  min-width: 1332px;
+}
+.admin-prototype .flow-workspace .flow-grid .flow-card:last-child {
+  grid-column: auto;
+}
+.admin-prototype .flow-workspace .flow-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  text-align: left;
+}
+.admin-prototype .flow-workspace .flow-card .flow-step {
+  min-height: 1.5em;
+  line-height: 1.5;
+}
+.admin-prototype .flow-workspace .flow-card .flow-name {
+  min-height: 1.5em;
+  line-height: 1.5;
+}
+.admin-prototype .flow-workspace .flow-card .flow-value {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  min-height: 58px;
+}
+.admin-prototype .flow-workspace .flow-number {
+  white-space: nowrap;
+}
+.admin-prototype .flow-workspace .flow-card .flow-value small {
+  line-height: 1.5;
+}
+.admin-prototype .flow-workspace .flow-card .flow-state {
+  min-height: 3em;
+  line-height: 1.5;
+}
+.admin-prototype .flow-workspace .flow-trend {
+  display: flex;
+  align-items: center;
+  min-height: 24px;
+}
+.admin-prototype .flow-workspace .flow-trend .spark {
+  display: block;
+  margin: 0;
+}
+.admin-prototype .flow-workspace .flow-card .flow-rate {
+  min-height: 3em;
+  line-height: 1.5;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.admin-prototype .flow-workspace .flow-card .flow-model {
+  flex: 1;
+  min-height: 3.8em;
+  line-height: 1.5;
+}
+
+/* Separate the selected stage's outcome, explanation, ownership and controls. */
+.admin-prototype .flow-workspace .stage-detail {
+  align-items: start;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 290px);
+  gap: 20px;
+}
+.admin-prototype .flow-workspace .stage-detail-main {
+  min-width: 0;
+}
+.admin-prototype .flow-workspace .detail-summary {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  padding: 0;
+  border: 0;
+}
+.admin-prototype .flow-workspace .detail-summary .mini-stat {
+  min-width: 0;
+  padding: 12px 13px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+.admin-prototype .flow-workspace .detail-summary .mini-stat b {
+  margin: 7px 0 5px;
+  line-height: 1.3;
+}
+.admin-prototype .flow-workspace .detail-summary .mini-stat small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.admin-prototype .flow-workspace .cause {
+  margin-top: 14px;
+}
+.admin-prototype .flow-workspace .stage-context {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+.admin-prototype .flow-workspace .stage-context > section {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.admin-prototype .flow-workspace .stage-context h4 {
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+.admin-prototype .flow-workspace .stage-context .facts {
+  grid-template-columns: 90px minmax(0, 1fr);
+  align-items: baseline;
+  gap: 12px 10px;
+  margin-top: 12px;
+  line-height: 1.7;
+}
+.admin-prototype .flow-workspace .stage-context .facts dd {
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+.admin-prototype .flow-workspace .stage-detail-links {
+  gap: 8px;
+  padding-top: 4px;
+}
+.admin-prototype .flow-workspace .control-box {
+  align-self: start;
+  min-width: 0;
+}
+.admin-prototype .flow-workspace .control-box .button {
+  white-space: normal;
+  line-height: 1.5;
+}
+.admin-prototype .flow-workspace .control-box .scope {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+@media (max-width: 1200px) {
+  .admin-prototype .flow-workspace .stage-detail {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .admin-prototype .flow-workspace .control-box {
+    width: 100%;
+  }
+}
+@media (max-width: 760px) {
+  .admin-prototype .flow-workspace .detail-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .admin-prototype .flow-workspace .stage-context {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .admin-prototype .flow-workspace .stage-context .facts {
+    grid-template-columns: 82px minmax(0, 1fr);
+  }
+}

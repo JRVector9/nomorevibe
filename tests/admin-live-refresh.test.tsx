@@ -9,7 +9,7 @@ const router = vi.hoisted(() => ({ refresh: vi.fn(), pathname: "/admin/review", 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: router.refresh }), usePathname: () => router.pathname,
   useSearchParams: () => new URLSearchParams(router.search) }));
 
-import { BUSY_LIMIT_MS, clockLabel, createNavigationGuard, createRefreshScheduler, freshCookie, hasUnsaved, isTextEntry, LIVE_STORAGE_KEY, mergeBadges, pauseReason,
+import { BUSY_LIMIT_MS, clockLabel, createNavigationGuard, createRefreshScheduler, freshCookie, hasPagedRows, hasUnsaved, isTextEntry, LIVE_STORAGE_KEY, mergeBadges, pauseReason,
   readLivePreference, refreshPolicy, UNSAVED_SELECTOR, writeLivePreference } from "@/app/(operator)/admin/live-refresh";
 import { LiveBar } from "@/app/(operator)/admin/components/LiveBar";
 import { AdminShell } from "@/app/(operator)/admin/AdminShell";
@@ -100,6 +100,15 @@ describe("화면마다 다시 읽는 규칙", () => {
 
 describe("자동 갱신의 차례(createRefreshScheduler)", () => {
   const calm = { visible: true, editing: false, unsaved: false, idleMs: 15_000 };
+  it("추가로 읽은 목록은 자동 갱신으로 초기화하지 않고 수동 갱신을 허용한다", () => {
+    const scheduler = createRefreshScheduler(() => 60_000);
+    expect(hasPagedRows({ querySelector: (selector: string) => selector === '[data-admin-scroll-active="true"]' ? {} : null } as never)).toBe(true);
+    expect(hasPagedRows(null)).toBe(false);
+    expect(scheduler.tick({ ...calm, paging: true })).toEqual({ refresh: false, paused: "paging" });
+    expect(scheduler.now()).toBe(true);
+    scheduler.settled();
+    expect(scheduler.tick(calm)).toEqual({ refresh: true, paused: null });
+  });
   it("열린 확인 창·고친 값이 있으면 읽지 않고 까닭을 돌려준다, 닫히면 다시 읽는다", () => {
     let clock = 1_000_000;
     const scheduler = createRefreshScheduler(() => clock);

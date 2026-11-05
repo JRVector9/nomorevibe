@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { adminRouteKey, clockLabel, createRefreshScheduler, freshCookie, hasPendingContent, hasUnsaved, isTextEntry, PAUSE_LABELS, pauseReason, readLivePreference, refreshPolicy,
+import { adminRouteKey, clockLabel, createRefreshScheduler, freshCookie, hasPagedRows, hasPendingContent, hasUnsaved, isTextEntry, PAUSE_LABELS, pauseReason, readLivePreference, refreshPolicy,
   writeLivePreference, type PauseReason } from "../live-refresh";
 import { renderedAtSnapshot, subscribeRenderedAt } from "./render-clock";
 import { StatusDot } from "./StatusDot";
@@ -124,6 +124,7 @@ export function LiveBar({ fallbackAt, appearance, navigationPending }: {
   useEffect(() => {
     if (!live) return;
     const state = (idleMs: number) => ({ visible: document.visibilityState === "visible", editing: isTextEntry(document.activeElement),
+      paging: hasPagedRows(document.getElementById("admin-content")),
       unsaved: hasUnsaved(document.getElementById("admin-content")) || [...touched.current].some((form) => form.isConnected), idleMs });
     const refresh = () => { autoBusy.current = true; startAuto(() => { router.refresh(); }); };
     // History can commit a cached page. Wait until its route and loading boundary settle before refreshing it once.

@@ -17,8 +17,8 @@ export type HeldReactionComment = {
   id: string; slug: string; productName: string; comment: string; reason: string | null; signedIn: boolean; createdAt: string; updatedAt: string;
 };
 
-export async function heldReactionComments(limit = 100): Promise<{ count: number; items: HeldReactionComment[] }> {
-  const held = eq(productReactions.commentState, "held");
+export async function heldReactionComments(limit = 100, selected?: { id: string }): Promise<{ count: number; items: HeldReactionComment[] }> {
+  const held = and(eq(productReactions.commentState, "held"), selected ? eq(productReactions.id, selected.id) : undefined);
   return onPrimary(async () => {
     const [rows, [total]] = await Promise.all([
       db.select({ reaction: productReactions, slug: products.slug, name: products.name }).from(productReactions)

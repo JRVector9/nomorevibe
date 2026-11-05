@@ -1,5 +1,5 @@
 import { sameUnderlyingModel } from "./review-model-identity";
-import { and, asc, desc, eq, gt, inArray, not, notInArray, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, not, notInArray, or, sql, getTableColumns, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '@/lib/db';
 import { crawlTaglines, type CandidateState, type CrawlDocument, type CrawlTagline, type DecisionReason } from '@/lib/db/schema';
@@ -23,7 +23,9 @@ import { adminAuditRow } from '@/lib/operations/admin-log';
 import { lockPipelineInputStages } from './pipeline-stage-context';
 import { applyAdminEvidenceRefreshCompletion, lockAdminEvidenceRefreshCompletion } from './evidence-refresh-completion';
 import { kstDayStart, type FreshWindows } from '@/lib/operations/windows';
-import { splitTiebreakApprovedFirst, splitTiebreakVerdicts, type SplitTiebreakView } from './gate-split-tiebreak-read';
+import { splitTiebreakApproved, splitTiebreakApprovedFirst, splitTiebreakVerdicts, type SplitTiebreakView } from './gate-split-tiebreak-read';
+
+import { reviewCursorKind, reviewCursorPredicate, type ReviewCursor } from "./admin-review-cursor";
 
 export const MAX_EVIDENCE_REFRESHES = 2;
 export const EVIDENCE_REFRESH_COOLDOWN_MS = 15 * 60_000;
@@ -542,6 +544,8 @@ function orderBy(sort: ReviewSort): SQL {
 
 export async function listAdminReviewEntries(settings: CrawlSettings, options: {
   state?: AdminReviewFilterState; after?: number; offset?: number; limit?: number;
+  /** Browser scroll uses the complete sort boundary; legacy after(id) remains for exports. */
+  cursor?: ReviewCursor;
   /** 갈래로 걸러 볼 때. 계산으로 얻은 값이라 SQL로 거를 수 없어 id 를 받는다 */
   ids?: number[];
   /** 이름(페이지 제목)·레포·주소에 이 글자가 들어간 것만 */
@@ -558,7 +562,7 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: {
 } = {}) {
   const limit = Math.max(1, Math.min(options.limit ?? 50, 50));
   const states = adminReviewCandidateStates(options.state);
-  if (options.ids?.length === 0) return { entries: [] as AdminReviewEntry[], nextAfter: null, total: 0, hiddenByAge: 0 };
+  if (options.ids?.length === 0) return { entries: [] as AdminReviewEntry[], nextAfter: null, nextCursor: null as ReviewCursor | null, total: 0, hiddenByAge: 0 };
   const term = options.search?.trim().slice(0, 100);
   // ILIKE 의 % _ \ 는 글자 그대로 찾는다
   const like = term ? `%${term.replace(/[\\%_]/g, (char) => `\\${char}`)}%` : null;
@@ -574,17 +578,23 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: {
     Number.isSafeInteger(options.minStars) && options.minStars! >= 0
       ? sql`${repoNumber('stargazers_count')} >= ${options.minStars}` : undefined);
   const where = stale ? and(base, not(stale)) : base;
+  const sort = options.sort ?? "";
+  const priority = !options.after && (states as readonly string[]).includes('needs_review') ? splitTiebreakApproved : sql<boolean>`false`;
+  const cursorValue = sort === "stars" ? repoNumber("stargazers_count") : sort === "push" || sort === "push_old" ? pushedAt
+    : sort === "wait" || sort === "wait_short" ? waitingSince : sql`${crawlCandidates.id}`;
+  const cursorWhere = options.cursor ? reviewCursorPredicate(options.cursor, { id: sql`${crawlCandidates.id}`, priority, value: cursorValue,
+    kind: reviewCursorKind(sort), descending: sort === "stars" || sort === "push" || sort === "wait_short" }) : undefined;
   const [candidates, [{ total }], [{ hidden: hiddenByAge }]] = await Promise.all([
     // Qwen-v2 도 승인한 갈림 보류가 어떤 정렬보다 먼저다 — 사람이 확인만 하면 되는 것(gate-split-tiebreak-read.ts).
     // 보류가 든 목록에서만 — 거부·발행 목록은 늘 거짓이라 색인 순서를 그대로 쓴다. after(id 다음부터 이어 읽기)는 id 순이어야 이어진다
-    db.select().from(crawlCandidates).where(where)
+    db.select({ ...getTableColumns(crawlCandidates), _cursorPriority: priority, _cursorValue: sql<string | null>`${cursorValue}::text` }).from(crawlCandidates).where(and(where, cursorWhere))
       .orderBy(...(options.after || !(states as readonly string[]).includes('needs_review') ? [] : [splitTiebreakApprovedFirst]), orderBy(options.sort ?? ""))
       .limit(limit + 1).offset(Math.max(0, options.offset ?? 0)),
     db.select({ total: sql<number>`count(*)::int` }).from(crawlCandidates).where(where),
     stale ? db.select({ hidden: sql<number>`count(*)::int` }).from(crawlCandidates).where(and(base, stale)) : Promise.resolve([{ hidden: 0 }]),
   ]);
   const page = candidates.slice(0, limit);
-  if (!page.length) return { entries: [] as AdminReviewEntry[], nextAfter: null, total, hiddenByAge };
+  if (!page.length) return { entries: [] as AdminReviewEntry[], nextAfter: null, nextCursor: null as ReviewCursor | null, total, hiddenByAge };
   const ids = page.map(row => row.id), repos = page.map(row => row.repo);
   const [documents, scans, latest, latestAutomatic, latestSuccessfulAutomatic] = await Promise.all([
     db.select().from(crawlDocuments).where(inArray(crawlDocuments.repo, repos)),
@@ -664,7 +674,9 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: {
   for (const entry of entries) {
     for (const part of [entry.review, entry.latest, ...entry.seconds]) if (part?.reason) part.reasonKo = korean.get(part.reason) ?? null;
   }
-  return { entries, nextAfter: candidates.length > limit ? page.at(-1)!.id : null, total, hiddenByAge };
+  const last = page.at(-1)!;
+  const nextCursor: ReviewCursor | null = candidates.length > limit ? { id: last.id, priority: Boolean(last._cursorPriority), value: last._cursorValue } : null;
+  return { entries, nextAfter: candidates.length > limit ? last.id : null, nextCursor, total, hiddenByAge };
 }
 
 /** 지은 줄과 그때 모델이 본 증거의 크기를 한 덩이로 — 화면이 이 값만 보고 말한다 */

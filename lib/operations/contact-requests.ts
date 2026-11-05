@@ -1,5 +1,5 @@
 import "server-only";
-import { asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import { operationsAudit } from "@/lib/db/schema";
 import { adminContactRequests as requests, type ContactStatus } from "@/lib/db/admin-contact-schema";
@@ -33,9 +33,9 @@ export async function updateContactRequest(value: unknown, adminLogin: string) {
   }));
 }
 /** 기본은 미처리·처리 중·회신 대기. 개인정보는 이 전용 화면에서만 읽는다. */
-export async function contactRequestQueue(options: { state?: ContactStatus | "open" | "all"; offset?: number; limit?: number } = {}) {
+export async function contactRequestQueue(options: { state?: ContactStatus | "open" | "all"; offset?: number; limit?: number; id?: string } = {}) {
   const state = options.state ?? "open";
-  const where = state === "all" ? undefined : state === "open" ? inArray(requests.status, ["new", "in_progress", "waiting"]) : eq(requests.status, state);
+  const where = and(state === "all" ? undefined : state === "open" ? inArray(requests.status, ["new", "in_progress", "waiting"]) : eq(requests.status, state), options.id ? eq(requests.id, options.id) : undefined);
   const offset = Math.max(0, Math.min(100000, Math.trunc(options.offset ?? 0)));
   const limit = Math.max(1, Math.min(50, Math.trunc(options.limit ?? 25)));
   return onPrimary(async () => {

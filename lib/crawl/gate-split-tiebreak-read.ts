@@ -33,8 +33,9 @@ const liveVerdict = sql`${t.state} = 'succeeded' AND ${t.promptVersion} = ${QWEN
  * 목록의 맨 앞 — Qwen-v2 도 승인한 갈림 보류(«Qwen-v2 승인 — 발행 후보»). 사람이 확인만 하면 되는 것부터 보이게 어떤 정렬보다 앞에 둔다.
  * 거부·발행 목록에서는 늘 거짓이라 순서를 바꾸지 않는다.
  */
-export const splitTiebreakApprovedFirst = sql`(EXISTS (SELECT 1 FROM ${t} WHERE ${t.candidateId} = ${crawlCandidates.id}
-  AND ${t.decision} = 'approve' AND ${liveVerdict})) DESC`;
+export const splitTiebreakApproved = sql<boolean>`(EXISTS (SELECT 1 FROM ${t} WHERE ${t.candidateId} = ${crawlCandidates.id}
+  AND ${t.decision} = 'approve' AND ${liveVerdict}))`;
+export const splitTiebreakApprovedFirst = sql`${splitTiebreakApproved} DESC`;
 
 export type SplitTiebreakView = {
   decision: "approve" | "reject" | "needs_review" | null; confidence: number | null; reason: string | null;
