@@ -162,7 +162,7 @@ export async function disableAdminServingContract(routeId: string, model: string
  * 5 s. The key is used for this one request and never returned.
  */
 export async function readbackServingEndpoint(endpoint: string, apiKey: string | null, request: typeof fetch = fetch):
-  Promise<{ ok: true; models: { id: string; maxModelLen: number | null }[] } | { ok: false; reason: string }> {
+  Promise<{ ok: true; models: { id: string; maxModelLen: number | null; canonicalModel?: string }[] } | { ok: false; reason: string }> {
   let url: URL;
   try { url = new URL(endpoint); } catch { return { ok: false, reason: "endpoint_invalid" }; }
   if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) return { ok: false, reason: "endpoint_invalid" };
@@ -171,8 +171,10 @@ export async function readbackServingEndpoint(endpoint: string, apiKey: string |
     const response = await request(`${url.origin}${base}/models`, { method: "GET", redirect: "error", cache: "no-store", signal: AbortSignal.timeout(5_000),
       headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {} });
     if (!response.ok) return { ok: false, reason: `http_${response.status}` };
-    const body = await response.json() as { data?: { id?: unknown; max_model_len?: unknown }[] };
+    const body = await response.json() as { data?: { id?: unknown; max_model_len?: unknown; root?: unknown }[] };
     return { ok: true, models: (body.data ?? []).flatMap(item => typeof item.id === "string" ? [{ id: item.id,
-      maxModelLen: typeof item.max_model_len === "number" && Number.isSafeInteger(item.max_model_len) ? item.max_model_len : null }] : []) };
+      maxModelLen: typeof item.max_model_len === "number" && Number.isSafeInteger(item.max_model_len) ? item.max_model_len : null,
+      ...(typeof item.root === "string" && item.root.length > 0 && item.root.length <= 200 && item.root === item.root.trim()
+        && !/[\p{Cc}]/u.test(item.root) ? { canonicalModel: item.root } : {}) }] : []) };
   } catch { return { ok: false, reason: "unreachable" }; }
 }

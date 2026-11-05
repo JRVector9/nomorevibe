@@ -129,3 +129,6 @@ export function setAiTaskModelsForTest(rows: readonly AiTaskModelSnapshotRow[] |
   current.loadedAt = rows === null ? 0 : Date.now();
   current.error = null;
 }
+
+/** An explicit existing unit/replay fixture, not a database read failure. */
+export function aiTaskModelsSnapshotPinned(): boolean { return state().pinned; }
