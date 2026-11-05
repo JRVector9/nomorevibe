@@ -536,6 +536,9 @@ export async function enqueueSecondReviews(_settingsHint: CrawlSettings, now: Da
       .where(and(sql`${approved.decision} = 'approve'`, eq(approved.promptVersion, REVIEW_PROMPT_VERSION), eq(approved.rulesVersion, REVIEW_RULES_VERSION),
         gt(approved.validUntil, semanticNow), sql`${gateRequired} = 0`)).limit(ENQUEUE_LIMIT);
     loneIds.push(...lone.map(row => row.candidateId));
+    // Closed identities still count completed votes. A new gate without a usable
+    // member must reach the locked hold path even when no voter template exists.
+    if (workload && !secondReviewPoolHasEligibleMember()) loneIds.push(...gate.map(row => row.candidateId));
     rows.push(...gate.flatMap((row) => voters.map((voter) => ({ ...voter,
       candidateId: row.candidateId, repo: row.repo, trigger: "ai_approved" as SecondReviewTrigger,
       firstDecision: "approve", firstConfidence: row.confidence, firstModel: row.firstModel, firstAttemptId: row.firstAttemptId,
