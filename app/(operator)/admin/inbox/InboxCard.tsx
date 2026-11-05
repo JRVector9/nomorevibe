@@ -15,39 +15,45 @@ export function InboxCard({ section, now }: { section: InboxSection; now: string
   const headingId = `inbox-${section.key}`;
   return (
     <section className="inbox-card" data-tone={section.state === "failed" ? "failed" : section.tone} aria-labelledby={headingId}>
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h2 id={headingId} className="text-[16px] font-bold">{section.title}</h2>
-        {data ? (
-          <>
-            <span className="inbox-count font-mono text-[18px] font-extrabold">{count(data.count)}건</span>
-            {oldest && <span className="text-[13px] text-fg-2" title={formatDetailTime(oldest)}>가장 오래된 것 {formatAgo(oldest, now)}</span>}
-            {data.note && <span className="text-[13px] text-fg-3">{data.note}</span>}
-          </>
-        ) : (
-          <span className="inbox-failed text-[13px] font-semibold">불러오지 못함</span>
-        )}
+      <div className="inbox-card-head">
+        <div className="inbox-card-heading">
+          <div className="inbox-card-title-row">
+            <h2 id={headingId} className="inbox-card-title">{section.title}</h2>
+            {data ? (
+              <>
+                <span className="inbox-priority" data-tone={section.tone}>
+                  {section.tone === "critical" ? "긴급" : "확인 필요"}
+                </span>
+                <span className="inbox-count">{count(data.count)}건</span>
+              </>
+            ) : (
+              <span className="inbox-failed">불러오지 못함</span>
+            )}
+          </div>
+          <p className="inbox-card-hint">{section.hint}</p>
+        </div>
+        <div className="inbox-card-side">
+          {oldest && <span className="inbox-oldest" title={formatDetailTime(oldest)}>가장 오래된 것 {formatAgo(oldest, now)}</span>}
+          {data?.note && <span className="inbox-note">{data.note}</span>}
+          <Link href={section.href} className="inbox-action">
+            {section.action}{data && data.count > data.items.length ? ` — ${count(data.count)}건 모두 보기` : ""} →
+          </Link>
+        </div>
       </div>
-      <p className="mt-1 text-[13px] text-fg-3">{section.hint}</p>
 
       {data && data.items.length > 0 && (
-        <ul className="mt-2 divide-y divide-line border-y border-line">
+        <ul className="inbox-list">
           {data.items.map((item) => (
-            <li key={item.id} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 py-1.5 text-[13px]">
-              <span className="min-w-0 break-all font-semibold text-fg">{item.name}</span>
-              <span className="min-w-0 flex-1 basis-[220px] text-fg-2">
+            <li key={item.id} className="inbox-item">
+              <span className="inbox-item-name">{item.name}</span>
+              <span className="inbox-item-why">
                 {section.key === "human" ? REASON_LABELS[item.why] ?? (item.why || "사유 없음") : item.why}
               </span>
-              <span className="ml-auto shrink-0 font-mono text-fg-3" title={formatDetailTime(item.since)}>{formatAgo(item.since, now)}</span>
+              <span className="inbox-item-time" title={formatDetailTime(item.since)}>{formatAgo(item.since, now)}</span>
             </li>
           ))}
         </ul>
       )}
-
-      <p className="mt-2 text-[13px]">
-        <Link href={section.href} className="font-semibold text-accent">
-          {section.action}{data && data.count > data.items.length ? ` — ${count(data.count)}건 모두 보기` : ""} →
-        </Link>
-      </p>
     </section>
   );
 }
