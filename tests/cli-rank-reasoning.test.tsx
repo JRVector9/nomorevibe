@@ -9,7 +9,7 @@ import { AI_RANK_SLOT_NAMES, aiRankSavedOptions, aiTaskRankOptions, aiTaskRanksI
 import { rankForm } from "@/lib/operations/flow-rank-editor";
 
 const id = "11111111-1111-4111-8111-111111111111", model = "opencode/deepseek-v4.1-flash";
-const connection: AiConnectionView = { id, label: "OpenCode", kind: "cli", cliTool: "opencode", cliModels: [model], cliVersion: "opencode v2.2.5",
+const connection: AiConnectionView = { id, label: "OpenCode", kind: "cli", cliTool: "opencode", cliModels: [model], cliVersion: "1.19.5", cliCatalog: { cliVersion: "1.19.5", observedAt: "2026-11-05T00:00:00Z", models: [{ id: model, label: model, variants: ["low", "high", "max"], maxModelLen: 1048576 }] },
   baseUrl: null, host: null, hasKey: false, models: null, modelsReadAt: null, modelsError: null, deviceId: "opencode-cli", capacitySlots: 1,
   contextTokens: null, enabled: true, version: 1, note: null, updatedBy: "test", updatedAt: "2026-11-05T00:00:00Z" };
 
@@ -19,7 +19,9 @@ describe("CLI rank reasoning", () => {
     expect(options).toHaveLength(1);
     expect(options[0]).toMatchObject({ model, reasoningEfforts: ["low", "high", "max"] });
     expect(aiTaskRankOptions(aiTask("crawl-tagline")!, [connection], [])).toEqual([]);
-    expect(aiTaskReasoningEfforts("first-review", "opencode", "opencode/deepseek-v4-pro")).toEqual(["high", "max"]);
+    expect(aiTaskReasoningEfforts("first-review", "opencode", "opencode/deepseek-v4-pro")).toEqual([]);
+    expect(aiTaskReasoningEfforts("first-review", "opencode", "catalog/model", ["high", "max"])).toEqual(["high", "max"]);
+    expect(aiTaskRankOptions(aiTask("first-review")!, [{ ...connection, cliCatalog: null }], [])).toEqual([]);
     expect(aiTaskReasoningEfforts("first-review", "opencode", "unverified/model")).toEqual([]);
     expect(aiTaskReasoningEfforts("product-intro-check", "claude", "opus")).toEqual([]);
     for (const [grokModel, efforts] of [

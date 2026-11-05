@@ -31,6 +31,9 @@ import { adminAuditRow, adminLog, type AdminLogRow } from "./admin-log";
 import { DIRECT_PROBE_INTERVAL_MS, directProbeDue, directProbeGate } from "./admin-models-direct-probe";
 import { saveCliServingContractTx, saveServingContractTx } from "./admin-serving-contracts";
 import { DrWriterFencedError, writerSiteActive } from "./dr/epoch";
+import { cliCatalogMetadataFromSnapshot, type CliCatalogMetadata } from "@/lib/llm/cli-catalog-metadata";
+import { readAdminCliCatalog } from "./admin-cli-catalog";
+import { validateCliHostTarget } from "./cli-host-target";
 
 /**
  * 「AI 연결」·「작업 ↔ 모델」 저장·읽기(2026-11-02, PR A). 실행 쪽(잡)은 이 표를 아직 읽지 않는다 — 저장해도 오늘 동작은 바뀌지 않는다.
@@ -82,11 +85,15 @@ const iso = (value: Date | string | null) => value === null ? null : new Date(va
 export function aiConnectionView(row: ConnectionRecord): AiConnectionView {
   const models = Array.isArray(row.models) ? row.models.filter((entry): entry is AiConnectionModel => !!entry && typeof entry.id === "string")
     .map(entry => Object.freeze({ id: entry.id, maxModelLen: typeof entry.maxModelLen === "number" ? entry.maxModelLen : null })) : null;
+  const storedOptions = row.options as Record<string, unknown>;
+  const cliVersion = row.kind === "cli" && typeof storedOptions.cliVersion === "string" ? storedOptions.cliVersion : null;
+  const cliCatalog = row.kind === "cli" && row.cliTool === "opencode"
+    ? cliCatalogMetadataFromSnapshot(storedOptions.cliHostCatalog, row.cliModels, cliVersion, sha256(JSON.stringify(row.cliModels))) : null;
   return Object.freeze({ id: row.id, label: row.label, kind: row.kind, baseUrl: row.baseUrl, host: aiConnectionHost(row.baseUrl), hasKey: row.apiKeyCiphertext !== null,
-    cliTool: row.cliTool, cliModels: Object.freeze([...row.cliModels]), models: models && Object.freeze(models), modelsReadAt: iso(row.modelsReadAt), modelsError: row.modelsError,
+    cliTool: row.cliTool, cliModels: Object.freeze([...row.cliModels]), models: models && Object.freeze(models), modelsReadAt: cliCatalog?.observedAt ?? iso(row.modelsReadAt), modelsError: row.modelsError,
     deviceId: row.deviceId, capacitySlots: row.capacitySlots, contextTokens: typeof row.options?.contextTokens === "number" ? row.options.contextTokens : null,
     enabled: row.enabled, version: Number(row.version), note: row.note, updatedBy: row.updatedBy, updatedAt: new Date(row.updatedAt).toISOString(),
-    cliVersion: row.kind === "cli" && typeof (row.options as Record<string, unknown> | null)?.cliVersion === "string" ? (row.options as Record<string, string>).cliVersion : null });
+    cliVersion, ...(row.kind === "cli" && row.cliTool === "opencode" ? { cliCatalog } : {}) });
 }
 export async function listAiConnections(reader?: Reader): Promise<AiConnectionView[]> {
   const load = async (from: Reader) => (await from.select().from(aiConnections).orderBy(asc(aiConnections.kind), asc(aiConnections.label))).map(aiConnectionView);
@@ -324,6 +331,29 @@ export async function saveAiConnection(input: AiConnectionInput, actor: string):
     if (input.id && !previous) return { ok: false, issues: ["ai_connection_missing"] };
     if (previous && previous.kind !== input.kind) return { ok: false, issues: ["ai_connection_kind_change"] };
     const id = previous?.id ?? randomUUID();
+    const openCode = input.kind === "cli" && input.cliTool === "opencode";
+    const preserveHost = openCode && previous?.kind === "cli" && previous.cliTool === "opencode";
+    let hostBaseUrl = preserveHost ? previous!.baseUrl : input.baseUrl;
+    let cliCatalog: CliCatalogMetadata | null = null;
+    let offlineDisable = false;
+    if (openCode) {
+      try {
+        const hostKey = preserveHost ? connectionKey(previous!) : input.key.mode === "set" ? input.key.value : null;
+        if (!hostBaseUrl || !hostKey) throw new Error("cli_host_not_configured");
+        const target = validateCliHostTarget({ connectionId: id, baseUrl: hostBaseUrl, apiKey: hostKey });
+        hostBaseUrl = target.baseUrl;
+        cliCatalog = await readAdminCliCatalog({ fresh: true, target });
+      }
+      catch {
+        // An unreachable host must never prevent the operator from disabling its existing connection.
+        offlineDisable = previous?.kind === "cli" && previous.cliTool === "opencode" && previous.enabled && !input.enabled;
+        if (!offlineDisable) return { ok: false, issues: ["ai_connection_cli_host_unavailable"] };
+      }
+      if (cliCatalog) {
+        const offered = new Set(cliCatalog.models.map(model => model.id));
+        if (input.cliModels.some(model => !offered.has(model))) return { ok: false, issues: ["ai_connection_cli_catalog_changed"] };
+      }
+    }
     const key = input.key.mode === "set" ? input.key.value : input.key.mode === "keep" && previous ? connectionKey(previous) : null;
     if (input.kind === "api" && input.key.mode === "keep" && previous?.apiKeyCiphertext && key === null) return { ok: false, issues: ["ai_connection_key_unreadable"] };
     const read = input.kind === "api" && input.baseUrl ? await readModels(input.baseUrl, key) : null;
@@ -335,22 +365,31 @@ export async function saveAiConnection(input: AiConnectionInput, actor: string):
       if (input.id && !locked) fail("ai_connection_missing");
       if (locked && Number(locked.version) !== input.expectedVersion) fail("ai_connection_version_mismatch");
       if (locked && Number(locked.version) >= VERSION_MAX) fail("ai_connection_version_mismatch");
-      const ciphertext = input.kind !== "api" || input.key.mode === "clear" ? null : input.key.mode === "set" ? sealSecret(input.key.value, aiConnectionKeyAad(id))
-        : locked?.apiKeyCiphertext ?? null;
-      const values = { label: input.label, kind: input.kind, baseUrl: input.kind === "api" ? input.baseUrl : null, apiKeyCiphertext: ciphertext,
-        cliTool: input.kind === "cli" ? input.cliTool : null, cliModels: input.kind === "cli" ? input.cliModels : [], models,
+      const ciphertext = openCode ? preserveHost ? locked?.apiKeyCiphertext ?? null : input.key.mode === "set" ? sealSecret(input.key.value, aiConnectionKeyAad(id)) : null
+        : input.kind !== "api" || input.key.mode === "clear" ? null : input.key.mode === "set" ? sealSecret(input.key.value, aiConnectionKeyAad(id)) : locked?.apiKeyCiphertext ?? null;
+      // Keep unrelated connection options. Only this form's own fields are replaced or cleared.
+      const options: Record<string, unknown> = { ...locked?.options };
+      if (!offlineDisable) {
+        delete options.contextTokens; delete options.cliVersion; delete options.cliHostCatalog;
+        if (input.contextTokens) options.contextTokens = input.contextTokens;
+        const cliVersion = cliCatalog?.cliVersion ?? input.cliVersion;
+        if (input.kind === "cli" && cliVersion) options.cliVersion = cliVersion;
+        if (cliCatalog) options.cliHostCatalog = { modelsHash: sha256(JSON.stringify(input.cliModels)), observedAt: cliCatalog.observedAt,
+          variantLists: input.cliModels.map(model => [...cliCatalog!.models.find(entry => entry.id === model)!.variants]) };
+      }
+      if (!offlineDisable && Buffer.byteLength(JSON.stringify(options), "utf8") > 8192) fail("ai_connection_options_full");
+      const values = { label: input.label, kind: input.kind, baseUrl: openCode ? preserveHost ? locked!.baseUrl : hostBaseUrl : input.kind === "api" ? input.baseUrl : null, apiKeyCiphertext: ciphertext,
+        cliTool: input.kind === "cli" ? input.cliTool : null, cliModels: offlineDisable ? [...locked!.cliModels] : input.kind === "cli" ? input.cliModels : [], models,
         modelsReadAt: input.kind !== "api" ? null : read?.ok ? new Date(now()) : sameBase ? locked?.modelsReadAt ?? null : null,
         modelsError: input.kind !== "api" ? null : read && !read.ok ? read.reason : null, deviceId: input.deviceId, capacitySlots: input.capacitySlots,
-        options: { ...(input.contextTokens ? { contextTokens: input.contextTokens } : {}),
-          // CLI 버전(PR C1) — 1차·2차·Grok 로그인 유지 순위의 CLI 계약이 이 값으로 만들어진다. 바꾸면 그 줄을 다시 저장해 계약을 바꾼다
-          ...(input.kind === "cli" && input.cliVersion ? { cliVersion: input.cliVersion } : {}) }, enabled: input.enabled, note: input.note, updatedBy: actor };
+        options, enabled: input.enabled, note: input.note, updatedBy: actor };
       const [row] = locked
         ? await tx.update(aiConnections).set({ ...values, version: sql`${aiConnections.version} + 1`, updatedAt: sql`clock_timestamp()` })
           .where(and(eq(aiConnections.id, id), eq(aiConnections.version, Number(locked.version)))).returning()
         : await tx.insert(aiConnections).values({ id, ...values }).returning();
       if (!row) fail("ai_connection_version_mismatch");
       await tx.insert(operationsAudit).values(await adminAuditRow(actor, { action: AI_CONNECTION_SAVE_AUDIT_ACTION, target: `${row.label}`.slice(0, 200),
-        detail: { id, created: !locked, keyChanged: input.key.mode !== "keep", before: connectionAudit(locked ?? null), after: connectionAudit(row),
+        detail: { id, created: !locked, keyChanged: preserveHost ? false : input.key.mode !== "keep", before: connectionAudit(locked ?? null), after: connectionAudit(row),
           modelsRead: read ? (read.ok ? { count: read.models.length } : { error: read.reason }) : null } }));
       return row;
     }));
@@ -425,8 +464,24 @@ export async function saveAiTaskRanks(input: AiTaskRanksInput, actor: string): P
   const task = aiTask(input.task);
   if (!task) return { ok: false, issues: ["ai_task_invalid:task"] };
   try {
-    const [connections, rows] = await Promise.all([listAiConnections(), listAiTaskRows()]);
+    const [storedConnections, rows] = await Promise.all([listAiConnections(), listAiTaskRows()]);
     const ranks = input.ranks.slice(0, 3);
+    let connections = storedConnections;
+    const openCode = storedConnections.filter(connection => connection.kind === "cli" && connection.cliTool === "opencode"
+      && ranks.some(rank => rank?.provider === connection.id));
+    if (openCode.length) {
+      const catalogs = new Map<string, CliCatalogMetadata>();
+      for (const connection of openCode) {
+        let catalog: CliCatalogMetadata;
+        try { catalog = await readAdminCliCatalog({ fresh: true, connectionId: connection.id }); }
+        catch { return { ok: false, issues: ["ai_connection_cli_host_unavailable"] }; }
+        const offered = new Set(catalog.models.map(model => model.id));
+        if (connection.cliVersion !== catalog.cliVersion || ranks.some(rank => rank?.provider === connection.id && !offered.has(rank.model)))
+          return { ok: false, issues: ["ai_connection_cli_catalog_changed"] };
+        catalogs.set(connection.id, catalog);
+      }
+      connections = storedConnections.map(connection => catalogs.has(connection.id) ? { ...connection, cliCatalog: catalogs.get(connection.id)! } : connection);
+    }
     const issues = validateAiTaskRanks(task.id, input.slot, ranks, { connections, rows });
     if (issues.length) return { ok: false, issues };
     const chosen = ranks.flatMap((row, index) => row ? [{ rank: index + 1, row, connection: connections.find(entry => entry.id === row.provider)! }] : []);

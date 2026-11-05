@@ -2448,6 +2448,15 @@ function cliRowDispatch(row: RequestRow | undefined): CliModelDispatch | null {
     && row.class === CLI_KIND_CLASS[binding.kind] && row.pool === "reviewer" && row.workKey === workKey
     && isDeepStrictEqual(row.dispatchBinding, binding) ? dispatch : null;
 }
+/** Readback is observation only: saved terminal JSON never grants the runner's native reconciliation capability. */
+export async function readCliModelDispatchRecord(requestId: string) {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const [row] = await onPrimary(() => db.select().from(modelCapacityRequests)
+    .where(eq(modelCapacityRequests.requestId, requestId)).limit(1));
+  if (!row) return null;
+  const dispatch = cliRowDispatch(row);
+  return dispatch ? { state: row.state, dispatch, terminalEvidence: row.terminalEvidence, terminalEvidenceHash: row.terminalEvidenceHash } : null;
+}
 /**
  * Only the runner's opaque terminal settles a CLI call — every ending (exited, killed, spawn_failed, not_started) is a physical end.
  * Its request, transport and C must equal the historical dispatch; today's policy, mode, owner or job never block completion.

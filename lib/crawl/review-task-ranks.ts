@@ -261,17 +261,20 @@ export function secondReviewSlotOf(model: string, ranks: SecondReviewRanks = sec
     ?? ranks.slots.find(slot => slot.members.some(member => canonicalReviewModel(member.identity) === key)) ?? null;
 }
 /** Options of the exact rank represented by the selected reviewer; mirror identity deduplication above. */
-export function reviewRankOptionsFor(routeId: ReviewTaskRoute, provider: string, model: string): Readonly<Record<string, unknown>> | null {
+export function reviewRankFor(routeId: ReviewTaskRoute, provider: string, model: string): AiTaskRank | null {
   // Compatibility/replay callers have no DB rank options; admission has already ensured the live rank snapshot.
   if (settingsReviewersActive() || !aiTaskModelsReadState().loaded && !currentPin()) return null;
   if (routeId === "crawl-agent-review") {
-    return resolveReviewTaskRanks("first-review").candidates.find(candidate => candidate.binding?.provider === provider && candidate.binding.identity === model)?.rank.options ?? null;
+    return resolveReviewTaskRanks("first-review").candidates.find(candidate => candidate.binding?.provider === provider && candidate.binding.identity === model)?.rank ?? null;
   }
   const ranks = secondReviewRanks(), slot = secondReviewSlotOf(model, ranks);
   if (!slot) return null;
   const voter = slot.voter?.provider === provider && slot.voter.identity === model ? slot.voter : null;
   return slot.resolution.candidates.find(candidate => candidate.binding?.provider === provider && candidate.binding.identity === model
-    && (!voter || candidate.binding.connectionId === voter.connectionId && candidate.binding.rank === voter.rank))?.rank.options ?? null;
+    && (!voter || candidate.binding.connectionId === voter.connectionId && candidate.binding.rank === voter.rank))?.rank ?? null;
+}
+export function reviewRankOptionsFor(routeId: ReviewTaskRoute, provider: string, model: string): Readonly<Record<string, unknown>> | null {
+  return reviewRankFor(routeId, provider, model)?.options ?? null;
 }
 
 /**

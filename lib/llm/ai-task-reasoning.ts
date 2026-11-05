@@ -1,7 +1,7 @@
 import type { AiCliTool } from "./ai-tasks";
 
-/** Model variants verified from the configured OpenCode v2.2.5 catalog; never infer arbitrary effort values. */
-export function aiTaskReasoningEfforts(task: string, cliTool: AiCliTool | null, model: string): readonly string[] {
+/** OpenCode variants come only from the actual host catalog; the other adapters retain their existing contracts. */
+export function aiTaskReasoningEfforts(task: string, cliTool: AiCliTool | null, model: string, catalogVariants: readonly string[] = []): readonly string[] {
   if (!["first-review", "second-review"].includes(task)) return [];
   if (cliTool === "grok") {
     if (model === "grok-4.7" || model === "grok-4.6") return ["low", "medium", "high", "xhigh"];
@@ -9,9 +9,6 @@ export function aiTaskReasoningEfforts(task: string, cliTool: AiCliTool | null, 
     return [];
   }
   if (cliTool === "claude" && /^(opus|sonnet)$|^claude-(opus|sonnet)-(4-[6-9]|[5-9])/.test(model)) return ["low", "medium", "high"];
-  if (cliTool === "opencode") {
-    if (["opencode/deepseek-v4.1-flash", "opencode-go/deepseek-v4.1-flash", "opencode/deepseek-v4.1-flash-free"].includes(model)) return ["low", "high", "max"];
-    if (model === "opencode/deepseek-v4-pro") return ["high", "max"];
-  }
+  if (cliTool === "opencode") return catalogVariants;
   return [];
 }
