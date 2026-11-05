@@ -22,6 +22,10 @@ describe("CLI rank reasoning", () => {
     expect(aiTaskReasoningEfforts("first-review", "opencode", "opencode/deepseek-v4-pro")).toEqual(["high", "max"]);
     expect(aiTaskReasoningEfforts("first-review", "opencode", "unverified/model")).toEqual([]);
     expect(aiTaskReasoningEfforts("product-intro-check", "claude", "opus")).toEqual([]);
+    for (const [grokModel, efforts] of [
+      ["grok-4.7", ["low", "medium", "high", "xhigh"]], ["grok-4.6", ["low", "medium", "high", "xhigh"]],
+      ["grok-4.5", ["low", "medium", "high"]], ["unverified-grok", []],
+    ] as const) expect(aiTaskReasoningEfforts("first-review", "grok", grokModel)).toEqual(efforts);
   });
   it("round trips the shared drawer form and rejects unsupported effort values", () => {
     const form = rankForm({ task: "first-review", slot: 1, revision: "a".repeat(64) }, [{ provider: id, model, reasoningEffort: "high" }]);
