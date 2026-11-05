@@ -60,11 +60,13 @@ export async function chooseTaskWorkloadMember<T extends AiTaskWorkloadCandidate
         const state = states.find(item => item.deviceId === row.route.groupId);
         const configured = settings.find(item => item.deviceId === row.route.groupId);
         if (!state || configured && !configured.enabled) return [];
-        const rank = deviceRoleRank(configured?.roles ?? [], row.candidate.routeId);
-        if (!deviceFits({ active: state.active, limitSlots: state.limitSlots, rank,
-          secondaryActive: state.secondaryActive, secondaryBound: state.secondaryBound })) return [];
         const helper = state.helpers?.filter(item => item.routeId === row.candidate.routeId
           && item.provider === row.candidate.provider && item.model === row.candidate.identity) ?? [];
+        // Match capacity-devices effectiveRank: helper routes never receive the rank-1 bypass.
+        const roleRank = deviceRoleRank(configured?.roles ?? [], row.candidate.routeId);
+        const rank = helper.length ? Math.max(roleRank, 2) : roleRank;
+        if (!deviceFits({ active: state.active, limitSlots: state.limitSlots, rank,
+          secondaryActive: state.secondaryActive, secondaryBound: state.secondaryBound })) return [];
         if (helper.some(item => !item.ok || item.active >= item.maxSlots)) return [];
         return [{ ...row, pressure: (state.active + state.waiting) / state.limitSlots }];
       });
