@@ -89,7 +89,8 @@ function poolStatus(line: TaskRankLine, execution: AiTaskExecutionAdminView, con
   if (execution.members.some(member => !connections.some(connection => connection.id === member.connectionId && connection.enabled)))
     return { text: "꺼졌거나 없는 연결", tone: "bad" };
   const runtime = currentTaskPoolRuntime(execution, connections, line.runtime);
-  if (runtime?.degraded) return { text: "최근 실행 사용 불가", tone: "bad" };
+  if (runtime?.degraded?.code === "all_ranks_unusable") return { text: "최근 실행 사용 불가", tone: "bad" };
+  if (runtime?.degraded) return { text: "일부 모델 확인 필요", tone: "warn" };
   if (runtime?.pool && Object.values(runtime.pool.served).some(count => count > 0)) return { text: "최근 실행 기록 있음", tone: "ok" };
   return { text: "설정 저장됨 · 실행 관측 대기", tone: "muted" };
 }

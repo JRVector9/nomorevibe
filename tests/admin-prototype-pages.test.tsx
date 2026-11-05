@@ -31,7 +31,7 @@ describe("original HTML prototype layout with real-loader contracts", () => {
     for (const className of ["flow-phases", "flow-grid", "stage-detail", "detail-summary", "control-box", "worker-grid"]) expect(html).toContain(`class="${className}"`);
     expect(html).toContain("확인된 7건 · 일부 조회 실패");
     expect(html).toContain('href="/admin/products?tab=quality"');
-    expect(html).toContain('class="mini-stat"><span>실제 실행 중</span><b class="mono">—</b>');
+    expect(html).toContain('class="mini-stat"><span>장부 전송 중</span><b class="mono">—</b>');
     expect(html).toContain('<details class="panel" id="flow-advanced">');
     expect(html).not.toMatch(/모델 A|Orbit Notes|가상 관측|시안 상황|NaN|undefined/);
   });

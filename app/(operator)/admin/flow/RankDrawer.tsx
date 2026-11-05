@@ -42,7 +42,7 @@ function displayRankChain(editor: FlowRankEditor, ranks: Ranks): string {
   })) }, ranks.map(row => {
     const connection = editor.connections.find(entry => entry.id === row?.provider);
     return row && connection ? { ...row, model: modelPickerModelLabel(connection, row.model) } : row;
-  }));
+  })).replaceAll(" → ", "\n");
 }
 
 function WarningList({ warnings }: { warnings: RankWarning[] }) {

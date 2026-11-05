@@ -330,7 +330,9 @@ describe("공개 전 소개와 공개 후·보조 작업", () => {
     const slow = conveyorInputs({ models, classification: { held: 5, nextRetryAt: null },
       throughput: { measuredAt: NOW, stages: [stage("fetch"), stage("judge"), stage("first"), stage("second"), stage("publish", { completed5m: 0 })] } });
     const html = renderToStaticMarkup(<FlowBoard data={buildConveyor(slow)} />);
-    expect(html).toContain("외 2");
+    // Current-call cards no longer collapse the other models into an “외 N” summary.
+    expect(html).not.toContain("외 2");
+    expect(html).toContain("LLM 현재 호출");
     for (const label of ["수집 소개 짓기", "한국어 소개 번역", "제품 다국어 번역", "심사 사유 번역", "소개 검수"]) expect(html, label).toContain(label);
   });
 
@@ -374,15 +376,20 @@ describe("card and detail", () => {
     expect(page).toContain("LLM 없음 · 탐색 API");
     expect(page).toContain("LLM 없음 · 내려받기");
     expect(page).toContain("LLM 없음 · 게시");
-    expect(page).toContain('<b class="cv-llm-m">qwen3.8-flash-next</b><small class="cv-llm-w">gpu3090-qwen');
-    expect(page).toContain('<b class="cv-llm-m">gpt-oss-120b</b><small class="cv-llm-w">m3-mlx (2)');
-    expect(page).toContain("최근 1시간 128건");
+    expect(page).toContain("gpu3090-qwen · qwen3.8-flash-next");
+    expect(page).toContain("m3-mlx (2) · gpt-oss-120b");
+    // This fixture has historical use but no current-call observation; never call it a live request.
+    expect(page).toContain('<span class="cv-llm-k">LLM 현재 호출</span>');
+    expect(page).toContain("현재 호출 일부 미확인");
+    const conveyor = buildConveyor(conveyorInputs({ models: buildStationLlm(healthy()) }));
+    const detail = renderToStaticMarkup(<StationDetail station={conveyor.stations.find(station => station.key === "first")!} hours={conveyor.hours} />);
+    expect(detail).toMatch(/<dt class="cv-llmd-k">최근 1시간<\/dt><dd class="cv-llmd-v">[^]*?gpu3090-qwen · <b>qwen3\.8-flash-next<\/b>[^]*?128건 · 1차 AI 검수/);
   });
 
   it("prints the flag with an icon and words, never colour alone", () => {
     const cleared = html(buildStationLlm(healthy({ rows: healthy().rows!.filter((row) => row.task !== "first-review"), used: [] })));
-    expect(cleared).toMatch(/<em class="cv-llm-flag" data-tone="bad"><span aria-hidden="true">■<\/span> 모델 없음 — 멈춤<\/em>/);
-    expect(cleared).toContain('<b class="cv-llm-m">모델 없음</b>');
+    expect(cleared).toMatch(/<span class="cv-badge" data-tone="jam"><span aria-hidden="true">■<\/span>모델 없음 — 멈춤<\/span>/);
+    expect(cleared).toContain('<span class="cv-llmd-state" data-state="none">모델 없음 — 멈춤</span>');
   });
 
   it("links the model rows of the open detail to /admin/models/tasks and shows set vs actual per task", () => {
@@ -393,9 +400,10 @@ describe("card and detail", () => {
     expect(page).toContain('class="cv-llmd"');
     expect(page).toContain('href="/admin/models/tasks#tasks"');
     expect(page).toContain("작업 ↔ AI 모델에서 순위 보기·바꾸기");
-    // 4차: 작업마다 라벨 | 값 두 열(dl) — 작업 · 설정 · 실제
-    expect(page).toMatch(/<dt class="cv-llmd-k">설정<\/dt><dd class="cv-llmd-v">1순위 gpu3090-qwen · qwen3\.8-flash-next<\/dd>/);
-    expect(page).toMatch(/<dt class="cv-llmd-k">실제<\/dt><dd class="cv-llmd-v">gpu3090-qwen · qwen3\.8-flash-next 128건 \(1순위\)<\/dd>/);
+    // Rows separate current calls, saved ranks, and historical completed calls.
+    expect(page).toMatch(/<dt class="cv-llmd-k">현재 호출<\/dt><dd class="cv-llmd-v">[^]*?현재 호출 일부 미확인<\/span><\/span><\/dd>/);
+    expect(page).toMatch(/<dt class="cv-llmd-k">설정<\/dt><dd class="cv-llmd-v">[^]*?<span class="flow-model-rank">1순위<\/span><span>gpu3090-qwen · qwen3\.8-flash-next<\/span>/);
+    expect(page).toMatch(/<dt class="cv-llmd-k">최근 1시간<\/dt><dd class="cv-llmd-v">[^]*?gpu3090-qwen · <b>qwen3\.8-flash-next<\/b>[^]*?128건 · 1차 AI 검수/);
   });
 
   it("explains a rule station's 'LLM 없음' with the code it was checked against", () => {
@@ -449,7 +457,7 @@ function conveyorInputs(patch: Partial<ConveyorInputs> = {}): ConveyorInputs {
 }
 
 describe("칸 자세히 · 장애 대응의 틀 (2026-11-04 4차: 섹션 나누기·정렬)", () => {
-  const SECTIONS = ["상태", "지금 쓰는 모델 — 설정과 실제(최근 1시간 장부)", "처리량", "이 칸에서 빠진 보류", "바로 가기"];
+  const SECTIONS = ["상태", "모델 — 현재 호출·설정·최근 1시간", "처리량", "이 칸에서 빠진 보류", "바로 가기"];
   const titles = (markup: string) => [...markup.matchAll(/<h3 class="cv-sec-h" id="cv-sec-[a-z]+">([^<]+)<\/h3>/g)].map((match) => match[1]);
   const same = healthy({ rows: [rank("first-review", 1, QWEN, "qwen3.8-flash-next"), rank("second-review", 1, QWEN, "qwen3.8-flash-next")],
     used: [used("crawl-agent-review", "abcllm", "qwen3.8-flash-next", 120)] });

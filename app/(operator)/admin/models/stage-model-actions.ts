@@ -18,6 +18,6 @@ export const saveAdminStageModels = webWriteAction(async function saveAdminStage
   catch { return { issues: ["등록되지 않은 모델·중복 모델·지원하지 않는 제공자 조합입니다. 모델 등록부와 선택 목록을 확인해주세요."] }; }
   const result = await saveSettings({ stageModelPools: pools }, admin.login, { expectedFormVersion: String(form.get("settingsVersion") ?? "") });
   if (!result.ok) return { issues: result.issues };
-  for (const path of ["/admin/models", "/admin", "/admin/status"]) revalidatePath(path);
+  for (const path of ["/admin/models", "/admin", "/admin/status", "/admin/flow"]) revalidatePath(path);
   return { ok: true, version: settingsFormVersion(result.settings) };
 });

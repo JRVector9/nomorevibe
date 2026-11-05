@@ -21,6 +21,7 @@ import { jobControlCsrf } from "../status/job-control-csrf";
 import { readOperatorAway, readOperatorChanges, readOperatorDeskShared, readOperatorDiagnostics } from "./desk";
 import type { FlowControls } from "./FlowBoard";
 import { FlowBoard } from "./FlowBoard";
+import { HumanModelSettings } from "./HumanModelSettings";
 import { PrototypeFlow, PrototypeFlowAway, PrototypeFlowChanges } from "./PrototypeFlow";
 import type { OperatorDesk } from "@/lib/operations/operator-desk-model";
 import { FlowOverviewSummary, SocialFlowSummary } from "./FlowOverview";
@@ -104,7 +105,7 @@ async function FlowWorkspace({ admin, fresh, tab, advanced }: {
     : <Suspense fallback={<p className="small muted" aria-busy="true">고급 운영 관측을 읽는 중…</p>}>
         <AdvancedFlow data={conveyor} controls={controls} deskRead={fullDeskRead} editor={editor} readRanks={diagnostics} login={admin.login} fresh={fresh} />
       </Suspense>;
-  return <PrototypeFlow data={conveyor} desk={desk} controls={controls} editor={editor} tab={tab}
+  return <PrototypeFlow humanModelSettings={!diagnostics ? <Suspense fallback={<p className="small muted" aria-busy="true">AI 보조 모델 설정을 읽는 중…</p>}><HumanModelSettings /></Suspense> : undefined} data={conveyor} desk={desk} controls={controls} editor={editor} tab={tab}
     reactionRequests={reactions?.count ?? null} advancedContent={advancedContent}
     overviewContent={!diagnostics ? <Suspense fallback={<p className="notice" aria-busy="true">프로젝트 등록 수와 발행 추이를 읽는 중…</p>}>
       <FlowOverviewSummary data={conveyor} desk={desk} reactionRequests={reactions?.count ?? null} />

@@ -12,7 +12,7 @@ const supa = (connection: PickerConnection) => connection.kind === "api" && conn
   && connection.baseUrl === "http://100.78.219.124:8000/v1";
 
 export function modelPickerConnectionLabel(connection: PickerConnection): string {
-  return m1(connection) ? "M1 Studio · Gemma" : connection.label ? aiConnectionLabel({ ...connection, label: connection.label }) : "";
+  return aiConnectionLabel({ ...connection, label: connection.label ?? "" });
 }
 export function modelPickerConnectionDevice(connection: PickerConnection): string {
   return m1(connection) ? "M1 Studio" : connection.deviceId ?? "";

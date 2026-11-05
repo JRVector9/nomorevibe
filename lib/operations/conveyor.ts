@@ -10,7 +10,7 @@ import { isPausedJob } from "@/lib/jobs/status";
 import { logger } from "@/lib/observability/logger";
 import { operationsData } from "./admin";
 import { buildConveyor, type Conveyor, type ConveyorInputs } from "./conveyor-model";
-import { buildStationLlm } from "./conveyor-llm";
+import { buildStationLlm, type LlmLegacyPublish } from "./conveyor-llm";
 import { readLlmInputs } from "./conveyor-llm-read";
 import { hourlyThroughput } from "./dashboard";
 import { pipelineFlow } from "./pipeline";
@@ -72,6 +72,26 @@ async function loadConveyor(fresh: boolean): Promise<Conveyor> {
   ]);
   const now = ops?.fetchedAt ?? new Date().toISOString();
   const nowMs = Date.parse(now);
+  const connect = ops?.serviceInstances.filter(row => row.role === "connect-agent")
+    .sort((a, b) => Date.parse(b.observedAt) - Date.parse(a.observedAt))
+    .find(row => nowMs >= Date.parse(row.observedAt) && nowMs - Date.parse(row.observedAt) <= 45_000);
+  let legacyPublish: LlmLegacyPublish | null = null;
+  if (connect) {
+    const value = connect.value, raw = value.config;
+    if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+      const config = raw as Record<string, unknown>;
+      const models = [config.primary, config.fallback].flatMap((candidate, index) => {
+        if (!candidate || typeof candidate !== "object") return [];
+        const model = (candidate as Record<string, unknown>).model;
+        if (typeof model !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$/.test(model)) return [];
+        const option = Array.isArray(value.modelOptions) ? value.modelOptions.find(row => row && typeof row === "object" && row.model === model) : null;
+        const provider = option?.provider;
+        return [{ rank: index + 1, model, where: provider === "claude-cli" ? "Claude CLI" : provider === "codex-cli" ? "Codex CLI" : "연결 에이전트 CLI" }];
+      });
+      legacyPublish = { source: "connect 에이전트 CLI 설정", observedAt: connect.observedAt,
+        ready: typeof value.classifyReady === "boolean" ? value.classifyReady : null, models };
+    }
+  }
   let progress: ConveyorInputs["progress"] = null;
   if (throughput && ops && jobStates) {
     try {
@@ -84,7 +104,7 @@ async function loadConveyor(fresh: boolean): Promise<Conveyor> {
   const search = searchJob?.lastError ? null : readSearchHealth(ops?.observations.find((row) => row.key === "job:product-search-health"), nowMs);
   const inputs: ConveyorInputs = {
     now, enabled: settings.enabled, throughput, flow, hourly, human, progress, search,
-    holds: holds?.holds ?? null, rejected: holds?.rejected ?? null, models: llm ? buildStationLlm(llm) : null,
+    holds: holds?.holds ?? null, rejected: holds?.rejected ?? null, models: llm ? buildStationLlm({ ...llm, legacyPublish }) : null,
     classification: ops ? { held: ops.held, nextRetryAt: ops.heldNextRetryAt } : null,
     sources: SOURCES.filter((source) => states.has(source.job)).map((source) => {
       const job = states.get(source.job)!;
@@ -96,5 +116,5 @@ async function loadConveyor(fresh: boolean): Promise<Conveyor> {
 }
 
 export function readConveyor(fresh = false): Promise<Conveyor> {
-  return conveyorCache("v3", () => loadConveyor(fresh), fresh);
+  return conveyorCache("v4", () => loadConveyor(fresh), fresh);
 }
