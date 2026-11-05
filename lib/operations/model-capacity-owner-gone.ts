@@ -15,23 +15,30 @@ const SINGLETON_OWNERS = Object.freeze([
   ...["crawler", "reviewer", "publisher", "text", "maintenance"].flatMap(role => [`m3-${role}`, `mini-${role}-standby`]),
   "ai2-consumer-m3", "agent-scan-consumer-m3",
 ]);
-export type ModelCapacityReclaimCursor = { ownerGoneAfterQueueOrdinal: string; httpHopAfterId?: string };
+export type ModelCapacityReclaimCursor = { ownerGoneAfterQueueOrdinal: string; ownerGoneThroughQueueOrdinal?: string; httpHopAfterId?: string };
 type Candidate = { requestId: string; queueOrdinal: string };
 
-function afterOrdinal(cursor: ModelCapacityReclaimCursor | null): string {
-  const value = cursor?.ownerGoneAfterQueueOrdinal;
-  return typeof value === "string" && /^(0|[1-9][0-9]{0,18})$/.test(value) && BigInt(value) <= BigInt("9223372036854775807") ? value : "0";
+function validOrdinal(value: unknown): value is string {
+  return typeof value === "string" && /^(0|[1-9][0-9]{0,18})$/.test(value) && BigInt(value) <= BigInt("9223372036854775807");
 }
-async function candidatesAfter(after: string): Promise<Candidate[]> {
+async function candidatesAfter(after: string, through: string | null): Promise<{ candidates: Candidate[]; through: string }> {
   return onPrimary(() => db.transaction(async tx => {
     await tx.execute(sql`SET LOCAL statement_timeout = '5s'`);
+    const eligible = sql`state = 'dispatched' AND owner_instance_id IN (${sql.join(SINGLETON_OWNERS.map(owner => sql`${owner}`), sql`, `)})
+      AND coalesce(dispatched_at, queued_at) <= clock_timestamp() - ${OWNER_GONE_QUIET_MS.default} * interval '1 millisecond'`;
+    // A finite sweep must end even when newer requests keep arriving. Failed
+    // checks are revisited on the next sweep without blocking this page's siblings.
+    let ceiling = through;
+    if (ceiling === null) {
+      const [row] = await tx.execute<{ through: string }>(sql`SELECT coalesce(max(queue_ordinal), 0)::text AS through
+        FROM model_capacity_requests WHERE ${eligible}`);
+      ceiling = row.through;
+    }
     const rows = await tx.execute<{ request_id: string; queue_ordinal: string }>(sql`
       SELECT request_id::text, queue_ordinal::text FROM model_capacity_requests
-      WHERE state = 'dispatched' AND owner_instance_id IN (${sql.join(SINGLETON_OWNERS.map(owner => sql`${owner}`), sql`, `)})
-        AND queue_ordinal > ${after}::bigint
-        AND coalesce(dispatched_at, queued_at) <= clock_timestamp() - ${OWNER_GONE_QUIET_MS.default} * interval '1 millisecond'
+      WHERE ${eligible} AND queue_ordinal > ${after}::bigint AND queue_ordinal <= ${ceiling}::bigint
       ORDER BY queue_ordinal LIMIT ${OWNER_GONE_MAX_REQUESTS}`);
-    return Array.from(rows).map(row => ({ requestId: row.request_id, queueOrdinal: row.queue_ordinal }));
+    return { candidates: Array.from(rows).map(row => ({ requestId: row.request_id, queueOrdinal: row.queue_ordinal })), through: ceiling };
   }, { accessMode: "read only" }));
 }
 
@@ -47,13 +54,17 @@ export async function markAutomaticOwnerGone(ctx: JobContext<ModelCapacityReclai
   const original = ctx.cursor ?? null;
   if (!ready()) return original;
   if (currentReplayDb()) throw new Error("dr_replay_unsupported");
-  let after = afterOrdinal(original);
-  let candidates = await candidatesAfter(after);
-  if (!candidates.length && after !== "0" && ready()) { after = "0"; candidates = await candidatesAfter(after); }
-  if (!candidates.length) {
-    if (!ready()) return original;
-    return original?.httpHopAfterId ? { ...original, ownerGoneAfterQueueOrdinal: "0" } : null;
+  let after = validOrdinal(original?.ownerGoneAfterQueueOrdinal) ? original.ownerGoneAfterQueueOrdinal : "0";
+  const ceiling = validOrdinal(original?.ownerGoneThroughQueueOrdinal) ? original.ownerGoneThroughQueueOrdinal : null;
+  let page = await candidatesAfter(after, ceiling);
+  if (!page.candidates.length && (after !== "0" || ceiling !== null) && ready()) {
+    after = "0"; page = await candidatesAfter(after, null);
   }
+  if (!page.candidates.length) {
+    if (!ready()) return original;
+    return original?.httpHopAfterId ? { ownerGoneAfterQueueOrdinal: "0", httpHopAfterId: original.httpHopAfterId } : null;
+  }
+  const { candidates, through } = page;
   let scanned = 0, marked = 0, kept = 0, errors = 0;
   for (const candidate of candidates) {
     if (!ready()) break;
@@ -74,8 +85,8 @@ export async function markAutomaticOwnerGone(ctx: JobContext<ModelCapacityReclai
     }
     scanned++;
     after = candidate.queueOrdinal;
-    if (ready()) await ctx.save({ ...original, ownerGoneAfterQueueOrdinal: after });
+    if (ready()) await ctx.save({ ...original, ownerGoneAfterQueueOrdinal: after, ownerGoneThroughQueueOrdinal: through });
   }
   ctx.log("model_capacity.owner_gone_scan", { scanned, marked, kept, errors });
-  return scanned ? { ...original, ownerGoneAfterQueueOrdinal: after } : original;
+  return scanned ? { ...original, ownerGoneAfterQueueOrdinal: after, ownerGoneThroughQueueOrdinal: through } : original;
 }

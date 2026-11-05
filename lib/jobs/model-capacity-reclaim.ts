@@ -27,8 +27,8 @@ export async function reclaimEvidencedModelCapacity(ctx: JobContext<ModelCapacit
       operator: operator(), scan: { afterHopId, limit: 20 }, jobLease: ctx.lease }, true);
     let result = await scan();
     if (!result.rows.length && afterHopId && ctx.hasBudget() && !ctx.signal?.aborted) { afterHopId = null; result = await scan(); }
-    cursor = { ownerGoneAfterQueueOrdinal: cursor?.ownerGoneAfterQueueOrdinal ?? "0",
-      ...(result.rows.length ? { httpHopAfterId: result.rows[result.rows.length - 1].hopId } : {}) };
+    cursor = { ...cursor, ownerGoneAfterQueueOrdinal: cursor?.ownerGoneAfterQueueOrdinal ?? "0",
+      httpHopAfterId: result.rows.length ? result.rows[result.rows.length - 1].hopId : undefined };
     await ctx.save(cursor);
     ctx.log("http_origin.auto_reclaim", { scanned: result.rows.length, released: result.rows.filter(row => row.released).length });
   }
