@@ -11,7 +11,7 @@ export function flowStageBadge(station: Station, jobs: readonly (Job | undefined
       + (task.active ?? []).filter(row => row.state === "dispatched").reduce((sum, row) => sum + row.count, 0), 0) : 0;
   if (known.some(job => job.execution === "stale")) return { label: "장애", tone: "red", why: "실행 잠금이 만료된 작업이 있습니다." };
   if (/워커 끊김|반복 재시작/.test(station.status)) return { label: "장애", tone: "red", why: station.reason ?? station.status };
-  if (known.length && known.every(job => job.paused) || station.tone === "stop")
+  if (known.length === jobs.length && known.length > 0 && known.every(job => job.paused) || station.tone === "stop")
     return { label: currentCalls === null || currentCalls > 0 || known.some(job => job.execution === "locked") ? "신규 중지" : "일시정지", tone: "gray",
       why: `새 작업 실행이 일시 중지됐습니다.${currentCalls === null ? " 기존 호출 상태는 미확인입니다." : currentCalls > 0 ? ` 기존 전송 ${currentCalls}건은 진행 중입니다.` : ""}` };
   if (station.llm?.kind === "llm" && station.llm.stopped.length)
