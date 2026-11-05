@@ -1,10 +1,61 @@
 /*
- * 오늘 할 일 — 칸 하나가 카드 하나다. 왼쪽 띠와 수의 색으로 급한 정도를 보인다:
- * warn(주황) 사람이 처리할 것, critical(빨강) 약속을 넘김, failed 못 읽음(빨강 글자, 띠는 중립).
+ * 오늘 할 일 — 관리자 흐름 화면의 compact panel/list 리듬을 이 화면 전용 클래스로 옮긴다.
+ * warn(주황): 사람이 처리할 것, critical(빨강): 약속 초과·공개 중단, failed: 불러오지 못함(중립 띠).
+ * 색과 글자 크기는 현재 관리자 공통 토큰을 따른다. 축소 비율은 공통 PostCSS 규칙 한곳에서 적용한다.
  */
-.inbox-card{border:1px solid var(--color-line);border-left:4px solid var(--color-warn);border-radius:12px;padding:12px 14px;background:var(--color-bg-card)}
-.inbox-card .inbox-count{color:var(--color-warn)}
-.inbox-card[data-tone=critical]{border-left-color:var(--color-danger)}
-.inbox-card[data-tone=critical] .inbox-count{color:var(--color-danger)}
-.inbox-card[data-tone=failed]{border-left-color:var(--color-neutral)}
-.inbox-card .inbox-failed{color:var(--color-danger)}
+.admin-prototype .inbox-page{align-self:stretch;display:flex;flex-direction:column;gap:8px;width:100%;max-width:none;min-width:0;margin:0;padding:6px 0 40px;color:var(--ink)}
+.admin-prototype .inbox-h1{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+.admin-prototype .inbox-header{display:flex;flex-direction:column;gap:5px;min-width:0;padding-bottom:10px;border-bottom:1px solid var(--line)}
+.admin-prototype .inbox-header-top{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:flex-start;gap:4px 14px;min-width:0}
+.admin-prototype .inbox-summary{flex:1 1 320px;margin:0;min-width:0;color:var(--muted);font-size:calc(14px + var(--admin-font-delta,0px));font-weight:600;line-height:1.5;word-break:keep-all;overflow-wrap:anywhere}
+.admin-prototype .inbox-mono{color:var(--ink);font-family:var(--font-mono,ui-monospace,SFMono-Regular,Menlo,monospace);font-variant-numeric:tabular-nums;font-weight:700}
+.admin-prototype .inbox-description{margin:0;color:var(--muted);font-size:inherit;line-height:1.6;word-break:keep-all;overflow-wrap:anywhere}
+.admin-prototype .inbox-alert{display:block;margin:0;padding:8px 12px;border:1px solid color-mix(in srgb,var(--red) 28%,var(--line));border-left:3px solid var(--red);border-radius:8px;background:color-mix(in srgb,var(--red) 6%,var(--surface));color:var(--muted);font-size:inherit;font-weight:600;line-height:1.55;word-break:keep-all;overflow-wrap:anywhere}
+.admin-prototype .inbox-empty{margin:0;padding:24px 16px;border:1px dashed var(--line);border-radius:8px;background:var(--surface);color:var(--muted);font-size:calc(15px + var(--admin-font-delta,0px));font-weight:600;text-align:center}
+.admin-prototype .inbox-card{width:100%;min-width:0;border:1px solid var(--line);border-left:3px solid var(--amber);border-radius:8px;background:var(--surface);color:var(--ink)}
+.admin-prototype .inbox-card[data-tone=critical]{border-left-color:var(--red)}
+.admin-prototype .inbox-card[data-tone=failed]{border-left-color:var(--muted)}
+.admin-prototype .inbox-card-head{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:8px 18px;min-width:0;padding:10px 14px 8px;border-bottom:1px solid var(--line)}
+.admin-prototype .inbox-card-heading{display:flex;flex:1 1 360px;flex-direction:column;gap:4px;min-width:0}
+.admin-prototype .inbox-card-title-row{display:flex;flex-wrap:wrap;align-items:center;gap:5px 8px;min-width:0}
+.admin-prototype .inbox-card-title{margin:0;min-width:0;color:var(--ink);font-size:calc(16px + var(--admin-font-delta,0px));font-weight:750;letter-spacing:-.01em;line-height:1.45;overflow-wrap:anywhere}
+.admin-prototype .inbox-priority{display:inline-flex;align-items:center;flex:none;padding:0 7px;border-radius:999px;background:color-mix(in srgb,var(--amber) 14%,transparent);color:var(--amber);font-size:.92em;font-weight:700;line-height:19px;white-space:nowrap}
+.admin-prototype .inbox-priority[data-tone=critical]{background:color-mix(in srgb,var(--red) 13%,transparent);color:var(--red)}
+.admin-prototype .inbox-count{display:inline-flex;align-items:center;flex:none;padding:0 7px;border-radius:6px;background:color-mix(in srgb,var(--amber) 9%,var(--surface-2));color:var(--amber);font-family:var(--font-mono,ui-monospace,SFMono-Regular,Menlo,monospace);font-size:calc(18px + var(--admin-font-delta,0px));font-weight:800;font-variant-numeric:tabular-nums;line-height:23px;white-space:nowrap}
+.admin-prototype .inbox-card[data-tone=critical] .inbox-count{background:color-mix(in srgb,var(--red) 9%,var(--surface-2));color:var(--red)}
+.admin-prototype .inbox-failed{display:inline-flex;align-items:center;flex:none;padding:0 8px;border-radius:999px;background:var(--surface-2);color:var(--red);font-size:.92em;font-weight:700;line-height:20px;white-space:nowrap}
+.admin-prototype .inbox-card-hint{margin:0;color:var(--muted);font-size:inherit;line-height:1.55;word-break:keep-all;overflow-wrap:anywhere}
+.admin-prototype .inbox-card-side{display:flex;flex:0 1 auto;flex-wrap:wrap;align-items:baseline;justify-content:flex-end;gap:4px 12px;min-width:0;max-width:100%;font-size:inherit;line-height:1.55;color:var(--muted)}
+.admin-prototype .inbox-oldest{min-width:0;color:var(--muted);font-weight:600;white-space:nowrap}
+.admin-prototype .inbox-note{min-width:0;word-break:keep-all;overflow-wrap:anywhere}
+.admin-prototype .inbox-action{display:inline-flex;align-items:center;max-width:100%;color:var(--blue);font-size:inherit;font-weight:650;line-height:1.5;text-align:right;word-break:keep-all;overflow-wrap:anywhere}
+.admin-prototype .inbox-action:hover{color:var(--blue);text-decoration:underline;text-underline-offset:2px}
+.admin-prototype .inbox-list{margin:0;padding:0;list-style:none}
+.admin-prototype .inbox-item{display:grid;grid-template-columns:minmax(150px,.8fr) minmax(0,1.6fr) auto;gap:2px 14px;align-items:baseline;min-width:0;padding:7px 14px;color:var(--ink);font-size:inherit;line-height:1.55}
+.admin-prototype .inbox-item+.inbox-item{border-top:1px solid var(--line)}
+.admin-prototype .inbox-item-name{min-width:0;color:var(--ink);font-weight:600;overflow-wrap:anywhere}
+.admin-prototype .inbox-item-why{min-width:0;color:var(--muted);word-break:keep-all;overflow-wrap:anywhere}
+.admin-prototype .inbox-item-time{justify-self:end;min-width:0;color:var(--muted);font-family:var(--font-mono,ui-monospace,SFMono-Regular,Menlo,monospace);font-variant-numeric:tabular-nums;white-space:nowrap}
+.admin-prototype .inbox-clear{margin:0;padding-top:8px;border-top:1px solid var(--line);color:var(--muted);font-size:inherit;line-height:1.7;word-break:keep-all;overflow-wrap:anywhere}
+.admin-prototype .inbox-clear-label{color:var(--muted);font-weight:700}
+.admin-prototype .inbox-clear-link{color:var(--muted);text-decoration:underline;text-underline-offset:2px}
+.admin-prototype .inbox-clear-link:hover{color:var(--blue)}
+@media(max-width:900px){
+.admin-prototype .inbox-card-heading{flex-basis:100%}
+.admin-prototype .inbox-card-side{flex:1 1 100%;justify-content:flex-start}
+.admin-prototype .inbox-action{text-align:left}
+}
+@media(max-width:760px){
+.admin-prototype .inbox-page{padding-bottom:28px}
+.admin-prototype .inbox-card-head{padding:9px 12px 8px;gap:6px 12px}
+.admin-prototype .inbox-item{grid-template-columns:minmax(0,1fr) auto;padding:7px 12px}
+.admin-prototype .inbox-item-name{grid-column:1;grid-row:1}
+.admin-prototype .inbox-item-time{grid-column:2;grid-row:1}
+.admin-prototype .inbox-item-why{grid-column:1 / -1;grid-row:2}
+}
+@media(max-width:480px){
+.admin-prototype .inbox-header-top{align-items:flex-start;flex-direction:column}
+.admin-prototype .inbox-summary{flex:initial;max-width:100%}
+.admin-prototype .inbox-card-side{gap:3px 9px}
+.admin-prototype .inbox-oldest{white-space:normal}
+}

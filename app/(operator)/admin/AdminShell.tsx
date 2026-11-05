@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { AdminNav, type NavBadges } from "./AdminNav";
 import { adminRouteKey, createNavigationGuard, mergeBadges } from "./live-refresh";
 import { CommandSearch } from "./components/CommandSearch";
@@ -25,26 +25,32 @@ function InlineScript({ html }: { html: string }) {
 export type BadgeSet = { badges?: NavBadges; unknown?: string[] };
 
 /**
- * 메뉴 배지 — 레이아웃이 그린 값(처음·자동 갱신·새로고침)과, 화면을 옮길 때마다 GET /admin/nav-badges 로 다시 받은 값.
+ * 메뉴 배지 — 서버 레이아웃이 넘긴 선택 값(있으면)과, 인증된 화면이 뜬 뒤 GET /admin/nav-badges 로 읽은 값.
  * 공유 레이아웃은 <Link> 이동에서 다시 그려지지 않는다(Next 문서 "layouts … do not rerender"). 받은 차례대로 합치고(mergeBadges),
  * 셀 수 없었던 칸은 전에 보이던 값을 둔다 — 다른 웹이 잰 시각끼리 견주지 않는다. 레이아웃이 새로 그리면 그 값부터 다시 합친다.
- * 첫 그리기에서는 부르지 않는다(레이아웃이 방금 셌다). 앞 요청은 다음 이동에서 끊는다.
+ * 인증된 첫 그리기·화면 이동(routeKey)·레이아웃 재렌더(renderedAt)에 한 번씩 부르고, 로그인 화면과 비인증 화면에서는 부르지 않는다.
+ * 앞 요청은 다음 이동이나 재렌더에서 끊는다.
  */
-function useLiveBadges(pathname: string, layout: BadgeSet, renderedAt: string) {
+function useLiveBadges(pathname: string, layout: BadgeSet, renderedAt: string, authenticated: boolean) {
   const [shown, setShown] = useState<{ from: string; badges: NavBadges }>(() => ({ from: renderedAt, badges: mergeBadges(undefined, layout) }));
-  // 레이아웃이 다시 그렸다 — 그 값을 지금 보이는 것 위에 합친다(그리는 중에 맞추는 React 방식)
-  if (shown.from !== renderedAt) setShown((prev) => ({ from: renderedAt, badges: mergeBadges(prev.badges, layout) }));
-  const first = useRef(true);
+  // 레이아웃이 다시 그렸다 — 선택 배지 값을 넘겼을 때만 그 값을 지금 보이는 것 위에 합친다(넘기지 않았으면 아래에서 새로 읽는다)
+  if (shown.from !== renderedAt) setShown((prev) => ({
+    from: renderedAt,
+    badges: layout.badges === undefined && layout.unknown === undefined ? prev.badges : mergeBadges(prev.badges, layout),
+  }));
   useEffect(() => {
-    if (first.current) { first.current = false; return; }
-    if (pathname.split("?")[0] === "/admin/login") return;
+    if (!authenticated || pathname.split("?")[0] === "/admin/login") return;
     const controller = new AbortController();
     fetch("/admin/nav-badges", { cache: "no-store", signal: controller.signal })
       .then((response) => response.ok ? response.json() as Promise<BadgeSet> : null)
-      .then((body) => { if (body?.badges) setShown((prev) => ({ from: prev.from, badges: mergeBadges(prev.badges, body) })); })
+      .then((body) => {
+        if (!controller.signal.aborted && body?.badges) setShown((prev) => prev.from === renderedAt
+          ? { from: prev.from, badges: mergeBadges(prev.badges, body) }
+          : prev);
+      })
       .catch(() => undefined);
     return () => controller.abort();
-  }, [pathname]);
+  }, [authenticated, pathname, renderedAt]);
   return shown.badges;
 }
 
@@ -72,7 +78,7 @@ function AdminWorkspaceShell({ children, badges, unknownBadges, account, rendere
   const location = resolveWorkspace(pathname, new URLSearchParams(search));
   const [expandedOn, setExpandedOn] = useState<string | null>(null);
   // 761~1279px 의 접힌 메뉴를 펼쳤는가 — 페이지를 옮겨도 그대로 둔다
-  const liveBadges = useLiveBadges(routeKey, { badges, unknown: unknownBadges }, renderedAt);
+  const liveBadges = useLiveBadges(routeKey, { badges, unknown: unknownBadges }, renderedAt, Boolean(account));
   useEffect(() => {
     const onEscape = (event: KeyboardEvent) => { if (event.key === "Escape") setExpandedOn(null); };
     document.addEventListener("keydown", onEscape);

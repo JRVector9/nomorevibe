@@ -63,6 +63,7 @@ const { actionCounts, buildActions, criticalActionCount, deriveStatus, rememberC
 const { acknowledgeAttention } = await import("@/app/(operator)/admin/status/actions");
 const { logger } = await import("@/lib/observability/logger");
 const { default: AdminLayout } = await import("@/app/(operator)/admin/layout");
+const { navBadges } = await import("@/app/(operator)/admin/badges");
 
 const at = (minutes: number) => new Date(ACTION_NOW.getTime() + minutes * 60_000);
 /** 뒤에서 도는 세기가 끝날 때까지 — 타이머는 진짜다(시계만 가짜) */
@@ -191,16 +192,16 @@ describe("메뉴 긴급 배지", () => {
     const items = serveInputs();
     expect(rememberCriticalCount(items)).toBe(13);
     const layout = await AdminLayout({ children: null }) as unknown as { props: { badges?: Record<string, unknown> } };
-    expect(layout.props.badges?.["/admin/status"]).toEqual({ label: "13", tone: "critical", title: "긴급 13건" });
+    expect(layout.props.badges).toBeUndefined();
+    expect((await navBadges()).badges["/admin/status"]).toEqual({ label: "13", tone: "critical", title: "긴급 13건" });
     expect(mocks.operationsData).not.toHaveBeenCalled();
     rememberCriticalCount(items.filter((item) => item.tone !== "critical"));
-    const calm = await AdminLayout({ children: null }) as unknown as { props: { badges?: Record<string, unknown> } };
-    expect(calm.props.badges?.["/admin/status"]).toBeUndefined();
+    expect((await navBadges()).badges["/admin/status"]).toBeUndefined();
   });
 
   it("긴급이 없으면 조용히 실패하던 작업의 보류를 주황 '작업 이상 N건'으로 단다 — 쌓인 일·원래 있던 보류는 세지 않는다", async () => {
     const hold = (key: string) => ({ key, tone: "hold" as const, count: 1, unit: "개", title: key, detail: key });
-    const badge = async () => (await AdminLayout({ children: null }) as unknown as { props: { badges?: Record<string, unknown> } }).props.badges?.["/admin/status"];
+    const badge = async () => (await navBadges()).badges["/admin/status"];
     expect(rememberCriticalCount([hold("job-health"), hold("email-outbox"), hold("review"), hold("model-servers")])).toBe(0);
     expect(await badge()).toEqual({ label: "2", tone: "warn", title: "작업 이상 2건(보류)" });
     // 긴급이 있으면 긴급 수만 빨강으로
