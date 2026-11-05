@@ -578,15 +578,16 @@ def check_app_deployed(client, short, target, previous_id, *, timeout=None, paus
             if app.get('sourceType') != 'docker' or app.get('dockerImage') != target[app_metadata(short)[3]] or setting(app.get('env'), 'RELEASE_TAG') != target['sha']:
                 raise RuntimeError(f'{short}_configuration_drift')
             try:
-                evidence = probe(short, app, target, app.get('replicas'))
+                evidence = probe(short, app, target, app.get('replicas'), detail=True)
             except (RuntimeError, json.JSONDecodeError, subprocess.TimeoutExpired):
                 evidence = {'ready': False}
-            if evidence.get('ready') is True:
-                return {'app': short, 'deployment': 'done', 'service': 'healthy',
-                        'instanceId': evidence.get('instanceId')}
             # swarmkit 은 spec 을 바꾸는 update 마다 UpdateStatus 를 비우므로, done 뒤에 보이는 rollback 은 이번 배포의 것이다
             if evidence.get('updateState') in SWARM_ROLLBACK_STATES + SWARM_STOP_STATES:
                 raise SwarmRollback(short, evidence)
+            # A healthy task during Swarm's monitor window is not a completed update.
+            if evidence.get('ready') is True and evidence.get('updateState') in (None, 'completed'):
+                return {'app': short, 'deployment': 'done', 'service': 'healthy',
+                        'instanceId': evidence.get('instanceId')}
             last = evidence
         time.sleep(pause)
     raise TimeoutError(swarm_detail(f'{short}_verification_timeout', last))
