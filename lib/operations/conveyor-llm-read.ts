@@ -6,7 +6,7 @@ import { AI_TASKS } from "@/lib/llm/ai-tasks";
 import { logger } from "@/lib/observability/logger";
 import { listAiConnections, readAiTaskRuntime } from "./admin-ai-tasks-repository";
 import { readAiTaskExecutionAdminViews } from "./admin-ai-task-execution";
-import type { LlmExecutionRow, LlmConnection, LlmInputs, LlmRankRow, LlmRuntime, LlmUsedRow } from "./conveyor-llm";
+import type { LlmExecutionRow, LlmConnection, LlmInputs, LlmRankRow, LlmRuntime, LlmUsedRow, LlmActiveRow } from "./conveyor-llm";
 
 /**
  * 전체 흐름 칸의 「지금 쓰는 모델」 읽기 — 읽기만 한다(새 쓰기 경로 없음).
@@ -39,8 +39,26 @@ export async function readLedgerUse(): Promise<LlmUsedRow[]> {
     lastAt: row.lastAt ? new Date(row.lastAt).toISOString() : null, groups: Array.isArray(row.groups) ? row.groups.filter((group) => typeof group === "string") : [] }));
 }
 
+/** The current primary ledger, not a count inferred from a busy worker or a recent success. */
+async function readActiveLedger(): Promise<LlmActiveRow[]> {
+  const rows = await onPrimary(() => db.transaction(async tx => {
+    await tx.execute(sql`SET LOCAL statement_timeout = '3s'`);
+    return tx.execute<{ routeId: string; provider: string; model: string; state: LlmActiveRow["state"];
+      count: number; lastAt: Date | string | null; groups: string[] | null }>(sql`
+      SELECT route_id AS "routeId", provider, model, state, count(*)::int AS count, max(updated_at) AS "lastAt",
+        array_agg(DISTINCT group_id ORDER BY group_id) AS groups
+      FROM model_capacity_requests
+      WHERE (state IN ('dispatched', 'indeterminate') OR (state = 'reserved' AND reserved_until > clock_timestamp()))
+        AND route_id IN (${sql.join(LEDGER_ROUTES.map(route => sql`${route}`), sql`, `)})
+      GROUP BY route_id, provider, model, state
+      ORDER BY CASE state WHEN 'dispatched' THEN 0 WHEN 'reserved' THEN 1 ELSE 2 END, route_id, model LIMIT 200`);
+  }, { accessMode: "read only" }));
+  return [...rows].map(row => ({ ...row, count: Number(row.count), lastAt: row.lastAt ? new Date(row.lastAt).toISOString() : null,
+    groups: Array.isArray(row.groups) ? row.groups.filter(group => typeof group === "string") : [] }));
+}
+
 export async function readLlmInputs(now: string): Promise<LlmInputs> {
-  const [connections, rows, used, runtime, execution] = await Promise.all([
+  const [connections, rows, used, runtime, execution, active] = await Promise.all([
     listAiConnections().then((list): LlmConnection[] => list.map((row) => ({ id: row.id, label: row.label, kind: row.kind, baseUrl: row.baseUrl,
       cliTool: row.cliTool, hasKey: row.hasKey, enabled: row.enabled, updatedAt: row.updatedAt }))).catch(warn("conveyor.llm_connections_unavailable")),
     // Keep the save timestamp with the same primary read; old tick failures are about the old ranks.
@@ -58,6 +76,7 @@ export async function readLlmInputs(now: string): Promise<LlmInputs> {
       members: row.members.map(member => ({ memberId: member.memberId, position: member.position,
         connectionId: member.connectionId, model: member.model, deviceId: member.deviceId })),
     }))).catch(warn("conveyor.llm_execution_unavailable")),
+    readActiveLedger().catch(warn("conveyor.llm_active_unavailable")),
   ]);
-  return { now, connections, rows, used, runtime, execution };
+  return { now, connections, rows, used, runtime, execution, active };
 }

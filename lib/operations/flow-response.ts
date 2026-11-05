@@ -27,7 +27,8 @@ export const STATION_JOBS: Readonly<Record<StationKey | "human", readonly { job:
   profile: [{ job: "crawl-tagline", label: "소개 짓기" }],
   publish: [{ job: "crawl-publish", label: "발행·분류" }],
   keywords: [{ job: "product-search-profile", label: "키워드 짓기" }, { job: "product-search-verify", label: "키워드 검수" }],
-  human: [{ job: "split-tiebreak", label: "갈림 판가름" }, { job: "held-qwen-retry", label: "보류 재심사" }],
+  human: [{ job: "human-deepseek-review", label: "사람 몫 AI 위임" }, { job: "split-confirm", label: "갈림 재확인" },
+    { job: "split-tiebreak", label: "갈림 판가름" }, { job: "held-qwen-retry", label: "보류 재심사" }],
 };
 
 /** Public-product translation runs after publication, outside the candidate conveyor. Reuse the same jobs read. */

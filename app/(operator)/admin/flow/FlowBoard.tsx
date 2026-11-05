@@ -10,6 +10,7 @@ import type { OperatorDesk } from "@/lib/operations/operator-desk-model";
 import { JobControl } from "../status/JobControl";
 import { ChangesPanel, EquipmentPanel, kstShort, TodoPanel, WindowPanel } from "./OperatorDesk";
 import { RankDrawer } from "./RankDrawer";
+import { ConfiguredModelRows, LiveModelRows, modelCallCount, RecentModelRows } from "./FlowModels";
 
 /**
  * 전체 흐름 — 발행 전 과정 한 장(/admin/flow). 2026-11-02 2차: 병목 판정 + 장애 대응 + 1인 관리자 필수 칸.
@@ -97,7 +98,7 @@ export type FlowControls = { measuredAt?: string; jobs: Record<string, FlowJobSt
 const TASKS_HREF = "/admin/models/tasks#tasks";
 
 const STATE_TEXT: Record<TaskLlm["state"], string> = {
-  ok: "최근 1시간 · 설정 1순위 사용", fallback: "순위가 넘어감", other: "설정과 다름", none: "모델 없음 — 멈춤", stuck: "쓸 수 있는 순위 없음 — 멈춤",
+  ok: "최근 완료 · 설정 1순위", fallback: "최근 완료 · 대체 순위", other: "최근 완료 · 현재 설정과 다름", none: "모델 없음 — 멈춤", stuck: "쓸 수 있는 순위 없음 — 멈춤",
   idle: "최근 1시간 호출 없음 · 설정값", set_only: "설정값",
 };
 
@@ -106,30 +107,30 @@ function LlmLine({ llm }: { llm: StationLlm | null }) {
   if (!llm) return <span className="cv-llm" data-llm="unknown"><span className="cv-llm-k">LLM</span><b className="cv-llm-m">확인 못함</b><small className="cv-llm-w">모델 설정을 읽지 못함</small></span>;
   if (llm.kind === "none") return <span className="cv-llm" data-llm="none"><span className="cv-llm-k">LLM</span><b className="cv-llm-m">LLM 없음 · {llm.short}</b><small className="cv-llm-w">모델을 부르지 않음</small></span>;
   if (llm.kind === "unknown") return <span className="cv-llm" data-llm="unknown"><span className="cv-llm-k">LLM</span><b className="cv-llm-m">확인 못함</b><small className="cv-llm-w">{llm.why}</small></span>;
-  const head = llm.head.head;
   const tone = llm.flag?.tone ?? "ok";
-  const usage = head?.source === "used" ? `최근 1시간 ${n(head.count ?? 0)}건` : llm.head.pool ? "작업 분산 설정" : llm.head.state === "none" ? "작업 ↔ AI 모델에서 채우기" : STATE_TEXT[llm.head.state];
-  return (
-    <span className="cv-llm" data-llm={tone} data-state={llm.head.state}>
-      <span className="cv-llm-k">LLM{llm.flag && <em className="cv-llm-flag" data-tone={llm.flag.tone}><span aria-hidden="true">{llm.flag.tone === "bad" ? "■" : "▲"}</span> {llm.flag.text}</em>}</span>
-      <b className="cv-llm-m">{head ? head.model : "모델 없음"}</b>
-      <small className="cv-llm-w">{head ? head.where : "순위 비어 있음"}{llm.head.pool && head?.source === "used" ? ` · ${llm.head.pool.summary}` : ""}{llm.more > 0 ? ` · 외 ${llm.more}` : ""} · {usage}</small>
-    </span>
-  );
+  return <span className="cv-llm" data-llm={tone} data-state={llm.head.state}>
+    <span className="cv-llm-k">LLM 현재 호출</span>
+    <LiveModelRows llm={llm} compact />
+    {modelCallCount(llm) === 0 && <span className="flow-model-config"><span className="flow-model-note">현재 설정</span><ConfiguredModelRows llm={llm} compact /></span>}
+  </span>;
 }
 
-function rankChain(task: TaskLlm): string {
-  if (task.pool) return `${task.pool.summary} · ${task.pool.members.map(member =>
-    `${member.connection} · ${member.model} [${member.deviceId}]${member.problem ? ` (${member.problem})` : ""}`).join(" / ")}`;
-  return task.slots.filter((slot) => slot.ranks.length).map((slot) =>
-    `${slot.label ? `${slot.label}: ` : ""}${slot.ranks.map((rank) => `${rank.rank}순위 ${rank.connection} · ${rank.model}${rank.problem ? ` (${rank.problem})` : ""}`).join(" → ")}`).join(" / ");
-}
-
-/** 실제(최근 1시간 장부) 한 줄 */
-function usedText(task: TaskLlm): string {
-  if (task.used === null) return task.usedWhy === "no_ledger" ? "기록 없음 — 용량 장부를 거치지 않는 작업" : "확인 못함 — 모델 장부를 읽지 못함";
-  if (task.used.length === 0) return "최근 1시간 호출 없음";
-  return task.used.map((row) => `${row.text} ${n(row.count)}건${task.pool ? "" : row.rank ? ` (${row.rank}순위)` : " (순위에 없음)"}`).join(" · ");
+function poolRuntimeLines(task: TaskLlm): ReactNode {
+  const pool = task.pool;
+  if (!pool?.runtime) return null;
+  const groups = new Map<string, typeof pool.members>();
+  for (const member of pool.members) {
+    const key = JSON.stringify([member.connectionId ?? member.connection, member.model]);
+    groups.set(key, [...groups.get(key) ?? [], member]);
+  }
+  return <span className="flow-model-lines">{[...groups].map(([key, members]) => {
+    const counts = members.flatMap(member => Object.hasOwn(pool.runtime!.served, member.memberId) ? [pool.runtime!.served[member.memberId]] : []);
+    // AI1 copies one engine total to each member; AI2 currently provides no member usage totals.
+    const served = counts.length === members.length ? task.task === "first-review" ? Math.max(...counts)
+      : task.task === "second-review" && members.length > 1 ? null : counts.reduce((sum, value) => sum + value, 0) : null;
+    return <span className="flow-model-line" key={key}>{members[0].connection} · {members[0].model} · {served === null ? "구성원별 사용 집계 없음" : `사용 기록 ${n(served)}건`}
+      {members.length > 1 ? ` · 동일 엔진 ${members.length}개 자리 공유` : ""}</span>;
+  })}</span>;
 }
 
 /**
@@ -148,13 +149,10 @@ function LlmDetail({ llm, shown }: { llm: StationLlm | null; shown: string[] }) 
       return (
         <dl key={task.task} className="cv-kv cv-llmd-task" data-state={task.state}>
           <dt className="cv-llmd-k">작업</dt><dd className="cv-llmd-v"><b>{task.label}</b><span className="cv-llmd-state" data-state={task.state}>{task.pool ? task.state === "stuck" ? "작업 분산 · 최근 틱 사용 불가" : "작업 분산 · 설정값" : STATE_TEXT[task.state]}</span></dd>
-          <dt className="cv-llmd-k">설정</dt><dd className="cv-llmd-v">{rankChain(task) || "순위 없음"}</dd>
-          {task.pool?.runtime && <><dt className="cv-llmd-k">최근 틱 관측</dt><dd className="cv-llmd-v">{kstShort(task.pool.runtime.at)} · {task.pool.members.map(member => {
-            const served = task.pool!.runtime!.served[member.memberId] ?? 0;
-            const unavailable = task.pool!.runtime!.unusable.filter(row => row.memberId === member.memberId).reduce((sum, row) => sum + row.count, 0);
-            return `${member.connection} · ${member.model}: 사용 기록 ${n(served)}건${unavailable ? ` · 사용 불가 ${n(unavailable)}건` : ""}`;
-          }).join(" / ")}</dd></>}
-          <dt className="cv-llmd-k">실제</dt><dd className="cv-llmd-v">{usedText(task)}</dd>
+          <dt className="cv-llmd-k">현재 호출</dt><dd className="cv-llmd-v"><LiveModelRows llm={{ ...llm, tasks: [task], head: task }} /></dd>
+          <dt className="cv-llmd-k">설정</dt><dd className="cv-llmd-v"><ConfiguredModelRows llm={{ ...llm, tasks: [task], head: task }} /></dd>
+          {task.pool?.runtime && <><dt className="cv-llmd-k">최근 틱 관측</dt><dd className="cv-llmd-v">{kstShort(task.pool.runtime.at)} · {poolRuntimeLines(task)}</dd></>}
+          <dt className="cv-llmd-k">최근 1시간</dt><dd className="cv-llmd-v"><RecentModelRows llm={{ ...llm, tasks: [task], head: task }} /></dd>
           {note && <><dt className="cv-llmd-k">까닭</dt><dd className="cv-llmd-v cv-llmd-note">{note}</dd></>}
         </dl>);
     })}</div>
@@ -303,7 +301,7 @@ export function StationDetail({ station, hours, onChangeModels, runtime, holdsKn
       <p className="cv-what">{station.what}</p>
       <StatusSection tone={station.tone} status={station.status} lines={lines} />
       {runtime}
-      <Section id="cv-sec-model" title="지금 쓰는 모델 — 설정과 실제(최근 1시간 장부)"
+      <Section id="cv-sec-model" title="모델 — 현재 호출·설정·최근 1시간"
         tool={onChangeModels ? <ChangeButton label={station.label} onClick={onChangeModels} /> : undefined}><LlmDetail llm={station.llm} shown={lines} /></Section>
       <Section id="cv-sec-rate" title="처리량">
         <Kpis items={kpis} />
@@ -340,7 +338,7 @@ export function HumanDetail({ human, onChangeModels }: { human: HumanBox; onChan
       <header className="cv-detail-h"><h2 id="cv-detail-title"><small>검수</small>사람 심사</h2><ToneBadge tone={human.tone} text={human.status} /></header>
       <p className="cv-what">규칙·AI가 가르지 못한 후보(보류)를 사람이 승인하거나 거절합니다. 승인하면 프로필 준비로 돌아갑니다.</p>
       <StatusSection tone={human.tone} status={human.status} lines={lines} />
-      <Section id="cv-sec-model" title="지금 쓰는 모델 — 설정과 실제(최근 1시간 장부)"
+      <Section id="cv-sec-model" title="모델 — 현재 호출·설정·최근 1시간"
         tool={onChangeModels ? <ChangeButton label="사람 심사" onClick={onChangeModels} /> : undefined}><LlmDetail llm={human.llm} shown={lines} /></Section>
       <Section id="cv-sec-rate" title="처리량">
         <Kpis items={[{ label: "직접 판단", value: n(human.direct) }, { label: "확정만 하면 됨", value: n(human.agreed) }, { label: "2차 결론 대기", value: n(human.awaitingSecond) },

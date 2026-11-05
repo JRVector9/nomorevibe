@@ -55,6 +55,8 @@ export type LlmRankRow = { task: string; slot: number; rank: number; connectionI
  * 순위에 맞지 않는 호출의 「어디서」를 장비 이름으로 보이는 데 쓴다(없으면 빈 배열).
  */
 export type LlmUsedRow = { routeId: string; provider: string; model: string; count: number; lastAt: string | null; groups?: string[] };
+/** Current shared-ledger calls, distinct from historical completed requests. */
+export type LlmActiveRow = LlmUsedRow & { state: "reserved" | "dispatched" | "indeterminate" };
 /** 실행 쪽 순위 사정(잡의 마지막 틱 관측 ai_task.ranks) — 오래됐으면 쓰지 않는다 */
 export type LlmExecutionRow = {
   task: string; slot: number; mode: "fallback" | "workload_pool"; revision: number | null; updatedAt: string | null;
@@ -63,12 +65,18 @@ export type LlmExecutionRow = {
 export type LlmPoolRuntime = { configRevision: number; members: number; served: Readonly<Record<string, number>>;
   unusable: readonly { memberId: string; code: string; count: number }[] };
 export type LlmRuntime = { at: string; startedAt?: string; pool?: LlmPoolRuntime; degraded: { code: string; detail: string | null } | null; unusable: { rank: number; code: string; text: string }[] };
+export type LlmLegacyPublish = { source: string; observedAt: string | null; ready: boolean | null;
+  models: { rank: number; model: string; where: string }[] };
 export type LlmInputs = {
   now: string;
   /** null = 읽지 못함 */
   connections: LlmConnection[] | null;
   rows: LlmRankRow[] | null;
   used: LlmUsedRow[] | null;
+  /** Undefined is retained for older pure fixtures; null means the current read failed. */
+  active?: LlmActiveRow[] | null;
+  /** Existing connect-agent observation, reused from the same operations snapshot. */
+  legacyPublish?: LlmLegacyPublish | null;
   runtime: Record<string, LlmRuntime> | null;
   /** Explicit null means the mode read failed. Undefined preserves existing fallback-only pure fixtures. */
   execution?: readonly LlmExecutionRow[] | null;
@@ -82,6 +90,7 @@ export const RUNTIME_FRESH_MS = 30 * 60_000;
 export type RankSeen = { rank: number; connection: string; model: string; problem: string | null };
 export type SlotSeen = { slot: number; label: string | null; ranks: RankSeen[] };
 export type UsedSeen = { text: string; model: string; where: string; count: number; rank: number | null; lastAt: string | null };
+export type ActiveSeen = UsedSeen & { state: LlmActiveRow["state"] };
 export type TaskState =
   /** 설정 1순위를 쓰고 있다 */
   | "ok"
@@ -100,7 +109,7 @@ export type TaskState =
 export type TaskHead = { model: string; where: string; rank: number | null; source: "used" | "set"; count: number | null };
 export type TaskLlmPool = {
   summary: string; modelCount: number; deviceCount: number;
-  members: { memberId: string; slot: number; configRevision: number | null; connection: string; model: string; deviceId: string; problem: string | null }[];
+  members: { memberId: string; slot: number; configRevision: number | null; connectionId?: string; connection: string; model: string; deviceId: string; problem: string | null }[];
   /** Only the exact current membership/revision may contribute member observations. */
   runtime: (LlmPoolRuntime & { at: string }) | null;
 };
@@ -108,8 +117,11 @@ export type TaskLlm = {
   task: string; label: string; live: boolean; state: TaskState;
   slots: SlotSeen[];
   pool?: TaskLlmPool;
+  legacy?: LlmLegacyPublish;
   /** null = 알 수 없음(장부 밖 route·읽지 못함) */
   used: UsedSeen[] | null;
+  /** Current reservations/transmissions/uncertainties. A reservation is not a running call. */
+  active?: ActiveSeen[] | null;
   usedWhy: "no_ledger" | "unread" | null;
   head: TaskHead | null;
   /** 한 줄 설명(왜 이 상태인지) */
@@ -219,13 +231,19 @@ function placeOf(row: LlmUsedRow, inputs: LlmInputs): string {
 }
 
 function taskLlm(def: AiTaskDef, inputs: LlmInputs): TaskLlm {
-  const live = isAiLiveTask(def.id);
   const fresh = currentRuntime(def, inputs);
   const poolConfigs = inputs.execution?.filter(row => row.task === def.id && row.mode === "workload_pool") ?? [];
+  const live = isAiLiveTask(def.id) || def.id === "publish-classify" && poolConfigs.length > 0;
+  const active: ActiveSeen[] | null = !def.routeId || inputs.active == null ? null : inputs.active
+    .filter(row => row.routeId === def.routeId).map(row => {
+      const place = placeOf(row, inputs);
+      return { text: `${place} · ${row.model}`, model: row.model, where: place, count: row.count, rank: null,
+        lastAt: row.lastAt, state: row.state };
+    });
   if (poolConfigs.length) {
     const members = poolConfigs.flatMap(config => config.members.map(member => {
       const connection = inputs.connections?.find(row => row.id === member.connectionId);
-      return { memberId: member.memberId, slot: config.slot, configRevision: config.revision,
+      return { memberId: member.memberId, slot: config.slot, configRevision: config.revision, connectionId: member.connectionId,
         connection: connection?.label ?? "연결 없음", model: member.model, deviceId: member.deviceId,
         problem: !connection ? "연결을 찾을 수 없음" : !connection.enabled ? "연결이 꺼져 있음" : null };
     }));
@@ -241,7 +259,7 @@ function taskLlm(def: AiTaskDef, inputs: LlmInputs): TaskLlm {
     // Only an explicit whole-pool failure, after currentRuntime's identity/time guards, stops the task.
     // Individual member_unusable counters never imply that every member is unavailable.
     const unavailable = fresh?.pool && fresh.degraded?.code === "all_ranks_unusable" ? fresh.degraded : null;
-    return { task: def.id, label: def.label, live, slots: [], pool, used, usedWhy,
+    return { task: def.id, label: def.label, live, slots: [], pool, used, active, usedWhy,
       state: unavailable ? "stuck" : used?.length === 0 ? "idle" : "set_only",
       head: top ? { model: top.model, where: top.where, rank: null, source: "used", count: top.count }
         : { model: `모델 ${pool.modelCount}개 · 작업 분산`, where: `장비 ${pool.deviceCount}대`, rank: null, source: "set", count: null },
@@ -251,7 +269,7 @@ function taskLlm(def: AiTaskDef, inputs: LlmInputs): TaskLlm {
   }
   const slots = slotsOf(def, inputs, fresh);
   const configured = slots.flatMap((slot) => slot.ranks);
-  const base = { task: def.id, label: def.label, live, slots };
+  const base = { task: def.id, label: def.label, live, slots, active };
 
   const usedWhy = !def.routeId ? "no_ledger" as const : inputs.used === null ? "unread" as const : null;
   const usedRows = usedWhy ? null : (inputs.used ?? []).filter((row) => row.routeId === def.routeId).sort((a, b) => b.count - a.count);
@@ -260,6 +278,16 @@ function taskLlm(def: AiTaskDef, inputs: LlmInputs): TaskLlm {
     const place = rank ? where(rank) : placeOf(row, inputs);
     return { text: `${place} · ${row.model}`, model: rank?.model ?? row.model, where: place, count: row.count, rank: rank?.rank ?? null, lastAt: row.lastAt };
   });
+
+  // Fallback publication is owned by connect-agent, not ai_task_models. Empty API ranks are not a missing CLI model.
+  if (def.id === "publish-classify") {
+    const legacy = inputs.legacyPublish ?? { source: "기존 connect CLI 설정", observedAt: null, ready: null, models: [] };
+    const first = legacy.models[0];
+    return { ...base, legacy, state: "set_only", used, usedWhy,
+      head: first ? { model: first.model, where: first.where, rank: first.rank, source: "set", count: null } : null,
+      note: legacy.observedAt ? "기존 CLI 분류 설정입니다. API 분산 모델과 별도이며 현재 호출은 장부에서 확인합니다."
+        : "기존 CLI 분류를 사용하지만 현재 연결 에이전트 설정은 미확인입니다. API 순위가 비었다는 이유로 모델 미설정으로 판단하지 않습니다." };
+  }
 
   // 순위가 비었다 — 실행 쪽이 순위를 읽는 작업은 돌지 않는다
   if (!configured.length) {

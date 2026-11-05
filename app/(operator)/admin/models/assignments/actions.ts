@@ -14,7 +14,7 @@ export type AssignmentImportRowState = { index: number; origin: string; assignme
 export type AssignmentImportState = { ok?: true; message?: string; issues?: string[]; rows?: AssignmentImportRowState[] } | null;
 
 const DENIED = { issues: ["권한이 없습니다. 다시 로그인해주세요."] };
-const PATHS = ["/admin/models/assignments", "/admin/models/devices", "/admin/models/helpers", "/admin/models", "/admin/models/contracts", "/admin/status"];
+const PATHS = ["/admin/models/assignments", "/admin/models/devices", "/admin/models/helpers", "/admin/models", "/admin/models/contracts", "/admin/status", "/admin/flow"];
 const revalidate = () => { for (const path of PATHS) revalidatePath(path); };
 const field = (form: FormData, name: string) => { const value = form.get(name); return typeof value === "string" ? value.trim() : ""; };
 const messages = (issues: readonly string[]) => issues.map(modelAssignmentIssueMessage);
