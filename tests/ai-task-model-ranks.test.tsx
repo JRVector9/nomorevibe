@@ -485,7 +485,7 @@ describe("RankSelects — 작업 ↔ 모델 꼴(provider 칸 = 연결 id)", () =
     expect(html).toContain('name="rank3Model" value="qwen3.8-flash-next"');
     expect(html).toContain("2순위를 비우고 그 뒤 순위만 고를 수 없습니다.");
     expect(html).toContain("<p>안내</p>");
-    expect(html).not.toContain("저장하면 다음 틱부터 적용됩니다");
+    expect(html).not.toContain("워커는 30초 주기로 설정을 다시 읽어");
     // 묶음이 없는 선택지(1차 AI 검수 꼴)는 예전처럼 한 줄 이름 그대로
     const flat = renderToStaticMarkup(createElement(RankSelects<{ provider: string; model: string }>, { stage: { id: "x-1", label: "x", slots: 1 },
       options: [{ provider: "supa", model: "m", label: "supa · m" }], value: [null], slotNames: AI_RANK_SLOT_NAMES, onChange: () => {}, validate: () => [] }));

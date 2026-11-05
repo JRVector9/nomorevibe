@@ -74,7 +74,8 @@ export const saveAiTaskRanksAction = webWriteAction(async function saveAiTaskRan
   const count = parsed.input.ranks.filter(Boolean).length;
   return { ok: true, warnings: saved.warnings,
     message: `${aiTaskSlotLabel(task, parsed.input.slot)}: ${count ? `${count}개 순위를 저장했습니다` : "순위를 비웠습니다"}.${made.length ? ` 함께 만든 것: ${made.join(" · ")}.` : ""}`
-      + (isAiLiveTask(task.id) ? " 다음 틱부터 이 순위를 씁니다." : " 이 작업의 실행 쪽은 아직 이 순위를 읽지 않습니다(설정값).") };
+      + (isAiLiveTask(task.id) ? " 워커는 30초 주기로 설정을 다시 읽어 새 작업에 자동 반영합니다. 진행 중인 호출은 기존 모델을 유지합니다."
+        : " 이 작업의 실행 쪽은 아직 이 순위를 읽지 않습니다(설정값).") };
 });
 
 /** 「지금 설정 가져오기」 적용 — 보여 준 계획 hash 와 같을 때만, 확인 글자 「가져오기」. */

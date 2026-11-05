@@ -84,7 +84,7 @@ export function RankSelects<T extends RankValue>({ stage, options, value, onChan
     </div>
     {issues.length > 0 && <ul role="alert" className="text-[13px] text-down">{issues.map(issue => <li key={issue}>{issue}</li>)}</ul>}
     {note === undefined
-      ? <p className="text-[13px] text-fg-2">1순위를 이 틱에 쓸 수 없으면(멈춤·장비 미설정·연결 계약 닫힘·경로 없음·엔진 내려감) 2순위, 그다음 3순위로 넘어갑니다. 저장하면 다음 틱부터 적용됩니다.</p>
+      ? <p className="text-[13px] text-fg-2">1순위를 이 틱에 쓸 수 없으면(멈춤·장비 미설정·연결 계약 닫힘·경로 없음·엔진 내려감) 2순위, 그다음 3순위로 넘어갑니다. 워커는 30초 주기로 설정을 다시 읽어 새 작업에 자동 반영합니다. 진행 중인 호출은 기존 모델을 유지합니다.</p>
       : note}
   </div>;
 }

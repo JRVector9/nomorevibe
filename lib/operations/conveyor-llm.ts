@@ -49,14 +49,14 @@ export const NO_LLM: Readonly<Record<"discover" | "fetch" | "judge" | "sink", { 
 // ── 입력 ─────────────────────────────────────────────────────────────────────────────────────────
 
 export type LlmConnection = { id: string; label: string; kind: "api" | "cli"; baseUrl?: string | null; cliTool: string | null; hasKey: boolean; enabled: boolean };
-export type LlmRankRow = { task: string; slot: number; rank: number; connectionId: string; model: string; enabled: boolean };
+export type LlmRankRow = { task: string; slot: number; rank: number; connectionId: string; model: string; enabled: boolean; updatedAt?: string };
 /**
  * 최근 1시간 장부(model_capacity_requests state=settled)를 route·provider·model 로 센 것. groups 는 그 호출들이 잡은 장비 그룹(group_id) —
  * 순위에 맞지 않는 호출의 「어디서」를 장비 이름으로 보이는 데 쓴다(없으면 빈 배열).
  */
 export type LlmUsedRow = { routeId: string; provider: string; model: string; count: number; lastAt: string | null; groups?: string[] };
 /** 실행 쪽 순위 사정(잡의 마지막 틱 관측 ai_task.ranks) — 오래됐으면 쓰지 않는다 */
-export type LlmRuntime = { at: string; degraded: { code: string; detail: string | null } | null; unusable: { rank: number; code: string; text: string }[] };
+export type LlmRuntime = { at: string; startedAt?: string; degraded: { code: string; detail: string | null } | null; unusable: { rank: number; code: string; text: string }[] };
 export type LlmInputs = {
   now: string;
   /** null = 읽지 못함 */
@@ -129,8 +129,18 @@ function problemOf(row: LlmRankRow, connection: LlmConnection | undefined): stri
   return null;
 }
 
-function slotsOf(def: AiTaskDef, inputs: LlmInputs, runtime: LlmRuntime | null): SlotSeen[] {
-  const fresh = runtime && Date.parse(inputs.now) - Date.parse(runtime.at) <= RUNTIME_FRESH_MS ? runtime : null;
+/** A previous rank's failure must not be attached to a newly saved rank with the same number. */
+function currentRuntime(def: AiTaskDef, inputs: LlmInputs): LlmRuntime | null {
+  const runtime = inputs.runtime?.[def.id];
+  if (!runtime || !(Date.parse(inputs.now) - Date.parse(runtime.at) <= RUNTIME_FRESH_MS)) return null;
+  // A tick may start with the old ranks and only finish after the save.
+  const observedAt = Date.parse(runtime.startedAt ?? runtime.at);
+  const changedSinceObservation = (inputs.rows ?? []).some(row => row.task === def.id && row.updatedAt
+    && Date.parse(row.updatedAt) > observedAt);
+  return changedSinceObservation ? null : runtime;
+}
+
+function slotsOf(def: AiTaskDef, inputs: LlmInputs, fresh: LlmRuntime | null): SlotSeen[] {
   return Array.from({ length: def.slots }, (_, index) => index + 1).map((slot) => {
     const ranks = (inputs.rows ?? []).filter((row) => row.task === def.id && row.slot === slot).sort((a, b) => a.rank - b.rank).map((row): RankSeen => {
       const connection = inputs.connections?.find((entry) => entry.id === row.connectionId);
@@ -181,9 +191,8 @@ function placeOf(row: LlmUsedRow, inputs: LlmInputs): string {
 
 function taskLlm(def: AiTaskDef, inputs: LlmInputs): TaskLlm {
   const live = isAiLiveTask(def.id);
-  const runtime = inputs.runtime?.[def.id] ?? null;
-  const fresh = runtime && Date.parse(inputs.now) - Date.parse(runtime.at) <= RUNTIME_FRESH_MS ? runtime : null;
-  const slots = slotsOf(def, inputs, runtime);
+  const fresh = currentRuntime(def, inputs);
+  const slots = slotsOf(def, inputs, fresh);
   const configured = slots.flatMap((slot) => slot.ranks);
   const base = { task: def.id, label: def.label, live, slots };
 

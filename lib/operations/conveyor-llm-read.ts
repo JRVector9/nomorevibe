@@ -1,9 +1,10 @@
 import "server-only";
-import { sql } from "drizzle-orm";
-import { db } from "@/lib/db";
+import { asc, sql } from "drizzle-orm";
+import { db, onPrimary } from "@/lib/db";
+import { aiTaskModels } from "@/lib/db/schema";
 import { AI_TASKS } from "@/lib/llm/ai-tasks";
 import { logger } from "@/lib/observability/logger";
-import { listAiConnections, listAiTaskRows, readAiTaskRuntime } from "./admin-ai-tasks-repository";
+import { listAiConnections, readAiTaskRuntime } from "./admin-ai-tasks-repository";
 import type { LlmConnection, LlmInputs, LlmRankRow, LlmRuntime, LlmUsedRow } from "./conveyor-llm";
 
 /**
@@ -41,11 +42,15 @@ export async function readLlmInputs(now: string): Promise<LlmInputs> {
   const [connections, rows, used, runtime] = await Promise.all([
     listAiConnections().then((list): LlmConnection[] => list.map((row) => ({ id: row.id, label: row.label, kind: row.kind, baseUrl: row.baseUrl,
       cliTool: row.cliTool, hasKey: row.hasKey, enabled: row.enabled }))).catch(warn("conveyor.llm_connections_unavailable")),
-    listAiTaskRows().then((list): LlmRankRow[] => list.map((row) => ({ task: row.task, slot: row.slot, rank: row.rank, connectionId: row.connectionId,
-      model: row.model, enabled: row.enabled }))).catch(warn("conveyor.llm_ranks_unavailable")),
+    // Keep the save timestamp with the same primary read; old tick failures are about the old ranks.
+    onPrimary(() => db.select({ task: aiTaskModels.task, slot: aiTaskModels.slot, rank: aiTaskModels.rank,
+      connectionId: aiTaskModels.connectionId, model: aiTaskModels.model, enabled: aiTaskModels.enabled, updatedAt: aiTaskModels.updatedAt })
+      .from(aiTaskModels).orderBy(asc(aiTaskModels.task), asc(aiTaskModels.slot), asc(aiTaskModels.rank)))
+      .then((list): LlmRankRow[] => list.map(row => ({ ...row, updatedAt: row.updatedAt.toISOString() })))
+      .catch(warn("conveyor.llm_ranks_unavailable")),
     readLedgerUse().catch(warn("conveyor.llm_ledger_unavailable")),
     readAiTaskRuntime().then((map): Record<string, LlmRuntime> => Object.fromEntries(Object.entries(map).map(([task, view]) => [task, {
-      at: view.at, degraded: view.degraded ? { code: view.degraded.code, detail: view.degraded.detail } : null,
+      at: view.at, ...(view.startedAt ? { startedAt: view.startedAt } : {}), degraded: view.degraded ? { code: view.degraded.code, detail: view.degraded.detail } : null,
       unusable: view.unusable.map((row) => ({ rank: row.rank, code: row.code, text: row.text })) }]))).catch(warn("conveyor.llm_runtime_unavailable")),
   ]);
   return { now, connections, rows, used, runtime };

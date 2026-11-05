@@ -31,7 +31,8 @@ it("reads the configured ranks and connections without opening keys, and the 1-h
   const inputs = await readLlmInputs(new Date().toISOString());
   const connection = inputs.connections?.find((row) => row.id === connectionId);
   expect(connection).toEqual({ id: connectionId, label, kind: "api", baseUrl: `http://it-llm-${run.slice(0, 8)}.test/v1`, cliTool: null, hasKey: false, enabled: true });
-  expect(inputs.rows).toContainEqual({ task: "screen-review", slot: 8, rank: 1, connectionId, model: "it-model", enabled: true });
+  expect(inputs.rows).toContainEqual({ task: "screen-review", slot: 8, rank: 1, connectionId, model: "it-model", enabled: true,
+    updatedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/) });
   expect(Array.isArray(inputs.used)).toBe(true);
   expect(inputs.runtime).not.toBeNull();
   // 읽은 입력으로 칸 답을 만들 수 있다 — 벨트 밖 작업의 행이 섞여도 칸은 자기 작업만 본다

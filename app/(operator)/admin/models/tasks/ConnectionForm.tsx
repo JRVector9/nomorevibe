@@ -37,7 +37,8 @@ export function ConnectionForm({ initial, secretBox }: { initial: AiConnectionVi
       <input name="label" required maxLength={80} value={label} onChange={event => setLabel(event.target.value)} autoComplete="off" className={INPUT} /></label>
     {kind === "api" ? <>
       <label className="grid gap-1">주소 (OpenAI 호환, …/v1)
-        <input name="baseUrl" required defaultValue={initial?.baseUrl ?? ""} placeholder="http://100.77.43.63:8090/v1" autoComplete="off" className={`${INPUT} font-mono`} /></label>
+        <input name="baseUrl" required defaultValue={initial?.baseUrl ?? ""} placeholder="http://100.77.43.63:8090/v1" autoComplete="off" className={`${INPUT} font-mono`} />
+        <span className="text-[13px] text-fg-3">저장 시 이 API 주소에서 모델 목록을 확인합니다. 확인된 모델은 지원하는 업무의 순위에서 바로 선택할 수 있으며, 호출은 등록한 API 주소로 직접 보냅니다.</span></label>
       <label className="grid gap-1">API 키 {initial?.hasKey ? "(저장됨 — 비워 두면 그대로)" : "(없으면 비워 둡니다)"}
         <input name="apiKey" type="password" autoComplete="off" disabled={!secretBox} className={INPUT}
           placeholder={secretBox ? "" : "이 서버에는 키 암호화 설정이 없어 키를 저장할 수 없습니다"} /></label>
