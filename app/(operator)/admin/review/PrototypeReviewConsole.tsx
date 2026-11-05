@@ -92,11 +92,12 @@ export function PrototypeReviewConsole({ entries: initialEntries, reasons, focus
           <td>{entry.bucket ? causeLabel(entry.bucket) : entry.candidate.reason ?? "—"}<p>{entry.candidate.judgedAt || entry.candidate.updatedAt ? `${formatWait(Math.max(0, (now - new Date(entry.candidate.judgedAt ?? entry.candidate.updatedAt).getTime()) / 3_600_000))} 대기` : "대기 —"}</p></td>
           <td><span className={`tag ${entry.candidate.state === "rejected" ? "red" : entry.candidate.state === "approved" || entry.candidate.state === "published" ? "green" : "amber"}`}>{states[entry.candidate.state] ?? entry.candidate.state}</span></td>
         </tr>)}
-      </tbody></table></div>
+      </tbody></table>
+      <AsyncScrollBoundary hasMore={!!cursor} loading={loading} error={error} onLoad={() => { void loadMore(); }} />
+      </div>
       {!entries.length && <div className="empty"><b>조건에 맞는 후보가 없습니다.</b>단계나 검색 조건을 바꿔 확인하세요.</div>}
       {entries.length > initialEntries.length && <p className="table-note">추가 목록을 확인하는 동안 자동 갱신은 잠시 쉽니다. 새로고침하면 최근 30개부터 다시 확인합니다.</p>}
       <p className="table-note">불러온 {entries.length}건 · J/K 이동 · A 승인 / R 반려 준비 · 원본이 바뀐 선택은 일괄 처리에서 제외합니다.</p>
-      <AsyncScrollBoundary hasMore={!!cursor} loading={loading} error={error} onLoad={() => { void loadMore(); }} />
       <div className="panel-foot"><BulkDecision selected={selection.send} reasons={reasons} title="선택한 후보" onDone={() => setChecked(new Map())} /></div>{footer && <div className="panel-foot">{footer}</div>}
     </section>
     <section className="panel pad sticky-detail" aria-label="선택한 검수 후보" data-review-panel tabIndex={-1}>{current ? <PrototypeReviewDetail key={current.candidate.id} entry={current} reasons={reasons} onDecided={result => decided(current, result)} /> : <div className="empty"><b>{active ? "선택한 후보가 목록에서 빠졌습니다." : "후보를 선택하세요."}</b>다른 후보로 자동 변경하지 않습니다. 목록에서 다시 선택하세요.</div>}</section>
