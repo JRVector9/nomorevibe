@@ -500,6 +500,27 @@ async function finalVerifyWall(tx: ProductTransaction, role: VerifyRole, job: Jo
       AND reserved_until>clock_timestamp()) AS live`);
   if (!wall?.live) throw new Error("search_verify_model_reservation_lost");
 }
+function verificationMember(product: Pick<ProfileTask['product'], 'id' | 'slug'>, current: ProductSearchProfile,
+  raw: Record<string, unknown>, evidenceHash: string, keywords: readonly string[], mode: 'full' | 'chunk') {
+  return searchVerifyMemberSchema.parse({ productId: product.id, slug: product.slug, evidenceHash,
+    profile: { rowIdentityHash: reviewHash(raw), sourceRevision: current.sourceRevision, verifyAttempts: current.verifyAttempts },
+    keywordsHash: reviewHash(keywords), keywordCount: mode === 'chunk' ? new Set(keywords).size : keywords.length, mode, policyHash: SEARCH_VERIFY_POLICY_HASH });
+}
+/** Read-only affinity snapshot, never a writer or dispatch permit. */
+export async function readSearchVerifyAffinityMember(task: ProfileTask) {
+  return onPrimary(() => db.transaction(async tx => {
+    await tx.execute(sql`SET LOCAL statement_timeout='3s'`);
+    const [product] = await tx.select({ ...FIELDS, reviewerNote: REVIEWER_NOTE }).from(products).where(eq(products.id, task.product.id));
+    const [profile] = await tx.select({ row: productSearchProfiles, raw: sql<Record<string, unknown>>`to_jsonb(${productSearchProfiles})` })
+      .from(productSearchProfiles).where(eq(productSearchProfiles.productId, task.product.id));
+    if (!product || !profile || !task.profile || !sameProfile(profile.row, task.profile)) return null;
+    const evidenceHash = profileHash(profileEvidence(product, product.reviewerNote));
+    if (evidenceHash !== profileHash(profileEvidence(task.product, task.reviewerNote))) return null;
+    const keywords = [...profile.row.keywordsEn, ...profile.row.keywordsKo];
+    const mode = ['invalid_output', 'timeout'].includes(profile.row.verifyError ?? '') ? 'chunk' : 'full';
+    return verificationMember(product, profile.row, profile.raw, evidenceHash, keywords, mode);
+  }, { accessMode: 'read only', isolationLevel: 'repeatable read' }));
+}
 type SearchVerifyPreparationOptions = { roleLease: RoleLease; keywords: readonly string[]; mode: "full" | "chunk";
   call?: import("@/lib/crawl/agent-review-gateway").PreparedSearchVerifyGatewayCall;
   reserved?: { reservation: import("@/lib/llm/capacity").ModelCapacityReservation; identity: import("@/lib/llm/capacity").ModelCapacityRequestIdentity;
@@ -541,9 +562,7 @@ export async function prepareSearchVerifyModelDispatch(task: ProfileTask, lease:
       const input = [...current.keywordsEn, ...current.keywordsKo];
       if (!isDeepStrictEqual(input, keywords) || mode !== (["invalid_output", "timeout"].includes(current.verifyError ?? "") ? "chunk" : "full"))
         throw new SearchVerifyChanged();
-      const member = searchVerifyMemberSchema.parse({ productId: product.id, slug: product.slug, evidenceHash,
-        profile: { rowIdentityHash: reviewHash(state.row), sourceRevision: current.sourceRevision, verifyAttempts: current.verifyAttempts },
-        keywordsHash: reviewHash(input), keywordCount: mode === "chunk" ? new Set(input).size : input.length, mode, policyHash: SEARCH_VERIFY_POLICY_HASH });
+      const member = verificationMember(product, current, state.row, evidenceHash, input, mode);
       const [clock] = await tx.execute<{ now: number }>(sql`SELECT (extract(epoch from clock_timestamp())*1000)::float8 AS now`);
       const nowMs = Math.floor(Number(clock.now));
       if (!reserved) {
