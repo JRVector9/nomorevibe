@@ -96,7 +96,7 @@ export async function chooseFirstReviewForCandidate(context: ReviewDomainContext
   if (executor === db && state.resolution?.execution?.mode === "workload_pool" && !active.length && !attempts[0]?.live) {
     const chosen = await chooseReviewWorkloadMember(state.resolution, blocked);
     if (!chosen) return null;
-    logger.info("ai_task.workload_hint_selected", { task: "first-review", candidateId: context.candidate.id,
+    logger.info("ai_task.workload_hint_selected", { candidateId: context.candidate.id,
       model: chosen.model, provider: chosen.provider, ...chosen.poolSelection });
     return { provider: chosen.provider, model: chosen.model };
   }
