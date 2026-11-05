@@ -8,6 +8,7 @@ import type { ProviderCircuits } from '@/lib/llm/provider-circuit-breaker';
 import { logger } from '@/lib/observability/logger';
 import { jobKnob } from '@/lib/operations/runtime-settings-schema';
 import { runtimeSettings } from '@/lib/operations/runtime-settings-store';
+import { readAiTaskExecutionConfig } from '@/lib/llm/ai-task-execution-snapshot';
 import type { HostAdmission } from '@/lib/operations/host-budget-runtime';
 import { interruptibleSleep, type RuntimeReport } from '@/scripts/worker';
 import { executeSecondReviewConsumerItem } from '../second-review-item-lifecycle';
@@ -111,6 +112,8 @@ export async function runSecondReviewConsumer(input: {
     const queue = [...priorities, ...normal];
     let deferred = false, completed = false, circuitOpen = false, rerouted = false;
     const concurrency = jobKnob(runtimeSettings(), 'second-review', 'consumerConcurrency');
+    // Preserve the serial fallback's quiet behavior; these observations describe pool/parallel work only.
+    const observeWorkload = concurrency > 1 || readAiTaskExecutionConfig('second-review', 1).mode === 'workload_pool';
     const active = new Map<number, number>(), scheduledVotes = new Set<number>();
     let next = 0, stopNewClaims = false, normalPosition = -1, peak = 0, validatedInputHints = 0;
     const inputReadyCandidates = new Set<number>();
@@ -164,13 +167,13 @@ export async function runSecondReviewConsumer(input: {
         if (written.state === 'recorded') { result.recorded++; completed = true; }
         else {
           result.skipped++;
-          logger.info('pipeline_consumer.claim_skipped', { stage: 'ai2', reason: 'reason' in written ? written.reason : written.state });
+          if (observeWorkload) logger.info('pipeline_consumer.claim_skipped', { stage: 'ai2', reason: 'reason' in written ? written.reason : written.state });
         }
       } catch (error) {
         if (!(error instanceof ModelCapacityDeferredError)) { stopNewClaims = true; throw error; }
         if (modelCapacityDeferralIsPerWork(error.reason)) { result.skipped++; return; }
         result.deferred++;
-        logger.info('pipeline_consumer.deferred', { stage: 'ai2', reason: error.reason });
+        if (observeWorkload) logger.info('pipeline_consumer.deferred', { stage: 'ai2', reason: error.reason });
         if (modelCapacityDeferralIsPerModel(error.reason)) { pausedModels.add(modelKey); return; }
         // Global denial stops NEW claims; already admitted lifecycles still finish.
         deferred = true; stopNewClaims = true;
@@ -188,7 +191,7 @@ export async function runSecondReviewConsumer(input: {
       }
     });
     const outcomes = await Promise.allSettled(lanes);
-    logger.info('pipeline_consumer.page', { stage: 'ai2', pendingHints: normal.length,
+    if (observeWorkload) logger.info('pipeline_consumer.page', { stage: 'ai2', pendingHints: normal.length,
       uniqueCandidateHints: new Set(normal.map(hint => hint.candidateId)).size,
       scheduledVotes: scheduledVotes.size, validatedInputHints, inputReadyCandidateHints: inputReadyCandidates.size, lifecycleLimit: concurrency, lifecyclePeak: peak,
       rerouted, deferred });

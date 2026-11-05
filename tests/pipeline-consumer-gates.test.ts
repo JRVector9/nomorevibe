@@ -37,10 +37,6 @@ function projectAi2Hint(value: unknown) {
   const hint = value as { id: number; candidateId?: number; vote?: number };
   return { ...hint, candidateId: hint.candidateId ?? hint.id, vote: hint.vote ?? hint.id };
 }
-const secondPageEvent = (peak: number, deferred: boolean) => ['pipeline_consumer.page', {
-  stage: 'ai2', pendingHints: 1, uniqueCandidateHints: 1, scheduledVotes: 1, validatedInputHints: 0,
-  inputReadyCandidateHints: 0, lifecycleLimit: 1, lifecyclePeak: peak, rerouted: false, deferred,
-}];
 beforeEach(() => {
   vi.resetAllMocks(); mocks.pages = []; mocks.reservedPages = [];
   mocks.limit.mockImplementation(async () => mocks.pages.shift() ?? []);
@@ -69,7 +65,7 @@ it('without gates passes the exact previous lifecycle arguments', async () => {
   mocks.pages = [[{ id: 9, fallback: false, provider: 'abcllm' }]];
   expect(await runSecondReviewConsumer({ owner, once: true })).toEqual({ attempted: 1, recorded: 1, skipped: 0, deferred: 0 });
   expect(mocks.second).toHaveBeenCalledExactlyOnceWith({ secondReviewId: 9, owner, signal: undefined, onInputReady: expect.any(Function) });
-  expect(mocks.info.mock.calls).toEqual([secondPageEvent(1, false)]);
+  expect(mocks.info).not.toHaveBeenCalled();
 });
 
 // PR C1: 소비자 쪽의 AI1 단일 회로(쪽 끝 쉼)는 없앴다 — 회로는 고른 모델마다 항목 생애(agent-review-item-lifecycle)가 'ai1:<모델>' 로 연다
@@ -129,12 +125,11 @@ it.each(['ai1', 'ai2'] as const)('%s host admission defers before any claim, log
   expect(await run({ owner, once: true, admit })).toEqual({ attempted: 0, recorded: 0, skipped: 0, deferred: 1 });
   expect(admit).toHaveBeenCalledExactlyOnceWith(job); expect(item).not.toHaveBeenCalled();
   const pressureEvent = ['pipeline_consumer.deferred', { stage, reason: 'host_pressure_rss' }];
-  expect(mocks.info.mock.calls).toEqual(stage === 'ai2' ? [pressureEvent, secondPageEvent(0, true)] : [pressureEvent]);
+  expect(mocks.info.mock.calls).toEqual([pressureEvent]);
   admit.mockRejectedValueOnce(new Error('ledger down')); mocks.pages = [[hint]];
   expect(await run({ owner, once: true, admit })).toMatchObject({ attempted: 0, deferred: 1 });
   const unavailableEvent = ['pipeline_consumer.deferred', { stage, reason: 'host_budget_unavailable' }];
-  expect(mocks.info.mock.calls).toEqual(stage === 'ai2'
-    ? [pressureEvent, secondPageEvent(0, true), unavailableEvent, secondPageEvent(0, true)] : [pressureEvent, unavailableEvent]);
+  expect(mocks.info.mock.calls).toEqual([pressureEvent, unavailableEvent]);
   const events: string[] = [], failure = new Error('SQL failure');
   admit.mockResolvedValueOnce({ admitted: true, release: async () => { events.push('release'); } });
   item.mockImplementationOnce(async () => { events.push('item'); throw failure; });
