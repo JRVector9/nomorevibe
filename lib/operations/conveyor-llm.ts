@@ -235,11 +235,15 @@ function taskLlm(def: AiTaskDef, inputs: LlmInputs): TaskLlm {
       .sort((a, b) => b.count - a.count).map(row => { const place = placeOf(row, inputs);
         return { text: `${place} · ${row.model}`, model: row.model, where: place, count: row.count, rank: null, lastAt: row.lastAt }; });
     const top = used?.[0];
+    // Only an explicit whole-pool failure, after currentRuntime's identity/time guards, stops the task.
+    // Individual member_unusable counters never imply that every member is unavailable.
+    const unavailable = fresh?.pool && fresh.degraded?.code === "all_ranks_unusable" ? fresh.degraded : null;
     return { task: def.id, label: def.label, live, slots: [], pool, used, usedWhy,
-      state: used?.length === 0 ? "idle" : "set_only",
+      state: unavailable ? "stuck" : used?.length === 0 ? "idle" : "set_only",
       head: top ? { model: top.model, where: top.where, rank: null, source: "used", count: top.count }
         : { model: `모델 ${pool.modelCount}개 · 작업 분산`, where: `장비 ${pool.deviceCount}대`, rank: null, source: "set", count: null },
-      note: used === null ? "작업 분산 설정입니다. 최근 실제 사용은 장부에서 확인하지 못했습니다."
+      note: unavailable ? `현재 작업 분산 구성의 최근 틱에서 모든 구성원을 사용할 수 없었습니다${unavailable.detail ? ` — ${unavailable.detail}` : ""}`
+        : used === null ? "작업 분산 설정입니다. 최근 실제 사용은 장부에서 확인하지 못했습니다."
         : "작업 분산 설정입니다. 최근 1시간 장부는 설정 변경 전 호출도 포함하며 구성원별 실행을 확정하지 않습니다." };
   }
   const slots = slotsOf(def, inputs, fresh);
@@ -328,7 +332,7 @@ function stationLlm(tasks: TaskLlm[]): StationLlm {
   const stopped = live.filter((task) => task.state === "none" || task.state === "stuck").map((task) => task.label);
   const flagFor = (): LlmFlag | null => {
     if (head.state === "none") return { tone: "bad", text: NO_MODEL_TEXT };
-    if (head.state === "stuck") return { tone: "bad", text: "쓸 수 있는 순위 없음 — 멈춤" };
+    if (head.state === "stuck") return { tone: "bad", text: head.pool ? "최근 틱 · 분산 구성원 전체 사용 불가" : "쓸 수 있는 순위 없음 — 멈춤" };
     if (head.state === "fallback") return { tone: "warn", text: `${head.head?.rank ?? 2}순위로 넘어감` };
     if (head.state === "other") return { tone: "warn", text: "순위에 없는 모델" };
     return null;

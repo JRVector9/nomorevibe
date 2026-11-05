@@ -147,7 +147,7 @@ function LlmDetail({ llm, shown }: { llm: StationLlm | null; shown: string[] }) 
       const note = task.note && task.state !== "idle" && !shown.some((text) => text.includes(task.note!)) ? task.note : null;
       return (
         <dl key={task.task} className="cv-kv cv-llmd-task" data-state={task.state}>
-          <dt className="cv-llmd-k">작업</dt><dd className="cv-llmd-v"><b>{task.label}</b><span className="cv-llmd-state" data-state={task.state}>{task.pool ? "작업 분산 · 설정값" : STATE_TEXT[task.state]}</span></dd>
+          <dt className="cv-llmd-k">작업</dt><dd className="cv-llmd-v"><b>{task.label}</b><span className="cv-llmd-state" data-state={task.state}>{task.pool ? task.state === "stuck" ? "작업 분산 · 최근 틱 사용 불가" : "작업 분산 · 설정값" : STATE_TEXT[task.state]}</span></dd>
           <dt className="cv-llmd-k">설정</dt><dd className="cv-llmd-v">{rankChain(task) || "순위 없음"}</dd>
           {task.pool?.runtime && <><dt className="cv-llmd-k">최근 틱 관측</dt><dd className="cv-llmd-v">{kstShort(task.pool.runtime.at)} · {task.pool.members.map(member => {
             const served = task.pool!.runtime!.served[member.memberId] ?? 0;
