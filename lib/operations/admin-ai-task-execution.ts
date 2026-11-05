@@ -74,7 +74,8 @@ export async function saveAiTaskExecutionConfig(input: unknown, actor: string): 
     const records = ids.length ? await onPrimary(() => db.select().from(aiConnections).where(inArray(aiConnections.id, ids))) : [];
     for (const id of ids) {
       const connection = connections.find(row => row.id === id);
-      if (!connection?.enabled || !aiTaskAccepts(task, connection)) fail("ai_task_pool_connection_unsupported");
+      if (!connection) return { ok: false, issues: ["ai_task_pool_connection_unsupported"] };
+      if (!connection.enabled || !aiTaskAccepts(task, connection)) fail("ai_task_pool_connection_unsupported");
       if (connection.cliTool === "opencode") {
         const catalog = await readAdminCliCatalog({ fresh: true, connectionId: id });
         if (catalog.cliVersion !== connection.cliVersion) fail("ai_connection_cli_catalog_changed");
