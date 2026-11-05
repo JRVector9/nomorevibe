@@ -13,6 +13,28 @@ export const aiTaskSupportsWorkloadPool = (taskId: string, slot = 1): boolean =>
 export function aiTaskWorkloadPoolUnsupportedReason(taskId: string, slot = 1): string | null {
   if (aiTaskSupportsWorkloadPool(taskId, slot)) return null;
   if (taskId === "second-review" && slot !== 1) return "2차 검수의 작업 분산은 투표자 1칸만 지원합니다.";
+  if (taskId === "human-review")
+    return "위임 검수의 모델별 승인 유효성과 재시도 이력을 유지하는 전용 연결이 필요해 아직 작업 분산을 지원하지 않습니다.";
+  if (taskId === "split-confirm")
+    return "갈림 재확인의 기존 입력·모델 고정과 확인 결과 기록을 연결해야 해 아직 작업 분산을 지원하지 않습니다.";
+  if (taskId === "split-tiebreak")
+    return "이전 심사와 다른 모델을 쓰는 조건과 갈림 확인 단계를 유지해야 해 아직 작업 분산을 지원하지 않습니다.";
+  if (taskId === "held-review-retry")
+    return "보류 재심사의 모델별 대상 선정·시도 이력을 연결해야 해 아직 작업 분산을 지원하지 않습니다.";
+  if (taskId === "audit-review" || taskId === "product-audit")
+    return "감사에 고정된 심사자와 명시적 모델 전환 기록을 유지해야 해 아직 작업 분산을 지원하지 않습니다.";
+  if (taskId === "audit-second-opinion" || taskId === "published-filter")
+    return "모델별 추가 의견의 중복 제외와 감사 종료 조건을 연결해야 해 아직 작업 분산을 지원하지 않습니다.";
+  if (taskId === "screen-review")
+    return "이미지 지원 계약과 캡처 증거를 선택한 연결에 묶어 검증해야 해 아직 작업 분산을 지원하지 않습니다.";
+  if (taskId === "assist-review" || taskId === "assist-audit")
+    return "보강 작업의 백엔드·입력·독립 감사 조건을 보존하는 전용 연결이 필요해 아직 작업 분산을 지원하지 않습니다.";
+  if (taskId === "product-intro-check")
+    return "소개 검수는 기존 CLI 실행·묶음 입력 계약을 사용하며 아직 작업 분산 설정을 읽지 않습니다.";
+  if (taskId === "publish-classify")
+    return "발행 분류는 기존 CLI 단계와 발행 권한에 묶여 있어 아직 작업 분산 설정을 읽지 않습니다.";
+  if (taskId === "korean-translation-direct")
+    return "이 경로는 용량 제어가 꺼진 때의 기존 직접 번역 경로이며 아직 작업 분산 설정을 읽지 않습니다.";
   if (taskId === "product-embedding" || taskId === "search-embedding")
     return "제품과 검색어가 같은 벡터 공간을 쓰는지 연결별 검증이 필요해 아직 작업 분산을 지원하지 않습니다.";
   if (taskId === "search-rerank")
