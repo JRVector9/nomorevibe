@@ -1,3 +1,4 @@
+import { publicationApiLogicalSql, publicationApiDispatchSql, publicationApiEventSql } from "@/lib/llm/publication-classify-api-sql";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { getTableConfig, PgDialect } from "drizzle-orm/pg-core";
@@ -36,7 +37,12 @@ it("appends the next monotonic migration and only three new guarded ledger branc
 it.each(targets)("%s / %s keeps the complete predecessor and appends the exact OpenCode branch", (table, name, branch) => {
   const checks = getTableConfig(table === "model_capacity_requests" ? modelCapacityRequests : modelCapacityEvents).checks;
   const expression = new PgDialect().sqlToQuery(checks.find(check => check.name === name)!.value).sql;
-  expect(expression.endsWith(`) OR (${branch})`)).toBe(true);
+  const publication = name === "model_capacity_requests_logical_check" ? publicationApiLogicalSql
+    : name === "model_capacity_requests_dispatch_check" ? publicationApiDispatchSql : publicationApiEventSql;
+  const tail = `) OR (${publication})`;
+  expect(expression.startsWith("(") && expression.endsWith(tail), `${name}: 0166 additive tail present`).toBe(true);
+  const predecessor = expression.slice(1, -tail.length);
+  expect(predecessor.endsWith(`) OR (${branch})`)).toBe(true);
   expect(branch).toContain("'opencode-cli'");
   expect(branch.includes("crawl-agent-review")).toBe(true);
   expect(branch.includes("second-review")).toBe(true);

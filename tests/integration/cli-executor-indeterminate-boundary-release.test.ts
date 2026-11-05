@@ -1,3 +1,4 @@
+import { publicationApiLogicalSql, publicationApiDispatchSql, publicationApiTerminalSql } from "@/lib/llm/publication-classify-api-sql";
 import { createHash,randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { chmodSync,copyFileSync,mkdirSync,mkdtempSync,readFileSync,rmSync,writeFileSync } from "node:fs";
@@ -101,21 +102,25 @@ it("0136 preserves nonempty old rows and the complete0135 CHECK predecessor",asy
     // deparsed 0158 predicate without a second parse, so the expectation is the joined string, not pg_get_constraintdef of a new CHECK.
     const textLocalDirect:Record<string,string>={[checks[2]]:textLocalDirectDispatchSql,[checks[3]]:textLocalDirectTerminalSql};
     const opencode: Record<string, string> = { model_capacity_requests_logical_check: opencodeCliLogicalSql, model_capacity_requests_dispatch_check: opencodeCliDispatchSql };
+    const publication: Record<string, string> = { model_capacity_requests_logical_check: publicationApiLogicalSql,
+      model_capacity_requests_members_check: publicationApiLogicalSql, model_capacity_requests_dispatch_check: publicationApiDispatchSql,
+      model_capacity_requests_terminal_check: publicationApiTerminalSql };
     if(textLocalDirect[n]){
       await client.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT unknown_expected_0158 CHECK (${predicate})`);
       let live="";
       try{live=(await client`SELECT pg_get_constraintdef(oid) definition FROM pg_constraint WHERE conname='unknown_expected_0158'`)[0].definition;}
       finally{await client.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT unknown_expected_0158`);}
       const expr=live.slice("CHECK (".length,-1);
-      // 0163 appends its own ordinal after 0161; the exact complete historical predicate remains the first leaf.
-      const leaves = [expr, textLocalDirect[n], opencode[n]].filter(Boolean);
-      expect(after[n],`${n}: 0161/0163 rules join`).toBe(`CHECK (${leaves.map(leaf => `(${leaf})`).join(" OR ")})`);
+      // 0163/0166 append their own ordinals after 0161; the exact complete historical predicate remains the first leaf.
+      const leaves = [expr, textLocalDirect[n], opencode[n], publication[n]].filter(Boolean);
+      expect(after[n],`${n}: 0161/0163/0166 rules join`).toBe(`CHECK (${leaves.map(leaf => `(${leaf})`).join(" OR ")})`);
       continue;
     }
     await client.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT unknown_expected CHECK (${predicate})`);
     try{
       const historical = (await client`SELECT pg_get_constraintdef(oid) definition FROM pg_constraint WHERE conname='unknown_expected'`)[0].definition;
-      const expected = opencode[n] ? `CHECK ((${historical.slice("CHECK (".length,-1)}) OR (${opencode[n]}))` : historical;
+      const leaves = [historical.slice("CHECK (".length,-1), opencode[n], publication[n]].filter(Boolean);
+      const expected = leaves.length > 1 ? `CHECK (${leaves.map(leaf => `(${leaf})`).join(" OR ")})` : historical;
       expect(after[n]).toBe(expected);
     }finally{await client.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT unknown_expected`);}}
   expect((await client`SELECT count(*)::int n FROM drizzle.__drizzle_migrations`)[0].n).toBe(journal.entries.length);

@@ -1,3 +1,4 @@
+import { publicationApiLogicalSql } from "@/lib/llm/publication-classify-api-sql";
 import { readFileSync } from "node:fs";
 import { getTableConfig, PgDialect } from "drizzle-orm/pg-core";
 import { expect, it } from "vitest";
@@ -57,12 +58,18 @@ function checkHistory(name: string) {
         expression: `(${previous!.expression}) OR (${ai2Branch})` });
     }
     // Rules migrations store only the new branch as the next ordinal. The TypeScript check() still composes (previous) OR (branch).
-    const rule = /SELECT '(?:model_capacity_requests|model_capacity_events)', '([^']+)', COALESCE\(MAX\(ordinal\), 0\) \+ 1, \$branch\$([\s\S]*?)\$branch\$/.exec(statement);
+    const rule = /SELECT '(?:model_capacity_requests|model_capacity_events)'\s*,\s*'([^']+)'\s*,\s*COALESCE\(MAX\(ordinal\),\s*0\)\s*\+\s*1,\s*\$branch\$([\s\S]*?)\$branch\$/i.exec(statement);
     if (rule && rule[1] === name) {
       const previous = history.at(-1);
       expect(previous, `${name}: rules predecessor`).toBeDefined();
       expect(statement).toContain("INSERT INTO model_capacity_check_rules");
-      expect(statement).toContain(`COUNT(*) FILTER (WHERE source = '${migration.tag}') = 0`);
+      if (migration.idx === 166) {
+        // 0166 validates all five targets before its INSERTs under the same rules-table lock.
+        const preflight = migration.statements.find(sql => sql.includes('DO $publication_api_preflight$'))!;
+        expect(preflight).toContain("r.source='0160_ledger_check_rules')<>1");
+        expect(preflight).toContain(`r.source='${migration.tag}'`);
+        expect(statement).toContain(`$branch$,'${migration.tag}'`);
+      } else expect(statement).toContain(`COUNT(*) FILTER (WHERE source = '${migration.tag}') = 0`);
       history.push({ idx: migration.idx, tag: migration.tag, expression: `(${previous!.expression}) OR (${rule[2]})` });
     }
   }
@@ -117,7 +124,9 @@ it("member CHECK는 0125·0126·0134·0135 전체와 0136의 exact predecessor �
   const unknown = history.find(entry => entry.idx === 136)!;
   const previous = history.filter(entry => entry.idx < 125).at(-1)!;
   const expression = new PgDialect().sqlToQuery(check.value).sql;
-  expect(latest.tag).toBe("0158_release_branch_kinds");
+  const release = history.find(entry => entry.idx === 158)!;
+  expect(release.tag).toBe("0158_release_branch_kinds");
+  expect(latest.tag).toBe("0166_publication_classify_api");
   expect(expression === latest.expression, check.name).toBe(true);
   expect(publication.expression.startsWith(`(${previous.expression}) OR coalesce((`)).toBe(true);
   expect(provider.expression).toBe(`(${publication.expression}) OR nmv_provider_boundary_request_valid(to_jsonb(model_capacity_requests))`);
@@ -134,7 +143,8 @@ it("member CHECK는 0125·0126·0134·0135 전체와 0136의 exact predecessor �
   const localDirect = history.find(entry => entry.idx === 157)!;
   expect(localDirect.expression).toBe(`(${replacedPath.expression}) OR (${gatewayLocalDirectMembersSql})`);
   // 0158: the publication_classify withdrawn branch (process_group_exit·dr_call_drain release) appended to the whole 0157 predecessor.
-  expect(expression).toBe(`(${localDirect.expression}) OR (${publicationClassifyReleaseLogicalSql})`);
+  expect(release.expression).toBe(`(${localDirect.expression}) OR (${publicationClassifyReleaseLogicalSql})`);
+  expect(expression).toBe(`(${release.expression}) OR (${publicationApiLogicalSql})`);
 });
 
 it("0118은 기존 네 CHECK 분기를 보존하고 typed direct 분기를 덧붙인다", () => {

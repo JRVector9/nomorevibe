@@ -1,3 +1,4 @@
+import { publicationApiLogicalSql, publicationApiDispatchSql } from "@/lib/llm/publication-classify-api-sql";
 import { readFileSync } from "node:fs";
 import { getTableConfig, PgDialect } from "drizzle-orm/pg-core";
 import { expect, it } from "vitest";
@@ -74,6 +75,10 @@ it("Drizzle composes the same three CHECKs as (previous) OR (branch) with the co
   const checks = getTableConfig(modelCapacityRequests).checks;
   for (const [name, branch] of Object.entries(targets)) {
     let expression = new PgDialect().sqlToQuery(checks.find(check => check.name === name)!.value).sql;
+    const publication = name === "model_capacity_requests_dispatch_check" ? publicationApiDispatchSql : publicationApiLogicalSql;
+    const publicationTail = `) OR (${publication})`;
+    expect(expression.startsWith("(") && expression.endsWith(publicationTail), `${name}: 0166 additive tail present`).toBe(true);
+    expression = expression.slice(1, -publicationTail.length);
     const opencode = name === "model_capacity_requests_dispatch_check" ? opencodeCliDispatchSql
       : name === "model_capacity_requests_logical_check" ? opencodeCliLogicalSql : null;
     if (opencode) {
