@@ -16,7 +16,7 @@ export function httpOriginPolicyHash(value: unknown): string {
 }
 export class HttpOriginPermitError extends Error {
   readonly name = 'HttpOriginPermitError';
-  constructor(readonly code: 'configuration'|'unavailable'|'waiting_aborted'|'authority_lost'|'replay_unsupported'|'custom_transport') { super(`http_origin_permit_${code}`); }
+  constructor(readonly code: 'configuration'|'unavailable'|'waiting_aborted'|'authority_lost'|'replay_unsupported'|'custom_transport', readonly origin?: string) { super(`http_origin_permit_${code}`); }
 }
 /** This check never imports/queries the DB on the default path. */
 export function sharedHttpEnabled(): boolean {

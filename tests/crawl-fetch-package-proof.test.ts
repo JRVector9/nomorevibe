@@ -89,12 +89,15 @@ it("한도에 걸리면 저장하지 않고 미루며, 다른 실패는 이 항�
 });
 
 it("permit waits return the claim without ACK or failed-attempt writes", async () => {
-  mocks.page.mockRejectedValue(new HttpOriginPermitError("waiting_aborted"));
-  mocks.repo.mockResolvedValue({ ok: true, value: { homepage: "https://pdf-skill.app", stargazers_count: 12 } });
-  const claim = entry("maker/pdf-skill");
-  mocks.dequeue.mockResolvedValueOnce([claim]).mockResolvedValue([]);
-  expect(await fetchCrawlDocuments(context())).toEqual({ done: false, deferred: "http_origin_permit" });
-  expect(mocks.defer).toHaveBeenCalledWith([claim], undefined);
-  expect(mocks.save).not.toHaveBeenCalled();
-  expect(mocks.failed).not.toHaveBeenCalled();
+  const now = Date.parse("2026-11-05T00:00:00.000Z"), clock = vi.spyOn(Date, "now").mockReturnValue(now);
+  try {
+    mocks.page.mockRejectedValue(new HttpOriginPermitError("waiting_aborted"));
+    mocks.repo.mockResolvedValue({ ok: true, value: { homepage: "https://pdf-skill.app", stargazers_count: 12 } });
+    const claim = entry("maker/pdf-skill");
+    mocks.dequeue.mockResolvedValueOnce([claim]).mockResolvedValue([]);
+    expect(await fetchCrawlDocuments(context())).toEqual({ done: false, deferred: "http_origin_permit" });
+    expect(mocks.defer).toHaveBeenCalledExactlyOnceWith([claim], new Date(now + 60_000));
+    expect(mocks.save).not.toHaveBeenCalled();
+    expect(mocks.failed).not.toHaveBeenCalled();
+  } finally { clock.mockRestore(); }
 });

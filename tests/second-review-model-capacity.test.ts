@@ -74,7 +74,10 @@ it('resumes the original pending ID and binds only actual owner/chain/input iden
   expect(mocks.atomic).toHaveBeenCalledExactlyOnceWith({ secondReviewId: 8, owner, expected: value.intent.intent, reservation: value.reservation, identity: mocks.pending.mock.calls[0][0], call: value.call });
 });
 it('waiting and an existing in-flight dispatch defer without an item claim', async () => {
-  mocks.request.mockResolvedValueOnce({ kind: 'deferred', reason: 'capacity' });
+  mocks.request.mockImplementationOnce(async (request: { requestId: string }) => {
+    mocks.pending.mockResolvedValue({ requestId: request.requestId, state: 'waiting' });
+    return { kind: 'deferred', reason: 'capacity' };
+  });
   await expect(claimSecondReviewModelCapacity(value.intent)).rejects.toMatchObject({ reason: 'capacity' });
   mocks.pending.mockResolvedValue({ requestId: randomUUID(), state: 'dispatched' });
   await expect(claimSecondReviewModelCapacity(value.intent)).rejects.toMatchObject({ reason: 'dispatched' });
@@ -122,7 +125,10 @@ it('keeps an existing granted reservation on the dispatch path', async () => {
   expect(mocks.atomic).toHaveBeenCalledOnce(); expect(mocks.fallback).not.toHaveBeenCalled(); expect(mocks.cancel).not.toHaveBeenCalled();
 });
 it('preserves capacity deferral when the atomic handoff rejects or there is no existing waiting request', async () => {
-  mocks.request.mockResolvedValue({ kind: 'deferred', reason: 'capacity' });
+  mocks.request.mockImplementation(async (request: { requestId: string }) => {
+    mocks.pending.mockResolvedValue({ requestId: request.requestId, state: 'waiting' });
+    return { kind: 'deferred', reason: 'capacity' };
+  });
   await expect(claimSecondReviewModelCapacity(localIntent())).rejects.toMatchObject({ reason: 'capacity' });
   expect(mocks.fallback).not.toHaveBeenCalled();
   mocks.pending.mockResolvedValue({ requestId: randomUUID(), state: 'waiting' });

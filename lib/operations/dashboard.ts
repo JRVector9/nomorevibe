@@ -4,7 +4,6 @@ import { db, onReplica } from "@/lib/db";
 import { cdnPurges, crawlCandidates, crawlFrontier, crawlTaglines, crawlReviewAttempts, productAuditCampaigns, productAuditItems, productEvidenceAudit, productHealth,
   productRepoReviews, productSearchProfiles, products, secondReviews } from "@/lib/db/schema";
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
-import { sameReviewModel } from "@/lib/crawl/review-model-identity";
 import { heldPublic } from "@/lib/crawl/product-audit-hold";
 import { SHOW_HN_SIGNAL, type CrawlSettings } from "@/lib/crawl/settings-schema";
 import { RECHECK_AFTER_MINUTES } from "@/lib/domain/products/health-freshness";
@@ -259,17 +258,17 @@ const MODEL_SLOTS = [
 /**
  * 모델 자리마다 지난 1시간의 호출. 한 문장에서 자리별 호출을 같은 모양으로 모아 한 번에 센다.
  *
- * 2차 투표는 1차와 다른 모델 중 첫 투표자다 — 같은 모델은 메아리라 줄에 올리지 않는다(second-review.ts).
+ * 2차는 현재 첫 투표자를 표시한다. 1차와 같은 모델도 별도 2차 호출로 사용할 수 있다.
  * 키워드 실패는 따로 남지 않아, 지난 1시간에 실패로 고쳐 쓴 행을 센다.
  */
 export async function modelHealth(settings: CrawlSettings, now = new Date()): Promise<ModelHealth[]> {
-  // 1차·2차는 「작업 ↔ 모델」 순위(PR C1) — 1차 1순위, 2차는 1차와 다른 첫 투표자·첫 예비
+  // 1차·2차는 「작업 ↔ 모델」 순위(PR C1) — 각 단계의 첫 투표자·첫 예비
   await ensureReviewTaskRanks();
   const firstModel = firstReviewers(settings)[0]?.model ?? null;
   const second = secondReviewVoterSets(settings);
   const configured: Record<ModelHealth["key"], string | null> = {
     first: firstModel,
-    second: second.voters.find((voter) => !sameReviewModel(voter.model, firstModel))?.model ?? null,
+    second: second.voters[0]?.model ?? null,
     fallback: second.fallbacks[0]?.model ?? null,
     // 키워드 짓기의 모델은 「작업 ↔ 모델」 1순위다(PR B) — 순위가 없으면 모름
     keywords: (await loadTaskModels("product-search-profile"))[0]?.model ?? null,

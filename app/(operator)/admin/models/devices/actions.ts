@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { currentAdmin } from "@/lib/auth/admin";
 import { capacityDeviceInputFromForm, capacityDeviceIssueMessage, saveAdminCapacityDevice } from "@/lib/operations/admin-capacity-devices";
 import { webWriteAction } from "@/lib/operations/dr/web-gate";
+import { saveEngineSharedLimit } from "@/lib/operations/admin-engine-limits";
 
 export type DeviceSaveState = { ok?: true; message?: string; issues?: string[] } | null;
 
@@ -16,14 +17,19 @@ export type DeviceSaveState = { ok?: true; message?: string; issues?: string[] }
 export const saveCapacityDevice = webWriteAction(async function saveCapacityDevice(_previous: DeviceSaveState, form: FormData): Promise<DeviceSaveState> {
   const admin = await currentAdmin();
   if (!admin) return { issues: ["권한이 없습니다. 다시 로그인해주세요."] };
-  const parsed = capacityDeviceInputFromForm(form);
-  if (parsed.issues.length || !parsed.input) return { issues: parsed.issues.length ? parsed.issues : ["폼을 읽지 못했습니다. 새로고침해주세요."] };
   try {
-    const result = await saveAdminCapacityDevice(parsed.input, parsed.expectedVersion, admin.login);
+    const shared = form.get("formMode") === "shared-limit";
+    const parsed = shared ? null : capacityDeviceInputFromForm(form);
+    if (parsed && (parsed.issues.length || !parsed.input))
+      return { issues: parsed.issues.length ? parsed.issues : ["폼을 읽지 못했습니다. 새로고침해주세요."] };
+    const version = String(form.get("expectedVersion") ?? "");
+    const result = shared ? await saveEngineSharedLimit({ deviceId: form.get("deviceId"), limitSlots: Number(form.get("limitSlots")),
+      expectedVersion: version === "" ? null : Number(version), policyHash: form.get("policyHash") }, admin.login)
+      : await saveAdminCapacityDevice(parsed!.input, parsed!.expectedVersion, admin.login);
     if (!result.ok) return { issues: result.issues.map(capacityDeviceIssueMessage) };
     for (const path of ["/admin/models/devices", "/admin/models/limits", "/admin/models", "/admin/status"]) revalidatePath(path);
     const changed = result.changes.length ? ` 바뀐 값: ${result.changes.join(" · ")}` : " 바뀐 값이 없습니다.";
-    return { ok: true, message: `${result.created ? "만들었습니다" : "저장했습니다"}(장비 ${result.deviceId}, 판 ${result.version}). 다음 입장 판정부터 바로 쓰입니다 — DRAIN 불필요.${changed}` };
+    return { ok: true, message: `${result.created ? "만들었습니다" : "저장했습니다"}(장비 ${result.deviceId}, 판 ${result.version}). ${shared ? "이 엔진을 쓰는 모든 작업이 이 한도를 함께 사용합니다. " : ""}다음 입장 판정부터 바로 쓰입니다 — DRAIN 불필요.${changed}` };
   } catch (error) {
     return { issues: [capacityDeviceIssueMessage(error instanceof Error ? error.message : "저장하지 못했습니다. 새로고침해 현재 상태를 확인해주세요.")] };
   }

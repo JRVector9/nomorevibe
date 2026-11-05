@@ -1,3 +1,4 @@
+import { publicationApiLogicalSql, publicationApiDispatchSql, publicationApiTerminalSql, publicationApiEventSql } from "@/lib/llm/publication-classify-api-sql";
 import { randomBytes, randomUUID } from "node:crypto";
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -519,6 +520,10 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
       const localDirectTail = `) OR (${events ? gatewayLocalDirectEventTerminalSql : gatewayLocalDirectTerminalSql})`;
       const split = `) OR (coalesce((${events ? localModelSplitJobsEventTerminalSql : localModelSplitJobsTerminalSql}),false))`;
       let full = new PgDialect().sqlToQuery(check.value).sql;
+      // Strip only the exact new 0166 suffix before checking every historical predecessor below.
+      const publicationTail = `) OR (${events ? publicationApiEventSql : publicationApiTerminalSql})`;
+      expect(full.startsWith("(") && full.endsWith(publicationTail), `${name}: 0166 tail present`).toBe(true);
+      full = full.slice(1, -publicationTail.length);
       // 0163 adds an OpenCode ordinal only to the events terminal; strip it before checking the historical 0161 tail.
       if (events) {
         const opencodeTail = `) OR (${opencodeCliEventTerminalSql})`;
@@ -638,8 +643,8 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
       expect(after0161[name], `${name}: 0158 predicate plus the 0161 text local-direct branch`).toBe(`CHECK ((${inner(after0158[name])}) OR (${branch}))`);
     }
     expect((await step<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`)[0].count).toBe(journal.entries.filter(entry => entry.idx <= 161).length);
-    // Then compare the complete current rules without changing the exact historical 0161 assertions above.
-    await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
+    // Compare the real historical 0163 state before advancing to the current 0166 rules.
+    await migrateThrough(163);
     const after0163 = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
     const opencode: Record<string, string> = { model_capacity_requests_logical_check: opencodeCliLogicalSql,
       model_capacity_requests_dispatch_check: opencodeCliDispatchSql, model_capacity_events_terminal_check: opencodeCliEventTerminalSql };
@@ -648,6 +653,17 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
       if (!branch) { expect(after0163[name], `${name}: unchanged by 0163`).toBe(after0161[name]); continue; }
       const predecessor = textLocalDirect[name] ? inner(after0161[name]) : `(${inner(after0161[name])})`;
       expect(after0163[name], `${name}: exact prior ordinals plus the 0163 review branch`).toBe(`CHECK (${predecessor} OR (${branch}))`);
+    }
+    await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
+    const current0166 = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
+    const publication: Record<string, string> = { model_capacity_requests_logical_check: publicationApiLogicalSql,
+      model_capacity_requests_members_check: publicationApiLogicalSql, model_capacity_requests_dispatch_check: publicationApiDispatchSql,
+      model_capacity_requests_terminal_check: publicationApiTerminalSql, model_capacity_events_terminal_check: publicationApiEventSql };
+    for (const name of [...LEFT, ...UNTOUCHED]) {
+      const branch = publication[name];
+      if (!branch) { expect(current0166[name], `${name}: unchanged by 0166`).toBe(after0163[name]); continue; }
+      const predecessor = textLocalDirect[name] || opencode[name] ? inner(after0163[name]) : `(${inner(after0163[name])})`;
+      expect(current0166[name], `${name}: exact prior ordinals plus the 0166 publication API branch`).toBe(`CHECK (${predecessor} OR (${branch}))`);
     }
     expect((await step<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`)[0].count).toBe(journal.entries.length);
   } finally { rmSync(partial, { recursive: true, force: true }); await step.end({ timeout: 5 }); }

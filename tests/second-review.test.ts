@@ -3,9 +3,9 @@ import { combineVotes, combineVerdicts, inSample, riskSignals } from "@/lib/craw
 
 const base = { name: "Taskly", productUrl: "https://taskly.app", textSample: "Plan your week", readme: null };
 
-it("an added AI1 worker cannot use its own underlying model as an independent AI2 fallback", () => {
+it("the first-stage model can perform a separate second-stage review", () => {
   expect(combineVerdicts({ decision: "approve", confidence: .99, model: "[supa] same-weights" },
-    { decision: "approve", confidence: .99, model: "same-weights", provider: "abcllm" }, .85, false)).toBe("needs_human");
+    { decision: "approve", confidence: .99, model: "same-weights", provider: "abcllm" }, .85, false)).toBe("agreed");
 });
 
 describe("riskSignals — 규칙은 통과했지만 한 번 더 볼 이유", () => {
@@ -133,13 +133,13 @@ describe("1차와 같은 모델의 표", () => {
   const first = { decision: "reject", confidence: 0.9 };
   const gateway = (decision: string, model: string) => ({ decision, confidence: 0.9, provider: "abcllm" as const, model });
 
-  it("같은 모델이 되풀이한 답은 셈에 넣지 않는다 — 검증이 아니라 메아리다", () => {
+  it("같은 모델의 별도 2차 판단도 센다 — 2차 안의 중복만 제외한다", () => {
     const options = { agreeAt: 0.85, published: false, pending: 0, firstModel: "[MLX] gemma4-26b" };
-    // 1차와 같은 모델 하나뿐이면 표가 하나도 안 남는다
-    expect(combineVotes(first, [gateway("reject", "[MLX] gemma4-26b")], options)).toMatchObject({ status: "needs_human", votes: 1 });
-    // 다른 모델이 더해져야 둘이 된다
+    // 1차와 같은 모델이어도 별도 2차 판단이 있으면 두 단계의 결과를 합친다
+    expect(combineVotes(first, [gateway("reject", "[MLX] gemma4-26b")], options)).toMatchObject({ status: "agreed", votes: 2 });
+    // 서로 다른 두 2차 모델은 각각 한 표로 합친다
     expect(combineVotes(first, [gateway("reject", "[MLX] gemma4-26b"), gateway("reject", "[MLX] gemma4-31b")], options))
-      .toMatchObject({ status: "agreed", votes: 2 });
+      .toMatchObject({ status: "agreed", votes: 3 });
   });
 
   it("1차 모델을 모르면 예전처럼 전부 센다", () => {
@@ -149,7 +149,7 @@ describe("1차와 같은 모델의 표", () => {
 
   it("행 상태도 같은 규칙을 따른다", () => {
     const echo = { decision: "reject", confidence: 0.9, provider: "abcllm" as const, model: "sonnet" };
-    expect(combineVerdicts({ decision: "reject", confidence: 0.9, model: "sonnet" }, echo, 0.85, false)).toBe("needs_human");
+    expect(combineVerdicts({ decision: "reject", confidence: 0.9, model: "sonnet" }, echo, 0.85, false)).toBe("agreed");
     expect(combineVerdicts({ decision: "reject", confidence: 0.9, model: "opus" }, echo, 0.85, false)).toBe("agreed");
   });
 });
@@ -165,9 +165,9 @@ describe("review integrity regressions", () => {
     expect(combineVotes({decision: "needs_review", confidence: .9}, [vote("approve", "gemma4-26b"), vote("approve", "gpt-oss-120b")], options).status).toBe("needs_human");
     expect(combineVotes({decision: "approve", confidence: .9}, [vote("needs_review", "gemma4-31b"), vote("approve", "gpt-oss-120b")], options).status).toBe("needs_human");
   });
-  it("excludes an alias of the first model and deduplicates second model aliases", () => {
-    expect(combineVotes({decision: "approve", confidence: .9}, [vote("approve", "gpt-oss-120b")], {...options, firstModel: "[MLX] gpt-oss-120b"}).votes).toBe(1);
+  it("allows the first model while deduplicating aliases within the second stage", () => {
+    expect(combineVotes({decision: "approve", confidence: .9}, [vote("approve", "gpt-oss-120b")], {...options, firstModel: "[MLX] gpt-oss-120b"}).votes).toBe(2);
     expect(combineVotes({decision: "approve", confidence: .4}, [vote("approve", "[MLX] gpt-oss-120b"), vote("approve", "gpt-oss-120b")], options).status).toBe("needs_human");
-    expect(combineVerdicts({decision: "approve", confidence: .9, model: "[MLX] gpt-oss-120b"}, vote("approve", "gpt-oss-120b"), .7, false)).toBe("needs_human");
+    expect(combineVerdicts({decision: "approve", confidence: .9, model: "[MLX] gpt-oss-120b"}, vote("approve", "gpt-oss-120b"), .7, false)).toBe("agreed");
   });
 });

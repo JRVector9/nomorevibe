@@ -42,7 +42,7 @@ async function reserve(origin: string, signal: AbortSignal): Promise<Hop> {
   const instanceId = process.env.SERVICE_INSTANCE_ID;
   if (!instanceId || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,47}$/.test(instanceId)) throw new HttpOriginPermitError('configuration');
   for (;;) {
-    if (signal.aborted) throw new HttpOriginPermitError('waiting_aborted');
+    if (signal.aborted) throw new HttpOriginPermitError('waiting_aborted', origin);
     const hop = await transaction(async tx => {
       // DR fence가 첫 lock이다(seal/open-permits와 같은 fence→control 순서). fenced DB(옛 primary·승격 전 사본)는 새 외부 hop을 내주지 않는다.
       if (!await writerSiteActive(tx)) throw new HttpOriginPermitError('unavailable');
@@ -63,7 +63,7 @@ async function reserve(origin: string, signal: AbortSignal): Promise<Hop> {
       await event(tx,row.id,'reserved'); return row;
     }).catch(error=>{if(error instanceof ControlBusy)return null;throw error;});
     if (hop) return hop;
-    try { await delay(50,undefined,{signal}); } catch { throw new HttpOriginPermitError('waiting_aborted'); }
+    try { await delay(50,undefined,{signal}); } catch { throw new HttpOriginPermitError('waiting_aborted', origin); }
   }
 }
 function exact(hop: Hop) { return sql`id=${hop.id}::uuid AND token=${hop.token}::uuid AND instance_id=${hop.instance_id}

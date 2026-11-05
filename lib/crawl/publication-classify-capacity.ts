@@ -173,3 +173,43 @@ export async function runPublicationClassificationCall(input: CliCallInput, payl
     throw new ModelCapacityDeferredError('dispatched');
   }
 }
+
+import { publicationClassifyApiInputHash, publicationClassifyApiInputSchema,
+  type PublicationClassifyApiInput, type ModelCapacityReservation, type ModelCapacityRequestIdentity } from '@/lib/llm/capacity';
+import { lockPublicationApiDispatch, finishPublicationApiDispatch } from '@/lib/llm/capacity-repository';
+import type { PreparedPublicationClassifyCall } from './publication-classify-gateway';
+export type PublicationClassificationExpected = Expected;
+/** Same publication sources/approval/job authority as the existing CLI; no HTTP under these locks. */
+export async function publicationApiSources(expected: readonly Expected[], payload: Payload, lease: JobLease) {
+  const role = roleLeaseFromEnv('publisher', process.env);
+  if (lease.name !== 'crawl-publish' || !role) throw new ModelCapacityDeferredError('owner_unavailable');
+  const job = { name: 'crawl-publish' as const, token: lease.token, requestedVersion: lease.requestedVersion };
+  return onPrimary(() => db.transaction(async tx => {
+    const publisherRole = await lockPublisher(tx, role);
+    const members = await lockSources(tx, payload, expected.map(item => ({ candidateId: item.candidate.id, repo: item.candidate.repo })), lease, expected);
+    await wallAuthority(tx, { job, publisherRole });
+    return { publisherRole, members };
+  }));
+}
+export async function dispatchPublicationApi(expected: readonly Expected[], payload: Payload, lease: JobLease,
+  initial: Awaited<ReturnType<typeof publicationApiSources>>, input: PublicationClassifyApiInput,
+  call: PreparedPublicationClassifyCall, reservation: ModelCapacityReservation, identity: ModelCapacityRequestIdentity) {
+  const role = roleLeaseFromEnv('publisher', process.env);
+  if (lease.name !== 'crawl-publish' || !role) throw new ModelCapacityDeferredError('owner_unavailable');
+  const job = { name: 'crawl-publish' as const, token: lease.token, requestedVersion: lease.requestedVersion };
+  const checked = publicationClassifyApiInputSchema.parse(input);
+  return onPrimary(() => db.transaction(async tx => {
+    const lock = await lockPublicationApiDispatch(tx, { reservation, identity, input: checked });
+    if (!lock) throw new ModelCapacityDeferredError('reservation_lost');
+    const publisherRole = await lockPublisher(tx, role);
+    const members = await lockSources(tx, payload, checked.members, lease, expected);
+    if (!isDeepStrictEqual(members, initial.members) || !isDeepStrictEqual(publisherRole, initial.publisherRole)
+      || call.payloadHash !== classificationPayloadHash(payload) || !payload.definitions
+      || call.definitionsHash !== classificationDefinitionsHash(payload.definitions)) throw new ModelCapacityDeferredError('reservation_lost');
+    await wallAuthority(tx, { job, publisherRole });
+    return finishPublicationApiDispatch(tx, lock, { ...checked, kind: 'publication_classify_gateway', version: 1,
+      logicalWorkKey: publicationClassifyLogicalWorkKey(members), inputHash: publicationClassifyApiInputHash(checked),
+      routeId: PUBLICATION_CLASSIFY_ROUTE, publisherRole, job,
+      wireHash: call.wireHash, servingContractHash: call.servingContractHash, totalTokenBound: call.totalTokenBound, chargedTokens: call.totalTokenBound });
+  }));
+}

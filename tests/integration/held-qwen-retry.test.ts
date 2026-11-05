@@ -176,14 +176,17 @@ describe("보류 Qwen-v2 재심사", () => {
     // 2차 전에는 발행하지 않는다
     await publish();
     expect(await db.select().from(products)).toHaveLength(0);
-    // 같은 Qwen(게이트웨이 이름 '[gpu3090] ')은 자리 표시만 달라 되풀이 표다 — 관문 행을 세우지 않는다. 독립 투표자(second-test)만 본다
-    expect(await enqueueSecondReviews(await getSettings())).toBe(1);
+    // 설정된 모든 2차 칸에 실제 별도 응답이 필요하다. 보류 관문은 독립 투표자도 계속 요구한다.
+    expect(await enqueueSecondReviews(await getSettings())).toBe(2);
     const gates = await db.select().from(secondReviews).orderBy(secondReviews.id);
-    expect(gates.map((gate) => gate.model)).toEqual([OTHER_VOTER.model]);
+    expect(gates.map((gate) => gate.model)).toEqual([QWEN_VOTER.model, OTHER_VOTER.model]);
     expect(gates.every((gate) => gate.trigger === "ai_approved" && gate.firstAttemptId === attempt.id && gate.firstModel === "qwen3.8-flash-next")).toBe(true);
     await publish();
     expect(await db.select().from(products)).toHaveLength(0);
     await vote(gates.find((gate) => gate.model === OTHER_VOTER.model)!, "approve");
+    await publish();
+    expect(await db.select().from(products)).toHaveLength(0);
+    await vote(gates.find((gate) => gate.model === QWEN_VOTER.model)!, "approve");
     await publish();
     expect(await db.select().from(products)).toHaveLength(1);
     expect(await candidateRow(row.id)).toMatchObject({ state: "published" });
@@ -197,12 +200,13 @@ describe("보류 Qwen-v2 재심사", () => {
     await enqueueSecondReviews(await getSettings());
     const gates = await db.select().from(secondReviews).orderBy(secondReviews.id);
     await vote(gates.find((gate) => gate.model === OTHER_VOTER.model)!, "approve");
+    await vote(gates.find((gate) => gate.model === QWEN_VOTER.model)!, "approve");
     // 독립 투표자(second-test)가 승인한 뒤 그 투표자를 빼고 같은 Qwen(게이트웨이 이름)만 남긴다 — 남은 칸은 Qwen-v2 와 같은 모델뿐이다
     await saveSettings({ secondReview: { enabled: true, voters: [QWEN_VOTER] } }, "test");
     await publish();
     expect(await db.select().from(products)).toHaveLength(0);
     expect((await candidateRow(row.id)).state).not.toBe("published");
-    // 독립 투표자를 되돌리면 그 승인으로 발행된다 — 막은 것은 같은 모델 규칙이다
+    // 독립 투표자를 되돌리면 두 칸의 실제 승인으로 발행된다 — 보류 관문의 독립 투표자 요건은 유지한다.
     await saveSettings({ secondReview: { enabled: true, voters: [QWEN_VOTER, OTHER_VOTER] } }, "test");
     await publish();
     expect(await db.select().from(products)).toHaveLength(1);
@@ -466,8 +470,8 @@ describe("보류 Qwen-v2 재심사", () => {
     expect(await db.select().from(products)).toHaveLength(0);
   });
 
-  it("독립 칸의 투표자가 실패해 같은 모델의 대체 모델이 답하면 그 칸은 비어 있다 — 1차와 같은 가중치의 표로는 발행하지 않는다", async () => {
-    // 보류 재심사가 아니어도 같다: 1차가 '[MLX] qwen3.8-flash-next', 대체 모델이 '[gpu3090] qwen3.8-flash-next'(자리 표시만 다르다)
+  it("일반 1차 승인 뒤 같은 모델의 대체 2차 응답이 실제로 기록되면 그 칸을 채운다", async () => {
+    // 보류 재심사 관문과 별개인 일반 1차 승인: 같은 Qwen도 실제 2차 호출·결과가 있어야 한다.
     const SUPA = { provider: "abcllm" as const, model: "[supa] Qwen3.8-27B-NVFP4" };
     await setQwenAutoStep({ step: "heldRetry", next: { ...DEFAULT_HELD_QWEN_RETRY, enabled: false }, expected: (await getSettings()).qwenAuto.heldRetry, actor: "test" });
     await saveSettings({ firstReview: { provider: "abcllm", model: "[MLX] qwen3.8-flash-next" },
@@ -488,12 +492,12 @@ describe("보류 Qwen-v2 재심사", () => {
     const fallback = (await db.select().from(secondReviews).orderBy(secondReviews.id)).find((item) => item.fallbackForId === gate.id)!;
     expect(fallback.model).toBe(QWEN_VOTER.model);
     await vote(fallback, "approve");
-    // 그 표는 되풀이라 "일치"가 아니고, 발행 조건도 그 칸을 채운 것으로 보지 않는다
-    expect((await db.select().from(secondReviews).where(eq(secondReviews.id, fallback.id)))[0].status).toBe("needs_human");
+    // 1차와 같은 모델이어도 별도 2차 응답이므로 기존 대체 칸 하나를 채운다.
+    expect((await db.select().from(secondReviews).where(eq(secondReviews.id, fallback.id)))[0].status).toBe("agreed");
     const approvable = await db.select({ id: crawlCandidates.id }).from(crawlCandidates).where(reviewApprovalPredicate(await getSettings()));
-    expect(approvable).toHaveLength(0);
+    expect(approvable).toHaveLength(1);
     await publish();
-    expect(await db.select().from(products)).toHaveLength(0);
+    expect(await db.select().from(products)).toHaveLength(1);
   });
 
   it("소개 없음의 «승인 의견»은 소개를 지어 후보가 풀려도 관문의 1차 승인이 아니다 — 1차가 다시 본다", async () => {

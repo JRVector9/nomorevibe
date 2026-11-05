@@ -747,7 +747,8 @@ export async function markModelDispatchIndeterminate(value: ModelCapacityDispatc
   const crawlBound = korean.success ? korean : crawlTaglineModelDispatchSchema.safeParse(value);
   const searchVerifyBound = crawlBound.success ? crawlBound : searchVerifyModelDispatchSchema.safeParse(value);
   const websearchBound = searchVerifyBound.success ? searchVerifyBound : websearchQueryModelDispatchSchema.safeParse(value);
-  const cliBound = websearchBound.success ? websearchBound : cliModelDispatchSchema.safeParse(value);
+  const publicationBound = websearchBound.success ? websearchBound : publicationClassifyApiDispatchSchema.safeParse(value);
+  const cliBound = publicationBound.success ? publicationBound : cliModelDispatchSchema.safeParse(value);
   const bound = cliBound.success ? cliBound : localModelDispatchSchema.safeParse(value);
   const checked = bound.success ? modelCapacityDispatchSchema.parse({ requestId: bound.data.requestId,
     owner: bound.data.owner, token: bound.data.token, epoch: bound.data.epoch, revision: bound.data.revision,
@@ -1185,6 +1186,7 @@ function gatewayNotStartedRowMatches(row: RequestRow | undefined, dispatch: Gate
     case "crawl_tagline_gateway": return crawlTaglineRowMatches(row, dispatch as CrawlTaglineModelDispatch);
     case "search_verify_gateway": return searchVerifyRowMatches(row, dispatch as SearchVerifyModelDispatch);
     case "websearch_query_gateway": return websearchQueryRowMatches(row, dispatch as WebsearchQueryModelDispatch);
+    case "publication_classify_gateway": return publicationApiRowMatches(row, dispatch as PublicationClassifyApiDispatch);
     case "local_model_direct": return localModelRowMatches(row, dispatch as LocalModelDispatch);
   }
 }
@@ -2847,4 +2849,168 @@ export async function readTextTargetPoolAffinities(target: TextTargetPoolInput, 
     }
     return [...new Map(matches.map(match => [JSON.stringify([match.provider, match.model]), match])).values()];
   }, { accessMode: 'read only', isolationLevel: 'repeatable read' }));
+}
+
+// Publication API classification: distinct typed boundary, existing member fence and capacity authority.
+import { publicationClassifyApiInputSchema, publicationClassifyApiInputHash, publicationClassifyApiBindingSchema, publicationClassifyApiBindingHash,
+  publicationClassifyApiDispatchSchema, publicationClassifyApiTerminalSchema,
+  type PublicationClassifyApiInput, type PublicationClassifyApiBinding, type PublicationClassifyApiDispatch } from './capacity';
+import type { PublicationClassifyGatewayTerminal } from '@/lib/crawl/publication-classify-gateway';
+function fixedPublicationApiIdentity(identity: ModelCapacityRequestIdentity, input: PublicationClassifyApiInput) {
+  const logical = publicationClassifyLogicalWorkKey(input.members);
+  if (identity.class !== 'background' || identity.pool !== 'reviewer' || identity.routeId !== 'crawl-publish-classify'
+    || identity.provider !== input.provider || identity.model !== input.model || identity.workKey !== `${logical}:${publicationClassifyApiInputHash(input)}`)
+    fail('publication_classify_api_identity_mismatch');
+  return logical;
+}
+function publicationApiRowMatches(row: RequestRow | undefined, dispatch: PublicationClassifyApiDispatch): row is RequestRow {
+  const b = dispatch.binding;
+  return owned(row, dispatch) && row.class === 'background' && row.pool === 'reviewer' && row.routeId === b.routeId
+    && row.provider === b.provider && row.model === b.model && row.logicalWorkKey === b.logicalWorkKey
+    && row.workKey === `${b.logicalWorkKey}:${b.inputHash}` && isDeepStrictEqual(row.logicalMemberKeys, publicationClassifyMemberKeys(b.members))
+    && row.dispatchBindingHash === dispatch.bindingHash && !!row.dispatchedAt && isDeepStrictEqual(row.dispatchBinding, b);
+}
+export async function requestPublicationApiSlot(value: ModelCapacityRequest, input: PublicationClassifyApiInput): Promise<ModelSlotResult> {
+  if (currentReplayDb()) throw new Error('model_capacity_replay_unsupported');
+  const checked = modelCapacityRequestSchema.parse(value), snapshot = publicationClassifyApiInputSchema.parse(input);
+  return requestSlot(checked, fixedPublicationApiIdentity(checked, snapshot), publicationClassifyMemberKeys(snapshot.members));
+}
+declare const publicationApiLockBrand: unique symbol;
+export type PublicationApiDispatchLock = Readonly<{ control: ReturnType<typeof callerControlSnapshot>; readonly [publicationApiLockBrand]: true }>;
+const publicationApiLocks = new WeakMap<PublicationApiDispatchLock, { tx: ProductTransaction; row: RequestRow;
+  identity: ModelCapacityRequestIdentity; input: PublicationClassifyApiInput; finished: boolean }>();
+/** This capacity prefix must precede publisher/stage/domain/job locks in the same TX. */
+export async function lockPublicationApiDispatch(tx: ProductTransaction, value: { reservation: ModelCapacityReservation;
+  identity: ModelCapacityRequestIdentity; input: PublicationClassifyApiInput }): Promise<PublicationApiDispatchLock | null> {
+  if (currentReplayDb()) throw new Error('model_capacity_replay_unsupported');
+  const checked = modelCapacityReservationSchema.parse(value.reservation), identity = modelCapacityRequestIdentitySchema.parse(value.identity);
+  const input = publicationClassifyApiInputSchema.parse(value.input), logical = fixedPublicationApiIdentity(identity, input);
+  const state = await control(tx);
+  const [row] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, checked.requestId)).for('update');
+  if (!owned(row, checked)) return null;
+  sameIdentity(row, identity);
+  if (row.logicalWorkKey !== logical || !isDeepStrictEqual(row.logicalMemberKeys, publicationClassifyMemberKeys(input.members))) return null;
+  const route = state.policy?.routes.find(route => route.routeId === identity.routeId && route.provider === identity.provider && route.model === identity.model);
+  if (row.state !== 'reserved' || state.mode !== 'open' || !route || row.epoch !== state.epoch || row.revision !== state.revision
+    || row.policyHash !== state.policyHash || row.providerBudgetId !== route.providerBudgetId || row.groupId !== route.groupId
+    || await introCheckFence(tx, publicationClassifyMemberKeys(input.members), row.requestId, 'crawl-publish-classify')) return null;
+  const [timing] = await tx.execute<{ live: boolean }>(sql`SELECT reserved_until>clock_timestamp() AS live FROM model_capacity_requests WHERE request_id=${row.requestId}::uuid`);
+  if (!timing?.live) return null;
+  const lock = Object.freeze({ control: callerControlSnapshot(state) }) as PublicationApiDispatchLock;
+  publicationApiLocks.set(lock, { tx, row, identity, input, finished: false }); return lock;
+}
+export async function finishPublicationApiDispatch(tx: ProductTransaction, lock: PublicationApiDispatchLock,
+  value: PublicationClassifyApiBinding): Promise<PublicationClassifyApiDispatch> {
+  const proof = publicationApiLocks.get(lock);
+  if (!proof || proof.tx !== tx || proof.finished) return fail('invalid_publication_api_dispatch_lock');
+  const binding = publicationClassifyApiBindingSchema.parse(value);
+  const { members, provider, model, payloadHash, definitionsHash, configRevision, memberId } = binding;
+  if (!isDeepStrictEqual({ members, provider, model, payloadHash, definitionsHash, configRevision, memberId }, proof.input) || binding.logicalWorkKey !== proof.row.logicalWorkKey
+    || `${binding.logicalWorkKey}:${binding.inputHash}` !== proof.identity.workKey
+    || binding.publisherRole.instanceId !== proof.identity.owner.instanceId || binding.publisherRole.bootId !== proof.identity.owner.bootId)
+    fail('publication_classify_api_binding_mismatch');
+  proof.finished = true;
+  const bindingHash = publicationClassifyApiBindingHash(binding);
+  const [changed] = await tx.update(modelCapacityRequests).set({ state: 'dispatched', dispatchBinding: binding, dispatchBindingHash: bindingHash,
+    dispatchedAt: sql`clock_timestamp()`, updatedAt: sql`clock_timestamp()` }).where(and(eq(modelCapacityRequests.requestId, proof.row.requestId),
+      eq(modelCapacityRequests.state, 'reserved'), eq(modelCapacityRequests.token, proof.row.token!), sql`${modelCapacityRequests.reservedUntil}>clock_timestamp()`)).returning();
+  if (!changed) fail('publication_classify_api_reservation_lost');
+  const dispatch = publicationClassifyApiDispatchSchema.parse({ ...reservation(changed), binding, bindingHash });
+  await event(tx, changed, 'dispatch_started', 'reserved', 'dispatched', null, { dispatch }); return dispatch;
+}
+export async function reconcilePublicationApiTerminal(terminal: PublicationClassifyGatewayTerminal): Promise<{ kind: 'settled' | 'already_settled' }> {
+  if (currentReplayDb()) throw new Error('model_capacity_replay_unsupported');
+  const { readPublicationClassifyTerminal } = await import('@/lib/crawl/publication-classify-gateway');
+  const native = readPublicationClassifyTerminal(terminal);
+  if (!native) fail('invalid_publication_api_terminal');
+  const evidence = publicationClassifyApiTerminalSchema.parse(native), dispatch = evidence.dispatch, evidenceHash = reviewHash(evidence);
+  return transaction(async tx => {
+    const [mutex] = await tx.select({ id: modelCapacityControl.id }).from(modelCapacityControl).where(eq(modelCapacityControl.id, 1)).for('update');
+    if (!mutex) fail('model_capacity_control_missing');
+    const [row] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, dispatch.requestId)).for('update');
+    if (!publicationApiRowMatches(row, dispatch)) fail('publication_api_terminal_binding_mismatch');
+    if (row.state === 'settled') {
+      if (row.terminalEvidenceHash !== evidenceHash || !isDeepStrictEqual(row.terminalEvidence, evidence)) fail('publication_api_terminal_conflict');
+      return { kind: 'already_settled' };
+    }
+    if (row.state !== 'dispatched' && row.state !== 'indeterminate') fail('publication_api_terminal_state_mismatch');
+    const [changed] = await tx.update(modelCapacityRequests).set({ state: 'settled', terminalEvidence: evidence, terminalEvidenceHash: evidenceHash,
+      settledAt: sql`clock_timestamp()`, updatedAt: sql`clock_timestamp()` }).where(eq(modelCapacityRequests.requestId, row.requestId)).returning();
+    await event(tx, changed, 'dispatch_settled', row.state, 'settled', null, evidence); return { kind: 'settled' };
+  });
+}
+
+export type OwnPendingPublicationApiBatch = Readonly<{
+  request: ModelCapacityRequest; state: 'waiting' | 'reserved'; token: string | null; epoch: number; revision: number; policyHash: string;
+  requestId: string; provider: GatewayDispatchProvider; model: string; workKey: string;
+  logicalWorkKey: string; memberKeys: readonly string[]; candidateIds: readonly number[];
+}>;
+/** Read-only priority metadata, never input/source/dispatch authority. The coordinator must reconstruct
+ * the current original batch and match its full input/work key, then re-poll the exact request ID.
+ * Read only this publisher boot's live unbound API requests; dispatched calls are never resumed here. */
+export async function findOwnPendingPublicationApiBatches(owner: ModelCapacityRequestIdentity['owner']): Promise<OwnPendingPublicationApiBatch[]> {
+  if (currentReplayDb()) throw new Error('model_capacity_replay_unsupported');
+  const checked = modelCapacityRequestIdentitySchema.shape.owner.parse(owner);
+  const rows = await onPrimary(() => db.select().from(modelCapacityRequests).where(and(
+    eq(modelCapacityRequests.ownerInstanceId, checked.instanceId), eq(modelCapacityRequests.ownerBootId, checked.bootId),
+    eq(modelCapacityRequests.class, 'background'), eq(modelCapacityRequests.pool, 'reviewer'),
+    eq(modelCapacityRequests.routeId, 'crawl-publish-classify'),
+    sql`${modelCapacityRequests.provider} IN ('abcllm','local-direct')`,
+    sql`${modelCapacityRequests.logicalWorkKey} LIKE 'bg:publication-classify:%' AND ${modelCapacityRequests.logicalMemberKeys} IS NOT NULL`,
+    sql`((${modelCapacityRequests.state}='waiting' AND ${modelCapacityRequests.queueUntil}>clock_timestamp())
+      OR (${modelCapacityRequests.state}='reserved' AND ${modelCapacityRequests.reservedUntil}>clock_timestamp()))`,
+    sql`${modelCapacityRequests.dispatchBinding} IS NULL AND ${modelCapacityRequests.dispatchBindingHash} IS NULL
+      AND ${modelCapacityRequests.dispatchedAt} IS NULL AND ${modelCapacityRequests.terminalEvidence} IS NULL
+      AND ${modelCapacityRequests.terminalEvidenceHash} IS NULL AND ${modelCapacityRequests.settledAt} IS NULL`,
+  )).orderBy(sql`CASE WHEN ${modelCapacityRequests.state}='reserved' THEN 0 ELSE 1 END`, asc(modelCapacityRequests.queueOrdinal)).limit(32));
+  return rows.map(row => {
+    const identity = modelCapacityRequestIdentitySchema.parse({ owner: checked, class: row.class, pool: row.pool,
+      routeId: row.routeId, provider: row.provider, model: row.model, workKey: row.workKey });
+    const keys = row.logicalMemberKeys;
+    if (!isGatewayDispatchProvider(identity.provider) || !keys || keys.length < 1 || keys.length > 10
+      || new Set(keys).size !== keys.length || keys.some((key, index) => !/^classify:[1-9][0-9]{0,15}$/.test(key)
+        || !Number.isSafeInteger(Number(key.slice(9))) || index > 0 && keys[index - 1] >= key))
+      throw new ModelCapacityDeferredError('ledger_mismatch');
+    const logical = `bg:publication-classify:${reviewHash(keys)}`;
+    if (row.logicalWorkKey !== logical || !new RegExp(`^${logical}:[a-f0-9]{64}$`).test(identity.workKey))
+      throw new ModelCapacityDeferredError('ledger_mismatch');
+    return Object.freeze({ request: Object.freeze({ ...identity, requestId: row.requestId }), state: row.state as 'waiting' | 'reserved',
+      token: row.token, epoch: row.epoch, revision: row.revision, policyHash: row.policyHash,
+      requestId: row.requestId, provider: identity.provider, model: identity.model, workKey: identity.workKey,
+      logicalWorkKey: logical, memberKeys: Object.freeze([...keys]), candidateIds: Object.freeze(keys.map(key => Number(key.slice(9)))) });
+  });
+}
+
+/** Cancel only this publisher's exact unstarted readback, including while draining/disabled.
+ * This is abandonment, never physical end proof; a successor or any sent/bound row stays untouched. */
+export async function cancelOwnPendingPublicationApiBatch(value: OwnPendingPublicationApiBatch,
+  owner: ModelCapacityRequestIdentity['owner']): Promise<boolean> {
+  const snapshot = structuredClone(value), checked = modelCapacityRequestSchema.parse(snapshot.request);
+  const expectedOwner = modelCapacityRequestIdentitySchema.shape.owner.parse(owner), keys = snapshot.memberKeys;
+  if (checked.owner.instanceId !== expectedOwner.instanceId || checked.owner.bootId !== expectedOwner.bootId
+    || checked.class !== 'background' || checked.pool !== 'reviewer' || checked.routeId !== 'crawl-publish-classify'
+    || !isGatewayDispatchProvider(checked.provider) || checked.requestId !== snapshot.requestId
+    || checked.provider !== snapshot.provider || checked.model !== snapshot.model || checked.workKey !== snapshot.workKey
+    || !['waiting', 'reserved'].includes(snapshot.state) || keys.length < 1 || keys.length > 10 || new Set(keys).size !== keys.length
+    || keys.some((key, index) => !/^classify:[1-9][0-9]{0,15}$/.test(key) || !Number.isSafeInteger(Number(key.slice(9)))
+      || index > 0 && keys[index - 1] >= key)) return false;
+  const logical = `bg:publication-classify:${reviewHash(keys)}`;
+  if (snapshot.logicalWorkKey !== logical || !new RegExp(`^${logical}:[a-f0-9]{64}$`).test(checked.workKey)) return false;
+  return transaction(async tx => {
+    const state = await control(tx);
+    if (state.fenced) return false;
+    const [row] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, checked.requestId)).for('update');
+    if (!row || row.state !== snapshot.state || row.ownerInstanceId !== expectedOwner.instanceId || row.ownerBootId !== expectedOwner.bootId
+      || row.class !== checked.class || row.pool !== checked.pool || row.routeId !== checked.routeId
+      || row.provider !== checked.provider || row.model !== checked.model || row.workKey !== checked.workKey
+      || row.epoch !== snapshot.epoch || row.revision !== snapshot.revision || row.policyHash !== snapshot.policyHash || row.token !== snapshot.token
+      || row.logicalWorkKey !== logical || !isDeepStrictEqual(row.logicalMemberKeys, keys)
+      || row.dispatchBinding !== null || row.dispatchBindingHash !== null || row.dispatchedAt !== null
+      || row.terminalEvidence !== null || row.terminalEvidenceHash !== null || row.settledAt !== null) return false;
+    const [changed] = await tx.update(modelCapacityRequests).set({ state: 'withdrawn', updatedAt: sql`clock_timestamp()` })
+      .where(and(eq(modelCapacityRequests.requestId, row.requestId), eq(modelCapacityRequests.state, row.state))).returning();
+    if (!changed) return false;
+    await event(tx, changed, row.state === 'waiting' ? 'wait_cancelled' : 'reservation_cancelled', row.state, 'withdrawn');
+    return true;
+  });
 }

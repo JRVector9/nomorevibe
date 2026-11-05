@@ -84,7 +84,7 @@ beforeAll(async () => {
 
   const vote = (inputHash: string, secondDecision: string, reviewedAt: Date): typeof secondReviews.$inferInsert => ({
     candidateId: candidate.id, repo: candidate.repo, trigger: "ai_approved", firstDecision: "approve", inputHash,
-    provider: "abcllm", model: "qwen", status: secondDecision === "approve" ? "agreed" : "needs_human",
+    provider: "abcllm", model: "gpt-oss-120b", status: secondDecision === "approve" ? "agreed" : "needs_human",
     secondDecision, createdAt: ago(10), reviewedAt,
   });
   await db.insert(secondReviews).values([vote("agree", "approve", ago(9)), vote("split", "reject", ago(5))]);
@@ -153,7 +153,7 @@ it("reports each model slot over the last hour", async () => {
   expect(await modelHealth(settings, now)).toEqual([
     { key: "first", label: "1차 심사", model: "[MLX] gpt-oss-120b", calls1h: 2, failed1h: 1, avgSeconds: 7,
       agreement1h: null, lastSuccessAt: ago(12, 4).toISOString() },
-    { key: "second", label: "2차 투표", model: "qwen", calls1h: 2, failed1h: 0, avgSeconds: 180,
+    { key: "second", label: "2차 투표", model: "gpt-oss-120b", calls1h: 2, failed1h: 0, avgSeconds: 180,
       agreement1h: 0.5, lastSuccessAt: ago(5).toISOString() },
     { key: "fallback", label: "2차 예비 모델", model: "sonnet", calls1h: 0, failed1h: 0, avgSeconds: null,
       agreement1h: null, lastSuccessAt: null },

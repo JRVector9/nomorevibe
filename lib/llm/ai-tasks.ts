@@ -130,8 +130,8 @@ export const AI_TASKS: readonly AiTaskDef[] = Object.freeze([
   // CLI 전용
   task({ id: "product-intro-check", label: "소개 검수", group: "cli", kind: "chat", api: false, cliTools: tools("claude"), routeId: "product-intro-check",
     wiring: "deferred", jobs: ["product-intro-check"], adminStage: "product-intro-check", assignmentStage: "intro", description: "AI 소개·메이커 소개를 근거와 대조해 고칩니다." }),
-  task({ id: "publish-classify", label: "카테고리 분류", group: "cli", kind: "chat", api: false, cliTools: tools("codex", "claude"), routeId: "crawl-publish-classify",
-    wiring: "deferred", jobs: ["crawl-publish"], assignmentStage: "publish-classify", description: "발행 전에 카테고리를 정합니다(connect 에이전트가 CLI 를 띄웁니다)." }),
+  task({ id: "publish-classify", label: "카테고리 분류", group: "cli", kind: "chat", api: true, cliTools: tools("codex", "claude"), routeId: "crawl-publish-classify",
+    wiring: "engine-route", jobs: ["crawl-publish"], assignmentStage: "publish-classify", description: "발행 전 카테고리 분류: 분산은 API 연결, 대체 실행은 기존 connect CLI 설정을 사용합니다." }),
   task({ id: "grok-session-check", label: "Grok 로그인 유지", group: "cli", kind: "chat", api: false, cliTools: tools("grok"), routeId: "grok-session-check",
     wiring: "deferred", jobs: ["grok-session-check"], description: "Grok CLI 로그인이 끊기지 않게 짧게 부릅니다." }),
 ]);

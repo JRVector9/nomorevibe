@@ -148,13 +148,13 @@ describe("writeKoreanTaglines — 정리된 줄을 저장하고 미룸 사유를
       rejected: { too_long: 1 }, cleaned: { parenthetical: 1 } }));
   });
 
-  it("logs the exact capacity deferral reason before deferring the tick", async () => {
+  it("logs the exact global capacity deferral reason before deferring the tick", async () => {
     m.pending.mockResolvedValueOnce([task(1)]);
-    const deferred = new ModelCapacityDeferredError("dispatched");
+    const deferred = new ModelCapacityDeferredError("draining");
     m.gpt.mockRejectedValueOnce(deferred);
     const context = ctx();
     await expect(writeKoreanTaglines(context)).rejects.toBe(deferred);
-    expect(context.log).toHaveBeenCalledWith("tagline_ko.capacity_deferred", expect.objectContaining({ reason: "dispatched" }));
+    expect(context.log).toHaveBeenCalledWith("tagline_ko.capacity_deferred", expect.objectContaining({ reason: "draining" }));
     expect(m.write).not.toHaveBeenCalled();
   });
 });

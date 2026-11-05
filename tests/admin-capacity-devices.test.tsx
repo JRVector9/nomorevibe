@@ -270,14 +270,14 @@ describe("그리기", () => {
     expect(gpu).toMatch(/<button[^>]*disabled/);
     expect(renderToStaticMarkup(createElement(RolesEditor, { roles: supa.roles, extraRows: 0 }))).not.toContain("extraRoute");
   });
-  it("실시간 한도 화면의 장비 묶음은 장비 한도 화면으로 보내고, 메뉴에 장비 한도가 h1 과 같은 이름으로 있다", () => {
+  it("실시간 한도 화면의 장비 묶음과 장비 한도 메뉴에서 엔진 공유 한도를 연다", () => {
     const html = renderToStaticMarkup(createElement(DevicesPlaceholder));
     expect(html).toContain('href="/admin/models/devices"');
     expect(html).toContain("model-capacity-device-save");
     expect(html).not.toContain("준비 중");
     const page = readFileSync(path.resolve(__dirname, "../app/(operator)/admin/models/devices/page.tsx"), "utf8");
     expect(page).toContain("<PageStamp />");
-    expect(page).toMatch(/<h1[^>]*>장비 한도<\/h1>/);
+    expect(page).toMatch(/<h1[^>]*>엔진 공유 한도<\/h1>/);
     expect(NAV_GROUPS[1].pages.find(page => page.href === "/admin/models/devices")).toMatchObject({ label: "장비 한도" });
   });
 });

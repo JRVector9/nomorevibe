@@ -10,6 +10,7 @@ import {
 import { RankSelects } from "../models/RankSelects";
 import { modelPickerConnectionDevice, modelPickerConnectionLabel, modelPickerModelLabel } from "../models/model-picker-display";
 import { saveAiTaskRanksAction } from "../models/tasks/actions";
+import { aiTaskWorkloadPoolApiOnly } from "@/lib/llm/ai-task-execution-config";
 
 /**
  * 「바꾸기」 서랍(2026-11-04 5차) — 전체 흐름에서 칸의 처리 LLM 1·2·3순위를 그 자리에서 바꾼다.
@@ -28,6 +29,7 @@ const STEPS: { key: Step; text: string }[] = [{ key: "edit", text: "고르기" }
 
 function lineTag(line: FlowRankLine): { text: string; tone: "lock" | "set" | "live" } {
   if (line.execution?.mode === "workload_pool") return { text: `작업 분산 · 모델 ${line.execution.members.length}개`, tone: "live" };
+  if (aiTaskWorkloadPoolApiOnly(line.task)) return { text: "기존 CLI 분류", tone: "live" };
   if (line.lock) return { text: "바꿀 수 없음", tone: "lock" };
   if (!line.live) return { text: "설정값", tone: "set" };
   return { text: "실행이 이 순위를 읽음", tone: "live" };
@@ -57,6 +59,7 @@ function LineEditor({ editor, line, value, onChange, warnings, disabled }: {
   const tag = lineTag(line);
   const changed = rankChanges(editor, [line], { [line.key]: value }).length > 0;
   const pool = line.execution?.mode === "workload_pool" ? line.execution : null;
+  const apiOnly = aiTaskWorkloadPoolApiOnly(line.task);
   return (
     <section className="fr-line" data-key={line.key} data-tag={tag.tone} aria-labelledby={`fr-line-${line.key}`}>
       <header className="fr-line-h">
@@ -70,15 +73,18 @@ function LineEditor({ editor, line, value, onChange, warnings, disabled }: {
           return <li key={member.memberId}>모델 {member.position} · {connection ? modelPickerConnectionLabel(connection) : "연결 없음"} · {connection ? modelPickerModelLabel(connection, member.model) : member.model}
             {typeof member.options.reasoningEffort === "string" && ` · 추론 ${member.options.reasoningEffort}`}</li>;
         })}</ul>
-        <p className="fr-note">서로 다른 업무를 분산합니다. 실행 수는 단계 동시성과 장비 한도를 따릅니다.</p>
+        <p className="fr-note">업무마다 모델 하나를 골라 나눠 처리합니다. 동시 실행 수는 단계·장비 한도를 따릅니다.</p>
         <Link href={`/admin/models/tasks#execution-${line.task}-${line.slot}`} prefetch={false} className="fr-link">분산 모델·실행 방식 변경 →</Link>
+      </> : apiOnly ? <>
+        <p className="fr-note">기존 CLI 분류를 사용합니다.</p>
+        <Link href={`/admin/models/tasks#execution-${line.task}-${line.slot}`} prefetch={false} className="fr-link">API 분산 모델 설정 →</Link>
       </> : <p className="fr-now"><span className="fr-k">지금</span> {displayRankChain(editor, line.saved)}</p>}
       {line.lock && <p className="fr-lock" role="note">{line.lock}</p>}
-      {!pool && <RankSelects<AiRankChoice> stage={{ id: `flow-${line.key}`, label: line.label, slots: 3 }} options={line.options} connections={editor.connections} value={value} onChange={onChange}
+      {!pool && !apiOnly && <RankSelects<AiRankChoice> stage={{ id: `flow-${line.key}`, label: line.label, slots: 3 }} options={line.options} connections={editor.connections} value={value} onChange={onChange}
         slotNames={AI_RANK_SLOT_NAMES} disabled={disabled || !!line.lock}
         showProvider={false} note={null} blocked={(option, index, slots) => flowOptionBlocked(editor, line, index, option, slots)}
         validate={(slots) => changed ? flowRankIssues(editor, line, slots) : []} />}
-      {!line.live && !line.lock && <p className="fr-note">{SET_ONLY_TEXT}</p>}
+      {!line.live && !line.lock && !apiOnly && <p className="fr-note">{SET_ONLY_TEXT}</p>}
       {!pool && <WarningList warnings={warnings} />}
     </section>
   );
@@ -123,7 +129,7 @@ export function RankDrawer({ editor, lines, title, secondWaiting, onClose, save 
   const changedKeys = new Set(changes.map((change) => change.line.key));
   const issues = changes.flatMap((change) => flowRankIssues(editor, change.line, change.after));
   const mustAck = needsAcknowledge(warnings);
-  // 확인 단계는 바꾼 줄의 경고와, 바꾸지 않았어도 바꾼 결과로 생기는 경고(같은 모델 등)를 함께 보인다
+  // 확인 단계는 바꾼 줄의 경고와, 바꾸지 않았어도 바꾼 결과로 생기는 경고를 함께 보인다
   const confirmWarnings = warnings.filter((warning) => changedKeys.has(warning.line) || !warning.existing);
 
   const close = () => { if (step !== "saving") onClose(); };
@@ -168,7 +174,7 @@ export function RankDrawer({ editor, lines, title, secondWaiting, onClose, save 
         </header>
 
         {step === "edit" && <div className="fr-body">
-          <p className="fr-lead">작업마다 1·2·3순위를 고릅니다. 1순위를 쓸 수 없으면 2순위, 그다음 3순위로 넘어갑니다. 선택지는 연결마다 묶여 「연결 · 장비 · 최근 상태」로 보입니다.</p>
+          <p className="fr-lead">대체 실행은 우선 모델 하나를 쓰고, 필요한 경우에만 다음 순위로 전환합니다. 작업 분산은 서로 다른 업무를 모델에 나눕니다.</p>
           {lines.map((line) => <LineEditor key={line.key} editor={editor} line={line} value={value(line)} disabled={false}
             onChange={(next) => setDrafts((current) => ({ ...current, [line.key]: next }))} warnings={warnings.filter((warning) => warning.line === line.key)} />)}
           <details className="fr-conns">

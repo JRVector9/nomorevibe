@@ -1,3 +1,4 @@
+import "@/lib/llm/publication-classify-serving-contract";
 import { createHash } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";

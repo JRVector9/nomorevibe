@@ -8,6 +8,7 @@ import { identity, writerSiteActive } from "./epoch";
 import { judgeOwnerGone, OWNER_GONE_MAX_REQUESTS, OWNER_GONE_QUIET_MS, ownerGoneEvidenceSchema, type OwnerFact, type OwnerFactSource,
   type OwnerGoneEvidence, type OwnerGoneVerdict } from "./owner-gone-contract";
 import { drTransactionMaybeDry } from "./repository";
+import { assertJobLeaseAtWallTime, type JobLease } from "@/lib/jobs/control";
 
 /** 판정 규칙·근거 모양은 ./owner-gone-contract.ts(DB 를 열지 않는 순수 모듈). 이 파일은 같은 TX 에서 기록을 읽고 전환·감사 기록을 쓴다. */
 
@@ -65,7 +66,7 @@ export type OwnerGoneRow = Readonly<{ requestId: string; status: "marked" | "ref
   evidence: OwnerGoneEvidence | null; verdict: OwnerGoneVerdict | null }>;
 
 /** 장부 요청 하나를 짧은 TX 하나로 판정·전환한다(dry-run 이면 같은 TX 를 실행한 뒤 ROLLBACK). */
-async function markOne(requestId: string, value: { operator: string; quietMs: number }, apply: boolean): Promise<OwnerGoneRow> {
+async function markOne(requestId: string, value: { operator: string; quietMs: number; allowedOwners?: ReadonlySet<string>; jobLease?: JobLease }, apply: boolean): Promise<OwnerGoneRow> {
   return drTransactionMaybeDry(apply, async tx => {
     // 워커 정산·입장과 겨루지 않게 짧게 기다리고 포기한다(전역 회수의 긴 control 잠금 교훈, 2026-11-02).
     await tx.execute(sql`SET LOCAL lock_timeout = '1s'`);
@@ -74,6 +75,10 @@ async function markOne(requestId: string, value: { operator: string; quietMs: nu
     if (!await writerSiteActive(tx)) throw new Error("dr_writer_site_fenced");
     let verdict: OwnerGoneVerdict | null = null;
     const result = await markOwnerGoneDispatchIndeterminate(tx, requestId, async (candidate: OwnerGoneCandidate) => {
+      // Automatic maintenance may only evaluate singleton owners. Recheck the
+      // actual locked owner, not only the earlier candidate-selection hint.
+      if (value.allowedOwners && !value.allowedOwners.has(candidate.owner.instanceId)) return { blocked: "owner_not_singleton" };
+      if (value.jobLease) await assertJobLeaseAtWallTime(tx, value.jobLease);
       const { facts, truncated } = await readOwnerFacts(tx, candidate.owner.instanceId, candidate.queueOrdinal);
       verdict = judgeOwnerGone({ state: candidate.state, dispatchAt: candidate.dispatchAt, owner: candidate.owner, now: candidate.now,
         quietMs: value.quietMs, facts, truncated });
@@ -88,6 +93,8 @@ async function markOne(requestId: string, value: { operator: string; quietMs: nu
     });
     if (result.kind === "not_dispatched") return { requestId, status: "not_dispatched", reason: "not_dispatched", state: result.state, evidence: null, verdict };
     if (result.kind === "blocked") return { requestId, status: "refused", reason: result.reason, state: "dispatched", evidence: null, verdict };
+    // An automatic mark and its audit must still belong to the same live job.
+    if (value.jobLease) await assertJobLeaseAtWallTime(tx, value.jobLease);
     // 감사 기록은 같은 TX 다(dry-run 이면 함께 ROLLBACK). operations_audit 는 덧붙이기만 된다.
     await tx.insert(operationsAudit).values(await adminAuditRow(value.operator, { action: "model-capacity-owner-gone", target: requestId,
       detail: { fromState: "dispatched", toState: "indeterminate", reason: "process_exit", evidence: result.evidence } }));
@@ -99,14 +106,18 @@ async function markOne(requestId: string, value: { operator: string; quietMs: nu
  * 운영자가 명시한 요청 id 들만(전체 일괄 없음, 최대 20건) 한 건씩 판정·전환한다. 근거가 없는 행은 그대로 두고 이유를 돌려준다.
  * dry-run(apply=false)은 같은 TX 를 실행한 뒤 ROLLBACK 한다 — 장부·event·감사 기록이 남지 않는다.
  */
-export async function markOwnerGoneIndeterminate(value: { requestIds: readonly string[]; operator: string; quietMs?: number }, apply: boolean):
+export async function markOwnerGoneIndeterminate(value: { requestIds: readonly string[]; operator: string; quietMs?: number;
+  allowedOwnerInstanceIds?: readonly string[]; jobLease?: JobLease }, apply: boolean):
   Promise<{ rows: OwnerGoneRow[] }> {
   const operator = identity(120).parse(value.operator);
   const requestIds = z.array(z.uuid()).min(1).max(OWNER_GONE_MAX_REQUESTS).parse(value.requestIds);
   if (new Set(requestIds).size !== requestIds.length) throw new Error("owner_gone_duplicate_request");
   const quietMs = z.number().int().min(OWNER_GONE_QUIET_MS.min).max(OWNER_GONE_QUIET_MS.max).parse(value.quietMs ?? OWNER_GONE_QUIET_MS.default);
+  const allowedOwners = value.allowedOwnerInstanceIds === undefined ? undefined
+    : new Set(z.array(identity(120)).min(1).max(32).parse(value.allowedOwnerInstanceIds));
+  const jobLease = value.jobLease && structuredClone(value.jobLease);
   const rows: OwnerGoneRow[] = [];
-  for (const requestId of requestIds) rows.push(await markOne(requestId, { operator, quietMs }, apply));
+  for (const requestId of requestIds) rows.push(await markOne(requestId, { operator, quietMs, allowedOwners, jobLease }, apply));
   return { rows };
 }
 

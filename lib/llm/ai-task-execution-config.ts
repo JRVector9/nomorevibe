@@ -6,9 +6,11 @@ export const AI_TASK_EXECUTION_MODES = ["fallback", "workload_pool"] as const;
 export type AiTaskExecutionMode = (typeof AI_TASK_EXECUTION_MODES)[number];
 export const AI_TASK_POOL_MEMBER_MAX = 4;
 /** Expand only when a real execution adapter consumes the configuration. */
-export const AI_TASK_WORKLOAD_POOL_TASKS: readonly string[] = Object.freeze(["first-review", "second-review", ...AI_TEXT_TASK_IDS]);
+export const AI_TASK_WORKLOAD_POOL_TASKS: readonly string[] = Object.freeze(["first-review", "second-review", "publish-classify", ...AI_TEXT_TASK_IDS]);
 export const aiTaskSupportsWorkloadPool = (taskId: string, slot = 1): boolean =>
   AI_TASK_WORKLOAD_POOL_TASKS.includes(taskId) && (taskId !== "second-review" || slot === 1);
+/** Actual publication fallback is ConnectAgent CLI; its new pool adapter is API-only. */
+export const aiTaskWorkloadPoolApiOnly = (taskId: string): boolean => taskId === 'publish-classify';
 /** UI explanation only. This never enables an adapter or treats a model name as space-equivalence proof. */
 export function aiTaskWorkloadPoolUnsupportedReason(taskId: string, slot = 1): string | null {
   if (aiTaskSupportsWorkloadPool(taskId, slot)) return null;
@@ -31,8 +33,6 @@ export function aiTaskWorkloadPoolUnsupportedReason(taskId: string, slot = 1): s
     return "보강 작업의 백엔드·입력·독립 감사 조건을 보존하는 전용 연결이 필요해 아직 작업 분산을 지원하지 않습니다.";
   if (taskId === "product-intro-check")
     return "소개 검수는 기존 CLI 실행·묶음 입력 계약을 사용하며 아직 작업 분산 설정을 읽지 않습니다.";
-  if (taskId === "publish-classify")
-    return "발행 분류는 기존 CLI 단계와 발행 권한에 묶여 있어 아직 작업 분산 설정을 읽지 않습니다.";
   if (taskId === "korean-translation-direct")
     return "이 경로는 용량 제어가 꺼진 때의 기존 직접 번역 경로이며 아직 작업 분산 설정을 읽지 않습니다.";
   if (taskId === "product-embedding" || taskId === "search-embedding")

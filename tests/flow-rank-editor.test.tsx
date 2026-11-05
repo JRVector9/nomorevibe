@@ -99,22 +99,20 @@ describe("처리 LLM 바꾸기 — 전→후와 경고", () => {
       ["second-review#1", "1순위 m3-mlx (2) · gpt-oss-120b", "1순위 supa-direct · supa"]]);
   });
 
-  it("warns when a 2차 voter gets the 1차 model (same-model hold incident) — as a change and as the current state", () => {
+  it("allows the same model in 1차 and 2차 without a warning or acknowledgement", () => {
     const editor = editorOf();
     const lines = flowRankLinesFor(editor, "second");
     const made = rankWarnings(editor, lines, { "second-review#1": [{ provider: QWEN, model: "qwen3.8-flash-next" }] });
     // gpt-oss 를 빼므로 재심사 안내도 함께
-    expect(made).toEqual([expect.objectContaining({ code: "same_model", tone: "bad", line: "second-review#1", existing: false }), expect.objectContaining({ code: "voter_reopen" })]);
-    expect(made[0].text).toContain("「2차 갈림」 보류");
-    expect(needsAcknowledge(made)).toBe(true);
+    expect(made).toEqual([expect.objectContaining({ code: "voter_reopen" })]);
+    expect(needsAcknowledge(made)).toBe(false);
     const already = editorOf([row("first-review", QWEN, "qwen3.8-flash-next"), row("second-review", QWEN, "qwen3.8-flash-next")]);
     const now = rankWarnings(already, flowRankLinesFor(already, "second"), {});
-    expect(now).toEqual([expect.objectContaining({ code: "same_model", existing: true })]);
-    expect(now[0].text).toMatch(/^지금 /);
+    expect(now).toEqual([]);
     expect(needsAcknowledge(now)).toBe(false);
-    // 1차 칸에서 1차를 2차 투표자의 모델로 바꿔도 같은 경고(1차 줄에)
+    // 1차 칸에서 같은 모델로 바꾸어도 경고하지 않는다
     const fromFirst = rankWarnings(editor, flowRankLinesFor(editor, "first"), { "first-review#1": [{ provider: M3, model: "gpt-oss-120b" }] });
-    expect(fromFirst).toEqual([expect.objectContaining({ code: "same_model", line: "first-review#1" })]);
+    expect(fromFirst).toEqual([]);
   });
 
   it("warns that clearing rank 1 stops a live task (11-02 21:13Z), says so softly for 설정값, and ignores empty voters 2·3", () => {
@@ -155,16 +153,16 @@ describe("처리 LLM 바꾸기 — 서랍 그림", () => {
     expect(html).toMatch(/<button type="button" class="fr-btn fr-primary" disabled="">/);
   });
 
-  it("confirm step: before → after table, the warnings, and the save stays off until the danger is acknowledged", () => {
+  it("confirm step: same model across stages only shows the voter replacement notice", () => {
     const html = renderToStaticMarkup(<RankDrawer editor={editor} lines={flowRankLinesFor(editor, "second")} title="AI 2차" secondWaiting={0} onClose={() => {}}
       initial={{ step: "confirm", drafts: { "second-review#1": [{ provider: QWEN, model: "qwen3.8-flash-next" }, null, null] } }} />);
     expect(html).toMatch(/<th scope="col">작업<\/th><th scope="col">전<\/th><th scope="col">후<\/th>/);
     expect(html).toContain("1순위 m3-mlx (2) · gpt-oss-120b");
     expect(html).toContain("1순위 gpu3090-qwen · qwen3.8-flash-next");
-    expect(html).toContain('data-code="same_model"');
+    expect(html).not.toContain('data-code="same_model"');
     expect(html).toContain('data-code="voter_reopen"');
-    expect(html).toContain("경고를 읽었습니다 — 그래도 저장합니다");
-    expect(html).toMatch(/data-danger="yes" disabled="">저장<\/button>/);
+    expect(html).not.toContain("경고를 읽었습니다 — 그래도 저장합니다");
+    expect(html).toMatch(/class="fr-btn fr-primary">저장<\/button>/);
   });
 });
 

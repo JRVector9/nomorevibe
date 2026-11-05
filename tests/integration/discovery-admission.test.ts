@@ -188,7 +188,7 @@ it("reports valid votes omitted by the observation cap as an incomplete lower bo
 });
 
 it.each(["policy", "prompt", "rules", "document-source", "candidate-source", "scan-source", "readme", "expiry", "voter", "dependent", "decision", "first-model"])(
-  "excludes a known %s mismatch before observation-cap uncertainty", async mismatch => {
+  "validates %s before observation-cap uncertainty", async mismatch => {
     const fixture = await observedSecondFixture();
     const firstId = eq(crawlReviewAttempts.id, fixture.first.id), voteId = eq(secondReviews.id, fixture.vote.id);
     if (mismatch === "policy") await db.update(crawlReviewAttempts).set({ policyHash: "old-policy" }).where(firstId);
@@ -217,6 +217,14 @@ it.each(["policy", "prompt", "rules", "document-source", "candidate-source", "sc
     if (mismatch === "decision") await db.update(crawlReviewAttempts).set({ outcome: { decision: "approve", reason: "Approved", evidenceIds: ["product"] } }).where(firstId);
     if (mismatch === "first-model") await db.update(secondReviews).set({ firstModel: "other-first" }).where(voteId);
     const [vote] = await db.select().from(secondReviews).where(voteId);
+    if (mismatch === "dependent") {
+      // 같은 1차 모델도 별도 2차 응답 대상으로 유효하다. 증거 창을 넘긴 유효 표는 미검증 하한에 포함한다.
+      expect(await loadSecondReviewInput(vote)).not.toBeNull();
+      const snapshot = await readDiscoveryAdmission(await getSettings());
+      expect(snapshot).toMatchObject({ secondWindowLimited: true, secondObservationLimited: true, secondUnvalidated: 1 });
+      expect(snapshot.stages.find(stage => stage.key === "second")?.waiting).toBe(0);
+      return;
+    }
     expect(await loadSecondReviewInput(vote)).toBeNull();
     const snapshot = await readDiscoveryAdmission(await getSettings());
     expect(snapshot).toMatchObject({ secondWindowLimited: false, secondObservationLimited: false, secondUnvalidated: 0, timedOut: false });

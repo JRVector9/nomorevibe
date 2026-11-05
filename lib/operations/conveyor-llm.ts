@@ -1,5 +1,5 @@
 import { AI_TASKS, aiTaskAliasIdentity, isAiLiveTask, type AiTaskDef } from "@/lib/llm/ai-tasks";
-import { bareModelName, sameUnderlyingModel } from "@/lib/crawl/review-model-identity";
+import { bareModelName } from "@/lib/crawl/review-model-identity";
 import { deviceServer, isLocalModelHost } from "./admin-models-view";
 import { NO_MODEL_TEXT, type StationKey } from "./conveyor-model";
 
@@ -14,7 +14,7 @@ import { NO_MODEL_TEXT, type StationKey } from "./conveyor-model";
  * - LLM 없는 칸: 탐색·원본 수집·규칙 심사. 이 칸들의 잡은 AI_TASKS 어느 작업에도 없고, 코드에서 확인했다(NO_LLM — 아래 근거 글).
  * - 순위가 비어 작업이 멈추는 경우(2026-11-02 21:13Z 드롭다운 사고, no_task_models): 실행 쪽이 순위를 읽는 작업(live)의 1순위가 비면 그 작업은 돌지 않는다
  *   (옛 설정·기본값으로 대신 부르지 않는다). 칸을 「모델 없음 — 멈춤」으로 올린다.
- * - 1차와 2차가 같은 모델: 2차 관문(lib/crawl/second-review.ts)은 1차와 다른 모델의 투표자가 없으면 표를 내지 못하고 1차 승인을 「2차 갈림」으로 보류한다.
+ * - 1차와 2차에 같은 모델을 둘 수 있다. 2차 관문은 모델 이름과 관계없이 별도 2차 결과를 요구한다.
  */
 export type LlmStationKey = StationKey | "human";
 
@@ -315,15 +315,6 @@ const SEVERITY: Record<TaskState, number> = { none: 0, stuck: 1, fallback: 2, ot
 
 const modelOf = (task: TaskLlm | null): string | null => task?.head?.model ?? null;
 
-/** 2차가 실제로 표를 낼 모델들 — 최근 1시간 장부에 보인 것, 없으면 투표자마다 쓸 수 있는 가장 높은 순위 */
-function secondModels(task: TaskLlm | undefined): string[] {
-  if (!task) return [];
-  if (task.used?.length) return task.used.map((row) => row.model);
-  return task.slots.flatMap((slot) => {
-    const pick = slot.ranks.find((rank) => !rank.problem) ?? slot.ranks[0];
-    return pick ? [pick.model] : [];
-  });
-}
 
 function stationLlm(tasks: TaskLlm[]): StationLlm {
   const head = [...tasks].sort((a, b) => SEVERITY[a.state] - SEVERITY[b.state])[0];
@@ -365,19 +356,5 @@ export function buildStationLlm(inputs: LlmInputs): Record<LlmStationKey | "sink
   out.support = summarize(STATION_TASKS.profile.filter((id) => id !== "crawl-tagline"));
   out.sink = { kind: "none", short: NO_LLM.sink.short, why: NO_LLM.sink.why };
 
-  // 1차와 2차가 같은 모델 — 2차 관문은 1차와 다른 모델의 투표자가 없으면 표를 내지 못한다(lib/crawl/second-review.ts)
-  const first = out.first, second = out.second;
-  if (first.kind === "llm" && second.kind === "llm") {
-    const firstTask = first.tasks[0], secondTask = second.tasks[0];
-    const firstModel = firstTask.state === "none" || firstTask.state === "stuck" ? null : firstTask.used?.[0]?.model ?? modelOf(firstTask);
-    const voters = secondTask.state === "none" || secondTask.state === "stuck" ? [] : secondModels(secondTask);
-    if (!firstTask.pool && !secondTask.pool && firstModel && voters.length && voters.every((model) => sameUnderlyingModel(firstModel, model))) {
-      const text = (side: "first" | "second") => side === "second"
-        ? `1차(${firstModel})와 같은 모델이라 2차가 표를 못 냅니다 — 1차 승인 후보가 「2차 갈림」으로 보류됩니다. 2차 투표자를 1차와 다른 모델로 바꾸세요`
-        : `2차 투표자도 같은 모델(${voters[0]})이라 2차가 표를 못 냅니다 — 1차 승인이 「2차 갈림」으로 보류됩니다`;
-      out.first = { ...first, sameModel: true, warnings: [text("first")], flag: first.flag ?? { tone: "warn", text: "2차와 같은 모델" } };
-      out.second = { ...second, sameModel: true, warnings: [text("second")], flag: second.flag ?? { tone: "warn", text: "1차와 같은 모델" } };
-    }
-  }
   return out;
 }

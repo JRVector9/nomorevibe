@@ -13,7 +13,7 @@ import { secondReviewHasWorkloadPool, secondReviewSlotRepresentatives, secondRev
  * 예전 crawl_settings.secondReview.voters·fallbacks, 배정 표(ai2), 설정 기본 투표자는 읽지 않는다.
  * - 투표자 = 칸마다 지금 표를 내는 순위. 대체 = 그 밖의 순위(목록 검사용 — 대체를 고를 때는 secondReviewFallbacksFor 가 같은 칸 안에서만 고른다).
  * - 한 모델은 한 칸에만 든다(저장이 막는다 — 같은 가중치·연결로 가른 이름 포함). 옛 행·가져오기로 겹쳐도 앞 칸만 쓴다 — 한 모델이 한 항목에 두 표를 내지 않는다.
- * - 항목마다 1차와 같은 가중치를 빼는 규칙(sameUnderlyingModel)은 부르는 쪽이 지금처럼 건다.
+ * - 1차와 같은 모델도 별도 2차 호출로 쓸 수 있다. 2차 칸 사이의 동일 모델 중복 제외는 유지한다.
  * - 객체는 { provider, model } 두 칸뿐이다 — 2차 행 insert 가 그대로 펼친다. model 은 장부 이름(identity)이다.
  * - AI2 정책 hash(secondReviewPolicyHash)는 저장된 설정을 그대로 hash 한다 — 순위가 바뀌어도 진행 중 2차 receipt 가 hash 로 깨지지 않고,
  *   목록에서 빠진 모델은 입력 검증(secondReviewInputMatches)·정리(closeSettledSecondReviews)가 거른다.

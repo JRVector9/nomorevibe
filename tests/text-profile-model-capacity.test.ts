@@ -86,7 +86,10 @@ it("cancels only the unused reservation when current profile/source is stale", a
   expect(mocks.cancel).toHaveBeenCalledWith(reservation); expect(mocks.native).not.toHaveBeenCalled();
 });
 it("keeps capacity refusal typed without cancelling a waiting request or calling transport", async () => {
-  mocks.request.mockResolvedValue({ kind: "deferred", reason: "capacity" });
+  mocks.request.mockImplementation(async (request: { requestId: string }) => {
+    mocks.pending.mockResolvedValue({ requestId: request.requestId, state: "waiting" });
+    return { kind: "deferred", reason: "capacity" };
+  });
   await expect(writeKeywordsWithModelCapacity(task, lease, options())).rejects.toMatchObject({ reason: "capacity" });
   expect(mocks.cancel).not.toHaveBeenCalled(); expect(mocks.native).not.toHaveBeenCalled();
 });

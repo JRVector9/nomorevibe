@@ -195,7 +195,7 @@ export const defaultRun: CliRun = async (args, stdin, timeoutMs) =>
 
 let warnedMissing = false;
 
-function promptFor(inputs: ClassifyInput[], definitions: CategoryDefinitions): string {
+export function promptFor(inputs: ClassifyInput[], definitions: CategoryDefinitions): string {
   const products = inputs.map((input, id) => ({
     id,
     name: input.name,
@@ -233,7 +233,7 @@ export function failureReason(result: CliResult): string {
   return result.code === 0 ? "invalid_output" : "error";
 }
 
-function parseCategories(result: CliResult, size: number) {
+export function parseCategories(result: CliResult, size: number) {
   if (result.kind !== "exit" || result.code !== 0) return null;
   let parsed: z.infer<typeof answer>;
   try {

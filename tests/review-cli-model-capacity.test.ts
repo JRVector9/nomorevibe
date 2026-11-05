@@ -270,7 +270,11 @@ it.skipIf(process.platform === 'win32')('AI2 consumer: CLI 의도 → CLI slot �
 it('AI2 consumer: 슬롯 대기는 표 기록(실패 수·예비모델 행) 0 으로 deferred 를 던진다', async () => {
   stub('ok');
   const ai2 = ai2World('claude-cli');
-  mocks.ai2Consumer.mockRejectedValue(ai2.intent); mocks.request.mockResolvedValue({ kind: 'deferred', reason: 'capacity' });
+  mocks.ai2Consumer.mockRejectedValue(ai2.intent);
+  mocks.request.mockImplementation(async (request: { requestId: string }) => {
+    mocks.pending.mockResolvedValue({ requestId: request.requestId, state: 'waiting' });
+    return { kind: 'deferred', reason: 'capacity' };
+  });
   await expect(executeSecondReviewConsumerItem({ secondReviewId: 8, owner })).rejects.toMatchObject({ name: 'ModelCapacityDeferredError', reason: 'capacity' });
   for (const mock of [mocks.ai2Claim, mocks.record2, mocks.observe2]) expect(mock).not.toHaveBeenCalled();
   expect(await recorded()).toEqual([]); expect(await readdir(tmp)).toEqual([]);

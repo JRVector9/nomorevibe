@@ -17,6 +17,7 @@ import * as reason from "@/lib/llm/reason-translation-serving-contract";
 import * as product from "@/lib/llm/product-translation-serving-contract";
 import * as korean from "@/lib/llm/product-tagline-ko-serving-contract";
 import * as query from "@/lib/llm/websearch-query-serving-contract";
+import * as publication from "@/lib/llm/publication-classify-serving-contract";
 
 type Resolve = (model: string) => unknown;
 type Kind = { route: GatewayServingRoute; protocol: string; strict: boolean; schema: unknown;
@@ -49,6 +50,9 @@ const KINDS: Kind[] = [
   { route: "search-query-translate", protocol: "abcllm-websearch-query-total-bound-v1", strict: true, schema: query.websearchQueryServingContractSchema,
     hash: query.websearchQueryServingContractHash, resolve: query.resolveWebsearchQueryServingContract,
     load: async () => (await import("@/lib/llm/websearch-query-serving-contract")).resolveWebsearchQueryServingContract },
+  { route: "crawl-publish-classify", protocol: "abcllm-crawl-publish-classify-total-bound-v1", strict: false, schema: publication.publicationClassifyServingContractSchema,
+    hash: publication.publicationClassifyServingContractHash, resolve: publication.resolvePublicationClassifyServingContract,
+    load: async () => (await import("@/lib/llm/publication-classify-serving-contract")).resolvePublicationClassifyServingContract },
 ];
 const model = "[MLX] fixture-model", OPT_IN = ABCLLM_STRICT_TERMINAL_OPT_IN;
 // 운영 값이 아니다 — 모양만 맞춘 고정 fixture 다

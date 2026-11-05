@@ -11,6 +11,7 @@ import { promotionDrain } from "./promotion";
 import { dbNow, drTransactionMaybeDry, lockPromotedState, processOwnerSchema, readProcessGroupEvents, type ProcessOwner } from "./repository";
 import { httpHopReleaseEvidenceSchema } from "./hop-reclaim";
 import { gatewayLocalEndFactSchema } from "@/lib/llm/capacity";
+import { assertJobLeaseAtWallTime, type JobLease } from "@/lib/jobs/control";
 
 /** 운영자가 선언한 provider 종료 성격과 그 출처. provider_bound 는 증명된 hard deadline 이 있어야 한다. */
 export type ReclaimPolicyWithReference = ReclaimPolicy & Readonly<{ reference: string }>;
@@ -134,22 +135,35 @@ export async function releaseEvidencedDispatches(value: { policies: ReadonlyMap<
 
 export type HopReleaseRow = Readonly<{ hopId: string; released: boolean; reason: string | null }>;
 type ActiveHop = { id: string; instance_id: string; boot_id: string; origin: string; host_id: string; state: "dispatched" | "indeterminate"; dispatch_at: string };
-const activeHops = (lock: boolean) => sql`SELECT id::text AS id, instance_id, boot_id::text AS boot_id, origin, host_id, state, ${msIso("dispatched_at")} AS dispatch_at
-  FROM http_origin_hops WHERE state IN ('dispatched','indeterminate') ORDER BY created_at, id ${lock ? sql`FOR UPDATE` : sql``}`;
+type HopScan = { afterHopId: string | null; limit: number };
+const activeHops = (lock: boolean, scan?: HopScan) => sql`SELECT id::text AS id, instance_id, boot_id::text AS boot_id, origin, host_id, state, ${msIso("dispatched_at")} AS dispatch_at
+  FROM http_origin_hops WHERE state IN ('dispatched','indeterminate') ${scan?.afterHopId ? sql`AND id > ${scan.afterHopId}::uuid` : sql``}
+  ORDER BY ${scan ? sql`id` : sql`created_at, id`} ${scan ? sql`LIMIT ${scan.limit}` : sql``} ${lock ? sql`FOR UPDATE` : sql``}`;
 const hopPolicy = (skewBoundMs: number): ReclaimPolicy => ({ termination: "client_bound", hardDeadlineMs: null, skewBoundMs });
 
 /**
  * crash 한 프로세스의 dispatched/indeterminate HTTP hop 을 그 owner(instance, boot)의 프로세스 그룹 종료 근거로만 released 로 정산한다.
  * 근거 없는 hop(기록기 없는 프로세스·살아 있는 그룹)은 그대로다. lock 순서: fence SHARE → http_origin_control UPDATE → hop 행 UPDATE.
  */
-export async function releaseProcessExitedHops(value: { skewBoundMs: number; reference: string; operator: string }, apply: boolean): Promise<{ rows: HopReleaseRow[] }> {
+export async function releaseProcessExitedHops(value: { skewBoundMs: number; reference: string; operator: string;
+  /** Maintenance uses a bounded fair scan; omitted options preserve the operator command. */
+  scan?: HopScan; jobLease?: JobLease }, apply: boolean): Promise<{ rows: HopReleaseRow[] }> {
   const operator = identity(120).parse(value.operator), reference = identity(400).parse(value.reference);
   const skewBoundMs = z.number().int().min(1).max(600_000).parse(value.skewBoundMs);
+  const scan = value.scan && { afterHopId: z.uuid().nullable().parse(value.scan.afterHopId), limit: z.number().int().min(1).max(20).parse(value.scan.limit) };
+  const jobLease = value.jobLease && structuredClone(value.jobLease);
+  if (jobLease && jobLease.name !== "model-capacity-reclaim") throw new Error("http_reclaim_maintenance_lease_required");
   return drTransactionMaybeDry(apply, async tx => {
+    if (scan) {
+      await tx.execute(sql`SET LOCAL lock_timeout = '1s'`);
+      await tx.execute(sql`SET LOCAL statement_timeout = '5s'`);
+      await tx.execute(sql`SET LOCAL transaction_timeout = '15s'`);
+    }
     if (!await writerSiteActive(tx)) throw new Error("dr_writer_site_fenced");
     const [control] = await tx.execute(sql`SELECT id FROM http_origin_control WHERE id = 1 FOR UPDATE`);
     if (!control) throw new Error("http_origin_control_missing");
-    const hops = Array.from(await tx.execute<ActiveHop>(activeHops(true))), now = await dbNow(tx), rows: HopReleaseRow[] = [];
+    const hops = Array.from(await tx.execute<ActiveHop>(activeHops(true, scan))), now = await dbNow(tx), rows: HopReleaseRow[] = [];
+    if (jobLease) await assertJobLeaseAtWallTime(tx, jobLease);
     for (const hop of hops) {
       const owner = processOwnerSchema.safeParse({ instanceId: hop.instance_id, bootId: hop.boot_id });
       if (!owner.success) { rows.push({ hopId: hop.id, released: false, reason: "owner_invalid" }); continue; }
@@ -165,6 +179,7 @@ export async function releaseProcessExitedHops(value: { skewBoundMs: number; ref
       await tx.execute(sql`INSERT INTO http_origin_events (hop_id, kind, evidence) VALUES (${hop.id}::uuid, 'released', ${JSON.stringify(evidence)}::text::jsonb)`);
       rows.push({ hopId: hop.id, released: true, reason: null });
     }
+    if (jobLease) await assertJobLeaseAtWallTime(tx, jobLease);
     return { rows };
   });
 }

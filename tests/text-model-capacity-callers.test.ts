@@ -212,7 +212,9 @@ it.each(["dispatched", "work_busy"] as const)("product-translate passes a %s bat
   mocks.product.mockRejectedValueOnce(new ModelCapacityDeferredError(reason)).mockResolvedValueOnce({ ok: true, outputs: ["Pad organizes your notes"] });
   mocks.productWrite.mockResolvedValue(1);
   expect(await translateDemandedProductFields(context("product-translate"))).toEqual({ done: true });
-  expect(mocks.productTasks.mock.calls.map(call => call[1])).toEqual([{ exclude: [] }, { exclude: ["product-translate:1:en:tagline"] }]);
+  // Exclusion is a target set; a passed task also remains scheduled for this tick.
+  expect(mocks.productTasks.mock.calls.map(call => ({ ...call[1], exclude: [...new Set(call[1].exclude)] })))
+    .toEqual([{ exclude: [] }, { exclude: ["product-translate:1:en:tagline"] }]);
   // 호출한 묶음은 틱마다 하나다 — 넘긴 묶음은 호출하지 않았다
   expect(mocks.product).toHaveBeenCalledTimes(2);
   expect(mocks.productWrite).toHaveBeenCalledOnce();

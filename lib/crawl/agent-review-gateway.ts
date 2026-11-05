@@ -178,7 +178,7 @@ function directReviewWire(contract: { model: string; maxOutputTokens?: number },
  * 직접 계약(direct-openai-chat-v1)의 요청 상한을 엔진이 보고한 사용량이 어겼는가: 입력 + 출력 상한이 requestTokenBound 를 넘거나 출력이 상한을
  * 넘으면 계약과 모순이다 — terminal 은 그대로 기록하고 결과만 판단으로 받지 않는다(AI1·AI2·text 공통).
  */
-function directBudgetExceeded(contract: { protocol: string; requestTokenBound?: number }, maxOutputTokens: number | undefined,
+export function directBudgetExceeded(contract: { protocol: string; requestTokenBound?: number }, maxOutputTokens: number | undefined,
   usage: { inputTokens: number; outputTokens: number } | null): boolean {
   const { requestTokenBound } = contract;
   if (contract.protocol !== DIRECT_OPENAI_CHAT_PROTOCOL || requestTokenBound === undefined || maxOutputTokens === undefined || !usage) return false;
@@ -216,11 +216,11 @@ export function directTextWire(contract: { model: string; maxOutputTokens: numbe
  * 계약에 맞는 wire: local-direct 직접 계약이면 엔진 이름의 직접 wire, abcllm(게이트웨이·직접 연결)이면 그 경로의 게이트웨이 wire 를 선택 이름으로 그대로.
  * abcllm 형 계약에 engineModel 이 있으면(같은 모델을 다른 연결에도 둔 순위, PR B) 선택 이름(연결로 가른 장부 이름) 대신 그 엔진 이름을 보낸다.
  */
-function textWireFor(contract: TextRouteContract, selection: string, build: (model: string) => string): string {
+export function textWireFor(contract: TextRouteContract, selection: string, build: (model: string) => string): string {
   return contract.provider === "local-direct" && contract.maxOutputTokens !== undefined
     ? directTextWire({ model: contract.model, maxOutputTokens: contract.maxOutputTokens }, build(contract.model)) : build(contract.engineModel ?? selection);
 }
-const wireMaxTokens = (wire: string): number | undefined => {
+export const wireMaxTokens = (wire: string): number | undefined => {
   const value = (JSON.parse(wire) as { max_tokens?: unknown }).max_tokens;
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 ? value : undefined;
 };
@@ -229,7 +229,7 @@ const wireMaxTokens = (wire: string): number | undefined => {
  * 준비는 DB 트랜잭션 안에서 일어나므로(HTTP 는 잠금 밖) 전송 직전에 한다. 상한 초과와 tokenizer 증거 없음은 구별한다.
  * 확인 중 신호가 끊기면 기존처럼 같은 신호의 fetch 경로가 거절한다(요청 0 증명은 거기서 난다).
  */
-async function directTextBudgetFailure(contract: TextRouteContract, wire: string,
+export async function directTextBudgetFailure(contract: TextRouteContract, wire: string,
   options: { timeoutMs: number; signal?: AbortSignal }): Promise<"input_too_large" | "tokenizer_unavailable" | null> {
   if (contract.protocol !== DIRECT_OPENAI_CHAT_PROTOCOL || options.signal?.aborted) return null;
   let maxOutputTokens: number | undefined;
@@ -244,7 +244,7 @@ async function directTextBudgetFailure(contract: TextRouteContract, wire: string
   reportProviderOutcome({ ok: false, error: "tokenizer_unavailable" });
   return "tokenizer_unavailable";
 }
-const textRedirect = (contract: { provider: string }): "error" | "manual" => contract.provider === "local-direct" ? "error" : "manual";
+export const textRedirect = (contract: { provider: string }): "error" | "manual" => contract.provider === "local-direct" ? "error" : "manual";
 
 export async function reviewWithGateway(input: ReviewInput, options: {
   model: string; timeoutMs?: number; request?: typeof fetch; signal?: AbortSignal;
@@ -441,7 +441,7 @@ export function readAi1GatewayTerminal(value: unknown): Ai1GatewayTerminalEviden
   return value && typeof value === "object" ? terminals.get(value as Ai1GatewayTerminal) ?? null : null;
 }
 
-function nativeTerminal(body: string, contract: Pick<Ai1GatewayServingContract, "responseModel" | "totalTokenBound">
+export function nativeTerminal(body: string, contract: Pick<Ai1GatewayServingContract, "responseModel" | "totalTokenBound">
   & { strictTerminalOptIn?: string }, direct = false): Pick<Ai1GatewayTerminalEvidence, "finishReason" | "actualUsage" | "provenance"> | null {
   if (Buffer.byteLength(body, "utf8") > MAX_BODY_BYTES) return null;
   let parsed: unknown;

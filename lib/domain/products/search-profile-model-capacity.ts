@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
+import { capacityRefusalReason } from "@/lib/llm/capacity-busy-targets";
 import { modelCapacityIndeterminateReason } from "@/lib/llm/capacity";
 import { reconcileGatewayNotStarted, findOwnPendingModelRequest, requestTextProfileModelSlot, cancelReservedModelSlot,
   reconcileTextProfileGatewayTerminal, markModelDispatchIndeterminate } from "@/lib/llm/capacity-repository";
@@ -34,8 +35,9 @@ export async function writeKeywordsWithModelCapacity(task: ProfileTask, lease: J
     workKey: `text:profile:${input.productId}:${textProfileInputHash(input)}`, class: "background", pool: "text",
     routeId: "product-search-profile", provider: prepared.call.provider, model: input.model };
   const pending = await findOwnPendingModelRequest(identity);
-  const slot = await requestTextProfileModelSlot({ ...identity, requestId: pending?.requestId ?? randomUUID() }, input.productId);
-  if (slot.kind !== "granted") throw new ModelCapacityDeferredError(slot.reason);
+  const request = { ...identity, requestId: pending?.requestId ?? randomUUID() };
+  const slot = await requestTextProfileModelSlot(request, input.productId);
+  if (slot.kind !== "granted") throw new ModelCapacityDeferredError(await capacityRefusalReason(request, slot.reason));
   let current;
   try {
     current = await prepareProfileModelDispatch(snapshot, ownedLease, { ...captured,

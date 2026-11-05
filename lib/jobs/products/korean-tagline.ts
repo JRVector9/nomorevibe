@@ -1,4 +1,4 @@
-import { modelRouteTimeoutMs, scopedModel } from "@/lib/llm/model-registry";
+import { modelRequestBudget, modelRouteTimeoutMs, scopedModel } from "@/lib/llm/model-registry";
 import { translateKoreanTaglinesWithModelCapacity, type KoreanTaglineCapacityResult } from "@/lib/domain/products/korean-tagline-model-capacity";
 import { deferredJob, type JobContext, type JobOutcome } from "@/lib/jobs/runner";
 import { tickRemaining } from "@/lib/jobs/tick-deadline";
@@ -6,7 +6,7 @@ import { displayProjectName } from "@/lib/domain/products/display-name";
 import { checkKoreanTaglineOutput } from "@/lib/domain/products/korean-tagline";
 import { homeListSlugs, pendingKoreanTaglines, pendingKoreanTaglineRecovery, recordKoreanTaglines, koreanTaglineSource as taglineSource, type KoreanTaglineResult, type KoreanTaglineTask } from "@/lib/domain/products/korean-taglines";
 import { readModelCapacityCallerControl } from "@/lib/llm/capacity-repository";
-import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
+import { ModelCapacityDeferredError, modelCapacityDeferralIsPerWork } from "@/lib/llm/capacity-deferred";
 import { translateKoreanTaglinesWithQwen } from "@/lib/crawl/korean-translation-qwen";
 import { KOREAN_TRANSLATION_NATIVE_MAX_CHARS,
   KOREAN_TRANSLATION_QWEN_MODEL, koreanTranslationQwenEnabled, koreanTranslationQwenRecoveryEnabled } from "@/lib/crawl/korean-translation-config";
@@ -19,7 +19,8 @@ import { pendingTextPoolModel } from "@/lib/llm/text-task-pool-resume";
  * 한국어 한 줄 소개 짓기(UX-13) — 공개 제품의 지금 소개를 한국어 한 줄로 옮긴다. 새 제품·홈에 보이는 제품부터, 나머지는 스타 순.
  *
  * legacy text 워커의 한국어 전용 줄에서 단일 잡 lease로 돈다. 서로 다른 묶음을 GPT와 GPU Qwen에 나누며,
- * 각 backend는 한 번만 동시에 부른다. 느리거나 실패한 backend는 이번 틱에서 쉬고 다른 backend의 결과는 남긴다.
+ * 장부가 열리면 서로 다른 소개 묶음을 경로 동시 호출 한도만큼 실행한다. 장부가 꺼진 예전 경로는 backend당 한 묶음이다.
+ * 느리거나 실패한 backend는 이번 틱에서 쉬고 이미 보낸 다른 묶음의 결과는 남긴다.
  * 모델이 준 줄은 코드 검사를 통과한 것만 남기고, 버린 것은 사유를 적어 센다(korean-taglines.ts koreanTaglineProgress).
  */
 
@@ -92,6 +93,7 @@ async function writeKoreanTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTa
     const counts = () => ({ written, failed, rejected, cleaned });
     const homeSlugs = await homeListSlugs();
     const visited = new Set<number>();
+    const scheduled = new Map<number, symbol>(), pendingRequestIds = new Set<string>();
     const stopped = new Set<"gpt" | "qwen">();
     let recoverySelected = 0;
 
@@ -112,9 +114,18 @@ async function writeKoreanTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTa
         return processed ? { done: true } : { done: true, degraded: ranks.degraded() };
       }
       const candidates = (await pendingKoreanTaglines(batchSize * 4, homeSlugs)).filter(task => !visited.has(task.productId));
-      const gptBatch = gptCallable() && !stopped.has("gpt")
-        ? packTaglineBatch(candidates, legacy ? legacyMaxChars : KOREAN_TRANSLATION_NATIVE_MAX_CHARS) : [];
-      const gptIds = new Set(gptBatch.map(task => task.productId));
+      const gptBatches: KoreanTaglineTask[][] = [];
+      const gptIds = new Set<number>();
+      const concurrency = legacy ? 1 : modelRequestBudget(JOB).concurrency;
+      if (gptCallable() && !stopped.has("gpt")) {
+        for (let lane = 0; lane < concurrency; lane++) {
+          const batch = packTaglineBatch(candidates.filter(task => !gptIds.has(task.productId)),
+            legacy ? legacyMaxChars : KOREAN_TRANSLATION_NATIVE_MAX_CHARS);
+          if (!batch.length) break;
+          gptBatches.push(batch);
+          batch.forEach(task => gptIds.add(task.productId));
+        }
+      }
       const qwenBatch = qwen ? packTaglineBatch(candidates.filter(task => !gptIds.has(task.productId)), legacyMaxChars) : [];
       const wantsRecovery = qwen && koreanTranslationQwenRecoveryEnabled() && !qwenBatch.length && recoverySelected < batchSize;
       let recoveryBatch = false, recoveryDeferred = wantsRecovery && remaining() < callMs + 1_000;
@@ -130,7 +141,7 @@ async function writeKoreanTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTa
       }
       const work = [
         // GPT 의 모델(장부 이름)은 순위가 정한다 — 부른 순위의 이름으로 아래에서 채운다
-        ...(gptBatch.length ? [{ backend: "gpt" as const, model: "", batch: gptBatch, recovery: false }] : []),
+        ...gptBatches.map(batch => ({ backend: "gpt" as const, model: "", batch, recovery: false })),
         ...(qwenBatch.length ? [{ backend: "qwen" as const, model: scopedModel("korean-translation-direct", KOREAN_TRANSLATION_QWEN_MODEL), batch: qwenBatch, recovery: recoveryBatch }] : []),
       ];
       if (!work.length) {
@@ -152,14 +163,22 @@ async function writeKoreanTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTa
         if (!work.length) return { done: false };
       }
       work.forEach(({ batch }) => batch.forEach(task => visited.add(task.productId)));
-      const outcomes = await Promise.allSettled(work.map(async entry => {
+      const lanes = work.map(entry => ({ entry, lane: Symbol("tagline-ko-lane") }));
+      lanes.forEach(({ entry, lane }) => entry.batch.forEach(task => scheduled.set(task.productId, lane)));
+      let skipped = false;
+      const outcomes = await Promise.allSettled(lanes.map(async ({ entry, lane }) => {
+        const pendingClaims = { requestIds: pendingRequestIds, claimBatch: (tasks: readonly KoreanTaglineTask[]) => {
+          if (tasks.some(task => scheduled.has(task.productId) && scheduled.get(task.productId) !== lane)) return false;
+          tasks.forEach(task => { scheduled.set(task.productId, lane); visited.add(task.productId); });
+          return true;
+        } };
         const items = entry.batch.map(task => ({ name: displayProjectName(task.name, task.repoUrl), tagline: taglineSource(task) }));
         let model = entry.model;
         let outcome: KoreanTaglineCapacityResult | { kind: "unusable" };
         if (entry.backend === "gpt") {
-          const prefer = await pendingTextPoolModel(ranks);
+          const prefer = await pendingTextPoolModel(ranks, pendingRequestIds);
           // 순위 차례로 부른다 — 이 모델만의 까닭(경로 없음·장비 행 없음·계약 닫힘·포화)이면 같은 묶음을 다음 순위로(TextTaskRanks.run)
-          const attempt = await ranks.run(binding => translateKoreanTaglinesWithModelCapacity(entry.batch, homeSlugs, lease, { timeoutMs, signal })
+          const attempt = await ranks.run(binding => translateKoreanTaglinesWithModelCapacity(entry.batch, homeSlugs, lease, { timeoutMs, signal, pendingClaims, requireAdmission: concurrency > 1 })
             .then(value => ({ value, model: binding.identity })), { prefer });
           if (attempt.kind === "unusable") outcome = { kind: "unusable" };
           else { outcome = attempt.value.value; model = attempt.value.model; }
@@ -167,35 +186,29 @@ async function writeKoreanTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTa
         const completedBatch = outcome.kind === "result" ? outcome.batch ?? entry.batch : entry.batch;
         completedBatch.forEach(task => visited.add(task.productId));
         const completedItems = completedBatch.map(task => ({ name: displayProjectName(task.name, task.repoUrl), tagline: taglineSource(task) }));
-        return { ...entry, model, batch: completedBatch, items: completedItems, outcome, elapsedMs: Date.now() - calledAt };
-      }));
-      if (signal.aborted || !ctx.hasBudget()) return { done: false };
-      let skipped = false;
-      const errors: unknown[] = [];
-      for (const settled of outcomes) {
-        if (signal.aborted || !ctx.hasBudget()) return { done: false };
-        if (settled.status === "rejected") { errors.push(settled.reason); continue; }
-        const { batch, backend, model, items, outcome, elapsedMs, recovery } = settled.value;
-        if (outcome.kind === "skipped") { skipped = true; continue; }
+        if (signal.aborted || !ctx.hasBudget()) { skipped = true; return; }
+        const { backend, recovery } = entry;
+        const batch = completedBatch, elapsedMs = Date.now() - calledAt;
+        if (outcome.kind === "skipped") { skipped = true; return; }
         // GPT 의 모든 순위가 이 틱에 쉰다 — 이 묶음은 그대로 두고(호출·시도 기록 없음) GPT 는 이 틱에서 멈춘다
-        if (outcome.kind === "unusable") { stopped.add(backend); continue; }
+        if (outcome.kind === "unusable") { stopped.add(backend); return; }
         const result = outcome.result;
         // 틱 끝이라 짧아진 제한에 걸린 것은 소개 탓이 아니다 — 시도로 세지 않고 다음 틱에 다시
         if (!result.ok && result.error === "timeout" && timeoutMs < callMs && !recovery) {
           ctx.log("tagline_ko.budget_deferred", counts());
-          skipped = true; stopped.add(backend); continue;
+          skipped = true; stopped.add(backend); return;
         }
         const entries = batch.map((task, index): { task: KoreanTaglineTask; result: KoreanTaglineResult } => {
           if (!result.ok) return { task, result: { kind: "failure", model,
             error: batch.length === 1 && result.error === "invalid_output" ? SOLO_INVALID_OUTPUT : result.error } };
           // 너무 긺·이름 철자·여러 줄은 정해진 정리 뒤 같은 검사를 다시 받는다(checkKoreanTaglineOutput)
-          const checked = checkKoreanTaglineOutput(result.outputs[index], items[index]);
+          const checked = checkKoreanTaglineOutput(result.outputs[index], completedItems[index]);
           if (checked.ok && checked.cleaned) cleaned[checked.cleaned] = (cleaned[checked.cleaned] ?? 0) + 1;
           return { task, result: checked.ok ? { kind: "success", line: checked.line, model }
             : { kind: "failure", error: `rejected:${checked.reason}`, model } };
         });
         const stored = outcome.expectation ? await recordKoreanTaglines(entries, lease, outcome.expectation) : await recordKoreanTaglines(entries, lease);
-        if ("expectation" in outcome && outcome.expectation && stored !== entries.length) { skipped = true; continue; }
+        if ("expectation" in outcome && outcome.expectation && stored !== entries.length) { skipped = true; return; }
         for (const { result: entry } of entries) {
           if (entry.kind === "success") written++;
           else if (entry.error.startsWith("rejected:")) rejected[entry.error.slice(9)] = (rejected[entry.error.slice(9)] ?? 0) + 1;
@@ -208,10 +221,21 @@ async function writeKoreanTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTa
           if (binding) ranks.pause(binding, result.ok ? "engine_slow" : "engine_failed");
           if (!binding || !gptCallable()) stopped.add(backend);
         }
+      }));
+      // Every dispatched lane settles and writes independently before waiting for its siblings.
+      const errors: unknown[] = [];
+      for (const settled of outcomes) {
+        if (settled.status !== "rejected") continue;
+        if (settled.reason instanceof ModelCapacityDeferredError && modelCapacityDeferralIsPerWork(settled.reason.reason)) {
+          ctx.log("tagline_ko.passed", { reason: settled.reason.reason });
+          continue;
+        }
+        errors.push(settled.reason);
       }
       if (errors.length) {
         // 미룸 사유(capacity·unmapped·dispatched…)를 남긴다 — 러너는 'model_capacity' 하나로만 적는다
-        const first = errors[0];
+        // A sibling's capacity wait must not hide a writer/ownership failure.
+        const first = errors.find(error => !(error instanceof ModelCapacityDeferredError)) ?? errors[0];
         if (first instanceof ModelCapacityDeferredError) {
           ctx.log("tagline_ko.capacity_deferred", { ...counts(), reason: first.reason });
           const processed = written + failed + Object.values(rejected).reduce((sum, count) => sum + count, 0);
@@ -219,6 +243,7 @@ async function writeKoreanTaglinesWithRanks(ctx: JobContext<null>, ranks: TextTa
         }
         throw first;
       }
+      if (signal.aborted || !ctx.hasBudget()) return { done: false };
       if (skipped || recoveryDeferred) return { done: false };
       if (ranks.exhausted && !qwen) {
         // GPT 의 모든 순위가 이 틱에 쉰다(Qwen 도 돌지 않는다). 포화면 예전처럼 미루고, 아니면 일을 했을 때만 보통 틱 — 한 건도 못 했으면 까닭을 남긴다

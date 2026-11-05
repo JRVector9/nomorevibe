@@ -57,8 +57,8 @@ describe("작업 ↔ AI 모델 화면", () => {
     expect(html.match(/<details class="text-\[13px\] md:col-span-3"><summary class="cursor-pointer text-fg-3">자세히<\/summary>/g)).toHaveLength(2);
     expect(html.indexOf("지금 실제로 쓰는 모델")).toBeGreaterThan(html.indexOf("자세히</summary>"));
     // text 작업(PR B)은 실행 쪽이 순위를 읽는다 — 아직 돈 기록이 없으면 그렇게 보인다. 감사 작업은 아직 읽지 않는다(다음 단계)
-    expect(html).toContain("실행 쪽이 이 순위를 읽습니다 — 1순위를 쓸 수 없으면 같은 일을 2순위, 그다음 3순위로 넘깁니다.");
-    expect(html).toContain("이 작업의 실행 쪽은 아직 이 순위를 읽지 않습니다(다음 단계).");
+    expect(html).toContain("대체 실행은 우선 모델 하나를 쓰고, 필요한 경우에만 다음 순위로 전환합니다. 순위마다 추가 검수하는 방식이 아닙니다.");
+    expect(html).toContain("이 작업은 아직 기존 설정을 사용합니다.");
     expect(html).toContain('data-runtime="none"');
     expect(html).toContain("실행: 아직 이 순위로 돈 기록이 없습니다.");
     expect(html.match(/data-runtime=/g)).toHaveLength(1);

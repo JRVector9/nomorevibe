@@ -140,7 +140,8 @@ export async function dequeue(limit: number, now: Date | undefined, lease: JobLe
 }
 
 /** Distinguish an inactive stage from an empty queue under the same stage SHARE. */
-export async function dequeueWithAdmission(limit: number, now: Date | undefined, lease: JobLease): Promise<FetchDequeueResult> {
+export async function dequeueWithAdmission(limit: number, now: Date | undefined, lease: JobLease,
+  excludedFrontierIds: readonly number[] = []): Promise<FetchDequeueResult> {
   const at = nowExpr(now);
 
   // 잠금과 갱신을 한 트랜잭션에 둔다. SELECT ... FOR UPDATE의 잠금은 트랜잭션이
@@ -157,6 +158,7 @@ export async function dequeueWithAdmission(limit: number, now: Date | undefined,
         and(
           inArray(crawlFrontier.state, ["pending", "fetching"]),
           lte(crawlFrontier.nextAttemptAt, at),
+          excludedFrontierIds.length ? notInArray(crawlFrontier.id, [...excludedFrontierIds]) : undefined,
           buffer?.blocked ? sourceBufferRefreshPredicate() : undefined,
         ),
       )

@@ -7,7 +7,7 @@ import { readAiTaskExecutionConfig } from '@/lib/llm/ai-task-execution-snapshot'
 import { taskModels } from '@/lib/llm/ai-task-resolver';
 import { chooseTaskWorkloadMember } from '@/lib/llm/ai-task-workload-selector';
 import { bindReviewTaskRank, resolveReviewTaskRanks, reviewRouteContracts, reviewTaskRanksPinned, settingsReviewersActive, type ReviewRankCandidate, type ReviewRankReviewer } from './review-task-ranks';
-import { underlyingReviewModel, reviewIndependenceKey, sameReviewModel, sameReviewIndependence } from './review-model-identity';
+import { underlyingReviewModel, reviewIndependenceKey, sameReviewModel } from './review-model-identity';
 import { reviewIndependenceSql } from './held-qwen-retry-policy';
 
 export type SecondReviewWorkloadSlot = Readonly<{
@@ -85,14 +85,10 @@ function modelCanonical(task: 'first-review' | 'second-review', model: string): 
   // A routing alias without observed canonical metadata cannot establish an independent vote.
   return OPAQUE_MODEL.test(underlyingReviewModel(value)) ? null : reviewIndependenceKey(value);
 }
-export function secondReviewFirstCanonical(model: string | null): string | null {
-  return model ? modelCanonical('first-review', model) : '';
-}
-export function secondReviewPoolHasIndependentMember(firstModel: string | null): boolean {
-  const first = secondReviewFirstCanonical(firstModel);
-  return first !== null && secondReviewWorkloadSlots()[0].candidates.some(candidate => {
+export function secondReviewPoolHasEligibleMember(): boolean {
+  return secondReviewWorkloadSlots()[0].candidates.some(candidate => {
     const canonical = candidate.binding ? modelCanonical('second-review', candidate.binding.identity) : null;
-    return canonical !== null && canonical !== first;
+    return !candidate.unusable && canonical !== null;
   });
 }
 export async function chooseSecondReviewWorkloadSlot(slot: SecondReviewWorkloadSlot, tx: ProductTransaction,
@@ -111,24 +107,13 @@ export async function chooseSecondReviewWorkloadSlot(slot: SecondReviewWorkloadS
     selection: chosen.poolSelection, canonicalModel: member.canonicalModel };
 }
 /** Single-voter pool: no pool member becomes an extra quorum slot. */
-export function secondReviewPoolRequiredSql(firstModel: SQL): SQL {
+export function secondReviewPoolRequiredSql(): SQL {
   const slot = secondReviewWorkloadSlots()[0];
   const available = [...new Set(slot.candidates.flatMap(candidate => {
     const canonical = candidate.binding ? modelCanonical('second-review', candidate.binding.identity) : null;
     return canonical === null ? [] : [canonical];
   }))];
-  return sql`CASE WHEN EXISTS (SELECT 1 FROM jsonb_array_elements_text(${JSON.stringify(available)}::jsonb) m(model)
-    WHERE m.model <> ${firstReviewIndependenceSql(firstModel)}) THEN 1 ELSE 0 END`;
-}
-export function firstReviewIndependenceSql(model: SQL): SQL {
-  const identities = resolveReviewTaskRanks('first-review').candidates.flatMap(candidate => candidate.binding ? [{
-    model: candidate.binding.identity, key: secondReviewFirstCanonical(candidate.binding.identity),
-  }] : []);
-  return sql`CASE WHEN EXISTS (SELECT 1 FROM jsonb_array_elements(${JSON.stringify(identities)}::jsonb) m
-      WHERE m->>'model' = ${model})
-    THEN (SELECT m->>'key' FROM jsonb_array_elements(${JSON.stringify(identities)}::jsonb) m WHERE m->>'model' = ${model} LIMIT 1)
-    WHEN lower(coalesce(${model}, '')) IN ('supa', 'auto') THEN NULL
-    ELSE ${reviewIndependenceSql(model)} END`;
+  return sql`CASE WHEN jsonb_array_length(${JSON.stringify(available)}::jsonb) > 0 THEN 1 ELSE 0 END`;
 }
 const sameNameSql = (name: SQL) => sql`regexp_replace(regexp_replace(lower(trim(${name})), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i')`;
 export function secondReviewPoolRootMembershipSql(root: SQL): SQL {
@@ -184,9 +169,9 @@ export async function insertSecondReviewWorkloadRows(tx: ProductTransaction,
     const assignments = await secondReviewAssignmentMap(tx, existing);
     if (existing.some(row => !row.fallbackForId && secondReviewWorkloadMembership(row, assignments.get(row.id))
       && !(row.status === 'resolved' && ['superseded', 'model_removed', 'not_required'].includes(row.resolution ?? '')))) continue;
-    const first = secondReviewFirstCanonical(base.firstModel ?? null);
-    if (first === null) continue;
-    const excluded = new Set(first ? [first] : []);
+    // The first stage may use the same model. Only existing second-stage work
+    // excludes a member here; each stage still obtains its own call/result.
+    const excluded = new Set<string>();
     // The existing per-model unique key also applies to closed rows of this exact generation.
     for (const row of existing) if (row.generationKey === base.generationKey && row.inputHash === base.inputHash && row.model) {
       const member = slot.candidates.find(candidate => sameReviewModel(candidate.binding?.identity, row.model));
@@ -207,13 +192,12 @@ export async function insertSecondReviewWorkloadRows(tx: ProductTransaction,
   return inserted;
 }
 
-export function secondReviewVoteIndependent(firstModel: string | null, model: string | null,
+export function secondReviewVoteEligible(model: string | null,
   assignment?: SecondReviewWorkloadAssignment | null, fallback = false): boolean {
-  if (!firstModel || !model) return true;
-  if (!assignment) return !sameReviewIndependence(firstModel, model);
-  const first = secondReviewFirstCanonical(firstModel), actual = fallback
-    ? modelCanonical('second-review', model) : secondReviewAssignedVoteCanonical(model, assignment);
-  return first !== null && actual !== null && first !== actual;
+  if (!model) return false;
+  if (!assignment) return true;
+  const actual = fallback ? modelCanonical('second-review', model) : secondReviewAssignedVoteCanonical(model, assignment);
+  return actual !== null;
 }
 
 /** Exact slot1 publication gate. Pool members provide alternatives for ONE required vote. */
@@ -234,9 +218,7 @@ export function secondReviewPoolApprovedSql(attempt: { id: SQL; model: SQL }): S
       WHERE g.first_attempt_id = ${attempt.id} AND g.trigger = 'ai_approved' AND g.status = 'agreed' AND g.second_decision = 'approve'
         AND wr.fallback_for_id IS NULL AND wr.first_attempt_id = g.first_attempt_id AND wr.candidate_id = g.candidate_id
         AND wr.trigger = g.trigger AND wr.generation_key = g.generation_key AND wr.input_hash = g.input_hash
-        AND ${roots} AND (CASE WHEN wa.second_review_id IS NULL THEN ${reviewIndependenceSql(sql`g.model`)}
-          ELSE ${actual} END) <> (CASE WHEN wa.second_review_id IS NULL THEN ${reviewIndependenceSql(attempt.model)}
-          ELSE ${firstReviewIndependenceSql(attempt.model)} END)
+        AND ${roots} AND (wa.second_review_id IS NULL OR ${actual} IS NOT NULL)
         AND (g.fallback_for_id IS NULL OR (wr.status = 'resolved' AND wr.resolution = 'fallback'
           AND EXISTS (SELECT 1 FROM jsonb_array_elements(${JSON.stringify(fallbacks)}::jsonb) f
             WHERE f->>'provider' = g.provider AND ${sameNameSql(sql`f->>'model'`)} = ${sameNameSql(sql`g.model`)}))))
