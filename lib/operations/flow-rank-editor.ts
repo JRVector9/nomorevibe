@@ -25,11 +25,11 @@ export function flowConnectionState(connection: AiConnectionView): FlowConnectio
   if (!connection.enabled) return { ...base, state: "off", text: "꺼짐" };
   if (connection.kind === "cli") return { ...base, state: "cli", text: connection.cliVersion ? `CLI ${connection.cliVersion.trim().split(/\s+/)[0]}` : "CLI" };
   if (!connection.models || connection.models.length === 0)
-    return { ...base, state: "no_list", text: `응답 없음 — ${aiModelsErrorText(connection.modelsError) ?? (connection.models === null ? "목록 아직 못 읽음" : "모델 0개")}` };
-  // 로컬 직접 연결(gpu3090-qwen·supa-direct·m3-mlx)은 키 없이 부른다 — 「키 없음」으로 잘못 보이지 않는다
-  if (!connection.hasKey && isLocalModelHost(connection.baseUrl)) return { ...base, state: "ok", text: "로컬 직접 · 키 없이 응답" };
+    return { ...base, state: "no_list", text: `모델 목록 미확인 — ${aiModelsErrorText(connection.modelsError) ?? (connection.models === null ? "아직 못 읽음" : "모델 0개")}` };
+  // 로컬 직접 연결은 키 없이도 목록을 확인할 수 있다. 목록 확인은 실제 호출 준비 완료와 구분한다.
+  if (!connection.hasKey && isLocalModelHost(connection.baseUrl)) return { ...base, state: "ok", text: "모델 목록 확인 · 키 없음" };
   if (!connection.hasKey) return { ...base, state: "no_key", text: "키 없음" };
-  return { ...base, state: "ok", text: "응답" };
+  return { ...base, state: "ok", text: "모델 목록 확인" };
 }
 
 /** 선택지 한 칸 — 묶음(group) = 「연결 · 장비 · 상태」, off = 꺼진 연결(보이되 고를 수 없다) */
