@@ -1,7 +1,7 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
-import { decodeReviewCursor, encodeReviewCursor, reviewCursorPredicate } from "@/lib/crawl/admin-review-cursor";
+import { decodeReviewCursor, encodeReviewCursor, reviewCursorKind, reviewCursorPredicate } from "@/lib/crawl/admin-review-cursor";
 import { prototypeReviewFilter } from "@/app/(operator)/admin/review/PrototypeReviewQuery";
 
 const fake = vi.hoisted(() => ({ admin: vi.fn(), settings: vi.fn(), list: vi.fn(), causes: vi.fn(), overview: vi.fn() }));
@@ -37,6 +37,19 @@ it("keeps approved split priority, descending value, NULLS LAST and ascending id
   const nullPage = dialect.sqlToQuery(reviewCursorPredicate({ ...after, value: null }, { id: sql`candidate_id`, priority: sql`false`, value: sql`stars`, kind: "number", descending: true }));
   expect(nullPage.sql).toContain("stars IS NULL AND candidate_id >");
   expect(nullPage.sql).not.toContain("stars <");
+});
+it.each(["push", "push_old"])("roundtrips %s cursors with PostgreSQL timezone text and exact microseconds", sort => {
+  const selected = prototypeReviewFilter({ tab: "all", sort });
+  const boundary = { id: 43, priority: false, value: "2026-11-05 01:03:20.123456+09" };
+  const decoded = decodeReviewCursor(encodeReviewCursor(boundary, selected)!, selected);
+  const query = new PgDialect().sqlToQuery(reviewCursorPredicate(decoded, { id: sql`candidate_id`, priority: sql`split_approved`,
+    value: sql`pushed_at`, kind: reviewCursorKind(selected.sort), descending: selected.sort === "push" }));
+  expect(reviewCursorKind(selected.sort)).toBe("timestamptz");
+  expect(query.sql).toContain(selected.sort === "push" ? "pushed_at <" : "pushed_at >");
+  expect(query.sql).toContain("::timestamptz");
+  expect(query.sql).toContain("pushed_at IS NULL");
+  expect(query.sql).toContain("candidate_id >");
+  expect(query.params).toContain("2026-11-05 01:03:20.123456+09");
 });
 it("refuses unauthenticated scroll requests before reading filters or candidates", async () => {
   fake.admin.mockResolvedValue(null);

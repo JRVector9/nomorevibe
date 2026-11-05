@@ -18,8 +18,13 @@ export function decodeReviewCursor(raw: string, filter: unknown): ReviewCursor {
 }
 
 /** NULLS LAST and id ASC are identical to the review reader's existing stable tie breaker. */
+export type ReviewCursorKind = "id" | "number" | "time" | "timestamptz";
+export function reviewCursorKind(sort: string): ReviewCursorKind {
+  return sort === "stars" ? "number" : sort === "push" || sort === "push_old" ? "timestamptz" : sort === "wait" || sort === "wait_short" ? "time" : "id";
+}
+
 export function reviewCursorPredicate(after: ReviewCursor, parts: {
-  id: SQL; priority: SQL; value: SQL; kind: "id" | "number" | "time"; descending: boolean;
+  id: SQL; priority: SQL; value: SQL; kind: ReviewCursorKind; descending: boolean;
 }): SQL {
   const samePriority = sql`${parts.priority} = ${after.priority}`;
   const idAfter = sql`${parts.id} > ${after.id}`;
@@ -28,8 +33,11 @@ export function reviewCursorPredicate(after: ReviewCursor, parts: {
   else if (after.value === null) valueAfter = sql`(${parts.value} IS NULL AND ${idAfter})`;
   else {
     // Cursor values remain parameters; the only casts/direction are from the fixed sort definition.
-    if (parts.kind === "number" ? !/^\d{1,19}$/.test(after.value) : !/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?$/.test(after.value)) throw new Error("review_cursor_invalid");
-    const value = parts.kind === "number" ? sql`${after.value}::bigint` : sql`${after.value}::timestamp`;
+    const format = parts.kind === "number" ? /^\d{1,19}$/ : parts.kind === "timestamptz"
+      ? /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}(?::?\d{2})?)$/
+      : /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?$/;
+    if (!format.test(after.value)) throw new Error("review_cursor_invalid");
+    const value = parts.kind === "number" ? sql`${after.value}::bigint` : parts.kind === "timestamptz" ? sql`${after.value}::timestamptz` : sql`${after.value}::timestamp`;
     const later = parts.descending ? sql`${parts.value} < ${value}` : sql`${parts.value} > ${value}`;
     valueAfter = sql`(${later} OR ${parts.value} IS NULL OR (${parts.value} = ${value} AND ${idAfter}))`;
   }

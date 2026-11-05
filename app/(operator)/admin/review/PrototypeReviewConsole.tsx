@@ -27,7 +27,7 @@ export function PrototypeReviewConsole({ entries: initialEntries, reasons, focus
   const [failed, setFailed] = useState<{ initial: AdminReviewEntry[]; message: string } | null>(null);
   const loading = pendingFor === initialEntries, error = failed?.initial === initialEntries ? failed.message : null;
   const request = useRef<AbortController | null>(null), busy = useRef(false);
-  const [activeSnapshot, setActiveSnapshot] = useState<AdminReviewEntry | null>(focusedEntry ?? initialEntries[0] ?? null);
+  const [activeSnapshot, setActiveSnapshot] = useState({ initial: initialEntries, entry: focusedEntry ?? initialEntries[0] ?? null });
   useEffect(() => () => { request.current?.abort(); request.current = null; busy.current = false; }, [initialEntries]);
   async function loadMore() {
     if (busy.current || !cursor) return;
@@ -58,10 +58,10 @@ export function PrototypeReviewConsole({ entries: initialEntries, reasons, focus
       if (request.current === controller) { request.current = null; busy.current = false; setPendingFor(null); }
     }
   }
-  function activate(entry: AdminReviewEntry) { setActive(entry.candidate.id); setActiveSnapshot(entry); }
+  function activate(entry: AdminReviewEntry) { setActive(entry.candidate.id); setActiveSnapshot({ initial: initialEntries, entry }); }
   const [active, setActive] = useState(focus ?? entries[0]?.candidate.id ?? 0);
   const [checked, setChecked] = useState<Map<number, AdminReviewEntry>>(new Map());
-  const current = entries.find(entry => entry.candidate.id === active) ?? (focusedEntry?.candidate.id === active ? focusedEntry : null) ?? (activeSnapshot?.candidate.id === active ? activeSnapshot : null);
+  const current = entries.find(entry => entry.candidate.id === active) ?? (focusedEntry?.candidate.id === active ? focusedEntry : null) ?? (activeSnapshot.initial === initialEntries && activeSnapshot.entry?.candidate.id === active ? activeSnapshot.entry : null);
   const selectable = useMemo(() => entries.filter(entry => !!entry.inputHash && !!entry.sourceRevisionHash && entry.candidate.state !== "published" && !entry.candidate.publishedSlug), [entries]);
   const selection = reconcileSnapshots(checked, selectable, entry => entry.candidate.id, entryVersion);
   const toggle = (entry: AdminReviewEntry) => setChecked(previous => {
@@ -80,7 +80,7 @@ export function PrototypeReviewConsole({ entries: initialEntries, reasons, focus
   useEffect(() => { const listener = (event: KeyboardEvent) => onKey(event); window.addEventListener("keydown", listener); return () => window.removeEventListener("keydown", listener); }, []);
   function decided(entry: AdminReviewEntry, result: DecidedResult) {
     const at = entries.indexOf(entry), next = entries[at + 1] ?? entries[at - 1];
-    setActive(next?.candidate.id ?? 0); setActiveSnapshot(next ?? null); setChecked(previous => { const copy = new Map(previous); copy.delete(entry.candidate.id); return copy; });
+    setActive(next?.candidate.id ?? 0); setActiveSnapshot({ initial: initialEntries, entry: next ?? null }); setChecked(previous => { const copy = new Map(previous); copy.delete(entry.candidate.id); return copy; });
     toast.show({ message: `${result.decision === "approve" ? "승인" : "반려"} · ${entry.name}`, link: { label: "기록 보기", href: `/admin/activity?target=${encodeURIComponent(result.repo)}` }, undo: { run: () => undoCandidateDecisions([{ repo: result.repo, attemptId: result.attemptId }]) } });
   }
   return <div id="review-list" className="grid detail" data-dirty={selection.send.length > 0 || undefined} data-admin-scroll-active={loading || entries.length > initialEntries.length || undefined}>

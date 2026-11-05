@@ -25,7 +25,7 @@ import { applyAdminEvidenceRefreshCompletion, lockAdminEvidenceRefreshCompletion
 import { kstDayStart, type FreshWindows } from '@/lib/operations/windows';
 import { splitTiebreakApproved, splitTiebreakApprovedFirst, splitTiebreakVerdicts, type SplitTiebreakView } from './gate-split-tiebreak-read';
 
-import { reviewCursorPredicate, type ReviewCursor } from "./admin-review-cursor";
+import { reviewCursorKind, reviewCursorPredicate, type ReviewCursor } from "./admin-review-cursor";
 
 export const MAX_EVIDENCE_REFRESHES = 2;
 export const EVIDENCE_REFRESH_COOLDOWN_MS = 15 * 60_000;
@@ -583,7 +583,7 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: {
   const cursorValue = sort === "stars" ? repoNumber("stargazers_count") : sort === "push" || sort === "push_old" ? pushedAt
     : sort === "wait" || sort === "wait_short" ? waitingSince : sql`${crawlCandidates.id}`;
   const cursorWhere = options.cursor ? reviewCursorPredicate(options.cursor, { id: sql`${crawlCandidates.id}`, priority, value: cursorValue,
-    kind: sort === "" ? "id" : sort === "stars" ? "number" : "time", descending: sort === "stars" || sort === "push" || sort === "wait_short" }) : undefined;
+    kind: reviewCursorKind(sort), descending: sort === "stars" || sort === "push" || sort === "wait_short" }) : undefined;
   const [candidates, [{ total }], [{ hidden: hiddenByAge }]] = await Promise.all([
     // Qwen-v2 도 승인한 갈림 보류가 어떤 정렬보다 먼저다 — 사람이 확인만 하면 되는 것(gate-split-tiebreak-read.ts).
     // 보류가 든 목록에서만 — 거부·발행 목록은 늘 거짓이라 색인 순서를 그대로 쓴다. after(id 다음부터 이어 읽기)는 id 순이어야 이어진다
