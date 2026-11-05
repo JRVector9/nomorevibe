@@ -123,8 +123,9 @@ function TaskRankLineForm({ line, connections, rows, readOnly, inactive = false 
         <span className="text-fg-3">{AI_TASK_KIND_LABELS[line.kind]} · 받는 연결: {line.accepts}</span>
         {aiTaskWorkloadPoolUnsupportedReason(line.task, line.slot) && <span className="text-fg-3">작업 분산: {aiTaskWorkloadPoolUnsupportedReason(line.task, line.slot)}</span>}
         {task.sameModelAcrossRanks && <span className="text-fg-3">2·3순위는 1순위와 같은 모델을 다른 서버에 둘 때만 씁니다.</span>}
-        <span className="text-fg-3">{line.live ? "실행 쪽이 이 순위를 읽습니다 — 1순위를 쓸 수 없으면 같은 일을 2순위, 그다음 3순위로 넘깁니다."
-          : "이 작업의 실행 쪽은 아직 이 순위를 읽지 않습니다(다음 단계)."} 저장하면 없는 장비 행·엔진 직접 계약·용량 경로를 함께 만듭니다(만들 수 없으면 저장하지 않고 이유를 보입니다).</span>
+        <span className="text-fg-3">{inactive ? "현재 작업 분산에는 이 순위를 쓰지 않습니다. 대체 실행으로 전환하면 사용합니다."
+          : line.live ? "대체 실행은 우선 모델 하나를 쓰고, 필요한 경우에만 다음 순위로 전환합니다. 순위마다 추가 검수하는 방식이 아닙니다."
+          : "이 작업은 아직 기존 설정을 사용합니다."} 저장할 수 없으면 이유를 표시합니다.</span>
         {!inactive && <CurrentDetail line={line} />}
         {line.live && !inactive && <RuntimeLine runtime={line.runtime} />}
       </div>

@@ -70,17 +70,17 @@ export function TaskExecutionForm({ view, label, options, connections, readOnly 
       <label className="grid max-w-sm gap-1 text-[13px]">실행 방식
         <select name="mode" value={mode} disabled={saving || readOnly} className="min-h-9 rounded-lg border border-line bg-bg-card px-2"
           onChange={event => setMode(event.target.value as typeof mode)}>
-          <option value="fallback">대체 실행 · 기존 1→2→3순위</option>
+          <option value="fallback">대체 실행 · 우선순위로 모델 하나 선택</option>
           <option value="workload_pool" disabled={!supported}>작업 분산 · 최대 4개 모델</option>
         </select>
       </label>
       {mode === "workload_pool" ? <>
-        <p className="text-[13px] text-fg-3">서로 다른 업무를 모델에 나눕니다. 같은 업무를 여러 모델에 중복 요청하지 않습니다. 실제 실행 수는 단계 동시성과 장비 한도를 따릅니다.</p>
+        <p className="text-[13px] text-fg-3">서로 다른 업무를 모델에 나눕니다. 업무마다 모델 하나를 선택하며, 동시 실행 수는 단계·장비 한도를 따릅니다.</p>
         <RankSelects<AiRankChoice> stage={{ id: `pool-${view.task}-${view.slot}`, label, slots: 4 }} selectionKind="pool"
           options={choices} connections={connections} value={value} onChange={setValue} slotNames={MEMBER_FIELDS}
           disabled={saving || readOnly || !supported} showProvider={false} note={null} validate={issuesOf} />
-        {view.task === "second-review" && <p className="text-[13px] text-fg-3">단일 투표자 구성에서 서로 다른 후보를 분산합니다. 후보마다 표 수는 늘리지 않습니다.</p>}
-      </> : <p className="text-[13px] text-fg-3">기존 1·2·3순위를 사용합니다. 저장해 둔 분산 모델 목록은 보관됩니다.</p>}
+        {view.task === "second-review" && <p className="text-[13px] text-fg-3">투표자 한 칸에서 후보별 모델을 고릅니다. 분산 모델 수가 표 수를 늘리지 않습니다.</p>}
+      </> : <p className="text-[13px] text-fg-3">우선 모델 하나를 쓰고, 대체가 필요한 경우에만 다음 순위로 전환합니다. 같은 입력을 세 모델이 차례로 검수하지 않습니다.</p>}
       {view.mode === "workload_pool" && <div className="grid gap-1 text-[13px] text-fg-3">
         {currentRuntime?.pool ? <>
           <p>마지막 관측 · {currentRuntime.at} · {currentRuntime.from === "job" ? "마지막 작업 틱" : "이 웹 프로세스의 마지막 요청"}</p>

@@ -70,7 +70,7 @@ function LineEditor({ editor, line, value, onChange, warnings, disabled }: {
           return <li key={member.memberId}>모델 {member.position} · {connection ? modelPickerConnectionLabel(connection) : "연결 없음"} · {connection ? modelPickerModelLabel(connection, member.model) : member.model}
             {typeof member.options.reasoningEffort === "string" && ` · 추론 ${member.options.reasoningEffort}`}</li>;
         })}</ul>
-        <p className="fr-note">서로 다른 업무를 분산합니다. 실행 수는 단계 동시성과 장비 한도를 따릅니다.</p>
+        <p className="fr-note">업무마다 모델 하나를 골라 나눠 처리합니다. 동시 실행 수는 단계·장비 한도를 따릅니다.</p>
         <Link href={`/admin/models/tasks#execution-${line.task}-${line.slot}`} prefetch={false} className="fr-link">분산 모델·실행 방식 변경 →</Link>
       </> : <p className="fr-now"><span className="fr-k">지금</span> {displayRankChain(editor, line.saved)}</p>}
       {line.lock && <p className="fr-lock" role="note">{line.lock}</p>}
@@ -168,7 +168,7 @@ export function RankDrawer({ editor, lines, title, secondWaiting, onClose, save 
         </header>
 
         {step === "edit" && <div className="fr-body">
-          <p className="fr-lead">작업마다 1·2·3순위를 고릅니다. 1순위를 쓸 수 없으면 2순위, 그다음 3순위로 넘어갑니다. 선택지는 연결마다 묶여 「연결 · 장비 · 최근 상태」로 보입니다.</p>
+          <p className="fr-lead">대체 실행은 우선 모델 하나를 쓰고, 필요한 경우에만 다음 순위로 전환합니다. 작업 분산은 서로 다른 업무를 모델에 나눕니다.</p>
           {lines.map((line) => <LineEditor key={line.key} editor={editor} line={line} value={value(line)} disabled={false}
             onChange={(next) => setDrafts((current) => ({ ...current, [line.key]: next }))} warnings={warnings.filter((warning) => warning.line === line.key)} />)}
           <details className="fr-conns">

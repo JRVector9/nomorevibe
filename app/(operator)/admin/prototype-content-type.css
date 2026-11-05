@@ -1,7 +1,7 @@
-/* Content receives a further 2 CSS px; title and navigation regions retain their existing scale. */
+/* Reduce content body by 2 CSS px; headings, navigation and status annotations keep their current scale. */
 .admin-prototype #page {
-  --admin-font-delta: 4px;
-  --admin-content-growth: 2px;
+  --admin-font-delta: 2px;
+  --admin-content-growth: 0px;
   --admin-heading-font-delta: 2px;
   font-size: calc(13px + var(--admin-font-delta, 0px));
 }
@@ -128,14 +128,24 @@
 }
 
 
-/* These content annotations previously reset the prototype delta to zero. */
+/* Preserve the existing observation/status typography. */
 .admin-prototype #page :is(.tag, .read-stamp, .live-indicator, .freshness, .flow-state, .flow-model, .worker-card small,
   .callout, [data-admin-type="status"], #apply, .admin-status, .panel-head .small.muted),
 .admin-prototype #page .panel-head .right:has(> .tag, > .read-stamp) {
   --admin-font-delta: 2px;
+  --admin-content-growth: 2px;
   --admin-heading-font-delta: 0px;
 }
-/* Heading sizes are not part of the content increase, including headings in status callouts. */
+/* Flow status badges use the content-growth variable rather than the prototype delta. */
+.admin-prototype #page :is(.cv-stamp, .cv-badge, .cv-llm-flag, .cv-llmd-state, .rs-state, .dk-stuck, .fr-tag,
+  .dk-roles li[data-tone] span) {
+  --admin-content-growth: 2px;
+}
+/* These task status labels previously inherited the full body delta. */
+.admin-prototype #page form[data-task] [data-status] {
+  font-size: 17px;
+}
+/* Heading sizes are not part of the content reduction, including headings in status callouts. */
 .admin-prototype #page :is(h1, h2, h3, h4, h5, h6) {
   --admin-font-delta: var(--admin-heading-font-delta, 2px);
 }
@@ -143,10 +153,10 @@
   --admin-font-delta: 2px;
   --admin-content-growth: 0px;
 }
-/* Fixed-size chart and SNS numbers are content too; their headings continue to inherit the title scale. */
-.admin-prototype #page .flow-publication-summary > strong { font-size:33px; }
-.admin-prototype #page .flow-publication-summary > strong > span { font-size:15px; }
-.admin-prototype #page .flow-publication-chart text { font-size:12px; }
-.admin-prototype #page .flow-social-step { font-size:12px; }
-.admin-prototype #page .flow-social-stage > strong { font-size:30px; }
-.admin-prototype #page .flow-social-stage > strong > span { font-size:13px; }
+/* Fixed-size chart and SNS numbers follow the same 2px body reduction. */
+.admin-prototype #page .flow-publication-summary > strong { font-size:31px; }
+.admin-prototype #page .flow-publication-summary > strong > span { font-size:13px; }
+.admin-prototype #page .flow-publication-chart text { font-size:10px; }
+.admin-prototype #page .flow-social-step { font-size:10px; }
+.admin-prototype #page .flow-social-stage > strong { font-size:28px; }
+.admin-prototype #page .flow-social-stage > strong > span { font-size:11px; }

@@ -58,8 +58,7 @@ export default async function AiTasksPage({ searchParams }: Props) {
     <header className="grid gap-1">
       <p className="text-[13px] text-fg-3"><Link href="/admin/models">← 모델 운영 현황</Link></p>
       <h1 className="text-[22px] font-semibold">작업 ↔ AI 모델</h1>
-      <p className="text-[13px] text-fg-3">대체 실행은 1·2·3순위를 사용합니다. 지원하는 작업은 「실행 방식」에서 최대 4개 모델에 서로 다른 업무를 분산하도록 바꿀 수 있습니다.
-        드롭다운에는 등록된 연결의 모델이 나옵니다.</p>
+      <p className="text-[13px] text-fg-3">대체 실행은 필요할 때 모델을 바꾸고, 작업 분산은 서로 다른 업무를 나눕니다. 각 작업의 실행 방식을 확인하세요.</p>
       {executionRead.failed && <p role="alert" className="text-[13px] text-red-600">실행 방식을 읽지 못했습니다. 현재 방식을 확인할 때까지 작업 설정을 저장할 수 없습니다.</p>}
       {errors.map(([key, error]) => <p key={key} role="alert" className="text-[13px] text-red-600">{ERROR_LABELS[key] ?? key}을(를) 읽지 못했습니다({aiTaskIssueMessage(error)}).</p>)}
       {unread.length > 0 && <p role="status" data-unread={unread.length} className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[13px] text-amber-900">

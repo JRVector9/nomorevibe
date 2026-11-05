@@ -7,7 +7,7 @@ import { modelPickerChoiceKey, presentPickerOptions, type PickerConnection } fro
 type RankValue = { provider: string; model: string; reasoningEffort?: string };
 
 /**
- * 단계 × 모델 순위 — 한 단계 행에 1순위·2순위·3순위 드롭다운(각각 「없음」 포함). 실행은 1 → 2 → 3 순으로, 그 틱에 쓸 수 있는 가장 높은 순위를 쓴다.
+ * 단계 × 모델 순위 — 우선순위로 모델 하나를 고르고, 대체가 필요한 경우에만 다음 순위로 전환한다.
  * 선택지는 지금 모든 서버가 실제로 내놓는 모델(엔진 API)과 이 단계가 받는 CLI 모델이며 「장비 · 모델」로 보인다(admin-first-review-ranks.ts rankOptions).
  * 폼 칸 이름은 slotNames 로 받는다 — 1차 AI 검수는 1순위 = primary0, 2·3순위 = firstAdditional0·1(서버 저장 경로 saveReviewModels 그대로).
  * 다른 단계는 같은 구성 요소에 그 단계의 RankStage·slotNames·저장 경로만 넘기면 된다. 「작업 ↔ 모델」(/admin/models/tasks)은 provider 칸에 연결 id 를 두고
@@ -86,7 +86,9 @@ export function RankSelects<T extends RankValue>({ stage, options, value, onChan
     </div>
     {issues.length > 0 && <ul role="alert" className="text-[13px] text-down">{issues.map(issue => <li key={issue}>{issue}</li>)}</ul>}
     {note === undefined
-      ? <p className="text-[13px] text-fg-2">1순위를 이 틱에 쓸 수 없으면(멈춤·장비 미설정·연결 계약 닫힘·경로 없음·엔진 내려감) 2순위, 그다음 3순위로 넘어갑니다. 워커는 30초 주기로 설정을 다시 읽어 새 작업에 자동 반영합니다. 진행 중인 호출은 기존 모델을 유지합니다.</p>
+      ? <p className="text-[13px] text-fg-2">{selectionKind === "pool"
+        ? "서로 다른 업무를 모델에 나눕니다. 업무마다 모델 하나를 선택하며, 동시 실행 수는 장비 한도를 따릅니다."
+        : "우선 모델 하나를 쓰고, 대체가 필요한 경우에만 다음 순위로 전환합니다. 같은 입력을 세 모델이 차례로 검수하지 않습니다. 새 설정은 새 작업부터 반영됩니다."}</p>
       : note}
   </div>;
 }
