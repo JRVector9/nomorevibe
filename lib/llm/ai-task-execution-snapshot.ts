@@ -10,6 +10,8 @@ type State = { configs: ReadonlyMap<string, AiTaskExecutionConfig>; loaded: bool
 const holder = globalThis as unknown as { __nmvAiTaskExecution?: State };
 const state = (): State => holder.__nmvAiTaskExecution ??= { configs: new Map(), loaded: false, loadedAt: 0, error: null, loading: null, pinned: false };
 const keyOf = (task: string, slot: number) => `${task}#${slot}`;
+// Match rank/contract snapshot opt-out. An explicit disabled read is not a successful no-row read.
+const readable = () => typeof window === 'undefined' && !!process.env.DATABASE_URL && process.env.MODEL_SERVING_CONTRACTS_DB !== '0';
 type Raw = { task: string; slot: number; mode: string; revision: number; updated_at: string;
   member_id: string | null; position: number | null; connection_id: string | null; model: string | null;
   options: unknown; canonical_model: string | null; device_id: string | null; engine_key: string | null;
@@ -67,7 +69,7 @@ async function reload(current: State): Promise<void> {
 function pinnedLegacyFixture(): boolean { return process.env.NODE_ENV === "test" && aiTaskModelsSnapshotPinned() && !state().pinned; }
 export async function ensureAiTaskExecutionConfigs(maxAgeMs = REFRESH_MS): Promise<void> {
   const current = state();
-  if (current.pinned || pinnedLegacyFixture()) return;
+  if (current.pinned || pinnedLegacyFixture() || !readable()) return;
   if (current.loading) return current.loading;
   if (current.loadedAt && Date.now() - current.loadedAt < (current.loaded ? maxAgeMs : Math.min(maxAgeMs, 5_000))) return;
   current.loading = reload(current).finally(() => { current.loading = null; });
@@ -78,7 +80,7 @@ export function readAiTaskExecutionConfig(taskId: string, slot = 1): AiTaskExecu
   const task = aiTask(taskId), current = state();
   if (!task || !Number.isInteger(slot) || slot < 1 || slot > task.slots) throw new Error("invalid_task_execution_slot");
   if (!current.loaded && !pinnedLegacyFixture()) throw new ModelCapacityDeferredError("assignments_unavailable");
-  if (!current.pinned && !pinnedLegacyFixture() && !current.loading && Date.now() - current.loadedAt >= REFRESH_MS)
+  if (!current.pinned && !pinnedLegacyFixture() && readable() && !current.loading && Date.now() - current.loadedAt >= REFRESH_MS)
     current.loading = reload(current).finally(() => { current.loading = null; });
   const known = !pinnedLegacyFixture() ? current.configs.get(keyOf(taskId, slot)) : undefined;
   if (!known && current.error && !pinnedLegacyFixture()) throw new ModelCapacityDeferredError("assignments_unavailable");
