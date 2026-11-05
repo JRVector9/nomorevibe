@@ -154,7 +154,6 @@ async function readAdmissionRows(tx: ProductTransaction, settings: CrawlSettings
         sql`${crawlReviewAttempts.outcome}->>'decision'=${secondReviews.firstDecision} and ${crawlReviewAttempts.model}=${secondReviews.firstModel}`,
         sql`case when ${secondReviews.fallbackForId} is null then
           ${voterMatches(sql`${secondReviews.provider}`, sql`${secondReviews.model}`, secondReviewVoters(settings))}
-          and ${modelName(sql`${secondReviews.firstModel}`)}<>${modelName(sql`${secondReviews.model}`)}
           else ${voterMatches(sql`${secondReviews.provider}`, sql`${secondReviews.model}`, secondReviewFallbacks(settings))}
             and ${root.fallbackForId} is null and ${root.candidateId}=${secondReviews.candidateId}
             and ${root.generationKey}=${secondReviews.generationKey} and ${root.inputHash}=${secondReviews.inputHash}
