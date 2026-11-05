@@ -555,7 +555,7 @@ it('1차가 다시 보면 그 판단으로만 올린다 — 지나간 입력으�
   expect(rows.map((row) => row.inputHash)).toEqual([current.inputHash]);
 });
 
-it('1차를 본 모델을 적어 두고, 2차에 같은 모델이 서면 그 표는 셈에서 뺀다', async () => {
+it('1차를 본 모델을 적어 두고, 같은 모델의 별도 2차 결과도 센다', async () => {
   await saveSettings({ secondReview: { enabled: true, sampleRate: 0, agreeAt: 0.85,
     voters: [{ provider: 'abcllm', model: 'sonnet' }, { provider: 'abcllm', model: '[MLX] gemma4-31b' }] } }, 'fixture');
   const candidate = await held('pr04b-second/echo');
@@ -570,10 +570,10 @@ it('1차를 본 모델을 적어 두고, 2차에 같은 모델이 서면 그 표
     await recordSecondReviewFixture(row.id, { ok: true, decision: 'reject', confidence: 0.9, reason: '문서 사이트',
       model: row.model!, provider: 'abcllm', status: 'needs_human' });
   }
-  // 1차(sonnet) + 메아리(sonnet) + 다른 모델 하나 → 셈에 드는 표는 둘이다
+  // 1차(sonnet) + 별도 2차(sonnet) + 다른 2차 모델 하나 → 세 결과를 센다
   const { ids } = await secondReviewSummary(0.85);
-  expect(ids.agreed_reject).toEqual([candidate.id]);
-  expect(ids.unanimous_reject).toEqual([]);
+  expect(ids.agreed_reject).toEqual([]);
+  expect(ids.unanimous_reject).toEqual([candidate.id]);
 });
 
 it('binds a new first attempt even when the semantic input is unchanged', async () => {
@@ -607,12 +607,12 @@ it('discards results if the underlying document changed while the model was runn
   });
   expect((await db.select().from(secondReviews).where(eq(secondReviews.id, row.id)))[0]).toMatchObject({status: 'resolved', resolution: 'superseded', secondDecision: null});
 });
-it('does not enqueue an alias of the first model as an independent second voter', async () => {
+it('enqueues a configured alias of the first model for a separate second review', async () => {
   await held('pr04b-second/alias'); await firstReview('pr04b-second/alias', 'approve');
   await db.update(crawlReviewAttempts).set({provider: 'abcllm', model: '[MLX] gpt-oss-120b'});
   await saveSettings({secondReview: {enabled: true, sampleRate: 0, voters: [{provider: 'abcllm', model: 'gpt-oss-120b'}, {provider: 'abcllm', model: '[MLX] gemma4-31b'}]}}, 'fixture');
-  expect(await enqueueSecondReviews(await getSettings())).toBe(1);
-  expect((await pendingSecondReviews(10)).map(row => row.model)).toEqual(['[MLX] gemma4-31b']);
+  expect(await enqueueSecondReviews(await getSettings())).toBe(2);
+  expect((await pendingSecondReviews(10)).map(row => row.model)).toEqual(['gpt-oss-120b', '[MLX] gemma4-31b']);
 });
 
 it('rejects stale input before starting a second model call', async () => {
@@ -642,13 +642,13 @@ it('rejects a late response after the first verdict changes without another enqu
   });
   expect((await secondReviewsFor([row.candidateId]))).toEqual([]);
 });
-it('does not let first-model-only candidates consume the enqueue limit', async () => {
+it('enqueues same-first-model candidates within the existing bounded limit', async () => {
   await saveSettings({secondReview: {voters: [{provider: 'abcllm', model: '[MLX] sonnet'}]}}, 'fixture');
   for (let i = 0; i < 55; i++) {await held(`pr04b-second/echo-${i}`); await firstReview(`pr04b-second/echo-${i}`, 'reject');}
   const eligible = await held('pr04b-second/independent'); await firstReview(eligible.repo, 'reject');
   await db.update(crawlReviewAttempts).set({model: 'another'}).where(eq(crawlReviewAttempts.candidateId, eligible.id));
-  expect(await enqueueSecondReviews(await getSettings())).toBe(1);
-  expect((await pendingSecondReviews(10)).map(row => row.repo)).toEqual([eligible.repo]);
+  expect(await enqueueSecondReviews(await getSettings())).toBe(25);
+  expect((await pendingSecondReviews(10)).map(row => row.repo)).toEqual(Array.from({ length: 10 }, (_, i) => `pr04b-second/echo-${i}`));
 });
 it('does not starve published samples beyond the first batch', async () => {
   for (let i = 0; i < 27; i++) await published(`pr04b-second/public-${i}`, 'the quick way to plan all of your week with friends');
@@ -906,7 +906,7 @@ it('다른 기본 모델의 MLX 별칭을 fallback 표로 배정하지 않는다
   expect(row).toMatchObject({model:'backup',fallbackForId:root.id});
 });
 
-it('Sonnet 대체가 1차와 같으면 참고 의견만 남기고 독립 합의 대신 사람 확인으로 보낸다', async () => {
+it('Sonnet 대체가 1차와 같아도 별도 2차 결과로 합친다', async () => {
   await saveSettings({secondReview:{fallbacks:[{provider:'claude-cli',model:'sonnet'}]}},'fixture');
   await held('pr04b-second/sonnet-fallback');await firstReview('pr04b-second/sonnet-fallback','approve');await enqueueSecondReviews(await getSettings());
   const [root]=await pendingSecondReviews(1);
@@ -915,11 +915,11 @@ it('Sonnet 대체가 1차와 같으면 참고 의견만 남기고 독립 합의 
   expect(backup).toMatchObject({provider:'claude-cli',model:'sonnet',fallbackForId:root.id});
   expect((await secondReviewSummary(.85)).counts.pending).toBe(1);
   await recordSecondReviewFixture(backup.id,{ok:true,decision:'approve',confidence:.99,reason:'usable',provider:'claude-cli',model:'sonnet',status:'agreed'});
-  expect((await secondReviewSummary(.85)).counts).toMatchObject({needsHuman:1,agreedApprove:0,pending:0});
-  expect((await secondReviewsFor([root.candidateId]))[0]).toMatchObject({model:'sonnet',status:'needs_human',secondDecision:'approve'});
+  expect((await secondReviewSummary(.85)).counts).toMatchObject({needsHuman:0,agreedApprove:1,pending:0});
+  expect((await secondReviewsFor([root.candidateId]))[0]).toMatchObject({model:'sonnet',status:'agreed',secondDecision:'approve'});
 });
 
-it('다른 독립 표가 일치해도 Sonnet 중복 대체를 완료한 후보는 사람 확인을 생략하지 않는다', async () => {
+it('서로 다른 두 2차 표가 일치하면 1차와 같은 모델의 대체 결과도 합친다', async () => {
   // 투표자 칸 1 = [a], 칸 2 = [b, sonnet] — b 가 실패하면 그 칸의 2순위 sonnet(1차와 같은 모델)이 대체한다(PR C1: 대체는 같은 칸 안에서만)
   pinReviewRanks({ first: [{ provider: 'claude-cli', model: 'sonnet' }],
     second: [[{ provider: 'abcllm', model: 'a' }], [{ provider: 'abcllm', model: 'b' }, { provider: 'claude-cli', model: 'sonnet' }]] });
@@ -930,7 +930,7 @@ it('다른 독립 표가 일치해도 Sonnet 중복 대체를 완료한 후보�
   const [backup]=await pendingSecondReviews(1);
   expect((await secondReviewSummary(.85)).counts).toMatchObject({pending:1,agreedApprove:0});
   await recordSecondReviewFixture(backup.id,{ok:true,decision:'approve',confidence:1,reason:'usable',provider:'claude-cli',model:'sonnet',status:'agreed'});
-  expect((await secondReviewSummary(.85)).counts).toMatchObject({needsHuman:1,agreedApprove:0,unanimousApprove:0,pending:0});
+  expect((await secondReviewSummary(.85)).counts).toMatchObject({needsHuman:0,agreedApprove:0,unanimousApprove:1,pending:0});
 });
 
 it('지금 세우지 않은 투표자가 막은 갈림 보류만 승인으로 되돌린다 — 지금 투표자가 반대한 것과 관문 표가 없던 것은 그대로', async () => {

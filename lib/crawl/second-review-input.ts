@@ -16,8 +16,7 @@ import { firstReviewers, firstReviewIdentitySql, hasFirstReviewer } from "./firs
 import { secondReviewFallbacks, secondReviewVoters } from "./second-review-voters";
 import { requireReviewTaskRanks } from "./review-task-ranks";
 import { reviewSemanticNow } from "./review-replay-context";
-import { secondReviewAssignmentMap, secondReviewHasWorkloadPool, secondReviewVoteIndependent, secondReviewWorkloadMembership } from "./second-review-workload";
-import { reviewModelsMayCountIndependently } from "./review-model-identity";
+import { secondReviewAssignmentMap, secondReviewHasWorkloadPool, secondReviewVoteEligible, secondReviewWorkloadMembership } from "./second-review-workload";
 import { appliedHeldQwenAttemptSql, heldQwenGateFirst, heldQwenGateFirstSql } from "./held-qwen-retry-policy";
 
 /** Grok upstream decisions are usable only while that exact first reviewer is configured. */
@@ -55,9 +54,8 @@ export function secondReviewInputMatches(row: SecondReview, current: {
     || root.resolution !== "fallback" || (secondReviewHasWorkloadPool() ? !secondReviewWorkloadMembership(root, current.workloadAssignment)
       : !secondReviewVoters(settings).some(voter => voter.provider === root.provider && sameReviewModel(voter.model, root.model))))) return false;
   if (secondReviewGeneration(row.firstAttemptId, input, row.trigger) !== row.generationKey
-    || (!row.fallbackForId && row.firstModel && (secondReviewHasWorkloadPool()
-      ? !secondReviewVoteIndependent(row.firstModel, row.model, current.workloadAssignment)
-      : !reviewModelsMayCountIndependently(row.firstModel, row.model)))) return false;
+    || (!row.fallbackForId && secondReviewHasWorkloadPool()
+      && !secondReviewVoteEligible(row.model, current.workloadAssignment))) return false;
   if (!row.publishedSlug) {
     const pool = firstReviewers(settings);
     // 관문 행은 보류 Qwen-v2 의 승인에도 붙는다(held-qwen-retry-policy.ts) — 그 밖의 행은 지금처럼 1차 심사자의 판단에만
@@ -169,9 +167,8 @@ async function secondReviewInputContext(row: SecondReview, tx?: ProductTransacti
   if (secondReviewHasWorkloadPool() ? !secondReviewWorkloadMembership(row, workloadAssignment)
     : !pool.some(voter => voter.provider === row.provider && sameReviewModel(voter.model, row.model))) return null;
   const input = await loadReviewInput(candidate, document, settings, executor);
-  if (secondReviewGeneration(row.firstAttemptId, input, row.trigger) !== row.generationKey || (!row.fallbackForId && row.firstModel && (secondReviewHasWorkloadPool()
-      ? !secondReviewVoteIndependent(row.firstModel, row.model, workloadAssignment)
-      : !reviewModelsMayCountIndependently(row.firstModel, row.model)))) return null;
+  if (secondReviewGeneration(row.firstAttemptId, input, row.trigger) !== row.generationKey || (!row.fallbackForId
+      && secondReviewHasWorkloadPool() && !secondReviewVoteEligible(row.model, workloadAssignment))) return null;
   let first: CrawlReviewAttempt | undefined;
   if (!row.publishedSlug) {
     // 관문은 그 1차 심사자(제공자·모델)의 최신 판단에 붙는다 — 다른 심사자의 더 새 판단과 견주지 않는다(codex 2차)

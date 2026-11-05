@@ -31,7 +31,7 @@ import { STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { hasLiveFetchItem } from "./fetch-ownership";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
 import { DEEPSEEK_REVIEW_MODEL, DEEPSEEK_REVIEW_PROVIDER, deepseekActor } from './deepseek-review-policy';
-import { appliedHeldQwenAttemptColumn, appliedHeldQwenAttemptSql, heldQwenGateFirstSql, reviewIndependenceSql } from './held-qwen-retry-policy';
+import { appliedHeldQwenAttemptColumn, appliedHeldQwenAttemptSql, heldQwenGateFirstSql } from './held-qwen-retry-policy';
 import { agentReviewBinding, assertAgentReviewJob, assertAgentReviewOwnership, finishAgentReviewOwnership,
   hasLiveAgentReviewItem, liveAgentReviewItem, type Ai1ItemLease, type Ai1ReviewOrigin, type Ai1ReviewReceipt } from "./agent-review-ownership";
 export type { Ai1ItemLease, Ai1ReviewOrigin, Ai1ReviewReceipt } from "./agent-review-ownership";
@@ -284,8 +284,8 @@ const sameModelName = (name: SQL) => sql`regexp_replace(regexp_replace(lower(tri
  *
  * 표가 "하나라도" 승인이면 되는 것이 아니다 — 모델을 바꾸거나 더한 직후에는 빠진 모델의 옛 승인만 남아 있어,
  * 새 모델이 한 번도 보지 않은 것이 발행됐다(codex 교차 검토 P1). 지금 설정의 모델 칸마다, 그 모델이나 그 칸을
- * 대신한 대체 모델(fallback_for_id)의 승인을 찾는다. 1차와 같은 모델의 칸은 되풀이라 뺀다. 칸이 하나도 없으면
- * 두 모델 승인을 할 수 없으므로 통과시키지 않는다(그런 후보는 enqueueSecondReviews 가 사람에게 넘긴다).
+ * 대신한 대체 모델(fallback_for_id)의 승인을 찾는다. 1차와 같은 모델도 별도의 2차 호출과 승인이 필요하다. 칸이 하나도 없으면
+ * 2차 승인을 받을 수 없으므로 통과시키지 않는다(그런 후보는 enqueueSecondReviews 가 사람에게 넘긴다).
  * 볼 표·실패·반대가 하나라도 열려 있으면 역시 통과시키지 않는다.
  */
 function secondApproved(attempt: { id: SQL; model: SQL }, voters: { provider: string; model: string }[],
@@ -295,16 +295,12 @@ function secondApproved(attempt: { id: SQL; model: SQL }, voters: { provider: st
   // 대체 모델의 표는 그 모델이 지금도 대체 모델일 때만 칸을 채운다 — 설정에서 뺀 직후 정리 전에 옛 승인으로 발행되지 않게(codex 2차 P1)
   const currentFallback = sql`(g.fallback_for_id IS NULL OR EXISTS (SELECT 1 FROM jsonb_array_elements(${JSON.stringify(fallbacks)}::jsonb) f
     WHERE f->>'provider' = g.provider AND ${sameModelName(sql`f->>'model'`)} = ${sameModelName(sql`g.model`)}))`;
-  // 1차와 같은 모델인지는 자리 표시([MLX]·[gpu3090] 등)를 모두 떼고 가른다 — 같은 가중치의 표는 칸이 달라도 독립 표가 아니다.
-  // 칸을 채운 표를 실제로 낸 모델(대체 모델 포함, g.model)이 1차와 같은 모델이면 그 칸은 비어 있는 것으로 본다
-  const independent = sql`${reviewIndependenceSql(sql`v->>'model'`)} <> ${reviewIndependenceSql(sql`coalesce(${attempt.model}, '')`)}`;
-  return sql`(EXISTS (SELECT 1 FROM ${slots} WHERE ${independent})
-    AND NOT EXISTS (SELECT 1 FROM ${slots} WHERE ${independent}
-      AND NOT EXISTS (SELECT 1 FROM ${secondReviews} g LEFT JOIN ${secondReviews} root ON root.id = g.fallback_for_id
+  return sql`(EXISTS (SELECT 1 FROM ${slots})
+    AND NOT EXISTS (SELECT 1 FROM ${slots}
+      WHERE NOT EXISTS (SELECT 1 FROM ${secondReviews} g LEFT JOIN ${secondReviews} root ON root.id = g.fallback_for_id
         WHERE g.first_attempt_id = ${attempt.id} AND g.trigger = 'ai_approved' AND g.status = 'agreed' AND g.second_decision = 'approve'
           AND coalesce(root.provider, g.provider) = v->>'provider'
-          AND ${sameModelName(sql`coalesce(root.model, g.model)`)} = ${sameModelName(sql`v->>'model'`)} AND ${currentFallback}
-          AND ${reviewIndependenceSql(sql`g.model`)} <> ${reviewIndependenceSql(sql`coalesce(${attempt.model}, '')`)}))
+          AND ${sameModelName(sql`coalesce(root.model, g.model)`)} = ${sameModelName(sql`v->>'model'`)} AND ${currentFallback}))
     AND NOT EXISTS (SELECT 1 FROM ${secondReviews} g WHERE g.first_attempt_id = ${attempt.id} AND g.trigger = 'ai_approved'
       AND g.status IN ('pending', 'failed', 'needs_human')))`;
 }

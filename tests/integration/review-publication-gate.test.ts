@@ -304,14 +304,18 @@ it("1차 확신이 기준에 못 미치면 2차가 승인해도 사람에게 넘
   expect((await db.select().from(crawlCandidates).where(eq(crawlCandidates.id, row.id)))[0]).toMatchObject({ state: "needs_review", reason: "second_review_split" });
 });
 
-it("2차 모델이 1차와 같으면 두 모델 승인을 할 수 없다 — 멈추지 않고 사람에게 넘긴다", async () => {
+it("1차와 같은 모델도 별도 2차 승인을 받은 뒤 발행한다", async () => {
   await saveSettings({ secondReview: { enabled: true, voters: [{ provider: "claude-cli", model: "test-model" }] } }, "test");
   const { row } = await candidate(0, true, 0.95);
-  expect(await enqueueSecondReviews(await getSettings())).toBe(0);
+  expect(await enqueueSecondReviews(await getSettings())).toBe(1);
   await tick();
   expect(await db.select().from(products)).toHaveLength(0);
-  expect((await db.select().from(crawlCandidates).where(eq(crawlCandidates.id, row.id)))[0]).toMatchObject({
-    state: "needs_review", reason: "second_review_split", signals: { stoppedAt: { rule: "2차 심사" } } });
+  const [gate] = await db.select().from(secondReviews);
+  expect(gate).toMatchObject({ candidateId: row.id, model: "test-model", status: "pending" });
+  await recordSecondReviewFixture(gate.id, { ok: true, decision: "approve", confidence: .95, reason: "별도 2차 승인",
+    model: "test-model", provider: "claude-cli", status: "agreed" });
+  await tick();
+  expect(await db.select().from(products)).toHaveLength(1);
 });
 
 

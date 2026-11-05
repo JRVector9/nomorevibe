@@ -248,13 +248,13 @@ it("keeps rejecting a changed published slug", () => {
   expect(secondReviewInputMatches({ ...row, publishedSlug: "another-product" }, current, now)).toBe(false);
 });
 
-it("keeps primary aliases of the first model out of independent voting", () => {
+it("admits a configured second-stage alias of the first model", () => {
   const { row, current } = fixture();
   pinRanks(undefined, [[abc("[MLX] FIRST-MODEL")]]);
-  expect(secondReviewInputMatches({ ...row, model: "[MLX] FIRST-MODEL" }, current, now)).toBe(false);
+  expect(secondReviewInputMatches({ ...row, model: "[MLX] FIRST-MODEL" }, current, now)).toBe(true);
 });
 
-it("preserves same-first fallback input admission as a reference-only opinion", () => {
+it("preserves same-first fallback input admission as a separate second-stage call", () => {
   const { row, current } = fallbackFixture();
   pinRanks(undefined, [[abc("second-model"), abc("[MLX] FIRST-MODEL")]]);
   expect(secondReviewInputMatches({ ...row, model: "[MLX] FIRST-MODEL" }, current, now)).toBe(true);

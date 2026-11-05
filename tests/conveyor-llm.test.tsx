@@ -283,28 +283,28 @@ describe("1차 and 2차 on the same model", () => {
   const same = healthy({ rows: [rank("first-review", 1, QWEN, "qwen3.8-flash-next"), rank("second-review", 1, QWEN, "qwen3.8-flash-next")],
     used: [used("crawl-agent-review", "abcllm", "qwen3.8-flash-next", 120)] });
 
-  it("warns on both stations — 2차 cannot cast a vote", () => {
+  it("allows both stations to use the same model without a false warning", () => {
     const models = buildStationLlm(same);
     for (const key of ["first", "second"] as const) {
       const station = models[key];
       if (station.kind !== "llm") throw new Error("llm");
-      expect(station.sameModel, key).toBe(true);
-      expect(station.warnings[0]).toContain("표를 못 냅니다");
+      expect(station.sameModel, key).toBe(false);
+      expect(station.warnings).toEqual([]);
     }
-    expect(models.second.kind === "llm" && models.second.flag).toEqual({ tone: "warn", text: "1차와 같은 모델" });
-    expect(models.first.kind === "llm" && models.first.flag).toEqual({ tone: "warn", text: "2차와 같은 모델" });
+    expect(models.second.kind === "llm" && models.second.flag).toBeNull();
+    expect(models.first.kind === "llm" && models.first.flag).toBeNull();
   });
 
-  it("raises the 2차 station to 쌓임 with the reason, but leaves 1차 flowing", () => {
+  it("keeps both stations flowing when their configured model is shared", () => {
     const conveyor = buildConveyor(conveyorInputs({ models: buildStationLlm(same) }));
-    expect(conveyor.stations.find((station) => station.key === "second")).toMatchObject({ tone: "slow", status: "1차와 같은 모델" });
+    expect(conveyor.stations.find((station) => station.key === "second")).toMatchObject({ tone: "flow" });
     expect(conveyor.stations.find((station) => station.key === "first")).toMatchObject({ tone: "flow" });
-    expect(stationResponse("second", conveyor, null).checks[0]).toContain("표를 못 냅니다");
+    expect(stationResponse("second", conveyor, null).checks.join(" ")).not.toContain("표를 못 냅니다");
   });
 
-  it("sees through server prefixes and connection aliases, and clears when one voter differs", () => {
+  it("does not reject shared models behind server prefixes and connection aliases", () => {
     const prefixed = healthy({ rows: [rank("first-review", 1, QWEN, "[gpu3090] qwen3.8-flash-next"), rank("second-review", 1, M3, "qwen3.8-flash-next@5a1b2c3d")], used: [] });
-    expect(buildStationLlm(prefixed).second.kind === "llm" && buildStationLlm(prefixed).second).toMatchObject({ sameModel: true });
+    expect(buildStationLlm(prefixed).second.kind === "llm" && buildStationLlm(prefixed).second).toMatchObject({ sameModel: false });
     const second = buildStationLlm(healthy({ rows: [...same.rows!, rank("second-review", 1, M3, "gpt-oss-120b", { slot: 2 })], used: [] })).second;
     expect(second.kind === "llm" && second.sameModel).toBe(false);
     expect(buildStationLlm(healthy()).second.kind === "llm" && (buildStationLlm(healthy()).second as { sameModel: boolean }).sameModel).toBe(false);

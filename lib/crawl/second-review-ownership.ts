@@ -30,7 +30,6 @@ import { resolveAi2GatewayServingContract, ai2ServingContractMatches, ai2Gateway
 import type { PreparedAi2GatewayCall } from "./agent-review-gateway";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { isReviewCliProvider, reviewCliCallRefSchema, reviewCliContractMatches, reviewCliServingContract } from "./review-cli-call";
-import { sameUnderlyingModel } from "./review-model-identity";
 
 export type Ai2ItemLease = ItemLease & { stage: "ai2"; binding: Ai2ItemBinding };
 export type SecondReviewReceipt = Readonly<{
@@ -462,8 +461,9 @@ export async function observeSecondReviewItemDispatch(receipt: SecondReviewItemR
 export function secondReviewPolicyHash(settings: CrawlSettings): string {
   // Extra AI1 workers do not invalidate every existing AI2 receipt. Its source
   // binds the actual first attempt; input validation checks active pool membership.
-  return reviewHash({ version: "second-review-policy-v1", inputPolicyHash: reviewPolicyHash(settings),
-    // firstReview·secondReview 는 저장된 옛 설정 값 그대로다(PR C1 부터 실행 쪽은 순위만 읽고 편집 화면은 없다) — 배포만으로 진행 중 2차 receipt 가 깨지지 않게 hash 입력을 바꾸지 않는다
+  // Record the cross-stage reuse policy in each new AI2 receipt without changing AI1 source identity.
+  return reviewHash({ version: "second-review-policy-v1", crossStageModelReuse: true, inputPolicyHash: reviewPolicyHash(settings),
+    // Preserve the saved settings inputs when rank choices change; the explicit reuse policy above is separately recorded.
     enabled: settings.enabled, reviewMode: settings.reviewMode, firstReview: firstReviewer(settings),
     secondReview: settings.secondReview, promptVersion: REVIEW_PROMPT_VERSION, rulesVersion: REVIEW_RULES_VERSION });
 }
@@ -538,7 +538,7 @@ export async function fallbackWaitingSecondReview(intent: SecondReviewModelReser
         && (isReviewCliProvider(voter.provider) ? reviewCliServingContract("second-review", voter.provider, voter.model) !== null
           : (() => { const serving = resolveAi2GatewayServingContract(voter.model, voter.provider);
             return serving?.provider === voter.provider && ai2ServingContractMatches(serving, voter.model); })()));
-      const backup = eligible.find(voter => !sameUnderlyingModel(row.firstModel, voter.model)) ?? eligible[0];
+      const backup = eligible[0];
       if (!backup) throw new WaitingFallbackRefused();
       await tx.insert(secondReviews).values({ ...backup, candidateId: row.candidateId, repo: row.repo,
         publishedSlug: row.publishedSlug, trigger: row.trigger, signals: row.signals,
