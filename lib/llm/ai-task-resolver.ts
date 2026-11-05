@@ -96,7 +96,7 @@ function endpointBase(endpoint: string | null): string | null {
   } catch { return null; }
 }
 /** 이 경로의 켜진 계약 중 모양이 맞는 것(경로 모듈이 등록한 스키마로). 계약 JSON 의 model 이 행 열쇠와 같아야 한다. */
-function routeContracts(routeId: AiTextTaskId): RouteContract[] {
+function routeContracts(routeId: GatewayServingRoute): RouteContract[] {
   const schema = registeredGatewayServingContractSchema(routeId as GatewayServingRoute);
   if (!schema) return [];
   return servingContractSnapshot().rows.filter(row => row.routeId === routeId).flatMap(row => {
@@ -114,7 +114,7 @@ function routeContracts(routeId: AiTextTaskId): RouteContract[] {
  * 순위 하나 → 묶음(순수에 가깝다 — 스냅숏 둘을 읽는다). 이 연결을 가리키는 계약(끝점 = 연결 주소, 엔진 모델 = 순위 모델)을 찾는다.
  * 같은 연결·모델의 계약이 둘이면 abcllm 형(엔진 연결이 만든 모양)을, 그 안에서는 이름 그대로(identity = 모델)를 먼저 쓴다.
  */
-export function bindTextTaskRank(routeId: AiTextTaskId, rank: AiTaskRank, contracts: readonly RouteContract[] = routeContracts(routeId)): TextRankCandidate {
+export function bindApiTaskRank(routeId: GatewayServingRoute, rank: AiTaskRank, contracts: readonly RouteContract[] = routeContracts(routeId)): TextRankCandidate {
   const unusable = (code: string): TextRankCandidate => Object.freeze({ rank, binding: null, unusable: code });
   const connection = rank.connection;
   if (!rank.enabled) return unusable("rank_disabled");
@@ -134,6 +134,10 @@ export function bindTextTaskRank(routeId: AiTextTaskId, rank: AiTaskRank, contra
   return Object.freeze({ rank, unusable: null, binding: Object.freeze({ routeId, rank: rank.rank, connectionId: connection.id, connectionLabel: connection.label,
     identity: picked.row.model, engineModel: rank.model, provider: picked.provider, bearer: connection.apiKey, deviceId: connection.deviceId }) });
 }
+
+/** Existing text-only callers retain their supported-task boundary. */
+export const bindTextTaskRank = (routeId: AiTextTaskId, rank: AiTaskRank, contracts: readonly RouteContract[] = routeContracts(routeId)): TextRankCandidate =>
+  bindApiTaskRank(routeId, rank, contracts);
 
 /** text 작업 하나의 순위 → 묶음(1·2·3 차례). 스냅숏을 한 번도 읽지 못했으면 task_models_unreadable, 순위가 없으면 no_task_models. */
 export function resolveTextTaskRanks(routeId: AiTextTaskId, execution?: AiTaskExecutionConfig): TextRankResolution {

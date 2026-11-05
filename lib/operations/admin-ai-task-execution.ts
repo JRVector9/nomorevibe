@@ -4,7 +4,7 @@ import { db, onPrimary } from "@/lib/db";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { aiConnections, aiTaskExecutionConfigs, aiTaskPoolMembers, aiTaskModels, operationsAudit } from "@/lib/db/schema";
 import { aiTask, aiTaskAccepts, aiTaskSlots } from "@/lib/llm/ai-tasks";
-import { aiTaskExecutionInputSchema, AI_TASK_EXECUTION_SAVE_AUDIT_ACTION, type AiTaskExecutionInput } from "@/lib/llm/ai-task-execution-config";
+import { aiTaskExecutionInputSchema, aiTaskWorkloadPoolApiOnly, AI_TASK_EXECUTION_SAVE_AUDIT_ACTION, type AiTaskExecutionInput } from "@/lib/llm/ai-task-execution-config";
 import { taskPoolEngineKey } from "@/lib/llm/ai-task-pool-identity";
 import { aiConnectionKeyAad, aiConnectionModelIds, aiRankReasoningEfforts, aiRanksReadiness } from "./admin-ai-tasks";
 import { aiTaskCrossResourceIssues, listAiConnections, prepareAiTaskServingResources,
@@ -90,7 +90,8 @@ export async function saveAiTaskExecutionConfig(input: unknown, actor: string): 
       const record = records.find(row => row.id === id);
       if (!record) return { ok: false, issues: ["ai_connection_version_mismatch"] };
       if (Number(record.version) !== connection.version) fail("ai_connection_version_mismatch");
-      if (!connection.enabled || !record.enabled || !aiTaskAccepts(task, connection)) fail("ai_task_pool_connection_unsupported");
+      if (!connection.enabled || !record.enabled || !aiTaskAccepts(task, connection)
+        || aiTaskWorkloadPoolApiOnly(task.id) && connection.kind !== "api") fail("ai_task_pool_connection_unsupported");
       if (connection.cliTool === "opencode") {
         const catalog = await readAdminCliCatalog({ fresh: true, connectionId: id });
         if (catalog.cliVersion !== connection.cliVersion) fail("ai_connection_cli_catalog_changed");

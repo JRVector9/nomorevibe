@@ -1013,10 +1013,46 @@ export type CliModelTerminalEvidence = Readonly<z.infer<typeof cliModelTerminalE
  * 저장된 JSON 은 권한이 아니다 — 게이트웨이 모듈이 낸 원본 증인만 정산한다. 증거 모양은 {version, kind, dispatch} 그대로다(CHECK 가 키를 열거한다).
  * local-direct schema 는 lazy 로 읽는다 — local-model-capacity-contract 는 도메인 모듈을 거쳐 이 모듈로 되돌아오므로(순환) 평가 시점에 묶지 않는다.
  */
+/** Publication API classification is a distinct native gateway boundary; CLI bindings remain unchanged. */
+export const publicationClassifyApiInputSchema = publicationClassifyInputSchema.pick({ members: true, model: true, payloadHash: true, definitionsHash: true })
+  .extend({ provider: gatewayProvider, configRevision: positive, memberId: z.uuid() }).strict();
+export type PublicationClassifyApiInput = Readonly<z.infer<typeof publicationClassifyApiInputSchema>>;
+export function publicationClassifyApiInputHash(input: PublicationClassifyApiInput): string {
+  const { members, provider, model, payloadHash, definitionsHash, configRevision, memberId } = input;
+  const checked = publicationClassifyApiInputSchema.parse({ members, provider, model, payloadHash, definitionsHash, configRevision, memberId });
+  return createHash("sha256").update(cliCanonical({ ...checked,
+    members: checked.members.toSorted((a, b) => a.candidateId - b.candidateId) })).digest("hex");
+}
+export const publicationClassifyApiBindingSchema = publicationClassifyApiInputSchema.extend({
+  kind: z.literal("publication_classify_gateway"), version: z.literal(1), logicalWorkKey: identity(160), inputHash: sha64,
+  routeId: z.literal("crawl-publish-classify"), publisherRole: publicationPublisherRoleSchema, job: cliJob("crawl-publish"),
+  wireHash: sha64, servingContractHash: sha64, totalTokenBound: positive, chargedTokens: positive,
+}).strict().refine(value => value.logicalWorkKey === publicationClassifyLogicalWorkKey(value.members)
+  && value.inputHash === publicationClassifyApiInputHash(value) && value.chargedTokens === value.totalTokenBound,
+  "invalid_publication_classify_api_binding");
+export type PublicationClassifyApiBinding = Readonly<z.infer<typeof publicationClassifyApiBindingSchema>>;
+export function publicationClassifyApiBindingHash(value: PublicationClassifyApiBinding): string {
+  return createHash("sha256").update(cliCanonical(publicationClassifyApiBindingSchema.parse(value))).digest("hex");
+}
+export type PublicationClassifyApiDispatch = ModelCapacityDispatch & Readonly<{ binding: PublicationClassifyApiBinding; bindingHash: string }>;
+export const publicationClassifyApiDispatchSchema = handleSchema.extend({ binding: publicationClassifyApiBindingSchema, bindingHash: sha64 }).strict()
+  .refine(value => value.bindingHash === publicationClassifyApiBindingHash(value.binding), "invalid_publication_classify_api_hash")
+  .refine(value => value.owner.instanceId === value.binding.publisherRole.instanceId && value.owner.bootId === value.binding.publisherRole.bootId,
+    "invalid_publication_classify_api_owner").transform(value => value as unknown as PublicationClassifyApiDispatch);
+export const publicationClassifyApiTerminalSchema = z.object({ version: z.literal(1), kind: z.literal("publication_classify_gateway_terminal"),
+  dispatch: publicationClassifyApiDispatchSchema, finishReason: z.enum(["stop", "length", "tool_calls", "function_call", "content_filter"]),
+  responseHash: sha64, actualUsage: z.object({ inputTokens: z.number().int().nonnegative().safe(), outputTokens: z.number().int().nonnegative().safe(),
+    totalTokens: z.number().int().nonnegative().safe() }).strict().nullable(), provenance: z.enum(["upstream_reported", "unknown"]),
+}).strict().refine(value => value.actualUsage === null ? value.provenance === "unknown"
+  : value.provenance === "upstream_reported" && Number.isSafeInteger(value.actualUsage.inputTokens + value.actualUsage.outputTokens)
+    && value.actualUsage.inputTokens + value.actualUsage.outputTokens === value.actualUsage.totalTokens
+    && value.actualUsage.totalTokens <= value.dispatch.binding.totalTokenBound, "invalid_publication_classify_api_usage");
+export type PublicationClassifyApiTerminalEvidence = Readonly<z.infer<typeof publicationClassifyApiTerminalSchema>>;
+
 export const gatewayNotStartedEvidenceSchema = z.object({ version: z.literal(1), kind: z.literal("gateway_not_started"),
   dispatch: z.union([ai1ModelDispatchSchema, ai1ItemModelDispatchSchema, ai2ModelDispatchSchema, textProfileModelDispatchSchema,
     reasonTranslationModelDispatchSchema, productTranslationModelDispatchSchema, productTaglineKoModelDispatchSchema,
-    crawlTaglineModelDispatchSchema, searchVerifyModelDispatchSchema, websearchQueryModelDispatchSchema,
+    crawlTaglineModelDispatchSchema, searchVerifyModelDispatchSchema, websearchQueryModelDispatchSchema, publicationClassifyApiDispatchSchema,
     z.lazy(() => localModelDispatchSchema).transform(value => value as LocalModelDispatch)]) }).strict();
 export type GatewayNotStartedEvidence = Readonly<z.infer<typeof gatewayNotStartedEvidenceSchema>>;
 export type GatewayNotStartedDispatch = GatewayNotStartedEvidence["dispatch"];

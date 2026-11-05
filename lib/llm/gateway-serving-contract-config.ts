@@ -10,7 +10,7 @@ import { servingContractSnapshot } from "./serving-contract-store";
  * - 계약 값이 바뀌면 각 kind 의 계약 hash 가 바뀌어, 앞 계약으로 묶은 binding(servingContractHash)과 맞지 않는다.
  */
 export const GATEWAY_SERVING_CONTRACT_ROUTES = ["crawl-agent-review", "second-review", "product-search-profile", "crawl-tagline",
-  "product-search-verify", "reason-translate", "product-translate", "product-tagline-ko", "search-query-translate"] as const;
+  "product-search-verify", "reason-translate", "product-translate", "product-tagline-ko", "search-query-translate", "crawl-publish-classify"] as const;
 export type GatewayServingRoute = typeof GATEWAY_SERVING_CONTRACT_ROUTES[number];
 /**
  * non-raw wire 로 보내는 번역 4경로. abcLLM PR1 의 raw terminal 이 닿지 않아 PR3 엄격 terminal opt-in 이 있어야만 연다.

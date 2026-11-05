@@ -1,3 +1,7 @@
+import { ensureAiTaskExecutionConfigs, readAiTaskExecutionConfig } from '@/lib/llm/ai-task-execution-snapshot';
+import { classifyPublicationPool } from '@/lib/crawl/publication-classify-pool';
+import { jobKnob } from '@/lib/operations/runtime-settings-schema';
+import { runtimeSettings } from '@/lib/operations/runtime-settings-store';
 import { emitPipelineEvent } from "@/lib/observability/review-pipeline";
 import { and, notInArray, or } from 'drizzle-orm';
 import { crawlCandidates } from '@/lib/db/schema';
@@ -59,6 +63,18 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
     if (reopened) ctx.log("crawl.star_approvals_reopened", { count: reopened });
   }
 
+  await ensureAiTaskExecutionConfigs();
+  let execution: ReturnType<typeof readAiTaskExecutionConfig>;
+  try { execution = readAiTaskExecutionConfig('publish-classify'); }
+  catch (error) {
+    if (!(error instanceof ModelCapacityDeferredError)) throw error;
+    ctx.log('crawl.classification_deferred', { reason: error.reason });
+    return deferredJob<null>('model_capacity');
+  }
+  const pool = execution.mode === 'workload_pool';
+  // Independent classification batches; model admission still enforces each physical device's limit.
+  const classifyConcurrency = pool ? jobKnob(runtimeSettings(), 'crawl-publish', 'classifierConcurrency') : 1;
+  const classificationWaiting = new Set<number>();
   let published = 0;
   let skipped = 0;
   const conflicts = new Set<number>();
@@ -68,15 +84,23 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
   };
   const capacityDeferred = () => deferredJob<null>("model_capacity", published + skipped);
 
+  const poolCounts: Record<string, number> = { ranks: 0, pool_members: execution.members.length, pool_revision: execution.revision ?? 0 };
+  const classifyCtx: JobContext<null> = { ...ctx, log(event, fields) {
+    if (event !== 'ai_task.ranks') { ctx.log(event, fields); return; }
+    for (const [key, count] of Object.entries(fields ?? {}))
+      if (key.startsWith('member_') && typeof count === 'number') poolCounts[key] = (poolCounts[key] ?? 0) + count;
+  } };
+  try {
   while (ctx.hasBudget()) {
     // Filter before LIMIT so pending reviews cannot starve approved products.
-    const eligible = process.env.CONNECT_AGENT_URL
+    const eligible = pool || process.env.CONNECT_AGENT_URL
       ? and(reviewApprovalPredicate(settings), or(classificationReadyPredicate(), starAutoApprovalPredicate(settings)))
       : reviewApprovalPredicate(settings);
     // Exclude conflicting snapshots before LIMIT; they remain untouched for the next tick.
-    const candidates = await crawl.listCandidates(["approved"], BATCH,
-      and(eligible, conflicts.size ? notInArray(crawlCandidates.id, [...conflicts]) : undefined));
+    const candidates = await crawl.listCandidates(["approved"], BATCH * classifyConcurrency,
+      and(eligible, conflicts.size || classificationWaiting.size ? notInArray(crawlCandidates.id, [...conflicts, ...classificationWaiting]) : undefined));
     if (candidates.length === 0) {
+      if (classificationWaiting.size) return capacityDeferred();
       ctx.log("crawl.publish_done", { published, skipped, conflicts: conflicts.size, drained: conflicts.size === 0 });
       return { done: conflicts.size === 0 };
     }
@@ -85,11 +109,30 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
       candidate,
       classification: await prepareCandidateClassification(candidate),
     })));
-    const decisions = new Map(await Promise.all(prepared.map(async item => [item.candidate.repo, item.classification && process.env.CONNECT_AGENT_URL ? await decisionFor(item.candidate, item.classification.snapshot.document) : null] as const)));
+    const decisions = new Map(await Promise.all(prepared.map(async item => [item.candidate.repo, item.classification && (pool || process.env.CONNECT_AGENT_URL) ? await decisionFor(item.candidate, item.classification.snapshot.document) : null] as const)));
     const inputs = prepared.filter(item => !decisions.get(item.candidate.repo)?.category).flatMap(item => item.classification ? [item.classification.input] : []);
     let classified: (Category | null)[] = [];
     if (inputs.length > 0) {
-      if (process.env.CONNECT_AGENT_URL) {
+      if (pool) {
+        // Complete all started batches before publishing; an unsuccessful batch does not hide another batch's result.
+        const batches = Array.from({ length: Math.ceil(inputs.length / BATCH) }, (_, index) => inputs.slice(index * BATCH, (index + 1) * BATCH));
+        const outcomes = await Promise.allSettled(batches.map(batch => {
+          const selected = prepared.flatMap(item => item.classification && batch.some(input => input.repo === item.candidate.repo)
+            ? [{ candidate: item.candidate, classification: item.classification, decision: decisions.get(item.candidate.repo) ?? null }] : []);
+          return classifyPublicationPool(selected, { inputs: batch, definitions: settings.classify.definitions }, execution, classifyCtx);
+        }));
+        classified = outcomes.flatMap((outcome, index) => {
+          if (outcome.status === 'fulfilled') return outcome.value;
+          if (!(outcome.reason instanceof ModelCapacityDeferredError)) throw outcome.reason;
+          for (const input of batches[index]) {
+            const candidate = candidates.find(candidate => candidate.repo === input.repo);
+            if (candidate) classificationWaiting.add(candidate.id);
+          }
+          ctx.log('crawl.classification_deferred', { count: batches[index].length,
+            reason: outcome.reason instanceof ModelCapacityDeferredError ? outcome.reason.reason : 'provider_contract_unavailable' });
+          return batches[index].map(() => null);
+        });
+      } else if (process.env.CONNECT_AGENT_URL) {
         let nativeRequested = false;
         try {
           const payload = { inputs, definitions: settings.classify.definitions };
@@ -125,6 +168,7 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
     let rejudge = 0;
     try {
       for (const candidate of candidates) {
+        if (classificationWaiting.has(candidate.id)) continue;
         if (!ctx.hasBudget()) return { done: false };
         const manual = decisions.get(candidate.repo);
         const category = manual?.category as Category | null ?? categoryByRepo.get(candidate.repo) ?? null;
@@ -213,4 +257,8 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
 
   ctx.log("crawl.publish_done", { published, skipped, conflicts: conflicts.size, drained: false });
   return { done: false };
+  } finally {
+    // One end-of-tick observation retains all member counts even when several independent batches ran.
+    if (pool) ctx.log('ai_task.ranks', poolCounts);
+  }
 }

@@ -254,7 +254,7 @@ function runtimeView(status: TextRankStatus, from: AiTaskRuntimeView["from"], de
 export async function readAiTaskRuntime(): Promise<Record<string, AiTaskRuntimeView>> {
   // 작업 → 그 순위를 읽는 잡(text 일곱은 작업 id = 잡 이름, PR C1: 1차·2차·Grok 로그인 유지)
   const jobOf = new Map<string, string>([...AI_TEXT_TASK_IDS.filter(task => task !== "search-query-translate").map(task => [task, task] as const),
-    ["first-review", "crawl-agent-review"], ["second-review", "second-review"], ["grok-session-check", "grok-session-check"]]);
+    ["first-review", "crawl-agent-review"], ["second-review", "second-review"], ["grok-session-check", "grok-session-check"], ["publish-classify", "crawl-publish"]]);
   const taskOf = new Map([...jobOf].map(([task, job]) => [`job:${job}`, task]));
   const rows = await onPrimary(() => db.select({ key: operationsObservations.key, value: operationsObservations.value, observedAt: operationsObservations.observedAt })
     .from(operationsObservations).where(inArray(operationsObservations.key, [...taskOf.keys()])));
@@ -493,6 +493,8 @@ export async function saveAiTaskRanks(input: AiTaskRanksInput, actor: string): P
       }
       connections = storedConnections.map(connection => catalogs.has(connection.id) ? { ...connection, cliCatalog: catalogs.get(connection.id)! } : connection);
     }
+    if (task.id === 'publish-classify' && ranks.some(rank => rank && connections.find(connection => connection.id === rank.provider)?.kind === 'api'))
+      return { ok: false, issues: ['ai_task_publish_api_pool_only'] };
     const issues = validateAiTaskRanks(task.id, input.slot, ranks, { connections, rows });
     if (issues.length) return { ok: false, issues };
     const chosen = ranks.flatMap((row, index) => row ? [{ rank: index + 1, row, connection: connections.find(entry => entry.id === row.provider)! }] : []);
