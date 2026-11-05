@@ -1,6 +1,6 @@
 import { aiTask, aiTaskAccepts, aiTaskSlotLabel, isAiLiveTask } from "@/lib/llm/ai-tasks";
 import {
-  AI_RANK_SLOT_NAMES, aiConnectionLabel, aiConnectionModelIds, aiModelsErrorText, aiRankOptionBlocked, aiSameUnderlyingModel, aiTaskRankOptions, validateAiTaskRanks,
+  AI_RANK_SLOT_NAMES, aiRankChoiceOfRow, aiConnectionLabel, aiConnectionModelIds, aiModelsErrorText, aiRankOptionBlocked, aiSameUnderlyingModel, aiTaskRankOptions, validateAiTaskRanks,
   type AiConnectionView, type AiRankChoice, type AiRankOption, type AiTaskRankRow,
 } from "./admin-ai-tasks";
 import { isLocalModelHost } from "./admin-models-view";
@@ -103,7 +103,7 @@ export function buildFlowRankEditor(connections: readonly AiConnectionView[], ro
           }
         }
         lines.push({ key: `${id}#${slot}`, station, task: id, slot, label: aiTaskSlotLabel(task, slot), revision: revisionOf(own),
-          saved: own.map((row) => ({ provider: row.connectionId, model: row.model })), options, live: isAiLiveTask(id), lock: FLOW_RANK_LOCKS[id] ?? null });
+          saved: own.map(aiRankChoiceOfRow), options, live: isAiLiveTask(id), lock: FLOW_RANK_LOCKS[id] ?? null });
       }
     }
   }
@@ -134,7 +134,7 @@ const trim = (ranks: readonly (AiRankChoice | null)[]) => {
 };
 const same = (a: readonly (AiRankChoice | null)[], b: readonly (AiRankChoice | null)[]) => {
   const x = trim(a), y = trim(b);
-  return x.length === y.length && x.every((row, index) => (!row && !y[index]) || (!!row && !!y[index] && row.provider === y[index]!.provider && row.model === y[index]!.model));
+  return x.length === y.length && x.every((row, index) => (!row && !y[index]) || (!!row && !!y[index] && row.provider === y[index]!.provider && row.model === y[index]!.model && (row.reasoningEffort ?? "") === (y[index]!.reasoningEffort ?? "")));
 };
 
 /** 사람에게 보이는 순위 사슬 — 「1순위 gpu3090-qwen · qwen3.8-flash-next → 2순위 …」, 비면 「비어 있음」 */
@@ -142,7 +142,7 @@ export function rankChainText(editor: FlowRankEditor | null, ranks: readonly (Ai
   const parts = ranks.map((row, index) => {
     if (!row) return null;
     const connection = editor?.connections.find((entry) => entry.id === row.provider);
-    return `${index + 1}순위 ${connection ? aiConnectionLabel(connection) : "지워진 연결"} · ${row.model}`;
+    return `${index + 1}순위 ${connection ? aiConnectionLabel(connection) : "지워진 연결"} · ${row.model}${row.reasoningEffort ? ` · 추론 ${row.reasoningEffort}` : ""}`;
   }).filter((part): part is string => !!part);
   return parts.length ? parts.join(" → ") : "비어 있음";
 }
@@ -251,6 +251,7 @@ export function rankForm(line: Pick<FlowRankLine, "task" | "slot" | "revision">,
     if (!row || !AI_RANK_SLOT_NAMES[index]) return;
     form.set(AI_RANK_SLOT_NAMES[index].provider, row.provider);
     form.set(AI_RANK_SLOT_NAMES[index].model, row.model);
+    form.set(AI_RANK_SLOT_NAMES[index].reasoningEffort, row.reasoningEffort ?? "");
   });
   return form;
 }

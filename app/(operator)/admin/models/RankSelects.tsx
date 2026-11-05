@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import type { FirstReviewer } from "@/lib/crawl/agent-review";
 import { rankOptionKey, validateRanks, type RankStage } from "@/lib/operations/admin-first-review-ranks";
 
-type RankValue = { provider: string; model: string };
+type RankValue = { provider: string; model: string; reasoningEffort?: string };
 
 /**
  * 단계 × 모델 순위 — 한 단계 행에 1순위·2순위·3순위 드롭다운(각각 「없음」 포함). 실행은 1 → 2 → 3 순으로, 그 틱에 쓸 수 있는 가장 높은 순위를 쓴다.
@@ -16,8 +16,8 @@ type RankValue = { provider: string; model: string };
  */
 export function RankSelects<T extends RankValue>({ stage, options, value, onChange, slotNames, disabled = false, validate, note, showProvider = true, compact = false, blocked }: {
   stage: Pick<RankStage, "id" | "label" | "slots"> & Partial<Pick<RankStage, "routeId" | "providers">>;
-  options: readonly (T & { label: string; group?: string; text?: string })[]; value: readonly (T | null)[]; onChange: (value: (T | null)[]) => void;
-  slotNames: readonly { provider: string; model: string }[]; disabled?: boolean;
+  options: readonly (T & { label: string; group?: string; text?: string; reasoningEfforts?: readonly string[] })[]; value: readonly (T | null)[]; onChange: (value: (T | null)[]) => void;
+  slotNames: readonly { provider: string; model: string; reasoningEffort?: string }[]; disabled?: boolean;
   /** 기본 = 1차 AI 검수 규칙(validateRanks) */
   validate?: (slots: readonly (T | null)[]) => string[];
   /** 기본 = 1차 AI 검수의 순위 대체 안내 */
@@ -32,8 +32,11 @@ export function RankSelects<T extends RankValue>({ stage, options, value, onChan
     const choice = options.find(option => rankOptionKey(option) === key) ?? null;
     // 「없음」이 아닌데 선택지에서 못 찾은 값이면 바꾸지 않는다 — 조용히 빈 칸이 되어 저장 한 번에 순위가 지워지지 않게(2026-11-02 NUL 열쇠 사고)
     if (key !== "" && !choice) return;
-    // 값은 { provider, model } 두 칸뿐이다(선택지의 label·saved 를 싣지 않는다)
-    onChange(slots.map((row, at) => at === index ? (choice ? { provider: choice.provider, model: choice.model } as T : null) : row));
+    // 선택지의 label·saved는 싣지 않는다. 모델이 바뀌면 이전 모델의 추론 설정을 해제한다.
+    const previous = slots[index], next = choice ? { provider: choice.provider, model: choice.model } as T : null;
+    if (next && slotNames[index]?.reasoningEffort && previous?.reasoningEffort !== undefined)
+      next.reasoningEffort = previous.provider === next.provider && previous.model === next.model ? previous.reasoningEffort : "";
+    onChange(slots.map((row, at) => at === index ? next : row));
   };
   // 서버(group)마다 묶기 — 처음 나온 순서 그대로(선택지를 만든 쪽이 정한 순서)
   const groups = options.some(option => option.group) ? [...options.reduce((map, option) => map.set(option.group ?? "", [...map.get(option.group ?? "") ?? [], option]),
@@ -42,6 +45,8 @@ export function RankSelects<T extends RankValue>({ stage, options, value, onChan
     <div className="grid min-w-0 gap-2 sm:grid-cols-3">
       {slots.map((row, index) => {
         const key = row ? rankOptionKey(row) : "";
+        const effortName = slotNames[index]?.reasoningEffort;
+        const efforts = options.find(option => rankOptionKey(option) === key)?.reasoningEfforts ?? [];
         // 다른 칸에서 이미 고른 모델은 이 칸에서 고를 수 없다(중복 방지). 지금 이 칸의 값은 남긴다
         const taken = new Set(slots.filter((other, at) => other && at !== index).map(other => rankOptionKey(other!)));
         const item = (option: (typeof options)[number]) => <option key={rankOptionKey(option)} value={rankOptionKey(option)}
@@ -56,6 +61,17 @@ export function RankSelects<T extends RankValue>({ stage, options, value, onChan
           </select>
           {/* 묶은 목록에서는 닫힌 드롭다운에 모델 이름만 보이므로, 고른 값의 서버를 밑에 적는다(같은 모델을 두 서버에 둘 때 가린다) */}
           {groups && row && <span className="truncate text-[13px] text-fg-3" data-rank-server="true">{options.find(option => rankOptionKey(option) === key)?.group ?? ""}</span>}
+          {row && effortName && <>
+            <span className="text-fg-2">추론 강도</span>
+            {efforts.length > 0 || row.reasoningEffort ? <select aria-label={`${stage.label} ${index + 1}순위 추론 강도`} value={row.reasoningEffort ?? ""}
+              disabled={disabled} className="min-h-9 w-full min-w-0 rounded-lg border border-line bg-bg-card px-2"
+              onChange={event => onChange(slots.map((entry, at) => at === index && entry ? { ...entry, reasoningEffort: event.target.value } : entry))}>
+              <option value="">{efforts.length ? "기본값" : "설정 해제"}</option>
+              {row.reasoningEffort && !efforts.includes(row.reasoningEffort) && <option value={row.reasoningEffort} disabled>저장된 값: {row.reasoningEffort} (실행 미지원)</option>}
+              {efforts.map(effort => <option key={effort} value={effort}>{effort}</option>)}
+            </select> : <span className="text-fg-3">이 작업·모델은 설정 미지원</span>}
+            <input type="hidden" name={effortName} value={row.reasoningEffort ?? ""} />
+          </>}
           {row && <><input type="hidden" name={slotNames[index].provider} value={row.provider} /><input type="hidden" name={slotNames[index].model} value={row.model} /></>}
         </label>;
       })}

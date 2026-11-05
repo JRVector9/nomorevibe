@@ -15,6 +15,7 @@ import { claimAgentReviewWithCliModelReservation, claimConsumerItemAgentReviewWi
 import { claimSecondReviewItemWithCliModelReservation, SecondReviewCliModelReservationRequired, type SecondReviewCliModelClaim } from './second-review-ownership';
 import { isReviewCliProvider, prepareReviewCliCall, releaseReviewCliCall, reviewWithReservedCli, settleReviewCliNotStarted,
   type PreparedReviewCliCall, type ReviewCliOutcome } from './review-cli-call';
+import { reviewRankOptionsFor } from './review-task-ranks';
 import { reviewCliTimeoutMs, type AgentReviewResult } from './agent-review';
 import { grokReviewTimeoutMs } from './agent-review-grok';
 import type { ReviewInput } from './agent-review-contract';
@@ -69,7 +70,9 @@ async function admit<C extends { kind: string; dispatch?: CliModelDispatch }>(ca
 }
 async function prepare(input: ReviewInput, routeId: 'crawl-agent-review' | 'second-review', provider: string, model: string, timeoutMs: number) {
   if (!isReviewCliProvider(provider)) throw new ModelCapacityDeferredError('provider_contract_unavailable');
-  const call = await prepareReviewCliCall(input, { routeId, provider, model, timeoutMs });
+  const reasoningEffort = reviewRankOptionsFor(routeId, provider, model)?.reasoningEffort;
+  if (reasoningEffort !== undefined && typeof reasoningEffort !== 'string') throw new ModelCapacityDeferredError('provider_contract_unavailable');
+  const call = await prepareReviewCliCall(input, { routeId, provider, model, timeoutMs, reasoningEffort });
   if (call.kind !== 'prepared_cli') throw new ModelCapacityDeferredError('provider_contract_unavailable');
   return call;
 }

@@ -8,8 +8,8 @@ const hash = z.string().regex(/^[a-f0-9]{64}$/);
 const date = z.string().datetime().refine(value => new Date(value).toISOString() === value, "canonical_utc_required");
 const integer = z.number().int().nonnegative().safe();
 const positive = integer.positive();
-const identity = z.object({ provider: z.enum(["abcllm", "claude-cli", "grok-cli", "local-direct"]), model: text, canonicalModel: text }).strict();
-const secondIdentity = identity.extend({ provider: z.enum(["abcllm", "claude-cli", "grok-cli", "local-direct"]) });
+const identity = z.object({ provider: z.enum(["abcllm", "claude-cli", "grok-cli", "opencode-cli", "local-direct"]), model: text, canonicalModel: text }).strict();
+const secondIdentity = identity.extend({ provider: z.enum(["abcllm", "claude-cli", "grok-cli", "opencode-cli", "local-direct"]) });
 const input = z.object({ candidateId: positive, inputHash: hash, sourceRevisionHash: hash,
   readyAt: date, stratum: text, reReview: z.boolean() }).strict();
 export const capacityManifestSchema = z.object({

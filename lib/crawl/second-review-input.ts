@@ -23,7 +23,7 @@ export function firstReviewProviderPredicate(settings: CrawlSettings,
   attempts: { provider: AnyPgColumn; model: AnyPgColumn } = crawlReviewAttempts) {
   const pool = firstReviewers(settings);
   return or(inArray(attempts.provider, ["claude-cli", "abcllm"]),
-    firstReviewIdentitySql(pool.filter(reviewer => reviewer.provider === "grok-cli"), attempts))!;
+    firstReviewIdentitySql(pool.filter(reviewer => reviewer.provider === "grok-cli" || reviewer.provider === "opencode-cli"), attempts))!;
 }
 
 /** Shared pure validation for a locked worker input and the bounded admission snapshot. */
@@ -60,9 +60,9 @@ export function secondReviewInputMatches(row: SecondReview, current: {
       && first && !hasFirstReviewer(pool, first)) return false;
     if (!first || !first.model?.trim() || first.id !== row.firstAttemptId || first.candidateId !== row.candidateId
       || !heldQwen && (first.kind !== "automatic" || first.state !== "succeeded"
-      || !["claude-cli", "abcllm", "grok-cli", "local-direct"].includes(first.provider ?? "")
+      || !["claude-cli", "abcllm", "grok-cli", "opencode-cli", "local-direct"].includes(first.provider ?? "")
       // grok-cli·local-direct(PR 3b-C) 1차는 지금 1차 심사자 풀에 있을 때만 2차 입력이 된다(second-review.ts 와 같은 규칙)
-      || ((first.provider === "grok-cli" || first.provider === "local-direct") && !hasFirstReviewer(pool, first)))
+      || ((first.provider === "grok-cli" || first.provider === "opencode-cli" || first.provider === "local-direct") && !hasFirstReviewer(pool, first)))
       || first.inputHash !== input.inputHash || first.sourceRevisionHash !== input.sourceRevisionHash
       || first.policyHash !== input.policyHash || first.promptVersion !== REVIEW_PROMPT_VERSION || first.rulesVersion !== REVIEW_RULES_VERSION
       || first.outcome?.decision !== row.firstDecision || (first.outcome?.confidence ?? null) !== (row.firstConfidence ?? null)

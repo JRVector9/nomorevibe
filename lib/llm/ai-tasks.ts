@@ -8,12 +8,12 @@
  * PR B 부터 text 일곱 작업, PR C1 부터 심사 둘(1차·2차)과 Grok 로그인 유지가 이 목록과 표를 읽는다. 나머지는 관리 화면이 저장·비교만 한다.
  */
 
-export const AI_CLI_TOOLS = Object.freeze(["claude", "codex", "grok"] as const);
+export const AI_CLI_TOOLS = Object.freeze(["claude", "codex", "grok", "opencode"] as const);
 export type AiCliTool = (typeof AI_CLI_TOOLS)[number];
 /** CLI 도구 → 오늘 용량 장부·계약의 provider 이름. */
-export const AI_CLI_TOOL_PROVIDERS: Readonly<Record<AiCliTool, "claude-cli" | "codex-cli" | "grok-cli">> = Object.freeze({
-  claude: "claude-cli", codex: "codex-cli", grok: "grok-cli" });
-export const AI_CLI_TOOL_LABELS: Readonly<Record<AiCliTool, string>> = Object.freeze({ claude: "Claude CLI", codex: "Codex CLI", grok: "Grok CLI" });
+export const AI_CLI_TOOL_PROVIDERS: Readonly<Record<AiCliTool, "claude-cli" | "codex-cli" | "grok-cli" | "opencode-cli">> = Object.freeze({
+  claude: "claude-cli", codex: "codex-cli", grok: "grok-cli", opencode: "opencode-cli" });
+export const AI_CLI_TOOL_LABELS: Readonly<Record<AiCliTool, string>> = Object.freeze({ claude: "Claude CLI", codex: "Codex CLI", grok: "Grok CLI", opencode: "OpenCode CLI" });
 export const aiCliToolOfProvider = (provider: string): AiCliTool | null =>
   (Object.entries(AI_CLI_TOOL_PROVIDERS) as [AiCliTool, string][]).find(([, value]) => value === provider)?.[0] ?? null;
 
@@ -75,9 +75,9 @@ const tools = (...values: AiCliTool[]) => Object.freeze(values);
 /** 화면 순서 = 이 순서. id 는 바꾸지 않는다(ai_task_models.task 에 저장된다). */
 export const AI_TASKS: readonly AiTaskDef[] = Object.freeze([
   // 심사
-  task({ id: "first-review", label: "1차 AI 검수", group: "review", kind: "chat", api: true, cliTools: tools("claude", "grok"), routeId: "crawl-agent-review",
+  task({ id: "first-review", label: "1차 AI 검수", group: "review", kind: "chat", api: true, cliTools: tools("claude", "grok", "opencode"), routeId: "crawl-agent-review",
     wiring: "review-ai1", jobs: ["crawl-agent-review"], assignmentStage: "ai1", description: "수집한 후보를 처음으로 읽고 승인·거절·보류를 정합니다." }),
-  task({ id: "second-review", label: "2차 AI 검수", group: "review", kind: "chat", api: true, cliTools: tools("claude", "grok"), slots: 3, slotLabel: "투표자",
+  task({ id: "second-review", label: "2차 AI 검수", group: "review", kind: "chat", api: true, cliTools: tools("claude", "grok", "opencode"), slots: 3, slotLabel: "투표자",
     routeId: "second-review", wiring: "review-ai2", jobs: ["second-review"], assignmentStage: "ai2",
     description: "1차 결과를 투표자 셋이 다시 봅니다. 투표자마다 1·2·3순위를 따로 정합니다." }),
   task({ id: "human-review", label: "사람 몫 위임 검수", group: "review", kind: "chat", api: true, routeId: "local-human-deepseek", wiring: "local-direct",

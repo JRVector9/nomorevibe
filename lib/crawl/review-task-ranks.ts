@@ -31,7 +31,7 @@ import { canonicalReviewModel } from "./review-model-identity";
 
 export type ReviewTaskRoute = "crawl-agent-review" | "second-review";
 export const REVIEW_TASK_ROUTES: Readonly<Record<AiReviewTaskId, ReviewTaskRoute>> = Object.freeze({ "first-review": "crawl-agent-review", "second-review": "second-review" });
-export type ReviewRankProvider = "abcllm" | "local-direct" | "claude-cli" | "grok-cli";
+export type ReviewRankProvider = "abcllm" | "local-direct" | "claude-cli" | "grok-cli" | "opencode-cli";
 export type ReviewRankBinding = Readonly<{
   task: AiReviewTaskId; slot: number; rank: number; routeId: ReviewTaskRoute;
   connectionId: string; connectionLabel: string; deviceId: string;
@@ -75,7 +75,7 @@ export function reviewRouteContracts(routeId: ReviewTaskRoute): RouteContract[] 
 }
 
 const CLI_MODEL = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$/;
-const REVIEW_CLI_PROVIDERS: ReadonlySet<string> = new Set(["claude-cli", "grok-cli"]);
+const REVIEW_CLI_PROVIDERS: ReadonlySet<string> = new Set(["claude-cli", "grok-cli", "opencode-cli"]);
 
 /** 순위 하나 → 묶음(스냅숏 둘을 읽는다). */
 export function bindReviewTaskRank(task: AiReviewTaskId, rank: AiTaskRank, contracts: readonly RouteContract[] = reviewRouteContracts(REVIEW_TASK_ROUTES[task])): ReviewRankCandidate {
@@ -90,7 +90,7 @@ export function bindReviewTaskRank(task: AiReviewTaskId, rank: AiTaskRank, contr
     const provider = connection.cliTool ? AI_CLI_TOOL_PROVIDERS[connection.cliTool as AiCliTool] : null;
     if (!provider || !REVIEW_CLI_PROVIDERS.has(provider)) return result(null, "cli_tool_unsupported");
     if (!CLI_MODEL.test(rank.model)) return result(null, "cli_model_invalid");
-    const binding = Object.freeze({ ...base, provider: provider as "claude-cli" | "grok-cli", identity: rank.model, engineModel: rank.model });
+    const binding = Object.freeze({ ...base, provider: provider as "claude-cli" | "grok-cli" | "opencode-cli", identity: rank.model, engineModel: rank.model });
     // 웹 프로세스는 CLI 를 띄우지 않아 버전을 모른다(probe_pending) — 그때는 쓸 수 있는 것으로 둔다. 워커는 부를 때 계약·버전을 다시 본다
     const { status, observedVersion } = cliServingContractDiagnosis(routeId, provider as CliProvider, rank.model);
     if (status === "ready" || status === "probe_pending") return result(binding, null);
@@ -146,7 +146,7 @@ function pinnedResolution(pin: PinnedReviewRanks, task: AiReviewTaskId, slot: nu
   const routeId = REVIEW_TASK_ROUTES[task];
   const reviewers = task === "first-review" ? slot === 1 ? pin.first : [] : pin.second[slot - 1] ?? [];
   const candidates = reviewers.slice(0, 3).map((reviewer, index): ReviewRankCandidate => {
-    const cli = reviewer.provider === "claude-cli" || reviewer.provider === "grok-cli";
+    const cli = reviewer.provider === "claude-cli" || reviewer.provider === "grok-cli" || reviewer.provider === "opencode-cli";
     const connection = Object.freeze({ id: `00000000-0000-4000-8000-${String(index + slot * 10).padStart(12, "0")}`, label: `test-${reviewer.provider}`,
       kind: cli ? "cli" as const : "api" as const, baseUrl: cli ? null : "http://review.test:8000/v1", cliTool: cli ? reviewer.provider.replace(/-cli$/, "") : null,
       deviceId: "test-device", enabled: true, models: null, contextTokens: null, apiKey: null, keyUnreadable: false });
@@ -260,6 +260,20 @@ export function secondReviewSlotOf(model: string, ranks: SecondReviewRanks = sec
   return ranks.slots.find(slot => slot.voter && canonicalReviewModel(slot.voter.identity) === key)
     ?? ranks.slots.find(slot => slot.members.some(member => canonicalReviewModel(member.identity) === key)) ?? null;
 }
+/** Options of the exact rank represented by the selected reviewer; mirror identity deduplication above. */
+export function reviewRankOptionsFor(routeId: ReviewTaskRoute, provider: string, model: string): Readonly<Record<string, unknown>> | null {
+  // Compatibility/replay callers have no DB rank options; admission has already ensured the live rank snapshot.
+  if (settingsReviewersActive() || !aiTaskModelsReadState().loaded && !currentPin()) return null;
+  if (routeId === "crawl-agent-review") {
+    return resolveReviewTaskRanks("first-review").candidates.find(candidate => candidate.binding?.provider === provider && candidate.binding.identity === model)?.rank.options ?? null;
+  }
+  const ranks = secondReviewRanks(), slot = secondReviewSlotOf(model, ranks);
+  if (!slot) return null;
+  const voter = slot.voter?.provider === provider && slot.voter.identity === model ? slot.voter : null;
+  return slot.resolution.candidates.find(candidate => candidate.binding?.provider === provider && candidate.binding.identity === model
+    && (!voter || candidate.binding.connectionId === voter.connectionId && candidate.binding.rank === voter.rank))?.rank.options ?? null;
+}
+
 /**
  * 같은 칸의 대체 차례(PR C1 — 투표자 칸마다 따로 1·2·3순위). 첫 표 모델(root)이 든 칸에서 그 모델 다음 순위부터, 쓸 수 있는 것만. 다른 칸의 모델은 들지 않는다 —
  * 대체 목록을 투표자 모두가 나눠 쓰던 때(PR A 의 남은 일 2)처럼 한 모델이 한 항목에 두 표를 내지 않는다. 두 칸에 있는 모델은 secondReviewSlotOf 가 정한 칸의 것이다.

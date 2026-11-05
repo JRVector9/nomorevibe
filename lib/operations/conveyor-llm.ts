@@ -161,7 +161,7 @@ const where = (rank: RankSeen) => rank.connection;
  * 지키려고 남겨 둔 내부 키) nomorevibe 는 abcLLM 을 쓰지 않는다 — 화면에 그 키를 그대로 쓰지 않는다(2026-11-04 사람 지적).
  */
 const PROVIDER_TEXT: Readonly<Record<string, string>> = { abcllm: "직접 연결", "local-direct": "직접 연결", "llama-server": "직접 연결",
-  "claude-cli": "Claude CLI", "grok-cli": "Grok CLI", "codex-cli": "Codex CLI" };
+  "claude-cli": "Claude CLI", "grok-cli": "Grok CLI", "codex-cli": "Codex CLI", "opencode-cli": "OpenCode CLI" };
 
 /**
  * 순위에 맞지 않는 장부 호출의 「어디서」 — 1) 장부 이름의 연결 표지(모델@연결 8자) → 그 연결 이름, 2) 호출이 잡은 장비 그룹 → 장비 이름(gpu3090 등),

@@ -18,7 +18,7 @@ const positive = z.number().int().positive().safe();
 const count = z.number().int().nonnegative().safe();
 const sha64 = z.string().regex(/^[a-f0-9]{64}$/);
 export const CLI_PROTOCOL = "cli-process-v1";
-export const cliProviderSchema = z.enum(["claude-cli", "grok-cli", "codex-cli"]);
+export const cliProviderSchema = z.enum(["claude-cli", "grok-cli", "codex-cli", "opencode-cli"]);
 export type CliProvider = z.infer<typeof cliProviderSchema>;
 
 /** 턴 k 의 입력은 첫 입력과 앞선 출력의 합이다 — turns·(입력+overhead) + Σk·출력. 안전 정수를 넘으면 증명하지 못한다. */
@@ -33,7 +33,7 @@ export const cliServingContractSchema = z.discriminatedUnion("boundProvenance", 
   z.object({ ...contractBase, boundProvenance: z.literal("derived"), provider: z.literal("claude-cli"),
     maxTurns: positive.max(100), outputTokensPerTurn: positive, overheadTokenBound: positive }).strict()
     .refine(value => value.totalTokenBound >= claudeCliTokenBound(value), "cli_token_bound_below_formula"),
-  z.object({ ...contractBase, boundProvenance: z.literal("declared"), provider: z.enum(["grok-cli", "codex-cli"]) }).strict(),
+  z.object({ ...contractBase, boundProvenance: z.literal("declared"), provider: z.enum(["grok-cli", "codex-cli", "opencode-cli"]) }).strict(),
 ]);
 export type CliServingContract = Readonly<z.infer<typeof cliServingContractSchema>>;
 export function cliServingContractHash(value: CliServingContract): string {
@@ -58,13 +58,13 @@ const MAX_CONTRACT_ENTRIES = 32;
 const MAX_VERSION_OUTPUT_BYTES = 4 * 1024;
 /** 장부 CLI kind(capacity.ts)가 있는 route 와 그 kind 가 받는 CLI. */
 const CLI_CONTRACT_ROUTES: Readonly<Record<string, readonly CliProvider[]>> = {
-  "crawl-agent-review": ["claude-cli", "grok-cli"], "second-review": ["claude-cli", "grok-cli"],
+  "crawl-agent-review": ["claude-cli", "grok-cli", "opencode-cli"], "second-review": ["claude-cli", "grok-cli", "opencode-cli"],
   "product-audit": ["claude-cli"], "product-intro-check": ["claude-cli"], "grok-session-check": ["grok-cli"],
   "crawl-publish-classify": ["claude-cli", "codex-cli"],
 };
 /** 호출자(review-cli-call·cli-model-capacity·classify)가 띄우는 명령과 같은 식 — env 계약 route(감사·소개 검수·분류)만. DB 계약 route 는 cliCommandFor */
 const cliCommand = (provider: CliProvider) => ({ "claude-cli": process.env.CLAUDE_CLI ?? "claude",
-  "grok-cli": process.env.GROK_CLI ?? "grok", "codex-cli": process.env.CODEX_CLI ?? "codex" })[provider];
+  "grok-cli": process.env.GROK_CLI ?? "grok", "codex-cli": process.env.CODEX_CLI ?? "codex", "opencode-cli": "opencode" })[provider];
 
 /**
  * CLI 계약을 DB(model_serving_contracts 의 `cli:<provider>:<route>` 행 — 「작업 ↔ 모델」 순위 저장이 CLI 연결의 버전으로 만든다)에서만 읽는 route
@@ -76,7 +76,7 @@ export const CLI_DB_CONTRACT_ROUTES: ReadonlySet<string> = Object.freeze(new Set
 /** DB 계약 행의 route_id — (도구, route) 마다 따로라 같은 이름의 API 계약·다른 CLI 의 계약과 겹치지 않는다. 계약 JSON 의 routeId 도 이 값이다(표의 CHECK) */
 export const cliContractRouteId = (provider: CliProvider, routeId: string) => `cli:${provider}:${routeId}`;
 /** DB 계약 route 의 실행 파일 — PATH 의 도구 이름(env 경로를 읽지 않는다). */
-export const CLI_TOOL_COMMANDS: Readonly<Record<CliProvider, string>> = Object.freeze({ "claude-cli": "claude", "grok-cli": "grok", "codex-cli": "codex" });
+export const CLI_TOOL_COMMANDS: Readonly<Record<CliProvider, string>> = Object.freeze({ "claude-cli": "claude", "grok-cli": "grok", "codex-cli": "codex", "opencode-cli": "opencode" });
 /** 그 route 의 CLI 를 띄울 명령 — DB 계약 route 는 PATH 의 도구 이름, 그 밖은 예전 그대로(env 경로 또는 이름). */
 export const cliCommandFor = (routeId: string, provider: CliProvider): string =>
   CLI_DB_CONTRACT_ROUTES.has(routeId) ? CLI_TOOL_COMMANDS[provider] : cliCommand(provider);
@@ -105,7 +105,7 @@ export function observedCliToolVersion(provider: CliProvider): string | null {
 }
 /** DB 계약 행 하나 → 계약(검사에 통과한 것) 또는 null. */
 export function cliContractFromRow(row: { routeId: string; model: string; contract: unknown }): CliServingContract | null {
-  const match = /^cli:(claude-cli|grok-cli|codex-cli):(.+)$/.exec(row.routeId);
+  const match = /^cli:(claude-cli|grok-cli|codex-cli|opencode-cli):(.+)$/.exec(row.routeId);
   if (!match || !CLI_DB_CONTRACT_ROUTES.has(match[2]) || !row.contract || typeof row.contract !== "object") return null;
   const parsed = cliServingContractSchema.safeParse({ ...(row.contract as Record<string, unknown>), routeId: match[2] });
   return parsed.success && parsed.data.provider === match[1] && parsed.data.model === row.model && cliContractRouteAccepts(match[2], match[1])
@@ -160,7 +160,7 @@ export function probeCliServingContracts(): Promise<readonly CliServingContractP
 }
 async function probeDbCliTools(): Promise<CliServingContractProbeReport[]> {
   toolProbesEnabled = true;
-  const providers: CliProvider[] = ["claude-cli", "grok-cli"];
+  const providers: CliProvider[] = ["claude-cli", "grok-cli", "opencode-cli"];
   return Promise.all(providers.map(async provider => {
     const command = CLI_TOOL_COMMANDS[provider];
     const known = toolVersions.get(command);

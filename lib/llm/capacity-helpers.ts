@@ -60,7 +60,7 @@ export const ASSIGNMENT_STAGE_IDS = Object.freeze(["ai1", "ai2", "human", "audit
   "reason", "tagline", "profile", "verify", "ko", "translate", "publish-classify", "repo"] as const);
 export type AssignmentStage = (typeof ASSIGNMENT_STAGE_IDS)[number];
 /** 배정 표 행에 허락하는 CLI 공급자(등록부 provider 그대로가 정책 route 의 provider 다). */
-export const ASSIGNMENT_CLI_PROVIDERS = Object.freeze(["claude-cli", "grok-cli", "codex-cli"] as const);
+export const ASSIGNMENT_CLI_PROVIDERS = Object.freeze(["claude-cli", "grok-cli", "codex-cli", "opencode-cli"] as const);
 /** cli 전송은 이 장비(등록부 equipment)의 모델만 — connect-agent 가 CLI 를 띄운다. */
 export const ASSIGNMENT_CLI_EQUIPMENT = "connect";
 export const ASSIGNMENT_RANK_MAX = 64;

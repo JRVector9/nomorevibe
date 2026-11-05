@@ -31,8 +31,8 @@ const integer = z.number().int().nonnegative().safe();
 const positive = integer.positive();
 /** 구간 시작 기준 ms. DB가 시간대 없는 UTC 벽시계 차이를 직접 계산한 값이다. */
 const offset = z.number().int().safe();
-const identity = z.object({ provider: z.enum(["abcllm", "claude-cli", "grok-cli", "local-direct"]), model: text, canonicalModel: text }).strict();
-const secondIdentity = identity.extend({ provider: z.enum(["abcllm", "claude-cli", "grok-cli", "local-direct"]) });
+const identity = z.object({ provider: z.enum(["abcllm", "claude-cli", "grok-cli", "opencode-cli", "local-direct"]), model: text, canonicalModel: text }).strict();
+const secondIdentity = identity.extend({ provider: z.enum(["abcllm", "claude-cli", "grok-cli", "opencode-cli", "local-direct"]) });
 const decision = z.enum(["approve", "reject", "needs_review"]);
 const attempt = z.object({ id: positive, candidateId: positive, inputHash: hash,
   state: z.enum(["running", "succeeded", "failed", "superseded"]), failure: z.enum(["technical", "cancelled"]).nullable(),

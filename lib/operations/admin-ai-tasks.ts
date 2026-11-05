@@ -1,3 +1,4 @@
+import { aiTaskReasoningEfforts } from "@/lib/llm/ai-task-reasoning";
 import { AI_CLI_TOOL_LABELS, AI_CLI_TOOL_PROVIDERS, AI_CLI_TOOLS, AI_TASK_RANK_MAX, AI_TASKS, aiTask, aiTaskAccepts, aiTaskAliasIdentity, aiTaskSlotLabel,
   type AiCliTool, type AiTaskDef } from "@/lib/llm/ai-tasks";
 
@@ -22,11 +23,27 @@ export type AiConnectionView = Readonly<{
 export type AiTaskRankRow = Readonly<{ task: string; slot: number; rank: number; connectionId: string; model: string;
   options: Readonly<Record<string, unknown>>; enabled: boolean }>;
 /** RankSelects 의 값 한 칸 — provider 칸에 연결 id 를 둔다(폼 칸 이름 rank<N>Connection·rank<N>Model). */
-export type AiRankChoice = { provider: string; model: string };
+export type AiRankChoice = { provider: string; model: string; reasoningEffort?: string };
+/** Only settings actually consumed by the review CLI adapter are offered. */
+export const aiRankReasoningEfforts = (task: string, connection: Pick<AiConnectionView, "kind" | "cliTool">, model: string): readonly string[] =>
+  connection.kind === "cli" ? aiTaskReasoningEfforts(task, connection.cliTool, model) : [];
+export const aiRankChoiceOfRow = (row: Pick<AiTaskRankRow, "connectionId" | "model" | "options">): AiRankChoice => ({
+  provider: row.connectionId, model: row.model,
+  ...(typeof row.options.reasoningEffort === "string" && row.options.reasoningEffort ? { reasoningEffort: row.options.reasoningEffort } : {}),
+});
+/** Preserve unrelated existing options; absence of this form field keeps legacy callers compatible. */
+export function aiRankSavedOptions(choice: AiRankChoice, previous: Readonly<Record<string, unknown>> = {}): Record<string, unknown> {
+  const options = { ...previous };
+  if (choice.reasoningEffort !== undefined) {
+    if (choice.reasoningEffort) options.reasoningEffort = choice.reasoningEffort;
+    else delete options.reasoningEffort;
+  }
+  return options;
+}
 /**
  * 드롭다운 한 칸. label = 「연결 이름 · 모델」(묶지 않은 목록·기록용), group = 서버(연결) 이름 — 드롭다운은 서버마다 묶고(optgroup) 그 안에 text(모델 이름)만 보인다.
  */
-export type AiRankOption = AiRankChoice & { label: string; saved?: boolean; group?: string; text?: string };
+export type AiRankOption = AiRankChoice & { label: string; saved?: boolean; group?: string; text?: string; reasoningEfforts?: readonly string[] };
 
 export const AI_CONNECTION_SAVE_AUDIT_ACTION = "ai-connection-save";
 export const AI_CONNECTION_MODELS_AUDIT_ACTION = "ai-connection-models-read";
@@ -124,7 +141,7 @@ export function aiConnectionInputFromForm(form: FormLike): { input: AiConnection
 
 /** 「작업 ↔ 모델」 한 줄의 폼 칸 이름(RankSelects slotNames). */
 export const AI_RANK_SLOT_NAMES = Object.freeze(Array.from({ length: AI_TASK_RANK_MAX }, (_, index) =>
-  Object.freeze({ provider: `rank${index + 1}Connection`, model: `rank${index + 1}Model` })));
+  Object.freeze({ provider: `rank${index + 1}Connection`, model: `rank${index + 1}Model`, reasoningEffort: `rank${index + 1}ReasoningEffort` })));
 
 export type AiTaskRanksInput = Readonly<{ task: string; slot: number; revision: string; ranks: (AiRankChoice | null)[] }>;
 /** 「작업 ↔ 모델」 한 줄 폼 → 입력(빈 칸 = 「없음」). */
@@ -138,7 +155,10 @@ export function aiTaskRanksInputFromForm(form: FormLike): { input: AiTaskRanksIn
     const connection = text(form, names.provider), model = text(form, names.model);
     if (!connection && !model) return null;
     if (!UUID.test(connection) || !model || model.length > 200 || CONTROL.test(model)) { issues.push("ai_task_invalid:rank"); return null; }
-    return { provider: connection, model };
+    const rawEffort = form.get(names.reasoningEffort);
+    const reasoningEffort = typeof rawEffort === "string" ? rawEffort.trim() : undefined;
+    if (reasoningEffort !== undefined && !/^[a-z0-9_-]{0,32}$/.test(reasoningEffort)) issues.push("ai_task_invalid:rank");
+    return { provider: connection, model, ...(reasoningEffort !== undefined ? { reasoningEffort } : {}) };
   });
   return issues.length ? { input: null, issues } : { input: Object.freeze({ task, slot, revision, ranks }), issues };
 }
@@ -172,7 +192,7 @@ export function aiTaskRankOptions(task: AiTaskDef, connections: readonly AiConne
       const key = `${connection.id}\u0000${model}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      options.push({ provider: connection.id, model, label: `${aiConnectionLabel(connection)} · ${model}`, group: aiConnectionLabel(connection), text: model });
+      options.push({ provider: connection.id, model, label: `${aiConnectionLabel(connection)} · ${model}`, group: aiConnectionLabel(connection), text: model, reasoningEfforts: aiRankReasoningEfforts(task.id, connection, model) });
     }
   }
   for (const row of saved) {
@@ -181,7 +201,7 @@ export function aiTaskRankOptions(task: AiTaskDef, connections: readonly AiConne
     seen.add(key);
     const connection = connections.find(entry => entry.id === row.connectionId), group = connection ? aiConnectionLabel(connection) : "지워진 연결";
     options.push({ provider: row.connectionId, model: row.model, saved: true, group, text: `${row.model} (목록에 없음)`,
-      label: `${group} · ${row.model} (저장된 값 · 지금 목록에 없음)` });
+      label: `${group} · ${row.model} (저장된 값 · 지금 목록에 없음)`, reasoningEfforts: connection ? aiRankReasoningEfforts(task.id, connection, row.model) : [] });
   }
   return options;
 }
@@ -242,6 +262,8 @@ export function validateAiTaskRanks(taskId: string, slot: number, ranks: readonl
     if (!aiTaskAccepts(task, connection)) issues.push(connection.kind === "api"
       ? `${rank}순위: ${task.label}은(는) API 주소 연결을 받지 않습니다(CLI ${task.cliTools.map(tool => AI_CLI_TOOL_LABELS[tool]).join("·") || "없음"}만).`
       : `${rank}순위: ${task.label}은(는) ${connection.cliTool ? AI_CLI_TOOL_LABELS[connection.cliTool] : "이 CLI"}를 받지 않습니다.`);
+    if (row.reasoningEffort && !aiRankReasoningEfforts(task.id, connection, row.model).includes(row.reasoningEffort))
+      issues.push(`${rank}순위: 이 작업·모델에서 추론 강도 ${row.reasoningEffort}을(를) 실행할 수 없습니다.`);
     const offered = aiConnectionModelIds(connection).includes(row.model);
     const keptSaved = saved.some(entry => entry.connectionId === row.provider && entry.model === row.model);
     if (!offered && !keptSaved) issues.push(connection.kind === "api"
@@ -635,7 +657,7 @@ export function aiTaskSlotDigestInput(rows: readonly Pick<AiTaskRankRow, "rank" 
 
 const FIELD_LABELS: Readonly<Record<string, string>> = {
   id: "연결 id", expectedVersion: "판", label: "이름(1~80자)", kind: "종류(API·CLI)", baseUrl: "주소(http(s)://호스트[:포트]/v1)", apiKey: "API 키(공백 없이 4096자까지)",
-  cliTool: "CLI 도구(claude·codex·grok)", cliModels: "CLI 모델 이름(영숫자와 . _ : / -, 1~32개)", cliVersion: "CLI 버전(80자까지, `--version` 출력 그대로)",
+  cliTool: "CLI 도구(claude·codex·grok·opencode)", cliModels: "CLI 모델 이름(영숫자와 . _ : / -, 1~32개)", cliVersion: "CLI 버전(80자까지, `--version` 출력 그대로)",
   deviceId: "장비 이름(공백 없이 120자까지)",
   capacitySlots: "칸 수(1~256)", contextTokens: "컨텍스트 상한(1~2097152 토큰)", note: "메모(400자까지)",
   task: "작업", slot: "칸", revision: "화면 판", rank: "순위 칸",
