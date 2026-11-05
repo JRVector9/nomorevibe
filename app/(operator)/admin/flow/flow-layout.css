@@ -16,7 +16,7 @@
 .admin-prototype .flow-workspace .flow-grid {
   display: grid;
   grid-template-columns: repeat(9, minmax(0, 1fr));
-  min-width: 1332px;
+  min-width: 1422px;
 }
 .admin-prototype .flow-workspace .flow-grid .flow-card:last-child {
   grid-column: auto;
@@ -173,3 +173,24 @@
     grid-template-columns: 82px minmax(0, 1fr);
   }
 }
+
+
+/* Keep observation text and its timestamp together instead of distributing them across the page. */
+.admin-prototype .flow-observation-row {
+  display:flex;
+  flex-wrap:wrap;
+  justify-content:flex-start;
+  align-items:center;
+  gap:6px 14px;
+  padding:0;
+}
+.admin-prototype .flow-observation-meta {
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  justify-content:flex-start;
+  gap:4px 12px;
+  min-width:0;
+}
+.admin-prototype .flow-observation-meta > span { max-width:100%; }
+.admin-prototype .flow-observation-row > .flex { flex-wrap:wrap; }
