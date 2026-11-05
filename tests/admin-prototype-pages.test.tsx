@@ -36,6 +36,17 @@ describe("original HTML prototype layout with real-loader contracts", () => {
     expect(html).not.toMatch(/모델 A|Orbit Notes|가상 관측|시안 상황|NaN|undefined/);
   });
 
+  it("places streamed overview and SNS flow in their own slots without duplicating overview metrics", () => {
+    const html = renderToStaticMarkup(<PrototypeFlow data={data} desk={null} controls={controls} editor={null}
+      overviewContent={<section>전체 프로젝트 집계와 발행 추이</section>}
+      socialContent={<section>SNS 수집·발행 흐름</section>} />);
+    expect(html).toContain("전체 프로젝트 집계와 발행 추이");
+    expect(html).not.toContain('class="grid four home-kpis"');
+    expect(html.match(/class="flow-card"/g)).toHaveLength(9);
+    expect(html.indexOf("SNS 수집·발행 흐름")).toBeGreaterThan(html.indexOf('id="prototype-selected-stage"'));
+    expect(html.indexOf("SNS 수집·발행 흐름")).toBeLessThan(html.indexOf("먼저 처리할 일"));
+  });
+
   it.each([
     ["judge", "/admin/review?tab=all&stage=judge"], ["first", "/admin/review?tab=all&stage=ai"],
     ["second", "/admin/review?tab=all&stage=second"], ["publish", "/admin/review?tab=publish&stage=publish"],
