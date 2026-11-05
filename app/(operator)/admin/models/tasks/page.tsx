@@ -84,8 +84,11 @@ export default async function AiTasksPage({ searchParams }: Props) {
                 : <span className="text-fg-3">아직 못 읽음</span>}
               <div className="text-fg-3">{row.modelsReadAt ? `읽음 ${formatListTime(row.modelsReadAt, now)}` : ""}</div>
               {row.modelsError && <div className="text-red-600">마지막 오류: {aiModelsErrorText(row.modelsError)}</div>}
-            </> : <><code className="break-all">{row.cliModels.join(" ")}</code>
-              <div className="text-fg-3">{row.cliVersion ? <>CLI 버전 <code>{row.cliVersion}</code></> : "CLI 버전 없음 — 1차·2차 순위에 쓰려면 적으세요"}</div></>}</td>
+            </> : <>{row.cliTool === "opencode" ? <details><summary className="cursor-pointer">마지막 저장된 모델 {row.cliModels.length}개</summary>
+              <ul className="mt-1 grid max-h-64 gap-1 overflow-y-auto">{row.cliModels.map(model => <li key={model}><code className="break-all">{model}</code></li>)}</ul></details>
+              : <code className="break-all">{row.cliModels.join(" ")}</code>}
+              <div className="text-fg-3">{row.cliVersion ? <>CLI 버전 <code>{row.cliVersion}</code></> : "CLI 버전 없음 — 1차·2차 순위에 쓰려면 적으세요"}</div>
+              {row.cliTool === "opencode" && <div className="text-fg-3">{row.hasKey ? "호스트 RPC 인증 정보 저장됨" : "호스트 RPC 인증 정보 미확인"}</div>}</>}</td>
             <td className="py-2 pr-3"><code>{row.deviceId}</code> · {row.capacitySlots}칸</td>
             <td className="py-2 pr-3">{row.enabled ? "켜짐" : <span className="text-amber-700">꺼짐</span>}<div className="text-fg-3">판 {row.version}</div></td>
             <td className="py-2 pr-3 tabular-nums">{used(row.id)}</td>
