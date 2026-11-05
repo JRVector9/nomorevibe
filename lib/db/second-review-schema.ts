@@ -1,4 +1,5 @@
-import { pgTable, serial, integer, varchar, text, timestamp, doublePrecision, index, uniqueIndex, jsonb } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { pgTable, serial, integer, bigint, uuid, varchar, text, timestamp, doublePrecision, index, uniqueIndex, jsonb, check } from "drizzle-orm/pg-core";
 
 /**
  * 2차 심사 — 1차(규칙·AI)와 다른 모델이 같은 입력을 따로 본다.
@@ -77,3 +78,19 @@ export const secondReviews = pgTable("second_reviews", {
 ]);
 
 export type SecondReview = typeof secondReviews.$inferSelect;
+
+
+/** One new workload-pool vote's immutable selection snapshot; never a second vote or dispatch permit. */
+export const secondReviewWorkloadAssignments = pgTable("second_review_workload_assignments", {
+  secondReviewId: integer("second_review_id").primaryKey().references(() => secondReviews.id, { onDelete: "cascade" }),
+  taskSlot: integer("task_slot").notNull(),
+  configRevision: bigint("config_revision", { mode: "number" }).notNull(),
+  // No FK to live pool members: changing a pool must not erase a vote's original selection.
+  memberId: uuid("member_id").notNull(),
+  canonicalModel: varchar("canonical_model", { length: 200 }).notNull(),
+}, table => [
+  check("second_review_workload_slot_check", sql`${table.taskSlot} BETWEEN 1 AND 3`),
+  check("second_review_workload_revision_check", sql`${table.configRevision} BETWEEN 1 AND 9007199254740991`),
+  check("second_review_workload_canonical_check", sql`length(${table.canonicalModel}) > 0 AND ${table.canonicalModel} = btrim(${table.canonicalModel}) AND ${table.canonicalModel} !~ '[[:cntrl:]]'`),
+]);
+export type SecondReviewWorkloadAssignment = typeof secondReviewWorkloadAssignments.$inferSelect;

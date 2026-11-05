@@ -11,7 +11,7 @@ import { lockRepositoryAgentEvidence } from "@/lib/domain/evidence/agents/lock";
 import { prepareReplayFinalWrite, recordReplayFinalWrite, recordReplaySecondReviewTransition } from "@/lib/operations/pipeline-replay-final";
 import { recordAi2Attempt, recordHumanDecisionOverride, recordHumanDecisionRefused, recordLateWriteRefused } from "@/lib/operations/pipeline-evidence-ledger";
 import { crawlCandidates, crawlDocuments, crawlFrontier, crawlReviewAttempts, crawlSettings, secondReviews, products, pipelineItemLeases, agentRepositoryScans, agentRepositoryObservations, operationsAudit,
-  type CrawlCandidate, type CrawlDocument, type CrawlReviewAttempt, type ProductStatus, type SecondReview, type SecondReviewProvider, type SecondReviewStatus, type SecondReviewTrigger } from "@/lib/db/schema";
+  type CrawlCandidate, type CrawlDocument, type CrawlReviewAttempt, type ProductStatus, type SecondReview, type SecondReviewProvider, type SecondReviewStatus, type SecondReviewTrigger, type SecondReviewWorkloadAssignment } from "@/lib/db/schema";
 import { pageFactsFromDocument } from "./rules";
 import type { CrawlSettings } from "./settings-schema";
 import { mergeWithDefaults } from "./settings";
@@ -24,12 +24,16 @@ import { JobLeaseLostError, assertJobLeaseAtWallTime, requestJob, type JobLease 
 import { JOB_CATALOG } from "@/lib/jobs/catalog";
 import { dbErrorFields, isDbDeadlock } from "@/lib/db/error-fields";
 import { writerSiteActive } from "@/lib/operations/dr/epoch";
-import { canonicalReviewModel, sameReviewModel, sameUnderlyingModel } from "./review-model-identity";
+import { canonicalReviewModel, sameReviewModel, sameReviewIndependence, reviewIndependenceKey } from "./review-model-identity";
 import { secondReviewFallbacks, secondReviewFallbacksFor, secondReviewVoters, withoutTakenModels } from "./second-review-voters";
 import { requireReviewTaskRanks } from "./review-task-ranks";
+import { insertSecondReviewWorkloadRows, secondReviewAssignmentMap, secondReviewHasWorkloadPool,
+  secondReviewPoolRequiredSql, secondReviewPoolRootExistsSql, secondReviewPoolRootMembershipSql, secondReviewPoolMembershipSql,
+  secondReviewWorkloadMembership, secondReviewPoolHasIndependentMember, secondReviewVoteIndependent,
+  secondReviewAssignedVoteCanonical, secondReviewFirstCanonical } from "./second-review-workload";
 import { firstReviewers, firstReviewIdentitySql, hasFirstReviewer } from "./first-reviewers";
 import { reviewSemanticNow } from "./review-replay-context";
-import { appliedHeldQwenAttemptColumn, heldQwenGateFirst, heldQwenGateFirstSql, underlyingModelSql } from "./held-qwen-retry-policy";
+import { appliedHeldQwenAttemptColumn, heldQwenGateFirst, heldQwenGateFirstSql, reviewIndependenceSql } from "./held-qwen-retry-policy";
 import { hasLiveFetchItem } from "./fetch-ownership";
 import { lockFrontierIdentity } from "./repository";
 import { admitStaleProposals, capacityBlocksStaleReconcile, classifyAi2Vote, SOURCE_REFRESH_COOLDOWN_MS, STALE_REVIEW_OWNER, STALE_RECONCILE_EXAMINE_LIMIT,
@@ -45,6 +49,7 @@ type ControllerDomain = {
   candidate: CrawlCandidate | null; document: CrawlDocument | null; settings: CrawlSettings;
   input: ReviewInput | null; attempts: CrawlReviewAttempt[]; votes: SecondReview[];
   publishedProductId: number | null;
+  workloadAssignments?: ReadonlyMap<number, SecondReviewWorkloadAssignment>;
   staleSources?: { scan: typeof agentRepositoryScans.$inferSelect | null;
     frontier: typeof crawlFrontier.$inferSelect | null; inserted: boolean; blocked: boolean; fetchBusy?: boolean };
 };
@@ -125,7 +130,8 @@ async function lockControllerDomain(tx: ProductTransaction, candidateId: number,
     .orderBy(secondReviews.id).for("update");
   const input = candidate && document && candidate.productUrl === document.productUrl
     ? await loadReviewInput(candidate, document, settings, tx) : null;
-  return { candidate: candidate ?? null, document: document ?? null, settings, input, attempts, votes, publishedProductId, staleSources };
+  const workloadAssignments = secondReviewHasWorkloadPool() ? await secondReviewAssignmentMap(tx, votes) : undefined;
+  return { candidate: candidate ?? null, document: document ?? null, settings, input, attempts, votes, publishedProductId, staleSources, workloadAssignments };
 }
 
 /** Protect every generation, including malformed persisted bindings that still
@@ -247,7 +253,8 @@ function controllerInputMatches(domain: ControllerDomain, row: SecondReview, now
     || row.trigger === "ai_approved" && heldQwenGateFirst(settings, attempt, candidate))
     && (row.trigger !== "ai_approved" || identity && attempt.provider === identity.provider && attempt.model === identity.model));
   return (!row.publishedSlug || Boolean(domain.publishedProductId)) && secondReviewInputMatches(row,
-    { candidate, document, settings, input, first, root: domain.votes.find(root => root.id === row.fallbackForId) }, now);
+    { candidate, document, settings, input, first, root: domain.votes.find(root => root.id === row.fallbackForId),
+      workloadAssignment: domain.workloadAssignments?.get(row.fallbackForId ?? row.id) }, now);
 }
 
 async function holdLockedGate(tx: ProductTransaction, domain: ControllerDomain, detail: string, now: Date,
@@ -306,7 +313,7 @@ type Verdict = { decision: string; confidence: number | null };
 export function combineVerdicts(first: Verdict & { model?: string | null }, second: Vote, agreeAt: number, published: boolean):
   Exclude<SecondReviewStatus, "pending" | "failed" | "resolved"> {
   // 같은 가중치의 모델이면 자리 표시([gpu3090] 등)가 달라도 되풀이다 — 독립 표가 아니다
-  const echo = sameUnderlyingModel(first.model, second.model);
+  const echo = sameReviewIndependence(first.model, second.model);
   if (published) return !echo && second.decision === "approve" ? "agreed" : "needs_human";
   const agreed = !echo && first.decision === second.decision && first.decision !== "needs_review" && counts(second, agreeAt)
     && (first.confidence ?? 0) >= agreeAt;
@@ -354,9 +361,9 @@ export function combineVotes(first: Verdict, second: Vote[], options: {
   const votes: Vote[] = [];
   const known = new Map<string, Vote>();
   for (const vote of second) {
-    if (sameUnderlyingModel(options.firstModel, vote.model)) continue;
+    if (sameReviewIndependence(options.firstModel, vote.model)) continue;
     if (!vote.model) { votes.push(vote); continue; }
-    const key = canonicalReviewModel(vote.model);
+    const key = reviewIndependenceKey(vote.model);
     const prior = known.get(key);
     if (prior) {
       // Conflicting duplicate results cannot silently become an agreeing vote.
@@ -437,6 +444,7 @@ export async function enqueueSecondReviews(_settingsHint: CrawlSettings, now: Da
   const loneIds: number[] = [];
   const semanticNow = reviewSemanticNow(now);
   const held = settings.secondReview.includeAiHeld;
+  const workload = secondReviewHasWorkloadPool();
   const voters = [...new Map(secondReviewVoters(settings).map(voter => [canonicalReviewModel(voter.model), voter])).values()];
 
   /**
@@ -467,16 +475,16 @@ export async function enqueueSecondReviews(_settingsHint: CrawlSettings, now: Da
    * 것들만 매 틱 다시 집혀 뒤가 영영 올라가지 않는다(대상 738건 중 654건이 그렇게 밀렸다).
    */
   // 1차와 다른 모델(같은 가중치는 자리 표시가 달라도 같다)의 칸 수
-  const required = sql`(select count(*) from jsonb_array_elements_text(${JSON.stringify(voters.map(voter => voter.model))}::jsonb) as v(model)
-    where ${underlyingModelSql(sql`v.model`)} <> ${underlyingModelSql(sql`coalesce(${latest.firstModel}, '')`)})`;
+  const required = workload ? secondReviewPoolRequiredSql(sql`${latest.firstModel}`) : sql`(select count(*) from jsonb_array_elements_text(${JSON.stringify(voters.map(voter => voter.model))}::jsonb) as v(model)
+    where ${reviewIndependenceSql(sql`v.model`)} <> ${reviewIndependenceSql(sql`coalesce(${latest.firstModel}, '')`)})`;
   const decided = await db.select().from(latest)
     .where(and(or(sql`${latest.confidence} is not null`, held ? sql`${latest.decision} = 'needs_review'` : undefined),
-      eq(latest.promptVersion, REVIEW_PROMPT_VERSION), eq(latest.rulesVersion, REVIEW_RULES_VERSION), gt(latest.validUntil, semanticNow), sql`${required} > 0`, sql`(select count(*) from ${secondReviews} s
+      eq(latest.promptVersion, REVIEW_PROMPT_VERSION), eq(latest.rulesVersion, REVIEW_RULES_VERSION), gt(latest.validUntil, semanticNow), sql`${required} > 0`, (workload ? sql`NOT ${secondReviewPoolRootExistsSql(sql`${latest.candidateId}`, sql`${latest.firstAttemptId}`, sql`${latest.inputHash}`)}` : sql`(select count(*) from ${secondReviews} s
       where s.candidate_id = ${latest.candidateId} and s.input_hash = ${latest.inputHash}
         and s.first_attempt_id = ${latest.firstAttemptId}
         and exists(select 1 from jsonb_array_elements(${JSON.stringify(voters)}::jsonb) v
           where v->>'provider'=s.provider and regexp_replace(regexp_replace(lower(trim(v->>'model')), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i')
-            = regexp_replace(regexp_replace(lower(trim(s.model)), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i'))) < ${required}`))
+            = regexp_replace(regexp_replace(lower(trim(s.model)), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i'))) < ${required}`)))
     .limit(ENQUEUE_LIMIT * 4);
   /**
    * 세워 둔 모델마다 한 행. 누가 볼지를 올릴 때 적는다 — 유일 색인이 (후보, 입력, 모델)이라
@@ -489,7 +497,7 @@ export async function enqueueSecondReviews(_settingsHint: CrawlSettings, now: Da
   const rows: (typeof secondReviews.$inferInsert)[] = decided
     .filter((row) => row.decision === "approve" || row.decision === "reject" || (held && row.decision === "needs_review"))
     .slice(0, ENQUEUE_LIMIT)
-    .flatMap((row) => voters.filter(voter => !sameUnderlyingModel(row.firstModel, voter.model)).map((voter) => ({ ...voter, candidateId: row.candidateId, repo: row.repo,
+    .flatMap((row) => voters.filter(voter => workload || !sameReviewIndependence(row.firstModel, voter.model)).map((voter) => ({ ...voter, candidateId: row.candidateId, repo: row.repo,
       trigger: (row.decision === "needs_review" ? "ai_held" : "ai_decided") as SecondReviewTrigger,
       firstDecision: row.decision, firstConfidence: row.confidence, firstModel: row.firstModel, firstAttemptId: row.firstAttemptId, generationKey: secondReviewGeneration(row.firstAttemptId, row), inputHash: row.inputHash })));
 
@@ -514,16 +522,16 @@ export async function enqueueSecondReviews(_settingsHint: CrawlSettings, now: Da
           heldQwenGateFirstSql(settings, appliedHeldQwenAttemptColumn(crawlCandidates.signals)))))
       .orderBy(crawlReviewAttempts.candidateId, desc(crawlReviewAttempts.id))
       .as("approved_latest");
-    const gateRequired = sql`(select count(*) from jsonb_array_elements_text(${JSON.stringify(voters.map(voter => voter.model))}::jsonb) as v(model)
-      where ${underlyingModelSql(sql`v.model`)} <> ${underlyingModelSql(sql`coalesce(${approved.firstModel}, '')`)})`;
+    const gateRequired = workload ? secondReviewPoolRequiredSql(sql`${approved.firstModel}`) : sql`(select count(*) from jsonb_array_elements_text(${JSON.stringify(voters.map(voter => voter.model))}::jsonb) as v(model)
+      where ${reviewIndependenceSql(sql`v.model`)} <> ${reviewIndependenceSql(sql`coalesce(${approved.firstModel}, '')`)})`;
     const gate = await db.select().from(approved)
       .where(and(sql`${approved.decision} = 'approve'`, eq(approved.promptVersion, REVIEW_PROMPT_VERSION), eq(approved.rulesVersion, REVIEW_RULES_VERSION),
         // 지금 세운 모델의 행만 센다 — 모델을 바꾸면 옛 모델의 행이 수를 채워 새 모델의 표가 영영 안 올라간다
-        gt(approved.validUntil, semanticNow), sql`${gateRequired} > 0`, sql`(select count(*) from ${secondReviews} s
+        gt(approved.validUntil, semanticNow), sql`${gateRequired} > 0`, (workload ? sql`NOT ${secondReviewPoolRootExistsSql(sql`${approved.candidateId}`, sql`${approved.firstAttemptId}`, sql`${approved.inputHash}`, 'ai_approved')}` : sql`(select count(*) from ${secondReviews} s
           where s.candidate_id = ${approved.candidateId} and s.first_attempt_id = ${approved.firstAttemptId} and s.trigger = 'ai_approved'
             and exists(select 1 from jsonb_array_elements(${JSON.stringify(voters)}::jsonb) v
               where v->>'provider'=s.provider and regexp_replace(regexp_replace(lower(trim(v->>'model')), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i')
-                = regexp_replace(regexp_replace(lower(trim(s.model)), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i'))) < ${gateRequired}`))
+                = regexp_replace(regexp_replace(lower(trim(s.model)), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i'))) < ${gateRequired}`)))
       .limit(ENQUEUE_LIMIT);
     /*
      * 2차에 1차와 다른 모델이 하나도 없으면 두 모델 승인을 할 수 없다 — 발행도 재심사도 안 되는 채로 멈추지 않게
@@ -533,7 +541,7 @@ export async function enqueueSecondReviews(_settingsHint: CrawlSettings, now: Da
       .where(and(sql`${approved.decision} = 'approve'`, eq(approved.promptVersion, REVIEW_PROMPT_VERSION), eq(approved.rulesVersion, REVIEW_RULES_VERSION),
         gt(approved.validUntil, semanticNow), sql`${gateRequired} = 0`)).limit(ENQUEUE_LIMIT);
     loneIds.push(...lone.map(row => row.candidateId));
-    rows.push(...gate.flatMap((row) => voters.filter(voter => !sameUnderlyingModel(row.firstModel, voter.model)).map((voter) => ({ ...voter,
+    rows.push(...gate.flatMap((row) => voters.filter(voter => workload || !sameReviewIndependence(row.firstModel, voter.model)).map((voter) => ({ ...voter,
       candidateId: row.candidateId, repo: row.repo, trigger: "ai_approved" as SecondReviewTrigger,
       firstDecision: "approve", firstConfidence: row.confidence, firstModel: row.firstModel, firstAttemptId: row.firstAttemptId,
       generationKey: secondReviewGeneration(row.firstAttemptId, row, "ai_approved"), inputHash: row.inputHash }))));
@@ -541,7 +549,10 @@ export async function enqueueSecondReviews(_settingsHint: CrawlSettings, now: Da
 
   const publishedSince = new Date(semanticNow.getTime() - PUBLISHED_LOOKBACK_MS);
   // 지금 세운 모델 중 이 공개분을 아직 안 본 것이 있다 — 다 본 것이 2,000건 상한을 차지하지 않게 SQL 에서 거른다
-  const unsampled = sql`exists(select 1 from jsonb_array_elements_text(${JSON.stringify(voters.map(voter => canonicalReviewModel(voter.model)))}::jsonb) as v(model)
+  const unsampled = workload ? sql`NOT EXISTS (SELECT 1 FROM second_reviews wr
+    WHERE wr.candidate_id = ${crawlCandidates.id} AND wr.published_slug = ${crawlCandidates.publishedSlug}
+      AND wr.fallback_for_id IS NULL AND NOT (wr.status = 'resolved' AND coalesce(wr.resolution, '') IN ('superseded','model_removed'))
+      AND ${secondReviewPoolRootMembershipSql(sql`wr`)})` : sql`exists(select 1 from jsonb_array_elements_text(${JSON.stringify(voters.map(voter => canonicalReviewModel(voter.model)))}::jsonb) as v(model)
     where not exists(select 1 from ${secondReviews} s where s.candidate_id = ${crawlCandidates.id} and s.published_slug = ${crawlCandidates.publishedSlug}
       and regexp_replace(regexp_replace(lower(trim(s.model)), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i') = v.model
       and not (s.status = 'resolved' and coalesce(s.resolution, '') in ('superseded', 'model_removed'))))`;
@@ -584,7 +595,8 @@ export async function enqueueSecondReviews(_settingsHint: CrawlSettings, now: Da
     if (gate) {
       if (current.reviewMode !== "enforce" || candidate.decidedBy !== "auto" || candidate.state !== "approved" || candidate.publishedSlug
         || !freshFirst(domain, first, semanticNow) || first.outcome?.decision !== "approve") return 0;
-      const independent = currentVoters.filter(voter => !sameUnderlyingModel(first.model, voter.model));
+      const independent = workload ? (secondReviewPoolHasIndependentMember(first.model) ? currentVoters : [])
+        : currentVoters.filter(voter => !sameReviewIndependence(first.model, voter.model));
       if (!independent.length) {
         await holdLockedGate(tx, domain, "2차에 1차와 다른 모델이 없어 두 모델 승인을 할 수 없다 — 2차 모델 설정을 확인", now!, events);
         return 0;
@@ -604,7 +616,7 @@ export async function enqueueSecondReviews(_settingsHint: CrawlSettings, now: Da
       const signals = riskSignals({ name: typeof meta?.title === "string" ? meta.title : candidate.repo, productUrl: candidate.productUrl,
         textSample: facts.textSample ?? null, readme: typeof meta?.readmeSample === "string" ? meta.readmeSample : null });
       if (!signals.length && !inSample(candidate.repo, current.secondReview.sampleRate)) return 0;
-      proposed = currentVoters.filter(voter => !domain.votes.some(existing => existing.publishedSlug === candidate.publishedSlug
+      proposed = currentVoters.filter(voter => workload || !domain.votes.some(existing => existing.publishedSlug === candidate.publishedSlug
         && sameReviewModel(existing.model, voter.model) && publishedVoteTaken(existing)))
         .map(voter => ({ ...voter, candidateId, repo: candidate.repo, publishedSlug: candidate.publishedSlug,
           trigger: signals.length ? "risk" : "sample", signals, firstDecision: "approve", firstConfidence: null,
@@ -615,16 +627,15 @@ export async function enqueueSecondReviews(_settingsHint: CrawlSettings, now: Da
       const decision = first.outcome?.decision;
       if (!(decision === "approve" || decision === "reject" || current.secondReview.includeAiHeld && decision === "needs_review")
         || first.outcome?.confidence == null && decision !== "needs_review") return 0;
-      proposed = currentVoters.filter(voter => !sameUnderlyingModel(first.model, voter.model)).map(voter => ({ ...voter,
+      proposed = currentVoters.filter(voter => workload || !sameReviewIndependence(first.model, voter.model)).map(voter => ({ ...voter,
         candidateId, repo: candidate.repo, trigger: decision === "needs_review" ? "ai_held" : "ai_decided",
         firstDecision: decision, firstConfidence: first.outcome?.confidence ?? null, firstModel: first.model,
         firstAttemptId: first.id, generationKey: secondReviewGeneration(first.id, input), inputHash: input.inputHash }));
     }
-    proposed = proposed.filter(row => !domain.votes.some(existing => existing.generationKey === row.generationKey
+    proposed = proposed.filter(row => workload || !domain.votes.some(existing => existing.generationKey === row.generationKey
       && existing.inputHash === row.inputHash && sameReviewModel(existing.model, row.model)));
     if (!proposed.length) return 0;
-    const inserted = await tx.insert(secondReviews).values(proposed).onConflictDoNothing()
-      .returning({ id: secondReviews.id, generationKey: secondReviews.generationKey });
+    const inserted = await insertSecondReviewWorkloadRows(tx, proposed);
     if (inserted.length) {
       const obsolete = await tx.update(secondReviews).set({ status: "resolved", resolution: "superseded", resolvedAt: now })
         .where(and(eq(secondReviews.candidateId, candidateId), ne(secondReviews.generationKey, inserted[0].generationKey),
@@ -651,7 +662,7 @@ export async function closeSettledSecondReviews(now: Date | undefined, lease: Jo
   // Preserve each cleanup's SQL eligibility before selecting work. Normal human
   // waits and completed published history must never occupy the cleanup prefix.
   const removedPredicate = and(inArray(secondReviews.status, ["pending", "failed", "agreed", "needs_human"]),
-      sql`not exists(select 1 from jsonb_array_elements(case when ${secondReviews.fallbackForId} is null then ${JSON.stringify(voters)}::jsonb else ${JSON.stringify(fallbacks)}::jsonb end) v
+      secondReviewHasWorkloadPool() ? sql`NOT (${secondReviewPoolMembershipSql(sql`second_reviews`)})` : sql`not exists(select 1 from jsonb_array_elements(case when ${secondReviews.fallbackForId} is null then ${JSON.stringify(voters)}::jsonb else ${JSON.stringify(fallbacks)}::jsonb end) v
         where v->>'provider'=coalesce(${secondReviews.provider}, 'claude-cli')
           and regexp_replace(regexp_replace(lower(trim(v->>'model')), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i')
             = regexp_replace(regexp_replace(lower(trim(${secondReviews.model})), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i')
@@ -666,7 +677,8 @@ export async function closeSettledSecondReviews(now: Date | undefined, lease: Jo
   const orphanedPredicate = and(eq(secondReviews.status, "resolved"), eq(secondReviews.resolution, "fallback"), isNull(secondReviews.fallbackForId),
       sql`exists(select 1 from second_reviews child where child.fallback_for_id=${secondReviews.id} and child.resolution='model_removed')`,
       sql`not exists(select 1 from second_reviews child where child.fallback_for_id=${secondReviews.id} and child.status in ('pending','failed','agreed','needs_human'))`,
-      sql`exists(select 1 from jsonb_array_elements(${JSON.stringify(voters)}::jsonb) v
+      secondReviewHasWorkloadPool() ? secondReviewPoolRootMembershipSql(sql`second_reviews`)
+        : sql`exists(select 1 from jsonb_array_elements(${JSON.stringify(voters)}::jsonb) v
         where v->>'provider'=${secondReviews.provider}
           and regexp_replace(regexp_replace(lower(trim(v->>'model')), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i')
             = regexp_replace(regexp_replace(lower(trim(${secondReviews.model})), '@[0-9a-f]{8}$', ''), '^\\[mlx\\][[:space:]]*', '', 'i'))`);
@@ -695,7 +707,8 @@ export async function closeSettledSecondReviews(now: Date | undefined, lease: Jo
     const voters = secondReviewVoters(domain.settings), fallbacks = secondReviewFallbacks(domain.settings);
     const currentVotes = new Map(domain.votes.map(row => [row.id, { ...row }]));
     const changed = new Set<number>();
-    const inPool = (row: SecondReview, pool: typeof voters) => pool.some(voter => voter.provider === (row.provider ?? "claude-cli") && sameReviewModel(voter.model, row.model));
+    const inPool = (row: SecondReview, pool: typeof voters) => secondReviewHasWorkloadPool()
+      ? secondReviewWorkloadMembership(row, domain.workloadAssignments?.get(row.fallbackForId ?? row.id)) : pool.some(voter => voter.provider === (row.provider ?? "claude-cli") && sameReviewModel(voter.model, row.model));
     const update = async (row: SecondReview, patch: Partial<typeof secondReviews.$inferInsert>) => {
       const [updated] = await tx.update(secondReviews).set(patch).where(and(eq(secondReviews.id, row.id), eq(secondReviews.status, row.status),
         sql`${secondReviews.resolution} IS NOT DISTINCT FROM ${row.resolution}`)).returning();
@@ -870,7 +883,8 @@ function staleVoteVerdict(domain: ControllerDomain, row: SecondReview, semanticN
     first: domain.attempts.find(attempt => attempt.id === row.firstAttemptId) ?? null,
     latestFirstId: currentFirst(domain, row.trigger === "ai_approved")?.id ?? null,
     expectedGenerationKey: input ? secondReviewGeneration(row.firstAttemptId, input, row.trigger) : null,
-    reviewerConfigured: pool.some(voter => voter.provider === row.provider && sameReviewModel(voter.model, row.model)),
+    reviewerConfigured: secondReviewHasWorkloadPool() ? secondReviewWorkloadMembership(row, domain.workloadAssignments?.get(row.fallbackForId ?? row.id))
+      : pool.some(voter => voter.provider === row.provider && sameReviewModel(voter.model, row.model)),
     loaderAccepts: (row.status === "pending" || row.status === "failed") && controllerInputMatches(domain, row, semanticNow),
     promptVersion: REVIEW_PROMPT_VERSION, rulesVersion: REVIEW_RULES_VERSION, now: semanticNow,
   });
@@ -894,7 +908,8 @@ function unpublishedStaleDemand(domain: ControllerDomain, now: Date): "required"
     || settings.secondReview.includeAiHeld && decision === "needs_review")) return "not_required";
   if (first.outcome?.confidence == null && decision !== "needs_review") return "not_required";
   // 관문에 1차와 다른 모델이 없으면 enqueue 가 사람에게 넘긴다(holdLockedGate) — 그 뒤 갈림 보류라 not_required 가 된다
-  if (!gate && !secondReviewVoters(settings).some(voter => !sameUnderlyingModel(first.model, voter.model))) return "not_required";
+  if (!gate && !(secondReviewHasWorkloadPool() ? secondReviewPoolHasIndependentMember(first.model)
+    : secondReviewVoters(settings).some(voter => !sameReviewIndependence(first.model, voter.model)))) return "not_required";
   return "required";
 }
 
@@ -997,7 +1012,7 @@ async function reconcileLockedStaleCandidate(tx: ProductTransaction, domain: Con
       eq(secondReviews.resolution, "superseded"), eq(secondReviews.resolvedBy, STALE_REVIEW_OWNER)))
     .returning({ id: secondReviews.id }) : [];
   const inserted = plan.proposed.length
-    ? await tx.insert(secondReviews).values(plan.proposed).onConflictDoNothing().returning({ id: secondReviews.id }) : [];
+    ? await insertSecondReviewWorkloadRows(tx, plan.proposed) : [];
   // 오류가 남은 스캔은 저장된 백오프를 유지한다. due 만 당기면 수집기는 캐시로 보고 GitHub 를 부르지 않는다.
   // 이미 due 인 스캔(당길 것이 없거나 살아 있는 claim 이 보고 있다)은 깨우지 않고 변경으로 세지 않는다. 수집 큐가 due 를 보고
   // 그대로 집고(scheduler 1분 요청·이어 하기), 이 후보는 스캔이 끝날 때까지 틱마다 다시 검사되므로 깨우면 같은 잡 행을
@@ -1043,7 +1058,7 @@ function proposeCurrentStaleGeneration(domain: ControllerDomain, closedIds: Set<
     if (!productStatus || !PUBLIC_STATUSES.includes(productStatus)) return [];
     const signals = publishedStaleReviewSignals(candidate, document);
     if (!signals.length && !inSample(candidate.repo, settings.secondReview.sampleRate)) return [];
-    proposed = voters.filter(voter => !taken(voter.model, candidate.publishedSlug)).map(voter => ({ ...voter, candidateId: candidate.id,
+    proposed = voters.filter(voter => secondReviewHasWorkloadPool() || !taken(voter.model, candidate.publishedSlug)).map(voter => ({ ...voter, candidateId: candidate.id,
       repo: candidate.repo, publishedSlug: candidate.publishedSlug, trigger: signals.length ? "risk" as const : "sample" as const, signals,
       firstDecision: "approve", firstConfidence: null, firstAttemptId: null, generationKey: secondReviewGeneration(null, input),
       inputHash: publishedInputHash(candidate.publishedSlug!) }));
@@ -1053,11 +1068,11 @@ function proposeCurrentStaleGeneration(domain: ControllerDomain, closedIds: Set<
     const first = currentFirst(domain, gate)!;
     const decision = first.outcome!.decision;
     const trigger = gate ? "ai_approved" as const : decision === "needs_review" ? "ai_held" as const : "ai_decided" as const;
-    proposed = voters.filter(voter => !sameUnderlyingModel(first.model, voter.model)).map(voter => ({ ...voter, candidateId: candidate.id,
+    proposed = voters.filter(voter => secondReviewHasWorkloadPool() || !sameReviewIndependence(first.model, voter.model)).map(voter => ({ ...voter, candidateId: candidate.id,
       repo: candidate.repo, trigger, firstDecision: decision, firstConfidence: first.outcome?.confidence ?? null, firstModel: first.model,
       firstAttemptId: first.id, generationKey: secondReviewGeneration(first.id, input, trigger), inputHash: input.inputHash }));
   }
-  return admitStaleProposals(proposed, open);
+  return secondReviewHasWorkloadPool() ? proposed : admitStaleProposals(proposed, open);
 }
 
 /**
@@ -1330,7 +1345,7 @@ export async function recordSecondReview(input: {
       // Prefer an independent model. This also covers an extra AI1 worker using
       // the configured AI2 fallback: a same-first fallback is reference-only and must end in human review.
       // 같은 가중치는 자리 표시가 달라도 같은 모델이다('[gpu3090] qwen3.8-flash-next' 와 보류 재심사의 'qwen3.8-flash-next')
-      const backup = eligible.find(v => !sameUnderlyingModel(row.firstModel, v.model)) ?? eligible[0];
+      const backup = eligible.find(v => !sameReviewIndependence(row.firstModel, v.model)) ?? eligible[0];
       if (backup) {
         await tx.insert(secondReviews).values({ ...backup, candidateId: row.candidateId, repo: row.repo,
           publishedSlug: row.publishedSlug, trigger: row.trigger, signals: row.signals,
@@ -1465,7 +1480,7 @@ export type SecondChipKey = "unanimous_reject" | "unanimous_approve" | "agreed_r
  * 사람은 안전한 쪽부터 한 번에 확정한다. 아직 볼 표가 남은 후보는 어느 칩에도 넣지 않는다.
  */
 export async function secondReviewSummary(agreeAt: number): Promise<{ counts: SecondReviewCounts; ids: Record<SecondChipKey, number[]> }> {
-  const rows = await db.select({ candidateId: secondReviews.candidateId, status: secondReviews.status, decision: secondReviews.secondDecision,
+  const rows = await db.select({ id: secondReviews.id, candidateId: secondReviews.candidateId, status: secondReviews.status, decision: secondReviews.secondDecision,
     confidence: secondReviews.secondConfidence, provider: secondReviews.provider, model: secondReviews.model,
     fallbackForId: secondReviews.fallbackForId, generationKey: secondReviews.generationKey, inputHash: secondReviews.inputHash, published: secondReviews.publishedSlug, firstDecision: secondReviews.firstDecision,
     firstConfidence: secondReviews.firstConfidence, firstModel: secondReviews.firstModel }).from(secondReviews)
@@ -1473,6 +1488,9 @@ export async function secondReviewSummary(agreeAt: number): Promise<{ counts: Se
     // 집계에서 통째로 사라지면 멈춘 줄 모른다
     .where(inArray(secondReviews.status, ["pending", "agreed", "needs_human", "failed"]));
 
+  await requireReviewTaskRanks();
+  const pool = secondReviewHasWorkloadPool();
+  const assignments = pool ? await secondReviewAssignmentMap(db, rows) : new Map<number, SecondReviewWorkloadAssignment>();
   const byCandidate = new Map<number, typeof rows>();
   for (const row of rows) byCandidate.set(row.candidateId, [...(byCandidate.get(row.candidateId) ?? []), row]);
 
@@ -1485,13 +1503,20 @@ export async function secondReviewSummary(agreeAt: number): Promise<{ counts: Se
       continue;
     }
     const first = { decision: group[0].firstDecision, confidence: group[0].firstConfidence };
-    const outstanding = group.filter((row) => (row.fallbackForId || !sameUnderlyingModel(row.firstModel, row.model)) && (row.status === "pending" || row.status === "failed")).length;
+    const outstanding = group.filter((row) => (row.fallbackForId || (pool
+      ? secondReviewVoteIndependent(row.firstModel, row.model, assignments.get(row.id)) : !sameReviewIndependence(row.firstModel, row.model))) && (row.status === "pending" || row.status === "failed")).length;
     const votes = group.filter((row) => row.status === "agreed" || row.status === "needs_human")
-      .map((row) => ({ decision: row.decision ?? "", confidence: row.confidence, provider: row.provider, model: row.model }));
+      .map((row) => ({ decision: row.decision ?? "", confidence: row.confidence, provider: row.provider, model: pool
+        ? secondReviewAssignedVoteCanonical(row.model, assignments.get(row.fallbackForId ?? row.id), !!row.fallbackForId) : row.model }));
+    const firstCanonical = pool && group.some(row => assignments.has(row.fallbackForId ?? row.id))
+      ? secondReviewFirstCanonical(group[0].firstModel) : group[0].firstModel;
+    if (pool && group[0].firstModel && firstCanonical === null) { ids.needs_human.push(candidateId); continue; }
     const verdict = combineVotes(first, votes, { agreeAt, published: Boolean(group[0].published),
-      pending: outstanding, firstModel: group[0].firstModel });
+      pending: outstanding, firstModel: firstCanonical });
     if (verdict.status === "pending") { pending += 1; continue; }
-    const referenceOnly = group.some(row => row.fallbackForId && sameUnderlyingModel(row.firstModel, row.model));
+    const referenceOnly = group.some(row => row.fallbackForId && (pool
+      ? !secondReviewVoteIndependent(row.firstModel, row.model, assignments.get(row.fallbackForId), true)
+      : sameReviewIndependence(row.firstModel, row.model)));
     if (referenceOnly) {
       if (group[0].published) published += 1;
       else ids.needs_human.push(candidateId);

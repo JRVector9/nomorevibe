@@ -101,6 +101,8 @@ export async function runFirstReviewConsumer(input: {
             // 전역 미룸(draining·disabled·정책·owner)은 쪽을 접는다.
             if (error instanceof FirstReviewModelDeferredError && firstReviewDeferralIsLocal(error.reason)) {
               pausedReviewers.add(firstReviewerKey(error.reviewer));
+              // Keep the workload member affinity once its admission callback was attempted.
+              if (firstReviewRankState(settings).resolution?.execution?.mode === 'workload_pool') break;
               continue;
             }
             stop = true;

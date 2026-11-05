@@ -6,6 +6,8 @@ import { itemOwnerSchema, type ItemOwner } from '@/lib/jobs/items/types';
 import { ModelCapacityDeferredError, modelCapacityDeferralIsPerModel, modelCapacityDeferralIsPerWork } from '@/lib/llm/capacity-deferred';
 import type { ProviderCircuits } from '@/lib/llm/provider-circuit-breaker';
 import { logger } from '@/lib/observability/logger';
+import { jobKnob } from '@/lib/operations/runtime-settings-schema';
+import { runtimeSettings } from '@/lib/operations/runtime-settings-store';
 import type { HostAdmission } from '@/lib/operations/host-budget-runtime';
 import { interruptibleSleep, type RuntimeReport } from '@/scripts/worker';
 import { executeSecondReviewConsumerItem } from '../second-review-item-lifecycle';
@@ -22,7 +24,8 @@ type PriorityCursor = { ordinal: number; id: number };
  * Rotate separately so stale hints cannot hide another reservation or waiter. */
 async function priorityHint(owner: ItemOwner, cursor: PriorityCursor | null, reserved: boolean) {
   const request = modelCapacityRequests;
-  const [hint] = await onPrimary(() => db.select({ id: secondReviews.id,
+  const [hint] = await onPrimary(() => db.select({ id: secondReviews.id, candidateId: secondReviews.candidateId,
+    vote: sql<number>`coalesce(${secondReviews.fallbackForId}, ${secondReviews.id})`,
     fallback: sql<boolean>`${secondReviews.fallbackForId} IS NOT NULL`, provider: secondReviews.provider, model: secondReviews.model,
     reserved: sql<boolean>`${reserved}`, ordinal: request.queueOrdinal }).from(request).innerJoin(secondReviews, and(
       eq(secondReviews.status, 'pending'), eq(request.provider, secondReviews.provider), eq(request.model, secondReviews.model),
@@ -41,7 +44,8 @@ async function priorityHint(owner: ItemOwner, cursor: PriorityCursor | null, res
 /** Hints only. The fixed lifecycle rechecks stage, current domain and ownership. */
 async function hints(cursor: Cursor | null) {
   const fallback = sql<boolean>`${secondReviews.fallbackForId} IS NOT NULL`;
-  return onPrimary(() => db.select({ id: secondReviews.id, fallback, provider: secondReviews.provider, model: secondReviews.model }).from(secondReviews)
+  return onPrimary(() => db.select({ id: secondReviews.id, candidateId: secondReviews.candidateId,
+    vote: sql<number>`coalesce(${secondReviews.fallbackForId}, ${secondReviews.id})`, fallback, provider: secondReviews.provider, model: secondReviews.model }).from(secondReviews)
     .where(and(eq(secondReviews.status, 'pending'), cursor ? or(
       and(eq(fallback, cursor.fallback), gt(secondReviews.id, cursor.id)),
       cursor.fallback ? isNull(secondReviews.fallbackForId) : undefined,
@@ -100,64 +104,91 @@ export async function runSecondReviewConsumer(input: {
     const priorities = [reserved, waiting].filter(hint => hint !== undefined);
     const queue = [...priorities, ...normal];
     let deferred = false, completed = false, circuitOpen = false, rerouted = false;
+    const concurrency = jobKnob(runtimeSettings(), 'second-review', 'consumerConcurrency');
+    const active = new Map<number, number>(), scheduledVotes = new Set<number>();
+    let next = 0, stopNewClaims = false, normalPosition = -1, peak = 0, validatedInputHints = 0;
+    const inputReadyCandidates = new Set<number>();
+    const advance = (hint: (typeof queue)[number]) => {
+      const position = normal.indexOf(hint);
+      if (position > normalPosition) { normalPosition = position; cursor = { id: hint.id, fallback: hint.fallback }; }
+    };
+    const reportActive = () => {
+      if (active.size) report?.('running', 'second-review', Math.min(...active.values()));
+      else report?.('idle');
+    };
     // 그 모델만의 미룸(포화·대기열·정책에 없음·계약 없음·장비 없음)을 받은 provider:model — 이 패스(쪽) 동안만 그 모델의 표를 건너뛰고
     // 다른 모델의 표는 계속 본다(2026-10-31 결정 "하나가 잘못되면 다음 작업도 안 되는 구조는 이유가 없다"). 다음 쪽은 다시 한 번 묻는다.
     const pausedModels = new Set<string>();
-    for (const hint of queue) {
-      if (halt?.aborted || once && result.attempted >= 100) break;
+    const execute = async (hint: (typeof queue)[number]) => {
+      if (halt?.aborted || stopNewClaims) return;
       const priority = hint === reserved || hint === waiting;
-      if (!priority && priorities.some(prioritized => hint.id === prioritized.id)) {
-        cursor = { id: hint.id, fallback: hint.fallback };
-        continue;
-      }
+      // Root/fallback/priority hints for one vote share one lifecycle in this pass.
+      if (scheduledVotes.has(hint.vote)) { if (!priority) advance(hint); return; }
+      scheduledVotes.add(hint.vote);
       const modelKey = `${hint.provider ?? 'unknown'}:${hint.model ?? 'unknown'}`;
       if (pausedModels.has(modelKey)) {
-        if (!priority) cursor = { id: hint.id, fallback: hint.fallback };
-        result.deferred++; continue;
+        if (!priority) advance(hint);
+        result.deferred++; return;
       }
-      // 회로가 열린 provider·model 의 표만 claim 없이 건너뛰고 다른 모델은 계속 본다
       const circuit = input.circuits?.admit(`ai2:${modelKey}`);
       if (circuit?.admitted === false) {
-        if (!priority) cursor = { id: hint.id, fallback: hint.fallback };
-        result.deferred++; circuitOpen = true; continue;
+        if (!priority) advance(hint);
+        result.deferred++; circuitOpen = true; return;
       }
-      // host 예산 거절은 이 hint 하나만 넘기고 쪽을 계속 본다 — cursor 는 넘기지 않아 다음 패스가 다시 집고, 쪽 끝의 5초 쉼이 되풀이를 막는다
-      const host = input.admit
-        ? await input.admit('second-review').catch(() => ({ admitted: false as const, reason: 'host_budget_unavailable' as const })) : null;
-      if (host?.admitted === false) {
-        circuit?.done(); logger.info('pipeline_consumer.deferred', { stage: 'ai2', reason: host.reason });
-        result.deferred++; deferred = true; continue;
-      }
-      if (!priority) cursor = { id: hint.id, fallback: hint.fallback };
-      result.attempted++;
-      report?.('running', 'second-review', Date.now());
+      let host: HostAdmission | null = null;
       try {
-        // One awaited lane; neither pool ownership nor HTTP crosses the hint query.
+        host = input.admit
+          ? await input.admit('second-review').catch(() => ({ admitted: false as const, reason: 'host_budget_unavailable' as const })) : null;
+        if (host?.admitted === false) {
+          logger.info('pipeline_consumer.deferred', { stage: 'ai2', reason: host.reason });
+          result.deferred++; deferred = true; return;
+        }
+        // A sibling can stop admission while this lifecycle awaits its host permit.
+        if (halt?.aborted || stopNewClaims || once && result.attempted >= 100) return;
+        if (!priority) advance(hint);
+        result.attempted++;
+        active.set(hint.id, Date.now()); peak = Math.max(peak, active.size); reportActive();
         const written = await executeSecondReviewConsumerItem({ secondReviewId: hint.id, owner, signal,
-          ...(stopClaims ? { stopClaims } : {}), ...(circuit ? { onProviderResult: circuit.record } : {}) });
+          ...(stopClaims ? { stopClaims } : {}), ...(circuit ? { onProviderResult: circuit.record } : {}),
+          onInputReady: () => { validatedInputHints++; inputReadyCandidates.add(hint.candidateId); } });
         if (written.state === 'rerouted') {
-          result.skipped++; cursor = null; rerouted = true; resumeFallback = true;
-          break;
+          result.skipped++; cursor = null; rerouted = true; resumeFallback = true; stopNewClaims = true;
+          return;
         }
         if (written.state === 'recorded') { result.recorded++; completed = true; }
-        else result.skipped++;
+        else {
+          result.skipped++;
+          logger.info('pipeline_consumer.claim_skipped', { stage: 'ai2', reason: 'reason' in written ? written.reason : written.state });
+        }
       } catch (error) {
-        if (!(error instanceof ModelCapacityDeferredError)) throw error;
-        // 이 항목만의 미룸 — 앞선 호출이 아직 보내진 중(dispatched)이거나 같은 항목이 다른 요청에 묶였다(work_busy, fence; AI1 과 같은 #754 처리),
-        // 장부 세대가 어긋났다(ledger_mismatch). 항목 하나를 건너뛰고 쪽을 계속 본다(미확인 행은 더 이상 이 사유를 내지 않는다).
-        if (modelCapacityDeferralIsPerWork(error.reason)) { result.skipped++; continue; }
+        if (!(error instanceof ModelCapacityDeferredError)) { stopNewClaims = true; throw error; }
+        if (modelCapacityDeferralIsPerWork(error.reason)) { result.skipped++; return; }
         result.deferred++;
-        // 그 모델만의 미룸 — 이 쪽에서 그 provider:model 의 남은 표만 건너뛰고 다른 모델의 표는 계속 본다
-        if (modelCapacityDeferralIsPerModel(error.reason)) { pausedModels.add(modelKey); continue; }
-        // 전역 미룸(draining·disabled·정책·owner) — 어느 모델에도 새 요청을 낼 수 없다. 쪽을 접고 cursor 를 지킨 채 5초 쉰다
-        deferred = true;
-        if (!priority) break;
+        logger.info('pipeline_consumer.deferred', { stage: 'ai2', reason: error.reason });
+        if (modelCapacityDeferralIsPerModel(error.reason)) { pausedModels.add(modelKey); return; }
+        // Global denial stops NEW claims; already admitted lifecycles still finish.
+        deferred = true; stopNewClaims = true;
       } finally {
         circuit?.done();
         if (host?.admitted) await host.release().catch(() => {});
-        report?.('idle');
+        active.delete(hint.id); reportActive();
       }
-    }
+    };
+    // The limit is lifecycle work, not votes/member count or a physical-slot grant.
+    const lanes = Array.from({ length: concurrency }, async () => {
+      while (next < queue.length && !halt?.aborted && !stopNewClaims && !(once && result.attempted >= 100)) {
+        try { await execute(queue[next++]); }
+        catch (error) { stopNewClaims = true; throw error; }
+      }
+    });
+    const outcomes = await Promise.allSettled(lanes);
+    logger.info('pipeline_consumer.page', { stage: 'ai2', pendingHints: normal.length,
+      uniqueCandidateHints: new Set(normal.map(hint => hint.candidateId)).size,
+      scheduledVotes: scheduledVotes.size, validatedInputHints, inputReadyCandidateHints: inputReadyCandidates.size, lifecycleLimit: concurrency, lifecyclePeak: peak,
+      rerouted, deferred });
+    const failures = outcomes.flatMap(outcome => outcome.status === 'rejected' ? [outcome.reason] : []);
+    if (failures.length === 1) throw failures[0];
+    if (failures.length) throw new AggregateError(failures, 'second_review_lifecycles_failed');
     pages++;
     if (rerouted) {
       if (once && (pages >= MAX_PAGES || result.attempted >= 100)) break;
@@ -168,7 +199,7 @@ export async function runSecondReviewConsumer(input: {
     // An empty normal keyset reached EOF independently of the priority hint.
     // Repeated stale reservation deferrals must not pin it beyond the last row.
     if (normal.length === 0 || end && !deferred && !completed) cursor = null;
-    if (halt?.aborted || once && (end || deferred || pages >= MAX_PAGES)) break;
+    if (halt?.aborted || once && (end || deferred || pages >= MAX_PAGES || result.attempted >= 100)) break;
     if (completed && !once) pages = 0;
     // Bound scans even when every pending row remains busy. Keep the keyset
     // across this backoff so low IDs cannot monopolize every pass.

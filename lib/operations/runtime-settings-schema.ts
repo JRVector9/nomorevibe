@@ -17,7 +17,7 @@ import { DEFAULT_MODEL_DEADLINES, DEFAULT_MODEL_DEFINITIONS, DEFAULT_MODEL_PURPO
  */
 
 export type PurposeLimit = { maxTokens: number; concurrency: number; timeoutMs?: number };
-export type JobKnobs = { batch?: number; batchChars?: number; minCallMs?: number; slowCallMs?: number; soloAttempts?: number; callMs?: number; maxAttempts?: number };
+export type JobKnobs = { batch?: number; batchChars?: number; minCallMs?: number; slowCallMs?: number; soloAttempts?: number; callMs?: number; maxAttempts?: number; consumerConcurrency?: number };
 export type JobKnobName = keyof JobKnobs;
 export type ProductTranslationPolicy = { maxSourceChars: number; batchChars: number; batchMax: 4; demandLimit: number; maxAttempts: number; jobMarginMs: number };
 export type JobBudget = number | "auto";
@@ -69,6 +69,8 @@ export const DEFAULT_RUNTIME_SETTINGS: RuntimeSettings = deepFreeze({
   // lib/domain/products/translation-policy.ts PRODUCT_TRANSLATION_* 와 lib/llm/deadline-ladder.ts PRODUCT_TRANSLATION_JOB_MARGIN_MS 의 원천
   translation: { product: { maxSourceChars: 30_000, batchChars: 8_000, batchMax: 4, demandLimit: 80, maxAttempts: 4, jobMarginMs: 15_000 } },
   jobs: {
+    // AI2 item lifecycles; independent of member count and physical model admission.
+    "second-review": { consumerConcurrency: 1 },
     // lib/crawl/jobs/translate-reasons.ts BATCH·BATCH_CHARS·MIN_CALL_MS·SOLO_ATTEMPTS
     "reason-translate": { batch: 4, batchChars: 1_600, minCallMs: 30_000, soloAttempts: 3 },
     // lib/crawl/jobs/tagline.ts BATCH·MIN_CALL_MS (동시 호출·호출 상한은 routes.limits/timeouts.crawl-tagline)
@@ -146,7 +148,7 @@ export const translationProductSchema = z.object({
 }).strict();
 export const jobKnobsSchema = z.object({
   batch: int(1, 64), batchChars: int(100, 30_000), minCallMs: ms(1_000, 600_000), slowCallMs: ms(1_000, 600_000),
-  soloAttempts: int(1, 10), callMs: ms(5_000, 600_000), maxAttempts: int(1, 50),
+  soloAttempts: int(1, 10), callMs: ms(5_000, 600_000), maxAttempts: int(1, 50), consumerConcurrency: int(1, 4),
 }).partial().strict();
 export const jobBudgetSchema = z.union([ms(5_000), z.literal("auto")]);
 export const JOB_KNOB_NAMES = Object.freeze(Object.keys(jobKnobsSchema.shape) as JobKnobName[]);
@@ -424,7 +426,7 @@ const LADDER_FIELD_LABELS: Record<keyof DeadlineLadder, string> = { engineMs: "�
 const TRANSLATION_FIELD_LABELS: Record<keyof ProductTranslationPolicy, string> = { maxSourceChars: "원문 글자 상한", batchChars: "묶음 글자 임계", batchMax: "묶음 최대 건수",
   demandLimit: "요청 보류 한도", maxAttempts: "최대 시도", jobMarginMs: "틱 여유(ms)" };
 const KNOB_LABELS: Record<JobKnobName, string> = { batch: "묶음", batchChars: "묶음 글자", minCallMs: "최소 남은 시간(ms)", slowCallMs: "느린 호출(ms)",
-  soloAttempts: "혼자 보내는 실패 수", callMs: "호출 상한(ms)", maxAttempts: "최대 시도" };
+  soloAttempts: "혼자 보내는 실패 수", callMs: "호출 상한(ms)", maxAttempts: "최대 시도", consumerConcurrency: "소비자 동시 업무(1~4)" };
 export const GROUP_LABELS: Readonly<Record<RuntimeSettingGroup, string>> = { routes: "경로 한도", translation: "번역·묶음", jobs: "잡별 묶음", budgets: "틱 예산",
   assignments: "모델 배정 읽기", devices: "장비 한도" };
 /** 열거 칸의 값 이름 — 폼의 선택지와 감사 줄이 같은 말을 쓴다 */
