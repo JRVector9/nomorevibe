@@ -78,6 +78,8 @@ export async function secondReviewRankTick(): Promise<{ degraded: ReviewRankDegr
   await ensureReviewTaskRanks();
   const ranks = secondReviewRanks();
   const served = new Map<number, number>();
-  for (const slot of ranks.slots) if (slot.voter) served.set(slot.voter.rank, (served.get(slot.voter.rank) ?? 0) + 1);
+  for (const slot of ranks.slots) if (slot.voter && slot.resolution.execution?.mode !== 'workload_pool')
+    served.set(slot.voter.rank, (served.get(slot.voter.rank) ?? 0) + 1);
+  // A pool's configured eligible representative is not evidence of an actual successful consumer call.
   return { degraded: secondReviewRanksDegraded(ranks), summary: reviewRanksSummary(ranks.slots.map(slot => slot.resolution), served) };
 }

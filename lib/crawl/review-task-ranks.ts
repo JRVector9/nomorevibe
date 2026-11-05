@@ -361,10 +361,19 @@ export function secondReviewRanksDegraded(ranks: SecondReviewRanks): ReviewRankD
 /** 틱 끝 요약(ai_task.ranks 의 숫자 칸) — 칸·순위마다 쓸 수 없는 까닭과 지금 표를 내는 순위. text 작업의 summary 와 같은 이름을 쓴다(관리 화면이 읽는다). */
 export function reviewRanksSummary(resolutions: readonly ReviewRankResolution[], served: ReadonlyMap<number, number> = new Map()): Record<string, number> {
   const out: Record<string, number> = { ranks: resolutions.reduce((sum, row) => sum + row.candidates.length, 0) };
-  for (const [rank, count] of served) out[`served.${rank}`] = count;
+  const pool = resolutions.find(resolution => resolution.execution?.mode === 'workload_pool');
+  if (pool?.execution?.revision) {
+    out.pool_revision = pool.execution.revision;
+    out.pool_members = pool.candidates.length;
+  } else for (const [rank, count] of served) out[`served.${rank}`] = count;
   for (const resolution of resolutions) for (const candidate of resolution.candidates) {
+    const member = resolution.execution?.mode === 'workload_pool' ? candidate.poolMember : null;
+    if (member) {
+      const count = served.get(candidate.rank.rank) ?? 0;
+      if (count > 0) out[`member_served.${member.memberId}`] = count;
+    }
     if (!candidate.unusable || !/^[a-z_]{1,60}$/.test(candidate.unusable)) continue;
-    const key = `unusable.${candidate.rank.rank}.${candidate.unusable}`;
+    const key = member ? `member_unusable.${member.memberId}.${candidate.unusable}` : `unusable.${candidate.rank.rank}.${candidate.unusable}`;
     out[key] = (out[key] ?? 0) + 1;
   }
   return out;
