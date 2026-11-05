@@ -7,8 +7,7 @@ import { listAdminReviewEntries, reviewQueueCauses } from "@/lib/crawl/admin-rev
 import { getSettings } from "@/lib/crawl/settings";
 import { REVIEW_REJECT_REASONS } from "@/lib/crawl/review";
 import { humanQueueOverview } from "@/lib/crawl/review-overview";
-import { publishedSecondReviews } from "@/lib/crawl/second-review";
-import { translationsFor } from "@/lib/crawl/translations";
+import { readPublishedReviewPage } from "@/lib/crawl/published-review-page";
 import { PageStamp } from "../components/PageStamp";
 import { encodeReviewCursor } from "@/lib/crawl/admin-review-cursor";
 import { PrototypeReviewConsole } from "./PrototypeReviewConsole";
@@ -50,10 +49,10 @@ async function Workspace({ params }: { params: Search }) {
   ]);
   const options = prototypeReviewOptions(filter, causes, overview);
   const state = options.state!;
-  const publishedSource = second === "published" ? await (async () => { const rows = await publishedSecondReviews(); const korean = await translationsFor(rows.flatMap(row => [row.secondReason, row.autoOpinion?.reason ?? null])); return rows.map(row => ({ id: row.id, slug: row.publishedSlug ?? "", repo: row.repo, decision: row.secondDecision, confidence: row.secondConfidence, reason: row.secondReason, reasonKo: row.secondReason ? korean.get(row.secondReason) ?? null : null, trigger: row.trigger, signals: row.signals, qwen: row.autoOpinion ? { decision: row.autoOpinion.decision, confidence: row.autoOpinion.confidence, reason: row.autoOpinion.reason, reasonKo: row.autoOpinion.reason ? korean.get(row.autoOpinion.reason) ?? null : null } : null })); })() : null;
-  const publishedRows = publishedSource?.filter(row => !q || `${row.slug} ${row.repo} ${row.reason ?? ""}`.toLocaleLowerCase().includes(q.toLocaleLowerCase())) ?? null;
-  const queue = publishedRows ? { entries: [], total: publishedRows.length, hiddenByAge: 0 } : await listAdminReviewEntries(settings, { ...options, limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE });
-  const focusedEntry = focus && !queue.entries.some(entry => entry.candidate.id === focus)
+  const publishedPage = second === "published" ? await readPublishedReviewPage(undefined, q) : null;
+  const publishedRows = publishedPage?.rows ?? null;
+  const queue = publishedRows ? { entries: [], total: publishedPage?.total ?? 0, hiddenByAge: 0 } : await listAdminReviewEntries(settings, { ...options, limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE });
+  const focusedEntry = second !== "published" && focus && !queue.entries.some(entry => entry.candidate.id === focus)
     ? (await listAdminReviewEntries(settings, { state: "all", ids: [focus], limit: 1 })).entries[0] ?? null : null;
   const query = (patch: Record<string, string | number | undefined> = {}) => {
     const search = new URLSearchParams(); const values = { tab, state: rawState || undefined, stage: stage || undefined, cause: cause || undefined, ai: ai || undefined,
@@ -77,7 +76,7 @@ async function Workspace({ params }: { params: Search }) {
     </form>
     {second !== "published" ? <DeferredReviewPanel panel="filters" expanded={filtersOpen} title="갈래·AI 판단·기간으로 더 좁히기">{filtersOpen && <Suspense fallback={<p className="panel-body small muted" role="status">갈래 집계를 읽는 중입니다.</p>}><PrototypeReviewFilters filter={filter} loadCauses={loadCauses} /></Suspense>}</DeferredReviewPanel> : <Link className="text-button" href={`/admin/review?tab=${tab}`}>후보 단계 검수로 돌아가기 →</Link>}
     {queue.hiddenByAge > 0 && <p className="small muted">최근 푸시 조건으로 {queue.hiddenByAge.toLocaleString("ko-KR")}건을 목록에서 제외했습니다. 후보 상태는 유지됩니다.</p>}
-    {second === "published" ? <PrototypeReviewPublished rows={publishedRows ?? []} />
+    {second === "published" ? <PrototypeReviewPublished rows={publishedRows ?? []} total={publishedPage?.total} nextCursor={publishedPage?.nextCursor} q={q} />
       : <PrototypeReviewConsole key={`${page}:${tab}:${state}:${stage}:${cause}:${ai}:${second}:${q}:${updated}:${sort}`} now={observedAt} entries={queue.entries} focusedEntry={focusedEntry} nextCursor={nextCursor} scrollQuery={scrollQuery.toString()} reasons={REVIEW_REJECT_REASONS} focus={focus} title={listTitle} total={queue.total} />}
     <DeferredReviewPanel panel="management" expanded={managementOpen} title="심사 운영·보류 재심사 관리">{managementOpen && <Suspense fallback={<p className="panel-body small muted" role="status">심사 운영 상태를 읽는 중입니다.</p>}><PrototypeReviewManagement settings={settings} loadCauses={loadCauses} /></Suspense>}</DeferredReviewPanel>
   </main>;
