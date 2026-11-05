@@ -2939,3 +2939,41 @@ export async function reconcilePublicationApiTerminal(terminal: PublicationClass
     await event(tx, changed, 'dispatch_settled', row.state, 'settled', null, evidence); return { kind: 'settled' };
   });
 }
+
+export type OwnPendingPublicationApiBatch = Readonly<{
+  requestId: string; provider: GatewayDispatchProvider; model: string; workKey: string;
+  logicalWorkKey: string; memberKeys: readonly string[]; candidateIds: readonly number[];
+}>;
+/** Read-only priority metadata, never input/source/dispatch authority. The coordinator must reconstruct
+ * the current original batch and match its full input/work key, then re-poll the exact request ID.
+ * Read only this publisher boot's live unbound API requests; dispatched calls are never resumed here. */
+export async function findOwnPendingPublicationApiBatches(owner: ModelCapacityRequestIdentity['owner']): Promise<OwnPendingPublicationApiBatch[]> {
+  if (currentReplayDb()) throw new Error('model_capacity_replay_unsupported');
+  const checked = modelCapacityRequestIdentitySchema.shape.owner.parse(owner);
+  const rows = await onPrimary(() => db.select().from(modelCapacityRequests).where(and(
+    eq(modelCapacityRequests.ownerInstanceId, checked.instanceId), eq(modelCapacityRequests.ownerBootId, checked.bootId),
+    eq(modelCapacityRequests.class, 'background'), eq(modelCapacityRequests.pool, 'reviewer'),
+    eq(modelCapacityRequests.routeId, 'crawl-publish-classify'),
+    sql`${modelCapacityRequests.provider} IN ('abcllm','local-direct')`,
+    sql`${modelCapacityRequests.logicalWorkKey} LIKE 'bg:publication-classify:%' AND ${modelCapacityRequests.logicalMemberKeys} IS NOT NULL`,
+    sql`((${modelCapacityRequests.state}='waiting' AND ${modelCapacityRequests.queueUntil}>clock_timestamp())
+      OR (${modelCapacityRequests.state}='reserved' AND ${modelCapacityRequests.reservedUntil}>clock_timestamp()))`,
+    sql`${modelCapacityRequests.dispatchBinding} IS NULL AND ${modelCapacityRequests.dispatchBindingHash} IS NULL
+      AND ${modelCapacityRequests.dispatchedAt} IS NULL AND ${modelCapacityRequests.terminalEvidence} IS NULL
+      AND ${modelCapacityRequests.terminalEvidenceHash} IS NULL AND ${modelCapacityRequests.settledAt} IS NULL`,
+  )).orderBy(sql`CASE WHEN ${modelCapacityRequests.state}='reserved' THEN 0 ELSE 1 END`, asc(modelCapacityRequests.queueOrdinal)).limit(32));
+  return rows.map(row => {
+    const identity = modelCapacityRequestIdentitySchema.parse({ owner: checked, class: row.class, pool: row.pool,
+      routeId: row.routeId, provider: row.provider, model: row.model, workKey: row.workKey });
+    const keys = row.logicalMemberKeys;
+    if (!isGatewayDispatchProvider(identity.provider) || !keys || keys.length < 1 || keys.length > 10
+      || new Set(keys).size !== keys.length || keys.some((key, index) => !/^classify:[1-9][0-9]{0,15}$/.test(key)
+        || !Number.isSafeInteger(Number(key.slice(9))) || index > 0 && keys[index - 1] >= key))
+      throw new ModelCapacityDeferredError('ledger_mismatch');
+    const logical = `bg:publication-classify:${reviewHash(keys)}`;
+    if (row.logicalWorkKey !== logical || !new RegExp(`^${logical}:[a-f0-9]{64}$`).test(identity.workKey))
+      throw new ModelCapacityDeferredError('ledger_mismatch');
+    return Object.freeze({ requestId: row.requestId, provider: identity.provider, model: identity.model, workKey: identity.workKey,
+      logicalWorkKey: logical, memberKeys: Object.freeze([...keys]), candidateIds: Object.freeze(keys.map(key => Number(key.slice(9)))) });
+  });
+}

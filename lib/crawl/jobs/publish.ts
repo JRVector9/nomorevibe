@@ -1,9 +1,11 @@
+import { findOwnPendingPublicationApiBatches } from '@/lib/llm/capacity-repository';
+import { roleLeaseFromEnv } from '@/lib/jobs/role-leader';
 import { ensureAiTaskExecutionConfigs, readAiTaskExecutionConfig } from '@/lib/llm/ai-task-execution-snapshot';
 import { classifyPublicationPool } from '@/lib/crawl/publication-classify-pool';
 import { jobKnob } from '@/lib/operations/runtime-settings-schema';
 import { runtimeSettings } from '@/lib/operations/runtime-settings-store';
 import { emitPipelineEvent } from "@/lib/observability/review-pipeline";
-import { and, notInArray, or } from 'drizzle-orm';
+import { and, inArray, notInArray, or } from 'drizzle-orm';
 import { crawlCandidates } from '@/lib/db/schema';
 import { agentRequest } from '@/lib/operations/agent-client';
 import { classificationReadyPredicate, decisionFor, holdClassification } from '@/lib/operations/categories';
@@ -75,6 +77,8 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
   // Independent classification batches; model admission still enforces each physical device's limit.
   const classifyConcurrency = pool ? jobKnob(runtimeSettings(), 'crawl-publish', 'classifierConcurrency') : 1;
   const classificationWaiting = new Set<number>();
+  const role = pool ? roleLeaseFromEnv('publisher', process.env) : undefined;
+  const pendingBatches = role ? await findOwnPendingPublicationApiBatches({ instanceId: role.instanceId, bootId: role.bootId }) : [];
   let published = 0;
   let skipped = 0;
   const conflicts = new Set<number>();
@@ -97,8 +101,17 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
       ? and(reviewApprovalPredicate(settings), or(classificationReadyPredicate(), starAutoApprovalPredicate(settings)))
       : reviewApprovalPredicate(settings);
     // Exclude conflicting snapshots before LIMIT; they remain untouched for the next tick.
-    const candidates = await crawl.listCandidates(["approved"], BATCH * classifyConcurrency,
-      and(eligible, conflicts.size || classificationWaiting.size ? notInArray(crawlCandidates.id, [...conflicts, ...classificationWaiting]) : undefined));
+    const resume = pendingBatches.shift();
+    const candidates = await crawl.listCandidates(["approved"], resume ? BATCH : BATCH * classifyConcurrency,
+      and(eligible, resume ? inArray(crawlCandidates.id, [...resume.candidateIds]) : undefined,
+        conflicts.size || classificationWaiting.size ? notInArray(crawlCandidates.id, [...conflicts, ...classificationWaiting]) : undefined));
+    // Stable input order is part of the payload hash. A new queue head must not split an existing batch.
+    if (pool) candidates.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime() || b.id - a.id);
+    if (resume && (candidates.length !== resume.candidateIds.length || candidates.some(candidate => !resume.candidateIds.includes(candidate.id)))) {
+      // Missing/ineligible/changed members close only this batch for the tick, never the queue behind it.
+      for (const id of resume.candidateIds) classificationWaiting.add(id);
+      continue;
+    }
     if (candidates.length === 0) {
       if (classificationWaiting.size) return capacityDeferred();
       ctx.log("crawl.publish_done", { published, skipped, conflicts: conflicts.size, drained: conflicts.size === 0 });
@@ -119,7 +132,7 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
         const outcomes = await Promise.allSettled(batches.map(batch => {
           const selected = prepared.flatMap(item => item.classification && batch.some(input => input.repo === item.candidate.repo)
             ? [{ candidate: item.candidate, classification: item.classification, decision: decisions.get(item.candidate.repo) ?? null }] : []);
-          return classifyPublicationPool(selected, { inputs: batch, definitions: settings.classify.definitions }, execution, classifyCtx);
+          return classifyPublicationPool(selected, { inputs: batch, definitions: settings.classify.definitions }, execution, classifyCtx, resume);
         }));
         classified = outcomes.flatMap((outcome, index) => {
           if (outcome.status === 'fulfilled') return outcome.value;
