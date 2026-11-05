@@ -49,7 +49,10 @@ export function SharedLimitForm({ device, engine, policyHash, readOnly }: {
       <p>단계마다 각각 배정하는 수가 아닙니다. 아래 작업의 예약·실행을 모두 합쳐 이 한도 안에서 처리합니다.</p>
       <p className="text-fg-2">함께 쓰는 작업: {device.roles.filter(role => role.inPolicy).map(role => role.label).join(" · ") || engine.routes.join(" · ")}</p>
       <p>이 값은 운영 한도와 엔진 최대치에 함께 저장됩니다. 낮은 순위 상한·비워 둘 수가 새 한도를 넘으면 그 범위까지만 낮춥니다. 역할 순서·유휴 시간은 유지합니다.</p>
-      <p>낮춰도 진행 중 호출은 끝까지 받으며, 다음 입장부터 적용합니다. <a href={`#device-${device.deviceId}`} className="font-semibold text-accent-ink underline">세부 설정 →</a></p>
+      <p>낮춰도 진행 중 호출은 끝까지 받으며, 다음 입장부터 적용합니다. <a href={`#device-${device.deviceId}`} onClick={() => {
+        const details = document.getElementById(`device-${device.deviceId}`)?.closest("details");
+        if (details) details.open = true;
+      }} className="font-semibold text-accent-ink underline">세부 설정 →</a></p>
     </div>
     {state?.ok && <p role="status" className="text-[15px]">{state.message}</p>}
     {state?.issues?.map(issue => <p key={issue} role="alert" className="text-[15px] text-red-600">{issue}</p>)}
