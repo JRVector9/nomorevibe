@@ -58,7 +58,7 @@ export const GET = withRoute("auth.github.callback", async (req: Request) => {
   }
 
   logger.info("auth.granted", { login: user.login });
-  const response = NextResponse.redirect(`${origin}/admin`);
+  const response = NextResponse.redirect(`${origin}/admin/flow`);
   response.cookies.set(SESSION_COOKIE, await signSession(user.login, secret), sessionCookieOptions);
   response.cookies.delete(OAUTH_STATE_COOKIE);
   return response;

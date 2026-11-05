@@ -61,7 +61,7 @@ export const POST = withRoute("auth.password.login", async (request: Request) =>
     return loginRedirect(origin, "1");
   }
   logger.info("auth.granted", { method: "password", login: configured.username });
-  const response = NextResponse.redirect(new URL("/admin/inbox", origin), { status: 303, headers: privateHeaders });
+  const response = NextResponse.redirect(new URL("/admin/flow", origin), { status: 303, headers: privateHeaders });
   response.cookies.set(SESSION_COOKIE, await signSession(configured.username, secret), sessionCookieOptions);
   response.cookies.delete(ADMIN_LOGIN_COOKIE);
   return response;

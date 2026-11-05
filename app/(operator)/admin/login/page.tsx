@@ -11,9 +11,9 @@ export default async function AdminLoginPage({
 }: {
   searchParams: Promise<{ error?: string }>;
 }) {
-  if (adminLocalLoginEnabled()) redirect("/admin");
+  if (adminLocalLoginEnabled()) redirect("/admin/flow");
   const { error } = await searchParams;
-  if (await currentAdmin()) redirect("/admin/inbox");
+  if (await currentAdmin()) redirect("/admin/flow");
   const passwordConfigured = !!adminPasswordConfig() && !!authSecret();
   const csrfToken = adminLoginCsrf((await cookies()).get(ADMIN_LOGIN_COOKIE)?.value);
   if (passwordConfigured && !csrfToken) redirect(`/api/auth/password${error === "1" || error === "rate" ? `?error=${error}` : ""}`);
