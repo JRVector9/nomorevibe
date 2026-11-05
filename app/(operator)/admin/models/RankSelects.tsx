@@ -3,6 +3,8 @@ import type { ReactNode } from "react";
 import type { FirstReviewer } from "@/lib/crawl/agent-review";
 import { rankOptionKey, validateRanks, type RankStage } from "@/lib/operations/admin-first-review-ranks";
 import { modelPickerChoiceKey, presentPickerOptions, type PickerConnection } from "./model-picker-display";
+import { modelPickerActivityText } from "@/lib/operations/model-picker-availability";
+import { refreshModelAvailability, useModelAvailability } from "./use-model-availability";
 
 type RankValue = { provider: string; model: string; reasoningEffort?: string };
 
@@ -12,7 +14,7 @@ type RankValue = { provider: string; model: string; reasoningEffort?: string };
  * 폼 칸 이름은 slotNames 로 받는다 — 1차 AI 검수는 1순위 = primary0, 2·3순위 = firstAdditional0·1(서버 저장 경로 saveReviewModels 그대로).
  * 다른 단계는 같은 구성 요소에 그 단계의 RankStage·slotNames·저장 경로만 넘기면 된다. 「작업 ↔ 모델」(/admin/models/tasks)은 provider 칸에 연결 id 를 두고
  * 검증(validate)·안내(note)를 따로 넘기며 제공자 이름을 덧붙이지 않는다(showProvider false).
- * 선택지에 group(서버 = 연결 이름)이 있으면 서버마다 묶어(optgroup) 그 안에 text(모델 이름)만 보인다. compact 는 넓은 화면에서 칸 위 「N순위」 글을 숨긴다(표 머리에 있다).
+ * 선택지에 group(서버 = 연결 이름)이 있으면 서버마다 묶고(optgroup), 모델 이름 옆에 현재 실행·공유 슬롯 관측을 표시한다. 순위 라벨은 항상 별도 줄이다.
  * blocked 는 그 칸에서 고를 수 없는 선택지를 흐리게 둔다(저장 검증은 validate 가 그대로 한다).
  */
 export function RankSelects<T extends RankValue>({ stage, options, value, onChange, slotNames, disabled = false, validate, note, showProvider = true, compact = false, blocked, connections = [], selectionKind = "rank" }: {
@@ -30,8 +32,17 @@ export function RankSelects<T extends RankValue>({ stage, options, value, onChan
   blocked?: (option: T, index: number, slots: readonly (T | null)[]) => boolean;
   selectionKind?: "rank" | "pool";
 }) {
+  const availability = useModelAvailability();
   const slots = Array.from({ length: stage.slots }, (_, index) => value[index] ?? null);
   const pickerOptions = (index: number) => presentPickerOptions(options, connections, slots[index]);
+  const activityText = (choice: RankValue): string => {
+    if (!availability.value) return availability.failed ? "상태 확인 못함" : "상태 확인 중";
+    const connection = availability.value.connections.find(entry => entry.connectionId === choice.provider);
+    if (!connection) return "슬롯 확인 못함";
+    const key = modelPickerChoiceKey(choice, connections);
+    const activity = connection.models.filter(row => modelPickerChoiceKey({ provider: choice.provider, model: row.model }, connections) === key);
+    return `${modelPickerActivityText(connection, activity, availability.value.mode)}${availability.loading ? " · 갱신 중" : ""}`;
+  };
 
   const issues = validate ? validate(slots) : validateRanks(stage as RankStage, slots as unknown as (FirstReviewer | null)[]);
   const set = (index: number, key: string) => {
@@ -55,20 +66,24 @@ export function RankSelects<T extends RankValue>({ stage, options, value, onChan
           new Map<string, (typeof options)[number][]>())] : null;
         const effortName = slotNames[index]?.reasoningEffort;
         const efforts = options.find(option => rankOptionKey(option) === key)?.reasoningEfforts ?? [];
-        // 다른 칸에서 이미 고른 모델은 이 칸에서 고를 수 없다(중복 방지). 지금 이 칸의 값은 남긴다
-        const taken = new Set(slots.filter((other, at) => other && at !== index).map(other => modelPickerChoiceKey(other!, connections)));
+        // Reusing a model does not reserve another slot. Runtime admission applies the one shared device limit.
         const item = (option: (typeof options)[number]) => <option key={rankOptionKey(option)} value={rankOptionKey(option)}
-          disabled={taken.has(modelPickerChoiceKey(option, connections)) || !!blocked?.(option, index, slots)}>
-          {option.group !== undefined ? option.text ?? option.model : `${option.label}${!showProvider || option.provider.endsWith("-cli") ? "" : ` (${option.provider})`}`}</option>;
+          disabled={!!blocked?.(option, index, slots)}>
+          {option.group !== undefined ? option.text ?? option.model : `${option.label}${!showProvider || option.provider.endsWith("-cli") ? "" : ` (${option.provider})`}`}
+          {` · ${activityText(option)}${blocked?.(option, index, slots) ? " · 이 투표자/모델 조건에서 선택 불가" : ""}`}</option>;
         return <label key={index} className="flex min-w-0 flex-col gap-1 text-[13px]">
-          <span className={compact ? "font-semibold sm:sr-only" : "font-semibold"}>{itemLabel(index)}</span>
+          <span className="block font-semibold" data-compact={compact || undefined}>{itemLabel(index)}</span>
           <select name={`${stage.id}-${selectionKind}-${index + 1}`} aria-label={`${stage.label} ${itemLabel(index)}`} value={key} disabled={disabled}
-            className="min-h-9 w-full min-w-0 rounded-lg border border-line bg-bg-card px-2" onChange={event => set(index, event.target.value)}>
+            className="min-h-9 w-full min-w-0 rounded-lg border border-line bg-bg-card px-2" onChange={event => set(index, event.target.value)}
+            onFocus={() => { void refreshModelAvailability(); }} onPointerDown={() => { void refreshModelAvailability(); }}
+            onPointerEnter={() => { void refreshModelAvailability(); }}
+            onKeyDown={event => { if (["Enter", " ", "ArrowDown", "ArrowUp"].includes(event.key)) void refreshModelAvailability(); }}>
             <option value="">없음</option>
             {groups ? groups.map(([name, list]) => <optgroup key={name} label={name}>{list.map(item)}</optgroup>) : choices.map(item)}
           </select>
           {/* 묶은 목록에서는 닫힌 드롭다운에 모델 이름만 보이므로, 고른 값의 서버를 밑에 적는다(같은 모델을 두 서버에 둘 때 가린다) */}
           {groups && row && <span className="truncate text-[13px] text-fg-3" data-rank-server="true">{choices.find(option => rankOptionKey(option) === key)?.group ?? ""}</span>}
+          {row && <span className="text-[13px] text-fg-3" data-model-activity="true">{activityText(row)}</span>}
           {row && effortName && <>
             <span className="text-fg-2">추론 강도</span>
             {efforts.length > 0 || row.reasoningEffort ? <select aria-label={`${stage.label} ${itemLabel(index)} 추론 강도`} value={row.reasoningEffort ?? ""}
@@ -84,6 +99,8 @@ export function RankSelects<T extends RankValue>({ stage, options, value, onChan
         </label>;
       })}
     </div>
+    <span className="text-[13px] text-fg-3">{availability.value && <>관측 {new Date(availability.value.observedAt).toLocaleTimeString("ko-KR", { hour12: false, timeZone: "Asia/Seoul" })} KST · </>}
+      슬롯은 장비 전체의 공유 여유입니다. 반복 선택해도 한도는 늘지 않으며 실행 시 다시 확인합니다.</span>
     {issues.length > 0 && <ul role="alert" className="text-[13px] text-down">{issues.map(issue => <li key={issue}>{issue}</li>)}</ul>}
     {note === undefined
       ? <p className="text-[13px] text-fg-2">{selectionKind === "pool"

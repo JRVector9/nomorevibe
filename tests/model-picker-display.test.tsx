@@ -37,10 +37,10 @@ it("renders one canonical Supa option for a selected legacy alias while preservi
   const selected = { provider: supa.id, model: "supa" };
   const html = renderToStaticMarkup(<RankSelects stage={{ id: "test", label: "검수", slots: 1 }} options={options} connections={connections}
     value={[selected]} onChange={() => {}} slotNames={AI_RANK_SLOT_NAMES} showProvider={false} validate={() => []} />);
-  expect(html).toContain('label="M1 Studio · Gemma"');
+  expect(html).toContain('label="M1 Studio · API"');
   expect(html).not.toContain("m1-qwen");
   expect(html).not.toContain('>auto</option>');
-  expect(html).toContain(`value="${rankOptionKey(selected)}" selected="">${SUPA}</option>`);
+  expect(html).toContain(`value="${rankOptionKey(selected)}" selected="">${SUPA} · `);
   expect(html).not.toContain(`value="${rankOptionKey({ provider: supa.id, model: SUPA })}"`);
   expect(html).toContain('name="rank1Model" value="supa"');
   expect(modelPickerChoiceKey(selected, connections)).toBe(modelPickerChoiceKey({ provider: supa.id, model: SUPA }, connections));

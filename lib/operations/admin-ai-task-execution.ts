@@ -98,13 +98,16 @@ export async function saveAiTaskExecutionConfig(input: unknown, actor: string): 
         connections = connections.map(row => row.id === id ? { ...row, cliCatalog: catalog } : row);
       }
     }
-    const canonical = new Map<string, string>(), endpointCounts = new Map<string, number>();
+    const canonical = new Map<string, string>(), endpointModels = new Map<string, Set<string>>();
     for (const member of value.members) {
       const connection = connections.find(row => row.id === member.connectionId)!;
       if (!aiConnectionModelIds(connection).includes(member.model)) fail("ai_task_pool_model_not_offered");
       if (member.reasoningEffort && !aiRankReasoningEfforts(task.id, connection, member.model).includes(member.reasoningEffort))
         fail("ai_task_pool_reasoning_unsupported");
-      if (connection.kind === "api") endpointCounts.set(connection.baseUrl!, (endpointCounts.get(connection.baseUrl!) ?? 0) + 1);
+      if (connection.kind === "api") {
+        const models = endpointModels.get(connection.baseUrl!) ?? new Set<string>();
+        models.add(member.model); endpointModels.set(connection.baseUrl!, models);
+      }
     }
     const catalogs = new Map<string, Awaited<ReturnType<typeof readbackServingEndpoint>>>();
     for (const member of value.members) {
@@ -121,7 +124,7 @@ export async function saveAiTaskExecutionConfig(input: unknown, actor: string): 
       const offered = catalog.models.find(row => row.id === member.model);
       if (!offered) fail("ai_task_pool_model_not_offered");
       // Two model IDs at one endpoint require actual root metadata to distinguish engines from aliases.
-      if ((endpointCounts.get(connection.baseUrl!) ?? 0) > 1 && !offered!.canonicalModel) fail("ai_task_pool_engine_identity_unconfirmed");
+      if ((endpointModels.get(connection.baseUrl!)?.size ?? 0) > 1 && !offered!.canonicalModel) fail("ai_task_pool_engine_identity_unconfirmed");
       canonical.set(member.connectionId + "\n" + member.model, offered!.canonicalModel ?? member.model);
     }
     const members = value.members.map((member, index) => {
@@ -134,12 +137,24 @@ export async function saveAiTaskExecutionConfig(input: unknown, actor: string): 
         connectionId: member.connectionId, model: member.model, options: member.reasoningEffort ? { reasoningEffort: member.reasoningEffort } : {},
         canonicalModel, deviceId: connection.deviceId, engineKey: taskPoolEngineKey(connection, canonicalModel) };
     });
-    if (new Set(members.map(member => member.engineKey)).size !== members.length) fail("ai_task_pool_duplicate_engine");
-    const cliIdentities = members.flatMap(member => {
+    if (new Set(members.map(member => member.memberId)).size !== members.length) fail("ai_task_pool_member_identity_mismatch");
+    // Review resumes identify provider/model, not a pool member. Identical CLI entries must therefore have identical options.
+    for (const member of members) {
       const connection = connections.find(row => row.id === member.connectionId)!;
-      return connection.kind === "cli" ? [`${connection.cliTool}:${member.model}`] : [];
-    });
-    if (new Set(cliIdentities).size !== cliIdentities.length) fail("ai_task_pool_cli_connection_ambiguous");
+      if (connection.kind === "cli" && members.some(other => other.connectionId === member.connectionId && other.model === member.model
+        && other.options.reasoningEffort !== member.options.reasoningEffort)) fail("ai_task_pool_repeated_model_options_mismatch");
+    }
+    // Repeated members have independent work IDs, but one actual engine must still share one device budget.
+    for (const member of members) if (members.some(other => other.engineKey === member.engineKey && other.deviceId !== member.deviceId))
+      fail("ai_task_pool_engine_device_mismatch");
+    const cliIdentities = new Map<string, Set<string>>();
+    for (const member of members) {
+      const connection = connections.find(row => row.id === member.connectionId)!;
+      if (connection.kind !== "cli") continue;
+      const identity = `${connection.cliTool}:${member.model}`, ids = cliIdentities.get(identity) ?? new Set<string>();
+      ids.add(member.connectionId); cliIdentities.set(identity, ids);
+    }
+    if ([...cliIdentities.values()].some(ids => ids.size > 1)) fail("ai_task_pool_cli_connection_ambiguous");
     const chosen = members.map(member => ({ rank: member.position,
       row: { provider: member.connectionId, model: member.model, ...(typeof member.options.reasoningEffort === "string" ? { reasoningEffort: member.options.reasoningEffort } : {}) },
       connection: connections.find(row => row.id === member.connectionId)! }));

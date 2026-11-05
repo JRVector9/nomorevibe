@@ -1,9 +1,10 @@
 import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ACTION_GROUPS, ACTION_LABELS } from "@/app/(operator)/admin/activity/labels";
 import { RankSelects } from "@/app/(operator)/admin/models/RankSelects";
+import * as modelAvailability from "@/app/(operator)/admin/models/use-model-availability";
 import { ADMIN_MODEL_STAGES } from "@/lib/llm/admin-model-stages";
 import { AI_TASKS, aiTask, aiTaskAccepts, aiTaskAliasIdentity, aiTaskSlots } from "@/lib/llm/ai-tasks";
 import { ASSIGNMENT_STAGE_IDS } from "@/lib/llm/capacity-helpers";
@@ -175,12 +176,12 @@ describe("선택지와 검증", () => {
       { id: m3.id, label: "m3-mlx", reason: "키 없음 · 거절됨(HTTP 401 — 키 확인)" }, { id: fresh.id, label: "새 서버", reason: "아직 못 읽음" },
       { id: empty.id, label: "빈 서버", reason: "모델 0개" }]);
   });
-  it("빈 칸 뒤 순위·같은 연결·모델·받지 않는 연결·목록에 없는 모델을 막는다", () => {
+  it("빈 칸 뒤 순위·받지 않는 연결·목록에 없는 모델을 막고 같은 연결·모델의 반복 순위는 허용한다", () => {
     expect(validateAiTaskRanks("crawl-tagline", 1, [pick(GPU, "qwen3.8-flash-next"), pick(SUPA, "qwen3.8-flash-next"), null], context())).toEqual([]);
     expect(validateAiTaskRanks("crawl-tagline", 1, [pick(GPU, "qwen3.8-flash-next"), null, pick(SUPA, "qwen3.8-flash-next")], context()))
       .toEqual(["2순위를 비우고 그 뒤 순위만 고를 수 없습니다. 2순위부터 차례로 골라주세요."]);
     expect(validateAiTaskRanks("crawl-tagline", 1, [pick(GPU, "qwen3.8-flash-next"), pick(GPU, "qwen3.8-flash-next")], context()))
-      .toEqual(["1순위와 2순위가 같은 연결·모델입니다(qwen3.8-flash-next). 한 연결의 한 모델은 한 순위에만 둘 수 있습니다."]);
+      .toEqual([]);
     expect(validateAiTaskRanks("crawl-tagline", 1, [pick(CLAUDE, "sonnet")], context())).toEqual(["1순위: 수집 소개 짓기은(는) Claude CLI를 받지 않습니다."]);
     expect(validateAiTaskRanks("product-intro-check", 1, [pick(GPU, "qwen3.8-flash-next")], context()))
       .toEqual(["1순위: 소개 검수은(는) API 주소 연결을 받지 않습니다(CLI Claude CLI만)."]);
@@ -192,7 +193,7 @@ describe("선택지와 검증", () => {
   });
   it("벡터: 2·3순위도 같은 모델, 검색어 벡터는 제품 벡터와 같은 모델; 제품 벡터를 바꾸면 알린다", () => {
     expect(validateAiTaskRanks("product-embedding", 1, [pick(EMB, "bge-m3"), pick(EMB, "bge-m3-q8")], context()))
-      .toEqual(["2순위: 제품 의미 검색 벡터은(는) 2·3순위도 1순위와 같은 모델(bge-m3)이어야 합니다. 다른 서버의 같은 모델만 대체로 둘 수 있습니다."]);
+      .toEqual(["2순위: 제품 의미 검색 벡터은(는) 2·3순위도 1순위와 같은 모델(bge-m3)이어야 합니다."]);
     const rows = [row("product-embedding", 1, 1, EMB, "bge-m3")];
     expect(validateAiTaskRanks("search-embedding", 1, [pick(EMB, "bge-m3-q8")], context(rows)))
       .toEqual(["검색어 벡터은(는) 제품 의미 검색 벡터의 1순위 모델(bge-m3)과 같은 모델이어야 합니다."]);
@@ -472,14 +473,14 @@ describe("RankSelects — 작업 ↔ 모델 꼴(provider 칸 = 연결 id)", () =
   it("검증·안내를 받아 그리고 제공자 이름을 덧붙이지 않는다; 고른 값은 rank<N>Connection·rank<N>Model 로 보낸다", () => {
     const options = aiTaskRankOptions(aiTask("crawl-tagline")!, CONNECTIONS, []);
     const html = renderToStaticMarkup(createElement(RankSelects<{ provider: string; model: string }>, { stage: { id: "crawl-tagline-1", label: "수집 소개 짓기", slots: 3 }, options,
-      value: [pick(GPU, "qwen3.8-flash-next"), null, pick(SUPA, "qwen3.8-flash-next")], slotNames: AI_RANK_SLOT_NAMES, onChange: () => {}, showProvider: false,
+      value: [pick(GPU, "qwen3.8-flash-next"), null, pick(SUPA, "qwen3.8-flash-next")], connections: CONNECTIONS, slotNames: AI_RANK_SLOT_NAMES, onChange: () => {}, showProvider: false,
       validate: slots => validateAiTaskRanks("crawl-tagline", 1, slots, { connections: CONNECTIONS, rows: [] }), note: createElement("p", null, "안내") }));
-    // 서버마다 묶고(optgroup) 그 안에는 모델 이름만
-    expect(html).toContain(`<optgroup label="gpu3090"><option value="${GPU}/qwen3.8-flash-next" selected="">qwen3.8-flash-next</option>`);
-    expect(html).toContain('<optgroup label="검색 서버"><option value="55555555-5555-4555-8555-555555555555/bge-m3">bge-m3</option>');
+    // 연결·전송별로 묶고, 모델 이름 옆에 실시간 관측 상태를 표시한다.
+    expect(html).toContain(`<optgroup label="gpu3090 · API"><option value="${GPU}/qwen3.8-flash-next" selected="">qwen3.8-flash-next · `);
+    expect(html).toContain('<optgroup label="검색 서버 · API"><option value="55555555-5555-4555-8555-555555555555/bge-m3">bge-m3 · ');
     expect(html).not.toContain("gpu3090 · qwen3.8-flash-next");
-    // 닫힌 드롭다운에는 모델 이름만 보이므로 고른 값의 서버를 밑에 적는다(1순위 gpu3090, 3순위 supa — 같은 모델 이름)
-    expect(html.match(/data-rank-server="true">([^<]*)</g)).toEqual(['data-rank-server="true">gpu3090<', 'data-rank-server="true">supa<']);
+    // 모델 이름이 같아도 연결·전송과 숨은 원래 모델 바인딩을 구분한다.
+    expect(html.match(/data-rank-server="true">([^<]*)</g)).toEqual(['data-rank-server="true">gpu3090 · API<', 'data-rank-server="true">supa · API<']);
     expect(html).not.toContain("(abcllm)");
     expect(html).toContain(`name="rank1Connection" value="${GPU}"`);
     expect(html).toContain('name="rank3Model" value="qwen3.8-flash-next"');
@@ -490,19 +491,20 @@ describe("RankSelects — 작업 ↔ 모델 꼴(provider 칸 = 연결 id)", () =
     const flat = renderToStaticMarkup(createElement(RankSelects<{ provider: string; model: string }>, { stage: { id: "x-1", label: "x", slots: 1 },
       options: [{ provider: "supa", model: "m", label: "supa · m" }], value: [null], slotNames: AI_RANK_SLOT_NAMES, onChange: () => {}, validate: () => [] }));
     expect(flat).not.toContain("<optgroup");
-    expect(flat).toContain(">supa · m (supa)</option>");
+    expect(flat).toContain(">supa · m (supa) · ");
   });
-  it("compact 는 넓은 화면에서 「N순위」 글을 숨기고, blocked 는 그 칸의 선택지를 흐리게 둔다(지금 값은 그대로)", () => {
+  it("compact 에서도 「N순위」 글을 보이고, blocked 는 모델 조건에 맞지 않는 선택지만 흐리게 둔다", () => {
     const options = aiTaskRankOptions(aiTask("product-embedding")!, CONNECTIONS, []);
     const html = renderToStaticMarkup(createElement(RankSelects<{ provider: string; model: string }>, { stage: { id: "product-embedding-1", label: "제품 의미 검색 벡터", slots: 3 },
       options, value: [pick(EMB, "bge-m3"), null, null], slotNames: AI_RANK_SLOT_NAMES, onChange: () => {}, showProvider: false, compact: true, note: null,
       validate: () => [], blocked: (option, index, slots) => aiRankOptionBlocked(aiTask("product-embedding")!, 1, index, option, slots, []) }));
-    expect(html).toContain('<span class="font-semibold sm:sr-only">1순위</span>');
+    expect(html).toContain('<span class="block font-semibold" data-compact="true">1순위</span>');
     const second = html.slice(html.indexOf('name="product-embedding-1-rank-2"'), html.indexOf('name="product-embedding-1-rank-3"'));
     expect(second).toContain(`value="${EMB}/bge-m3-q8" disabled=""`);
     expect(second).toContain(`value="${GPU}/qwen3.8-flash-next" disabled=""`);
-    // 1순위 bge-m3 는 같은 칸 중복(taken)이라 2순위에서도 흐리다 — 다른 서버의 같은 모델만 대체로 둘 수 있다
-    expect(second).toContain(`value="${EMB}/bge-m3" disabled=""`);
+    // 1순위와 같은 연결·모델도 반복 선택할 수 있지만 다른 모델의 벡터 공간은 섞지 않는다.
+    expect(second).toContain(`value="${EMB}/bge-m3">bge-m3 · `);
+    expect(second).not.toContain(`value="${EMB}/bge-m3" disabled=""`);
     const first = html.slice(0, html.indexOf('name="product-embedding-1-rank-2"'));
     expect(first).not.toContain('disabled=""');
   });
@@ -523,8 +525,12 @@ describe("RankSelects — 작업 ↔ 모델 꼴(provider 칸 = 연결 id)", () =
   it("「없음」이 아닌데 선택지에 없는 값이 오면 칸을 비우지 않는다 — 조용히 비운 채 저장되지 않게", () => {
     const options = aiTaskRankOptions(aiTask("crawl-tagline")!, CONNECTIONS, []);
     const changes: unknown[] = [];
-    const tree = RankSelects<{ provider: string; model: string }>({ stage: { id: "crawl-tagline-1", label: "수집 소개 짓기", slots: 3 }, options,
-      value: [pick(GPU, "qwen3.8-flash-next"), null, null], slotNames: AI_RANK_SLOT_NAMES, onChange: value => changes.push(value), showProvider: false, validate: () => [], note: null });
+    // This existing event-handler guard constructs the tree directly; only its new live-observation dependency is stubbed.
+    const availability = vi.spyOn(modelAvailability, "useModelAvailability").mockReturnValue({ value: null, loading: false, failed: false });
+    let tree: ReturnType<typeof RankSelects<{ provider: string; model: string }>>;
+    try { tree = RankSelects<{ provider: string; model: string }>({ stage: { id: "crawl-tagline-1", label: "수집 소개 짓기", slots: 3 }, options,
+      value: [pick(GPU, "qwen3.8-flash-next"), null, null], slotNames: AI_RANK_SLOT_NAMES, onChange: value => changes.push(value), showProvider: false, validate: () => [], note: null }); }
+    finally { availability.mockRestore(); }
     const selects: { props: { name: string; onChange: (event: { target: { value: string } }) => void } }[] = [];
     const walk = (node: unknown): void => {
       if (Array.isArray(node)) { node.forEach(walk); return; }

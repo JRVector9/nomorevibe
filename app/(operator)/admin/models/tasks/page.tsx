@@ -13,19 +13,20 @@ import { ConnectionForm } from "./ConnectionForm";
 import { TaskImportCard } from "./TaskImportCard";
 import { TaskRanksBoard, type TaskRankLine } from "./TaskRanksBoard";
 import { modelPickerConnectionDevice, modelPickerConnectionLabel, modelPickerConnectionModels, modelPickerModelLabel, modelPickerVisibleText } from "../model-picker-display";
+import "./tasks.css";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "작업 ↔ AI 모델 — NoMoreVibe", robots: { index: false } };
 
 type Props = { searchParams: Promise<Record<string, string | string[] | undefined>> };
 const one = (value: string | string[] | undefined) => typeof value === "string" ? value.trim() : Array.isArray(value) ? (value[0] ?? "").trim() : "";
-const ERROR_LABELS: Record<string, string> = { connections: "AI 연결", rows: "작업 ↔ 모델 순위", readiness: "계약·정책·장비", policy: "용량 정책", current: "지금 실제로 쓰는 모델",
+const ERROR_LABELS: Record<string, string> = { connections: "AI 연결", rows: "작업 ↔ 모델 순위", readiness: "계약·정책·장비", policy: "용량 정책", current: "실행 쪽 모델 설정",
   audit: "최근 기록", runtime: "실행 쪽 순위 사정" };
 const ACTION_LABELS: Record<string, string> = { "ai-connection-save": "연결 저장", "ai-connection-models-read": "모델 목록 읽기", "ai-connection-delete": "연결 지움",
   "ai-task-models-save": "순위 저장", "ai-task-execution-save": "실행 설정 저장", "ai-task-models-import": "가져오기", "ai-connection-key-fill": "키 자동 채움" };
 
-const FOLD = "min-w-0 rounded-xl border border-line bg-bg-card scroll-mt-6";
-const SUMMARY = "flex cursor-pointer flex-wrap items-baseline gap-x-3 gap-y-1 px-4 py-2.5 text-[15px] font-semibold";
+const FOLD = "min-w-0 rounded-lg border border-line bg-bg-card scroll-mt-6";
+const SUMMARY = "flex cursor-pointer flex-wrap items-baseline gap-x-3 gap-y-1 px-3 py-2 text-[15px] font-semibold";
 
 /**
  * 작업 ↔ AI 모델(2026-11-02 소유자 결정, PR A·B·C1) — 작업마다(2차는 투표자마다) 1·2·3순위를 고른다.
@@ -53,33 +54,32 @@ export default async function AiTasksPage({ searchParams }: Props) {
       at: formatListTime(slot.runtime.at, now), served: [...slot.runtime.served], unusable: [...slot.runtime.unusable] } : null }));
   const errors = Object.entries(view.errors);
   const unread = aiUnreadConnections(view.connections, view.keyConflicts);
-  return <main className="mx-auto grid max-w-7xl gap-6 p-4">
+  return <main className="mt-task-page grid min-w-0 gap-3">
     <PageStamp />
     <header className="grid gap-1">
       <p className="text-[13px] text-fg-3"><Link href="/admin/models">← 모델 운영 현황</Link></p>
       <h1 className="text-[22px] font-semibold">작업 ↔ AI 모델</h1>
-      <p className="text-[13px] text-fg-3">대체 실행은 필요할 때 모델을 바꾸고, 작업 분산은 서로 다른 업무를 나눕니다. 각 작업의 실행 방식을 확인하세요.</p>
+      <p className="text-[13px] text-fg-3">대체: 업무마다 우선 모델 하나 · 분산: 서로 다른 업무를 병렬 처리. 행을 열어 설정합니다.</p>
       {executionRead.failed && <p role="alert" className="text-[13px] text-red-600">실행 방식을 읽지 못했습니다. 현재 방식을 확인할 때까지 작업 설정을 저장할 수 없습니다.</p>}
       {errors.map(([key, error]) => <p key={key} role="alert" className="text-[13px] text-red-600">{ERROR_LABELS[key] ?? key}을(를) 읽지 못했습니다({aiTaskIssueMessage(error)}).</p>)}
       {unread.length > 0 && <p role="status" data-unread={unread.length} className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[13px] text-amber-900">
         모델 목록을 못 읽은 서버 — {unread.map((row, index) => <span key={row.id}>{index > 0 && ", "}<Link href={`/admin/models/tasks?edit=${row.id}#connection-form`} prefetch={false}
           className="font-semibold underline">{modelPickerConnectionLabel(view.connections.find(connection => connection.id === row.id)!)}</Link>({row.reason})</span>)}. 이 서버의 모델은 드롭다운에 없습니다 — 이름을 눌러 키를 넣거나 「다시 읽기」를 누르세요.</p>}
     </header>
-    <section id="tasks" className="grid gap-3 scroll-mt-6" aria-label="작업 ↔ 모델">
+    <section id="tasks" className="min-w-0 scroll-mt-6" aria-label="작업 ↔ 모델">
       <TaskRanksBoard lines={lines} connections={[...view.connections]} rows={[...view.rows]} executions={executionRead.executions} readOnly={executionRead.failed} />
     </section>
     <details id="connections" className={FOLD} open={!!editId || view.connections.length === 0}>
       <summary className={SUMMARY}><h2>AI 연결 관리</h2><span className="text-[13px] font-normal text-fg-3">서버 {view.connections.length}개
         {unread.length > 0 && <> · <span className="text-amber-700">목록 못 읽음 {unread.length}</span></>} · 주소·키·CLI 모델 이름</span></summary>
-      <div className="grid gap-3 px-4 pb-4">
-      <p className="text-[13px] text-fg-3">API 연결은 저장할 때 GET /models 로 모델 목록을 읽습니다(「다시 읽기」는 1분에 한 번). 키는 암호화해 두고 화면에 다시 보이지 않습니다.
-        장비 이름은 용량 장비(장비 한도 화면)의 이름입니다. 작업 줄을 저장하면 없는 장비 행·엔진 직접 계약(엔진에 1토큰 시험)·용량 경로(덧붙이기만, DRAIN 없음)를 함께 만들고,
-        기존 계약·경로·장비 값·장비 역할 순위는 바꾸지 않습니다.{view.policyMode && <> 용량 정책 {view.policyMode.toUpperCase()}.</>}</p>
-      <p className="flex flex-wrap gap-4 text-[13px] text-fg-3"><Link href="/admin/models/devices">장비 한도 →</Link>
+      <div className="grid gap-2 px-3 pb-3">
+      <p className="text-[13px] text-fg-3">API 저장 시 모델 목록을 읽습니다. 키는 암호화되며 다시 표시하지 않습니다. 작업 설정 저장 시 필요한 연결 자원을 확인합니다.
+        {view.policyMode && <> 용량 정책 {view.policyMode.toUpperCase()}.</>}</p>
+      <p className="flex flex-wrap gap-3 text-[13px] text-fg-3"><Link href="/admin/models/devices">장비 한도 →</Link>
         <Link href="/admin/models/contracts">모델 연결(계약) →</Link><Link href="/admin/models/assignments">모델 배정 →</Link></p>
       {view.connections.length === 0 ? <p className="text-[13px] text-fg-3">아직 연결이 없습니다. 아래에서 만들거나 「지금 설정 가져오기」로 오늘 쓰는 서버를 옮기세요.</p>
         : <div className="overflow-x-auto"><table className="w-full min-w-[980px] text-left text-[13px]"><thead><tr className="border-b border-line">
-          <th className="py-2 pr-3">이름</th><th className="py-2 pr-3">주소 · 도구</th><th className="py-2 pr-3">모델</th><th className="py-2 pr-3">장비 · 칸</th>
+          <th className="py-2 pr-3">이름</th><th className="py-2 pr-3">주소 · 도구</th><th className="py-2 pr-3">모델</th><th className="py-2 pr-3">공유 장비</th>
           <th className="py-2 pr-3">상태</th><th className="py-2 pr-3">저장된 순위·분산 모델</th><th className="py-2" /></tr></thead>
           <tbody>{view.connections.map(row => <tr key={row.id} className="border-b border-line align-top" data-connection={row.id}>
             <td className="py-2 pr-3 font-semibold">{modelPickerConnectionLabel(row)}{row.note && <div className="font-normal text-fg-3">{row.note}</div>}</td>
@@ -96,7 +96,7 @@ export default async function AiTasksPage({ searchParams }: Props) {
               : <code className="break-all">{row.cliModels.join(" ")}</code>}
               <div className="text-fg-3">{row.cliVersion ? <>CLI 버전 <code>{row.cliVersion}</code></> : "CLI 버전 없음 — 1차·2차 순위에 쓰려면 적으세요"}</div>
               {row.cliTool === "opencode" && <div className="text-fg-3">{row.hasKey ? "호스트 RPC 인증 정보 저장됨" : "호스트 RPC 인증 정보 미확인"}</div>}</>}</td>
-            <td className="py-2 pr-3"><code>{modelPickerConnectionDevice(row)}</code> · {row.capacitySlots}칸</td>
+            <td className="py-2 pr-3"><code>{modelPickerConnectionDevice(row)}</code><div><Link href="/admin/models/devices" className="text-accent-ink underline">공유 한도 확인</Link></div></td>
             <td className="py-2 pr-3">{row.enabled ? "켜짐" : <span className="text-amber-700">꺼짐</span>}<div className="text-fg-3">판 {row.version}</div></td>
             <td className="py-2 pr-3 tabular-nums">{used(row.id)}</td>
             <td className="py-2"><div className="flex flex-col items-start gap-1">
@@ -114,11 +114,11 @@ export default async function AiTasksPage({ searchParams }: Props) {
     </details>
     <details id="import" className={FOLD} open={one(params.import) === "plan"}>
       <summary className={SUMMARY}><h2>지금 설정 가져오기</h2><span className="text-[13px] font-normal text-fg-3">옛 설정의 모델을 연결·순위로 옮깁니다(빈 칸만)</span></summary>
-      <div className="px-4 pb-4"><TaskImportCard preview={preview} confirmWord={AI_TASK_IMPORT_CONFIRM} /></div>
+      <div className="px-3 pb-3"><TaskImportCard preview={preview} confirmWord={AI_TASK_IMPORT_CONFIRM} /></div>
     </details>
     <details id="audit" className={FOLD}>
       <summary className={SUMMARY}><h2>최근 기록</h2><span className="text-[13px] font-normal text-fg-3">{view.audit.length}건</span></summary>
-      <div className="grid gap-2 px-4 pb-4">
+      <div className="grid gap-2 px-3 pb-3">
       {view.audit.length === 0 ? <p className="text-[13px] text-fg-3">아직 기록이 없습니다.</p>
         : <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-[13px]"><thead><tr className="border-b border-line">
           <th className="py-2 pr-3">시각</th><th className="py-2 pr-3">누가</th><th className="py-2 pr-3">무엇</th><th className="py-2 pr-3">대상</th><th className="py-2 pr-3">내용</th></tr></thead>

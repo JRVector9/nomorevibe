@@ -748,7 +748,6 @@ export const aiTaskModels = pgTable('ai_task_models', {
   check('ai_task_models_model_check', sql`char_length(${table.model}) BETWEEN 1 AND 200 AND ${table.model} = btrim(${table.model}) AND ${table.model} !~ '[[:cntrl:]]'`),
   check('ai_task_models_options_check', sql`jsonb_typeof(${table.options}) = 'object' AND pg_column_size(${table.options}) <= 4096`),
   unique('ai_task_models_rank_key').on(table.task, table.slot, table.rank),
-  unique('ai_task_models_model_key').on(table.task, table.slot, table.connectionId, table.model),
   index('ai_task_models_connection_idx').on(table.connectionId),
 ]);
 
@@ -778,7 +777,6 @@ export const aiTaskPoolMembers = pgTable('ai_task_pool_members', {
   foreignKey({ columns: [table.task, table.slot], foreignColumns: [aiTaskExecutionConfigs.task, aiTaskExecutionConfigs.slot], name: 'ai_task_pool_members_config_fk' }).onDelete('cascade'),
   foreignKey({ columns: [table.connectionId], foreignColumns: [aiConnections.id], name: 'ai_task_pool_members_connection_fk' }).onDelete('restrict'),
   unique('ai_task_pool_members_position_key').on(table.task, table.slot, table.position),
-  unique('ai_task_pool_members_engine_key').on(table.task, table.slot, table.engineKey),
   check('ai_task_pool_members_position_check', sql`${table.position} BETWEEN 1 AND 4`),
   check('ai_task_pool_members_model_check', sql`char_length(${table.model}) BETWEEN 1 AND 200 AND ${table.model} = btrim(${table.model}) AND ${table.model} !~ '[[:cntrl:]]'`),
   check('ai_task_pool_members_canonical_check', sql`char_length(${table.canonicalModel}) BETWEEN 1 AND 200 AND ${table.canonicalModel} = btrim(${table.canonicalModel}) AND ${table.canonicalModel} !~ '[[:cntrl:]]'`),

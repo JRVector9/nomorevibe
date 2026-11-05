@@ -36,26 +36,33 @@ describe("작업 ↔ AI 모델 화면", () => {
     expect(renderToStaticMarkup(createElement(ConnectionForm, { initial: null, secretBox: false })))
       .toContain("이 서버에는 키 암호화 설정이 없어 키를 저장할 수 없습니다");
   });
-  it("작업 표: 줄마다 1·2·3순위와 저장·한 줄 상태만 보이고, 지금 실제로 쓰는 모델·준비 상태는 「자세히」에 접는다", () => {
+  it("작업 목록: 모델 순위·설정 상태를 한 행에서 비교하고, 저장 폼과 실행 쪽 설정은 같은 행에서 펼친다", () => {
     const html = renderToStaticMarkup(createElement(TaskRanksBoard, { lines: [line(), line({ task: "audit-review", label: "발행분 감사 · 직접 모델", group: "audit",
       rows: [], current: { labels: [], source: "등록부·env 기본값", notes: [], error: null, skip: "지금 꺼져 있습니다." }, sameAsCurrent: null, readiness: [], live: false })],
       connections: [gpu], rows: line().rows }));
     expect(html).toContain("글 짓기·번역");
     expect(html).toContain("감사·보강");
     expect(html).toContain('aria-label="수집 소개 짓기 1순위"');
-    expect(html).toContain(">gpu3090 · qwen3.8-flash-next</option>");
+    expect(html).toContain(">gpu3090 · qwen3.8-flash-next · 상태 확인 중</option>");
+    // 같은 작업의 다른 순위에서도 같은 모델을 선택할 수 있다. 선택 자체는 공유 슬롯을 예약하지 않는다.
+    expect(html).toContain(`<option value="${GPU}/qwen3.8-flash-next">gpu3090 · qwen3.8-flash-next · 상태 확인 중</option>`);
     expect(html).toContain(`name="rank1Connection" value="${GPU}"`);
-    expect(html).toContain("저장한 순위 = 지금 동작");
+    expect(html).toContain("저장 순위와 실행 설정 일치");
     expect(html).toContain("저장한 순위의 계약·경로·장비가 있습니다.");
     expect(html).toContain("지금 꺼져 있습니다.");
-    // 한 줄 상태: 순위가 있고 준비된 text 작업 = 준비됨, 순위가 없는 아직 옮기지 않은 작업 = 순위 없음. 바뀐 것이 없으면 저장 버튼이 꺼져 있다
-    expect(html).toContain('data-status="ok">준비됨</span>');
+    // 설정 준비와 실제 실행 관측을 구분한다. 바뀐 것이 없으면 저장 버튼이 꺼져 있다.
+    expect(html).toContain('data-status="ok">설정 준비됨</span>');
     expect(html).toContain('data-status="muted">순위 없음</span>');
     expect(html).toMatch(/<button type="submit" disabled=""[^>]*>저장<\/button>/);
     expect(html).not.toContain("바뀐 것이 없습니다.");
-    // 자세한 것은 줄마다 접힌 「자세히」 안 — 표 위의 긴 안내는 없다
-    expect(html.match(/<details class="text-\[13px\] md:col-span-3"><summary class="cursor-pointer text-fg-3">자세히<\/summary>/g)).toHaveLength(2);
-    expect(html.indexOf("지금 실제로 쓰는 모델")).toBeGreaterThan(html.indexOf("자세히</summary>"));
+    // 목록에서는 모델·상태를 항상 비교하며, 수정 폼은 닫힌 작업 행 안에 유지한다.
+    expect(html).toContain('<details id="execution-crawl-tagline-1" class="mt-task-row">');
+    expect(html).toContain('<details id="execution-audit-review-1" class="mt-task-row">');
+    expect(html).toContain("모델 설정 · 순위별 표시");
+    expect(html).toContain("최근 실행 관측 없음");
+    expect(html.indexOf("gpu3090 · qwen3.8-flash-next")).toBeLessThan(html.indexOf('class="mt-task-editor"'));
+    expect(html.match(/<details class="text-\[13px\]"><summary class="cursor-pointer text-fg-3">자세히<\/summary>/g)).toHaveLength(2);
+    expect(html.indexOf("실행 쪽 현재 설정")).toBeGreaterThan(html.indexOf("자세히</summary>"));
     // text 작업(PR B)은 실행 쪽이 순위를 읽는다 — 아직 돈 기록이 없으면 그렇게 보인다. 감사 작업은 아직 읽지 않는다(다음 단계)
     expect(html).toContain("대체 실행은 우선 모델 하나를 쓰고, 필요한 경우에만 다음 순위로 전환합니다. 순위마다 추가 검수하는 방식이 아닙니다.");
     expect(html).toContain("이 작업은 아직 기존 설정을 사용합니다.");
@@ -78,9 +85,9 @@ describe("작업 ↔ AI 모델 화면", () => {
     const html = renderToStaticMarkup(createElement(TaskRanksBoard, { lines: [line({ task: "second-review", slot: 2, label: "2차 AI 검수 · 투표자 2", group: "review",
       rows: [], options, current: null, sameAsCurrent: null, readiness: [], runtime: null })], connections: [gpu], rows: voters }));
     expect(html).toContain('aria-label="2차 AI 검수 · 투표자 2 1순위"');
-    expect(html).toContain(`<optgroup label="gpu3090"><option value="${GPU}/qwen3.8-flash-next" disabled="">qwen3.8-flash-next</option>`
-      + `<option value="${GPU}/gpt-oss-120b">gpt-oss-120b</option></optgroup>`);
-    expect(html).not.toContain("gpu3090 · ");
+    expect(html).toContain(`<optgroup label="gpu3090 · API"><option value="${GPU}/qwen3.8-flash-next" disabled="">qwen3.8-flash-next · 상태 확인 중 · 이 투표자/모델 조건에서 선택 불가</option>`
+      + `<option value="${GPU}/gpt-oss-120b">gpt-oss-120b · 상태 확인 중</option></optgroup>`);
+    expect(html).not.toContain(">gpu3090 · qwen3.8-flash-next");
     expect(html).toContain('data-status="bad">순위 없음 — 이 작업은 돌지 않습니다</span>');
   });
   it("순위를 모두 비우는 저장은 한 번 더 묻는다 — 실행 쪽이 읽는 작업은 멈춘다고 적는다", () => {
@@ -91,14 +98,18 @@ describe("작업 ↔ AI 모델 화면", () => {
     const status = (patch: Partial<TaskRankLine>) => /data-status="(\w+)">([^<]*)</.exec(renderToStaticMarkup(createElement(TaskRanksBoard,
       { lines: [line(patch)], connections: [gpu], rows: line().rows })))!.slice(1);
     expect(status({ readiness: [{ rank: 1, blocking: ["막힘"], warnings: [], pending: [] }] })).toEqual(["bad", "쓸 수 없는 순위가 있습니다 — 자세히"]);
-    expect(status({ runtime: { from: "job", at: "11-02", served: [], unusable: [], degraded: { code: "all_ranks_unusable", detail: null } } }))
-      .toEqual(["bad", "실행 멈춤 — 자세히"]);
+    expect(status({ runtime: { from: "job", at: "11-02", observedAt: "2026-11-02T00:00:00.000Z", fresh: true,
+      served: [], unusable: [], degraded: { code: "all_ranks_unusable", detail: null } } }))
+      .toEqual(["bad", "최근 실행 사용 불가"]);
     expect(status({ options: [{ provider: GPU, model: "qwen3.8-flash-next", label: "x", saved: true, group: "gpu3090", text: "qwen3.8-flash-next (목록에 없음)" }] }))
       .toEqual(["warn", "저장한 모델이 지금 서버 목록에 없습니다"]);
     expect(status({ readiness: [{ rank: 1, blocking: [], warnings: ["알림"], pending: [] }] })).toEqual(["warn", "알림이 있습니다 — 자세히"]);
     expect(status({ live: false })).toEqual(["muted", "저장됨 · 실행 쪽은 아직 옛 설정"]);
-    expect(status({ runtime: { from: "job", at: "11-02", served: [{ rank: 1, count: 3 }, { rank: 2, count: 0 }], unusable: [], degraded: null } }))
-      .toEqual(["ok", "준비됨 · 마지막 실행 1순위 3건"]);
+    const runtime: TaskRankLine["runtime"] = { from: "job", at: "11-02", observedAt: "2026-11-02T00:00:00.000Z", fresh: true,
+      served: [{ rank: 1, count: 3 }, { rank: 2, count: 0 }], unusable: [], degraded: null };
+    expect(status({ runtime })).toEqual(["ok", "설정 준비됨"]);
+    const html = renderToStaticMarkup(createElement(TaskRanksBoard, { lines: [line({ runtime })], connections: [gpu], rows: line().rows }));
+    expect(html).toContain('<span class="mt-task-runtime"><b>1순위 3건</b>');
   });
   it("실행 쪽 순위 사정: 순위마다 맡은 수와 아래 순위를 쓴 까닭, 제 일 못 한 틱을 보인다", () => {
     const served = renderToStaticMarkup(createElement(TaskRanksBoard, { lines: [line({ runtime: { from: "job", at: "11-02 12:00", served: [{ rank: 1, count: 3 },
