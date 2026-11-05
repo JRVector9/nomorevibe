@@ -1,14 +1,15 @@
 "use client";
 import { aiRankChoiceOfRow } from "@/lib/operations/admin-ai-tasks";
-import { Fragment, useActionState, useState } from "react";
+import { useActionState, useEffect, useState } from "react";
 import { AI_TASK_GROUP_LABELS, AI_TASK_KIND_LABELS, aiTask, type AiTaskGroup } from "@/lib/llm/ai-tasks";
 // 형과 순수 함수만 — 저장은 actions(서버)를 거친다
 import { AI_RANK_SLOT_NAMES, aiRankOptionBlocked, validateAiTaskRanks, type AiConnectionView, type AiRankChoice, type AiRankOption, type AiTaskRankRow } from "@/lib/operations/admin-ai-tasks";
 import { RankSelects } from "../RankSelects";
 import { saveAiTaskRanksAction, type AiTaskActionState } from "./actions";
 import type { AiTaskExecutionAdminView } from "@/lib/operations/admin-ai-task-execution";
-import { TaskExecutionForm } from "./TaskExecutionForm";
+import { currentTaskPoolRuntime, taskPoolRuntimeGroups, TaskExecutionForm } from "./TaskExecutionForm";
 import { aiTaskWorkloadPoolUnsupportedReason, aiTaskWorkloadPoolApiOnly, type AiTaskPoolRuntime } from "@/lib/llm/ai-task-execution-config";
+import { modelPickerConnectionLabel, modelPickerModelLabel } from "../model-picker-display";
 
 /** 한 줄(작업 × 칸)의 화면 값 — 서버(readAiTasksAdminView)가 만든다. */
 export type TaskRankLine = {
@@ -25,35 +26,56 @@ export type TaskRankLine = {
     degraded: { code: string; detail: string | null } | null; pool?: AiTaskPoolRuntime; startedAt?: string; observedAt?: string; fresh?: boolean } | null;
 };
 
-/** 넓은 화면의 한 줄: 작업 | 1·2·3순위 | 저장 */
-const GRID = "grid gap-x-3 gap-y-2 md:items-start md:[grid-template-columns:minmax(0,15rem)_minmax(0,1fr)_7.5rem]";
-
 /**
- * 「작업 ↔ 모델」 표(2026-11-02 소유자 지시 「작업 한 줄마다 1·2·3순위 드롭다운만」) — 작업(2차는 투표자마다) 한 줄에 1·2·3순위 드롭다운과 저장 버튼, 한 줄 상태만 보인다.
- * 드롭다운은 서버(AI 연결)마다 묶여 그 서버가 서비스하는 모델 이름만 나온다(API 는 GET /models, CLI 는 적은 모델 이름). 지금 실제로 쓰는 모델·준비 상태·실행 기록은 줄마다 「자세히」에 접는다.
- * 줄마다 따로 저장한다(화면 판 compare-and-set). 검증은 서버와 같은 순수 함수(validateAiTaskRanks)를 그 자리에서 돌려 보인다.
+ * 한 목록에서 작업·실행 방식·모든 저장 모델·최근 실행을 비교한다.
+ * 수정 폼은 같은 행에서 펼치며 기존 순위/실행 방식의 별도 CAS 저장 경로를 유지한다.
  */
 export function TaskRanksBoard({ lines, connections, rows, executions = [], readOnly = false }: { lines: TaskRankLine[]; connections: AiConnectionView[]; rows: AiTaskRankRow[];
   executions?: readonly AiTaskExecutionAdminView[]; readOnly?: boolean }) {
+  useEffect(() => {
+    const openTarget = () => {
+      const id = window.location.hash.slice(1);
+      if (!id.startsWith("execution-")) return;
+      const target = document.getElementById(id);
+      if (target instanceof HTMLDetailsElement) {
+        target.open = true;
+        target.scrollIntoView({ block: "start" });
+      }
+    };
+    openTarget();
+    window.addEventListener("hashchange", openTarget);
+    return () => window.removeEventListener("hashchange", openTarget);
+  }, []);
   const groups = [...new Set(lines.map(line => line.group))];
-  return <div className="grid gap-4">
-    {groups.map(group => <section key={group} className="grid gap-0 rounded-xl border border-line bg-bg-card" aria-labelledby={`task-group-${group}`}>
-      <h3 id={`task-group-${group}`} className="border-b border-line px-4 py-2 text-[15px] font-semibold">{AI_TASK_GROUP_LABELS[group]}</h3>
-      <div className={`${GRID} border-b border-line px-4 py-1.5 text-[13px] font-semibold text-fg-3 max-md:hidden`} aria-hidden="true">
-        <span>작업</span><span className="grid grid-cols-3 gap-2"><span>1순위</span><span>2순위</span><span>3순위</span></span><span /></div>
+  return <div className="mt-task-list text-[13px]">
+    <div className="mt-task-list-head" aria-hidden="true"><span>작업</span><span>실행 방식 · 상태</span><span>모델 설정 · 순위별 표시</span><span>최근 실행 관측</span><span /></div>
+    {groups.map(group => <section key={group} aria-labelledby={`task-group-${group}`}>
+      <h3 id={`task-group-${group}`} className="mt-task-group-title">{AI_TASK_GROUP_LABELS[group]}</h3>
       {lines.filter(line => line.group === group).map(line => {
         const execution = executions.find(view => view.task === line.task && view.slot === line.slot);
         const pool = execution?.mode === "workload_pool";
         const apiOnly = aiTaskWorkloadPoolApiOnly(line.task);
+        const status: Status = readOnly ? { text: "설정 읽기 실패 · 저장 잠김", tone: "warn" }
+          : pool ? poolStatus(line, execution, connections) : apiOnly ? legacyClassificationStatus(line) : lineStatus(line, false, false);
         const ranks = <TaskRankLineForm line={line} connections={connections} rows={rows} readOnly={readOnly || pool} inactive={pool} />;
-        return <Fragment key={`${line.task}#${line.slot}`}>
-          {!pool && !apiOnly && ranks}
-          {execution && <TaskExecutionForm key={`${line.task}#${line.slot}#${execution.revision ?? "default"}`} view={execution}
-            label={line.label} options={line.options} connections={connections} readOnly={readOnly} runtime={line.runtime} />}
-          {pool && !apiOnly && <details className="border-b border-line px-4 py-2 text-[13px]">
-            <summary className="cursor-pointer text-fg-3">보관된 1·2·3순위 · 대체 실행으로 전환할 때 사용</summary>{ranks}
-          </details>}
-        </Fragment>;
+        return <details key={`${line.task}#${line.slot}`} id={`execution-${line.task}-${line.slot}`} className="mt-task-row">
+          <summary className="mt-task-row-summary">
+            <span className="mt-task-identity"><b title={line.description}>{line.label}</b><small>{AI_TASK_KIND_LABELS[line.kind]} · {line.accepts}</small></span>
+            <span className="mt-task-mode"><b>{readOnly ? "실행 방식 미확인" : pool ? `작업 분산 · ${execution.members.length}칸` : apiOnly ? "기존 CLI 분류" : "대체 실행"}</b>
+              <span className={TONE[status.tone]} data-status={status.tone}>{status.text}</span></span>
+            <TaskModelsSummary line={line} execution={execution} connections={connections} />
+            {readOnly ? <span className="mt-task-runtime text-fg-3">실행 방식 확인 후 표시</span> : <TaskRuntimeSummary line={line} execution={execution} connections={connections} />}
+            <span className="mt-task-toggle">설정</span>
+          </summary>
+          <div className="mt-task-editor">
+            {execution && <TaskExecutionForm key={`${line.task}#${line.slot}#${execution.revision ?? "default"}`} view={execution}
+              label={line.label} options={line.options} connections={connections} readOnly={readOnly} runtime={line.runtime} />}
+            {!pool && !apiOnly && ranks}
+            {pool && !apiOnly && <details className="text-[13px]">
+              <summary className="cursor-pointer text-fg-3">보관된 대체 순위</summary>{ranks}
+            </details>}
+          </div>
+        </details>;
       })}
     </section>)}
   </div>;
@@ -62,19 +84,68 @@ export function TaskRanksBoard({ lines, connections, rows, executions = [], read
 type Status = { text: string; tone: "ok" | "warn" | "bad" | "muted" };
 const TONE: Record<Status["tone"], string> = { ok: "text-emerald-700", warn: "text-amber-700", bad: "text-red-600", muted: "text-fg-3" };
 
+function poolStatus(line: TaskRankLine, execution: AiTaskExecutionAdminView, connections: readonly AiConnectionView[]): Status {
+  if (!execution.members.length) return { text: "분산 모델 없음", tone: "bad" };
+  if (execution.members.some(member => !connections.some(connection => connection.id === member.connectionId && connection.enabled)))
+    return { text: "꺼졌거나 없는 연결", tone: "bad" };
+  const runtime = currentTaskPoolRuntime(execution, connections, line.runtime);
+  if (runtime?.degraded) return { text: "최근 실행 사용 불가", tone: "bad" };
+  if (runtime?.pool && Object.values(runtime.pool.served).some(count => count > 0)) return { text: "최근 실행 기록 있음", tone: "ok" };
+  return { text: "설정 저장됨 · 실행 관측 대기", tone: "muted" };
+}
+
+function legacyClassificationStatus(line: TaskRankLine): Status {
+  if (!line.current || line.current.error || !line.current.labels.length) return { text: "CLI 설정 확인 필요", tone: "warn" };
+  return { text: "기존 CLI 설정 사용", tone: "muted" };
+}
+
+function TaskModelsSummary({ line, execution, connections }: { line: TaskRankLine; execution?: AiTaskExecutionAdminView; connections: readonly AiConnectionView[] }) {
+  const pool = execution?.mode === "workload_pool";
+  const models = pool ? execution.members.map(member => ({ position: member.position, connectionId: member.connectionId, model: member.model,
+    effort: typeof member.options.reasoningEffort === "string" ? member.options.reasoningEffort : "" }))
+    : aiTaskWorkloadPoolApiOnly(line.task) ? [] : line.rows.map(row => ({ position: row.rank, connectionId: row.connectionId, model: row.model,
+      effort: typeof row.options.reasoningEffort === "string" ? row.options.reasoningEffort : "" }));
+  if (!models.length) {
+    if (!pool && aiTaskWorkloadPoolApiOnly(line.task) && line.current?.labels.length) return <span className="mt-task-models">
+      {line.current.labels.map((text, index) => <span key={`${index}:${text}`} className="mt-task-model-line"><b>{index + 1}순위</b><span>{text}</span></span>)}
+    </span>;
+    return <span className="mt-task-models text-fg-3">{!pool && aiTaskWorkloadPoolApiOnly(line.task) ? "CLI 모델 확인 필요" : "모델 미설정"}</span>;
+  }
+  return <span className="mt-task-models">{models.map((model, index) => {
+    const connection = connections.find(row => row.id === model.connectionId);
+    return <span className="mt-task-model-line" key={`${model.position}:${index}`}>
+      <b>{pool ? `모델 ${model.position}` : `${model.position}순위`}</b>
+      <span>{connection ? modelPickerConnectionLabel(connection) : "연결 없음"} · {connection ? modelPickerModelLabel(connection, model.model) : model.model}
+        {model.effort && <small> · 추론 {model.effort}</small>}</span>
+    </span>;
+  })}{!pool && line.sameAsCurrent === false && <small className="text-amber-700">실행 설정과 다름 · 자세히 확인</small>}</span>;
+}
+
+function TaskRuntimeSummary({ line, execution, connections }: { line: TaskRankLine; execution?: AiTaskExecutionAdminView; connections: readonly AiConnectionView[] }) {
+  const runtime = execution?.mode === "workload_pool" ? currentTaskPoolRuntime(execution, connections, line.runtime)
+    : line.runtime?.fresh ? line.runtime : null;
+  if (!runtime) return <span className="mt-task-runtime text-fg-3">최근 실행 관측 없음</span>;
+  const groups = execution?.mode === "workload_pool" && runtime.pool ? taskPoolRuntimeGroups(execution, runtime) : null;
+  const counts = execution?.mode === "workload_pool" && runtime.pool
+    ? groups!.map(group => `${group.members.map(member => `모델 ${member.position}`).join("·")} · ${group.served === null ? "사용 집계 없음" : `${group.shared ? "동일 모델 공유 업무 " : ""}${group.served}건`}`)
+    : runtime.served.filter(row => row.count > 0).map(row => `${row.rank}순위 ${row.count}건`);
+  const unusable = groups ? groups.reduce((sum, group) => sum + group.unusable, 0) : runtime.unusable.reduce((sum, row) => sum + row.count, 0);
+  return <span className="mt-task-runtime">{counts.length ? counts.map(text => <b key={text}>{text}</b>) : <b>맡은 업무 없음</b>}<small>{runtime.at} · {runtime.from === "job" ? "마지막 틱" : "웹 요청"}</small>
+    {unusable > 0 && <span className="text-amber-700">사용 불가 {unusable}건</span>}</span>;
+}
+
 /** 한 줄 상태(작업 이름 밑) — 고칠 일이 있으면 그것 하나, 없으면 「준비됨」. 자세한 까닭은 「자세히」에 있다. */
 function lineStatus(line: TaskRankLine, changed: boolean, cleared: boolean): Status {
   if (cleared) return line.live ? { text: "모두 비움 — 저장하면 이 작업이 멈춥니다", tone: "bad" } : { text: "모두 비움 — 저장 전", tone: "warn" };
   if (changed) return { text: "바꿈 — 저장 전", tone: "warn" };
   if (!line.rows.length) return line.live ? { text: "순위 없음 — 이 작업은 돌지 않습니다", tone: "bad" } : { text: "순위 없음", tone: "muted" };
   if (line.readiness.some(row => row.blocking.length)) return { text: "쓸 수 없는 순위가 있습니다 — 자세히", tone: "bad" };
-  if (line.runtime?.degraded) return { text: "실행 멈춤 — 자세히", tone: "bad" };
+  if (line.runtime?.fresh && line.runtime.degraded) return { text: "최근 실행 사용 불가", tone: "bad" };
   if (line.options.some(option => option.saved)) return { text: "저장한 모델이 지금 서버 목록에 없습니다", tone: "warn" };
   if (line.readiness.some(row => row.pending.length)) return { text: "빠진 것이 있습니다 — 다시 저장하면 만듭니다", tone: "warn" };
   if (line.readiness.some(row => row.warnings.length)) return { text: "알림이 있습니다 — 자세히", tone: "warn" };
   if (!line.live) return { text: "저장됨 · 실행 쪽은 아직 옛 설정", tone: "muted" };
-  const served = line.runtime?.served.filter(row => row.count > 0) ?? [];
-  return { text: served.length ? `준비됨 · 마지막 실행 ${served.map(row => `${row.rank}순위 ${row.count}건`).join(" · ")}` : "준비됨", tone: "ok" };
+  return { text: "설정 준비됨", tone: "ok" };
 }
 
 /** 순위를 모두 비우는 저장 앞의 확인 글(브라우저 confirm). 취소하면 폼 동작이 돌지 않는다(onSubmit preventDefault). */
@@ -97,33 +168,32 @@ function TaskRankLineForm({ line, connections, rows, readOnly, inactive = false 
   const confirmClear = (event: { preventDefault(): void }) => {
     if (cleared && !window.confirm(clearConfirmText(line))) event.preventDefault();
   };
-  return <form action={action} onSubmit={confirmClear} className={`${GRID} border-b border-line px-4 py-3 last:border-b-0`} data-task={line.task} data-slot={line.slot}>
+  return <form action={action} onSubmit={confirmClear} className="mt-task-ranks grid min-w-0 gap-2" data-task={line.task} data-slot={line.slot}>
     <input type="hidden" name="task" value={line.task} /><input type="hidden" name="slot" value={line.slot} /><input type="hidden" name="revision" value={line.revision} />
-    <div className="grid content-start gap-0.5 text-[13px]">
-      <span className="text-[14px] font-semibold" title={line.description}>{line.label}</span>
+    <div className="mt-task-form-toolbar text-[13px]">
+      <span className="grid content-start gap-0.5"><b>대체 모델 순위</b>
       <span className={TONE[status.tone]} data-status={status.tone}>{status.text}</span>
-    </div>
-    <RankSelects<AiRankChoice> stage={{ id: `${line.task}-${line.slot}`, label: line.label, slots: 3 }} options={line.options} connections={connections} value={value} onChange={setValue}
-      slotNames={AI_RANK_SLOT_NAMES} disabled={saving || readOnly} showProvider={false} compact note={null}
-      blocked={(option, index, slots) => aiRankOptionBlocked(task, line.slot, index, option, slots, rows)}
-      validate={slots => validateAiTaskRanks(line.task, line.slot, slots, { connections, rows })} />
-    <div className="grid content-start">
+      </span>
       <button type="submit" disabled={saving || readOnly || issues.length > 0 || !changed && !pending}
         className="min-h-9 rounded-lg bg-fg px-3 text-[13px] text-bg disabled:opacity-40">
         {saving ? "저장 중…" : !changed && pending ? "다시 저장" : "저장"}</button>
     </div>
-    {(state?.ok || state?.warnings?.length || state?.issues?.length) ? <div className="grid gap-0.5 text-[13px] md:col-span-3">
+    <RankSelects<AiRankChoice> stage={{ id: `${line.task}-${line.slot}`, label: line.label, slots: 3 }} options={line.options} connections={connections} value={value} onChange={setValue}
+      slotNames={AI_RANK_SLOT_NAMES} disabled={saving || readOnly} showProvider={false} note={null}
+      blocked={(option, index, slots) => aiRankOptionBlocked(task, line.slot, index, option, slots, rows)}
+      validate={slots => validateAiTaskRanks(line.task, line.slot, slots, { connections, rows })} />
+    {(state?.ok || state?.warnings?.length || state?.issues?.length) ? <div className="grid gap-0.5 text-[13px]">
       {state?.ok && <p role="status">{state.message}</p>}
       {state?.warnings?.map(text => <p key={text} role="note" className="text-amber-700">알림 — {text}</p>)}
       {state?.issues && <ul role="alert" className="grid gap-0.5 text-red-600">{state.issues.map(text => <li key={text}>{text}</li>)}</ul>}
     </div> : null}
-    <details className="text-[13px] md:col-span-3">
+    <details className="text-[13px]">
       <summary className="cursor-pointer text-fg-3">자세히</summary>
       <div className="mt-1 grid gap-1 rounded-lg border border-line px-3 py-2">
         <span className="text-fg-2">{line.description}</span>
         <span className="text-fg-3">{AI_TASK_KIND_LABELS[line.kind]} · 받는 연결: {line.accepts}</span>
         {aiTaskWorkloadPoolUnsupportedReason(line.task, line.slot) && <span className="text-fg-3">작업 분산: {aiTaskWorkloadPoolUnsupportedReason(line.task, line.slot)}</span>}
-        {task.sameModelAcrossRanks && <span className="text-fg-3">2·3순위는 1순위와 같은 모델을 다른 서버에 둘 때만 씁니다.</span>}
+        {task.sameModelAcrossRanks && <span className="text-fg-3">2·3순위도 1순위와 같은 모델을 선택합니다.</span>}
         <span className="text-fg-3">{inactive ? "현재 작업 분산에는 이 순위를 쓰지 않습니다. 대체 실행으로 전환하면 사용합니다."
           : line.live ? "대체 실행은 우선 모델 하나를 쓰고, 필요한 경우에만 다음 순위로 전환합니다. 순위마다 추가 검수하는 방식이 아닙니다."
           : "이 작업은 아직 기존 설정을 사용합니다."} 저장할 수 없으면 이유를 표시합니다.</span>
@@ -134,19 +204,19 @@ function TaskRankLineForm({ line, connections, rows, readOnly, inactive = false 
   </form>;
 }
 
-/** 지금 실제로 쓰는 모델 · 준비 상태(「자세히」 안). */
+/** 실행 쪽 설정 · 준비 상태. 실제 실행 여부는 별도 관측 기록으로 표시한다. */
 function CurrentDetail({ line }: { line: TaskRankLine }) {
   return <div className="grid gap-0.5">
-    <span className="font-semibold">지금 실제로 쓰는 모델</span>
+    <span className="font-semibold">실행 쪽 현재 설정</span>
     {line.current === null ? <span className="text-fg-3">지금 값을 읽지 못했습니다.</span>
       : line.current.error ? <span className="text-amber-700">지금 값을 읽지 못했습니다({line.current.error}).</span>
         : line.current.labels.length ? <ol className="grid gap-0.5">{line.current.labels.map((text, index) =>
           <li key={`${index}:${text}`}><span className="font-mono tabular-nums text-fg-3">{index + 1}.</span> {text}</li>)}</ol>
-          : <span className="text-fg-3">{line.current.skip ?? "지금 쓰는 모델이 없습니다."}</span>}
+          : <span className="text-fg-3">{line.current.skip ?? "실행 쪽 모델 설정이 없습니다."}</span>}
     {line.current && !line.current.error && <span className="text-fg-3">출처: {line.current.source}</span>}
     {line.current?.notes.map(text => <span key={text} className="text-fg-3">{text}</span>)}
     {line.sameAsCurrent !== null && line.rows.length > 0 && <span className={line.sameAsCurrent ? "font-semibold text-emerald-700" : "font-semibold text-amber-700"}>
-      {line.sameAsCurrent ? "저장한 순위 = 지금 동작" : "저장한 순위가 지금 동작과 다릅니다"}</span>}
+      {line.sameAsCurrent ? "저장 순위와 실행 설정 일치" : "저장 순위와 실행 설정이 다릅니다"}</span>}
     {line.readiness.map(row => <span key={row.rank} className={row.blocking.length ? "text-red-600" : "text-amber-700"}>
       {[...row.blocking, ...row.pending, ...row.warnings].map(text => <span key={text} className="block">{text}</span>)}</span>)}
     {line.rows.length > 0 && line.readiness.every(row => !row.blocking.length && !row.warnings.length && !row.pending.length)

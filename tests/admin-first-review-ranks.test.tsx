@@ -32,9 +32,9 @@ describe("1차 AI 검수 순위 선택지(엔진 API 실측 + CLI)", () => {
 
 describe("순위 검증", () => {
   const a = { provider: "abcllm" as const, model: "qwen3.8-flash-next" }, g = { provider: "grok-cli" as const, model: "grok-4.7" };
-  it("빈 칸 뒤 순위·중복·받지 않는 제공자를 한국어로 거절한다", () => {
+  it("빈 칸 뒤 순위·받지 않는 제공자를 거절하고 반복 모델은 허용한다", () => {
     expect(validateRanks(FIRST_REVIEW_RANK_STAGE, [a, null, g])).toEqual(["2순위를 비우고 그 뒤 순위만 고를 수 없습니다. 2순위부터 차례로 골라주세요."]);
-    expect(validateRanks(FIRST_REVIEW_RANK_STAGE, [a, g, a])).toEqual(["1순위와 3순위가 같은 모델입니다(qwen3.8-flash-next). 한 모델은 한 순위에만 둘 수 있습니다."]);
+    expect(validateRanks(FIRST_REVIEW_RANK_STAGE, [a, g, a])).toEqual([]);
     expect(validateRanks(FIRST_REVIEW_RANK_STAGE, [a, { provider: "codex-cli" as never, model: "spark" }, null]))
       .toEqual(["2순위: 1차 AI 검수에서 쓸 수 없는 제공자입니다(codex-cli)."]);
     expect(validateRanks(FIRST_REVIEW_RANK_STAGE, [a, g, null])).toEqual([]);

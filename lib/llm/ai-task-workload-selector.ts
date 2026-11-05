@@ -18,7 +18,7 @@ const cursors = new Map<string, number>();
  * Existing waiting/resumed identities are selected first and never replaced by a newly idle route.
  */
 export async function chooseTaskWorkloadMember<T extends AiTaskWorkloadCandidate>(config: AiTaskExecutionConfig,
-  candidates: readonly T[], options: Readonly<{ preferIdentity?: string | null; executor?: ProductTransaction }> = {}): Promise<AiTaskWorkloadChoice<T> | null> {
+  candidates: readonly T[], options: Readonly<{ preferIdentity?: string | null; preferMemberId?: string | null; executor?: ProductTransaction }> = {}): Promise<AiTaskWorkloadChoice<T> | null> {
   if (config.mode !== "workload_pool") return null;
   if (!aiTaskSupportsWorkloadPool(config.task, config.slot)) throw new ModelCapacityDeferredError("assignments_unavailable");
   if (config.revision === null || config.members.length < 1 || config.members.length > 4)
@@ -50,8 +50,9 @@ export async function chooseTaskWorkloadMember<T extends AiTaskWorkloadCandidate
       const result = (chosen: typeof eligible[number]): AiTaskWorkloadChoice<T> => Object.freeze({ ...chosen.candidate,
         poolSelection: Object.freeze({ task: config.task, slot: config.slot, configRevision: config.revision!, memberId: chosen.member.memberId,
           position: chosen.member.position, policyEpoch: Number(control.epoch), policyRevision: Number(control.revision), policyHash: control.policyHash! }) });
-      if (options.preferIdentity) {
-        const preferred = eligible.find(row => row.candidate.identity === options.preferIdentity);
+      if (options.preferIdentity || options.preferMemberId) {
+        const preferred = eligible.find(row => (!options.preferIdentity || row.candidate.identity === options.preferIdentity)
+          && (!options.preferMemberId || row.member.memberId === options.preferMemberId));
         return preferred ? result(preferred) : null;
       }
       if (control.mode !== "open") throw new ModelCapacityDeferredError(control.mode === "disabled" ? "disabled" : "draining");

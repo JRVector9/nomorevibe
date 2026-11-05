@@ -1,5 +1,4 @@
 import type { FirstReviewer } from "@/lib/crawl/agent-review";
-import { sameUnderlyingModel } from "@/lib/crawl/review-model-identity";
 import { modelRequestName, type ModelDefinition } from "@/lib/llm/model-registry";
 import type { ServedContractModels } from "./admin-engine-connect";
 
@@ -56,7 +55,7 @@ export function rankOptions(stage: RankStage, input: { served: readonly ServedCo
     .sort((a, b) => Number(a.provider.endsWith("-cli")) - Number(b.provider.endsWith("-cli")) || a.label.localeCompare(b.label));
 }
 
-/** 1·2·3순위 검증(순수). 빈 칸은 「없음」. 앞 순위를 비우고 뒤 순위만 고를 수 없고, 한 모델(같은 가중치 포함)은 한 순위에만 둔다. */
+/** 1·2·3순위 검증(순수). 빈 칸은 「없음」. 반복 모델도 실제 실행의 공유 용량 한도를 따른다. */
 export function validateRanks(stage: RankStage, ranks: readonly (FirstReviewer | null)[]): string[] {
   const issues: string[] = [];
   if (ranks.length > stage.slots) issues.push(`${stage.label}은 ${stage.slots}순위까지 고를 수 있습니다.`);
@@ -66,9 +65,6 @@ export function validateRanks(stage: RankStage, ranks: readonly (FirstReviewer |
   ranks.forEach((row, index) => {
     if (!row) return;
     if (!stage.providers.includes(row.provider)) issues.push(`${index + 1}순위: ${stage.label}에서 쓸 수 없는 제공자입니다(${row.provider}).`);
-    const earlier = ranks.slice(0, index).findIndex(other => other && (other.provider === row.provider && other.model === row.model
-      || sameUnderlyingModel(other.model, row.model)));
-    if (earlier >= 0) issues.push(`${earlier + 1}순위와 ${index + 1}순위가 같은 모델입니다(${row.model}). 한 모델은 한 순위에만 둘 수 있습니다.`);
   });
   return issues;
 }

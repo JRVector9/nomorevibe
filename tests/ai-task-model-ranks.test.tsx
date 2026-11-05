@@ -175,12 +175,12 @@ describe("선택지와 검증", () => {
       { id: m3.id, label: "m3-mlx", reason: "키 없음 · 거절됨(HTTP 401 — 키 확인)" }, { id: fresh.id, label: "새 서버", reason: "아직 못 읽음" },
       { id: empty.id, label: "빈 서버", reason: "모델 0개" }]);
   });
-  it("빈 칸 뒤 순위·같은 연결·모델·받지 않는 연결·목록에 없는 모델을 막는다", () => {
+  it("빈 칸 뒤 순위·받지 않는 연결·목록에 없는 모델을 막고 같은 연결·모델의 반복 순위는 허용한다", () => {
     expect(validateAiTaskRanks("crawl-tagline", 1, [pick(GPU, "qwen3.8-flash-next"), pick(SUPA, "qwen3.8-flash-next"), null], context())).toEqual([]);
     expect(validateAiTaskRanks("crawl-tagline", 1, [pick(GPU, "qwen3.8-flash-next"), null, pick(SUPA, "qwen3.8-flash-next")], context()))
       .toEqual(["2순위를 비우고 그 뒤 순위만 고를 수 없습니다. 2순위부터 차례로 골라주세요."]);
     expect(validateAiTaskRanks("crawl-tagline", 1, [pick(GPU, "qwen3.8-flash-next"), pick(GPU, "qwen3.8-flash-next")], context()))
-      .toEqual(["1순위와 2순위가 같은 연결·모델입니다(qwen3.8-flash-next). 한 연결의 한 모델은 한 순위에만 둘 수 있습니다."]);
+      .toEqual([]);
     expect(validateAiTaskRanks("crawl-tagline", 1, [pick(CLAUDE, "sonnet")], context())).toEqual(["1순위: 수집 소개 짓기은(는) Claude CLI를 받지 않습니다."]);
     expect(validateAiTaskRanks("product-intro-check", 1, [pick(GPU, "qwen3.8-flash-next")], context()))
       .toEqual(["1순위: 소개 검수은(는) API 주소 연결을 받지 않습니다(CLI Claude CLI만)."]);
@@ -192,7 +192,7 @@ describe("선택지와 검증", () => {
   });
   it("벡터: 2·3순위도 같은 모델, 검색어 벡터는 제품 벡터와 같은 모델; 제품 벡터를 바꾸면 알린다", () => {
     expect(validateAiTaskRanks("product-embedding", 1, [pick(EMB, "bge-m3"), pick(EMB, "bge-m3-q8")], context()))
-      .toEqual(["2순위: 제품 의미 검색 벡터은(는) 2·3순위도 1순위와 같은 모델(bge-m3)이어야 합니다. 다른 서버의 같은 모델만 대체로 둘 수 있습니다."]);
+      .toEqual(["2순위: 제품 의미 검색 벡터은(는) 2·3순위도 1순위와 같은 모델(bge-m3)이어야 합니다."]);
     const rows = [row("product-embedding", 1, 1, EMB, "bge-m3")];
     expect(validateAiTaskRanks("search-embedding", 1, [pick(EMB, "bge-m3-q8")], context(rows)))
       .toEqual(["검색어 벡터은(는) 제품 의미 검색 벡터의 1순위 모델(bge-m3)과 같은 모델이어야 합니다."]);

@@ -250,7 +250,7 @@ export type AiRankValidationContext = Readonly<{
 
 /**
  * 한 줄(작업 × 칸)의 1·2·3순위 검증(순수, 한국어). 저장을 막는 문제만 낸다:
- * 빈 칸 뒤 순위 · 같은 연결·모델 두 번 · 없는/꺼진 연결 · 작업이 받지 않는 연결(API·CLI 도구) · 연결이 내놓지 않는 모델(저장된 값은 그대로 둘 수 있다) ·
+ * 빈 칸 뒤 순위 · 없는/꺼진 연결 · 작업이 받지 않는 연결(API·CLI 도구) · 연결이 내놓지 않는 모델(저장된 값은 그대로 둘 수 있다) ·
  * 벡터·재정렬의 「2·3순위도 같은 모델」 · 검색어 벡터 = 제품 벡터 모델 · 2차 투표자끼리 같은 1순위 모델.
  */
 export function validateAiTaskRanks(taskId: string, slot: number, ranks: readonly (AiRankChoice | null)[], context: AiRankValidationContext): string[] {
@@ -279,10 +279,12 @@ export function validateAiTaskRanks(taskId: string, slot: number, ranks: readonl
     if (!offered && !keptSaved) issues.push(connection.kind === "api"
       ? `${rank}순위: 「${connection.label}」의 모델 목록에 ${row.model}이(가) 없습니다. AI 연결에서 「다시 읽기」로 목록을 새로 읽으세요.`
       : `${rank}순위: 「${connection.label}」에 ${row.model} 모델 이름이 없습니다. AI 연결에서 CLI 모델 이름에 더하세요.`);
+    // Review resumes identify provider/model. Repeated CLI ranks must therefore resolve to the same options.
     const earlier = ranks.slice(0, index).findIndex(other => other && other.provider === row.provider && other.model === row.model);
-    if (earlier >= 0) issues.push(`${earlier + 1}순위와 ${rank}순위가 같은 연결·모델입니다(${row.model}). 한 연결의 한 모델은 한 순위에만 둘 수 있습니다.`);
+    if (connection.kind === "cli" && earlier >= 0 && (ranks[earlier]?.reasoningEffort || "") !== (row.reasoningEffort || ""))
+      issues.push(`${earlier + 1}순위와 ${rank}순위의 같은 CLI 모델은 추론 강도도 같게 설정하세요. 대기 작업을 같은 설정으로 이어가기 위한 조건입니다.`);
     if (task.sameModelAcrossRanks && index > 0 && ranks[0] && ranks[0].model !== row.model)
-      issues.push(`${rank}순위: ${task.label}은(는) 2·3순위도 1순위와 같은 모델(${ranks[0].model})이어야 합니다. 다른 서버의 같은 모델만 대체로 둘 수 있습니다.`);
+      issues.push(`${rank}순위: ${task.label}은(는) 2·3순위도 1순위와 같은 모델(${ranks[0].model})이어야 합니다.`);
   });
   const first = ranks[0];
   if (task.sameModelAs && first) {
@@ -491,6 +493,8 @@ export function aiRanksReadiness(task: AiTaskDef, ranks: readonly Readonly<{ ran
     if (ready.createContract && entry.connection.baseUrl)
       contracts.push({ routeId: ready.createContract.routeId, model: ready.createContract.identity, provider: "abcllm",
         endpoint: `${entry.connection.baseUrl}/chat/completions`, transport: "direct", engineModel: ready.createContract.engineModel });
+    if (ready.createCliContract) contracts.push({ routeId: `cli:${ready.createCliContract.provider}:${ready.createCliContract.routeId}`,
+      model: ready.createCliContract.model, provider: ready.createCliContract.provider, endpoint: null, transport: "direct", cliVersion: ready.createCliContract.cliVersion });
     return ready;
   });
 }

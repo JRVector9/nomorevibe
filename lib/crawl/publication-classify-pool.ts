@@ -69,7 +69,7 @@ export async function classifyPublicationPool(expected: readonly PublicationClas
     await abandonResume();
     throw new ModelCapacityDeferredError('reservation_lost');
   }
-  const choice = await chooseTaskWorkloadMember(config, candidates, { preferIdentity: own[0]?.candidate.identity });
+  const choice = await chooseTaskWorkloadMember(config, candidates, { preferIdentity: own[0]?.candidate.identity, preferMemberId: own[0]?.candidate.memberId });
   if (!choice) throw new ModelCapacityDeferredError(candidates.length ? 'capacity' : 'provider_contract_unavailable');
   return runInTextTaskRank({ ...choice, poolSelection: choice.poolSelection }, async () => {
     if (!ctx.hasBudget() || ctx.signal?.aborted) throw new ModelCapacityDeferredError('reservation_lost');

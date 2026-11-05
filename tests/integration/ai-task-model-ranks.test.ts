@@ -118,7 +118,8 @@ describe("0162 표 CHECK", () => {
     await expect(client`INSERT INTO ai_task_models (task, rank, connection_id, model, updated_by) VALUES ('crawl-tagline', 4, ${id}, 'm', 't')`).rejects.toThrow(/ai_task_models_rank_check/);
     await client`INSERT INTO ai_task_models (task, rank, connection_id, model, updated_by) VALUES ('crawl-tagline', 1, ${id}, 'm', 't')`;
     await expect(client`INSERT INTO ai_task_models (task, rank, connection_id, model, updated_by) VALUES ('crawl-tagline', 1, ${id}, 'n', 't')`).rejects.toThrow(/ai_task_models_rank_key/);
-    await expect(client`INSERT INTO ai_task_models (task, rank, connection_id, model, updated_by) VALUES ('crawl-tagline', 2, ${id}, 'm', 't')`).rejects.toThrow(/ai_task_models_model_key/);
+    // 0167 permits the same model at another rank; the rank itself stays unique.
+    await client`INSERT INTO ai_task_models (task, rank, connection_id, model, updated_by) VALUES ('crawl-tagline', 2, ${id}, 'm', 't')`;
     await expect(client`DELETE FROM ai_connections WHERE id = ${id}`).rejects.toThrow(/ai_task_models_connection_fk/);
   });
 });
