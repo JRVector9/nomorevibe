@@ -185,8 +185,12 @@ export const aiConnectionModelIds = (connection: Pick<AiConnectionView, "kind" |
   }
   return [...connection.cliModels];
 };
-export const aiConnectionLabel = (connection: Pick<AiConnectionView, "label" | "kind" | "cliTool">) =>
-  connection.kind === "cli" && connection.cliTool && !connection.label.toLowerCase().includes("cli") ? `${connection.label}(${AI_CLI_TOOL_LABELS[connection.cliTool]})` : connection.label;
+export const aiConnectionLabel = (connection: Pick<AiConnectionView, "label" | "kind" | "cliTool"> & Partial<Pick<AiConnectionView, "deviceId" | "baseUrl">>) => {
+  if (connection.kind === "api" && connection.deviceId === "m1-qwen" && connection.baseUrl === "https://m1-studio.tail02799e.ts.net/v1")
+    return "M1 Studio · Gemma";
+  return connection.kind === "cli" && connection.cliTool && !connection.label.toLowerCase().includes("cli")
+    ? `${connection.label}(${AI_CLI_TOOL_LABELS[connection.cliTool]})` : connection.label;
+};
 
 /**
  * 한 작업의 선택지: 이 작업이 받는 켜진 연결마다 그 연결이 실제로 내놓는 모델 하나씩 — 「연결 이름 · 모델」. 지금 저장된 값이 목록에 없으면

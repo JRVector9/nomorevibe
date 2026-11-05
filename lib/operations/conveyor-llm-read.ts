@@ -5,6 +5,7 @@ import { aiTaskModels } from "@/lib/db/schema";
 import { AI_TASKS } from "@/lib/llm/ai-tasks";
 import { logger } from "@/lib/observability/logger";
 import { listAiConnections, readAiTaskRuntime } from "./admin-ai-tasks-repository";
+import { aiConnectionLabel } from "./admin-ai-tasks";
 import { readAiTaskExecutionAdminViews } from "./admin-ai-task-execution";
 import type { LlmExecutionRow, LlmConnection, LlmInputs, LlmRankRow, LlmRuntime, LlmUsedRow, LlmActiveRow } from "./conveyor-llm";
 
@@ -59,7 +60,7 @@ async function readActiveLedger(): Promise<LlmActiveRow[]> {
 
 export async function readLlmInputs(now: string): Promise<LlmInputs> {
   const [connections, rows, used, runtime, execution, active] = await Promise.all([
-    listAiConnections().then((list): LlmConnection[] => list.map((row) => ({ id: row.id, label: row.label, kind: row.kind, baseUrl: row.baseUrl,
+    listAiConnections().then((list): LlmConnection[] => list.map((row) => ({ id: row.id, label: aiConnectionLabel(row), kind: row.kind, baseUrl: row.baseUrl,
       cliTool: row.cliTool, hasKey: row.hasKey, enabled: row.enabled, updatedAt: row.updatedAt }))).catch(warn("conveyor.llm_connections_unavailable")),
     // Keep the save timestamp with the same primary read; old tick failures are about the old ranks.
     onPrimary(() => db.select({ task: aiTaskModels.task, slot: aiTaskModels.slot, rank: aiTaskModels.rank,
