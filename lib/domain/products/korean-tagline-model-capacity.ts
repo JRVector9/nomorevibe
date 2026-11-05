@@ -24,8 +24,11 @@ export type KoreanTaglineCapacityResult = { kind: "skipped" } | {
 
 /** A single demanded batch; neither queue waiting nor HTTP retains a DB TX. */
 export async function translateKoreanTaglinesWithModelCapacity(value: readonly KoreanTaglineTask[], homeSlugs: readonly string[], job: JobLease,
-  valueOptions: { timeoutMs: number; signal?: AbortSignal; roleLease?: RoleLease }): Promise<KoreanTaglineCapacityResult> {
+  valueOptions: { timeoutMs: number; signal?: AbortSignal; roleLease?: RoleLease;
+    pendingClaims?: { requestIds: Set<string>; claimBatch: (tasks: readonly KoreanTaglineTask[]) => boolean } }): Promise<KoreanTaglineCapacityResult> {
   let tasks = structuredClone(value);
+  // Tick-local scheduling only; durable source/admission/dispatch checks remain below.
+  const pendingClaims = valueOptions.pendingClaims;
   const home = structuredClone(homeSlugs), lease = structuredClone(job);
   const options = { timeoutMs: valueOptions.timeoutMs, signal: valueOptions.signal,
     roleLease: valueOptions.roleLease && structuredClone(valueOptions.roleLease) };
@@ -56,8 +59,12 @@ export async function translateKoreanTaglinesWithModelCapacity(value: readonly K
   let adopted: { requestId: string; state: "waiting" | "reserved" } | undefined;
   for (const candidate of await findOwnPendingProductTextRequests(expected)) {
     if (options.signal?.aborted) throw new ModelCapacityDeferredError("reservation_lost");
+    if (pendingClaims?.requestIds.has(candidate.request.requestId)) continue;
     const recovered = await pendingKoreanTaglineBatch(candidate.memberKeys, home);
     if (!recovered) { await cancelOwnPendingProductTextRequest(candidate, expected); continue; }
+    // Claim synchronously after recovery, before another lane can adopt these members.
+    if (pendingClaims && !pendingClaims.claimBatch(recovered)) continue;
+    pendingClaims?.requestIds.add(candidate.request.requestId);
     const recoveredItems = recovered.map(task => ({ name: displayProjectName(task.name, task.repoUrl), tagline: koreanTaglineSource(task) }));
     const recoveredCall = prepareProductTaglineKoGatewayCall(recoveredItems, { model: textTaskModel("product-tagline-ko"), timeoutMs: options.timeoutMs, provider });
     if (recoveredCall.kind !== "prepared") throw new ModelCapacityDeferredError(recoveredCall.reason);
@@ -76,7 +83,11 @@ export async function translateKoreanTaglinesWithModelCapacity(value: readonly K
     workKey: `${productTaglineKoLogicalWorkKey(members)}:${productTaglineKoInputHash({ members, model: textTaskModel("product-tagline-ko") })}` });
   const pending = adopted ?? await findOwnPendingModelRequest(identity);
   if (pending?.state === "dispatched") throw new ModelCapacityDeferredError("dispatched");
-  const slot = await requestProductTaglineKoModelSlot({ ...identity, requestId: pending?.requestId ?? randomUUID() }, members);
+  if (!adopted && pending && pendingClaims?.requestIds.has(pending.requestId))
+    throw new ModelCapacityDeferredError("work_busy");
+  const request = { ...identity, requestId: pending?.requestId ?? randomUUID() };
+  pendingClaims?.requestIds.add(request.requestId);
+  const slot = await requestProductTaglineKoModelSlot(request, members);
   if (slot.kind !== "granted") throw new ModelCapacityDeferredError(slot.reason);
   let prepared: Awaited<ReturnType<typeof prepareKoreanTaglineDispatch>>;
   try {

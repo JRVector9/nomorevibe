@@ -25,8 +25,11 @@ export type ProductTranslationCapacityResult = { kind: "skipped" } | {
 
 /** A single demanded batch; neither queue waiting nor HTTP retains a DB TX. */
 export async function translateProductFieldsWithModelCapacity(value: readonly ProductTranslationTask[], job: JobLease,
-  valueOptions: { timeoutMs: number; signal?: AbortSignal; roleLease?: RoleLease; deadlineAt?: number }): Promise<ProductTranslationCapacityResult> {
+  valueOptions: { timeoutMs: number; signal?: AbortSignal; roleLease?: RoleLease; deadlineAt?: number;
+    pendingClaims?: { requestIds: Set<string>; claimBatch: (tasks: readonly ProductTranslationTask[]) => boolean } }): Promise<ProductTranslationCapacityResult> {
   let tasks = structuredClone(value);
+  // Tick-local scheduling only; durable source/admission/dispatch checks remain below.
+  const pendingClaims = valueOptions.pendingClaims;
   const lease = structuredClone(job);
   const options = { timeoutMs: valueOptions.timeoutMs, signal: valueOptions.signal, deadlineAt: valueOptions.deadlineAt,
     roleLease: valueOptions.roleLease && structuredClone(valueOptions.roleLease) };
@@ -59,8 +62,12 @@ export async function translateProductFieldsWithModelCapacity(value: readonly Pr
   let adopted: { requestId: string; state: "waiting" | "reserved" } | undefined;
   for (const candidate of await findOwnPendingProductTextRequests(expected)) {
     if (options.signal?.aborted) throw new ModelCapacityDeferredError("reservation_lost");
+    if (pendingClaims?.requestIds.has(candidate.request.requestId)) continue;
     const recovered = await pendingProductTranslationBatch(candidate.memberKeys);
     if (!recovered) { await cancelOwnPendingProductTextRequest(candidate, expected); continue; }
+    // Claim synchronously after recovery, before another lane can adopt these members.
+    if (pendingClaims && !pendingClaims.claimBatch(recovered)) continue;
+    pendingClaims?.requestIds.add(candidate.request.requestId);
     const recoveredItems = recovered.map(task => ({ name: task.source.name, locale: task.locale, field: task.field,
       text: translationSourceText(task.source, task.field) }));
     const recoveredCall = prepareProductTranslationGatewayCall(recoveredItems, { model, timeoutMs: options.timeoutMs, provider });
@@ -80,7 +87,10 @@ export async function translateProductFieldsWithModelCapacity(value: readonly Pr
     workKey: `${productTranslationLogicalWorkKey(members)}:${productTranslationInputHash({ members, model })}` });
   const pending = adopted ?? await findOwnPendingModelRequest(identity);
   if (pending?.state === "dispatched") throw new ModelCapacityDeferredError("dispatched");
+  if (!adopted && pending && pendingClaims?.requestIds.has(pending.requestId))
+    throw new ModelCapacityDeferredError("work_busy");
   const request = { ...identity, requestId: pending?.requestId ?? randomUUID() };
+  pendingClaims?.requestIds.add(request.requestId);
   const slot = await requestProductTranslationModelSlot(request, members);
   // 줄에 서지 못한 capacity(멤버 fence)는 이 묶음만의 work_busy — 잡은 이 멤버를 넘기고 다음 수요로 간다(2026-10-30 결정)
   if (slot.kind !== "granted") throw new ModelCapacityDeferredError(await capacityRefusalReason(request, slot.reason));

@@ -7,8 +7,9 @@ import type { TextTaskRanks } from "./ai-task-resolver";
 /** Prefer an existing unstarted batch's model before selecting another pool member.
  * This read grants nothing: each existing adapter rehydrates and validates the
  * complete membership, policy generation and domain claim before dispatch.
+ * A parallel tick omits requests already claimed by a sibling lane.
  */
-export async function pendingTextPoolModel(ranks: TextTaskRanks): Promise<string | null> {
+export async function pendingTextPoolModel(ranks: TextTaskRanks, claimedRequestIds?: ReadonlySet<string>): Promise<string | null> {
   const routeId = ranks.routeId;
   if (ranks.mode !== "workload_pool" || !["reason-translate", "product-translate", "product-tagline-ko"].includes(routeId)) return null;
   const owner = capacityOwnerFromEnv();
@@ -17,7 +18,8 @@ export async function pendingTextPoolModel(ranks: TextTaskRanks): Promise<string
     const expected = { owner, model: binding.identity, provider: binding.provider };
     const requests = routeId === "reason-translate" ? await findOwnPendingReasonTranslationRequests(expected)
       : await findOwnPendingProductTextRequests({ ...expected, routeId: routeId as "product-translate" | "product-tagline-ko" });
-    return requests.map(request => ({ model: binding.identity, state: request.state }));
+    return requests.filter(request => !claimedRequestIds?.has(request.request.requestId))
+      .map(request => ({ model: binding.identity, state: request.state }));
   }));
   const requests = pending.flat();
   return (requests.find(request => request.state === "reserved") ?? requests[0])?.model ?? null;

@@ -47,29 +47,32 @@ async function translateWithRanks(ctx: JobContext<null>, ranks: TextTaskRanks): 
   ownershipPoll.unref?.();
   try {
     const policy = productTranslationPolicy();
-    const passed = new Set<string>(), scheduled = new Set<string>();
+    const passed = new Set<string>(), scheduled = new Map<string, symbol>();
+    const pendingRequestIds = new Set<string>();
     const concurrency = Math.min(modelRequestBudget(JOB).concurrency, MAX_SELECTION_ROUNDS);
     let recorded = 0, rounds = 0, stopClaims = false;
     let selection: Promise<void> = Promise.resolve();
     // Queue selection is serial even when HTTP is parallel. Reserve these task keys
     // locally before releasing the next lane; durable admission remains in the existing capacity adapter.
-    const takeBatch = (): Promise<ProductTranslationTask[] | null> => {
+    const takeBatch = (lane: symbol): Promise<ProductTranslationTask[] | null> => {
       const next = selection.then(async () => {
         while (!stopClaims && rounds++ < MAX_SELECTION_ROUNDS && ctx.hasBudget() && !signal.aborted && !ranks.exhausted) {
-          const tasks = (await pendingProductTranslations(policy.batchMax, { exclude: [...passed, ...scheduled] }))
+          const tasks = (await pendingProductTranslations(policy.batchMax, { exclude: [...passed, ...scheduled.keys()] }))
             .filter(task => !passed.has(productTranslationTaskKey(task)) && !scheduled.has(productTranslationTaskKey(task)));
           if (!tasks.length || !ctx.hasBudget() || signal.aborted || stopClaims) return null;
           const retired = tasks.filter((task) => !task.eligible || productTranslationSourceHash(task.source, task.field) !== task.sourceHash
             || translationSourceText(task.source, task.field).length > policy.maxSourceChars);
           if (retired.length) {
-            recorded += await recordProductTranslations(retired.map((task) => ({ task,
+            const retiredStored = await recordProductTranslations(retired.map((task) => ({ task,
               result: { ok: false, error: translationSourceText(task.source, task.field).length > policy.maxSourceChars ? "source_too_long" : "stale_source", model: "" } as ProductTranslationResult,
             })), lease);
+            recorded += retiredStored;
           }
           for (const task of retired) passed.add(productTranslationTaskKey(task));
           // Long descriptions remain single calls; short fields keep the existing batch bound.
-          const batch = packProductTranslationBatch(tasks.filter((task) => !retired.includes(task)), policy);
-          for (const task of batch) scheduled.add(productTranslationTaskKey(task));
+          const batch = packProductTranslationBatch(tasks.filter((task) => !retired.includes(task)
+            && !scheduled.has(productTranslationTaskKey(task)) && !passed.has(productTranslationTaskKey(task))), policy);
+          for (const task of batch) scheduled.set(productTranslationTaskKey(task), lane);
           if (batch.length) return batch;
         }
         return null;
@@ -78,16 +81,23 @@ async function translateWithRanks(ctx: JobContext<null>, ranks: TextTaskRanks): 
       return next;
     };
     const runLane = async () => {
+      const lane = Symbol("translation-lane");
+      const pendingClaims = { requestIds: pendingRequestIds, claimBatch: (tasks: readonly ProductTranslationTask[]) => {
+        const keys = tasks.map(productTranslationTaskKey);
+        if (keys.some(key => passed.has(key) || scheduled.has(key) && scheduled.get(key) !== lane)) return false;
+        keys.forEach(key => scheduled.set(key, lane));
+        return true;
+      } };
       while (!stopClaims && ctx.hasBudget() && !signal.aborted) {
-        const batch = await takeBatch();
+        const batch = await takeBatch(lane);
         if (!batch || stopClaims || !ctx.hasBudget() || signal.aborted) return;
         let attempt: TextRankRun<Flow>;
         try {
-          const prefer = await pendingTextPoolModel(ranks);
+          const prefer = await pendingTextPoolModel(ranks, pendingRequestIds);
           // 순위 차례로 부른다 — 이 모델만의 까닭(경로 없음·장비 행 없음·계약 닫힘·포화)이면 같은 묶음을 다음 순위로(TextTaskRanks.run)
           attempt = await ranks.run(async (): Promise<Flow> => {
             // Outermost HTTP deadline (routes.limits.product-translate.timeoutMs, read per tick) fits the job budget; inner M1 bounds still require measurement and enforcement.
-            const outcome = await translateProductFieldsWithModelCapacity(batch, lease, { timeoutMs: productTranslationClientTimeoutMs(), signal, deadlineAt: ctx.deadlineAt });
+            const outcome = await translateProductFieldsWithModelCapacity(batch, lease, { timeoutMs: productTranslationClientTimeoutMs(), signal, deadlineAt: ctx.deadlineAt, pendingClaims });
             if (outcome.kind === "skipped") return { kind: "skipped" };
             const response = outcome.result;
             const completedBatch = outcome.batch ?? batch;
