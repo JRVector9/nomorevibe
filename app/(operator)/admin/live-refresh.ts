@@ -34,12 +34,13 @@ export function refreshPolicy(pathname: string, search: Pick<URLSearchParams, "g
 }
 
 /** 이번 차례를 건너뛰는 까닭. null 이면 읽는다. stuck 은 다시 읽기가 오래 끝나지 않아 기다리는 것 */
-export type PauseReason = "hidden" | "editing" | "unsaved" | "active" | "stuck" | "navigation";
+export type PauseReason = "hidden" | "editing" | "unsaved" | "paging" | "active" | "stuck" | "navigation";
 
 export const PAUSE_LABELS: Record<PauseReason, string> = {
   hidden: "창이 가려져 쉼",
   editing: "입력 중이라 잠시 멈춤",
   unsaved: "저장하지 않은 변경·열린 확인 창이 있어 멈춤",
+  paging: "이전 목록 확인 중",
   active: "조작 중이라 잠시 멈춤",
   stuck: "다시 읽기가 오래 걸려 끝나기를 기다리는 중",
   navigation: "페이지 이동 중",
@@ -58,10 +59,16 @@ export function hasUnsaved(root: Pick<ParentNode, "querySelector"> | null | unde
   return !!root?.querySelector(UNSAVED_SELECTOR);
 }
 
-export function pauseReason(input: { visible: boolean; editing: boolean; unsaved: boolean; idleForMs: number; idleMs: number }): PauseReason | null {
+/** Appended pages retain their cursor snapshot until the operator explicitly refreshes. */
+export function hasPagedRows(root: Pick<ParentNode, "querySelector"> | null | undefined): boolean {
+  return !!root?.querySelector('[data-admin-scroll-active="true"]');
+}
+
+export function pauseReason(input: { visible: boolean; editing: boolean; unsaved: boolean; paging?: boolean; idleForMs: number; idleMs: number }): PauseReason | null {
   if (!input.visible) return "hidden";
   if (input.unsaved) return "unsaved";
   if (input.editing) return "editing";
+  if (input.paging) return "paging";
   if (input.idleMs > 0 && input.idleForMs < input.idleMs) return "active";
   return null;
 }
@@ -128,7 +135,7 @@ export function createRefreshScheduler(now: () => number = () => Date.now()) {
   let retried = false;
   return {
     input() { lastInput = now(); },
-    tick(state: { visible: boolean; editing: boolean; unsaved: boolean; idleMs: number; manualBusy?: boolean; navigationBusy?: boolean }): { refresh: boolean; paused: PauseReason | null } {
+    tick(state: { visible: boolean; editing: boolean; unsaved: boolean; paging?: boolean; idleMs: number; manualBusy?: boolean; navigationBusy?: boolean }): { refresh: boolean; paused: PauseReason | null } {
       const reason = pauseReason({ ...state, idleForMs: now() - lastInput });
       if (reason) return { refresh: false, paused: reason };
       if (state.navigationBusy) return { refresh: false, paused: "navigation" };
