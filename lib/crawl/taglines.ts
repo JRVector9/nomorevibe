@@ -246,6 +246,21 @@ function crawlMember(task: TaglineTask, snapshot: CrawlSnapshot): CrawlTaglineMe
     documentRowIdentityHash: reviewHash(snapshot.document), cache: snapshot.cache ? { kind: "present",
       rowIdentityHash: reviewHash(snapshot.cache), attempts: snapshot.cache.attempts } : { kind: "absent" } });
 }
+/** Metadata-only current member for pool affinity; dispatch rechecks every source/role/job wall. */
+export async function readCrawlTaglineAffinityMember(task: TaglineTask): Promise<CrawlTaglineMember | null> {
+  return onPrimary(() => db.transaction(async tx => {
+    await tx.execute(sql`SET LOCAL statement_timeout='3s'`);
+    const [candidate] = await tx.select({ row: crawlCandidates, raw: sql<Raw>`to_jsonb(${crawlCandidates})` })
+      .from(crawlCandidates).where(eq(crawlCandidates.id, task.candidate.id));
+    const [document] = await tx.select({ row: crawlDocuments, raw: sql<Raw>`to_jsonb(${crawlDocuments})` })
+      .from(crawlDocuments).where(eq(crawlDocuments.id, task.document.id));
+    const [cache] = await tx.select({ row: crawlTaglines, raw: sql<Raw>`to_jsonb(${crawlTaglines})` })
+      .from(crawlTaglines).where(eq(crawlTaglines.repo, task.candidate.repo));
+    if (!candidate || !document || !isDeepStrictEqual(candidate.row, task.candidate)
+      || !isDeepStrictEqual(document.row, task.document) || !isDeepStrictEqual(cache?.row ?? null, task.written)) return null;
+    return crawlMember(task, { candidate: candidate.raw, document: document.raw, cache: cache?.raw ?? null });
+  }, { accessMode: 'read only', isolationLevel: 'repeatable read' }));
+}
 type PreparationOptions = { roleLease: RoleLease; call?: PreparedCrawlTaglineGatewayCall; previous?: CrawlTaglineWriteExpectation;
   reserved?: { reservation: ModelCapacityReservation; identity: ModelCapacityRequestIdentity; input: CrawlTaglineInput; initial: CrawlInitial } };
 export type CrawlTaglinePreparation = { kind: "disabled" } | ReturnType<typeof skipped> | CrawlInitial

@@ -11,6 +11,9 @@ import { planTerms, RELAX_MIN_TERMS, type SearchPlan, type SearchQuery } from ".
 import { translateQueryWithModelCapacity } from "./search-query-model-capacity";
 import { textTaskModel } from "@/lib/llm/ai-task-rank-scope";
 import { TextTaskRanks } from "@/lib/llm/ai-task-resolver";
+import { pendingTextPoolTargetModel } from "@/lib/llm/text-task-pool-resume";
+import { websearchProcessOwner } from "@/lib/llm/websearch-process-owner";
+import { readWebsearchQueryAffinityMember, type WebsearchQueryTarget } from "./search-query-capacity-repository";
 
 /**
  * 한국어·확실한 중국어 검색어를 영어 낱말로 바꿔 같은 제품 색인에서 한 번 더 찾는다.
@@ -152,21 +155,32 @@ async function translateDetectedQuery(raw: string): Promise<QueryTranslation> {
     // 공통 슬롯이 켜져 있으면 그 길로만 부른다(장부·캐시 기록은 그 안에서 주 DB 로). 꺼져 있으면 legacy — 아래 원래 길 그대로다
     const { prompt, glossary } = queryTranslationPolicy(raw, sourceLocale);
     const timeoutMs = searchQueryTranslateTimeoutMs();
-    const attempt = await ranks.run(async (): Promise<QueryTranslation | { kind: "result"; result: Awaited<ReturnType<typeof translateQueryToEnglish>> }> => {
-      const reserved = await translateQueryWithModelCapacity({ query: raw, sourceLocale, cacheKey: hash, promptVersion: prompt,
-        glossaryVersion: glossary }, timeoutMs);
-      if (reserved.kind === "cached") return { kind: "translated", text: reserved.text };
-      const result = reserved.kind === "result" ? reserved.result : sourceLocale === "ko" ? await translateQueryToEnglish(raw, timeoutMs)
-        : await translateChineseQueryToEnglish(raw, sourceLocale, timeoutMs);
-      // 관련도순 검색은 0건이면 공개 읽기(복제본) 안에서 번역을 기다린다 — 기록은 쓰기라 늘 주 DB 로 보낸다.
-      // 복제본에서 쓰면 25006 으로 실패하고, 아래 catch 가 받아 온 번역까지 버렸다
-      if (reserved.kind === "legacy") await onPrimary(() => recordTranslations(
-        [{ hash, translated: result.ok ? result.keywords : null, error: result.ok ? undefined : result.error }],
-        textTaskModel("search-query-translate"),
-        "en",
-      ));
-      return { kind: "result", result };
-    }).finally(() => ranks.publish());
+    const target: WebsearchQueryTarget = { query: raw, sourceLocale, cacheKey: hash, promptVersion: prompt, glossaryVersion: glossary };
+    const attempt = await (async () => {
+      let prefer: string | null = null;
+      if (ranks.mode === "workload_pool") {
+        const owner = websearchProcessOwner();
+        if (!owner) throw new ModelCapacityDeferredError("owner_unavailable");
+        // Read exactly the primary cache snapshot/member that the original coordinator will revalidate.
+        // A normalized cache key alone cannot substitute for its raw-query hash and prompt/glossary identity.
+        const member = await readWebsearchQueryAffinityMember(target);
+        if (member) prefer = await pendingTextPoolTargetModel(ranks, { routeId: "search-query-translate", member }, owner);
+      }
+      return ranks.run(async (): Promise<QueryTranslation | { kind: "result"; result: Awaited<ReturnType<typeof translateQueryToEnglish>> }> => {
+        const reserved = await translateQueryWithModelCapacity(target, timeoutMs);
+        if (reserved.kind === "cached") return { kind: "translated", text: reserved.text };
+        const result = reserved.kind === "result" ? reserved.result : sourceLocale === "ko" ? await translateQueryToEnglish(raw, timeoutMs)
+          : await translateChineseQueryToEnglish(raw, sourceLocale, timeoutMs);
+        // 관련도순 검색은 0건이면 공개 읽기(복제본) 안에서 번역을 기다린다 — 기록은 쓰기라 늘 주 DB 로 보낸다.
+        // 복제본에서 쓰면 25006 으로 실패하고, 아래 catch 가 받아 온 번역까지 버렸다
+        if (reserved.kind === "legacy") await onPrimary(() => recordTranslations(
+          [{ hash, translated: result.ok ? result.keywords : null, error: result.ok ? undefined : result.error }],
+          textTaskModel("search-query-translate"),
+          "en",
+        ));
+        return { kind: "result", result };
+      }, { prefer });
+    })().finally(() => ranks.publish());
     if (attempt.kind === "unusable") {
       // 모든 순위가 이 요청에 쓸 수 없다 — 포화면 다음에 다시(pending), 아니면 번역 없이 찾는다
       noteQueryRanksUnusable("all_ranks_unusable");

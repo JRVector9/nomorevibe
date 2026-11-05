@@ -62,6 +62,20 @@ async function writeQueryCache(tx: Transaction, cacheKey: string, expected: Cach
   return changed.length === 1;
 }
 
+/** Primary cache snapshot for model affinity only; the original coordinator still owns the cache CAS. */
+export async function readWebsearchQueryAffinityMember(value: WebsearchQueryTarget): Promise<WebsearchQueryInput["member"] | null> {
+  const target = targetSchema.parse(value);
+  return onPrimary(() => db.transaction(async tx => {
+    await tx.execute(sql`SET LOCAL statement_timeout = '3s'`);
+    const [row] = await tx.execute<{ raw: CacheRow }>(sql`SELECT to_jsonb(t) AS raw FROM text_translations t
+      WHERE t.source_hash=${target.cacheKey} AND t.target_lang='en'`);
+    const raw = row?.raw ?? null;
+    if (doneText(raw) !== null) return null;
+    return websearchQueryMemberSchema.parse({ cacheKey: target.cacheKey, sourceLocale: target.sourceLocale, queryHash: textHash(target.query),
+      promptVersion: target.promptVersion, glossaryVersion: target.glossaryVersion,
+      cache: raw === null ? { kind: "absent" } : { kind: "present", rowIdentityHash: reviewHash(raw), attempts: Number(raw.attempts) } });
+  }, { accessMode: "read only", isolationLevel: "repeatable read" }));
+}
 /** Initial read and reserved reentry share the same primary checks; only the fixed ledger UPDATE prefix differs. */
 export async function prepareWebsearchQueryDispatch(value: WebsearchQueryTarget, valueOptions: { owner: WebsearchProcessOwner;
   call: PreparedWebsearchQueryGatewayCall; reserved?: { reservation: ModelCapacityReservation; identity: ModelCapacityRequestIdentity; input: WebsearchQueryInput } }):
