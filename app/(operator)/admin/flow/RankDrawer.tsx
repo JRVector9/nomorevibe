@@ -8,6 +8,7 @@ import {
   type FlowRankEditor, type FlowRankLine, type RankChange, type RankWarning,
 } from "@/lib/operations/flow-rank-editor";
 import { RankSelects } from "../models/RankSelects";
+import { modelPickerConnectionDevice, modelPickerConnectionLabel, modelPickerModelLabel } from "../models/model-picker-display";
 import { saveAiTaskRanksAction } from "../models/tasks/actions";
 
 /**
@@ -31,6 +32,16 @@ function lineTag(line: FlowRankLine): { text: string; tone: "lock" | "set" | "li
   return { text: "실행이 이 순위를 읽음", tone: "live" };
 }
 
+/** Presentation names only; rank validation and form values retain the original connections. */
+function displayRankChain(editor: FlowRankEditor, ranks: Ranks): string {
+  return rankChainText({ ...editor, connections: editor.connections.map(connection => ({
+    ...connection, label: modelPickerConnectionLabel(connection),
+  })) }, ranks.map(row => {
+    const connection = editor.connections.find(entry => entry.id === row?.provider);
+    return row && connection ? { ...row, model: modelPickerModelLabel(connection, row.model) } : row;
+  }));
+}
+
 function WarningList({ warnings }: { warnings: RankWarning[] }) {
   if (!warnings.length) return null;
   return <ul className="fr-warns">{warnings.map((warning) => (
@@ -51,7 +62,7 @@ function LineEditor({ editor, line, value, onChange, warnings, disabled }: {
         <span className="fr-tag" data-tone={tag.tone}>{tag.text}</span>
         {changed && <span className="fr-tag" data-tone="changed">바꿈 — 저장 전</span>}
       </header>
-      <p className="fr-now"><span className="fr-k">지금</span> {rankChainText(editor, line.saved)}</p>
+      <p className="fr-now"><span className="fr-k">지금</span> {displayRankChain(editor, line.saved)}</p>
       {line.lock && <p className="fr-lock" role="note">{line.lock}</p>}
       <RankSelects<AiRankChoice> stage={{ id: `flow-${line.key}`, label: line.label, slots: 3 }} options={line.options} connections={editor.connections} value={value} onChange={onChange}
         slotNames={AI_RANK_SLOT_NAMES} disabled={disabled || !!line.lock}
@@ -95,7 +106,9 @@ export function RankDrawer({ editor, lines, title, secondWaiting, onClose, save 
     if (node && !node.open && typeof node.showModal === "function") node.showModal();
   }, []);
   const value = (line: FlowRankLine): Ranks => drafts[line.key] ?? line.saved;
-  const changes = rankChanges(editor, lines, drafts);
+  const changes = rankChanges(editor, lines, drafts).map(change => ({ ...change,
+    beforeText: displayRankChain(editor, change.before), afterText: displayRankChain(editor, change.after),
+  }));
   const warnings = rankWarnings(editor, lines, drafts, { secondWaiting });
   const changedKeys = new Set(changes.map((change) => change.line.key));
   const issues = changes.flatMap((change) => flowRankIssues(editor, change.line, change.after));
@@ -152,7 +165,11 @@ export function RankDrawer({ editor, lines, title, secondWaiting, onClose, save 
             <summary>연결 상태 {editor.states.length}개</summary>
             <table className="fr-conn-table">
               <thead><tr><th scope="col">연결</th><th scope="col">장비</th><th scope="col">최근 상태</th></tr></thead>
-              <tbody>{editor.states.map((state) => <tr key={state.id} data-state={state.state}><th scope="row">{state.label}</th><td>{state.device}</td><td>{state.text}</td></tr>)}</tbody>
+              <tbody>{editor.states.map((state) => {
+                const connection = editor.connections.find(row => row.id === state.id);
+                return <tr key={state.id} data-state={state.state}><th scope="row">{connection ? modelPickerConnectionLabel(connection) : state.label}</th>
+                  <td>{connection ? modelPickerConnectionDevice(connection) : state.device}</td><td>{state.text}</td></tr>;
+              })}</tbody>
             </table>
           </details>
         </div>}
