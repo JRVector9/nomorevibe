@@ -103,22 +103,24 @@ const STATE_TEXT: Record<TaskLlm["state"], string> = {
 
 /** 카드 맨 아래, 모든 칸이 같은 자리·같은 모양 — LLM 이름표 + 모델 + 어디서·얼마나(한 줄). 모델이 없는 칸도 같은 모양으로 답한다 */
 function LlmLine({ llm }: { llm: StationLlm | null }) {
-  if (!llm) return <span className="cv-llm" data-llm="unknown"><span className="cv-llm-k">LLM</span><b className="cv-llm-m">확인 못함</b><small className="cv-llm-w">모델 순위를 읽지 못함</small></span>;
+  if (!llm) return <span className="cv-llm" data-llm="unknown"><span className="cv-llm-k">LLM</span><b className="cv-llm-m">확인 못함</b><small className="cv-llm-w">모델 설정을 읽지 못함</small></span>;
   if (llm.kind === "none") return <span className="cv-llm" data-llm="none"><span className="cv-llm-k">LLM</span><b className="cv-llm-m">LLM 없음 · {llm.short}</b><small className="cv-llm-w">모델을 부르지 않음</small></span>;
   if (llm.kind === "unknown") return <span className="cv-llm" data-llm="unknown"><span className="cv-llm-k">LLM</span><b className="cv-llm-m">확인 못함</b><small className="cv-llm-w">{llm.why}</small></span>;
   const head = llm.head.head;
   const tone = llm.flag?.tone ?? "ok";
-  const usage = head?.source === "used" ? `최근 1시간 ${n(head.count ?? 0)}건` : llm.head.state === "none" ? "작업 ↔ AI 모델에서 채우기" : STATE_TEXT[llm.head.state];
+  const usage = head?.source === "used" ? `최근 1시간 ${n(head.count ?? 0)}건` : llm.head.pool ? "작업 분산 설정" : llm.head.state === "none" ? "작업 ↔ AI 모델에서 채우기" : STATE_TEXT[llm.head.state];
   return (
     <span className="cv-llm" data-llm={tone} data-state={llm.head.state}>
       <span className="cv-llm-k">LLM{llm.flag && <em className="cv-llm-flag" data-tone={llm.flag.tone}><span aria-hidden="true">{llm.flag.tone === "bad" ? "■" : "▲"}</span> {llm.flag.text}</em>}</span>
       <b className="cv-llm-m">{head ? head.model : "모델 없음"}</b>
-      <small className="cv-llm-w">{head ? head.where : "순위 비어 있음"}{llm.more > 0 ? ` · 외 ${llm.more}` : ""} · {usage}</small>
+      <small className="cv-llm-w">{head ? head.where : "순위 비어 있음"}{llm.head.pool && head?.source === "used" ? ` · ${llm.head.pool.summary}` : ""}{llm.more > 0 ? ` · 외 ${llm.more}` : ""} · {usage}</small>
     </span>
   );
 }
 
 function rankChain(task: TaskLlm): string {
+  if (task.pool) return `${task.pool.summary} · ${task.pool.members.map(member =>
+    `${member.connection} · ${member.model} [${member.deviceId}]${member.problem ? ` (${member.problem})` : ""}`).join(" / ")}`;
   return task.slots.filter((slot) => slot.ranks.length).map((slot) =>
     `${slot.label ? `${slot.label}: ` : ""}${slot.ranks.map((rank) => `${rank.rank}순위 ${rank.connection} · ${rank.model}${rank.problem ? ` (${rank.problem})` : ""}`).join(" → ")}`).join(" / ");
 }
@@ -127,7 +129,7 @@ function rankChain(task: TaskLlm): string {
 function usedText(task: TaskLlm): string {
   if (task.used === null) return task.usedWhy === "no_ledger" ? "기록 없음 — 용량 장부를 거치지 않는 작업" : "확인 못함 — 모델 장부를 읽지 못함";
   if (task.used.length === 0) return "최근 1시간 호출 없음";
-  return task.used.map((row) => `${row.text} ${n(row.count)}건${row.rank ? ` (${row.rank}순위)` : " (순위에 없음)"}`).join(" · ");
+  return task.used.map((row) => `${row.text} ${n(row.count)}건${task.pool ? "" : row.rank ? ` (${row.rank}순위)` : " (순위에 없음)"}`).join(" · ");
 }
 
 /**
@@ -136,7 +138,7 @@ function usedText(task: TaskLlm): string {
  * shown 은 ① 상태에 이미 쓴 문장 — 같은 뜻의 작업 설명(note)을 다시 쓰지 않는다.
  */
 function LlmDetail({ llm, shown }: { llm: StationLlm | null; shown: string[] }) {
-  if (!llm) return <p className="cv-sec-text">모델 순위를 읽지 못했습니다 — 다음 갱신에서 다시 읽습니다.</p>;
+  if (!llm) return <p className="cv-sec-text">모델 설정을 읽지 못했습니다 — 다음 갱신에서 다시 읽습니다.</p>;
   if (llm.kind === "none") return <p className="cv-sec-text"><b>LLM 없음 · {llm.short}</b> — {llm.why}</p>;
   if (llm.kind === "unknown") return <p className="cv-sec-text">{llm.why}</p>;
   return (
@@ -145,8 +147,13 @@ function LlmDetail({ llm, shown }: { llm: StationLlm | null; shown: string[] }) 
       const note = task.note && task.state !== "idle" && !shown.some((text) => text.includes(task.note!)) ? task.note : null;
       return (
         <dl key={task.task} className="cv-kv cv-llmd-task" data-state={task.state}>
-          <dt className="cv-llmd-k">작업</dt><dd className="cv-llmd-v"><b>{task.label}</b><span className="cv-llmd-state" data-state={task.state}>{STATE_TEXT[task.state]}</span></dd>
+          <dt className="cv-llmd-k">작업</dt><dd className="cv-llmd-v"><b>{task.label}</b><span className="cv-llmd-state" data-state={task.state}>{task.pool ? "작업 분산 · 설정값" : STATE_TEXT[task.state]}</span></dd>
           <dt className="cv-llmd-k">설정</dt><dd className="cv-llmd-v">{rankChain(task) || "순위 없음"}</dd>
+          {task.pool?.runtime && <><dt className="cv-llmd-k">최근 틱 관측</dt><dd className="cv-llmd-v">{kstShort(task.pool.runtime.at)} · {task.pool.members.map(member => {
+            const served = task.pool!.runtime!.served[member.memberId] ?? 0;
+            const unavailable = task.pool!.runtime!.unusable.filter(row => row.memberId === member.memberId).reduce((sum, row) => sum + row.count, 0);
+            return `${member.connection} · ${member.model}: 사용 기록 ${n(served)}건${unavailable ? ` · 사용 불가 ${n(unavailable)}건` : ""}`;
+          }).join(" / ")}</dd></>}
           <dt className="cv-llmd-k">실제</dt><dd className="cv-llmd-v">{usedText(task)}</dd>
           {note && <><dt className="cv-llmd-k">까닭</dt><dd className="cv-llmd-v cv-llmd-note">{note}</dd></>}
         </dl>);
