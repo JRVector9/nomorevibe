@@ -5,7 +5,8 @@ import { aiTaskModels } from "@/lib/db/schema";
 import { AI_TASKS } from "@/lib/llm/ai-tasks";
 import { logger } from "@/lib/observability/logger";
 import { listAiConnections, readAiTaskRuntime } from "./admin-ai-tasks-repository";
-import type { LlmConnection, LlmInputs, LlmRankRow, LlmRuntime, LlmUsedRow } from "./conveyor-llm";
+import { readAiTaskExecutionAdminViews } from "./admin-ai-task-execution";
+import type { LlmExecutionRow, LlmConnection, LlmInputs, LlmRankRow, LlmRuntime, LlmUsedRow } from "./conveyor-llm";
 
 /**
  * 전체 흐름 칸의 「지금 쓰는 모델」 읽기 — 읽기만 한다(새 쓰기 경로 없음).
@@ -39,7 +40,7 @@ export async function readLedgerUse(): Promise<LlmUsedRow[]> {
 }
 
 export async function readLlmInputs(now: string): Promise<LlmInputs> {
-  const [connections, rows, used, runtime] = await Promise.all([
+  const [connections, rows, used, runtime, execution] = await Promise.all([
     listAiConnections().then((list): LlmConnection[] => list.map((row) => ({ id: row.id, label: row.label, kind: row.kind, baseUrl: row.baseUrl,
       cliTool: row.cliTool, hasKey: row.hasKey, enabled: row.enabled }))).catch(warn("conveyor.llm_connections_unavailable")),
     // Keep the save timestamp with the same primary read; old tick failures are about the old ranks.
@@ -50,8 +51,13 @@ export async function readLlmInputs(now: string): Promise<LlmInputs> {
       .catch(warn("conveyor.llm_ranks_unavailable")),
     readLedgerUse().catch(warn("conveyor.llm_ledger_unavailable")),
     readAiTaskRuntime().then((map): Record<string, LlmRuntime> => Object.fromEntries(Object.entries(map).map(([task, view]) => [task, {
-      at: view.at, ...(view.startedAt ? { startedAt: view.startedAt } : {}), degraded: view.degraded ? { code: view.degraded.code, detail: view.degraded.detail } : null,
+      at: view.at, ...(view.startedAt ? { startedAt: view.startedAt } : {}), ...(view.pool ? { pool: view.pool } : {}), degraded: view.degraded ? { code: view.degraded.code, detail: view.degraded.detail } : null,
       unusable: view.unusable.map((row) => ({ rank: row.rank, code: row.code, text: row.text })) }]))).catch(warn("conveyor.llm_runtime_unavailable")),
+    readAiTaskExecutionAdminViews().then((list): LlmExecutionRow[] => list.map(row => ({
+      task: row.task, slot: row.slot, mode: row.mode, revision: row.revision, updatedAt: row.updatedAt,
+      members: row.members.map(member => ({ memberId: member.memberId, position: member.position,
+        connectionId: member.connectionId, model: member.model, deviceId: member.deviceId })),
+    }))).catch(warn("conveyor.llm_execution_unavailable")),
   ]);
-  return { now, connections, rows, used, runtime };
+  return { now, connections, rows, used, runtime, execution };
 }

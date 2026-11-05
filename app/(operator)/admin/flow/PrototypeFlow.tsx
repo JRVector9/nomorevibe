@@ -32,12 +32,16 @@ function modelText(llm: StationLlm | null, actual = false): string {
     const used = llm.tasks.flatMap(task => task.used ?? []);
     return used.length ? [...new Set(used.map(row => `${row.where} · ${row.model}`))].join(" / ") : llm.tasks.some(task => task.used === null) ? "실제 호출 미확인" : "최근 1시간 호출 없음";
   }
+  if (llm.head.pool) return llm.head.head?.source === "used"
+    ? `${llm.head.head.model} · 최근 사용 · ${llm.head.pool.summary}` : llm.head.pool.summary;
   return llm.head.head ? `${llm.head.head.model} · ${llm.head.head.source === "used" ? "최근 사용" : "설정값"}` : "모델 미설정";
 }
 function configured(llm: StationLlm | null): string {
   if (!llm || llm.kind === "unknown") return "확인 못함";
   if (llm.kind === "none") return "이 단계는 LLM을 호출하지 않습니다.";
-  return llm.tasks.map(task => `${task.label}: ${task.slots.flatMap(slot => slot.ranks.map(rank => `${rank.rank}순위 ${rank.connection} · ${rank.model}${rank.problem ? ` (${rank.problem})` : ""}`)).join(" → ") || "순위 없음"}`).join(" / ");
+  return llm.tasks.map(task => `${task.label}: ${task.pool
+    ? `${task.pool.summary} · ${task.pool.members.map(member => `${member.connection} · ${member.model} [${member.deviceId}]${member.problem ? ` (${member.problem})` : ""}`).join(" / ")}`
+    : task.slots.flatMap(slot => slot.ranks.map(rank => `${rank.rank}순위 ${rank.connection} · ${rank.model}${rank.problem ? ` (${rank.problem})` : ""}`)).join(" → ") || "순위 없음"}`).join(" / ");
 }
 const REQUEST_KEYS = ["takedown", "introRequest", "feedback", "makerReply", "contact"];
 export function requestCount(desk: Pick<OperatorDesk, "decisions"> | null, reactionRequests: number | null = null): number | null {
