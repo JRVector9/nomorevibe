@@ -24,7 +24,7 @@
 
 ## 적용 경계와 잠금
 
-[일반 배포 절차](deployment-fast-path.md)의 모델 호출 보유 앱 교체·장부 변경 경계를 따른다. 운영 적용은 root가 별도 이전 창에서 진행한다. 공식 비교 후 적용 경로로 DRAINING을 확인하고 유효 reserved·dispatched·indeterminate가 모두 0인지 확인한다. unknown을 지우거나 모델을 강제 종료해 이 조건을 만들지 않는다.
+[일반 배포 절차](deployment-fast-path.md)의 모델 호출 보유 앱 교체·장부 변경 경계를 따른다. 운영 적용은 root가 별도 이전 창에서 진행한다. 공식 비교 후 적용 경로로 DRAINING을 확인하고 유효 reserved·dispatched가 모두 0인지 확인한다. 실제 배포 관문의 `MODEL_REPLACEMENT_SCRIPT`와 `lib/llm/capacity-states.ts` 기준으로 indeterminate는 슬롯을 보유하지 않는 별도 사람 확인 대상이다. 미확정 행 수·경보는 따로 보존하며 이를 배포를 위해 지우거나 모델을 강제 종료하지 않는다. 기존 일반 문서의 indeterminate=0 문구를 현행 관문의 의미로 해석하지 않는다.
 
 0163은 `lock_timeout=5s`를 사용한다. `ai_connections`의 작은 CHECK 교체·검증에는 ACCESS EXCLUSIVE 잠금이 필요하므로 해당 표의 동시 쓰기를 잠깐 막을 수 있다. rules 표는 SHARE ROW EXCLUSIVE로 동시 변경을 막고, 기존 장부 전체를 다시 스캔하거나 큰 CHECK를 재설치하지 않는다. 두 guard 함수 교체의 메타데이터 잠금도 별도 이전 창에 포함한다. 잠금 실패·예상과 다른 사전 상태는 트랜잭션을 실패시킨다.
 

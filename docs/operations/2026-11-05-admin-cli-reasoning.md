@@ -28,7 +28,7 @@ v2 계정은 표준 XDG data의 `opencode/opencode.db`에 저장된다. 운영�
 
 계정 출처가 확인되면 공식 `auth export <선택한 integration>` → `auth import --standalone`을 비밀 출력 없는 stdin/메모리 경로로 수행할 수 있다. 전체 계정을 무차별 복사하거나 SQLite를 직접 해석하지 않는다. 내보내기 JSON은 비밀이므로 채팅·Git·공개 보고서·실행 인자·일반 로그에 남기지 않는다. 읽기 전용 auth 메타데이터로 연결 존재를 확인하고 실제 모델 호출을 검증했다고 기록하지 않는다.
 
-0163은 CLI 연결 CHECK와 검수 전용 장부 가지를 추가한다. 별도 마이그레이션 절차에서 DRAINING과 실제 진행 중 요청 0을 확인한 뒤 적용한다. 기존 CLI·terminal·indeterminate·분류 복구 의미를 넓히지 않는다. 일반 배포 도구의 `--migration-verified`만으로 이전을 대신하지 않는다. 적용 후 journal과 생성된 guard를 확인하고 단축 배포를 따른다.
+0163은 CLI 연결 CHECK와 검수 전용 장부 가지를 추가한다. 별도 마이그레이션 절차에서 DRAINING과 실제 진행 중 요청(유효 reserved·dispatched) 0을 확인한 뒤 적용한다. 현재 용량 상태 규칙에서 indeterminate는 슬롯을 보유하지 않고 별도 사람 확인 대상으로 집계된다. 종료 미확정 행을 배포를 위해 지우지 않는다. 기존 CLI·terminal·indeterminate·분류 복구 의미를 넓히지 않는다. 일반 배포 도구의 `--migration-verified`만으로 이전을 대신하지 않는다. 적용 후 journal과 생성된 guard를 확인하고 단축 배포를 따른다.
 
 ## 실제 확인한 결과
 
