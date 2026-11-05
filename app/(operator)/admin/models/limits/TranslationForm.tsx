@@ -4,9 +4,9 @@ import type { JobKnobName } from "@/lib/operations/runtime-settings-schema";
 import { GroupForm, TD, TH, ValueCell } from "./fields";
 
 // 열 순서 — 클라이언트 번들이라 schema 모듈(node:crypto)을 값으로 import 하지 않고 이름만 적는다(JOB_KNOB_NAMES 와 같은 집합)
-const KNOB_ORDER: readonly JobKnobName[] = ["batch", "batchChars", "minCallMs", "slowCallMs", "soloAttempts", "callMs", "maxAttempts", "consumerConcurrency"];
+const KNOB_ORDER: readonly JobKnobName[] = ["batch", "batchChars", "minCallMs", "slowCallMs", "soloAttempts", "callMs", "maxAttempts", "consumerConcurrency", "classifierConcurrency"];
 const KNOB_HEADERS: Record<JobKnobName, string> = { batch: "묶음", batchChars: "묶음 글자", minCallMs: "최소 남은 시간(초)", slowCallMs: "느린 호출(초)",
-  soloAttempts: "혼자 보내는 실패 수", callMs: "호출 상한(초)", maxAttempts: "최대 시도", consumerConcurrency: "소비자 동시 업무(1~4)" };
+  soloAttempts: "혼자 보내는 실패 수", callMs: "호출 상한(초)", maxAttempts: "최대 시도", consumerConcurrency: "소비자 동시 업무(1~4)", classifierConcurrency: "분류 동시 묶음(1~4)" };
 
 /**
  * 번역·묶음 — 공개 번역 정책(translation 그룹)과 잡별 묶음(jobs 그룹)은 저장 묶음이 다르므로 폼이 둘이다.
