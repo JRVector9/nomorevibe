@@ -655,15 +655,15 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
       expect(after0163[name], `${name}: exact prior ordinals plus the 0163 review branch`).toBe(`CHECK (${predecessor} OR (${branch}))`);
     }
     await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
-    const current = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
+    const current0166 = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
     const publication: Record<string, string> = { model_capacity_requests_logical_check: publicationApiLogicalSql,
       model_capacity_requests_members_check: publicationApiLogicalSql, model_capacity_requests_dispatch_check: publicationApiDispatchSql,
       model_capacity_requests_terminal_check: publicationApiTerminalSql, model_capacity_events_terminal_check: publicationApiEventSql };
     for (const name of [...LEFT, ...UNTOUCHED]) {
       const branch = publication[name];
-      if (!branch) { expect(current[name], `${name}: unchanged by 0166`).toBe(after0163[name]); continue; }
+      if (!branch) { expect(current0166[name], `${name}: unchanged by 0166`).toBe(after0163[name]); continue; }
       const predecessor = textLocalDirect[name] || opencode[name] ? inner(after0163[name]) : `(${inner(after0163[name])})`;
-      expect(current[name], `${name}: exact prior ordinals plus the 0166 publication API branch`).toBe(`CHECK (${predecessor} OR (${branch}))`);
+      expect(current0166[name], `${name}: exact prior ordinals plus the 0166 publication API branch`).toBe(`CHECK (${predecessor} OR (${branch}))`);
     }
     expect((await step<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`)[0].count).toBe(journal.entries.length);
   } finally { rmSync(partial, { recursive: true, force: true }); await step.end({ timeout: 5 }); }
