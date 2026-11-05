@@ -9,6 +9,18 @@ export const AI_TASK_POOL_MEMBER_MAX = 4;
 export const AI_TASK_WORKLOAD_POOL_TASKS: readonly string[] = Object.freeze(["first-review", "second-review", ...AI_TEXT_TASK_IDS]);
 export const aiTaskSupportsWorkloadPool = (taskId: string, slot = 1): boolean =>
   AI_TASK_WORKLOAD_POOL_TASKS.includes(taskId) && (taskId !== "second-review" || slot === 1);
+/** UI explanation only. This never enables an adapter or treats a model name as space-equivalence proof. */
+export function aiTaskWorkloadPoolUnsupportedReason(taskId: string, slot = 1): string | null {
+  if (aiTaskSupportsWorkloadPool(taskId, slot)) return null;
+  if (taskId === "second-review" && slot !== 1) return "2차 검수의 작업 분산은 투표자 1칸만 지원합니다.";
+  if (taskId === "product-embedding" || taskId === "search-embedding")
+    return "제품과 검색어가 같은 벡터 공간을 쓰는지 연결별 검증이 필요해 아직 작업 분산을 지원하지 않습니다.";
+  if (taskId === "search-rerank")
+    return "같은 점수 기준을 쓰는 복제본인지 연결별 검증이 필요해 아직 작업 분산을 지원하지 않습니다.";
+  if (taskId === "grok-session-check")
+    return "로그인 세션 유지 작업이므로 여러 모델에 나누어 호출하지 않습니다.";
+  return "이 작업의 실행 경로는 아직 작업 분산 설정을 읽지 않습니다.";
+}
 export const AI_TASK_EXECUTION_SAVE_AUDIT_ACTION = "ai-task-execution-save";
 const identity = z.string().min(1).max(200).refine(value => value === value.trim() && !/[\p{Cc}]/u.test(value));
 export const aiTaskPoolMemberInputSchema = z.object({
