@@ -1,7 +1,8 @@
-import { canonicalReviewModel } from "./review-model-identity";
+import { reviewIndependenceKey, sameReviewModel } from "./review-model-identity";
 import { ensureReviewTaskRanks, reviewRanksSummary, secondReviewRankSets, settingsReviewersActive, secondReviewRanks, secondReviewRanksDegraded, secondReviewSlotFallbacks,
   type ReviewRankDegraded, type SecondReviewRanks } from "./review-task-ranks";
 import type { CrawlSettings } from "./settings-schema";
+import { secondReviewHasWorkloadPool, secondReviewSlotRepresentatives, secondReviewWorkloadSlots } from "./second-review-workload";
 
 /**
  * 2차 투표자·대체 목록의 한 길목. 2차의 모든 읽기(올리기·입력 검증·정리·공개 관문 SQL·보류 재심사·대체 고르기·발견 관문)가 이 함수들을 읽어,
@@ -29,7 +30,7 @@ function legacySets(settings: Pick<CrawlSettings, "secondReview">): { voters: Se
 export function secondReviewVoterSets(settings: Pick<CrawlSettings, "secondReview">):
   { voters: SecondReviewVoter[]; fallbacks: SecondReviewVoter[]; source: "ranks" | "replay" } {
   if (settingsReviewersActive()) return { ...legacySets(settings), source: "replay" };
-  return { ...secondReviewRankSets(), source: "ranks" };
+  return { ...(secondReviewHasWorkloadPool() ? secondReviewSlotRepresentatives() : secondReviewRankSets()), source: "ranks" };
 }
 
 /** 2차 투표자(칸마다 지금 표를 내는 순위) — 예전 `settings.secondReview.voters` 자리. */
@@ -45,6 +46,14 @@ export const secondReviewFallbacks = (settings: Pick<CrawlSettings, "secondRevie
 export function secondReviewFallbacksFor(settings: Pick<CrawlSettings, "secondReview">, rootModel: string | null | undefined): SecondReviewVoter[] {
   if (settingsReviewersActive()) return legacySets(settings).fallbacks;
   if (!rootModel) return [];
+  if (secondReviewHasWorkloadPool()) {
+    const slot = secondReviewWorkloadSlots()[0];
+    // Pool alternatives are never fallback retries for the same vote. Keep its saved legacy fallback chain.
+    const primary = slot.legacy.find(candidate => candidate.binding && !candidate.unusable);
+    return slot.legacy.flatMap(candidate => candidate !== primary && candidate.binding && !candidate.unusable
+      && !sameReviewModel(candidate.binding.identity, rootModel)
+      ? [{ provider: candidate.binding.provider, model: candidate.binding.identity }] : []);
+  }
   return secondReviewSlotFallbacks(rootModel);
 }
 
@@ -56,8 +65,8 @@ export function secondReviewVotersDegraded(ranks?: SecondReviewRanks): ReviewRan
 
 /** 런타임 가드: 이 항목에 표를 낸·내는 중인 모델과 같은 모델(같은 가중치·연결로 가른 이름 포함)은 대체가 될 수 없다. */
 export function withoutTakenModels<T extends { model: string }>(candidates: readonly T[], taken: readonly (string | null | undefined)[]): T[] {
-  const keys = new Set(taken.flatMap(model => model ? [canonicalReviewModel(model)] : []));
-  return candidates.filter(candidate => !keys.has(canonicalReviewModel(candidate.model)));
+  const keys = new Set(taken.flatMap(model => model ? [reviewIndependenceKey(model)] : []));
+  return candidates.filter(candidate => !keys.has(reviewIndependenceKey(candidate.model)));
 }
 
 /**

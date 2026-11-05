@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from "node:util";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import type { Ai2ModelDispatch, CliModelDispatch } from "@/lib/llm/capacity";
 import type { PreparedAi2GatewayCall } from "./agent-review-gateway";
-import type { SecondReviewModelReservationRequired, SecondReviewModelClaim, SecondReviewCliModelClaim } from "./second-review-ownership";
+import { SecondReviewModelReservationRequired, type SecondReviewModelClaim, type SecondReviewCliModelClaim } from "./second-review-ownership";
 import type { PreparedReviewCliCall } from "./review-cli-call";
 import { itemOwnerSchema, type ItemOwner } from "@/lib/jobs/items/types";
 import { STALE_LOCK_MS } from "@/lib/jobs/lease";
@@ -31,6 +31,8 @@ export async function executeSecondReviewConsumerItem(input: {
   stopClaims?: AbortSignal;
   /** provider 회로(PR06e)에 실제 호출 결과만 알린다. 호출이 없던 항목은 부르지 않는다 */
   onProviderResult?: (result: AgentReviewResult) => void;
+  /** Current input passed the fixed domain admission check; not a capacity grant or dispatch proof. */
+  onInputReady?: () => void;
 }): Promise<SecondReviewItemOutcome> {
   return executeItem(input, 'consumer');
 }
@@ -49,6 +51,7 @@ export async function executeSecondReviewItem(input: {
 
 async function executeItem(input: {
   secondReviewId: number; owner: ItemOwner; signal?: AbortSignal; stopClaims?: AbortSignal; onProviderResult?: (result: AgentReviewResult) => void;
+  onInputReady?: () => void;
   lease?: SecondReviewItemLeaseTiming;
 }, purpose: 'consumer' | 'compatibility'): Promise<SecondReviewItemOutcome> {
   const { secondReviewId, owner: ownerValue, signal: callerSignal, stopClaims } = input;
@@ -59,17 +62,22 @@ async function executeItem(input: {
   if (callerSignal?.aborted || stopClaims?.aborted) return { state: "skipped", reason: "aborted" };
   let claimed: SecondReviewModelClaim | SecondReviewCliModelClaim, capacity: typeof import("./second-review-model-capacity") | undefined;
   let dispatch: Ai2ModelDispatch | undefined, call: PreparedAi2GatewayCall | undefined;
+  let observedInputReady = false;
+  const inputReady = () => { if (!observedInputReady) { observedInputReady = true; input.onInputReady?.(); } };
   // CLI 표(05c-4): 고정 CLI 의도 class 만 CLI coordinator 로 간다. 슬롯 deferred 는 아래 기록 전에 던져진다.
   let cli: { capacity: typeof import("./review-cli-model-capacity"); call: PreparedReviewCliCall; dispatch: CliModelDispatch } | undefined;
   try { claimed = await (purpose === 'consumer' ? claimConsumerItemSecondReview : claimItemSecondReview)(id, owner, ttlMs); }
   catch (error) {
     if (!(error instanceof ModelCapacityDeferredError) || error.reason !== "reservation_required") throw error;
     if (error instanceof SecondReviewCliModelReservationRequired) {
+      inputReady();
       const cliCapacity = await import("./review-cli-model-capacity");
       const admitted = await cliCapacity.claimSecondReviewCliModelCapacity(error, callerSignal);
       claimed = admitted.claim;
       if (admitted.claim.dispatch) cli = { capacity: cliCapacity, call: admitted.call, dispatch: admitted.claim.dispatch };
     } else {
+      if (!(error instanceof SecondReviewModelReservationRequired)) throw error;
+      inputReady();
       capacity = await import("./second-review-model-capacity");
       // The coordinator requires the actual fixed intent instance, not this reason.
       const admitted = await capacity.claimSecondReviewModelCapacity(error as SecondReviewModelReservationRequired, callerSignal);
@@ -79,6 +87,7 @@ async function executeItem(input: {
   }
   if (claimed.kind === "skipped") return { state: "skipped", reason: claimed.reason };
   if (claimed.kind !== "claimed" || claimed.receipt.ownership.kind !== "item") throw new Error("invalid_second_review_item_claim");
+  inputReady();
   const receipt = claimed.receipt as SecondReviewItemReceipt;
   const { provider, model } = claimed.row;
   if (!provider || !model) throw new Error("invalid_second_review_reviewer");

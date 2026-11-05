@@ -210,7 +210,8 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
         if (error.reason === "capacity") saturated = true;
         ctx.log("crawl.agent_review_deferred", { reason: error.reason, provider: reviewProvider, model });
         // 이 모델만의 거절(경로 없음·장비 미설정·계약 닫힘·포화 등)이면 같은 후보를 다음 순위로 다시 고른다(2026-11-01 순위 대체)
-        if (local) continue;
+        // A workload choice may have left a durable waiting request. Do not spray this input across members.
+        if (local && ranks.resolution?.execution?.mode !== "workload_pool") continue;
         return;
       }
       if (claim.kind === "skipped") {
