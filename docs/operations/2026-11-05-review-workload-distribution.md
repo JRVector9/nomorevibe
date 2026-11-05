@@ -16,7 +16,7 @@
 
 ## 기존 표와 발행 조건
 
-pool 모드 전환만으로 association 없는 기존 slot1 primary/fallback 표를 재배정하지 않는다. 기존 행의 정확한 provider/model/endpoint 연결은 AI2 credential lookup에서 보존하고, claim은 실제 기존 표와 domain을 다시 검증한다. 이 lookup은 신규 enqueue 후보 목록이 아니다. 신규 표는 pool 구성원만 선택한다.
+pool 모드 전환만으로 association 없는 기존 slot1 primary/fallback 표를 재배정하지 않는다. 기존 행의 정확한 provider/model/endpoint 연결은 AI2 credential lookup에서 보존하고, claim은 실제 기존 표와 domain을 다시 검증한다. 이 lookup은 신규 enqueue 후보 목록이 아니다. 신규 표는 pool 구성원만 선택한다. 현재 pool 구성원이 모두 사용 불가여도 실제 usable legacy binding이 있으면 소비자의 기존 표 hint 조회는 계속한다. 경고는 유지하며 각 표의 고정 domain/계약/버전/용량 재검증을 통과한 경우에만 실행한다. 신규 pool enqueue를 legacy로 우회하지 않는다.
 
 구성원을 삭제하거나 동일 구성원 ID의 연결/모델을 바꾸는 경우는 다르다. 현재 구성원과 더 이상 일치하지 않는 association 표는 기존의 `model_removed`/재검수 경로를 따른다. 이전 표의 스냅샷·dispatch binding·이력은 덮어쓰지 않는다.
 
@@ -43,7 +43,7 @@ OpenCode catalog에는 weights 지문이 없다. 관측된 DeepSeek Flash/Pro의
 | inputReadyCandidateHints | 위 유효 입력 표가 속한 서로 다른 후보 수 |
 | lifecycleLimit / lifecyclePeak | 설정된 lifecycle 상한 / 실제 진행 lifecycle의 최대 수 |
 
-이 값들은 전체 ready backlog 수, 용량 grant 수, 실제 호출 수로 표시하면 안 된다. 실제 호출·완료는 기존 dispatch/terminal/기록 이벤트를 사용한다. AI1의 선택 로그는 `ai_task.workload_hint_selected`이며 선택 metadata만 남기고 키는 남기지 않는다.
+이 값들은 전체 ready backlog 수, 용량 grant 수, 실제 호출 수로 표시하면 안 된다. 실제 호출·완료는 기존 dispatch/terminal/기록 이벤트를 사용한다. pool 상태는 position을 legacy 순위로 위장하지 않고 `pool_revision`, `pool_members`, `member_served.<UUID>`, `member_unusable.<UUID>.<code>`로 보고한다. AI1의 pool 성공 수는 실제 호출 성공과 도메인 기록 성공이 모두 확인된 경우만 센다. AI2 enqueue job의 설정상 대표는 실제 소비자 성공 횟수로 보고하지 않는다. AI1의 선택 로그는 `ai_task.workload_hint_selected`이며 선택 metadata만 남기고 키는 남기지 않는다.
 
 ## 검증 및 적용 상태
 

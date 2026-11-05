@@ -13,6 +13,7 @@ import { interruptibleSleep, type RuntimeReport } from '@/scripts/worker';
 import { executeSecondReviewConsumerItem } from '../second-review-item-lifecycle';
 import { ensureReviewTaskRanks } from '../review-task-ranks';
 import { secondReviewVotersDegraded } from '../second-review-voters';
+import { secondReviewHasWorkloadPool, secondReviewWorkloadSlots } from '../second-review-workload';
 
 // 빈 큐는 1초 뒤 다시 본다 — AI2 행이 생긴 뒤 집기까지의 대기가 종단 지연에 그대로 더해진다. 슬롯 미룸·회로 열림은 5초를 기다린다.
 const PAGE_SIZE = 24, MAX_PAGES = 4, IDLE_MS = 1_000, DEFERRED_MS = 5_000;
@@ -76,12 +77,17 @@ export async function runSecondReviewConsumer(input: {
     const degraded = secondReviewVotersDegraded();
     if (degraded) {
       if (degradedCode !== degraded.code) { degradedCode = degraded.code; logger.warn('pipeline_consumer.degraded', { stage: 'ai2', ...degraded }); }
-      result.deferred++;
-      if (halt?.aborted || once) break;
-      report?.('idle'); await interruptibleSleep(DEFERRED_MS, halt);
-      continue;
-    }
-    degradedCode = null;
+      // A pool switch must not hide an already-existing legacy vote/reservation.
+      // This only scans hints: the fixed row/domain/contract/capacity claim still authorizes every execution.
+      const legacyContinuation = secondReviewHasWorkloadPool() && secondReviewWorkloadSlots()[0].legacy
+        .some(candidate => candidate.binding && !candidate.unusable);
+      if (!legacyContinuation) {
+        result.deferred++;
+        if (halt?.aborted || once) break;
+        report?.('idle'); await interruptibleSleep(DEFERRED_MS, halt);
+        continue;
+      }
+    } else degradedCode = null;
     let reserved = await priorityHint(owner, reservedCursor, true);
     if (!reserved && reservedCursor) {
       reservedCursor = null;
