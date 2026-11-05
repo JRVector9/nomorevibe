@@ -8,6 +8,7 @@ import { jobKnob, type RuntimeSettings } from "@/lib/operations/runtime-settings
 import { runtimeSettings } from "@/lib/operations/runtime-settings-store";
 import { textTaskModel } from "@/lib/llm/ai-task-rank-scope";
 import { TextTaskRanks, type TextRankRun } from "@/lib/llm/ai-task-resolver";
+import { pendingTextPoolModel } from "@/lib/llm/text-task-pool-resume";
 
 const JOB = "reason-translate";
 /**
@@ -107,6 +108,7 @@ async function translateReasonsWithRanks(ctx: JobContext<null>, ranks: TextTaskR
       const batch = pending[0].attempts >= knobs.soloAttempts ? [pending[0]] : packBatch(pending, knobs);
       let attempt: TextRankRun<Flow>;
       try {
+        const prefer = await pendingTextPoolModel(ranks);
         // 순위 차례로 부른다 — 이 모델만의 까닭(경로 없음·장비 행 없음·계약 닫힘·포화)이면 같은 묶음을 다음 순위로(TextTaskRanks.run)
         attempt = await ranks.run(async (): Promise<Flow> => {
           const prepared = await translateReasonsWithModelCapacity(batch, lease,
@@ -125,7 +127,7 @@ async function translateReasonsWithRanks(ctx: JobContext<null>, ranks: TextTaskR
           } else await recordWorkerTranslations(rows, textTaskModel(JOB), lease);
           return { kind: "recorded", ok: result.ok, unknown: prepared.kind === 'ready' && prepared.unknown,
             translated: rows.filter((row) => row.translated !== null).length, failed: rows.filter((row) => row.translated === null).length };
-        });
+        }, { prefer });
       } catch (error) {
         // 미룸 사유(capacity·dispatched·unmapped…)를 남긴다 — 러너는 'model_capacity' 하나로만 적는다
         if (error instanceof ModelCapacityDeferredError) {

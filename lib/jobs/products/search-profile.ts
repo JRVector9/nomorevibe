@@ -113,7 +113,8 @@ async function writeSearchProfilesWithRanks(ctx: JobContext<null>, ranks: TextTa
                     : recordProfileResult(task, lease, failure))) return "stop";
                   failed++;
                   // 그 제품의 실패로 남겼다. 엔진이 모든 제품에 대해 내려갔음이 증명되면(engine-down.ts) 이 순위만 쉬고 다음 제품은 다음 순위로 간다
-                  if (ranks.failed(binding, result.error)) ctx.log("search_profile.rank_down", { rank: binding.rank });
+                  if (ranks.failed(binding, result.error)) ctx.log("search_profile.rank_down", binding.memberId
+                    ? { memberId: binding.memberId, configRevision: binding.configRevision } : { rank: binding.rank });
                   return "next";
                 }
                 ranks.answered(binding);

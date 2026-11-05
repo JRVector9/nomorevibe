@@ -7,6 +7,7 @@ import { ModelCapacityDeferredError, modelCapacityDeferralIsPerWork } from "@/li
 import { productTranslationClientTimeoutMs } from "@/lib/llm/deadline-ladder";
 import { textTaskModel } from "@/lib/llm/ai-task-rank-scope";
 import { TextTaskRanks, type TextRankRun } from "@/lib/llm/ai-task-resolver";
+import { pendingTextPoolModel } from "@/lib/llm/text-task-pool-resume";
 
 const JOB = "product-translate";
 
@@ -65,6 +66,7 @@ async function translateWithRanks(ctx: JobContext<null>, ranks: TextTaskRanks): 
       if (!ctx.hasBudget() || signal.aborted) break;
       let attempt: TextRankRun<Flow>;
       try {
+        const prefer = await pendingTextPoolModel(ranks);
         // 순위 차례로 부른다 — 이 모델만의 까닭(경로 없음·장비 행 없음·계약 닫힘·포화)이면 같은 묶음을 다음 순위로(TextTaskRanks.run)
         attempt = await ranks.run(async (): Promise<Flow> => {
           // Outermost HTTP deadline (routes.limits.product-translate.timeoutMs, read per tick) fits the job budget; inner M1 bounds still require measurement and enforcement.
@@ -86,7 +88,7 @@ async function translateWithRanks(ctx: JobContext<null>, ranks: TextTaskRanks): 
           ctx.log("product_translation.tick", { model: textTaskModel(JOB), demanded: completedBatch.length, stored,
             accepted: entries.filter(({ result }) => result.ok).length, gatewayError: response.ok ? null : response.error, passed: passed.size });
           return { kind: "recorded" };
-        });
+        }, { prefer });
       } catch (error) {
         if (!(error instanceof ModelCapacityDeferredError) || !modelCapacityDeferralIsPerWork(error.reason)) {
           if (error instanceof ModelCapacityDeferredError && recorded >= 1) return deferredJob("model_capacity", recorded);

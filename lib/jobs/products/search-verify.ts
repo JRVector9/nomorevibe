@@ -98,7 +98,8 @@ async function verifySearchKeywordsWithRanks(ctx: JobContext<null>, ranks: TextT
                   if (await (outcome.expectation ? recordVerificationResult(task, lease, failure, outcome.expectation)
                     : recordVerificationResult(task, lease, failure))) failed++;
                   // 그 제품의 실패로 남겼다. 엔진이 모든 제품에 대해 내려갔음이 증명되면(engine-down.ts) 이 순위만 쉬고 다음 제품은 다음 순위로 간다
-                  if (ranks.failed(binding, result.error)) ctx.log("search_verify.rank_down", { rank: binding.rank });
+                  if (ranks.failed(binding, result.error)) ctx.log("search_verify.rank_down", binding.memberId
+                    ? { memberId: binding.memberId, configRevision: binding.configRevision } : { rank: binding.rank });
                   return "next";
                 }
                 ranks.answered(binding);
