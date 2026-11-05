@@ -6,7 +6,7 @@ import { ensureServingContracts } from '@/lib/llm/serving-contract-store';
 import { runInTextTaskRank } from '@/lib/llm/ai-task-rank-scope';
 import { publicationClassifyApiInputHash, publicationClassifyLogicalWorkKey, modelCapacityIndeterminateReason,
   modelCapacityRequestIdentitySchema } from '@/lib/llm/capacity';
-import { findOwnPendingModelRequest, requestPublicationApiSlot, cancelReservedModelSlot, reconcilePublicationApiTerminal,
+import { readModelCapacityCallerControl, findOwnPendingModelRequest, requestPublicationApiSlot, cancelReservedModelSlot, reconcilePublicationApiTerminal,
   reconcileGatewayNotStarted, markModelDispatchIndeterminate, type OwnPendingPublicationApiBatch } from '@/lib/llm/capacity-repository';
 import { markUnsettledDispatch } from '@/lib/llm/capacity-unsettled';
 import { capacityRefusalReason } from '@/lib/llm/capacity-busy-targets';
@@ -24,6 +24,9 @@ export async function classifyPublicationPool(expected: readonly PublicationClas
   config: AiTaskExecutionConfig, ctx: JobContext<null>, resume?: OwnPendingPublicationApiBatch) {
   if (!ctx.lease || config.task !== 'publish-classify' || config.mode !== 'workload_pool' || config.revision === null)
     throw new ModelCapacityDeferredError('assignments_unavailable');
+  // API pool never drops into uncapped CLI/legacy. Resume hints are not permission to dispatch while draining.
+  const control = await readModelCapacityCallerControl();
+  if (control.mode !== 'open') throw new ModelCapacityDeferredError(control.mode === 'disabled' ? 'disabled' : 'draining');
   await ensureServingContracts();
   const lease = ctx.lease, initial = await publicationApiSources(expected, payload, lease);
   const candidates = config.members.flatMap(member => {

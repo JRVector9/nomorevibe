@@ -77,6 +77,7 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
   // Independent classification batches; model admission still enforces each physical device's limit.
   const classifyConcurrency = pool ? jobKnob(runtimeSettings(), 'crawl-publish', 'classifierConcurrency') : 1;
   const classificationWaiting = new Set<number>();
+  let classificationDrainObserved = false;
   const role = pool ? roleLeaseFromEnv('publisher', process.env) : undefined;
   const pendingBatches = role ? await findOwnPendingPublicationApiBatches({ instanceId: role.instanceId, bootId: role.bootId }) : [];
   let published = 0;
@@ -134,6 +135,13 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
             ? [{ candidate: item.candidate, classification: item.classification, decision: decisions.get(item.candidate.repo) ?? null }] : []);
           return classifyPublicationPool(selected, { inputs: batch, definitions: settings.classify.definitions }, execution, classifyCtx, resume);
         }));
+        // The existing drain witness belongs after all started native calls have completed/settled.
+        const draining = outcomes.find(outcome => outcome.status === 'rejected'
+          && outcome.reason instanceof ModelCapacityDeferredError && outcome.reason.reason === 'draining');
+        if (!classificationDrainObserved && draining?.status === 'rejected') {
+          classificationDrainObserved = true;
+          await observeClassificationDrain(draining.reason, ctx);
+        }
         classified = outcomes.flatMap((outcome, index) => {
           if (outcome.status === 'fulfilled') return outcome.value;
           if (!(outcome.reason instanceof ModelCapacityDeferredError)) throw outcome.reason;
