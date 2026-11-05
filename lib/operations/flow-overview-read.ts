@@ -58,8 +58,18 @@ export async function readProjectFlowOverview(): Promise<ProjectFlowOverview> {
   }, { accessMode: "read only", isolationLevel: "repeatable read" }));
 }
 
-type SocialJob = { paused: boolean; runtimeLabel?: string | null; lastSuccessAt: string | null; lastError: boolean };
+type SocialJob = { paused: boolean; runtimeLabel?: string | null; lastSuccessAt: string | null; lastError: boolean; execution?: "locked" | "stale" | "none" };
 export type SocialFlowJobs = Record<string, SocialJob>;
+/** A job row without a live execution or a successful run is not proof of a healthy collector. */
+export function socialCollectorRuntime(job: SocialJob | undefined, enabled: boolean, degraded: boolean): Pick<SocialCollector, "status" | "tone"> {
+  if (!job) return { status: "작업 관측 미확인", tone: "gray" };
+  if (!enabled || job.paused) return { status: "수집 중지", tone: "gray" };
+  if (job.execution === "stale" || job.runtimeLabel === "중단·회수 대기") return { status: "중단·회수 대기", tone: "amber" };
+  if (degraded || job.lastError) return { status: degraded ? "수집 미완료" : "오류", tone: "amber" };
+  if (job.execution === "locked" || job.runtimeLabel === "실행 중") return { status: "실행 중", tone: "green" };
+  if (!job.runtimeLabel || job.runtimeLabel === "실행 기록 없음" || !job.lastSuccessAt) return { status: job.runtimeLabel ?? "상태 미확인", tone: "gray" };
+  return { status: job.runtimeLabel, tone: job.runtimeLabel === "유휴" ? "green" : "gray" };
+}
 const SOURCES: readonly SocialSource[] = ["hn", "bluesky", "x", "geeknews"];
 const SOURCE_LABEL: Record<SocialSource, string> = { hn: "Hacker News", bluesky: "Bluesky", x: "X", geeknews: "GeekNews" };
 
@@ -117,9 +127,7 @@ export async function readSocialFlowOverview(jobs: SocialFlowJobs): Promise<Soci
       if (source === "geeknews") return { ...base, status: "수집 잡 없음", tone: "gray", lastSuccessAt: null, note: "보관 글만 표시 · 현재 자동 잡 미등록" };
       const name = source === "hn" ? "hn-talk" : "bluesky-talk", job = jobs[name];
       const degraded = readJobDegraded(observations.find(row => row.key === `job:${name}`)?.value).current;
-      const stopped = !settings.enabled || job?.paused;
-      return { ...base, href: `/admin/status?tab=jobs&job=${name}`, status: !job ? "작업 관측 미확인" : stopped ? "수집 중지" : degraded ? "수집 미완료" : job.lastError ? "오류" : job.runtimeLabel ?? "상태 미확인",
-        tone: !job || stopped ? "gray" : degraded || job.lastError ? "amber" : "green", lastSuccessAt: job?.lastSuccessAt ?? null,
+      return { ...base, href: `/admin/status?tab=jobs&job=${name}`, ...socialCollectorRuntime(job, settings.enabled, !!degraded), lastSuccessAt: job?.lastSuccessAt ?? null,
         note: `${source === "hn" ? "30분" : "2시간"} 주기 · crawler${degraded ? ` · ${degraded.code}` : ""}` };
     });
     return { measuredAt: now.toISOString(), stored: raw.reduce((sum, row) => sum + row.count, 0), new24h: raw.reduce((sum, row) => sum + row.recent, 0),

@@ -6,7 +6,7 @@ import { flowOverviewRequests, publicationChange, type ProjectFlowOverview, type
 
 const mocks = vi.hoisted(() => ({ transaction: vi.fn(), execute: vi.fn(), replica: vi.fn() }));
 vi.mock("@/lib/db", () => ({ db: { transaction: mocks.transaction }, onReplica: mocks.replica }));
-import { projectFlowOverviewSql, readProjectFlowOverview, socialPublicationCounts } from "@/lib/operations/flow-overview-read";
+import { projectFlowOverviewSql, readProjectFlowOverview, socialPublicationCounts, socialCollectorRuntime } from "@/lib/operations/flow-overview-read";
 import { FlowOverviewView, PublicationTrend, SocialFlowView } from "@/app/(operator)/admin/flow/FlowOverview";
 import type { TalkGroup } from "@/lib/social/talk";
 
@@ -76,6 +76,15 @@ describe("flow overview reads and measurement scope", () => {
 });
 
 describe("SNS publication follows the real site talk selector", () => {
+  it("does not mark stale or never-successful collectors green", () => {
+    const job = { paused: false, runtimeLabel: "유휴", lastSuccessAt: at, lastError: false };
+    expect(socialCollectorRuntime({ ...job, execution: "stale", runtimeLabel: "중단·회수 대기" }, true, false).tone).toBe("amber");
+    expect(socialCollectorRuntime({ ...job, lastSuccessAt: null, runtimeLabel: "실행 기록 없음" }, true, false).tone).toBe("gray");
+    expect(socialCollectorRuntime(undefined, true, false).tone).toBe("gray");
+    expect(socialCollectorRuntime(job, true, true).tone).toBe("amber");
+    expect(socialCollectorRuntime(job, true, false).tone).toBe("green");
+    expect(socialCollectorRuntime({ ...job, lastSuccessAt: null, runtimeLabel: "실행 중", execution: "locked" }, true, false).tone).toBe("green");
+  });
   const groups = Array.from({ length: 55 }, (_, index) => ({ repositoryKey: `owner/p${index}`, product: { id: index + 1 }, posts: [], score: index === 54 ? null : 60 - index })) as unknown as TalkGroup[];
   it("limits talk to 50 and applies the shared top-20 home representative approval branch", () => {
     const counts = socialPublicationCounts(groups, [{ repositoryKey: "owner/p2", homeDecision: "approved" }]);
