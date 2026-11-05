@@ -387,7 +387,7 @@ class ReleaseSafetyTests(unittest.TestCase):
              patch.object(release.time, 'sleep'):
             with self.assertRaisesRegex(TimeoutError, 'verification_timeout'):
                 release.check_app_deployed(client, 'crawler-mini', self.target, 'old', timeout=1)
-        with patch.object(release, 'probe', return_value={'ready': True}):
+        with patch.object(release, 'probe', return_value={'ready': True, 'updateStatusInspected': True, 'updateState': 'completed'}):
             result = release.check_app_deployed(client, 'crawler-mini', self.target, 'old')
             self.assertEqual(result['service'], 'healthy')
 
@@ -434,7 +434,8 @@ class ReleaseSafetyTests(unittest.TestCase):
         apps['web-m3'].update({'replicas': 4, 'dockerImage': self.target['web'],
                                'env': 'RELEASE_TAG=' + self.new_sha + '\n'})
         client = FakeClient(apps, deployment_id='new')
-        with patch.object(release, 'probe', return_value={'ready': True, 'instanceId': 'm3-web'}) as probe:
+        with patch.object(release, 'probe', return_value={'ready': True, 'instanceId': 'm3-web',
+                                                       'updateStatusInspected': True, 'updateState': 'completed'}) as probe:
             result = release.check_app_deployed(client, 'web-m3', self.target, 'old')
         self.assertEqual(result['instanceId'], 'm3-web')
         self.assertEqual(probe.call_args.args[3], 4)
