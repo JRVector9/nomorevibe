@@ -250,29 +250,28 @@ export class TextTaskRanks {
   /** Choose once per independent work/batch; never fan out one callback to several models. */
   private async runPool<T>(work: (binding: TextTaskRankBinding) => Promise<T>, options: Readonly<{ prefer?: string | null }>): Promise<TextRankRun<T>> {
     const execution = this.execution!;
-    while (this.usable().length) {
-      const candidates = this.usable().flatMap(binding => binding.memberId ? [{ ...binding, memberId: binding.memberId }] : []);
-      const selected = await chooseTaskWorkloadMember(execution, candidates, { preferIdentity: options.prefer });
-      // No eligible idle route is a capacity deferral, not proof that all configured models failed.
-      if (!selected) throw new ModelCapacityDeferredError("capacity");
-      const binding: TextTaskRankBinding = Object.freeze({ ...selected });
-      try {
-        const value = await runInTextTaskRank(binding, () => work(binding));
-        const key = bindingKey(binding);
-        this.served.set(key, (this.served.get(key) ?? 0) + 1);
-        return { kind: "served", binding, value };
-      } catch (error) {
-        if (error instanceof ModelCapacityDeferredError && modelCapacityDeferralIsPerModel(error.reason)) {
-          this.pause(binding, error.reason);
-          // A durable waiting/resumed identity cannot be moved to another pool member.
-          if (options.prefer) throw error;
-          continue;
-        }
-        throw error;
-      }
+    const candidates = this.usable().flatMap(binding => binding.memberId ? [{ ...binding, memberId: binding.memberId }] : []);
+    if (!candidates.length) {
+      this.exhausted = true;
+      return { kind: "unusable" };
     }
-    this.exhausted = true;
-    return { kind: "unusable" };
+    const selected = await chooseTaskWorkloadMember(execution, candidates, { preferIdentity: options.prefer });
+    // No eligible idle route is a capacity deferral, not proof that all configured models failed.
+    if (!selected) throw new ModelCapacityDeferredError("capacity");
+    const binding: TextTaskRankBinding = Object.freeze({ ...selected });
+    try {
+      const value = await runInTextTaskRank(binding, () => work(binding));
+      const key = bindingKey(binding);
+      this.served.set(key, (this.served.get(key) ?? 0) + 1);
+      return { kind: "served", binding, value };
+    } catch (error) {
+      if (error instanceof ModelCapacityDeferredError && modelCapacityDeferralIsPerModel(error.reason)) this.pause(binding, error.reason);
+      // requestSlot may have committed a waiting row and its logical fence
+      // before deferring. Never invoke this work on another member, even when
+      // it had no pending identity before this callback. A later independent
+      // work unit can choose another member; existing retries resume this one.
+      throw error;
+    }
   }
 
   /** 엔진이 이 일에 실패했다(그 일의 시도는 이미 적혔다). 엔진이 내려갔음이 증명되면(engine-down.ts) 그 순위를 쉬게 하고 true. */
