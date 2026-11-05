@@ -15,6 +15,7 @@ import { localModelSplitJobsDispatchSql, localModelSplitJobsTerminalSql } from "
 import { gatewayLocalDirectDispatchSql, gatewayLocalDirectLogicalSql, gatewayLocalDirectMembersSql, gatewayLocalDirectTerminalSql } from "@/lib/llm/gateway-local-direct-sql";
 import { publicationClassifyReleaseLogicalSql, releaseKindsDispatchSql } from "@/lib/llm/dispatch-release-kinds-sql";
 import { textLocalDirectDispatchSql, textLocalDirectTerminalSql } from "@/lib/llm/gateway-local-direct-binding-sql";
+import { opencodeCliLogicalSql, opencodeCliDispatchSql } from "@/lib/llm/opencode-cli-binding-sql";
 import { modelCapacityPolicyHash,publicationClassifyMemberKeys,type ModelCapacityPolicy } from "@/lib/llm/capacity";
 import { providerBoundaryCanonicalHash } from "@/lib/llm/provider-boundary-contract";
 import { cliExecutorIndeterminatePlanHash } from "@/lib/llm/cli-executor-indeterminate-boundary-contract";
@@ -99,17 +100,24 @@ it("0136 preserves nonempty old rows and the complete0135 CHECK predecessor",asy
     // 0161 (PR 3b-E text local-direct 기록) adds the seven text-route branches as the next rules row. ledgerCheckDefs joins that row onto the
     // deparsed 0158 predicate without a second parse, so the expectation is the joined string, not pg_get_constraintdef of a new CHECK.
     const textLocalDirect:Record<string,string>={[checks[2]]:textLocalDirectDispatchSql,[checks[3]]:textLocalDirectTerminalSql};
+    const opencode: Record<string, string> = { model_capacity_requests_logical_check: opencodeCliLogicalSql, model_capacity_requests_dispatch_check: opencodeCliDispatchSql };
     if(textLocalDirect[n]){
       await client.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT unknown_expected_0158 CHECK (${predicate})`);
       let live="";
       try{live=(await client`SELECT pg_get_constraintdef(oid) definition FROM pg_constraint WHERE conname='unknown_expected_0158'`)[0].definition;}
       finally{await client.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT unknown_expected_0158`);}
       const expr=live.slice("CHECK (".length,-1);
-      expect(after[n],`${n}: 0161 rules join`).toBe(`CHECK ((${expr}) OR (${textLocalDirect[n]}))`);
+      // 0163 appends its own ordinal after 0161; the exact complete historical predicate remains the first leaf.
+      const leaves = [expr, textLocalDirect[n], opencode[n]].filter(Boolean);
+      expect(after[n],`${n}: 0161/0163 rules join`).toBe(`CHECK (${leaves.map(leaf => `(${leaf})`).join(" OR ")})`);
       continue;
     }
     await client.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT unknown_expected CHECK (${predicate})`);
-    try{expect(after[n]).toBe((await client`SELECT pg_get_constraintdef(oid) definition FROM pg_constraint WHERE conname='unknown_expected'`)[0].definition);}finally{await client.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT unknown_expected`);}}
+    try{
+      const historical = (await client`SELECT pg_get_constraintdef(oid) definition FROM pg_constraint WHERE conname='unknown_expected'`)[0].definition;
+      const expected = opencode[n] ? `CHECK ((${historical.slice("CHECK (".length,-1)}) OR (${opencode[n]}))` : historical;
+      expect(after[n]).toBe(expected);
+    }finally{await client.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT unknown_expected`);}}
   expect((await client`SELECT count(*)::int n FROM drizzle.__drizzle_migrations`)[0].n).toBe(journal.entries.length);
 });
 it("rejects wrong state/token/full binding/control/writer/C and rolls back every row/event/audit",async()=>{
