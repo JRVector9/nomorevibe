@@ -173,7 +173,7 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
         const manual = decisions.get(candidate.repo);
         const category = manual?.category as Category | null ?? categoryByRepo.get(candidate.repo) ?? null;
         const snapshot = snapshotByRepo.get(candidate.repo);
-        if (process.env.CONNECT_AGENT_URL && snapshot && category === null && !snapshot.starAutoApproved) {
+        if ((pool || process.env.CONNECT_AGENT_URL) && snapshot && category === null && !snapshot.starAutoApproved) {
           await holdClassification(candidate, snapshot.document, ctx.lease); skipped++; continue;
         }
         /**
@@ -197,7 +197,7 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
         }
         const result = await publishCandidate(candidate, ctx.lease, {
           category,
-          decision: process.env.CONNECT_AGENT_URL ? { revision: manual?.revision ?? null, sourceHash: manual?.sourceHash ?? null } : undefined,
+          decision: pool || process.env.CONNECT_AGENT_URL ? { revision: manual?.revision ?? null, sourceHash: manual?.sourceHash ?? null } : undefined,
           snapshot: snapshotByRepo.get(candidate.repo),
         });
 
