@@ -386,6 +386,7 @@ it.skipIf(process.platform === "win32")("OpenCode worker contracts use the authe
   expect(resolved(mod, contract)).toBeNull();
   mod.setCliHostObservedVersion("1.19.5");
   expect(resolved(mod, contract)).toEqual(contract);
-  expect(status(mod, { ...contract, model: "opencode/deepseek-v4.1-flash-free" })).toBe("cli_version_mismatch");
+  expect(status(mod, { ...contract, model: "opencode/deepseek-v4.1-flash-free" })).toBe("ready");
+  expect(resolved(mod, { ...contract, model: "opencode/deepseek-v4.1-flash-free" })).toEqual({ ...contract, model: "opencode/deepseek-v4.1-flash-free", cliVersion: "1.19.5" });
   expect(await recorded()).toEqual([]);
 }, PROCESS_TEST_MS);
