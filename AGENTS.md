@@ -17,9 +17,10 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - 이미 실행한 결과와 실패는 보존하며, 실행하지 않은 검사를 통과했다고 기록하지 않는다.
 - GitHub의 필수 병합 CI는 저장소 규칙대로 유지한다.
 
-## 일반 배포 기본 경로 (2026-10-25)
+## 일반 배포 기본 경로 (2026-10-25, 2026-11-06 보완)
 
 - [단축 배포 절차](docs/operations/deployment-fast-path.md)의 `npm run deploy -- scope|plan|run`을 기본으로 사용한다.
+- 화면·관리자 전용 변경과 GitHub API 한도 대응은 [배포 단축 경로](docs/operations/2026-11-06-deployment-fast-routes.md)를 먼저 읽고 실제 `scope`·`plan`으로 범위를 확정한다. 관리자 TSX는 현재 자동으로 웹 전용 분류되지 않는다. 준비·기존 경보·앱 교체 시간을 분리하며, 미구현 단축안이나 Git ref만으로 CI 검증을 대체하지 않는다.
 - 실제 앱별 baseline으로 변경 대상을 정하고, 필요한 main `check`·이미지 publish만 기다린다. `refresh-caches`와 6시간 관측은 동기 배포 대기가 아니다.
 - text·maintenance·scheduler는 공통 worker digest를 사용한다. connect는 Git이며 출처를 검증한다. 같은 역할의 mini→M3, scheduler M3 2복제본·mini 1복제본과 기존 설정을 보존한다.
 - 이미 목표 상태인 앱은 재배포하지 않고 유지 대상으로 검증한다. 실패한 once 디렉터리를 재사용하거나 응답이 불명확한 배포를 자동 재요청하지 않는다.
