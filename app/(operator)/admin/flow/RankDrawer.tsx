@@ -1,5 +1,6 @@
 "use client";
 
+import "./rank-drawer-rows.css";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { AI_RANK_SLOT_NAMES, type AiRankChoice } from "@/lib/operations/admin-ai-tasks";
@@ -8,6 +9,7 @@ import {
   type FlowRankEditor, type FlowRankLine, type RankChange, type RankWarning,
 } from "@/lib/operations/flow-rank-editor";
 import { RankSelects } from "../models/RankSelects";
+import { SelectedModelProbe } from "../models/SelectedModelProbe";
 import { modelPickerConnectionDevice, modelPickerConnectionLabel, modelPickerModelLabel } from "../models/model-picker-display";
 import { saveAiTaskRanksAction } from "../models/tasks/actions";
 import { aiTaskWorkloadPoolApiOnly } from "@/lib/llm/ai-task-execution-config";
@@ -71,7 +73,8 @@ function LineEditor({ editor, line, value, onChange, warnings, disabled }: {
         <ul className="fr-note">{pool.members.map(member => {
           const connection = editor.connections.find(row => row.id === member.connectionId);
           return <li key={member.memberId}>모델 {member.position} · {connection ? modelPickerConnectionLabel(connection) : "연결 없음"} · {connection ? modelPickerModelLabel(connection, member.model) : member.model}
-            {typeof member.options.reasoningEffort === "string" && ` · 추론 ${member.options.reasoningEffort}`}</li>;
+            {typeof member.options.reasoningEffort === "string" && ` · 추론 ${member.options.reasoningEffort}`}
+            <SelectedModelProbe key={JSON.stringify([member.connectionId, member.model, member.options.reasoningEffort])} choice={{ provider: member.connectionId, model: member.model, ...(typeof member.options.reasoningEffort === "string" ? { reasoningEffort: member.options.reasoningEffort } : {}) }} disabled={disabled || !!line.lock} /></li>;
         })}</ul>
         <p className="fr-note">업무마다 모델 하나를 골라 나눠 처리합니다. 동시 실행 수는 단계·장비 한도를 따릅니다.</p>
         <Link href={`/admin/models/tasks#execution-${line.task}-${line.slot}`} prefetch={false} className="fr-link">분산 모델·실행 방식 변경 →</Link>
@@ -83,7 +86,8 @@ function LineEditor({ editor, line, value, onChange, warnings, disabled }: {
       {!pool && !apiOnly && <RankSelects<AiRankChoice> stage={{ id: `flow-${line.key}`, label: line.label, slots: 3 }} options={line.options} connections={editor.connections} value={value} onChange={onChange}
         slotNames={AI_RANK_SLOT_NAMES} disabled={disabled || !!line.lock}
         showProvider={false} note={null} blocked={(option, index, slots) => flowOptionBlocked(editor, line, index, option, slots)}
-        validate={(slots) => changed ? flowRankIssues(editor, line, slots) : []} />}
+        validate={(slots) => changed ? flowRankIssues(editor, line, slots) : []} layout="rows"
+        renderAfterSlot={(row) => <SelectedModelProbe key={JSON.stringify([row.provider, row.model, row.reasoningEffort])} choice={row} disabled={disabled || !!line.lock} />} />}
       {!line.live && !line.lock && !apiOnly && <p className="fr-note">{SET_ONLY_TEXT}</p>}
       {!pool && <WarningList warnings={warnings} />}
     </section>

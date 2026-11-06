@@ -16,8 +16,9 @@ type RankValue = { provider: string; model: string; reasoningEffort?: string };
  * 검증(validate)·안내(note)를 따로 넘기며 제공자 이름을 덧붙이지 않는다(showProvider false).
  * 선택지에 group(서버 = 연결 이름)이 있으면 서버마다 묶고(optgroup), 모델 이름 옆에 현재 실행·공유 슬롯 관측을 표시한다. 순위 라벨은 항상 별도 줄이다.
  * blocked 는 그 칸에서 고를 수 없는 선택지를 흐리게 둔다(저장 검증은 validate 가 그대로 한다).
+ * rows 는 좁은 서랍에서 1·2·3순위를 가로 줄로 보인다. 기본 current 는 기존 배치 그대로다.
  */
-export function RankSelects<T extends RankValue>({ stage, options, value, onChange, slotNames, disabled = false, validate, note, showProvider = true, compact = false, blocked, connections = [], selectionKind = "rank" }: {
+export function RankSelects<T extends RankValue>({ stage, options, value, onChange, slotNames, disabled = false, validate, note, showProvider = true, compact = false, blocked, connections = [], selectionKind = "rank", layout = "current", renderAfterSlot }: {
   stage: Pick<RankStage, "id" | "label" | "slots"> & Partial<Pick<RankStage, "routeId" | "providers">>;
   options: readonly (T & { label: string; group?: string; text?: string; reasoningEfforts?: readonly string[] })[]; value: readonly (T | null)[]; onChange: (value: (T | null)[]) => void;
   slotNames: readonly { provider: string; model: string; reasoningEffort?: string }[]; disabled?: boolean;
@@ -31,6 +32,10 @@ export function RankSelects<T extends RankValue>({ stage, options, value, onChan
   compact?: boolean;
   blocked?: (option: T, index: number, slots: readonly (T | null)[]) => boolean;
   selectionKind?: "rank" | "pool";
+  /** rows = 좁은 서랍의 가로 순위 줄. 기본 current 는 기존 배치 그대로다. */
+  layout?: "current" | "rows";
+  /** 고른 순위의 label 바깥에 붙일 도구(실제 모델 응답 시험 단추는 root 가 연결한다). */
+  renderAfterSlot?: (row: T, index: number) => ReactNode;
 }) {
   const availability = useModelAvailability();
   const slots = Array.from({ length: stage.slots }, (_, index) => value[index] ?? null);
@@ -56,8 +61,9 @@ export function RankSelects<T extends RankValue>({ stage, options, value, onChan
     onChange(slots.map((row, at) => at === index ? next : row));
   };
   const itemLabel = (index: number) => selectionKind === "pool" ? `모델 ${index + 1}` : `${index + 1}순위`;
+  const isRows = layout === "rows";
   return <div className="flex min-w-0 flex-col gap-2" role="group" aria-label={`${stage.label} ${selectionKind === "pool" ? "분산 모델" : "모델 순위"}`}>
-    <div className={selectionKind === "pool" ? "grid min-w-0 gap-2 sm:grid-cols-2 xl:grid-cols-4" : "grid min-w-0 gap-2 sm:grid-cols-3"}>
+    <div className={isRows ? "fr-rank-rows" : selectionKind === "pool" ? "grid min-w-0 gap-2 sm:grid-cols-2 xl:grid-cols-4" : "grid min-w-0 gap-2 sm:grid-cols-3"}>
       {slots.map((row, index) => {
         const key = row ? rankOptionKey(row) : "";
         const choices = pickerOptions(index);
@@ -71,32 +77,59 @@ export function RankSelects<T extends RankValue>({ stage, options, value, onChan
           disabled={!!blocked?.(option, index, slots)}>
           {option.group !== undefined ? option.text ?? option.model : `${option.label}${!showProvider || option.provider.endsWith("-cli") ? "" : ` (${option.provider})`}`}
           {` · ${activityText(option)}${blocked?.(option, index, slots) ? " · 이 투표자/모델 조건에서 선택 불가" : ""}`}</option>;
-        return <label key={index} className="flex min-w-0 flex-col gap-1 text-[13px]">
-          <span className="block font-semibold" data-compact={compact || undefined}>{itemLabel(index)}</span>
-          <select name={`${stage.id}-${selectionKind}-${index + 1}`} aria-label={`${stage.label} ${itemLabel(index)}`} value={key} disabled={disabled}
-            className="min-h-9 w-full min-w-0 rounded-lg border border-line bg-bg-card px-2" onChange={event => set(index, event.target.value)}
-            onFocus={() => { void refreshModelAvailability(); }} onPointerDown={() => { void refreshModelAvailability(); }}
-            onPointerEnter={() => { void refreshModelAvailability(); }}
-            onKeyDown={event => { if (["Enter", " ", "ArrowDown", "ArrowUp"].includes(event.key)) void refreshModelAvailability(); }}>
-            <option value="">없음</option>
-            {groups ? groups.map(([name, list]) => <optgroup key={name} label={name}>{list.map(item)}</optgroup>) : choices.map(item)}
-          </select>
-          {/* 묶은 목록에서는 닫힌 드롭다운에 모델 이름만 보이므로, 고른 값의 서버를 밑에 적는다(같은 모델을 두 서버에 둘 때 가린다) */}
-          {groups && row && <span className="truncate text-[13px] text-fg-3" data-rank-server="true">{choices.find(option => rankOptionKey(option) === key)?.group ?? ""}</span>}
-          {row && <span className="text-[13px] text-fg-3" data-model-activity="true">{activityText(row)}</span>}
-          {row && effortName && <>
+        const modelSelect = <select name={`${stage.id}-${selectionKind}-${index + 1}`} aria-label={`${stage.label} ${itemLabel(index)}`} value={key} disabled={disabled}
+          className={`min-h-9 w-full min-w-0 rounded-lg border border-line bg-bg-card px-2${isRows ? " fr-rank-row-select" : ""}`} onChange={event => set(index, event.target.value)}
+          onFocus={() => { void refreshModelAvailability(); }} onPointerDown={() => { void refreshModelAvailability(); }}
+          onPointerEnter={() => { void refreshModelAvailability(); }}
+          onKeyDown={event => { if (["Enter", " ", "ArrowDown", "ArrowUp"].includes(event.key)) void refreshModelAvailability(); }}>
+          <option value="">없음</option>
+          {groups ? groups.map(([name, list]) => <optgroup key={name} label={name}>{list.map(item)}</optgroup>) : choices.map(item)}
+        </select>;
+        const selectedServer = groups && row ? <span className={isRows ? "fr-rank-row-server truncate text-[13px] text-fg-3" : "truncate text-[13px] text-fg-3"} data-rank-server="true">{choices.find(option => rankOptionKey(option) === key)?.group ?? ""}</span> : null;
+        // 묶은 목록에서는 닫힌 드롭다운에 모델 이름만 보이므로, 고른 값의 서버를 밑에 적는다(같은 모델을 두 서버에 둘 때 가린다)
+        const selectedActivity = row ? <span className={isRows ? "fr-rank-row-activity text-[13px] text-fg-3" : "text-[13px] text-fg-3"} data-model-activity="true">{activityText(row)}</span> : null;
+        const effortControl = row && effortName ? <>
+          {efforts.length > 0 || row.reasoningEffort ? <select aria-label={`${stage.label} ${itemLabel(index)} 추론 강도`} value={row.reasoningEffort ?? ""}
+            disabled={disabled} className={`min-h-9 w-full min-w-0 rounded-lg border border-line bg-bg-card px-2${isRows ? " fr-rank-row-effort-select" : ""}`}
+            onChange={event => onChange(slots.map((entry, at) => at === index && entry ? { ...entry, reasoningEffort: event.target.value } : entry))}>
+            <option value="">{efforts.length ? "기본값" : "설정 해제"}</option>
+            {row.reasoningEffort && !efforts.includes(row.reasoningEffort) && <option value={row.reasoningEffort} disabled>저장된 값: {row.reasoningEffort} (실행 미지원)</option>}
+            {efforts.map(effort => <option key={effort} value={effort}>{effort}</option>)}
+          </select> : <span className="text-fg-3">이 작업·모델은 설정 미지원</span>}
+          <input type="hidden" name={effortName} value={row.reasoningEffort ?? ""} />
+        </> : null;
+        const effortBlock = row && effortName ? (
+          isRows ? <span className="fr-rank-row-effort">
+            <span className="fr-rank-row-effort-label text-fg-2">추론 강도</span>
+            {effortControl}
+          </span> : <>
             <span className="text-fg-2">추론 강도</span>
-            {efforts.length > 0 || row.reasoningEffort ? <select aria-label={`${stage.label} ${itemLabel(index)} 추론 강도`} value={row.reasoningEffort ?? ""}
-              disabled={disabled} className="min-h-9 w-full min-w-0 rounded-lg border border-line bg-bg-card px-2"
-              onChange={event => onChange(slots.map((entry, at) => at === index && entry ? { ...entry, reasoningEffort: event.target.value } : entry))}>
-              <option value="">{efforts.length ? "기본값" : "설정 해제"}</option>
-              {row.reasoningEffort && !efforts.includes(row.reasoningEffort) && <option value={row.reasoningEffort} disabled>저장된 값: {row.reasoningEffort} (실행 미지원)</option>}
-              {efforts.map(effort => <option key={effort} value={effort}>{effort}</option>)}
-            </select> : <span className="text-fg-3">이 작업·모델은 설정 미지원</span>}
-            <input type="hidden" name={effortName} value={row.reasoningEffort ?? ""} />
+            {effortControl}
+          </>
+        ) : null;
+        const labelContents = <>
+          <span className={isRows ? "fr-rank-row-name font-semibold" : "block font-semibold"} data-compact={compact || undefined}>{itemLabel(index)}</span>
+          {isRows ? <span className="fr-rank-row-model">
+            <span className="text-fg-2">모델</span>
+            {modelSelect}
+            {selectedServer}
+            {selectedActivity}
+          </span> : <>
+            {modelSelect}
+            {selectedServer}
+            {selectedActivity}
           </>}
+          {effortBlock}
           {row && <><input type="hidden" name={slotNames[index].provider} value={row.provider} /><input type="hidden" name={slotNames[index].model} value={row.model} /></>}
-        </label>;
+        </>;
+        if (isRows || renderAfterSlot) {
+          return <div key={index} className={isRows ? "fr-rank-row" : "min-w-0"}>
+            <label className={isRows ? "fr-rank-row-label text-[13px]" : "flex min-w-0 flex-col gap-1 text-[13px]"}
+              data-rank-effort={isRows ? (row && effortName ? "yes" : "no") : undefined}>{labelContents}</label>
+            {row && renderAfterSlot?.(row, index)}
+          </div>;
+        }
+        return <label key={index} className="flex min-w-0 flex-col gap-1 text-[13px]">{labelContents}</label>;
       })}
     </div>
     <span className="text-[13px] text-fg-3">{availability.value && <>관측 {new Date(availability.value.observedAt).toLocaleTimeString("ko-KR", { hour12: false, timeZone: "Asia/Seoul" })} KST · </>}

@@ -11,7 +11,9 @@ import { prepareLocalReviewCliCall, runLocalReviewWithReservedCli, settleLocalRe
 import { assertCliHostDispatch } from "@/lib/crawl/review-cli-remote";
 import { readCliHostCatalog } from "./cli-host-catalog";
 import { cliHostCatalogSchema, cliHostPrepareResponseSchema, cliHostRunResponseSchema, cliHostNotStartedResponseSchema,
-  decodeCliHostInput, type CliHostCatalog, type CliHostHandle, type CliHostRequest } from "./cli-host-protocol";
+  cliHostResponseProbeResponseSchema, type CliHostResponseProbeData, decodeCliHostInput, type CliHostCatalog, type CliHostHandle, type CliHostRequest } from "./cli-host-protocol";
+
+import { runCliHostResponseProbe } from "./cli-host-response-probe";
 
 type PrepareData = Extract<CliHostRequest, { action: "prepare" }>["data"];
 type BoundData = Extract<CliHostRequest, { action: "run" }>["data"];
@@ -27,6 +29,7 @@ export class CliHostRuntime {
   private catalogLoading: Promise<CliHostCatalog> | null = null;
   private cachedCatalog: CliHostCatalog | null = null;
   private closing = false;
+  private probeBusy = false;
 
   async catalog(): Promise<CliHostCatalog> {
     if (this.closing) throw new Error("cli_host_closing");
@@ -62,6 +65,27 @@ export class CliHostRuntime {
     const handle = Object.freeze({ bootId: this.bootId, callId: randomUUID(), connectionId: options.connectionId });
     this.calls.set(handle.callId, { handle, call, input, createdAt: Date.now(), used: false });
     return cliHostPrepareResponseSchema.parse({ kind: "prepared", handle, call });
+  }
+
+  /** One diagnostic at a time; a rejected request never waits to spawn later. */
+  responseProbe(data: CliHostResponseProbeData) {
+    if (this.closing || this.probeBusy) return Promise.resolve({ ok: false, ms: 0, error: "busy" as const });
+    this.probeBusy = true;
+    return this.track(this.executeResponseProbe(data).finally(() => { this.probeBusy = false; }));
+  }
+  private async executeResponseProbe(data: CliHostResponseProbeData) {
+    const started = Date.now();
+    const refuse = (error: "unavailable" | "model_unavailable" | "reasoning_effort_unsupported") =>
+      ({ ok: false, ms: Date.now() - started, error });
+    try {
+      if (this.closing) return refuse("unavailable");
+      const catalog = await this.catalog();
+      const selected = catalog.models.find(entry => entry.id === data.model);
+      if (!selected) return refuse("model_unavailable");
+      if (data.reasoningEffort && !selected.variants.includes(data.reasoningEffort)) return refuse("reasoning_effort_unsupported");
+      if (this.closing) return refuse("unavailable");
+      return cliHostResponseProbeResponseSchema.parse(await runCliHostResponseProbe(data));
+    } catch { return refuse("unavailable"); }
   }
 
   private take(data: BoundData): Call | null {
