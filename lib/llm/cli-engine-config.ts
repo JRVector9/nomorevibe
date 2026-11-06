@@ -11,6 +11,8 @@ export type CliEngineSource = Readonly<{
 
 export const CLI_ENGINE_AUTH_PREFIX = 'nmv-cli-engine.';
 
+export const OPENCODE_NATIVE_TASK_ROUTES: readonly string[] = Object.freeze(["product-intro-check", "product-audit"]);
+
 export const CLI_ENGINE_TASKS = [
   'crawl-tagline',
   'reason-translate',

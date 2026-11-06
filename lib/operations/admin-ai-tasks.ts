@@ -1,6 +1,6 @@
 import { aiTaskReasoningEfforts } from "@/lib/llm/ai-task-reasoning";
 import type { CliCatalogMetadata } from "@/lib/llm/cli-catalog-metadata";
-import { aiTaskUsesCliEngine, cliEngineEndpoint, cliEngineRevision, type CliEngineSource } from "@/lib/llm/cli-engine-config";
+import { OPENCODE_NATIVE_TASK_ROUTES, aiTaskUsesCliEngine, cliEngineEndpoint, cliEngineRevision, type CliEngineSource } from "@/lib/llm/cli-engine-config";
 import { AI_TASK_EXECUTION_SAVE_AUDIT_ACTION } from "@/lib/llm/ai-task-execution-config";
 import { AI_CLI_TOOL_LABELS, AI_CLI_TOOL_PROVIDERS, AI_CLI_TOOLS, AI_TASK_RANK_MAX, AI_TASKS, aiTask, aiTaskAccepts, aiTaskAliasIdentity, aiTaskSlotLabel,
   type AiCliTool, type AiTaskDef } from "@/lib/llm/ai-tasks";
@@ -489,7 +489,7 @@ export function aiRankReadiness(task: AiTaskDef, rank: number, connection: AiCon
     provider = connection.cliTool ? AI_CLI_TOOL_PROVIDERS[connection.cliTool] : null;
     if (!provider) { blocking.push(`${head}: CLI 도구를 알 수 없습니다.`); return result(); }
     checkDevice(checkRoute(provider, true, ""));
-    if (routeId && (input.cliContractRoutes ?? []).includes(routeId)) {
+    if (routeId && ((input.cliContractRoutes ?? []).includes(routeId) || provider === "opencode-cli" && OPENCODE_NATIVE_TASK_ROUTES.includes(routeId))) {
       // 1차·2차·Grok 로그인 유지(PR C1): CLI 계약은 이 저장이 연결의 CLI 버전으로 만든다(env CLI_SERVING_CONTRACTS 는 읽지 않는다). 버전은 워커가 부를 때 견준다
       const version = connection.cliVersion?.trim() || null;
       const row = input.contracts.find(entry => entry.routeId === `cli:${provider}:${routeId}` && entry.model === model);

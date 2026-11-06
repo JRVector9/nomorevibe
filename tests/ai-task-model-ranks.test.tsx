@@ -359,6 +359,13 @@ describe("저장 전 준비 확인(aiRankReadiness)", () => {
     expect(intro).toMatchObject({ blocking: [], createCliContract: null });
     expect(intro.warnings).toEqual([expect.stringContaining("CLI 계약(connect 에이전트 쪽)은 이 화면이 확인하지 못합니다")]);
   });
+  it.each(["product-intro-check", "product-audit"])("%s OpenCode는 실제 DB 계약 준비를 요청한다", id => {
+    const model = "opencode-go/deepseek-v4.1-flash";
+    const opencode = { ...claude, label: "OpenCode", cliTool: "opencode" as const, cliVersion: "2.2.5", cliModels: [model], hasKey: true };
+    const ready = aiRankReadiness(aiTask(id)!, 1, opencode, model, input());
+    expect(ready.blocking).toEqual([]);
+    expect(ready.createCliContract).toEqual({ routeId: id, provider: "opencode-cli", model, cliVersion: "2.2.5", replaces: null });
+  });
   it("로컬 직접 경로: 정책 route 와 로컬 계약이 있어야 한다(만들지 않는다)", () => {
     const task = aiTask("audit-review")!;
     expect(aiRankReadiness(task, 1, gpu, "qwen3.8-flash-next", input({ localContract: () => ({ model: "qwen3.8-flash-next", endpoint: "http://100.77.43.63:8090/v1/chat/completions" }) })))

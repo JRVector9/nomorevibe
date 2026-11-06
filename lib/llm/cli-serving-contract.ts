@@ -1,3 +1,4 @@
+import { OPENCODE_NATIVE_TASK_ROUTES } from "./cli-engine-config";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import os from "node:os";
@@ -74,8 +75,8 @@ const cliCommand = (provider: CliProvider) => ({ "claude-cli": process.env.CLAUD
  */
 export const CLI_DB_CONTRACT_ROUTES: ReadonlySet<string> = Object.freeze(new Set(["crawl-agent-review", "second-review", "grok-session-check"]));
 /** DB 계약 행의 route_id — (도구, route) 마다 따로라 같은 이름의 API 계약·다른 CLI 의 계약과 겹치지 않는다. 계약 JSON 의 routeId 도 이 값이다(표의 CHECK) */
-const readsDbContract = (routeId: string, provider: string): boolean => CLI_DB_CONTRACT_ROUTES.has(routeId)
-  || provider === "opencode-cli" && ["product-intro-check", "product-audit"].includes(routeId);
+export const cliContractReadsDb = (routeId: string, provider: string): boolean => CLI_DB_CONTRACT_ROUTES.has(routeId)
+  || provider === "opencode-cli" && OPENCODE_NATIVE_TASK_ROUTES.includes(routeId);
 export const cliContractRouteId = (provider: CliProvider, routeId: string) => `cli:${provider}:${routeId}`;
 /** DB 계약 route 의 실행 파일 — PATH 의 도구 이름(env 경로를 읽지 않는다). */
 export const CLI_TOOL_COMMANDS: Readonly<Record<CliProvider, string>> = Object.freeze({ "claude-cli": "claude", "grok-cli": "grok", "codex-cli": "codex", "opencode-cli": "opencode" });
@@ -119,7 +120,7 @@ export function observedCliToolVersion(provider: CliProvider): string | null {
 /** DB 계약 행 하나 → 계약(검사에 통과한 것) 또는 null. */
 export function cliContractFromRow(row: { routeId: string; model: string; contract: unknown }): CliServingContract | null {
   const match = /^cli:(claude-cli|grok-cli|codex-cli|opencode-cli):(.+)$/.exec(row.routeId);
-  if (!match || !readsDbContract(match[2], match[1]) || !row.contract || typeof row.contract !== "object") return null;
+  if (!match || !cliContractReadsDb(match[2], match[1]) || !row.contract || typeof row.contract !== "object") return null;
   const parsed = cliServingContractSchema.safeParse({ ...(row.contract as Record<string, unknown>), routeId: match[2] });
   return parsed.success && parsed.data.provider === match[1] && parsed.data.model === row.model && cliContractRouteAccepts(match[2], match[1])
     ? Object.freeze(parsed.data) : null;
@@ -148,7 +149,7 @@ let configured: Configured | null = null;
 let probed: Promise<readonly CliServingContractProbeReport[]> | null = null;
 
 function lookup(routeId: string, provider: CliProvider, model: string): { status: CliServingContractStatus; contract: CliServingContract | null; observed?: string | null } {
-  if (readsDbContract(routeId, provider)) return dbLookup(routeId, provider, model);
+  if (cliContractReadsDb(routeId, provider)) return dbLookup(routeId, provider, model);
   if (!configured) return { status: "probe_pending", contract: null };
   if (configured.kind !== "loaded") return { status: configured.kind, contract: null };
   const entry = configured.entries.get(contractKey(routeId, provider, model));
@@ -213,7 +214,7 @@ async function loadCliServingContracts(): Promise<readonly CliServingContractPro
   const checked = values.map((value, index) => {
     const key = keys[index];
     // DB 계약 route(1차·2차·Grok 로그인 유지)의 env 항목은 읽지 않는다 — 계약은 순위 저장이 만든 행뿐이다(PR C1)
-    if (fields[index].routeId !== null && readsDbContract(fields[index].routeId!, fields[index].provider ?? "")) return { status: "route_reads_db" as const };
+    if (fields[index].routeId !== null && cliContractReadsDb(fields[index].routeId!, fields[index].provider ?? "")) return { status: "route_reads_db" as const };
     if (key && counts.get(key)! > 1) return { status: "duplicate_entry" as const };
     const parsed = cliServingContractSchema.safeParse(value);
     return parsed.success && Object.hasOwn(CLI_CONTRACT_ROUTES, parsed.data.routeId)

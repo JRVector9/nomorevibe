@@ -1,4 +1,4 @@
-import { opencodeTaskEventTerminalSql } from "@/lib/llm/opencode-task-binding-sql";
+import { opencodeTaskLogicalSql, opencodeTaskMembersSql, opencodeTaskDispatchSql, opencodeTaskEventTerminalSql } from "@/lib/llm/opencode-task-binding-sql";
 import { publicationApiLogicalSql, publicationApiDispatchSql, publicationApiTerminalSql, publicationApiEventSql } from "@/lib/llm/publication-classify-api-sql";
 import { randomBytes, randomUUID } from "node:crypto";
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -649,7 +649,7 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
       expect(after0161[name], `${name}: 0158 predicate plus the 0161 text local-direct branch`).toBe(`CHECK ((${inner(after0158[name])}) OR (${branch}))`);
     }
     expect((await step<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`)[0].count).toBe(journal.entries.filter(entry => entry.idx <= 161).length);
-    // Compare the real historical 0163 state before advancing to the current 0166 rules.
+    // Compare the real historical 0163 state before advancing to the current 0166/0168 rules.
     await migrateThrough(163);
     const after0163 = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
     const opencode: Record<string, string> = { model_capacity_requests_logical_check: opencodeCliLogicalSql,
@@ -661,15 +661,19 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
       expect(after0163[name], `${name}: exact prior ordinals plus the 0163 review branch`).toBe(`CHECK (${predecessor} OR (${branch}))`);
     }
     await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
-    const current0166 = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
+    const current0168 = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
     const publication: Record<string, string> = { model_capacity_requests_logical_check: publicationApiLogicalSql,
       model_capacity_requests_members_check: publicationApiLogicalSql, model_capacity_requests_dispatch_check: publicationApiDispatchSql,
       model_capacity_requests_terminal_check: publicationApiTerminalSql, model_capacity_events_terminal_check: publicationApiEventSql };
+    const opencodeTask: Record<string, string> = { model_capacity_requests_logical_check: opencodeTaskLogicalSql,
+      model_capacity_requests_members_check: opencodeTaskMembersSql, model_capacity_requests_dispatch_check: opencodeTaskDispatchSql,
+      model_capacity_events_terminal_check: opencodeTaskEventTerminalSql };
     for (const name of [...LEFT, ...UNTOUCHED]) {
       const branch = publication[name];
-      if (!branch) { expect(current0166[name], `${name}: unchanged by 0166`).toBe(after0163[name]); continue; }
+      if (!branch) { expect(current0168[name], `${name}: unchanged by 0166/0168`).toBe(after0163[name]); continue; }
       const predecessor = textLocalDirect[name] || opencode[name] ? inner(after0163[name]) : `(${inner(after0163[name])})`;
-      expect(current0166[name], `${name}: exact prior ordinals plus the 0166 publication API branch`).toBe(`CHECK (${predecessor} OR (${branch}))`);
+      const taskTail = opencodeTask[name] ? ` OR (${opencodeTask[name]})` : "";
+      expect(current0168[name], `${name}: exact prior ordinals plus the 0166 publication and 0168 task branches`).toBe(`CHECK (${predecessor} OR (${branch})${taskTail})`);
     }
     expect((await step<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`)[0].count).toBe(journal.entries.length);
   } finally { rmSync(partial, { recursive: true, force: true }); await step.end({ timeout: 5 }); }
