@@ -2286,10 +2286,10 @@ export type CliTarget = Readonly<{ kind: "ai1"; candidateId: number }> | Readonl
 type FixedCli = Readonly<{ target: CliTarget; logical: string; memberKeys: string[] | null; kinds: readonly CliDispatchBinding["kind"][] }>;
 const CLI_TARGET_KEYS = { ai1: ["candidateId"], ai2: ["candidateId", "vote"], audit: ["itemId"], intro: ["members"], "grok-session": ["instanceId"], "publication-classify": ["members"] } as const;
 const CLI_FIXED = {
-  ai1: { class: "first", routeId: "crawl-agent-review", providers: ["claude-cli", "grok-cli"], kinds: ["ai1_legacy_cli", "ai1_item_cli"] },
-  ai2: { class: "second", routeId: "second-review", providers: ["claude-cli", "grok-cli"], kinds: ["ai2_item_cli"] },
-  audit: { class: "background", routeId: "product-audit", providers: ["claude-cli"], kinds: ["product_audit_cli"] },
-  intro: { class: "background", routeId: "product-intro-check", providers: ["claude-cli"], kinds: ["intro_check_cli"] },
+  ai1: { class: "first", routeId: "crawl-agent-review", providers: ["claude-cli", "grok-cli", "opencode-cli"], kinds: ["ai1_legacy_cli", "ai1_item_cli"] },
+  ai2: { class: "second", routeId: "second-review", providers: ["claude-cli", "grok-cli", "opencode-cli"], kinds: ["ai2_item_cli"] },
+  audit: { class: "background", routeId: "product-audit", providers: ["claude-cli", "opencode-cli"], kinds: ["product_audit_cli"] },
+  intro: { class: "background", routeId: "product-intro-check", providers: ["claude-cli", "opencode-cli"], kinds: ["intro_check_cli"] },
   "publication-classify": { class: "background", routeId: "crawl-publish-classify", providers: ["claude-cli", "codex-cli"], kinds: ["publication_classify_cli"] },
   "grok-session": { class: "background", routeId: "grok-session-check", providers: ["grok-cli"], kinds: ["grok_session_cli"] },
 } as const;

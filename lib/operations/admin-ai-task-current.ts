@@ -1,3 +1,4 @@
+import { parseCliEngineRevision, type CliEngineSource } from "@/lib/llm/cli-engine-config";
 import { eq } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import { productAuditCampaigns } from "@/lib/db/schema";
@@ -113,7 +114,7 @@ export function buildAiCurrentSlots(sources: AiCurrentSources): AiCurrentSlot[] 
     ? Object.fromEntries(Object.entries(pools).filter(([id]) => id !== "human-review")) as typeof pools
     : pools;
   /** 직접 모델 단계(단계 풀 → 같은 용도의 공통 풀 → 등록부·env 기본값). 풀 key 마다 그 key 하나로 좁힌 범위에서 실제 고르기 함수를 부른다. */
-  const stageUses = (task: AiTaskDef, read: () => { model: string; baseUrl: string | null; provider: string } | null, provider: string): AiCurrentSlot => {
+  const stageUses = (task: AiTaskDef, read: () => { model: string; baseUrl: string | null; provider: string; cliEngine?: CliEngineSource } | null, provider: string): AiCurrentSlot => {
     const stageId = task.adminStage as AdminModelStage | null;
     if (!stageId) return slot(task, { source: "—", error: "stage_unmapped" });
     if (sources.settingsUnknown) return slot(task, { source: "설정 출처 미확인", error: "settings_unavailable" });
@@ -129,14 +130,24 @@ export function buildAiCurrentSlots(sources: AiCurrentSources): AiCurrentSlot[] 
     const keys = selectedTable ? selectedTable.map(row => row.registryKey) : own.length ? own : shared;
     const scopeStage = table || own.length ? stageId : purpose;
     const poolOf = (key: string) => ({ ...effectivePools, [scopeStage]: [key] });
+    const selectedRead = () => {
+      const value = read();
+      if (!value) return null;
+      const definition = modelForPurpose(purpose);
+      return definition.cliEngine && modelRequestName(definition) === value.model
+        ? { ...value, provider: "opencode-cli", cliEngine: definition.cliEngine } : value;
+    };
     const run = (scope: Record<string, string[]> | null) => scope
-      ? withAdminStagePools(scope, `ai-task-current:${stageId}`, () => withAdminModelStage(stageId, read)) : read();
+      ? withAdminStagePools(scope, `ai-task-current:${stageId}`, () => withAdminModelStage(stageId, selectedRead)) : selectedRead();
     try {
       const picked = keys.length ? keys.map((key, index) => ({ origin: table ? `배정 표 ${stageId} rank ${table[index].rank}` : own.length
         ? `stageModelPools.${stageId}[${index}]` : sharedTable ? `공통 단계 배정 표 ${purpose} rank ${sharedTable[index].rank}`
         : `stageModelPools.${purpose}[${index}]`, value: run(poolOf(key)) })) : [{ origin: "등록부·env 기본값", value: run(null) }];
-      const uses = picked.flatMap(entry => entry.value ? [api(task, entry.value.model, entry.value.provider === "claude-cli" ? "claude-cli" : provider, entry.origin,
-        entry.value.baseUrl)] : []).map(use => use.provider.endsWith("-cli") ? cli(task, use.provider, use.model, use.origin) : use);
+      const uses = picked.flatMap(({ value, origin }) => !value ? [] : [value.cliEngine
+        ? cli(task, "opencode-cli", value.model, origin, { baseUrl: value.baseUrl,
+            options: value.cliEngine.reasoningEffort ? { reasoningEffort: value.cliEngine.reasoningEffort } : {} })
+        : value.provider.endsWith("-cli") ? cli(task, value.provider, value.model, origin)
+        : api(task, value.model, provider, origin, value.baseUrl)]);
       const notes = !table && !sharedTable && keys.length > 1 ? ["작업 묶음마다 모델 하나를 선택합니다."] : [];
       return slot(task, { uses, source: table ? "배정 표" : own.length ? "단계 풀" : sharedTable ? "공통 단계 배정 표" : shared.length ? "공통 단계 풀" : "등록부·env 기본값", notes });
     } catch (error) { return slot(task, { source: "—", error: errorText(error) }); }
@@ -145,7 +156,7 @@ export function buildAiCurrentSlots(sources: AiCurrentSources): AiCurrentSlot[] 
     const model = purpose in MODEL_PURPOSE_ENV ? configuredModel(purpose as keyof typeof MODEL_PURPOSE_ENV) : modelRequestName(modelForPurpose(purpose));
     let baseUrl: string | null = null;
     try { baseUrl = modelBaseUrl(purpose); } catch { baseUrl = null; }
-    return { model, baseUrl: provider.endsWith("-cli") ? null : baseOf(baseUrl), provider: modelForPurpose(purpose).provider === "claude-cli" ? "claude-cli" : provider };
+    return { model, baseUrl: provider.endsWith("-cli") ? null : baseOf(baseUrl), provider: modelForPurpose(purpose).provider.endsWith("-cli") ? modelForPurpose(purpose).provider : provider };
   };
 
   const out: AiCurrentSlot[] = [];
@@ -201,9 +212,13 @@ export function buildAiCurrentSlots(sources: AiCurrentSources): AiCurrentSlot[] 
               break;
             }
           }
-          out.push(slot(task, { source: "작업 ↔ 모델(실행 쪽이 이 표를 읽는다)", uses: resolution.candidates.map(candidate => api(task, candidate.rank.model,
-            candidate.binding?.provider ?? "abcllm", `작업 ↔ 모델 ${candidate.rank.rank}순위`, candidate.rank.connection.baseUrl,
-            { deviceId: candidate.rank.connection.deviceId, ...(candidate.unusable ? { note: textRankUnusableText(candidate.unusable) } : {}) })),
+          out.push(slot(task, { source: "작업 ↔ 모델(실행 쪽이 이 표를 읽는다)", uses: resolution.candidates.map(candidate => {
+            const extra = { baseUrl: candidate.rank.connection.baseUrl, deviceId: candidate.rank.connection.deviceId,
+              options: candidate.rank.options, ...(candidate.unusable ? { note: textRankUnusableText(candidate.unusable) } : {}) };
+            return candidate.rank.connection.kind === "cli"
+              ? cli(task, "opencode-cli", candidate.rank.model, `작업 ↔ 모델 ${candidate.rank.rank}순위`, extra)
+              : api(task, candidate.rank.model, candidate.binding?.provider ?? "abcllm", `작업 ↔ 모델 ${candidate.rank.rank}순위`, candidate.rank.connection.baseUrl, extra);
+          }),
             ...(resolution.status === "ok" ? {} : { skip: resolution.status === "no_task_models"
               ? "작업 ↔ 모델에 순위가 없습니다 — 이 작업은 돌지 않습니다(no_task_models). 기본값으로 대신 부르지 않습니다."
               : "작업 ↔ 모델 표를 아직 읽지 못했습니다(task_models_unreadable)." }) }));
@@ -245,8 +260,13 @@ export function buildAiCurrentSlots(sources: AiCurrentSources): AiCurrentSlot[] 
           const lane = task.id === "assist-audit" ? "audit" : "regular";
           if (!sources.env.LLM_ASSIST_BACKENDS) { out.push(slot(task, { source: "env LLM_ASSIST_BACKENDS", skip: "LLM_ASSIST_BACKENDS 가 없어 지금 돌지 않습니다." })); break; }
           const drains = withAdminStagePools(pools, `ai-task-current:${task.id}`, () => assistBackendDrains(process.env, lane));
-          out.push(slot(task, { source: "env LLM_ASSIST_BACKENDS + 로컬 계약", uses: drains.map(drain => api(task, drain.contract.model, "local-direct",
-            `LLM_ASSIST_BACKENDS ${drain.backendId}`, baseOf(drain.contract.endpoint), { deviceId: drain.contract.physicalGroup })),
+          out.push(slot(task, { source: "env LLM_ASSIST_BACKENDS + 로컬 계약", uses: drains.map(drain => {
+            const source = parseCliEngineRevision(drain.contract.deploymentRevision);
+            const extra = { baseUrl: baseOf(drain.contract.endpoint), deviceId: drain.contract.physicalGroup,
+              ...(source?.reasoningEffort ? { options: { reasoningEffort: source.reasoningEffort } } : {}) };
+            return source ? cli(task, "opencode-cli", drain.contract.model, `LLM_ASSIST_BACKENDS ${drain.backendId}`, extra)
+              : api(task, drain.contract.model, "local-direct", `LLM_ASSIST_BACKENDS ${drain.backendId}`, extra.baseUrl, extra);
+          }),
             notes: sources.env.LLM_ASSIST_API_KEYS ? ["보강 키(LLM_ASSIST_API_KEYS)는 옮기지 않습니다 — 키가 필요한 엔진이면 연결에 키를 넣으세요."] : [],
             ...(drains.length ? {} : { skip: "이 줄의 보강 장비가 없습니다." }) }));
           break;

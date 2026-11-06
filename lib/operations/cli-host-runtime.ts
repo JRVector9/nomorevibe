@@ -12,6 +12,8 @@ import { assertCliHostDispatch } from "@/lib/crawl/review-cli-remote";
 import { readCliHostCatalog } from "./cli-host-catalog";
 import { cliHostCatalogSchema, cliHostPrepareResponseSchema, cliHostRunResponseSchema, cliHostNotStartedResponseSchema,
   cliHostResponseProbeResponseSchema, type CliHostResponseProbeData, decodeCliHostInput, type CliHostCatalog, type CliHostHandle, type CliHostRequest } from "./cli-host-protocol";
+import type { CliTaskPrepareData, CliTaskRequest } from "./cli-task-protocol";
+import { CliTaskRuntime } from "./cli-task-runtime";
 
 import { runCliHostResponseProbe } from "./cli-host-response-probe";
 
@@ -25,6 +27,11 @@ const MAX_CALLS = 64, PREPARE_TTL_MS = 120_000, CATALOG_TTL_MS = 30_000;
 export class CliHostRuntime {
   readonly bootId = randomUUID();
   private readonly calls = new Map<string, Call>();
+  private readonly taskRuntime: CliTaskRuntime = new CliTaskRuntime(
+    this.bootId,
+    () => this.catalog(),
+    (): boolean => this.calls.size + this.taskRuntime.size < MAX_CALLS,
+  );
   private readonly active = new Set<Promise<unknown>>();
   private catalogLoading: Promise<CliHostCatalog> | null = null;
   private cachedCatalog: CliHostCatalog | null = null;
@@ -48,11 +55,12 @@ export class CliHostRuntime {
       this.calls.delete(id);
       await releaseLocalReviewCliCall(state.call);
     }
+    await this.taskRuntime.expire();
   }
   async prepare(data: PrepareData) {
     if (this.closing) return UNSUPPORTED;
     await this.expire();
-    if (this.calls.size >= MAX_CALLS) return UNSUPPORTED;
+    if (this.calls.size + this.taskRuntime.size >= MAX_CALLS) return UNSUPPORTED;
     const input = decodeCliHostInput(data.input), options = data.options;
     if (input.validUntil.getTime() <= Date.now()) return UNSUPPORTED;
     const catalog = await this.catalog(), model = catalog.models.find(entry => entry.id === options.model);
@@ -61,10 +69,31 @@ export class CliHostRuntime {
     const call = await prepareLocalReviewCliCall(input, { ...options, catalogVariants: model.variants });
     if (call.kind !== "prepared_cli") return UNSUPPORTED;
     // A shutdown or competing prepare may have arrived while the native profile was being prepared.
-    if (this.closing || this.calls.size >= MAX_CALLS) { await releaseLocalReviewCliCall(call); return UNSUPPORTED; }
+    if (this.closing || this.calls.size + this.taskRuntime.size >= MAX_CALLS) { await releaseLocalReviewCliCall(call); return UNSUPPORTED; }
     const handle = Object.freeze({ bootId: this.bootId, callId: randomUUID(), connectionId: options.connectionId });
     this.calls.set(handle.callId, { handle, call, input, createdAt: Date.now(), used: false });
     return cliHostPrepareResponseSchema.parse({ kind: "prepared", handle, call });
+  }
+
+  taskPrepare(data: CliTaskPrepareData) {
+    return this.track((async () => {
+      if (this.closing) return UNSUPPORTED;
+      await this.expire();
+      if (this.closing) return UNSUPPORTED;
+      return this.taskRuntime.prepare(data);
+    })());
+  }
+
+  taskRun(data: Extract<CliTaskRequest, { action: "taskRun" }>["data"]) {
+    return this.taskRuntime.run(data);
+  }
+
+  taskNotStarted(data: Extract<CliTaskRequest, { action: "taskNotStarted" }>["data"]) {
+    return this.taskRuntime.notStarted(data);
+  }
+
+  taskRelease(handle: CliHostHandle) {
+    return this.taskRuntime.release(handle);
   }
 
   /** One diagnostic at a time; a rejected request never waits to spawn later. */
@@ -155,7 +184,7 @@ export class CliHostRuntime {
   }
   async close(): Promise<void> {
     this.closing = true;
-    await Promise.allSettled([...this.active]);
+    await Promise.allSettled([this.taskRuntime.close(), ...this.active]);
     await Promise.allSettled([...this.calls.values()].map(state => releaseLocalReviewCliCall(state.call)));
     this.calls.clear();
   }

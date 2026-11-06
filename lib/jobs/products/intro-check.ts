@@ -1,4 +1,4 @@
-import { scopedModel } from "@/lib/llm/model-registry";
+import { configuredModelDefinition, scopedModel } from "@/lib/llm/model-registry";
 import type { ReviewCliRun } from "@/lib/crawl/agent-review";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { tickRemaining } from "@/lib/jobs/tick-deadline";
@@ -11,10 +11,10 @@ import { jobKnob } from "@/lib/operations/runtime-settings-schema";
 import { runtimeSettings } from "@/lib/operations/runtime-settings-store";
 
 /**
- * 소개 검수 — 주인 없는 수집 제품의 AI 소개와 쓸모없어 보이는 메이커 소개를 Sonnet 이 근거와 대조한다
+ * 소개 검수 — 주인 없는 수집 제품의 AI 소개와 쓸모없어 보이는 메이커 소개를 선택된 모델이 근거와 대조한다
  * (intro-check.ts). 틀리거나 쓸모없으면 고쳐 쓴 줄로 바꾸고, 알 수 없으면 관리자가 본다.
  *
- * reviewer 워커에서 돈다 — 구독 토큰(claude-cli)이 거기에만 있다. 키워드 검수(동시 2)·2차 심사와 한도를
+ * reviewer 워커에서 돈다 — 구독 토큰(claude-cli) 또는 설정된 local-direct CLI 가 거기에만 있다. 키워드 검수(동시 2)·2차 심사와 한도를
  * 같이 쓰므로 한 번에 하나만 부른다. 처음 쌓인 약 970건은 30분쯤이면 끝나고, 그 뒤로는 새로 발행되는 것만 온다.
  */
 
@@ -43,12 +43,15 @@ export async function checkProductIntros(ctx: JobContext<null>, run?: ReviewCliR
       ctx.log("intro_check.done", { ...counts, drained: true });
       return { done: true };
     }
-    // 공통 모델 슬롯: disabled 면 원 호출 그대로. open 이고 CLI 계약이 있으면 슬롯을 얻어 부르고, 그 밖(draining·매핑·계약 없음)과
-    // 슬롯 대기는 부르지 않고 미룬다 — 아무것도 적지 않으므로 시도 횟수·재시도 시각이 그대로다
-    const capacity = await backgroundCliPath("product-intro-check", scopedModel("product-intro-check", INTRO_CHECK_MODEL));
+    // 등록부의 단계 선택을 그대로 따른다 — cliEngine(local-direct)이 있으면 그 모델로 원격 CLI 를 부르고,
+    // 없으면 기존 공통 슬롯/Claude 경로를 쓴다. CLI 는 legacy checkIntros 로 떨어지지 않는다.
+    const definition = configuredModelDefinition(JOB);
+    const cliEngine = definition.cliEngine;
+    const selectedModel = cliEngine ? definition.model : scopedModel("product-intro-check", INTRO_CHECK_MODEL);
+    const capacity = await backgroundCliPath("product-intro-check", selectedModel, cliEngine ? "opencode-cli" : undefined);
     const items = tasks.map((task) => ({ slug: task.product.slug, intro: task.product.tagline, evidence: introEvidence(task.product) }));
     const timeoutMs = Math.max(1_000, Math.min(callMs, remaining() - 1_000));
-    const native = capacity === "native" ? await checkIntrosWithModelCapacity(tasks, items, lease, { timeoutMs, signal: ctx.signal,
+    const native = (capacity === "native" || cliEngine) ? await checkIntrosWithModelCapacity(tasks, items, lease, { timeoutMs, signal: ctx.signal,
       // 슬롯을 얻은 뒤 띄우기 직전에 이 틱의 여유를 다시 본다(루프 조건과 같다)
       beforeSpawn: () => ctx.hasBudget() && !ctx.signal?.aborted && remaining() >= minCallMs }) : null;
     // 그사이 묶음이 바뀌었거나 여유가 모자라 띄우지 않았다 — 적지 않고 이 틱을 접는다
@@ -60,7 +63,7 @@ export async function checkProductIntros(ctx: JobContext<null>, run?: ReviewCliR
     for (const task of tasks) {
       const judgement = result.ok ? result.judgements.get(task.product.slug) : undefined;
       // 답이 빠진 제품은 실패로 적는다 — 다음에 다시 본다
-      const outcome: IntroCheckRecord = judgement ? { kind: "success", judgement, model: scopedModel("product-intro-check", INTRO_CHECK_MODEL) }
+      const outcome: IntroCheckRecord = judgement ? { kind: "success", judgement, model: selectedModel }
         : { kind: "failure", error: result.ok ? "missing_result" : result.error };
       const recorded = await recordIntroCheck(task, lease, outcome);
       if (recorded) counts[recorded]++;
@@ -70,7 +73,7 @@ export async function checkProductIntros(ctx: JobContext<null>, run?: ReviewCliR
       ctx.log("intro_check.blocked", { ...counts, error: result.error });
       // 멈추라는 신호(cancelled)는 배포·종료다. 그 밖(인증·CLI 없음·한도·시간 초과)은 성공이 아니다 — 소개 검수가 일을 못 했다
       return result.error === "cancelled" ? { done: true }
-        : { done: true, degraded: { code: result.error, detail: `소개 검수 ${scopedModel("product-intro-check", INTRO_CHECK_MODEL)} 호출 실패` } };
+        : { done: true, degraded: { code: result.error, detail: `소개 검수 ${selectedModel} 호출 실패` } };
     }
   }
   ctx.log("intro_check.done", { ...counts, drained: false });

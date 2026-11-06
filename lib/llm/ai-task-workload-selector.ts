@@ -8,9 +8,37 @@ import { readModelCapacityDeviceStates, listModelCapacityDevices } from "./capac
 import { deviceFits, deviceRoleRank } from "./capacity-devices";
 import { ModelCapacityDeferredError } from "./capacity-deferred";
 import { taskPoolEngineKey } from "./ai-task-pool-identity";
+import { aiTaskUsesCliEngine, cliEngineRevision, type CliEngineSource } from "./cli-engine-config";
 import { aiTaskSupportsWorkloadPool, type AiTaskExecutionConfig, type AiTaskWorkloadCandidate, type AiTaskWorkloadChoice } from "./ai-task-execution-config";
 
 const cursors = new Map<string, number>();
+
+type CliEngineCandidateMetadata = Readonly<{
+  cliEngine?: CliEngineSource;
+  options?: Readonly<Record<string, unknown>>;
+}>;
+
+function configuredCliEngineSource(member: { connectionId: string; options?: Readonly<Record<string, unknown>> }): CliEngineSource | null {
+  const reasoningEffort = (member.options ?? {}).reasoningEffort;
+  if (reasoningEffort !== undefined && typeof reasoningEffort !== "string") return null;
+  const source: CliEngineSource = reasoningEffort === undefined
+    ? { connectionId: member.connectionId }
+    : { connectionId: member.connectionId, reasoningEffort };
+  try {
+    cliEngineRevision(source);
+    return Object.freeze(source);
+  } catch {
+    return null;
+  }
+}
+
+function sameCliEngineSource(left: CliEngineSource, right: CliEngineSource): boolean {
+  try {
+    return cliEngineRevision(left) === cliEngineRevision(right);
+  } catch {
+    return false;
+  }
+}
 /**
  * Read-only selection HINT for one new work unit, never a reservation or dispatch authority.
  * Device state uses grantOne's existing CTE/role/helper rules. Concurrent observations may race;
@@ -39,10 +67,22 @@ export async function chooseTaskWorkloadMember<T extends AiTaskWorkloadCandidate
           || member.connection.deviceId !== member.deviceId || candidate.deviceId !== member.deviceId
           || taskPoolEngineKey(member.connection, member.canonicalModel) !== member.engineKey
           || task.routeId !== null && candidate.routeId !== task.routeId) return [];
-        const provider = member.connection.kind === "cli"
-          ? AI_CLI_TOOL_PROVIDERS[member.connection.cliTool as AiCliTool] : null;
-        if (member.connection.kind === "cli" ? candidate.provider !== provider
-          : !["abcllm", "local-direct"].includes(candidate.provider)) return [];
+        const cliEngineTask = aiTaskUsesCliEngine(config.task, member.connection);
+        const cliMetadata = candidate as T & CliEngineCandidateMetadata;
+        if (cliEngineTask) {
+          if (candidate.provider !== "abcllm" || cliMetadata.options === undefined) return [];
+          const configured = configuredCliEngineSource(member);
+          const captured = configuredCliEngineSource({ connectionId: candidate.connectionId, options: cliMetadata.options });
+          if (!configured || !captured || !cliMetadata.cliEngine
+            || !sameCliEngineSource(captured, configured)
+            || !sameCliEngineSource(cliMetadata.cliEngine, configured)) return [];
+        } else {
+          const provider = member.connection.kind === "cli"
+            ? AI_CLI_TOOL_PROVIDERS[member.connection.cliTool as AiCliTool] : null;
+          if (member.connection.kind === "cli" ? candidate.provider !== provider
+            : !["abcllm", "local-direct"].includes(candidate.provider)) return [];
+          if (member.connection.kind === "api" && cliMetadata.cliEngine !== undefined) return [];
+        }
         const route = policy.routes.find(row => row.routeId === candidate.routeId && row.provider === candidate.provider && row.model === candidate.identity);
         if (!route || route.groupId !== member.deviceId) return [];
         return [{ candidate, member, route }];

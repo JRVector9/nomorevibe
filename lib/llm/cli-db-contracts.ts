@@ -1,8 +1,8 @@
-import { CLI_PROTOCOL, CLI_DB_CONTRACT_ROUTES, claudeCliTokenBound, cliContractRouteAccepts, cliServingContractSchema, type CliProvider,
+import { CLI_PROTOCOL, cliContractReadsDb, claudeCliTokenBound, cliContractRouteAccepts, cliServingContractSchema, type CliProvider,
   type CliServingContract } from "./cli-serving-contract";
 
 /**
- * 「작업 ↔ 모델」 순위 저장이 CLI 연결에서 만드는 CLI 계약(2026-11-02 소유자 결정, PR C1) — 1차·2차 심사와 Grok 로그인 유지 route 만.
+ * 「작업 ↔ 모델」 순위 저장이 CLI 연결에서 만드는 CLI 계약(2026-11-02 소유자 결정, PR C1) — 1차·2차 심사·Grok 로그인 유지와 OpenCode 소개·감사 route.
  * 예전에는 운영자가 reviewer env CLI_SERVING_CONTRACTS 에 계약 JSON 을 넣었다. 이제 상한 값은 그 route 가 CLI 를 띄우는 방식(코드의 argv 상수)에서 나오고,
  * 운영자는 CLI 버전(`<도구> --version` 출력 그대로 — 워커 로그 cli_contract.probe 의 observedVersion)만 연결에 적는다.
  * 모델 이름·주소는 없다(모델은 순위의 것이다). 슬롯 한도는 개수 기반이라 C(totalTokenBound)는 활성화 판정에 쓰지 않고 binding·terminal 증거로만 남는다
@@ -20,7 +20,7 @@ const VERSION = /^[^\p{Cc}]{1,80}$/u;
 /** 그 route·CLI·모델·버전의 계약(검사에 통과한 것). 받지 않는 조합·틀린 버전 글이면 null. */
 export function cliDbContract(routeId: string, provider: CliProvider, model: string, cliVersion: string): CliServingContract | null {
   const version = cliVersion.trim();
-  if (!CLI_DB_CONTRACT_ROUTES.has(routeId) || !cliContractRouteAccepts(routeId, provider) || !VERSION.test(version) || version !== cliVersion) return null;
+  if (!cliContractReadsDb(routeId, provider) || !cliContractRouteAccepts(routeId, provider) || !VERSION.test(version) || version !== cliVersion) return null;
   const base = { version: 1 as const, protocol: CLI_PROTOCOL, routeId, model, cliVersion: version };
   const value = provider === "claude-cli"
     ? { ...base, boundProvenance: "derived" as const, provider, inputByteCap: REVIEW_CLAUDE.inputByteCap, costBoundUsdMicros: REVIEW_CLAUDE.costBoundUsdMicros,

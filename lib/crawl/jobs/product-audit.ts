@@ -3,7 +3,7 @@ import { ModelCapacityDeferredError, modelCapacityDeferralIsPerWork } from "@/li
 import { assertCliModelAdmission } from "@/lib/llm/cli-capacity-admission";
 import { backgroundCliPath } from "@/lib/llm/cli-model-capacity";
 import { reportProviderOutcome } from "@/lib/llm/provider-circuit-breaker";
-import { auditCliModelCapacity } from "@/lib/crawl/product-audit-model-capacity";
+import { auditCliModelCapacity, reviewAuditWithRemoteCliModelCapacity } from "@/lib/crawl/product-audit-model-capacity";
 import { getSettings } from "@/lib/crawl/settings";
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import { reviewCliTimeoutMs, reviewWithAgent } from "@/lib/crawl/agent-review";
@@ -101,10 +101,13 @@ async function askAuditCampaign(ctx: JobContext<null>, settings: CrawlSettings):
     if (await finishAuditCampaign(campaign.id, ctx.lease)) ctx.log("product_audit.finished", { campaign: campaign.id });
     return { done: true };
   }
+  const cliEngine = reviewer.provider === campaign.provider && reviewer.model === campaign.model ? campaign.cliSource : null;
+  const remoteRequested = Boolean(cliEngine);
+  if (reviewer.provider === "opencode-cli" && !cliEngine) throw new ModelCapacityDeferredError("provider_contract_unavailable");
   const deadlineAt = Math.min(startedAt + TICK_MS, ctx.deadlineAt ?? Infinity);
   const remaining = () => deadlineAt - Date.now();
   // 1차 심사자 설정을 바꿔도 감사는 따라가지 않는다 — 감사 행의 심사자(reviewer)로만 묻는다
-  const ceiling = reviewer.provider === "abcllm" ? reviewGatewayTimeoutMs() : reviewCliTimeoutMs();
+  const ceiling = !remoteRequested && reviewer.provider === "abcllm" ? reviewGatewayTimeoutMs() : reviewCliTimeoutMs();
   let reviewed = 0, failed = 0, noSource = 0, passed = 0;
   let down: string | null = null;
   // 심사자 쪽이 없는 실패(REVIEWER_DOWN — 설정·키·CLI·모델 없음, 항목 탓일 수 없다)만 모든 자리의 새 호출을 멈춘다. 한 자리의 장부 미룸은
@@ -125,9 +128,12 @@ async function askAuditCampaign(ctx: JobContext<null>, settings: CrawlSettings):
       }
       // open·draining 이면 부르지 않고 미룬다 — 감사 시도 행을 넣지 않으므로 시도 횟수·재시도 시각이 그대로다.
       // Claude CLI 는 계약이 있으면 공통 슬롯을 얻어 부른다. 게이트웨이(abcllm)는 native 종료 근거가 없어 open 이면 늘 미룬다
-      let capacity: "legacy" | "native" = "legacy";
+      let capacity: "legacy" | "native" | "remote" = "legacy";
       try {
-        if (reviewer.provider === "abcllm") await assertCliModelAdmission({ routeId: "product-audit", provider: "abcllm", model: reviewer.model });
+        if (remoteRequested) {
+          await backgroundCliPath("product-audit", reviewer.model, "opencode-cli");
+          capacity = "remote";
+        } else if (reviewer.provider === "abcllm") await assertCliModelAdmission({ routeId: "product-audit", provider: "abcllm", model: reviewer.model });
         else capacity = await backgroundCliPath("product-audit", reviewer.model);
       } catch (error) {
         // 이 항목만의 미룸(같은 항목이 다른 요청에 묶임·앞선 호출이 보내진 중·장부 세대 어긋남) — 항목 하나를 넘기고 이 자리는 다음 항목을 본다
@@ -144,6 +150,11 @@ async function askAuditCampaign(ctx: JobContext<null>, settings: CrawlSettings):
       // 슬롯을 얻은 뒤 띄우기 직전에 이 자리의 시작 조건을 다시 본다
       const native = capacity === "native"
         ? auditCliModelCapacity({ campaign: { ...campaign, ...reviewer }, item, input, lease, beforeSpawn: () => canStart() && !controller.signal.aborted }) : null;
+      if (capacity === "remote" && !cliEngine) throw new ModelCapacityDeferredError("provider_contract_unavailable");
+      const remote = capacity === "remote" && cliEngine
+        ? () => reviewAuditWithRemoteCliModelCapacity({ campaign: { ...campaign, ...reviewer }, item, input, lease,
+            beforeSpawn: () => canStart() && !controller.signal.aborted, source: cliEngine,
+            timeoutMs: ceiling, signal: controller.signal }) : null;
       const abort = () => controller.abort();
       ctx.signal?.addEventListener("abort", abort, { once: true });
       const ownershipPoll = setInterval(() => { if (!ctx.hasBudget() || remaining() <= 0) controller.abort(); }, 250);
@@ -151,10 +162,17 @@ async function askAuditCampaign(ctx: JobContext<null>, settings: CrawlSettings):
       let result;
       try {
         if (!canStart()) controller.abort();
-        const options = { model: reviewer.model, timeoutMs: ceiling, signal: controller.signal };
-        result = reviewer.provider === "abcllm"
-          ? await reviewWithGateway(input, options)
-          : await reviewWithAgent(input, native ? { ...options, run: native.run } : options);
+        if (remote) {
+          const settledRemote = await remote();
+          // 원격 슬롯의 건너뜀·띄우지 않음은 이 자리를 기록 없이 끝낸다
+          if (settledRemote.kind !== "result") return;
+          result = settledRemote.result;
+        } else {
+          const options = { model: reviewer.model, timeoutMs: ceiling, signal: controller.signal };
+          result = reviewer.provider === "abcllm"
+            ? await reviewWithGateway(input, options)
+            : await reviewWithAgent(input, native ? { ...options, run: native.run } : options);
+        }
       } finally {
         clearInterval(ownershipPoll);
         ctx.signal?.removeEventListener("abort", abort);
@@ -164,8 +182,8 @@ async function askAuditCampaign(ctx: JobContext<null>, settings: CrawlSettings):
       // 멈추라고 해서 끊긴 것은 실패가 아니다 — 다음 회차가 처음부터 본다
       if (controller.signal.aborted || ctx.signal?.aborted || !ctx.hasBudget() || remaining() <= 0
         || (!result.ok && result.error === "cancelled")) return;
-      // 게이트웨이 감사는 전송 단계(observeProviderTransport)가 이미 알린다 — 두 번 세지 않게 CLI 결과만
-      if (reviewer.provider !== "abcllm") reportProviderOutcome(result);
+      // 게이트웨이 감사는 전송 단계(observeProviderTransport)가 이미 알린다 — 두 번 세지 않게 CLI/원격 결과만
+      if (remoteRequested || reviewer.provider !== "abcllm") reportProviderOutcome(result);
       const call = { itemId: item.id, startedAt: callStartedAt, provider: reviewer.provider, model: reviewer.model,
         promptVersion: campaign.promptVersion, input };
       if (result.ok) {

@@ -1,8 +1,13 @@
+import { z } from "zod";
+import { cliTaskRequestSchema } from "../lib/operations/cli-task-protocol";
 import { createServer, type Server } from "node:http";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { isIP } from "node:net";
 import { userInfo } from "node:os";
 import { pathToFileURL } from "node:url";
+import type { CliEngineRuntime } from "../lib/operations/cli-engine-runtime";
+import { cliEngineBearer } from "../lib/llm/cli-engine-auth";
+import { CLI_ENGINE_ENDPOINT_HEADER, CLI_ENGINE_REQUEST_HEADER, CLI_ENGINE_MAX_WIRE_BYTES } from "../lib/operations/cli-engine-protocol";
 import type { CliHostRuntime } from "../lib/operations/cli-host-runtime";
 import { CLI_HOST_RPC_DOMAIN, CLI_HOST_BODY_LIMIT, cliHostRequestSchema } from "../lib/operations/cli-host-protocol";
 
@@ -17,12 +22,41 @@ export function cliHostBind(value = "127.0.0.1"): string {
   return value;
 }
 
-export function createCliHostBridge(runtime: CliHostRuntime, secret: string): Server {
+export function createCliHostBridge(runtime: CliHostRuntime, secret: string, engine?: CliEngineRuntime): Server {
   if (secret.length < 32) throw new Error("OPENCODE_HOST_SECRET is required");
   const expected = Buffer.from(`Bearer ${cliHostToken(secret)}`);
   const server = createServer(async (req, res) => {
     res.setHeader("content-type", "application/json"); res.setHeader("cache-control", "no-store");
     const auth = Buffer.from(req.headers.authorization ?? "");
+    if (req.method === "POST" && req.url === "/v1/chat/completions" && engine) {
+      const engineExpected = Buffer.from(`Bearer ${cliEngineBearer(secret)}`);
+      if (auth.length !== engineExpected.length || !timingSafeEqual(auth, engineExpected)) {
+        res.writeHead(401); res.end('{"error":"unauthorized"}'); return;
+      }
+      try {
+        let size = 0;
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) {
+          size += chunk.length;
+          if (size > CLI_ENGINE_MAX_WIRE_BYTES) { res.writeHead(413); res.end('{"error":"body_too_large"}'); return; }
+          chunks.push(chunk);
+        }
+        const requestId = req.headers[CLI_ENGINE_REQUEST_HEADER];
+        const endpoint = req.headers[CLI_ENGINE_ENDPOINT_HEADER];
+        if (typeof requestId !== "string" || typeof endpoint !== "string") throw new Error("invalid_engine_request");
+        const controller = new AbortController();
+        const disconnected = () => { if (!res.writableEnded) controller.abort(); };
+        req.once("aborted", disconnected); res.once("close", disconnected);
+        let result;
+        try { result = await engine.complete({ requestId, signal: controller.signal, endpoint,
+          bearer: cliEngineBearer(secret), wire: Buffer.concat(chunks).toString("utf8") }); }
+        finally { req.off("aborted", disconnected); res.off("close", disconnected); }
+        res.writeHead(result.status, result.headers); res.end(result.body);
+      } catch {
+        res.writeHead(503); res.end('{"error":"cli_host_unavailable"}');
+      }
+      return;
+    }
     if (auth.length !== expected.length || !timingSafeEqual(auth, expected)) {
       res.writeHead(401); res.end('{"error":"unauthorized"}'); return;
     }
@@ -35,11 +69,15 @@ export function createCliHostBridge(runtime: CliHostRuntime, secret: string): Se
         if (size > CLI_HOST_BODY_LIMIT) { res.writeHead(413); res.end('{"error":"body_too_large"}'); return; }
         chunks.push(chunk);
       }
-      const checked = cliHostRequestSchema.safeParse(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+      const checked = z.union([cliHostRequestSchema, cliTaskRequestSchema]).safeParse(JSON.parse(Buffer.concat(chunks).toString("utf8")));
       if (!checked.success) { res.writeHead(400); res.end('{"error":"invalid_request"}'); return; }
       const request = checked.data;
       let result: unknown;
       switch (request.action) {
+        case "taskPrepare": result = await runtime.taskPrepare(request.data); break;
+        case "taskRun": result = await runtime.taskRun(request.data); break;
+        case "taskNotStarted": result = await runtime.taskNotStarted(request.data); break;
+        case "taskRelease": result = await runtime.taskRelease(request.data.handle); break;
         case "catalog": result = await runtime.catalog(); break;
         case "prepare": result = await runtime.prepare(request.data); break;
         case "run": result = await runtime.run(request.data); break;
@@ -71,14 +109,20 @@ async function main(): Promise<void> {
   const [{ CliHostRuntime }, { probeCliServingContracts }] = await Promise.all([
     import("../lib/operations/cli-host-runtime"), import("../lib/llm/cli-serving-contract"),
   ]);
-  const runtime = new CliHostRuntime(), server = createCliHostBridge(runtime, secret);
+  const [{ CliEngineRuntime }, { authorizeCliEngineExecution }] = await Promise.all([
+    import("../lib/operations/cli-engine-runtime"), import("../lib/operations/cli-engine-authority"),
+  ]);
+  const runtime = new CliHostRuntime();
+  const engine = new CliEngineRuntime({ bootId: runtime.bootId, authorizeAndClaim: authorizeCliEngineExecution,
+    catalog: () => runtime.catalog() });
+  const server = createCliHostBridge(runtime, secret, engine);
   await probeCliServingContracts();
   let closing = false;
   for (const signal of ["SIGINT", "SIGTERM"] as const) process.on(signal, () => {
     if (closing) return;
     closing = true;
     const closed = new Promise<void>(resolve => server.close(() => resolve()));
-    void Promise.all([runtime.close(), closed]).then(() => process.exit(0), () => process.exit(1));
+    void Promise.all([runtime.close(), engine.close(), closed]).then(() => process.exit(0), () => process.exit(1));
   });
   if (!closing) server.listen(Number(rawPort), bind, () => {
     console.info(JSON.stringify({ event: "cli_host.ready", bootId: runtime.bootId, bind, port: Number(rawPort) }));

@@ -12,6 +12,7 @@ const VERSION = "2.1.0 (Claude Code)";
 
 it.each([
   ["crawl-agent-review", "claude-cli", "sonnet"], ["second-review", "claude-cli", "opus"],
+  ["product-intro-check", "opencode-cli", "opencode-go/deepseek-v4.1-flash"], ["product-audit", "opencode-cli", "opencode-go/deepseek-v4.1-flash"],
   ["crawl-agent-review", "opencode-cli", "opencode/deepseek-v4.1-flash"], ["second-review", "opencode-cli", "opencode-go/deepseek-v4.1-flash"],
   ["crawl-agent-review", "grok-cli", "grok-4.7"], ["second-review", "grok-cli", "grok-4.7"], ["grok-session-check", "grok-cli", "grok-4.7"],
 ] as const)("%s · %s 는 검사에 통과한 계약을 만든다", (routeId, provider, model) => {
@@ -42,9 +43,9 @@ it("Grok 로그인 유지는 짧은 호출의 상한, 심사는 심사 입력의
 it.each([
   // route 가 받지 않는 CLI
   ["grok-session-check", "claude-cli"], ["crawl-agent-review", "codex-cli"], ["second-review", "codex-cli"], ["grok-session-check", "codex-cli"],
-  // DB 계약 route 가 아닌 route(감사·소개 검수·분류는 env 계약 그대로)
+  // DB 계약 route 가 아닌 route(Claude 감사·소개 검수와 분류는 env 계약 그대로)
   ["product-audit", "claude-cli"], ["product-intro-check", "claude-cli"], ["crawl-publish-classify", "claude-cli"], ["crawl-publish-classify", "codex-cli"],
-  ["grok-session-check", "opencode-cli"], ["product-audit", "opencode-cli"], ["product-intro-check", "opencode-cli"], ["crawl-publish-classify", "opencode-cli"],
+  ["grok-session-check", "opencode-cli"], ["crawl-publish-classify", "opencode-cli"],
   ["unknown-route", "claude-cli"],
 ] as const)("%s · %s 는 받지 않는다(null)", (routeId, provider) => {
   expect(cliDbContract(routeId, provider as CliProvider, "model", VERSION)).toBeNull();
@@ -58,6 +59,6 @@ it("버전 글이 계약 칸에 맞지 않으면(앞뒤 공백·빈 값·제어 
   expect(cliDbContract("crawl-agent-review", "claude-cli", " sonnet", VERSION)).toBeNull();
 });
 
-it("DB 계약 route 는 1차·2차 심사와 Grok 로그인 유지뿐이다", () => {
+it("공통 DB 계약 route는 1차·2차 심사와 Grok 로그인 유지이며 OpenCode 전용 확장은 분리한다", () => {
   expect([...CLI_DB_CONTRACT_ROUTES].sort()).toEqual(["crawl-agent-review", "grok-session-check", "second-review"]);
 });

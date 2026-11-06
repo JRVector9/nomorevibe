@@ -58,7 +58,7 @@ async function readControls(admin: { login: string; exp: number }): Promise<Flow
  * 그 자리의 장애 대응, 그리고 1인 관리자 필수 칸(할 일 — 경보·사람 판단·자리 비운 사이·모두 보기, 최근 바뀐 설정·장비·점검 창).
  * 이 화면이 직접 바꾸는 것은 작업 멈춤·재개(운영센터와 같은 서버 동작, 사유 필수, 작업 로그) 하나다. 나머지는 각 조치의 링크가 보내는 화면에서 한다.
  */
-export default async function AdminFlowPage({ searchParams }: { searchParams?: Promise<Record<string, string | string[] | undefined>> } = {}) {
+export default async function AdminFlowPage({ searchParams }: { searchParams?: Promise<Record<string, string | string[] | undefined>> }) {
   const admin = await currentAdmin();
   if (!admin) redirect("/admin/login");
   const fresh = (await cookies()).has(OPS_FRESH_COOKIE);

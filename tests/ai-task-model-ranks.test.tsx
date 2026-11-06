@@ -86,8 +86,9 @@ describe("작업 목록(lib/llm/ai-tasks.ts)", () => {
       expect(ACTION_GROUPS.settings.actions as readonly string[], action).toContain(action);
     }
   });
-  it("받는 연결: 소개 검수는 Claude CLI 만, 임베딩은 API 만", () => {
+  it("받는 연결: 소개 검수는 Claude·OpenCode CLI, 임베딩은 API 만", () => {
     expect(aiTaskAccepts(aiTask("product-intro-check")!, { kind: "cli", cliTool: "claude" })).toBe(true);
+    expect(aiTaskAccepts(aiTask("product-intro-check")!, { kind: "cli", cliTool: "opencode" })).toBe(true);
     expect(aiTaskAccepts(aiTask("product-intro-check")!, { kind: "api", cliTool: null })).toBe(false);
     expect(aiTaskAccepts(aiTask("product-embedding")!, { kind: "cli", cliTool: "claude" })).toBe(false);
     expect(aiTaskAccepts(aiTask("publish-classify")!, { kind: "cli", cliTool: "grok" })).toBe(false);
@@ -184,7 +185,7 @@ describe("선택지와 검증", () => {
       .toEqual([]);
     expect(validateAiTaskRanks("crawl-tagline", 1, [pick(CLAUDE, "sonnet")], context())).toEqual(["1순위: 수집 소개 짓기은(는) Claude CLI를 받지 않습니다."]);
     expect(validateAiTaskRanks("product-intro-check", 1, [pick(GPU, "qwen3.8-flash-next")], context()))
-      .toEqual(["1순위: 소개 검수은(는) API 주소 연결을 받지 않습니다(CLI Claude CLI만)."]);
+      .toEqual(["1순위: 소개 검수은(는) API 주소 연결을 받지 않습니다(CLI Claude CLI·OpenCode CLI만)."]);
     expect(validateAiTaskRanks("crawl-tagline", 1, [pick(GPU, "gone")], context()))
       .toEqual(["1순위: 「gpu3090」의 모델 목록에 gone이(가) 없습니다. AI 연결에서 「다시 읽기」로 목록을 새로 읽으세요."]);
     // 저장된 값은 목록에서 빠져도 그대로 다시 저장할 수 있다
@@ -357,6 +358,13 @@ describe("저장 전 준비 확인(aiRankReadiness)", () => {
     const intro = aiRankReadiness(aiTask("product-intro-check")!, 1, versioned, "opus", input());
     expect(intro).toMatchObject({ blocking: [], createCliContract: null });
     expect(intro.warnings).toEqual([expect.stringContaining("CLI 계약(connect 에이전트 쪽)은 이 화면이 확인하지 못합니다")]);
+  });
+  it.each(["product-intro-check", "product-audit"])("%s OpenCode는 실제 DB 계약 준비를 요청한다", id => {
+    const model = "opencode-go/deepseek-v4.1-flash";
+    const opencode = { ...claude, label: "OpenCode", cliTool: "opencode" as const, cliVersion: "2.2.5", cliModels: [model], hasKey: true };
+    const ready = aiRankReadiness(aiTask(id)!, 1, opencode, model, input());
+    expect(ready.blocking).toEqual([]);
+    expect(ready.createCliContract).toEqual({ routeId: id, provider: "opencode-cli", model, cliVersion: "2.2.5", replaces: null });
   });
   it("로컬 직접 경로: 정책 route 와 로컬 계약이 있어야 한다(만들지 않는다)", () => {
     const task = aiTask("audit-review")!;

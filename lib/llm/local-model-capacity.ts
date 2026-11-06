@@ -17,6 +17,9 @@ import { requestReservedLocalModel } from "./local-model-terminal";
 import { GatewayNotSentError } from "./gateway-not-started";
 import { recordLocalModelWireObservation } from "./local-model-wire-observation";
 import { tableLocalModelContract } from "./local-model-contract-table";
+import { isAuditAssistTask } from "@/lib/domain/llm-assist/work";
+import { scopedModelDefinition } from "./model-registry";
+import { cliEngineRevision, parseCliEngineRevision } from "./cli-engine-config";
 import { devicePhysicalLimit } from "./serving-contract-store";
 
 type Env = Readonly<Record<string, string | undefined>>;
@@ -38,8 +41,8 @@ const object = (value: unknown): value is Record<string, unknown> => Boolean(val
  * 표의 행은 readback 으로 확인해 넣은 계약이다). 이 주소·모델의 행이 없을 때만 env(LOCAL_MODEL_SERVING_CONTRACTS +
  * LOCAL_MODEL_VERIFIED_CONTRACT_HASHES)를 예전과 똑같이 본다.
  */
-export function verifiedLocalModelContract(url: string, model: string, env: Env = process.env): LocalModelServingContract | null {
-  const table = tableLocalModelContract(url, model);
+export function verifiedLocalModelContract(url: string, model: string, env: Env = process.env, revision?: string): LocalModelServingContract | null {
+  const table = tableLocalModelContract(url, model, revision);
   if (table !== undefined) return table;
   try {
     const contracts = localModelServingContractsSchema.parse(JSON.parse(env.LOCAL_MODEL_SERVING_CONTRACTS ?? "null"));
@@ -90,9 +93,14 @@ export async function withLocalModelCapacity<T>(value: LocalModelCallContext,
     let wire = "";
     let contract: LocalModelServingContract | null = null;
     try {
+      const purpose = context.target.kind === "assist" ? (isAuditAssistTask(context.target.task) ? "assist-audit" : "assist-primary")
+        : context.target.purpose === "human_deepseek" || context.target.purpose === "deepseek_confirm" ? "human-review"
+        : context.target.purpose === "screen" ? "screen-review" : "direct-review";
+      const selected = scopedModelDefinition(purpose);
+      const revision = selected?.cliEngine ? cliEngineRevision(selected.cliEngine) : undefined;
       const control = await readModelCapacityCallerControl();
       if (control.mode === "disabled") {
-        if (context.allowLegacy === false) throw new ModelCapacityDeferredError("disabled");
+        if (context.allowLegacy === false || revision) throw new ModelCapacityDeferredError("disabled");
         return (baseRequest ?? fetch)(urlValue, init);
       }
       if (control.mode !== "open") throw new ModelCapacityDeferredError("draining");
@@ -103,7 +111,8 @@ export async function withLocalModelCapacity<T>(value: LocalModelCallContext,
         throw new ModelCapacityDeferredError("provider_contract_unavailable");
       if (body.context_strategy !== undefined && body.context_strategy !== "raw")
         throw new ModelCapacityDeferredError("provider_contract_unavailable");
-      contract = verifiedLocalModelContract(url, body.model, env);
+      contract = verifiedLocalModelContract(url, body.model, env, revision);
+      if (contract && parseCliEngineRevision(contract.deploymentRevision) && baseRequest) throw new ModelCapacityDeferredError("provider_contract_unavailable");
       if (!contract || !localModelRouteReady(control.policy, context.target, contract, env)) throw new ModelCapacityDeferredError("provider_contract_unavailable");
       const maxOutput = body.max_tokens;
       const vision = body.messages.some(message => object(message) && Array.isArray(message.content)

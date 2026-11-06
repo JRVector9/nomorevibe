@@ -3,15 +3,16 @@ import { z } from "zod";
 import { assertLiveReviewAdapterAllowed } from "@/lib/crawl/review-fixture-transport";
 import { setCliHostObservedVersion } from "@/lib/llm/cli-serving-contract";
 import { CLI_HOST_RPC_DOMAIN, CLI_HOST_BODY_LIMIT, cliHostCatalogSchema, cliHostRequestSchema, type CliHostRequest } from "./cli-host-protocol";
+import { cliTaskRequestSchema, type CliTaskRequest } from "./cli-task-protocol";
 import { validateCliHostTarget, type CliHostTarget } from "./cli-host-target";
 
 export function cliHostToken(secret: string): string {
   return createHmac("sha256", secret).update(CLI_HOST_RPC_DOMAIN).digest("hex");
 }
 /** One HTTP attempt only. A network failure is never evidence that a CLI did not start. */
-export async function cliHostRequest<T>(target: CliHostTarget, request: CliHostRequest, schema: z.ZodType<T>, timeoutMs = 8_000): Promise<T> {
+export async function cliHostRequest<T>(target: CliHostTarget, request: CliHostRequest | CliTaskRequest, schema: z.ZodType<T>, timeoutMs = 8_000): Promise<T> {
   assertLiveReviewAdapterAllowed();
-  const parsed = cliHostRequestSchema.parse(request);
+  const parsed = z.union([cliHostRequestSchema, cliTaskRequestSchema]).parse(request);
   const pinned = validateCliHostTarget(target);
   const endpoint = new URL(pinned.baseUrl);
   endpoint.pathname = `${endpoint.pathname.replace(/\/$/, "")}/rpc`;

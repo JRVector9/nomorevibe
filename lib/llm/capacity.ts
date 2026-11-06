@@ -906,7 +906,7 @@ export const ai2ItemCliDispatchBindingSchema = z.object({
 export const productAuditCliDispatchBindingSchema = z.object({
   kind: z.literal("product_audit_cli"), version: z.literal(1), logicalWorkKey: identity(160), itemId: positive, campaignId: positive,
   productId: positive, slug: identity(80), inputHash: sha64, promptVersion: identity(40), rulesVersion: identity(40),
-  attempts: z.number().int().nonnegative().safe(), provider: z.literal("claude-cli"), model: identity(200), routeId: z.literal("product-audit"),
+  attempts: z.number().int().nonnegative().safe(), provider: z.enum(["claude-cli", "opencode-cli"]), model: identity(200), routeId: z.literal("product-audit"),
   transport: cliTransportSchema, totalTokenBound: positive, chargedTokens: positive, job: cliJob("product-audit"),
 }).strict().refine(value => value.logicalWorkKey === `bg:audit:${value.itemId}`, "invalid_product_audit_cli_logical_work")
   .refine(cliTransportCharge, "invalid_cli_transport_charge");
@@ -937,7 +937,7 @@ export function introCheckInputHash(value: IntroCheckInput): string {
 }
 export const introCheckCliDispatchBindingSchema = introCheckInputSchema.extend({
   kind: z.literal("intro_check_cli"), version: z.literal(1), logicalWorkKey: identity(160), inputHash: sha64,
-  provider: z.literal("claude-cli"), routeId: z.literal("product-intro-check"), transport: cliTransportSchema,
+  provider: z.enum(["claude-cli", "opencode-cli"]), routeId: z.literal("product-intro-check"), transport: cliTransportSchema,
   totalTokenBound: positive, chargedTokens: positive, job: cliJob("product-intro-check"),
 }).strict().refine(value => {
   const checked = introCheckInputSchema.safeParse({ members: value.members, model: value.model });

@@ -1,5 +1,5 @@
 import { scopedRequestTimeout } from "@/lib/llm/model-registry";
-import { scopedModel, scopedModelBaseUrl } from "@/lib/llm/model-registry";
+import { scopedModel, scopedModelBaseUrl, scopedModelDefinition, modelForPurpose } from "@/lib/llm/model-registry";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { readModelCapacityCallerControl } from "@/lib/llm/capacity-repository";
 import { parseKoreanTaglines, type KoreanTaglineBatch } from "@/lib/domain/products/korean-tagline";
@@ -15,6 +15,10 @@ export async function translateKoreanTaglinesWithQwen(items: readonly ProductTag
   if (!items.length || items.length > KOREAN_TRANSLATION_MAX_ITEMS ||
     items.reduce((count, item) => count + item.tagline.length, 0) > KOREAN_TRANSLATION_LEGACY_MAX_CHARS)
     return { ok: false, error: "input_too_large" };
+  // CLI selection is configured/executed only through the capped product-tagline-ko task route;
+  // this uncapped legacy raw path must not execute a CLI-selected definition.
+  const selectedDefinition = scopedModelDefinition("korean-translation-direct") ?? modelForPurpose("korean-translation-direct");
+  if (selectedDefinition.cliEngine) throw new ModelCapacityDeferredError("provider_contract_unavailable");
   // This legacy transport cannot borrow the reviewer-only local capacity permit.
   const control = await readModelCapacityCallerControl();
   if (control.mode !== "disabled") throw new ModelCapacityDeferredError(control.mode === "draining" ? "draining" : "provider_contract_unavailable");
