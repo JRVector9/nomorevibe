@@ -19,6 +19,7 @@ import { modelConfigSchema, type AgentStatus, type ClassificationAuthority } fro
 import { categorySourceHash } from '@/lib/operations/categories';
 import { reviewHash } from './agent-review-contract';
 import { assertReviewApproval } from './agent-review-repository';
+import { ensureReviewTaskRanks } from './review-task-ranks';
 import type { ClassifyInput } from './classify';
 import { lockPipelineInputStages } from './pipeline-stage-context';
 import { classificationInputFromRows, type PreparedClassification } from './publish';
@@ -115,6 +116,9 @@ export async function publicationClassificationAuthority(expected: readonly Expe
   catch { throw new ModelCapacityDeferredError('provider_contract_unavailable'); }
   if (status.classificationCapacityVersion !== 1 || !status.classifyReady || status.busy)
     throw new ModelCapacityDeferredError('provider_contract_unavailable');
+  // Approval identity reads both rank and execution snapshots synchronously under
+  // source locks. Initialize them in this process before entering that transaction.
+  await ensureReviewTaskRanks();
   return onPrimary(() => db.transaction(async tx => {
     const publisherRole = await lockPublisher(tx, role);
     const members = await lockSources(tx, payload, expected.map(item => ({ candidateId: item.candidate.id, repo: item.candidate.repo })), lease, expected);
@@ -144,6 +148,9 @@ export async function runPublicationClassificationCall(input: CliCallInput, payl
     if (!current() || classificationPayloadHash(payload) !== authority.payloadHash
       || !payload.definitions || classificationDefinitionsHash(payload.definitions) !== authority.definitionsHash)
       throw new ModelCapacityDeferredError('reservation_lost');
+    // ConnectAgent is a separate process: the publisher's initialized snapshots do
+    // not reach its native dispatch proof. Load before capacity/source locks.
+    await ensureReviewTaskRanks();
     const facts = { members: authority.members, provider: input.provider, model: input.model, payloadHash: authority.payloadHash,
       definitionsHash: authority.definitionsHash, configHash: authority.configHash, generation: authority.generation, configVersion: authority.configVersion };
     const logicalWorkKey = publicationClassifyLogicalWorkKey(facts.members), inputHash = publicationClassifyInputHash(facts);
@@ -183,6 +190,7 @@ export type PublicationClassificationExpected = Expected;
 export async function publicationApiSources(expected: readonly Expected[], payload: Payload, lease: JobLease) {
   const role = roleLeaseFromEnv('publisher', process.env);
   if (lease.name !== 'crawl-publish' || !role) throw new ModelCapacityDeferredError('owner_unavailable');
+  await ensureReviewTaskRanks();
   const job = { name: 'crawl-publish' as const, token: lease.token, requestedVersion: lease.requestedVersion };
   return onPrimary(() => db.transaction(async tx => {
     const publisherRole = await lockPublisher(tx, role);
@@ -196,6 +204,7 @@ export async function dispatchPublicationApi(expected: readonly Expected[], payl
   call: PreparedPublicationClassifyCall, reservation: ModelCapacityReservation, identity: ModelCapacityRequestIdentity) {
   const role = roleLeaseFromEnv('publisher', process.env);
   if (lease.name !== 'crawl-publish' || !role) throw new ModelCapacityDeferredError('owner_unavailable');
+  await ensureReviewTaskRanks();
   const job = { name: 'crawl-publish' as const, token: lease.token, requestedVersion: lease.requestedVersion };
   const checked = publicationClassifyApiInputSchema.parse(input);
   return onPrimary(() => db.transaction(async tx => {
