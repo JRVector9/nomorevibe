@@ -130,7 +130,7 @@ async function readScope(query: string) {
   return { options, query: normalizeQuery(filter) };
 }
 
-export const prepareRejectedRerunAction = webWriteAction(async function (
+export const prepareRejectedRerunAction = webWriteAction(async function prepareRejectedRerunAction(
   form: FormData,
 ): Promise<{ snapshot?: RejectedRerunSnapshot; error?: string }> {
   try {
@@ -151,7 +151,7 @@ export const prepareRejectedRerunAction = webWriteAction(async function (
   }
 });
 
-export const continueRejectedRerunAction = webWriteAction(async function (
+export const continueRejectedRerunAction = webWriteAction(async function continueRejectedRerunAction(
   snapshot: RejectedRerunSnapshot,
 ): Promise<{
   snapshot?: RejectedRerunSnapshot;
@@ -187,7 +187,7 @@ export const continueRejectedRerunAction = webWriteAction(async function (
   }
 });
 
-export const rerunSelectedRejectedAction = webWriteAction(async function (
+export const rerunSelectedRejectedAction = webWriteAction(async function rerunSelectedRejectedAction(
   targets: RejectedRerunTarget[],
 ): Promise<{
   queued?: number;
