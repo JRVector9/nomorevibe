@@ -492,11 +492,14 @@ export async function saveAiTaskRanks(input: AiTaskRanksInput, actor: string): P
         try { catalog = await readAdminCliCatalog({ fresh: true, connectionId: connection.id }); }
         catch { return { ok: false, issues: ["ai_connection_cli_host_unavailable"] }; }
         const offered = new Set(catalog.models.map(model => model.id));
-        if (connection.cliVersion !== catalog.cliVersion || ranks.some(rank => rank?.provider === connection.id && !offered.has(rank.model)))
+        if (ranks.some(rank => rank?.provider === connection.id && !offered.has(rank.model)))
           return { ok: false, issues: ["ai_connection_cli_catalog_changed"] };
         catalogs.set(connection.id, catalog);
       }
-      connections = storedConnections.map(connection => catalogs.has(connection.id) ? { ...connection, cliCatalog: catalogs.get(connection.id)! } : connection);
+      connections = storedConnections.map(connection => {
+        const catalog = catalogs.get(connection.id);
+        return catalog ? { ...connection, cliVersion: catalog.cliVersion, cliCatalog: catalog } : connection;
+      });
     }
     if (task.id === 'publish-classify' && ranks.some(rank => rank && connections.find(connection => connection.id === rank.provider)?.kind === 'api'))
       return { ok: false, issues: ['ai_task_publish_api_pool_only'] };

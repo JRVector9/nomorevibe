@@ -8,14 +8,15 @@ import { cliModelDispatchSchema, type CliModelDispatch } from "@/lib/llm/capacit
 import { prepareCliCall, runReservedCliCall, settleCliNotStarted, type CliCallOutcome, type CliProcessTerminal,
   type PreparedCliCall } from "@/lib/llm/cli-process-runner";
 import { cliCommandFor, cliServingContractHash, cliServingContractSchema, cliTransportSchema, resolveCliServingContract,
-  type CliServingContract, type CliTransport } from "@/lib/llm/cli-serving-contract";
+  setCliHostObservedVersion, type CliServingContract, type CliTransport } from "@/lib/llm/cli-serving-contract";
 import { reviewCliArgs, reviewCliMaxOutputTokens, reviewCliPrompt, reviewCliTimeoutMs, cliReviewModel, reviewWithAgent,
   type AgentReviewResult, type ReviewCliRun } from "./agent-review";
 import { grokAuthPath, grokReviewAgentDefinition, grokReviewArgs, grokReviewResult, grokReviewTimeoutMs,
   GROK_REVIEW_AGENT } from "./agent-review-grok";
 import { aiCliToolOfProvider } from "@/lib/llm/ai-tasks";
 import { aiTaskReasoningEfforts } from "@/lib/llm/ai-task-reasoning";
-import { opencodeReviewArgs, opencodeReviewProfile, releaseOpencodeReviewProfile, opencodeReviewResult, OPENCODE_REVIEW_VERSION } from "./agent-review-opencode";
+import { opencodeReviewArgs, opencodeReviewProfile, releaseOpencodeReviewProfile, opencodeReviewResult } from "./agent-review-opencode";
+import { readOpenCodeCliCapabilities } from "./opencode-cli-capabilities";
 import { MAX_REVIEW_INPUT_BYTES, type ReviewInput } from "./agent-review-contract";
 import { assertLiveReviewAdapterAllowed } from "./review-fixture-transport";
 import type { CliHostSettlement } from "@/lib/operations/cli-host-protocol";
@@ -88,7 +89,6 @@ export async function prepareLocalReviewCliCall(input: ReviewInput, options: Pre
   const cliTool = aiCliToolOfProvider(provider);
   const reasoningEffort = options.reasoningEffort || undefined;
   if (reasoningEffort && !aiTaskReasoningEfforts(task, cliTool, model, options.catalogVariants).includes(reasoningEffort)) return unsupported;
-  if (provider === "opencode-cli" && reviewCliServingContract(routeId, provider, model)?.cliVersion !== OPENCODE_REVIEW_VERSION) return unsupported;
   const serialized = JSON.stringify(snapshot.snapshot);
   if (Buffer.byteLength(serialized, "utf8") > MAX_REVIEW_INPUT_BYTES) return unsupported;
   const prompt = reviewCliPrompt(serialized);
@@ -114,8 +114,10 @@ export async function prepareLocalReviewCliCall(input: ReviewInput, options: Pre
         cwd: directory, env, boundEnvKeys: ["NO_COLOR", "RUST_LOG"], timeoutMs, maxStdoutBytes: MAX_STDOUT_BYTES, maxStderrBytes: MAX_STDERR_BYTES });
     } else {
       const profile = await opencodeReviewProfile(directory);
-      args = opencodeReviewArgs(model, reasoningEffort); stdin = prompt;
-      prepared = prepareCliCall({ routeId, provider, model, command: profile.command, args, stdin,
+      const capabilities = await readOpenCodeCliCapabilities(profile.command, directory, profile.env);
+      setCliHostObservedVersion(capabilities.version);
+      args = opencodeReviewArgs(model, reasoningEffort, capabilities); stdin = prompt;
+      prepared = prepareCliCall({ routeId, provider, model, command: capabilities.command, args, stdin,
         files: profile.files, cwd: directory, env: profile.env, boundEnvKeys: profile.boundEnvKeys,
         timeoutMs, maxStdoutBytes: MAX_STDOUT_BYTES, maxStderrBytes: MAX_STDERR_BYTES });
     }

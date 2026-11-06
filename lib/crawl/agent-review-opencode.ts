@@ -3,15 +3,25 @@ import path from "node:path";
 import { REVIEW_SYSTEM_PROMPT, type AgentReviewResult } from "./agent-review";
 import { validateReviewOutcome, type ReviewInput } from "./agent-review-contract";
 import type { CliProcessResult } from "@/lib/llm/cli-process-runner";
+import type { OpenCodeCliCapabilities } from "./opencode-cli-capabilities";
 
 /** Existing M3 host CLI, never installed or upgraded by workers. */
 export const OPENCODE_HOST_COMMAND = "/opt/homebrew/bin/opencode";
 export const OPENCODE_HOST_HOME = "/Users/jr";
 export const OPENCODE_REVIEW_AGENT = "nmv-review";
-export const OPENCODE_REVIEW_VERSION = "1.19.5";
-export function opencodeReviewArgs(model: string, effort?: string): string[] {
-  return ["run", "--pure", "--format", "json", "--agent", OPENCODE_REVIEW_AGENT, "--model", model,
+export function opencodeReviewArgs(model: string, effort?: string, cap?: OpenCodeCliCapabilities): string[] {
+  if (!cap) return ["run", "--pure", "--format", "json", "--agent", OPENCODE_REVIEW_AGENT, "--model", model,
     ...(effort ? ["--variant", effort] : [])];
+  if (!cap.pure && !cap.standalone) throw new Error("opencode_cli_unsupported");
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$/.test(model)) throw new Error("opencode_cli_model_invalid");
+  if (effort !== undefined && (!/^[a-z0-9_-]{1,32}$/.test(effort) || effort.startsWith("-"))) throw new Error("opencode_cli_variant_invalid");
+  if (effort !== undefined && cap.variantSyntax === "none") throw new Error("opencode_cli_variant_unsupported");
+  const variantModel = effort !== undefined && cap.variantSyntax === "suffix" ? `${model}#${effort}` : model;
+  return [
+    ...(cap.standalone ? ["--standalone"] : []), "run", ...(cap.pure ? ["--pure"] : []),
+    "--format", "json", "--agent", OPENCODE_REVIEW_AGENT, "--model", variantModel,
+    ...(effort !== undefined && cap.variantSyntax === "flag" ? ["--variant", effort] : []),
+  ];
 }
 
 /** v1 configuration: deny every tool/MCP operation and prevent auxiliary LLM calls. */
