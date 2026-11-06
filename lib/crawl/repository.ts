@@ -3,6 +3,7 @@ import { isReviewCandidate, REVIEW_RETRIABLE_REASONS } from "./agent-review-cont
 import { and, asc, desc, eq, inArray, lt, lte, ne, notInArray, or, sql } from "drizzle-orm";
 import { isDeepStrictEqual } from "node:util";
 import { db } from "@/lib/db";
+import { z } from "zod";
 import {
   crawlFrontier,
   crawlDocuments,
@@ -814,11 +815,16 @@ export async function recordAutomaticJudgement(input: {
     // A pre-existing admin `new` is an explicit rejudge request. A later admin decision is never replaced.
     if ((candidate && candidate.state !== "new") || !isDeepStrictEqual(candidate,input.candidate)
       || !isDeepStrictEqual(document,input.document) || !isDeepStrictEqual(mergeWithDefaults(settingsRow?.values),input.settings)) return false;
+    const adminFirstReviewRerunIdValidation = z.string().uuid().safeParse(
+      candidate?.signals?.adminFirstReviewRerunId,
+    );
     const now = new Date();
     const values = {repo:input.document.repo,productUrl:input.document.productUrl,state:input.verdict.state,
       reason:input.verdict.reason,signals:{ ...input.verdict.signals,
         ...(typeof candidate?.signals?.adminEvidenceRefreshConsumedId === "number"
           ? { adminEvidenceRefreshConsumedId: candidate.signals.adminEvidenceRefreshConsumedId } : {}),
+        ...(adminFirstReviewRerunIdValidation.success
+          ? { adminFirstReviewRerunId: adminFirstReviewRerunIdValidation.data } : {}),
       },decidedBy:"auto" as const,
       judgedAt:now,updatedAt:now,decidedAt:null};
     if (candidate) {

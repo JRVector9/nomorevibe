@@ -60,7 +60,14 @@ export async function humanQueueOverview(settings: CrawlSettings, now?: Date): P
     reviewQueueAiDecisions(), secondReviewSummary(settings.secondReview.agreeAt), humanOnlyCandidateIds(),
     humanDecisions24h(now).catch(() => null),
   ]);
-  const overview = buildHumanQueueOverview({ aiDecisions, seconds, humanOnly, wait: null, decided24h });
+  const pendingRerun = new Set(aiDecisions.pendingRerunIds);
+  const secondsWithoutPending: typeof seconds = {
+    ...seconds,
+    ids: Object.fromEntries(Object.entries(seconds.ids).map(([key, list]) => [
+      key, (list as number[]).filter((id) => !pendingRerun.has(id)),
+    ])) as (typeof seconds)["ids"],
+  };
+  const overview = buildHumanQueueOverview({ aiDecisions, seconds: secondsWithoutPending, humanOnly, wait: null, decided24h });
   const age = await waitingAge(overview.ids.human, now).catch(() => null);
   return { ...overview, wait: age && { oldestDays: age.oldestDays, stalled: age.stalled, in24h: age.new24h } };
 }

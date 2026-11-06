@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, inArray, not, notInArray, or, sql, getTableColumns, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, notInArray, or, sql, getTableColumns, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '@/lib/db';
 import { crawlTaglines, type CandidateState, type CrawlDocument, type CrawlTagline, type DecisionReason } from '@/lib/db/schema';
@@ -25,6 +25,9 @@ import { kstDayStart, type FreshWindows } from '@/lib/operations/windows';
 import { splitTiebreakApproved, splitTiebreakApprovedFirst, splitTiebreakVerdicts, type SplitTiebreakView } from './gate-split-tiebreak-read';
 
 import { reviewCursorKind, reviewCursorPredicate, type ReviewCursor } from "./admin-review-cursor";
+import { adminReviewCandidateStates, adminReviewListPredicates, type AdminReviewFilterState, type AdminReviewListOptions } from './admin-review-query';
+export { adminReviewCandidateStates };
+export type { AdminReviewFilterState, AdminReviewListOptions };
 
 export const MAX_EVIDENCE_REFRESHES = 2;
 export const EVIDENCE_REFRESH_COOLDOWN_MS = 15 * 60_000;
@@ -512,14 +515,6 @@ export type AdminReviewEntry = {
 export const REVIEW_SORTS = ["", "stars", "push", "push_old", "wait", "wait_short"] as const;
 export type ReviewSort = typeof REVIEW_SORTS[number];
 
-export type AdminReviewFilterState = 'all' | 'pending' | 'new' | 'approved' | 'needs_review' | 'rejected' | 'published';
-/** Explicit all-stage reads include completed states. Existing pending reads retain their original three states. */
-export function adminReviewCandidateStates(state?: AdminReviewFilterState): readonly CandidateState[] {
-  if (state === 'all') return ['new', 'approved', 'needs_review', 'rejected', 'published'];
-  if (state === 'rejected' || state === 'published' || state === 'needs_review' || state === 'new' || state === 'approved') return [state];
-  return ['new', 'approved', 'needs_review'];
-}
-
 /** 원본의 값을 후보 한 줄마다 꺼낸다. repo 는 crawl_documents 의 고유 키라 한 건만 나온다 */
 const repoNumber = (key: string) => sql`(select case when d.repo_meta->>${key} ~ '^[0-9]+$'
   then (d.repo_meta->>${key})::bigint end from ${crawlDocuments} d where d.repo = ${crawlCandidates.repo})`;
@@ -541,42 +536,11 @@ function orderBy(sort: ReviewSort): SQL {
   }
 }
 
-export async function listAdminReviewEntries(settings: CrawlSettings, options: {
-  state?: AdminReviewFilterState; after?: number; offset?: number; limit?: number;
-  /** Browser scroll uses the complete sort boundary; legacy after(id) remains for exports. */
-  cursor?: ReviewCursor;
-  /** 갈래로 걸러 볼 때. 계산으로 얻은 값이라 SQL로 거를 수 없어 id 를 받는다 */
-  ids?: number[];
-  /** 이름(페이지 제목)·레포·주소에 이 글자가 들어간 것만 */
-  search?: string;
-  /** Minimum GitHub stars, applied before pagination. Unknown counts do not match. */
-  minStars?: number;
-  /**
-   * 마지막 푸시가 이 일수보다 오래된 것을 목록에서 뺀다 — 화면에서만 빼고 후보는 그대로 둔다(2026-09-19 사용자 결정).
-   * 푸시 시각을 모르는 것은 오래됐다고 볼 근거가 없어 남긴다. 뺀 수는 hiddenByAge 로 돌려준다.
-   */
-  pushedWithinDays?: number;
-  /** 표 머리에서 고른 정렬. 기본은 들어온 차례다 */
-  sort?: ReviewSort;
-} = {}) {
+export async function listAdminReviewEntries(settings: CrawlSettings, options: AdminReviewListOptions = {}) {
   const limit = Math.max(1, Math.min(options.limit ?? 50, 50));
   const states = adminReviewCandidateStates(options.state);
   if (options.ids?.length === 0) return { entries: [] as AdminReviewEntry[], nextAfter: null, nextCursor: null as ReviewCursor | null, total: 0, hiddenByAge: 0 };
-  const term = options.search?.trim().slice(0, 100);
-  // ILIKE 의 % _ \ 는 글자 그대로 찾는다
-  const like = term ? `%${term.replace(/[\\%_]/g, (char) => `\\${char}`)}%` : null;
-  const matches = like ? sql`(${crawlCandidates.repo} ilike ${like} or coalesce(${crawlCandidates.productUrl}, '') ilike ${like}
-    or exists (select 1 from ${crawlDocuments} d where d.repo = ${crawlCandidates.repo} and coalesce(d.page_meta->>'title', '') ilike ${like}))` : undefined;
-  const days = options.pushedWithinDays && Number.isSafeInteger(options.pushedWithinDays) && options.pushedWithinDays > 0 ? options.pushedWithinDays : null;
-  const stale = days ? sql`exists (select 1 from ${crawlDocuments} d where d.repo = ${crawlCandidates.repo}
-    and d.repo_meta->>'pushed_at' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T'
-    and (d.repo_meta->>'pushed_at')::timestamptz <= now() - make_interval(days => ${days}))` : undefined;
-  const base = and(inArray(crawlCandidates.state, [...states]),
-    options.ids ? inArray(crawlCandidates.id, options.ids) : undefined,
-    sql`${crawlCandidates.id} > ${Math.max(0, options.after ?? 0)}`, matches,
-    Number.isSafeInteger(options.minStars) && options.minStars! >= 0
-      ? sql`${repoNumber('stargazers_count')} >= ${options.minStars}` : undefined);
-  const where = stale ? and(base, not(stale)) : base;
+  const { base, where, stale } = adminReviewListPredicates(options);
   const sort = options.sort ?? "";
   const priority = !options.after && (states as readonly string[]).includes('needs_review') ? splitTiebreakApproved : sql<boolean>`false`;
   const cursorValue = sort === "stars" ? repoNumber("stargazers_count") : sort === "push" || sort === "push_old" ? pushedAt
@@ -699,23 +663,34 @@ export type ReviewAiDecision = 'reject' | 'approve' | 'needs_review' | 'none';
  * 후보마다 마지막으로 성공한 자동 심사의 결론이다. 실패만 있거나 아직 안 돈 것은 'none'.
  * 심사 화면이 "AI가 거부라고 한 것만" 같은 거르기에 쓴다 — 갈래와 같은 방식으로 id 를 넘긴다.
  */
-export async function reviewQueueAiDecisions(): Promise<{ counts: Record<ReviewAiDecision, number>; ids: Map<ReviewAiDecision, number[]> }> {
-  const candidates = await db.select({ id: crawlCandidates.id }).from(crawlCandidates)
+export async function reviewQueueAiDecisions(): Promise<{ counts: Record<ReviewAiDecision, number>; ids: Map<ReviewAiDecision, number[]>; pendingRerunIds: number[] }> {
+  const candidates = await db.select({
+    id: crawlCandidates.id, rerunId: sql<string | null>`${crawlCandidates.signals}->>'adminFirstReviewRerunId'`,
+  }).from(crawlCandidates)
     .where(eq(crawlCandidates.state, 'needs_review')).orderBy(asc(crawlCandidates.id)).limit(REVIEW_QUEUE_SCAN_LIMIT);
   // 후보 id 를 IN 목록으로 넘기지 않고 조인으로 고른다 — 큐가 수천 건이면 목록이 그만큼 길어진다
   const latest = candidates.length ? await db.selectDistinctOn([crawlReviewAttempts.candidateId], {
     candidateId: crawlReviewAttempts.candidateId, decision: sql<string | null>`${crawlReviewAttempts.outcome}->>'decision'`,
+    rerunId: sql<string | null>`${crawlReviewAttempts.snapshot}->>'adminFirstReviewRerunId'`,
   }).from(crawlReviewAttempts).innerJoin(crawlCandidates, eq(crawlCandidates.id, crawlReviewAttempts.candidateId)).where(and(
     eq(crawlCandidates.state, 'needs_review'),
     eq(crawlReviewAttempts.kind, 'automatic'), eq(crawlReviewAttempts.state, 'succeeded'),
   )).orderBy(crawlReviewAttempts.candidateId, desc(crawlReviewAttempts.id)) : [];
-  const decided = new Map(latest.map(row => [row.candidateId, row.decision]));
+  const decided = new Map(latest.map(row => [row.candidateId, row]));
   const ids = new Map<ReviewAiDecision, number[]>([['reject', []], ['approve', []], ['needs_review', []], ['none', []]]);
-  for (const { id } of candidates) {
-    const decision = decided.get(id);
+  const pendingRerunIds: number[] = [];
+  for (const { id, rerunId } of candidates) {
+    const marker = z.string().uuid().safeParse(rerunId);
+    const row = decided.get(id);
+    if (marker.success && row?.rerunId !== marker.data) {
+      ids.get('none')!.push(id);
+      pendingRerunIds.push(id);
+      continue;
+    }
+    const decision = row?.decision;
     const key: ReviewAiDecision = decision === 'reject' || decision === 'approve' || decision === 'needs_review' ? decision : 'none';
     ids.get(key)!.push(id);
   }
   const counts = Object.fromEntries([...ids].map(([key, list]) => [key, list.length])) as Record<ReviewAiDecision, number>;
-  return { counts, ids };
+  return { counts, ids, pendingRerunIds };
 }

@@ -46,6 +46,16 @@ export async function claimHumanReview(repo: string, lease: JobLease): Promise<H
       // 보류 Qwen-v2 재심사가 맡은 사유는 그쪽만 가른다 — 같은 잠긴 설정 행으로 재므로 두 claim 이 한 후보에 겹치지 않는다
       || heldQwenOwns(current.settings, current.candidate.reason)) return null;
     const { candidate, input } = current;
+    if (input.snapshot.adminFirstReviewRerunId) {
+      const [rerun] = await tx.select({ id: crawlReviewAttempts.id }).from(crawlReviewAttempts).where(and(
+        eq(crawlReviewAttempts.candidateId, candidate.id), eq(crawlReviewAttempts.kind, 'automatic'),
+        eq(crawlReviewAttempts.state, 'succeeded'), eq(crawlReviewAttempts.inputHash, input.inputHash),
+        eq(crawlReviewAttempts.policyHash, input.policyHash), eq(crawlReviewAttempts.sourceRevisionHash, input.sourceRevisionHash),
+        eq(crawlReviewAttempts.promptVersion, REVIEW_PROMPT_VERSION),
+        eq(crawlReviewAttempts.rulesVersion, REVIEW_RULES_VERSION),
+      )).limit(1);
+      if (!rerun) return null;
+    }
     const pending = await tx.select({ id: secondReviews.id }).from(secondReviews).where(and(
       eq(secondReviews.candidateId, candidate.id), eq(secondReviews.status, 'pending'),
     )).for('share');

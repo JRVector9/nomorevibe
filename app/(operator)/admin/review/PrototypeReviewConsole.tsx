@@ -6,6 +6,7 @@ import type { AdminReviewEntry } from "@/lib/crawl/admin-review";
 import { reconcileSnapshots } from "../components/selection";
 import { useAdminToast } from "../components/Toast";
 import { BulkDecision } from "./BulkDecision";
+import { RejectedRerun } from "./RejectedRerun";
 import { entryVersion } from "./contract";
 import { causeLabel } from "./causes";
 import { undoCandidateDecisions } from "./actions";
@@ -70,6 +71,22 @@ export function PrototypeReviewConsole({ entries: initialEntries, reasons, focus
     else next.set(entry.candidate.id, entry);
     return next;
   });
+  const allLoadedSelected = selectable.length > 0 && selectable.every(entry => checked.has(entry.candidate.id) && !selection.changed.has(entry.candidate.id));
+  const rerunTargets = selection.send
+    .filter((entry): entry is AdminReviewEntry & { inputHash: string; sourceRevisionHash: string; candidateRevisionHash: string } =>
+      entry.candidate.state === "rejected" && !!entry.inputHash && !!entry.sourceRevisionHash && !!entry.candidateRevisionHash)
+    .map(entry => ({
+      repo: entry.candidate.repo,
+      inputHash: entry.inputHash,
+      sourceRevisionHash: entry.sourceRevisionHash,
+      candidateRevisionHash: entry.candidateRevisionHash,
+    }));
+  function toggleAllLoaded() {
+    setChecked(() => {
+      if (allLoadedSelected) return new Map<number, AdminReviewEntry>();
+      return new Map(selectable.map(entry => [entry.candidate.id, entry] as const));
+    });
+  }
   const onKey = useEffectEvent((event: KeyboardEvent) => {
     const key = reviewShortcut(event);
     if (key?.kind === "move") {
@@ -97,8 +114,8 @@ export function PrototypeReviewConsole({ entries: initialEntries, reasons, focus
       </div>
       {!entries.length && <div className="empty"><b>조건에 맞는 후보가 없습니다.</b>단계나 검색 조건을 바꿔 확인하세요.</div>}
       {entries.length > initialEntries.length && <p className="table-note">추가 목록을 확인하는 동안 자동 갱신은 잠시 쉽니다. 새로고침하면 최근 30개부터 다시 확인합니다.</p>}
-      <p className="table-note">불러온 {entries.length}건 · J/K 이동 · A 승인 / R 반려 준비 · 원본이 바뀐 선택은 일괄 처리에서 제외합니다.</p>
-      <div className="panel-foot"><BulkDecision selected={selection.send} reasons={reasons} title="선택한 후보" onDone={() => setChecked(new Map())} /></div>{footer && <div className="panel-foot">{footer}</div>}
+      <p className="table-note">선택 {selection.send.length}건 · 불러온 {entries.length}건 · J/K 이동 · A 승인 / R 반려 준비 · 원본이 바뀐 선택은 일괄 처리에서 제외합니다.</p>
+      <div className="panel-foot"><BulkDecision selected={selection.send} reasons={reasons} title="선택한 후보" onDone={() => setChecked(new Map())} /><button type="button" className="text-button" onClick={toggleAllLoaded} disabled={!selectable.length} aria-pressed={allLoadedSelected}>현재 목록 전체 선택 (불러온 {entries.length}건)</button><RejectedRerun targets={rerunTargets} /></div>{footer && <div className="panel-foot">{footer}</div>}
     </section>
     <section className="panel pad sticky-detail" aria-label="선택한 검수 후보" data-review-panel tabIndex={-1}>{current ? <PrototypeReviewDetail key={current.candidate.id} entry={current} reasons={reasons} onDecided={result => decided(current, result)} /> : <div className="empty"><b>{active ? "선택한 후보가 목록에서 빠졌습니다." : "후보를 선택하세요."}</b>다른 후보로 자동 변경하지 않습니다. 목록에서 다시 선택하세요.</div>}</section>
   </div>;
