@@ -28,7 +28,7 @@ import { readModelRegistry } from '@/lib/llm/model-registry';
 beforeEach(() => {
   mocks.audits.length = 0; mocks.update.mockReset(); mocks.request.mockReset();
   mocks.lockSource.mockReset().mockResolvedValue({ tableOn: false, tableUnread: false, rows: null, registry: readModelRegistry() });
-  mocks.resolveSource.mockReset().mockReturnValue({ source: 'pool', effectiveModels: [], effectiveKeys: ['gpu3090:review'],
+  mocks.resolveSource.mockReset().mockReturnValue({ source: 'pool', effectiveModels: readModelRegistry().models.filter(model => model.key === 'gpu3090:review'), effectiveKeys: ['gpu3090:review'],
     tableOn: false, eligibleRows: [], targets: [], fingerprint: 'pool-fingerprint' });
   mocks.values = { ...DEFAULT_CRAWL_SETTINGS, stageModelPools: { 'human-review': ['gpu3090:review'] } };
 });

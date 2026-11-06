@@ -376,4 +376,24 @@ it("계약과 실제 argv·env·입력 크기가 어긋나면 준비하지 않�
     { boundEnvKeys: [] }, { stdin: "x".repeat(claudeContract.inputByteCap) }, { timeoutMs: 0 }, { maxStdoutBytes: 0 },
     { cwd: "relative/dir" }, { files: [{ path: "../escape.txt", content: "x" }] }, { files: [{ path: "/abs.txt", content: "x" }] },
   ] satisfies Partial<CliCallInput>[]) expect(prepareCliCall(claudeCall("{}", change)).kind, JSON.stringify(Object.keys(change))).toBe("unsupported");
+
+  const openCodeModel = "opencode/deepseek-v4.1-flash";
+  const priorContracts = fixture.contracts;
+  fixture.contracts = [{ ...grokContract, routeId: "crawl-agent-review", provider: "opencode-cli", model: openCodeModel, cliVersion: "2.2.5" }];
+  const openCodeCall = (openCodeArgs: string[]) => prepareCliCall(claudeCall("{}", {
+    routeId: "crawl-agent-review", provider: "opencode-cli", model: openCodeModel, command: "opencode", args: openCodeArgs,
+  }));
+  try {
+    expect(openCodeCall(["run", "--pure", "--format", "json", "--agent", "nmv-review", "--model", openCodeModel, "--variant", "high"]).kind).toBe("prepared");
+    expect(openCodeCall(["--standalone", "run", "--model", `${openCodeModel}#high`]).kind).toBe("prepared");
+    expect(openCodeCall(["run", "--model", "other", "--variant", "high"]).kind).toBe("unsupported");
+    expect(openCodeCall(["--standalone", "run", "--model", `${openCodeModel}#`]).kind).toBe("unsupported");
+    expect(openCodeCall(["--standalone", "run", "--model", `${openCodeModel}#high#max`]).kind).toBe("unsupported");
+    expect(openCodeCall(["--standalone", "run", "--model", `${openCodeModel}#high`, "--variant", "high"]).kind).toBe("unsupported");
+    expect(openCodeCall(["--standalone", "run", "--model", `${openCodeModel}#high`, "--model", `${openCodeModel}#high`]).kind).toBe("unsupported");
+    expect(openCodeCall(["run", "--model", openCodeModel, "--variant", "high", "--variant", "low"]).kind).toBe("unsupported");
+    expect(openCodeCall(["run", "--model", openCodeModel, "--variant", ""]).kind).toBe("unsupported");
+  } finally {
+    fixture.contracts = priorContracts;
+  }
 });

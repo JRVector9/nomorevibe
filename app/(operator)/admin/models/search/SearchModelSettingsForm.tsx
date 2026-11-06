@@ -13,7 +13,7 @@ const SOURCE: Record<SearchModelServiceView['source'], string> = { environment: 
 const STATUS: Record<SearchModelServiceView['status'], string> = { configured: '목록 응답 확인', environment: '목록 응답 확인', unconfigured: '미설정', error: '오류', unobserved: '조회 생략' };
 
 function CurrentService({ service }: { service: SearchModelServiceView }) {
-  return <dl className='grid min-w-0 gap-2 rounded-lg border border-line p-3 text-[12px] sm:grid-cols-2'>
+  return <dl className='grid min-w-0 gap-2 rounded-lg border border-line p-3 text-[13px] sm:grid-cols-2'>
     <div><dt className='font-semibold'>현재 출처</dt><dd>{SOURCE[service.source]}</dd></div>
     <div><dt className='font-semibold'>현재 상태</dt><dd>{STATUS[service.status]}</dd></div>
     <div className='sm:col-span-2'><dt className='font-semibold'>현재 API</dt><dd className='break-all'>{service.baseUrl.trim() || '미설정'}</dd></div>
@@ -53,28 +53,28 @@ function ServiceForm({ kind, revision, connections, current, disabledReason }: {
       <h3 id={`search-${kind}-heading`} className='text-[15px] font-semibold'>{title}</h3>
       <CurrentService service={current} />
     </div>
-    {disabledReason && <p role='note' className='text-[12px] text-fg-2'>{disabledReason}</p>}
-    {!apiConnections.length && <p className='text-[12px] text-fg-2'>사용 가능한 API 연결이 없습니다. <Link href='/admin/models/tasks#connections' prefetch={false} className='underline'>AI 연결에서 주소·키 등록</Link></p>}
+    {disabledReason && <p role='note' className='text-[13px] text-fg-2'>{disabledReason}</p>}
+    {!apiConnections.length && <p className='text-[13px] text-fg-2'>사용 가능한 API 연결이 없습니다. <Link href='/admin/models/tasks#connections' prefetch={false} className='underline'>AI 연결에서 주소·키 등록</Link></p>}
     <form action={formAction} className='flex flex-col gap-2 rounded-lg border border-line p-3'>
       <input type='hidden' name='revision' value={revision} />
       <input type='hidden' name='kind' value={kind} />
       <input type='hidden' name='connectionId' value={connectionId} />
       <input type='hidden' name='model' value={model} />
-      <label htmlFor={`${kind}-connection`} className='text-[12px] font-semibold'>API 연결</label>
+      <label htmlFor={`${kind}-connection`} className='text-[13px] font-semibold'>API 연결</label>
       <select id={`${kind}-connection`} value={connectionId} onChange={event => { setConnectionId(event.target.value); setModel(''); }} disabled={locked || pending} className='min-w-0 rounded-lg border border-line bg-bg-card px-3 py-2 text-[13px]'>
         <option value=''>연결 선택</option>
         {apiConnections.map(connection => <option key={connection.id} value={connection.id}>{connection.label}{connection.hasKey ? '' : ' · 키 없음'}</option>)}
       </select>
-      <label htmlFor={`${kind}-model`} className='text-[12px] font-semibold'>서버 모델</label>
+      <label htmlFor={`${kind}-model`} className='text-[13px] font-semibold'>서버 모델</label>
       <select id={`${kind}-model`} value={model} onChange={event => setModel(event.target.value)} disabled={locked || pending || !selected || !models} className='min-w-0 rounded-lg border border-line bg-bg-card px-3 py-2 text-[13px]'>
         <option value=''>{!connectionId ? '연결을 먼저 선택' : models ? '모델 선택' : '모델 목록 미확인'}</option>
         {models?.map(entry => <option key={entry.id} value={entry.id}>{entry.id}</option>)}
       </select>
-      {selected && !models && <p className='text-[12px] text-fg-2'>이 연결의 실제 모델 목록이 없습니다. <Link href='/admin/models/tasks#connections' prefetch={false} className='underline'>AI 연결에서 목록을 읽으세요.</Link></p>}
-      <p className='text-[12px] text-fg-3'>{guidance}</p>
+      {selected && !models && <p className='text-[13px] text-fg-2'>이 연결의 실제 모델 목록이 없습니다. <Link href='/admin/models/tasks#connections' prefetch={false} className='underline'>AI 연결에서 목록을 읽으세요.</Link></p>}
+      <p className='text-[13px] text-fg-3'>{guidance}</p>
       <button type='submit' disabled={!canSave} className='self-start rounded-lg border border-line px-3 py-2 text-[13px] font-semibold disabled:opacity-50'>{pending ? '확인 중…' : buttonText}</button>
-      {issues.length > 0 && <ul role='alert' className='list-disc pl-5 text-[12px] text-fg-2'>{issues.map((issue, index) => <li key={`${index}:${issue}`}>{issue}</li>)}</ul>}
-      {success && <p role='status' aria-live='polite' className='text-[12px] text-fg-2'>{success}</p>}
+      {issues.length > 0 && <ul role='alert' className='list-disc pl-5 text-[13px] text-fg-2'>{issues.map((issue, index) => <li key={`${index}:${issue}`}>{issue}</li>)}</ul>}
+      {success && <p role='status' aria-live='polite' className='text-[13px] text-fg-2'>{success}</p>}
     </form>
   </section>;
 }

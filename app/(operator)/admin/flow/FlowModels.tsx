@@ -31,10 +31,10 @@ export function LiveModelRows({ llm, compact = false }: { llm: StationLlm | null
   return <span className="flow-model-lines">
     {running.length > 0 ? display(running, "전송 중", "running") : <span className="flow-model-note">{unread ? "현재 호출 일부 미확인" : "장부상 전송 중 호출 없음"}</span>}
     {display(reserved, "예약", "reserved")}
-    {compact ? display(uncertain, "종료 미확정", "uncertain") : uncertain.map(({ task, row }, index) =>
+    {uncertain.map(({ task, row }, index) =>
       <span className="flow-model-line" data-state="uncertain" key={`${task.task}:${row.where}:${row.model}:uncertain:${index}`}>
         <FlowUnknownReviews task={task.task} model={row.model} label={`종료 미확정 ${count(row.count)}`} className="flow-model-state fu-trigger" />
-        <span>{row.where} · <b>{row.model}</b>{llm.tasks.length > 1 ? ` · ${task.label}` : ""}</span>
+        <span>{row.where} · <b>{row.model}</b>{!compact && llm.tasks.length > 1 ? ` · ${task.label}` : ""}</span>
       </span>)}
   </span>;
 }

@@ -1,7 +1,9 @@
-import { sql } from 'drizzle-orm';
+import { eq, inArray, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { db, onPrimary } from '@/lib/db';
+import { withDbDeadline } from '@/lib/db/pool';
 import { currentReplayDb } from '@/lib/db/replay-scope';
+import { crawlCandidates, products } from '@/lib/db/schema';
 import { MODEL_CAPACITY_INDETERMINATE_REASONS, inFlightStateSql, reviewStateSql } from '@/lib/llm/capacity-states';
 
 /**
@@ -131,4 +133,224 @@ export async function readModelCapacityReviewQueue(): Promise<CapacityReviewQueu
       return { items: Array.from(rows).slice(0, 100).map(row => capacityReviewItemSchema.parse(row)), truncated: rows.length > 100, error: null };
     }, { accessMode: 'read only' }));
   } catch (error) { return { items: [], truncated: false, error: error instanceof Error ? error.message : 'read_failed' }; }
+}
+
+/**
+ * 사람 검토 상세 — 실제 등록/후보 프로젝트·사유·모델/장비·대기/전송/표식/로컬 종료 DB 시각.
+ * 기존 검토 행은 슬롯 점유가 아니며, 이 읽기는 닫기·종료·승인을 하지 않는다.
+ */
+export type CapacityReviewProject = { kind: 'candidate' | 'product'; id: number; label: string; href: string | null };
+export type CapacityReviewDetailsItem = CapacityReviewItem & { queuedAt: string | null; localEndedAt: string | null;
+  projects: CapacityReviewProject[]; projectsTruncated: boolean };
+export type CapacityReviewDetailsQueue = { items: CapacityReviewDetailsItem[]; truncated: boolean; error: string | null;
+  observedAt: string | null };
+
+const CAPACITY_DETAIL_ITEM_LIMIT = 100;
+const CAPACITY_DETAIL_PROJECT_LIMIT = 32;
+type CapacityReviewProjectRef = { kind: 'candidate'; id: number } | { kind: 'product'; id: number }
+  | { kind: 'product'; slug: string };
+type CapacityReviewDetailsRow = {
+  requestId: string; routeId: string; provider: string; model: string; groupId: string; providerBudgetId: string;
+  workKey: string; logicalWorkKey: string | null; ownerInstanceId: string; dispatchedAt: string | null; queuedAt: string | null;
+  markedAt: string | null; reason: string | null; oldPolicy: boolean; localEndRecorded: boolean; localEndedAt: string | null;
+  privateBinding: unknown;
+};
+
+const capacityReviewObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+const capacityReviewId = (value: unknown): number | null =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value > 0 && value <= 2_147_483_647 ? value : null;
+
+function capacityReviewProjectRefs(binding: unknown): { refs: CapacityReviewProjectRef[]; truncated: boolean } {
+  const refs: CapacityReviewProjectRef[] = [], seen = new Set<string>();
+  let truncated = false;
+  const add = (ref: CapacityReviewProjectRef) => {
+    const key = ref.kind === 'candidate' ? `candidate:${ref.id}` : 'slug' in ref ? `product-slug:${ref.slug}` : `product:${ref.id}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    if (refs.length >= CAPACITY_DETAIL_PROJECT_LIMIT) { truncated = true; return; }
+    refs.push(ref);
+  };
+  const addId = (kind: 'candidate' | 'product', value: unknown) => {
+    const id = capacityReviewId(value);
+    if (id !== null) {
+      if (kind === 'candidate') add({ kind: 'candidate', id });
+      else add({ kind: 'product', id });
+    }
+  };
+  if (!capacityReviewObject(binding) || binding.version !== 1) return { refs, truncated };
+  const kind = binding.kind;
+  if (typeof kind !== 'string') return { refs, truncated };
+  const addMembers = (target: 'candidate' | 'product') => {
+    if (!Array.isArray(binding.members)) return;
+    for (const member of binding.members) {
+      if (capacityReviewObject(member)) addId(target, target === 'candidate' ? member.candidateId : member.productId);
+    }
+  };
+  switch (kind) {
+    case 'ai1_legacy_gateway':
+    case 'ai1_legacy_cli':
+      addId('candidate', binding.candidateId);
+      break;
+    case 'ai1_item_gateway':
+    case 'ai1_item_cli':
+    case 'ai2_item_gateway':
+    case 'ai2_item_cli':
+      if (capacityReviewObject(binding.review)) addId('candidate', binding.review.candidateId);
+      break;
+    case 'crawl_tagline_gateway':
+      if (capacityReviewObject(binding.member)) addId('candidate', binding.member.candidateId);
+      break;
+    case 'publication_classify_gateway':
+    case 'publication_classify_cli':
+      addMembers('candidate');
+      break;
+    case 'text_profile_gateway':
+    case 'product_audit_cli':
+      addId('product', binding.productId);
+      break;
+    case 'search_verify_gateway':
+      if (capacityReviewObject(binding.member)) addId('product', binding.member.productId);
+      break;
+    case 'product_translation_gateway':
+    case 'product_tagline_ko_gateway':
+    case 'intro_check_cli':
+      addMembers('product');
+      break;
+    case 'local_model_direct': {
+      if (!capacityReviewObject(binding.target)) break;
+      const targetKind = binding.target.kind;
+      if (targetKind === 'candidate' || targetKind === 'split') addId('candidate', binding.target.candidateId);
+      else if (targetKind === 'audit' || targetKind === 'published') {
+        const slug = binding.target.slug;
+        if (typeof slug === 'string' && slug.length > 0 && slug.length <= 80) add({ kind: 'product', slug });
+      }
+      break;
+    }
+    default:
+      break;
+  }
+  return { refs, truncated };
+}
+
+function capacityReviewProjects(refs: readonly CapacityReviewProjectRef[], candidates: ReadonlyMap<number, { repo: string; productName: string | null }>,
+  productsById: ReadonlyMap<number, { id: number; slug: string; name: string }>,
+  productsBySlug: ReadonlyMap<string, { id: number; slug: string; name: string }>, initiallyTruncated: boolean): {
+    projects: CapacityReviewProject[]; projectsTruncated: boolean } {
+  const projects: CapacityReviewProject[] = [], seen = new Set<string>();
+  let projectsTruncated = initiallyTruncated;
+  const add = (project: CapacityReviewProject) => {
+    const key = `${project.kind}:${project.id}`;
+    if (seen.has(key)) return;
+    if (projects.length >= CAPACITY_DETAIL_PROJECT_LIMIT) { projectsTruncated = true; return; }
+    seen.add(key);
+    projects.push(project);
+  };
+  for (const ref of refs) {
+    if (ref.kind === 'candidate') {
+      const candidate = candidates.get(ref.id);
+      add(candidate ? { kind: 'candidate', id: ref.id, label: candidate.productName ?? candidate.repo,
+        href: `/admin/review?tab=all&focus=${ref.id}` } : { kind: 'candidate', id: ref.id, label: `candidate #${ref.id}`, href: null });
+      continue;
+    }
+    if ('slug' in ref) {
+      const product = productsBySlug.get(ref.slug);
+      if (product) add({ kind: 'product', id: product.id, label: product.name,
+        href: `/admin/products/${encodeURIComponent(product.slug)}` });
+      continue;
+    }
+    const product = productsById.get(ref.id);
+    add(product ? { kind: 'product', id: product.id, label: product.name,
+      href: `/admin/products/${encodeURIComponent(product.slug)}` }
+      : { kind: 'product', id: ref.id, label: `product #${ref.id}`, href: null });
+  }
+  return { projects, projectsTruncated };
+}
+
+/** 상세 검토 목록 — 같은 기본 키읽기 트랜잭션에서 101행만 잘라 본 뒤, 안전한 프로젝트 표시 정보만 배치로 붙인다. */
+export async function readModelCapacityReviewDetailsQueue(scope: { routeId?: string; model?: string } = {}): Promise<CapacityReviewDetailsQueue> {
+  const empty = (error: string): CapacityReviewDetailsQueue => ({ items: [], truncated: false, error, observedAt: null });
+  if (currentReplayDb()) return empty('replay');
+  try {
+    return await onPrimary(() => withDbDeadline(Date.now() + 4_000, () => db.transaction(async tx => {
+      await tx.execute(sql`SET LOCAL statement_timeout = '3s'`);
+      const [meta] = await tx.execute<{ controlPresent: boolean; observedAt: string }>(sql`
+        SELECT EXISTS (SELECT 1 FROM model_capacity_control WHERE id = 1) AS "controlPresent",
+          to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "observedAt"`);
+      if (!meta?.controlPresent) return empty('control_missing');
+      const rows = Array.from(await tx.execute<CapacityReviewDetailsRow>(sql`
+        WITH review AS MATERIALIZED (
+          SELECT r.request_id, r.route_id, r.provider, r.model, r.group_id, r.provider_budget_id, r.work_key,
+            r.logical_work_key, r.owner_instance_id, r.owner_boot_id, r.dispatched_at, r.queued_at, r.queue_ordinal,
+            r.dispatch_binding_hash, r.dispatch_binding,
+            (r.epoch <> c.epoch OR r.revision <> c.revision OR r.policy_hash IS DISTINCT FROM c.policy_hash) AS "oldPolicy"
+          FROM model_capacity_requests r CROSS JOIN model_capacity_control c
+          WHERE c.id = 1 AND ${reviewStateSql('r.state')}
+            ${scope.routeId === undefined ? sql`` : sql`AND r.route_id = ${scope.routeId}`}
+            ${scope.model === undefined ? sql`` : sql`AND r.model = ${scope.model}`}
+          ORDER BY coalesce(r.dispatched_at, r.queued_at), r.queue_ordinal
+          LIMIT 101
+        )
+        SELECT r.request_id::text AS "requestId", r.route_id AS "routeId", r.provider, r.model,
+          r.group_id AS "groupId", r.provider_budget_id AS "providerBudgetId", r.work_key AS "workKey",
+          r.logical_work_key AS "logicalWorkKey", r.owner_instance_id AS "ownerInstanceId",
+          to_char(r.dispatched_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "dispatchedAt",
+          to_char(r.queued_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "queuedAt",
+          r."oldPolicy", m.reason, m."markedAt", e."localEndedAt", (e.request_id IS NOT NULL) AS "localEndRecorded",
+          r.dispatch_binding AS "privateBinding"
+        FROM review r
+        LEFT JOIN LATERAL (
+          SELECT e.reason, to_char(e.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "markedAt"
+          FROM model_capacity_events e
+          WHERE e.request_id = r.request_id AND e.kind = 'dispatch_indeterminate'
+          ORDER BY e.id DESC LIMIT 1
+        ) m ON true
+        LEFT JOIN LATERAL (
+          SELECT e.request_id, to_char(e.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "localEndedAt"
+          FROM model_capacity_events e
+          WHERE e.request_id = r.request_id AND e.kind = 'dispatch_local_ended'
+            AND e.evidence->'owner'->>'instanceId' = r.owner_instance_id
+            AND e.evidence->'owner'->>'bootId' = r.owner_boot_id::text
+            AND e.evidence->>'bindingHash' IS NOT DISTINCT FROM r.dispatch_binding_hash
+          ORDER BY e.id DESC LIMIT 1
+        ) e ON true
+        ORDER BY coalesce(r.dispatched_at, r.queued_at), r.queue_ordinal`));
+      const bounded = rows.slice(0, CAPACITY_DETAIL_ITEM_LIMIT).map(row => ({ row, ...capacityReviewProjectRefs(row.privateBinding) }));
+      const candidateIds = new Set<number>(), productIds = new Set<number>(), productSlugs = new Set<string>();
+      for (const item of bounded) for (const ref of item.refs) {
+        if (ref.kind === 'candidate') candidateIds.add(ref.id);
+        else if ('slug' in ref) productSlugs.add(ref.slug);
+        else productIds.add(ref.id);
+      }
+      const candidateRows = candidateIds.size === 0 ? [] : await tx.select({ id: crawlCandidates.id, repo: crawlCandidates.repo,
+        productName: products.name }).from(crawlCandidates)
+        .leftJoin(products, eq(products.slug, crawlCandidates.publishedSlug))
+        .where(inArray(crawlCandidates.id, [...candidateIds]));
+      const productFilter = productIds.size && productSlugs.size
+        ? or(inArray(products.id, [...productIds]), inArray(products.slug, [...productSlugs]))
+        : productIds.size ? inArray(products.id, [...productIds])
+        : productSlugs.size ? inArray(products.slug, [...productSlugs]) : null;
+      const productRows = productFilter ? await tx.select({ id: products.id, slug: products.slug, name: products.name })
+        .from(products).where(productFilter) : [];
+      const candidates = new Map<number, { repo: string; productName: string | null }>();
+      for (const row of candidateRows) candidates.set(Number(row.id), { repo: row.repo, productName: row.productName });
+      const productsById = new Map<number, { id: number; slug: string; name: string }>();
+      const productsBySlug = new Map<string, { id: number; slug: string; name: string }>();
+      for (const row of productRows) {
+        const product = { id: Number(row.id), slug: row.slug, name: row.name };
+        productsById.set(product.id, product);
+        productsBySlug.set(product.slug, product);
+      }
+      const items = bounded.map(({ row, refs, truncated }) => {
+        const base = capacityReviewItemSchema.parse({ requestId: row.requestId, routeId: row.routeId, provider: row.provider,
+          model: row.model, groupId: row.groupId, providerBudgetId: row.providerBudgetId, workKey: row.workKey,
+          logicalWorkKey: row.logicalWorkKey, ownerInstanceId: row.ownerInstanceId, dispatchedAt: row.dispatchedAt,
+          markedAt: row.markedAt, reason: row.reason, oldPolicy: row.oldPolicy, localEndRecorded: row.localEndRecorded });
+        const projects = capacityReviewProjects(refs, candidates, productsById, productsBySlug, truncated);
+        return { ...base, queuedAt: row.queuedAt, localEndedAt: row.localEndedAt, projects: projects.projects,
+          projectsTruncated: projects.projectsTruncated };
+      });
+      return { items, truncated: rows.length > CAPACITY_DETAIL_ITEM_LIMIT, error: null, observedAt: meta.observedAt };
+    }, { accessMode: 'read only', isolationLevel: 'repeatable read' })));
+  } catch { return empty('read_failed'); }
 }
