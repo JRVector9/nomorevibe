@@ -24,7 +24,10 @@ describe("original HTML prototype layout with real-loader contracts", () => {
     const html = renderToStaticMarkup(<PrototypeFlow data={data} desk={null} controls={controls} editor={null} userRequests={{ count: null, knownCount: 7, failed: 1 }} />);
     expect(html).toContain('class="grid four home-kpis"');
     expect(html.match(/class="flow-card"/g)).toHaveLength(9);
-    expect(html.match(/class="branch"/g)).toHaveLength(3);
+    const branchClasses = Array.from(html.matchAll(/class="([^"]*)"/g)).filter(([, names]) => names.split(/\s+/).includes("branch"));
+    expect(branchClasses).toHaveLength(3);
+    expect(html).toContain('href="#flow-human-work"');
+    expect(html).toContain('href="/admin/review?stage=rejected"');
     const stageTable = html.match(/id="prototype-stage-observations"[^]*?<\/tbody>/)?.[0]?.split("<tbody>")[1] ?? "";
     expect(stageTable.match(/<tr>/g)).toHaveLength(9);
     expect(stageTable).toContain(">공개 완료</button>");
@@ -94,7 +97,13 @@ describe("original HTML prototype layout with real-loader contracts", () => {
     const html = renderToStaticMarkup(<PrototypeModels observation={unavailableAdminModels()} models={[]} assignments={[]} contracts={[]} tab={tab} readOnly />);
     expect(html).toContain('class="panel-head"');
     expect(html).toContain(`tab=${tab}&amp;advanced=1`);
-    if (tab === "tasks") { expect(html).toContain(`전체 ${AI_TASKS.length}개 작업`); expect(html).toContain("순위를 읽지 못함"); expect(html).toContain('href="/admin/models/tasks#tasks"'); }
+    if (tab === "tasks") {
+      expect(html).toContain(`전체 ${AI_TASKS.length}개 작업`);
+      expect(html).toContain("순위를 읽지 못함");
+      expect(html).toContain('href="/admin/models/tasks#execution-first-review-1"');
+      expect(html).toContain('href="/admin/models/human#human-review"');
+      expect(html).toContain('href="/admin/models/search"');
+    }
     if (tab === "capacity") { expect(html).toContain("장비·물리 그룹"); expect(html).toContain("경로별 토큰·기한·묶음"); }
     if (tab === "connections") expect(html).toContain("연결 목록을 읽지 못했습니다.");
     if (tab === "history") expect(html).toContain("열린 요청을 읽지 못했습니다.");
