@@ -14,11 +14,12 @@ const connection: AiConnectionView = { id, label: "OpenCode", kind: "cli", cliTo
   contextTokens: null, enabled: true, version: 1, note: null, updatedBy: "test", updatedAt: "2026-11-05T00:00:00Z" };
 
 describe("CLI rank reasoning", () => {
-  it("offers only registered CLI models and catalog-confirmed variants on live review tasks", () => {
+  it("offers only registered CLI models and catalog-confirmed variants on review and text tasks", () => {
     const options = aiTaskRankOptions(aiTask("first-review")!, [connection], []);
     expect(options).toHaveLength(1);
     expect(options[0]).toMatchObject({ model, reasoningEfforts: ["low", "high", "max"] });
-    expect(aiTaskRankOptions(aiTask("crawl-tagline")!, [connection], [])).toEqual([]);
+    expect(aiTaskRankOptions(aiTask("crawl-tagline")!, [connection], [])).toEqual(options);
+    expect(aiTaskRankOptions(aiTask("product-embedding")!, [connection], [])).toEqual([]);
     expect(aiTaskReasoningEfforts("first-review", "opencode", "opencode/deepseek-v4-pro")).toEqual([]);
     expect(aiTaskReasoningEfforts("first-review", "opencode", "catalog/model", ["high", "max"])).toEqual(["high", "max"]);
     expect(aiTaskRankOptions(aiTask("first-review")!, [{ ...connection, cliCatalog: null }], [])).toEqual([]);

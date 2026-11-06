@@ -1,3 +1,4 @@
+import { opencodeTaskLogicalSql, opencodeTaskMembersSql, opencodeTaskDispatchSql } from "@/lib/llm/opencode-task-binding-sql";
 import { publicationApiLogicalSql, publicationApiDispatchSql, publicationApiTerminalSql } from "@/lib/llm/publication-classify-api-sql";
 import { createHash,randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -102,6 +103,8 @@ it("0136 preserves nonempty old rows and the complete0135 CHECK predecessor",asy
     // deparsed 0158 predicate without a second parse, so the expectation is the joined string, not pg_get_constraintdef of a new CHECK.
     const textLocalDirect:Record<string,string>={[checks[2]]:textLocalDirectDispatchSql,[checks[3]]:textLocalDirectTerminalSql};
     const opencode: Record<string, string> = { model_capacity_requests_logical_check: opencodeCliLogicalSql, model_capacity_requests_dispatch_check: opencodeCliDispatchSql };
+    const opencodeTask: Record<string, string> = { model_capacity_requests_logical_check: opencodeTaskLogicalSql,
+      model_capacity_requests_members_check: opencodeTaskMembersSql, model_capacity_requests_dispatch_check: opencodeTaskDispatchSql };
     const publication: Record<string, string> = { model_capacity_requests_logical_check: publicationApiLogicalSql,
       model_capacity_requests_members_check: publicationApiLogicalSql, model_capacity_requests_dispatch_check: publicationApiDispatchSql,
       model_capacity_requests_terminal_check: publicationApiTerminalSql };
@@ -111,15 +114,15 @@ it("0136 preserves nonempty old rows and the complete0135 CHECK predecessor",asy
       try{live=(await client`SELECT pg_get_constraintdef(oid) definition FROM pg_constraint WHERE conname='unknown_expected_0158'`)[0].definition;}
       finally{await client.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT unknown_expected_0158`);}
       const expr=live.slice("CHECK (".length,-1);
-      // 0163/0166 append their own ordinals after 0161; the exact complete historical predicate remains the first leaf.
-      const leaves = [expr, textLocalDirect[n], opencode[n], publication[n]].filter(Boolean);
-      expect(after[n],`${n}: 0161/0163/0166 rules join`).toBe(`CHECK (${leaves.map(leaf => `(${leaf})`).join(" OR ")})`);
+      // 0163/0166/0168 append exact ordinals after 0161; the complete historical predicate remains the first leaf.
+      const leaves = [expr, textLocalDirect[n], opencode[n], publication[n], opencodeTask[n]].filter(Boolean);
+      expect(after[n],`${n}: 0161/0163/0166/0168 rules join`).toBe(`CHECK (${leaves.map(leaf => `(${leaf})`).join(" OR ")})`);
       continue;
     }
     await client.unsafe(`ALTER TABLE ${table} ADD CONSTRAINT unknown_expected CHECK (${predicate})`);
     try{
       const historical = (await client`SELECT pg_get_constraintdef(oid) definition FROM pg_constraint WHERE conname='unknown_expected'`)[0].definition;
-      const leaves = [historical.slice("CHECK (".length,-1), opencode[n], publication[n]].filter(Boolean);
+      const leaves = [historical.slice("CHECK (".length,-1), opencode[n], publication[n], opencodeTask[n]].filter(Boolean);
       const expected = leaves.length > 1 ? `CHECK (${leaves.map(leaf => `(${leaf})`).join(" OR ")})` : historical;
       expect(after[n]).toBe(expected);
     }finally{await client.unsafe(`ALTER TABLE ${table} DROP CONSTRAINT unknown_expected`);}}

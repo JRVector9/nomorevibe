@@ -1,4 +1,6 @@
 import { publicationApiLogicalSql } from "@/lib/llm/publication-classify-api-sql";
+import { opencodeTaskLogicalSql, opencodeTaskMembersSql, opencodeTaskDispatchSql, opencodeTaskEventTerminalSql } from "@/lib/llm/opencode-task-binding-sql";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { getTableConfig, PgDialect } from "drizzle-orm/pg-core";
 import { expect, it } from "vitest";
@@ -126,7 +128,7 @@ it("member CHECK는 0125·0126·0134·0135 전체와 0136의 exact predecessor �
   const expression = new PgDialect().sqlToQuery(check.value).sql;
   const release = history.find(entry => entry.idx === 158)!;
   expect(release.tag).toBe("0158_release_branch_kinds");
-  expect(latest.tag).toBe("0166_publication_classify_api");
+  expect(latest.tag).toBe("0168_opencode_task_cli");
   expect(expression === latest.expression, check.name).toBe(true);
   expect(publication.expression.startsWith(`(${previous.expression}) OR coalesce((`)).toBe(true);
   expect(provider.expression).toBe(`(${publication.expression}) OR nmv_provider_boundary_request_valid(to_jsonb(model_capacity_requests))`);
@@ -144,7 +146,50 @@ it("member CHECK는 0125·0126·0134·0135 전체와 0136의 exact predecessor �
   expect(localDirect.expression).toBe(`(${replacedPath.expression}) OR (${gatewayLocalDirectMembersSql})`);
   // 0158: the publication_classify withdrawn branch (process_group_exit·dr_call_drain release) appended to the whole 0157 predecessor.
   expect(release.expression).toBe(`(${localDirect.expression}) OR (${publicationClassifyReleaseLogicalSql})`);
-  expect(expression).toBe(`(${release.expression}) OR (${publicationApiLogicalSql})`);
+  const publicationApi = history.find(entry => entry.idx === 166)!;
+  expect(publicationApi.tag).toBe("0166_publication_classify_api");
+  expect(publicationApi.expression).toBe(`(${release.expression}) OR (${publicationApiLogicalSql})`);
+  expect(expression).toBe(`(${publicationApi.expression}) OR (${opencodeTaskMembersSql})`);
+});
+
+it("0168은 검토된 정본의 네 규칙만 기존 ordinal 다음에 추가하고 source·hash를 재검증한다", () => {
+  const tag = "0168_opencode_task_cli";
+  const migration = readFileSync(`drizzle/${tag}.sql`, "utf8");
+  expect(createHash("sha256").update(migration).digest("hex"))
+    .toBe("7f12b6761265a96de669c77ddd81f97c9473c14ebb533343fab99b11e7c2e8e9");
+  const index = journal.entries.findIndex(entry => entry.tag === tag);
+  expect(journal.entries[index]).toMatchObject({ idx: 168, when: 1794086401079, tag, version: "7", breakpoints: true });
+  expect(journal.entries[index - 1]).toMatchObject({ idx: 167, when: 1794086401078, tag: "0167_ai_task_repeated_models" });
+  expect(journal.entries.filter(entry => entry.idx === 168 || entry.tag === tag)).toHaveLength(1);
+  const targets = [
+    ["model_capacity_requests", "model_capacity_requests_logical_check", opencodeTaskLogicalSql, "7100b78079ef5c520d55827bf55f0d8911e5feb2b58f666ec1eed9088b7230e8"],
+    ["model_capacity_requests", "model_capacity_requests_members_check", opencodeTaskMembersSql, "4df244a508df2a634137064ac33535b4fbe536c4ea85369c4da562b2889edb0f"],
+    ["model_capacity_requests", "model_capacity_requests_dispatch_check", opencodeTaskDispatchSql, "3138ab71997730a7044f8a18474d261d710cdb671b14b54c67ea4accb406c15c"],
+    ["model_capacity_events", "model_capacity_events_terminal_check", opencodeTaskEventTerminalSql, "1253e3d9345a9e68813395bc117a7148553b985851d57746f114cfda320bc66b"],
+  ] as const;
+  const rules = [...migration.matchAll(/SELECT '(model_capacity_requests|model_capacity_events)', '([^']+)', COALESCE\(MAX\(ordinal\), 0\) \+ 1, \$branch\$([\s\S]*?)\$branch\$, '([^']+)'/g)];
+  expect(rules.map(match => match.slice(1))).toEqual(targets.map(([table, name, branch]) => [table, name, branch, tag]));
+  expect(migration.match(/INSERT INTO model_capacity_check_rules \(/g)).toHaveLength(4);
+  expect(migration.match(/COUNT\(\*\) FILTER \(WHERE source = '0168_opencode_task_cli'\) = 0/g)).toHaveLength(4);
+  const statements = migration.split("--> statement-breakpoint");
+  const preflight = statements.find(statement => statement.includes("DO $opencode_preflight$"))!;
+  const postflight = statements.find(statement => statement.includes("DO $opencode_postflight$"))!;
+  const ruleLock = migration.indexOf("LOCK TABLE model_capacity_check_rules IN SHARE ROW EXCLUSIVE MODE;");
+  expect(ruleLock).toBeGreaterThan(-1);
+  expect(ruleLock).toBeLessThan(migration.indexOf("DO $opencode_preflight$"));
+  expect(migration.indexOf("DO $opencode_preflight$")).toBeLessThan(migration.indexOf("INSERT INTO model_capacity_check_rules"));
+  expect(preflight).toContain("r.source='0160_ledger_check_rules') <> 1");
+  expect(preflight).toContain(`r.source='${tag}') THEN`);
+  expect(postflight).toContain(`r.source='${tag}') <> 1`);
+  expect(postflight).toContain("encode(sha256(convert_to(r.predicate,'UTF8')),'hex')=target.predicate_hash");
+  for (const [table, name, branch, hash] of targets) {
+    expect(createHash("sha256").update(branch).digest("hex"), name).toBe(hash);
+    expect(preflight).toContain(`('${table}','${name}')`);
+    expect(postflight).toContain(`('${table}','${name}','${hash}')`);
+  }
+  for (const table of ["model_capacity_requests", "model_capacity_events"]) {
+    expect(migration.indexOf("DO $opencode_postflight$")).toBeLessThan(migration.indexOf(`SELECT nmv_model_capacity_check_guard_rebuild('${table}')`));
+  }
 });
 
 it("0118은 기존 네 CHECK 분기를 보존하고 typed direct 분기를 덧붙인다", () => {

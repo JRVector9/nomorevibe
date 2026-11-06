@@ -124,12 +124,22 @@ export async function withStoredAdminStagePools<T>(assignment: string, run: () =
   const jobName = assignment.split(":", 1)[0];
   const stages = new Set<string>(AI_TASKS.filter(task => task.jobs.includes(jobName)).flatMap(task => task.adminStage ? [task.adminStage] : []));
   for (const stage of ADMIN_MODEL_STAGES) if (stages.has(stage.id)) stages.add(stage.purpose);
-  const pools = Object.fromEntries(Object.entries(settings.stageModelPools ?? {}).filter(([stage]) => stages.has(stage))) as AdminStagePools;
+  const cachedRegistry = readModelRegistry(process.env);
+  const inventory = await import("./ai-task-models-snapshot");
+  const cliConnections = inventory.aiTaskCliEngineConnections({ reload: false });
+  const isCliKey = (key: string | null): boolean => {
+    if (!key) return false;
+    const known = cachedRegistry.models.find(model => model.key === key);
+    return known ? !!known.cliEngine : cliConnections.some(connection => key.startsWith(`${connection.deviceId}:`));
+  };
+  // Keep every established API selection, including callers that read more than one purpose in a scope.
+  const pools = Object.fromEntries(Object.entries(settings.stageModelPools ?? {}).map(([stage, keys]) =>
+    [stage, (keys ?? []).filter(key => stages.has(stage) || !isCliKey(key))])) as AdminStagePools;
   // 배정 표(PR 3b-B): 대응하는 단계는 저장 풀 대신 표에서 고른다. 스위치(PR 3b-E: runtime_settings 토글·env 강제)는 스냅숏과 함께 새로 읽는다 —
   // 꺼졌으면 빈 선택(오늘 그대로). 잡 틱 안에서는 그 틱이 고정한 판의 토글이다.
   let table: Record<string, string> = {};
   await ensureStageAssignments();
-  const warmPools = { ...pools };
+  const warmPools = Object.fromEntries(Object.entries(pools).filter(([stage]) => stages.has(stage))) as AdminStagePools;
   const assignmentStages = new Set<AssignmentStage>();
   if (assignmentTableEnabled()) for (const stage of ADMIN_MODEL_STAGES) {
     const target = ADMIN_STAGE_ASSIGNMENTS[stage.id];
@@ -141,7 +151,8 @@ export async function withStoredAdminStagePools<T>(assignment: string, run: () =
   try { await ensureCliStageCatalogs(warmPools, true); }
   catch { noteAssignmentOnce(`cli_catalog_unavailable:${jobName}`, { job: jobName }); }
   const currentRegistry = readModelRegistry(process.env);
-  if (assignmentTableEnabled()) table = tableStageSelections(stage => assignmentStages.has(stage) ? stageAssignmentRows(stage) : null, assignment, currentRegistry);
+  if (assignmentTableEnabled()) table = tableStageSelections(stage =>
+    stageAssignmentRows(stage)?.filter(row => assignmentStages.has(stage) || !isCliKey(row.registryKey)) ?? null, assignment, currentRegistry);
   const defaultStage = assignment.startsWith("human-deepseek-review:") ? "human-review"
     : assignment.startsWith("split-confirm:") ? "split-confirm" : null;
   if (defaultStage) {

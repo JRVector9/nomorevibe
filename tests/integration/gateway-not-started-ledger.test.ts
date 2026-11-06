@@ -1,3 +1,4 @@
+import { opencodeTaskEventTerminalSql } from "@/lib/llm/opencode-task-binding-sql";
 import { publicationApiLogicalSql, publicationApiDispatchSql, publicationApiTerminalSql, publicationApiEventSql } from "@/lib/llm/publication-classify-api-sql";
 import { randomBytes, randomUUID } from "node:crypto";
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -520,7 +521,12 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
       const localDirectTail = `) OR (${events ? gatewayLocalDirectEventTerminalSql : gatewayLocalDirectTerminalSql})`;
       const split = `) OR (coalesce((${events ? localModelSplitJobsEventTerminalSql : localModelSplitJobsTerminalSql}),false))`;
       let full = new PgDialect().sqlToQuery(check.value).sql;
-      // Strip only the exact new 0166 suffix before checking every historical predecessor below.
+      if (events) {
+        const taskTail = `) OR (${opencodeTaskEventTerminalSql})`;
+        expect(full.startsWith("(") && full.endsWith(taskTail), `${name}: 0168 task tail present`).toBe(true);
+        full = full.slice(1, -taskTail.length);
+      }
+      // Strip only the exact 0166 suffix before checking every historical predecessor below.
       const publicationTail = `) OR (${events ? publicationApiEventSql : publicationApiTerminalSql})`;
       expect(full.startsWith("(") && full.endsWith(publicationTail), `${name}: 0166 tail present`).toBe(true);
       full = full.slice(1, -publicationTail.length);

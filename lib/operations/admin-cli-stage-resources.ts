@@ -72,7 +72,7 @@ export async function ensureCliStageModelResources(pools: AdminStagePools, actor
     const selected: Selected[] = [];
     for (const [stage, keys] of Object.entries(pools)) for (const key of keys ?? []) {
       const model = registry.models.find(entry => entry.key === key);
-      if (!model) fail('cli_stage_model_not_registered');
+      if (!model) continue; // Table-authoritative stages may retain an unused, retired pool key.
       if (model.cliEngine) selected.push({ stage, model });
     }
     if (!selected.length) return { ok: true };

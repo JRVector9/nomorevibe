@@ -86,8 +86,9 @@ describe("작업 목록(lib/llm/ai-tasks.ts)", () => {
       expect(ACTION_GROUPS.settings.actions as readonly string[], action).toContain(action);
     }
   });
-  it("받는 연결: 소개 검수는 Claude CLI 만, 임베딩은 API 만", () => {
+  it("받는 연결: 소개 검수는 Claude·OpenCode CLI, 임베딩은 API 만", () => {
     expect(aiTaskAccepts(aiTask("product-intro-check")!, { kind: "cli", cliTool: "claude" })).toBe(true);
+    expect(aiTaskAccepts(aiTask("product-intro-check")!, { kind: "cli", cliTool: "opencode" })).toBe(true);
     expect(aiTaskAccepts(aiTask("product-intro-check")!, { kind: "api", cliTool: null })).toBe(false);
     expect(aiTaskAccepts(aiTask("product-embedding")!, { kind: "cli", cliTool: "claude" })).toBe(false);
     expect(aiTaskAccepts(aiTask("publish-classify")!, { kind: "cli", cliTool: "grok" })).toBe(false);
@@ -184,7 +185,7 @@ describe("선택지와 검증", () => {
       .toEqual([]);
     expect(validateAiTaskRanks("crawl-tagline", 1, [pick(CLAUDE, "sonnet")], context())).toEqual(["1순위: 수집 소개 짓기은(는) Claude CLI를 받지 않습니다."]);
     expect(validateAiTaskRanks("product-intro-check", 1, [pick(GPU, "qwen3.8-flash-next")], context()))
-      .toEqual(["1순위: 소개 검수은(는) API 주소 연결을 받지 않습니다(CLI Claude CLI만)."]);
+      .toEqual(["1순위: 소개 검수은(는) API 주소 연결을 받지 않습니다(CLI Claude CLI·OpenCode CLI만)."]);
     expect(validateAiTaskRanks("crawl-tagline", 1, [pick(GPU, "gone")], context()))
       .toEqual(["1순위: 「gpu3090」의 모델 목록에 gone이(가) 없습니다. AI 연결에서 「다시 읽기」로 목록을 새로 읽으세요."]);
     // 저장된 값은 목록에서 빠져도 그대로 다시 저장할 수 있다
