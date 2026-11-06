@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import { ADMIN_MODEL_STAGES, adminStagePoolsSchema, type AdminStagePools, type AdminModelStage } from "./admin-model-stages";
-import { MODEL_PURPOSE_ENV, modelRequestName, readModelRegistry, setModelEnvironmentResolver, type ModelEnvironment, type ModelRegistry } from "./model-registry";
+import { MODEL_PURPOSE_ENV, modelForPurpose, modelRequestName, readModelRegistry, setModelEnvironmentResolver, type ModelEnvironment, type ModelRegistry } from "./model-registry";
 import { assignmentTableEnabled } from "./assignment-flag";
 import type { AssignmentStage, ModelAssignmentRow } from "./capacity-helpers";
 import { ADMIN_STAGE_ASSIGNMENTS, chooseModelForItem } from "./stage-assignments";
@@ -67,7 +67,11 @@ export function withAdminStagePools<T>(value: unknown, assignment: string, run: 
 }
 
 function runWithStagePools<T>(value: unknown, assignment: string, run: () => T, tableSelected: Readonly<Record<string, string>>): T {
-  const registry = readModelRegistry(process.env), pools = validateAdminStagePools(value, registry);
+  const registry = readModelRegistry(process.env);
+  const poolsValue = tableSelected['human-review'] && value && typeof value === 'object' && !Array.isArray(value)
+    ? Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'human-review'))
+    : value;
+  const pools = validateAdminStagePools(poolsValue, registry);
   const selected: Record<string, string> = { ...tableSelected };
   for (const stage of ADMIN_MODEL_STAGES) {
     const keys = pools[stage.id];
@@ -119,7 +123,22 @@ export async function withStoredAdminStagePools<T>(assignment: string, run: () =
   // 꺼졌으면 빈 선택(오늘 그대로). 잡 틱 안에서는 그 틱이 고정한 판의 토글이다.
   let table: Record<string, string> = {};
   await ensureStageAssignments();
-  if (assignmentTableEnabled()) table = tableStageSelections(stageAssignmentRows, assignment, readModelRegistry(process.env));
+  const currentRegistry = readModelRegistry(process.env);
+  if (assignmentTableEnabled()) table = tableStageSelections(stageAssignmentRows, assignment, currentRegistry);
+  const defaultStage = assignment.startsWith("human-deepseek-review:") ? "human-review"
+    : assignment.startsWith("split-confirm:") ? "split-confirm" : null;
+  if (defaultStage) {
+    const stage = ADMIN_MODEL_STAGES.find(row => row.id === defaultStage)!;
+    const ownPool = settings.stageModelPools?.[defaultStage as AdminModelStage] ?? [];
+    const purposeKey = table[stage.purpose];
+    if (!table[defaultStage] && !ownPool.length && purposeKey) table[defaultStage] = purposeKey;
+    const purposePool = stage.purpose === defaultStage ? [] : settings.stageModelPools?.[stage.purpose as AdminModelStage] ?? [];
+    if (!table[defaultStage] && !ownPool.length && !purposePool.length) {
+      const key = modelForPurpose(stage.purpose, process.env).key;
+      validateAdminStagePools({ [defaultStage]: [key] }, currentRegistry);
+      table[defaultStage] = key;
+    }
+  }
   return runWithStagePools(settings.stageModelPools ?? {}, assignment, () => {
     if (assignment.startsWith("split-tiebreak:")) return withAdminModelStage("split-tiebreak", run);
     if (assignment.startsWith("split-confirm:")) return withAdminModelStage("split-confirm", run);

@@ -1,4 +1,4 @@
-import { modelForPurpose, resolveRegistryModel } from "@/lib/llm/model-registry";
+import { resolveRegistryModel } from "@/lib/llm/model-registry";
 import { createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
@@ -476,11 +476,14 @@ export async function getSettingsMeta(): Promise<{ updatedBy: string | null; upd
 }
 
 /** General/stale settings forms cannot grant model decision authority. */
-export async function setHumanReviewEnabled(input: { enabled: boolean; expectedGeneration: number; actor: string; expectedModelPoolKeys?: readonly string[] }): Promise<SaveResult> {
+export async function setHumanReviewEnabled(input: { enabled: boolean; expectedGeneration: number; actor: string; expectedModelPoolKeys?: readonly string[]; expectedModelSourceFingerprint?: string }): Promise<SaveResult> {
   if (typeof input.enabled !== 'boolean' || !Number.isSafeInteger(input.expectedGeneration) || input.expectedGeneration < 0) {
     return { ok: false, issues: ['스위치 값을 읽을 수 없습니다.'] };
   }
   return db.transaction(async tx => {
+    if (!await writerSiteActive(tx)) throw new DrWriterFencedError('site_fenced');
+    const sourceModule = input.enabled ? await import('@/lib/operations/human-model-source') : null;
+    const sourceContext = sourceModule ? await sourceModule.lockHumanModelSource(tx) : null;
     await lockPipelineInputStages(tx);
     await tx.insert(crawlSettings).values({ id: ROW_ID, values: DEFAULT_CRAWL_SETTINGS }).onConflictDoNothing();
     const [row] = await tx.select().from(crawlSettings).where(eq(crawlSettings.id, ROW_ID)).for('update');
@@ -489,13 +492,60 @@ export async function setHumanReviewEnabled(input: { enabled: boolean; expectedG
       return { ok: false, issues: ['그 사이 설정이 바뀌었거나 읽지 못했습니다. 새로고침해주세요.'] };
     }
     const keys = current.stageModelPools?.['human-review'] ?? [];
-    if (input.enabled && JSON.stringify(input.expectedModelPoolKeys ?? []) !== JSON.stringify(keys)) {
-      await tx.insert(operationsAudit).values(await adminAuditRow(input.actor, { action: 'human-review-deepseek', target: 'crawl_settings',
-        detail: { expectedModelPoolKeys: input.expectedModelPoolKeys ?? [], modelPool: keys }, ok: false, error: 'stale_model_pool' }));
-      return { ok: false, issues: ['그 사이 사람 위임 모델 풀이 바뀌었습니다. 새로고침해 연결을 다시 확인해주세요.'] };
+    let sourceKind = input.enabled ? 'legacy' : 'off';
+    let legacyModels: Array<ReturnType<typeof resolveRegistryModel>> = [];
+    let auditDetail: Record<string, unknown> | null = null;
+    let tableAudit: { fingerprint: string; model: string; host: string; modelPool: string[];
+      models: Record<string, unknown>[]; assignmentRows: Record<string, unknown>[] } | null = null;
+    if (input.enabled) {
+      if (!sourceModule || !sourceContext || sourceContext.tableUnread || !sourceContext.registry) {
+        return { ok: false, issues: ['사람 위임 배정 표 상태를 확인하지 못했습니다. 새로고침해주세요.'] };
+      }
+      const selection = sourceModule.resolveHumanModelSelection(keys, sourceContext.tableOn, sourceContext.rows, sourceContext.registry);
+      if (selection.source === 'unknown') {
+        return { ok: false, issues: ['사람 위임 배정 표에서 실제 모델을 확인하지 못했습니다. 새로고침해주세요.'] };
+      }
+      try {
+        sourceModule.validateHumanModelPools(current.stageModelPools ?? {}, selection, sourceContext.registry);
+      } catch {
+        return { ok: false, issues: ['사람 위임 단계 풀에 쓸 수 없는 모델이 있습니다. 새로고침해주세요.'] };
+      }
+      if (selection.source === 'table') {
+        if (!input.expectedModelSourceFingerprint || input.expectedModelSourceFingerprint !== selection.fingerprint) {
+          await tx.insert(operationsAudit).values(await adminAuditRow(input.actor, { action: 'human-review-deepseek', target: 'crawl_settings',
+            detail: { source: 'table', expectedModelSourceFingerprint: input.expectedModelSourceFingerprint ?? null,
+              fingerprint: selection.fingerprint }, ok: false, error: 'stale_model_source' }));
+          return { ok: false, issues: ['그 사이 사람 위임 모델 출처가 바뀌었습니다. 새로고침해 연결을 다시 확인해주세요.'] };
+        }
+        tableAudit = { fingerprint: selection.fingerprint, model: selection.effectiveKeys.join(','),
+          host: selection.effectiveModels.map(model => model.equipment).join(','),
+          modelPool: [...selection.effectiveKeys],
+          models: selection.effectiveModels.map(model => ({ key: model.key, equipment: model.equipment, provider: model.provider, model: model.model })),
+          assignmentRows: selection.eligibleRows.map(row => ({ assignmentId: row.assignmentId, version: row.version, rank: row.rank,
+            key: row.key, model: row.model, provider: row.provider, device: row.deviceId })) };
+      } else {
+        sourceKind = selection.source;
+        if (JSON.stringify(input.expectedModelPoolKeys ?? []) !== JSON.stringify(keys)) {
+          await tx.insert(operationsAudit).values(await adminAuditRow(input.actor, { action: 'human-review-deepseek', target: 'crawl_settings',
+            detail: { expectedModelPoolKeys: input.expectedModelPoolKeys ?? [], modelPool: keys }, ok: false, error: 'stale_model_pool' }));
+          return { ok: false, issues: ['그 사이 사람 위임 모델 풀이 바뀌었습니다. 새로고침해 연결을 다시 확인해주세요.'] };
+        }
+        legacyModels = keys.map(key => resolveRegistryModel(key));
+        if (legacyModels.some(model => !model)) return { ok: false, issues: ['등록부에서 사람 위임 모델을 확인하지 못했습니다.'] };
+        if (input.expectedModelSourceFingerprint && input.expectedModelSourceFingerprint !== selection.fingerprint) {
+          await tx.insert(operationsAudit).values(await adminAuditRow(input.actor, { action: 'human-review-deepseek', target: 'crawl_settings',
+            detail: { source: selection.source, expectedModelSourceFingerprint: input.expectedModelSourceFingerprint,
+              fingerprint: selection.fingerprint }, ok: false, error: 'stale_model_source' }));
+          return { ok: false, issues: ['그 사이 사람 위임 모델 출처가 바뀌었습니다. 새로고침해 연결을 다시 확인해주세요.'] };
+        }
+        auditDetail = { source: selection.source,
+          model: selection.effectiveModels.map(model => model.key).join(','),
+          host: selection.effectiveModels.map(model => model.equipment).join(','),
+          ...(keys.length ? { modelPool: keys } : {}),
+          models: selection.effectiveModels.map(model => ({ key: model.key, equipment: model.equipment, provider: model.provider, model: model.model })),
+          fingerprint: selection.fingerprint };
+      }
     }
-    const models = keys.map(key => resolveRegistryModel(key));
-    if (input.enabled && models.some(model => !model)) return { ok: false, issues: ['등록부에서 사람 위임 모델을 확인하지 못했습니다.'] };
     if (current.humanReview.enabled === input.enabled) return { ok: true, settings: current };
     if (current.humanReview.generation >= Number.MAX_SAFE_INTEGER) return { ok: false, issues: ['설정 세대를 더 올릴 수 없습니다.'] };
     const settings = crawlSettingsSchema.parse({ ...current, humanReview: {
@@ -504,11 +554,10 @@ export async function setHumanReviewEnabled(input: { enabled: boolean; expectedG
     await tx.update(crawlSettings).set({ values: settings, updatedBy: input.actor, updatedAt: new Date() }).where(eq(crawlSettings.id, ROW_ID));
     await tx.insert(operationsAudit).values(await adminAuditRow(input.actor, {
       action: 'human-review-deepseek', target: 'crawl_settings',
-      detail: { before: current.humanReview, after: settings.humanReview,
-        model: keys.length ? keys.join(',') : modelForPurpose("human-review").model,
-        host: keys.length ? models.map(model => model?.equipment ?? 'unknown').join(',') : 'm3ultra',
-        ...(keys.length ? { modelPool: keys, models: models.map((model, index) => model
-          ? { key: model.key, equipment: model.equipment, provider: model.provider, model: model.model } : { key: keys[index], unavailable: true }) } : {}) },
+      detail: tableAudit ? { before: current.humanReview, after: settings.humanReview, source: 'table',
+        fingerprint: tableAudit.fingerprint, model: tableAudit.model, host: tableAudit.host, modelPool: tableAudit.modelPool,
+        models: tableAudit.models, assignmentRows: tableAudit.assignmentRows }
+        : { before: current.humanReview, after: settings.humanReview, source: sourceKind, ...(auditDetail ?? {}) },
     }));
     if (input.enabled) await requestJob('human-deepseek-review', tx);
     return { ok: true, settings };

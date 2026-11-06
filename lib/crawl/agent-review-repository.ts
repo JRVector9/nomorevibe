@@ -1,5 +1,6 @@
 import { secondReviewHasWorkloadPool, secondReviewPoolApprovedSql } from "./second-review-workload";
-import { registeredPoolModelNames } from "@/lib/llm/model-registry";
+import { modelRequestName } from "@/lib/llm/model-registry";
+import { currentHumanModelSelection } from "@/lib/operations/human-model-source";
 import { emitPipelineEvent } from "@/lib/observability/review-pipeline";
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
@@ -30,7 +31,7 @@ import { roleLeaseFromEnv } from "@/lib/jobs/role-leader";
 import { STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { hasLiveFetchItem } from "./fetch-ownership";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
-import { DEEPSEEK_REVIEW_MODEL, DEEPSEEK_REVIEW_PROVIDER, deepseekActor } from './deepseek-review-policy';
+import { DEEPSEEK_REVIEW_PROVIDER, deepseekActor } from './deepseek-review-policy';
 import { appliedHeldQwenAttemptColumn, appliedHeldQwenAttemptSql, heldQwenGateFirstSql } from './held-qwen-retry-policy';
 import { agentReviewBinding, assertAgentReviewJob, assertAgentReviewOwnership, finishAgentReviewOwnership,
   hasLiveAgentReviewItem, liveAgentReviewItem, type Ai1ItemLease, type Ai1ReviewOrigin, type Ai1ReviewReceipt } from "./agent-review-ownership";
@@ -221,10 +222,12 @@ function activeReviewIdentity(settings: CrawlSettings): SQL {
 }
 
 function delegatedReviewIdentity(settings: CrawlSettings, attemptId?: string): SQL {
+  const selection = currentHumanModelSelection(settings.stageModelPools?.["human-review"] ?? []);
+  if (selection.source === 'unknown' || !selection.effectiveModels.length) return sql`false`;
   return sql`(${settings.humanReview.enabled}
     AND ${crawlReviewAttempts.kind} = 'delegated'
     AND ${crawlReviewAttempts.provider} = ${DEEPSEEK_REVIEW_PROVIDER}
-    AND ${inArray(crawlReviewAttempts.model, registeredPoolModelNames(settings.stageModelPools?.["human-review"], DEEPSEEK_REVIEW_MODEL))}
+    AND ${inArray(crawlReviewAttempts.model, selection.effectiveModels.map(modelRequestName))}
     AND ${crawlReviewAttempts.actor} = ${deepseekActor(settings.humanReview.generation)}
     AND ${crawlReviewAttempts.id}::text = ${attemptId === undefined ? sql`${crawlCandidates.signals}->>'delegatedReviewAttemptId'` : attemptId})`;
 }
