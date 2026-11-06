@@ -95,7 +95,7 @@ it("distinguishes human, same-source success, semantic reuse, retry, running and
     attempt(2, {state: "succeeded", source: oldSource, sourceRevisionHash: reviewHash(oldSource), outcome: {decision: "approve", reason: "semantic reuse", evidenceIds: ["product"]}}),
     attempt(3, {retryAfter: new Date(Date.now() + 60_000)}),
     attempt(4, {state: "running", leaseToken: "ready-owner"}),
-    ...Array.from({length: 3}, () => attempt(5, {errorCode: "timeout"})),
+    ...Array.from({length: 3}, () => attempt(5, {errorCode: "invalid_output"})),
   ]);
   await admin`UPDATE jobs SET lease_token='ready-owner',locked_at=clock_timestamp() WHERE name='crawl-agent-review'`;
   const initial = await snapshot(), actual = deriveReplayReadiness(initial.projection, initial.capturedAt);

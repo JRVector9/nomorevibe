@@ -3,6 +3,7 @@ import { getTableColumns, type Table } from "drizzle-orm";
 import * as schema from "@/lib/db/schema";
 import type postgres from "postgres";
 import type { CapacityManifest } from "./pipeline-capacity";
+import { candidateRetryCountedFailure } from "@/lib/llm/provider-circuit-breaker";
 import { createReviewInput, isReviewCandidate, reviewHash, REVIEW_FRESH_MS, REVIEW_PROMPT_VERSION,
   REVIEW_RULES_VERSION, MAX_REVIEW_ATTEMPTS } from "@/lib/crawl/agent-review-contract";
 import { mergeWithDefaults } from "@/lib/crawl/settings";
@@ -235,7 +236,7 @@ function deriveWithFailureHistoryIn(value: ReplayReadinessProjection, wallNow: s
       && (settings.reviewMode === "observe" || (candidate?.state === "approved" && row.outcome?.decision === "approve")
         || (candidate?.state === "needs_review" && row.outcome?.decision === "needs_review")))) blocked.push("already_succeeded");
     if (sameSource.some(row => row.state === "failed" && row.retryAfter && time(projection.tables.crawl_review_attempts.find(raw => raw.id === row.id)!.retry_after) > wall)) blocked.push("retry_wait");
-    if (sameSource.filter(row => ["failed", "superseded"].includes(row.state) && row.errorCode !== "owner_changed").length >= MAX_REVIEW_ATTEMPTS)
+    if (sameSource.filter(row => ["failed", "superseded"].includes(row.state) && candidateRetryCountedFailure(row.errorCode)).length >= MAX_REVIEW_ATTEMPTS)
       blocked.push("attempts_exhausted");
     if (sameSource.filter(row => row.state === "superseded" && row.errorCode === "owner_changed" && row.completedAt
       && time(projection.tables.crawl_review_attempts.find(raw => raw.id === row.id)!.completed_at) > wall - REVIEW_FRESH_MS * 1000).length >= 3) blocked.push("owner_changes_exhausted");
@@ -260,7 +261,7 @@ function deriveWithFailureHistoryIn(value: ReplayReadinessProjection, wallNow: s
         || claimRows.some(row => row.inputHash === input!.inputHash && row.state === "succeeded" && row.outcome
           && row.provider === reviewer!.provider && row.model === reviewer!.model
           && row.promptVersion === REVIEW_PROMPT_VERSION && row.rulesVersion === REVIEW_RULES_VERSION)) blocked.push("reuse");
-      if (same.filter(row => ["failed", "superseded"].includes(row.state) && row.errorCode !== "owner_changed").length >= MAX_REVIEW_ATTEMPTS)
+      if (same.filter(row => ["failed", "superseded"].includes(row.state) && candidateRetryCountedFailure(row.errorCode)).length >= MAX_REVIEW_ATTEMPTS)
         blocked.push("attempts_exhausted");
       const replaced = claimRows.find(row => row.state === "running");
       const interruptions = same.filter(row => row.state === "superseded" && row.errorCode === "owner_changed" && row.completedAt

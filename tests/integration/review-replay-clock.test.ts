@@ -154,7 +154,7 @@ it("hands reference-current exhausted attempts to a person using a real event ti
     for (let index = 0; index < 3; index++) {
       const claim = await claimAgentReview(context);
       if (claim.kind === "skipped") throw new Error(claim.reason);
-      await recordAgentReview({ ...context, receipt: claim.receipt, error: "timeout", retryAfter: new Date(0) });
+      await recordAgentReview({ ...context, receipt: claim.receipt, error: "invalid_output", retryAfter: new Date(0) });
     }
     // The writer uses the DB clock. A local Docker VM can lag the host by tens of ms.
     const [clock] = await db.execute<{ ms: string }>(sql`select extract(epoch from clock_timestamp()) * 1000 as ms`);

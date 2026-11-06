@@ -22,6 +22,7 @@ vi.mock('@/lib/domain/products/repository', () => ({ findRepositoryProduct: asyn
 // 1차 잡은 늘 순위 고르기다(PR C1): 자기 대기 행·풀 쪽(keyset)·후보별 고르기·막힌 모델 읽기를 경계 mock 으로 둔다
 vi.mock('@/lib/crawl/agent-review-repository', () => ({ canStartLegacyAgentReview: async () => true,
   requeueStaleReviewSources: async () => 0, handOffExhaustedFirstReviews: async () => 0,
+  reopenProviderExhaustedFirstReviews: async () => [],
   listOwnPendingFirstReviewCandidates: async () => [],
   listFirstReviewPoolCandidates: async (settings: CrawlSettings, limit: number) => ((await mocks.list(settings, limit)) as CrawlCandidate[]).map(candidate =>
     ({ candidate, position: { id: candidate.id, reviewed: false, updatedAt: '2026-10-27 00:00:00.000001', ceiling: 1000 } })),

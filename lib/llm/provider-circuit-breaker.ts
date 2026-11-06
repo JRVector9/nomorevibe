@@ -31,11 +31,29 @@ export function providerCircuitConfig(env: Readonly<Record<string, string | unde
 const PROVIDER_DOWN: ReadonlySet<string> = new Set(["timeout", "gateway_error", "rate_limited", "budget", "not_configured", "auth",
   "missing_cli", "model_unavailable", "no_key", "rate_limit", "network", "tokenizer_unavailable"]);
 /**
+ * 후보 탓이 아닌 제공자·호출 장애 코드. 모델 장애로 생긴 실패는 그 후보의 재시도 예산(MAX_REVIEW_ATTEMPTS)을 쓰지 않는다 —
+ * 장애가 끝난 뒤 같은 후보가 자동으로 다시 검사 대상이 되게 하기 위해서다(A1 종료 미확정 복구 우선순위).
+ * 판정·입력 실패(invalid_json·schema 등)는 여기에 넣지 않는다.
+ */
+export const PROVIDER_FAILURE_CODES = Object.freeze([...PROVIDER_DOWN]) as readonly string[];
+export function providerSideFailure(errorCode: string | null | undefined): boolean {
+  return typeof errorCode === "string" && (PROVIDER_DOWN.has(errorCode) || /^http_5\d\d$/.test(errorCode));
+}
+/**
  * native AI1·AI2 게이트웨이가 계약(응답 envelope·terminal: responseModel·error 키·chat.completion 모양 등)을 어긴 응답의 detail
  * (agent-review-gateway). 결과 모양은 기존 invalid_output 그대로지만 모델 판정 실패가 아니라 게이트웨이 쪽 기술 오류다 —
  * 회로에는 provider 장애로 세고 AI1 시도 수로는 세지 않는다. 내용이 판정이 아닌 것(invalid_json·schema 등)은 그대로 판정 오류다.
  */
 export const NATIVE_TERMINAL_FAILURE = "invalid_native_terminal";
+/**
+ * 후보의 재시도 예산(MAX_REVIEW_ATTEMPTS)·사람 인계에 세는 실패인가.
+ * 제공자·게이트웨이 장애, 워커 중단(cancelled), 소유권 변경은 후보 탓이 아니므로 세지 않는다.
+ * 판정·입력 실패(invalid_output·invalid_json·schema 등)는 그대로 센다.
+ */
+export function candidateRetryCountedFailure(errorCode: string | null | undefined): boolean {
+  return errorCode !== "owner_changed" && errorCode !== NATIVE_TERMINAL_FAILURE && errorCode !== "cancelled"
+    && !providerSideFailure(errorCode);
+}
 type ProviderResult = { ok: boolean; error?: string; detail?: string };
 export function nativeTerminalFailure(result: ProviderResult): boolean {
   return !result.ok && result.error === "invalid_output" && result.detail === NATIVE_TERMINAL_FAILURE;

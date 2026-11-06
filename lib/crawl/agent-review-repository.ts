@@ -10,7 +10,7 @@ import { currentReplayDb } from "@/lib/db/replay-scope";
 import { lockAi1ModelCapacityDispatch, finishAi1ModelCapacityDispatch, finishAi1ItemModelCapacityDispatch, type Ai1CapacityDispatchLock, lockModelCapacityCallerControl,
   lockCliModelCapacityDispatch, finishCliModelCapacityDispatch, type CliCapacityDispatchLock } from "@/lib/llm/capacity-repository";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
-import { NATIVE_TERMINAL_FAILURE, nativeTerminalFailure } from "@/lib/llm/provider-circuit-breaker";
+import { NATIVE_TERMINAL_FAILURE, nativeTerminalFailure, candidateRetryCountedFailure, PROVIDER_FAILURE_CODES } from "@/lib/llm/provider-circuit-breaker";
 import { modelCapacityReservationSchema, modelCapacityRequestIdentitySchema, GATEWAY_DISPATCH_PROVIDERS, type Ai1ModelDispatch, type Ai1ItemModelDispatch,
   type CliModelDispatch, type GatewayDispatchProvider, type ModelCapacityReservation, type ModelCapacityRequestIdentity } from "@/lib/llm/capacity";
 import { resolveAi1GatewayServingContract, ai1GatewayServingContractHash } from "./agent-review-serving-contract";
@@ -236,6 +236,18 @@ function delegatedReviewIdentity(settings: CrawlSettings, attemptId?: string): S
 function retryReviewIdentity(): SQL {
   return and(eq(crawlReviewAttempts.kind, "automatic"), or(ne(crawlReviewAttempts.provider, "rules"),
     and(eq(crawlReviewAttempts.provider, "rules"), eq(crawlReviewAttempts.model, REVIEW_RULES_VERSION))))!;
+}
+
+/**
+ * 후보의 재시도 예산에 세는 실패인가. 제공자·게이트웨이 장애와 워커 중단은 후보 탓이 아니므로 세지 않는다.
+ * 이 규칙이 없으면 모델 장애 몇 분 만에 후보가 ai_review_exhausted 로 사람에게 넘어가고, 모델이 돌아와도
+ * 다시 자동 검사 대상이 되지 않는다(2026-11-06 사용자 보고).
+ */
+export const countedReviewFailure = candidateRetryCountedFailure;
+function countedReviewFailureSql(column: SQL | typeof crawlReviewAttempts.errorCode): SQL {
+  return sql`(${column} IS NOT NULL AND ${column} <> 'owner_changed' AND ${column} <> ${NATIVE_TERMINAL_FAILURE}
+    AND ${column} <> 'cancelled' AND ${column} !~ '^http_5[0-9][0-9]$'
+    AND ${column} NOT IN (${sql.join(PROVIDER_FAILURE_CODES.map(code => sql`${code}`), sql`, `)}))`;
 }
 
 function matchingSource(settings: CrawlSettings, delegated = false, retry = false): SQL {
@@ -495,8 +507,7 @@ export async function handOffExhaustedFirstReviews(
         AND d.fetched_at <= ${reviewSemanticNowSql()} AND d.fetched_at > ${reviewSemanticNowSql()} - interval '24 hours')`,
       sql`(SELECT count(*) FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings, false, true)}
         AND ${crawlReviewAttempts.state} IN ('failed', 'superseded')
-        AND ${crawlReviewAttempts.errorCode} IS DISTINCT FROM 'owner_changed'
-        AND ${crawlReviewAttempts.errorCode} IS DISTINCT FROM ${NATIVE_TERMINAL_FAILURE}) >= ${MAX_REVIEW_ATTEMPTS}`,
+        AND ${countedReviewFailureSql(crawlReviewAttempts.errorCode)}) >= ${MAX_REVIEW_ATTEMPTS}`,
       sql`NOT EXISTS (SELECT 1 FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings)}
         AND ${crawlReviewAttempts.state} = 'succeeded' AND ${crawlReviewAttempts.validUntil} > ${reviewSemanticNowSql()})`,
     )).orderBy(asc(crawlCandidates.updatedAt), asc(crawlCandidates.id))
@@ -523,7 +534,7 @@ export async function handOffExhaustedFirstReviews(
       if (attempts.some(attempt => attempt.state === "succeeded" && attempt.validUntil > reviewSemanticNow()
         && (attempt.provider === "rules" || hasFirstReviewer(firstReviewers(settings), attempt)))) continue;
       if (attempts.filter(attempt => ["failed", "superseded"].includes(attempt.state)
-        && attempt.errorCode !== "owner_changed" && attempt.errorCode !== NATIVE_TERMINAL_FAILURE).length >= MAX_REVIEW_ATTEMPTS) exhausted.push(candidate.id);
+        && countedReviewFailure(attempt.errorCode)).length >= MAX_REVIEW_ATTEMPTS) exhausted.push(candidate.id);
     }
     const unowned: number[] = [];
     for (const candidateId of exhausted) if (!await hasLiveAgentReviewItem(tx, candidateId)) unowned.push(candidateId);
@@ -537,6 +548,76 @@ export async function handOffExhaustedFirstReviews(
     }).where(inArray(crawlCandidates.id, unowned)).returning({ id: crawlCandidates.id });
     await assertAgentReviewJob(tx, lease);
     return updated.length;
+  });
+}
+
+/**
+ * 모델 장애로 소진된 1차 후보를 회복 증거가 있을 때만 자동 검사 대상으로 되돌린다.
+ *
+ * - `ai_review_exhausted` + `decided_by='auto'` + `signals.firstReviewExhausted` 만 본다(사람이 닫은 결정은 건드리지 않는다).
+ * - 실패 중 후보 탓(판정·입력)이 하나라도 있으면 되돌리지 않는다 — 진짜 콘텐츠 문제는 사람이 봐야 한다.
+ * - 최근 2시간 안에 규칙이 아닌 1차 자동 심사 성공이 있어야 한다(모델이 실제로 돌아왔다는 증거).
+ * - 장부(model_capacity_requests)는 건드리지 않는다 — 종료 미확정 행은 소유자 결정대로 사람 검토·늦은 종료 근거만 닫는다.
+ * - `updated_at` 을 첫 실패 시각으로 되돌려 기존 (미검수 우선, 오래된 순) 순서에서 앞쪽에 서게 한다.
+ */
+export async function reopenProviderExhaustedFirstReviews(
+  settings: CrawlSettings, lease: JobLease, limit = 20,
+): Promise<number[]> {
+  if (!settings.enabled || settings.reviewMode !== "enforce") return [];
+  return db.transaction(async tx => {
+    const stages = await lockPipelineInputStages(tx);
+    await readItemStage(tx, stages.ai1);
+    const [evidence] = await tx.execute<{ ok: boolean }>(sql`
+      SELECT EXISTS (SELECT 1 FROM ${crawlReviewAttempts} ok
+        WHERE ok.kind = 'automatic' AND ok.provider <> 'rules' AND ok.state = 'succeeded'
+          AND ok.completed_at > clock_timestamp() - interval '2 hours'
+          AND ok.completed_at <= clock_timestamp()) AS ok`);
+    if (!evidence?.ok) return [];
+    const previousReasons = ["passed", ...REVIEW_RETRIABLE_REASONS];
+    const rows = await tx.select().from(crawlCandidates).where(and(
+      eq(crawlCandidates.state, "needs_review"), eq(crawlCandidates.reason, "ai_review_exhausted"),
+      eq(crawlCandidates.decidedBy, "auto"),
+      sql`${crawlCandidates.signals} ? 'firstReviewExhausted'`,
+      sql`${crawlCandidates.signals}->'firstReviewExhausted'->>'previousReason'
+        IN (${sql.join(previousReasons.map(reason => sql`${reason}`), sql`, `)})`,
+      sql`EXISTS (SELECT 1 FROM ${crawlDocuments} d WHERE d.repo = ${crawlCandidates.repo}
+        AND d.product_url IS NOT DISTINCT FROM ${crawlCandidates.productUrl}
+        AND d.fetched_at <= ${reviewSemanticNowSql()} AND d.fetched_at > ${reviewSemanticNowSql()} - interval '24 hours')`,
+      sql`NOT EXISTS (SELECT 1 FROM ${crawlReviewAttempts} bad WHERE bad.candidate_id = ${crawlCandidates.id}
+        AND bad.kind = 'automatic' AND bad.state IN ('failed', 'superseded')
+        AND ${countedReviewFailureSql(sql`bad.error_code`)})`,
+      // 회복 증거는 이 후보의 마지막 실패보다 뒤에 있어야 한다 — 장애 전의 옛 성공으로 되돌리지 않는다.
+      sql`EXISTS (SELECT 1 FROM ${crawlReviewAttempts} ok
+        WHERE ok.kind = 'automatic' AND ok.provider <> 'rules' AND ok.state = 'succeeded'
+          AND ok.completed_at > clock_timestamp() - interval '2 hours'
+          AND ok.completed_at > coalesce((SELECT max(bad.completed_at) FROM ${crawlReviewAttempts} bad
+            WHERE bad.candidate_id = ${crawlCandidates.id} AND bad.kind = 'automatic'
+              AND bad.state IN ('failed', 'superseded')), '-infinity'::timestamptz))`,
+      sql`NOT EXISTS (SELECT 1 FROM ${crawlReviewAttempts} ok WHERE ok.candidate_id = ${crawlCandidates.id}
+        AND ok.kind = 'automatic' AND ok.state = 'succeeded' AND ok.valid_until > ${reviewSemanticNowSql()})`,
+    )).orderBy(asc(crawlCandidates.updatedAt), asc(crawlCandidates.id))
+      .limit(Math.max(1, Math.min(50, limit))).for("update", { skipLocked: true });
+    if (!rows.length) return [];
+    const reopened: number[] = [];
+    for (const candidate of rows) {
+      const signals = candidate.signals as { firstReviewExhausted?: { previousReason?: unknown }; stoppedAt?: { rule?: unknown } } | null;
+      const previous = signals?.firstReviewExhausted?.previousReason;
+      if (previous !== "passed" && !REVIEW_RETRIABLE_REASONS.some(reason => reason === previous)) continue;
+      const handoffStop = signals?.stoppedAt?.rule === "AI 1차 심사";
+      const changed = await tx.update(crawlCandidates).set({
+        state: previous === "passed" ? "approved" : "needs_review", reason: previous as CrawlCandidate["reason"],
+        updatedAt: sql`coalesce((SELECT min(started_at) FROM ${crawlReviewAttempts} r
+          WHERE r.candidate_id = ${candidate.id} AND r.kind = 'automatic'
+            AND r.state IN ('failed', 'superseded')), clock_timestamp())`,
+        signals: sql`(${handoffStop ? sql`${crawlCandidates.signals} - 'stoppedAt'` : sql`${crawlCandidates.signals}`}
+          - 'firstReviewExhausted') || jsonb_build_object('firstReviewRecoveredAt', clock_timestamp(),
+            'firstReviewRecoveredFrom', ${crawlCandidates.signals}->'firstReviewExhausted')`,
+      }).where(and(eq(crawlCandidates.id, candidate.id), eq(crawlCandidates.state, "needs_review"),
+        eq(crawlCandidates.reason, "ai_review_exhausted"))).returning({ id: crawlCandidates.id });
+      if (changed.length) reopened.push(candidate.id);
+    }
+    await assertAgentReviewJob(tx, lease);
+    return reopened;
   });
 }
 
@@ -610,8 +691,7 @@ export function reviewCandidatePredicate(settings: CrawlSettings, options: Revie
       AND ${crawlReviewAttempts.state} = 'failed' AND ${crawlReviewAttempts.retryAfter} > clock_timestamp())`,
     sql`(SELECT count(*) FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings, false, true)}
       AND ${crawlReviewAttempts.state} IN ('failed','superseded')
-      AND ${crawlReviewAttempts.errorCode} IS DISTINCT FROM 'owner_changed'
-      AND ${crawlReviewAttempts.errorCode} IS DISTINCT FROM ${NATIVE_TERMINAL_FAILURE}) < ${MAX_REVIEW_ATTEMPTS}`,
+      AND ${countedReviewFailureSql(crawlReviewAttempts.errorCode)}) < ${MAX_REVIEW_ATTEMPTS}`,
     sql`(SELECT count(*) FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings, false, true)}
       AND ${crawlReviewAttempts.state} = 'superseded'
       AND ${crawlReviewAttempts.errorCode} = 'owner_changed'
@@ -1013,7 +1093,7 @@ async function claimReview(input: ClaimContext, authority: ClaimAuthority, reser
       // native 게이트웨이 계약 위반은 모델 실패가 아니다 — 기록·재시도 대기는 그대로 두고 시도 수로만 세지 않는다
       const [retryState] = await tx.select({ attemptCount: sql<number>`count(*)::integer`,
         failures: sql<number>`count(*) FILTER (WHERE ${crawlReviewAttempts.state} IN ('failed','superseded')
-        AND ${crawlReviewAttempts.errorCode} IS DISTINCT FROM 'owner_changed' AND ${crawlReviewAttempts.errorCode} IS DISTINCT FROM ${NATIVE_TERMINAL_FAILURE})::integer`,
+        AND ${countedReviewFailureSql(crawlReviewAttempts.errorCode)})::integer`,
         ownerChanges: sql<number>`count(*) FILTER (WHERE ${crawlReviewAttempts.state} = 'superseded' AND ${crawlReviewAttempts.errorCode} = 'owner_changed'
           AND ${gt(crawlReviewAttempts.completedAt, new Date(wallNow.getTime() - 24 * 60 * 60_000))})::integer`,
         waiting: sql<boolean>`coalesce(bool_or(${crawlReviewAttempts.state} = 'failed' AND ${gt(crawlReviewAttempts.retryAfter, wallNow)}), false)` })
