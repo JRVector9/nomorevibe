@@ -1,6 +1,7 @@
 import { findOwnPendingPublicationApiBatches, cancelOwnPendingPublicationApiBatch, readModelCapacityControlObservation } from '@/lib/llm/capacity-repository';
 import { roleLeaseFromEnv } from '@/lib/jobs/role-leader';
-import { ensureAiTaskExecutionConfigs, readAiTaskExecutionConfig } from '@/lib/llm/ai-task-execution-snapshot';
+import { readAiTaskExecutionConfig } from '@/lib/llm/ai-task-execution-snapshot';
+import { ensureReviewTaskRanks } from '@/lib/crawl/review-task-ranks';
 import { classifyPublicationPool } from '@/lib/crawl/publication-classify-pool';
 import { jobKnob } from '@/lib/operations/runtime-settings-schema';
 import { runtimeSettings } from '@/lib/operations/runtime-settings-store';
@@ -60,12 +61,14 @@ export async function publishCandidates(ctx: JobContext<null>): Promise<JobOutco
     return { done: true };
   }
 
+  // Queue predicates and final approval checks use the current reviewers, even
+  // though this role does not execute first/second reviews itself.
+  await ensureReviewTaskRanks();
   if (ctx.lease) {
     const reopened = await requeueInvalidStarApprovals(settings, ctx.lease);
     if (reopened) ctx.log("crawl.star_approvals_reopened", { count: reopened });
   }
 
-  await ensureAiTaskExecutionConfigs();
   let execution: ReturnType<typeof readAiTaskExecutionConfig>;
   try { execution = readAiTaskExecutionConfig('publish-classify'); }
   catch (error) {
