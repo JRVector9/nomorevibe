@@ -13,6 +13,7 @@ import { SelectedModelProbe } from "../models/SelectedModelProbe";
 import { modelPickerConnectionDevice, modelPickerConnectionLabel, modelPickerModelLabel } from "../models/model-picker-display";
 import { saveAiTaskRanksAction } from "../models/tasks/actions";
 import { aiTaskWorkloadPoolApiOnly } from "@/lib/llm/ai-task-execution-config";
+import { aiTaskEditTarget } from "@/lib/operations/ai-task-edit-target";
 
 /**
  * 「바꾸기」 서랍(2026-11-04 5차) — 전체 흐름에서 칸의 처리 LLM 1·2·3순위를 그 자리에서 바꾼다.
@@ -59,9 +60,10 @@ function LineEditor({ editor, line, value, onChange, warnings, disabled }: {
   editor: FlowRankEditor; line: FlowRankLine; value: Ranks; onChange: (value: (AiRankChoice | null)[]) => void; warnings: RankWarning[]; disabled: boolean;
 }) {
   const tag = lineTag(line);
-  const changed = rankChanges(editor, [line], { [line.key]: value }).length > 0;
   const pool = line.execution?.mode === "workload_pool" ? line.execution : null;
   const apiOnly = aiTaskWorkloadPoolApiOnly(line.task);
+  const nonLiveTarget = !line.live && line.task !== "publish-classify" ? aiTaskEditTarget(line.task) : null;
+  const changed = !nonLiveTarget && rankChanges(editor, [line], { [line.key]: value }).length > 0;
   return (
     <section className="fr-line" data-key={line.key} data-tag={tag.tone} aria-labelledby={`fr-line-${line.key}`}>
       <header className="fr-line-h">
@@ -81,14 +83,15 @@ function LineEditor({ editor, line, value, onChange, warnings, disabled }: {
       </> : apiOnly ? <>
         <p className="fr-note">기존 CLI 분류를 사용합니다.</p>
         <Link href={`/admin/models/tasks#execution-${line.task}-${line.slot}`} prefetch={false} className="fr-link">API 분산 모델 설정 →</Link>
-      </> : <p className="fr-now"><span className="fr-k">지금</span> {displayRankChain(editor, line.saved)}</p>}
+      </> : nonLiveTarget ? <p className="fr-now"><span className="fr-k">실제 적용 설정</span> <Link href={nonLiveTarget.href} prefetch={false} className="fr-link">{nonLiveTarget.label} →</Link></p>
+        : <p className="fr-now"><span className="fr-k">지금</span> {displayRankChain(editor, line.saved)}</p>}
       {line.lock && <p className="fr-lock" role="note">{line.lock}</p>}
-      {!pool && !apiOnly && <RankSelects<AiRankChoice> stage={{ id: `flow-${line.key}`, label: line.label, slots: 3 }} options={line.options} connections={editor.connections} value={value} onChange={onChange}
+      {!pool && !apiOnly && !nonLiveTarget && <RankSelects<AiRankChoice> stage={{ id: `flow-${line.key}`, label: line.label, slots: 3 }} options={line.options} connections={editor.connections} value={value} onChange={onChange}
         slotNames={AI_RANK_SLOT_NAMES} disabled={disabled || !!line.lock}
         showProvider={false} note={null} blocked={(option, index, slots) => flowOptionBlocked(editor, line, index, option, slots)}
         validate={(slots) => changed ? flowRankIssues(editor, line, slots) : []} layout="rows"
         renderAfterSlot={(row) => <SelectedModelProbe key={JSON.stringify([row.provider, row.model, row.reasoningEffort])} choice={row} disabled={disabled || !!line.lock} />} />}
-      {!line.live && !line.lock && !apiOnly && <p className="fr-note">{SET_ONLY_TEXT}</p>}
+      {!line.live && !line.lock && !apiOnly && !nonLiveTarget && <p className="fr-note">{SET_ONLY_TEXT}</p>}
       {!pool && <WarningList warnings={warnings} />}
     </section>
   );

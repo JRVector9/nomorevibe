@@ -11,7 +11,7 @@ export type AiTaskActionState = { ok?: true; message?: string; issues?: string[]
 
 const DENIED: AiTaskActionState = { issues: [aiTaskIssueMessage("denied")] };
 // 전체 흐름(/admin/flow)의 「바꾸기」 서랍도 같은 순위 저장을 부른다 — 저장 뒤 그 화면의 칸 모델·최근 바뀐 설정도 새로 읽는다
-const PATHS = ["/admin/models/tasks", "/admin/models", "/admin/models/contracts", "/admin/models/devices", "/admin/flow"];
+const PATHS = ["/admin/models/tasks", "/admin/models", "/admin/models/contracts", "/admin/models/devices", "/admin/flow", "/admin/models/search", "/admin/models/human"];
 const revalidate = () => { for (const path of PATHS) revalidatePath(path); };
 const field = (form: FormData, name: string) => { const value = form.get(name); return typeof value === "string" ? value.trim() : ""; };
 const messages = (issues: readonly string[]) => issues.map(aiTaskIssueMessage);
@@ -58,7 +58,7 @@ export const deleteAiConnectionAction = webWriteAction(async function deleteAiCo
 
 /**
  * 「작업 ↔ 모델」 한 줄 저장. 검증 → 준비 확인 → (없으면) 엔진 직접 계약 readback·1토큰 시험 → 한 TX(장비 행·계약·정책 경로 덧붙이기·순위 행·감사).
- * 막히면 아무것도 쓰지 않고 무엇이 없는지 보인다. 이 판에서는 잡이 이 순위를 아직 읽지 않는다.
+ * 실행 쪽이 순위를 읽는 작업만 저장합니다. 별도 설정 작업은 실제 적용 편집기로 안내합니다.
  */
 export const saveAiTaskRanksAction = webWriteAction(async function saveAiTaskRanksAction(_previous: AiTaskActionState, form: FormData): Promise<AiTaskActionState> {
   const admin = await currentAdmin();
@@ -87,5 +87,5 @@ export const applyAiTaskImportAction = webWriteAction(async function applyAiTask
   if (!applied.ok) return { issues: messages(applied.issues) };
   revalidate();
   return { ok: true, warnings: applied.warnings, message: `가져왔습니다 — 연결 ${applied.connections}개 · 순위를 채운 칸 ${applied.slots}개`
-    + `${applied.skipped ? ` · 그 사이 순위가 생겨 건너뛴 칸 ${applied.skipped}개` : ""}. 잡은 아직 이 순위를 읽지 않습니다.` };
+    + `${applied.skipped ? ` · 그 사이 순위가 생겨 건너뛴 칸 ${applied.skipped}개` : ""}. 새 작업은 30초 안에 이 순위를 읽습니다.` };
 });

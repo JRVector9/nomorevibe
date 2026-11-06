@@ -26,6 +26,7 @@ import {
 } from "./admin-ai-tasks";
 import { contractKeyMatch, maybeFillConnectionKeys, readConnectionModels } from "./ai-connection-key-fill";
 import { buildAiCurrentSlots, readAiCurrentSources } from "./admin-ai-task-current";
+import { aiTaskEditTarget } from "./ai-task-edit-target";
 import { readCapacityDevicesControl } from "./admin-capacity-devices";
 import { engineRouteContract, ENGINE_CONNECT_ROUTES, probeEngineContract } from "./admin-engine-connect";
 import { adminAuditRow, adminLog, type AdminLogRow } from "./admin-log";
@@ -307,8 +308,8 @@ export async function readAiTasksAdminView(): Promise<AiTasksAdminView> {
     }), readiness) : [];
     return Object.freeze({ task, slot, label: aiTaskSlotLabel(task, slot), revision: aiTaskSlotRevision(own), rows: Object.freeze(own),
       options: Object.freeze(aiTaskRankOptions(task, connections, own)), current: cur,
-      currentLabels: Object.freeze((cur?.uses ?? []).slice(0, 3).map(use => currentLabel(use, connections))),
-      sameAsCurrent: isAiReviewTask(task.id) ? null : sameAsCurrent(own, cur, connections),
+      currentLabels: Object.freeze((isAiLiveTask(task.id) ? (cur?.uses ?? []).slice(0, 3) : cur?.uses ?? []).map(use => currentLabel(use, connections))),
+      sameAsCurrent: isAiReviewTask(task.id) || !isAiLiveTask(task.id) ? null : sameAsCurrent(own, cur, connections),
       readiness: Object.freeze(ready), live: isAiLiveTask(task.id), runtime: runtime[task.id] ?? null });
   });
   return Object.freeze({ connections: Object.freeze(connections), rows: Object.freeze(rows), slots: Object.freeze(slots), errors: Object.freeze(errors),
@@ -474,6 +475,10 @@ export async function saveAiTaskRanks(input: AiTaskRanksInput, actor: string): P
   if (!validActor(actor)) return { ok: false, issues: ["invalid_actor"] };
   const task = aiTask(input.task);
   if (!task) return { ok: false, issues: ["ai_task_invalid:task"] };
+  if (!isAiLiveTask(task.id)) {
+    const target = aiTaskEditTarget(task.id);
+    return { ok: false, issues: [`${task.label}의 모델 순위는 지금 실행 쪽이 읽지 않아 저장해도 동작이 바뀌지 않습니다 — 실제 적용 설정에서 바꾸세요: ${target?.href ?? "/admin/models?advanced=1#model-settings"}`] };
+  }
   try {
     const [storedConnections, rows] = await Promise.all([listAiConnections(), listAiTaskRows()]);
     const ranks = input.ranks.slice(0, 3);
@@ -555,8 +560,10 @@ type BuiltImport = { plan: AiImportPlan; served: Map<string, AiConnectionModel[]
  */
 async function buildImport(): Promise<BuiltImport> {
   const control = await readCapacityDevicesControl().catch(() => null);
-  const [connections, rows, devices, current] = await Promise.all([listAiConnections(), listAiTaskRows(), listModelCapacityDevices().catch(() => []),
+  const [connections, rows, devices, currentAll] = await Promise.all([listAiConnections(), listAiTaskRows(), listModelCapacityDevices().catch(() => []),
     depsForTest?.current ? depsForTest.current() : readAiCurrentSources(control?.policy ?? null).then(buildAiCurrentSlots)]);
+  // 실제로 순위를 읽는 작업만 가져온다 — 검색 등 비live 작업의 옛 설정을 저장된 순위처럼 만들지 않는다
+  const current = currentAll.filter(slot => isAiLiveTask(slot.task));
   const deviceSlots = new Map<string, number>(Object.entries(control?.policy?.groupLimits ?? {}).map(([key, value]) => [key, Number(value)]));
   for (const device of devices) deviceSlots.set(device.deviceId, device.limitSlots);
   const hostEquipment = new Map<string, string>();
@@ -667,6 +674,7 @@ export async function applyAiTaskImport(expectedHash: string, actor: string): Pr
       const slots: Record<string, unknown>[] = [];
       let skipped = 0;
       for (const slot of plan.slots) {
+        if (!isAiLiveTask(slot.task)) { if (slot.action === "create") skipped += 1; continue; }
         if (slot.action !== "create") continue;
         await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('ai_task_models'), hashtext(${`${slot.task}#${slot.slot}`}))`);
         const [exists] = await tx.select({ id: aiTaskModels.id }).from(aiTaskModels).where(and(eq(aiTaskModels.task, slot.task), eq(aiTaskModels.slot, slot.slot))).limit(1);

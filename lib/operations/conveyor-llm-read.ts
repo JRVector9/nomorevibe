@@ -2,12 +2,14 @@ import "server-only";
 import { asc, sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import { aiTaskModels } from "@/lib/db/schema";
-import { AI_TASKS } from "@/lib/llm/ai-tasks";
+import { AI_TASKS, isAiLiveTask } from "@/lib/llm/ai-tasks";
 import { logger } from "@/lib/observability/logger";
 import { listAiConnections, readAiTaskRuntime } from "./admin-ai-tasks-repository";
-import { aiConnectionLabel } from "./admin-ai-tasks";
+import { aiConnectionBaseUrl, aiConnectionLabel } from "./admin-ai-tasks";
 import { readAiTaskExecutionAdminViews } from "./admin-ai-task-execution";
-import type { LlmExecutionRow, LlmConnection, LlmInputs, LlmRankRow, LlmRuntime, LlmUsedRow, LlmActiveRow } from "./conveyor-llm";
+import { buildAiCurrentSlots, readAiCurrentSources } from "./admin-ai-task-current";
+import { withReadOnlyAiTaskModels } from "@/lib/llm/ai-task-models-snapshot";
+import type { LlmExecutionRow, LlmConnection, LlmInputs, LlmRankRow, LlmRuntime, LlmUsedRow, LlmActiveRow, LlmEffectiveConfig } from "./conveyor-llm";
 
 /**
  * 전체 흐름 칸의 「지금 쓰는 모델」 읽기 — 읽기만 한다(새 쓰기 경로 없음).
@@ -59,9 +61,10 @@ async function readActiveLedger(): Promise<LlmActiveRow[]> {
 }
 
 export async function readLlmInputs(now: string): Promise<LlmInputs> {
-  const [connections, rows, used, runtime, execution, active] = await Promise.all([
-    listAiConnections().then((list): LlmConnection[] => list.map((row) => ({ id: row.id, label: aiConnectionLabel(row), kind: row.kind, baseUrl: row.baseUrl,
-      cliTool: row.cliTool, hasKey: row.hasKey, enabled: row.enabled, updatedAt: row.updatedAt }))).catch(warn("conveyor.llm_connections_unavailable")),
+  const connectionsTask = listAiConnections().then((list): LlmConnection[] => list.map((row) => ({ id: row.id, label: aiConnectionLabel(row), kind: row.kind, baseUrl: row.baseUrl,
+    cliTool: row.cliTool, hasKey: row.hasKey, enabled: row.enabled, updatedAt: row.updatedAt }))).catch(warn("conveyor.llm_connections_unavailable"));
+  const [connections, rows, used, runtime, execution, active, effective] = await Promise.all([
+    connectionsTask,
     // Keep the save timestamp with the same primary read; old tick failures are about the old ranks.
     onPrimary(() => db.select({ task: aiTaskModels.task, slot: aiTaskModels.slot, rank: aiTaskModels.rank,
       connectionId: aiTaskModels.connectionId, model: aiTaskModels.model, enabled: aiTaskModels.enabled, updatedAt: aiTaskModels.updatedAt })
@@ -78,6 +81,26 @@ export async function readLlmInputs(now: string): Promise<LlmInputs> {
         connectionId: member.connectionId, model: member.model, deviceId: member.deviceId })),
     }))).catch(warn("conveyor.llm_execution_unavailable")),
     readActiveLedger().catch(warn("conveyor.llm_active_unavailable")),
+    withReadOnlyAiTaskModels(async () => buildAiCurrentSlots(await readAiCurrentSources(null, { includeAgent: false })))
+      .then(async (slots): Promise<Record<string, LlmEffectiveConfig>> => {
+        const connections = await connectionsTask;
+        const providerText = (provider: string) => provider === "abcllm" || provider === "local-direct" || provider === "llama-server" ? "직접 연결" : provider;
+        const whereOf = (use: { baseUrl: string | null; deviceId: string | null; provider: string }) => {
+          const base = use.baseUrl ? aiConnectionBaseUrl(use.baseUrl) : null;
+          const match = base ? connections?.find(connection => connection.baseUrl && aiConnectionBaseUrl(connection.baseUrl) === base) : null;
+          return match?.label ?? use.deviceId ?? use.baseUrl ?? providerText(use.provider);
+        };
+        const out: Record<string, LlmEffectiveConfig> = {};
+        for (const slot of slots) {
+          if (isAiLiveTask(slot.task)) continue;
+          const previous = out[slot.task];
+          const models = slot.uses.map(use => ({ model: use.model, where: whereOf(use) }));
+          out[slot.task] = { source: previous?.source ?? slot.source, models: [...(previous?.models ?? []), ...models],
+            error: previous?.error ?? slot.error, skip: previous?.skip ?? slot.skip,
+            notes: [...new Set([...(previous?.notes ?? []), ...slot.notes])] };
+        }
+        return out;
+      }).catch(warn("conveyor.llm_effective_unavailable")),
   ]);
-  return { now, connections, rows, used, runtime, execution, active };
+  return { now, connections, rows, used, runtime, execution, active, effective };
 }

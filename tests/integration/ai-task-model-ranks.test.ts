@@ -212,7 +212,9 @@ describe("작업 ↔ 모델 순위 저장", () => {
     const { saveAiTaskRanksAction } = await actions();
     const snapshot = await tableState();
     const local = await saveAiTaskRanksAction(null, form({ task: "audit-review", slot: "1", revision: EMPTY_REVISION, rank1Connection: engine.id, rank1Model: "Qwen-X" }));
-    expect(local?.issues).toEqual([expect.stringContaining("1순위 엔진 · Qwen-X: 용량 정책에 local-audit / local-direct / Qwen-X 경로가 없습니다.")]);
+    expect(local?.issues).toEqual([expect.stringContaining("/admin/audit")]);
+    const embedding = await saveAiTaskRanksAction(null, form({ task: "product-embedding", slot: "1", revision: EMPTY_REVISION, rank1Connection: engine.id, rank1Model: "Qwen-Y" }));
+    expect(embedding?.issues).toEqual([expect.stringContaining("/admin/models/search")]);
     const stale = await saveAiTaskRanksAction(null, form({ task: "crawl-tagline", slot: "1", revision: "b".repeat(64), rank1Connection: engine.id, rank1Model: "Qwen-X" }));
     expect(stale?.issues).toEqual(["그 사이 이 줄이 바뀌었습니다. 새로고침한 뒤 다시 저장하세요."]);
     const gap = await saveAiTaskRanksAction(null, form({ task: "crawl-tagline", slot: "1", revision: EMPTY_REVISION, rank2Connection: engine.id, rank2Model: "Qwen-X" }));
@@ -233,14 +235,13 @@ describe("작업 ↔ 모델 순위 저장", () => {
   });
   it("쓰는 순위가 있는 연결은 지울 수 없고, 비우면 지울 수 있다", async () => {
     const engine = await makeEngine();
-    const { saveAiTaskRanksAction, deleteAiConnectionAction } = await actions();
+    const { deleteAiConnectionAction } = await actions();
     await client`UPDATE model_capacity_control SET mode = 'disabled' WHERE id = 1`;
-    expect(await saveAiTaskRanksAction(null, form({ task: "product-embedding", slot: "1", revision: EMPTY_REVISION, rank1Connection: engine.id, rank1Model: "Qwen-Y" })))
-      .toMatchObject({ ok: true });
+    // 일반 검색 설정은 짝 증거가 필요해 막히므로, 이 행은 연결 삭제 FK 동작만 보기 위한 픽스처다.
+    await client`INSERT INTO ai_task_models (task, slot, rank, connection_id, model, updated_by) VALUES ('product-embedding', 1, 1, ${engine.id}, 'Qwen-Y', 'it')`;
     const refused = await deleteAiConnectionAction(null, form({ id: engine.id, label: "엔진", expectedVersion: "1", confirm: "엔진" }));
     expect(refused?.issues).toEqual(["이 연결을 쓰는 순위가 있어 지울 수 없습니다. 먼저 작업 ↔ 모델 표에서 빼거나 연결을 끄세요."]);
-    const revision = createHash("sha256").update(JSON.stringify([[1, engine.id, "Qwen-Y", {}, true]])).digest("hex");
-    expect(await saveAiTaskRanksAction(null, form({ task: "product-embedding", slot: "1", revision }))).toMatchObject({ ok: true, message: expect.stringContaining("순위를 비웠습니다") });
+    await client`DELETE FROM ai_task_models WHERE task = 'product-embedding' AND slot = 1 AND rank = 1 AND connection_id = ${engine.id}`;
     expect(await deleteAiConnectionAction(null, form({ id: engine.id, label: "엔진", expectedVersion: "1", confirm: "엔진" }))).toMatchObject({ ok: true });
     expect(await connections()).toEqual([]);
     expect((await audits("ai-connection-delete")).map(row => row.target)).toEqual(["엔진"]);
@@ -391,27 +392,26 @@ describe("지금 설정 → 작업 ↔ 모델 가져오기", () => {
     const preview = await previewAiTaskImport();
     expect(preview.error).toBeNull();
     expect(preview.plan!.connections.map(row => [row.action, row.label, row.deviceId, row.keyEnv])).toEqual([["create", "eng-dev", "eng-dev", "TEST_ENGINE_KEY"],
-      ["create", "Claude CLI", "anthropic-cli", null], ["create", "emb.test:18081", "emb-test-18081", null]]);
-    expect(preview.plan!.slots.map(row => [row.task, row.action, row.ranks.map(rank => rank.model)])).toEqual([["first-review", "create", ["Qwen-X", "sonnet"]],
-      ["product-embedding", "create", ["bge-m3"]]]);
-    expect(calls.map(call => `${call.url} ${call.auth}`).sort()).toEqual([`${EMB}/models null`, `${ENGINE}/models Bearer sk-from-env`]);
+      ["create", "Claude CLI", "anthropic-cli", null]]);
+    expect(preview.plan!.slots.map(row => [row.task, row.action, row.ranks.map(rank => rank.model)])).toEqual([["first-review", "create", ["Qwen-X", "sonnet"]]]);
+    expect(calls.map(call => `${call.url} ${call.auth}`).sort()).toEqual([`${ENGINE}/models Bearer sk-from-env`]);
     expect(await connections()).toEqual([]);
     const { applyAiTaskImportAction } = await actions();
     expect((await applyAiTaskImportAction(null, form({ planHash: preview.hash!, confirm: "아니오" })))?.issues).toEqual(["확인 칸에 「가져오기」를 적어야 적용합니다."]);
     const applied = await applyAiTaskImportAction(null, form({ planHash: preview.hash!, confirm: "가져오기" }));
-    expect(applied).toMatchObject({ ok: true, message: expect.stringContaining("연결 3개 · 순위를 채운 칸 2개") });
+    expect(applied).toMatchObject({ ok: true, message: expect.stringContaining("연결 2개 · 순위를 채운 칸 1개") });
     const rows = await connections();
     const engine = rows.find(row => row.base_url === ENGINE)!;
     expect(openSecret(engine.api_key_ciphertext!, aiConnectionKeyAad(engine.id))).toBe("sk-from-env");
     expect(engine.models?.map(model => model.id)).toEqual(["Qwen-X", "Qwen-Y"]);
-    expect((await rankRows()).map(row => [row.task, row.rank, row.model])).toEqual([["first-review", 1, "Qwen-X"], ["first-review", 2, "sonnet"], ["product-embedding", 1, "bge-m3"]]);
+    expect((await rankRows()).map(row => [row.task, row.rank, row.model])).toEqual([["first-review", 1, "Qwen-X"], ["first-review", 2, "sonnet"]]);
     const [audit] = await audits("ai-task-models-import");
     expect(audit.detail).toMatchObject({ hash: preview.hash, skipped: 0 });
     expect(JSON.stringify(audit.detail)).not.toContain("sk-from-env");
     expect((await applyAiTaskImportAction(null, form({ planHash: preview.hash!, confirm: "가져오기" })))?.issues)
       .toEqual(["계획을 보여 준 뒤 설정이 바뀌었습니다. 계획을 다시 보고 적용하세요."]);
     const again = await previewAiTaskImport();
-    expect(again.plan!.slots.map(row => row.action)).toEqual(["unchanged", "unchanged"]);
-    expect(again.plan!.connections.map(row => row.action)).toEqual(["existing", "existing", "existing"]);
+    expect(again.plan!.slots.map(row => row.action)).toEqual(["unchanged"]);
+    expect(again.plan!.connections.map(row => row.action)).toEqual(["existing", "existing"]);
   });
 });

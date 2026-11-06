@@ -11,16 +11,17 @@ import { QWEN_AUDIT_PROVIDER } from "@/lib/crawl/product-audit-reviewer";
 import { qwenDirectConfig } from "@/lib/crawl/qwen-direct-review";
 import { assistBackendDrains } from "@/lib/domain/llm-assist/config";
 import { EMBEDDING_MODEL } from "@/lib/domain/products/embedding";
-import { withAdminModelStage, withAdminStagePools } from "@/lib/llm/admin-model-pools";
+import { tableStageSelections, withAdminModelStage, withAdminStagePools } from "@/lib/llm/admin-model-pools";
 import { ADMIN_MODEL_STAGES, type AdminModelStage } from "@/lib/llm/admin-model-stages";
 import { AI_TASKS, aiCliToolOfProvider, type AiTaskDef, type AiTextTaskId } from "@/lib/llm/ai-tasks";
 import { ensureAiTaskModels } from "@/lib/llm/ai-task-models-snapshot";
 import { resolveTextTaskRanks, textRankUnusableText } from "@/lib/llm/ai-task-resolver";
 import type { ModelCapacityPolicy } from "@/lib/llm/capacity";
 import type { AssignmentStage } from "@/lib/llm/capacity-helpers";
-import { configuredModel, modelBaseUrl, modelForPurpose, modelRequestName, MODEL_PURPOSE_ENV } from "@/lib/llm/model-registry";
+import { configuredModel, modelBaseUrl, modelForPurpose, modelRequestName, MODEL_PURPOSE_ENV, readModelRegistry } from "@/lib/llm/model-registry";
 import { ensureServingContracts, servingContractSnapshot, type StoredServingContract } from "@/lib/llm/serving-contract-store";
 import { ensureStageAssignments, stageAssignmentRows } from "@/lib/llm/stage-assignment-snapshot";
+import { ADMIN_STAGE_ASSIGNMENTS } from "@/lib/llm/stage-assignments";
 import { screenModelConfig } from "@/lib/screen-review/vision-review";
 import { aiConnectionBaseUrl, type AiCurrentSlot, type AiCurrentUse } from "./admin-ai-tasks";
 import { assignmentFlagState } from "./admin-assignment-source";
@@ -45,6 +46,12 @@ export type AiCurrentSources = Readonly<{
   agent: AgentStatus | null;
   auditCampaign: Readonly<{ provider: string; model: string }> | null;
   tableOn: boolean;
+  /** 배정 표 스위치를 읽지 못했다 — 표가 켜졌는지 모르므로 풀을 오늘 값이라고 하지 않는다. */
+  tableUnknown?: boolean;
+  /** 설정을 읽지 못해 기본값으로 대신했다 — 단계 풀을 오늘 값이라고 하지 않는다. */
+  settingsUnknown?: boolean;
+  /** 검색 API 설정(안전한 값만: 키·원래 오류는 넘기지 않는다). 없으면 옛 env 폴백(순수 시험). */
+  searchModels?: Readonly<Record<string, { source: string; model: string | null; baseUrl: string | null; error: string | null }>>;
   env: Readonly<Record<string, string | undefined>>;
 }>;
 
@@ -85,31 +92,53 @@ export function buildAiCurrentSlots(sources: AiCurrentSources): AiCurrentSlot[] 
   const slot = (task: AiTaskDef, value: Partial<AiCurrentSlot> & Pick<AiCurrentSlot, "source">, index = 1): AiCurrentSlot =>
     Object.freeze({ task: task.id, slot: index, uses: Object.freeze([...value.uses ?? []]), source: value.source, error: value.error ?? null, skip: value.skip ?? null,
       notes: Object.freeze([...value.notes ?? []]) });
-  const tableRows = (stage: string | null) => {
+  const tableRows = (stage: AssignmentStage | null, stageId: AdminModelStage) => {
     if (!sources.tableOn || !stage) return null;
-    const rows = stageAssignmentRows(stage as AssignmentStage)?.filter(row => row.role === "primary" && row.mode === "live") ?? [];
-    return rows.length ? [...rows].sort((a, b) => a.rank - b.rank || a.assignmentId.localeCompare(b.assignmentId)) : null;
+    const rows = stageAssignmentRows(stage)?.filter(row => row.role === "primary" && row.mode === "live") ?? [];
+    if (!rows.length) return null;
+    const registry = readModelRegistry(process.env);
+    const eligible = rows.filter(row => tableStageSelections(
+      target => target === stage ? [row] : null, `ai-task-current:${stageId}`, registry)[stageId] === row.registryKey);
+    if (!eligible.length) return null;
+    const rank = Math.min(...eligible.map(row => row.rank));
+    return eligible.filter(row => row.rank === rank)
+      .sort((a, b) => a.rank - b.rank || a.assignmentId.localeCompare(b.assignmentId));
   };
   const pools = sources.settings.stageModelPools ?? {};
+  const humanTable = (() => {
+    try { return tableRows("human", "human-review"); }
+    catch { return null; }
+  })();
+  const effectivePools = humanTable
+    ? Object.fromEntries(Object.entries(pools).filter(([id]) => id !== "human-review")) as typeof pools
+    : pools;
   /** 직접 모델 단계(단계 풀 → 같은 용도의 공통 풀 → 등록부·env 기본값). 풀 key 마다 그 key 하나로 좁힌 범위에서 실제 고르기 함수를 부른다. */
   const stageUses = (task: AiTaskDef, read: () => { model: string; baseUrl: string | null; provider: string } | null, provider: string): AiCurrentSlot => {
     const stageId = task.adminStage as AdminModelStage | null;
     if (!stageId) return slot(task, { source: "—", error: "stage_unmapped" });
+    if (sources.settingsUnknown) return slot(task, { source: "설정 출처 미확인", error: "settings_unavailable" });
     // 같은 용도를 나누는 단계(감사·갈림·보류 → direct-review, 갈림 확인 → human-review)는 자기 풀이 없으면 그 용도의 공통 풀을 쓴다(withAdminModelStage 와 같다)
     const purpose = ADMIN_MODEL_STAGES.find(stage => stage.id === stageId)?.purpose ?? stageId;
-    const table = tableRows(task.assignmentStage);
-    const own = pools[stageId] ?? [], shared = purpose !== stageId ? pools[purpose as AdminModelStage] ?? [] : [];
-    const keys = table ? table.map(row => row.registryKey) : own.length ? own : shared;
-    const poolOf = (key: string) => table || own.length ? { ...pools, [stageId]: [key] } : { ...pools, [purpose]: [key] };
+    if (sources.tableUnknown && (task.assignmentStage || (!(pools[stageId]?.length) && purpose !== stageId && !!ADMIN_STAGE_ASSIGNMENTS[purpose]))) return slot(task, { source: "배정 출처 미확인", error: "assignments_unavailable" });
+    const rawStage = task.assignmentStage as AssignmentStage | null;
+    const table = tableRows(rawStage, stageId);
+    const own = pools[stageId] ?? [];
+    const sharedTable = !table && !own.length ? tableRows(ADMIN_STAGE_ASSIGNMENTS[purpose] ?? null, purpose as AdminModelStage) : null;
+    const shared = purpose !== stageId ? pools[purpose as AdminModelStage] ?? [] : [];
+    const selectedTable = table ?? sharedTable;
+    const keys = selectedTable ? selectedTable.map(row => row.registryKey) : own.length ? own : shared;
+    const scopeStage = table || own.length ? stageId : purpose;
+    const poolOf = (key: string) => ({ ...effectivePools, [scopeStage]: [key] });
     const run = (scope: Record<string, string[]> | null) => scope
       ? withAdminStagePools(scope, `ai-task-current:${stageId}`, () => withAdminModelStage(stageId, read)) : read();
     try {
       const picked = keys.length ? keys.map((key, index) => ({ origin: table ? `배정 표 ${stageId} rank ${table[index].rank}` : own.length
-        ? `stageModelPools.${stageId}[${index}]` : `stageModelPools.${purpose}[${index}]`, value: run(poolOf(key)) })) : [{ origin: "등록부·env 기본값", value: run(null) }];
+        ? `stageModelPools.${stageId}[${index}]` : sharedTable ? `공통 단계 배정 표 ${purpose} rank ${sharedTable[index].rank}`
+        : `stageModelPools.${purpose}[${index}]`, value: run(poolOf(key)) })) : [{ origin: "등록부·env 기본값", value: run(null) }];
       const uses = picked.flatMap(entry => entry.value ? [api(task, entry.value.model, entry.value.provider === "claude-cli" ? "claude-cli" : provider, entry.origin,
         entry.value.baseUrl)] : []).map(use => use.provider.endsWith("-cli") ? cli(task, use.provider, use.model, use.origin) : use);
-      const notes = !table && keys.length > 1 ? ["오늘은 단계 풀의 모델을 잡마다 돌아가며 나눠 씁니다 — 순위로 옮기면 1순위를 먼저 쓰고 나머지는 대체가 됩니다."] : [];
-      return slot(task, { uses, source: table ? "배정 표" : own.length ? "단계 풀" : shared.length ? "공통 단계 풀" : "등록부·env 기본값", notes });
+      const notes = !table && !sharedTable && keys.length > 1 ? ["작업 묶음마다 모델 하나를 선택합니다."] : [];
+      return slot(task, { uses, source: table ? "배정 표" : own.length ? "단계 풀" : sharedTable ? "공통 단계 배정 표" : shared.length ? "공통 단계 풀" : "등록부·env 기본값", notes });
     } catch (error) { return slot(task, { source: "—", error: errorText(error) }); }
   };
   const purposeRead = (purpose: string, provider: string) => () => {
@@ -184,7 +213,13 @@ export function buildAiCurrentSlots(sources: AiCurrentSources): AiCurrentSlot[] 
           out.push(koreanTranslationQwenEnabled(sources.env) ? stageUses(task, purposeRead("korean-translation-direct", "local-direct"), "local-direct")
             : slot(task, { source: "env KOREAN_TRANSLATION_QWEN_ENABLED", skip: "지금 꺼져 있습니다(KOREAN_TRANSLATION_QWEN_ENABLED) — 켜지 않은 경로는 옮기지 않습니다." }));
           break;
-        case "human-review": case "split-confirm":
+        case "human-review": {
+          const slot = stageUses(task, purposeRead("human-review", "local-direct"), "local-direct");
+          const note = sources.settings.humanReview.enabled ? "자동 위임 켜짐" : "자동 위임 꺼짐 · 사람이 직접 판단";
+          out.push(Object.freeze({ ...slot, notes: Object.freeze([...slot.notes, note]) }));
+          break;
+        }
+        case "split-confirm":
           out.push(stageUses(task, purposeRead("human-review", "local-direct"), "local-direct"));
           break;
         case "audit-review": case "audit-second-opinion": case "published-filter": case "split-tiebreak": case "held-review-retry": {
@@ -249,6 +284,25 @@ export function buildAiCurrentSlots(sources: AiCurrentSources): AiCurrentSlot[] 
         }
         case "product-embedding": case "search-embedding": case "search-rerank": {
           const name = task.id === "search-rerank" ? "RERANK_URL" : "EMBEDDING_URL";
+          if (sources.searchModels) {
+            const value = sources.searchModels[task.id];
+            if (!value || value.error) {
+              out.push(slot(task, { source: "검색 API 설정", error: "search_model_unavailable" }));
+              break;
+            }
+            if (value.source === "environment" && !value.baseUrl) {
+              out.push(slot(task, { source: "환경 API 설정", skip: `환경 API 설정에 ${name} 이(가) 없어 옮기지 않습니다.`, uses: [] }));
+              break;
+            }
+            if (!value.baseUrl || (!value.model && value.source !== "environment")) {
+              out.push(slot(task, { source: "검색 API 설정", error: "search_model_unavailable" }));
+              break;
+            }
+            const source = value.source === "environment" ? "환경 API 설정" : "검색 API 설정";
+            const model = value.model ?? (task.kind === "embedding" ? EMBEDDING_MODEL : "서버 제공 모델");
+            out.push(slot(task, { source, uses: [api(task, model, "llama-server", source, baseOf(value.baseUrl), { serverNamed: value.source === "environment" })] }));
+            break;
+          }
           const base = baseOf(sources.env[name]?.trim());
           out.push(base ? slot(task, { source: `웹 프로세스 env ${name}`, uses: [api(task, task.kind === "embedding" ? EMBEDDING_MODEL : "rerank", "llama-server", `env ${name}`, base,
             { serverNamed: true, note: "모델 이름은 서버 목록에서 고릅니다(하나뿐이면 그것)" })],
@@ -265,16 +319,24 @@ export function buildAiCurrentSlots(sources: AiCurrentSources): AiCurrentSlot[] 
 }
 
 /** 현재 값의 출처를 모아(설정·text 경로 이름·정책·connect 상태·실행 중 감사·배정 표 스위치) buildAiCurrentSlots 에 넘긴다. 읽기만 한다. */
-export async function readAiCurrentSources(policy: ModelCapacityPolicy | null): Promise<AiCurrentSources> {
+export async function readAiCurrentSources(policy: ModelCapacityPolicy | null, options: { includeAgent?: boolean } = {}): Promise<AiCurrentSources> {
   await Promise.all([ensureServingContracts(0), ensureAiTaskModels(0)]);
-  const [{ getSettings }, { currentModelEnv }, { agentRequest }] = await Promise.all([import("@/lib/crawl/settings"), import("./model-env"), import("./agent-client")]);
+  const [{ getSettings, settingsUnreadable }, { currentModelEnv }, { agentRequest }, { resolveSearchModelSettings }] = await Promise.all([import("@/lib/crawl/settings"), import("./model-env"), import("./agent-client"), import("@/lib/domain/products/search-model-settings")]);
   const [settings, modelEnv, agent, auditCampaign, flag] = await Promise.all([onPrimary(getSettings), currentModelEnv(),
-    agentRequest<AgentStatus>("status").catch(() => null),
+    options.includeAgent === false ? Promise.resolve(null) : agentRequest<AgentStatus>("status").catch(() => null),
     onPrimary(async () => {
       const [row] = await db.select({ provider: productAuditCampaigns.provider, model: productAuditCampaigns.model, currentProvider: productAuditCampaigns.currentProvider,
         currentModel: productAuditCampaigns.currentModel }).from(productAuditCampaigns).where(eq(productAuditCampaigns.status, "running")).limit(1);
       return row ? row.currentProvider && row.currentModel ? { provider: row.currentProvider, model: row.currentModel } : { provider: row.provider, model: row.model } : null;
     }).catch(() => null),
-    ensureStageAssignments(0).then(assignmentFlagState).catch(() => ({ enabled: false }))]);
-  return { settings, modelEnv, policy, agent, auditCampaign, tableOn: flag.enabled === true, env: process.env };
+    ensureStageAssignments(0).then(assignmentFlagState).catch(() => ({ enabled: false, source: "unread" }))]);
+  const searchModels = Object.freeze(Object.fromEntries(await Promise.all((["product-embedding", "search-embedding", "search-rerank"] as const).map(async task => {
+    try {
+      const value = await resolveSearchModelSettings(task);
+      return [task, Object.freeze({ source: value.source, model: value.model, baseUrl: value.baseUrl, error: null })] as const;
+    } catch {
+      return [task, Object.freeze({ source: "검색 API 설정", model: null, baseUrl: null, error: "search_model_unavailable" })] as const;
+    }
+  }))));
+  return { settings, modelEnv, policy, agent, auditCampaign, tableOn: flag.enabled === true, tableUnknown: flag.source === "unread", settingsUnknown: settingsUnreadable(settings), searchModels, env: process.env };
 }
