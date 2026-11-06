@@ -32,6 +32,8 @@ export type AiTaskConnectionSnapshot = Readonly<{
   apiKey: string | null;
   /** 암호문이 있는데 열리지 않았다 */
   keyUnreadable: boolean;
+  /** 연결 행 버전(있으면 정확히 일치해야 한다). 예전 시험 고정에는 없다. */
+  version?: number;
 }>;
 export type AiTaskModelSnapshotRow = Readonly<{
   task: string; slot: number; rank: number; model: string; enabled: boolean; options: Readonly<Record<string, unknown>>;
@@ -48,7 +50,7 @@ function readable(current: State): boolean {
 
 type RawRow = { task: string; slot: number | string; rank: number | string; model: string; enabled: boolean; options: unknown;
   connection_id: string; label: string; kind: string; base_url: string | null; api_key_ciphertext: string | null; cli_tool: string | null;
-  device_id: string; connection_enabled: boolean; models: unknown; connection_options: unknown };
+  device_id: string; connection_enabled: boolean; models: unknown; connection_options: unknown; connection_version?: number | string };
 
 const aad = (id: string) => `ai_connections\n${id}`;
 const objectOf = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -62,11 +64,14 @@ export function aiTaskModelSnapshotRows(rows: readonly RawRow[]): AiTaskModelSna
       return typeof value.id === "string" ? [Object.freeze({ id: value.id, maxModelLen: typeof value.maxModelLen === "number" ? value.maxModelLen : null })] : [];
     }) : null;
     const contextTokens = objectOf(row.connection_options).contextTokens;
+    const version = row.connection_version !== undefined && row.connection_version !== null && `${row.connection_version}`.trim() !== ""
+      && Number.isSafeInteger(Number(row.connection_version)) ? Number(row.connection_version) : null;
     return Object.freeze({ task: row.task, slot: Number(row.slot), rank: Number(row.rank), model: row.model, enabled: row.enabled === true,
       options: Object.freeze({ ...objectOf(row.options) }),
       connection: Object.freeze({ id: row.connection_id, label: row.label, kind: row.kind === "cli" ? "cli" as const : "api" as const, baseUrl: row.base_url,
         cliTool: row.cli_tool, deviceId: row.device_id, enabled: row.connection_enabled === true, models: models && Object.freeze(models),
-        contextTokens: typeof contextTokens === "number" ? contextTokens : null, apiKey, keyUnreadable: !!row.api_key_ciphertext && apiKey === null }) });
+        contextTokens: typeof contextTokens === "number" ? contextTokens : null, ...(version !== null ? { version } : {}),
+        apiKey, keyUnreadable: !!row.api_key_ciphertext && apiKey === null }) });
   });
 }
 
@@ -76,7 +81,7 @@ async function reload(current: State): Promise<void> {
     if (currentReplayDb()) return;
     const query = sql`SELECT t.task, t.slot, t.rank, t.model, t.enabled, t.options,
         c.id AS connection_id, c.label, c.kind, c.base_url, c.api_key_ciphertext, c.cli_tool, c.device_id, c.enabled AS connection_enabled,
-        c.models, c.options AS connection_options
+        c.models, c.options AS connection_options, c.version AS connection_version
       FROM ai_task_models t JOIN ai_connections c ON c.id = t.connection_id
       ORDER BY t.task, t.slot, t.rank`;
     const rows = Array.from(readOnlyScope.getStore() ? await db.transaction(async tx => {

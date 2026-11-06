@@ -67,6 +67,7 @@ export type LlmPoolRuntime = { configRevision: number; members: number; served: 
 export type LlmRuntime = { at: string; startedAt?: string; pool?: LlmPoolRuntime; degraded: { code: string; detail: string | null } | null; unusable: { rank: number; code: string; text: string }[] };
 export type LlmLegacyPublish = { source: string; observedAt: string | null; ready: boolean | null;
   models: { rank: number; model: string; where: string }[] };
+export type LlmEffectiveConfig = { source: string; models: { model: string; where: string }[]; error: string | null; skip: string | null; notes: string[] };
 export type LlmInputs = {
   now: string;
   /** null = 읽지 못함 */
@@ -80,6 +81,8 @@ export type LlmInputs = {
   runtime: Record<string, LlmRuntime> | null;
   /** Explicit null means the mode read failed. Undefined preserves existing fallback-only pure fixtures. */
   execution?: readonly LlmExecutionRow[] | null;
+  /** nonlive 실제 적용 설정. null = 읽지 못함, undefined = 기존 fixture(없음). */
+  effective?: Record<string, LlmEffectiveConfig> | null;
 };
 
 /** 실행 쪽 사정 관측을 믿는 시간 — 잡 관측이 멈춰 있어도(2차는 10:46Z 에 멈춘 채) 옛 오류를 지금 것으로 보이지 않게 한다 */
@@ -118,6 +121,7 @@ export type TaskLlm = {
   slots: SlotSeen[];
   pool?: TaskLlmPool;
   legacy?: LlmLegacyPublish;
+  effective?: LlmEffectiveConfig;
   /** null = 알 수 없음(장부 밖 route·읽지 못함) */
   used: UsedSeen[] | null;
   /** Current reservations/transmissions/uncertainties. A reservation is not a running call. */
@@ -287,6 +291,24 @@ function taskLlm(def: AiTaskDef, inputs: LlmInputs): TaskLlm {
       head: first ? { model: first.model, where: first.where, rank: first.rank, source: "set", count: null } : null,
       note: legacy.observedAt ? "기존 CLI 분류 설정입니다. API 분산 모델과 별도이며 현재 호출은 장부에서 확인합니다."
         : "기존 CLI 분류를 사용하지만 현재 연결 에이전트 설정은 미확인입니다. API 순위가 비었다는 이유로 모델 미설정으로 판단하지 않습니다." };
+  }
+
+  // 실행 쪽이 순위를 읽지 않는 작업 — 저장된 순위가 아니라 실제 적용 설정만 보인다.
+  if (!live) {
+    const effective = inputs.effective?.[def.id] ?? null;
+    const plainUsed = usedWhy ? null : (inputs.used ?? []).filter(row => row.routeId === def.routeId).sort((a, b) => b.count - a.count)
+      .map(row => { const place = placeOf(row, inputs);
+        return { text: `${place} · ${row.model}`, model: row.model, where: place, count: row.count, rank: null, lastAt: row.lastAt }; });
+    const firstUsed = plainUsed?.[0] ?? null;
+    const first = effective?.models[0] ?? null;
+    const notes = effective
+      ? [effective.error ? `실제 적용 설정 오류: ${effective.error}` : null, effective.skip, ...effective.notes,
+        effective.source ? `출처: ${effective.source}` : null].filter((text): text is string => !!text)
+      : ["실제 적용 설정을 읽지 못했습니다 — 저장된 순위는 실행에 쓰이지 않습니다."];
+    return { ...base, slots: [], ...(effective ? { effective } : {}), used: plainUsed, usedWhy, state: "set_only",
+      head: first ? { model: first.model, where: first.where, rank: null, source: "set", count: null }
+        : !effective && firstUsed ? { model: firstUsed.model, where: firstUsed.where, rank: null, source: "used", count: firstUsed.count } : null,
+      note: notes.length ? notes.join(" · ") : null };
   }
 
   // 순위가 비었다 — 실행 쪽이 순위를 읽는 작업은 돌지 않는다

@@ -34,6 +34,15 @@ function healthy(patch: Partial<LlmInputs> = {}): LlmInputs {
       rank("product-search-profile", 1, QWEN, "qwen3.8-flash-next"), rank("product-search-verify", 1, QWEN, "qwen3.8-flash-next")],
     used: [used("crawl-agent-review", "abcllm", "qwen3.8-flash-next", 128), used("second-review", "abcllm", "gpt-oss-120b", 40)],
     runtime: {},
+    effective: {
+      "product-intro-check": {
+        source: "CLI 환경 설정",
+        models: [{ model: "sonnet", where: "Claude CLI" }],
+        error: null,
+        skip: null,
+        notes: [],
+      },
+    },
     ...patch,
   };
 }

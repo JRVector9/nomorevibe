@@ -101,6 +101,7 @@ export type ReviewSnapshot = {
   relationship: "same_product" | "unknown" | "conflict";
   scanState: "pending" | "complete" | "partial" | "failed";
   evidenceTruncated: boolean;
+  adminFirstReviewRerunId?: string;
 };
 export type ReviewInput = {
   snapshot: ReviewSnapshot;
@@ -155,6 +156,7 @@ export function createReviewInput(
   const keys = Array.isArray(raw) ? [...new Set(raw.filter((key): key is string => typeof key === "string")
     .map(key => key.replace(/^github:/, "").toLowerCase()))] : [];
   const relationship = keys.length === 1 ? keys[0] === document.repo.toLowerCase() ? "same_product" : "conflict" : "unknown";
+  const rerunMarker = z.string().uuid().safeParse(candidate.signals?.adminFirstReviewRerunId);
   const scanFresh = scan?.completedAt && scan.completedAt <= now
     && scan.completedAt.getTime() + REVIEW_FRESH_MS > now.getTime()
     && scan.detectorVersion === settings.agentEvidence.detectorVersion && !scan.lastErrorCode;
@@ -196,6 +198,7 @@ export function createReviewInput(
     evidence: all.slice(0, 32),
     evidenceSummary: summarizeAgentEvidence({ relationship, scanState, observations: [] }),
     relationship, scanState, evidenceTruncated: all.length > 32,
+    ...(rerunMarker.success ? { adminFirstReviewRerunId: rerunMarker.data } : {}),
   };
   while (Buffer.byteLength(JSON.stringify(snapshot), "utf8") > MAX_REVIEW_INPUT_BYTES && snapshot.evidence.length) {
     snapshot.evidence.pop();

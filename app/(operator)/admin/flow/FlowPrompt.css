@@ -1,0 +1,258 @@
+/* Prompt trigger and read-only dialog for the flow prompt inspector. */
+.flow-prompt-button {
+  white-space: nowrap;
+}
+.admin-prototype .flow-workspace .flow-card[data-selected=true] {
+  border-color: var(--blue);
+  box-shadow: inset 0 0 0 1px var(--blue);
+}
+.admin-prototype .flow-workspace .flow-prompt-card-select {
+  appearance: none;
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.admin-prototype .flow-workspace .flow-prompt-card-select:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+.admin-prototype .flow-workspace .flow-card-prompt {
+  display: flex;
+  margin-top: 8px;
+}
+.admin-prototype .flow-workspace .flow-card-prompt .flow-prompt-button {
+  width: 100%;
+}
+.flow-prompt-support {
+  margin-top: 8px;
+}
+.flow-prompt-dialog {
+  width: min(1080px, calc(100vw - 32px));
+  max-width: 1080px;
+  max-height: 85dvh;
+  margin: auto;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 24px 80px rgba(15, 23, 42, .32);
+  overflow: hidden;
+}
+.flow-prompt-dialog::backdrop {
+  background: rgba(15, 23, 42, .55);
+}
+.flow-prompt-dialog-inner {
+  display: flex;
+  flex-direction: column;
+  max-height: 85dvh;
+  min-height: 0;
+}
+.flow-prompt-dialog-head {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.flow-prompt-dialog-head .eyebrow {
+  margin: 0 0 4px;
+}
+.flow-prompt-dialog-head h2 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+.flow-prompt-close {
+  flex-shrink: 0;
+}
+.flow-prompt-dialog-body {
+  min-height: 0;
+  padding: 18px 20px 22px;
+  overflow: auto;
+}
+.flow-prompt-response-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+.flow-prompt-response-head h2 {
+  margin: 0;
+}
+.flow-prompt-stage-code {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 8px;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: .8rem;
+}
+.flow-prompt-meta,
+.flow-prompt-note,
+.flow-prompt-caveat {
+  margin: 10px 0 0;
+}
+.flow-prompt-meta {
+  color: var(--muted);
+  font-size: .9rem;
+  overflow-wrap: anywhere;
+}
+.flow-prompt-note {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.flow-prompt-caveat {
+  border-left: 3px solid var(--amber);
+  padding: 8px 10px;
+  background: var(--amber-soft);
+  color: var(--amber);
+  font-size: .9rem;
+}
+.flow-prompt-sections {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+}
+.flow-prompt-section {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px;
+  background: var(--surface-2);
+}
+.flow-prompt-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.flow-prompt-section-head h3 {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.flow-prompt-version {
+  color: var(--muted);
+  font-size: .86rem;
+}
+.flow-prompt-section-error {
+  margin: 10px 0 0;
+  border-radius: 6px;
+  padding: 8px 10px;
+  background: var(--red-soft);
+  color: var(--red);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.flow-prompt-facts {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  gap: 8px 12px;
+  margin: 12px 0 0;
+}
+.flow-prompt-facts dt {
+  color: var(--muted);
+  font-weight: 650;
+}
+.flow-prompt-facts dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.flow-prompt-source-list,
+.flow-prompt-notes-list {
+  margin: 0;
+  padding-left: 1.2rem;
+}
+.flow-prompt-source-list code,
+.flow-prompt-variable-list code {
+  overflow-wrap: anywhere;
+}
+.flow-prompt-variable-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.flow-prompt-variable-list code {
+  display: inline-block;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 5px;
+  background: var(--surface);
+  font-size: .86rem;
+}
+.flow-prompt-block h4 {
+  margin: 14px 0 6px;
+}
+.flow-prompt-code {
+  max-height: 340px;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: .86rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.flow-prompt-placeholder-note {
+  margin: 8px 0 0;
+  color: var(--amber);
+  font-size: .88rem;
+  line-height: 1.5;
+}
+.flow-prompt-muted {
+  color: var(--muted);
+}
+.flow-prompt-status {
+  margin: 0;
+  color: var(--muted);
+}
+.flow-prompt-error {
+  border: 1px solid var(--red);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--red-soft);
+  color: var(--red);
+}
+.flow-prompt-error p {
+  margin: 0 0 10px;
+}
+@media (max-width: 640px) {
+  .flow-prompt-dialog {
+    width: calc(100vw - 16px);
+  }
+  .flow-prompt-dialog-head,
+  .flow-prompt-dialog-body {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+  .flow-prompt-facts {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+  .flow-prompt-facts dd {
+    margin-bottom: 6px;
+  }
+}

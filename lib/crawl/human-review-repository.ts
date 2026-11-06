@@ -1,4 +1,5 @@
-import { scopedModel, registeredPoolModelNames } from "@/lib/llm/model-registry";
+import { modelRequestName, scopedModel } from "@/lib/llm/model-registry";
+import { currentHumanModelSelection } from '@/lib/operations/human-model-source';
 import { and, asc, desc, eq, inArray, isNull, not, notInArray, or, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { crawlCandidates, crawlReviewAttempts, operationsAudit, jobs, secondReviews, type DecisionReason } from '@/lib/db/schema';
@@ -45,6 +46,16 @@ export async function claimHumanReview(repo: string, lease: JobLease): Promise<H
       // 보류 Qwen-v2 재심사가 맡은 사유는 그쪽만 가른다 — 같은 잠긴 설정 행으로 재므로 두 claim 이 한 후보에 겹치지 않는다
       || heldQwenOwns(current.settings, current.candidate.reason)) return null;
     const { candidate, input } = current;
+    if (input.snapshot.adminFirstReviewRerunId) {
+      const [rerun] = await tx.select({ id: crawlReviewAttempts.id }).from(crawlReviewAttempts).where(and(
+        eq(crawlReviewAttempts.candidateId, candidate.id), eq(crawlReviewAttempts.kind, 'automatic'),
+        eq(crawlReviewAttempts.state, 'succeeded'), eq(crawlReviewAttempts.inputHash, input.inputHash),
+        eq(crawlReviewAttempts.policyHash, input.policyHash), eq(crawlReviewAttempts.sourceRevisionHash, input.sourceRevisionHash),
+        eq(crawlReviewAttempts.promptVersion, REVIEW_PROMPT_VERSION),
+        eq(crawlReviewAttempts.rulesVersion, REVIEW_RULES_VERSION),
+      )).limit(1);
+      if (!rerun) return null;
+    }
     const pending = await tx.select({ id: secondReviews.id }).from(secondReviews).where(and(
       eq(secondReviews.candidateId, candidate.id), eq(secondReviews.status, 'pending'),
     )).for('share');
@@ -160,9 +171,11 @@ export async function requeueInvalidHumanApprovals(lease: JobLease, limit = 50):
       if (!current || current.candidate.state !== 'approved' || current.candidate.decidedBy !== 'deepseek') return 0;
       const id = current.candidate.signals?.delegatedReviewAttemptId;
       const [attempt] = await tx.select().from(crawlReviewAttempts).where(eq(crawlReviewAttempts.id, typeof id === 'number' ? id : -1)).for('share');
+      const selection = currentHumanModelSelection(current.settings.stageModelPools?.["human-review"] ?? []);
       if (current.settings.humanReview.enabled && attempt?.kind === 'delegated' && attempt.state === 'succeeded'
         && attempt.actor === deepseekActor(current.settings.humanReview.generation) && attempt.outcome?.decision === 'approve'
-        && attempt.provider === DEEPSEEK_REVIEW_PROVIDER && attempt.model !== null && registeredPoolModelNames(current.settings.stageModelPools?.["human-review"], DEEPSEEK_REVIEW_MODEL).includes(attempt.model)
+        && attempt.provider === DEEPSEEK_REVIEW_PROVIDER && attempt.model !== null
+        && (selection.source === 'unknown' || selection.effectiveModels.map(modelRequestName).includes(attempt.model))
         && attempt.policyHash === current.input.policyHash
         && attempt.inputHash === current.input.inputHash && attempt.sourceRevisionHash === current.input.sourceRevisionHash
         && attempt.validUntil > new Date() && current.input.validUntil > new Date()) return 0;

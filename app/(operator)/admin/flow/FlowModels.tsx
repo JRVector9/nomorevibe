@@ -1,5 +1,6 @@
 "use client";
 
+import "./flow-layout.css";
 import type { StationLlm } from "@/lib/operations/conveyor-llm";
 import { FlowUnknownReviews } from "./FlowUnknownReviews";
 
@@ -30,10 +31,10 @@ export function LiveModelRows({ llm, compact = false }: { llm: StationLlm | null
   return <span className="flow-model-lines">
     {running.length > 0 ? display(running, "전송 중", "running") : <span className="flow-model-note">{unread ? "현재 호출 일부 미확인" : "장부상 전송 중 호출 없음"}</span>}
     {display(reserved, "예약", "reserved")}
-    {compact ? display(uncertain, "종료 미확정", "uncertain") : uncertain.map(({ task, row }, index) =>
+    {uncertain.map(({ task, row }, index) =>
       <span className="flow-model-line" data-state="uncertain" key={`${task.task}:${row.where}:${row.model}:uncertain:${index}`}>
         <FlowUnknownReviews task={task.task} model={row.model} label={`종료 미확정 ${count(row.count)}`} className="flow-model-state fu-trigger" />
-        <span>{row.where} · <b>{row.model}</b>{llm.tasks.length > 1 ? ` · ${task.label}` : ""}</span>
+        <span>{row.where} · <b>{row.model}</b>{!compact && llm.tasks.length > 1 ? ` · ${task.label}` : ""}</span>
       </span>)}
   </span>;
 }
@@ -47,13 +48,22 @@ export function RecentModelRows({ llm }: { llm: StationLlm | null }) {
   </span>)}{!used.length && <span>{llm.tasks.some(task => task.used === null) ? "최근 사용 기록 미확인" : "최근 1시간 완료 호출 없음"}</span>}</span>;
 }
 
-/** The saved fallback ranks and pool members each occupy a new row. */
+/** 실제 적용 설정·저장된 fallback ranks·pool members each occupy a new row. */
 export function ConfiguredModelRows({ llm, compact = false }: { llm: StationLlm | null; compact?: boolean }) {
   if (!llm || llm.kind === "unknown") return <span className="flow-model-note">모델 설정 미확인</span>;
   if (llm.kind === "none") return <span>해당 없음</span>;
   return <span className="flow-model-lines">{llm.tasks.map(task => <span className="flow-model-task" key={task.task}>
-    {!compact && <b>{task.label}{task.pool ? " · 작업 분산" : task.legacy ? ` · ${task.legacy.source}` : task.live ? " · 대체 실행" : " · 저장된 순위(실행 미연결)"}</b>}
-    {task.legacy ? <>{task.legacy.models.map(row => <span className="flow-model-line" key={row.rank}>
+    {!compact && <b>{task.label}{task.pool ? " · 작업 분산" : task.effective ? " · 실제 적용 설정" : task.legacy ? ` · ${task.legacy.source}` : task.live ? " · 대체 실행" : " · 실제 적용 설정 미확인"}</b>}
+    {task.effective ? <>
+      <span className="flow-model-note">출처: {task.effective.source}</span>
+      {task.effective.models.map((row, index) => <span className="flow-model-line" key={`${index}:${row.where}:${row.model}`}>
+        <span className="flow-model-rank">모델 {index + 1}</span><span>{row.where} · {row.model}</span>
+      </span>)}
+      {task.effective.models.length === 0 && !task.effective.error && !task.effective.skip && <span className="flow-model-note">실제 적용 모델 없음</span>}
+      {task.effective.error && <span className="flow-model-note">설정 오류: {task.effective.error}</span>}
+      {task.effective.skip && <span className="flow-model-note">{task.effective.skip}</span>}
+      {task.effective.notes.map((note, index) => <span className="flow-model-note" key={`${index}:${note}`}>{note}</span>)}
+    </> : task.legacy ? <>{task.legacy.models.map(row => <span className="flow-model-line" key={row.rank}>
       <span className="flow-model-rank">{row.rank}순위</span><span>{row.where} · {row.model}</span>
     </span>)}{task.legacy.models.length === 0 && <span className="flow-model-note">기존 CLI 설정 미확인</span>}
       {task.legacy.ready === false && <span className="flow-model-note">연결 에이전트가 현재 분류 요청을 받을 수 없습니다.</span>}</> : task.pool ? task.pool.members.map(member => <span className="flow-model-line" key={member.memberId}>
@@ -65,6 +75,7 @@ export function ConfiguredModelRows({ llm, compact = false }: { llm: StationLlm 
         <span className="flow-model-rank">{rank.rank}순위</span><span>{rank.connection} · {rank.model}{rank.problem ? ` · ${rank.problem}` : ""}</span>
       </span>)}
     </span>)}
-    {!task.pool && !task.legacy && !task.slots.some(slot => slot.ranks.length) && <span className="flow-model-note">모델 순위 없음</span>}
+    {!task.effective && !task.pool && !task.legacy && !task.live && <span className="flow-model-note">실제 적용 설정 미확인</span>}
+    {!task.effective && !task.pool && !task.legacy && task.live && !task.slots.some(slot => slot.ranks.length) && <span className="flow-model-note">모델 순위 없음</span>}
   </span>)}</span>;
 }

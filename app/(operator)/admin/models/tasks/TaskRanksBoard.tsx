@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 import { aiRankChoiceOfRow } from "@/lib/operations/admin-ai-tasks";
 import { useActionState, useEffect, useState } from "react";
 import { AI_TASK_GROUP_LABELS, AI_TASK_KIND_LABELS, aiTask, type AiTaskGroup } from "@/lib/llm/ai-tasks";
@@ -10,6 +11,7 @@ import type { AiTaskExecutionAdminView } from "@/lib/operations/admin-ai-task-ex
 import { currentTaskPoolRuntime, taskPoolRuntimeGroups, TaskExecutionForm } from "./TaskExecutionForm";
 import { aiTaskWorkloadPoolUnsupportedReason, aiTaskWorkloadPoolApiOnly, type AiTaskPoolRuntime } from "@/lib/llm/ai-task-execution-config";
 import { modelPickerConnectionLabel, modelPickerModelLabel } from "../model-picker-display";
+import { aiTaskEditTarget } from "@/lib/operations/ai-task-edit-target";
 
 /** 한 줄(작업 × 칸)의 화면 값 — 서버(readAiTasksAdminView)가 만든다. */
 export type TaskRankLine = {
@@ -55,13 +57,15 @@ export function TaskRanksBoard({ lines, connections, rows, executions = [], read
         const execution = executions.find(view => view.task === line.task && view.slot === line.slot);
         const pool = execution?.mode === "workload_pool";
         const apiOnly = aiTaskWorkloadPoolApiOnly(line.task);
+        const externalTarget = !line.live && line.task !== "publish-classify" ? aiTaskEditTarget(line.task) : null;
         const status: Status = readOnly ? { text: "설정 읽기 실패 · 저장 잠김", tone: "warn" }
-          : pool ? poolStatus(line, execution, connections) : apiOnly ? legacyClassificationStatus(line) : lineStatus(line, false, false);
+          : pool ? poolStatus(line, execution, connections) : externalTarget ? effectiveStatus(line)
+            : apiOnly ? legacyClassificationStatus(line) : lineStatus(line, false, false);
         const ranks = <TaskRankLineForm line={line} connections={connections} rows={rows} readOnly={readOnly || pool} inactive={pool} />;
         return <details key={`${line.task}#${line.slot}`} id={`execution-${line.task}-${line.slot}`} className="mt-task-row">
           <summary className="mt-task-row-summary">
             <span className="mt-task-identity"><b title={line.description}>{line.label}</b><small>{AI_TASK_KIND_LABELS[line.kind]} · {line.accepts}</small></span>
-            <span className="mt-task-mode"><b>{readOnly ? "실행 방식 미확인" : pool ? `작업 분산 · ${execution.members.length}칸` : apiOnly ? "기존 CLI 분류" : "대체 실행"}</b>
+            <span className="mt-task-mode"><b>{readOnly ? "실행 방식 미확인" : pool ? `작업 분산 · ${execution.members.length}칸` : apiOnly ? "기존 CLI 분류" : externalTarget ? "실제 적용 설정" : "대체 실행"}</b>
               <span className={TONE[status.tone]} data-status={status.tone}>{status.text}</span></span>
             <TaskModelsSummary line={line} execution={execution} connections={connections} />
             {readOnly ? <span className="mt-task-runtime text-fg-3">실행 방식 확인 후 표시</span> : <TaskRuntimeSummary line={line} execution={execution} connections={connections} />}
@@ -70,10 +74,13 @@ export function TaskRanksBoard({ lines, connections, rows, executions = [], read
           <div className="mt-task-editor">
             {execution && <TaskExecutionForm key={`${line.task}#${line.slot}#${execution.revision ?? "default"}`} view={execution}
               label={line.label} options={line.options} connections={connections} readOnly={readOnly} runtime={line.runtime} />}
-            {!pool && !apiOnly && ranks}
-            {pool && !apiOnly && <details className="text-[13px]">
-              <summary className="cursor-pointer text-fg-3">보관된 대체 순위</summary>{ranks}
-            </details>}
+            {externalTarget ? <EffectiveModelConfig line={line} target={externalTarget} readOnly={readOnly} />
+              : <>
+                {!pool && !apiOnly && ranks}
+                {pool && !apiOnly && <details className="text-[13px]">
+                  <summary className="cursor-pointer text-fg-3">보관된 대체 순위</summary>{ranks}
+                </details>}
+              </>}
           </div>
         </details>;
       })}
@@ -100,8 +107,26 @@ function legacyClassificationStatus(line: TaskRankLine): Status {
   return { text: "기존 CLI 설정 사용", tone: "muted" };
 }
 
+function effectiveStatus(line: TaskRankLine): Status {
+  if (!line.current) return { text: "실제 적용 설정 확인 필요", tone: "warn" };
+  if (line.current.error) return { text: "실제 적용 설정 읽지 못함", tone: "bad" };
+  if (line.current.skip) return { text: "실행 조건 확인", tone: "muted" };
+  return { text: "실제 적용 설정 확인", tone: "muted" };
+}
+
 function TaskModelsSummary({ line, execution, connections }: { line: TaskRankLine; execution?: AiTaskExecutionAdminView; connections: readonly AiConnectionView[] }) {
   const pool = execution?.mode === "workload_pool";
+  const effectiveOnly = !pool && !line.live && line.task !== "publish-classify";
+  if (effectiveOnly) {
+    if (!line.current) return <span className="mt-task-models text-fg-3">실제 적용 설정 확인 필요</span>;
+    if (line.current.error) return <span className="mt-task-models text-red-600">실제 적용 설정 읽지 못함</span>;
+    if (line.current.labels.length) return <span className="mt-task-models">
+      {line.current.labels.map((text, index) => <span key={`${index}:${text}`} className="mt-task-model-line"><b>모델 {index + 1}</b><span>{text}</span></span>)}
+      <small className="text-fg-3">출처: {line.current.source}</small>
+      {line.current.skip && <small className="text-amber-700">{line.current.skip}</small>}
+    </span>;
+    return <span className="mt-task-models text-fg-3">{line.current.skip ?? "실제 적용 모델 설정 없음"}</span>;
+  }
   const models = pool ? execution.members.map(member => ({ position: member.position, connectionId: member.connectionId, model: member.model,
     effort: typeof member.options.reasoningEffort === "string" ? member.options.reasoningEffort : "" }))
     : aiTaskWorkloadPoolApiOnly(line.task) ? [] : line.rows.map(row => ({ position: row.rank, connectionId: row.connectionId, model: row.model,
@@ -123,6 +148,9 @@ function TaskModelsSummary({ line, execution, connections }: { line: TaskRankLin
 }
 
 function TaskRuntimeSummary({ line, execution, connections }: { line: TaskRankLine; execution?: AiTaskExecutionAdminView; connections: readonly AiConnectionView[] }) {
+  if (!line.live && execution?.mode !== "workload_pool" && line.task !== "publish-classify") {
+    return <span className="mt-task-runtime text-fg-3">실제 호출은 모델 운영 현황에서 확인 <Link href="/admin/models" prefetch={false}>모델 운영 현황</Link></span>;
+  }
   const runtime = execution?.mode === "workload_pool" ? currentTaskPoolRuntime(execution, connections, line.runtime)
     : line.runtime?.fresh ? line.runtime : null;
   if (!runtime) return <span className="mt-task-runtime text-fg-3">최근 실행 관측 없음</span>;
@@ -203,6 +231,22 @@ function TaskRankLineForm({ line, connections, rows, readOnly, inactive = false 
       </div>
     </details>
   </form>;
+}
+
+function EffectiveModelConfig({ line, target, readOnly }: { line: TaskRankLine; target: { href: string; label: string }; readOnly: boolean }) {
+  const current = line.current;
+  return <div className="grid gap-1 rounded-lg border border-line px-3 py-2 text-[13px]">
+    <span className="font-semibold">실제 적용 모델 설정</span>
+    {current === null ? <span className="text-fg-3">지금 실제 적용 설정을 읽지 못했습니다.</span>
+      : current.error ? <span className="text-red-600">지금 실제 적용 설정을 읽지 못했습니다({current.error}).</span>
+        : current.labels.length ? <ol className="grid gap-0.5">{current.labels.map((text, index) => <li key={`${index}:${text}`}>{text}</li>)}</ol>
+          : <span className="text-fg-3">{current.skip ?? "실제 적용 모델 설정이 없습니다."}</span>}
+    {current && !current.error && <span className="text-fg-3">출처: {current.source}</span>}
+    {current && current.skip && current.labels.length > 0 && <span className="text-fg-3">{current.skip}</span>}
+    {current?.notes.map(text => <span key={text} className="text-fg-3">{text}</span>)}
+    <Link href={target.href} prefetch={false} className="font-semibold text-accent-ink underline">{target.label} →</Link>
+    {readOnly && <span className="text-amber-700">지금은 읽기 전용입니다.</span>}
+  </div>;
 }
 
 /** 실행 쪽 설정 · 준비 상태. 실제 실행 여부는 별도 관측 기록으로 표시한다. */

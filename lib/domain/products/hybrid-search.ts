@@ -13,6 +13,8 @@
  * 재정렬이 없으면 섞은 순서. 검색이 실패하지는 않는다.
  */
 import { embedTexts } from "./embedding";
+import { readSearchModelJson, withinSearchModelDeadline } from "./search-model-http";
+import { resolveSearchModelSettings } from "./search-model-settings";
 import { logger } from "@/lib/observability/logger";
 
 /** RRF 상수 — 흔히 쓰는 60. 순위만 보므로 두 점수의 단위가 달라도 섞인다 */
@@ -106,18 +108,37 @@ export async function rerankDocuments(
   documents: readonly string[],
   options: { url?: string; timeoutMs?: number; fetchImpl?: typeof fetch } = {},
 ): Promise<number[]> {
-  const base = (options.url ?? process.env.RERANK_URL)?.trim().replace(/\/+$/, "");
+  const timeout = AbortSignal.timeout(options.timeoutMs ?? RERANK_TIMEOUT_MS);
+  const explicit = options.url !== undefined;
+  let settings: Awaited<ReturnType<typeof resolveSearchModelSettings>> | null = null;
+  if (!explicit) {
+    try { settings = await withinSearchModelDeadline(resolveSearchModelSettings("search-rerank"), timeout); }
+    catch (error) {
+      throw new Error(error instanceof Error && /^search_model_/.test(error.message) ? error.message : "rerank_settings_unavailable", { cause: error });
+    }
+  }
+  const base = explicit ? (options.url ?? "").trim().replace(/\/+$/, "") : settings!.baseUrl;
   if (!base) throw new Error("rerank_no_url");
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  const payload: { query: string; documents: readonly string[]; top_n: number; model?: string } = {
+    query, documents, top_n: documents.length,
+  };
+  const configured = !explicit && settings?.source === "configured";
+  if (configured && settings) {
+    if (settings.model) payload.model = settings.model;
+    if (settings.apiKey) headers.authorization = `Bearer ${settings.apiKey}`;
+  }
   const response = await (options.fetchImpl ?? fetch)(`${base}/v1/rerank`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ query, documents, top_n: documents.length }),
-    signal: AbortSignal.timeout(options.timeoutMs ?? RERANK_TIMEOUT_MS),
+    headers,
+    body: JSON.stringify(payload),
+    signal: timeout,
+    ...(configured ? { redirect: "error" as const } : {}),
   });
   if (!response.ok) throw new Error(`rerank_http_${response.status}`);
-  const body = await response.json() as { results?: { index: number; relevance_score: number }[] };
+  const body = await withinSearchModelDeadline(readSearchModelJson(response, 1024 * 1024), timeout).catch(() => null) as { results?: { index: number; relevance_score: number }[] } | null;
   const scores = new Array<number>(documents.length).fill(Number.NEGATIVE_INFINITY);
-  for (const row of body.results ?? []) {
+  for (const row of body?.results ?? []) {
     if (Number.isInteger(row.index) && row.index >= 0 && row.index < documents.length && Number.isFinite(row.relevance_score)) {
       scores[row.index] = row.relevance_score;
     }

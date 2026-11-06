@@ -1,4 +1,5 @@
 import { aiTask, aiTaskAccepts, aiTaskSlotLabel, isAiLiveTask } from "@/lib/llm/ai-tasks";
+import { aiTaskEditTarget } from "./ai-task-edit-target";
 import {
   AI_RANK_SLOT_NAMES, aiRankChoiceOfRow, aiConnectionLabel, aiConnectionModelIds, aiModelsErrorText, aiRankOptionBlocked, aiSameUnderlyingModel, aiTaskRankOptions, validateAiTaskRanks,
   type AiConnectionView, type AiRankChoice, type AiRankOption, type AiTaskRankRow,
@@ -106,9 +107,12 @@ export function buildFlowRankEditor(connections: readonly AiConnectionView[], ro
             options.push({ provider: connection.id, model, label: `${aiConnectionLabel(connection)} · ${model}`, group: group(connection.id, connection.label), text: model, off: true });
           }
         }
+        const editTarget = id === "publish-classify" ? null : aiTaskEditTarget(id);
         lines.push({ key: `${id}#${slot}`, station, task: id, slot, label: aiTaskSlotLabel(task, slot), revision: revisionOf(own),
           saved: own.map(aiRankChoiceOfRow), options, live: isAiLiveTask(id), ...(execution ? { execution } : {}),
-          lock: execution?.mode === "workload_pool" ? "작업 분산 중입니다. 분산 모델과 실행 방식은 「작업 ↔ AI 모델」에서 변경하세요." : FLOW_RANK_LOCKS[id] ?? null });
+          lock: execution?.mode === "workload_pool" ? "작업 분산 중입니다. 분산 모델과 실행 방식은 「작업 ↔ AI 모델」에서 변경하세요."
+            : FLOW_RANK_LOCKS[id] ? `${FLOW_RANK_LOCKS[id]}${editTarget ? ` 실제 적용 설정: ${editTarget.href}` : ""}`
+              : editTarget ? `실제 적용 설정에서 변경하세요: ${editTarget.href}` : null });
       }
     }
   }

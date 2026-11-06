@@ -17,3 +17,12 @@
 .fu-form input:not([type=hidden]) { min-width:0; flex:1 1 220px; padding:6px 8px; border:1px solid var(--line); border-radius:6px; background:var(--surface); }
 .fu-error { color:var(--red); }
 .flow-model-state.fu-trigger { padding:0; border:0; background:none; text-decoration:underline; text-underline-offset:3px; text-align:left; }
+.fu-route { color:var(--muted); font-size:.8em; overflow-wrap:anywhere; }
+.fu-projects { margin:8px 0; }
+.fu-project-list { margin:4px 0; padding-left:16px; }
+.fu-project-list li { margin:2px 0; overflow-wrap:anywhere; }
+.fu-link { text-decoration:underline; text-underline-offset:3px; }
+.fu-times { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:6px 12px; margin:8px 0; }
+.fu-times > div { min-width:0; }
+.fu-times dt { color:var(--muted); font-size:.78em; }
+.fu-times dd { margin:0; overflow-wrap:anywhere; }

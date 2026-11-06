@@ -52,7 +52,7 @@ describe("작업 ↔ AI 모델 화면", () => {
     expect(html).toContain("지금 꺼져 있습니다.");
     // 설정 준비와 실제 실행 관측을 구분한다. 바뀐 것이 없으면 저장 버튼이 꺼져 있다.
     expect(html).toContain('data-status="ok">설정 준비됨</span>');
-    expect(html).toContain('data-status="muted">순위 없음</span>');
+    expect(html).toContain('data-status="muted">실행 조건 확인</span>');
     expect(html).toMatch(/<button type="submit" disabled=""[^>]*>저장<\/button>/);
     expect(html).not.toContain("바뀐 것이 없습니다.");
     // 목록에서는 모델·상태를 항상 비교하며, 수정 폼은 닫힌 작업 행 안에 유지한다.
@@ -61,11 +61,14 @@ describe("작업 ↔ AI 모델 화면", () => {
     expect(html).toContain("모델 설정 · 순위별 표시");
     expect(html).toContain("최근 실행 관측 없음");
     expect(html.indexOf("gpu3090 · qwen3.8-flash-next")).toBeLessThan(html.indexOf('class="mt-task-editor"'));
-    expect(html.match(/<details class="text-\[13px\]"><summary class="cursor-pointer text-fg-3">자세히<\/summary>/g)).toHaveLength(2);
+    // 비라이브 감사 작업은 실제 적용 설정만 보여 주고 순위 저장 폼을 열지 않는다.
+    expect(html.match(/<details class="text-\[13px\]"><summary class="cursor-pointer text-fg-3">자세히<\/summary>/g)).toHaveLength(1);
+    expect(html).not.toContain('aria-label="발행분 감사 · 직접 모델 1순위"');
     expect(html.indexOf("실행 쪽 현재 설정")).toBeGreaterThan(html.indexOf("자세히</summary>"));
     // text 작업(PR B)은 실행 쪽이 순위를 읽는다 — 아직 돈 기록이 없으면 그렇게 보인다. 감사 작업은 아직 읽지 않는다(다음 단계)
     expect(html).toContain("대체 실행은 우선 모델 하나를 쓰고, 필요한 경우에만 다음 순위로 전환합니다. 순위마다 추가 검수하는 방식이 아닙니다.");
-    expect(html).toContain("이 작업은 아직 기존 설정을 사용합니다.");
+    // 감사 작업의 실제 적용 설정은 정본(/admin/audit)을 가리키고, 꺼진 실행 조건은 그대로 보인다.
+    expect(html).toContain('href="/admin/audit"');
     expect(html).toContain('data-runtime="none"');
     expect(html).toContain("실행: 아직 이 순위로 돈 기록이 없습니다.");
     expect(html.match(/data-runtime=/g)).toHaveLength(1);

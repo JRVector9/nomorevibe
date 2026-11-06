@@ -7,18 +7,20 @@ import { redirect } from "next/navigation";
 import { currentAdmin } from "@/lib/auth/admin";
 import { getSettings, settingsFormVersion } from "@/lib/crawl/settings";
 import { readServedContractModels } from "@/lib/operations/admin-engine-connect";
-import { configuredHumanModelsProbe, configuredHumanModelsReady, humanReviewModelDisplay, type HumanModelProbe } from "@/lib/operations/admin-models-human";
+import { configuredHumanModelsProbe, type HumanModelProbe } from "@/lib/operations/admin-models-human";
 import { currentModelEnv } from "@/lib/operations/model-env";
 import { adminModelStageView, type TextStageBindings } from "@/lib/operations/admin-model-stage-view";
 import { adminWorkspaceReadOnly } from "@/lib/operations/admin-workspace-preview";
 import { readFlowRankEditor } from "@/lib/operations/flow-rank-editor-read";
 import { PageStamp } from "../components/PageStamp";
-import { HumanReviewSwitch } from "../review/HumanReviewSwitch";
+
 import { ReviewModelsForm } from "./ReviewModelsForm";
 import { firstReviewers } from "@/lib/crawl/first-reviewers";
 import { ensureReviewTaskRanks } from "@/lib/crawl/review-task-ranks";
 import { secondReviewVoterSets } from "@/lib/crawl/second-review-voters";
 import { readAdminModelsObservation } from "@/lib/operations/admin-models-repository";
+import { readConveyor } from "@/lib/operations/conveyor";
+import type { Conveyor } from "@/lib/operations/conveyor-model";
 import { LiveModels } from "./LiveModels";
 import { UnknownReviewList } from "./UnknownReviewList";
 import { DevicesPanel } from "./DevicesPanel";
@@ -130,9 +132,10 @@ async function ModelsWorkspace({ tab, advanced, readOnly }: { tab: string; advan
         <section className="flex flex-col gap-3 rounded-xl border border-line bg-bg-card p-4" aria-labelledby="human-model-heading">
           <h2 id="human-model-heading" className="text-[15px] font-semibold">사람 검토 단계</h2>
           <p className="text-[13px] text-fg-2">직접 판단: 사람이 심사 큐에서 결정합니다. 사람 위임 검수 모델을 켜면 기존 정책에 따라 자동 판단하고, 불확실하거나 실패한 항목은 사람이 검토합니다.</p>
-          <Suspense fallback={<p aria-busy="true" className="text-[13px]">사람 위임 모델 연결 확인 중…</p>}>
-            {readOnly ? <p className="notice">읽기 전용 프리뷰 · 사람 위임 연결 확인·제어를 실행하지 않습니다.</p> : <HumanSlot enabled={settings.humanReview.enabled} generation={settings.humanReview.generation} keys={humanKeys} humanProbe={humanProbe} />}
-          </Suspense>
+          <div className="notice blue">
+            <p className="text-[13px] text-fg-2">모델 배정·자동 위임은 같은 실행 설정에서 변경합니다.</p>
+            <Link prefetch={false} href="/admin/models/human#human-review" className="text-[13px] font-semibold text-accent-ink">실행 설정에서 사람 검토 모델 변경 →</Link>
+          </div>
           <Link prefetch={false} href="/admin/review" className="text-[13px] font-semibold text-accent-ink">사람이 검토할 심사 큐 열기 →</Link>
         </section>
         <section className="flex flex-col gap-3 rounded-xl border border-line bg-bg-card p-4" aria-labelledby="text-model-heading">
@@ -161,13 +164,15 @@ async function PrototypeModelsSlot({ observationRead, assignments, models, contr
   models: ReturnType<typeof readModelRegistry>["models"]; contracts: ModelContractLink[]; tab: string; readOnly: boolean;
 }) {
   const { readModelOpsStates } = await import("@/lib/operations/ops-runner/repository");
-  const [observation, editor, devices, helpers, opsStates] = await Promise.all([observationRead,
+  const liveTab = !["tasks", "connections", "capacity", "history"].includes(tab);
+  const [observation, editor, devices, helpers, opsStates, flow] = await Promise.all([observationRead,
     tab === "tasks" || tab === "connections" ? readFlowRankEditor() : Promise.resolve(null),
     tab === "capacity" ? readCapacityDevicesAdminView(renderClock()).catch(() => null) : Promise.resolve(null),
     tab === "capacity" ? readModelHelpersAdminView().catch(() => null) : Promise.resolve(null),
     readModelOpsStates().catch(() => []),
+    liveTab ? readConveyor(false).catch((): Conveyor | null => null) : Promise.resolve<Conveyor | null>(null),
   ]);
-  return <PrototypeModels observation={observation} assignments={assignments} models={models} contracts={contracts} editor={editor} devices={devices} helpers={helpers} tab={tab} readOnly={readOnly} opsStates={opsStates} />;
+  return <PrototypeModels observation={observation} assignments={assignments} models={models} contracts={contracts} editor={editor} devices={devices} helpers={helpers} tab={tab} readOnly={readOnly} opsStates={opsStates} flow={flow} />;
 }
 
 /** 장부 경보 요약 — monitor 와 같은 읽기(readModelCapacityUnknowns)·같은 문턱. 못 읽었으면 unknown(0건으로 보지 않는다). */
@@ -226,15 +231,11 @@ async function SearchModelsSlot() {
   if (adminWorkspaceReadOnly()) return <SavedProbeNote label="검색 모델 서버" />;
   const { value: health, ms } = await timed(() => modelServerHealth());
   const saved = await recordAutoProbes(health.map(row => ({ identity: { routeId: null, provider: "search-server", model: row.name === "임베딩" ? "embedding" : "rerank" },
-    result: { listed: row.ok ? true : null, listMs: ms, error: row.ok ? null : `서버 확인 실패 · ${row.error ?? "미확인"}` }, detail: "검색 모델 서버 · GET /health" })));
+    result: { listed: row.ok ? true : null, listMs: ms, error: row.ok ? null : `서버 확인 실패 · ${row.error ?? "미확인"}` }, detail: "검색 API 메타데이터·상태 응답" })));
   return <SearchModelConstraints health={health} embeddingModel={EMBEDDING_MODEL} dimensions={EMBEDDING_DIMENSIONS} probedAgo={health.length ? `방금 · 응답 ${ms}ms${saved ? ` · 관측 ${saved}건 저장` : ""}` : null} />;
 }
 
-async function HumanSlot({ enabled, generation, keys, humanProbe }: { enabled: boolean; generation: number; keys: string[]; humanProbe: Promise<HumanModelProbe[]> }) {
-  const probes = await humanProbe;
-  const ready = probes.length ? probes.every(probe => probe.ready) : !adminWorkspaceReadOnly() && await configuredHumanModelsReady(keys);
-  return <HumanReviewSwitch key={generation} enabled={enabled} generation={generation} ready={ready} {...humanReviewModelDisplay(keys)} />;
-}
+
 
 async function UnknownReviewSlot() {
   return <UnknownReviewList queue={await readModelCapacityReviewQueue()} />;

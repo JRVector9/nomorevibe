@@ -139,15 +139,15 @@ describe("처리 LLM 바꾸기 — 전→후와 경고", () => {
 
 describe("처리 LLM 바꾸기 — 서랍 그림", () => {
   const editor = editorOf();
-  it("edit step: a select per rank, the locked task disabled with its reason, a connection state table", () => {
+  it("edit step: a select per live rank, actual setting links, the locked task disabled with its reason, a connection state table", () => {
     const html = renderToStaticMarkup(<RankDrawer editor={editor} lines={flowRankLinesFor(editor, "profile")} title="프로필 준비" secondWaiting={null} onClose={() => {}} />);
     expect(html).toContain("처리 LLM 바꾸기 — 프로필 준비");
-    expect(html.match(/aria-label="[^"]+ [123]순위"/g)).toHaveLength(18);
+    expect(html.match(/aria-label="[^"]+ [123]순위"/g)).toHaveLength(12);
     expect(html).toContain("추론 강도");
-    expect(html).toMatch(/aria-label="소개 검수 1순위" disabled=""/);
+    expect(html).not.toMatch(/aria-label="소개 검수 [123]순위"/);
     expect(html).toContain("바꿀 수 없음");
     expect(html).toContain("CLI_SERVING_CONTRACTS");
-    expect(html).toContain("설정값");
+    expect(html).toContain("/admin/models?advanced=1#model-settings");
     expect(html).toContain("연결 상태 5개");
     expect(html).toMatch(/바뀌는 내용 확인 →<\/button>/);
     expect(html).toMatch(/<button type="button" class="fr-btn fr-primary" disabled="">/);

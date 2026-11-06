@@ -4,7 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { cliHostCatalogSchema, type CliHostCatalog } from "./cli-host-protocol";
-import { OPENCODE_HOST_COMMAND, OPENCODE_HOST_HOME, OPENCODE_REVIEW_VERSION, opencodeReviewProfile, releaseOpencodeReviewProfile } from "@/lib/crawl/agent-review-opencode";
+import { OPENCODE_HOST_COMMAND, opencodeReviewProfile, releaseOpencodeReviewProfile } from "@/lib/crawl/agent-review-opencode";
+import { setCliHostObservedVersion } from "@/lib/llm/cli-serving-contract";
+import { readOpenCodeCliCapabilities, readOpenCodeV2Models } from "@/lib/crawl/opencode-cli-capabilities";
 
 const exec = promisify(execFile);
 const MAX_CATALOG_BYTES = 16 * 1024 * 1024;
@@ -58,13 +60,16 @@ export async function readCliHostCatalog(bootId: string): Promise<CliHostCatalog
   const directory = await mkdtemp(path.join(os.tmpdir(), "nmv-cli-catalog-"));
   try {
     const profile = await opencodeReviewProfile(directory);
-    const [version, listed] = await Promise.all([
-      exec(OPENCODE_HOST_COMMAND, ["--version"], { cwd: OPENCODE_HOST_HOME, env: profile.env, timeout: 5_000, maxBuffer: 4096, encoding: "utf8" }),
-      exec(OPENCODE_HOST_COMMAND, ["models", "--verbose", "--pure"], { cwd: directory, env: profile.env, timeout: 6_000, maxBuffer: MAX_CATALOG_BYTES, encoding: "utf8" }),
-    ]);
-    if (version.stdout.trim() !== OPENCODE_REVIEW_VERSION) throw new Error("cli_host_version_mismatch");
-    return cliHostCatalogSchema.parse({ version: 1, bootId, cliVersion: version.stdout.trim(), observedAt: new Date().toISOString(),
-      models: parseCliHostModelsVerbose(listed.stdout) });
+    const capabilities = await readOpenCodeCliCapabilities(OPENCODE_HOST_COMMAND, directory, profile.env);
+    const models = capabilities.catalog === "verbose"
+      ? parseCliHostModelsVerbose((await exec(capabilities.command,
+          [...(capabilities.standalone ? ["--standalone"] : []), "models", "--verbose", ...(capabilities.pure ? ["--pure"] : [])],
+          { cwd: directory, env: profile.env, timeout: 6_000, maxBuffer: MAX_CATALOG_BYTES, encoding: "utf8" })).stdout)
+      : await readOpenCodeV2Models(capabilities, directory, profile.env);
+    const catalog = cliHostCatalogSchema.parse({ version: 1, bootId, cliVersion: capabilities.version,
+      observedAt: new Date().toISOString(), models });
+    setCliHostObservedVersion(capabilities.version);
+    return catalog;
   } finally {
     await releaseOpencodeReviewProfile(directory);
     await rm(directory, { recursive: true, force: true });

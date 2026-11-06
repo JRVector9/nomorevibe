@@ -109,9 +109,9 @@ function toolVersion(command: string): VersionProbe | "pending" | null {
 }
 /** 이 프로세스가 마지막으로 본 도구 버전(진단·화면) — 보지 않았으면 null. */
 export function observedCliToolVersion(provider: CliProvider): string | null {
-  if (provider === "opencode-cli" && !nativeOpencodeHost())
+  if (provider === "opencode-cli")
     return cliHostVersion && Date.now() - cliHostVersion.observedAt <= 60_000 ? cliHostVersion.version : null;
-  const known = toolVersions.get(provider === "opencode-cli" ? cliCommandFor("crawl-agent-review", provider) : CLI_TOOL_COMMANDS[provider]);
+  const known = toolVersions.get(CLI_TOOL_COMMANDS[provider]);
   return known && known !== "pending" && known.kind === "ok" ? known.version : null;
 }
 /** DB 계약 행 하나 → 계약(검사에 통과한 것) 또는 null. */
@@ -127,9 +127,12 @@ function dbLookup(routeId: string, provider: CliProvider, model: string): { stat
   if (!row) return { status: "not_configured", contract: null };
   const contract = cliContractFromRow(row);
   if (!contract) return { status: "invalid_entry", contract: null };
-  const observed = provider === "opencode-cli" && !nativeOpencodeHost() ? observedCliToolVersion(provider) : null;
-  const version = provider === "opencode-cli" && !nativeOpencodeHost() ? observed ? { kind: "ok" as const, version: observed } : null
-    : toolVersion(provider === "opencode-cli" ? cliCommandFor(routeId, provider) : CLI_TOOL_COMMANDS[provider]);
+  if (provider === "opencode-cli") {
+    const observed = observedCliToolVersion(provider);
+    if (!observed) return { status: "probe_pending", contract: null };
+    return { status: "ready", contract: Object.freeze({ ...contract, cliVersion: observed }) };
+  }
+  const version = toolVersion(CLI_TOOL_COMMANDS[provider]);
   if (version === null || version === "pending") return { status: "probe_pending", contract: null };
   if (version.kind !== "ok") return { status: version.kind === "timeout" ? "cli_version_probe_timeout" : "cli_version_probe_failed", contract: null };
   if (version.version !== contract.cliVersion) return { status: "cli_version_mismatch", contract: null, observed: version.version };

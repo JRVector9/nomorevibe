@@ -1,6 +1,7 @@
 import type { listAdminReviewEntries, reviewQueueCauses, ReviewAiDecision, ReviewSort } from "@/lib/crawl/admin-review";
 import { REVIEW_SORTS } from "@/lib/crawl/admin-review";
 import type { humanQueueOverview } from "@/lib/crawl/review-overview";
+import { REASON_LABELS } from "../reasons";
 import { CAUSE_GUIDE, type CauseKey } from "./causes";
 import { SECOND_FILTER_KEYS, STAGE_KEYS, STAGE_STATE, type StageKey, type SecondFilter } from "./stages";
 import { UPDATED_DAYS, UPDATED_WINDOWS, type UpdatedWindow } from "./ListToolbar";
@@ -17,31 +18,46 @@ export function prototypeReviewFilter(params: Record<string, string | string[] |
     q: one(params.q).trim().slice(0, 100), updated: (UPDATED_WINDOWS.some(([key]) => key === one(params.updated)) ? one(params.updated) : "") as UpdatedWindow,
     sort: (params.sort === undefined ? "wait_short" : REVIEW_SORTS.includes(one(params.sort) as ReviewSort) ? one(params.sort) : "wait_short") as ReviewSort,
     rawState: one(params.state),
+    reason: Object.hasOwn(REASON_LABELS, one(params.reason)) ? one(params.reason) : "",
   };
 }
 type Filter = ReturnType<typeof prototypeReviewFilter>;
+type ReviewState = NonNullable<Parameters<typeof listAdminReviewEntries>[1]>["state"];
+function filterState(filter: Filter): ReviewState {
+  const { tab, stage, cause, ai, second, rawState } = filter;
+  const heldStage = ["ai", "second", "agreed", "human"].includes(stage);
+  const detailable = !stage || heldStage;
+  return stage ? STAGE_STATE[stage] : rawState === "rejected" ? "rejected" : tab === "human" || (detailable && (cause || ai || second)) ? "needs_review"
+    : ["pending", "needs_review", "rejected", "published"].includes(rawState) ? rawState as "pending" | "needs_review" | "rejected" | "published" : "all";
+}
+export function prototypeReviewState(filter: ReturnType<typeof prototypeReviewFilter>): ReviewState {
+  return filterState(filter);
+}
 /** Membership must remain fresh; display-only counts are not a prerequisite for every queue. */
 export function prototypeReviewNeeds(filter: Filter) {
   const heldStage = ["ai", "second", "agreed", "human"].includes(filter.stage);
   const detailable = !filter.stage || heldStage;
+  const rejected = filterState(filter) === "rejected";
+  const secondHeld = Boolean(filter.second && filter.second !== "published");
   return {
-    overview: Boolean(heldStage || filter.tab === "human" || (detailable && (filter.ai || (filter.second && filter.second !== "published")))),
-    causes: Boolean(detailable && filter.cause),
+    overview: Boolean(rejected ? secondHeld : (heldStage || filter.tab === "human" || (detailable && (filter.ai || secondHeld)))),
+    causes: Boolean(filter.cause && (detailable || rejected)),
   };
 }
 export function prototypeReviewOptions(filter: Filter, causes: Awaited<ReturnType<typeof reviewQueueCauses>> | null, overview: Awaited<ReturnType<typeof humanQueueOverview>> | null): NonNullable<Parameters<typeof listAdminReviewEntries>[1]> {
-  const { tab, stage, cause, ai, second, q, updated, sort, rawState } = filter;
+  const { tab, stage, cause, ai, second, q, updated, sort, reason } = filter;
   const heldStage = ["ai", "second", "agreed", "human"].includes(stage) ? stage as "ai" | "second" | "agreed" | "human" : null;
   const detailable = !stage || heldStage !== null;
+  const state = filterState(filter);
+  const rejected = state === "rejected";
   const needs = prototypeReviewNeeds(filter);
   if (needs.overview && !overview) throw new Error("review_overview_unavailable");
   if (needs.causes && !causes) throw new Error("review_causes_unavailable");
-  const ids = [heldStage ? overview!.ids[heldStage] : tab === "human" ? [...overview!.ids.human, ...overview!.ids.agreed] : undefined,
-    detailable && cause ? causes!.ids.get(cause) ?? [] : undefined,
-    detailable && ai ? overview!.aiDecisions.ids.get(ai) ?? [] : undefined,
-    detailable && second && second !== "published" ? overview!.secondIds[second] : undefined]
+  if (needs.causes && causes!.truncated) throw new Error("review_causes_truncated");
+  const ids = [rejected ? undefined : heldStage ? overview!.ids[heldStage] : tab === "human" ? [...overview!.ids.human, ...overview!.ids.agreed] : undefined,
+    cause && (detailable || rejected) ? causes!.ids.get(cause) ?? [] : undefined,
+    ai && detailable && !rejected ? overview!.aiDecisions.ids.get(ai) ?? [] : undefined,
+    second && second !== "published" && (detailable || rejected) ? overview!.secondIds[second] : undefined]
     .filter((items): items is number[] => items !== undefined).reduce<number[] | undefined>((result, items) => { if (!result) return items; const keep = new Set(items); return result.filter(id => keep.has(id)); }, undefined);
-  const state = stage ? STAGE_STATE[stage] : tab === "human" || (detailable && (cause || ai || second)) ? "needs_review"
-    : ["pending", "needs_review", "rejected", "published"].includes(rawState) ? rawState as "pending" | "needs_review" | "rejected" | "published" : "all";
-  return { state, ids, search: q || undefined, pushedWithinDays: updated ? UPDATED_DAYS[updated] : undefined, sort };
+  return { state, ids, ...(rejected && ai ? { aiDecision: ai } : {}), reason: reason || undefined, search: q || undefined, pushedWithinDays: updated ? UPDATED_DAYS[updated] : undefined, sort };
 }
