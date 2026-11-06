@@ -10,6 +10,8 @@ import { sql } from "drizzle-orm";
 import { PgDialect } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import { products } from "@/lib/db/schema";
+import { readSearchModelJson, withinSearchModelDeadline } from "./search-model-http";
+import { resolveSearchModelSettings, SearchModelSettingsError } from "./search-model-settings";
 
 /** 모델 파일 이름과 sha256 앞 8자리 — 저장한 벡터가 어느 모델 것인지 */
 export const EMBEDDING_MODEL = "bge-m3-f16@daec91ff";
@@ -109,31 +111,52 @@ export function vectorLiteral(vector: readonly number[]): string {
 /**
  * 글 여럿을 한 번에 임베딩한다. 서버가 없거나(EMBEDDING_URL 없음) 늦거나 이상한 답을 하면 EmbeddingUnavailableError —
  * 검색은 낱말 검색만으로, 잡은 다음 틱으로 넘어간다.
+ *
+ * options.url 이 있으면 기존처럼 그 주소와 환경 프로필 검사를 그대로 쓴다. 없으면 저장된 검색 모델 설정을 먼저 본다.
  */
 export async function embedTexts(
   texts: readonly string[],
   options: { timeoutMs: number; signal?: AbortSignal; url?: string; fetchImpl?: typeof fetch },
 ): Promise<number[][]> {
   if (texts.length === 0) return [];
-  const base = (options.url ?? process.env.EMBEDDING_URL)?.trim().replace(/\/+$/, "");
-  // 같은 공간이 확인되지 않은 서버는 부르지 않는다 — 검색은 낱말만, 벡터 잡은 쓰지 않고 다음 틱으로
-  const readiness = embeddingReadiness(process.env, base);
-  if (readiness.mode === "degraded") throw new EmbeddingUnavailableError(`degraded:${readiness.reasons.join(",")}`);
-  if (!base) throw new EmbeddingUnavailableError("no_url");
   const timeout = AbortSignal.timeout(options.timeoutMs);
+  const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
+  const explicit = options.url !== undefined;
+  let settings: Awaited<ReturnType<typeof resolveSearchModelSettings>> | null = null;
+  if (!explicit) {
+    try { settings = await withinSearchModelDeadline(resolveSearchModelSettings("product-embedding"), signal); }
+    catch (error) {
+      throw new EmbeddingUnavailableError(timeout.aborted ? "timeout" : (error instanceof SearchModelSettingsError ? error.code : "settings_unavailable"), { cause: error });
+    }
+  }
+  const base = explicit ? (options.url ?? "").trim().replace(/\/+$/, "") : settings!.baseUrl;
+  // 같은 공간이 확인되지 않은 서버는 부르지 않는다 — 검색은 낱말만, 벡터 잡은 쓰지 않고 다음 틱으로.
+  // 저장된 설정은 자체 증명을 이미 확인했으므로 env 의 옛 EMBEDDING_SERVING_PROFILE 을 다시 보지 않는다.
+  if (explicit || settings?.source === "environment") {
+    const readiness = embeddingReadiness(process.env, base);
+    if (readiness.mode === "degraded") throw new EmbeddingUnavailableError(`degraded:${readiness.reasons.join(",")}`);
+  }
+  if (!base) throw new EmbeddingUnavailableError("no_url");
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  const payload: { input: readonly string[]; model?: string } = { input: texts };
+  if (!explicit && settings?.source === "configured") {
+    if (settings.model) payload.model = settings.model;
+    if (settings.apiKey) headers.authorization = `Bearer ${settings.apiKey}`;
+  }
   let response: Response;
   try {
     response = await (options.fetchImpl ?? fetch)(`${base}/v1/embeddings`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ input: texts }),
-      signal: options.signal ? AbortSignal.any([options.signal, timeout]) : timeout,
+      headers,
+      body: JSON.stringify(payload),
+      signal,
+      ...(!explicit && settings?.source === "configured" ? { redirect: "error" as const } : {}),
     });
   } catch (error) {
     throw new EmbeddingUnavailableError(timeout.aborted ? "timeout" : "network", { cause: error });
   }
   if (!response.ok) throw new EmbeddingUnavailableError(`http_${response.status}`);
-  const body = await response.json().catch(() => null) as { data?: { index: number; embedding: number[] }[] } | null;
+  const body = await withinSearchModelDeadline(readSearchModelJson(response, 8 * 1024 * 1024), signal).catch(() => null) as { data?: { index: number; embedding: number[] }[] } | null;
   const rows = body?.data;
   if (!Array.isArray(rows) || rows.length !== texts.length) throw new EmbeddingUnavailableError("bad_response");
   const vectors = [...rows].sort((a, b) => a.index - b.index).map((row) => row.embedding);
