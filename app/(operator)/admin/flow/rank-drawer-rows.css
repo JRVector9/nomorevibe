@@ -1,0 +1,88 @@
+/* 좁은 「바꾸기」 서랍 — 1·2·3순위를 한 줄씩. 이 파일의 선택자는 모두 fr 로 시작한다. */
+.fr .fr-rank-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.fr .fr-rank-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 8.5rem;
+  align-items: start;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.fr .fr-rank-row-label {
+  display: grid;
+  grid-template-columns: 3.5rem minmax(0, 1fr) 7rem;
+  align-items: start;
+  gap: 0.25rem 0.75rem;
+  min-width: 0;
+  width: 100%;
+}
+.fr .fr-rank-row-label[data-rank-effort="no"] {
+  grid-template-columns: 3.5rem minmax(0, 1fr) 7rem;
+}
+.fr .fr-rank-row-name {
+  min-width: 0;
+  white-space: nowrap;
+}
+.fr .fr-rank-row-model,
+.fr .fr-rank-row-effort {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.fr .fr-rank-row-select,
+.fr .fr-rank-row-effort-select {
+  width: 100%;
+  min-width: 0;
+}
+.fr .fr-rank-row-server,
+.fr .fr-rank-row-activity {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 640px) {
+  .fr .fr-rank-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .fr .fr-rank-row-label,
+  .fr .fr-rank-row-label[data-rank-effort="no"] {
+    grid-template-columns: minmax(3.25rem, max-content) minmax(0, 1fr);
+  }
+  .fr .fr-rank-row-name {
+    grid-column: 1;
+  }
+  .fr .fr-rank-row-model {
+    grid-column: 2;
+  }
+  .fr .fr-rank-row-effort {
+    grid-column: 1 / -1;
+  }
+}
+@media (max-width: 420px) {
+  .fr .fr-rank-row-label,
+  .fr .fr-rank-row-label[data-rank-effort="no"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .fr .fr-rank-row-name,
+  .fr .fr-rank-row-model,
+  .fr .fr-rank-row-effort {
+    grid-column: 1 / -1;
+  }
+  .fr .fr-rank-row-name {
+    white-space: normal;
+  }
+}
+
+.fr .fr-response-probe { display:flex; flex-direction:column; align-items:flex-start; gap:0.3rem; width:8.5rem; max-width:100%; }
+.fr .fr-probe-result { font-size:calc(12px + var(--admin-content-growth,0px)); line-height:1.4; overflow-wrap:anywhere; color:var(--color-fg-3); }
+.fr .fr-probe-result[data-ok="true"] { color:var(--cv-ok); }
+.fr .fr-probe-result[data-ok="false"] { color:var(--cv-bad); }
+.fr .fr-rank-row { padding:0.5rem 0; border-bottom:1px solid var(--color-line); }
+@media(max-width:640px) { .fr .fr-response-probe { width:auto; } }
+
+.fr .fr-rank-row-name { padding-top:1.35rem; }
+.fr .fr-rank-row > .fr-response-probe { padding-top:1.35rem; }
+@media(max-width:640px) { .fr .fr-rank-row > .fr-response-probe { padding-top:0; } }

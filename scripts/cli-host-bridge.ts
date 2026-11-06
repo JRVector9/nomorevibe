@@ -44,6 +44,7 @@ export function createCliHostBridge(runtime: CliHostRuntime, secret: string): Se
         case "prepare": result = await runtime.prepare(request.data); break;
         case "run": result = await runtime.run(request.data); break;
         case "notStarted": result = await runtime.notStarted(request.data); break;
+        case "responseProbe": result = await runtime.responseProbe(request.data); break;
         case "release": result = await runtime.release(request.data.handle); break;
       }
       res.end(JSON.stringify(result));
