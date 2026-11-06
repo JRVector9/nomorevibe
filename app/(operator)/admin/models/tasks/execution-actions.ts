@@ -48,5 +48,5 @@ export const saveTaskExecutionAction = webWriteAction(async function saveTaskExe
   return { ok: true, warnings: saved.warnings,
     message: `${aiTaskSlotLabel(task, parsed.data.slot)}: ${parsed.data.mode === "workload_pool"
       ? `모델 ${parsed.data.members.length}개의 작업 분산 설정을 저장했습니다.`
-      : "기존 실행 방식으로 전환했습니다. 보관된 대체 순위를 사용합니다."} 진행 중인 호출은 유지되고 새 업무부터 반영됩니다.` };
+      : task.id === "publish-classify" ? "기존 CLI 분류 설정으로 전환했습니다." : "기존 실행 방식으로 전환했습니다. 보관된 대체 순위를 사용합니다."} 진행 중인 호출은 유지되고 새 업무부터 반영됩니다.` };
 });
