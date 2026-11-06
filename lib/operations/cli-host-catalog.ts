@@ -48,7 +48,10 @@ export function parseCliHostModelsVerbose(stdout: string): CliHostCatalog["model
     const variants = entry.variants === undefined ? [] : object(entry.variants) ? Object.keys(entry.variants).sort() : null;
     if (!variants || variants.length > 32 || variants.some(value => !variant.test(value))) throw new Error("cli_host_catalog_invalid");
     const limit = object(entry.limit) ? entry.limit.context : null;
-    models.push({ id, label: entry.name, variants, maxModelLen: typeof limit === "number" && Number.isSafeInteger(limit) && limit > 0 ? limit : null });
+    const capabilities = object(entry.capabilities) ? entry.capabilities : null;
+    const input = capabilities && Array.isArray(capabilities.input) ? capabilities.input : null;
+    const vision = !!input && input.includes("image");
+    models.push({ id, label: entry.name, variants, maxModelLen: typeof limit === "number" && Number.isSafeInteger(limit) && limit > 0 ? limit : null, vision });
     seen.add(id);
   }
   if (!models.length) throw new Error("cli_host_catalog_empty");

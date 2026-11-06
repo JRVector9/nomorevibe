@@ -20,6 +20,11 @@ import { createReviewInput, MAX_REVIEW_ATTEMPTS, REVIEW_PROMPT_VERSION, REVIEW_R
 import { auditReviewer, auditReviewerLabel, QWEN_AUDIT_PROVIDER, sameAuditReviewer, type AuditReviewer } from "./product-audit-reviewer";
 import { qwenDirectConfig } from "./qwen-direct-review";
 
+import { ensureAiTaskModels } from "@/lib/llm/ai-task-models-snapshot";
+import { taskModels } from "@/lib/llm/ai-task-resolver";
+import { cliEngineRevision, isCliEngineConnection, type CliEngineSource } from "@/lib/llm/cli-engine-config";
+import { cliHostTargetFromConnection } from "@/lib/operations/cli-host-target";
+
 /**
  * 발행분 감사 — 올리고, 묻고, 적고, 사람이 정한다.
  *
@@ -95,7 +100,19 @@ export async function startProductAudit(input: {
   const reason = input.reason.trim();
   if (!reason) return { ok: false, error: "왜 다시 보는지 적어주세요. 감사 기록에 남습니다." };
   const settings = await getSettings();
-  const reviewer = firstReviewer(settings);
+  await ensureAiTaskModels(0);
+  const rank = taskModels("product-audit").find(row => row.enabled && row.connection.enabled);
+  if (rank && !isCliEngineConnection(rank.connection)) return { ok: false, error: "감사 작업 순위는 OpenCode CLI 연결을 선택해주세요. 기존 감사 설정은 순위를 비운 상태에서 유지됩니다." };
+  let cliSource: CliEngineSource | null = null;
+  if (rank && isCliEngineConnection(rank.connection)) {
+    try {
+      cliHostTargetFromConnection(rank.connection);
+      cliSource = { connectionId: rank.connection.id,
+        ...(typeof rank.options.reasoningEffort === "string" ? { reasoningEffort: rank.options.reasoningEffort } : {}) };
+      cliEngineRevision(cliSource);
+    } catch { return { ok: false, error: "선택한 감사 CLI 연결을 확인한 뒤 다시 시작해주세요." }; }
+  }
+  const reviewer = cliSource && rank ? { provider: "opencode-cli" as const, model: rank.model } : firstReviewer(settings);
   if (!reviewer) return { ok: false, error: "1차 심사자를 설정해야 감사를 시작할 수 있습니다." };
   try {
     return await db.transaction(async (tx) => {
@@ -109,7 +126,7 @@ export async function startProductAudit(input: {
       const [campaign] = await tx.insert(productAuditCampaigns).values({
         startedBy: input.startedBy.slice(0, 120), reason: reason.slice(0, 500),
         promptVersion: REVIEW_PROMPT_VERSION, rulesVersion: REVIEW_RULES_VERSION,
-        provider: reviewer.provider, model: reviewer.model, reauditKept: input.reauditKept,
+        provider: reviewer.provider, model: reviewer.model, cliSource, reauditKept: input.reauditKept,
       }).returning({ id: productAuditCampaigns.id });
       const all = await tx.select({ id: products.id, slug: products.slug }).from(products)
         .where(listed).orderBy(asc(products.id));

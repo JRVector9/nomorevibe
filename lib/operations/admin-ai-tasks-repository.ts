@@ -1,3 +1,4 @@
+import { cliEngineModelIdentity } from "@/lib/llm/cli-engine-identity";
 import { createHash, randomUUID } from "node:crypto";
 import type { AiTaskPoolRuntime } from "@/lib/llm/ai-task-execution-config";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
@@ -34,6 +35,8 @@ import { DIRECT_PROBE_INTERVAL_MS, directProbeDue, directProbeGate } from "./adm
 import { saveCliServingContractTx, saveServingContractTx } from "./admin-serving-contracts";
 import { DrWriterFencedError, writerSiteActive } from "./dr/epoch";
 import { cliCatalogMetadataFromSnapshot, type CliCatalogMetadata } from "@/lib/llm/cli-catalog-metadata";
+import { aiTaskUsesCliEngine, cliEngineEndpoint, cliEngineRevision } from "@/lib/llm/cli-engine-config";
+import { cliEngineBearer } from "@/lib/llm/cli-engine-auth";
 import { readAdminCliCatalog } from "./admin-cli-catalog";
 import { validateCliHostTarget } from "./cli-host-target";
 
@@ -120,7 +123,8 @@ async function readReadinessInput(): Promise<AiReadinessInput & { policyError: s
     return { routeId: row.routeId, model: row.model, transport: row.transport,
       provider: typeof contract.provider === "string" ? contract.provider : null, endpoint: typeof contract.endpoint === "string" ? contract.endpoint : null,
       engineModel: typeof contract.engineModel === "string" ? contract.engineModel : null,
-      cliVersion: typeof contract.cliVersion === "string" ? contract.cliVersion : null };
+      cliVersion: typeof contract.cliVersion === "string" ? contract.cliVersion : null,
+      deploymentRevision: typeof contract.deploymentRevision === "string" ? contract.deploymentRevision : null };
   });
   let policy: AiReadinessInput["policy"] = null, policyError: string | null = null;
   try {
@@ -132,7 +136,7 @@ async function readReadinessInput(): Promise<AiReadinessInput & { policyError: s
   } catch (error) { policyError = error instanceof Error ? error.message : "read_failed"; }
   const devices = new Map((await listModelCapacityDevices().catch(() => [])).map(device => [device.deviceId, { enabled: device.enabled, limitSlots: device.limitSlots }]));
   // 2차(second-review)도 순위 저장이 엔진 직접 계약(abcllm 형 total-bound, transport direct)을 만든다(PR C1 — 예전에는 env·모델 연결 화면의 계약만 받았다)
-  return { contracts, policy, policyError, devices, engineRoutes: [...ENGINE_CONNECT_ROUTES, "second-review"], cliContractRoutes: [...CLI_DB_CONTRACT_ROUTES],
+  return { contracts, policy, policyError, devices, cliEngineIdentity: cliEngineModelIdentity, engineRoutes: [...ENGINE_CONNECT_ROUTES, "second-review"], cliContractRoutes: [...CLI_DB_CONTRACT_ROUTES],
     localContract: backendId => {
       const contract = resolveLocalModelContract(backendId);
       return contract ? { model: contract.model, endpoint: contract.endpoint } : null;
@@ -304,7 +308,8 @@ export async function readAiTasksAdminView(): Promise<AiTasksAdminView> {
     const cur = isAiReviewTask(task.id) ? reviewCurrentSlot(task, slot) : current.find(entry => entry.task === task.id && entry.slot === slot) ?? null;
     const ready = readiness ? aiRanksReadiness(task, own.flatMap(row => {
       const connection = connections.find(entry => entry.id === row.connectionId);
-      return connection ? [{ rank: row.rank, connection, model: row.model }] : [];
+      return connection ? [{ rank: row.rank, connection, model: row.model,
+        reasoningEffort: typeof row.options?.reasoningEffort === "string" ? row.options.reasoningEffort : undefined }] : [];
     }), readiness) : [];
     return Object.freeze({ task, slot, label: aiTaskSlotLabel(task, slot), revision: aiTaskSlotRevision(own), rows: Object.freeze(own),
       options: Object.freeze(aiTaskRankOptions(task, connections, own)), current: cur,
@@ -388,6 +393,9 @@ export async function saveAiConnection(input: AiConnectionInput, actor: string):
         if (input.kind === "cli" && cliVersion) options.cliVersion = cliVersion;
         if (cliCatalog) options.cliHostCatalog = { modelsHash: sha256(JSON.stringify(input.cliModels)), observedAt: cliCatalog.observedAt,
           variantLists: input.cliModels.map(model => [...cliCatalog!.models.find(entry => entry.id === model)!.variants]) };
+        if (cliCatalog) options.cliHostCatalog = { ...(options.cliHostCatalog as Record<string, unknown>),
+          contextLists: input.cliModels.map(model => cliCatalog!.models.find(entry => entry.id === model)?.maxModelLen ?? null),
+          visionLists: input.cliModels.map(model => cliCatalog!.models.find(entry => entry.id === model)?.vision === true) };
       }
       if (!offlineDisable && Buffer.byteLength(JSON.stringify(options), "utf8") > 8192) fail("ai_connection_options_full");
       const values = { label: input.label, kind: input.kind, baseUrl: openCode ? preserveHost ? locked!.baseUrl : hostBaseUrl : input.kind === "api" ? input.baseUrl : null, apiKeyCiphertext: ciphertext,
@@ -507,7 +515,8 @@ export async function saveAiTaskRanks(input: AiTaskRanksInput, actor: string): P
     if (issues.length) return { ok: false, issues };
     const chosen = ranks.flatMap((row, index) => row ? [{ rank: index + 1, row, connection: connections.find(entry => entry.id === row.provider)! }] : []);
     const readinessInput = await readReadinessInput();
-    const readiness = aiRanksReadiness(task, chosen.map(entry => ({ rank: entry.rank, connection: entry.connection, model: entry.row.model })), readinessInput);
+    const readiness = aiRanksReadiness(task, chosen.map(entry => ({ rank: entry.rank, connection: entry.connection, model: entry.row.model,
+      ...(typeof entry.row.reasoningEffort === "string" ? { reasoningEffort: entry.row.reasoningEffort } : {}) })), readinessInput);
     const blocking = [...readiness.flatMap(row => row.blocking), ...crossRankIssues(task, readiness)];
     if (blocking.length) return { ok: false, issues: blocking };
     const warnings = [...readiness.flatMap(row => row.warnings), ...aiTaskRankNotices(task.id, ranks, rows)];
@@ -720,6 +729,29 @@ export async function prepareAiTaskServingResources(task: AiTaskDef, chosen: rea
     if (!record || Number(record.version) !== connection.version || !record.enabled)
       return { ok: false as const, issues: ["ai_connection_version_mismatch"] };
     const key = connectionKey(record);
+    const cliEngine = ready.createContract.cliEngine;
+    if (cliEngine) {
+      if (!record.apiKeyCiphertext || key === null) return { ok: false as const, issues: ["ai_connection_key_unreadable"] };
+      if (record.kind !== "cli" || record.cliTool !== "opencode" || !record.baseUrl || !aiTaskUsesCliEngine(task.id, connection)
+        || cliEngine.connectionId !== connection.id)
+        return { ok: false as const, issues: [`ai_task_contract_probe_failed:${ready.createContract.routeId}:cli_engine_unsupported`] };
+      let catalog: CliCatalogMetadata;
+      try { catalog = await readAdminCliCatalog({ fresh: true, connectionId: connection.id }); }
+      catch { return { ok: false as const, issues: ["ai_connection_cli_host_unavailable"] }; }
+      const served = catalog.models.find(model => model.id === row.model);
+      const context = served?.maxModelLen;
+      const effortSupported = !cliEngine.reasoningEffort || (served?.variants as readonly unknown[] | undefined)?.some(variant =>
+        variant === cliEngine.reasoningEffort || (typeof variant === "object" && variant !== null && (variant as { id?: unknown }).id === cliEngine.reasoningEffort));
+      if (!served || typeof context !== "number" || !Number.isSafeInteger(context) || context <= 0 || context > 2097152
+        || !effortSupported || (task.kind === "vision" && served.vision !== true))
+        return { ok: false as const, issues: ["ai_connection_cli_catalog_changed"] };
+      const contract = engineRouteContract(ready.createContract.routeId as GatewayServingRoute, ready.createContract.identity, row.model,
+        cliEngineEndpoint(record.baseUrl), context, connection.deviceId, "engine", ready.createContract.engineModel);
+      if (!contract) return { ok: false as const, issues: [`ai_task_contract_probe_failed:${ready.createContract.routeId}:contract_schema_invalid`] };
+      contracts.push({ routeId: ready.createContract.routeId, model: ready.createContract.identity,
+        contract: { ...contract, deploymentRevision: cliEngineRevision(cliEngine) }, key: cliEngineBearer(key), label: connection.label });
+      continue;
+    }
     if (record?.apiKeyCiphertext && key === null) return { ok: false as const, issues: ["ai_connection_key_unreadable"] };
     const served = connection.models?.find(model => model.id === row.model);
     let probed;
@@ -786,3 +818,5 @@ export async function saveAiTaskServingResources(tx: ProductTransaction, task: A
   }
   return { contracts: madeContracts, devices: madeDevices, routes: appended.map(route => `${route.routeId} / ${route.provider} / ${route.model} → ${route.groupId}`), policyRevision };
 }
+
+export { ensureCliStageModelResources } from "./admin-cli-stage-resources";

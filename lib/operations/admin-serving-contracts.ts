@@ -125,9 +125,9 @@ export async function saveLocalServingContractTx(tx: Tx, input: { routeId: strin
  * cliServingContractHash 다(호출 binding 의 cliContractHash 와 같다). auth none·transport direct(키 없음). 앞의 켜진 행은 꺼서 남기고 감사 한 줄을 쓴다.
  */
 export async function saveCliServingContractTx(tx: Tx, input: { contract: unknown; note?: string | null }, actor: string): Promise<{ id: number; contractHash: string }> {
-  const { CLI_DB_CONTRACT_ROUTES, cliContractRouteId, cliServingContractHash, cliServingContractSchema } = await import("@/lib/llm/cli-serving-contract");
+  const { cliContractReadsDb, cliContractRouteId, cliServingContractHash, cliServingContractSchema } = await import("@/lib/llm/cli-serving-contract");
   const parsed = cliServingContractSchema.safeParse(input.contract);
-  if (!parsed.success || !CLI_DB_CONTRACT_ROUTES.has(parsed.data.routeId)) throw new Error("contract_schema_invalid");
+  if (!parsed.success || !cliContractReadsDb(parsed.data.routeId, parsed.data.provider)) throw new Error("contract_schema_invalid");
   if (!actor.trim()) throw new Error("serving_contract_input_invalid");
   const contract = parsed.data, routeId = cliContractRouteId(contract.provider, contract.routeId), model = contract.model;
   const contractHash = cliServingContractHash(contract);

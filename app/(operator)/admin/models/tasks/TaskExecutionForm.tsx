@@ -73,8 +73,8 @@ export function TaskExecutionForm({ view, label, options, connections, readOnly 
     if (!selected.length) issues.push("분산할 모델을 하나 이상 선택하세요.");
     if (selected.some(choice => !connections.some(connection => connection.id === choice.provider && connection.enabled)))
       issues.push("꺼졌거나 없는 연결을 바꿔주세요.");
-    if (apiOnly && selected.some(choice => !connections.some(connection => connection.id === choice.provider && connection.kind === "api")))
-      issues.push("발행 분류에는 API 연결을 선택하세요.");
+    if (apiOnly && selected.some(choice => !connections.some(connection => connection.id === choice.provider && (connection.kind === "api" || connection.cliTool === "opencode"))))
+      issues.push("발행 분류에는 API 또는 OpenCode 연결을 선택하세요.");
     if (selected.some((choice, index) => connections.some(connection => connection.id === choice.provider && connection.kind === "cli")
       && selected.slice(0, index).some(previous => previous.provider === choice.provider && previous.model === choice.model
         && (previous.reasoningEffort ?? "") !== (choice.reasoningEffort ?? ""))))
@@ -83,7 +83,7 @@ export function TaskExecutionForm({ view, label, options, connections, readOnly 
   };
   const issues = mode === "workload_pool" ? issuesOf(value) : [];
   // Keep a missing saved choice visible until the operator explicitly changes it.
-  const choices = options.filter(option => !apiOnly || connections.some(connection => connection.id === option.provider && connection.kind === "api"));
+  const choices = options.filter(option => !apiOnly || connections.some(connection => connection.id === option.provider && (connection.kind === "api" || connection.cliTool === "opencode")));
   for (const member of view.members) if (!choices.some(option => option.provider === member.connectionId && option.model === member.model)) {
     const connection = connections.find(row => row.id === member.connectionId);
     choices.push({ provider: member.connectionId, model: member.model, saved: true,
@@ -114,7 +114,7 @@ export function TaskExecutionForm({ view, label, options, connections, readOnly 
           options={choices} connections={connections} value={value} onChange={setValue} slotNames={MEMBER_FIELDS}
           disabled={saving || readOnly || !supported} showProvider={false} note={null} validate={issuesOf} />
         {view.task === "second-review" && <p className="text-[13px] text-fg-3">후보별 모델 하나를 고르며, 투표 수는 늘리지 않습니다.</p>}
-      </> : <p className="text-[13px] text-fg-3">{apiOnly ? "API 모델을 쓰려면 작업 분산으로 전환하세요." : "우선 모델 하나를 사용하고, 대체가 필요할 때만 다음 순위로 전환합니다."}</p>}
+      </> : <p className="text-[13px] text-fg-3">{apiOnly ? "API·OpenCode 모델을 쓰려면 작업 분산으로 전환하세요." : "우선 모델 하나를 사용하고, 대체가 필요할 때만 다음 순위로 전환합니다."}</p>}
       {view.mode === "workload_pool" && <div className="grid gap-1 text-[13px] text-fg-3">
         {currentRuntime?.pool ? <>
           <p>마지막 관측 · {currentRuntime.at} · {currentRuntime.from === "job" ? "마지막 작업 틱" : "이 웹 프로세스의 마지막 요청"}</p>

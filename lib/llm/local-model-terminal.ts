@@ -1,3 +1,4 @@
+import { parseCliEngineRevision } from "./cli-engine-config";
 import { createHash } from "node:crypto";
 import { consumeLocalModelDispatch } from "./capacity-repository";
 import { gatewayFetch } from "./gateway-local-end-fetch";
@@ -55,7 +56,7 @@ export async function requestReservedLocalModel(value: LocalModelDispatch, contr
   if (init.signal?.aborted) throw new DOMException("local_model_cancelled", "AbortError");
   const headersForRequest = new Headers(init.headers);
   headersForRequest.set("x-nmv-relay-request-id", dispatch.requestId);
-  const wire: string = init.body, send = () => request ? request(url, { ...init, headers: headersForRequest, redirect: "error" })
+  const wire: string = init.body, send = () => !parseCliEngineRevision(contract.deploymentRevision) && request ? request(url, { ...init, headers: headersForRequest, redirect: "error" })
     : gatewayFetch(dispatch.requestId, url, { method: "POST", headers: Object.fromEntries(headersForRequest.entries()), body: wire, signal: init.signal, redirect: "error" });
   let response: Awaited<ReturnType<typeof send>>;
   try { response = await send(); }

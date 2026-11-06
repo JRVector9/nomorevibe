@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { parseCliEngineRevision } from "./cli-engine-config";
 import { servingContractSnapshot } from "./serving-contract-store";
 import { localModelServingContractSchema, localModelServingContractsSchema, resolveLocalModelServingContract,
   type LocalModelServingContract } from "./local-model-serving-contract";
@@ -15,7 +17,8 @@ import { localModelServingContractSchema, localModelServingContractsSchema, reso
  * 스냅샷은 serving-contract-store 가 30초마다 다시 읽는다. MODEL_SERVING_CONTRACTS_DB=0 이면 표는 비어 있고 env 만 쓴다.
  */
 export const LOCAL_MODEL_CONTRACT_ROUTE_PREFIX = "local-model:";
-export const localModelContractRouteId = (backendId: string): string => `${LOCAL_MODEL_CONTRACT_ROUTE_PREFIX}${backendId}`;
+export const localModelContractRouteId = (backendId: string, revision?: string): string =>
+  `${LOCAL_MODEL_CONTRACT_ROUTE_PREFIX}${backendId}${revision && parseCliEngineRevision(revision) ? `:cli-${createHash("sha256").update(revision).digest("hex").slice(0, 12)}` : ""}`;
 export const LOCAL_MODEL_CONTRACT_PROTOCOL = "local-openai-chat-v1";
 
 /** 표의 local 계약 한 행: 검사에 통과한 계약(contract) 또는 null, 그리고 짝짓기에 쓰는 원래 route_id·endpoint·model. */
@@ -27,20 +30,31 @@ export function tableLocalModelContracts(): readonly TableLocalModelContract[] {
     if (!object(row.contract) || row.contract.protocol !== LOCAL_MODEL_CONTRACT_PROTOCOL) return [];
     const { routeId, ...value } = row.contract;
     const parsed = localModelServingContractSchema.safeParse(value);
-    const contract = parsed.success && routeId === row.routeId && row.routeId === localModelContractRouteId(parsed.data.backendId)
+    const contract = parsed.success && routeId === row.routeId && (row.routeId === localModelContractRouteId(parsed.data.backendId) || row.routeId === localModelContractRouteId(parsed.data.backendId, parsed.data.deploymentRevision))
       && parsed.data.model === row.model ? Object.freeze(parsed.data) : null;
     return [{ routeId: row.routeId, contract, endpoint: value.endpoint, model: row.model }];
   });
   // 행끼리의 규칙(같은 backend 두 번·한 endpoint 의 다른 장비 그룹)은 env 묶음과 같다 — 어기면 표의 계약을 모두 닫는다.
   const valid = rows.flatMap(row => row.contract ? [row.contract] : []);
-  return localModelServingContractsSchema.safeParse(valid).success ? rows : rows.map(row => ({ ...row, contract: null }));
+  const unique = new Map<string, LocalModelServingContract>();
+  let compatible = true;
+  for (const contract of valid) {
+    const prior = unique.get(contract.backendId);
+    if (prior) {
+      const a = parseCliEngineRevision(prior.deploymentRevision), b = parseCliEngineRevision(contract.deploymentRevision);
+      if (!a || !b || a.connectionId !== b.connectionId || prior.deploymentRevision === contract.deploymentRevision
+        || prior.endpoint !== contract.endpoint || prior.model !== contract.model || prior.physicalGroup !== contract.physicalGroup) compatible = false;
+    } else unique.set(contract.backendId, contract);
+  }
+  return compatible && localModelServingContractsSchema.safeParse([...unique.values()]).success ? rows : rows.map(row => ({ ...row, contract: null }));
 }
 
 /** 표에서 이 주소·모델의 계약. 행이 없으면 undefined(=env 를 본다), 있지만 틀리거나 둘 이상이면 null(=닫음)이다. */
-export function tableLocalModelContract(url: string, model: string): LocalModelServingContract | null | undefined {
+export function tableLocalModelContract(url: string, model: string, revision?: string): LocalModelServingContract | null | undefined {
   const matches = tableLocalModelContracts().filter(row => row.endpoint === url && row.model === model);
-  if (!matches.length) return undefined;
-  return matches.length === 1 ? matches[0].contract : null;
+  if (!matches.length) return revision ? null : undefined;
+  const selected = revision ? matches.filter(row => row.contract?.deploymentRevision === revision) : matches;
+  return selected.length === 1 ? selected[0].contract : null;
 }
 
 /**
@@ -49,9 +63,10 @@ export function tableLocalModelContract(url: string, model: string): LocalModelS
  * 틀리거나 둘 이상이면 null(닫음 — env 로 되돌아가지 않는다). 표에 없을 때만 env `LOCAL_MODEL_SERVING_CONTRACTS` 를 예전과 똑같이 본다.
  * MODEL_SERVING_CONTRACTS_DB=0 이면 표가 비어 env 만 쓴다.
  */
-export function resolveLocalModelContract(backendId: string, env: Readonly<Record<string, string | undefined>> = process.env): LocalModelServingContract | null {
+export function resolveLocalModelContract(backendId: string, env: Readonly<Record<string, string | undefined>> = process.env, revision?: string): LocalModelServingContract | null {
   const routeId = localModelContractRouteId(backendId);
   const matches = tableLocalModelContracts().filter(row => row.routeId === routeId || row.contract?.backendId === backendId);
-  if (!matches.length) return resolveLocalModelServingContract(backendId, env);
-  return matches.length === 1 ? matches[0].contract : null;
+  if (!matches.length) return revision ? null : resolveLocalModelServingContract(backendId, env);
+  const selected = revision ? matches.filter(row => row.contract?.deploymentRevision === revision) : matches;
+  return selected.length === 1 ? selected[0].contract : null;
 }

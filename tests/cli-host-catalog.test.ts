@@ -15,7 +15,7 @@ const model = { providerID: "opencode", id: "deepseek-v4.1-flash", name: "DeepSe
 const entry = (value: unknown = model, id = "opencode/deepseek-v4.1-flash") => `${id}\n${JSON.stringify(value, null, 2)}\n`;
 it("projects only actual native model IDs, labels, variant names and context limits", () => {
   const result = parseCliHostModelsVerbose(entry());
-  expect(result).toEqual([{ id: "opencode/deepseek-v4.1-flash", label: "DeepSeek Flash", variants: ["high", "low"], maxModelLen: 1_000_000 }]);
+  expect(result).toEqual([{ id: "opencode/deepseek-v4.1-flash", label: "DeepSeek Flash", variants: ["high", "low"], maxModelLen: 1_000_000, vision: false }]);
   expect(JSON.stringify(result)).not.toContain("secret");
   for (const invalid of [entry() + entry(), entry(model, "other/deepseek-v4.1-flash"), entry({ ...model, variants: { "--unsafe": {} } }),
     entry().slice(0, -5), "[]", ""]) expect(() => parseCliHostModelsVerbose(invalid)).toThrow();

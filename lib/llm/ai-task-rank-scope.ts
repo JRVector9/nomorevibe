@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { AiTaskPoolSelection } from "./ai-task-execution-config";
+import type { CliEngineSource } from "./cli-engine-config";
 
 /**
  * 글 짓기·번역·검색 text 작업이 「작업 ↔ 모델」 순위 하나로 부르는 동안의 범위(2026-11-02 소유자 결정, PR B).
@@ -23,6 +24,9 @@ export type TextTaskRankBinding = Readonly<{
   configRevision?: number;
   /** Selection hint only. Existing domain claim/dispatch remains the execution authority. */
   poolSelection?: AiTaskPoolSelection;
+  /** CLI engine source/options; present only for OpenCode CLI engine bindings. */
+  options?: Readonly<Record<string, unknown>>;
+  cliEngine?: CliEngineSource;
   connectionId: string;
   connectionLabel: string;
   /** 장부·정책 route·계약 행의 model 열쇠 */

@@ -28,3 +28,14 @@ export const adminStagePoolsSchema = z.partialRecord(z.enum(ADMIN_MODEL_STAGES.m
   z.array(z.string().regex(/^[a-z0-9][a-z0-9-]*:[a-z0-9][a-z0-9-]*$/)).max(8)
     .refine(keys => new Set(keys).size === keys.length, "같은 모델을 중복 선택할 수 없습니다."));
 export type AdminStagePools = z.infer<typeof adminStagePoolsSchema>;
+
+/** One eligibility rule shared by the stage editor and its runtime selection. */
+export function adminStageAcceptsModel(stage: typeof ADMIN_MODEL_STAGES[number], model: {
+  provider: string; cliEngine?: unknown; purposes: readonly string[];
+}): boolean {
+  const nativeIntro = stage.id === "product-intro-check" && model.provider === "opencode-cli" && !!model.cliEngine
+    && model.purposes.includes(stage.purpose);
+  if (!nativeIntro && model.provider !== stage.provider) return false;
+  if (stage.id === "korean-translation-direct" && model.cliEngine) return false;
+  return !(stage.id.startsWith("assist-") || stage.id === "screen-review") || model.purposes.includes(stage.purpose);
+}

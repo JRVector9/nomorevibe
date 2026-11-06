@@ -1,5 +1,6 @@
 import { aiTaskReasoningEfforts } from "@/lib/llm/ai-task-reasoning";
 import type { CliCatalogMetadata } from "@/lib/llm/cli-catalog-metadata";
+import { OPENCODE_NATIVE_TASK_ROUTES, aiTaskUsesCliEngine, cliEngineEndpoint, cliEngineRevision, type CliEngineSource } from "@/lib/llm/cli-engine-config";
 import { AI_TASK_EXECUTION_SAVE_AUDIT_ACTION } from "@/lib/llm/ai-task-execution-config";
 import { AI_CLI_TOOL_LABELS, AI_CLI_TOOL_PROVIDERS, AI_CLI_TOOLS, AI_TASK_RANK_MAX, AI_TASKS, aiTask, aiTaskAccepts, aiTaskAliasIdentity, aiTaskSlotLabel,
   type AiCliTool, type AiTaskDef } from "@/lib/llm/ai-tasks";
@@ -185,6 +186,17 @@ export const aiConnectionModelIds = (connection: Pick<AiConnectionView, "kind" |
   }
   return [...connection.cliModels];
 };
+
+/** 작업이 실제로 고를 수 있는 모델 id — OpenCode chat은 DeepSeek, vision은 카탈로그의 실제 vision=true만. 그 밖의 CLI/API는 기존과 같다. */
+export const aiTaskConnectionModelIds = (task: AiTaskDef, connection: Pick<AiConnectionView, "kind" | "models" | "cliModels"> & Partial<Pick<AiConnectionView, "cliTool" | "cliCatalog">>): string[] => {
+  if (connection.kind === "cli" && connection.cliTool === "opencode") {
+    if (task.kind === "vision") return (connection.cliCatalog?.models ?? []).filter(model => model.vision === true && /deepseek/i.test(model.id) && connection.cliModels.includes(model.id)).map(model => model.id);
+    const ids = aiConnectionModelIds(connection);
+    if (task.kind === "chat") return ids.filter(id => id.toLowerCase().includes("deepseek"));
+    return ids;
+  }
+  return aiConnectionModelIds(connection);
+};
 export const aiConnectionLabel = (connection: Pick<AiConnectionView, "label" | "kind" | "cliTool"> & Partial<Pick<AiConnectionView, "deviceId" | "baseUrl">>) => {
   if (connection.kind === "api" && connection.deviceId === "m1-qwen" && connection.baseUrl === "https://m1-studio.tail02799e.ts.net/v1")
     return "M1 Studio · Gemma";
@@ -202,7 +214,7 @@ export function aiTaskRankOptions(task: AiTaskDef, connections: readonly AiConne
   const sorted = [...connections].sort((a, b) => Number(a.kind === "cli") - Number(b.kind === "cli") || a.label.localeCompare(b.label));
   for (const connection of sorted) {
     if (!connection.enabled || !aiTaskAccepts(task, connection)) continue;
-    for (const model of aiConnectionModelIds(connection)) {
+    for (const model of aiTaskConnectionModelIds(task, connection)) {
       const key = `${connection.id}\u0000${model}`;
       if (seen.has(key)) continue;
       seen.add(key);
@@ -278,9 +290,11 @@ export function validateAiTaskRanks(taskId: string, slot: number, ranks: readonl
       : `${rank}순위: ${task.label}은(는) ${connection.cliTool ? AI_CLI_TOOL_LABELS[connection.cliTool] : "이 CLI"}를 받지 않습니다.`);
     if (row.reasoningEffort && !aiRankReasoningEfforts(task.id, connection, row.model).includes(row.reasoningEffort))
       issues.push(`${rank}순위: 이 작업·모델에서 추론 강도 ${row.reasoningEffort}을(를) 실행할 수 없습니다.`);
-    const offered = aiConnectionModelIds(connection).includes(row.model);
+    const offered = aiTaskConnectionModelIds(task, connection).includes(row.model);
     const keptSaved = saved.some(entry => entry.connectionId === row.provider && entry.model === row.model);
-    if (!offered && !keptSaved) issues.push(connection.kind === "api"
+    const visionUnverified = task.kind === "vision" && connection.kind === "cli" && connection.cliTool === "opencode" && !offered;
+    if (visionUnverified) issues.push(`${rank}순위: ${task.label}은(는) 실제 vision 지원이 확인된 모델만 쓸 수 있습니다. AI 연결에서 M3 호스트 목록을 다시 조회해 vision=true 모델을 고르세요.`);
+    else if (!offered && !keptSaved) issues.push(connection.kind === "api"
       ? `${rank}순위: 「${connection.label}」의 모델 목록에 ${row.model}이(가) 없습니다. AI 연결에서 「다시 읽기」로 목록을 새로 읽으세요.`
       : `${rank}순위: 「${connection.label}」에 ${row.model} 모델 이름이 없습니다. AI 연결에서 CLI 모델 이름에 더하세요.`);
     // Review resumes identify provider/model. Repeated CLI ranks must therefore resolve to the same options.
@@ -334,10 +348,14 @@ export function aiTaskRankNotices(taskId: string, ranks: readonly (AiRankChoice 
 
 export type AiPolicyRoute = Readonly<{ routeId: string; provider: string; model: string; providerBudgetId: string; groupId: string }>;
 export type AiReadinessInput = Readonly<{
+  /** 서버에서만 계산하는 CLI 장부 이름. 클라이언트 공유 규칙은 node 모듈을 불러오지 않는다. */
+  cliEngineIdentity?: (model: string, source: CliEngineSource) => string;
   /** 켜진 계약 행(model_serving_contracts, 키 없이). provider·endpoint·engineModel 은 계약 JSON 의 값(engineModel 은 연결로 가른 이름의 계약만, PR B) */
   contracts: readonly Readonly<{ routeId: string; model: string; provider: string | null; endpoint: string | null; transport: string; engineModel?: string | null;
     /** CLI 계약 행(`cli:<provider>:<route>`)의 버전(PR C1) */
-    cliVersion?: string | null }>[];
+    cliVersion?: string | null;
+    /** CLI 엔진 계약의 배포 리비전 — prepared source와 다르면 계약을 새로 만든다. */
+    deploymentRevision?: string | null }>[];
   /** 고정 로컬 경로의 계약(backendId = 정책 route 의 providerBudgetId) */
   localContract: (backendId: string) => Readonly<{ model: string; endpoint: string | null }> | null;
   /** 엔진 직접 계약을 만들 수 있는 경로(admin-engine-connect ENGINE_CONNECT_ROUTES + 2차 second-review, PR C1) */
@@ -358,7 +376,7 @@ export type AiRankReadiness = Readonly<{
   /** 저장이 만들 것 */
   createDevice: Readonly<{ deviceId: string; limitSlots: number }> | null;
   /** identity = 만들 계약의 model 열쇠, engineModel = 엔진에 보낼 이름(identity 가 연결로 가른 이름일 때만) */
-  createContract: Readonly<{ routeId: string; replacesGateway: boolean; identity: string; engineModel: string | null }> | null;
+  createContract: Readonly<{ routeId: string; replacesGateway: boolean; identity: string; engineModel: string | null; cliEngine?: CliEngineSource }> | null;
   appendRoute: AiPolicyRoute | null;
   /** 저장이 만들(또는 버전을 바꿀) CLI 계약 행(PR C1 — 1차·2차·Grok 로그인 유지 route 만, 연결의 CLI 버전으로) */
   createCliContract: Readonly<{ routeId: string; provider: string; model: string; cliVersion: string; replaces: string | null }> | null;
@@ -373,7 +391,7 @@ const contractBase = (endpoint: string | null) => endpoint ? aiConnectionBaseUrl
  * 정책 route(abcllm·CLI — 같은 장비의 다른 route 가 쓰는 예산 이름을 따른다). 그 밖에 없는 것은 막는다(blocking): 계약이 다른 서버를 가리킴, 정책 route 가
  * 다른 장비에 있음, 로컬·2차 계약 없음, 꺼진 장비. 확인할 수 없는 것(CLI 계약·보강 경로)은 경고로만 알린다.
  */
-export function aiRankReadiness(task: AiTaskDef, rank: number, connection: AiConnectionView, model: string, input: AiReadinessInput): AiRankReadiness {
+export function aiRankReadiness(task: AiTaskDef, rank: number, connection: AiConnectionView, model: string, input: AiReadinessInput, reasoningEffort?: string): AiRankReadiness {
   const blocking: string[] = [], warnings: string[] = [];
   let createDevice: AiRankReadiness["createDevice"] = null, createContract: AiRankReadiness["createContract"] = null, appendRoute: AiPolicyRoute | null = null;
   let createCliContract: AiRankReadiness["createCliContract"] = null;
@@ -412,11 +430,66 @@ export function aiRankReadiness(task: AiTaskDef, rank: number, connection: AiCon
     if (!device) createDevice = Object.freeze({ deviceId, limitSlots: input.policy?.groupLimits[deviceId] ?? connection.capacitySlots });
   };
 
+  const nativeCliEngineExcluded = task.id === "product-audit" || task.id === "product-intro-check";
+  if (!nativeCliEngineExcluded && aiTaskUsesCliEngine(task.id, connection)) {
+    if (!connection.baseUrl) { blocking.push(`${head}: CLI 엔진 주소가 없습니다.`); return result(); }
+    if (!connection.hasKey) { blocking.push(`${head}: CLI 엔진 HTTP 인증 정보가 없습니다. AI 연결에서 키를 저장하세요.`); return result(); }
+    const catalogModel = connection.cliCatalog?.models.find(entry => entry.id === model);
+    if (!catalogModel) { blocking.push(`${head}: 실제 CLI 카탈로그에 ${model} 모델이 없습니다.`); return result(); }
+    const maxModelLen = catalogModel.maxModelLen;
+    if (!(typeof maxModelLen === "number" && maxModelLen > 0 && maxModelLen <= 2097152)) {
+      blocking.push(`${head}: 모델 context(${maxModelLen ?? "없음"})가 1~2097152 범위가 아닙니다.`); return result();
+    }
+    if (reasoningEffort && !(catalogModel.variants ?? []).includes(reasoningEffort)) {
+      blocking.push(`${head}: 이 모델에서 추론 강도 ${reasoningEffort}을(를) 실행할 수 없습니다.`); return result();
+    }
+    if (task.kind === "vision" && catalogModel.vision !== true) {
+      blocking.push(`${head}: 실제 vision 지원이 확인된 모델이 아닙니다.`); return result();
+    }
+    const engineSource: CliEngineSource = { connectionId: connection.id, ...(reasoningEffort ? { reasoningEffort } : {}) };
+    try {
+      cliEngineEndpoint(connection.baseUrl);
+    } catch {
+      blocking.push(`${head}: CLI 엔진 주소를 확인하세요.`);
+      return result();
+    }
+    provider = "abcllm";
+    if (!input.cliEngineIdentity) {
+      blocking.push(`${head}: CLI 계약 정보를 읽지 못했습니다. 다시 시도하세요.`);
+      return result();
+    }
+    identity = input.cliEngineIdentity(model, engineSource);
+    const existing = task.routeId
+      ? input.contracts.find(entry => entry.routeId === task.routeId && entry.model === identity)
+      : undefined;
+    if (existing) {
+      if (existing.provider !== "abcllm" || existing.transport !== "direct"
+        || contractBase(existing.endpoint) !== connection.baseUrl
+        || existing.engineModel !== model
+        || existing.deploymentRevision !== cliEngineRevision(engineSource)) {
+        blocking.push(`${head}: CLI 연결·모델·추론 강도가 저장된 계약과 다릅니다.`);
+        return result();
+      }
+    } else if (task.routeId && input.engineRoutes.includes(task.routeId)) {
+      createContract = Object.freeze({
+        routeId: task.routeId,
+        replacesGateway: false,
+        identity,
+        engineModel: model,
+        cliEngine: engineSource,
+      });
+    } else {
+      blocking.push(`${head}: 이 작업의 CLI 실행 경로를 준비할 수 없습니다.`);
+      return result();
+    }
+    checkDevice(checkRoute(provider, true, ""));
+    return result();
+  }
   if (connection.kind === "cli") {
     provider = connection.cliTool ? AI_CLI_TOOL_PROVIDERS[connection.cliTool] : null;
     if (!provider) { blocking.push(`${head}: CLI 도구를 알 수 없습니다.`); return result(); }
     checkDevice(checkRoute(provider, true, ""));
-    if (routeId && (input.cliContractRoutes ?? []).includes(routeId)) {
+    if (routeId && ((input.cliContractRoutes ?? []).includes(routeId) || provider === "opencode-cli" && OPENCODE_NATIVE_TASK_ROUTES.includes(routeId))) {
       // 1차·2차·Grok 로그인 유지(PR C1): CLI 계약은 이 저장이 연결의 CLI 버전으로 만든다(env CLI_SERVING_CONTRACTS 는 읽지 않는다). 버전은 워커가 부를 때 견준다
       const version = connection.cliVersion?.trim() || null;
       const row = input.contracts.find(entry => entry.routeId === `cli:${provider}:${routeId}` && entry.model === model);
@@ -489,14 +562,15 @@ export function aiRankReadiness(task: AiTaskDef, rank: number, connection: AiCon
  * 한 줄(작업 × 칸)의 순위들을 차례로 확인한다 — 앞 순위가 만들 계약을 뒤 순위가 본다(PR B). 둘 다 계약이 없는 같은 모델을 다른 연결로 고르면
  * 1순위는 모델 이름 그대로, 2순위는 연결로 가른 이름으로 계약을 만든다(한 저장에서 같은 계약 열쇠를 두 서버로 만들지 않는다).
  */
-export function aiRanksReadiness(task: AiTaskDef, ranks: readonly Readonly<{ rank: number; connection: AiConnectionView; model: string }>[],
+export function aiRanksReadiness(task: AiTaskDef, ranks: readonly Readonly<{ rank: number; connection: AiConnectionView; model: string; reasoningEffort?: string }>[],
   input: AiReadinessInput): AiRankReadiness[] {
   const contracts = [...input.contracts];
   return ranks.map(entry => {
-    const ready = aiRankReadiness(task, entry.rank, entry.connection, entry.model, { ...input, contracts });
+    const ready = aiRankReadiness(task, entry.rank, entry.connection, entry.model, { ...input, contracts }, entry.reasoningEffort);
     if (ready.createContract && entry.connection.baseUrl)
       contracts.push({ routeId: ready.createContract.routeId, model: ready.createContract.identity, provider: "abcllm",
-        endpoint: `${entry.connection.baseUrl}/chat/completions`, transport: "direct", engineModel: ready.createContract.engineModel });
+        endpoint: ready.createContract.cliEngine ? cliEngineEndpoint(entry.connection.baseUrl) : `${entry.connection.baseUrl}/chat/completions`, transport: "direct", engineModel: ready.createContract.engineModel,
+        ...(ready.createContract.cliEngine ? { deploymentRevision: cliEngineRevision(ready.createContract.cliEngine) } : {}) });
     if (ready.createCliContract) contracts.push({ routeId: `cli:${ready.createCliContract.provider}:${ready.createCliContract.routeId}`,
       model: ready.createCliContract.model, provider: ready.createCliContract.provider, endpoint: null, transport: "direct", cliVersion: ready.createCliContract.cliVersion });
     return ready;

@@ -38,7 +38,11 @@ export function scopedRequestTimeout(purpose: string, fallbackMs: number): numbe
   return env === process.env ? fallbackMs : Math.max(1, Math.min(fallbackMs, modelTimeoutMs(purpose, env)));
 }
 const identity = z.string().min(1).max(200).refine(value => value === value.trim() && !/[\p{Cc}]/u.test(value));
-export const modelProviderSchema = z.enum(["abcllm", "local-direct", "claude-cli", "codex-cli", "grok-cli", "llama-server"]);
+const cliEngineSourceSchema = z.object({
+  connectionId: z.uuid(),
+  reasoningEffort: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,31}$/).refine(value => value !== "default").optional(),
+}).strict();
+export const modelProviderSchema = z.enum(["abcllm", "local-direct", "claude-cli", "codex-cli", "grok-cli", "llama-server", "opencode-cli"]);
 export const modelDefinitionSchema = z.object({
   key: z.string().regex(/^[a-z0-9][a-z0-9-]*:[a-z0-9][a-z0-9-]*$/),
   equipment: z.string().regex(/^[a-z0-9][a-z0-9-]*$/), displayName: identity,
@@ -50,6 +54,7 @@ export const modelDefinitionSchema = z.object({
   model: identity, family: identity,
   /** Gateway labels are explicit equipment identities, never inferred from a bare name. */
   gatewayLabel: identity.optional(),
+  cliEngine: cliEngineSourceSchema.optional(),
   deadlineLadder: deadlineLadderSchema.optional(),
   timeoutMs: z.number().int().positive().max(3_600_000), maxTokens: z.number().int().positive().max(262_144),
   concurrency: z.number().int().positive().max(64), purposes: z.array(identity).min(1),
@@ -131,7 +136,7 @@ export const DEFAULT_MODEL_DEADLINES: Readonly<Record<string, DeadlineLadder>> =
  * 등록부 문서의 candidates 칸은 그대로 받는다(덮어쓰기 검사에만 쓴다).
  */
 export const DEFAULT_MODEL_CANDIDATES: Readonly<Record<string, readonly string[]>> = {};
-const registrySchema = z.object({ version: z.literal(1), models: z.array(modelDefinitionSchema).min(1).max(64),
+const registrySchema = z.object({ version: z.literal(1), models: z.array(modelDefinitionSchema).min(1).max(512),
   selections: z.record(z.string(), z.string()).default({}), limits: z.record(z.string(), purposeLimitSchema).default({}),
   deadlines: z.record(z.string(), deadlineLadderSchema).default({}),
   timeouts: z.record(z.string(), z.number().int().positive().max(3_600_000)).default({}),
@@ -170,6 +175,33 @@ type RegistryOverlay = () => readonly unknown[];
 let registryOverlay: RegistryOverlay | undefined;
 /** The server installs the admin override reader (model_registry_overrides). Client bundles keep the code defaults. */
 export function setModelRegistryOverlay(reader: RegistryOverlay | undefined) { registryOverlay = reader; }
+
+type CliEngineOverlay = () => readonly ModelDefinition[];
+let cliEngineOverlay: CliEngineOverlay | undefined;
+/**
+ * The server installs a secret-free reader of derived CLI-engine entries (from the ai_connections snapshot).
+ * This module stays client-safe: it imports no node-only module.
+ */
+export function setCliEngineModelOverlay(reader: CliEngineOverlay | undefined) { cliEngineOverlay = reader; }
+/**
+ * Append validated, secret-free CLI-engine entries after admin overrides. CLI entries fail closed individually
+ * (schema-invalid, duplicate, or unexpected provider are skipped); a reader error or an over-bound merge drops
+ * only the appended CLI inventory, never the API code defaults.
+ */
+function appendCliEngineDefinitions(base: ModelDefinition[], entries: readonly ModelDefinition[]): ModelDefinition[] {
+  if (!entries.length) return base;
+  const merged = [...base];
+  const keys = new Set(base.map(model => model.key));
+  for (const entry of entries) {
+    const parsed = modelDefinitionSchema.safeParse(entry);
+    if (!parsed.success || !parsed.data.cliEngine || keys.has(parsed.data.key)
+      || (parsed.data.provider !== "opencode-cli" && parsed.data.provider !== "local-direct")) continue;
+    keys.add(parsed.data.key);
+    merged.push(parsed.data);
+  }
+  if (merged.length > 512) return base;
+  return registrySchema.safeParse({ version: 1, models: merged }).success ? merged : base;
+}
 /**
  * Code defaults with admin overrides by key. An override that fails the definition schema removes that key (its routes close);
  * a merged registry that fails the registry schema keeps the code defaults. Saving validates the merge first, so neither
@@ -203,7 +235,10 @@ export function readModelRegistry(env: ModelEnvironment = process.env): ModelReg
   try {
     // An explicit MODEL_REGISTRY_CONFIG (including a job scope built from the overlaid registry) is used as is.
     if (env.MODEL_REGISTRY_CONFIG?.trim()) return registrySchema.parse(JSON.parse(env.MODEL_REGISTRY_CONFIG));
-    const models = overlaidModelDefinitions(registryOverlay?.() ?? []);
+    const overlaid = overlaidModelDefinitions(registryOverlay?.() ?? []);
+    let cliEntries: readonly ModelDefinition[] = [];
+    try { const read = cliEngineOverlay?.(); if (Array.isArray(read)) cliEntries = read; } catch { cliEntries = []; }
+    const models = appendCliEngineDefinitions(overlaid, cliEntries);
     const policy = routePolicyOverlay?.() ?? null;
     if (!policy) return registrySchema.parse({ version: 1, models });
     // A route policy that fails the merged registry schema keeps the code-default routes (saving validates the merge first).
@@ -217,7 +252,8 @@ export function readModelRegistry(env: ModelEnvironment = process.env): ModelReg
 }
 export function modelForPurpose(purpose: string, env: ModelEnvironment = process.env): ModelDefinition {
   const registry = readModelRegistry(env), key = registry.selections[purpose];
-  const matches = registry.models.filter(model => key ? model.key === key : model.purposes.includes(purpose));
+  // Unselected derived CLI-engine entries must never become defaults; an explicit selection still wins.
+  const matches = registry.models.filter(model => key ? model.key === key : (!model.cliEngine && model.purposes.includes(purpose)));
   if (matches.length !== 1) throw new Error(`model_purpose_not_unique:${purpose}`);
   return matches[0];
 }
@@ -235,6 +271,15 @@ export function resolveRegistryModel(value: string, env: ModelEnvironment = proc
   const matches = models.filter(model => model.model === name);
   if (matches.length > 1) throw new Error("ambiguous_model_identity");
   return matches[0] ?? null;
+}
+
+export function resolveFrozenCliRegistryModel(provider: string, model: string, purpose: string,
+  env: ModelEnvironment = process.env): ModelDefinition | null {
+  const models = readModelRegistry(env).models;
+  const matches = models.filter(entry => entry.provider === provider && entry.model === model
+    && entry.purposes.includes(purpose) && entry.cliEngine);
+  const sources = new Set(matches.map(entry => JSON.stringify([entry.cliEngine!.connectionId, entry.cliEngine!.reasoningEffort ?? null])));
+  return sources.size === 1 ? matches[0] ?? null : null;
 }
 
 /**
@@ -290,10 +335,19 @@ function assignedDefinition(purpose: keyof typeof MODEL_PURPOSE_ENV, env: ModelE
   const key = assignmentDefaultsOverlay(purpose, env);
   return key ? readModelRegistry(env).models.find(model => model.key === key) ?? null : null;
 }
+/** A CLI-engine entry the operator explicitly selected for this purpose wins over legacy *_KEY/env wiring. */
+function selectedCliEngineDefinition(purpose: keyof typeof MODEL_PURPOSE_ENV, env: ModelEnvironment): ModelDefinition | null {
+  const registry = readModelRegistry(env);
+  const selected = registry.selections[purpose];
+  if (!selected) return null;
+  return registry.models.find(model => model.key === selected && model.cliEngine !== undefined && model.purposes.includes(purpose)) ?? null;
+}
 export function configuredModelDefinition(purpose: keyof typeof MODEL_PURPOSE_ENV, env: ModelEnvironment = process.env): ModelDefinition {
   env = modelEnvironment(env, purpose);
   const assigned = assignedDefinition(purpose, env);
   if (assigned) return assigned;
+  const cliSelected = selectedCliEngineDefinition(purpose, env);
+  if (cliSelected) return cliSelected;
   const variable = MODEL_PURPOSE_ENV[purpose], key = variable ? env[`${variable}_KEY`]?.trim() : undefined;
   if (key) {
     const selected = readModelRegistry(env).models.find(model => model.key === key && model.purposes.includes(purpose));
@@ -307,6 +361,8 @@ export function configuredModel(purpose: keyof typeof MODEL_PURPOSE_ENV, env: Mo
   env = modelEnvironment(env, purpose);
   const assigned = assignedDefinition(purpose, env);
   if (assigned) return modelRequestName(assigned);
+  const cliSelected = selectedCliEngineDefinition(purpose, env);
+  if (cliSelected) return modelRequestName(cliSelected);
   const variable = MODEL_PURPOSE_ENV[purpose], key = variable ? env[`${variable}_KEY`]?.trim() : undefined;
   if (key) {
     const selected = readModelRegistry(env).models.find(model => model.key === key && model.purposes.includes(purpose));
@@ -343,7 +399,7 @@ export function modelBaseUrl(purpose: string, env: ModelEnvironment = process.en
   env = modelEnvironment(env, purpose);
   const definition = purpose in MODEL_PURPOSE_ENV ? configuredModelDefinition(purpose as keyof typeof MODEL_PURPOSE_ENV, env) : modelForPurpose(purpose, env);
   if (expectedProvider && definition.provider !== expectedProvider) throw new Error("model_provider_adapter_mismatch");
-  const legacy = purpose === "direct-review" ? env.AUDIT_SECOND_OPINION_URL?.trim() : undefined;
+  const legacy = purpose === "direct-review" && !definition.cliEngine ? env.AUDIT_SECOND_OPINION_URL?.trim() : undefined;
   const base = legacy || definition.baseUrl;
   if (!base) throw new Error(`model_base_url_missing:${purpose}`);
   const url = new URL(base);

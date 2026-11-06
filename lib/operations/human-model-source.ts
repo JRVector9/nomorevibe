@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import type { getSettings } from '@/lib/crawl/settings';
 import { ADMIN_MODEL_STAGES, type AdminModelStage, type AdminStagePools } from '@/lib/llm/admin-model-stages';
-import { tableStageSelections, validateAdminStagePools, withAdminModelStage, withAdminStagePools } from '@/lib/llm/admin-model-pools';
+import { ensureCliStageCatalogs, tableStageSelections, validateAdminStagePools, withAdminModelStage, withAdminStagePools } from '@/lib/llm/admin-model-pools';
 import { modelBaseUrl, modelForPurpose, modelRequestName, readModelRegistry, type ModelDefinition, type ModelEnvironment, type ModelRegistry } from '@/lib/llm/model-registry';
 import { stageTableRows } from '@/lib/llm/stage-assignments';
 import { servingContractsDbEnabled } from '@/lib/llm/serving-contract-store';
@@ -205,6 +205,7 @@ export async function readHumanModelSource(): Promise<HumanModelSource> {
   let registry: ModelRegistry | null = null;
   try {
     await servingModule.ensureServingContracts(0);
+    await ensureCliStageCatalogs();
     registry = readModelRegistry();
   } catch { registry = null; }
   let tableOn = false;

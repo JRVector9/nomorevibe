@@ -1,4 +1,9 @@
 import { Dispatcher, fetch as undiciFetch, getGlobalDispatcher } from "undici";
+import {
+  prepareCliEngineClientRequest,
+  verifyCliEngineResponse,
+  type CliEngineClientRequest,
+} from "./cli-engine-client";
 import { trackGatewayTransport } from "./gateway-local-end";
 
 /**
@@ -10,6 +15,8 @@ import { trackGatewayTransport } from "./gateway-local-end";
  */
 export async function gatewayFetch(requestId: string, ...[url, init]: Parameters<typeof undiciFetch>): ReturnType<typeof undiciFetch> {
   const track = trackGatewayTransport(requestId);
+  let prepared: CliEngineClientRequest | null = null;
+  let preparedKnown = false;
   class Observed extends Dispatcher {
     dispatch(options: Dispatcher.DispatchOptions, handler: Dispatcher.DispatchHandler): boolean {
       const end = track.dispatched();
@@ -28,6 +35,31 @@ export async function gatewayFetch(requestId: string, ...[url, init]: Parameters
       catch (error) { track.unknown(); throw error; }
     }
   }
-  try { return await undiciFetch(url, { ...init, dispatcher: new Observed() }); }
-  finally { track.settled(); }
+  try {
+    prepared = await prepareCliEngineClientRequest(requestId, url, init);
+    preparedKnown = true;
+    const response = await undiciFetch(
+      prepared === null ? url : prepared.endpoint,
+      prepared === null
+        ? { ...init, dispatcher: new Observed() }
+        : {
+            ...init,
+            method: "POST",
+            headers: prepared.headers,
+            body: prepared.wire,
+            redirect: "error",
+            dispatcher: new Observed(),
+          },
+    );
+    if (prepared === null) return response;
+    return await verifyCliEngineResponse(prepared, response);
+  } catch (error) {
+    if (!preparedKnown || prepared !== null) {
+      track.unknown();
+      throw new Error("cli_engine_failed");
+    }
+    throw error;
+  } finally {
+    track.settled();
+  }
 }

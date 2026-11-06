@@ -1,7 +1,8 @@
 "use server";
 
+import { ensureCliStageModelResources } from "@/lib/operations/admin-ai-tasks-repository";
 import { revalidatePath } from "next/cache";
-import { validateAdminStagePools } from "@/lib/llm/admin-model-pools";
+import { ensureCliStageCatalogs, validateAdminStagePools } from "@/lib/llm/admin-model-pools";
 import { ensureServingContracts } from "@/lib/llm/serving-contract-store";
 import { currentAdmin } from "@/lib/auth/admin";
 import { saveSettings, settingsFormVersion } from "@/lib/crawl/settings";
@@ -23,8 +24,12 @@ export const saveReviewModels = webWriteAction(async function saveReviewModels(_
   let stageModelPools;
   try {
     if (typeof raw !== "string" || raw.length > 32_000) throw new Error("invalid_pool");
-    stageModelPools = validateAdminStagePools(JSON.parse(raw));
+    const parsed = JSON.parse(raw);
+    await ensureCliStageCatalogs(parsed);
+    stageModelPools = validateAdminStagePools(parsed);
   } catch { return { issues: ["등록되지 않은 모델·중복 모델·지원하지 않는 제공자 조합입니다. 모델 등록부와 선택 목록을 확인해주세요."] }; }
+  const resources = await ensureCliStageModelResources(stageModelPools, admin.login);
+  if (!resources.ok) return { issues: resources.issues };
   const result = await saveSettings({ stageModelPools }, admin.login, { expectedFormVersion: String(form.get("settingsVersion") ?? "") });
   if (!result.ok) return { issues: result.issues };
   for (const path of ["/admin/models", "/admin", "/admin/status", "/admin/review"]) revalidatePath(path);

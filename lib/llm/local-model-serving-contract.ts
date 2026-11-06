@@ -21,10 +21,17 @@ export const localModelServingContractSchema = z.object({
   contextWindowTokens: positive.max(1_048_576), totalTokenBound: positive.max(1_048_576),
   maxOutputTokens: positive.max(262_144), maxInputBytes: positive.max(16 * 1024 * 1024),
   capabilities: z.object({ vision: z.boolean(), jsonSchema: z.boolean() }).strict(),
-  thinking: z.object({
-    mode: z.enum(["disabled", "low"]),
-    parameter: z.enum(["chat_template_kwargs.enable_thinking", "enable_thinking", "reasoning_effort", "none"]),
-  }).strict(),
+  thinking: z.union([
+    z.object({
+      mode: z.enum(["disabled", "low"]),
+      parameter: z.enum(["chat_template_kwargs.enable_thinking", "enable_thinking", "reasoning_effort", "none"]),
+    }).strict(),
+    z.object({
+      mode: z.literal("cli-variant"),
+      parameter: z.literal("reasoning_effort"),
+      effort: z.string().regex(/^(?!-)[a-z0-9_-]{1,32}$/).optional(),
+    }).strict(),
+  ]),
   termination: z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("response_only") }).strict(),
     z.object({ kind: z.literal("provider_hard_deadline"), maxDurationMs: positive.max(3_600_000) }).strict(),
@@ -77,6 +84,7 @@ export function resolveLocalModelServingContract(backendId: string,
 
 export function localModelThinkingFields(contract: LocalModelServingContract): Record<string, unknown> {
   const { thinking } = localModelServingContractSchema.parse(contract);
+  if (thinking.mode === "cli-variant") return thinking.effort ? { reasoning_effort: thinking.effort } : {};
   switch (thinking.parameter) {
     case "chat_template_kwargs.enable_thinking": return { chat_template_kwargs: { enable_thinking: false } };
     case "enable_thinking": return { enable_thinking: false };

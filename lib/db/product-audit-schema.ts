@@ -40,6 +40,8 @@ export const productAuditCampaigns = pgTable("product_audit_campaigns", {
   rulesVersion: varchar("rules_version", { length: 40 }).notNull(),
   provider: varchar("provider", { length: 80 }).notNull(),
   model: varchar("model", { length: 160 }).notNull(),
+  /** Exact CLI source frozen at campaign start; no credentials or inference from the current settings. */
+  cliSource: jsonb("cli_source").$type<{ connectionId: string; reasoningEffort?: string }>(),
   /**
    * 남은 감사 모델 바꾸기(0112) — 아직 답이 없는 항목을 이 심사자로 묻는다. 비어 있으면 위의 provider·model 이다(product-audit-reviewer.ts).
    * 위의 두 칸은 이 감사가 무엇으로 시작했는지의 기록이라 바꾸지 않는다. 이미 답한 항목은 그대로고, 답마다 누가 답했는지는
