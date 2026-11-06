@@ -224,6 +224,13 @@
 .admin-prototype .flow-human-jobs > li { min-width:0; border:1px solid var(--line); border-radius:6px; padding:8px; }
 .admin-prototype .flow-human-job-head { display:flex; flex-wrap:wrap; justify-content:space-between; gap:4px; margin-bottom:4px; }
 .admin-prototype .flow-human-settings { margin-top:10px; }
+.admin-prototype .flow-workspace .flow-branches .branch.flow-branch-human {
+  border-color:var(--amber);
+  background:var(--amber-soft);
+}
+.admin-prototype .flow-workspace .flow-branches .branch.flow-branch-human strong {
+  color:var(--amber);
+}
 .admin-prototype .flow-human-model-settings { display:grid; gap:8px; margin-top:8px; }
 .admin-prototype .flow-human-assignment { display:grid; gap:6px; }
 .admin-prototype .flow-human-assignment-row { border:1px solid var(--line); border-radius:6px; padding:8px; min-width:0; }

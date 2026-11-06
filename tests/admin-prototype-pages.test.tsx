@@ -80,7 +80,7 @@ describe("original HTML prototype layout with real-loader contracts", () => {
   it("renders the original LLM summary and seven-column representative table from ledger observations", () => {
     const html = renderToStaticMarkup(<PrototypeModels observation={redesignObservation()} models={redesignModels} assignments={redesignAssignments} contracts={[]} readOnly />);
     expect(html).toContain('class="grid four"');
-    expect(html).toContain("작업 × 실제 사용 모델 · 대표 6개");
+    expect(html).toContain("흐름 단계 × 실제 사용 모델 · 전체 단계");
     for (const heading of ["설정 모델 / 출처", "실제 모델", "실행 / 한도", "성공 / 실패", "결과 미확정 · 사람 검토", "호출 기록 · 업무 결과 대조"]) expect(html).toContain(heading);
     expect(html).not.toContain('class="models-stage-table');
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>신규 호출 접수 중지<\/button>/);
