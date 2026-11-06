@@ -40,7 +40,7 @@ async function SearchSettingsData({ readOnly, disabledReason }: { readOnly: bool
           <h2 className='text-[18px] font-semibold'>검색 모델 실제 설정</h2>
           <p className='text-[13px] text-fg-2'>상태는 모델 목록 응답 기준이며, 추론 성공과는 구분합니다.</p>
         </div>
-        <div className='text-[12px] text-fg-3'>
+        <div className='text-[13px] text-fg-3'>
           <p>설정 읽음 <time dateTime={data.readAt}>{when(data.readAt)}</time></p>
           <p>모델 목록 관측 <time dateTime={data.observedAt}>{when(data.observedAt)}</time></p>
         </div>
