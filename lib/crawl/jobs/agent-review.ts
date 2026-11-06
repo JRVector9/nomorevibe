@@ -4,7 +4,7 @@ import { loadReviewDocument } from "./review-document";
 import { getSettings } from "@/lib/crawl/settings";
 import { isReviewCandidate, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import { listReviewCandidates, loadReviewInput, claimAgentReview, recordAgentReview,
-  requeueStaleReviewSources, handOffExhaustedFirstReviews, canStartLegacyAgentReview, type ModelCapacityReviewClaim,
+  requeueStaleReviewSources, handOffExhaustedFirstReviews, reopenProviderExhaustedFirstReviews, canStartLegacyAgentReview, type ModelCapacityReviewClaim,
   type CliModelCapacityReviewClaim, chooseFirstReviewForCandidate, listFirstReviewPoolCandidates,
   listOwnPendingFirstReviewCandidates, type PendingFirstReviewCandidate } from "@/lib/crawl/agent-review-repository";
 import { holdSuspectedSpam } from "@/lib/crawl/repository";
@@ -62,6 +62,9 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
   if (requeued) ctx.log("crawl.agent_review_sources_queued", { count: requeued });
   const handedOff = await handOffExhaustedFirstReviews(settings, lease, 20);
   if (handedOff) ctx.log("crawl.agent_review_exhausted_handed_off", { count: handedOff });
+  // 모델 장애로 소진된 후보는 모델이 실제로 돌아온 뒤에만 되돌린다 — 장부의 종료 미확정 행은 건드리지 않는다.
+  const reopened = await reopenProviderExhaustedFirstReviews(settings, lease, 20);
+  if (reopened.length) ctx.log("crawl.agent_review_recovered", { count: reopened.length });
   if (!await canStartLegacyAgentReview(lease)) {
     ctx.log("crawl.agent_review_skipped", { reason: "stage_inactive" });
     return { done: false, deferred: "stage_blocked" };

@@ -5,7 +5,7 @@ import { jobs, crawlCandidates, crawlDocuments, crawlFrontier, crawlSettings, cr
 import * as crawl from "@/lib/crawl/repository";
 import { saveSettings, changeReviewMode, getSettings, resetSettings } from "@/lib/crawl/settings";
 import { loadReviewInput, claimAgentReview, recordAgentReview,
-  requeueStaleReviewSources, handOffExhaustedFirstReviews, listReviewCandidates,
+  requeueStaleReviewSources, handOffExhaustedFirstReviews, reopenProviderExhaustedFirstReviews, listReviewCandidates,
   reviewCandidatePredicate, reviewApprovalPredicate, assertReviewApproval } from "@/lib/crawl/agent-review-repository";
 import { ensureSchema } from "./setup";
 import { pinReviewRanks } from "../review-task-ranks-fixture";
@@ -217,15 +217,18 @@ it("enforce 에서 AI 가 거부하면 그 이유를 거부 기록에 남긴다"
   });
 });
 
-it("stops after three infrastructure failures without rejecting the product", async () => {
+it("provider outages do not consume the candidate retry budget", async () => {
   const context = await fixture("enforce");
-  for (let number = 1; number <= 3; number++) {
+  for (let number = 1; number <= 4; number++) {
     const claim = await claimAgentReview(context);
     if (claim.kind === "skipped") throw new Error(claim.reason);
     expect(claim.attempt.attemptNumber).toBe(number);
     await recordAgentReview({ ...context, receipt: claim.receipt, error: "timeout", retryAfter: new Date(0) });
   }
-  expect(await claimAgentReview(context)).toEqual({ kind: "skipped", reason: "attempts_exhausted" });
+  expect(await listReviewCandidates(context.settings, 20)).toMatchObject([{ id: context.candidate.id }]);
+  const claim = await claimAgentReview(context);
+  if (claim.kind === "skipped") throw new Error(claim.reason);
+  expect(claim.attempt.attemptNumber).toBe(5);
   expect(await crawl.getCandidate(context.candidate.repo)).toEqual(context.candidate);
 });
 
@@ -238,7 +241,7 @@ it("hands an approved candidate to human review after three current-source failu
   for (let number = 1; number <= 3; number++) {
     const claim = await claimAgentReview(context);
     if (claim.kind === "skipped") throw new Error(claim.reason);
-    await recordAgentReview({ ...context, receipt: claim.receipt, error: "gateway_error", retryAfter: new Date(0) });
+    await recordAgentReview({ ...context, receipt: claim.receipt, error: "invalid_output", retryAfter: new Date(0) });
   }
   expect(await handOffExhaustedFirstReviews(settings, context.lease)).toBe(1);
   expect(await crawl.getCandidate(context.candidate.repo)).toMatchObject({
@@ -246,6 +249,30 @@ it("hands an approved candidate to human review after three current-source failu
   });
   expect(await handOffExhaustedFirstReviews(settings, context.lease)).toBe(0);
   expect(await db.select().from(crawlReviewAttempts)).toHaveLength(3);
+});
+
+it("reopens legacy provider-exhausted candidates only after a later non-rules success", async () => {
+  const context = await fixture("enforce");
+  for (let number = 1; number <= 3; number++) {
+    const claim = await claimAgentReview(context);
+    if (claim.kind === "skipped") throw new Error(claim.reason);
+    await recordAgentReview({ ...context, receipt: claim.receipt, error: "timeout", retryAfter: new Date(0) });
+  }
+  // 회복 증거: 같은 입력의 1차 자동 심사가 실제로 성공했다.
+  const success = await claimAgentReview(context);
+  if (success.kind === "skipped") throw new Error(success.reason);
+  await recordAgentReview({ ...context, receipt: success.receipt, outcome });
+  // 수정 전에 이미 소진된 행을 재현한다. 성공은 만료시켜 "지금 유효한 성공" 조건을 비운다.
+  await db.update(crawlCandidates).set({ state: "needs_review", reason: "ai_review_exhausted",
+    signals: { firstReviewExhausted: { previousReason: "passed" }, stoppedAt: { rule: "AI 1차 심사", detail: "test" } },
+    updatedAt: new Date() }).where(eq(crawlCandidates.id, context.candidate.id));
+  await db.update(crawlReviewAttempts).set({ validUntil: new Date(0) }).where(eq(crawlReviewAttempts.state, "succeeded"));
+  expect(await reopenProviderExhaustedFirstReviews(context.settings, context.lease)).toEqual([context.candidate.id]);
+  const reopened = await crawl.getCandidate(context.candidate.repo);
+  expect(reopened).toMatchObject({ state: "approved", reason: "passed", decidedBy: "auto" });
+  expect(reopened?.signals).toMatchObject({ firstReviewRecoveredFrom: { previousReason: "passed" } });
+  expect(reopened?.signals).not.toHaveProperty("stoppedAt");
+  expect(await handOffExhaustedFirstReviews(context.settings, context.lease)).toBe(0);
 });
 
 it("does not combine failures from before and after README recovery", async () => {
@@ -280,7 +307,7 @@ it.each(["ambiguous", "ai_evidence_insufficient"] as const)("hands exhausted %s 
   for (let number = 1; number <= 3; number++) {
     const claim = await claimAgentReview(context);
     if (claim.kind === "skipped") throw new Error(claim.reason);
-    await recordAgentReview({ ...context, receipt: claim.receipt, error: "timeout", retryAfter: new Date(0) });
+    await recordAgentReview({ ...context, receipt: claim.receipt, error: "invalid_output", retryAfter: new Date(0) });
   }
   expect(await handOffExhaustedFirstReviews(settings, context.lease)).toBe(1);
   expect(await crawl.getCandidate(candidate.repo)).toMatchObject({ state: "needs_review", reason: "ai_review_exhausted",
@@ -355,7 +382,7 @@ it("keeps the current-input attempt budget when the selected model changes", asy
   const context = await fixture(); pinReviewRanks({ first: [reviewer, otherReviewer] });
   for (let i = 0; i < 3; i++) {
     const attempt = await claimAgentReview(context); if (attempt.kind === "skipped") throw new Error(attempt.reason);
-    await recordAgentReview({...context, receipt: attempt.receipt, error: "timeout", retryAfter: new Date(0)});
+    await recordAgentReview({...context, receipt: attempt.receipt, error: "invalid_output", retryAfter: new Date(0)});
   }
   expect(await claimAgentReview({...context, model: "other-model"})).toMatchObject({kind: "skipped", reason: "attempts_exhausted"});
 });
@@ -364,7 +391,7 @@ it("removing a sent reviewer moves its settled retry to the remaining model and 
   const original = await fixture("enforce");
   for (let number = 0; number < 2; number++) {
     const claim = await claimAgentReview(original); if (claim.kind === "skipped") throw new Error(claim.reason);
-    await recordAgentReview({ ...original, receipt: claim.receipt, error: "timeout", retryAfter: new Date(number ? Date.now() + 60_000 : 0) });
+    await recordAgentReview({ ...original, receipt: claim.receipt, error: "invalid_output", retryAfter: new Date(number ? Date.now() + 60_000 : 0) });
   }
   await saveSettings({ firstReview: { provider: original.provider, model: "other-model" },
     firstReviewAdditional: [{ provider: original.provider, model: original.model }] }, "test");
@@ -380,7 +407,7 @@ it("removing a sent reviewer moves its settled retry to the remaining model and 
   expect((await listReviewCandidates(settings)).map(row => row.id)).toEqual([original.candidate.id]);
   const third = await claimAgentReview(context); if (third.kind === "skipped") throw new Error(third.reason);
   expect(third.attempt).toMatchObject({ attemptNumber: 3, model: "other-model" });
-  await recordAgentReview({ ...context, receipt: third.receipt, error: "timeout", retryAfter: new Date(0) });
+  await recordAgentReview({ ...context, receipt: third.receipt, error: "invalid_output", retryAfter: new Date(0) });
   expect(await claimAgentReview(context)).toMatchObject({ kind: "skipped", reason: "attempts_exhausted" });
   // Restoring the original model does not reset the shared limit either.
   await saveSettings({ firstReviewAdditional: [{ provider: original.provider, model: original.model }] }, "test");
