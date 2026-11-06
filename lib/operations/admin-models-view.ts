@@ -26,7 +26,8 @@ export type ModelCard = { id: string; name: string; equipment: string; equipment
 export type StageHealth = "정상" | "느림" | "미확인" | "접수 중지";
 const routeStage: Record<string, string> = { "crawl-agent-review": "first-review", "review-gateway": "first-review", "review-cli": "first-review",
   "human-deepseek-review": "human-review", "product-audit": "audit-review", "korean-tagline": "product-tagline-ko",
-  "search-profile": "product-search-profile", "search-verify": "product-search-verify", "intro-check": "product-intro-check" };
+  "search-profile": "product-search-profile", "search-verify": "product-search-verify", "intro-check": "product-intro-check",
+  "crawl-publish-classify": "publish-classify" };
 export const modelStageId = (route: string) => routeStage[route] ?? route;
 export const modelStageLabel = (route: string) => MODEL_DASHBOARD_STAGES.find(stage => stage.id === modelStageId(route))?.label ?? "다른 모델 단계";
 export function findModelDefinition(row: { provider: string; model: string }, models: readonly ModelDefinition[]) {

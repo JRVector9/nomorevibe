@@ -9,7 +9,8 @@ import { buildAdminModelsObservation, unavailableAdminModels, type AdminModelsOb
 import { readModelCapacityDeviceStates } from "@/lib/llm/capacity-devices-repository";
 
 /**
- * Read-only primary snapshot. Expired reservations and historical unknowns remain visible and occupied.
+ * Read-only primary snapshot. Reservations follow device admission accounting until cleanup;
+ * historical unknowns remain visible for review and never count as occupied slots.
  * Basic status boards can skip the completion sample used only by advanced throughput charts.
  * The default/full reader retains its sample bound and one repeatable-read snapshot.
  */
@@ -41,7 +42,8 @@ export async function readAdminModelsObservation(options: { throughput?: boolean
           count(*) FILTER (WHERE NOT response_ok AND settled_at >= transaction_timestamp()-interval '1 hour')::int AS "failed1h",
           count(*) FILTER (WHERE state='withdrawn' AND updated_at >= transaction_timestamp()-interval '1 hour')::int AS "withdrawn1h",
           count(*) FILTER (WHERE state='settled' AND response_ok IS NULL AND settled_at >= transaction_timestamp()-interval '1 hour')::int AS "unclassified1h",
-          count(*) FILTER (WHERE state='waiting')::int AS waiting,
+          count(*) FILTER (WHERE state='waiting' AND queue_until > transaction_timestamp()
+            AND epoch=${control.epoch} AND revision=${control.revision} AND policy_hash=${control.policyHash})::int AS waiting,
           count(*) FILTER (WHERE state='reserved')::int AS reserved,
           count(*) FILTER (WHERE state='dispatched')::int AS dispatched,
           count(*) FILTER (WHERE state='indeterminate')::int AS indeterminate,

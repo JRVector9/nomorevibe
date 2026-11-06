@@ -22,6 +22,8 @@ export type AdminModelsObservation = {
   observedAt: string | null; error: string | null; mode: "open" | "draining" | "disabled" | null;
   epoch: number | null; revision: number | null; policyHash: string | null; controlUpdatedAt: string | null;
   policyVerified: boolean; rows: AdminModelMetrics[];
+  /** Current verified policy bindings; historical ledger groups are not configured capacity. */
+  configuredRoutes?: Pick<AdminModelMetrics, "routeId" | "provider" | "model" | "groupId" | "providerBudgetId">[];
   /**
    * 장비(groupId)별 점유와 한도. 한도는 실시간 장비 상태(`model_capacity_devices`, 없으면 정책 groupLimits 대체)에서 온다 — 전역·풀 한도는 없다(PR 1b).
    * lending: 우선 역할이 유휴라서 낮은 순위가 평소 상한을 넘겨 쓰고 있다. source 가 null 이면 장비 상태를 읽지 못했다(한도는 정책 대체만).
@@ -34,7 +36,7 @@ export type AdminModelsObservation = {
 export function unavailableAdminModels(): AdminModelsObservation {
   return { observedAt: null, error: "운영 DB 실측을 읽지 못했습니다. 0건으로 간주하지 않습니다.", mode: null,
     epoch: null, revision: null, policyHash: null, controlUpdatedAt: null, policyVerified: false,
-    rows: [], groups: [], devices: [], devicesRead: false, requests: [], truncated: false };
+    rows: [], configuredRoutes: [], groups: [], devices: [], devicesRead: false, requests: [], truncated: false };
 }
 export function buildAdminModelsObservation(raw: {
   observedAt: string; control: { mode: "open" | "draining" | "disabled"; epoch: number; revision: number;
@@ -68,6 +70,8 @@ export function buildAdminModelsObservation(raw: {
   }
   return { observedAt, error: null, mode: raw.control.mode, epoch: raw.control.epoch, revision: raw.control.revision,
     policyHash: raw.control.policyHash, controlUpdatedAt: time.parse(raw.control.updatedAt), policyVerified: verified,
-    rows, groups: [...groups.values()].sort((a, b) => a.groupId.localeCompare(b.groupId)), devices, devicesRead: Array.isArray(raw.devices), requests,
+    rows, configuredRoutes: verified ? parsed.data.routes.map(({ routeId, provider, model, groupId, providerBudgetId }) =>
+      ({ routeId, provider, model, groupId, providerBudgetId })) : [],
+    groups: [...groups.values()].sort((a, b) => a.groupId.localeCompare(b.groupId)), devices, devicesRead: Array.isArray(raw.devices), requests,
     truncated: raw.requests.length > 100 };
 }
