@@ -20,7 +20,7 @@ vi.mock("@/lib/crawl/repository", () => ({ holdSuspectedSpam: vi.fn() }));
 // 1차 잡은 늘 순위 고르기다(PR C1): 자기 대기 행·풀 쪽(keyset)·후보별 고르기·막힌 모델 읽기를 경계 mock 으로 둔다
 vi.mock("@/lib/crawl/agent-review-repository", () => ({ requeueStaleReviewSources: async () => 0,
   canStartLegacyAgentReview: async () => true,
-  handOffExhaustedFirstReviews: async () => 0, listReviewCandidates: async () => [mocks.candidate],
+  handOffExhaustedFirstReviews: async () => 0, reopenProviderExhaustedFirstReviews: async () => [], listReviewCandidates: async () => [mocks.candidate],
   listOwnPendingFirstReviewCandidates: async () => [],
   listFirstReviewPoolCandidates: async () => [{ candidate: mocks.candidate,
     position: { id: mocks.candidate!.id, reviewed: false, updatedAt: "2026-10-27 00:00:00.000001", ceiling: 1000 } }],

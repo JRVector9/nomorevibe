@@ -54,6 +54,7 @@ vi.mock('@/lib/domain/products/repository', () => ({ findRepositoryProduct: asyn
 vi.mock('@/lib/crawl/first-reviewer-blocks', () => ({ readBlockedFirstReviewerKeys: mocks.blocked }));
 vi.mock('@/lib/crawl/agent-review-repository', () => ({
   canStartLegacyAgentReview: async () => true, requeueStaleReviewSources: async () => 0, handOffExhaustedFirstReviews: async () => 0,
+  reopenProviderExhaustedFirstReviews: async () => [],
   listOwnPendingFirstReviewCandidates: async () => [],
   // 틱 끝의 이어 하기 확인(readyOnly)만 이 목록을 읽는다 — 남은 후보가 없다고 답한다(후보는 늘 풀 쪽에서 읽는다, PR C1)
   listReviewCandidates: async (_settings: unknown, limit: number, options?: { readyOnly?: boolean }) =>
