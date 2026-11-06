@@ -1,4 +1,5 @@
-import { scopedModel, registeredPoolModelNames } from "@/lib/llm/model-registry";
+import { modelRequestName, scopedModel } from "@/lib/llm/model-registry";
+import { currentHumanModelSelection } from '@/lib/operations/human-model-source';
 import { and, asc, desc, eq, inArray, isNull, not, notInArray, or, sql } from 'drizzle-orm';
 import { db } from '@/lib/db';
 import { crawlCandidates, crawlReviewAttempts, operationsAudit, jobs, secondReviews, type DecisionReason } from '@/lib/db/schema';
@@ -160,9 +161,11 @@ export async function requeueInvalidHumanApprovals(lease: JobLease, limit = 50):
       if (!current || current.candidate.state !== 'approved' || current.candidate.decidedBy !== 'deepseek') return 0;
       const id = current.candidate.signals?.delegatedReviewAttemptId;
       const [attempt] = await tx.select().from(crawlReviewAttempts).where(eq(crawlReviewAttempts.id, typeof id === 'number' ? id : -1)).for('share');
+      const selection = currentHumanModelSelection(current.settings.stageModelPools?.["human-review"] ?? []);
       if (current.settings.humanReview.enabled && attempt?.kind === 'delegated' && attempt.state === 'succeeded'
         && attempt.actor === deepseekActor(current.settings.humanReview.generation) && attempt.outcome?.decision === 'approve'
-        && attempt.provider === DEEPSEEK_REVIEW_PROVIDER && attempt.model !== null && registeredPoolModelNames(current.settings.stageModelPools?.["human-review"], DEEPSEEK_REVIEW_MODEL).includes(attempt.model)
+        && attempt.provider === DEEPSEEK_REVIEW_PROVIDER && attempt.model !== null
+        && (selection.source === 'unknown' || selection.effectiveModels.map(modelRequestName).includes(attempt.model))
         && attempt.policyHash === current.input.policyHash
         && attempt.inputHash === current.input.inputHash && attempt.sourceRevisionHash === current.input.sourceRevisionHash
         && attempt.validUntil > new Date() && current.input.validUntil > new Date()) return 0;

@@ -21,6 +21,17 @@ vi.mock('@/lib/crawl/deepseek-review', async importOriginal => {
   const original = await importOriginal<typeof import('@/lib/crawl/deepseek-review')>();
   return { ...original, deepseekReviewReady: mocks.ready, reviewWithDeepSeek: mocks.infer };
 });
+vi.mock('@/lib/operations/human-model-source', async importOriginal => {
+  const original = await importOriginal<typeof import('@/lib/operations/human-model-source')>();
+  const { readModelRegistry } = await import('@/lib/llm/model-registry');
+  const registry = readModelRegistry();
+  const selection = original.resolveHumanModelSelection(['gpu3090:review'], false, null, registry);
+  const source = { settings: {}, models: registry.models, pools: { 'human-review': ['gpu3090:review'] },
+    defaults: {}, assignments: [], options: {}, source: selection.source, humanUsesTable: selection.source === 'table',
+    tableOn: selection.tableOn, unknown: false, effectiveModels: selection.effectiveModels,
+    effectiveKeys: selection.effectiveKeys, version: '1', selection, saveBlocked: false };
+  return { ...original, readHumanModelSource: async () => source };
+});
 
 import { setHumanReview } from '@/app/(operator)/admin/review/human-review-actions';
 import { reviewHumanQueue } from '@/lib/crawl/jobs/human-review';
@@ -99,9 +110,10 @@ describe('admin switch', () => {
   it('activates after confirming the local model and refreshes the switch pages', async () => {
     expect(await setHumanReview(null, form('true'))).toHaveProperty('message');
     expect(mocks.ready).toHaveBeenCalledTimes(1);
-    expect(mocks.save).toHaveBeenCalledWith({ enabled: true, expectedGeneration: 3, actor: 'operator' });
+    expect(mocks.save).toHaveBeenCalledWith({ enabled: true, expectedGeneration: 3, actor: 'operator',
+      expectedModelPoolKeys: ['gpu3090:review'], expectedModelSourceFingerprint: expect.any(String) });
     expect(mocks.ready.mock.invocationCallOrder[0]).toBeLessThan(mocks.save.mock.invocationCallOrder[0]);
-    expect(mocks.revalidate.mock.calls).toEqual([['/admin'], ['/admin/models'], ['/admin/review'], ['/admin/status']]);
+    expect(mocks.revalidate.mock.calls).toEqual([['/admin'], ['/admin/models'], ['/admin/models/human'], ['/admin/flow'], ['/admin/review'], ['/admin/status']]);
   });
   it('checks administrator access before model lookup or writes', async () => {
     mocks.admin.mockResolvedValue(null);
