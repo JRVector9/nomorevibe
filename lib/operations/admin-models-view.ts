@@ -11,7 +11,8 @@ export function elapsedModelTime(at: string, observedAt: string | null): string 
 }
 
 export const MODEL_DASHBOARD_STAGES = [
-  { id: "first-review", label: "1차 검수" }, { id: "second-review", label: "2차 검수" }, ...ADMIN_MODEL_STAGES,
+  { id: "first-review", label: "1차 검수" }, { id: "second-review", label: "2차 검수" },
+  { id: "publish-classify", label: "발행 분류" }, ...ADMIN_MODEL_STAGES,
 ];
 export type ModelStageAssignment = { id: string; label: string; models: { provider: string; model: string }[] };
 /** 관리 계약(model_serving_contracts) 한 줄의 표시용 요약 — 주소는 host:port 만, 키·토큰은 절대 들어오지 않는다. */
