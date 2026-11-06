@@ -1,0 +1,19 @@
+.fu-dialog { inset:0 0 0 auto; margin:0; padding:0; width:min(780px,100vw); max-width:100vw; height:100dvh; max-height:100dvh; border:0; border-left:1px solid var(--line); background:var(--surface); color:var(--ink); }
+.fu-dialog::backdrop { background:rgb(0 0 0 / .32); }
+.fu-dialog[open] { display:flex; flex-direction:column; }
+.fu-header,.fu-toolbar,.fu-row-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+.fu-header { padding:14px 18px; border-bottom:1px solid var(--line); }
+.fu-header h2 { margin:0; }
+.fu-body { min-height:0; overflow:auto; padding:14px 18px; }
+.fu-body > p { margin:0 0 10px; }
+.fu-toolbar { margin:12px 0; }
+.fu-list { margin:0; padding:0; list-style:none; display:flex; flex-direction:column; gap:12px; }
+.fu-row { min-width:0; border:1px solid var(--line); border-radius:8px; padding:12px; background:var(--surface-2); }
+.fu-row p { margin:4px 0; }
+.fu-row-head { align-items:baseline; flex-wrap:wrap; }
+.fu-row-head span,.fu-meta { color:var(--muted); }
+.fu-model,.fu-meta { overflow-wrap:anywhere; }
+.fu-form { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+.fu-form input:not([type=hidden]) { min-width:0; flex:1 1 220px; padding:6px 8px; border:1px solid var(--line); border-radius:6px; background:var(--surface); }
+.fu-error { color:var(--red); }
+.flow-model-state.fu-trigger { padding:0; border:0; background:none; text-decoration:underline; text-underline-offset:3px; text-align:left; }
