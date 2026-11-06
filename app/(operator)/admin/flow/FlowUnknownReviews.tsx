@@ -24,7 +24,7 @@ function ReviewRow({ item, onClosed }: { item: CapacityReviewItem; onClosed: (id
     <div className="fu-row-head"><b>{modelStageLabel(item.routeId)}</b><span>{item.reason ? reasons[item.reason] ?? "사유 미확인" : "사유 기록 없음"}</span></div>
     <p className="fu-model">{item.model} · {item.groupId}</p>
     <p className="fu-meta">전송 {item.dispatchedAt ? `${kstClock(item.dispatchedAt)} KST` : "시각 미확인"} · {item.localEndRecorded ? "호출자 측 종료 기록 있음" : "호출자 측 종료 기록 없음"}</p>
-    <details><summary>호출 근거</summary><p className="fu-meta">요청 {item.requestId}<br />작업 {item.workKey}<br />담당 {item.ownerInstanceId}{item.oldPolicy ? " · 이전 정책의 호출" : ""}</p></details>
+    <details><summary>호출 근거</summary><p className="fu-meta">요청 {item.requestId}<br />경로 {item.routeId}<br />작업 {item.workKey}<br />담당 {item.ownerInstanceId}{item.oldPolicy ? " · 이전 정책의 호출" : ""}</p></details>
     <form action={action} className="fu-form">
       <input type="hidden" name="requestId" value={item.requestId} />
       <label className="admin-vh" htmlFor={id}>검토 메모</label>
@@ -70,7 +70,7 @@ function ReviewDialog({ task, model, onClose }: Scope & { onClose: () => void })
     router.refresh();
   };
   return <dialog ref={dialog} className="fu-dialog" aria-labelledby={title} onClose={onClose}>
-    <div className="fu-header"><h2 id={title}>미확정 호출 검토</h2><button className="button small" type="button" onClick={onClose}>닫기</button></div>
+    <div className="fu-header"><h2 id={title}>미확정 호출 검토</h2><button className="button small" type="button" onClick={() => dialog.current?.close()}>닫기</button></div>
     <div className="fu-body">
       <p>검토 기록을 닫습니다. 모델 서버의 실행을 중지하는 기능은 아닙니다. 이 기록은 슬롯을 점유하지 않습니다.</p>
       {model && <p className="fu-model">선택한 모델 · {model}</p>}
