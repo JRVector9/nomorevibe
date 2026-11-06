@@ -3,6 +3,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { OPENCODE_REVIEW_AGENT, opencodeReviewArgs, opencodeReviewProfile, releaseOpencodeReviewProfile } from '@/lib/crawl/agent-review-opencode';
+import { readOpenCodeCliCapabilities } from '@/lib/crawl/opencode-cli-capabilities';
+import { setCliHostObservedVersion } from '@/lib/llm/cli-serving-contract';
 import type { CliHostResponseProbeError } from './cli-host-protocol';
 
 const MAX_STDOUT_BYTES = 64 * 1024;
@@ -48,6 +50,11 @@ export async function runCliHostResponseProbe(input: { model: string; reasoningE
   let profile: Awaited<ReturnType<typeof opencodeReviewProfile>>;
   try { profile = await opencodeReviewProfile(directory); }
   catch { await cleanup(directory); return { ok: false, ms: Date.now() - started, error: 'cli_error' }; }
+  let capabilities: Awaited<ReturnType<typeof readOpenCodeCliCapabilities>>;
+  try {
+    capabilities = await readOpenCodeCliCapabilities(profile.command, directory, profile.env);
+    setCliHostObservedVersion(capabilities.version);
+  } catch { await cleanup(directory); return { ok: false, ms: Date.now() - started, error: 'cli_error' }; }
   try {
     // Keep the isolated deny-all profile; only the fixed diagnostic instruction changes.
     const config = JSON.parse(profile.env.OPENCODE_CONFIG_CONTENT ?? '{}') as { agent: Record<string, { prompt?: string }> };
@@ -68,7 +75,7 @@ export async function runCliHostResponseProbe(input: { model: string; reasoningE
         void cleanup(directory).then(() => resolve({ ok: error === undefined, ms, ...(error === undefined ? {} : { error }) }));
       };
       try {
-        spawned = spawn(profile.command, [...opencodeReviewArgs(input.model, input.reasoningEffort), PROMPT], {
+        spawned = spawn(capabilities.command, [...opencodeReviewArgs(input.model, input.reasoningEffort, capabilities), PROMPT], {
           cwd: directory, env, stdio: ['pipe', 'pipe', 'pipe'],
         });
       } catch { finish('cli_error'); return; }

@@ -22,7 +22,11 @@ import { fakeToolDir } from "./fake-cli-path";
  * 1차·2차의 명령은 PATH 의 도구 이름(claude·grok, PR C1)이라 자식의 PATH 는 가짜 CLI 래퍼를 그 이름으로 링크한 디렉터리뿐이다.
  * env 경로(CLAUDE_CLI·GROK_CLI)는 없는 파일을 가리켜 읽지 않음을 함께 본다. legacy 쪽도 1차·2차처럼 도구 이름을 넘긴다. 장부(DB)는 쓰지 않는다.
  */
-const fixture = vi.hoisted(() => ({ contracts: [] as CliServingContract[], opencodeCommand: "" }));
+const fixture = vi.hoisted(() => ({
+  contracts: [] as CliServingContract[],
+  opencodeCommand: "",
+  opencodeCapabilityMode: "v1" as "v1" | "v2",
+}));
 vi.mock("@/lib/llm/cli-serving-contract", async original => ({
   ...await original<typeof import("@/lib/llm/cli-serving-contract")>(),
   resolveCliServingContract: (routeId: string, provider: string, model: string) =>
@@ -34,6 +38,17 @@ vi.mock("@/lib/crawl/agent-review-opencode", async original => {
     const profile = await actual.opencodeReviewProfile(directory);
     return { ...profile, command: fixture.opencodeCommand || profile.command };
   } };
+});
+vi.mock("@/lib/crawl/opencode-cli-capabilities", async original => {
+  const actual = await original<typeof import("@/lib/crawl/opencode-cli-capabilities")>();
+  return { ...actual, readOpenCodeCliCapabilities: async (command: string) => ({
+    command: fixture.opencodeCommand || command,
+    version: fixture.opencodeCapabilityMode === "v2" ? "2.2.5" : "1.19.5",
+    pure: fixture.opencodeCapabilityMode === "v1",
+    standalone: fixture.opencodeCapabilityMode === "v2",
+    variantSyntax: fixture.opencodeCapabilityMode === "v2" ? "suffix" : "flag",
+    catalog: fixture.opencodeCapabilityMode === "v2" ? "api" : "verbose",
+  }) };
 });
 const model = "fake-model", PROCESS_TEST_MS = 20_000;
 const claudeShape = { maxTurns: 2, inputByteCap: 200_000, overheadTokenBound: 20_000, outputTokensPerTurn: 2_000 };
@@ -72,6 +87,7 @@ exec '${process.execPath}' -e 'process.stdout.write(process.argv[1])' '${answer}
 afterAll(() => rm(root, { recursive: true, force: true }));
 beforeEach(() => {
   fixture.opencodeCommand = "";
+  fixture.opencodeCapabilityMode = "v1";
   fixture.contracts = [claude("crawl-agent-review"), claude("second-review"), grok("crawl-agent-review"), grok("second-review")];
   vi.stubEnv("TMPDIR", tmp); vi.stubEnv("PATH", tools); vi.stubEnv("FAKE_CLI_RECORD", records); vi.stubEnv("CLAUDECODE", "1");
   // env 경로는 1차·2차가 읽지 않는다 — 없는 파일을 가리켜도 PATH 의 claude·grok 이 뜬다
@@ -221,7 +237,7 @@ it.skipIf(process.platform === "win32")("pipe 쥔 손자: terminal 없이 proces
 }, PROCESS_TEST_MS);
 
 
-it("OpenCode existing v1 host preparation binds model variants and rejects invalid effort/version before spawn", async () => {
+it("OpenCode host preparation binds model variants and rejects invalid effort before spawn", async () => {
   vi.stubEnv("HOME", "/Users/jr");
   const wireModel = "opencode/deepseek-v4.1-flash";
   fixture.contracts = [{ ...grok("crawl-agent-review"), provider: "opencode-cli", boundProvenance: "declared", model: wireModel, cliVersion: "1.19.5" }];
@@ -235,7 +251,13 @@ it("OpenCode existing v1 host preparation binds model variants and rejects inval
   expect(low.transport.cliContractHash).toBe(high.transport.cliContractHash);
   await releaseLocalReviewCliCall(low); await releaseLocalReviewCliCall(high);
   expect(await prepare("medium")).toMatchObject({ kind: "unsupported" });
-  fixture.contracts[0] = { ...fixture.contracts[0], cliVersion: "1.14.0" };
+  fixture.opencodeCapabilityMode = "v2";
+  const v2 = await prepare("high");
+  expect(v2.kind).toBe("prepared_cli");
+  if (v2.kind !== "prepared_cli") throw new Error("missing_fixture_contract");
+  expect(v2.transport.argvHash).not.toBe(high.transport.argvHash);
+  await releaseLocalReviewCliCall(v2);
+  fixture.contracts = [];
   expect(await prepare("high")).toMatchObject({ kind: "unsupported" });
   expect(await recorded()).toEqual([]);
   expect(await readdir(tmp)).toEqual([]);
