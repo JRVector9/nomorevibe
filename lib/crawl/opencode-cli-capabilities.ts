@@ -12,6 +12,7 @@ export type OpenCodeCliCapabilities = {
   standalone: boolean;
   variantSyntax: "flag" | "suffix" | "none";
   catalog: "verbose" | "api";
+  files?: boolean;
 };
 
 const MAX_HELP_BYTES = 256 * 1024;
@@ -24,7 +25,7 @@ const MAX_INFLIGHT_ENTRIES = 8;
 const modelId = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$/;
 const variantId = /^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/;
 
-type ProjectedModel = { id: string; label: string; variants: string[]; maxModelLen: number | null };
+type ProjectedModel = { id: string; label: string; variants: string[]; maxModelLen: number | null; vision?: boolean };
 
 const capabilityCache = new Map<string, OpenCodeCliCapabilities>();
 const inflightCapabilities = new Map<string, Promise<OpenCodeCliCapabilities>>();
@@ -133,7 +134,7 @@ export async function readOpenCodeCliCapabilities(command: string, cwd: string, 
       pure = pure || hasFlag(serveHelp, "--pure");
       catalog = "api";
     }
-    return { command: real, version, pure, standalone, variantSyntax, catalog };
+    return { command: real, version, pure, standalone, variantSyntax, catalog, files: hasFlag(runHelp, "--file") };
   })();
   boundedSet(inflightCapabilities, key, task, MAX_INFLIGHT_ENTRIES);
   try {
@@ -321,7 +322,10 @@ function projectModels(payload: unknown): ProjectedModel[] {
     variants.sort();
     const limit = record(entry.limit) ? entry.limit.context : null;
     const maxModelLen = typeof limit === "number" && Number.isSafeInteger(limit) && limit > 0 ? limit : null;
-    models.push({ id, label: entry.name, variants, maxModelLen });
+    const capabilities = record(entry.capabilities) ? entry.capabilities : null;
+    const input = capabilities && Array.isArray(capabilities.input) ? capabilities.input : null;
+    const vision = !!input && input.includes("image");
+    models.push({ id, label: entry.name, variants, maxModelLen, vision });
     seen.add(id);
   }
   if (!models.length) throw new Error("opencode_cli_catalog_empty");
@@ -358,7 +362,7 @@ async function terminateOwned(child: ChildProcessByStdio<Writable, Readable, nul
   await waitForExit(child, 1_000);
 }
 
-export async function readOpenCodeV2Models(cap: OpenCodeCliCapabilities, cwd: string, env: NodeJS.ProcessEnv): Promise<{ id: string; label: string; variants: string[]; maxModelLen: number | null }[]> {
+export async function readOpenCodeV2Models(cap: OpenCodeCliCapabilities, cwd: string, env: NodeJS.ProcessEnv): Promise<{ id: string; label: string; variants: string[]; maxModelLen: number | null; vision?: boolean }[]> {
   if (!cap.standalone) throw new Error("opencode_cli_unsupported");
   if (!path.isAbsolute(cap.command)) throw new Error("opencode_cli_command_untrusted");
   const deadline = Date.now() + MODEL_DEADLINE_MS;

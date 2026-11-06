@@ -1,7 +1,7 @@
 "use client";
 import { useActionState, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ADMIN_MODEL_STAGES, type AdminModelStage, type AdminStagePools } from "@/lib/llm/admin-model-stages";
+import { ADMIN_MODEL_STAGES, adminStageAcceptsModel, type AdminModelStage, type AdminStagePools } from "@/lib/llm/admin-model-stages";
 import { type ModelDefinition } from "@/lib/llm/model-registry";
 import { saveAdminStageModels } from "./stage-model-actions";
 import { ModelSaveNotice } from "./ReviewModelsForm";
@@ -17,11 +17,11 @@ export function StagePoolFields({ draft, models, defaults, update, stageIds }: {
     <p className="text-[13px] text-fg-2">선택지 앞의 대괄호는 등록부 장비 표지입니다. 호출은 「모델 연결」의 직접 연결 계약이 엽니다.</p>
     <div className="grid min-w-0 gap-3 md:grid-cols-2">{ADMIN_MODEL_STAGES.filter(stage => !stageIds || stageIds.includes(stage.id)).map(stage => {
     const keys = draft[stage.id] ?? [];
-    const choices = models.filter(model => model.provider === stage.provider && (!(stage.id.startsWith("assist-") || stage.id === "screen-review") || model.purposes.includes(stage.purpose)));
+    const choices = models.filter(model => adminStageAcceptsModel(stage, model));
     return <div key={stage.id} className="flex min-w-0 flex-col gap-2 rounded-lg border border-line p-3">
       <h3 className="text-[14px] font-semibold">{stage.label}</h3>
-      <ModelChips displayName={row => { const model = models.find(model => model.key === row.model); return model ? `[${model.gatewayLabel ?? model.equipment}] ${model.model}` : "등록부에서 사라진 모델"; }} label={stage.label} max={8} rows={keys.map(key => ({ provider: stage.provider, model: key }))}
-        choices={choices.map(model => ({ provider: stage.provider, model: model.key, label: `[${model.gatewayLabel ?? model.equipment}] ${model.model}` }))}
+      <ModelChips displayName={row => { const model = models.find(model => model.key === row.model); return model ? model.cliEngine ? `${model.displayName} · CLI` : `[${model.gatewayLabel ?? model.equipment}] ${model.model}` : "등록부에서 사라진 모델"; }} label={stage.label} max={8} rows={keys.map(key => ({ provider: stage.provider, model: key }))}
+        choices={choices.map(model => ({ provider: stage.provider, model: model.key, label: model.cliEngine ? `${model.displayName} · CLI` : `[${model.gatewayLabel ?? model.equipment}] ${model.model}` }))}
         onChange={rows => update(stage.id, rows.map(row => row.model))} />
       {!keys.length && <span className="w-fit max-w-full break-words rounded-full border border-line bg-bg-soft px-3 py-2 text-[13px]">기본 · {defaults[stage.id] ?? "미확인"}</span>}
       {!choices.length && <p className="text-[13px] text-fg-2">용도·실행 계약 등록 후 모델을 추가할 수 있습니다.</p>}

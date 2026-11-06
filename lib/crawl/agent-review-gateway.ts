@@ -20,6 +20,7 @@ import { checkAi2TokenBudget } from "./second-review-direct-tokenize";
 import { REVIEW_GATEWAY_LADDER, reviewGatewayLadder } from "@/lib/llm/deadline-ladder";
 import { ensureServingContracts, servingContractAuth, servingContractSnapshot, textRouteAccess, textRouteCallable } from "@/lib/llm/serving-contract-store";
 import { DIRECT_OPENAI_CHAT_PROTOCOL, DIRECT_REQUEST_TOKEN_BOUND, type GatewayContractProvider } from "@/lib/llm/direct-serving-contract";
+import { parseCliEngineRevision } from "@/lib/llm/cli-engine-config";
 
 /**
  * Bearer for a contract's endpoint — the send-side reading of the one route access rule (textRouteAccess in serving-contract-store, the
@@ -195,7 +196,8 @@ function directBudgetResult(contract: { protocol: string; requestTokenBound?: nu
 type TextRouteContract = Readonly<{ routeId: string; provider: string; protocol: string; model: string; endpoint: string; totalTokenBound: number;
   tokenizerEndpoint?: string; requestTokenBound?: typeof DIRECT_REQUEST_TOKEN_BOUND; maxOutputTokens?: number; strictTerminalOptIn?: string;
   /** abcllm 형 계약의 엔진 모델 이름(PR B — model 이 연결로 가른 장부 이름일 때만 있다) */
-  engineModel?: string }>;
+  engineModel?: string;
+  deploymentRevision?: string }>;
 /**
  * text 7경로의 엔진 직접(local-direct) wire(PR 3b-E) — 그 경로의 게이트웨이 wire 에서 게이트웨이 전용 칸(context_strategy·reasoning_effort)만 빼고
  * 계약의 엔진 모델 이름(라벨 없음)을 넣는다. max_tokens 는 경로의 출력 상한과 계약 maxOutputTokens 중 작은 쪽, thinking 은 AI1·AI2 직접 wire 와
@@ -217,8 +219,22 @@ export function directTextWire(contract: { model: string; maxOutputTokens: numbe
  * abcllm 형 계약에 engineModel 이 있으면(같은 모델을 다른 연결에도 둔 순위, PR B) 선택 이름(연결로 가른 장부 이름) 대신 그 엔진 이름을 보낸다.
  */
 export function textWireFor(contract: TextRouteContract, selection: string, build: (model: string) => string): string {
-  return contract.provider === "local-direct" && contract.maxOutputTokens !== undefined
-    ? directTextWire({ model: contract.model, maxOutputTokens: contract.maxOutputTokens }, build(contract.model)) : build(contract.engineModel ?? selection);
+  const cliEngineSource = parseCliEngineRevision(contract.deploymentRevision);
+  if (cliEngineSource === null) {
+    return contract.provider === "local-direct" && contract.maxOutputTokens !== undefined
+      ? directTextWire({ model: contract.model, maxOutputTokens: contract.maxOutputTokens }, build(contract.model)) : build(contract.engineModel ?? selection);
+  }
+  if (contract.provider === "local-direct") {
+    throw new Error("invalid_cli_engine_revision");
+  }
+  const body = JSON.parse(build(contract.engineModel ?? selection)) as Record<string, unknown>;
+  const effort = cliEngineSource.reasoningEffort;
+  if (effort === undefined) {
+    delete body.reasoning_effort;
+  } else {
+    body.reasoning_effort = effort;
+  }
+  return JSON.stringify(body);
 }
 export const wireMaxTokens = (wire: string): number | undefined => {
   const value = (JSON.parse(wire) as { max_tokens?: unknown }).max_tokens;

@@ -1170,6 +1170,13 @@
       "when": 1794086401078,
       "tag": "0167_ai_task_repeated_models",
       "breakpoints": true
+    },
+    {
+      "idx": 168,
+      "version": "7",
+      "when": 1793960832402,
+      "tag": "0168_opencode_task_cli",
+      "breakpoints": true
     }
   ]
 }

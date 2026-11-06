@@ -16,6 +16,8 @@ import { ensureServingContracts, servingContractRowAccess, servingContractSnapsh
 import type { AiTaskExecutionConfig, AiTaskPoolRuntime } from "./ai-task-execution-config";
 import { ensureAiTaskExecutionConfigs, readAiTaskExecutionConfig } from "./ai-task-execution-snapshot";
 import { chooseTaskWorkloadMember } from "./ai-task-workload-selector";
+import { cliEngineBearer } from "./cli-engine-auth";
+import { cliEngineEndpoint, cliEngineRevision, isCliEngineConnection, isCliEngineTask, parseCliEngineRevision, type CliEngineSource } from "./cli-engine-config";
 
 /**
  * 공통 실행 resolver(2026-11-02 소유자 결정 「작업 ↔ AI 모델 1~3순위」, PR B).
@@ -73,6 +75,10 @@ export const TEXT_RANK_UNUSABLE_TEXT: Readonly<Record<string, string>> = Object.
   cli_contract_missing: "CLI 계약이 없음(연결에 CLI 버전을 적고 그 줄을 다시 저장하면 만듦)",
   cli_version_mismatch: "워커의 CLI 버전이 계약과 다름(연결의 CLI 버전을 고치고 다시 저장)",
   cli_contract_unavailable: "CLI 계약을 쓸 수 없음(버전 확인 실패 등)",
+  cli_engine_endpoint_invalid: "CLI 엔진 연결 주소가 없거나 올바르지 않음",
+  cli_engine_source_invalid: "CLI 엔진 연결·추론 강도가 계약과 맞지 않음",
+  cli_engine_auth_invalid: "CLI 엔진 인증 정보가 올바르지 않음",
+  cli_engine_contract_not_stored: "CLI 엔진 계약이 저장되어 있지 않음",
   model_paused: "이 틱에 쉬는 중",
   blocked_unconfirmed: "미확인 점유로 장비 칸이 가득 참",
 });
@@ -82,7 +88,8 @@ export type TextRankCandidate = Readonly<{ rank: AiTaskRank; binding: TextTaskRa
 export type TextRankResolution = Readonly<{ routeId: AiTextTaskId; status: "ok" | "no_task_models" | "task_models_unreadable";
   candidates: readonly TextRankCandidate[] }>;
 
-type RouteContract = Readonly<{ row: StoredServingContract; provider: "abcllm" | "local-direct"; endpointBase: string | null; wireModel: string }>;
+type RouteContract = Readonly<{ row: StoredServingContract; provider: "abcllm" | "local-direct"; endpointBase: string | null; wireModel: string;
+  deploymentRevision?: string | null }>;
 const text = (value: unknown, name: string): string | null => {
   const field = value && typeof value === "object" ? (value as Record<string, unknown>)[name] : undefined;
   return typeof field === "string" && field ? field : null;
@@ -106,8 +113,70 @@ function routeContracts(routeId: GatewayServingRoute): RouteContract[] {
     // 게이트웨이 전송 행(abcllm 형, transport gateway)은 열리지 않는다 — 엔진 직접만 순위가 된다
     if (provider === "abcllm" && row.transport !== "direct") return [];
     const wireModel = provider === "local-direct" ? parsed.model : text(parsed, "engineModel") ?? parsed.model;
-    return [{ row, provider, endpointBase: endpointBase(text(parsed, "endpoint")), wireModel }];
+    const deploymentRevision = text(parsed, "deploymentRevision");
+    return [{ row, provider, endpointBase: endpointBase(text(parsed, "endpoint")), wireModel, deploymentRevision }];
   });
+}
+
+function isCliEngineContract(entry: RouteContract): boolean {
+  return parseCliEngineRevision(entry.deploymentRevision) !== null;
+}
+
+function bindCliEngineTaskRank(routeId: GatewayServingRoute, rank: AiTaskRank, contracts: readonly RouteContract[]): TextRankCandidate {
+  const unusable = (code: string): TextRankCandidate => Object.freeze({ rank, binding: null, unusable: code });
+  const connection = rank.connection;
+  const baseUrl = connection.baseUrl;
+  if (!baseUrl) return unusable("cli_engine_endpoint_invalid");
+  try {
+    cliEngineEndpoint(baseUrl);
+  } catch {
+    return unusable("cli_engine_endpoint_invalid");
+  }
+  if (connection.keyUnreadable) return unusable("stored_key_unreadable");
+  const secret = connection.apiKey;
+  if (secret === null || typeof secret !== "string") return unusable("connection_key_missing");
+  const effort = rank.options.reasoningEffort;
+  if (effort !== undefined && typeof effort !== "string") return unusable("cli_engine_source_invalid");
+  const source: CliEngineSource = Object.freeze(effort === undefined
+    ? { connectionId: connection.id }
+    : { connectionId: connection.id, reasoningEffort: effort });
+  let revision: string;
+  try {
+    revision = cliEngineRevision(source);
+  } catch {
+    return unusable("cli_engine_source_invalid");
+  }
+  const direct = contracts.filter(entry => entry.provider === "abcllm" && entry.row.transport === "direct"
+    && entry.endpointBase === baseUrl && entry.wireModel === rank.model);
+  if (!direct.length) return unusable("cli_contract_missing");
+  const parsed = direct.flatMap(entry => {
+    const contractRevision = parseCliEngineRevision(entry.deploymentRevision);
+    return contractRevision ? [{ entry, contractRevision }] : [];
+  });
+  const mine = parsed.filter(row => {
+    try {
+      return cliEngineRevision(row.contractRevision) === revision;
+    } catch {
+      return false;
+    }
+  }).map(row => row.entry)
+    .sort((a, b) => Number(a.row.auth !== "stored") - Number(b.row.auth !== "stored")
+      || Number(a.row.model !== rank.model) - Number(b.row.model !== rank.model)
+      || a.row.model.localeCompare(b.row.model));
+  const picked = mine[0];
+  if (!picked) return unusable(parsed.length ? "cli_engine_source_invalid" : "cli_engine_contract_not_stored");
+  if (picked.row.auth !== "stored") return unusable("cli_engine_contract_not_stored");
+  const access = servingContractRowAccess(picked.row, picked.provider);
+  if (access.block && access.block !== "stored_key_unreadable") return unusable(access.block);
+  let bearer: string;
+  try {
+    bearer = cliEngineBearer(secret);
+  } catch {
+    return unusable("cli_engine_auth_invalid");
+  }
+  return Object.freeze({ rank, unusable: null, binding: Object.freeze({ routeId, rank: rank.rank, connectionId: connection.id, connectionLabel: connection.label,
+    identity: picked.row.model, engineModel: rank.model, provider: picked.provider, bearer, deviceId: connection.deviceId,
+    options: rank.options, cliEngine: source }) });
 }
 
 /**
@@ -119,9 +188,10 @@ export function bindApiTaskRank(routeId: GatewayServingRoute, rank: AiTaskRank, 
   const connection = rank.connection;
   if (!rank.enabled) return unusable("rank_disabled");
   if (!connection.enabled) return unusable("connection_disabled");
+  if (isCliEngineTask(rank.task) && isCliEngineConnection(connection)) return bindCliEngineTaskRank(routeId, rank, contracts);
   if (connection.kind !== "api" || !connection.baseUrl) return unusable("connection_not_api");
   if (connection.keyUnreadable) return unusable("stored_key_unreadable");
-  const mine = contracts.filter(entry => entry.endpointBase === connection.baseUrl && entry.wireModel === rank.model)
+  const mine = contracts.filter(entry => !isCliEngineContract(entry) && entry.endpointBase === connection.baseUrl && entry.wireModel === rank.model)
     .sort((a, b) => Number(a.provider !== "abcllm") - Number(b.provider !== "abcllm") || Number(a.row.model !== rank.model) - Number(b.row.model !== rank.model)
       || a.row.model.localeCompare(b.row.model));
   const picked = mine[0];

@@ -179,7 +179,7 @@ export async function runReservedCliCall(call: PreparedCliCall, dispatch: CliDis
   // File preparation yields to shutdown. This admission check has no await before synchronous spawn;
   // it is not an abort signal and never cancels a child that has already started.
   if (signal?.aborted || options.beforeSpawn?.() === false) return notStarted({ kind: "cancelled" });
-  const observed = await observe(state, signal);
+  const observed = await observeCliProcess(state, signal);
   if (observed.ending === null) return { result: observed.result, terminal: null, indeterminate: observed.indeterminate };
   if (observed.ending === "spawn_failed") return { result: observed.result, terminal: issue(state, requestId, unstarted("spawn_failed")), indeterminate: null };
   const usage = observed.result.kind === "exit" ? reportedUsage(state.provider, observed.result.stdout) : null;
@@ -216,12 +216,12 @@ function reportedUsage(provider: CliProvider, stdout: string) {
   reportedCostUsdMicros: cost !== null && Number.isSafeInteger(cost) ? cost : null };
 }
 
-type Observed = { ending: null; indeterminate: Indeterminate; result: StopResult }
+export type ObservedCliProcess = { ending: null; indeterminate: Indeterminate; result: StopResult }
   | { ending: "spawn_failed"; result: StopResult }
   | { ending: "exited" | "killed"; result: CliProcessResult; exit: { code: number | null; signal: NodeJS.Signals | null };
     killReason: KillReason | null; stdout: Buffer; stderr: Buffer };
 /** legacy runReviewCli 와 같은 순서·규율로 띄우고 죽인다. 다른 점은 exit 와 close 를 따로 보고 두 유예로 끝을 묶는 것뿐이다. */
-function observe(state: State, signal: AbortSignal | undefined): Promise<Observed> {
+export function observeCliProcess(state: Pick<CliCallInput, "command" | "args" | "cwd" | "env" | "stdin" | "timeoutMs" | "maxStdoutBytes" | "maxStderrBytes">, signal?: AbortSignal): Promise<ObservedCliProcess> {
   return new Promise(resolve => {
     let child: ChildProcess;
     try {

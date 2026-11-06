@@ -1,4 +1,4 @@
-import { chmod, lstat, mkdir, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { REVIEW_SYSTEM_PROMPT, type AgentReviewResult } from "./agent-review";
 import { validateReviewOutcome, type ReviewInput } from "./agent-review-contract";
@@ -64,9 +64,21 @@ export async function opencodeReviewProfile(directory: string) {
   ownedProfiles.add(directory);
   await writeFile(path.join(configDir, "opencode.json"), config, { mode: 0o600 });
   await chmod(configDir, 0o500);
+  // v2 standalone does not resolve Go API auth from the user profile in the isolated config.
+  // Reuse the existing login in memory only. Neither the temporary file nor the registry stores its key.
+  let runtimeConfig = config;
+  try {
+    const auth = JSON.parse(await readFile(path.join(env.XDG_DATA_HOME ?? path.join(OPENCODE_HOST_HOME, ".local", "share"), "opencode", "auth.json"), "utf8"));
+    const go = auth?.["opencode-go"];
+    if (go?.type === "api" && typeof go.key === "string" && go.key.length > 0) {
+      runtimeConfig = JSON.stringify({ ...JSON.parse(config), provider: { "opencode-go": { options: { apiKey: go.key } } } });
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw new Error("cli_host_auth_unreadable");
+  }
   const flags = { OPENCODE_DISABLE_PROJECT_CONFIG: "true", OPENCODE_DISABLE_EXTERNAL_SKILLS: "true",
     OPENCODE_DISABLE_CLAUDE_CODE: "true", OPENCODE_DISABLE_AUTOCOMPACT: "true",
-    OPENCODE_DISABLE_LSP_DOWNLOAD: "true", OPENCODE_CONFIG_CONTENT: config, OPENCODE_PERMISSION: JSON.stringify({ "*": "deny" }) };
+    OPENCODE_DISABLE_LSP_DOWNLOAD: "true", OPENCODE_CONFIG_CONTENT: runtimeConfig, OPENCODE_PERMISSION: JSON.stringify({ "*": "deny" }) };
   return { command: OPENCODE_HOST_COMMAND,
     env: { ...env, ...flags, XDG_CONFIG_HOME: configRoot,
       XDG_DATA_HOME: env.XDG_DATA_HOME ?? path.join(OPENCODE_HOST_HOME, ".local", "share"),

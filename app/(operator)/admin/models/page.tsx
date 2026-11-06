@@ -1,3 +1,4 @@
+import { ensureCliStageCatalogs } from "@/lib/llm/admin-model-pools";
 import { TextModelStagesTable } from "./TextModelStagesTable";
 import { ModelRegistryTable } from "./ModelRegistryTable";
 import type { Metadata } from "next";
@@ -70,7 +71,7 @@ async function textStageBindings(): Promise<TextStageBindings> {
  * /admin/models 한 화면(2026-10-31 승인 시안): 고정 상단 띠 → 요약 타일 4 → 단계 × 모델 표 → 장비 표 | 확인 못함 목록 → 접기 2(도우미·감시자·배정 출처·새 잡 / 참고).
  * 모든 구획이 실제 출처만 읽는다 — 장부 관측·장비 로더·도우미 로더·배정 출처·역할 lease·장부 경보 요약·jobs 표·연결 확인 관측. 하위 화면은 그대로 두고 여기서는 요약+링크다.
  */
-export default async function ModelsPage({ searchParams }: { searchParams?: Promise<Record<string, string | string[] | undefined>> } = {}) {
+export default async function ModelsPage({ searchParams }: { searchParams?: Promise<Record<string, string | string[] | undefined>> }) {
   if (!await currentAdmin()) redirect("/admin/login");
   const params = await searchParams;
   const tab = typeof params?.tab === "string" ? params.tab : "live";
@@ -92,6 +93,7 @@ async function ModelsWorkspace({ tab, advanced, readOnly }: { tab: string; advan
     assignmentTableFlag(), ensureReviewTaskRanks()]);
   const [models, bindings] = await Promise.all([currentModelEnv(), textStageBindings()]);
 
+  if (advanced) await ensureCliStageCatalogs();
   const registry = readModelRegistry();
   const { defaults, assignments: stageAssignments } = adminModelStageView({ models, pools: settings.stageModelPools, bindings,
     legacyDefault: stage => stage.purpose === "screen-review" ? screenModelConfig()?.model ?? "미설정"

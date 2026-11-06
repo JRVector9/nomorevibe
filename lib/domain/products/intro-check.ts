@@ -3,6 +3,7 @@ import { scopedModel } from "@/lib/llm/model-registry";
 import { configuredModelForProvider, modelLimits } from "@/lib/llm/model-registry";
 import { cliFailure, runReviewCli, usageFrom, type ReviewCliRun, type ReviewUsage } from "@/lib/crawl/agent-review";
 import { tidyTagline } from "@/lib/crawl/tagline";
+import type { CliTaskResult } from "@/lib/operations/cli-task-protocol";
 import type { IntroOutcome, IntroVerdict } from "@/lib/db/schema";
 
 /**
@@ -90,6 +91,43 @@ export type IntroJudgement = { verdict: IntroVerdict; problem: string; corrected
 export type IntroCheckResult =
   | { ok: true; judgements: Map<string, IntroJudgement>; usage: ReviewUsage }
   | { ok: false; error: string; usage?: ReviewUsage };
+
+export type IntroCheckChatRequest = {
+  messages: [{ role: "system"; content: string }, { role: "user"; content: string }];
+  responseFormat: { type: "json_schema"; json_schema: { name: "intro_check"; strict: true; schema: typeof SCHEMA } };
+};
+
+/**
+ * CLI 로 옮길 때 쓰는 요청 — SYSTEM 은 system 메시지로, 근거 본문은 checkIntros 와 같은 이스케이프로 user 메시지에 넣는다.
+ * 검수 지시를 따로 붙이지 않는다. SCHEMA 도 checkIntros 와 같은 것을 intro_check 이름으로 보낸다.
+ */
+export function introCheckChatRequest(items: readonly IntroItem[]): IntroCheckChatRequest {
+  if (items.length < 1 || items.length > INTRO_CHECK_BATCH) throw new Error("intro_check_batch_size");
+  const body = JSON.stringify(items).replace(/</g, "\\u003c").replace(/>/g, "\\u003e");
+  return {
+    messages: [
+      { role: "system", content: SYSTEM },
+      { role: "user", content: `<untrusted_evidence_json>\n${body}\n</untrusted_evidence_json>` },
+    ],
+    responseFormat: { type: "json_schema", json_schema: { name: "intro_check", strict: true, schema: SCHEMA } },
+  };
+}
+
+/** CLI 결과를 기존 파서로 옮긴다 — 실패의 error/usage 는 그대로 두고, 본문이 깨졌으면 invalid_output 이다. */
+export function introCheckChatResult(items: readonly IntroItem[], result: CliTaskResult): IntroCheckResult {
+  if (!result.ok) return result.usage ? { ok: false, error: result.error, usage: result.usage } : { ok: false, error: result.error };
+  let structured: unknown;
+  try {
+    structured = JSON.parse(result.content);
+  } catch {
+    return { ok: false, error: "invalid_output", usage: result.usage };
+  }
+  try {
+    return { ok: true, judgements: parseIntroCheck(items, structured), usage: result.usage };
+  } catch {
+    return { ok: false, error: "invalid_output", usage: result.usage };
+  }
+}
 
 /** 보낸 제품의 답만 받는다. 답이 빠졌거나 판정이 틀린 모양이면 넣지 않는다(검수하지 않은 것으로 남는다) */
 export function parseIntroCheck(items: readonly IntroItem[], structured: unknown): Map<string, IntroJudgement> {

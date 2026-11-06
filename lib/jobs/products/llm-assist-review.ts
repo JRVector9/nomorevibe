@@ -20,6 +20,7 @@ import { collectIntroRecheckInput, runIntroCorrectionStage } from "@/lib/domain/
 import { completeAssistIntroCorrection } from "@/lib/domain/llm-assist/intro-complete";
 import { collectActionAuditInput, AuditDispatchBudgetExceededError } from "@/lib/domain/llm-assist/audit-runtime";
 import { collectNewsLocalizationRuntimeInput } from "@/lib/domain/llm-assist/news-runtime";
+import { parseCliEngineRevision } from "@/lib/llm/cli-engine-config";
 
 const TICK_MS = 100_000;
 const NATIVE_EXECUTION_MS = 60_000;
@@ -44,7 +45,8 @@ async function runAssistLane(ctx: JobContext<null>, lane: "regular" | "audit"): 
   const drain = async (backend: AssistBackendDrain) => {
     const counts = { claimed: 0, recorded: 0, applied: 0, deferred: 0, human: 0, indeterminate: 0 };
     const apiKey = assistBackendKey(backend.backendId);
-    if (!apiKey) { ctx.log("assist.backend_key_missing", { backendId: backend.backendId }); return counts; }
+    const cliEngine = parseCliEngineRevision(backend.contract.deploymentRevision);
+    if (!apiKey && !cliEngine) { ctx.log("assist.backend_key_missing", { backendId: backend.backendId }); return counts; }
     for (let index = 0; index < backend.maxClaims && ctx.hasBudget() && !ctx.signal?.aborted && remaining() > 15_000; index++) {
       const claim = await claimAssistWork({ lease, owner, backendId: backend.backendId, tasks: backend.tasks, backendFamily: backend.contract.modelFamily });
       if (!claim) break;
@@ -97,7 +99,7 @@ async function runAssistLane(ctx: JobContext<null>, lane: "regular" | "audit"): 
           workRevision: claim.work.revision, claimToken: claim.token, task: claim.work.task, subjectId: subject.id, backendId: backend.backendId },
           input: assistCapacityInput(claim.work, input), lease, promptVersion: input.promptVersion, allowLegacy: false,
           waitForCapacity: true, admissionDeadlineAt }, fetchModel =>
-          fetchModel(backend.contract.endpoint, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
+          fetchModel(backend.contract.endpoint, { method: "POST", headers: { "content-type": "application/json", ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) },
             body: request.wire, signal }));
         const raw = await response.text();
         let value: unknown;
@@ -120,7 +122,7 @@ async function runAssistLane(ctx: JobContext<null>, lane: "regular" | "audit"): 
               workRevision: claim.work.revision, claimToken: claim.token, task: "intro_recheck", subjectId: subject.id, backendId: backend.backendId },
               input: plan.capacityInput, lease, promptVersion: plan.promptVersion, allowLegacy: false,
               waitForCapacity: true, admissionDeadlineAt }, fetchModel =>
-              fetchModel(backend.contract.endpoint, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` }, body: plan.wire, signal }));
+              fetchModel(backend.contract.endpoint, { method: "POST", headers: { "content-type": "application/json", ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) }, body: plan.wire, signal }));
             const [current] = await db.select({ capacityRequestId: llmAssistWorks.capacityRequestId }).from(llmAssistWorks).where(eq(llmAssistWorks.id, claim.work.id));
             if (!current?.capacityRequestId || current.capacityRequestId === factualRequestId) throw new Error("intro_correction_dispatch_missing");
             return { response, capacityRequestId: current.capacityRequestId };

@@ -20,7 +20,7 @@ export const isRemoteReviewCliCall = (call: PreparedReviewCliCall): boolean => c
 /** Host admission is a read of the exact committed historical dispatch, never an authority supplied by RPC JSON. */
 export async function assertCliHostDispatch(value: CliModelDispatch, allowIndeterminate = false): Promise<void> {
   const dispatch = cliModelDispatchSchema.parse(value);
-  if (dispatch.binding.provider !== "opencode-cli" || !["ai1_legacy_cli", "ai1_item_cli", "ai2_item_cli"].includes(dispatch.binding.kind))
+  if (dispatch.binding.provider !== "opencode-cli" || !["ai1_legacy_cli", "ai1_item_cli", "ai2_item_cli", "intro_check_cli", "product_audit_cli"].includes(dispatch.binding.kind))
     throw new Error("cli_host_dispatch_unsupported");
   const record = await readCliModelDispatchRecord(dispatch.requestId);
   if (!record || record.state !== "dispatched" && !(allowIndeterminate && record.state === "indeterminate")

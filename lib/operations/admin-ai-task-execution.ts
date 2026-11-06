@@ -6,7 +6,8 @@ import { aiConnections, aiTaskExecutionConfigs, aiTaskPoolMembers, aiTaskModels,
 import { aiTask, aiTaskAccepts, aiTaskSlots } from "@/lib/llm/ai-tasks";
 import { aiTaskExecutionInputSchema, aiTaskWorkloadPoolApiOnly, AI_TASK_EXECUTION_SAVE_AUDIT_ACTION, type AiTaskExecutionInput } from "@/lib/llm/ai-task-execution-config";
 import { taskPoolEngineKey } from "@/lib/llm/ai-task-pool-identity";
-import { aiConnectionKeyAad, aiConnectionModelIds, aiRankReasoningEfforts, aiRanksReadiness } from "./admin-ai-tasks";
+import { aiTaskUsesCliEngine } from "@/lib/llm/cli-engine-config";
+import { aiConnectionKeyAad, aiTaskConnectionModelIds, aiRankReasoningEfforts, aiRanksReadiness } from "./admin-ai-tasks";
 import { aiTaskCrossResourceIssues, listAiConnections, prepareAiTaskServingResources,
   readAiTaskReadinessInput, saveAiTaskServingResources } from "./admin-ai-tasks-repository";
 import { readAdminCliCatalog } from "./admin-cli-catalog";
@@ -90,18 +91,19 @@ export async function saveAiTaskExecutionConfig(input: unknown, actor: string): 
       const record = records.find(row => row.id === id);
       if (!record) return { ok: false, issues: ["ai_connection_version_mismatch"] };
       if (Number(record.version) !== connection.version) fail("ai_connection_version_mismatch");
-      if (!connection.enabled || !record.enabled || !aiTaskAccepts(task, connection)
-        || aiTaskWorkloadPoolApiOnly(task.id) && connection.kind !== "api") fail("ai_task_pool_connection_unsupported");
+      const cliEngine = aiTaskUsesCliEngine(task.id, connection);
+      if (!connection.enabled || !record.enabled
+        || !(connection.kind === "api" || cliEngine || (!aiTaskWorkloadPoolApiOnly(task.id) && aiTaskAccepts(task, connection))))
+        fail("ai_task_pool_connection_unsupported");
       if (connection.cliTool === "opencode") {
         const catalog = await readAdminCliCatalog({ fresh: true, connectionId: id });
-        if (catalog.cliVersion !== connection.cliVersion) fail("ai_connection_cli_catalog_changed");
-        connections = connections.map(row => row.id === id ? { ...row, cliCatalog: catalog } : row);
+        connections = connections.map(row => row.id === id ? { ...row, cliVersion: catalog.cliVersion, cliCatalog: catalog } : row);
       }
     }
     const canonical = new Map<string, string>(), endpointModels = new Map<string, Set<string>>();
     for (const member of value.members) {
       const connection = connections.find(row => row.id === member.connectionId)!;
-      if (!aiConnectionModelIds(connection).includes(member.model)) fail("ai_task_pool_model_not_offered");
+      if (!aiTaskConnectionModelIds(task, connection).includes(member.model)) fail("ai_task_pool_model_not_offered");
       if (member.reasoningEffort && !aiRankReasoningEfforts(task.id, connection, member.model).includes(member.reasoningEffort))
         fail("ai_task_pool_reasoning_unsupported");
       if (connection.kind === "api") {
@@ -159,7 +161,8 @@ export async function saveAiTaskExecutionConfig(input: unknown, actor: string): 
       row: { provider: member.connectionId, model: member.model, ...(typeof member.options.reasoningEffort === "string" ? { reasoningEffort: member.options.reasoningEffort } : {}) },
       connection: connections.find(row => row.id === member.connectionId)! }));
     const readinessInput = await readAiTaskReadinessInput();
-    const readiness = aiRanksReadiness(task, chosen.map(entry => ({ rank: entry.rank, connection: entry.connection, model: entry.row.model })), readinessInput);
+    const readiness = aiRanksReadiness(task, chosen.map(entry => ({ rank: entry.rank, connection: entry.connection, model: entry.row.model,
+      ...(typeof entry.row.reasoningEffort === "string" ? { reasoningEffort: entry.row.reasoningEffort } : {}) })), readinessInput);
     const blocking = [...readiness.flatMap(row => row.blocking), ...aiTaskCrossResourceIssues(task, readiness)];
     if (blocking.length) return { ok: false, issues: blocking };
     const resources = await prepareAiTaskServingResources(task, chosen, readiness);

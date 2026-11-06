@@ -1,9 +1,10 @@
 "use server";
+import { ensureCliStageModelResources } from "@/lib/operations/admin-ai-tasks-repository";
 import { revalidatePath } from "next/cache";
 import { currentAdmin } from "@/lib/auth/admin";
 import { getSettings, saveSettings, settingsFormVersion, settingsUnreadable } from "@/lib/crawl/settings";
 import { onPrimary } from "@/lib/db";
-import { validateAdminStagePools } from "@/lib/llm/admin-model-pools";
+import { ensureCliStageCatalogs, validateAdminStagePools } from "@/lib/llm/admin-model-pools";
 import { adminStagePoolsSchema } from "@/lib/llm/admin-model-stages";
 import { readModelRegistry } from "@/lib/llm/model-registry";
 import { ensureServingContracts } from "@/lib/llm/serving-contract-store";
@@ -37,6 +38,7 @@ export const saveAdminStageModels = webWriteAction(async function saveAdminStage
   catch { return { issues: [POOL_ISSUE] }; }
 
   try {
+    await ensureCliStageCatalogs(submitted);
     readModelRegistry();
     await ensureServingContracts(0);
     await ensureStageAssignments(0);
@@ -62,6 +64,8 @@ export const saveAdminStageModels = webWriteAction(async function saveAdminStage
     }
   } catch { return { issues: [POOL_ISSUE] }; }
 
+  const resources = await ensureCliStageModelResources(pools, admin.login);
+  if (!resources.ok) return { issues: resources.issues };
   const result = await saveSettings({ stageModelPools: pools }, admin.login, { expectedFormVersion: String(form.get("settingsVersion") ?? "") });
   if (!result.ok) return { issues: result.issues };
   for (const path of ["/admin/models", "/admin/models/human", "/admin", "/admin/status", "/admin/flow"]) revalidatePath(path);

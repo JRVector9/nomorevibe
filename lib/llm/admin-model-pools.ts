@@ -1,6 +1,7 @@
+import { AI_TASKS } from "./ai-tasks";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
-import { ADMIN_MODEL_STAGES, adminStagePoolsSchema, type AdminStagePools, type AdminModelStage } from "./admin-model-stages";
+import { ADMIN_MODEL_STAGES, adminStageAcceptsModel, adminStagePoolsSchema, type AdminStagePools, type AdminModelStage } from "./admin-model-stages";
 import { MODEL_PURPOSE_ENV, modelForPurpose, modelRequestName, readModelRegistry, setModelEnvironmentResolver, type ModelEnvironment, type ModelRegistry } from "./model-registry";
 import { assignmentTableEnabled } from "./assignment-flag";
 import type { AssignmentStage, ModelAssignmentRow } from "./capacity-helpers";
@@ -26,7 +27,7 @@ export function validateAdminStagePools(value: unknown, registry = readModelRegi
   const pools = adminStagePoolsSchema.parse(value);
   for (const stage of ADMIN_MODEL_STAGES) for (const key of pools[stage.id] ?? []) {
     const model = registry.models.find(row => row.key === key);
-    if (!model || model.provider !== stage.provider) throw new Error(`stage_model_adapter_mismatch:${stage.id}:${key}`);
+    if (!model || !adminStageAcceptsModel(stage, model)) throw new Error(`stage_model_adapter_mismatch:${stage.id}:${key}`);
     // Vision and native assist depend on independent verified contracts; never infer those from a name.
     if ((stage.id.startsWith("assist-") || stage.id === "screen-review") && !model.purposes.includes(stage.purpose)) throw new Error(`stage_model_contract_purpose_required:${stage.id}:${key}`);
   }
@@ -51,7 +52,7 @@ export function tableStageSelections(rowsFor: (stage: AssignmentStage) => readon
     if (!rows?.length) continue;
     const fit = rows.filter(row => {
       const model = registry.models.find(entry => entry.key === row.registryKey);
-      return !!model && model.provider === stage.provider && modelRequestName(model) === row.model
+      return !!model && adminStageAcceptsModel(stage, model) && model.provider === row.provider && modelRequestName(model) === row.model
         && !((stage.id.startsWith("assist-") || stage.id === "screen-review") && !model.purposes.includes(stage.purpose));
     });
     if (fit.length < rows.length) noteAssignmentOnce(`assignment_stage_rows_unusable:${stage.id}`, { stage: target, unusable: rows.length - fit.length });
@@ -119,12 +120,28 @@ export async function withStoredAdminStagePools<T>(assignment: string, run: () =
   const { getSettings } = await import("@/lib/crawl/settings");
   const { onPrimary } = await import("@/lib/db");
   const settings = await onPrimary(getSettings);
+  // A CLI in another job must not add host I/O or invalidate this job's API model selection.
+  const jobName = assignment.split(":", 1)[0];
+  const stages = new Set<string>(AI_TASKS.filter(task => task.jobs.includes(jobName)).flatMap(task => task.adminStage ? [task.adminStage] : []));
+  for (const stage of ADMIN_MODEL_STAGES) if (stages.has(stage.id)) stages.add(stage.purpose);
+  const pools = Object.fromEntries(Object.entries(settings.stageModelPools ?? {}).filter(([stage]) => stages.has(stage))) as AdminStagePools;
   // 배정 표(PR 3b-B): 대응하는 단계는 저장 풀 대신 표에서 고른다. 스위치(PR 3b-E: runtime_settings 토글·env 강제)는 스냅숏과 함께 새로 읽는다 —
   // 꺼졌으면 빈 선택(오늘 그대로). 잡 틱 안에서는 그 틱이 고정한 판의 토글이다.
   let table: Record<string, string> = {};
   await ensureStageAssignments();
+  const warmPools = { ...pools };
+  const assignmentStages = new Set<AssignmentStage>();
+  if (assignmentTableEnabled()) for (const stage of ADMIN_MODEL_STAGES) {
+    const target = ADMIN_STAGE_ASSIGNMENTS[stage.id];
+    if (!stages.has(stage.id) || !target) continue;
+    assignmentStages.add(target);
+    const rows = stageAssignmentRows(target) ?? [];
+    warmPools[stage.id] = [...new Set([...(warmPools[stage.id] ?? []), ...rows.filter(row => row.mode === "live" && row.role === "primary").map(row => row.registryKey).filter((key): key is string => key !== null)])];
+  }
+  try { await ensureCliStageCatalogs(warmPools, true); }
+  catch { noteAssignmentOnce(`cli_catalog_unavailable:${jobName}`, { job: jobName }); }
   const currentRegistry = readModelRegistry(process.env);
-  if (assignmentTableEnabled()) table = tableStageSelections(stageAssignmentRows, assignment, currentRegistry);
+  if (assignmentTableEnabled()) table = tableStageSelections(stage => assignmentStages.has(stage) ? stageAssignmentRows(stage) : null, assignment, currentRegistry);
   const defaultStage = assignment.startsWith("human-deepseek-review:") ? "human-review"
     : assignment.startsWith("split-confirm:") ? "split-confirm" : null;
   if (defaultStage) {
@@ -139,11 +156,24 @@ export async function withStoredAdminStagePools<T>(assignment: string, run: () =
       table[defaultStage] = key;
     }
   }
-  return runWithStagePools(settings.stageModelPools ?? {}, assignment, () => {
+  return runWithStagePools(pools, assignment, () => {
     if (assignment.startsWith("split-tiebreak:")) return withAdminModelStage("split-tiebreak", run);
     if (assignment.startsWith("split-confirm:")) return withAdminModelStage("split-confirm", run);
     if (assignment.startsWith("held-qwen-retry:")) return withAdminModelStage("held-review-retry", run);
     if (assignment.startsWith("audit-qwen:")) return withAdminModelStage("audit-review", run);
     return run();
   }, table);
+}
+
+/** Fresh host metadata is limited to explicit CLI stage selection/editing, never the general flow page. */
+export async function ensureCliStageCatalogs(value?: unknown, onlyMissing = false): Promise<void> {
+  const snapshot = await import("./ai-task-models-snapshot");
+  await snapshot.ensureAiTaskModels();
+  const keys = value === undefined ? null : Object.values(adminStagePoolsSchema.parse(value)).flat();
+  const registered = readModelRegistry().models;
+  if (onlyMissing && keys && keys.every(key => registered.some(model => model.key === key))) return;
+  const ids = snapshot.aiTaskCliEngineConnections().filter(connection => connection.enabled && (keys === null
+    || keys.some(key => key.startsWith(`${connection.deviceId}:`) || registered.find(model => model.key === key)?.cliEngine?.connectionId === connection.id)))
+    .map(connection => connection.id);
+  if (ids.length) await snapshot.ensureAiTaskCliEngineCatalogs(ids);
 }

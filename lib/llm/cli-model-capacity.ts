@@ -15,6 +15,7 @@ import { markUnsettledDispatch } from "./capacity-unsettled";
 import { cliCommandFor, resolveCliServingContract } from "./cli-serving-contract";
 import { prepareCliCall, readCliProcessTerminal, runReservedCliCall, settleCliNotStarted, type CliCallInput, type CliCallOutcome,
   type CliProcessResult, type PreparedCliCall } from "./cli-process-runner";
+import { releaseRemoteCliTaskCall, runRemoteCliTaskCall, settleRemoteCliTaskNotStarted } from "@/lib/crawl/cli-task-remote";
 
 /**
  * 공통 슬롯 밖에서 CLI 를 부르던 reviewer 배경 호출자 — 소개 검수·Claude 감사·Grok 세션 점검(PR05c-5).
@@ -31,10 +32,16 @@ const MAX_STDERR_BYTES = 16 * 1024;
 /** runReviewCli 가 출력 토큰을 따로 받지 않을 때의 값(agent-review.ts reviewCliMaxOutputTokens) */
 const CLAUDE_OUTPUT_TOKENS = 2_000;
 
-export async function backgroundCliPath(routeId: BackgroundCliRoute, model: string): Promise<"legacy" | "native"> {
+export async function backgroundCliPath(routeId: BackgroundCliRoute, model: string,
+  providerOverride?: "opencode-cli"): Promise<"legacy" | "native"> {
   if (!Object.hasOwn(BACKGROUND_CLI, routeId)) throw new Error("invalid_cli_model_route");
-  const provider = BACKGROUND_CLI[routeId], control = await readModelCapacityCallerControl();
-  if (control.mode === "disabled") return "legacy";
+  if (providerOverride !== undefined && routeId !== "product-intro-check" && routeId !== "product-audit")
+    throw new Error("invalid_cli_model_route");
+  const provider = providerOverride ?? BACKGROUND_CLI[routeId], control = await readModelCapacityCallerControl();
+  if (control.mode === "disabled") {
+    if (providerOverride !== undefined) throw new ModelCapacityDeferredError("disabled");
+    return "legacy";
+  }
   if (control.mode === "draining") throw new ModelCapacityDeferredError("draining");
   if (control.mode !== "open") throw new Error("model_capacity_control_invalid");
   if (!control.policy?.routes.some(route => route.routeId === routeId && route.provider === provider && route.model === model))
@@ -80,7 +87,7 @@ export type CliCapacityWork = Readonly<{
   /** 슬롯 요청 전 주인·도메인 스냅숏. null 이면 그사이 바뀌었다 */
   plan: () => Promise<CliPlan | null>;
   /** lock 접두 뒤 같은 TX 에서 도메인 행·job 리스를 증명하고 binding 을 낸다. null 이면 건너뛴다(예약은 거둔다) */
-  prove: (tx: ProductTransaction, call: PreparedCliCall, plan: CliPlan) => Promise<CliDispatchBinding | null>;
+  prove: (tx: ProductTransaction, call: Pick<PreparedCliCall, "routeId" | "transport" | "totalTokenBound">, plan: CliPlan) => Promise<CliDispatchBinding | null>;
 }>;
 
 /**
@@ -145,6 +152,85 @@ export async function runCliWithModelCapacity(input: CliCallInput, signal: Abort
     if (work.requireTerminal) throw new CliPhysicalEndUnknownError();
   }
   return readCliProcessTerminal(outcome.terminal)?.ending === "not_started" ? { kind: "not_started" } : { kind: "ran", result: outcome.result };
+}
+
+type RemoteCliTaskCall = Parameters<typeof runRemoteCliTaskCall>[0];
+type RemoteCliTaskResult = Awaited<ReturnType<typeof runRemoteCliTaskCall>>["result"];
+export type RemoteCliTaskCapacityRun = { kind: "ran"; result: RemoteCliTaskResult } | { kind: "not_started" | "skipped" };
+
+/** 원격 task 호출도 같은 슬롯·dispatch·정산 순서를 쓴다. 검증된 remoteSettlement 없이는 결과를 내보내지 않는다. */
+export async function runRemoteCliTaskWithModelCapacity(call: RemoteCliTaskCall, signal: AbortSignal | undefined,
+  work: CliCapacityWork): Promise<RemoteCliTaskCapacityRun> {
+  try {
+    if (signal?.aborted) return { kind: "not_started" };
+    if ((call.routeId !== "product-intro-check" && call.routeId !== "product-audit") || call.provider !== "opencode-cli")
+      throw new Error("invalid_cli_task_route");
+    const plan = await work.plan();
+    if (!plan) return { kind: "skipped" };
+    if (plan.identity.routeId !== call.routeId || plan.identity.provider !== call.provider
+      || plan.identity.model !== call.model)
+      throw new Error("cli_task_identity_mismatch");
+    const pending = await findOwnPendingModelRequest(plan.identity);
+    if (pending?.state === "dispatched") throw new ModelCapacityDeferredError("dispatched");
+    const slot = await requestCliModelSlot({ ...plan.identity, requestId: pending?.requestId ?? randomUUID() }, plan.target);
+    if (slot.kind !== "granted") throw new ModelCapacityDeferredError(slot.reason);
+    let dispatch: CliModelDispatch | null;
+    try {
+      // 장부 lock 접두가 도메인·job 잠금보다 앞선다. 이 TX 는 transport 를 품지 않는다
+      dispatch = await onPrimary(() => db.transaction(async tx => {
+        const lock = await lockCliModelCapacityDispatch(tx, { reservation: slot.reservation, identity: plan.identity, target: plan.target });
+        if (!lock) throw new ModelCapacityDeferredError("reservation_lost");
+        const binding = await work.prove(tx, call, plan);
+        return binding && finishCliModelCapacityDispatch(tx, lock, binding);
+      }));
+    } catch (error) {
+      try { await cancelReservedModelSlot(slot.reservation); }
+      catch (cleanup) { throw new AggregateError([error, cleanup], "cli_model_reservation_cleanup_failed"); }
+      throw error;
+    }
+    if (!dispatch) {
+      await cancelReservedModelSlot(slot.reservation);
+      return { kind: "skipped" };
+    }
+    if (signal?.aborted || !work.beforeSpawn()) {
+      let settlement: Awaited<ReturnType<typeof settleRemoteCliTaskNotStarted>> | null = null;
+      try { settlement = await settleRemoteCliTaskNotStarted(call, dispatch); }
+      catch (error) {
+        try {
+          if (!await markModelDispatchIndeterminate(dispatch, modelCapacityIndeterminateReason({ signal, error })))
+            throw new Error("cli_model_dispatch_not_marked");
+        } catch (cleanup) { throw new CliPhysicalEndUnknownError(new AggregateError([error, cleanup], "cli_model_transport_cleanup_failed")); }
+        throw new CliPhysicalEndUnknownError(error);
+      }
+      if (!settlement) {
+        try {
+          if (!await markModelDispatchIndeterminate(dispatch, "transport_unknown")) throw new Error("cli_model_dispatch_not_marked");
+        } catch (error) { throw new CliPhysicalEndUnknownError(error); }
+        throw new CliPhysicalEndUnknownError();
+      }
+      return { kind: "not_started" };
+    }
+    let outcome: Awaited<ReturnType<typeof runRemoteCliTaskCall>>;
+    try { outcome = await runRemoteCliTaskCall(call, dispatch, { signal }); }
+    catch (error) {
+      let failure: unknown = error;
+      try {
+        if (!await markModelDispatchIndeterminate(dispatch, modelCapacityIndeterminateReason({ signal, error })))
+          throw new Error("cli_model_dispatch_not_marked");
+      } catch (cleanup) { failure = new AggregateError([error, cleanup], "cli_model_transport_cleanup_failed"); }
+      throw new CliPhysicalEndUnknownError(failure);
+    }
+    if (!outcome.remoteSettlement) {
+      try {
+        if (!await markModelDispatchIndeterminate(dispatch, outcome.indeterminate ?? "transport_unknown"))
+          throw new Error("cli_model_dispatch_not_marked");
+      } catch (error) { throw new CliPhysicalEndUnknownError(error); }
+      throw new CliPhysicalEndUnknownError();
+    }
+    return outcome.notStarted ? { kind: "not_started" } : { kind: "ran", result: outcome.result };
+  } finally {
+    await releaseRemoteCliTaskCall(call);
+  }
 }
 
 /**

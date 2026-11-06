@@ -10,7 +10,7 @@ const sha = z.string().regex(/^[a-f0-9]{64}$/);
 const model = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$/);
 const text = z.string().min(1).max(160).refine(value => !/[\p{Cc}]/u.test(value));
 export const cliHostModelSchema = z.object({ id: model, label: z.string().min(1).max(240),
-  variants: z.array(text).max(32), maxModelLen: z.number().int().positive().safe().nullable() }).strict();
+  variants: z.array(text).max(32), maxModelLen: z.number().int().positive().safe().nullable(), vision: z.boolean().optional() }).strict();
 export const cliHostCatalogSchema = z.object({ version: z.literal(1), bootId: z.uuid(), cliVersion: z.string().min(1).max(80),
   observedAt: z.iso.datetime(), models: z.array(cliHostModelSchema).max(512) }).strict();
 export type CliHostCatalog = z.infer<typeof cliHostCatalogSchema>;
