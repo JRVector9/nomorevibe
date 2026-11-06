@@ -293,10 +293,10 @@ export function aiTaskModelRows(options: Readonly<{ reload?: boolean }> = {}): r
 }
 
 /** 이 프로세스가 읽은 CLI(opencode) 연결 목록. 순위 JOIN 과 무관한 실제 ai_connections 행에서 채운다. */
-export function aiTaskCliEngineConnections(): readonly AiTaskConnectionSnapshot[] {
+export function aiTaskCliEngineConnections(options: Readonly<{ reload?: boolean }> = {}): readonly AiTaskConnectionSnapshot[] {
   const current = state();
   if (current.pinned) return pinnedCliEngineConnections(current.rows);
-  maybeScheduleReload(current);
+  maybeScheduleReload(current, options);
   return current.cliConnections;
 }
 
@@ -405,7 +405,8 @@ function cliDefinitionKey(connection: AiTaskConnectionSnapshot, modelId: string,
 function derivedCliDefinitions(): readonly ModelDefinition[] {
   const definitions: ModelDefinition[] = [];
   try {
-    for (const connection of aiTaskCliEngineConnections()) {
+    // Registry reads also run while modules initialize; only explicit async callers may refresh inventory here.
+    for (const connection of aiTaskCliEngineConnections({ reload: false })) {
       if (connection.kind !== "cli" || connection.cliTool !== "opencode" || !connection.enabled || connection.apiKey === null
         || connection.keyUnreadable || !connection.baseUrl || !connection.cliCatalog) continue;
       const baseUrl = normalizedCliBaseUrl(connection.baseUrl);
