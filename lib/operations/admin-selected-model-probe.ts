@@ -80,6 +80,7 @@ async function writeProbeResultAudit(actor: string, row: SelectedConnection, mod
   const code = result.ok ? 'ok' : result.error ?? 'unavailable';
   const audit = await adminAuditRow(actor, { action: SELECTED_MODEL_RESPONSE_PROBE_RESULT_ACTION, target: row.deviceId,
     detail: { connectionId: row.id, model, ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+      ...(result.responseModel === undefined ? {} : { responseModel: result.responseModel }),
       ...(result.ms === undefined ? {} : { ms: result.ms }), code },
     ok: result.ok, error: result.ok ? null : code });
   await onPrimary(() => db.insert(operationsAudit).values(audit));

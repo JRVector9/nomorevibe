@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 type Choice = { provider: string; model: string; reasoningEffort?: string };
-type Result = { ok: boolean; ms?: number; error?: string; auditWarning?: boolean };
+type Result = { ok: boolean; ms?: number; responseModel?: string; error?: string; auditWarning?: boolean };
 const MESSAGES: Record<string, string> = {
   unauthorized: "관리자 로그인이 필요합니다.", forbidden: "관리자 화면에서 다시 요청해주세요.", invalid_request: "모델 선택을 확인해주세요.",
   not_found: "사용할 수 없는 연결입니다.", disabled: "연결 또는 모델 접수가 꺼져 있습니다.",
@@ -45,6 +45,7 @@ export function SelectedModelProbe({ choice, disabled = false }: { choice: Choic
       if (generation.current !== own || controller.signal.aborted) return;
       setResult({ key, value: { ok: response.ok && value.ok === true, ...(typeof value.ms === "number" && Number.isFinite(value.ms) ? { ms: value.ms } : {}),
         auditWarning: value.auditWarning === "result_audit_failed",
+        ...(typeof value.responseModel === "string" && value.responseModel.length > 0 && value.responseModel.length <= 200 ? { responseModel: value.responseModel } : {}),
         error: typeof value.error === "string" && value.error in MESSAGES ? value.error : "probe_failed" } });
     } catch {
       if (generation.current === own && !controller.signal.aborted) setResult({ key, value: { ok: false, error: "probe_failed" } });
@@ -59,6 +60,7 @@ export function SelectedModelProbe({ choice, disabled = false }: { choice: Choic
     <span role="status" className="fr-probe-result" data-ok={result ? String(result.ok) : undefined}>
       {result ? result.ok ? `응답 확인${typeof result.ms === "number" ? ` · ${Math.round(result.ms).toLocaleString("ko-KR")}ms` : ""}` : MESSAGES[result.error ?? "probe_failed"] : "선택한 모델에 짧은 진단 호출"}
     </span>
+    {result?.ok && result.responseModel && <span className="fr-probe-result">실제 응답 모델 · {result.responseModel}</span>}
     {result?.auditWarning && <span className="fr-probe-result" data-ok="false">응답 결과 기록 저장 실패 · 자동 재시도하지 않습니다. 작업 로그를 확인해주세요.</span>}
   </div>;
 }

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { adminMutationOriginAllowed } from '@/lib/auth/admin-access';
 import { currentAdmin } from '@/lib/auth/admin';
 import { withRoute } from '@/lib/http/handler';
+import { adminWorkspaceReadOnly } from '@/lib/operations/admin-workspace-preview';
 import { runAdminSelectedModelProbe, type SelectedModelProbeResult } from '@/lib/operations/admin-selected-model-probe';
 
 export const runtime = 'nodejs';
@@ -50,6 +51,7 @@ async function readJsonBounded(req: Request, limit: number): Promise<unknown | n
 }
 
 export const POST = withRoute('admin.models.selected-probe', async (req: Request) => {
+  if (adminWorkspaceReadOnly()) return respond({ ok: false, model: '', error: 'forbidden' }, 403);
   if (!adminMutationOriginAllowed(req.headers)) return respond({ ok: false, model: '', error: 'forbidden' }, 403);
   const admin = await currentAdmin();
   if (!admin?.login) return respond({ ok: false, model: '', error: 'unauthorized' }, 401);
