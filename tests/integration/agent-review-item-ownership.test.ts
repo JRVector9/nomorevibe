@@ -185,7 +185,7 @@ async function exhaustedSource() {
   for (let attempt = 0; attempt < 3; attempt++) {
     latest = await claimItem(context);
     expect(latest.kind).toBe("claimed");
-    expect(await recordAgentReview({ ...context, receipt: latest.receipt, error: "timeout", retryAfter: new Date(0) }))
+    expect(await recordAgentReview({ ...context, receipt: latest.receipt, error: "invalid_output", retryAfter: new Date(0) }))
       .toEqual({ applied: false, state: "failed" });
   }
   if (!latest || latest.receipt.ownership.kind !== "item") throw new Error("actual exhausted item fixture required");
