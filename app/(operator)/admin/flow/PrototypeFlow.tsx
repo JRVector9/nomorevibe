@@ -8,6 +8,7 @@ import { flowStageBadge } from "@/lib/operations/flow-stage-state";
 import { flowModelStage } from "@/lib/operations/flow-model-catalog";
 import { ConfiguredModelRows, LiveModelRows, modelCallCount, RecentModelRows } from "./FlowModels";
 import { FlowUnknownReviews } from "./FlowUnknownReviews";
+import { FlowPromptButton } from "./FlowPrompt";
 import type { OperatorDesk } from "@/lib/operations/operator-desk-model";
 import { flowRankLinesFor, type FlowRankEditor } from "@/lib/operations/flow-rank-editor";
 import { STATION_JOBS } from "@/lib/operations/flow-response";
@@ -29,6 +30,7 @@ const result = (station: Station, range: Range) => range === "5m" ? station.done
 const rangeLabel = (range: Range) => range === "5m" ? "5분" : range === "1h" ? "1시간" : "24시간";
 const stageLabel = (station: Station) => flowModelStage(station.key)?.label ?? station.label;
 const stagePhase = (key: Station["key"]) => flowModelStage(key)?.phase ?? "";
+const cardPromptStage = (key: Station["key"] | "public") => key === "first" || key === "second" || key === "profile" || key === "publish" || key === "keywords" ? key : null;
 const humanStageLabel = flowModelStage("human")?.label ?? "사람 확인 · AI 보조";
 const publicStageLabel = flowModelStage("public")?.label ?? "공개 완료";
 const publicStagePhase = flowModelStage("public")?.phase ?? "결과";
@@ -63,7 +65,7 @@ function HumanWork({ data, controls, modelSettings }: { data: Conveyor; controls
   const llm = human?.llm;
   return <section className="panel flow-human-work" id="flow-human-work" aria-labelledby="flow-human-title">
     <div className="panel-head"><div><h3 id="flow-human-title">{humanStageLabel}</h3><p>자동 검수에서 남은 보류 → 사람 판단·확정 → 승인 시 준비·발행 / 반려 시 종료</p></div>
-      <div className="right"><Link prefetch={false} className="text-button" href="/admin/models#flow-stage-human">모델·단계 설정 →</Link><Tag tone={human?.waiting ? "amber" : human ? "green" : "gray"}>{human ? human.waiting ? "판단 대기" : "대기 없음" : "미확인"}</Tag><ReadStamp at={data.measuredAt} /></div></div>
+      <div className="right"><FlowPromptButton stage="human" /><Link prefetch={false} className="text-button" href="/admin/models#flow-stage-human">모델·단계 설정 →</Link><Tag tone={human?.waiting ? "amber" : human ? "green" : "gray"}>{human ? human.waiting ? "판단 대기" : "대기 없음" : "미확인"}</Tag><ReadStamp at={data.measuredAt} /></div></div>
     <div className="panel-body flow-human-grid">
       <section className="flow-human-decisions"><h4>사람이 처리할 일</h4>
         <Facts rows={[["직접 판단", `${number(human?.direct)}건`], ["확정 필요", `${number(human?.agreed)}건`],
@@ -132,20 +134,25 @@ export function PrototypeFlow({ data, desk, controls, editor, tab = "flow", user
         <div className="flow-grid">{main.map((station, index) => {
           const badge = station ? flowStageBadge(station, STATION_JOBS[station.key].map(job => controls.jobs[job.job]), desk?.window?.admission ?? null)
             : { label: data.publishedHour === null ? "미확인" : "결과 관측", tone: data.publishedHour === null ? "gray" : "green", why: "실제 발행 결과입니다." };
-          return <button className="flow-card" type="button" key={station?.key ?? "public"} data-id={station?.key ?? "public"}
-            data-tone={station ? tone(station.tone) : data.publishedHour === null ? "gray" : "green"} aria-pressed={selected === (station?.key ?? "public")}
-            aria-controls="prototype-selected-stage" onClick={() => setSelected(station?.key ?? "public")}>
-            <div className="flow-card-top"><div className="flow-step">{String(index + 1).padStart(2, "0")} / {station ? stagePhase(station.key) : publicStagePhase}</div>
-              <span className={`flow-status ${badge.tone}`} title={badge.why}>{badge.label}</span></div>
-            <div className="flow-name">{station ? stageLabel(station) : publicStageLabel}</div>
-            <div className="flow-value mono"><span className="flow-number">{number(station ? station.key === "discover" ? station.doneHour : station.waiting : data.publishedHour)}</span>
-              <small>{station ? station.key === "discover" ? "신규 / 1h" : station.key === "keywords" ? "작업" : "후보" : "공개 / 1h"}</small></div>
-            <div className="flow-state">{station?.status ?? (data.publishedHour === null ? "현재 미확인" : "발행 결과 관측")}</div>
-            <div className="flow-trend"><PrototypeSpark values={station ? station.spark : data.stations.find(row => row.key === "publish")?.spark} label={`${station?.label ?? "공개"} 실제 시간별 추이`} /></div>
-            <div className="flow-rate">{rangeLabel(range)} 완료 {number(station ? result(station, range) : range === "1h" ? data.publishedHour : result(data.stations.find(row => row.key === "publish")!, range))}{station?.unit ?? "건"}</div>
+          const promptStage = cardPromptStage(station?.key ?? "public");
+          const cardSelected = selected === (station?.key ?? "public");
+          return <div className="flow-card" key={station?.key ?? "public"} data-id={station?.key ?? "public"}
+            data-tone={station ? tone(station.tone) : data.publishedHour === null ? "gray" : "green"} data-selected={cardSelected ? "true" : "false"}>
+            <button className="flow-prompt-card-select" type="button" aria-pressed={cardSelected}
+              aria-controls="prototype-selected-stage" onClick={() => setSelected(station?.key ?? "public")}>
+              <div className="flow-card-top"><div className="flow-step">{String(index + 1).padStart(2, "0")} / {station ? stagePhase(station.key) : publicStagePhase}</div>
+                <span className={`flow-status ${badge.tone}`} title={badge.why}>{badge.label}</span></div>
+              <div className="flow-name">{station ? stageLabel(station) : publicStageLabel}</div>
+              <div className="flow-value mono"><span className="flow-number">{number(station ? station.key === "discover" ? station.doneHour : station.waiting : data.publishedHour)}</span>
+                <small>{station ? station.key === "discover" ? "신규 / 1h" : station.key === "keywords" ? "작업" : "후보" : "공개 / 1h"}</small></div>
+              <div className="flow-state">{station?.status ?? (data.publishedHour === null ? "현재 미확인" : "발행 결과 관측")}</div>
+              <div className="flow-trend"><PrototypeSpark values={station ? station.spark : data.stations.find(row => row.key === "publish")?.spark} label={`${station?.label ?? "공개"} 실제 시간별 추이`} /></div>
+              <div className="flow-rate">{rangeLabel(range)} 완료 {number(station ? result(station, range) : range === "1h" ? data.publishedHour : result(data.stations.find(row => row.key === "publish")!, range))}{station?.unit ?? "건"}</div>
+            </button>
             <div className="flow-model">{station ? <><LiveModelRows llm={station.llm} compact />
               {modelCallCount(station.llm) === 0 && station.llm?.kind === "llm" && <span className="flow-model-config"><span className="flow-model-note">현재 설정</span><ConfiguredModelRows llm={station.llm} compact /></span>}</> : "목록 반영 · LLM 없음"}</div>
-          </button>;
+            {promptStage && <div className="flow-card-prompt"><FlowPromptButton stage={promptStage} /></div>}
+          </div>;
         })}</div>
       </div>
       <div className="flow-branches"><Link prefetch={false} className="branch flow-branch-human" href="#flow-human-work"><strong>↳ {humanStageLabel}</strong><small>갈림·근거 부족·확정 필요</small><span className="branch-count mono">{number(data.human?.waiting)}</span></Link><Link prefetch={false} className="branch" href="/admin/review?stage=rejected"><strong>↳ 후보 반려</strong><small>공개 전 판정 기록 · 누적</small><span className="branch-count mono">{number(data.rejected)}</span></Link><Link prefetch={false} className="branch" href="/admin/products?tab=quality"><strong>↳ 공개 후 품질관리</strong><small>감사·생존·사용자 요청</small><span className="branch-count">→</span></Link></div><div className="panel-foot"><span>공개 완료 뒤의 검색·번역은 별도 후처리 분기입니다. 후보·2차 표·후처리 수를 합산하지 않습니다.</span><span>— 는 미집계·확인 불가</span></div></section>
@@ -162,7 +169,7 @@ export function PrototypeFlow({ data, desk, controls, editor, tab = "flow", user
           <Facts rows={[["담당", current ? `${STATION_ROLE[current.key]} · ${owner?.host ?? "장비 미확인"} · ${owner?.text ?? "역할 상태 미확인"}` : "공개 목록·프로젝트 상세"], ["작업 / 소비자", current ? `${STATION_JOBS[current.key].map(job => job.job).join(" · ")}${current.key === "second" ? " + AI2 소비자는 별도 관측·제어" : ""}` : "실제 발행 결과"], ["잡 실행 관측", observation ? `${observation.running === null ? "미확인" : `${observation.running}개 · 유효 잠금 기준`}${observation.stale ? " · 오래된 잠금 있음" : ""}` : "해당 없음"], ["마지막 잡 성공", clock(observation?.lastSuccessAt)]]} />
         </section>
       </div>
-      {current?.key === "keywords" && <div className="notice mt small"><b>현재 수치는 검색 키워드의 대기·완료입니다.</b><br />공개 후 소개·번역의 실제 사용: <RecentModelRows llm={data.supportLlm ?? null} /><br />번역·소개 검수의 완료는 언어별·업무별 원본에서 별도로 확인합니다.</div>}
+      {current?.key === "keywords" && <div className="notice mt small"><b>현재 수치는 검색 키워드의 대기·완료입니다.</b><br />공개 후 소개·번역의 실제 사용: <RecentModelRows llm={data.supportLlm ?? null} /><br />번역·소개 검수의 완료는 언어별·업무별 원본에서 별도로 확인합니다.<div className="flow-prompt-support"><FlowPromptButton stage="support" /></div></div>}
       <div className="flex mt stage-detail-links"><Link prefetch={false} className="button small" href={stageTargets[selected]}>{selected === "public" ? "전체 프로젝트 보기" : current?.key === "keywords" ? "검색 후처리 진단" : current?.key === "discover" || current?.key === "fetch" ? "수집·작업 진단" : "이 단계 대상 보기"} →</Link><Link prefetch={false} className="button small" href={`/admin/models#flow-stage-${selected}`}>실제 호출·모델 →</Link><Link prefetch={false} className="text-button" href="/admin/activity?group=settings">관련 설정 변경 →</Link></div></div>
       <aside className="control-box"><h4>이 단계의 제어</h4><p>다음 실행부터 멈추거나 재개합니다. 진행 중인 호출은 실제 종료까지 관측합니다.</p>{current ? STATION_JOBS[current.key].map(job => { const state = controls.jobs[job.job]; return <details key={job.job}><summary className="button">{job.label} {state?.paused ? "재개" : "멈춤"}…</summary>{state && controls.csrf ? <JobControl name={job.job} paused={state.paused} notBefore={state.notBefore} version={state.version} csrf={controls.csrf} /> : <p className="small muted">이 화면에서는 제어할 수 없습니다. <Link prefetch={false} href={`/admin/status?tab=jobs&job=${job.job}`}>작업 상세 →</Link></p>}</details>; }) : <Link prefetch={false} className="button" href="/admin/products">프로젝트 관리 →</Link>}{changeModels && current ? <button className="button" type="button" onClick={() => setChanging(current.key)}>모델 순위·적용 출처</button> : <Link prefetch={false} className="button" href="/admin/models?tab=tasks">모델 순위·적용 출처 →</Link>}<div className="scope"><b>영향 범위</b><br />{current?.key === "second" ? "second-review 잡만 제어합니다. AI2 소비자 전체의 중단을 보장하지 않습니다." : "선택한 잡만 제어합니다. 전역 자동 파이프라인 관문·모델 DRAIN은 다른 범위입니다."}</div></aside></div></Panel>
     {socialContent}
