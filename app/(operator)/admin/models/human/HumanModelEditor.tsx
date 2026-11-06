@@ -42,7 +42,7 @@ export async function HumanModelEditor() {
           <h2 className='text-[15px] font-semibold'>사람 확인 · AI 위임</h2>
           <p className='text-fg-2'>현재 출처: <strong>{SOURCE_LABELS[data.source]}</strong> · {modelLabel}</p>
         </div>
-        <span className='rounded-full border border-line bg-bg-soft px-2.5 py-0.5 text-[12px]'>읽기 전용 {formReadOnly ? '켜짐' : '아님'}</span>
+        <span className='rounded-full border border-line bg-bg-soft px-2.5 py-0.5 text-[13px]'>읽기 전용 {formReadOnly ? '켜짐' : '아님'}</span>
       </div>
       <p className='text-fg-2'>우선순위는 실제로 읽힌 배정 표의 쓸 수 있는 최소 순위 행 → 사람 위임 검수 풀 → 등록부 기본값입니다. 같은 최소 순위의 모델은 작업 분배 후보입니다.</p>
       {tableEffective && <p className='text-fg-2'>배정 표가 실제 출처이므로 사람 위임 검수 풀의 기존 값은 실행에 쓰지 않습니다. 다른 단계 풀 값은 유지됩니다.</p>}
@@ -73,7 +73,7 @@ export async function HumanModelEditor() {
           </li>;
         })}
       </ul> : <p role='alert' className='text-warn'>확인된 사람 확인 · AI 위임 모델이 없습니다. 저장하지 말고 배정 표와 사람 위임 검수 풀을 확인해 주세요.</p>}
-      <p className='text-[12px] text-fg-3'>GET /models는 연결 메타데이터만 확인합니다. 실제 추론 성공이나 실행 중 상태를 뜻하지 않습니다.</p>
+      <p className='text-[13px] text-fg-3'>GET /models는 연결 메타데이터만 확인합니다. 실제 추론 성공이나 실행 중 상태를 뜻하지 않습니다.</p>
     </section>
 
     {data.tableOn && <section className='grid gap-2 rounded-xl border border-line bg-bg-card p-3'>
@@ -104,6 +104,6 @@ export async function HumanModelEditor() {
       <StageModelPoolsForm pools={data.pools} models={data.models} defaults={data.defaults} version={data.version}
         stageIds={poolStageIds} readOnly={formReadOnly} />
     </div>
-    <p className='text-[12px] text-fg-3'>저장된 작업 순위 설정은 사람 확인 모델 선택에 적용되지 않습니다. 위 단계 풀·배정 표·등록부 기본값만 사용합니다.</p>
+    <p className='text-[13px] text-fg-3'>저장된 작업 순위 설정은 사람 확인 모델 선택에 적용되지 않습니다. 위 단계 풀·배정 표·등록부 기본값만 사용합니다.</p>
   </div>;
 }
