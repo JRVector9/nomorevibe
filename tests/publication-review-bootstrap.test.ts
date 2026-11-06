@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { firstReviewers } from '@/lib/crawl/first-reviewers';
 import { setAiTaskModelsForTest } from '@/lib/llm/ai-task-models-snapshot';
@@ -12,7 +13,7 @@ import { classificationConfigHash, classificationDefinitionsHash, classification
 import type { CliCallInput } from '@/lib/llm/cli-process-runner';
 import { publishCandidates } from '@/lib/crawl/jobs/publish';
 
-const fixture = vi.hoisted(() => ({ read: vi.fn(), transaction: vi.fn(), run: vi.fn(), control: vi.fn(), status: vi.fn() }));
+const fixture = vi.hoisted(() => ({ read: vi.fn(), ranks: vi.fn(), transaction: vi.fn(), run: vi.fn(), control: vi.fn(), status: vi.fn() }));
 vi.mock('@/lib/db', () => ({ db: { execute: fixture.read, transaction: fixture.transaction }, onPrimary: (run: () => unknown) => run() }));
 vi.mock('@/lib/llm/cli-model-capacity', () => ({ runCliWithModelCapacity: fixture.run }));
 vi.mock('@/lib/llm/capacity-repository', async original => ({ ...await original<typeof import('@/lib/llm/capacity-repository')>(),
@@ -61,7 +62,9 @@ beforeEach(() => {
   // Undo the global unit fixture: a real newly booted process has neither snapshot.
   setAiTaskModelsForTest(null);
   setAiTaskExecutionConfigsForTest(null);
-  fixture.read.mockResolvedValue([rank]);
+  fixture.ranks.mockResolvedValue([rank]);
+  fixture.read.mockImplementation(query => new PgDialect().sqlToQuery(query).sql.includes('FROM ai_task_models')
+    ? fixture.ranks() : []);
   fixture.control.mockResolvedValue({ mode: 'open' });
   fixture.transaction.mockImplementation(async (run, options) => {
     if (options?.accessMode === 'read only') return run({ execute: async () => [] });
@@ -84,19 +87,19 @@ describe('publication approval snapshots on a cold process', () => {
     const value = prepared();
     await expect(publishCandidates({ lease: value.authority.job, cursor: null, save: vi.fn(), log: vi.fn(), hasBudget: () => true }))
       .rejects.toBe(stop);
-    expect(fixture.read).toHaveBeenCalledOnce();
+    expect(fixture.ranks).toHaveBeenCalledOnce();
   });
 
   it('loads review ranks before the publisher takes source locks for CLI authority', async () => {
     const value = prepared(); fixture.status.mockResolvedValue(value.status);
     await expect(publicationClassificationAuthority([], value.payload, value.authority.job)).rejects.toBe(stop);
-    expect(fixture.read).toHaveBeenCalledOnce();
+    expect(fixture.ranks).toHaveBeenCalledOnce();
   });
 
   it('loads review ranks before an API publisher takes the same source locks', async () => {
     const value = prepared();
     await expect(publicationApiSources([], value.payload, value.authority.job)).rejects.toBe(stop);
-    expect(fixture.read).toHaveBeenCalledOnce();
+    expect(fixture.ranks).toHaveBeenCalledOnce();
   });
 
   it('independently initializes the remote Connect process before native CLI admission', async () => {
@@ -108,7 +111,7 @@ describe('publication approval snapshots on a cold process', () => {
     await expect(runPublicationClassificationCall(value.input, value.payload, value.authority, () => value.status))
       .resolves.toMatchObject({ kind: 'exit', code: 0 });
     expect(fixture.run).toHaveBeenCalledOnce();
-    expect(fixture.read).toHaveBeenCalledOnce();
+    expect(fixture.ranks).toHaveBeenCalledOnce();
   });
 
   it('does not silently fall back when execution settings cannot be read', async () => {
@@ -129,12 +132,12 @@ describe('publication approval snapshots on a cold process', () => {
     });
     const classify = () => runPublicationClassificationCall(value.input, value.payload, value.authority, () => value.status);
     await classify();
-    fixture.read.mockResolvedValue([{ ...rank, model: 'opus' }]);
+    fixture.ranks.mockResolvedValue([{ ...rank, model: 'opus' }]);
     await classify();
-    expect(fixture.read).toHaveBeenCalledTimes(1);
+    expect(fixture.ranks).toHaveBeenCalledTimes(1);
     clock.mockReturnValue(at + 30_001);
     await classify();
-    expect(fixture.read).toHaveBeenCalledTimes(2);
+    expect(fixture.ranks).toHaveBeenCalledTimes(2);
     expect(reviewers).toEqual([
       [{ provider: 'claude-cli', model: 'sonnet' }],
       [{ provider: 'claude-cli', model: 'sonnet' }],

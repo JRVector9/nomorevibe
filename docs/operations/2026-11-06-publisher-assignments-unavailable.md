@@ -69,3 +69,12 @@ ConnectAgent 경로에는 검증 전에 `ensureReviewTaskRanks()`를 기다리�
 배포 시 publisher만이 아니라 Connect도 수정 소스로 교체되어야 하며,
 공유 라이브러리 변경의 실제 배포 범위는 기존 단축 배포 절차의 scope/plan으로 확정한다.
 CLI 재로그인·슬롯 강제 회수·DB 마이그레이션은 이 수정에 필요하지 않다.
+
+## 후속 배포 준비 — 12:57 UTC
+
+사용자가 수정 미포함이면 배포하도록 지시했다. 실제 M3·mini publisher와 Connect는
+`68ba54d7`이었으며 두 수정 파일에 초기화 호출이 없어 미포함을 확인했다.
+최신 main을 병합한 뒤 새 CLI 연결 목록 조회가 늘어나 기존 회귀의 전체 SELECT 횟수 단언
+5개가 실패했다. 동작 검증은 유지하고 캐시 단언을 해당 모델 순위 조회 횟수로 좁혔다.
+이전 실패 로그는 `/tmp/nomorevibe-publisher-merged-tests.log`에 보존했다.
+이 준비 기록 자체는 배포 완료 증거가 아니다.
