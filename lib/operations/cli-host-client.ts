@@ -26,7 +26,8 @@ export async function cliHostRequest<T>(target: CliHostTarget, request: CliHostR
   return schema.parse(JSON.parse(content));
 }
 export async function readCliHostCatalog(target: CliHostTarget) {
-  const catalog = await cliHostRequest(target, { version: 1, action: "catalog", data: {} }, cliHostCatalogSchema);
+  // Cold metadata can take ~10s + owned API models 12s + 4s child cleanup; allow 30s for catalog.
+  const catalog = await cliHostRequest(target, { version: 1, action: "catalog", data: {} }, cliHostCatalogSchema, 30_000);
   const observed = Date.parse(catalog.observedAt);
   if (observed > Date.now() + 5_000 || Date.now() - observed > 60_000) throw new Error("cli_host_catalog_stale");
   setCliHostObservedVersion(catalog.cliVersion);
