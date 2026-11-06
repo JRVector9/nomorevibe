@@ -6,6 +6,7 @@ import { ageText, type Conveyor, type Station } from "@/lib/operations/conveyor-
 import type { StationLlm, LlmStationKey } from "@/lib/operations/conveyor-llm";
 import { flowStageBadge } from "@/lib/operations/flow-stage-state";
 import { ConfiguredModelRows, LiveModelRows, modelCallCount, RecentModelRows } from "./FlowModels";
+import { FlowUnknownReviews } from "./FlowUnknownReviews";
 import type { OperatorDesk } from "@/lib/operations/operator-desk-model";
 import { flowRankLinesFor, type FlowRankEditor } from "@/lib/operations/flow-rank-editor";
 import { STATION_JOBS } from "@/lib/operations/flow-response";
@@ -102,7 +103,7 @@ export function PrototypeFlow({ data, desk, controls, editor, tab = "flow", user
   const pickedTone = current ? tone(current.tone) : data.published === null ? "gray" : "green";
   const pickedBadge = current ? flowStageBadge(current, STATION_JOBS[current.key].map(job => controls.jobs[job.job]), desk?.window?.admission ?? null) : null;
   const changeModels = current && flowRankLinesFor(editor, current.key).length > 0;
-  const actions = <div className="flex"><Link prefetch={false} className="button" href="/admin/status">자동 파이프라인 제어</Link><Link prefetch={false} className="button" href="/admin/models">모델 접수 {admission}</Link></div>;
+  const actions = <div className="flex"><FlowUnknownReviews /><Link prefetch={false} className="button" href="/admin/status">자동 파이프라인 제어</Link><Link prefetch={false} className="button" href="/admin/models">모델 접수 {admission}</Link></div>;
   const jobs = Object.entries(controls.jobs);
   const advanced = <details className="panel" id="flow-advanced"><summary>고급 전체 흐름·장애 대응·모든 제어</summary><div className="panel-body">{advancedContent ?? <FlowBoard data={data} desk={desk} controls={controls} editor={editor} />}</div></details>;
 
