@@ -92,8 +92,14 @@ function CardRows({ card, observation, controls, probe, busy, onProbe, recovery,
   const engineHosts = card.hosts.filter(host => !isCodeDefaultGatewayHost(host)), codeDefaultHost = card.hosts.some(isCodeDefaultGatewayHost);
   const blocked = !card.definition ? "등록부에서 장비·실행 대상을 확인하지 못했습니다." : recovery ? recovery.blockedReason : modelRecoveryBlocked(card.definition.equipment, card.definition.provider);
   const cell = "border-b border-line px-2.5 py-1.5 align-top", span = `${cell} border-l border-line bg-bg-card`;
-  const limitOf = (group: ModelRowGroup) => { const groupsOf = observation.groups.filter(row => group.groupIds.includes(row.groupId));
-    return { limit: groupsOf.length && groupsOf.every(row => row.limit !== null) ? groupsOf.reduce((n, row) => n + row.limit!, 0) : null, lending: groupsOf.some(row => row.lending), full: groupsOf.some(row => row.held >= (row.limit ?? Infinity)) }; };
+  const limitOf = (group: ModelRowGroup) => {
+    const metrics = group.stages.flatMap(stage => stage.rows);
+    const identities = new Set(metrics.map(row => JSON.stringify([row.routeId, row.provider, row.model])));
+    const currentGroups = new Set((observation.policyVerified ? observation.configuredRoutes ?? [] : [])
+      .filter(route => identities.has(JSON.stringify([route.routeId, route.provider, route.model]))).map(route => route.groupId));
+    for (const row of metrics) if (row.dispatched || row.reserved || row.waiting) currentGroups.add(row.groupId);
+    const groupsOf = observation.groups.filter(row => currentGroups.has(row.groupId));
+    return { limit: groupsOf.length && groupsOf.length === currentGroups.size && groupsOf.every(row => row.limit !== null) ? groupsOf.reduce((n, row) => n + row.limit!, 0) : null, lending: groupsOf.some(row => row.lending), full: groupsOf.some(row => row.held >= (row.limit ?? Infinity)) }; };
   const totalStageRows = groups.reduce((n, group) => n + group.stages.length, 0);
   return <tbody id={modelCardAnchor(card.id)} className="scroll-mt-28 md:scroll-mt-16" aria-label={label}>
     {groups.map((group, gi) => group.stages.map((stage, si) => {

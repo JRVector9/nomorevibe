@@ -18,7 +18,7 @@ export type StageCapacityGroup = {
 export type StageCapacitySummary = {
   /** 운영 DB 실측 자체를 읽지 못했다. 이때 0건으로 간주하지 않는다. */
   unavailable: boolean;
-  /** 설정된 정확한 제공자·모델 신원을 이 단계 장부에서 찾지 못했다. */
+  /** 설정된 정확한 제공자·모델 신원을 현재 검증된 정책에서 찾지 못했다. */
   unresolved: boolean;
   /** 서로 다른 장비 그룹만 한 번씩. */
   groups: StageCapacityGroup[];
@@ -52,7 +52,7 @@ const finiteOrNull = (value: unknown): number | null =>
 /**
  * 대표 단계의 용량 표시 요약.
  *
- * - 설정된 정확한 (provider, model) 행은 지표가 0이어도 포함한다(현재 설정의 한도).
+ * - 현재 검증된 정책에 연결된 설정의 정확한 (provider, model)은 지표가 0이어도 포함한다.
  * - 설정과 무관해도 이 단계에서 지금 dispatched/reserved/waiting 인 행은 포함한다(실제 실행).
  * - 그 밖의 과거 전용 그룹은 분모에 넣지 않는다. 이름·별칭·서버는 추측하지 않는다.
  */
