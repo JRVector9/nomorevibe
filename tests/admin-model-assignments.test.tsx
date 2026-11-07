@@ -18,6 +18,7 @@ import { applyAssignmentImportAction, saveModelAssignmentAction, turnOffModelAss
 import { AssignmentForm } from "@/app/(operator)/admin/models/assignments/AssignmentForm";
 import { AssignmentStageTable } from "@/app/(operator)/admin/models/assignments/AssignmentTable";
 import { ImportCard } from "@/app/(operator)/admin/models/assignments/ImportCard";
+import { TurnOffButton } from "@/app/(operator)/admin/models/assignments/TurnOffButton";
 import { SettingsForm } from "@/app/(operator)/admin/SettingsForm";
 import { ReviewModelsForm } from "@/app/(operator)/admin/models/ReviewModelsForm";
 import { NAV_GROUPS } from "@/app/(operator)/admin/AdminNav";
@@ -439,6 +440,18 @@ describe("그리기", () => {
       expect(source, file).not.toMatch(/^import \{[^}]*\} from "@\/lib\/(operations\/admin-model-assignments|llm\/capacity-helpers)"/m);
     }
     expect(readFileSync(path.join(root, "app/(operator)/admin/models/contracts/EngineConnectForm.tsx"), "utf8")).toContain("이 모델을 단계에 배정");
+  });
+});
+
+describe("배정 끄기 — 두 단계", () => {
+  it("처음 누르는 「끄기」는 제출하지 않고 확인 문장을 연다(2026-11-07 — 전엔 한 번에 꺼졌다)", () => {
+    const html = renderToStaticMarkup(createElement(TurnOffButton, { assignmentId: "a1", version: 3 }));
+    expect(html).toMatch(/<button type="button"[^>]*>끄기<\/button>/);
+    expect(html).not.toContain('type="submit"');
+    expect(html).not.toContain("끄기 확인");
+    expect(html).toContain('name="expectedVersion" value="3"');
+    const source = readFileSync(path.resolve(__dirname, "..", "app/(operator)/admin/models/assignments/TurnOffButton.tsx"), "utf8");
+    expect(source).toMatch(/type="submit"[^>]*>끄기 확인/);
   });
 });
 

@@ -89,6 +89,20 @@ describe('작업 로그 화면', () => {
     expect(html).toContain('system:uptime');
   });
 
+  it('LLM 운영 갈래 — 접수 전환·미확정 처리·경계 해제·연결 확인을 이름표와 함께 거른다(2026-11-07 전엔 「전체」에서만 보였다)', async () => {
+    mocks.log.mockResolvedValue([row(11, { actor: 'opencode', actorKind: 'token', ip: null, userAgent: null,
+      action: 'pipeline-control-capacity-mode', target: 'model_capacity_control', detail: { change: 'draining → open' } })]);
+    const html = await render({ group: 'llm' });
+    expect(mocks.log).toHaveBeenCalledWith(expect.objectContaining({ actions: expect.arrayContaining([
+      'pipeline-control-capacity-mode', 'model-capacity-unknown-requeued', 'model-capacity-owner-gone', 'model-provider-boundary-release',
+      'admin-models-probe-result', 'selected-model-response-probe-result', 'ai-task-models-save', 'runtime-settings-save']) }));
+    expect(html).toContain('LLM 운영');
+    expect(html).toContain('모델 접수 OPEN·DRAIN 전환');
+    for (const action of ['model-capacity-unknown-requeued', 'model-capacity-owner-gone', 'model-provider-boundary-release',
+      'admin-models-probe-start', 'selected-model-response-probe-result', 'ops-runner-state', 'model-supervisor-toggle', 'search-model-settings-save'])
+      expect(actionLabel(action), action).not.toBe(action);
+  });
+
   it('로컬 로그인이면 "내 이름" 칸을 둔다', async () => {
     mocks.local.mockReturnValue(true);
     mocks.operator.mockResolvedValue('지우');

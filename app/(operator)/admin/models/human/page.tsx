@@ -19,7 +19,7 @@ export default async function HumanModelsPage() {
     <PageStamp />
     <h1 className='sr-only'>사람 확인 · AI 위임 모델</h1>
     <nav className='flex flex-wrap gap-3 text-[13px]'>
-      <Link href='/admin/models' prefetch={false} className='text-accent-ink underline'>모델 연결</Link>
+      <Link href='/admin/models' prefetch={false} className='text-accent-ink underline'>LLM 운영</Link>
       <Link href='/admin/flow' prefetch={false} className='text-accent-ink underline'>크롤 흐름</Link>
       <Link href='/admin/review?tab=human' prefetch={false} className='text-accent-ink underline'>사람 검토 큐</Link>
     </nav>

@@ -343,6 +343,17 @@ export function parseFieldInput(kind: FieldKind, raw: string): number | null | u
 }
 
 /**
+ * 초 칸에 ms 를 넣는 실수 막기 — 화면은 ms 값을 초로 받는다(이름표 「(초)」). 2026-11-07 CLI 심사 호출 상한에 60000(ms 생각)을 넣어
+ * 그대로였으면 60000초(약 17시간)가 될 뻔했다. 이 화면의 호출 상한·기한·틱 예산은 모두 1시간보다 짧으므로 1시간 넘는 값은 거절하고 고칠 값을 알려 준다.
+ */
+export const SECONDS_FIELD_MAX_MS = 3_600_000;
+function secondsTooLarge(label: string, raw: string, value: number): string | null {
+  if (value <= SECONDS_FIELD_MAX_MS) return null;
+  const asMs = Number(raw.replace(/,/g, "")) / 1000;
+  return `${label}: ${raw}초는 1시간이 넘습니다 — 이 칸은 초 단위입니다${Number.isFinite(asMs) && asMs >= 1 ? `(ms로 넣으셨다면 ${asMs}초)` : ""}`;
+}
+
+/**
  * 폼 칸 이름: value:<path>(지금 글자) · initial:<path>(처음 그린 글자) · stored:<path>("1" = 덮어쓴 키) · reset:<path>(기본값으로)
  * · auto:budgets.<job> / initialAuto:budgets.<job>. 바뀐 칸만 patch 에 넣는다. reset 은 덮어쓴 키에만 null 을 넣는다(없는 키의 reset 은 바뀐 것이 없다).
  * patch 는 저장 문서 모양(그룹 키부터)이다: { translation: { product: { batchChars: 6000 } } }.
@@ -370,6 +381,8 @@ export function runtimeSettingsPatchFromForm(group: RuntimeSettingGroup, form: F
       if (autoNow) { if (!autoBefore) { setLeaf(patch, path, "auto"); changed.push(path); } continue; }
       const value = parseFieldInput("ms", raw);
       if (value === undefined || value === null) { issues.push(`${label}: 초 단위 숫자를 넣어주세요`); continue; }
+      const tooLargeBudget = secondsTooLarge(label, raw, value);
+      if (tooLargeBudget && raw !== initial) { issues.push(tooLargeBudget); continue; }
       if (autoBefore || value !== parseFieldInput("ms", initial)) { setLeaf(patch, path, value); changed.push(path); }
       continue;
     }
@@ -379,6 +392,10 @@ export function runtimeSettingsPatchFromForm(group: RuntimeSettingGroup, form: F
     const value = parseFieldInput(kind, raw);
     if (value === undefined) { issues.push(kind === "int" ? `${label}: 정수를 넣어주세요` : `${label}: 초 단위 숫자를 넣어주세요`); continue; }
     if (value === null && !path.endsWith(".relayMs")) { issues.push(`${label}: 값이 비었습니다 — 기본값으로 돌리려면 「기본값으로」를 켜주세요`); continue; }
+    if (kind === "ms" && value !== null) {
+      const tooLarge = secondsTooLarge(label, raw, value);
+      if (tooLarge) { issues.push(tooLarge); continue; }
+    }
     if (value !== parseFieldInput(kind, initial)) { setLeaf(patch, path, value); changed.push(path); }
   }
   return { patch, changed, issues };
