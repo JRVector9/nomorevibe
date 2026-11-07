@@ -16,6 +16,8 @@ import { cliCommandFor, resolveCliServingContract } from "./cli-serving-contract
 import { prepareCliCall, readCliProcessTerminal, runReservedCliCall, settleCliNotStarted, type CliCallInput, type CliCallOutcome,
   type CliProcessResult, type PreparedCliCall } from "./cli-process-runner";
 import { releaseRemoteCliTaskCall, runRemoteCliTaskCall, settleRemoteCliTaskNotStarted } from "@/lib/crawl/cli-task-remote";
+import { refreshCliHostObservation } from "@/lib/operations/cli-host-observation";
+import { readCliHostTarget } from "@/lib/operations/cli-host-target";
 
 /**
  * 공통 슬롯 밖에서 CLI 를 부르던 reviewer 배경 호출자 — 소개 검수·Claude 감사·Grok 세션 점검(PR05c-5).
@@ -33,7 +35,7 @@ const MAX_STDERR_BYTES = 16 * 1024;
 const CLAUDE_OUTPUT_TOKENS = 2_000;
 
 export async function backgroundCliPath(routeId: BackgroundCliRoute, model: string,
-  providerOverride?: "opencode-cli"): Promise<"legacy" | "native"> {
+  providerOverride?: "opencode-cli", connectionId?: string): Promise<"legacy" | "native"> {
   if (!Object.hasOwn(BACKGROUND_CLI, routeId)) throw new Error("invalid_cli_model_route");
   if (providerOverride !== undefined && routeId !== "product-intro-check" && routeId !== "product-audit")
     throw new Error("invalid_cli_model_route");
@@ -46,6 +48,9 @@ export async function backgroundCliPath(routeId: BackgroundCliRoute, model: stri
   if (control.mode !== "open") throw new Error("model_capacity_control_invalid");
   if (!control.policy?.routes.some(route => route.routeId === routeId && route.provider === provider && route.model === model))
     throw new ModelCapacityDeferredError("unmapped");
+  // OpenCode 계약은 이 워커가 60초 안에 본 호스트 버전이 있어야 열린다 — 원격 prepare(카탈로그 읽기)는 이 확인 뒤라 먼저 낡았을 때만 채운다.
+  // 실패하면 아무것도 바꾸지 않아 아래가 오늘처럼 provider_contract_unavailable 로 미룬다(cli-host-observation)
+  if (provider === "opencode-cli" && connectionId) await refreshCliHostObservation(connectionId, () => readCliHostTarget(connectionId));
   if (!resolveCliServingContract(routeId, provider, model)) throw new ModelCapacityDeferredError("provider_contract_unavailable");
   return "native";
 }

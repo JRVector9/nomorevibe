@@ -48,7 +48,7 @@ export async function checkProductIntros(ctx: JobContext<null>, run?: ReviewCliR
     const definition = configuredModelDefinition(JOB);
     const cliEngine = definition.cliEngine;
     const selectedModel = cliEngine ? definition.model : scopedModel("product-intro-check", INTRO_CHECK_MODEL);
-    const capacity = await backgroundCliPath("product-intro-check", selectedModel, cliEngine ? "opencode-cli" : undefined);
+    const capacity = await backgroundCliPath("product-intro-check", selectedModel, cliEngine ? "opencode-cli" : undefined, cliEngine?.connectionId);
     const items = tasks.map((task) => ({ slug: task.product.slug, intro: task.product.tagline, evidence: introEvidence(task.product) }));
     const timeoutMs = Math.max(1_000, Math.min(callMs, remaining() - 1_000));
     const native = (capacity === "native" || cliEngine) ? await checkIntrosWithModelCapacity(tasks, items, lease, { timeoutMs, signal: ctx.signal,

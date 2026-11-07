@@ -131,7 +131,7 @@ async function askAuditCampaign(ctx: JobContext<null>, settings: CrawlSettings):
       let capacity: "legacy" | "native" | "remote" = "legacy";
       try {
         if (remoteRequested) {
-          await backgroundCliPath("product-audit", reviewer.model, "opencode-cli");
+          await backgroundCliPath("product-audit", reviewer.model, "opencode-cli", cliEngine?.connectionId);
           capacity = "remote";
         } else if (reviewer.provider === "abcllm") await assertCliModelAdmission({ routeId: "product-audit", provider: "abcllm", model: reviewer.model });
         else capacity = await backgroundCliPath("product-audit", reviewer.model);

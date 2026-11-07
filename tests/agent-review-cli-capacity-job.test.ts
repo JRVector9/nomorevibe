@@ -13,7 +13,8 @@ import { pinReviewRanks, pinReviewRanksFromSettings } from './review-task-ranks-
  */
 const mocks = vi.hoisted(() => ({ settings: null as CrawlSettings | null, list: vi.fn(), document: vi.fn(), input: vi.fn(), claim: vi.fn(),
   record: vi.fn(), gatewayClaim: vi.fn(), gatewayReview: vi.fn(), gatewayAbandon: vi.fn(), cliClaim: vi.fn(), cliReview: vi.fn(), cliAbandon: vi.fn(),
-  legacyCli: vi.fn(), legacyGrok: vi.fn(), budget: vi.fn(), choose: vi.fn() }));
+  legacyCli: vi.fn(), legacyGrok: vi.fn(), budget: vi.fn(), choose: vi.fn(), observe: vi.fn() }));
+vi.mock('@/lib/crawl/review-cli-host-observe', () => ({ observeReviewCliHost: mocks.observe }));
 vi.mock('@/lib/crawl/settings', () => ({ getSettings: async () => mocks.settings }));
 vi.mock('@/lib/crawl/repository', () => ({ getDocument: mocks.document, setReadmeSample: vi.fn(), holdSuspectedSpam: vi.fn() }));
 vi.mock('@/lib/crawl/readme', () => ({ fetchReadmeSample: async () => '', README_SAMPLE_LIMIT: 3000, README_SAMPLE_VERSION: '2026-09-14.1' }));
@@ -63,7 +64,7 @@ beforeEach(() => {
   pinReviewRanksFromSettings(() => mocks.settings);
 });
 afterEach(() => pinReviewRanks(null));
-const settings = (provider: 'claude-cli' | 'grok-cli') => ({ ...DEFAULT_CRAWL_SETTINGS, enabled: true, reviewMode: 'observe' as const,
+const settings = (provider: 'claude-cli' | 'grok-cli' | 'opencode-cli') => ({ ...DEFAULT_CRAWL_SETTINGS, enabled: true, reviewMode: 'observe' as const,
   reviewConcurrency: 1, firstReview: { provider, model: 'fake-model' } });
 
 it.each([['claude-cli', 20_000], ['grok-cli', 90_000]] as const)('%s 의 되감은 fresh claim 은 CLI coordinator 로 가고, 정산된 결과를 기존 writer 가 적는다', async (provider, timeoutMs) => {
@@ -116,4 +117,15 @@ it('CLI 정산은 호출자 abort 로 업무 결과가 cancelled 로 바뀌기 �
   // 취소된 결과도 그 모델을 이 틱 동안 쉬게 한다(늘 순위 고르기, PR C1) — 남긴 심사가 없으니 미룸으로 끝난다
   expect(await reviewCrawlCandidates(context(controller.signal))).toEqual({ done: false, deferred: 'model_capacity' });
   expect(order).toEqual(['physical_terminal_settled', 'cancelled']);
+});
+
+it('OpenCode 순위는 claim TX 의 예약 전 계약 확인보다 먼저(TX 밖에서) 호스트 버전 관측을 채운다 — 교착 회귀(2026-11-07)', async () => {
+  mocks.settings = settings('opencode-cli') as unknown as CrawlSettings;
+  const order: string[] = [];
+  mocks.observe.mockImplementation(async () => { order.push('observe'); });
+  mocks.claim.mockImplementation(async () => { order.push('claim'); throw new ModelCapacityDeferredError('reservation_required'); });
+  mocks.cliClaim.mockImplementation(async () => { order.push('cli_claim'); return claimed(); });
+  expect(await reviewCrawlCandidates(context())).toEqual({ done: false });
+  expect(order).toEqual(['observe', 'claim', 'cli_claim']);
+  expect(mocks.observe).toHaveBeenCalledExactlyOnceWith('crawl-agent-review', { provider: 'opencode-cli', model: 'fake-model' });
 });

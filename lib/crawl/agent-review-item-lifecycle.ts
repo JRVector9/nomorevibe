@@ -15,6 +15,7 @@ import { claimConsumerItemAgentReview, loadFirstReviewConsumerContext, observeAg
   chooseFirstReviewForCandidate, type AgentReviewItemModelReservationRequired, type ItemModelCapacityReviewClaim, type CliModelCapacityReviewClaim } from './agent-review-repository';
 import type { PreparedReviewCliCall } from './review-cli-call';
 import { reviewGatewayLadder } from '@/lib/llm/deadline-ladder';
+import { observeReviewCliHost } from './review-cli-host-observe';
 
 export type FirstReviewConsumerOutcome = { state: 'skipped'; reason: string }
   | { applied: boolean; state: 'succeeded' | 'failed' | 'superseded' };
@@ -51,6 +52,8 @@ export async function executeFirstReviewConsumerItem(input: {
   if (circuit?.admitted === false) return { state: 'skipped', reason: 'provider_circuit_open' };
   try {
     const prepared = await prepareAgentReview(context, reviewer);
+    // OpenCode 순위의 예약 전 계약 확인에 필요한 호스트 버전 관측 — claim TX 밖에서 낡았을 때만 채운다(실패하면 오늘처럼 미룸)
+    await observeReviewCliHost('crawl-agent-review', { provider: prepared.provider, model: prepared.model });
     if (signal?.aborted || stopClaims?.aborted) return { state: 'skipped', reason: 'aborted' };
     let claim: ItemModelCapacityReviewClaim | CliModelCapacityReviewClaim, capacity: typeof import('./agent-review-model-capacity') | undefined;
     let dispatch: Ai1ItemModelDispatch | undefined, call: PreparedAi1GatewayCall | undefined;

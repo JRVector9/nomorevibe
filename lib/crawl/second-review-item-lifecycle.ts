@@ -12,6 +12,7 @@ import { claimConsumerItemSecondReview, claimItemSecondReview, observeSecondRevi
   SecondReviewCliModelReservationRequired, type SecondReviewItemReceipt } from "./second-review-ownership";
 import { recordSecondReview, type SecondReviewWriteResult } from "./second-review";
 import { dispatchSecondReviewTransport, secondReviewTransportTimeoutMs } from "./second-review-transport";
+import { observeReviewCliHost } from "./review-cli-host-observe";
 
 export type SecondReviewItemOutcome =
   | { state: "skipped"; reason: "stage_inactive" | "not_pending" | "input_changed" | "running" | "aborted" }
@@ -66,6 +67,12 @@ async function executeItem(input: {
   const inputReady = () => { if (!observedInputReady) { observedInputReady = true; input.onInputReady?.(); } };
   // CLI 표(05c-4): 고정 CLI 의도 class 만 CLI coordinator 로 간다. 슬롯 deferred 는 아래 기록 전에 던져진다.
   let cli: { capacity: typeof import("./review-cli-model-capacity"); call: PreparedReviewCliCall; dispatch: CliModelDispatch } | undefined;
+  // 2차 OpenCode 순위: 어느 표인지는 claim TX 안에서야 알아, 그 TX 의 예약 전 계약 확인(관측된 호스트 버전 필요)보다 먼저 2차 OpenCode 순위
+  // 연결의 관측을 낡았을 때만 채운다. OpenCode 순위가 없으면 아무것도 하지 않고, 실패하면 오늘처럼 provider_contract_unavailable 이다
+  if (purpose === 'consumer') {
+    await observeReviewCliHost("second-review");
+    if (callerSignal?.aborted || stopClaims?.aborted) return { state: "skipped", reason: "aborted" };
+  }
   try { claimed = await (purpose === 'consumer' ? claimConsumerItemSecondReview : claimItemSecondReview)(id, owner, ttlMs); }
   catch (error) {
     if (!(error instanceof ModelCapacityDeferredError) || error.reason !== "reservation_required") throw error;
