@@ -108,11 +108,12 @@ export const capacityReviewItemSchema = z.object({ requestId: z.uuid(), routeId:
   ownerInstanceId: z.string().min(1).max(200), dispatchedAt: z.string().nullable(), markedAt: z.string().nullable(),
   reason: z.enum(MODEL_CAPACITY_INDETERMINATE_REASONS).nullable(), oldPolicy: z.boolean(), localEndRecorded: z.boolean() }).strict();
 export type CapacityReviewItem = z.infer<typeof capacityReviewItemSchema>;
-export type CapacityReviewQueue = { items: CapacityReviewItem[]; truncated: boolean; error: string | null };
+export type CapacityReviewGroup = { routeId: string; count: number };
+export type CapacityReviewQueue = { items: CapacityReviewItem[]; truncated: boolean; error: string | null; groups: CapacityReviewGroup[] };
 
 /** 관리자 '확인 못함 — 사람 검토' 목록(최대 100건, 오래된 전송부터). 읽기만 한다. */
 export async function readModelCapacityReviewQueue(): Promise<CapacityReviewQueue> {
-  if (currentReplayDb()) return { items: [], truncated: false, error: 'replay' };
+  if (currentReplayDb()) return { items: [], truncated: false, error: 'replay', groups: [] };
   try {
     return await onPrimary(() => db.transaction(async tx => {
       await tx.execute(sql`SET LOCAL statement_timeout = '3s'`);
@@ -129,10 +130,14 @@ export async function readModelCapacityReviewQueue(): Promise<CapacityReviewQueu
           WHERE e.request_id = r.request_id AND e.kind = 'dispatch_indeterminate' ORDER BY e.id DESC LIMIT 1) m ON true
         WHERE c.id = 1 AND ${reviewStateSql('r.state')} ORDER BY coalesce(r.dispatched_at, r.queued_at), r.queue_ordinal LIMIT 101`);
       const control = await tx.execute(sql`SELECT id FROM model_capacity_control WHERE id = 1`);
-      if (control.length !== 1) return { items: [], truncated: false, error: 'control_missing' };
-      return { items: Array.from(rows).slice(0, 100).map(row => capacityReviewItemSchema.parse(row)), truncated: rows.length > 100, error: null };
+      if (control.length !== 1) return { items: [], truncated: false, error: 'control_missing', groups: [] };
+      const groups = await tx.execute<{ route_id: string; n: number }>(sql`
+        SELECT r.route_id, count(*)::int AS n FROM model_capacity_requests r
+        WHERE ${reviewStateSql('r.state')} GROUP BY r.route_id ORDER BY n DESC, r.route_id`);
+      return { items: Array.from(rows).slice(0, 100).map(row => capacityReviewItemSchema.parse(row)), truncated: rows.length > 100, error: null,
+        groups: Array.from(groups).map(row => ({ routeId: row.route_id, count: Number(row.n) })) };
     }, { accessMode: 'read only' }));
-  } catch (error) { return { items: [], truncated: false, error: error instanceof Error ? error.message : 'read_failed' }; }
+  } catch (error) { return { items: [], truncated: false, error: error instanceof Error ? error.message : 'read_failed', groups: [] }; }
 }
 
 /**

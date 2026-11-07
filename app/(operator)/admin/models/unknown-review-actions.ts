@@ -7,6 +7,8 @@ import { operationsAudit } from "@/lib/db/schema";
 import { webWriteAction } from "@/lib/operations/dr/web-gate";
 import { adminAuditRow } from "@/lib/operations/admin-log";
 import { closeModelCapacityUnknownReview } from "@/lib/llm/capacity-repository";
+import { canRequeueUnknownRoute, requeueModelCapacityUnknowns } from "@/lib/operations/model-capacity-requeue";
+import { revalidatePath } from "next/cache";
 
 export type UnknownReviewState = { ok: true; requestId: string } | { ok: false; error: string } | null;
 const inputSchema = z.object({ requestId: z.uuid(), note: z.string().trim().min(1).max(400) });
@@ -26,4 +28,36 @@ export const closeUnknownReview = webWriteAction(async function closeUnknownRevi
     if (result.kind !== "reviewed") return { ok: false, error: result.state === null ? "요청을 찾지 못했습니다." : `이미 ${result.state} 상태라 검토 대상이 아닙니다.` };
     return { ok: true, requestId };
   } catch (error) { return { ok: false, error: error instanceof Error ? error.message : "검토 기록에 실패했습니다." }; }
+});
+
+export type RequeueUnknownState = { ok: true; closed: number; groups: number } | { ok: false; error: string } | null;
+const requeueSchema = z.object({ routeId: z.string().trim().min(1).max(120).optional() });
+
+/**
+ * '다시 대기열에 넣기' — 지원 라우트의 실제 작업 큐를 되돌리고, 성공한 라우트의 장부 행만 운영자 검토로 닫는다.
+ * 라우트를 지정하지 않으면 지원하는 모든 라우트를 한 번에 처리한다(최대 500행).
+ */
+export const requeueUnknownReviews = webWriteAction(async function requeueUnknownReviews(
+  _previous: RequeueUnknownState, form: FormData,
+): Promise<RequeueUnknownState> {
+  const admin = await currentAdmin();
+  if (!admin) return { ok: false, error: "관리자만 다시 대기열에 넣을 수 있습니다." };
+  const parsed = requeueSchema.safeParse({ routeId: form.get("routeId") || undefined });
+  if (!parsed.success) return { ok: false, error: "라우트 이름이 올바르지 않습니다." };
+  const routeId = parsed.data.routeId;
+  if (routeId && !canRequeueUnknownRoute(routeId)) return { ok: false, error: "이 단계는 아직 다시 대기열에 넣기를 지원하지 않습니다." };
+  try {
+    const result = await requeueModelCapacityUnknowns({ routeId, operator: admin.login,
+      note: "운영자 다시 대기열에 넣기", limit: 500 });
+    await db.insert(operationsAudit).values(await adminAuditRow(admin.login, {
+      action: "model-capacity-unknown-requeued", target: routeId ?? "all-supported-routes",
+      detail: { routeId: routeId ?? null, groups: result.groups, closed: result.closed },
+      ok: result.groups.some(group => group.error === null),
+      error: result.groups.some(group => group.error) ? "some_routes_failed" : null,
+    }));
+    revalidatePath("/admin/models");
+    return { ok: true, closed: result.closed, groups: result.groups.length };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "다시 대기열에 넣지 못했습니다." };
+  }
 });
