@@ -5,7 +5,7 @@ import { AI_TASKS, AI_TASK_GROUP_LABELS, AI_TASK_KIND_LABELS, AI_CLI_TOOL_LABELS
 import type { ModelDefinition } from "@/lib/llm/model-registry";
 import { summarizeStageCapacity, type StageCapacityGroup } from "@/lib/operations/admin-model-stage-capacity";
 import type { AdminModelsObservation, AdminModelMetrics } from "@/lib/operations/admin-models-observation";
-import { deviceServer, elapsedModelTime, modelStageId, modelStageLabel, type ModelContractLink, type ModelStageAssignment } from "@/lib/operations/admin-models-view";
+import { deviceServer, modelStageId, type ModelContractLink, type ModelStageAssignment } from "@/lib/operations/admin-models-view";
 import type { FlowRankEditor } from "@/lib/operations/flow-rank-editor";
 import type { CapacityDevicesAdminView } from "@/lib/operations/admin-capacity-devices";
 import type { ModelHelpersAdminView } from "@/lib/operations/admin-model-helpers";
@@ -13,6 +13,7 @@ import type { OpsState } from "@/lib/operations/ops-runner/contract";
 import type { Conveyor, Station } from "@/lib/operations/conveyor-model";
 import { FLOW_MODEL_STAGES, flowModelTaskHref, flowModelTaskStage, type FlowModelStage } from "@/lib/operations/flow-model-catalog";
 import { ModelOpsPanel } from "./ModelOpsPanel";
+import { ModelCallsPanel, MODEL_REQUEST_REVIEW_HREF } from "./ModelCallsPanel";
 import { modelPickerConnectionLabel, modelPickerConnectionModels, modelPickerModelLabel } from "./model-picker-display";
 import { ConfiguredModelRows, LiveModelRows, RecentModelRows } from "../flow/FlowModels";
 import { clock, DataTable, Facts, number, Panel, ReadStamp, Stat, Tag } from "../flow/PrototypeParts";
@@ -95,9 +96,8 @@ const stageLedgerCounts = (stage: FlowModelStage, observation: AdminModelsObserv
     indeterminate: sum(rows, "indeterminate"),
   };
 };
-const stateText = { waiting: "용량 대기", reserved: "슬롯 예약", dispatched: "전송 실행 중", indeterminate: "결과 미확정" };
 const actual = (rows: AdminModelMetrics[], unavailable: boolean) => unavailable ? "확인 불가" : [...new Set(rows.filter(row => row.dispatched || row.succeeded1h || row.failed1h || row.lastSuccessAt).map(row => row.model))].join(" / ") || "최근 실행 기록 없음";
-const requestHref = "/admin/models?tab=live&advanced=1#review";
+const requestHref = MODEL_REQUEST_REVIEW_HREF;
 export function PrototypeModels({ observation, assignments, models, contracts, editor = null, devices = null, helpers = null, tab = "live", readOnly = false, opsStates = [], flow = null }: {
   observation: AdminModelsObservation; assignments: ModelStageAssignment[]; models: readonly ModelDefinition[]; contracts: ModelContractLink[];
   editor?: FlowRankEditor | null; devices?: CapacityDevicesAdminView | null; helpers?: ModelHelpersAdminView | null; tab?: string; readOnly?: boolean; opsStates?: OpsState[]; flow?: Conveyor | null;
@@ -120,10 +120,7 @@ export function PrototypeModels({ observation, assignments, models, contracts, e
     return connection ? modelPickerModelLabel(connection, model) : model;
   };
   const taskRanks = (id: string) => editor?.rows.filter(row => row.task === id).sort((a, b) => a.slot - b.slot || a.rank - b.rank) ?? [];
-  const calls = <Panel title="호출 기록 · 업무 결과 대조" tool={<ReadStamp at={observation.observedAt} />}><DataTable heads={["호출", "작업·모델", "호출 상태", "대기 포함 시간", "업무 반영", "근거"]} note={`열린 요청 ${observation.truncated ? "상위 100건 중 " : ""}${Math.min(12, observation.requests.length)}건 표시. 모델 응답과 판정·번역·공개 반영의 원본은 각각 대조합니다.`}>
-    {observation.requests.slice(0, 12).map(request => <tr key={request.requestId}><td><code>{request.requestId.slice(0, 8)}</code></td><td><b>{modelStageLabel(request.routeId)}</b><p>{request.model}</p></td><td><Tag tone={request.state === "indeterminate" ? "red" : request.state === "waiting" ? "amber" : "blue"}>{stateText[request.state]}</Tag></td><td className="mono">{elapsedModelTime(request.queuedAt, observation.observedAt)}</td><td>{request.localEndRecorded ? "로컬 호출 종료 기록 있음" : "업무 반영 별도 확인"}<p>도메인 저장·공개 완료를 뜻하지 않음</p></td><td><details><summary className="text-button">대조</summary><Facts rows={[["요청", request.requestId], ["소유 프로세스", request.ownerInstanceId], ["장비 그룹", request.groupId], ["접수", clock(request.queuedAt)], ["전송", clock(request.dispatchedAt)], ["상태 변경", clock(request.stateSince)]]} /><Link prefetch={false} className="text-button" href={request.state === "indeterminate" ? requestHref : "/admin/status?tab=jobs"}>원본 근거·조치 →</Link></details></td></tr>)}
-    {!observation.requests.length && <tr><td colSpan={6}>{unavailable ? "열린 요청을 읽지 못했습니다." : "현재 표시할 열린 요청이 없습니다. 종료 이력과 업무 기록은 별도입니다."}</td></tr>}
-  </DataTable></Panel>;
+  const calls = <ModelCallsPanel observation={observation} />;
 
   const stageTaskPairs = FLOW_MODEL_STAGES.flatMap(stage => stage.taskIds
     .map(id => AI_TASKS.find(task => task.id === id))

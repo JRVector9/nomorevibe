@@ -5,17 +5,53 @@ import { AI_CLI_TOOL_LABELS, AI_CLI_TOOLS, type AiCliTool } from "@/lib/llm/ai-t
 // 형과 순수 함수만 — 서버 모듈(DB)은 actions 를 거친다
 import { aiDeviceSlug, type AiConnectionView } from "@/lib/operations/admin-ai-tasks";
 import { saveAiConnectionAction, type AiTaskActionState } from "./actions";
+import { saveCapacityDevice } from "../devices/actions";
 import { OpenCodeCatalogFields } from "./OpenCodeCatalogFields";
 
 const INPUT = "rounded border border-line bg-bg p-2 text-[13px]";
+
+/**
+ * LLM 운영 화면(/admin/models/llm)에서만: 「칸 수」 대신 장비 행(실제 적용 값)의 「동시 실행 한도」 한 칸.
+ * 연결 저장(saveAiConnectionAction)이 끝나면 값이 바뀐 때만 같은 장비 행을 기존 공유 한도 저장(saveCapacityDevice formMode=shared-limit)으로 저장한다.
+ * eligible 이 아니면(정책 경로가 아직 없는 장비 등) 값은 연결의 칸 수로만 남는다 — 순위를 저장할 때 장비 행을 만드는 값이다.
+ */
+export type ConnectionLimitField = Readonly<{ deviceId: string; current: number | null; expectedVersion: number | null; policyHash: string | null;
+  eligible: boolean; reason: string | null; sharedWith: readonly string[] }>;
+/** 저장 뒤 바로 보일 모델 목록(새로 그린 화면의 값) — 연결 id 로 찾는다. */
+export type ConnectionSavedModels = Readonly<{ id: string; models: readonly string[]; error: string | null }>;
+
+/** 연결 저장 → (바뀌었으면) 장비 한도 저장. 두 기존 서버 동작을 차례로 부른다 — 새 쓰기 경로가 없다. */
+export async function saveConnectionWithLimit(limit: ConnectionLimitField | null, form: FormData,
+  actions = { connection: saveAiConnectionAction, device: saveCapacityDevice }): Promise<AiTaskActionState> {
+  const saved = await actions.connection(null, form);
+  if (!limit || !saved?.ok) return saved;
+  const wanted = Number(form.get("capacitySlots"));
+  if (!limit.eligible || limit.current === null || !Number.isSafeInteger(wanted) || wanted === limit.current) return saved;
+  const typed = String(form.get("deviceId") ?? "").trim();
+  if (typed !== limit.deviceId)
+    return { ...saved, warnings: [...saved.warnings ?? [], "장비 이름을 바꿔 동시 실행 한도는 저장하지 않았습니다. 새 장비로 다시 펼쳐 저장하세요."] };
+  const shared = new FormData();
+  shared.set("formMode", "shared-limit"); shared.set("deviceId", limit.deviceId); shared.set("limitSlots", String(wanted));
+  shared.set("expectedVersion", limit.expectedVersion === null ? "" : String(limit.expectedVersion)); shared.set("policyHash", limit.policyHash ?? "");
+  const device = await actions.device(null, shared);
+  if (device?.ok) return { ...saved, message: `${saved.message} 동시 실행 한도: ${device.message}` };
+  return { ...saved, issues: (device?.issues ?? ["저장 결과를 확인하지 못했습니다."]).map(issue => `연결은 저장했지만 동시 실행 한도는 저장하지 못했습니다: ${issue}`) };
+}
 
 /**
  * 「AI 연결」 만들기·고치기. API = 주소(OpenAI 호환 …/v1) + 선택 키 — 저장하면 서버가 GET /models 로 목록을 읽어 함께 저장한다(못 읽으면 이유를 보인다).
  * 키는 다시 보이지 않는다: 비워 두면 저장된 키 그대로, 「키 지우기」로만 지운다. OpenCode는 기존 M3 CLI의 실제 목록·버전을 비동기로 읽고, 다른 CLI는 기존 입력을 유지한다.
  * 장비 이름은 용량 장비(장비 한도 화면의 이름)다 — 비우면 이름에서 만든다. CLI 버전은 1차·2차·Grok 로그인 유지 순위의 CLI 계약에 쓰인다(PR C1).
  */
-export function ConnectionForm({ initial, secretBox }: { initial: AiConnectionView | null; secretBox: boolean }) {
-  const [state, action, pending] = useActionState<AiTaskActionState, FormData>(saveAiConnectionAction, null);
+export function ConnectionForm({ initial, secretBox, limit = null, cancelHref = "/admin/models/tasks#connections", savedModels, readOnly = false }: {
+  initial: AiConnectionView | null; secretBox: boolean;
+  /** LLM 운영 화면: 장비 행 「동시 실행 한도」 한 칸(없으면 예전 「칸 수」) */
+  limit?: ConnectionLimitField | null; cancelHref?: string;
+  /** LLM 운영 화면: 새로 만든 연결의 모델 목록을 저장 직후 보인다 */
+  savedModels?: readonly ConnectionSavedModels[]; readOnly?: boolean;
+}) {
+  // 「칸 수」를 쓰는 기존 화면은 서버 동작을 그대로 건다(JS 없이도 제출된다). 한도 칸이 있으면 두 저장을 차례로 부르는 함수다.
+  const [state, action, pending] = useActionState<AiTaskActionState, FormData>(limit ? (_previous, form) => saveConnectionWithLimit(limit, form) : saveAiConnectionAction, null);
   const [kind, setKind] = useState<"api" | "cli">(initial?.kind ?? "api");
   const [label, setLabel] = useState(initial?.label ?? "");
   const [cliTool, setCliTool] = useState<AiCliTool>(initial?.cliTool ?? "claude");
@@ -24,6 +60,7 @@ export function ConnectionForm({ initial, secretBox }: { initial: AiConnectionVi
   const editing = initial !== null;
   const canDisableOffline = initial?.kind === "cli" && initial.cliTool === "opencode" && cliTool === "opencode" && initial.enabled && !enabled;
   const hostConfigured = initial?.kind === "cli" && initial.cliTool === "opencode" && !!initial.baseUrl && initial.hasKey;
+  const created = state?.ok && !editing && state.connectionId ? savedModels?.find(row => row.id === state.connectionId) ?? null : null;
   return <form action={action} className="grid gap-3 rounded-xl border border-line bg-bg-card p-5 text-[14px]">
     <input type="hidden" name="id" value={initial?.id ?? ""} />
     <input type="hidden" name="expectedVersion" value={initial?.version ?? ""} />
@@ -66,21 +103,30 @@ export function ConnectionForm({ initial, secretBox }: { initial: AiConnectionVi
     <div className="grid gap-3 sm:grid-cols-2">
       <label className="grid gap-1">장비 이름(용량)
         <input name="deviceId" maxLength={120} defaultValue={initial?.deviceId ?? ""} placeholder={aiDeviceSlug(label || "engine")} autoComplete="off" className={`${INPUT} font-mono`} />
-        <span className="text-[13px] text-fg-3">장비 한도 화면의 장비 이름입니다. 없으면 순위를 저장할 때 아래 칸 수로 만듭니다.</span></label>
-      <label className="grid gap-1">칸 수(동시에 처리할 수)
+        <span className="text-[13px] text-fg-3">장비 한도 화면의 장비 이름입니다. 없으면 순위를 저장할 때 {limit ? "옆 동시 실행 한도" : "아래 칸 수"}로 만듭니다.</span></label>
+      {limit ? <label className="grid gap-1">동시 실행 한도(장비 행 · 실제 적용 값)
+        <input name="capacitySlots" type="number" inputMode="numeric" min={1} max={256} step={1} defaultValue={limit.current ?? initial?.capacitySlots ?? 1} className={`${INPUT} font-mono`} />
+        <span className="text-[13px] text-fg-3">{limit.deviceId ? `장비 ${limit.deviceId}` : "새 장비"}{limit.sharedWith.length ? ` · ${limit.sharedWith.join(", ")}와 함께 씀` : ""}.
+          {" "}{limit.eligible ? "값을 바꿔 저장하면 장비 행도 이 값으로 바뀝니다 — 같은 장비를 쓰는 모든 작업이 이 한도를 나눠 씁니다." : limit.reason ?? "새 연결은 순위를 저장할 때 이 값으로 장비 행을 만듭니다(같은 이름의 장비 행이 있으면 그 값이 쓰입니다)."}</span></label>
+      : <label className="grid gap-1">칸 수(동시에 처리할 수)
         <input name="capacitySlots" type="number" inputMode="numeric" min={1} max={256} step={1} defaultValue={initial?.capacitySlots ?? 1} className={`${INPUT} font-mono`} />
-        <span className="text-[13px] text-fg-3">장비 행이 이미 있으면 그 값이 이깁니다(장비 한도 화면에서 바꿉니다).</span></label>
+        <span className="text-[13px] text-fg-3">장비 행이 이미 있으면 그 값이 이깁니다(장비 한도 화면에서 바꿉니다).</span></label>}
     </div>
     <label className="grid gap-1">상태
       <select name="enabled" value={enabled ? "1" : "0"} onChange={event => setEnabled(event.target.value !== "0")} className={INPUT}>
         <option value="1">켜짐</option><option value="0">꺼짐 — 순위 선택지에서 뺍니다(저장된 순위는 남습니다)</option></select></label>
     <label className="grid gap-1">메모<input name="note" maxLength={400} defaultValue={initial?.note ?? ""} className={INPUT} /></label>
     <div className="flex flex-wrap items-center gap-3">
-      <button type="submit" disabled={pending || (kind === "cli" && cliTool === "opencode" && (!catalogReady || !hostConfigured) && !canDisableOffline)} className="rounded bg-fg px-3 py-2 text-bg disabled:opacity-50">
-        {pending ? (kind === "api" ? "모델 목록 읽는 중…" : "저장 중…") : editing ? "연결 저장" : "연결 만들기"}</button>
-      {editing && <Link href="/admin/models/tasks#connections" prefetch={false} className="text-[13px] text-fg-3 underline">고치기 그만두기</Link>}
+      {/* LLM 운영 화면은 승인 시안의 단추(.button.primary)를 쓴다 — 시안 CSS 의 button{color:inherit} 가 층 밖이라 text-bg 유틸리티를 덮어 글자가 안 보였다 */}
+      <button type="submit" disabled={readOnly || pending || (kind === "cli" && cliTool === "opencode" && (!catalogReady || !hostConfigured) && !canDisableOffline)}
+        className={limit ? "button primary" : "rounded bg-fg px-3 py-2 text-bg disabled:opacity-50"}>
+        {pending ? (kind === "api" ? "모델 목록 읽는 중…" : "저장 중…") : limit && kind === "api" ? (editing ? "저장하고 모델 읽기" : "만들고 모델 읽기") : editing ? "연결 저장" : "연결 만들기"}</button>
+      {editing && <Link href={cancelHref} prefetch={false} className="text-[13px] text-fg-3 underline">고치기 그만두기</Link>}
     </div>
     {state?.ok && <p role="status" className="text-[13px]">{state.message}</p>}
+    {state?.warnings?.map(text => <p key={text} role="note" className="text-[13px] text-amber-700">{text}</p>)}
     {state?.issues?.map(text => <p key={text} role="alert" className="text-[13px] text-red-600">{text}</p>)}
+    {created && <div className="grid gap-1 text-[13px]" data-created-models={created.id}><p className="font-semibold">이 서버의 모델 {created.models.length}개{created.error ? ` · 마지막 오류: ${created.error}` : ""}</p>
+      {created.models.length > 0 && <ul className="grid max-h-48 gap-0.5 overflow-y-auto rounded border border-line p-2">{created.models.map(model => <li key={model}><code className="break-all">{model}</code></li>)}</ul>}</div>}
   </form>;
 }
