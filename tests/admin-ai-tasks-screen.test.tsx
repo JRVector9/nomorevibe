@@ -8,7 +8,7 @@ vi.mock("@/lib/auth/admin", () => ({ currentAdmin: mocks.admin }));
 vi.mock("@/lib/operations/dr/web-gate", () => ({ webWriteAction: (fn: unknown) => fn }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
-import { ConnectionForm, type ConnectionLimitField } from "@/app/(operator)/admin/models/tasks/ConnectionForm";
+import { ConnectionForm, connectionLimitHint, type ConnectionLimitField } from "@/app/(operator)/admin/models/tasks/ConnectionForm";
 import { TaskImportCard } from "@/app/(operator)/admin/models/tasks/TaskImportCard";
 import * as actions from "@/app/(operator)/admin/models/tasks/actions";
 import type { AiConnectionView } from "@/lib/operations/admin-ai-tasks";
@@ -45,6 +45,24 @@ describe("작업 배정 화면 · 연결 폼(LLM 운영)", () => {
     expect(unknown).toMatch(/name="capacitySlots"[^>]*value="4"/);
     expect(unknown).toContain("새 연결은 순위를 저장할 때 이 값으로 장비 행을 만듭니다");
     expect(unknown).toContain('href="/admin/models/llm"');
+  });
+  it("연결에 옛 칸 수가 남았으면(장비 행과 다름) 한도 칸 아래 한 줄 — 칸의 값으로 저장하면 무엇이 되는지", () => {
+    const stale: ConnectionLimitField = { ...limit, stale: 4 };
+    expect(connectionLimitHint(stale, "5")).toBe("저장하면 연결 값도 5(으)로 맞춰집니다(연결에 남은 옛 값 4).");
+    expect(connectionLimitHint(stale, "6")).toBe("저장하면 연결과 장비 행 모두 6(으)로 바뀝니다.");
+    expect(connectionLimitHint({ ...stale, eligible: false }, "6")).toBe("여기서는 장비 행을 바꾸지 못해 연결 값만 6(으)로 바뀝니다 — 맞추려면 5 그대로 저장하세요.");
+    expect(connectionLimitHint(stale, "")).toBeNull();
+    expect(connectionLimitHint(stale, "0")).toBeNull();
+    expect(connectionLimitHint(limit, "5")).toBeNull();
+    expect(connectionLimitHint({ ...stale, current: null }, "5")).toBeNull();
+    const html = renderToStaticMarkup(createElement(ConnectionForm, { initial: gpu, secretBox: true, limit: stale }));
+    expect(html).toContain('data-limit-hint="true">저장하면 연결 값도 5(으)로 맞춰집니다(연결에 남은 옛 값 4).</span>');
+    // 고칠 칸은 id(conn-<연결>-<칸>)가 있고, ?fix 가 없으면 눈에 띄게 하지 않는다. 새 연결 폼에는 id 가 없다(행마다 겹치지 않게)
+    for (const field of ["address", "key", "limit", "enabled"]) expect(html).toContain(`id="conn-${GPU}-${field}" data-fix-field="${field}">`);
+    expect(html).not.toContain('data-fix="true"');
+    expect(renderToStaticMarkup(createElement(ConnectionForm, { initial: null, secretBox: true }))).not.toContain("data-fix-field");
+    expect(renderToStaticMarkup(createElement(ConnectionForm, { initial: gpu, secretBox: true, limit: stale, fix: "key" })))
+      .toContain(`id="conn-${GPU}-key" data-fix-field="key" data-fix="true">`);
   });
   it("가져오기 카드: 계획이 없으면 「계획 보기」만, 있으면 만들 연결·칸과 확인 칸 — 키 경고는 경고 맨 앞 줄이고 적용 버튼은 막지 않는다", () => {
     expect(renderToStaticMarkup(createElement(TaskImportCard, { preview: null, confirmWord: "가져오기" }))).toContain("계획 보기");

@@ -175,6 +175,23 @@
 .advanced-editor-name { color: var(--blue); font-weight: 650; font-size: calc(14px + var(--admin-font-delta, 0px)); }
 .advanced-editor-purpose { color: var(--muted); font-size: calc(13px + var(--admin-font-delta, 0px)); overflow-wrap: anywhere; }
 
+/* 문제 표시 → 고칠 곳(2026-11-07) — 문제 글자 뒤에 파란 밑줄 동작 글자(「— 맞추기 →」). 색·모양·글자는 그대로 두고, 키보드 초점이 보인다. */
+.llm-ops a.llm-fix { color: inherit; border-radius: 4px; overflow-wrap: anywhere; }
+.llm-ops .llm-fix-action { color: var(--blue); font-weight: 650; white-space: nowrap; text-decoration: underline; text-underline-offset: 2px; }
+.llm-ops a.llm-fix:hover .llm-fix-action { text-decoration-thickness: 2px; }
+.llm-ops a.llm-fix:focus-visible, .llm-ops a.llm-chip:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.llm-ops .llm-flag { display: inline-block; line-height: 1.5; }
+.llm-ops a.llm-flag { color: var(--amber); }
+.llm-ops a.llm-flag:hover { border-color: var(--blue); }
+.llm-conn-status-reason { display: grid; gap: 2px; justify-items: start; }
+.llm-ops a.llm-reason { color: var(--muted); }
+.llm-ops a.llm-fix-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border: 1px dashed var(--line); border-radius: 999px; font-size: calc(13px + var(--admin-font-delta, 0px)); white-space: nowrap; color: var(--muted); }
+.llm-ops a.llm-fix-chip:hover { border-color: var(--blue); }
+/* 고칠 칸(?fix= · #conn-<연결>-<칸>) — 그 칸을 둘러 눈에 띄게 */
+.llm-ops [data-fix-field] { scroll-margin-top: 120px; border-radius: 8px; }
+.llm-ops [data-fix-field][data-fix=true], .llm-ops [data-fix-field]:target { outline: 2px solid var(--amber); outline-offset: 4px; background: var(--amber-soft); }
+.llm-ops .llm-fix-hint { color: var(--amber); font-weight: 650; }
+
 @media (max-width: 1100px) {
   .llm-conn-cols { --llm-cols: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr); }
   .llm-cell-wide { grid-column: span 2; }

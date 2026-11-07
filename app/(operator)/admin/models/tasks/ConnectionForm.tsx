@@ -1,9 +1,10 @@
 "use client";
 import Link from "next/link";
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useState } from "react";
 import { AI_CLI_TOOL_LABELS, AI_CLI_TOOLS, type AiCliTool } from "@/lib/llm/ai-tasks";
 // 형과 순수 함수만 — 서버 모듈(DB)은 actions 를 거친다
 import { aiDeviceSlug, type AiConnectionView } from "@/lib/operations/admin-ai-tasks";
+import { llmFieldAnchor, type LlmFixField } from "@/lib/operations/llm-ops-links";
 import { saveAiConnectionAction, type AiTaskActionState } from "./actions";
 import { saveCapacityDevice } from "../devices/actions";
 import { OpenCodeCatalogFields } from "./OpenCodeCatalogFields";
@@ -16,9 +17,29 @@ const INPUT = "rounded border border-line bg-bg p-2 text-[13px]";
  * eligible 이 아니면(정책 경로가 아직 없는 장비 등) 값은 연결의 칸 수로만 남는다 — 순위를 저장할 때 장비 행을 만드는 값이다.
  */
 export type ConnectionLimitField = Readonly<{ deviceId: string; current: number | null; expectedVersion: number | null; policyHash: string | null;
-  eligible: boolean; reason: string | null; sharedWith: readonly string[] }>;
+  eligible: boolean; reason: string | null; sharedWith: readonly string[];
+  /** 연결에 남은 옛 칸 수 — 장비 행(실제 적용 값)과 다를 때만. 칸은 장비 행 값으로 채워져 있어 그대로 저장하면 연결 값도 맞춰진다 */
+  stale?: number | null }>;
 /** 저장 뒤 바로 보일 모델 목록(새로 그린 화면의 값) — 연결 id 로 찾는다. */
 export type ConnectionSavedModels = Readonly<{ id: string; models: readonly string[]; error: string | null }>;
+
+/**
+ * 연결에 옛 칸 수가 남아 장비 행과 다를 때, 한도 칸 아래 한 줄 — 지금 칸의 값으로 저장하면 무엇이 되는지(saveConnectionWithLimit 그대로).
+ * 장비 행 값 그대로면 연결 값만 맞춰지고, 바꾸면 저장할 수 있는 장비는 둘 다 바뀌며, 저장할 수 없는 장비는 연결 값만 바뀌어 다시 어긋난다.
+ */
+export function connectionLimitHint(limit: ConnectionLimitField, value: string): string | null {
+  if (limit.stale == null || limit.current === null) return null;
+  const wanted = Number(value);
+  if (!Number.isSafeInteger(wanted) || wanted < 1 || wanted > 256) return null;
+  if (wanted === limit.current) return `저장하면 연결 값도 ${wanted}(으)로 맞춰집니다(연결에 남은 옛 값 ${limit.stale}).`;
+  return limit.eligible ? `저장하면 연결과 장비 행 모두 ${wanted}(으)로 바뀝니다.`
+    : `여기서는 장비 행을 바꾸지 못해 연결 값만 ${wanted}(으)로 바뀝니다 — 맞추려면 ${limit.current} 그대로 저장하세요.`;
+}
+/** 고칠 칸(?fix=)에 붙는 짧은 안내 — 한도는 connectionLimitHint 가 따로 늘 보인다. */
+const FIX_HINT: Readonly<Partial<Record<LlmFixField, string>>> = {
+  key: "키를 넣고 「저장하고 모델 읽기」를 누르세요.",
+  address: "주소·키를 확인하고 「저장하고 모델 읽기」를 누르세요.",
+};
 
 /** 연결 저장 → (바뀌었으면) 장비 한도 저장. 두 기존 서버 동작을 차례로 부른다 — 새 쓰기 경로가 없다. */
 export async function saveConnectionWithLimit(limit: ConnectionLimitField | null, form: FormData,
@@ -43,15 +64,31 @@ export async function saveConnectionWithLimit(limit: ConnectionLimitField | null
  * API = 주소(OpenAI 호환 …/v1) + 선택 키 — 저장하면 서버가 GET /models 로 목록을 읽어 함께 저장한다(못 읽으면 이유를 보인다).
  * 키는 다시 보이지 않는다: 비워 두면 저장된 키 그대로, 「키 지우기」로만 지운다. OpenCode는 기존 M3 CLI의 실제 목록·버전을 비동기로 읽고, 다른 CLI는 기존 입력을 유지한다.
  * 장비 이름은 용량 장비(장비 한도 화면의 이름)다 — 비우면 이름에서 만든다. CLI 버전은 1차·2차·Grok 로그인 유지 순위의 CLI 계약에 쓰인다(PR C1).
+ * 고치는 칸(한도·키·주소·CLI 버전·상태)은 id 가 conn-<연결>-<칸> 이라 LLM 운영 행의 문제 표시가 ?fix=<칸>#conn-<연결>-<칸> 으로 바로 온다 — 그 칸으로 내려가 초점을 둔다.
  */
-export function ConnectionForm({ initial, secretBox, limit: given = null, cancelHref = "/admin/models/llm", savedModels, readOnly = false }: {
+export function ConnectionForm({ initial, secretBox, limit: given = null, cancelHref = "/admin/models/llm", savedModels, readOnly = false, fix = null }: {
   initial: AiConnectionView | null; secretBox: boolean;
   /** 장비 행 「동시 실행 한도」 한 칸. 없으면(장부를 못 읽음 등) 장비 행을 바꾸지 않는 칸 — 값은 연결에만 남고 순위 저장이 장비 행을 만들 때 쓴다 */
   limit?: ConnectionLimitField | null; cancelHref?: string;
   /** LLM 운영 화면: 새로 만든 연결의 모델 목록을 저장 직후 보인다 */
   savedModels?: readonly ConnectionSavedModels[]; readOnly?: boolean;
+  /** 고칠 칸(LLM 운영 ?fix=) — 눈에 띄게 하고 처음 그릴 때 초점을 둔다 */
+  fix?: LlmFixField | null;
 }) {
   const limit: ConnectionLimitField = given ?? { deviceId: initial?.deviceId ?? "", current: null, expectedVersion: null, policyHash: null, eligible: false, reason: null, sharedWith: [] };
+  const connectionId = initial?.id ?? null;
+  const [slots, setSlots] = useState(String(limit.current ?? initial?.capacitySlots ?? 1));
+  const limitHint = connectionLimitHint(limit, slots);
+  // 문제 표시에서 왔으면 그 칸으로 내려가 초점을 둔다(펼친 행은 서버가 open 으로 그린다). 꺼진 칸은 초점만 건너뛴다
+  useEffect(() => {
+    if (!fix || !connectionId) return;
+    const field = document.getElementById(llmFieldAnchor(connectionId, fix));
+    field?.scrollIntoView({ block: "center" });
+    field?.querySelector<HTMLElement>("input:not([type=hidden]):not([disabled]), select:not([disabled]), textarea:not([disabled])")?.focus({ preventScroll: true });
+  }, [fix, connectionId]);
+  /** 고칠 수 있는 칸의 label — 주소의 #조각이 가리키고, 고칠 칸이면 data-fix 로 눈에 띈다 */
+  const fixField = (field: LlmFixField) => connectionId ? { id: llmFieldAnchor(connectionId, field), "data-fix-field": field, "data-fix": fix === field ? "true" : undefined } : {};
+  const fixHint = (field: LlmFixField) => fix === field && FIX_HINT[field] ? <span className="llm-fix-hint text-[13px]">{FIX_HINT[field]}</span> : null;
   // 연결 저장 → (바뀌었으면) 장비 한도 저장을 차례로 부른다(saveConnectionWithLimit).
   const [state, action, pending] = useActionState<AiTaskActionState, FormData>((_previous, form) => saveConnectionWithLimit(limit, form), null);
   const [kind, setKind] = useState<"api" | "cli">(initial?.kind ?? "api");
@@ -75,12 +112,13 @@ export function ConnectionForm({ initial, secretBox, limit: given = null, cancel
     <label className="grid gap-1">이름(화면에 보이는 이름, 예: gpu3090 · M3 gpt-oss)
       <input name="label" required maxLength={80} value={label} onChange={event => setLabel(event.target.value)} autoComplete="off" className={INPUT} /></label>
     {kind === "api" ? <>
-      <label className="grid gap-1">주소 (OpenAI 호환, …/v1)
+      <label className="grid gap-1" {...fixField("address")}>주소 (OpenAI 호환, …/v1)
         <input name="baseUrl" required defaultValue={initial?.baseUrl ?? ""} placeholder="http://100.77.43.63:8090/v1" autoComplete="off" className={`${INPUT} font-mono`} />
-        <span className="text-[13px] text-fg-3">저장 시 이 API 주소에서 모델 목록을 확인합니다. 확인된 모델은 지원하는 업무의 순위에서 바로 선택할 수 있으며, 호출은 등록한 API 주소로 직접 보냅니다.</span></label>
-      <label className="grid gap-1">API 키 {initial?.hasKey ? "(저장됨 — 비워 두면 그대로)" : "(없으면 비워 둡니다)"}
+        <span className="text-[13px] text-fg-3">저장 시 이 API 주소에서 모델 목록을 확인합니다. 확인된 모델은 지원하는 업무의 순위에서 바로 선택할 수 있으며, 호출은 등록한 API 주소로 직접 보냅니다.</span>
+        {fixHint("address")}</label>
+      <label className="grid gap-1" {...fixField("key")}>API 키 {initial?.hasKey ? "(저장됨 — 비워 두면 그대로)" : "(없으면 비워 둡니다)"}
         <input name="apiKey" type="password" autoComplete="off" disabled={!secretBox} className={INPUT}
-          placeholder={secretBox ? "" : "이 서버에는 키 암호화 설정이 없어 키를 저장할 수 없습니다"} /></label>
+          placeholder={secretBox ? "" : "이 서버에는 키 암호화 설정이 없어 키를 저장할 수 없습니다"} />{fixHint("key")}</label>
       {initial?.hasKey && <label className="flex items-center gap-2 text-[13px]"><input type="checkbox" name="clearKey" value="1" />저장된 키 지우기</label>}
       <label className="grid gap-1">컨텍스트 상한(토큰) — /models 가 최대 길이를 알려 주지 않는 엔진에만
         <input name="contextTokens" type="number" inputMode="numeric" min={1} max={2097152} step={1} defaultValue={initial?.contextTokens ?? ""}
@@ -95,7 +133,7 @@ export function ConnectionForm({ initial, secretBox, limit: given = null, cancel
       </> : <>
       <label className="grid gap-1">모델 이름(띄어쓰기·쉼표로 나눔 — CLI 에는 목록이 없어 직접 적습니다)
         <textarea name="cliModels" required rows={2} defaultValue={initial?.cliModels.join(" ") ?? ""} placeholder="sonnet opus" className={`${INPUT} font-mono`} /></label>
-      <label className="grid gap-1">CLI 버전 — 1차·2차 심사·Grok 로그인 유지에 쓰려면 필요합니다
+      <label className="grid gap-1" {...fixField("version")}>CLI 버전 — 1차·2차 심사·Grok 로그인 유지에 쓰려면 필요합니다
         <input name="cliVersion" maxLength={80} defaultValue={initial?.cliVersion ?? ""} placeholder="워커에서 claude --version 을 실행한 출력 그대로" autoComplete="off"
           className={`${INPUT} font-mono`} />
         <span className="text-[13px] text-fg-3">이 화면은 CLI 를 띄우지 않아 버전을 확인하지 못합니다. 워커 로그 cli_contract.probe 의 observedVersion 을 그대로 적으세요 —
@@ -106,12 +144,14 @@ export function ConnectionForm({ initial, secretBox, limit: given = null, cancel
       <label className="grid gap-1">장비 이름(용량)
         <input name="deviceId" maxLength={120} defaultValue={initial?.deviceId ?? ""} placeholder={aiDeviceSlug(label || "engine")} autoComplete="off" className={`${INPUT} font-mono`} />
         <span className="text-[13px] text-fg-3">장비 한도 화면의 장비 이름입니다. 없으면 순위를 저장할 때 옆 동시 실행 한도로 만듭니다.</span></label>
-      <label className="grid gap-1">동시 실행 한도(장비 행 · 실제 적용 값)
-        <input name="capacitySlots" type="number" inputMode="numeric" min={1} max={256} step={1} defaultValue={limit.current ?? initial?.capacitySlots ?? 1} className={`${INPUT} font-mono`} />
+      <label className="grid gap-1" {...fixField("limit")}>동시 실행 한도(장비 행 · 실제 적용 값)
+        <input name="capacitySlots" type="number" inputMode="numeric" min={1} max={256} step={1} defaultValue={limit.current ?? initial?.capacitySlots ?? 1}
+          onChange={event => setSlots(event.target.value)} className={`${INPUT} font-mono`} />
         <span className="text-[13px] text-fg-3">{limit.deviceId ? `장비 ${limit.deviceId}` : "새 장비"}{limit.sharedWith.length ? ` · ${limit.sharedWith.join(", ")}와 함께 씀` : ""}.
-          {" "}{limit.eligible ? "값을 바꿔 저장하면 장비 행도 이 값으로 바뀝니다 — 같은 장비를 쓰는 모든 작업이 이 한도를 나눠 씁니다." : limit.reason ?? "새 연결은 순위를 저장할 때 이 값으로 장비 행을 만듭니다(같은 이름의 장비 행이 있으면 그 값이 쓰입니다)."}</span></label>
+          {" "}{limit.eligible ? "값을 바꿔 저장하면 장비 행도 이 값으로 바뀝니다 — 같은 장비를 쓰는 모든 작업이 이 한도를 나눠 씁니다." : limit.reason ?? "새 연결은 순위를 저장할 때 이 값으로 장비 행을 만듭니다(같은 이름의 장비 행이 있으면 그 값이 쓰입니다)."}</span>
+        {limitHint && <span className="llm-fix-hint text-[13px]" data-limit-hint="true">{limitHint}</span>}</label>
     </div>
-    <label className="grid gap-1">상태
+    <label className="grid gap-1" {...fixField("enabled")}>상태
       <select name="enabled" value={enabled ? "1" : "0"} onChange={event => setEnabled(event.target.value !== "0")} className={INPUT}>
         <option value="1">켜짐</option><option value="0">꺼짐 — 순위 선택지에서 뺍니다(저장된 순위는 남습니다)</option></select></label>
     <label className="grid gap-1">메모<input name="note" maxLength={400} defaultValue={initial?.note ?? ""} className={INPUT} /></label>
