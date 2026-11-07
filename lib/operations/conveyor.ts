@@ -14,6 +14,7 @@ import { buildStationLlm, type LlmLegacyPublish } from "./conveyor-llm";
 import { readLlmInputs } from "./conveyor-llm-read";
 import { hourlyThroughput } from "./dashboard";
 import { pipelineFlow } from "./pipeline";
+import { readPublicListing } from "./public-listing";
 import { readSearchHealth } from "./search-health-model";
 import { sharedLoader } from "./shared-cache";
 import { sharedHumanQueueOverview } from "./shared-reads";
@@ -59,7 +60,7 @@ export async function readHoldCounts(): Promise<{ holds: { reason: string; count
 
 async function loadConveyor(fresh: boolean): Promise<Conveyor> {
   const settings = await getSettings();
-  const [ops, jobStates, batch, throughput, flow, hourly, human, holds, llm] = await Promise.all([
+  const [ops, jobStates, batch, throughput, flow, hourly, human, holds, llm, listing] = await Promise.all([
     operationsData().catch(warn("conveyor.ops_unavailable")),
     listJobStates().catch(warn("conveyor.jobs_unavailable")),
     readJobBatchMode().catch(() => ({ mode: "legacy", writerContractVersion: 0 })),
@@ -69,6 +70,7 @@ async function loadConveyor(fresh: boolean): Promise<Conveyor> {
     sharedHumanQueueOverview(settings, fresh).catch(warn("conveyor.human_unavailable")),
     readHoldCounts().catch(warn("conveyor.holds_unavailable")),
     readLlmInputs(new Date().toISOString()).catch(warn("conveyor.llm_unavailable")),
+    readPublicListing(fresh).catch(warn("conveyor.listing_unavailable")),
   ]);
   const now = ops?.fetchedAt ?? new Date().toISOString();
   const nowMs = Date.parse(now);
@@ -103,7 +105,7 @@ async function loadConveyor(fresh: boolean): Promise<Conveyor> {
   const searchJob = states.get("product-search-health");
   const search = searchJob?.lastError ? null : readSearchHealth(ops?.observations.find((row) => row.key === "job:product-search-health"), nowMs);
   const inputs: ConveyorInputs = {
-    now, enabled: settings.enabled, throughput, flow, hourly, human, progress, search,
+    now, enabled: settings.enabled, throughput, flow, hourly, human, progress, search, listing,
     holds: holds?.holds ?? null, rejected: holds?.rejected ?? null, models: llm ? buildStationLlm({ ...llm, legacyPublish }) : null,
     classification: ops ? { held: ops.held, nextRetryAt: ops.heldNextRetryAt } : null,
     sources: SOURCES.filter((source) => states.has(source.job)).map((source) => {
@@ -116,5 +118,5 @@ async function loadConveyor(fresh: boolean): Promise<Conveyor> {
 }
 
 export function readConveyor(fresh = false): Promise<Conveyor> {
-  return conveyorCache("v4", () => loadConveyor(fresh), fresh);
+  return conveyorCache("v5", () => loadConveyor(fresh), fresh);
 }

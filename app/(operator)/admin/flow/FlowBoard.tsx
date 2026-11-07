@@ -7,6 +7,7 @@ import type { LlmStationKey, StationLlm, TaskLlm } from "@/lib/operations/convey
 import { flowRankLinesFor, type FlowRankEditor } from "@/lib/operations/flow-rank-editor";
 import { PUBLIC_TRANSLATION_JOBS, stationResponse, STATION_JOBS, type ResponseStep } from "@/lib/operations/flow-response";
 import type { OperatorDesk } from "@/lib/operations/operator-desk-model";
+import { LISTING_NOTE, listingExclusionText, PROFILE_NOTE } from "@/lib/operations/public-listing-model";
 import { JobControl } from "../status/JobControl";
 import { ChangesPanel, EquipmentPanel, kstShort, TodoPanel, WindowPanel } from "./OperatorDesk";
 import { RankDrawer } from "./RankDrawer";
@@ -568,6 +569,7 @@ export function FlowBoard({ data, desk = null, controls = EMPTY_CONTROLS, editor
   const current = selected === "human" ? null : data.stations.find((station) => station.key === selected) ?? null;
   const tone = current?.tone ?? data.human?.tone ?? "unknown";
   const response = stationResponse(selected, data, desk);
+  const listingGap = listingExclusionText(data.listing);
   // 머리 줄 바로 할 일 — 가장 막힌 곳의 조치 중 화면으로 가는 앞 두 개
   const quick = data.bottleneck ? stationResponse(data.bottleneck, data, desk).steps.filter((step): step is Extract<ResponseStep, { kind: "link" }> => step.kind === "link").slice(0, 2) : [];
   const pick = (key: Selected) => {
@@ -620,8 +622,9 @@ export function FlowBoard({ data, desk = null, controls = EMPTY_CONTROLS, editor
           <li className="cv-cell" data-key="sink">
             <p className="cv-phase" data-first="yes"><span>결과</span></p>
             <div className="cv-card cv-sink"><span className="cv-card-top"><span className="cv-card-name">공개 완료</span></span>
-              <span className="cv-big"><b>{num(data.published)}</b><small>공개 제품</small></span>
-              <span className="cv-rate"><span>1시간 +<b>{num(data.publishedHour)}</b></span></span>
+              <span className="cv-big"><b>{num(data.listing?.publicStatus ?? data.published)}</b><small>공개 상태</small></span>
+              <span className="cv-rate"><span>목록 노출 <b>{num(data.listing?.listed)}</b></span><span>1시간 +<b>{num(data.publishedHour)}</b></span></span>
+              {listingGap && <span className="cv-rate" title={LISTING_NOTE}><span>목록에서 빠짐: {listingGap}</span>{(data.listing?.excluded.profileUnclaimed ?? 0) > 0 && <span>{PROFILE_NOTE}</span>}</span>}
               <Link className="cv-inline-link" href="/admin/products" prefetch={false}>공개 프로젝트 →</Link>
               <LlmLine llm={data.sinkLlm} /></div>
             <div className="cv-belt cv-belt-end" aria-hidden="true" />

@@ -5,6 +5,8 @@ import { getSettings, getSettingsMeta } from "@/lib/crawl/settings";
 import { categoryCounts } from "@/lib/domain/products/repository";
 import { formatListTime } from "@/lib/format/time";
 import { logger } from "@/lib/observability/logger";
+import { readPublicListing } from "@/lib/operations/public-listing";
+import { LISTING_NOTE, PROFILE_NOTE } from "@/lib/operations/public-listing-model";
 import { readSettingsApply } from "@/lib/operations/settings-apply";
 import { SettingsApplyLine } from "../settings/SettingsApplyLine";
 import { CategoryDefinitionsForm } from "./CategoryDefinitionsForm";
@@ -18,16 +20,26 @@ export default async function AdminCategoriesPage() {
   if (!admin) redirect("/admin/login");
 
   const now = new Date();
-  const [settings, meta, counts, apply] = await Promise.all([
+  const [settings, meta, listing, apply] = await Promise.all([
     getSettings(),
     getSettingsMeta(),
-    categoryCounts({ statuses: ["verified", "seeded"] }),
+    // 분야마다 공개 상태·목록 노출 — 흐름 화면과 같은 15초 캐시(public-listing.ts). 못 읽으면 아래에서 공개 상태만 센다
+    readPublicListing().catch((error) => {
+      logger.warn("admin.public_listing_unavailable", { error });
+      return null;
+    }),
     // 카테고리 기준은 크롤 설정과 같은 행이라 같은 판을 쓴다 — 워커가 새 정의로 도는지 여기서도 본다(ADM-19)
     readSettingsApply().catch((error) => {
       logger.warn("admin.settings_apply_unavailable", { error });
       return null;
     }),
   ]);
+  const counts = listing
+    ? Object.fromEntries(Object.entries(listing.byCategory).map(([category, row]) => [category, row.publicStatus]))
+    : await categoryCounts({ statuses: ["verified", "seeded"] });
+  const listed = listing
+    ? Object.fromEntries(Object.entries(listing.byCategory).map(([category, row]) => [category, row.listed]))
+    : null;
 
   return (
     <main className="mx-auto max-w-[1100px] px-6 pb-20"><PageStamp />
@@ -48,9 +60,14 @@ export default async function AdminCategoriesPage() {
         </p>
       )}
       {apply && <div className="mt-1.5"><SettingsApplyLine apply={apply} now={now} /></div>}
+      {listed && (
+        <p className="mt-1.5 max-w-[68ch] text-[13px] text-fg-3" title={LISTING_NOTE}>
+          공개 = 공개 상태(검증됨·미클레임) · 목록 = 공개 목록·검색에 실리는 수. {PROFILE_NOTE}.
+        </p>
+      )}
 
       <div className="mt-6">
-        <CategoryDefinitionsForm definitions={settings.classify.definitions} counts={counts} />
+        <CategoryDefinitionsForm definitions={settings.classify.definitions} counts={counts} listed={listed} />
       </div>
     </main>
   );
