@@ -3,6 +3,7 @@ import { useActionState, useState } from "react";
 // 형만 가져온다 — 그 모듈은 DB 를 읽는 서버 모듈이라 클라이언트 묶음에 들면 안 된다(limits/fields.tsx 와 같은 규칙)
 import type { DeviceSettingsView, DeviceView } from "@/lib/operations/admin-capacity-devices";
 import { RolesEditor } from "./RolesEditor";
+import { ConfirmSubmit } from "../ConfirmSubmit";
 import { saveCapacityDevice, type DeviceSaveState } from "./actions";
 
 const INPUT = "w-24 rounded border border-line bg-bg px-2 py-1 text-right tabular-nums";
@@ -64,7 +65,8 @@ export function DeviceForm({ device, readOnly }: { device: DeviceView | null; re
     </div>
     <RolesEditor roles={device?.roles ?? []} readOnly={readOnly} extraRows={device ? 1 : 3} />
     <div className="flex flex-wrap items-center gap-3">
-      <button type="submit" disabled={pending || readOnly} className="rounded bg-fg px-3 py-2 text-bg disabled:opacity-50">{pending ? "저장 중…" : device ? "이 장비 저장" : "새 장비 만들기"}</button>
+      <ConfirmSubmit label={device ? "이 장비 저장" : "새 장비 만들기"} pending={pending} disabled={readOnly} savedKey={device?.version ?? null}
+        summary="저장 즉시 다음 입장 판정부터 씁니다. 이미 잡힌 예약·실행은 그대로입니다." />
       <span className="text-[13px] text-fg-3">저장 즉시 다음 입장 판정부터 — DRAIN 불필요</span>
       {readOnly && <span className="text-[13px] text-fg-3">장비 행을 읽지 못해 읽기 전용입니다.</span>}
     </div>

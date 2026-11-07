@@ -2,6 +2,7 @@
 import { useActionState, useState } from "react";
 // 형만 가져온다 — 그 모듈은 DB 를 읽는 서버 모듈이라 클라이언트 묶음에 들면 안 된다(devices/DeviceForm 과 같은 규칙)
 import type { SupervisorBadge, SupervisorView } from "@/lib/operations/admin-model-helpers";
+import { ConfirmSubmit } from "../ConfirmSubmit";
 import { saveCapacitySupervisorTiming, switchCapacitySupervisor, type HelperActionState } from "./actions";
 
 const INPUT = "w-24 rounded border border-line bg-bg px-2 py-1 text-right tabular-nums";
@@ -61,9 +62,10 @@ export function SupervisorCard({ supervisor, readOnly }: { supervisor: Superviso
       <input type="hidden" name="enabled" value={s.enabled ? "false" : "true"} />
       {!s.enabled && <label className="flex items-center gap-1 text-[13px]"><input type="checkbox" name="confirm" value="yes" disabled={readOnly} />
         감시자 계정·GRANT·정책의 도우미 경로·배정(꺼짐)을 마쳤습니다</label>}
-      <button type="submit" disabled={switching || readOnly}
-        className={`rounded px-3 py-2 disabled:opacity-50 ${s.enabled ? "bg-red-600 text-white" : "bg-fg text-bg"}`}>
-        {switching ? "바꾸는 중…" : s.enabled ? "감시자 끄기" : "감시자 켜기"}</button>
+      <ConfirmSubmit label={s.enabled ? "감시자 끄기" : "감시자 켜기"} confirmLabel={s.enabled ? "끄기 확인" : "켜기 확인"} pending={switching} pendingLabel="바꾸는 중…"
+        disabled={readOnly} className={`rounded px-3 py-2 disabled:opacity-50 ${s.enabled ? "bg-red-600 text-white" : "bg-fg text-bg"}`}
+        changes={[{ label: "감시자 전체 스위치", before: s.enabled ? "켜짐" : "꺼짐", after: s.enabled ? "꺼짐" : "켜짐" }]}
+        summary={s.enabled ? "다음 입장 판정부터 모든 도우미가 닫힙니다. 돌고 있는 호출은 끝까지 갑니다." : "신선한 신호가 있을 때만 도우미가 열립니다. 우선 역할 일은 막지 않습니다."} />
       <span className="text-[13px] text-fg-3">끄면 다음 입장 판정부터 모든 도우미가 닫힙니다 — 돌고 있는 호출은 끝까지 갑니다. 우선 역할은 영향이 없습니다.</span>
     </form>
     <Result state={switchState} />
@@ -90,7 +92,7 @@ export function SupervisorCard({ supervisor, readOnly }: { supervisor: Superviso
         <span className="flex items-center gap-1"><input name="loopSeconds" defaultValue={seconds(s.loopMs)} aria-label="순환 간격" inputMode="decimal"
           disabled={readOnly} className={INPUT} /><span className="text-fg-3">초</span></span>
         <span className="text-fg-3">5~60초 · 유효 시간의 절반 이하</span></label>
-      <button type="submit" disabled={timing || readOnly} className="rounded bg-fg px-3 py-2 text-bg disabled:opacity-50">{timing ? "저장 중…" : "순환 설정 저장"}</button>
+      <ConfirmSubmit label="순환 설정 저장" pending={timing} disabled={readOnly} savedKey={`${s.signalTtlMs}:${s.loopMs}`} />
     </form>
     <Result state={timingState} />
     <div className="grid gap-1">

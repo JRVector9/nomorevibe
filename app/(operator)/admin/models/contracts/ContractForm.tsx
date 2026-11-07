@@ -1,5 +1,6 @@
 "use client";
 import { useActionState, useState } from "react";
+import { ConfirmSubmit } from "../ConfirmSubmit";
 import { readbackEngine, saveServingContract, type ContractSaveState } from "./actions";
 
 const AI1_TEMPLATE = { version: 1, protocol: "abcllm-raw-total-bound-v1", routeId: "crawl-agent-review", provider: "abcllm",
@@ -38,7 +39,7 @@ export function ContractForm({ routes, initial }: { routes: readonly string[]; i
     <label className="grid gap-1">메모<input name="note" maxLength={400} className="rounded border border-line bg-bg p-2" /></label>
     <div className="flex flex-wrap gap-2">
       <button type="button" onClick={check} disabled={!endpoint} className="rounded border border-line px-3 py-2">엔진 확인 (모델·최대 길이 읽기)</button>
-      <button type="submit" disabled={pending} className="rounded bg-fg px-3 py-2 text-bg">{pending ? "저장 중…" : "저장"}</button>
+      <ConfirmSubmit label="저장" pending={pending} summary="저장하면 배포 없이 각 앱이 30초 안에 다음 작업부터 이 계약을 씁니다." />
     </div>
     {readback && <pre className="whitespace-pre-wrap rounded bg-bg p-2 text-[13px]">{readback}</pre>}
     {state?.ok && <p role="status" className="text-[13px]">{state.message}</p>}

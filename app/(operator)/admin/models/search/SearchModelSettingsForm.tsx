@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useActionState, useEffect, useRef, useState } from 'react';
 import type { AiConnectionView } from '@/lib/operations/admin-ai-tasks';
 import type { SearchModelServiceView } from '@/lib/domain/products/search-model-repository';
+import { ConfirmSubmit } from '../ConfirmSubmit';
 import { saveSearchModelSettingsAction, type SearchModelActionState } from './actions';
 
 type Kind = 'embedding' | 'rerank';
@@ -54,7 +55,7 @@ function ServiceForm({ kind, revision, connections, current, disabledReason }: {
       <CurrentService service={current} />
     </div>
     {disabledReason && <p role='note' className='text-[13px] text-fg-2'>{disabledReason}</p>}
-    {!apiConnections.length && <p className='text-[13px] text-fg-2'>사용 가능한 API 연결이 없습니다. <Link href='/admin/models/tasks#connections' prefetch={false} className='underline'>AI 연결에서 주소·키 등록</Link></p>}
+    {!apiConnections.length && <p className='text-[13px] text-fg-2'>사용 가능한 API 연결이 없습니다. <Link href='/admin/models/llm' prefetch={false} className='underline'>LLM 운영에서 주소·키 등록</Link></p>}
     <form action={formAction} className='flex flex-col gap-2 rounded-lg border border-line p-3'>
       <input type='hidden' name='revision' value={revision} />
       <input type='hidden' name='kind' value={kind} />
@@ -70,9 +71,13 @@ function ServiceForm({ kind, revision, connections, current, disabledReason }: {
         <option value=''>{!connectionId ? '연결을 먼저 선택' : models ? '모델 선택' : '모델 목록 미확인'}</option>
         {models?.map(entry => <option key={entry.id} value={entry.id}>{entry.id}</option>)}
       </select>
-      {selected && !models && <p className='text-[13px] text-fg-2'>이 연결의 실제 모델 목록이 없습니다. <Link href='/admin/models/tasks#connections' prefetch={false} className='underline'>AI 연결에서 목록을 읽으세요.</Link></p>}
+      {selected && !models && <p className='text-[13px] text-fg-2'>이 연결의 실제 모델 목록이 없습니다. <Link href='/admin/models/llm' prefetch={false} className='underline'>LLM 운영에서 모델 목록을 읽으세요.</Link></p>}
       <p className='text-[13px] text-fg-3'>{guidance}</p>
-      <button type='submit' disabled={!canSave} className='self-start rounded-lg border border-line px-3 py-2 text-[13px] font-semibold disabled:opacity-50'>{pending ? '확인 중…' : buttonText}</button>
+      {/* 두 단계 확인(PR 5) — 지금 API·모델 → 고른 연결·모델을 보이고 「저장 확인」으로 보낸다(서버가 호환성·응답을 확인) */}
+      <div className='flex flex-wrap items-center gap-2'><ConfirmSubmit label={buttonText} pending={pending} pendingLabel='확인 중…' disabled={!canSave}
+        className='self-start rounded-lg border border-line px-3 py-2 text-[13px] font-semibold disabled:opacity-50'
+        changes={[{ label: 'API 연결', before: current.baseUrl.trim() || '미설정', after: selected?.label ?? '미선택' }, { label: '서버 모델', before: current.model?.trim() || '미확인', after: model || '미선택' }]}
+        summary={guidance} /></div>
       {issues.length > 0 && <ul role='alert' className='list-disc pl-5 text-[13px] text-fg-2'>{issues.map((issue, index) => <li key={`${index}:${issue}`}>{issue}</li>)}</ul>}
       {success && <p role='status' aria-live='polite' className='text-[13px] text-fg-2'>{success}</p>}
     </form>

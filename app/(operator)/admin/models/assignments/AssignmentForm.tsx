@@ -4,6 +4,7 @@ import { useActionState, useState } from "react";
 // 형만 가져온다 — 그 모듈들은 서버 모듈(DB·node:crypto)이라 클라이언트 묶음에 들면 안 된다(helpers/HelperForm 과 같은 규칙)
 import type { AssignmentStage, AssignmentTransport } from "@/lib/llm/capacity-helpers";
 import type { AssignmentFormOptions, AssignmentPrefill } from "@/lib/operations/admin-model-assignments";
+import { ConfirmSubmit } from "../ConfirmSubmit";
 import { saveModelAssignmentAction, type AssignmentActionState } from "./actions";
 
 const SELECT = "rounded border border-line bg-bg px-2 py-1 text-[13px]";
@@ -97,8 +98,8 @@ export function AssignmentForm({ options, initial, prefill = {}, readOnly }: { o
             <label className="flex items-center gap-1"><input type="radio" name="role" value="helper" checked={role === "helper"} disabled={readOnly || !!initial}
               onChange={() => setRole("helper")} />도우미</label>
           </span>
-          {role === "helper" && <span role="note" className="text-amber-700">도우미는 「도우미 장비」 화면에서 만들고 임계값·섀도·승격을 정합니다 —
-            {" "}<Link href="/admin/models/helpers#new" prefetch={false} className="font-semibold underline">도우미 장비로 →</Link></span>}</fieldset>
+          {role === "helper" && <span role="note" className="text-amber-700">도우미는 「도우미·감시자」 화면에서 만들고 임계값·섀도·승격을 정합니다 —
+            {" "}<Link href="/admin/models/helpers#new" prefetch={false} className="font-semibold underline">도우미·감시자로 →</Link></span>}</fieldset>
         {stageOption?.vote && <label className={LABEL}><span className={CAPTION}>표(투표)</span>
           <span className="flex items-center gap-1"><input type="checkbox" name="vote" defaultChecked={initial?.vote ?? false} disabled={readOnly || !voteAllowed}
             aria-label="표(투표)" />2차 투표자로 세운다</span>
@@ -120,8 +121,8 @@ export function AssignmentForm({ options, initial, prefill = {}, readOnly }: { o
         <input name="confirm" autoComplete="off" placeholder={options.confirmWord} disabled={readOnly} aria-label="확인" className={`${SELECT} w-40`} />
         <span className="text-fg-3">실전으로 저장하면 플래그가 켜진 뒤 이 배정을 바로 고릅니다. 저장 때 계약을 확인하고 없으면 엔진에 readback·1토큰 시험을 보냅니다.</span></label>}
       <div className="flex flex-wrap items-center gap-3">
-        <button type="submit" disabled={blocked} className="rounded bg-fg px-3 py-2 text-bg disabled:opacity-50">
-          {pending ? "저장 중… (엔진 확인 포함)" : initial ? "이 배정 저장" : "배정 만들기"}</button>
+        <ConfirmSubmit label={initial ? "이 배정 저장" : "배정 만들기"} pending={pending} pendingLabel="저장 중… (엔진 확인 포함)" disabled={blocked}
+          savedKey={initial?.version ?? null} />
         <span className="text-[13px] text-fg-3">저장 한 번이 계약 확인 → 정책 경로 덧붙이기(DRAIN 없음) → 장비 역할 순위 → 배정 행 → 감사 한 줄을 한 번에 합니다. 거절되면 아무것도 바뀌지 않습니다.</span>
         {readOnly && <span className="text-[13px] text-fg-3">배정 표를 읽지 못해 읽기 전용입니다.</span>}
       </div>

@@ -1,7 +1,9 @@
 .models-save-bar { position: fixed; bottom: 0; right: 0; left: var(--models-sidebar-width, 200px); z-index: 30; padding-bottom: max(12px, env(safe-area-inset-bottom)); }
 @media (min-width: 761px) and (max-width: 1279px) { .admin-area:not([data-rail=expanded]) .models-save-bar { left: 64px; } }
 @media (max-width: 760px) { .models-save-bar { left: 0; } }
-.models-save-bar > div { flex: 1; max-height: 90px; overflow: auto; }
+.models-save-bar > div:not([data-confirm-open]) { flex: 1; max-height: 90px; overflow: auto; }
+/* 두 단계 확인 칸(ConfirmSubmit, PR 5)은 줄 하나를 다 쓰고 높이는 화면의 40% 까지 */
+.models-save-bar > [data-confirm-open] { max-height: 40vh; overflow: auto; }
 @media (max-width: 479px) { .models-save-bar { gap: 8px; padding-inline: 16px; } .models-save-bar button { padding-inline: 12px; } }
 @media print { .models-save-bar { position: static; } }
 
