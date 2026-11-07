@@ -16,7 +16,7 @@ import { modelPickerConnectionDevice, modelPickerConnectionLabel, modelPickerCon
 import "./tasks.css";
 
 export const dynamic = "force-dynamic";
-export const metadata: Metadata = { title: "작업 ↔ AI 모델 — NoMoreVibe", robots: { index: false } };
+export const metadata: Metadata = { title: "작업 배정 · LLM 운영 — NoMoreVibe", robots: { index: false } };
 
 type Props = { searchParams: Promise<Record<string, string | string[] | undefined>> };
 const one = (value: string | string[] | undefined) => typeof value === "string" ? value.trim() : Array.isArray(value) ? (value[0] ?? "").trim() : "";
@@ -57,8 +57,8 @@ export default async function AiTasksPage({ searchParams }: Props) {
   return <main className="mt-task-page grid min-w-0 gap-3">
     <PageStamp />
     <header className="grid gap-1">
-      <p className="text-[13px] text-fg-3"><Link href="/admin/models">← 모델 운영 현황</Link></p>
-      <h1 className="text-[22px] font-semibold">작업 ↔ AI 모델</h1>
+      <p className="text-[13px] text-fg-3"><Link href="/admin/models">← LLM 운영 대시보드</Link></p>
+      <h1 className="text-[22px] font-semibold">작업 배정 <span className="text-[15px] font-normal text-fg-3">작업 ↔ AI 모델 순위</span></h1>
       <p className="text-[13px] text-fg-3">Flow 단계와 같은 실제 적용 설정입니다. 대체 실행·작업 분산은 각 작업의 실행 방식을 따릅니다. 별도 설정 작업은 실제 설정 화면에서 변경합니다.</p>
       {executionRead.failed && <p role="alert" className="text-[13px] text-red-600">실행 방식을 읽지 못했습니다. 현재 방식을 확인할 때까지 작업 설정을 저장할 수 없습니다.</p>}
       {errors.map(([key, error]) => <p key={key} role="alert" className="text-[13px] text-red-600">{ERROR_LABELS[key] ?? key}을(를) 읽지 못했습니다({aiTaskIssueMessage(error)}).</p>)}
@@ -73,6 +73,7 @@ export default async function AiTasksPage({ searchParams }: Props) {
       <summary className={SUMMARY}><h2>AI 연결 관리</h2><span className="text-[13px] font-normal text-fg-3">서버 {view.connections.length}개
         {unread.length > 0 && <> · <span className="text-amber-700">목록 못 읽음 {unread.length}</span></>} · 주소·키·CLI 모델 이름</span></summary>
       <div className="grid gap-2 px-3 pb-3">
+      <p role="note" className="rounded-lg border border-line bg-bg-soft px-3 py-2 text-[13px]">연결·모델 목록·동시 실행 한도는 이제 <Link href="/admin/models/llm" prefetch={false} className="font-semibold text-accent-ink underline">LLM 운영</Link>에서 한 줄씩 보고 고칩니다(한도는 장비 행 한 곳). 이 표와 폼은 옮기는 동안 그대로 둡니다.</p>
       <p className="text-[13px] text-fg-3">API 저장 시 모델 목록을 읽습니다. 키는 암호화되며 다시 표시하지 않습니다. 작업 설정 저장 시 필요한 연결 자원을 확인합니다.
         {view.policyMode && <> 용량 정책 {view.policyMode.toUpperCase()}.</>}</p>
       <p className="flex flex-wrap gap-3 text-[13px] text-fg-3"><Link href="/admin/models/devices">장비 한도 →</Link>

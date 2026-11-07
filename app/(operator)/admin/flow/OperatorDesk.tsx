@@ -214,7 +214,7 @@ export function EquipmentPanel({ desk }: { desk: OperatorDesk }) {
   const equipment = desk.equipment;
   const ledger = equipment ? LEDGER[equipment.ledger.status] : LEDGER.unknown;
   return (
-    <Panel id="dk-equipment" title="장비·모델 서버" tone={ledger.tone} count={ledger.text} more={{ href: "/admin/models", label: "모델 운영 현황" }}>
+    <Panel id="dk-equipment" title="장비·모델 서버" tone={ledger.tone} count={ledger.text} more={{ href: "/admin/models", label: "LLM 운영" }}>
       {!equipment ? <Unread what="모델 장부" /> : <>
         {equipment.ledger.reasons.length > 0 && <ul className="dk-reasons">{equipment.ledger.reasons.map((reason) => <li key={reason}>
           <b>{reason}</b>{reason === "dispatch_stuck" ? ` · 전송 ${minutes(equipment.ledger.stuckThresholdSeconds)} 넘은 호출 ${n(equipment.ledger.stuckDispatched)}건`
@@ -248,7 +248,7 @@ export function WindowPanel({ desk }: { desk: OperatorDesk }) {
   const trouble = window ? window.roles.filter((role) => !role.ok) : [];
   return (
     <Panel id="dk-window" title="배포·점검 창" tone={!window ? "mute" : trouble.length || window.schedulerAlarm ? "bad" : admission?.tone ?? "mute"}
-      count={admission?.text ?? (window ? "접수 미확인" : null)} countTone={admission?.tone ?? "mute"} more={{ href: "/admin/models", label: "접수 바꾸기(모델 운영 현황)" }}>
+      count={admission?.text ?? (window ? "접수 미확인" : null)} countTone={admission?.tone ?? "mute"} more={{ href: "/admin/models#admission", label: "접수 바꾸기(LLM 운영)" }}>
       {!window ? <Unread what="점검 창" /> : <>
         <p className="dk-sub">{admission ? admission.hint : "모델 접수 모드를 읽지 못했습니다"}{window.admissionSince ? ` · ${kstShort(window.admissionSince)}부터` : ""}</p>
         <ul className="dk-roles">{window.roles.map((role) => (
