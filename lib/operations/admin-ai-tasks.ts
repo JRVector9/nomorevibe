@@ -530,7 +530,7 @@ export function aiRankReadiness(task: AiTaskDef, rank: number, connection: AiCon
           const taken = alias ? input.contracts.find(entry => entry.routeId === routeId && entry.model === alias) : undefined;
           if (!alias) blocking.push(`${head}: 같은 모델 이름의 계약이 다른 서버에 있는데 모델 이름이 길어 연결로 가른 이름을 만들 수 없습니다.`);
           else if (taken) blocking.push(`${head}: ${routeId} 경로의 ${alias} 계약이 다른 서버(${aiConnectionHost(contractBase(taken.endpoint)) ?? "주소 없음"})를 가리킵니다. `
-            + "모델 연결 화면에서 그 계약을 고치세요.");
+            + "서빙 계약·등록부 화면에서 그 계약을 고치세요.");
           else {
             identity = alias;
             createContract = Object.freeze({ routeId, replacesGateway: false, identity: alias, engineModel: model });

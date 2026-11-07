@@ -147,7 +147,7 @@ describe("처리 LLM 바꾸기 — 서랍 그림", () => {
     expect(html).not.toMatch(/aria-label="소개 검수 [123]순위"/);
     expect(html).toContain("바꿀 수 없음");
     expect(html).toContain("CLI_SERVING_CONTRACTS");
-    expect(html).toContain("/admin/models?advanced=1#model-settings");
+    expect(html).toContain("/admin/models/advanced#model-settings");
     expect(html).toContain("연결 상태 5개");
     expect(html).toMatch(/바뀌는 내용 확인 →<\/button>/);
     expect(html).toMatch(/<button type="button" class="fr-btn fr-primary" disabled="">/);

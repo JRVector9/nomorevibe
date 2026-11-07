@@ -8,11 +8,34 @@ export type WorkspaceLocation = { workspace: Workspace; tab: string; detail: "pr
 type Search = Pick<URLSearchParams, "get">;
 const none: Search = { get: () => null };
 
-/** 고급 설정 — 지금은 기존 /admin/models?advanced=1 화면(옛 「한 화면」)을 그대로 연다. 그 안의 #review·#model-settings 링크가 바뀌지 않는다. */
-export const MODELS_ADVANCED_HREF = "/admin/models?advanced=1";
-/** 고급 설정 아래로 가는 기존 하위 화면 */
-const MODELS_ADVANCED_PATHS: readonly string[] = ["/admin/models/devices", "/admin/models/limits", "/admin/models/helpers", "/admin/models/assignments",
-  "/admin/models/contracts", "/admin/models/human", "/admin/models/search"];
+/** 고급 설정(2026-11-07 PR 5) — 편집기 목록과 「장애 분석」이 있는 화면. 옛 /admin/models?advanced=1 은 여기로 넘긴다(#조각은 브라우저가 지킨다). */
+export const MODELS_ADVANCED_HREF = "/admin/models/advanced";
+export const MODELS_ADVANCED_LABEL = "고급 설정";
+/**
+ * 고급 설정 아래 편집기 — 메뉴 이름, 화면 제목(h1·title), 다른 화면의 링크 글자가 모두 이 이름 하나를 쓴다.
+ * purpose 는 고급 설정 목록에 보이는 한 줄(무엇을 하고 언제 여는지)이다.
+ */
+export const MODELS_ADVANCED_EDITORS = [
+  { id: "limits", label: "실시간 한도", href: "/admin/models/limits",
+    purpose: "경로별 출력 토큰·동시 호출·호출 상한, 번역 묶음, 틱 예산을 바꿉니다. 시간 초과가 잦거나 묶음 크기를 바꿀 때 엽니다." },
+  { id: "devices", label: "장비 한도", href: "/admin/models/devices",
+    purpose: "장비(엔진)마다 동시에 처리하는 칸 수와 역할 순서를 바꿉니다. 한 장비가 늘 가득 차거나 칸 수를 고칠 때 엽니다." },
+  { id: "helpers", label: "도우미·감시자", href: "/admin/models/helpers",
+    purpose: "쉬는 장비가 1·2차 검수를 돕는 배정과 Oracle 감시자를 다룹니다. 도우미를 켜거나 자동 정지를 풀 때 엽니다." },
+  { id: "assignments", label: "모델 배정 표", href: "/admin/models/assignments",
+    purpose: "단계 × 장비 × 모델 배정 표와 배정 표 읽기 스위치입니다. 배정 표로 모델을 고르기 시작하거나 행을 고칠 때 엽니다." },
+  { id: "contracts", label: "서빙 계약·등록부", href: "/admin/models/contracts",
+    purpose: "모델을 부르는 주소·응답 모델·토큰 한도 계약과 모델 등록부입니다. 엔진을 직접 연결하거나 등록부 값을 고칠 때 엽니다." },
+  { id: "human", label: "사람 위임 모델", href: "/admin/models/human",
+    purpose: "사람 확인 단계를 모델에 맡기는 스위치와 그 모델입니다. 사람 검토 큐를 모델에 맡기거나 끌 때 엽니다." },
+  { id: "search", label: "검색 모델", href: "/admin/models/search",
+    purpose: "의미 검색 임베딩·재정렬 모델과 호환성 확인입니다. 검색 서버나 모델을 바꿀 때 엽니다." },
+] as const satisfies readonly (WorkspaceLink & { purpose: string })[];
+export type ModelsAdvancedEditorId = (typeof MODELS_ADVANCED_EDITORS)[number]["id"];
+/** 편집기 하나의 이름·주소 — 하위 화면의 제목과 뒤로 가기·건너가기 링크가 쓴다 */
+export const modelsAdvancedEditor = (id: ModelsAdvancedEditorId) => MODELS_ADVANCED_EDITORS.find(editor => editor.id === id)!;
+/** 고급 설정 아래 화면(목록 자체 + 편집기) */
+const MODELS_ADVANCED_PATHS: readonly string[] = [MODELS_ADVANCED_HREF, ...MODELS_ADVANCED_EDITORS.map(editor => editor.href)];
 /** 옛 「LLM 운영」 탭(?tab=) → 새 화면. live·모르는 값은 대시보드, 용량·장비와 연결은 LLM 운영(연결 행에 한도·편집을 합침). */
 const MODELS_LEGACY_TABS: Readonly<Record<string, { tab: string; href: string }>> = {
   live: { tab: "dashboard", href: "/admin/models" },
@@ -23,10 +46,10 @@ const MODELS_LEGACY_TABS: Readonly<Record<string, { tab: string; href: string }>
 };
 /**
  * /admin/models 의 옛 주소를 새 화면으로 넘길 곳. 넘길 것이 없으면 null(그대로 그린다).
- * advanced=1 이 있으면 tab 과 상관없이 기존 고급 화면이다(#review 같은 옛 링크가 그대로 산다).
+ * advanced=1 이 있으면 tab 과 상관없이 고급 설정 화면이다 — 옛 #model-settings 같은 조각은 브라우저가 넘김 뒤에도 지킨다.
  */
 export function modelsLegacyTabHref(search: Search): string | null {
-  if (search.get("advanced") === "1") return null;
+  if (search.get("advanced") === "1") return MODELS_ADVANCED_HREF;
   const tab = search.get("tab");
   if (tab === null) return null;
   return MODELS_LEGACY_TABS[tab]?.href ?? "/admin/models";
@@ -63,7 +86,7 @@ export const WORKSPACES: readonly Workspace[] = [
     { id: "llm", label: "LLM 운영", href: "/admin/models/llm" },
     { id: "tasks", label: "작업 배정", href: "/admin/models/tasks" },
     { id: "history", label: "기록", href: "/admin/models/history" },
-    { id: "advanced", label: "고급 설정", href: MODELS_ADVANCED_HREF },
+    { id: "advanced", label: MODELS_ADVANCED_LABEL, href: MODELS_ADVANCED_HREF },
   ] },
   { id: "content", label: "콘텐츠 운영", href: "/admin/content", icon: "news", tabs: [
     { id: "social", label: "SNS 화제", href: "/admin/content?tab=social" },
@@ -87,16 +110,10 @@ export const WORKSPACE_SECONDARY = {
     { id: "inbox", label: "오늘 할 일", href: "/admin/inbox" },
     { id: "changes", label: "변경 기록", href: "/admin/activity?workspace=home&group=settings" },
   ],
-  /** 고급 설정 — 처음 설정하거나 장애를 분석할 때 여는 기존 편집기. 옮기기 전까지 각 원래 주소를 그대로 연다. */
+  /** 고급 설정 — 처음 설정하거나 장애를 분석할 때 여는 편집기. 이름은 MODELS_ADVANCED_EDITORS 하나에서 온다. */
   modelsAdvanced: [
-    { id: "overview", label: "기존 고급 화면", href: MODELS_ADVANCED_HREF },
-    { id: "devices", label: "장비 한도", href: "/admin/models/devices" },
-    { id: "limits", label: "실시간 한도", href: "/admin/models/limits" },
-    { id: "helpers", label: "도우미 장비", href: "/admin/models/helpers" },
-    { id: "assignments", label: "모델 배정", href: "/admin/models/assignments" },
-    { id: "contracts", label: "모델 연결(계약)", href: "/admin/models/contracts" },
-    { id: "human", label: "사람 확인 모델", href: "/admin/models/human" },
-    { id: "search", label: "검색 모델", href: "/admin/models/search" },
+    { id: "overview", label: MODELS_ADVANCED_LABEL, href: MODELS_ADVANCED_HREF },
+    ...MODELS_ADVANCED_EDITORS.map(({ id, label, href }) => ({ id, label, href })),
   ],
   projectQuality: [
     { id: "audit", label: "AI 감사·정책", href: "/admin/audit?tab=audit" },
@@ -124,7 +141,8 @@ export const WORKSPACE_LEGACY_SCREENS = [
   "/admin/maker-replies", "/admin/feedback", "/admin/reactions", "/admin/translations", "/admin/github-integrations",
   "/admin/products", "/admin/products/recheck", "/admin/products/[slug]", "/admin/talk", "/admin", "/admin/models",
   "/admin/models/tasks", "/admin/models/limits", "/admin/models/devices", "/admin/models/helpers",
-  "/admin/models/assignments", "/admin/models/contracts", "/admin/categories", "/admin/evidence", "/admin/ranking",
+  "/admin/models/assignments", "/admin/models/contracts", "/admin/models/human", "/admin/models/search", "/admin/models/advanced",
+  "/admin/categories", "/admin/evidence", "/admin/ranking",
   "/admin/news", "/admin/github-accounts", "/admin/activity", "/admin/login",
 ] as const;
 

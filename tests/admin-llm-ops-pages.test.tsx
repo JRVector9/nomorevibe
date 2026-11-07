@@ -141,9 +141,14 @@ describe("옛 주소는 새 화면으로 넘긴다", () => {
       const { default: ModelsPage } = await import("@/app/(operator)/admin/models/page");
       await expect(ModelsPage({ searchParams: Promise.resolve({ tab }) })).rejects.toThrow(`NEXT_REDIRECT:${href}`);
     });
-  it("advanced=1 이 붙으면 넘기지 않고 기존 고급 화면을 연다", async () => {
+  it("advanced=1 이 붙으면 tab 과 상관없이 고급 설정(/admin/models/advanced)으로 넘긴다", async () => {
     const { default: ModelsPage } = await import("@/app/(operator)/admin/models/page");
-    await ModelsPage({ searchParams: Promise.resolve({ tab: "live", advanced: "1" }) });
+    await expect(ModelsPage({ searchParams: Promise.resolve({ tab: "live", advanced: "1" }) })).rejects.toThrow("NEXT_REDIRECT:/admin/models/advanced");
+    await expect(ModelsPage({ searchParams: Promise.resolve({ advanced: "1" }) })).rejects.toThrow("NEXT_REDIRECT:/admin/models/advanced");
+  });
+  it("tab·advanced 가 없으면 넘기지 않고 대시보드를 그린다", async () => {
+    const { default: ModelsPage } = await import("@/app/(operator)/admin/models/page");
+    await ModelsPage({ searchParams: Promise.resolve({}) });
     expect(mocks.redirect).not.toHaveBeenCalled();
   });
 });

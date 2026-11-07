@@ -1,7 +1,6 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { TextModelStagesTable } from "@/app/(operator)/admin/models/TextModelStagesTable";
 import { ModelRegistryTable } from "@/app/(operator)/admin/models/ModelRegistryTable";
 import { DEFAULT_MODEL_DEFINITIONS } from "@/lib/llm/model-registry";
 import { classificationDefaultConfig, classificationModelOptions, classificationModelProvider } from "@/lib/operations/classification-models";
@@ -43,12 +42,8 @@ describe("configured operator model identities", () => {
     expect(models.pooled?.["search-query-translate"]).toEqual(["qwen3.6-35b", "qwen3.6-35b-backup"]);
     // 순위가 없거나 묶인 순위가 없는 자리는 빈 이름이다(기본값으로 채우지 않는다)
     expect([models.tagline, models.profile, models.verify, models.productTranslate]).toEqual(["", "", "", ""]);
-    const html = renderToStaticMarkup(createElement(TextModelStagesTable, { models }));
-    expect(html).toContain("한국어 소개 번역");
-    expect(html).toContain("검색 질의 번역");
-    for (const model of ["gemma-4-26b", "gpt-oss-120b", "qwen3.6-35b"]) expect(html).toContain(`>${model}</td>`);
-    expect(html).not.toContain("env-translate");
-    expect(html).not.toContain("[m1] mlx-community--gemma-4-26b-a4b-it-4bit");
+    // (옛 「참고」 접힘의 단계 표는 PR 5 에서 지웠다 — 같은 순위는 고급 설정의 text 작업 순위 표와 작업 배정 화면이 보인다)
+    expect(Object.values(models)).not.toContain("env-translate");
   });
   it("keeps default CLI configuration valid when the primary provider changes", () => {
     const env = { MODEL_REGISTRY_CONFIG: JSON.stringify({ version: 1, models: DEFAULT_MODEL_DEFINITIONS.map(model =>

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { unavailableAdminModels } from "@/lib/operations/admin-models-observation";
 import { buildDashboardView, buildLlmOpsView, llmReasonLevel, llmReasonShort, parseClassifierObservation, type LlmOpsInput } from "@/lib/operations/llm-ops-view";
-import { modelsLegacyTabHref, resolveWorkspace, WORKSPACE_SECONDARY } from "@/app/(operator)/admin/workspace-navigation";
+import { MODELS_ADVANCED_HREF, modelsLegacyTabHref, resolveWorkspace, WORKSPACE_SECONDARY } from "@/app/(operator)/admin/workspace-navigation";
 import { CLAUDE, GPU, LLM_NOW, llmClassifier, llmCliContracts, llmConnections, llmConveyor, llmJobs, llmObservation, llmRankRows, llmRuntime, M1, OPENCODE, SUPA } from "./fixtures/llm-ops";
 
 
@@ -187,10 +187,11 @@ describe("옛 주소 → 새 화면", () => {
     ["tab=live", "/admin/models"], ["tab=tasks", "/admin/models/tasks"], ["tab=connections", "/admin/models/llm"],
     ["tab=capacity", "/admin/models/llm"], ["tab=history", "/admin/models/history"], ["tab=unknown", "/admin/models"],
   ])("/admin/models?%s → %s", (search, href) => expect(modelsLegacyTabHref(query(search))).toBe(href));
-  it("tab 이 없거나 advanced=1 이면 넘기지 않는다(옛 #review·#model-settings 링크가 그대로 산다)", () => {
+  it("tab 이 없으면 넘기지 않고, advanced=1 은 tab 과 상관없이 고급 설정 화면으로 넘긴다(#조각은 브라우저가 지킨다)", () => {
     expect(modelsLegacyTabHref(query(""))).toBeNull();
-    expect(modelsLegacyTabHref(query("tab=live&advanced=1"))).toBeNull();
-    expect(modelsLegacyTabHref(query("advanced=1"))).toBeNull();
+    expect(modelsLegacyTabHref(query("tab=live&advanced=1"))).toBe("/admin/models/advanced");
+    expect(modelsLegacyTabHref(query("advanced=1"))).toBe("/admin/models/advanced");
+    expect(MODELS_ADVANCED_HREF).toBe("/admin/models/advanced");
   });
   it.each([
     ["/admin/models", "", "dashboard"], ["/admin/models", "tab=capacity", "llm"], ["/admin/models", "tab=history", "history"],
@@ -198,7 +199,7 @@ describe("옛 주소 → 새 화면", () => {
     ["/admin/models/llm", "", "llm"], ["/admin/models/tasks", "", "tasks"], ["/admin/models/history", "", "history"],
     ["/admin/models/devices", "", "advanced"], ["/admin/models/limits", "", "advanced"], ["/admin/models/helpers", "", "advanced"],
     ["/admin/models/assignments", "", "advanced"], ["/admin/models/contracts", "", "advanced"], ["/admin/models/human", "", "advanced"],
-    ["/admin/models/search", "", "advanced"], ["/admin/activity", "workspace=models", "history"],
+    ["/admin/models/search", "", "advanced"], ["/admin/models/advanced", "", "advanced"], ["/admin/activity", "workspace=models", "history"],
   ])("%s?%s 는 LLM 운영의 %s 탭", (path, search, tab) => {
     const location = resolveWorkspace(path, query(search));
     expect(location.workspace.id).toBe("models");

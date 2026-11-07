@@ -10,7 +10,6 @@ vi.mock("@/app/(operator)/admin/models/unknown-review-actions", () => ({ closeUn
 import { LiveModels } from "@/app/(operator)/admin/models/LiveModels";
 import { SummaryTiles } from "@/app/(operator)/admin/models/SummaryTiles";
 import { ModelStageTable } from "@/app/(operator)/admin/models/ModelStageTable";
-import { RefreshBar, ModelsTopBar } from "@/app/(operator)/admin/models/RefreshBar";
 import { DevicesPanel, deviceProbeStatus } from "@/app/(operator)/admin/models/DevicesPanel";
 import { UnknownReviewList } from "@/app/(operator)/admin/models/UnknownReviewList";
 import { HelpersFold } from "@/app/(operator)/admin/models/HelpersFold";
@@ -214,22 +213,21 @@ describe("장비 표·검토 목록·접기·상단 띠", () => {
     expect(html).toContain(">미등록</span>"); expect(html).toContain("스케줄러 먼저 배포");
     expect(html).not.toMatch(/<details[^>]*\sopen/);
   });
-  it("페이지는 접기 2개(#assign·#ref)·2열 구획·상단 띠·PageStamp 를 두고 숫자를 지어내지 않는다", () => {
-    const source = readFileSync(path.resolve(__dirname, "../app/(operator)/admin/models/page.tsx"), "utf8");
-    expect(source).toContain("<PageStamp />");
+  it("고급 설정의 장애 분석은 도우미 접기(#assign)·단계별 모델 풀 접기를 두고 옛 한 화면의 실측 읽기를 그대로 옮긴다", () => {
+    // 2026-11-07 PR 5: 옛 /admin/models?advanced=1 한 화면은 /admin/models/advanced 로 옮겼다(대시보드 page.tsx 에는 남기지 않는다)
+    const source = readFileSync(path.resolve(__dirname, "../app/(operator)/admin/models/advanced/advanced-slots.tsx"), "utf8");
+    const page = readFileSync(path.resolve(__dirname, "../app/(operator)/admin/models/advanced/page.tsx"), "utf8");
+    expect(page).toContain("<PageStamp />");
     // The shared workspace header owns refresh and navigation; a second timer used to overlap it and overflow the viewport.
     expect(source).not.toContain("<ModelsTopBar");
     expect(readFileSync(path.resolve(__dirname, "../app/(operator)/admin/AdminShell.tsx"), "utf8")).toContain("<LiveBar ");
-    expect(source).toContain('<details id="ref"'); expect(source).toContain("<HelpersFold ");
-    expect(source).toContain("[grid-template-columns:minmax(0,7fr)_minmax(0,5fr)]"); expect(source).toContain("readProbeObservations()"); expect(source).toContain("recordAutoProbes(");
+    expect(source).toContain('<details id="stage-pools"'); expect(source).toContain("<HelpersFold ");
+    expect(source).toContain("readProbeObservations()"); expect(source).toContain("recordAutoProbes(");
     expect(source).toContain("roleOverview()"); expect(source).toContain("readModelCapacityUnknowns("); expect(source).toContain("readCatalogJobRegistration()");
-  });
-  it("상단 띠는 마지막 갱신(KST 서버 렌더 시각)·30초마다 자동·다음 N초·수동 새로고침을 보이고 하위 화면 링크를 둔다", () => {
-    const html = renderToStaticMarkup(createElement(ModelsTopBar, { renderedAt: "2026-10-31T05:31:56.000Z" }));
-    expect(html).toContain("마지막 갱신"); expect(html).toMatch(/<time datetime="2026-10-31T05:31:56.000Z" class="font-mono font-semibold tabular-nums">14:31:56<\/time>/i);
-    expect(html).toContain("30초마다 자동"); expect(html).toContain("다음 30초"); expect(html).toContain(">수동 새로고침</button>"); expect(html).toContain('href="/admin/models/devices"');
-    for (const href of ["#assign", "#devices", "#ref", "/admin/models/contracts", "/admin/models/limits", "/admin/models/assignments"]) expect(html).toContain(`href="${href}"`);
-    expect(renderToStaticMarkup(createElement(RefreshBar, { renderedAt: "bad", periodMs: 10_000 }))).toContain("--:--:--");
+    // 확인 못함 검토 목록은 기록 화면(PR 3)이 맡는다 — 고급 설정에는 넣지 않는다
+    expect(source).not.toContain("UnknownReview");
+    const dashboard = readFileSync(path.resolve(__dirname, "../app/(operator)/admin/models/page.tsx"), "utf8");
+    expect(dashboard).not.toMatch(/ModelsWorkspace|LiveModels|HelpersFold|ReviewModelsForm/);
   });
   it("LiveModels 는 타일·표·범례·처리량 접기를 한 구획에 그리고 장부 오류면 띠와 경고만 그린다", () => {
     const html = renderToStaticMarkup(createElement(LiveModels, { observation: redesignObservation(), models: redesignModels, assignments: redesignAssignments, probes: {}, leases: [], readiness: null, alarms: alarms() }));

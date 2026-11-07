@@ -118,7 +118,7 @@ export function isRetiredGatewayUrl(value: string | null | undefined): boolean {
   try { return new URL(value).hostname === CODE_DEFAULT_GATEWAY_HOST; } catch { return false; }
 }
 /** 전송 칸에 퇴역한 예전 기본 주소만 있을 때. 그 주소만으로는 경로가 열리지 않는다. */
-export const CODE_DEFAULT_GATEWAY_NOTE = "퇴역한 예전 기본 주소(abcllm-api)입니다. 그 주소만으로는 열리지 않으며, 「모델 연결」에서 직접 연결 계약을 추가해야 합니다.";
+export const CODE_DEFAULT_GATEWAY_NOTE = "퇴역한 예전 기본 주소(abcllm-api)입니다. 그 주소만으로는 열리지 않으며, 「서빙 계약·등록부」에서 직접 연결 계약을 추가해야 합니다.";
 /**
  * 전송 칸. 열리는 쪽만 적는다 — 직접 / CLI / 계약 없음(또는 직접 연결 계약 필요).
  * 직접 연결 계약(transport direct)이 있으면 「엔진 직접(계약)」. local-direct·llama-server 는 저장 전송 칸과 무관하게 직접이다.

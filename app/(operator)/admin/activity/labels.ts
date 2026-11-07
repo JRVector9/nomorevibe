@@ -81,16 +81,17 @@ export const ACTION_LABELS: Record<string, string> = {
   "ai-task-execution-save": "작업 실행 방식·분산 모델 저장",
   "ai-task-models-import": "작업 ↔ 모델 가져오기",
   "ai-connection-key-fill": "AI 연결 키 자동 채움",
-  // 모델 한도·장비·연결 화면의 저장 — 전에는 이름표·갈래가 없어 「설정·연결」로 거르면 보이지 않았다(2026-11-02)
+  // 모델 한도·장비·계약 화면의 저장(2026-11-07 PR 5: 고급 설정 화면 이름과 맞췄다 — 서빙 계약·등록부, 도우미·감시자)
+  // — 전에는 이름표·갈래가 없어 「설정·연결」로 거르면 보이지 않았다(2026-11-02)
   "runtime-settings-save": "실시간 한도 저장",
   "model-capacity-device-save": "장비 한도 저장",
-  "model-serving-contract-save": "모델 연결 저장",
-  "model-serving-contract-disable": "모델 연결 끄기",
+  "model-serving-contract-save": "서빙 계약 저장",
+  "model-serving-contract-disable": "서빙 계약 끄기",
   "model-registry-override-save": "모델 등록부 덮어쓰기 저장",
   "model-registry-override-disable": "모델 등록부 덮어쓰기 끄기",
   "model-assignment-save": "모델 배정 저장",
-  "model-helper-save": "도우미 장비 저장",
-  "model-helper-mode": "도우미 장비 모드 바꿈",
+  "model-helper-save": "도우미 배정 저장",
+  "model-helper-mode": "도우미 모드 바꿈",
   "model-capacity-unknown-reviewed": "확인 못한 모델 호출 닫음",
   // LLM 운영의 조치·운영 스크립트 기록 — 이름표·갈래가 없어 「전체」에서만 보였다(2026-11-07, 30일 동안 약 300건)
   "model-capacity-unknown-requeued": "확인 못한 모델 호출 다시 대기열",
@@ -115,7 +116,7 @@ export const ACTION_LABELS: Record<string, string> = {
   "admin-models-probe-result": "모델 연결 확인 결과",
   "selected-model-response-probe-start": "선택 모델 응답 시험 시작",
   "selected-model-response-probe-result": "선택 모델 응답 시험 결과",
-  "model-helper-promote": "도우미 장비 실전으로 올림",
+  "model-helper-promote": "도우미 실전으로 올림",
   "model-supervisor-toggle": "도우미 감시자 켜기·끄기",
   "search-model-settings-save": "검색 모델 설정 저장",
   "ops-runner-state": "모델 운영 작업(접수·재시작·해제) 진행",

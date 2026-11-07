@@ -42,7 +42,7 @@ export function ReviewModelsForm({ settings, version, models, defaults = {}, sav
     {models && <input type="hidden" name="stageModelPools" value={JSON.stringify(pools)} />}
     <div><h2 className="text-[20px] font-bold">설정 바꾸기</h2><p className="mt-2 text-[13px] leading-relaxed text-fg-2">현재 선택한 모델입니다. 모델을 추가·제거한 뒤 저장해야 적용됩니다. 이후 작업 묶음부터 반영하며, 진행 중·미확인 요청과 기존 업무 기록은 원래 계약에 남습니다.</p></div>
     <TaskRanksPointer what="1차 AI 검수·2차 AI 검수(투표자·대체) 모델" />
-    <p className="text-[13px] leading-relaxed text-fg-2">사람 확인 · AI 보조 배정은 <Link className="underline" prefetch={false} href="/admin/models/human#human-review">사람 확인 · AI 보조 화면</Link>에서 바꿉니다. 소개 검수는 CLI 환경 설정을 읽는 읽기 전용이며, 실제 사용 모델은 운영현황에서 확인합니다.</p>
+    <p className="text-[13px] leading-relaxed text-fg-2">사람 확인 · AI 보조 배정은 <Link className="underline" prefetch={false} href="/admin/models/human#human-review">사람 위임 모델</Link> 화면에서 바꿉니다. 소개 검수는 CLI 환경 설정을 읽는 읽기 전용이며, 실제 사용 모델은 LLM 운영 대시보드에서 확인합니다.</p>
     {locked && <AssignmentMovedNotice detail="이 폼의 모델 칸(단계별 모델 풀)은 읽기 전용이고 저장하지 않습니다." />}
     {models && <fieldset disabled={pending || locked} data-readonly={locked || undefined}><StagePoolFields draft={pools} models={models} defaults={defaults} stageIds={stageIds} update={(id, keys) => setPools(current => ({ ...current, [id]: keys }))} /></fieldset>}
     <p className="text-[13px] leading-relaxed text-fg-2">풀을 비우면 현재 기본 모델을 사용합니다. 단계 켜짐·발행 보호·물리 슬롯 상한은 별도입니다. 선택은 실행 권한을 부여하지 않으며, 실제 호출은 워커의 연결·실행 계약·용량 검증을 통과해야 합니다.</p>

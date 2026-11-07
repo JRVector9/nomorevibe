@@ -11,10 +11,9 @@ vi.mock("@/lib/operations/model-env", () => ({ currentModelEnv: async () => ({})
 vi.mock("@/lib/operations/pipeline-control-repository", () => ({ runPipelineControl: mocks.control }));
 // 2026-10-31 한 화면: 연결 확인 결과는 관측 표(probe:<provider>:<model>)에 남는다 — 저장소는 목으로 두고 호출 모양만 본다
 vi.mock("@/lib/operations/admin-models-probe-repository", () => ({ saveProbeObservation: mocks.saveProbe }));
-import { probeAdminModel, changeAdminModelAdmission } from "@/app/(operator)/admin/models/operation-actions";
+import { probeAdminModel } from "@/app/(operator)/admin/models/operation-actions";
 
 const identity = { routeId: "crawl-agent-review", provider: "abcllm", model: "test-model" };
-const input = { to: "draining", fromMode: "open", expectEpoch: 1, expectRevision: 2, reason: "점검", confirmed: true };
 beforeEach(() => {
   vi.resetAllMocks(); mocks.admin.mockResolvedValue({ login: "admin" });
   mocks.insert.mockReturnValue({ values: mocks.values }); mocks.values.mockResolvedValue(undefined);
@@ -23,10 +22,10 @@ beforeEach(() => {
   mocks.submit.mockResolvedValue({ id: "queued-id" }); mocks.list.mockResolvedValue([identity.model]); mocks.control.mockResolvedValue({ executed: true });
   mocks.saveProbe.mockResolvedValue({ key: `probe:${identity.provider}:${identity.model}`, observedAt: "2026-10-31T05:00:00.000Z" });
 });
-it("비관리자는 연결·접수 변경을 서버에서 거절한다", async () => {
+// 접수 OPEN/DRAIN 은 운영 실행기 접수(ops-runner-actions)만 쓴다 — 쓰이지 않던 호환 경로 changeAdminModelAdmission 은 PR 5 에서 지웠다.
+it("비관리자는 연결 확인을 서버에서 거절한다", async () => {
   mocks.admin.mockResolvedValue(null);
   expect(await probeAdminModel(identity)).toMatchObject({ error: expect.stringContaining("관리자") });
-  expect(await changeAdminModelAdmission(input)).toMatchObject({ error: expect.stringContaining("관리자") });
   expect(mocks.list).not.toHaveBeenCalled(); expect(mocks.control).not.toHaveBeenCalled(); expect(mocks.insert).not.toHaveBeenCalled();
 });
 it("DB에 없는 임의 모델을 호출하지 않는다", async () => {
@@ -57,21 +56,6 @@ it("유료 DeepSeek 호출을 만들지 않는다", async () => {
   const row = { ...identity, provider: "deepseek", model: "deepseek-chat" }; mocks.observation.mockResolvedValue({ rows: [row] });
   expect(await probeAdminModel(row)).toMatchObject({ callBlocked: expect.stringContaining("허용되지 않습니다") });
   expect(mocks.list).not.toHaveBeenCalled();
-});
-it("접수 전환의 호환 경로도 실행기 큐와 감사 경로에 위임한다", async () => {
-  expect(await changeAdminModelAdmission(input)).toEqual({ queued: "queued-id" });
-  expect(mocks.submit).toHaveBeenCalledWith(expect.objectContaining({ action: "admission-pause", targetId: "model-capacity", reason: "점검" }), "admin");
-  expect(mocks.control).not.toHaveBeenCalled();
-});
-it("접수 변경 전 관측 CAS 충돌을 거절하고 큐에 넣지 않는다", async () => {
-  mocks.observation.mockResolvedValue({ mode: "open", epoch: 1, revision: 3 });
-  expect(await changeAdminModelAdmission(input)).toMatchObject({ error: expect.any(String), blocked: ["capacity_pin_changed"] });
-  expect(mocks.submit).not.toHaveBeenCalled();
-});
-it("확인하지 않았거나 사유가 없는 변경은 제어기에 도달하지 않는다", async () => {
-  expect(await changeAdminModelAdmission({ ...input, confirmed: false })).toHaveProperty("error");
-  expect(await changeAdminModelAdmission({ ...input, reason: " " })).toHaveProperty("error");
-  expect(mocks.control).not.toHaveBeenCalled();
 });
 it("장부의 local-direct 모델 이름도 정식 등록 장비의 목록 경로로 확인한다", async () => {
   const row = { routeId: "direct-review", provider: "local-direct", model: "qwen3.8-flash-next" };

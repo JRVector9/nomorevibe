@@ -12,8 +12,8 @@ export async function HumanModelEditor() {
   let data: Awaited<ReturnType<typeof readHumanModelSource>>;
   try { data = await readHumanModelSource(); } catch {
     return <section className='grid gap-2 rounded-xl border border-line bg-bg-card p-3 text-[13px]'>
-      <p role='alert' className='text-warn'>사람 확인 · AI 위임 설정을 읽지 못했습니다. 저장할 수 없습니다. 새로고침한 뒤 모델 연결 상태를 확인해 주세요.</p>
-      <p><Link href='/admin/models' prefetch={false} className='text-accent-ink underline'>모델 연결 →</Link></p>
+      <p role='alert' className='text-warn'>사람 위임 모델 설정을 읽지 못했습니다. 저장할 수 없습니다. 새로고침한 뒤 LLM 연결 상태를 확인해 주세요.</p>
+      <p><Link href='/admin/models/llm' prefetch={false} className='text-accent-ink underline'>LLM 운영 →</Link></p>
     </section>;
   }
 
@@ -87,7 +87,7 @@ export async function HumanModelEditor() {
         return <details key={row.assignmentId} className='rounded-lg border border-line px-2.5 py-2'>
           <summary>{row.rank}순위 · {row.deviceId} · {row.registryKey} · {row.mode === 'live' ? '실전' : '꺼짐'} · {row.role === 'primary' ? (formReadOnly ? '읽기 전용' : '편집') : '도우미'}</summary>
           {row.role === 'primary' ? <AssignmentForm options={data.options} initial={initial} readOnly={formReadOnly} />
-            : <p className='small muted'>도우미 행은 도우미 장비 화면에서만 바꿉니다.</p>}
+            : <p className='small muted'>도우미 행은 도우미·감시자 화면에서만 바꿉니다.</p>}
         </details>;
       })}
       {!data.saveBlocked && data.assignments.length === 0 && <p className='small muted'>배정 표에 사람 확인 · AI 위임 모델 행이 없습니다. 현재는 사람 위임 검수 풀 또는 등록부 기본값을 사용합니다.</p>}

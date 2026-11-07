@@ -5,7 +5,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock("@/app/(operator)/admin/status/source-buffer-actions", () => ({ setSourceBufferAction: vi.fn() }));
 
 import { SourceBufferCard } from "@/app/(operator)/admin/status/SourceBufferCard";
-import { ModelRouteContracts } from "@/app/(operator)/admin/status/ModelRouteContracts";
+import { ModelRouteContracts } from "@/app/(operator)/admin/models/advanced/ModelRouteContracts";
 import type { ModelRouteStatus } from "@/lib/operations/model-route-status";
 
 const CSRF = { token: "f".repeat(64), expiresAt: 1 };

@@ -6,13 +6,16 @@ import { EMBEDDING_DIMENSIONS, EMBEDDING_MODEL } from '@/lib/domain/products/emb
 import { readSearchModelSettings, type SearchModelSettingsView } from '@/lib/domain/products/search-model-repository';
 import { adminWorkspaceReadOnly } from '@/lib/operations/admin-workspace-preview';
 import { PageStamp } from '../../components/PageStamp';
+import { modelsAdvancedEditor } from '../../workspace-navigation';
+import { AdvancedEditorLinks, advancedEditorTitle } from '../advanced/AdvancedEditorLinks';
 import { SearchModelSettingsForm } from './SearchModelSettingsForm';
 
 export const dynamic = 'force-dynamic';
 export const metadata = {
-  title: '검색 모델 설정 · 운영',
+  title: advancedEditorTitle('search'),
   robots: { index: false, follow: false },
 };
+const EDITOR = modelsAdvancedEditor('search');
 
 function when(value: string | null | undefined): string {
   if (!value) return '기록 없음';
@@ -64,9 +67,8 @@ async function SearchSettingsData({ readOnly, disabledReason }: { readOnly: bool
       </div> : <p className='text-[13px] text-fg-2'>저장된 벡터 메타데이터가 없습니다.</p>}
     </section>
     <nav aria-label='관련 화면' className='flex flex-wrap gap-3 text-[13px]'>
-      <Link href='/admin/models' prefetch={false} className='underline'>모델</Link>
-      <Link href='/admin/flow' prefetch={false} className='underline'>흐름</Link>
-      <Link href='/admin/models/tasks#connections' prefetch={false} className='underline'>AI 연결(주소·키 등록)</Link>
+      <Link href='/admin/models/llm' prefetch={false} className='underline'>LLM 운영(연결 주소·키)</Link>
+      <Link href='/admin/flow' prefetch={false} className='underline'>운영 홈 흐름</Link>
     </nav>
   </>;
 }
@@ -80,7 +82,10 @@ export default async function SearchModelSettingsPage() {
     : dbOff ? 'DB 모델 설정 읽기가 꺼져 있어 저장할 수 없습니다.' : null;
   return <main className='stack'>
     <PageStamp />
-    <h1 className='sr-only'>검색 모델 설정</h1>
+    <header className='grid gap-1'>
+      <AdvancedEditorLinks />
+      <h1 className='text-[22px] font-semibold'>{EDITOR.label}</h1>
+    </header>
     <Suspense fallback={<section role='status' className='rounded-xl border border-line bg-bg-card p-5 text-[13px] text-fg-2'>검색 모델 설정을 읽는 중입니다.</section>}>
       <SearchSettingsData readOnly={readOnly} disabledReason={disabledReason} />
     </Suspense>

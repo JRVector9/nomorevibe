@@ -298,7 +298,7 @@ describe("폼 그리기", () => {
     expect(html).toContain("기본값으로");
     expect(html).toContain("m1:translation");
     expect(html).toContain("이 숫자를 강제하는 게이트웨이는 없습니다");
-    expect(html).toContain("모델 자체의 상한은 모델 연결 → 등록부 덮어쓰기");
+    expect(html).toContain("모델 자체의 상한은 서빙 계약·등록부 → 등록부 덮어쓰기");
     expect(html).toContain("이 묶음 저장");
     expect(html).not.toMatch(/name="value:routes\.deadlines\.review-gateway\.relayMs"[^>]*placeholder="모델 상한"/);
   });

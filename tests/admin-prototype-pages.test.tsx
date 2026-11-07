@@ -3,11 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock("@/app/(operator)/admin/models/ops-runner-actions", () => ({ submitAdminModelOperation: vi.fn(), readAdminModelOperation: vi.fn() }));
 import { PrototypeFlow, requestCount } from "@/app/(operator)/admin/flow/PrototypeFlow";
-import { PrototypeModels } from "@/app/(operator)/admin/models/PrototypeModels";
 import { buildConveyor } from "@/lib/operations/conveyor-model";
-import { unavailableAdminModels } from "@/lib/operations/admin-models-observation";
-import { AI_TASKS } from "@/lib/llm/ai-tasks";
-import { redesignObservation, redesignModels, redesignAssignments } from "./fixtures/admin-models-redesign";
 
 const data = buildConveyor({ now: "2026-11-04T15:00:00.000Z", enabled: true, throughput: null, flow: null, hourly: null, human: null,
   progress: null, search: null, holds: null, rejected: null, classification: null, sources: [] });
@@ -78,35 +74,5 @@ describe("original HTML prototype layout with real-loader contracts", () => {
     expect(html).toContain('class="panel-head"');
     expect(html).not.toContain('class="flow-grid"');
     expect(html).toContain(tab === "diagnostics" ? "수집 소스별 상태" : "최근 바뀐 설정·제어");
-  });
-
-  it("renders the original LLM summary and seven-column representative table from ledger observations", () => {
-    const html = renderToStaticMarkup(<PrototypeModels observation={redesignObservation()} models={redesignModels} assignments={redesignAssignments} contracts={[]} readOnly />);
-    expect(html).toContain('class="grid four"');
-    expect(html).toContain("흐름 단계 × 실제 사용 모델 · 전체 단계");
-    for (const heading of ["설정 모델 / 출처", "실제 모델", "실행 / 한도", "성공 / 실패", "결과 미확정 · 사람 검토", "호출 기록 · 업무 결과 대조"]) expect(html).toContain(heading);
-    expect(html).not.toContain('class="models-stage-table');
-    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>신규 호출 접수 중지<\/button>/);
-    expect(html).toContain("이 검토 행 자체는 슬롯을 점유하지 않음");
-    const missing = renderToStaticMarkup(<PrototypeModels observation={unavailableAdminModels()} models={[]} assignments={[]} contracts={[]} readOnly />);
-    expect(missing).toContain("최근 실행을 읽지 못했습니다.");
-    expect(missing).not.toContain('class="stat-value mono">0</div>');
-  });
-
-  it.each(["tasks", "capacity", "connections", "history"])("keeps LLM %s in the prototype layout and links to original editors", tab => {
-    const html = renderToStaticMarkup(<PrototypeModels observation={unavailableAdminModels()} models={[]} assignments={[]} contracts={[]} tab={tab} readOnly />);
-    expect(html).toContain('class="panel-head"');
-    expect(html).toContain(`tab=${tab}&amp;advanced=1`);
-    if (tab === "tasks") {
-      expect(html).toContain(`전체 ${AI_TASKS.length}개 작업`);
-      expect(html).toContain("순위를 읽지 못함");
-      expect(html).toContain('href="/admin/models/tasks#execution-first-review-1"');
-      expect(html).toContain('href="/admin/models/human#human-review"');
-      expect(html).toContain('href="/admin/models/search"');
-    }
-    if (tab === "capacity") { expect(html).toContain("장비·물리 그룹"); expect(html).toContain("경로별 토큰·기한·묶음"); }
-    if (tab === "connections") expect(html).toContain("연결 목록을 읽지 못했습니다.");
-    if (tab === "history") expect(html).toContain("열린 요청을 읽지 못했습니다.");
-    expect(html).not.toMatch(/모델 A|REQ-941|가상 데이터|NaN|undefined/);
   });
 });

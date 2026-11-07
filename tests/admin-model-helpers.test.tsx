@@ -17,6 +17,7 @@ import { HelperForm, msToSecondsText, ratioToPercentText } from "@/app/(operator
 import { HelperTable } from "@/app/(operator)/admin/models/helpers/HelperTable";
 import { clientAgeLabel, clientDurationLabel, SupervisorCard } from "@/app/(operator)/admin/models/helpers/SupervisorCard";
 import { NAV_GROUPS } from "@/app/(operator)/admin/AdminNav";
+import { modelsAdvancedEditor } from "@/app/(operator)/admin/workspace-navigation";
 import {
   HELPER_REASONS, HELPER_ROUTE_DEFAULTS, HELPER_SAVE_REFUSALS, helperAssignmentSchema, parseHelperAssignment, SUPERVISOR_PRINCIPAL,
   type HelperAssignmentRow, type HelperSignalRow, type HelperStatusSnapshot, type HelperStopRow, type SupervisorControlRow,
@@ -409,7 +410,9 @@ describe("그리기", () => {
     expect(html).toContain('name="minAgreementPct" value="95"');
     expect(html).toContain('name="minHelpSeconds" value="120"');
     expect(html).toContain("기본 95%");
-    expect(html).toMatch(/<button type="submit" value="off"[^>]*name="mode">끄기<\/button>/);
+    // PR 5: 모드 단추는 두 단계 확인 — 처음에는 type="button"(확인 열기)만, 「끄기 확인」을 눌러야 name="mode" value="off" 가 나간다
+    expect(html).toMatch(/<button type="button" data-confirm-trigger=""[^>]*>끄기<\/button>/);
+    expect(html).not.toContain('type="submit"');
     expect(html).not.toContain(">섀도 시작<");
     expect(html).toContain("자동 정지 해제");
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>실전으로 올리기<\/button>/);
@@ -440,16 +443,18 @@ describe("그리기", () => {
     expect(percentLabel(null)).toBe("—");
   });
 
-  it("메뉴에 도우미 장비가 h1 과 같은 이름으로 있고, 장비 한도 화면이 이 화면으로 보낸다; 화면에 PageStamp", () => {
+  it("메뉴에 도우미·감시자가 h1 과 같은 이름으로 있고, 장비 한도 화면이 이 화면으로 보낸다; 화면에 PageStamp", () => {
     const root = path.resolve(__dirname, "..");
     const page = readFileSync(path.join(root, "app/(operator)/admin/models/helpers/page.tsx"), "utf8");
     expect(page).toContain("<PageStamp />");
-    expect(page).toMatch(/<h1[^>]*>도우미 장비<\/h1>/);
+    // 이름은 메뉴와 같은 표(MODELS_ADVANCED_EDITORS) 하나에서 온다(PR 5)
+    expect(page).toMatch(/<h1[^>]*>\{EDITOR\.label\}<\/h1>/); expect(page).toContain('modelsAdvancedEditor("helpers")');
+    expect(modelsAdvancedEditor("helpers").label).toBe("도우미·감시자");
     expect(page).toContain('redirect("/admin/login")');
     const pages = NAV_GROUPS[1].pages.map(entry => entry.href);
     expect(pages.indexOf("/admin/models/helpers")).toBe(pages.indexOf("/admin/models/devices") + 1);
-    expect(NAV_GROUPS[1].pages.find(entry => entry.href === "/admin/models/helpers")).toMatchObject({ label: "도우미 장비", icon: "sliders" });
-    expect(readFileSync(path.join(root, "app/(operator)/admin/models/devices/page.tsx"), "utf8")).toContain('href="/admin/models/helpers"');
+    expect(NAV_GROUPS[1].pages.find(entry => entry.href === "/admin/models/helpers")).toMatchObject({ label: "도우미·감시자", icon: "sliders" });
+    expect(readFileSync(path.join(root, "app/(operator)/admin/models/devices/page.tsx"), "utf8")).toMatch(/<AdvancedEditorLinks next=\{\[[^\]]*"helpers"/);
     // 서버 모듈(DB·node:crypto)은 클라이언트 폼에 형으로만 들어간다
     for (const file of ["HelperForm.tsx", "SupervisorCard.tsx"]) {
       const source = readFileSync(path.join(root, "app/(operator)/admin/models/helpers", file), "utf8");

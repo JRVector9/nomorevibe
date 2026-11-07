@@ -4,7 +4,7 @@ import { formatDetailTime } from "@/lib/format/time";
 import { textRankUnusableText, type TextRankResolution } from "@/lib/llm/ai-task-resolver";
 import { aiTask } from "@/lib/llm/ai-tasks";
 import type { AiTaskRuntimeView } from "@/lib/operations/admin-ai-tasks-repository";
-import { ScrollTable } from "../components/ScrollTable";
+import { ScrollTable } from "../../components/ScrollTable";
 
 export type TextTaskRanksLine = Readonly<{ task: string; resolution: TextRankResolution; runtime: AiTaskRuntimeView | null }>;
 

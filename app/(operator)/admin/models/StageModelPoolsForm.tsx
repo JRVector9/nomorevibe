@@ -14,7 +14,7 @@ export function StagePoolFields({ draft, models, defaults, update, stageIds }: {
   stageIds?: readonly AdminModelStage[];
 }) {
   return <div className="grid min-w-0 gap-3">
-    <p className="text-[13px] text-fg-2">선택지 앞의 대괄호는 등록부 장비 표지입니다. 호출은 「모델 연결」의 직접 연결 계약이 엽니다.</p>
+    <p className="text-[13px] text-fg-2">선택지 앞의 대괄호는 등록부 장비 표지입니다. 호출은 「서빙 계약·등록부」의 직접 연결 계약이 엽니다.</p>
     <div className="grid min-w-0 gap-3 md:grid-cols-2">{ADMIN_MODEL_STAGES.filter(stage => !stageIds || stageIds.includes(stage.id)).map(stage => {
     const keys = draft[stage.id] ?? [];
     const choices = models.filter(model => adminStageAcceptsModel(stage, model));

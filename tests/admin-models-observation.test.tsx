@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 vi.mock("@/app/(operator)/admin/models/ops-runner-actions", () => ({ submitAdminModelOperation: vi.fn(), readAdminModelOperation: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
-vi.mock("@/app/(operator)/admin/models/operation-actions", () => ({ probeAdminModel: vi.fn(), changeAdminModelAdmission: vi.fn() }));
+vi.mock("@/app/(operator)/admin/models/operation-actions", () => ({ probeAdminModel: vi.fn() }));
 import { buildAdminModelsObservation, unavailableAdminModels, elapsedModelTime } from "@/lib/operations/admin-models-observation";
 import { modelCapacityPolicyHash, type ModelCapacityPolicy } from "@/lib/llm/capacity";
 import { LiveModels } from "@/app/(operator)/admin/models/LiveModels";

@@ -135,7 +135,7 @@ async function readReadinessInput(): Promise<AiReadinessInput & { policyError: s
     else policyError = control.policyVerified ? "model_capacity_policy_missing" : "model_capacity_policy_unverified";
   } catch (error) { policyError = error instanceof Error ? error.message : "read_failed"; }
   const devices = new Map((await listModelCapacityDevices().catch(() => [])).map(device => [device.deviceId, { enabled: device.enabled, limitSlots: device.limitSlots }]));
-  // 2차(second-review)도 순위 저장이 엔진 직접 계약(abcllm 형 total-bound, transport direct)을 만든다(PR C1 — 예전에는 env·모델 연결 화면의 계약만 받았다)
+  // 2차(second-review)도 순위 저장이 엔진 직접 계약(abcllm 형 total-bound, transport direct)을 만든다(PR C1 — 예전에는 env·서빙 계약·등록부 화면의 계약만 받았다)
   return { contracts, policy, policyError, devices, cliEngineIdentity: cliEngineModelIdentity, engineRoutes: [...ENGINE_CONNECT_ROUTES, "second-review"], cliContractRoutes: [...CLI_DB_CONTRACT_ROUTES],
     localContract: backendId => {
       const contract = resolveLocalModelContract(backendId);
@@ -155,7 +155,7 @@ function crossRankIssues(task: AiTaskDef, readiness: readonly AiRankReadiness[])
     const earlier = readiness.slice(0, index).find(other => other.provider === row.provider && other.identity === row.identity && other.connectionId !== row.connectionId);
     if (!earlier) return;
     issues.push(task.wiring === "engine-route" || task.wiring === "review-ai1" || task.wiring === "review-ai2"
-      ? `${earlier.rank}순위와 ${row.rank}순위가 같은 계약(${row.identity})을 다른 서버로 가리킵니다. 모델 연결 화면에서 계약을 고친 뒤 다시 저장하세요.`
+      ? `${earlier.rank}순위와 ${row.rank}순위가 같은 계약(${row.identity})을 다른 서버로 가리킵니다. 서빙 계약·등록부 화면에서 계약을 고친 뒤 다시 저장하세요.`
       : `${earlier.rank}순위와 ${row.rank}순위가 같은 모델(${row.model})을 다른 서버로 씁니다. 직접 모델 단계의 실행 쪽은 아직 경로·모델마다 서버 하나만 알아 `
         + "두 순위를 가를 수 없습니다 — 다음 단계(PR C2)에서 풀립니다. 지금은 다른 모델을 고르세요.");
   });
@@ -485,7 +485,7 @@ export async function saveAiTaskRanks(input: AiTaskRanksInput, actor: string): P
   if (!task) return { ok: false, issues: ["ai_task_invalid:task"] };
   if (!isAiLiveTask(task.id)) {
     const target = aiTaskEditTarget(task.id);
-    return { ok: false, issues: [`${task.label}의 모델 순위는 지금 실행 쪽이 읽지 않아 저장해도 동작이 바뀌지 않습니다 — 실제 적용 설정에서 바꾸세요: ${target?.href ?? "/admin/models?advanced=1#model-settings"}`] };
+    return { ok: false, issues: [`${task.label}의 모델 순위는 지금 실행 쪽이 읽지 않아 저장해도 동작이 바뀌지 않습니다 — 실제 적용 설정에서 바꾸세요: ${target?.href ?? "/admin/models/advanced#model-settings"}`] };
   }
   try {
     const [storedConnections, rows] = await Promise.all([listAiConnections(), listAiTaskRows()]);

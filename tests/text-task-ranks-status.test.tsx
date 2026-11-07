@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, expect, it } from "vitest";
-import { TextTaskRanksStatus } from "@/app/(operator)/admin/status/TextTaskRanksStatus";
+import { TextTaskRanksStatus } from "@/app/(operator)/admin/models/advanced/TextTaskRanksStatus";
 import { setAiTaskModelsForTest } from "@/lib/llm/ai-task-models-snapshot";
 import { resolveTextTaskRanks } from "@/lib/llm/ai-task-resolver";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";

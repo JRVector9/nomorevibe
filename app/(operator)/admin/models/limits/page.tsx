@@ -7,21 +7,23 @@ import { ensureServingContracts } from "@/lib/llm/serving-contract-store";
 import { readRuntimeSettingsAdminView } from "@/lib/operations/admin-runtime-settings";
 import { GROUP_LABELS } from "@/lib/operations/runtime-settings-schema";
 import { PageStamp } from "../../components/PageStamp";
+import { modelsAdvancedEditor } from "../../workspace-navigation";
+import { AdvancedEditorLinks, advancedEditorTitle } from "../advanced/AdvancedEditorLinks";
 import { SettingsApplyLine } from "../../settings/SettingsApplyLine";
 import { AssignmentsForm } from "./AssignmentsForm";
 import { BudgetsForm } from "./BudgetsForm";
-import { DevicesPlaceholder } from "./DevicesPlaceholder";
 import { RoutesForm } from "./RoutesForm";
 import { TranslationForm } from "./TranslationForm";
 
 export const dynamic = "force-dynamic";
-export const metadata: Metadata = { title: "실시간 한도 — NoMoreVibe", robots: { index: false } };
+export const metadata: Metadata = { title: advancedEditorTitle("limits"), robots: { index: false } };
+const EDITOR = modelsAdvancedEditor("limits");
 
 const ENV_TITLE = "이 역할은 MODEL_REGISTRY_CONFIG env 로 돌아 경로 한도 저장이 반영되지 않습니다";
 
 /**
  * 실시간 한도(runtime_settings, PR 1a) — 경로 한도·번역 묶음·틱 예산을 저장하면 배포 없이 각 워커가 30초 안에 다음 틱부터 쓴다.
- * 머리의 「읽은 판」이 어느 역할이 이미 새 판으로 도는지 보인다. 장비 한도는 PR 1b 의 자리다.
+ * 머리의 「읽은 판」이 어느 역할이 이미 새 판으로 도는지 보인다. 장비별 칸 수는 「장비 한도」 화면이 맡는다(이 화면에 자리표시 묶음을 두지 않는다).
  */
 export default async function RuntimeLimitsPage() {
   if (!await currentAdmin()) redirect("/admin/login");
@@ -34,8 +36,8 @@ export default async function RuntimeLimitsPage() {
   return <main className="mx-auto grid max-w-6xl gap-6 p-4">
     <PageStamp />
     <header className="grid gap-1">
-      <Link href="/admin/models" className="text-[13px] text-fg-3">← 단계별 모델</Link>
-      <h1 className="text-[22px] font-semibold">실시간 한도</h1>
+      <AdvancedEditorLinks next={["devices"]} />
+      <h1 className="text-[22px] font-semibold">{EDITOR.label}</h1>
       <p className="text-[13px] text-fg-3">저장하면 배포 없이 각 워커가 30초 안에 다음 틱부터 씁니다. 아래 &apos;읽은 판&apos;으로 어느 역할이 이미 새 판으로 도는지 봅니다.
         저장 문서는 바꾼 값만 담고(덮어씀), 나머지는 코드 기본값입니다.</p>
       <p className="text-[13px] text-fg-2">저장 판 <span className="font-mono">{view.shortVersion}</span>
@@ -64,13 +66,9 @@ export default async function RuntimeLimitsPage() {
     </section>
     <section id="assignments" className="grid gap-2 scroll-mt-6">
       <h2 className="text-[18px] font-semibold">{GROUP_LABELS.assignments}</h2>
-      <p className="text-[13px] text-fg-3">단계별 모델 고르기가 <Link href="/admin/models/assignments" className="underline">모델 배정</Link> 표를 읽는지(켬) 설정(legacy)을 읽는지(끔)입니다.
+      <p className="text-[13px] text-fg-3">단계별 모델 고르기가 <Link href={modelsAdvancedEditor("assignments").href} className="underline">{modelsAdvancedEditor("assignments").label}</Link>를 읽는지(켬) 설정(legacy)을 읽는지(끔)입니다.
         저장하면 웹·reviewer·text·소비자가 30초 안에 같은 값을 읽습니다 — 재배포 없음. 켜기 전에 배정 화면에서 「현재 설정 → 배정 표 가져오기」로 행을 채우고 상태 띠를 확인합니다.</p>
       <AssignmentsForm fields={view.assignments} revision={view.revision} readOnly={readOnly} />
-    </section>
-    <section id="devices" className="grid gap-2 scroll-mt-6">
-      <h2 className="text-[18px] font-semibold">{GROUP_LABELS.devices}</h2>
-      <DevicesPlaceholder />
     </section>
     <section id="audit" className="grid gap-2 scroll-mt-6">
       <h2 className="text-[18px] font-semibold">최근 저장 ({view.audit.length})</h2>
