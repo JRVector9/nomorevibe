@@ -1,43 +1,100 @@
+/* 작업 배정(/admin/models/tasks) — 「설정 vs 실제」 표(2026-11-07 승인 시안 PR 4). 색은 승인 시안 토큰(prototype.css)만 쓴다: 어두운 테마도 토큰이 바꾼다.
+   상태는 색만으로 가르지 않는다 — LevelBadge 의 모양(●▲■‖?)과 글자를 함께 쓰고, 「설정 밖」·「0건」은 글자로도 적는다. 글자는 13px 이상. */
 .mt-task-page { min-width: 0; }
-.mt-task-list { min-width: 0; overflow: clip; border: 1px solid var(--color-line); border-radius: 8px; background: var(--color-bg-card); }
-.mt-task-list-head, .mt-task-row-summary { display: grid; grid-template-columns: minmax(9rem, 1.1fr) minmax(8rem, .95fr) minmax(0, 2.8fr) minmax(9rem, 1.2fr) 3rem; gap: 12px; align-items: start; padding: 8px 12px; }
-.mt-task-list-head { color: var(--color-fg-3); background: var(--color-bg-soft); font-weight: 600; border-bottom: 1px solid var(--color-line); }
-.mt-task-group-title { margin: 0; padding: 6px 12px; font-weight: 700; color: var(--color-fg-2); background: var(--color-bg-soft); border-bottom: 1px solid var(--color-line); }
-.mt-task-row { min-width: 0; scroll-margin-top: 20px; border-bottom: 1px solid var(--color-line); }
-.mt-task-list > section:last-child > .mt-task-row:last-child { border-bottom: 0; }
-.mt-task-row-summary { cursor: pointer; list-style: none; }
-.mt-task-row-summary::-webkit-details-marker { display: none; }
-.mt-task-row-summary:hover, .mt-task-row[open] > .mt-task-row-summary { background: var(--color-bg-hover); }
-.mt-task-row-summary:focus-visible { outline: 2px solid var(--color-accent); outline-offset: -2px; }
-.mt-task-row-summary > span, .mt-task-model-line > span { min-width: 0; overflow-wrap: anywhere; }
-.mt-task-identity, .mt-task-mode, .mt-task-models, .mt-task-runtime { display: grid; gap: 3px; line-height: 1.45; }
-.mt-task-list small { font-size: inherit; color: var(--color-fg-3); font-weight: 400; }
-.mt-task-model-line { display: grid; grid-template-columns: 3.5rem minmax(0, 1fr); gap: 6px; }
-.mt-task-model-line > b { color: var(--color-fg-3); font-weight: 500; white-space: nowrap; }
-.mt-task-toggle { display: inline-flex; justify-content: flex-end; gap: 4px; color: var(--color-accent-ink); font-weight: 600; white-space: nowrap; }
-.mt-task-toggle::after { content: "+"; }
-.mt-task-row[open] > .mt-task-row-summary .mt-task-toggle::after { content: "−"; }
-.mt-task-editor { min-width: 0; display: grid; gap: 10px; padding: 10px 12px; border-top: 1px solid var(--color-line); background: var(--color-bg-soft); }
+
+/* 표 */
+.tk .tk-wrap { min-width: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); overflow: clip; }
+.tk .tk-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: calc(13px + var(--admin-font-delta, 0px)); line-height: 1.45; }
+.tk .tk-table thead th { padding: 10px 12px; text-align: left; font-size: calc(13px + var(--admin-font-delta, 0px)); font-weight: 650; color: var(--muted); white-space: normal;
+  background: var(--surface-2, var(--bg)); border-bottom: 1px solid var(--line); }
+.tk .tk-table thead th:nth-child(1) { width: 14%; }
+.tk .tk-table thead th:nth-child(2), .tk .tk-table thead th:nth-child(3), .tk .tk-table thead th:nth-child(4) { width: 12.5%; }
+.tk .tk-table thead th:nth-child(5) { width: 24%; }
+.tk .tk-table thead th:nth-child(6) { width: 17%; }
+.tk .tk-table thead th:nth-child(7) { width: 7.5%; }
+.tk .tk-group th { padding: 7px 12px; text-align: left; font-size: calc(13px + var(--admin-font-delta, 0px)); font-weight: 700; color: var(--ink); background: var(--surface-2, var(--bg)); border-bottom: 1px solid var(--line); }
+.tk .tk-table .tk-row > th, .tk .tk-table .tk-row > td { padding: 10px 12px; vertical-align: top; text-align: left; border-bottom: 1px solid var(--line); min-width: 0; overflow-wrap: anywhere;
+  white-space: normal; font-size: calc(13px + var(--admin-font-delta, 0px)); font-weight: 400; color: var(--ink); background: transparent; }
+.tk tbody:last-child .tk-row:last-child > th, .tk tbody:last-child .tk-row:last-child > td { border-bottom: 0; }
+.tk .tk-row { scroll-margin-top: 96px; }
+.tk .tk-row:target > th, .tk .tk-row:target > td { background: var(--blue-soft); }
+.tk .tk-row[data-level=bad] > th { box-shadow: inset 4px 0 0 var(--red); }
+.tk .tk-row[data-level=warn] > th { box-shadow: inset 4px 0 0 var(--amber); }
+
+/* 작업 */
+.tk .tk-task-name { display: block; font-weight: 700; font-size: calc(14px + var(--admin-font-delta, 0px)); color: var(--ink); }
+.tk .tk-mode { display: inline-block; margin-top: 4px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface-2, var(--bg)); color: var(--muted); font-size: calc(13px + var(--admin-font-delta, 0px)); font-weight: 600; }
+.tk .tk-mode[data-mode=workload_pool] { border-color: var(--blue); color: var(--blue); background: var(--blue-soft); }
+.tk .tk-mode[data-mode=unknown] { border-style: dotted; }
+
+/* 설정 칸 */
+.tk .tk-choice { display: grid; gap: 1px; min-width: 0; align-content: start; }
+.tk .tk-choice[data-off=true] .tk-model { text-decoration: line-through; color: var(--muted); }
+.tk .tk-conn { color: var(--muted); font-size: calc(13px + var(--admin-font-delta, 0px)); }
+.tk .tk-model { font-family: 'SFMono-Regular', Consolas, monospace; font-size: calc(13px + var(--admin-font-delta, 0px)); color: var(--ink); overflow-wrap: anywhere; word-break: break-word; }
+.tk .tk-effort { width: fit-content; padding: 0 6px; border-radius: 4px; background: var(--blue-soft); color: var(--blue); font-size: calc(13px + var(--admin-font-delta, 0px)); font-weight: 600; }
+.tk .tk-off { color: var(--amber); font-weight: 600; }
+.tk .tk-none { color: var(--muted); }
+.tk .tk-merged-list { display: grid; gap: 8px 14px; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); align-items: start; }
+.tk .tk-merged .tk-pos, .tk .tk-calls .tk-pos { color: var(--muted); font-weight: 650; }
+.tk .tk-source { display: block; margin-top: 4px; color: var(--muted); }
+
+/* 지금 실제 */
+.tk .tk-calls { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
+.tk .tk-calls li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 2px 6px; align-items: baseline; }
+.tk .tk-calls li > b { font-size: calc(14px + var(--admin-font-delta, 0px)); }
+.tk .tk-calls .tk-fail { grid-column: 2 / -1; color: var(--red); font-weight: 600; }
+.tk .tk-calls li[data-zero=true] > b { color: var(--amber); }
+.tk .tk-calls li[data-position=none] .tk-pos { color: var(--amber); }
+.tk .tk-calls li[data-position=none] .tk-pos::before { content: "▲ "; font-size: 10px; }
+.tk .tk-empty { display: block; color: var(--muted); }
+.tk .tk-mismatch { display: grid; gap: 4px; margin-top: 6px; }
+.tk .tk-mismatch > .llm-level { justify-self: start; }
+.tk .tk-mismatch ul { margin: 0; padding-left: 16px; color: var(--amber); }
+
+/* 상태 */
+.tk .tk-status > .llm-level { margin-bottom: 4px; }
+.tk .tk-reason { color: var(--muted); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.tk .tk-act { text-align: right; }
+.tk .tk-act .button { white-space: nowrap; font-size: calc(13px + var(--admin-font-delta, 0px)); }
+
+/* 좁은 화면 — 줄마다 카드로: 작업·바꾸기 → 1·2·3순위 → 실제·상태 */
+@media (max-width: 1100px) {
+  .tk .tk-table, .tk .tk-table tbody { display: block; }
+  .tk .tk-table thead { display: none; }
+  .tk .tk-group, .tk .tk-group th { display: block; }
+  .tk .tk-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 14px; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  .tk tbody:last-child .tk-row:last-child { border-bottom: 0; }
+  .tk .tk-table .tk-row > th, .tk .tk-table .tk-row > td { display: block; padding: 0; border: 0; }
+  .tk .tk-row[data-level=bad] > th, .tk .tk-row[data-level=warn] > th { box-shadow: none; }
+  .tk .tk-row[data-level=warn] { box-shadow: inset 4px 0 0 var(--amber); }
+  .tk .tk-row[data-level=bad] { box-shadow: inset 4px 0 0 var(--red); }
+  .tk .tk-row:target { background: var(--blue-soft); }
+  .tk .tk-task { grid-column: 1 / 3; }
+  .tk .tk-act { grid-column: 3; grid-row: 1; }
+  .tk .tk-merged { grid-column: 1 / -1; }
+  .tk .tk-actual { grid-column: 1 / 3; }
+  .tk .tk-status { grid-column: 3; }
+  .tk .tk-row > td[data-label]::before { content: attr(data-label); display: block; margin-bottom: 2px; color: var(--muted); font-weight: 650; }
+}
+@media (max-width: 560px) {
+  .tk .tk-row { grid-template-columns: minmax(0, 1fr) auto; gap: 8px 10px; padding: 12px; }
+  .tk .tk-task { grid-column: 1; }
+  .tk .tk-act { grid-column: 2; }
+  .tk .tk-rank, .tk .tk-merged, .tk .tk-actual, .tk .tk-status { grid-column: 1 / -1; }
+  .tk .tk-table .tk-row > td.tk-rank { display: grid; grid-template-columns: 3.5rem minmax(0, 1fr); gap: 6px; }
+  .tk .tk-row > td.tk-rank::before { margin: 0; }
+  .tk .tk-table .tk-row > td.tk-rank[data-empty=true]:not([data-label="1순위"]) { display: none; }
+  .tk .tk-merged-list { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* 실행 방식 접힘(기존 TaskExecutionForm) */
+.mt-task-mode-item { padding-top: 10px; border-top: 1px solid var(--line); }
+.mt-task-mode-item:first-of-type { border-top: 0; padding-top: 0; }
+.mt-task-execution { min-width: 0; }
 .mt-task-form-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: end; }
 .mt-task-form-toolbar > label { max-width: 36rem; }
-.mt-task-execution + .mt-task-ranks { border-top: 1px solid var(--color-line); padding-top: 10px; }
-.mt-task-ranks > details > div { border: 0; padding: 4px 0; }
-@media (max-width: 1100px) {
-  .mt-task-list-head { display: none; }
-  .mt-task-row-summary { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 3rem; gap: 8px 12px; }
-  .mt-task-identity { grid-column: 1; grid-row: 1; }
-  .mt-task-mode { grid-column: 2; grid-row: 1; }
-  .mt-task-toggle { grid-column: 3; grid-row: 1; }
-  .mt-task-models { grid-column: 1; grid-row: 2; }
-  .mt-task-runtime { grid-column: 2 / 4; grid-row: 2; }
-}
 @media (max-width: 600px) {
-  .mt-task-row-summary { grid-template-columns: minmax(0, 1fr) 3rem; }
-  .mt-task-identity { grid-column: 1; grid-row: 1; }
-  .mt-task-toggle { grid-column: 2; grid-row: 1; }
-  .mt-task-mode { grid-column: 1 / 3; grid-row: 2; }
-  .mt-task-models { grid-column: 1 / 3; grid-row: 3; }
-  .mt-task-runtime { grid-column: 1 / 3; grid-row: 4; }
   .mt-task-form-toolbar { grid-template-columns: minmax(0, 1fr); }
   .mt-task-form-toolbar > button { justify-self: start; }
 }
