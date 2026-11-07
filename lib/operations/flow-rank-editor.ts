@@ -1,4 +1,4 @@
-import { aiTask, aiTaskAccepts, aiTaskSlotLabel, isAiLiveTask } from "@/lib/llm/ai-tasks";
+import { AI_TASKS, aiTask, aiTaskAccepts, aiTaskSlotLabel, isAiLiveTask } from "@/lib/llm/ai-tasks";
 import { aiTaskEditTarget } from "./ai-task-edit-target";
 import {
   AI_RANK_SLOT_NAMES, aiRankChoiceOfRow, aiConnectionLabel, aiConnectionModelIds, aiModelsErrorText, aiRankOptionBlocked, aiSameUnderlyingModel, aiTaskRankOptions, validateAiTaskRanks,
@@ -38,8 +38,8 @@ export function flowConnectionState(connection: AiConnectionView): FlowConnectio
 export type FlowRankOption = AiRankOption & { off?: boolean };
 
 export type FlowRankLine = {
-  /** `${task}#${slot}` — 감사 target 과 같은 모양 */
-  key: string; station: LlmStationKey; task: string; slot: number; label: string;
+  /** `${task}#${slot}` — 감사 target 과 같은 모양. station 은 흐름 칸(벨트 밖 작업은 "off_belt" — 작업 배정 화면에서만 쓴다) */
+  key: string; station: LlmStationKey | "off_belt"; task: string; slot: number; label: string;
   /** 「작업 ↔ AI 모델」 줄의 판(compare-and-set) — 서버가 aiTaskSlotRevision 으로 만든다 */
   revision: string;
   saved: AiRankChoice[]; options: FlowRankOption[];
@@ -49,6 +49,10 @@ export type FlowRankLine = {
   lock: string | null;
   /** Safe stored mode/member settings; never contains decrypted connection credentials. */
   execution?: AiTaskExecutionAdminView;
+  /** 저장된 순위에 아직 없는 계약·경로·장비 — 순위를 바꾸지 않고 다시 저장하면 만든다(작업 배정 화면이 채운다, aiRankPendingText) */
+  pending?: readonly string[];
+  /** 저장된 순위의 막힘(bad)·알림(warn) — 작업 배정 화면이 채운다(aiRanksReadiness) */
+  notes?: readonly { tone: "bad" | "warn"; text: string }[];
 };
 
 export type FlowRankEditor = {
@@ -83,6 +87,23 @@ export function flowRankLinesFor(editor: FlowRankEditor | null, station: LlmStat
  */
 export function buildFlowRankEditor(connections: readonly AiConnectionView[], rows: readonly AiTaskRankRow[],
   revisionOf: (rows: readonly AiTaskRankRow[]) => string, executions: readonly AiTaskExecutionAdminView[] = []): FlowRankEditor {
+  const entries = (Object.entries(STATION_TASKS) as [LlmStationKey, readonly string[]][]).flatMap(([station, tasks]) => tasks.map(id => [station, id] as const));
+  return buildRankEditor(entries, connections, rows, revisionOf, executions);
+}
+
+/**
+ * 작업 배정(/admin/models/tasks)의 서랍 — 흐름 칸에 없는 작업(검색어 번역·감사·보강·Grok 로그인 유지)까지 모든 AI 작업을 작업 목록 순서로.
+ * 줄·선택지·잠금·저장 폼은 buildFlowRankEditor 와 같다(같은 서랍, 같은 저장 동작). 칸에 없는 작업의 station 은 "off_belt" 라 흐름 칸 고르기에는 걸리지 않는다.
+ */
+export function buildTaskRankEditor(connections: readonly AiConnectionView[], rows: readonly AiTaskRankRow[],
+  revisionOf: (rows: readonly AiTaskRankRow[]) => string, executions: readonly AiTaskExecutionAdminView[] = []): FlowRankEditor {
+  const stationOf = new Map<string, LlmStationKey>();
+  for (const [station, tasks] of Object.entries(STATION_TASKS) as [LlmStationKey, readonly string[]][]) for (const id of tasks) if (!stationOf.has(id)) stationOf.set(id, station);
+  return buildRankEditor(AI_TASKS.map(task => [stationOf.get(task.id) ?? "off_belt", task.id] as const), connections, rows, revisionOf, executions);
+}
+
+function buildRankEditor(entries: readonly (readonly [LlmStationKey | "off_belt", string])[], connections: readonly AiConnectionView[], rows: readonly AiTaskRankRow[],
+  revisionOf: (rows: readonly AiTaskRankRow[]) => string, executions: readonly AiTaskExecutionAdminView[]): FlowRankEditor {
   const states = connections.map(flowConnectionState);
   const stateOf = new Map(states.map((state) => [state.id, state]));
   const group = (id: string, fallback: string) => {
@@ -91,29 +112,27 @@ export function buildFlowRankEditor(connections: readonly AiConnectionView[], ro
     return state ? `${state.label}${state.device.toLowerCase() === state.label.toLowerCase() ? "" : ` · 장비 ${state.device}`} · ${state.text}` : fallback;
   };
   const lines: FlowRankLine[] = [];
-  for (const [station, tasks] of Object.entries(STATION_TASKS) as [LlmStationKey, readonly string[]][]) {
-    for (const id of tasks) {
-      const task = aiTask(id);
-      if (!task) continue;
-      for (let slot = 1; slot <= task.slots; slot += 1) {
-        const execution = executions.find(view => view.task === id && view.slot === slot);
-        const own = rows.filter((row) => row.task === id && row.slot === slot).sort((a, b) => a.rank - b.rank);
-        const options: FlowRankOption[] = aiTaskRankOptions(task, connections, own).map((option) => ({ ...option, group: group(option.provider, option.group ?? "지워진 연결") }));
-        // 꺼진 연결도 보인다(상태 「꺼짐」) — 고를 수는 없다(저장 검증도 막는다)
-        for (const connection of connections) {
-          if (connection.enabled || !aiTaskAccepts(task, connection)) continue;
-          for (const model of aiConnectionModelIds(connection)) {
-            if (options.some((option) => option.provider === connection.id && option.model === model)) continue;
-            options.push({ provider: connection.id, model, label: `${aiConnectionLabel(connection)} · ${model}`, group: group(connection.id, connection.label), text: model, off: true });
-          }
+  for (const [station, id] of entries) {
+    const task = aiTask(id);
+    if (!task) continue;
+    for (let slot = 1; slot <= task.slots; slot += 1) {
+      const execution = executions.find(view => view.task === id && view.slot === slot);
+      const own = rows.filter((row) => row.task === id && row.slot === slot).sort((a, b) => a.rank - b.rank);
+      const options: FlowRankOption[] = aiTaskRankOptions(task, connections, own).map((option) => ({ ...option, group: group(option.provider, option.group ?? "지워진 연결") }));
+      // 꺼진 연결도 보인다(상태 「꺼짐」) — 고를 수는 없다(저장 검증도 막는다)
+      for (const connection of connections) {
+        if (connection.enabled || !aiTaskAccepts(task, connection)) continue;
+        for (const model of aiConnectionModelIds(connection)) {
+          if (options.some((option) => option.provider === connection.id && option.model === model)) continue;
+          options.push({ provider: connection.id, model, label: `${aiConnectionLabel(connection)} · ${model}`, group: group(connection.id, connection.label), text: model, off: true });
         }
-        const editTarget = id === "publish-classify" ? null : aiTaskEditTarget(id);
-        lines.push({ key: `${id}#${slot}`, station, task: id, slot, label: aiTaskSlotLabel(task, slot), revision: revisionOf(own),
-          saved: own.map(aiRankChoiceOfRow), options, live: isAiLiveTask(id), ...(execution ? { execution } : {}),
-          lock: execution?.mode === "workload_pool" ? "작업 분산 중입니다. 분산 모델과 실행 방식은 「작업 ↔ AI 모델」에서 변경하세요."
-            : FLOW_RANK_LOCKS[id] ? `${FLOW_RANK_LOCKS[id]}${editTarget ? ` 실제 적용 설정: ${editTarget.href}` : ""}`
-              : editTarget ? `실제 적용 설정에서 변경하세요: ${editTarget.href}` : null });
       }
+      const editTarget = id === "publish-classify" ? null : aiTaskEditTarget(id);
+      lines.push({ key: `${id}#${slot}`, station, task: id, slot, label: aiTaskSlotLabel(task, slot), revision: revisionOf(own),
+        saved: own.map(aiRankChoiceOfRow), options, live: isAiLiveTask(id), ...(execution ? { execution } : {}),
+        lock: execution?.mode === "workload_pool" ? "작업 분산 중입니다. 분산 모델과 실행 방식은 「작업 배정」의 실행 방식에서 변경하세요."
+          : FLOW_RANK_LOCKS[id] ? `${FLOW_RANK_LOCKS[id]}${editTarget ? ` 실제 적용 설정: ${editTarget.href}` : ""}`
+            : editTarget ? `실제 적용 설정에서 변경하세요: ${editTarget.href}` : null });
     }
   }
   return { lines, connections: [...connections], rows: [...rows], states };
@@ -156,7 +175,8 @@ export function rankChainText(editor: FlowRankEditor | null, ranks: readonly (Ai
   return parts.length ? parts.join(" → ") : "비어 있음";
 }
 
-export type RankChange = { line: FlowRankLine; before: AiRankChoice[]; after: (AiRankChoice | null)[]; beforeText: string; afterText: string };
+/** resave = 순위는 그대로 두고 다시 저장(빠진 계약·경로·장비를 만든다 — 예전 순위판의 「다시 저장」) */
+export type RankChange = { line: FlowRankLine; before: AiRankChoice[]; after: (AiRankChoice | null)[]; beforeText: string; afterText: string; resave?: true };
 
 /** 저장 전 「전 → 후」 — 바뀐 줄만, 서랍의 줄 차례대로 */
 export function rankChanges(editor: FlowRankEditor, lines: readonly FlowRankLine[], drafts: RankDrafts): RankChange[] {
@@ -165,6 +185,61 @@ export function rankChanges(editor: FlowRankEditor, lines: readonly FlowRankLine
     if (!draft || line.lock || same(draft, line.saved)) return [];
     const after = trim(draft);
     return [{ line, before: line.saved, after, beforeText: rankChainText(editor, line.saved), afterText: rankChainText(editor, after) }];
+  });
+}
+
+/**
+ * 바꾸지 않은 줄을 그대로 다시 저장 — 가져온 순위처럼 계약·경로·장비가 아직 없는 줄(pending)만, 사람이 고른 줄(keys)만.
+ * 같은 저장 동작(saveAiTaskRanksAction)에 지금 순위를 그대로 보낸다. 이미 바꾼 줄(drafts 가 다름)은 rankChanges 가 맡는다.
+ */
+export function rankResaves(editor: FlowRankEditor, lines: readonly FlowRankLine[], drafts: RankDrafts, keys: ReadonlySet<string>): RankChange[] {
+  return lines.flatMap((line) => {
+    if (!keys.has(line.key) || line.lock || !line.pending?.length || !line.saved.length) return [];
+    if (drafts[line.key] && !same(drafts[line.key], line.saved)) return [];
+    const text = rankChainText(editor, line.saved);
+    return [{ line, before: line.saved, after: [...line.saved], beforeText: text, afterText: text, resave: true as const }];
+  });
+}
+
+// ── 장비 한도 미리보기 ────────────────────────────────────────────────────────────────────────────
+
+/** 장비 한도(장부 관측) — 서랍을 여는 화면이 넘긴다. 못 읽었으면 넘기지 않는다(그때는 연결 폼 칸 수만 보인다). */
+export type RankDeviceLimit = Readonly<{ deviceId: string; limit: number | null; held: number | null; source: "table" | "policy_fallback" | null }>;
+export type RankDeviceImpact = Readonly<{
+  deviceId: string; connections: string[];
+  /** 장비 행 한도(모르면 null)와 지금 점유 */
+  limit: number | null; held: number | null;
+  /** 장비 행이 없어 저장이 만들 때의 칸 수(연결 폼 값) — 장비 행이 있으면 null */
+  create: number | null;
+  /** 저장 뒤 이 장비를 함께 쓰는 다른 작업(바꾼 줄 밖) */
+  sharing: string[];
+}>;
+
+/**
+ * 저장 뒤 순위가 가리키는 장비마다: 한도·점유, 장비 행이 없으면 만들 칸 수, 같은 장비를 나눠 쓰는 다른 작업.
+ * devices 가 null 이면 한도를 모른다(흐름 화면 — 그때는 「LLM 운영에서 확인」).
+ */
+export function rankDeviceImpact(editor: FlowRankEditor, changes: readonly RankChange[], devices: readonly RankDeviceLimit[] | null): RankDeviceImpact[] {
+  const changed = new Set(changes.map((change) => change.line.key));
+  const out = new Map<string, { deviceId: string; connections: Set<string>; create: number | null }>();
+  for (const change of changes) for (const row of change.after) {
+    const connection = row ? editor.connections.find((entry) => entry.id === row.provider) : undefined;
+    if (!connection) continue;
+    const entry = out.get(connection.deviceId) ?? { deviceId: connection.deviceId, connections: new Set<string>(), create: null };
+    entry.connections.add(aiConnectionLabel(connection));
+    entry.create ??= connection.capacitySlots;
+    out.set(connection.deviceId, entry);
+  }
+  return [...out.values()].map((entry) => {
+    const device = devices?.find((row) => row.deviceId === entry.deviceId) ?? null;
+    const sharing = new Set<string>();
+    for (const line of editor.lines) {
+      if (changed.has(line.key)) continue;
+      const uses = [...line.saved, ...(line.execution?.mode === "workload_pool" ? line.execution.members.map((member) => ({ provider: member.connectionId })) : [])];
+      if (uses.some((row) => editor.connections.find((connection) => connection.id === row.provider)?.deviceId === entry.deviceId)) sharing.add(line.label);
+    }
+    return { deviceId: entry.deviceId, connections: [...entry.connections], limit: device?.limit ?? null, held: device?.held ?? null,
+      create: devices && device?.source !== "table" ? entry.create : null, sharing: [...sharing] };
   });
 }
 
@@ -226,7 +301,7 @@ export function rankWarnings(editor: FlowRankEditor, lines: readonly FlowRankLin
 export const needsAcknowledge = (warnings: readonly RankWarning[]) => warnings.some((warning) => warning.tone === "bad" && !warning.existing);
 
 /**
- * 저장에 보낼 폼 — 「작업 ↔ AI 모델」 줄 폼(TaskRankLineForm)과 같은 칸: task · slot · revision · RankSelects 의 숨은 칸(AI_RANK_SLOT_NAMES).
+ * 저장에 보낼 폼 — 예전 「작업 ↔ AI 모델」 줄 폼과 같은 칸: task · slot · revision · RankSelects 의 숨은 칸(AI_RANK_SLOT_NAMES).
  * 서버는 같은 aiTaskRanksInputFromForm 으로 읽는다. 값은 연결 id(uuid)와 모델 이름 그대로 — 제어 글자를 쓰지 않는다.
  */
 export function rankForm(line: Pick<FlowRankLine, "task" | "slot" | "revision">, ranks: readonly (AiRankChoice | null)[]): FormData {
