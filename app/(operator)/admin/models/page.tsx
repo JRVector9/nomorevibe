@@ -12,7 +12,6 @@ import { configuredHumanModelsProbe, type HumanModelProbe } from "@/lib/operatio
 import { currentModelEnv } from "@/lib/operations/model-env";
 import { adminModelStageView, type TextStageBindings } from "@/lib/operations/admin-model-stage-view";
 import { adminWorkspaceReadOnly } from "@/lib/operations/admin-workspace-preview";
-import { readFlowRankEditor } from "@/lib/operations/flow-rank-editor-read";
 import { PageStamp } from "../components/PageStamp";
 
 import { ReviewModelsForm } from "./ReviewModelsForm";
@@ -20,8 +19,6 @@ import { firstReviewers } from "@/lib/crawl/first-reviewers";
 import { ensureReviewTaskRanks } from "@/lib/crawl/review-task-ranks";
 import { secondReviewVoterSets } from "@/lib/crawl/second-review-voters";
 import { readAdminModelsObservation } from "@/lib/operations/admin-models-repository";
-import { readConveyor } from "@/lib/operations/conveyor";
-import type { Conveyor } from "@/lib/operations/conveyor-model";
 import { LiveModels } from "./LiveModels";
 import { UnknownReviewList } from "./UnknownReviewList";
 import { DevicesPanel } from "./DevicesPanel";
@@ -47,17 +44,20 @@ import { autoProbeDirectEngines, readProbeObservations, recordAutoProbes } from 
 import { readbackServingEndpoint } from "@/lib/operations/admin-serving-contracts";
 import { roleOverview } from "@/lib/operations/roles";
 import { SearchModelConstraints } from "./SearchModelConstraints";
-import { PrototypeModels } from "./PrototypeModels";
+import { ModelsDashboardSlot } from "./llm-ops-slots";
+import { modelsLegacyTabHref } from "../workspace-navigation";
 import "../status/operations.css";
 import "./models.css";
+import "./llm-ops.css";
 
 export const dynamic = "force-dynamic";
-export const metadata: Metadata = { title: "모델 운영 현황 — NoMoreVibe", robots: { index: false } };
+export const metadata: Metadata = { title: "LLM 운영 — NoMoreVibe", robots: { index: false } };
 
 /** 서버가 이 화면을 그리기 시작한 시각 — 상단 띠의 「마지막 갱신」. 구성 요소 밖에서 읽는다(렌더 순수성 규칙). */
 const renderClock = () => new Date();
 /** 자동 확인 호출의 소요 ms — 결과와 함께 관측에 남긴다. */
 async function timed<T>(run: () => Promise<T>): Promise<{ value: T; ms: number }> { const started = Date.now(); const value = await run(); return { value, ms: Date.now() - started }; }
+const one = (value: string | string[] | undefined) => typeof value === "string" ? value : Array.isArray(value) ? value[0] ?? null : null;
 
 /** currentModelEnv already opened these cached snapshots. Only the non-secret identity and actual provider reach the view. */
 async function textStageBindings(): Promise<TextStageBindings> {
@@ -68,24 +68,30 @@ async function textStageBindings(): Promise<TextStageBindings> {
 }
 
 /**
- * /admin/models 한 화면(2026-10-31 승인 시안): 고정 상단 띠 → 요약 타일 4 → 단계 × 모델 표 → 장비 표 | 확인 못함 목록 → 접기 2(도우미·감시자·배정 출처·새 잡 / 참고).
- * 모든 구획이 실제 출처만 읽는다 — 장부 관측·장비 로더·도우미 로더·배정 출처·역할 lease·장부 경보 요약·jobs 표·연결 확인 관측. 하위 화면은 그대로 두고 여기서는 요약+링크다.
+ * /admin/models — LLM 운영 대시보드(2026-11-07 승인 시안 PR 1). 대시보드에 필요한 것만 읽는다(llm-ops-slots.tsx).
+ * 옛 ?tab= 주소는 새 화면으로 넘기고(modelsLegacyTabHref), ?advanced=1 은 기존 「한 화면」 고급 영역(단계 × 모델 표·연결 확인·모델 재시작·정식 해제·
+ * 장비 상세·미확정 다시 대기열·닫기·도우미·참고)을 그대로 연다 — 「고급 설정」 탭이 여기로 온다. 하위 화면은 그대로다.
  */
 export default async function ModelsPage({ searchParams }: { searchParams?: Promise<Record<string, string | string[] | undefined>> }) {
   if (!await currentAdmin()) redirect("/admin/login");
-  const params = await searchParams;
-  const tab = typeof params?.tab === "string" ? params.tab : "live";
-  const advanced = params?.advanced === "1";
+  const params = (await searchParams) ?? {};
+  const legacy = modelsLegacyTabHref({ get: name => one(params[name]) });
+  if (legacy) redirect(legacy);
   const readOnly = adminWorkspaceReadOnly();
-  return <main className="stack"><PageStamp /><h1 className="admin-vh">LLM 운영</h1>
+  if (one(params.advanced) === "1") return <main className="stack"><PageStamp /><h1 className="admin-vh">LLM 운영 · 고급 설정</h1>
     <Suspense fallback={<p aria-busy="true" className="notice">모델 설정·운영 관측을 읽는 중…</p>}>
-      <ModelsWorkspace tab={tab} advanced={advanced} readOnly={readOnly} />
+      <ModelsWorkspace readOnly={readOnly} />
+    </Suspense>
+  </main>;
+  return <main className="stack"><PageStamp /><h1 className="admin-vh">LLM 운영 · 대시보드</h1>
+    <Suspense fallback={<p aria-busy="true" className="notice">LLM 운영 상태를 읽는 중…</p>}>
+      <ModelsDashboardSlot readOnly={readOnly} />
     </Suspense>
   </main>;
 }
 
 /** Bootstrap lives inside the boundary so cold contract/rank snapshots do not hide its fallback. */
-async function ModelsWorkspace({ tab, advanced, readOnly }: { tab: string; advanced: boolean; readOnly: boolean }) {
+async function ModelsWorkspace({ readOnly }: { readOnly: boolean }) {
   // Admin registry overrides (0148) are part of the registry this page shows and validates against.
   // ensureReviewTaskRanks already waits for both contracts and task ranks.
   const [settings, assignmentLocked] = await Promise.all([getSettings(),
@@ -93,7 +99,7 @@ async function ModelsWorkspace({ tab, advanced, readOnly }: { tab: string; advan
     assignmentTableFlag(), ensureReviewTaskRanks()]);
   const [models, bindings] = await Promise.all([currentModelEnv(), textStageBindings()]);
 
-  if (advanced) await ensureCliStageCatalogs();
+  await ensureCliStageCatalogs();
   const registry = readModelRegistry();
   const { defaults, assignments: stageAssignments } = adminModelStageView({ models, pools: settings.stageModelPools, bindings,
     legacyDefault: stage => stage.purpose === "screen-review" ? screenModelConfig()?.model ?? "미설정"
@@ -107,16 +113,17 @@ async function ModelsWorkspace({ tab, advanced, readOnly }: { tab: string; advan
   ];
   // 관리 계약(0147)의 주소는 host:port 만 넘긴다 — 장비 칸의 「장비 미확인」을 줄이고 전송 방식을 보이기 위해서다. 키는 ModelContractLink 에 없다.
   const contracts = modelContractLinks(servingContractSnapshot().rows);
-  const observationRead = readAdminModelsObservation({ throughput: advanced });
-  const servedModels = advanced && !readOnly ? readServedContractModels() : Promise.resolve([]);
+  const observationRead = readAdminModelsObservation({ throughput: true });
+  const servedModels = !readOnly ? readServedContractModels() : Promise.resolve([]);
   // 사람 위임 슬롯의 자동 연결 확인은 한 번만 — 표(연결 확인 열)와 참고의 사람 검토 단계가 같은 약속을 기다린다.
   const humanKeys = settings.stageModelPools?.["human-review"] ?? [];
-  const humanProbe = advanced && !readOnly ? configuredHumanModelsProbe(humanKeys).catch((): HumanModelProbe[] => []) : Promise.resolve([] as HumanModelProbe[]);
+  const humanProbe = !readOnly ? configuredHumanModelsProbe(humanKeys).catch((): HumanModelProbe[] => []) : Promise.resolve([] as HumanModelProbe[]);
   return <>
-    <Suspense fallback={<p aria-busy="true" className="notice">운영 DB 실측을 읽는 중…</p>}><PrototypeModelsSlot observationRead={observationRead} assignments={assignments} models={registry.models} contracts={contracts} tab={tab} readOnly={readOnly} /></Suspense>
-    <details className="panel" id="model-advanced" open={advanced}>
-      <summary>고급 운영·기존 제어·모델 설정</summary>
-      {advanced ? <div className="panel-body stack">
+    <section className="panel" id="model-advanced" aria-labelledby="model-advanced-title">
+      <div className="panel-head"><div><h3 id="model-advanced-title">고급 설정 · 기존 운영·제어·모델 설정</h3>
+        <p>처음 설정하거나 장애를 분석할 때 여는 기존 화면입니다. 연결 확인·모델 재시작·정식 해제·미확정 다시 대기열·장비 상세·도우미·참고를 옮기기 전까지 그대로 둡니다.
+          장비 한도·실시간 한도·도우미·모델 배정·계약·사람 확인·검색 모델은 위 「고급 설정」 줄에서 엽니다.</p></div></div>
+      <div className="panel-body stack">
     <Suspense fallback={<p aria-busy="true" className="text-[13px]">운영 DB 실측 확인 중…</p>}><LiveModelsSlot assignments={assignments} models={registry.models} contracts={contracts} humanProbe={humanProbe} served={servedModels} read={observationRead} readOnly={readOnly} /></Suspense>
     <div className="grid gap-3 [grid-template-columns:minmax(0,7fr)_minmax(0,5fr)] max-[980px]:grid-cols-1">
       <Suspense fallback={<p aria-busy="true" className="text-[13px]">장비 한도 확인 중…</p>}><DevicesSlot models={registry.models} /></Suspense>
@@ -156,25 +163,9 @@ async function ModelsWorkspace({ tab, advanced, readOnly }: { tab: string; advan
       </div>
     </details>
     <p className="text-[13px] leading-relaxed text-fg-2">처리 시간은 장부 접수 → 실제 종료(대기 포함). 1시간 성공·실패는 최근 1시간의 실제 종료만 집계. 철회·미확인 요청은 처리량에 넣지 않음. 접수 일시중지/재개는 모든 공통 모델에 적용. 저장한 설정은 배포 없이 30초 안에 각 앱이 다음 작업부터 사용.</p>
-      </div> : <div className="panel-body"><p className="small muted">기존 단계별 모델 표·장비 상세·미확정 검토 폼·도우미·모델 선택·분류·검색 연결을 보존합니다. 명시적으로 열 때 기존 고급 화면을 읽습니다.</p><div className="decision-bar"><Link className="button" href={`/admin/models?tab=${tab}&advanced=1#model-advanced`} prefetch={false}>고급 화면 불러오기 →</Link><Link className="button" href="/admin/models/tasks">작업별 순위 원본 →</Link><Link className="button" href="/admin/models/devices">장비 한도 원본 →</Link></div></div>}
-    </details>
+      </div>
+    </section>
   </>;
-}
-
-async function PrototypeModelsSlot({ observationRead, assignments, models, contracts, tab, readOnly }: {
-  observationRead: ReturnType<typeof readAdminModelsObservation>; assignments: ModelStageAssignment[];
-  models: ReturnType<typeof readModelRegistry>["models"]; contracts: ModelContractLink[]; tab: string; readOnly: boolean;
-}) {
-  const { readModelOpsStates } = await import("@/lib/operations/ops-runner/repository");
-  const liveTab = !["tasks", "connections", "capacity", "history"].includes(tab);
-  const [observation, editor, devices, helpers, opsStates, flow] = await Promise.all([observationRead,
-    tab === "tasks" || tab === "connections" ? readFlowRankEditor() : Promise.resolve(null),
-    tab === "capacity" ? readCapacityDevicesAdminView(renderClock()).catch(() => null) : Promise.resolve(null),
-    tab === "capacity" ? readModelHelpersAdminView().catch(() => null) : Promise.resolve(null),
-    readModelOpsStates().catch(() => []),
-    liveTab ? readConveyor(false).catch((): Conveyor | null => null) : Promise.resolve<Conveyor | null>(null),
-  ]);
-  return <PrototypeModels observation={observation} assignments={assignments} models={models} contracts={contracts} editor={editor} devices={devices} helpers={helpers} tab={tab} readOnly={readOnly} opsStates={opsStates} flow={flow} />;
 }
 
 /** 장부 경보 요약 — monitor 와 같은 읽기(readModelCapacityUnknowns)·같은 문턱. 못 읽었으면 unknown(0건으로 보지 않는다). */

@@ -7,11 +7,13 @@ import { AI_TASK_IMPORT_CONFIRM, aiConnectionInputFromForm, aiModelsErrorText, a
 import { applyAiTaskImport, deleteAiConnection, readAiConnectionModels, saveAiConnection, saveAiTaskRanks } from "@/lib/operations/admin-ai-tasks-repository";
 import { webWriteAction } from "@/lib/operations/dr/web-gate";
 
-export type AiTaskActionState = { ok?: true; message?: string; issues?: string[]; warnings?: string[] } | null;
+export type AiTaskActionState = { ok?: true; message?: string; issues?: string[]; warnings?: string[];
+  /** 연결 저장이 만들거나 고친 연결 id — LLM 운영 화면이 저장 직후 그 연결의 모델 목록을 보인다 */
+  connectionId?: string } | null;
 
 const DENIED: AiTaskActionState = { issues: [aiTaskIssueMessage("denied")] };
 // 전체 흐름(/admin/flow)의 「바꾸기」 서랍도 같은 순위 저장을 부른다 — 저장 뒤 그 화면의 칸 모델·최근 바뀐 설정도 새로 읽는다
-const PATHS = ["/admin/models/tasks", "/admin/models", "/admin/models/contracts", "/admin/models/devices", "/admin/flow", "/admin/models/search", "/admin/models/human"];
+const PATHS = ["/admin/models/tasks", "/admin/models", "/admin/models/llm", "/admin/models/contracts", "/admin/models/devices", "/admin/flow", "/admin/models/search", "/admin/models/human"];
 const revalidate = () => { for (const path of PATHS) revalidatePath(path); };
 const field = (form: FormData, name: string) => { const value = form.get(name); return typeof value === "string" ? value.trim() : ""; };
 const messages = (issues: readonly string[]) => issues.map(aiTaskIssueMessage);
@@ -31,7 +33,7 @@ export const saveAiConnectionAction = webWriteAction(async function saveAiConnec
   const models = parsed.input.kind === "cli" ? `CLI 모델 ${parsed.input.cliModels.length}개` : saved.modelsError
     ? `모델 목록을 읽지 못했습니다(${aiModelsErrorText(saved.modelsError)}) — 주소·키를 확인하고 「다시 읽기」를 누르세요`
     : `모델 ${saved.models ?? 0}개를 읽었습니다`;
-  return { ok: true, message: `「${parsed.input.label}」 연결을 ${saved.created ? "만들었습니다" : "저장했습니다"}(판 ${saved.version}). ${models}.` };
+  return { ok: true, connectionId: saved.id, message: `「${parsed.input.label}」 연결을 ${saved.created ? "만들었습니다" : "저장했습니다"}(판 ${saved.version}). ${models}.` };
 });
 
 /** 「다시 읽기」 — 저장된 주소·키로 GET /models(1분 간격). */

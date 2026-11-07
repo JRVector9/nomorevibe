@@ -149,7 +149,7 @@ function TaskModelsSummary({ line, execution, connections }: { line: TaskRankLin
 
 function TaskRuntimeSummary({ line, execution, connections }: { line: TaskRankLine; execution?: AiTaskExecutionAdminView; connections: readonly AiConnectionView[] }) {
   if (!line.live && execution?.mode !== "workload_pool" && line.task !== "publish-classify") {
-    return <span className="mt-task-runtime text-fg-3">실제 호출은 모델 운영 현황에서 확인 <Link href="/admin/models" prefetch={false}>모델 운영 현황</Link></span>;
+    return <span className="mt-task-runtime text-fg-3">실제 호출은 LLM 운영 대시보드에서 확인 <Link href="/admin/models" prefetch={false}>LLM 운영</Link></span>;
   }
   const runtime = execution?.mode === "workload_pool" ? currentTaskPoolRuntime(execution, connections, line.runtime)
     : line.runtime?.fresh ? line.runtime : null;

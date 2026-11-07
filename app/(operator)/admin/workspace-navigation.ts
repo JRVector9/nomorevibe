@@ -8,6 +8,30 @@ export type WorkspaceLocation = { workspace: Workspace; tab: string; detail: "pr
 type Search = Pick<URLSearchParams, "get">;
 const none: Search = { get: () => null };
 
+/** 고급 설정 — 지금은 기존 /admin/models?advanced=1 화면(옛 「한 화면」)을 그대로 연다. 그 안의 #review·#model-settings 링크가 바뀌지 않는다. */
+export const MODELS_ADVANCED_HREF = "/admin/models?advanced=1";
+/** 고급 설정 아래로 가는 기존 하위 화면 */
+const MODELS_ADVANCED_PATHS: readonly string[] = ["/admin/models/devices", "/admin/models/limits", "/admin/models/helpers", "/admin/models/assignments",
+  "/admin/models/contracts", "/admin/models/human", "/admin/models/search"];
+/** 옛 「LLM 운영」 탭(?tab=) → 새 화면. live·모르는 값은 대시보드, 용량·장비와 연결은 LLM 운영(연결 행에 한도·편집을 합침). */
+const MODELS_LEGACY_TABS: Readonly<Record<string, { tab: string; href: string }>> = {
+  live: { tab: "dashboard", href: "/admin/models" },
+  tasks: { tab: "tasks", href: "/admin/models/tasks" },
+  connections: { tab: "llm", href: "/admin/models/llm" },
+  capacity: { tab: "llm", href: "/admin/models/llm" },
+  history: { tab: "history", href: "/admin/models/history" },
+};
+/**
+ * /admin/models 의 옛 주소를 새 화면으로 넘길 곳. 넘길 것이 없으면 null(그대로 그린다).
+ * advanced=1 이 있으면 tab 과 상관없이 기존 고급 화면이다(#review 같은 옛 링크가 그대로 산다).
+ */
+export function modelsLegacyTabHref(search: Search): string | null {
+  if (search.get("advanced") === "1") return null;
+  const tab = search.get("tab");
+  if (tab === null) return null;
+  return MODELS_LEGACY_TABS[tab]?.href ?? "/admin/models";
+}
+
 export const WORKSPACES: readonly Workspace[] = [
   { id: "home", label: "운영 홈", href: "/admin/flow", icon: "flow", tabs: [
     { id: "flow", label: "실시간 전체 흐름", href: "/admin/flow" },
@@ -33,12 +57,13 @@ export const WORKSPACES: readonly Workspace[] = [
     { id: "quality", label: "품질관리", href: "/admin/products?tab=quality" },
     { id: "translations", label: "소개·번역", href: "/admin/products?tab=translations" },
   ] },
+  // 2026-11-07 LLM 운영 개편(PR 1·2): 화면 4개 + 고급 설정. 옛 ?tab= 주소는 modelsLegacyTabHref 로 새 화면에 넘긴다.
   { id: "models", label: "LLM 운영", href: "/admin/models", icon: "sliders", tabs: [
-    { id: "live", label: "실시간", href: "/admin/models" },
-    { id: "tasks", label: "작업별 모델", href: "/admin/models?tab=tasks" },
-    { id: "capacity", label: "용량·장비", href: "/admin/models?tab=capacity" },
-    { id: "connections", label: "연결", href: "/admin/models?tab=connections" },
-    { id: "history", label: "조치 기록", href: "/admin/models?tab=history" },
+    { id: "dashboard", label: "대시보드", href: "/admin/models" },
+    { id: "llm", label: "LLM 운영", href: "/admin/models/llm" },
+    { id: "tasks", label: "작업 배정", href: "/admin/models/tasks" },
+    { id: "history", label: "기록", href: "/admin/models/history" },
+    { id: "advanced", label: "고급 설정", href: MODELS_ADVANCED_HREF },
   ] },
   { id: "content", label: "콘텐츠 운영", href: "/admin/content", icon: "news", tabs: [
     { id: "social", label: "SNS 화제", href: "/admin/content?tab=social" },
@@ -62,14 +87,16 @@ export const WORKSPACE_SECONDARY = {
     { id: "inbox", label: "오늘 할 일", href: "/admin/inbox" },
     { id: "changes", label: "변경 기록", href: "/admin/activity?workspace=home&group=settings" },
   ],
-  modelsCapacity: [
+  /** 고급 설정 — 처음 설정하거나 장애를 분석할 때 여는 기존 편집기. 옮기기 전까지 각 원래 주소를 그대로 연다. */
+  modelsAdvanced: [
+    { id: "overview", label: "기존 고급 화면", href: MODELS_ADVANCED_HREF },
     { id: "devices", label: "장비 한도", href: "/admin/models/devices" },
     { id: "limits", label: "실시간 한도", href: "/admin/models/limits" },
     { id: "helpers", label: "도우미 장비", href: "/admin/models/helpers" },
-  ],
-  modelTasks: [
-    { id: "tasks", label: "작업별 순위", href: "/admin/models/tasks" },
-    { id: "assignments", label: "배정 표·적용 출처", href: "/admin/models/assignments" },
+    { id: "assignments", label: "모델 배정", href: "/admin/models/assignments" },
+    { id: "contracts", label: "모델 연결(계약)", href: "/admin/models/contracts" },
+    { id: "human", label: "사람 확인 모델", href: "/admin/models/human" },
+    { id: "search", label: "검색 모델", href: "/admin/models/search" },
   ],
   projectQuality: [
     { id: "audit", label: "AI 감사·정책", href: "/admin/audit?tab=audit" },
@@ -142,16 +169,20 @@ export function resolveWorkspace(pathname: string, search: Search = none): Works
     id = "projects"; tab = validTab(id, search.get("tab"), "all");
   } else if (pathname.startsWith("/admin/products/")) {
     id = "projects"; tab = "all";
-  } else if (pathname === "/admin/models/tasks" || pathname === "/admin/models/assignments") {
+  } else if (pathname === "/admin/models/tasks") {
     id = "models"; tab = "tasks";
-  } else if (["/admin/models/devices", "/admin/models/limits", "/admin/models/helpers"].includes(pathname)) {
-    id = "models"; tab = "capacity";
-  } else if (pathname === "/admin/models/contracts") {
-    id = "models"; tab = "connections";
+  } else if (pathname === "/admin/models/llm") {
+    id = "models"; tab = "llm";
+  } else if (pathname === "/admin/models/history") {
+    id = "models"; tab = "history";
+  } else if (MODELS_ADVANCED_PATHS.includes(pathname)) {
+    id = "models"; tab = "advanced";
   } else if (pathname === "/admin/models") {
-    id = "models"; tab = validTab(id, search.get("tab"), "live");
+    id = "models";
+    const legacy = search.get("tab");
+    tab = search.get("advanced") === "1" ? "advanced" : legacy !== null ? MODELS_LEGACY_TABS[legacy]?.tab ?? "dashboard" : "dashboard";
   } else if (pathname.startsWith("/admin/models/")) {
-    id = "models"; tab = "live";
+    id = "models"; tab = "dashboard";
   } else if (pathname === "/admin/content") {
     id = "content"; tab = validTab(id, search.get("tab"), "social");
   } else if (["/admin/talk", "/admin/news", "/admin/ranking"].includes(pathname)) {
@@ -166,8 +197,7 @@ export function resolveWorkspace(pathname: string, search: Search = none): Works
     id = "settings"; tab = "collection";
   }
   const secondary = id === "home" && tab === "changes" && pathname !== "/admin/flow" ? WORKSPACE_SECONDARY.homeChanges
-    : id === "models" && tab === "capacity" && pathname !== "/admin/models" ? WORKSPACE_SECONDARY.modelsCapacity
-    : id === "models" && tab === "tasks" && pathname !== "/admin/models" ? WORKSPACE_SECONDARY.modelTasks
+    : id === "models" && tab === "advanced" ? WORKSPACE_SECONDARY.modelsAdvanced
     : id === "projects" && tab === "quality" && pathname !== "/admin/products" ? WORKSPACE_SECONDARY.projectQuality
     : id === "requests" && tab === "posts" && pathname !== "/admin/requests" ? WORKSPACE_SECONDARY.posts
     : id === "settings" && tab === "evidence" && pathname !== "/admin/settings" ? WORKSPACE_SECONDARY.evidence

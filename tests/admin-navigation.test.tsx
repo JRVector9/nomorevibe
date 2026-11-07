@@ -56,10 +56,13 @@ describe('seven operational workspaces', () => {
     ['/admin/requests', 'tab=constructor', 'requests', 'open'],
     ['/admin/maker-replies', '', 'requests', 'posts'],
     ['/admin/reactions', '', 'requests', 'posts'],
-    ['/admin/models/assignments', '', 'models', 'tasks'],
-    ['/admin/models/helpers', '', 'models', 'capacity'],
-    ['/admin/models/limits', '', 'models', 'capacity'],
-    ['/admin/models/contracts', '', 'models', 'connections'],
+    // 2026-11-07 LLM 운영 개편: 드물게 쓰는 편집기는 「고급 설정」 아래로
+    ['/admin/models/assignments', '', 'models', 'advanced'],
+    ['/admin/models/helpers', '', 'models', 'advanced'],
+    ['/admin/models/limits', '', 'models', 'advanced'],
+    ['/admin/models/contracts', '', 'models', 'advanced'],
+    ['/admin/models/llm', '', 'models', 'llm'],
+    ['/admin/models/history', '', 'models', 'history'],
     ['/admin/talk', '', 'content', 'social'],
     ['/admin/news', '', 'content', 'news'],
     ['/admin/ranking', '', 'content', 'ranking'],
@@ -89,13 +92,14 @@ describe('seven operational workspaces', () => {
 });
 
 describe('workspace tabs and legacy deep links', () => {
-  it('selects the corresponding capacity tab and keeps all capacity editors reachable', () => {
+  it('selects the advanced-settings tab and keeps every advanced editor reachable', () => {
     const location = resolveWorkspace('/admin/models/helpers');
     const html = renderToStaticMarkup(<WorkspaceTabs location={location} pathname="/admin/models/helpers" search="" />);
-    for (const href of ['/admin/models/devices', '/admin/models/limits', '/admin/models/helpers']) expect(html).toContain(`href="${href}"`);
-    expectActiveLink(html, '/admin/models?tab=capacity');
+    for (const href of ['/admin/models?advanced=1', '/admin/models/devices', '/admin/models/limits', '/admin/models/helpers', '/admin/models/assignments',
+      '/admin/models/contracts', '/admin/models/human', '/admin/models/search']) expect(html).toContain(`href="${href}"`);
+    expectActiveLink(html, '/admin/models?advanced=1');
     expectActiveLink(html, '/admin/models/helpers');
-    expect(html).toContain('조치 기록');
+    for (const label of ['대시보드', 'LLM 운영', '작업 배정', '기록', '고급 설정']) expect(html).toContain(`>${label}</a>`);
   });
 
   it('keeps published second review, audit policies and rule recheck separate', () => {
@@ -203,14 +207,25 @@ describe('approved prototype workspace tabs', () => {
   it.each([
     ['/admin/flow', 'diagnostics', 'home'], ['/admin/flow', 'changes', 'home'],
     ['/admin/products', 'quality', 'projects'], ['/admin/products', 'translations', 'projects'],
-    ['/admin/models', 'tasks', 'models'], ['/admin/models', 'capacity', 'models'],
-    ['/admin/models', 'connections', 'models'], ['/admin/models', 'history', 'models'],
   ])('keeps %s?tab=%s inside the designed workspace', (pathname, tab, owner) => {
     const location = resolveWorkspace(pathname, query(`tab=${tab}`));
     expect(location.workspace.id).toBe(owner); expect(location.tab).toBe(tab);
     expect(location.secondary).toEqual([]);
     const html = renderToStaticMarkup(<WorkspaceTabs location={location} pathname={pathname} search={`tab=${tab}`} />);
     expectActiveLink(html, `${pathname}?tab=${tab}`);
+  });
+});
+
+describe('LLM 운영 tabs after the 2026-11-07 redesign', () => {
+  it.each([
+    ['tasks', 'tasks', '/admin/models/tasks'], ['capacity', 'llm', '/admin/models/llm'],
+    ['connections', 'llm', '/admin/models/llm'], ['history', 'history', '/admin/models/history'], ['live', 'dashboard', '/admin/models'],
+  ])('maps the old /admin/models?tab=%s to the %s tab', (tab, mapped, href) => {
+    const location = resolveWorkspace('/admin/models', query(`tab=${tab}`));
+    expect(location.workspace.id).toBe('models'); expect(location.tab).toBe(mapped);
+    expect(location.secondary).toEqual([]);
+    const html = renderToStaticMarkup(<WorkspaceTabs location={location} pathname="/admin/models" search={`tab=${tab}`} />);
+    expectActiveLink(html, href);
   });
 });
 

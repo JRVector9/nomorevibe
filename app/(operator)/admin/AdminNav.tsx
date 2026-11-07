@@ -31,7 +31,7 @@ export const NAV_GROUPS: readonly { title: string; pages: readonly NavPage[] }[]
     title: "설정·기록",
     pages: [
       { href: "/admin", label: "크롤 설정", hint: "수집 규칙·검색 신호", icon: "sliders" },
-      { href: "/admin/models", label: "단계별 모델", hint: "1·2차·사람 검토·LLM 경로", icon: "sliders" },
+      { href: "/admin/models", label: "LLM 운영", hint: "대시보드·연결·한도·작업 배정", icon: "sliders" },
       { href: "/admin/models/limits", label: "실시간 한도", hint: "경로 한도·번역 묶음·틱 예산·장비 한도", icon: "sliders" },
       { href: "/admin/models/devices", label: "장비 한도", hint: "장비별 칸 수·역할 순서·빌려 쓰기", icon: "sliders" },
       { href: "/admin/models/helpers", label: "도우미 장비", hint: "쉬는 장비가 1·2차 검수 돕기·섀도·자동 정지", icon: "sliders" },

@@ -244,7 +244,7 @@ function SettingsFormBody({ settings, version, yields, secondControls, onRevert,
         actions={<a href="#second" className={`${chipClass} bg-bg-hover text-fg-2 hover:text-fg`}>발행 보호 {REVIEW_MODE_LABELS[settings.reviewMode]}</a>}>
         {/* 1차 심사 모델은 「작업 ↔ 모델」 순위뿐이다(PR C1) — 이 폼은 바꾸지 않는다 */}
         <TaskRanksPointer what="1차 심사 모델(1·2·3순위)" />
-        <Link href="/admin/models" prefetch={false} className="text-[13px] font-semibold text-accent-ink hover:underline">모델 운영 현황 →</Link>
+        <Link href="/admin/models" prefetch={false} className="text-[13px] font-semibold text-accent-ink hover:underline">LLM 운영 →</Link>
         <div className="flex flex-col gap-1.5">
           <label htmlFor="reviewConcurrency" className={labelClass}>동시 실행 수</label>
           <div className="flex flex-wrap items-start gap-4">

@@ -27,7 +27,7 @@ export const saveCapacityDevice = webWriteAction(async function saveCapacityDevi
       expectedVersion: version === "" ? null : Number(version), policyHash: form.get("policyHash") }, admin.login)
       : await saveAdminCapacityDevice(parsed!.input, parsed!.expectedVersion, admin.login);
     if (!result.ok) return { issues: result.issues.map(capacityDeviceIssueMessage) };
-    for (const path of ["/admin/models/devices", "/admin/models/limits", "/admin/models", "/admin/status"]) revalidatePath(path);
+    for (const path of ["/admin/models/devices", "/admin/models/limits", "/admin/models", "/admin/models/llm", "/admin/status"]) revalidatePath(path);
     const changed = result.changes.length ? ` 바뀐 값: ${result.changes.join(" · ")}` : " 바뀐 값이 없습니다.";
     return { ok: true, message: `${result.created ? "만들었습니다" : "저장했습니다"}(장비 ${result.deviceId}, 판 ${result.version}). ${shared ? "이 엔진을 쓰는 모든 작업이 이 한도를 함께 사용합니다. " : ""}다음 입장 판정부터 바로 쓰입니다 — DRAIN 불필요.${changed}` };
   } catch (error) {
