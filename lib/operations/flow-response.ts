@@ -1,5 +1,6 @@
 import type { Conveyor, Station, StationKey } from "./conveyor-model";
 import type { OperatorDesk } from "./operator-desk-model";
+import { LLM_RETRY_HREF } from "./llm-ops-links";
 
 /**
  * 장애 대응 — 전체 흐름의 칸을 누르면 열리는 "이 자리에서 할 일". DB 를 읽지 않는 순수 함수다.
@@ -56,8 +57,8 @@ function equipmentSteps(desk: OperatorDesk | null): { checks: string[]; steps: R
       where: "화면 조치 없음 — scripts/ops/model-owner-gone.ts mark → close-review(PR #800). 판정 근거를 확인한 뒤 운영자가 실행" });
   }
   if (ledger && (ledger.reasons.includes("review_backlog") || ledger.reasons.includes("review_stale") || ledger.reviewCount > 0)) {
-    steps.push({ kind: "link", label: `확인 못함(미확정) ${n(ledger.reviewCount)}건 사람 검토로 닫기`, href: "/admin/models#review", risk: "careful",
-      why: "점유하지 않는 미확정 행이 쌓이면 review_backlog·review_stale 경보가 납니다", undo: "닫은 검토는 다시 열리지 않습니다(점유에는 영향 없음)" });
+    steps.push({ kind: "link", label: `확인 못함(미확정) ${n(ledger.reviewCount)}건 다시 대기열에 넣거나 닫기`, href: LLM_RETRY_HREF, risk: "careful",
+      why: "점유하지 않는 미확정 행이 쌓이면 review_backlog·review_stale 경보가 납니다", undo: "닫은 행은 다시 열리지 않습니다(점유에는 영향 없음) · 다시 넣은 작업은 그 단계가 다시 실행합니다" });
   }
   return { checks, steps };
 }

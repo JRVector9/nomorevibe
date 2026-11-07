@@ -7,6 +7,8 @@ import { elapsedModelTime, modelStageId, modelStageLabel } from "./admin-models-
 import type { StationLlm } from "./conveyor-llm";
 import type { BeltTone, Conveyor } from "./conveyor-model";
 import { FLOW_MODEL_STAGES, type FlowModelStage } from "./flow-model-catalog";
+import { LLM_RETRY_HREF } from "./llm-ops-links";
+export { LLM_RETRY_HREF, llmRetryRowHref } from "./llm-ops-links";
 
 /**
  * 「LLM 운영」 개편(2026-11-07 승인 시안 PR 1·2)의 화면 모형 — DB 를 읽지 않는 순수 함수다.
@@ -127,12 +129,16 @@ export type DashboardInput = Readonly<{
   jobs: readonly JobPause[] | null;
   /** AI 연결(장비 이름표·한도 불일치·목록 못 읽음). null = 읽지 못함 */
   connections: readonly AiConnectionView[] | null;
+  /** 「다시 대기열」을 서버가 지원하는 단계인가(model-capacity-requeue canRequeueUnknownRoute). 없으면 할 일에 바로 누르는 단추를 두지 않는다. */
+  requeueSupported?: (routeId: string) => boolean;
 }>;
 export type DashboardKpi = Readonly<{ id: "running" | "waiting" | "settled" | "retry"; label: string; value: string; foot: string; level: LlmOpsLevel }>;
 export type DashboardDevice = Readonly<{ deviceId: string; label: string; held: number; limit: number | null; percent: number | null; waiting: number | null;
   lending: boolean; level: LlmOpsLevel; note: string | null }>;
 export type DashboardStage = Readonly<{ id: string; label: string; level: LlmOpsLevel; status: string; model: string | null; detail: string | null; href: string }>;
-export type DashboardTodo = Readonly<{ id: string; level: LlmOpsLevel; title: string; detail: string; href: string; action: string }>;
+/** retry: 결과 미확정을 그 자리에서 다시 대기열에 넣는 단추(단계마다, 서버 지원 단계만) — 기록 › 재실행 패널과 같은 서버 동작이다. */
+export type DashboardTodo = Readonly<{ id: string; level: LlmOpsLevel; title: string; detail: string; href: string; action: string;
+  retry?: readonly { routeId: string; label: string; count: number }[] }>;
 export type DashboardView = Readonly<{
   readable: boolean; observedAt: string | null; flowAt: string | null;
   banner: { level: LlmOpsLevel; title: string; lines: string[] };
@@ -196,6 +202,15 @@ function buildStage(stage: FlowModelStage, input: DashboardInput, paused: Set<st
   }
   if (pausedTasks.length) detail = [`일부 중지: ${pausedText}`, detail].filter(Boolean).join(" · ");
   return { ...base, level, status, detail };
+}
+
+/** 할 일에 바로 두는 「다시 대기열」 단추 — 지원 단계의 미확정만, 많은 것부터 둘까지(나머지는 재실행 패널에서). */
+function retryButtons(rows: readonly AdminModelMetrics[], supported: DashboardInput["requeueSupported"]) {
+  if (!supported) return undefined;
+  const byRoute = rows.reduce((map, row) => row.indeterminate > 0 ? map.set(row.routeId, (map.get(row.routeId) ?? 0) + row.indeterminate) : map, new Map<string, number>());
+  const buttons = [...byRoute].filter(([routeId]) => supported(routeId)).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, 2)
+    .map(([routeId, count]) => ({ routeId, label: routeTaskLabel(routeId), count }));
+  return buttons.length ? buttons : undefined;
 }
 
 export function buildDashboardView(input: DashboardInput): DashboardView {
@@ -278,7 +293,7 @@ export function buildDashboardView(input: DashboardInput): DashboardView {
     todos.push({ id: "indeterminate", level: "warn", title: `미확정 ${fmt(indeterminate)}건 정리`,
       detail: oldest ? `가장 오래된 것: ${routeTaskLabel(oldest.routeId)} · ${oldest.model} · ${elapsedModelTime(oldest.stateSince, observation.observedAt)} 전${oldest.localEndRecorded ? " · 로컬 종료 기록 있음" : ""}`
         : "근거를 보고 다시 대기열에 넣거나 닫습니다.",
-      href: "/admin/models?advanced=1#review", action: "다시 대기열·닫기" });
+      href: LLM_RETRY_HREF, action: "재실행 패널", retry: retryButtons(rows, input.requeueSupported) });
   }
   for (const row of failureOnly.slice(0, 2)) todos.push({ id: `fail-${row.routeId}-${row.model}-${row.groupId}`, level: "bad",
     title: `${routeTaskLabel(row.routeId)} · ${row.model} 실패 ${fmt(row.failed1h)}건`, detail: `최근 1시간 성공 0건(장비 ${labels.get(row.groupId) ?? row.groupId}) — 연결 상태와 까닭을 확인하세요.`,

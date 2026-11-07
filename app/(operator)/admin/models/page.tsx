@@ -20,10 +20,10 @@ import { ensureReviewTaskRanks } from "@/lib/crawl/review-task-ranks";
 import { secondReviewVoterSets } from "@/lib/crawl/second-review-voters";
 import { readAdminModelsObservation } from "@/lib/operations/admin-models-repository";
 import { LiveModels } from "./LiveModels";
-import { UnknownReviewList } from "./UnknownReviewList";
 import { DevicesPanel } from "./DevicesPanel";
 import { HelpersFold, type AssignmentSourceView } from "./HelpersFold";
-import { capacityMonitorThresholds, readModelCapacityReviewQueue, readModelCapacityUnknowns } from "@/lib/operations/model-capacity-unknowns";
+import { capacityMonitorThresholds, readModelCapacityUnknowns } from "@/lib/operations/model-capacity-unknowns";
+import { LLM_RETRY_HREF } from "@/lib/operations/llm-ops-links";
 import { buildModelCards, modelContractLinks, modelRecoveryBlocked, type CapacityAlarmSummary, type ModelContractLink, type ModelStageAssignment } from "@/lib/operations/admin-models-view";
 import { AI_TEXT_TASK_IDS } from "@/lib/llm/ai-tasks";
 import { TextTaskRanks } from "@/lib/llm/ai-task-resolver";
@@ -121,13 +121,17 @@ async function ModelsWorkspace({ readOnly }: { readOnly: boolean }) {
   return <>
     <section className="panel" id="model-advanced" aria-labelledby="model-advanced-title">
       <div className="panel-head"><div><h3 id="model-advanced-title">고급 설정 · 기존 운영·제어·모델 설정</h3>
-        <p>처음 설정하거나 장애를 분석할 때 여는 기존 화면입니다. 연결 확인·모델 재시작·정식 해제·미확정 다시 대기열·장비 상세·도우미·참고를 옮기기 전까지 그대로 둡니다.
+        <p>처음 설정하거나 장애를 분석할 때 여는 기존 화면입니다. 연결 확인·모델 재시작·정식 해제·장비 상세·도우미·참고를 옮기기 전까지 그대로 둡니다. 미확정 다시 대기열·닫기는 「기록」으로 옮겼습니다.
           장비 한도·실시간 한도·도우미·모델 배정·계약·사람 확인·검색 모델은 위 「고급 설정」 줄에서 엽니다.</p></div></div>
       <div className="panel-body stack">
     <Suspense fallback={<p aria-busy="true" className="text-[13px]">운영 DB 실측 확인 중…</p>}><LiveModelsSlot assignments={assignments} models={registry.models} contracts={contracts} humanProbe={humanProbe} served={servedModels} read={observationRead} readOnly={readOnly} /></Suspense>
     <div className="grid gap-3 [grid-template-columns:minmax(0,7fr)_minmax(0,5fr)] max-[980px]:grid-cols-1">
       <Suspense fallback={<p aria-busy="true" className="text-[13px]">장비 한도 확인 중…</p>}><DevicesSlot models={registry.models} /></Suspense>
-      <Suspense fallback={<p aria-busy="true" className="text-[13px]">사람 검토 목록 확인 중…</p>}><UnknownReviewSlot /></Suspense>
+      <section className="min-w-0 rounded-xl border border-line bg-bg-card p-4" aria-labelledby="unknown-moved-heading">
+        <h2 id="unknown-moved-heading" className="text-[15px] font-semibold">확인 못함 · 다시 대기열</h2>
+        <p className="mt-2 text-[13px] text-fg-2">결과 미확정 호출을 다시 대기열에 넣거나 사유를 남겨 닫는 곳은 「기록 › 재실행 대기」 한 곳으로 옮겼습니다.</p>
+        <Link prefetch={false} href={LLM_RETRY_HREF} className="mt-2 inline-block text-[13px] font-semibold text-accent-ink">재실행 대기 열기 →</Link>
+      </section>
     </div>
     <Suspense fallback={<p aria-busy="true" className="text-[13px]">도우미·배정 출처·새 잡 확인 중…</p>}><HelpersSlot contracts={contracts} /></Suspense>
     <details id="ref" className="min-w-0 rounded-xl border border-line bg-bg-card scroll-mt-28 md:scroll-mt-16">
@@ -229,10 +233,6 @@ async function SearchModelsSlot() {
 }
 
 
-
-async function UnknownReviewSlot() {
-  return <UnknownReviewList queue={await readModelCapacityReviewQueue()} />;
-}
 
 function SavedProbeNote({ label }: { label: string }) {
   return <section className="rounded-xl border border-line bg-bg-card p-4"><h2 className="text-[15px] font-semibold">{label}</h2>

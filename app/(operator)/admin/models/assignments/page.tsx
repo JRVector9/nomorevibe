@@ -13,6 +13,7 @@ import { AssignmentsForm } from "../limits/AssignmentsForm";
 import { AssignmentForm, type AssignmentFormValues } from "./AssignmentForm";
 import { AssignmentStageTable } from "./AssignmentTable";
 import { ImportCard } from "./ImportCard";
+import { llmHistoryHref, RECENT_AUDIT_ROWS } from "@/lib/operations/llm-ops-history";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "모델 배정 — NoMoreVibe", robots: { index: false } };
@@ -86,18 +87,18 @@ export default async function ModelAssignmentsPage({ searchParams }: Props) {
       <ImportCard preview={preview} readOnly={view.readOnly} confirmWord={ASSIGNMENT_LIVE_CONFIRM} />
     </section>
     <section id="audit" className="grid gap-2 scroll-mt-6">
-      <h2 className="text-[18px] font-semibold">최근 기록 ({view.audit.length})</h2>
+      <h2 className="text-[18px] font-semibold">최근 기록 {Math.min(view.audit.length, RECENT_AUDIT_ROWS)}건</h2>
       {view.audit.length === 0 ? <p className="text-[13px] text-fg-3">아직 기록이 없습니다.</p>
         : <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-[13px]"><thead><tr className="border-b border-line">
           <th className="py-2 pr-3">시각</th><th className="py-2 pr-3">누가</th><th className="py-2 pr-3">배정 · 판</th><th className="py-2 pr-3">바뀐 값</th></tr></thead>
-          <tbody>{view.audit.map(row => <tr key={row.id} className="border-b border-line align-top">
+          <tbody>{view.audit.slice(0, RECENT_AUDIT_ROWS).map(row => <tr key={row.id} className="border-b border-line align-top">
             <td className="py-2 pr-3 whitespace-nowrap">{formatListTime(row.at, now)}</td>
             <td className="py-2 pr-3">{row.actor}</td>
             <td className="py-2 pr-3"><code>{row.target}</code>{row.version !== null && <> · <span className="font-mono">{row.version}</span></>}</td>
             <td className="py-2 pr-3">{row.ok ? (row.changes.length ? row.changes.map(line => <div key={line}>{line}</div>) : "—")
               : <span className="text-red-600">{row.error ? modelAssignmentIssueMessage(row.error) : "거절"}</span>}</td>
           </tr>)}</tbody></table></div>}
-      <Link href="/admin/activity" prefetch={false} className="text-[13px] font-semibold text-accent-ink">작업 로그에서 전체 보기 →</Link>
+      <Link href={llmHistoryHref({ kind: "rank" })} prefetch={false} className="text-[13px] font-semibold text-accent-ink">LLM 운영 › 기록에서 전체 보기 →</Link>
     </section>
   </main>;
 }

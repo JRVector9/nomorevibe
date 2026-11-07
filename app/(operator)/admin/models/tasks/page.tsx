@@ -14,6 +14,7 @@ import { TaskImportCard } from "./TaskImportCard";
 import { TaskRanksBoard, type TaskRankLine } from "./TaskRanksBoard";
 import { modelPickerConnectionDevice, modelPickerConnectionLabel, modelPickerConnectionModels, modelPickerModelLabel, modelPickerVisibleText } from "../model-picker-display";
 import "./tasks.css";
+import { llmHistoryHref, RECENT_AUDIT_ROWS } from "@/lib/operations/llm-ops-history";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "작업 배정 · LLM 운영 — NoMoreVibe", robots: { index: false } };
@@ -118,18 +119,18 @@ export default async function AiTasksPage({ searchParams }: Props) {
       <div className="px-3 pb-3"><TaskImportCard preview={preview} confirmWord={AI_TASK_IMPORT_CONFIRM} /></div>
     </details>
     <details id="audit" className={FOLD}>
-      <summary className={SUMMARY}><h2>최근 기록</h2><span className="text-[13px] font-normal text-fg-3">{view.audit.length}건</span></summary>
+      <summary className={SUMMARY}><h2>최근 기록</h2><span className="text-[13px] font-normal text-fg-3">최근 {Math.min(view.audit.length, RECENT_AUDIT_ROWS)}건</span></summary>
       <div className="grid gap-2 px-3 pb-3">
       {view.audit.length === 0 ? <p className="text-[13px] text-fg-3">아직 기록이 없습니다.</p>
         : <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-[13px]"><thead><tr className="border-b border-line">
           <th className="py-2 pr-3">시각</th><th className="py-2 pr-3">누가</th><th className="py-2 pr-3">무엇</th><th className="py-2 pr-3">대상</th><th className="py-2 pr-3">내용</th></tr></thead>
-          <tbody>{view.audit.map(row => <tr key={row.id} className="border-b border-line align-top">
+          <tbody>{view.audit.slice(0, RECENT_AUDIT_ROWS).map(row => <tr key={row.id} className="border-b border-line align-top">
             <td className="py-2 pr-3 whitespace-nowrap">{formatListTime(row.at, now)}</td><td className="py-2 pr-3">{row.actor}</td>
             <td className="py-2 pr-3">{ACTION_LABELS[row.action] ?? row.action}</td>
             <td className="py-2 pr-3">{row.action === "ai-task-models-save" || row.action === "ai-task-execution-save" ? aiTaskTargetLabel(row.target) : row.target}</td>
             <td className={`py-2 pr-3 ${row.ok ? "" : "text-red-600"}`}>{row.summary}</td>
           </tr>)}</tbody></table></div>}
-      <Link href="/admin/activity" prefetch={false} className="text-[13px] font-semibold text-accent-ink">작업 로그에서 전체 보기 →</Link>
+      <Link href={llmHistoryHref()} prefetch={false} className="text-[13px] font-semibold text-accent-ink">LLM 운영 › 기록에서 전체 보기 →</Link>
       </div>
     </details>
   </main>;
