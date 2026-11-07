@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock("@/app/(operator)/admin/models/operation-actions", () => ({ probeAdminModel: vi.fn() }));
-vi.mock("@/app/(operator)/admin/models/ops-runner-actions", () => ({ submitAdminModelOperation: vi.fn(), readAdminModelOperation: vi.fn() }));
+vi.mock("@/app/(operator)/admin/models/ops-runner-actions", () => ({ submitAdminModelOperation: vi.fn(), readAdminModelOperation: vi.fn(), cancelAdminModelOperation: vi.fn() }));
 vi.mock("@/app/(operator)/admin/models/actions", () => ({ saveReviewModels: vi.fn() }));
 vi.mock("@/app/(operator)/admin/models/stage-model-actions", () => ({ saveAdminStageModels: vi.fn() }));
 import { LiveModels, StageStatusRibbon, ThroughputMetrics } from "@/app/(operator)/admin/models/LiveModels";

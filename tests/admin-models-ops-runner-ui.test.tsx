@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it, vi } from "vitest";
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
-vi.mock("@/app/(operator)/admin/models/ops-runner-actions", () => ({ submitAdminModelOperation: vi.fn(), readAdminModelOperation: vi.fn() }));
+vi.mock("@/app/(operator)/admin/models/ops-runner-actions", () => ({ submitAdminModelOperation: vi.fn(), readAdminModelOperation: vi.fn(), cancelAdminModelOperation: vi.fn() }));
 import { ModelOpsPanel, ModelOpsProgress } from "@/app/(operator)/admin/models/ModelOpsPanel";
 import { AdmissionControl } from "@/app/(operator)/admin/models/AdmissionControl";
 import { initialOpsState } from "@/lib/operations/ops-runner/contract";
@@ -68,4 +68,21 @@ it("compact: 준비 단계에서 멈춘 요청(경계를 잡지 않음)은 단�
   expect(html).toContain('data-level="bad"');
   expect(html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ")).toContain("멈춘 운영 요청: 요청 종료·해제 · 감사 #21000 · 중단");
   expect(html).toContain("사람이 장비에서 할 일");
+});
+
+it("시작 전 취소(2026-11-07): 실행기가 한 단계도 돌리지 않은 접수에만 단추를 두고, 취소된 요청은 단추를 잠그지 않고 끝난 목록에 사유와 함께 보인다", () => {
+  const queued = { ...initialOpsState(command, "jr"), auditId: 21956 };
+  const html = renderToStaticMarkup(createElement(AdmissionControl, { mode: "open", opsStates: [queued], readOnly: false, readable: true }));
+  expect(html).toContain(">시작 전 취소</button>");
+  expect(html).toMatch(/<button[^>]*disabled=""[^>]*>DRAIN 으로 · 접수 중지<\/button>/);
+  expect(renderToStaticMarkup(createElement(AdmissionControl, { mode: "open", opsStates: [queued], readOnly: true, readable: true }))).not.toContain("시작 전 취소");
+  const started = { ...queued, status: "running" as const, step: "drain" as const, steps: { prepare: "done" as const, drain: "running" as const } };
+  expect(renderToStaticMarkup(createElement(AdmissionControl, { mode: "open", opsStates: [started], readOnly: false, readable: true }))).not.toContain("시작 전 취소");
+  expect(renderToStaticMarkup(createElement(ModelOpsProgress, { state: queued, cancel: { action: vi.fn(), changed: vi.fn() } }))).toContain(">시작 전 취소</button>");
+  const cancelled = { ...queued, status: "cancelled" as const, code: "operator_cancelled", cancelledBy: "jr", cancelReason: "대상 요청 이미 닫힘", auditId: 25600 };
+  const after = renderToStaticMarkup(createElement(AdmissionControl, { mode: "open", opsStates: [cancelled], readOnly: false, readable: true }));
+  expect(after).not.toMatch(/disabled=""[^>]*>DRAIN 으로/);
+  expect(after).toContain("끝난 운영 요청 1건");
+  expect(after).toContain("시작 전 취소됨 · 사유: 대상 요청 이미 닫힘");
+  expect(after).not.toContain("처리 안 된 운영 요청");
 });

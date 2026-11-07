@@ -10,7 +10,7 @@ import { ModelOpsPanel } from "./ModelOpsPanel";
 export function AdmissionControl({ mode, opsStates, readOnly, readable }: {
   mode: "open" | "draining" | "disabled" | null; opsStates: OpsState[]; readOnly: boolean; readable: boolean;
 }) {
-  return <ModelOpsPanel compact mode={mode} requests={[]} models={[]} initialStates={opsStates} renderControls={controls =>
+  return <ModelOpsPanel compact readOnly={readOnly} mode={mode} requests={[]} models={[]} initialStates={opsStates} renderControls={controls =>
     <div className="llm-admission-action">
       <button type="button" className="button" disabled={readOnly || !readable || controls.disabled || !(mode === "open" || mode === "draining")}
         aria-describedby={controls.blockedBy} onClick={() => controls.open(mode === "open" ? "admission-pause" : "admission-open", "model-capacity")}>
