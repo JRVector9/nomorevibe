@@ -11,6 +11,7 @@ import { AdvancedEditorLinks, advancedEditorTitle } from "../advanced/AdvancedEd
 import { DeviceForm } from "./DeviceForm";
 import { DeviceTable } from "./DeviceTable";
 import { SharedLimitForm } from "./SharedLimitForm";
+import { llmHistoryHref, RECENT_AUDIT_ROWS } from "@/lib/operations/llm-ops-history";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: advancedEditorTitle("devices"), robots: { index: false } };
@@ -78,17 +79,17 @@ export default async function CapacityDevicesPage() {
       </div>
     </details>
     <section id="audit" className="grid gap-2 scroll-mt-6">
-      <h2 className="text-[18px] font-semibold">최근 저장 ({view.audit.length})</h2>
+      <h2 className="text-[18px] font-semibold">최근 저장 {Math.min(view.audit.length, RECENT_AUDIT_ROWS)}건</h2>
       {view.audit.length === 0 ? <p className="text-[13px] text-fg-3">아직 저장 기록이 없습니다.</p>
         : <div className="overflow-x-auto"><table className="w-full min-w-[720px] text-left text-[13px]"><thead><tr className="border-b border-line">
           <th className="py-2 pr-3">시각</th><th className="py-2 pr-3">누가</th><th className="py-2 pr-3">장비 · 판</th><th className="py-2 pr-3">바뀐 값</th></tr></thead>
-          <tbody>{view.audit.map(row => <tr key={row.id} className="border-b border-line align-top">
+          <tbody>{view.audit.slice(0, RECENT_AUDIT_ROWS).map(row => <tr key={row.id} className="border-b border-line align-top">
             <td className="py-2 pr-3 whitespace-nowrap">{formatListTime(row.at, now)}</td>
             <td className="py-2 pr-3">{row.actor}</td>
             <td className="py-2 pr-3"><code>{row.deviceId}</code>{row.version !== null && <> · <span className="font-mono">{row.version}</span></>}{!row.ok && <span className="ml-1 text-red-600">거절</span>}</td>
             <td className="py-2 pr-3">{row.ok ? (row.changes.length ? row.changes.map(line => <div key={line}>{line}</div>) : "—") : <span className="text-red-600">{row.error ? capacityDeviceIssueMessage(row.error) : "거절"}</span>}</td>
           </tr>)}</tbody></table></div>}
-      <Link href="/admin/activity" prefetch={false} className="text-[13px] font-semibold text-accent-ink">작업 로그에서 전체 보기 →</Link>
+      <Link href={llmHistoryHref({ kind: "limit" })} prefetch={false} className="text-[13px] font-semibold text-accent-ink">LLM 운영 › 기록에서 전체 보기 →</Link>
     </section>
   </main>;
 }

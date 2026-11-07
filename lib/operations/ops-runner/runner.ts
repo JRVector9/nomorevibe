@@ -1,5 +1,5 @@
 import type { ReclaimPolicyWithReference, DispatchReleaseRow } from "../dr/reclaim";
-import { opsStepsFor, type OpsState, type OpsStep } from "./contract";
+import { opsFinished, opsStepsFor, type OpsState, type OpsStep } from "./contract";
 
 export type StepResult = { ok: boolean; code?: string; manual?: boolean };
 export type OpsDriver = {
@@ -27,7 +27,7 @@ export async function runModelOpsRunner(input: AutoInput | { state: OpsState; dr
   }
   const { driver } = input;
   let state: OpsState = structuredClone(input.state);
-  if (state.status === "completed") return state;
+  if (opsFinished(state)) return state;
   for (const step of opsStepsFor(state)) {
     if (state.steps[step] === "done") continue;
     const previous = state.steps[step];

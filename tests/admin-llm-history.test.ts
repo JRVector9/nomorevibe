@@ -1,0 +1,92 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+import { ACTION_GROUPS } from "@/app/(operator)/admin/activity/labels";
+import { buildRetryView, LLM_HISTORY_ACTIONS, LLM_HISTORY_KIND_IDS, LLM_HISTORY_KINDS, llmHistoryFilter, llmHistoryHref, llmHistoryKindOf, recentFailures,
+  RECENT_AUDIT_ROWS } from "@/lib/operations/llm-ops-history";
+import { LLM_RETRY_HREF, buildDashboardView } from "@/lib/operations/llm-ops-view";
+import type { CapacityReviewItem } from "@/lib/operations/model-capacity-unknowns";
+import { unavailableAdminModels } from "@/lib/operations/admin-models-observation";
+import { LLM_NOW, llmConnections, llmConveyor, llmObservation } from "./fixtures/llm-ops";
+
+const item = (n: number, over: Partial<CapacityReviewItem> = {}): CapacityReviewItem => ({ requestId: `7e2c1a90-0000-4000-8000-00000000000${n}`, routeId: "crawl-agent-review",
+  provider: "local-direct", model: "qwen3.8-flash-next", groupId: "gpu3090-qwen", providerBudgetId: "gpu3090-qwen", workKey: `candidate:${n}`, logicalWorkKey: null,
+  ownerInstanceId: "m3-reviewer", dispatchedAt: `2026-11-07T05:1${n}:00.000Z`, markedAt: null, reason: "client_timeout", oldPolicy: false, localEndRecorded: false, ...over });
+
+describe("변경 기록 갈래 — 작업 로그 「LLM 운영」 묶음을 빠짐없이 한 번씩 나눈다", () => {
+  it("네 갈래의 합이 ACTION_GROUPS.llm 과 같고 겹치지 않는다", () => {
+    expect([...LLM_HISTORY_ACTIONS].sort()).toEqual([...ACTION_GROUPS.llm.actions].sort());
+    expect(new Set(LLM_HISTORY_ACTIONS).size).toBe(LLM_HISTORY_ACTIONS.length);
+    expect(LLM_HISTORY_KIND_IDS.map(kind => LLM_HISTORY_KINDS[kind].label)).toEqual(["연결", "한도", "순위", "조치"]);
+    expect(llmHistoryKindOf("runtime-settings-save")).toBe("limit");
+    expect(llmHistoryKindOf("ai-task-models-save")).toBe("rank");
+    expect(llmHistoryKindOf("model-capacity-unknown-requeued")).toBe("action");
+    expect(llmHistoryKindOf("ai-connection-save")).toBe("connection");
+    expect(llmHistoryKindOf("job-pause")).toBeNull();
+  });
+
+  it("주소 거르기 — 모르는 갈래는 전체, id 범위 밖은 버린다, 주소는 #audit 로 간다", () => {
+    expect(llmHistoryFilter({ kind: "limit", failed: "1", before: "25500" })).toEqual({ kind: "limit", failedOnly: true, before: 25500 });
+    expect(llmHistoryFilter({ kind: "toString", failed: "0", before: "9999999999" })).toEqual({ kind: null, failedOnly: false, before: null });
+    expect(llmHistoryFilter({})).toEqual({ kind: null, failedOnly: false, before: null });
+    expect(llmHistoryHref()).toBe("/admin/models/history#audit");
+    expect(llmHistoryHref({ kind: "rank", failedOnly: true, before: 7 })).toBe("/admin/models/history?kind=rank&failed=1&before=7#audit");
+    expect(RECENT_AUDIT_ROWS).toBe(3);
+  });
+});
+
+describe("재실행 패널 — 단계(route)별 묶음", () => {
+  it("모델·까닭·근거를 묶음 안에서 세고, 서버 지원 여부를 그대로 싣는다", () => {
+    const view = buildRetryView({ items: [item(1), item(2, { model: "opencode-go/deepseek-v4.1-flash", reason: "transport_unknown", localEndRecorded: true }),
+      item(3, { routeId: "human-deepseek-review", reason: null, oldPolicy: true })], truncated: true, error: null,
+    groups: [{ routeId: "crawl-agent-review", count: 140 }, { routeId: "human-deepseek-review", count: 1 }] }, route => route === "crawl-agent-review");
+    expect(view.total).toBe(141); expect(view.supportedTotal).toBe(140); expect(view.truncated).toBe(true);
+    const [first, human] = view.groups;
+    expect(first).toMatchObject({ routeId: "crawl-agent-review", label: "1차 AI 검수", count: 140, sampled: 2, supported: true, localEnded: 1, oldestAt: "2026-11-07T05:11:00.000Z" });
+    expect(first.models.map(model => [model.label, model.count])).toEqual([["opencode-go/deepseek-v4.1-flash", 1], ["qwen3.8-flash-next", 1]]);
+    expect(first.reasons.map(reason => reason.label)).toEqual(["시간 초과", "결과 모름"]);
+    expect(human).toMatchObject({ supported: false, oldPolicy: 1 });
+    expect(human.reasons[0].label).toBe("사유 기록 없음");
+  });
+  it("묶음 수를 못 읽었으면 목록에서 세고, 목록을 못 읽었으면 readable=false", () => {
+    expect(buildRetryView({ items: [item(1), item(2)], truncated: false, error: null, groups: [] }, () => true).groups).toMatchObject([{ routeId: "crawl-agent-review", count: 2 }]);
+    expect(buildRetryView({ items: [], truncated: false, error: "statement timeout", groups: [] }, () => true)).toMatchObject({ readable: false, total: 0, error: "statement timeout" });
+  });
+});
+
+describe("최근 1시간 실패 · 대시보드 할 일", () => {
+  it("실패가 있는 줄만 많은 순으로, 장부를 못 읽었으면 null", () => {
+    const rows = recentFailures(llmObservation())!;
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every(row => row.failed > 0)).toBe(true);
+    expect(rows.map(row => row.failed)).toEqual([...rows.map(row => row.failed)].sort((a, b) => b - a));
+    expect(recentFailures(unavailableAdminModels())).toBeNull();
+  });
+  it("미확정 할 일은 기록 › 재실행으로 잇고, 서버가 지원하는 단계에만 바로 누르는 단추를 둔다", () => {
+    const input = { now: LLM_NOW, observation: llmObservation(), conveyor: llmConveyor(), jobs: [], connections: llmConnections };
+    const todo = (view: ReturnType<typeof buildDashboardView>) => [...view.todos].find(entry => entry.id === "indeterminate");
+    const supported = todo(buildDashboardView({ ...input, requeueSupported: () => true }));
+    expect(supported).toMatchObject({ href: LLM_RETRY_HREF, action: "재실행 패널" });
+    expect(supported?.retry?.[0]).toMatchObject({ count: 1 });
+    expect(todo(buildDashboardView({ ...input, requeueSupported: () => false }))?.retry).toBeUndefined();
+    expect(todo(buildDashboardView(input))?.retry).toBeUndefined();
+  });
+});
+
+describe("하위 화면의 변경 기록은 최근 3건만, 나머지는 기록 한 표로", () => {
+  const root = path.resolve(__dirname, "..");
+  it.each([["devices", 'llmHistoryHref({ kind: "limit" })'], ["limits", 'llmHistoryHref({ kind: "limit" })'], ["helpers", 'llmHistoryHref({ kind: "limit" })'],
+    ["assignments", 'llmHistoryHref({ kind: "rank" })'], ["tasks", "llmHistoryHref()"]])("%s", (page, link) => {
+    const source = readFileSync(path.join(root, `app/(operator)/admin/models/${page}/page.tsx`), "utf8");
+    expect(source).toContain("view.audit.slice(0, RECENT_AUDIT_ROWS).map(");
+    expect(source).not.toMatch(/view\.audit\.map\(/);
+    expect(source).toContain(`href={${link}}`);
+  });
+  it("확인 못함 목록은 고급 영역에서 빠졌고 옛 #review 주소를 쓰는 곳이 없다", () => {
+    const page = readFileSync(path.join(root, "app/(operator)/admin/models/page.tsx"), "utf8");
+    expect(page).not.toContain("UnknownReviewSlot");
+    for (const file of ["lib/operations/llm-ops-view.ts", "lib/operations/flow-response.ts", "app/(operator)/admin/models/ModelCallsPanel.tsx",
+      "app/(operator)/admin/models/LiveModels.tsx", "app/(operator)/admin/models/SummaryTiles.tsx", "app/(operator)/admin/models/ModelStageTable.tsx"])
+      expect(readFileSync(path.join(root, file), "utf8")).not.toMatch(/models(\?advanced=1)?#review|href="#review"|`#rv-/);
+  });
+});

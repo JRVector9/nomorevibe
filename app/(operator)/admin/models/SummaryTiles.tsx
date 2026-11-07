@@ -6,6 +6,7 @@ import type { RoleOverview } from "@/lib/operations/roles";
 import { READINESS_LABELS } from "../status/status-summary";
 import type { ModelOpsControls } from "./ModelOpsPanel";
 import { buttonSmall } from "../settings/Switch";
+import { LLM_RETRY_HREF } from "@/lib/operations/llm-ops-links";
 
 export type LeaseTile = Pick<RoleOverview, "role" | "reason" | "ownerInstanceId" | "ownerKind" | "ownerRelease" | "epoch" | "secondsUntilExpiry" | "updatedAgoSeconds">;
 const CHIP: Record<"ok" | "warn" | "bad" | "plain", string> = { ok: "border-up bg-up/10 text-up", warn: "border-warn bg-warn/10 text-warn", bad: "border-down bg-down/10 text-down", plain: "border-line bg-bg-soft text-fg" };
@@ -56,7 +57,7 @@ export function SummaryTiles({ observation, cards, controls, probes, leases, rea
         <span className="flex items-baseline gap-1.5"><b className={`font-mono text-[20px] ${unknown ? "text-down" : ""}`} data-sum="unknown">{unknown}</b><span className="text-[13px] text-fg-2">확인 못함</span></span>
       </div>
       <p className="text-[13px] text-fg-2 tabular-nums">최근 1시간 성공 <span className="font-mono text-up">{sum(cards, "succeeded1h")}</span> · 실패 <span className="font-mono text-down">{sum(cards, "failed1h")}</span> · 철회 <span className="font-mono">{sum(cards, "withdrawn1h")}</span></p>
-      <p className="text-[13px] text-fg-2">확인 못함은 슬롯을 점유하지 않음 · <a href="#review" className="text-accent-ink underline underline-offset-[3px]">사람 검토 목록 ↓</a></p>
+      <p className="text-[13px] text-fg-2">확인 못함은 슬롯을 점유하지 않음 · <a href={LLM_RETRY_HREF} className="text-accent-ink underline underline-offset-[3px]">재실행 대기 →</a></p>
     </div>
     <div className={tile}>
       <h2 className={head}>경보</h2>

@@ -22,27 +22,47 @@
 .llm-stamp { color: var(--muted); font-size: calc(13px + var(--admin-font-delta, 0px)); white-space: nowrap; }
 .llm-stamp.stale { color: var(--amber); }
 
-/* 판단 띠 + 접수 */
-.llm-top { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 340px); gap: var(--llm-gap); align-items: stretch; }
-.llm-banner { display: flex; gap: 14px; padding: 16px 18px; border: 1px solid var(--line); border-left-width: 5px; border-radius: 10px; background: var(--surface); min-width: 0; }
-.llm-banner[data-level=ok] { border-left-color: var(--green); background: var(--green-soft); }
-.llm-banner[data-level=warn] { border-left-color: var(--amber); background: var(--amber-soft); }
-.llm-banner[data-level=bad] { border-left-color: var(--red); background: var(--red-soft); }
-.llm-banner[data-level=unknown], .llm-banner[data-level=idle] { border-left-color: var(--muted); background: var(--surface-2); border-left-style: dashed; }
-.llm-banner-shape { flex: none; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 8px; background: var(--surface); font-size: 14px; }
-.llm-banner[data-level=ok] .llm-banner-shape { color: var(--green); }
-.llm-banner[data-level=warn] .llm-banner-shape { color: var(--amber); }
-.llm-banner[data-level=bad] .llm-banner-shape { color: var(--red); }
-.llm-banner-body { min-width: 0; display: grid; gap: 6px; }
-.llm-banner-body h2 { font-size: calc(16px + var(--admin-font-delta, 0px)); line-height: 1.45; }
-.llm-banner-body ul { margin: 0; padding-left: 18px; display: grid; gap: 2px; font-size: calc(13px + var(--admin-font-delta, 0px)); }
-.llm-banner-meta { display: flex; flex-wrap: wrap; gap: 4px 14px; }
-.llm-card { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); padding: 14px 16px; min-width: 0; }
-.llm-admission { display: grid; gap: 8px; align-content: start; }
-.llm-admission-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
-.llm-admission-head h2 { font-size: calc(15px + var(--admin-font-delta, 0px)); }
-.llm-admission .llm-admission-detail { font-size: calc(13px + var(--admin-font-delta, 0px)); color: var(--muted); }
-.llm-admission p { font-size: calc(13px + var(--admin-font-delta, 0px)); }
+/* 판단 띠 + 접수 — 규칙을 관리자 셸(.admin-prototype .llm-ops) 안으로 좁힌다: prototype.css 의 요소 규칙(h2·p·button)이 층으로 옮겨 가든,
+   CSS 묶음(chunk) 순서가 바뀌든 이 값이 이긴다.
+   두 칸은 위에 맞춰 각자 높이로 둔다. stretch 였을 때 운영(2026-11-08)에서 접수 카드가 길어지자 띠가 그만큼 늘고, 띠 본문 grid 의
+   자동 행이 늘어난 높이를 나눠 가져 제목·줄·관측 시각이 위아래로 흩어졌다 — 띠 본문도 align-content: start 로 막는다. */
+.admin-prototype .llm-ops .llm-top { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 340px); gap: var(--llm-gap); align-items: start; }
+.admin-prototype .llm-ops .llm-banner { display: flex; align-items: flex-start; gap: 14px; padding: 16px 18px; border: 1px solid var(--line); border-left-width: 5px; border-radius: 10px; background: var(--surface); min-width: 0; }
+.admin-prototype .llm-ops .llm-banner[data-level=ok] { border-left-color: var(--green); background: var(--green-soft); }
+.admin-prototype .llm-ops .llm-banner[data-level=warn] { border-left-color: var(--amber); background: var(--amber-soft); }
+.admin-prototype .llm-ops .llm-banner[data-level=bad] { border-left-color: var(--red); background: var(--red-soft); }
+.admin-prototype .llm-ops .llm-banner[data-level=unknown], .admin-prototype .llm-ops .llm-banner[data-level=idle] { border-left-color: var(--muted); background: var(--surface-2); border-left-style: dashed; }
+.admin-prototype .llm-ops .llm-banner-shape { flex: none; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 8px; background: var(--surface); font-size: 14px; }
+.admin-prototype .llm-ops .llm-banner[data-level=ok] .llm-banner-shape { color: var(--green); }
+.admin-prototype .llm-ops .llm-banner[data-level=warn] .llm-banner-shape { color: var(--amber); }
+.admin-prototype .llm-ops .llm-banner[data-level=bad] .llm-banner-shape { color: var(--red); }
+.admin-prototype .llm-ops .llm-banner-body { flex: 1 1 auto; min-width: 0; display: grid; gap: 6px; align-content: start; }
+.admin-prototype .llm-ops .llm-banner-body h2 { margin: 0; font-size: calc(16px + var(--admin-font-delta, 0px)); line-height: 1.45; }
+.admin-prototype .llm-ops .llm-banner-body ul { margin: 0; padding-left: 18px; display: grid; gap: 2px; font-size: calc(13px + var(--admin-font-delta, 0px)); }
+.admin-prototype .llm-ops .llm-banner-meta { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.admin-prototype .llm-ops .llm-card { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); padding: 14px 16px; min-width: 0; }
+.admin-prototype .llm-ops .llm-admission { display: grid; gap: 8px; align-content: start; }
+.admin-prototype .llm-ops .llm-admission-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.admin-prototype .llm-ops .llm-admission-head h2 { margin: 0; font-size: calc(15px + var(--admin-font-delta, 0px)); }
+.admin-prototype .llm-ops .llm-admission p { margin: 0; font-size: calc(13px + var(--admin-font-delta, 0px)); }
+.admin-prototype .llm-ops .llm-admission .llm-admission-detail { color: var(--muted); }
+/* 접수 카드 안 운영 요청(ModelOpsPanel compact). 단추는 왼쪽에 제 너비로 — Tailwind flex-col 을 쓰던 때는 prototype.css 의
+   `.admin-prototype .flex { align-items: center }`(층 밖이라 유틸리티보다 늘 이긴다)가 단추·진행 상자를 가운데로 모았다. */
+.admin-prototype .llm-ops .llm-ops-runner { display: grid; gap: 8px; min-width: 0; justify-items: stretch; }
+.admin-prototype .llm-ops .llm-admission-action { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 6px; }
+.admin-prototype .llm-ops .llm-ops-req { display: grid; gap: 6px; min-width: 0; padding: 8px 10px; border: 1px solid var(--amber); border-radius: 8px; background: var(--amber-soft); }
+.admin-prototype .llm-ops .llm-ops-req[data-level=bad] { border-color: var(--red); background: var(--red-soft); }
+.admin-prototype .llm-ops .llm-ops-req-shape { margin-right: 5px; color: var(--amber); font-size: 10px; }
+.admin-prototype .llm-ops .llm-ops-req[data-level=bad] .llm-ops-req-shape { color: var(--red); }
+.admin-prototype .llm-ops .llm-ops-req b { font-weight: 650; }
+.admin-prototype .llm-ops .llm-ops-req [role=alert] { display: grid; gap: 2px; color: var(--red); }
+.admin-prototype .llm-ops .llm-ops-req details > summary,
+.admin-prototype .llm-ops .llm-ops-done > summary { cursor: pointer; width: fit-content; color: var(--blue); font-weight: 600; font-size: calc(13px + var(--admin-font-delta, 0px)); }
+.admin-prototype .llm-ops .llm-ops-req ol { margin: 6px 0 4px; padding-left: 22px; list-style: decimal; display: grid; gap: 1px; font-size: calc(13px + var(--admin-font-delta, 0px)); }
+.admin-prototype .llm-ops .llm-ops-req details p { color: var(--muted); }
+.admin-prototype .llm-ops .llm-ops-done ul { margin: 6px 0 0; padding: 0; list-style: none; display: grid; gap: 2px; color: var(--muted); font-size: calc(13px + var(--admin-font-delta, 0px)); }
+/* 확인 대화상자(OpsConfirm 의 Tailwind flex-col)도 같은 까닭으로 가운데로 모이지 않게 */
+.admin-prototype .llm-ops .llm-ops-runner .flex-col { align-items: stretch; }
 
 /* KPI */
 .llm-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--llm-gap); }
@@ -57,7 +77,7 @@
 /* 패널 */
 .llm-panel { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); min-width: 0; }
 .llm-panel-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
-.llm-panel-head h2 { font-size: calc(15px + var(--admin-font-delta, 0px)); }
+.admin-prototype .llm-ops .llm-panel-head h2 { margin: 0; font-size: calc(15px + var(--admin-font-delta, 0px)); }
 .llm-panel-body { padding: 12px 16px; display: grid; gap: 10px; }
 .llm-dash-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--llm-gap); align-items: start; }
 
@@ -68,6 +88,10 @@
 .llm-todo-title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-weight: 650; font-size: calc(14px + var(--admin-font-delta, 0px)); }
 .llm-todo-detail { color: var(--muted); font-size: calc(13px + var(--admin-font-delta, 0px)); overflow-wrap: anywhere; }
 .llm-todo .button { white-space: nowrap; }
+.llm-todo-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 6px; }
+/* 다시 대기열 확인 단계에서는 할 일 한 칸을 위아래로 쌓는다 — 미리보기 글이 제목 칸을 좁히지 않게 */
+.llm-todo:has(.llm-retry-form[data-confirming]) { grid-template-columns: minmax(0, 1fr); }
+.llm-todo:has(.llm-retry-form[data-confirming]) .llm-todo-actions { justify-content: flex-start; }
 .llm-empty { color: var(--muted); font-size: calc(13px + var(--admin-font-delta, 0px)); }
 
 /* 장비 점유 */
@@ -75,7 +99,7 @@
 .llm-device { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(90px, 1.4fr) auto; gap: 4px 12px; align-items: center; font-size: calc(13px + var(--admin-font-delta, 0px)); }
 .llm-device-name { min-width: 0; display: grid; }
 .llm-device-name b { overflow-wrap: anywhere; }
-.llm-device-name small { color: var(--muted); font-size: calc(13px + var(--admin-font-delta, 0px)); overflow-wrap: anywhere; }
+.admin-prototype .llm-ops .llm-device-name small { color: var(--muted); font-size: calc(13px + var(--admin-font-delta, 0px)); overflow-wrap: anywhere; }
 .llm-device-count { display: flex; align-items: center; gap: 6px; justify-content: flex-end; white-space: nowrap; }
 .llm-device-note { grid-column: 1 / -1; color: var(--muted); }
 .llm-bar { position: relative; height: 10px; border-radius: 5px; background: var(--surface-2); border: 1px solid var(--line); overflow: hidden; }
@@ -158,7 +182,7 @@
   .llm-cell-label { display: block; }
 }
 @media (max-width: 900px) {
-  .llm-top, .llm-dash-grid, .llm-conn-edit-body { grid-template-columns: minmax(0, 1fr); }
+  .admin-prototype .llm-ops .llm-top, .llm-dash-grid, .llm-conn-edit-body { grid-template-columns: minmax(0, 1fr); }
   .llm-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 560px) {
@@ -169,5 +193,27 @@
   .llm-device .llm-bar { grid-column: 1 / -1; grid-row: 2; }
   .llm-kpi-value { font-size: calc(22px + var(--admin-font-delta, 0px)); }
   .llm-todo { grid-template-columns: minmax(0, 1fr); }
-  .llm-banner { padding: 12px; gap: 10px; }
+  .admin-prototype .llm-ops .llm-banner { padding: 12px; gap: 10px; }
 }
+
+/* 기록 › 재실행 패널·변경 기록(PR 3) */
+.llm-retry-form { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.llm-retry-form[data-confirming] { padding: 6px 8px; border: 1px solid var(--amber); border-radius: 8px; background: var(--amber-soft); }
+.llm-retry-preview { font-size: calc(13px + var(--admin-font-delta, 0px)); max-width: 42ch; }
+.llm-retry-done { color: var(--green); font-weight: 600; font-size: calc(13px + var(--admin-font-delta, 0px)); }
+.llm-retry-error { color: var(--red); font-size: calc(13px + var(--admin-font-delta, 0px)); }
+.llm-retry-all { display: flex; justify-content: flex-end; }
+.llm-retry-items > summary { cursor: pointer; font-weight: 600; font-size: calc(13px + var(--admin-font-delta, 0px)); }
+.llm-retry-items > ul { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 8px; }
+.llm-retry-item { display: grid; gap: 4px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); font-size: calc(13px + var(--admin-font-delta, 0px)); scroll-margin-top: 72px; }
+.llm-retry-item:target { border-color: var(--amber); box-shadow: 0 0 0 2px var(--amber-soft); }
+.llm-retry-item-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.llm-retry-close { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.llm-retry-close input { flex: 1 1 220px; min-width: 0; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+.llm-break { overflow-wrap: anywhere; }
+.llm-filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.llm-ops .llm-filter { padding: 3px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--muted); font-size: calc(13px + var(--admin-font-delta, 0px)); }
+.llm-ops .llm-filter:hover { border-color: var(--blue); }
+.llm-ops .llm-filter.active { border-color: var(--blue); background: var(--blue-soft); color: var(--blue); font-weight: 650; }
+.llm-pager { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; }
+.llm-recent-note { font-size: calc(13px + var(--admin-font-delta, 0px)); }

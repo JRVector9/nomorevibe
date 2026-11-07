@@ -54,7 +54,7 @@ describe("대시보드 화면 모형", () => {
     expect(view.banner.lines).toEqual(expect.arrayContaining(["최근 1시간 실패 2건(성공 394건).", "검색·후처리 단계를 확인하세요."]));
     expect(view.banner.lines.at(-1)).toBe("의도적 중지(잡 일시중지): 검색 키워드 검수 · 소개 검수");
     expect(view.todos.map(todo => todo.id)).toEqual(["indeterminate", `limit-${GPU}`, `limit-${SUPA}`]);
-    expect(view.todos[0]).toMatchObject({ href: "/admin/models?advanced=1#review", action: "다시 대기열·닫기" });
+    expect(view.todos[0]).toMatchObject({ href: "/admin/models/history#retry", action: "재실행 패널" });
     expect(view.todos[0].detail).toContain("1차 AI 검수 · qwen3.8-flash-next · 2시간 0분 전 · 로컬 종료 기록 있음");
     expect(view.todos[1]).toMatchObject({ href: `/admin/models/llm?edit=${GPU}#conn-${GPU}`, detail: "연결 폼의 칸 수 4, 장비 행 5(으)로 적용 중 — 실제로 쓰는 값은 장비 행입니다." });
     // OpenCode 한도 불일치(2/1)·m1 목록 못 읽음·잡 일시중지 둘은 셋 밖으로 밀린다

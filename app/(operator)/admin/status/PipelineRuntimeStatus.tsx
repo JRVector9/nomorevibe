@@ -105,7 +105,7 @@ function Models({ models }: { models: Runtime['models'] }) {
           <td>{row.dispatched + row.indeterminate === 0 ? '—' : row.oldestUnsettledMin === null ? '미확인' : `${number(row.oldestUnsettledMin)}분`}</td></tr>)}</tbody>
       </table></ScrollTable>}
     <p className={note}>점유는 유효 예약과 dispatched 입니다 — dispatched 는 정산 근거가 올 때까지 슬롯 하나 전체(full C)를 차지합니다.
-      확인 못함(indeterminate)은 full C 기록만 남고 슬롯을 점유하지 않으며 아무 단계도 막지 않습니다(2026-10-30) — 단계별 모델(/admin/models)의 「확인 못함 — 사람 검토」 목록에서 닫습니다.
+      확인 못함(indeterminate)은 full C 기록만 남고 슬롯을 점유하지 않으며 아무 단계도 막지 않습니다(2026-10-30) — LLM 운영 › 기록(/admin/models/history#retry)의 「재실행 대기」에서 다시 대기열에 넣거나 닫습니다.
       설정 상한은 정책값이며 실제 모델 제공용량을 인증하지 않습니다.</p>
   </section>;
 }

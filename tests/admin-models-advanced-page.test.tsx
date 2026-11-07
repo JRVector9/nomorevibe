@@ -52,7 +52,7 @@ vi.mock("@/lib/operations/model-route-status", () => ({ readModelRouteStatus: mo
 vi.mock("@/lib/operations/agent-client", () => ({ agentRequest: mocks.agent }));
 vi.mock("@/lib/operations/model-servers", () => ({ modelServerHealth: mocks.health }));
 vi.mock("@/app/(operator)/admin/models/operation-actions", () => ({ probeAdminModel: vi.fn() }));
-vi.mock("@/app/(operator)/admin/models/ops-runner-actions", () => ({ submitAdminModelOperation: vi.fn(), readAdminModelOperation: vi.fn() }));
+vi.mock("@/app/(operator)/admin/models/ops-runner-actions", () => ({ submitAdminModelOperation: vi.fn(), readAdminModelOperation: vi.fn(), cancelAdminModelOperation: vi.fn() }));
 vi.mock("@/app/(operator)/admin/models/actions", () => ({ saveReviewModels: vi.fn() }));
 vi.mock("@/app/(operator)/admin/models/stage-model-actions", () => ({ saveAdminStageModels: vi.fn() }));
 

@@ -37,6 +37,7 @@ import { HelpersFold, type AssignmentSourceView } from "../HelpersFold";
 import { HashTarget } from "./HashTarget";
 import { ModelRouteContracts } from "./ModelRouteContracts";
 import { TextTaskRanksStatus } from "./TextTaskRanksStatus";
+import { LLM_RETRY_HREF } from "@/lib/operations/llm-ops-links";
 
 /**
  * 고급 설정(/admin/models/advanced, 2026-11-07 승인 시안 PR 5) — 편집기 목록과 「장애 분석」.
@@ -110,8 +111,8 @@ export async function ModelsAdvancedAnalysis({ readOnly }: { readOnly: boolean }
         <p>단계 × 모델 표에서 연결 확인·모델 재시작·정식 해제를 합니다. 모델 재시작과 정식 해제는 되돌릴 수 없어 사유를 적어야 누를 수 있습니다.</p></div></div>
       <div className="panel-body stack">
         <Suspense fallback={<p aria-busy="true" className="text-[13px]">운영 DB 실측 확인 중…</p>}><LiveModelsSlot assignments={assignments} models={registry.models} contracts={contracts} humanProbe={humanProbe} served={servedModels} read={observationRead} readOnly={readOnly} /></Suspense>
-        <p id="review" className="notice scroll-mt-28 md:scroll-mt-16">확인 못함 · 사람 검토(다시 대기열·닫기)는 「기록」 화면에서 합니다.{" "}
-          <Link prefetch={false} href="/admin/models/history" className="font-semibold text-accent-ink">기록 →</Link></p>
+        <p id="review" className="notice scroll-mt-28 md:scroll-mt-16">확인 못함(결과 미확정)의 다시 대기열·닫기는 「기록 › 재실행 대기」에서 합니다.{" "}
+          <Link prefetch={false} href={LLM_RETRY_HREF} className="font-semibold text-accent-ink">재실행 대기 →</Link></p>
         <Suspense fallback={<p aria-busy="true" className="text-[13px]">장비 한도 확인 중…</p>}><DevicesSlot models={registry.models} /></Suspense>
         <Suspense fallback={<p aria-busy="true" className="text-[13px]">도우미·배정 출처·새 잡 확인 중…</p>}><HelpersSlot contracts={contracts} /></Suspense>
         <section id="llm-routes" className="grid min-w-0 gap-3 scroll-mt-28 md:scroll-mt-16 *:min-w-0" aria-label="작업 순위·경로 계약">
