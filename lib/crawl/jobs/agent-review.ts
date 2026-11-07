@@ -26,6 +26,7 @@ import { readBlockedFirstReviewerKeys } from "../first-reviewer-blocks";
 import { agentReviewBinding } from "../agent-review-ownership";
 import { itemBindingHash } from "@/lib/jobs/items/types";
 import { AGENT_REVIEW_ALL_SKIPPED } from "../agent-review-skip";
+import { observeReviewCliHost } from "../review-cli-host-observe";
 
 const MAX_CONCURRENT_REVIEWS = 16;
 const TICK_MS = 40_000;
@@ -155,6 +156,9 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
         ctx.log("crawl.agent_review_suspected_spam", { repo: candidate.repo, held });
         return;
       }
+      // OpenCode 순위: claim TX 의 예약 전 계약 확인은 이 워커가 60초 안에 본 호스트 버전이 있어야 지난다 — TX 밖에서 낡았을 때만 카탈로그로
+      // 채운다(실패하면 아무것도 바꾸지 않아 오늘처럼 provider_contract_unavailable → 다음 순위). 걸린 시간은 아래 여유 확인이 다시 잰다
+      await observeReviewCliHost("crawl-agent-review", { provider, model });
       if (!canAdmit() || !canStartModel()) return skip(candidate.repo, notStartable(), { provider: reviewProvider, model });
       const context = { candidate, document, settings, input };
       let claim: ModelCapacityReviewClaim | CliModelCapacityReviewClaim;

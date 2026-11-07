@@ -98,6 +98,10 @@ export function setCliHostObservedVersion(version: string): void {
   if (cliHostVersion?.version !== version) toolVersionEpoch++;
   cliHostVersion = { version, observedAt: Date.now() };
 }
+/** 워커가 호스트 카탈로그로 OpenCode 버전을 본 지 얼마나 됐나(ms) — 본 적이 없으면 null. 예약 전 관측 갱신(cli-host-observation)이 낡음을 잰다. */
+export function cliHostObservationAgeMs(): number | null {
+  return cliHostVersion ? Date.now() - cliHostVersion.observedAt : null;
+}
 const nativeOpencodeHost = (): boolean => process.env.OPENCODE_HOST_LOCAL === "1";
 /** 도구 버전 확인 결과가 바뀔 때마다 오르는 수 — 순위 묶기의 기억(review-task-ranks)이 이것으로 낡음을 안다. */
 export const cliToolVersionEpoch = (): number => toolVersionEpoch;

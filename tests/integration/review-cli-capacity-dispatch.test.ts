@@ -17,7 +17,12 @@ import { executeFirstReviewConsumerItem } from '@/lib/crawl/agent-review-item-li
 import { executeSecondReviewConsumerItem } from '@/lib/crawl/second-review-item-lifecycle';
 import { secondReviewGeneration } from '@/lib/crawl/second-review-input';
 import { agentReviewBinding } from '@/lib/crawl/agent-review-ownership';
-import { claudeCliTokenBound, type CliServingContract } from '@/lib/llm/cli-serving-contract';
+import { claudeCliTokenBound, cliContractRouteId, cliServingContractHash, type CliProvider, type CliServingContract } from '@/lib/llm/cli-serving-contract';
+import { cliDbContract } from '@/lib/llm/cli-db-contracts';
+import { setServingContractSnapshotForTest } from '@/lib/llm/serving-contract-store';
+import { setAiTaskModelsForTest } from '@/lib/llm/ai-task-models-snapshot';
+import { reviewCliServingContract } from '@/lib/crawl/review-cli-call';
+import { resetCliHostObservationForTest } from '@/lib/operations/cli-host-observation';
 import { modelCapacityPolicyHash, type ModelCapacityPolicy } from '@/lib/llm/capacity';
 import { requestAi1ModelSlot, requestCliModelSlot, cancelReservedModelSlot } from '@/lib/llm/capacity-repository';
 import { itemBindingHash } from '@/lib/jobs/items/types';
@@ -37,12 +42,14 @@ import { pinReviewRanks } from '../review-task-ranks-fixture';
  * 심사자는 「작업 ↔ 모델」 순위다(PR C1) — 1차 1순위 fake-model, 2차 투표자 칸 1 = [fake-model, fake-backup]. AI2 원 표의 1차 판단(first-model)은
  * 지금 1차 심사자의 것이어야 표가 유효하므로 AI2 시험은 1차 순위를 first-model 로 둔다(pinAi2Ranks).
  */
-const fixture = vi.hoisted(() => ({ contracts: [] as CliServingContract[] }));
-vi.mock('@/lib/llm/cli-serving-contract', async original => ({
-  ...await original<typeof import('@/lib/llm/cli-serving-contract')>(),
-  resolveCliServingContract: (routeId: string, provider: string, model: string) =>
-    fixture.contracts.find(value => value.routeId === routeId && value.provider === provider && value.model === model) ?? null,
-}));
+const fixture = vi.hoisted(() => ({ contracts: [] as CliServingContract[], realOpencode: false }));
+// realOpencode: OpenCode 시험(2026-11-07 교착 회귀)만 실제 resolver(DB 계약 행 + 이 워커가 본 호스트 버전)를 쓴다
+vi.mock('@/lib/llm/cli-serving-contract', async original => {
+  const actual = await original<typeof import('@/lib/llm/cli-serving-contract')>();
+  return { ...actual, resolveCliServingContract: (routeId: string, provider: string, model: string) =>
+    fixture.realOpencode && provider === 'opencode-cli' ? actual.resolveCliServingContract(routeId, provider as CliProvider, model)
+      : fixture.contracts.find(value => value.routeId === routeId && value.provider === provider && value.model === model) ?? null };
+});
 type Raw = Record<string, unknown>;
 type Snapshot = Record<string, Raw[]>;
 const marker = `pr05c4-${randomUUID().slice(0, 8)}`, model = 'fake-model', backup = 'fake-backup';
@@ -311,6 +318,78 @@ const requests = async () => (await admin`SELECT to_jsonb(r) AS row FROM model_c
 const events = async (id: unknown) => (await admin`SELECT kind,reason FROM model_capacity_events WHERE request_id=${String(id)}::uuid ORDER BY id`).map(row => row.reason ? `${row.kind}:${row.reason}` : row.kind);
 const votes = async (candidateId: number) => (await admin`SELECT to_jsonb(s) AS row FROM second_reviews s WHERE candidate_id=${candidateId} ORDER BY id`).map(row => row.row as Raw);
 const evidence = (row: Raw) => (row.terminal_evidence as { process: Raw } | null)?.process;
+
+/*
+ * OpenCode 1순위(2026-11-07 운영 교착): 「작업 ↔ 모델」 1차 1순위가 OpenCode CLI 연결이고 DB 계약 행이 있는데, 워커가 호스트 버전을 본 적이 없으면
+ * claim TX 의 예약 전 계약 확인이 늘 provider_contract_unavailable 이라 원격 prepare 에 닿지 못했다. 호스트는 fetch 로만 흉내 낸다(실제 브리지·CLI 없음).
+ * 순위·계약·장부·claim TX·job 은 실제다. run 응답은 잃은 것으로 둔다 — dispatch 가 commit 되고 호스트 run 이 시도됐다는 데까지가 「admit」 증명이다.
+ * 실패 시험을 먼저 둔다: 관측 버전은 프로세스 상태라, 성공 시험 뒤에는 60초 동안 새로운 관측이 남는다.
+ */
+const OC_MODEL = 'opencode-go/deepseek-v4.1-flash', OC_CONNECTION = '0d0e0f10-0000-4000-8000-0000000000aa';
+const OC_BASE = 'http://cli-host.test:3031/v1', OC_KEY = 'test-only-bridge-secret-32-characters-long', OC_BOOT = randomUUID();
+async function withOpencodeRank<T>(run: (rpc: string[]) => Promise<T>, catalogOk: boolean): Promise<T> {
+  const base = policy(), selected: ModelCapacityPolicy = { ...base, providerLimits: { ...base.providerLimits, 'opencode-host': 2 },
+    routes: [...base.routes, route('crawl-agent-review', 'opencode-cli', OC_MODEL, 'opencode-host')] };
+  await admin`UPDATE model_capacity_control SET policy=${JSON.stringify(selected)}::text::jsonb,policy_hash=${modelCapacityPolicyHash(selected)} WHERE id=1`;
+  const routeId = cliContractRouteId('opencode-cli', 'crawl-agent-review');
+  setServingContractSnapshotForTest([{ routeId, model: OC_MODEL, auth: 'none', apiKey: null,
+    contract: { ...cliDbContract('crawl-agent-review', 'opencode-cli', OC_MODEL, '1.19.5')!, routeId } }]);
+  pinReviewRanks(null);
+  setAiTaskModelsForTest([{ task: 'first-review', slot: 1, rank: 1, model: OC_MODEL, enabled: true, options: {}, connection: { id: OC_CONNECTION,
+    label: 'm3-opencode-host', kind: 'cli', baseUrl: OC_BASE, cliTool: 'opencode', deviceId: 'm3-opencode-host', enabled: true, models: null,
+    contextTokens: null, apiKey: OC_KEY, keyUnreadable: false } }]);
+  fixture.realOpencode = true; resetCliHostObservationForTest();
+  const rpc: string[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (url: URL | string, init: RequestInit) => {
+    if (String(url) !== `${OC_BASE}/rpc`) throw new Error('unexpected_external_http');
+    const request = JSON.parse(String(init.body)); rpc.push(request.action);
+    if (request.action === 'catalog') return catalogOk ? Response.json({ version: 1, bootId: OC_BOOT, cliVersion: '1.19.5',
+      observedAt: new Date().toISOString(), models: [{ id: OC_MODEL, label: 'DeepSeek', variants: ['low', 'high'], maxModelLen: null }] })
+      : new Response('unauthenticated', { status: 401 });
+    if (request.action === 'prepare') {
+      const contract = reviewCliServingContract('crawl-agent-review', 'opencode-cli', OC_MODEL)!, inputHash = request.data.input.inputHash;
+      const transport = { protocol: 'cli-process-v1', provider: 'opencode-cli', model: OC_MODEL, argvHash: 'a'.repeat(64), inputHash,
+        envPolicyHash: 'b'.repeat(64), cliContractHash: cliServingContractHash(contract), timeoutMs: request.data.options.timeoutMs,
+        maxStdoutBytes: 65_536, maxStderrBytes: 16_384 };
+      return Response.json({ kind: 'prepared', handle: { bootId: OC_BOOT, callId: randomUUID(), connectionId: OC_CONNECTION },
+        call: { kind: 'prepared_cli', routeId: 'crawl-agent-review', provider: 'opencode-cli', model: OC_MODEL, inputHash, transport,
+          totalTokenBound: contract.totalTokenBound } });
+    }
+    // run 응답을 잃었다 — run 을 보낸 뒤라 not_started 를 주장하지 않고 indeterminate 로 점유를 유지한다
+    throw new Error('host_response_lost');
+  }));
+  try { return await run(rpc); }
+  finally { fixture.realOpencode = false; setAiTaskModelsForTest(null); setServingContractSnapshotForTest(null); resetCliHostObservationForTest(); }
+}
+
+it('AI1 legacy job: OpenCode 1순위 — 호스트 카탈로그가 실패(인증 없음)하면 오늘처럼 prepare·slot·attempt 없이 미루고 그 순위를 쉰다', async () => {
+  const { candidate } = await source(); await install('open'); await withRole();
+  await withOpencodeRank(async rpc => {
+    expect(await tick()).toMatchObject({ status: 'completed', done: false, degraded: 'all_ranks_unusable' });
+    // 관측 갱신 한 번(실패)만 — 예약 전 확인이 닫혀 원격 prepare 로 가지 않는다
+    expect(rpc).toEqual(['catalog']);
+    expect(await attempts(candidate.id)).toEqual([]); expect(await requests()).toEqual([]); expect(await recorded()).toEqual([]);
+  }, false);
+});
+
+it('AI1 legacy job: OpenCode 1순위 — 인증된 호스트(카탈로그 정상)면 관측 없이 시작한 워커도 slot → 같은 TX attempt·dispatch → 호스트 run 까지 간다', async () => {
+  const { candidate } = await source(); await install('open'); await withRole();
+  await withOpencodeRank(async rpc => {
+    // run 응답을 잃은 호출(cli_error)은 이 틱의 모델 실패라 그 순위를 쉬고 미룸으로 끝난다(아래 pipe 쥔 손자 시험과 같은 결과) — 계약 없음 미룸이 아니다
+    expect(await tick()).toMatchObject({ status: 'deferred', reason: 'model_capacity' });
+    // TX 밖 관측 갱신 → (claim 사전 확인 통과) → prepare 의 정확한 버전 대조용 카탈로그 → prepare → commit 된 dispatch 로 run
+    expect(rpc).toEqual(['catalog', 'catalog', 'prepare', 'run']);
+    const [row, ...rest] = await requests();
+    expect(rest).toEqual([]);
+    expect(row).toMatchObject({ state: 'indeterminate', class: 'first', route_id: 'crawl-agent-review', provider: 'opencode-cli', model: OC_MODEL,
+      logical_work_key: `ai1:${candidate.id}`, provider_budget_id: 'opencode-host' });
+    expect(row.dispatch_binding).toMatchObject({ kind: 'ai1_legacy_cli', candidateId: candidate.id, provider: 'opencode-cli', model: OC_MODEL,
+      transport: { provider: 'opencode-cli', model: OC_MODEL } });
+    expect(await attempts(candidate.id)).toMatchObject([{ provider: 'opencode-cli', model: OC_MODEL, attempt_number: 1 }]);
+    // 워커는 OpenCode 를 로컬에서 띄우지 않는다
+    expect(await recorded()).toEqual([]);
+  }, true);
+});
 
 it('AI1 legacy job: open 이지만 운영 resolver(null)면 slot·attempt·spawn 없이 그 순위를 쉬게 하고, 남은 순위가 없으면 all_ranks_unusable 로 적는다', async () => {
   const { candidate } = await source(); await install('open'); await withRole(); fixture.contracts = [];
