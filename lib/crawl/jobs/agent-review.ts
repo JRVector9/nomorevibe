@@ -296,7 +296,9 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
         if (recorded.state !== "superseded") emitPipelineEvent("committed", { ...telemetry, state: recorded.state }, ctx.log);
         ctx.log("crawl.agent_reviewed", {
           repo: candidate.repo, provider, mode: settings.reviewMode, ...recorded,
-          ...(result.ok ? { decision: result.outcome.decision } : { error: result.error }),
+          // detail 은 고정 코드(예: opencode_output:no_text)일 때만 싣는다 — 다른 경로의 자유 글·모델 출력은 로그에 남기지 않는다
+          ...(result.ok ? { decision: result.outcome.decision } : { error: result.error,
+            ...(result.detail && /^[a-z0-9_]{1,40}:[a-z0-9_]{1,40}$/.test(result.detail) ? { detail: result.detail } : {}) }),
         });
       } finally {
         clearInterval(ownershipPoll);
