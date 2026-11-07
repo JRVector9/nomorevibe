@@ -1,7 +1,7 @@
 import { sql } from 'drizzle-orm';
 
 /**
- * Approved least-privilege PostgreSQL profiles for Oracle osaka-smoke services.
+ * Approved least-privilege PostgreSQL profiles for Oracle nomore-x services.
  *
  * The same table renders deploy/oracle/least-privilege.sql and verifies a session's effective privileges, so the
  * operator SQL and the runtime check cannot drift. Lock-only tables get UPDATE on their primary key column because

@@ -42,8 +42,9 @@ SLICE = 'nomorevibe-core.slice'
 # /nomorevibe.slice/nomorevibe-core.slice, never directly under the cgroup root (osaka-smoke 2026-10-20).
 SLICE_CGROUP = ('nomorevibe.slice', SLICE)
 SERVICE_USER = 'nomorevibe-core'
+# Internal logical host key kept from the old instance name; the OCI display name is now 'nomore-x'.
 HOST = 'oracle-osaka-smoke'
-TARGET = {'tenancy': 'surfguide', 'region': 'ap-osaka-1', 'instance': 'osaka-smoke'}
+TARGET = {'tenancy': 'surfguide', 'region': 'ap-osaka-1', 'instance': 'nomore-x'}
 PREFLIGHT_TIMEOUT_SECONDS = 90
 MAX_PREFLIGHT_BYTES = 1024 * 1024
 REQUIRED_PREFLIGHT = ('identity', 'batch', 'database', 'timeouts')

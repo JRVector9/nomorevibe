@@ -1,6 +1,6 @@
 # X 수집기 하루 보고(x-status) — 보내는 쪽 계약과 켜는 법
 
-운영센터 v8 PR9. X 수집기(osaka-smoke, `nomorevibe-x.service`)가 하루 한 번 자기 상태를 **서명한 push** 로
+운영센터 v8 PR9. X 수집기(nomore-x, `nomorevibe-x.service`)가 하루 한 번 자기 상태를 **서명한 push** 로
 웹에 보낸다. 웹은 관측 표(`operations_observations`)의 `x-status` 한 줄만 덮어쓴다.
 Tailscale 로 끌어오는 길 대신 이 길을 고른 까닭은 v8 계획(공개 쓰기 주소 1개, Cloudflare 가 막으면 그 주소만 예외)과 같다.
 
@@ -121,7 +121,7 @@ const response = await fetch(process.env.X_STATUS_REPORT_URL!, { method: "POST",
    확인: 서명 없는 `POST /api/ops/x-status` 가 404 가 아니라 401 이면 켜진 것이다(여러 번 보내 두 웹 모두 401 인지 본다).
 3. Cloudflare 확인(아래)을 dry-run 보고로 한다.
 4. 수집기 쪽: root 전용 env(`/etc/nomorevibe-x.env`)에 `X_STATUS_REPORT_SECRET`·`X_STATUS_REPORT_URL`
-   (게시물도 받으려면 `X_POSTS_REPORT_URL`)을 두고, 보내기를 넣은 새 릴리스를 osaka runbook 대로 배치한다.
+   (게시물도 받으려면 `X_POSTS_REPORT_URL`)을 두고, 보내기를 넣은 새 릴리스를 X runbook 대로 배치한다.
    비밀이 있는데 주소가 하나도 없거나, 주소가 https 가 아니거나 사용자 정보·조각이 있으면 수집기는 설정 오류로 멈춘다.
 5. `dry-run` 으로 수동 실행 1회 → 200. 읽기 전용 조회로 줄을 본다:
    `select value, observed_at from operations_observations where key = 'x-status';`

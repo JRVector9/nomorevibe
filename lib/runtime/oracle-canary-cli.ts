@@ -1,5 +1,5 @@
 /**
- * Operator entry for the Oracle canary. Run on osaka-smoke with the role's worker env file (DATABASE_URL is the role's
+ * Operator entry for the Oracle canary. Run on nomore-x with the role's worker env file (DATABASE_URL is the role's
  * least-privilege principal) plus ORACLE_ATTEST_DATABASE_URL for the separate attest principal, e.g.
  *   node --import tsx lib/runtime/oracle-canary-cli.ts canary --role=official-news --job=news-refresh
  * Commands: canary (attest latest -> one elected real tick -> attest it), attest (latest ACK only), refresh (capability only;

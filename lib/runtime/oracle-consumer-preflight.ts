@@ -60,7 +60,7 @@ type CheckName = 'identity' | 'runtime' | 'host' | 'release' | 'database' | 'tim
   | 'model' | 'batch' | 'admission';
 export type OracleConsumerPreflightReport = {
   kind: 'nomorevibe-oracle-consumer-preflight'; version: 1; consumer: string; role: ConsumerParentRole;
-  configuredHost: { tenancy: 'surfguide'; region: 'ap-osaka-1'; instance: 'osaka-smoke' };
+  configuredHost: { tenancy: 'surfguide'; region: 'ap-osaka-1'; instance: 'nomore-x' };
   instanceId: string | null; releaseSha: string | null; ready: false; activationAllowed: false;
   workload: { ready: boolean; reason: string };
   checks: Record<CheckName, OracleConsumerCheck>;
@@ -120,7 +120,7 @@ export async function inspectOracleConsumer(spec: OracleConsumerSpec): Promise<O
   const processZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const report: OracleConsumerPreflightReport = {
     kind: 'nomorevibe-oracle-consumer-preflight', version: 1, consumer: spec.consumer, role: spec.role,
-    configuredHost: { tenancy: 'surfguide', region: 'ap-osaka-1', instance: 'osaka-smoke' },
+    configuredHost: { tenancy: 'surfguide', region: 'ap-osaka-1', instance: 'nomore-x' },
     instanceId: null, releaseSha: null, ready: false, activationAllowed: false,
     workload: { ready: false, reason: 'identity_unknown' },
     checks: { identity: unknown('identity_unknown'), runtime: unknown('loaded_runtime_unverified'),

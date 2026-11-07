@@ -15,7 +15,8 @@ const target = z.object({ role: z.enum(['translation', 'site-evidence', 'officia
 type Check = { status: 'verified' | 'unknown' | 'rejected'; reason: string; hash?: string };
 export type OracleRuntimePreflightReport = {
   kind: 'nomorevibe-oracle-runtime-preflight'; version: 1; role: z.infer<typeof target>['role'];
-  configuredHost: { tenancy: 'surfguide'; region: 'ap-osaka-1'; instance: 'osaka-smoke' };
+  // OCI display name; the internal logical host key stays 'oracle-osaka-smoke'.
+  configuredHost: { tenancy: 'surfguide'; region: 'ap-osaka-1'; instance: 'nomore-x' };
   instanceId: string | null; releaseSha: string | null; ready: false; activationAllowed: false;
   workload: { ready: boolean; reason: string; job?: string; evidenceHash?: string };
   checks: Record<'identity' | 'runtime' | 'host' | 'release' | 'database' | 'timeouts' | 'budget' | 'model' | 'batch' | 'admission', Check>;
@@ -81,7 +82,7 @@ export async function readOracleRuntimePreflight(input: unknown): Promise<Oracle
   const env = Object.fromEntries(keys.map(key => [key, process.env[key]]));
   const report: OracleRuntimePreflightReport = {
     kind: 'nomorevibe-oracle-runtime-preflight', version: 1, role,
-    configuredHost: { tenancy: 'surfguide', region: 'ap-osaka-1', instance: 'osaka-smoke' },
+    configuredHost: { tenancy: 'surfguide', region: 'ap-osaka-1', instance: 'nomore-x' },
     instanceId: null, releaseSha: null, ready: false, activationAllowed: false,
     workload: { ready: false, reason: 'identity_unknown' },
     checks: { identity: unknown('identity_unknown'), runtime: unknown('loaded_runtime_unverified'),

@@ -18,7 +18,8 @@ IMDS_HOST = '169.254.169.254'
 IMDS_PATH = '/opc/v2/instance/'
 MAX_METADATA_BYTES = 64 * 1024
 TIMEOUT_SECONDS = 2.0
-TARGET = {'tenancy': 'surfguide', 'region': 'ap-osaka-1', 'instance': 'osaka-smoke'}
+# OCI instance display name. The internal logical host key remains 'oracle-osaka-smoke'.
+TARGET = {'tenancy': 'surfguide', 'region': 'ap-osaka-1', 'instance': 'nomore-x'}
 APPROVED_KEYS = ('version', 'tenancy', 'region', 'instance', 'tenancyOcid', 'compartmentOcid', 'instanceOcid', 'shape')
 SUFFIX = r'[a-z0-9]{6,120}'
 

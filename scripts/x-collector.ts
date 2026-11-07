@@ -31,6 +31,7 @@ export function xCollectorConfig(args: string[], environment: Record<string, str
   for (const value of [environment.X_COLLECTION_LIVE, environment.X_USE_CASE_APPROVED])
     if (value !== undefined && !["0", "1"].includes(value)) invalid();
   const live = args[0] === "--live" || (!args.length && environment.X_COLLECTION_LIVE === "1");
+  // OS hostname gate, not the OCI display name (nomore-x). Verify `hostname` before changing this.
   if (live && host !== "osaka-smoke") invalid();
   const stateDir = environment.X_STATE_DIR ?? "/var/lib/nomorevibe-x";
   if (!isAbsolute(stateDir) || stateDir === "/" || /[\u0000-\u001f\u007f]/.test(stateDir)) invalid();

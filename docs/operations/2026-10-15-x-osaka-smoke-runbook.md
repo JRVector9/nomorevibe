@@ -1,8 +1,9 @@
-# X 독립 수집기 — osaka-smoke
+# X 독립 수집기 — nomore-x (구 osaka-smoke)
 
 ## 대상과 실제 상태
 
-대상은 **surfguide / ap-osaka-1 / osaka-smoke**다. SSH도 `osaka-smoke`를 사용한다.
+대상은 **surfguide / ap-osaka-1 / nomore-x**다. SSH는 허브 등록 이름 `nomore-x`를 사용한다(`ssh osaka-smoke`는 허브 이름 불일치로 거절된다).
+OCI 표시 이름만 nomore-x이고 OS hostname은 이번 변경 대상이 아니므로 `nomorevibe-x.service`의 `ConditionHost=osaka-smoke`와 수집기의 live host 검사는 그대로 둔다(hostname을 바꾸는 별도 작업 때 함께 바꾼다).
 **onetwoday는 대상이 아니다.** M3 crawler role이나 운영 DB 자격 증명을 사용하지 않는다.
 
 2026-10-15 14:07–14:09 KST 설치·검증:
@@ -111,17 +112,17 @@ read $0.005 기준10개는 최대$0.05/일,31일$1.55의 단순 환산이며 실
 ## 운영 명령
 
 ```sh
-ssh osaka-smoke 'systemctl list-timers nomorevibe-x.timer --no-pager'
-ssh osaka-smoke 'sudo systemctl show nomorevibe-x.service -p Result -p ExecMainStatus -p MemoryMax -p CPUQuotaPerSecUSec'
-ssh osaka-smoke 'sudo cat /var/lib/nomorevibe-x/status.json'
-ssh osaka-smoke 'sudo journalctl -u nomorevibe-x.service -n 10 --no-pager'
+ssh nomore-x 'systemctl list-timers nomorevibe-x.timer --no-pager'
+ssh nomore-x 'sudo systemctl show nomorevibe-x.service -p Result -p ExecMainStatus -p MemoryMax -p CPUQuotaPerSecUSec'
+ssh nomore-x 'sudo cat /var/lib/nomorevibe-x/status.json'
+ssh nomore-x 'sudo journalctl -u nomorevibe-x.service -n 10 --no-pager'
 ```
 
 env 전문을 cat하거나 `systemctl show ... -p Environment`로 출력하지 않는다.
 중단은 timer를 disable/stop한다. **budget 파일/상태 디렉터리 삭제는 금지**한다.
 
 ```sh
-ssh osaka-smoke 'sudo systemctl disable --now nomorevibe-x.timer'
+ssh nomore-x 'sudo systemctl disable --now nomorevibe-x.timer'
 ```
 
 현재 dry-run 설정에서 수동 서비스 실행은 요청0이다. 실제 목적 승인과 계정 상태를 확인한 뒤
@@ -155,11 +156,11 @@ rollback은 이전 release로 current 링크만 돌리고, 필요하면 timer를
    확인: 서명 없는 `POST https://nomorevibe.com/api/ops/x-query` 가 **404** 면 새 웹이다(주소를 지웠다). **401** 이면 아직 #590 웹이다 —
    여러 번 보내 두 웹 모두 404 인지 본다. `POST /api/ops/x-status`·`/api/ops/x-posts` 는 그대로 401 이다.
 2. 로컬: 위 빌드 명령으로 bundle 을 만들고 SHA256 을 적는다(DB 코드 0 확인).
-3. osaka: 새 release 로 배치하고 **current 링크만** 바꾼다. 장부·상태 폴더·env 는 복사하거나 초기화하지 않는다.
+3. nomore-x: 새 release 로 배치하고 **current 링크만** 바꾼다. 장부·상태 폴더·env 는 복사하거나 초기화하지 않는다.
 
    ```sh
-   scp /private/tmp/x-collector.mjs osaka-smoke:/tmp/x-collector.mjs
-   ssh osaka-smoke "sudo bash -s -- <로컬 SHA256 64자>" <<'EOF'
+   scp /private/tmp/x-collector.mjs nomore-x:/tmp/x-collector.mjs
+   ssh nomore-x "sudo bash -s -- <로컬 SHA256 64자>" <<'EOF'
    set -euo pipefail
    expected=$1; sum=$(sha256sum /tmp/x-collector.mjs | cut -d' ' -f1)
    [ "$sum" = "$expected" ] || { echo "sha256 mismatch"; exit 1; }
@@ -176,7 +177,7 @@ rollback은 이전 release로 current 링크만 돌리고, 필요하면 timer를
 4. root 전용 env 를 백업하고 `X_QUERY_URL` 줄만 지운다. 값은 출력하지 않는다(이름만 본다).
 
    ```sh
-   ssh osaka-smoke 'sudo bash -s' <<'EOF'
+   ssh nomore-x 'sudo bash -s' <<'EOF'
    set -euo pipefail
    env=/etc/nomorevibe-x.env; backup=$env.bak-$(date -u +%Y%m%dT%H%M%SZ)
    cp -p "$env" "$backup"                                 # root:root 0600 그대로
@@ -205,7 +206,7 @@ systemd 는 EnvironmentFile 의 값이 Environment= 를 이긴다(systemd.exec) 
 그래서 `X_STATE_DIR` 한 줄만 든 root 전용 임시 env 파일을 **두 번째** `-p EnvironmentFile=` 로 준다. 실제 폴더의 지문을 앞뒤로 비교한다.
 
 ```sh
-ssh osaka-smoke 'sudo bash -s' <<'EOF'
+ssh nomore-x 'sudo bash -s' <<'EOF'
 set -euo pipefail
 real=/var/lib/nomorevibe-x
 dir=$(mktemp -d /var/tmp/nomorevibe-x-dryrun.XXXXXX); chown nomorevibe-x:nomorevibe-x "$dir"; chmod 0700 "$dir"

@@ -109,7 +109,7 @@ function NodeDetail({ node, data }: { node: FlowNode; data: FlowDetailData }) {
         <p className="ops-flow-line">{node.io}</p>
         <JobLines jobs={data.jobs} names={names} now={data.now} />
         {node.key === "human" && <p className="ops-flow-line">사람이 하는 단계라 잡이 없습니다. <Link href={ACTION_LINKS.reviewHuman}>심사 큐에서 처리 →</Link></p>}
-        {node.key === "x" && <p className="ops-flow-line">X 수집기(osaka-smoke) 하루 보고 · {xSummary(data.x).note}
+        {node.key === "x" && <p className="ops-flow-line">X 수집기(nomore-x) 하루 보고 · {xSummary(data.x).note}
           {report && <> · 오늘 읽기 {report.reads.used}/{report.reads.limit} · 후보 {report.candidates} · 마지막 성공 {formatAgo(report.lastSuccessAt, data.now, "없음")}</>}</p>}
         {node.key === "others" && <ul className="ops-flow-jobs">{others.map((row) => <li key={row.key}>
           <span className="dash-dot" data-tone={DOT_TONE[row.tone]} aria-hidden /> <b>{row.label}</b> <span className="ops-flow-code">({row.code})</span> · {row.state}

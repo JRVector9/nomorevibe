@@ -25,7 +25,7 @@ import manage_release as manager
 SHA = 'a' * 40
 OTHER = 'b' * 40
 HOST = {'version': 1, 'tenancy': 'surfguide', 'region': 'ap-osaka-1',
-        'instance': 'osaka-smoke', 'tenancyOcid': 'ocid1.tenancy.oc1..fixture',
+        'instance': 'nomore-x', 'tenancyOcid': 'ocid1.tenancy.oc1..fixture',
         'instanceOcid': 'ocid1.instance.oc1.ap-osaka-1.fixture'}
 RUNTIME = {'system': 'Linux', 'machine': 'aarch64', 'libc': 'glibc'}
 

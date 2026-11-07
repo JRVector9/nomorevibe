@@ -1,7 +1,7 @@
 import { createHmac } from "node:crypto";
 
 /**
- * X 수집기(osaka-smoke)가 보내는 게시물 관측 — 서명한 push 로 받아 social_posts(source=x)에 둔다(SNS 화제 C안 T18).
+ * X 수집기(nomore-x)가 보내는 게시물 관측 — 서명한 push 로 받아 social_posts(source=x)에 둔다(SNS 화제 C안 T18).
  *
  * 받는 쪽은 app/api/ops/x-posts/route.ts, 보내는 쪽은 lib/social/x-report.ts 다. 비밀은 하루 보고(x-status)와 같은 것을 쓰고,
  * 서명 머리만 달라 한 주소의 서명을 다른 주소에 다시 쓸 수 없다. 비밀이 없으면 주소는 404 다.

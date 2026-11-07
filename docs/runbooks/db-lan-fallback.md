@@ -12,7 +12,7 @@
 2. **넘어가는 조건은 TCP 연결 실패뿐이다**(거절·도달 불가·1초 안에 안 열림). 그때는 PostgreSQL/RESP 바이트를 하나도 보내지 않았으므로 쿼리·쓰기가 두 번 나갈 수 없다.
    연결된 뒤의 쿼리 오류·인증 거절(pg_hba `28000`)·끊김은 넘기지 않고 원래대로 오류가 난다.
 3. **새 연결마다 URL의 주소부터 다시 시도한다.** 원래 길이 돌아오면 다음 새 연결부터 그 길을 쓴다. 이미 열린 연결은 수명(`DB_MAX_LIFETIME_SECONDS`, 기본 30분)까지 그대로다.
-4. **`*_FALLBACK_HOST`가 없으면 동작이 지금과 같다**(드라이버 옵션·health 응답·관측 값 모두 그대로). Oracle osaka-smoke에는 두지 않는다 — Oracle은 Tailscale만 쓴다.
+4. **`*_FALLBACK_HOST`가 없으면 동작이 지금과 같다**(드라이버 옵션·health 응답·관측 값 모두 그대로). Oracle nomore-x에는 두지 않는다 — Oracle은 Tailscale만 쓴다.
 5. 컨테이너(OrbStack) 실측(2026-10-17, `dokploy-network`에 붙인 임시 컨테이너, 10회):
    - LAN으로 새 TCP 연결을 열면 **첫 번째·세 번째 왕복이 약 200ms씩 멈춘다**(그 뒤 왕복은 LAN 0.4ms·Tailscale 0.9ms). Tailscale 경로와 호스트(컨테이너 밖)의 LAN 경로에는 없다.
      PostgreSQL 새 연결은 인증까지 왕복이 3번이라 LAN에서 약 +400ms가 든다(연결 수명 30분마다 한 번).
@@ -60,7 +60,7 @@
 
 비밀을 고치지 않고 한 줄씩 더하기만 한다. 평소 지연은 지금과 같고, Tailscale 경로가 끊길 때만 LAN으로 넘어간다.
 
-Oracle osaka-smoke: 어느 쪽이든 **바꾸지 않는다**(`DATABASE_URL`은 Tailscale, `*_FALLBACK_HOST` 없음).
+Oracle nomore-x: 어느 쪽이든 **바꾸지 않는다**(`DATABASE_URL`은 Tailscale, `*_FALLBACK_HOST` 없음).
 
 ## 배포 순서
 
