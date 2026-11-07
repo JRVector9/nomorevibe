@@ -1,5 +1,6 @@
 import Link from "next/link";
-import type { LlmOpsRow, LlmOpsView, LlmTaskChip } from "@/lib/operations/llm-ops-view";
+import type { ReactNode } from "react";
+import type { LlmFix, LlmFixField, LlmOpsLevel, LlmOpsRow, LlmOpsView, LlmTaskChip } from "@/lib/operations/llm-ops-view";
 import { MODEL_REQUEST_REVIEW_HREF } from "../ModelCallsPanel";
 import { LevelBadge, LevelLegend, ObservedAt } from "../LlmOpsParts";
 import { modelPickerModelLabel } from "../model-picker-display";
@@ -10,11 +11,25 @@ const NEW_LIMIT: ConnectionLimitField = { deviceId: "", current: null, expectedV
 const fmt = (value: number) => value.toLocaleString("ko-KR");
 const kst = (at: string | null) => at ? new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Seoul", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(at)) : null;
 
+/**
+ * 문제 표시 하나 — 누르면 고치는 곳으로 간다. 문제 글자 뒤에 파란 동작 글자(「— 맞추기 →」)를 붙여 누를 수 있음이 보이게 한다.
+ * 고칠 곳이 없으면(엔진 쪽 사정 등) 링크 없이 글자만.
+ */
+function FixLink({ fix, level, className, title, children }: { fix: LlmFix | null; level?: LlmOpsLevel; className?: string; title?: string; children: ReactNode }) {
+  if (!fix) return <span className={className} data-level={level} title={title}>{children}</span>;
+  return <Link prefetch={false} href={fix.href} className={`llm-fix${className ? ` ${className}` : ""}`} data-level={level} title={title}>
+    {children}<span className="llm-fix-sep"> — </span><span className="llm-fix-action">{fix.label} →</span></Link>;
+}
+
 function TaskChip({ chip }: { chip: LlmTaskChip }) {
   const rank = chip.rank !== null ? String(chip.rank) : chip.source === "pool" ? "분산" : "설정";
   const title = `${chip.label} · ${chip.rank !== null ? `${chip.rank}순위` : chip.source === "pool" ? "작업 분산 구성원" : chip.source === "classifier" ? "분류 설정" : "정책 경로·계약"} · ${chip.model}${chip.enabled ? "" : " · 순위 꺼짐"}${chip.paused ? " · 잡 일시중지" : ""}`;
-  return <Link prefetch={false} href={chip.href} className="llm-chip" data-source={chip.source} data-off={chip.enabled ? undefined : "true"} data-paused={chip.paused ? "true" : undefined} title={title}>
-    <span className="llm-chip-rank">{rank}</span>{chip.label}{chip.paused ? " · 중지" : ""}</Link>;
+  return <>
+    <Link prefetch={false} href={chip.href} className="llm-chip" data-source={chip.source} data-off={chip.enabled ? undefined : "true"} data-paused={chip.paused ? "true" : undefined} title={title}>
+      <span className="llm-chip-rank">{rank}</span>{chip.label}{chip.paused ? " · 중지" : ""}</Link>
+    {chip.fix && <Link prefetch={false} href={chip.fix.href} className="llm-fix llm-fix-chip" data-level="idle" aria-label={`${chip.label} 잡 일시중지 — ${chip.fix.label}`}>
+      <span aria-hidden="true">‖</span><span className="llm-fix-action">{chip.fix.label} →</span></Link>}
+  </>;
 }
 
 const modelLabel = (row: LlmOpsRow, id: string) => row.connection ? modelPickerModelLabel(row.connection, id) : id;
@@ -46,14 +61,23 @@ function CliToolDetail({ row }: { row: LlmOpsRow }) {
   </div>;
 }
 
-function ConnectionRow({ row, view, secretBox, readOnly, open }: { row: LlmOpsRow; view: LlmOpsView; secretBox: boolean; readOnly: boolean; open: boolean }) {
+/** 이름 아래 한 줄(종류 · 주소 · 버전 · 키). CLI 버전을 모르는 CLI 연결은 그 조각이 버전 칸으로 가는 링크다. */
+function ConnectionMeta({ row }: { row: LlmOpsRow }) {
+  const version = row.version ? `${row.kind === "cli" ? "" : "버전 "}${row.version}${row.versionSource ? `(${row.versionSource})` : ""}` : row.kind === "cli" ? "CLI 버전 미확인" : null;
+  const parts: ReactNode[] = [row.kindText, row.address,
+    version && !row.version && row.versionFix ? <FixLink key="version" fix={row.versionFix}>{version}</FixLink> : version, row.keyText].filter(Boolean);
+  return <span className="llm-conn-meta">{parts.map((part, index) => <span key={index}>{index > 0 && " · "}{part}</span>)}</span>;
+}
+
+function ConnectionRow({ row, view, secretBox, readOnly, open, fix }: { row: LlmOpsRow; view: LlmOpsView; secretBox: boolean; readOnly: boolean; open: boolean;
+  fix: LlmFixField | null }) {
   const { capacity, status } = row;
   const first = row.models.ids[0];
   return <article id={row.anchor} className="llm-conn llm-conn-cols" data-source={row.source} data-row={row.key}>
     <div className="llm-conn-grid">
       <div className="llm-cell llm-cell-wide">
         <span className="llm-conn-name">{row.label}</span>
-        <span className="llm-conn-meta">{[row.kindText, row.address, row.version ? `${row.kind === "cli" ? "" : "버전 "}${row.version}${row.versionSource ? `(${row.versionSource})` : ""}` : row.kind === "cli" ? "CLI 버전 미확인" : null, row.keyText].filter(Boolean).join(" · ")}</span>
+        <ConnectionMeta row={row} />
         {row.connection && <span className="llm-conn-meta">장비 <code>{row.connection.deviceId}</code></span>}
         {!row.enabled && <LevelBadge level="idle">꺼짐</LevelBadge>}
       </div>
@@ -61,11 +85,13 @@ function ConnectionRow({ row, view, secretBox, readOnly, open }: { row: LlmOpsRo
         {first ? <span><code>{modelLabel(row, first)}</code>{row.models.ids.length > 1 && <span className="llm-muted"> 외 {row.models.ids.length - 1}</span>}</span> : <span className="llm-muted">없음</span>}
         <span className="llm-muted">{row.models.title}</span>
       </div>
-      <div className="llm-cell"><span className="llm-cell-label">한도 · 점유</span>
+      <div className="llm-cell"><span className="llm-cell-label">점유 / 한도</span>
         {capacity ? <>
           <span className="llm-cap" title="점유(예약+실행 중) / 장비 행 한도">{capacity.text}</span>
-          {capacity.mismatch && <span className="llm-flag"><span aria-hidden="true">▲</span>연결 폼 {fmt(capacity.stored!)}칸과 다름</span>}
-          {capacity.note && !capacity.mismatch && <span className="llm-muted">{capacity.note}</span>}
+          {capacity.mismatch ? <FixLink fix={capacity.fix} level="warn" className="llm-flag"
+            title="연결에 저장된 옛 칸 수가 장비 행 한도(실제로 쓰는 값)와 다릅니다. 연결 폼을 저장하면 같은 값으로 맞춰집니다.">
+            <span aria-hidden="true">▲ </span>{capacity.note}</FixLink>
+            : capacity.note && <FixLink fix={capacity.fix} className="llm-muted">{capacity.note}</FixLink>}
           {capacity.waiting ? <span className="llm-muted">대기 {fmt(capacity.waiting)}</span> : null}
           {capacity.sharedWith.length > 0 && <span className="llm-muted">함께 씀: {capacity.sharedWith.join(" · ")}</span>}
         </> : <span className="llm-muted">장비 없음</span>}
@@ -75,7 +101,8 @@ function ConnectionRow({ row, view, secretBox, readOnly, open }: { row: LlmOpsRo
       </div>
       <div className="llm-cell" data-status={status.level}><span className="llm-cell-label">상태</span>
         <LevelBadge level={status.level} title={status.detail ?? undefined}>{status.text}</LevelBadge>
-        {status.reason && <span className="llm-conn-status-reason">{status.reason}</span>}
+        {status.reasons.length > 0 && <span className="llm-conn-status-reason">{status.reasons.map((reason, index) =>
+          <FixLink key={index} fix={reason.fix} className="llm-reason">{reason.text}</FixLink>)}</span>}
       </div>
       <div className="llm-cell"><span className="llm-cell-label">재실행</span>
         {row.retry === null ? <span className="llm-muted">확인 불가</span> : row.retry > 0
@@ -86,7 +113,8 @@ function ConnectionRow({ row, view, secretBox, readOnly, open }: { row: LlmOpsRo
       <summary>{row.connection ? "펼치기 · 연결 편집" : "펼치기 · 자세히"}</summary>
       <div className="llm-conn-edit-body">
         {row.connection ? <ConnectionForm key={`${row.connection.id}#${row.connection.version}`} initial={row.connection} secretBox={secretBox} limit={row.limitForm}
-          cancelHref="/admin/models/llm" readOnly={readOnly} savedModels={view.rows.filter(entry => entry.connection).map(entry => ({ id: entry.key, models: entry.models.ids, error: entry.models.error }))} />
+          cancelHref="/admin/models/llm" readOnly={readOnly} fix={open ? fix : null}
+          savedModels={view.rows.filter(entry => entry.connection).map(entry => ({ id: entry.key, models: entry.models.ids, error: entry.models.error }))} />
           : <CliToolDetail row={row} />}
         <ModelsBlock row={row} readOnly={readOnly} />
       </div>
@@ -96,10 +124,12 @@ function ConnectionRow({ row, view, secretBox, readOnly, open }: { row: LlmOpsRo
 
 /**
  * LLM 운영(/admin/models/llm) — 「어떤 LLM을 쓸 수 있고, 얼마나, 어디에 쓰고 있나?」(2026-11-07 승인 시안 PR 2).
- * 연결(서버)과 연결 행이 없는 CLI 도구가 한 줄씩: 모델 · 동시 실행 한도/점유 · 배정된 작업 · 운영 상태와 까닭 · 재실행 대기.
+ * 연결(서버)과 연결 행이 없는 CLI 도구가 한 줄씩: 모델 · 점유 / 동시 실행 한도 · 배정된 작업 · 운영 상태와 까닭 · 재실행 대기.
+ * 문제 표시(한도 불일치·까닭·잡 중지 등)는 누르면 고치는 곳으로 간다 — 연결 폼의 그 칸(?edit=…&fix=…), 작업 배정의 그 줄, 계약·기록·잡 상태.
  * 행을 펼치면 기존 연결 폼(saveAiConnectionAction)으로 고치고, 동시 실행 한도는 장비 행 한 곳(saveCapacityDevice)에서만 바꾼다.
  */
-export function LlmOpsList({ view, secretBox, readOnly, editId, adding }: { view: LlmOpsView; secretBox: boolean; readOnly: boolean; editId: string | null; adding: boolean }) {
+export function LlmOpsList({ view, secretBox, readOnly, editId, fix = null, adding }: { view: LlmOpsView; secretBox: boolean; readOnly: boolean; editId: string | null;
+  fix?: LlmFixField | null; adding: boolean }) {
   const { totals } = view;
   const saved = view.rows.filter(row => row.connection).map(row => ({ id: row.key, models: row.models.ids, error: row.models.error }));
   return <div className="stack llm-ops" data-llm-page="llm">
@@ -117,12 +147,12 @@ export function LlmOpsList({ view, secretBox, readOnly, editId, adding }: { view
       </div>
     </details>
     <section className="llm-conn-list" aria-label="LLM 연결과 CLI 도구">
-      <div className="llm-conn-head llm-conn-cols" aria-hidden="true"><span>LLM(연결)</span><span>모델</span><span>한도 · 점유</span><span>배정된 작업</span><span>상태</span><span>재실행</span></div>
-      {view.rows.map(row => <ConnectionRow key={row.key} row={row} view={view} secretBox={secretBox} readOnly={readOnly} open={editId === row.key} />)}
+      <div className="llm-conn-head llm-conn-cols" aria-hidden="true"><span>LLM(연결)</span><span>모델</span><span>점유 / 한도</span><span>배정된 작업</span><span>상태</span><span>재실행</span></div>
+      {view.rows.map(row => <ConnectionRow key={row.key} row={row} view={view} secretBox={secretBox} readOnly={readOnly} open={editId === row.key} fix={fix} />)}
       {!view.rows.length && <p className="llm-empty">{view.errors.length ? "연결을 읽지 못했습니다." : "아직 연결이 없습니다. 「+ 연결 추가」로 만드세요."}</p>}
     </section>
     <LevelLegend />
-    <p className="llm-empty">상태 옆 회색 글자가 까닭입니다(예: 계약 없음 · 키 없음 · 연결 꺼짐 · 서버 응답 없음 · 시간 초과). 실행 쪽이 마지막 틱(30분 안)에 남긴 순위 사정과 장부의 최근 1시간 정산에서 읽습니다.
-      한도·점유는 장비 행 기준이라 같은 장비를 쓰는 연결은 같은 수를 보입니다.</p>
+    <p className="llm-empty">상태 아래 글자가 까닭입니다(예: 계약 없음 · 키 없음 · 연결 꺼짐 · 서버 응답 없음 · 시간 초과). 실행 쪽이 마지막 틱(30분 안)에 남긴 순위 사정과 장부의 최근 1시간 정산에서 읽습니다.
+      파란 「— … →」가 붙은 표시는 누르면 고치는 곳으로 갑니다. 점유 / 한도는 장비 행 기준이라 같은 장비를 쓰는 연결은 같은 수를 보입니다.</p>
   </div>;
 }

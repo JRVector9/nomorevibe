@@ -56,7 +56,9 @@ describe("대시보드 화면 모형", () => {
     expect(view.todos.map(todo => todo.id)).toEqual(["indeterminate", `limit-${GPU}`, `limit-${SUPA}`]);
     expect(view.todos[0]).toMatchObject({ href: "/admin/models/history#retry", action: "재실행 패널" });
     expect(view.todos[0].detail).toContain("1차 AI 검수 · qwen3.8-flash-next · 2시간 0분 전 · 로컬 종료 기록 있음");
-    expect(view.todos[1]).toMatchObject({ href: `/admin/models/llm?edit=${GPU}#conn-${GPU}`, detail: "연결 폼의 칸 수 4, 장비 행 5(으)로 적용 중 — 실제로 쓰는 값은 장비 행입니다." });
+    // 한도 불일치는 LLM 운영 행의 표시와 같은 말 · 같은 곳(그 연결 폼의 동시 실행 한도 칸)
+    expect(view.todos[1]).toMatchObject({ title: "gpu3090-qwen 한도 값 다름", href: `/admin/models/llm?edit=${GPU}&fix=limit#conn-${GPU}-limit`,
+      detail: "연결에 남은 옛 값 4 · 실제 적용 5. 연결을 한 번 저장하면 연결 값도 5(으)로 맞춰집니다.", action: "LLM 운영에서 맞추기" });
     // OpenCode 한도 불일치(2/1)·m1 목록 못 읽음·잡 일시중지 둘은 셋 밖으로 밀린다
     expect(view.moreTodos).toBe(4);
   });
@@ -97,11 +99,11 @@ describe("대시보드 화면 모형", () => {
 });
 
 describe("LLM 운영 화면 모형 — 연결 행", () => {
-  it("연결 한 줄에 모델·장비 행 한도/점유·배정된 작업(순위)·상태·재실행 대기를 담고, 연결 폼 칸 수가 장비 행과 다르면 표시한다", () => {
+  it("연결 한 줄에 모델·점유/장비 행 한도·배정된 작업(순위)·상태·재실행 대기를 담고, 연결에 남은 옛 칸 수가 장비 행과 다르면 표시한다", () => {
     const view = llm();
     const gpu = view.rows.find(row => row.key === GPU)!;
     expect(gpu).toMatchObject({ source: "connection", kindText: "API", address: "100.77.43.63:8090", keyText: "키 없음", retry: 1 });
-    expect(gpu.capacity).toMatchObject({ limit: 5, held: 2, stored: 4, mismatch: true, text: "2 / 5", note: "연결 폼 4칸과 다름 — 장비 행 5칸이 적용됨" });
+    expect(gpu.capacity).toMatchObject({ limit: 5, held: 2, stored: 4, mismatch: true, text: "2 / 5", note: "연결에 남은 옛 값 4 · 실제 적용 5" });
     expect(gpu.tasks.map(chip => [chip.label, chip.rank])).toEqual([["1차 AI 검수", 2]]);
     expect(gpu.status).toMatchObject({ level: "warn", text: "미확정 있음", reason: "재실행 대기 1건" });
     expect(gpu.limitForm).toMatchObject({ deviceId: "gpu3090-qwen", current: 5, expectedVersion: 3, eligible: true, reason: null });
