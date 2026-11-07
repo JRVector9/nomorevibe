@@ -192,6 +192,22 @@ describe("폼 → sparse patch", () => {
       .toEqual({ routes: { timeouts: { "human-review": 90_000 } } });
   });
 
+  it("초 칸에 ms 를 넣으면(1시간 초과) 고칠 값을 알려 주며 거절한다(2026-11-07 CLI 심사 상한 60000 입력)", () => {
+    const result = runtimeSettingsPatchFromForm("routes", form({ "value:routes.limits.review-cli.timeoutMs": "60000", "initial:routes.limits.review-cli.timeoutMs": "20" }));
+    expect(result.patch).toEqual({});
+    expect(result.issues).toHaveLength(1);
+    expect(result.issues[0]).toContain("60000초는 1시간이 넘습니다");
+    expect(result.issues[0]).toContain("ms로 넣으셨다면 60초");
+    // 1시간까지는 그대로 받는다
+    expect(runtimeSettingsPatchFromForm("routes", form({ "value:routes.limits.review-cli.timeoutMs": "3600", "initial:routes.limits.review-cli.timeoutMs": "20" })).patch)
+      .toEqual({ routes: { limits: { "review-cli": { timeoutMs: 3_600_000 } } } });
+    // 틱 예산도 같다
+    expect(runtimeSettingsPatchFromForm("budgets", form({ "value:budgets.product-translate": "315000", "initial:budgets.product-translate": "315", "initialAuto:budgets.product-translate": "0" })).issues[0])
+      .toContain("1시간이 넘습니다");
+    // 정수 칸(토큰·동시 호출)은 단위가 없어 이 검사를 하지 않는다
+    expect(runtimeSettingsPatchFromForm("routes", form({ "value:routes.limits.review-cli.maxTokens": "8000", "initial:routes.limits.review-cli.maxTokens": "2000" })).issues).toEqual([]);
+  });
+
   it("열거 칸(3b-E) — 배정 표 읽기는 선택지의 글자 그대로, 선택지 밖·빈 값은 거절, 처음 값과 같으면 바뀐 것이 없다, 「기본값으로」는 덮어쓴 칸에만", () => {
     const toggle = (over: Record<string, string>) => runtimeSettingsPatchFromForm("assignments", form({ "value:assignments.tableReads": "off", "initial:assignments.tableReads": "off",
       "stored:assignments.tableReads": "0", ...over }));
