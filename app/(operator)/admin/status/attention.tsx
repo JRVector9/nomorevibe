@@ -697,7 +697,7 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
       action: { label: "수집 계정", href: ACTION_LINKS.githubAccounts },
     });
   }
-  // X 수집기(osaka-smoke)의 하루 보고(v8 PR9) — 이미 읽은 관측 줄에서 꺼낸다(새 쿼리 없음).
+  // X 수집기(nomore-x)의 하루 보고(v8 PR9) — 이미 읽은 관측 줄에서 꺼낸다(새 쿼리 없음).
   // 받는 주소가 꺼져 있거나(비밀 없음), 아직 보고가 없거나(연결 전), 마지막 보고가 꺼짐(disabled)이면 띄우지 않는다.
   const x = readXStatus(ops.observations, now);
   const hoursSince = (at: string | null) => at ? Math.max(0, Math.floor((Date.parse(now) - Date.parse(at)) / 3_600_000)) : 0;
@@ -712,7 +712,7 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
       count: hours,
       title: x.state === "stale" ? "X 수집 보고가 끊겼습니다" : x.state === "error" ? "X 수집기가 오류를 보고했습니다" : "X 수집 보고를 읽지 못했습니다",
       detail: x.state === "stale"
-        ? <>마지막 보고 {received}(받은 시각) · {mode} — 하루 한 번 오는 보고가 {X_STATUS_STALE_HOURS}시간 넘게 없습니다. osaka-smoke 의 X 수집 타이머와 보고 전송을 확인합니다.</>
+        ? <>마지막 보고 {received}(받은 시각) · {mode} — 하루 한 번 오는 보고가 {X_STATUS_STALE_HOURS}시간 넘게 없습니다. nomore-x 의 X 수집 타이머와 보고 전송을 확인합니다.</>
         : x.state === "error"
           ? <>오류 <span className="font-mono">{x.report?.error}</span> · {mode} · 마지막 성공 {formatListTime(x.report?.lastSuccessAt ?? null, now, "없음")} · 받은 시각 {received} — 수집기 상태와 로그를 확인합니다. 일부러 끈 것이면 꺼짐(disabled)으로 보고하게 합니다.</>
           : <>받은 시각 {received} — 저장된 보고의 모양이 지금 코드와 맞지 않습니다. 수집기를 다시 실행해 새 보고를 받습니다.</>,
@@ -736,7 +736,7 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
         title: "X 수집 결과가 웹에 들어오지 않았습니다",
         detail: <>{formatListTime(x.report.lastRunAt, now)} 실제 수집이 후보 {n(x.report.candidates)}건을 냈는데 같은 실행의 게시물 보고를 받지 못했습니다
           {" "}· 마지막으로 받은 게시물 보고 {Number.isFinite(postsRunAt) ? formatListTime(new Date(postsRunAt).toISOString(), now) : "없음"}
-          {" "}— osaka-smoke 의 status.json(reports.posts)에 웹이 돌려준 응답이 있습니다. 서명 비밀·주소(X_POSTS_REPORT_URL)·형식을 확인합니다.</>,
+          {" "}— nomore-x 의 status.json(reports.posts)에 웹이 돌려준 응답이 있습니다. 서명 비밀·주소(X_POSTS_REPORT_URL)·형식을 확인합니다.</>,
         action: { label: "크롤러 활동", href: ACTION_LINKS.crawlers }, work: X_WORK,
       });
     }

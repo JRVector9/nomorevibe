@@ -1,7 +1,8 @@
 [Unit]
-Description=NoMoreVibe X candidate collector (OCI osaka-smoke only)
+Description=NoMoreVibe X candidate collector (OCI nomore-x only)
 Wants=network-online.target
 After=network-online.target
+# ConditionHost tests the OS hostname, not the OCI display name (which is nomore-x). Change only after `hostnamectl` confirms a hostname change.
 ConditionHost=osaka-smoke
 
 [Service]

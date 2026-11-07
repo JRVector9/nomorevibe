@@ -1,5 +1,5 @@
 [Unit]
-Description=NoMoreVibe X daily ten-post reservation (osaka-smoke)
+Description=NoMoreVibe X daily ten-post reservation (nomore-x)
 
 [Timer]
 OnCalendar=*-*-* 00:10:00 UTC

@@ -125,8 +125,8 @@ const SERVICES: Readonly<Record<WorkService, { label: string; role: string | nul
     how: "M3·mini 웹이 함께 요청을 받습니다. 로그인 코드 메일은 요청을 받은 웹이 그 자리에서 보냅니다(작업이 아닙니다)." },
   scheduler: { label: "작업 일정 관리", role: "scheduler", schedule: "상시",
     how: "두 복제본이 작업 표의 주기대로 다음 실행 시각을 예약합니다. 역할 워커는 예약된 작업만 받아 돌립니다." },
-  "x-collector": { label: "X 수집기", role: null, schedule: "하루 1회 — osaka-smoke 타이머",
-    how: "Oracle 서버(osaka-smoke)의 타이머가 하루 한 번 X 를 검색해 후보 수와 게시물을 웹에 보고합니다. 웹은 보고를 받기만 합니다." },
+  "x-collector": { label: "X 수집기", role: null, schedule: "하루 1회 — nomore-x 타이머",
+    how: "Oracle 서버(nomore-x)의 타이머가 하루 한 번 X 를 검색해 후보 수와 게시물을 웹에 보고합니다. 웹은 보고를 받기만 합니다." },
 };
 
 /** 역할 lease 없이 같은 대기열을 건 단위로 나눠 맡는 일꾼(lib/runtime/consumer-registry.ts) — 그 일을 하는 잡 */
@@ -169,11 +169,11 @@ const timeOf = (value: string | Date) => value instanceof Date ? value.getTime()
 const shortRelease = (value: unknown) => typeof value === "string" && value !== "unknown" ? value.slice(0, 7) : null;
 const label = (job: string) => JOB_LABELS[job] ?? job;
 
-/** 인스턴스 이름의 장비 — m3-crawler·agent-scan-consumer-m3 → M3, mini-crawler-standby → mini, …-oracle → Oracle */
+/** 인스턴스 이름의 장비 — m3-crawler·agent-scan-consumer-m3 → M3, mini-crawler-standby → mini, …-oracle·nomore-x → Oracle */
 export function hostName(instanceId: string): string {
   if (/(^|[-_.])m3([-_.]|$)/i.test(instanceId)) return "M3";
   if (/(^|[-_.])mini([-_.]|$)/i.test(instanceId)) return "mini";
-  if (/oracle|osaka/i.test(instanceId)) return "Oracle";
+  if (/oracle|osaka|nomore-x/i.test(instanceId)) return "Oracle";
   return instanceId;
 }
 
@@ -339,7 +339,7 @@ function serviceOwners(service: WorkService, ctx: OwnerContext): { models: Model
   const info = SERVICES[service];
   const nowMs = Date.parse(ctx.now);
   const hosts: HostEntry[] = service === "x-collector"
-    ? [{ name: "Oracle", row: { instanceId: "osaka-smoke", what: info.label, jobs: [info.label], state: "하루 보고로만 관측", tone: null, release: null, seen: null } }]
+    ? [{ name: "Oracle", row: { instanceId: "nomore-x", what: info.label, jobs: [info.label], state: "하루 보고로만 관측", tone: null, release: null, seen: null } }]
     : ctx.instances.filter((row) => row.role === info.role && !consumerOfInstance(row.instanceId) && nowMs - timeOf(row.observedAt) <= LIVE_MS)
       .map((row) => {
         const fresh = nowMs - timeOf(row.observedAt) <= FRESH_MS;

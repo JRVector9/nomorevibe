@@ -175,7 +175,7 @@ def validate_host(expected, observed):
     for value in (expected, observed):
         exact(value, ('version', 'tenancy', 'region', 'instance', 'tenancyOcid', 'instanceOcid'))
         if (type(value['version']) is not int or value['version'] != 1
-                or (value['tenancy'], value['region'], value['instance']) != ('surfguide', 'ap-osaka-1', 'osaka-smoke')):
+                or (value['tenancy'], value['region'], value['instance']) != ('surfguide', 'ap-osaka-1', 'nomore-x')):
             raise ValueError('oracle_host_identity_mismatch')
         for key, prefix in (('tenancyOcid', 'ocid1.tenancy.oc1..'),
                             ('instanceOcid', 'ocid1.instance.oc1.ap-osaka-1.')):

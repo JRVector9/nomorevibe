@@ -29,10 +29,10 @@ INSTANCE = 'oracle-news'
 TENANCY = 'ocid1.tenancy.oc1..aaaafixturetenancy'
 COMPARTMENT = 'ocid1.compartment.oc1..aaaafixturecompartment'
 INSTANCE_OCID = 'ocid1.instance.oc1.ap-osaka-1.aaaafixtureinstance'
-APPROVED = {'version': 1, 'tenancy': 'surfguide', 'region': 'ap-osaka-1', 'instance': 'osaka-smoke',
+APPROVED = {'version': 1, 'tenancy': 'surfguide', 'region': 'ap-osaka-1', 'instance': 'nomore-x',
             'tenancyOcid': TENANCY, 'compartmentOcid': COMPARTMENT, 'instanceOcid': INSTANCE_OCID,
             'shape': 'VM.Standard.A1.Flex'}
-METADATA = {'id': INSTANCE_OCID, 'tenantId': TENANCY, 'compartmentId': COMPARTMENT, 'displayName': 'osaka-smoke',
+METADATA = {'id': INSTANCE_OCID, 'tenantId': TENANCY, 'compartmentId': COMPARTMENT, 'displayName': 'nomore-x',
             'canonicalRegionName': 'ap-osaka-1', 'regionInfo': {'regionIdentifier': 'ap-osaka-1', 'regionKey': 'KIX'},
             'shape': 'VM.Standard.A1.Flex', 'region': 'ap-osaka-1'}
 RUNTIME = {'system': 'Linux', 'machine': 'aarch64', 'libc': 'glibc'}
@@ -94,7 +94,7 @@ class OciIdentityTests(unittest.TestCase):
         with FakeImds(imds) as server:
             record = oci_identity.validate_identity(APPROVED, oci_identity.observed_identity(server.fetch()))
         self.assertEqual(server.requests, [('/opc/v2/instance/', 'Bearer Oracle')])
-        self.assertEqual(record, {'version': 1, 'tenancy': 'surfguide', 'region': 'ap-osaka-1', 'instance': 'osaka-smoke',
+        self.assertEqual(record, {'version': 1, 'tenancy': 'surfguide', 'region': 'ap-osaka-1', 'instance': 'nomore-x',
                                   'tenancyOcid': TENANCY, 'instanceOcid': INSTANCE_OCID})
         contract.validate_host(record, record)
 
@@ -107,11 +107,11 @@ class OciIdentityTests(unittest.TestCase):
         observed = oci_identity.observed_identity(METADATA)
         for key, value in [('tenancyOcid', 'ocid1.tenancy.oc1..aaaaothertenancy'), ('compartmentOcid', TENANCY),
                            ('instanceOcid', 'ocid1.instance.oc1.ap-osaka-1.aaaaotherinstance'), ('region', 'ap-tokyo-1'),
-                           ('displayName', 'onetwoday'), ('shape', 'VM.Standard.E2.1.Micro')]:
+                           ('displayName', 'osaka-smoke'), ('shape', 'VM.Standard.E2.1.Micro')]:
             with self.subTest(observed=key), self.assertRaises(ValueError):
                 oci_identity.validate_identity(APPROVED, {**observed, key: value})
         placeholder = json.loads((SOURCE / 'oracle-identity.json.example').read_text())
-        for approved in (placeholder, {**APPROVED, 'instance': 'onetwoday'}, {**APPROVED, 'extra': True},
+        for approved in (placeholder, {**APPROVED, 'instance': 'osaka-smoke'}, {**APPROVED, 'instance': 'onetwoday'}, {**APPROVED, 'extra': True},
                          {**APPROVED, 'version': True}, {**APPROVED, 'shape': ''}):
             with self.subTest(approved=approved), self.assertRaises(ValueError):
                 oci_identity.validate_identity(approved, observed)
@@ -207,7 +207,7 @@ def prepared_release(root):
 
 def report(role='official-news', **changes):
     value = {'kind': 'nomorevibe-oracle-runtime-preflight', 'version': 1, 'role': role,
-             'configuredHost': {'tenancy': 'surfguide', 'region': 'ap-osaka-1', 'instance': 'osaka-smoke'},
+             'configuredHost': {'tenancy': 'surfguide', 'region': 'ap-osaka-1', 'instance': 'nomore-x'},
              'instanceId': INSTANCE, 'releaseSha': SHA, 'ready': False, 'activationAllowed': False,
              'workload': {'ready': True, 'reason': 'ready', 'job': 'news-refresh', 'evidenceHash': 'd' * 64},
              'checks': {name: {'status': 'unknown', 'reason': 'x'} for name in launch.PREFLIGHT_CHECKS}}
@@ -401,7 +401,7 @@ CONSUMER_INSTANCE = 'fixture-scan-consumer-oracle'
 
 def consumer_report(consumer=CONSUMER, role='crawler', **changes):
     value = {'kind': 'nomorevibe-oracle-consumer-preflight', 'version': 1, 'consumer': consumer, 'role': role,
-             'configuredHost': {'tenancy': 'surfguide', 'region': 'ap-osaka-1', 'instance': 'osaka-smoke'},
+             'configuredHost': {'tenancy': 'surfguide', 'region': 'ap-osaka-1', 'instance': 'nomore-x'},
              'instanceId': CONSUMER_INSTANCE, 'releaseSha': SHA, 'ready': False, 'activationAllowed': False,
              'workload': {'ready': True, 'reason': 'ready'},
              'checks': {name: {'status': 'unknown', 'reason': 'x'} for name in launch.CONSUMER_PREFLIGHT_CHECKS}}

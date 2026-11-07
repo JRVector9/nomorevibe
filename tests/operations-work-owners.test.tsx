@@ -65,8 +65,8 @@ describe("작업마다 하는 일", () => {
   });
 
   it("인스턴스 이름에서 장비를 읽는다", () => {
-    expect(["m3-crawler", "mini-crawler-standby", "agent-scan-consumer-oracle", "agent-scan-consumer-m3", "m3-scheduler-7d233478d0ce", "osaka-smoke", "gpu3090"]
-      .map(hostName)).toEqual(["M3", "mini", "Oracle", "M3", "M3", "Oracle", "gpu3090"]);
+    expect(["m3-crawler", "mini-crawler-standby", "agent-scan-consumer-oracle", "agent-scan-consumer-m3", "m3-scheduler-7d233478d0ce", "osaka-smoke", "nomore-x", "gpu3090"]
+      .map(hostName)).toEqual(["M3", "mini", "Oracle", "M3", "M3", "Oracle", "Oracle", "gpu3090"]);
   });
 });
 
@@ -155,7 +155,7 @@ describe("맡은 장비·LLM·일정", () => {
     expect(owners.jobs.map((job) => job.name)).toEqual(["uptime-ping"]);
   });
 
-  it("X 수집기는 Oracle(osaka-smoke) 타이머, 맡은 것이 없으면 버튼을 달지 않는다", () => {
+  it("X 수집기는 Oracle(nomore-x) 타이머, 맡은 것이 없으면 버튼을 달지 않는다", () => {
     expect(resolveWorkOwners({ services: ["x-collector"] }, context())?.hosts.map((host) => host.name)).toEqual(["Oracle"]);
     expect(resolveWorkOwners(undefined, context())).toBeNull();
     expect(workOwnersByAction([{ key: "a", work: { jobs: ["uptime-ping"] } }, { key: "b" }], context())).toHaveProperty("a");

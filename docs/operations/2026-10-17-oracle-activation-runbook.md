@@ -1,6 +1,6 @@
-# Oracle osaka-smoke 종단 간 활성화·DR runbook (PR11f, 2026-10-17)
+# Oracle nomore-x 종단 간 활성화·DR runbook (PR11f, 2026-10-17)
 
-대상은 **surfguide / ap-osaka-1 / osaka-smoke**다. 이 문서는 절차만 적는다. 작성하면서 운영 DB·SSH·OCI·배포·provider 호출은 하지 않았고, 문서의 명령도 실행하지 않았다. 실행한 것은 `scripts/ops/oracle_activation_check.py`의 구문 검사(`bash -n`)와 코드 대조뿐이다.
+대상은 **surfguide / ap-osaka-1 / nomore-x**다. `oracle-osaka-smoke`(예: `PHYSICAL_HOST=oracle-osaka-smoke`)는 옛 인스턴스 이름에서 이어 온 내부 논리 host 키이며 그대로 쓴다. 이 문서는 절차만 적는다. 작성하면서 운영 DB·SSH·OCI·배포·provider 호출은 하지 않았고, 문서의 명령도 실행하지 않았다. 실행한 것은 `scripts/ops/oracle_activation_check.py`의 구문 검사(`bash -n`)와 코드 대조뿐이다.
 
 - 기준 코드: integration-3 (`9c92f983`). integration-2에 PR15c #515, PR11e #513(0098), PR01b-8 #509(0097), PR05c-6 #510, PR05d #511, PR16b #512, PR13c #514를 더한 상태다.
 - 함께 읽을 문서: `deploy/oracle/README.md`(offline 패키징·canary·refresh 정책), `docs/superpowers/plans/2026-10-16-pipeline-pr11-oracle-runtime.md`, `docs/operations/independent-workers-runbook.md`.

@@ -2,7 +2,7 @@
   "version": 1,
   "tenancy": "surfguide",
   "region": "ap-osaka-1",
-  "instance": "osaka-smoke",
+  "instance": "nomore-x",
   "tenancyOcid": "<approved full tenancy OCID; placeholder is rejected>",
   "compartmentOcid": "<approved full compartment OCID, or the tenancy OCID for the root compartment>",
   "instanceOcid": "<approved full instance OCID; placeholder is rejected>",

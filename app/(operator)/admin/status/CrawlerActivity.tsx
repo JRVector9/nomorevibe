@@ -105,7 +105,7 @@ function XCollectorCard({ x }: { x: XStatusView }) {
   // 색은 흐름 상세의 X 칸과 같다 — 정상 초록, 끊김·오류·모양 어긋남 주황, 연결 전·꺼짐 회색
   const tone = summary.tone === "ok" ? "ok" : summary.tone === "warn" ? "warn" : "muted";
   return <section className="dash-card crawler-x"><div className="dash-card-h"><h2>X</h2><span className="crawler-state" data-tone={tone}>{summary.value}</span></div>
-    <p>예약된 크롤러 잡이 아니라 osaka 서버(osaka-smoke)의 X 수집기가 {X_COLLECTOR_SCHEDULE}에 한 번 GitHub 주소가 있고 많이 퍼진 글
+    <p>예약된 크롤러 잡이 아니라 Oracle 서버(nomore-x)의 X 수집기가 {X_COLLECTOR_SCHEDULE}에 한 번 GitHub 주소가 있고 많이 퍼진 글
       {minLikes !== null && <>(<code>url:github.com min_likes:{minLikes}</code>)</>}을 검색해 후보 게시물과 하루 보고를 보냅니다. 받은 글은 SNS 화제에서 봅니다.</p>
     <p className="crawler-muted">{summary.note}</p>
     <div className="crawler-links"><Link href="/admin/talk?source=x" prefetch={false}>SNS 화제의 X 글 →</Link></div>
