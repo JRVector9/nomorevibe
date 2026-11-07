@@ -373,6 +373,9 @@ export function runtimeSettingsPatchFromForm(group: RuntimeSettingGroup, form: F
       if (autoBefore || value !== parseFieldInput("ms", initial)) { setLeaf(patch, path, value); changed.push(path); }
       continue;
     }
+    // 처음 그린 글자 그대로면 바뀐 칸이 아니다 — 코드 기본값이 없어 빈칸으로 그려진 칸(routes.timeouts.<route> 등)을 「값이 비었습니다」로
+    // 거절하면 같은 묶음의 다른 칸을 고쳐도 저장이 늘 실패한다(2026-11-07 CLI 심사 상한 저장 거절). 「기본값으로」는 덮어쓴 칸에만 있어 우회도 없었다
+    if (raw === initial) continue;
     const value = parseFieldInput(kind, raw);
     if (value === undefined) { issues.push(kind === "int" ? `${label}: 정수를 넣어주세요` : `${label}: 초 단위 숫자를 넣어주세요`); continue; }
     if (value === null && !path.endsWith(".relayMs")) { issues.push(`${label}: 값이 비었습니다 — 기본값으로 돌리려면 「기본값으로」를 켜주세요`); continue; }
