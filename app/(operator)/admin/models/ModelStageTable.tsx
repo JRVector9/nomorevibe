@@ -7,6 +7,7 @@ import type { ServedContractModels } from "@/lib/operations/admin-engine-connect
 import type { ModelProbeResult } from "./operation-actions";
 import type { ModelOpsControls } from "./ModelOpsPanel";
 import { buttonSmall } from "../settings/Switch";
+import { LLM_RETRY_HREF, llmRetryRowHref } from "@/lib/operations/llm-ops-links";
 
 export const PROBE_PROVIDERS = ["abcllm", "local-direct"];
 export const cardProvider = (card: ModelCard) => card.definition?.provider ?? card.rows[0]?.provider ?? card.requests[0]?.provider ?? "";
@@ -45,7 +46,7 @@ function ProbeCell({ probe, observation, probeable, shared, busy }: { probe: Pro
 
 /**
  * 단계 × 모델. 넓은 화면은 8열(장비·전송은 모델 칸, 대기·미확인은 상태 칸). 1280px 미만은 모델 카드.
- * 모델·연결 확인·동작 셀은 묶음의 첫 행에 rowspan. 미확인 수는 사람 검토 목록의 그 요청(#rv-…)으로 간다.
+ * 모델·연결 확인·동작 셀은 묶음의 첫 행에 rowspan. 미확인 수는 기록 › 재실행 대기의 그 요청(/admin/models/history#rv-…)으로 간다.
  */
 export function ModelStageTable({ cards, observation, controls, probes, localProbes, busy, onProbe, restartModels = [], served = [] }: {
   cards: ModelCard[]; observation: AdminModelsObservation; controls: ModelOpsControls; probes: Record<string, ProbeObservation>;
@@ -122,7 +123,7 @@ function CardRows({ card, observation, controls, probe, busy, onProbe, recovery,
               {card.requests.map(row => <p key={row.requestId}>requestId {row.requestId}<br />state {row.state} · 상태 경과 {elapsedModelTime(row.stateSince, observation.observedAt)} · 요청 시작 {kstClock(row.dispatchedAt ?? row.queuedAt)} KST{row.localEndRecorded ? " · 로컬 호출 종료 기록 있음" : ""}<br />owner {row.ownerInstanceId} · 예약 기한 {row.reservedUntil ? `${kstClock(row.reservedUntil)} KST` : "없음"}</p>)}
               {card.contracts.map(row => <p key={`${row.routeId}:${row.model}`}>계약 routeId {row.routeId} · {row.transport} · {row.host ?? "주소 없음"}</p>)}</div></details></td>}
         <td className={cell}><ModelStatusBadge status={status}>{status === "unknown" ? `확인 못함 ${stage.unknown}` : spec.label}</ModelStatusBadge>
-          <span className="mt-0.5 block text-fg-2">대기 {stage.waiting} · 미확인 {stage.unknown ? <a href={unknownRequest ? `#rv-${unknownRequest.requestId}` : "#review"} className="font-semibold text-warn underline underline-offset-[3px]">{stage.unknown} ↓</a> : 0}</span>
+          <span className="mt-0.5 block text-fg-2">대기 {stage.waiting} · 미확인 {stage.unknown ? <a href={unknownRequest ? llmRetryRowHref(unknownRequest.requestId) : LLM_RETRY_HREF} className="font-semibold text-warn underline underline-offset-[3px]">{stage.unknown} →</a> : 0}</span>
           {status === "down" && !probe && <span className="mt-0.5 block text-fg-2">최근 성공·연결 확인 기록 없음</span>}
           {status === "hold" && full && <span className="mt-0.5 block text-fg-2">슬롯 상한 도달</span>}</td>
         {group.shared ? (si === 0 && <td rowSpan={group.stages.length} className={`${span} text-right tabular-nums`}><span className="font-semibold">{group.held} / {limit ?? "미확인"}</span> <small className="text-fg-2">공유</small>{lending && <span className="block text-fg-2">빌려 쓰는 중</span>}</td>)
@@ -168,7 +169,7 @@ function StageCard({ card, observation, controls, probe, busy, onProbe, recovery
         return <div key={`${group.id}:${stage.stage}`}>
           <dt className="font-semibold">{stage.label}</dt>
           <dd className="text-fg-2"><ModelStatusBadge status={status} /> · {stage.held} 점유 · 대기 {stage.waiting} · 성공 {stage.succeeded1h} / 실패 {stage.failed1h}
-            {stage.unknown ? <> · <a href={unknownRequest ? `#rv-${unknownRequest.requestId}` : "#review"} className="font-semibold text-warn">미확인 {stage.unknown}</a></> : null}
+            {stage.unknown ? <> · <a href={unknownRequest ? llmRetryRowHref(unknownRequest.requestId) : LLM_RETRY_HREF} className="font-semibold text-warn">미확인 {stage.unknown}</a></> : null}
             {stage.lastSuccessAt ? ` · ${elapsedModelTime(stage.lastSuccessAt, observation.observedAt)} 전` : ""}</dd>
         </div>;
       }))}

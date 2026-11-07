@@ -30,7 +30,7 @@ describe("admin models 한 화면 렌더(2026-10-31 승인 시안)", () => {
   it("지원하는 모든 단계(처리량 접기)·마지막 성공·확인 못함 수를 빠짐없이 표시하고, 갱신 띠는 상단(RefreshBar)으로 옮겼다", () => {
     const html = render(); for (const stage of MODEL_DASHBOARD_STAGES) expect(html).toContain(stage.label);
     expect(html).toContain("확인 못함 1"); expect(html).toContain(">2분 전<"); expect(html).toContain(">마지막 성공</th>");
-    expect(html).not.toContain("30초 자동 새로고침"); expect(html).toContain("검토 목록");
+    expect(html).not.toContain("30초 자동 새로고침"); expect(html).toContain("기록 › 재실행 대기");
   });
   it("모델을 단계 × 모델 표 12열(단계·경로 / 모델 / 장비·출처 / 전송 / 상태 / 점유·한도 / 대기 / 미확인 / 1시간 / 마지막 성공 / 연결 확인 / 동작)로 그린다", () => {
     const html = render();
@@ -85,10 +85,10 @@ describe("admin models 한 화면 렌더(2026-10-31 승인 시안)", () => {
     const observation = redesignObservation();
     expect(stageHealth(observation, observation.rows.slice(0, 2), observation.requests.slice(0, 1))).toBe("미확인");
   });
-  it("미확인 행은 요청 시작(KST)·경과·슬롯 점유 없음과 M1 sudo/Supa root 비활성 사유를 보이고, 미확인 수는 검토 목록의 그 요청으로 간다", () => {
+  it("미확인 행은 요청 시작(KST)·경과·슬롯 점유 없음과 M1 sudo/Supa root 비활성 사유를 보이고, 미확인 수는 기록 › 재실행 대기의 그 요청으로 간다", () => {
     // 2026-10-30 결정: 미확인 요청은 단계를 막지 않으므로 "막고 있는 단계" 대신 "슬롯 점유 없음"을 안내한다.
     const html = render();
-    for (const value of ["요청 시작 15:40:00 KST", "20분째", "미확인은 슬롯 점유 없음 · 사람 검토 뒤 닫기", "확인 못함 2건 · 사람 검토", "M1 sudo 필요", "Supa root 필요", `href="#rv-${redesignRequests[0].requestId}"`]) expect(html).toContain(value);
+    for (const value of ["요청 시작 15:40:00 KST", "20분째", "미확인은 슬롯 점유 없음 · 사람 검토 뒤 닫기", "확인 못함 2건 · 사람 검토", "M1 sudo 필요", "Supa root 필요", `href="/admin/models/history#rv-${redesignRequests[0].requestId}"`]) expect(html).toContain(value);
     expect(html).not.toContain("막고 있는 단계"); expect(html).not.toContain("멈춤"); expect(html).not.toContain("모델 슬롯 가득");
     expect(html.match(/<button[^>]*disabled=""[^>]*>종료\(정식 해제\)<\/button>/g)).toHaveLength(2);
     expect(html.match(/<button[^>]*disabled=""[^>]*>모델 재시작<\/button>/g)?.length).toBeGreaterThanOrEqual(2);

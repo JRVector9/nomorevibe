@@ -1,15 +1,20 @@
 import "server-only";
-import { sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, sql, type SQL } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
+import { operationsAudit } from "@/lib/db/schema";
 import { listJobStates } from "@/lib/jobs/runner";
 import { isPausedJob } from "@/lib/jobs/status";
 import { ensureServingContracts, servingContractSnapshot } from "@/lib/llm/serving-contract-store";
 import { secretBoxReady } from "@/lib/security/secret-box";
 import { readAiTaskExecutionAdminViews } from "./admin-ai-task-execution";
 import { listAiConnections, listAiTaskRows, readAiTaskRuntime } from "./admin-ai-tasks-repository";
+import type { AdminLogRow } from "./admin-log";
 import type { AdminModelsObservation } from "./admin-models-observation";
 import { readAdminModelsObservation } from "./admin-models-repository";
 import { readConveyor } from "./conveyor";
+import { LLM_HISTORY_ACTIONS, LLM_HISTORY_KINDS, type LlmHistoryFilter } from "./llm-ops-history";
+import { canRequeueUnknownRoute } from "./model-capacity-requeue";
+import { readModelCapacityReviewQueue, type CapacityReviewQueue } from "./model-capacity-unknowns";
 import type { OpsState } from "./ops-runner/contract";
 import { buildDashboardView, buildLlmOpsView, CLI_VERSION_PATTERN, parseClassifierObservation, type DashboardView, type JobPause, type LlmClassifierInput, type LlmCliContractInput, type LlmOpsView } from "./llm-ops-view";
 
@@ -61,7 +66,7 @@ export async function readModelsDashboard(): Promise<{ view: DashboardView; obse
     listAiConnections().catch(() => null),
     readModelOpsStates().catch((): OpsState[] => []),
   ]);
-  return { view: buildDashboardView({ now: new Date().toISOString(), observation, conveyor, jobs, connections }), observation, opsStates };
+  return { view: buildDashboardView({ now: new Date().toISOString(), observation, conveyor, jobs, connections, requeueSupported: canRequeueUnknownRoute }), observation, opsStates };
 }
 
 /** LLM 운영 — 연결·순위·분산 구성·실행 쪽 순위 사정·장부 관측·잡 멈춤·CLI 계약·분류 에이전트 관측. 연결 확인(네트워크)은 하지 않는다. */
@@ -78,4 +83,22 @@ export async function readLlmOps(): Promise<{ view: LlmOpsView; secretBox: boole
     readClassifierObservation(now.getTime()),
   ]);
   return { view: buildLlmOpsView({ now: now.toISOString(), observation, connections, rows, executions, runtime, jobs, cliContracts, classifier }), secretBox: secretBoxReady() };
+}
+
+export type LlmChangeLog = Readonly<{ rows: AdminLogRow[]; more: boolean; error: string | null }>;
+/** 변경 기록 한 표 — 작업 로그(operations_audit)의 「LLM 운영」 작업만, 갈래·실패만·이전 쪽(before id)으로 거른다. 못 읽으면 error. */
+export async function readLlmChangeLog(filter: LlmHistoryFilter, limit = 40): Promise<LlmChangeLog> {
+  try {
+    const where: SQL[] = [inArray(operationsAudit.action, [...(filter.kind ? LLM_HISTORY_KINDS[filter.kind].actions : LLM_HISTORY_ACTIONS)])];
+    if (filter.failedOnly) where.push(eq(operationsAudit.ok, false));
+    if (filter.before) where.push(lt(operationsAudit.id, filter.before));
+    const rows = await db.select().from(operationsAudit).where(and(...where)).orderBy(desc(operationsAudit.id)).limit(limit + 1);
+    return { rows: rows.slice(0, limit), more: rows.length > limit, error: null };
+  } catch (error) { return { rows: [], more: false, error: error instanceof Error ? error.message : "read_failed" }; }
+}
+
+/** 기록 — 재실행 대기(장부 검토 목록)·열린 호출과 1시간 정산(장부 관측)·변경 기록. 하나를 못 읽어도 화면은 뜬다. */
+export async function readLlmHistory(filter: LlmHistoryFilter): Promise<{ queue: CapacityReviewQueue; observation: AdminModelsObservation; changes: LlmChangeLog }> {
+  const [queue, observation, changes] = await Promise.all([readModelCapacityReviewQueue(), readAdminModelsObservation({ throughput: false }), readLlmChangeLog(filter)]);
+  return { queue, observation, changes };
 }

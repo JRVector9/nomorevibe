@@ -38,6 +38,7 @@ const QUERY: Record<string, Record<string, readonly string[]>> = {
   "/admin/audit": { tab: auditTabs(), view: auditViews() },
   "/admin/github-accounts": {},
   "/admin/models": {},
+  "/admin/models/history": {},
   "/admin/feedback": { state: ["accepted", "held", "rejected", "all"] },
   "/admin/translations": { state: ["pending", "ready", "failed", "reviewed", "all"] },
 };

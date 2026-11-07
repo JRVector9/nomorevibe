@@ -7,6 +7,7 @@ import type { CapacityReviewDetailsItem, CapacityReviewDetailsQueue } from "@/li
 import { kstClock, modelStageLabel } from "@/lib/operations/admin-models-view";
 import { closeUnknownReview, type UnknownReviewState } from "../models/unknown-review-actions";
 import "./unknown-reviews.css";
+import { LLM_RETRY_HREF } from "@/lib/operations/llm-ops-links";
 
 const reasons: Record<string, string> = {
   client_timeout: "기한 초과",
@@ -113,7 +114,7 @@ function ReviewDialog({ task, model, onClose }: Scope & { onClose: () => void })
     <div className="fu-header"><h2 id={title}>미확정 호출 검토</h2><button className="button small" type="button" onClick={() => dialog.current?.close()}>닫기</button></div>
     <div className="fu-body">
       <p>확인한 근거를 메모하고 검토 기록을 종료합니다. 모델 실행 중지나 작업 승인으로 처리하지 않습니다.</p>
-      <p className="fu-meta">장부 슬롯: 점유 없음 · 원격 실행 종료: 별도 확인</p>
+      <p className="fu-meta">장부 슬롯: 점유 없음 · 원격 실행 종료: 별도 확인 · 작업을 다시 실행하려면 <a className="fu-link" href={LLM_RETRY_HREF}>LLM 운영 › 기록 › 재실행 대기</a>에서 「다시 대기열」을 누릅니다.</p>
       {model && <p className="fu-model">선택한 모델 · {model}</p>}
       <div className="fu-toolbar"><span>{queue ? `${queue.items.length.toLocaleString("ko-KR")}건` : "조회 중"}{observedAt ? ` · ${time(observedAt)} 기준` : ""}</span><button type="button" className="button small" disabled={loading} onClick={() => { setCanReview(false); setLoading(true); setError(null); void load(); }}>목록 새로고침</button></div>
       <p role="status" aria-live="polite" className="fu-meta">{message}</p>

@@ -5,7 +5,7 @@ import { GPU, LLM_NOW, llmConnections, llmConveyor, llmObservation, llmRankRows,
 
 const mocks = vi.hoisted(() => ({
   observation: vi.fn(), conveyor: vi.fn(), jobs: vi.fn(), connections: vi.fn(), rows: vi.fn(), runtime: vi.fn(), executions: vi.fn(), opsStates: vi.fn(),
-  classifier: vi.fn(), redirect: vi.fn((href: string) => { throw new Error(`NEXT_REDIRECT:${href}`); }),
+  classifier: vi.fn(), reviewQueue: vi.fn(), auditRows: vi.fn(), redirect: vi.fn((href: string) => { throw new Error(`NEXT_REDIRECT:${href}`); }),
 }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }), redirect: mocks.redirect }));
 vi.mock("@/lib/auth/admin", () => ({ currentAdmin: async () => ({ login: "jr" }) }));
@@ -19,7 +19,10 @@ vi.mock("@/lib/security/secret-box", () => ({ secretBoxReady: () => true }));
 vi.mock("@/lib/llm/serving-contract-store", () => ({ ensureServingContracts: async () => undefined, servingContractSnapshot: () => ({ rows: [
   { routeId: "cli:grok-cli:grok-session-check", model: "grok-4.7", contract: { cliVersion: "0.9.1", apiKey: "SECRET-CONTRACT" }, auth: "stored", apiKey: "SECRET-KEY", transport: "direct" },
   { routeId: "second-review", model: "supa", contract: {}, auth: "none", apiKey: null, transport: "direct" }] }) }));
-vi.mock("@/lib/db", () => ({ db: { execute: mocks.classifier }, onPrimary: (run: () => unknown) => run() }));
+// 변경 기록(operations_audit)은 db.select().from().where().orderBy().limit() 로 읽는다
+const auditChain = { from: () => auditChain, where: () => auditChain, orderBy: () => auditChain, limit: (n: number) => mocks.auditRows(n) };
+vi.mock("@/lib/db", () => ({ db: { execute: mocks.classifier, select: () => auditChain }, onPrimary: (run: () => unknown) => run() }));
+vi.mock("@/lib/operations/model-capacity-unknowns", async original => ({ ...await original<object>(), readModelCapacityReviewQueue: mocks.reviewQueue }));
 vi.mock("@/app/(operator)/admin/models/ops-runner-actions", () => ({ submitAdminModelOperation: vi.fn(), readAdminModelOperation: vi.fn() }));
 vi.mock("@/app/(operator)/admin/models/tasks/actions", () => ({ saveAiConnectionAction: vi.fn(), readAiConnectionModelsAction: vi.fn(), deleteAiConnectionAction: vi.fn() }));
 vi.mock("@/app/(operator)/admin/models/devices/actions", () => ({ saveCapacityDevice: vi.fn() }));
@@ -60,7 +63,9 @@ describe("대시보드(/admin/models) 그리기", () => {
     expect(html).toMatch(/data-kpi="running"[^]*?4 \/ 17/);
     expect(html).toMatch(/data-kpi="retry"[^]*?>1<\/div>/);
     expect(html.match(/class="llm-todo"/g)).toHaveLength(3);
-    expect(html).toContain('href="/admin/models?advanced=1#review"');
+    // 미확정은 기록 › 재실행 대기로 가고, 지원 단계면 할 일에서 바로 다시 대기열에 넣는다(PR 3)
+    expect(html).toContain('href="/admin/models/history#retry"');
+    expect(html).toMatch(/data-todo="indeterminate"[^]*?>[^<]+ 다시 대기열<\/button>[^]*?재실행 패널 →/);
     expect(html).toContain(`href="/admin/models/llm?edit=${GPU}#conn-${GPU}"`);
     expect(html).toContain('aria-label="gpu3090-qwen 점유 2 / 5"');
     expect(html.match(/class="llm-stage"/g)).toHaveLength(7);
@@ -91,7 +96,7 @@ describe("LLM 운영(/admin/models/llm) 그리기", () => {
     expect(text(gpu)).toContain("▲ 연결 폼 4칸과 다름");
     expect(gpu).toContain('<span class="llm-chip-rank">2</span>1차 AI 검수');
     expect(text(gpu)).toContain("미확정 있음 재실행 대기 1건");
-    expect(gpu).toContain('href="/admin/models?advanced=1#review">대기 1 →');
+    expect(gpu).toContain('href="/admin/models/history#retry">대기 1 →');
     const opencode = html.match(new RegExp(`<article id="conn-${OPENCODE}"[^]*?</article>`))![0];
     expect(text(opencode)).toContain("시간 초과 1회(1차 AI 검수)");
     expect(text(html.match(new RegExp(`<article id="conn-${M1}"[^]*?</article>`))![0])).toContain("목록 못 읽음 서버 응답 없음");
@@ -125,13 +130,53 @@ describe("LLM 운영(/admin/models/llm) 그리기", () => {
 });
 
 describe("기록(/admin/models/history) 그리기", () => {
-  it("열린 호출 표 한 곳과 재실행 검토·작업 로그(LLM 운영 갈래) 링크", async () => {
-    const html = renderToStaticMarkup(await ModelsHistorySlot());
+  const item = { requestId: "7e2c1a90-0000-4000-8000-000000000001", routeId: "crawl-agent-review", provider: "local-direct", model: "qwen3.8-flash-next",
+    groupId: "gpu3090-qwen", providerBudgetId: "gpu3090-qwen", workKey: "candidate:42", logicalWorkKey: null, ownerInstanceId: "m3-reviewer",
+    dispatchedAt: "2026-11-07T05:17:52.000Z", markedAt: "2026-11-07T05:19:55.000Z", reason: "client_timeout" as const, oldPolicy: false, localEndRecorded: true };
+  const audit = (id: number, action: string, over: Record<string, unknown> = {}) => ({ id, action, actor: "jr", target: "review-cli", ok: true, error: null,
+    detail: { changes: [{ path: "routes.limits.review-cli.timeoutMs", before: 45000, after: 60000 }] }, ip: "100.1.1.1", userAgent: "Mozilla", actorKind: "github",
+    createdAt: new Date(Date.parse(LLM_NOW) - 5 * 60_000), ...over });
+  beforeEach(() => {
+    mocks.reviewQueue.mockResolvedValue({ items: [item], truncated: false, error: null, groups: [{ routeId: "crawl-agent-review", count: 1 }, { routeId: "human-deepseek-review", count: 2 }] });
+    mocks.auditRows.mockResolvedValue([audit(25500, "runtime-settings-save"), audit(25499, "model-capacity-unknown-requeued", { ok: false, error: "some_routes_failed", detail: { routeId: "crawl-agent-review", closed: 0 } })]);
+  });
+
+  it("재실행 대기(단계별 묶음 · 다시 대기열 · 사유 받는 닫기) → 1시간 실패 → 호출 기록 → 변경 기록 한 표", async () => {
+    const html = renderToStaticMarkup(await ModelsHistorySlot({ filter: { kind: null, failedOnly: false, before: null }, readOnly: false }));
+    const retry = html.match(/<section class="llm-panel" id="retry"[^]*?<\/section>/)![0];
+    expect(text(retry)).toContain("결과 미확정 3건");
+    expect(retry).toMatch(/data-retry-route="crawl-agent-review"[^]*?1차 AI 검수[^]*?qwen3.8-flash-next[^]*?시간 초과 1[^]*?로컬 종료 기록 1[^]*?>다시 대기열<\/button>/);
+    // 서버가 다시 대기열을 지원하지 않는 단계는 단추 없이 한 건씩 닫게 한다
+    expect(retry).toMatch(/data-retry-route="human-deepseek-review"[^]*?아직 지원하지 않습니다/);
+    expect(retry).toContain(`id="rv-${item.requestId}"`);
+    expect(retry).toContain("mlx-lm 은 취소가 없어");
+    expect(retry).toContain('placeholder="닫는 사유(엔진 상태·조치)"');
+    expect(retry).toContain(">닫기</button>");
+    expect(retry).not.toContain("window.confirm");
+    expect(html).toContain('id="failures"');
     expect(html).toContain("호출 기록 · 업무 결과 대조");
     expect(html).toContain("161d7780");
-    expect(html).toContain("결과 미확정 1건");
-    expect(html).toContain('href="/admin/activity?group=llm"');
-    expect(html).toContain('href="/admin/models/devices#audit"');
+    const audit = html.match(/<section class="llm-panel" id="audit"[^]*?<\/section>/)![0];
+    expect(audit).toContain('data-audit-action="runtime-settings-save"');
+    expect(text(audit)).toContain("실시간 한도 저장");
+    expect(text(audit)).toContain("routes.limits.review-cli.timeoutMs: 45000 → 60000");
+    expect(text(audit)).toMatch(/확인 못한 모델 호출 다시 대기열 ▲?■? ?실패 some_routes_failed/);
+    expect(audit).toContain('href="/admin/models/history?kind=limit#audit"');
+    expect(audit).toContain('href="/admin/models/history?failed=1#audit"');
+    expect(audit).toContain('href="/admin/activity?workspace=models&amp;group=llm"');
+    expect(mocks.auditRows).toHaveBeenCalledWith(41);
+  });
+
+  it("읽지 못하면 0건으로 꾸미지 않는다 · 읽기 전용에서는 단추·닫기 폼이 없다", async () => {
+    mocks.reviewQueue.mockResolvedValue({ items: [], truncated: false, error: "statement timeout", groups: [] });
+    mocks.observation.mockResolvedValue(unavailableAdminModels());
+    mocks.auditRows.mockRejectedValue(new Error("db down"));
+    const html = renderToStaticMarkup(await ModelsHistorySlot({ filter: { kind: "limit", failedOnly: true, before: 100 }, readOnly: true }));
+    expect(text(html)).toContain("재실행 목록을 읽지 못했습니다");
+    expect(text(html)).toContain("변경 기록을 읽지 못했습니다");
+    expect(html).toMatch(/id="failures"[^]*?확인 불가/);
+    expect(html).not.toContain(">다시 대기열</button>");
+    expect(html).toContain('class="llm-filter active" aria-current="page" href="/admin/models/history?kind=limit&amp;failed=1#audit"');
   });
 });
 

@@ -1,5 +1,6 @@
-import { readLlmOps, readModelsDashboard } from "@/lib/operations/llm-ops-read";
-import { readAdminModelsObservation } from "@/lib/operations/admin-models-repository";
+import { readLlmHistory, readLlmOps, readModelsDashboard } from "@/lib/operations/llm-ops-read";
+import { buildRetryView, type LlmHistoryFilter } from "@/lib/operations/llm-ops-history";
+import { canRequeueUnknownRoute } from "@/lib/operations/model-capacity-requeue";
 import { ModelsDashboard } from "./ModelsDashboard";
 import { LlmOpsList } from "./llm/LlmOpsList";
 import { ModelsHistory } from "./history/ModelsHistory";
@@ -18,6 +19,10 @@ export async function LlmOpsSlot({ readOnly, editId, adding }: { readOnly: boole
   return <LlmOpsList view={view} secretBox={secretBox} readOnly={readOnly} editId={editId} adding={adding} />;
 }
 
-export async function ModelsHistorySlot() {
-  return <ModelsHistory observation={await readAdminModelsObservation({ throughput: false })} />;
+/** 서버가 그리기 시작한 시각 — 변경 기록의 「몇 분 전」. 구성 요소 밖에서 읽는다(렌더 순수성 규칙). */
+const renderClock = () => new Date();
+
+export async function ModelsHistorySlot({ filter, readOnly }: { filter: LlmHistoryFilter; readOnly: boolean }) {
+  const { queue, observation, changes } = await readLlmHistory(filter);
+  return <ModelsHistory retry={buildRetryView(queue, canRequeueUnknownRoute)} observation={observation} changes={changes} filter={filter} now={renderClock()} readOnly={readOnly} />;
 }

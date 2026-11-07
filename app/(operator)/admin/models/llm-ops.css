@@ -68,6 +68,10 @@
 .llm-todo-title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-weight: 650; font-size: calc(14px + var(--admin-font-delta, 0px)); }
 .llm-todo-detail { color: var(--muted); font-size: calc(13px + var(--admin-font-delta, 0px)); overflow-wrap: anywhere; }
 .llm-todo .button { white-space: nowrap; }
+.llm-todo-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 6px; }
+/* 다시 대기열 확인 단계에서는 할 일 한 칸을 위아래로 쌓는다 — 미리보기 글이 제목 칸을 좁히지 않게 */
+.llm-todo:has(.llm-retry-form[data-confirming]) { grid-template-columns: minmax(0, 1fr); }
+.llm-todo:has(.llm-retry-form[data-confirming]) .llm-todo-actions { justify-content: flex-start; }
 .llm-empty { color: var(--muted); font-size: calc(13px + var(--admin-font-delta, 0px)); }
 
 /* 장비 점유 */
@@ -164,3 +168,25 @@
   .llm-todo { grid-template-columns: minmax(0, 1fr); }
   .llm-banner { padding: 12px; gap: 10px; }
 }
+
+/* 기록 › 재실행 패널·변경 기록(PR 3) */
+.llm-retry-form { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.llm-retry-form[data-confirming] { padding: 6px 8px; border: 1px solid var(--amber); border-radius: 8px; background: var(--amber-soft); }
+.llm-retry-preview { font-size: calc(13px + var(--admin-font-delta, 0px)); max-width: 42ch; }
+.llm-retry-done { color: var(--green); font-weight: 600; font-size: calc(13px + var(--admin-font-delta, 0px)); }
+.llm-retry-error { color: var(--red); font-size: calc(13px + var(--admin-font-delta, 0px)); }
+.llm-retry-all { display: flex; justify-content: flex-end; }
+.llm-retry-items > summary { cursor: pointer; font-weight: 600; font-size: calc(13px + var(--admin-font-delta, 0px)); }
+.llm-retry-items > ul { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 8px; }
+.llm-retry-item { display: grid; gap: 4px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); font-size: calc(13px + var(--admin-font-delta, 0px)); scroll-margin-top: 72px; }
+.llm-retry-item:target { border-color: var(--amber); box-shadow: 0 0 0 2px var(--amber-soft); }
+.llm-retry-item-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.llm-retry-close { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.llm-retry-close input { flex: 1 1 220px; min-width: 0; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+.llm-break { overflow-wrap: anywhere; }
+.llm-filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.llm-ops .llm-filter { padding: 3px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--muted); font-size: calc(13px + var(--admin-font-delta, 0px)); }
+.llm-ops .llm-filter:hover { border-color: var(--blue); }
+.llm-ops .llm-filter.active { border-color: var(--blue); background: var(--blue-soft); color: var(--blue); font-weight: 650; }
+.llm-pager { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; }
+.llm-recent-note { font-size: calc(13px + var(--admin-font-delta, 0px)); }

@@ -3,6 +3,7 @@ import type { OpsState } from "@/lib/operations/ops-runner/contract";
 import { LLM_OPS_LEVELS, type DashboardView } from "@/lib/operations/llm-ops-view";
 import { AdmissionControl } from "./AdmissionControl";
 import { LEVEL_WORD, LevelBadge, LevelLegend, ObservedAt } from "./LlmOpsParts";
+import { RequeueButton } from "./history/RetryActions";
 
 /**
  * 대시보드(/admin/models) — 「지금 문제없이 돌고 있나? 무엇부터 하나?」(2026-11-07 승인 시안).
@@ -43,7 +44,10 @@ export function ModelsDashboard({ view, opsStates, readOnly }: { view: Dashboard
           {view.todos.length ? <ol className="llm-todos">{view.todos.map(todo => <li key={todo.id} className="llm-todo" data-todo={todo.id}>
             <div className="llm-todo-main"><p className="llm-todo-title"><LevelBadge level={todo.level}>{todo.level === "idle" ? "확인" : LEVEL_WORD[todo.level]}</LevelBadge>{todo.title}</p>
               <p className="llm-todo-detail">{todo.detail}</p></div>
-            <Link prefetch={false} className="button small" href={todo.href}>{todo.action} →</Link>
+            <div className="llm-todo-actions">
+              {todo.retry?.map(retry => <RequeueButton key={retry.routeId} routeId={retry.routeId} label={retry.label} count={retry.count} named readOnly={readOnly} />)}
+              <Link prefetch={false} className="button small" href={todo.href}>{todo.action} →</Link>
+            </div>
           </li>)}</ol> : <p className="llm-empty">{view.readable ? "지금 따로 할 일이 없습니다." : "장부를 읽지 못해 할 일을 정하지 못했습니다 — 새로고침하거나 고급 설정에서 원본을 확인하세요."}</p>}
           {view.moreTodos > 0 && <p className="llm-empty">그 밖에 {view.moreTodos}건 — LLM 운영·기록에서 이어서 확인합니다.</p>}
         </div>
