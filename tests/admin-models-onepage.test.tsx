@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock("@/app/(operator)/admin/models/operation-actions", () => ({ probeAdminModel: vi.fn() }));
 vi.mock("@/app/(operator)/admin/models/ops-runner-actions", () => ({ submitAdminModelOperation: vi.fn(), readAdminModelOperation: vi.fn() }));
-vi.mock("@/app/(operator)/admin/models/unknown-review-actions", () => ({ closeUnknownReview: vi.fn() }));
+vi.mock("@/app/(operator)/admin/models/unknown-review-actions", () => ({ closeUnknownReview: vi.fn(), requeueUnknownReviews: vi.fn() }));
 import { LiveModels } from "@/app/(operator)/admin/models/LiveModels";
 import { SummaryTiles } from "@/app/(operator)/admin/models/SummaryTiles";
 import { ModelStageTable } from "@/app/(operator)/admin/models/ModelStageTable";
@@ -183,14 +183,25 @@ describe("장비 표·검토 목록·접기·상단 띠", () => {
     expect(deviceProbeStatus("supa", DEFAULT_MODEL_DEFINITIONS, probes)).toBe("down"); expect(deviceProbeStatus("gpu3090", DEFAULT_MODEL_DEFINITIONS, {})).toBeNull();
   });
   it("확인 못함 목록은 요청마다 #rv-<requestId> 앵커·사유·KST 시각·근거·검토 완료 폼을 보인다", () => {
-    const queue: CapacityReviewQueue = { truncated: false, error: null, items: [{ requestId: "7e2c1a90-0000-4000-8000-000000000001", routeId: "human-deepseek-review", provider: "local-direct", model: "deepseek-v4.1-flash-1017",
+    const queue: CapacityReviewQueue = { truncated: false, error: null, groups: [{ routeId: "human-deepseek-review", count: 1 }], items: [{ requestId: "7e2c1a90-0000-4000-8000-000000000001", routeId: "human-deepseek-review", provider: "local-direct", model: "deepseek-v4.1-flash-1017",
       groupId: "m3", providerBudgetId: "m3", workKey: "candidate:42", logicalWorkKey: null, ownerInstanceId: "m3-reviewer", dispatchedAt: "2026-10-31T05:17:52.000Z", markedAt: "2026-10-31T05:19:55.000Z",
       reason: "client_timeout", oldPolicy: false, localEndRecorded: true }] };
     const html = renderToStaticMarkup(createElement(UnknownReviewList, { queue }));
     expect(html).toContain('id="rv-7e2c1a90-0000-4000-8000-000000000001"'); expect(html).toContain("<code title=\"7e2c1a90-0000-4000-8000-000000000001\">7e2c1a90</code>");
     expect(html).toContain("기한 초과(client_timeout)"); expect(html).toContain("전송 <span class=\"font-mono tabular-nums\">14:17:52</span>"); expect(html).toContain("14:19:55"); expect(html).toContain("mlx-lm 은 취소 없음");
     expect(html).toContain("로컬 종료 기록 있음"); expect(html).toContain(">검토 완료</button>"); expect(html).toContain('for="note-7e2c1a90-0000-4000-8000-000000000001"');
-    expect(renderToStaticMarkup(createElement(UnknownReviewList, { queue: { items: [], truncated: false, error: null } }))).toContain("검토할 미확인 호출이 없습니다");
+    expect(renderToStaticMarkup(createElement(UnknownReviewList, { queue: { items: [], truncated: false, error: null, groups: [] } }))).toContain("검토할 미확인 호출이 없습니다");
+  });
+  it("지원하는 단계에는 전체 건수와 다시 대기열에 넣기 버튼을, 미지원 단계에는 안내만 보인다", () => {
+    const item = { requestId: "7e2c1a90-0000-4000-8000-000000000002", routeId: "crawl-publish-classify", provider: "abcllm",
+      model: "opencode-go/deepseek-v4.1-flash", groupId: "m3", providerBudgetId: "m3", workKey: "bg:publication-classify:abc:def",
+      logicalWorkKey: "bg:publication-classify:abc", ownerInstanceId: "m3-publisher", dispatchedAt: "2026-11-06T12:57:27.934Z",
+      markedAt: "2026-11-06T12:58:00.000Z", reason: "transport_unknown" as const, oldPolicy: false, localEndRecorded: false };
+    const html = renderToStaticMarkup(createElement(UnknownReviewList, { queue: { items: [item], truncated: true, error: null,
+      groups: [{ routeId: "crawl-publish-classify", count: 160 }, { routeId: "human-deepseek-review", count: 2 }] } }));
+    expect(html).toContain("160"); expect(html).toContain("발행 분류");
+    expect(html).toContain("다시 대기열에 넣기"); expect(html).toContain("목록은 오래된 100건만 표시합니다");
+    expect(html).toContain("아직 지원하지 않는 단계");
   });
   it("접기 1(도우미·감시자·배정 출처·새 잡)은 요약을 summary 에 두고 실제 값만 그린다 — 없는 출처는 — 로", () => {
     const html = renderToStaticMarkup(createElement(HelpersFold, { helpers: null, contracts: [{ routeId: "crawl-agent-review", model: "q", host: null, transport: "gateway" }],
