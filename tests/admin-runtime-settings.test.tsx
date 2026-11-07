@@ -174,6 +174,24 @@ describe("폼 → sparse patch", () => {
       .toEqual({ routes: { deadlines: { "review-gateway": { relayMs: null } } } });
   });
 
+  it("처음부터 빈칸이고 손대지 않은 칸은 건너뛴다 — 같은 묶음의 다른 칸 저장을 막지 않는다(2026-11-07 CLI 심사 상한 저장 거절)", () => {
+    // 코드 기본값이 없는 호출 상한 칸 다섯 개는 빈칸으로 그려지고 「기본값으로」도 없다(덮어쓴 칸에만 있음)
+    const untouched = Object.fromEntries(["classify-claude", "human-review", "product-intro-check", "gateway-review", "direct-review"].flatMap(route => [
+      [`value:routes.timeouts.${route}`, ""], [`initial:routes.timeouts.${route}`, ""], [`stored:routes.timeouts.${route}`, "0"]]));
+    const result = runtimeSettingsPatchFromForm("routes", form({ ...untouched,
+      "value:routes.limits.review-cli.timeoutMs": "60", "initial:routes.limits.review-cli.timeoutMs": "20", "stored:routes.limits.review-cli.timeoutMs": "0",
+      "value:routes.limits.review-cli.maxTokens": "2000", "initial:routes.limits.review-cli.maxTokens": "2000" }));
+    expect(result).toEqual({ patch: { routes: { limits: { "review-cli": { timeoutMs: 60_000 } } } }, changed: ["routes.limits.review-cli.timeoutMs"], issues: [] });
+    // 아무것도 안 바꾸면 바뀐 것이 없다(거절 아님)
+    expect(runtimeSettingsPatchFromForm("routes", form(untouched))).toEqual({ patch: {}, changed: [], issues: [] });
+    // 값이 있던 칸을 비우는 것은 여전히 거절한다(기본값으로 돌리려면 「기본값으로」)
+    expect(runtimeSettingsPatchFromForm("routes", form({ "value:routes.timeouts.crawl-tagline": "", "initial:routes.timeouts.crawl-tagline": "40" })).issues[0])
+      .toContain("값이 비었습니다");
+    // 빈칸이던 칸에 값을 넣으면 저장한다
+    expect(runtimeSettingsPatchFromForm("routes", form({ "value:routes.timeouts.human-review": "90", "initial:routes.timeouts.human-review": "" })).patch)
+      .toEqual({ routes: { timeouts: { "human-review": 90_000 } } });
+  });
+
   it("열거 칸(3b-E) — 배정 표 읽기는 선택지의 글자 그대로, 선택지 밖·빈 값은 거절, 처음 값과 같으면 바뀐 것이 없다, 「기본값으로」는 덮어쓴 칸에만", () => {
     const toggle = (over: Record<string, string>) => runtimeSettingsPatchFromForm("assignments", form({ "value:assignments.tableReads": "off", "initial:assignments.tableReads": "off",
       "stored:assignments.tableReads": "0", ...over }));
