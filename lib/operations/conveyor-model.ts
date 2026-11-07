@@ -1,6 +1,7 @@
 import { humanBacklogged, type HumanQueueOverview } from "@/lib/crawl/human-queue";
 import type { HourlySeries, HourPoint } from "./dashboard";
 import type { PipelineFlow } from "./pipeline";
+import type { PublicListingCounts } from "./public-listing-model";
 import type { SearchHealth } from "./search-health-model";
 import type { ThroughputSnapshot, ThroughputStage } from "./throughput-model";
 import type { ProgressReason, StageProgress } from "./worker-progress";
@@ -81,6 +82,8 @@ export type Conveyor = {
   human: HumanBox | null;
   /** 보류 전체(needs_review) · 거절 누적 · 공개 제품 */
   held: number | null; rejected: number | null; published: number | null; publishedHour: number | null;
+  /** 공개 상태(published)와 공개 목록 노출·빠진 사유(public-listing.ts) — 못 읽었으면 null. published 와 같은 시각에 센 값은 아니다(각자 15초 캐시) */
+  listing?: Omit<PublicListingCounts, "byCategory"> | null;
   /** 가장 급한 칸 — 막힘이 쌓임보다 먼저, 같은 급이면 앞(위쪽) 칸 */
   bottleneck: StationKey | "human" | null;
   headline: { tone: BeltTone; title: string; detail: string };
@@ -97,6 +100,8 @@ export type ConveyorInputs = {
   enabled: boolean;
   throughput: ThroughputSnapshot | null;
   flow: PipelineFlow | null;
+  /** 공개 상태·목록 노출 — 없으면(옛 시험·못 읽음) 화면은 공개 상태만 */
+  listing?: PublicListingCounts | null;
   hourly: HourlySeries | null;
   human: HumanQueueOverview | null;
   progress: { stages: Pick<StageProgress, "stage" | "reason" | "alarm">[]; liveness: { role: string; reason: string; alarm: boolean }[] } | null;
@@ -416,6 +421,7 @@ export function buildConveyor(inputs: ConveyorInputs): Conveyor {
   const bottleneck = candidates[0]?.key ?? null;
 
   const published = inputs.flow?.published ?? null;
+  const listing = inputs.listing ? { publicStatus: inputs.listing.publicStatus, listed: inputs.listing.listed, excluded: inputs.listing.excluded } : null;
   const publishedHour = inputs.hourly?.lastHour?.published ?? null;
   const held = inputs.holds ? inputs.holds.reduce((total, row) => total + row.count, 0) : null;
 
@@ -435,7 +441,7 @@ export function buildConveyor(inputs: ConveyorInputs): Conveyor {
       href: holdHref(row.reason), station: HOLD_STATION[row.reason] ?? ("human" as const) }));
 
   return {
-    measuredAt: inputs.now, hours: inputs.hourly?.points.length ? inputs.hourly.points.map((point) => point.hour) : null, stations, human, held, rejected: inputs.rejected, published, publishedHour,
+    measuredAt: inputs.now, hours: inputs.hourly?.points.length ? inputs.hourly.points.map((point) => point.hour) : null, stations, human, held, rejected: inputs.rejected, published, publishedHour, listing,
     bottleneck, headline: headlineFor(stations, human, bottleneck, publishedHour), funnel, holdsByReason, sinkLlm: models?.sink ?? null,
     supportLlm: models?.support ?? null,
   };

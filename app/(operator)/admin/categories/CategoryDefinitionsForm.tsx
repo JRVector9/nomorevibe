@@ -10,10 +10,20 @@ const field = "mt-2 block w-full rounded-lg border border-line bg-bg-soft px-3 p
 export function CategoryDefinitionsForm({
   definitions,
   counts,
+  listed = null,
 }: {
   definitions: CategoryDefinitions;
+  /** 분야마다 공개 상태(verified·seeded) 수 */
   counts: Record<string, number>;
+  /** 분야마다 공개 목록에 실리는 수(public-listing.ts) — 못 읽었으면 null 이고 공개 상태만 보인다 */
+  listed?: Record<string, number> | null;
 }) {
+  // 목록 노출이 공개 상태와 다를 때만 함께 적는다(주로 Profile — 주인 없는 개인 프로필은 목록에 없다)
+  const shown = (name: string) => {
+    const total = counts[name] ?? 0;
+    const inList = listed ? listed[name] ?? 0 : null;
+    return inList === null || inList === total ? `${total}` : `${total} · 목록 ${inList}`;
+  };
   const [selected, setSelected] = useState<Category>("Dev");
   const [state, action, pending] = useActionState(saveCategoryDefinitions, null);
   const current = definitions[selected];
@@ -35,7 +45,7 @@ export function CategoryDefinitionsForm({
               >
                 <span className="min-w-0 flex-1 truncate">{name}</span>
                 {edited && <span className="text-[13px] text-accent">기준 추가됨</span>}
-                <span className="font-mono text-[13px] text-fg-3">{counts[name] ?? 0}</span>
+                <span className="font-mono text-[13px] text-fg-3" title={listed ? `공개 ${counts[name] ?? 0} · 목록 ${listed[name] ?? 0}` : undefined}>{shown(name)}</span>
               </button>
             </li>
           );
@@ -46,7 +56,7 @@ export function CategoryDefinitionsForm({
       <form key={selected} action={action} className="rounded-[12px] border border-line bg-bg-card p-5">
         <input type="hidden" name="category" value={selected} />
         <h2 className="text-[18px] font-extrabold tracking-tight">
-          {selected} <span className="text-[13px] font-medium text-fg-3">· 공개 제품 {counts[selected] ?? 0}개</span>
+          {selected} <span className="text-[13px] font-medium text-fg-3">· {listed ? `공개 ${counts[selected] ?? 0} · 목록 ${listed[selected] ?? 0}` : `공개 제품 ${counts[selected] ?? 0}개`}</span>
         </h2>
 
         <label className="mt-5 block text-[13px] font-semibold text-fg-2">

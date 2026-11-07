@@ -14,6 +14,8 @@ import { NAME_ISSUE_LABELS } from "@/lib/domain/products/display-name";
 import { namesNeedingReview } from "@/lib/domain/products/name-review";
 import { formatDay, formatDetailTime, formatListTime } from "@/lib/format/time";
 import { siteOrigin } from "@/lib/site";
+import { readPublicListing } from "@/lib/operations/public-listing";
+import { listingExclusionText } from "@/lib/operations/public-listing-model";
 import { ScrollTable } from "../components/ScrollTable";
 import { ProductRow } from "./ProductRow";
 import { repoReviewView } from "./repo-review-view";
@@ -69,12 +71,15 @@ export default async function AdminProductsPage({ searchParams }: Props) {
   const conditions = { statuses: [...statuses], ...flags, ...(pending ? { repoGone: undefined, repoMissing: true } : {}), adminSearch: q || undefined };
   const repoArchived = active === "저장소 보관됨";
   const repoRenamed = active === "저장소 이름 바뀜";
-  const [products, total, counts] = await Promise.all([
+  const [products, total, counts, listing] = await Promise.all([
     listProducts({ ...conditions, sort, limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE }),
     countProducts(conditions),
     // 칩의 수는 없어도 목록은 그린다
     (q ? countProductsByFilter(PRODUCT_FILTERS, q) : allFilterCounts.get("all", () => countProductsByFilter(PRODUCT_FILTERS))).catch(() => null),
+    // 공개 목록에 실제로 실리는 수 — 흐름 화면과 같은 15초 캐시. 전체 수라 찾는 글자가 있으면 두지 않는다. 못 읽으면 그 칸만 —
+    q ? null : readPublicListing().catch(() => null),
   ]);
+  const listingGap = listingExclusionText(listing);
   const intro = active === "소개 확인 필요";
   const [reviews, waiting, introNotes, nameReviews] = await Promise.all([
     repoGone || repoAutoBanned ? repoReviewsFor(products.map((product) => product.id)) : null,
@@ -119,7 +124,8 @@ export default async function AdminProductsPage({ searchParams }: Props) {
     <div className="page-heading"><div className="heading-actions"><a className="button small" href={exportHref}>CSV 내보내기</a></div></div>
     <div className="grid four mb">
       <PrototypeStat label="등록 프로젝트" value={n(counts?.전체)} note={q ? "현재 검색어의 전체 상태" : "검증·미클레임·검증 대기·차단 포함"} />
-      <PrototypeStat label="공개 대상 상태" value={counts ? n(counts.검증됨 + counts.미클레임) : "—"} note="실제 노출은 생존·보류 조건도 적용" tone="good" />
+      <PrototypeStat label="공개 대상 상태" value={counts ? n(counts.검증됨 + counts.미클레임) : "—"} tone="good"
+        note={q ? "실제 노출은 생존·보류 조건도 적용" : `목록 노출 ${n(listing?.listed)} · 실제 노출은 생존·보류·개인 프로필 조건도 적용${listingGap ? ` (빠짐: ${listingGap})` : ""}`} />
       <PrototypeStat label="생존 확인 필요" value={n(counts?.["응답 없음"])} note="공개 대상 중 연속 응답 실패" tone="warn" />
       <PrototypeStat label="소개 확인 필요" value={n(counts?.["소개 확인 필요"])} note="현재 소개의 편집 보류" />
     </div>

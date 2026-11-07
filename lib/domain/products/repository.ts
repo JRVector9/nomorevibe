@@ -303,6 +303,18 @@ const SORTS = {
 /** 정렬 파라미터 검증용 (쿼리스트링 → ProductSort) */
 
 /**
+ * notDown 의 두 갈래 — 연속 실패로 닿지 않음이 아니다 · 설치형의 저장소 사라짐이 아니다. 어드민의 목록 노출 집계(publicListingCounts)가
+ * 빠진 사유를 나눠 세려고 따로 이름을 붙였다. notDown 은 이 둘을 그대로 잇는다 — 식을 두 벌 두지 않는다.
+ */
+const notFailingHealth = sql`not exists (
+  select 1 from product_health h
+  where h.slug = ${products.slug} and h.failures >= ${DOWN_THRESHOLD}
+    and ${uptimeNegativeAllowed({ id: products.id, url: products.url, updatedAt: products.updatedAt,
+      checkedAt: sql`h.checked_at`, failures: sql`h.failures`, status: sql`h.status` })}
+)`;
+const notInstallRepoGone = sql`not (${products.accessMode} <> 'website' and ${repoGone})`;
+
+/**
  * 닿지 않는 제품을 뺀다.
  *
  * 6시간마다 확인하므로 DOWN_THRESHOLD(3)회 연속 실패는 하루 가까이 계속 안 열렸다는 뜻이다.
@@ -315,12 +327,7 @@ const SORTS = {
  * 설치형은 생존 확인을 하지 않는다 — 저장소가 곧 제품이라 저장소가 사라졌다고 확정되면(repoGone) 닿지 않는 것과 같다.
  * 같은 이유로 여기서 함께 가린다. 웹사이트는 사이트가 살아 있을 수 있어 목록에 두고 GitHub 신호만 뺀다.
  */
-export const notDown = sql`(not exists (
-  select 1 from product_health h
-  where h.slug = ${products.slug} and h.failures >= ${DOWN_THRESHOLD}
-    and ${uptimeNegativeAllowed({ id: products.id, url: products.url, updatedAt: products.updatedAt,
-      checkedAt: sql`h.checked_at`, failures: sql`h.failures`, status: sql`h.status` })}
-) and not (${products.accessMode} <> 'website' and ${repoGone}))`;
+export const notDown = sql`(${notFailingHealth} and ${notInstallRepoGone})`;
 
 /**
  * 응답 없음 — health.ts 의 downWhere(downProducts·downProductCount)와 같은 식: DOWN_THRESHOLD 회 이상 연속 실패했고
@@ -591,6 +598,63 @@ export async function categoryCounts(
     .where(and(...(await listConditions(options))))
     .groupBy(products.category);
   return Object.fromEntries(rows.map((r) => [r.category, r.count]));
+}
+
+/** 공개 상태 수와 공개 목록에 실제로 실리는 수, 그 사이의 사유별 수(어드민) */
+export type PublicListingCounts = {
+  /** status 가 verified·seeded — 상세 주소가 열리는 수 */
+  publicStatus: number;
+  /** 공개 목록·검색·분야에 실리는 수 — 공개 사이트 「공개 N개」(categoryCounts excludeDown)와 같은 조건 */
+  listed: number;
+  /**
+   * 목록에서 빠진 수를 사유 하나씩에 — 한 제품이 여러 사유에 걸리면 이 차례의 앞 사유 하나로만 센다
+   * (주인 없는 개인 프로필 → 응답 없음 → 감사 보류 → 저장소 사라짐). 그래서 publicStatus = listed + 네 칸의 합.
+   */
+  excluded: { profileUnclaimed: number; down: number; auditHeld: number; repoGone: number };
+  /** 분야마다 공개 상태·목록 노출 */
+  byCategory: Record<string, { publicStatus: number; listed: number }>;
+};
+
+/**
+ * 공개 상태와 목록 노출을 한 번에 센다(어드민 흐름·제품·카테고리 화면) — 공개 사이트가 쓰는 조건(listedByDefault·notDown 의 두 갈래·
+ * notAuditHeld)을 그대로 받아 행마다 한 번씩 평가하고 바깥에서 묶는다. 목록 노출 = 네 조건이 모두 참인 행이라 공개 목록의 수와 식으로 같다.
+ * null 이 섞인 조건은 공개 목록에서 그 행을 빼므로(where 는 참만 남긴다) 여기서도 '참이 아님'을 빠짐으로 센다.
+ * 공개 화면은 이것을 부르지 않는다 — 어드민이 15초 캐시(lib/operations/public-listing.ts)로 나눠 쓴다.
+ */
+export async function publicListingCounts(): Promise<PublicListingCounts> {
+  const rows = await db.transaction(async (tx) => {
+    await tx.execute(sql`SET LOCAL statement_timeout = '5s'`);
+    return tx.execute<{ category: string; public_status: number; listed: number; profile: number; down: number; held: number; gone: number }>(sql`
+      select category, count(*)::int as public_status,
+        count(*) filter (where profile_ok and health_ok and held_ok and repo_ok)::int as listed,
+        count(*) filter (where not profile_ok)::int as profile,
+        count(*) filter (where profile_ok and not health_ok)::int as down,
+        count(*) filter (where profile_ok and health_ok and not held_ok)::int as held,
+        count(*) filter (where profile_ok and health_ok and held_ok and not repo_ok)::int as gone
+      from (
+        select ${products.category} as category,
+          coalesce(${listedByDefault}, false) as profile_ok,
+          coalesce(${notFailingHealth}, false) as health_ok,
+          coalesce(${notAuditHeld}, false) as held_ok,
+          coalesce(${notInstallRepoGone}, false) as repo_ok
+        from ${products}
+        where ${inArray(products.status, ["verified", "seeded"])}
+      ) listing
+      group by category`);
+  }, { accessMode: "read only" });
+  const result: PublicListingCounts = { publicStatus: 0, listed: 0,
+    excluded: { profileUnclaimed: 0, down: 0, auditHeld: 0, repoGone: 0 }, byCategory: {} };
+  for (const row of rows) {
+    const publicStatus = Number(row.public_status), listed = Number(row.listed);
+    result.publicStatus += publicStatus;
+    result.listed += listed;
+    result.excluded.profileUnclaimed += Number(row.profile);
+    result.excluded.down += Number(row.down);
+    result.excluded.auditHeld += Number(row.held);
+    result.excluded.repoGone += Number(row.gone);
+    result.byCategory[row.category] = { publicStatus, listed };
+  }
+  return result;
 }
 
 /**
