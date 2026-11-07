@@ -129,7 +129,7 @@ describe("작업 배정(/admin/models/tasks) 표 그리기", () => {
     // 목록을 못 읽은 서버는 LLM 운영의 그 행으로 보낸다
     expect(html).toContain(`href="/admin/models/llm?edit=${M1}#conn-${M1}"`);
     // 최근 기록(#audit)은 그대로
-    expect(html).toContain("작업 로그에서 전체 보기 →");
+    expect(html).toContain("LLM 운영 › 기록에서 전체 보기 →");
   });
 
   it("옛 「연결 고치기」 주소(?edit=<연결>)는 LLM 운영의 그 행으로 넘긴다", async () => {

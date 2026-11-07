@@ -122,7 +122,7 @@ describe("고급 설정 화면 그리기", () => {
     // 확인 못함 검토 목록은 기록 화면(PR 3)이 맡는다 — 여기는 옛 #review 링크를 받는 안내만
     expect(html).not.toContain("unknown-review-heading");
     expect(html).toContain('id="review"');
-    expect(html).toContain('href="/admin/models/history"');
+    expect(html).toContain('href="/admin/models/history#retry"');
     // 옛 참고 접힘의 자리표시·겹치는 칸은 없다
     expect(html).not.toContain('id="ref"');
     expect(html).not.toContain("다른 LLM 단계 · 지금 1순위");
