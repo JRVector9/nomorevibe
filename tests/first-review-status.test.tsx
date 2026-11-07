@@ -89,7 +89,7 @@ describe("AI 1차 상세 상태", () => {
     expect(out).toContain("유효 예약·호출 0 / 상한 1");
     expect(out).toContain("확인 못함 1건 · 사람 검토");
     expect(out).toContain("확인 못함 · 사람 검토(점유 아님) 1건");
-    expect(out).toContain('href="/admin/models#unknown-review-heading"');
+    expect(out).toContain('href="/admin/models/history#retry"');
     expect(out).not.toMatch(/종료 미확정|계속 점유/);
   });
 
