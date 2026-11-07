@@ -127,11 +127,20 @@
   text-transform: uppercase;
   color: var(--blue);
 }
-.admin-prototype .flex {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  flex-wrap: wrap;
+/* 시안의 「.flex」(가운데 정렬·9px 간격·줄바꿈)는 Tailwind 의 flex 유틸리티와 이름이 같다. 층 밖에 두면 items-start·gap-3·flex-nowrap 같은
+   유틸리티를 늘 이겼고, 「flex flex-col」 칸의 자식이 가운데로 몰려 폭이 줄었다(ModelOpsPanel·확인 대화상자·LiveModels·검색 모델, 2026-11-07 PR 5).
+   components 층에 두어 시안 화면(유틸리티 없이 「flex」만 쓴 곳)은 그대로 두고, 유틸리티를 적은 곳은 그 값이 이기게 한다.
+   Tailwind 의 세로 flex(flex-col)는 기본(stretch)이 뜻이라 그것만 되돌린다. */
+@layer components {
+  .admin-prototype .flex {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    flex-wrap: wrap;
+  }
+  .admin-prototype .flex.flex-col {
+    align-items: stretch;
+  }
 }
 .admin-prototype .between {
   justify-content: space-between;

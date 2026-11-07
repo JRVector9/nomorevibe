@@ -10,7 +10,7 @@ export function AdmissionControl({ mode, opsStates, readOnly, readable }: {
   mode: "open" | "draining" | "disabled" | null; opsStates: OpsState[]; readOnly: boolean; readable: boolean;
 }) {
   return <ModelOpsPanel mode={mode} requests={[]} models={[]} initialStates={opsStates} renderControls={controls =>
-    <button type="button" className="button" disabled={readOnly || !readable || controls.disabled || !(mode === "open" || mode === "draining")}
+    <button type="button" className="button self-center" disabled={readOnly || !readable || controls.disabled || !(mode === "open" || mode === "draining")}
       onClick={() => controls.open(mode === "open" ? "admission-pause" : "admission-open", "model-capacity")}>
       {mode === "draining" ? "OPEN 으로 · 접수 재개" : "DRAIN 으로 · 접수 중지"}</button>} />;
 }

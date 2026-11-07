@@ -13,7 +13,8 @@ const css = (file: string) => readFileSync(path.join(root, file), "utf8").replac
 const unlayered = (source: string) => source.replace(/@layer[^{;]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g, "");
 // 고친 범위(선택자 → 층 밖에 두면 안 되는 속성):
 // - PR 2: 화면 뿌리 아래 폼 요소(단추·입력)의 글자색, LLM 운영 화면의 링크 글자색.
-// - PR 5: 화면 뿌리 아래 링크의 글자색(text-accent-ink 를 덮었다), 단추 테두리(border 를 덮었다), 제목·문단 바깥 여백(mt-2 등을 덮었다).
+// - PR 5: 화면 뿌리 아래 링크의 글자색(text-accent-ink 를 덮었다), 단추 테두리(border 를 덮었다), 제목·문단 바깥 여백(mt-2 등을 덮었다),
+//   시안 「.flex」의 가운데 정렬·간격·줄바꿈(items-*·gap-*·flex-nowrap 을 덮고 flex-col 자식을 가운데로 몰았다).
 //   링크 밑줄 없음은 승인 시안의 모양이라 일부러 층 밖에 둔다(옮기면 underline 을 적은 링크에 밑줄이 새로 생긴다 — 전후 스크린샷으로 확인).
 // 글자 크기(font: inherit·제목 font-size)는 관리자 글자 크기 조절(--admin-font-delta)이 쓰므로 일부러 층 밖에 둔다 — 여기서 보지 않는다.
 const ROOT_ELEMENT: readonly (readonly [RegExp, RegExp])[] = [
@@ -22,6 +23,8 @@ const ROOT_ELEMENT: readonly (readonly [RegExp, RegExp])[] = [
   [/^\.admin-prototype\s+a$/, /(^|;)\s*color\s*:/],
   [/^\.admin-prototype\s+button$/, /(^|;)\s*border\s*:/],
   [/^\.admin-prototype\s+(h[1-6]|p)$/, /(^|;)\s*margin\s*:/],
+  // 시안의 「.flex」는 Tailwind flex 와 이름이 같다 — 층 밖이면 items-*·gap-*·flex-nowrap 을 덮고 flex-col 자식을 가운데로 몬다
+  [/^\.admin-prototype\s+\.flex$/, /(^|;)\s*(align-items|gap|flex-wrap)\s*:/],
 ];
 
 describe("관리자 CSS — 화면 뿌리 아래 요소의 기본 모양(글자색·테두리·여백)은 유틸리티를 덮지 않는다", () => {
@@ -41,6 +44,10 @@ describe("관리자 CSS — 화면 뿌리 아래 요소의 기본 모양(글자�
     expect(base).toMatch(/\.admin-prototype a\s*\{\s*color:\s*inherit;\s*\}/);
     expect(base).toMatch(/\.admin-prototype button\s*\{\s*border:\s*0;\s*\}/);
     expect(base).toMatch(/\.admin-prototype h1,\.admin-prototype h2,\.admin-prototype h3,\.admin-prototype h4,\.admin-prototype p\s*\{\s*margin:\s*0;\s*\}/);
+    // 시안 「.flex」는 components 층(시안 화면은 그대로), 세로 flex(flex-col)는 stretch 로 되돌린다
+    const components = css("app/(operator)/admin/prototype.css").match(/@layer components\s*\{((?:[^{}]*\{[^{}]*\})*[^{}]*)\}/)?.[1] ?? "";
+    expect(components).toMatch(/\.admin-prototype \.flex\s*\{[^}]*align-items:\s*center;[^}]*gap:\s*9px;/);
+    expect(components).toMatch(/\.admin-prototype \.flex\.flex-col\s*\{\s*align-items:\s*stretch;\s*\}/);
     // 글자 크기 조절·링크 밑줄 없음은 층 밖 그대로
     expect(unlayered(css("app/(operator)/admin/prototype.css"))).toMatch(/\.admin-prototype a\s*\{\s*text-decoration:\s*none;\s*\}/);
     expect(unlayered(css("app/(operator)/admin/prototype.css"))).toMatch(/\.admin-prototype h1\s*\{\s*font-size:\s*calc\(28px/);
