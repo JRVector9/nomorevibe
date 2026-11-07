@@ -386,7 +386,8 @@ it("every admin server action and every write route handler goes through the web
   // admin/models/search/actions.ts: saveSearchModelSettingsAction(검색 모델 설정 저장)도 같은 쓰기 관문을 통과해 106.
   // admin/review/rejected-rerun-actions.ts: prepareRejectedRerunAction(읽기 전용)·continueRejectedRerunAction·rerunSelectedRejectedAction 셋이 같은 webWriteAction 관문을 통과해 109 — prepare는 읽기 전용이지만 예외 없이 같은 DR 관문을 쓴다.
   // 2026-11-07 admin/models/unknown-review-actions.ts: requeueUnknownReviews(종료 미확정 다시 대기열) 하나가 더해져 110.
-  expect(wrapped).toBe(110);
+  // 2026-11-07 admin/models/ops-runner-actions.ts: cancelAdminModelOperation(시작 전 운영 작업 취소) 하나가 더해져 111.
+  expect(wrapped).toBe(111);
   const routes = files.filter(file => file.endsWith(`${path.sep}route.ts`));
   for (const file of routes) {
     const source = readFileSync(file, "utf8");

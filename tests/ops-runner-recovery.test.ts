@@ -84,3 +84,9 @@ it("자동 회수도 같은 함수에서 기존 DB lock/종료 증거 판정과 
   expect(mocks.release).toHaveBeenCalledWith({ policies, operator: "auto-reclaim:worker", onlyDeclaredBudgets: true }, true);
   expect(result.rows[0].released).toBe(false); expect(audit).toHaveBeenCalledTimes(2);
 });
+
+it("취소된 작업은 실행기가 다시 잡아도 한 단계도 돌리지 않는다(2026-11-07 시작 전 취소)", async () => {
+  const cancelled: OpsState = { ...state, status: "cancelled", code: "operator_cancelled", cancelledBy: "jr", cancelReason: "시험" };
+  expect(await runModelOpsRunner({ state: cancelled, driver })).toEqual(cancelled);
+  expect(driver.save).not.toHaveBeenCalled(); expect(driver.execute).not.toHaveBeenCalled();
+});

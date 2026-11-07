@@ -4,7 +4,7 @@ import { db, onPrimary } from "@/lib/db";
 import { operationsAudit } from "@/lib/db/schema";
 import { adminAuditRow } from "../admin-log";
 import { readWriterFence, writerSiteActive } from "../dr/epoch";
-import { opsCommandSchema, initialOpsState, opsHoldsBoundary, type OpsState } from "./contract";
+import { opsCancellable, opsCancelSchema, opsCommandSchema, initialOpsState, opsHoldsBoundary, type OpsState } from "./contract";
 
 // Append-only operations_audit is the durable queue/journal. No mutable business row or TTL cleanup.
 export async function readModelOpsStates(): Promise<OpsState[]> {
@@ -82,5 +82,27 @@ export async function saveModelOpsState(state: OpsState): Promise<void> {
     if (!await writerSiteActive(tx)) throw new Error("dr_writer_site_fenced");
     await tx.insert(operationsAudit).values(await adminAuditRow(state.actor, { action: "ops-runner-state", target: state.id,
       detail: { ...state }, ok: !["blocked", "manual"].includes(state.status), error: state.code }));
+  }));
+}
+
+/**
+ * 시작 전 취소 — 운영 실행기가 아직 잡지 않은 접수만(opsCancellable). 접수 잠금(7219401)을 잡고, 실행기 세션 잠금(7219402)을
+ * 같은 TX 안에서 잡을 수 있을 때만(실행기가 돌고 있지 않을 때만) 닫는다 — 실행기는 그 잠금을 쥔 채 상태를 읽고 단계를 돈다.
+ * 새 줄은 같은 append-only 장부(ops-runner-state)에 취소한 사람 이름으로 남는다. 원래 요청자(detail.actor)는 그대로다.
+ */
+export async function cancelModelOpsCommand(raw: unknown, actor: string): Promise<OpsState> {
+  const { id, reason } = opsCancelSchema.parse(raw);
+  return onPrimary(() => db.transaction(async tx => {
+    if (!await writerSiteActive(tx)) throw new Error("dr_writer_site_fenced");
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(7219401)`);
+    const [lock] = await tx.execute<{ locked: boolean }>(sql`SELECT pg_try_advisory_xact_lock(7219402) AS locked`);
+    if (!lock?.locked) throw new Error("ops_runner_running");
+    const [row] = await tx.execute<{ detail: OpsState }>(sql`SELECT detail FROM operations_audit
+      WHERE action='ops-runner-state' AND target=${id} ORDER BY id DESC LIMIT 1`);
+    if (!row) throw new Error("ops_runner_job_missing");
+    if (!opsCancellable(row.detail)) throw new Error("ops_runner_not_cancellable");
+    const state: OpsState = { ...row.detail, status: "cancelled", code: "operator_cancelled", cancelledBy: actor, cancelReason: reason };
+    await tx.insert(operationsAudit).values(await adminAuditRow(actor, { action: "ops-runner-state", target: id, detail: { ...state } }));
+    return state;
   }));
 }

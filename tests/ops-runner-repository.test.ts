@@ -3,8 +3,8 @@ const mocks = vi.hoisted(() => ({ execute: vi.fn(), insert: vi.fn(), values: vi.
 vi.mock("@/lib/db", () => ({ db: { execute: mocks.execute, transaction: (fn: (tx: unknown) => unknown) => fn({ execute: mocks.execute, insert: mocks.insert }) }, onPrimary: (fn: () => unknown) => fn() }));
 vi.mock("@/lib/operations/admin-log", () => ({ adminAuditRow: mocks.audit }));
 vi.mock("@/lib/operations/dr/epoch", () => ({ writerSiteActive: mocks.fence, readWriterFence: mocks.readFence }));
-import { submitModelOpsCommand, saveModelOpsState } from "@/lib/operations/ops-runner/repository";
-import { initialOpsState } from "@/lib/operations/ops-runner/contract";
+import { cancelModelOpsCommand, submitModelOpsCommand, saveModelOpsState } from "@/lib/operations/ops-runner/repository";
+import { initialOpsState, opsCancellable, opsFinished, opsHoldsBoundary } from "@/lib/operations/ops-runner/contract";
 const command = { id: "ad2b84de-4ddf-4b2e-9dbd-605c64f7d728", action: "request-release" as const,
   targetId: "161d7780-5b1f-4ce8-be8d-baed927b28e8", reason: "test", confirmed: true as const };
 beforeEach(() => {
@@ -78,4 +78,32 @@ it("운영자 셸 미리 보기는 READ ONLY로 같은 거절 사유를 보이�
     expect(mocks.fence).not.toHaveBeenCalled();
     expect(transaction).toHaveBeenCalledTimes(5); expect(mocks.insert).not.toHaveBeenCalled();
   } finally { (db as { transaction: unknown }).transaction = original; }
+});
+
+// 2026-11-07 시작 전 취소 — 10-31 #21956 처럼 운영 실행기가 한 번도 잡지 않은 접수가 접수 단추를 8일 동안 막았다.
+it("시작 전 취소: 실행기가 돌지 않을 때 queued·prepare·단계 없음인 접수만 취소한 사람 이름으로 닫고, 닫힌 것은 경계를 쥐지 않는다", async () => {
+  const queued = initialOpsState(command, "jr");
+  mocks.execute.mockResolvedValueOnce([]).mockResolvedValueOnce([{ locked: true }]).mockResolvedValueOnce([{ detail: queued }]);
+  const state = await cancelModelOpsCommand({ id: command.id, reason: "대상 요청은 10-31 검토 완료로 이미 닫힘" }, "operator2");
+  expect(state).toMatchObject({ status: "cancelled", code: "operator_cancelled", actor: "jr", cancelledBy: "operator2", cancelReason: "대상 요청은 10-31 검토 완료로 이미 닫힘" });
+  expect(mocks.audit).toHaveBeenCalledWith("operator2", expect.objectContaining({ action: "ops-runner-state", target: command.id, detail: expect.objectContaining({ status: "cancelled" }) }));
+  expect(mocks.values).toHaveBeenCalledTimes(1);
+  expect(opsHoldsBoundary(state)).toBe(false); expect(opsFinished(state)).toBe(true); expect(opsCancellable(state)).toBe(false);
+  expect(opsHoldsBoundary(queued)).toBe(true); expect(opsCancellable(queued)).toBe(true);
+});
+it("시작 전 취소는 실행기가 잠금을 쥐고 있거나, 한 단계라도 돌았거나, 끝났거나, 사유가 없으면 쓰지 않는다", async () => {
+  const queued = initialOpsState(command, "jr");
+  mocks.execute.mockResolvedValueOnce([]).mockResolvedValueOnce([{ locked: false }]);
+  await expect(cancelModelOpsCommand({ id: command.id, reason: "x" }, "jr")).rejects.toThrow("ops_runner_running");
+  for (const detail of [{ ...queued, status: "running" as const, step: "drain" as const, steps: { prepare: "done" as const, drain: "running" as const } },
+    { ...queued, steps: { prepare: "running" as const } }, { ...queued, status: "completed" as const }, { ...queued, status: "cancelled" as const }]) {
+    mocks.execute.mockResolvedValueOnce([]).mockResolvedValueOnce([{ locked: true }]).mockResolvedValueOnce([{ detail }]);
+    await expect(cancelModelOpsCommand({ id: command.id, reason: "x" }, "jr")).rejects.toThrow("ops_runner_not_cancellable");
+  }
+  mocks.execute.mockResolvedValueOnce([]).mockResolvedValueOnce([{ locked: true }]).mockResolvedValueOnce([]);
+  await expect(cancelModelOpsCommand({ id: command.id, reason: "x" }, "jr")).rejects.toThrow("ops_runner_job_missing");
+  await expect(cancelModelOpsCommand({ id: command.id, reason: "  " }, "jr")).rejects.toThrow();
+  mocks.fence.mockResolvedValue(false);
+  await expect(cancelModelOpsCommand({ id: command.id, reason: "x" }, "jr")).rejects.toThrow("dr_writer_site_fenced");
+  expect(mocks.insert).not.toHaveBeenCalled();
 });
