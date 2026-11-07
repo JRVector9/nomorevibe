@@ -4,6 +4,7 @@ import { useActionState, useState } from "react";
 import type { DeviceView } from "@/lib/operations/admin-capacity-devices";
 import type { EngineLimitIdentity } from "@/lib/operations/admin-engine-limits";
 import { modelPickerConnectionLabel, modelPickerModelLabel } from "../model-picker-display";
+import { ConfirmSubmit } from "../ConfirmSubmit";
 import { saveCapacityDevice, type DeviceSaveState } from "./actions";
 
 /** The same group-wide maximum is shared across review, writing and every other mapped route. */
@@ -41,9 +42,9 @@ export function SharedLimitForm({ device, engine, policyHash, readOnly }: {
           className="w-24 rounded border border-line bg-bg px-3 py-2 text-right text-[21px] font-semibold tabular-nums" />건</span>
         <span className="text-[13px] text-fg-3">저장된 운영 한도 {device.settings.limitSlots ?? "없음"}건 · 엔진 최대치 {device.settings.physicalLimit ?? "미설정"}</span>
       </label>
-      <button disabled={pending || readOnly} className="rounded bg-fg px-4 py-2 text-[15px] font-semibold text-bg disabled:opacity-50">
-        {pending ? "저장 중…" : "공유 한도 저장"}
-      </button>
+      <ConfirmSubmit label="공유 한도 저장" pending={pending} disabled={readOnly} savedKey={device.version}
+        className="rounded bg-fg px-4 py-2 text-[15px] font-semibold text-bg disabled:opacity-50"
+        summary="진행 중 호출은 끝까지 받고, 다음 입장부터 새 한도를 씁니다." />
     </div>
     <div className="grid gap-1 text-[13px] text-fg-3">
       <p>단계마다 각각 배정하는 수가 아닙니다. 아래 작업의 예약·실행을 모두 합쳐 이 한도 안에서 처리합니다.</p>

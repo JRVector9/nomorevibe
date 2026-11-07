@@ -1,6 +1,7 @@
 import { readLlmHistory, readLlmOps, readModelsDashboard } from "@/lib/operations/llm-ops-read";
 import { buildRetryView, type LlmHistoryFilter } from "@/lib/operations/llm-ops-history";
 import { canRequeueUnknownRoute } from "@/lib/operations/model-capacity-requeue";
+import type { LlmFixField } from "@/lib/operations/llm-ops-links";
 import { ModelsDashboard } from "./ModelsDashboard";
 import { LlmOpsList } from "./llm/LlmOpsList";
 import { ModelsHistory } from "./history/ModelsHistory";
@@ -14,9 +15,9 @@ export async function ModelsDashboardSlot({ readOnly }: { readOnly: boolean }) {
   return <ModelsDashboard view={view} opsStates={opsStates} readOnly={readOnly} />;
 }
 
-export async function LlmOpsSlot({ readOnly, editId, adding }: { readOnly: boolean; editId: string | null; adding: boolean }) {
+export async function LlmOpsSlot({ readOnly, editId, fix = null, adding }: { readOnly: boolean; editId: string | null; fix?: LlmFixField | null; adding: boolean }) {
   const { view, secretBox } = await readLlmOps();
-  return <LlmOpsList view={view} secretBox={secretBox} readOnly={readOnly} editId={editId} adding={adding} />;
+  return <LlmOpsList view={view} secretBox={secretBox} readOnly={readOnly} editId={editId} fix={fix} adding={adding} />;
 }
 
 /** 서버가 그리기 시작한 시각 — 변경 기록의 「몇 분 전」. 구성 요소 밖에서 읽는다(렌더 순수성 규칙). */

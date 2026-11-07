@@ -2,6 +2,7 @@
 import { useActionState, useState, type ReactNode } from "react";
 import type { SettingField } from "@/lib/operations/admin-runtime-settings";
 import type { RuntimeSettingGroup } from "@/lib/operations/runtime-settings-schema";
+import { ConfirmSubmit } from "../ConfirmSubmit";
 import { saveRuntimeSettingsGroup, type LimitsSaveState } from "./actions";
 
 /**
@@ -21,8 +22,9 @@ export function GroupForm({ group, revision, readOnly, children, footer }: { gro
     <input type="hidden" name="expectedRevision" value={revision ?? ""} />
     {children}
     <div className="flex flex-wrap items-center gap-3">
-      <button type="submit" disabled={pending || readOnly || revision === null} className="rounded bg-fg px-3 py-2 text-bg disabled:opacity-50">
-        {pending ? "저장 중…" : "이 묶음 저장"}</button>
+      {/* 두 단계 확인(PR 5) — 바뀌는 칸(이전 → 이후)을 보이고 「저장 확인」으로 보낸다. 판(revision)이 바뀌면 그 값이 새 기준이다 */}
+      <ConfirmSubmit label="이 묶음 저장" pending={pending} disabled={readOnly || revision === null} savedKey={revision}
+        summary="저장하면 배포 없이 각 워커가 30초 안에 다음 틱부터 씁니다." />
       {footer}
       {readOnly && <span className="text-[13px] text-fg-3">저장 행을 읽지 못해 읽기 전용입니다.</span>}
     </div>

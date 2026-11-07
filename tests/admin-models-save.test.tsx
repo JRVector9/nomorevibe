@@ -26,7 +26,8 @@ beforeEach(() => {
 });
 it("파란 주 저장 버튼과 추가·제거 후 저장 안내를 노출한다 — 단계 풀이 있을 때만; 1차·2차는 「작업 ↔ 모델」 안내", () => {
   const html = renderToStaticMarkup(createElement(ReviewModelsForm, { settings: DEFAULT_CRAWL_SETTINGS, version: "v1", models: DEFAULT_MODEL_DEFINITIONS }));
-  expect(html).toMatch(/type="submit"[^>]*bg-accent-solid[^>]*>모델 설정 저장/);
+  // PR 5: 저장은 두 단계 확인 — 첫 단추는 확인을 여는 type="button", 「저장 확인」이 type="submit"
+  expect(html).toMatch(/type="button" data-confirm-trigger=""[^>]*bg-accent-solid[^>]*>모델 설정 저장/);
   expect(html).toContain("모델을 추가·제거한 뒤 저장해야 적용됩니다");
   expect(html).toContain('data-task-ranks-pointer="true"');
   // 단계 풀이 없으면 저장할 칸이 없다 — 예전 「검수 모델 저장」 바도 없다

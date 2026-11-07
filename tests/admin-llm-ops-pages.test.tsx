@@ -23,7 +23,7 @@ vi.mock("@/lib/llm/serving-contract-store", () => ({ ensureServingContracts: asy
 const auditChain = { from: () => auditChain, where: () => auditChain, orderBy: () => auditChain, limit: (n: number) => mocks.auditRows(n) };
 vi.mock("@/lib/db", () => ({ db: { execute: mocks.classifier, select: () => auditChain }, onPrimary: (run: () => unknown) => run() }));
 vi.mock("@/lib/operations/model-capacity-unknowns", async original => ({ ...await original<object>(), readModelCapacityReviewQueue: mocks.reviewQueue }));
-vi.mock("@/app/(operator)/admin/models/ops-runner-actions", () => ({ submitAdminModelOperation: vi.fn(), readAdminModelOperation: vi.fn() }));
+vi.mock("@/app/(operator)/admin/models/ops-runner-actions", () => ({ submitAdminModelOperation: vi.fn(), readAdminModelOperation: vi.fn(), cancelAdminModelOperation: vi.fn() }));
 vi.mock("@/app/(operator)/admin/models/tasks/actions", () => ({ saveAiConnectionAction: vi.fn(), readAiConnectionModelsAction: vi.fn(), deleteAiConnectionAction: vi.fn() }));
 vi.mock("@/app/(operator)/admin/models/devices/actions", () => ({ saveCapacityDevice: vi.fn() }));
 
@@ -66,7 +66,7 @@ describe("대시보드(/admin/models) 그리기", () => {
     // 미확정은 기록 › 재실행 대기로 가고, 지원 단계면 할 일에서 바로 다시 대기열에 넣는다(PR 3)
     expect(html).toContain('href="/admin/models/history#retry"');
     expect(html).toMatch(/data-todo="indeterminate"[^]*?>[^<]+ 다시 대기열<\/button>[^]*?재실행 패널 →/);
-    expect(html).toContain(`href="/admin/models/llm?edit=${GPU}#conn-${GPU}"`);
+    expect(html).toContain(`href="/admin/models/llm?edit=${GPU}&amp;fix=limit#conn-${GPU}-limit"`);
     expect(html).toContain('aria-label="gpu3090-qwen 점유 2 / 5"');
     expect(html.match(/class="llm-stage"/g)).toHaveLength(7);
     expect(text(html)).toContain("일부 중지: 검색 키워드 검수");
@@ -88,12 +88,14 @@ describe("대시보드(/admin/models) 그리기", () => {
 });
 
 describe("LLM 운영(/admin/models/llm) 그리기", () => {
-  it("연결·CLI 도구 한 줄씩 — 모델·한도/점유(불일치 표시)·배정 칩(순위)·상태와 까닭·재실행 대기", async () => {
+  it("연결·CLI 도구 한 줄씩 — 모델·점유/한도(불일치 표시)·배정 칩(순위)·상태와 까닭·재실행 대기", async () => {
     const html = renderToStaticMarkup(await LlmOpsSlot({ readOnly: false, editId: null, adding: false }));
     expect(text(html)).toContain("연결 6 CLI 도구 2");
     const gpu = html.match(new RegExp(`<article id="conn-${GPU}"[^]*?</article>`))![0];
     expect(gpu).toContain('<span class="llm-cap" title="점유(예약+실행 중) / 장비 행 한도">2 / 5</span>');
-    expect(text(gpu)).toContain("▲ 연결 폼 4칸과 다름");
+    expect(text(html)).toContain("LLM(연결) 모델 점유 / 한도 배정된 작업 상태 재실행");
+    expect(html).not.toContain("한도 · 점유");
+    expect(text(gpu)).toContain("점유 / 한도 2 / 5 ▲ 연결에 남은 옛 값 4 · 실제 적용 5 — 맞추기 →");
     expect(gpu).toContain('<span class="llm-chip-rank">2</span>1차 AI 검수');
     expect(text(gpu)).toContain("미확정 있음 재실행 대기 1건");
     expect(gpu).toContain('href="/admin/models/history#retry">대기 1 →');
@@ -126,6 +128,46 @@ describe("LLM 운영(/admin/models/llm) 그리기", () => {
     const added = renderToStaticMarkup(await LlmOpsSlot({ readOnly: false, editId: null, adding: true }));
     expect(added).toContain('<details class="llm-add" id="connection-new" open="">');
     expect(added).toContain(">만들고 모델 읽기</button>");
+  });
+  it("문제 표시는 누르면 고칠 곳으로 — 한도 불일치는 그 연결 폼의 한도 칸, 까닭은 기록·연결 폼, 잡이 멈춘 칩 옆은 잡 상태", async () => {
+    const html = renderToStaticMarkup(await LlmOpsSlot({ readOnly: false, editId: null, adding: false }));
+    const article = (id: string) => html.match(new RegExp(`<article id="${id}"[^]*?</article>`))![0];
+    const anchors = (part: string) => [...part.matchAll(/<a ([^>]*)>([^]*?)<\/a>/g)].map(([, attrs, inner]) => ({
+      href: (/href="([^"]*)"/.exec(attrs)?.[1] ?? "").replaceAll("&amp;", "&"), className: /class="([^"]*)"/.exec(attrs)?.[1] ?? "", text: text(inner).trim() }));
+    const gpu = anchors(article(`conn-${GPU}`));
+    expect(gpu).toContainEqual({ className: "llm-fix llm-flag", href: `/admin/models/llm?edit=${GPU}&fix=limit#conn-${GPU}-limit`,
+      text: "▲ 연결에 남은 옛 값 4 · 실제 적용 5 — 맞추기 →" });
+    expect(gpu).toContainEqual({ className: "llm-fix llm-reason", href: "/admin/models/history#retry", text: "재실행 대기 1건 — 재실행 보기 →" });
+    expect(anchors(article(`conn-${OPENCODE}`)).filter(link => link.className === "llm-fix llm-reason").map(link => [link.href, link.text])).toEqual([
+      ["/admin/models/history#failures", "1시간 정산 86 · 실패 2 — 실패 보기 →"], ["/admin/models/history#failures", "시간 초과 1회(1차 AI 검수) — 실패 보기 →"]]);
+    expect(anchors(article(`conn-${M1}`))).toContainEqual({ className: "llm-fix llm-reason", href: `/admin/models/llm?edit=${M1}&fix=address#conn-${M1}-address`,
+      text: "서버 응답 없음 — 다시 읽기 →" });
+    // 잡이 멈춘 작업 칩: 칩은 작업 배정, 옆 링크는 그 잡의 상태 창(키보드로 닿는 a, 낭독기용 이름)
+    const supa = article("conn-33333333-3333-4333-8333-333333333333");
+    expect(anchors(supa)).toContainEqual({ className: "llm-fix llm-fix-chip", href: "/admin/status?tab=jobs&job=product-search-verify", text: "‖ 잡 보기 →" });
+    expect(supa).toContain('aria-label="검색 키워드 검수 잡 일시중지 — 잡 보기"');
+    // 고칠 곳이 없는 정상 까닭은 링크가 아니다
+    expect(article("conn-22222222-2222-4222-8222-222222222222")).toContain('<span class="llm-reason">1시간 정산 100</span>');
+    expect(text(html)).toContain("파란 「— … →」가 붙은 표시는 누르면 고치는 곳으로 갑니다.");
+  });
+  it("?edit=<연결>&fix=limit 로 열면 한도 칸이 눈에 띄고(장비 행 값 5로 채움) 「저장하면 연결 값도 5(으)로 맞춰집니다」 — 다른 칸·다른 행은 그대로", async () => {
+    const html = renderToStaticMarkup(await LlmOpsSlot({ readOnly: false, editId: GPU, fix: "limit", adding: false }));
+    const gpu = html.match(new RegExp(`<article id="conn-${GPU}"[^]*?</article>`))![0];
+    expect(gpu).toContain('<details class="llm-conn-edit" open="">');
+    expect(gpu).toContain(`<label class="grid gap-1" id="conn-${GPU}-limit" data-fix-field="limit" data-fix="true">동시 실행 한도(장비 행 · 실제 적용 값)`);
+    expect(gpu).toMatch(/name="capacitySlots"[^>]*value="5"/);
+    expect(gpu).toContain('data-limit-hint="true">저장하면 연결 값도 5(으)로 맞춰집니다(연결에 남은 옛 값 4).</span>');
+    expect(gpu).toContain(`<label class="grid gap-1" id="conn-${GPU}-key" data-fix-field="key">API 키`);
+    // 닫힌 행은 ?fix 를 받지 않는다
+    expect(html).not.toMatch(new RegExp(`id="conn-${M1}-[a-z]+" data-fix-field="[a-z]+" data-fix="true"`));
+    // 주소 칸으로 오면 그 칸과 짧은 안내
+    const address = renderToStaticMarkup(await LlmOpsSlot({ readOnly: false, editId: M1, fix: "address", adding: false }));
+    const m1 = address.match(new RegExp(`<article id="conn-${M1}"[^]*?</article>`))![0];
+    expect(m1).toContain(`id="conn-${M1}-address" data-fix-field="address" data-fix="true">주소`);
+    expect(text(m1)).toContain("주소·키를 확인하고 「저장하고 모델 읽기」를 누르세요.");
+    // 한도가 같은 연결(m3-mlx)에는 맞추기 안내가 없다
+    const mlx = renderToStaticMarkup(await LlmOpsSlot({ readOnly: false, editId: "22222222-2222-4222-8222-222222222222", fix: "limit", adding: false }));
+    expect(mlx.match(/<article id="conn-22222222-2222-4222-8222-222222222222"[^]*?<\/article>/)![0]).not.toContain("data-limit-hint");
   });
 });
 
@@ -186,9 +228,14 @@ describe("옛 주소는 새 화면으로 넘긴다", () => {
       const { default: ModelsPage } = await import("@/app/(operator)/admin/models/page");
       await expect(ModelsPage({ searchParams: Promise.resolve({ tab }) })).rejects.toThrow(`NEXT_REDIRECT:${href}`);
     });
-  it("advanced=1 이 붙으면 넘기지 않고 기존 고급 화면을 연다", async () => {
+  it("advanced=1 이 붙으면 tab 과 상관없이 고급 설정(/admin/models/advanced)으로 넘긴다", async () => {
     const { default: ModelsPage } = await import("@/app/(operator)/admin/models/page");
-    await ModelsPage({ searchParams: Promise.resolve({ tab: "live", advanced: "1" }) });
+    await expect(ModelsPage({ searchParams: Promise.resolve({ tab: "live", advanced: "1" }) })).rejects.toThrow("NEXT_REDIRECT:/admin/models/advanced");
+    await expect(ModelsPage({ searchParams: Promise.resolve({ advanced: "1" }) })).rejects.toThrow("NEXT_REDIRECT:/admin/models/advanced");
+  });
+  it("tab·advanced 가 없으면 넘기지 않고 대시보드를 그린다", async () => {
+    const { default: ModelsPage } = await import("@/app/(operator)/admin/models/page");
+    await ModelsPage({ searchParams: Promise.resolve({}) });
     expect(mocks.redirect).not.toHaveBeenCalled();
   });
 });

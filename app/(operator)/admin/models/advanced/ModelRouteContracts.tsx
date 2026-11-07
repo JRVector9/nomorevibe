@@ -3,7 +3,7 @@ import { formatDetailTime } from '@/lib/format/time';
 import type { ModelRouteStatus } from '@/lib/operations/model-route-status';
 import { replicaHoldText, type ReplicaRead } from '@/lib/operations/replica-hold';
 import type { RouteStatus } from '@/lib/operations/pipeline-control';
-import { ScrollTable } from '../components/ScrollTable';
+import { ScrollTable } from '../../components/ScrollTable';
 
 const ROUTE_STATUS: Record<RouteStatus, string> = {
   serving: '계약 있음(serving)', no_contract: '계약 없음(no_contract)', unmapped: '슬롯 정책에 없음(unmapped)',

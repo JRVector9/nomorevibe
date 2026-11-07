@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useActionState, useState } from "react";
+import { ConfirmSubmit } from "../ConfirmSubmit";
 import { connectEngine, readbackEngineBase, type ContractSaveState } from "./actions";
 
 export type EngineConnectModel = { key: string; label: string; requestModel: string; baseUrl: string | null; purposes: string[] };
@@ -63,11 +64,12 @@ export function EngineConnectForm({ models, routes }: { models: EngineConnectMod
           onChange={event => setChosen(event.target.checked ? [...chosen, route] : chosen.filter(row => row !== route))} />{route}</label>)}</fieldset>
     <label className="flex gap-2 text-[13px]"><input type="checkbox" name="selectStages" defaultChecked />고른 경로의 단계별 모델을 이 모델로 지정</label>
     <label className="grid gap-1">메모<input name="note" maxLength={400} className="rounded border border-line bg-bg p-2" /></label>
-    <div><button type="submit" disabled={pending || !engineModel || !chosen.length || (lenUnknown && !maxModelLen.trim())} className="rounded bg-fg px-3 py-2 text-bg">
-      {pending ? "연결 중…" : "연결 저장"}</button></div>
+    <div className="flex flex-wrap items-center gap-3"><ConfirmSubmit label="연결 저장" pending={pending} pendingLabel="연결 중…"
+      disabled={!engineModel || !chosen.length || (lenUnknown && !maxModelLen.trim())}
+      summary="저장 전에 서버가 엔진의 모델 목록을 다시 읽어 모델과 최대 길이를 확인합니다. 고른 경로마다 엔진 직접 계약을 만듭니다." /></div>
     {state?.ok && <p role="status" className="text-[13px]">{state.message}</p>}
     {state?.ok && state.assignHref && <p className="text-[13px]"><Link href={state.assignHref} prefetch={false} className="font-semibold text-accent-ink underline">
-      이 모델을 단계에 배정 →</Link> <span className="text-fg-3">모델 배정 화면의 새 배정 폼을 이 모델·엔진 직접 전송으로 채웁니다(연결 저장과 별개).</span></p>}
+      이 모델을 단계에 배정 →</Link> <span className="text-fg-3">모델 배정 표 화면의 새 배정 폼을 이 모델·엔진 직접 전송으로 채웁니다(연결 저장과 별개).</span></p>}
     {state?.issues?.map(text => <p key={text} role="alert" className="text-[13px] text-red-600">{text}</p>)}
   </form>;
 }

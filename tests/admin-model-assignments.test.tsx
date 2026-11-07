@@ -22,6 +22,7 @@ import { TurnOffButton } from "@/app/(operator)/admin/models/assignments/TurnOff
 import { SettingsForm } from "@/app/(operator)/admin/SettingsForm";
 import { ReviewModelsForm } from "@/app/(operator)/admin/models/ReviewModelsForm";
 import { NAV_GROUPS } from "@/app/(operator)/admin/AdminNav";
+import { modelsAdvancedEditor } from "@/app/(operator)/admin/workspace-navigation";
 import { engineConnectAssignmentHref } from "@/lib/operations/admin-engine-connect";
 import { planAssignmentImport, type AssignmentImportSources } from "@/lib/llm/assignment-import";
 import {
@@ -430,10 +431,11 @@ describe("그리기", () => {
     const root = path.resolve(__dirname, "..");
     const page = readFileSync(path.join(root, "app/(operator)/admin/models/assignments/page.tsx"), "utf8");
     expect(page).toContain("<PageStamp />");
-    expect(page).toMatch(/<h1[^>]*>모델 배정<\/h1>/);
+    expect(page).toMatch(/<h1[^>]*>\{EDITOR\.label\}<\/h1>/); expect(page).toContain('modelsAdvancedEditor("assignments")');
+    expect(modelsAdvancedEditor("assignments").label).toBe("모델 배정 표");
     expect(page).toContain('redirect("/admin/login")');
     for (const id of ['id="table"', 'id="form"', 'id="import"', 'id="audit"']) expect(page).toContain(id);
-    expect(NAV_GROUPS[1].pages.find(entry => entry.href === "/admin/models/assignments")).toMatchObject({ label: "모델 배정" });
+    expect(NAV_GROUPS[1].pages.find(entry => entry.href === "/admin/models/assignments")).toMatchObject({ label: "모델 배정 표" });
     for (const file of ["AssignmentForm.tsx", "ImportCard.tsx", "TurnOffButton.tsx"]) {
       const source = readFileSync(path.join(root, "app/(operator)/admin/models/assignments", file), "utf8");
       expect(source.startsWith('"use client"'), file).toBe(true);

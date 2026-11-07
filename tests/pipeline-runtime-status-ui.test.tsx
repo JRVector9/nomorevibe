@@ -63,7 +63,7 @@ describe('pipeline runtime status UI', () => {
     // 2026-10-30: indeterminate is a human-review row, not occupancy — 점유 = reserved 1 + dispatched 3 (not + indeterminate 4).
     expect(html).toMatch(/abcllm<\/th><td>2<\/td><td>4<\/td><td>2<\/td>/);
     expect(html).toContain('확인 못함 (사람 검토)');
-    expect(html).toContain('단계별 모델(/admin/models)의 「확인 못함 — 사람 검토」 목록');
+    expect(html).toContain('LLM 운영 › 기록(/admin/models/history#retry)의 「재실행 대기」');
     expect(html).toContain('61분');
     expect(html).toContain('1 (1)');
     expect(html).toContain('쓰기 차단 (fenced · 승격 봉인)');

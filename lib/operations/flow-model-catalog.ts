@@ -56,9 +56,9 @@ export function flowModelTaskStage(taskId: string): FlowModelStage | null {
 export function flowModelTaskHref(taskId: string): string {
   if (HUMAN_TASKS.has(taskId)) return `/admin/models/human#${taskId}`;
   if (taskId === "publish-classify") return "/admin/models/tasks#execution-publish-classify-1";
-  if (taskId === "product-intro-check") return "/admin/models?advanced=1#model-settings";
+  if (taskId === "product-intro-check") return "/admin/models/advanced#model-settings";
   if (isAiLiveTask(taskId)) return `/admin/models/tasks#execution-${taskId}-1`;
   if (SEARCH_VECTOR_TASKS.has(taskId) || aiTask(taskId)?.kind === "embedding" || aiTask(taskId)?.kind === "rerank") return "/admin/models/search";
   if (aiTask(taskId)?.group === "audit") return "/admin/audit";
-  return "/admin/models?advanced=1#model-settings";
+  return "/admin/models/advanced#model-settings";
 }

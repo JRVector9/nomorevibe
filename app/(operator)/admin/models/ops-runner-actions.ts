@@ -3,8 +3,8 @@ import { z } from "zod";
 import { recordAdminAction } from "@/lib/operations/admin-log";
 import { currentAdmin } from "@/lib/auth/admin";
 import { webWriteAction } from "@/lib/operations/dr/web-gate";
-import { opsCommandSchema, type OpsState } from "@/lib/operations/ops-runner/contract";
-import { submitModelOpsCommand, readModelOpsState } from "@/lib/operations/ops-runner/repository";
+import { opsCancelSchema, opsCommandSchema, type OpsState } from "@/lib/operations/ops-runner/contract";
+import { cancelModelOpsCommand, submitModelOpsCommand, readModelOpsState } from "@/lib/operations/ops-runner/repository";
 
 export type OpsActionResult = { state?: OpsState; error?: string };
 export const submitAdminModelOperation = webWriteAction(async function submitAdminModelOperation(raw: unknown): Promise<OpsActionResult> {
@@ -32,4 +32,23 @@ export const readAdminModelOperation = webWriteAction(async function readAdminMo
     const state = await readModelOpsState(id);
     return state ? { state } : { error: "작업을 찾을 수 없습니다." };
   } catch { return { error: "진행 상황 조회 실패 · 실행 결과를 감사 기록에서 확인해주세요." }; }
+});
+
+const CANCEL_ERRORS: Readonly<Record<string, string>> = {
+  ops_runner_running: "운영 실행기가 이 작업을 처리하고 있어 취소할 수 없습니다.",
+  ops_runner_not_cancellable: "이미 시작했거나 끝난 작업이라 취소할 수 없습니다. 진행 상황을 확인해주세요.",
+  ops_runner_job_missing: "작업을 찾을 수 없습니다.",
+  dr_writer_site_fenced: "쓰기가 막힌 사이트라 취소할 수 없습니다.",
+};
+/** 시작 전 취소 — 운영 실행기가 아직 한 단계도 돌리지 않은 접수만 사유와 함께 닫는다(2026-11-07). 감사 장부에 취소한 사람이 남는다. */
+export const cancelAdminModelOperation = webWriteAction(async function cancelAdminModelOperation(raw: unknown): Promise<OpsActionResult> {
+  const admin = await currentAdmin();
+  if (!admin) return { error: "관리자만 작업을 취소할 수 있습니다." };
+  const parsed = opsCancelSchema.safeParse(raw);
+  if (!parsed.success) return { error: "취소 사유(1~300자)를 입력해주세요." };
+  try { return { state: await cancelModelOpsCommand(parsed.data, admin.login) }; }
+  catch (error) {
+    const code = error instanceof Error ? error.message : "";
+    return { error: CANCEL_ERRORS[code] ?? "취소하지 못했습니다. 진행 상황과 감사 기록을 확인해주세요." };
+  }
 });

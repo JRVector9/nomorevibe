@@ -410,7 +410,7 @@ const FIXED_MESSAGES: Record<string, string> = {
   batch_exceeds_source_cap: "묶음 글자 수가 원문 상한보다 큽니다",
   deadline_order_inverted: "기한 사다리 순서가 어긋났습니다(엔진 < 중계 < 게이트웨이 < 클라이언트, 층 사이 2초 이상)",
   model_timeout_ladder_mismatch: "호출 상한이 같은 경로 사다리의 클라이언트 기한과 다릅니다",
-  model_role_deadline_order_inverted: "모델 상한이 심사 사다리 순서를 어긋나게 합니다(모델 연결 → 등록부 덮어쓰기에서 확인)",
+  model_role_deadline_order_inverted: "모델 상한이 심사 사다리 순서를 어긋나게 합니다(서빙 계약·등록부 → 등록부 덮어쓰기에서 확인)",
   invalid_model_registry: "합친 등록부가 검사를 통과하지 못했습니다.",
   runtime_settings_unreadable: "저장 문서를 읽을 수 없습니다.",
   runtime_settings_not_implemented: "저장 경로가 아직 준비되지 않았습니다(runtime_settings).",

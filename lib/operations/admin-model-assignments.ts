@@ -226,11 +226,11 @@ export function buildModelAssignmentsAdminView(input: ModelAssignmentsViewInput)
       version: row.version, updatedBy: row.updatedBy, updatedAt: row.updatedAt, note: row.note, helperHref: null, editHref: assignmentEditHref(row.assignmentId), issues: [],
     };
     const device = deviceById.get(row.deviceId);
-    if (!entry) view.issues.push(`등록부에 없는 key(${row.registryKey}) — 모델 연결 화면에서 등록부를 확인하세요`);
+    if (!entry) view.issues.push(`등록부에 없는 key(${row.registryKey}) — 서빙 계약·등록부 화면에서 등록부를 확인하세요`);
     if (input.devices && !device) view.issues.push("장비 행이 없습니다 — 장비 한도에서 이 장비를 저장하세요");
     else if (device && !device.enabled) view.issues.push("장비 행이 꺼져 있습니다 — 입장 판정이 이 장비를 보지 않습니다");
     if (view.mode === "live" && view.contract.state === "missing" && contracts !== null) view.issues.push("켜진 계약이 없습니다(꺼졌거나 지워짐) — 다시 저장하면 엔진을 확인해 계약을 만듭니다");
-    if (view.contract.transportMismatch) view.issues.push("저장된 계약의 전송이 배정 전송과 다릅니다 — 「모델 연결」에서 직접 연결 계약인지 확인하세요");
+    if (view.contract.transportMismatch) view.issues.push("저장된 계약의 전송이 배정 전송과 다릅니다 — 「서빙 계약·등록부」에서 직접 연결 계약인지 확인하세요");
     if (view.mode === "live" && view.route.state === "missing") view.issues.push("현재 정책에 이 경로가 없습니다 — 다시 저장하면 덧붙입니다");
     if (view.route.state === "other_device") view.issues.push("같은 경로·공급자·모델이 정책에서 다른 장비에 묶여 있습니다");
     if (view.deviceRoleRank !== null && view.deviceRoleRank !== row.rank)
@@ -572,7 +572,7 @@ const FIXED: Record<string, string> = {
   epoch_stale: "이 사이트는 지금 쓰기가 막혀 있습니다(DR: 옛 쓰기 epoch).",
   epoch_ahead: "이 사이트는 지금 쓰기가 막혀 있습니다(DR: 앞선 쓰기 epoch).",
   invalid_actor: "저장한 사람을 확인하지 못했습니다. 다시 로그인해 주세요.",
-  assignment_helper_role: "도우미 배정은 「도우미 장비」 화면(/admin/models/helpers)에서 만들고 섀도·승격합니다 — 이 폼은 주 배정만 저장합니다.",
+  assignment_helper_role: "도우미 배정은 「도우미·감시자」 화면(/admin/models/helpers)에서 만들고 섀도·승격합니다 — 이 폼은 주 배정만 저장합니다.",
   assignment_confirm_required: `실전(live)으로 저장하려면 확인 칸에 「${ASSIGNMENT_LIVE_CONFIRM}」을 적어 주세요.`,
   assignment_device_required: "장비를 골라 주세요. 목록이 비어 있으면 장비 한도(/admin/models/devices)에서 장비를 먼저 저장하세요.",
   assignment_registry_required: "모델(등록부 key)을 골라 주세요.",
@@ -591,21 +591,21 @@ const FIXED: Record<string, string> = {
   model_capacity_replay_unsupported: "재생(replay) DB 에서는 배정을 저장할 수 없습니다.",
   model_capacity_revision_exhausted: "정책 revision 이 끝에 닿았습니다 — 정책을 새 epoch 로 다시 적용하세요.",
   model_capacity_device_version_exhausted: "장비 행의 판 번호가 끝에 닿았습니다 — 장비 한도에서 장비를 다시 만드세요.",
-  contract_schema_invalid: "만든 계약이 이 경로의 계약 형식과 맞지 않습니다 — 모델 연결 화면(/admin/models/contracts)에서 계약을 직접 넣으세요.",
-  serving_contract_input_invalid: "계약 저장 입력이 틀립니다 — 모델 연결 화면에서 계약을 직접 넣으세요.",
+  contract_schema_invalid: "만든 계약이 이 경로의 계약 형식과 맞지 않습니다 — 서빙 계약·등록부 화면(/admin/models/contracts)에서 계약을 직접 넣으세요.",
+  serving_contract_input_invalid: "계약 저장 입력이 틀립니다 — 서빙 계약·등록부 화면에서 계약을 직접 넣으세요.",
   secret_box_key_missing: "서버에 키 암호화 설정(NMV_SECRET_BOX_KEY)이 없어 계약을 저장할 수 없습니다.",
 };
 export const MODEL_ASSIGNMENT_REFUSAL_MESSAGES: Readonly<Record<ModelAssignmentRefusal, string>> = {
-  registry_key_unknown: "등록부에 없는 모델입니다 — 모델 연결 화면(/admin/models/contracts)에서 등록부를 확인하세요.",
+  registry_key_unknown: "등록부에 없는 모델입니다 — 서빙 계약·등록부 화면(/admin/models/contracts)에서 등록부를 확인하세요.",
   transport_provider_mismatch: "이 모델의 공급자로는 고른 전송을 쓸 수 없습니다(장비 표지·엔진 직접 = abcllm 형, 로컬 직접 = 로컬 모델, CLI = Claude·Grok·Codex CLI) — 전송을 바꾸세요.",
   backend_id_invalid: "로컬 계약의 backendId 를 만들 수 없는 등록부 key 입니다 — key 를 60자 이하 소문자·숫자·'-' 로 바꾸세요.",
   device_unconfigured: "장비 행이 없거나 꺼져 있습니다 — 장비 한도(/admin/models/devices)에서 이 장비를 먼저 저장(켜기)하세요.",
-  assignment_is_helper: "이 이름은 도우미 배정입니다 — 「도우미 장비」 화면(/admin/models/helpers)에서 바꾸세요.",
+  assignment_is_helper: "이 이름은 도우미 배정입니다 — 「도우미·감시자」 화면(/admin/models/helpers)에서 바꾸세요.",
   route_is_helper_route: "이 장비의 도우미 경로와 겹칩니다(같은 모델을 도우미로 쓰거나, 도우미 경로를 순위 1 로 올리게 됨) — 순위를 2 이상으로 하거나 도우미를 먼저 끄세요.",
   route_device_mismatch: "같은 경로·공급자·모델이 정책에서 다른 장비에 묶여 있습니다 — 그 장비로 배정하거나, 정책의 장비 매핑을 먼저 고치세요.",
   contract_probe_failed: "엔진 확인(readback·1토큰 시험)이 맞지 않아 저장하지 않았습니다 — 엔진이 다른 모델 이름으로 답했습니다. 등록부의 모델 이름을 확인하세요.",
-  contract_unbuildable: "이 경로의 계약을 자동으로 만들 수 없습니다(예: 2차 second-review) — 모델 연결 화면(/admin/models/contracts)에서 계약을 먼저 넣고 다시 저장하세요.",
-  contract_transport_mismatch: "저장된 계약의 전송이 고른 배정 전송과 다릅니다. 엔진 직접 배정은 직접 연결 계약과 맞아야 하고, 장비 표지 배정은 그 외 계약 행과 맞아야 합니다. 텍스트 경로는 「모델 연결」의 직접 연결 계약만 열립니다 — 전송을 계약에 맞추거나 계약을 다시 저장하세요.",
+  contract_unbuildable: "이 경로의 계약을 자동으로 만들 수 없습니다(예: 2차 second-review) — 서빙 계약·등록부 화면(/admin/models/contracts)에서 계약을 먼저 넣고 다시 저장하세요.",
+  contract_transport_mismatch: "저장된 계약의 전송이 고른 배정 전송과 다릅니다. 엔진 직접 배정은 직접 연결 계약과 맞아야 하고, 장비 표지 배정은 그 외 계약 행과 맞아야 합니다. 텍스트 경로는 「서빙 계약·등록부」의 직접 연결 계약만 열립니다 — 전송을 계약에 맞추거나 계약을 다시 저장하세요.",
   contract_device_mismatch: "저장된 로컬 계약의 장비(physicalGroup)가 이 장비와 다릅니다 — 계약의 장비로 배정하거나 계약을 고치세요.",
   cli_contract_missing: "이 CLI 모델의 계약(CLI_SERVING_CONTRACTS)이 웹 프로세스에 없거나 --version 확인을 통과하지 못했습니다 — env 계약을 넣은 뒤 저장하세요.",
 };
@@ -617,7 +617,7 @@ const INVALID_FIELDS: Record<string, string> = {
   registryKey: "모델을 쓸 수 없습니다 — 등록부 key 모양이 틀렸거나, 같은 장비·단계에 같은 모델 배정이 이미 있습니다(그 행을 고치세요).",
   transport: "이 단계에서 쓸 수 없는 전송이거나, CLI 인데 connect 장비 모델이 아닙니다 — 목록의 전송을 고르세요.",
   rank: `순위는 1~${ASSIGNMENT_FORM_RANK_MAX} 의 정수여야 합니다.`,
-  role: "역할은 주 배정만 이 폼에서 저장합니다(도우미는 도우미 장비 화면).",
+  role: "역할은 주 배정만 이 폼에서 저장합니다(도우미는 도우미·감시자 화면).",
   vote: "표(투표)는 2차 검수의 순위 1 배정에만 켤 수 있습니다.",
   mode: "모드는 꺼짐·실전만 고를 수 있습니다(섀도는 도우미 화면).",
   maxSlots: "최대 칸은 1~256 의 정수여야 합니다.",
@@ -632,8 +632,8 @@ function probeReasonMessage(reason: string): string {
   const mismatch = /^engine_max_len_mismatch:(\d+):(\d+)$/.exec(reason);
   if (mismatch) return `엔진이 알려 준 최대 길이(${mismatch[1]})와 입력한 상한(${mismatch[2]})이 다릅니다.`;
   switch (reason) {
-    case "engine_model_not_found": return "엔진의 모델 목록에 이 모델이 없습니다 — 엔진 연결(모델 연결 화면)에서 모델 이름을 확인하세요.";
-    case "engine_max_len_unknown": return "엔진이 최대 길이(max_model_len)를 알려 주지 않습니다 — 모델 연결 화면의 「엔진 연결」에서 컨텍스트 상한을 넣어 계약을 먼저 만든 뒤 다시 저장하세요(저장된 계약을 씁니다).";
+    case "engine_model_not_found": return "엔진의 모델 목록에 이 모델이 없습니다 — 엔진 연결(서빙 계약·등록부 화면)에서 모델 이름을 확인하세요.";
+    case "engine_max_len_unknown": return "엔진이 최대 길이(max_model_len)를 알려 주지 않습니다 — 서빙 계약·등록부 화면의 「엔진 연결」에서 컨텍스트 상한을 넣어 계약을 먼저 만든 뒤 다시 저장하세요(저장된 계약을 씁니다).";
     case "engine_probe_failed": return "엔진에 1토큰 시험 호출을 보냈지만 정상 응답이 오지 않았습니다 — 모델 이름·키·엔진 상태를 확인하세요.";
     case "engine_base_url_invalid": return "등록부의 주소(baseUrl)가 https://호스트/v1 모양이 아닙니다 — 엔진 연결로 주소를 고치세요.";
     default: return `엔진 확인이 실패했습니다(${reason}) — 엔진 상태를 확인하고 다시 저장하세요.`;

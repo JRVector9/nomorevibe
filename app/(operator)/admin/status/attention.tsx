@@ -375,7 +375,7 @@ export function buildActions(inputs: ActionInputs, derived: DerivedStatus): Acti
       key: "second-failed", tone: gone ? "critical" : "hold", count: total, unit: "건", title: "2차 심사가 실패하고 있습니다",
       detail: <>
         최근 24시간 미해결 오류 · {secondFailures.slice(0, 3).map((row) => `${row.model ? modelName(row.model) : "모델 미상"} ${row.errorCode} ${row.count}건`).join(" · ")}
-        {gone && <> — 설정한 모델의 직접 연결 계약이 없거나 엔진이 그 모델을 갖고 있지 않습니다. 「모델 연결」에서 행을 확인하세요.</>}
+        {gone && <> — 설정한 모델의 직접 연결 계약이 없거나 엔진이 그 모델을 갖고 있지 않습니다. 「서빙 계약·등록부」에서 행을 확인하세요.</>}
       </>,
       action: { label: "2차 심사 설정", href: ACTION_LINKS.secondSettings }, work: { jobs: ["second-review"] },
     });

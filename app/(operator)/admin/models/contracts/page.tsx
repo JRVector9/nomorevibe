@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { currentAdmin } from "@/lib/auth/admin";
 import { GATEWAY_SERVING_CONTRACT_ROUTES } from "@/lib/llm/gateway-serving-contract-config";
@@ -10,13 +9,17 @@ import { listAdminRegistryOverrides } from "@/lib/operations/admin-model-registr
 import { listAdminServingContracts } from "@/lib/operations/admin-serving-contracts";
 import { secretBoxReady } from "@/lib/security/secret-box";
 import { PageStamp } from "../../components/PageStamp";
+import { modelsAdvancedEditor } from "../../workspace-navigation";
+import { AdvancedEditorLinks, advancedEditorTitle } from "../advanced/AdvancedEditorLinks";
+import { ModelRegistryTable } from "../ModelRegistryTable";
 import { ContractForm } from "./ContractForm";
 import { DisableButton } from "./DisableButton";
 import { EngineConnectForm } from "./EngineConnectForm";
 import { RegistryOverrideForm, RevertRegistryButton } from "./RegistryOverrideForm";
 
 export const dynamic = "force-dynamic";
-export const metadata: Metadata = { title: "모델 연결 — NoMoreVibe", robots: { index: false } };
+export const metadata: Metadata = { title: advancedEditorTitle("contracts"), robots: { index: false } };
+const EDITOR = modelsAdvancedEditor("contracts");
 
 /** Admin-managed serving contracts — the only contract source. A saved row applies on every app within ~30 s. */
 export default async function ServingContractsPage() {
@@ -30,8 +33,8 @@ export default async function ServingContractsPage() {
   return <main className="mx-auto grid max-w-5xl gap-6 p-4">
     <PageStamp />
     <header className="grid gap-1">
-      <Link href="/admin/models" className="text-[13px] text-fg-3">← 단계별 모델</Link>
-      <h1 className="text-[22px] font-semibold">모델 연결</h1>
+      <AdvancedEditorLinks />
+      <h1 className="text-[22px] font-semibold">{EDITOR.label}</h1>
       <p className="text-[13px] text-fg-3">모델을 어디로(주소) 어떻게(응답 모델·토큰 한도·인증) 부르는지의 계약입니다. 저장하면 배포 없이 각 앱이 30초 안에 다음 작업부터 씁니다.
         계약은 여기 저장한 것만 쓰며, 끄면 그 경로·모델은 다시 저장할 때까지 호출하지 않습니다. 용량 경로(정책)는 따로 있어야 실제로 호출됩니다.
         abcLLM 게이트웨이는 제거됐으므로 엔진 직접 연결 계약만 호출됩니다.</p>
@@ -71,6 +74,8 @@ export default async function ServingContractsPage() {
           <td className="py-2 pr-3">{row.updatedBy}<br />{row.updatedAt.slice(0, 16).replace("T", " ")}</td>
           <td className="py-2"><RevertRegistryButton registryKey={row.key} /></td></tr>)}</tbody></table></div>}
       <RegistryOverrideForm definitions={registry.map(model => ({ ...model }))} />
+      {/* 등록부 전체(읽기 전용) — 옛 LLM 운영 「참고」 접힘에서 옮겼다(PR 5). 덮어쓰기를 반영한 지금 등록부다 */}
+      <ModelRegistryTable />
     </section>
   </main>;
 }

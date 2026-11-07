@@ -92,8 +92,8 @@ function HumanWork({ data, controls, modelSettings }: { data: Conveyor; controls
           </li>;
         })}</ul> : <p className="small muted">AI 보조 실행 관측을 읽지 못했습니다.</p>}
         <details className="flow-human-settings"><summary className="text-button">AI 보조 실행 모델 지정</summary>
-          {modelSettings ?? <Link prefetch={false} className="button small" href="/admin/models?advanced=1#model-settings">실행 모델 설정 →</Link>}
-          <Link prefetch={false} className="text-button small" href="/admin/models/human#human-review">사람 확인 모델 설정 →</Link>
+          {modelSettings ?? <Link prefetch={false} className="button small" href="/admin/models/advanced#model-settings">실행 모델 설정 →</Link>}
+          <Link prefetch={false} className="text-button small" href="/admin/models/human#human-review">사람 위임 모델 설정 →</Link>
         </details>
       </section>
     </div>

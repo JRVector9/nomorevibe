@@ -3,6 +3,7 @@ import { useActionState, useState } from "react";
 // 형만 가져온다 — 그 모듈들은 서버 모듈(DB·node:crypto)이라 클라이언트 묶음에 들면 안 된다(devices/DeviceForm 과 같은 규칙)
 import type { HelperStage } from "@/lib/llm/capacity-helpers";
 import type { HelperRouteDefaults, HelperRowView, HelperSettingsDefaults } from "@/lib/operations/admin-model-helpers";
+import { ConfirmSubmit } from "../ConfirmSubmit";
 import { changeModelHelperMode, clearModelHelperStop, saveModelHelper, type HelperActionState } from "./actions";
 
 const INPUT = "w-24 rounded border border-line bg-bg px-2 py-1 text-right tabular-nums";
@@ -79,10 +80,15 @@ function ModeControls({ helper, readOnly }: { helper: HelperRowView; readOnly?: 
     <input type="hidden" name="expectedVersion" value={helper.version} />
     <div className="flex flex-wrap items-center gap-2 text-[13px]">
       <span className="font-semibold text-fg-2">모드 {helper.modeLabel}</span>
-      {helper.mode === "off" && <button type="submit" name="mode" value="shadow" disabled={busy} className={button}>섀도 시작</button>}
-      {helper.mode === "live" && <button type="submit" name="mode" value="shadow" disabled={busy} className={button}>섀도로 내리기</button>}
-      {helper.mode !== "off" && <button type="submit" name="mode" value="off" disabled={busy} className={button}>끄기</button>}
-      {helper.stops.length > 0 && <button type="submit" formAction={clearAction} disabled={busy} className={`${button} border-red-600 text-red-600`}>자동 정지 해제</button>}
+      {/* 모드 단추도 두 단계 확인(PR 5) — 무엇이 바뀌는지 보이고 「… 확인」으로 보낸다 */}
+      {helper.mode === "off" && <ConfirmSubmit label="섀도 시작" confirmLabel="섀도 시작 확인" name="mode" value="shadow" pending={modePending} disabled={busy} className={button}
+        changes={[{ label: "모드", before: helper.modeLabel, after: "섀도" }]} summary="섀도 결과는 어떤 판정에도 쓰이지 않습니다." />}
+      {helper.mode === "live" && <ConfirmSubmit label="섀도로 내리기" confirmLabel="섀도로 내리기 확인" name="mode" value="shadow" pending={modePending} disabled={busy} className={button}
+        changes={[{ label: "모드", before: helper.modeLabel, after: "섀도" }]} summary="이 장비가 실제로 돕지 않고 결과만 남깁니다." />}
+      {helper.mode !== "off" && <ConfirmSubmit label="끄기" confirmLabel="끄기 확인" name="mode" value="off" pending={modePending} disabled={busy} className={button}
+        changes={[{ label: "모드", before: helper.modeLabel, after: "꺼짐" }]} summary="이 장비가 더는 돕지 않습니다. 우선 역할 일은 그대로입니다." />}
+      {helper.stops.length > 0 && <ConfirmSubmit label="자동 정지 해제" confirmLabel="해제 확인" formAction={clearAction} pending={clearPending} disabled={busy} className={`${button} border-red-600 text-red-600`}
+        changes={[{ label: "자동 정지", before: `${helper.stops.length}건`, after: "해제" }]} summary="같은 값으로 다시 저장해 판이 오릅니다. 정지 조건이 다시 맞으면 또 멈춥니다." />}
       <button type="button" disabled aria-disabled="true" title="PR 2c 에서 엽니다 — 섀도 근거(같은 evidence_key)·조건 목록·확인 「실전」이 필요합니다" className={button}>실전으로 올리기</button>
       <span className="text-fg-3">실전 승격은 PR 2c 에서 엽니다. 섀도 결과는 어떤 판정에도 쓰이지 않습니다.</span>
     </div>
@@ -147,7 +153,7 @@ export function HelperForm({ helper, defaults, routeDefaults, readOnly }: { help
           <input name="note" defaultValue={values.note ?? ""} maxLength={400} aria-label="메모" disabled={readOnly} className="rounded border border-line bg-bg px-2 py-1" /></label>
       </div>
       <div className="flex flex-wrap items-center gap-3">
-        <button type="submit" disabled={pending || readOnly} className="rounded bg-fg px-3 py-2 text-bg disabled:opacity-50">{pending ? "저장 중…" : helper ? "이 배정 저장" : "새 배정 만들기"}</button>
+        <ConfirmSubmit label={helper ? "이 배정 저장" : "새 배정 만들기"} pending={pending} disabled={readOnly} savedKey={helper?.version ?? null} />
         <span className="text-[13px] text-fg-3">저장하면 판이 오르고(그 판의 자동 정지가 풀립니다) 감시자의 다음 순환부터 새 판으로 판정합니다</span>
         {readOnly && <span className="text-[13px] text-fg-3">도우미 상태를 읽지 못해 읽기 전용입니다.</span>}
       </div>

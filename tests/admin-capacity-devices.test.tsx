@@ -16,8 +16,8 @@ import { saveCapacityDevice } from "@/app/(operator)/admin/models/devices/action
 import { DeviceForm } from "@/app/(operator)/admin/models/devices/DeviceForm";
 import { DeviceTable } from "@/app/(operator)/admin/models/devices/DeviceTable";
 import { RolesEditor } from "@/app/(operator)/admin/models/devices/RolesEditor";
-import { DevicesPlaceholder } from "@/app/(operator)/admin/models/limits/DevicesPlaceholder";
 import { NAV_GROUPS } from "@/app/(operator)/admin/AdminNav";
+import { modelsAdvancedEditor } from "@/app/(operator)/admin/workspace-navigation";
 import type { ModelCapacityPolicy } from "@/lib/llm/capacity";
 import type { ModelCapacityDeviceRow, ModelCapacityDeviceState } from "@/lib/llm/capacity-devices";
 import type { AdminLogRow } from "@/lib/operations/admin-log";
@@ -270,15 +270,14 @@ describe("그리기", () => {
     expect(gpu).toMatch(/<button[^>]*disabled/);
     expect(renderToStaticMarkup(createElement(RolesEditor, { roles: supa.roles, extraRows: 0 }))).not.toContain("extraRoute");
   });
-  it("실시간 한도 화면의 장비 묶음과 장비 한도 메뉴에서 엔진 공유 한도를 연다", () => {
-    const html = renderToStaticMarkup(createElement(DevicesPlaceholder));
-    expect(html).toContain('href="/admin/models/devices"');
-    expect(html).toContain("model-capacity-device-save");
-    expect(html).not.toContain("준비 중");
+  it("장비 한도 메뉴는 「장비 한도」 화면을 연다 — 메뉴·제목·옛 메뉴 이름이 같다(PR 5: 실시간 한도의 자리표시 묶음은 지웠다)", () => {
     const page = readFileSync(path.resolve(__dirname, "../app/(operator)/admin/models/devices/page.tsx"), "utf8");
     expect(page).toContain("<PageStamp />");
-    expect(page).toMatch(/<h1[^>]*>엔진 공유 한도<\/h1>/);
+    expect(page).toContain('modelsAdvancedEditor("devices")');
+    expect(page).not.toContain("엔진 공유 한도");
+    expect(modelsAdvancedEditor("devices").label).toBe("장비 한도");
     expect(NAV_GROUPS[1].pages.find(page => page.href === "/admin/models/devices")).toMatchObject({ label: "장비 한도" });
+    expect(readFileSync(path.resolve(__dirname, "../app/(operator)/admin/models/limits/page.tsx"), "utf8")).not.toContain("DevicesPlaceholder");
   });
 });
 

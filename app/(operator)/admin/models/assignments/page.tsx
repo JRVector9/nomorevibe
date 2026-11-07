@@ -9,6 +9,8 @@ import {
 } from "@/lib/operations/admin-model-assignments";
 import { readAssignmentReadsControl } from "@/lib/operations/admin-runtime-settings";
 import { PageStamp } from "../../components/PageStamp";
+import { modelsAdvancedEditor } from "../../workspace-navigation";
+import { AdvancedEditorLinks, advancedEditorTitle } from "../advanced/AdvancedEditorLinks";
 import { AssignmentsForm } from "../limits/AssignmentsForm";
 import { AssignmentForm, type AssignmentFormValues } from "./AssignmentForm";
 import { AssignmentStageTable } from "./AssignmentTable";
@@ -16,7 +18,8 @@ import { ImportCard } from "./ImportCard";
 import { llmHistoryHref, RECENT_AUDIT_ROWS } from "@/lib/operations/llm-ops-history";
 
 export const dynamic = "force-dynamic";
-export const metadata: Metadata = { title: "모델 배정 — NoMoreVibe", robots: { index: false } };
+export const metadata: Metadata = { title: advancedEditorTitle("assignments"), robots: { index: false } };
+const EDITOR = modelsAdvancedEditor("assignments");
 
 type Props = { searchParams: Promise<Record<string, string | string[] | undefined>> };
 const ERROR_LABELS: Record<string, string> = { rows: "배정 표", helpers: "도우미 배정", devices: "장비 행", policy: "용량 정책", contracts: "계약",
@@ -46,12 +49,11 @@ export default async function ModelAssignmentsPage({ searchParams }: Props) {
   return <main className="mx-auto grid max-w-7xl gap-6 p-4">
     <PageStamp />
     <header className="grid gap-1">
-      <p className="flex flex-wrap gap-4 text-[13px] text-fg-3"><Link href="/admin/models">← 단계별 모델</Link><Link href="/admin/models/devices">장비 한도 →</Link>
-        <Link href="/admin/models/helpers">도우미 장비 →</Link><Link href="/admin/models/contracts">모델 연결(계약) →</Link></p>
-      <h1 className="text-[22px] font-semibold">모델 배정</h1>
+      <AdvancedEditorLinks next={["devices", "helpers", "contracts"]} />
+      <h1 className="text-[22px] font-semibold">{EDITOR.label}</h1>
       <p className="text-[13px] text-fg-3">단계마다 어느 장비의 어느 모델을 몇 순위로 쓸지 정합니다. 저장하면 재배포 없이 계약 확인(없으면 엔진에 readback·1토큰 시험) →
         정책 경로 덧붙이기(DRAIN 없음) → 장비 역할 순위 → 배정 행 → 작업 로그 한 줄이 한 번에 들어갑니다. 거절되면 아무것도 바뀌지 않고 이유와 할 일을 보입니다.
-        도우미(쉬는 장비가 돕기)는 <Link href="/admin/models/helpers" className="underline">도우미 장비</Link>에서 섀도·승격합니다.</p>
+        도우미(쉬는 장비가 돕기)는 <Link href={modelsAdvancedEditor("helpers").href} className="underline">{modelsAdvancedEditor("helpers").label}</Link>에서 섀도·승격합니다.</p>
       <p role="status" data-flag={view.flagOn ? "on" : "off"} data-flag-source={view.flagSource} className={`rounded-lg border px-3 py-2 text-[13px] font-semibold ${view.flagOn
         ? "border-emerald-300 bg-emerald-50 text-emerald-900" : view.flagSource === "unread" ? "border-amber-300 bg-amber-50 text-amber-900" : "border-line bg-bg-soft text-fg-2"}`}>
         {view.banner}</p>

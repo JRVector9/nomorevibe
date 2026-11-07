@@ -47,6 +47,21 @@
   .admin-prototype button,.admin-prototype input,.admin-prototype textarea,.admin-prototype select {
     color: inherit;
   }
+  /* 링크 글자색, 단추 테두리 없음, 제목·문단 바깥 여백 0 도 base 층(2026-11-07 PR 5) — 층 밖에 두면 text-accent-ink·border·mt-2 같은
+     유틸리티를 늘 이겨 화면에 적은 클래스가 먹지 않았다. 클래스가 없는 요소의 모양은 그대로다.
+     링크 밑줄 없음(text-decoration: none)은 승인 시안의 모양이라 층 밖에 그대로 둔다 — 옮기면 underline 을 적은 링크 수백 곳에 밑줄이 새로 생긴다. */
+  .admin-prototype a {
+    color: inherit;
+  }
+  .admin-prototype button {
+    border: 0;
+  }
+  .admin-prototype h1,.admin-prototype h2,.admin-prototype h3,.admin-prototype h4,.admin-prototype p {
+    margin: 0;
+  }
+}
+.admin-prototype a {
+  text-decoration: none;
 }
 .admin-prototype button,.admin-prototype a {
   touch-action: manipulation;
@@ -58,19 +73,9 @@
   opacity: .45;
   cursor: default;
 }
-.admin-prototype a {
-  color: inherit;
-  text-decoration: none;
-}
 .admin-prototype button:focus-visible,.admin-prototype a:focus-visible,.admin-prototype input:focus-visible,.admin-prototype textarea:focus-visible,.admin-prototype select:focus-visible,.admin-prototype summary:focus-visible {
   outline: 3px solid #7792ff;
   outline-offset: 3px;
-}
-.admin-prototype button {
-  border: 0;
-}
-.admin-prototype h1,.admin-prototype h2,.admin-prototype h3,.admin-prototype h4,.admin-prototype p {
-  margin: 0;
 }
 .admin-prototype h1,.admin-prototype h2,.admin-prototype h3,.admin-prototype h4 {
   line-height: 1.4;
@@ -122,11 +127,20 @@
   text-transform: uppercase;
   color: var(--blue);
 }
-.admin-prototype .flex {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  flex-wrap: wrap;
+/* 시안의 「.flex」(가운데 정렬·9px 간격·줄바꿈)는 Tailwind 의 flex 유틸리티와 이름이 같다. 층 밖에 두면 items-start·gap-3·flex-nowrap 같은
+   유틸리티를 늘 이겼고, 「flex flex-col」 칸의 자식이 가운데로 몰려 폭이 줄었다(ModelOpsPanel·확인 대화상자·LiveModels·검색 모델, 2026-11-07 PR 5).
+   components 층에 두어 시안 화면(유틸리티 없이 「flex」만 쓴 곳)은 그대로 두고, 유틸리티를 적은 곳은 그 값이 이기게 한다.
+   Tailwind 의 세로 flex(flex-col)는 기본(stretch)이 뜻이라 그것만 되돌린다. */
+@layer components {
+  .admin-prototype .flex {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    flex-wrap: wrap;
+  }
+  .admin-prototype .flex.flex-col {
+    align-items: stretch;
+  }
 }
 .admin-prototype .between {
   justify-content: space-between;

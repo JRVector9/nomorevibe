@@ -7,8 +7,8 @@ import { elapsedModelTime, modelStageId, modelStageLabel } from "./admin-models-
 import type { StationLlm } from "./conveyor-llm";
 import type { BeltTone, Conveyor } from "./conveyor-model";
 import { FLOW_MODEL_STAGES, type FlowModelStage } from "./flow-model-catalog";
-import { LLM_RETRY_HREF } from "./llm-ops-links";
-export { LLM_RETRY_HREF, llmRetryRowHref } from "./llm-ops-links";
+import { LLM_CONTRACTS_HREF, LLM_FAILURES_HREF, LLM_RETRY_HREF, llmEditHref, type LlmFixField } from "./llm-ops-links";
+export { LLM_CONTRACTS_HREF, LLM_FAILURES_HREF, LLM_FIX_FIELDS, LLM_RETRY_HREF, llmEditHref, llmFieldAnchor, llmFixField, llmRetryRowHref, type LlmFixField } from "./llm-ops-links";
 
 /**
  * 「LLM 운영」 개편(2026-11-07 승인 시안 PR 1·2)의 화면 모형 — DB 를 읽지 않는 순수 함수다.
@@ -79,6 +79,67 @@ const HARD_REASONS = new Set(["connection_key_missing", "stored_key_unreadable",
   "engine_network", "cli_tool_unsupported", "cli_model_invalid", "cli_engine_endpoint_invalid", "cli_engine_source_invalid", "cli_engine_auth_invalid",
   "cli_engine_contract_not_stored", "connection_not_api", "engine_tokenizer_unavailable"]);
 export const llmReasonLevel = (code: string): LlmOpsLevel => HARD_REASONS.has(code) ? "bad" : code === "rank_disabled" || code === "connection_disabled" ? "idle" : "warn";
+
+// ── 고칠 곳(문제 표시 → 고치는 화면) ───────────────────────────────────────────────────────────────────
+
+/** 문제 표시를 누르면 가는 곳과 짧은 동작 글자(「맞추기」·「키 넣기」…). 고치는 일은 늘 그 화면의 기존 저장이 한다. */
+export type LlmFix = Readonly<{ href: string; label: string }>;
+/** 고칠 곳을 고를 때 아는 것 — 그 까닭이 붙은 연결(없으면 CLI 도구 행)과 작업·칸. */
+export type LlmFixAt = Readonly<{ connection: AiConnectionView | null; task: string | null; slot: number }>;
+export const llmTaskHref = (task: string, slot = 1) => `/admin/models/tasks#execution-${task}-${slot}`;
+export const llmJobHref = (job: string) => `/admin/status?tab=jobs&job=${encodeURIComponent(job)}`;
+export const LLM_NEW_DEVICE_HREF = "/admin/models/devices#new";
+export const LLM_CLASSIFIER_HREF = "/admin/status?tab=ai";
+/** 호출 결과가 실패로 정산된 까닭 → 기록 › 최근 실패 */
+const CALL_FAILED = new Set(["engine_slow", "client_timeout", "timeout", "invalid_output", "output_invalid", "parse_failed", "engine_failed", "local_abort", "process_exit"]);
+/** 결과를 모르는 까닭 → 기록 › 재실행 대기(미확정을 다시 대기열에 넣거나 닫는 곳) */
+const CALL_UNKNOWN = new Set(["engine_unknown", "transport_unknown", "commit_unknown", "blocked_unconfirmed"]);
+const contractsFix: LlmFix = { href: LLM_CONTRACTS_HREF, label: "계약 보기" };
+
+/**
+ * 까닭 코드 → 고칠 곳. 운영자 문장(TEXT_RANK_UNUSABLE_TEXT)이 말하는 고치는 길을 따른다:
+ * 엔진 직접 계약·CLI 계약·용량 경로는 작업 배정에서 그 순위를 다시 저장하면 만들어지고, 키·주소·CLI 버전·켜기는 연결 폼(그 칸),
+ * 닫히거나 맞지 않는 계약은 모델 연결(계약) 화면, 장비 행은 장비 한도 화면이다.
+ * OpenCode 호스트 주소·인증처럼 이 관리 화면에서 고칠 수 없는 것, 이 틱만 쉬는 것은 null — 링크를 지어내지 않는다.
+ */
+export function llmReasonFix(code: string, at: LlmFixAt): LlmFix | null {
+  const { connection } = at;
+  const api = connection?.kind === "api";
+  const opencode = connection?.kind === "cli" && connection.cliTool === "opencode";
+  const typedCli = connection?.kind === "cli" && !opencode;
+  const edit = (field: LlmFixField | null, label: string): LlmFix | null => connection ? { href: llmEditHref(connection.id, field), label } : null;
+  const rank = (label: string): LlmFix => ({ href: at.task ? llmTaskHref(at.task, at.slot) : "/admin/models/tasks#tasks", label });
+  const http = /^http_(\d{3})$/.exec(code)?.[1];
+  if (http) return !api ? null : http === "401" || http === "403" ? edit("key", "키 확인") : edit("address", "다시 읽기");
+  if (CALL_FAILED.has(code)) return { href: LLM_FAILURES_HREF, label: "실패 보기" };
+  if (CALL_UNKNOWN.has(code)) return { href: LLM_RETRY_HREF, label: "재실행 보기" };
+  switch (code) {
+    case "no_direct_contract": case "cli_engine_contract_not_stored": case "unmapped": return rank("순위 다시 저장");
+    // CLI 계약은 연결의 CLI 버전으로 만든다 — 버전이 없으면 먼저 적는다(OpenCode 는 호스트에서 읽은 목록을 다시 저장)
+    case "cli_contract_missing":
+      return typedCli && !connection.cliVersion?.trim() ? edit("version", "버전 적기") : opencode && !connection.cliVersion ? edit(null, "연결 다시 저장") : rank("순위 다시 저장");
+    case "cli_version_mismatch": return typedCli ? edit("version", "버전 고치기") : opencode ? edit(null, "연결 다시 저장") : contractsFix;
+    case "provider_contract_unavailable": case "cli_contract_unavailable": case "gateway_auth": case "cli_engine_source_invalid": return contractsFix;
+    case "connection_key_missing": return api ? edit("key", "키 넣기") : null;
+    case "stored_key_unreadable": case "key_unreadable": return api ? edit("key", "키 다시 넣기") : null;
+    case "engine_no_key": return api ? edit("key", "키 확인") : null;
+    case "connection_disabled": return edit("enabled", "연결 켜기");
+    case "rank_disabled": return rank("순위 켜기");
+    case "connection_not_api": case "cli_tool_unsupported": case "cli_model_invalid": case "engine_model_unavailable": return rank("순위 바꾸기");
+    case "no_task_models": case "all_ranks_unusable": case "task_models_unreadable": return rank("작업 배정");
+    case "engine_network": case "unreachable": case "engine_tokenizer_unavailable": return api ? edit("address", "다시 읽기") : null;
+    case "endpoint_invalid": return api ? edit("address", "주소 고치기") : null;
+    case "device_unconfigured": return { href: LLM_NEW_DEVICE_HREF, label: "장비 행 만들기" };
+    case "capacity": case "queue_full": return connection ? edit("limit", "한도 보기") : { href: "/admin/models/devices#devices", label: "장비 한도" };
+    case "helper_ineligible": return { href: "/admin/models/helpers", label: "도우미 보기" };
+    default: return null;
+  }
+}
+/** 연결의 모델 목록을 못 읽었을 때 — 키 거절이면 키 칸, 아니면 주소 칸(저장하면 목록을 다시 읽는다). */
+const modelsFix = (connection: AiConnectionView): LlmFix =>
+  (connection.modelsError ? llmReasonFix(connection.modelsError, { connection, task: null, slot: 1 }) : null) ?? { href: llmEditHref(connection.id, "address"), label: "다시 읽기" };
+/** 연결 폼에 남은 옛 칸 수와 장비 행(실제 적용 값)이 다를 때의 한 줄 — LLM 운영 행과 대시보드 할 일이 같은 말을 쓴다. */
+export const llmLimitMismatchText = (stored: number, applied: number) => `연결에 남은 옛 값 ${fmt(stored)} · 실제 적용 ${fmt(applied)}`;
 
 // ── 공통 ────────────────────────────────────────────────────────────────────────────────────────────
 
@@ -302,9 +363,9 @@ export function buildDashboardView(input: DashboardInput): DashboardView {
     if (!connection.enabled) continue;
     const state = observation.devices.find(device => device.deviceId === connection.deviceId);
     if (state?.source === "table" && state.limitSlots !== connection.capacitySlots)
-      todos.push({ id: `limit-${connection.id}`, level: "warn", title: `${aiConnectionLabel(connection)} 한도 확인`,
-        detail: `연결 폼의 칸 수 ${fmt(connection.capacitySlots)}, 장비 행 ${fmt(state.limitSlots)}(으)로 적용 중 — 실제로 쓰는 값은 장비 행입니다.`,
-        href: `/admin/models/llm?edit=${connection.id}#conn-${connection.id}`, action: "LLM 운영에서 맞추기" });
+      todos.push({ id: `limit-${connection.id}`, level: "warn", title: `${aiConnectionLabel(connection)} 한도 값 다름`,
+        detail: `${llmLimitMismatchText(connection.capacitySlots, state.limitSlots)}. 연결을 한 번 저장하면 연결 값도 ${fmt(state.limitSlots)}(으)로 맞춰집니다.`,
+        href: llmEditHref(connection.id, "limit"), action: "LLM 운영에서 맞추기" });
   }
   for (const connection of input.connections ?? []) {
     if (!connection.enabled || connection.kind !== "api" || (connection.models && connection.models.length)) continue;
@@ -369,14 +430,25 @@ export type LlmOpsInput = Readonly<{
   cliContracts: readonly LlmCliContractInput[] | null;
   classifier: LlmClassifierInput | null;
 }>;
+/** fix: 칩이 보이는 문제(잡 일시중지)를 고치는 곳 — 칩 자체(href)는 늘 작업 배정의 그 줄로 간다. */
 export type LlmTaskChip = Readonly<{ key: string; task: string; label: string; rank: number | null; slot: number; model: string; enabled: boolean;
-  source: "rank" | "pool" | "policy" | "classifier"; paused: boolean; href: string }>;
+  source: "rank" | "pool" | "policy" | "classifier"; paused: boolean; href: string; fix: LlmFix | null }>;
 export type LlmCapacity = Readonly<{ deviceId: string; limit: number | null; held: number | null; waiting: number | null; source: "table" | "policy_fallback" | null;
   /** 연결 폼에 저장된 칸 수(장비 행이 없을 때 순위 저장이 장비 행을 만드는 값). CLI 도구 행은 null */
-  stored: number | null; mismatch: boolean; level: LlmOpsLevel; text: string; note: string | null; sharedWith: string[] }>;
+  stored: number | null; mismatch: boolean; level: LlmOpsLevel;
+  /** 점유 / 한도(대시보드 장비 점유 막대와 같은 순서) */
+  text: string; note: string | null;
+  /** note 가 말하는 문제를 고치는 곳(한도 불일치 → 연결 폼의 한도 칸, 장비 행 없음 → 장비 한도) */
+  fix: LlmFix | null; sharedWith: string[] }>;
+/** stale: 연결에 남은 옛 칸 수 — 장비 행(실제 적용 값)과 다를 때만. 연결 폼을 저장하면 그 칸의 값으로 맞춰진다 */
 export type LlmLimitForm = Readonly<{ deviceId: string; current: number | null; expectedVersion: number | null; policyHash: string | null;
-  eligible: boolean; reason: string | null; sharedWith: string[] }>;
-export type LlmOpsStatus = Readonly<{ level: LlmOpsLevel; text: string; reason: string | null; detail: string | null }>;
+  eligible: boolean; reason: string | null; sharedWith: string[]; stale: number | null }>;
+/** 상태 옆 까닭 한 줄과 그것을 고치는 곳(없으면 null — 고칠 곳이 없는 사정) */
+export type LlmOpsReason = Readonly<{ text: string; fix: LlmFix | null }>;
+/** reason 은 reasons 글자를 「 · 」로 이은 것(예전 모양 그대로). 화면은 reasons 를 하나씩 링크로 그린다. */
+export type LlmOpsStatus = Readonly<{ level: LlmOpsLevel; text: string; reason: string | null; detail: string | null; reasons: readonly LlmOpsReason[] }>;
+const statusLine = (level: LlmOpsLevel, text: string, reason: string | null, detail: string | null = null, fix: LlmFix | null = null): LlmOpsStatus =>
+  ({ level, text, reason, detail, reasons: reason ? [{ text: reason, fix }] : [] });
 export type LlmOpsRow = Readonly<{
   key: string; anchor: string; source: "connection" | "cli-tool";
   connection: AiConnectionView | null;
@@ -391,16 +463,24 @@ export type LlmOpsRow = Readonly<{
   retry: number | null;
   limitForm: LlmLimitForm | null;
   editLinks: { href: string; label: string }[];
+  /** CLI 버전을 모르는 CLI 연결 → 연결 폼의 CLI 버전 칸(계약을 만들 때 쓴다) */
+  versionFix: LlmFix | null;
 }>;
 export type LlmOpsView = Readonly<{ readable: boolean; observedAt: string | null; rows: LlmOpsRow[];
   totals: { connections: number; cliTools: number; models: number; limitSum: number | null }; errors: string[] }>;
 
 export const RUNTIME_FRESH_MS = 30 * 60_000;
-const chipHref = (task: string, slot: number) => `/admin/models/tasks#execution-${task}-${slot}`;
+const chipHref = llmTaskHref;
+/** 잡이 멈춘 작업 → 그 잡의 상태 창(다시 켜는 곳). 멈춘 작업이 아니면 null */
+const pausedFix = (taskId: string, paused: ReadonlySet<string>): LlmFix | null => {
+  const job = paused.has(taskId) ? aiTask(taskId)?.jobs[0] : undefined;
+  return job ? { href: llmJobHref(job), label: "잡 보기" } : null;
+};
 const chipSort = (a: LlmTaskChip, b: LlmTaskChip) => (a.rank ?? 99) - (b.rank ?? 99)
   || AI_TASKS.findIndex(task => task.id === a.task) - AI_TASKS.findIndex(task => task.id === b.task) || a.slot - b.slot;
 
-function capacityOf(deviceId: string, observation: AdminModelsObservation, stored: number | null, sharedWith: string[]): LlmCapacity {
+/** connectionId: 이 한도를 보이는 연결(CLI 도구 행은 null) — 한도 불일치를 그 연결 폼의 한도 칸으로 고친다. */
+function capacityOf(deviceId: string, observation: AdminModelsObservation, stored: number | null, sharedWith: string[], connectionId: string | null): LlmCapacity {
   const readable = observationReadable(observation);
   const state = readable ? observation.devices.find(device => device.deviceId === deviceId) : undefined;
   const group = readable ? observation.groups.find(row => row.groupId === deviceId) : undefined;
@@ -410,12 +490,15 @@ function capacityOf(deviceId: string, observation: AdminModelsObservation, store
   const mismatch = stored !== null && state?.source === "table" && state.limitSlots !== stored;
   const level: LlmOpsLevel = !readable || limit === null ? "unknown" : held !== null && held >= limit ? "warn" : "ok";
   const text = !readable ? UNREADABLE : `${fmt(held ?? 0)} / ${limit === null ? UNREADABLE : fmt(limit)}`;
+  const noDevice = readable && (!state && !group || source === "policy_fallback");
   const note = !readable ? "장부를 읽지 못했습니다"
-    : mismatch ? `연결 폼 ${fmt(stored!)}칸과 다름 — 장비 행 ${fmt(limit!)}칸이 적용됨`
+    : mismatch ? llmLimitMismatchText(stored!, limit!)
     : !state && !group ? stored !== null ? `장비 행 없음 — 순위를 저장하면 ${fmt(stored)}칸으로 만듭니다` : "장비 행 없음"
     : source === "policy_fallback" ? "장비 행 없음 · 정책 대체 한도"
     : !observation.devicesRead ? "장비 행을 읽지 못함" : null;
-  return { deviceId, limit, held, waiting: state ? state.waiting : null, source, stored, mismatch, level, text, note, sharedWith };
+  const fix: LlmFix | null = mismatch && connectionId ? { href: llmEditHref(connectionId, "limit"), label: "맞추기" }
+    : noDevice && observation.devicesRead ? { href: LLM_NEW_DEVICE_HREF, label: "장비 행 만들기" } : null;
+  return { deviceId, limit, held, waiting: state ? state.waiting : null, source, stored, mismatch, level, text, note, fix, sharedWith };
 }
 
 function limitFormOf(connection: AiConnectionView, observation: AdminModelsObservation, sharedWith: string[]): LlmLimitForm {
@@ -423,7 +506,8 @@ function limitFormOf(connection: AiConnectionView, observation: AdminModelsObser
   const state = readable ? observation.devices.find(device => device.deviceId === connection.deviceId) : undefined;
   const inPolicy = (observation.configuredRoutes ?? []).some(route => route.groupId === connection.deviceId);
   const current = state?.limitSlots ?? null;
-  const base = { deviceId: connection.deviceId, current, expectedVersion: state?.version ?? null, policyHash: observation.policyHash, sharedWith };
+  const stale = state?.source === "table" && state.limitSlots !== connection.capacitySlots ? connection.capacitySlots : null;
+  const base = { deviceId: connection.deviceId, current, expectedVersion: state?.version ?? null, policyHash: observation.policyHash, sharedWith, stale };
   const reason = !readable ? "장부를 읽지 못해 지금은 장비 한도를 저장할 수 없습니다."
     : !observation.policyVerified || !observation.policyHash ? "용량 정책을 확인하지 못해 장비 한도를 여기서 저장할 수 없습니다."
     : !connection.enabled ? "꺼진 연결의 장비 한도는 고급 설정 → 장비 한도에서 바꿉니다."
@@ -433,22 +517,24 @@ function limitFormOf(connection: AiConnectionView, observation: AdminModelsObser
   return { ...base, eligible: reason === null, reason };
 }
 
+/** 가장 나쁜 신호가 상태가 되고, 까닭은 그 신호부터 둘까지(신호마다 고칠 곳을 그대로 들고 간다). */
 function statusOf(signals: LlmOpsStatus[], base: LlmOpsStatus): LlmOpsStatus {
   const worst = signals.reduce<LlmOpsStatus | null>((current, signal) => !current || LEVEL_RANK[signal.level] > LEVEL_RANK[current.level] ? signal : current, null);
   if (!worst || LEVEL_RANK[worst.level] <= LEVEL_RANK.idle) return base;
-  const others = signals.filter(signal => signal !== worst && signal.reason).map(signal => signal.reason!);
-  return { ...worst, reason: [worst.reason, ...others].filter(Boolean).slice(0, 2).join(" · ") || null };
+  const reasons = [worst, ...signals.filter(signal => signal !== worst)].flatMap(signal => signal.reasons).slice(0, 2);
+  return { ...worst, reason: reasons.map(reason => reason.text).join(" · ") || null, reasons };
 }
 
-/** 이 연결의 순위 중 실행 쪽이 마지막 틱에 쓸 수 없다고 남긴 것(30분 안). 여러 칸 작업은 그 순위의 모든 칸이 이 연결일 때만. */
-function runtimeUnusable(connectionId: string, input: LlmOpsInput): { task: string; code: string; count: number; text: string }[] {
+/** 이 연결의 순위 중 실행 쪽이 마지막 틱에 쓸 수 없다고 남긴 것(30분 안). 여러 칸 작업은 그 순위의 모든 칸이 이 연결일 때만. slot 은 고칠 줄(작업 배정)을 고른다. */
+function runtimeUnusable(connectionId: string, input: LlmOpsInput): { task: string; slot: number; code: string; count: number; text: string }[] {
   if (!input.runtime || !input.rows) return [];
-  const now = Date.parse(input.now), out: { task: string; code: string; count: number; text: string }[] = [];
+  const now = Date.parse(input.now), out: { task: string; slot: number; code: string; count: number; text: string }[] = [];
   for (const [taskId, runtime] of Object.entries(input.runtime)) {
     if (!(now - Date.parse(runtime.at) <= RUNTIME_FRESH_MS)) continue;
     for (const entry of runtime.unusable) {
       const ranked = input.rows.filter(row => row.task === taskId && row.rank === entry.rank);
-      if (ranked.length && ranked.every(row => row.connectionId === connectionId)) out.push({ task: taskId, code: entry.code, count: entry.count, text: entry.text });
+      if (ranked.length && ranked.every(row => row.connectionId === connectionId))
+        out.push({ task: taskId, slot: Math.min(...ranked.map(row => row.slot)), code: entry.code, count: entry.count, text: entry.text });
     }
   }
   return out;
@@ -460,19 +546,26 @@ function ledgerOf(rows: readonly AdminModelMetrics[] | null) {
   return { succeeded1h, failed1h, dispatched: sum(rows, "dispatched"), settled1h: succeeded1h + failed1h + sum(rows, "unclassified1h") };
 }
 
+const failuresFix: LlmFix = { href: LLM_FAILURES_HREF, label: "실패 보기" };
+const retryFix: LlmFix = { href: LLM_RETRY_HREF, label: "재실행 보기" };
+const classifierFix: LlmFix = { href: LLM_CLASSIFIER_HREF, label: "분류 설정" };
+
 function commonSignals(ledgerRows: readonly AdminModelMetrics[] | null, tasks: readonly LlmTaskChip[]): { signals: LlmOpsStatus[]; base: LlmOpsStatus } {
   const signals: LlmOpsStatus[] = [];
   const ledger = ledgerOf(ledgerRows);
   const indeterminate = ledgerRows ? sum(ledgerRows, "indeterminate") : 0;
-  if (ledger && ledger.failed1h > 0 && ledger.succeeded1h === 0) signals.push({ level: "bad", text: "실패만", reason: `1시간 실패 ${fmt(ledger.failed1h)}건 · 성공 0건`, detail: null });
-  else if (ledger && ledger.failed1h > 0) signals.push({ level: "warn", text: "일부 실패", reason: `1시간 정산 ${fmt(ledger.settled1h)} · 실패 ${fmt(ledger.failed1h)}`, detail: null });
-  if (indeterminate > 0) signals.push({ level: "warn", text: "미확정 있음", reason: `재실행 대기 ${fmt(indeterminate)}건`, detail: null });
+  if (ledger && ledger.failed1h > 0 && ledger.succeeded1h === 0) signals.push(statusLine("bad", "실패만", `1시간 실패 ${fmt(ledger.failed1h)}건 · 성공 0건`, null, failuresFix));
+  else if (ledger && ledger.failed1h > 0) signals.push(statusLine("warn", "일부 실패", `1시간 정산 ${fmt(ledger.settled1h)} · 실패 ${fmt(ledger.failed1h)}`, null, failuresFix));
+  if (indeterminate > 0) signals.push(statusLine("warn", "미확정 있음", `재실행 대기 ${fmt(indeterminate)}건`, null, retryFix));
   const active = tasks.filter(task => task.enabled);
-  const base: LlmOpsStatus = !active.length ? { level: "idle", text: "배정 없음", reason: "이 연결을 쓰는 작업이 없습니다", detail: null }
-    : active.every(task => task.paused) ? { level: "idle", text: "의도적 중지", reason: `잡 일시중지: ${[...new Set(active.map(task => task.label))].join(" · ")}`, detail: null }
-    : !ledger ? { level: "unknown", text: UNREADABLE, reason: "장부를 읽지 못했습니다", detail: null }
-    : ledger.settled1h > 0 || ledger.dispatched > 0 ? { level: "ok", text: "정상", reason: `1시간 정산 ${fmt(ledger.settled1h)}${ledger.dispatched ? ` · 실행 중 ${fmt(ledger.dispatched)}` : ""}`, detail: null }
-    : { level: "idle", text: "1시간 호출 없음", reason: "최근 1시간 정산·실행 기록이 없습니다", detail: null };
+  // 잡이 멈춘 작업이 하나면 그 잡의 상태 창, 여럿이면 잡 목록(다시 켜는 곳)
+  const pausedFixes = [...new Map(active.filter(task => task.fix).map(task => [task.task, task.fix!])).values()];
+  const base: LlmOpsStatus = !active.length ? statusLine("idle", "배정 없음", "이 연결을 쓰는 작업이 없습니다")
+    : active.every(task => task.paused) ? statusLine("idle", "의도적 중지", `잡 일시중지: ${[...new Set(active.map(task => task.label))].join(" · ")}`, null,
+      pausedFixes.length === 1 ? pausedFixes[0] : { href: "/admin/status?tab=jobs", label: "잡 보기" })
+    : !ledger ? statusLine("unknown", UNREADABLE, "장부를 읽지 못했습니다")
+    : ledger.settled1h > 0 || ledger.dispatched > 0 ? statusLine("ok", "정상", `1시간 정산 ${fmt(ledger.settled1h)}${ledger.dispatched ? ` · 실행 중 ${fmt(ledger.dispatched)}` : ""}`)
+    : statusLine("idle", "1시간 호출 없음", "최근 1시간 정산·실행 기록이 없습니다");
   return { signals, base };
 }
 
@@ -497,7 +590,7 @@ export function buildLlmOpsView(input: LlmOpsInput): LlmOpsView {
       if (row.connectionId !== connection.id) continue;
       const task = aiTask(row.task);
       chips.push({ key: `rank:${row.task}:${row.slot}:${row.rank}`, task: row.task, label: task ? (task.slots > 1 ? aiTaskSlotLabel(task, row.slot) : task.label) : row.task,
-        rank: row.rank, slot: row.slot, model: row.model, enabled: row.enabled, source: "rank", paused: paused.has(row.task), href: chipHref(row.task, row.slot) });
+        rank: row.rank, slot: row.slot, model: row.model, enabled: row.enabled, source: "rank", paused: paused.has(row.task), href: chipHref(row.task, row.slot), fix: pausedFix(row.task, paused) });
     }
     for (const execution of input.executions ?? []) {
       if (execution.mode !== "workload_pool") continue;
@@ -506,7 +599,7 @@ export function buildLlmOpsView(input: LlmOpsInput): LlmOpsView {
         const task = aiTask(execution.task);
         chips.push({ key: `pool:${execution.task}:${execution.slot}:${member.memberId}`, task: execution.task,
           label: task ? (task.slots > 1 ? aiTaskSlotLabel(task, execution.slot) : task.label) : execution.task, rank: null, slot: execution.slot, model: member.model,
-          enabled: true, source: "pool", paused: paused.has(execution.task), href: chipHref(execution.task, execution.slot) });
+          enabled: true, source: "pool", paused: paused.has(execution.task), href: chipHref(execution.task, execution.slot), fix: pausedFix(execution.task, paused) });
       }
     }
     return chips;
@@ -523,7 +616,7 @@ export function buildLlmOpsView(input: LlmOpsInput): LlmOpsView {
   const policyChip = (provider: string, routeId: string, model: string): LlmTaskChip => {
     const task = taskOfRoute(routeId);
     return { key: `policy:${provider}:${routeId}:${model}`, task: task?.id ?? routeId, label: task?.label ?? routeTaskLabel(routeId), rank: null, slot: 1, model, enabled: true,
-      source: "policy", paused: task ? paused.has(task.id) : false, href: task ? chipHref(task.id, 1) : "/admin/models/contracts" };
+      source: "policy", paused: task ? paused.has(task.id) : false, href: task ? chipHref(task.id, 1) : LLM_CONTRACTS_HREF, fix: task ? pausedFix(task.id, paused) : null };
   };
   for (const route of policy) {
     if (!isCliProvider(route.provider)) continue;
@@ -548,7 +641,7 @@ export function buildLlmOpsView(input: LlmOpsInput): LlmOpsView {
     const entry = tool(model.provider);
     entry.models.add(model.model); entry.classifier = true;
     entry.chips.push({ key: `classifier:${model.provider}:${model.rank}`, task: "publish-classify", label: aiTask("publish-classify")?.label ?? "카테고리 분류", rank: model.rank, slot: 1,
-      model: model.model, enabled: true, source: "classifier", paused: paused.has("publish-classify"), href: "/admin/status?tab=ai" });
+      model: model.model, enabled: true, source: "classifier", paused: paused.has("publish-classify"), href: LLM_CLASSIFIER_HREF, fix: pausedFix("publish-classify", paused) });
   }
   if (input.classifier) for (const version of input.classifier.versions) if (tools.has(version.provider)) tools.get(version.provider)!.versions.set(version.cliVersion, "분류 에이전트 관측");
   if (readable) for (const device of observation.devices) {
@@ -594,16 +687,17 @@ export function buildLlmOpsView(input: LlmOpsInput): LlmOpsView {
     const own = ledgerRows ? ledgerRows.filter(row => row.groupId === connection.deviceId) : null;
     const { signals, base } = commonSignals(own, tasks);
     if (connection.enabled && connection.kind === "api" && (!connection.models || !connection.models.length))
-      signals.push({ level: "bad", text: "목록 못 읽음", reason: llmReasonShort(connection.modelsError) ?? (connection.models === null ? "아직 읽지 않음" : "모델 0개"),
-        detail: aiModelsErrorText(connection.modelsError) });
+      signals.push(statusLine("bad", "목록 못 읽음", llmReasonShort(connection.modelsError) ?? (connection.models === null ? "아직 읽지 않음" : "모델 0개"),
+        aiModelsErrorText(connection.modelsError), modelsFix(connection)));
     for (const entry of connection.enabled ? runtimeUnusable(connection.id, input) : []) {
       const level = llmReasonLevel(entry.code);
-      signals.push({ level, text: level === "bad" ? "부르지 못함" : "일부 건너뜀",
-        reason: `${llmReasonShort(entry.code)} ${fmt(entry.count)}회(${aiTask(entry.task)?.label ?? entry.task})`, detail: entry.text });
+      signals.push(statusLine(level, level === "bad" ? "부르지 못함" : "일부 건너뜀",
+        `${llmReasonShort(entry.code)} ${fmt(entry.count)}회(${aiTask(entry.task)?.label ?? entry.task})`, entry.text, llmReasonFix(entry.code, { connection, task: entry.task, slot: entry.slot })));
     }
     if (extra?.classifier && input.classifier?.fresh && input.classifier.ready === false)
-      signals.push({ level: "bad", text: "분류 요청 안 받음", reason: "connect 에이전트가 분류를 받지 않음", detail: null });
-    const status = !connection.enabled ? { level: "idle" as const, text: "꺼짐", reason: "순위 선택지에서 빠져 있습니다(저장된 순위는 남음)", detail: null } : statusOf(signals, base);
+      signals.push(statusLine("bad", "분류 요청 안 받음", "connect 에이전트가 분류를 받지 않음", null, classifierFix));
+    const status = !connection.enabled ? statusLine("idle", "꺼짐", "순위 선택지에서 빠져 있습니다(저장된 순위는 남음)", null, llmReasonFix("connection_disabled", { connection, task: null, slot: 1 }))
+      : statusOf(signals, base);
     const versions = connection.cliVersion ? [connection.cliVersion] : [...(extra?.versions.keys() ?? [])];
     const others = sharedWith(connection.deviceId, label);
     rows.push({ key: connection.id, anchor: `conn-${connection.id}`, source: "connection", connection, label, kind: connection.kind,
@@ -615,9 +709,10 @@ export function buildLlmOpsView(input: LlmOpsInput): LlmOpsView {
       models: { ids, title: connection.kind === "api" ? (connection.models ? `${ids.length}개` : "목록 없음")
         : connection.cliTool === "opencode" ? `카탈로그 ${ids.length}개` : `${ids.length}개`,
         error: aiModelsErrorText(connection.modelsError), readAt: connection.modelsReadAt },
-      modelTasks, capacity: capacityOf(connection.deviceId, observation, connection.capacitySlots, others), otherDevices: [],
+      modelTasks, capacity: capacityOf(connection.deviceId, observation, connection.capacitySlots, others, connection.id), otherDevices: [],
       tasks, status, ledger: ledgerOf(own), retry: own ? sum(own, "indeterminate") : null,
-      limitForm: limitFormOf(connection, observation, others), editLinks: extra?.classifier ? [{ href: "/admin/status?tab=ai", label: "분류 모델 설정" }] : [] });
+      limitForm: limitFormOf(connection, observation, others), editLinks: extra?.classifier ? [{ href: LLM_CLASSIFIER_HREF, label: "분류 모델 설정" }] : [],
+      versionFix: connection.kind === "cli" && connection.cliTool !== "opencode" && !versions.length ? { href: llmEditHref(connection.id, "version"), label: "버전 적기" } : null });
   }
   for (const entry of [...tools.values()].sort((a, b) => cliProviderLabel(a.provider).localeCompare(cliProviderLabel(b.provider)))) {
     if (covered.has(entry.provider)) continue;
@@ -629,13 +724,13 @@ export function buildLlmOpsView(input: LlmOpsInput): LlmOpsView {
     const own = ledgerRows ? ledgerRows.filter(row => row.provider === entry.provider) : null;
     const { signals, base } = commonSignals(own, tasks);
     if (entry.classifier && input.classifier?.fresh && input.classifier.ready === false)
-      signals.push({ level: "bad", text: "분류 요청 안 받음", reason: "connect 에이전트가 분류를 받지 않음", detail: null });
+      signals.push(statusLine("bad", "분류 요청 안 받음", "connect 에이전트가 분류를 받지 않음", null, classifierFix));
     if (entry.classifier && input.classifier && !input.classifier.fresh)
-      signals.push({ level: "unknown", text: UNREADABLE, reason: "분류 에이전트 관측이 오래됨", detail: null });
+      signals.push(statusLine("unknown", UNREADABLE, "분류 에이전트 관측이 오래됨", null, classifierFix));
     const versions = [...entry.versions.keys()];
     const cliTool = aiCliToolOfProvider(entry.provider);
     const editLinks = [
-      ...(entry.classifier || entry.provider === "codex-cli" ? [{ href: "/admin/status?tab=ai", label: "분류 모델 설정" }] : []),
+      ...(entry.classifier || entry.provider === "codex-cli" ? [{ href: LLM_CLASSIFIER_HREF, label: "분류 모델 설정" }] : []),
       ...(tasks.some(chip => chip.source !== "classifier") ? [{ href: "/admin/models/tasks", label: "작업 배정(순위)" }] : []),
       ...(cliTool && cliTool !== "codex" ? [{ href: "/admin/models/llm?add=1#connection-new", label: "CLI 연결로 등록" }] : []),
       { href: "/admin/models/contracts", label: "CLI 계약" },
@@ -645,8 +740,8 @@ export function buildLlmOpsView(input: LlmOpsInput): LlmOpsView {
       address: devices.length ? `장비 ${devices.join(" · ")}` : null, version: versions[0] ?? null, versionSource: versions.length ? entry.versions.get(versions[0]) ?? null : null,
       enabled: true, keyText: null,
       models: { ids: [...entry.models].sort(), title: `설정·관측 ${entry.models.size}개`, error: null, readAt: null },
-      modelTasks, capacity: devices.length ? capacityOf(devices[0], observation, null, sharedWith(devices[0], label)) : null, otherDevices: devices.slice(1),
-      tasks, status: statusOf(signals, base), ledger: ledgerOf(own), retry: own ? sum(own, "indeterminate") : null, limitForm: null, editLinks });
+      modelTasks, capacity: devices.length ? capacityOf(devices[0], observation, null, sharedWith(devices[0], label), null) : null, otherDevices: devices.slice(1),
+      tasks, status: statusOf(signals, base), ledger: ledgerOf(own), retry: own ? sum(own, "indeterminate") : null, limitForm: null, editLinks, versionFix: null });
   }
   const limitDevices = new Map<string, number>();
   for (const row of rows) if (row.capacity && row.capacity.limit !== null) limitDevices.set(row.capacity.deviceId, row.capacity.limit);

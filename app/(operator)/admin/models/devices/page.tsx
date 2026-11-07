@@ -6,13 +6,16 @@ import { formatListTime } from "@/lib/format/time";
 import { capacityDeviceIssueMessage, readCapacityDevicesAdminView } from "@/lib/operations/admin-capacity-devices";
 import { readEngineLimitMetadata } from "@/lib/operations/admin-engine-limits";
 import { PageStamp } from "../../components/PageStamp";
+import { modelsAdvancedEditor } from "../../workspace-navigation";
+import { AdvancedEditorLinks, advancedEditorTitle } from "../advanced/AdvancedEditorLinks";
 import { DeviceForm } from "./DeviceForm";
 import { DeviceTable } from "./DeviceTable";
 import { SharedLimitForm } from "./SharedLimitForm";
 import { llmHistoryHref, RECENT_AUDIT_ROWS } from "@/lib/operations/llm-ops-history";
 
 export const dynamic = "force-dynamic";
-export const metadata: Metadata = { title: "엔진 공유 한도 — NoMoreVibe", robots: { index: false } };
+export const metadata: Metadata = { title: advancedEditorTitle("devices"), robots: { index: false } };
+const EDITOR = modelsAdvancedEditor("devices");
 
 /**
  * 장비 한도(model_capacity_devices·model_capacity_device_roles, PR 1b) — 장비별 칸 수·낮은 순위 상한·유휴 판정·비워 둘 칸·역할 순서를 저장하면
@@ -31,8 +34,8 @@ export default async function CapacityDevicesPage() {
   return <main className="mx-auto grid max-w-6xl gap-6 p-4">
     <PageStamp />
     <header className="grid gap-1">
-      <p className="flex flex-wrap gap-4 text-[13px] text-fg-3"><Link href="/admin/models/limits">← 실시간 한도</Link><Link href="/admin/models">← 단계별 모델</Link><Link href="/admin/models/helpers">도우미 장비 →</Link></p>
-      <h1 className="text-[22px] font-semibold">엔진 공유 한도</h1>
+      <AdvancedEditorLinks next={["limits", "helpers"]} />
+      <h1 className="text-[22px] font-semibold">{EDITOR.label}</h1>
       <p className="text-[15px] text-fg-2">같은 엔진을 사용하는 1차·2차 검수와 글 짓기 등 모든 작업이 하나의 동시 실행 한도를 나눠 씁니다. 예를 들어 5건으로 저장하면 각 단계의 예약·실행 합계가 최대 5건입니다.</p>
       <p className="text-[13px] text-fg-3">저장하면 입장 판정이 트랜잭션 안에서 이 표를 바로 읽어
         <strong> 다음 입장부터</strong> 쓰입니다 — DRAIN·배포·&apos;읽은 판&apos;이 없습니다. 이미 잡힌 행(예약·진행)은 그대로이고 한도를 낮추면 새 입장만 막힙니다.
@@ -51,11 +54,11 @@ export default async function CapacityDevicesPage() {
       <div className="grid gap-4 lg:grid-cols-2">{mapped.map(({ device, engine }) => <SharedLimitForm
         key={`${device.deviceId}#${device.version ?? "new"}#${engines.policyHash}`} device={device} engine={engine} policyHash={engines.policyHash!}
         readOnly={readOnly || !view.policyVerified || !device.enabled} />)}</div>
-      {!engines.error && !mapped.length && <p className="text-[15px] text-fg-3">현재 정책과 연결된 등록 엔진이 없습니다. 고급 설정에서 정책 그룹을 확인해 주세요.</p>}
-      {mapped.length < view.devices.length && <p className="text-[13px] text-fg-3">등록 연결이 확인되지 않은 정책 그룹 {view.devices.length - mapped.length}개는 고급 설정에 표시합니다. 다른 그룹의 한도를 같은 엔진 한도로 대신 적용하지 않습니다.</p>}
+      {!engines.error && !mapped.length && <p className="text-[15px] text-fg-3">현재 정책과 연결된 등록 엔진이 없습니다. 아래 세부 설정에서 정책 그룹을 확인해 주세요.</p>}
+      {mapped.length < view.devices.length && <p className="text-[13px] text-fg-3">등록 연결이 확인되지 않은 정책 그룹 {view.devices.length - mapped.length}개는 아래 세부 설정에 표시합니다. 다른 그룹의 한도를 같은 엔진 한도로 대신 적용하지 않습니다.</p>}
     </section>
     <details className="grid gap-4 rounded-xl border border-line p-4">
-      <summary className="cursor-pointer text-[17px] font-semibold">고급 설정 · 전체 정책 그룹, 역할 우선순위</summary>
+      <summary className="cursor-pointer text-[17px] font-semibold">세부 설정 · 전체 정책 그룹, 역할 우선순위</summary>
       <div className="mt-4 grid gap-6">
     <section id="devices" className="grid gap-2 scroll-mt-6">
       <h2 className="text-[18px] font-semibold">장비 목록 ({view.devices.length})</h2>

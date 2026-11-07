@@ -6,6 +6,7 @@ import postgres from "postgres";
 import { z } from "zod";
 import { readModelOpsState, saveModelOpsState } from "@/lib/operations/ops-runner/repository";
 import { opsRootHandoffPath, runPreparedModelOps } from "@/lib/operations/ops-runner/operator";
+import { opsFinished } from "@/lib/operations/ops-runner/contract";
 
 export function parseOpsRunnerArgs(args: string[]) {
   if (args.length !== 4 || !["prepare", "run"].includes(args[0]) || !z.uuid().safeParse(args[1]).success
@@ -23,7 +24,7 @@ async function main() {
     if (!row.locked) throw new Error("ops_runner_already_running");
     const state = await readModelOpsState(args.id);
     if (!state) throw new Error("ops_runner_job_missing");
-    if (state.status === "completed") { process.stdout.write(JSON.stringify(state) + "\n"); return; }
+    if (opsFinished(state)) { process.stdout.write(JSON.stringify(state) + "\n"); return; }
     let result;
     try { result = await runPreparedModelOps(state, args.profile, args.directory, args.prepare); }
     catch {

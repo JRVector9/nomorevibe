@@ -1,5 +1,6 @@
 "use client";
 import type { ModelOption } from "../settings/ModelRows";
+import { ConfirmSubmit } from "./ConfirmSubmit";
 export type SelectedModel = { provider: string; model: string };
 const identity = (row: SelectedModel) => JSON.stringify([row.provider, row.model]);
 export function ModelChips({ label, rows, choices, max, onChange, prefix, displayName }: {
@@ -26,6 +27,9 @@ export function ModelSaveBar({ pending = false, changes, label = "검수 모델 
   return <div className="models-save-bar flex flex-wrap items-center justify-between gap-3 border-t border-line bg-bg-card px-5 py-3 shadow-lg" role="region" aria-label="모델 설정 저장">
     <div className="min-w-0 text-[13px]"><p className="font-semibold">{changes.length ? `${changes.length}개 항목 변경 · 아직 적용 전` : "저장된 설정과 같습니다"}</p>
       <p className="mt-1 break-words text-fg-2">{changes.length ? changes.join(" · ") : "모델을 추가·제거한 뒤 저장해야 적용됩니다."}</p></div>
-    <button type="submit" disabled={pending || !changes.length} className="inline-flex min-h-10 shrink-0 items-center justify-center rounded-[9px] bg-accent-solid px-5 text-[14px] font-semibold text-white hover:brightness-110 disabled:opacity-50">{pending ? "저장 중…" : label}</button>
+    {/* 두 단계 확인(PR 5) — 바뀌는 단계를 다시 보이고 「저장 확인」으로 보낸다 */}
+    <ConfirmSubmit label={label} pending={pending} disabled={!changes.length} title="바뀌는 단계"
+      className="inline-flex min-h-10 shrink-0 items-center justify-center rounded-[9px] bg-accent-solid px-5 text-[14px] font-semibold text-white hover:brightness-110 disabled:opacity-50"
+      changes={changes.map(stage => ({ label: stage }))} summary="저장하면 다음 작업 묶음부터 바뀐 모델을 씁니다. 진행 중 요청은 원래 계약에 남습니다." />
   </div>;
 }

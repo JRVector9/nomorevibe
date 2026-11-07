@@ -22,8 +22,10 @@ describe('seven operational workspaces', () => {
 
   it('preserves the legacy inventory while moving its screens to workspace tabs', () => {
     expect(NAV_GROUPS.flatMap(group => group.pages).map(page => page.href)).toEqual(expect.arrayContaining(['/admin/models/devices', '/admin/models/helpers', '/admin/models/assignments', '/admin/activity']));
-    expect(WORKSPACE_LEGACY_SCREENS).toHaveLength(30);
-    expect(new Set(WORKSPACE_LEGACY_SCREENS).size).toBe(30);
+    // PR 5: 사람 위임 모델·검색 모델·고급 설정(옛 /admin/models?advanced=1) 화면을 더했다
+    expect(WORKSPACE_LEGACY_SCREENS).toHaveLength(33);
+    expect(new Set(WORKSPACE_LEGACY_SCREENS).size).toBe(33);
+    expect(WORKSPACE_LEGACY_SCREENS).toEqual(expect.arrayContaining(['/admin/models/advanced', '/admin/models/human', '/admin/models/search']));
     for (const path of WORKSPACE_LEGACY_SCREENS.filter(path => path !== '/admin/login')) {
       expect(resolveWorkspace(path).workspace.id, path).toBeTruthy();
     }
@@ -61,6 +63,8 @@ describe('seven operational workspaces', () => {
     ['/admin/models/helpers', '', 'models', 'advanced'],
     ['/admin/models/limits', '', 'models', 'advanced'],
     ['/admin/models/contracts', '', 'models', 'advanced'],
+    ['/admin/models/advanced', '', 'models', 'advanced'],
+    ['/admin/models', 'advanced=1', 'models', 'advanced'],
     ['/admin/models/llm', '', 'models', 'llm'],
     ['/admin/models/history', '', 'models', 'history'],
     ['/admin/talk', '', 'content', 'social'],
@@ -95,9 +99,9 @@ describe('workspace tabs and legacy deep links', () => {
   it('selects the advanced-settings tab and keeps every advanced editor reachable', () => {
     const location = resolveWorkspace('/admin/models/helpers');
     const html = renderToStaticMarkup(<WorkspaceTabs location={location} pathname="/admin/models/helpers" search="" />);
-    for (const href of ['/admin/models?advanced=1', '/admin/models/devices', '/admin/models/limits', '/admin/models/helpers', '/admin/models/assignments',
+    for (const href of ['/admin/models/advanced', '/admin/models/devices', '/admin/models/limits', '/admin/models/helpers', '/admin/models/assignments',
       '/admin/models/contracts', '/admin/models/human', '/admin/models/search']) expect(html).toContain(`href="${href}"`);
-    expectActiveLink(html, '/admin/models?advanced=1');
+    expectActiveLink(html, '/admin/models/advanced');
     expectActiveLink(html, '/admin/models/helpers');
     for (const label of ['대시보드', 'LLM 운영', '작업 배정', '기록', '고급 설정']) expect(html).toContain(`>${label}</a>`);
   });

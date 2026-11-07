@@ -23,11 +23,13 @@ export const OPS_STEP_LABELS: Record<OpsStep, string> = { prepare: "준비·대�
   handoff: "DRAIN 유지·다음 절차 인계" };
 export type OpsState = {
   id: string; action: OpsCommand["action"]; targetId: string; actor: string; reason: string;
-  status: "queued" | "running" | "blocked" | "manual" | "completed";
+  status: "queued" | "running" | "blocked" | "manual" | "completed" | "cancelled";
   steps: Partial<Record<OpsStep, "running" | "done" | "blocked" | "manual">>;
   step: OpsStep; code: string | null; profileHash?: string; auditId?: number;
   /** Set from the pinned operator profile. "draining" ends with handoff instead of OPEN. */
   finalAdmission?: "draining";
+  /** 시작 전 취소(2026-11-07) — 누가 왜. 원래 요청자(actor)는 그대로 둔다. */
+  cancelledBy?: string; cancelReason?: string;
 };
 export function initialOpsState(command: OpsCommand, actor: string): OpsState {
   return { ...command, actor, status: "queued", steps: {}, step: "prepare", code: null };
@@ -39,6 +41,14 @@ export function opsStepsFor(state: Pick<OpsState, "action" | "finalAdmission">):
     .map(step => step === "open" && state.finalAdmission === "draining" ? "handoff" : step);
 }
 
+/** Terminal states: the runner never touches them again. */
+export const opsFinished = (state: Pick<OpsState, "status">) => state.status === "completed" || state.status === "cancelled";
 /** A human-only preflight has changed no admission or host state and does not own a physical boundary. */
-export const opsHoldsBoundary = (state: OpsState) => state.status !== "completed"
+export const opsHoldsBoundary = (state: OpsState) => !opsFinished(state)
   && !(["manual", "blocked"].includes(state.status) && state.step === "prepare" && !state.steps.drain);
+/**
+ * 시작 전 취소(2026-11-07 운영자 결정) — 운영 실행기가 아직 한 단계도 돌리지 않은 접수(queued · prepare · 단계 기록 없음)만 닫는다.
+ * 접수·장비·장부를 바꾼 적이 없으므로 되돌릴 물리 상태가 없다. 한 단계라도 돌았으면 실행기가 끝까지 처리하거나 사람이 본다.
+ */
+export const opsCancellable = (state: OpsState) => state.status === "queued" && state.step === "prepare" && Object.keys(state.steps).length === 0;
+export const opsCancelSchema = z.object({ id: z.uuid(), reason: z.string().trim().min(1).max(300).regex(/^[^\p{Cc}]+$/u) }).strict();

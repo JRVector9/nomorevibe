@@ -5,16 +5,19 @@ import { currentAdmin } from "@/lib/auth/admin";
 import { formatListTime } from "@/lib/format/time";
 import { modelHelperIssueMessage, readModelHelpersAdminView } from "@/lib/operations/admin-model-helpers";
 import { PageStamp } from "../../components/PageStamp";
+import { modelsAdvancedEditor } from "../../workspace-navigation";
+import { AdvancedEditorLinks, advancedEditorTitle } from "../advanced/AdvancedEditorLinks";
 import { HelperForm } from "./HelperForm";
 import { HelperTable } from "./HelperTable";
 import { SupervisorCard } from "./SupervisorCard";
 import { llmHistoryHref, RECENT_AUDIT_ROWS } from "@/lib/operations/llm-ops-history";
 
 export const dynamic = "force-dynamic";
-export const metadata: Metadata = { title: "도우미 장비 — NoMoreVibe", robots: { index: false } };
+export const metadata: Metadata = { title: advancedEditorTitle("helpers"), robots: { index: false } };
+const EDITOR = modelsAdvancedEditor("helpers");
 
 /**
- * 도우미 장비(PR 2a, Layer B) — 장비의 자기 역할이 쉬면 다른 역할(1차·2차 검수)을 돕게 하는 배정과 Oracle 감시자를 보이고 바꾼다.
+ * 도우미·감시자(PR 2a, Layer B) — 장비의 자기 역할이 쉬면 다른 역할(1차·2차 검수)을 돕게 하는 배정과 Oracle 감시자를 보이고 바꾼다.
  * 감시자 신호는 도우미 경로를 열 뿐 우선 역할 일을 막지 못한다. 신호가 없거나 만료·다른 epoch·판·계정이면 도우미는 닫힌다(fail-closed).
  * 상태는 readHelperStatusSnapshot 한 번(DB 시계)에서 만든다. 실전 승격은 PR 2c 에서 연다.
  */
@@ -26,8 +29,8 @@ export default async function ModelHelpersPage() {
   return <main className="mx-auto grid max-w-6xl gap-6 p-4">
     <PageStamp />
     <header className="grid gap-1">
-      <p className="flex flex-wrap gap-4 text-[13px] text-fg-3"><Link href="/admin/models/devices">← 장비 한도</Link><Link href="/admin/models">← 단계별 모델</Link></p>
-      <h1 className="text-[22px] font-semibold">도우미 장비</h1>
+      <AdvancedEditorLinks next={["devices"]} />
+      <h1 className="text-[22px] font-semibold">{EDITOR.label}</h1>
       <p className="text-[13px] text-fg-3">장비의 자기 역할(예: M3 DeepSeek 의 사람 검수)이 쉬면 그 장비가 1차·2차 검수를 돕고, 자기 일이 다시 오면 바로 돌아갑니다.
         도우미는 언제나 그 장비의 우선 역할보다 낮은 순위이고, Oracle 감시자의 <strong>신선한 신호가 있을 때만</strong> 열립니다 — 신호가 없거나 오래되면 도우미가 닫힐 뿐
         우선 역할 일은 막히지 않습니다. 섀도 결과는 어떤 판정에도 쓰이지 않습니다.</p>

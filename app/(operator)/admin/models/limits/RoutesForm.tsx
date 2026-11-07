@@ -9,7 +9,7 @@ import { GroupForm, TD, TH, ValueCell } from "./fields";
  */
 export function RoutesForm({ routes, ladders, revision, readOnly }: { routes: RouteRow[]; ladders: LadderRow[]; revision: number | null; readOnly?: boolean }) {
   return <GroupForm group="routes" revision={revision} readOnly={readOnly}
-    footer={<Link href="/admin/models/contracts" className="text-[13px] underline">모델 자체의 상한은 모델 연결 → 등록부 덮어쓰기</Link>}>
+    footer={<Link href="/admin/models/contracts" className="text-[13px] underline">모델 자체의 상한은 서빙 계약·등록부 → 등록부 덮어쓰기</Link>}>
     <div className="overflow-x-auto"><table className="w-full min-w-[880px] text-left text-[13px]"><thead><tr className="border-b border-line">
       <th className={TH}>경로</th><th className={TH}>출력 토큰 상한</th><th className={TH}>동시 호출</th><th className={TH}>호출 상한(초)</th><th className={TH}>모델 상한(등록부)</th></tr></thead>
       <tbody>{routes.map(row => <tr key={row.route} className="border-b border-line">
@@ -21,7 +21,7 @@ export function RoutesForm({ routes, ladders, revision, readOnly }: { routes: Ro
       </tr>)}</tbody></table></div>
     <h3 className="mt-2 text-[15px] font-semibold">기한 사다리</h3>
     <p className="text-[13px] text-fg-3">기한 칸(엔진·중계·게이트웨이·클라이언트)은 선언입니다. 이 숫자를 강제하는 게이트웨이는 없습니다. 순서는 엔진 &lt; 중계 &lt; 게이트웨이 &lt; 클라이언트(층 사이 2초 이상)이고,
-      클라이언트 기한이 그 경로의 호출 상한입니다. 호출이 열리는지는 「모델 연결」의 직접 연결 계약이 정합니다. 새 값은 새 호출부터 적용됩니다.</p>
+      클라이언트 기한이 그 경로의 호출 상한입니다. 호출이 열리는지는 「서빙 계약·등록부」의 직접 연결 계약이 정합니다. 새 값은 새 호출부터 적용됩니다.</p>
     <div className="overflow-x-auto"><table className="w-full min-w-[720px] text-left text-[13px]"><thead><tr className="border-b border-line">
       <th className={TH}>경로</th><th className={TH}>엔진(초)</th><th className={TH}>중계(초)</th><th className={TH}>게이트웨이(초)</th><th className={TH}>클라이언트(초)</th></tr></thead>
       <tbody>{ladders.map(row => <tr key={row.route} className="border-b border-line">

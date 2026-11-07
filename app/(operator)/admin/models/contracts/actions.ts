@@ -21,7 +21,7 @@ const REASONS: Record<string, string> = {
   engine_max_len_unknown: "엔진의 /models 가 이 모델의 최대 길이(max_model_len)를 주지 않습니다. 「컨텍스트 상한(토큰)」에 모델의 컨텍스트 길이를 직접 넣어 주세요.",
   engine_max_len_invalid: "컨텍스트 상한은 1 이상 2,097,152 이하의 정수여야 합니다.",
   engine_probe_failed: "엔진에 1토큰 시험 호출을 보냈지만 정상 응답이 오지 않았습니다(모델 이름·키·엔진 상태를 확인해주세요).",
-  engine_stage_save_failed: "연결은 저장했지만 단계 모델 지정은 실패했습니다. 단계별 모델에서 직접 골라주세요.",
+  engine_stage_save_failed: "연결은 저장했지만 단계 모델 지정은 실패했습니다. 고급 설정 › 단계별 모델 풀에서 직접 골라주세요.",
   model_definition_invalid: "등록부 정의 형식이 맞지 않습니다.", model_definition_duplicate: "같은 키가 두 번 있습니다.",
   model_registry_invalid: "합친 등록부가 검사를 통과하지 못했습니다(제한 시간 순서·키 중복 등).",
   model_purpose_duplicate: "한 용도(purpose)를 두 모델이 맡게 됩니다. 한 모델에만 두세요.",

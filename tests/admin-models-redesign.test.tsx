@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock("@/app/(operator)/admin/models/operation-actions", () => ({ probeAdminModel: vi.fn() }));
-vi.mock("@/app/(operator)/admin/models/ops-runner-actions", () => ({ submitAdminModelOperation: vi.fn(), readAdminModelOperation: vi.fn() }));
+vi.mock("@/app/(operator)/admin/models/ops-runner-actions", () => ({ submitAdminModelOperation: vi.fn(), readAdminModelOperation: vi.fn(), cancelAdminModelOperation: vi.fn() }));
 vi.mock("@/app/(operator)/admin/models/actions", () => ({ saveReviewModels: vi.fn() }));
 vi.mock("@/app/(operator)/admin/models/stage-model-actions", () => ({ saveAdminStageModels: vi.fn() }));
 import { LiveModels, StageStatusRibbon, ThroughputMetrics } from "@/app/(operator)/admin/models/LiveModels";
@@ -27,7 +27,7 @@ describe("admin models 한 화면 렌더(2026-10-31 승인 시안)", () => {
     const html = renderToStaticMarkup(createElement(StageStatusRibbon, { observation, cards: buildModelCards(observation, redesignModels) }));
     const first = html.match(/<a .*?<\/a>/)?.[0]; expect(first).toContain(`>${expected}${expected === "미확인" ? " 1건" : ""}</span>`);
   });
-  it("지원하는 모든 단계(처리량 접기)·마지막 성공·확인 못함 수를 빠짐없이 표시하고, 갱신 띠는 상단(RefreshBar)으로 옮겼다", () => {
+  it("지원하는 모든 단계(처리량 접기)·마지막 성공·확인 못함 수를 빠짐없이 표시하고, 갱신 띠는 관리자 머리(LiveBar)가 맡는다", () => {
     const html = render(); for (const stage of MODEL_DASHBOARD_STAGES) expect(html).toContain(stage.label);
     expect(html).toContain("확인 못함 1"); expect(html).toContain(">2분 전<"); expect(html).toContain(">마지막 성공</th>");
     expect(html).not.toContain("30초 자동 새로고침"); expect(html).toContain("기록 › 재실행 대기");

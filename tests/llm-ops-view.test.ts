@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { unavailableAdminModels } from "@/lib/operations/admin-models-observation";
 import { buildDashboardView, buildLlmOpsView, llmReasonLevel, llmReasonShort, parseClassifierObservation, type LlmOpsInput } from "@/lib/operations/llm-ops-view";
-import { modelsLegacyTabHref, resolveWorkspace, WORKSPACE_SECONDARY } from "@/app/(operator)/admin/workspace-navigation";
+import { MODELS_ADVANCED_HREF, modelsLegacyTabHref, resolveWorkspace, WORKSPACE_SECONDARY } from "@/app/(operator)/admin/workspace-navigation";
 import { CLAUDE, GPU, LLM_NOW, llmClassifier, llmCliContracts, llmConnections, llmConveyor, llmJobs, llmObservation, llmRankRows, llmRuntime, M1, OPENCODE, SUPA } from "./fixtures/llm-ops";
 
 
@@ -56,7 +56,9 @@ describe("대시보드 화면 모형", () => {
     expect(view.todos.map(todo => todo.id)).toEqual(["indeterminate", `limit-${GPU}`, `limit-${SUPA}`]);
     expect(view.todos[0]).toMatchObject({ href: "/admin/models/history#retry", action: "재실행 패널" });
     expect(view.todos[0].detail).toContain("1차 AI 검수 · qwen3.8-flash-next · 2시간 0분 전 · 로컬 종료 기록 있음");
-    expect(view.todos[1]).toMatchObject({ href: `/admin/models/llm?edit=${GPU}#conn-${GPU}`, detail: "연결 폼의 칸 수 4, 장비 행 5(으)로 적용 중 — 실제로 쓰는 값은 장비 행입니다." });
+    // 한도 불일치는 LLM 운영 행의 표시와 같은 말 · 같은 곳(그 연결 폼의 동시 실행 한도 칸)
+    expect(view.todos[1]).toMatchObject({ title: "gpu3090-qwen 한도 값 다름", href: `/admin/models/llm?edit=${GPU}&fix=limit#conn-${GPU}-limit`,
+      detail: "연결에 남은 옛 값 4 · 실제 적용 5. 연결을 한 번 저장하면 연결 값도 5(으)로 맞춰집니다.", action: "LLM 운영에서 맞추기" });
     // OpenCode 한도 불일치(2/1)·m1 목록 못 읽음·잡 일시중지 둘은 셋 밖으로 밀린다
     expect(view.moreTodos).toBe(4);
   });
@@ -97,11 +99,11 @@ describe("대시보드 화면 모형", () => {
 });
 
 describe("LLM 운영 화면 모형 — 연결 행", () => {
-  it("연결 한 줄에 모델·장비 행 한도/점유·배정된 작업(순위)·상태·재실행 대기를 담고, 연결 폼 칸 수가 장비 행과 다르면 표시한다", () => {
+  it("연결 한 줄에 모델·점유/장비 행 한도·배정된 작업(순위)·상태·재실행 대기를 담고, 연결에 남은 옛 칸 수가 장비 행과 다르면 표시한다", () => {
     const view = llm();
     const gpu = view.rows.find(row => row.key === GPU)!;
     expect(gpu).toMatchObject({ source: "connection", kindText: "API", address: "100.77.43.63:8090", keyText: "키 없음", retry: 1 });
-    expect(gpu.capacity).toMatchObject({ limit: 5, held: 2, stored: 4, mismatch: true, text: "2 / 5", note: "연결 폼 4칸과 다름 — 장비 행 5칸이 적용됨" });
+    expect(gpu.capacity).toMatchObject({ limit: 5, held: 2, stored: 4, mismatch: true, text: "2 / 5", note: "연결에 남은 옛 값 4 · 실제 적용 5" });
     expect(gpu.tasks.map(chip => [chip.label, chip.rank])).toEqual([["1차 AI 검수", 2]]);
     expect(gpu.status).toMatchObject({ level: "warn", text: "미확정 있음", reason: "재실행 대기 1건" });
     expect(gpu.limitForm).toMatchObject({ deviceId: "gpu3090-qwen", current: 5, expectedVersion: 3, eligible: true, reason: null });
@@ -187,10 +189,11 @@ describe("옛 주소 → 새 화면", () => {
     ["tab=live", "/admin/models"], ["tab=tasks", "/admin/models/tasks"], ["tab=connections", "/admin/models/llm"],
     ["tab=capacity", "/admin/models/llm"], ["tab=history", "/admin/models/history"], ["tab=unknown", "/admin/models"],
   ])("/admin/models?%s → %s", (search, href) => expect(modelsLegacyTabHref(query(search))).toBe(href));
-  it("tab 이 없거나 advanced=1 이면 넘기지 않는다(옛 #review·#model-settings 링크가 그대로 산다)", () => {
+  it("tab 이 없으면 넘기지 않고, advanced=1 은 tab 과 상관없이 고급 설정 화면으로 넘긴다(#조각은 브라우저가 지킨다)", () => {
     expect(modelsLegacyTabHref(query(""))).toBeNull();
-    expect(modelsLegacyTabHref(query("tab=live&advanced=1"))).toBeNull();
-    expect(modelsLegacyTabHref(query("advanced=1"))).toBeNull();
+    expect(modelsLegacyTabHref(query("tab=live&advanced=1"))).toBe("/admin/models/advanced");
+    expect(modelsLegacyTabHref(query("advanced=1"))).toBe("/admin/models/advanced");
+    expect(MODELS_ADVANCED_HREF).toBe("/admin/models/advanced");
   });
   it.each([
     ["/admin/models", "", "dashboard"], ["/admin/models", "tab=capacity", "llm"], ["/admin/models", "tab=history", "history"],
@@ -198,7 +201,7 @@ describe("옛 주소 → 새 화면", () => {
     ["/admin/models/llm", "", "llm"], ["/admin/models/tasks", "", "tasks"], ["/admin/models/history", "", "history"],
     ["/admin/models/devices", "", "advanced"], ["/admin/models/limits", "", "advanced"], ["/admin/models/helpers", "", "advanced"],
     ["/admin/models/assignments", "", "advanced"], ["/admin/models/contracts", "", "advanced"], ["/admin/models/human", "", "advanced"],
-    ["/admin/models/search", "", "advanced"], ["/admin/activity", "workspace=models", "history"],
+    ["/admin/models/search", "", "advanced"], ["/admin/models/advanced", "", "advanced"], ["/admin/activity", "workspace=models", "history"],
   ])("%s?%s 는 LLM 운영의 %s 탭", (path, search, tab) => {
     const location = resolveWorkspace(path, query(search));
     expect(location.workspace.id).toBe("models");
