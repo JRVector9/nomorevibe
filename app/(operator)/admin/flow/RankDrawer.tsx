@@ -1,25 +1,28 @@
 "use client";
 
+import "./rank-drawer.css";
 import "./rank-drawer-rows.css";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { AI_RANK_SLOT_NAMES, type AiRankChoice } from "@/lib/operations/admin-ai-tasks";
 import {
-  flowOptionBlocked, flowRankIssues, needsAcknowledge, rankChainText, rankChanges, rankForm, rankWarnings, SET_ONLY_TEXT,
-  type FlowRankEditor, type FlowRankLine, type RankChange, type RankWarning,
+  flowOptionBlocked, flowRankIssues, needsAcknowledge, rankChainText, rankChanges, rankDeviceImpact, rankForm, rankResaves, rankWarnings, SET_ONLY_TEXT,
+  type FlowRankEditor, type FlowRankLine, type RankChange, type RankDeviceLimit, type RankWarning,
 } from "@/lib/operations/flow-rank-editor";
 import { RankSelects } from "../models/RankSelects";
 import { SelectedModelProbe } from "../models/SelectedModelProbe";
-import { modelPickerConnectionDevice, modelPickerConnectionLabel, modelPickerModelLabel } from "../models/model-picker-display";
+import { modelPickerConnectionDevice, modelPickerConnectionLabel, modelPickerModelLabel, modelPickerVisibleText } from "../models/model-picker-display";
 import { saveAiTaskRanksAction } from "../models/tasks/actions";
 import { aiTaskWorkloadPoolApiOnly } from "@/lib/llm/ai-task-execution-config";
 import { aiTaskEditTarget } from "@/lib/operations/ai-task-edit-target";
 
 /**
- * 「바꾸기」 서랍(2026-11-04 5차) — 전체 흐름에서 칸의 처리 LLM 1·2·3순위를 그 자리에서 바꾼다.
- * 차례: ① 고르기(작업마다 RankSelects — 「작업 ↔ AI 모델」과 같은 선택 상자·값 열쇠) → ② 확인(전→후, 경고, 위험하면 확인 칸) → ③ 저장됨(결과 · 되돌리기).
- * 저장은 「작업 ↔ AI 모델」 줄 저장과 같은 서버 동작(saveAiTaskRanksAction)을 같은 폼 칸으로 부른다 — 새 쓰기 경로가 없다. 작업 로그(ai-task-models-save)에 전·후가 남고
+ * 「바꾸기」 서랍(2026-11-04 5차, 2026-11-07 작업 배정 PR 4) — 작업의 처리 LLM 1·2·3순위를 그 자리에서 바꾸는 단 하나의 순위 편집기.
+ * 운영 홈(/admin/flow)의 칸 「바꾸기」와 작업 배정(/admin/models/tasks)의 줄 「바꾸기」가 이 서랍을 연다(예전 작업 화면의 줄마다 펼치던 순위판은 없앴다).
+ * 차례: ① 고르기(작업마다 RankSelects — 모델과 추론 강도, 같은 선택 상자·값 열쇠) → ② 확인(전→후, 장비 한도와 함께 쓰는 작업, 경고, 위험하면 확인 칸) → ③ 저장됨(결과 · 되돌리기).
+ * 저장은 예전 순위판과 같은 서버 동작(saveAiTaskRanksAction)을 같은 폼 칸으로 부른다 — 새 쓰기 경로가 없다. 작업 로그(ai-task-models-save)에 전·후가 남고
  * 「최근 바뀐 설정」에 보인다. 되돌리기는 직전 순위를 같은 길로 다시 저장한다(확인 단계를 다시 거친다 — 2차 투표자 되돌리기도 재심사를 일으키므로).
+ * 순위를 바꾸지 않아도 빠진 계약·경로·장비가 있는 줄(pending)은 「다시 저장」을 골라 같은 길로 다시 저장한다(예전 순위판의 「다시 저장」).
  */
 type Step = "edit" | "confirm" | "saving" | "done";
 type Result = { key: string; label: string; ok: boolean; text: string; warnings: string[]; issues: string[]; beforeText: string; afterText: string };
@@ -28,7 +31,11 @@ type Ranks = readonly (AiRankChoice | null)[];
 /** 서버 동작 — 시험·시안은 바꿔 끼운다(기본은 「작업 ↔ AI 모델」 줄 저장) */
 export type RankSave = (previous: null, form: FormData) => Promise<{ ok?: true; message?: string; issues?: string[]; warnings?: string[] } | null>;
 
-const STEPS: { key: Step; text: string }[] = [{ key: "edit", text: "고르기" }, { key: "confirm", text: "확인" }, { key: "done", text: "저장됨" }];
+const STEPS: { key: Step; text: string }[] = [{ key: "edit", text: "모델·추론 강도 고르기" }, { key: "confirm", text: "바뀌는 내용 확인" }, { key: "done", text: "저장됨" }];
+/** 운영 홈에서 열었을 때 「모든 작업 보기」 링크(작업 배정 화면 안에서 열면 null) */
+const TASKS_FULL_VIEW = "/admin/models/tasks#tasks";
+/** 작업 배정 화면의 실행 방식 접힘 안 그 작업 칸(작업 분산 구성원·실행 방식을 바꾸는 곳) */
+const modeHref = (line: Pick<FlowRankLine, "task" | "slot">) => `/admin/models/tasks#mode-${line.task}-${line.slot}`;
 
 function lineTag(line: FlowRankLine): { text: string; tone: "lock" | "set" | "live" } {
   if (line.execution?.mode === "workload_pool") return { text: `작업 분산 · 모델 ${line.execution.members.length}개`, tone: "live" };
@@ -56,8 +63,9 @@ function WarningList({ warnings }: { warnings: RankWarning[] }) {
 }
 
 /** ① 고르기 — 작업 한 줄 */
-function LineEditor({ editor, line, value, onChange, warnings, disabled }: {
+function LineEditor({ editor, line, value, onChange, warnings, disabled, resave, onResave, onNavigate }: {
   editor: FlowRankEditor; line: FlowRankLine; value: Ranks; onChange: (value: (AiRankChoice | null)[]) => void; warnings: RankWarning[]; disabled: boolean;
+  resave: boolean; onResave: (checked: boolean) => void; onNavigate: () => void;
 }) {
   const tag = lineTag(line);
   const pool = line.execution?.mode === "workload_pool" ? line.execution : null;
@@ -79,10 +87,10 @@ function LineEditor({ editor, line, value, onChange, warnings, disabled }: {
             <SelectedModelProbe key={JSON.stringify([member.connectionId, member.model, member.options.reasoningEffort])} choice={{ provider: member.connectionId, model: member.model, ...(typeof member.options.reasoningEffort === "string" ? { reasoningEffort: member.options.reasoningEffort } : {}) }} disabled={disabled || !!line.lock} /></li>;
         })}</ul>
         <p className="fr-note">업무마다 모델 하나를 골라 나눠 처리합니다. 동시 실행 수는 단계·장비 한도를 따릅니다.</p>
-        <Link href={`/admin/models/tasks#execution-${line.task}-${line.slot}`} prefetch={false} className="fr-link">분산 모델·실행 방식 변경 →</Link>
+        <Link href={modeHref(line)} prefetch={false} className="fr-link" onClick={onNavigate}>분산 모델·실행 방식 변경 →</Link>
       </> : apiOnly ? <>
         <p className="fr-note">기존 CLI 분류를 사용합니다.</p>
-        <Link href={`/admin/models/tasks#execution-${line.task}-${line.slot}`} prefetch={false} className="fr-link">API 분산 모델 설정 →</Link>
+        <Link href={modeHref(line)} prefetch={false} className="fr-link" onClick={onNavigate}>API 분산 모델 설정 →</Link>
       </> : nonLiveTarget ? <p className="fr-now"><span className="fr-k">실제 적용 설정</span> <Link href={nonLiveTarget.href} prefetch={false} className="fr-link">{nonLiveTarget.label} →</Link></p>
         : <p className="fr-now"><span className="fr-k">지금</span> {displayRankChain(editor, line.saved)}</p>}
       {line.lock && <p className="fr-lock" role="note">{line.lock}</p>}
@@ -92,6 +100,13 @@ function LineEditor({ editor, line, value, onChange, warnings, disabled }: {
         validate={(slots) => changed ? flowRankIssues(editor, line, slots) : []} layout="rows"
         renderAfterSlot={(row) => <SelectedModelProbe key={JSON.stringify([row.provider, row.model, row.reasoningEffort])} choice={row} disabled={disabled || !!line.lock} />} />}
       {!line.live && !line.lock && !apiOnly && !nonLiveTarget && <p className="fr-note">{SET_ONLY_TEXT}</p>}
+      {!pool && !apiOnly && !nonLiveTarget && !!line.notes?.length && <ul className="fr-warns" aria-label={`${line.label} 저장된 순위의 막힘·알림`}>{line.notes.map((note) =>
+        <li key={`${note.tone}:${note.text}`} className="fr-warn" data-tone={note.tone} data-note="readiness"><span aria-hidden="true">{note.tone === "bad" ? "■" : "▲"}</span> {modelPickerVisibleText(note.text, editor.connections)}</li>)}</ul>}
+      {!pool && !apiOnly && !nonLiveTarget && !line.lock && !changed && !!line.pending?.length && line.saved.length > 0 && <div className="fr-resave" data-resave={line.key}>
+        <span>빠진 것이 있습니다 — 순위를 그대로 다시 저장하면 만듭니다.</span>
+        <ul>{line.pending.map((text) => <li key={text}>{modelPickerVisibleText(text, editor.connections)}</li>)}</ul>
+        <label><input type="checkbox" checked={resave} disabled={disabled} onChange={(event) => onResave(event.target.checked)} />바꾸지 않고 다시 저장</label>
+      </div>}
       {!pool && <WarningList warnings={warnings} />}
     </section>
   );
@@ -106,16 +121,43 @@ function ChangeTable({ changes }: { changes: RankChange[] }) {
       <tbody>{changes.map((change) => <tr key={change.line.key} data-key={change.line.key}>
         <th scope="row">{change.line.label}</th>
         <td className="fr-before">{change.beforeText}</td>
-        <td className="fr-after" data-empty={change.after.some(Boolean) ? undefined : "yes"}>{change.afterText}</td>
+        <td className="fr-after" data-empty={change.after.some(Boolean) ? undefined : "yes"}>{change.resave ? `다시 저장(순위 그대로)\n${change.afterText}` : change.afterText}</td>
       </tr>)}</tbody>
     </table>
   );
 }
 
-export function RankDrawer({ editor, lines, title, secondWaiting, onClose, save = saveAiTaskRanksAction as RankSave, initial }: {
+/** ② 확인 — 저장 뒤 순위가 가리키는 장비의 한도·점유와, 같은 장비를 나눠 쓰는 다른 작업 */
+function DeviceImpact({ editor, changes, devices }: { editor: FlowRankEditor; changes: RankChange[]; devices: readonly RankDeviceLimit[] | null }) {
+  const impact = rankDeviceImpact(editor, changes, devices);
+  if (!impact.length) return null;
+  const visible = (text: string) => modelPickerVisibleText(text, editor.connections);
+  return <section className="fr-devices" aria-labelledby="fr-devices-title">
+    <h4 id="fr-devices-title">장비 한도 · 함께 쓰는 작업</h4>
+    <table className="fr-conn-table fr-device-table">
+      <thead><tr><th scope="col">장비</th><th scope="col">한도</th><th scope="col">함께 쓰는 다른 작업</th></tr></thead>
+      <tbody>{impact.map((row) => <tr key={row.deviceId} data-device={row.deviceId}>
+        <th scope="row">{visible(row.deviceId)}{row.connections.some((name) => name !== row.deviceId)
+          && <span className="fr-note"> · {row.connections.filter((name) => name !== row.deviceId).map(visible).join(" · ")}</span>}</th>
+        <td>{row.create !== null ? `장비 행 없음 — 저장하면 ${row.create}칸으로 만듭니다` : row.limit !== null ? `${row.held ?? 0} / ${row.limit}칸 사용 중` : "확인 불가"}</td>
+        <td>{row.sharing.length ? row.sharing.join(" · ") : "없음"}</td>
+      </tr>)}</tbody>
+    </table>
+    <p className="fr-note">한도는 장비 하나를 모든 작업이 나눠 씁니다. 바꾸려면 <Link href="/admin/models/llm" prefetch={false} className="fr-link">LLM 운영 →</Link></p>
+  </section>;
+}
+
+export function RankDrawer({ editor, lines, title, secondWaiting, onClose, save = saveAiTaskRanksAction as RankSave, initial, fullViewHref = TASKS_FULL_VIEW,
+  devices = null, lockReason = null }: {
   editor: FlowRankEditor; lines: FlowRankLine[]; title: string; secondWaiting: number | null; onClose: () => void; save?: RankSave;
-  /** 시험용 — 처음 단계와 고른 값 */
-  initial?: { step?: Step; drafts?: Record<string, (AiRankChoice | null)[]> };
+  /** 시험용 — 처음 단계와 고른 값, 다시 저장할 줄 */
+  initial?: { step?: Step; drafts?: Record<string, (AiRankChoice | null)[]>; resave?: string[] };
+  /** 「작업 배정에서 전체 보기」 링크 — 작업 배정 화면 안에서 열면 null */
+  fullViewHref?: string | null;
+  /** 장비 한도(장부 관측). null = 모름 — 확인 단계에 장비 이름과 함께 쓰는 작업만 보인다 */
+  devices?: readonly RankDeviceLimit[] | null;
+  /** 저장할 수 없는 까닭(예: 실행 방식을 읽지 못함) — 있으면 저장 단추를 잠근다 */
+  lockReason?: string | null;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [drafts, setDrafts] = useState<Record<string, (AiRankChoice | null)[]>>(initial?.drafts ?? {});
@@ -124,12 +166,13 @@ export function RankDrawer({ editor, lines, title, secondWaiting, onClose, save 
   const [ack, setAck] = useState(false);
   const [results, setResults] = useState<Result[]>([]);
   const [undo, setUndo] = useState<{ key: string; ranks: AiRankChoice[] }[]>([]);
+  const [resave, setResave] = useState<ReadonlySet<string>>(() => new Set(initial?.resave ?? []));
   useEffect(() => {
     const node = dialog.current;
     if (node && !node.open && typeof node.showModal === "function") node.showModal();
   }, []);
   const value = (line: FlowRankLine): Ranks => drafts[line.key] ?? line.saved;
-  const changes = rankChanges(editor, lines, drafts).map(change => ({ ...change,
+  const changes = [...rankChanges(editor, lines, drafts), ...(mode === "change" ? rankResaves(editor, lines, drafts, resave) : [])].map(change => ({ ...change,
     beforeText: displayRankChain(editor, change.before), afterText: displayRankChain(editor, change.after),
   }));
   const warnings = rankWarnings(editor, lines, drafts, { secondWaiting });
@@ -156,10 +199,11 @@ export function RankDrawer({ editor, lines, title, secondWaiting, onClose, save 
       const ok = !!answer?.ok;
       done.push({ ...base, ok, text: answer?.message ?? "", warnings: answer?.warnings ?? [], issues: answer?.issues ?? (ok ? [] : ["저장하지 못했습니다."]) });
       if (!ok) break;
-      saved.push({ key: change.line.key, ranks: change.before });
+      if (!change.resave) saved.push({ key: change.line.key, ranks: change.before });
     }
     setResults(done);
     setUndo(mode === "change" ? saved : []);
+    setResave(new Set());
     setStep("done");
   };
   const startUndo = () => {
@@ -181,9 +225,12 @@ export function RankDrawer({ editor, lines, title, secondWaiting, onClose, save 
         </header>
 
         {step === "edit" && <div className="fr-body">
-          <p className="fr-lead">대체 실행은 우선 모델 하나를 쓰고, 필요한 경우에만 다음 순위로 전환합니다. 작업 분산은 서로 다른 업무를 모델에 나눕니다.</p>
+          <p className="fr-lead">대체 실행은 우선 모델 하나를 쓰고, 필요한 경우에만 다음 순위로 전환합니다. 작업 분산은 서로 다른 업무를 모델에 나눕니다. 모델을 고르면 옆에서 추론 강도를 정합니다.</p>
+          {lockReason && <p className="fr-locked" role="alert">{lockReason}</p>}
           {lines.map((line) => <LineEditor key={line.key} editor={editor} line={line} value={value(line)} disabled={false}
-            onChange={(next) => setDrafts((current) => ({ ...current, [line.key]: next }))} warnings={warnings.filter((warning) => warning.line === line.key)} />)}
+            onChange={(next) => setDrafts((current) => ({ ...current, [line.key]: next }))} warnings={warnings.filter((warning) => warning.line === line.key)}
+            resave={resave.has(line.key)} onNavigate={close}
+            onResave={(checked) => setResave((current) => { const next = new Set(current); if (checked) next.add(line.key); else next.delete(line.key); return next; })} />)}
           <details className="fr-conns">
             <summary>연결 상태 {editor.states.length}개</summary>
             <table className="fr-conn-table">
@@ -200,9 +247,11 @@ export function RankDrawer({ editor, lines, title, secondWaiting, onClose, save 
         {(step === "confirm" || step === "saving") && <div className="fr-body">
           <p className="fr-lead">{mode === "undo" ? "되돌리기 — 직전 순위로 다시 저장합니다. 바뀌는 내용을 확인하세요." : "저장 전에 바뀌는 내용을 확인하세요."}</p>
           {changes.length ? <ChangeTable changes={changes} /> : <p className="fr-note">바뀌는 것이 없습니다.</p>}
+          <DeviceImpact editor={editor} changes={changes} devices={devices} />
           <WarningList warnings={confirmWarnings} />
-          <p className="fr-note">저장은 「작업 ↔ AI 모델」 줄 저장과 같은 서버 동작입니다. 작업 로그(ai-task-models-save)에 전·후 값이 남고 「최근 바뀐 설정」에 보입니다.
+          <p className="fr-note">저장은 작업 배정의 순위 저장과 같은 서버 동작입니다. 작업 로그(ai-task-models-save)에 전·후 값이 남고 「최근 바뀐 설정」에 보입니다.
             없는 장비 행·엔진 직접 계약·용량 경로는 함께 만들고, 만들 수 없으면 저장하지 않고 까닭을 보입니다.</p>
+          {lockReason && <p className="fr-locked" role="alert">{lockReason}</p>}
           {mustAck && <label className="fr-ack"><input type="checkbox" checked={ack} onChange={(event) => setAck(event.target.checked)} disabled={step === "saving"} />
             위 ■ 경고를 읽었습니다 — 그래도 저장합니다</label>}
         </div>}
@@ -220,15 +269,15 @@ export function RankDrawer({ editor, lines, title, secondWaiting, onClose, save 
 
         <footer className="fr-f">
           {step === "edit" && <>
-            <Link href="/admin/models/tasks#tasks" prefetch={false} className="fr-link">작업 ↔ AI 모델에서 모든 작업 보기 →</Link>
+            {fullViewHref && <Link href={fullViewHref} prefetch={false} className="fr-link">작업 배정에서 전체 보기 →</Link>}
             <button type="button" className="fr-btn" onClick={close}>닫기</button>
-            <button type="button" className="fr-btn fr-primary" onClick={toConfirm} disabled={!changes.length || issues.length > 0}>
+            <button type="button" className="fr-btn fr-primary" onClick={toConfirm} disabled={!changes.length || issues.length > 0 || !!lockReason}>
               바뀌는 내용 확인{changes.length ? ` (${changes.length})` : ""} →</button>
           </>}
           {(step === "confirm" || step === "saving") && <>
             <button type="button" className="fr-btn" onClick={() => { setStep("edit"); if (mode === "undo") { setMode("change"); setDrafts({}); } }} disabled={step === "saving"}>← 고치기</button>
             <button type="button" className="fr-btn fr-primary" data-danger={mustAck ? "yes" : undefined} onClick={submit}
-              disabled={step === "saving" || !changes.length || issues.length > 0 || (mustAck && !ack)}>
+              disabled={step === "saving" || !changes.length || issues.length > 0 || (mustAck && !ack) || !!lockReason}>
               {step === "saving" ? "저장 중…" : mode === "undo" ? "되돌리기 저장" : "저장"}</button>
           </>}
           {step === "done" && <>

@@ -2,22 +2,25 @@
 
 import Link from "next/link";
 import { useActionState, useState } from "react";
-import { aiTaskSupportsWorkloadPool, aiTaskWorkloadPoolApiOnly, type AiTaskExecutionInput } from "@/lib/llm/ai-task-execution-config";
+import { aiTaskSupportsWorkloadPool, aiTaskWorkloadPoolApiOnly, type AiTaskExecutionInput, type AiTaskPoolRuntime } from "@/lib/llm/ai-task-execution-config";
 import type { AiTaskExecutionAdminView } from "@/lib/operations/admin-ai-task-execution";
 import { aiRankReasoningEfforts, type AiConnectionView, type AiRankChoice, type AiRankOption } from "@/lib/operations/admin-ai-tasks";
 import { modelPickerConnectionLabel, modelPickerModelLabel } from "../model-picker-display";
 import { RankSelects } from "../RankSelects";
 import type { AiTaskActionState } from "./actions";
 import { saveTaskExecutionAction } from "./execution-actions";
-import type { TaskRankLine } from "./TaskRanksBoard";
+
+/** 실행 쪽의 순위 사정(화면 값) — 잡의 마지막 틱(from job) 또는 이 웹 프로세스의 마지막 요청(from web). at 은 화면 글, observedAt 은 원래 시각, fresh = 30분 안(서버가 정한다). */
+export type TaskRuntimeLine = { from: "job" | "web"; at: string; served: { rank: number; count: number }[]; unusable: { rank: number; code: string; text: string; count: number }[];
+  degraded: { code: string; detail: string | null } | null; pool?: AiTaskPoolRuntime; startedAt?: string; observedAt?: string; fresh?: boolean } | null;
 
 const MEMBER_FIELDS = Array.from({ length: 4 }, (_, index) => ({ provider: `pool${index + 1}Connection`, model: `pool${index + 1}Model`,
   reasoningEffort: `pool${index + 1}ReasoningEffort` }));
 type Props = { view: AiTaskExecutionAdminView; label: string; options: readonly AiRankOption[]; connections: readonly AiConnectionView[];
-  readOnly?: boolean; runtime?: TaskRankLine["runtime"] };
+  readOnly?: boolean; runtime?: TaskRuntimeLine };
 
 /** A previous configuration's last tick must not be presented as this pool's execution. */
-export function currentTaskPoolRuntime(view: AiTaskExecutionAdminView, connections: readonly AiConnectionView[], runtime: TaskRankLine["runtime"] | undefined) {
+export function currentTaskPoolRuntime(view: AiTaskExecutionAdminView, connections: readonly AiConnectionView[], runtime: TaskRuntimeLine | undefined) {
   const memberIds = new Set(view.members.map(member => member.memberId));
   const lastSaved = Math.max(Date.parse(view.updatedAt ?? "") || 0, ...connections.filter(connection => view.members.some(member => member.connectionId === connection.id))
     .map(connection => Date.parse(connection.updatedAt) || 0));
@@ -30,7 +33,7 @@ export function currentTaskPoolRuntime(view: AiTaskExecutionAdminView, connectio
 }
 
 /** AI1 reports the identity total in every matching member; text/publication report individual member totals. */
-export function taskPoolRuntimeGroups(view: AiTaskExecutionAdminView, runtime: NonNullable<TaskRankLine["runtime"]>) {
+export function taskPoolRuntimeGroups(view: AiTaskExecutionAdminView, runtime: NonNullable<TaskRuntimeLine>) {
   const groups = new Map<string, AiTaskExecutionAdminView["members"][number][]>();
   for (const member of view.members) {
     const key = JSON.stringify([member.connectionId, member.model]);
