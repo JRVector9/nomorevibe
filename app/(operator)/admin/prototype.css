@@ -39,7 +39,14 @@
 }
 .admin-prototype button,.admin-prototype input,.admin-prototype textarea,.admin-prototype select {
   font: inherit;
-  color: inherit;
+}
+/* 폼 요소 글자색은 base 층에 둔다 — 층 밖(unlayered)에 두면 Tailwind 유틸리티(@layer utilities)보다 늘 이겨서
+   「bg-fg … text-bg」 단추의 글자가 배경색과 같아져 보이지 않았다(2026-11-07, 연결 저장·공유 한도 저장 등 관리자 단추 약 19곳).
+   글자 크기(font: inherit)는 관리자 글자 크기 조절(--admin-font-delta)이 쓰므로 그대로 층 밖에 둔다. */
+@layer base {
+  .admin-prototype button,.admin-prototype input,.admin-prototype textarea,.admin-prototype select {
+    color: inherit;
+  }
 }
 .admin-prototype button,.admin-prototype a {
   touch-action: manipulation;

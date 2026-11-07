@@ -2,7 +2,7 @@
    상태는 색만으로 가르지 않는다 — 모양(●▲■‖?)과 글자를 늘 함께 쓴다. 글자는 13px 이상(모양 글리프만 예외). */
 
 .llm-ops { --llm-gap: 14px; min-width: 0; }
-.llm-ops a { color: inherit; }
+@layer base { .llm-ops a { color: inherit; } } /* 유틸리티 글자색(text-accent-ink 등)이 이기게 base 층 */
 .llm-ops .llm-link { color: var(--blue); font-weight: 600; }
 .llm-ops .llm-link:hover { text-decoration: underline; }
 .llm-ops .llm-muted { color: var(--muted); }
