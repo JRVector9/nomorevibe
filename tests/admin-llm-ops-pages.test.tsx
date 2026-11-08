@@ -84,11 +84,14 @@ describe("LLM 운영 — 안 쓰는 모델 「삭제」(2026-11-08)", () => {
     expect(line("deepseek/deepseek-v4.1-flash")).not.toContain("llm-model-hide");
     const unused = line("deepseek/deepseek-v4.1-pro");
     expect(text(unused)).toContain("배정 없음");
-    expect(unused).toContain('name="model" value="deepseek/deepseek-v4.1-pro"');
-    expect(unused).toContain('name="hidden" value="1"');
-    expect(unused).toContain('aria-label="deepseek/deepseek-v4.1-pro 목록에서 삭제"');
-    expect(text(opencode)).toContain("숨긴 모델 1개");
-    expect(opencode).toContain('aria-label="opencode/old-free 목록에 되돌리기"');
+    // 한 번 눌러서는 지워지지 않는다 — 처음 그린 「삭제」는 제출 단추가 아니고 저장할 값(숨은 칸)도 없다. 누르면 그 자리에 「삭제 확인」이 열린다
+    expect(unused).toMatch(/<button type="button" class="llm-model-hide" aria-label="deepseek\/deepseek-v4\.1-pro 목록에서 삭제"[^>]*>삭제<\/button>/);
+    expect(unused).not.toContain('name="hidden"');
+    expect(unused).not.toContain("<form");
+    expect(text(opencode)).toContain("삭제한 모델 1개 — 다시 추가");
+    expect(opencode).toContain('aria-label="opencode/old-free 다시 추가"');
+    // CLI 연결은 모델 추가·정정을 연결 고치기에서 한다
+    expect(opencode).toContain(`href="/admin/models/llm?edit=${OPENCODE}#conn-${OPENCODE}"`);
     const readOnly = renderToStaticMarkup(await LlmOpsSlot({ readOnly: true, editId: null, adding: false }));
     expect(readOnly).not.toContain("llm-model-hide");
   });

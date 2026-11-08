@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { AiTaskPoolRuntime } from "@/lib/llm/ai-task-execution-config";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
-import { aiConnections, aiTaskModels, aiTaskExecutionConfigs, aiTaskPoolMembers, modelCapacityControl, modelCapacityDevices, operationsAudit, operationsObservations, type AiConnectionModel } from "@/lib/db/schema";
+import { aiConnections, aiTaskModels, aiTaskExecutionConfigs, aiTaskPoolMembers, modelCapacityControl, modelHelperAssignments, modelCapacityDevices, operationsAudit, operationsObservations, type AiConnectionModel } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { REVIEW_TASK_ROUTES, ensureReviewTaskRanks, resolveReviewTaskRanks, reviewRankUnusableText } from "@/lib/crawl/review-task-ranks";
 import { AI_TEXT_TASK_IDS, aiTask, aiTaskSlotLabel, aiTaskSlots, isAiLiveTask, isAiReviewTask, type AiTaskDef } from "@/lib/llm/ai-tasks";
@@ -14,13 +14,14 @@ import { listModelCapacityDevices, saveModelCapacityDevice } from "@/lib/llm/cap
 import type { GatewayServingRoute } from "@/lib/llm/gateway-serving-contract-config";
 import { resolveLocalModelContract } from "@/lib/llm/local-model-contract-table";
 import { readModelRegistry } from "@/lib/llm/model-registry";
+import { cliDerivedRegistryKeys } from "@/lib/llm/ai-task-models-snapshot";
 import { ensureServingContracts, servingContractSnapshot } from "@/lib/llm/serving-contract-store";
 import { logger } from "@/lib/observability/logger";
 import { openSecret, sealSecret, secretBoxReady } from "@/lib/security/secret-box";
 import {
   AI_CONNECTION_DELETE_AUDIT_ACTION, AI_CONNECTION_KEY_FILL_AUDIT_ACTION, AI_CONNECTION_MODEL_HIDE_AUDIT_ACTION, AI_CONNECTION_MODELS_AUDIT_ACTION, AI_CONNECTION_SAVE_AUDIT_ACTION, AI_TASK_AUDIT_ACTIONS,
   AI_TASK_MODELS_IMPORT_AUDIT_ACTION,
-  AI_TASK_MODELS_SAVE_AUDIT_ACTION, aiConnectionBaseUrl, aiConnectionHost, aiTaskRanksUnread, aiConnectionKeyAad, aiImportPlanDigestInput, aiRanksReadiness, aiTaskRankNotices,
+  AI_TASK_MODELS_SAVE_AUDIT_ACTION, aiConnectionBaseUrl, aiConnectionHiddenModels, aiConnectionHost, aiTaskRanksUnread, aiConnectionKeyAad, aiImportPlanDigestInput, aiRanksReadiness, aiTaskRankNotices,
   aiRankSavedOptions, aiTaskRankOptions, aiTaskSlotDigestInput, buildAiImportPlan, validateAiTaskRanks,
   type AiConnectionInput, type AiConnectionView, type AiCurrentSlot, type AiImportPlan, type AiPolicyRoute, type AiRankChoice, type AiRankOption,
   type AiImportConnection, type AiRankReadiness, type AiReadinessInput, type AiTaskRankRow, type AiTaskRanksInput,
@@ -87,11 +88,7 @@ function issueOf(error: unknown): string {
 // ── 읽기 ───────────────────────────────────────────────────────────────────────────────────────────────
 
 const iso = (value: Date | string | null) => value === null ? null : new Date(value).toISOString();
-/** 운영자가 목록에서 뺀 모델 이름(options.hiddenModels) — 문자열만, 중복 없이 */
-const hiddenModelsOf = (options: unknown): string[] => {
-  const raw = (options as Record<string, unknown> | null)?.hiddenModels;
-  return Array.isArray(raw) ? [...new Set(raw.filter((entry): entry is string => typeof entry === "string" && entry.length > 0 && entry.length <= 200))] : [];
-};
+const hiddenModelsOf = aiConnectionHiddenModels;
 export function aiConnectionView(row: ConnectionRecord): AiConnectionView {
   // 목록에서 뺀 모델은 화면·순위 선택지·검증이 보는 이 보기에서 빠진다(저장된 원래 목록과 실행 쪽 스냅숏은 그대로)
   const hidden = hiddenModelsOf(row.options), shown = (id: string) => !hidden.includes(id);
@@ -482,6 +479,17 @@ export async function setAiConnectionModelsHidden(input: { id: string; expectedV
         const [pooled] = await tx.select({ id: aiTaskPoolMembers.memberId }).from(aiTaskPoolMembers)
           .where(and(eq(aiTaskPoolMembers.connectionId, input.id), inArray(aiTaskPoolMembers.model, models))).limit(1);
         if (ranked || pooled) fail("ai_connection_model_in_use");
+        // OpenCode deepseek 모델은 등록부 항목(장비:cli-…)으로도 들어가 단계 풀·모델 배정 표가 그 키를 가리킬 수 있다 — 가리키면 뺄 수 없다
+        if (row!.kind === "cli" && row!.cliTool === "opencode") {
+          const view = aiConnectionView(row!);
+          const keys = new Set(models.flatMap(model => cliDerivedRegistryKeys({ id: row!.id, deviceId: row!.deviceId }, model,
+            view.cliCatalog?.models.find(entry => entry.id === model)?.variants ?? [])));
+          const { getSettings } = await import("@/lib/crawl/settings");
+          const pools = Object.values((await getSettings()).stageModelPools ?? {}).flat();
+          const [assigned] = keys.size ? await tx.select({ id: modelHelperAssignments.assignmentId }).from(modelHelperAssignments)
+            .where(inArray(modelHelperAssignments.registryKey, [...keys])).limit(1) : [];
+          if (pools.some(key => keys.has(String(key))) || assigned) fail("ai_connection_model_in_use");
+        }
       } else if (models.some(model => !before.includes(model))) fail("ai_connection_model_missing");
       const after = input.hidden ? [...before, ...models] : before.filter(model => !models.includes(model));
       const options: Record<string, unknown> = { ...row!.options };

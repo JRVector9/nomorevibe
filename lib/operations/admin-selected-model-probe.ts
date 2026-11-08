@@ -1,4 +1,5 @@
 import { and, eq, sql } from 'drizzle-orm';
+import { aiConnectionHiddenModels } from "./admin-ai-tasks";
 import { z } from 'zod';
 import { db, onPrimary } from '@/lib/db';
 import { aiConnections, operationsAudit } from '@/lib/db/schema';
@@ -34,7 +35,7 @@ const failure = (model: string, error: SelectedModelProbeError, ms?: number): Se
 async function readSelectedConnection(connectionId: string) {
   return onPrimary(() => db.select({ id: aiConnections.id, kind: aiConnections.kind, baseUrl: aiConnections.baseUrl,
     apiKeyCiphertext: aiConnections.apiKeyCiphertext, cliTool: aiConnections.cliTool, cliModels: aiConnections.cliModels,
-    models: aiConnections.models, enabled: aiConnections.enabled, deviceId: aiConnections.deviceId })
+    models: aiConnections.models, options: aiConnections.options, enabled: aiConnections.enabled, deviceId: aiConnections.deviceId })
     .from(aiConnections).where(eq(aiConnections.id, connectionId)).limit(1));
 }
 type SelectedConnection = Awaited<ReturnType<typeof readSelectedConnection>>[number];
@@ -154,6 +155,8 @@ export async function runAdminSelectedModelProbe(input: unknown, actor: string):
   catch { return failure(model, 'unavailable'); }
   if (!row) return failure(model, 'not_found');
   if (!row.enabled) return failure(model, 'disabled');
+  // 운영자가 연결의 목록에서 삭제한 모델은 시험하지 않는다(화면 선택지에도 없다)
+  if (aiConnectionHiddenModels(row.options).includes(model)) return failure(model, 'model_unavailable');
   if (row.kind === 'api') {
     if (reasoningEffort !== undefined) return failure(model, 'reasoning_effort_unsupported');
     if (!row.models?.some(entry => entry.id === model)) return failure(model, 'model_unavailable');

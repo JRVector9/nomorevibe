@@ -263,3 +263,7 @@
 /* 옛 순위 기록(실행 안 함)·실제 출처 칩(2026-11-08) */
 .llm-chip[data-source="record"] { border-style: dashed; opacity: 0.72; }
 .llm-chip[data-source="current"] .llm-chip-rank { font-weight: 600; }
+
+/* 모델 삭제 확인(2026-11-08) */
+.llm-model-confirm { padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.llm-model-danger { border-color: var(--red); color: var(--red); font-weight: 600; }

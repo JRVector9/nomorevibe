@@ -142,14 +142,23 @@ function catalogModelsForDefinitions(catalog: CliCatalogMetadata | null): readon
   }));
 }
 
+/** 운영자가 연결의 목록에서 삭제한 모델(options.hiddenModels) — 실행 스냅숏·등록부 파생 항목에서도 빠진다(관리 화면과 같은 기준) */
+function hiddenOf(options: Record<string, unknown>): ReadonlySet<string> {
+  const raw = options.hiddenModels;
+  return new Set(Array.isArray(raw) ? raw.filter((entry): entry is string => typeof entry === "string") : []);
+}
 function connectionSnapshotFromRaw(row: RawConnection, hydrated?: HydratedCliCatalog): AiTaskConnectionSnapshot {
   const options = objectOf(row.connection_options);
-  const cliModels = Array.isArray(row.cli_models) ? Object.freeze(row.cli_models.filter((entry): entry is string => typeof entry === "string")) : undefined;
+  const hidden = hiddenOf(options);
+  const rawCliModels = Array.isArray(row.cli_models) ? row.cli_models.filter((entry): entry is string => typeof entry === "string") : undefined;
+  // 카탈로그 판(hash)은 저장된 원래 목록으로 확인하고, 노출하는 목록에서만 뺀다
+  const cliModels = rawCliModels ? Object.freeze(rawCliModels.filter(model => !hidden.has(model))) : undefined;
   const optionCliVersion = typeof options.cliVersion === "string" ? options.cliVersion : null;
-  const catalog = hydrated?.catalog ?? (cliModels
-    ? cliCatalogMetadataFromSnapshot(options.cliHostCatalog, cliModels, optionCliVersion, sha256Json(cliModels))
+  const catalog = hydrated?.catalog ?? (rawCliModels
+    ? cliCatalogMetadataFromSnapshot(options.cliHostCatalog, rawCliModels, optionCliVersion, sha256Json(rawCliModels))
     : null);
-  const models = row.kind === "cli" ? (hydrated?.models ?? catalogModelEntries(catalog)) : modelEntries(row.models);
+  const allModels = row.kind === "cli" ? (hydrated?.models ?? catalogModelEntries(catalog)) : modelEntries(row.models);
+  const models = allModels && hidden.size ? Object.freeze(allModels.filter(model => !hidden.has(model.id))) : allModels;
   const contextTokens = typeof options.contextTokens === "number" ? options.contextTokens : null;
   const version = safeInteger(row.connection_version);
   const apiKey = row.api_key_ciphertext ? openSecret(row.api_key_ciphertext, aad(row.connection_id)) : null;
@@ -177,7 +186,10 @@ function inventoryConnectionSnapshot(current: State, row: RawConnection): AiTask
   return connectionSnapshotFromRaw(row, usable);
 }
 function withHydratedCatalog(connection: AiTaskConnectionSnapshot, hydrated: HydratedCliCatalog): AiTaskConnectionSnapshot {
-  return Object.freeze({ ...connection, models: hydrated.models, cliVersion: hydrated.cliVersion, cliCatalog: hydrated.catalog });
+  // 새로 읽은 카탈로그에도 삭제한 모델은 노출 목록(cliModels)에 없는 것만 남긴다
+  const shown = connection.cliModels ? new Set(connection.cliModels) : null;
+  const models = shown && hydrated.models ? Object.freeze(hydrated.models.filter(model => shown.has(model.id))) : hydrated.models;
+  return Object.freeze({ ...connection, models, cliVersion: hydrated.cliVersion, cliCatalog: hydrated.catalog });
 }
 function rowWithHydratedCatalog(current: State, row: AiTaskModelSnapshotRow): AiTaskModelSnapshotRow {
   const cached = current.hydratedCliCatalogs.get(row.connection.id);
@@ -397,7 +409,12 @@ function normalizedCliBaseUrl(baseUrl: string): string | null {
   }
 }
 
-function cliDefinitionKey(connection: AiTaskConnectionSnapshot, modelId: string, effort: string, providerKind: string): string {
+/** 한 (OpenCode 연결, 모델)이 등록부에 만들 수 있는 모든 키 — 추론 강도(default·변형) × 경로(local-direct·opencode-cli). 삭제 전 「쓰는 중」 확인용 */
+export function cliDerivedRegistryKeys(connection: Pick<AiTaskConnectionSnapshot, "id" | "deviceId">, modelId: string, variants: readonly string[]): string[] {
+  const efforts = new Set(["default", ...variants.filter(variant => variant !== "default")]);
+  return [...efforts].flatMap(effort => ["local-direct", "opencode-cli"].map(kind => cliDefinitionKey(connection, modelId, effort, kind)));
+}
+function cliDefinitionKey(connection: Pick<AiTaskConnectionSnapshot, "id" | "deviceId">, modelId: string, effort: string, providerKind: string): string {
   const hash = createHash("sha256").update(`${connection.id}\n${modelId}\n${effort}\n${providerKind}`).digest("hex").slice(0, 24);
   return `${connection.deviceId}:cli-${hash}`;
 }

@@ -68,6 +68,17 @@ export const AI_TASK_AUDIT_ACTIONS = Object.freeze([AI_CONNECTION_SAVE_AUDIT_ACT
  * (admin-ai-task-current). 순위 저장도 막혀 있어(saveAiTaskRanks) 지우는 길은 clearUnreadAiTaskRanks 뿐이다. 검색 벡터·재정렬은 검색 설정이 순위 행을 읽으므로 아니다.
  */
 export const aiTaskRanksUnread = (taskId: string): boolean => !isAiLiveTask(taskId) && !["embedding", "rerank"].includes(aiTask(taskId)?.kind ?? "");
+/** 운영자가 연결의 목록에서 삭제한 모델 이름(options.hiddenModels, 2026-11-08) — 문자열만, 중복 없이. 모든 읽기가 이것으로 거른다. */
+export function aiConnectionHiddenModels(options: unknown): string[] {
+  const raw = options && typeof options === "object" ? (options as Record<string, unknown>).hiddenModels : undefined;
+  return Array.isArray(raw) ? [...new Set(raw.filter((entry): entry is string => typeof entry === "string" && entry.length > 0 && entry.length <= 200))] : [];
+}
+/** 삭제한 모델을 뺀 목록(목록이 없으면 그대로 null) */
+export function aiConnectionVisibleModels<T extends { id: string }>(models: readonly T[] | null | undefined, options: unknown): T[] | null {
+  if (!Array.isArray(models)) return null;
+  const hidden = new Set(aiConnectionHiddenModels(options));
+  return models.filter(model => !!model && typeof model.id === "string" && !hidden.has(model.id));
+}
 export const AI_TASK_IMPORT_CONFIRM = "가져오기";
 export const AI_TASKS_PAGE = "/admin/models/tasks";
 /** 키 암호문의 AAD — 행 id 에 묶는다(다른 행으로 옮긴 암호문은 열리지 않는다). */

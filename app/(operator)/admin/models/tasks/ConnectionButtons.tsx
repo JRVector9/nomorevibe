@@ -1,5 +1,5 @@
 "use client";
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { buttonSmall } from "../../settings/Switch";
 import { clearUnreadAiTaskRanksAction, deleteAiConnectionAction, hideAiConnectionModelAction, readAiConnectionModelsAction, type AiTaskActionState } from "./actions";
 
@@ -15,20 +15,30 @@ export function RereadModelsButton({ id }: { id: string }) {
 }
 
 /**
- * 모델 「삭제」(목록에서 빼기)·「되돌리기」 — 배정이 없는 모델 줄에만 보인다. 서버·CLI 쪽 모델은 그대로이고 이 연결의 목록·순위 선택지에서만 빠진다.
- * 같은 모델의 별칭(여러 이름)은 한 번에 뺀다. 결과는 그 자리에 보인다.
+ * 모델 「삭제」·「다시 추가」(2026-11-08). 삭제는 두 단계 — 「삭제」를 누르면 그 자리에 확인이 열리고 「삭제 확인」을 눌러야 저장한다.
+ * 삭제한 모델은 이 연결의 목록·순위 선택지·검색 설정·장비 한도·등록부 파생 항목 등 모든 관리 화면에서 빠진다(서버·CLI 쪽 모델은 그대로).
+ * 같은 모델의 별칭(여러 이름)은 한 번에 지운다. 「다시 추가」는 확인 없이 되돌린다.
  */
 export function HideModelButton({ id, version, models, label, hidden }: { id: string; version: number; models: readonly string[]; label: string; hidden: boolean }) {
   const [state, action, pending] = useActionState<AiTaskActionState, FormData>(hideAiConnectionModelAction, null);
-  return <form action={action} className="llm-model-act">
+  const [confirming, setConfirming] = useState(false);
+  if (state?.ok) return <span role="status" className="llm-muted">{state.message}</span>;
+  const fields = <>
     <input type="hidden" name="id" value={id} /><input type="hidden" name="expectedVersion" value={version} />
     <input type="hidden" name="hidden" value={hidden ? "1" : "0"} />
     {models.map(model => <input key={model} type="hidden" name="model" value={model} />)}
-    <button type="submit" disabled={pending} className="llm-model-hide" aria-label={`${label} ${hidden ? "목록에서 삭제" : "목록에 되돌리기"}`}
-      title={hidden ? "이 연결의 모델 목록과 순위 선택지에서 뺍니다. 서버 쪽 모델은 그대로이며 「숨긴 모델」에서 되돌릴 수 있습니다." : undefined}>
-      {pending ? "…" : hidden ? "삭제" : "되돌리기"}</button>
-    {state?.ok && <span role="status" className="llm-muted">{state.message}</span>}
-    {state?.issues?.map(text => <span key={text} role="alert" className="text-red-600">{text}</span>)}
+  </>;
+  const issues = state?.issues?.map(text => <span key={text} role="alert" className="text-red-600">{text}</span>);
+  if (!hidden) return <form action={action} className="llm-model-act">{fields}
+    <button type="submit" disabled={pending} className="llm-model-hide" aria-label={`${label} 다시 추가`}>{pending ? "추가하는 중…" : "다시 추가"}</button>{issues}</form>;
+  if (!confirming) return <span className="llm-model-act">
+    <button type="button" className="llm-model-hide" aria-label={`${label} 목록에서 삭제`} onClick={() => setConfirming(true)}
+      title="이 연결의 모델 목록과 모든 관리 화면의 선택지에서 뺍니다. 서버 쪽 모델은 그대로이며 「삭제한 모델」에서 다시 추가할 수 있습니다.">삭제</button>{issues}</span>;
+  return <form action={action} className="llm-model-act llm-model-confirm" role="group" aria-label={`${label} 삭제 확인`}>{fields}
+    <span>「{label}」을(를) 이 연결의 목록에서 삭제할까요? 모든 관리 화면에서 빠집니다.</span>
+    <button type="submit" disabled={pending} className="llm-model-hide llm-model-danger" autoFocus>{pending ? "삭제하는 중…" : "삭제 확인"}</button>
+    <button type="button" disabled={pending} className="llm-model-hide" onClick={() => setConfirming(false)}>취소</button>
+    {issues}
   </form>;
 }
 

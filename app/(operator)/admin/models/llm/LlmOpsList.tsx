@@ -71,11 +71,15 @@ function ModelsBlock({ row, readOnly }: { row: LlmOpsRow; readOnly: boolean }) {
           {connection && !readOnly && line.listed && <HideModelButton id={connection.id} version={connection.version} models={line.ids} label={line.label} hidden />}</span>}</li>; })}</ul>
       : <p className="llm-empty">{connection?.kind === "api" ? "아직 읽은 모델이 없습니다 — 주소·키를 확인하고 저장하거나 다시 읽으세요." : "적힌 모델이 없습니다."}</p>}
     {connection && (connection.hiddenModels?.length ?? 0) > 0 && <details className="llm-hidden-models">
-      <summary>숨긴 모델 {connection.hiddenModels!.length}개</summary>
+      <summary>삭제한 모델 {connection.hiddenModels!.length}개 — 다시 추가</summary>
       <ul>{connection.hiddenModels!.map(model => <li key={model}><code>{model}</code>
-        {readOnly ? <span className="llm-muted">목록에서 뺌</span> : <HideModelButton id={connection.id} version={connection.version} models={[model]} label={model} hidden={false} />}</li>)}</ul>
+        {readOnly ? <span className="llm-muted">삭제함</span> : <HideModelButton id={connection.id} version={connection.version} models={[model]} label={model} hidden={false} />}</li>)}</ul>
     </details>}
-    <p className="llm-empty">모델 옆 칩은 그 모델을 쓰는 작업과 순위입니다. 누르면 작업 배정으로 이동합니다. 배정 없는 모델은 「삭제」로 이 연결의 목록에서 뺄 수 있습니다(서버 쪽은 그대로).</p>
+    <p className="llm-empty">모델 옆 칩은 그 모델을 쓰는 작업과 순위입니다. 누르면 작업 배정으로 이동합니다. 배정 없는 모델은 「삭제」 → 「삭제 확인」으로 이 연결의 목록과
+      모든 관리 화면에서 뺍니다(서버 쪽 모델은 그대로). {connection?.kind === "api" ? "서버에 새로 생긴 모델은 「다시 읽기」로 추가됩니다."
+        : connection ? "모델 추가·이름 정정은 이 연결의 고치기에서 합니다." : ""}</p>
+    {connection && connection.kind === "cli" && !readOnly && <Link prefetch={false} className="button small" href={`/admin/models/llm?edit=${connection.id}#conn-${connection.id}`}>
+      모델 추가·정정 →</Link>}
     {connection && !readOnly && <div className="llm-edit-links">
       {connection.kind === "api" && <RereadModelsButton id={connection.id} />}
       {!used && <DeleteConnectionButton id={connection.id} label={connection.label} version={connection.version} />}

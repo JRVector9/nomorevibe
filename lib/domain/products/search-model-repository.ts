@@ -10,7 +10,7 @@ import {
 import {
   normalizeSearchBaseUrl, resolveSearchModelSettings, resolveSearchModelSettingsFromRows, type SearchModelTask,
 } from "./search-model-settings";
-import { aiConnectionBaseUrl, aiConnectionKeyAad, type AiConnectionView } from "@/lib/operations/admin-ai-tasks";
+import { aiConnectionVisibleModels, aiConnectionBaseUrl, aiConnectionKeyAad, type AiConnectionView } from "@/lib/operations/admin-ai-tasks";
 import { listAiConnections } from "@/lib/operations/admin-ai-tasks-repository";
 import { adminAuditRow } from "@/lib/operations/admin-log";
 import { openSecret } from "@/lib/security/secret-box";
@@ -26,7 +26,7 @@ type RankRow = Readonly<{
   options: Readonly<Record<string, unknown>>; enabled: boolean;
 }>;
 type StoredSample = { product_id: number; embedding: string; document: string };
-type PreConnection = { version: number; baseUrl: string | null; apiKeyCiphertext: string | null; kind: string; enabled: boolean; models: unknown };
+type PreConnection = { version: number; baseUrl: string | null; apiKeyCiphertext: string | null; kind: string; enabled: boolean; models: unknown; options?: unknown };
 type Pre = { revision: string; connection: PreConnection | null; apiKey: string | null };
 type ReadyConnection = { ok: true; version: number; rawBaseUrl: string | null; apiKeyCiphertext: string | null; baseUrl: string; apiKey: string | null };
 
@@ -216,7 +216,7 @@ async function readPre(connectionId: string): Promise<Pre> {
     const rows = await loadRanks(tx as unknown as Reader);
     const [connection] = await tx.select({
       version: aiConnections.version, baseUrl: aiConnections.baseUrl, apiKeyCiphertext: aiConnections.apiKeyCiphertext,
-      kind: aiConnections.kind, enabled: aiConnections.enabled, models: aiConnections.models,
+      kind: aiConnections.kind, enabled: aiConnections.enabled, models: aiConnections.models, options: aiConnections.options,
     }).from(aiConnections).where(eq(aiConnections.id, connectionId)).limit(1);
     let apiKey: string | null = null;
     if (connection?.apiKeyCiphertext) {
@@ -234,7 +234,8 @@ function readyConnection(pre: Pre, model: string): ReadyConnection | { ok: false
   const baseUrl = aiConnectionBaseUrl(connection.baseUrl ?? "");
   if (!baseUrl) return { ok: false, issue: "search_model_base_url_invalid" };
   if (connection.apiKeyCiphertext && !pre.apiKey) return { ok: false, issue: "search_model_key_unreadable" };
-  if (!modelListed(connection.models, model)) return { ok: false, issue: "search_model_model_not_listed" };
+  // 운영자가 연결의 목록에서 삭제한 모델은 목록에 없는 것으로 본다
+  if (!modelListed(aiConnectionVisibleModels(connection.models as { id: string }[] | null, connection.options), model)) return { ok: false, issue: "search_model_model_not_listed" };
   return { ok: true, version: connection.version, rawBaseUrl: connection.baseUrl,
     apiKeyCiphertext: connection.apiKeyCiphertext, baseUrl, apiKey: pre.apiKey };
 }
@@ -409,12 +410,12 @@ export async function saveSearchModelSettings(
       if (searchRevision(before) !== input.revision) throw new Error("search_model_revision_mismatch");
       const [live] = await tx.select({
         version: aiConnections.version, baseUrl: aiConnections.baseUrl, apiKeyCiphertext: aiConnections.apiKeyCiphertext,
-        kind: aiConnections.kind, enabled: aiConnections.enabled, models: aiConnections.models,
+        kind: aiConnections.kind, enabled: aiConnections.enabled, models: aiConnections.models, options: aiConnections.options,
       }).from(aiConnections).where(eq(aiConnections.id, input.connectionId)).for("share");
       if (!live || live.version !== ready.version || live.baseUrl !== ready.rawBaseUrl
         || live.apiKeyCiphertext !== ready.apiKeyCiphertext || !live.enabled || live.kind !== "api")
         throw new Error("search_model_connection_changed");
-      if (!modelListed(live.models, model)) throw new Error("search_model_model_not_listed");
+      if (!modelListed(aiConnectionVisibleModels(live.models as { id: string }[] | null, live.options), model)) throw new Error("search_model_model_not_listed");
 
       if (input.kind === "embedding") {
         if (!profile) throw new Error("search_model_embedding_profile_missing");
