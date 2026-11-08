@@ -7,8 +7,8 @@ import { elapsedModelTime, modelStageId, modelStageLabel } from "./admin-models-
 import type { StationLlm } from "./conveyor-llm";
 import type { BeltTone, Conveyor } from "./conveyor-model";
 import { FLOW_MODEL_STAGES, type FlowModelStage } from "./flow-model-catalog";
-import { LLM_CONTRACTS_HREF, LLM_FAILURES_HREF, LLM_RETRY_HREF, llmEditHref, type LlmFixField } from "./llm-ops-links";
-export { LLM_CONTRACTS_HREF, LLM_FAILURES_HREF, LLM_FIX_FIELDS, LLM_RETRY_HREF, llmEditHref, llmFieldAnchor, llmFixField, llmRetryRowHref, type LlmFixField } from "./llm-ops-links";
+import { LLM_CONTRACTS_HREF, LLM_FAILURES_HREF, LLM_RETRY_HREF, llmAllocationHref, llmEditHref, type LlmFixField } from "./llm-ops-links";
+export { LLM_ALLOCATION_HREF, LLM_CONTRACTS_HREF, LLM_FAILURES_HREF, LLM_FIX_FIELDS, LLM_RETRY_HREF, llmAllocationAnchor, llmAllocationHref, llmEditHref, llmFieldAnchor, llmFixField, llmRetryRowHref, type LlmFixField } from "./llm-ops-links";
 
 /**
  * 「LLM 운영」 개편(2026-11-07 승인 시안 PR 1·2)의 화면 모형 — DB 를 읽지 않는 순수 함수다.
@@ -61,7 +61,7 @@ const REASON_SHORT: Readonly<Record<string, string>> = Object.freeze({
   commit_unknown: "정산 결과 모름",
   // 용량·정책
   unmapped: "정책 경로 없음", device_unconfigured: "장비 행 없음", capacity: "칸 가득", queue_full: "대기열 가득",
-  blocked_unconfirmed: "미확인 점유로 가득", helper_ineligible: "도우미 경로 닫힘", model_paused: "쉬는 중",
+  blocked_unconfirmed: "미확인 점유로 가득", helper_ineligible: "도우미 경로 닫힘", route_quota: "경로 몫 가득", model_paused: "쉬는 중",
   // 작업
   no_task_models: "순위 없음", all_ranks_unusable: "쓸 수 있는 순위 없음", task_models_unreadable: "순위 못 읽음",
 });
@@ -132,6 +132,8 @@ export function llmReasonFix(code: string, at: LlmFixAt): LlmFix | null {
     case "device_unconfigured": return { href: LLM_NEW_DEVICE_HREF, label: "장비 행 만들기" };
     case "capacity": case "queue_full": return connection ? edit("limit", "한도 보기") : { href: "/admin/models/devices#devices", label: "장비 한도" };
     case "helper_ineligible": return { href: "/admin/models/helpers", label: "도우미 보기" };
+    // 경로 몫(step 2)이 가득 — 몫을 고치는 곳은 칸 배분(step 3) 표다
+    case "route_quota": return { href: llmAllocationHref(), label: "칸 배분" };
     default: return null;
   }
 }

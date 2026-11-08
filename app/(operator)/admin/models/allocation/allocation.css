@@ -1,0 +1,75 @@
+/* 칸 배분(/admin/models/allocation, step 3 — 2026-11-08) — 작업 영역 × 장비 배분표. 색은 승인 시안 토큰(prototype.css)만 쓴다: 어두운 테마도 토큰이 바꾼다.
+   보장 = 초록 이름표, 상한 = 파랑 이름표 — 색만으로 가르지 않고 늘 「보장」·「상한」 글자를 함께 쓴다. 문제는 ▲ 모양 + 글자(LevelBadge 와 같은 규칙). 글자는 13px 이상.
+   규칙은 .admin-prototype .alloc 안으로 좁힌다 — prototype.css 의 표·입력 요소 규칙(th 10px·input 11px 등)보다 이기게. */
+
+.admin-prototype .alloc .alloc-explain { margin: 0; padding: 12px 16px 12px 30px; display: grid; gap: 4px; list-style: disc; border: 1px solid var(--line); border-left: 4px solid var(--blue);
+  border-radius: 0 10px 10px 0; background: var(--surface); color: var(--ink); font-size: calc(13px + var(--admin-font-delta, 0px)); line-height: 1.6; }
+.admin-prototype .alloc .alloc-explain b { margin-right: 6px; font-weight: 700; }
+.admin-prototype .alloc .alloc-explain b[data-kind=min] { color: var(--green); }
+.admin-prototype .alloc .alloc-explain b[data-kind=max] { color: var(--blue); }
+
+/* 표 — 넓으면 표 안에서만 가로로 밀린다(화면은 밀리지 않는다). 첫 열(작업 영역)은 밀려도 왼쪽에 붙어 있다. */
+/* position: relative — 표 안의 낭독용 글(.admin-vh, position: absolute)이 이 상자를 기준으로 서야 가로로 밀린 칸의 글이 화면 전체를 넓히지 않는다 */
+.admin-prototype .alloc .alloc-wrap { position: relative; min-width: 0; overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); scroll-margin-top: 96px; }
+.admin-prototype .alloc .alloc-table { --alloc-area: 196px; --alloc-col: 186px; width: 100%; min-width: calc(var(--alloc-area) + var(--alloc-cols, 1) * var(--alloc-col));
+  border-collapse: separate; border-spacing: 0; table-layout: fixed; font-size: calc(13px + var(--admin-font-delta, 0px)); line-height: 1.5; }
+.admin-prototype .alloc .alloc-table th, .admin-prototype .alloc .alloc-table td { padding: 10px 12px; text-align: left; vertical-align: top; white-space: normal; overflow-wrap: anywhere;
+  border-bottom: 1px solid var(--line); background: var(--surface); color: var(--ink); font-size: calc(13px + var(--admin-font-delta, 0px)); font-weight: 400; letter-spacing: normal; }
+.admin-prototype .alloc .alloc-table td + td, .admin-prototype .alloc .alloc-table th + td, .admin-prototype .alloc .alloc-table th + th { border-left: 1px solid var(--line); }
+.admin-prototype .alloc .alloc-table thead th { background: var(--surface-2); vertical-align: bottom; }
+.admin-prototype .alloc .alloc-table tbody tr:last-child > * { border-bottom: 0; }
+.admin-prototype .alloc .alloc-table .alloc-area { position: sticky; left: 0; z-index: 1; width: var(--alloc-area); box-shadow: 1px 0 0 var(--line); }
+.admin-prototype .alloc .alloc-table thead .alloc-area { color: var(--muted); font-weight: 650; }
+.admin-prototype .alloc .alloc-area-name { display: block; font-weight: 700; font-size: calc(14px + var(--admin-font-delta, 0px)); word-break: keep-all; }
+.admin-prototype .alloc .alloc-route { display: block; margin-top: 2px; color: var(--muted); font-size: calc(12px + var(--admin-font-delta, 0px)); font-weight: 400; overflow-wrap: anywhere; }
+
+/* 장비 열 머리 */
+.admin-prototype .alloc .alloc-dev > span { display: block; }
+.admin-prototype .alloc .alloc-dev-name { font-family: 'SFMono-Regular', Consolas, monospace; font-weight: 700; font-size: calc(14px + var(--admin-font-delta, 0px)); color: var(--ink); overflow-wrap: anywhere; }
+.admin-prototype .alloc .alloc-dev-label { color: var(--muted); font-weight: 400; overflow-wrap: anywhere; }
+.admin-prototype .alloc .alloc-dev-limit { width: fit-content; margin-top: 4px; padding: 0 8px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface);
+  font-family: 'SFMono-Regular', Consolas, monospace; font-weight: 650; color: var(--ink); }
+.admin-prototype .alloc .alloc-dev-use { margin-top: 2px; color: var(--muted); font-weight: 400; }
+.admin-prototype .alloc .alloc-dev:target { box-shadow: inset 0 3px 0 var(--blue); background: var(--blue-soft); }
+
+/* 칸 — 보장·상한 입력 + 지금 쓰는 양 */
+.admin-prototype .alloc .alloc-cell { display: grid; gap: 4px; justify-items: start; min-width: 0; }
+.admin-prototype .alloc .alloc-cell > .llm-level { justify-self: start; }
+.admin-prototype .alloc .alloc-cell[data-off] .alloc-use { color: var(--muted); }
+.admin-prototype .alloc .alloc-pair { display: flex; flex-wrap: wrap; gap: 6px; }
+.admin-prototype .alloc .alloc-field { display: inline-flex; align-items: stretch; min-height: 32px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--surface); }
+.admin-prototype .alloc .alloc-field > span { display: inline-flex; align-items: center; padding: 0 7px; font-weight: 650; font-size: calc(13px + var(--admin-font-delta, 0px)); }
+.admin-prototype .alloc .alloc-field[data-kind=min] > span { background: var(--green-soft); color: var(--green); }
+.admin-prototype .alloc .alloc-field[data-kind=max] > span { background: var(--blue-soft); color: var(--blue); }
+.admin-prototype .alloc .alloc-field:focus-within { outline: 2px solid var(--blue); outline-offset: 1px; }
+.admin-prototype .alloc .alloc-field input { width: 54px; min-height: 30px; margin: 0; padding: 2px 6px; border: 0; border-left: 1px solid var(--line); border-radius: 0; background: var(--surface);
+  color: var(--ink); font-family: 'SFMono-Regular', Consolas, monospace; font-size: calc(14px + var(--admin-font-delta, 0px)); font-variant-numeric: tabular-nums; text-align: right; }
+.admin-prototype .alloc .alloc-field input:focus-visible { outline: none; }
+.admin-prototype .alloc .alloc-field input::placeholder { color: var(--muted); opacity: 1; font-family: inherit; font-size: calc(13px + var(--admin-font-delta, 0px)); }
+.admin-prototype .alloc .alloc-ro .alloc-field b { display: inline-flex; align-items: center; min-width: 40px; justify-content: flex-end; padding: 0 8px; border-left: 1px solid var(--line);
+  font-family: 'SFMono-Regular', Consolas, monospace; font-size: calc(14px + var(--admin-font-delta, 0px)); }
+.admin-prototype .alloc .alloc-cell[data-changed] .alloc-field { border-color: var(--blue); }
+.admin-prototype .alloc .alloc-use { color: var(--muted); }
+.admin-prototype .alloc .alloc-none { color: var(--muted); }
+.admin-prototype .alloc .alloc-issue { color: var(--amber); font-weight: 650; }
+.admin-prototype .alloc .alloc-changed { color: var(--blue); font-weight: 650; }
+.admin-prototype .alloc .alloc-refusal { color: var(--red); font-weight: 650; }
+
+/* 열 아래 — 보장 합 / 한도 · 빈 칸 빌려 쓰기 · 저장 */
+.admin-prototype .alloc .alloc-table tfoot th, .admin-prototype .alloc .alloc-table tfoot td { border-top: 1px solid var(--line); border-bottom: 0; background: var(--surface-2); }
+.admin-prototype .alloc .alloc-table tfoot th { font-weight: 700; }
+.admin-prototype .alloc .alloc-foot { display: grid; gap: 6px; min-width: 0; }
+.admin-prototype .alloc .alloc-sum b { font-family: 'SFMono-Regular', Consolas, monospace; font-size: calc(17px + var(--admin-font-delta, 0px)); font-weight: 650; }
+.admin-prototype .alloc .alloc-sum[data-over] { color: var(--amber); }
+.admin-prototype .alloc .alloc-sum[data-over] b::before { content: "▲ "; font-size: 10px; }
+.admin-prototype .alloc .alloc-foot .llm-bar > span { background: var(--green); }
+.admin-prototype .alloc .alloc-form { display: grid; gap: 6px; justify-items: start; min-width: 0; }
+.admin-prototype .alloc .alloc-lend { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font-weight: 600; }
+.admin-prototype .alloc .alloc-result { display: grid; gap: 2px; color: var(--green); font-weight: 600; }
+.admin-prototype .alloc .alloc-result ul { margin: 0; padding-left: 16px; color: var(--ink); font-weight: 400; }
+
+@media (max-width: 560px) {
+  .admin-prototype .alloc .alloc-table { --alloc-area: 128px; --alloc-col: 176px; }
+  .admin-prototype .alloc .alloc-table th, .admin-prototype .alloc .alloc-table td { padding: 8px 10px; }
+  .admin-prototype .alloc .alloc-explain { padding-left: 26px; }
+}

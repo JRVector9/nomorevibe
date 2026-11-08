@@ -10,7 +10,7 @@ const TABLE: Record<ModelCapacityDeferredReason, "global" | "model" | "work"> = 
   draining: "global", disabled: "global", policy_changed: "global", owner_unavailable: "global", reservation_required: "global",
   assignments_unavailable: "global",
   capacity: "model", queue_full: "model", unmapped: "model", provider_contract_unavailable: "model", device_unconfigured: "model",
-  helper_ineligible: "model",
+  helper_ineligible: "model", route_quota: "model",
   dispatched: "work", work_busy: "work", ledger_mismatch: "work", withdrawn: "work", reservation_lost: "work",
 };
 
@@ -42,6 +42,12 @@ describe("미룸 사유 범위 표", () => {
   it("도우미 경로 닫힘(helper_ineligible, PR 2a)은 그 장비의 도우미 경로만의 일이라 모델 범위다 — 우선 역할 경로와 다른 장비는 계속 돈다", () => {
     expect(modelCapacityDeferralScope("helper_ineligible")).toBe("model");
     expect(modelCapacityDeferralIsPerWork("helper_ineligible")).toBe(false);
+  });
+  it("경로 몫 상한(route_quota, step 2)은 그 장비의 그 경로만의 일이라 모델 범위다 — 다음 순위로 넘기고 다른 장비·경로는 계속 돈다", () => {
+    expect(modelCapacityDeferralScope("route_quota")).toBe("model");
+    expect(isModelCapacityDeferredReason("route_quota")).toBe(true);
+    expect(modelCapacityDeferralIsPerWork("route_quota")).toBe(false);
+    expect(modelCapacityDeferralIsGlobal("route_quota")).toBe(false);
   });
   it("모르는 문자열은 사유가 아니다", () => {
     expect(isModelCapacityDeferredReason("capacity")).toBe(true);

@@ -344,6 +344,8 @@ const INVALID_FIELD_MESSAGES: Record<string, string> = {
 const REFINEMENT_MESSAGES: Record<string, string> = {
   secondary_cap_exceeds_limit: INVALID_FIELD_MESSAGES.secondaryCap, reserve_exceeds_limit: INVALID_FIELD_MESSAGES.reserveSlots,
   limit_exceeds_physical: INVALID_FIELD_MESSAGES.limitSlots, duplicate_route: INVALID_FIELD_MESSAGES.roles,
+  // 경로 몫(0169): 칸 수를 경로별 보장 합계·상한 아래로 줄이는 장비 저장(capacity-devices-repository saveModelCapacityDevice)
+  route_quotas_exceed_limit: "칸 수: 이 장비의 경로 몫(보장 합계·상한)보다 작게 줄일 수 없습니다 — 경로 몫을 먼저 줄여주세요",
   invalid_identity: "이름에 앞뒤 공백이나 제어 문자가 있습니다",
 };
 /** WP-A 저장·읽기의 코드를 운영자 문장으로. 모르는 코드는 그대로 보인다(숨기지 않는다) */

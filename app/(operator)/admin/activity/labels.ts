@@ -86,6 +86,7 @@ export const ACTION_LABELS: Record<string, string> = {
   // — 전에는 이름표·갈래가 없어 「설정·연결」로 거르면 보이지 않았다(2026-11-02)
   "runtime-settings-save": "실시간 한도 저장",
   "model-capacity-device-save": "장비 한도 저장",
+  "model-capacity-route-quota-save": "장비 경로 몫 저장",
   "model-serving-contract-save": "서빙 계약 저장",
   "model-serving-contract-disable": "서빙 계약 끄기",
   "model-registry-override-save": "모델 등록부 덮어쓰기 저장",
@@ -204,12 +205,12 @@ export const ACTION_GROUPS = {
     "github-collector-app-save", "github-collector-app-enable", "github-collector-app-disable",
     "ai-connect", "ai-input", "ai-cancel", "ai-probe", "ai-test", "ai-apply",
     "ai-connection-save", "ai-connection-models-read", "ai-connection-delete", "ai-connection-model-hide", "ai-task-models-save", "ai-task-models-import", "ai-connection-key-fill", "ai-task-execution-save",
-    "runtime-settings-save", "model-capacity-device-save", "model-serving-contract-save", "model-serving-contract-disable", "model-registry-override-save",
+    "runtime-settings-save", "model-capacity-device-save", "model-capacity-route-quota-save", "model-serving-contract-save", "model-serving-contract-disable", "model-registry-override-save",
     "model-registry-override-disable", "model-assignment-save", "model-helper-save", "model-helper-mode", "model-capacity-unknown-reviewed", "job-pause", "job-resume"] },
   // LLM 운영 화면에서 한 번에 거르는 갈래 — 연결·순위·한도 저장(「설정·연결」과 겹침)과 접수·미확정·경계 해제·연결 확인 같은 조치
   llm: { label: "LLM 운영", actions: ["ai-connection-save", "ai-connection-models-read", "ai-connection-delete", "ai-connection-model-hide", "ai-connection-key-fill",
     "ai-task-models-save", "ai-task-models-import", "ai-task-execution-save",
-    "runtime-settings-save", "model-capacity-device-save", "model-serving-contract-save", "model-serving-contract-disable",
+    "runtime-settings-save", "model-capacity-device-save", "model-capacity-route-quota-save", "model-serving-contract-save", "model-serving-contract-disable",
     "model-registry-override-save", "model-registry-override-disable", "model-assignment-save",
     "model-helper-save", "model-helper-mode", "model-helper-promote", "model-supervisor-toggle", "search-model-settings-save",
     "model-capacity-unknown-reviewed", "model-capacity-unknown-requeued", "model-capacity-unknown-reclaimed", "model-capacity-owner-gone",

@@ -19,6 +19,7 @@ import { opencodeTaskLogicalSql, opencodeTaskMembersSql, opencodeTaskDispatchSql
 import { MODEL_CAPACITY_LIVE_STATES_SQL, MODEL_CAPACITY_OCCUPYING_STATES_SQL, MODEL_CAPACITY_INDETERMINATE_REASONS } from '@/lib/llm/capacity-states';
 import type { OperatorReviewEvidence } from '@/lib/llm/capacity';
 import type { LocalModelBinding, LocalModelTerminalEvidence } from '@/lib/llm/local-model-capacity-contract';
+import type { ModelCapacityRouteQuotaRecord } from '@/lib/llm/capacity-devices';
 import { sql } from 'drizzle-orm';
 import { pgTable, varchar, jsonb, timestamp, serial, bigserial, integer, text, bigint, boolean, index, uniqueIndex, unique, check, primaryKey, foreignKey, uuid, numeric, doublePrecision } from 'drizzle-orm/pg-core';
 import type { AssignmentRole, AssignmentStage, AssignmentTransport, HelperLiveDownstream, HelperMode, HelperReason, HelperShadowAgreement, HelperShadowRunState, HelperStage, HelperStopEffect, HelperVerdict } from '@/lib/llm/capacity-helpers';
@@ -246,11 +247,16 @@ export const modelCapacityDevices = pgTable('model_capacity_devices', {
   updatedBy: varchar('updated_by', { length: 120 }).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
   updatedAt: timestamp('updated_at', { withTimezone: true, precision: 3 }).notNull().default(sql`clock_timestamp()`),
+  /** 0169(step 2): 수요 없는 경로의 보장 칸을 다른 경로가 빌려 쓸 수 있다(기본 켜짐). 끄면 몫이 있는 경로는 보장만큼만 쓰고 보장 칸은 늘 비워 둔다 */
+  lendIdle: boolean('lend_idle').notNull().default(true),
+  /** 0169(step 2): 경로별 몫 [{route_id, min_slots, max_slots}] — 판정은 lib/llm/capacity-devices.ts, 모양·합계 검사는 DB 함수 model_capacity_route_quotas_ok */
+  routeQuotas: jsonb('route_quotas').$type<ModelCapacityRouteQuotaRecord[]>().notNull().default(sql`'[]'::jsonb`),
 }, table => [
   check('model_capacity_devices_id_check', sql`char_length(${table.deviceId}) > 0 and ${table.deviceId} = btrim(${table.deviceId}) and ${table.deviceId} !~ '[[:cntrl:]]'`),
   check('model_capacity_devices_limits_check', sql`${table.limitSlots} between 1 and 256 and ${table.secondaryCap} between 0 and ${table.limitSlots} and ${table.reserveSlots} between 0 and ${table.limitSlots} - 1 and ${table.idleMs} between 0 and 3600000`),
   check('model_capacity_devices_physical_check', sql`${table.physicalLimit} is null or (${table.physicalLimit} between 1 and 256 and ${table.limitSlots} <= ${table.physicalLimit})`),
   check('model_capacity_devices_version_check', sql`${table.version} between 1 and 9007199254740991`),
+  check('model_capacity_devices_route_quotas_check', sql`model_capacity_route_quotas_ok(${table.routeQuotas}, ${table.limitSlots})`),
 ]);
 
 /**

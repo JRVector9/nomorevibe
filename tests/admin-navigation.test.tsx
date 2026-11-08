@@ -99,7 +99,7 @@ describe('workspace tabs and legacy deep links', () => {
   it('selects the advanced-settings tab and keeps every advanced editor reachable', () => {
     const location = resolveWorkspace('/admin/models/helpers');
     const html = renderToStaticMarkup(<WorkspaceTabs location={location} pathname="/admin/models/helpers" search="" />);
-    for (const href of ['/admin/models/advanced', '/admin/models/devices', '/admin/models/limits', '/admin/models/helpers', '/admin/models/assignments',
+    for (const href of ['/admin/models/advanced', '/admin/models/devices', '/admin/models/allocation', '/admin/models/limits', '/admin/models/helpers', '/admin/models/assignments',
       '/admin/models/contracts', '/admin/models/human', '/admin/models/search']) expect(html).toContain(`href="${href}"`);
     expectActiveLink(html, '/admin/models/advanced');
     expectActiveLink(html, '/admin/models/helpers');

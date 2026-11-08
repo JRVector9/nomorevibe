@@ -2,7 +2,7 @@ import { sql } from 'drizzle-orm';
 import { db, onPrimary } from '@/lib/db';
 import { currentReplayDb } from '@/lib/db/replay-scope';
 import { modelCapacityPolicyHash, parseModelCapacityPolicy, type ModelCapacityPolicy } from '@/lib/llm/capacity';
-import { deviceFallbackLimit, UNRANKED_ROLE_RANK } from '@/lib/llm/capacity-devices';
+import { deviceFallbackLimit, routeQuotaCap, routeQuotasFromRecords, UNRANKED_ROLE_RANK, type ModelCapacityRouteQuota } from '@/lib/llm/capacity-devices';
 import { inFlightStateSql } from '@/lib/llm/capacity-states';
 
 /** 점유는 (장비, 경로) 묶음으로 센다 — route ≤ 128 이므로 129 행이면 잘렸다. */
@@ -31,7 +31,9 @@ export type StageAdmissionDetail = {
 
 type ActiveRow = { groupId: string; routeId: string; providerBudgetId: string; pool: string; n: number };
 type WaitingRow = Omit<ActiveRow, 'routeId'> & { routeId: string; provider: string; model: string; class: string };
-type DeviceRow = { deviceId: string; limitSlots: number; secondaryCap: number; roles: { routeId: string; rank: number }[] };
+type DeviceRow = { deviceId: string; limitSlots: number; secondaryCap: number; roles: { routeId: string; rank: number }[];
+  /** 경로 몫(0169). 옛 스냅숏에는 없다(그때는 빌려주기 켜짐·몫 없음). */
+  lendIdle: boolean; quotas: readonly ModelCapacityRouteQuota[] };
 
 /**
  * OPEN 정책의 이전 세대 점유는 모든 신규 접수를 막는다. 이 경우 waiting INSERT 이전에 거절되므로 대기 행이 없어도 보호한다.
@@ -68,9 +70,10 @@ export async function readCapacityAdmissionBlocks(): Promise<CapacityAdmissionBl
           ),
           'devices', (
             SELECT coalesce(jsonb_agg(jsonb_build_object('deviceId', d.device_id, 'limitSlots', d.limit_slots, 'secondaryCap', d.secondary_cap,
+              'lendIdle', d.lend_idle, 'routeQuotas', d.route_quotas,
               'roles', (SELECT coalesce(jsonb_agg(jsonb_build_object('routeId', ro.route_id, 'rank', ro.role_rank)), '[]'::jsonb)
                 FROM model_capacity_device_roles ro WHERE ro.device_id = d.device_id))), '[]'::jsonb)
-            FROM (SELECT device_id, limit_slots, secondary_cap FROM model_capacity_devices WHERE enabled ORDER BY device_id LIMIT ${DEVICE_CAP}) d
+            FROM (SELECT device_id, limit_slots, secondary_cap, lend_idle, route_quotas FROM model_capacity_devices WHERE enabled ORDER BY device_id LIMIT ${DEVICE_CAP}) d
           ),
           'waiting', (
             SELECT coalesce(jsonb_agg(jsonb_build_object(
@@ -155,7 +158,7 @@ function deviceSettings(policy: ModelCapacityPolicy, devices: DeviceRow[], devic
   const row = devices.find(device => device.deviceId === deviceId);
   if (row) return row;
   const limit = deviceFallbackLimit(policy.groupLimits, deviceId);
-  return limit === null ? null : { deviceId, limitSlots: limit, secondaryCap: limit, roles: [] };
+  return limit === null ? null : { deviceId, limitSlots: limit, secondaryCap: limit, roles: [], lendIdle: true, quotas: [] };
 }
 function saturatedScope(policy: ModelCapacityPolicy, devices: DeviceRow[], active: ActiveRow[], waiting: WaitingRow[], item: WaitingRow): CapacityAdmissionScope | null {
   const device = deviceSettings(policy, devices, item.groupId);
@@ -163,7 +166,22 @@ function saturatedScope(policy: ModelCapacityPolicy, devices: DeviceRow[], activ
   const rank = (routeId: string) => device.roles.find(role => role.routeId === routeId)?.rank ?? UNRANKED_ROLE_RANK;
   const onDevice = (row: { groupId: string }) => row.groupId === item.groupId;
   if (sum(active, onDevice) >= device.limitSlots) return 'device';
-  if (rank(item.routeId) === 1) return null;
+  // 경로 몫(step 2): 이 경로가 상한에 닿았거나, 보장 아래가 아닌데 다른 경로의 못 채운 보장을 비워 두면 칸이 없다(장비 막힘).
+  // 「최근(idle_ms)」 수요는 스냅숏에 없어 점유·대기만 수요로 본다 — 막힘을 덜 말하는 쪽(힌트, 입장은 capacity-devices.ts 의 SQL 이 한다).
+  const onRoute = (routeId: string) => (row: { groupId: string; routeId: string }) => onDevice(row) && row.routeId === routeId;
+  const own = device.quotas.find(quota => quota.routeId === item.routeId);
+  const ownActive = sum(active, onRoute(item.routeId));
+  const cap = own ? routeQuotaCap(own, device.lendIdle) : null;
+  if (cap !== null && ownActive >= cap) return 'device';
+  const under = own !== undefined && ownActive < own.minSlots;
+  const held = device.quotas.reduce((total, quota) => {
+    if (quota.routeId === item.routeId) return total;
+    const routeActive = sum(active, onRoute(quota.routeId));
+    const demand = !device.lendIdle || routeActive > 0 || sum(waiting, onRoute(quota.routeId)) > 0;
+    return total + (demand ? Math.max(quota.minSlots - routeActive, 0) : 0);
+  }, 0);
+  if (!under && sum(active, onDevice) + held >= device.limitSlots) return 'device';
+  if (rank(item.routeId) === 1 || under) return null;
   // 낮은 순위: 우선 역할이 점유 중이거나 대기 중이면(최근 updated_at 은 스냅숏에 없다) 낮은 순위 합계가 cap 에 닿았을 때 막힌다.
   const primaryBusy = active.some(row => onDevice(row) && rank(row.routeId) === 1) || waiting.some(row => onDevice(row) && rank(row.routeId) === 1);
   if (primaryBusy && sum(active, row => onDevice(row) && rank(row.routeId) > 1) >= device.secondaryCap) return 'device_cap';
@@ -183,6 +201,9 @@ function parseDevices(value: unknown): DeviceRow[] | null {
     const row = item as Record<string, unknown>;
     const limitSlots = count(row.limitSlots), secondaryCap = row.secondaryCap === 0 ? 0 : count(row.secondaryCap);
     if (!identity(row.deviceId) || limitSlots === null || secondaryCap === null || !Array.isArray(row.roles)) return null;
+    if (row.lendIdle !== undefined && typeof row.lendIdle !== 'boolean') return null;
+    let quotas: readonly ModelCapacityRouteQuota[];
+    try { quotas = routeQuotasFromRecords(row.routeQuotas ?? []); } catch { return null; }
     const roles: DeviceRow['roles'] = [];
     for (const role of row.roles) {
       if (!role || typeof role !== 'object') return null;
@@ -191,7 +212,7 @@ function parseDevices(value: unknown): DeviceRow[] | null {
       if (!identity(routeId) || parsed === null) return null;
       roles.push({ routeId, rank: parsed });
     }
-    rows.push({ deviceId: row.deviceId, limitSlots, secondaryCap, roles });
+    rows.push({ deviceId: row.deviceId, limitSlots, secondaryCap, roles, lendIdle: row.lendIdle !== false, quotas });
   }
   return rows;
 }

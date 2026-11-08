@@ -46,6 +46,8 @@ describe("까닭 코드 → 고칠 곳", () => {
     // 장비·도우미
     ["device_unconfigured", { href: "/admin/models/devices#new", label: "장비 행 만들기" }], ["capacity", edit(GPU, "limit", "한도 보기")],
     ["queue_full", edit(GPU, "limit", "한도 보기")], ["helper_ineligible", { href: "/admin/models/helpers", label: "도우미 보기" }],
+    // 경로 몫 가득(step 2) → 몫을 고치는 칸 배분 표(step 3)
+    ["route_quota", { href: "/admin/models/allocation#allocation", label: "칸 배분" }],
     // 호출 결과: 실패는 최근 실패, 결과 모름은 재실행 대기
     ["engine_slow", failures], ["client_timeout", failures], ["invalid_output", failures], ["parse_failed", failures], ["engine_failed", failures], ["process_exit", failures],
     ["engine_unknown", retry], ["transport_unknown", retry], ["commit_unknown", retry], ["blocked_unconfirmed", retry],
@@ -232,7 +234,7 @@ describe("고칠 곳 주소가 받는 화면에 있다", () => {
       ...entry.tasks.map(chip => chip.fix), ...Object.values(entry.modelTasks).flat().map(chip => chip.fix)]));
     const codes = ["no_direct_contract", "cli_contract_missing", "cli_version_mismatch", "provider_contract_unavailable", "connection_key_missing", "stored_key_unreadable",
       "engine_no_key", "http_401", "http_503", "connection_disabled", "rank_disabled", "connection_not_api", "engine_network", "endpoint_invalid", "device_unconfigured",
-      "capacity", "helper_ineligible", "engine_slow", "engine_unknown", "no_task_models", "unmapped", "gateway_auth"];
+      "capacity", "helper_ineligible", "route_quota", "engine_slow", "engine_unknown", "no_task_models", "unmapped", "gateway_auth"];
     for (const connection of [conn(GPU), conn(CLAUDE), conn(OPENCODE), { ...conn(CLAUDE), cliVersion: null }, null])
       for (const task of [["first-review", 1], ["second-review", 3], [null, 1]] as const)
         for (const code of codes) fixes.push(llmReasonFix(code, { connection, task: task[0], slot: task[1] }));

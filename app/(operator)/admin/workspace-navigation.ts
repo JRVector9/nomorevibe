@@ -20,6 +20,9 @@ export const MODELS_ADVANCED_EDITORS = [
     purpose: "경로별 출력 토큰·동시 호출·호출 상한, 번역 묶음, 틱 예산을 바꿉니다. 시간 초과가 잦거나 묶음 크기를 바꿀 때 엽니다." },
   { id: "devices", label: "장비 한도", href: "/admin/models/devices",
     purpose: "장비(엔진)마다 동시에 처리하는 칸 수와 역할 순서를 바꿉니다. 한 장비가 늘 가득 차거나 칸 수를 고칠 때 엽니다." },
+  // step 3(2026-11-08): 장비 한도의 칸을 작업 영역마다 보장·상한으로 나누는 배분표 — 장비 한도 바로 다음
+  { id: "allocation", label: "칸 배분", href: "/admin/models/allocation",
+    purpose: "장비 한 대의 칸을 작업 영역마다 보장·상한으로 나눕니다. 한 작업이 장비를 독차지하거나 다른 작업이 늘 밀릴 때 엽니다." },
   { id: "helpers", label: "도우미·감시자", href: "/admin/models/helpers",
     purpose: "쉬는 장비가 1·2차 검수를 돕는 배정과 Oracle 감시자를 다룹니다. 도우미를 켜거나 자동 정지를 풀 때 엽니다." },
   { id: "assignments", label: "모델 배정 표", href: "/admin/models/assignments",

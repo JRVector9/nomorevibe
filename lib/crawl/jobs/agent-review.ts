@@ -214,7 +214,8 @@ export async function reviewCrawlCandidates(ctx: JobContext<FirstReviewCursor>):
         if (local) pausedModels.add(key);
         else modelDeferred = true;
         // 진짜 포화(이 요청이 줄에 섰다)는 틱 결과를 예전처럼 미룸으로 둔다 — 줄의 대기 행이 진행 감시의 재시작을 막는다(capacity-admission-block)
-        if (error.reason === "capacity") saturated = true;
+        // 경로 몫 상한(route_quota, step 2)도 포화다: 그 경로가 칸을 다 쥐고 일하는 중이라 모든 순위가 막히면 「쓸 수 없는 순위」가 아니라 미룸이다
+        if (error.reason === "capacity" || error.reason === "route_quota") saturated = true;
         ctx.log("crawl.agent_review_deferred", { reason: error.reason, provider: reviewProvider, model });
         // 이 모델만의 거절(경로 없음·장비 미설정·계약 닫힘·포화 등)이면 같은 후보를 다음 순위로 다시 고른다(2026-11-01 순위 대체)
         // A workload choice may have left a durable waiting request. Do not spray this input across members.

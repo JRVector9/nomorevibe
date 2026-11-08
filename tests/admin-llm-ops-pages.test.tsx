@@ -143,6 +143,8 @@ describe("LLM 운영(/admin/models/llm) 그리기", () => {
     expect(html).not.toContain("한도 · 점유");
     expect(text(gpu)).toContain("점유 / 한도 2 / 5 ▲ 연결에 남은 옛 값 4 · 실제 적용 5 — 맞추기 →");
     expect(gpu).toContain('<span class="llm-chip-rank">2</span>1차 AI 검수');
+    // 장비 행이 있는 한도 칸 아래 — 그 장비 열의 칸 배분(step 3)으로
+    expect(gpu).toContain('href="/admin/models/allocation#alloc-gpu3090-qwen">작업별 칸 배분 →</a>');
     // 연결 표 — 머리 줄이 행과 같은 목록 테두리 안에 있고, 배정된 작업은 칸(llm-task) 단위 격자다
     expect(html).toMatch(/<section class="llm-conn-list"[^>]*><div class="llm-conn-head llm-conn-cols"/);
     expect(gpu).toMatch(/<span class="llm-chips">(<span class="llm-task"><a [^>]*class="llm-chip"[^]*?<\/a><\/span>)+<\/span>/);
