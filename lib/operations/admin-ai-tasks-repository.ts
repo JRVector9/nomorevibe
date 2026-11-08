@@ -20,7 +20,7 @@ import { openSecret, sealSecret, secretBoxReady } from "@/lib/security/secret-bo
 import {
   AI_CONNECTION_DELETE_AUDIT_ACTION, AI_CONNECTION_KEY_FILL_AUDIT_ACTION, AI_CONNECTION_MODEL_HIDE_AUDIT_ACTION, AI_CONNECTION_MODELS_AUDIT_ACTION, AI_CONNECTION_SAVE_AUDIT_ACTION, AI_TASK_AUDIT_ACTIONS,
   AI_TASK_MODELS_IMPORT_AUDIT_ACTION,
-  AI_TASK_MODELS_SAVE_AUDIT_ACTION, aiConnectionBaseUrl, aiConnectionHost, aiConnectionKeyAad, aiImportPlanDigestInput, aiRanksReadiness, aiTaskRankNotices,
+  AI_TASK_MODELS_SAVE_AUDIT_ACTION, aiConnectionBaseUrl, aiConnectionHost, aiTaskRanksUnread, aiConnectionKeyAad, aiImportPlanDigestInput, aiRanksReadiness, aiTaskRankNotices,
   aiRankSavedOptions, aiTaskRankOptions, aiTaskSlotDigestInput, buildAiImportPlan, validateAiTaskRanks,
   type AiConnectionInput, type AiConnectionView, type AiCurrentSlot, type AiImportPlan, type AiPolicyRoute, type AiRankChoice, type AiRankOption,
   type AiImportConnection, type AiRankReadiness, type AiReadinessInput, type AiTaskRankRow, type AiTaskRanksInput,
@@ -605,6 +605,34 @@ export async function saveAiTaskRanks(input: AiTaskRanksInput, actor: string): P
     }));
     logger.info("ai_tasks.ranks_saved", { actor, task: task.id, slot: input.slot, ranks: chosen.length, ...result.created });
     return { ok: true, revision: result.revision, warnings, created: result.created };
+  } catch (error) { return { ok: false, issues: [issueOf(error)] }; }
+}
+
+/**
+ * 실행 쪽이 읽지 않는 작업의 옛 순위 행 지우기(2026-11-08 사용자 결정 「1단계 배정 정리」). 실행 동작은 바뀌지 않는다 — 그 작업의 모델은 단계 풀·감사 설정에서 온다.
+ * 같은 칸 잠금(advisory) → 화면 판 compare-and-set → 그 (작업, 칸)의 행만 지움 → 순위 저장과 같은 감사 한 줄(reason: unread_records_cleared).
+ */
+export async function clearUnreadAiTaskRanks(input: { task: string; slot: number; revision: string }, actor: string): Promise<{ ok: true; removed: number } | { ok: false; issues: string[] }> {
+  if (!validActor(actor)) return { ok: false, issues: ["invalid_actor"] };
+  const task = aiTask(input.task);
+  if (!task || !Number.isSafeInteger(input.slot) || input.slot < 1 || input.slot > task.slots) return { ok: false, issues: ["ai_task_invalid:task"] };
+  if (!aiTaskRanksUnread(task.id)) return { ok: false, issues: ["ai_task_ranks_read"] };
+  try {
+    const removed = await onPrimary(() => db.transaction(async tx => {
+      if (!await writerSiteActive(tx)) throw new DrWriterFencedError("site_fenced");
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('ai_task_models'), hashtext(${`${task.id}#${input.slot}`}))`);
+      const before = (await tx.select().from(aiTaskModels).where(and(eq(aiTaskModels.task, task.id), eq(aiTaskModels.slot, input.slot)))
+        .orderBy(asc(aiTaskModels.rank))).map(rankRowOf);
+      if (aiTaskSlotRevision(before) !== input.revision) fail("ai_task_revision_mismatch");
+      if (!before.length) return 0;
+      await tx.delete(aiTaskModels).where(and(eq(aiTaskModels.task, task.id), eq(aiTaskModels.slot, input.slot)));
+      await tx.insert(operationsAudit).values(await adminAuditRow(actor, { action: AI_TASK_MODELS_SAVE_AUDIT_ACTION, target: `${task.id}#${input.slot}`,
+        detail: { task: task.id, slot: input.slot, revisionBefore: input.revision, revision: aiTaskSlotRevision([]), before: before.map(row => ({ ...row })), after: [],
+          reason: "unread_records_cleared" } }));
+      return before.length;
+    }));
+    logger.info("ai_tasks.unread_ranks_cleared", { actor, task: task.id, slot: input.slot, removed });
+    return { ok: true, removed };
   } catch (error) { return { ok: false, issues: [issueOf(error)] }; }
 }
 

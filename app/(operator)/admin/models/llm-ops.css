@@ -257,3 +257,7 @@
 .llm-ops .llm-filter.active { border-color: var(--blue); background: var(--blue-soft); color: var(--blue); font-weight: 650; }
 .llm-pager { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; }
 .llm-recent-note { font-size: calc(13px + var(--admin-font-delta, 0px)); }
+
+/* 옛 순위 기록(실행 안 함)·실제 출처 칩(2026-11-08) */
+.llm-chip[data-source="record"] { border-style: dashed; opacity: 0.72; }
+.llm-chip[data-source="current"] .llm-chip-rank { font-weight: 600; }

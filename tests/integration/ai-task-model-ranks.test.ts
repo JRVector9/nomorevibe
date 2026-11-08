@@ -246,6 +246,27 @@ describe("작업 ↔ 모델 순위 저장", () => {
     expect(await connections()).toEqual([]);
     expect((await audits("ai-connection-delete")).map(row => row.target)).toEqual(["엔진"]);
   });
+  it("2026-11-08 「기록 지우기」: 순위를 읽지 않는 작업의 옛 순위 행만 판을 맞춰 지우고, 순위를 읽는 작업은 거절한다", async () => {
+    const engine = await makeEngine();
+    const { clearUnreadAiTaskRanksAction } = await actions();
+    const { aiTaskSlotRevision, listAiTaskRows } = await import("@/lib/operations/admin-ai-tasks-repository");
+    await client`INSERT INTO ai_task_models (task, slot, rank, connection_id, model, updated_by) VALUES ('held-review-retry', 1, 1, ${engine.id}, 'Qwen-X', 'it'),
+      ('held-review-retry', 1, 2, ${engine.id}, 'Qwen-Y', 'it')`;
+    const rows = (await listAiTaskRows()).filter(row => row.task === "held-review-retry" && row.slot === 1);
+    expect(rows).toHaveLength(2);
+    expect((await clearUnreadAiTaskRanksAction(null, form({ task: "held-review-retry", slot: "1", revision: "0".repeat(64) })))?.issues)
+      .toEqual(["그 사이 이 줄이 바뀌었습니다. 새로고침한 뒤 다시 저장하세요."]);
+    expect(await rankRows()).toHaveLength(2);
+    expect(await clearUnreadAiTaskRanksAction(null, form({ task: "held-review-retry", slot: "1", revision: aiTaskSlotRevision(rows) })))
+      .toEqual({ ok: true, message: "옛 순위 기록 2개를 지웠습니다." });
+    expect(await rankRows()).toEqual([]);
+    const [audit] = await audits("ai-task-models-save");
+    expect(audit).toMatchObject({ target: "held-review-retry#1", ok: true, detail: { reason: "unread_records_cleared", after: [] } });
+    expect((audit.detail.before as unknown[]).length).toBe(2);
+    // 순위를 읽는 작업은 이 길로 지우지 않는다(바꾸기 서랍에서 바꾼다)
+    expect((await clearUnreadAiTaskRanksAction(null, form({ task: "first-review", slot: "1", revision: EMPTY_REVISION })))?.issues)
+      .toEqual(["실행 쪽이 이 작업의 순위를 읽습니다 — 옛 기록이 아니므로 「바꾸기」에서 바꾸세요."]);
+  });
   it("2026-11-08 모델 「삭제」: 쓰는 모델은 뺄 수 없고, 뺀 모델은 다시 읽어도 빠진 채 남으며 되돌릴 수 있다", async () => {
     const engine = await makeEngine();
     const { hideAiConnectionModelAction, saveAiConnectionAction } = await actions();

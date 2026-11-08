@@ -103,3 +103,8 @@
 .tk-other { display: grid; gap: 8px; margin-top: 8px; }
 .tk-section-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; font-size: calc(16px + var(--admin-font-delta, 0px)); font-weight: 600; }
 .tk-section-title .llm-muted { font-size: calc(13px + var(--admin-font-delta, 0px)); font-weight: 400; }
+
+/* 실행 쪽이 읽지 않는 작업의 옛 순위 기록 — 작업 이름 아래 한 줄 + 「기록 지우기」 */
+.tk-records { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; font-size: calc(12px + var(--admin-font-delta, 0px)); font-weight: 400; color: var(--fg-3, inherit); }
+.tk-records-form { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+.tk-records-done { font-size: calc(12px + var(--admin-font-delta, 0px)); font-weight: 400; }

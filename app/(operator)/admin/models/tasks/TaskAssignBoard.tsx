@@ -5,6 +5,7 @@ import { aiTask } from "@/lib/llm/ai-tasks";
 import type { FlowRankEditor, RankDeviceLimit } from "@/lib/operations/flow-rank-editor";
 import { ledgerModelText, type TaskAssignChoice, type TaskAssignRow, type TaskAssignView } from "@/lib/operations/llm-task-assign-view";
 import { RankDrawer } from "../../flow/RankDrawer";
+import { ClearRecordsButton } from "./ConnectionButtons";
 import { LevelBadge, LevelLegend, ObservedAt } from "../LlmOpsParts";
 import { modelPickerConnectionLabel, modelPickerModelLabel, modelPickerVisibleText } from "../model-picker-display";
 
@@ -82,7 +83,8 @@ const NON_LLM_KINDS: ReadonlySet<string> = new Set(["embedding", "rerank"]);
 const usesLlm = (row: TaskAssignView["rows"][number]) => !NON_LLM_KINDS.has(aiTask(row.task)?.kind ?? "chat");
 
 /** 작업 표 하나 — 묶음(group)마다 tbody. 「바꾸기」는 부모의 서랍을 연다. */
-function TaskTable({ rows, caption, editor, onChange }: { rows: TaskAssignView["rows"]; caption: string; editor: FlowRankEditor; onChange: (task: string) => void }) {
+function TaskTable({ rows, caption, editor, onChange, locked }: { rows: TaskAssignView["rows"]; caption: string; editor: FlowRankEditor; onChange: (task: string) => void;
+  locked: boolean }) {
   const groups = [...new Set(rows.map(row => row.group))];
   return <div className="tk-wrap">
       <table className="tk-table">
@@ -95,6 +97,10 @@ function TaskTable({ rows, caption, editor, onChange }: { rows: TaskAssignView["
             <th scope="row" className="tk-task" data-label="작업">
               <span className="tk-task-name">{row.label}</span>
               <span className="tk-mode" data-mode={row.mode ?? "unknown"}>{row.modeText}</span>
+              {row.records && <span className="tk-records" data-records={row.records.count}>
+                <span>옛 순위 기록 {row.records.count}개 · 실행 안 함</span>
+                {!locked && <ClearRecordsButton task={row.task} slot={row.slot} revision={row.records.revision} count={row.records.count} label={row.label} />}
+              </span>}
             </th>
             <SettingCells row={row} editor={editor} />
             <ActualCell row={row} editor={editor} />
@@ -130,13 +136,13 @@ export function TaskAssignBoard({ view, editor, devices, lockReason }: { view: T
       <ObservedAt label="장부 관측" at={view.observedAt} />
     </div>
     {view.errors.map(error => <p key={error} role="alert" className="llm-notice">{error}</p>)}
-    <TaskTable rows={llmRows} caption="LLM 작업별 설정 순위와 최근 1시간 실제 호출" editor={editor} onChange={setChanging} />
+    <TaskTable rows={llmRows} caption="LLM 작업별 설정 순위와 최근 1시간 실제 호출" editor={editor} onChange={setChanging} locked={!!lockReason} />
     <LevelLegend />
     <p className="llm-empty">「지금 실제」는 장부의 최근 1시간 정산(성공·실패·판정 없음)을 모델별로 센 것입니다. 1순위가 0건인데 다른 모델이 처리했거나, 1순위가 아닌 모델이 절반 이상을 처리했거나,
       순위에 없는 모델이 불렸으면 「설정과 다름」으로 알립니다. 상태 옆 회색 글자가 까닭입니다.</p>
     {otherRows.length > 0 && <section className="tk-other" id="tasks-non-llm" aria-labelledby="tasks-non-llm-title">
       <h2 id="tasks-non-llm-title" className="tk-section-title">LLM이 아닌 모델 <span className="llm-muted">검색 벡터·재정렬 — 대화형 LLM이 아니라 임베딩·재정렬 엔진이 처리합니다</span></h2>
-      <TaskTable rows={otherRows} caption="LLM이 아닌 모델(벡터·재정렬)을 쓰는 작업의 설정 순위와 최근 1시간 실제 호출" editor={editor} onChange={setChanging} />
+      <TaskTable rows={otherRows} caption="LLM이 아닌 모델(벡터·재정렬)을 쓰는 작업의 설정 순위와 최근 1시간 실제 호출" editor={editor} onChange={setChanging} locked={!!lockReason} />
     </section>}
     {changing && <RankDrawer key={changing} editor={editor} lines={lines} title={aiTask(changing)?.label ?? changing} secondWaiting={null}
       onClose={() => setChanging(null)} fullViewHref={null} devices={devices} lockReason={lockReason} />}

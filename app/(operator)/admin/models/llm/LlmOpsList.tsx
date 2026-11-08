@@ -22,8 +22,10 @@ function FixLink({ fix, level, className, title, children }: { fix: LlmFix | nul
 }
 
 function TaskChip({ chip }: { chip: LlmTaskChip }) {
-  const rank = chip.rank !== null ? String(chip.rank) : chip.source === "pool" ? "분산" : "설정";
-  const title = `${chip.label} · ${chip.rank !== null ? `${chip.rank}순위` : chip.source === "pool" ? "작업 분산 구성원" : chip.source === "classifier" ? "분류 설정" : "정책 경로·계약"} · ${chip.model}${chip.enabled ? "" : " · 순위 꺼짐"}${chip.paused ? " · 잡 일시중지" : ""}`;
+  // 옛 = 실행 쪽이 읽지 않는 작업의 옛 순위 행(실행 안 함), 실제 = 그 작업의 실제 출처(단계 풀·감사 설정·등록부)
+  const rank = chip.source === "record" ? "옛" : chip.source === "current" ? "실제" : chip.rank !== null ? String(chip.rank) : chip.source === "pool" ? "분산" : "설정";
+  const title = `${chip.label} · ${chip.source === "record" ? `옛 ${chip.rank}순위 기록 — 실행 쪽이 읽지 않음(작업 배정에서 「기록 지우기」)` : chip.source === "current" ? "실제 출처(단계 풀·감사 설정)"
+    : chip.rank !== null ? `${chip.rank}순위` : chip.source === "pool" ? "작업 분산 구성원" : chip.source === "classifier" ? "분류 설정" : "정책 경로·계약"} · ${chip.model}${chip.enabled ? "" : " · 순위 꺼짐"}${chip.paused ? " · 잡 일시중지" : ""}`;
   // 한 작업 = 표의 한 칸(순위 칸 너비 고정 · 이름). 잡 중지 표시는 같은 칸 안에 붙여 다른 칸으로 밀리지 않게 한다.
   return <span className="llm-task">
     <Link prefetch={false} href={chip.href} className="llm-chip" data-source={chip.source} data-off={chip.enabled ? undefined : "true"} data-paused={chip.paused ? "true" : undefined} title={title}>
@@ -56,7 +58,7 @@ const lineNote = (line: ModelLine) => [line.ids.length > 1 || line.ids[0] !== li
 function ModelsBlock({ row, readOnly }: { row: LlmOpsRow; readOnly: boolean }) {
   const { connection } = row;
   const read = kst(row.models.readAt);
-  const used = row.tasks.some(chip => chip.source === "rank" || chip.source === "pool");
+  const used = row.tasks.some(chip => chip.source === "rank" || chip.source === "pool" || chip.source === "record");
   const lines = modelLines(row), listed = lines.filter(line => line.listed).length;
   return <section className="llm-models" aria-label={`${row.label} 모델 목록`}>
     <h3>{connection?.kind === "api" ? "이 서버의 모델" : "모델"} · {listed}개{read ? ` · ${read} 읽음` : ""}</h3>

@@ -26,7 +26,7 @@ vi.mock("@/lib/security/secret-box", () => ({ secretBoxReady: () => true }));
 vi.mock("@/lib/db", () => ({ db: { execute: vi.fn() }, onPrimary: (run: () => unknown) => run() }));
 vi.mock("@/lib/operations/conveyor", () => ({ readConveyor: vi.fn() }));
 vi.mock("@/app/(operator)/admin/models/tasks/actions", () => ({ saveAiTaskRanksAction: vi.fn(), applyAiTaskImportAction: vi.fn(), saveAiConnectionAction: vi.fn(),
-  readAiConnectionModelsAction: vi.fn(), deleteAiConnectionAction: vi.fn(), hideAiConnectionModelAction: vi.fn() }));
+  readAiConnectionModelsAction: vi.fn(), deleteAiConnectionAction: vi.fn(), hideAiConnectionModelAction: vi.fn(), clearUnreadAiTaskRanksAction: vi.fn() }));
 vi.mock("@/app/(operator)/admin/models/tasks/execution-actions", () => ({ saveTaskExecutionAction: vi.fn() }));
 vi.mock("@/app/(operator)/admin/models/devices/actions", () => ({ saveCapacityDevice: vi.fn() }));
 

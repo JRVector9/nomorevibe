@@ -2,7 +2,7 @@ import { aiTaskReasoningEfforts } from "@/lib/llm/ai-task-reasoning";
 import type { CliCatalogMetadata } from "@/lib/llm/cli-catalog-metadata";
 import { OPENCODE_NATIVE_TASK_ROUTES, aiTaskUsesCliEngine, cliEngineEndpoint, cliEngineRevision, type CliEngineSource } from "@/lib/llm/cli-engine-config";
 import { AI_TASK_EXECUTION_SAVE_AUDIT_ACTION } from "@/lib/llm/ai-task-execution-config";
-import { AI_CLI_TOOL_LABELS, AI_CLI_TOOL_PROVIDERS, AI_CLI_TOOLS, AI_TASK_RANK_MAX, AI_TASKS, aiTask, aiTaskAccepts, aiTaskAliasIdentity, aiTaskSlotLabel,
+import { AI_CLI_TOOL_LABELS, AI_CLI_TOOL_PROVIDERS, AI_CLI_TOOLS, AI_TASK_RANK_MAX, AI_TASKS, aiTask, aiTaskAccepts, aiTaskAliasIdentity, aiTaskSlotLabel, isAiLiveTask,
   type AiCliTool, type AiTaskDef } from "@/lib/llm/ai-tasks";
 
 /**
@@ -63,6 +63,11 @@ export const AI_TASK_MODELS_IMPORT_AUDIT_ACTION = "ai-task-models-import";
 export const AI_CONNECTION_KEY_FILL_AUDIT_ACTION = "ai-connection-key-fill";
 export const AI_TASK_AUDIT_ACTIONS = Object.freeze([AI_CONNECTION_SAVE_AUDIT_ACTION, AI_CONNECTION_MODELS_AUDIT_ACTION, AI_CONNECTION_DELETE_AUDIT_ACTION, AI_CONNECTION_MODEL_HIDE_AUDIT_ACTION,
   AI_TASK_MODELS_SAVE_AUDIT_ACTION, AI_TASK_MODELS_IMPORT_AUDIT_ACTION, AI_CONNECTION_KEY_FILL_AUDIT_ACTION, AI_TASK_EXECUTION_SAVE_AUDIT_ACTION] as const);
+/**
+ * 실행 쪽이 1·2·3순위를 읽지 않는 작업인가(2026-11-08). 이 작업의 순위 행은 실행에 쓰이지 않는 옛 기록이다 — 실제 모델은 단계 풀·감사 설정·등록부에서 온다
+ * (admin-ai-task-current). 순위 저장도 막혀 있어(saveAiTaskRanks) 지우는 길은 clearUnreadAiTaskRanks 뿐이다. 검색 벡터·재정렬은 검색 설정이 순위 행을 읽으므로 아니다.
+ */
+export const aiTaskRanksUnread = (taskId: string): boolean => !isAiLiveTask(taskId) && !["embedding", "rerank"].includes(aiTask(taskId)?.kind ?? "");
 export const AI_TASK_IMPORT_CONFIRM = "가져오기";
 export const AI_TASKS_PAGE = "/admin/models/tasks";
 /** 키 암호문의 AAD — 행 id 에 묶는다(다른 행으로 옮긴 암호문은 열리지 않는다). */
@@ -770,6 +775,7 @@ const CODE_MESSAGES: Readonly<Record<string, string>> = {
   ai_connection_model_in_use: "이 모델을 쓰는 순위나 작업 분산 구성원이 있어 목록에서 뺄 수 없습니다. 먼저 작업 배정에서 바꾸세요.",
   ai_connection_model_missing: "이 연결의 목록에 없는 모델입니다. 새로고침하세요.",
   ai_connection_model_invalid: "모델 이름이 올바르지 않습니다.",
+  ai_task_ranks_read: "실행 쪽이 이 작업의 순위를 읽습니다 — 옛 기록이 아니므로 「바꾸기」에서 바꾸세요.",
   ai_connection_models_too_soon: "1분 안에 이미 목록을 읽었습니다. 잠시 뒤 다시 읽으세요.",
   ai_connection_not_api: "CLI 연결은 /models 목록이 없습니다. CLI 모델 이름을 직접 적으세요.",
   ai_connection_cli_host_unavailable: "M3 OpenCode에 연결하지 못해 저장하지 않았습니다. 기존 선택은 유지됩니다. 실제 목록을 다시 조회하세요.",

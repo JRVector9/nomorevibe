@@ -1,7 +1,7 @@
 "use client";
 import { useActionState } from "react";
 import { buttonSmall } from "../../settings/Switch";
-import { deleteAiConnectionAction, hideAiConnectionModelAction, readAiConnectionModelsAction, type AiTaskActionState } from "./actions";
+import { clearUnreadAiTaskRanksAction, deleteAiConnectionAction, hideAiConnectionModelAction, readAiConnectionModelsAction, type AiTaskActionState } from "./actions";
 
 /** 「다시 읽기」 — 저장된 주소·키로 GET /models(1분에 한 번). 결과를 그 자리에 보인다. */
 export function RereadModelsButton({ id }: { id: string }) {
@@ -28,6 +28,18 @@ export function HideModelButton({ id, version, models, label, hidden }: { id: st
       title={hidden ? "이 연결의 모델 목록과 순위 선택지에서 뺍니다. 서버 쪽 모델은 그대로이며 「숨긴 모델」에서 되돌릴 수 있습니다." : undefined}>
       {pending ? "…" : hidden ? "삭제" : "되돌리기"}</button>
     {state?.ok && <span role="status" className="llm-muted">{state.message}</span>}
+    {state?.issues?.map(text => <span key={text} role="alert" className="text-red-600">{text}</span>)}
+  </form>;
+}
+
+/** 「기록 지우기」 — 실행 쪽이 읽지 않는 작업의 옛 순위 행(실행 안 함)을 지운다. 실행 동작은 바뀌지 않는다. */
+export function ClearRecordsButton({ task, slot, revision, count, label }: { task: string; slot: number; revision: string; count: number; label: string }) {
+  const [state, action, pending] = useActionState<AiTaskActionState, FormData>(clearUnreadAiTaskRanksAction, null);
+  if (state?.ok) return <span role="status" className="tk-records-done">{state.message}</span>;
+  return <form action={action} className="tk-records-form">
+    <input type="hidden" name="task" value={task} /><input type="hidden" name="slot" value={slot} /><input type="hidden" name="revision" value={revision} />
+    <button type="submit" disabled={pending} className="llm-model-hide" aria-label={`${label} 옛 순위 기록 ${count}개 지우기`}
+      title="실행 쪽이 이 작업의 순위를 읽지 않습니다. 남은 순위 행은 실행에 쓰이지 않는 기록이라 지워도 동작은 바뀌지 않습니다.">{pending ? "지우는 중…" : "기록 지우기"}</button>
     {state?.issues?.map(text => <span key={text} role="alert" className="text-red-600">{text}</span>)}
   </form>;
 }

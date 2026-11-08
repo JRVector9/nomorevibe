@@ -1,6 +1,6 @@
 import { AI_TASK_GROUP_LABELS, type AiTaskDef, type AiTaskGroup } from "@/lib/llm/ai-tasks";
 import { aiTaskWorkloadPoolApiOnly } from "@/lib/llm/ai-task-execution-config";
-import { aiConnectionHost, aiConnectionLabel, aiRankPendingText, aiSameUnderlyingModel, type AiConnectionView, type AiCurrentUse } from "./admin-ai-tasks";
+import { aiConnectionHost, aiConnectionLabel, aiRankPendingText, aiSameUnderlyingModel, aiTaskRanksUnread, type AiConnectionView, type AiCurrentUse } from "./admin-ai-tasks";
 import type { AiTaskExecutionAdminView } from "./admin-ai-task-execution";
 import type { AiTaskSlotView } from "./admin-ai-tasks-repository";
 import type { AdminModelsObservation } from "./admin-models-observation";
@@ -14,7 +14,8 @@ import { llmReasonShort, observationReadable, RUNTIME_FRESH_MS, taskOfRoute, UNR
  * 읽지 못한 값은 0 으로 꾸미지 않는다(「확인 불가」).
  */
 
-export type TaskAssignSlotInput = Pick<AiTaskSlotView, "task" | "slot" | "label" | "rows" | "options" | "current" | "sameAsCurrent" | "readiness" | "live" | "runtime">;
+export type TaskAssignSlotInput = Pick<AiTaskSlotView, "task" | "slot" | "label" | "rows" | "options" | "current" | "sameAsCurrent" | "readiness" | "live" | "runtime">
+  & Partial<Pick<AiTaskSlotView, "revision">>;
 export type TaskAssignInput = Readonly<{
   now: string;
   observation: AdminModelsObservation;
@@ -61,6 +62,8 @@ export type TaskAssignRow = Readonly<{
   /** 작업 분산 중일 때 보관된 대체 순위(지금은 쓰지 않음 — 대체 실행으로 돌리면 쓴다) */
   archived: TaskAssignChoice[];
   actual: TaskAssignActual; status: TaskAssignStatus; paused: boolean;
+  /** 실행 쪽이 순위를 읽지 않는 작업에 남은 옛 순위 행(실행 안 함) — 「기록 지우기」가 그 판(revision)으로 지운다 */
+  records: Readonly<{ count: number; revision: string }> | null;
 }>;
 export type TaskAssignView = Readonly<{
   readable: boolean; observedAt: string | null; rows: TaskAssignRow[];
@@ -292,7 +295,8 @@ export function buildTaskAssignView(input: TaskAssignInput): TaskAssignView {
       group: task.group, groupLabel: AI_TASK_GROUP_LABELS[task.group], mode, modeText, choices, merged: mode !== "fallback", source,
       archived: mode === "workload_pool" ? ranks : [],
       actual: { readable, tracked, settled: readable && tracked ? total : null, failed: readable && tracked ? failed : null, calls, empty, warnings, shared: multi, compared },
-      status, paused: !!paused };
+      status, paused: !!paused,
+      records: aiTaskRanksUnread(task.id) && slot.rows.length > 0 && slot.revision ? { count: slot.rows.length, revision: slot.revision } : null };
   });
 
   const counts: Record<LlmOpsLevel, number> = { ok: 0, warn: 0, bad: 0, idle: 0, unknown: 0 };
