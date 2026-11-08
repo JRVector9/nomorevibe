@@ -4,7 +4,7 @@ vi.mock("@/app/(operator)/admin/models/tasks/actions", () => ({ saveAiTaskRanksA
 import { RankSelects } from "@/app/(operator)/admin/models/RankSelects";
 import { RankDrawer } from "@/app/(operator)/admin/flow/RankDrawer";
 import { modelPickerConnectionDevice, modelPickerConnectionLabel, modelPickerConnectionModels, modelPickerChoiceKey,
-  modelPickerVisibleText, presentPickerOptions } from "@/app/(operator)/admin/models/model-picker-display";
+  modelPickerModelGroups, modelPickerModelLabel, modelPickerVisibleText, presentPickerOptions } from "@/app/(operator)/admin/models/model-picker-display";
 import { aiTask } from "@/lib/llm/ai-tasks";
 import { AI_RANK_SLOT_NAMES, aiTaskRankOptions, type AiConnectionView, type AiTaskRankRow } from "@/lib/operations/admin-ai-tasks";
 import { buildFlowRankEditor } from "@/lib/operations/flow-rank-editor";
@@ -58,4 +58,23 @@ it("renders the same curated picker inside the flow drawer and keeps stored mode
   expect(html).toContain('name="rank2Model" value="supa"');
   expect(editor.connections[0].label).toBe("m1-qwen");
   expect(editor.lines.find(row => row.task === "first-review")?.saved[1].model).toBe("supa");
+});
+
+it("2026-11-08: M1 의 새 목록 이름 m1-gemma 도 Gemma 4 26B 한 줄 — 옛 이름으로 저장된 순위는 폼 값 그대로, 새로 고르면 지금 목록 이름", () => {
+  const renamed = { ...make(m1.id, "m1-qwen", "https://m1-studio.tail02799e.ts.net/v1", ["m1-gemma"]), label: "m1-gemma" };
+  expect(modelPickerModelLabel(renamed, "m1-gemma")).toBe("Gemma 4 26B");
+  expect(modelPickerModelLabel(renamed, GEMMA)).toBe("Gemma 4 26B");
+  expect(modelPickerConnectionModels(renamed)).toEqual([{ id: "m1-gemma", maxModelLen: 131072 }]);
+  const task = aiTask("product-translate")!;
+  const offered = aiTaskRankOptions(task, [renamed], [{ connectionId: renamed.id, model: GEMMA }]);
+  expect(offered.map(row => row.model)).toEqual(["m1-gemma", GEMMA]);
+  expect(presentPickerOptions(offered, [renamed], null).map(row => [row.model, row.text])).toEqual([["m1-gemma", "Gemma 4 26B"]]);
+  expect(presentPickerOptions(offered, [renamed], { provider: renamed.id, model: GEMMA }).map(row => [row.model, row.text])).toEqual([[GEMMA, "Gemma 4 26B"]]);
+  expect(modelPickerChoiceKey({ provider: renamed.id, model: "m1-gemma" }, [renamed])).toBe(modelPickerChoiceKey({ provider: renamed.id, model: GEMMA }, [renamed]));
+});
+it("2026-11-08: 같은 모델의 별칭만 한 줄로 묶는다 — Supa 두 이름·M1 Gemma 두 이름, 다른 연결의 다른 모델은 그대로", () => {
+  expect(modelPickerModelGroups(supa, ["supa", SUPA])).toEqual([{ label: SUPA, ids: ["supa", SUPA] }]);
+  expect(modelPickerModelGroups(m1, ["m1-gemma", GEMMA, "auto"])).toEqual([{ label: "Gemma 4 26B", ids: ["m1-gemma", GEMMA] }, { label: "auto", ids: ["auto"] }]);
+  const other = make("33333333-3333-4333-8333-333333333333", "gpu", "http://gpu.invalid/v1", ["supa", SUPA]);
+  expect(modelPickerModelGroups(other, ["supa", SUPA])).toEqual([{ label: "supa", ids: ["supa"] }, { label: SUPA, ids: [SUPA] }]);
 });

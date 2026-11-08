@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { unavailableAdminModels } from "@/lib/operations/admin-models-observation";
-import { GPU, LLM_NOW, llmConnections, llmConveyor, llmObservation, llmRankRows, llmRuntime, M1, OPENCODE } from "./fixtures/llm-ops";
+import { GPU, LLM_NOW, llmConnections, llmConveyor, llmObservation, llmRankRows, llmRuntime, M1, OPENCODE, SUPA as SUPA_ID } from "./fixtures/llm-ops";
 
 const mocks = vi.hoisted(() => ({
   observation: vi.fn(), conveyor: vi.fn(), jobs: vi.fn(), connections: vi.fn(), rows: vi.fn(), runtime: vi.fn(), executions: vi.fn(), opsStates: vi.fn(),
@@ -50,6 +50,29 @@ beforeEach(() => {
     classificationContracts: [{ provider: "codex-cli", cliVersion: "codex-cli 0.98.0" }] } }]);
 });
 const text = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+
+describe("LLM 운영 — 같은 모델의 별칭은 한 줄(2026-11-08)", () => {
+  it("Supa 의 supa·Inferact 두 이름과 M1 Gemma 의 옛·새 이름을 한 줄로 그리고 칩을 모은다", async () => {
+    const QWEN = "Inferact/Qwen3.8-27B-NVFP4", GEMMA = "mlx-community--gemma-4-26b-a4b-it-4bit";
+    mocks.connections.mockResolvedValue(llmConnections.map(row => row.id === SUPA_ID ? { ...row, models: [{ id: "supa", maxModelLen: 131072 }, { id: QWEN, maxModelLen: 131072 }] }
+      : row.id === M1 ? { ...row, label: "m1-gemma", baseUrl: "https://m1-studio.tail02799e.ts.net/v1", host: "m1-studio.tail02799e.ts.net",
+        models: [{ id: "m1-gemma", maxModelLen: null }], modelsError: null, modelsReadAt: LLM_NOW } : row));
+    mocks.rows.mockResolvedValue([...llmRankRows, { task: "product-translate", slot: 1, rank: 1, connectionId: M1, model: GEMMA, options: {}, enabled: true }]);
+    const html = renderToStaticMarkup(await LlmOpsSlot({ readOnly: false, editId: null, adding: false }));
+    const article = (id: string) => html.match(new RegExp(`<article id="conn-${id}"[^]*?</article>`))![0];
+    const lines = (id: string) => [...article(id).matchAll(/<li [^>]*data-model-line="([^"]*)"/g)].map(match => match[1]);
+    const supa = article(SUPA_ID);
+    expect(lines(SUPA_ID)).toEqual([`supa ${QWEN}`]);
+    expect(supa).toContain("이 서버의 모델 · 1개");
+    expect(supa).not.toContain("배정 없음");
+    expect(text(supa)).toContain(`이름 supa · ${QWEN}`);
+    // 순위는 옛 이름(GEMMA)으로 저장돼 있고 서버 목록은 새 이름(m1-gemma) — 한 줄(Gemma 4 26B)에 번역 칩이 붙는다
+    expect(lines(M1)).toEqual([`m1-gemma ${GEMMA}`]);
+    expect(text(article(M1))).toContain("Gemma 4 26B");
+    expect(article(M1)).toContain("이 서버의 모델 · 1개");
+    expect(article(M1)).not.toContain("배정 없음");
+  });
+});
 
 describe("대시보드(/admin/models) 그리기", () => {
   it("판단 띠·접수 한 곳·KPI 4·먼저 할 일 3·장비 점유 막대·단계 띠를 실제 읽기에서 그린다", async () => {
@@ -126,7 +149,7 @@ describe("LLM 운영(/admin/models/llm) 그리기", () => {
     expect(gpu).toContain(">저장하고 모델 읽기</button>");
     expect(gpu).toContain("이 서버의 모델 · 1개");
     // 모델 목록도 표처럼 — 모델 이름 옆 작업 격자, 칸 하나에 순위·이름(2026-11-08)
-    expect(gpu).toMatch(/<code>qwen3.8-flash-next<\/code><span class="llm-chips"><span class="llm-task"><a [^>]*class="llm-chip"/);
+    expect(gpu).toMatch(/<span class="llm-model-name"><code>qwen3.8-flash-next<\/code><\/span><span class="llm-chips"><span class="llm-task"><a [^>]*class="llm-chip"/);
     // 닫힌 다른 행, 「+ 연결 추가」는 닫혀 있다
     expect(html).toContain('<details class="llm-add" id="connection-new">');
     const added = renderToStaticMarkup(await LlmOpsSlot({ readOnly: false, editId: null, adding: true }));

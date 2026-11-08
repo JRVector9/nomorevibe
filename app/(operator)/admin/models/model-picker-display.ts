@@ -5,6 +5,8 @@ export type PickerConnection = Pick<AiConnectionView, "id" | "kind" | "cliTool">
 type Choice = { provider: string; model: string };
 type Option = Choice & { label: string; group?: string; text?: string };
 const GEMMA = "mlx-community--gemma-4-26b-a4b-it-4bit";
+/** M1 이 내보내는 Gemma 4 26B 의 이름들 — 2026-11-08 M1 서버가 목록 이름을 m1-gemma 로 바꿨다(옛 이름은 저장된 순위·계약에 남아 있을 수 있다). */
+const GEMMA_NAMES: ReadonlySet<string> = new Set([GEMMA, "m1-gemma"]);
 const SUPA = "Inferact/Qwen3.8-27B-NVFP4";
 const m1 = (connection: PickerConnection) => connection.kind === "api" && connection.deviceId === "m1-qwen"
   && connection.baseUrl === "https://m1-studio.tail02799e.ts.net/v1";
@@ -18,7 +20,7 @@ export function modelPickerConnectionDevice(connection: PickerConnection): strin
   return m1(connection) ? "M1 Studio" : connection.deviceId ?? "";
 }
 export function modelPickerModelLabel(connection: PickerConnection, model: string): string {
-  return m1(connection) && model === GEMMA ? "Gemma 4 26B" : supa(connection) && model === "supa" ? SUPA : model;
+  return m1(connection) && GEMMA_NAMES.has(model) ? "Gemma 4 26B" : supa(connection) && model === "supa" ? SUPA : model;
 }
 /** Existing server-generated summaries are text only; never apply this to a form field or a stored record. */
 export function modelPickerVisibleText(text: string, connections: readonly PickerConnection[]): string {
@@ -27,15 +29,29 @@ export function modelPickerVisibleText(text: string, connections: readonly Picke
 export function modelPickerConnectionModels(connection: PickerConnection): AiConnectionView["models"] {
   const models = connection.models ?? null;
   if (models === null) return null;
-  if (m1(connection)) return models.filter(model => model.id === GEMMA);
+  if (m1(connection)) return models.filter(model => GEMMA_NAMES.has(model.id)).slice(0, 1);
   if (supa(connection) && models.some(model => model.id === SUPA)) return models.filter(model => model.id !== "supa");
   return models;
+}
+
+/**
+ * 한 연결의 모델 이름들을 화면 이름이 같은 것끼리 한 줄로 묶는다(처음 나온 자리 순서). 증명된 별칭(Supa 의 supa·Inferact 두 이름, M1 Gemma 의 옛·새 이름)만
+ * 같은 화면 이름이 되므로 다른 모델은 합쳐지지 않는다. 표시만 — 저장된 목록·순위의 이름은 그대로다.
+ */
+export function modelPickerModelGroups(connection: PickerConnection, ids: readonly string[]): { label: string; ids: string[] }[] {
+  const groups = new Map<string, string[]>();
+  for (const id of ids) {
+    const label = modelPickerModelLabel(connection, id), members = groups.get(label);
+    if (!members) groups.set(label, [id]); else if (!members.includes(id)) members.push(id);
+  }
+  return [...groups].map(([label, members]) => ({ label, ids: members }));
 }
 
 /** The proven aliases share one engine. Picker display identity only; domain voting identities are unchanged. */
 export function modelPickerChoiceKey(choice: Choice, connections: readonly PickerConnection[]): string {
   const connection = connections.find(entry => entry.id === choice.provider);
-  const model = connection && supa(connection) && choice.model === "supa" ? SUPA : choice.model;
+  const model = connection && supa(connection) && choice.model === "supa" ? SUPA
+    : connection && m1(connection) && GEMMA_NAMES.has(choice.model) ? GEMMA : choice.model;
   return JSON.stringify([choice.provider, model]);
 }
 
@@ -72,8 +88,16 @@ export function presentPickerOptions<T extends Option>(options: readonly T[], co
       && !/^deepseek(?:[-_.:]|$)/i.test(option.model.slice(option.model.lastIndexOf("/") + 1))
       && !(current?.provider === option.provider && current.model === option.model)) continue;
     if (m1(connection)) {
-      if (option.model !== GEMMA) continue;
-      const grouped = withPickerGroup(option, connection, connections, true);
+      if (!GEMMA_NAMES.has(option.model)) continue;
+      // Gemma 의 두 이름은 한 줄로 — 고른 값이 있으면 그 이름(폼 값 그대로), 없으면 지금 서버 목록에 있는 이름
+      const wanted = current?.provider === option.provider && GEMMA_NAMES.has(current.model) ? current.model : null;
+      const selected = (wanted ? options.find(entry => entry.provider === option.provider && entry.model === wanted) : undefined)
+        ?? options.find(entry => entry.provider === option.provider && GEMMA_NAMES.has(entry.model) && !("saved" in entry && entry.saved))
+        ?? option;
+      const key = modelPickerChoiceKey(selected, connections);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const grouped = withPickerGroup(selected, connection, connections, true);
       result.push({ ...grouped, text: "Gemma 4 26B", label: "M1 Studio · Gemma 4 26B" });
       continue;
     }

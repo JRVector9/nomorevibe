@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import type { LlmFix, LlmFixField, LlmOpsLevel, LlmOpsRow, LlmOpsView, LlmTaskChip } from "@/lib/operations/llm-ops-view";
 import { MODEL_REQUEST_REVIEW_HREF } from "../ModelCallsPanel";
 import { LevelBadge, LevelLegend, ObservedAt } from "../LlmOpsParts";
-import { modelPickerModelLabel } from "../model-picker-display";
+import { modelPickerModelGroups } from "../model-picker-display";
 import { DeleteConnectionButton, RereadModelsButton } from "../tasks/ConnectionButtons";
 import { ConnectionForm, type ConnectionLimitField } from "../tasks/ConnectionForm";
 
@@ -33,18 +33,39 @@ function TaskChip({ chip }: { chip: LlmTaskChip }) {
   </span>;
 }
 
-const modelLabel = (row: LlmOpsRow, id: string) => row.connection ? modelPickerModelLabel(row.connection, id) : id;
+type ModelLine = { label: string; ids: string[]; chips: LlmTaskChip[]; listed: boolean };
+/**
+ * 연결의 모델 줄(2026-11-08). 같은 모델의 별칭(Supa 두 이름·M1 Gemma 옛·새 이름)은 한 줄로 합치고 칩도 모은다 — 전에는 같은 이름이 두 줄로 나와
+ * 한 줄은 「배정 없음」이었다. 순위가 가리키는데 지금 서버 목록에 없는 모델도 줄로 남긴다(칩이 사라지지 않게).
+ */
+function modelLines(row: LlmOpsRow): ModelLine[] {
+  const listed = new Set(row.models.ids);
+  const ids = [...row.models.ids, ...Object.keys(row.modelTasks).filter(id => !listed.has(id))];
+  const groups = row.connection ? modelPickerModelGroups(row.connection, ids) : ids.map(id => ({ label: id, ids: [id] }));
+  return groups.map(group => {
+    const seen = new Set<string>();
+    const chips = group.ids.flatMap(id => row.modelTasks[id] ?? []).filter(chip => !seen.has(chip.key) && Boolean(seen.add(chip.key)));
+    return { label: group.label, ids: group.ids, chips, listed: group.ids.some(id => listed.has(id)) };
+  });
+}
+const listedLines = (row: LlmOpsRow) => modelLines(row).filter(line => line.listed);
+/** 화면 이름과 다른 실제 이름(별칭)·목록에 없음을 줄 아래 작게 */
+const lineNote = (line: ModelLine) => [line.ids.length > 1 || line.ids[0] !== line.label ? `이름 ${line.ids.join(" · ")}` : null,
+  line.listed ? null : "지금 서버 목록에 없음"].filter(Boolean).join(" · ");
 
 function ModelsBlock({ row, readOnly }: { row: LlmOpsRow; readOnly: boolean }) {
   const { connection } = row;
   const read = kst(row.models.readAt);
   const used = row.tasks.some(chip => chip.source === "rank" || chip.source === "pool");
+  const lines = modelLines(row), listed = lines.filter(line => line.listed).length;
   return <section className="llm-models" aria-label={`${row.label} 모델 목록`}>
-    <h3>{connection?.kind === "api" ? "이 서버의 모델" : "모델"} · {row.models.ids.length}개{read ? ` · ${read} 읽음` : ""}</h3>
+    <h3>{connection?.kind === "api" ? "이 서버의 모델" : "모델"} · {listed}개{read ? ` · ${read} 읽음` : ""}</h3>
     {row.models.error && <p className="llm-notice">마지막 목록 오류: {row.models.error}</p>}
-    {row.models.ids.length ? <ul>{row.models.ids.map(id => <li key={id}><code>{modelLabel(row, id)}</code>
-      {(row.modelTasks[id] ?? []).length ? <span className="llm-chips">{(row.modelTasks[id] ?? []).map(chip => <TaskChip key={chip.key} chip={chip} />)}</span>
-        : <span className="llm-muted">배정 없음</span>}</li>)}</ul>
+    {lines.length ? <ul>{lines.map(line => { const note = lineNote(line);
+      return <li key={line.ids.join("\u0000")} data-model-line={line.ids.join(" ")}><span className="llm-model-name"><code>{line.label}</code>
+        {note && <span className="llm-muted llm-model-note">{note}</span>}</span>
+      {line.chips.length ? <span className="llm-chips">{line.chips.map(chip => <TaskChip key={chip.key} chip={chip} />)}</span>
+        : <span className="llm-muted">배정 없음</span>}</li>; })}</ul>
       : <p className="llm-empty">{connection?.kind === "api" ? "아직 읽은 모델이 없습니다 — 주소·키를 확인하고 저장하거나 다시 읽으세요." : "적힌 모델이 없습니다."}</p>}
     <p className="llm-empty">모델 옆 칩은 그 모델을 쓰는 작업과 순위입니다. 누르면 작업 배정으로 이동합니다.</p>
     {connection && !readOnly && <div className="llm-edit-links">
@@ -74,7 +95,7 @@ function ConnectionMeta({ row }: { row: LlmOpsRow }) {
 function ConnectionRow({ row, view, secretBox, readOnly, open, fix }: { row: LlmOpsRow; view: LlmOpsView; secretBox: boolean; readOnly: boolean; open: boolean;
   fix: LlmFixField | null }) {
   const { capacity, status } = row;
-  const first = row.models.ids[0];
+  const lines = listedLines(row), first = lines[0];
   return <article id={row.anchor} className="llm-conn llm-conn-cols" data-source={row.source} data-row={row.key}>
     <div className="llm-conn-grid">
       <div className="llm-cell llm-cell-wide">
@@ -84,8 +105,8 @@ function ConnectionRow({ row, view, secretBox, readOnly, open, fix }: { row: Llm
         {!row.enabled && <LevelBadge level="idle">꺼짐</LevelBadge>}
       </div>
       <div className="llm-cell"><span className="llm-cell-label">모델</span>
-        {first ? <span><code>{modelLabel(row, first)}</code>{row.models.ids.length > 1 && <span className="llm-muted"> 외 {row.models.ids.length - 1}</span>}</span> : <span className="llm-muted">없음</span>}
-        <span className="llm-muted">{row.models.title}</span>
+        {first ? <span><code>{first.label}</code>{lines.length > 1 && <span className="llm-muted"> 외 {lines.length - 1}</span>}</span> : <span className="llm-muted">없음</span>}
+        <span className="llm-muted">{row.connection?.kind === "api" && row.connection.models ? `${lines.length}개` : row.models.title}</span>
       </div>
       <div className="llm-cell"><span className="llm-cell-label">점유 / 한도</span>
         {capacity ? <>
@@ -136,7 +157,7 @@ export function LlmOpsList({ view, secretBox, readOnly, editId, fix = null, addi
   const saved = view.rows.filter(row => row.connection).map(row => ({ id: row.key, models: row.models.ids, error: row.models.error }));
   return <div className="stack llm-ops" data-llm-page="llm">
     <div className="llm-toolbar">
-      <p className="llm-totals"><span>연결 <b>{fmt(totals.connections)}</b></span><span>CLI 도구 <b>{fmt(totals.cliTools)}</b></span><span>모델 <b>{fmt(totals.models)}</b></span>
+      <p className="llm-totals"><span>연결 <b>{fmt(totals.connections)}</b></span><span>CLI 도구 <b>{fmt(totals.cliTools)}</b></span><span>모델 <b>{fmt(view.rows.reduce((total, row) => total + listedLines(row).length, 0))}</b></span>
         <span>동시 실행 한도 합계 <b>{totals.limitSum === null ? "확인 불가" : fmt(totals.limitSum)}</b></span></p>
       <ObservedAt label="장부 관측" at={view.observedAt} />
     </div>
