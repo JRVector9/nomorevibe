@@ -183,6 +183,19 @@ describe("작업 배정에서 여는 서랍(운영 홈과 같은 RankDrawer)", (
     expect(resave).toMatch(/class="fr-btn fr-primary">저장<\/button>/);
   });
 
+  it("2026-11-08: 서랍 모양 — 공용 dialog 규칙(가운데 680px·91dvh 카드)보다 앞서는 오른쪽 위 시트, 높이는 내용만큼, 관리자 틀 색으로 읽힌다", () => {
+    const css = readFileSync("app/(operator)/admin/flow/rank-drawer.css", "utf8");
+    const sheet = css.match(/:is\(\.admin-prototype, body\) dialog\.fr\{([^}]*)\}/)?.[1] ?? "";
+    // .admin-prototype dialog·dialog:modal(0,1,1)보다 구체적이다 — 서랍이 카드로 가운데 뜨고 아래 절반이 비던 까닭
+    for (const rule of ["inset:0 0 auto auto", "margin:0", "width:min(760px,100%)", "height:auto", "max-height:100dvh"]) expect(sheet, rule).toContain(rule);
+    expect(sheet).not.toContain("100vw");
+    expect(css).toMatch(/\.fr-in\{[^}]*max-height:calc\(100dvh - 1px\)/);
+    expect(css).toMatch(/\.fr-body\{[^}]*min-height:0;overflow:auto/);
+    // 3차 글자(--text-3·--color-fg-3)는 관리자 틀 안에서 --muted — 유틸리티(@theme inline)가 읽는 원래 이름도 함께
+    const tokens = css.match(/\.admin-prototype \.fr\{([^}]*)\}/)?.[1] ?? "";
+    for (const token of ["--color-fg-3:var(--muted)", "--text-3:var(--muted)", "--text-2:var(--muted)", "--color-bg-card:var(--surface)", "--bg-card:var(--surface)"]) expect(tokens, token).toContain(token);
+  });
+
   it("저장할 수 없는 까닭이 있으면 서랍의 저장 단추를 잠그고 까닭을 보인다", () => {
     const editor = editorOf();
     const html = renderToStaticMarkup(<RankDrawer editor={editor} lines={editor.lines.filter(line => line.task === "crawl-tagline")} title="수집 소개 짓기" secondWaiting={null}
@@ -198,8 +211,8 @@ describe("작업 배정에서 여는 서랍(운영 홈과 같은 RankDrawer)", (
       onClose={() => {}} fullViewHref={null} />);
     expect(html.match(/aria-label="2차 AI 검수 · 투표자 [123] [123]순위"/g)).toHaveLength(9);
     // 투표자 2 칸에서는 투표자 1의 supa 를, 투표자 1 칸에서는 투표자 2의 gpt-oss 를 고를 수 없다(같은 모델 두 표 금지)
-    expect(html).toContain(`<option value="${SUPA}/supa" disabled="">Inferact/Qwen3.8-27B-NVFP4 · 상태 확인 중 · 이 투표자/모델 조건에서 선택 불가</option>`);
-    expect(html).toContain(`<option value="${MLX}/gpt-oss-120b" disabled="">gpt-oss-120b · 상태 확인 중 · 이 투표자/모델 조건에서 선택 불가</option>`);
+    expect(html).toContain(`<option value="${SUPA}/supa" disabled="">Inferact/Qwen3.8-27B-NVFP4 — 상태 확인 중 · 이 투표자/모델 조건에서 선택 불가</option>`);
+    expect(html).toContain(`<option value="${MLX}/gpt-oss-120b" disabled="">gpt-oss-120b — 상태 확인 중 · 이 투표자/모델 조건에서 선택 불가</option>`);
     expect(html).toContain('<optgroup label="supa-direct · API">');
     // 작업 분산 칸의 링크는 작업 배정의 실행 방식 접힘으로
     const pooled = buildTaskRankEditor(llmConnections, llmRankRows, () => "a".repeat(64), [{ task: "first-review", slot: 1, mode: "workload_pool", revision: 2, updatedAt: null,

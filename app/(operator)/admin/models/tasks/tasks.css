@@ -4,7 +4,7 @@
 
 /* 표 */
 .tk .tk-wrap { min-width: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); overflow: clip; }
-.tk .tk-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: calc(13px + var(--admin-font-delta, 0px)); line-height: 1.45; }
+.tk .tk-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: calc(13px + var(--admin-font-delta, 0px)); line-height: 1.55; }
 .tk .tk-table thead th { padding: 10px 12px; text-align: left; font-size: calc(13px + var(--admin-font-delta, 0px)); font-weight: 650; color: var(--muted); white-space: normal;
   background: var(--surface-2, var(--bg)); border-bottom: 1px solid var(--line); }
 .tk .tk-table thead th:nth-child(1) { width: 14%; }
@@ -40,7 +40,7 @@
 .tk .tk-source { display: block; margin-top: 4px; color: var(--muted); }
 
 /* 지금 실제 */
-.tk .tk-calls { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
+.tk .tk-calls { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
 .tk .tk-calls li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 2px 6px; align-items: baseline; }
 .tk .tk-calls li > b { font-size: calc(14px + var(--admin-font-delta, 0px)); }
 .tk .tk-calls .tk-fail { grid-column: 2 / -1; color: var(--red); font-weight: 600; }
@@ -50,11 +50,11 @@
 .tk .tk-empty { display: block; color: var(--muted); }
 .tk .tk-mismatch { display: grid; gap: 4px; margin-top: 6px; }
 .tk .tk-mismatch > .llm-level { justify-self: start; }
-.tk .tk-mismatch ul { margin: 0; padding-left: 16px; color: var(--amber); }
+.tk .tk-mismatch ul { margin: 0; padding-left: 16px; color: var(--amber); display: grid; gap: 3px; }
 
 /* 상태 */
 .tk .tk-status > .llm-level { margin-bottom: 4px; }
-.tk .tk-reason { color: var(--muted); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.tk .tk-reason { color: var(--muted); line-height: 1.55; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .tk .tk-act { text-align: right; }
 .tk .tk-act .button { white-space: nowrap; font-size: calc(13px + var(--admin-font-delta, 0px)); }
 
