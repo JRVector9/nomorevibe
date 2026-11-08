@@ -50,6 +50,7 @@ import { slotOnlyModelCapacity } from "./capacity-consumer-scope";
 import { DrWriterFencedError, fenceFromRow, writerSiteActive } from "@/lib/operations/dr/epoch";
 import { takeGatewayLocalEnd, type GatewayLocalEnd } from "./gateway-local-end";
 import { trackOverdueDispatch } from "./capacity-overdue";
+import { retryOnLockNotAvailable } from "./capacity-lock-retry";
 import { localModelBindingSchema, localModelBindingHash, localModelDispatchSchema, localModelLogicalKey,
   localModelRoute, localModelTargetSchema, localModelTerminalEvidenceSchema,
   type LocalModelTarget, type LocalModelBinding, type LocalModelDispatch, type LocalModelScreenProof } from "./local-model-capacity-contract";
@@ -62,6 +63,15 @@ const fail = (code: string): never => { throw new Error(code); };
 function transaction<T>(load: (tx: ProductTransaction) => Promise<T>): Promise<T> {
   if (currentReplayDb()) return Promise.reject(new Error("model_capacity_replay_unsupported"));
   return onPrimary(() => db.transaction(load));
+}
+
+/**
+ * 끝난 호출의 정산(reconcile*)과 미확정 표시(markModelDispatchIndeterminate) TX — control 행 lock_timeout(55P03)이면 같은 TX 를 다시 연다
+ * (capacity-lock-retry). 55P03 은 ROLLBACK 이라 커밋되지 않은 것이 확실하고, 이 TX 들은 행을 FOR UPDATE 로 다시 읽어 판정하므로 두 번 쓰지 않는다.
+ * 예전에는 첫 55P03 에서 바로 commit_unknown(사람 검토)으로 갔다(2026-11-08).
+ */
+function settlementTransaction<T>(label: string, load: (tx: ProductTransaction) => Promise<T>): Promise<T> {
+  return retryOnLockNotAvailable(label, () => transaction(load));
 }
 
 /** DR writer fence가 첫 lock이다(seal의 fence UPDATE → control UPDATE와 같은 순서; control → fence는 그 UPDATE와 교착한다).
@@ -551,7 +561,7 @@ export async function reconcileLocalModelTerminal(terminal: unknown): Promise<{ 
   if (!native) return fail("invalid_local_model_terminal");
   const evidence = localModelTerminalEvidenceSchema.parse(native), dispatch = evidence.dispatch;
   const evidenceHash = reviewHash(evidence);
-  return transaction(async tx => {
+  return settlementTransaction("reconcileLocalModelTerminal", async tx => {
     const [mutex] = await tx.select({ id: modelCapacityControl.id }).from(modelCapacityControl).where(eq(modelCapacityControl.id, 1)).for("update");
     if (!mutex) return fail("model_capacity_control_missing");
     const [row] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, dispatch.requestId)).for("update");
@@ -781,7 +791,7 @@ export async function markModelDispatchIndeterminate(value: ModelCapacityDispatc
     owner: bound.data.owner, token: bound.data.token, epoch: bound.data.epoch, revision: bound.data.revision,
     policyHash: bound.data.policyHash }) : modelCapacityDispatchSchema.parse(value);
   if (!MODEL_CAPACITY_INDETERMINATE_REASONS.includes(reason)) fail("invalid_model_capacity_reason");
-  const marked = await transaction(async tx => {
+  const marked = await settlementTransaction("markModelDispatchIndeterminate", async tx => {
     const state = await control(tx);
     await expireRequests(tx, state);
     const [row] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, checked.requestId)).for("update");
@@ -957,7 +967,7 @@ export async function reconcileAi1GatewayTerminal(terminal: Ai1GatewayTerminal):
   if (!native) fail("invalid_ai1_gateway_terminal");
   const evidence = ai1GatewayTerminalEvidenceSchema.parse(native), dispatch = evidence.dispatch;
   const evidenceHash = reviewHash(evidence);
-  return transaction(async tx => {
+  return settlementTransaction("reconcileAi1GatewayTerminal", async tx => {
     // Completion uses the historical dispatch, not today's policy validity.
     const [mutex] = await tx.select({ id: modelCapacityControl.id }).from(modelCapacityControl)
       .where(eq(modelCapacityControl.id, 1)).for("update");
@@ -1087,7 +1097,7 @@ export async function reconcileAi2GatewayTerminal(terminal: Ai2GatewayTerminal):
   if (!native) fail("invalid_ai2_gateway_terminal");
   const evidence = ai2GatewayTerminalEvidenceSchema.parse(native), dispatch = evidence.dispatch;
   const evidenceHash = reviewHash(evidence);
-  return transaction(async tx => {
+  return settlementTransaction("reconcileAi2GatewayTerminal", async tx => {
     const [mutex] = await tx.select({ id: modelCapacityControl.id }).from(modelCapacityControl)
       .where(eq(modelCapacityControl.id, 1)).for("update");
     if (!mutex) fail("model_capacity_control_missing");
@@ -1146,7 +1156,7 @@ export async function reconcileAi1ItemGatewayTerminal(terminal: Ai1ItemGatewayTe
   if (!native) fail("invalid_ai1_item_gateway_terminal");
   const evidence = ai1ItemGatewayTerminalEvidenceSchema.parse(native), dispatch = evidence.dispatch;
   const evidenceHash = reviewHash(evidence);
-  return transaction(async tx => {
+  return settlementTransaction("reconcileAi1ItemGatewayTerminal", async tx => {
     // Completion uses the historical dispatch, not today's policy validity.
     const [mutex] = await tx.select({ id: modelCapacityControl.id }).from(modelCapacityControl)
       .where(eq(modelCapacityControl.id, 1)).for("update");
@@ -1231,7 +1241,7 @@ export async function reconcileGatewayNotStarted(terminal: GatewayNotStarted): P
   if (!native) fail("invalid_gateway_not_started");
   const evidence = gatewayNotStartedEvidenceSchema.parse(native), dispatch = evidence.dispatch;
   const evidenceHash = reviewHash(evidence);
-  return transaction(async tx => {
+  return settlementTransaction("reconcileGatewayNotStarted", async tx => {
     const [mutex] = await tx.select({ id: modelCapacityControl.id }).from(modelCapacityControl)
       .where(eq(modelCapacityControl.id, 1)).for("update");
     if (!mutex) fail("model_capacity_control_missing");
@@ -1339,7 +1349,7 @@ export async function reconcileTextProfileGatewayTerminal(terminal: TextProfileG
   if (!native) fail("invalid_text_profile_gateway_terminal");
   const evidence = textProfileGatewayTerminalEvidenceSchema.parse(native), dispatch = evidence.dispatch;
   const evidenceHash = reviewHash(evidence);
-  return transaction(async tx => {
+  return settlementTransaction("reconcileTextProfileGatewayTerminal", async tx => {
     // Completion uses the historical dispatch, not today's policy validity.
     const [mutex] = await tx.select({ id: modelCapacityControl.id }).from(modelCapacityControl)
       .where(eq(modelCapacityControl.id, 1)).for("update");
@@ -1453,7 +1463,7 @@ export async function reconcileReasonTranslationGatewayTerminal(terminal: Reason
   if (!native) fail("invalid_reason_translation_gateway_terminal");
   const evidence = reasonTranslationGatewayTerminalEvidenceSchema.parse(native), dispatch = evidence.dispatch;
   const evidenceHash = reviewHash(evidence);
-  return transaction(async tx => {
+  return settlementTransaction("reconcileReasonTranslationGatewayTerminal", async tx => {
     // Completion uses the historical dispatch, not today's policy validity.
     const [mutex] = await tx.select({ id: modelCapacityControl.id }).from(modelCapacityControl)
       .where(eq(modelCapacityControl.id, 1)).for("update");
@@ -1568,7 +1578,7 @@ export async function reconcileProductTranslationGatewayTerminal(terminal: Produ
   if (!native) fail("invalid_product_translation_gateway_terminal");
   const evidence = productTranslationGatewayTerminalEvidenceSchema.parse(native), dispatch = evidence.dispatch;
   const evidenceHash = reviewHash(evidence);
-  return transaction(async tx => {
+  return settlementTransaction("reconcileProductTranslationGatewayTerminal", async tx => {
     // Completion uses the historical dispatch, not today's policy validity.
     const [mutex] = await tx.select({ id: modelCapacityControl.id }).from(modelCapacityControl)
       .where(eq(modelCapacityControl.id, 1)).for("update");
@@ -1683,7 +1693,7 @@ export async function reconcileProductTaglineKoGatewayTerminal(terminal: Product
   if (!native) fail("invalid_product_tagline_ko_gateway_terminal");
   const evidence = productTaglineKoGatewayTerminalEvidenceSchema.parse(native), dispatch = evidence.dispatch;
   const evidenceHash = reviewHash(evidence);
-  return transaction(async tx => {
+  return settlementTransaction("reconcileProductTaglineKoGatewayTerminal", async tx => {
     // Completion uses the historical dispatch, not today's policy validity.
     const [mutex] = await tx.select({ id: modelCapacityControl.id }).from(modelCapacityControl)
       .where(eq(modelCapacityControl.id, 1)).for("update");
@@ -1845,7 +1855,7 @@ export async function reconcileCrawlTaglineGatewayTerminal(terminal: CrawlTaglin
   const native = readCrawlTaglineGatewayTerminal(terminal);
   if (!native) fail("invalid_crawl_tagline_gateway_terminal");
   const evidence = crawlTaglineGatewayTerminalEvidenceSchema.parse(native), dispatch = evidence.dispatch, evidenceHash = reviewHash(evidence);
-  return transaction(async tx => {
+  return settlementTransaction("reconcileCrawlTaglineGatewayTerminal", async tx => {
     const [mutex] = await tx.select({ id: modelCapacityControl.id }).from(modelCapacityControl).where(eq(modelCapacityControl.id, 1)).for("update");
     if (!mutex) fail("model_capacity_control_missing");
     const [row] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, dispatch.requestId)).for("update");
@@ -2023,7 +2033,7 @@ export async function reconcileSearchVerifyGatewayTerminal(terminal: SearchVerif
   const native = readSearchVerifyGatewayTerminal(terminal);
   if (!native) fail("invalid_search_verify_gateway_terminal");
   const evidence = searchVerifyGatewayTerminalEvidenceSchema.parse(native), dispatch = evidence.dispatch, evidenceHash = reviewHash(evidence);
-  return transaction(async tx => {
+  return settlementTransaction("reconcileSearchVerifyGatewayTerminal", async tx => {
     const [mutex] = await tx.select({ id: modelCapacityControl.id }).from(modelCapacityControl).where(eq(modelCapacityControl.id, 1)).for("update");
     if (!mutex) fail("model_capacity_control_missing");
     const [row] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, dispatch.requestId)).for("update");
@@ -2258,7 +2268,7 @@ export async function reconcileWebsearchQueryGatewayTerminal(terminal: Websearch
   const native = readWebsearchQueryGatewayTerminal(terminal);
   if (!native) fail("invalid_websearch_query_gateway_terminal");
   const evidence = websearchQueryGatewayTerminalEvidenceSchema.parse(native), dispatch = evidence.dispatch, evidenceHash = reviewHash(evidence);
-  return transaction(async tx => {
+  return settlementTransaction("reconcileWebsearchQueryGatewayTerminal", async tx => {
     const [mutex] = await tx.select({ id: modelCapacityControl.id }).from(modelCapacityControl).where(eq(modelCapacityControl.id, 1)).for("update");
     if (!mutex) fail("model_capacity_control_missing");
     const [row] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, dispatch.requestId)).for("update");
@@ -2496,7 +2506,7 @@ export async function reconcileCliProcessTerminal(terminal: CliProcessTerminal):
   const native = readCliProcessTerminal(terminal);
   if (!native) fail("invalid_cli_process_terminal");
   const process = cliProcessTerminalEvidenceSchema.parse(native);
-  return transaction(async tx => {
+  return settlementTransaction("reconcileCliProcessTerminal", async tx => {
     const [mutex] = await tx.select({ id: modelCapacityControl.id }).from(modelCapacityControl).where(eq(modelCapacityControl.id, 1)).for("update");
     if (!mutex) fail("model_capacity_control_missing");
     const [row] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, process.requestId)).for("update");
@@ -2951,7 +2961,7 @@ export async function reconcilePublicationApiTerminal(terminal: PublicationClass
   const native = readPublicationClassifyTerminal(terminal);
   if (!native) fail('invalid_publication_api_terminal');
   const evidence = publicationClassifyApiTerminalSchema.parse(native), dispatch = evidence.dispatch, evidenceHash = reviewHash(evidence);
-  return transaction(async tx => {
+  return settlementTransaction("reconcilePublicationApiTerminal", async tx => {
     const [mutex] = await tx.select({ id: modelCapacityControl.id }).from(modelCapacityControl).where(eq(modelCapacityControl.id, 1)).for('update');
     if (!mutex) fail('model_capacity_control_missing');
     const [row] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, dispatch.requestId)).for('update');
