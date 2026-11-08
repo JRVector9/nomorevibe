@@ -21,6 +21,7 @@ import { modelCapacityPolicyHash, searchVerifyInputHash, searchVerifyLogicalWork
   type ModelCapacityRequest, type SearchVerifyInput, type SearchVerifyMember } from "@/lib/llm/capacity";
 import type { SearchVerifyServingContract } from "@/lib/llm/search-verify-serving-contract";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
+import { OVERDUE_DEFAULT_CALL_MS, OVERDUE_GRACE_MS, overdueTrackedForTest, resetOverdueDispatchesForTest, sweepOverdueDispatches } from "@/lib/llm/capacity-overdue";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
 import { inTextRank, pinTextRanks, textContract } from "../text-task-ranks-fixture";
 
@@ -490,4 +491,52 @@ it("records a live not_started failure once so the generation moves on, without 
   const after = await profileRow(task.product.id);
   expect(after.verify_error).toBe("network"); expect(after.updated_at).not.toEqual(before.updated_at);
   expect((await ledger(task.product.id)).map(row => row.state)).toEqual(["settled"]);
+}), 20_000);
+
+it("2026-11-07 repro: a committed dispatch whose caller left without settling goes to unknown review by its own owner after the deadline", exercise(async () => {
+  // 운영 835e8cc3: dispatch_started 뒤 사건 없이 주인(살아 있음)이 5시간 dispatched 로 둠 — supa 칸 하나와 배포 관문을 묶었다.
+  // 여기서는 「전송 중」 커밋까지만 하고 HTTP·정산 없이 빠져나간 호출을 만든다. 주인 정리(capacity-overdue)가 기한 + 여유 뒤 commit_unknown 으로 넘긴다.
+  resetOverdueDispatchesForTest();
+  const words = keywords(2), task = await seed(words, null);
+  let requestId = "", deadlineAt = 0;
+  await server(async ({ bodies }) => {
+    expect(await custom(async lease => {
+      const initial = await tracked(prepareSearchVerifyModelDispatch(task, lease, { roleLease: role, keywords: words, mode: "full" }));
+      if (initial.kind !== "ready" || !("member" in initial)) throw new Error("fixture_initial_required");
+      const input: SearchVerifyInput = { member: initial.member, model: VERIFY_MODEL, execution: 0, step: { kind: "full" }, parent: null };
+      const identity = { owner: { instanceId: prefix, bootId: role.bootId }, class: "background" as const, pool: "text" as const, routeId: jobName,
+        provider: "abcllm", model: VERIFY_MODEL, workKey: `${searchVerifyLogicalWorkKey(input)}:${searchVerifyInputHash(input)}` };
+      const slot = await tracked(requestSearchVerifyModelSlot({ ...identity, requestId: randomUUID() }, input));
+      if (slot.kind !== "granted") throw new Error("fixture_reservation_required");
+      const call = prepareSearchVerifyGatewayCall({ evidence: profileEvidence(task.product, task.reviewerNote), keywords: words }, { model: VERIFY_MODEL, timeoutMs: 60_000 });
+      if (call.kind !== "prepared") throw new Error("fixture_call_required");
+      const prepared = await tracked(prepareSearchVerifyModelDispatch(task, lease, { roleLease: role, keywords: words, mode: "full", call,
+        reserved: { reservation: slot.reservation, identity, input, role: initial.role, remainingMs: 60_000 } }));
+      if (prepared.kind !== "ready" || !("dispatch" in prepared)) throw new Error("fixture_dispatch_required");
+      requestId = prepared.dispatch.requestId;
+      deadlineAt = (prepared.dispatch as unknown as { binding: { deadlineAt: number } }).binding.deadlineAt;
+    })).toMatchObject({ status: "completed" });
+    expect(bodies).toEqual([]);
+  });
+  const state = async () => (await admin`SELECT state FROM model_capacity_requests WHERE request_id=${requestId}::uuid`)[0].state;
+  expect(await state()).toBe("dispatched");
+  expect(overdueTrackedForTest().get(requestId)?.overdueAt).toBe(deadlineAt + OVERDUE_GRACE_MS);
+  // 기한 + 여유 전에는 장부를 건드리지 않는다
+  expect(await tracked(sweepOverdueDispatches(deadlineAt + OVERDUE_GRACE_MS - 1))).toMatchObject({ due: 0, marked: 0 });
+  expect(await state()).toBe("dispatched");
+  expect(await tracked(sweepOverdueDispatches(deadlineAt + OVERDUE_GRACE_MS))).toMatchObject({ marked: 1, failed: 0 });
+  expect(await state()).toBe("indeterminate");
+  expect(Array.from(await admin`SELECT kind,from_state,to_state,reason FROM model_capacity_events WHERE request_id=${requestId}::uuid ORDER BY id`)).toEqual([
+    { kind: "queued", from_state: null, to_state: "waiting", reason: null }, { kind: "reserved", from_state: "waiting", to_state: "reserved", reason: null },
+    { kind: "dispatch_started", from_state: "reserved", to_state: "dispatched", reason: null },
+    { kind: "dispatch_indeterminate", from_state: "dispatched", to_state: "indeterminate", reason: "commit_unknown" }]);
+  expect(overdueTrackedForTest().has(requestId)).toBe(false);
+  // 정상 정산된 호출은 첫 읽기에서 빠지고 표시 TX 를 열지 않는다
+  const settled = await seed(keywords(2, "s"), null);
+  await server(async () => { await custom(async lease => { expect((await verify(settled, lease)).kind).toBe("result"); }); });
+  const [done] = await ledger(settled.product.id);
+  expect(done.state).toBe("settled");
+  expect(await tracked(sweepOverdueDispatches(Date.now() + OVERDUE_DEFAULT_CALL_MS + 2 * OVERDUE_GRACE_MS))).toMatchObject({ marked: 0, failed: 0 });
+  expect(overdueTrackedForTest().has(done.request_id as string)).toBe(false);
+  expect((await ledger(settled.product.id)).map(row => row.state)).toEqual(["settled"]);
 }), 20_000);
