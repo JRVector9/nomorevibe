@@ -20,7 +20,7 @@ import { ai1ItemDispatchBindingSchema, ai1ItemDispatchBindingHash, ai1ItemModelD
   ai1ItemGatewayTerminalEvidenceSchema, type Ai1ItemDispatchBinding, type Ai1ItemModelDispatch } from "@/lib/llm/capacity";
 import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
-import { and, asc, eq, getTableColumns, sql } from "drizzle-orm";
+import { and, asc, eq, getTableColumns, inArray, sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import { currentReplayDb } from "@/lib/db/replay-scope";
 import { modelCapacityControl, modelCapacityDevices, modelCapacityEvents, modelCapacityRequests } from "@/lib/db/schema";
@@ -49,6 +49,7 @@ import { helperGateStateFromRow, helperGateStatesSql, type HelperGateState, type
 import { slotOnlyModelCapacity } from "./capacity-consumer-scope";
 import { DrWriterFencedError, fenceFromRow, writerSiteActive } from "@/lib/operations/dr/epoch";
 import { takeGatewayLocalEnd, type GatewayLocalEnd } from "./gateway-local-end";
+import { trackOverdueDispatch } from "./capacity-overdue";
 import { localModelBindingSchema, localModelBindingHash, localModelDispatchSchema, localModelLogicalKey,
   localModelRoute, localModelTargetSchema, localModelTerminalEvidenceSchema,
   type LocalModelTarget, type LocalModelBinding, type LocalModelDispatch, type LocalModelScreenProof } from "./local-model-capacity-contract";
@@ -215,6 +216,32 @@ async function event(tx: ProductTransaction, row: RequestRow, kind: ModelCapacit
   evidence: unknown = null) {
   await tx.insert(modelCapacityEvents).values({ requestId: row.requestId, kind, epoch: row.epoch,
     revision: row.revision, policyHash: row.policyHash, fromState, toState, reason, evidence });
+  if (kind === "dispatch_started") trackOwnDispatch(row, evidence);
+}
+
+/**
+ * 모든 「전송 중」 전환은 이 사건을 쓴다 — 여기서 이 프로세스의 dispatch 를 주인 정리(capacity-overdue)에 넣는다. 사건에 dispatch 손잡이가
+ * 실린 전환만(현재 CLI 를 뺀 12 경로 전부). CLI 실행기(*_cli binding)는 별도 실행기가 경계 종료 근거를 남겨 넣지 않는다.
+ * TX 커밋 전이다: 커밋 응답을 받지 못한 행도 잡으려는 것이고, 되돌려진 행은 정리가 dispatched 가 아님을 읽고 버린다.
+ */
+function trackOwnDispatch(row: RequestRow, evidence: unknown): void {
+  const dispatch = evidence && typeof evidence === "object" ? (evidence as { dispatch?: ModelCapacityDispatch }).dispatch : undefined;
+  if (!dispatch) return;
+  const kind = (dispatch as { binding?: { kind?: unknown } }).binding?.kind;
+  if (typeof kind === "string" && Object.hasOwn(CLI_KIND_CLASS, kind)) return;
+  trackOverdueDispatch(dispatch, row.routeId);
+}
+
+/** 주인 정리(capacity-overdue)의 첫 읽기 — 잠금 없이 상태·주인·binding hash 만. 표시는 markModelDispatchIndeterminate 가 잠긴 행으로 다시 판정한다. */
+export async function readModelDispatchStates(requestIds: readonly string[]): Promise<Map<string, {
+  requestId: string; state: RequestRow["state"]; ownerInstanceId: string; ownerBootId: string; dispatchBindingHash: string | null }>> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  if (!requestIds.length) return new Map();
+  const rows = await onPrimary(() => db.select({ requestId: modelCapacityRequests.requestId, state: modelCapacityRequests.state,
+    ownerInstanceId: modelCapacityRequests.ownerInstanceId, ownerBootId: modelCapacityRequests.ownerBootId,
+    dispatchBindingHash: modelCapacityRequests.dispatchBindingHash }).from(modelCapacityRequests)
+    .where(inArray(modelCapacityRequests.requestId, [...requestIds])));
+  return new Map(rows.map(row => [row.requestId, row]));
 }
 
 function sameIdentity(row: RequestRow, value: ModelCapacityRequestIdentity): void {
