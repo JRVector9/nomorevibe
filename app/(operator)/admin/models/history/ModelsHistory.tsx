@@ -28,7 +28,7 @@ function RetryPanel({ retry, readOnly }: { retry: RetryView; readOnly: boolean }
     <div className="llm-panel-head"><h2 id="llm-retry-title">재실행 대기</h2>
       <LevelBadge level={!retry.readable ? "unknown" : retry.total > 0 ? "warn" : "ok"}>{!retry.readable ? "확인 불가" : `결과 미확정 ${fmt(retry.total)}건`}</LevelBadge></div>
     <div className="llm-panel-body">
-      <p className="llm-empty">결과를 받지 못한 호출입니다. 칸을 차지하지 않습니다. 「다시 대기열」은 그 단계의 작업을 다시 실행하고 다시 넣은 행만 닫습니다.
+      <p className="llm-empty">결과를 받지 못한 호출입니다. 칸을 차지하지 않습니다. 「다시 대기열」은 그 단계의 작업을 다시 실행하고, 다시 넣었거나 할 일이 이미 끝난 행을 닫습니다.
         「닫기」는 작업을 다시 넣지 않고 사유를 남겨 행만 닫습니다.</p>
       {retry.error && <p role="alert" className="llm-notice">재실행 목록을 읽지 못했습니다 · {retry.error}</p>}
       {retry.readable && retry.total === 0 && <p className="llm-empty">다시 실행할 미확정 호출이 없습니다.</p>}

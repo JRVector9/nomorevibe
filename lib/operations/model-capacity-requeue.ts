@@ -1,6 +1,6 @@
 import { and, asc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { categoryDecisions, crawlCandidates, crawlReviewAttempts, modelCapacityRequests, productSearchProfiles,
+import { categoryDecisions, crawlCandidates, crawlReviewAttempts, modelCapacityRequests, products, productSearchProfiles,
   productTranslations, secondReviews, textTranslations, type CrawlCandidate } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { requestJob } from "@/lib/jobs/control";
@@ -19,6 +19,8 @@ export type RequeueGroupResult = {
   routeId: string;
   requests: number;
   requeued: number;
+  /** 할 일이 이미 끝났거나 다른 대기열이 맡은 행 — 다시 넣지 않고 닫는다(검색 키워드 검수) */
+  done: number;
   skipped: number;
   closed: number;
   error: string | null;
@@ -170,12 +172,54 @@ async function requeueReasonTranslation(tx: ProductTransaction, rows: readonly U
   return { requeued: updated.length ? rows.length : 0, skipped: updated.length ? 0 : rows.length };
 }
 
-const HANDLERS: Readonly<Record<string, (tx: ProductTransaction, rows: readonly UnknownRow[]) => Promise<{ requeued: number; skipped: number }>>> = {
+/**
+ * 검색 키워드 검수(2026-11-08 사용자 요청). 아직 검수하지 않은 제품은 시도 횟수·재시도 시각을 되돌려 대기열 맨 앞에 세운다
+ * (pendingVerifications 가 「실패 원인은 있는데 재시도 시각이 없는」 운영자 재요청을 먼저 읽는다).
+ * 실패 원인(verify_error)은 남겨 다음 시도가 나눠 검수(chunked)를 고르게 한다 — reconcileSearchProfileBatch 의 검수 복구와 같은 방식이다.
+ * source_revision 을 올려 그 제품의 옛 실행이 다시 쓰지 못하게 하고, updated_at 은 건드리지 않는다(30일 재생성 주기의 기준).
+ * 이미 검수가 끝났거나, 키워드를 다시 짓는 중이거나(새 키워드는 다시 검수된다), 키워드가 없는 제품은 할 일이 남지 않았으므로 넣지 않고 닫는다(done).
+ * 공개 상태가 아닌 제품은 넣지도 닫지도 않는다(skipped).
+ */
+async function requeueSearchVerify(tx: ProductTransaction, rows: readonly UnknownRow[]) {
+  const productOf = (row: UnknownRow) => {
+    const [member] = parseMembers(asArray(row.logicalMemberKeys), "search-verify:"), id = Number(member);
+    return Number.isSafeInteger(id) && id > 0 ? id : null;
+  };
+  const ids = [...new Set(rows.map(productOf).filter((id): id is number => id !== null))];
+  if (!ids.length) return { requeued: 0, done: 0, skipped: rows.length };
+  const profiles = await tx.select().from(productSearchProfiles).where(inArray(productSearchProfiles.productId, ids)).for("update");
+  const listed = new Set((await tx.select({ id: products.id }).from(products)
+    .where(and(inArray(products.id, ids), inArray(products.status, ["seeded", "verified"])))).map(product => product.id));
+  const outcome = new Map<number, "requeued" | "done">();
+  for (const profile of profiles) {
+    if (!listed.has(profile.productId)) continue;
+    const settled = profile.verifiedAt !== null || profile.needsRefresh || profile.errorCode !== null
+      || profile.keywordsEn.length + profile.keywordsKo.length === 0;
+    outcome.set(profile.productId, settled ? "done" : "requeued");
+  }
+  const pending = ids.filter(id => outcome.get(id) === "requeued");
+  if (pending.length) {
+    await tx.update(productSearchProfiles).set({ verifyAttempts: 0, verifyRetryAt: null,
+      sourceRevision: sql`${productSearchProfiles.sourceRevision} + 1` })
+      .where(inArray(productSearchProfiles.productId, pending));
+    await requestJob("product-search-verify", tx);
+  }
+  let requeued = 0, done = 0;
+  for (const row of rows) {
+    const id = productOf(row), result = id === null ? undefined : outcome.get(id);
+    if (result === "requeued") requeued++; else if (result === "done") done++;
+  }
+  return { requeued, done, skipped: rows.length - requeued - done };
+}
+
+type RequeueHandler = (tx: ProductTransaction, rows: readonly UnknownRow[]) => Promise<{ requeued: number; skipped: number; done?: number }>;
+const HANDLERS: Readonly<Record<string, RequeueHandler>> = {
   "crawl-publish-classify": requeuePublicationClassify,
   "crawl-agent-review": requeueFirstReview,
   "local-held-qwen": requeueHeldQwen,
   "second-review": requeueSecondReview,
   "product-search-profile": requeueSearchProfile,
+  "product-search-verify": requeueSearchVerify,
   "product-translate": requeueProductTranslation,
   "reason-translate": requeueReasonTranslation,
 };
@@ -204,26 +248,27 @@ export async function requeueModelCapacityUnknowns(input: {
   for (const [routeId, group] of grouped) {
     const handler = HANDLERS[routeId];
     if (!handler) {
-      groups.push({ routeId, requests: group.length, requeued: 0, skipped: group.length, closed: 0, error: "unsupported_route" });
+      groups.push({ routeId, requests: group.length, requeued: 0, done: 0, skipped: group.length, closed: 0, error: "unsupported_route" });
       continue;
     }
-    let result: { requeued: number; skipped: number };
+    let result: Awaited<ReturnType<RequeueHandler>>;
     try {
       result = await db.transaction(tx => handler(tx, group));
     } catch (error) {
-      groups.push({ routeId, requests: group.length, requeued: 0, skipped: 0, closed: 0,
+      groups.push({ routeId, requests: group.length, requeued: 0, done: 0, skipped: 0, closed: 0,
         error: error instanceof Error ? error.message.slice(0, 120) : "requeue_failed" });
       continue;
     }
     let closed = 0;
-    if (result.requeued > 0) {
+    const done = result.done ?? 0;
+    if (result.requeued > 0 || done > 0) {
       for (const row of group) {
         const closedResult = await closeModelCapacityUnknownReview({ requestId: row.requestId, operator: input.operator,
           note: `${input.note} · ${routeId}` }).catch(() => null);
         if (closedResult?.kind === "reviewed") closed++;
       }
     }
-    groups.push({ routeId, requests: group.length, requeued: result.requeued, skipped: result.skipped, closed, error: null });
+    groups.push({ routeId, requests: group.length, requeued: result.requeued, done, skipped: result.skipped, closed, error: null });
   }
   return { groups, closed: groups.reduce((sum, group) => sum + group.closed, 0) };
 }
