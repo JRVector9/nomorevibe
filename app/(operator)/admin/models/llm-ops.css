@@ -134,14 +134,21 @@
 .llm-add-body > form label.grid, .llm-conn-edit-body > form label.grid { grid-template-columns: minmax(0, 1fr); min-width: 0; }
 .llm-add-body > form select, .llm-conn-edit-body > form select { width: 100%; min-width: 0; }
 
-/* LLM 운영 — 연결 행 */
-.llm-conn-list { display: grid; gap: 10px; }
-.llm-conn-cols { --llm-cols: minmax(170px, 1.35fr) minmax(130px, 1fr) minmax(110px, .8fr) minmax(150px, 1.2fr) minmax(150px, 1.2fr) minmax(70px, .5fr); }
-.llm-conn-head { display: grid; grid-template-columns: var(--llm-cols); gap: 12px; padding: 0 16px; color: var(--muted); font-size: calc(13px + var(--admin-font-delta, 0px)); font-weight: 650; }
-.llm-conn { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); min-width: 0; scroll-margin-top: 96px; }
-.llm-conn:target { outline: 2px solid var(--blue); outline-offset: 2px; }
-.llm-conn[data-source=cli-tool] { border-style: dashed; }
-.llm-conn-grid { display: grid; grid-template-columns: var(--llm-cols); gap: 12px; padding: 14px 16px; align-items: start; }
+/* LLM 운영 — 연결 표(2026-11-08 운영자 요청: 표처럼 칸을 맞춘다).
+   머리 줄과 행이 한 테두리 안에서 같은 칸 정의·같은 좌우 여백을 쓴다 — 예전에는 머리 줄이 카드 밖에 있어 카드 테두리만큼 어긋나고,
+   카드마다 둥근 테두리와 틈이 있어 표가 아니라 카드 목록으로 읽혔다. 행은 위아래 선으로만 나눈다.
+   칸은 위에 맞추고 각 칸 첫 줄을 같은 높이(24px)로 둬 글자 크기가 달라도 첫 줄이 한 줄에 선다(기준선 맞춤은 줄 바뀐 칸이 다른 칸을 밀어 내려 쓰지 않는다). */
+.llm-conn-list { display: grid; gap: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); min-width: 0; }
+.llm-conn-list > .llm-empty { padding: 14px 16px; }
+.llm-conn-cols { --llm-cols: minmax(170px, 1.3fr) minmax(130px, 1fr) minmax(120px, .85fr) minmax(220px, 1.6fr) minmax(150px, 1.15fr) minmax(70px, .45fr); }
+.llm-conn-head { display: grid; grid-template-columns: var(--llm-cols); gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--line); border-radius: 9px 9px 0 0;
+  background: var(--surface-2); color: var(--muted); font-size: calc(13px + var(--admin-font-delta, 0px)); font-weight: 650; }
+.llm-conn { min-width: 0; scroll-margin-top: 96px; }
+.llm-conn + .llm-conn { border-top: 1px solid var(--line); }
+.llm-conn:last-child { border-radius: 0 0 9px 9px; }
+.llm-conn:target { box-shadow: inset 0 0 0 2px var(--blue); }
+.llm-conn-grid { display: grid; grid-template-columns: var(--llm-cols); gap: 12px; padding: 14px 16px 10px; align-items: start; }
+.llm-conn-grid .llm-cell > :is(:first-child, .llm-cell-label + *) { line-height: 24px; }
 .llm-cell { min-width: 0; display: grid; gap: 4px; font-size: calc(13px + var(--admin-font-delta, 0px)); align-content: start; }
 .llm-cell-label { display: none; color: var(--muted); font-weight: 650; }
 .llm-cell > .llm-level, .llm-stage > .llm-level, .llm-kpi-top > .llm-level { justify-self: start; }
@@ -150,21 +157,27 @@
 .llm-conn-meta code { font-size: calc(13px + var(--admin-font-delta, 0px)); }
 .llm-cap { font-family: 'SFMono-Regular', Consolas, monospace; font-variant-numeric: tabular-nums; font-size: calc(17px + var(--admin-font-delta, 0px)); font-weight: 650; }
 .llm-flag { display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px; border-radius: 4px; border: 1px solid var(--amber); color: var(--amber); background: var(--amber-soft); font-weight: 650; width: fit-content; }
-.llm-chips { display: flex; flex-wrap: wrap; gap: 5px; }
-.llm-chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px 2px 3px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface-2); font-size: calc(13px + var(--admin-font-delta, 0px)); white-space: nowrap; }
-.llm-chip:hover { border-color: var(--blue); }
-.llm-chip-rank { display: inline-grid; place-items: center; min-width: 20px; height: 20px; padding: 0 4px; border-radius: 999px; background: var(--blue-soft); color: var(--blue); font-weight: 700; font-family: 'SFMono-Regular', Consolas, monospace; }
+/* 배정된 작업 — 같은 너비 칸의 격자. 칸마다 [순위(고정 너비) | 작업 이름]이라 순위와 이름의 왼쪽 끝이 위아래로 맞는다. 칸이 좁으면 이름이 줄을 바꾼다. */
+.llm-chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 15em), 1fr)); gap: 2px 10px; min-width: 0; }
+.llm-task { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; min-width: 0; }
+.llm-chip { display: flex; flex: 1 1 10em; align-items: center; gap: 7px; min-width: 0; padding: 2px 6px 2px 2px; border: 1px solid transparent; border-radius: 6px;
+  font-size: calc(13px + var(--admin-font-delta, 0px)); line-height: 1.45; word-break: keep-all; overflow-wrap: break-word; }
+.llm-chip:hover { border-color: var(--blue); background: var(--surface-2); }
+.llm-chip-rank { flex: none; display: inline-grid; place-items: center; width: 2.6em; height: 20px; border-radius: 999px; background: var(--blue-soft); color: var(--blue); font-weight: 700; font-family: 'SFMono-Regular', Consolas, monospace; font-size: calc(12px + var(--admin-font-delta, 0px)); }
 .llm-chip[data-source=policy] .llm-chip-rank, .llm-chip[data-source=pool] .llm-chip-rank { background: var(--surface); color: var(--muted); border: 1px dashed var(--line); }
 .llm-chip[data-off=true] { text-decoration: line-through; color: var(--muted); }
-.llm-chip[data-paused=true] { border-style: dashed; }
+.llm-chip[data-paused=true] { border-color: var(--line); border-style: dashed; }
 .llm-conn-status-reason { color: var(--muted); overflow-wrap: anywhere; }
-.llm-conn-edit { border-top: 1px solid var(--line); }
-.llm-conn-edit > summary { cursor: pointer; padding: 8px 16px; color: var(--blue); font-weight: 650; font-size: calc(13px + var(--admin-font-delta, 0px)); }
+/* 펼치기는 같은 행의 끝줄이다 — 행 사이 선과 헷갈리지 않게 따로 선을 긋지 않는다 */
+.llm-conn-edit > summary { cursor: pointer; width: fit-content; padding: 0 16px 10px; color: var(--blue); font-weight: 650; font-size: calc(13px + var(--admin-font-delta, 0px)); }
 .llm-conn-edit-body { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 14px; padding: 0 16px 16px; align-items: start; }
 .llm-models { display: grid; gap: 8px; }
 .llm-models h3 { font-size: calc(14px + var(--admin-font-delta, 0px)); }
 .llm-models ul { list-style: none; margin: 0; padding: 8px; display: grid; gap: 6px; max-height: 320px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); }
-.llm-models li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: calc(13px + var(--admin-font-delta, 0px)); }
+/* 모델 목록도 표처럼 — [모델 이름 | 그 모델의 작업 격자]. 모델이 여러 개여도 작업 칸의 왼쪽 끝이 맞는다. */
+.llm-models li { display: grid; grid-template-columns: minmax(8em, max-content) minmax(0, 1fr); align-items: baseline; gap: 4px 12px; font-size: calc(13px + var(--admin-font-delta, 0px)); }
+.llm-models li + li { padding-top: 6px; border-top: 1px solid var(--line); }
+.llm-models .llm-chip:hover { background: var(--surface); }
 .llm-models li code { font-size: calc(13px + var(--admin-font-delta, 0px)); overflow-wrap: anywhere; word-break: break-all; }
 .llm-edit-links { display: flex; flex-wrap: wrap; gap: 8px; }
 
@@ -206,6 +219,7 @@
   .llm-conn-cols { --llm-cols: minmax(0, 1fr) minmax(0, 1fr); }
   .llm-cell-wide { grid-column: 1 / -1; }
   .llm-conn-grid { gap: 10px; padding: 12px; }
+  .llm-models li { grid-template-columns: minmax(0, 1fr); }
   .llm-device { grid-template-columns: minmax(0, 1fr) auto; }
   .llm-device .llm-bar { grid-column: 1 / -1; grid-row: 2; }
   .llm-kpi-value { font-size: calc(22px + var(--admin-font-delta, 0px)); }
