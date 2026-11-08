@@ -92,7 +92,7 @@ beforeEach(() => {
 afterEach(() => { pinTextRanks(null); setServingContractSnapshotForTest(null); });
 
 describe("고급 설정 화면 그리기", () => {
-  it("편집기 일곱 개를 메뉴와 같은 이름·한 줄 설명으로 먼저 보이고, 장애 분석에 표·장비·도우미·작업 순위·경로 계약을 둔다", async () => {
+  it("편집기 여덟 개(2026-11-08 칸 배분 추가)를 메뉴와 같은 이름·한 줄 설명으로 먼저 보이고, 장애 분석에 표·장비·도우미·작업 순위·경로 계약을 둔다", async () => {
     const html = await prerender(await ModelsAdvancedPage());
     expect(html).toMatch(/<h1[^>]*>고급 설정<\/h1>/);
     for (const editor of MODELS_ADVANCED_EDITORS) {
@@ -148,9 +148,9 @@ describe("고급 설정 화면 그리기", () => {
 
 describe("이름 통일 — 메뉴·화면 제목·뒤로 가기가 같은 표 하나를 쓴다", () => {
   const root = path.resolve(__dirname, "..");
-  it("두 번째 메뉴는 고급 설정 + 편집기 일곱 개이고, 목록 화면과 같은 순서·이름이다", () => {
+  it("두 번째 메뉴는 고급 설정 + 편집기 여덟 개이고, 목록 화면과 같은 순서·이름이다", () => {
     expect(MODELS_ADVANCED_HREF).toBe("/admin/models/advanced");
-    expect(WORKSPACE_SECONDARY.modelsAdvanced.map(link => link.label)).toEqual(["고급 설정", "실시간 한도", "장비 한도", "도우미·감시자", "모델 배정 표", "서빙 계약·등록부", "사람 위임 모델", "검색 모델"]);
+    expect(WORKSPACE_SECONDARY.modelsAdvanced.map(link => link.label)).toEqual(["고급 설정", "실시간 한도", "장비 한도", "칸 배분", "도우미·감시자", "모델 배정 표", "서빙 계약·등록부", "사람 위임 모델", "검색 모델"]);
     const index = renderToStaticMarkup(<AdvancedEditorsIndex />);
     expect([...index.matchAll(/class="advanced-editor-name">([^<]+) →</g)].map(match => match[1])).toEqual(MODELS_ADVANCED_EDITORS.map(editor => editor.label));
   });

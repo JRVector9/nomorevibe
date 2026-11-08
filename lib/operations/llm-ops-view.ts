@@ -7,8 +7,8 @@ import { elapsedModelTime, modelStageId, modelStageLabel } from "./admin-models-
 import type { StationLlm } from "./conveyor-llm";
 import type { BeltTone, Conveyor } from "./conveyor-model";
 import { FLOW_MODEL_STAGES, type FlowModelStage } from "./flow-model-catalog";
-import { LLM_CONTRACTS_HREF, LLM_FAILURES_HREF, LLM_RETRY_HREF, llmEditHref, type LlmFixField } from "./llm-ops-links";
-export { LLM_CONTRACTS_HREF, LLM_FAILURES_HREF, LLM_FIX_FIELDS, LLM_RETRY_HREF, llmEditHref, llmFieldAnchor, llmFixField, llmRetryRowHref, type LlmFixField } from "./llm-ops-links";
+import { LLM_CONTRACTS_HREF, LLM_FAILURES_HREF, LLM_RETRY_HREF, llmAllocationHref, llmEditHref, type LlmFixField } from "./llm-ops-links";
+export { LLM_ALLOCATION_HREF, LLM_CONTRACTS_HREF, LLM_FAILURES_HREF, LLM_FIX_FIELDS, LLM_RETRY_HREF, llmAllocationAnchor, llmAllocationHref, llmEditHref, llmFieldAnchor, llmFixField, llmRetryRowHref, type LlmFixField } from "./llm-ops-links";
 
 /**
  * 「LLM 운영」 개편(2026-11-07 승인 시안 PR 1·2)의 화면 모형 — DB 를 읽지 않는 순수 함수다.
@@ -132,8 +132,8 @@ export function llmReasonFix(code: string, at: LlmFixAt): LlmFix | null {
     case "device_unconfigured": return { href: LLM_NEW_DEVICE_HREF, label: "장비 행 만들기" };
     case "capacity": case "queue_full": return connection ? edit("limit", "한도 보기") : { href: "/admin/models/devices#devices", label: "장비 한도" };
     case "helper_ineligible": return { href: "/admin/models/helpers", label: "도우미 보기" };
-    // 경로 몫(step 2)은 장비 행의 일이다 — 몫을 고치는 화면이 생기기 전까지 장비 한도 화면으로 보낸다
-    case "route_quota": return { href: "/admin/models/devices#devices", label: "장비 한도" };
+    // 경로 몫(step 2)이 가득 — 몫을 고치는 곳은 칸 배분(step 3) 표다
+    case "route_quota": return { href: llmAllocationHref(), label: "칸 배분" };
     default: return null;
   }
 }

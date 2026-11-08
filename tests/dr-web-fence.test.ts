@@ -390,7 +390,8 @@ it("every admin server action and every write route handler goes through the web
   // 2026-11-07 admin/models/ops-runner-actions.ts: cancelAdminModelOperation(시작 전 운영 작업 취소) 하나가 더해져 110.
   // 2026-11-08 admin/models/tasks/actions.ts: hideAiConnectionModelAction(연결 모델 빼기·되돌리기) 하나가 더해져 111.
   // 2026-11-08 admin/models/tasks/actions.ts: clearUnreadAiTaskRanksAction(실행 쪽이 읽지 않는 옛 순위 기록 지우기) 하나가 더해져 112.
-  expect(wrapped).toBe(112);
+  // 2026-11-08 admin/models/allocation/actions.ts(칸 배분, step 3): saveRouteQuotasAction(장비 한 대의 작업 영역별 보장·상한·빌려 쓰기 저장) 하나가 더해져 113.
+  expect(wrapped).toBe(113);
   const routes = files.filter(file => file.endsWith(`${path.sep}route.ts`));
   for (const file of routes) {
     const source = readFileSync(file, "utf8");

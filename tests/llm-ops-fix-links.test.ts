@@ -46,7 +46,8 @@ describe("까닭 코드 → 고칠 곳", () => {
     // 장비·도우미
     ["device_unconfigured", { href: "/admin/models/devices#new", label: "장비 행 만들기" }], ["capacity", edit(GPU, "limit", "한도 보기")],
     ["queue_full", edit(GPU, "limit", "한도 보기")], ["helper_ineligible", { href: "/admin/models/helpers", label: "도우미 보기" }],
-    ["route_quota", { href: "/admin/models/devices#devices", label: "장비 한도" }],
+    // 경로 몫 가득(step 2) → 몫을 고치는 칸 배분 표(step 3)
+    ["route_quota", { href: "/admin/models/allocation#allocation", label: "칸 배분" }],
     // 호출 결과: 실패는 최근 실패, 결과 모름은 재실행 대기
     ["engine_slow", failures], ["client_timeout", failures], ["invalid_output", failures], ["parse_failed", failures], ["engine_failed", failures], ["process_exit", failures],
     ["engine_unknown", retry], ["transport_unknown", retry], ["commit_unknown", retry], ["blocked_unconfirmed", retry],

@@ -21,3 +21,11 @@ export const llmFieldAnchor = (connectionId: string, field: LlmFixField) => `con
 /** 연결 행을 펼친 주소. 칸을 주면 그 칸으로 간다(없으면 행 머리). */
 export const llmEditHref = (connectionId: string, field: LlmFixField | null = null) =>
   `/admin/models/llm?edit=${connectionId}${field ? `&fix=${field}#${llmFieldAnchor(connectionId, field)}` : `#conn-${connectionId}`}`;
+
+/**
+ * 칸 배분(step 3) — 장비 칸을 작업 영역(경로)마다 보장·상한으로 나누는 화면. 장비를 주면 그 열 머리(#alloc-<장비>)로 간다.
+ * 앵커는 글자·숫자·_·- 만 남긴다(장비 id 의 다른 글자는 _) — 화면의 열 머리가 같은 함수로 id 를 단다.
+ */
+export const LLM_ALLOCATION_HREF = "/admin/models/allocation";
+export const llmAllocationAnchor = (deviceId: string) => `alloc-${deviceId.replace(/[^A-Za-z0-9_-]/g, "_")}`;
+export const llmAllocationHref = (deviceId: string | null = null) => deviceId ? `${LLM_ALLOCATION_HREF}#${llmAllocationAnchor(deviceId)}` : `${LLM_ALLOCATION_HREF}#allocation`;

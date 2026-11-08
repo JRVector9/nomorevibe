@@ -34,7 +34,7 @@ export default async function CapacityDevicesPage() {
   return <main className="mx-auto grid max-w-6xl gap-6 p-4">
     <PageStamp />
     <header className="grid gap-1">
-      <AdvancedEditorLinks next={["limits", "helpers"]} />
+      <AdvancedEditorLinks next={["allocation", "limits", "helpers"]} />
       <h1 className="text-[22px] font-semibold">{EDITOR.label}</h1>
       <p className="text-[15px] text-fg-2">같은 엔진을 사용하는 1차·2차 검수와 글 짓기 등 모든 작업이 하나의 동시 실행 한도를 나눠 씁니다. 예를 들어 5건으로 저장하면 각 단계의 예약·실행 합계가 최대 5건입니다.</p>
       <p className="text-[13px] text-fg-3">저장하면 입장 판정이 트랜잭션 안에서 이 표를 바로 읽어

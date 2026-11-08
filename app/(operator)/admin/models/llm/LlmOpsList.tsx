@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import type { LlmFix, LlmFixField, LlmOpsLevel, LlmOpsRow, LlmOpsView, LlmTaskChip } from "@/lib/operations/llm-ops-view";
+import { llmAllocationHref } from "@/lib/operations/llm-ops-links";
 import { MODEL_REQUEST_REVIEW_HREF } from "../ModelCallsPanel";
 import { LevelBadge, LevelLegend, ObservedAt } from "../LlmOpsParts";
 import { modelPickerModelGroups } from "../model-picker-display";
@@ -129,6 +130,7 @@ function ConnectionRow({ row, view, secretBox, readOnly, open, fix }: { row: Llm
             : capacity.note && <FixLink fix={capacity.fix} className="llm-muted">{capacity.note}</FixLink>}
           {capacity.waiting ? <span className="llm-muted">대기 {fmt(capacity.waiting)}</span> : null}
           {capacity.sharedWith.length > 0 && <span className="llm-muted">함께 씀: {capacity.sharedWith.join(" · ")}</span>}
+          {capacity.source === "table" && <Link prefetch={false} className="llm-link" href={llmAllocationHref(capacity.deviceId)}>작업별 칸 배분 →</Link>}
         </> : <span className="llm-muted">장비 없음</span>}
       </div>
       <div className="llm-cell llm-cell-wide"><span className="llm-cell-label">배정된 작업</span>

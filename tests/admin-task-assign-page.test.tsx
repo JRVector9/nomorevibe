@@ -136,6 +136,8 @@ describe("작업 배정(/admin/models/tasks) 표 그리기", () => {
     expect(html).toContain("분산 1개");
     // 연결 관리는 LLM 운영에서 — 이 화면에 연결 폼·「칸 수」가 없다
     expect(html).toContain('href="/admin/models/llm"');
+    // 장비 칸을 작업마다 나누는 곳(칸 배분, step 3)
+    expect(html).toContain('href="/admin/models/allocation">장비 칸을 작업별로 나누기(칸 배분) →</a>');
     expect(html).not.toContain('name="baseUrl"');
     expect(html).not.toContain("칸 수");
     expect(html).not.toContain('id="connection-form"');

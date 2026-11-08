@@ -17,6 +17,7 @@ import { modelPickerConnectionLabel } from "../model-picker-display";
 import "../llm-ops.css";
 import "./tasks.css";
 import { llmHistoryHref, RECENT_AUDIT_ROWS } from "@/lib/operations/llm-ops-history";
+import { LLM_ALLOCATION_HREF } from "@/lib/operations/llm-ops-links";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "작업 배정 · LLM 운영 — NoMoreVibe", robots: { index: false } };
@@ -93,7 +94,9 @@ export default async function AiTasksPage({ searchParams }: Props) {
       <h2 id="connections-title" className="text-[15px] font-semibold">AI 연결</h2>
       <p className="text-[13px] text-fg-3">연결 추가·편집, 키, CLI·OpenCode 모델, 모델 목록 다시 읽기, 동시 실행 한도, 지우기는 LLM 운영에서 합니다. 서버 {view.connections.length}개
         {unread.length > 0 && <> · <span className="text-amber-700">목록 못 읽음 {unread.length}</span></>}{view.policyMode && <> · 용량 정책 {view.policyMode.toUpperCase()}</>}.</p>
-      <p><Link href="/admin/models/llm" prefetch={false} className="text-[13px] font-semibold text-accent-ink underline">LLM 운영에서 연결 관리 →</Link></p>
+      <p className="flex flex-wrap gap-x-4 gap-y-1"><Link href="/admin/models/llm" prefetch={false} className="text-[13px] font-semibold text-accent-ink underline">LLM 운영에서 연결 관리 →</Link>
+        {/* step 3: 한 장비의 칸을 작업마다 보장·상한으로 나누는 곳 */}
+        <Link href={LLM_ALLOCATION_HREF} prefetch={false} className="text-[13px] font-semibold text-accent-ink underline">장비 칸을 작업별로 나누기(칸 배분) →</Link></p>
     </section>
     <details id="import" className={FOLD} open={one(params.import) === "plan"}>
       <summary className={SUMMARY}><h2>지금 설정 가져오기</h2><span className="text-[13px] font-normal text-fg-3">옛 설정의 모델을 연결·순위로 옮깁니다(빈 칸만)</span></summary>
