@@ -44,7 +44,8 @@ import {
 import { ModelCapacityDeferredError } from "./capacity-deferred";
 import { LocalModelDomainRefusedError, localModelDomainRefusalEvidence } from "./local-model-domain-refusal";
 import { liveStateSql, occupyingStateSql, inFlightStateSql, sentStateSql } from "./capacity-states";
-import { deviceCandidateSql, deviceFallbackLimit, type ModelCapacityGeneration } from "./capacity-devices";
+import { deviceCandidateSql, deviceFallbackLimit, deviceRouteQuotaGateSql, routeQuotaGateCapped, type DeviceRouteQuotaGateRow,
+  type ModelCapacityGeneration } from "./capacity-devices";
 import { helperGateStateFromRow, helperGateStatesSql, type HelperGateState, type HelperGateStateRow } from "./capacity-helpers";
 import { slotOnlyModelCapacity } from "./capacity-consumer-scope";
 import { DrWriterFencedError, fenceFromRow, writerSiteActive } from "@/lib/operations/dr/epoch";
@@ -209,6 +210,20 @@ async function deviceConfigured(tx: ProductTransaction, policy: NonNullable<Cont
   const [row] = await tx.select({ deviceId: modelCapacityDevices.deviceId }).from(modelCapacityDevices)
     .where(and(eq(modelCapacityDevices.deviceId, deviceId), eq(modelCapacityDevices.enabled, true))).limit(1);
   return row !== undefined;
+}
+
+/**
+ * 경로 몫 사전 거절(step 2, 운영자 결정 2026-11-08): 장비의 이 route 가 상한(cap)에 닿았는가 — routeActive + 앞선 현재 세대 대기 ≥ cap.
+ * 몫 줄이 없거나 cap 이 없으면 false(오늘과 같다). `ownRequestId` 는 이미 줄에 선 이 요청(그보다 앞선 대기만 센다), 새 요청은 null.
+ * 입장 후보 SQL(deviceCandidateSql)과 같은 quota_state CTE, 같은 control 잠금 아래.
+ */
+async function routeQuotaCapped(tx: ProductTransaction, state: Control, deviceId: string, routeId: string, ownRequestId: string | null): Promise<boolean> {
+  if (!state.policy) return fail("model_capacity_policy_missing");
+  if (state.policyHash === null) return fail("model_capacity_policy_hash_missing");
+  const generation: ModelCapacityGeneration = { epoch: state.epoch, revision: state.revision, policyHash: state.policyHash };
+  const [row] = await tx.execute<DeviceRouteQuotaGateRow>(deviceRouteQuotaGateSql(deviceId, generation, JSON.stringify(state.policy.groupLimits ?? {}),
+    routeId, ownRequestId));
+  return routeQuotaGateCapped(row);
 }
 
 /**
@@ -669,6 +684,17 @@ function requestSlot(checked: ModelCapacityRequest, logicalKey: string | null, m
     // 도우미가 아닌 경로는 0 줄이라 이 검사를 지나간다 — 우선 역할 일은 도우미 상태로 막히지 않는다.
     const helperGates = await helperRouteGates(tx, route.groupId, checked);
     if (helperGates.some(gate => !gate.ok || gate.active >= gate.maxSlots)) return { kind: "deferred", reason: "helper_ineligible" };
+    // 경로 몫(step 2): 이 장비에서 이 route 가 상한에 닿았으면 줄에 서지 않고 바로 미룬다(route_quota, 모델 범위) — 호출자는 다음 순위로 넘긴다.
+    // 이미 줄에 서 있던 이 요청이면(상한이 그 사이 찼다) 그 대기 행을 같은 TX 에서 거둔다(도우미 grant-or-nothing 과 같은 wait_cancelled):
+    // 남은 대기 행은 같은 작업의 다음 순위 요청을 fence 로 막고, 나중에 예약되면 쓸 사람 없이 칸을 쥔다. 몫이 없으면 0 행이라 지나간다.
+    if (await routeQuotaCapped(tx, state, route.groupId, checked.routeId, existing?.state === "waiting" ? existing.requestId : null)) {
+      if (existing?.state === "waiting") {
+        const [withdrawn] = await tx.update(modelCapacityRequests).set({ state: "withdrawn", updatedAt: sql`clock_timestamp()` })
+          .where(and(eq(modelCapacityRequests.requestId, existing.requestId), eq(modelCapacityRequests.state, "waiting"))).returning();
+        if (withdrawn) await event(tx, withdrawn, "wait_cancelled", "waiting", "withdrawn");
+      }
+      return { kind: "deferred", reason: "route_quota" };
+    }
     const oldActive = await tx.select({ epoch: modelCapacityRequests.epoch, revision: modelCapacityRequests.revision,
       policyHash: modelCapacityRequests.policyHash }).from(modelCapacityRequests)
       .where(sql`${occupyingStateSql(modelCapacityRequests.state)} AND (

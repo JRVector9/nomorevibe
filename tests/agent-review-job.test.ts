@@ -404,6 +404,14 @@ it("a model-local refusal on the only rank ends the tick as all_ranks_unusable w
   expect(mocks.claim).toHaveBeenCalledTimes(1);
   expect(mocks.record).not.toHaveBeenCalled(); expect(mocks.review).not.toHaveBeenCalled();
 });
+// 경로 몫 상한(route_quota, step 2)은 포화다: 하나뿐인 순위가 상한에 닿으면 「모든 순위를 쓸 수 없음」(degraded)이 아니라 미룸으로 남아 나중에 다시 한다
+it("a route_quota refusal on the only rank stays a deferral (saturation), not all_ranks_unusable", async () => {
+  const { ModelCapacityDeferredError } = await import("@/lib/llm/capacity-deferred");
+  mocks.claim.mockRejectedValue(new ModelCapacityDeferredError("route_quota"));
+  expect(await reviewCrawlCandidates(context())).toEqual({ done: false, deferred: "model_capacity" });
+  expect(mocks.claim).toHaveBeenCalledTimes(1);
+  expect(mocks.record).not.toHaveBeenCalled(); expect(mocks.review).not.toHaveBeenCalled();
+});
 it("stops new admission while settling an already running lane without aborting it", async () => {
   const { ModelCapacityDeferredError } = await import("@/lib/llm/capacity-deferred");
   let start!: () => void, release!: (value: unknown) => void, refused!: () => void;

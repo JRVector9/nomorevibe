@@ -52,6 +52,23 @@ it('reports device_cap when a lower-rank route waits behind the secondary cap wh
   const primaryWaiting = [{ ...waiting[0], routeId: 'crawl-agent-review', class: 'first' }];
   expect(capacityAdmissionBlocksFromSnapshot({ ...snapshot(), devices, waiting: primaryWaiting, active: [secondaryActive, secondaryActive] })).toEqual([]);
 });
+// step 2 (0169 route quotas): a waiting route at its cap, or kept out by another route's unmet guarantee, is a device block; no quota lines = today
+it('reports device when a waiting route is at its quota cap or must leave another route\'s unmet guarantee free', () => {
+  const quotaDevice = (lendIdle: boolean, routeQuotas: unknown[]) => [{ deviceId: 'mlx', limitSlots: 3, secondaryCap: 3, roles: [], lendIdle, routeQuotas }];
+  const one = (routeId: string, n = 1) => ({ groupId: 'mlx', routeId, providerBudgetId: 'mlx', pool: 'reviewer', n });
+  const block = [{ job: 'crawl-agent-review', routeId: 'crawl-agent-review', groupId: 'mlx', scope: 'device' }];
+  const ai1Active = [one('crawl-agent-review')];
+  expect(capacityAdmissionBlocksFromSnapshot({ ...snapshot(), devices: quotaDevice(true, []), active: ai1Active })).toEqual([]);
+  expect(capacityAdmissionBlocksFromSnapshot({ ...snapshot(), devices: quotaDevice(true, [{ route_id: 'crawl-agent-review', min_slots: 0, max_slots: 1 }]), active: ai1Active }))
+    .toEqual(block);
+  // second-review holds a guarantee of 2 with demand (one active): 2 active + 1 held = limit 3 → AI1 (no guarantee) is blocked; idle and lending → not blocked
+  const guarded = quotaDevice(true, [{ route_id: 'second-review', min_slots: 2, max_slots: null }]);
+  expect(capacityAdmissionBlocksFromSnapshot({ ...snapshot(), devices: guarded, active: [one('crawl-agent-review'), one('second-review')] })).toEqual(block);
+  expect(capacityAdmissionBlocksFromSnapshot({ ...snapshot(), devices: guarded, active: ai1Active })).toEqual([]);
+  expect(capacityAdmissionBlocksFromSnapshot({ ...snapshot(), devices: [{ ...guarded[0], lendIdle: false }], active: [one('crawl-agent-review', 2)] })).toEqual(block);
+  // a malformed quota list is not evidence: no protection is invented
+  expect(capacityAdmissionBlocksFromSnapshot({ ...snapshot(), devices: quotaDevice(true, [{ route_id: 'x', min_slots: 2, max_slots: 1 }]), active: ai1Active })).toEqual([]);
+});
 it.each([{ writerActive: false }, { mode: 'draining' }, { policyHash: 'a'.repeat(64) }, { oldActive: null }])('never invents protection with invalid control %j', patch => {
   expect(capacityAdmissionBlocksFromSnapshot({ ...snapshot(), oldActive: true, ...patch })).toEqual([]);
 });
@@ -63,6 +80,7 @@ it('reads old-generation occupancy on the primary without locking or changing re
   expect(query).toContain("r.state = 'dispatched'"); expect(query).not.toContain("'indeterminate'");
   // PR 1b: 장비 행·순위를 같은 문장으로 읽고, 점유는 (장비, 경로)로 센다.
   expect(query).toContain('FROM model_capacity_devices WHERE enabled'); expect(query).toContain('FROM model_capacity_device_roles ro');
+  expect(query).toContain("'lendIdle', d.lend_idle, 'routeQuotas', d.route_quotas");
   expect(query).toContain('GROUP BY group_id, route_id, provider_budget_id, pool');
   expect(query).toContain('r.reserved_until > clock_timestamp()');
   expect(query).toContain('r.policy_hash IS DISTINCT FROM c.policy_hash');

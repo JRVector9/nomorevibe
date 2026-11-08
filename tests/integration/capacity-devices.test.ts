@@ -187,7 +187,9 @@ describe("readModelCapacityDeviceStates", () => {
     expect(states[0].updatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(states[1]).toEqual({ deviceId: "beta", source: "policy_fallback", limitSlots: 1, secondaryCap: 1, idleMs: 60_000, reserveSlots: 0,
       active: 1, secondaryActive: 1, primaryBusy: false, secondaryBound: 1, lending: false, waiting: 0, waitingPrimary: 0, version: null, updatedAt: null,
-      helpers: [] }); // PR 2a: no helper assignment on this device
+      helpers: [], // PR 2a: no helper assignment on this device
+      // 0169 (route quotas): the policy fallback lends idle slots and has no quota lines; the per-route occupancy still shows (indeterminate holds nothing)
+      lendIdle: true, routes: [{ routeId: "beta-route", active: 1, waiting: 0, minSlots: null, maxSlots: null, cap: null, demand: false, held: 0 }] });
     expect(states[2]).toMatchObject({ deviceId: "gamma", source: "table", active: 0 });
     // the same read inside a caller transaction (1b-C's admission TX) sees the same snapshot
     expect(await db.transaction(tx => readModelCapacityDeviceStates(tx))).toEqual(states);

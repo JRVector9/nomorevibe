@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { sql } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
-import { DEFAULT_DEVICE_IDLE_MS, DEFAULT_DEVICE_RESERVE_SLOTS, MODEL_CAPACITY_DEVICE_SAVE_AUDIT_ACTION, UNRANKED_ROLE_RANK,
-  deviceCandidateSql, deviceFallbackLimit, deviceFits, deviceLending, deviceRoleRank, deviceSecondaryBound, deviceSettingsFromPolicyFallback,
-  deviceStateCte, deviceStateFromRow, deviceStateSql, modelCapacityDeviceRoleSchema, modelCapacityDeviceSettingsSchema,
-  parseModelCapacityDeviceSettings } from '@/lib/llm/capacity-devices';
+import { DEFAULT_DEVICE_IDLE_MS, DEFAULT_DEVICE_RESERVE_SLOTS, MODEL_CAPACITY_DEVICE_SAVE_AUDIT_ACTION, MODEL_CAPACITY_ROUTE_QUOTA_SAVE_AUDIT_ACTION, UNRANKED_ROLE_RANK,
+  deviceCandidateSql, deviceFallbackLimit, deviceFits, deviceLending, deviceRoleRank, deviceRouteQuotaFits, deviceRouteQuotaGateSql, deviceSecondaryBound,
+  deviceSettingsFromPolicyFallback, deviceStateCte, deviceStateFromRow, deviceStateSql, modelCapacityDeviceRoleSchema, modelCapacityDeviceSettingsSchema,
+  modelCapacityRouteStateSchema, parseModelCapacityDeviceSettings, parseModelCapacityRouteQuotasInput, routeQuotaCap, routeQuotaGateCapped,
+  routeQuotasFromRecords, routeQuotasLimitIssue, routeQuotasToRecords, routeStatesFromJson, type ModelCapacityRouteState } from '@/lib/llm/capacity-devices';
 
 const render = (query: ReturnType<typeof sql>) => new PgDialect().sqlToQuery(query);
 const generation = { epoch: 3, revision: 7, policyHash: 'a'.repeat(64) };
@@ -119,7 +120,8 @@ describe('candidate SQL', () => {
 
   it('counts occupancy from reserved/dispatched rows only (indeterminate holds nothing) and busy from rank-1 live/recent rows', () => {
     const query = render(deviceCandidateSql('supa', generation, '{}')).sql;
-    expect(query.match(/r\.state IN \('reserved','dispatched'\)/g)).toHaveLength(3);  // helper_active + active CTE + busy CTE
+    // helper_active + active CTE + busy CTE + route_use CTE (0169 route quotas: the same occupancy, split by route)
+    expect(query.match(/r\.state IN \('reserved','dispatched'\)/g)).toHaveLength(4);
     expect(query).not.toContain("'indeterminate'");
     expect(query).toContain('ro.role_rank = 1');
     expect(query).toContain("r.updated_at >= clock_timestamp() - s.idle_ms * interval '1 millisecond'");
@@ -175,5 +177,109 @@ describe('candidate SQL', () => {
     expect(deviceStateFromRow({ device_id: 'g', source: 'table', limit_slots: 2, secondary_cap: 0, idle_ms: 0, reserve_slots: 0, active: 1,
       secondary_active: 1, secondary_bound: 2, primary_busy: false, lending: true, waiting: 0, waiting_primary: 0, version: 1, updated_at: at, helpers }).helpers)
       .toEqual([{ assignmentId: 'g:ai1', kind: 'live', routeId: 'h', provider: 'local-direct', model: 'm', ok: true, active: 1, maxSlots: 2 }]);
+  });
+});
+
+describe('route quotas (step 2, 0169)', () => {
+  const input = { deviceId: 'gpu3090-qwen', expectedVersion: 3, lendIdle: true,
+    quotas: [{ routeId: 'second-review', minSlots: 1, maxSlots: 2 }, { routeId: 'crawl-publish-classify', minSlots: 1, maxSlots: null }] };
+
+  it('parses the save input, sorts lines by route and names the refused field', () => {
+    const parsed = parseModelCapacityRouteQuotasInput(input);
+    expect(parsed.quotas.map(quota => quota.routeId)).toEqual(['crawl-publish-classify', 'second-review']);
+    expect(Object.isFrozen(parsed.quotas)).toBe(true);
+    const refuse = (value: unknown, code: string) => expect(() => parseModelCapacityRouteQuotasInput(value)).toThrow(`model_capacity_route_quota_invalid:${code}`);
+    refuse({ ...input, quotas: [{ routeId: 'a', minSlots: 2, maxSlots: 1 }] }, 'quotas.0.maxSlots:min_exceeds_max');
+    refuse({ ...input, quotas: [{ routeId: 'a', minSlots: 0, maxSlots: 1 }, { routeId: 'a', minSlots: 0, maxSlots: null }] }, 'quotas:duplicate_route');
+    refuse({ ...input, quotas: [{ routeId: 'a', minSlots: -1, maxSlots: null }] }, 'quotas.0.minSlots');
+    refuse({ ...input, quotas: [{ routeId: 'a', minSlots: 0, maxSlots: 257 }] }, 'quotas.0.maxSlots');
+    refuse({ ...input, quotas: Array.from({ length: 65 }, (_, index) => ({ routeId: `r${index}`, minSlots: 0, maxSlots: null })) }, 'quotas');
+    refuse({ ...input, expectedVersion: null }, 'expectedVersion');
+    refuse({ ...input, lendIdle: 'yes' }, 'lendIdle');
+    refuse({ ...input, extra: true }, 'root');
+    expect(MODEL_CAPACITY_ROUTE_QUOTA_SAVE_AUDIT_ACTION).toBe('model-capacity-route-quota-save');
+  });
+
+  it('checks the lines against the device limit like the DB function, and converts to and from the stored snake_case lines', () => {
+    expect(routeQuotasLimitIssue([{ minSlots: 1, maxSlots: 5 }, { minSlots: 4, maxSlots: null }], 5)).toBeNull();
+    expect(routeQuotasLimitIssue([{ minSlots: 1, maxSlots: 6 }], 5)).toBe('quotas.0.maxSlots:exceeds_limit');
+    expect(routeQuotasLimitIssue([{ minSlots: 0, maxSlots: null }, { minSlots: 6, maxSlots: null }], 5)).toBe('quotas.1.minSlots:exceeds_limit');
+    expect(routeQuotasLimitIssue([{ minSlots: 3, maxSlots: null }, { minSlots: 3, maxSlots: null }], 5)).toBe('quotas:min_sum_exceeds_limit');
+    const parsed = parseModelCapacityRouteQuotasInput(input);
+    const records = routeQuotasToRecords(parsed.quotas);
+    expect(records).toEqual([{ route_id: 'crawl-publish-classify', min_slots: 1, max_slots: null }, { route_id: 'second-review', min_slots: 1, max_slots: 2 }]);
+    expect(routeQuotasFromRecords(records)).toEqual(parsed.quotas);
+    expect(routeQuotasFromRecords(JSON.stringify(records))).toEqual(parsed.quotas);
+    expect(routeQuotasFromRecords([])).toEqual([]);
+    expect(() => routeQuotasFromRecords([{ route_id: 'a', min_slots: 2, max_slots: 1 }])).toThrow('model_capacity_route_quotas_unreadable');
+    expect(() => routeQuotasFromRecords({})).toThrow('model_capacity_route_quotas_unreadable');
+  });
+
+  it('applies the cap by the lending switch: on = max, off = the guarantee when there is one, else max', () => {
+    expect(routeQuotaCap({ minSlots: 1, maxSlots: 3 }, true)).toBe(3);
+    expect(routeQuotaCap({ minSlots: 1, maxSlots: null }, true)).toBeNull();
+    expect(routeQuotaCap({ minSlots: 1, maxSlots: 3 }, false)).toBe(1);
+    expect(routeQuotaCap({ minSlots: 0, maxSlots: 3 }, false)).toBe(3);
+    expect(routeQuotaCap({ minSlots: 0, maxSlots: null }, false)).toBeNull();
+    expect(routeQuotaCap({ minSlots: 0, maxSlots: 0 }, true)).toBe(0);
+  });
+
+  it('mirrors the admission expression for a new request: at cap counts waiting rows, under-guarantee ignores held slots, others leave them free', () => {
+    const route = (routeId: string, over: Partial<ModelCapacityRouteState> = {}): ModelCapacityRouteState =>
+      ({ routeId, active: 0, waiting: 0, minSlots: null, maxSlots: null, cap: null, demand: false, held: 0, ...over });
+    const state = (active: number, routes: ModelCapacityRouteState[]) => ({ active, limitSlots: 5, routes });
+    expect(deviceRouteQuotaFits({ active: 4, limitSlots: 5 }, 'x')).toEqual({ fits: true, atCap: false, underGuarantee: false }); // no routes = no quotas
+    expect(deviceRouteQuotaFits(state(1, [route('a', { active: 1, cap: 1, maxSlots: 1, minSlots: 0 })]), 'a')).toMatchObject({ fits: false, atCap: true });
+    expect(deviceRouteQuotaFits(state(0, [route('a', { waiting: 1, cap: 1, maxSlots: 1, minSlots: 0 })]), 'a')).toMatchObject({ fits: false, atCap: true });
+    expect(deviceRouteQuotaFits(state(0, [route('a', { cap: 0, maxSlots: 0, minSlots: 0 })]), 'a')).toMatchObject({ fits: false, atCap: true });
+    const crowded = state(4, [route('a', { minSlots: 1, held: 1, demand: true, waiting: 1 }), route('b', { active: 4 })]);
+    expect(deviceRouteQuotaFits(crowded, 'b')).toEqual({ fits: false, atCap: false, underGuarantee: false }); // 4 + held 1 = limit
+    expect(deviceRouteQuotaFits(crowded, 'a')).toEqual({ fits: true, atCap: false, underGuarantee: true });
+    expect(deviceRouteQuotaFits(state(5, crowded.routes), 'a').fits).toBe(false);                            // never above the device limit
+  });
+
+  it('pins the candidate predicate, the pre-check and the observation shape', () => {
+    const candidate = render(deviceCandidateSql('supa', generation, '{}')).sql;
+    for (const cte of ['quota', 'route_use', 'recent', 'quota_state']) expect(candidate).toContain(`${cte} AS MATERIALIZED`);
+    expect(candidate).toContain('jsonb_to_recordset(d.route_quotas) AS x(route_id text, min_slots int, max_slots int)');
+    expect(candidate).toContain('LEFT JOIN quota_state qs ON qs.route_id = q.route_id');
+    expect(candidate).toContain('(NOT h.helper AND coalesce(qs.active < qs.min_slots, false))');
+    expect(candidate).toContain('AND (qs.cap IS NULL OR qs.active < qs.cap)');
+    expect(candidate).toContain('AND (coalesce(qs.active < qs.min_slots, false) OR c.total + (SELECT coalesce(sum(o.held), 0) FROM quota_state o WHERE o.route_id <> q.route_id) < s.limit_slots)');
+    expect(candidate).toContain("CASE WHEN s.lend_idle THEN qu.max_slots WHEN qu.min_slots > 0 THEN qu.min_slots ELSE qu.max_slots END AS cap");
+    expect(candidate).toContain("(r.state = 'settled' AND r.settled_at >= (SELECT clock_timestamp() - s.idle_ms * interval '1 millisecond' FROM s))");
+    expect(candidate).toMatch(/ORDER BY h\.helper, coalesce\(ro\.role_rank, 32767\), q\.queue_ordinal LIMIT 1 FOR UPDATE OF q$/);
+    // observation stays readable by the supervisor's column-limited SELECT (no queue_ordinal) and never locks
+    const state = render(deviceStateSql('supa', generation, '{}')).sql;
+    expect(state).toContain('s.lend_idle');
+    expect(state).toContain('FROM quota_state qs FULL JOIN route_use u ON u.route_id = qs.route_id) x) AS routes');
+    expect(state).not.toContain('queue_ordinal');
+    expect(state).not.toMatch(/\bFOR\s+(SHARE|UPDATE)\b/);
+    const fresh = render(deviceRouteQuotaGateSql('supa', generation, '{}', 'second-review', null));
+    expect(fresh.sql).toContain('FROM quota_state qs WHERE qs.route_id = $');
+    expect(fresh.sql).not.toContain('w.queue_ordinal <');
+    expect(fresh.params).toContain('second-review');
+    const own = render(deviceRouteQuotaGateSql('supa', generation, '{}', 'second-review', '7e2c1a90-0000-4000-8000-000000000001')).sql;
+    expect(own).toContain('w.queue_ordinal < (SELECT o.queue_ordinal FROM model_capacity_requests o WHERE o.request_id = $');
+    expect(routeQuotaGateCapped(undefined)).toBe(false);
+    expect(routeQuotaGateCapped({ cap: null, active: 9, min_slots: 0, ahead: 9 })).toBe(false);
+    expect(routeQuotaGateCapped({ cap: 2, active: 1, min_slots: 0, ahead: 0 })).toBe(false);
+    expect(routeQuotaGateCapped({ cap: 2, active: 1, min_slots: 0, ahead: 1 })).toBe(true);
+    expect(routeQuotaGateCapped({ cap: 0, active: 0, min_slots: 0, ahead: 0 })).toBe(true);
+  });
+
+  it('maps the routes jsonb and lend_idle into the state only when the row carries them', () => {
+    const base = { device_id: 'g', source: 'table' as const, limit_slots: 5, secondary_cap: 5, idle_ms: 0, reserve_slots: 0, active: 1,
+      secondary_active: 1, secondary_bound: 5, primary_busy: false, lending: false, waiting: 0, waiting_primary: 0, version: 1, updated_at: null };
+    expect(deviceStateFromRow(base)).not.toHaveProperty('routes');
+    const routes = [{ route_id: 'second-review', active: 1, waiting: 0, min_slots: 1, max_slots: 2, cap: 2, demand: true, held: 0 },
+      { route_id: 'other', active: 0, waiting: 2, min_slots: null, max_slots: null, cap: null, demand: false, held: 0 }];
+    const mapped = deviceStateFromRow({ ...base, lend_idle: false, routes });
+    expect(mapped.lendIdle).toBe(false);
+    expect(mapped.routes).toEqual([{ routeId: 'second-review', active: 1, waiting: 0, minSlots: 1, maxSlots: 2, cap: 2, demand: true, held: 0 },
+      { routeId: 'other', active: 0, waiting: 2, minSlots: null, maxSlots: null, cap: null, demand: false, held: 0 }]);
+    for (const row of mapped.routes!) expect(modelCapacityRouteStateSchema.parse(row)).toEqual(row);
+    expect(routeStatesFromJson({})).toEqual([]);
+    expect(routeStatesFromJson(JSON.stringify(routes))).toEqual(mapped.routes);
   });
 });

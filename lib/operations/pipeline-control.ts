@@ -10,7 +10,7 @@ import { reviewTaskRanksPinned, settingsReviewersActive } from "@/lib/crawl/revi
 import { QWEN_AUDIT_PROVIDER } from "@/lib/crawl/product-audit-reviewer";
 import { batchPolicyHash, batchPolicySchema } from "@/lib/jobs/batches";
 import { modelCapacityPolicyHash, modelCapacityPolicySchema, type ModelCapacityPolicy } from "@/lib/llm/capacity";
-import { deviceFallbackLimit } from "@/lib/llm/capacity-devices";
+import { deviceFallbackLimit, modelCapacityRouteStateSchema } from "@/lib/llm/capacity-devices";
 import { ASSIGNMENT_STAGE_IDS, helperGateStateSchema } from "@/lib/llm/capacity-helpers";
 import { secondReviewFallbacks, secondReviewVoters } from "@/lib/crawl/second-review-voters";
 import { cliServingContractSchema, resolveCliServingContract, type CliProvider } from "@/lib/llm/cli-serving-contract";
@@ -153,11 +153,14 @@ export const controlSnapshotSchema = z.object({
    * policy_fallback = 정책 groupLimits 대체). 없으면(옛 스냅숏·읽지 못함) 장비 판정은 "모름"이라 경고·거절을 만들지 않는다.
    * `helpers`(PR 2a Layer B): 그 장비의 도우미 경로 상태(helper_gate + 점유). 옛 스냅숏에는 없다. 도우미 상태는 어떤 전환도 막지 않는다 —
    * 배정 없는 장비는 [] 이고, 감시자 표가 없거나 신선하지 않으면 ok=false 로 읽힐 뿐이다(fail-closed 는 도우미 쪽이다, OPEN 쪽이 아니다).
+   * `lendIdle`·`routes`(0169 경로 몫): readModelCapacityDeviceStates 가 더 준다 — strict 거절로 status·OPEN 이 막히지 않게 받아들인다.
    */
   devices: z.array(z.object({ deviceId: z.string().min(1).max(120), source: z.enum(["table", "policy_fallback"]), limitSlots: count, secondaryCap: count,
     idleMs: count, reserveSlots: count, active: count, secondaryActive: count, secondaryBound: count, primaryBusy: z.boolean(), lending: z.boolean(),
     waiting: count, waitingPrimary: count, version: count.nullable(), updatedAt: z.string().nullable(),
-    helpers: z.array(helperGateStateSchema).max(512).optional() }).strict()).max(512).optional(),
+    helpers: z.array(helperGateStateSchema).max(512).optional(),
+    // 경로 몫(0169, step 2): 빌려주기와 경로마다 점유·몫. 옛 스냅숏에는 없다. 어떤 전환도 막지 않는다.
+    lendIdle: z.boolean().optional(), routes: z.array(modelCapacityRouteStateSchema).max(512).optional() }).strict()).max(512).optional(),
   /**
    * 배정 표 읽기(PR 3b-B). 이 스냅숏을 읽은 프로세스(ops CLI·웹)의 스위치가 켜졌을 때만 있다. PR 3b-E 부터 스위치는 runtime_settings 토글
    * (`flagSource` 'runtime' — 모든 역할이 같은 행을 읽는다) 또는 env MODEL_ASSIGNMENT_TABLE 강제('env', 이 프로세스만)다. 옛 스냅숏에는 flagSource 가 없다.

@@ -1,12 +1,15 @@
-import { asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import { currentReplayDb } from "@/lib/db/replay-scope";
 import { modelCapacityControl, modelCapacityDeviceRoles, modelCapacityDevices, operationsAudit } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { adminAuditRow } from "@/lib/operations/admin-log";
 import { DrWriterFencedError, writerSiteActive } from "@/lib/operations/dr/epoch";
-import { MODEL_CAPACITY_DEVICE_SAVE_AUDIT_ACTION, deviceStateFromRow, deviceStateSql, parseModelCapacityDeviceSettings,
-  type DeviceStateRow, type ModelCapacityDeviceRow, type ModelCapacityDeviceState, type ModelCapacityGeneration } from "./capacity-devices";
+import { MODEL_CAPACITY_DEVICE_SAVE_AUDIT_ACTION, MODEL_CAPACITY_ROUTE_QUOTA_SAVE_AUDIT_ACTION, deviceStateFromRow, deviceStateSql,
+  parseModelCapacityDeviceSettings, parseModelCapacityRouteQuotasInput, routeQuotaCap, routeQuotasFromRecords, routeQuotasLimitIssue, routeQuotasToRecords,
+  type DeviceStateRow, type ModelCapacityDeviceRow, type ModelCapacityDeviceState, type ModelCapacityGeneration,
+  type ModelCapacityRouteQuota } from "./capacity-devices";
+import { parseModelCapacityPolicy } from "./capacity";
 
 /**
  * 장비 설정 표(model_capacity_devices / model_capacity_device_roles, 0153)의 DB 읽기·저장 — 1b-A.
@@ -31,6 +34,7 @@ function toRow(row: DeviceRowRecord, roles: readonly RoleRowRecord[]): ModelCapa
     deviceId: row.deviceId, limitSlots: row.limitSlots, secondaryCap: row.secondaryCap, idleMs: row.idleMs, reserveSlots: row.reserveSlots,
     physicalLimit: row.physicalLimit, roles: Object.freeze(ranked), note: row.note, enabled: row.enabled, version: Number(row.version),
     updatedBy: row.updatedBy, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
+    lendIdle: row.lendIdle, routeQuotas: routeQuotasFromRecords(row.routeQuotas),
   });
 }
 
@@ -81,6 +85,9 @@ export async function saveModelCapacityDevice(tx: ProductTransaction, input: unk
   const current = before?.version ?? null;
   if (expectedVersion !== null && current !== expectedVersion) fail(`model_capacity_device_version_mismatch:${current ?? "none"}`);
   if (current !== null && current >= 9007199254740991) fail("model_capacity_device_version_exhausted");
+  // 경로 몫(0169)은 장비 저장이 바꾸지 않는다 — 칸 수를 보장 합계·상한 아래로 줄이려면 몫을 먼저 줄인다(DB 검사도 같은 규칙으로 거절한다)
+  if (before?.routeQuotas?.length && routeQuotasLimitIssue(before.routeQuotas, settings.limitSlots) !== null)
+    fail("model_capacity_device_invalid:route_quotas_exceed_limit");
   const values = { limitSlots: settings.limitSlots, secondaryCap: settings.secondaryCap, idleMs: settings.idleMs, reserveSlots: settings.reserveSlots,
     physicalLimit: settings.physicalLimit, note: settings.note, updatedBy: actor };
   const [saved] = await tx.insert(modelCapacityDevices).values({ deviceId: settings.deviceId, ...values, enabled: true })
@@ -94,6 +101,53 @@ export async function saveModelCapacityDevice(tx: ProductTransaction, input: unk
   await tx.insert(operationsAudit).values(await adminAuditRow(actor, { action: MODEL_CAPACITY_DEVICE_SAVE_AUDIT_ACTION, target: settings.deviceId,
     detail: { version: after.version, expectedVersion, before: before && settingsOf(before), after: settingsOf(after) } }));
   return { before, after };
+}
+
+/**
+ * 경로 몫 저장(step 2, 운영자 결정 2026-11-08) — 장비 한 대의 lend_idle 과 route_quotas 를 통째로 바꾼다. 호출자의 tx 안에서, 던지면 아무것도 남지 않는다.
+ * 순서(모든 입장 TX 와 같은 잠금 순서): replay 거부 → 입력 검증(zod) → DR writer fence(SHARE; fenced 면 site_fenced) → model_capacity_control id=1
+ * FOR UPDATE(grant 는 몫 스냅숏 하나만 본다) → 장비 행 FOR UPDATE(있고 enabled 여야 한다) → version compare-and-set → 칸 수와 견준 검사
+ * (줄마다 min·max ≤ 칸, 보장 합계 ≤ 칸) → UPDATE(lend_idle, route_quotas, version + 1) → operations_audit 한 줄
+ * (MODEL_CAPACITY_ROUTE_QUOTA_SAVE_AUDIT_ACTION, target = device_id, detail { version, expectedVersion, before, after, warnings }).
+ * 거절: `model_capacity_route_quota_invalid:<path>` · `model_capacity_route_quota_version_mismatch:<current|none>` · `model_capacity_route_quota_device_unconfigured`
+ * · `model_capacity_device_version_exhausted` · `model_capacity_control_missing` · DrWriterFencedError("site_fenced").
+ * 경고(저장은 한다): `route_unmapped:<route>` = 지금 정책에 이 장비로 가는 그 route 가 없다(몫은 route 가 생기면 적용된다), `policy_unreadable`.
+ * 장부 행은 건드리지 않는다 — 이미 잡힌 칸은 그대로 끝나고, 새 grant 부터 몫이 적용된다(DRAIN 불필요).
+ */
+export async function saveModelCapacityRouteQuotas(tx: ProductTransaction, input: unknown, actor: string): Promise<{
+  before: { lendIdle: boolean; quotas: readonly ModelCapacityRouteQuota[] }; after: ModelCapacityDeviceRow; warnings: readonly string[] }> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  if (typeof actor !== "string" || !actor.trim() || actor.length > 120) fail("model_capacity_route_quota_invalid:actor");
+  const parsed = parseModelCapacityRouteQuotasInput(input);
+  if (!await writerSiteActive(tx)) throw new DrWriterFencedError("site_fenced");
+  const [control] = await tx.select({ id: modelCapacityControl.id, policy: modelCapacityControl.policy }).from(modelCapacityControl)
+    .where(eq(modelCapacityControl.id, 1)).for("update");
+  if (!control) fail("model_capacity_control_missing");
+  const [existing] = await tx.select().from(modelCapacityDevices).where(eq(modelCapacityDevices.deviceId, parsed.deviceId)).for("update");
+  if (!existing || !existing.enabled) fail("model_capacity_route_quota_device_unconfigured");
+  const current = Number(existing.version);
+  if (current !== parsed.expectedVersion) fail(`model_capacity_route_quota_version_mismatch:${current}`);
+  if (current >= 9007199254740991) fail("model_capacity_device_version_exhausted");
+  const issue = routeQuotasLimitIssue(parsed.quotas, existing.limitSlots);
+  if (issue !== null) fail(`model_capacity_route_quota_invalid:${issue}`);
+  const warnings: string[] = [];
+  let policy: ReturnType<typeof parseModelCapacityPolicy> | null = null;
+  try { policy = control.policy === null ? null : parseModelCapacityPolicy(control.policy); } catch { policy = null; }
+  if (policy === null) warnings.push("policy_unreadable");
+  else for (const quota of parsed.quotas)
+    if (!policy.routes.some(route => route.routeId === quota.routeId && route.groupId === parsed.deviceId)) warnings.push(`route_unmapped:${quota.routeId}`);
+  const before = { lendIdle: existing.lendIdle, quotas: routeQuotasFromRecords(existing.routeQuotas) };
+  const [saved] = await tx.update(modelCapacityDevices).set({ lendIdle: parsed.lendIdle, routeQuotas: routeQuotasToRecords(parsed.quotas),
+    version: sql`${modelCapacityDevices.version} + 1`, updatedBy: actor, updatedAt: sql`clock_timestamp()` })
+    .where(and(eq(modelCapacityDevices.deviceId, parsed.deviceId), eq(modelCapacityDevices.version, existing.version))).returning();
+  if (!saved) fail(`model_capacity_route_quota_version_mismatch:${current}`);
+  const after = toRow(saved, await rolesOf(tx, [parsed.deviceId]));
+  const quotaView = (lendIdle: boolean, quotas: readonly ModelCapacityRouteQuota[]) => ({ lendIdle,
+    quotas: quotas.map(quota => ({ ...quota, cap: routeQuotaCap(quota, lendIdle) })) });
+  await tx.insert(operationsAudit).values(await adminAuditRow(actor, { action: MODEL_CAPACITY_ROUTE_QUOTA_SAVE_AUDIT_ACTION, target: parsed.deviceId,
+    detail: { version: after.version, expectedVersion: parsed.expectedVersion, limitSlots: after.limitSlots,
+      before: quotaView(before.lendIdle, before.quotas), after: quotaView(after.lendIdle ?? true, after.routeQuotas ?? []), warnings } }));
+  return { before, after, warnings: Object.freeze(warnings) };
 }
 
 const settingsOf = (row: ModelCapacityDeviceRow) => ({ limitSlots: row.limitSlots, secondaryCap: row.secondaryCap, idleMs: row.idleMs,

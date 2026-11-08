@@ -5,7 +5,7 @@ import { aiTask, AI_CLI_TOOL_PROVIDERS, type AiCliTool } from "./ai-tasks";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { modelCapacityPolicyHash, parseModelCapacityPolicy } from "./capacity";
 import { readModelCapacityDeviceStates, listModelCapacityDevices } from "./capacity-devices-repository";
-import { deviceFits, deviceRoleRank } from "./capacity-devices";
+import { deviceFits, deviceRoleRank, deviceRouteQuotaFits } from "./capacity-devices";
 import { ModelCapacityDeferredError } from "./capacity-deferred";
 import { taskPoolEngineKey } from "./ai-task-pool-identity";
 import { aiTaskUsesCliEngine, cliEngineRevision, type CliEngineSource } from "./cli-engine-config";
@@ -103,9 +103,14 @@ export async function chooseTaskWorkloadMember<T extends AiTaskWorkloadCandidate
         if (!state || configured && !configured.enabled) return [];
         const helper = state.helpers?.filter(item => item.routeId === row.candidate.routeId
           && item.provider === row.candidate.provider && item.model === row.candidate.identity) ?? [];
-        // Match capacity-devices effectiveRank: helper routes never receive the rank-1 bypass.
+        // Route quota (step 2) hint, same expression as deviceCandidateSql/deviceRouteQuotaGateSql: a route at its cap on this device
+        // would be refused as route_quota without queuing, and other routes' unmet guarantees stay free. SQL stays the authority.
+        const quota = deviceRouteQuotaFits(state, row.candidate.routeId);
+        if (!quota.fits) return [];
+        // Match capacity-devices effectiveRank: helper routes never receive the rank-1 bypass. A route under its guarantee
+        // passes the secondary bound like rank 1 (non-helper only), as in deviceCandidateSql.
         const roleRank = deviceRoleRank(configured?.roles ?? [], row.candidate.routeId);
-        const rank = helper.length ? Math.max(roleRank, 2) : roleRank;
+        const rank = helper.length ? Math.max(roleRank, 2) : quota.underGuarantee ? 1 : roleRank;
         if (!deviceFits({ active: state.active, limitSlots: state.limitSlots, rank,
           secondaryActive: state.secondaryActive, secondaryBound: state.secondaryBound })) return [];
         if (helper.some(item => !item.ok || item.active >= item.maxSlots)) return [];

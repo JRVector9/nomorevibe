@@ -167,6 +167,14 @@ describe("pipeline control plan", () => {
       allowDeferredRoutes: true }, withHelpers);
     expect([opened.blocked, opened.warnings.filter(warning => /helper/.test(warning))]).toEqual([[], []]);
     expect(formatControlStatus(withHelpers)).toContain("[devices]");
+    // 0169 (route quotas): the device read also carries lendIdle and per-route quota state — the strict snapshot accepts them and no transition is blocked
+    const routes = [{ routeId: "second-review", active: 1, waiting: 0, minSlots: 1, maxSlots: 2, cap: 2, demand: true, held: 0 },
+      { routeId: "crawl-agent-review", active: 0, waiting: 3, minSlots: null, maxSlots: null, cap: null, demand: false, held: 0 }];
+    const withQuotas = draining([{ ...device("gateway", "table"), helpers, lendIdle: false, routes }, { ...device("omega", "table"), helpers: [], lendIdle: true, routes: [] }]);
+    expect(controlSnapshotSchema.parse(withQuotas)).toEqual(withQuotas);
+    expect(() => controlSnapshotSchema.parse(draining([{ ...device("gateway", "table"), routes: [{ ...routes[0], extra: 1 } as unknown as (typeof routes)[number]] }]))).toThrow();
+    expect(planPipelineControl({ ...transition("capacity", "mode", "--to=open", "--from-mode=draining", "--expect-epoch=1", "--expect-revision=2"),
+      allowDeferredRoutes: true }, withQuotas).blocked).toEqual([]);
   });
 
   it("changes a policy only while closed and refuses an unchanged or invalid policy", () => {

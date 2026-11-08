@@ -61,7 +61,7 @@ const REASON_SHORT: Readonly<Record<string, string>> = Object.freeze({
   commit_unknown: "정산 결과 모름",
   // 용량·정책
   unmapped: "정책 경로 없음", device_unconfigured: "장비 행 없음", capacity: "칸 가득", queue_full: "대기열 가득",
-  blocked_unconfirmed: "미확인 점유로 가득", helper_ineligible: "도우미 경로 닫힘", model_paused: "쉬는 중",
+  blocked_unconfirmed: "미확인 점유로 가득", helper_ineligible: "도우미 경로 닫힘", route_quota: "경로 몫 가득", model_paused: "쉬는 중",
   // 작업
   no_task_models: "순위 없음", all_ranks_unusable: "쓸 수 있는 순위 없음", task_models_unreadable: "순위 못 읽음",
 });
@@ -132,6 +132,8 @@ export function llmReasonFix(code: string, at: LlmFixAt): LlmFix | null {
     case "device_unconfigured": return { href: LLM_NEW_DEVICE_HREF, label: "장비 행 만들기" };
     case "capacity": case "queue_full": return connection ? edit("limit", "한도 보기") : { href: "/admin/models/devices#devices", label: "장비 한도" };
     case "helper_ineligible": return { href: "/admin/models/helpers", label: "도우미 보기" };
+    // 경로 몫(step 2)은 장비 행의 일이다 — 몫을 고치는 화면이 생기기 전까지 장비 한도 화면으로 보낸다
+    case "route_quota": return { href: "/admin/models/devices#devices", label: "장비 한도" };
     default: return null;
   }
 }
