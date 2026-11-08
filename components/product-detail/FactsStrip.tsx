@@ -13,12 +13,26 @@ import { safeExternalUrl } from "./format";
 /** 칸 하나 — 값이 있는 것만 만든다 */
 type Fact = { label: string; value: ReactNode; note?: string; tone?: "up" | "down"; title?: string };
 
-function Tile({ label, value, note, tone, title }: Fact) {
+/**
+ * 칸 수에 맞춘 줄 나눔(2026-11-08) — 한 줄에 perRow 칸까지, 줄마다 칸을 고르게(차이 1칸 이하) 나눠 모든 줄이 끝까지 찬다.
+ * 예전 auto-fit 격자는 7칸을 3·3·1 로 놓아 마지막 줄에 선 없는 빈자리가 둘 남았다. 7칸 → 넓은 틀 4·3, 좁은 틀 2·2·2·1.
+ */
+export function factRows(count: number, perRow: number): number[] {
+  if (count <= 0) return [];
+  const rows = Math.ceil(count / perRow), base = Math.floor(count / rows), extra = count % rows;
+  return Array.from({ length: rows }, (_, index) => base + (index < extra ? 1 : 0));
+}
+/** 12칸 격자에서 줄의 칸 수 → 칸 너비. Tailwind 가 읽도록 클래스 이름을 글자 그대로 둔다(좁은 틀 / @lg 넓은 틀). */
+const NARROW_SPAN: Readonly<Record<number, string>> = { 1: "col-span-12", 2: "col-span-6" };
+const WIDE_SPAN: Readonly<Record<number, string>> = { 1: "@lg:col-span-12", 2: "@lg:col-span-6", 3: "@lg:col-span-4", 4: "@lg:col-span-3" };
+const rowSpans = (rows: number[]) => rows.flatMap((count) => Array.from({ length: count }, () => count));
+
+function Tile({ label, value, note, tone, title, span }: Fact & { span: string }) {
   const color = tone === "up" ? "text-up" : tone === "down" ? "text-down" : "text-fg";
   return (
-    <div className="flex min-w-0 flex-col gap-0.5 border-l border-t border-line px-3 py-2.5" title={title}>
+    <div className={`flex min-w-0 flex-col gap-1 border-l border-t border-line px-4 py-3 ${span}`} title={title}>
       <dt className="break-words text-[13px] leading-[18px] text-fg-2">{label}</dt>
-      <dd className={`m-0 min-w-0 break-words text-[17px] font-semibold leading-6 tracking-[-0.02em] tabular-nums ${color}`}>{value}</dd>
+      <dd className={`m-0 min-w-0 break-words text-[18px] font-semibold leading-6 tracking-[-0.02em] tabular-nums ${color}`}>{value}</dd>
       {/* 덧말도 값의 일부로 둘째 dd 에 둔다 — dl 묶음 안에는 dt·dd 만 와야 스크린리더가 짝을 읽는다(A11Y-04) */}
       {note && <dd className="m-0 break-words text-[13px] leading-[18px] text-fg-2">{note}</dd>}
     </div>
@@ -42,7 +56,7 @@ const licenseName = (license: LicenseValue) => hasSpdx(license) ? license.spdxId
  * 유입 지표는 값이 있을 때만 일곱째 칸으로 — 공개 제품 대부분이 0·신규라 늘 보이면 빈 숫자가 가장 눈에 띈다.
  *
  * 값이 없는 칸('—'·'확인 안 됨'·'확인 전')은 그리지 않는다(UX-16).
- * 확인된 항목 수에 관계없이 같은 격자 스타일로 표시한다.
+ * 남은 칸 수에 맞춰 줄을 나눠(factRows) 어느 줄에도 빈자리가 없다 — 칸 수와 관계없이 표의 선이 모두 그려진다.
  *
  * 칸마다 왼쪽·위 선을 긋고 바깥 틀이 첫 줄·첫 칸의 선을 가린다.
  */
@@ -135,11 +149,13 @@ export function FactsStrip({ product, repository, license, health, visits }: {
     },
   ];
   const tiles = cells.filter((cell): cell is Fact => Boolean(cell));
+  // 좁은 틀(카드 너비 512px 미만)은 한 줄 2칸, 넓은 틀은 4칸까지 — 어느 쪽이든 줄이 끝까지 차서 표의 선이 모두 그려진다
+  const narrow = rowSpans(factRows(tiles.length, 2)), wide = rowSpans(factRows(tiles.length, 4));
 
   return (
-    <div className="overflow-hidden rounded-[12px] border border-line bg-bg-card">
-      <dl className="-ml-px -mt-px grid grid-cols-[repeat(auto-fit,minmax(min(200px,100%),1fr))] max-[440px]:grid-cols-[repeat(auto-fit,minmax(min(140px,100%),1fr))]">
-        {tiles.map((tile) => <Tile key={tile.label} {...tile} />)}
+    <div className="@container overflow-hidden rounded-[12px] border border-line bg-bg-card">
+      <dl className="-ml-px -mt-px grid grid-cols-12">
+        {tiles.map((tile, index) => <Tile key={tile.label} {...tile} span={`${NARROW_SPAN[narrow[index]]} ${WIDE_SPAN[wide[index]]}`} />)}
       </dl>
       {!facts && product.repoUrl && !product.repoGone && <p className="m-0 border-t border-line px-3 py-2.5 text-[13px] leading-[18px] text-fg-2">{t("facts.notCollected")}</p>}
     </div>
