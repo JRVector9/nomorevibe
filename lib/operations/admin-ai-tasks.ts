@@ -2,7 +2,7 @@ import { aiTaskReasoningEfforts } from "@/lib/llm/ai-task-reasoning";
 import type { CliCatalogMetadata } from "@/lib/llm/cli-catalog-metadata";
 import { OPENCODE_NATIVE_TASK_ROUTES, aiTaskUsesCliEngine, cliEngineEndpoint, cliEngineRevision, type CliEngineSource } from "@/lib/llm/cli-engine-config";
 import { AI_TASK_EXECUTION_SAVE_AUDIT_ACTION } from "@/lib/llm/ai-task-execution-config";
-import { AI_CLI_TOOL_LABELS, AI_CLI_TOOL_PROVIDERS, AI_CLI_TOOLS, AI_TASK_RANK_MAX, AI_TASKS, aiTask, aiTaskAccepts, aiTaskAliasIdentity, aiTaskSlotLabel,
+import { AI_CLI_TOOL_LABELS, AI_CLI_TOOL_PROVIDERS, AI_CLI_TOOLS, AI_TASK_RANK_MAX, AI_TASKS, aiTask, aiTaskAccepts, aiTaskAliasIdentity, aiTaskSlotLabel, isAiLiveTask,
   type AiCliTool, type AiTaskDef } from "@/lib/llm/ai-tasks";
 
 /**
@@ -20,6 +20,8 @@ export type AiConnectionView = Readonly<{
   models: readonly AiServedModel[] | null; modelsReadAt: string | null; modelsError: string | null;
   deviceId: string; capacitySlots: number; contextTokens: number | null; enabled: boolean; version: number; note: string | null;
   updatedBy: string; updatedAt: string;
+  /** 운영자가 목록에서 뺀 모델(options.hiddenModels) — models·cliModels·cliCatalog 에서 이미 빠져 있다. 「되돌리기」에만 쓴다 */
+  hiddenModels?: readonly string[];
   /** CLI version for serving contracts. OpenCode uses the observed existing-host version; other tools retain manual input. */
   cliVersion: string | null;
   /** Whitelisted metadata from the existing M3 CLI host, never provider configuration or keys. */
@@ -53,12 +55,30 @@ export type AiRankOption = AiRankChoice & { label: string; saved?: boolean; grou
 export const AI_CONNECTION_SAVE_AUDIT_ACTION = "ai-connection-save";
 export const AI_CONNECTION_MODELS_AUDIT_ACTION = "ai-connection-models-read";
 export const AI_CONNECTION_DELETE_AUDIT_ACTION = "ai-connection-delete";
+/** 연결의 모델 하나를 목록에서 빼거나 되돌림(2026-11-08 — options.hiddenModels, 서버·CLI 쪽 모델은 그대로) */
+export const AI_CONNECTION_MODEL_HIDE_AUDIT_ACTION = "ai-connection-model-hide";
 export const AI_TASK_MODELS_SAVE_AUDIT_ACTION = "ai-task-models-save";
 export const AI_TASK_MODELS_IMPORT_AUDIT_ACTION = "ai-task-models-import";
 /** 같은 주소 계약 키로 연결 키를 채움(lib/operations/ai-connection-key-fill.ts — 사람이 아니라 상자 키가 있는 프로세스가 쓴다) */
 export const AI_CONNECTION_KEY_FILL_AUDIT_ACTION = "ai-connection-key-fill";
-export const AI_TASK_AUDIT_ACTIONS = Object.freeze([AI_CONNECTION_SAVE_AUDIT_ACTION, AI_CONNECTION_MODELS_AUDIT_ACTION, AI_CONNECTION_DELETE_AUDIT_ACTION,
+export const AI_TASK_AUDIT_ACTIONS = Object.freeze([AI_CONNECTION_SAVE_AUDIT_ACTION, AI_CONNECTION_MODELS_AUDIT_ACTION, AI_CONNECTION_DELETE_AUDIT_ACTION, AI_CONNECTION_MODEL_HIDE_AUDIT_ACTION,
   AI_TASK_MODELS_SAVE_AUDIT_ACTION, AI_TASK_MODELS_IMPORT_AUDIT_ACTION, AI_CONNECTION_KEY_FILL_AUDIT_ACTION, AI_TASK_EXECUTION_SAVE_AUDIT_ACTION] as const);
+/**
+ * 실행 쪽이 1·2·3순위를 읽지 않는 작업인가(2026-11-08). 이 작업의 순위 행은 실행에 쓰이지 않는 옛 기록이다 — 실제 모델은 단계 풀·감사 설정·등록부에서 온다
+ * (admin-ai-task-current). 순위 저장도 막혀 있어(saveAiTaskRanks) 지우는 길은 clearUnreadAiTaskRanks 뿐이다. 검색 벡터·재정렬은 검색 설정이 순위 행을 읽으므로 아니다.
+ */
+export const aiTaskRanksUnread = (taskId: string): boolean => !isAiLiveTask(taskId) && !["embedding", "rerank"].includes(aiTask(taskId)?.kind ?? "");
+/** 운영자가 연결의 목록에서 삭제한 모델 이름(options.hiddenModels, 2026-11-08) — 문자열만, 중복 없이. 모든 읽기가 이것으로 거른다. */
+export function aiConnectionHiddenModels(options: unknown): string[] {
+  const raw = options && typeof options === "object" ? (options as Record<string, unknown>).hiddenModels : undefined;
+  return Array.isArray(raw) ? [...new Set(raw.filter((entry): entry is string => typeof entry === "string" && entry.length > 0 && entry.length <= 200))] : [];
+}
+/** 삭제한 모델을 뺀 목록(목록이 없으면 그대로 null) */
+export function aiConnectionVisibleModels<T extends { id: string }>(models: readonly T[] | null | undefined, options: unknown): T[] | null {
+  if (!Array.isArray(models)) return null;
+  const hidden = new Set(aiConnectionHiddenModels(options));
+  return models.filter(model => !!model && typeof model.id === "string" && !hidden.has(model.id));
+}
 export const AI_TASK_IMPORT_CONFIRM = "가져오기";
 export const AI_TASKS_PAGE = "/admin/models/tasks";
 /** 키 암호문의 AAD — 행 id 에 묶는다(다른 행으로 옮긴 암호문은 열리지 않는다). */
@@ -763,6 +783,10 @@ const CODE_MESSAGES: Readonly<Record<string, string>> = {
   ai_connection_missing: "연결을 찾지 못했습니다(지워졌을 수 있습니다). 새로고침하세요.",
   ai_connection_kind_change: "연결의 종류(API·CLI)는 바꿀 수 없습니다. 새 연결을 만드세요.",
   ai_connection_in_use: "이 연결을 쓰는 순위가 있어 지울 수 없습니다. 먼저 작업 ↔ 모델 표에서 빼거나 연결을 끄세요.",
+  ai_connection_model_in_use: "이 모델을 쓰는 순위나 작업 분산 구성원이 있어 목록에서 뺄 수 없습니다. 먼저 작업 배정에서 바꾸세요.",
+  ai_connection_model_missing: "이 연결의 목록에 없는 모델입니다. 새로고침하세요.",
+  ai_connection_model_invalid: "모델 이름이 올바르지 않습니다.",
+  ai_task_ranks_read: "실행 쪽이 이 작업의 순위를 읽습니다 — 옛 기록이 아니므로 「바꾸기」에서 바꾸세요.",
   ai_connection_models_too_soon: "1분 안에 이미 목록을 읽었습니다. 잠시 뒤 다시 읽으세요.",
   ai_connection_not_api: "CLI 연결은 /models 목록이 없습니다. CLI 모델 이름을 직접 적으세요.",
   ai_connection_cli_host_unavailable: "M3 OpenCode에 연결하지 못해 저장하지 않았습니다. 기존 선택은 유지됩니다. 실제 목록을 다시 조회하세요.",

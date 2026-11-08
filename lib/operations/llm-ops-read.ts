@@ -7,6 +7,8 @@ import { isPausedJob } from "@/lib/jobs/status";
 import { ensureServingContracts, servingContractSnapshot } from "@/lib/llm/serving-contract-store";
 import { secretBoxReady } from "@/lib/security/secret-box";
 import { readAiTaskExecutionAdminViews } from "./admin-ai-task-execution";
+import { buildAiCurrentSlots, readAiCurrentSources } from "./admin-ai-task-current";
+import { readCapacityDevicesControl } from "./admin-capacity-devices";
 import { listAiConnections, listAiTaskRows, readAiTaskRuntime } from "./admin-ai-tasks-repository";
 import type { AdminLogRow } from "./admin-log";
 import type { AdminModelsObservation } from "./admin-models-observation";
@@ -72,7 +74,7 @@ export async function readModelsDashboard(): Promise<{ view: DashboardView; obse
 /** LLM 운영 — 연결·순위·분산 구성·실행 쪽 순위 사정·장부 관측·잡 멈춤·CLI 계약·분류 에이전트 관측. 연결 확인(네트워크)은 하지 않는다. */
 export async function readLlmOps(): Promise<{ view: LlmOpsView; secretBox: boolean }> {
   const now = new Date();
-  const [observation, connections, rows, executions, runtime, jobs, cliContracts, classifier] = await Promise.all([
+  const [observation, connections, rows, executions, runtime, jobs, cliContracts, classifier, current] = await Promise.all([
     readAdminModelsObservation({ throughput: false }),
     listAiConnections().catch(() => null),
     listAiTaskRows().catch(() => null),
@@ -81,8 +83,10 @@ export async function readLlmOps(): Promise<{ view: LlmOpsView; secretBox: boole
     readJobPauses(now.getTime()),
     readCliContracts(),
     readClassifierObservation(now.getTime()),
+    // 순위를 읽지 않는 작업의 실제 출처(작업 배정 화면과 같은 읽기) — 못 읽으면 그 칩만 빠진다
+    readCapacityDevicesControl().catch(() => null).then(control => readAiCurrentSources(control?.policy ?? null)).then(buildAiCurrentSlots).catch(() => null),
   ]);
-  return { view: buildLlmOpsView({ now: now.toISOString(), observation, connections, rows, executions, runtime, jobs, cliContracts, classifier }), secretBox: secretBoxReady() };
+  return { view: buildLlmOpsView({ now: now.toISOString(), observation, connections, rows, executions, current, runtime, jobs, cliContracts, classifier }), secretBox: secretBoxReady() };
 }
 
 export type LlmChangeLog = Readonly<{ rows: AdminLogRow[]; more: boolean; error: string | null }>;

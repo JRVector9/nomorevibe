@@ -46,6 +46,18 @@ export const PAUSE_LABELS: Record<PauseReason, string> = {
   navigation: "페이지 이동 중",
 };
 
+/**
+ * 갱신 줄의 보이는 글자 — status 는 기본 갱신 줄·풀이(title), indicator 는 관리자 머리(prototype)의 표시.
+ * 자동 갱신이 도는 동안은 글자를 바꾸지 않는다(그래서 자동 갱신 진행 여부를 받지 않는다). 전에는 15·60초마다 「관측 갱신 중」으로 바뀌었다
+ * 돌아오며 머리 줄이 깜빡였다(2026-11-08 운영자). 자동 갱신이 끝나면 「관측/마지막 갱신」 시각이 바뀐다. 수동 새로고침만 「갱신 중」을 보인다.
+ */
+export function liveStatusLabels(input: { manualPending: boolean; live: boolean; paused: PauseReason | null; seconds: number }): { status: string; indicator: string } {
+  if (input.manualPending) return { status: "다시 읽는 중…", indicator: "관측 갱신 중" };
+  if (!input.live) return { status: "자동 갱신을 껐습니다 — 새로고침을 눌러 읽습니다", indicator: "자동 갱신 멈춤" };
+  if (input.paused) return { status: PAUSE_LABELS[input.paused], indicator: PAUSE_LABELS[input.paused] };
+  return { status: `${input.seconds}초마다 다시 읽음`, indicator: `${input.seconds}초 자동 관측` };
+}
+
 /** Normalize URL encoding in both the committed router state and the browser location. */
 export const adminRouteKey = (pathname: string, search = "") => `${pathname}?${new URLSearchParams(search).toString()}`;
 export const hasPendingContent = (root: Pick<ParentNode, "querySelector"> | null | undefined) => !!root?.querySelector('[aria-busy="true"]');

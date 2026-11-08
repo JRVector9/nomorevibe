@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { AiTaskPoolRuntime } from "@/lib/llm/ai-task-execution-config";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
-import { aiConnections, aiTaskModels, aiTaskExecutionConfigs, modelCapacityControl, modelCapacityDevices, operationsAudit, operationsObservations, type AiConnectionModel } from "@/lib/db/schema";
+import { aiConnections, aiTaskModels, aiTaskExecutionConfigs, aiTaskPoolMembers, modelCapacityControl, modelHelperAssignments, modelCapacityDevices, operationsAudit, operationsObservations, type AiConnectionModel } from "@/lib/db/schema";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { REVIEW_TASK_ROUTES, ensureReviewTaskRanks, resolveReviewTaskRanks, reviewRankUnusableText } from "@/lib/crawl/review-task-ranks";
 import { AI_TEXT_TASK_IDS, aiTask, aiTaskSlotLabel, aiTaskSlots, isAiLiveTask, isAiReviewTask, type AiTaskDef } from "@/lib/llm/ai-tasks";
@@ -14,13 +14,14 @@ import { listModelCapacityDevices, saveModelCapacityDevice } from "@/lib/llm/cap
 import type { GatewayServingRoute } from "@/lib/llm/gateway-serving-contract-config";
 import { resolveLocalModelContract } from "@/lib/llm/local-model-contract-table";
 import { readModelRegistry } from "@/lib/llm/model-registry";
+import { cliDerivedRegistryKeys } from "@/lib/llm/ai-task-models-snapshot";
 import { ensureServingContracts, servingContractSnapshot } from "@/lib/llm/serving-contract-store";
 import { logger } from "@/lib/observability/logger";
 import { openSecret, sealSecret, secretBoxReady } from "@/lib/security/secret-box";
 import {
-  AI_CONNECTION_DELETE_AUDIT_ACTION, AI_CONNECTION_KEY_FILL_AUDIT_ACTION, AI_CONNECTION_MODELS_AUDIT_ACTION, AI_CONNECTION_SAVE_AUDIT_ACTION, AI_TASK_AUDIT_ACTIONS,
+  AI_CONNECTION_DELETE_AUDIT_ACTION, AI_CONNECTION_KEY_FILL_AUDIT_ACTION, AI_CONNECTION_MODEL_HIDE_AUDIT_ACTION, AI_CONNECTION_MODELS_AUDIT_ACTION, AI_CONNECTION_SAVE_AUDIT_ACTION, AI_TASK_AUDIT_ACTIONS,
   AI_TASK_MODELS_IMPORT_AUDIT_ACTION,
-  AI_TASK_MODELS_SAVE_AUDIT_ACTION, aiConnectionBaseUrl, aiConnectionHost, aiConnectionKeyAad, aiImportPlanDigestInput, aiRanksReadiness, aiTaskRankNotices,
+  AI_TASK_MODELS_SAVE_AUDIT_ACTION, aiConnectionBaseUrl, aiConnectionHiddenModels, aiConnectionHost, aiTaskRanksUnread, aiConnectionKeyAad, aiImportPlanDigestInput, aiRanksReadiness, aiTaskRankNotices,
   aiRankSavedOptions, aiTaskRankOptions, aiTaskSlotDigestInput, buildAiImportPlan, validateAiTaskRanks,
   type AiConnectionInput, type AiConnectionView, type AiCurrentSlot, type AiImportPlan, type AiPolicyRoute, type AiRankChoice, type AiRankOption,
   type AiImportConnection, type AiRankReadiness, type AiReadinessInput, type AiTaskRankRow, type AiTaskRanksInput,
@@ -87,18 +88,22 @@ function issueOf(error: unknown): string {
 // ── 읽기 ───────────────────────────────────────────────────────────────────────────────────────────────
 
 const iso = (value: Date | string | null) => value === null ? null : new Date(value).toISOString();
+const hiddenModelsOf = aiConnectionHiddenModels;
 export function aiConnectionView(row: ConnectionRecord): AiConnectionView {
-  const models = Array.isArray(row.models) ? row.models.filter((entry): entry is AiConnectionModel => !!entry && typeof entry.id === "string")
+  // 목록에서 뺀 모델은 화면·순위 선택지·검증이 보는 이 보기에서 빠진다(저장된 원래 목록과 실행 쪽 스냅숏은 그대로)
+  const hidden = hiddenModelsOf(row.options), shown = (id: string) => !hidden.includes(id);
+  const models = Array.isArray(row.models) ? row.models.filter((entry): entry is AiConnectionModel => !!entry && typeof entry.id === "string" && shown(entry.id))
     .map(entry => Object.freeze({ id: entry.id, maxModelLen: typeof entry.maxModelLen === "number" ? entry.maxModelLen : null })) : null;
   const storedOptions = row.options as Record<string, unknown>;
   const cliVersion = row.kind === "cli" && typeof storedOptions.cliVersion === "string" ? storedOptions.cliVersion : null;
-  const cliCatalog = row.kind === "cli" && row.cliTool === "opencode"
+  const catalog = row.kind === "cli" && row.cliTool === "opencode"
     ? cliCatalogMetadataFromSnapshot(storedOptions.cliHostCatalog, row.cliModels, cliVersion, sha256(JSON.stringify(row.cliModels))) : null;
+  const cliCatalog = catalog && hidden.length ? Object.freeze({ ...catalog, models: Object.freeze(catalog.models.filter(model => shown(model.id))) }) : catalog;
   return Object.freeze({ id: row.id, label: row.label, kind: row.kind, baseUrl: row.baseUrl, host: aiConnectionHost(row.baseUrl), hasKey: row.apiKeyCiphertext !== null,
-    cliTool: row.cliTool, cliModels: Object.freeze([...row.cliModels]), models: models && Object.freeze(models), modelsReadAt: cliCatalog?.observedAt ?? iso(row.modelsReadAt), modelsError: row.modelsError,
+    cliTool: row.cliTool, cliModels: Object.freeze(row.cliModels.filter(shown)), models: models && Object.freeze(models), modelsReadAt: cliCatalog?.observedAt ?? iso(row.modelsReadAt), modelsError: row.modelsError,
     deviceId: row.deviceId, capacitySlots: row.capacitySlots, contextTokens: typeof row.options?.contextTokens === "number" ? row.options.contextTokens : null,
     enabled: row.enabled, version: Number(row.version), note: row.note, updatedBy: row.updatedBy, updatedAt: new Date(row.updatedAt).toISOString(),
-    cliVersion, ...(row.kind === "cli" && row.cliTool === "opencode" ? { cliCatalog } : {}) });
+    hiddenModels: Object.freeze(hidden), cliVersion, ...(row.kind === "cli" && row.cliTool === "opencode" ? { cliCatalog } : {}) });
 }
 export async function listAiConnections(reader?: Reader): Promise<AiConnectionView[]> {
   const load = async (from: Reader) => (await from.select().from(aiConnections).orderBy(asc(aiConnections.kind), asc(aiConnections.label))).map(aiConnectionView);
@@ -233,6 +238,7 @@ function auditSummary(row: AdminLogRow): string {
     case AI_CONNECTION_SAVE_AUDIT_ACTION: return `${detail.created ? "만듦" : "고침"} · ${String((detail.after as { label?: unknown } | undefined)?.label ?? "")}${detail.keyChanged ? " · 키 바꿈" : ""}`;
     case AI_CONNECTION_MODELS_AUDIT_ACTION: return detail.error ? `목록 읽기 실패(${String(detail.error)})` : `모델 ${String(detail.count ?? 0)}개 읽음`;
     case AI_CONNECTION_DELETE_AUDIT_ACTION: return `지움 · ${String(detail.label ?? "")}`;
+    case AI_CONNECTION_MODEL_HIDE_AUDIT_ACTION: return `${detail.hidden ? "목록에서 뺌" : "목록에 되돌림"} · ${Array.isArray(detail.models) ? detail.models.join(", ") : ""}`;
     case AI_TASK_MODELS_SAVE_AUDIT_ACTION: {
       const after = Array.isArray(detail.after) ? detail.after as { rank: number; model: string }[] : [];
       const made = detail.created as { devices?: unknown[]; contracts?: unknown[]; routes?: unknown[] } | undefined;
@@ -447,6 +453,59 @@ export async function readAiConnectionModels(id: string, actor: string): Promise
   } catch (error) { return { ok: false, issues: [issueOf(error)] }; }
 }
 
+/**
+ * 연결의 모델을 목록에서 빼거나(hidden=true) 되돌린다(2026-11-08 사용자 요청 「안 쓰는 모델은 삭제 가능하게」). options.hiddenModels 한 칸만 바꾼다 —
+ * 서버가 다시 알려 줘도(다시 읽기·저장) 빠진 채로 남고, 화면·순위 선택지·검증은 aiConnectionView 에서 빠진 목록을 본다. 실행 쪽 스냅숏은 그대로다.
+ * 빼기는 그 모델을 쓰는 순위(ai_task_models)·작업 분산 구성원(ai_task_pool_members)이 없고 지금 목록에 있을 때만. TX: DR fence → 행 FOR UPDATE(판 CAS) → 판 + 1 → 감사 한 줄.
+ */
+export async function setAiConnectionModelsHidden(input: { id: string; expectedVersion: number; models: readonly string[]; hidden: boolean }, actor: string):
+  Promise<{ ok: true; version: number; hidden: string[] } | { ok: false; issues: string[] }> {
+  if (!validActor(actor)) return { ok: false, issues: ["invalid_actor"] };
+  if (!UUID.test(input.id)) return { ok: false, issues: ["ai_connection_missing"] };
+  const models = [...new Set(input.models)];
+  if (!models.length || models.length > 16 || models.some(model => !model || model.length > 200 || /[\p{Cc}]/u.test(model))) return { ok: false, issues: ["ai_connection_model_invalid"] };
+  try {
+    const saved = await onPrimary(() => db.transaction(async tx => {
+      if (!await writerSiteActive(tx)) throw new DrWriterFencedError("site_fenced");
+      const [row] = await tx.select().from(aiConnections).where(eq(aiConnections.id, input.id)).for("update");
+      if (!row) fail("ai_connection_missing");
+      if (Number(row!.version) !== input.expectedVersion || Number(row!.version) >= VERSION_MAX) fail("ai_connection_version_mismatch");
+      const before = hiddenModelsOf(row!.options);
+      if (input.hidden) {
+        const listed = new Set([...(Array.isArray(row!.models) ? row!.models.flatMap(entry => entry && typeof entry.id === "string" ? [entry.id] : []) : []), ...row!.cliModels]);
+        if (models.some(model => !listed.has(model) || before.includes(model))) fail("ai_connection_model_missing");
+        const [ranked] = await tx.select({ id: aiTaskModels.id }).from(aiTaskModels)
+          .where(and(eq(aiTaskModels.connectionId, input.id), inArray(aiTaskModels.model, models))).limit(1);
+        const [pooled] = await tx.select({ id: aiTaskPoolMembers.memberId }).from(aiTaskPoolMembers)
+          .where(and(eq(aiTaskPoolMembers.connectionId, input.id), inArray(aiTaskPoolMembers.model, models))).limit(1);
+        if (ranked || pooled) fail("ai_connection_model_in_use");
+        // OpenCode deepseek 모델은 등록부 항목(장비:cli-…)으로도 들어가 단계 풀·모델 배정 표가 그 키를 가리킬 수 있다 — 가리키면 뺄 수 없다
+        if (row!.kind === "cli" && row!.cliTool === "opencode") {
+          const view = aiConnectionView(row!);
+          const keys = new Set(models.flatMap(model => cliDerivedRegistryKeys({ id: row!.id, deviceId: row!.deviceId }, model,
+            view.cliCatalog?.models.find(entry => entry.id === model)?.variants ?? [])));
+          const { getSettings } = await import("@/lib/crawl/settings");
+          const pools = Object.values((await getSettings()).stageModelPools ?? {}).flat();
+          const [assigned] = keys.size ? await tx.select({ id: modelHelperAssignments.assignmentId }).from(modelHelperAssignments)
+            .where(inArray(modelHelperAssignments.registryKey, [...keys])).limit(1) : [];
+          if (pools.some(key => keys.has(String(key))) || assigned) fail("ai_connection_model_in_use");
+        }
+      } else if (models.some(model => !before.includes(model))) fail("ai_connection_model_missing");
+      const after = input.hidden ? [...before, ...models] : before.filter(model => !models.includes(model));
+      const options: Record<string, unknown> = { ...row!.options };
+      if (after.length) options.hiddenModels = after; else delete options.hiddenModels;
+      if (Buffer.byteLength(JSON.stringify(options), "utf8") > 8192) fail("ai_connection_options_full");
+      const [updated] = await tx.update(aiConnections).set({ options, version: sql`${aiConnections.version} + 1`, updatedBy: actor, updatedAt: sql`clock_timestamp()` })
+        .where(and(eq(aiConnections.id, input.id), eq(aiConnections.version, Number(row!.version)))).returning();
+      if (!updated) fail("ai_connection_version_mismatch");
+      await tx.insert(operationsAudit).values(await adminAuditRow(actor, { action: AI_CONNECTION_MODEL_HIDE_AUDIT_ACTION, target: row!.label.slice(0, 200),
+        detail: { id: input.id, hidden: input.hidden, models, before, after } }));
+      return { version: Number(updated.version), hidden: after };
+    }));
+    return { ok: true, ...saved };
+  } catch (error) { return { ok: false, issues: [issueOf(error)] }; }
+}
+
 /** 쓰는 순위가 없는 연결만 지운다(FK RESTRICT). 판 compare-and-set, 감사 한 줄. */
 export async function deleteAiConnection(id: string, expectedVersion: number, actor: string): Promise<{ ok: true } | { ok: false; issues: string[] }> {
   if (!validActor(actor)) return { ok: false, issues: ["invalid_actor"] };
@@ -554,6 +613,34 @@ export async function saveAiTaskRanks(input: AiTaskRanksInput, actor: string): P
     }));
     logger.info("ai_tasks.ranks_saved", { actor, task: task.id, slot: input.slot, ranks: chosen.length, ...result.created });
     return { ok: true, revision: result.revision, warnings, created: result.created };
+  } catch (error) { return { ok: false, issues: [issueOf(error)] }; }
+}
+
+/**
+ * 실행 쪽이 읽지 않는 작업의 옛 순위 행 지우기(2026-11-08 사용자 결정 「1단계 배정 정리」). 실행 동작은 바뀌지 않는다 — 그 작업의 모델은 단계 풀·감사 설정에서 온다.
+ * 같은 칸 잠금(advisory) → 화면 판 compare-and-set → 그 (작업, 칸)의 행만 지움 → 순위 저장과 같은 감사 한 줄(reason: unread_records_cleared).
+ */
+export async function clearUnreadAiTaskRanks(input: { task: string; slot: number; revision: string }, actor: string): Promise<{ ok: true; removed: number } | { ok: false; issues: string[] }> {
+  if (!validActor(actor)) return { ok: false, issues: ["invalid_actor"] };
+  const task = aiTask(input.task);
+  if (!task || !Number.isSafeInteger(input.slot) || input.slot < 1 || input.slot > task.slots) return { ok: false, issues: ["ai_task_invalid:task"] };
+  if (!aiTaskRanksUnread(task.id)) return { ok: false, issues: ["ai_task_ranks_read"] };
+  try {
+    const removed = await onPrimary(() => db.transaction(async tx => {
+      if (!await writerSiteActive(tx)) throw new DrWriterFencedError("site_fenced");
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('ai_task_models'), hashtext(${`${task.id}#${input.slot}`}))`);
+      const before = (await tx.select().from(aiTaskModels).where(and(eq(aiTaskModels.task, task.id), eq(aiTaskModels.slot, input.slot)))
+        .orderBy(asc(aiTaskModels.rank))).map(rankRowOf);
+      if (aiTaskSlotRevision(before) !== input.revision) fail("ai_task_revision_mismatch");
+      if (!before.length) return 0;
+      await tx.delete(aiTaskModels).where(and(eq(aiTaskModels.task, task.id), eq(aiTaskModels.slot, input.slot)));
+      await tx.insert(operationsAudit).values(await adminAuditRow(actor, { action: AI_TASK_MODELS_SAVE_AUDIT_ACTION, target: `${task.id}#${input.slot}`,
+        detail: { task: task.id, slot: input.slot, revisionBefore: input.revision, revision: aiTaskSlotRevision([]), before: before.map(row => ({ ...row })), after: [],
+          reason: "unread_records_cleared" } }));
+      return before.length;
+    }));
+    logger.info("ai_tasks.unread_ranks_cleared", { actor, task: task.id, slot: input.slot, removed });
+    return { ok: true, removed };
   } catch (error) { return { ok: false, issues: [issueOf(error)] }; }
 }
 

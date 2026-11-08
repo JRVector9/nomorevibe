@@ -155,6 +155,8 @@
 .llm-conn-name { font-weight: 700; font-size: calc(15px + var(--admin-font-delta, 0px)); overflow-wrap: anywhere; }
 .llm-conn-meta { color: var(--muted); overflow-wrap: anywhere; }
 .llm-conn-meta code { font-size: calc(13px + var(--admin-font-delta, 0px)); }
+/* 「모델」 칸의 모델 이름도 같은 크기 — 관리자 기본 code(11px)라 이 표에서 가장 중요한 이름이 가장 작았다(2026-11-08) */
+.llm-conn-grid .llm-cell code { font-size: calc(13px + var(--admin-font-delta, 0px)); overflow-wrap: anywhere; }
 .llm-cap { font-family: 'SFMono-Regular', Consolas, monospace; font-variant-numeric: tabular-nums; font-size: calc(17px + var(--admin-font-delta, 0px)); font-weight: 650; }
 .llm-flag { display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px; border-radius: 4px; border: 1px solid var(--amber); color: var(--amber); background: var(--amber-soft); font-weight: 650; width: fit-content; }
 /* 배정된 작업 — 같은 너비 칸의 격자. 칸마다 [순위(고정 너비) | 작업 이름]이라 순위와 이름의 왼쪽 끝이 위아래로 맞는다. 칸이 좁으면 이름이 줄을 바꾼다. */
@@ -181,6 +183,13 @@
 .llm-models li code { font-size: calc(13px + var(--admin-font-delta, 0px)); overflow-wrap: anywhere; word-break: break-all; }
 .llm-model-name { display: grid; gap: 2px; min-width: 0; }
 .llm-model-note { font-size: calc(12px + var(--admin-font-delta, 0px)); overflow-wrap: anywhere; }
+.llm-model-free { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.llm-model-act { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+.llm-model-hide { border: 1px solid var(--line); border-radius: 6px; padding: 1px 8px; background: transparent; color: var(--fg-2, inherit);
+  font-size: calc(12px + var(--admin-font-delta, 0px)); cursor: pointer; }
+.llm-model-hide:hover:not(:disabled) { background: var(--surface); }
+.llm-hidden-models summary { cursor: pointer; font-size: calc(13px + var(--admin-font-delta, 0px)); }
+.llm-hidden-models ul { margin-top: 6px; }
 .llm-edit-links { display: flex; flex-wrap: wrap; gap: 8px; }
 
 /* 고급 설정(PR 5) — 편집기 목록. 이름(파랑) 아래 한 줄 설명. 칸 하나가 링크 하나다. */
@@ -250,3 +259,11 @@
 .llm-ops .llm-filter.active { border-color: var(--blue); background: var(--blue-soft); color: var(--blue); font-weight: 650; }
 .llm-pager { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; }
 .llm-recent-note { font-size: calc(13px + var(--admin-font-delta, 0px)); }
+
+/* 옛 순위 기록(실행 안 함)·실제 출처 칩(2026-11-08) */
+.llm-chip[data-source="record"] { border-style: dashed; opacity: 0.72; }
+.llm-chip[data-source="current"] .llm-chip-rank { font-weight: 600; }
+
+/* 모델 삭제 확인(2026-11-08) */
+.llm-model-confirm { padding: 6px 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.llm-model-danger { border-color: var(--red); color: var(--red); font-weight: 600; }

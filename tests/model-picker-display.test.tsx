@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 vi.mock("@/app/(operator)/admin/models/tasks/actions", () => ({ saveAiTaskRanksAction: vi.fn() }));
 import { RankSelects } from "@/app/(operator)/admin/models/RankSelects";
 import { RankDrawer } from "@/app/(operator)/admin/flow/RankDrawer";
@@ -9,6 +9,8 @@ import { aiTask } from "@/lib/llm/ai-tasks";
 import { AI_RANK_SLOT_NAMES, aiTaskRankOptions, type AiConnectionView, type AiTaskRankRow } from "@/lib/operations/admin-ai-tasks";
 import { buildFlowRankEditor } from "@/lib/operations/flow-rank-editor";
 import { rankOptionKey } from "@/lib/operations/admin-first-review-ranks";
+import * as modelAvailability from "@/app/(operator)/admin/models/use-model-availability";
+import { modelPickerActivityParts, modelPickerActivityText, type ModelPickerAvailability } from "@/lib/operations/model-picker-availability";
 
 const GEMMA = "mlx-community--gemma-4-26b-a4b-it-4bit", SUPA = "Inferact/Qwen3.8-27B-NVFP4";
 const make = (id: string, label: string, baseUrl: string, models: string[]): AiConnectionView => ({ id, label, baseUrl, models: models.map(id => ({ id, maxModelLen: 131072 })),
@@ -40,7 +42,8 @@ it("renders one canonical Supa option for a selected legacy alias while preservi
   expect(html).toContain('label="M1 Studio · API"');
   expect(html).not.toContain("m1-qwen");
   expect(html).not.toContain('>auto</option>');
-  expect(html).toContain(`value="${rankOptionKey(selected)}" selected="">${SUPA} · `);
+  // 고른 선택지는 이름만 — 관측은 상자 밑 줄(data-model-activity)
+  expect(html).toContain(`value="${rankOptionKey(selected)}" selected="">${SUPA}</option>`);
   expect(html).not.toContain(`value="${rankOptionKey({ provider: supa.id, model: SUPA })}"`);
   expect(html).toContain('name="rank1Model" value="supa"');
   expect(modelPickerChoiceKey(selected, connections)).toBe(modelPickerChoiceKey({ provider: supa.id, model: SUPA }, connections));
@@ -77,4 +80,61 @@ it("2026-11-08: 같은 모델의 별칭만 한 줄로 묶는다 — Supa 두 이
   expect(modelPickerModelGroups(m1, ["m1-gemma", GEMMA, "auto"])).toEqual([{ label: "Gemma 4 26B", ids: ["m1-gemma", GEMMA] }, { label: "auto", ids: ["auto"] }]);
   const other = make("33333333-3333-4333-8333-333333333333", "gpu", "http://gpu.invalid/v1", ["supa", SUPA]);
   expect(modelPickerModelGroups(other, ["supa", SUPA])).toEqual([{ label: "supa", ids: ["supa"] }, { label: SUPA, ids: [SUPA] }]);
+});
+
+// 2026-11-08 운영자 「주기적으로 깜빡인다·안 읽힌다」 — 고르기 상자의 관측 표시
+const observed = (patch: Partial<ModelPickerAvailability["connections"][number]> = {}): ModelPickerAvailability => ({ observedAt: "2026-11-07T14:51:42.000Z", mode: "open",
+  connections: [{ connectionId: supa.id, deviceId: "supa-direct", enabled: true, deviceEnabled: true, source: "table", limit: 2, occupied: 0, free: 2, reserved: 0, expiredReserved: 0,
+    running: 0, waiting: 0, indeterminate: 1, models: [{ model: "supa", reserved: 0, expiredReserved: 0, running: 0, waiting: 0, indeterminate: 1 }], ...patch }] });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
+
+it("2026-11-08: 관측 조각 — 글은 예전 한 줄과 같고, 사람이 볼 것(미확정·여유 0·꺼짐)만 warn", () => {
+  const connection = observed().connections[0];
+  expect(modelPickerActivityParts(connection, connection.models, "open")).toEqual([{ text: "미실행", tone: null }, { text: "미확정 1", tone: "warn" },
+    { text: "공유 여유 2/2", tone: null }]);
+  expect(modelPickerActivityText(connection, connection.models, "open")).toBe("미실행 · 미확정 1 · 공유 여유 2/2");
+  const full = observed({ free: 0, enabled: false }).connections[0];
+  expect(modelPickerActivityParts(full, [], "open").filter(part => part.tone === "warn").map(part => part.text)).toEqual(["연결 꺼짐", "공유 여유 0/2"]);
+});
+
+it("2026-11-08: 고른 선택지는 이름만, 관측은 상자 밑 조각 — 다시 읽는 중에도 「갱신 중」을 붙이지 않고, 실패하면 마지막 관측과 그 사실을 보인다", () => {
+  vi.spyOn(modelAvailability, "useModelAvailability").mockReturnValue({ value: observed(), loading: true, failed: true });
+  const selected = { provider: supa.id, model: "supa" };
+  const html = renderToStaticMarkup(<RankSelects stage={{ id: "test", label: "검수", slots: 1 }} options={options} connections={connections}
+    value={[selected]} onChange={() => {}} slotNames={AI_RANK_SLOT_NAMES} showProvider={false} validate={() => []} />);
+  expect(html).toContain(`value="${rankOptionKey(selected)}" selected="">${SUPA}</option>`);
+  // 고르지 않은 선택지는 「이름 — 관측」(M1 은 이 관측에 없다)
+  expect(html).toContain(">Gemma 4 26B — 슬롯 확인 못함</option>");
+  expect(html).toContain('aria-describedby="test-rank-1-activity"');
+  expect(html).toMatch(/<span id="test-rank-1-activity"[^>]*data-model-activity="true">(<span[^>]*>[^<]+<\/span>){3}<\/span>/);
+  expect(html).toMatch(/data-tone="warn"[^>]*>미확정 1<\/span>/);
+  expect(html).not.toMatch(/data-tone="warn"[^>]*>미실행</);
+  expect(html).not.toContain("갱신 중");
+  expect(html).toContain("(다시 읽기 실패 — 마지막 관측)");
+});
+
+it("2026-11-08: 관측을 다시 읽어도 글자를 흔들지 않는다 — 처음만 loading, 실패해도 마지막 관측을 두고, 5초 안에 상자를 다시 스치면 부르지 않는다", async () => {
+  vi.resetModules();
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date("2026-11-08T00:00:00.000Z"));
+  const first = observed();
+  const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ ok: true, availability: first }) }));
+  vi.stubGlobal("fetch", fetchMock);
+  const store = await import("@/app/(operator)/admin/models/use-model-availability");
+  const opening = store.refreshModelAvailability();
+  expect(store.modelAvailabilitySnapshot()).toEqual({ value: null, loading: true, failed: false });
+  await opening;
+  expect(store.modelAvailabilitySnapshot()).toEqual({ value: first, loading: false, failed: false });
+  // 상자를 스치거나 눌러도 5초 안이면 그 값을 쓴다
+  vi.setSystemTime(new Date(Date.now() + store.MODEL_AVAILABILITY_FRESH_MS - 1));
+  await store.refreshModelAvailability();
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  // 15초 주기 읽기 — 도는 동안 loading 을 알리지 않고, 실패하면 마지막 관측을 그대로 둔다
+  vi.setSystemTime(new Date(Date.now() + 15_000));
+  fetchMock.mockResolvedValueOnce({ ok: false, json: async () => ({ ok: false, availability: first }) });
+  const background = store.refreshModelAvailability();
+  expect(store.modelAvailabilitySnapshot()).toEqual({ value: first, loading: false, failed: false });
+  await background;
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  expect(store.modelAvailabilitySnapshot()).toEqual({ value: first, loading: false, failed: true });
 });

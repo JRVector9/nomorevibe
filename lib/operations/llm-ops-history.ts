@@ -16,7 +16,7 @@ export { LLM_RETRY_HREF, llmRetryRowHref } from "./llm-ops-links";
  * 시험(tests/admin-llm-history.test.ts)이 두 목록이 같은지 본다. 새 작업을 묶음에 더하면 여기에도 더한다.
  */
 export const LLM_HISTORY_KINDS = Object.freeze({
-  connection: { label: "연결", actions: ["ai-connection-save", "ai-connection-models-read", "ai-connection-delete", "ai-connection-key-fill",
+  connection: { label: "연결", actions: ["ai-connection-save", "ai-connection-models-read", "ai-connection-delete", "ai-connection-model-hide", "ai-connection-key-fill",
     "model-serving-contract-save", "model-serving-contract-disable", "model-registry-override-save", "model-registry-override-disable",
     "search-model-settings-save", "admin-models-probe-start", "admin-models-probe-result",
     "selected-model-response-probe-start", "selected-model-response-probe-result"] },

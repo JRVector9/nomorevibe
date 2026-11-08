@@ -484,8 +484,11 @@ describe("RankSelects — 작업 ↔ 모델 꼴(provider 칸 = 연결 id)", () =
       value: [pick(GPU, "qwen3.8-flash-next"), null, pick(SUPA, "qwen3.8-flash-next")], connections: CONNECTIONS, slotNames: AI_RANK_SLOT_NAMES, onChange: () => {}, showProvider: false,
       validate: slots => validateAiTaskRanks("crawl-tagline", 1, slots, { connections: CONNECTIONS, rows: [] }), note: createElement("p", null, "안내") }));
     // 연결·전송별로 묶고, 모델 이름 옆에 실시간 관측 상태를 표시한다.
-    expect(html).toContain(`<optgroup label="gpu3090 · API"><option value="${GPU}/qwen3.8-flash-next" selected="">qwen3.8-flash-next · `);
-    expect(html).toContain('<optgroup label="검색 서버 · API"><option value="55555555-5555-4555-8555-555555555555/bge-m3">bge-m3 · ');
+    // 고른 선택지는 이름만(관측은 상자 밑 줄), 나머지는 「이름 — 관측」
+    expect(html).toContain(`<optgroup label="gpu3090 · API"><option value="${GPU}/qwen3.8-flash-next" selected="">qwen3.8-flash-next</option>`);
+    expect(html).toContain('<optgroup label="검색 서버 · API"><option value="55555555-5555-4555-8555-555555555555/bge-m3">bge-m3 — ');
+    expect(html).toContain(`aria-describedby="crawl-tagline-1-rank-1-activity"`);
+    expect(html).toContain('<span id="crawl-tagline-1-rank-1-activity" class="flex flex-wrap gap-1" data-model-activity="true">');
     expect(html).not.toContain("gpu3090 · qwen3.8-flash-next");
     // 모델 이름이 같아도 연결·전송과 숨은 원래 모델 바인딩을 구분한다.
     expect(html.match(/data-rank-server="true">([^<]*)</g)).toEqual(['data-rank-server="true">gpu3090 · API<', 'data-rank-server="true">supa · API<']);
@@ -499,7 +502,7 @@ describe("RankSelects — 작업 ↔ 모델 꼴(provider 칸 = 연결 id)", () =
     const flat = renderToStaticMarkup(createElement(RankSelects<{ provider: string; model: string }>, { stage: { id: "x-1", label: "x", slots: 1 },
       options: [{ provider: "supa", model: "m", label: "supa · m" }], value: [null], slotNames: AI_RANK_SLOT_NAMES, onChange: () => {}, validate: () => [] }));
     expect(flat).not.toContain("<optgroup");
-    expect(flat).toContain(">supa · m (supa) · ");
+    expect(flat).toContain(">supa · m (supa) — ");
   });
   it("compact 에서도 「N순위」 글을 보이고, blocked 는 모델 조건에 맞지 않는 선택지만 흐리게 둔다", () => {
     const options = aiTaskRankOptions(aiTask("product-embedding")!, CONNECTIONS, []);
@@ -511,7 +514,7 @@ describe("RankSelects — 작업 ↔ 모델 꼴(provider 칸 = 연결 id)", () =
     expect(second).toContain(`value="${EMB}/bge-m3-q8" disabled=""`);
     expect(second).toContain(`value="${GPU}/qwen3.8-flash-next" disabled=""`);
     // 1순위와 같은 연결·모델도 반복 선택할 수 있지만 다른 모델의 벡터 공간은 섞지 않는다.
-    expect(second).toContain(`value="${EMB}/bge-m3">bge-m3 · `);
+    expect(second).toContain(`value="${EMB}/bge-m3">bge-m3 — `);
     expect(second).not.toContain(`value="${EMB}/bge-m3" disabled=""`);
     const first = html.slice(0, html.indexOf('name="product-embedding-1-rank-2"'));
     expect(first).not.toContain('disabled=""');

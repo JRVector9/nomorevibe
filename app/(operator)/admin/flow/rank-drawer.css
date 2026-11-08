@@ -1,61 +1,83 @@
 /* 「바꾸기」 서랍(RankDrawer) — 운영 홈(/admin/flow)과 작업 배정(/admin/models/tasks)이 같은 서랍을 연다. 서랍이 이 파일을 직접 불러온다
    (예전에는 flow.css 안에 있어 운영 홈에서만 모양이 잡혔다). 상태 색은 운영 홈 띠(.cv)와 같은 값 — 서랍이 .cv 밖에서 열려도 같게 보이도록 .fr 에도 둔다. */
 .fr{--cv-ok:var(--color-ok);--cv-warn:var(--color-warn);--cv-bad:var(--color-danger)}
-/* 바꾸기 서랍 — 오른쪽 시트(dialog). Esc·닫기로 닫는다 */
-.fr{position:fixed;inset:0 0 0 auto;margin:0;width:min(760px,100vw);max-width:100vw;height:100dvh;max-height:100dvh;padding:0;border:0;border-left:1px solid var(--color-line);
-  background:var(--color-bg-card);color:var(--color-fg);border-radius:0;box-shadow:-12px 0 32px rgb(0 0 0/.18)}
+/* 관리자 틀(.admin-prototype) 안에서는 서랍도 주변 화면과 같은 승인 시안 색을 쓴다. 전에는 서랍만 공개 사이트 쪽 토큰(--color-*)을 써서
+   어두운 테마에서 초록 바탕 위에 남색 단추·남회색 글자(3차 글자 --text-3 은 4.2:1 — 13px 글자에 AA 미달)가 섞였다(2026-11-08 운영자 「안 읽힌다」).
+   서랍과 그 안의 고르기 상자(RankSelects 의 text-fg-2·border-line·bg-bg-card 등)가 같은 이름을 읽으므로 여기서 한 번에 잇는다. 보조·3차 글자는 --muted(어두움 6.5:1 · 밝음 5.3:1).
+   두 벌을 함께 바꾼다 — 이 파일의 규칙은 --color-* 를 읽고, Tailwind 유틸리티(@theme inline)는 --text-2·--border 같은 원래 이름을 바로 읽는다. */
+.admin-prototype .fr{--color-bg-card:var(--surface);--color-bg-soft:var(--surface-2);--color-line:var(--line);--color-fg:var(--ink);--color-fg-2:var(--muted);--color-fg-3:var(--muted);
+  --color-accent-ink:var(--blue);--color-warn:var(--amber);--color-down:var(--red);--cv-ok:var(--green);--cv-warn:var(--amber);--cv-bad:var(--red);
+  --bg-card:var(--surface);--bg-soft:var(--surface-2);--border:var(--line);--text:var(--ink);--text-2:var(--muted);--text-3:var(--muted);--accent-ink:var(--blue);--warn:var(--amber);--down:var(--red)}
+/* 바꾸기 서랍 — 오른쪽 위에 붙는 시트(dialog). 높이는 내용만큼(화면 높이까지)이고 넘치면 본문(.fr-body)만 스크롤한다 — 머리·단추 줄은 늘 보인다. Esc·닫기로 닫는다.
+   공용 dialog 규칙(home.css 의 dialog:modal 가운데 정렬·좁은 화면 아래 시트, prototype.css 의 .admin-prototype dialog 680px·91dvh 카드)이 .fr 보다 구체적이라
+   서랍이 680px 카드로 세로 가운데 떠 있었고 높이를 91dvh 로 채워 아래 절반이 비어 있었다 — 아래 선택자(0,2,1)가 그 규칙들(0,1,1)보다 앞선다.
+   폭은 100vw 가 아니라 100% — 늘 보이는 스크롤 막대가 있는 브라우저에서 100vw 는 막대 폭만큼 넓어 오른쪽에 붙인 서랍의 왼쪽 끝이 화면 밖으로 밀린다. */
+:is(.admin-prototype, body) dialog.fr{position:fixed;inset:0 0 auto auto;margin:0;box-sizing:border-box;width:min(760px,100%);max-width:100%;height:auto;max-height:100dvh;
+  padding:0;overflow:hidden auto;border:0;border-left:1px solid var(--color-line);border-bottom:1px solid var(--color-line);border-radius:0 0 0 12px;
+  background:var(--color-bg-card);color:var(--color-fg);box-shadow:-12px 0 32px rgb(0 0 0/.18)}
 .fr::backdrop{background:rgb(0 0 0/.32)}
-.fr-in{display:flex;flex-direction:column;height:100%}
+/* 서랍 아래 테두리(1px)만큼 뺀다 — 100dvh 그대로면 긴 내용에서 서랍 전체에 1px 스크롤이 생긴다 */
+.fr-in{display:flex;flex-direction:column;max-height:calc(100dvh - 1px);min-width:0}
 .fr-h{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:16px 20px 12px;border-bottom:1px solid var(--color-line)}
-.fr-h h3{margin:0;font-size:17px;font-weight:800}
-.fr-steps{display:flex;gap:14px;margin:6px 0 0;padding:0;list-style:none;font-size:12px;color:var(--color-fg-3)}
+.fr-h h3{margin:0;font-size:19px;font-weight:800;line-height:1.35}
+.fr-steps{display:flex;flex-wrap:wrap;gap:4px 16px;margin:6px 0 0;padding:0;list-style:none;font-size:14px;color:var(--color-fg-3)}
 .fr-steps li[aria-current=step]{color:var(--color-fg);font-weight:800}
-.fr-x{border:0;background:none;font-size:16px;color:var(--color-fg-3);cursor:pointer;padding:2px 6px}
-.fr-body{flex:1;overflow:auto;display:flex;flex-direction:column;gap:14px;padding:14px 20px}
-.fr-lead{margin:0;font-size:calc(13px + var(--admin-content-growth,0px));color:var(--color-fg-2);line-height:1.5}
+.fr-x{flex:none;border:0;background:none;font-size:20px;line-height:1;color:var(--color-fg-2);cursor:pointer;padding:6px 8px;border-radius:8px}
+.fr-x:hover{background:var(--color-bg-soft);color:var(--color-fg)}
+.fr-body{flex:1 1 auto;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:14px;padding:16px 20px}
+.fr-lead{margin:0;font-size:calc(15px + var(--admin-content-growth,0px));color:var(--color-fg-2);line-height:1.6}
 .fr-line{display:flex;flex-direction:column;gap:6px;padding-top:12px;border-top:1px solid var(--color-line)}
 .fr-line:first-of-type{border-top:0;padding-top:0}
 .fr-line-h{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px}
-.fr-line-h h4{margin:0;font-size:14px;font-weight:800}
-.fr-tag{font-size:calc(11px + var(--admin-content-growth,0px));font-weight:700;padding:1px 7px;border-radius:999px;background:var(--color-bg-soft);color:var(--color-fg-3)}
+.fr-line-h h4{margin:0;font-size:16px;font-weight:800}
+.fr-tag{font-size:calc(12px + var(--admin-content-growth,0px));font-weight:700;padding:1px 7px;border-radius:999px;background:var(--color-bg-soft);color:var(--color-fg-3)}
 .fr-tag[data-tone=lock]{color:var(--color-fg-2)}
 .fr-tag[data-tone=set]{color:var(--color-fg-2)}
 .fr-tag[data-tone=changed]{color:var(--cv-warn);background:color-mix(in srgb,var(--cv-warn) 12%,transparent)}
-.fr-now{margin:0;font-size:calc(12.5px + var(--admin-content-growth,0px));color:var(--color-fg-2);overflow-wrap:anywhere;white-space:pre-line}
-.fr-k{display:inline-block;width:32px;font-size:calc(11px + var(--admin-content-growth,0px));font-weight:700;color:var(--color-fg-3)}
-.fr-lock,.fr-note{margin:0;font-size:calc(12.5px + var(--admin-content-growth,0px));line-height:1.5;color:var(--color-fg-3)}
+.fr-now{margin:0;font-size:calc(15px + var(--admin-content-growth,0px));line-height:1.55;color:var(--color-fg);overflow-wrap:anywhere;white-space:pre-line}
+.fr-k{display:inline-block;min-width:32px;margin-right:6px;font-size:calc(14px + var(--admin-content-growth,0px));font-weight:700;color:var(--color-fg-3)}
+.fr-lock,.fr-note{margin:0;font-size:calc(14px + var(--admin-content-growth,0px));line-height:1.55;color:var(--color-fg-3)}
 .fr-lock{padding:6px 10px;border-radius:8px;background:var(--color-bg-soft);color:var(--color-fg-2)}
 .fr-warns{display:flex;flex-direction:column;gap:6px;margin:0;padding:0;list-style:none}
-.fr-warn{display:block;font-size:calc(12.5px + var(--admin-content-growth,0px));line-height:1.5;padding:6px 10px;border-radius:8px;border-left:3px solid var(--cv-warn);background:color-mix(in srgb,var(--cv-warn) 9%,transparent);color:var(--color-fg)}
+.fr-warn{display:block;font-size:calc(15px + var(--admin-content-growth,0px));line-height:1.55;padding:6px 10px;border-radius:8px;border-left:3px solid var(--cv-warn);background:color-mix(in srgb,var(--cv-warn) 9%,transparent);color:var(--color-fg)}
 .fr-warn[data-tone=bad]{border-left-color:var(--cv-bad);background:color-mix(in srgb,var(--cv-bad) 9%,transparent)}
-.fr-warn>span{font-size:9px;color:var(--cv-warn)}
+.fr-warn>span{font-size:11px;color:var(--cv-warn)}
 .fr-warn[data-tone=bad]>span{color:var(--cv-bad)}
-.fr-conns>summary{cursor:pointer;font-size:calc(12.5px + var(--admin-content-growth,0px));font-weight:700;color:var(--color-fg-2)}
-.fr-conn-table,.fr-diff{width:100%;table-layout:fixed;border-collapse:collapse;font-size:calc(12.5px + var(--admin-content-growth,0px));line-height:1.45;margin-top:6px}
+.fr-conns>summary{cursor:pointer;font-size:calc(14px + var(--admin-content-growth,0px));font-weight:700;color:var(--color-fg-2)}
+.fr-conn-table,.fr-diff{width:100%;table-layout:fixed;border-collapse:collapse;font-size:calc(15px + var(--admin-content-growth,0px));line-height:1.5;margin-top:6px}
 .fr-conn-table th,.fr-conn-table td,.fr-diff th,.fr-diff td{padding:6px 8px;text-align:left;vertical-align:top;border-bottom:1px solid var(--color-line);overflow-wrap:anywhere;font-weight:400}
 .fr-conn-table th:first-child,.fr-conn-table td:first-child,.fr-diff th:first-child,.fr-diff td:first-child{padding-left:0}
-.fr-conn-table thead th,.fr-diff thead th{font-size:calc(11.5px + var(--admin-content-growth,0px));font-weight:700;color:var(--color-fg-3)}
+.fr-conn-table thead th,.fr-diff thead th{font-size:calc(14px + var(--admin-content-growth,0px));font-weight:700;color:var(--color-fg-3)}
 .fr-conn-table tbody th,.fr-diff tbody th{font-weight:700}
 .fr-conn-table tr[data-state=off] td,.fr-conn-table tr[data-state=no_list] td:last-child{color:var(--cv-bad)}
 .fr-conn-table tr[data-state=no_key] td:last-child{color:var(--cv-warn)}
 .fr-c-task{width:170px}
+/* 관리자 틀의 표 규칙(.admin-prototype table 11px·th 10px, th 줄바꿈 없음·회색 바탕)이 서랍 표에 새어 들어와 전·후 칸이 서랍에서 가장 작은 글자였고
+   행 머리(작업·장비 이름)가 회색 띠로 보였다 — 서랍 표는 서랍 글자 크기를 쓰고 긴 이름은 줄을 바꾼다 */
+.admin-prototype .fr :is(.fr-conn-table,.fr-diff){font-size:calc(15px + var(--admin-content-growth,0px))}
+.admin-prototype .fr :is(.fr-conn-table,.fr-diff) :is(th,td){padding:6px 8px;font-size:inherit;white-space:normal;vertical-align:top}
+.admin-prototype .fr :is(.fr-conn-table,.fr-diff) :is(th,td):first-child{padding-left:0}
+.admin-prototype .fr :is(.fr-conn-table,.fr-diff) thead th{padding-left:8px;font-size:calc(14px + var(--admin-content-growth,0px));color:var(--color-fg-3)}
+.admin-prototype .fr :is(.fr-conn-table,.fr-diff) tbody th{background:none;color:var(--color-fg)}
+.admin-prototype .fr .fr-device-table td:nth-child(2){white-space:nowrap}
+.admin-prototype .fr :is(.fr-conn-table,.fr-diff) tbody tr:last-child>*{border-bottom:0}
 .fr-before{color:var(--color-fg-3);text-decoration:line-through;text-decoration-color:color-mix(in srgb,var(--color-fg-3) 60%,transparent);white-space:pre-line}
 .fr-after{font-weight:700;white-space:pre-line}
 .fr-after[data-empty=yes]{color:var(--cv-bad)}
-.fr-ack{display:flex;align-items:center;gap:8px;font-size:calc(13px + var(--admin-content-growth,0px));font-weight:700;color:var(--cv-bad)}
+.fr-ack{display:flex;align-items:center;gap:8px;font-size:calc(15px + var(--admin-content-growth,0px));font-weight:700;color:var(--cv-bad)}
 .fr-results{display:flex;flex-direction:column;gap:10px;margin:0;padding:0;list-style:none}
-.fr-results li{display:flex;flex-direction:column;gap:3px;font-size:calc(13px + var(--admin-content-growth,0px));line-height:1.45;padding-left:10px;border-left:3px solid var(--cv-ok)}
+.fr-results li{display:flex;flex-direction:column;gap:3px;font-size:calc(15px + var(--admin-content-growth,0px));line-height:1.5;padding-left:10px;border-left:3px solid var(--cv-ok)}
 .fr-results li[data-ok=no]{border-left-color:var(--cv-bad)}
 .fr-result-diff{color:var(--color-fg-2);overflow-wrap:anywhere}
 .fr-f{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:8px;padding:12px 20px;border-top:1px solid var(--color-line)}
-.fr-link{margin-right:auto;font-size:calc(12.5px + var(--admin-content-growth,0px));color:var(--color-accent-ink);text-decoration:underline;text-underline-offset:3px}
-.fr-btn{min-height:34px;padding:0 14px;border:1px solid var(--color-line);border-radius:8px;background:var(--color-bg-card);font:inherit;font-size:calc(13px + var(--admin-content-growth,0px));font-weight:700;color:var(--color-fg);cursor:pointer}
+.fr-link{margin-right:auto;font-size:calc(14px + var(--admin-content-growth,0px));color:var(--color-accent-ink);text-decoration:underline;text-underline-offset:3px}
+.fr-btn{min-height:36px;padding:0 14px;border:1px solid var(--color-line);border-radius:8px;background:var(--color-bg-card);font:inherit;font-size:calc(15px + var(--admin-content-growth,0px));font-weight:700;color:var(--color-fg);cursor:pointer}
 .fr-btn:disabled{opacity:.45;cursor:not-allowed}
 .fr-primary{background:var(--color-fg);color:var(--color-bg-card);border-color:var(--color-fg)}
 .fr-primary[data-danger=yes]{background:var(--cv-bad);border-color:var(--cv-bad);color:#fff}
 .fr-undo{color:var(--color-accent-ink)}
 /* 선택 상자 밑 서버 글(RankSelects data-rank-server) — 서랍에서는 「연결 · 장비 · 상태」라 길다. 줄여 자르지 않고 줄을 바꾼다 */
-.fr [data-rank-server]{white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere;font-size:calc(12px + var(--admin-content-growth,0px));line-height:1.35}
+.fr [data-rank-server]{white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere;font-size:calc(14px + var(--admin-content-growth,0px));line-height:1.4}
 
 
 /* The prototype's button inheritance must not hide the drawer's primary action. */
@@ -79,10 +101,10 @@
 .admin-prototype #page .fr .fr-link { color:var(--blue); }
 
 /* 작업 배정에서 더한 것 — 다시 저장(빠진 계약·경로·장비 만들기), 장비 한도 미리보기, 저장 잠금 */
-.fr-resave{display:flex;flex-direction:column;gap:4px;padding:8px 10px;border-radius:8px;background:var(--color-bg-soft);font-size:calc(12.5px + var(--admin-content-growth,0px));line-height:1.5}
+.fr-resave{display:flex;flex-direction:column;gap:4px;padding:8px 10px;border-radius:8px;background:var(--color-bg-soft);font-size:calc(14px + var(--admin-content-growth,0px));line-height:1.55}
 .fr-resave ul{margin:0;padding-left:18px;color:var(--color-fg-2)}
 .fr-resave label{display:flex;align-items:center;gap:8px;font-weight:700}
 .fr-devices{display:flex;flex-direction:column;gap:6px}
-.fr-devices h4{margin:0;font-size:13px;font-weight:800}
+.fr-devices h4{margin:0;font-size:15px;font-weight:800}
 .fr-device-table td:nth-child(2){white-space:nowrap}
-.fr-locked{margin:0;padding:8px 10px;border-radius:8px;border-left:3px solid var(--cv-bad);background:color-mix(in srgb,var(--cv-bad) 9%,transparent);font-size:calc(13px + var(--admin-content-growth,0px));font-weight:700}
+.fr-locked{margin:0;padding:8px 10px;border-radius:8px;border-left:3px solid var(--cv-bad);background:color-mix(in srgb,var(--cv-bad) 9%,transparent);font-size:calc(15px + var(--admin-content-growth,0px));font-weight:700}

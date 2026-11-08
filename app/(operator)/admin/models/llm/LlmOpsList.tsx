@@ -4,7 +4,7 @@ import type { LlmFix, LlmFixField, LlmOpsLevel, LlmOpsRow, LlmOpsView, LlmTaskCh
 import { MODEL_REQUEST_REVIEW_HREF } from "../ModelCallsPanel";
 import { LevelBadge, LevelLegend, ObservedAt } from "../LlmOpsParts";
 import { modelPickerModelGroups } from "../model-picker-display";
-import { DeleteConnectionButton, RereadModelsButton } from "../tasks/ConnectionButtons";
+import { DeleteConnectionButton, HideModelButton, RereadModelsButton } from "../tasks/ConnectionButtons";
 import { ConnectionForm, type ConnectionLimitField } from "../tasks/ConnectionForm";
 
 const NEW_LIMIT: ConnectionLimitField = { deviceId: "", current: null, expectedVersion: null, policyHash: null, eligible: false, reason: null, sharedWith: [] };
@@ -22,8 +22,10 @@ function FixLink({ fix, level, className, title, children }: { fix: LlmFix | nul
 }
 
 function TaskChip({ chip }: { chip: LlmTaskChip }) {
-  const rank = chip.rank !== null ? String(chip.rank) : chip.source === "pool" ? "분산" : "설정";
-  const title = `${chip.label} · ${chip.rank !== null ? `${chip.rank}순위` : chip.source === "pool" ? "작업 분산 구성원" : chip.source === "classifier" ? "분류 설정" : "정책 경로·계약"} · ${chip.model}${chip.enabled ? "" : " · 순위 꺼짐"}${chip.paused ? " · 잡 일시중지" : ""}`;
+  // 옛 = 실행 쪽이 읽지 않는 작업의 옛 순위 행(실행 안 함), 실제 = 그 작업의 실제 출처(단계 풀·감사 설정·등록부)
+  const rank = chip.source === "record" ? "옛" : chip.source === "current" ? "실제" : chip.rank !== null ? String(chip.rank) : chip.source === "pool" ? "분산" : "설정";
+  const title = `${chip.label} · ${chip.source === "record" ? `옛 ${chip.rank}순위 기록 — 실행 쪽이 읽지 않음(작업 배정에서 「기록 지우기」)` : chip.source === "current" ? "실제 출처(단계 풀·감사 설정)"
+    : chip.rank !== null ? `${chip.rank}순위` : chip.source === "pool" ? "작업 분산 구성원" : chip.source === "classifier" ? "분류 설정" : "정책 경로·계약"} · ${chip.model}${chip.enabled ? "" : " · 순위 꺼짐"}${chip.paused ? " · 잡 일시중지" : ""}`;
   // 한 작업 = 표의 한 칸(순위 칸 너비 고정 · 이름). 잡 중지 표시는 같은 칸 안에 붙여 다른 칸으로 밀리지 않게 한다.
   return <span className="llm-task">
     <Link prefetch={false} href={chip.href} className="llm-chip" data-source={chip.source} data-off={chip.enabled ? undefined : "true"} data-paused={chip.paused ? "true" : undefined} title={title}>
@@ -56,7 +58,7 @@ const lineNote = (line: ModelLine) => [line.ids.length > 1 || line.ids[0] !== li
 function ModelsBlock({ row, readOnly }: { row: LlmOpsRow; readOnly: boolean }) {
   const { connection } = row;
   const read = kst(row.models.readAt);
-  const used = row.tasks.some(chip => chip.source === "rank" || chip.source === "pool");
+  const used = row.tasks.some(chip => chip.source === "rank" || chip.source === "pool" || chip.source === "record");
   const lines = modelLines(row), listed = lines.filter(line => line.listed).length;
   return <section className="llm-models" aria-label={`${row.label} 모델 목록`}>
     <h3>{connection?.kind === "api" ? "이 서버의 모델" : "모델"} · {listed}개{read ? ` · ${read} 읽음` : ""}</h3>
@@ -65,9 +67,19 @@ function ModelsBlock({ row, readOnly }: { row: LlmOpsRow; readOnly: boolean }) {
       return <li key={line.ids.join("\u0000")} data-model-line={line.ids.join(" ")}><span className="llm-model-name"><code>{line.label}</code>
         {note && <span className="llm-muted llm-model-note">{note}</span>}</span>
       {line.chips.length ? <span className="llm-chips">{line.chips.map(chip => <TaskChip key={chip.key} chip={chip} />)}</span>
-        : <span className="llm-muted">배정 없음</span>}</li>; })}</ul>
+        : <span className="llm-model-free"><span className="llm-muted">배정 없음</span>
+          {connection && !readOnly && line.listed && <HideModelButton id={connection.id} version={connection.version} models={line.ids} label={line.label} hidden />}</span>}</li>; })}</ul>
       : <p className="llm-empty">{connection?.kind === "api" ? "아직 읽은 모델이 없습니다 — 주소·키를 확인하고 저장하거나 다시 읽으세요." : "적힌 모델이 없습니다."}</p>}
-    <p className="llm-empty">모델 옆 칩은 그 모델을 쓰는 작업과 순위입니다. 누르면 작업 배정으로 이동합니다.</p>
+    {connection && (connection.hiddenModels?.length ?? 0) > 0 && <details className="llm-hidden-models">
+      <summary>삭제한 모델 {connection.hiddenModels!.length}개 — 다시 추가</summary>
+      <ul>{connection.hiddenModels!.map(model => <li key={model}><code>{model}</code>
+        {readOnly ? <span className="llm-muted">삭제함</span> : <HideModelButton id={connection.id} version={connection.version} models={[model]} label={model} hidden={false} />}</li>)}</ul>
+    </details>}
+    <p className="llm-empty">모델 옆 칩은 그 모델을 쓰는 작업과 순위입니다. 누르면 작업 배정으로 이동합니다. 배정 없는 모델은 「삭제」 → 「삭제 확인」으로 이 연결의 목록과
+      모든 관리 화면에서 뺍니다(서버 쪽 모델은 그대로). {connection?.kind === "api" ? "서버에 새로 생긴 모델은 「다시 읽기」로 추가됩니다."
+        : connection ? "모델 추가·이름 정정은 이 연결의 고치기에서 합니다." : ""}</p>
+    {connection && connection.kind === "cli" && !readOnly && <Link prefetch={false} className="button small" href={`/admin/models/llm?edit=${connection.id}#conn-${connection.id}`}>
+      모델 추가·정정 →</Link>}
     {connection && !readOnly && <div className="llm-edit-links">
       {connection.kind === "api" && <RereadModelsButton id={connection.id} />}
       {!used && <DeleteConnectionButton id={connection.id} label={connection.label} version={connection.version} />}

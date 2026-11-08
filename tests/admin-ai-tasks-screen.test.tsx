@@ -84,13 +84,15 @@ describe("작업 배정 화면 · 연결 폼(LLM 운영)", () => {
     mocks.admin.mockResolvedValue(null);
     const form = new FormData();
     for (const action of [actions.saveAiConnectionAction, actions.readAiConnectionModelsAction, actions.deleteAiConnectionAction, actions.saveAiTaskRanksAction,
-      actions.applyAiTaskImportAction]) expect(await action(null, form)).toEqual({ issues: ["권한이 없습니다. 다시 로그인해주세요."] });
+      actions.applyAiTaskImportAction, actions.hideAiConnectionModelAction, actions.clearUnreadAiTaskRanksAction])
+      expect(await action(null, form)).toEqual({ issues: ["권한이 없습니다. 다시 로그인해주세요."] });
     mocks.admin.mockResolvedValue({ login: "operator" });
     // 연결 id 가 uuid 가 아니면 DB 에 묻지 않고 「찾지 못함」
     expect(await actions.readAiConnectionModelsAction(null, form)).toEqual({ issues: ["연결을 찾지 못했습니다(지워졌을 수 있습니다). 새로고침하세요."] });
     const del = new FormData(); del.set("id", "not-a-uuid"); del.set("expectedVersion", "1"); del.set("label", "x"); del.set("confirm", "x");
     expect(await actions.deleteAiConnectionAction(null, del)).toEqual({ issues: ["연결을 찾지 못했습니다(지워졌을 수 있습니다). 새로고침하세요."] });
     const source = readFileSync("app/(operator)/admin/models/tasks/actions.ts", "utf8");
-    expect(source.match(/^export const \w+ = webWriteAction\(async function \w+/gm)).toHaveLength(5);
+    // 2026-11-08: 모델 빼기·되돌리기(hideAiConnectionModelAction)와 옛 순위 기록 지우기(clearUnreadAiTaskRanksAction) 둘이 더해져 7
+    expect(source.match(/^export const \w+ = webWriteAction\(async function \w+/gm)).toHaveLength(7);
   });
 });
