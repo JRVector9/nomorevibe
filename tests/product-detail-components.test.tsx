@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { BuildTools } from "@/components/product-detail/BuildTools";
 import { DetailSkeleton } from "@/components/product-detail/DetailSkeleton";
 import { EvidenceCard } from "@/components/product-detail/EvidenceCard";
-import { FactsStrip } from "@/components/product-detail/FactsStrip";
+import { FactsStrip, factRows } from "@/components/product-detail/FactsStrip";
 import { InfoCard } from "@/components/product-detail/InfoCard";
 import { IntroSection } from "@/components/product-detail/IntroSection";
 import { LanguageBar } from "@/components/product-detail/LanguageBar";
@@ -367,8 +367,10 @@ describe("evidence product detail components", () => {
     const missing: ProductDetailView["license"] = { state: "missing", label: "라이선스 확인 안 됨", maker: null, observed: null };
     const unread = renderFacts({ repository: null, license: missing });
     // 값이 없는 칸은 그리지 않고, 확인된 항목은 개수와 관계없이 격자에 표시
-    expect(unread).toContain("grid-cols-[repeat(auto-fit,minmax(min(200px,100%),1fr))]");
+    expect(unread).toContain('class="-ml-px -mt-px grid grid-cols-12"');
     expect(unread.match(/<dt/g)).toHaveLength(1);
+    // 한 칸이면 줄 전체
+    expect(unread).toContain("col-span-12 @lg:col-span-12");
     expect(textOf(unread)).toContain("nomorevibe 등록7월 1일");
     expect(textOf(unread)).toContain("저장소 정보는 아직 수집하지 않았습니다.");
     expect(unread).not.toContain(">—<");
@@ -380,16 +382,20 @@ describe("evidence product detail components", () => {
     // 확인한 가동 상태 하나가 더해지면 같은 격자 안에 두 칸
     const checked = { uptime30d: null, latencyMs: null, checkedAt: new Date(), down: false };
     const two = renderFacts({ repository: null, license: missing, health: checked });
-    expect(two).toContain("grid-cols-[repeat(auto-fit,minmax(min(200px,100%),1fr))]");
+    expect(two).toContain('class="-ml-px -mt-px grid grid-cols-12"');
+    // 두 칸은 좁은 틀·넓은 틀 모두 한 줄에 반씩
+    expect(two.match(/col-span-6 @lg:col-span-6/g)).toHaveLength(2);
     expect(textOf(two)).toContain("가동 상태온라인");
     // 셋이면 여러 칸으로 줄을 채운다
     const three = renderFacts({ repository: null, license: observedLicense, health: checked });
-    expect(three).toContain("grid-cols-[repeat(auto-fit,minmax(min(200px,100%),1fr))]");
     expect(three.match(/<dt/g)).toHaveLength(3);
+    // 셋: 넓은 틀은 한 줄 세 칸, 좁은 틀은 2·1 — 마지막 칸이 줄 끝까지 찬다
+    expect([...three.matchAll(/class="flex [^"]*? (col-span-\d+ @lg:col-span-\d+)"/g)].map((match) => match[1]))
+      .toEqual(["col-span-6 @lg:col-span-4", "col-span-6 @lg:col-span-4", "col-span-12 @lg:col-span-4"]);
     // 라이선스를 읽지 못했으면 그 칸만 빠진다
     const noLicense = renderFacts({ license: missing });
     expect(noLicense).not.toContain("라이선스");
-    expect(noLicense).toContain("grid-cols-[repeat(auto-fit,minmax(min(200px,100%),1fr))]");
+    expect(noLicense).toContain('class="-ml-px -mt-px grid grid-cols-12"');
 
     const unknown = renderFacts({ repository: { ...observedRepository, facts: { ...observedRepository.facts!, archived: null, fork: null } } });
     expect(unknown).not.toContain("활성");
@@ -485,7 +491,8 @@ describe("evidence product detail components", () => {
     expect(html).not.toContain("tracker.example");
 
     const unclaimed = await renderIntro({ profile, unclaimed: true });
-    expect(unclaimed).toContain("저장소 README에서 가져옴");
+    // 운영자 미확인 제품은 출처 줄을 달지 않는다 — 「저장소 README에서 가져옴」은 운영자 요청으로 뺐다(2026-11-08)
+    expect(unclaimed).not.toContain("저장소 README에서 가져옴");
     expect(unclaimed).not.toContain("메이커 제공·미검증");
   });
 
@@ -926,4 +933,19 @@ it("offers an installation prompt instead of a visit CTA or a website uptime cla
   expect(facts).not.toContain("30일 가동률");
   expect(facts).not.toContain("가동 상태");
   expect(facts).toContain("사용자 환경에서 실행");
+});
+
+describe("사실 표 줄 나눔(factRows, 2026-11-08) — 어느 줄에도 빈자리가 없다", () => {
+  it("한 줄 최대 칸 수 안에서 줄마다 고르게 나눈다(차이 1칸 이하)", () => {
+    expect([1, 2, 3, 4, 5, 6, 7, 8].map((count) => factRows(count, 4))).toEqual([[1], [2], [3], [4], [3, 2], [3, 3], [4, 3], [4, 4]]);
+    expect([1, 2, 3, 7].map((count) => factRows(count, 2))).toEqual([[1], [2], [2, 1], [2, 2, 2, 1]]);
+    expect(factRows(0, 4)).toEqual([]);
+  });
+  it("일곱 칸(운영 화면) — 넓은 틀은 4·3, 좁은 틀은 2·2·2·1 로 그린다", () => {
+    const html = renderFacts({ health: { uptime30d: 100, latencyMs: 84, checkedAt: new Date(), down: false },
+      visits: { ...collectingVisits, collecting: false, validVisits: 2, uniqueVisitors: 2, uniqueChangePercent: null } });
+    const spans = [...html.matchAll(/class="flex [^"]*? col-span-(\d+) @lg:col-span-(\d+)"/g)].map((match) => [Number(match[1]), Number(match[2])]);
+    expect(spans.map(([, wide]) => wide)).toEqual([3, 3, 3, 3, 4, 4, 4]);
+    expect(spans.map(([narrow]) => narrow)).toEqual([6, 6, 6, 6, 6, 6, 12]);
+  });
 });

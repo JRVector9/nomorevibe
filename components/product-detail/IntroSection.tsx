@@ -54,7 +54,8 @@ export async function IntroSection({ product, profile, readmeExcerpt, unclaimed,
         {description && selected?.translated && selected.provenance === "machine" && <p className="m-0 text-[13px] text-fg-2">{labels("content.machineTranslation")}</p>}
         {description && selected?.pending && <p role="status" className="m-0 text-[13px] text-fg-2">{labels("content.pending")}</p>}
         {description && selected?.translated && originalDescription && <details className="text-[13px] text-fg-2"><summary className="min-h-11 cursor-pointer">{labels("content.original")}</summary><p lang={selected.sourceLocale ?? englishLang(originalDescription)} className="whitespace-pre-line">{originalDescription}</p></details>}
-        {description && <p className="m-0 text-[13px] text-fg-2">{unclaimed ? t("source.readme") : t("source.maker")}</p>}
+        {/* 출처 줄은 메이커가 준 소개에만(「메이커 제공·미검증」). 운영자 미확인 제품의 「저장소 README에서 가져옴」은 운영자 요청으로 뺐다(2026-11-08). */}
+        {description && !unclaimed && <p className="m-0 text-[13px] text-fg-2">{t("source.maker")}</p>}
       </section>
       {children ?? (readmeExcerpt && (
         <section aria-labelledby="readme-title" className="flex flex-col gap-3">
