@@ -838,3 +838,28 @@ it("a failed settlement is marked commit_unknown on a dispatched row and never r
   await markUnsettledDispatch(done.dispatch as Ai1ModelDispatch);
   expect(await row(done.requested.requestId)).toEqual(before); expect(await events(done.requested.requestId)).toEqual(history);
 });
+
+it("2026-11-08 repro: a settlement that outwaits lock_timeout on the control row retries the same TX and settles instead of going commit_unknown", async () => {
+  await install();
+  const first = await translate(), proof = witness(first.dispatch);
+  // 운영의 긴 장부 쓰기 TX — 다른 세션이 control 을 FOR UPDATE 로 lock_timeout(시험 연결 5초)보다 조금 더 쥔다
+  const holder = postgres(TEST_DATABASE_URL, { max: 1, prepare: false, onnotice: () => {}, connection: { application_name: "f2-control-holder" } });
+  let release!: () => void, locked!: () => void;
+  const lockedAt = new Promise<void>(resolve => { locked = resolve; }), released = new Promise<void>(resolve => { release = resolve; });
+  const held = holder.begin(async tx => { await tx`SELECT id FROM model_capacity_control WHERE id=1 FOR UPDATE`; locked(); await released; });
+  try {
+    await lockedAt;
+    const startedAt = Date.now();
+    const settling = tracked(reconcileGatewayNotStarted(proof));
+    // 첫 시도는 5초에 55P03 으로 접힌다. 그 뒤(0.25초 쉰 두 번째 시도가 기다리는 동안) holder 가 놓는다
+    await new Promise(resolve => setTimeout(resolve, 5_600));
+    release(); await held;
+    expect(await settling).toEqual({ kind: "settled" });
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(5_000);
+  } finally { release(); await held.catch(() => {}); await holder.end({ timeout: 5 }); }
+  const evidence = expectSettled(await row(first.requested.requestId), first.dispatch);
+  // 장부에는 정산 하나뿐 — 미확정(commit_unknown) 표시도, 두 번째 정산도 없다
+  expect(await events(first.requested.requestId)).toMatchObject([{ kind: "queued" }, { kind: "reserved" }, { kind: "dispatch_started" },
+    { kind: "dispatch_settled", from_state: "dispatched", to_state: "settled", reason: null, evidence }]);
+  expect(await tracked(reconcileGatewayNotStarted(proof))).toEqual({ kind: "already_settled" });
+}, 30_000);
