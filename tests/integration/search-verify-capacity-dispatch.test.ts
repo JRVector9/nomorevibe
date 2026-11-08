@@ -16,6 +16,7 @@ import { JobLeaseLostError } from "@/lib/jobs/lease";
 import { tryAcquireRole, type RoleLease } from "@/lib/jobs/role-leader";
 import { requestModelSlot, requestSearchVerifyModelSlot, cancelReservedModelSlot, closeModelCapacityUnknownReview } from "@/lib/llm/capacity-repository";
 import { verifySearchKeywords } from "@/lib/jobs/products/search-verify";
+import { canRequeueUnknownRoute, requeueModelCapacityUnknowns } from "@/lib/operations/model-capacity-requeue";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { modelCapacityPolicyHash, searchVerifyInputHash, searchVerifyLogicalWorkKey, type ModelCapacityPolicy,
   type ModelCapacityRequest, type SearchVerifyInput, type SearchVerifyMember } from "@/lib/llm/capacity";
@@ -470,6 +471,31 @@ it("2026-10-31 repro: a not_started step among withdrawn permits and a reviewed 
   expect(rows.map(row => [row.state, row.binding?.execution ?? null, row.binding?.step ?? null])).toEqual([["withdrawn", null, null],
     ["settled", 0, { kind: "chunk", chunk: 0 }], ["settled", 1, { kind: "chunk", chunk: 0 }], ["settled", 1, { kind: "chunk", chunk: 1 }]]);
   expect(await profileRow(task.product.id)).toMatchObject({ removed_keywords: [words[2]], verify_attempts: Number(before.verify_attempts) + 1, verify_error: null });
+}), 20_000);
+
+it("2026-11-08 「다시 대기열」: 검수 못 한 제품은 시도를 되돌려 맨 앞에 세우고, 이미 검수한 제품의 미확정 행은 닫기만 한다", exercise(async () => {
+  const older = await seed(keywords(2, "w"), null), lost = await seed(keywords(2, "l"), null), done = await seed(keywords(2, "d"), null);
+  await server(async state => {
+    state.setReply((_sent, response) => { response.destroy(); });
+    for (const task of [lost, done]) await custom(async lease => { expect(await verify(task, lease)).toMatchObject({ kind: "result", result: { ok: false } }); });
+  });
+  const unknowns = async () => Array.from(await admin`SELECT logical_member_keys FROM model_capacity_requests WHERE route_id=${jobName} AND state='indeterminate' ORDER BY queue_ordinal`);
+  expect((await unknowns()).map(row => row.logical_member_keys)).toEqual([[`search-verify:${lost.product.id}`], [`search-verify:${done.product.id}`]]);
+  // 운영 11-08 의 모양: 잡이 시간 초과를 적고 재시도 시각을 미뤘다(updated_at 이 갱신돼 대기열 맨 뒤). 다른 제품은 그 뒤 다시 검수됐다.
+  await admin`UPDATE product_search_profiles SET updated_at=now() - interval '1 day' WHERE product_id=${older.product.id}`;
+  await admin`UPDATE product_search_profiles SET verify_error='timeout',verify_attempts=1,verify_retry_at=now() - interval '1 minute',updated_at=now() WHERE product_id=${lost.product.id}`;
+  await admin`UPDATE product_search_profiles SET verified_at=now(),verify_attempts=1,updated_at=now() WHERE product_id=${done.product.id}`;
+  const order = async () => (await tracked(pendingVerifications(1000))).map(task => task.product.id).filter(id => id === older.product.id || id === lost.product.id);
+  expect(await order()).toEqual([older.product.id, lost.product.id]);
+  const lostBefore = await profileRow(lost.product.id), doneBefore = await profileRow(done.product.id);
+  expect(canRequeueUnknownRoute(jobName)).toBe(true);
+  expect(await tracked(requeueModelCapacityUnknowns({ routeId: jobName, operator: "fixture", note: "2026-11-08 repro" })))
+    .toEqual({ groups: [{ routeId: jobName, requests: 2, requeued: 1, done: 1, skipped: 0, closed: 2, error: null }], closed: 2 });
+  expect(await unknowns()).toEqual([]);
+  // 실패 원인(timeout)은 남아 다음 시도가 나눠 검수를 고르고, updated_at(30일 재생성 기준)은 그대로다. 옛 실행은 source_revision 으로 막힌다.
+  expect(await profileRow(lost.product.id)).toEqual({ ...lostBefore, verify_attempts: 0, verify_retry_at: null, source_revision: Number(lostBefore.source_revision) + 1 });
+  expect(await profileRow(done.product.id)).toEqual(doneBefore);
+  expect(await order()).toEqual([lost.product.id, older.product.id]);
 }), 20_000);
 
 it("records a live not_started failure once so the generation moves on, without a second POST", exercise(async () => {

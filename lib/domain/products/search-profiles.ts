@@ -234,7 +234,10 @@ export async function pendingVerifications(limit: number): Promise<ProfileTask[]
         and ${productSearchProfiles.verifyAttempts} < ${MAX_VERIFY_ATTEMPTS}
         and (${productSearchProfiles.verifyRetryAt} is null or ${productSearchProfiles.verifyRetryAt} <= now())`,
     ))
-    .orderBy(productSearchProfiles.updatedAt, products.id)
+    // 운영자 재요청(「다시 대기열」·검수 복구)이 먼저다 — 실패 원인은 남기고 재시도 시각만 지운 행은 그 경로에서만 생긴다(실패 기록은 늘 재시도 시각을 적는다).
+    // updated_at 은 30일 재생성 주기의 기준이라 앞당길 수 없다(2026-11-08: 시간 초과 뒤 대기 27,098건의 맨 뒤로 가 며칠 기다렸다).
+    .orderBy(sql`(${productSearchProfiles.verifyError} is not null and ${productSearchProfiles.verifyRetryAt} is null) desc`,
+      productSearchProfiles.updatedAt, products.id)
     .limit(limit);
   return rows.map((row) => ({ product: row.product, profile: row.profile, reviewerNote: row.reviewerNote }));
 }
