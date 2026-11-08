@@ -246,6 +246,53 @@ describe("작업 ↔ 모델 순위 저장", () => {
     expect(await connections()).toEqual([]);
     expect((await audits("ai-connection-delete")).map(row => row.target)).toEqual(["엔진"]);
   });
+  it("2026-11-08 「기록 지우기」: 순위를 읽지 않는 작업의 옛 순위 행만 판을 맞춰 지우고, 순위를 읽는 작업은 거절한다", async () => {
+    const engine = await makeEngine();
+    const { clearUnreadAiTaskRanksAction } = await actions();
+    const { aiTaskSlotRevision, listAiTaskRows } = await import("@/lib/operations/admin-ai-tasks-repository");
+    await client`INSERT INTO ai_task_models (task, slot, rank, connection_id, model, updated_by) VALUES ('held-review-retry', 1, 1, ${engine.id}, 'Qwen-X', 'it'),
+      ('held-review-retry', 1, 2, ${engine.id}, 'Qwen-Y', 'it')`;
+    const rows = (await listAiTaskRows()).filter(row => row.task === "held-review-retry" && row.slot === 1);
+    expect(rows).toHaveLength(2);
+    expect((await clearUnreadAiTaskRanksAction(null, form({ task: "held-review-retry", slot: "1", revision: "0".repeat(64) })))?.issues)
+      .toEqual(["그 사이 이 줄이 바뀌었습니다. 새로고침한 뒤 다시 저장하세요."]);
+    expect(await rankRows()).toHaveLength(2);
+    expect(await clearUnreadAiTaskRanksAction(null, form({ task: "held-review-retry", slot: "1", revision: aiTaskSlotRevision(rows) })))
+      .toEqual({ ok: true, message: "옛 순위 기록 2개를 지웠습니다." });
+    expect(await rankRows()).toEqual([]);
+    const [audit] = await audits("ai-task-models-save");
+    expect(audit).toMatchObject({ target: "held-review-retry#1", ok: true, detail: { reason: "unread_records_cleared", after: [] } });
+    expect((audit.detail.before as unknown[]).length).toBe(2);
+    // 순위를 읽는 작업은 이 길로 지우지 않는다(바꾸기 서랍에서 바꾼다)
+    expect((await clearUnreadAiTaskRanksAction(null, form({ task: "first-review", slot: "1", revision: EMPTY_REVISION })))?.issues)
+      .toEqual(["실행 쪽이 이 작업의 순위를 읽습니다 — 옛 기록이 아니므로 「바꾸기」에서 바꾸세요."]);
+  });
+  it("2026-11-08 모델 「삭제」: 쓰는 모델은 뺄 수 없고, 뺀 모델은 다시 읽어도 빠진 채 남으며 되돌릴 수 있다", async () => {
+    const engine = await makeEngine();
+    const { hideAiConnectionModelAction, saveAiConnectionAction } = await actions();
+    const { listAiConnections } = await import("@/lib/operations/admin-ai-tasks-repository");
+    const view = async () => (await listAiConnections()).find(row => row.id === engine.id)!;
+    expect((await view()).models?.map(row => row.id)).toEqual(["Qwen-X", "Qwen-Y"]);
+    await client`INSERT INTO ai_task_models (task, slot, rank, connection_id, model, updated_by) VALUES ('product-embedding', 1, 1, ${engine.id}, 'Qwen-Y', 'it')`;
+    expect((await hideAiConnectionModelAction(null, form({ id: engine.id, expectedVersion: String(engine.version), hidden: "1", model: "Qwen-Y" })))?.issues)
+      .toEqual(["이 모델을 쓰는 순위나 작업 분산 구성원이 있어 목록에서 뺄 수 없습니다. 먼저 작업 배정에서 바꾸세요."]);
+    await client`DELETE FROM ai_task_models WHERE task = 'product-embedding' AND connection_id = ${engine.id}`;
+    expect((await hideAiConnectionModelAction(null, form({ id: engine.id, expectedVersion: String(engine.version), hidden: "1", model: "없는-모델" })))?.issues)
+      .toEqual(["이 연결의 목록에 없는 모델입니다. 새로고침하세요."]);
+    expect(await hideAiConnectionModelAction(null, form({ id: engine.id, expectedVersion: String(engine.version), hidden: "1", model: "Qwen-Y" }))).toMatchObject({ ok: true });
+    expect(await view()).toMatchObject({ version: engine.version + 1, hiddenModels: ["Qwen-Y"], models: [{ id: "Qwen-X" }] });
+    // 저장된 서버 목록은 그대로 — 화면·선택지가 보는 보기에서만 빠진다
+    expect((await connections()).find(row => row.id === engine.id)!.models?.map(row => row.id)).toEqual(["Qwen-X", "Qwen-Y"]);
+    // 연결을 다시 저장해 서버 목록을 다시 읽어도 빠진 채로 남는다
+    expect(await saveAiConnectionAction(null, form({ id: engine.id, expectedVersion: String(engine.version + 1), kind: "api", label: "엔진", baseUrl: ENGINE,
+      deviceId: "eng-dev", capacitySlots: "2" }))).toMatchObject({ ok: true });
+    expect(await view()).toMatchObject({ hiddenModels: ["Qwen-Y"], models: [{ id: "Qwen-X" }] });
+    const version = (await view()).version;
+    expect(await hideAiConnectionModelAction(null, form({ id: engine.id, expectedVersion: String(version), hidden: "0", model: "Qwen-Y" }))).toMatchObject({ ok: true });
+    expect((await view()).models?.map(row => row.id)).toEqual(["Qwen-X", "Qwen-Y"]);
+    expect((await view()).hiddenModels).toEqual([]);
+    expect((await audits("ai-connection-model-hide")).map(row => [row.target, row.detail.hidden, row.detail.models])).toEqual([["엔진", true, ["Qwen-Y"]], ["엔진", false, ["Qwen-Y"]]]);
+  });
 });
 
 describe("실행 쪽 resolver(PR B) — 저장한 순위를 DB 스냅숏으로 읽어 그 연결의 계약에 묶는다", () => {

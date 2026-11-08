@@ -7,7 +7,7 @@ import { deviceFallbackLimit, deviceSettingsFromPolicyFallback } from "@/lib/llm
 import { readModelCapacityDevice, saveModelCapacityDevice } from "@/lib/llm/capacity-devices-repository";
 import { DrWriterFencedError, writerSiteActive } from "./dr/epoch";
 import { capacityDeviceIssueMessage, type SaveCapacityDeviceResult } from "./admin-capacity-devices";
-import type { AiConnectionView } from "./admin-ai-tasks";
+import { aiConnectionVisibleModels, type AiConnectionView } from "./admin-ai-tasks";
 
 /** Display metadata only. A policy group is the existing shared admission boundary, never a per-stage allowance. */
 export type EngineLimitIdentity = Readonly<{
@@ -31,11 +31,11 @@ export async function readEngineLimitMetadata(): Promise<EngineLimitMetadata> {
       if (!parsed.success || !control?.policy_hash || modelCapacityPolicyHash(parsed.data) !== control.policy_hash)
         return { policyHash: null, engines: [], error: "engine_limit_policy_unavailable" };
       const rows = await tx.execute<{ id: string; label: string; kind: "api" | "cli"; cli_tool: AiConnectionView["cliTool"];
-        base_url: string | null; device_id: string; models: AiConnectionView["models"] }>(sql`
-        SELECT id::text, label, kind, cli_tool, base_url, device_id, models FROM ai_connections
+        base_url: string | null; device_id: string; models: AiConnectionView["models"]; options: unknown }>(sql`
+        SELECT id::text, label, kind, cli_tool, base_url, device_id, models, options FROM ai_connections
         WHERE enabled ORDER BY label, id`);
       const connections = Array.from(rows).map(row => ({ id: row.id, label: row.label, kind: row.kind, cliTool: row.cli_tool,
-        baseUrl: row.base_url, deviceId: row.device_id, models: row.models }));
+        baseUrl: row.base_url, deviceId: row.device_id, models: aiConnectionVisibleModels(row.models, row.options) }));
       const devices = [...new Set(parsed.data.routes.map(route => route.groupId))].sort();
       const engines = devices.map(deviceId => {
         const routes = parsed.data.routes.filter(route => route.groupId === deviceId);

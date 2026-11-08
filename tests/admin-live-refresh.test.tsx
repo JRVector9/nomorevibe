@@ -9,7 +9,7 @@ const router = vi.hoisted(() => ({ refresh: vi.fn(), pathname: "/admin/review", 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: router.refresh }), usePathname: () => router.pathname,
   useSearchParams: () => new URLSearchParams(router.search) }));
 
-import { BUSY_LIMIT_MS, clockLabel, createNavigationGuard, createRefreshScheduler, freshCookie, hasPagedRows, hasUnsaved, isTextEntry, LIVE_STORAGE_KEY, mergeBadges, pauseReason,
+import { BUSY_LIMIT_MS, clockLabel, createNavigationGuard, createRefreshScheduler, freshCookie, hasPagedRows, hasUnsaved, isTextEntry, LIVE_STORAGE_KEY, liveStatusLabels, mergeBadges, pauseReason,
   readLivePreference, refreshPolicy, UNSAVED_SELECTOR, writeLivePreference } from "@/app/(operator)/admin/live-refresh";
 import { LiveBar } from "@/app/(operator)/admin/components/LiveBar";
 import { AdminShell } from "@/app/(operator)/admin/AdminShell";
@@ -95,6 +95,17 @@ describe("화면마다 다시 읽는 규칙", () => {
     expect(hasUnsaved(root("dialog") as never)).toBe(true);
     expect(hasUnsaved(root(null) as never)).toBe(false);
     expect(hasUnsaved(null)).toBe(false);
+  });
+
+  it("2026-11-08: 자동 갱신이 도는 동안 머리 줄 글자를 바꾸지 않는다 — 수동 새로고침만 「갱신 중」, 끝나면 시각만 바뀐다", () => {
+    expect(liveStatusLabels({ manualPending: false, live: true, paused: null, seconds: 60 })).toEqual({ status: "60초마다 다시 읽음", indicator: "60초 자동 관측" });
+    expect(liveStatusLabels({ manualPending: true, live: true, paused: null, seconds: 60 })).toEqual({ status: "다시 읽는 중…", indicator: "관측 갱신 중" });
+    expect(liveStatusLabels({ manualPending: false, live: true, paused: "unsaved", seconds: 15 }).indicator).toBe("저장하지 않은 변경·열린 확인 창이 있어 멈춤");
+    expect(liveStatusLabels({ manualPending: false, live: false, paused: null, seconds: 15 }).indicator).toBe("자동 갱신 멈춤");
+    // 자동 갱신 진행(autoPending)은 글자에 넣지 않는다 — busy guard·aria-disabled 에만 쓴다
+    const source = readFileSync(path.resolve(__dirname, "../app/(operator)/admin/components/LiveBar.tsx"), "utf8");
+    expect(source).toContain("liveStatusLabels({ manualPending, live, paused: pausedReason, seconds })");
+    expect(source).not.toMatch(/autoPending \? "(관측 갱신 중|다시 읽는 중…)"/);
   });
 });
 

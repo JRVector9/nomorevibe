@@ -23,7 +23,8 @@ export function StagePoolFields({ draft, models, defaults, update, stageIds }: {
       <ModelChips displayName={row => { const model = models.find(model => model.key === row.model); return model ? model.cliEngine ? `${model.displayName} · CLI` : `[${model.gatewayLabel ?? model.equipment}] ${model.model}` : "등록부에서 사라진 모델"; }} label={stage.label} max={8} rows={keys.map(key => ({ provider: stage.provider, model: key }))}
         choices={choices.map(model => ({ provider: stage.provider, model: model.key, label: model.cliEngine ? `${model.displayName} · CLI` : `[${model.gatewayLabel ?? model.equipment}] ${model.model}` }))}
         onChange={rows => update(stage.id, rows.map(row => row.model))} />
-      {!keys.length && <span className="w-fit max-w-full break-words rounded-full border border-line bg-bg-soft px-3 py-2 text-[13px]">기본 · {defaults[stage.id] ?? "미확인"}</span>}
+      {!keys.length ? <span className="w-fit max-w-full break-words rounded-full border border-line bg-bg-soft px-3 py-2 text-[13px]">기본 · {defaults[stage.id] ?? "미확인"}</span>
+        : <p className="text-[13px] text-fg-2">모두 빼면 등록부 기본값({defaults[stage.id] ?? "미확인"})으로 돌아갑니다.</p>}
       {!choices.length && <p className="text-[13px] text-fg-2">용도·실행 계약 등록 후 모델을 추가할 수 있습니다.</p>}
     </div>;
   })}</div></div>;

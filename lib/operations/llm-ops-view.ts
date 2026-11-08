@@ -1,5 +1,5 @@
 import { AI_CLI_TOOL_LABELS, AI_CLI_TOOL_PROVIDERS, AI_TASKS, aiCliToolOfProvider, aiTask, aiTaskSlotLabel, type AiTaskDef } from "@/lib/llm/ai-tasks";
-import { aiConnectionLabel, aiModelsErrorText, type AiConnectionView, type AiTaskRankRow } from "./admin-ai-tasks";
+import { aiConnectionLabel, aiModelsErrorText, aiTaskRanksUnread, type AiConnectionView, type AiCurrentSlot, type AiTaskRankRow } from "./admin-ai-tasks";
 import type { AiTaskExecutionAdminView } from "./admin-ai-task-execution";
 import type { AiTaskRuntimeView } from "./admin-ai-tasks-repository";
 import type { AdminModelMetrics, AdminModelsObservation } from "./admin-models-observation";
@@ -425,6 +425,8 @@ export type LlmOpsInput = Readonly<{
   connections: readonly AiConnectionView[] | null;
   rows: readonly AiTaskRankRow[] | null;
   executions: readonly Pick<AiTaskExecutionAdminView, "task" | "slot" | "mode" | "members">[] | null;
+  /** 실행 쪽이 순위를 읽지 않는 작업의 실제 출처(단계 풀·감사 설정·등록부) — 작업 배정 화면과 같은 읽기. 못 읽으면 null(그 칩만 빠진다) */
+  current?: readonly AiCurrentSlot[] | null;
   runtime: Readonly<Record<string, AiTaskRuntimeView>> | null;
   jobs: readonly JobPause[] | null;
   cliContracts: readonly LlmCliContractInput[] | null;
@@ -432,7 +434,8 @@ export type LlmOpsInput = Readonly<{
 }>;
 /** fix: 칩이 보이는 문제(잡 일시중지)를 고치는 곳 — 칩 자체(href)는 늘 작업 배정의 그 줄로 간다. */
 export type LlmTaskChip = Readonly<{ key: string; task: string; label: string; rank: number | null; slot: number; model: string; enabled: boolean;
-  source: "rank" | "pool" | "policy" | "classifier"; paused: boolean; href: string; fix: LlmFix | null }>;
+  /** record = 실행 쪽이 읽지 않는 작업의 옛 순위 행(실행 안 함), current = 그 작업의 실제 출처(단계 풀·감사 설정·등록부) */
+  source: "rank" | "pool" | "policy" | "classifier" | "record" | "current"; paused: boolean; href: string; fix: LlmFix | null }>;
 export type LlmCapacity = Readonly<{ deviceId: string; limit: number | null; held: number | null; waiting: number | null; source: "table" | "policy_fallback" | null;
   /** 연결 폼에 저장된 칸 수(장비 행이 없을 때 순위 저장이 장비 행을 만드는 값). CLI 도구 행은 null */
   stored: number | null; mismatch: boolean; level: LlmOpsLevel;
@@ -557,7 +560,8 @@ function commonSignals(ledgerRows: readonly AdminModelMetrics[] | null, tasks: r
   if (ledger && ledger.failed1h > 0 && ledger.succeeded1h === 0) signals.push(statusLine("bad", "실패만", `1시간 실패 ${fmt(ledger.failed1h)}건 · 성공 0건`, null, failuresFix));
   else if (ledger && ledger.failed1h > 0) signals.push(statusLine("warn", "일부 실패", `1시간 정산 ${fmt(ledger.settled1h)} · 실패 ${fmt(ledger.failed1h)}`, null, failuresFix));
   if (indeterminate > 0) signals.push(statusLine("warn", "미확정 있음", `재실행 대기 ${fmt(indeterminate)}건`, null, retryFix));
-  const active = tasks.filter(task => task.enabled);
+  // 옛 순위 기록(record)은 실행되지 않으므로 「배정된 작업」으로 세지 않는다
+  const active = tasks.filter(task => task.enabled && task.source !== "record");
   // 잡이 멈춘 작업이 하나면 그 잡의 상태 창, 여럿이면 잡 목록(다시 켜는 곳)
   const pausedFixes = [...new Map(active.filter(task => task.fix).map(task => [task.task, task.fix!])).values()];
   const base: LlmOpsStatus = !active.length ? statusLine("idle", "배정 없음", "이 연결을 쓰는 작업이 없습니다")
@@ -588,9 +592,20 @@ export function buildLlmOpsView(input: LlmOpsInput): LlmOpsView {
     const chips: LlmTaskChip[] = [];
     for (const row of input.rows ?? []) {
       if (row.connectionId !== connection.id) continue;
-      const task = aiTask(row.task);
-      chips.push({ key: `rank:${row.task}:${row.slot}:${row.rank}`, task: row.task, label: task ? (task.slots > 1 ? aiTaskSlotLabel(task, row.slot) : task.label) : row.task,
-        rank: row.rank, slot: row.slot, model: row.model, enabled: row.enabled, source: "rank", paused: paused.has(row.task), href: chipHref(row.task, row.slot), fix: pausedFix(row.task, paused) });
+      const task = aiTask(row.task), record = aiTaskRanksUnread(row.task);
+      chips.push({ key: `${record ? "record" : "rank"}:${row.task}:${row.slot}:${row.rank}`, task: row.task, label: task ? (task.slots > 1 ? aiTaskSlotLabel(task, row.slot) : task.label) : row.task,
+        rank: row.rank, slot: row.slot, model: row.model, enabled: row.enabled, source: record ? "record" : "rank", paused: paused.has(row.task), href: chipHref(row.task, row.slot),
+        fix: record ? null : pausedFix(row.task, paused) });
+    }
+    // 순위를 읽지 않는 작업이 실제로 이 서버를 쓰는 곳 — 주소(없으면 장비)로 맞춘다
+    if (connection.kind === "api") for (const slot of input.current ?? []) {
+      if (!aiTaskRanksUnread(slot.task)) continue;
+      const task = aiTask(slot.task);
+      for (const use of slot.uses) {
+        if (use.kind !== "api" || !(use.baseUrl ? use.baseUrl === connection.baseUrl : use.deviceId !== null && use.deviceId === connection.deviceId)) continue;
+        chips.push({ key: `current:${slot.task}:${slot.slot}:${use.model}`, task: slot.task, label: task ? (task.slots > 1 ? aiTaskSlotLabel(task, slot.slot) : task.label) : slot.task,
+          rank: null, slot: slot.slot, model: use.model, enabled: true, source: "current", paused: paused.has(slot.task), href: chipHref(slot.task, slot.slot), fix: pausedFix(slot.task, paused) });
+      }
     }
     for (const execution of input.executions ?? []) {
       if (execution.mode !== "workload_pool") continue;

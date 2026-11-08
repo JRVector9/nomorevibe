@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { currentAdmin } from "@/lib/auth/admin";
 import { aiTask, aiTaskSlotLabel, isAiLiveTask } from "@/lib/llm/ai-tasks";
 import { AI_TASK_IMPORT_CONFIRM, aiConnectionInputFromForm, aiModelsErrorText, aiTaskIssueMessage, aiTaskRanksInputFromForm } from "@/lib/operations/admin-ai-tasks";
-import { applyAiTaskImport, deleteAiConnection, readAiConnectionModels, saveAiConnection, saveAiTaskRanks } from "@/lib/operations/admin-ai-tasks-repository";
+import { applyAiTaskImport, clearUnreadAiTaskRanks, deleteAiConnection, readAiConnectionModels, saveAiConnection, saveAiTaskRanks, setAiConnectionModelsHidden } from "@/lib/operations/admin-ai-tasks-repository";
 import { webWriteAction } from "@/lib/operations/dr/web-gate";
 
 export type AiTaskActionState = { ok?: true; message?: string; issues?: string[]; warnings?: string[];
@@ -43,6 +43,32 @@ export const readAiConnectionModelsAction = webWriteAction(async function readAi
   const read = await readAiConnectionModels(field(form, "id"), admin.login);
   revalidate();
   return read.ok ? { ok: true, message: `모델 ${read.count}개를 읽었습니다.` } : { issues: messages(read.issues) };
+});
+
+/** 모델을 연결의 목록에서 빼기(hidden=1)·되돌리기(hidden=0) — 쓰는 순위·작업 분산 구성원이 없는 모델만 뺀다. model 칸은 여러 개(같은 모델의 별칭)일 수 있다. */
+export const hideAiConnectionModelAction = webWriteAction(async function hideAiConnectionModelAction(_previous: AiTaskActionState, form: FormData): Promise<AiTaskActionState> {
+  const admin = await currentAdmin();
+  if (!admin) return DENIED;
+  const raw = field(form, "expectedVersion"), version = /^\d{1,15}$/.test(raw) ? Number(raw) : NaN;
+  if (!Number.isSafeInteger(version)) return { issues: messages(["ai_connection_invalid:expectedVersion"]) };
+  const models = form.getAll("model").flatMap(value => typeof value === "string" && value.trim() ? [value.trim()] : []);
+  const hidden = field(form, "hidden") !== "0";
+  const result = await setAiConnectionModelsHidden({ id: field(form, "id"), expectedVersion: version, models, hidden }, admin.login);
+  if (!result.ok) return { issues: messages(result.issues) };
+  revalidate();
+  return { ok: true, message: `${models.join(" · ")} — ${hidden ? "목록에서 뺐습니다" : "목록에 되돌렸습니다"}.` };
+});
+
+/** 실행 쪽이 순위를 읽지 않는 작업의 옛 순위 행 지우기 — 실행 동작은 그대로다(그 작업의 모델은 단계 풀·감사 설정에서 온다). */
+export const clearUnreadAiTaskRanksAction = webWriteAction(async function clearUnreadAiTaskRanksAction(_previous: AiTaskActionState, form: FormData): Promise<AiTaskActionState> {
+  const admin = await currentAdmin();
+  if (!admin) return DENIED;
+  const rawSlot = field(form, "slot"), revision = field(form, "revision");
+  if (!/^\d$/.test(rawSlot) || !/^[a-f0-9]{64}$/.test(revision)) return { issues: messages(["ai_task_invalid:revision"]) };
+  const result = await clearUnreadAiTaskRanks({ task: field(form, "task"), slot: Number(rawSlot), revision }, admin.login);
+  if (!result.ok) return { issues: messages(result.issues) };
+  revalidate();
+  return { ok: true, message: `옛 순위 기록 ${result.removed}개를 지웠습니다.` };
 });
 
 /** 쓰는 순위가 없는 연결 지우기. 확인 칸에 연결 이름을 적어야 한다. */
