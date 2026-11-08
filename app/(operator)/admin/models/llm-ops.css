@@ -181,6 +181,13 @@
 .llm-models li code { font-size: calc(13px + var(--admin-font-delta, 0px)); overflow-wrap: anywhere; word-break: break-all; }
 .llm-model-name { display: grid; gap: 2px; min-width: 0; }
 .llm-model-note { font-size: calc(12px + var(--admin-font-delta, 0px)); overflow-wrap: anywhere; }
+.llm-model-free { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.llm-model-act { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; }
+.llm-model-hide { border: 1px solid var(--line); border-radius: 6px; padding: 1px 8px; background: transparent; color: var(--fg-2, inherit);
+  font-size: calc(12px + var(--admin-font-delta, 0px)); cursor: pointer; }
+.llm-model-hide:hover:not(:disabled) { background: var(--surface); }
+.llm-hidden-models summary { cursor: pointer; font-size: calc(13px + var(--admin-font-delta, 0px)); }
+.llm-hidden-models ul { margin-top: 6px; }
 .llm-edit-links { display: flex; flex-wrap: wrap; gap: 8px; }
 
 /* 고급 설정(PR 5) — 편집기 목록. 이름(파랑) 아래 한 줄 설명. 칸 하나가 링크 하나다. */

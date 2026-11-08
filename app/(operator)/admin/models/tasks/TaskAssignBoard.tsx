@@ -77,33 +77,21 @@ function ActualCell({ row, editor }: { row: TaskAssignRow; editor: FlowRankEdito
   </td>;
 }
 
-/**
- * 작업 배정 표 — 작업 × 칸마다 설정(1·2·3순위 · 분산 · 실제 적용)과 장부의 최근 1시간 실제 호출, 상태와 까닭. 「바꾸기」는 운영 홈과 같은 서랍(RankDrawer)을 연다.
- * 저장은 서랍 안의 기존 순위 저장(saveAiTaskRanksAction)뿐이다 — 이 표는 쓰지 않는다.
- */
-export function TaskAssignBoard({ view, editor, devices, lockReason }: { view: TaskAssignView; editor: FlowRankEditor; devices: readonly RankDeviceLimit[] | null;
-  lockReason: string | null }) {
-  const [changing, setChanging] = useState<string | null>(null);
-  useOpenHash();
-  const groups = [...new Set(view.rows.map(row => row.group))];
-  const lines = changing ? editor.lines.filter(line => line.task === changing) : [];
-  return <div className="stack llm-ops tk" data-llm-page="tasks">
-    <div className="llm-toolbar">
-      <p className="llm-totals"><span>작업 <b>{fmt(view.rows.length)}</b></span>
-        {(["bad", "warn", "idle", "unknown"] as const).filter(level => view.counts[level] > 0).map(level =>
-          <span key={level} data-count={level}><LevelBadge level={level}>{level === "bad" ? "멈춤" : level === "warn" ? "주의" : level === "idle" ? "중지·쉼" : "확인 불가"} {fmt(view.counts[level])}</LevelBadge></span>)}
-        <span data-count="ok"><LevelBadge level="ok">정상 {fmt(view.counts.ok)}</LevelBadge></span></p>
-      <ObservedAt label="장부 관측" at={view.observedAt} />
-    </div>
-    {view.errors.map(error => <p key={error} role="alert" className="llm-notice">{error}</p>)}
-    <div className="tk-wrap">
+/** LLM 이 아닌 모델(임베딩·재정렬)을 쓰는 작업 — 대화형 LLM 호출이 아니라 표를 따로 둔다(2026-11-08 사용자 요청) */
+const NON_LLM_KINDS: ReadonlySet<string> = new Set(["embedding", "rerank"]);
+const usesLlm = (row: TaskAssignView["rows"][number]) => !NON_LLM_KINDS.has(aiTask(row.task)?.kind ?? "chat");
+
+/** 작업 표 하나 — 묶음(group)마다 tbody. 「바꾸기」는 부모의 서랍을 연다. */
+function TaskTable({ rows, caption, editor, onChange }: { rows: TaskAssignView["rows"]; caption: string; editor: FlowRankEditor; onChange: (task: string) => void }) {
+  const groups = [...new Set(rows.map(row => row.group))];
+  return <div className="tk-wrap">
       <table className="tk-table">
-        <caption className="admin-vh">작업별 설정 순위와 최근 1시간 실제 호출</caption>
+        <caption className="admin-vh">{caption}</caption>
         <thead><tr><th scope="col">작업</th><th scope="col">1순위</th><th scope="col">2순위</th><th scope="col">3순위</th>
           <th scope="col">지금 실제 (1시간)</th><th scope="col">상태</th><th scope="col"><span className="admin-vh">바꾸기</span></th></tr></thead>
         {groups.map(group => <tbody key={group}>
-          <tr className="tk-group"><th colSpan={7} scope="colgroup">{view.rows.find(row => row.group === group)?.groupLabel}</th></tr>
-          {view.rows.filter(row => row.group === group).map(row => <tr key={row.key} id={row.anchor} className="tk-row" data-task={row.key} data-level={row.status.level}>
+          <tr className="tk-group"><th colSpan={7} scope="colgroup">{rows.find(row => row.group === group)?.groupLabel}</th></tr>
+          {rows.filter(row => row.group === group).map(row => <tr key={row.key} id={row.anchor} className="tk-row" data-task={row.key} data-level={row.status.level}>
             <th scope="row" className="tk-task" data-label="작업">
               <span className="tk-task-name">{row.label}</span>
               <span className="tk-mode" data-mode={row.mode ?? "unknown"}>{row.modeText}</span>
@@ -115,15 +103,41 @@ export function TaskAssignBoard({ view, editor, devices, lockReason }: { view: T
               {row.status.reason && <span className="tk-reason">{modelPickerVisibleText(row.status.reason, editor.connections)}</span>}
             </td>
             <td className="tk-act">
-              <button type="button" className="button small" aria-label={`${row.label} 모델 바꾸기`} onClick={() => setChanging(row.task)}>바꾸기</button>
+              <button type="button" className="button small" aria-label={`${row.label} 모델 바꾸기`} onClick={() => onChange(row.task)}>바꾸기</button>
             </td>
           </tr>)}
         </tbody>)}
       </table>
+    </div>;
+}
+
+/**
+ * 작업 배정 표 — 작업 × 칸마다 설정(1·2·3순위 · 분산 · 실제 적용)과 장부의 최근 1시간 실제 호출, 상태와 까닭. 「바꾸기」는 운영 홈과 같은 서랍(RankDrawer)을 연다.
+ * 저장은 서랍 안의 기존 순위 저장(saveAiTaskRanksAction)뿐이다 — 이 표는 쓰지 않는다.
+ */
+export function TaskAssignBoard({ view, editor, devices, lockReason }: { view: TaskAssignView; editor: FlowRankEditor; devices: readonly RankDeviceLimit[] | null;
+  lockReason: string | null }) {
+  const [changing, setChanging] = useState<string | null>(null);
+  useOpenHash();
+  const llmRows = view.rows.filter(usesLlm), otherRows = view.rows.filter(row => !usesLlm(row));
+  const lines = changing ? editor.lines.filter(line => line.task === changing) : [];
+  return <div className="stack llm-ops tk" data-llm-page="tasks">
+    <div className="llm-toolbar">
+      <p className="llm-totals"><span>LLM 작업 <b>{fmt(llmRows.length)}</b></span>{otherRows.length > 0 && <span>LLM 아님 <b>{fmt(otherRows.length)}</b></span>}
+        {(["bad", "warn", "idle", "unknown"] as const).filter(level => view.counts[level] > 0).map(level =>
+          <span key={level} data-count={level}><LevelBadge level={level}>{level === "bad" ? "멈춤" : level === "warn" ? "주의" : level === "idle" ? "중지·쉼" : "확인 불가"} {fmt(view.counts[level])}</LevelBadge></span>)}
+        <span data-count="ok"><LevelBadge level="ok">정상 {fmt(view.counts.ok)}</LevelBadge></span></p>
+      <ObservedAt label="장부 관측" at={view.observedAt} />
     </div>
+    {view.errors.map(error => <p key={error} role="alert" className="llm-notice">{error}</p>)}
+    <TaskTable rows={llmRows} caption="LLM 작업별 설정 순위와 최근 1시간 실제 호출" editor={editor} onChange={setChanging} />
     <LevelLegend />
     <p className="llm-empty">「지금 실제」는 장부의 최근 1시간 정산(성공·실패·판정 없음)을 모델별로 센 것입니다. 1순위가 0건인데 다른 모델이 처리했거나, 1순위가 아닌 모델이 절반 이상을 처리했거나,
       순위에 없는 모델이 불렸으면 「설정과 다름」으로 알립니다. 상태 옆 회색 글자가 까닭입니다.</p>
+    {otherRows.length > 0 && <section className="tk-other" id="tasks-non-llm" aria-labelledby="tasks-non-llm-title">
+      <h2 id="tasks-non-llm-title" className="tk-section-title">LLM이 아닌 모델 <span className="llm-muted">검색 벡터·재정렬 — 대화형 LLM이 아니라 임베딩·재정렬 엔진이 처리합니다</span></h2>
+      <TaskTable rows={otherRows} caption="LLM이 아닌 모델(벡터·재정렬)을 쓰는 작업의 설정 순위와 최근 1시간 실제 호출" editor={editor} onChange={setChanging} />
+    </section>}
     {changing && <RankDrawer key={changing} editor={editor} lines={lines} title={aiTask(changing)?.label ?? changing} secondWaiting={null}
       onClose={() => setChanging(null)} fullViewHref={null} devices={devices} lockReason={lockReason} />}
   </div>;

@@ -25,7 +25,7 @@ type Props = { searchParams: Promise<Record<string, string | string[] | undefine
 const one = (value: string | string[] | undefined) => typeof value === "string" ? value.trim() : Array.isArray(value) ? (value[0] ?? "").trim() : "";
 const ERROR_LABELS: Record<string, string> = { connections: "AI 연결", rows: "작업 ↔ 모델 순위", readiness: "계약·정책·장비", policy: "용량 정책", current: "실행 쪽 모델 설정",
   audit: "최근 기록", runtime: "실행 쪽 순위 사정" };
-const ACTION_LABELS: Record<string, string> = { "ai-connection-save": "연결 저장", "ai-connection-models-read": "모델 목록 읽기", "ai-connection-delete": "연결 지움",
+const ACTION_LABELS: Record<string, string> = { "ai-connection-save": "연결 저장", "ai-connection-models-read": "모델 목록 읽기", "ai-connection-delete": "연결 지움", "ai-connection-model-hide": "모델 빼기·되돌리기",
   "ai-task-models-save": "순위 저장", "ai-task-execution-save": "실행 설정 저장", "ai-task-models-import": "가져오기", "ai-connection-key-fill": "키 자동 채움" };
 
 const FOLD = "min-w-0 rounded-lg border border-line bg-bg-card scroll-mt-6";

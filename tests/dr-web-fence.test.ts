@@ -388,7 +388,8 @@ it("every admin server action and every write route handler goes through the web
   // 2026-11-07 admin/models/unknown-review-actions.ts: requeueUnknownReviews(종료 미확정 다시 대기열) 하나가 더해져 110.
   // 2026-11-07 PR 5: 어디서도 부르지 않던 접수 호환 경로 changeAdminModelAdmission(operation-actions.ts)을 지워 109 — 접수 OPEN/DRAIN 은 운영 실행기 접수만.
   // 2026-11-07 admin/models/ops-runner-actions.ts: cancelAdminModelOperation(시작 전 운영 작업 취소) 하나가 더해져 110.
-  expect(wrapped).toBe(110);
+  // 2026-11-08 admin/models/tasks/actions.ts: hideAiConnectionModelAction(연결 모델 빼기·되돌리기) 하나가 더해져 111.
+  expect(wrapped).toBe(111);
   const routes = files.filter(file => file.endsWith(`${path.sep}route.ts`));
   for (const file of routes) {
     const source = readFileSync(file, "utf8");

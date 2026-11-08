@@ -4,7 +4,7 @@ import type { LlmFix, LlmFixField, LlmOpsLevel, LlmOpsRow, LlmOpsView, LlmTaskCh
 import { MODEL_REQUEST_REVIEW_HREF } from "../ModelCallsPanel";
 import { LevelBadge, LevelLegend, ObservedAt } from "../LlmOpsParts";
 import { modelPickerModelGroups } from "../model-picker-display";
-import { DeleteConnectionButton, RereadModelsButton } from "../tasks/ConnectionButtons";
+import { DeleteConnectionButton, HideModelButton, RereadModelsButton } from "../tasks/ConnectionButtons";
 import { ConnectionForm, type ConnectionLimitField } from "../tasks/ConnectionForm";
 
 const NEW_LIMIT: ConnectionLimitField = { deviceId: "", current: null, expectedVersion: null, policyHash: null, eligible: false, reason: null, sharedWith: [] };
@@ -65,9 +65,15 @@ function ModelsBlock({ row, readOnly }: { row: LlmOpsRow; readOnly: boolean }) {
       return <li key={line.ids.join("\u0000")} data-model-line={line.ids.join(" ")}><span className="llm-model-name"><code>{line.label}</code>
         {note && <span className="llm-muted llm-model-note">{note}</span>}</span>
       {line.chips.length ? <span className="llm-chips">{line.chips.map(chip => <TaskChip key={chip.key} chip={chip} />)}</span>
-        : <span className="llm-muted">배정 없음</span>}</li>; })}</ul>
+        : <span className="llm-model-free"><span className="llm-muted">배정 없음</span>
+          {connection && !readOnly && line.listed && <HideModelButton id={connection.id} version={connection.version} models={line.ids} label={line.label} hidden />}</span>}</li>; })}</ul>
       : <p className="llm-empty">{connection?.kind === "api" ? "아직 읽은 모델이 없습니다 — 주소·키를 확인하고 저장하거나 다시 읽으세요." : "적힌 모델이 없습니다."}</p>}
-    <p className="llm-empty">모델 옆 칩은 그 모델을 쓰는 작업과 순위입니다. 누르면 작업 배정으로 이동합니다.</p>
+    {connection && (connection.hiddenModels?.length ?? 0) > 0 && <details className="llm-hidden-models">
+      <summary>숨긴 모델 {connection.hiddenModels!.length}개</summary>
+      <ul>{connection.hiddenModels!.map(model => <li key={model}><code>{model}</code>
+        {readOnly ? <span className="llm-muted">목록에서 뺌</span> : <HideModelButton id={connection.id} version={connection.version} models={[model]} label={model} hidden={false} />}</li>)}</ul>
+    </details>}
+    <p className="llm-empty">모델 옆 칩은 그 모델을 쓰는 작업과 순위입니다. 누르면 작업 배정으로 이동합니다. 배정 없는 모델은 「삭제」로 이 연결의 목록에서 뺄 수 있습니다(서버 쪽은 그대로).</p>
     {connection && !readOnly && <div className="llm-edit-links">
       {connection.kind === "api" && <RereadModelsButton id={connection.id} />}
       {!used && <DeleteConnectionButton id={connection.id} label={connection.label} version={connection.version} />}

@@ -20,6 +20,8 @@ export type AiConnectionView = Readonly<{
   models: readonly AiServedModel[] | null; modelsReadAt: string | null; modelsError: string | null;
   deviceId: string; capacitySlots: number; contextTokens: number | null; enabled: boolean; version: number; note: string | null;
   updatedBy: string; updatedAt: string;
+  /** 운영자가 목록에서 뺀 모델(options.hiddenModels) — models·cliModels·cliCatalog 에서 이미 빠져 있다. 「되돌리기」에만 쓴다 */
+  hiddenModels?: readonly string[];
   /** CLI version for serving contracts. OpenCode uses the observed existing-host version; other tools retain manual input. */
   cliVersion: string | null;
   /** Whitelisted metadata from the existing M3 CLI host, never provider configuration or keys. */
@@ -53,11 +55,13 @@ export type AiRankOption = AiRankChoice & { label: string; saved?: boolean; grou
 export const AI_CONNECTION_SAVE_AUDIT_ACTION = "ai-connection-save";
 export const AI_CONNECTION_MODELS_AUDIT_ACTION = "ai-connection-models-read";
 export const AI_CONNECTION_DELETE_AUDIT_ACTION = "ai-connection-delete";
+/** 연결의 모델 하나를 목록에서 빼거나 되돌림(2026-11-08 — options.hiddenModels, 서버·CLI 쪽 모델은 그대로) */
+export const AI_CONNECTION_MODEL_HIDE_AUDIT_ACTION = "ai-connection-model-hide";
 export const AI_TASK_MODELS_SAVE_AUDIT_ACTION = "ai-task-models-save";
 export const AI_TASK_MODELS_IMPORT_AUDIT_ACTION = "ai-task-models-import";
 /** 같은 주소 계약 키로 연결 키를 채움(lib/operations/ai-connection-key-fill.ts — 사람이 아니라 상자 키가 있는 프로세스가 쓴다) */
 export const AI_CONNECTION_KEY_FILL_AUDIT_ACTION = "ai-connection-key-fill";
-export const AI_TASK_AUDIT_ACTIONS = Object.freeze([AI_CONNECTION_SAVE_AUDIT_ACTION, AI_CONNECTION_MODELS_AUDIT_ACTION, AI_CONNECTION_DELETE_AUDIT_ACTION,
+export const AI_TASK_AUDIT_ACTIONS = Object.freeze([AI_CONNECTION_SAVE_AUDIT_ACTION, AI_CONNECTION_MODELS_AUDIT_ACTION, AI_CONNECTION_DELETE_AUDIT_ACTION, AI_CONNECTION_MODEL_HIDE_AUDIT_ACTION,
   AI_TASK_MODELS_SAVE_AUDIT_ACTION, AI_TASK_MODELS_IMPORT_AUDIT_ACTION, AI_CONNECTION_KEY_FILL_AUDIT_ACTION, AI_TASK_EXECUTION_SAVE_AUDIT_ACTION] as const);
 export const AI_TASK_IMPORT_CONFIRM = "가져오기";
 export const AI_TASKS_PAGE = "/admin/models/tasks";
@@ -763,6 +767,9 @@ const CODE_MESSAGES: Readonly<Record<string, string>> = {
   ai_connection_missing: "연결을 찾지 못했습니다(지워졌을 수 있습니다). 새로고침하세요.",
   ai_connection_kind_change: "연결의 종류(API·CLI)는 바꿀 수 없습니다. 새 연결을 만드세요.",
   ai_connection_in_use: "이 연결을 쓰는 순위가 있어 지울 수 없습니다. 먼저 작업 ↔ 모델 표에서 빼거나 연결을 끄세요.",
+  ai_connection_model_in_use: "이 모델을 쓰는 순위나 작업 분산 구성원이 있어 목록에서 뺄 수 없습니다. 먼저 작업 배정에서 바꾸세요.",
+  ai_connection_model_missing: "이 연결의 목록에 없는 모델입니다. 새로고침하세요.",
+  ai_connection_model_invalid: "모델 이름이 올바르지 않습니다.",
   ai_connection_models_too_soon: "1분 안에 이미 목록을 읽었습니다. 잠시 뒤 다시 읽으세요.",
   ai_connection_not_api: "CLI 연결은 /models 목록이 없습니다. CLI 모델 이름을 직접 적으세요.",
   ai_connection_cli_host_unavailable: "M3 OpenCode에 연결하지 못해 저장하지 않았습니다. 기존 선택은 유지됩니다. 실제 목록을 다시 조회하세요.",

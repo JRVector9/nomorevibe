@@ -26,7 +26,7 @@ vi.mock("@/lib/security/secret-box", () => ({ secretBoxReady: () => true }));
 vi.mock("@/lib/db", () => ({ db: { execute: vi.fn() }, onPrimary: (run: () => unknown) => run() }));
 vi.mock("@/lib/operations/conveyor", () => ({ readConveyor: vi.fn() }));
 vi.mock("@/app/(operator)/admin/models/tasks/actions", () => ({ saveAiTaskRanksAction: vi.fn(), applyAiTaskImportAction: vi.fn(), saveAiConnectionAction: vi.fn(),
-  readAiConnectionModelsAction: vi.fn(), deleteAiConnectionAction: vi.fn() }));
+  readAiConnectionModelsAction: vi.fn(), deleteAiConnectionAction: vi.fn(), hideAiConnectionModelAction: vi.fn() }));
 vi.mock("@/app/(operator)/admin/models/tasks/execution-actions", () => ({ saveTaskExecutionAction: vi.fn() }));
 vi.mock("@/app/(operator)/admin/models/devices/actions", () => ({ saveCapacityDevice: vi.fn() }));
 
@@ -92,6 +92,19 @@ describe("작업 배정(/admin/models/tasks) 표 그리기", () => {
     for (const label of ["정상", "느림·주의", "멈춤·실패", "의도적 중지·쉼", "확인 불가"]) expect(html).toContain(`</span>${label}</span>`);
     // 서랍은 처음에 닫혀 있다
     expect(html).not.toContain('class="fr"');
+  });
+
+  it("2026-11-08: LLM 이 아닌 모델(벡터·재정렬) 작업은 표 아래 별도 섹션 — 앞 표에는 LLM 작업만", async () => {
+    const html = renderToStaticMarkup(await TaskAssignSlot({ view: adminView(), executions: [], readOnly: false }));
+    const [main, other] = html.split('<section class="tk-other" id="tasks-non-llm"');
+    expect(other).toBeDefined();
+    expect(other).toContain("LLM이 아닌 모델");
+    for (const task of ["product-embedding", "search-embedding", "search-rerank"]) {
+      expect(other, task).toContain(`id="execution-${task}-1"`);
+      expect(main, task).not.toContain(`id="execution-${task}-1"`);
+    }
+    for (const task of ["first-review", "product-translate", "product-search-verify"]) expect(main, task).toContain(`id="execution-${task}-1"`);
+    expect(text(main)).toMatch(/LLM 작업 \d+ LLM 아님 3/);
   });
 
   it("장부를 못 읽으면 숫자 대신 「확인 불가」, 실행 방식을 못 읽거나 읽기 전용이면 서랍 저장이 잠긴다고 알린다", async () => {

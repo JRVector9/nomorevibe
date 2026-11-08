@@ -24,7 +24,7 @@ const auditChain = { from: () => auditChain, where: () => auditChain, orderBy: (
 vi.mock("@/lib/db", () => ({ db: { execute: mocks.classifier, select: () => auditChain }, onPrimary: (run: () => unknown) => run() }));
 vi.mock("@/lib/operations/model-capacity-unknowns", async original => ({ ...await original<object>(), readModelCapacityReviewQueue: mocks.reviewQueue }));
 vi.mock("@/app/(operator)/admin/models/ops-runner-actions", () => ({ submitAdminModelOperation: vi.fn(), readAdminModelOperation: vi.fn(), cancelAdminModelOperation: vi.fn() }));
-vi.mock("@/app/(operator)/admin/models/tasks/actions", () => ({ saveAiConnectionAction: vi.fn(), readAiConnectionModelsAction: vi.fn(), deleteAiConnectionAction: vi.fn() }));
+vi.mock("@/app/(operator)/admin/models/tasks/actions", () => ({ saveAiConnectionAction: vi.fn(), readAiConnectionModelsAction: vi.fn(), deleteAiConnectionAction: vi.fn(), hideAiConnectionModelAction: vi.fn() }));
 vi.mock("@/app/(operator)/admin/models/devices/actions", () => ({ saveCapacityDevice: vi.fn() }));
 
 import { LlmOpsSlot, ModelsDashboardSlot, ModelsHistorySlot } from "@/app/(operator)/admin/models/llm-ops-slots";
@@ -71,6 +71,26 @@ describe("LLM 운영 — 같은 모델의 별칭은 한 줄(2026-11-08)", () => 
     expect(text(article(M1))).toContain("Gemma 4 26B");
     expect(article(M1)).toContain("이 서버의 모델 · 1개");
     expect(article(M1)).not.toContain("배정 없음");
+  });
+});
+
+describe("LLM 운영 — 안 쓰는 모델 「삭제」(2026-11-08)", () => {
+  it("배정 없는 모델 줄에만 「삭제」, 숨긴 모델은 접힌 목록에서 되돌리기 — 읽기 전용이면 단추가 없다", async () => {
+    mocks.connections.mockResolvedValue(llmConnections.map(row => row.id === OPENCODE ? { ...row, hiddenModels: ["opencode/old-free"] } : row));
+    const html = renderToStaticMarkup(await LlmOpsSlot({ readOnly: false, editId: null, adding: false }));
+    const opencode = html.match(new RegExp(`<article id="conn-${OPENCODE}"[^]*?</article>`))![0];
+    const line = (model: string) => opencode.match(new RegExp(`<li [^>]*data-model-line="${model.replaceAll("/", "\\/").replaceAll(".", "\\.")}"[^]*?</li>`))![0];
+    // 1차 1순위가 쓰는 모델에는 칩만, 안 쓰는 모델에는 「배정 없음」과 「삭제」
+    expect(line("deepseek/deepseek-v4.1-flash")).not.toContain("llm-model-hide");
+    const unused = line("deepseek/deepseek-v4.1-pro");
+    expect(text(unused)).toContain("배정 없음");
+    expect(unused).toContain('name="model" value="deepseek/deepseek-v4.1-pro"');
+    expect(unused).toContain('name="hidden" value="1"');
+    expect(unused).toContain('aria-label="deepseek/deepseek-v4.1-pro 목록에서 삭제"');
+    expect(text(opencode)).toContain("숨긴 모델 1개");
+    expect(opencode).toContain('aria-label="opencode/old-free 목록에 되돌리기"');
+    const readOnly = renderToStaticMarkup(await LlmOpsSlot({ readOnly: true, editId: null, adding: false }));
+    expect(readOnly).not.toContain("llm-model-hide");
   });
 });
 

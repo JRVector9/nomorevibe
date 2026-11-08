@@ -98,3 +98,8 @@
   .mt-task-form-toolbar { grid-template-columns: minmax(0, 1fr); }
   .mt-task-form-toolbar > button { justify-self: start; }
 }
+
+/* LLM 이 아닌 모델(벡터·재정렬) 작업 — 표를 따로 둔다(2026-11-08) */
+.tk-other { display: grid; gap: 8px; margin-top: 8px; }
+.tk-section-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; font-size: calc(16px + var(--admin-font-delta, 0px)); font-weight: 600; }
+.tk-section-title .llm-muted { font-size: calc(13px + var(--admin-font-delta, 0px)); font-weight: 400; }
