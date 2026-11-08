@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { adminRouteKey, clockLabel, createRefreshScheduler, freshCookie, hasPagedRows, hasPendingContent, hasUnsaved, isTextEntry, PAUSE_LABELS, pauseReason, readLivePreference, refreshPolicy,
-  writeLivePreference, type PauseReason } from "../live-refresh";
+import { adminRouteKey, clockLabel, createRefreshScheduler, freshCookie, hasPagedRows, hasPendingContent, hasUnsaved, isTextEntry, liveStatusLabels, pauseReason, readLivePreference,
+  refreshPolicy, writeLivePreference, type PauseReason } from "../live-refresh";
 import { renderedAtSnapshot, subscribeRenderedAt } from "./render-clock";
 import { StatusDot } from "./StatusDot";
 
@@ -177,11 +177,11 @@ export function LiveBar({ fallbackAt, appearance, navigationPending }: {
 
   const seconds = policy.intervalMs / 1000;
   const idle = policy.idleMs / 1000;
-  const status = manualPending || autoPending ? "다시 읽는 중…" : !live ? "자동 갱신을 껐습니다 — 새로고침을 눌러 읽습니다"
-    : pausedReason ? PAUSE_LABELS[pausedReason] : `${seconds}초마다 다시 읽음`;
+  // 자동 갱신 중(autoPending)에는 보이는 글자를 바꾸지 않는다 — 끝나면 시각만 바뀐다(liveStatusLabels)
+  const { status, indicator } = liveStatusLabels({ manualPending, live, paused: pausedReason, seconds });
   const rule = `이 화면은 ${seconds}초마다 다시 읽습니다${idle ? ` — 누르거나 키를 치거나 스크롤한 뒤 ${idle >= 60 ? `${idle / 60}분` : `${idle}초`} 동안은 쉽니다` : ""}.`;
   if (appearance === "prototype") return <div className="prototype-live" role="group" aria-label="화면 갱신">
-    <span className={`live-indicator${!live || pausedReason ? " paused" : ""}`} title={status}><i />{manualPending || autoPending ? "관측 갱신 중" : !live ? "자동 갱신 멈춤" : pausedReason ? PAUSE_LABELS[pausedReason] : `${seconds}초 자동 관측`}</span>
+    <span className={`live-indicator${!live || pausedReason ? " paused" : ""}`} title={status}><i />{indicator}</span>
     <span className="freshness">관측 <time dateTime={shownAt}>{clockLabel(shownAt)}</time></span>
     <button type="button" className="button small" role="switch" aria-checked={live} aria-label="자동 갱신" onClick={toggle} title={rule}>{live ? "갱신 멈춤" : "갱신 재개"}</button>
     <button type="button" className="icon-button" aria-label="지금 새로고침" title="지금 새로고침" aria-disabled={manualPending || autoPending || pausedReason === "navigation" || undefined} onClick={refreshNow}>↻</button>
