@@ -179,6 +179,8 @@
 .llm-models li + li { padding-top: 6px; border-top: 1px solid var(--line); }
 .llm-models .llm-chip:hover { background: var(--surface); }
 .llm-models li code { font-size: calc(13px + var(--admin-font-delta, 0px)); overflow-wrap: anywhere; word-break: break-all; }
+.llm-model-name { display: grid; gap: 2px; min-width: 0; }
+.llm-model-note { font-size: calc(12px + var(--admin-font-delta, 0px)); overflow-wrap: anywhere; }
 .llm-edit-links { display: flex; flex-wrap: wrap; gap: 8px; }
 
 /* 고급 설정(PR 5) — 편집기 목록. 이름(파랑) 아래 한 줄 설명. 칸 하나가 링크 하나다. */
