@@ -24,12 +24,13 @@ function FixLink({ fix, level, className, title, children }: { fix: LlmFix | nul
 function TaskChip({ chip }: { chip: LlmTaskChip }) {
   const rank = chip.rank !== null ? String(chip.rank) : chip.source === "pool" ? "분산" : "설정";
   const title = `${chip.label} · ${chip.rank !== null ? `${chip.rank}순위` : chip.source === "pool" ? "작업 분산 구성원" : chip.source === "classifier" ? "분류 설정" : "정책 경로·계약"} · ${chip.model}${chip.enabled ? "" : " · 순위 꺼짐"}${chip.paused ? " · 잡 일시중지" : ""}`;
-  return <>
+  // 한 작업 = 표의 한 칸(순위 칸 너비 고정 · 이름). 잡 중지 표시는 같은 칸 안에 붙여 다른 칸으로 밀리지 않게 한다.
+  return <span className="llm-task">
     <Link prefetch={false} href={chip.href} className="llm-chip" data-source={chip.source} data-off={chip.enabled ? undefined : "true"} data-paused={chip.paused ? "true" : undefined} title={title}>
       <span className="llm-chip-rank">{rank}</span>{chip.label}{chip.paused ? " · 중지" : ""}</Link>
     {chip.fix && <Link prefetch={false} href={chip.fix.href} className="llm-fix llm-fix-chip" data-level="idle" aria-label={`${chip.label} 잡 일시중지 — ${chip.fix.label}`}>
       <span aria-hidden="true">‖</span><span className="llm-fix-action">{chip.fix.label} →</span></Link>}
-  </>;
+  </span>;
 }
 
 const modelLabel = (row: LlmOpsRow, id: string) => row.connection ? modelPickerModelLabel(row.connection, id) : id;
@@ -42,7 +43,8 @@ function ModelsBlock({ row, readOnly }: { row: LlmOpsRow; readOnly: boolean }) {
     <h3>{connection?.kind === "api" ? "이 서버의 모델" : "모델"} · {row.models.ids.length}개{read ? ` · ${read} 읽음` : ""}</h3>
     {row.models.error && <p className="llm-notice">마지막 목록 오류: {row.models.error}</p>}
     {row.models.ids.length ? <ul>{row.models.ids.map(id => <li key={id}><code>{modelLabel(row, id)}</code>
-      {(row.modelTasks[id] ?? []).length ? (row.modelTasks[id] ?? []).map(chip => <TaskChip key={chip.key} chip={chip} />) : <span className="llm-muted">배정 없음</span>}</li>)}</ul>
+      {(row.modelTasks[id] ?? []).length ? <span className="llm-chips">{(row.modelTasks[id] ?? []).map(chip => <TaskChip key={chip.key} chip={chip} />)}</span>
+        : <span className="llm-muted">배정 없음</span>}</li>)}</ul>
       : <p className="llm-empty">{connection?.kind === "api" ? "아직 읽은 모델이 없습니다 — 주소·키를 확인하고 저장하거나 다시 읽으세요." : "적힌 모델이 없습니다."}</p>}
     <p className="llm-empty">모델 옆 칩은 그 모델을 쓰는 작업과 순위입니다. 누르면 작업 배정으로 이동합니다.</p>
     {connection && !readOnly && <div className="llm-edit-links">

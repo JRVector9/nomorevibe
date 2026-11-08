@@ -97,6 +97,9 @@ describe("LLM 운영(/admin/models/llm) 그리기", () => {
     expect(html).not.toContain("한도 · 점유");
     expect(text(gpu)).toContain("점유 / 한도 2 / 5 ▲ 연결에 남은 옛 값 4 · 실제 적용 5 — 맞추기 →");
     expect(gpu).toContain('<span class="llm-chip-rank">2</span>1차 AI 검수');
+    // 연결 표 — 머리 줄이 행과 같은 목록 테두리 안에 있고, 배정된 작업은 칸(llm-task) 단위 격자다
+    expect(html).toMatch(/<section class="llm-conn-list"[^>]*><div class="llm-conn-head llm-conn-cols"/);
+    expect(gpu).toMatch(/<span class="llm-chips">(<span class="llm-task"><a [^>]*class="llm-chip"[^]*?<\/a><\/span>)+<\/span>/);
     expect(text(gpu)).toContain("미확정 있음 재실행 대기 1건");
     expect(gpu).toContain('href="/admin/models/history#retry">대기 1 →');
     const opencode = html.match(new RegExp(`<article id="conn-${OPENCODE}"[^]*?</article>`))![0];
@@ -122,7 +125,8 @@ describe("LLM 운영(/admin/models/llm) 그리기", () => {
     expect(gpu).not.toContain("칸 수(동시에 처리할 수)");
     expect(gpu).toContain(">저장하고 모델 읽기</button>");
     expect(gpu).toContain("이 서버의 모델 · 1개");
-    expect(gpu).toMatch(/<code>qwen3.8-flash-next<\/code><a [^>]*class="llm-chip"/);
+    // 모델 목록도 표처럼 — 모델 이름 옆 작업 격자, 칸 하나에 순위·이름(2026-11-08)
+    expect(gpu).toMatch(/<code>qwen3.8-flash-next<\/code><span class="llm-chips"><span class="llm-task"><a [^>]*class="llm-chip"/);
     // 닫힌 다른 행, 「+ 연결 추가」는 닫혀 있다
     expect(html).toContain('<details class="llm-add" id="connection-new">');
     const added = renderToStaticMarkup(await LlmOpsSlot({ readOnly: false, editId: null, adding: true }));
