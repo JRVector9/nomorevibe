@@ -135,6 +135,10 @@ describe("화면 모형 — 장비 목록은 행 ∪ 정책 장비 ∪ 실시간
     expect(deviceRoleLabel("crawl-agent-review")).toBe("1차 검수");
     expect(deviceRoleLabel("human-deepseek-review")).toBe("사람 위임 검수");
     expect(deviceRoleLabel("local-assist-m3")).toBe("local-assist-m3");
+    // 2026-11-09: 그 밖은 작업·보조·옛 경로 이름으로 채운다(같은 id 를 두 번 찍지 않게)
+    expect(deviceRoleLabel("local-held-qwen")).toBe("보류 재심사");
+    expect(deviceRoleLabel("local-assist-decision_audit-m3-deepseek")).toBe("보조 · 판정 감사");
+    expect(deviceRoleLabel("product-tagline-ko-qwen-legacy")).toBe("옛 경로 · 한국어 소개 번역");
     expect(DEVICE_FIELD_LABELS.secondaryCap).toBe("낮은 순위 평소 상한");
   });
 });
@@ -230,11 +234,22 @@ describe("그리기", () => {
     expect(html).toContain("유휴");
     expect(html).toContain("초과");
     expect(html).toContain("1차 검수");
-    expect(html).toContain("순위 없음: crawl-tagline");
+    // 순위 없는 경로도 이름으로(경로 id 는 title)
+    expect(html).toContain("순위 없음: 소개 생성");
     expect(html).toContain("정책 밖");
     expect(html).toContain("저장한 적 없음");
     expect(html).toContain("60초");
     expect(renderToStaticMarkup(createElement(DeviceTable, { devices: [], now: NOW }))).toContain("장비가 없습니다");
+  });
+  it("2026-11-09: 장비 이름은 연결 이름이 먼저, 장비 id(정책 groupId)는 다를 때만 옆에 작게 — 연결이 없는 장비는 「연결 없음」", () => {
+    const names = { "m1-qwen": { name: "m1-gemma", connected: true }, supa: { name: "supa", connected: false }, "gpu3090-qwen": { name: "gpu3090-qwen", connected: true } };
+    const html = renderToStaticMarkup(createElement(DeviceTable, { devices: model.devices, now: NOW, names }));
+    const cell = (deviceId: string) => html.match(new RegExp(`data-device="${deviceId}"><td[^>]*>([^]*?)</td>`))![1].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    expect(cell("m1-qwen")).toMatch(/^m1-gemma m1-qwen( 문제 \d+)?$/);
+    expect(cell("gpu3090-qwen")).toMatch(/^gpu3090-qwen( 문제 \d+)?$/);
+    expect(cell("supa")).toMatch(/^supa 연결 없음( 문제 \d+)?$/);
+    const form = renderToStaticMarkup(createElement(DeviceForm, { device: model.devices.find(device => device.deviceId === "m1-qwen")!, name: "m1-gemma" }));
+    expect(form).toMatch(/<h3[^>]*>m1-gemma<code[^>]*>m1-qwen<\/code><\/h3>/);
   });
   it("장비 폼 — 숨은 deviceId·expectedVersion(CAS)·칸 이름·기본값·바꿈 표시·역할 순위 칸·추가 경로", () => {
     const supa = model.devices.find(device => device.deviceId === "supa")!;

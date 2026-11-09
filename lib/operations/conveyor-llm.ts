@@ -48,7 +48,9 @@ export const NO_LLM: Readonly<Record<"discover" | "fetch" | "judge" | "sink", { 
 
 // ── 입력 ─────────────────────────────────────────────────────────────────────────────────────────
 
-export type LlmConnection = { id: string; label: string; kind: "api" | "cli"; baseUrl?: string | null; cliTool: string | null; hasKey: boolean; enabled: boolean; updatedAt?: string };
+/** deviceId: 그 연결이 쓰는 장비(정책 groupId) — 장부 호출의 장비를 연결 이름으로 부를 때 쓴다 */
+export type LlmConnection = { id: string; label: string; kind: "api" | "cli"; baseUrl?: string | null; cliTool: string | null; hasKey: boolean; enabled: boolean; updatedAt?: string;
+  deviceId?: string };
 export type LlmRankRow = { task: string; slot: number; rank: number; connectionId: string; model: string; enabled: boolean; updatedAt?: string };
 /**
  * 최근 1시간 장부(model_capacity_requests state=settled)를 route·provider·model 로 센 것. groups 는 그 호출들이 잡은 장비 그룹(group_id) —
@@ -219,14 +221,20 @@ const PROVIDER_TEXT: Readonly<Record<string, string>> = { abcllm: "직접 연결
   "claude-cli": "Claude CLI", "grok-cli": "Grok CLI", "codex-cli": "Codex CLI", "opencode-cli": "OpenCode CLI" };
 
 /**
- * 순위에 맞지 않는 장부 호출의 「어디서」 — 1) 장부 이름의 연결 표지(모델@연결 8자) → 그 연결 이름, 2) 호출이 잡은 장비 그룹 → 장비 이름(gpu3090 등),
+ * 순위에 맞지 않는 장부 호출의 「어디서」 — 1) 장부 이름의 연결 표지(모델@연결 8자) → 그 연결 이름, 2) 호출이 잡은 장비 그룹 → 그 장비를 쓰는 연결 이름
+ * (켜진 것 먼저 — llm-display deviceDisplay 와 같은 규칙), 연결이 없는 장비는 서버 이름(gpu3090 등),
  * 3) 같은 모델을 순위에 둔 연결이 하나뿐이면 그 연결 이름, 4) provider 의 사람 말. 내부 provider 키(abcllm)는 쓰지 않는다.
  */
+function deviceConnectionNames(group: string, inputs: LlmInputs): string | null {
+  const mine = (inputs.connections ?? []).filter((connection) => connection.deviceId === group);
+  const named = mine.some((connection) => connection.enabled) ? mine.filter((connection) => connection.enabled) : mine;
+  return named.length ? [...new Set(named.map((connection) => connection.label))].sort((a, b) => a.localeCompare(b, "ko")).join(" · ") : null;
+}
 function placeOf(row: LlmUsedRow, inputs: LlmInputs): string {
   const tag = row.model.match(/@([0-9a-f]{8})$/i)?.[1]?.toLowerCase();
   const tagged = tag ? inputs.connections?.find((connection) => connection.id.toLowerCase().startsWith(tag)) : undefined;
   if (tagged) return tagged.label;
-  const devices = [...new Set((row.groups ?? []).filter(Boolean).map((group) => deviceServer(group, []).name))];
+  const devices = [...new Set((row.groups ?? []).filter(Boolean).map((group) => deviceConnectionNames(group, inputs) ?? deviceServer(group, []).name))];
   if (devices.length) return devices.sort().join(" · ");
   const same = [...new Set((inputs.rows ?? []).filter((rank) => bareModelName(rank.model) === bareModelName(row.model)).map((rank) => rank.connectionId))];
   const only = same.length === 1 ? inputs.connections?.find((connection) => connection.id === same[0]) : undefined;

@@ -16,21 +16,28 @@ const GEMMA = "mlx-community--gemma-4-26b-a4b-it-4bit", SUPA = "Inferact/Qwen3.8
 const make = (id: string, label: string, baseUrl: string, models: string[]): AiConnectionView => ({ id, label, baseUrl, models: models.map(id => ({ id, maxModelLen: 131072 })),
   deviceId: label, kind: "api", cliTool: null, cliModels: [], host: new URL(baseUrl).host, hasKey: false, enabled: true,
   modelsReadAt: null, modelsError: null, contextTokens: null, capacitySlots: 1, version: 1, note: null, updatedBy: "fixture", updatedAt: "", cliVersion: null });
-const m1 = make("11111111-1111-4111-8111-111111111111", "m1-qwen", "https://m1-studio.tail02799e.ts.net/v1", [GEMMA, "auto"]);
+// 운영 그대로: 연결 이름표는 m1-gemma, 장비(정책 groupId)는 옛 이름 m1-qwen
+const m1: AiConnectionView = { ...make("11111111-1111-4111-8111-111111111111", "m1-gemma", "https://m1-studio.tail02799e.ts.net/v1", [GEMMA, "auto"]), deviceId: "m1-qwen" };
 const supa = make("22222222-2222-4222-8222-222222222222", "supa-direct", "http://100.78.219.124:8000/v1", ["supa", SUPA]);
 const connections = [m1, supa];
 const options = aiTaskRankOptions(aiTask("first-review")!, connections, []);
 
 it("presents known M1 as Gemma only and collapses proven Supa aliases without touching other connections or metadata", () => {
-  expect(modelPickerConnectionLabel(m1)).toBe("M1 Studio · Gemma");
-  expect(modelPickerConnectionDevice(m1)).toBe("M1 Studio");
-  expect(modelPickerVisibleText("m1-qwen · Gemma", connections)).toBe("M1 Studio · Gemma");
+  // 2026-11-09: 보이는 이름은 연결 이름표 그대로 — 장비 id·주소로 「M1 Studio」 를 지어내지 않는다
+  expect(modelPickerConnectionLabel(m1)).toBe("m1-gemma");
+  expect(modelPickerConnectionDevice(m1)).toBe("m1-qwen");
+  expect(modelPickerVisibleText("m1-qwen · Gemma", connections)).toBe("m1-gemma · Gemma");
   expect(modelPickerConnectionModels(m1)).toEqual([{ id: GEMMA, maxModelLen: 131072 }]);
   expect(modelPickerConnectionModels(supa)).toEqual([{ id: SUPA, maxModelLen: 131072 }]);
   const unrelated = { ...m1, baseUrl: "https://other.example/v1" };
-  expect(modelPickerConnectionLabel(unrelated)).toBe("m1-qwen");
+  expect(modelPickerConnectionLabel(unrelated)).toBe("m1-gemma");
   expect(modelPickerConnectionModels(unrelated)).toBe(unrelated.models);
-  expect(modelPickerVisibleText("m1-qwen · Gemma", [unrelated])).toBe("m1-qwen · Gemma");
+  // 장비 id 가 연결 이름과 같으면 그대로, 다른 이름의 일부·연결 이름표 안은 건드리지 않는다
+  expect(modelPickerVisibleText("supa-direct 칸 가득 · m1-qwen-old", connections)).toBe("supa-direct 칸 가득 · m1-qwen-old");
+  const shared = [{ ...supa, id: "a", label: "m3-mlx", deviceId: "m3-mlx" }, { ...supa, id: "b", label: "m3-mlx (2)", deviceId: "m3-mlx" }];
+  expect(modelPickerVisibleText("m3-mlx (2) · gpt-oss — 장비 m3-mlx 가득", shared)).toBe("m3-mlx (2) · gpt-oss — 장비 m3-mlx 가득");
+  const renamed = [{ ...shared[0], label: "m3-deepseek" }, { ...shared[1], label: "m3-gpt-oss" }];
+  expect(modelPickerVisibleText("장비 행 m3-mlx이(가) 없습니다", renamed)).toBe("장비 행 m3-deepseek · m3-gpt-oss이(가) 없습니다");
   expect(presentPickerOptions(options, connections, null).map(row => row.model)).toEqual([GEMMA, SUPA]);
   expect(m1.models?.map(row => row.id)).toEqual([GEMMA, "auto"]);
   expect(supa.models?.map(row => row.id)).toEqual(["supa", SUPA]);
@@ -39,7 +46,7 @@ it("renders one canonical Supa option for a selected legacy alias while preservi
   const selected = { provider: supa.id, model: "supa" };
   const html = renderToStaticMarkup(<RankSelects stage={{ id: "test", label: "검수", slots: 1 }} options={options} connections={connections}
     value={[selected]} onChange={() => {}} slotNames={AI_RANK_SLOT_NAMES} showProvider={false} validate={() => []} />);
-  expect(html).toContain('label="M1 Studio · API"');
+  expect(html).toContain('label="m1-gemma · API"');
   expect(html).not.toContain("m1-qwen");
   expect(html).not.toContain('>auto</option>');
   // 고른 선택지는 이름만 — 관측은 상자 밑 줄(data-model-activity)
@@ -54,12 +61,14 @@ it("renders the same curated picker inside the flow drawer and keeps stored mode
   const editor = buildFlowRankEditor(connections, rows, () => "a".repeat(64));
   const html = renderToStaticMarkup(<RankDrawer editor={editor} lines={editor.lines.filter(row => row.task === "first-review")}
     title="1차 검수" secondWaiting={null} onClose={() => {}} />);
-  expect(html).toContain("M1 Studio");
-  expect(html).not.toContain("m1-qwen");
+  expect(html).toContain("m1-gemma");
+  // 장비 id 는 연결 상태 표의 title 에만 남는다
+  expect(html.replace(/title="[^"]*"/g, "")).not.toContain("m1-qwen");
   expect(html).not.toContain('>auto</option>');
   expect(html).toContain(SUPA);
   expect(html).toContain('name="rank2Model" value="supa"');
-  expect(editor.connections[0].label).toBe("m1-qwen");
+  expect(editor.connections[0].label).toBe("m1-gemma");
+  expect(editor.connections[0].deviceId).toBe("m1-qwen");
   expect(editor.lines.find(row => row.task === "first-review")?.saved[1].model).toBe("supa");
 });
 

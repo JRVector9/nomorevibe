@@ -114,7 +114,9 @@ function ConnectionRow({ row, view, secretBox, readOnly, open, fix }: { row: Llm
       <div className="llm-cell llm-cell-wide">
         <span className="llm-conn-name">{row.label}</span>
         <ConnectionMeta row={row} />
-        {row.connection && <span className="llm-conn-meta">장비 <code>{row.connection.deviceId}</code></span>}
+        {/* 장비 이름은 같은 장비를 쓰는 연결 이름들 — 이 연결 이름과 같으면 다시 적지 않는다. 장비 id 는 title 에만 */}
+        {row.connection && row.deviceName && row.deviceName !== row.label
+          && <span className="llm-conn-meta" title={`장비 id ${row.connection.deviceId}`}>장비 {row.deviceName}</span>}
         {!row.enabled && <LevelBadge level="idle">꺼짐</LevelBadge>}
       </div>
       <div className="llm-cell"><span className="llm-cell-label">모델</span>

@@ -33,7 +33,8 @@ function NumberField({ name, label, value, defaultValue, unit, note, readOnly, p
  * 장비 한 대 폼(device 가 null 이면 새 장비). 숨은 expectedVersion 으로 CAS — 저장 사이에 다른 사람이 저장했으면 거절을 그대로 보인다.
  * 정책 대체(policy_fallback)·미설정 장비도 같은 폼으로 첫 행을 만든다(expectedVersion 빈 값).
  */
-export function DeviceForm({ device, readOnly }: { device: DeviceView | null; readOnly?: boolean }) {
+/** name: 장비의 보이는 이름(그 장비를 쓰는 연결 이름) — 장비 id(정책 groupId)와 다르면 이름 옆에 id 를 작게 둔다 */
+export function DeviceForm({ device, readOnly, name }: { device: DeviceView | null; readOnly?: boolean; name?: string }) {
   const [state, action, pending] = useActionState<DeviceSaveState, FormData>(saveCapacityDevice, null);
   const [dirty, setDirty] = useState(false);
   const settings: DeviceSettingsView = device?.settings ?? { limitSlots: null, secondaryCap: null, idleMs: 60_000, reserveSlots: 0, physicalLimit: null, note: null };
@@ -41,7 +42,8 @@ export function DeviceForm({ device, readOnly }: { device: DeviceView | null; re
   const id = device ? `device-${device.deviceId}` : "device-new";
   return <form id={id} action={action} data-dirty={dirty || undefined} onChange={() => setDirty(true)} className="grid gap-3 rounded-xl border border-line bg-bg-card p-5 text-[14px] scroll-mt-6">
     <div className="flex flex-wrap items-baseline gap-2">
-      {device ? <><h3 className="font-mono text-[17px] font-semibold">{device.deviceId}</h3><input type="hidden" name="deviceId" value={device.deviceId} />
+      {device ? <><h3 className="text-[17px] font-semibold">{name ?? device.deviceId}{name && name !== device.deviceId
+          && <code className="ml-2 text-[13px] font-normal text-fg-3" title="장비 id(정책 groupId)">{device.deviceId}</code>}</h3><input type="hidden" name="deviceId" value={device.deviceId} />
         <span className="text-[13px] text-fg-3">{device.source === "table" ? `판 ${device.version}` : device.source === "policy_fallback" ? "정책 대체 — 저장하면 행이 생깁니다" : "미설정 — 저장해야 입장이 됩니다"}</span>
         {!device.enabled && <span className="rounded-full bg-amber-100 px-1.5 text-[13px] font-semibold text-amber-900">꺼짐</span>}</>
         : <label className="grid gap-0.5 text-[13px]"><span className="font-semibold text-fg-2">장비 이름(정책 groupId)</span>

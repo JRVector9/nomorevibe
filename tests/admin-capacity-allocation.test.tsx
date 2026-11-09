@@ -7,7 +7,7 @@ import { buildAdminModelsObservation, unavailableAdminModels, type AdminModelMet
 
 // 칸 배분(step 3) — 화면 모형(순수)·폼 → 저장 입력·거절 문장·화면 그리기·server action. DB 없이 본다; 저장소 저장과 장부 관측 읽기는 가짜다.
 const mocks = vi.hoisted(() => ({
-  admin: vi.fn(), observation: vi.fn(), connections: vi.fn(), save: vi.fn(), revalidate: vi.fn(), readOnly: vi.fn(() => false),
+  admin: vi.fn(), observation: vi.fn(), connections: vi.fn(), ranks: vi.fn(), executions: vi.fn(), save: vi.fn(), revalidate: vi.fn(), readOnly: vi.fn(() => false),
   redirect: vi.fn((href: string) => { throw new Error(`NEXT_REDIRECT:${href}`); }),
 }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }), redirect: mocks.redirect }));
@@ -16,7 +16,8 @@ vi.mock("@/lib/auth/admin", () => ({ currentAdmin: mocks.admin }));
 vi.mock("@/lib/operations/dr/web-gate", () => ({ webWriteAction: (fn: unknown) => fn }));
 vi.mock("@/lib/operations/admin-workspace-preview", () => ({ adminWorkspaceReadOnly: mocks.readOnly }));
 vi.mock("@/lib/operations/admin-models-repository", () => ({ readAdminModelsObservation: mocks.observation }));
-vi.mock("@/lib/operations/admin-ai-tasks-repository", () => ({ listAiConnections: mocks.connections }));
+vi.mock("@/lib/operations/admin-ai-tasks-repository", () => ({ listAiConnections: mocks.connections, listAiTaskRows: mocks.ranks }));
+vi.mock("@/lib/operations/admin-ai-task-execution", () => ({ readAiTaskExecutionAdminViews: mocks.executions }));
 vi.mock("@/lib/llm/capacity-devices-repository", () => ({ saveModelCapacityRouteQuotas: mocks.save }));
 vi.mock("@/lib/db", () => ({ db: { transaction: (work: (tx: unknown) => unknown) => work({}) }, onPrimary: (run: () => unknown) => run() }));
 
@@ -65,8 +66,9 @@ const METRICS = [metric("crawl-publish-classify", GPU, { succeeded1h: 160, faile
 const observation = (patch: { devices?: ModelCapacityDeviceState[] | null; policy?: ModelCapacityPolicy; policyHash?: string } = {}) => buildAdminModelsObservation({ observedAt: NOW,
   control: { mode: "open", epoch: 4, revision: 12, policy: patch.policy ?? POLICY, policyHash: patch.policyHash ?? modelCapacityPolicyHash(patch.policy ?? POLICY), updatedAt: NOW },
   metrics: METRICS, requests: [], devices: patch.devices === undefined ? DEVICES : patch.devices });
-const connection = (deviceId: string, label: string) => ({ id: `id-${deviceId}`, label, kind: "api", deviceId, baseUrl: null, host: null, hasKey: false, cliTool: null, cliModels: [],
-  models: null, modelsReadAt: null, modelsError: null, capacitySlots: 1, contextTokens: null, enabled: true, version: 1, note: null, updatedBy: "jr", updatedAt: NOW, cliVersion: null }) as AiConnectionView;
+const connection = (deviceId: string, label: string, models: string[] | null = null) => ({ id: `id-${deviceId}-${label}`, label, kind: "api", deviceId, baseUrl: null, host: null,
+  hasKey: false, cliTool: null, cliModels: [], models: models && models.map(id => ({ id, maxModelLen: null })), modelsReadAt: null, modelsError: null, capacitySlots: 1,
+  contextTokens: null, enabled: true, version: 1, note: null, updatedBy: "jr", updatedAt: NOW, cliVersion: null }) as AiConnectionView;
 const form = (entries: [string, string][]) => { const data = new FormData(); for (const [key, value] of entries) data.append(key, value); return data; };
 const text = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
 
@@ -75,7 +77,9 @@ beforeEach(() => {
   mocks.admin.mockResolvedValue({ login: "jr" });
   mocks.readOnly.mockReturnValue(false);
   mocks.observation.mockResolvedValue(observation());
-  mocks.connections.mockResolvedValue([connection(GPU, GPU), connection(MLX, "m3-mlx (2)")]);
+  mocks.connections.mockResolvedValue([connection(GPU, GPU), connection(MLX, "m3-mlx (2)"), connection("m3-opencode-host", "M3 OpenCode")]);
+  mocks.ranks.mockResolvedValue([]);
+  mocks.executions.mockResolvedValue([]);
 });
 
 describe("화면 모형(buildCapacityAllocationView)", () => {
@@ -83,7 +87,7 @@ describe("화면 모형(buildCapacityAllocationView)", () => {
     const view = buildCapacityAllocationView({ observation: observation() });
     expect(view).toMatchObject({ readable: true, policyVerified: true, observedAt: NOW, errors: [] });
     expect(view.devices.map(entry => entry.deviceId)).toEqual([GPU, MLX, SUPA, M1]);
-    expect(view.devices[0]).toEqual({ deviceId: GPU, label: null, limitSlots: 5, version: 9, lendIdle: true, active: 2, waiting: 2, guaranteeSum: 2, over: false, lines: 3,
+    expect(view.devices[0]).toEqual({ deviceId: GPU, name: GPU, models: [], limitSlots: 5, version: 9, lendIdle: true, active: 2, waiting: 2, guaranteeSum: 2, over: false, lines: 3,
       routes: ["crawl-agent-review", "local-qwen-tiebreak", "local-held-qwen", "local-audit", "local-screen", "crawl-publish-classify"] });
     expect(view.devices.find(entry => entry.deviceId === SUPA)).toMatchObject({ lendIdle: false, guaranteeSum: 2, lines: 1, routes: ["second-review", "product-search-verify"] });
     expect(view.rows.map(row => [row.routeId, row.label])).toEqual([
@@ -102,15 +106,66 @@ describe("화면 모형(buildCapacityAllocationView)", () => {
     // 2차 AI 검수는 두 장비에 한 줄
     expect(view.rows.find(row => row.routeId === "second-review")!.cells.map(cell => cell?.deviceId ?? null)).toEqual([null, MLX, SUPA, null]);
     // 행이 없는 장비는 뺀다(대체 한도·아예 없음)
-    expect(view.skipped).toEqual([{ deviceId: "m3-opencode-host", reason: "policy_fallback" }, { deviceId: "nowhere-host", reason: "unconfigured" }]);
+    expect(view.skipped).toEqual([{ deviceId: "m3-opencode-host", name: "m3-opencode-host", reason: "policy_fallback" },
+      { deviceId: "nowhere-host", name: "nowhere-host", reason: "unconfigured" }]);
+    // 연결을 모르면 아무것도 숨기지 않는다
+    expect(view.orphans).toEqual([]);
+    expect(view.rows.every(row => row.group === "task" && !row.stale)).toBe(true);
   });
 
-  it("연결 이름은 장비 id 와 다를 때만, 보장 합이 한도를 넘으면 over", () => {
-    const labels = new Map([[GPU, GPU], [MLX, "m3-mlx (2)"]]);
+  it("열 이름 = 그 장비를 쓰는 연결 이름(정렬, 「 · 」) + 모델(같은 엔진 별칭은 하나로) — 연결이 없으면 장비 id, 보장 합이 한도를 넘으면 over", () => {
     const over = DEVICES.map(entry => entry.deviceId === M1 ? { ...entry, routes: [quotaRoute("product-translate", { minSlots: 3, maxSlots: null })] } : entry);
-    const view = buildCapacityAllocationView({ observation: observation({ devices: over }), labels });
-    expect(view.devices.map(entry => entry.label)).toEqual([null, "m3-mlx (2)", null, null]);
+    // 2026-11-09 운영 그대로: m3-mlx 장비를 연결 둘이, m1-qwen 장비를 m1-gemma 연결이, supa-direct 는 별칭 두 이름을 내놓는다
+    const connections = [connection(GPU, GPU, ["qwen3.8-flash-next"]), connection(MLX, "m3-gpt-oss", ["gpt-oss-120b"]), connection(MLX, "m3-deepseek", ["deepseek-v4.1-flash-1017"]),
+      connection(M1, "m1-gemma", ["m1-gemma"]), connection(SUPA, "supa-direct", ["supa", "Inferact/Qwen3.8-27B-NVFP4"])];
+    const view = buildCapacityAllocationView({ observation: observation({ devices: over }), connections });
+    expect(view.devices.map(entry => [entry.deviceId, entry.name, entry.models])).toEqual([[GPU, GPU, ["qwen3.8-flash-next"]],
+      [MLX, "m3-deepseek · m3-gpt-oss", ["gpt-oss-120b", "deepseek-v4.1-flash-1017"]], [SUPA, "supa-direct", ["Inferact/Qwen3.8-27B-NVFP4"]], [M1, "m1-gemma", ["Gemma 4 26B"]]]);
     expect(view.devices.find(entry => entry.deviceId === M1)).toMatchObject({ guaranteeSum: 3, over: true });
+    const html = renderToStaticMarkup(<AllocationMatrix view={view} readOnly={false} />);
+    expect(text(html)).toContain("m3-deepseek · m3-gpt-oss gpt-oss-120b · deepseek-v4.1-flash-1017 한도 2");
+    expect(text(html)).toContain("m1-gemma Gemma 4 26B 한도 2");
+    // 장비 id 는 title 에만(보이는 이름으로 쓰지 않는다)
+    expect(html).toContain('title="장비 id m1-qwen"');
+    expect(text(html.replace(/title="[^"]*"/g, "").replace(/(id|form|aria-label|name)="[^"]*"/g, ""))).not.toMatch(/m1-qwen|\bm3-mlx\b/);
+  });
+
+  it("2026-11-09: 연결도 쓰임도 없는 장비는 열을 만들지 않고, 낡은 정책 경로만 남은 줄은 stale, 보조 경로는 「보조」 갈래로 뒤에 모은다", () => {
+    const policy: ModelCapacityPolicy = { ...POLICY, groupLimits: { ...POLICY.groupLimits, supa: 20 }, routes: [...POLICY.routes,
+      // supa: 연결이 없고 쓰임도 없는 장비 — 옛 별칭 정책 경로만 남았다
+      route("local-held-qwen", "supa", "[supa] Qwen3.8-27B-NVFP4"), route("second-review", "supa", "Inferact/Qwen3.8-27B-NVFP4"),
+      // m3-mlx: 지금 연결이 내놓지 않는 별칭([MLX] …) — 순위·분산이 쓰지 않으면 낡음
+      route("product-translate", MLX, "[MLX] gpt-oss-120b"),
+      // 한 번도 쓰지 않은 옛 경로 id
+      route("product-tagline-ko-qwen-legacy", GPU, "qwen3.8-flash-next"),
+      // 보조 경로 — 같은 작업이 두 백엔드
+      route("local-assist-uptime-gpu3090-qwen", GPU, "qwen3.8-flash-next"), route("local-assist-uptime-m3-deepseek", MLX, "deepseek-v4.1-flash-1017"),
+      route("local-assist-decision_audit-m3-deepseek", MLX, "deepseek-v4.1-flash-1017")] };
+    const devices = [...DEVICES, device("supa", 20)];
+    const connections = [connection(GPU, GPU, ["qwen3.8-flash-next"]), connection(MLX, "m3-gpt-oss", ["gpt-oss-120b"]), connection(MLX, "m3-deepseek", ["deepseek-v4.1-flash-1017"]),
+      connection(M1, "m1-gemma", ["m1-gemma"]), connection(SUPA, "supa-direct", ["supa", "Inferact/Qwen3.8-27B-NVFP4"]), connection("m3-opencode-host", "M3 OpenCode")];
+    const view = buildCapacityAllocationView({ observation: observation({ policy, devices }), connections, references: new Set(["m", "gpt-oss"]) });
+    expect(view.devices.map(entry => entry.deviceId)).not.toContain("supa");
+    expect(view.orphans).toEqual(["supa", "nowhere-host"].sort());
+    expect(view.skipped.map(entry => entry.deviceId)).toEqual(["m3-opencode-host"]);
+    const byId = new Map(view.rows.map(row => [row.routeId, row]));
+    expect(byId.get("product-tagline-ko-qwen-legacy")).toMatchObject({ label: "옛 경로 · 한국어 소개 번역", stale: true });
+    // product-translate: m1-qwen 칸은 쓰는 중(정산 114건), m3-mlx 칸은 낡은 별칭 → 줄은 살아 있다
+    expect(byId.get("product-translate")).toMatchObject({ stale: false });
+    expect(view.rows.filter(row => row.group === "helper").map(row => [row.routeId, row.label])).toEqual([
+      ["local-assist-uptime-gpu3090-qwen", "보조 · 연결 확인 (gpu3090-qwen)"], ["local-assist-uptime-m3-deepseek", "보조 · 연결 확인 (m3-deepseek)"],
+      ["local-assist-decision_audit-m3-deepseek", "보조 · 판정 감사"]]);
+    // 보조 줄은 맨 뒤, 숨긴 줄은 저장 폼 경로에서 빠진다
+    expect(view.rows.slice(-3).every(row => row.group === "helper")).toBe(true);
+    expect(view.devices.find(entry => entry.deviceId === GPU)!.routes).not.toContain("product-tagline-ko-qwen-legacy");
+    const html = renderToStaticMarkup(<AllocationMatrix view={view} readOnly={false} />);
+    expect(html).not.toContain('name="route" value="product-tagline-ko-qwen-legacy"');
+    expect(text(html)).toContain("옛 정책 경로 1개를 숨겼습니다(옛 경로 · 한국어 소개 번역)");
+    expect(text(html)).toContain("연결도 쓰임도 없는 장비 2대(nowhere-host, supa)");
+    expect(html).toMatch(/<tr class="alloc-group" data-group="helper">/);
+    // 같은 id 를 두 번 찍지 않는다 — 아는 경로는 이름 + 작은 id, 모르는 경로는 id 한 번
+    expect(html).toContain('<span class="alloc-area-name">보조 · 판정 감사</span><code class="alloc-route">local-assist-decision_audit-m3-deepseek</code>');
+    expect(html.match(/local-assist-decision_audit-m3-deepseek<\/span>/g)).toBeNull();
   });
 
   it("못 읽으면 꾸미지 않는다 — 장부 실패는 표 없이 까닭, 장비 상태 실패도 까닭, 정책 확인 실패는 저장된 몫만", () => {
@@ -196,7 +251,7 @@ describe("칸 배분 화면 그리기", () => {
     expect(html).toContain('id="allocation"');
     expect(html).toContain(`id="${llmAllocationAnchor(GPU)}"`);
     expect(text(html)).toContain(`${GPU} 한도 5 지금 2 · 대기 2`);
-    expect(text(html)).toContain("m3-mlx m3-mlx (2) 한도 2");
+    expect(text(html)).toContain("m3-mlx (2) 한도 2");
     // 칸: 저장된 값과 빈 값, 입력은 form 속성으로 그 장비 열의 폼에 붙는다
     const classify = html.match(/<tr><th scope="row" class="alloc-area"><span class="alloc-area-name">카테고리 분류<\/span>[^]*?<\/tr>/)![0];
     expect(classify).toMatch(/<input type="number"[^>]* max="5"[^>]* form="alloc-form-0-gpu3090-qwen"[^>]* name="min:crawl-publish-classify" value="1"\/>/);
@@ -221,7 +276,8 @@ describe("칸 배분 화면 그리기", () => {
     expect(html.match(/>저장<\/button>/g)).toHaveLength(4);
     expect(text(html)).toContain("보장 칸 그 작업 영역에 일이 있으면 늘 비워 두는 칸입니다");
     expect(text(html)).toContain("두 칸을 모두 비우면 오늘과 같습니다");
-    expect(text(html)).toContain("장비 행이 없거나 꺼진 장비 2대");
+    expect(text(html)).toContain("장비 행이 없거나 꺼진 장비 1대( M3 OpenCode )");
+    expect(text(html)).toContain("연결도 쓰임도 없는 장비 1대(nowhere-host)");
     expect(html).not.toMatch(/NaN|undefined/);
   });
 
@@ -244,7 +300,7 @@ describe("칸 배분 화면 그리기", () => {
     expect(html).toContain("장비 상태를 읽지 못해 배분표를 그리지 못했습니다.");
     expect(html).not.toContain("<table");
     mocks.observation.mockResolvedValue(observation());
-    expect((await readCapacityAllocationView()).devices.every(entry => entry.label === null)).toBe(true);
+    expect((await readCapacityAllocationView()).devices.every(entry => entry.name === entry.deviceId)).toBe(true);
   });
 
   it("보장 합이 한도를 넘는 열은 경고하고 저장 단추를 잠근다", () => {

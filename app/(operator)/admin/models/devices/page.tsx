@@ -5,11 +5,13 @@ import { currentAdmin } from "@/lib/auth/admin";
 import { formatListTime } from "@/lib/format/time";
 import { capacityDeviceIssueMessage, readCapacityDevicesAdminView } from "@/lib/operations/admin-capacity-devices";
 import { readEngineLimitMetadata } from "@/lib/operations/admin-engine-limits";
+import { listAiConnections } from "@/lib/operations/admin-ai-tasks-repository";
+import { deviceDisplay } from "@/lib/operations/llm-display";
 import { PageStamp } from "../../components/PageStamp";
 import { modelsAdvancedEditor } from "../../workspace-navigation";
 import { AdvancedEditorLinks, advancedEditorTitle } from "../advanced/AdvancedEditorLinks";
 import { DeviceForm } from "./DeviceForm";
-import { DeviceTable } from "./DeviceTable";
+import { DeviceName, DeviceTable, type DeviceNames } from "./DeviceTable";
 import { SharedLimitForm } from "./SharedLimitForm";
 import { llmHistoryHref, RECENT_AUDIT_ROWS } from "@/lib/operations/llm-ops-history";
 
@@ -25,7 +27,12 @@ const EDITOR = modelsAdvancedEditor("devices");
 export default async function CapacityDevicesPage() {
   if (!await currentAdmin()) redirect("/admin/login");
   const now = new Date();
-  const [view, engines] = await Promise.all([readCapacityDevicesAdminView(now), readEngineLimitMetadata()]);
+  const [view, engines, connections] = await Promise.all([readCapacityDevicesAdminView(now), readEngineLimitMetadata(), listAiConnections().catch(() => null)]);
+  // 장비 이름 = 그 장비를 쓰는 연결 이름(장비 id 는 정책 groupId 라 옆에 작게 둔다). 연결이 없는 장비는 「연결 없음」 — 여기서 지우거나 고친다
+  const names: DeviceNames = Object.fromEntries([...view.devices.map(device => device.deviceId), ...view.audit.slice(0, RECENT_AUDIT_ROWS).map(row => row.deviceId)].map(deviceId => {
+    const display = deviceDisplay(deviceId, connections);
+    return [deviceId, { name: display.name, connected: connections === null ? null : display.source !== "id" }];
+  }));
   const readOnly = view.rowsError !== null;
   const mapped = view.devices.flatMap(device => {
     const engine = engines.engines.find(engine => engine.deviceId === device.deviceId);
@@ -64,12 +71,12 @@ export default async function CapacityDevicesPage() {
       <h2 className="text-[18px] font-semibold">장비 목록 ({view.devices.length})</h2>
       <p className="text-[13px] text-fg-3">점유는 예약+진행만 셉니다(미확인 행은 점유가 아닙니다). 「빌려 쓰는 중」은 우선 역할이 유휴라 낮은 순위 역할이 평소 상한을 넘어 쓰는 상태이며,
         우선 역할 요청이 오면 새 낮은 순위 입장은 바로 멈추고 빈 칸은 우선 역할로 갑니다(진행 중 호출은 끊지 않습니다).</p>
-      <DeviceTable devices={view.devices} now={now} />
+      <DeviceTable devices={view.devices} now={now} names={names} />
     </section>
     <section id="edit" className="grid gap-4 scroll-mt-6">
       <h2 className="text-[18px] font-semibold">장비별 설정</h2>
       {view.devices.length === 0 && <p className="text-[13px] text-fg-3">장비가 없습니다 — 아래에서 새 장비를 만들거나 정책을 적용하세요.</p>}
-      {view.devices.map(device => <DeviceForm key={device.deviceId} device={device} readOnly={readOnly} />)}
+      {view.devices.map(device => <DeviceForm key={device.deviceId} device={device} readOnly={readOnly} name={names[device.deviceId]?.name} />)}
     </section>
     <section id="new" className="grid gap-2 scroll-mt-6">
       <h2 className="text-[18px] font-semibold">새 장비</h2>
@@ -86,7 +93,7 @@ export default async function CapacityDevicesPage() {
           <tbody>{view.audit.slice(0, RECENT_AUDIT_ROWS).map(row => <tr key={row.id} className="border-b border-line align-top">
             <td className="py-2 pr-3 whitespace-nowrap">{formatListTime(row.at, now)}</td>
             <td className="py-2 pr-3">{row.actor}</td>
-            <td className="py-2 pr-3"><code>{row.deviceId}</code>{row.version !== null && <> · <span className="font-mono">{row.version}</span></>}{!row.ok && <span className="ml-1 text-red-600">거절</span>}</td>
+            <td className="py-2 pr-3"><DeviceName deviceId={row.deviceId} names={names} />{row.version !== null && <> · <span className="font-mono">{row.version}</span></>}{!row.ok && <span className="ml-1 text-red-600">거절</span>}</td>
             <td className="py-2 pr-3">{row.ok ? (row.changes.length ? row.changes.map(line => <div key={line}>{line}</div>) : "—") : <span className="text-red-600">{row.error ? capacityDeviceIssueMessage(row.error) : "거절"}</span>}</td>
           </tr>)}</tbody></table></div>}
       <Link href={llmHistoryHref({ kind: "limit" })} prefetch={false} className="text-[13px] font-semibold text-accent-ink">LLM 운영 › 기록에서 전체 보기 →</Link>

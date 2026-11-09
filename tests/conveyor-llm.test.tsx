@@ -156,6 +156,17 @@ describe("configured rank vs the model actually used in the last hour", () => {
     expect(page).not.toMatch(/abcllm/i);
   });
 
+  it("2026-11-09: 장비 그룹은 그 장비를 쓰는 연결 이름으로 — 연결이 없는 장비만 서버 이름", () => {
+    const rows = healthy().rows!.filter((row) => row.task !== "first-review");
+    const connections = [{ ...QWEN, deviceId: "gpu3090-qwen" }, { ...M3, label: "m3-gpt-oss", deviceId: "m3-mlx" }, conn("d", "m3-deepseek", { deviceId: "m3-mlx" }), CLAUDE];
+    const named = buildStationLlm(healthy({ connections, rows, used: [{ ...used("crawl-agent-review", "abcllm", "deepseek-v4.1-flash-1017", 5), groups: ["m3-mlx"] }] })).first;
+    if (named.kind !== "llm") throw new Error("llm");
+    expect(named.head.used?.[0]).toMatchObject({ where: "m3-deepseek · m3-gpt-oss" });
+    const orphan = buildStationLlm(healthy({ connections, rows, used: [{ ...used("crawl-agent-review", "abcllm", "qwen3.8-flash-next", 5), groups: ["supa"] }] })).first;
+    if (orphan.kind !== "llm") throw new Error("llm");
+    expect(orphan.head.used?.[0].where).toBe("Supa");
+  });
+
   it("recognises the same model on another connection by its ledger alias (모델@연결 8자)", () => {
     const rows = [rank("first-review", 1, QWEN, "gpt-oss-120b"), rank("first-review", 2, M3, "gpt-oss-120b"), rank("second-review", 1, CLAUDE, "sonnet")];
     const first = buildStationLlm(healthy({ rows, used: [used("crawl-agent-review", "abcllm", "gpt-oss-120b@5a1b2c3d", 4)] })).first;

@@ -42,7 +42,8 @@ function Result({ state }: { state: HelperActionState }) {
  * 감시자 카드(Oracle) — 전체 스위치(kill switch)·상태 배지(정상/늦음/꺼짐/계정 불일치)·lease·epoch·마지막 신호·신호 유효 시간/순환 간격(바꿀 수 있다)·
  * 빌려주기 제한 신호·자기 일 beacon. 끄면 다음 입장 판정부터 모든 도우미가 닫히고, 돌고 있는 호출은 끝까지 간다.
  */
-export function SupervisorCard({ supervisor, readOnly }: { supervisor: SupervisorView | null; readOnly?: boolean }) {
+/** names: 장비 id → 보이는 이름(그 장비를 쓰는 연결 이름). 장비 id 는 title 에만 */
+export function SupervisorCard({ supervisor, readOnly, names }: { supervisor: SupervisorView | null; readOnly?: boolean; names?: Readonly<Record<string, string>> }) {
   const [switchState, switchAction, switching] = useActionState<HelperActionState, FormData>(switchCapacitySupervisor, null);
   const [timingState, timingAction, timing] = useActionState<HelperActionState, FormData>(saveCapacitySupervisorTiming, null);
   const [dirty, setDirty] = useState(false);
@@ -99,7 +100,7 @@ export function SupervisorCard({ supervisor, readOnly }: { supervisor: Superviso
       <h4 className="text-[15px] font-semibold">빌려주기 제한 신호(장비별 자기 일 수요)</h4>
       <p className="text-[13px] text-fg-3">신선한 수요 신호는 그 장비의 빌려주기를 바로 멈춥니다. 오래된 신호는 무시하고 장부 규칙(장비 한도)으로 돌아갑니다 — 막지 않습니다.</p>
       {s.deviceDemand.length === 0 ? <p className="text-[13px] text-fg-3">신호가 없습니다.</p>
-        : <ul className="grid gap-0.5 text-[13px]">{s.deviceDemand.map(entry => <li key={entry.deviceId}><code>{entry.deviceId}</code> · {entry.primaryDemand ? `수요 있음(대기 ${entry.backlog.toLocaleString("ko-KR")})` : "수요 없음"}
+        : <ul className="grid gap-0.5 text-[13px]">{s.deviceDemand.map(entry => <li key={entry.deviceId}><span className="font-semibold" title={`장비 id ${entry.deviceId}`}>{names?.[entry.deviceId] ?? entry.deviceId}</span> · {entry.primaryDemand ? `수요 있음(대기 ${entry.backlog.toLocaleString("ko-KR")})` : "수요 없음"}
           {" · "}{entry.usable ? "쓰는 신호" : <span className="text-fg-3">무시(오래됨·다른 epoch·계정)</span>} · {clientAgeLabel(entry.ageMs)}{entry.reason && <span className="text-fg-3"> · {entry.reason}</span>}</li>)}</ul>}
     </div>
     <div className="grid gap-1">
@@ -107,7 +108,7 @@ export function SupervisorCard({ supervisor, readOnly }: { supervisor: Superviso
       <p className="text-[13px] text-fg-3">집 쪽 잡이 남기는 자기 역할 적체입니다. 오래되거나 없으면 감시자는 그 장비를 바쁨으로 봅니다(돕지 않음).</p>
       {s.roleDemand.length === 0 ? <p className="text-[13px] text-fg-3">beacon 이 없습니다.</p>
         : <ul className="grid gap-0.5 text-[13px]">{s.roleDemand.map(entry => <li key={entry.roleId}>{entry.label} <strong className="tabular-nums">{entry.backlog.toLocaleString("ko-KR")}</strong>
-          {" · "}<code>{entry.deviceId}</code> · {entry.fresh ? "신선" : <span className="text-amber-700">오래됨 → 바쁨으로 봄</span>} · {clientAgeLabel(entry.ageMs)}</li>)}</ul>}
+          {" · "}<span title={`장비 id ${entry.deviceId}`}>{names?.[entry.deviceId] ?? entry.deviceId}</span> · {entry.fresh ? "신선" : <span className="text-amber-700">오래됨 → 바쁨으로 봄</span>} · {clientAgeLabel(entry.ageMs)}</li>)}</ul>}
     </div>
   </div>;
 }

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { OpsState } from "@/lib/operations/ops-runner/contract";
+import { deviceModelsText } from "@/lib/operations/llm-display";
 import { LLM_OPS_LEVELS, type DashboardView } from "@/lib/operations/llm-ops-view";
 import { AdmissionControl } from "./AdmissionControl";
 import { LEVEL_WORD, LevelBadge, LevelLegend, ObservedAt } from "./LlmOpsParts";
@@ -57,7 +58,8 @@ export function ModelsDashboard({ view, opsStates, readOnly }: { view: Dashboard
         <div className="llm-panel-body">
           {view.devicesNote && <p className="llm-notice">{view.devicesNote}</p>}
           {view.devices.length ? <ul className="llm-devices">{view.devices.map(device => <li key={device.deviceId} className="llm-device" data-device={device.deviceId}>
-            <span className="llm-device-name"><b>{device.label}</b>{device.label !== device.deviceId && <small>{device.deviceId}</small>}</span>
+            <span className="llm-device-name" title={device.label !== device.deviceId ? `장비 id ${device.deviceId}` : undefined}><b>{device.label}</b>
+              {device.models.length > 0 && <small title={device.models.join("\n")}>{deviceModelsText(device.models)}</small>}</span>
             <span className="llm-bar" data-level={device.level} role="img" aria-label={`${device.label} 점유 ${device.held} / ${device.limit ?? "한도 확인 불가"}`}>
               {device.percent !== null && <span style={{ width: `${Math.max(device.held > 0 ? 4 : 0, device.percent)}%` }} />}</span>
             <span className="llm-device-count"><span className="llm-num">{device.held} / {device.limit ?? "확인 불가"}</span>{device.level !== "ok" && <LevelBadge level={device.level}>{device.level === "warn" ? "가득" : "확인 불가"}</LevelBadge>}</span>

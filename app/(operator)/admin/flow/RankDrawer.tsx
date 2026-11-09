@@ -11,7 +11,8 @@ import {
 } from "@/lib/operations/flow-rank-editor";
 import { RankSelects } from "../models/RankSelects";
 import { SelectedModelProbe } from "../models/SelectedModelProbe";
-import { modelPickerConnectionDevice, modelPickerConnectionLabel, modelPickerModelLabel, modelPickerVisibleText } from "../models/model-picker-display";
+import { deviceDisplay } from "@/lib/operations/llm-display";
+import { modelPickerConnectionLabel, modelPickerModelLabel, modelPickerVisibleText } from "../models/model-picker-display";
 import { saveAiTaskRanksAction } from "../models/tasks/actions";
 import { aiTaskWorkloadPoolApiOnly } from "@/lib/llm/ai-task-execution-config";
 import { aiTaskEditTarget } from "@/lib/operations/ai-task-edit-target";
@@ -237,8 +238,9 @@ export function RankDrawer({ editor, lines, title, secondWaiting, onClose, save 
               <thead><tr><th scope="col">연결</th><th scope="col">장비</th><th scope="col">최근 상태</th></tr></thead>
               <tbody>{editor.states.map((state) => {
                 const connection = editor.connections.find(row => row.id === state.id);
+                // 장비 칸 = 그 장비를 쓰는 연결 이름들(llm-display deviceDisplay), 장비 id 는 title 에만
                 return <tr key={state.id} data-state={state.state}><th scope="row">{connection ? modelPickerConnectionLabel(connection) : state.label}</th>
-                  <td>{connection ? modelPickerConnectionDevice(connection) : state.device}</td><td>{state.text}</td></tr>;
+                  <td title={`장비 id ${state.device}`}>{deviceDisplay(state.device, editor.connections).name}</td><td>{state.text}</td></tr>;
               })}</tbody>
             </table>
           </details>

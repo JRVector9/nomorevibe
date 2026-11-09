@@ -373,6 +373,19 @@ describe("그리기", () => {
     expect(renderToStaticMarkup(createElement(HelperTable, { helpers: [], now: NOW }))).toContain("도우미 배정이 없습니다");
   });
 
+  it("2026-11-09: 도우미 장비는 연결 이름으로 — 장비 id 는 title 에만(표·폼 머리·감시자 카드)", () => {
+    const deviceId = model.helpers[0].deviceId, names = { [deviceId]: "m3-deepseek · m3-gpt-oss" };
+    const table = renderToStaticMarkup(createElement(HelperTable, { helpers: model.helpers, now: NOW, names }));
+    expect(table).toContain(`title="장비 id ${deviceId}">m3-deepseek · m3-gpt-oss</a>`);
+    const head = renderToStaticMarkup(createElement(HelperForm, { helper: model.helpers[0], defaults: model.defaults, routeDefaults: model.routeDefaults, names }));
+    expect(head).toMatch(/<h3[^>]*title="장비 id [^"]+">m3-deepseek · m3-gpt-oss · /);
+    // 이름표가 없는 장비는 장비 id 그대로
+    expect(renderToStaticMarkup(createElement(HelperTable, { helpers: model.helpers, now: NOW }))).toContain(`>${deviceId}</a>`);
+    const card = renderToStaticMarkup(createElement(SupervisorCard, { supervisor: model.supervisor, names: Object.fromEntries(
+      [...(model.supervisor?.roleDemand ?? []), ...(model.supervisor?.deviceDemand ?? [])].map(entry => [entry.deviceId, `이름 ${entry.deviceId}`])) }));
+    for (const entry of model.supervisor?.roleDemand ?? []) expect(card).toContain(`title="장비 id ${entry.deviceId}">이름 ${entry.deviceId}</span>`);
+  });
+
   it("감시자 카드 — 배지·스위치(켜져 있으면 끄기, 꺼져 있으면 확인 칸 + 켜기)·lease·순환 설정·beacon", () => {
     const html = renderToStaticMarkup(createElement(SupervisorCard, { supervisor: model.supervisor }));
     expect(html).toContain('data-badge="ok"');

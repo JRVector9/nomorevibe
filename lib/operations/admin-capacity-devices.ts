@@ -8,6 +8,7 @@ import { logger } from "@/lib/observability/logger";
 import { adminLog, settingsChanges, type AdminLogRow } from "./admin-log";
 import { modelStageLabel } from "./admin-models-view";
 import { DrWriterFencedError } from "./dr/epoch";
+import { routeDisplayLabel } from "./llm-display";
 import { ROUTE_LABELS } from "./runtime-settings-schema";
 
 /**
@@ -102,11 +103,11 @@ export const DEVICE_FIELD_LABELS: Readonly<Record<string, string>> = {
   physicalLimit: "엔진 실제 동시 처리 수", roles: "역할 순서", note: "메모", enabled: "사용",
 };
 export const deviceFieldLabel = (path: string): string => DEVICE_FIELD_LABELS[path.split(".")[0]] ?? path;
-/** 역할(경로) 이름 — 실시간 한도 화면과 같은 ROUTE_LABELS, 없으면 단계 이름, 그것도 없으면 경로 id */
+/** 역할(경로) 이름 — 실시간 한도 화면과 같은 ROUTE_LABELS, 없으면 단계 이름, 그것도 없으면 작업·보조·옛 경로 이름(llm-display routeDisplayLabel — 모르면 경로 id) */
 export function deviceRoleLabel(routeId: string): string {
   if (ROUTE_LABELS[routeId]) return ROUTE_LABELS[routeId];
   const stage = modelStageLabel(routeId);
-  return stage === "다른 모델 단계" ? routeId : stage;
+  return stage === "다른 모델 단계" ? routeDisplayLabel(routeId) : stage;
 }
 
 const settingsView = (row: Pick<ModelCapacityDeviceSettings, "limitSlots" | "secondaryCap" | "idleMs" | "reserveSlots" | "physicalLimit" | "note">): DeviceSettingsView =>

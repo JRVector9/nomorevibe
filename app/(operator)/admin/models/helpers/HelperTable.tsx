@@ -18,14 +18,14 @@ function Gate({ label, gate }: { label: string; gate: HelperGateView | null }) {
  * 도우미 표 — 배정 한 줄씩: 도우미 장비 · 돕는 단계 · 모델 · 모드 · 지금 판정(+이유) · 신호 나이 · 입장(DB 의 helper_gate) · 주 장비 · 자기 일 · 섀도 · 자동 정지 · 판.
  * 판정은 신호를 쓸 수 있을 때만 그 판정이고, 아니면 「쉬는 중」과 신호를 못 쓰는 이유다(fail-closed). 색만으로 가르지 않고 글자를 낸다.
  */
-export function HelperTable({ helpers, now }: { helpers: HelperRowView[]; now: Date }) {
+export function HelperTable({ helpers, now, names }: { helpers: HelperRowView[]; now: Date; names?: Readonly<Record<string, string>> }) {
   if (!helpers.length) return <p className="text-[13px] text-fg-3">도우미 배정이 없습니다 — 아래 「새 배정」에서 꺼짐으로 먼저 만드세요.</p>;
   return <div className="overflow-x-auto"><table className="w-full min-w-[1320px] text-left text-[13px]"><thead><tr className="border-b border-line">
     <th className={TH}>도우미 장비</th><th className={TH}>돕는 단계</th><th className={TH}>모델</th><th className={TH}>모드</th><th className={TH}>지금 판정</th>
     <th className={TH}>신호 나이</th><th className={TH}>입장(실제)</th><th className={TH}>주 장비</th><th className={TH}>자기 일</th><th className={TH}>섀도</th>
     <th className={TH}>자동 정지</th><th className={TH}>판</th></tr></thead>
     <tbody>{helpers.map(row => <tr key={row.assignmentId} className="border-b border-line" data-assignment={row.assignmentId}>
-      <td className={TD}><a href={`#helper-${row.assignmentId}`} className="font-mono font-semibold underline">{row.deviceId}</a>
+      <td className={TD}><a href={`#helper-${row.assignmentId}`} className="font-semibold underline" title={`장비 id ${row.deviceId}`}>{names?.[row.deviceId] ?? row.deviceId}</a>
         <div className="font-mono text-fg-3">{row.assignmentId}</div>
         {row.issues.length > 0 && <div className="text-amber-700" title={row.issues.join("\n")}>알림 {row.issues.length}</div>}</td>
       <td className={TD}>{row.stageLabel}</td>

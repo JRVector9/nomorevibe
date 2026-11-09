@@ -101,8 +101,8 @@ function ModeControls({ helper, readOnly }: { helper: HelperRowView; readOnly?: 
  * 배정 한 개 폼(helper 가 null 이면 새 배정). 숨은 expectedVersion 으로 CAS. 있는 배정은 장비·단계·이름·모드를 숨은 값으로 지키고(모드는 단추로만 바꾼다),
  * 모델·경로·임계값·이력·메모를 바꾼다. 모델·경로를 바꾸면 섀도 근거(evidence_key)가 처음부터 시작한다. 새 배정은 단계에 맞는 경로 기본값으로 채운다.
  */
-export function HelperForm({ helper, defaults, routeDefaults, readOnly }: { helper: HelperRowView | null; defaults: HelperSettingsDefaults;
-  routeDefaults: HelperRouteDefaults; readOnly?: boolean }) {
+export function HelperForm({ helper, defaults, routeDefaults, readOnly, names }: { helper: HelperRowView | null; defaults: HelperSettingsDefaults;
+  routeDefaults: HelperRouteDefaults; readOnly?: boolean; names?: Readonly<Record<string, string>> }) {
   const [state, action, pending] = useActionState<HelperActionState, FormData>(saveModelHelper, null);
   const [dirty, setDirty] = useState(false);
   const [stage, setStage] = useState<HelperStage>(helper?.stage ?? "ai1");
@@ -111,7 +111,7 @@ export function HelperForm({ helper, defaults, routeDefaults, readOnly }: { help
   const id = helper ? `helper-${helper.assignmentId}` : "helper-new";
   return <div id={id} className="grid gap-3 rounded-xl border border-line bg-bg-card p-5 text-[14px] scroll-mt-6">
     <div className="flex flex-wrap items-baseline gap-2">
-      {helper ? <><h3 className="font-mono text-[17px] font-semibold">{helper.deviceId} · {helper.stageLabel}</h3>
+      {helper ? <><h3 className="text-[17px] font-semibold" title={`장비 id ${helper.deviceId}`}>{names?.[helper.deviceId] ?? helper.deviceId} · {helper.stageLabel}</h3>
         <span className="text-[13px] text-fg-3">배정 <code>{helper.assignmentId}</code> · 판 {helper.version} · evidence <code title={helper.evidenceKey}>{helper.evidenceKey.slice(0, 12)}</code>
           {helper.promotedAt && <> · 승격됨</>}</span></>
         : <h3 className="text-[17px] font-semibold">새 배정</h3>}

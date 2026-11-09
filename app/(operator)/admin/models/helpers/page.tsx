@@ -4,6 +4,8 @@ import { redirect } from "next/navigation";
 import { currentAdmin } from "@/lib/auth/admin";
 import { formatListTime } from "@/lib/format/time";
 import { modelHelperIssueMessage, readModelHelpersAdminView } from "@/lib/operations/admin-model-helpers";
+import { listAiConnections } from "@/lib/operations/admin-ai-tasks-repository";
+import { deviceDisplayMap } from "@/lib/operations/llm-display";
 import { PageStamp } from "../../components/PageStamp";
 import { modelsAdvancedEditor } from "../../workspace-navigation";
 import { AdvancedEditorLinks, advancedEditorTitle } from "../advanced/AdvancedEditorLinks";
@@ -23,7 +25,11 @@ const EDITOR = modelsAdvancedEditor("helpers");
  */
 export default async function ModelHelpersPage() {
   if (!await currentAdmin()) redirect("/admin/login");
-  const view = await readModelHelpersAdminView();
+  const [view, connections] = await Promise.all([readModelHelpersAdminView(), listAiConnections().catch(() => null)]);
+  // 장비 id → 보이는 이름(그 장비를 쓰는 연결 이름 — llm-display deviceDisplay). 장비 id 는 title 로만 남는다
+  const ids = [...view.helpers.map(row => row.deviceId), ...(view.supervisor?.deviceDemand ?? []).map(entry => entry.deviceId),
+    ...(view.supervisor?.roleDemand ?? []).map(entry => entry.deviceId)];
+  const names: Record<string, string> = Object.fromEntries([...deviceDisplayMap(connections, null, ids)].map(([id, display]) => [id, display.name]));
   const now = new Date(view.nowMs);
   const readOnly = view.snapshotError !== null;
   return <main className="mx-auto grid max-w-6xl gap-6 p-4">
@@ -41,13 +47,13 @@ export default async function ModelHelpersPage() {
     </header>
     <section id="supervisor" className="grid gap-2 scroll-mt-6">
       <h2 className="text-[18px] font-semibold">감시자</h2>
-      <SupervisorCard supervisor={view.supervisor} readOnly={readOnly} />
+      <SupervisorCard supervisor={view.supervisor} readOnly={readOnly} names={names} />
     </section>
     <section id="helpers" className="grid gap-2 scroll-mt-6">
       <h2 className="text-[18px] font-semibold">도우미 ({view.helpers.length})</h2>
       <p className="text-[13px] text-fg-3">「지금 판정」은 신호를 쓸 수 있을 때의 감시자 판정이고, 쓸 수 없으면 「쉬는 중」과 그 이유입니다. 「입장(실제)」는 입장 판정이 DB 안에서 본
         경로 열림·점유입니다(미확인 행은 점유가 아닙니다). 감시자가 metrics 에 적지 않은 칸은 「—」입니다.</p>
-      <HelperTable helpers={view.helpers} now={now} />
+      <HelperTable helpers={view.helpers} now={now} names={names} />
     </section>
     <section id="stops" className="grid gap-2 scroll-mt-6">
       <h2 className="text-[18px] font-semibold">자동 정지 ({view.stops.length})</h2>
@@ -71,7 +77,7 @@ export default async function ModelHelpersPage() {
       <p className="text-[13px] text-fg-3">임계값·이력 설정만 바꾸면 판이 오르고 섀도 근거는 그대로입니다. 모델·경로를 바꾸면 섀도 근거(evidence_key)가 처음부터 시작하고 실전은 섀도로 내려갑니다.
         저장 거절(도우미 경로가 우선 역할·정책에 경로 없음·2차 대체 목록 밖)은 이유를 그대로 보입니다.</p>
       {view.helpers.length === 0 && <p className="text-[13px] text-fg-3">배정이 없습니다.</p>}
-      {view.helpers.map(helper => <HelperForm key={helper.assignmentId} helper={helper} defaults={view.defaults} routeDefaults={view.routeDefaults} readOnly={readOnly} />)}
+      {view.helpers.map(helper => <HelperForm key={helper.assignmentId} helper={helper} defaults={view.defaults} routeDefaults={view.routeDefaults} readOnly={readOnly} names={names} />)}
     </section>
     <section id="new" className="grid gap-2 scroll-mt-6">
       <h2 className="text-[18px] font-semibold">새 배정</h2>
