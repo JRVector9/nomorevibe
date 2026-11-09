@@ -41,6 +41,14 @@ import { helperCandidateExclusionSql, helperDemandOnSql, helperGateCte, helperGa
  * - 대기 행 q 는 위 조건에 더해 **(cap 이 없거나 routeActive < cap) AND (under(q) OR active(D) + Σ_{R ≠ route(q)} held(R) < limit_slots)** 일 때만 맞는다.
  *   under(q) 이고 도우미가 아닌 행은 rank 1 처럼 낮은 순위 합계 상한(secondaryBound)을 넘을 수 있다 — 보장 칸이 순위 규칙에 막혀 놀지 않게(보장은 운영자가 명시한 것).
  * - 새 요청은 routeActive + (앞선 현재 세대 대기 행) ≥ cap 이면 대기 행 없이 바로 `route_quota` 로 미룬다(deviceRouteQuotaGateSql) — 호출자는 다음 순위로 넘긴다.
+ *
+ * 모델 상한(운영자 결정 2026-11-09; 0170 model_capacity_devices.model_limits). 상한 줄이 없는 모델·장비는 위 판정 그대로다.
+ * 한 장비를 서로 다른 서버·모델이 함께 쓸 때(m3-mlx: deepseek 엔진 최대 1 · gpt-oss 엔진 최대 4, 공유 칸 2) 공유 칸(limit_slots)과 따로 모델마다 상한을 둔다.
+ * - modelActive(M) = D 에서 model = M 인 reserved/dispatched 행 수(모든 세대) — routeActive 와 같은 거르기를 모델(장부 model 문자열, 공급자 무관)로 나눈 것.
+ * - 대기 행 q 는 위 모든 조건(공유 칸·낮은 순위 상한·경로 몫)에 더해 **(model(q) 의 상한 줄이 없거나 modelActive(model(q)) < max_slots)** 일 때만 맞는다.
+ *   모델 상한은 절대적이다 — 보장 아래의 행(under)·rank 1·도우미 행 모두 이 조건을 지난다.
+ * - 새 요청은 modelActive + (같은 모델의 앞선 현재 세대 대기 행) ≥ max_slots 이면 대기 행 없이 바로 `model_quota` 로 미룬다
+ *   (deviceModelQuotaGateSql; 이미 줄에 선 자기 대기 행은 거둔다) — 호출자는 `route_quota` 처럼 다음 순위로 넘긴다.
  */
 
 /** 점유로 세는 상태 = lib/llm/capacity-states.ts 의 하나(reserved·dispatched). indeterminate 는 사람 검토용 행이며 슬롯을 쥐지 않고 바쁨 신호도 아니다(PR #750). */
@@ -61,6 +69,12 @@ export const MODEL_CAPACITY_DEVICE_SAVE_AUDIT_ACTION = "model-capacity-device-sa
 export const MODEL_CAPACITY_ROUTE_QUOTA_SAVE_AUDIT_ACTION = "model-capacity-route-quota-save";
 /** 장비 하나의 경로 몫 줄 수 상한(0169 의 DB 검사와 같다). */
 export const MODEL_CAPACITY_ROUTE_QUOTAS_MAX = 64;
+/** operations_audit 의 action(모델 상한 저장, 0170). target 은 device_id. saveModelCapacityModelLimits 가 쓴다. */
+export const MODEL_CAPACITY_MODEL_LIMIT_SAVE_AUDIT_ACTION = "model-capacity-model-limit-save";
+/** 장비 하나의 모델 상한 줄 수 상한(0170 의 DB 검사와 같다). */
+export const MODEL_CAPACITY_MODEL_LIMITS_MAX = 64;
+/** 모델 문자열 길이 상한 = model_capacity_requests.model(varchar 200) — 0170 의 DB 검사와 같다. */
+export const MODEL_CAPACITY_MODEL_NAME_MAX = 200;
 /** 설정 행이 없을 때 정책 groupLimits 값으로 대체하는 규칙(migration 0153 의 seed 와 같은 패턴). */
 export const DEVICE_FALLBACK_LIMIT_PATTERN = /^[1-9][0-9]{0,2}$/;
 
@@ -101,6 +115,8 @@ export type ModelCapacityDeviceSettings = Readonly<Omit<z.infer<typeof modelCapa
 export type ModelCapacityDeviceRow = ModelCapacityDeviceSettings & Readonly<{
   enabled: boolean; version: number; updatedBy: string; createdAt: string; updatedAt: string;
   lendIdle?: boolean; routeQuotas?: readonly ModelCapacityRouteQuota[];
+  /** 모델 상한(0170) — saveModelCapacityModelLimits 가 바꾼다(저장소가 읽은 행에는 늘 있다; 테스트 조립 행에는 없을 수 있다). */
+  modelLimits?: readonly ModelCapacityModelLimit[];
 }>;
 
 /** 경로 몫 한 줄(step 2). minSlots = 수요가 있을 때 비워 두는 보장, maxSlots = 한 번에 쥘 수 있는 상한(null = 없음, 0 = 이 장비에서 뺌). */
@@ -192,6 +208,83 @@ export type ModelCapacityRouteState = Readonly<{
   held: number;
 }>;
 
+/**
+ * 모델 상한 한 줄(0170). model = 장부 행의 model 문자열(공급자 무관), maxSlots = 이 장비에서 그 모델이 한 번에 쥘 수 있는 칸(0 = 이 장비에서 뺌),
+ * engineMax = 운영자가 적은 그 서버(엔진)의 실제 최대 동시 처리 수(null·없음 = 모름) — 표시·검증용, 입장은 maxSlots 만 본다. maxSlots ≤ engineMax.
+ */
+export const modelCapacityModelLimitSchema = z.object({
+  model: identity(MODEL_CAPACITY_MODEL_NAME_MAX),
+  maxSlots: int(0, MODEL_CAPACITY_DEVICE_LIMIT_MAX),
+  engineMax: int(1, MODEL_CAPACITY_DEVICE_LIMIT_MAX).nullable().optional(),
+}).strict().refine(value => value.engineMax === null || value.engineMax === undefined || value.maxSlots <= value.engineMax,
+  { message: "exceeds_engine", path: ["maxSlots"] });
+/** 저장소가 돌려주는 줄은 engineMax 가 늘 있다(null = 모름). */
+export type ModelCapacityModelLimit = Readonly<{ model: string; maxSlots: number; engineMax?: number | null }>;
+/** DB(model_capacity_devices.model_limits) 의 원소 — snake_case, model 순. 모양은 0170 model_capacity_model_limits_ok 가 다시 본다(engine_max 는 늘 있다). */
+export type ModelCapacityModelLimitRecord = { model: string; max_slots: number; engine_max: number | null };
+
+/** 모델 상한 저장 입력(saveModelCapacityModelLimits). expectedVersion = 장비 행의 version(상한 저장도 장비 version 을 올린다). */
+export const modelCapacityModelLimitsInputSchema = z.object({
+  deviceId: identity(MODEL_CAPACITY_DEVICE_ID_MAX),
+  expectedVersion: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  limits: z.array(modelCapacityModelLimitSchema).max(MODEL_CAPACITY_MODEL_LIMITS_MAX),
+}).strict().refine(value => new Set(value.limits.map(limit => limit.model)).size === value.limits.length, { message: "duplicate_model", path: ["limits"] });
+export type ModelCapacityModelLimitsInput = Readonly<{ deviceId: string; expectedVersion: number; limits: readonly ModelCapacityModelLimit[] }>;
+
+const byModel = (a: { model: string }, b: { model: string }) => a.model < b.model ? -1 : a.model > b.model ? 1 : 0;
+
+/** 모델 상한 입력을 검증한다. 거절은 `model_capacity_model_limit_invalid:<path>`(첫 issue 의 경로; refine 은 그 message). 줄은 model 순으로 고정한다. */
+export function parseModelCapacityModelLimitsInput(input: unknown): ModelCapacityModelLimitsInput {
+  const parsed = modelCapacityModelLimitsInputSchema.safeParse(input);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    const refined = issue?.code === "custom" && typeof issue.message === "string" && /^[a-z_]+$/.test(issue.message) ? issue.message : null;
+    const path = issue?.path.length ? issue.path.map(String).join(".") : "root";
+    throw new Error(`model_capacity_model_limit_invalid:${refined ? `${path}:${refined}` : path}`);
+  }
+  const limits = [...parsed.data.limits].sort(byModel);
+  return Object.freeze({ ...parsed.data, limits: Object.freeze(limits.map(limit => Object.freeze({ ...limit, engineMax: limit.engineMax ?? null }))) });
+}
+
+/** 공유 칸 수보다 큰 상한(거절하지 않는다 — 공유 칸이 먼저 막는다). 저장의 경고 `max_exceeds_limit:<model>` 의 대상. */
+export const modelLimitsAboveShared = (limits: readonly ModelCapacityModelLimit[], limitSlots: number): readonly string[] =>
+  limits.filter(limit => limit.maxSlots > limitSlots).map(limit => limit.model);
+
+export const modelLimitsToRecords = (limits: readonly ModelCapacityModelLimit[]): ModelCapacityModelLimitRecord[] =>
+  [...limits].sort(byModel).map(limit => ({ model: limit.model, max_slots: limit.maxSlots, engine_max: limit.engineMax ?? null }));
+
+/** 저장된 jsonb → 모델 상한 줄(model 순). DB 검사를 지난 값이므로 모양이 틀리면 던진다(조용히 상한을 지우지 않는다). */
+export function modelLimitsFromRecords(value: unknown): readonly ModelCapacityModelLimit[] {
+  const rows = typeof value === "string" ? JSON.parse(value) as unknown : value ?? [];
+  if (!Array.isArray(rows)) throw new Error("model_capacity_model_limits_unreadable");
+  return Object.freeze(rows.map(row => {
+    const record = row as Partial<ModelCapacityModelLimitRecord>;
+    const parsed = modelCapacityModelLimitSchema.safeParse({ model: record.model, maxSlots: record.max_slots, engineMax: record.engine_max ?? null });
+    if (!parsed.success) throw new Error("model_capacity_model_limits_unreadable");
+    return Object.freeze({ model: parsed.data.model, maxSlots: parsed.data.maxSlots, engineMax: parsed.data.engineMax ?? null });
+  }).sort(byModel));
+}
+
+/** ModelCapacityModelState 의 zod(스냅숏을 strict 로 다시 읽는 곳 — pipeline-control 의 controlSnapshotSchema). */
+export const modelCapacityModelStateSchema = z.object({
+  model: identity(MODEL_CAPACITY_MODEL_NAME_MAX), active: int(0, 65_535), waiting: int(0, 65_535),
+  maxSlots: int(0, MODEL_CAPACITY_DEVICE_LIMIT_MAX).nullable(), engineMax: int(1, MODEL_CAPACITY_DEVICE_LIMIT_MAX).nullable(),
+}).strict();
+
+/** 장비 안 모델 하나의 실시간 상태(deviceStateSql 의 models). 상한 줄이 없는 모델은 maxSlots 가 null 이다(살아 있는 행이 있을 때만 보인다). */
+export type ModelCapacityModelState = Readonly<{
+  /** 장부 행의 model 문자열(공급자 무관). */
+  model: string;
+  /** reserved/dispatched(모든 세대). */
+  active: number;
+  /** 현재 세대 대기(queue_until > now). */
+  waiting: number;
+  /** 이 장비에서 이 모델의 상한. null = 상한 없음(공유 칸만). */
+  maxSlots: number | null;
+  /** 운영자가 적은 엔진 최대(표시용; 입장은 보지 않는다). null = 모름·상한 줄 없음. */
+  engineMax: number | null;
+}>;
+
 /** 장비 하나의 실시간 상태(관리자 화면·status·1b-C 의 관측). 설정 출처 `table` | `policy_fallback`. `helpers` 는 이 장비의 도우미 경로 상태(PR 2a). */
 export type ModelCapacityDeviceState = Readonly<{
   deviceId: string; source: "table" | "policy_fallback";
@@ -214,6 +307,8 @@ export type ModelCapacityDeviceState = Readonly<{
   lendIdle?: boolean;
   /** 경로 몫(0169): 이 장비의 경로마다 점유·대기·몫(몫 줄 ∪ 살아 있는 행이 있는 경로, route 순). deviceStateSql 행에는 늘 있다. */
   routes?: readonly ModelCapacityRouteState[];
+  /** 모델 상한(0170): 이 장비의 모델마다 점유·대기·상한(상한 줄 ∪ 살아 있는 행이 있는 모델, model 순). deviceStateSql 행에는 늘 있다. */
+  models?: readonly ModelCapacityModelState[];
 }>;
 
 export type ModelCapacityGeneration = Readonly<{ epoch: number; revision: number; policyHash: string }>;
@@ -281,6 +376,30 @@ export function deviceRouteQuotaFits(state: Pick<ModelCapacityDeviceState, "acti
   return { fits, atCap, underGuarantee };
 }
 
+/**
+ * 모델 M 의 **새** 요청 하나가 지금 모델 상한에 맞는가(deviceModelQuotaGateSql·deviceCandidateSql 과 같은 식 — 선택 힌트·테스트용; 판정은 DB 안에서 한다).
+ * atCap = modelActive + 현재 세대 대기 ≥ maxSlots(요청은 대기 행 없이 model_quota). 상한 줄이 없거나 models 가 없는 상태(옛 읽기)는 상한이 없는 것으로 본다.
+ * 공유 칸(active < limit)은 이 함수가 보지 않는다 — deviceFits·deviceRouteQuotaFits 와 함께 쓴다.
+ */
+export function deviceModelQuotaFits(state: Pick<ModelCapacityDeviceState, "models">, model: string): { fits: boolean; atCap: boolean } {
+  const row = state.models?.find(item => item.model === model);
+  const atCap = row !== undefined && row.maxSlots !== null && row.active + row.waiting >= row.maxSlots;
+  return { fits: !atCap, atCap };
+}
+
+/** 장비 목록 한 줄의 재료: 「m3-deepseek 한도 1 / 엔진 1 · m3-gpt-oss 한도 2 / 엔진 4」(엔진 최대를 모르면 ?). 상한 줄이 있는 모델만, model 순. `label` 로 모델 이름을 바꾼다. */
+export function deviceModelLimitText(state: Pick<ModelCapacityDeviceState, "models">, label: (model: string) => string = model => model): string {
+  return (state.models ?? []).filter(row => row.maxSlots !== null)
+    .map(row => `${label(row.model)} 한도 ${row.maxSlots} / 엔진 ${row.engineMax ?? "?"}`).join(" · ");
+}
+
+/** 실시간 한 줄의 재료: 「deepseek-v4.1-flash-1017 1/1 · gpt-oss-120b 2/4 · 공유 3/4」(점유/상한). 상한 줄이 있는 모델만, model 순. `label` 로 모델 이름을 바꾼다. */
+export function deviceModelUsageText(state: Pick<ModelCapacityDeviceState, "active" | "limitSlots" | "models">,
+  label: (model: string) => string = model => model): string {
+  const lines = (state.models ?? []).filter(row => row.maxSlots !== null).map(row => `${label(row.model)} ${row.active}/${row.maxSlots}`);
+  return [...lines, `공유 ${state.active}/${state.limitSlots}`].join(" · ");
+}
+
 const deviceRef = (deviceId: SQL | string): SQL => typeof deviceId === "string" ? sql`${deviceId}` : deviceId;
 // 상수는 bind 가 아니라 글자로 넣는다 — 렌더된 SQL 이 스스로 읽히고(ORDER BY coalesce(ro.role_rank, 32767)), 계획 캐시 키가 장비마다 같다.
 const unranked = sql.raw(String(UNRANKED_ROLE_RANK));
@@ -339,7 +458,8 @@ export function deviceStateCte(deviceId: SQL | string, generation: ModelCapacity
       WHERE r.group_id = ${device} AND r.state = 'waiting' AND r.epoch = ${generation.epoch} AND r.revision = ${generation.revision}
         AND r.policy_hash = ${generation.policyHash} AND r.queue_until > clock_timestamp()
     ),
-    ${routeQuotaCte(device, generation)}`;
+    ${routeQuotaCte(device, generation)},
+    ${modelLimitCte(device, generation)}`;
 }
 
 /**
@@ -385,6 +505,37 @@ function routeQuotaCte(device: SQL, generation: ModelCapacityGeneration): SQL {
 }
 
 /**
+ * 모델 상한 CTE(0170) — deviceStateCte 의 끝에 붙고, deviceModelQuotaGateSql 은 이것만 쓴다(s 를 읽지 않는다). 상한 줄이 없는 장비는 model_limit·
+ * model_state 가 비어 입장이 오늘과 같다.
+ * - model_limit: enabled 장비 행의 model_limits 줄.
+ * - model_use: 모델별 점유(reserved/dispatched, 모든 세대)·현재 세대 대기 — route_use 와 같은 거르기(같은 부분 색인)를 장부 model 로 나눈 것(공급자 무관).
+ * - model_state: 상한 줄마다 max_slots·active·waiting(engine_max 는 표시용으로 실을 뿐 판정에 쓰지 않는다).
+ * 열은 감시자 계정의 열 단위 SELECT(CAPACITY_REQUEST_READ) 안의 것만 쓴다(model 은 그 안에 있다).
+ */
+function modelLimitCte(device: SQL, generation: ModelCapacityGeneration): SQL {
+  const occupying = sql.raw(DEVICE_OCCUPYING_STATES_SQL);
+  return sql`model_limit AS MATERIALIZED (
+      SELECT x.model, x.max_slots, x.engine_max
+      FROM model_capacity_devices d CROSS JOIN LATERAL jsonb_to_recordset(d.model_limits) AS x(model text, max_slots int, engine_max int)
+      WHERE d.device_id = ${device} AND d.enabled
+    ),
+    model_use AS MATERIALIZED (
+      SELECT u.model, sum(u.active)::int AS active, sum(u.waiting)::int AS waiting FROM (
+        SELECT r.model, count(*) AS active, 0::bigint AS waiting FROM model_capacity_requests r
+        WHERE r.group_id = ${device} AND r.state IN ${occupying} GROUP BY r.model
+        UNION ALL
+        SELECT r.model, 0::bigint, count(*) FROM model_capacity_requests r
+        WHERE r.group_id = ${device} AND r.state = 'waiting' AND r.epoch = ${generation.epoch} AND r.revision = ${generation.revision}
+          AND r.policy_hash = ${generation.policyHash} AND r.queue_until > clock_timestamp() GROUP BY r.model
+      ) u GROUP BY u.model
+    ),
+    model_state AS MATERIALIZED (
+      SELECT ml.model, ml.max_slots, coalesce(u.active, 0) AS active, coalesce(u.waiting, 0) AS waiting
+      FROM model_limit ml LEFT JOIN model_use u ON u.model = ml.model
+    )`;
+}
+
+/**
  * 장비 D 에서 지금 입장시킬 대기 행 하나(`request_id`)를 잠근다(`FOR UPDATE OF q`). 1b-C 의 grantOne 이 control 행 FOR UPDATE 아래에서
  * 장비마다 한 번 실행한다. 설정 출처가 없으면(s 가 비면) 행이 나오지 않는다 → 그 장비는 grant 없음.
  * 도우미 행(h.helper)은 rank 1 우회가 없고, 열린 경로·max_slots 안에서만 맞으며(helperCandidateExclusionSql), 자기 역할 행 뒤에 정렬된다.
@@ -393,11 +544,13 @@ export function deviceCandidateSql(deviceId: string, generation: ModelCapacityGe
   const device = deviceRef(deviceId);
   // 경로 몫(step 2): 보장 아래의 행(under)은 다른 경로의 held 를 보지 않고 rank 1 처럼 낮은 순위 상한을 넘는다(도우미 행 제외).
   // 몫 줄이 없으면 qs 가 NULL 이라 cap 조건은 참, under 는 거짓, held 합은 0 — 조건이 오늘의 `c.total < s.limit_slots` 와 같아진다.
+  // 모델 상한(0170): 행의 model 에 상한 줄이 있으면 modelActive < max_slots 여야 한다(보장·rank 1·도우미와 무관하게 절대적). 줄이 없으면 ms 가 NULL 이라 참.
   const under = sql`coalesce(qs.active < qs.min_slots, false)`;
   return sql`${deviceStateCte(deviceId, generation, groupLimitsJson)}
     SELECT q.request_id FROM model_capacity_requests q
       LEFT JOIN roles ro ON ro.route_id = q.route_id
       LEFT JOIN quota_state qs ON qs.route_id = q.route_id
+      LEFT JOIN model_state ms ON ms.model = q.model
       CROSS JOIN LATERAL (SELECT ${helperRouteMatchSql("q")} AS helper) h, s, counts c, busy b
     WHERE q.group_id = ${device} AND q.state = 'waiting'
       AND q.epoch = ${generation.epoch} AND q.revision = ${generation.revision} AND q.policy_hash = ${generation.policyHash}
@@ -408,6 +561,7 @@ export function deviceCandidateSql(deviceId: string, generation: ModelCapacityGe
       AND ${helperCandidateExclusionSql("q")}
       AND (qs.cap IS NULL OR qs.active < qs.cap)
       AND (${under} OR c.total + (SELECT coalesce(sum(o.held), 0) FROM quota_state o WHERE o.route_id <> q.route_id) < s.limit_slots)
+      AND (ms.max_slots IS NULL OR ms.active < ms.max_slots)
     ORDER BY h.helper, coalesce(ro.role_rank, ${unranked}), q.queue_ordinal LIMIT 1 FOR UPDATE OF q`;
 }
 
@@ -435,6 +589,29 @@ export type DeviceRouteQuotaGateRow = { cap: number | null; active: number; min_
 export const routeQuotaGateCapped = (row: DeviceRouteQuotaGateRow | undefined): boolean =>
   row !== undefined && row.cap !== null && Number(row.active) + Number(row.ahead) >= Number(row.cap);
 
+/**
+ * requestSlot 의 모델 상한 사전 거절(0170) — 장비 D 에서 모델 M 의 상한 한 줄(상한 줄이 없으면 0 행). `ahead` = D 에서 M 의 현재 세대 대기 행 중
+ * 이 요청보다 앞선 것(새 요청은 전부; 경로·공급자 무관). modelActive + ahead ≥ max_slots 이면 대기 행 없이(있던 자기 대기 행은 거두고) model_quota.
+ * modelLimitCte 하나만 쓴다(장비 판정 CTE 전체를 다시 돌리지 않는다). control 행 FOR UPDATE 아래 입장 TX 에서만 부른다(queue_ordinal 을 읽는다).
+ */
+export function deviceModelQuotaGateSql(deviceId: string, generation: ModelCapacityGeneration, model: string, ownRequestId: string | null): SQL {
+  const device = deviceRef(deviceId);
+  const behindOwn = ownRequestId === null ? sql`true`
+    : sql`w.request_id <> ${ownRequestId}::uuid AND w.queue_ordinal < (SELECT o.queue_ordinal FROM model_capacity_requests o WHERE o.request_id = ${ownRequestId}::uuid)`;
+  return sql`WITH ${modelLimitCte(device, generation)}
+    SELECT ms.max_slots, ms.active, (SELECT count(*)::int FROM model_capacity_requests w
+        WHERE w.group_id = ${device} AND w.model = ${model} AND w.state = 'waiting'
+          AND w.epoch = ${generation.epoch} AND w.revision = ${generation.revision} AND w.policy_hash = ${generation.policyHash}
+          AND w.queue_until > clock_timestamp() AND ${behindOwn}) AS ahead
+    FROM model_state ms WHERE ms.model = ${model}`;
+}
+
+/** deviceModelQuotaGateSql 의 행. */
+export type DeviceModelQuotaGateRow = { max_slots: number; active: number; ahead: number };
+/** 모델 상한에 닿았나(행이 없으면 = 상한 줄이 없으면 아니다). */
+export const modelQuotaGateCapped = (row: DeviceModelQuotaGateRow | undefined): boolean =>
+  row !== undefined && row.max_slots !== null && Number(row.active) + Number(row.ahead) >= Number(row.max_slots);
+
 /** deviceStateSql 이 돌려주는 행(snake_case; 숫자는 int 로 캐스팅돼 있다). */
 export type DeviceStateRow = {
   device_id: string; source: "table" | "policy_fallback"; limit_slots: number; secondary_cap: number; idle_ms: number; reserve_slots: number;
@@ -446,6 +623,8 @@ export type DeviceStateRow = {
   lend_idle?: boolean;
   /** jsonb 배열 [{route_id, active, waiting, min_slots, max_slots, cap, demand, held}]. */
   routes?: unknown;
+  /** 모델 상한(0170): jsonb 배열 [{model, active, waiting, max_slots, engine_max}]. 이 열이 없는 옛 행 모양도 받는다(그때는 상태에 싣지 않는다). */
+  models?: unknown;
 };
 
 /**
@@ -469,7 +648,11 @@ export function deviceStateSql(deviceId: SQL | string, generation: ModelCapacity
           'max_slots', x.max_slots, 'cap', x.cap, 'demand', x.demand, 'held', x.held) ORDER BY x.route_id), '[]'::jsonb)
         FROM (SELECT coalesce(qs.route_id, u.route_id) AS route_id, coalesce(u.active, 0) AS active, coalesce(u.waiting, 0) AS waiting,
             qs.min_slots, qs.max_slots, qs.cap, coalesce(qs.demand, false) AS demand, coalesce(qs.held, 0) AS held
-          FROM quota_state qs FULL JOIN route_use u ON u.route_id = qs.route_id) x) AS routes
+          FROM quota_state qs FULL JOIN route_use u ON u.route_id = qs.route_id) x) AS routes,
+      (SELECT coalesce(jsonb_agg(jsonb_build_object('model', x.model, 'active', x.active, 'waiting', x.waiting, 'max_slots', x.max_slots,
+          'engine_max', x.engine_max) ORDER BY x.model), '[]'::jsonb)
+        FROM (SELECT coalesce(ml.model, u.model) AS model, coalesce(u.active, 0) AS active, coalesce(u.waiting, 0) AS waiting, ml.max_slots, ml.engine_max
+          FROM model_limit ml FULL JOIN model_use u ON u.model = ml.model) x) AS models
     FROM s, counts c, busy b, waiting w`;
 }
 
@@ -485,6 +668,18 @@ export function routeStatesFromJson(value: unknown): readonly ModelCapacityRoute
   }));
 }
 
+/** deviceStateSql 의 `models` jsonb → 모델 상한 상태(model 순). 배열이 아니면 빈 목록. */
+export function modelStatesFromJson(value: unknown): readonly ModelCapacityModelState[] {
+  const rows = typeof value === "string" ? JSON.parse(value) as unknown : value;
+  if (!Array.isArray(rows)) return Object.freeze([]);
+  return Object.freeze(rows.map(raw => {
+    const row = raw as Record<string, unknown>;
+    return Object.freeze({ model: String(row.model), active: Number(row.active ?? 0), waiting: Number(row.waiting ?? 0),
+      maxSlots: row.max_slots === null || row.max_slots === undefined ? null : Number(row.max_slots),
+      engineMax: row.engine_max === null || row.engine_max === undefined ? null : Number(row.engine_max) });
+  }));
+}
+
 /** DeviceStateRow → ModelCapacityDeviceState(camelCase, ISO 시각). */
 export function deviceStateFromRow(row: DeviceStateRow): ModelCapacityDeviceState {
   const updatedAt = row.updated_at === null ? null : row.updated_at instanceof Date ? row.updated_at.toISOString() : new Date(row.updated_at).toISOString();
@@ -496,5 +691,6 @@ export function deviceStateFromRow(row: DeviceStateRow): ModelCapacityDeviceStat
     version: row.version === null ? null : Number(row.version), updatedAt, helpers: helperGateStatesFromJson(row.helpers),
     ...(row.lend_idle === undefined ? {} : { lendIdle: row.lend_idle !== false }),
     ...(row.routes === undefined ? {} : { routes: routeStatesFromJson(row.routes) }),
+    ...(row.models === undefined ? {} : { models: modelStatesFromJson(row.models) }),
   });
 }
