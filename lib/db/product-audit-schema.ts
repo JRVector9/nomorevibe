@@ -20,7 +20,11 @@ import type { AuditProvider } from "@/lib/crawl/product-audit-reviewer";
  * recordAgentReview 는 enforce 에서 후보 상태를 결정으로 덮는다 — 공개된 후보를 거기 태우면
  * published 가 rejected/approved 로 뒤집히고 발행 잡이 다시 올리려 든다.
  */
-export type ProductAuditStatus = "running" | "done" | "cancelled";
+/**
+ * rolling: 공개분 변경 재검수(0171, lib/crawl/published-recheck.ts)의 늘 열린 줄 — 사람이 연 감사(running·done·cancelled)와 같은 표에 행 하나로 산다.
+ * 'running' 으로 두지 않는다: 사람이 연 감사가 하나뿐임(product_audit_one_running_idx)·"진행 중인 감사"를 읽는 곳이 모두 status = 'running' 을 본다
+ */
+export type ProductAuditStatus = "running" | "done" | "cancelled" | "rolling";
 export type ProductAuditHumanDecision = "removed" | "kept";
 
 export const productAuditCampaigns = pgTable("product_audit_campaigns", {
@@ -58,6 +62,8 @@ export const productAuditCampaigns = pgTable("product_audit_campaigns", {
 }, (table) => [
   // 한 번에 하나만 돈다. 둘이 돌면 같은 제품을 두 번 묻고 목록도 둘로 갈린다
   uniqueIndex("product_audit_one_running_idx").on(table.status).where(sql`${table.status} = 'running'`),
+  // 공개분 변경 재검수의 줄은 하나뿐이다(0171)
+  uniqueIndex("product_audit_one_rolling_idx").on(sql`(true)`).where(sql`${table.status} = 'rolling'`),
 ]);
 
 export const productAuditItems = pgTable("product_audit_items", {
@@ -109,8 +115,25 @@ export const productAuditItems = pgTable("product_audit_items", {
    * 유지·내리기는 human_decision 이 남으므로 따로 적지 않는다(lib/crawl/product-audit-hold.ts)
    */
   holdReleasedAt: timestamp("hold_released_at"),
+  /**
+   * 같은 줄에서 그 제품의 몇 번째 항목인가(0171). 사람이 연 감사는 늘 0 이다 — 제품 하나에 항목 하나.
+   * 공개분 변경 재검수(늘 열린 줄)는 내용이 바뀔 때마다 같은 제품을 다시 올리므로 1, 2, … 로 센다
+   */
+  round: integer("round").notNull().default(0),
+  /** 공개분 변경 재검수가 올린 시각(0171) — 하루 상한을 센다. 사람이 연 감사의 항목은 비어 있다 */
+  enrolledAt: timestamp("enrolled_at"),
+  /** 무엇이 바뀌어 다시 올렸나(0171, lib/crawl/published-recheck-change.ts RecheckChangeSummary). 사람이 연 감사의 항목은 비어 있다 */
+  changeSummary: jsonb("change_summary").$type<Record<string, unknown>>(),
+  /**
+   * 이 답을 낸 심사 글·규칙의 판(0171). 사람이 연 감사는 감사 행이 굳힌 판으로 묻는다(비어 있다).
+   * 공개분 변경 재검수의 줄은 끝나지 않으므로 판이 바뀌어도 멈추지 않고, 답마다 그때의 판을 여기에 적는다
+   */
+  promptVersion: varchar("prompt_version", { length: 40 }),
+  rulesVersion: varchar("rules_version", { length: 40 }),
 }, (table) => [
-  uniqueIndex("product_audit_items_campaign_product_idx").on(table.campaignId, table.productId),
+  uniqueIndex("product_audit_items_campaign_product_round_idx").on(table.campaignId, table.productId, table.round),
+  // 공개분 변경 재검수의 하루 상한(0171)
+  index("product_audit_items_rolling_enrolled_idx").on(table.campaignId, table.enrolledAt).where(sql`${table.enrolledAt} is not null`),
   // 잡이 다음 일감을 고른다 — 아직 답을 받지 못한 것만
   index("product_audit_items_pending_idx").on(table.campaignId, table.id).where(sql`${table.aiDecision} is null`),
   // 사람이 볼 목록 — 아직 아무도 손대지 않은 것만
@@ -241,6 +264,37 @@ export const productAuditPolicyRunItems = pgTable("product_audit_policy_run_item
     sql`${table.state} in ('pending', 'applied', 'skipped', 'cancelled', 'undone', 'undo_blocked')`),
 ]);
 
+/**
+ * 공개분 변경 재검수(0171)의 기준 — 공개 제품마다 "모델이 마지막으로 본 내용"이 무엇인지와 마지막으로 견준 내용의 해시.
+ *
+ * source:
+ *  - first_review: 발행 전 1차 심사의 마지막 성공 승인(crawl_review_attempts.snapshot 의 product). 내용을 복사하지 않고 attempt_id 로 가리킨다 —
+ *    공개분 7만여 건의 본문을 두 번 쌓지 않는다. 견줄 때만 그 행의 snapshot->'product' 를 읽는다.
+ *  - recheck: 이 잡이 다시 본 답(product_audit_items.id). 그때 모델이 본 내용(content)을 적어 둔다 — 하루 수십 건이다.
+ *  - seeded: 모델이 본 적 없는 공개 제품(1차 승인 기록이 없다). 처음 본 지금의 내용을 기준으로 삼고, 그 뒤의 변경부터 잡는다.
+ * content_hash: 기준 내용의 해시. checked_hash: 마지막으로 견준 지금 내용의 해시 — 같으면 다시 견주지 않는다(본문을 읽지 않는다).
+ * products 로 외래 키를 걸지 않는다(감사 항목과 같은 까닭 — 제품 삭제가 이 표까지 알 까닭이 없다).
+ */
+export type ProductRecheckBaselineSource = "first_review" | "recheck" | "seeded";
+
+export const productRecheckBaselines = pgTable("product_recheck_baselines", {
+  productId: integer("product_id").primaryKey(),
+  source: varchar("source", { length: 20 }).$type<ProductRecheckBaselineSource>().notNull(),
+  attemptId: integer("attempt_id"),
+  itemId: integer("item_id"),
+  content: jsonb("content").$type<Record<string, unknown>>(),
+  contentHash: varchar("content_hash", { length: 64 }).notNull(),
+  checkedHash: varchar("checked_hash", { length: 64 }),
+  judgedAt: timestamp("judged_at"),
+  checkedAt: timestamp("checked_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => [
+  check("product_recheck_baselines_source_check", sql`${table.source} in ('first_review', 'recheck', 'seeded')`),
+  check("product_recheck_baselines_ref_check", sql`(${table.source} = 'first_review') = (${table.attemptId} is not null)
+    and (${table.source} = 'recheck') = (${table.itemId} is not null) and (${table.source} = 'first_review' or ${table.content} is not null)`),
+]);
+
+export type ProductRecheckBaseline = typeof productRecheckBaselines.$inferSelect;
 export type ProductAuditCampaign = typeof productAuditCampaigns.$inferSelect;
 export type ProductAuditItem = typeof productAuditItems.$inferSelect;
 export type ProductAuditSecondOpinion = typeof productAuditSecondOpinions.$inferSelect;

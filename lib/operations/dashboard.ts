@@ -5,6 +5,7 @@ import { cdnPurges, crawlCandidates, crawlFrontier, crawlTaglines, crawlReviewAt
   productRepoReviews, productSearchProfiles, products, secondReviews } from "@/lib/db/schema";
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import { heldPublic } from "@/lib/crawl/product-audit-hold";
+import { latestManualCampaignSql, rollingCampaignSql } from "@/lib/crawl/audit-stream";
 import { SHOW_HN_SIGNAL, type CrawlSettings } from "@/lib/crawl/settings-schema";
 import { RECHECK_AFTER_MINUTES } from "@/lib/domain/products/health-freshness";
 import { countProducts, repoGone, SPAM_AUTO_BAN_ACTOR, SPAM_AUTO_BAN_REASON, spamAutoBanned } from "@/lib/domain/products/repository";
@@ -419,7 +420,7 @@ export async function attentionCounts(now = new Date()): Promise<AttentionCounts
       spam_day: number; spam_banned: number }>(sql`
       SELECT
         (SELECT count(*)::int FROM ${productAuditItems} JOIN ${products} ON ${products.id} = ${productAuditItems.productId}
-          WHERE ${productAuditItems.campaignId} = (SELECT max(${productAuditCampaigns.id}) FROM ${productAuditCampaigns})
+          WHERE ${productAuditItems.campaignId} IN (${latestManualCampaignSql}, ${rollingCampaignSql})
             AND ${productAuditItems.aiDecision} = 'reject' AND ${productAuditItems.humanDecision} IS NULL
             AND ${products.status} IN ('seeded', 'verified')) AS audit,
         (SELECT count(*)::int FROM ${products} WHERE ${heldPublic}) AS held,

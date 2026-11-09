@@ -19,6 +19,7 @@ import { getSettings, lockedSettings } from "./settings";
 import { importHoldEffect } from "./audit-import-gate";
 import { autoRunInfo, type AutoRunInfo } from "./audit-auto-close";
 import { m1SplitSql, pageTextLengthSql, screenJudgedSql, screenWaitSql, thinPageTextSql } from "./audit-text-gate";
+import { manualAuditCampaign, rollingCampaignSql } from "./audit-stream";
 
 /**
  * 감사 정책 처리(0116, 2026-10-22) — 열린 감사 거절을 거르기로 골라 한 번에 닫는다. 미리 보고, 수를 적어 적용하고, 실행 하나를 통째로 되돌린다.
@@ -60,8 +61,9 @@ const FROM = sql`from ${productAuditItems} i join ${products} p on p.id = i.prod
 const unownedSql = () => unownedPublic("p", { includeHeld: true });
 
 /**
- * 감사 화면이 보이는 열린 거절 — 마지막 감사의 것과, 지난 감사의 항목으로 보류 중인 것(그 제품에 마지막 감사의 열린 거절이 없을 때).
- * 별칭은 i(product_audit_items)·p(products)다. Qwen-v2 감사 두 번째 의견(audit-second-opinion-auto.ts scope all)도 같은 대상을 묻는다
+ * 감사 화면이 보이는 열린 거절 — 마지막 감사(사람이 연 것)의 것, 공개분 변경 재검수 줄(0171, 늘 열림)의 것, 지난 감사의 항목으로 보류 중인 것
+ * (그 제품에 마지막 감사의 열린 거절이 없을 때). 별칭은 i(product_audit_items)·p(products)다. Qwen-v2 감사 두 번째 의견
+ * (audit-second-opinion-auto.ts scope all)·화면 판별 대기도 같은 대상을 본다 — 재검수 거절도 사람이 연 감사가 없어도 그 일감이 된다
  */
 export function openAuditRejectUniverse(latest: number | SQL): SQL {
   return universeSql(latest);
@@ -69,7 +71,7 @@ export function openAuditRejectUniverse(latest: number | SQL): SQL {
 
 function universeSql(latest: number | SQL): SQL {
   return sql`(i.ai_decision = 'reject' and i.human_decision is null and p.status in ('seeded', 'verified')
-    and (i.campaign_id = ${latest} or (p.audit_hold_at is not null and p.audit_hold_item_id = i.id
+    and (i.campaign_id = ${latest} or i.campaign_id = ${rollingCampaignSql} or (p.audit_hold_at is not null and p.audit_hold_item_id = i.id
       and not exists (select 1 from ${productAuditItems} n where n.product_id = i.product_id and n.campaign_id = ${latest}
         and n.ai_decision = 'reject' and n.human_decision is null))))`;
 }
@@ -161,7 +163,7 @@ function baseSql(filter: PolicyFilter, action: PolicyAction, ctx: PolicyContext,
 
 async function policyContext(latestOverride?: number): Promise<PolicyContext | null> {
   const [settings, [row]] = await Promise.all([getSettings(),
-    db.select({ id: sql<number | null>`max(${productAuditCampaigns.id})` }).from(productAuditCampaigns)]);
+    db.select({ id: sql<number | null>`max(${productAuditCampaigns.id})` }).from(productAuditCampaigns).where(manualAuditCampaign)]);
   // 실행이 굳힌 마지막 감사(정책 처리) — 없으면(올리기·연장) 지금의 마지막 감사
   const latest = latestOverride || row?.id || null;
   return latest ? { latest, autoOpinions: settings.qwenAuto.auditSecondOpinion.enabled } : null;

@@ -6,7 +6,7 @@ import { withLocalModelCapacity } from "@/lib/llm/local-model-capacity";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { LocalModelDomainRefusedError, type LocalModelDomainCheck } from "@/lib/llm/local-model-domain-refusal";
 import { db } from "@/lib/db";
-import { cdnPurges, crawlCandidates, crawlDocuments, operationsObservations, productAuditAttempts, productAuditCampaigns, productAuditItems,
+import { cdnPurges, crawlCandidates, crawlDocuments, operationsObservations, productAuditAttempts, productAuditItems,
   productAuditPolicyRunItems, productAuditPolicyRuns, productAuditSecondOpinions, products, secondReviews, type SecondReviewAutoOpinion } from "@/lib/db/schema";
 import { lockProductGeneration } from "@/lib/domain/products/generation";
 import { assertJobLeaseAtWallTime, JobLeaseLostError, withJobLeaseWrite, type JobLease } from "@/lib/jobs/control";
@@ -19,6 +19,7 @@ import { writeAuditSecondOpinions } from "./audit-second-opinion-import";
 import { AUTO_CLOSE_MIN_CONFIDENCE, autoClosableSql, autoCloseOpinion, autoCloseToday, utcDay, type AutoCloseResult,
   type AutoCloseToday } from "./audit-auto-close";
 import { openAuditRejectUniverse } from "./audit-policy";
+import { latestManualCampaignSql } from "./audit-stream";
 import { AUDIT_HOLD_PURGE, AUDIT_HOLD_SWEEP_BATCH, AUDIT_RELEASE_PURGE, auditItemModel, holdCandidate } from "./product-audit-hold";
 import { lockPipelineInputStages } from "./pipeline-stage-context";
 import { QWEN_AUDIT_PROVIDER } from "./product-audit-reviewer";
@@ -128,8 +129,11 @@ const emptyTally = (): QwenAutoTally => ({ audit: { asked: 0, approve: 0, reject
 const bareModel = (model: SQL) => sql`lower(regexp_replace(regexp_replace(trim(${model}), '^\\[[^]]*\\]\\s*', ''), '^[^/[:space:]]+/', ''))`;
 const bareModelValue = bareModelName;
 
-/** 지금(마지막) 감사 — 감사 화면·정책 처리가 보는 감사와 같다. 끝난 뒤에도 그 감사의 열린 거절을 묻는다 */
-const latestCampaign = sql`(select max(${productAuditCampaigns.id}) from ${productAuditCampaigns})`;
+/**
+ * 지금(마지막) 감사 — 감사 화면·정책 처리가 보는 감사와 같다(사람이 연 감사 중 마지막 것, audit-stream.ts). 끝난 뒤에도 그 감사의 열린 거절을 묻는다.
+ * 공개분 변경 재검수 줄의 열린 거절은 범위(openAuditRejectUniverse)가 따로 넣는다 — 사람이 연 감사가 없어도 그 거절에는 의견을 묻는다
+ */
+const latestCampaign = latestManualCampaignSql;
 
 /** 묻는 범위 — all: 지금 감사의 열린 AI 거절 전부(정책 처리의 대상과 같다), hold: 보류 후보(holdCandidate) */
 function auditScope(scope: AuditOpinionScope, hold: Pick<AuditHoldSettings, "minConfidence">): SQL {

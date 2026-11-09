@@ -13,6 +13,7 @@ import { QWEN_AUTO_MIN_CONFIDENCE, secondOpinionFamily, secondRejectHolds } from
 import { QWEN_V2_AUTO_SOURCE } from "./qwen-direct-review";
 import { CONFIDENCE_FLOOR_SOURCES } from "./audit-import-sources";
 import { opposingOpinions, thinPageTextSql } from "./audit-text-gate";
+import { newerItemPending } from "./audit-stream";
 
 /**
  * 감사 보류(0110, 2026-10-21 운영자 결정) — 발행분 감사가 높은 확신으로 "제품 아님"이라 한 주인 없는 공개 제품은
@@ -89,7 +90,7 @@ function holdableItem(alias: string, minConfidence: number | null): SQL {
   return sql`(${c("ai_decision")} = 'reject'${confident}
     and ${c("human_decision")} is null and ${c("hold_released_at")} is null
     and not exists (select 1 from ${productAuditItems} n join ${productAuditCampaigns} nc on nc.id = n.campaign_id
-      where n.product_id = ${c("product_id")} and n.id > ${c("id")} and (n.ai_decision is not null or nc.status = 'running'))
+      where n.product_id = ${c("product_id")} and n.id > ${c("id")} and ${newerItemPending("n", "nc")})
     and not exists (select 1 from ${productAuditItems} k where k.product_id = ${c("product_id")}
       and k.human_decision = 'kept' and k.keep_until > now()))`;
 }
