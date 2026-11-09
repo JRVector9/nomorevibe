@@ -3,7 +3,7 @@ import { readAdminModelsObservation } from "@/lib/operations/admin-models-reposi
 import type { AiTaskExecutionAdminView } from "@/lib/operations/admin-ai-task-execution";
 import { aiTaskSlotRevision, type AiTasksAdminView } from "@/lib/operations/admin-ai-tasks-repository";
 import { buildTaskRankEditor } from "@/lib/operations/flow-rank-editor";
-import { readAuditCampaignRunning, readJobPauses } from "@/lib/operations/llm-ops-read";
+import { readAuditCampaignRunning, readJobPauses, readRecheckRejectsOpen } from "@/lib/operations/llm-ops-read";
 import { buildTaskAssignView, taskAssignDeviceLimits, withTaskReadiness } from "@/lib/operations/llm-task-assign-view";
 import { TaskAssignBoard } from "./TaskAssignBoard";
 
@@ -14,10 +14,10 @@ import { TaskAssignBoard } from "./TaskAssignBoard";
  */
 export async function TaskAssignSlot({ view, executions, readOnly }: { view: AiTasksAdminView; executions: readonly AiTaskExecutionAdminView[] | null; readOnly: boolean }) {
   const now = new Date();
-  const [observation, jobs, auditRunning] = await Promise.all([readAdminModelsObservation({ throughput: false }).catch(() => unavailableAdminModels()),
-    readJobPauses(now.getTime()), readAuditCampaignRunning()]);
+  const [observation, jobs, auditRunning, recheckRejectsOpen] = await Promise.all([readAdminModelsObservation({ throughput: false }).catch(() => unavailableAdminModels()),
+    readJobPauses(now.getTime()), readAuditCampaignRunning(), readRecheckRejectsOpen()]);
   const assign = buildTaskAssignView({ now: now.toISOString(), observation, connections: view.connections, slots: view.slots, executions, jobs,
-    facts: { auditRunning, connectionsRead: !view.errors.connections } });
+    facts: { auditRunning, connectionsRead: !view.errors.connections, recheckRejectsOpen } });
   const editor = withTaskReadiness(buildTaskRankEditor(view.connections, view.rows, aiTaskSlotRevision, executions ?? []), view.slots);
   const lockReason = readOnly ? "읽기 전용 미리보기 — 여기서는 저장할 수 없습니다."
     : executions === null ? "실행 방식을 읽지 못했습니다 — 확인할 때까지 순위를 저장할 수 없습니다." : null;

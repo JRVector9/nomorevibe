@@ -29,7 +29,9 @@ export type TaskAssignInput = Readonly<{
    * 순위 없는 작업을 「쓰지 않음」으로 가르는 사실(2026-11-09) — 진행 중인 감사 캠페인이 있나(null = 읽지 못함), 연결 목록을 읽었나.
    * 없거나 읽지 못했으면 모른다로 보고 지금 표시(「멈춤 · 순위 없음」)를 그대로 둔다.
    */
-  facts?: Readonly<{ auditRunning: boolean | null; connectionsRead: boolean }>;
+  facts?: Readonly<{ auditRunning: boolean | null; connectionsRead: boolean;
+    /** 공개분 변경 재검수 줄에 사람을 기다리는 거절이 있나(0171, null·없음 = 모름) — 감사 두 번째 의견은 감사 캠페인이 없어도 이것을 묻는다 */
+    recheckRejectsOpen?: boolean | null }>;
 }>;
 
 /** fallback = 대체 실행(작업 순위), workload_pool = 작업 분산, classifier = 기존 CLI 분류(발행 분류의 대체 실행), effective = 실행 쪽이 순위를 읽지 않는 작업(실제 적용 설정) */
@@ -292,7 +294,9 @@ export function buildTaskAssignView(input: TaskAssignInput): TaskAssignView {
     const enabledConnections = entries.filter(entry => entry.connectionId).map(entry => connectionOf(entry.connectionId!));
     const skipText = (mode === "effective" || mode === "classifier") && slot.current?.skip ? slot.current.skipStatus ?? trimDot(slot.current.skip) : null;
     // 감사 항목을 받아서만 일하는 작업 — 진행 중인 감사가 없으면 일감이 없어 쉬는 것이지 멈춘 것이 아니다(「24시간 성공 0건」으로 보이지 않게)
-    const auditIdle = AUDIT_FED_TASKS.has(task.id) && input.facts?.auditRunning === false ? "진행 중인 감사 없음" : null;
+    // 감사 두 번째 의견은 공개분 변경 재검수 줄의 거절도 묻는다(0171) — 그 거절이 없다고 읽었을 때만 쉰다
+    const auditIdle = AUDIT_FED_TASKS.has(task.id) && input.facts?.auditRunning === false
+      && (task.id !== "audit-second-opinion" || input.facts.recheckRejectsOpen === false) ? "진행 중인 감사 없음" : null;
     const idleWhy = paused ? "잡 일시중지" : unused ? "쓰지 않음" : mode === "fallback" && !entries.length ? "순위 없음"
       : runtime?.degraded ? llmReasonShort(runtime.degraded.code) ?? runtime.degraded.code
       : skipText ?? auditIdle ?? (enabledConnections.length && enabledConnections.every(connection => !connection?.enabled) ? "연결 꺼짐"

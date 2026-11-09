@@ -282,6 +282,14 @@ describe("2026-11-09 상태 문구 — 운영 관측(19:27 UTC)에서 틀렸던 
     expect(audit({ auditRunning: false, connectionsRead: true }).actual.empty).toBe("호출 없음 (진행 중인 감사 없음)");
     expect(audit({ auditRunning: true, connectionsRead: true }).status).toMatchObject({ level: "warn", reason: "24시간 성공 0건" });
     expect(audit({ auditRunning: null, connectionsRead: true }).status).toMatchObject({ level: "warn", reason: "24시간 성공 0건" });
+    // 감사 두 번째 의견은 공개분 변경 재검수 줄(0171)의 거절도 묻는다 — 감사 캠페인이 없어도 그 거절이 있거나 모르면 쉬는 것이 아니다
+    const opinion = (facts: TaskAssignInput["facts"]) => rowOf(buildTaskAssignView(input({ facts, observation: observationWith([]),
+      slots: [slotOf("audit-second-opinion", 1, { current: current("audit-second-opinion", "qwen3.8-flash-next") })] })), "audit-second-opinion#1");
+    expect(opinion({ auditRunning: false, connectionsRead: true, recheckRejectsOpen: false }).status).toEqual({ level: "idle", text: "쉼", reason: "진행 중인 감사 없음", detail: null });
+    expect(opinion({ auditRunning: false, connectionsRead: true, recheckRejectsOpen: true }).status).toMatchObject({ level: "warn", reason: "24시간 성공 0건" });
+    expect(opinion({ auditRunning: false, connectionsRead: true }).status).toMatchObject({ level: "warn", reason: "24시간 성공 0건" });
+    // 재검수 줄은 Qwen 직접 감사(audit-review)의 일감이 아니다 — 그 작업은 감사 캠페인만 본다
+    expect(audit({ auditRunning: false, connectionsRead: true, recheckRejectsOpen: true }).status).toMatchObject({ level: "idle", reason: "진행 중인 감사 없음" });
   });
 
   it("F6 장부 밖 작업은 「정상」이라 하지 않는다 — 「장부 밖」(확인 불가 수준), 정상 수에 세지 않는다", () => {

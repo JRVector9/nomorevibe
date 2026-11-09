@@ -42,6 +42,18 @@ export async function readAuditCampaignRunning(): Promise<boolean | null> {
   } catch { return null; }
 }
 
+/**
+ * 공개분 변경 재검수 줄(0171, status 'rolling' — 사람이 연 감사로 세지 않는다)에 사람을 기다리는 AI 거절이 있는가. 감사 두 번째 의견은 사람이 연 감사가
+ * 없어도 이 거절을 묻는다(audit-policy.ts openAuditRejectUniverse) — 작업 배정이 그 작업을 「쉼 · 진행 중인 감사 없음」으로 가르지 않게 한다. 못 읽으면 null
+ */
+export async function readRecheckRejectsOpen(): Promise<boolean | null> {
+  try {
+    const [row] = await onPrimary(() => db.execute<{ open: unknown }>(sql`SELECT EXISTS (SELECT 1 FROM product_audit_items i
+      JOIN product_audit_campaigns c ON c.id = i.campaign_id WHERE c.status = 'rolling' AND i.ai_decision = 'reject' AND i.human_decision IS NULL) AS open`));
+    return typeof row?.open === "boolean" ? row.open : null;
+  } catch { return null; }
+}
+
 const CLI_ROUTE = /^cli:([a-z0-9-]{1,40}):(.{1,120})$/;
 /** DB CLI 계약(cli:<provider>:<route>)의 이름·버전만 — 키·명령·주소는 읽지 않는다. 스냅숏은 프로세스 안에서 30초 나눠 쓴다. */
 export async function readCliContracts(): Promise<LlmCliContractInput[] | null> {
