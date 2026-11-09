@@ -292,7 +292,9 @@ it("DeepSeek 이 탈 나면 사람에게 그대로 두고 항목의 실패로 �
   deepseekReply = async () => ({ down: true });
   await confirm();
   expect(deepseekRequests).toHaveLength(2);
-  expect((await tiebreaksOf(one.candidate.id))[0]).toMatchObject({ deepseekErrorCode: "unreachable", deepseekFailureCount: 0 });
+  // 2026-11-09: 방금 시도한 항목은 뒤로 간다 — 탈 난 항목이 물러나기가 끝날 때마다 맨 앞에 서 나머지를 굶기지 않는다
+  expect((await tiebreaksOf(two.candidate.id))[0]).toMatchObject({ deepseekErrorCode: "unreachable", deepseekFailureCount: 0 });
+  expect((await tiebreaksOf(one.candidate.id))[0]).toMatchObject({ deepseekErrorCode: "http_503", deepseekFailureCount: 0 });
 
   // 물러남이 끝나면 다시 묻고 닫는다
   resetDeepseekConfirmBackoff();

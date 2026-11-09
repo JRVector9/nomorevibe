@@ -90,13 +90,18 @@ type ConfirmSettled = "rejected" | "held" | "capped" | "failed" | "cancelled" | 
 export type SplitConfirmTick = { calls: number; rejected: number; held: number; capped: number; failed: number; cancelled: number;
   superseded: number; skipped: number; stopped: string | null };
 
-/** 확인을 기다리는 판가름 — 오래 기다린 것부터. 실제 조건은 잡는 트랜잭션이 다시 읽는다 */
+/**
+ * 확인을 기다리는 판가름 — 오래 기다린 것부터. 실제 조건은 잡는 트랜잭션이 다시 읽는다.
+ * 기다린 시각은 마지막 확인 시도(deepseek_completed_at, 실패도 찍는다)부터 센다(2026-11-09): 부르는 곳의 탈(시간 초과 등)은 항목 실패로 세지 않고
+ * 틱을 멈추므로, 판가름 시각(completed_at)만 보면 늘 시간 초과가 나는 한 항목이 물러나기가 끝날 때마다 맨 앞에 서 나머지를 굶겼다(매번 결과 미확정 한 건).
+ * 시도한 항목은 뒤로 간다. 멈춤(cancelled)은 그 시각을 되돌려 자리를 지킨다.
+ */
 async function confirmHints(limit: number, now: Date): Promise<SplitTiebreakHint[]> {
   return db.select({ candidateId: t.candidateId, repo: t.repo, generationKey: t.generationKey }).from(t)
     .where(and(eq(t.promptVersion, QWEN_V2_PROMPT_VERSION), eq(t.state, "succeeded"), eq(t.applied, "awaiting_deepseek"),
       inArray(t.deepseekState, ["waiting", "failed", "running"]), lt(t.deepseekFailureCount, SPLIT_TIEBREAK_MAX_FAILURES),
       or(isNull(t.deepseekRetryAfter), lte(t.deepseekRetryAfter, sql`${now.toISOString()}::timestamp`))))
-    .orderBy(asc(t.completedAt), asc(t.id)).limit(limit);
+    .orderBy(asc(sql`coalesce(${t.deepseekCompletedAt}, ${t.completedAt})`), asc(t.id)).limit(limit);
 }
 
 /** 오늘(KST 0시부터) 이 길로 닫은 수 — 쓰는 트랜잭션 안에서 센다(사람 검토 잡은 한 번에 하나라 겹치지 않는다) */
