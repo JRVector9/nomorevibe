@@ -65,16 +65,18 @@ function ActualCell({ row, editor }: { row: TaskAssignRow; editor: FlowRankEdito
   return <td className="tk-actual" data-label="지금 실제 (1시간)">
     {actual.calls.length > 0 && <ul className="tk-calls">{actual.calls.map(call => {
       const connection = call.connectionId ? editor.connections.find(entry => entry.id === call.connectionId) : undefined;
-      return <li key={call.key} data-position={call.position ?? (actual.compared ? "none" : "unknown")} data-zero={call.settled === 0 ? "true" : undefined}>
+      // 순위를 막 바꿨으면 설정 밖 호출은 그 전 순위의 것일 수 있다 — 경고 표시(▲)를 하지 않는다
+      return <li key={call.key} data-position={call.position ?? (!actual.compared ? "unknown" : actual.mixed ? "earlier" : "none")} data-zero={call.settled === 0 ? "true" : undefined}>
         <span className="tk-pos">{label(call.position)}</span>
         <code className="tk-model">{connection ? modelPickerModelLabel(connection, call.model) : ledgerModelText(call.model)}</code>
         <b className="llm-num">{fmt(call.settled)}</b>{call.failed > 0 && <span className="tk-fail">실패 {fmt(call.failed)}</span>}
       </li>;
     })}</ul>}
     {actual.empty && <span className="tk-empty">{actual.empty}</span>}
+    {actual.note && <span className="tk-source" data-note="mixed">{actual.note}</span>}
     {actual.warnings.length > 0 && <span className="tk-mismatch"><LevelBadge level="warn">설정과 다름</LevelBadge>
       <ul>{actual.warnings.map(text => <li key={text}>{text}</li>)}</ul></span>}
-    {actual.shared && actual.tracked && actual.readable && <span className="tk-source">투표자 구분 없이 작업 전체 장부</span>}
+    {actual.shared && actual.tracked && actual.readable && actual.calls.length > 0 && <span className="tk-source">투표자 구분 없이 작업 전체 장부</span>}
   </td>;
 }
 
@@ -139,7 +141,8 @@ export function TaskAssignBoard({ view, editor, devices, lockReason }: { view: T
     <TaskTable rows={llmRows} caption="LLM 작업별 설정 순위와 최근 1시간 실제 호출" editor={editor} onChange={setChanging} locked={!!lockReason} />
     <LevelLegend />
     <p className="llm-empty">「지금 실제」는 장부의 최근 1시간 정산(성공·실패·판정 없음)을 모델별로 센 것입니다. 1순위가 0건인데 다른 모델이 처리했거나, 1순위가 아닌 모델이 절반 이상을 처리했거나,
-      순위에 없는 모델이 불렸으면 「설정과 다름」으로 알립니다. 상태 옆 회색 글자가 까닭입니다.</p>
+      순위에 없는 모델이 불렸으면 「설정과 다름」으로 알립니다. 1시간 안에 순위를 바꿨거나 앞 순위가 상한·칸 가득으로 건너뛰어져 뒤 순위가 처리한 것(순위대로 대체)은
+      「설정과 다름」으로 세지 않습니다. 장부 밖 작업은 호출을 세지 않아 「정상」으로 보지 않습니다. 상태 옆 회색 글자가 까닭입니다.</p>
     {otherRows.length > 0 && <section className="tk-other" id="tasks-non-llm" aria-labelledby="tasks-non-llm-title">
       <h2 id="tasks-non-llm-title" className="tk-section-title">LLM이 아닌 모델 <span className="llm-muted">검색 벡터·재정렬 — 대화형 LLM이 아니라 임베딩·재정렬 엔진이 처리합니다</span></h2>
       <TaskTable rows={otherRows} caption="LLM이 아닌 모델(벡터·재정렬)을 쓰는 작업의 설정 순위와 최근 1시간 실제 호출" editor={editor} onChange={setChanging} locked={!!lockReason} />

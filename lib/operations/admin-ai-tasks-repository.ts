@@ -111,8 +111,10 @@ export async function listAiConnections(reader?: Reader): Promise<AiConnectionVi
 }
 const rankRowOf = (row: typeof aiTaskModels.$inferSelect): AiTaskRankRow => Object.freeze({ task: row.task, slot: row.slot, rank: row.rank, connectionId: row.connectionId,
   model: row.model, options: Object.freeze({ ...row.options }), enabled: row.enabled });
+/** 화면 읽기의 행 — 마지막으로 쓴 시각(updated_at)을 함께 싣는다. 감사 기록(before·after)은 rankRowOf 그대로다 */
+const listedRankRowOf = (row: typeof aiTaskModels.$inferSelect): AiTaskRankRow => Object.freeze({ ...rankRowOf(row), updatedAt: new Date(row.updatedAt).toISOString() });
 export async function listAiTaskRows(reader?: Reader): Promise<AiTaskRankRow[]> {
-  const load = async (from: Reader) => (await from.select().from(aiTaskModels).orderBy(asc(aiTaskModels.task), asc(aiTaskModels.slot), asc(aiTaskModels.rank))).map(rankRowOf);
+  const load = async (from: Reader) => (await from.select().from(aiTaskModels).orderBy(asc(aiTaskModels.task), asc(aiTaskModels.slot), asc(aiTaskModels.rank))).map(listedRankRowOf);
   return reader ? load(reader) : onPrimary(() => load(db));
 }
 /** 저장한 키(평문) — 메모리 안에서만 쓴다. 없거나 열리지 않으면 null(hasKey 인데 null 이면 열리지 않은 것). */
@@ -186,6 +188,8 @@ export type AiTaskSlotView = Readonly<{
   /** 실행 쪽이 이 순위를 읽는 작업인가(PR B: text 일곱) */
   live: boolean;
   runtime: AiTaskRuntimeView | null;
+  /** 이 칸의 순위를 마지막으로 저장한 시각(행의 updated_at 중 가장 늦은 것, ISO). 행이 없으면 null — 작업 배정이 장부 1시간과 견줄 때 쓴다 */
+  savedAt: string | null;
 }>;
 export type AiTaskAuditView = Readonly<{ id: number; at: string; actor: string; action: string; target: string; ok: boolean; summary: string }>;
 export type AiTasksAdminView = Readonly<{
@@ -321,7 +325,8 @@ export async function readAiTasksAdminView(): Promise<AiTasksAdminView> {
       options: Object.freeze(aiTaskRankOptions(task, connections, own)), current: cur,
       currentLabels: Object.freeze((isAiLiveTask(task.id) ? (cur?.uses ?? []).slice(0, 3) : cur?.uses ?? []).map(use => currentLabel(use, connections))),
       sameAsCurrent: isAiReviewTask(task.id) || !isAiLiveTask(task.id) ? null : sameAsCurrent(own, cur, connections),
-      readiness: Object.freeze(ready), live: isAiLiveTask(task.id), runtime: runtime[task.id] ?? null });
+      readiness: Object.freeze(ready), live: isAiLiveTask(task.id), runtime: runtime[task.id] ?? null,
+      savedAt: own.reduce<string | null>((latest, row) => row.updatedAt && (!latest || row.updatedAt > latest) ? row.updatedAt : latest, null) });
   });
   return Object.freeze({ connections: Object.freeze(connections), rows: Object.freeze(rows), slots: Object.freeze(slots), errors: Object.freeze(errors),
     secretBox: secretBoxReady(), policyMode: readiness?.policy?.mode ?? null, keyConflicts: Object.freeze(keyConflicts),
@@ -573,7 +578,8 @@ export async function saveAiTaskRanks(input: AiTaskRanksInput, actor: string): P
     const issues = validateAiTaskRanks(task.id, input.slot, ranks, { connections, rows });
     if (issues.length) return { ok: false, issues };
     const chosen = ranks.flatMap((row, index) => row ? [{ rank: index + 1, row, connection: connections.find(entry => entry.id === row.provider)! }] : []);
-    const readinessInput = await readReadinessInput();
+    // OpenCode 순위의 연결 버전은 위에서 호스트에서 방금 읽은 값이다 — 계약 버전이 다르면 그 값으로 계약을 맞춘다(기록된 옛 버전은 쓰지 않는다)
+    const readinessInput = { ...await readReadinessInput(), hostCliVersions: new Set(openCode.map(connection => connection.id)) };
     const readiness = aiRanksReadiness(task, chosen.map(entry => ({ rank: entry.rank, connection: entry.connection, model: entry.row.model,
       ...(typeof entry.row.reasoningEffort === "string" ? { reasoningEffort: entry.row.reasoningEffort } : {}) })), readinessInput);
     const blocking = [...readiness.flatMap(row => row.blocking), ...crossRankIssues(task, readiness)];

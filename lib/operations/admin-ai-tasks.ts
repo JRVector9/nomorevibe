@@ -28,7 +28,9 @@ export type AiConnectionView = Readonly<{
   cliCatalog?: CliCatalogMetadata | null;
 }>;
 export type AiTaskRankRow = Readonly<{ task: string; slot: number; rank: number; connectionId: string; model: string;
-  options: Readonly<Record<string, unknown>>; enabled: boolean }>;
+  options: Readonly<Record<string, unknown>>; enabled: boolean;
+  /** 이 행을 마지막으로 쓴 시각(ai_task_models.updated_at, ISO) — 순위 저장은 그 칸의 행을 모두 새로 쓰므로 칸의 마지막 저장 시각이다. 화면 읽기(listAiTaskRows)만 싣는다 */
+  updatedAt?: string }>;
 /** RankSelects 의 값 한 칸 — provider 칸에 연결 id 를 둔다(폼 칸 이름 rank<N>Connection·rank<N>Model). */
 export type AiRankChoice = { provider: string; model: string; reasoningEffort?: string };
 /** Only settings actually consumed by the review CLI adapter are offered. */
@@ -383,6 +385,11 @@ export type AiReadinessInput = Readonly<{
   cliContractRoutes?: readonly string[];
   policy: Readonly<{ mode: string; routes: readonly AiPolicyRoute[]; groupLimits: Readonly<Record<string, number>> }> | null;
   devices: ReadonlyMap<string, Readonly<{ enabled: boolean; limitSlots: number }>>;
+  /**
+   * CLI 버전을 방금 호스트에서 읽은 연결 id(순위·분산 저장이 OpenCode 목록을 새로 읽고 넘긴다). 여기 없는 연결의 cliVersion 은
+   * 연결에 기록된 값(OpenCode 는 마지막으로 목록을 읽은 때의 값)이라 오래됐을 수 있다 — 화면은 이것으로 계약 버전을 바꾸라고 하지 않는다(2026-11-09).
+   */
+  hostCliVersions?: ReadonlySet<string>;
 }>;
 export type AiRankReadiness = Readonly<{
   rank: number; connectionId: string; model: string;
@@ -516,7 +523,17 @@ export function aiRankReadiness(task: AiTaskDef, rank: number, connection: AiCon
         : `${head}: 연결에 CLI 버전이 없습니다. AI 연결에서 「CLI 버전」(워커의 \`${connection.cliTool} --version\` 출력 그대로)을 적은 뒤 저장하세요.`);
       else if (!row || row.cliVersion !== version)
         createCliContract = Object.freeze({ routeId, provider, model, cliVersion: version, replaces: row?.cliVersion ?? null });
-      if (version) warnings.push(connection.cliTool === "opencode" ? `${head}: M3 호스트에서 조회한 CLI 버전(${version})을 사용합니다. 목록 확인은 모델 호출 성공과 별개이며, 실행 전에 호스트가 버전·모델을 다시 확인합니다.`
+      // 계약 버전과 연결의 버전이 다를 때 저장은 지금처럼 그 버전으로 계약을 바꾼다(OpenCode 저장은 호스트에서 방금 읽은 버전을 넘긴다 — hostCliVersions).
+      // 화면은 이것을 「빠진 계약」으로 보이거나 저장을 권하지 않는다: OpenCode 연결의 버전은 마지막으로 목록을 읽은 때의 기록이라 계약이 더 새것일 수 있다
+      // (2026-11-09 운영: 계약·호스트 opencode v2.2.6, 기록 v2.2.5 — 기록대로 바꾸면 계약을 내리고 호출 전 버전 대조에서 1차가 멈춘다).
+      const differs = !!version && !!row?.cliVersion && row.cliVersion !== version;
+      if (differs && connection.cliTool === "opencode" && !input.hostCliVersions?.has(connection.id))
+        warnings.push(`${head}: CLI 계약은 ${row!.cliVersion}인데 이 연결에 기록된 M3 호스트 버전은 ${version}입니다 — 기록은 마지막으로 목록을 읽은 때의 값이라 `
+          + "오래됐을 수 있습니다. LLM 운영에서 이 연결을 열어 목록을 다시 조회하세요. 호출 전에는 호스트가 실제 버전을 계약과 견줍니다.");
+      else if (differs && connection.cliTool !== "opencode")
+        warnings.push(`${head}: CLI 계약은 ${row!.cliVersion}인데 연결에 적은 CLI 버전은 ${version}입니다 — 워커의 \`${connection.cliTool} --version\` 출력과 `
+          + "맞는지 LLM 운영의 연결에서 확인하세요. 워커가 부를 때 계약과 다르면 이 순위는 쓰이지 않습니다.");
+      else if (version) warnings.push(connection.cliTool === "opencode" ? `${head}: M3 호스트에서 조회한 CLI 버전(${version})을 사용합니다. 목록 확인은 모델 호출 성공과 별개이며, 실행 전에 호스트가 버전·모델을 다시 확인합니다.`
         : `${head}: CLI 버전(${version})은 이 화면이 확인하지 못합니다 — 워커가 부를 때 \`--version\` 과 다르면 이 순위는 쓰이지 않습니다(상태 화면에 까닭).`);
     } else if (routeId) warnings.push(`${head}: CLI 계약(connect 에이전트 쪽)은 이 화면이 확인하지 못합니다. 계약이 없으면 이 순위는 쓰이지 않습니다.`);
     return result();
@@ -596,11 +613,14 @@ export function aiRanksReadiness(task: AiTaskDef, ranks: readonly Readonly<{ ran
   });
 }
 
-/** 저장된 순위에 아직 없는 것(그 줄을 다시 저장하면 만든다) — 화면의 준비 상태 문장. */
+/**
+ * 저장된 순위에 아직 없는 것(그 줄을 다시 저장하면 만든다) — 화면의 준비 상태 문장.
+ * 이미 있는 CLI 계약의 버전이 연결의 버전과 다른 것은 빠진 것이 아니다 — 저장을 권하지 않고 준비 상태의 알림(aiRankReadiness warnings)으로만 보인다(2026-11-09).
+ */
 export function aiRankPendingText(ready: Pick<AiRankReadiness, "rank" | "model" | "createContract" | "appendRoute" | "createDevice"> & Partial<Pick<AiRankReadiness, "createCliContract">>): string[] {
   const out: string[] = [];
-  if (ready.createCliContract) out.push(`${ready.rank}순위 ${ready.model}: ${ready.createCliContract.routeId} CLI 계약이 ${ready.createCliContract.replaces
-    ? `버전 ${ready.createCliContract.replaces}입니다` : "없습니다"} — 이 줄을 저장하면 연결의 CLI 버전(${ready.createCliContract.cliVersion})으로 ${ready.createCliContract.replaces ? "바꿉니다" : "만듭니다"}.`);
+  if (ready.createCliContract && !ready.createCliContract.replaces)
+    out.push(`${ready.rank}순위 ${ready.model}: ${ready.createCliContract.routeId} CLI 계약이 없습니다 — 이 줄을 저장하면 연결의 CLI 버전(${ready.createCliContract.cliVersion})으로 만듭니다.`);
   if (ready.createContract) out.push(`${ready.rank}순위 ${ready.model}: ${ready.createContract.routeId} 엔진 직접 계약이 ${ready.createContract.replacesGateway
     ? "게이트웨이 계약뿐입니다" : "없습니다"} — 이 줄을 저장하면 엔진을 확인하고 만듭니다${ready.createContract.engineModel
     ? `(같은 모델이 다른 서버에도 있어 장부 이름 ${ready.createContract.identity})` : ""}.`);
@@ -639,8 +659,10 @@ export type AiCurrentSlot = Readonly<{ task: string; slot: number; uses: readonl
   source: string;
   /** 계산하지 못했으면 그 까닭 */
   error: string | null;
-  /** 옮기지 않는 까닭(예: 꺼져 있음) */
-  skip: string | null; notes: readonly string[] }>;
+  /** 옮기지 않는 까닭(예: 꺼져 있음) — 가져오기 계획의 말 */
+  skip: string | null; notes: readonly string[];
+  /** skip 의 상태 화면용 짧은 말(작업 배정 「상태」 칸, 2026-11-09). 없으면 skip 을 그대로 쓴다 */
+  skipStatus?: string }>;
 
 export type AiImportConnection = Readonly<{
   key: string; action: "create" | "update" | "existing"; id: string | null; label: string; kind: AiConnectionKind; baseUrl: string | null;

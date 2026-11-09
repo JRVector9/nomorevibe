@@ -19,6 +19,7 @@ import { TEST_DATABASE_URL } from "./setup";
 const admin = vi.hoisted(() => ({ login: { login: "operator" } as { login: string } | null }));
 vi.mock("@/lib/auth/admin", () => ({ currentAdmin: async () => admin.login, localOperatorName: async () => null }));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("server-only", () => ({}));
 
 const name = `nomorevibe_test_ai_tasks_${randomUUID().replaceAll("-", "")}`, url = new URL(TEST_DATABASE_URL); url.pathname = `/${name}`;
 const pgAdmin = postgres(TEST_DATABASE_URL, { max: 1, onnotice: () => {} }), client = postgres(url.toString(), { max: 4, prepare: false, onnotice: () => {} });
@@ -167,6 +168,34 @@ describe("AI 연결 저장", () => {
     expect(await readAiConnectionModelsAction(null, form({ id: engine.id }))).toMatchObject({ ok: true, message: "모델 2개를 읽었습니다." });
     expect((await connections()).find(entry => entry.id === engine.id)!.version).toBe(1);
     expect((await audits("ai-connection-models-read")).map(row => row.detail)).toEqual([{ id: engine.id, count: 2 }]);
+  });
+});
+
+describe("작업 배정 읽기(2026-11-09)", () => {
+  it("칸의 마지막 저장 시각(savedAt = 행 updated_at)을 화면 읽기에 싣고(감사 기록은 그대로), 진행 중인 감사 캠페인이 있는지 읽는다", async () => {
+    const engine = await makeEngine();
+    const { saveAiTaskRanksAction } = await actions();
+    expect(await saveAiTaskRanksAction(null, form({ task: "crawl-tagline", slot: "1", revision: EMPTY_REVISION, rank1Connection: engine.id, rank1Model: "Qwen-X" })))
+      .toMatchObject({ ok: true });
+    const [stored] = await client<{ at: string }[]>`SELECT to_char(max(updated_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS at
+      FROM ai_task_models WHERE task = 'crawl-tagline' AND slot = 1`;
+    const repository = await import("@/lib/operations/admin-ai-tasks-repository");
+    expect((await repository.listAiTaskRows()).map(row => [row.task, row.rank, row.updatedAt])).toEqual([["crawl-tagline", 1, stored.at]]);
+    const view = await repository.readAiTasksAdminView();
+    expect(view.slots.find(slot => slot.task.id === "crawl-tagline")?.savedAt).toBe(stored.at);
+    expect(view.slots.find(slot => slot.task.id === "reason-translate")?.savedAt).toBeNull();
+    const [saved] = await audits("ai-task-models-save");
+    expect(Object.keys((saved.detail.after as Record<string, unknown>[])[0])).not.toContain("updatedAt");
+
+    const { readAuditCampaignRunning } = await import("@/lib/operations/llm-ops-read");
+    // 이 파일만의 DB 라 감사 캠페인이 없다
+    expect(await readAuditCampaignRunning()).toBe(false);
+    const [campaign] = await client<{ id: number }[]>`INSERT INTO product_audit_campaigns (started_by, reason, prompt_version, rules_version, provider, model)
+      VALUES ('ai-task-assign-test', 'test', 'p', 'r', 'opencode-cli', 'm') RETURNING id`;
+    expect(await readAuditCampaignRunning()).toBe(true);
+    await client`UPDATE product_audit_campaigns SET status = 'done', finished_at = now() WHERE id = ${campaign.id}`;
+    expect(await readAuditCampaignRunning()).toBe(false);
+    await client`DELETE FROM product_audit_campaigns WHERE id = ${campaign.id}`;
   });
 });
 
