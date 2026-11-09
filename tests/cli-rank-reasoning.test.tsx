@@ -24,7 +24,9 @@ describe("CLI rank reasoning", () => {
     expect(aiTaskReasoningEfforts("first-review", "opencode", "catalog/model", ["high", "max"])).toEqual(["high", "max"]);
     expect(aiTaskRankOptions(aiTask("first-review")!, [{ ...connection, cliCatalog: null }], [])).toEqual([]);
     expect(aiTaskReasoningEfforts("first-review", "opencode", "unverified/model")).toEqual([]);
-    expect(aiTaskReasoningEfforts("product-intro-check", "claude", "opus")).toEqual([]);
+    // 소개 검수 Claude CLI 는 단계 풀 key 의 저장 강도를 --effort 로 넘긴다(2026-11-09) — 순위 저장은 여전히 막혀 있다
+    expect(aiTaskReasoningEfforts("product-intro-check", "claude", "opus")).toEqual(["low", "medium", "high"]);
+    expect(aiTaskReasoningEfforts("product-intro-check", "claude", "haiku")).toEqual([]);
     for (const [grokModel, efforts] of [
       ["grok-4.7", ["low", "medium", "high", "xhigh"]], ["grok-4.6", ["low", "medium", "high", "xhigh"]],
       ["grok-4.5", ["low", "medium", "high"]], ["unverified-grok", []],

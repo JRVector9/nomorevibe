@@ -7,6 +7,7 @@ import type { ModelCapacityRoute } from "@/lib/llm/capacity";
 import { aiConnectionLabel, aiRankChoiceOfRow, aiRankReasoningEfforts, aiTaskConnectionModelIds, type AiConnectionView, type AiCurrentSlot,
   type AiRankChoice, type AiTaskRankRow, type AiTaskRanksInput } from "./admin-ai-tasks";
 import { aiTaskEditTarget } from "./ai-task-edit-target";
+import { aiTaskReasoningEfforts } from "@/lib/llm/ai-task-reasoning";
 
 /**
  * 「장비 한도」 화면의 CLI 장비 줄 아래 작업별 모델·추론 강도(2026-11-09). Claude CLI·Codex CLI 만 다룬다(OpenCode 는 그대로다).
@@ -15,10 +16,12 @@ import { aiTaskEditTarget } from "./ai-task-edit-target";
  * - 1차·2차 AI 검수 × Claude CLI: 순위 행의 options.reasoningEffort → prepareReviewCliCall → reviewCliArgs(model, effort) 의 `--effort <값>`.
  *   값이 없으면 어댑터 기본 low. 고를 수 있는 값은 aiTaskReasoningEfforts(sonnet·opus: low·medium·high) — 실행 쪽 검사와 같은 함수다.
  *   이 두 작업만 실행 쪽이 순위를 읽으므로 이 화면에서 바꿀 수 있다(작업 배정과 같은 saveAiTaskRanks — 규칙·감사가 같다).
- * - 소개 검수 × Claude CLI: introCheckCliArgs 가 `--effort high` 를 고정으로 넣는다. 모델은 단계 풀·배정 표·등록부에서 오고 순위 행은 읽지 않는다
- *   (saveAiTaskRanks 가 저장을 거절한다). 그래서 지금 실제 모델을 읽기만 하고 실제 설정 위치로 보낸다.
+ * - 소개 검수 × Claude CLI: 모델은 단계 풀(settings.stageModelPools["product-intro-check"])·배정 표·등록부 기본값에서 오고 순위 행은 읽지 않는다.
+ *   강도는 그 등록부 key 에 저장한 settings.stageModelEfforts["product-intro-check"][key] 를 introCheckEffort 가 확인해 `--effort` 로 넘긴다(기본 high).
+ *   출처가 단계 풀(한 모델)이거나 등록부 기본값이면 이 화면에서 그 단계 풀·강도를 저장한다(saveCliStageModelAction — 단계 풀 저장과 같은 검사, settings-save 감사).
+ *   배정 표·여러 모델 풀이 출처면 읽기만 한다.
  * - 카테고리 분류 × Codex·Claude CLI: connect 에이전트 설정(우선·예비)의 model·effort — Codex 는 `-c model_reasoning_effort="<값>"`(high·xhigh),
- *   Claude 는 `--effort high` 고정. 저장은 에이전트 검사·적용 절차(/admin/status?tab=ai)를 거쳐야 하므로 마지막 관측을 읽기만 한다.
+ *   Claude 는 `--effort high` 고정. 웹의 기존 쓰기 길(운영센터 AI 연결과 같은 codexOperation test → apply: 에이전트가 표본 분류로 검사한 뒤 적용)로 바꾼다.
  * - 작업 분산(workload_pool) 칸은 순위 대신 구성원을 쓴다 — 그 칸의 순위는 고칠 수 없게 두고 구성원은 읽기만 한다.
  */
 
@@ -47,15 +50,28 @@ export type CliTaskUsage = Readonly<{
   effort: string | null;
   /** 「기본」을 고르면 어댑터가 넘기는 값(있으면) */
   defaultEffort: string | null;
-  /** 이 줄에서 고를 수 있는 모델(연결의 CLI 모델 + 지금 값) */
+  /** 이 줄에서 고를 수 있는 값(연결의 CLI 모델 + 지금 값; 소개 검수는 등록부 key) */
   models: readonly string[];
+  /** 값 → 보이는 이름(값이 등록부 key 일 때) */
+  modelLabels?: Readonly<Record<string, string>>;
   /** 모델마다 받는 추론 강도 — 빈 목록이면 강도를 넘기지 않는다 */
   effortsByModel: Readonly<Record<string, readonly string[]>>;
-  /** 고칠 수 있는 줄: 저장 때 같은 판인지 비교한다 */
-  edit: Readonly<{ revision: string }> | null;
+  /** 고칠 수 있는 줄과 그 저장 길 — 저장 때 같은 판인지 비교한다 */
+  edit: CliTaskUsageEdit | null;
   /** 읽기 전용 까닭과 실제 설정 위치 */
   readOnly: Readonly<{ reason: string; href: string; linkLabel: string }> | null;
 }>;
+
+export type CliTaskUsageEdit = Readonly<
+  | { kind: "rank"; revision: string }
+  /** 소개 검수 단계 풀 + 강도(settings). settingsVersion = 화면이 본 설정 판, currentKey = 지금 고른 등록부 key */
+  | { kind: "stage"; stage: "product-intro-check"; settingsVersion: string; currentKey: string }
+  /** connect 에이전트 우선·예비 — 저장 때 에이전트의 지금 설정·판을 다시 읽는다 */
+  | { kind: "connect"; which: "primary" | "fallback" }>;
+
+/** 소개 검수 단계의 지금 출처(읽기에서 계산) — 단계 풀 한 모델 또는 등록부 기본값일 때만 */
+export type CliIntroStageSource = Readonly<{ source: "pool" | "default"; currentKey: string; settingsVersion: string;
+  savedEfforts: Readonly<Record<string, string>>; choices: readonly Readonly<{ key: string; model: string }>[] }>;
 
 export type CliTaskUsageView = Readonly<{ usages: readonly CliTaskUsage[]; unavailable: readonly string[] }>;
 
@@ -72,6 +88,10 @@ export type CliTaskUsageInput = Readonly<{
   /** 순위를 읽지 않는 작업의 실제 출처(buildAiCurrentSlots). 못 읽으면 null */
   current: readonly AiCurrentSlot[] | null;
   classifier: CliClassifierObservation | null;
+  /** 소개 검수를 이 화면에서 저장할 수 있을 때의 출처. null = 읽기만 */
+  introStage?: CliIntroStageSource | null;
+  /** 웹 등록부의 분류 모델(classificationModelOptions) — connect 줄의 선택지 */
+  connectModels?: readonly Readonly<{ model: string; provider: string }>[];
   routes: readonly Pick<ModelCapacityRoute, "routeId" | "provider" | "model" | "groupId">[] | null;
 }>;
 
@@ -88,7 +108,7 @@ export const CLAUDE_REVIEW_DEFAULT_EFFORT = argvEffort(reviewCliArgs("sonnet"));
 /** 소개 검수 Claude CLI 가 늘 넘기는 값(고정) */
 export const CLAUDE_INTRO_CHECK_EFFORT = argvEffort(introCheckCliArgs("sonnet"));
 /** connect 분류 에이전트가 받는 강도(lib/operations/contracts.ts modelConfigSchema) — Claude 는 high 만 */
-const CONNECT_EFFORTS: Readonly<Record<CliTaskUsageTool, readonly string[]>> = Object.freeze({ codex: ["high", "xhigh"], claude: ["high"] });
+export const CONNECT_EFFORTS: Readonly<Record<CliTaskUsageTool, readonly string[]>> = Object.freeze({ codex: ["high", "xhigh"], claude: ["high"] });
 
 const rankWhere = (task: string, slot: number, rank: number) => {
   const def = aiTask(task);
@@ -132,7 +152,7 @@ export function buildCliTaskUsages(input: CliTaskUsageInput): CliTaskUsageView {
       where: rankWhere(row.task, row.slot, row.rank), source: "rank", model: row.model, effort: optionEffort(row.options),
       defaultEffort: tool === "claude" && (row.task === "first-review" || row.task === "second-review") ? CLAUDE_REVIEW_DEFAULT_EFFORT : null,
       ...modelChoices(connection, row.task, row.model),
-      edit: reason ? null : Object.freeze({ revision: input.revisionOf(slotRows) }),
+      edit: reason ? null : Object.freeze({ kind: "rank", revision: input.revisionOf(slotRows) }),
       readOnly: reason ? Object.freeze({ reason, href: `${TASKS_PAGE}#execution-${row.task}-${row.slot}`, linkLabel: "작업 배정에서 바꾸기" }) : null }));
   }
 
@@ -162,11 +182,26 @@ export function buildCliTaskUsages(input: CliTaskUsageInput): CliTaskUsageView {
       if (use.kind !== "cli" || !isUsageTool(use.cliTool)) return;
       const tool = use.cliTool;
       const target = aiTaskEditTarget(def.id);
+      const stage = input.introStage;
+      const stageModel = stage?.choices.find(choice => choice.key === stage.currentKey)?.model;
+      if (tool === "claude" && def.id === "product-intro-check" && index === 0 && slot.uses.length === 1 && stage && stageModel === use.model) {
+        const keys = [...new Set([stage.currentKey, ...stage.choices.map(choice => choice.key)])];
+        const modelOf = (key: string) => stage.choices.find(choice => choice.key === key)?.model ?? key;
+        const saved = stage.savedEfforts[stage.currentKey];
+        usages.push(Object.freeze({ key: `stage:${def.id}`, deviceId: use.deviceId ?? deviceOfTool(tool), cliTool: tool, connectionId: null,
+          connectionLabel: "Claude CLI", task: def.id, taskLabel: def.label, slot: 1, rank: null,
+          where: stage.source === "pool" ? "단계 풀" : "등록부 기본값", source: "current", model: stage.currentKey,
+          effort: typeof saved === "string" && saved ? saved : null, defaultEffort: CLAUDE_INTRO_CHECK_EFFORT,
+          models: keys, modelLabels: Object.fromEntries(keys.map(key => [key, modelOf(key)])),
+          effortsByModel: Object.fromEntries(keys.map(key => [key, [...aiTaskReasoningEfforts(def.id, "claude", modelOf(key))]])),
+          edit: Object.freeze({ kind: "stage", stage: "product-intro-check", settingsVersion: stage.settingsVersion, currentKey: stage.currentKey }), readOnly: null }));
+        return;
+      }
       const fixed = tool === "claude" && def.id === "product-intro-check" ? CLAUDE_INTRO_CHECK_EFFORT : null;
       usages.push(Object.freeze({ key: `current:${def.id}:${slot.slot}:${index}`, deviceId: use.deviceId ?? deviceOfTool(tool), cliTool: tool, connectionId: null,
         connectionLabel: tool === "claude" ? "Claude CLI" : "Codex CLI", task: def.id, taskLabel: aiTaskSlotLabel(def, slot.slot), slot: slot.slot, rank: null,
         where: slot.source, source: "current", model: use.model, effort: fixed, defaultEffort: null, models: [use.model], effortsByModel: { [use.model]: fixed ? [fixed] : [] },
-        edit: null, readOnly: Object.freeze({ reason: fixed ? `추론 강도는 어댑터가 ${fixed}로 고정합니다` : "이 작업은 순위를 읽지 않습니다",
+        edit: null, readOnly: Object.freeze({ reason: fixed ? `${slot.source}에서 오는 값이라 여기서 바꾸지 않습니다(저장한 강도가 없으면 ${fixed})` : "이 작업은 순위를 읽지 않습니다",
           href: target?.href ?? "/admin/models/advanced#model-settings", linkLabel: target?.label ?? "실제 적용 모델 설정" }) }));
     });
   }
@@ -178,11 +213,17 @@ export function buildCliTaskUsages(input: CliTaskUsageInput): CliTaskUsageView {
     const tool = entry.provider === "codex-cli" ? "codex" : entry.provider === "claude-cli" ? "claude" : null;
     if (!tool) continue;
     const effort = entry.effort && EFFORT.test(entry.effort) ? entry.effort : null;
+    const provider = entry.provider!;
+    const offered = (input.connectModels ?? []).filter(option => option.provider === provider).map(option => option.model);
+    const models = [...new Set([entry.model, ...offered])];
+    const editable = offered.includes(entry.model) && input.classifier!.fresh;
     usages.push(Object.freeze({ key: `connect:${entry.rank}`, deviceId: routeDevice(classify.routeId, entry.provider!, entry.model) ?? deviceOfTool(tool), cliTool: tool,
       connectionId: null, connectionLabel: tool === "claude" ? "Claude CLI" : "Codex CLI", task: classify.id, taskLabel: classify.label, slot: 1, rank: entry.rank,
       where: `connect ${entry.rank === 1 ? "우선" : "예비"}${input.classifier!.fresh ? "" : " · 관측 오래됨"}`, source: "connect", model: entry.model, effort,
-      defaultEffort: null, models: [entry.model], effortsByModel: { [entry.model]: [...CONNECT_EFFORTS[tool]] }, edit: null,
-      readOnly: Object.freeze({ reason: "connect 에이전트가 검사한 뒤 적용합니다", href: CONNECT_PAGE, linkLabel: "AI 연결·설정에서 바꾸기" }) }));
+      defaultEffort: null, models, effortsByModel: Object.fromEntries(models.map(model => [model, [...CONNECT_EFFORTS[tool]]])),
+      edit: editable ? Object.freeze({ kind: "connect", which: entry.rank === 1 ? "primary" : "fallback" }) : null,
+      readOnly: editable ? null : Object.freeze({ reason: input.classifier!.fresh ? "웹 등록부에 없는 분류 모델입니다" : "connect 관측이 오래되어 지금 설정을 확인할 수 없습니다",
+        href: CONNECT_PAGE, linkLabel: "AI 연결·설정에서 바꾸기" }) }));
   }
   return Object.freeze({ usages: Object.freeze(usages), unavailable: Object.freeze(unavailable) });
 }
@@ -248,6 +289,48 @@ export function cliTaskModelEdit(rows: readonly AiTaskRankRow[], request: CliTas
   return { ok: true, input: { task: def.id, slot: request.slot, revision: request.revision, ranks }, changed };
 }
 
+// ── 소개 검수 단계 풀·강도 저장 입력 ──────────────────────────────────────────────────────────────────────
+
+export type CliStageModelEditRequest = Readonly<{ stage: "product-intro-check"; settingsVersion: string; currentKey: string; key: string;
+  /** "" = 기본(저장한 강도를 지운다 → high) */
+  reasoningEffort: string }>;
+const REGISTRY_KEY = /^[a-z0-9][a-z0-9-]*:[a-z0-9][a-z0-9-]*$/;
+
+export function cliStageModelEditFromForm(form: FormLike): CliStageModelEditRequest | null {
+  const text = (name: string) => { const value = form.get(name); return typeof value === "string" ? value.trim() : ""; };
+  const currentKey = text("currentKey"), key = text("model") || currentKey, settingsVersion = text("settingsVersion"), reasoningEffort = text("reasoningEffort");
+  if (text("stage") !== "product-intro-check" || !/^[a-f0-9]{32}$/.test(settingsVersion) || !REGISTRY_KEY.test(currentKey) || !REGISTRY_KEY.test(key)
+    || (reasoningEffort !== "" && !EFFORT.test(reasoningEffort))) return null;
+  return { stage: "product-intro-check", settingsVersion, currentKey, key, reasoningEffort };
+}
+
+export type CliStageSettingsPatch = { ok: true; changed: boolean; poolChanged: boolean;
+  patch: { stageModelEfforts: Record<string, Record<string, string>>; stageModelPools?: Record<string, string[]> } } | { ok: false; issue: string };
+
+/**
+ * 순수 — 지금 설정 위에 소개 검수 단계 풀(바꾼 모델이면 그 key 하나)과 그 key 의 강도를 얹은 saveSettings 패치. 모델은 등록부의 Claude CLI 정의여야 하고
+ * (호출자가 adminStageAcceptsModel 로 거른 choices), 강도는 그 모델이 받는 값(aiTaskReasoningEfforts)이거나 ""(기본 high).
+ * 다른 단계 풀·다른 key 의 강도는 그대로다.
+ */
+export function cliStageSettingsPatch(current: { stageModelPools?: Readonly<Record<string, readonly string[] | undefined>>;
+    stageModelEfforts?: Readonly<Record<string, Readonly<Record<string, string>>>> }, request: CliStageModelEditRequest,
+  choices: readonly Readonly<{ key: string; model: string }>[]): CliStageSettingsPatch {
+  const choice = choices.find(entry => entry.key === request.key);
+  if (!choice) return { ok: false, issue: "소개 검수가 받지 않는 모델입니다(등록부의 Claude CLI 모델만)." };
+  if (request.reasoningEffort && !aiTaskReasoningEfforts(request.stage, "claude", choice.model).includes(request.reasoningEffort))
+    return { ok: false, issue: `${choice.model}은(는) 추론 강도 ${request.reasoningEffort}을(를) 받지 않습니다.` };
+  const poolChanged = request.key !== request.currentKey;
+  const efforts: Record<string, Record<string, string>> = Object.fromEntries(Object.entries(current.stageModelEfforts ?? {}).map(([stage, map]) => [stage, { ...map }]));
+  const mine = efforts[request.stage] ?? {};
+  const before = mine[request.key] ?? "";
+  if (request.reasoningEffort) mine[request.key] = request.reasoningEffort; else delete mine[request.key];
+  if (Object.keys(mine).length) efforts[request.stage] = mine; else delete efforts[request.stage];
+  const changed = poolChanged || before !== request.reasoningEffort;
+  const pools = Object.fromEntries(Object.entries(current.stageModelPools ?? {}).flatMap(([stage, keys]) => keys ? [[stage, [...keys]]] : [])) as Record<string, string[]>;
+  if (poolChanged) pools[request.stage] = [request.key];
+  return { ok: true, changed, poolChanged, patch: { stageModelEfforts: efforts, ...(poolChanged ? { stageModelPools: pools } : {}) } };
+}
+
 // ── 읽기 ───────────────────────────────────────────────────────────────────────────────────────────────
 
 const CONNECT_FRESH_MS = 5 * 60_000;
@@ -284,23 +367,56 @@ async function readConnectObservation(now: number): Promise<CliClassifierObserva
  * 장비 한도 화면이 한 번 읽는다 — 연결·순위·작업 분산·순위를 읽지 않는 작업의 실제 출처·connect 관측. 네트워크(에이전트 호출)는 하지 않는다.
  * 하나를 못 읽어도 나머지는 보이고 unavailable 에 그 문장이 남는다. 연결·순위를 못 읽으면 줄이 없다.
  */
+/** 소개 검수 단계의 지금 출처 → 이 화면이 저장할 수 있는가(단계 풀 한 모델 또는 등록부 기본값). 배정 표·여러 모델 풀·출처 미확인이면 null. */
+export function introStageSource(input: { settings: { stageModelPools?: Readonly<Record<string, readonly string[] | undefined>>;
+    stageModelEfforts?: Readonly<Record<string, Readonly<Record<string, string>>>> }; settingsUnknown?: boolean; slot: AiCurrentSlot | null;
+  settingsVersion: string; defaultKey: string | null; choices: readonly Readonly<{ key: string; model: string }>[] }): CliIntroStageSource | null {
+  if (input.settingsUnknown || !input.slot || input.slot.error) return null;
+  const pool = input.settings.stageModelPools?.["product-intro-check"] ?? [];
+  const savedEfforts = input.settings.stageModelEfforts?.["product-intro-check"] ?? {};
+  const base = { settingsVersion: input.settingsVersion, savedEfforts, choices: input.choices };
+  if (input.slot.source === "단계 풀" && pool.length === 1) return { ...base, source: "pool", currentKey: pool[0] };
+  if (input.slot.source === "등록부·env 기본값" && pool.length === 0 && input.defaultKey) return { ...base, source: "default", currentKey: input.defaultKey };
+  return null;
+}
+
+/**
+ * 장비 한도 화면이 한 번 읽는다 — 연결·순위·작업 분산·순위를 읽지 않는 작업의 실제 출처·connect 관측. 네트워크(에이전트 호출)는 하지 않는다.
+ * 하나를 못 읽어도 나머지는 보이고 unavailable 에 그 문장이 남는다. 연결·순위를 못 읽으면 순위 줄이 없다.
+ */
 export async function readCliTaskUsages(): Promise<CliTaskUsageView> {
   const [{ aiTaskSlotRevision, listAiConnections, listAiTaskRows }, { readAiTaskExecutionAdminViews }, { buildAiCurrentSlots, readAiCurrentSources },
-    { readCapacityDevicesControl }] = await Promise.all([import("./admin-ai-tasks-repository"), import("./admin-ai-task-execution"),
-    import("./admin-ai-task-current"), import("./admin-capacity-devices")]);
+    { readCapacityDevicesControl }, { settingsFormVersion }, registryModule, { ADMIN_MODEL_STAGES, adminStageAcceptsModel }, { classificationModelOptions }] = await Promise.all([
+    import("./admin-ai-tasks-repository"), import("./admin-ai-task-execution"), import("./admin-ai-task-current"), import("./admin-capacity-devices"),
+    import("@/lib/crawl/settings"), import("@/lib/llm/model-registry"), import("@/lib/llm/admin-model-stages"), import("./classification-models")]);
   const now = Date.now();
   const policy = await readCapacityDevicesControl().then(control => control.policy).catch(() => null);
-  const [connections, rows, executions, current, classifier] = await Promise.all([
+  const [connections, rows, executions, sources, classifier] = await Promise.all([
     listAiConnections().catch(() => null),
     listAiTaskRows().catch(() => null),
     readAiTaskExecutionAdminViews().catch(() => null),
-    readAiCurrentSources(policy, { includeAgent: false }).then(buildAiCurrentSlots).catch(() => null),
+    readAiCurrentSources(policy, { includeAgent: false }).catch(() => null),
     readConnectObservation(now),
   ]);
+  let current: AiCurrentSlot[] | null = null;
+  try { current = sources ? buildAiCurrentSlots(sources) : null; } catch { current = null; }
+  let introStage: CliIntroStageSource | null = null;
+  try {
+    const stage = ADMIN_MODEL_STAGES.find(row => row.id === "product-intro-check")!;
+    const choices = registryModule.readModelRegistry().models.filter(model => model.provider === "claude-cli" && adminStageAcceptsModel(stage, model))
+      .map(model => ({ key: model.key, model: registryModule.modelRequestName(model) }));
+    let defaultKey: string | null = null;
+    try { defaultKey = registryModule.configuredModelDefinition("product-intro-check").key; } catch { defaultKey = null; }
+    introStage = sources ? introStageSource({ settings: sources.settings, settingsUnknown: sources.settingsUnknown, settingsVersion: settingsFormVersion(sources.settings),
+      slot: current?.find(slot => slot.task === "product-intro-check") ?? null, defaultKey, choices }) : null;
+  } catch { introStage = null; }
+  let connectModels: { model: string; provider: string }[] = [];
+  try { connectModels = classificationModelOptions(); } catch { connectModels = []; }
   const routes = policy?.routes ?? null;
+  const common = { revisionOf: aiTaskSlotRevision, executions, current, classifier, routes, introStage, connectModels };
   if (!connections || !rows) {
-    const rest = buildCliTaskUsages({ connections: [], rows: [], revisionOf: aiTaskSlotRevision, executions, current, classifier, routes });
+    const rest = buildCliTaskUsages({ ...common, connections: [], rows: [] });
     return Object.freeze({ usages: rest.usages, unavailable: Object.freeze(["CLI 연결·작업 순위를 읽지 못했습니다 — 순위 줄은 보이지 않습니다.", ...rest.unavailable]) });
   }
-  return buildCliTaskUsages({ connections, rows, revisionOf: aiTaskSlotRevision, executions, current, classifier, routes });
+  return buildCliTaskUsages({ ...common, connections, rows });
 }
