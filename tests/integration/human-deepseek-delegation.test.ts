@@ -10,8 +10,9 @@ import { lockedInput } from "@/lib/crawl/admin-review";
 import { runJob } from "@/lib/jobs/runner";
 import type { JobLease } from "@/lib/jobs/control";
 import { publishCandidates } from "@/lib/crawl/jobs/publish";
-import { claimHumanReview, deferHumanReviewForModelCapacity, humanReviewRepos, recordHumanReview,
+import { claimHumanReview, deferHumanReviewForModelCapacity, humanReviewRepos, recordHumanReview, refreshStaleDelegatedSources,
   requeueInvalidHumanApprovals, type HumanReviewClaim } from "@/lib/crawl/human-review-repository";
+import type { DelegatedRepoCheck } from "@/lib/crawl/delegated-repo-check";
 import { localModelDomainRefusal } from "@/lib/llm/local-model-domain";
 import { releaseRole, tryAcquireRole, type RoleLease } from "@/lib/jobs/role-leader";
 import { saveRepositoryAgentScan } from "@/lib/domain/evidence/agents/repository";
@@ -103,13 +104,16 @@ const abstain: DeepSeekReviewResult = { ok: true, outcome: { decision: "needs_re
 const queue = async (...ids: number[]) => humanReviewRepos(ids, [], { settings: await getSettings() });
 
 /** claim → (모델 답) → 기록. 같은 잡 lease 로 한다 */
-async function review(repo: string, result: DeepSeekReviewResult) {
+async function review(repo: string, result: DeepSeekReviewResult, repoCheck?: DelegatedRepoCheck) {
   return withHumanJob(async lease => {
     const claim = await claimHumanReview(repo, lease);
     if (!claim) return { claim: null, state: null };
-    return { claim, state: await recordHumanReview(claim, result) };
+    return { claim, state: await recordHumanReview(claim, result, repoCheck ? { repoCheck: { check: repoCheck, retryAt: null } } : {}) };
   });
 }
+const sweep = async () => withHumanJob(async lease => refreshStaleDelegatedSources(lease, await getSettings()));
+const frontierOf = async (repo: string) => (await db.select().from(crawlFrontier).where(eq(crawlFrontier.repo, repo)))[0];
+const fetchRequests = async () => (await db.select().from(jobs).where(eq(jobs.name, "crawl-fetch")))[0]?.requestedVersion ?? 0;
 
 describe("사람 몫 위임 검수 — 고르기", () => {
   it("사람 큐에 최근 들어온 것부터 고르고, 24시간 지난 근거도 고르며, 읽는 수에 상한이 있다", async () => {
@@ -161,16 +165,16 @@ describe("사람 몫 위임 검수 — 고르기", () => {
 });
 
 describe("사람 몫 위임 검수 — 24시간 지난 근거의 승인", () => {
-  it("24시간 지난 입력도 승인하면 발행된다 — 되돌리지 않고, 근거 나이를 감사에 남긴다", async () => {
+  it("24~72시간(48시간) 지난 입력도 저장소가 있으면 승인해 발행한다 — 되돌리지 않고, 근거 나이·저장소 확인을 감사에 남긴다", async () => {
     const floor = await auditFloor();
-    const { row } = await split(0, { ageHours: 30 });
-    const { claim, state } = await review(row.repo, approve);
+    const { row } = await split(0, { ageHours: 48 });
+    const { claim, state } = await review(row.repo, approve, "present");
     expect(state).toBe("applied");
     expect(claim!.input.validUntil.getTime()).toBeLessThan(Date.now());
     expect(await candidateRow(row.id)).toMatchObject({ state: "approved", decidedBy: "deepseek" });
     const [audit] = await auditRowsAfter(floor, "candidate-deepseek-decision");
-    expect(audit.detail).toMatchObject({ evidenceExpired: true, outcome: { decision: "approve" } });
-    expect((audit.detail as { evidenceAgeHours: number }).evidenceAgeHours).toBeGreaterThanOrEqual(30);
+    expect(audit.detail).toMatchObject({ evidenceExpired: true, repoCheck: "present", outcome: { decision: "approve" } });
+    expect((audit.detail as { evidenceAgeHours: number }).evidenceAgeHours).toBeGreaterThanOrEqual(48);
 
     // 다음 틱 머리의 되돌리기가 기한만으로 사람 큐에 돌려보내지 않는다
     expect(await withHumanJob(lease => requeueInvalidHumanApprovals(lease))).toBe(0);
@@ -199,7 +203,7 @@ describe("사람 몫 위임 검수 — 24시간 지난 근거의 승인", () => 
 
     const approveWithEvidence: DeepSeekReviewResult = { ok: true, outcome: { decision: "approve", reason: "Built with an agent and usable.",
       evidenceIds: ["product", anyAge!.input.snapshot.evidence[0].id], confidence: 0.97 } };
-    expect(await review(row.repo, approveWithEvidence)).toMatchObject({ state: "applied" });
+    expect(await review(row.repo, approveWithEvidence, "present")).toMatchObject({ state: "applied" });
     expect(await withHumanJob(lease => requeueInvalidHumanApprovals(lease))).toBe(0);
     await publish();
     expect(await candidateRow(row.id)).toMatchObject({ state: "published" });
@@ -208,13 +212,90 @@ describe("사람 몫 위임 검수 — 24시간 지난 근거의 승인", () => 
 
   it("발행 전에 원본이 바뀌면 그 위임 승인으로 발행하지 않는다 — 기한만 풀었고 같은 원본 대조는 그대로다", async () => {
     const { row, document } = await split(0, { ageHours: 30 });
-    expect(await review(row.repo, approve)).toMatchObject({ state: "applied" });
+    expect(await review(row.repo, approve, "present")).toMatchObject({ state: "applied" });
     await db.update(crawlDocuments).set({ fetchedAt: new Date(), pageMeta: { title: "Split 0", description: "Something else now" } })
       .where(eq(crawlDocuments.id, document.id));
     await publish();
     expect(await db.select().from(products)).toHaveLength(0);
     expect(await withHumanJob(lease => requeueInvalidHumanApprovals(lease))).toBe(1);
     expect(await candidateRow(row.id)).toMatchObject({ state: "needs_review", reason: "second_review_split", decidedBy: "auto" });
+  });
+});
+
+describe("72시간 넘은 근거의 승인 — 공개 전에 다시 검수(2026-11-09 운영자 결정)", () => {
+  it("73시간 지난 승인은 발행하지 않고 사람 큐에 남기며, 원본 재수집을 한 번만 요청한다 — 다시 받은 뒤 승인하면 발행된다", async () => {
+    const floor = await auditFloor();
+    const { row, document } = await split(0, { ageHours: 73 });
+    expect(await review(row.repo, approve)).toMatchObject({ state: "stale" });
+    expect(await candidateRow(row.id)).toMatchObject({ state: "needs_review", reason: "second_review_split", decidedBy: "auto" });
+    const [attempt] = await delegatedAttempts(row.id);
+    expect(attempt).toMatchObject({ state: "succeeded", reason: "stale_evidence_refresh", outcome: { decision: "needs_review" } });
+    const [audit] = await auditRowsAfter(floor, "candidate-deepseek-stale-hold");
+    expect(audit.detail).toMatchObject({ cause: "evidence_over_72h", outcome: { decision: "approve" } });
+    expect((audit.detail as { evidenceAgeHours: number }).evidenceAgeHours).toBeGreaterThan(72);
+    expect(await withHumanJob(lease => requeueInvalidHumanApprovals(lease))).toBe(0);
+    await publish();
+    expect(await db.select().from(products)).toHaveLength(0);
+    // 같은 입력은 다시 고르지 않는다
+    expect(await queue(row.id)).toEqual([]);
+
+    const before = await fetchRequests();
+    expect(await sweep()).toEqual({ requested: 1, gone: 0, failed: 0 });
+    expect(await frontierOf(row.repo)).toMatchObject({ state: "pending", signal: "review-source-refresh" });
+    expect(await fetchRequests()).toBeGreaterThan(before);
+    // 매 틱 다시 요청하지 않는다 — 수집이 아직 안 돌았을 때도, 돌고 난 뒤에도
+    expect(await sweep()).toEqual({ requested: 0, gone: 0, failed: 0 });
+
+    // 수집 잡이 원본을 다시 받았다(내용은 같다 — 해시가 같아도 수집 시각이 새 입력을 만든다)
+    await db.update(crawlFrontier).set({ state: "done", updatedAt: new Date() }).where(eq(crawlFrontier.repo, row.repo));
+    await db.update(crawlDocuments).set({ fetchedAt: new Date() }).where(eq(crawlDocuments.id, document.id));
+    expect(await sweep()).toEqual({ requested: 0, gone: 0, failed: 0 });
+    expect(await queue(row.id)).toEqual([row.repo]);
+    expect(await review(row.repo, approve)).toMatchObject({ state: "applied" });
+    await publish();
+    expect(await candidateRow(row.id)).toMatchObject({ state: "published" });
+  });
+
+  it("다시 받기가 404 로 끝나면(저장소 삭제·비공개) 발행하지 않고 repo_deleted 로 사람에게 넘기며 감사를 남긴다", async () => {
+    const floor = await auditFloor();
+    const { row } = await split(0, { ageHours: 80 });
+    expect(await review(row.repo, approve)).toMatchObject({ state: "stale" });
+    expect(await sweep()).toMatchObject({ requested: 1 });
+    // 수집 잡이 404 를 만나 건너뛰었다(원본은 그대로)
+    await db.update(crawlFrontier).set({ state: "skipped", lastError: "github_not_found", updatedAt: new Date() }).where(eq(crawlFrontier.repo, row.repo));
+    expect(await sweep()).toEqual({ requested: 0, gone: 1, failed: 0 });
+    expect(await candidateRow(row.id)).toMatchObject({ state: "needs_review", reason: "repo_deleted", decidedBy: "auto",
+      signals: { stoppedAt: { rule: "원본 재수집" } } });
+    const [audit] = await auditRowsAfter(floor, "candidate-deepseek-stale-refresh-failed");
+    expect(audit.detail).toMatchObject({ reason: "repo_deleted", frontierError: "github_not_found" });
+    expect(await sweep()).toEqual({ requested: 0, gone: 0, failed: 0 });
+    await publish();
+    expect(await db.select().from(products)).toHaveLength(0);
+  });
+
+  it("24~72시간 근거의 승인에서 저장소가 사라졌으면 발행하지 않고 repo_deleted 로 넘긴다 — 확인을 못 했으면 미룬다", async () => {
+    const floor = await auditFloor();
+    const gone = await split(0, { ageHours: 48 });
+    expect(await review(gone.row.repo, approve, "gone")).toMatchObject({ state: "repo_gone" });
+    expect(await candidateRow(gone.row.id)).toMatchObject({ state: "needs_review", reason: "repo_deleted", decidedBy: "auto" });
+    expect(await auditRowsAfter(floor, "candidate-deepseek-repo-gone")).toHaveLength(1);
+
+    const unknown = await split(1, { ageHours: 48 });
+    expect(await review(unknown.row.repo, approve, "deferred")).toMatchObject({ state: "deferred" });
+    expect(await candidateRow(unknown.row.id)).toMatchObject({ state: "needs_review", reason: "second_review_split" });
+    expect((await delegatedAttempts(unknown.row.id))[0]).toMatchObject({ state: "superseded", errorCode: "repo_check_deferred" });
+    // 미룸은 다시 볼 시각 전까지 고르지 않고, 시도로 세지 않는다
+    expect(await queue(unknown.row.id)).toEqual([]);
+    await publish();
+    expect(await db.select().from(products)).toHaveLength(0);
+  });
+
+  it("100시간 지난 근거의 거부는 그대로 닫는다", async () => {
+    const { row } = await split(0, { ageHours: 100 });
+    const reject: DeepSeekReviewResult = { ok: true, outcome: { decision: "reject", reason: "Not a product.", evidenceIds: ["product"], confidence: 0.97 } };
+    expect(await review(row.repo, reject)).toMatchObject({ state: "applied" });
+    expect(await candidateRow(row.id)).toMatchObject({ state: "rejected", decidedBy: "deepseek" });
+    expect(await sweep()).toEqual({ requested: 0, gone: 0, failed: 0 });
   });
 });
 

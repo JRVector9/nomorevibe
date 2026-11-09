@@ -2,12 +2,13 @@ import type { JobContext, JobOutcome } from '@/lib/jobs/runner';
 import { getSettings } from '../settings';
 import { humanQueueOverview } from '../review-overview';
 import { claimHumanReview, recordHumanReview, requeueInvalidHumanApprovals, humanReviewRepos, deferHumanReviewForModelCapacity,
-  HUMAN_REVIEW_SCAN_FACTOR } from '../human-review-repository';
+  HUMAN_REVIEW_SCAN_FACTOR, delegatedApprovalRoute, refreshStaleDelegatedSources } from '../human-review-repository';
+import { checkDelegatedRepository, type DelegatedRepoCheckResult } from '../delegated-repo-check';
 import { withLocalModelCapacity } from '@/lib/llm/local-model-capacity';
 import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
 import { REVIEW_FRESH_MS, REVIEW_PROMPT_VERSION, reviewEvidenceAgeHours } from '../agent-review-contract';
 import { reviewWithDeepSeek } from '../deepseek-review';
-import { deepseekReviewTimeoutMs } from '../deepseek-review-policy';
+import { DEEPSEEK_MIN_CONFIDENCE, deepseekReviewTimeoutMs } from '../deepseek-review-policy';
 import { withDeepSeekSlot } from '../deepseek-slot';
 import { heldQwenOwnedReasons } from '../held-qwen-retry-policy';
 
@@ -36,7 +37,13 @@ export async function reviewHumanQueue(ctx: JobContext<null>): Promise<JobOutcom
     ctx.log('crawl.human_review_skipped', { reason: 'disabled', requeued });
     return { done: true };
   }
+  // 72시간 넘은 근거라 보류한 승인의 원본 재수집 요청·결과 처리(보류 한 번에 요청 한 번) — 위임 앞뒤로 한 번씩
+  const refreshed = await refreshStaleDelegatedSources(lease, settings);
   const delegated = await delegateToDeepSeek(ctx, lease, settings, requeued);
+  const after = await refreshStaleDelegatedSources(lease, settings);
+  if (refreshed.requested + refreshed.gone + refreshed.failed + after.requested + after.gone + after.failed)
+    ctx.log('crawl.human_review_stale_refresh', { requested: refreshed.requested + after.requested,
+      gone: refreshed.gone + after.gone, failed: refreshed.failed + after.failed });
   return { done: delegated === 0 };
 }
 
@@ -47,7 +54,7 @@ async function delegateToDeepSeek(ctx: JobContext<null>, lease: NonNullable<JobC
   const ids = [...new Set([...overview.ids.human, ...overview.ids.agreed])];
   const repos = await humanReviewRepos(ids, heldQwenOwnedReasons(settings),
     { settings, limit: HUMAN_REVIEW_MAX_PER_TICK * HUMAN_REVIEW_SCAN_FACTOR });
-  let started = 0, applied = 0, held = 0, failed = 0, unclaimed = 0, agedEvidence = 0;
+  let started = 0, applied = 0, held = 0, failed = 0, unclaimed = 0, agedEvidence = 0, stale = 0, repoGone = 0, repoDeferred = 0;
   let oldestEvidenceHours: number | null = null;
   const callTimeoutMs = deepseekReviewTimeoutMs();
   const room = () => !ctx.signal?.aborted && ctx.hasBudget()
@@ -83,13 +90,22 @@ async function delegateToDeepSeek(ctx: JobContext<null>, lease: NonNullable<JobC
       ctx.log('crawl.human_review_capacity_deferred', { reason: error.reason });
       break;
     } finally { clearInterval(poll); }
-    const state = await recordHumanReview(claim, result);
+    // 24~72시간 근거의 승인은 발행 전에 저장소가 아직 있는지 묻는다(트랜잭션 밖, 한 번). 기록이 같은 나이로 다시 가른다
+    let repoCheck: DelegatedRepoCheckResult | undefined;
+    if (result.ok && result.outcome.decision === 'approve' && (result.outcome.confidence ?? 0) >= DEEPSEEK_MIN_CONFIDENCE
+      && delegatedApprovalRoute(reviewEvidenceAgeHours(claim.input, claim.startedAt)) === 'check_repo')
+      repoCheck = await checkDelegatedRepository(claim.repo, ctx.signal);
+    const state = await recordHumanReview(claim, result, repoCheck ? { repoCheck } : {});
     if (state === 'applied') applied++;
     if (state === 'held') held++;
     if (state === 'failed') failed++;
-    if (!result.ok) break;
+    if (state === 'stale') stale++;
+    if (state === 'repo_gone') repoGone++;
+    if (state === 'deferred') repoDeferred++;
+    // GitHub 를 못 물었으면(한도·전송) 이 틱의 나머지 승인도 같은 일을 겪는다 — 멈춘다
+    if (!result.ok || state === 'deferred') break;
   }
   ctx.log('crawl.human_reviewed', { started, applied, held, failed, requeued, candidates: repos.length, unclaimed,
-    agedEvidence, oldestEvidenceHours });
-  return applied + held + failed;
+    agedEvidence, oldestEvidenceHours, stale, repoGone, repoDeferred });
+  return applied + held + failed + stale + repoGone;
 }

@@ -4,6 +4,7 @@ import type { ReviewInput } from '@/lib/crawl/agent-review-contract';
 const mocks = vi.hoisted(() => ({
   admin: vi.fn(), save: vi.fn(), ready: vi.fn(), settings: vi.fn(), overview: vi.fn(), repos: vi.fn(),
   claim: vi.fn(), record: vi.fn(), requeue: vi.fn(), infer: vi.fn(), revalidate: vi.fn(), defer: vi.fn(),
+  refresh: vi.fn(), repoCheck: vi.fn(),
 }));
 // 2026-10-31(PR 3a-C): 보류 Qwen-v2 재심사(held-qwen-retry)와 갈림 판가름의 DeepSeek 확인(split-confirm)은 자기 잡이다 — 이 잡은 둘을 부르지 않는다
 vi.mock('@/lib/crawl/held-qwen-retry', () => ({ runHeldQwenRetry: () => { throw new Error('human_review_must_not_run_held_qwen'); } }));
@@ -16,7 +17,10 @@ vi.mock('@/lib/crawl/review-overview', () => ({ humanQueueOverview: mocks.overvi
 vi.mock('@/lib/crawl/human-review-repository', () => ({
   claimHumanReview: mocks.claim, recordHumanReview: mocks.record, requeueInvalidHumanApprovals: mocks.requeue,
   humanReviewRepos: mocks.repos, deferHumanReviewForModelCapacity: mocks.defer, HUMAN_REVIEW_SCAN_FACTOR: 4,
+  refreshStaleDelegatedSources: mocks.refresh,
+  delegatedApprovalRoute: (hours: number) => hours > 72 ? 'refresh' : hours > 24 ? 'check_repo' : 'publish',
 }));
+vi.mock('@/lib/crawl/delegated-repo-check', () => ({ checkDelegatedRepository: mocks.repoCheck }));
 vi.mock('@/lib/crawl/deepseek-review', async importOriginal => {
   const original = await importOriginal<typeof import('@/lib/crawl/deepseek-review')>();
   return { ...original, deepseekReviewReady: mocks.ready, reviewWithDeepSeek: mocks.infer };
@@ -153,6 +157,29 @@ describe('human queue worker', () => {
     mocks.repos.mockResolvedValue(['a/one', 'b/two', 'c/three']);
     mocks.claim.mockResolvedValue({ input }); mocks.infer.mockResolvedValue({ ok: true, outcome: verdict });
     mocks.record.mockResolvedValue('applied');
+    mocks.refresh.mockResolvedValue({ requested: 0, gone: 0, failed: 0 });
+    mocks.repoCheck.mockResolvedValue({ check: 'present', retryAt: null });
+  });
+  const aged = (hours: number) => ({ input: { ...input, validUntil: new Date(Date.now() - (hours - 24) * 3600_000) }, startedAt: new Date() });
+  // 2026-11-09: 24~72시간 근거의 승인만 GitHub 에 저장소를 묻는다 — 72시간 넘은 것은 기록이 원본 재수집으로 보낸다
+  it('asks GitHub whether the repository still exists only for approvals on 24-72h evidence', async () => {
+    mocks.repos.mockResolvedValue(['a/fresh', 'b/aged', 'c/old']);
+    mocks.claim.mockResolvedValueOnce({ input, startedAt: new Date() }).mockResolvedValueOnce(aged(48)).mockResolvedValueOnce(aged(100));
+    await reviewHumanQueue(ctx());
+    expect(mocks.repoCheck).toHaveBeenCalledTimes(1);
+    expect(mocks.record.mock.calls.map(call => call[2])).toEqual([{}, { repoCheck: { check: 'present', retryAt: null } }, {}]);
+  });
+  it('does not ask GitHub for rejections of old evidence', async () => {
+    mocks.claim.mockResolvedValue(aged(48)); mocks.infer.mockResolvedValue({ ok: true, outcome: { ...verdict, decision: 'reject' } });
+    await reviewHumanQueue(ctx()); expect(mocks.repoCheck).not.toHaveBeenCalled();
+  });
+  it('stops the tick when the repository check had to be deferred', async () => {
+    mocks.claim.mockResolvedValue(aged(48)); mocks.repoCheck.mockResolvedValue({ check: 'deferred', retryAt: null });
+    mocks.record.mockResolvedValue('deferred');
+    await reviewHumanQueue(ctx()); expect(mocks.infer).toHaveBeenCalledTimes(1);
+  });
+  it('runs the stale-evidence refresh sweep around the delegation', async () => {
+    await reviewHumanQueue(ctx()); expect(mocks.refresh).toHaveBeenCalledTimes(2);
   });
   // 2026-11-09: 고정 2건 대신 예산·마감이 허락하는 만큼(상한 HUMAN_REVIEW_MAX_PER_TICK)
   it('delegates every selected candidate that fits the budget and reports remaining work', async () => {
