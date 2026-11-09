@@ -188,7 +188,8 @@ export type DashboardTodo = Readonly<{ id: string; level: LlmOpsLevel; title: st
   retry?: readonly { routeId: string; label: string; count: number }[] }>;
 export type DashboardView = Readonly<{
   readable: boolean; observedAt: string | null; flowAt: string | null;
-  banner: { level: LlmOpsLevel; title: string; lines: string[] };
+  /** lines = 둘째 이후 문제 + 의도적 중지 한 줄(옛 모양 그대로). notes = 둘째 이후 문제만, paused = 의도적으로 멈춘 작업 이름 — 띠가 「의도적 중지」를 따로 그린다 */
+  banner: { level: LlmOpsLevel; title: string; lines: string[]; notes: string[]; paused: string[] };
   admission: { mode: AdminModelsObservation["mode"]; text: string; level: LlmOpsLevel; detail: string };
   kpis: DashboardKpi[]; devices: DashboardDevice[]; devicesNote: string | null;
   stages: DashboardStage[]; todos: DashboardTodo[]; moreTodos: number;
@@ -330,7 +331,8 @@ export function buildDashboardView(input: DashboardInput): DashboardView {
   const ranked = [...issues].sort((a, b) => LEVEL_RANK[b.level] - LEVEL_RANK[a.level]);
   const level = ranked.reduce<LlmOpsLevel>((worst, issue) => worseLevel(worst, issue.level), "ok");
   const title = ranked[0]?.text ?? (pausedStages.length ? "정상 — 의도적으로 멈춘 작업 외에는 문제가 없습니다." : "모든 LLM 단계가 정상입니다.");
-  const lines = [...ranked.slice(1).map(issue => issue.text), ...(pausedLine ? [pausedLine] : [])];
+  const notes = ranked.slice(1).map(issue => issue.text);
+  const lines = [...notes, ...(pausedLine ? [pausedLine] : [])];
 
   // 먼저 할 일
   const todos: DashboardTodo[] = [];
@@ -370,7 +372,7 @@ export function buildDashboardView(input: DashboardInput): DashboardView {
   const sorted = todos.map((todo, index) => ({ todo, index })).sort((a, b) => LEVEL_RANK[b.todo.level] - LEVEL_RANK[a.todo.level] || a.index - b.index).map(entry => entry.todo);
 
   return { readable, observedAt: observation.observedAt, flowAt: input.conveyor?.measuredAt ?? null,
-    banner: { level, title, lines }, admission, kpis, devices, devicesNote, stages, todos: sorted.slice(0, 3), moreTodos: Math.max(0, sorted.length - 3) };
+    banner: { level, title, lines, notes, paused: pausedLabels }, admission, kpis, devices, devicesNote, stages, todos: sorted.slice(0, 3), moreTodos: Math.max(0, sorted.length - 3) };
 }
 
 // ── LLM 운영 ────────────────────────────────────────────────────────────────────────────────────────

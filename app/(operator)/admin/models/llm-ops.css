@@ -22,31 +22,7 @@
 .llm-stamp { color: var(--muted); font-size: calc(13px + var(--admin-font-delta, 0px)); white-space: nowrap; }
 .llm-stamp.stale { color: var(--amber); }
 
-/* 판단 띠 + 접수 — 규칙을 관리자 셸(.admin-prototype .llm-ops) 안으로 좁힌다: prototype.css 의 요소 규칙(h2·p·button)이 층으로 옮겨 가든,
-   CSS 묶음(chunk) 순서가 바뀌든 이 값이 이긴다.
-   두 칸은 위에 맞춰 각자 높이로 둔다. stretch 였을 때 운영(2026-11-08)에서 접수 카드가 길어지자 띠가 그만큼 늘고, 띠 본문 grid 의
-   자동 행이 늘어난 높이를 나눠 가져 제목·줄·관측 시각이 위아래로 흩어졌다 — 띠 본문도 align-content: start 로 막는다. */
-.admin-prototype .llm-ops .llm-top { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 340px); gap: var(--llm-gap); align-items: start; }
-.admin-prototype .llm-ops .llm-banner { display: flex; align-items: flex-start; gap: 14px; padding: 16px 18px; border: 1px solid var(--line); border-left-width: 5px; border-radius: 10px; background: var(--surface); min-width: 0; }
-.admin-prototype .llm-ops .llm-banner[data-level=ok] { border-left-color: var(--green); background: var(--green-soft); }
-.admin-prototype .llm-ops .llm-banner[data-level=warn] { border-left-color: var(--amber); background: var(--amber-soft); }
-.admin-prototype .llm-ops .llm-banner[data-level=bad] { border-left-color: var(--red); background: var(--red-soft); }
-.admin-prototype .llm-ops .llm-banner[data-level=unknown], .admin-prototype .llm-ops .llm-banner[data-level=idle] { border-left-color: var(--muted); background: var(--surface-2); border-left-style: dashed; }
-.admin-prototype .llm-ops .llm-banner-shape { flex: none; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 8px; background: var(--surface); font-size: 14px; }
-.admin-prototype .llm-ops .llm-banner[data-level=ok] .llm-banner-shape { color: var(--green); }
-.admin-prototype .llm-ops .llm-banner[data-level=warn] .llm-banner-shape { color: var(--amber); }
-.admin-prototype .llm-ops .llm-banner[data-level=bad] .llm-banner-shape { color: var(--red); }
-.admin-prototype .llm-ops .llm-banner-body { flex: 1 1 auto; min-width: 0; display: grid; gap: 6px; align-content: start; }
-.admin-prototype .llm-ops .llm-banner-body h2 { margin: 0; font-size: calc(16px + var(--admin-font-delta, 0px)); line-height: 1.45; }
-.admin-prototype .llm-ops .llm-banner-body ul { margin: 0; padding-left: 18px; display: grid; gap: 2px; font-size: calc(13px + var(--admin-font-delta, 0px)); }
-.admin-prototype .llm-ops .llm-banner-meta { display: flex; flex-wrap: wrap; gap: 4px 14px; }
-.admin-prototype .llm-ops .llm-card { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); padding: 14px 16px; min-width: 0; }
-.admin-prototype .llm-ops .llm-admission { display: grid; gap: 8px; align-content: start; }
-.admin-prototype .llm-ops .llm-admission-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
-.admin-prototype .llm-ops .llm-admission-head h2 { margin: 0; font-size: calc(15px + var(--admin-font-delta, 0px)); }
-.admin-prototype .llm-ops .llm-admission p { margin: 0; font-size: calc(13px + var(--admin-font-delta, 0px)); }
-.admin-prototype .llm-ops .llm-admission .llm-admission-detail { color: var(--muted); }
-/* 접수 카드 안 운영 요청(ModelOpsPanel compact). 단추는 왼쪽에 제 너비로 — Tailwind flex-col 을 쓰던 때는 prototype.css 의
+/* 대시보드 숫자 띠의 접수 칸 안 운영 요청(ModelOpsPanel compact) — 관리자 셸(.admin-prototype .llm-ops) 안으로 좁혀 CSS 묶음 순서와 무관하게 이긴다. 단추는 왼쪽에 제 너비로 — Tailwind flex-col 을 쓰던 때는 prototype.css 의
    `.admin-prototype .flex { align-items: center }`(층 밖이라 유틸리티보다 늘 이긴다)가 단추·진행 상자를 가운데로 모았다. */
 .admin-prototype .llm-ops .llm-ops-runner { display: grid; gap: 8px; min-width: 0; justify-items: stretch; }
 .admin-prototype .llm-ops .llm-admission-action { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 6px; }
@@ -64,60 +40,19 @@
 /* 확인 대화상자(OpsConfirm 의 Tailwind flex-col)도 같은 까닭으로 가운데로 모이지 않게 */
 .admin-prototype .llm-ops .llm-ops-runner .flex-col { align-items: stretch; }
 
-/* KPI */
-.llm-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--llm-gap); }
-.llm-kpi { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); padding: 14px 16px; min-width: 0; display: grid; gap: 4px; }
-.llm-kpi-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; color: var(--muted); font-size: calc(13px + var(--admin-font-delta, 0px)); }
-.llm-kpi-value { font-size: calc(28px + var(--admin-font-delta, 0px)); font-weight: 650; line-height: 1.3; letter-spacing: -.04em; overflow-wrap: anywhere; }
-.llm-kpi[data-level=warn] .llm-kpi-value { color: var(--amber); }
-.llm-kpi[data-level=bad] .llm-kpi-value { color: var(--red); }
-.llm-kpi[data-level=unknown] .llm-kpi-value { color: var(--muted); font-size: calc(20px + var(--admin-font-delta, 0px)); }
-.llm-kpi-foot { color: var(--muted); font-size: calc(13px + var(--admin-font-delta, 0px)); }
-
 /* 패널 */
 .llm-panel { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); min-width: 0; }
 .llm-panel-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
 .admin-prototype .llm-ops .llm-panel-head h2 { margin: 0; font-size: calc(15px + var(--admin-font-delta, 0px)); }
 .llm-panel-body { padding: 12px 16px; display: grid; gap: 10px; }
-.llm-dash-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--llm-gap); align-items: start; }
 
-/* 먼저 할 일 */
-.llm-todos { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
-.llm-todo { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; align-items: center; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); }
-.llm-todo-main { display: grid; gap: 4px; min-width: 0; }
-.llm-todo-title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-weight: 650; font-size: calc(14px + var(--admin-font-delta, 0px)); }
-.llm-todo-detail { color: var(--muted); font-size: calc(13px + var(--admin-font-delta, 0px)); overflow-wrap: anywhere; }
-.llm-todo .button { white-space: nowrap; }
-.llm-todo-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 6px; }
-/* 다시 대기열 확인 단계에서는 할 일 한 칸을 위아래로 쌓는다 — 미리보기 글이 제목 칸을 좁히지 않게 */
-.llm-todo:has(.llm-retry-form[data-confirming]) { grid-template-columns: minmax(0, 1fr); }
-.llm-todo:has(.llm-retry-form[data-confirming]) .llm-todo-actions { justify-content: flex-start; }
 .llm-empty { color: var(--muted); font-size: calc(13px + var(--admin-font-delta, 0px)); }
 
-/* 장비 점유 */
-.llm-devices { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
-.llm-device { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(90px, 1.4fr) auto; gap: 4px 12px; align-items: center; font-size: calc(13px + var(--admin-font-delta, 0px)); }
-.llm-device-name { min-width: 0; display: grid; }
-.llm-device-name b { overflow-wrap: anywhere; }
-.admin-prototype .llm-ops .llm-device-name small { color: var(--muted); font-size: calc(13px + var(--admin-font-delta, 0px)); overflow-wrap: anywhere; }
-.llm-device-count { display: flex; align-items: center; gap: 6px; justify-content: flex-end; white-space: nowrap; }
-.llm-device-note { grid-column: 1 / -1; color: var(--muted); }
+/* 점유 막대(대시보드 서버 점유 · 칸 배분) */
 .llm-bar { position: relative; height: 10px; border-radius: 5px; background: var(--surface-2); border: 1px solid var(--line); overflow: hidden; }
 .llm-bar > span { position: absolute; inset: 0 auto 0 0; border-radius: 4px; background: var(--green); }
 .llm-bar[data-level=warn] > span { background: repeating-linear-gradient(135deg, var(--amber) 0 6px, color-mix(in srgb, var(--amber) 70%, transparent) 6px 10px); }
 .llm-bar[data-level=unknown] { border-style: dashed; }
-
-/* 단계 띠 */
-.llm-stages { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
-.llm-stage { display: grid; gap: 6px; align-content: start; padding: 12px; border: 1px solid var(--line); border-top-width: 4px; border-radius: 8px; background: var(--surface); min-width: 0; }
-.llm-stage:hover { border-color: var(--blue); }
-.llm-stage[data-level=ok] { border-top-color: var(--green); }
-.llm-stage[data-level=warn] { border-top-color: var(--amber); }
-.llm-stage[data-level=bad] { border-top-color: var(--red); }
-.llm-stage[data-level=idle], .llm-stage[data-level=unknown] { border-top-color: var(--muted); border-top-style: dashed; }
-.llm-stage-label { font-weight: 700; font-size: calc(14px + var(--admin-font-delta, 0px)); }
-.llm-stage-model { font-size: calc(13px + var(--admin-font-delta, 0px)); overflow-wrap: anywhere; }
-.llm-stage-detail { color: var(--muted); font-size: calc(13px + var(--admin-font-delta, 0px)); overflow-wrap: anywhere; }
 
 /* LLM 운영 — 머리 */
 .llm-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 14px; }
@@ -151,7 +86,7 @@
 .llm-conn-grid .llm-cell > :is(:first-child, .llm-cell-label + *) { line-height: 24px; }
 .llm-cell { min-width: 0; display: grid; gap: 4px; font-size: calc(13px + var(--admin-font-delta, 0px)); align-content: start; }
 .llm-cell-label { display: none; color: var(--muted); font-weight: 650; }
-.llm-cell > .llm-level, .llm-stage > .llm-level, .llm-kpi-top > .llm-level { justify-self: start; }
+.llm-cell > .llm-level { justify-self: start; }
 .llm-conn-name { font-weight: 700; font-size: calc(15px + var(--admin-font-delta, 0px)); overflow-wrap: anywhere; }
 .llm-conn-meta { color: var(--muted); overflow-wrap: anywhere; }
 .llm-conn-meta code { font-size: calc(13px + var(--admin-font-delta, 0px)); }
@@ -223,19 +158,13 @@
   .llm-cell-label { display: block; }
 }
 @media (max-width: 900px) {
-  .admin-prototype .llm-ops .llm-top, .llm-dash-grid, .llm-conn-edit-body { grid-template-columns: minmax(0, 1fr); }
-  .llm-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .llm-conn-edit-body { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 560px) {
   .llm-conn-cols { --llm-cols: minmax(0, 1fr) minmax(0, 1fr); }
   .llm-cell-wide { grid-column: 1 / -1; }
   .llm-conn-grid { gap: 10px; padding: 12px; }
   .llm-models li { grid-template-columns: minmax(0, 1fr); }
-  .llm-device { grid-template-columns: minmax(0, 1fr) auto; }
-  .llm-device .llm-bar { grid-column: 1 / -1; grid-row: 2; }
-  .llm-kpi-value { font-size: calc(22px + var(--admin-font-delta, 0px)); }
-  .llm-todo { grid-template-columns: minmax(0, 1fr); }
-  .admin-prototype .llm-ops .llm-banner { padding: 12px; gap: 10px; }
 }
 
 /* 기록 › 재실행 패널·변경 기록(PR 3) */
