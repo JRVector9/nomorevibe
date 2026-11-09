@@ -16,6 +16,7 @@ import { checkGrokSession } from "@/lib/crawl/jobs/grok-session";
 import { auditPublishedProducts } from "@/lib/crawl/jobs/product-audit";
 import { auditWithQwenDirect } from "@/lib/crawl/jobs/audit-qwen";
 import { reviewAuditSecondOpinions } from "@/lib/crawl/jobs/audit-second-opinion";
+import { recheckPublishedChanges } from "@/lib/crawl/jobs/published-recheck";
 import { reviewThinPagesByScreen } from "@/lib/screen-review/job";
 import { translateReasons } from "@/lib/crawl/jobs/translate-reasons";
 import { writeTaglines } from "@/lib/crawl/jobs/tagline";
@@ -113,6 +114,8 @@ const HANDLERS: Record<string, AnyJob> = {
   "audit-second-opinion": (ctx) => reviewAuditSecondOpinions(ctx as JobContext<null>),
   /** 글이 얇은 감사 거절을 그려서 화면과 글로 m1 Qwen 에 묻는다 — 두 번째 의견(qwen-vision-m1)으로 적고 답으로 닫는다 */
   "audit-screen-review": (ctx) => reviewThinPagesByScreen(ctx as JobContext<null>),
+  /** 공개 제품의 받아 둔 원본이 모델이 마지막으로 본 내용과 뜻있게 달라졌으면 감사 표의 늘 열린 줄에 올린다 — 묻기는 감사 잡이 1차 순위로 */
+  "published-recheck": recheckPublishedChanges,
 
   /** 통과한 후보를 seeded 제품으로 목록에 올린다 */
   "crawl-publish": publishCandidates,

@@ -17,7 +17,9 @@ import { DEFAULT_MODEL_DEADLINES, DEFAULT_MODEL_DEFINITIONS, DEFAULT_MODEL_PURPO
  */
 
 export type PurposeLimit = { maxTokens: number; concurrency: number; timeoutMs?: number };
-export type JobKnobs = { batch?: number; batchChars?: number; minCallMs?: number; slowCallMs?: number; soloAttempts?: number; callMs?: number; maxAttempts?: number; consumerConcurrency?: number; classifierConcurrency?: number };
+export type JobKnobs = { batch?: number; batchChars?: number; minCallMs?: number; slowCallMs?: number; soloAttempts?: number; callMs?: number; maxAttempts?: number; consumerConcurrency?: number; classifierConcurrency?: number;
+  /** 공개분 변경 재검수(published-recheck) — 틱마다 견줄 공개 제품 수·하루에 올릴 수·감사 잡 틱마다 물을 수·같다고 볼 낱말 유사도(%)·1차에 물러나는 상한(시간) */
+  scanBatch?: number; dailyCap?: number; askBatch?: number; minSimilarity?: number; yieldHours?: number };
 export type JobKnobName = keyof JobKnobs;
 export type ProductTranslationPolicy = { maxSourceChars: number; batchChars: number; batchMax: 4; demandLimit: number; maxAttempts: number; jobMarginMs: number };
 export type JobBudget = number | "auto";
@@ -85,6 +87,14 @@ export const DEFAULT_RUNTIME_SETTINGS: RuntimeSettings = deepFreeze({
     "product-search-verify": { batch: 16, minCallMs: 20_000 },
     // lib/jobs/products/intro-check.ts CALL_MS(CLI 호출에 직접 주는 상한)·MIN_CALL_MS
     "product-intro-check": { callMs: 90_000, minCallMs: 40_000 },
+    /**
+     * 공개분 변경 재검수(lib/crawl/published-recheck.ts, 2026-11-09 운영자 결정 — 수를 코드에 박지 않고 여기서 고친다).
+     * scanBatch: 틱(1분)마다 견줄 공개 제품 — 200 이면 공개 7만 6천여 건 한 바퀴가 약 6시간(생존 확인의 본문 다시 채우기 주기와 같다).
+     * dailyCap: 지난 24시간에 재검수 줄에 올릴 최대 수(0 이면 올리지 않음) — 2026-11-09 실측으로 하루 수십 건, 첫 바퀴의 밀린 몫도 하루 100건씩.
+     * askBatch: 감사 잡(product-audit) 틱마다 물을 재검수 항목 수(0 이면 묻지 않음). minSimilarity: 글 칸의 낱말 유사도가 이 % 아래면 바뀜.
+     * yieldHours: 1차 심사 대기에 후보가 있으면 물러나되, 가장 오래 기다린 재검수 항목이 이 시간을 넘으면 함께 묻는다(0 이면 물러나지 않음 — 장부의 background 등급만)
+     */
+    "published-recheck": { scanBatch: 200, dailyCap: 100, askBatch: 2, minSimilarity: 60, yieldHours: 6 },
   },
   // scripts/worker.ts jobRunOptions 의 리터럴. product-translate 만 "auto"(= 호출 상한 300초 + 여유 15초 = 315초).
   // 2026-10-31(PR 3a-C) 합성 잡 분해 — 나뉜 잡은 전 잡의 예산 봉투를 그대로 받는다: held-qwen-retry·split-confirm 110초(human-deepseek-review),
@@ -150,6 +160,7 @@ export const translationProductSchema = z.object({
 export const jobKnobsSchema = z.object({
   batch: int(1, 64), batchChars: int(100, 30_000), minCallMs: ms(1_000, 600_000), slowCallMs: ms(1_000, 600_000),
   soloAttempts: int(1, 10), callMs: ms(5_000, 600_000), maxAttempts: int(1, 50), consumerConcurrency: int(1, 4), classifierConcurrency: int(1, 4),
+  scanBatch: int(10, 2_000), dailyCap: int(0, 5_000), askBatch: int(0, 16), minSimilarity: int(0, 100), yieldHours: int(0, 168),
 }).partial().strict();
 export const jobBudgetSchema = z.union([ms(5_000), z.literal("auto")]);
 export const JOB_KNOB_NAMES = Object.freeze(Object.keys(jobKnobsSchema.shape) as JobKnobName[]);
@@ -418,7 +429,7 @@ export const JOB_LABELS: Readonly<Record<string, string>> = {
   "product-stars-refresh": "스타 갱신", "product-star-observation": "스타 관측", "ai-level-refresh": "AI 제작 근거", "product-evidence-refresh": "제품 근거 갱신",
   "product-site-evidence-refresh": "사이트 근거 갱신", "agent-evidence-refresh": "에이전트 근거 갱신", "second-review": "2차 심사",
   "split-tiebreak": "2차 갈림 판가름", "human-deepseek-review": "사람 큐 DeepSeek 심사", "held-qwen-retry": "보류 Qwen 재심사", "split-confirm": "갈림 DeepSeek 확인",
-  "audit-qwen": "Qwen 직접 감사", "audit-second-opinion": "감사 두 번째 의견",
+  "audit-qwen": "Qwen 직접 감사", "audit-second-opinion": "감사 두 번째 의견", "published-recheck": "공개분 변경 재검수",
   "product-thumbnail-refresh": "썸네일 갱신", "bluesky-talk": "Bluesky 화제", "crawl-seed": "검색 수집",
   "crawl-fetch": "원본 확보",
 };
@@ -427,7 +438,8 @@ const LADDER_FIELD_LABELS: Record<keyof DeadlineLadder, string> = { engineMs: "�
 const TRANSLATION_FIELD_LABELS: Record<keyof ProductTranslationPolicy, string> = { maxSourceChars: "원문 글자 상한", batchChars: "묶음 글자 임계", batchMax: "묶음 최대 건수",
   demandLimit: "요청 보류 한도", maxAttempts: "최대 시도", jobMarginMs: "틱 여유(ms)" };
 const KNOB_LABELS: Record<JobKnobName, string> = { batch: "묶음", batchChars: "묶음 글자", minCallMs: "최소 남은 시간(ms)", slowCallMs: "느린 호출(ms)",
-  soloAttempts: "혼자 보내는 실패 수", callMs: "호출 상한(ms)", maxAttempts: "최대 시도", consumerConcurrency: "소비자 동시 업무(1~4)", classifierConcurrency: "분류 동시 묶음(1~4)" };
+  soloAttempts: "혼자 보내는 실패 수", callMs: "호출 상한(ms)", maxAttempts: "최대 시도", consumerConcurrency: "소비자 동시 업무(1~4)", classifierConcurrency: "분류 동시 묶음(1~4)",
+  scanBatch: "틱마다 견줄 제품", dailyCap: "하루 올리기 상한", askBatch: "감사 틱마다 묻기", minSimilarity: "같다고 볼 유사도(%)", yieldHours: "1차 양보 상한(시간)" };
 export const GROUP_LABELS: Readonly<Record<RuntimeSettingGroup, string>> = { routes: "경로 한도", translation: "번역·묶음", jobs: "잡별 묶음", budgets: "틱 예산",
   assignments: "모델 배정 읽기", devices: "장비 한도" };
 /** 열거 칸의 값 이름 — 폼의 선택지와 감사 줄이 같은 말을 쓴다 */

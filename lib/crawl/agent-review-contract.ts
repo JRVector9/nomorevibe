@@ -153,6 +153,35 @@ function ruleStop(document: CrawlDocument, settings: CrawlSettings, now: Date): 
  */
 export type ReviewEvidenceAge = "window" | "any_age";
 
+/**
+ * 심사 입력의 product 부분 — 모델이 보는 제품 내용. 1차·2차·감사가 같은 것을 보고, 공개분 변경 재검수(published-recheck.ts)가 "지금 내용"을
+ * 만들 때도 이 함수 하나를 쓴다(스캔·근거·규칙 멈춤은 읽지 않는다). now 는 createReviewInput 이 고친 그 시각이다.
+ */
+export function buildReviewProduct(candidate: CrawlCandidate, document: CrawlDocument, settings: CrawlSettings, now: Date): ReviewSnapshot["product"] {
+  const page = document.pageMeta ?? {};
+  return {
+    repo: candidate.repo,
+    name: limitedText(page.title, 300) || candidate.repo.split("/").at(-1)!,
+    description: [limitedText(page.description, 6000), limitedText(document.repoMeta.description, 6000)].filter(Boolean).join("\n"),
+    /**
+     * 규칙의 "설치 유도 아님"이 보는 바로 그 본문. 같은 추출기로 뽑는다.
+     *
+     * 빠져 있을 때 모델은 제목·소개만 보고 설치 안내 페이지를 승인했고, 해시에도 없어서 본문이
+     * 바뀌어도 옛 승인이 새 원본으로 복사됐다(codex 재현). 스냅숏에 두면 inputHash에 들어가,
+     * 본문이 바뀌면 옛 승인은 재사용도 발행 검증도 통과하지 못한다.
+     */
+    pageText: limitedText(pageFactsFromDocument(document).textSample, TEXT_SAMPLE_LIMIT),
+    url: candidate.productUrl,
+    accessMode: accessFromDocument({ ...document, productUrl: candidate.productUrl }, settings, now)?.mode ?? "website",
+    repositoryUrl: repositoryUrl(candidate.repo),
+    topics: Array.isArray(document.repoMeta.topics) ? document.repoMeta.topics.slice(0, 30).map(item => limitedText(item, 100)) : [],
+    language: limitedText(document.repoMeta.language, 100) || null,
+    readme: limitedText(page.readmeSample, README_SAMPLE_LIMIT),
+    linksOwnGithub: linksOwnGithub(candidate.repo, pageFactsFromDocument(document).githubLinks),
+    ...(packageProofOf(document.repoMeta).length ? { packageProof: packageProofOf(document.repoMeta) } : {}),
+  };
+}
+
 export function createReviewInput(
   candidate: CrawlCandidate,
   document: CrawlDocument,
@@ -177,29 +206,8 @@ export function createReviewInput(
   const scanState = scan?.state === "complete" && !scanFresh ? "pending" : scan ? effectiveAgentScanState(scan) : "pending";
   const all = evidence.observations.filter(item => item.observation.scope === "")
     .sort((a, b) => canonical(a.observation).localeCompare(canonical(b.observation)));
-  const page = document.pageMeta ?? {};
   const snapshot: ReviewSnapshot = {
-    product: {
-      repo: candidate.repo,
-      name: limitedText(page.title, 300) || candidate.repo.split("/").at(-1)!,
-      description: [limitedText(page.description, 6000), limitedText(document.repoMeta.description, 6000)].filter(Boolean).join("\n"),
-      /**
-       * 규칙의 "설치 유도 아님"이 보는 바로 그 본문. 같은 추출기로 뽑는다.
-       *
-       * 빠져 있을 때 모델은 제목·소개만 보고 설치 안내 페이지를 승인했고, 해시에도 없어서 본문이
-       * 바뀌어도 옛 승인이 새 원본으로 복사됐다(codex 재현). 스냅숏에 두면 inputHash에 들어가,
-       * 본문이 바뀌면 옛 승인은 재사용도 발행 검증도 통과하지 못한다.
-       */
-      pageText: limitedText(pageFactsFromDocument(document).textSample, TEXT_SAMPLE_LIMIT),
-      url: candidate.productUrl,
-      accessMode: accessFromDocument({ ...document, productUrl: candidate.productUrl }, settings, now)?.mode ?? "website",
-      repositoryUrl: repositoryUrl(candidate.repo),
-      topics: Array.isArray(document.repoMeta.topics) ? document.repoMeta.topics.slice(0, 30).map(item => limitedText(item, 100)) : [],
-      language: limitedText(document.repoMeta.language, 100) || null,
-      readme: limitedText(page.readmeSample, README_SAMPLE_LIMIT),
-      linksOwnGithub: linksOwnGithub(candidate.repo, pageFactsFromDocument(document).githubLinks),
-      ...(packageProofOf(document.repoMeta).length ? { packageProof: packageProofOf(document.repoMeta) } : {}),
-    },
+    product: buildReviewProduct(candidate, document, settings, now),
     repoFacts: {
       stars: typeof document.repoMeta.stargazers_count === "number" ? document.repoMeta.stargazers_count : null,
       pushedAt: limitedText(document.repoMeta.pushed_at, 40) || null,
