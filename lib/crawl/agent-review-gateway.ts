@@ -360,6 +360,12 @@ function freeze<T>(value: T): T {
  */
 export { readGatewayNotStarted, type GatewayNotStarted };
 const issueNotStarted = issueGatewayNotStarted;
+/**
+ * 이미 끝난 신호(기한·틱 끝·형제 호출 중단)로는 fetch 를 부르지 않는다 — undici 도 보내지 않고 같은 사유로 거절하므로 전송 0 이 증명된다(AI1·AI2 전송과 같다).
+ * 글 경로 전송 함수는 이 확인 없이 fetch 를 불러 전송 0 인 호출도 결과 미확정으로 남겼다(2026-11-09). 결과 코드는 예전 catch 와 같다(기한이면 timeout).
+ */
+const abortedBeforeSend = (signal: AbortSignal): "timeout" | "network" =>
+  (signal.reason as { name?: unknown } | null | undefined)?.name === "TimeoutError" ? "timeout" : "network";
 /** dispatch binding 이 이 준비 호출의 wire·계약·C 를 그대로 묶었는가(입력 원문 대조는 실제 전송 경로가 한다) */
 function sameCall(call: PreparedAi1GatewayCall | PreparedAi2GatewayCall, contract: { provider: string; routeId: string },
   binding: { model: string; wireHash: string; servingContractHash: string; totalTokenBound: number; provider: string; routeId: string },
@@ -770,12 +776,13 @@ export async function writeKeywordsWithReservedGateway(evidence: ProfileEvidence
     || dispatchedRequests.has(owned.requestId)) throw new Error("text_profile_gateway_call_mismatch");
   state.used = true; dispatchedRequests.add(owned.requestId);
   const key = contractBearer(state.contract), directEngine = directTransport(state.contract);
-  if (key === undefined) return { result: { ok: false, error: "no_key" }, terminal: null };
+  if (key === undefined) return { result: { ok: false, error: "no_key" }, terminal: null, notStarted: issueNotStarted(owned) };
   const deadline = AbortSignal.timeout(timeoutMs), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
   const preflightFailure = await directTextBudgetFailure(state.contract, state.wire, { timeoutMs, signal: combined });
   if (preflightFailure) return { result: { ok: false, error: preflightFailure }, terminal: null, notStarted: issueNotStarted(owned) };
   let body: string;
   try {
+    if (combined.aborted) return { result: { ok: false, error: abortedBeforeSend(combined) }, terminal: null, notStarted: issueNotStarted(owned) };
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: textRedirect(state.contract),
       headers: bearerHeaders(key), body: state.wire, signal: combined });
     if (response.status !== 200) {
@@ -861,12 +868,13 @@ export async function translateWithReservedReasonGateway(texts: readonly string[
     || dispatchedRequests.has(owned.requestId)) throw new Error("reason_translation_gateway_call_mismatch");
   state.used = true; dispatchedRequests.add(owned.requestId);
   const key = contractBearer(state.contract), directEngine = directTransport(state.contract);
-  if (key === undefined) return { result: { ok: false, error: "no_key" }, terminal: null };
+  if (key === undefined) return { result: { ok: false, error: "no_key" }, terminal: null, notStarted: issueNotStarted(owned) };
   const deadline = AbortSignal.timeout(timeoutMs), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
   const preflightFailure = await directTextBudgetFailure(state.contract, state.wire, { timeoutMs, signal: combined });
   if (preflightFailure) return { result: { ok: false, error: preflightFailure }, terminal: null, notStarted: issueNotStarted(owned) };
   let body: string;
   try {
+    if (combined.aborted) return { result: { ok: false, error: abortedBeforeSend(combined) }, terminal: null, notStarted: issueNotStarted(owned) };
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: textRedirect(state.contract),
       headers: { ...bearerHeaders(key), ...strictTerminalHeaders(state.contract) },
       body: state.wire, signal: combined });
@@ -955,13 +963,14 @@ export async function translateProductFieldsWithReservedGateway(items: readonly 
     || dispatchedRequests.has(owned.requestId)) throw new Error("product_translation_gateway_call_mismatch");
   state.used = true; dispatchedRequests.add(owned.requestId);
   const key = contractBearer(state.contract), directEngine = directTransport(state.contract);
-  if (key === undefined) return { result: { ok: false, error: "no_key" }, terminal: null };
+  if (key === undefined) return { result: { ok: false, error: "no_key" }, terminal: null, notStarted: issueNotStarted(owned) };
   const deadline = AbortSignal.timeout(timeoutMs), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
   state.deadline = deadline;
   let body: string;
   try {
     const preflightFailure = await directTextBudgetFailure(state.contract, state.wire, { timeoutMs, signal: combined });
     if (preflightFailure) return { result: { ok: false, error: preflightFailure }, terminal: null, notStarted: issueNotStarted(owned) };
+    if (combined.aborted) return { result: { ok: false, error: abortedBeforeSend(combined) }, terminal: null, notStarted: issueNotStarted(owned) };
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: textRedirect(state.contract),
       headers: { ...bearerHeaders(key), ...strictTerminalHeaders(state.contract) },
       body: state.wire, signal: combined });
@@ -1042,13 +1051,14 @@ export async function translateTaglinesWithReservedGateway(items: readonly Produ
     || dispatchedRequests.has(owned.requestId)) throw new Error("product_tagline_ko_gateway_call_mismatch");
   state.used = true; dispatchedRequests.add(owned.requestId);
   const key = contractBearer(state.contract), directEngine = directTransport(state.contract);
-  if (key === undefined) return { result: { ok: false, error: "no_key" }, terminal: null };
+  if (key === undefined) return { result: { ok: false, error: "no_key" }, terminal: null, notStarted: issueNotStarted(owned) };
   const deadline = AbortSignal.timeout(timeoutMs), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
   state.deadline = deadline;
   let body: string;
   try {
     const preflightFailure = await directTextBudgetFailure(state.contract, state.wire, { timeoutMs, signal: combined });
     if (preflightFailure) return { result: { ok: false, error: preflightFailure }, terminal: null, notStarted: issueNotStarted(owned) };
+    if (combined.aborted) return { result: { ok: false, error: abortedBeforeSend(combined) }, terminal: null, notStarted: issueNotStarted(owned) };
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: textRedirect(state.contract),
       headers: { ...bearerHeaders(key), ...strictTerminalHeaders(state.contract) },
       body: state.wire, signal: combined });
@@ -1130,13 +1140,14 @@ export async function writeTaglineWithReservedGateway(evidence: TaglineEvidence,
     || dispatchedRequests.has(owned.requestId)) throw new Error("crawl_tagline_gateway_call_mismatch");
   state.used = true; dispatchedRequests.add(owned.requestId);
   const key = contractBearer(state.contract), directEngine = directTransport(state.contract);
-  if (key === undefined) return { result: { ok: false, error: "no_key" }, terminal: null };
+  if (key === undefined) return { result: { ok: false, error: "no_key" }, terminal: null, notStarted: issueNotStarted(owned) };
   const deadline = AbortSignal.timeout(timeoutMs), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
   state.deadline = deadline;
   let body: string;
   try {
     const preflightFailure = await directTextBudgetFailure(state.contract, state.wire, { timeoutMs, signal: combined });
     if (preflightFailure) return { result: { ok: false, error: preflightFailure }, terminal: null, notStarted: issueNotStarted(owned) };
+    if (combined.aborted) return { result: { ok: false, error: abortedBeforeSend(combined) }, terminal: null, notStarted: issueNotStarted(owned) };
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: textRedirect(state.contract),
       headers: bearerHeaders(key), body: state.wire, signal: combined });
     if (response.status !== 200) {
@@ -1219,12 +1230,13 @@ export async function verifyKeywordsWithReservedGateway(item: VerifyItem, dispat
     || dispatchedRequests.has(owned.requestId)) throw new Error("search_verify_gateway_call_mismatch");
   state.used = true; dispatchedRequests.add(owned.requestId);
   const key = contractBearer(state.contract), directEngine = directTransport(state.contract);
-  if (key === undefined) return { result: { ok: false, error: "no_key" }, terminal: null };
+  if (key === undefined) return { result: { ok: false, error: "no_key" }, terminal: null, notStarted: issueNotStarted(owned) };
   const deadline = AbortSignal.timeout(timeoutMs), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
   const preflightFailure = await directTextBudgetFailure(state.contract, state.wire, { timeoutMs, signal: combined });
   if (preflightFailure) return { result: { ok: false, error: preflightFailure }, terminal: null, notStarted: issueNotStarted(owned) };
   let body: string;
   try {
+    if (combined.aborted) return { result: { ok: false, error: abortedBeforeSend(combined) }, terminal: null, notStarted: issueNotStarted(owned) };
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: textRedirect(state.contract),
       headers: bearerHeaders(key), body: state.wire, signal: combined });
     if (response.status !== 200) {
@@ -1313,13 +1325,14 @@ export async function translateQueryWithReservedGateway(input: WebsearchQueryGat
     || dispatchedRequests.has(owned.requestId)) throw new Error("websearch_query_gateway_call_mismatch");
   state.used = true; dispatchedRequests.add(owned.requestId);
   const key = contractBearer(state.contract), directEngine = directTransport(state.contract);
-  if (key === undefined) return { result: { ok: false, error: "no_key" }, terminal: null };
+  if (key === undefined) return { result: { ok: false, error: "no_key" }, terminal: null, notStarted: issueNotStarted(owned) };
   const deadline = AbortSignal.timeout(timeoutMs), combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
   state.deadline = deadline;
   let body: string, status: number;
   try {
     const preflightFailure = await directTextBudgetFailure(state.contract, state.wire, { timeoutMs, signal: combined });
     if (preflightFailure) return { result: { ok: false, error: preflightFailure }, terminal: null, notStarted: issueNotStarted(owned) };
+    if (combined.aborted) return { result: { ok: false, error: abortedBeforeSend(combined) }, terminal: null, notStarted: issueNotStarted(owned) };
     const response = await gatewayFetch(owned.requestId, state.contract.endpoint, { method: "POST", redirect: textRedirect(state.contract),
       headers: { ...bearerHeaders(key), ...strictTerminalHeaders(state.contract) },
       body: state.wire, signal: combined });

@@ -217,7 +217,7 @@ it.each([["removed", () => setServingContractSnapshotForTest([])], ["switched to
   ("makes a direct contract %s after preparation incapable of POST or terminal issuance", async (_case, change) => {
     await server(async ({ bodies }) => {
       const call = prepared(korean), owned = dispatch(korean, call); change();
-      expect(await send(korean, owned, call)).toEqual({ result: { ok: false, error: "no_key" }, terminal: null }); expect(bodies).toEqual([]);
+      expect(await send(korean, owned, call)).toEqual({ result: { ok: false, error: "no_key" }, terminal: null, notStarted: { kind: "gateway_not_started" } }); expect(bodies).toEqual([]);
     });
   });
 it("keeps invalid endpoint and descriptor data outside the fixed leaf contract", async () => {

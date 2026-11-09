@@ -209,9 +209,9 @@ it("leaves truncated EOF, caller abort and timeout without terminal authority", 
 it("makes a direct contract removed or switched to gateway auth after preparation incapable of POST or terminal issuance", async () => {
   await server(async ({ bodies }) => {
     const input = item(), call = prepared(input), owned = dispatch(input, call); setServingContractSnapshotForTest([]);
-    expect(await send(input, owned, call)).toEqual({ result: { ok: false, error: "no_key" }, terminal: null });
+    expect(await send(input, owned, call)).toEqual({ result: { ok: false, error: "no_key" }, terminal: null, notStarted: { kind: "gateway_not_started" } });
     pinRow(); const again = prepared(input), next = dispatch(input, again); pinRow("gateway");
-    expect(await send(input, next, again)).toEqual({ result: { ok: false, error: "no_key" }, terminal: null }); expect(bodies).toEqual([]);
+    expect(await send(input, next, again)).toEqual({ result: { ok: false, error: "no_key" }, terminal: null, notStarted: { kind: "gateway_not_started" } }); expect(bodies).toEqual([]);
   });
 });
 it("keeps invalid endpoint and descriptor data outside the fixed leaf contract", async () => {

@@ -179,7 +179,7 @@ it("keeps a broken response body and a malformed HTTP 200 apart: network stays r
 it("makes a direct contract removed after preparation incapable of POST or terminal issuance", async () => {
   await server(async ({ bodies }) => {
     const value = evidence(), call = prepared(value), owned = dispatch(value, call); setServingContractSnapshotForTest([]);
-    expect(await send(value, owned, call)).toEqual({ result: { ok: false, error: "no_key" }, terminal: null }); expect(bodies).toEqual([]);
+    expect(await send(value, owned, call)).toEqual({ result: { ok: false, error: "no_key" }, terminal: null, notStarted: { kind: "gateway_not_started" } }); expect(bodies).toEqual([]);
   });
 });
 
