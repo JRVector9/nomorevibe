@@ -173,3 +173,14 @@ export function isStalePolicyRoute(entry: Readonly<{ routeId: string; provider: 
   if (references.has(entry.model) || references.has(bare)) return false;
   return !mine.some(connection => connectionModelIds(connection).some(id => id === bare || id === entry.model));
 }
+
+/** 갈린 장비 묶음 머리 이름 — 연결 이름들의 공통 앞 조각(「-」·공백으로 가른다). 「m3」처럼 글자+숫자 한 조각이면 대문자(M3). 없으면 null */
+export function sharedColumnGroupName(names: readonly string[]): string | null {
+  if (names.length < 2) return null;
+  const parts = names.map(name => name.trim().split(/[-\s_]+/).filter(Boolean));
+  const common: string[] = [];
+  for (let index = 0; parts.every(list => index < list.length - 1 && list[index].toLowerCase() === parts[0][index].toLowerCase()); index += 1) common.push(parts[0][index]);
+  if (!common.length) return null;
+  const joined = common.join("-");
+  return /^[a-z]\d+$/i.test(joined) ? joined.toUpperCase() : joined;
+}

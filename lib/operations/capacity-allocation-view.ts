@@ -4,7 +4,7 @@ import { aiConnectionLabel } from "./admin-ai-tasks";
 import type { AdminModelsObservation } from "./admin-models-observation";
 import { ALLOCATION_SECTIONS, type AllocationSection } from "./capacity-allocation-sections";
 import { deviceDisplay, helperRouteOf, isLegacyRouteId, isOrphanDevice, isStalePolicyRoute, modelDisplayName, modelDisplayNames, routeDisplayLabel, routeGroupOf, taskOfRoute,
-  type DisplayConnection } from "./llm-display";
+  type DisplayConnection, sharedColumnGroupName } from "./llm-display";
 import { observationReadable } from "./llm-ops-view";
 
 /**
@@ -128,16 +128,6 @@ export function allocationSectionOf(routeId: string): AllocationSection {
   if (task.id === "publish-classify") return "audit";
   if (task.id === "product-intro-check") return "text";
   return task.group === "review" ? "review" : task.group === "audit" ? "audit" : task.group === "text" || task.group === "search" ? "text" : "other";
-}
-/** 갈린 장비 묶음 머리 이름 — 연결 이름들의 공통 앞 조각(「-」·공백으로 가른다). 「m3」처럼 글자+숫자 한 조각이면 대문자(M3). 없으면 null */
-export function sharedColumnGroupName(names: readonly string[]): string | null {
-  if (names.length < 2) return null;
-  const parts = names.map(name => name.trim().split(/[-\s_]+/).filter(Boolean));
-  const common: string[] = [];
-  for (let index = 0; parts.every(list => index < list.length - 1 && list[index].toLowerCase() === parts[0][index].toLowerCase()); index += 1) common.push(parts[0][index]);
-  if (!common.length) return null;
-  const joined = common.join("-");
-  return /^[a-z]\d+$/i.test(joined) ? joined.toUpperCase() : joined;
 }
 const bareModel = (model: string) => model.replace(/@[0-9a-f]{8}$/i, "");
 /** 줄 순서 — 작업 목록 순, 그다음 모르는 경로, 보조 경로는 맨 뒤(작업 이름 순) */
@@ -295,3 +285,5 @@ export function routeQuotasInputFromForm(form: FormLike): RouteQuotasFormParse {
 /** 몫 한 줄의 글(감사·저장 결과·확인 칸이 같은 말을 쓴다). 줄이 없으면 「없음」(= 오늘과 같음) */
 export const routeQuotaText = (quota: Pick<ModelCapacityRouteQuota, "minSlots" | "maxSlots"> | null | undefined): string =>
   quota ? `보장 ${quota.minSlots} · 상한 ${quota.maxSlots === null ? "없음" : quota.maxSlots === 0 ? "0(뺌)" : quota.maxSlots}` : "없음";
+
+export { sharedColumnGroupName };

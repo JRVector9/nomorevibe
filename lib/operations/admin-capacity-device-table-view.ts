@@ -3,7 +3,7 @@ import { aiConnectionLabel } from "./admin-ai-tasks";
 import type { DeviceSource, DeviceView } from "./admin-capacity-devices";
 import { deviceRoleLabel } from "./admin-capacity-devices";
 import type { AdminModelsObservation } from "./admin-models-observation";
-import { deviceDisplay, isOrphanDevice, modelDisplayName, modelDisplayNames, type DisplayConnection } from "./llm-display";
+import { deviceDisplay, isOrphanDevice, modelDisplayName, modelDisplayNames, sharedColumnGroupName, type DisplayConnection } from "./llm-display";
 
 /**
  * 장비 한도 표(/admin/models/devices, 2026-11-09 개편 시안 #devices)의 줄 — 순수, DB 를 읽지 않는다. 서버 한 대가 한 줄이다.
@@ -86,7 +86,8 @@ export function buildDeviceTableRows(input: DeviceTableInput): DeviceTableRow[] 
       : display.name !== device.deviceId ? `장비 ${device.deviceId}` : null;
     const editReason = input.readOnly ? "읽기 전용입니다" : !device.enabled ? "꺼진 장비 — 세부 설정에서 켜 주세요" : orphan ? "연결이 없는 장비입니다" : null;
     const retire = retireVerdict(device, mine, input, orphan, cli || display.source === "cli");
-    return { deviceId: device.deviceId, name: display.name, kind, sub,
+    const groupName = kind === "models" ? sharedColumnGroupName(lines.filter(line => line.exposed).map(line => line.name)) : null;
+    return { deviceId: device.deviceId, name: groupName ?? display.name, kind, sub,
       models: kind === "cli" ? [] : [...display.models], modelFixed: opencode,
       limitSlots: device.settings.limitSlots, engineMax: device.settings.physicalLimit,
       active: device.live?.active ?? null, waiting: device.live?.waiting ?? null,

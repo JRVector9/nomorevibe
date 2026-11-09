@@ -91,7 +91,7 @@ describe("줄 모형(buildDeviceTableRows)", () => {
 
   it("M3 — 부모 줄은 전체 공유 한도, 모델마다 그 모델을 내놓는 연결 이름·모델 한도·엔진 최대치·지금·대기·그 모델로 가는 작업", () => {
     const m3 = byId("m3-mlx");
-    expect(m3).toMatchObject({ name: "m3-deepseek · m3-gpt-oss", sub: "장비 m3-mlx · 모델 2개", limitSlots: 2, active: 2, waiting: 3, version: 7 });
+    expect(m3).toMatchObject({ name: "M3", sub: "장비 m3-mlx · 모델 2개", limitSlots: 2, active: 2, waiting: 3, version: 7 });
     expect(m3.lines).toEqual([
       { model: DEEPSEEK, name: "m3-deepseek", exposed: true, maxSlots: 1, engineMax: 1, active: 1, waiting: 3, tasks: ["2차 갈림 재확인", "사람 몫 위임 검수"] },
       { model: GPT, name: "m3-gpt-oss", exposed: true, maxSlots: 2, engineMax: 4, active: 1, waiting: 0, tasks: ["키워드 검수"] },
@@ -116,7 +116,7 @@ describe("그리기(DeviceLimitsTable)", () => {
     for (const head of ["서버", "모델", "운영 한도", "엔진 최대치", "지금 · 대기", "함께 쓰는 작업", "동작"]) expect(html).toContain(`>${head}`);
     expect(html).toMatch(/role="img" tabindex="0" title="[^"]+" aria-label="도움말: /);
     expect(html).toContain('aria-label="gpu3090-qwen 운영 한도"');
-    expect(html).toContain('aria-label="m3-deepseek · m3-gpt-oss 전체 공유 한도"');
+    expect(html).toContain('aria-label="M3 전체 공유 한도"');
     expect(html).toContain(`aria-label="m3-deepseek ${DEEPSEEK} 모델 한도"`);
     expect(html).toContain(`aria-label="m3-gpt-oss ${GPT} 엔진 최대치"`);
     expect(html).toContain(`name="max:${GPT}"`);
