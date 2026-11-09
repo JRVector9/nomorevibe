@@ -31,6 +31,17 @@ export async function readJobPauses(now = Date.now()): Promise<JobPause[] | null
   catch { return null; }
 }
 
+/**
+ * 진행 중인 감사 캠페인(product_audit_campaigns status='running')이 있는가 — 작업 배정이 「발행분 감사 캠페인」을 「쓰지 않음」으로 가를 때 쓴다(2026-11-09).
+ * 읽기만 한다(running 은 부분 유일 색인이라 많아야 한 행). 못 읽으면 null — 화면은 그때 지금 표시를 그대로 둔다.
+ */
+export async function readAuditCampaignRunning(): Promise<boolean | null> {
+  try {
+    const [row] = await onPrimary(() => db.execute<{ running: unknown }>(sql`SELECT EXISTS (SELECT 1 FROM product_audit_campaigns WHERE status = 'running') AS running`));
+    return typeof row?.running === "boolean" ? row.running : null;
+  } catch { return null; }
+}
+
 const CLI_ROUTE = /^cli:([a-z0-9-]{1,40}):(.{1,120})$/;
 /** DB CLI 계약(cli:<provider>:<route>)의 이름·버전만 — 키·명령·주소는 읽지 않는다. 스냅숏은 프로세스 안에서 30초 나눠 쓴다. */
 export async function readCliContracts(): Promise<LlmCliContractInput[] | null> {

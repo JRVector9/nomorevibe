@@ -5,7 +5,7 @@ import type { AiTaskRuntimeView } from "@/lib/operations/admin-ai-tasks-reposito
 import { buildAdminModelsObservation, unavailableAdminModels, type AdminModelMetrics } from "@/lib/operations/admin-models-observation";
 import { buildTaskRankEditor, rankDeviceImpact, rankResaves } from "@/lib/operations/flow-rank-editor";
 import { buildTaskAssignView, taskAssignDeviceLimits, withTaskReadiness, type TaskAssignInput, type TaskAssignSlotInput } from "@/lib/operations/llm-task-assign-view";
-import { CLAUDE, GPU, LLM_NOW, llmConnections, llmDevices, llmJobs, llmMetrics, llmObservation, llmPolicy, llmRankRows, llmRequests, llmRuntime, MLX, OPENCODE, SUPA } from "./fixtures/llm-ops";
+import { CLAUDE, GPU, LLM_NOW, llmConnections, llmDevices, llmJobs, llmMetrics, llmObservation, llmPolicy, llmRankRows, llmRequests, llmRuntime, M1, MLX, OPENCODE, SUPA } from "./fixtures/llm-ops";
 import { modelCapacityPolicyHash } from "@/lib/llm/capacity";
 
 /** 작업 × 칸 하나의 입력 — 화면이 readAiTasksAdminView 에서 받는 값과 같은 모양(운영 DB 를 읽지 않는다) */
@@ -164,6 +164,166 @@ describe("작업 배정 — 설정 vs 실제(buildTaskAssignView)", () => {
     // 꺼진 2순위의 qwen 호출은 「순위에 없는 모델」로 센다(실행이 그 순위를 쓰지 않는다)
     expect(rowOf(view, "first-review#1").actual.warnings).toContain("순위에 없는 모델 호출: qwen3.8-flash-next 93건");
     expect(Object.values(view.counts).reduce((sum, count) => sum + count, 0)).toBe(view.rows.length);
+  });
+});
+
+describe("2026-11-09 상태 문구 — 운영 관측(19:27 UTC)에서 틀렸던 말", () => {
+  const rank = (task: string, order: number, connectionId: string, model: string, slot = 1): AiTaskRankRow => ({ task, slot, rank: order, connectionId, model, options: {}, enabled: true });
+  const current = (task: string, model: string, patch: Partial<AiCurrentSlot> = {}): AiCurrentSlot => ({ task, slot: 1, source: "단계 풀", error: null, skip: null, notes: [],
+    uses: [{ kind: "api", baseUrl: "http://100.92.77.66:8010/v1", cliTool: null, model, provider: "local-direct", origin: "단계 풀", deviceId: "m3-mlx", keyFrom: null }], ...patch });
+  const fresh = (patch: Partial<AiTaskRuntimeView>): AiTaskRuntimeView => ({ from: "job", at: "2026-11-07T07:19:00.000Z", served: [], unusable: [], degraded: null, ...patch });
+  const quota = (order: number) => ({ rank: order, code: "model_quota", text: "이 장비에서 이 모델의 상한이 가득 참", count: 1 });
+
+  it("F1 순위를 1시간 안에 저장했으면 그 전 호출이 섞인 장부와 견주지 않는다 — 「설정과 다름」 대신 중립 메모, 미확정·실패 신호는 그대로", () => {
+    // 심사 사유 번역: 07:14Z 에 1순위를 m1 로 바꿨고, 장부 1시간에는 옛 1순위 gpt-oss 65건이 남아 있다
+    const rows = [rank("reason-translate", 1, M1, "m1-gemma")];
+    const metrics = [metric("reason-translate", "abcllm", "gpt-oss-120b", "m3-mlx", 65, { indeterminate: 3 }), metric("reason-translate", "abcllm", "m1-gemma", "m1-qwen", 9)];
+    const at = (savedAt: string | null) => rowOf(buildTaskAssignView(input({ observation: observationWith(metrics),
+      slots: [slotOf("reason-translate", 1, { savedAt }, rows)] })), "reason-translate#1");
+    const saved = at("2026-11-07T07:14:00.000Z");
+    expect(saved.actual).toMatchObject({ warnings: [], mixed: true, note: "순위를 6분 전에 바꿈 — 그 전 호출이 섞여 있어 17:14 이후 비교" });
+    expect(saved.actual.calls.map(call => [call.position, call.model, call.settled])).toEqual([[1, "m1-gemma", 9], [null, "gpt-oss-120b", 65]]);
+    expect(saved.status).toMatchObject({ level: "warn", reason: "결과 미확정 3건" });
+    expect(`${saved.status.reason} ${saved.status.detail}`).not.toContain("설정과 다름");
+    // 1시간이 지난 저장(또는 저장 시각 모름)은 지금처럼 견준다
+    for (const old of [at("2026-11-07T06:10:00.000Z"), at(null)]) {
+      expect(old.actual).toMatchObject({ mixed: false, note: null, warnings: ["1순위가 아닌 모델이 88%를 처리", "순위에 없는 모델 호출: gpt-oss-120b 65건"] });
+      expect(old.status.reason).toBe("결과 미확정 3건 · 설정과 다름: 1순위가 아닌 모델이 88%를 처리");
+    }
+    // 1순위 0건(firstGap)도 같은 규칙
+    const gap = rowOf(buildTaskAssignView(input({ observation: observationWith([metric("reason-translate", "abcllm", "gpt-oss-120b", "m3-mlx", 20)]),
+      slots: [slotOf("reason-translate", 1, { savedAt: "2026-11-07T07:19:40.000Z" }, rows)] })), "reason-translate#1");
+    expect(gap.actual).toMatchObject({ warnings: [], note: "순위를 방금 바꿈 — 그 전 호출이 섞여 있어 17:19 이후 비교" });
+    expect(gap.status).toMatchObject({ level: "ok", text: "정상", reason: "1시간 정산 20" });
+  });
+
+  it("F2 앞 순위가 상한·칸 가득으로만 건너뛰어져 뒤 순위가 처리했으면 순위대로 대체 — 「설정과 다름」이 아니다; 다른 까닭이 섞이면 지금 경고 그대로", () => {
+    // 제품 다국어 번역: 1·2순위 m3 gpt-oss 가 모델 상한 가득, 3순위 m1 이 98건을 처리
+    const rows = [rank("product-translate", 1, MLX, "gpt-oss-120b"), rank("product-translate", 2, MLX, "gpt-oss-120b"), rank("product-translate", 3, M1, "m1-gemma")];
+    const metrics = (indeterminate: number) => [metric("product-translate", "abcllm", "m1-gemma", "m1-qwen", 98),
+      metric("product-translate", "abcllm", "mlx-community--gemma-4-26b-a4b-it-4bit", "m1-qwen", 0, { indeterminate })];
+    const view = (runtime: AiTaskRuntimeView, indeterminate = 0) => rowOf(buildTaskAssignView(input({ observation: observationWith(metrics(indeterminate)),
+      slots: [slotOf("product-translate", 1, { runtime }, rows)] })), "product-translate#1");
+    const designed = fresh({ served: [{ rank: 3, count: 1 }], unusable: [quota(1), quota(2)] });
+    const row = view(designed);
+    expect(row.actual.warnings).toEqual([]);
+    expect(row.status).toMatchObject({ level: "ok", text: "정상", reason: "1·2순위 모델 상한 가득 → 3순위가 처리(순위대로 대체) · 1시간 정산 98" });
+    // 미확정은 그대로 주의 — 대체 설명은 까닭 옆에
+    const unsettled = view(designed, 1);
+    expect(unsettled.status).toMatchObject({ level: "warn", reason: "결과 미확정 1건 · 1·2순위 모델 상한 가득 → 3순위가 처리(순위대로 대체)" });
+    expect(unsettled.status.detail).not.toContain("건너뜀");
+    // 2순위가 계약 때문에 건너뛰어졌으면 설명되지 않는다 — 1순위 0건 경고와 건너뜀 신호를 그대로 낸다
+    const broken = view(fresh({ served: [{ rank: 3, count: 1 }], unusable: [quota(1), { rank: 2, code: "no_direct_contract", text: "계약 없음", count: 1 }] }));
+    expect(broken.actual.warnings).toEqual(["1순위 gpt-oss-120b 0건 — 다른 모델이 처리"]);
+    expect(broken.status).toMatchObject({ level: "warn", reason: "1순위 건너뜀: 모델 상한 가득 1회 · 2순위 건너뜀: 계약 없음 1회" });
+    // 오래된 순위 사정(30분 넘음)으로는 설명하지 않는다
+    expect(view(fresh({ at: "2026-11-07T06:00:00.000Z", served: [{ rank: 3, count: 1 }], unusable: [quota(1), quota(2)] })).actual.warnings)
+      .toEqual(["1순위 gpt-oss-120b 0건 — 다른 모델이 처리"]);
+  });
+
+  it("F3 순위 없는 2차 투표자 칸은 「비어 있음」 — 미확정·실패·순위 사정 같은 작업 전체 신호는 투표자 1 줄에만", () => {
+    const rows = [rank("second-review", 1, SUPA, "supa"), rank("second-review", 2, MLX, "gpt-oss-120b")];
+    const metrics = [metric("second-review", "abcllm", "supa", "supa-direct", 82, { indeterminate: 1, failed1h: 2 })];
+    const runtime = fresh({ unusable: [{ rank: 1, code: "engine_slow", text: "느림", count: 2 }], served: [{ rank: 1, count: 4 }] });
+    const view = buildTaskAssignView(input({ observation: observationWith(metrics), slots: [1, 2, 3].map(slot => slotOf("second-review", slot, { runtime }, rows)) }));
+    const voter1 = rowOf(view, "second-review#1");
+    expect(voter1.status).toMatchObject({ level: "warn" });
+    expect(`${voter1.status.reason} ${voter1.status.detail}`).toContain("결과 미확정 1건");
+    expect(`${voter1.status.reason} ${voter1.status.detail}`).toContain("1순위 건너뜀");
+    for (const key of ["second-review#2", "second-review#3"]) {
+      const row = rowOf(view, key);
+      expect(row.status, key).toEqual({ level: "idle", text: "비어 있음", reason: "이 칸은 쓰지 않습니다", detail: null });
+      expect(row.actual, key).toMatchObject({ calls: [], warnings: [], empty: "쓰지 않는 칸", note: null });
+    }
+  });
+
+  it("F4 계약 버전만 다른 CLI 순위는 「빠진 계약·경로 — 다시 저장하면 만듦」이 아니다 — 알림으로만, 서랍도 다시 저장을 권하지 않는다", () => {
+    const warning = "1순위 M3 OpenCode · deepseek/deepseek-v4.1-flash: CLI 계약은 opencode v2.2.6인데 이 연결에 기록된 M3 호스트 버전은 opencode v2.2.5입니다 — 기록은 …";
+    const base = slotOf("first-review");
+    const slot = slotOf("first-review", 1, { readiness: [{ ...base.readiness[0], warnings: [warning],
+      createCliContract: { routeId: "crawl-agent-review", provider: "opencode-cli", model: "deepseek/deepseek-v4.1-flash", cliVersion: "opencode v2.2.5", replaces: "opencode v2.2.6" } },
+      base.readiness[1]] });
+    const row = rowOf(buildTaskAssignView(input({ slots: [slot] })), "first-review#1");
+    expect(`${row.status.reason} ${row.status.detail}`).not.toContain("다시 저장하면");
+    expect(row.status.detail).toContain(warning);
+    const line = withTaskReadiness(buildTaskRankEditor(llmConnections, llmRankRows, () => "a".repeat(64)), [slot]).lines.find(entry => entry.key === "first-review#1")!;
+    expect(line).not.toHaveProperty("pending");
+    expect(line.notes).toEqual([{ tone: "warn", text: warning }]);
+  });
+
+  it("F5 「쉼」이 멈춤을 가리지 않는다 — 입장 철회만 쌓이면 주의, 24시간 성공이 없으면 주의, 있으면 마지막 성공 시각; 멈춘 잡·웹 요청 작업은 경고하지 않는다", () => {
+    const split = (metrics: AdminModelMetrics[], jobs = llmJobs) => rowOf(buildTaskAssignView(input({ observation: observationWith(metrics), jobs,
+      slots: [slotOf("split-confirm", 1, { current: current("split-confirm", "deepseek-v4.1-flash-1017") })] })), "split-confirm#1");
+    // 2차 갈림 재확인: 입장 철회만 54건, 정산 0
+    const withdrawn = split([metric("local-deepseek-confirm", "local-direct", "deepseek-v4.1-flash-1017", "m3-mlx", 0, { withdrawn1h: 54 })]);
+    expect(withdrawn.actual.empty).toBe("호출 없음 (최근 1시간)");
+    expect(withdrawn.status).toMatchObject({ level: "warn", text: "주의", reason: "1시간 입장 철회 54건 · 정산 0 · 24시간 성공 0건" });
+    // 사람 몫 위임 검수: 24시간 안 마지막 성공이 있으면 그 시각(KST)을 「쉼」 옆에
+    const human = (lastSuccessAt: string | null, jobs = llmJobs) => rowOf(buildTaskAssignView(input({ jobs,
+      observation: observationWith([metric("local-human-deepseek", "local-direct", "deepseek-v4.1-flash-1017", "m3-mlx", 0, { lastSuccessAt })]),
+      slots: [slotOf("human-review", 1, { current: current("human-review", "deepseek-v4.1-flash-1017") })] })), "human-review#1");
+    expect(human("2026-11-07T01:05:00.000Z").status).toEqual({ level: "idle", text: "쉼", reason: "최근 1시간 호출 없음 · 마지막 성공 11-07 10:05", detail: null });
+    expect(human(null).status).toMatchObject({ level: "warn", text: "주의", reason: "24시간 성공 0건" });
+    // 잡을 멈췄으면 경고하지 않는다; 잡 상태를 못 읽었으면 멈췄는지 몰라 경고하지 않는다
+    expect(human(null, [{ name: "human-deepseek-review", paused: true }]).status).toMatchObject({ level: "idle", text: "의도적 중지" });
+    expect(human(null, null as never).status).toMatchObject({ level: "idle", text: "쉼", reason: "최근 1시간 호출 없음" });
+    // 실제 적용 설정을 못 읽은 줄(무엇을 쓰는지 모름)에는 멈춤 신호를 더하지 않는다 — 그 까닭이 이미 보인다
+    const unknownSetting = rowOf(buildTaskAssignView(input({ observation: observationWith([]),
+      slots: [slotOf("screen-review", 1, { current: current("screen-review", "x", { uses: [], error: "model_purpose_not_unique:screen-review" }) })] })), "screen-review#1");
+    expect(unknownSetting.status).toEqual({ level: "warn", text: "주의", reason: "실제 적용 설정을 읽지 못함", detail: "model_purpose_not_unique:screen-review" });
+    // 웹 요청 작업(잡 없음)은 요청이 없으면 쉰다
+    const web = rowOf(buildTaskAssignView(input({ observation: observationWith([]),
+      slots: [slotOf("search-query-translate", 1, {}, [rank("search-query-translate", 1, MLX, "gpt-oss-120b")])] })), "search-query-translate#1");
+    expect(web.status).toEqual({ level: "idle", text: "쉼", reason: "최근 1시간 호출 없음", detail: null });
+  });
+
+  it("F6 장부 밖 작업은 「정상」이라 하지 않는다 — 「장부 밖」(확인 불가 수준), 정상 수에 세지 않는다", () => {
+    const slots = [slotOf("product-embedding", 1, { current: current("product-embedding", "bge-m3") }),
+      slotOf("assist-review", 1, { current: current("assist-review", "qwen3.8-flash-next") }), slotOf("assist-audit")];
+    const view = buildTaskAssignView(input({ slots }));
+    expect(rowOf(view, "product-embedding#1").status).toEqual({ level: "unknown", text: "장부 밖", reason: "호출을 세지 않아 이 표로는 확인하지 못함", detail: null });
+    expect(rowOf(view, "assist-review#1").status).toMatchObject({ level: "unknown", text: "장부 밖" });
+    // 실제 적용 설정을 못 읽은 장부 밖 작업은 그 까닭이 앞선다
+    expect(rowOf(view, "assist-audit#1").status).toMatchObject({ level: "unknown", text: "확인 불가", reason: "실제 적용 설정을 읽지 못함" });
+    expect(view.rows.map(row => row.status.text)).not.toContain("정상");
+    expect(view.counts).toMatchObject({ ok: 0, unknown: 3 });
+  });
+
+  it("F7 검색 재정렬의 주소 없음은 상태 칸에 상태의 말로 — 가져오기 계획의 「옮기지 않습니다」를 쓰지 않는다", () => {
+    const skip = "환경 API 설정에 RERANK_URL 이(가) 없어 옮기지 않습니다.";
+    const row = rowOf(buildTaskAssignView(input({ slots: [slotOf("search-rerank", 1, { current: { task: "search-rerank", slot: 1, uses: [], source: "환경 API 설정", error: null,
+      skip, skipStatus: "재정렬 서버 주소(RERANK_URL)가 없어 쓰지 않음", notes: [] } })] })), "search-rerank#1");
+    expect(row.status).toEqual({ level: "idle", text: "의도적 중지", reason: "재정렬 서버 주소(RERANK_URL)가 없어 쓰지 않음", detail: null });
+    expect(JSON.stringify(row)).not.toContain("옮기지 않습니다");
+    // 상태 말이 없는 skip 은 지금처럼
+    const audit = rowOf(buildTaskAssignView(input({ slots: [slotOf("audit-review", 1, { current: { task: "audit-review", slot: 1, uses: [], source: "x", error: null,
+      skip: "지금 꺼져 있습니다.", notes: [] } })] })), "audit-review#1");
+    expect(audit.status.reason).toBe("지금 꺼져 있습니다");
+  });
+
+  it("F8 쓰지 않는 작업 — 진행 중인 감사가 없는 감사 캠페인·Grok 연결이 없는 Grok 로그인 유지는 「쓰지 않음」; 모르거나 쓸 일이 생기면 지금처럼 「멈춤 · 순위 없음」", () => {
+    const degraded = fresh({ degraded: { code: "no_task_models", detail: "Grok 로그인 유지: 작업 ↔ 모델에 순위가 없습니다" } });
+    const view = (facts: TaskAssignInput["facts"], connections = llmConnections) => buildTaskAssignView(input({ facts, connections,
+      slots: [slotOf("product-audit"), slotOf("grok-session-check", 1, { runtime: degraded })] }));
+    const unused = view({ auditRunning: false, connectionsRead: true });
+    expect(rowOf(unused, "product-audit#1").status).toEqual({ level: "idle", text: "쓰지 않음", reason: "진행 중인 감사 없음", detail: null });
+    expect(rowOf(unused, "product-audit#1").actual.empty).toBe("호출 없음 (쓰지 않음)");
+    expect(rowOf(unused, "grok-session-check#1").status).toEqual({ level: "idle", text: "쓰지 않음", reason: "Grok CLI 연결 없음", detail: null });
+    expect(unused.counts).toMatchObject({ bad: 0, idle: 2 });
+    const stopped = { level: "bad", text: "멈춤", reason: "순위 없음 — 이 작업은 돌지 않습니다" };
+    // 진행 중인 감사가 생겼거나 Grok 연결이 생겼는데 순위가 없으면 멈춤
+    const grok = { ...llmConnections[5], id: "77777777-7777-4777-8777-777777777777", label: "Grok CLI", cliTool: "grok" as const, deviceId: "grok-cli", cliModels: ["grok-4.7"] };
+    const needed = view({ auditRunning: true, connectionsRead: true }, [...llmConnections, grok]);
+    expect(rowOf(needed, "product-audit#1").status).toMatchObject(stopped);
+    expect(rowOf(needed, "grok-session-check#1").status).toMatchObject({ level: "bad", text: "멈춤", reason: expect.stringContaining("순위 없음 — 이 작업은 돌지 않습니다") });
+    // 감사가 진행 중이면 OpenCode 연결이 없어도 「쓰지 않음」이 아니다
+    expect(rowOf(view({ auditRunning: true, connectionsRead: true }, llmConnections.filter(row => row.cliTool !== "opencode")), "product-audit#1").status).toMatchObject(stopped);
+    // 못 읽었으면 꾸미지 않는다
+    for (const facts of [undefined, { auditRunning: null, connectionsRead: false }]) {
+      const unknown = view(facts);
+      expect(rowOf(unknown, "product-audit#1").status, JSON.stringify(facts)).toMatchObject(stopped);
+      expect(rowOf(unknown, "grok-session-check#1").status.level, JSON.stringify(facts)).toBe("bad");
+    }
   });
 });
 
