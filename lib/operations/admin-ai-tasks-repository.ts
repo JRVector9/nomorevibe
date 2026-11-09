@@ -12,7 +12,8 @@ import { CLI_DB_CONTRACT_ROUTES, type CliProvider } from "@/lib/llm/cli-serving-
 import { textRankStatusFromCounts, textRankUnusableText, textTaskRankStatus, type TextRankStatus } from "@/lib/llm/ai-task-resolver";
 import { listModelCapacityDevices, saveModelCapacityDevice } from "@/lib/llm/capacity-devices-repository";
 import type { GatewayServingRoute } from "@/lib/llm/gateway-serving-contract-config";
-import { resolveLocalModelContract } from "@/lib/llm/local-model-contract-table";
+import { resolveLocalModelContract, tableLocalModelContracts } from "@/lib/llm/local-model-contract-table";
+import { localModelServingContractSchema, localModelServingContractsSchema, type LocalModelServingContract } from "@/lib/llm/local-model-serving-contract";
 import { readModelRegistry } from "@/lib/llm/model-registry";
 import { cliDerivedRegistryKeys } from "@/lib/llm/ai-task-models-snapshot";
 import { ensureServingContracts, servingContractSnapshot } from "@/lib/llm/serving-contract-store";
@@ -39,6 +40,7 @@ import { cliCatalogMetadataFromSnapshot, type CliCatalogMetadata } from "@/lib/l
 import { aiTaskUsesCliEngine, cliEngineEndpoint, cliEngineRevision } from "@/lib/llm/cli-engine-config";
 import { cliEngineBearer } from "@/lib/llm/cli-engine-auth";
 import { readAdminCliCatalog } from "./admin-cli-catalog";
+import { saveLocalContract } from "./admin-cli-stage-resources";
 import { validateCliHostTarget } from "./cli-host-target";
 
 /**
@@ -141,14 +143,33 @@ async function readReadinessInput(): Promise<AiReadinessInput & { policyError: s
       groupLimits: { ...(control.policy.groupLimits ?? {}) } as Record<string, number> };
     else policyError = control.policyVerified ? "model_capacity_policy_missing" : "model_capacity_policy_unverified";
   } catch (error) { policyError = error instanceof Error ? error.message : "read_failed"; }
-  const devices = new Map((await listModelCapacityDevices().catch(() => [])).map(device => [device.deviceId, { enabled: device.enabled, limitSlots: device.limitSlots }]));
+  const devices = new Map((await listModelCapacityDevices().catch(() => [])).map(device => [device.deviceId,
+    { enabled: device.enabled, limitSlots: device.limitSlots, physicalLimit: device.physicalLimit ?? null }]));
+  const table = tableLocalModelContracts();
   // 2차(second-review)도 순위 저장이 엔진 직접 계약(abcllm 형 total-bound, transport direct)을 만든다(PR C1 — 예전에는 env·서빙 계약·등록부 화면의 계약만 받았다)
   return { contracts, policy, policyError, devices, cliEngineIdentity: cliEngineModelIdentity, engineRoutes: [...ENGINE_CONNECT_ROUTES, "second-review"], cliContractRoutes: [...CLI_DB_CONTRACT_ROUTES],
     localContract: backendId => {
       const contract = resolveLocalModelContract(backendId);
       return contract ? { model: contract.model, endpoint: contract.endpoint } : null;
-    } };
+    },
+    // 감사 직접 경로(「발행분 감사 · 변경 재판정」의 API 순위): 표의 행 + 이 프로세스 env 의 로컬 계약 — 같은 주소·모델을 다시 쓰고 장비가 갈리지 않게 본다
+    localContracts: [...table.flatMap(row => row.contract ? [row.contract] : []), ...envLocalModelContracts()]
+      .map(contract => ({ backendId: contract.backendId, model: contract.model, endpoint: contract.endpoint, physicalGroup: contract.physicalGroup })),
+    localContractTableCount: new Set(table.flatMap(row => row.contract ? [row.contract.backendId] : [])).size,
+    localBackendId: auditDirectBackendId };
 }
+
+/** env LOCAL_MODEL_SERVING_CONTRACTS 의 로컬 계약(모양이 틀리면 없음) — 확인 여부와 상관없이 주소·장비 대조에만 쓴다 */
+function envLocalModelContracts(): readonly LocalModelServingContract[] {
+  try { return process.env.LOCAL_MODEL_SERVING_CONTRACTS ? localModelServingContractsSchema.parse(JSON.parse(process.env.LOCAL_MODEL_SERVING_CONTRACTS)) : []; }
+  catch { return []; }
+}
+
+/**
+ * 「발행분 감사 · 변경 재판정」의 API 순위가 만드는 로컬 계약의 backend id — 연결 id·모델의 hash(35자, 관리 표 route_id 64자 안). 연결 주소가 바뀌어도 같은 id 라
+ * 다시 저장하면 그 계약 행을 새 주소로 바꾼다(정책 route 의 예산 이름은 그대로).
+ */
+export const auditDirectBackendId = (connectionId: string, model: string): string => `api-${sha256(`${connectionId}\n${model}`).slice(0, 31)}`;
 
 /**
  * 같은 작업 안에서 계약·정책 route 가 (경로, provider, 장부 이름) 하나에 서버 하나다. 글 짓기·번역·검색 text 경로(engine-route, PR B)와 1차·2차(review-ai1·ai2, PR C1)는
@@ -157,10 +178,16 @@ async function readReadinessInput(): Promise<AiReadinessInput & { policyError: s
  */
 function crossRankIssues(task: AiTaskDef, readiness: readonly AiRankReadiness[]): string[] {
   if (!task.routeId || task.wiring === "uncapped" || task.wiring === "deferred") return [];
+  // 「발행분 감사 · 변경 재판정」: CLI 순위는 예전처럼 보지 않고, API 순위(감사 직접 경로)만 — 그 경로의 장부 route 는 모델마다 서버 하나다
+  const rows = task.wiring === "audit-direct" ? readiness.filter(row => row.provider === "local-direct") : readiness;
   const issues: string[] = [];
-  readiness.forEach((row, index) => {
-    const earlier = readiness.slice(0, index).find(other => other.provider === row.provider && other.identity === row.identity && other.connectionId !== row.connectionId);
+  rows.forEach((row, index) => {
+    const earlier = rows.slice(0, index).find(other => other.provider === row.provider && other.identity === row.identity && other.connectionId !== row.connectionId);
     if (!earlier) return;
+    if (task.wiring === "audit-direct") {
+      issues.push(`${earlier.rank}순위와 ${row.rank}순위가 같은 모델(${row.model})을 다른 서버로 씁니다. 감사 직접 경로(local-audit)는 모델마다 서버 하나만 둡니다 — 다른 모델을 고르세요.`);
+      return;
+    }
     issues.push(task.wiring === "engine-route" || task.wiring === "review-ai1" || task.wiring === "review-ai2"
       ? `${earlier.rank}순위와 ${row.rank}순위가 같은 계약(${row.identity})을 다른 서버로 가리킵니다. 서빙 계약·등록부 화면에서 계약을 고친 뒤 다시 저장하세요.`
       : `${earlier.rank}순위와 ${row.rank}순위가 같은 모델(${row.model})을 다른 서버로 씁니다. 직접 모델 단계의 실행 쪽은 아직 경로·모델마다 서버 하나만 알아 `
@@ -861,6 +888,31 @@ export async function prepareAiTaskServingResources(task: AiTaskDef, chosen: rea
     if (!contract) return { ok: false as const, issues: [`ai_task_contract_probe_failed:${ready.createContract.routeId}:contract_schema_invalid`] };
     contracts.push({ routeId: ready.createContract.routeId, model: ready.createContract.identity, contract, key, label: connection.label });
   }
+  // 감사 직접 경로의 로컬 계약(「발행분 감사 · 변경 재판정」의 API 순위, 2026-11-09) — 엔진 직접 계약과 같은 readback(GET /models) + 1토큰 시험으로 응답 모델·문맥 상한을
+  // 확인하고 local-openai-chat-v1 계약을 만든다(네트워크는 잠금 전에). 관리 표의 행은 확인해 넣은 계약으로 읽힌다(local-model-contract-table.ts)
+  const localContracts: LocalModelServingContract[] = [];
+  for (const [index, ready] of readiness.entries()) {
+    const wanted = ready.createLocalContract;
+    if (!wanted) continue;
+    const { connection, row } = chosen[index];
+    const [record] = await onPrimary(() => db.select().from(aiConnections).where(eq(aiConnections.id, connection.id)));
+    if (!record || Number(record.version) !== connection.version || !record.enabled || record.kind !== "api" || record.baseUrl !== connection.baseUrl)
+      return { ok: false as const, issues: ["ai_connection_version_mismatch"] };
+    const key = connectionKey(record);
+    if (record.apiKeyCiphertext && key === null) return { ok: false as const, issues: ["ai_connection_key_unreadable"] };
+    const served = connection.models?.find(model => model.id === row.model);
+    let probed;
+    try {
+      probed = await probeEngineContract({ endpoint: wanted.endpoint, engineModel: row.model, apiKey: key,
+        maxModelLen: served?.maxModelLen ? null : connection.contextTokens }, request());
+    } catch (error) {
+      const reason = error instanceof Error && /^[a-z0-9_:.-]{1,80}$/.test(error.message) ? error.message : "error";
+      return { ok: false as const, issues: [`ai_task_contract_probe_failed:${wanted.routeId}:${reason}`] };
+    }
+    const contract = auditDirectLocalContract(wanted, connection.id, probed);
+    if (!contract) return { ok: false as const, issues: [`ai_task_contract_probe_failed:${wanted.routeId}:contract_schema_invalid`] };
+    localContracts.push(contract);
+  }
   // CLI 계약(PR C1 — 1차·2차·Grok 로그인 유지): 연결의 CLI 버전과 route 의 argv 상한으로 만든다(네트워크 없음)
   const cliContracts = readiness.flatMap(ready => {
     if (!ready.createCliContract) return [];
@@ -870,7 +922,23 @@ export async function prepareAiTaskServingResources(task: AiTaskDef, chosen: rea
   });
   const brokenCli = cliContracts.find(entry => !entry.contract);
   if (brokenCli) return { ok: false as const, issues: [`${brokenCli.ready.rank}순위 ${brokenCli.ready.model}: CLI 계약을 만들 수 없습니다(이 작업이 받지 않는 CLI 이거나 버전 글이 맞지 않음).`] };
-  return { ok: true as const, contracts, cliContracts };
+  return { ok: true as const, contracts, cliContracts, localContracts };
+}
+
+/**
+ * 감사 직접 경로의 로컬 계약 한 장(순수) — 엔진이 답한 응답 모델·문맥 상한으로. thinking 은 심사 wire 가 보내던 것(chat_template_kwargs.enable_thinking=false)을
+ * 계약이 대신 붙인다(local-model-capacity.ts 가 wire 의 thinking 칸을 지우고 계약의 것을 붙인다). 배포 리비전은 연결 id(CLI 엔진 리비전이 아니다).
+ * 모양이 계약 규칙을 어기면 null.
+ */
+export function auditDirectLocalContract(wanted: NonNullable<AiRankReadiness["createLocalContract"]>, connectionId: string,
+  probed: { responseModel: string; totalTokenBound: number }): LocalModelServingContract | null {
+  const parsed = localModelServingContractSchema.safeParse({ version: 1, protocol: "local-openai-chat-v1", backendId: wanted.backendId, provider: "local-direct",
+    physicalGroup: wanted.physicalGroup, endpoint: wanted.endpoint, model: wanted.model, responseModel: probed.responseModel,
+    modelFamily: wanted.model.slice(0, 120).trim(), deploymentRevision: `ai-connection:${connectionId}`,
+    contextWindowTokens: probed.totalTokenBound, totalTokenBound: probed.totalTokenBound, maxOutputTokens: Math.min(probed.totalTokenBound, 262_144),
+    maxInputBytes: 16 * 1024 * 1024, capabilities: { vision: false, jsonSchema: true },
+    thinking: { mode: "disabled", parameter: "chat_template_kwargs.enable_thinking" }, termination: { kind: "response_only" } });
+  return parsed.success ? Object.freeze(parsed.data) : null;
 }
 
 export type AiTaskServingResources = Extract<Awaited<ReturnType<typeof prepareAiTaskServingResources>>, { ok: true }>;
@@ -878,8 +946,12 @@ export type AiTaskServingResources = Extract<Awaited<ReturnType<typeof prepareAi
 /** Caller owns its existing writer fence/config CAS. Resource semantics are the same for both save paths. */
 export async function saveAiTaskServingResources(tx: ProductTransaction, task: AiTaskDef, readiness: readonly AiRankReadiness[],
   resources: AiTaskServingResources, actor: string) {
-  const { contracts, cliContracts } = resources;
+  const { contracts, cliContracts, localContracts = [] } = resources;
   const madeContracts: string[] = [];
+  for (const contract of localContracts) {
+    const saved = await saveLocalContract(tx, contract, actor, `작업 ↔ 모델 저장(${task.label}) · 감사 직접 경로`);
+    if (saved) madeContracts.push(`${saved.routeId} · ${contract.model} 로컬 계약 (#${saved.id})`);
+  }
   for (const entry of contracts) {
     const saved = await saveServingContractTx(tx, { routeId: entry.routeId, contract: entry.contract, auth: entry.key ? "stored" : "none", transport: "direct",
       apiKey: entry.key ?? undefined, note: `작업 ↔ 모델 저장(${task.label}) · 연결 ${entry.label}` }, actor);

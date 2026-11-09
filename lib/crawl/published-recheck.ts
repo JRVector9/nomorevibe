@@ -11,7 +11,8 @@ import { cliContractRouteId } from "@/lib/llm/cli-serving-contract";
 import { servingContractSnapshot } from "@/lib/llm/serving-contract-store";
 import { aiTaskModelsReadState } from "@/lib/llm/ai-task-models-snapshot";
 import { taskModels } from "@/lib/llm/ai-task-resolver";
-import { aiTask } from "@/lib/llm/ai-tasks";
+import { AUDIT_DIRECT_ROUTE, aiTask } from "@/lib/llm/ai-tasks";
+import { verifiedLocalModelContract } from "@/lib/llm/local-model-capacity";
 import { cliEngineRevision, isCliEngineConnection } from "@/lib/llm/cli-engine-config";
 import { cliHostTargetFromConnection } from "@/lib/operations/cli-host-target";
 import { buildReviewProduct, MAX_REVIEW_ATTEMPTS, REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, type ReviewSnapshot } from "./agent-review-contract";
@@ -311,12 +312,15 @@ export const RECHECK_TASK = "product-audit";
 /** 그 작업의 화면 이름(「발행분 감사 · 변경 재판정」) */
 export const RECHECK_TASK_LABEL = aiTask(RECHECK_TASK)?.label ?? RECHECK_TASK;
 /**
- * 감사 경로(product-audit)의 장부 binding(product_audit_cli)이 받는 CLI — OpenCode(원격 호스트)·Claude(이 워커에서 띄움). 그 밖의 연결(Codex·Grok·API)은
- * 장부 규칙(model_capacity_requests 의 CHECK 가지)·binding 이 없어 받지 않는다(lib/llm/ai-tasks.ts 의 product-audit cliTools 와 같다)
+ * 재판정을 부르는 제공자 — 감사 경로(product-audit)의 장부 binding(product_audit_cli)이 받는 CLI 둘(OpenCode 원격 호스트·Claude 이 워커)과,
+ * API 연결(local-direct — 감사 직접 경로 local-audit, binding direct:audit:<항목>:audit, 잡 audit-qwen, 2026-11-09). Codex·Grok 은 장부 규칙(CHECK 가지)·binding 이
+ * 없어 받지 않는다(lib/llm/ai-tasks.ts 의 product-audit 과 같다). CLI 순위는 감사 잡이, API 순위는 Qwen 직접 감사 잡이 묻는다(published-recheck-lanes.ts)
  */
-export type RecheckProvider = "opencode-cli" | "claude-cli";
+export type RecheckProvider = "opencode-cli" | "claude-cli" | "local-direct";
 export type RecheckReviewer = Readonly<{ rank: number; provider: RecheckProvider; model: string; connectionId: string; connectionLabel: string;
-  reasoningEffort?: string }>;
+  reasoningEffort?: string;
+  /** API 순위만: 연결 주소(`origin/v1`). 키는 싣지 않는다 — 부를 때 recheckDirectEndpoint 가 순위 스냅숏에서 읽는다 */
+  baseUrl?: string }>;
 export type RecheckRankStatus = "ok" | "no_task_models" | "task_models_unreadable";
 export type RecheckReviewerPlan = Readonly<{ status: RecheckRankStatus; reviewers: readonly RecheckReviewer[];
   /** 순위에 있지만 재판정이 부르지 않는 것과 까닭(운영자 문장) */
@@ -325,9 +329,10 @@ export type RecheckReviewerPlan = Readonly<{ status: RecheckRankStatus; reviewer
 /**
  * 재판정의 심사자 — 「작업 ↔ 모델」의 발행분 감사 · 변경 재판정(작업 product-audit, 칸 1)의 1·2·3순위를 차례로(2026-11-09 운영자 결정: 1차 순위와
  * 완전히 나눈다 — 1차 순위를 바꿔도 재판정은 따라가지 않는다). 사람이 연 감사를 시작할 때와 같은 해석이다(product-audit.ts startProductAudit):
- * 켜진 순위·켜진 연결이고 OpenCode CLI 연결(그 호스트 주소·키를 열 수 있어야 한다) 또는 Claude CLI 연결이어야 한다. 모델은 순위의 모델,
- * 추론 강도는 순위의 옵션이다(OpenCode 만).
- * 호출은 감사 경로(product_audit_cli)로 간다 — 그 순위를 저장하면 만들어지는 감사 경로 CLI 계약·정책 route 로 열린다(새 장부 binding·계약을 만들지 않는다).
+ * 켜진 순위·켜진 연결이고 OpenCode CLI 연결(그 호스트 주소·키를 열 수 있어야 한다)·Claude CLI 연결 또는 API 연결(주소가 있고 저장한 키를 열 수 있어야 한다)이어야
+ * 한다. 모델은 순위의 모델, 추론 강도는 순위의 옵션이다(OpenCode 만).
+ * CLI 는 감사 경로(product_audit_cli)로 간다 — 그 순위를 저장하면 만들어지는 감사 경로 CLI 계약·정책 route 로 열린다. API 는 감사 직접 경로(local-audit)로 간다 —
+ * 그 순위를 저장하면 만들어지는(이미 있으면 그대로 쓰는) 로컬 계약·정책 route 로 열린다. 둘 다 새 장부 binding·CHECK 가지를 만들지 않는다.
  * 순위가 없거나 표를 못 읽었으면 status 로 말하고 부르지 않는다 — 코드 기본값·1차 순위·옛 설정으로 대신 부르지 않는다.
  */
 export function recheckReviewerPlan(): RecheckReviewerPlan {
@@ -339,9 +344,16 @@ export function recheckReviewerPlan(): RecheckReviewerPlan {
     const base = { rank: rank.rank, label: rank.connection.label, model: rank.model };
     const effort = typeof rank.options.reasoningEffort === "string" ? rank.options.reasoningEffort : undefined;
     const claude = rank.connection.kind === "cli" && rank.connection.cliTool === "claude";
+    const api = rank.connection.kind === "api";
     const reason = !rank.enabled ? "순위 꺼짐" : !rank.connection.enabled ? "연결 꺼짐"
-      : !claude && !isCliEngineConnection(rank.connection) ? "감사 경로는 OpenCode·Claude CLI 연결만 받습니다" : null;
+      : api ? !rank.connection.baseUrl ? "연결 주소가 없습니다" : rank.connection.keyUnreadable ? "연결에 저장한 키를 열 수 없습니다(암호 상자 키 확인)" : null
+      : !claude && !isCliEngineConnection(rank.connection) ? "감사 경로는 OpenCode·Claude CLI·API 연결만 받습니다" : null;
     if (reason) { skipped.push({ ...base, reason }); continue; }
+    if (api) {
+      reviewers.push(Object.freeze({ rank: rank.rank, provider: "local-direct" as const, model: rank.model, connectionId: rank.connection.id,
+        connectionLabel: rank.connection.label, baseUrl: rank.connection.baseUrl! }));
+      continue;
+    }
     if (claude) {
       reviewers.push(Object.freeze({ rank: rank.rank, provider: "claude-cli" as const, model: rank.model, connectionId: rank.connection.id,
         connectionLabel: rank.connection.label }));
@@ -373,11 +385,36 @@ export function recheckReviewerPlanText(plan: RecheckReviewerPlan): string | nul
  * 그 심사자가 감사 경로(product-audit)에서 열릴 계약이 있는가 — 화면의 안내다(워커는 부를 때 장부·계약·호스트 버전을 다시 본다).
  * 그 모델의 감사 경로 CLI 계약 행(cli:opencode-cli:product-audit)은 「발행분 감사 · 변경 재판정」 순위를 저장하면 그 연결의 CLI 버전으로 만들어진다
  */
-export function recheckRouteNote(reviewer: Pick<RecheckReviewer, "provider" | "model">): { ready: boolean; text: string } {
+export function recheckRouteNote(reviewer: Pick<RecheckReviewer, "provider" | "model" | "baseUrl">): { ready: boolean; text: string } {
+  if (reviewer.provider === "local-direct") {
+    // API 순위 — 감사 직접 경로(local-audit)의 로컬 계약(관리 표, 없으면 이 프로세스 env). 정책 route·장비 물리 상한은 워커가 부를 때 본다
+    const ready = Boolean(reviewer.baseUrl && verifiedLocalModelContract(`${reviewer.baseUrl}/chat/completions`, reviewer.model));
+    return ready ? { ready, text: `감사 직접 경로(${AUDIT_DIRECT_ROUTE}) 로컬 계약 있음` }
+      : { ready, text: `감사 직접 경로(${AUDIT_DIRECT_ROUTE}) 로컬 계약 없음 — 「${RECHECK_TASK_LABEL}」 순위를 다시 저장하면 만들어집니다` };
+  }
   const routeId = cliContractRouteId(reviewer.provider, "product-audit");
   const ready = servingContractSnapshot().rows.some((row) => row.routeId === routeId && row.model === reviewer.model);
   return ready ? { ready, text: "감사 경로 CLI 계약 있음" }
     : { ready, text: `감사 경로(product-audit) CLI 계약 없음 — 「${RECHECK_TASK_LABEL}」 순위를 다시 저장하면 만들어집니다` };
+}
+
+/**
+ * API 순위를 부를 주소·키 — 순위 스냅숏(30초)의 그 순위·연결에서 읽는다(키는 메모리 안에서만). 순위가 그 사이 바뀌었거나 키를 열 수 없으면 null
+ */
+export function recheckDirectEndpoint(reviewer: Pick<RecheckReviewer, "rank" | "connectionId" | "model">): { baseUrl: string; apiKey: string | null } | null {
+  const rank = taskModels(RECHECK_TASK, 1).find((row) => row.rank === reviewer.rank && row.connection.id === reviewer.connectionId && row.model === reviewer.model);
+  if (!rank || !rank.enabled || !rank.connection.enabled || rank.connection.kind !== "api" || !rank.connection.baseUrl || rank.connection.keyUnreadable) return null;
+  return { baseUrl: rank.connection.baseUrl, apiKey: rank.connection.apiKey };
+}
+
+/**
+ * 이 틱은 1차 심사 때문에 재판정을 쉬는가 — 쉬면 가장 오래 기다린 항목의 시간(없으면 null)을, 묻으면 false. 두 묻기 줄(감사 잡의 CLI·Qwen 직접 감사 잡의 API)이 같은 규칙이다:
+ * 1차 심사 대기에 후보가 있으면 물러나되, 가장 오래 기다린 재판정 항목이 yieldHours 를 넘으면 함께 묻는다(0 이면 물러나지 않는다)
+ */
+export async function recheckYields(settings: CrawlSettings, rollingId: number, yieldHours: number): Promise<{ waitedHours: number | null } | false> {
+  if (yieldHours <= 0 || !await firstReviewHasWork(settings)) return false;
+  const waited = await oldestPendingRecheckHours(rollingId);
+  return waited === null || waited < yieldHours ? { waitedHours: waited === null ? null : Math.round(waited * 10) / 10 } : false;
 }
 
 /** 1차 심사 대기에 지금 묻을 후보가 있는가(줄 맨 앞 하나만 본다) — 재판정는 1차가 일할 때 물러난다 */

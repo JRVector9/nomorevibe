@@ -12,7 +12,9 @@ import { finishAuditCampaign, loadAuditInput, markAuditInputFailed, markAuditNoS
   runningAuditCampaign } from "@/lib/crawl/product-audit";
 import { sweepAuditHolds } from "@/lib/crawl/product-audit-hold";
 import { auditReviewer, QWEN_AUDIT_PROVIDER, type AuditReviewer } from "@/lib/crawl/product-audit-reviewer";
-import { firstReviewHasWork, oldestPendingRecheckHours, recheckLimits, recheckReviewerPlan, rollingStream } from "@/lib/crawl/published-recheck";
+import { recheckLimits, recheckReviewerPlan, recheckYields, rollingStream } from "@/lib/crawl/published-recheck";
+import { claimRecheckItem, clearRecheckRankPause, noteRecheckRankPaused, recheckLaneOf, recheckSkips, recheckTurn,
+  releaseRecheckItem } from "@/lib/crawl/published-recheck-lanes";
 import { ensureAiTaskModels } from "@/lib/llm/ai-task-models-snapshot";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import type { ProductAuditCampaign } from "@/lib/db/schema";
@@ -146,7 +148,9 @@ async function callAuditReviewer(ctx: JobContext<null>, lease: JobLease, ask: Au
 /**
  * 공개분 변경 재판정(0171, lib/crawl/published-recheck.ts)의 항목을 묻는다 — 감사 잡의 한 갈래(장부 job.name 이 product-audit 이어야 감사 경로의
  * binding 을 쓸 수 있다). 심사자는 재판정 자신의 설정인 「작업 ↔ 모델」의 발행분 감사 · 변경 재판정(product-audit) 1·2·3순위다(recheckReviewerPlan —
- * 사람이 연 감사를 시작할 때와 같은 해석, OpenCode·Claude CLI 연결만). 1차 순위와는 나뉜다. 한 순위가 이 틱에 모델·전역 미룸이거나 심사자 쪽 탈이면 다음 순위로 간다.
+ * 사람이 연 감사를 시작할 때와 같은 해석). 1차 순위와는 나뉜다. 한 순위가 이 틱에 모델·전역 미룸이거나 심사자 쪽 탈이면 다음 순위로 간다.
+ * 이 갈래는 CLI 순위(OpenCode·Claude)만 부른다. 차례가 API 순위면 그 항목은 Qwen 직접 감사 잡(audit-qwen)의 재판정 갈래에 맡긴다(2026-11-09 —
+ * 감사 직접 경로의 binding 은 job audit-qwen 이다). 두 줄의 순위 차례는 published-recheck-lanes.ts 가 맞춘다.
  * 순위가 없으면 묻지 않는다 — 올리기(published-recheck)만 쌓이고 화면이 그 까닭을 말한다.
  *
  * 1차를 늦추지 않는다: 감사 경로의 요청은 장부의 background 등급이고(1차는 first), 1차 심사 대기에 후보가 있으면 물러난다 — 다만 가장 오래 기다린
@@ -163,12 +167,10 @@ async function askRecheckStream(ctx: JobContext<null>, settings: CrawlSettings):
   if (!stream) return;
   const queue = await pendingAuditItems(stream.id, limits.askBatch);
   if (!queue.length) return;
-  if (limits.yieldHours > 0 && await firstReviewHasWork(settings)) {
-    const waited = await oldestPendingRecheckHours(stream.id);
-    if (waited === null || waited < limits.yieldHours) {
-      ctx.log("published_recheck.yielded", { stream: stream.id, pending: queue.length, waitedHours: waited === null ? null : Math.round(waited * 10) / 10 });
-      return;
-    }
+  const yielded = await recheckYields(settings, stream.id, limits.yieldHours);
+  if (yielded) {
+    ctx.log("published_recheck.yielded", { stream: stream.id, pending: queue.length, waitedHours: yielded.waitedHours });
+    return;
   }
   await ensureAiTaskModels();
   const plan = recheckReviewerPlan();
@@ -180,58 +182,74 @@ async function askRecheckStream(ctx: JobContext<null>, settings: CrawlSettings):
   const startedAt = Date.now();
   const deadlineAt = Math.min(startedAt + TICK_MS, ctx.deadlineAt ?? Infinity);
   const remaining = () => deadlineAt - Date.now();
+  // 이 틱에 열리지 않은 CLI 순위. API 순위(감사 직접 경로)는 Qwen 직접 감사 잡(audit-qwen)이 묻는다 — 그 줄이 적은 쉼만 본다(published-recheck-lanes.ts)
   const paused = new Set<number>();
-  let asked = 0, failed = 0, noSource = 0, passed = 0;
+  let asked = 0, failed = 0, noSource = 0, passed = 0, handedOff = 0, busy = 0;
   const deferred: string[] = [];
   // CLI 호출의 상한 — 사람이 연 감사의 CLI 심사자와 같다
   const ceiling = reviewCliTimeoutMs();
   const startable = () => !ctx.signal?.aborted && ctx.hasBudget() && remaining() >= ceiling + WRITE_MARGIN_MS;
   items: for (const item of queue) {
-    if (!startable() || plan.reviewers.every((reviewer) => paused.has(reviewer.rank))) break;
-    let input: ReviewInput | null;
-    try { input = await loadAuditInput(item.slug, settings); }
-    catch (caught) {
-      failed += 1;
-      await markAuditInputFailed(item.id, caught instanceof Error && /^[a-z0-9_]{3,60}$/.test(caught.message) ? caught.message : "input_error", lease);
-      continue;
-    }
-    if (!input) { noSource += 1; await markAuditNoSource(item.id, lease); continue; }
-    for (const reviewer of plan.reviewers) {
-      if (paused.has(reviewer.rank)) continue;
-      if (!startable()) break items;
-      const ask: AuditAsk = { campaign: { id: stream.id, provider: reviewer.provider, model: reviewer.model, promptVersion: REVIEW_PROMPT_VERSION,
-        rulesVersion: REVIEW_RULES_VERSION }, reviewer: { provider: reviewer.provider, model: reviewer.model },
-        // OpenCode 는 순위의 연결(원격 호스트)로, Claude 는 이 워커의 감사 경로 Claude 계약으로(callAuditReviewer)
-        cliEngine: reviewer.provider === "opencode-cli"
-          ? { connectionId: reviewer.connectionId, ...(reviewer.reasoningEffort ? { reasoningEffort: reviewer.reasoningEffort } : {}) } : null, ceiling };
-      let outcome: Awaited<ReturnType<typeof callAuditReviewer>>;
-      const callStartedAt = new Date();
-      try { outcome = await callAuditReviewer(ctx, lease, ask, item, input, startable, remaining); }
-      catch (error) {
-        if (!(error instanceof ModelCapacityDeferredError)) throw error;
-        // 이 심사자가 감사 경로에서 지금 열리지 않는다(경로 매핑 없음·계약 없음·포화·draining) — 이 틱에는 다음 순위로
-        paused.add(reviewer.rank);
-        deferred.push(`${reviewer.rank}:${error.reason}`);
+    if (!startable()) break;
+    // 지금 차례인 순위 — 모든 순위가 멈췄으면 이 틱을 끝내고(이 항목에서만 건너뛰는 것이면 다음 항목), API 순위면 그 줄에 맡긴다(입력도 읽지 않는다)
+    const turn = recheckTurn(plan.reviewers, "cli", paused, Date.now(), item.id);
+    if (!turn) { if (plan.reviewers.every((reviewer) => recheckSkips(reviewer, "cli", paused))) break; continue; }
+    if (recheckLaneOf(turn) === "api") { handedOff += 1; continue; }
+    if (!claimRecheckItem(item.id)) { busy += 1; continue; }
+    try {
+      let input: ReviewInput | null;
+      try { input = await loadAuditInput(item.slug, settings); }
+      catch (caught) {
+        failed += 1;
+        await markAuditInputFailed(item.id, caught instanceof Error && /^[a-z0-9_]{3,60}$/.test(caught.message) ? caught.message : "input_error", lease);
         continue;
       }
-      if (outcome.kind === "passed") { passed += 1; continue items; }
-      if (outcome.kind === "cut") break items;
-      const result = outcome.result;
-      const call = { itemId: item.id, startedAt: callStartedAt, provider: reviewer.provider, model: reviewer.model, promptVersion: REVIEW_PROMPT_VERSION, input };
-      if (result.ok) {
-        asked += 1;
-        await recordAuditResult({ ...call, ok: true, outcome: result.outcome }, lease, settings.auditHold);
-        continue items;
+      if (!input) { noSource += 1; await markAuditNoSource(item.id, lease); continue; }
+      for (const reviewer of plan.reviewers) {
+        // 이 틱에 열리지 않은 CLI 순위·다른 줄이 쉼으로 적은 API 순위·이 항목에서 건너뛰는 순위는 넘긴다
+        if (recheckSkips(reviewer, "cli", paused, Date.now(), item.id)) continue;
+        // 앞의 CLI 순위가 이 틱에 열리지 않아 API 순위 차례다 — 그 줄에 맡긴다
+        if (recheckLaneOf(reviewer) === "api") { handedOff += 1; continue items; }
+        if (!startable()) break items;
+        const cliReviewer = { provider: reviewer.provider as "opencode-cli" | "claude-cli", model: reviewer.model };
+        const ask: AuditAsk = { campaign: { id: stream.id, ...cliReviewer, promptVersion: REVIEW_PROMPT_VERSION,
+          rulesVersion: REVIEW_RULES_VERSION }, reviewer: cliReviewer,
+          // OpenCode 는 순위의 연결(원격 호스트)로, Claude 는 이 워커의 감사 경로 Claude 계약으로(callAuditReviewer)
+          cliEngine: reviewer.provider === "opencode-cli"
+            ? { connectionId: reviewer.connectionId, ...(reviewer.reasoningEffort ? { reasoningEffort: reviewer.reasoningEffort } : {}) } : null, ceiling };
+        let outcome: Awaited<ReturnType<typeof callAuditReviewer>>;
+        const callStartedAt = new Date();
+        try { outcome = await callAuditReviewer(ctx, lease, ask, item, input, startable, remaining); }
+        catch (error) {
+          if (!(error instanceof ModelCapacityDeferredError)) throw error;
+          // 이 심사자가 감사 경로에서 지금 열리지 않는다(경로 매핑 없음·계약 없음·포화·draining) — 이 틱에는 다음 순위로(다른 줄도 잠시 다음 순위로)
+          paused.add(reviewer.rank);
+          noteRecheckRankPaused(reviewer, error.reason);
+          deferred.push(`${reviewer.rank}:${error.reason}`);
+          continue;
+        }
+        if (outcome.kind === "passed") { passed += 1; continue items; }
+        if (outcome.kind === "cut") break items;
+        const result = outcome.result;
+        const call = { itemId: item.id, startedAt: callStartedAt, provider: reviewer.provider, model: reviewer.model, promptVersion: REVIEW_PROMPT_VERSION, input };
+        if (result.ok) {
+          asked += 1;
+          clearRecheckRankPause(reviewer);
+          await recordAuditResult({ ...call, ok: true, outcome: result.outcome }, lease, settings.auditHold);
+          continue items;
+        }
+        const reviewerDown = REVIEWER_DOWN.has(result.error);
+        await recordAuditResult({ ...call, ok: false, error: result.error, counted: !reviewerDown }, lease);
+        if (!reviewerDown) { failed += 1; continue items; }
+        // 심사자 쪽이 없다(설정·키·CLI·모델 없음) — 항목 탓이 아니다. 이 틱에는 다음 순위로
+        paused.add(reviewer.rank);
+        noteRecheckRankPaused(reviewer, result.error);
+        deferred.push(`${reviewer.rank}:${result.error}`);
       }
-      const reviewerDown = REVIEWER_DOWN.has(result.error);
-      await recordAuditResult({ ...call, ok: false, error: result.error, counted: !reviewerDown }, lease);
-      if (!reviewerDown) { failed += 1; continue items; }
-      // 심사자 쪽이 없다(설정·키·CLI·모델 없음) — 항목 탓이 아니다. 이 틱에는 다음 순위로
-      paused.add(reviewer.rank);
-      deferred.push(`${reviewer.rank}:${result.error}`);
-    }
+    } finally { releaseRecheckItem(item.id); }
   }
-  ctx.log("published_recheck.asked", { stream: stream.id, asked, failed, noSource, passed, deferred, reviewers: plan.reviewers.map((row) => `${row.rank}:${row.provider}:${row.model}`) });
+  ctx.log("published_recheck.asked", { stream: stream.id, lane: "cli", asked, failed, noSource, passed, handedOff, busy, deferred,
+    reviewers: plan.reviewers.map((row) => `${row.rank}:${row.provider}:${row.model}`) });
 }
 
 export type AuditCampaignForTick = { campaign: ProductAuditCampaign; reviewer: AuditReviewer; direct: boolean };

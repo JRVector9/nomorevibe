@@ -87,6 +87,8 @@ const fmt = (value: number) => value.toLocaleString("ko-KR");
 const HOUR_MS = 60 * 60_000;
 /** 감사 항목(감사 캠페인)이 있어야 일하는 작업 — 발행분 감사 · 직접 모델(audit-qwen)·감사 두 번째 의견(audit-second-opinion) */
 const AUDIT_FED_TASKS: ReadonlySet<string> = new Set(["audit-review", "audit-second-opinion"]);
+/** 「발행분 감사 · 변경 재판정」과, 그 API 순위가 쓰는 감사 직접 경로(local-audit)의 장부 작업(「발행분 감사 · 직접 모델」) */
+const RECHECK_TASK_ID = "product-audit", AUDIT_DIRECT_TASK_ID = "audit-review";
 /** 실행 쪽이 「이 틱만 칸이 없어」 다음 순위로 넘기는 까닭 — lib/llm/ai-task-resolver.ts 의 SATURATION 과 같은 목록(그 모듈은 서버 전용이라 여기 둔다) */
 const SATURATION: ReadonlySet<string> = new Set(["capacity", "queue_full", "route_quota", "model_quota"]);
 const KST = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Seoul", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
@@ -187,6 +189,19 @@ export function buildTaskAssignView(input: TaskAssignInput): TaskAssignView {
     }
     return (slot.current?.uses ?? []).map((use, index) => ({ position: index + 1, connectionId: null, model: use.model, identity: null, deviceId: use.deviceId, first: index === 0 }));
   };
+
+  // 「발행분 감사 · 변경 재판정」의 API 순위는 감사 직접 경로(local-audit — 장부로는 「발행분 감사 · 직접 모델」의 route)로 묻는다(2026-11-09).
+  // 그 순위 모델의 local-audit 호출은 이 작업의 「실제」로 센다. 직접 모델 작업의 실제 적용 설정에도 있는 모델이면 두 작업 모두에 남긴다(장부가 둘을 가르지 않는다)
+  const recheckSlot = input.slots.find(slot => slot.task.id === RECHECK_TASK_ID && slot.slot === 1);
+  const recheckApiModels = (recheckSlot?.rows ?? []).filter(row => row.enabled && connectionOf(row.connectionId)?.kind === "api").map(row => row.model);
+  const directAggs = ledger.get(AUDIT_DIRECT_TASK_ID) ?? [];
+  const recheckAggs = directAggs.filter(agg => recheckApiModels.some(model => agg.model === model || aiSameUnderlyingModel(agg.model, model)));
+  if (recheckAggs.length) {
+    const directSlot = input.slots.find(slot => slot.task.id === AUDIT_DIRECT_TASK_ID && slot.slot === 1);
+    const directEntries = directSlot ? expected(directSlot, modeOf(directSlot)) : [];
+    ledger.set(RECHECK_TASK_ID, [...ledger.get(RECHECK_TASK_ID) ?? [], ...recheckAggs]);
+    ledger.set(AUDIT_DIRECT_TASK_ID, directAggs.filter(agg => !recheckAggs.includes(agg) || owner(agg, directEntries)));
+  }
 
   // 여러 칸 작업은 모든 칸의 설정을 합쳐 「설정 밖」을 가른다
   const taskEntries = new Map<string, Expect[]>();

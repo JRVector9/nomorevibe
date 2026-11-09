@@ -2,8 +2,8 @@ import { aiTaskReasoningEfforts } from "@/lib/llm/ai-task-reasoning";
 import type { CliCatalogMetadata } from "@/lib/llm/cli-catalog-metadata";
 import { OPENCODE_NATIVE_TASK_ROUTES, aiTaskUsesCliEngine, cliEngineEndpoint, cliEngineRevision, type CliEngineSource } from "@/lib/llm/cli-engine-config";
 import { AI_TASK_EXECUTION_SAVE_AUDIT_ACTION } from "@/lib/llm/ai-task-execution-config";
-import { AI_CLI_TOOL_LABELS, AI_CLI_TOOL_PROVIDERS, AI_CLI_TOOLS, AI_TASK_RANK_MAX, AI_TASKS, aiTask, aiTaskAccepts, aiTaskAliasIdentity, aiTaskSlotLabel, isAiLiveTask,
-  type AiCliTool, type AiTaskDef } from "@/lib/llm/ai-tasks";
+import { AI_CLI_TOOL_LABELS, AI_CLI_TOOL_PROVIDERS, AI_CLI_TOOLS, AI_TASK_RANK_MAX, AI_TASKS, AUDIT_DIRECT_ROUTE, aiTask, aiTaskAccepts, aiTaskAliasIdentity, aiTaskSlotLabel,
+  isAiLiveTask, type AiCliTool, type AiTaskDef } from "@/lib/llm/ai-tasks";
 
 /**
  * 「AI 연결」·「작업 ↔ 모델」 관리 화면의 순수 규칙(2026-11-02, PR A) — 입력 읽기·선택지·순위 검증·저장 전 준비 확인·가져오기 계획·한국어 문장.
@@ -379,12 +379,22 @@ export type AiReadinessInput = Readonly<{
     deploymentRevision?: string | null }>[];
   /** 고정 로컬 경로의 계약(backendId = 정책 route 의 providerBudgetId) */
   localContract: (backendId: string) => Readonly<{ model: string; endpoint: string | null }> | null;
+  /**
+   * 알려진 로컬 계약(local-openai-chat-v1) 전부 — 관리 표의 검사를 지난 행과 env(LOCAL_MODEL_SERVING_CONTRACTS)의 것. 감사 직접 경로(audit-direct)가
+   * 같은 주소·모델의 계약을 다시 쓰고, 한 주소의 장비 이름이 갈리지 않는지 본다(표는 한 주소의 장비가 갈리면 표의 계약을 모두 닫는다). 없으면 빈 목록으로 본다
+   */
+  localContracts?: readonly Readonly<{ backendId: string; model: string; endpoint: string; physicalGroup: string }>[];
+  /** 관리 표의 로컬 계약 수(표는 32개까지 — 넘으면 표의 로컬 계약이 모두 닫힌다) */
+  localContractTableCount?: number;
+  /** 새로 만들 로컬 계약의 backend id(연결 id·모델의 hash — 서버에서만 계산한다). 없으면 감사 직접 경로 계약을 만들 수 없다 */
+  localBackendId?: (connectionId: string, model: string) => string;
   /** 엔진 직접 계약을 만들 수 있는 경로(admin-engine-connect ENGINE_CONNECT_ROUTES + 2차 second-review, PR C1) */
   engineRoutes: readonly string[];
   /** CLI 계약을 DB 행으로 만드는 route(cli-serving-contract CLI_DB_CONTRACT_ROUTES — 1차·2차·Grok 로그인 유지, PR C1). 없으면 빈 목록 */
   cliContractRoutes?: readonly string[];
   policy: Readonly<{ mode: string; routes: readonly AiPolicyRoute[]; groupLimits: Readonly<Record<string, number>> }> | null;
-  devices: ReadonlyMap<string, Readonly<{ enabled: boolean; limitSlots: number }>>;
+  /** physicalLimit: 장비 표의 물리 상한(없으면 null·생략 — 로컬 직접 경로는 이것 또는 워커 env 의 상한이 있어야 열린다) */
+  devices: ReadonlyMap<string, Readonly<{ enabled: boolean; limitSlots: number; physicalLimit?: number | null }>>;
   /**
    * CLI 버전을 방금 호스트에서 읽은 연결 id(순위·분산 저장이 OpenCode 목록을 새로 읽고 넘긴다). 여기 없는 연결의 cliVersion 은
    * 연결에 기록된 값(OpenCode 는 마지막으로 목록을 읽은 때의 값)이라 오래됐을 수 있다 — 화면은 이것으로 계약 버전을 바꾸라고 하지 않는다(2026-11-09).
@@ -406,6 +416,11 @@ export type AiRankReadiness = Readonly<{
   appendRoute: AiPolicyRoute | null;
   /** 저장이 만들(또는 버전을 바꿀) CLI 계약 행(PR C1 — 1차·2차·Grok 로그인 유지 route 만, 연결의 CLI 버전으로) */
   createCliContract: Readonly<{ routeId: string; provider: string; model: string; cliVersion: string; replaces: string | null }> | null;
+  /**
+   * 저장이 만들 로컬 계약(local-openai-chat-v1, 관리 표 `local-model:<backendId>`) — 「발행분 감사 · 변경 재판정」의 API 순위(audit-direct)만.
+   * 저장이 연결 주소를 readback + 1토큰 시험으로 확인한 뒤 만든다. 이 순위가 만들 것이 없으면 칸이 없다
+   */
+  createLocalContract?: Readonly<{ routeId: string; backendId: string; endpoint: string; model: string; physicalGroup: string }>;
   /** 이 순위를 부를 provider(장부·계약 이름) */
   provider: string | null;
 }>;
@@ -421,10 +436,11 @@ export function aiRankReadiness(task: AiTaskDef, rank: number, connection: AiCon
   const blocking: string[] = [], warnings: string[] = [];
   let createDevice: AiRankReadiness["createDevice"] = null, createContract: AiRankReadiness["createContract"] = null, appendRoute: AiPolicyRoute | null = null;
   let createCliContract: AiRankReadiness["createCliContract"] = null;
+  let createLocalContract: AiRankReadiness["createLocalContract"] | null = null;
   let provider: string | null = null, identity = model;
   const head = `${rank}순위 ${connection.label} · ${model}`;
   const result = () => Object.freeze({ rank, connectionId: connection.id, model, identity, blocking: Object.freeze(blocking), warnings: Object.freeze(warnings),
-    createDevice, createContract, appendRoute, createCliContract, provider });
+    createDevice, createContract, appendRoute, createCliContract, ...(createLocalContract ? { createLocalContract } : {}), provider });
   const routeId = task.routeId;
   const policyRoutes = input.policy?.routes ?? [];
   const budgetFor = (deviceId: string) => policyRoutes.find(route => route.groupId === deviceId)?.providerBudgetId ?? deviceId;
@@ -578,6 +594,64 @@ export function aiRankReadiness(task: AiTaskDef, rank: number, connection: AiCon
       checkDevice(checkRoute(provider, provider === "abcllm", "로컬 직접 경로는 예산·장비 이름이 계약과 같아야 해서 자동으로 만들지 않습니다."));
       return result();
     }
+    case "audit-direct": {
+      // 「발행분 감사 · 변경 재판정」의 API 순위(2026-11-09) — 감사 직접 경로(local-audit, 잡 audit-qwen)로 부른다. 저장이 그 경로의 로컬 계약·정책 route 를 둔다
+      provider = "local-direct";
+      const routeHead = `${head}: 감사 직접 경로(${AUDIT_DIRECT_ROUTE})`;
+      if (!base) { blocking.push(`${head}: 연결 주소가 없습니다.`); return result(); }
+      if (input.policy === null) { blocking.push(`${head}: 용량 정책을 읽지 못해 경로를 확인하지 못했습니다. 잠시 뒤 다시 저장하세요.`); return result(); }
+      if (input.policy.mode === "disabled") {
+        warnings.push(`${head}: 용량 관리가 꺼져 있어 경로를 확인하지 않았습니다. 감사 직접 경로는 용량 관리가 켜져 있어야 부릅니다.`);
+        return result();
+      }
+      const endpoint = `${base}/chat/completions`;
+      const known = policyRoutes.find(route => route.routeId === AUDIT_DIRECT_ROUTE && route.provider === "local-direct" && route.model === model);
+      const local = input.localContracts ?? [];
+      let group: string | null = null;
+      if (known) {
+        // 이미 있는 경로 — 그 예산(backend)의 계약이 이 연결의 주소·모델이어야 한다(장부 route 는 경로·모델마다 하나라 다른 서버를 둘 수 없다)
+        const contract = input.localContract(known.providerBudgetId);
+        if (!contract) blocking.push(`${routeHead}의 ${model} 경로가 쓰는 로컬 계약(${known.providerBudgetId})을 찾지 못했습니다. 서빙 계약 화면에서 그 계약을 확인하세요.`);
+        else if (contract.model !== model || contractBase(contract.endpoint) !== base)
+          blocking.push(`${routeHead}의 ${model}은(는) 이미 다른 서버(${aiConnectionHost(contractBase(contract.endpoint)) ?? "주소 없음"} · ${contract.model})의 계약을 씁니다 — `
+            + "감사 직접 경로는 모델마다 서버 하나만 둡니다. 다른 모델을 고르세요.");
+        if (known.groupId !== connection.deviceId)
+          blocking.push(`${routeHead}의 ${model} 경로는 장비 ${known.groupId}에 있습니다. 연결의 장비 이름을 ${known.groupId}(으)로 바꾸거나 용량 정책을 고치세요.`);
+        group = known.groupId;
+      } else {
+        // 같은 모델을 다른 로컬 경로가 쓰고 있으면 그 계약을 본다 — 이 화면이 읽지 못하는 계약(워커 env 만)이면 같은 서버인지 몰라 만들지 않는다
+        // (같은 주소·모델의 표 행을 새로 두면 워커는 env 계약 대신 그 행을 읽어 다른 단계의 경로가 닫힌다)
+        const sameModel = policyRoutes.filter(route => route.provider === "local-direct" && route.model === model);
+        const unread = sameModel.filter(route => !input.localContract(route.providerBudgetId)).map(route => route.providerBudgetId);
+        const matches = [...new Map(local.filter(entry => entry.model === model && contractBase(entry.endpoint) === base)
+          .map(entry => [entry.backendId, entry] as const)).values()];
+        const otherGroup = local.find(entry => contractBase(entry.endpoint) === base && entry.physicalGroup !== connection.deviceId);
+        if (matches.length > 1) blocking.push(`${head}: 이 서버·모델의 로컬 계약이 둘 이상입니다(${matches.map(entry => entry.backendId).join("·")}). 서빙 계약 화면에서 하나만 남기세요.`);
+        else if (matches.length === 1) {
+          if (matches[0].physicalGroup !== connection.deviceId)
+            blocking.push(`${head}: 이 서버·모델의 로컬 계약(${matches[0].backendId})은 장비 ${matches[0].physicalGroup}입니다. 연결의 장비 이름을 ${matches[0].physicalGroup}(으)로 맞추세요.`);
+          else appendRoute = Object.freeze({ routeId: AUDIT_DIRECT_ROUTE, provider: "local-direct", model, providerBudgetId: matches[0].backendId, groupId: matches[0].physicalGroup });
+        } else if (unread.length)
+          blocking.push(`${head}: 다른 로컬 경로가 같은 모델을 계약 ${[...new Set(unread)].join("·")}(으)로 쓰는데 이 화면이 그 계약을 읽지 못해 같은 서버인지 모릅니다 — `
+            + "서빙 계약 화면에서 그 계약을 확인하세요.");
+        else if (otherGroup)
+          blocking.push(`${head}: 이 서버의 다른 로컬 계약(${otherGroup.backendId})은 장비 ${otherGroup.physicalGroup}입니다 — 한 서버의 로컬 계약은 장비가 같아야 합니다. `
+            + `연결의 장비 이름을 ${otherGroup.physicalGroup}(으)로 맞추세요.`);
+        else if (!input.localBackendId) blocking.push(`${head}: 로컬 계약 정보를 읽지 못했습니다. 다시 시도하세요.`);
+        else if ((input.localContractTableCount ?? 0) >= 32) blocking.push(`${head}: 관리 표의 로컬 계약이 32개로 가득 찼습니다. 쓰지 않는 로컬 계약을 끈 뒤 다시 저장하세요.`);
+        else {
+          const backendId = input.localBackendId(connection.id, model);
+          createLocalContract = Object.freeze({ routeId: AUDIT_DIRECT_ROUTE, backendId, endpoint, model, physicalGroup: connection.deviceId });
+          appendRoute = Object.freeze({ routeId: AUDIT_DIRECT_ROUTE, provider: "local-direct", model, providerBudgetId: backendId, groupId: connection.deviceId });
+        }
+        group = connection.deviceId;
+      }
+      checkDevice(group);
+      const device = group ? input.devices.get(group) : undefined;
+      if (group && !blocking.length && !device?.physicalLimit)
+        warnings.push(`${head}: 장비 ${group}에 물리 상한이 없습니다 — 장비 한도 화면에서 물리 상한을 적어야 감사 직접 경로가 열립니다(워커 env LOCAL_MODEL_PHYSICAL_LIMITS 에 있으면 그 값).`);
+      return result();
+    }
     case "local-direct": {
       provider = "local-direct";
       const group = checkRoute("local-direct", false, "로컬 직접 경로는 예산·장비 이름이 계약과 같아야 해서 자동으로 만들지 않습니다(용량 정책 개정).");
@@ -601,8 +675,12 @@ export function aiRankReadiness(task: AiTaskDef, rank: number, connection: AiCon
 export function aiRanksReadiness(task: AiTaskDef, ranks: readonly Readonly<{ rank: number; connection: AiConnectionView; model: string; reasoningEffort?: string }>[],
   input: AiReadinessInput): AiRankReadiness[] {
   const contracts = [...input.contracts];
+  const localContracts = [...input.localContracts ?? []];
   return ranks.map(entry => {
-    const ready = aiRankReadiness(task, entry.rank, entry.connection, entry.model, { ...input, contracts }, entry.reasoningEffort);
+    const ready = aiRankReadiness(task, entry.rank, entry.connection, entry.model, { ...input, contracts, localContracts }, entry.reasoningEffort);
+    // 앞 순위가 만들 로컬 계약은 뒤 순위가 다시 쓴다(같은 연결·모델이면 같은 계약)
+    if (ready.createLocalContract) localContracts.push({ backendId: ready.createLocalContract.backendId, model: ready.createLocalContract.model,
+      endpoint: ready.createLocalContract.endpoint, physicalGroup: ready.createLocalContract.physicalGroup });
     if (ready.createContract && entry.connection.baseUrl)
       contracts.push({ routeId: ready.createContract.routeId, model: ready.createContract.identity, provider: "abcllm",
         endpoint: ready.createContract.cliEngine ? cliEngineEndpoint(entry.connection.baseUrl) : `${entry.connection.baseUrl}/chat/completions`, transport: "direct", engineModel: ready.createContract.engineModel,
@@ -617,8 +695,11 @@ export function aiRanksReadiness(task: AiTaskDef, ranks: readonly Readonly<{ ran
  * 저장된 순위에 아직 없는 것(그 줄을 다시 저장하면 만든다) — 화면의 준비 상태 문장.
  * 이미 있는 CLI 계약의 버전이 연결의 버전과 다른 것은 빠진 것이 아니다 — 저장을 권하지 않고 준비 상태의 알림(aiRankReadiness warnings)으로만 보인다(2026-11-09).
  */
-export function aiRankPendingText(ready: Pick<AiRankReadiness, "rank" | "model" | "createContract" | "appendRoute" | "createDevice"> & Partial<Pick<AiRankReadiness, "createCliContract">>): string[] {
+export function aiRankPendingText(ready: Pick<AiRankReadiness, "rank" | "model" | "createContract" | "appendRoute" | "createDevice">
+  & Partial<Pick<AiRankReadiness, "createCliContract" | "createLocalContract">>): string[] {
   const out: string[] = [];
+  if (ready.createLocalContract) out.push(`${ready.rank}순위 ${ready.model}: 감사 직접 경로(${ready.createLocalContract.routeId})의 로컬 계약이 없습니다 — `
+    + "이 줄을 저장하면 연결 주소를 확인하고 만듭니다.");
   if (ready.createCliContract && !ready.createCliContract.replaces)
     out.push(`${ready.rank}순위 ${ready.model}: ${ready.createCliContract.routeId} CLI 계약이 없습니다 — 이 줄을 저장하면 연결의 CLI 버전(${ready.createCliContract.cliVersion})으로 만듭니다.`);
   if (ready.createContract) out.push(`${ready.rank}순위 ${ready.model}: ${ready.createContract.routeId} 엔진 직접 계약이 ${ready.createContract.replacesGateway
@@ -844,7 +925,8 @@ export function aiTaskIssueMessage(issue: string): string {
     const reason = probe[2] ?? "";
     const text = PROBE_MESSAGES[reason] ?? (reason.startsWith("engine_unreachable") ? `엔진에 닿지 않습니다(${reason.split(":")[1] ?? "연결 실패"})`
       : reason.startsWith("engine_max_len_mismatch") ? "엔진이 알려 준 최대 길이와 연결의 컨텍스트 상한이 다릅니다" : reason || "확인 실패");
-    return `${probe[1]} 경로의 엔진 직접 계약을 만들지 못했습니다: ${text}.`;
+    return probe[1] === AUDIT_DIRECT_ROUTE ? `감사 직접 경로(${AUDIT_DIRECT_ROUTE})의 로컬 계약을 만들지 못했습니다: ${text}.`
+      : `${probe[1]} 경로의 엔진 직접 계약을 만들지 못했습니다: ${text}.`;
   }
   if (issue.startsWith("ai_connection_models_failed:")) return `모델 목록을 읽지 못했습니다(${issue.slice("ai_connection_models_failed:".length)}).`;
   return CODE_MESSAGES[issue] ?? `저장하지 못했습니다(${issue}).`;

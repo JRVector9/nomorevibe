@@ -1,7 +1,8 @@
 import { isDeepStrictEqual } from "node:util";
 import { and, asc, desc, eq } from "drizzle-orm";
 import { productAuditCampaigns, productAuditItems, products, secondReviews, crawlReviewAttempts, gateSplitTiebreaks,
-  crawlCandidates, crawlDocuments, crawlSettings, agentRepositoryScans, agentRepositoryObservations } from "@/lib/db/schema";
+  crawlCandidates, crawlDocuments, crawlSettings, agentRepositoryScans, agentRepositoryObservations, aiConnections, aiTaskModels } from "@/lib/db/schema";
+import { isManualCampaign, ROLLING_AUDIT_STATUS } from "@/lib/crawl/audit-stream";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { assertJobLeaseAtWallTime, type JobLease } from "@/lib/jobs/control";
 import { assertRoleLease, type RoleLease } from "@/lib/jobs/role-leader";
@@ -33,6 +34,24 @@ async function lockDirectInput(tx: ProductTransaction, repo: string, evidenceAge
   if (scan) await tx.select({ id: agentRepositoryObservations.id }).from(agentRepositoryObservations)
     .where(eq(agentRepositoryObservations.scanId, scan.id)).orderBy(asc(agentRepositoryObservations.id)).for("share");
   return { candidate, document, settings, scan, input: await loadReviewInput(candidate, document, settings, tx, evidenceAge) };
+}
+
+/** 그 감사 항목이 공개분 변경 재판정 줄(status 'rolling')의 것인가 — 잠그지 않는 읽기(줄 행은 끝나지 않는다. 아래 감사 갈래가 잠근 행으로 다시 본다) */
+async function onRecheckStream(tx: ProductTransaction, itemId: number): Promise<boolean> {
+  const [row] = await tx.select({ status: productAuditCampaigns.status }).from(productAuditItems)
+    .innerJoin(productAuditCampaigns, eq(productAuditCampaigns.id, productAuditItems.campaignId)).where(eq(productAuditItems.id, itemId));
+  return row?.status === ROLLING_AUDIT_STATUS;
+}
+
+/**
+ * 이 모델이 지금 「발행분 감사 · 변경 재판정」(작업 product-audit, 칸 1)의 켜진 API 순위인가 — 켜진 API 연결의 켜진 순위. 잠그지 않는 읽기다
+ * (순위 저장 TX 는 model_capacity_control 을 먼저 잠그므로 이 dispatch TX 와 잠금 차례가 엇갈리지 않게 행을 잠그지 않는다)
+ */
+async function recheckDirectRankHolds(tx: ProductTransaction, model: string): Promise<boolean> {
+  const [row] = await tx.select({ rank: aiTaskModels.rank }).from(aiTaskModels).innerJoin(aiConnections, eq(aiConnections.id, aiTaskModels.connectionId))
+    .where(and(eq(aiTaskModels.task, "product-audit"), eq(aiTaskModels.slot, 1), eq(aiTaskModels.enabled, true), eq(aiTaskModels.model, model),
+      eq(aiConnections.enabled, true), eq(aiConnections.kind, "api"))).limit(1);
+  return Boolean(row);
 }
 
 /** 예약을 잠근 같은 TX에서 실제 행·원본·설정·lease를 다시 증명한다. 외부 boolean 검증기를 받지 않는다. */
@@ -68,6 +87,10 @@ export async function localModelDomainRefusal(tx: ProductTransaction, target: Lo
   // (2026-11-09 운영자 결정, ReviewEvidenceAge any_age). 원본·입력 해시·스냅숏·후보 상태·시도 행·lease 대조는 아래에서 그대로 한다 —
   // 빠지는 것은 24시간 기한 거절 하나다. 감사·공개분·갈림 판가름은 그대로 input_expired 로 거절한다
   const anyAge = target.kind === "candidate";
+  // 공개분 변경 재판정 줄(0171)의 감사 항목 — 「발행분 감사 · 변경 재판정」의 API 순위가 묻는다(2026-11-09). 그 줄의 CLI 순위(lockAuditDispatchItem)처럼
+  // 근거 나이(24시간 기한)로 거절하지 않는다 — 공개 제품의 원본·스캔은 대개 하루가 지났고(생존 확인은 fetched_at 을 바꾸지 않는다), 원본·입력 해시·스냅숏 대조는
+  // 아래에서 그대로 한다. 줄 행은 끝나지 않으므로 여기서는 잠그지 않고 읽고, 아래 감사 갈래가 잠근 항목·감사 행으로 다시 본다
+  const rolling = target.kind === "audit" && target.purpose === "audit" && await onRecheckStream(tx, target.itemId);
   const current = await lockDirectInput(tx, input.snapshot.product.repo, anyAge ? "any_age" : "window");
   const now = new Date(), screen = target.kind === "audit" && target.purpose === "screen";
   if (!current) return refuse("source_missing");
@@ -77,7 +100,7 @@ export async function localModelDomainRefusal(tx: ProductTransaction, target: Lo
   if (screen) {
     if (!freshLocalModelScreenProof(screenProof, input.snapshot.product.url, now.getTime())) return refuse("screen_proof_stale");
     if (current.document.fetchedAt > now || Boolean(current.scan?.completedAt && current.scan.completedAt > now)) return refuse("screen_source_future");
-  } else if (!anyAge && current.input.validUntil <= now) return refuse("input_expired", current.input.validUntil);
+  } else if (!anyAge && !rolling && current.input.validUntil <= now) return refuse("input_expired", current.input.validUntil);
   if (current.input.sourceRevisionHash !== input.sourceRevisionHash) return refuse("source_changed");
   let expected = target.kind === "audit"
     ? await loadReviewInput(current.candidate, current.document, auditSettings(current.settings), tx) : current.input;
@@ -106,9 +129,16 @@ export async function localModelDomainRefusal(tx: ProductTransaction, target: Lo
     if (target.purpose === "audit") {
       const [campaign] = await tx.select().from(productAuditCampaigns).where(eq(productAuditCampaigns.id, item.campaignId));
       if (!campaign) return refuse("campaign_missing");
-      const reviewer = auditReviewer(campaign);
-      valid = reviewer.provider === "qwen-direct" && reviewer.model === model
-        && Boolean(await lockAuditDispatchItem(tx, { itemId: item.id, slug: target.slug, campaign: { ...campaign, ...reviewer } }));
+      if (!isManualCampaign(campaign)) {
+        // 재판정 줄: 감사 행에 굳힌 심사자가 없다 — 이 모델이 지금 「발행분 감사 · 변경 재판정」의 켜진 API 순위여야 하고, 항목은 지금 코드의 글 판으로 물을 수 있어야 한다
+        valid = rolling && campaign.status === ROLLING_AUDIT_STATUS && await recheckDirectRankHolds(tx, model)
+          && Boolean(await lockAuditDispatchItem(tx, { itemId: item.id, slug: target.slug, campaign: { id: campaign.id, provider: "local-direct", model,
+            promptVersion: REVIEW_PROMPT_VERSION, rulesVersion: REVIEW_RULES_VERSION } }));
+      } else {
+        const reviewer = auditReviewer(campaign);
+        valid = reviewer.provider === "qwen-direct" && reviewer.model === model
+          && Boolean(await lockAuditDispatchItem(tx, { itemId: item.id, slug: target.slug, campaign: { ...campaign, ...reviewer } }));
+      }
     } else {
       if (!(target.purpose === "screen" ? current.settings.qwenAuto.screenReview.enabled
         : current.settings.qwenAuto.auditSecondOpinion.enabled)) return refuse("step_disabled");

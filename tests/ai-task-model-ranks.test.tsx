@@ -393,9 +393,10 @@ describe("저장 전 준비 확인(aiRankReadiness)", () => {
     expect(ready.blocking).toEqual([]);
     expect(ready.createCliContract).toEqual({ routeId: id, provider: "opencode-cli", model, cliVersion: "2.2.5", replaces: null });
   });
-  it("2026-11-09 「발행분 감사 · 변경 재판정」은 Claude·OpenCode CLI 를 받고, 저장이 제공자마다 감사 경로 CLI 계약과 정책 route 를 만든다 — Codex·Grok·API 는 받지 않는다", () => {
+  it("2026-11-09 「발행분 감사 · 변경 재판정」은 Claude·OpenCode CLI 를 받고, 저장이 제공자마다 감사 경로 CLI 계약과 정책 route 를 만든다 — Codex·Grok 은 받지 않는다", () => {
     const task = aiTask("product-audit")!;
-    expect(task).toMatchObject({ label: "발행분 감사 · 변경 재판정", api: false, cliTools: ["claude", "opencode"], routeId: "product-audit" });
+    expect(task).toMatchObject({ label: "발행분 감사 · 변경 재판정", api: true, wiring: "audit-direct", cliTools: ["claude", "opencode"], routeId: "product-audit",
+      jobs: ["product-audit", "audit-qwen"] });
     const model = "opencode-go/deepseek-v4.1-flash";
     const opencode = { ...claude, label: "M3 OpenCode", cliTool: "opencode" as const, cliVersion: "opencode v2.2.6", cliModels: [model], hasKey: true, deviceId: "m3-opencode-host" };
     const versioned = { ...claude, cliVersion: "2.1.0 (Claude Code)" };
@@ -407,12 +408,80 @@ describe("저장 전 준비 확인(aiRankReadiness)", () => {
     expect(claudeReady).toMatchObject({ blocking: [], provider: "claude-cli",
       createCliContract: { routeId: "product-audit", provider: "claude-cli", model: "sonnet", cliVersion: "2.1.0 (Claude Code)", replaces: null },
       appendRoute: { routeId: "product-audit", provider: "claude-cli", model: "sonnet", groupId: "anthropic-cli" } });
-    // 장부 binding(product_audit_cli)이 받지 않는 CLI·API 연결은 이 작업의 선택지가 아니다
+    // 장부 binding(product_audit_cli)이 받지 않는 CLI 는 이 작업의 선택지가 아니다. API 연결은 받는다(감사 직접 경로 — 아래)
     expect(aiTaskAccepts(task, { kind: "cli", cliTool: "codex" })).toBe(false);
     expect(aiTaskAccepts(task, { kind: "cli", cliTool: "grok" })).toBe(false);
-    expect(aiTaskAccepts(task, { kind: "api", cliTool: null })).toBe(false);
+    expect(aiTaskAccepts(task, { kind: "api", cliTool: null })).toBe(true);
     expect(aiTaskAccepts(task, { kind: "cli", cliTool: "claude" })).toBe(true);
     expect(aiTaskAccepts(task, { kind: "cli", cliTool: "opencode" })).toBe(true);
+    // CLI 순위의 준비는 예전 그대로다 — 로컬 계약을 만들지 않는다
+    expect(opencodeReady).not.toHaveProperty("createLocalContract");
+    expect(claudeReady).not.toHaveProperty("createLocalContract");
+  });
+
+  describe("2026-11-09 「발행분 감사 · 변경 재판정」의 API 순위 — 감사 직접 경로(local-audit)", () => {
+    const task = aiTask("product-audit")!;
+    const backend = (connectionId: string, model: string) => `api-${connectionId.slice(0, 8)}-${model}`;
+    const direct = (patch: Partial<AiReadinessInput> = {}) => input({ localBackendId: backend, localContractTableCount: 3,
+      devices: new Map([["supa", { enabled: true, limitSlots: 4, physicalLimit: 4 }], ["gpu3090-qwen", { enabled: true, limitSlots: 4, physicalLimit: 4 }]]), ...patch });
+    it("계약·경로가 없으면 그 연결 주소·모델의 로컬 계약과 local-audit 정책 route 를 만들 것으로 적는다", () => {
+      const ready = aiRankReadiness(task, 1, supa, "Inferact/Qwen3.8-27B-NVFP4", direct());
+      expect(ready).toMatchObject({ blocking: [], warnings: [], provider: "local-direct", identity: "Inferact/Qwen3.8-27B-NVFP4", createContract: null, createCliContract: null,
+        createLocalContract: { routeId: "local-audit", backendId: backend(SUPA, "Inferact/Qwen3.8-27B-NVFP4"), endpoint: "http://supa.test:8000/v1/chat/completions",
+          model: "Inferact/Qwen3.8-27B-NVFP4", physicalGroup: "supa" },
+        appendRoute: { routeId: "local-audit", provider: "local-direct", model: "Inferact/Qwen3.8-27B-NVFP4", providerBudgetId: backend(SUPA, "Inferact/Qwen3.8-27B-NVFP4"),
+          groupId: "supa" } });
+      expect(aiRankPendingText(ready)[0]).toBe("1순위 Inferact/Qwen3.8-27B-NVFP4: 감사 직접 경로(local-audit)의 로컬 계약이 없습니다 — 이 줄을 저장하면 연결 주소를 확인하고 만듭니다.");
+      // 장비 행이 없으면 만들고, 물리 상한이 없으면 열리지 않는다고 알린다(막지는 않는다 — 워커 env 의 상한일 수 있다)
+      const noDevice = aiRankReadiness(task, 1, supa, "Inferact/Qwen3.8-27B-NVFP4", direct({ devices: new Map() }));
+      expect(noDevice).toMatchObject({ blocking: [], createDevice: { deviceId: "supa", limitSlots: 2 } });
+      expect(noDevice.warnings).toEqual([expect.stringContaining("장비 supa에 물리 상한이 없습니다")]);
+    });
+    it("이미 있는 local-audit 경로·같은 주소의 로컬 계약은 그대로 쓴다 — 다른 서버면 막는다", () => {
+      // 감사 직접 경로에 이미 있는 gpu3090 Qwen(route + 로컬 계약): 만들 것이 없다
+      const gpuContract = () => ({ model: "qwen3.8-flash-next", endpoint: "http://100.77.43.63:8090/v1/chat/completions" });
+      expect(aiRankReadiness(task, 1, gpu, "qwen3.8-flash-next", direct({ localContract: gpuContract })))
+        .toMatchObject({ blocking: [], appendRoute: null, createDevice: null, provider: "local-direct" });
+      expect(aiRankReadiness(task, 1, gpu, "qwen3.8-flash-next", direct({ localContract: gpuContract }))).not.toHaveProperty("createLocalContract");
+      // 그 경로의 계약이 다른 서버면 같은 모델 이름을 두 서버로 둘 수 없다
+      expect(aiRankReadiness(task, 1, supa, "qwen3.8-flash-next", direct({ localContract: gpuContract })).blocking)
+        .toEqual([expect.stringContaining("이미 다른 서버(100.77.43.63:8090 · qwen3.8-flash-next)의 계약을 씁니다"),
+          expect.stringContaining("경로는 장비 gpu3090-qwen에 있습니다")]);
+      // 경로가 없지만 같은 주소·모델의 로컬 계약이 있으면 그 계약(예산)으로 route 만 덧붙인다
+      const local = [{ backendId: "supa-qwen", model: "Inferact/Qwen3.8-27B-NVFP4", endpoint: "http://supa.test:8000/v1/chat/completions", physicalGroup: "supa" }];
+      const reused = aiRankReadiness(task, 1, supa, "Inferact/Qwen3.8-27B-NVFP4", direct({ localContracts: local }));
+      expect(reused).toMatchObject({ blocking: [], appendRoute: { routeId: "local-audit", provider: "local-direct", providerBudgetId: "supa-qwen", groupId: "supa" } });
+      expect(reused).not.toHaveProperty("createLocalContract");
+      // 같은 서버의 다른 로컬 계약이 다른 장비 이름이면 막는다(표가 한 주소의 장비가 갈리면 표의 계약을 모두 닫는다)
+      const otherGroup = [{ backendId: "supa-other", model: "other", endpoint: "http://supa.test:8000/v1/chat/completions", physicalGroup: "supa-gpu" }];
+      expect(aiRankReadiness(task, 1, supa, "Inferact/Qwen3.8-27B-NVFP4", direct({ localContracts: otherGroup })).blocking)
+        .toEqual([expect.stringContaining("이 서버의 다른 로컬 계약(supa-other)은 장비 supa-gpu입니다")]);
+    });
+    it("같은 모델을 다른 로컬 경로가 이 화면이 못 읽는 계약으로 쓰면 만들지 않는다(워커의 env 계약을 표 행이 가리지 않게); 표가 가득하면 막는다", () => {
+      const routes = [...policyRoutes, { routeId: "local-second-opinion", provider: "local-direct", model: "Inferact/Qwen3.8-27B-NVFP4", providerBudgetId: "env-only", groupId: "supa" }];
+      expect(aiRankReadiness(task, 1, supa, "Inferact/Qwen3.8-27B-NVFP4", direct({ policy: { mode: "open", routes, groupLimits: {} } })).blocking)
+        .toEqual([expect.stringContaining("계약 env-only(으)로 쓰는데 이 화면이 그 계약을 읽지 못해")]);
+      expect(aiRankReadiness(task, 1, supa, "Inferact/Qwen3.8-27B-NVFP4", direct({ localContractTableCount: 32 })).blocking)
+        .toEqual([expect.stringContaining("로컬 계약이 32개로 가득 찼습니다")]);
+      expect(aiRankReadiness(task, 1, supa, "Inferact/Qwen3.8-27B-NVFP4", direct({ localBackendId: undefined })).blocking)
+        .toEqual([expect.stringContaining("로컬 계약 정보를 읽지 못했습니다")]);
+      expect(aiRankReadiness(task, 1, supa, "Inferact/Qwen3.8-27B-NVFP4", direct({ policy: null })).blocking)
+        .toEqual([expect.stringContaining("용량 정책을 읽지 못해")]);
+    });
+    it("CLI 와 API 를 섞은 순위 — 앞 순위가 만들 계약을 뒤 순위가 다시 쓰고, CLI 순위는 예전 그대로다", () => {
+      const versioned = { ...claude, cliVersion: "2.1.0 (Claude Code)" };
+      const ready = aiRanksReadiness(task, [{ rank: 1, connection: supa, model: "Inferact/Qwen3.8-27B-NVFP4" }, { rank: 2, connection: versioned, model: "sonnet" },
+        { rank: 3, connection: supa, model: "Inferact/Qwen3.8-27B-NVFP4" }], direct());
+      expect(ready.map(row => [row.rank, row.provider, row.createLocalContract?.backendId ?? null, row.appendRoute?.routeId ?? null, row.createCliContract?.routeId ?? null]))
+        .toEqual([[1, "local-direct", backend(SUPA, "Inferact/Qwen3.8-27B-NVFP4"), "local-audit", null], [2, "claude-cli", null, "product-audit", "product-audit"],
+          [3, "local-direct", null, "local-audit", null]]);
+      expect(ready[2].appendRoute?.providerBudgetId).toBe(backend(SUPA, "Inferact/Qwen3.8-27B-NVFP4"));
+    });
+    it("다른 작업의 API 순위는 그대로다 — 직접 모델 작업은 여전히 로컬 계약을 만들지 않는다", () => {
+      expect(aiRankReadiness(aiTask("audit-review")!, 1, supa, "Inferact/Qwen3.8-27B-NVFP4", direct()).blocking)
+        .toEqual([expect.stringContaining("용량 정책에 local-audit / local-direct / Inferact/Qwen3.8-27B-NVFP4 경로가 없습니다.")]);
+      expect(aiRankReadiness(aiTask("audit-review")!, 1, supa, "Inferact/Qwen3.8-27B-NVFP4", direct())).not.toHaveProperty("createLocalContract");
+    });
   });
   it("로컬 직접 경로: 정책 route 와 로컬 계약이 있어야 한다(만들지 않는다)", () => {
     const task = aiTask("audit-review")!;

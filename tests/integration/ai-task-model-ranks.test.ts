@@ -236,6 +236,56 @@ describe("작업 ↔ 모델 순위 저장", () => {
     expect(calls).toEqual([]);
     expect((await controlRow()).revision).toBe(after.revision);
   });
+  it("2026-11-09 「발행분 감사 · 변경 재판정」 API 순위: 연결 주소를 readback + 1토큰 시험으로 확인해 로컬 계약·local-audit 정책 route·장비 행을 한 TX 에 만들고, 다시 저장하면 만들지 않는다", async () => {
+    const engine = await makeEngine();
+    const { saveAiConnectionAction, saveAiTaskRanksAction } = await actions();
+    expect(await saveAiConnectionAction(null, form({ kind: "cli", label: "Claude CLI", cliTool: "claude", cliModels: "sonnet", cliVersion: "2.1.0 (Claude Code)",
+      deviceId: "anthropic-cli", capacitySlots: "1" }))).toMatchObject({ ok: true });
+    const claude = (await connections()).find(row => row.label === "Claude CLI")!;
+    const before = await controlRow();
+    calls = [];
+    const result = await saveAiTaskRanksAction(null, form({ task: "product-audit", slot: "1", revision: EMPTY_REVISION, rank1Connection: engine.id, rank1Model: "Qwen-X",
+      rank2Connection: claude.id, rank2Model: "sonnet" }));
+    expect(result).toMatchObject({ ok: true });
+    expect(calls.map(call => `${call.method} ${call.url} ${call.auth}`)).toEqual([`GET ${ENGINE}/models Bearer ${KEY}`, `POST ${ENGINE}/chat/completions Bearer ${KEY}`]);
+    expect(await rankRows()).toEqual([{ task: "product-audit", slot: 1, rank: 1, connection_id: engine.id, model: "Qwen-X", options: {} },
+      { task: "product-audit", slot: 1, rank: 2, connection_id: claude.id, model: "sonnet", options: {} }]);
+    const { auditDirectBackendId } = await import("@/lib/operations/admin-ai-tasks-repository");
+    const backend = auditDirectBackendId(engine.id, "Qwen-X");
+    const contracts = await client<{ route_id: string; model: string; transport: string; auth: string; api_key_ciphertext: string | null; contract: Record<string, unknown> }[]>`
+      SELECT route_id, model, transport, auth, api_key_ciphertext, contract FROM model_serving_contracts WHERE enabled ORDER BY id`;
+    // 로컬 계약(키는 계약에 두지 않는다 — 부를 때 연결의 키를 쓴다)과, Claude 순위의 감사 경로 CLI 계약(예전 그대로)
+    expect(contracts.map(row => [row.route_id, row.model, row.transport, row.auth])).toEqual([[`local-model:${backend}`, "Qwen-X", "direct", "none"],
+      ["cli:claude-cli:product-audit", "sonnet", "direct", "none"]]);
+    expect(contracts[0].api_key_ciphertext).toBeNull();
+    expect(contracts[0].contract).toMatchObject({ protocol: "local-openai-chat-v1", provider: "local-direct", backendId: backend, physicalGroup: "eng-dev",
+      endpoint: `${ENGINE}/chat/completions`, model: "Qwen-X", responseModel: "Qwen-X-served", totalTokenBound: 32768, contextWindowTokens: 32768,
+      deploymentRevision: `ai-connection:${engine.id}`, capabilities: { vision: false, jsonSchema: true } });
+    const after = await controlRow();
+    expect(after.revision).toBe(before.revision + 1);
+    expect(after.policy.routes).toContainEqual({ routeId: "local-audit", provider: "local-direct", model: "Qwen-X", providerBudgetId: backend, groupId: "eng-dev" });
+    expect(after.policy.routes).toContainEqual(expect.objectContaining({ routeId: "product-audit", provider: "claude-cli", model: "sonnet", groupId: "anthropic-cli" }));
+    expect(await client`SELECT device_id FROM model_capacity_devices ORDER BY device_id`).toEqual([{ device_id: "anthropic-cli" }, { device_id: "eng-dev" }]);
+    // 워커가 읽는 그 계약 — 표의 행은 확인해 넣은 계약으로 읽힌다(감사 직접 경로가 이 주소·모델로 연다)
+    const { ensureServingContracts } = await import("@/lib/llm/serving-contract-store");
+    const { verifiedLocalModelContract } = await import("@/lib/llm/local-model-capacity");
+    await ensureServingContracts(0);
+    expect(verifiedLocalModelContract(`${ENGINE}/chat/completions`, "Qwen-X", {})).toMatchObject({ backendId: backend, responseModel: "Qwen-X-served" });
+    // 다시 저장하면 계약·경로는 이미 있어 만들지 않는다(엔진도 다시 부르지 않는다). 장비의 물리 상한이 없다는 알림만 남는다
+    const view = await (await import("@/lib/operations/admin-ai-tasks-repository")).readAiTasksAdminView();
+    const line = view.slots.find(slot => slot.task.id === "product-audit")!;
+    expect(line.readiness[0]).toMatchObject({ blocking: [], appendRoute: null, createDevice: null, provider: "local-direct" });
+    expect(line.readiness[0]).not.toHaveProperty("createLocalContract");
+    expect(line.readiness[0].warnings).toEqual([expect.stringContaining("장비 eng-dev에 물리 상한이 없습니다")]);
+    calls = [];
+    expect(await saveAiTaskRanksAction(null, form({ task: "product-audit", slot: "1", revision: line.revision, rank1Connection: engine.id, rank1Model: "Qwen-X",
+      rank2Connection: claude.id, rank2Model: "sonnet" }))).toMatchObject({ ok: true });
+    expect(calls).toEqual([]);
+    expect((await controlRow()).revision).toBe(after.revision);
+    // 직접 모델 작업(audit-review)은 그대로 「실제 적용 설정」 — 순위를 저장하지 않는다
+    const local = await saveAiTaskRanksAction(null, form({ task: "audit-review", slot: "1", revision: EMPTY_REVISION, rank1Connection: engine.id, rank1Model: "Qwen-X" }));
+    expect(local?.issues).toEqual([expect.stringContaining("/admin/audit")]);
+  });
   it("막히면(로컬 경로 없음·옛 판·틀린 순위) 아무것도 쓰지 않고 한국어로 무엇이 없는지 보인다", async () => {
     const engine = await makeEngine();
     const { saveAiTaskRanksAction } = await actions();
