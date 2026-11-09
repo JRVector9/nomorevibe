@@ -795,11 +795,13 @@ export async function cancelReservedModelSlot(value: ModelCapacityReservation): 
   });
 }
 
-/** Assist pre-dispatch abandonment only. This is no provider termination evidence.
- * Never sweeps another request, grants capacity, or alters a dispatched/bound row. */
+/** Assist pre-dispatch abandonment, and a split (갈림 판가름·확인) caller's own waiting row after a deferred admission.
+ * This is no provider termination evidence. Never sweeps another request, grants capacity, or alters a dispatched/bound row.
+ * split(2026-11-09): 60초 틱이 미뤄진 뒤 남긴 대기 행은 나중에 남의 입장 판정이 reserved 로 올리고, 아무도 쓰지 않은 채 예약 TTL 동안
+ * M3 한 칸을 쥐다 reservation_expired 로 끝났다(운영 local-deepseek-confirm 하루 651건). */
 export async function cancelOwnPendingLocalModelRequest(value: ModelCapacityRequest, target: LocalModelTarget): Promise<boolean> {
   const checked = modelCapacityRequestSchema.parse(value), parsed = localModelTargetSchema.parse(target);
-  if (parsed.kind !== "assist" || checked.provider !== "local-direct" || checked.class !== "background"
+  if (parsed.kind !== "assist" && parsed.kind !== "split" || checked.provider !== "local-direct" || checked.class !== "background"
     || checked.pool !== "reviewer" || checked.routeId !== localModelRoute(parsed)) fail("invalid_assist_pending_cancellation");
   return transaction(async tx => {
     const state = await control(tx);
