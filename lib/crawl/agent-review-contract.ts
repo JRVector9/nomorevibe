@@ -141,24 +141,38 @@ function ruleStop(document: CrawlDocument, settings: CrawlSettings, now: Date): 
     : { stoppedAt: null, detail: null, cause: null };
 }
 
+/**
+ * 근거의 나이를 어떻게 다루는가.
+ *
+ * window(기본) — 원본·스캔이 24시간(REVIEW_FRESH_MS) 안일 때만 그 사실(페이지가 가리키는 저장소·스캔 완료)을 입력에 싣는다.
+ *   1차·2차·갈림 판가름·보류 재심사·감사가 모두 이 기준이다.
+ * any_age — 사람 몫 위임 검수(human-deepseek-review)만 쓴다. 2026-11-09 운영자 결정: "과거의 내용이라도 기간으로 잘라서 검토가
+ *   안 되게 하지 마라". 24시간이 지난 원본·스캔도 같은 사실로 싣는다(미래 시각·탐지기 버전·스캔 오류 검사는 그대로).
+ *   근거가 아직 24시간 안이면 두 기준의 입력(해시)이 같다 — 갈리는 것은 기한이 지난 뒤뿐이다.
+ *   validUntil 은 두 기준 모두 같은 값(min(fetched, scan) + 24h)이다 — any_age 쪽은 이것을 거절 사유로 쓰지 않고 근거 나이(reviewEvidenceAgeHours)로 기록한다.
+ */
+export type ReviewEvidenceAge = "window" | "any_age";
+
 export function createReviewInput(
   candidate: CrawlCandidate,
   document: CrawlDocument,
   settings: CrawlSettings,
   evidence: { scan: AgentRepositoryScan | null; observations: ReviewEvidence[] },
   now = new Date(),
+  evidenceAge: ReviewEvidenceAge = "window",
 ): ReviewInput {
   now = reviewSemanticNow(now);
+  const anyAge = evidenceAge === "any_age";
   const scan = evidence.scan;
   const fetchedAt = document.fetchedAt.getTime();
-  const siteFresh = fetchedAt <= now.getTime() && fetchedAt + REVIEW_FRESH_MS > now.getTime();
+  const siteFresh = fetchedAt <= now.getTime() && (anyAge || fetchedAt + REVIEW_FRESH_MS > now.getTime());
   const raw = siteFresh ? document.pageMeta?.repositoryKeys : undefined;
   const keys = Array.isArray(raw) ? [...new Set(raw.filter((key): key is string => typeof key === "string")
     .map(key => key.replace(/^github:/, "").toLowerCase()))] : [];
   const relationship = keys.length === 1 ? keys[0] === document.repo.toLowerCase() ? "same_product" : "conflict" : "unknown";
   const rerunMarker = z.string().uuid().safeParse(candidate.signals?.adminFirstReviewRerunId);
   const scanFresh = scan?.completedAt && scan.completedAt <= now
-    && scan.completedAt.getTime() + REVIEW_FRESH_MS > now.getTime()
+    && (anyAge || scan.completedAt.getTime() + REVIEW_FRESH_MS > now.getTime())
     && scan.detectorVersion === settings.agentEvidence.detectorVersion && !scan.lastErrorCode;
   const scanState = scan?.state === "complete" && !scanFresh ? "pending" : scan ? effectiveAgentScanState(scan) : "pending";
   const all = evidence.observations.filter(item => item.observation.scope === "")
@@ -222,6 +236,11 @@ export function createReviewInput(
     sourceRevisionHash: reviewHash(source),
     validUntil: new Date(Math.min(fetchedAt + REVIEW_FRESH_MS,
       scan?.completedAt ? scan.completedAt.getTime() + REVIEW_FRESH_MS : Infinity)) };
+}
+
+/** 입력이 기댄 가장 오래된 근거(원본 수집·스캔 완료 중 이른 것)가 now 에 몇 시간 됐는가 — 소수 첫째 자리. 24 이상이면 기한이 지난 근거다 */
+export function reviewEvidenceAgeHours(input: Pick<ReviewInput, "validUntil">, now = new Date()): number {
+  return Math.round((now.getTime() - (input.validUntil.getTime() - REVIEW_FRESH_MS)) / 360_000) / 10;
 }
 
 export function validateReviewOutcome(input: ReviewInput, value: unknown): ReviewOutcome {

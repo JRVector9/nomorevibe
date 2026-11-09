@@ -14,14 +14,14 @@ import { auditReviewer } from "@/lib/crawl/product-audit-reviewer";
 import { isAssistCapacityInput, type LocalModelInput } from "./local-model-input";
 import { freshLocalModelScreenProof, localModelJob, type LocalModelScreenProof, type LocalModelTarget } from "./local-model-capacity-contract";
 import { readItemStage } from "@/lib/jobs/items/repository";
-import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
+import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, type ReviewEvidenceAge } from "@/lib/crawl/agent-review-contract";
 import { deepseekActor } from "@/lib/crawl/deepseek-review-policy";
 import { heldQwenActor, heldQwenOwns } from "@/lib/crawl/held-qwen-retry-policy";
 import { QWEN_V2_PROMPT_VERSION } from "@/lib/crawl/qwen-direct-review";
 import type { LocalModelDomainCheck, LocalModelDomainRefusal } from "./local-model-domain-refusal";
 
 /** 관리자 재판정 loader는 발행 후보를 거절한다. direct 감사에는 발행 원본도 잠가야 한다. */
-async function lockDirectInput(tx: ProductTransaction, repo: string) {
+async function lockDirectInput(tx: ProductTransaction, repo: string, evidenceAge: ReviewEvidenceAge = "window") {
   const [candidate] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.repo, repo)).for("update");
   const [document] = await tx.select().from(crawlDocuments).where(eq(crawlDocuments.repo, repo)).for("share");
   const [saved] = await tx.select().from(crawlSettings).where(eq(crawlSettings.id, 1)).for("share");
@@ -32,7 +32,7 @@ async function lockDirectInput(tx: ProductTransaction, repo: string) {
     eq(agentRepositoryScans.scope, ""))).orderBy(desc(agentRepositoryScans.startedAt), desc(agentRepositoryScans.id)).limit(1).for("share");
   if (scan) await tx.select({ id: agentRepositoryObservations.id }).from(agentRepositoryObservations)
     .where(eq(agentRepositoryObservations.scanId, scan.id)).orderBy(asc(agentRepositoryObservations.id)).for("share");
-  return { candidate, document, settings, scan, input: await loadReviewInput(candidate, document, settings, tx) };
+  return { candidate, document, settings, scan, input: await loadReviewInput(candidate, document, settings, tx, evidenceAge) };
 }
 
 /** 예약을 잠근 같은 TX에서 실제 행·원본·설정·lease를 다시 증명한다. 외부 boolean 검증기를 받지 않는다. */
@@ -64,7 +64,10 @@ export async function localModelDomainRefusal(tx: ProductTransaction, target: Lo
     const ai1 = await readItemStage(tx, stages.ai1), ai2 = await readItemStage(tx, stages.ai2);
     if (ai1.mode === "draining" || ai2.mode === "draining") return refuse("pipeline_draining");
   }
-  const current = await lockDirectInput(tx, input.snapshot.product.repo);
+  // 사람 몫 위임 검수(DeepSeek)만 근거 나이를 자르지 않는다(2026-11-09 운영자 결정, ReviewEvidenceAge any_age).
+  // 원본·입력 해시·스냅숏·후보 상태·시도 행·lease 대조는 아래에서 그대로 한다 — 빠지는 것은 24시간 기한 거절 하나다
+  const anyAge = target.kind === "candidate" && target.purpose === "human_deepseek";
+  const current = await lockDirectInput(tx, input.snapshot.product.repo, anyAge ? "any_age" : "window");
   const now = new Date(), screen = target.kind === "audit" && target.purpose === "screen";
   if (!current) return refuse("source_missing");
   if (!current.settings.enabled) return refuse("crawl_disabled");
@@ -73,7 +76,7 @@ export async function localModelDomainRefusal(tx: ProductTransaction, target: Lo
   if (screen) {
     if (!freshLocalModelScreenProof(screenProof, input.snapshot.product.url, now.getTime())) return refuse("screen_proof_stale");
     if (current.document.fetchedAt > now || Boolean(current.scan?.completedAt && current.scan.completedAt > now)) return refuse("screen_source_future");
-  } else if (current.input.validUntil <= now) return refuse("input_expired", current.input.validUntil);
+  } else if (!anyAge && current.input.validUntil <= now) return refuse("input_expired", current.input.validUntil);
   if (current.input.sourceRevisionHash !== input.sourceRevisionHash) return refuse("source_changed");
   let expected = target.kind === "audit"
     ? await loadReviewInput(current.candidate, current.document, auditSettings(current.settings), tx) : current.input;

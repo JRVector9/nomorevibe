@@ -21,7 +21,7 @@ import { loadAgentJudgeInput } from "./agent-evidence";
 import { summarizeAgentEvidence, type AgentEvidenceSummary } from "@/lib/domain/evidence/agents/summary";
 import { requestJob, type JobLease } from "@/lib/jobs/control";
 import { notifyMakerNewProject } from "@/lib/me/notifications";
-import { ReviewApprovalChangedError } from "./agent-review-repository";
+import { isDelegatedApproval, ReviewApprovalChangedError } from "./agent-review-repository";
 import { parseRepositoryStats } from "@/lib/domain/products/stars";
 import { SEARCH_PAGE_TEXT_CHARS } from "@/lib/domain/products/search";
 import { candidateStarAutoApproval } from "./star-auto-approval";
@@ -102,7 +102,8 @@ async function preparePublication(candidate: CrawlCandidate): Promise<
     return { ok: false, reason: "installation_review_required" };
   }
   const checkedEvidence = settings.agentEvidence.enforceEligibility && candidate.decidedBy !== "admin" && !starAutoApproved
-    ? await loadAgentJudgeInput(document, settings) : null;
+    // 사람 몫 위임 검수의 승인은 그 검수와 같은 기준(근거 나이 무관, any_age)으로 다시 본다
+    ? await loadAgentJudgeInput(document, settings, isDelegatedApproval(candidate) ? "any_age" : "window") : null;
   if (checkedEvidence) {
     const summary = summarizeAgentEvidence(checkedEvidence);
     if (!summary.eligible) return { ok: false, reason: summary.reason };

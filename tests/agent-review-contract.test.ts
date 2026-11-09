@@ -175,3 +175,23 @@ it("확신도는 0~1 만 받고, 없어도 된다", () => {
   expect(validateReviewOutcome(input, { decision: "reject", reason: "문서 사이트", evidenceIds: ["product"] }).confidence).toBeUndefined();
   expect(() => validateReviewOutcome(input, { decision: "reject", reason: "문서 사이트", evidenceIds: ["product"], confidence: 1.5 })).toThrow();
 });
+
+// 2026-11-09 운영자 결정 — 사람 몫 위임 검수(any_age)만 24시간 지난 근거를 그대로 싣는다. 기본(window)은 예전 그대로다
+it("any_age keeps aged site/scan facts for the human delegation path, window still expires them", async () => {
+  const { reviewEvidenceAgeHours } = await import("@/lib/crawl/agent-review-contract");
+  const fresh = createReviewInput(candidate, document, DEFAULT_CRAWL_SETTINGS, evidence, now);
+  expect(createReviewInput(candidate, document, DEFAULT_CRAWL_SETTINGS, evidence, now, "any_age").inputHash).toBe(fresh.inputHash);
+  const later = new Date(now.getTime() + 30 * 3600_000);
+  const windowed = createReviewInput(candidate, document, DEFAULT_CRAWL_SETTINGS, evidence, later);
+  const aged = createReviewInput(candidate, document, DEFAULT_CRAWL_SETTINGS, evidence, later, "any_age");
+  expect(windowed.snapshot).toMatchObject({ scanState: "pending", relationship: "unknown" });
+  expect(aged.snapshot).toMatchObject({ scanState: "complete", relationship: "same_product" });
+  expect(aged.validUntil).toEqual(windowed.validUntil);
+  expect(aged.validUntil.getTime()).toBe(now.getTime() + 24 * 3600_000);
+  expect(aged.sourceRevisionHash).toBe(windowed.sourceRevisionHash);
+  expect(reviewEvidenceAgeHours(aged, later)).toBe(30);
+  // 미래 시각의 원본·스캔은 any_age 에서도 싣지 않는다
+  const early = new Date(now.getTime() - 1000);
+  expect(createReviewInput(candidate, document, DEFAULT_CRAWL_SETTINGS, evidence, early, "any_age").snapshot)
+    .toMatchObject({ scanState: "pending", relationship: "unknown" });
+});
