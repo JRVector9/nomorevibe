@@ -49,7 +49,7 @@ export function ModelsDashboard({ view, opsStates, readOnly }: { view: Dashboard
           <td className="md-todo-level"><LevelBadge level={todo.level}>{todo.level === "idle" ? "확인" : LEVEL_WORD[todo.level]}</LevelBadge></td>
           <td><span className="md-t">{todo.title}</span><span className="md-d">{todo.detail}</span></td>
           <td className="md-todo-acts"><div className="md-acts">
-            {todo.retry?.map(retry => <RequeueButton key={retry.routeId} routeId={retry.routeId} label={retry.label} count={retry.count} named readOnly={readOnly} />)}
+            {todo.retry?.map(retry => <RequeueButton key={retry.routeId} routeId={retry.routeId} label={retry.label} count={retry.count} named readOnly={readOnly} historyLink />)}
             <Link prefetch={false} className="md-link" href={todo.href}>{todo.action} →</Link>
           </div></td>
         </tr>)}</tbody></table></div>

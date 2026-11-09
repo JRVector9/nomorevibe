@@ -457,6 +457,8 @@ export type LlmOpsRow = Readonly<{
   status: LlmOpsStatus;
   ledger: { succeeded1h: number; failed1h: number; dispatched: number; settled1h: number } | null;
   retry: number | null;
+  /** 「미확정 있음」을 눌러 그 자리에서 다시 대기열에 넣을 범위 — 연결 행은 그 장비(groupId), CLI 도구 행은 그 provider(재실행 수를 센 것과 같은 범위) */
+  retryScope: Readonly<{ groupId: string | null; provider: string | null }>;
   limitForm: LlmLimitForm | null;
   editLinks: { href: string; label: string }[];
   /** CLI 버전을 모르는 CLI 연결 → 연결 폼의 CLI 버전 칸(계약을 만들 때 쓴다) */
@@ -543,7 +545,6 @@ function ledgerOf(rows: readonly AdminModelMetrics[] | null) {
 }
 
 const failuresFix: LlmFix = { href: LLM_FAILURES_HREF, label: "실패 보기" };
-const retryFix: LlmFix = { href: LLM_RETRY_HREF, label: "재실행 보기" };
 const classifierFix: LlmFix = { href: LLM_CLASSIFIER_HREF, label: "분류 설정" };
 
 function commonSignals(ledgerRows: readonly AdminModelMetrics[] | null, tasks: readonly LlmTaskChip[]): { signals: LlmOpsStatus[]; base: LlmOpsStatus } {
@@ -552,7 +553,8 @@ function commonSignals(ledgerRows: readonly AdminModelMetrics[] | null, tasks: r
   const indeterminate = ledgerRows ? sum(ledgerRows, "indeterminate") : 0;
   if (ledger && ledger.failed1h > 0 && ledger.succeeded1h === 0) signals.push(statusLine("bad", "실패만", `1시간 실패 ${fmt(ledger.failed1h)}건 · 성공 0건`, null, failuresFix));
   else if (ledger && ledger.failed1h > 0) signals.push(statusLine("warn", "일부 실패", `1시간 정산 ${fmt(ledger.settled1h)} · 실패 ${fmt(ledger.failed1h)}`, null, failuresFix));
-  if (indeterminate > 0) signals.push(statusLine("warn", "미확정 있음", `재실행 대기 ${fmt(indeterminate)}건`, null, retryFix));
+  // 「미확정 있음」은 LLM 운영 행에서 눌러 그 자리에서 다시 대기열에 넣는다(2026-11-09) — 처리하지 못한 행이 남을 때만 결과 한 줄이 재실행 보기 링크를 단다
+  if (indeterminate > 0) signals.push(statusLine("warn", "미확정 있음", `재실행 대기 ${fmt(indeterminate)}건`, null, null));
   // 옛 순위 기록(record)은 실행되지 않으므로 「배정된 작업」으로 세지 않는다
   const active = tasks.filter(task => task.enabled && task.source !== "record");
   // 잡이 멈춘 작업이 하나면 그 잡의 상태 창, 여럿이면 잡 목록(다시 켜는 곳)
@@ -719,7 +721,7 @@ export function buildLlmOpsView(input: LlmOpsInput): LlmOpsView {
         : connection.cliTool === "opencode" ? `카탈로그 ${ids.length}개` : `${ids.length}개`,
         error: aiModelsErrorText(connection.modelsError), readAt: connection.modelsReadAt },
       modelTasks, capacity: capacityOf(connection.deviceId, observation, connection.capacitySlots, others, connection.id), otherDevices: [],
-      tasks, status, ledger: ledgerOf(own), retry: own ? sum(own, "indeterminate") : null,
+      tasks, status, ledger: ledgerOf(own), retry: own ? sum(own, "indeterminate") : null, retryScope: { groupId: connection.deviceId, provider: null },
       limitForm: limitFormOf(connection, observation, others), editLinks: extra?.classifier ? [{ href: LLM_CLASSIFIER_HREF, label: "분류 모델 설정" }] : [],
       versionFix: connection.kind === "cli" && connection.cliTool !== "opencode" && !versions.length ? { href: llmEditHref(connection.id, "version"), label: "버전 적기" } : null });
   }
@@ -750,7 +752,8 @@ export function buildLlmOpsView(input: LlmOpsInput): LlmOpsView {
       enabled: true, keyText: null,
       models: { ids: [...entry.models].sort(), title: `설정·관측 ${entry.models.size}개`, error: null, readAt: null },
       modelTasks, capacity: devices.length ? capacityOf(devices[0], observation, null, sharedWith(devices[0], label), null) : null, otherDevices: devices.slice(1),
-      tasks, status: statusOf(signals, base), ledger: ledgerOf(own), retry: own ? sum(own, "indeterminate") : null, limitForm: null, editLinks, versionFix: null });
+      tasks, status: statusOf(signals, base), ledger: ledgerOf(own), retry: own ? sum(own, "indeterminate") : null, retryScope: { groupId: null, provider: entry.provider },
+      limitForm: null, editLinks, versionFix: null });
   }
   const limitDevices = new Map<string, number>();
   for (const row of rows) if (row.capacity && row.capacity.limit !== null) limitDevices.set(row.capacity.deviceId, row.capacity.limit);

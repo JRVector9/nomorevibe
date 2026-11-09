@@ -1,6 +1,7 @@
 import type { AdminModelsObservation } from "./admin-models-observation";
 import type { CapacityReviewItem, CapacityReviewQueue } from "./model-capacity-unknowns";
 import { llmReasonShort, routeTaskLabel } from "./llm-ops-view";
+import { requeueReasonText, type RequeueOutcome } from "./model-capacity-requeue-text";
 export { LLM_RETRY_HREF, llmRetryRowHref } from "./llm-ops-links";
 
 /**
@@ -64,15 +65,23 @@ export const RECENT_AUDIT_ROWS = 3;
 // ── 재실행 패널 ─────────────────────────────────────────────────────────────────────────────────────
 
 export type RetryCount = Readonly<{ key: string; label: string; count: number }>;
+/** 「다시 대기열」을 누르면(미리보기) — 다시 넣을 행·할 일이 끝나 닫을 행·남을 행과 남는 까닭. 목록에 실린 행에서 센다. */
+export type RetryPlanView = Readonly<{ requeue: number; close: number; left: number; reasons: RetryCount[] }>;
+export type RetryItemPlan = Readonly<{ outcome: RequeueOutcome; reason: string; text: string }>;
 export type RetryGroupView = Readonly<{
   routeId: string; label: string; count: number; supported: boolean;
   /** 아래 셋은 목록에 실린 행(오래된 100건)에서 센다 — sampled 가 count 보다 작으면 화면이 그렇게 말한다. */
   sampled: number; models: RetryCount[]; reasons: RetryCount[]; localEnded: number; oldPolicy: number; oldestAt: string | null;
+  /** 미리보기를 못 읽었으면 null */
+  plan: RetryPlanView | null;
 }>;
+export type RetryItemView = CapacityReviewItem & Readonly<{ plan: RetryItemPlan | null }>;
 export type RetryView = Readonly<{
   readable: boolean; error: string | null; total: number; supportedTotal: number; truncated: boolean;
-  groups: RetryGroupView[]; items: CapacityReviewItem[];
+  groups: RetryGroupView[]; items: RetryItemView[];
 }>;
+/** 미리보기 한 행(model-capacity-requeue previewModelCapacityUnknowns 의 값 모양) */
+export type RetryPreviewRow = Readonly<{ outcome: RequeueOutcome; reason: string }>;
 
 const counted = (values: readonly string[], label: (value: string) => string): RetryCount[] =>
   [...values.reduce((map, value) => map.set(value, (map.get(value) ?? 0) + 1), new Map<string, number>())]
@@ -82,21 +91,31 @@ const counted = (values: readonly string[], label: (value: string) => string): R
  * 장부 검토 목록(readModelCapacityReviewQueue) → 단계(route)별 묶음. 「다시 대기열」은 서버가 route 단위로만 하므로 묶음도 route 다.
  * 모델·까닭·근거는 묶음 안에서 센다. supported 는 서버의 지원 목록(canRequeueUnknownRoute)을 그대로 받는다.
  */
-export function buildRetryView(queue: CapacityReviewQueue, supported: (routeId: string) => boolean): RetryView {
+export function buildRetryView(queue: CapacityReviewQueue, supported: (routeId: string) => boolean,
+  preview: ReadonlyMap<string, RetryPreviewRow> | null = null): RetryView {
   const fromItems = [...queue.items.reduce((map, item) => map.set(item.routeId, (map.get(item.routeId) ?? 0) + 1), new Map<string, number>())]
     .map(([routeId, count]) => ({ routeId, count }));
   const counts = queue.groups.length ? queue.groups : fromItems;
+  const planOf = (item: CapacityReviewItem): RetryItemPlan | null => {
+    const row = preview?.get(item.requestId);
+    return row ? { outcome: row.outcome, reason: row.reason, text: requeueReasonText(row.reason) } : null;
+  };
+  const items: RetryItemView[] = queue.items.map(item => ({ ...item, plan: planOf(item) }));
   const groups = counts.map(({ routeId, count }): RetryGroupView => {
-    const items = queue.items.filter(item => item.routeId === routeId);
-    const oldest = items.map(item => item.dispatchedAt ?? item.markedAt).filter((value): value is string => !!value).sort()[0] ?? null;
-    return { routeId, label: routeTaskLabel(routeId), count, supported: supported(routeId), sampled: items.length,
-      models: counted(items.map(item => item.model), model => model),
-      reasons: counted(items.map(item => item.reason ?? "none"), code => code === "none" ? "사유 기록 없음" : llmReasonShort(code) ?? code),
-      localEnded: items.filter(item => item.localEndRecorded).length, oldPolicy: items.filter(item => item.oldPolicy).length, oldestAt: oldest };
+    const own = items.filter(item => item.routeId === routeId);
+    const oldest = own.map(item => item.dispatchedAt ?? item.markedAt).filter((value): value is string => !!value).sort()[0] ?? null;
+    const plans = own.map(item => item.plan).filter((plan): plan is RetryItemPlan => plan !== null);
+    const plan: RetryPlanView | null = plans.length ? { requeue: plans.filter(row => row.outcome === "requeued").length,
+      close: plans.filter(row => row.outcome === "done").length, left: plans.filter(row => row.outcome === "skipped").length,
+      reasons: counted(plans.filter(row => row.outcome === "skipped").map(row => row.reason), requeueReasonText) } : null;
+    return { routeId, label: routeTaskLabel(routeId), count, supported: supported(routeId), sampled: own.length,
+      models: counted(own.map(item => item.model), model => model),
+      reasons: counted(own.map(item => item.reason ?? "none"), code => code === "none" ? "사유 기록 없음" : llmReasonShort(code) ?? code),
+      localEnded: own.filter(item => item.localEndRecorded).length, oldPolicy: own.filter(item => item.oldPolicy).length, oldestAt: oldest, plan };
   });
   const total = groups.reduce((sum, group) => sum + group.count, 0);
   return { readable: !queue.error, error: queue.error, total, supportedTotal: groups.filter(group => group.supported).reduce((sum, group) => sum + group.count, 0),
-    truncated: queue.truncated, groups, items: queue.items };
+    truncated: queue.truncated, groups, items };
 }
 
 // ── 최근 1시간 실패 ─────────────────────────────────────────────────────────────────────────────────

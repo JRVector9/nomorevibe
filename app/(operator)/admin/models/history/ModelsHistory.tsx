@@ -2,7 +2,7 @@ import Link from "next/link";
 import { formatDetailTime, formatListTime } from "@/lib/format/time";
 import type { AdminModelsObservation } from "@/lib/operations/admin-models-observation";
 import { kstClock } from "@/lib/operations/admin-models-view";
-import { LLM_HISTORY_KIND_IDS, LLM_HISTORY_KINDS, llmHistoryHref, llmHistoryKindOf, recentFailures, type LlmHistoryFilter, type RetryView } from "@/lib/operations/llm-ops-history";
+import { LLM_HISTORY_KIND_IDS, LLM_HISTORY_KINDS, llmHistoryHref, llmHistoryKindOf, recentFailures, type LlmHistoryFilter, type RetryPlanView, type RetryView } from "@/lib/operations/llm-ops-history";
 import type { LlmChangeLog } from "@/lib/operations/llm-ops-read";
 import { actionLabel, targetLabel } from "../../activity/labels";
 import { isScriptRow, summaryLine, summaryLines } from "../../activity/summary";
@@ -22,13 +22,24 @@ const GROUND: Readonly<Record<string, string>> = {
   commit_unknown: "정산 commit 결과를 모름 · 장부와 업무 기록을 대조",
 };
 
+/** 「다시 대기열」을 누르면 — 다시 넣을 행 · 할 일이 끝나 닫을 행 · 남을 행(까닭) */
+function planLine(plan: RetryPlanView): string {
+  const left = plan.left ? ` · 남음 ${fmt(plan.left)}(${plan.reasons.map(reason => `${reason.label} ${fmt(reason.count)}`).join(" · ")})` : "";
+  return `누르면: 다시 넣음 ${fmt(plan.requeue)} · 끝나서 닫음 ${fmt(plan.close)}${left}`;
+}
+
 function RetryPanel({ retry, readOnly }: { retry: RetryView; readOnly: boolean }) {
   const supported = retry.groups.filter(group => group.supported);
   return <section className="llm-panel" id="retry" aria-labelledby="llm-retry-title">
+    {/* 「지원 단계 모두 다시 대기열」은 건수 배지 바로 옆 — 확인은 그 자리의 두 단계 그대로 */}
     <div className="llm-panel-head"><h2 id="llm-retry-title">재실행 대기</h2>
-      <LevelBadge level={!retry.readable ? "unknown" : retry.total > 0 ? "warn" : "ok"}>{!retry.readable ? "확인 불가" : `결과 미확정 ${fmt(retry.total)}건`}</LevelBadge></div>
+      <div className="llm-panel-head-side">
+        <LevelBadge level={!retry.readable ? "unknown" : retry.total > 0 ? "warn" : "ok"}>{!retry.readable ? "확인 불가" : `결과 미확정 ${fmt(retry.total)}건`}</LevelBadge>
+        {supported.length > 0 && <RequeueButton routeId="" label="지원하는 단계 모두의" count={retry.supportedTotal} readOnly={readOnly} />}
+      </div></div>
     <div className="llm-panel-body">
-      <p className="llm-empty">결과를 받지 못한 호출입니다. 칸을 차지하지 않습니다. 「다시 대기열」은 그 단계의 작업을 다시 실행하고, 다시 넣었거나 할 일이 이미 끝난 행을 닫습니다.
+      <p className="llm-empty">결과를 받지 못한 호출입니다. 칸을 차지하지 않습니다. 「다시 대기열」은 그 단계의 작업을 다시 실행하고, 다시 넣었거나 할 일이 이미 끝난 행을 닫습니다
+        (이미 판정·번역이 끝났거나 대상이 없어진 행은 다시 넣지 않고 닫습니다). 넣지도 닫지도 못한 행은 까닭과 함께 남습니다.
         「닫기」는 작업을 다시 넣지 않고 사유를 남겨 행만 닫습니다.</p>
       {retry.error && <p role="alert" className="llm-notice">재실행 목록을 읽지 못했습니다 · {retry.error}</p>}
       {retry.readable && retry.total === 0 && <p className="llm-empty">다시 실행할 미확정 호출이 없습니다.</p>}
@@ -42,11 +53,11 @@ function RetryPanel({ retry, readOnly }: { retry: RetryView; readOnly: boolean }
           <td>{[group.localEnded ? `로컬 종료 기록 ${fmt(group.localEnded)}` : "로컬 종료 기록 없음", group.oldPolicy ? `옛 정책 세대 ${fmt(group.oldPolicy)}` : null,
             group.oldestAt ? `가장 오래된 전송 ${stamp(group.oldestAt)}` : null].filter((line): line is string => !!line).map(line => <div key={line}>{line}</div>)}</td>
           <td>{group.supported ? <RequeueButton routeId={group.routeId} label={group.label} count={group.count} readOnly={readOnly} />
-            : <span className="llm-muted">이 단계는 다시 대기열을 아직 지원하지 않습니다 — 아래에서 한 건씩 닫습니다.</span>}</td>
+            : <span className="llm-muted">이 단계는 다시 대기열을 아직 지원하지 않습니다 — 아래에서 한 건씩 닫습니다.</span>}
+            {group.supported && group.plan && <p className="llm-muted llm-retry-plan" data-retry-plan={group.routeId}>{planLine(group.plan)}</p>}</td>
         </tr>)}
       </DataTable>}
-      {supported.length > 1 && <div className="llm-retry-all"><RequeueButton routeId="" label="지원하는 단계 모두의" count={retry.supportedTotal} readOnly={readOnly} /></div>}
-      {retry.items.length > 0 && <details className="llm-retry-items">
+      {retry.items.length > 0 && <details className="llm-retry-items" open={retry.items.some(item => item.plan?.outcome === "skipped") || undefined}>
         <summary>한 건씩 보기 · 닫기 ({fmt(retry.items.length)}건{retry.truncated ? ", 오래된 순 100건까지" : ""})</summary>
         <ul>{retry.items.map(item => <li key={item.requestId} id={`rv-${item.requestId}`} className="llm-retry-item">
           <p className="llm-retry-item-head"><code title={item.requestId}>{item.requestId.slice(0, 8)}</code><b>{retry.groups.find(group => group.routeId === item.routeId)?.label ?? item.routeId}</b>
@@ -54,6 +65,8 @@ function RetryPanel({ retry, readOnly }: { retry: RetryView; readOnly: boolean }
             {item.oldPolicy && <span className="llm-muted">옛 정책 세대</span>}</p>
           <p className="llm-muted">전송 {stamp(item.dispatchedAt)} · 미확정 처리 {stamp(item.markedAt)}{item.localEndRecorded ? " · 로컬 종료 기록 있음" : ""} · 소유 프로세스 {item.ownerInstanceId}</p>
           <p className="llm-muted">근거: {item.reason ? GROUND[item.reason] ?? `사유 코드 ${item.reason}` : "사유 기록 없음 — 장부 이벤트를 확인"}</p>
+          {item.plan && <p className={item.plan.outcome === "skipped" ? "llm-retry-left" : "llm-muted"} data-retry-outcome={item.plan.outcome}>
+            다시 대기열: {item.plan.outcome === "requeued" ? "다시 넣고 닫음" : item.plan.outcome === "done" ? `넣지 않고 닫음 — ${item.plan.text}` : `남음 — ${item.plan.text}`}</p>}
           <p className="llm-muted llm-break">작업 키 {item.workKey}{item.logicalWorkKey && item.logicalWorkKey !== item.workKey ? ` · 논리 키 ${item.logicalWorkKey}` : ""}</p>
           <CloseReviewForm requestId={item.requestId} readOnly={readOnly} />
         </li>)}</ul>

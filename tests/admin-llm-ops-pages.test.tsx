@@ -5,7 +5,7 @@ import { GPU, LLM_NOW, llmConnections, llmConveyor, llmObservation, llmRankRows,
 
 const mocks = vi.hoisted(() => ({
   observation: vi.fn(), conveyor: vi.fn(), jobs: vi.fn(), connections: vi.fn(), rows: vi.fn(), runtime: vi.fn(), executions: vi.fn(), opsStates: vi.fn(),
-  classifier: vi.fn(), reviewQueue: vi.fn(), auditRows: vi.fn(), redirect: vi.fn((href: string) => { throw new Error(`NEXT_REDIRECT:${href}`); }),
+  classifier: vi.fn(), reviewQueue: vi.fn(), auditRows: vi.fn(), previewRequeue: vi.fn(), redirect: vi.fn((href: string) => { throw new Error(`NEXT_REDIRECT:${href}`); }),
 }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }), redirect: mocks.redirect }));
 vi.mock("@/lib/auth/admin", () => ({ currentAdmin: async () => ({ login: "jr" }) }));
@@ -23,6 +23,8 @@ vi.mock("@/lib/llm/serving-contract-store", () => ({ ensureServingContracts: asy
 const auditChain = { from: () => auditChain, where: () => auditChain, orderBy: () => auditChain, limit: (n: number) => mocks.auditRows(n) };
 vi.mock("@/lib/db", () => ({ db: { execute: mocks.classifier, select: () => auditChain }, onPrimary: (run: () => unknown) => run() }));
 vi.mock("@/lib/operations/model-capacity-unknowns", async original => ({ ...await original<object>(), readModelCapacityReviewQueue: mocks.reviewQueue }));
+// 기록 › 재실행 패널의 행마다 「다시 대기열」 미리보기(읽기만) — 판정 함수 자체는 tests/integration(crawl-tagline·search-verify)이 본다
+vi.mock("@/lib/operations/model-capacity-requeue", async original => ({ ...await original<object>(), previewModelCapacityUnknowns: mocks.previewRequeue }));
 vi.mock("@/app/(operator)/admin/models/ops-runner-actions", () => ({ submitAdminModelOperation: vi.fn(), readAdminModelOperation: vi.fn(), cancelAdminModelOperation: vi.fn() }));
 vi.mock("@/app/(operator)/admin/models/tasks/actions", () => ({ saveAiConnectionAction: vi.fn(), readAiConnectionModelsAction: vi.fn(), deleteAiConnectionAction: vi.fn(), hideAiConnectionModelAction: vi.fn(), clearUnreadAiTaskRanksAction: vi.fn() }));
 vi.mock("@/app/(operator)/admin/models/devices/actions", () => ({ saveCapacityDevice: vi.fn() }));
@@ -94,6 +96,9 @@ describe("LLM 운영 — 안 쓰는 모델 「삭제」(2026-11-08)", () => {
     expect(opencode).toContain(`href="/admin/models/llm?edit=${OPENCODE}#conn-${OPENCODE}"`);
     const readOnly = renderToStaticMarkup(await LlmOpsSlot({ readOnly: true, editId: null, adding: false }));
     expect(readOnly).not.toContain("llm-model-hide");
+    // 읽기 전용 미리보기에서는 「미확정 있음」도 누를 수 없는 배지다
+    expect(readOnly).not.toContain("llm-level-button");
+    expect(readOnly).not.toContain("llm-retry-inline");
   });
 });
 
@@ -158,6 +163,11 @@ describe("LLM 운영(/admin/models/llm) 그리기", () => {
     expect(gpu).toMatch(/<span class="llm-chips">(<span class="llm-task"><a [^>]*class="llm-chip"[^]*?<\/a><\/span>)+<\/span>/);
     expect(text(gpu)).toContain("미확정 있음 재실행 대기 1건");
     expect(gpu).toContain('href="/admin/models/history#retry">대기 1 →');
+    // 2026-11-09: 「미확정 있음」 배지는 그 연결(장비)의 결과 미확정을 그 자리에서 다시 넣는 단추다(같은 서버 동작) — 기록 화면으로 가지 않는다
+    const gpuDevice = llmConnections.find(row => row.id === GPU)!.deviceId;
+    expect(gpu).toMatch(new RegExp(`<form[^>]*class="llm-retry-inline"[^>]*><input type="hidden" name="groupId" value="${gpuDevice}"/><button type="submit" class="llm-level-button"[^>]*aria-label="미확정 있음 — 누르면 결과 미확정 1건을 바로 다시 대기열에 넣습니다[^"]*"><span class="llm-level" data-level="warn">`));
+    // 미확정이 없는 행은 배지 그대로(단추 없음)
+    expect(html.match(/<article id="conn-22222222-2222-4222-8222-222222222222"[^]*?<\/article>/)![0]).not.toContain("llm-level-button");
     const opencode = html.match(new RegExp(`<article id="conn-${OPENCODE}"[^]*?</article>`))![0];
     expect(text(opencode)).toContain("시간 초과 1회(1차 AI 검수)");
     expect(text(html.match(new RegExp(`<article id="conn-${M1}"[^]*?</article>`))![0])).toContain("목록 못 읽음 서버 응답 없음");
@@ -197,7 +207,8 @@ describe("LLM 운영(/admin/models/llm) 그리기", () => {
     const gpu = anchors(article(`conn-${GPU}`));
     expect(gpu).toContainEqual({ className: "llm-fix llm-flag", href: `/admin/models/llm?edit=${GPU}&fix=limit#conn-${GPU}-limit`,
       text: "▲ 연결에 남은 옛 값 4 · 실제 적용 5 — 맞추기 →" });
-    expect(gpu).toContainEqual({ className: "llm-fix llm-reason", href: "/admin/models/history#retry", text: "재실행 대기 1건 — 재실행 보기 →" });
+    // 미확정은 기록 화면 링크가 아니다 — 「미확정 있음」 배지를 눌러 그 자리에서 다시 넣는다(아래 시험)
+    expect(gpu.some(link => link.className.includes("llm-reason") && link.href === "/admin/models/history#retry")).toBe(false);
     expect(anchors(article(`conn-${OPENCODE}`)).filter(link => link.className === "llm-fix llm-reason").map(link => [link.href, link.text])).toEqual([
       ["/admin/models/history#failures", "1시간 정산 86 · 실패 2 — 실패 보기 →"], ["/admin/models/history#failures", "시간 초과 1회(1차 AI 검수) — 실패 보기 →"]]);
     expect(anchors(article(`conn-${M1}`))).toContainEqual({ className: "llm-fix llm-reason", href: `/admin/models/llm?edit=${M1}&fix=address#conn-${M1}-address`,
@@ -240,6 +251,8 @@ describe("기록(/admin/models/history) 그리기", () => {
     createdAt: new Date(Date.parse(LLM_NOW) - 5 * 60_000), ...over });
   beforeEach(() => {
     mocks.reviewQueue.mockResolvedValue({ items: [item], truncated: false, error: null, groups: [{ routeId: "crawl-agent-review", count: 1 }, { routeId: "human-deepseek-review", count: 2 }] });
+    // 작업 키(ai1:<후보>)가 없는 행 — 다시 넣지도 닫지도 못하고 까닭과 함께 남는다
+    mocks.previewRequeue.mockResolvedValue(new Map([[item.requestId, { requestId: item.requestId, routeId: "crawl-agent-review", outcome: "skipped", reason: "key_unreadable" }]]));
     mocks.auditRows.mockResolvedValue([audit(25500, "runtime-settings-save"), audit(25499, "model-capacity-unknown-requeued", { ok: false, error: "some_routes_failed", detail: { routeId: "crawl-agent-review", closed: 0 } })]);
   });
 
@@ -247,6 +260,16 @@ describe("기록(/admin/models/history) 그리기", () => {
     const html = renderToStaticMarkup(await ModelsHistorySlot({ filter: { kind: null, failedOnly: false, before: null }, readOnly: false }));
     const retry = html.match(/<section class="llm-panel" id="retry"[^]*?<\/section>/)![0];
     expect(text(retry)).toContain("결과 미확정 3건");
+    // 「지원 단계 모두 다시 대기열」은 머리의 건수 배지 바로 옆(2026-11-09) — 패널 아래 오른쪽에는 더 없다
+    expect(retry).toMatch(/<div class="llm-panel-head"><h2 id="llm-retry-title">재실행 대기<\/h2><div class="llm-panel-head-side"><span class="llm-level" data-level="warn">[^]*?결과 미확정 3건<\/span><form class="llm-retry-form"[^>]*><button type="button" class="button small">지원 단계 모두 다시 대기열<\/button>/);
+    expect(retry).not.toContain("llm-retry-all");
+    // 행마다 「다시 대기열」을 누르면 어떻게 되는지 — 미리보기(읽기만)가 남는 까닭을 보인다
+    expect(retry).toContain('data-retry-outcome="skipped"');
+    expect(mocks.previewRequeue).toHaveBeenCalledWith([item.requestId]);
+    expect(text(retry)).toContain("다시 대기열: 남음 — 작업 키를 읽지 못함 — 한 건씩 닫기");
+    expect(text(retry)).toContain("누르면: 다시 넣음 0 · 끝나서 닫음 0 · 남음 1(작업 키를 읽지 못함 — 한 건씩 닫기 1)");
+    // 남는 행이 있으면 한 건씩 보기를 펼쳐 둔다
+    expect(retry).toContain('<details class="llm-retry-items" open="">');
     expect(retry).toMatch(/data-retry-route="crawl-agent-review"[^]*?1차 AI 검수[^]*?qwen3.8-flash-next[^]*?시간 초과 1[^]*?로컬 종료 기록 1[^]*?>다시 대기열<\/button>/);
     // 서버가 다시 대기열을 지원하지 않는 단계는 단추 없이 한 건씩 닫게 한다
     expect(retry).toMatch(/data-retry-route="human-deepseek-review"[^]*?아직 지원하지 않습니다/);

@@ -111,9 +111,12 @@ describe("LLM 운영 행 — 문제 표시와 고칠 곳", () => {
     expect(row(view, "cli:codex-cli").capacity).toMatchObject({ note: "장비 행 없음 · 정책 대체 한도", fix: { href: "/admin/models/devices#new", label: "장비 행 만들기" } });
   });
 
-  it("상태 까닭은 하나씩 고칠 곳을 든다 — 미확정은 재실행 대기, 실패는 최근 실패, 목록 못 읽음은 그 연결의 주소 칸", () => {
+  it("상태 까닭은 하나씩 고칠 곳을 든다 — 미확정은 그 자리에서 다시 넣는다(링크 없음), 실패는 최근 실패, 목록 못 읽음은 그 연결의 주소 칸", () => {
     const view = llm();
-    expect(row(view, GPU).status.reasons).toEqual([{ text: "재실행 대기 1건", fix: { href: "/admin/models/history#retry", label: "재실행 보기" } }]);
+    // 2026-11-09: 「미확정 있음」은 LLM 운영 행에서 눌러 바로 다시 넣는다 — 까닭은 기록 화면 링크가 아니다. 범위는 그 연결의 장비
+    expect(row(view, GPU).status.reasons).toEqual([{ text: "재실행 대기 1건", fix: null }]);
+    expect(row(view, GPU).retryScope).toEqual({ groupId: conn(GPU).deviceId, provider: null });
+    expect(row(view, "cli:codex-cli").retryScope).toEqual({ groupId: null, provider: "codex-cli" });
     // 예전 한 줄(reason)은 그대로 — reasons 글자를 이은 것
     expect(row(view, OPENCODE).status.reason).toBe("1시간 정산 86 · 실패 2 · 시간 초과 1회(1차 AI 검수)");
     expect(row(view, OPENCODE).status.reasons.map(reason => reason.fix?.href)).toEqual(["/admin/models/history#failures", "/admin/models/history#failures"]);
@@ -134,7 +137,7 @@ describe("LLM 운영 행 — 문제 표시와 고칠 곳", () => {
       fix: { href: "/admin/models/tasks#execution-crawl-tagline-1", label: "순위 다시 저장" } });
     expect(row(view, GPU).status).toMatchObject({ level: "bad", text: "부르지 못함" });
     expect(row(view, GPU).status.reasons).toEqual([{ text: "키 없음 3회(1차 AI 검수)", fix: edit(GPU, "key", "키 넣기") },
-      { text: "재실행 대기 1건", fix: { href: "/admin/models/history#retry", label: "재실행 보기" } }]);
+      { text: "재실행 대기 1건", fix: null }]);
   });
 
   it("잡이 멈춘 작업: 칩 옆에 잡 상태로 가는 링크, 행의 모든 작업이 멈췄으면 상태 까닭도 그 잡으로", () => {

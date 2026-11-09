@@ -17,7 +17,7 @@ import type { AdminModelsObservation } from "./admin-models-observation";
 import { readAdminModelsObservation } from "./admin-models-repository";
 import { readConveyor } from "./conveyor";
 import { LLM_HISTORY_ACTIONS, LLM_HISTORY_KINDS, type LlmHistoryFilter } from "./llm-ops-history";
-import { canRequeueUnknownRoute } from "./model-capacity-requeue";
+import { canRequeueUnknownRoute, previewModelCapacityUnknowns, type RequeueRowResult } from "./model-capacity-requeue";
 import { readModelCapacityReviewQueue, type CapacityReviewQueue } from "./model-capacity-unknowns";
 import type { OpsState } from "./ops-runner/contract";
 import { buildDashboardView, buildLlmOpsView, CLI_VERSION_PATTERN, parseClassifierObservation, type DashboardView, type JobPause, type LlmClassifierInput, type LlmCliContractInput, type LlmOpsView } from "./llm-ops-view";
@@ -139,8 +139,14 @@ export async function readLlmChangeLog(filter: LlmHistoryFilter, limit = 40): Pr
   } catch (error) { return { rows: [], more: false, error: error instanceof Error ? error.message : "read_failed" }; }
 }
 
-/** 기록 — 재실행 대기(장부 검토 목록)·열린 호출과 1시간 정산(장부 관측)·변경 기록. 하나를 못 읽어도 화면은 뜬다. */
-export async function readLlmHistory(filter: LlmHistoryFilter): Promise<{ queue: CapacityReviewQueue; observation: AdminModelsObservation; changes: LlmChangeLog }> {
+/**
+ * 기록 — 재실행 대기(장부 검토 목록)·열린 호출과 1시간 정산(장부 관측)·변경 기록. 하나를 못 읽어도 화면은 뜬다.
+ * preview 는 목록의 행마다 「다시 대기열」을 누르면 어떻게 되는지(다시 넣음·닫음·남음과 까닭) — 읽기만 한다. 못 읽으면 null(까닭 칸이 빈다).
+ */
+export async function readLlmHistory(filter: LlmHistoryFilter): Promise<{ queue: CapacityReviewQueue; observation: AdminModelsObservation; changes: LlmChangeLog;
+  preview: Map<string, RequeueRowResult> | null }> {
   const [queue, observation, changes] = await Promise.all([readModelCapacityReviewQueue(), readAdminModelsObservation({ throughput: false }), readLlmChangeLog(filter)]);
-  return { queue, observation, changes };
+  const preview = queue.items.length
+    ? await onPrimary(() => previewModelCapacityUnknowns(queue.items.map(item => item.requestId))).catch(() => null) : new Map<string, RequeueRowResult>();
+  return { queue, observation, changes, preview };
 }
