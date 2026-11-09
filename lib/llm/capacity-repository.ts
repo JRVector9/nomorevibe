@@ -43,7 +43,7 @@ import {
 } from "./capacity";
 import { ModelCapacityDeferredError } from "./capacity-deferred";
 import { LocalModelDomainRefusedError, localModelDomainRefusalEvidence } from "./local-model-domain-refusal";
-import { liveStateSql, occupyingStateSql, inFlightStateSql, sentStateSql } from "./capacity-states";
+import { liveStateSql, occupyingStateSql, inFlightStateSql, openStateSql, sentStateSql } from "./capacity-states";
 import { deviceCandidateSql, deviceFallbackLimit, deviceRouteQuotaGateSql, routeQuotaGateCapped, type DeviceRouteQuotaGateRow,
   type ModelCapacityGeneration } from "./capacity-devices";
 import { helperGateStateFromRow, helperGateStatesSql, type HelperGateState, type HelperGateStateRow } from "./capacity-helpers";
@@ -2779,6 +2779,80 @@ export async function appendCompatibleRoutes(tx: ProductTransaction, routes: rea
     .where(and(eq(modelCapacityControl.id, 1), eq(modelCapacityControl.revision, state.revision))).returning({ revision: modelCapacityControl.revision });
   if (!row) return fail("model_capacity_revision_exhausted");
   return { appended: added, policyRevision: Number(row.revision) };
+}
+
+/** 정책에서 뺄 route(장비까지 맞아야 한다). */
+export type RemovedModelCapacityRoute = Readonly<{ routeId: string; provider: string; model: string; groupId: string }>;
+export type RemoveCapacityRoutesResult = Readonly<{
+  removed: readonly ModelCapacityRoute[]; removedGroupLimits: Readonly<Record<string, number>>;
+  before: Readonly<{ epoch: number; revision: number; policyHash: string }>; after: Readonly<{ epoch: number; revision: number; policyHash: string }>;
+  predecessors: readonly ModelCapacityPredecessor[]; written: boolean }>;
+
+/**
+ * 정책에서 route 를 **빼기만** 한다(2026-11-09, 쓰지 않는 장비 은퇴·남은 별칭 route 정리). appendCompatibleRoutes 의 거울이다 — mode 를 그대로 두고
+ * (OPEN 이어도) revision 을 올린다. 호출자의 TX 안에서 DR fence(SHARE) → control FOR UPDATE(입장 TX 와 같은 잠금 순서).
+ *
+ * OPEN 에서 써도 되는 까닭(덧붙이기와 같은 근거): 뺄 route 마다 **모든 세대**의 끝나지 않은 장부 행(waiting·reserved·dispatched·indeterminate)이
+ * 하나도 없음을 같은 control FOR UPDATE 아래에서 확인한다(새 대기 행은 그 잠금을 쥔 requestSlot 만 쓴다 — 확인과 쓰기 사이에 생기지 않는다).
+ * 그러면 살아 있는 모든 옛 세대 행의 route 다섯 칸은 새 정책에 그대로 남는다 — 앞 판 사슬(`compatiblePredecessors`)이 인증하는 사실
+ * (「옛 행의 route·예산·장비가 그대로」)이 덧붙이기와 똑같이 참이다. 그래서 사슬을 appendCompatibleRoutes 와 같은 규칙으로 쓴다
+ * (지금 사슬 + 지금 세대 → 살아 있는 행이 있는 칸만, 넘치면 `model_capacity_append_chain_full`). 결과도 덧붙이기와 같다:
+ * - 다른 route 의 dispatched 행은 그대로 정산되고(정산은 지금 정책을 보지 않는다), 옛 세대 점유가 인증되므로 새 입장이 `policy_changed` 로 막히지 않는다.
+ * - 다른 route 의 옛 세대 waiting 행은 다음 poll 에서 여느 정책 변경처럼 `policy_changed` 사건과 함께 withdrawn 되고(버려지지 않는다 — 호출자가 다시 줄을 선다),
+ *   옛 세대 reserved 행은 dispatch 에서 ownership_lost 다. 이것은 모든 revision 상승(순위 저장의 덧붙이기 포함)에 공통이고 이 쓰기만의 일이 아니다.
+ * 거절(아무것도 쓰지 않는다): `model_capacity_route_missing:<routeId|provider|model>`(이미 빠졌다 — 다시 눌러도 두 번 쓰지 않는다)·
+ * `model_capacity_route_conflict`(같은 route 가 다른 장비)·`model_capacity_route_unsettled:<개수>`·`model_capacity_group_in_use:<장비>`(남는 route 가 그 groupLimits 키를 쓴다)·
+ * `model_capacity_routes_empty`(route 가 하나도 남지 않는다)·`model_capacity_append_chain_full`·`model_capacity_revision_exhausted`·`model_capacity_policy_missing`·site_fenced.
+ * 뺄 것이 없으면(route 0개, 지울 groupLimits 키도 없음) 쓰지 않고 지금 판을 돌려준다(`written: false`).
+ */
+export async function removeCapacityRoutes(tx: ProductTransaction, value: { routes: readonly RemovedModelCapacityRoute[]; groupLimitKeys?: readonly string[] }):
+  Promise<RemoveCapacityRoutesResult> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  const state = await control(tx);
+  if (state.fenced) throw new DrWriterFencedError("site_fenced");
+  if (!state.policy || state.policyHash === null) return fail("model_capacity_policy_missing");
+  const current = state.policy;
+  const removed: ModelCapacityRoute[] = [];
+  for (const wanted of value.routes) {
+    const existing = current.routes.find(route => routeKey(route) === routeKey(wanted));
+    if (!existing) fail(`model_capacity_route_missing:${wanted.routeId}|${wanted.provider}|${wanted.model}`);
+    if (existing!.groupId !== wanted.groupId) fail("model_capacity_route_conflict");
+    if (!removed.some(route => routeKey(route) === routeKey(existing!))) removed.push(existing!);
+  }
+  if (removed.length) {
+    const keys = sql.join(removed.map(route => sql`(${route.routeId}, ${route.provider}, ${route.model})`), sql`, `);
+    const [open] = await tx.execute<{ n: number }>(sql`SELECT count(*)::int AS n FROM model_capacity_requests
+      WHERE ${openStateSql(sql`state`)} AND (route_id, provider, model) IN (${keys})`);
+    if (Number(open?.n ?? 0) > 0) fail(`model_capacity_route_unsettled:${Number(open.n)}`);
+  }
+  const remaining = current.routes.filter(route => !removed.some(other => routeKey(other) === routeKey(route)));
+  const limits = { ...(current.groupLimits ?? {}) } as Record<string, number>;
+  const removedGroupLimits: Record<string, number> = {};
+  for (const key of new Set(value.groupLimitKeys ?? [])) {
+    if (!Object.hasOwn(limits, key)) continue;
+    if (remaining.some(route => route.groupId === key)) fail(`model_capacity_group_in_use:${key}`);
+    removedGroupLimits[key] = limits[key];
+    delete limits[key];
+  }
+  const generation = { epoch: state.epoch, revision: state.revision, policyHash: state.policyHash };
+  if (!removed.length && !Object.keys(removedGroupLimits).length)
+    return { removed: [], removedGroupLimits: {}, before: generation, after: generation, predecessors: [], written: false };
+  if (!remaining.length) return fail("model_capacity_routes_empty");
+  if (state.revision >= 9007199254740991) fail("model_capacity_revision_exhausted");
+  const chain = await liveCapacityPredecessors(tx, state.epoch, [...modelCapacityPredecessorChain(current), generation]);
+  if (chain.length > MODEL_CAPACITY_PREDECESSORS_MAX) return fail("model_capacity_append_chain_full");
+  const { compatiblePredecessor: _single, compatiblePredecessors: _chain, groupLimits: _limits, ...base } = current;
+  void _single; void _chain; void _limits;
+  // groupLimits 는 키가 하나 이상이어야 한다(정책 schema) — 마지막 키를 지우면 칸째 뺀다(그때부터 route 의 groupId 검사도 없다)
+  const next = parseModelCapacityPolicy({ ...base, routes: remaining, ...(current.groupLimits && Object.keys(limits).length ? { groupLimits: limits } : {}),
+    ...(chain.length ? { compatiblePredecessors: chain } : {}) });
+  const policyHash = modelCapacityPolicyHash(next);
+  const [row] = await tx.update(modelCapacityControl).set({ policy: next, policyHash,
+    revision: sql`${modelCapacityControl.revision} + 1`, updatedAt: sql`clock_timestamp()` })
+    .where(and(eq(modelCapacityControl.id, 1), eq(modelCapacityControl.revision, state.revision))).returning({ revision: modelCapacityControl.revision });
+  if (!row) return fail("model_capacity_revision_exhausted");
+  return { removed, removedGroupLimits, before: generation, after: { epoch: state.epoch, revision: Number(row.revision), policyHash },
+    predecessors: chain, written: true };
 }
 
 /** Fixed AI2 pre-dispatch handoff. The caller must finish its domain transition
