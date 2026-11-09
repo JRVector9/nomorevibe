@@ -1,5 +1,5 @@
 import type { ModelCapacityMode } from "@/lib/llm/capacity";
-import type { ModelCapacityRouteState } from "@/lib/llm/capacity-devices";
+import type { ModelCapacityModelState, ModelCapacityRouteState } from "@/lib/llm/capacity-devices";
 
 /** Observation only. Selecting a model neither reserves a slot nor authorizes execution. */
 export type ModelPickerModelActivity = Readonly<{
@@ -13,6 +13,8 @@ export type ModelPickerConnectionAvailability = Readonly<{
   models: readonly ModelPickerModelActivity[];
   /** 경로 몫(0169, step 2): 이 장비의 경로마다 점유·대기·보장·상한, 유휴 보장 빌려주기. 장비 상태를 못 읽었으면 없다. 관측일 뿐이다. */
   routes?: readonly ModelCapacityRouteState[]; lendIdle?: boolean;
+  /** 모델 상한(0170): 이 장비의 모델마다 점유·대기·상한(장부 model 문자열 그대로). 장비 상태를 못 읽었으면 없다. 관측일 뿐이다. */
+  modelCaps?: readonly ModelCapacityModelState[];
 }>;
 export type ModelPickerAvailability = Readonly<{
   observedAt: string; mode: ModelCapacityMode;
