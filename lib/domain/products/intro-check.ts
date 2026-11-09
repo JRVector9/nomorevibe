@@ -3,6 +3,7 @@ import { scopedModel } from "@/lib/llm/model-registry";
 import { configuredModelForProvider, modelLimits } from "@/lib/llm/model-registry";
 import { cliFailure, runReviewCli, usageFrom, type ReviewCliRun, type ReviewUsage } from "@/lib/crawl/agent-review";
 import { tidyTagline } from "@/lib/crawl/tagline";
+import { aiTaskReasoningEfforts } from "@/lib/llm/ai-task-reasoning";
 import type { CliTaskResult } from "@/lib/operations/cli-task-protocol";
 import type { IntroOutcome, IntroVerdict } from "@/lib/db/schema";
 
@@ -61,10 +62,20 @@ const SCHEMA = {
   } } },
 };
 
-export function introCheckCliArgs(model: string): string[] {
+/** 추론 강도를 저장하지 않았을 때 넘기는 값 — 표본(2026-09-24)을 이 강도로 쟀다 */
+export const INTRO_CHECK_DEFAULT_EFFORT = "high";
+/**
+ * 단계 풀에 저장한 강도(settings.stageModelEfforts["product-intro-check"][등록부 key]) → 넘길 값. 그 모델이 받는 강도
+ * (aiTaskReasoningEfforts — sonnet·opus: low·medium·high)가 아니면 기본 high 다. 모르는 값을 CLI 에 넘기지 않는다.
+ */
+export function introCheckEffort(saved: unknown, model: string): string {
+  return typeof saved === "string" && aiTaskReasoningEfforts("product-intro-check", "claude", model).includes(saved) ? saved : INTRO_CHECK_DEFAULT_EFFORT;
+}
+
+export function introCheckCliArgs(model: string, effort: string = INTRO_CHECK_DEFAULT_EFFORT): string[] {
   return ["-p", "--output-format", "json", "--json-schema", JSON.stringify(SCHEMA),
     "--tools", "", "--max-turns", "2", "--no-session-persistence", "--model", model,
-    "--effort", "high", "--max-budget-usd", "1", "--safe-mode", "--disable-slash-commands",
+    "--effort", effort, "--max-budget-usd", "1", "--safe-mode", "--disable-slash-commands",
     "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', "--no-chrome", "--system-prompt", SYSTEM];
 }
 
@@ -176,12 +187,14 @@ export function decideIntro(origin: "ai" | "maker", judgement: IntroJudgement, p
 
 export async function checkIntros(items: readonly IntroItem[], options: {
   timeoutMs: number; run?: ReviewCliRun; model?: string; signal?: AbortSignal;
+  /** 넘길 추론 강도(introCheckEffort 로 고른 값). 없으면 기본 high */
+  effort?: string;
 }): Promise<IntroCheckResult> {
   // 꺾쇠를 막아 두어야 근거 안의 글이 구분자를 끝내지 못한다 — 심사 쪽과 같은 처리다
   const body = JSON.stringify(items).replace(/</g, "\\u003c").replace(/>/g, "\\u003e");
   let result;
   try {
-    result = await (options.run ?? runReviewCli)(introCheckCliArgs(options.model ?? scopedModel("product-intro-check", INTRO_CHECK_MODEL)),
+    result = await (options.run ?? runReviewCli)(introCheckCliArgs(options.model ?? scopedModel("product-intro-check", INTRO_CHECK_MODEL), options.effort),
       `<untrusted_evidence_json>\n${body}\n</untrusted_evidence_json>`,
       { timeoutMs: scopedRequestTimeout("product-intro-check", options.timeoutMs), signal: options.signal, maxOutputTokens: modelLimits("product-intro-check").maxTokens });
   } catch { return { ok: false, error: "cli_error" }; }

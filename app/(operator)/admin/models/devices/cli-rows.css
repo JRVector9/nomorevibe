@@ -1,0 +1,29 @@
+/* 장비 한도 — CLI 장비 줄 아래 작업별 모델·추론 강도(CliTaskRows). 공용 CSS 를 건드리지 않게 cli- 접두사만 쓴다. */
+.cli-task-row td { padding: 6px 12px 6px 0; vertical-align: middle; }
+.cli-task-row td:first-child { padding-left: 30px; position: relative; }
+.cli-task-row td:first-child::before {
+  content: ""; position: absolute; left: 14px; top: 0; bottom: 50%; width: 10px;
+  border-left: 1px solid var(--color-fg-3); border-bottom: 1px solid var(--color-fg-3);
+}
+.cli-task { font-weight: 600; white-space: nowrap; }
+.cli-task small { display: block; font-weight: 400; color: var(--color-fg-3); }
+.cli-sel-pair { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.cli-sel-pair .cli-lb { color: var(--color-fg-3); font-size: 12px; }
+.cli-sel-pair .cli-lb + .cli-sel, .cli-sel-pair .cli-lb + .cli-value { margin-right: 8px; }
+.cli-sel {
+  height: 28px; max-width: 100%; padding: 0 4px; border: 1px solid var(--color-line); border-radius: 5px;
+  background: var(--color-bg-card); color: var(--color-fg); font-size: 13px;
+}
+.cli-sel[data-changed] { border-color: var(--color-accent); background: var(--color-accent-soft); }
+.cli-sel:disabled { opacity: 0.6; }
+.cli-value { font-family: var(--font-mono, ui-monospace, monospace); font-size: 13px; }
+.cli-note { display: block; margin-top: 2px; color: var(--color-fg-3); font-size: 12px; }
+.cli-note a { color: var(--color-accent-ink); font-weight: 600; text-decoration: underline; }
+.cli-save { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: flex-end; }
+.cli-save button {
+  height: 28px; padding: 0 10px; border-radius: 5px; background: var(--color-fg); color: var(--color-bg);
+  font-size: 13px; font-weight: 600;
+}
+.cli-save button:disabled { opacity: 0.4; }
+.cli-result { font-size: 12px; }
+.cli-result[role="alert"] { color: #dc2626; }

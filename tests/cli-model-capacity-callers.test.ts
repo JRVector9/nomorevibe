@@ -163,6 +163,18 @@ it("disabled intro check keeps the exact CLI argv, stdin, timeout, records and r
   expect(ctx.log).toHaveBeenLastCalledWith("intro_check.done", { kept: 2, replaced: 0, needs_editor: 0, failed: 0, drained: true });
 });
 
+it("intro check passes the effort saved for the selected stage key, and high when none or unsupported", async () => {
+  for (const [saved, expected] of [["medium", "medium"], ["max", "high"], [undefined, "high"]] as const) {
+    introCli.mockClear();
+    mocks.settings.mockResolvedValue({ ...DEFAULT_CRAWL_SETTINGS, ...(saved ? { stageModelEfforts: { "product-intro-check": { "connect:sonnet": saved } } } : {}) });
+    mocks.pendingIntro.mockResolvedValueOnce([introTask(1)]).mockResolvedValue([]);
+    expect(await checkProductIntros(context("product-intro-check"), introCli)).toEqual({ done: true });
+    expect(introCli.mock.calls[0][0]).toEqual(introCheckCliArgs(INTRO_CHECK_MODEL, expected));
+    expect(introCli.mock.calls[0][0][introCli.mock.calls[0][0].indexOf("--effort") + 1]).toBe(expected);
+  }
+  mocks.settings.mockReset();
+});
+
 it("disabled intro failures keep the existing per-product failure record and stop rule", async () => {
   const tasks = [introTask(1)];
   mocks.pendingIntro.mockResolvedValueOnce(tasks).mockResolvedValue([]);
