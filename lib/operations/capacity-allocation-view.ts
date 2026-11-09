@@ -1,7 +1,10 @@
 import { AI_TASKS } from "@/lib/llm/ai-tasks";
-import type { ModelCapacityDeviceState, ModelCapacityRouteQuota } from "@/lib/llm/capacity-devices";
+import { deviceModelLimitText, type ModelCapacityDeviceState, type ModelCapacityRouteQuota } from "@/lib/llm/capacity-devices";
+import { aiConnectionLabel } from "./admin-ai-tasks";
 import type { AdminModelsObservation } from "./admin-models-observation";
-import { deviceDisplay, helperRouteOf, isLegacyRouteId, isOrphanDevice, isStalePolicyRoute, routeDisplayLabel, routeGroupOf, taskOfRoute, type DisplayConnection } from "./llm-display";
+import { ALLOCATION_SECTIONS, type AllocationSection } from "./capacity-allocation-sections";
+import { deviceDisplay, helperRouteOf, isLegacyRouteId, isOrphanDevice, isStalePolicyRoute, modelDisplayName, modelDisplayNames, routeDisplayLabel, routeGroupOf, taskOfRoute,
+  type DisplayConnection } from "./llm-display";
 import { observationReadable } from "./llm-ops-view";
 
 /**
@@ -16,6 +19,11 @@ import { observationReadable } from "./llm-ops-view";
  * 이름(2026-11-09): 열 머리는 장비 id 가 아니라 그 장비를 쓰는 연결 이름과 그 아래 모델 이름(llm-display deviceDisplay)이고, 연결도 쓰임도 없는 장비(isOrphanDevice)는
  * 열을 만들지 않는다(장비 한도 화면에만 남는다). 줄은 보조 경로(local-assist-*)를 「보조」 갈래로 뒤에 모으고, 낡은 정책 경로(isStalePolicyRoute — 옛 경로 id,
  * 그 장비의 어느 연결도 내놓지 않고 순위·분산도 쓰지 않는 모델)만 있고 몫 줄·점유·정산도 없는 줄은 stale 로 표시해 화면이 숨긴다. 데이터는 지우지 않는다.
+ *
+ * 개편(2026-11-09 승인 시안 #alloc): 줄은 갈래(검수 · 분류·감사 · 글·번역·검색 · 기타 · 보조 작업 — allocationSectionOf)로 묶어 그 순서로 늘어놓고, 줄마다 최근 1시간
+ * 정산 합(calls1h)을 둔다. 켜진 API 연결이 둘 이상이고 서로 다른 모델을 내놓는 장비(예: m3-mlx = m3-deepseek·m3-gpt-oss)는 열을 연결(모델)마다 가른다(columns) —
+ * 칸은 그 경로의 정책 모델을 내놓는 연결 하나의 열에 놓는다(place). 그 연결이 하나로 정해지지 않는 칸(정책에서 빠진 몫 줄, 두 연결이 같은 모델, 정책 확인 실패)이 하나라도
+ * 있으면 그 장비는 가르지 않고 한 열로 둔다. 저장 단위는 여전히 장비 하나다(갈린 열들이 저장 폼 하나·판 하나를 나눠 쓴다). 숨긴 옛 줄(stale)의 칸은 갈린 장비 전체에 걸친다.
  *
  * 몫의 뜻(lib/llm/capacity-devices.ts 머리 주석): 보장(min) = 그 영역에 일이 있으면 비워 두는 칸, 상한(max) = 한 번에 쥘 수 있는 칸(비움 = 없음,
  * 0 = 이 장비에서 뺌), 빈 칸 빌려 쓰기(lend_idle, 기본 켬). 두 칸을 모두 비운 줄(보장 0·상한 없음)은 오늘과 같으므로 저장하지 않는다.
@@ -32,8 +40,21 @@ export type AllocationCell = Readonly<{
   /** 장부 최근 1시간 정산(성공+실패+판정 없음) · 그중 실패 */
   settled1h: number; failed1h: number;
 }>;
-/** group: helper = LLM 보조 작업 경로(local-assist-*). stale = 낡은 정책 경로만 남은 줄(몫 줄·점유·정산 없음) — 화면은 숨기고 수만 알린다 */
-export type AllocationRow = Readonly<{ routeId: string; label: string; group: "task" | "helper"; stale: boolean; cells: readonly (AllocationCell | null)[] }>;
+export { ALLOCATION_SECTIONS, type AllocationSection };
+const SECTION_ORDER: Readonly<Record<AllocationSection, number>> = Object.freeze(Object.fromEntries(ALLOCATION_SECTIONS.map((entry, index) => [entry.id, index])) as Record<AllocationSection, number>);
+
+/**
+ * group: helper = LLM 보조 작업 경로(local-assist-*). section = 화면 갈래. stale = 낡은 정책 경로만 남은 줄(몫 줄·점유·정산 없음) — 화면은 「숨긴 옛 경로」로 접는다.
+ * cells[i] = 장비 열 i 의 칸. place[i] = 갈린 장비(devices[i].columns)에서 그 칸이 놓이는 연결 열의 번호(가르지 않은 장비는 0, 칸이 없거나 장비 전체에 걸치면 null).
+ * calls1h·failed1h = 이 줄의 칸들의 최근 1시간 정산 합 · 그중 실패(장부 관측이 이미 가진 값 — 따로 읽지 않는다).
+ */
+export type AllocationRow = Readonly<{ routeId: string; label: string; group: "task" | "helper"; section: AllocationSection; stale: boolean;
+  cells: readonly (AllocationCell | null)[]; place: readonly (number | null)[]; calls1h: number; failed1h: number }>;
+/** 갈린 장비의 연결(모델) 열 하나 — 이름 = 연결 이름, models = 그 연결의 모델(화면 이름), 모델 한도·점유·대기 = 장비 상태의 모델 상한 줄(0170; 모르면 null) */
+export type AllocationSubColumn = Readonly<{
+  connectionId: string; name: string; models: readonly string[];
+  modelLimit: number | null; engineMax: number | null; active: number | null; waiting: number | null;
+}>;
 export type AllocationDevice = Readonly<{
   deviceId: string;
   /** 보이는 이름 — 그 장비를 쓰는 연결 이름들(없으면 CLI 도구 이름, 그것도 없으면 장비 id). 장비 id 는 title 에만 */
@@ -47,6 +68,12 @@ export type AllocationDevice = Readonly<{
   lines: number;
   /** 이 열에 칸이 있는 경로(저장 폼이 읽을 줄 — 숨긴 stale 줄은 빠진다) */
   routes: readonly string[];
+  /** 연결(모델)마다 가른 열 — 비었으면 한 열. 둘 이상이면 머리는 「groupName · 공유 한도 N」 묶음 아래 연결 열들이고 저장은 하나다 */
+  columns: readonly AllocationSubColumn[];
+  /** 갈린 장비 묶음 머리의 이름(연결 이름들의 공통 앞부분, 예: m3-deepseek·m3-gpt-oss → M3; 없으면 name). 가르지 않으면 null */
+  groupName: string | null;
+  /** 모델 상한 한 줄(「m3-deepseek 한도 1 / 엔진 1 · …」, deviceModelLimitText) — 머리 title. 상한 줄이 없으면 빈 글 */
+  modelLimits: string;
 }>;
 /** policy_fallback = 장비 행이 없거나 꺼져 정책 대체 한도로 돈다 · unconfigured = 행도 대체 한도도 없어 그 장비로 가는 요청이 보류된다 */
 export type AllocationSkipped = Readonly<{ deviceId: string; name: string; reason: "policy_fallback" | "unconfigured" }>;
@@ -79,6 +106,40 @@ export function allocationAreaLabel(routeId: string): string {
   if (task && task.slots > 1 && task.slotLabel) return `${task.label} (${task.slotLabel} ${Array.from({ length: task.slots }, (_, index) => index + 1).join("·")})`;
   return routeDisplayLabel(routeId);
 }
+/** 경로의 작업(옛 경로 id 는 -legacy 와 뒤 조각을 둘까지 떼어 찾는다 — routeDisplayLabel 과 같은 규칙) */
+function taskOfAnyRoute(routeId: string) {
+  let base = routeId;
+  if (isLegacyRouteId(base)) base = base.replace(/-legacy$/, "");
+  for (let drop = 0; drop <= (isLegacyRouteId(routeId) ? 2 : 0) && base; drop += 1) {
+    const task = taskOfRoute(base);
+    if (task) return task;
+    base = base.includes("-") ? base.slice(0, base.lastIndexOf("-")) : "";
+  }
+  return null;
+}
+/**
+ * 줄 갈래 — 보조 경로는 보조 작업, 작업 목록의 갈래 review → 검수, audit·카테고리 분류 → 분류·감사, text·search·소개 검수 → 글·번역·검색,
+ * 그 밖(Grok 로그인 유지, 모르는 경로) → 기타. 옛 경로 id 는 바탕 작업의 갈래.
+ */
+export function allocationSectionOf(routeId: string): AllocationSection {
+  if (helperRouteOf(routeId)) return "helper";
+  const task = taskOfAnyRoute(routeId);
+  if (!task) return "other";
+  if (task.id === "publish-classify") return "audit";
+  if (task.id === "product-intro-check") return "text";
+  return task.group === "review" ? "review" : task.group === "audit" ? "audit" : task.group === "text" || task.group === "search" ? "text" : "other";
+}
+/** 갈린 장비 묶음 머리 이름 — 연결 이름들의 공통 앞 조각(「-」·공백으로 가른다). 「m3」처럼 글자+숫자 한 조각이면 대문자(M3). 없으면 null */
+export function sharedColumnGroupName(names: readonly string[]): string | null {
+  if (names.length < 2) return null;
+  const parts = names.map(name => name.trim().split(/[-\s_]+/).filter(Boolean));
+  const common: string[] = [];
+  for (let index = 0; parts.every(list => index < list.length - 1 && list[index].toLowerCase() === parts[0][index].toLowerCase()); index += 1) common.push(parts[0][index]);
+  if (!common.length) return null;
+  const joined = common.join("-");
+  return /^[a-z]\d+$/i.test(joined) ? joined.toUpperCase() : joined;
+}
+const bareModel = (model: string) => model.replace(/@[0-9a-f]{8}$/i, "");
 /** 줄 순서 — 작업 목록 순, 그다음 모르는 경로, 보조 경로는 맨 뒤(작업 이름 순) */
 const taskOrder = (routeId: string) => {
   if (helperRouteOf(routeId)) return AI_TASKS.length + 1;
@@ -117,7 +178,7 @@ export function buildCapacityAllocationView({ observation, connections = null, r
   const columns = candidates.filter(state => !orphan(state.deviceId))
     .sort((a, b) => (mapped.get(b.deviceId)?.size ?? 0) - (mapped.get(a.deviceId)?.size ?? 0) || a.deviceId.localeCompare(b.deviceId));
   const routeIds = [...new Set(columns.flatMap(state => [...mapped.get(state.deviceId) ?? [], ...quotaLines(state).map(line => line.routeId)]))]
-    .sort((a, b) => taskOrder(a) - taskOrder(b) || (helperRouteOf(a) && helperRouteOf(b) ? allocationAreaLabel(a).localeCompare(allocationAreaLabel(b), "ko") : 0)
+    .sort((a, b) => SECTION_ORDER[allocationSectionOf(a)] - SECTION_ORDER[allocationSectionOf(b)] || taskOrder(a) - taskOrder(b) || (helperRouteOf(a) && helperRouteOf(b) ? allocationAreaLabel(a).localeCompare(allocationAreaLabel(b), "ko") : 0)
       || compareRouteIds(a, b));
   const metrics = readable ? observation.rows : [];
   const cellOf = (state: ModelCapacityDeviceState, routeId: string): AllocationCell | null => {
@@ -139,20 +200,53 @@ export function buildCapacityAllocationView({ observation, connections = null, r
   const built = routeIds.map(routeId => {
     const cells = columns.map(state => cellOf(state, routeId));
     const present = cells.filter((cell): cell is AllocationCell => cell !== null);
-    return { routeId, label: allocationAreaLabel(routeId), group: routeGroupOf(routeId), stale: present.length > 0 && present.every(staleCell), cells };
+    return { routeId, label: allocationAreaLabel(routeId), group: routeGroupOf(routeId), section: allocationSectionOf(routeId), stale: present.length > 0 && present.every(staleCell), cells,
+      calls1h: present.reduce((sum, cell) => sum + cell.settled1h, 0), failed1h: present.reduce((sum, cell) => sum + cell.failed1h, 0) };
+  });
+  // 장비를 연결(모델)마다 가를 수 있는가 — 켜진 API 연결 둘 이상(모델 목록을 읽었고 서로 다른 모델), 보이는 칸마다 정책 모델을 내놓는 연결이 꼭 하나
+  const splits = columns.map((state, index) => {
+    const mine = (connections ?? []).filter(connection => connection.deviceId === state.deviceId && connection.enabled && connection.kind === "api" && connection.models?.length)
+      .sort((a, b) => aiConnectionLabel(a).localeCompare(aiConnectionLabel(b), "ko"));
+    const modelSets = mine.map(connection => [...new Set((connection.models ?? []).map(model => model.id))].sort().join("\n"));
+    if (mine.length < 2 || new Set(modelSets).size !== mine.length) return null;
+    const place: (number | null)[] = [];
+    for (const row of built) {
+      const cell = row.cells[index];
+      if (!cell || row.stale) { place.push(null); continue; }
+      const models = policyRoutes.filter(entry => entry.routeId === row.routeId && entry.groupId === state.deviceId).map(entry => entry.model);
+      if (!cell.mapped || !models.length) return null;
+      const owners = mine.flatMap((connection, owner) => (connection.models ?? []).some(model => models.some(wanted => model.id === wanted || model.id === bareModel(wanted))) ? [owner] : []);
+      if (owners.length !== 1) return null;
+      place.push(owners[0]);
+    }
+    const subColumns: AllocationSubColumn[] = mine.map(connection => {
+      const ids = (connection.models ?? []).map(model => model.id);
+      const limits = (state.models ?? []).filter(row => ids.some(id => id === row.model || id === bareModel(row.model)));
+      const capped = limits.filter(row => row.maxSlots !== null);
+      return { connectionId: connection.id, name: aiConnectionLabel(connection), models: modelDisplayNames(ids),
+        modelLimit: capped.length ? capped.reduce((sum, row) => sum + row.maxSlots!, 0) : null,
+        engineMax: capped.length && capped.every(row => row.engineMax !== null) ? capped.reduce((sum, row) => sum + row.engineMax!, 0) : null,
+        active: state.models ? limits.reduce((sum, row) => sum + row.active, 0) : null, waiting: state.models ? limits.reduce((sum, row) => sum + row.waiting, 0) : null };
+    });
+    return { place, subColumns };
   });
   // 같은 이름의 보조 줄(같은 작업, 다른 백엔드)은 백엔드를 덧붙여 가른다
-  const rows: AllocationRow[] = built.map(row => {
+  const rows: AllocationRow[] = built.map((row, rowIndex) => {
     const helper = helperRouteOf(row.routeId);
-    return helper && built.some(other => other !== row && !other.stale && other.label === row.label) ? { ...row, label: `${row.label} (${helper.backendId})` } : row;
+    const place = row.cells.map((cell, index) => { const split = splits[index]; return !cell ? null : split ? split.place[rowIndex] : 0; });
+    const named = helper && built.some(other => other !== row && !other.stale && other.label === row.label) ? `${row.label} (${helper.backendId})` : row.label;
+    return { ...row, label: named, place };
   });
   const devices: AllocationDevice[] = columns.map((state, index) => {
     const lines = quotaLines(state);
     const guaranteeSum = lines.reduce((sum, line) => sum + (line.minSlots ?? 0), 0);
     const { name, models } = display(state.deviceId);
+    const subColumns = splits[index]?.subColumns ?? [];
     return { deviceId: state.deviceId, name, models, limitSlots: state.limitSlots, version: state.version!,
       lendIdle: state.lendIdle ?? true, active: state.active, waiting: state.waiting, guaranteeSum, over: guaranteeSum > state.limitSlots, lines: lines.length,
-      routes: rows.filter(row => !row.stale && row.cells[index] !== null).map(row => row.routeId) };
+      routes: rows.filter(row => !row.stale && row.cells[index] !== null).map(row => row.routeId),
+      columns: subColumns, groupName: subColumns.length ? sharedColumnGroupName(subColumns.map(column => column.name)) ?? name : null,
+      modelLimits: deviceModelLimitText(state, model => modelDisplayName(model)) };
   });
   return { observedAt: readable ? observation.observedAt : null, readable, policyVerified: readable && observation.policyVerified, devices, rows, skipped, orphans, errors };
 }

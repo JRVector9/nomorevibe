@@ -26,7 +26,8 @@ import { saveRouteQuotasAction } from "@/app/(operator)/admin/models/allocation/
 import { AllocationMatrix } from "@/app/(operator)/admin/models/allocation/AllocationMatrix";
 import { modelsAdvancedEditor } from "@/app/(operator)/admin/workspace-navigation";
 import { readCapacityAllocationView, routeQuotaChangeLines, routeQuotaIssueMessage, routeQuotaWarningMessage, saveAdminRouteQuotas } from "@/lib/operations/admin-capacity-allocation";
-import { allocationAreaLabel, buildCapacityAllocationView, routeQuotasInputFromForm, routeQuotaText } from "@/lib/operations/capacity-allocation-view";
+import { ALLOCATION_SECTIONS, allocationAreaLabel, allocationSectionOf, buildCapacityAllocationView, routeQuotasInputFromForm, routeQuotaText, sharedColumnGroupName }
+  from "@/lib/operations/capacity-allocation-view";
 import { llmAllocationAnchor, llmAllocationHref } from "@/lib/operations/llm-ops-links";
 
 const NOW = "2026-11-08T16:30:00.000Z";
@@ -71,6 +72,9 @@ const connection = (deviceId: string, label: string, models: string[] | null = n
   contextTokens: null, enabled: true, version: 1, note: null, updatedBy: "jr", updatedAt: NOW, cliVersion: null }) as AiConnectionView;
 const form = (entries: [string, string][]) => { const data = new FormData(); for (const [key, value] of entries) data.append(key, value); return data; };
 const text = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+/** 배분표의 줄 하나(작업 이름으로) — 줄 머리 th 의 title 은 경로 id */
+const rowHtml = (html: string, label: string) =>
+  html.match(new RegExp(`<tr data-group="[a-z]+"[^>]*><th scope="row" class="alloc-area" title="[^"]*"><span class="alloc-area-in"><span class="alloc-area-name">${label}</span>[^]*?</tr>`))![0];
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -88,12 +92,17 @@ describe("화면 모형(buildCapacityAllocationView)", () => {
     expect(view).toMatchObject({ readable: true, policyVerified: true, observedAt: NOW, errors: [] });
     expect(view.devices.map(entry => entry.deviceId)).toEqual([GPU, MLX, SUPA, M1]);
     expect(view.devices[0]).toEqual({ deviceId: GPU, name: GPU, models: [], limitSlots: 5, version: 9, lendIdle: true, active: 2, waiting: 2, guaranteeSum: 2, over: false, lines: 3,
-      routes: ["crawl-agent-review", "local-qwen-tiebreak", "local-held-qwen", "local-audit", "local-screen", "crawl-publish-classify"] });
+      routes: ["crawl-agent-review", "local-qwen-tiebreak", "local-held-qwen", "local-audit", "local-screen", "crawl-publish-classify"], columns: [], groupName: null, modelLimits: "" });
     expect(view.devices.find(entry => entry.deviceId === SUPA)).toMatchObject({ lendIdle: false, guaranteeSum: 2, lines: 1, routes: ["second-review", "product-search-verify"] });
-    expect(view.rows.map(row => [row.routeId, row.label])).toEqual([
-      ["crawl-agent-review", "1차 AI 검수"], ["second-review", "2차 AI 검수 (투표자 1·2·3)"], ["local-qwen-tiebreak", "2차 갈림 판가름"], ["local-held-qwen", "보류 재심사"],
-      ["crawl-tagline", "수집 소개 짓기"], ["product-translate", "제품 다국어 번역"], ["product-search-verify", "검색 키워드 검수"], ["local-audit", "발행분 감사 · 직접 모델"],
-      ["local-screen", "화면 판별"], ["crawl-publish-classify", "카테고리 분류"]]);
+    // 줄은 갈래(검수 → 분류·감사 → 글·번역·검색) 순, 갈래 안은 작업 목록 순
+    expect(view.rows.map(row => [row.routeId, row.label, row.section])).toEqual([
+      ["crawl-agent-review", "1차 AI 검수", "review"], ["second-review", "2차 AI 검수 (투표자 1·2·3)", "review"], ["local-qwen-tiebreak", "2차 갈림 판가름", "review"],
+      ["local-held-qwen", "보류 재심사", "review"], ["local-audit", "발행분 감사 · 직접 모델", "audit"], ["local-screen", "화면 판별", "audit"],
+      ["crawl-publish-classify", "카테고리 분류", "audit"], ["crawl-tagline", "수집 소개 짓기", "text"], ["product-translate", "제품 다국어 번역", "text"],
+      ["product-search-verify", "검색 키워드 검수", "text"]]);
+    // 줄의 1시간 호출 = 그 줄 칸들의 최근 1시간 정산 합(장부 관측 값 그대로)
+    expect(view.rows.find(row => row.routeId === "crawl-publish-classify")).toMatchObject({ calls1h: 161, failed1h: 1, place: [0, null, null, null] });
+    expect(view.rows.find(row => row.routeId === "second-review")).toMatchObject({ calls1h: 40, failed1h: 0, place: [null, 0, 0, null] });
     const classify = view.rows.find(row => row.routeId === "crawl-publish-classify")!;
     expect(classify.cells.map(cell => cell?.deviceId ?? null)).toEqual([GPU, null, null, null]);
     expect(classify.cells[0]).toEqual({ deviceId: GPU, routeId: "crawl-publish-classify", mapped: true, minSlots: 1, maxSlots: 2, active: 1, waiting: 0, held: 0, cap: 2,
@@ -160,12 +169,20 @@ describe("화면 모형(buildCapacityAllocationView)", () => {
     expect(view.devices.find(entry => entry.deviceId === GPU)!.routes).not.toContain("product-tagline-ko-qwen-legacy");
     const html = renderToStaticMarkup(<AllocationMatrix view={view} readOnly={false} />);
     expect(html).not.toContain('name="route" value="product-tagline-ko-qwen-legacy"');
-    expect(text(html)).toContain("옛 정책 경로 1개를 숨겼습니다(옛 경로 · 한국어 소개 번역)");
+    expect(text(html)).toContain("숨긴 옛 경로 1개 보기");
+    expect(html).toContain('title="옛 경로 · 한국어 소개 번역 (product-tagline-ko-qwen-legacy)"');
+    // 숨긴 옛 줄은 토글을 켜기 전에는 그리지 않는다
+    expect(html).not.toContain('title="product-tagline-ko-qwen-legacy"');
     expect(text(html)).toContain("연결도 쓰임도 없는 장비 2대(nowhere-host, supa)");
     expect(html).toMatch(/<tr class="alloc-group" data-group="helper">/);
-    // 같은 id 를 두 번 찍지 않는다 — 아는 경로는 이름 + 작은 id, 모르는 경로는 id 한 번
-    expect(html).toContain('<span class="alloc-area-name">보조 · 판정 감사</span><code class="alloc-route">local-assist-decision_audit-m3-deepseek</code>');
-    expect(html.match(/local-assist-decision_audit-m3-deepseek<\/span>/g)).toBeNull();
+    // 경로 id 는 title 에만 — 보조 갈래 안에서는 「보조 · 」를 떼고 작업 이름만
+    expect(html).toContain('<th scope="row" class="alloc-area" title="local-assist-decision_audit-m3-deepseek"><span class="alloc-area-in"><span class="alloc-area-name">판정 감사</span>');
+    expect(text(html.replace(/(title|name|aria-label)="[^"]*"/g, ""))).not.toContain("local-assist-decision_audit-m3-deepseek");
+    // 보조 작업은 접힌 한 묶음 — 줄은 hidden 이지만 입력은 그 장비 폼에 붙어 있어 값을 보낸다
+    expect(html).toContain('aria-expanded="false"');
+    expect(text(html)).toContain("보조 작업 3");
+    expect(html).toMatch(/<tr data-group="helper" hidden=""><th scope="row" class="alloc-area" title="local-assist-uptime-gpu3090-qwen">/);
+    expect(html).toMatch(/form="alloc-form-0-gpu3090-qwen"[^>]* name="min:local-assist-uptime-gpu3090-qwen"/);
   });
 
   it("못 읽으면 꾸미지 않는다 — 장부 실패는 표 없이 까닭, 장비 상태 실패도 까닭, 정책 확인 실패는 저장된 몫만", () => {
@@ -180,6 +197,110 @@ describe("화면 모형(buildCapacityAllocationView)", () => {
     expect(unverified.devices.map(entry => entry.deviceId)).toEqual([GPU, SUPA]);
     expect(unverified.rows.map(row => row.routeId)).toEqual(["crawl-agent-review", "second-review", "local-screen", "crawl-publish-classify"]);
     expect(unverified.rows.every(row => row.cells.every(cell => cell === null || !cell.mapped))).toBe(true);
+  });
+});
+
+describe("갈래와 연결(모델)마다 가른 장비 열 — 2026-11-09 승인 시안 #alloc", () => {
+  it("줄 갈래: 검수 · 분류·감사 · 글·번역·검색 · 기타 · 보조 작업(이 순서) — 옛 경로 id 는 바탕 작업의 갈래", () => {
+    expect(ALLOCATION_SECTIONS.map(entry => entry.label)).toEqual(["검수", "분류 · 감사", "글 · 번역 · 검색", "기타", "보조 작업"]);
+    expect(Object.fromEntries(["crawl-agent-review", "second-review", "local-human-deepseek", "local-deepseek-confirm", "local-qwen-tiebreak", "local-held-qwen",
+      "crawl-publish-classify", "local-published-filter", "local-audit", "local-second-opinion", "local-screen", "product-audit",
+      "crawl-tagline", "product-tagline-ko", "product-translate", "reason-translate", "search-query-translate", "product-search-profile", "product-search-verify", "product-intro-check",
+      "grok-session-check", "mystery-route", "local-assist-uptime-gpu3090-qwen", "product-tagline-ko-qwen-legacy", "crawl-agent-review-legacy"].map(id => [id, allocationSectionOf(id)])))
+      .toEqual({ "crawl-agent-review": "review", "second-review": "review", "local-human-deepseek": "review", "local-deepseek-confirm": "review", "local-qwen-tiebreak": "review",
+        "local-held-qwen": "review", "crawl-publish-classify": "audit", "local-published-filter": "audit", "local-audit": "audit", "local-second-opinion": "audit",
+        "local-screen": "audit", "product-audit": "audit", "crawl-tagline": "text", "product-tagline-ko": "text", "product-translate": "text", "reason-translate": "text",
+        "search-query-translate": "text", "product-search-profile": "text", "product-search-verify": "text", "product-intro-check": "text", "grok-session-check": "other",
+        "mystery-route": "other", "local-assist-uptime-gpu3090-qwen": "helper", "product-tagline-ko-qwen-legacy": "text", "crawl-agent-review-legacy": "review" });
+  });
+
+  it("묶음 머리 이름 = 연결 이름의 공통 앞 조각(m3 → M3), 없으면 null", () => {
+    expect(sharedColumnGroupName(["m3-deepseek", "m3-gpt-oss"])).toBe("M3");
+    expect(sharedColumnGroupName(["oracle-osaka-a", "oracle-osaka-b"])).toBe("oracle-osaka");
+    expect(sharedColumnGroupName(["gpu3090-qwen", "supa-direct"])).toBeNull();
+    expect(sharedColumnGroupName(["m3", "m3-gpt-oss"])).toBeNull();
+    expect(sharedColumnGroupName(["m3-deepseek"])).toBeNull();
+  });
+
+  // m3-mlx = 연결 둘(m3-deepseek·m3-gpt-oss)이 서로 다른 모델을 내놓는 장비. 정책 경로의 모델로 칸을 그 연결 열에 놓는다
+  const SPLIT_POLICY: ModelCapacityPolicy = { ...POLICY, routes: [...POLICY.routes.filter(entry => entry.groupId !== MLX),
+    route("second-review", MLX, "gpt-oss-120b"), route("crawl-tagline", MLX, "gpt-oss-120b"),
+    // 장부 이름의 「@연결 8자」는 떼고 맞춘다
+    route("local-human-deepseek", MLX, "deepseek-v4.1-flash-1017@0a1b2c3d")] };
+  const SPLIT_DEVICES = DEVICES.map(entry => entry.deviceId === MLX ? { ...entry, active: 2, waiting: 3, models: [
+    { model: "deepseek-v4.1-flash-1017", active: 1, waiting: 3, maxSlots: 1, engineMax: 1 }, { model: "gpt-oss-120b", active: 1, waiting: 0, maxSlots: 2, engineMax: 4 }] } : entry);
+  const SPLIT_CONNECTIONS = [connection(GPU, GPU, ["qwen3.8-flash-next"]), connection(MLX, "m3-gpt-oss", ["gpt-oss-120b"]),
+    connection(MLX, "m3-deepseek", ["deepseek-v4.1-flash-1017"]), connection(SUPA, "supa-direct", ["Inferact/Qwen3.8-27B-NVFP4"]), connection(M1, "m1-gemma", ["m1-gemma"])];
+
+  it("켜진 API 연결이 둘 이상이고 모델이 다르면 장비 열을 연결마다 가른다 — 모델 한도·점유는 장비 상태의 모델 상한 줄, 저장은 장비 하나", () => {
+    const view = buildCapacityAllocationView({ observation: observation({ policy: SPLIT_POLICY, devices: SPLIT_DEVICES }), connections: SPLIT_CONNECTIONS });
+    const mlxIndex = view.devices.findIndex(entry => entry.deviceId === MLX);
+    const mlx = view.devices[mlxIndex];
+    expect(mlx).toMatchObject({ groupName: "M3", limitSlots: 2, active: 2, waiting: 3,
+      modelLimits: "deepseek-v4.1-flash-1017 한도 1 / 엔진 1 · gpt-oss-120b 한도 2 / 엔진 4" });
+    expect(mlx.columns).toEqual([
+      { connectionId: `id-${MLX}-m3-deepseek`, name: "m3-deepseek", models: ["deepseek-v4.1-flash-1017"], modelLimit: 1, engineMax: 1, active: 1, waiting: 3 },
+      { connectionId: `id-${MLX}-m3-gpt-oss`, name: "m3-gpt-oss", models: ["gpt-oss-120b"], modelLimit: 2, engineMax: 4, active: 1, waiting: 0 }]);
+    // 가르지 않은 장비는 columns 가 비었다
+    expect(view.devices.filter(entry => entry.deviceId !== MLX).every(entry => entry.columns.length === 0 && entry.groupName === null)).toBe(true);
+    const placeOf = (routeId: string) => view.rows.find(row => row.routeId === routeId)!.place[mlxIndex];
+    expect([placeOf("local-human-deepseek"), placeOf("second-review"), placeOf("crawl-tagline"), placeOf("crawl-agent-review")]).toEqual([0, 1, 1, null]);
+    expect(mlx.routes).toEqual(["second-review", "local-human-deepseek", "crawl-tagline"]);
+
+    const html = renderToStaticMarkup(<AllocationMatrix view={view} readOnly={false} />);
+    // 머리 두 줄: 「M3 · 공유 한도 2」 묶음(앵커는 장비 id) + 연결 열(이름·모델·모델 한도·지금·대기); 나머지 장비는 두 줄에 걸친다
+    expect(html).toMatch(new RegExp(`<th scope="colgroup" colSpan="2" id="${llmAllocationAnchor(MLX)}" class="alloc-dev alloc-dev-group"`));
+    expect(text(html)).toContain("M3 · 공유 한도 2 지금 2 · 대기 3");
+    expect(text(html)).toContain("m3-deepseek deepseek-v4.1-flash-1017 모델 한도 1 지금 1 · 대기 3");
+    expect(text(html)).toContain("m3-gpt-oss gpt-oss-120b 모델 한도 2 지금 1 · 대기 0");
+    expect(html).toMatch(new RegExp(`<th scope="col" rowSpan="2" id="${llmAllocationAnchor(GPU)}"`));
+    expect(html).toContain('<th scope="col" rowSpan="2" class="alloc-area">작업<span class="alloc-area-sub">1시간 호출</span></th>');
+    // 칸은 그 모델을 내놓는 연결 열에 — 사람 몫 위임 검수는 m3-deepseek(첫 열), 2차 AI 검수는 m3-gpt-oss(둘째 열)
+    const formId = `alloc-form-${mlxIndex}-m3-mlx`;
+    const human = rowHtml(html, "사람 몫 위임 검수");
+    expect(human).toContain('aria-label="사람 몫 위임 검수 · m3-deepseek 보장 칸"');
+    expect(human).toMatch(new RegExp(`<td><div class="alloc-cell"[^]*form="${formId}"[^]*?</td><td class="alloc-na" title="이 작업을 m3-gpt-oss\\(으\\)로 보내지 않음">`));
+    const second = rowHtml(html, "2차 AI 검수 \\(투표자 1·2·3\\)");
+    expect(second).toMatch(/<td class="alloc-na" title="이 작업을 m3-deepseek\(으\)로 보내지 않음">[^]*?<\/td><td><div class="alloc-cell"/);
+    expect(second).toContain('aria-label="2차 AI 검수 (투표자 1·2·3) · m3-gpt-oss 보장 칸"');
+    // 저장은 장비 하나 — 바닥 칸이 두 열에 걸치고, 폼 하나에 두 열의 경로가 모두 있다
+    expect(html).toMatch(new RegExp(`<td colSpan="2"><div class="alloc-foot">[^]*?<form id="${formId}"`));
+    const mlxForm = html.match(new RegExp(`<form id="${formId}"[^]*?</form>`))![0];
+    expect(mlxForm).toContain('aria-label="M3 칸 배분 저장"');
+    expect(mlxForm.match(/name="route"/g)).toHaveLength(3);
+    expect(text(html)).toContain("보장 합 0 / 2");
+  });
+
+  it("칸이 어느 연결 열인지 하나로 정해지지 않으면 그 장비는 한 열 — 정책에서 빠진 몫 줄, 같은 모델을 내놓는 두 연결, 정책 확인 실패, 꺼진 연결", () => {
+    const build = (patch: { policy?: ModelCapacityPolicy; devices?: ModelCapacityDeviceState[]; policyHash?: string }, connections: AiConnectionView[] | null = SPLIT_CONNECTIONS) =>
+      buildCapacityAllocationView({ observation: observation({ policy: SPLIT_POLICY, devices: SPLIT_DEVICES, ...patch }), connections }).devices.find(entry => entry.deviceId === MLX);
+    expect(build({})?.columns).toHaveLength(2);
+    const quotaOnly = SPLIT_DEVICES.map(entry => entry.deviceId === MLX ? { ...entry, routes: [quotaRoute("local-screen", { minSlots: 1, maxSlots: 1, cap: 1 })] } : entry);
+    expect(build({ devices: quotaOnly })).toMatchObject({ columns: [], groupName: null });
+    const same = [...SPLIT_CONNECTIONS.filter(entry => entry.deviceId !== MLX), connection(MLX, "m3-a", ["gpt-oss-120b"]), connection(MLX, "m3-b", ["gpt-oss-120b"])];
+    expect(build({}, same)?.columns).toEqual([]);
+    const overlap = [...SPLIT_CONNECTIONS.filter(entry => entry.deviceId !== MLX), connection(MLX, "m3-a", ["gpt-oss-120b", "deepseek-v4.1-flash-1017"]),
+      connection(MLX, "m3-b", ["deepseek-v4.1-flash-1017"])];
+    expect(build({}, overlap)?.columns).toEqual([]);
+    expect(build({ policyHash: "0".repeat(64) })?.columns ?? []).toEqual([]);
+    const off = SPLIT_CONNECTIONS.map(entry => entry.label === "m3-gpt-oss" ? { ...entry, enabled: false } : entry);
+    expect(build({}, off)?.columns).toEqual([]);
+    expect(build({}, null)?.columns).toEqual([]);
+    // 가르지 않으면 머리는 한 줄, 칸은 장비 열 하나
+    const html = renderToStaticMarkup(<AllocationMatrix view={buildCapacityAllocationView({ observation: observation({ policy: SPLIT_POLICY, devices: quotaOnly }),
+      connections: SPLIT_CONNECTIONS })} readOnly={false} />);
+    expect(html).not.toContain("alloc-dev-group");
+    expect(html).not.toContain("rowSpan");
+  });
+
+  it("갈린 장비에서 숨긴 옛 줄(stale)의 칸은 연결 열에 놓지 않고 장비 전체에 걸친다", () => {
+    const policy: ModelCapacityPolicy = { ...SPLIT_POLICY, routes: [...SPLIT_POLICY.routes, route("product-tagline-ko-qwen-legacy", MLX, "qwen-old")] };
+    const view = buildCapacityAllocationView({ observation: observation({ policy, devices: SPLIT_DEVICES }), connections: SPLIT_CONNECTIONS, references: new Set() });
+    const mlxIndex = view.devices.findIndex(entry => entry.deviceId === MLX);
+    expect(view.devices[mlxIndex].columns).toHaveLength(2);
+    expect(view.rows.find(row => row.routeId === "product-tagline-ko-qwen-legacy")).toMatchObject({ stale: true });
+    expect(view.rows.find(row => row.routeId === "product-tagline-ko-qwen-legacy")!.place[mlxIndex]).toBeNull();
+    expect(view.devices[mlxIndex].routes).not.toContain("product-tagline-ko-qwen-legacy");
   });
 });
 
@@ -253,19 +374,27 @@ describe("칸 배분 화면 그리기", () => {
     expect(text(html)).toContain(`${GPU} 한도 5 지금 2 · 대기 2`);
     expect(text(html)).toContain("m3-mlx (2) 한도 2");
     // 칸: 저장된 값과 빈 값, 입력은 form 속성으로 그 장비 열의 폼에 붙는다
-    const classify = html.match(/<tr><th scope="row" class="alloc-area"><span class="alloc-area-name">카테고리 분류<\/span>[^]*?<\/tr>/)![0];
+    const classify = rowHtml(html, "카테고리 분류");
     expect(classify).toMatch(/<input type="number"[^>]* max="5"[^>]* form="alloc-form-0-gpu3090-qwen"[^>]* name="min:crawl-publish-classify" value="1"\/>/);
     expect(classify).toMatch(/<input type="number"[^>]* form="alloc-form-0-gpu3090-qwen"[^>]* name="max:crawl-publish-classify" value="2"\/>/);
     expect(classify).toContain('aria-label="카테고리 분류 · gpu3090-qwen 보장 칸"');
-    expect(text(classify)).toContain("지금 1 · 대기 0 1시간 161건 · 실패 1");
-    expect(classify.match(/class="alloc-none"/g)).toHaveLength(3);
-    const held = html.match(/<tr><th scope="row" class="alloc-area"><span class="alloc-area-name">보류 재심사[^]*?<\/tr>/)![0];
+    // 줄 머리: 이름 + 1시간 호출(실패 함께), 경로 id 는 title. 칸: 지금·대기(켤 때만 보이는 글), 1시간 정산은 칸 title
+    expect(classify).toContain('title="crawl-publish-classify"');
+    expect(text(classify)).toContain("카테고리 분류 161 · 실패 1");
+    expect(text(classify)).toContain("지금 1 · 대기 0");
+    expect(classify).toContain('title="최근 1시간 161건 · 실패 1 · 지금 상한 2"');
+    expect(classify.match(/class="alloc-na"/g)).toHaveLength(3);
+    const held = rowHtml(html, "보류 재심사");
     expect(held).toMatch(/form="alloc-form-0-gpu3090-qwen"[^>]* name="min:local-held-qwen" value=""\/>/);
-    expect(held).toContain('placeholder="없음"');
-    const screen = html.match(/<tr><th scope="row" class="alloc-area"><span class="alloc-area-name">화면 판별[^]*?<\/tr>/)![0];
+    expect(held).toContain('placeholder="–"');
+    const screen = rowHtml(html, "화면 판별");
     expect(text(screen)).toContain("이 장비에서 뺌");
     expect(text(screen)).toContain("정책 경로 없음");
-    expect(text(html.match(/<tr><th scope="row" class="alloc-area"><span class="alloc-area-name">1차 AI 검수[^]*?<\/tr>/)![0])).toContain("지금 0 · 대기 2 · 비워 둠 1");
+    expect(text(rowHtml(html, "1차 AI 검수"))).toContain("지금 0 · 대기 2 · 비워 둠 1");
+    // 갈래 머리 줄과 지금·대기 토글(처음엔 꺼짐 — 표에 data-show-use 없음)
+    expect(html.match(/<tr class="alloc-group" data-group="(review|audit|text)">/g)).toHaveLength(3);
+    expect(text(html)).toContain("칸마다 지금·대기 보기");
+    expect(html).not.toContain("data-show-use");
     // 열 아래: 보장 합 / 한도, 빌려 쓰기(장비마다), 그 장비의 폼(판·경로)
     expect(text(html)).toContain("보장 합 2 / 5");
     expect(html).toContain('<form id="alloc-form-0-gpu3090-qwen"');
@@ -274,8 +403,11 @@ describe("칸 배분 화면 그리기", () => {
     expect(html).toMatch(/aria-label="gpu3090-qwen 빈 칸 빌려 쓰기" name="lendIdle" checked=""\/>/);
     expect(html).toMatch(/aria-label="supa-direct 빈 칸 빌려 쓰기" name="lendIdle"\/>/);
     expect(html.match(/>저장<\/button>/g)).toHaveLength(4);
-    expect(text(html)).toContain("보장 칸 그 작업 영역에 일이 있으면 늘 비워 두는 칸입니다");
-    expect(text(html)).toContain("두 칸을 모두 비우면 오늘과 같습니다");
+    // 바뀐 값이 없으면 저장 단추는 잠겨 있다
+    expect(html.match(/<button type="button" data-confirm-trigger="" disabled=""[^>]*>저장<\/button>/g)).toHaveLength(4);
+    // 설명은 한 줄
+    expect(text(html)).toContain("보 보장: 일이 있으면 늘 남겨 두는 칸 · 상 상한: 한 번에 쓰는 최대(비우면 없음, 0이면 뺌)");
+    expect(text(html)).toContain("둘 다 비우면 오늘과 같고");
     expect(text(html)).toContain("장비 행이 없거나 꺼진 장비 1대( M3 OpenCode )");
     expect(text(html)).toContain("연결도 쓰임도 없는 장비 1대(nowhere-host)");
     expect(html).not.toMatch(/NaN|undefined/);
@@ -289,7 +421,7 @@ describe("칸 배분 화면 그리기", () => {
     expect(html).not.toContain(">저장</button>");
     expect(text(html)).toContain("빈 칸 빌려 쓰기 켬");
     expect(text(html)).toContain("빈 칸 빌려 쓰기 끔");
-    expect(text(html)).toContain("보장 1 상한 2");
+    expect(text(html)).toContain("보 보장 1 상 상한 2");
   });
 
   it("장부를 못 읽으면 표 대신 까닭, 연결 이름을 못 읽어도 화면은 뜬다", async () => {
@@ -307,7 +439,7 @@ describe("칸 배분 화면 그리기", () => {
     const over = DEVICES.map(entry => entry.deviceId === M1 ? { ...entry, routes: [quotaRoute("product-translate", { minSlots: 3, maxSlots: null })] } : entry);
     const html = renderToStaticMarkup(<AllocationMatrix view={buildCapacityAllocationView({ observation: observation({ devices: over }) })} readOnly={false} />);
     expect(text(html)).toContain("보장 합 3 / 2");
-    expect(html).toContain("보장 합이 한도를 넘습니다 — 저장할 수 없습니다");
+    expect(html).toContain("보장 합이 한도를 넘습니다</span>");
     expect(html).toContain("보장이 한도 2칸보다 많습니다");
     const m1 = html.match(/<form id="alloc-form-3-m1-qwen"[^]*?<\/form>/)![0];
     expect(m1).toMatch(/<button type="button" data-confirm-trigger="" disabled=""/);
