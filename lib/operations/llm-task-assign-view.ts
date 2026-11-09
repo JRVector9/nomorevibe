@@ -81,6 +81,8 @@ export type TaskAssignView = Readonly<{
 
 const fmt = (value: number) => value.toLocaleString("ko-KR");
 const HOUR_MS = 60 * 60_000;
+/** 감사 항목(감사 캠페인)이 있어야 일하는 작업 — 발행분 감사 · 직접 모델(audit-qwen)·감사 두 번째 의견(audit-second-opinion) */
+const AUDIT_FED_TASKS: ReadonlySet<string> = new Set(["audit-review", "audit-second-opinion"]);
 /** 실행 쪽이 「이 틱만 칸이 없어」 다음 순위로 넘기는 까닭 — lib/llm/ai-task-resolver.ts 의 SATURATION 과 같은 목록(그 모듈은 서버 전용이라 여기 둔다) */
 const SATURATION: ReadonlySet<string> = new Set(["capacity", "queue_full", "route_quota", "model_quota"]);
 const KST = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Seoul", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
@@ -289,9 +291,11 @@ export function buildTaskAssignView(input: TaskAssignInput): TaskAssignView {
     // 호출이 없을 때의 까닭(없으면 「최근 1시간」 — 그때만 멈춤 신호를 더 본다)
     const enabledConnections = entries.filter(entry => entry.connectionId).map(entry => connectionOf(entry.connectionId!));
     const skipText = (mode === "effective" || mode === "classifier") && slot.current?.skip ? slot.current.skipStatus ?? trimDot(slot.current.skip) : null;
+    // 감사 항목을 받아서만 일하는 작업 — 진행 중인 감사가 없으면 일감이 없어 쉬는 것이지 멈춘 것이 아니다(「24시간 성공 0건」으로 보이지 않게)
+    const auditIdle = AUDIT_FED_TASKS.has(task.id) && input.facts?.auditRunning === false ? "진행 중인 감사 없음" : null;
     const idleWhy = paused ? "잡 일시중지" : unused ? "쓰지 않음" : mode === "fallback" && !entries.length ? "순위 없음"
       : runtime?.degraded ? llmReasonShort(runtime.degraded.code) ?? runtime.degraded.code
-      : skipText ?? (enabledConnections.length && enabledConnections.every(connection => !connection?.enabled) ? "연결 꺼짐"
+      : skipText ?? auditIdle ?? (enabledConnections.length && enabledConnections.every(connection => !connection?.enabled) ? "연결 꺼짐"
       : !task.jobs.length ? "최근 웹 요청 없음" : null);
     const empty = emptyExtra ? "쓰지 않는 칸" : !readable ? `${UNREADABLE} — 장부를 읽지 못했습니다` : !tracked ? "장부 밖 작업 — 호출 수를 세지 않습니다" : total > 0 ? null
       : `호출 없음 (${idleWhy ?? "최근 1시간"})`;
@@ -352,6 +356,7 @@ export function buildTaskAssignView(input: TaskAssignInput): TaskAssignView {
       : !tracked ? untracked
       : !readable ? { level: "unknown", text: UNREADABLE, reason: "장부를 읽지 못했습니다", detail: null }
       : total > 0 ? { level: "ok", text: "정상", reason: `1시간 정산 ${fmt(total)}${multi ? " (작업 전체)" : ""}`, detail: null }
+      : auditIdle ? { level: "idle", text: "쉼", reason: auditIdle, detail: null }
       : { level: "idle", text: "쉼", reason: lastSuccess !== null ? `최근 1시간 호출 없음 · 마지막 성공 ${kstStamp(lastSuccess)}` : "최근 1시간 호출 없음", detail: null };
     const worst = signals.reduce<TaskAssignStatus | null>((current, entry) => !current || LEVEL_RANK[entry.level] > LEVEL_RANK[current.level] ? entry : current, null);
     let status: TaskAssignStatus;

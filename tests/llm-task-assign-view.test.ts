@@ -275,6 +275,13 @@ describe("2026-11-09 상태 문구 — 운영 관측(19:27 UTC)에서 틀렸던 
     const web = rowOf(buildTaskAssignView(input({ observation: observationWith([]),
       slots: [slotOf("search-query-translate", 1, {}, [rank("search-query-translate", 1, MLX, "gpt-oss-120b")])] })), "search-query-translate#1");
     expect(web.status).toEqual({ level: "idle", text: "쉼", reason: "최근 1시간 호출 없음", detail: null });
+    // 감사 항목을 받아서만 일하는 작업은 진행 중인 감사가 없으면 쉬는 것 — 「24시간 성공 0건」이 아니다. 감사가 있거나 모르면 지금 규칙 그대로
+    const audit = (facts: TaskAssignInput["facts"]) => rowOf(buildTaskAssignView(input({ facts, observation: observationWith([]),
+      slots: [slotOf("audit-review", 1, { current: current("audit-review", "qwen3.8-flash-next") })] })), "audit-review#1");
+    expect(audit({ auditRunning: false, connectionsRead: true }).status).toEqual({ level: "idle", text: "쉼", reason: "진행 중인 감사 없음", detail: null });
+    expect(audit({ auditRunning: false, connectionsRead: true }).actual.empty).toBe("호출 없음 (진행 중인 감사 없음)");
+    expect(audit({ auditRunning: true, connectionsRead: true }).status).toMatchObject({ level: "warn", reason: "24시간 성공 0건" });
+    expect(audit({ auditRunning: null, connectionsRead: true }).status).toMatchObject({ level: "warn", reason: "24시간 성공 0건" });
   });
 
   it("F6 장부 밖 작업은 「정상」이라 하지 않는다 — 「장부 밖」(확인 불가 수준), 정상 수에 세지 않는다", () => {
