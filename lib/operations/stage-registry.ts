@@ -83,9 +83,10 @@ export const PIPELINE_STAGES = Object.freeze([
   stage({ key: "embedding", group: "enrichment", label: "의미 검색 벡터", code: "product-embedding", jobs: ["product-embedding"], role: "text", headline: true }),
   stage({ key: "product-translate", group: "enrichment", label: "제품 번역", code: "product-translate", jobs: ["product-translate"], role: "text", headline: true }),
   stage({ key: "reason-translate", group: "enrichment", label: "사유 번역", code: "reason-translate", jobs: ["reason-translate"], role: "text", headline: true }),
-  // Qwen 직접 감사(audit-qwen)·두 번째 의견·공개분 거르기(audit-second-opinion)는 2026-10-31 product-audit 에서 자기 잡으로 나뉘었다
+  // Qwen 직접 감사(audit-qwen)·두 번째 의견·공개분 거르기(audit-second-opinion)는 2026-10-31 product-audit 에서 자기 잡으로 나뉘었다.
+  // 공개분 변경 재판정(published-recheck, 2026-11-09)는 감사 표의 늘 열린 줄에 올리고, 묻기는 product-audit 이 한다
   stage({ key: "audit", group: "enrichment", label: "발행분 감사", code: "product-audit",
-    jobs: ["product-audit", "audit-qwen", "audit-second-opinion", "audit-screen-review"], role: "reviewer", headline: true }),
+    jobs: ["product-audit", "audit-qwen", "audit-second-opinion", "audit-screen-review", "published-recheck"], role: "reviewer", headline: true }),
   stage({ key: "assist-audit", group: "enrichment", label: "보강 독립 감사", code: "product-automated-action-audit",
     jobs: ["product-automated-action-audit", "product-llm-assist-audit-review"], role: "maintenance" }),
   stage({ key: "stars", group: "enrichment", label: "저장소·스타", code: "product-stars-refresh", jobs: ["product-stars-refresh"], role: "crawler", headline: true }),

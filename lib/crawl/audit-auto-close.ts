@@ -10,6 +10,7 @@ import { holdAuditedProduct, releaseAuditHold, unownedPublic, unreleasedOpenItem
 import { QWEN_V2_AUTO_SOURCE } from "./qwen-direct-review";
 import { QWEN_AUTO_MIN_CONFIDENCE, THIN_PAGE_TEXT_CHARS } from "./second-opinion-rules";
 import { opposingOpinions, pageTextLengthSql, thinPageTextSql } from "./audit-text-gate";
+import { newerItemPending } from "./audit-stream";
 import type { CrawlSettings } from "./settings-schema";
 
 /**
@@ -157,7 +158,7 @@ export function autoClosableSql(holdEnabled: boolean): SQL {
         and ${bareModel(sql`o6.model`)} <> ${bareModel(sql`o.model`)})
       and not exists (select 1 from ${productAuditItems} k5 where k5.product_id = i.product_id and k5.human_decision = 'kept' and k5.keep_until > now())
       and not exists (select 1 from ${productAuditItems} n5 join ${productAuditCampaigns} nc5 on nc5.id = n5.campaign_id
-        where n5.product_id = i.product_id and n5.id > i.id and (n5.ai_decision is not null or nc5.status = 'running')))))`;
+        where n5.product_id = i.product_id and n5.id > i.id and ${newerItemPending("n5", "nc5")}))))`;
 }
 
 export type AutoCloseResult = { action: "kept" | "held"; runId: number; releasedHold: boolean }
@@ -194,7 +195,7 @@ async function readState(tx: ProductTransaction, input: AutoCloseInput): Promise
       ${pageTextLengthSql(sql`p.id`)} as text_length,
       exists (select 1 from ${productAuditItems} k where k.product_id = i.product_id and k.human_decision = 'kept' and k.keep_until > now()) as kept_elsewhere,
       exists (select 1 from ${productAuditItems} n join ${productAuditCampaigns} nc on nc.id = n.campaign_id
-        where n.product_id = i.product_id and n.id > i.id and (n.ai_decision is not null or nc.status = 'running')) as superseded,
+        where n.product_id = i.product_id and n.id > i.id and ${newerItemPending("n", "nc")}) as superseded,
       exists (select 1 from ${productAuditPolicyRunItems} ri where ri.item_id = i.id and ri.state in ('undone', 'undo_blocked')) as reverted
       from ${productAuditItems} i join ${products} p on p.id = i.product_id
      where i.id = ${input.itemId} and p.id = ${input.productId}`);

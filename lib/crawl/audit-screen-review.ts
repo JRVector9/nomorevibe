@@ -1,9 +1,10 @@
 import { sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { crawlCandidates, crawlDocuments, productAuditCampaigns, productAuditItems, products } from "@/lib/db/schema";
+import { crawlCandidates, crawlDocuments, productAuditItems, products } from "@/lib/db/schema";
 import type { JobLease } from "@/lib/jobs/control";
 import { SCREEN_REVIEW_SOURCES } from "./audit-import-sources";
 import { openAuditRejectUniverse } from "./audit-policy";
+import { latestManualCampaignSql } from "./audit-stream";
 import type { AuditReasonCategory } from "./audit-reason-category";
 import { auditReasonCategorySql, secondOpinionsField, type SecondOpinionView } from "./audit-second-opinions";
 import { writeAuditSecondOpinions, type SecondOpinionImport, type SecondOpinionRow } from "./audit-second-opinion-import";
@@ -41,7 +42,8 @@ import { sameOpinionModel } from "./second-opinion-rules";
  *  3. screenReviewCounts() — 감사 거절 탭의 Qwen 상태 칸·정책 처리 탭이 보이는 수(대기·그중 공개 중·엇갈림).
  */
 
-const latestCampaign = sql`(select max(${productAuditCampaigns.id}) from ${productAuditCampaigns})`;
+/** 사람이 연 감사 중 마지막 것(audit-stream.ts) — 공개분 변경 재판정 줄의 거절은 범위(openAuditRejectUniverse)가 따로 넣는다 */
+const latestCampaign = latestManualCampaignSql;
 const TIME = sql.raw(`'YYYY-MM-DD"T"HH24:MI:SS.US'`);
 
 /** 화면 판별 대기의 조건 — 별칭 i(감사 항목)·p(제품) */

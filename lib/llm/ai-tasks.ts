@@ -121,8 +121,11 @@ export const AI_TASKS: readonly AiTaskDef[] = Object.freeze([
     jobs: ["audit-second-opinion"], adminStage: "published-filter", description: "규칙만 통과해 공개된 제품을 다시 거릅니다." }),
   task({ id: "screen-review", label: "화면 판별", group: "audit", kind: "vision", api: true, cliTools: tools("opencode"), routeId: "local-screen", wiring: "local-direct",
     jobs: ["audit-screen-review"], adminStage: "screen-review", assignmentStage: "screen", description: "제품 화면 사진을 보고 판별합니다." }),
-  task({ id: "product-audit", label: "발행분 감사 캠페인", group: "audit", kind: "chat", api: false, cliTools: tools("opencode"), routeId: "product-audit",
-    wiring: "deferred", jobs: ["product-audit"], description: "새 감사의 OpenCode 모델을 고릅니다. 감사 시작 시 모델과 추론 강도를 고정합니다." }),
+  // 2026-11-09: 공개분 변경 재판정도 이 순위로 부른다(lib/crawl/published-recheck.ts recheckReviewerPlan) — 받는 CLI 는 감사 경로의 장부 binding(product_audit_cli)이
+  // 받는 것(Claude·OpenCode)뿐이다. Codex·Grok·API 연결은 장부 규칙(CHECK)·binding 이 없어 받지 않는다
+  task({ id: "product-audit", label: "발행분 감사 · 변경 재판정", group: "audit", kind: "chat", api: false, cliTools: tools("claude", "opencode"), routeId: "product-audit",
+    wiring: "deferred", jobs: ["product-audit"],
+    description: "사람이 연 발행분 감사와, 내용이 바뀐 공개 제품의 재판정이 이 순위로 모델을 부릅니다. 감사는 시작할 때 1순위를 고정하고, 재판정은 1·2·3순위를 차례로 씁니다." }),
   task({ id: "assist-review", label: "LLM 보강", group: "audit", kind: "chat", api: true, cliTools: tools("opencode"), wiring: "deferred", jobs: ["product-llm-assist-review"],
     adminStage: "assist-primary", assignmentStage: "assist", description: "응답 점검·저장소 이동 등 보강 작업을 모델에 묻습니다." }),
   task({ id: "assist-audit", label: "LLM 보강 독립 감사", group: "audit", kind: "chat", api: true, cliTools: tools("opencode"), wiring: "deferred", jobs: ["product-llm-assist-audit-review"],

@@ -26,6 +26,9 @@ vi.mock("@/lib/crawl/agent-review-gateway", async (load) => ({ ...await load<typ
 vi.mock("@/lib/crawl/product-audit-hold", () => ({ sweepAuditHolds: async () => 0 }));
 // Qwen-v2 단계(gpu3090 직접 호출)는 DB·네트워크를 쓴다 — tests/product-audit-job.test.ts 가 감사 묻기와의 관계를 본다
 vi.mock("@/lib/crawl/audit-second-opinion-auto", () => ({ runQwenSecondOpinions: async () => null }));
+// 공개분 변경 재판정 갈래(0171)는 DB 를 읽는다 — 이 테스트는 사람이 연 감사의 묻기만 본다(tests/integration/published-recheck.test.ts 가 그 갈래를 본다)
+vi.mock("@/lib/crawl/published-recheck", () => ({ rollingStream: async () => null,
+  recheckLimits: () => ({ scanBatch: 200, dailyCap: 100, askBatch: 2, minSimilarity: 0.6, yieldHours: 6 }) }));
 vi.mock("@/lib/crawl/product-audit", () => ({ runningAuditCampaign: mocks.campaign, pendingAuditItems: mocks.pendingAudit,
   loadAuditInput: mocks.input, recordAuditResult: mocks.recordAudit, markAuditNoSource: mocks.noSource, finishAuditCampaign: mocks.finish }));
 

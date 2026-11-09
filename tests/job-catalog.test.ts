@@ -121,8 +121,8 @@ describe('lanesForRole', () => {
   it('화면 판별은 reviewer 의 따로 도는 줄(screen)에서 150초 틱으로 돈다 — 기본 줄의 심사·감사를 막지 않는다', () => {
     expect(JOB_CATALOG.find(job => job.name === 'audit-screen-review')).toEqual({ name: 'audit-screen-review', role: 'reviewer', intervalMs: 60_000, lane: 'screen' });
     const reviewer = lanesForRole('reviewer');
-    // 기본 줄에는 모델을 부르지 않는 crawl-judge 만 남는다. 그 뒤는 줄이 카탈로그에 처음 나온 차례
-    expect(reviewer).toEqual([['crawl-judge'], ['crawl-agent-review'], ['second-review'], ['split-tiebreak'], ['human-deepseek-review'], ['held-qwen-retry'], ['split-confirm'],
+    // 기본 줄에는 모델을 부르지 않는 crawl-judge·published-recheck 만 남는다. 그 뒤는 줄이 카탈로그에 처음 나온 차례
+    expect(reviewer).toEqual([['crawl-judge', 'published-recheck'], ['crawl-agent-review'], ['second-review'], ['split-tiebreak'], ['human-deepseek-review'], ['held-qwen-retry'], ['split-confirm'],
       ['product-audit'], ['audit-qwen'], ['audit-second-opinion'], ['audit-screen-review'], ['product-intro-check'], ['product-llm-assist-review'],
       ['product-llm-assist-audit-review'], ['grok-session-check']]);
     expect(jobRunOptions('product-llm-assist-review', { requestedOnly: true }).budgetMs).toBe(105_000);
@@ -134,7 +134,7 @@ describe('lanesForRole', () => {
     expect(JOB_CATALOG.find(job => job.name === 'crawl-agent-review')).toEqual({ name: 'crawl-agent-review', role: 'reviewer', intervalMs: 60_000, lane: 'ai1' });
     const reviewer = lanesForRole('reviewer');
     expect(reviewer.filter(lane => lane.includes('crawl-agent-review'))).toEqual([['crawl-agent-review']]);
-    expect(reviewer[0]).toEqual(['crawl-judge']);
+    expect(reviewer[0]).toEqual(['crawl-judge', 'published-recheck']);
     expect(reviewer[0]).not.toContain('crawl-agent-review');
     expect(jobRunOptions('crawl-agent-review', { requestedOnly: true })).toEqual({ requestedOnly: true, budgetMs: 110_000 });
     // product-translate: 클라이언트 300초 + 기록 2초 + 입장·DB 대기 여유(lib/llm/deadline-ladder.ts PRODUCT_TRANSLATION_JOB_BUDGET_MS)
@@ -162,8 +162,9 @@ describe('lanesForRole', () => {
     expect(lanesForRole('reviewer')).toHaveLength(15);
     expect(lanesForRole('text')).toHaveLength(8);
     for (const role of JOB_ROLES) expect(lanesForRole(role).length, role).toBeLessThanOrEqual(16);
-    // 모델을 부르지 않는 crawl-judge 만 reviewer 기본 줄에 남는다
-    expect(lanesForRole('reviewer')[0]).toEqual(['crawl-judge']);
+    // 모델을 부르지 않는 crawl-judge 와 공개분 변경 재판정의 견주기(published-recheck, 2026-11-09 — DB 쓸기뿐, 묻기는 product-audit 줄)만 reviewer 기본 줄에 남는다
+    expect(lanesForRole('reviewer')[0]).toEqual(['crawl-judge', 'published-recheck']);
+    expect(JOB_CATALOG.find(job => job.name === 'published-recheck')).toEqual({ name: 'published-recheck', role: 'reviewer', intervalMs: 60_000 });
     expect(JOB_CATALOG.find(job => job.name === 'crawl-judge')?.lane).toBeUndefined();
     // 기존 전용 줄은 그대로다
     for (const [name, lane] of [['crawl-agent-review', 'ai1'], ['audit-screen-review', 'screen'], ['product-llm-assist-review', 'assist'],

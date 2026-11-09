@@ -48,6 +48,9 @@ vi.mock("@/lib/crawl/agent-review-repository", () => ({ listReviewCandidates: mo
 vi.mock("@/lib/crawl/product-audit-hold", () => ({ sweepAuditHolds: async () => 0 }));
 // Qwen-v2 단계(gpu3090 직접 호출)는 DB·네트워크를 쓴다 — tests/product-audit-job.test.ts 가 감사 묻기와의 관계를 본다
 vi.mock("@/lib/crawl/audit-second-opinion-auto", () => ({ runQwenSecondOpinions: async () => null }));
+// 공개분 변경 재판정 갈래(0171)는 DB 를 읽는다 — 이 테스트는 사람이 연 감사의 묻기만 본다(tests/integration/published-recheck.test.ts 가 그 갈래를 본다)
+vi.mock("@/lib/crawl/published-recheck", () => ({ rollingStream: async () => null,
+  recheckLimits: () => ({ scanBatch: 200, dailyCap: 100, askBatch: 2, minSimilarity: 0.6, yieldHours: 6 }) }));
 vi.mock("@/lib/crawl/product-audit", () => ({ runningAuditCampaign: mocks.campaign, pendingAuditItems: mocks.pendingAudit, loadAuditInput: mocks.input,
   recordAuditResult: mocks.recordAudit, markAuditNoSource: mocks.noSource, finishAuditCampaign: mocks.finishCampaign, lockAuditDispatchItem: mocks.auditItem }));
 vi.mock("@/lib/operations/observations", () => ({ observe: mocks.observe }));
@@ -68,7 +71,7 @@ const control = (mode: string) => ({ mode, epoch: 1, revision: 1, policyHash: "a
 const sha = (value: string) => createHash("sha256").update(value).digest("hex");
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const settle = (work: Promise<unknown>) => work.then(value => ({ value, error: undefined }), (error: unknown) => ({ value: undefined, error }));
-let root = "", bin = "", empty = "", records = "", bootId = "", grokTools = "";
+let root = "", bin = "", empty = "", records = "", bootId = "", grokTools = "", claudeTools = "";
 
 type Recorded = { mode: string; pid: number; argv: string[]; env: Record<string, string | null>; realCliOnPath: boolean; stdin?: string; grandchild?: number };
 async function recorded(): Promise<Recorded[]> {
@@ -110,6 +113,7 @@ beforeAll(async () => {
   bin = path.join(root, "fake-cli");
   await writeFile(bin, `#!/bin/sh\nexec '${process.execPath}' '${script}' "$@"\n`); await chmod(bin, 0o755);
   grokTools = await fakeToolDir(path.join(root, "grok-tools"), { grok: bin });
+  claudeTools = await fakeToolDir(path.join(root, "claude-tools"), { claude: bin });
 });
 afterAll(() => rm(root, { recursive: true, force: true }));
 beforeEach(async () => {
@@ -278,6 +282,8 @@ it.each([
 
 it("audit: open with a contract binds the audit item, runs reviewWithAgent's exact argv/stdin through the runner, settles, then records", async () => {
   fake("ok");
+  // 2026-11-09: 감사 경로(product-audit)의 Claude 계약은 DB 계약 route 다 — 실행 파일은 env CLAUDE_CLI 가 아니라 PATH 의 claude
+  vi.stubEnv("PATH", claudeTools); vi.stubEnv("CLAUDE_CLI", path.join(empty, "absent-claude"));
   const ctx = context("product-audit");
 
   expect(await auditPublishedProducts(ctx)).toEqual({ done: false });

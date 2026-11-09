@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fakeToolDir } from "./fake-cli-path";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import type { ReviewCliResult } from "@/lib/crawl/agent-review";
 import type { JobContext } from "@/lib/jobs/runner";
@@ -43,6 +44,9 @@ vi.mock("@/lib/crawl/agent-review-repository", () => ({ listReviewCandidates: mo
 vi.mock("@/lib/crawl/product-audit-hold", () => ({ sweepAuditHolds: async () => 0 }));
 // Qwen-v2 단계(gpu3090 직접 호출)는 DB·네트워크를 쓴다 — tests/product-audit-job.test.ts 가 감사 묻기와의 관계를 본다
 vi.mock("@/lib/crawl/audit-second-opinion-auto", () => ({ runQwenSecondOpinions: async () => null }));
+// 공개분 변경 재판정 갈래(0171)는 DB 를 읽는다 — 이 테스트는 사람이 연 감사의 묻기만 본다(tests/integration/published-recheck.test.ts 가 그 갈래를 본다)
+vi.mock("@/lib/crawl/published-recheck", () => ({ rollingStream: async () => null,
+  recheckLimits: () => ({ scanBatch: 200, dailyCap: 100, askBatch: 2, minSimilarity: 0.6, yieldHours: 6 }) }));
 vi.mock("@/lib/crawl/product-audit", () => ({ runningAuditCampaign: mocks.campaign, pendingAuditItems: mocks.pendingAudit, loadAuditInput: mocks.input,
   recordAuditResult: mocks.recordAudit, markAuditNoSource: mocks.noSource, finishAuditCampaign: mocks.finishCampaign, lockAuditDispatchItem: mocks.auditItem }));
 vi.mock("@/lib/crawl/agent-review-gateway", () => ({ reviewWithGateway: mocks.gateway, REVIEW_GATEWAY_TIMEOUT_MS: 60_000, reviewGatewayTimeoutMs: () => 60_000 }));
@@ -60,7 +64,7 @@ const ROUTES = [{ routeId: "product-intro-check", provider: "claude-cli", model:
   { routeId: "product-audit", provider: "claude-cli", model: AUDIT_MODEL }];
 const control = (mode: string) => ({ mode, epoch: 1, revision: 1, policyHash: "a".repeat(64), policy: { routes: ROUTES } });
 const sha = (value: string) => createHash("sha256").update(value).digest("hex");
-let root = "", bin = "", empty = "", records = "", bootId = "", serial = 0;
+let root = "", bin = "", empty = "", records = "", bootId = "", serial = 0, claudeTools = "";
 
 async function recorded(): Promise<Raw[]> {
   return Promise.all((await readdir(records)).map(async name => JSON.parse(await readFile(path.join(records, name), "utf8")) as Raw));
@@ -99,6 +103,8 @@ beforeAll(async () => {
   for (const value of [root, script, process.execPath]) expect(value).not.toContain("'");
   bin = path.join(root, "fake-cli");
   await writeFile(bin, `#!/bin/sh\nexec '${process.execPath}' '${script}' "$@"\n`); await chmod(bin, 0o755);
+  // 2026-11-09: 감사 경로(product-audit)의 Claude 는 DB 계약 route 라 PATH 의 claude 를 띄운다(소개 검수는 env CLAUDE_CLI 그대로)
+  claudeTools = await fakeToolDir(path.join(root, "claude-tools"), { claude: bin });
 });
 afterAll(() => rm(root, { recursive: true, force: true }));
 beforeEach(async () => {
@@ -136,8 +142,8 @@ it("audit: consecutive REVIEWER_DOWN in the consumer lane opens its circuit, the
   const circuits = createProviderCircuits({ mode: "enabled", failures: 2, openMs: 30_000 }, { now: () => clock.now,
     log: (event, fields) => events.push({ event, ...fields }) });
   const { logs, tick } = consumerLane(["product-audit"], circuits);
-  // 없는 CLI(ENOENT) — 기존 REVIEWER_DOWN(missing_cli)
-  vi.stubEnv("CLAUDE_CLI", path.join(root, "absent-cli"));
+  // 없는 CLI(ENOENT) — 기존 REVIEWER_DOWN(missing_cli). 감사의 Claude 는 PATH 의 claude 다 — 빈 PATH 면 없다
+  vi.stubEnv("PATH", empty);
   await tick();
   expect(events).toEqual([]);
   await tick();
@@ -155,7 +161,7 @@ it("audit: consecutive REVIEWER_DOWN in the consumer lane opens its circuit, the
   expect(calls()).toEqual(before);
   expect(await recorded()).toEqual([]);
 
-  clock.now = 30_000; vi.stubEnv("CLAUDE_CLI", bin); fake("ok");
+  clock.now = 30_000; vi.stubEnv("PATH", claudeTools); fake("ok");
   logs.length = 0;
   await tick();
   expect(events.map(row => row.event)).toEqual(["provider_circuit.opened", "provider_circuit.half_open", "provider_circuit.closed"]);
@@ -238,6 +244,7 @@ it("audit: a gateway (abcllm) campaign's result is not reported again — its tr
 it("outside the consumer lane nothing is reported: a failing legacy lane beside a consumer lane leaves that circuit closed", async () => {
   const events: string[] = [], logs: Raw[] = [];
   const circuits = createProviderCircuits({ mode: "enabled", failures: 1, openMs: 30_000 }, { log: event => events.push(event) });
+  vi.stubEnv("PATH", claudeTools);
   fake("fail");
   // 소비 줄(소개 검수)의 틱이 범위 안에서 기다리는 동안 기존 줄(감사)이 같은 프로세스에서 한도 실패를 낸다
   let audited!: () => void;

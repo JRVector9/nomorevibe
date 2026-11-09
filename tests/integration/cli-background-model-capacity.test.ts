@@ -28,7 +28,8 @@ import { cliRankRow, fakeToolDir, pinTaskRanks } from "../fake-cli-path";
 
 /*
  * 05c-5 실제 DB driver — 실제 runJob·장부(model_capacity_*)·도메인 TX 위에서 소개 검수·Claude 감사·Grok 세션 점검이 공통 슬롯을 거친다.
- * 자식 프로세스는 tests/fixtures/fake-cli/background.mjs(가짜 CLI)뿐이다. 소개 검수·감사는 env 경로(CLAUDE_CLI)로 띄워 PATH 는 빈 디렉터리이고,
+ * 자식 프로세스는 tests/fixtures/fake-cli/background.mjs(가짜 CLI)뿐이다. 소개 검수는 env 경로(CLAUDE_CLI)로 띄워 PATH 는 빈 디렉터리이고(감사의 Claude 는 2026-11-09 부터
+ * PATH 의 claude — 그 시험만 claude 이름의 링크를 PATH 로 쓴다),
  * Grok 세션 점검은 PATH 의 grok 으로 띄운다(PR C1 — GROK_CLI 를 읽지 않는다) — 그 시험만 가짜 래퍼를 grok 이름으로 링크한 디렉터리를 PATH 로 쓰고,
  * 모델은 그 작업의 「작업 ↔ 모델」 순위(grok-session-check 1순위)로 고정한다. 실제 claude/grok·provider·운영 resolver 는
  * 쓰지 않는다 — CLI 계약은 이 파일의 fixture 만 연다(운영 resolver 는 null 이라 open 이어도 미룬다).
@@ -60,7 +61,7 @@ const policy: ModelCapacityPolicy = { version: 1, globalLimit: 4, providerLimits
   routes: [{ routeId: "product-intro-check", provider: "claude-cli", model: INTRO_CHECK_MODEL, providerBudgetId: "claude-sub", groupId: "reviewers" },
     { routeId: "product-audit", provider: "claude-cli", model: AUDIT_MODEL, providerBudgetId: "claude-sub", groupId: "reviewers" },
     { routeId: "grok-session-check", provider: "grok-cli", model: GROK_MODEL, providerBudgetId: "grok-sub", groupId: "reviewers" }] };
-let root = "", bin = "", empty = "", records = "", tools = "", originalControl: Raw, sequence = 0;
+let root = "", bin = "", empty = "", records = "", tools = "", originalControl: Raw, sequence = 0, claudeTools = "";
 const grandchildren: number[] = [];
 
 beforeAll(async () => {
@@ -78,6 +79,7 @@ beforeAll(async () => {
   for (const value of [root, script, process.execPath]) expect(value).not.toContain("'");
   bin = path.join(root, "fake-cli"); await writeFile(bin, `#!/bin/sh\nexec '${process.execPath}' '${script}' "$@"\n`); await chmod(bin, 0o755);
   tools = await fakeToolDir(path.join(root, "tools"), { grok: bin });
+  claudeTools = await fakeToolDir(path.join(root, "claude-tools"), { claude: bin });
   console.info("cli_background_migrations", { journal: journal.entries.length, applied: applied.count });
 });
 beforeEach(async () => {
@@ -319,6 +321,8 @@ it("audit dispatch proof: an open item of the running campaign yields its snapsh
 
 it("audit: a real tick binds the audit item, runs the fake Claude once with reviewWithAgent's argv, settles, then records one attempt", async () => {
   vi.stubEnv("FAKE_CLI_MODE", "ok");
+  // 2026-11-09: 감사 경로(product-audit)의 Claude 는 DB 계약 route 라 PATH 의 claude 를 띄운다(소개 검수는 env CLAUDE_CLI 그대로)
+  vi.stubEnv("PATH", claudeTools);
   await saveSettings({ enabled: true, firstReview: { provider: "claude-cli", model: AUDIT_MODEL }, reviewConcurrency: 1 }, "test");
   await listed("audit/one");
   expect(await startProductAudit({ startedBy: "jr", reason: "슬롯 확인", reauditKept: false })).toMatchObject({ ok: true, enrolled: 1 });

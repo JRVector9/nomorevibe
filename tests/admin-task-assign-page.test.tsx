@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
+import { setRuntimeSettingsForTest } from "@/lib/operations/runtime-settings-store";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { aiTaskSlots, isAiLiveTask } from "@/lib/llm/ai-tasks";
 import type { AiTaskRankRow } from "@/lib/operations/admin-ai-tasks";
@@ -94,21 +95,23 @@ describe("작업 배정(/admin/models/tasks) 표 그리기", () => {
     expect(html).not.toContain('class="fr"');
   });
 
-  it("2026-11-09: 1시간 안에 바꾼 순위는 「설정과 다름」 대신 메모, 진행 중인 감사·Grok 연결이 없으면 「쓰지 않음」 — 감사 여부를 못 읽으면 「순위 없음」 그대로", async () => {
+  it("2026-11-09: 1시간 안에 바꾼 순위는 「설정과 다름」 대신 메모, 진행 중인 감사도 없고 변경 재판정도 꺼졌거나 Grok 연결이 없으면 「쓰지 않음」 — 못 읽으면 「순위 없음」 그대로", async () => {
     const { db } = await import("@/lib/db");
-    vi.mocked(db.execute).mockResolvedValueOnce([{ running: false }] as never);
+    // 진행 중인 감사 없음 · 재판정 거절 없음(두 읽기) · 변경 재판정 꺼짐(실시간 한도 askBatch 0)
+    vi.mocked(db.execute).mockResolvedValueOnce([{ running: false }] as never).mockResolvedValueOnce([{ open: false }] as never);
+    setRuntimeSettingsForTest({ version: 1, jobs: { "published-recheck": { askBatch: 0 } } });
     // 수집 소개 짓기의 1순위를 07:00Z 에 deepseek 로 바꿨다 — 장부 1시간의 gpt-oss 100건은 그 전 순위의 호출이다
     const rows = llmRankRows.map(row => row.task === "crawl-tagline" ? { ...row, model: "deepseek-v4.1-flash-1017" } : row);
     const saved = slots(rows).map(slot => slot.task.id === "crawl-tagline" ? { ...slot, savedAt: "2026-11-07T07:00:00.000Z" } : slot);
     const html = renderToStaticMarkup(await TaskAssignSlot({ view: adminView({ rows, slots: saved }), executions: [], readOnly: false }));
-    expect(db.execute).toHaveBeenCalledTimes(1);
+    expect(db.execute).toHaveBeenCalledTimes(2);
     const tagline = html.match(/<tr id="execution-crawl-tagline-1"[^]*?<\/tr>/)![0];
     expect(text(tagline)).toContain("순위를 20분 전에 바꿈 — 그 전 호출이 섞여 있어 17:00 이후 비교");
     expect(tagline).toContain('data-position="earlier"');
     expect(tagline).not.toContain("설정과 다름");
     const audit = html.match(/<tr id="execution-product-audit-1"[^]*?<\/tr>/)![0];
     expect(audit).toContain('data-level="idle"');
-    expect(text(audit)).toContain("쓰지 않음 진행 중인 감사 없음");
+    expect(text(audit)).toContain("쓰지 않음 진행 중인 감사 없음 · 변경 재판정 꺼짐");
     expect(text(html.match(/<tr id="execution-grok-session-check-1"[^]*?<\/tr>/)![0])).toContain("쓰지 않음 Grok CLI 연결 없음");
     // 장부 밖 작업은 「정상」이 아니다(이 픽스처는 실제 적용 설정이 없어 그 까닭이 앞선다)
     const embedding = text(html.match(/<tr id="execution-product-embedding-1"[^]*?<\/tr>/)![0]);
@@ -117,6 +120,12 @@ describe("작업 배정(/admin/models/tasks) 표 그리기", () => {
     vi.mocked(db.execute).mockRejectedValueOnce(new Error("db down"));
     const unread = renderToStaticMarkup(await TaskAssignSlot({ view: adminView(), executions: [], readOnly: false }));
     expect(text(unread.match(/<tr id="execution-product-audit-1"[^]*?<\/tr>/)![0])).toContain("멈춤 순위 없음 — 이 작업은 돌지 않습니다");
+    // 재판정이 켜져 있으면(기본 한도) 감사가 없어도 순위 없음은 멈춤이다 — 배포 뒤 순위를 저장하기 전
+    setRuntimeSettingsForTest({ version: 1 });
+    vi.mocked(db.execute).mockResolvedValueOnce([{ running: false }] as never).mockResolvedValueOnce([{ open: false }] as never);
+    const on = renderToStaticMarkup(await TaskAssignSlot({ view: adminView(), executions: [], readOnly: false }));
+    expect(text(on.match(/<tr id="execution-product-audit-1"[^]*?<\/tr>/)![0])).toContain("멈춤 순위 없음 — 이 작업은 돌지 않습니다");
+    setRuntimeSettingsForTest(null);
   });
 
   it("2026-11-08: LLM 이 아닌 모델(벡터·재정렬) 작업은 표 아래 별도 섹션 — 앞 표에는 LLM 작업만", async () => {

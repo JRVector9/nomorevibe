@@ -1,3 +1,4 @@
+import { fakeToolDir } from "../fake-cli-path";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
@@ -46,7 +47,7 @@ const CONTRACT: CliServingContract = { version: 1, protocol: "cli-process-v1", r
 const policy: ModelCapacityPolicy = { version: 1, globalLimit: 4, providerLimits: { "claude-sub": 2 }, groupLimits: { reviewers: 4 },
   poolLimits: { reviewer: 4, text: 1 }, weights: { first: 2, second: 2, background: 1 }, maxWaiting: 8, queueTtlMs: 60_000, reservationTtlMs: 60_000,
   routes: [{ routeId: ROUTE, provider: "claude-cli", model: AUDIT_MODEL, providerBudgetId: "claude-sub", groupId: "reviewers" }] };
-let root = "", bin = "", empty = "", records = "", originalControl: Raw, sequence = 0;
+let root = "", bin = "", empty = "", records = "", originalControl: Raw, sequence = 0, claudeTools = "";
 
 beforeAll(async () => {
   ensureSchema();
@@ -63,6 +64,8 @@ beforeAll(async () => {
   const script = path.resolve("tests/fixtures/fake-cli/background.mjs");
   for (const value of [root, script, process.execPath]) expect(value).not.toContain("'");
   bin = path.join(root, "fake-cli"); await writeFile(bin, `#!/bin/sh\nexec '${process.execPath}' '${script}' "$@"\n`); await chmod(bin, 0o755);
+  // 2026-11-09: 감사 경로(product-audit)의 Claude 는 DB 계약 route 라 PATH 의 claude 를 띄운다
+  claudeTools = await fakeToolDir(path.join(root, "claude-tools"), { claude: bin });
 });
 beforeEach(async () => {
   fixture.contracts = [CONTRACT];
@@ -151,7 +154,7 @@ it("consecutive REVIEWER_DOWN in the real consumer lane opens its circuit; while
     run: async () => { throw new Error("legacy_lane_unused"); }, consumer, log: (event, fields) => { logs.push({ event, ...fields }); } });
 
   // 없는 CLI(ENOENT) — 감사의 기존 REVIEWER_DOWN(missing_cli)
-  vi.stubEnv("CLAUDE_CLI", path.join(root, "absent-cli"));
+  vi.stubEnv("PATH", empty);
   await arm(); await tick();
   expect(events).toEqual([]);
   await arm(); await tick();
@@ -175,7 +178,7 @@ it("consecutive REVIEWER_DOWN in the real consumer lane opens its circuit; while
   expect(await readdir(records)).toEqual([]);
 
   // half-open 시험 하나가 실제 CLI 결과를 내면 닫힌다 — 같은 틱의 다음 항목은 닫힌 회로에서 돈다
-  clock.now = 30_000; vi.stubEnv("CLAUDE_CLI", bin); vi.stubEnv("FAKE_CLI_MODE", "ok");
+  clock.now = 30_000; vi.stubEnv("PATH", claudeTools); vi.stubEnv("FAKE_CLI_MODE", "ok");
   logs.length = 0;
   await arm(); await tick();
   expect(events.map(row => row.event)).toEqual(["provider_circuit.opened", "provider_circuit.half_open", "provider_circuit.closed"]);

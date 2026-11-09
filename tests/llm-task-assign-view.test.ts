@@ -251,6 +251,21 @@ describe("2026-11-09 상태 문구 — 운영 관측(19:27 UTC)에서 틀렸던 
     expect(line.notes).toEqual([{ tone: "warn", text: warning }]);
   });
 
+  it("2026-11-09 「발행분 감사 · 변경 재판정」 서랍은 OpenCode·Claude CLI 연결의 모델을 고르게 하고, API 연결은 내지 않는다 — 실행 쪽이 순위를 읽는 작업이다", () => {
+    // OpenCode 는 호스트에서 읽은 실제 목록(cliCatalog)에 있는 모델만 고를 수 있다
+    const catalog = { cliVersion: "2.2.6", observedAt: LLM_NOW, models: ["deepseek/deepseek-v4.1-flash", "deepseek/deepseek-v4.1-pro"]
+      .map(id => ({ id, label: id, variants: ["high"], maxModelLen: 1048576 })) };
+    const connections = llmConnections.map(connection => connection.id === OPENCODE ? { ...connection, cliCatalog: catalog } : connection);
+    const line = buildTaskRankEditor(connections, llmRankRows, () => "a".repeat(64)).lines.find(entry => entry.key === "product-audit#1")!;
+    expect(line).toMatchObject({ label: "발행분 감사 · 변경 재판정", live: true, lock: null });
+    expect(new Set(line.options.map(option => option.provider))).toEqual(new Set([OPENCODE, CLAUDE]));
+    expect(line.options.map(option => option.model).sort()).toEqual(["deepseek/deepseek-v4.1-flash", "deepseek/deepseek-v4.1-pro", "sonnet"]);
+    // API 모델을 받는 감사 직접 경로(audit-review — gpu3090 Qwen 등)는 실행 쪽이 순위를 읽지 않는 「실제 적용 설정」 작업이다(재판정의 모델 설정이 아니다)
+    const direct = buildTaskRankEditor(connections, llmRankRows, () => "a".repeat(64)).lines.find(entry => entry.key === "audit-review#1")!;
+    expect(direct.live).toBe(false);
+    expect(direct.lock).toContain("실제 적용 설정");
+  });
+
   it("F5 「쉼」이 멈춤을 가리지 않는다 — 입장 철회만 쌓이면 주의, 24시간 성공이 없으면 주의, 있으면 마지막 성공 시각; 멈춘 잡·웹 요청 작업은 경고하지 않는다", () => {
     const split = (metrics: AdminModelMetrics[], jobs = llmJobs) => rowOf(buildTaskAssignView(input({ observation: observationWith(metrics), jobs,
       slots: [slotOf("split-confirm", 1, { current: current("split-confirm", "deepseek-v4.1-flash-1017") })] })), "split-confirm#1");
@@ -282,6 +297,14 @@ describe("2026-11-09 상태 문구 — 운영 관측(19:27 UTC)에서 틀렸던 
     expect(audit({ auditRunning: false, connectionsRead: true }).actual.empty).toBe("호출 없음 (진행 중인 감사 없음)");
     expect(audit({ auditRunning: true, connectionsRead: true }).status).toMatchObject({ level: "warn", reason: "24시간 성공 0건" });
     expect(audit({ auditRunning: null, connectionsRead: true }).status).toMatchObject({ level: "warn", reason: "24시간 성공 0건" });
+    // 감사 두 번째 의견은 공개분 변경 재판정 줄(0171)의 거절도 묻는다 — 감사 캠페인이 없어도 그 거절이 있거나 모르면 쉬는 것이 아니다
+    const opinion = (facts: TaskAssignInput["facts"]) => rowOf(buildTaskAssignView(input({ facts, observation: observationWith([]),
+      slots: [slotOf("audit-second-opinion", 1, { current: current("audit-second-opinion", "qwen3.8-flash-next") })] })), "audit-second-opinion#1");
+    expect(opinion({ auditRunning: false, connectionsRead: true, recheckRejectsOpen: false }).status).toEqual({ level: "idle", text: "쉼", reason: "진행 중인 감사 없음", detail: null });
+    expect(opinion({ auditRunning: false, connectionsRead: true, recheckRejectsOpen: true }).status).toMatchObject({ level: "warn", reason: "24시간 성공 0건" });
+    expect(opinion({ auditRunning: false, connectionsRead: true }).status).toMatchObject({ level: "warn", reason: "24시간 성공 0건" });
+    // 재판정 줄은 Qwen 직접 감사(audit-review)의 일감이 아니다 — 그 작업은 감사 캠페인만 본다
+    expect(audit({ auditRunning: false, connectionsRead: true, recheckRejectsOpen: true }).status).toMatchObject({ level: "idle", reason: "진행 중인 감사 없음" });
   });
 
   it("F6 장부 밖 작업은 「정상」이라 하지 않는다 — 「장부 밖」(확인 불가 수준), 정상 수에 세지 않는다", () => {
@@ -308,12 +331,12 @@ describe("2026-11-09 상태 문구 — 운영 관측(19:27 UTC)에서 틀렸던 
     expect(audit.status.reason).toBe("지금 꺼져 있습니다");
   });
 
-  it("F8 쓰지 않는 작업 — 진행 중인 감사가 없는 감사 캠페인·Grok 연결이 없는 Grok 로그인 유지는 「쓰지 않음」; 모르거나 쓸 일이 생기면 지금처럼 「멈춤 · 순위 없음」", () => {
+  it("F8 쓰지 않는 작업 — 진행 중인 감사도 없고 변경 재판정도 꺼진 「발행분 감사 · 변경 재판정」·Grok 연결이 없는 Grok 로그인 유지는 「쓰지 않음」; 모르거나 쓸 일이 생기면 지금처럼 「멈춤 · 순위 없음」", () => {
     const degraded = fresh({ degraded: { code: "no_task_models", detail: "Grok 로그인 유지: 작업 ↔ 모델에 순위가 없습니다" } });
     const view = (facts: TaskAssignInput["facts"], connections = llmConnections) => buildTaskAssignView(input({ facts, connections,
       slots: [slotOf("product-audit"), slotOf("grok-session-check", 1, { runtime: degraded })] }));
-    const unused = view({ auditRunning: false, connectionsRead: true });
-    expect(rowOf(unused, "product-audit#1").status).toEqual({ level: "idle", text: "쓰지 않음", reason: "진행 중인 감사 없음", detail: null });
+    const unused = view({ auditRunning: false, connectionsRead: true, recheckOff: true });
+    expect(rowOf(unused, "product-audit#1").status).toEqual({ level: "idle", text: "쓰지 않음", reason: "진행 중인 감사 없음 · 변경 재판정 꺼짐", detail: null });
     expect(rowOf(unused, "product-audit#1").actual.empty).toBe("호출 없음 (쓰지 않음)");
     expect(rowOf(unused, "grok-session-check#1").status).toEqual({ level: "idle", text: "쓰지 않음", reason: "Grok CLI 연결 없음", detail: null });
     expect(unused.counts).toMatchObject({ bad: 0, idle: 2 });
@@ -323,6 +346,9 @@ describe("2026-11-09 상태 문구 — 운영 관측(19:27 UTC)에서 틀렸던 
     const needed = view({ auditRunning: true, connectionsRead: true }, [...llmConnections, grok]);
     expect(rowOf(needed, "product-audit#1").status).toMatchObject(stopped);
     expect(rowOf(needed, "grok-session-check#1").status).toMatchObject({ level: "bad", text: "멈춤", reason: expect.stringContaining("순위 없음 — 이 작업은 돌지 않습니다") });
+    // 변경 재판정(0171)은 늘 이 순위를 부른다 — 감사가 없어도 재판정이 켜져 있거나 모르면 순위가 없는 것은 멈춤이다(배포 뒤 순위를 저장하기 전)
+    for (const recheckOff of [false, null, undefined])
+      expect(rowOf(view({ auditRunning: false, connectionsRead: true, recheckOff }), "product-audit#1").status, String(recheckOff)).toMatchObject(stopped);
     // 감사가 진행 중이면 OpenCode 연결이 없어도 「쓰지 않음」이 아니다
     expect(rowOf(view({ auditRunning: true, connectionsRead: true }, llmConnections.filter(row => row.cliTool !== "opencode")), "product-audit#1").status).toMatchObject(stopped);
     // 못 읽었으면 꾸미지 않는다

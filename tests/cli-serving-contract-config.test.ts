@@ -25,6 +25,8 @@ const shape = { maxTurns: 2, inputByteCap: 75_000, overheadTokenBound: 5_000, ou
 const audit = { version: 1, protocol: "cli-process-v1", routeId: "product-audit", provider: "claude-cli", model: "sonnet",
   cliVersion: "claude 9.9.9", totalTokenBound: claudeCliTokenBound(shape), costBoundUsdMicros: 150_000, boundProvenance: "derived", ...shape } as const;
 const intro = { ...audit, routeId: "product-intro-check" } as const;
+// 2026-11-09 부터 감사 경로(product-audit)의 Claude 계약은 DB 행이다 — env 계약의 세 번째 Claude 항목은 분류 route 의 Claude 다
+const classifyClaude = { ...audit, routeId: "crawl-publish-classify" } as const;
 const classify = { version: 1, protocol: "cli-process-v1", routeId: "crawl-publish-classify", provider: "codex-cli", model: "gpt-5.3-codex-spark",
   cliVersion: "codex 9.9.9", inputByteCap: 75_000, totalTokenBound: 120_000, costBoundUsdMicros: null, boundProvenance: "declared" } as const;
 // DB 계약 route
@@ -110,19 +112,19 @@ it("설정이 없으면 probe 는 아무것도 띄우지 않고 모든 계약이
 }, PROCESS_TEST_MS);
 
 it("정상 계약은 probe 가 cliVersion 을 맞춘 뒤에만 열리고, CLI 마다 --version 을 한 번만 띄운다", async () => {
-  const mod = await load([intro, audit, classify], { claude: await cli("version", "claude 9.9.9"), codex: await cli("version", "codex 9.9.9") });
+  const mod = await load([intro, classifyClaude, classify], { claude: await cli("version", "claude 9.9.9"), codex: await cli("version", "codex 9.9.9") });
   expect(resolved(mod, intro)).toBeNull();
   const first = mod.probeCliServingContracts();
   expect(mod.probeCliServingContracts()).toBe(first);
-  expect(await first).toEqual([...[intro, audit, classify].map((value, index) => ({ index, routeId: value.routeId, provider: value.provider,
+  expect(await first).toEqual([...[intro, classifyClaude, classify].map((value, index) => ({ index, routeId: value.routeId, provider: value.provider,
     model: value.model, status: "ready", observedVersion: null })), ...TOOLS_ABSENT]);
-  for (const value of [intro, audit, classify]) {
+  for (const value of [intro, classifyClaude, classify]) {
     expect(resolved(mod, value)).toEqual(value);
     expect(Object.isFrozen(resolved(mod, value))).toBe(true);
     expect(status(mod, value)).toBe("ready");
   }
   // 설정에 없는 route·provider·model 은 열리지 않는다
-  for (const key of [{ ...intro, routeId: "crawl-publish-classify" }, { ...intro, model: "opus" }, { ...intro, provider: "grok-cli" },
+  for (const key of [{ ...intro, routeId: "crawl-publish-classify", model: "unlisted" }, { ...intro, model: "opus" }, { ...intro, provider: "grok-cli" },
     { ...intro, provider: "codex-cli" }, { ...classify, provider: "claude-cli" }]) {
     expect(resolved(mod, key)).toBeNull();
     expect(status(mod, key)).toBe("not_configured");
@@ -145,7 +147,7 @@ it("항목 오류는 그 항목만 닫고 다른 항목을 열거나 닫지 않�
   expect(_bound).toBe(120_000);
   const entries: [unknown, string][] = [
     [intro, "ready"],
-    [{ ...audit, totalTokenBound: audit.totalTokenBound - 1 }, "invalid_entry"],
+    [{ ...classifyClaude, totalTokenBound: audit.totalTokenBound - 1 }, "invalid_entry"],
     // Claude 는 derived 공식으로만, Grok·codex 는 declared bound 로만 들어온다
     [{ ...classify, routeId: "product-intro-check", provider: "claude-cli", model: "declared-claude" }, "invalid_entry"],
     [{ ...classify, boundProvenance: "derived" }, "invalid_entry"],
@@ -156,7 +158,7 @@ it("항목 오류는 그 항목만 닫고 다른 항목을 열거나 닫지 않�
     [{ ...intro, model: "dup-bad" }, "duplicate_entry"],
     [{ ...intro, model: "dup-bad", totalTokenBound: 1 }, "duplicate_entry"],
     // 장부 kind 가 받지 않는 route·CLI 조합과 모르는 route
-    [{ ...classify, routeId: "product-audit" }, "invalid_entry"],
+    [{ ...classify, routeId: "product-intro-check", model: "codex-on-intro" }, "invalid_entry"],
     [{ ...ai2, routeId: "product-intro-check" }, "invalid_entry"],
     [{ ...intro, routeId: "constructor", model: "proto" }, "invalid_entry"],
     [{ ...intro, routeId: "crawl-publish", model: "classify" }, "invalid_entry"],
@@ -205,12 +207,12 @@ it("설정 전체가 계약 JSON 배열이 아니면 아무 계약도 열지 않
 }, PROCESS_TEST_MS);
 
 it("D7: 설치된 CLI 의 --version 이 cliVersion 과 다르면 그 CLI 의 계약만 null 이고 관측 버전을 보고한다", async () => {
-  const mod = await load([intro, audit, classify], { claude: await cli("version", "claude 9.9.10"), codex: await cli("version", "codex 9.9.9") });
+  const mod = await load([intro, classifyClaude, classify], { claude: await cli("version", "claude 9.9.10"), codex: await cli("version", "codex 9.9.9") });
   const reports = await mod.probeCliServingContracts();
   expect(reports.slice(0, 3).map(report => [report.index, report.status, report.observedVersion])).toEqual([
     [0, "cli_version_mismatch", "claude 9.9.10"], [1, "cli_version_mismatch", "claude 9.9.10"], [2, "ready", null]]);
   expect(resolved(mod, intro)).toBeNull();
-  expect(resolved(mod, audit)).toBeNull();
+  expect(resolved(mod, classifyClaude)).toBeNull();
   expect(status(mod, intro)).toBe("cli_version_mismatch");
   expect(resolved(mod, classify)).toEqual(classify);
   // 접두·대소문자·여러 줄은 같은 버전이 아니다. 계약 칸에 넣을 수 없는 출력은 관측 버전으로도 싣지 않는다
@@ -262,7 +264,9 @@ it.skipIf(process.platform === "win32")("1차·2차·Grok 로그인 유지: 계�
     expect(mod.cliCommandFor(routeId, "claude-cli")).toBe("claude");
     expect(mod.cliCommandFor(routeId, "grok-cli")).toBe("grok");
   }
-  expect(mod.cliCommandFor("product-audit", "claude-cli")).toBe(path.join(root, "absent-claude"));
+  // 감사 경로(product-audit)도 2026-11-09 부터 DB 계약 route 다 — PATH 의 도구 이름. 소개 검수는 env 경로 그대로
+  expect(mod.cliCommandFor("product-audit", "claude-cli")).toBe("claude");
+  expect(mod.cliCommandFor("product-intro-check", "claude-cli")).toBe(path.join(root, "absent-claude"));
   expect(mod.CLI_TOOL_COMMANDS).toEqual({ "claude-cli": "claude", "grok-cli": "grok", "codex-cli": "codex", "opencode-cli": "opencode" });
   // 행이 없으면 not_configured(probe 전에도)
   expect(status(mod, ai1)).toBe("not_configured");
@@ -331,8 +335,10 @@ it.skipIf(process.platform === "win32")("DB 계약 행이 계약 검사·route·
     expect(resolved(mod, key)).toBeNull();
   }
   // 행 → 계약 해석(접두 떼기)은 DB 계약 route 의 행만 받는다
+  expect(mod.cliContractFromRow({ routeId: cliContractRouteId("claude-cli", "product-intro-check"), model: intro.model,
+    contract: { ...intro, routeId: cliContractRouteId("claude-cli", "product-intro-check") } })).toBeNull();
   expect(mod.cliContractFromRow({ routeId: cliContractRouteId("claude-cli", "product-audit"), model: audit.model,
-    contract: { ...audit, routeId: cliContractRouteId("claude-cli", "product-audit") } })).toBeNull();
+    contract: { ...audit, routeId: cliContractRouteId("claude-cli", "product-audit") } })).toEqual(audit);
   expect(mod.cliContractFromRow({ routeId: "crawl-agent-review", model: ai1.model, contract: ai1 })).toBeNull();
   expect(mod.cliContractFromRow(dbRow(ai1))).toEqual(ai1);
 }, PROCESS_TEST_MS);

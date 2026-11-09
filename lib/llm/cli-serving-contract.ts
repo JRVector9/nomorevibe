@@ -69,11 +69,12 @@ const cliCommand = (provider: CliProvider) => ({ "claude-cli": process.env.CLAUD
 
 /**
  * CLI 계약을 DB(model_serving_contracts 의 `cli:<provider>:<route>` 행 — 「작업 ↔ 모델」 순위 저장이 CLI 연결의 버전으로 만든다)에서만 읽는 route
- * (2026-11-02 소유자 결정, PR C1: 1차·2차 심사와 Grok 로그인 유지). 이 route 들에는 env CLI_SERVING_CONTRACTS 를 읽지 않고, 실행 파일도 env 경로
+ * (2026-11-02 소유자 결정, PR C1: 1차·2차 심사와 Grok 로그인 유지. 2026-11-09: 발행분 감사 · 변경 재판정(product-audit)의 Claude 순위도 — 그 작업 순위가
+ * 재판정의 모델 설정이 되면서 Claude 를 받는다). 이 route 들에는 env CLI_SERVING_CONTRACTS 를 읽지 않고, 실행 파일도 env 경로
  * (CLAUDE_CLI·GROK_CLI)가 아니라 PATH 의 도구 이름이다. 로그인은 그 CLI 가 호스트에서 스스로 쓰는 것이다(PR E 가 env 를 정리한다).
  * cliVersion 은 웹이 확인할 수 없다(CLI 를 띄우지 않는다) — 운영자가 연결에 적은 버전으로 행을 만들고, 워커가 부를 때 예전처럼 `--version` 으로 견준다.
  */
-export const CLI_DB_CONTRACT_ROUTES: ReadonlySet<string> = Object.freeze(new Set(["crawl-agent-review", "second-review", "grok-session-check"]));
+export const CLI_DB_CONTRACT_ROUTES: ReadonlySet<string> = Object.freeze(new Set(["crawl-agent-review", "second-review", "grok-session-check", "product-audit"]));
 /** DB 계약 행의 route_id — (도구, route) 마다 따로라 같은 이름의 API 계약·다른 CLI 의 계약과 겹치지 않는다. 계약 JSON 의 routeId 도 이 값이다(표의 CHECK) */
 export const cliContractReadsDb = (routeId: string, provider: string): boolean => CLI_DB_CONTRACT_ROUTES.has(routeId)
   || provider === "opencode-cli" && OPENCODE_NATIVE_TASK_ROUTES.includes(routeId);

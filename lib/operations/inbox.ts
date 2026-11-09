@@ -2,12 +2,13 @@ import { uptimeNegativeAllowed } from "@/lib/domain/products/uptime-negative-gat
 import { and, asc, eq, gte, inArray, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { db } from "@/lib/db";
-import { crawlCandidates, productAuditCampaigns, productAuditItems, productEvidenceAudit, productHealth, productIntroChecks,
+import { crawlCandidates, productAuditItems, productEvidenceAudit, productHealth, productIntroChecks,
   products } from "@/lib/db/schema";
 import { sharedStore } from "@/lib/cache/shared";
 import { sharedLoader } from "./shared-cache";
 import { sharedHumanQueueOverview } from "./shared-reads";
 import { heldPublic } from "@/lib/crawl/product-audit-hold";
+import { latestManualCampaignSql, rollingCampaignSql } from "@/lib/crawl/audit-stream";
 import { AUDIT_BACKLOG_OVERDUE_DAYS, openBacklogStats } from "@/lib/crawl/audit-policy";
 import { getSettings } from "@/lib/crawl/settings";
 import { humanInboxNote } from "@/lib/crawl/human-queue";
@@ -90,12 +91,12 @@ export function auditInboxNote(held: number, backlog: { overdue: number; oldestW
   return parts.length ? parts.join(" · ") : undefined;
 }
 
-/** 감사 거절 — attentionCounts 의 auditRejectsOpen 과 같은 조건(마지막 감사, AI 거절, 사람 손 안 탐, 아직 공개) */
+/** 감사 거절 — attentionCounts 의 auditRejectsOpen 과 같은 조건(사람이 연 마지막 감사와 공개분 변경 재판정 줄, AI 거절, 사람 손 안 탐, 아직 공개) */
 async function auditPreview(): Promise<InboxItem[]> {
   const rows = await db.select({ id: productAuditItems.id, name: products.name, reason: productAuditItems.aiReason,
     confidence: productAuditItems.aiConfidence, since: iso(productAuditItems.reviewedAt) })
     .from(productAuditItems).innerJoin(products, eq(products.id, productAuditItems.productId))
-    .where(and(sql`${productAuditItems.campaignId} = (select max(${productAuditCampaigns.id}) from ${productAuditCampaigns})`,
+    .where(and(sql`${productAuditItems.campaignId} in (${latestManualCampaignSql}, ${rollingCampaignSql})`,
       eq(productAuditItems.aiDecision, "reject"), isNull(productAuditItems.humanDecision), LISTED))
     .orderBy(sql`${productAuditItems.reviewedAt} asc nulls last`, asc(productAuditItems.id)).limit(INBOX_PREVIEW);
   return rows.map((row) => ({ id: String(row.id), name: row.name,
@@ -103,11 +104,12 @@ async function auditPreview(): Promise<InboxItem[]> {
     since: row.since }));
 }
 
-/** 지난 감사의 항목으로 보류 중인 공개 제품 — 마지막 감사의 거절(auditRejectsOpen)에 이미 든 보류는 두 번 세지 않는다 */
+/** 지난 감사의 항목으로 보류 중인 공개 제품 — 마지막 감사·변경 재판정 줄의 거절(auditRejectsOpen)에 이미 든 보류는 두 번 세지 않는다 */
 async function heldOutsideLatestCampaign(): Promise<number> {
   const [row] = await db.select({ count: sql<number>`count(*)::int` }).from(products)
     .innerJoin(productAuditItems, eq(productAuditItems.id, products.auditHoldItemId))
-    .where(and(heldPublic, sql`${productAuditItems.campaignId} <> (select max(${productAuditCampaigns.id}) from ${productAuditCampaigns})`));
+    .where(and(heldPublic, sql`${productAuditItems.campaignId} is distinct from ${latestManualCampaignSql}`,
+      sql`${productAuditItems.campaignId} is distinct from ${rollingCampaignSql}`));
   return row?.count ?? 0;
 }
 
