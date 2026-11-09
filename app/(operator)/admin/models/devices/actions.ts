@@ -6,6 +6,8 @@ import { capacityDeviceInputFromForm, capacityDeviceIssueMessage, saveAdminCapac
 import { webWriteAction } from "@/lib/operations/dr/web-gate";
 import { saveEngineSharedLimit } from "@/lib/operations/admin-engine-limits";
 import { modelLimitIssueMessage, modelLimitsInputFromForm, modelLimitWarningMessage, saveAdminModelLimits } from "@/lib/operations/admin-capacity-model-limits";
+import { capacityRetireIssueMessage, pruneAdminStaleCapacityRoutes, pruneInputFromForm, retireAdminCapacityDevice,
+  retireInputFromForm } from "@/lib/operations/admin-capacity-retire";
 
 export type DeviceSaveState = { ok?: true; message?: string; issues?: string[] } | null;
 
@@ -63,4 +65,37 @@ export const saveModelLimitsAction = webWriteAction(async function saveModelLimi
   } catch (error) {
     return { issues: [modelLimitIssueMessage(error instanceof Error ? error.message : "저장하지 못했습니다. 새로고침해 현재 상태를 확인해주세요.")] };
   }
+});
+
+const RETIRE_PATHS = ["/admin/models/devices", "/admin/models/limits", "/admin/models", "/admin/models/llm", "/admin/models/allocation", "/admin/status"];
+
+/**
+ * 쓰지 않는 장비 지우기(2026-11-09). 두 단계 확인은 화면의 일 — 이 action 은 confirm=yes 와 고를 때 본 장비 version(expectedVersion, 행 없는 장비는 빈 값)을
+ * 반드시 받는다. 쓰기 관문(webWriteAction) → 관리자 확인 → 폼 → retireAdminCapacityDevice(fence·control FOR UPDATE·장비 CAS·참조 확인·정책에서 route·groupLimits 빼기·
+ * 장비·역할 행 지우기·감사 한 줄). 연결·순위·풀·배정·계약·끝나지 않은 장부 행이 하나라도 남아 있으면 아무것도 지우지 않는다. OPEN 중에도 된다.
+ */
+export const retireCapacityDeviceAction = webWriteAction(async function retireCapacityDeviceAction(_previous: DeviceSaveState, form: FormData): Promise<DeviceSaveState> {
+  const admin = await currentAdmin();
+  if (!admin) return { issues: ["권한이 없습니다. 다시 로그인해주세요."] };
+  const parsed = retireInputFromForm(form);
+  if (!parsed.input) return { issues: parsed.issues.map(capacityRetireIssueMessage) };
+  const result = await retireAdminCapacityDevice(parsed.input, admin.login);
+  if (!result.ok) return { issues: result.issues.map(capacityRetireIssueMessage) };
+  for (const path of RETIRE_PATHS) revalidatePath(path);
+  return { ok: true, message: result.message };
+});
+
+/**
+ * 남은 정책 route 정리(옛 별칭 등, 2026-11-09). confirm=yes · expectedRevision(후보를 볼 때의 정책 판) · route(JSON [routeId, provider, model, groupId], 여러 개)를 받는다.
+ * 고른 route 가 지금도 모두 정리 후보여야 한다(노출·순위·풀·배정·계약·장부 어느 하나라도 있으면 아무것도 빼지 않는다). OPEN 중에도 된다.
+ */
+export const pruneStaleCapacityRoutesAction = webWriteAction(async function pruneStaleCapacityRoutesAction(_previous: DeviceSaveState, form: FormData): Promise<DeviceSaveState> {
+  const admin = await currentAdmin();
+  if (!admin) return { issues: ["권한이 없습니다. 다시 로그인해주세요."] };
+  const parsed = pruneInputFromForm(form);
+  if (!parsed.input) return { issues: parsed.issues.map(capacityRetireIssueMessage) };
+  const result = await pruneAdminStaleCapacityRoutes(parsed.input, admin.login);
+  if (!result.ok) return { issues: result.issues.map(capacityRetireIssueMessage) };
+  for (const path of RETIRE_PATHS) revalidatePath(path);
+  return { ok: true, message: result.message };
 });

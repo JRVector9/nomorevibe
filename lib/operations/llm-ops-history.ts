@@ -20,7 +20,7 @@ export const LLM_HISTORY_KINDS = Object.freeze({
     "model-serving-contract-save", "model-serving-contract-disable", "model-registry-override-save", "model-registry-override-disable",
     "search-model-settings-save", "admin-models-probe-start", "admin-models-probe-result",
     "selected-model-response-probe-start", "selected-model-response-probe-result"] },
-  limit: { label: "한도", actions: ["runtime-settings-save", "model-capacity-device-save", "model-capacity-route-quota-save", "model-capacity-model-limit-save", "model-helper-save", "model-helper-mode",
+  limit: { label: "한도", actions: ["runtime-settings-save", "model-capacity-device-save", "model-capacity-route-quota-save", "model-capacity-model-limit-save", "model-capacity-device-retire", "model-capacity-routes-prune", "model-helper-save", "model-helper-mode",
     "model-helper-promote", "model-supervisor-toggle", "pipeline-control-capacity-policy"] },
   rank: { label: "순위", actions: ["ai-task-models-save", "ai-task-models-import", "ai-task-execution-save", "model-assignment-save"] },
   action: { label: "조치", actions: ["model-capacity-unknown-reviewed", "model-capacity-unknown-requeued", "model-capacity-unknown-reclaimed",
