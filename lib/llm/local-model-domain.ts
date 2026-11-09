@@ -64,9 +64,10 @@ export async function localModelDomainRefusal(tx: ProductTransaction, target: Lo
     const ai1 = await readItemStage(tx, stages.ai1), ai2 = await readItemStage(tx, stages.ai2);
     if (ai1.mode === "draining" || ai2.mode === "draining") return refuse("pipeline_draining");
   }
-  // 사람 몫 위임 검수(DeepSeek)만 근거 나이를 자르지 않는다(2026-11-09 운영자 결정, ReviewEvidenceAge any_age).
-  // 원본·입력 해시·스냅숏·후보 상태·시도 행·lease 대조는 아래에서 그대로 한다 — 빠지는 것은 24시간 기한 거절 하나다
-  const anyAge = target.kind === "candidate" && target.purpose === "human_deepseek";
+  // 사람 큐 후보를 맡는 두 잡 — 사람 몫 위임 검수(human_deepseek)와 보류 Qwen-v2 재심사(held_qwen) — 만 근거 나이를 자르지 않는다
+  // (2026-11-09 운영자 결정, ReviewEvidenceAge any_age). 원본·입력 해시·스냅숏·후보 상태·시도 행·lease 대조는 아래에서 그대로 한다 —
+  // 빠지는 것은 24시간 기한 거절 하나다. 감사·공개분·갈림 판가름은 그대로 input_expired 로 거절한다
+  const anyAge = target.kind === "candidate";
   const current = await lockDirectInput(tx, input.snapshot.product.repo, anyAge ? "any_age" : "window");
   const now = new Date(), screen = target.kind === "audit" && target.purpose === "screen";
   if (!current) return refuse("source_missing");

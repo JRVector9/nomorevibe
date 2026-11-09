@@ -87,7 +87,7 @@ async function split(index: number, options: { ageHours?: number; enteredAt?: Da
   return { row, document };
 }
 
-async function withJob<T>(name: "human-deepseek-review" | "held-qwen-retry", load: (lease: JobLease) => Promise<T>): Promise<T> {
+async function withJob<T>(name: "human-deepseek-review" | "audit-second-opinion" | "split-tiebreak", load: (lease: JobLease) => Promise<T>): Promise<T> {
   let value!: T;
   const result = await runJob<null>(name, async ctx => { value = await load(ctx.lease!); return { done: true }; });
   if (result.status !== "completed") throw new Error(`${name}_${result.status}`);
@@ -114,7 +114,7 @@ async function review(repo: string, result: DeepSeekReviewResult) {
 describe("사람 몫 위임 검수 — 고르기", () => {
   it("사람 큐에 최근 들어온 것부터 고르고, 24시간 지난 근거도 고르며, 읽는 수에 상한이 있다", async () => {
     const base = Date.now() - 10 * HOUR;
-    const rows = [];
+    const rows: (typeof crawlCandidates.$inferSelect)[] = [];
     for (const [index, ageHours] of [[0, 1], [1, 72], [2, 2], [3, 30], [4, 0]] as const)
       rows.push((await split(index, { ageHours, enteredAt: new Date(base + index * HOUR) })).row);
     const ids = rows.map(row => row.id);
@@ -219,7 +219,7 @@ describe("사람 몫 위임 검수 — 24시간 지난 근거의 승인", () => 
 });
 
 describe("호출 직전 증명", () => {
-  it("위임 검수(human_deepseek)는 24시간 지난 입력을 통과시키고, 보류 재심사(held_qwen)는 그대로 input_expired 로 거절한다", async () => {
+  it("사람 큐 후보(human_deepseek·held_qwen)는 24시간 지난 입력을 통과시키고, 다른 대상(공개분 거르기·갈림 판가름)은 그대로 input_expired 로 거절한다", async () => {
     const { row } = await split(0, { ageHours: 30 });
     await withHumanJob(async lease => {
       const claim = await claimHumanReview(row.repo, lease);
@@ -229,9 +229,15 @@ describe("호출 직전 증명", () => {
       expect(await db.transaction(tx => localModelDomainRefusal(tx, target, claim!.input, lease, role!, attempt.model!))).toBeNull();
       await recordHumanReview(claim!, abstain);
     });
-    await withJob("held-qwen-retry", async lease => {
-      const current = await db.transaction(tx => lockedInput(tx, row.repo));
-      const target = { kind: "candidate" as const, purpose: "held_qwen" as const, attemptId: 1, candidateId: row.id, repo: row.repo };
+    const current = await db.transaction(tx => lockedInput(tx, row.repo));
+    await withJob("audit-second-opinion", async lease => {
+      const target = { kind: "published" as const, purpose: "published_filter" as const, secondReviewId: 1, slug: "split-0" };
+      expect(await db.transaction(tx => localModelDomainRefusal(tx, target, current!.input, lease, role!, "qwen3.8-flash-next")))
+        .toMatchObject({ check: "input_expired" });
+    });
+    await withJob("split-tiebreak", async lease => {
+      const target = { kind: "split" as const, purpose: "qwen_tiebreak" as const, tiebreakId: 1, candidateId: row.id,
+        generationKey: "b".repeat(64), repo: row.repo };
       expect(await db.transaction(tx => localModelDomainRefusal(tx, target, current!.input, lease, role!, "qwen3.8-flash-next")))
         .toMatchObject({ check: "input_expired" });
     });

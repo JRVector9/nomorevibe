@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { crawlCandidates, crawlDocuments, crawlFrontier, crawlReviewAttempts, crawlSettings, jobs, products, secondReviews } from "@/lib/db/schema";
 import { changeReviewMode, getSettings, saveSettings, setHumanReviewEnabled, setQwenAutoStep } from "@/lib/crawl/settings";
@@ -14,7 +14,7 @@ import type { JobLease } from "@/lib/jobs/control";
 import { publishCandidates } from "@/lib/crawl/jobs/publish";
 import { retryHeldQwen } from "@/lib/crawl/jobs/held-qwen-retry";
 import { claimHumanReview, humanReviewRepos } from "@/lib/crawl/human-review-repository";
-import { heldQwenBadges, heldQwenRetryStatus, runHeldQwenRetry } from "@/lib/crawl/held-qwen-retry";
+import { heldQwenBadges, heldQwenCandidates, heldQwenRetryStatus, runHeldQwenRetry } from "@/lib/crawl/held-qwen-retry";
 import { heldQwenOwnedReasons } from "@/lib/crawl/held-qwen-retry-policy";
 import { QWEN_V2_ADDENDUM, QWEN_V2_PROMPT_VERSION } from "@/lib/crawl/qwen-direct-review";
 import { qwenEndpointBackingOff, qwenEndpointBackoffOf, resetQwenAuditBackoff } from "@/lib/crawl/qwen-endpoint-backoff";
@@ -538,7 +538,9 @@ describe("보류 Qwen-v2 재심사", () => {
     expect(await candidateRow(broken.row.id)).toMatchObject({ state: "needs_review", decidedBy: "auto" });
   });
 
-  it("원본이 24시간 지나 입력이 만료된 보류는 원본을 다시 받게 한다 — 하루 안에 받은 것·이 원본으로 이미 판단한 것은 다시 받지 않는다", async () => {
+  // 2026-11-09 운영자 결정 — 근거 나이로 자르지 않는다: 24시간 지난 보류도 그대로 묻는다. 원본 재수집 요청은 따로 계속한다
+  it("원본이 24시간 지난 보류도 그대로 묻고(근거 나이를 감사에 남긴다), 원본도 다시 받게 한다 — 하루 안에 받은 것·이 원본으로 이미 판단한 것은 다시 받지 않는다", async () => {
+    const floor = await auditFloor();
     const stale = new Date(Date.now() - 25 * 3600_000);
     const due = await held(0), recent = await held(1), judged = await held(2);
     for (const { document } of [due, recent, judged]) await db.update(crawlDocuments).set({ fetchedAt: stale }).where(eq(crawlDocuments.id, document.id));
@@ -557,7 +559,17 @@ describe("보류 Qwen-v2 재심사", () => {
       outcome: { decision: "needs_review", reason: "unclear", evidenceIds: [], confidence: 0.4 }, completedAt: new Date() });
 
     await tick();
-    expect(requests).toHaveLength(0);
+    // 이 원본으로 이미 판단한 judged 만 다시 묻지 않는다 — due·recent 는 24시간이 지났어도 묻는다(답이 없으면 판단 보류)
+    expect(requests).toHaveLength(2);
+    expect((await qwenAttempts(due.row.id)).map((row) => row.state)).toEqual(["succeeded"]);
+    expect((await qwenAttempts(recent.row.id)).map((row) => row.state)).toEqual(["succeeded"]);
+    expect(await qwenAttempts(judged.row.id)).toHaveLength(1);
+    const audits = await auditRowsAfter(floor, "candidate-qwen-held-review");
+    expect(audits).toHaveLength(2);
+    for (const audit of audits) {
+      expect(audit.detail).toMatchObject({ result: "held", evidenceExpired: true });
+      expect((audit.detail as { evidenceAgeHours: number }).evidenceAgeHours).toBeGreaterThanOrEqual(25);
+    }
     const frontiers = await db.select().from(crawlFrontier).orderBy(crawlFrontier.repo);
     expect(frontiers.map((row) => [row.repo, row.state])).toEqual([[due.row.repo, "pending"], [recent.row.repo, "done"], [judged.row.repo, "done"]]);
     expect((await db.select().from(jobs).where(eq(jobs.name, "crawl-fetch")))[0]?.requestedVersion).toBeGreaterThan(0);
@@ -565,6 +577,21 @@ describe("보류 Qwen-v2 재심사", () => {
     expect(await candidateRow(due.row.id)).toMatchObject({ state: "needs_review", reason: "ai_review_exhausted" });
     const status = await heldQwenRetryStatus(await getSettings());
     expect(status).toMatchObject({ waiting: 3, expired: 3 });
+  });
+
+  it("사람 큐에 최근 들어온 것부터 고르고, 24시간 지난 원본도 고르며, 24시간 지난 근거로도 거부를 적용한다", async () => {
+    const stale = new Date(Date.now() - 72 * 3600_000);
+    const rows = [await held(0), await held(1), await held(2)];
+    await db.update(crawlDocuments).set({ fetchedAt: stale }).where(eq(crawlDocuments.id, rows[1].document.id));
+    const model = (await import("@/lib/crawl/qwen-direct-review")).qwenDirectConfig(process.env)!.model;
+    expect((await heldQwenCandidates(await getSettings(), model, 10)).map((row) => row.repo)).toEqual([2, 1, 0].map((index) => rows[index].row.repo));
+    expect((await heldQwenCandidates(await getSettings(), model, 1)).map((row) => row.repo)).toEqual([rows[2].row.repo]);
+    // 72시간 지난 원본의 후보만 남기고 묻는다 — 거부는 그대로 끝난다
+    await db.delete(crawlCandidates).where(inArray(crawlCandidates.id, [rows[0].row.id, rows[2].row.id]));
+    reply(outcome("reject", 0.97));
+    await tick();
+    expect(requests).toHaveLength(1);
+    expect(await candidateRow(rows[1].row.id)).toMatchObject({ state: "rejected", reason: "not_a_product", decidedBy: "qwen-v2" });
   });
 
   it("상태 칸이 처리·복귀·거부·사람 몫을 센다", async () => {
