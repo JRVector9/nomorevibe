@@ -8,6 +8,7 @@ import { saveEngineSharedLimit } from "@/lib/operations/admin-engine-limits";
 import { modelLimitIssueMessage, modelLimitsInputFromForm, modelLimitWarningMessage, saveAdminModelLimits } from "@/lib/operations/admin-capacity-model-limits";
 import { capacityRetireIssueMessage, pruneAdminStaleCapacityRoutes, pruneInputFromForm, retireAdminCapacityDevice,
   retireInputFromForm } from "@/lib/operations/admin-capacity-retire";
+import { deviceRowInputFromForm, deviceRowIssueMessage, deviceRowWarningMessage, saveAdminDeviceRow } from "@/lib/operations/admin-capacity-device-row-save";
 
 export type DeviceSaveState = { ok?: true; message?: string; issues?: string[] } | null;
 
@@ -98,4 +99,31 @@ export const pruneStaleCapacityRoutesAction = webWriteAction(async function prun
   if (!result.ok) return { issues: result.issues.map(capacityRetireIssueMessage) };
   for (const path of RETIRE_PATHS) revalidatePath(path);
   return { ok: true, message: result.message };
+});
+
+/** 장비 한도 표 한 줄의 결과 — saved = 저장한 판(그 줄이 새 값으로 다시 그려지는 열쇠) */
+export type DeviceRowSaveState = { ok?: true; message?: string; changes?: string[]; warnings?: string[]; issues?: string[] } | null;
+const DEVICE_ROW_AFFECTED = ["/admin/models/devices", "/admin/models/limits", "/admin/models", "/admin/models/llm", "/admin/models/allocation", "/admin/models/tasks", "/admin/status"];
+
+/**
+ * 장비 한도 표(2026-11-09 개편) 한 줄 저장 — 운영 한도(칸 수)와, 모델이 나뉜 장비는 모델 한도·엔진 최대치 줄까지 한 TX 에서(admin-capacity-device-row-save).
+ * 엔진 최대치(physicalLimit)·역할 순서·유휴 시간은 바꾸지 않는다. 숨은 expectedVersion 으로 CAS — 그 사이 다른 곳에서 저장했으면 거절을 그대로 보인다.
+ * 쓰기 관문(webWriteAction) → 관리자 확인 → 폼 숫자 모양 검사 → 저장. 저장 즉시 다음 입장부터 쓰인다 — 잡힌 칸은 그대로 끝나고 DRAIN 은 없다.
+ */
+export const saveDeviceRowAction = webWriteAction(async function saveDeviceRowAction(_previous: DeviceRowSaveState, form: FormData): Promise<DeviceRowSaveState> {
+  const admin = await currentAdmin();
+  if (!admin) return { issues: ["권한이 없습니다. 다시 로그인해주세요."] };
+  try {
+    const parsed = deviceRowInputFromForm(form);
+    if (!parsed.input) return { issues: parsed.issues.length ? parsed.issues : ["폼을 읽지 못했습니다. 새로고침해주세요."] };
+    const input = parsed.input;
+    const result = await saveAdminDeviceRow(input, admin.login);
+    if (!result.ok) return { issues: result.issues.map(issue => deviceRowIssueMessage(issue, input.modelLimits ?? [])) };
+    if (result.changes.length) for (const path of DEVICE_ROW_AFFECTED) revalidatePath(path);
+    return { ok: true, message: result.changes.length ? `저장했습니다(판 ${result.version}). 다음 입장부터 바로 쓰입니다 — 진행 중 호출은 끝까지 갑니다.` : "바뀐 값이 없습니다.",
+      changes: result.changes, warnings: result.warnings.map(deviceRowWarningMessage) };
+  } catch {
+    // 저장소 거절은 위에서 문장이 된다 — 여기 오는 것은 DB 오류 등이라 커밋 여부를 모른다(문장에 원문을 싣지 않는다)
+    return { issues: ["저장 결과를 확인하지 못했습니다. 다시 저장하기 전에 새로고침해 현재 한도를 확인해주세요."] };
+  }
 });
