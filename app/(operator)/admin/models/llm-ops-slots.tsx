@@ -24,6 +24,6 @@ export async function LlmOpsSlot({ readOnly, editId, fix = null, adding }: { rea
 const renderClock = () => new Date();
 
 export async function ModelsHistorySlot({ filter, readOnly }: { filter: LlmHistoryFilter; readOnly: boolean }) {
-  const { queue, observation, changes } = await readLlmHistory(filter);
-  return <ModelsHistory retry={buildRetryView(queue, canRequeueUnknownRoute)} observation={observation} changes={changes} filter={filter} now={renderClock()} readOnly={readOnly} />;
+  const { queue, observation, changes, preview } = await readLlmHistory(filter);
+  return <ModelsHistory retry={buildRetryView(queue, canRequeueUnknownRoute, preview)} observation={observation} changes={changes} filter={filter} now={renderClock()} readOnly={readOnly} />;
 }

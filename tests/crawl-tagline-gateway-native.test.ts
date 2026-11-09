@@ -271,7 +271,7 @@ it("retains the original timeout source through a pending body read", async () =
 it("makes a direct contract removed after preparation incapable of POST or terminal issuance", async () => {
   await server(async ({ bodies }) => {
     const input = evidence(), call = prepared(input), owned = dispatch(input, call); pin(null);
-    expect(await send(input, owned, call)).toEqual({ result: { ok: false, error: "no_key" }, terminal: null }); expect(bodies).toEqual([]);
+    expect(await send(input, owned, call)).toEqual({ result: { ok: false, error: "no_key" }, terminal: null, notStarted: { kind: "gateway_not_started" } }); expect(bodies).toEqual([]);
   });
 });
 it("keeps invalid endpoint and descriptor data outside the fixed leaf contract", async () => {

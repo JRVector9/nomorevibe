@@ -6,6 +6,7 @@ import { MODEL_REQUEST_REVIEW_HREF } from "../ModelCallsPanel";
 import { LevelBadge, LevelLegend, ObservedAt } from "../LlmOpsParts";
 import { modelPickerModelGroups } from "../model-picker-display";
 import { DeleteConnectionButton, HideModelButton, RereadModelsButton } from "../tasks/ConnectionButtons";
+import { UnknownRequeueStatus } from "../history/RetryActions";
 import { ConnectionForm, type ConnectionLimitField } from "../tasks/ConnectionForm";
 
 const NEW_LIMIT: ConnectionLimitField = { deviceId: "", current: null, expectedVersion: null, policyHash: null, eligible: false, reason: null, sharedWith: [] };
@@ -139,9 +140,12 @@ function ConnectionRow({ row, view, secretBox, readOnly, open, fix }: { row: Llm
         {row.tasks.length ? <span className="llm-chips">{row.tasks.map(chip => <TaskChip key={chip.key} chip={chip} />)}</span> : <span className="llm-muted">배정 없음</span>}
       </div>
       <div className="llm-cell" data-status={status.level}><span className="llm-cell-label">상태</span>
-        <LevelBadge level={status.level} title={status.detail ?? undefined}>{status.text}</LevelBadge>
-        {status.reasons.length > 0 && <span className="llm-conn-status-reason">{status.reasons.map((reason, index) =>
-          <FixLink key={index} fix={reason.fix} className="llm-reason">{reason.text}</FixLink>)}</span>}
+        {/* 「미확정 있음」은 누르면 이 연결(장비)·CLI 도구의 결과 미확정을 그 자리에서 다시 대기열에 넣는다 — 결과 한 줄도 이 칸에 */}
+        <UnknownRequeueStatus badge={<LevelBadge level={status.level} title={status.detail ?? undefined}>{status.text}</LevelBadge>}
+          unknownBadge={status.text === "미확정 있음"} count={row.retry} groupId={row.retryScope.groupId} provider={row.retryScope.provider} readOnly={readOnly}>
+          {status.reasons.length > 0 && <span className="llm-conn-status-reason">{status.reasons.map((reason, index) =>
+            <FixLink key={index} fix={reason.fix} className="llm-reason">{reason.text}</FixLink>)}</span>}
+        </UnknownRequeueStatus>
       </div>
       <div className="llm-cell"><span className="llm-cell-label">재실행</span>
         {row.retry === null ? <span className="llm-muted">확인 불가</span> : row.retry > 0

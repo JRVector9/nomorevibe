@@ -255,7 +255,7 @@ it("keeps a key removed after prepare incapable of POST or terminal issuance", a
   await server(async ({ bodies }) => {
     // The direct admin row is removed after preparation: no bearer, so nothing is sent.
     const batch = items(), call = prepared(batch), owned = dispatch(batch, call); setServingContractSnapshotForTest([]);
-    expect(await send(batch, owned, call)).toEqual({ result: { ok: false, error: "no_key" }, terminal: null }); expect(bodies).toEqual([]);
+    expect(await send(batch, owned, call)).toEqual({ result: { ok: false, error: "no_key" }, terminal: null, notStarted: { kind: "gateway_not_started" } }); expect(bodies).toEqual([]);
   });
 });
 it("keeps invalid endpoint and descriptor validation inside the strict leaf result", async () => {

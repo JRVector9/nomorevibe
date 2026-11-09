@@ -3,6 +3,7 @@ import { createServer, type ServerResponse } from "node:http";
 import { afterEach, expect, it, vi } from "vitest";
 import { textHash, translateToKorean, parseTranslations, reasonTranslationGatewayWire } from "@/lib/crawl/translate";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
+import { readGatewayNotStarted } from "@/lib/llm/gateway-not-started";
 import { reasonTranslationInputHash, reasonTranslationLogicalWorkKey, reasonTranslationDispatchBindingHash,
   reasonTranslationModelDispatchSchema } from "@/lib/llm/capacity";
 import { prepareReasonTranslationGatewayCall, translateWithReservedReasonGateway, readReasonTranslationGatewayTerminal,
@@ -192,6 +193,19 @@ it("drains actual caller abort with no terminal authority", async () => {
     const texts = sources(), call = prepared(texts), controller = new AbortController(), pending = send(texts, dispatch(texts, call), call, { signal: controller.signal });
     await Promise.race([ready, pending.then(outcome => { throw new Error("fixture_native_ended_before_headers", { cause: outcome }); })]);
     controller.abort(); expect(await pending).toEqual({ result: { ok: false, error: "network" }, terminal: null }); expect(bodies).toHaveLength(1);
+  });
+});
+// 2026-11-09: 보내기 전에 이미 끝난 신호(틱 끝·형제 호출 중단·기한)로는 fetch 를 부르지 않고 전송 0 증인(not_started)을 낸다 —
+// 예전에는 fetch 가 바이트 없이 거절한 호출도 결과 미확정으로 남았다. 결과 코드는 예전 그대로(기한이면 timeout, 아니면 network).
+it("issues a not-started witness without POST when the signal ended before send", async () => {
+  await server(async ({ bodies }) => {
+    for (const [signal, error] of [[AbortSignal.abort(), "network"], [AbortSignal.abort(new DOMException("deadline", "TimeoutError")), "timeout"]] as const) {
+      const texts = sources(), call = prepared(texts), owned = dispatch(texts, call);
+      const outcome = await send(texts, owned, call, { signal });
+      expect(outcome).toEqual({ result: { ok: false, error }, terminal: null, notStarted: { kind: "gateway_not_started" } });
+      expect(readGatewayNotStarted(outcome.notStarted)?.dispatch.requestId).toBe(owned.requestId);
+    }
+    expect(bodies).toEqual([]);
   });
 });
 // 2026-11-02(PR B): 등록부의 M1 기본값(TRANSLATE_MODEL)은 없어졌다 — 모델은 「작업 ↔ 모델」 순위가 고르고, wire 는 받은 이름을 그대로 싣는다

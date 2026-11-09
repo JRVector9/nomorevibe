@@ -6,6 +6,8 @@ import { buildRetryView, LLM_HISTORY_ACTIONS, LLM_HISTORY_KIND_IDS, LLM_HISTORY_
   RECENT_AUDIT_ROWS } from "@/lib/operations/llm-ops-history";
 import { LLM_RETRY_HREF, buildDashboardView } from "@/lib/operations/llm-ops-view";
 import type { CapacityReviewItem } from "@/lib/operations/model-capacity-unknowns";
+import { summarizeRequeue } from "@/lib/operations/model-capacity-requeue";
+import { requeueSummaryText } from "@/lib/operations/model-capacity-requeue-text";
 import { unavailableAdminModels } from "@/lib/operations/admin-models-observation";
 import { LLM_NOW, llmConnections, llmConveyor, llmObservation } from "./fixtures/llm-ops";
 
@@ -51,6 +53,35 @@ describe("재실행 패널 — 단계(route)별 묶음", () => {
   it("묶음 수를 못 읽었으면 목록에서 세고, 목록을 못 읽었으면 readable=false", () => {
     expect(buildRetryView({ items: [item(1), item(2)], truncated: false, error: null, groups: [] }, () => true).groups).toMatchObject([{ routeId: "crawl-agent-review", count: 2 }]);
     expect(buildRetryView({ items: [], truncated: false, error: "statement timeout", groups: [] }, () => true)).toMatchObject({ readable: false, total: 0, error: "statement timeout" });
+  });
+  // 2026-11-09: 행마다 「다시 대기열」을 누르면 어떻게 되는지(미리보기) — 남는 행은 까닭을 단다. 미리보기를 못 읽었으면 plan 은 null(지어내지 않는다)
+  it("미리보기를 행마다 싣고 묶음에서 다시 넣음·끝나서 닫음·남음(까닭)을 센다", () => {
+    const queue = { items: [item(1), item(2), item(3)], truncated: false, error: null, groups: [{ routeId: "crawl-agent-review", count: 3 }] };
+    const preview = new Map([[item(1).requestId, { outcome: "requeued" as const, reason: "requeued" }], [item(2).requestId, { outcome: "done" as const, reason: "candidate_decided" }],
+      [item(3).requestId, { outcome: "skipped" as const, reason: "key_unreadable" }]]);
+    const view = buildRetryView(queue, () => true, preview);
+    expect(view.items.map(row => row.plan)).toEqual([{ outcome: "requeued", reason: "requeued", text: "다시 넣음" },
+      { outcome: "done", reason: "candidate_decided", text: "후보 판정이 이미 남(사람·거절·발행)" },
+      { outcome: "skipped", reason: "key_unreadable", text: "작업 키를 읽지 못함 — 한 건씩 닫기" }]);
+    expect(view.groups[0].plan).toEqual({ requeue: 1, close: 1, left: 1, reasons: [{ key: "key_unreadable", label: "작업 키를 읽지 못함 — 한 건씩 닫기", count: 1 }] });
+    const unread = buildRetryView(queue, () => true, null);
+    expect(unread.groups[0].plan).toBeNull(); expect(unread.items.every(row => row.plan === null)).toBe(true);
+  });
+});
+
+describe("「다시 대기열」 결과 한 줄 — N건 다시 넣음 · M건 닫음 · K건 남음(까닭)", () => {
+  it("단계별 결과를 모아 한 줄로 쓰고, 남은 행이 없으면 까닭을 붙이지 않는다", () => {
+    const summary = summarizeRequeue({ closed: 5, leftRows: [], groups: [
+      { routeId: "crawl-agent-review", requests: 4, requeued: 1, done: 3, skipped: 0, closed: 4, left: [], error: null },
+      { routeId: "second-review", requests: 1, requeued: 1, done: 0, skipped: 0, closed: 1, left: [], error: null },
+      { routeId: "local-human-deepseek", requests: 2, requeued: 0, done: 0, skipped: 2, closed: 0, left: [{ reason: "unsupported_route", count: 2 }], error: null },
+      { routeId: "product-translate", requests: 1, requeued: 0, done: 0, skipped: 1, closed: 0, left: [{ reason: "close_failed", count: 1 }], error: null }] });
+    expect(summary).toEqual({ requests: 8, requeued: 2, done: 3, closed: 5, left: 3,
+      reasons: [{ reason: "unsupported_route", count: 2 }, { reason: "close_failed", count: 1 }] });
+    expect(requeueSummaryText(summary)).toBe("2건 다시 넣음 · 5건 닫음 · 3건 남음(다시 대기열을 지원하지 않는 단계 — 근거를 보고 한 건씩 닫기 2 · "
+      + "작업은 처리했으나 장부 행을 닫지 못함 — 다시 누르기 1)");
+    expect(requeueSummaryText({ ...summary, left: 0, reasons: [] })).toBe("2건 다시 넣음 · 5건 닫음");
+    expect(requeueSummaryText({ requests: 0, requeued: 0, done: 0, closed: 0, left: 0, reasons: [] })).toBe("다시 넣을 결과 미확정 행이 없습니다");
   });
 });
 

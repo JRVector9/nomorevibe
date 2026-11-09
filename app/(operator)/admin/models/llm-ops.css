@@ -173,7 +173,18 @@
 .llm-retry-preview { font-size: calc(13px + var(--admin-font-delta, 0px)); max-width: 42ch; }
 .llm-retry-done { color: var(--green); font-weight: 600; font-size: calc(13px + var(--admin-font-delta, 0px)); }
 .llm-retry-error { color: var(--red); font-size: calc(13px + var(--admin-font-delta, 0px)); }
-.llm-retry-all { display: flex; justify-content: flex-end; }
+/* 남은 행(넣지도 닫지도 못함)과 그 까닭 — 결과 한 줄·행마다 */
+.llm-retry-left { color: var(--amber); font-weight: 600; font-size: calc(13px + var(--admin-font-delta, 0px)); overflow-wrap: anywhere; }
+.llm-retry-plan { margin: 4px 0 0; font-size: calc(12px + var(--admin-font-delta, 0px)); }
+.llm-retry-more { font-size: calc(12px + var(--admin-font-delta, 0px)); white-space: nowrap; }
+/* 패널 머리: 건수 배지 바로 옆에 「지원 단계 모두 다시 대기열」 */
+.llm-panel-head-side { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px 10px; min-width: 0; }
+/* LLM 운영 상태 칸: 「미확정 있음」 배지를 누르면 그 자리에서 다시 대기열 */
+.llm-retry-inline { display: grid; gap: 4px; justify-items: start; }
+.llm-level-button { padding: 0; border: 0; background: none; font: inherit; color: inherit; cursor: pointer; border-radius: 999px; }
+.llm-level-button:hover .llm-level { box-shadow: 0 0 0 2px var(--amber-soft); text-decoration: underline; text-underline-offset: 2px; }
+.llm-level-button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.llm-level-button:disabled { cursor: progress; opacity: .7; }
 .llm-retry-items > summary { cursor: pointer; font-weight: 600; font-size: calc(13px + var(--admin-font-delta, 0px)); }
 .llm-retry-items > ul { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 8px; }
 .llm-retry-item { display: grid; gap: 4px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); font-size: calc(13px + var(--admin-font-delta, 0px)); scroll-margin-top: 72px; }

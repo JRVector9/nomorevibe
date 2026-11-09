@@ -258,6 +258,27 @@ it("keeps an ordinary failure at full C for review with the original single-atte
   expect((await cache(key)).row).toMatchObject({ status: "done", translated: "merge pdf | merge pdf files", error_code: null });
 });
 
+// 2026-11-09: 결과 미확정 호출의 실패가 캐시에 닿지 못하면(전송 오류로 던짐·프로세스 재시작·캐시 쓰기 실패) 캐시 스냅숏이 그대로라
+// 같은 스냅숏의 새 전송이 snapshot 고유 색인(23505)에 막혀 그 검색어는 매번 번역되지 못했다. 이제 실패 한 번(unknown)만 적어 스냅숏을 넘긴다 — 결과는 지어내지 않는다.
+it("2026-11-09: an unknown call whose failure never reached the cache no longer walls its snapshot; one unknown failure moves the query on", async () => {
+  const query = "식단 기록 앱", key = target(query).cacheKey, before = bodies.length;
+  reply = response => { response.statusCode = 500; response.end("failure"); };
+  try { expect((await searchTranslation.resolveSearchQuery(query, { waitForTranslation: true })).translated).toBeNull(); }
+  finally { reply = response => response.end(JSON.stringify(envelope("diet log app | meal tracker"))); }
+  const [row] = await rows(key); expect(row).toMatchObject({ state: "indeterminate", terminal_evidence: null });
+  // 실패가 캐시에 닿지 못한 모양 — 캐시 행이 없어 그 호출과 같은 스냅숏(absent)이다
+  await admin`DELETE FROM text_translations WHERE source_hash=${key} AND target_lang='en'`;
+  expect((await searchTranslation.resolveSearchQuery(query, { waitForTranslation: true })).translated).toBeNull();
+  expect(bodies.length - before).toBe(1);
+  expect((await cache(key)).row).toMatchObject({ status: "failed", attempts: 1, error_code: "unknown", model: row.model });
+  expect((await rows(key)).map(item => item.state)).toEqual(["indeterminate"]);
+  // 다음 검색은 새 스냅숏(present, attempts 1)이라 막히지 않고 한 번 보내 번역된다. 미확정 행은 사람 검토로 그대로 남는다
+  expect(await searchTranslation.resolveSearchQuery(query, { waitForTranslation: true })).toMatchObject({ translated: "diet log app / meal tracker" });
+  expect(bodies.length - before).toBe(2);
+  expect((await rows(key)).map(item => item.state)).toEqual(["indeterminate", "settled"]);
+  expect((await rows(key))[0]).toMatchObject({ request_id: row.request_id, state: "indeterminate", terminal_evidence: null });
+});
+
 it("never POSTs after reservation expiry or a changed cache snapshot; only reserved rows are cancelled", async () => {
   const before = bodies.length, expired = await dispatched("홈트 루틴 기록");
   await admin`UPDATE model_capacity_requests SET reserved_until=clock_timestamp()-interval '1 second' WHERE request_id=${expired.reservation.requestId}::uuid`;
