@@ -15,6 +15,7 @@ import { runJob } from "@/lib/jobs/runner";
 import { setRuntimeSettingsForTest } from "@/lib/operations/runtime-settings-store";
 import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
 import { setAiTaskModelsForTest, type AiTaskModelSnapshotRow } from "@/lib/llm/ai-task-models-snapshot";
+import { noteRecheckRankPaused, recheckRankPaused, resetRecheckLanes } from "@/lib/crawl/published-recheck-lanes";
 import { cliRankRow } from "../fake-cli-path";
 import { jobRunOptions } from "@/scripts/worker";
 import { ensureSchema, resetTables } from "./setup";
@@ -69,6 +70,7 @@ beforeEach(async () => {
   calls.remote.mockReset().mockResolvedValue(remoteResult("approve"));
   calls.agent.mockReset().mockResolvedValue(verdict("approve"));
   setAiTaskModelsForTest(ranks());
+  resetRecheckLanes();
   await saveSettings({ enabled: true, firstReview: { provider: "abcllm", model: MODEL }, reviewConcurrency: 2 }, "test");
 });
 afterEach(() => { setRuntimeSettingsForTest(null); setAiTaskModelsForTest(null); });
@@ -275,6 +277,50 @@ describe("묻기 — 감사 잡의 재판정 갈래", () => {
     expect((await rollingItems())[0]).toMatchObject({ aiDecision: "needs_review", aiProvider: "claude-cli", aiModel: "sonnet" });
   });
 
+  it("2026-11-09 API 순위가 차례면 감사 잡은 묻지 않고 Qwen 직접 감사 잡에 맡긴다 — 그 줄이 그 순위를 쉼으로 적으면 다음 CLI 순위로 묻는다", async () => {
+    const api = Object.freeze({ task: "product-audit", slot: 1, rank: 1, model: "qwen3.8-flash-next", enabled: true, options: Object.freeze({}),
+      connection: Object.freeze({ id: "0a0b0c0d-0000-4000-8000-000000000009", label: "gpu3090-qwen", kind: "api" as const, baseUrl: "http://gpu.test:8090/v1",
+        cliTool: null, deviceId: "gpu3090-qwen", enabled: true, models: [{ id: "qwen3.8-flash-next", maxModelLen: 131072 }], contextTokens: null, apiKey: null,
+        keyUnreadable: false }) }) satisfies AiTaskModelSnapshotRow;
+    setAiTaskModelsForTest([api, cliRankRow("product-audit", "sonnet", { rank: 2, cliTool: "claude", label: "Claude CLI", connectionId: "0a0b0c0d-0000-4000-8000-000000000002" })]);
+    calls.agent.mockResolvedValue(verdict("approve"));
+    await listed("l/app");
+    await scan();
+    await page("l/app", { title: "Changed Title For Api Rank" });
+    await scan();
+    await ask();
+    expect(calls.path).not.toHaveBeenCalled();
+    expect(calls.agent).not.toHaveBeenCalled();
+    expect((await rollingItems())[0]).toMatchObject({ aiDecision: null, attempts: 0 });
+
+    noteRecheckRankPaused({ rank: 1, provider: "local-direct", connectionId: api.connection.id, model: api.model }, "capacity");
+    await db.update(jobs).set({ notBefore: null }).where(eq(jobs.name, "product-audit"));
+    await ask();
+    expect(calls.agent).toHaveBeenCalledTimes(1);
+    expect((await rollingItems())[0]).toMatchObject({ aiDecision: "approve", aiProvider: "claude-cli", aiModel: "sonnet" });
+  });
+
+  it("2026-11-09 CLI 1순위가 열리지 않으면 그 순위를 쉼으로 적고, 2순위 API 는 Qwen 직접 감사 잡에 맡긴다(감사 잡이 부르지 않음)", async () => {
+    calls.path.mockImplementation(async (_route: string, _model: string, provider?: string) => {
+      if (provider === "opencode-cli") throw new ModelCapacityDeferredError("capacity");
+      return "legacy";
+    });
+    const [opencode] = ranks();
+    const api = Object.freeze({ ...opencode, rank: 2, model: "qwen3.8-flash-next", connection: Object.freeze({ id: "0a0b0c0d-0000-4000-8000-000000000009",
+      label: "gpu3090-qwen", kind: "api" as const, baseUrl: "http://gpu.test:8090/v1", cliTool: null, deviceId: "gpu3090-qwen", enabled: true,
+      models: [{ id: "qwen3.8-flash-next", maxModelLen: 131072 }], contextTokens: null, apiKey: null, keyUnreadable: false }) }) satisfies AiTaskModelSnapshotRow;
+    setAiTaskModelsForTest([opencode, api]);
+    await listed("m/app");
+    await scan();
+    await page("m/app", { title: "Changed Title For Rank Pause" });
+    await scan();
+    await ask();
+    expect(calls.path.mock.calls.map((call) => call.slice(0, 3))).toEqual([["product-audit", OPENCODE, "opencode-cli"]]);
+    expect(calls.remote).not.toHaveBeenCalled();
+    expect((await rollingItems())[0]).toMatchObject({ aiDecision: null, attempts: 0 });
+    expect(recheckRankPaused({ rank: 1, provider: "opencode-cli", connectionId: OPENCODE_CONNECTION, model: OPENCODE })).toBe(true);
+  });
+
   it("순위가 없으면 묻지 않는다 — 1차 순위로 대신 부르지 않고 항목은 기다린다", async () => {
     setAiTaskModelsForTest([]);
     await listed("k/app");
@@ -301,6 +347,21 @@ describe("사람이 연 감사와 함께 산다", () => {
     expect(await cancelProductAudit()).toBe(true);
     expect((await rollingStream())?.status).toBe("rolling");
     expect((await productAuditOverview()).campaign?.status).toBe("cancelled");
+  });
+
+  it("2026-11-09 사람이 연 감사는 CLI 순위 중 가장 앞의 것으로 시작한다 — API 순위는 재판정만 쓰고, API 순위뿐이면 시작하지 않는다", async () => {
+    await listed("n/one");
+    const api = Object.freeze({ task: "product-audit", slot: 1, rank: 1, model: "qwen3.8-flash-next", enabled: true, options: Object.freeze({}),
+      connection: Object.freeze({ id: "0a0b0c0d-0000-4000-8000-000000000009", label: "gpu3090-qwen", kind: "api" as const, baseUrl: "http://gpu.test:8090/v1",
+        cliTool: null, deviceId: "gpu3090-qwen", enabled: true, models: [{ id: "qwen3.8-flash-next", maxModelLen: 131072 }], contextTokens: null, apiKey: null,
+        keyUnreadable: false }) }) satisfies AiTaskModelSnapshotRow;
+    setAiTaskModelsForTest([api]);
+    expect(await startProductAudit({ startedBy: "jr", reason: "감사", reauditKept: false }))
+      .toEqual({ ok: false, error: expect.stringContaining("사람이 연 감사는 OpenCode·Claude CLI 순위로 시작합니다") });
+    expect(await runningAuditCampaign()).toBeNull();
+    setAiTaskModelsForTest([api, cliRankRow("product-audit", "sonnet", { rank: 2, cliTool: "claude", label: "Claude CLI", connectionId: "0a0b0c0d-0000-4000-8000-000000000002" })]);
+    expect(await startProductAudit({ startedBy: "jr", reason: "감사", reauditKept: false })).toMatchObject({ ok: true, enrolled: 1 });
+    expect(await runningAuditCampaign()).toMatchObject({ provider: "claude-cli", model: "sonnet", cliSource: null });
   });
 
   it("공통 슬롯의 도메인 증명 — 재판정 항목은 지금 코드의 글 판으로만 묻는다", async () => {

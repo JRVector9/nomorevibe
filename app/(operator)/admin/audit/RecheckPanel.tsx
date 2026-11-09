@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { RECHECK_TASK_LABEL, recheckReviewerPlanText, type RecheckOverview, type RecheckReviewerPlan } from "@/lib/crawl/published-recheck";
 import { formatListTime } from "@/lib/format/time";
+import type { RecheckLimitsControlView } from "@/lib/operations/admin-runtime-settings";
+import { RecheckLimitsForm } from "./RecheckLimitsForm";
 
 const count = (value: number) => value.toLocaleString("ko-KR");
 
@@ -9,9 +11,12 @@ export type RecheckReviewerRow = RecheckReviewerPlan["reviewers"][number] & { ro
 /**
  * 공개분 변경 재판정(lib/crawl/published-recheck.ts) — 늘 열린 줄의 상태·한도·재판정의 모델 설정(「발행분 감사 · 변경 재판정」 순위와 그 순위마다
  * 감사 경로 계약 유무). 내리기·유지는 아래 목록(감사 거절과 같은 줄)에서 한다.
- * 한도는 실시간 한도 화면(잡별 묶음의 published-recheck 줄)에서 고친다.
+ * 한도(잡별 묶음의 published-recheck 줄 다섯 칸)는 이 자리에서 고친다(2026-11-09, RecheckLimitsForm — 실시간 한도 화면과 같은 저장). overview.limits 는
+ * 저장 행을 바로 읽은 값이다(페이지 로더가 readRecheckLimitsControl 로 읽어 넘긴다) — 저장 뒤 새 값으로 그린다.
+ * readOnly: 저장 행을 못 읽었거나 읽기 전용 미리보기(ADMIN_WORKSPACE_PREVIEW_READ_ONLY)면 칸·단추를 끈다.
  */
-export function RecheckPanel({ overview, plan, reviewers, now }: { overview: RecheckOverview; plan: RecheckReviewerPlan; reviewers: RecheckReviewerRow[]; now: Date }) {
+export function RecheckPanel({ overview, plan, reviewers, now, limitsControl, readOnly }: { overview: RecheckOverview; plan: RecheckReviewerPlan;
+  reviewers: RecheckReviewerRow[]; now: Date; limitsControl: Pick<RecheckLimitsControlView, "fields" | "revision" | "rowError">; readOnly: boolean }) {
   const { stream, limits, counts, baselines } = overview;
   const enrollOn = limits.dailyCap > 0, askOn = limits.askBatch > 0;
   const onOff = (on: boolean, label: string) => <span className={`rounded px-1.5 py-0.5 font-semibold ${on ? "bg-accent-soft text-accent" : "bg-bg-soft text-fg-2"}`}>{label} {on ? "켬" : "끔"}</span>;
@@ -44,7 +49,7 @@ export function RecheckPanel({ overview, plan, reviewers, now }: { overview: Rec
         물을 재판정 항목이 {overview.oldestPendingHours!.toFixed(1)}시간째 기다립니다. 아래 순위가 감사 경로에서 열리는지(계약), 1차 대기가 늘 차 있지 않은지 보세요.</p>}
       <div className="flex flex-col gap-1 border-t border-line pt-3">
         <p><b className="font-semibold text-fg">묻는 모델 — 「{RECHECK_TASK_LABEL}」 순위</b> <span className="text-fg-3">(작업 ↔ 모델에서 고칩니다. 1차 AI 검수 순위와 따로입니다.
-          1순위부터, 그 틱에 열리지 않으면(계약·경로 없음·포화) 다음 순위. OpenCode·Claude CLI 연결만 받습니다)</span></p>
+          1순위부터, 그 틱에 열리지 않으면(계약·경로 없음·포화) 다음 순위. OpenCode·Claude CLI 연결과 API 연결을 받습니다)</span></p>
         {recheckReviewerPlanText(plan) && <p className="text-warn">{recheckReviewerPlanText(plan)}</p>}
         <ul className="flex flex-col gap-0.5">
           {reviewers.map((row) => <li key={`${row.rank}:${row.provider}:${row.model}`}>
@@ -52,13 +57,15 @@ export function RecheckPanel({ overview, plan, reviewers, now }: { overview: Rec
             <span className={row.route.ready ? "text-fg-2" : "text-warn"}>{row.route.text}</span></li>)}
           {plan.skipped.map((row) => <li key={`s:${row.rank}:${row.model}`} className="text-fg-3">{row.rank}순위 {row.label} · <span className="font-mono">{row.model}</span> — 부르지 않음: {row.reason}</li>)}
         </ul>
-        <p className="text-fg-3">감사 경로(product-audit)의 장부 요청이라 background 등급입니다 — 장부 행은 감사로 셉니다. 1차 심사 대기에 후보가 있으면 물러나되,
+        <p className="text-fg-3">CLI 순위는 감사 경로(product-audit, 감사 잡)로, API 순위는 감사 직접 경로(local-audit, Qwen 직접 감사 잡)로 묻습니다 — 둘 다 장부의
+          background 등급입니다. 1차 심사 대기에 후보가 있으면 물러나되,
           가장 오래 기다린 항목이 {count(limits.yieldHours)}시간을 넘으면 함께 묻습니다(0 이면 물러나지 않음).</p>
       </div>
-      <div className="flex flex-wrap items-center gap-2 border-t border-line pt-3">
-        <Link href="/admin/models/limits" className="admin-button">한도 고치기 →</Link>
-        <span className="text-fg-3">틱마다 견줄 제품 {count(limits.scanBatch)} · 하루 올리기 상한 {count(limits.dailyCap)} · 감사 틱마다 묻기 {count(limits.askBatch)} ·
-          같다고 볼 유사도 {Math.round(limits.minSimilarity * 100)}% · 1차 양보 상한 {count(limits.yieldHours)}시간 (잡별 묶음의 published-recheck 줄)</span>
+      <div className="flex flex-col gap-2 border-t border-line pt-3">
+        <p className="flex flex-wrap items-baseline gap-x-2"><b className="font-semibold text-fg">한도</b>
+          <span className="text-fg-3">이 자리에서 고쳐 저장합니다 — 다른 잡의 한도는 <Link href="/admin/models/limits" className="underline">실시간 한도</Link> 화면에서 고칩니다.</span></p>
+        <RecheckLimitsForm fields={limitsControl.fields} revision={limitsControl.revision} readOnly={readOnly}
+          readOnlyReason={limitsControl.revision === null ? `저장 행을 읽지 못해 읽기 전용입니다(${limitsControl.rowError ?? "모름"}).` : readOnly ? "읽기 전용 미리보기라 저장하지 않습니다." : null} />
       </div>
     </section>
   );

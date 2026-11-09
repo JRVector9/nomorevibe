@@ -9,7 +9,7 @@ import { ROLE_LABELS } from "./contracts";
 import { isConsumerServiceInstance, parseServiceObservationKey } from "./instance";
 import { readRuntimeSettingsApply, readRuntimeSettingsRow, RUNTIME_SETTINGS_AUDIT_ACTION, type RuntimeSettingsRow } from "./runtime-settings";
 import { ASSIGNMENT_TABLE_READS, ASSIGNMENT_TABLE_READS_LABELS, BUDGET_CALL_MARGIN_MS, BUDGET_THIN_MARGIN_MS, DEFAULT_JOB_BUDGET_MS, DEFAULT_RUNTIME_SETTINGS,
-  effectiveJobBudgetMs, GROUP_LABELS, JOB_CALL_ROUTES, JOB_KNOB_NAMES, JOB_LABELS, jobCallCeilingMs, resolveRuntimeSettings, ROUTE_LABELS, RUNTIME_SETTING_GROUPS,
+  effectiveJobBudgetMs, GROUP_LABELS, JOB_CALL_ROUTES, JOB_KNOB_NAMES, JOB_LABELS, jobCallCeilingMs, jobKnobsSchema, resolveRuntimeSettings, ROUTE_LABELS, RUNTIME_SETTING_GROUPS,
   runtimeSettingLabel, runtimeSettingsWarnings, shortRuntimeSettingsVersion, storedSettingsVersion, type JobKnobName, type ProductTranslationPolicy,
   type RuntimeSettingGroup, type RuntimeSettings } from "./runtime-settings-schema";
 import type { SettingsApply } from "./settings-apply";
@@ -319,6 +319,45 @@ export async function readAssignmentReadsControl(): Promise<AssignmentReadsContr
   catch (error) { return buildAssignmentReadsControl(null, error instanceof Error ? error.message : String(error)); }
 }
 
+/**
+ * 공개분 변경 재판정의 한도(잡별 묶음 jobs.published-recheck 다섯 칸, 2026-11-09) — /admin/audit?tab=recheck 가 보이는 그 자리에서 고친다.
+ * 단위(건·%·시간)와 스키마 범위(jobKnobsSchema 그대로)를 칸마다 싣는다. 저장은 실시간 한도 화면과 같은 saveRuntimeSettings(group jobs, revision CAS)다
+ */
+export const RECHECK_LIMITS_JOB = "published-recheck";
+export const RECHECK_LIMIT_KNOBS = Object.freeze(["scanBatch", "dailyCap", "askBatch", "minSimilarity", "yieldHours"] as const satisfies readonly JobKnobName[]);
+export type RecheckLimitKnob = (typeof RECHECK_LIMIT_KNOBS)[number];
+const RECHECK_LIMIT_UNITS: Readonly<Record<RecheckLimitKnob, string>> = Object.freeze({ scanBatch: "건", dailyCap: "건", askBatch: "건", minSimilarity: "%", yieldHours: "시간" });
+const RECHECK_LIMIT_NOTES: Readonly<Record<RecheckLimitKnob, string>> = Object.freeze({
+  scanBatch: "틱(1분)마다 견줄 공개 제품 수", dailyCap: "지난 24시간 재판정 줄에 올릴 최대 수 — 0 이면 올리기·쓸기 멈춤",
+  askBatch: "묻기 갈래(CLI 순위 감사 잡·API 순위 Qwen 직접 감사 잡)마다 틱에 물을 항목 수 — 0 이면 묻기 멈춤",
+  minSimilarity: "글 칸의 낱말 유사도가 이 % 아래면 바뀐 것으로 봄", yieldHours: "1차 대기가 있으면 물러나되, 가장 오래 기다린 항목이 이 시간을 넘으면 함께 묻기 — 0 이면 물러나지 않음" });
+export type RecheckLimitField = SettingField & { knob: RecheckLimitKnob; unit: string; min: number; max: number };
+export type RecheckLimitsControlView = { revision: number | null; rowError: string | null; fields: RecheckLimitField[]; settings: RuntimeSettings };
+
+/** 그 잡 손잡이의 스키마 범위(jobKnobsSchema 의 min·max 그대로) — 화면이 범위를 보이고 거절 문장이 같은 범위를 말한다 */
+export function jobKnobRange(knob: string): { min: number; max: number } | null {
+  const schema = (jobKnobsSchema.shape as Record<string, (typeof jobKnobsSchema.shape)[JobKnobName] | undefined>)[knob]?.unwrap();
+  return schema && typeof schema.minValue === "number" && typeof schema.maxValue === "number" ? { min: schema.minValue, max: schema.maxValue } : null;
+}
+
+/** 재판정 한도 폼 한 묶음 — 행을 못 읽으면 revision null(읽기 전용)이고 값은 코드 기본값이다. settings 는 화면의 다른 글(양보 시간 등)이 같은 값을 쓰게 함께 준다 */
+export function buildRecheckLimitsControl(row: RuntimeSettingsRow | null, rowError: string | null = null): RecheckLimitsControlView {
+  const { settings } = resolveRuntimeSettings(row?.values ?? null);
+  const stored = row?.values ?? null;
+  const fields = RECHECK_LIMIT_KNOBS.map((knob): RecheckLimitField => {
+    const base = DEFAULT_RUNTIME_SETTINGS.jobs[RECHECK_LIMITS_JOB]?.[knob];
+    const range = jobKnobRange(knob)!;
+    return { ...field(stored, `jobs.${RECHECK_LIMITS_JOB}.${knob}`, settings.jobs[RECHECK_LIMITS_JOB]?.[knob] ?? base, base, { note: RECHECK_LIMIT_NOTES[knob] }),
+      knob, unit: RECHECK_LIMIT_UNITS[knob], ...range };
+  });
+  return { revision: row?.revision ?? null, rowError: row ? null : rowError ?? "runtime_settings_row_missing", fields, settings };
+}
+/** 저장 행을 바로 읽는다(30초 스냅숏이 아니다) — 저장 뒤 화면이 새 값을 그린다 */
+export async function readRecheckLimitsControl(): Promise<RecheckLimitsControlView> {
+  try { return buildRecheckLimitsControl(await readRuntimeSettingsRow()); }
+  catch (error) { return buildRecheckLimitsControl(null, error instanceof Error ? error.message : String(error)); }
+}
+
 // ---------- 폼 → sparse patch ----------
 export type FormPatch = { patch: Record<string, unknown>; changed: string[]; issues: string[] };
 type FormLike = { get(name: string): FormDataEntryValue | null; entries(): IterableIterator<[string, FormDataEntryValue]> };
@@ -432,8 +471,12 @@ export function runtimeSettingsIssueMessage(issue: string): string {
     case "min_call_exceeds_timeout": return `${jobLabel(detail)} 최소 남은 시간이 호출 상한보다 깁니다 — 틱이 호출을 시작하지 못합니다`;
     case "auto_budget_without_route": return `${jobLabel(detail)} 은 호출 상한 경로가 없어 auto 예산을 쓸 수 없습니다`;
     case "timeout_below_engine_bound": return `${routeLabel(detail)} 호출 상한이 엔진 기한 + ${secondsLabel(BUDGET_CALL_MARGIN_MS)}보다 짧습니다`;
-    case "runtime_settings_invalid": return detail in CHOICE_OPTIONS ? `${runtimeSettingLabel(detail)}: 고를 수 있는 값이 아닙니다(${CHOICE_OPTIONS[detail].map(option => option.value).join(" · ")})`
-      : `${runtimeSettingLabel(detail)}: 범위를 벗어났습니다`;
+    case "runtime_settings_invalid": {
+      if (detail in CHOICE_OPTIONS) return `${runtimeSettingLabel(detail)}: 고를 수 있는 값이 아닙니다(${CHOICE_OPTIONS[detail].map(option => option.value).join(" · ")})`;
+      // 잡별 묶음의 정수 칸은 스키마 범위를 함께 말한다(2026-11-09 — 재판정 한도를 그 자리에서 고칠 때 무엇을 넣어야 하는지 보이게). ms 칸은 화면 단위가 초라 범위를 붙이지 않는다
+      const parts = detail.split("."), range = parts[0] === "jobs" && parts.length === 3 && fieldKind(detail) === "int" ? jobKnobRange(parts[2]) : null;
+      return `${runtimeSettingLabel(detail)}: 범위를 벗어났습니다${range ? `(${range.min}~${range.max})` : ""}`;
+    }
     case "runtime_settings_version": return `저장 문서 판 표시가 다릅니다: ${detail}`;
     default: return issue;
   }

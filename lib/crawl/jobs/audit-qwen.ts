@@ -1,16 +1,25 @@
 import { modelLimits, modelTimeoutMs } from "@/lib/llm/model-registry";
 import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
-import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
+import { ModelCapacityDeferredError, modelCapacityDeferralIsPerWork } from "@/lib/llm/capacity-deferred";
 import { withLocalModelCapacity } from "@/lib/llm/local-model-capacity";
+import { ensureAiTaskModels } from "@/lib/llm/ai-task-models-snapshot";
 import { getSettings } from "@/lib/crawl/settings";
 import { finishAuditCampaign, loadAuditInput, markAuditInputFailed, markAuditNoSource, pendingAuditItems, recordAuditResult,
   runningAuditCampaign } from "@/lib/crawl/product-audit";
 import { auditReviewer, sameAuditReviewer, type AuditReviewer } from "@/lib/crawl/product-audit-reviewer";
-import { qwenDirectConfig, QwenDirectError, reviewWithQwenDirect, QWEN_V2_PROMPT_VERSION,
+import { qwenDirectConfig, QwenDirectError, qwenEndpointFailure, reviewWithQwenDirect, QWEN_V2_PROMPT_VERSION,
   type QwenDirectErrorCode, type QwenDirectReview } from "@/lib/crawl/qwen-direct-review";
+import { REVIEW_PROMPT_VERSION, type ReviewInput, type ReviewOutcome } from "@/lib/crawl/agent-review-contract";
+import { recheckDirectEndpoint, recheckLimits, recheckReviewerPlan, recheckYields, rollingStream } from "@/lib/crawl/published-recheck";
+import { claimRecheckItem, clearRecheckRankPause, noteRecheckItemRankRefused, noteRecheckRankPaused, recheckLaneOf, recheckSkips, recheckTurn,
+  releaseRecheckItem } from "@/lib/crawl/published-recheck-lanes";
+import { LocalModelDomainRefusedError } from "@/lib/llm/local-model-domain-refusal";
+import { reviewWithRecheckEndpoint } from "@/lib/crawl/recheck-direct-review";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import type { ProductAuditCampaign } from "@/lib/db/schema";
 import type { JobLease } from "@/lib/jobs/control";
+import { JobLeaseLostError } from "@/lib/jobs/lease";
+import { DrWriterFencedError } from "@/lib/operations/dr/epoch";
 import { classifyQwenCallFailure, noteQwenAnswered, noteQwenEndpointSuccess, qwenBackoffMs, qwenEndpointBackingOff, qwenEndpointBackoffOf,
   resetQwenAuditBackoff } from "@/lib/crawl/qwen-endpoint-backoff";
 import { AUDIT_TICK_MS as TICK_MS, AUDIT_WRITE_MARGIN_MS as WRITE_MARGIN_MS, auditCampaignForTick } from "./product-audit";
@@ -25,6 +34,8 @@ import { AUDIT_TICK_MS as TICK_MS, AUDIT_WRITE_MARGIN_MS as WRITE_MARGIN_MS, aud
 export async function auditWithQwenDirect(ctx: JobContext<null>): Promise<JobOutcome<null>> {
   const startedAt = Date.now();
   const settings = await getSettings();
+  // 공개분 변경 재판정(0171)의 API 순위 갈래를 먼저 조금(askBatch) 묻는다 — 사람이 연 감사가 없어도 돈다(2026-11-09)
+  await askRecheckDirectSafely(ctx, settings);
   const campaign = await auditCampaignForTick(ctx, settings, "audit_qwen");
   if (!campaign) return { done: true };
   if (!campaign.direct) {
@@ -34,6 +45,148 @@ export async function auditWithQwenDirect(ctx: JobContext<null>): Promise<JobOut
   const lease = ctx.lease;
   if (!lease) throw new Error("audit qwen requires a valid worker job lease");
   return auditWithQwen(ctx, { campaign: campaign.campaign, reviewer: campaign.reviewer, settings, startedAt, lease });
+}
+
+// ─────────────────────────── 공개분 변경 재판정의 API 순위(2026-11-09) ───────────────────────────
+
+/**
+ * 재판정 갈래는 사람이 연 감사의 틱을 바꾸지 않는다 — 그 갈래의 실패(읽기·기록·호출 오류)는 로그로만 남기고 감사 묻기로 넘어간다.
+ * 작업 lease 를 잃었거나 DR writer fence 에 막혔으면 이 틱 전체가 더 쓰면 안 되므로 그대로 던진다(jobs/product-audit.ts 의 CLI 갈래와 같다)
+ */
+async function askRecheckDirectSafely(ctx: JobContext<null>, settings: CrawlSettings): Promise<void> {
+  try { await askRecheckDirect(ctx, settings); }
+  catch (error) {
+    if (error instanceof JobLeaseLostError || error instanceof DrWriterFencedError) throw error;
+    ctx.log("published_recheck.failed", { lane: "api", error: error instanceof ModelCapacityDeferredError ? `deferred:${error.reason}`
+      : error instanceof Error && /^[a-z0-9_:.-]{1,80}$/.test(error.message) ? error.message : "error" });
+  }
+}
+
+/**
+ * 공개분 변경 재판정(0171)의 항목을 「발행분 감사 · 변경 재판정」의 API 순위로 묻는다 — 감사 직접 경로(route local-audit, 장부 binding local_model_direct ·
+ * direct:audit:<항목>:audit · job audit-qwen, CHECK 가지는 0155 에 이미 있다). 그래서 이 잡의 갈래다(CLI 순위는 감사 잡 product-audit 이 묻는다).
+ *  - 순위 차례: 항목마다 쉬지 않는 가장 앞 순위가 차례다(published-recheck-lanes.ts). 차례가 CLI 순위면 그 줄에 맡기고, API 순위면 이 갈래가 묻는다.
+ *    API 순위가 열리지 않으면(로컬 계약·정책 route 없음·포화·장비 상한 없음 등 장부 미룸, 서버 탈) 다음 순위로 가고 그 순위를 잠시 쉼으로 적는다.
+ *    장부 도메인 증명(local-model-domain.ts)이 한 항목을 거절하면 그 항목에서만 그 순위를 잠시 건너뛴다 — 다른 줄이 그 항목을 다음 순위로 묻는다.
+ *  - 부르는 곳: 순위의 연결 주소·모델·키(recheckDirectEndpoint) — env AUDIT_SECOND_OPINION_URL·_MODEL 을 읽지 않는다. 계약은 단계 풀이 아니라 그 주소·모델의
+ *    로컬 계약(리비전 없음 — servingRevision null)이다. 순위 저장이 그 계약과 정책 route 를 만든다(admin-ai-tasks-repository.ts).
+ *  - 글: 1차·감사와 같은 정책 글(REVIEW_PROMPT_VERSION, recheck-direct-review.ts). Qwen-v2 덧붙임은 붙이지 않는다.
+ *  - 1차를 늦추지 않는다(CLI 갈래와 같은 규칙 — recheckYields). 한 틱에 askBatch 건까지, 한 번에 하나씩. 용량 관리가 꺼져 있으면(disabled) 장부 없이 부르지 않는다.
+ *  - 답은 감사와 같은 길로 적는다(recordAuditResult — 확신 높은 거절은 감사 보류, 답이 곧 그 제품의 새 기준). 서버 쪽 탈(닿지 않음·5xx·401/403/404·429)은
+ *    항목의 시도로 세지 않고 다음 순위로, 진짜 시간 초과는 그 항목의 시도로 세고(세 번까지) 다음 순위로, 형식 오류·입력 초과·요청 거절은 그 항목의 실패다.
+ * 순위에 API 연결이 없으면 DB 를 읽지 않고 바로 끝난다.
+ */
+async function askRecheckDirect(ctx: JobContext<null>, settings: CrawlSettings): Promise<void> {
+  const limits = recheckLimits();
+  if (!settings.enabled || limits.askBatch === 0) return;
+  const lease = ctx.lease;
+  if (!lease) return;
+  await ensureAiTaskModels();
+  const plan = recheckReviewerPlan();
+  if (!plan.reviewers.some((reviewer) => recheckLaneOf(reviewer) === "api")) return;
+  const stream = await rollingStream();
+  if (!stream) return;
+  const queue = await pendingAuditItems(stream.id, limits.askBatch);
+  if (!queue.length) return;
+  const yielded = await recheckYields(settings, stream.id, limits.yieldHours);
+  if (yielded) {
+    ctx.log("published_recheck.yielded", { stream: stream.id, lane: "api", pending: queue.length, waitedHours: yielded.waitedHours });
+    return;
+  }
+  const startedAt = Date.now();
+  const deadlineAt = Math.min(startedAt + TICK_MS, ctx.deadlineAt ?? Infinity);
+  const left = () => deadlineAt - Date.now();
+  const remaining = () => left() - WRITE_MARGIN_MS;
+  const ceiling = qwenCallTimeoutMs();
+  const startable = () => !ctx.signal?.aborted && ctx.hasBudget() && left() >= QWEN_MIN_START_MS;
+  // 이 틱에 열리지 않은 API 순위. CLI 순위는 감사 잡이 적은 쉼만 본다
+  const paused = new Set<number>();
+  let asked = 0, failed = 0, noSource = 0, passed = 0, handedOff = 0, busy = 0, cutoff = 0;
+  const deferred: string[] = [];
+  items: for (const item of queue) {
+    if (!startable()) break;
+    const turn = recheckTurn(plan.reviewers, "api", paused, Date.now(), item.id);
+    if (!turn) { if (plan.reviewers.every((reviewer) => recheckSkips(reviewer, "api", paused))) break; continue; }
+    if (recheckLaneOf(turn) === "cli") { handedOff += 1; continue; }
+    if (!claimRecheckItem(item.id)) { busy += 1; continue; }
+    try {
+      let input: ReviewInput | null;
+      try { input = await loadAuditInput(item.slug, settings); }
+      catch (caught) {
+        failed += 1;
+        await markAuditInputFailed(item.id, caught instanceof Error && /^[a-z0-9_]{3,60}$/.test(caught.message) ? caught.message : "input_error", lease);
+        continue;
+      }
+      if (!input) { noSource += 1; await markAuditNoSource(item.id, lease); continue; }
+      const source: ReviewInput = input;
+      for (const reviewer of plan.reviewers) {
+        // 이 틱에 열리지 않은 API 순위·감사 잡이 쉼으로 적은 CLI 순위·이 항목에서 건너뛰는 순위는 넘긴다
+        if (recheckSkips(reviewer, "api", paused, Date.now(), item.id)) continue;
+        // 앞의 API 순위가 이 틱에 열리지 않아 CLI 순위 차례다 — 감사 잡에 맡긴다
+        if (recheckLaneOf(reviewer) === "cli") { handedOff += 1; continue items; }
+        if (!startable()) break items;
+        const pause = (reason: string) => { paused.add(reviewer.rank); noteRecheckRankPaused(reviewer, reason); deferred.push(`${reviewer.rank}:${reason}`); };
+        const endpoint = recheckDirectEndpoint(reviewer);
+        if (!endpoint) { pause("connection_unavailable"); continue; }
+        // 남은 시간이 상한보다 짧으면 그만큼 줄여 부른다 — 줄인 제한 시간에 걸린 것은 틱 끝 때문이라 적지 않는다
+        const timeoutMs = Math.min(ceiling, remaining());
+        if (timeoutMs <= 0) break items;
+        const shrunk = timeoutMs < ceiling;
+        const controller = new AbortController();
+        const abort = () => controller.abort();
+        ctx.signal?.addEventListener("abort", abort, { once: true });
+        const ownershipPoll = setInterval(() => { if (!ctx.hasBudget() || remaining() <= 0) controller.abort(); }, 250);
+        ownershipPoll.unref?.();
+        const callStartedAt = new Date();
+        let outcome: ReviewOutcome | null = null;
+        let error: QwenDirectErrorCode | null = null;
+        try {
+          outcome = await withLocalModelCapacity({ target: { kind: "audit", purpose: "audit", itemId: item.id, slug: item.slug }, input: source, lease,
+            promptVersion: REVIEW_PROMPT_VERSION, allowLegacy: false, servingRevision: null },
+          request => reviewWithRecheckEndpoint(source, { baseUrl: endpoint.baseUrl, apiKey: endpoint.apiKey, model: reviewer.model, timeoutMs,
+            signal: controller.signal, request }));
+        } catch (caught) {
+          if (caught instanceof LocalModelDomainRefusedError) {
+            // 도메인 증명이 이 항목을 거절했다(원본 짝이 맞지 않음·순위가 바뀜 등) — 이 항목에서만 이 순위를 잠시 건너뛰고 다음 순위로(다른 줄도 그 항목은 다음 순위로)
+            noteRecheckItemRankRefused(item.id, reviewer);
+            deferred.push(`${reviewer.rank}:refused:${caught.check}`);
+            continue;
+          }
+          if (caught instanceof ModelCapacityDeferredError) {
+            // 이 항목만의 미룸(앞선 호출이 보내진 중·같은 항목이 다른 요청에 묶임) — 항목을 넘긴다. 모델·전역 미룸이면 이 순위를 쉬고 다음 순위로
+            if (modelCapacityDeferralIsPerWork(caught.reason)) { passed += 1; continue items; }
+            pause(caught.reason);
+            continue;
+          }
+          if (!(caught instanceof QwenDirectError)) throw caught;
+          error = caught.code;
+        } finally {
+          clearInterval(ownershipPoll);
+          ctx.signal?.removeEventListener("abort", abort);
+        }
+        // 멈추라고 해서 끊긴 것·줄인 제한 시간(틱 끝)에 걸린 것은 실패가 아니다 — 적지 않는다
+        if (controller.signal.aborted || ctx.signal?.aborted || !ctx.hasBudget() || error === "qwen_cancelled" || error === "qwen_timeout" && shrunk) {
+          cutoff += 1;
+          break items;
+        }
+        const call = { itemId: item.id, startedAt: callStartedAt, provider: "local-direct", model: reviewer.model, promptVersion: REVIEW_PROMPT_VERSION, input: source };
+        if (outcome) {
+          asked += 1;
+          clearRecheckRankPause(reviewer);
+          await recordAuditResult({ ...call, ok: true, outcome }, lease, settings.auditHold);
+          continue items;
+        }
+        const code = error ?? "qwen_unreachable";
+        const endpointDown = qwenEndpointFailure(code);
+        // 서버 쪽 탈은 항목 탓이 아니다(세지 않음) — 진짜 시간 초과만은 그 항목의 시도로 센다(한 항목이 매 틱 이 순위를 막지 않게, 세 번까지)
+        await recordAuditResult({ ...call, ok: false, error: code, counted: !endpointDown || code === "qwen_timeout" }, lease);
+        if (!endpointDown) { failed += 1; continue items; }
+        pause(code);
+      }
+    } finally { releaseRecheckItem(item.id); }
+  }
+  ctx.log("published_recheck.asked", { stream: stream.id, lane: "api", asked, failed, noSource, passed, handedOff, busy, cutoff, deferred,
+    reviewers: plan.reviewers.map((row) => `${row.rank}:${row.provider}:${row.model}`) });
 }
 
 // ─────────────────────────── Qwen 직접 심사(남은 감사 모델 바꾸기 뒤) — 2026-10-31 jobs/product-audit.ts 에서 그대로 옮김 ───────────────────────────

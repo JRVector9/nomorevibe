@@ -74,7 +74,8 @@ export async function saveAiTaskExecutionConfig(input: unknown, actor: string): 
     /^[a-z_]{1,80}$/.test(issue.message) ? issue.message : "ai_task_execution_invalid_input"))] };
   const value: AiTaskExecutionInput = parsed.data, task = aiTask(value.task)!;
   try {
-    if (value.mode === "workload_pool" && (!task.routeId || task.wiring === "deferred" || task.id === "grok-session-check"))
+    // 「발행분 감사 · 변경 재판정」(audit-direct)은 두 잡이 순위 차례로 나눠 묻는다 — 작업 분산 실행이 없다
+    if (value.mode === "workload_pool" && (!task.routeId || task.wiring === "deferred" || task.wiring === "audit-direct" || task.id === "grok-session-check"))
       fail("ai_task_pool_route_not_supported");
     const [before, storedConnections] = await Promise.all([readAiTaskExecutionAdminView(value.task, value.slot), listAiConnections()]);
     if (before.revision !== value.expectedRevision) fail("ai_task_execution_revision_mismatch");

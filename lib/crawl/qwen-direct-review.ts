@@ -169,16 +169,23 @@ export async function reviewWithQwenDirect(input: ReviewInput, opts: {
       : reviewHash({ snapshot: input.snapshot, inputHash: input.inputHash, source: input.source, policyHash: input.policyHash,
         sourceRevisionHash: input.sourceRevisionHash, model: config.model, promptVersion: prompt.version, promptHash: prompt.hash }),
     cacheGeneration: prompt.cacheGeneration };
-  const httpStatus = seen.status;
-  if (httpStatus !== null && (httpStatus < 200 || httpStatus > 299)) throw new QwenDirectError(`qwen_http_${httpStatus}`, { status: httpStatus });
+  throw qwenDirectFailure(result, seen.status);
+}
+
+/**
+ * 게이트웨이 심사 길(reviewWithGateway)의 실패 → 직접 호출의 고정 코드. 답의 HTTP 상태가 2xx 가 아니면 qwen_http_<상태>, 아니면 실패 갈래마다.
+ * Qwen 직접 심사와 공개분 변경 재판정의 API 순위(recheck-direct-review.ts)가 같은 코드를 쓴다
+ */
+export function qwenDirectFailure(result: { error: string; detail?: string }, httpStatus: number | null): QwenDirectError {
+  if (httpStatus !== null && (httpStatus < 200 || httpStatus > 299)) return new QwenDirectError(`qwen_http_${httpStatus}`, { status: httpStatus });
   switch (result.error) {
-    case "timeout": throw new QwenDirectError("qwen_timeout");
-    case "cancelled": throw new QwenDirectError("qwen_cancelled");
-    case "input_too_large": throw new QwenDirectError("qwen_input_too_large");
-    case "not_configured": throw new QwenDirectError("qwen_not_configured");
+    case "timeout": return new QwenDirectError("qwen_timeout");
+    case "cancelled": return new QwenDirectError("qwen_cancelled");
+    case "input_too_large": return new QwenDirectError("qwen_input_too_large");
+    case "not_configured": return new QwenDirectError("qwen_not_configured");
     case "invalid_output": case "output_too_large":
-      throw new QwenDirectError("qwen_invalid_json", { detail: result.detail ?? result.error, status: httpStatus });
+      return new QwenDirectError("qwen_invalid_json", { detail: result.detail ?? result.error, status: httpStatus });
     // 연결 거절·끊김(답을 받기 전이거나 본문을 읽다가)
-    default: throw new QwenDirectError("qwen_unreachable", { detail: result.error, status: httpStatus });
+    default: return new QwenDirectError("qwen_unreachable", { detail: result.error, status: httpStatus });
   }
 }

@@ -47,21 +47,26 @@ function assistRoutes(stage: string, backendId: string): string[] {
   return tasks.map(task => `local-assist-${task}-${backendId}`);
 }
 
-/** Retain the contract history and audit format; CLI credentials remain in ai_connections. */
-async function saveLocalContract(tx: ProductTransaction, contract: LocalModelServingContract, actor: string): Promise<void> {
+/**
+ * Retain the contract history and audit format; CLI credentials remain in ai_connections. 「작업 ↔ 모델」 순위 저장(감사 직접 경로 로컬 계약)도 같은 함수로 쓴다 —
+ * 같은 계약이 이미 켜져 있으면 null(아무것도 쓰지 않음), 아니면 새 행.
+ */
+export async function saveLocalContract(tx: ProductTransaction, contract: LocalModelServingContract, actor: string,
+  note = '단계별 CLI 모델 설정'): Promise<{ id: number; routeId: string } | null> {
   const routeId = localModelContractRouteId(contract.backendId, contract.deploymentRevision);
   if (routeId.length > 64) fail('cli_stage_contract_identity_invalid');
   const contractHash = localModelContractHash(contract);
   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('model_serving_contracts'), hashtext(${routeId + ':' + contract.model}))`);
   const [previous] = await tx.select().from(modelServingContracts).where(and(eq(modelServingContracts.routeId, routeId),
     eq(modelServingContracts.model, contract.model), eq(modelServingContracts.enabled, true))).for('update');
-  if (previous?.contractHash === contractHash && previous.transport === 'direct' && previous.auth === 'none') return;
+  if (previous?.contractHash === contractHash && previous.transport === 'direct' && previous.auth === 'none') return null;
   if (previous) await tx.update(modelServingContracts).set({ enabled: false, updatedBy: actor, updatedAt: new Date() }).where(eq(modelServingContracts.id, previous.id));
   const [saved] = await tx.insert(modelServingContracts).values({ routeId, model: contract.model, contract: { ...contract, routeId }, contractHash,
-    auth: 'none', transport: 'direct', apiKeyCiphertext: null, enabled: true, updatedBy: actor, note: '단계별 CLI 모델 설정' }).returning({ id: modelServingContracts.id });
+    auth: 'none', transport: 'direct', apiKeyCiphertext: null, enabled: true, updatedBy: actor, note }).returning({ id: modelServingContracts.id });
   await tx.insert(operationsAudit).values(await adminAuditRow(actor, { action: 'model-serving-contract-save', target: `${routeId}:${contract.model}`,
     detail: { id: saved.id, previousId: previous?.id ?? null, contractHash, previousHash: previous?.contractHash ?? null,
-      auth: 'none', transport: 'direct', keyChanged: false, endpoint: contract.endpoint, protocol: contract.protocol, note: '단계별 CLI 모델 설정' } }));
+      auth: 'none', transport: 'direct', keyChanged: false, endpoint: contract.endpoint, protocol: contract.protocol, note } }));
+  return { id: saved.id, routeId };
 }
 
 /** Prepare only explicitly selected CLI sources; metadata checks never run model inference. */

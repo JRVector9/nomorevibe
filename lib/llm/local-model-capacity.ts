@@ -31,6 +31,11 @@ export type LocalModelCallContext = {
   /** Absolute admission cutoff supplied by the bounded assist job, before its dispatch headroom. */
   admissionDeadlineAt?: number;
   screenProof?: LocalModelScreenProof;
+  /**
+   * 계약을 고를 배포 리비전 — 주면 단계 풀(scopedModelDefinition)의 CLI 엔진 리비전 대신 이것을 쓴다(null = 리비전을 따지지 않는 로컬 계약).
+   * 「작업 ↔ 모델」 순위로 고른 연결을 부르는 호출(공개분 변경 재판정의 API 순위)만 준다 — 그 호출은 단계 풀의 모델을 따르지 않는다
+   */
+  servingRevision?: string | null;
 };
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 const object = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value));
@@ -96,8 +101,9 @@ export async function withLocalModelCapacity<T>(value: LocalModelCallContext,
       const purpose = context.target.kind === "assist" ? (isAuditAssistTask(context.target.task) ? "assist-audit" : "assist-primary")
         : context.target.purpose === "human_deepseek" || context.target.purpose === "deepseek_confirm" ? "human-review"
         : context.target.purpose === "screen" ? "screen-review" : "direct-review";
-      const selected = scopedModelDefinition(purpose);
-      const revision = selected?.cliEngine ? cliEngineRevision(selected.cliEngine) : undefined;
+      const selected = context.servingRevision !== undefined ? null : scopedModelDefinition(purpose);
+      const revision = context.servingRevision !== undefined ? context.servingRevision ?? undefined
+        : selected?.cliEngine ? cliEngineRevision(selected.cliEngine) : undefined;
       const control = await readModelCapacityCallerControl();
       if (control.mode === "disabled") {
         if (context.allowLegacy === false || revision) throw new ModelCapacityDeferredError("disabled");

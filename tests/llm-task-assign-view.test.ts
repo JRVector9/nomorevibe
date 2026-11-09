@@ -251,19 +251,46 @@ describe("2026-11-09 상태 문구 — 운영 관측(19:27 UTC)에서 틀렸던 
     expect(line.notes).toEqual([{ tone: "warn", text: warning }]);
   });
 
-  it("2026-11-09 「발행분 감사 · 변경 재판정」 서랍은 OpenCode·Claude CLI 연결의 모델을 고르게 하고, API 연결은 내지 않는다 — 실행 쪽이 순위를 읽는 작업이다", () => {
+  it("2026-11-09 「발행분 감사 · 변경 재판정」 서랍은 OpenCode·Claude CLI 와 API 연결의 모델을 연결마다 묶어 고르게 한다 — 실행 쪽이 순위를 읽는 작업이다", () => {
     // OpenCode 는 호스트에서 읽은 실제 목록(cliCatalog)에 있는 모델만 고를 수 있다
     const catalog = { cliVersion: "2.2.6", observedAt: LLM_NOW, models: ["deepseek/deepseek-v4.1-flash", "deepseek/deepseek-v4.1-pro"]
       .map(id => ({ id, label: id, variants: ["high"], maxModelLen: 1048576 })) };
     const connections = llmConnections.map(connection => connection.id === OPENCODE ? { ...connection, cliCatalog: catalog } : connection);
     const line = buildTaskRankEditor(connections, llmRankRows, () => "a".repeat(64)).lines.find(entry => entry.key === "product-audit#1")!;
     expect(line).toMatchObject({ label: "발행분 감사 · 변경 재판정", live: true, lock: null });
-    expect(new Set(line.options.map(option => option.provider))).toEqual(new Set([OPENCODE, CLAUDE]));
-    expect(line.options.map(option => option.model).sort()).toEqual(["deepseek/deepseek-v4.1-flash", "deepseek/deepseek-v4.1-pro", "sonnet"]);
-    // API 모델을 받는 감사 직접 경로(audit-review — gpu3090 Qwen 등)는 실행 쪽이 순위를 읽지 않는 「실제 적용 설정」 작업이다(재판정의 모델 설정이 아니다)
+    // API 연결(목록을 읽은 것)의 모델도 나온다 — 감사 직접 경로(local-audit)로 부른다. 목록을 못 읽은 연결(m1-qwen)은 고를 모델이 없다
+    expect(new Set(line.options.map(option => option.provider))).toEqual(new Set([GPU, MLX, SUPA, OPENCODE, CLAUDE]));
+    expect(line.options.map(option => option.model).sort()).toEqual(["deepseek-v4.1-flash-1017", "deepseek/deepseek-v4.1-flash", "deepseek/deepseek-v4.1-pro",
+      "gpt-oss-120b", "qwen3.6-35b-heretic", "qwen3.8-flash-next", "sonnet", "supa"]);
+    // 연결마다 묶인다(묶음 이름 = 연결 이름)
+    const groups = new Map(line.options.map(option => [option.model, option.group]));
+    expect(groups.get("gpt-oss-120b")).toBe(groups.get("deepseek-v4.1-flash-1017"));
+    expect(groups.get("gpt-oss-120b")).toContain("m3-mlx (2)");
+    expect(groups.get("qwen3.8-flash-next")).toContain("gpu3090-qwen");
+    expect(groups.get("sonnet")).toContain("Claude CLI");
+    // 감사 직접 경로 작업(audit-review — gpu3090 Qwen 등)은 그대로 실행 쪽이 순위를 읽지 않는 「실제 적용 설정」 작업이다
     const direct = buildTaskRankEditor(connections, llmRankRows, () => "a".repeat(64)).lines.find(entry => entry.key === "audit-review#1")!;
     expect(direct.live).toBe(false);
     expect(direct.lock).toContain("실제 적용 설정");
+  });
+
+  it("2026-11-09 「발행분 감사 · 변경 재판정」의 API 순위 호출은 local-audit 장부에서 이 작업으로 센다 — 직접 모델 작업의 설정에 없는 모델이면 그 작업에서 뺀다", () => {
+    const rows = [...llmRankRows, { task: "product-audit", slot: 1, rank: 1, connectionId: MLX, model: "gpt-oss-120b", options: {}, enabled: true },
+      { task: "product-audit", slot: 1, rank: 2, connectionId: CLAUDE, model: "sonnet", options: {}, enabled: true }];
+    const directCurrent: AiCurrentSlot = { task: "audit-review", slot: 1, source: "test", error: null, skip: null, notes: [],
+      uses: [{ kind: "api", baseUrl: "http://100.77.43.63:8090/v1", cliTool: null, provider: "local-direct", model: "qwen3.8-flash-next", origin: "test",
+        deviceId: "gpu3090-qwen", keyFrom: null }] };
+    const view = buildTaskAssignView(input({ observation: observationWith([
+      metric("local-audit", "local-direct", "gpt-oss-120b", "m3-mlx", 7), metric("local-audit", "local-direct", "qwen3.8-flash-next", "gpu3090-qwen", 5),
+      metric("product-audit", "claude-cli", "sonnet", "anthropic-cli", 3)]),
+    slots: [slotOf("product-audit", 1, {}, rows), slotOf("audit-review", 1, { current: directCurrent }, rows)] }));
+    const recheck = rowOf(view, "product-audit#1");
+    expect(recheck.actual.calls.map(call => [call.position, call.model, call.settled])).toEqual([[1, "gpt-oss-120b", 7], [2, "sonnet", 3]]);
+    expect(recheck.actual.warnings).toEqual([]);
+    // 직접 모델 작업은 자기 설정(qwen)만 — 재판정의 gpt-oss 호출을 「설정에 없는 모델 호출」로 보이지 않는다
+    const direct = rowOf(view, "audit-review#1");
+    expect(direct.actual.calls.map(call => [call.model, call.settled])).toEqual([["qwen3.8-flash-next", 5]]);
+    expect(direct.actual.warnings).toEqual([]);
   });
 
   it("F5 「쉼」이 멈춤을 가리지 않는다 — 입장 철회만 쌓이면 주의, 24시간 성공이 없으면 주의, 있으면 마지막 성공 시각; 멈춘 잡·웹 요청 작업은 경고하지 않는다", () => {

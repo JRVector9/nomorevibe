@@ -30,8 +30,13 @@ export const AI_TASK_KIND_LABELS: Readonly<Record<AiTaskKind, string>> = Object.
  * - local-direct: 고정 로컬 경로(local-*) — 이미 있는 정책 route 와 로컬 계약(장비 backend)만. 예산·장비 이름이 계약과 같아야 열려 만들지 않는다.
  * - uncapped: 용량 장부를 거치지 않는다(임베딩·재정렬·한국어 Qwen 직접 경로). 확인할 계약·경로가 없다.
  * - deferred: 경로 규칙이 아직 없다(보강 assist 는 작업·장비마다 route 가 다르고, 감사 캠페인은 시작할 때 모델을 굳힌다) — 저장은 받고 확인하지 않았다고 알린다.
+ * - audit-direct: 「발행분 감사 · 변경 재판정」(2026-11-09)의 API 순위 — 감사 직접 경로(route local-audit, 잡 audit-qwen)로 부른다. 저장이 그 연결·모델의
+ *   검증된 로컬 계약(local-openai-chat-v1, 연결 주소 readback + 1토큰 시험)과 정책 route(local-audit / local-direct / 모델)를 만든다(이미 있으면 그대로 쓴다).
+ *   CLI 순위는 감사 경로(routeId product-audit)의 CLI 계약을 만든다(예전 그대로).
  */
-export type AiTaskApiWiring = "engine-route" | "review-ai1" | "review-ai2" | "local-direct" | "uncapped" | "deferred";
+export type AiTaskApiWiring = "engine-route" | "review-ai1" | "review-ai2" | "local-direct" | "uncapped" | "deferred" | "audit-direct";
+/** 「발행분 감사 · 변경 재판정」의 API 순위가 쓰는 감사 직접 경로(장부 route — local-model-capacity-contract.ts localModelRoute 의 audit 목적) */
+export const AUDIT_DIRECT_ROUTE = "local-audit";
 
 export type AiTaskGroup = "review" | "text" | "search" | "audit" | "cli";
 export const AI_TASK_GROUP_LABELS: Readonly<Record<AiTaskGroup, string>> = Object.freeze({
@@ -122,10 +127,12 @@ export const AI_TASKS: readonly AiTaskDef[] = Object.freeze([
   task({ id: "screen-review", label: "화면 판별", group: "audit", kind: "vision", api: true, cliTools: tools("opencode"), routeId: "local-screen", wiring: "local-direct",
     jobs: ["audit-screen-review"], adminStage: "screen-review", assignmentStage: "screen", description: "제품 화면 사진을 보고 판별합니다." }),
   // 2026-11-09: 공개분 변경 재판정도 이 순위로 부른다(lib/crawl/published-recheck.ts recheckReviewerPlan) — 받는 CLI 는 감사 경로의 장부 binding(product_audit_cli)이
-  // 받는 것(Claude·OpenCode)뿐이다. Codex·Grok·API 연결은 장부 규칙(CHECK)·binding 이 없어 받지 않는다
-  task({ id: "product-audit", label: "발행분 감사 · 변경 재판정", group: "audit", kind: "chat", api: false, cliTools: tools("claude", "opencode"), routeId: "product-audit",
-    wiring: "deferred", jobs: ["product-audit"],
-    description: "사람이 연 발행분 감사와, 내용이 바뀐 공개 제품의 재판정이 이 순위로 모델을 부릅니다. 감사는 시작할 때 1순위를 고정하고, 재판정은 1·2·3순위를 차례로 씁니다." }),
+  // 받는 것(Claude·OpenCode)뿐이다. Codex·Grok 은 장부 규칙(CHECK)·binding 이 없어 받지 않는다.
+  // API 연결은 재판정만 받는다 — 감사 직접 경로(route local-audit, 잡 audit-qwen, binding direct:audit:<항목>:audit, CHECK 가지는 이미 있음)로 부른다(wiring audit-direct).
+  // 그래서 이 작업의 잡은 둘이다: CLI 순위는 product-audit, API 순위는 audit-qwen 이 묻는다(lib/crawl/published-recheck-lanes.ts 가 순위 차례를 맞춘다)
+  task({ id: "product-audit", label: "발행분 감사 · 변경 재판정", group: "audit", kind: "chat", api: true, cliTools: tools("claude", "opencode"), routeId: "product-audit",
+    wiring: "audit-direct", jobs: ["product-audit", "audit-qwen"],
+    description: "사람이 연 발행분 감사와, 내용이 바뀐 공개 제품의 재판정이 이 순위로 모델을 부릅니다. 재판정은 1·2·3순위를 차례로 씁니다(API 연결은 감사 직접 경로로). 사람이 연 감사는 시작할 때 CLI 순위 중 가장 앞의 것을 고정합니다(API 연결은 재판정만)." }),
   task({ id: "assist-review", label: "LLM 보강", group: "audit", kind: "chat", api: true, cliTools: tools("opencode"), wiring: "deferred", jobs: ["product-llm-assist-review"],
     adminStage: "assist-primary", assignmentStage: "assist", description: "응답 점검·저장소 이동 등 보강 작업을 모델에 묻습니다." }),
   task({ id: "assist-audit", label: "LLM 보강 독립 감사", group: "audit", kind: "chat", api: true, cliTools: tools("opencode"), wiring: "deferred", jobs: ["product-llm-assist-audit-review"],
