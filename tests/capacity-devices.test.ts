@@ -5,7 +5,10 @@ import { DEFAULT_DEVICE_IDLE_MS, DEFAULT_DEVICE_RESERVE_SLOTS, MODEL_CAPACITY_DE
   deviceCandidateSql, deviceFallbackLimit, deviceFits, deviceLending, deviceRoleRank, deviceRouteQuotaFits, deviceRouteQuotaGateSql, deviceSecondaryBound,
   deviceSettingsFromPolicyFallback, deviceStateCte, deviceStateFromRow, deviceStateSql, modelCapacityDeviceRoleSchema, modelCapacityDeviceSettingsSchema,
   modelCapacityRouteStateSchema, parseModelCapacityDeviceSettings, parseModelCapacityRouteQuotasInput, routeQuotaCap, routeQuotaGateCapped,
-  routeQuotasFromRecords, routeQuotasLimitIssue, routeQuotasToRecords, routeStatesFromJson, type ModelCapacityRouteState } from '@/lib/llm/capacity-devices';
+  routeQuotasFromRecords, routeQuotasLimitIssue, routeQuotasToRecords, routeStatesFromJson, type ModelCapacityRouteState,
+  MODEL_CAPACITY_MODEL_LIMIT_SAVE_AUDIT_ACTION, deviceModelLimitText, deviceModelQuotaFits, deviceModelQuotaGateSql, deviceModelUsageText,
+  modelCapacityModelStateSchema, modelLimitsAboveShared, modelLimitsFromRecords, modelLimitsToRecords, modelQuotaGateCapped, modelStatesFromJson,
+  parseModelCapacityModelLimitsInput, type ModelCapacityModelState } from '@/lib/llm/capacity-devices';
 
 const render = (query: ReturnType<typeof sql>) => new PgDialect().sqlToQuery(query);
 const generation = { epoch: 3, revision: 7, policyHash: 'a'.repeat(64) };
@@ -120,8 +123,8 @@ describe('candidate SQL', () => {
 
   it('counts occupancy from reserved/dispatched rows only (indeterminate holds nothing) and busy from rank-1 live/recent rows', () => {
     const query = render(deviceCandidateSql('supa', generation, '{}')).sql;
-    // helper_active + active CTE + busy CTE + route_use CTE (0169 route quotas: the same occupancy, split by route)
-    expect(query.match(/r\.state IN \('reserved','dispatched'\)/g)).toHaveLength(4);
+    // helper_active + active CTE + busy CTE + route_use CTE (0169 route quotas: the same occupancy, split by route) + model_use CTE (0170, split by model)
+    expect(query.match(/r\.state IN \('reserved','dispatched'\)/g)).toHaveLength(5);
     expect(query).not.toContain("'indeterminate'");
     expect(query).toContain('ro.role_rank = 1');
     expect(query).toContain("r.updated_at >= clock_timestamp() - s.idle_ms * interval '1 millisecond'");
@@ -281,5 +284,101 @@ describe('route quotas (step 2, 0169)', () => {
     for (const row of mapped.routes!) expect(modelCapacityRouteStateSchema.parse(row)).toEqual(row);
     expect(routeStatesFromJson({})).toEqual([]);
     expect(routeStatesFromJson(JSON.stringify(routes))).toEqual(mapped.routes);
+  });
+});
+
+describe('model limits (0170)', () => {
+  const DEEPSEEK = 'deepseek-v4.1-flash-1017', GPT = 'gpt-oss-120b';
+  const input = { deviceId: 'm3-mlx', expectedVersion: 4, limits: [{ model: GPT, maxSlots: 2, engineMax: 4 }, { model: DEEPSEEK, maxSlots: 1, engineMax: 1 }] };
+
+  it('parses the save input, sorts lines by model, defaults engineMax to null and names the refused field', () => {
+    const parsed = parseModelCapacityModelLimitsInput(input);
+    expect(parsed.limits).toEqual([{ model: DEEPSEEK, maxSlots: 1, engineMax: 1 }, { model: GPT, maxSlots: 2, engineMax: 4 }]);
+    expect(Object.isFrozen(parsed.limits)).toBe(true);
+    expect(parseModelCapacityModelLimitsInput({ ...input, limits: [{ model: GPT, maxSlots: 3 }] }).limits).toEqual([{ model: GPT, maxSlots: 3, engineMax: null }]);
+    const refuse = (value: unknown, code: string) => expect(() => parseModelCapacityModelLimitsInput(value)).toThrow(`model_capacity_model_limit_invalid:${code}`);
+    refuse({ ...input, limits: [{ model: GPT, maxSlots: 1 }, { model: GPT, maxSlots: 2 }] }, 'limits:duplicate_model');
+    refuse({ ...input, limits: [{ model: GPT, maxSlots: 5, engineMax: 4 }] }, 'limits.0.maxSlots:exceeds_engine');
+    refuse({ ...input, limits: [{ model: GPT, maxSlots: -1 }] }, 'limits.0.maxSlots');
+    refuse({ ...input, limits: [{ model: GPT, maxSlots: 257 }] }, 'limits.0.maxSlots');
+    refuse({ ...input, limits: [{ model: GPT, maxSlots: 1.5 }] }, 'limits.0.maxSlots');
+    refuse({ ...input, limits: [{ model: GPT, maxSlots: 0, engineMax: 0 }] }, 'limits.0.engineMax');
+    refuse({ ...input, limits: [{ model: ` ${GPT}`, maxSlots: 1 }] }, 'limits.0.model');
+    refuse({ ...input, limits: [{ model: 'x'.repeat(201), maxSlots: 1 }] }, 'limits.0.model');
+    refuse({ ...input, limits: [{ model: GPT, maxSlots: 1, extra: 1 }] }, 'limits.0');
+    refuse({ ...input, limits: Array.from({ length: 65 }, (_, index) => ({ model: `m${index}`, maxSlots: 1 })) }, 'limits');
+    refuse({ ...input, expectedVersion: 0 }, 'expectedVersion');
+    refuse({ ...input, extra: true }, 'root');
+    expect(MODEL_CAPACITY_MODEL_LIMIT_SAVE_AUDIT_ACTION).toBe('model-capacity-model-limit-save');
+  });
+
+  it('converts to and from the stored snake_case lines, warns (not refuses) above the shared limit', () => {
+    const parsed = parseModelCapacityModelLimitsInput(input);
+    const records = modelLimitsToRecords(parsed.limits);
+    expect(records).toEqual([{ model: DEEPSEEK, max_slots: 1, engine_max: 1 }, { model: GPT, max_slots: 2, engine_max: 4 }]);
+    expect(modelLimitsFromRecords(records)).toEqual(parsed.limits);
+    expect(modelLimitsFromRecords(JSON.stringify(records))).toEqual(parsed.limits);
+    expect(modelLimitsFromRecords([])).toEqual([]);
+    expect(() => modelLimitsFromRecords([{ model: GPT, max_slots: 3, engine_max: 2 }])).toThrow('model_capacity_model_limits_unreadable');
+    expect(() => modelLimitsFromRecords({})).toThrow('model_capacity_model_limits_unreadable');
+    expect(modelLimitsAboveShared([{ model: DEEPSEEK, maxSlots: 1 }, { model: GPT, maxSlots: 4 }], 2)).toEqual([GPT]);
+    expect(modelLimitsAboveShared([{ model: GPT, maxSlots: 2 }], 2)).toEqual([]);
+  });
+
+  it('mirrors the pre-check for a new request: waiting rows of the same model count, no line = no cap', () => {
+    const model = (name: string, over: Partial<ModelCapacityModelState> = {}): ModelCapacityModelState =>
+      ({ model: name, active: 0, waiting: 0, maxSlots: null, engineMax: null, ...over });
+    expect(deviceModelQuotaFits({}, GPT)).toEqual({ fits: true, atCap: false });
+    expect(deviceModelQuotaFits({ models: [model(GPT, { active: 9 })] }, GPT)).toEqual({ fits: true, atCap: false });
+    expect(deviceModelQuotaFits({ models: [model(DEEPSEEK, { active: 1, maxSlots: 1 })] }, DEEPSEEK)).toEqual({ fits: false, atCap: true });
+    expect(deviceModelQuotaFits({ models: [model(DEEPSEEK, { waiting: 1, maxSlots: 1 })] }, DEEPSEEK)).toEqual({ fits: false, atCap: true });
+    expect(deviceModelQuotaFits({ models: [model(DEEPSEEK, { maxSlots: 0 })] }, DEEPSEEK)).toEqual({ fits: false, atCap: true });
+    expect(deviceModelQuotaFits({ models: [model(DEEPSEEK, { active: 1, maxSlots: 1 }), model(GPT, { active: 1, maxSlots: 4 })] }, GPT).fits).toBe(true);
+    const state = { active: 3, limitSlots: 4, models: [model(DEEPSEEK, { active: 1, maxSlots: 1, engineMax: 1 }), model(GPT, { active: 2, maxSlots: 4, engineMax: 4 }),
+      model('unlimited', { active: 0, waiting: 2 })] };
+    expect(deviceModelUsageText(state)).toBe(`${DEEPSEEK} 1/1 · ${GPT} 2/4 · 공유 3/4`);
+    expect(deviceModelUsageText(state, name => name === DEEPSEEK ? 'm3-deepseek' : 'm3-gpt-oss')).toBe('m3-deepseek 1/1 · m3-gpt-oss 2/4 · 공유 3/4');
+    expect(deviceModelLimitText({ models: [model(DEEPSEEK, { maxSlots: 1, engineMax: 1 }), model(GPT, { maxSlots: 2, engineMax: 4 }), model('x', { maxSlots: 1 })] },
+      name => name === DEEPSEEK ? 'm3-deepseek' : name === GPT ? 'm3-gpt-oss' : name)).toBe('m3-deepseek 한도 1 / 엔진 1 · m3-gpt-oss 한도 2 / 엔진 4 · x 한도 1 / 엔진 ?');
+  });
+
+  it('pins the candidate predicate, the pre-check and the observation shape', () => {
+    const candidate = render(deviceCandidateSql('m3-mlx', generation, '{}')).sql;
+    for (const cte of ['model_limit', 'model_use', 'model_state']) expect(candidate).toContain(`${cte} AS MATERIALIZED`);
+    expect(candidate).toContain('jsonb_to_recordset(d.model_limits) AS x(model text, max_slots int, engine_max int)');
+    expect(candidate).toContain('LEFT JOIN model_state ms ON ms.model = q.model');
+    // absolute: its own AND line, outside the rank-1 / under-guarantee bypass
+    expect(candidate).toMatch(/\n\s+AND \(ms\.max_slots IS NULL OR ms\.active < ms\.max_slots\)\n\s+ORDER BY h\.helper/);
+    expect(candidate).toContain('GROUP BY r.model');
+    expect(candidate).not.toContain('engine_max <');
+    const state = render(deviceStateSql('m3-mlx', generation, '{}')).sql;
+    expect(state).toContain('FROM model_limit ml FULL JOIN model_use u ON u.model = ml.model) x) AS models');
+    expect(state).not.toContain('queue_ordinal');
+    const fresh = render(deviceModelQuotaGateSql('m3-mlx', generation, 'deepseek-v4.1-flash-1017', null));
+    expect(fresh.sql).toMatch(/^WITH model_limit AS MATERIALIZED/);
+    expect(fresh.sql).not.toContain('quota_state');      // the light gate does not re-run the whole device CTE
+    expect(fresh.sql).toContain('FROM model_state ms WHERE ms.model = $');
+    expect(fresh.sql).toContain('w.model = $');
+    expect(fresh.sql).not.toContain('w.route_id');       // any route, any provider: the exact model string
+    expect(fresh.sql).not.toContain('w.queue_ordinal <');
+    expect(fresh.params).toContain('deepseek-v4.1-flash-1017');
+    const own = render(deviceModelQuotaGateSql('m3-mlx', generation, GPT, '7e2c1a90-0000-4000-8000-000000000001')).sql;
+    expect(own).toContain('w.queue_ordinal < (SELECT o.queue_ordinal FROM model_capacity_requests o WHERE o.request_id = $');
+    expect(modelQuotaGateCapped(undefined)).toBe(false);
+    expect(modelQuotaGateCapped({ max_slots: 2, active: 1, ahead: 0 })).toBe(false);
+    expect(modelQuotaGateCapped({ max_slots: 2, active: 1, ahead: 1 })).toBe(true);
+    expect(modelQuotaGateCapped({ max_slots: 0, active: 0, ahead: 0 })).toBe(true);
+  });
+
+  it('maps the models jsonb into the state only when the row carries it', () => {
+    const base = { device_id: 'm3-mlx', source: 'table' as const, limit_slots: 2, secondary_cap: 2, idle_ms: 0, reserve_slots: 0, active: 1,
+      secondary_active: 1, secondary_bound: 2, primary_busy: false, lending: false, waiting: 0, waiting_primary: 0, version: 1, updated_at: null };
+    expect(deviceStateFromRow(base)).not.toHaveProperty('models');
+    const models = [{ model: DEEPSEEK, active: 1, waiting: 0, max_slots: 1, engine_max: 1 }, { model: 'other', active: 0, waiting: 2, max_slots: null, engine_max: null }];
+    const mapped = deviceStateFromRow({ ...base, models });
+    expect(mapped.models).toEqual([{ model: DEEPSEEK, active: 1, waiting: 0, maxSlots: 1, engineMax: 1 }, { model: 'other', active: 0, waiting: 2, maxSlots: null, engineMax: null }]);
+    for (const row of mapped.models!) expect(modelCapacityModelStateSchema.parse(row)).toEqual(row);
+    expect(modelStatesFromJson(JSON.stringify(models))).toEqual(mapped.models);
+    expect(modelStatesFromJson(null)).toEqual([]);
   });
 });

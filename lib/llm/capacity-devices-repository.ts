@@ -5,10 +5,11 @@ import { modelCapacityControl, modelCapacityDeviceRoles, modelCapacityDevices, o
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { adminAuditRow } from "@/lib/operations/admin-log";
 import { DrWriterFencedError, writerSiteActive } from "@/lib/operations/dr/epoch";
-import { MODEL_CAPACITY_DEVICE_SAVE_AUDIT_ACTION, MODEL_CAPACITY_ROUTE_QUOTA_SAVE_AUDIT_ACTION, deviceStateFromRow, deviceStateSql,
-  parseModelCapacityDeviceSettings, parseModelCapacityRouteQuotasInput, routeQuotaCap, routeQuotasFromRecords, routeQuotasLimitIssue, routeQuotasToRecords,
+import { MODEL_CAPACITY_DEVICE_SAVE_AUDIT_ACTION, MODEL_CAPACITY_MODEL_LIMIT_SAVE_AUDIT_ACTION, MODEL_CAPACITY_ROUTE_QUOTA_SAVE_AUDIT_ACTION,
+  deviceStateFromRow, deviceStateSql, modelLimitsAboveShared, modelLimitsFromRecords, modelLimitsToRecords, parseModelCapacityDeviceSettings,
+  parseModelCapacityModelLimitsInput, parseModelCapacityRouteQuotasInput, routeQuotaCap, routeQuotasFromRecords, routeQuotasLimitIssue, routeQuotasToRecords,
   type DeviceStateRow, type ModelCapacityDeviceRow, type ModelCapacityDeviceState, type ModelCapacityGeneration,
-  type ModelCapacityRouteQuota } from "./capacity-devices";
+  type ModelCapacityModelLimit, type ModelCapacityRouteQuota } from "./capacity-devices";
 import { parseModelCapacityPolicy } from "./capacity";
 
 /**
@@ -34,7 +35,7 @@ function toRow(row: DeviceRowRecord, roles: readonly RoleRowRecord[]): ModelCapa
     deviceId: row.deviceId, limitSlots: row.limitSlots, secondaryCap: row.secondaryCap, idleMs: row.idleMs, reserveSlots: row.reserveSlots,
     physicalLimit: row.physicalLimit, roles: Object.freeze(ranked), note: row.note, enabled: row.enabled, version: Number(row.version),
     updatedBy: row.updatedBy, createdAt: row.createdAt.toISOString(), updatedAt: row.updatedAt.toISOString(),
-    lendIdle: row.lendIdle, routeQuotas: routeQuotasFromRecords(row.routeQuotas),
+    lendIdle: row.lendIdle, routeQuotas: routeQuotasFromRecords(row.routeQuotas), modelLimits: modelLimitsFromRecords(row.modelLimits),
   });
 }
 
@@ -147,6 +148,49 @@ export async function saveModelCapacityRouteQuotas(tx: ProductTransaction, input
   await tx.insert(operationsAudit).values(await adminAuditRow(actor, { action: MODEL_CAPACITY_ROUTE_QUOTA_SAVE_AUDIT_ACTION, target: parsed.deviceId,
     detail: { version: after.version, expectedVersion: parsed.expectedVersion, limitSlots: after.limitSlots,
       before: quotaView(before.lendIdle, before.quotas), after: quotaView(after.lendIdle ?? true, after.routeQuotas ?? []), warnings } }));
+  return { before, after, warnings: Object.freeze(warnings) };
+}
+
+/**
+ * 모델 상한 저장(0170, 운영자 결정 2026-11-09) — 장비 한 대의 model_limits 를 통째로 바꾼다. 호출자의 tx 안에서, 던지면 아무것도 남지 않는다.
+ * 순서는 saveModelCapacityRouteQuotas 와 같다: replay 거부 → actor·입력 검증(zod) → DR writer fence(SHARE; fenced 면 site_fenced) → model_capacity_control
+ * id=1 FOR UPDATE → 장비 행 FOR UPDATE(있고 enabled 여야 한다) → version compare-and-set → UPDATE(model_limits, version + 1) → operations_audit 한 줄
+ * (MODEL_CAPACITY_MODEL_LIMIT_SAVE_AUDIT_ACTION, target = device_id, detail { version, expectedVersion, limitSlots, before, after, warnings }).
+ * 거절: `model_capacity_model_limit_invalid:<path>` · `model_capacity_model_limit_version_mismatch:<current>` · `model_capacity_model_limit_device_unconfigured`
+ * · `model_capacity_device_version_exhausted` · `model_capacity_control_missing` · DrWriterFencedError("site_fenced").
+ * 경고(저장은 한다): `max_exceeds_limit:<model>` = 상한이 공유 칸 수보다 크다(공유 칸이 먼저 막는다), `model_unmapped:<model>` = 지금 정책에 이 장비로 가는
+ * 그 모델의 route 가 없다(상한은 그 모델이 오면 적용된다), `policy_unreadable`.
+ * 장부 행은 건드리지 않는다 — 이미 잡힌 칸은 그대로 끝나고, 새 grant 부터 상한이 적용된다(DRAIN 불필요).
+ */
+export async function saveModelCapacityModelLimits(tx: ProductTransaction, input: unknown, actor: string): Promise<{
+  before: readonly ModelCapacityModelLimit[]; after: ModelCapacityDeviceRow; warnings: readonly string[] }> {
+  if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
+  if (typeof actor !== "string" || !actor.trim() || actor.length > 120) fail("model_capacity_model_limit_invalid:actor");
+  const parsed = parseModelCapacityModelLimitsInput(input);
+  if (!await writerSiteActive(tx)) throw new DrWriterFencedError("site_fenced");
+  const [control] = await tx.select({ id: modelCapacityControl.id, policy: modelCapacityControl.policy }).from(modelCapacityControl)
+    .where(eq(modelCapacityControl.id, 1)).for("update");
+  if (!control) fail("model_capacity_control_missing");
+  const [existing] = await tx.select().from(modelCapacityDevices).where(eq(modelCapacityDevices.deviceId, parsed.deviceId)).for("update");
+  if (!existing || !existing.enabled) fail("model_capacity_model_limit_device_unconfigured");
+  const current = Number(existing.version);
+  if (current !== parsed.expectedVersion) fail(`model_capacity_model_limit_version_mismatch:${current}`);
+  if (current >= 9007199254740991) fail("model_capacity_device_version_exhausted");
+  const warnings: string[] = modelLimitsAboveShared(parsed.limits, existing.limitSlots).map(model => `max_exceeds_limit:${model}`);
+  let policy: ReturnType<typeof parseModelCapacityPolicy> | null = null;
+  try { policy = control.policy === null ? null : parseModelCapacityPolicy(control.policy); } catch { policy = null; }
+  if (policy === null) warnings.push("policy_unreadable");
+  else for (const limit of parsed.limits)
+    if (!policy.routes.some(route => route.model === limit.model && route.groupId === parsed.deviceId)) warnings.push(`model_unmapped:${limit.model}`);
+  const before = modelLimitsFromRecords(existing.modelLimits);
+  const [saved] = await tx.update(modelCapacityDevices).set({ modelLimits: modelLimitsToRecords(parsed.limits),
+    version: sql`${modelCapacityDevices.version} + 1`, updatedBy: actor, updatedAt: sql`clock_timestamp()` })
+    .where(and(eq(modelCapacityDevices.deviceId, parsed.deviceId), eq(modelCapacityDevices.version, existing.version))).returning();
+  if (!saved) fail(`model_capacity_model_limit_version_mismatch:${current}`);
+  const after = toRow(saved, await rolesOf(tx, [parsed.deviceId]));
+  await tx.insert(operationsAudit).values(await adminAuditRow(actor, { action: MODEL_CAPACITY_MODEL_LIMIT_SAVE_AUDIT_ACTION, target: parsed.deviceId,
+    detail: { version: after.version, expectedVersion: parsed.expectedVersion, limitSlots: after.limitSlots,
+      before: before.map(limit => ({ ...limit })), after: (after.modelLimits ?? []).map(limit => ({ ...limit })), warnings } }));
   return { before, after, warnings: Object.freeze(warnings) };
 }
 

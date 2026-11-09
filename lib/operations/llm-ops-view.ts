@@ -62,7 +62,7 @@ const REASON_SHORT: Readonly<Record<string, string>> = Object.freeze({
   commit_unknown: "정산 결과 모름",
   // 용량·정책
   unmapped: "정책 경로 없음", device_unconfigured: "장비 행 없음", capacity: "칸 가득", queue_full: "대기열 가득",
-  blocked_unconfirmed: "미확인 점유로 가득", helper_ineligible: "도우미 경로 닫힘", route_quota: "경로 몫 가득", model_paused: "쉬는 중",
+  blocked_unconfirmed: "미확인 점유로 가득", helper_ineligible: "도우미 경로 닫힘", route_quota: "경로 몫 가득", model_quota: "모델 상한 가득", model_paused: "쉬는 중",
   // 작업
   no_task_models: "순위 없음", all_ranks_unusable: "쓸 수 있는 순위 없음", task_models_unreadable: "순위 못 읽음",
 });
@@ -135,6 +135,8 @@ export function llmReasonFix(code: string, at: LlmFixAt): LlmFix | null {
     case "helper_ineligible": return { href: "/admin/models/helpers", label: "도우미 보기" };
     // 경로 몫(step 2)이 가득 — 몫을 고치는 곳은 칸 배분(step 3) 표다
     case "route_quota": return { href: llmAllocationHref(), label: "칸 배분" };
+    // 모델 상한(0170)이 가득 — 상한은 장비 한도(장비 행)에 붙어 있다
+    case "model_quota": return { href: "/admin/models/devices#devices", label: "장비 한도" };
     default: return null;
   }
 }

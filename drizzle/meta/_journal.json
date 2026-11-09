@@ -1184,6 +1184,13 @@
       "when": 1794086401080,
       "tag": "0169_capacity_route_quotas",
       "breakpoints": true
+    },
+    {
+      "idx": 170,
+      "version": "7",
+      "when": 1794086401081,
+      "tag": "0170_capacity_model_limits",
+      "breakpoints": true
     }
   ]
 }

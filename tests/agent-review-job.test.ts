@@ -412,6 +412,14 @@ it("a route_quota refusal on the only rank stays a deferral (saturation), not al
   expect(mocks.claim).toHaveBeenCalledTimes(1);
   expect(mocks.record).not.toHaveBeenCalled(); expect(mocks.review).not.toHaveBeenCalled();
 });
+// 모델 상한(model_quota, 0170)도 같은 포화다
+it("a model_quota refusal on the only rank stays a deferral (saturation), not all_ranks_unusable", async () => {
+  const { ModelCapacityDeferredError } = await import("@/lib/llm/capacity-deferred");
+  mocks.claim.mockRejectedValue(new ModelCapacityDeferredError("model_quota"));
+  expect(await reviewCrawlCandidates(context())).toEqual({ done: false, deferred: "model_capacity" });
+  expect(mocks.claim).toHaveBeenCalledTimes(1);
+  expect(mocks.record).not.toHaveBeenCalled(); expect(mocks.review).not.toHaveBeenCalled();
+});
 it("stops new admission while settling an already running lane without aborting it", async () => {
   const { ModelCapacityDeferredError } = await import("@/lib/llm/capacity-deferred");
   let start!: () => void, release!: (value: unknown) => void, refused!: () => void;

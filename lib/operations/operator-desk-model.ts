@@ -59,6 +59,7 @@ export const CHANGE_UNDO: Readonly<Record<string, (target: string) => DeskUndo>>
   "runtime-settings-save": () => ({ text: "「실시간 한도」에서 작업 로그의 이전 값으로 다시 저장", href: "/admin/models/limits" }),
   "model-capacity-device-save": () => ({ text: "「장비 한도」에서 이전 칸 수로 다시 저장", href: "/admin/models/devices" }),
   "model-capacity-route-quota-save": () => ({ text: "작업 로그의 이전 경로 몫(보장·상한·빌려주기)으로 다시 저장", href: "/admin/models/devices" }),
+  "model-capacity-model-limit-save": () => ({ text: "작업 로그의 이전 모델 상한으로 다시 저장", href: "/admin/models/devices" }),
   "model-serving-contract-save": () => ({ text: "「서빙 계약·등록부」에서 이 계약을 끄면 이전 경로로 돌아갑니다", href: "/admin/models/contracts" }),
   "model-serving-contract-disable": () => ({ text: "「서빙 계약·등록부」에서 같은 계약을 다시 저장", href: "/admin/models/contracts" }),
   "model-registry-override-save": () => ({ text: "「서빙 계약·등록부」에서 덮어쓰기를 끄면 코드 기본값으로 돌아갑니다", href: "/admin/models/contracts" }),

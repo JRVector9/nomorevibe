@@ -44,8 +44,8 @@ import {
 import { ModelCapacityDeferredError } from "./capacity-deferred";
 import { LocalModelDomainRefusedError, localModelDomainRefusalEvidence } from "./local-model-domain-refusal";
 import { liveStateSql, occupyingStateSql, inFlightStateSql, sentStateSql } from "./capacity-states";
-import { deviceCandidateSql, deviceFallbackLimit, deviceRouteQuotaGateSql, routeQuotaGateCapped, type DeviceRouteQuotaGateRow,
-  type ModelCapacityGeneration } from "./capacity-devices";
+import { deviceCandidateSql, deviceFallbackLimit, deviceModelQuotaGateSql, deviceRouteQuotaGateSql, modelQuotaGateCapped, routeQuotaGateCapped,
+  type DeviceModelQuotaGateRow, type DeviceRouteQuotaGateRow, type ModelCapacityGeneration } from "./capacity-devices";
 import { helperGateStateFromRow, helperGateStatesSql, type HelperGateState, type HelperGateStateRow } from "./capacity-helpers";
 import { slotOnlyModelCapacity } from "./capacity-consumer-scope";
 import { DrWriterFencedError, fenceFromRow, writerSiteActive } from "@/lib/operations/dr/epoch";
@@ -224,6 +224,25 @@ async function routeQuotaCapped(tx: ProductTransaction, state: Control, deviceId
   const [row] = await tx.execute<DeviceRouteQuotaGateRow>(deviceRouteQuotaGateSql(deviceId, generation, JSON.stringify(state.policy.groupLimits ?? {}),
     routeId, ownRequestId));
   return routeQuotaGateCapped(row);
+}
+
+/**
+ * 모델 상한 사전 거절(0170, 운영자 결정 2026-11-09): 장비에서 이 model 이 상한에 닿았는가 — modelActive + 앞선 현재 세대 대기(같은 모델, 경로·공급자 무관) ≥ max_slots.
+ * 상한 줄이 없으면 false(오늘과 같다). `ownRequestId` 는 이미 줄에 선 이 요청, 새 요청은 null. 입장 후보 SQL 과 같은 model_state CTE, 같은 control 잠금 아래.
+ */
+async function modelQuotaCapped(tx: ProductTransaction, state: Control, deviceId: string, model: string, ownRequestId: string | null): Promise<boolean> {
+  if (state.policyHash === null) return fail("model_capacity_policy_hash_missing");
+  const generation: ModelCapacityGeneration = { epoch: state.epoch, revision: state.revision, policyHash: state.policyHash };
+  const [row] = await tx.execute<DeviceModelQuotaGateRow>(deviceModelQuotaGateSql(deviceId, generation, model, ownRequestId));
+  return modelQuotaGateCapped(row);
+}
+
+/** 상한에 닿은 요청의 자기 대기 행을 같은 TX 에서 거둔다(wait_cancelled) — 경로 몫·모델 상한 사전 거절이 같이 쓴다. */
+async function withdrawOwnWaiting(tx: ProductTransaction, existing: { requestId: string; state: string } | undefined): Promise<void> {
+  if (existing?.state !== "waiting") return;
+  const [withdrawn] = await tx.update(modelCapacityRequests).set({ state: "withdrawn", updatedAt: sql`clock_timestamp()` })
+    .where(and(eq(modelCapacityRequests.requestId, existing.requestId), eq(modelCapacityRequests.state, "waiting"))).returning();
+  if (withdrawn) await event(tx, withdrawn, "wait_cancelled", "waiting", "withdrawn");
 }
 
 /**
@@ -687,13 +706,16 @@ function requestSlot(checked: ModelCapacityRequest, logicalKey: string | null, m
     // 경로 몫(step 2): 이 장비에서 이 route 가 상한에 닿았으면 줄에 서지 않고 바로 미룬다(route_quota, 모델 범위) — 호출자는 다음 순위로 넘긴다.
     // 이미 줄에 서 있던 이 요청이면(상한이 그 사이 찼다) 그 대기 행을 같은 TX 에서 거둔다(도우미 grant-or-nothing 과 같은 wait_cancelled):
     // 남은 대기 행은 같은 작업의 다음 순위 요청을 fence 로 막고, 나중에 예약되면 쓸 사람 없이 칸을 쥔다. 몫이 없으면 0 행이라 지나간다.
-    if (await routeQuotaCapped(tx, state, route.groupId, checked.routeId, existing?.state === "waiting" ? existing.requestId : null)) {
-      if (existing?.state === "waiting") {
-        const [withdrawn] = await tx.update(modelCapacityRequests).set({ state: "withdrawn", updatedAt: sql`clock_timestamp()` })
-          .where(and(eq(modelCapacityRequests.requestId, existing.requestId), eq(modelCapacityRequests.state, "waiting"))).returning();
-        if (withdrawn) await event(tx, withdrawn, "wait_cancelled", "waiting", "withdrawn");
-      }
+    const ownWaiting = existing?.state === "waiting" ? existing.requestId : null;
+    if (await routeQuotaCapped(tx, state, route.groupId, checked.routeId, ownWaiting)) {
+      await withdrawOwnWaiting(tx, existing);
       return { kind: "deferred", reason: "route_quota" };
+    }
+    // 모델 상한(0170): 이 장비에서 이 model(장부 문자열, 공급자 무관)이 상한에 닿았으면 같은 방식으로 줄에 서지 않고 미룬다(model_quota, 모델 범위).
+    // 상한 줄이 없으면 0 행이라 지나간다 — 경로 몫이 보장한 경로라도 모델 상한은 넘지 못한다(절대 상한).
+    if (await modelQuotaCapped(tx, state, route.groupId, checked.model, ownWaiting)) {
+      await withdrawOwnWaiting(tx, existing);
+      return { kind: "deferred", reason: "model_quota" };
     }
     const oldActive = await tx.select({ epoch: modelCapacityRequests.epoch, revision: modelCapacityRequests.revision,
       policyHash: modelCapacityRequests.policyHash }).from(modelCapacityRequests)
