@@ -53,6 +53,9 @@ describe("대시보드 화면 모형", () => {
     expect(view.banner.title).toBe("결과 미확정 1건이 재실행을 기다립니다.");
     expect(view.banner.lines).toEqual(expect.arrayContaining(["최근 1시간 실패 2건(성공 394건).", "검색·후처리 단계를 확인하세요."]));
     expect(view.banner.lines.at(-1)).toBe("의도적 중지(잡 일시중지): 검색 키워드 검수 · 소개 검수");
+    // 띠는 의도적 중지를 자기 배지 한 줄로 따로 그린다 — notes 는 그 줄을 뺀 문제, paused 는 멈춘 작업 이름
+    expect(view.banner.notes).toEqual(view.banner.lines.slice(0, -1));
+    expect(view.banner.paused).toEqual(["검색 키워드 검수", "소개 검수"]);
     expect(view.todos.map(todo => todo.id)).toEqual(["indeterminate", `limit-${GPU}`, `limit-${SUPA}`]);
     expect(view.todos[0]).toMatchObject({ href: "/admin/models/history#retry", action: "재실행 패널" });
     expect(view.todos[0].detail).toContain("1차 AI 검수 · qwen3.8-flash-next · 2시간 0분 전 · 로컬 종료 기록 있음");

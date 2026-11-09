@@ -1,0 +1,83 @@
+/*
+ * 모델 대시보드(/admin/models) — 2026-11-09 압축 시안. 이름은 모두 md- 로 시작하고 관리자 셸(.admin-prototype .md-dash) 안으로 좁힌다:
+ * 전역 CSS 는 화면을 옮겨도 남고, 셸의 table·th·td·p 요소 규칙(작은 글자·큰 여백)을 이겨야 한다. 배지(.llm-level)·막대(.llm-bar)·접수 실행기(.llm-ops-runner)는 llm-ops.css 것을 쓴다.
+ */
+.admin-prototype .stack.md-dash { gap: 12px; }
+.admin-prototype .md-dash .md-link { color: var(--blue); font-weight: 600; white-space: nowrap; font-size: calc(13px + var(--admin-font-delta, 0px)); }
+.admin-prototype .md-dash .md-link:hover { text-decoration: underline; }
+.admin-prototype .md-dash .md-muted { color: var(--muted); }
+.admin-prototype .md-dash .md-stamps { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px 14px; }
+
+/* 판단 띠 — 배지 하나 + 제목이 한 줄, 그 아래 짧은 줄. 모양 상자를 따로 두지 않는다 */
+.admin-prototype .md-dash .md-banner { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 16px; align-items: center; padding: 10px 14px;
+  border: 1px solid var(--line); border-left-width: 5px; border-radius: 10px; background: var(--surface); min-width: 0; }
+.admin-prototype .md-dash .md-banner[data-level=ok] { border-left-color: var(--green); background: var(--green-soft); }
+.admin-prototype .md-dash .md-banner[data-level=warn] { border-left-color: var(--amber); background: var(--amber-soft); }
+.admin-prototype .md-dash .md-banner[data-level=bad] { border-left-color: var(--red); background: var(--red-soft); }
+.admin-prototype .md-dash .md-banner[data-level=unknown], .admin-prototype .md-dash .md-banner[data-level=idle] { border-left-color: var(--muted); border-left-style: dashed; background: var(--surface-2); }
+.admin-prototype .md-dash .md-banner-main { display: grid; gap: 3px; min-width: 0; align-content: start; }
+.admin-prototype .md-dash .md-banner-title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: 0; font-size: calc(15px + var(--admin-font-delta, 0px)); font-weight: 700; line-height: 1.45; letter-spacing: -.01em; }
+.admin-prototype .md-dash .md-banner-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: calc(13px + var(--admin-font-delta, 0px)); }
+.admin-prototype .md-dash .md-banner-side { display: grid; gap: 4px; justify-items: end; }
+
+/* 숫자 띠 — 접수 + KPI 4 한 줄 */
+.admin-prototype .md-dash .md-stats { display: grid; grid-template-columns: minmax(220px, 1.5fr) repeat(4, minmax(0, 1fr)); align-items: stretch;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--surface); min-width: 0; }
+.admin-prototype .md-dash .md-stat { display: grid; align-content: start; gap: 2px; min-width: 0; padding: 8px 14px; border-left: 1px solid var(--line); }
+.admin-prototype .md-dash .md-stat:first-child { border-left: 0; }
+.admin-prototype .md-dash .md-k { color: var(--muted); font-size: calc(13px + var(--admin-font-delta, 0px)); }
+.admin-prototype .md-dash .md-v { font-family: 'SFMono-Regular', Consolas, monospace; font-variant-numeric: tabular-nums; font-size: calc(20px + var(--admin-font-delta, 0px)); font-weight: 650;
+  letter-spacing: -.02em; line-height: 1.35; overflow-wrap: anywhere; }
+.admin-prototype .md-dash .md-stat[data-level=warn] .md-v { color: var(--amber); }
+.admin-prototype .md-dash .md-stat[data-level=bad] .md-v { color: var(--red); }
+.admin-prototype .md-dash .md-stat[data-level=unknown] .md-v { color: var(--muted); font-size: calc(16px + var(--admin-font-delta, 0px)); }
+.admin-prototype .md-dash .md-admission[data-level=ok] .md-v { color: var(--green); }
+.admin-prototype .md-dash .md-foot { color: var(--muted); font-size: calc(12px + var(--admin-font-delta, 0px)); overflow-wrap: anywhere; }
+.admin-prototype .md-dash .md-admission .llm-ops-runner { margin-top: 4px; }
+
+/* 패널 · 표 */
+.admin-prototype .md-dash .md-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 12px; align-items: start; }
+.admin-prototype .md-dash .md-panel { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); min-width: 0; }
+.admin-prototype .md-dash .md-panel-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 4px 12px; padding: 9px 14px; border-bottom: 1px solid var(--line); }
+.admin-prototype .md-dash .md-panel-head h2 { margin: 0; font-size: calc(15px + var(--admin-font-delta, 0px)); font-weight: 700; letter-spacing: -.01em; }
+.admin-prototype .md-dash .md-acts { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; justify-content: flex-end; }
+.admin-prototype .md-dash .md-empty { padding: 10px 14px; color: var(--muted); font-size: calc(13px + var(--admin-font-delta, 0px)); }
+.admin-prototype .md-dash .md-notice { margin: 10px 14px 0; }
+.admin-prototype .md-dash .md-scroll { overflow-x: auto; min-width: 0; }
+/* 패널 맨 아래 표 — 칸 배경이 패널의 둥근 모서리를 덮지 않게 */
+.admin-prototype .md-dash .md-panel > .md-scroll:last-child { border-radius: 0 0 9px 9px; }
+.admin-prototype .md-dash .md-table { border-collapse: separate; border-spacing: 0; width: 100%; font-size: calc(13px + var(--admin-font-delta, 0px)); }
+.admin-prototype .md-dash .md-table th, .admin-prototype .md-dash .md-table td { padding: 6px 10px; text-align: left; vertical-align: middle; border-bottom: 1px solid var(--line); background: var(--surface); font-size: inherit; }
+.admin-prototype .md-dash .md-table thead th { background: var(--surface-2); color: var(--muted); font-weight: 650; white-space: nowrap; }
+.admin-prototype .md-dash .md-table tbody tr:last-child > * { border-bottom: 0; }
+.admin-prototype .md-dash .md-table .r { text-align: right; }
+.admin-prototype .md-dash .md-table .nowrap { white-space: nowrap; }
+.admin-prototype .md-dash .md-t { display: block; font-weight: 650; }
+.admin-prototype .md-dash .md-d { display: block; color: var(--muted); overflow-wrap: anywhere; }
+.admin-prototype .md-dash .md-wrap { overflow-wrap: anywhere; }
+.admin-prototype .md-dash .md-tip { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--muted); color: var(--muted);
+  font-size: 11px; font-weight: 700; cursor: help; vertical-align: 1px; }
+.admin-prototype .md-dash .md-todos { min-width: 420px; }
+.admin-prototype .md-dash .md-todos td { vertical-align: top; }
+.admin-prototype .md-dash .md-todo-level { width: 1%; white-space: nowrap; }
+.admin-prototype .md-dash .md-todo-acts { text-align: right; }
+.admin-prototype .md-dash .md-occ { min-width: 340px; }
+.admin-prototype .md-dash .md-occ td { padding-block: 5px; }
+.admin-prototype .md-dash .md-occ-bar { width: 36%; }
+.admin-prototype .md-dash .md-occ .llm-bar { display: block; min-width: 60px; height: 8px; }
+.admin-prototype .md-dash .md-stages { min-width: 560px; }
+.admin-prototype .md-dash .md-stage-link { font-weight: 600; }
+.admin-prototype .md-dash .md-stage-link:hover { color: var(--blue); text-decoration: underline; }
+
+@media (max-width: 900px) {
+  .admin-prototype .md-dash .md-grid { grid-template-columns: minmax(0, 1fr); }
+  .admin-prototype .md-dash .md-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .admin-prototype .md-dash .md-stat { border-left: 0; border-top: 1px solid var(--line); }
+  .admin-prototype .md-dash .md-stat:nth-child(odd):not(:first-child) { border-left: 1px solid var(--line); }
+  .admin-prototype .md-dash .md-admission { grid-column: 1 / -1; border-top: 0; }
+}
+@media (max-width: 640px) {
+  .admin-prototype .md-dash .md-banner { grid-template-columns: minmax(0, 1fr); }
+  .admin-prototype .md-dash .md-banner-side { justify-items: start; }
+  .admin-prototype .md-dash .md-stamps { justify-content: flex-start; }
+}

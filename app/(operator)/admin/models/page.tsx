@@ -9,6 +9,7 @@ import { modelsLegacyTabHref } from "../workspace-navigation";
 import "../status/operations.css";
 import "./models.css";
 import "./llm-ops.css";
+import "./dashboard.css";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "LLM 운영 — NoMoreVibe", robots: { index: false } };

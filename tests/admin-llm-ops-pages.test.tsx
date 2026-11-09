@@ -98,27 +98,35 @@ describe("LLM 운영 — 안 쓰는 모델 「삭제」(2026-11-08)", () => {
 });
 
 describe("대시보드(/admin/models) 그리기", () => {
-  it("판단 띠·접수 한 곳·KPI 4·먼저 할 일 3·장비 점유 막대·단계 띠를 실제 읽기에서 그린다", async () => {
+  it("판단 띠·숫자 띠(접수 + KPI 4)·먼저 할 일 3·서버 점유 표·단계별 상태 표를 실제 읽기에서 그린다", async () => {
     const html = renderToStaticMarkup(await ModelsDashboardSlot({ readOnly: false }));
     expect(mocks.observation).toHaveBeenCalledWith({ throughput: false });
-    expect(html).toContain('class="llm-banner" data-level="warn"');
-    expect(html).toContain("결과 미확정 1건이 재실행을 기다립니다.");
-    // 접수 버튼은 한 곳 — 기존 운영 실행기 접수(사유 확인 대화상자)를 그대로 쓴다
+    expect(html).toContain('class="md-banner" data-level="warn"');
+    // 한 메시지에 모양은 한 번 — 띠 제목은 「▲ 주의」 배지 하나, 따로 선 모양 상자가 없다
+    const banner = html.match(/<section class="md-banner"[^]*?<\/section>/)![0];
+    expect(banner).not.toContain("llm-banner-shape");
+    expect(banner).toMatch(/<h2 id="llm-banner-title"[^>]*><span class="llm-level" data-level="warn"><span class="llm-level-shape" aria-hidden="true">▲<\/span>주의<\/span>결과 미확정 1건이 재실행을 기다립니다\.<\/h2>/);
+    expect(banner.match(/llm-level-shape/g)).toHaveLength(2);
+    // 의도적 중지는 자기 배지 하나로 따로 한 줄
+    expect(banner).toMatch(/data-paused=""><span class="llm-level" data-level="idle"><span class="llm-level-shape" aria-hidden="true">‖<\/span>의도적 중지<\/span>검색 키워드 검수 · 소개 검수\(잡 일시중지\)<\/p>/);
+    expect(banner).not.toContain("의도적 중지(잡 일시중지):");
+    expect(banner).toContain('href="/admin/models/history#retry"');
+    // 접수 버튼은 한 곳(숫자 띠의 첫 칸) — 기존 운영 실행기 접수(사유 확인 대화상자)를 그대로 쓴다
     expect(html.match(/접수 중지<\/button>/g)).toHaveLength(1);
-    expect(html).toContain('id="admission"');
+    expect(html).toMatch(/<div id="admission" class="md-stat md-admission"[^]*?OPEN[^]*?접수 중지<\/button>/);
     expect(html).toMatch(/data-kpi="running"[^]*?4 \/ 17/);
-    expect(html).toMatch(/data-kpi="retry"[^]*?>1<\/div>/);
-    expect(html.match(/class="llm-todo"/g)).toHaveLength(3);
+    expect(html).toMatch(/data-kpi="retry"[^]*?>1<\/span>/);
+    expect(html.match(/<tr data-todo=/g)).toHaveLength(3);
     // 미확정은 기록 › 재실행 대기로 가고, 지원 단계면 할 일에서 바로 다시 대기열에 넣는다(PR 3)
-    expect(html).toContain('href="/admin/models/history#retry"');
     expect(html).toMatch(/data-todo="indeterminate"[^]*?>[^<]+ 다시 대기열<\/button>[^]*?재실행 패널 →/);
     expect(html).toContain(`href="/admin/models/llm?edit=${GPU}&amp;fix=limit#conn-${GPU}-limit"`);
     expect(html).toContain('aria-label="gpu3090-qwen 점유 2 / 5"');
-    expect(html.match(/class="llm-stage"/g)).toHaveLength(7);
+    expect(html).toContain('href="/admin/models/devices">장비 한도 →</a>');
+    expect(html.match(/<tr data-stage=/g)).toHaveLength(7);
     expect(text(html)).toContain("일부 중지: 검색 키워드 검수");
-    // 상태는 색만으로 가르지 않는다 — 모양과 글자가 함께
+    // 상태는 색만으로 가르지 않는다 — 모양과 글자가 함께. 범례 줄은 지웠다(배지에 글자가 있다)
     expect(html).toContain('<span class="llm-level-shape" aria-hidden="true">▲</span>주의');
-    for (const label of ["정상", "느림·주의", "멈춤·실패", "의도적 중지·쉼", "확인 불가"]) expect(html).toContain(`</span>${label}</span>`);
+    expect(html).not.toContain("llm-legend");
   });
   it("읽지 못하면 숫자 자리에 0 대신 「확인 불가」, 접수 버튼은 잠긴다", async () => {
     mocks.observation.mockResolvedValue(unavailableAdminModels());
@@ -126,8 +134,8 @@ describe("대시보드(/admin/models) 그리기", () => {
     mocks.jobs.mockRejectedValue(new Error("down"));
     mocks.connections.mockRejectedValue(new Error("down"));
     const html = renderToStaticMarkup(await ModelsDashboardSlot({ readOnly: false }));
-    expect(html.match(/class="llm-kpi-value llm-num">확인 불가</g)).toHaveLength(4);
-    expect(html).not.toMatch(/class="llm-kpi-value llm-num">0</);
+    expect(html.match(/class="md-v llm-num">확인 불가</g)).toHaveLength(4);
+    expect(html).not.toMatch(/class="md-v llm-num">0</);
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*>DRAIN 으로 · 접수 중지<\/button>/);
     expect(html).toContain("장부를 읽지 못해 할 일을 정하지 못했습니다");
   });
