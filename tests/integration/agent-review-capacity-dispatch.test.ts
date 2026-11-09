@@ -23,6 +23,7 @@ import { requestJob } from '@/lib/jobs/control';
 import { tryAcquireRole, releaseRole, type RoleLease } from '@/lib/jobs/role-leader';
 import { jobsForRole } from '@/lib/jobs/catalog';
 import { setServingContractSnapshotForTest } from '@/lib/llm/serving-contract-store';
+import { previewModelCapacityUnknowns, requeueModelCapacityUnknowns } from '@/lib/operations/model-capacity-requeue';
 import { ensureSchema, TEST_DATABASE_URL } from './setup';
 import { directContractRow } from './direct-engine-fixtures';
 
@@ -364,6 +365,32 @@ it('native EOF without a terminal retains charge and a new actual tick cannot PO
       .toMatchObject({ status: 'failed' });
     expect(await requests()).toContainEqual(unknown); expect(calls.count).toBe(1);
   }, true);
+}));
+
+// 2026-11-09 운영: crawl-agent-review 미확정 4건을 「다시 대기열」에 넣자 4건 모두 건너뜀(skipped)으로 남았다 — 1차가 이미 끝난 후보(사람·거절·발행)를
+// 넣지도 닫지도 않았다. 이제 그런 행은 할 일이 끝났으므로 닫고(done), 1차를 기다리는 후보는 실패 대기를 풀어 다시 넣는다.
+it('2026-11-09 「다시 대기열」: 1차를 기다리는 후보는 다시 넣을 행으로, 사람이 그 뒤 정한 후보의 미확정 행은 넣지 않고 닫기만 한다', () => exercise(async () => {
+  const context = await source(); await mode('open');
+  await serve(async (_endpoint, calls) => { await tick(); expect(calls.count).toBe(1); }, true);
+  const [unknown] = await requests(); expect(unknown).toMatchObject({ state: 'indeterminate', logical_work_key: `ai1:${context.candidate.id}` });
+  const requestId = String(unknown.request_id), failed = await attempts(context.candidate.id);
+  expect(failed.map(row => row.state)).toEqual(['failed']);
+  // 1차를 기다리는 후보(실패 대기 중) — 누르면 다시 넣는다(미리보기는 쓰지 않는다)
+  expect((await previewModelCapacityUnknowns([requestId])).get(requestId)).toMatchObject({ outcome: 'requeued', reason: 'requeued' });
+  expect(await attempts(context.candidate.id)).toEqual(failed);
+  // 그 사이 사람이 정했다 — 1차가 할 일은 없다
+  await admin`UPDATE crawl_candidates SET state='rejected', reason='not_a_product', decided_by='jr' WHERE id=${context.candidate.id}`;
+  const decided = (await admin`SELECT to_jsonb(c) AS row FROM crawl_candidates c WHERE id=${context.candidate.id}`)[0].row;
+  expect((await previewModelCapacityUnknowns([requestId])).get(requestId)).toMatchObject({ outcome: 'done', reason: 'candidate_decided' });
+  expect(await requeueModelCapacityUnknowns({ routeId: 'crawl-agent-review', operator: 'fixture', note: '2026-11-09 repro' })).toEqual({
+    groups: [{ routeId: 'crawl-agent-review', requests: 1, requeued: 0, done: 1, skipped: 0, closed: 1, left: [], error: null }], closed: 1, leftRows: [] });
+  const [closed] = await requests();
+  expect(closed).toMatchObject({ request_id: unknown.request_id, state: 'withdrawn', dispatch_binding: unknown.dispatch_binding,
+    terminal_evidence: { kind: 'operator_review', note: '2026-11-09 repro · crawl-agent-review · 후보 판정이 이미 남(사람·거절·발행)' } });
+  expect(await events(requestId)).toEqual(['queued','reserved','dispatch_started','dispatch_indeterminate','dispatch_reviewed']);
+  // 사람 결정·시도 기록은 그대로다
+  expect((await admin`SELECT to_jsonb(c) AS row FROM crawl_candidates c WHERE id=${context.candidate.id}`)[0].row).toEqual(decided);
+  expect(await attempts(context.candidate.id)).toEqual(failed);
 }));
 
 it('caller abort after native POST retains unknown charge and a fresh-signal tick cannot POST again', () => exercise(async () => {

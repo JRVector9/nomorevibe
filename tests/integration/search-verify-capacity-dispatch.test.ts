@@ -490,7 +490,7 @@ it("2026-11-08 「다시 대기열」: 검수 못 한 제품은 시도를 되돌
   const lostBefore = await profileRow(lost.product.id), doneBefore = await profileRow(done.product.id);
   expect(canRequeueUnknownRoute(jobName)).toBe(true);
   expect(await tracked(requeueModelCapacityUnknowns({ routeId: jobName, operator: "fixture", note: "2026-11-08 repro" })))
-    .toEqual({ groups: [{ routeId: jobName, requests: 2, requeued: 1, done: 1, skipped: 0, closed: 2, error: null }], closed: 2 });
+    .toEqual({ groups: [{ routeId: jobName, requests: 2, requeued: 1, done: 1, skipped: 0, closed: 2, left: [], error: null }], closed: 2, leftRows: [] });
   expect(await unknowns()).toEqual([]);
   // 실패 원인(timeout)은 남아 다음 시도가 나눠 검수를 고르고, updated_at(30일 재생성 기준)은 그대로다. 옛 실행은 source_revision 으로 막힌다.
   expect(await profileRow(lost.product.id)).toEqual({ ...lostBefore, verify_attempts: 0, verify_retry_at: null, source_revision: Number(lostBefore.source_revision) + 1 });

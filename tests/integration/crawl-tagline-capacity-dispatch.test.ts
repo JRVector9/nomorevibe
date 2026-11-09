@@ -21,6 +21,7 @@ import { jobsForRole } from "@/lib/jobs/catalog";
 import { batchCanaryAnchorKey, batchPolicyHash } from "@/lib/jobs/batches";
 import { STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { setServingContractSnapshotForTest } from "@/lib/llm/serving-contract-store";
+import { canRequeueUnknownRoute, previewModelCapacityUnknowns, requeueModelCapacityUnknowns } from "@/lib/operations/model-capacity-requeue";
 import { ensureSchema, TEST_DATABASE_URL } from "./setup";
 import { inTextRank, pinTextRanks, textContract } from "../text-task-ranks-fixture";
 
@@ -346,6 +347,47 @@ it("passes a candidate fenced by its own unknown phase row and keeps writing the
     expect((await admin`SELECT state FROM model_capacity_requests WHERE request_id=${unknown.request_id}::uuid`)[0].state).toBe("indeterminate");
     expect(await admin`SELECT state FROM model_capacity_requests WHERE owner_instance_id=${prefix} AND request_id<>${unknown.request_id}::uuid`)
       .toEqual(next.map(() => ({ state: "settled" })));
+  });
+}), 20_000);
+
+// 2026-11-09: 실패를 적지 못한 미확정 단계 행(같은 세대의 「보낸 단계」 — fence·crawl_tagline_phase_idx)은 그 후보를 세대가 바뀔 때까지 매 틱 넘기게 했다.
+// 「다시 대기열」(crawl-tagline 지원)은 그 후보를 다시 넣고 행을 닫아 다음 틱이 짓게 하고, 그 사이 사람이 소개를 적은 후보의 행은 넣지 않고 닫는다.
+it("2026-11-09 「다시 대기열」: 미확정 단계 행에 막힌 후보는 다시 넣어 다음 틱이 짓고, 사람이 소개를 적은 후보의 행은 닫기만 한다", exercise(async () => {
+  const stuck = await seed(), human = await seed();
+  await server(async ({ bodies, setReply }) => {
+    setReply(response => { response.end('{"partial":'); });
+    expect(await custom(async lease => {
+      for (const task of [stuck, human]) expect(await tracked(writeCrawlTaglineWithModelCapacity(task, lease, { roleLease: role, timeoutMs: 1000 })))
+        .toMatchObject({ kind: "result", result: { ok: false } });
+    })).toMatchObject({ status: "completed" }); expect(bodies).toHaveLength(2);
+    const unknowns = async () => Array.from(await admin`SELECT request_id, logical_member_keys FROM model_capacity_requests
+      WHERE owner_instance_id=${prefix} AND state='indeterminate' ORDER BY queue_ordinal`);
+    const [stuckRow, humanRow] = await unknowns();
+    expect([stuckRow.logical_member_keys, humanRow.logical_member_keys]).toEqual([[`crawl-tagline:${stuck.candidate.id}`], [`crawl-tagline:${human.candidate.id}`]]);
+    await admin`INSERT INTO crawl_taglines(repo,tagline,source,model,source_hash,document_at,written_by)
+      VALUES(${human.candidate.repo},'Human line','page','',${"0".repeat(64)},now(),'jr')`;
+    setReply(response => { response.end(JSON.stringify(replyBody())); });
+    // 고치기 전 모양: 막힌 후보는 넘겨지고(새 요청 없음) 소개도 없다
+    expect(await tick()).toMatchObject({ status: "completed" });
+    expect(bodies).toHaveLength(2);
+    expect(await admin`SELECT repo FROM crawl_taglines WHERE repo=${stuck.candidate.repo}`).toEqual([]);
+    // 미리보기와 실제가 같은 판정을 낸다
+    const preview = await tracked(previewModelCapacityUnknowns([stuckRow.request_id, humanRow.request_id]));
+    expect([preview.get(stuckRow.request_id), preview.get(humanRow.request_id)].map(row => row && [row.outcome, row.reason]))
+      .toEqual([["requeued", "requeued"], ["done", "tagline_done"]]);
+    expect(canRequeueUnknownRoute(jobName)).toBe(true);
+    expect(await tracked(requeueModelCapacityUnknowns({ routeId: jobName, operator: "fixture", note: "2026-11-09 repro" }))).toEqual({
+      groups: [{ routeId: jobName, requests: 2, requeued: 1, done: 1, skipped: 0, closed: 2, left: [], error: null }], closed: 2, leftRows: [] });
+    expect(await unknowns()).toEqual([]);
+    const reviewed = await admin`SELECT request_id, state, terminal_evidence->>'note' AS note FROM model_capacity_requests
+      WHERE request_id=ANY(${[stuckRow.request_id, humanRow.request_id]}::uuid[]) ORDER BY queue_ordinal`;
+    expect(reviewed.map(row => [row.state, row.note])).toEqual([["withdrawn", "2026-11-09 repro · crawl-tagline · 다시 넣음"],
+      ["withdrawn", "2026-11-09 repro · crawl-tagline · 소개가 이미 있음"]]);
+    // 다음 틱은 막혔던 후보를 새로 묻고 소개를 적는다. 사람이 적은 줄은 그대로다
+    expect(await tick()).toMatchObject({ status: "completed" });
+    expect(bodies).toHaveLength(3);
+    expect(await admin`SELECT tagline FROM crawl_taglines WHERE repo=${stuck.candidate.repo}`).toEqual([{ tagline: "Document manager" }]);
+    expect(await admin`SELECT tagline, written_by FROM crawl_taglines WHERE repo=${human.candidate.repo}`).toEqual([{ tagline: "Human line", written_by: "jr" }]);
   });
 }), 20_000);
 
