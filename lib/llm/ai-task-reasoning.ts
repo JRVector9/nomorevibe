@@ -1,7 +1,12 @@
 import type { AiCliTool } from "./ai-tasks";
 import { isCliEngineTask } from "./cli-engine-config";
 
-/** OpenCode variants come only from the actual host catalog; the other adapters retain their existing contracts. */
+/**
+ * OpenCode variants come only from the actual host catalog; the other adapters retain their existing contracts.
+ * Claude CLI rank efforts reach the process only on first/second review (reviewCliArgs `--effort`). Intro check pins `--effort high`
+ * and reads stage pools, and publish-classify takes Codex/Claude effort from the connect agent config — neither reads rank options,
+ * so they offer none here (lib/operations/cli-task-usage.ts shows them read-only). Codex is accepted only by publish-classify.
+ */
 export function aiTaskReasoningEfforts(task: string, cliTool: AiCliTool | null, model: string, catalogVariants: readonly string[] = []): readonly string[] {
   if (["first-review", "second-review"].includes(task)) {
     if (cliTool === "grok") {
