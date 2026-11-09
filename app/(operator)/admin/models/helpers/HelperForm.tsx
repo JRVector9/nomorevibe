@@ -49,7 +49,7 @@ function NumberField({ name, label, value, defaultValue, unit, note, readOnly }:
       <span className="text-fg-3">{unit}</span>
       <span className={`rounded-full px-1.5 font-semibold ${overridden ? "bg-amber-100 text-amber-900" : "text-fg-3"}`}>{overridden ? "바꿈" : "기본값"}</span>
     </span>
-    <span className="text-fg-3">기본 {defaultValue}{unit} · {note}</span>
+    <span className="text-fg-3" title={note}>기본 {defaultValue}{unit}</span>
   </label>;
 }
 
@@ -89,8 +89,7 @@ function ModeControls({ helper, readOnly }: { helper: HelperRowView; readOnly?: 
         changes={[{ label: "모드", before: helper.modeLabel, after: "꺼짐" }]} summary="이 장비가 더는 돕지 않습니다. 우선 역할 일은 그대로입니다." />}
       {helper.stops.length > 0 && <ConfirmSubmit label="자동 정지 해제" confirmLabel="해제 확인" formAction={clearAction} pending={clearPending} disabled={busy} className={`${button} border-red-600 text-red-600`}
         changes={[{ label: "자동 정지", before: `${helper.stops.length}건`, after: "해제" }]} summary="같은 값으로 다시 저장해 판이 오릅니다. 정지 조건이 다시 맞으면 또 멈춥니다." />}
-      <button type="button" disabled aria-disabled="true" title="PR 2c 에서 엽니다 — 섀도 근거(같은 evidence_key)·조건 목록·확인 「실전」이 필요합니다" className={button}>실전으로 올리기</button>
-      <span className="text-fg-3">실전 승격은 PR 2c 에서 엽니다. 섀도 결과는 어떤 판정에도 쓰이지 않습니다.</span>
+      <button type="button" disabled aria-disabled="true" title="실전 승격은 PR 2c 에서 엽니다 — 섀도 근거(같은 evidence_key)·조건 목록·확인 「실전」이 필요합니다. 섀도 결과는 어떤 판정에도 쓰이지 않습니다." className={button}>실전으로 올리기</button>
     </div>
     <Result state={modeState} prefix="모드 거절" />
     <Result state={clearState} prefix="해제 거절" />
@@ -101,20 +100,20 @@ function ModeControls({ helper, readOnly }: { helper: HelperRowView; readOnly?: 
  * 배정 한 개 폼(helper 가 null 이면 새 배정). 숨은 expectedVersion 으로 CAS. 있는 배정은 장비·단계·이름·모드를 숨은 값으로 지키고(모드는 단추로만 바꾼다),
  * 모델·경로·임계값·이력·메모를 바꾼다. 모델·경로를 바꾸면 섀도 근거(evidence_key)가 처음부터 시작한다. 새 배정은 단계에 맞는 경로 기본값으로 채운다.
  */
-export function HelperForm({ helper, defaults, routeDefaults, readOnly, names }: { helper: HelperRowView | null; defaults: HelperSettingsDefaults;
-  routeDefaults: HelperRouteDefaults; readOnly?: boolean; names?: Readonly<Record<string, string>> }) {
+export function HelperForm({ helper, defaults, routeDefaults, readOnly, names, bare = false }: { helper: HelperRowView | null; defaults: HelperSettingsDefaults;
+  routeDefaults: HelperRouteDefaults; readOnly?: boolean; names?: Readonly<Record<string, string>>; bare?: boolean }) {
   const [state, action, pending] = useActionState<HelperActionState, FormData>(saveModelHelper, null);
   const [dirty, setDirty] = useState(false);
   const [stage, setStage] = useState<HelperStage>(helper?.stage ?? "ai1");
   const values = helper?.settings ?? { ...defaults, ...routeDefaults[stage], assignmentId: "", stage, deviceId: "", model: "" };
   const routes = helper ? { shadowRouteId: helper.settings.shadowRouteId, liveRouteId: helper.settings.liveRouteId, liveProvider: helper.settings.liveProvider } : routeDefaults[stage];
   const id = helper ? `helper-${helper.assignmentId}` : "helper-new";
-  return <div id={id} className="grid gap-3 rounded-xl border border-line bg-bg-card p-5 text-[14px] scroll-mt-6">
+  return <div id={id} className={`grid gap-3 text-[13px] scroll-mt-24${bare ? "" : " rounded-xl border border-line bg-bg-card p-5"}`}>
     <div className="flex flex-wrap items-baseline gap-2">
-      {helper ? <><h3 className="text-[17px] font-semibold" title={`장비 id ${helper.deviceId}`}>{names?.[helper.deviceId] ?? helper.deviceId} · {helper.stageLabel}</h3>
+      {helper ? <><h3 className="text-[15px] font-semibold" title={`장비 id ${helper.deviceId}`}>{names?.[helper.deviceId] ?? helper.deviceId} · {helper.stageLabel}</h3>
         <span className="text-[13px] text-fg-3">배정 <code>{helper.assignmentId}</code> · 판 {helper.version} · evidence <code title={helper.evidenceKey}>{helper.evidenceKey.slice(0, 12)}</code>
           {helper.promotedAt && <> · 승격됨</>}</span></>
-        : <h3 className="text-[17px] font-semibold">새 배정</h3>}
+        : !bare && <h3 className="text-[15px] font-semibold">새 배정</h3>}
     </div>
     {helper?.issues.map(text => <p key={text} role="note" className="text-[13px] text-amber-700">{text}</p>)}
     {helper && <ModeControls helper={helper} readOnly={readOnly} />}
@@ -154,7 +153,7 @@ export function HelperForm({ helper, defaults, routeDefaults, readOnly, names }:
       </div>
       <div className="flex flex-wrap items-center gap-3">
         <ConfirmSubmit label={helper ? "이 배정 저장" : "새 배정 만들기"} pending={pending} disabled={readOnly} savedKey={helper?.version ?? null} />
-        <span className="text-[13px] text-fg-3">저장하면 판이 오르고(그 판의 자동 정지가 풀립니다) 감시자의 다음 순환부터 새 판으로 판정합니다</span>
+        <span className="text-[13px] text-fg-3">저장하면 판이 오르고 감시자의 다음 순환부터 새 판으로 판정합니다</span>
         {readOnly && <span className="text-[13px] text-fg-3">도우미 상태를 읽지 못해 읽기 전용입니다.</span>}
       </div>
       <Result state={state} prefix="저장 거절" />
