@@ -119,7 +119,7 @@ export function pruneInputFromForm(form: FormLike): { input: { routes: { routeId
 const modeLabel = (mode: ModelCapacityMode) => mode === "open" ? "OPEN" : mode === "draining" ? "DRAIN" : "꺼짐";
 const BLOCKER_LABELS: Readonly<Record<string, string>> = {
   connection: "이 장비에 묶인 AI 연결", exposed: "이 모델을 아직 내보내는 연결", rank: "작업 순위", pool: "작업 분산 풀", helper: "모델 배정",
-  contract: "켜진 서빙 계약", ledger: "끝나지 않은 장부 행",
+  contract: "켜진 서빙 계약", ledger: "끝나지 않은 장부 행", cli: "CLI 경로(connect 에이전트·단계 풀 설정이 부름)",
 };
 function blockerLines(text: string): string {
   return text.split(" | ").filter(Boolean).map(part => {
