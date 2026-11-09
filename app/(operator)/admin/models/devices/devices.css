@@ -1,0 +1,85 @@
+/* 장비 한도(/admin/models/devices, 2026-11-09 개편 시안 #devices) — 서버 한 대가 한 줄인 표. 색은 승인 시안 토큰(prototype.css)만 쓴다: 어두운 테마도 토큰이 바꾼다.
+   상태는 색만으로 가르지 않는다(▲ 모양 + 글자, 「사용 중」·「전체 공유」·「고정」 글자). 글자는 13px 이상(관리자 글자 크기 조절 --admin-font-delta 를 따른다).
+   규칙은 .admin-prototype .devlim 안으로 좁힌다 — prototype.css 의 표·입력 요소 규칙(th 10px·input 11px·min-height 35px 등)보다 이기게.
+   가로 스크롤은 표 상자(.devlim-scroll) 안에서만 — 화면(400px 폰 포함)은 밀리지 않는다. */
+
+.admin-prototype .devlim { min-width: 0; font-size: calc(13px + var(--admin-font-delta, 0px)); color: var(--ink); }
+.admin-prototype .devlim-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 6px 16px; min-width: 0; }
+.admin-prototype .devlim-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 0; color: var(--muted); }
+.admin-prototype .devlim-meta b { color: var(--ink); font-weight: 650; font-variant-numeric: tabular-nums; }
+.admin-prototype .devlim .devlim-link { color: var(--blue); font-weight: 600; }
+.admin-prototype .devlim-lede { margin: 0; color: var(--muted); max-width: 72ch; }
+.admin-prototype .devlim .devlim-muted { color: var(--muted); font-weight: 400; }
+.admin-prototype .devlim .devlim-note { margin: 0; color: var(--amber); }
+.admin-prototype .devlim .devlim-warn { color: var(--amber); font-weight: 650; }
+.admin-prototype .devlim .devlim-refusal { margin: 0; color: var(--red); font-weight: 600; }
+.admin-prototype .devlim .devlim-num { font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace; font-variant-numeric: tabular-nums; }
+.admin-prototype .devlim .devlim-wait { color: var(--amber); font-weight: 700; }
+
+/* 표 상자 — 넓으면 이 안에서만 가로로 밀린다. position: relative — 표 안 낭독용 글(.admin-vh)이 이 상자를 기준으로 선다 */
+.admin-prototype .devlim .devlim-wrap { display: grid; gap: 8px; min-width: 0; }
+.admin-prototype .devlim .devlim-scroll { position: relative; min-width: 0; max-width: 100%; overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.admin-prototype .devlim .devlim-scroll:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.admin-prototype .devlim .devlim-table { width: 100%; min-width: 880px; border-collapse: separate; border-spacing: 0; font-size: calc(13px + var(--admin-font-delta, 0px)); line-height: 1.5; }
+.admin-prototype .devlim .devlim-stale-table { min-width: 620px; }
+.admin-prototype .devlim .devlim-table th, .admin-prototype .devlim .devlim-table td { padding: 7px 10px; text-align: left; vertical-align: middle; border-bottom: 1px solid var(--line);
+  background: var(--surface); color: var(--ink); font-size: calc(13px + var(--admin-font-delta, 0px)); font-weight: 400; white-space: normal; }
+.admin-prototype .devlim .devlim-table thead th { background: var(--surface-2); color: var(--muted); font-weight: 650; white-space: nowrap; }
+.admin-prototype .devlim .devlim-table tbody tr:last-child > * { border-bottom: 0; }
+.admin-prototype .devlim .devlim-table .devlim-r { text-align: right; }
+.admin-prototype .devlim .devlim-table small { display: block; color: var(--muted); font-size: calc(13px + var(--admin-font-delta, 0px)); font-weight: 400; font-family: inherit; }
+
+/* 서버 칸 — 이름은 고정폭 굵게, 아래 작은 한 줄 */
+.admin-prototype .devlim .devlim-table .devlim-server { font-weight: 700; white-space: nowrap; }
+.admin-prototype .devlim .devlim-name { font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace; font-weight: 700; }
+.admin-prototype .devlim .devlim-table .devlim-model { overflow-wrap: anywhere; }
+.admin-prototype .devlim .devlim-table tr.devlim-parent > * { background: var(--surface-2); }
+.admin-prototype .devlim .devlim-table tr.devlim-stale > * { background: var(--surface-2); color: var(--muted); }
+/* 모델 줄 — 부모 줄에서 내려오는 ㄴ 선 */
+.admin-prototype .devlim .devlim-table tr.devlim-child > :first-child { position: relative; padding-left: 30px; }
+.admin-prototype .devlim .devlim-table tr.devlim-child > :first-child::before { content: ""; position: absolute; left: 14px; top: 0; bottom: 50%; width: 10px;
+  border-left: 1px solid var(--muted); border-bottom: 1px solid var(--muted); }
+.admin-prototype .devlim .devlim-table tr.devlim-hint > td { background: var(--amber-soft); color: var(--amber); padding-block: 4px; font-weight: 600; }
+.admin-prototype .devlim .devlim-table tr.devlim-msg > td { background: var(--surface); padding-block: 6px; }
+.admin-prototype .devlim .devlim-table tr.devlim-msg p { margin: 0; }
+
+/* 한도 입력 — prototype.css 의 입력 크기(11px·35px)를 덮는다 */
+.admin-prototype .devlim .devlim-lim { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.admin-prototype .devlim input.devlim-input { width: 56px; min-height: 0; height: 30px; padding: 0 6px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); color: var(--ink);
+  font: 650 calc(14px + var(--admin-font-delta, 0px)) 'SFMono-Regular', Consolas, 'Liberation Mono', monospace; text-align: right; }
+.admin-prototype .devlim input.devlim-input::placeholder { color: var(--muted); font-weight: 400; opacity: .8; }
+.admin-prototype .devlim input.devlim-input[data-changed] { border-color: var(--blue); background: var(--blue-soft); }
+.admin-prototype .devlim .devlim-tag { display: inline-block; padding: 0 6px; border-radius: 4px; background: var(--blue-soft); color: var(--blue); font-weight: 600; white-space: nowrap; }
+.admin-prototype .devlim .devlim-fixed { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 4px; border: 1px solid var(--line); background: var(--surface-2); color: var(--muted); font-weight: 600; }
+
+/* ⓘ 도움말 */
+.admin-prototype .devlim .devlim-tip { display: inline-grid; place-items: center; width: 18px; height: 18px; margin-left: 2px; border-radius: 50%; border: 1px solid var(--muted); color: var(--muted);
+  font-size: calc(13px + var(--admin-font-delta, 0px)); font-weight: 700; line-height: 1; cursor: help; vertical-align: 1px; }
+.admin-prototype .devlim .devlim-tip:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+/* 동작 칸 — 저장·사용 중·삭제·확인 */
+.admin-prototype .devlim .devlim-acts { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: flex-end; }
+.admin-prototype .devlim .devlim-acts-start { justify-content: flex-start; }
+.admin-prototype .devlim .devlim-acts form { display: contents; }
+.admin-prototype .devlim .devlim-why { color: var(--muted); white-space: nowrap; }
+.admin-prototype .devlim .devlim-btn { padding: 3px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); font-weight: 600;
+  font-size: calc(13px + var(--admin-font-delta, 0px)); white-space: nowrap; cursor: pointer; }
+.admin-prototype .devlim .devlim-btn:hover:not(:disabled) { border-color: var(--blue); }
+.admin-prototype .devlim .devlim-btn:disabled { opacity: .5; cursor: not-allowed; }
+.admin-prototype .devlim .devlim-btn[hidden] { display: none; }
+.admin-prototype .devlim .devlim-primary { background: var(--blue); border-color: var(--blue); color: var(--surface); }
+.admin-prototype .devlim .devlim-danger { color: var(--red); border-color: var(--red); }
+.admin-prototype .devlim .devlim-danger.devlim-solid { background: var(--red); color: var(--surface); }
+.admin-prototype .devlim .devlim-confirm { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; color: var(--red); font-weight: 650; }
+.admin-prototype .devlim .devlim-msg-block { display: grid; gap: 2px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.admin-prototype .devlim .devlim-msg-block p { margin: 0; }
+
+/* 패널(옛 정책 경로 정리·세부 설정) */
+.admin-prototype .devlim .devlim-panel { min-width: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.admin-prototype .devlim .devlim-panel-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 9px 14px; border-bottom: 1px solid var(--line); }
+.admin-prototype .devlim .devlim-panel-head h2 { display: inline; margin: 0; font-size: calc(15px + var(--admin-font-delta, 0px)); font-weight: 700; }
+.admin-prototype .devlim .devlim-panel-body { display: grid; gap: 8px; min-width: 0; padding: 10px 14px; }
+.admin-prototype .devlim .devlim-panel-body p { margin: 0; }
+.admin-prototype .devlim details.devlim-details > summary { cursor: pointer; border-bottom: 0; }
+.admin-prototype .devlim details.devlim-details[open] > summary { border-bottom: 1px solid var(--line); }
+.admin-prototype .devlim .devlim-stale-table td input[type=checkbox] { margin: 0; }
