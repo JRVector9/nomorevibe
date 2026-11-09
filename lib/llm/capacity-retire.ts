@@ -37,7 +37,7 @@ export type CapacityReferenceSnapshot = Readonly<{
   /** 작업 순위·풀이 만들 수 있는 route id(노출이 막는 범위). 없으면 모든 route 에서 노출이 막는다 */
   taskRouteIds?: readonly string[] }>;
 
-export type CapacityBlockerKind = "connection" | "exposed" | "rank" | "pool" | "helper" | "contract" | "ledger";
+export type CapacityBlockerKind = "connection" | "exposed" | "rank" | "pool" | "helper" | "contract" | "ledger" | "cli";
 export type CapacityBlocker = Readonly<{ kind: CapacityBlockerKind; detail: string }>;
 export type StaleRouteCandidate = Readonly<{ route: ModelCapacityRoute; reason: string;
   /** 이 장비에 묶인 연결이 하나도 없다 — 장비째 지우려면 은퇴(retireCapacityDevice)를 쓴다 */
@@ -80,9 +80,17 @@ function aliasNames(model: string): string[] {
 
 const visibleModels = (connection: RetireConnection) => connection.models.filter(model => !connection.hiddenModels.includes(model));
 
+/**
+ * CLI 공급자 route(`*-cli`) — 이 판정이 보지 못하는 곳(connect 에이전트의 분류 우선·예비 설정, 단계 풀·등록부 CLI 엔진)이 부른다.
+ * 2026-11-09: `crawl-publish-classify / codex-cli / gpt-5.6-terra → openai-cli`(7일 15,737건)가 연결 행이 없다는 까닭만으로 정리 후보에 올랐다.
+ * 그래서 CLI route 는 늘 「쓰는 중」으로 보고, 정리·장비 은퇴 어느 쪽도 지우지 않는다(필요하면 용량 정책 명령으로 뺀다).
+ */
+const isCliRoute = (route: Pick<ModelCapacityRoute, "provider">) => route.provider.endsWith("-cli");
+
 /** route 하나가 쓰이는 근거(노출 제외 — 노출은 장비의 연결에 달렸다). 은퇴·정리가 같은 규칙을 쓴다. */
 export function capacityRouteReferences(snapshot: CapacityReferenceSnapshot, route: ModelCapacityRoute): CapacityBlocker[] {
   const out: CapacityBlocker[] = [];
+  if (isCliRoute(route)) out.push({ kind: "cli", detail: `${route.provider} · ${route.routeId} · ${route.model}` });
   for (const rank of snapshot.ranks)
     if (rank.routeId === route.routeId && modelNamesRoute(rank.model, route.model))
       out.push({ kind: "rank", detail: `${rank.task}#${rank.slot} ${rank.rank}순위 ${rank.model}${rank.enabled ? "" : "(꺼짐)"}` });

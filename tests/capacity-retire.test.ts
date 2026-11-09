@@ -121,6 +121,21 @@ describe("findStaleCapacityRoutes", () => {
   });
 });
 
+describe("CLI routes are always in use (2026-11-09)", () => {
+  // connect 에이전트 분류(Codex 우선·예비)는 연결 행 없이 openai-cli 장비의 CLI route 를 부른다 — 이 판정이 그 설정을 보지 못한다
+  const codex = route("crawl-publish-classify", "codex-cli", "gpt-5.6-terra", "openai-cli");
+  const withCli = { ...base, routes: [...routes, codex] };
+  it("never offers a CLI route as a prune candidate, even on a device with no connection row", () => {
+    const result = findStaleCapacityRoutes(withCli);
+    expect(keys(result.candidates)).not.toContain("crawl-publish-classify|gpt-5.6-terra|openai-cli");
+    expect(result.kept.find(entry => entry.route === codex)?.blockers).toEqual([{ kind: "cli", detail: "codex-cli · crawl-publish-classify · gpt-5.6-terra" }]);
+  });
+  it("blocks retiring the device that carries it", () => {
+    expect(capacityDeviceRetireBlockers(withCli, "openai-cli")).toEqual([{ kind: "cli", detail: "codex-cli · crawl-publish-classify · gpt-5.6-terra" }]);
+    expect(capacityRetireIssueMessage(`model_capacity_device_retire_blocked:${capacityBlockersText(capacityDeviceRetireBlockers(withCli, "openai-cli"))}`)).toContain("CLI 경로");
+  });
+});
+
 describe("capacityDeviceRetireBlockers", () => {
   it("lets the connection-less gateway device go and blocks every device something still uses", () => {
     expect(capacityDeviceRetireBlockers(base, "supa")).toEqual([]);
