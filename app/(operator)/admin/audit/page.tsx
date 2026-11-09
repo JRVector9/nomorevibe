@@ -83,7 +83,7 @@ type Props = { searchParams: Promise<{ view?: string; page?: string; tab?: strin
  * 탭 — 사람이 부탁한 것(내려달라는 요청), 감사가 걸러낸 것, 처리 기록. 기다리는 요청이 있으면 요청이 먼저다:
  * 상세 페이지가 내려 준다고 약속했다. 감사의 갈래(?view=)로 들어오면 감사 탭이다.
  */
-const TABS = { requests: "내려달라는 요청", audit: "감사 거절", recheck: "변경 재검수", policy: "정책 처리", history: "처리 기록" } as const;
+const TABS = { requests: "내려달라는 요청", audit: "감사 거절", recheck: "변경 재판정", policy: "정책 처리", history: "처리 기록" } as const;
 type Tab = keyof typeof TABS;
 
 export default async function AdminAuditPage({ searchParams }: Props) {
@@ -99,7 +99,7 @@ export default async function AdminAuditPage({ searchParams }: Props) {
   // 목록의 "13:38 (3분 전)"은 이 시각을 기준으로 센다
   const now = new Date();
   const [overview, summary, introPending, recheckOpen] = await Promise.all([productAuditOverview(), takedownSummary(), pendingIntroRequestCount(),
-    // 변경 재검수 탭의 수 — 못 읽어도 화면은 그린다
+    // 변경 재판정 탭의 수 — 못 읽어도 화면은 그린다
     recheckOpenCount().catch(() => 0)]);
   const { campaign, counts } = overview;
   // 보류 중인 것이 있으면 그것부터 — 이미 목록에서 빠져 사람을 기다린다.
@@ -318,7 +318,7 @@ export default async function AdminAuditPage({ searchParams }: Props) {
 }
 
 /**
- * 변경 재검수 탭 — 늘 열린 줄의 상태와 사람이 볼 것(거절·판단 보류). 줄 하나·결정은 감사 거절과 같은 줄(AuditFinding)이다 — 내리기·유지가 같은 길이다.
+ * 변경 재판정 탭 — 늘 열린 줄의 상태와 사람이 볼 것(거절·판단 보류). 줄 하나·결정은 감사 거절과 같은 줄(AuditFinding)이다 — 내리기·유지가 같은 길이다.
  * 보류 중인 것은 감사 거절 탭의 '보류 중'에도 함께 보인다(회차와 상관없이). 한 갈래에 쪽 하나(최근 확신 높은 순 RECHECK_PAGE 건)만 보인다
  */
 const RECHECK_PAGE = 50;
@@ -365,8 +365,8 @@ async function RecheckTab({ now }: { now: Date }) {
   );
   return <>
     <RecheckPanel overview={overview} plan={plan} reviewers={reviewers} now={now} />
-    {section("다시 본 결과 — 제품 아님", rejects, overview.counts.openReject, "재검수가 거절한 것 중 사람이 볼 것이 없습니다.")}
-    {section("다시 본 결과 — 판단 보류", needs, overview.counts.openNeedsReview, "재검수가 판단을 미룬 것이 없습니다.")}
+    {section("다시 본 결과 — 제품 아님", rejects, overview.counts.openReject, "재판정가 거절한 것 중 사람이 볼 것이 없습니다.")}
+    {section("다시 본 결과 — 판단 보류", needs, overview.counts.openNeedsReview, "재판정가 판단을 미룬 것이 없습니다.")}
   </>;
 }
 

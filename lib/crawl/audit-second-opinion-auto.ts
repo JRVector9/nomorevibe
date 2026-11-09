@@ -131,7 +131,7 @@ const bareModelValue = bareModelName;
 
 /**
  * 지금(마지막) 감사 — 감사 화면·정책 처리가 보는 감사와 같다(사람이 연 감사 중 마지막 것, audit-stream.ts). 끝난 뒤에도 그 감사의 열린 거절을 묻는다.
- * 공개분 변경 재검수 줄의 열린 거절은 범위(openAuditRejectUniverse)가 따로 넣는다 — 사람이 연 감사가 없어도 그 거절에는 의견을 묻는다
+ * 공개분 변경 재판정 줄의 열린 거절은 범위(openAuditRejectUniverse)가 따로 넣는다 — 사람이 연 감사가 없어도 그 거절에는 의견을 묻는다
  */
 const latestCampaign = latestManualCampaignSql;
 

@@ -9,23 +9,28 @@ import { jobKnob, type RuntimeSettings } from "@/lib/operations/runtime-settings
 import { runtimeSettings } from "@/lib/operations/runtime-settings-store";
 import { cliContractRouteId } from "@/lib/llm/cli-serving-contract";
 import { servingContractSnapshot } from "@/lib/llm/serving-contract-store";
+import { aiTaskModelsReadState } from "@/lib/llm/ai-task-models-snapshot";
+import { taskModels } from "@/lib/llm/ai-task-resolver";
+import { aiTask } from "@/lib/llm/ai-tasks";
+import { cliEngineRevision, isCliEngineConnection } from "@/lib/llm/cli-engine-config";
+import { cliHostTargetFromConnection } from "@/lib/operations/cli-host-target";
 import { buildReviewProduct, MAX_REVIEW_ATTEMPTS, REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, type ReviewSnapshot } from "./agent-review-contract";
 import { reviewCandidatePredicate } from "./agent-review-repository";
 import { ROLLING_AUDIT_STATUS } from "./audit-stream";
 import { auditSettings } from "./product-audit";
 import { compareRecheckContent, packageProofKnownSince, recheckContent, recheckContentHash, type RecheckChangeSummary,
   type RecheckContent } from "./published-recheck-change";
-import { resolveReviewTaskRanks, reviewRankUnusableText, type ReviewRankStatus } from "./review-task-ranks";
 import type { CrawlSettings } from "./settings-schema";
 
 /**
- * 공개분 변경 재검수(2026-11-09 운영자 결정) — 이미 공개된 제품의 수집 내용이 모델이 마지막으로 본 것과 뜻있게 달라지면 1차 순위 모델로 다시 묻는다.
+ * 공개분 변경 재판정(2026-11-09 운영자 결정) — 이미 공개된 제품의 수집 내용이 모델이 마지막으로 본 것과 뜻있게 달라지면 다시 묻는다.
+ * 모델은 재판정 자신의 설정 — 「작업 ↔ 모델」의 발행분 감사 · 변경 재판정(product-audit) 순위다. 1차 순위와 나뉜다.
  *
- * 1. 기준: 모델이 마지막으로 본 제품 내용 — 1차 심사의 마지막 성공 승인(crawl_review_attempts.snapshot 의 product), 이 재검수가 다시 본 뒤에는
+ * 1. 기준: 모델이 마지막으로 본 제품 내용 — 1차 심사의 마지막 성공 승인(crawl_review_attempts.snapshot 의 product), 이 재판정가 다시 본 뒤에는
  *    그 답이 본 내용(product_recheck_baselines, published-recheck-baseline.ts). 모델이 본 적 없는 공개 제품은 처음 본 지금 내용을 기준으로 삼는다(seeded).
  * 2. 지금 내용: 이미 받아 둔 원본(crawl_documents·후보)만으로 1차와 같은 함수(buildReviewProduct)로 만든다. GitHub·사이트를 새로 부르지 않는다.
  * 3. 견주기: published-recheck-change.ts 의 아홉 칸 규칙(글은 낱말 유사도). 뜻있게 바뀌었으면 감사 표의 늘 열린 줄(status 'rolling')에 항목을 올린다.
- * 4. 묻기: 감사 잡(product-audit)의 재검수 갈래(jobs/product-audit.ts askRecheckStream)가 1차 순위(작업 first-review)의 모델로 묻는다 —
+ * 4. 묻기: 감사 잡(product-audit)의 재판정 갈래(jobs/product-audit.ts askRecheckStream)가 발행분 감사 · 변경 재판정 순위(recheckReviewerPlan)로 묻는다 —
  *    답을 적는 길은 감사와 같다(recordAuditResult: 확신 높은 거절은 감사 보류, 사람은 /admin/audit 에서 내리기·유지). 아무것도 저절로 내리지 않는다.
  *
  * 이 모듈의 잡(published-recheck)은 1~3 만 한다 — 모델을 부르지 않는다. 공개 제품을 id 순서로 한 바퀴씩 돌며(틱마다 scanBatch 건) 마지막으로 견준 해시와
@@ -33,8 +38,8 @@ import type { CrawlSettings } from "./settings-schema";
  */
 export const RECHECK_JOB = "published-recheck";
 export const RECHECK_ACTOR = "system:published-recheck";
-/** 재검수 줄 행의 provider·model 칸 — 줄에는 굳힌 심사자가 없다(1차 순위가 묻는 때마다 고른다) */
-export const RECHECK_REVIEWER_LABEL = "first-review-ranks";
+/** 재판정 줄 행의 provider·model 칸 — 줄에는 굳힌 심사자가 없다(발행분 감사 · 변경 재판정 순위가 묻는 때마다 고른다) */
+export const RECHECK_REVIEWER_LABEL = "product-audit-ranks";
 
 export type RecheckLimits = Readonly<{ scanBatch: number; dailyCap: number; askBatch: number; minSimilarity: number; yieldHours: number }>;
 
@@ -60,7 +65,7 @@ export async function ensureRollingStream(lease: JobLease): Promise<ProductAudit
   if (existing) return existing;
   await withJobLeaseWrite(lease, async (tx) => {
     await tx.insert(productAuditCampaigns).values({
-      startedBy: RECHECK_ACTOR, reason: "공개분 변경 재검수 — 내용이 바뀐 공개 제품을 1차 순위 모델로 다시 봅니다(늘 열린 줄)",
+      startedBy: RECHECK_ACTOR, reason: "공개분 변경 재판정 — 내용이 바뀐 공개 제품을 「발행분 감사 · 변경 재판정」 순위 모델로 다시 봅니다(늘 열린 줄)",
       promptVersion: REVIEW_PROMPT_VERSION, rulesVersion: REVIEW_RULES_VERSION, provider: RECHECK_REVIEWER_LABEL, model: RECHECK_REVIEWER_LABEL,
       status: ROLLING_AUDIT_STATUS,
     }).onConflictDoNothing();
@@ -119,7 +124,7 @@ export type RecheckScanResult = {
   capped: boolean; afterId: number; finishedPass: boolean;
 };
 
-/** 그 제품을 지금 다시 올리지 않는 까닭 — 이미 사람을 기다리거나(보류·열린 재검수 답) 아직 물을 재검수 항목이 있다 */
+/** 그 제품을 지금 다시 올리지 않는 까닭 — 이미 사람을 기다리거나(보류·열린 재판정 답) 아직 물을 재판정 항목이 있다 */
 async function blockedProducts(executor: typeof db | ProductTransaction, rollingId: number, productIds: readonly number[]): Promise<Set<number>> {
   if (!productIds.length) return new Set();
   const rows = await executor.execute<{ id: number }>(sql`
@@ -131,7 +136,7 @@ async function blockedProducts(executor: typeof db | ProductTransaction, rolling
   return new Set(rows.map((row) => row.id));
 }
 
-/** 지난 24시간 재검수 줄에 올린 수 — 시각은 DB 시계로 잰다(시간대 없는 칸) */
+/** 지난 24시간 재판정 줄에 올린 수 — 시각은 DB 시계로 잰다(시간대 없는 칸) */
 export async function enrolledLastDay(rollingId: number): Promise<number> {
   const [row] = await db.select({ count: sql<number>`count(*)::int` }).from(productAuditItems)
     .where(and(eq(productAuditItems.campaignId, rollingId), sql`${productAuditItems.enrolledAt} > now() - interval '24 hours'`));
@@ -166,7 +171,7 @@ type BaselineWrite = { productId: number; insert?: BaselineInsert; replace?: { f
   check?: { contentHash: string; checkedHash: string } };
 
 /**
- * 한 틱 — 공개 제품 scanBatch 건을 기준과 견주고, 뜻있게 바뀐 것을 재검수 줄에 올린다. 모델을 부르지 않는다.
+ * 한 틱 — 공개 제품 scanBatch 건을 기준과 견주고, 뜻있게 바뀐 것을 재판정 줄에 올린다. 모델을 부르지 않는다.
  * 기준 쓰기(새 기준·마지막으로 견준 해시)는 틱 끝에 한 커밋으로 모은다(DR writer fence → 작업 lease). 올리기는 한 건마다 한 커밋이다.
  * 하루 상한에 닿으면 그 제품 앞에서 멈춘다 — 커서가 넘어가지 않아 다음 날 이어서 올린다(바뀐 것을 건너뛰지 않는다).
  */
@@ -282,7 +287,7 @@ async function writeBaselines(writes: readonly BaselineWrite[], lease: JobLease)
 }
 
 /**
- * 한 제품을 재검수 줄에 올린다 — 한 커밋(DR writer fence → 항목 → 기준 → 작업 lease). 그 사이 보류됐거나 열린 재검수 항목이 생겼으면 올리지 않는다.
+ * 한 제품을 재판정 줄에 올린다 — 한 커밋(DR writer fence → 항목 → 기준 → 작업 lease). 그 사이 보류됐거나 열린 재판정 항목이 생겼으면 올리지 않는다.
  * round 는 그 제품의 이 줄 항목 수 + 1 이다((campaign_id, product_id, round) 유일 색인).
  */
 async function enrollRecheck(input: { rolling: ProductAuditCampaign; productId: number; slug: string; summary: RecheckChangeSummary; lease: JobLease;
@@ -301,58 +306,81 @@ async function enrollRecheck(input: { rolling: ProductAuditCampaign; productId: 
 
 // ─────────────────────────── 묻기의 재료(감사 잡이 쓴다) ───────────────────────────
 
-/** 재검수가 부를 수 있는 1차 순위의 제공자 — 감사 경로(product-audit)의 장부 binding(product_audit_cli)·게이트웨이 입장이 받는 것 */
-export const RECHECK_PROVIDERS = ["opencode-cli", "claude-cli", "abcllm"] as const;
-export type RecheckProvider = (typeof RECHECK_PROVIDERS)[number];
+/** 재판정을 부르는 작업 — 「작업 ↔ 모델」의 발행분 감사 · 변경 재판정(product-audit). 사람이 연 감사도 이 순위로 시작한다(product-audit.ts startProductAudit) */
+export const RECHECK_TASK = "product-audit";
+/** 그 작업의 화면 이름(「발행분 감사 · 변경 재판정」) */
+export const RECHECK_TASK_LABEL = aiTask(RECHECK_TASK)?.label ?? RECHECK_TASK;
+/**
+ * 감사 경로(product-audit)의 장부 binding(product_audit_cli)이 받는 CLI — OpenCode(원격 호스트)·Claude(이 워커에서 띄움). 그 밖의 연결(Codex·Grok·API)은
+ * 장부 규칙(model_capacity_requests 의 CHECK 가지)·binding 이 없어 받지 않는다(lib/llm/ai-tasks.ts 의 product-audit cliTools 와 같다)
+ */
+export type RecheckProvider = "opencode-cli" | "claude-cli";
 export type RecheckReviewer = Readonly<{ rank: number; provider: RecheckProvider; model: string; connectionId: string; connectionLabel: string;
   reasoningEffort?: string }>;
-export type RecheckReviewerPlan = Readonly<{ status: ReviewRankStatus; reviewers: readonly RecheckReviewer[];
-  /** 순위에 있지만 재검수가 부르지 않는 것과 까닭(운영자 문장) */
+export type RecheckRankStatus = "ok" | "no_task_models" | "task_models_unreadable";
+export type RecheckReviewerPlan = Readonly<{ status: RecheckRankStatus; reviewers: readonly RecheckReviewer[];
+  /** 순위에 있지만 재판정이 부르지 않는 것과 까닭(운영자 문장) */
   skipped: readonly { rank: number; label: string; model: string; reason: string }[] }>;
 
 /**
- * 1차 순위(작업 first-review, 칸 1)를 1차와 같은 길(resolveReviewTaskRanks)로 읽어, 재검수가 부를 수 있는 것만 순위 차례로 낸다.
- * 1차가 쓸 수 없다고 본 순위(계약 없음·꺼짐 등)는 부르지 않는다. 감사 경로가 받지 않는 제공자(local-direct·grok-cli)도 부르지 않는다 —
- * 감사 경로의 장부 binding 은 product_audit_cli(claude-cli·opencode-cli)와 게이트웨이 입장뿐이다(새 장부 binding·계약을 만들지 않는다).
+ * 재판정의 심사자 — 「작업 ↔ 모델」의 발행분 감사 · 변경 재판정(작업 product-audit, 칸 1)의 1·2·3순위를 차례로(2026-11-09 운영자 결정: 1차 순위와
+ * 완전히 나눈다 — 1차 순위를 바꿔도 재판정은 따라가지 않는다). 사람이 연 감사를 시작할 때와 같은 해석이다(product-audit.ts startProductAudit):
+ * 켜진 순위·켜진 연결이고 OpenCode CLI 연결(그 호스트 주소·키를 열 수 있어야 한다) 또는 Claude CLI 연결이어야 한다. 모델은 순위의 모델,
+ * 추론 강도는 순위의 옵션이다(OpenCode 만).
+ * 호출은 감사 경로(product_audit_cli)로 간다 — 그 순위를 저장하면 만들어지는 감사 경로 CLI 계약·정책 route 로 열린다(새 장부 binding·계약을 만들지 않는다).
+ * 순위가 없거나 표를 못 읽었으면 status 로 말하고 부르지 않는다 — 코드 기본값·1차 순위·옛 설정으로 대신 부르지 않는다.
  */
 export function recheckReviewerPlan(): RecheckReviewerPlan {
-  const resolution = resolveReviewTaskRanks("first-review", 1);
+  const read = aiTaskModelsReadState();
+  const ranks = taskModels(RECHECK_TASK, 1);
   const reviewers: RecheckReviewer[] = [];
   const skipped: { rank: number; label: string; model: string; reason: string }[] = [];
-  for (const candidate of resolution.candidates) {
-    const base = { rank: candidate.rank.rank, label: candidate.rank.connection.label, model: candidate.rank.model };
-    const binding = candidate.binding;
-    if (!binding || candidate.unusable) {
-      skipped.push({ ...base, reason: reviewRankUnusableText(candidate.unusable ?? "no_binding", candidate.detail) });
+  for (const rank of ranks) {
+    const base = { rank: rank.rank, label: rank.connection.label, model: rank.model };
+    const effort = typeof rank.options.reasoningEffort === "string" ? rank.options.reasoningEffort : undefined;
+    const claude = rank.connection.kind === "cli" && rank.connection.cliTool === "claude";
+    const reason = !rank.enabled ? "순위 꺼짐" : !rank.connection.enabled ? "연결 꺼짐"
+      : !claude && !isCliEngineConnection(rank.connection) ? "감사 경로는 OpenCode·Claude CLI 연결만 받습니다" : null;
+    if (reason) { skipped.push({ ...base, reason }); continue; }
+    if (claude) {
+      reviewers.push(Object.freeze({ rank: rank.rank, provider: "claude-cli" as const, model: rank.model, connectionId: rank.connection.id,
+        connectionLabel: rank.connection.label }));
       continue;
     }
-    if (!(RECHECK_PROVIDERS as readonly string[]).includes(binding.provider)) {
-      skipped.push({ ...base, reason: `${binding.provider} 는 감사 경로(product-audit)로 부를 수 없습니다 — 다음 순위로 묻습니다` });
+    try {
+      cliHostTargetFromConnection(rank.connection);
+      cliEngineRevision({ connectionId: rank.connection.id, ...(effort ? { reasoningEffort: effort } : {}) });
+    } catch {
+      skipped.push({ ...base, reason: "연결의 호스트 주소·키를 열 수 없거나 추론 강도가 맞지 않습니다" });
       continue;
     }
-    const effort = candidate.rank.options.reasoningEffort;
-    reviewers.push(Object.freeze({ rank: binding.rank, provider: binding.provider as RecheckProvider,
-      // CLI 는 엔진에 보내는 이름 그대로, 게이트웨이는 장부 이름(identity)
-      model: binding.provider === "abcllm" ? binding.identity : binding.engineModel,
-      connectionId: binding.connectionId, connectionLabel: binding.connectionLabel, ...(typeof effort === "string" ? { reasoningEffort: effort } : {}) }));
+    reviewers.push(Object.freeze({ rank: rank.rank, provider: "opencode-cli" as const, model: rank.model, connectionId: rank.connection.id,
+      connectionLabel: rank.connection.label, ...(effort ? { reasoningEffort: effort } : {}) }));
   }
-  return Object.freeze({ status: resolution.status, reviewers: Object.freeze(reviewers), skipped: Object.freeze(skipped) });
+  const status: RecheckRankStatus = ranks.length ? "ok" : read.loaded ? "no_task_models" : "task_models_unreadable";
+  return Object.freeze({ status, reviewers: Object.freeze(reviewers), skipped: Object.freeze(skipped) });
+}
+
+/** 순위가 없거나 부를 순위가 없을 때의 운영자 문장 — 화면·로그가 같은 말을 쓴다 */
+export function recheckReviewerPlanText(plan: RecheckReviewerPlan): string | null {
+  if (plan.status === "task_models_unreadable") return "작업 ↔ 모델 표를 아직 읽지 못했습니다 — 묻지 않고 올리기만 합니다";
+  if (plan.status === "no_task_models") return `「${RECHECK_TASK_LABEL}」 순위 없음 — 작업 ↔ 모델에서 1순위를 저장할 때까지 묻지 않고 올리기만 합니다`;
+  if (!plan.reviewers.length) return `「${RECHECK_TASK_LABEL}」 순위를 모두 부를 수 없습니다 — 묻지 않고 올리기만 합니다`;
+  return null;
 }
 
 /**
  * 그 심사자가 감사 경로(product-audit)에서 열릴 계약이 있는가 — 화면의 안내다(워커는 부를 때 장부·계약·호스트 버전을 다시 본다).
- * CLI 는 그 모델의 감사 경로 CLI 계약 행(cli:<provider>:product-audit)이 있어야 한다 — 작업 ↔ 모델의 「발행분 감사 캠페인」 순위를 같은 연결·모델로
- * 저장하면 만들어진다. 게이트웨이(abcllm)는 장부가 열려 있으면 감사 경로에서 늘 미룬다(native 종료 근거가 없다)
+ * 그 모델의 감사 경로 CLI 계약 행(cli:opencode-cli:product-audit)은 「발행분 감사 · 변경 재판정」 순위를 저장하면 그 연결의 CLI 버전으로 만들어진다
  */
 export function recheckRouteNote(reviewer: Pick<RecheckReviewer, "provider" | "model">): { ready: boolean; text: string } {
-  if (reviewer.provider === "abcllm") return { ready: false, text: "게이트웨이 계약 — 장부가 열려 있으면 감사 경로에서 미룹니다" };
   const routeId = cliContractRouteId(reviewer.provider, "product-audit");
   const ready = servingContractSnapshot().rows.some((row) => row.routeId === routeId && row.model === reviewer.model);
   return ready ? { ready, text: "감사 경로 CLI 계약 있음" }
-    : { ready, text: "감사 경로(product-audit) CLI 계약 없음 — 작업 ↔ 모델의 「발행분 감사 캠페인」에 같은 연결·모델을 저장하면 열립니다" };
+    : { ready, text: `감사 경로(product-audit) CLI 계약 없음 — 「${RECHECK_TASK_LABEL}」 순위를 다시 저장하면 만들어집니다` };
 }
 
-/** 1차 심사 대기에 지금 묻을 후보가 있는가(줄 맨 앞 하나만 본다) — 재검수는 1차가 일할 때 물러난다 */
+/** 1차 심사 대기에 지금 묻을 후보가 있는가(줄 맨 앞 하나만 본다) — 재판정는 1차가 일할 때 물러난다 */
 export async function firstReviewHasWork(settings: CrawlSettings): Promise<boolean> {
   if (!settings.enabled || settings.reviewMode === "off") return false;
   const [row] = await db.select({ id: crawlCandidates.id }).from(crawlCandidates)
@@ -360,7 +388,7 @@ export async function firstReviewHasWork(settings: CrawlSettings): Promise<boole
   return Boolean(row);
 }
 
-/** 가장 오래 기다린 물을 재검수 항목이 올라온 지 몇 시간인가 — 없으면 null */
+/** 가장 오래 기다린 물을 재판정 항목이 올라온 지 몇 시간인가 — 없으면 null */
 export async function oldestPendingRecheckHours(rollingId: number): Promise<number | null> {
   const [row] = await db.select({ hours: sql<number | null>`extract(epoch from (now() - min(${productAuditItems.enrolledAt}))) / 3600` })
     .from(productAuditItems).where(and(eq(productAuditItems.campaignId, rollingId), isNull(productAuditItems.aiDecision),
@@ -416,7 +444,7 @@ export async function recheckOverview(limits: RecheckLimits = recheckLimits()): 
   return { stream, limits, counts: counts ?? empty, baselines, oldestPendingHours };
 }
 
-/** 재검수 줄에서 사람이 볼 것이 있는 제품 수(보류 제외) — 화면 탭의 숫자 */
+/** 재판정 줄에서 사람이 볼 것이 있는 제품 수(보류 제외) — 화면 탭의 숫자 */
 export async function recheckOpenCount(): Promise<number> {
   const [row] = await db.select({ count: sql<number>`count(*)::int` }).from(productAuditItems)
     .innerJoin(productAuditCampaigns, eq(productAuditCampaigns.id, productAuditItems.campaignId))

@@ -61,9 +61,9 @@ const FROM = sql`from ${productAuditItems} i join ${products} p on p.id = i.prod
 const unownedSql = () => unownedPublic("p", { includeHeld: true });
 
 /**
- * 감사 화면이 보이는 열린 거절 — 마지막 감사(사람이 연 것)의 것, 공개분 변경 재검수 줄(0171, 늘 열림)의 것, 지난 감사의 항목으로 보류 중인 것
+ * 감사 화면이 보이는 열린 거절 — 마지막 감사(사람이 연 것)의 것, 공개분 변경 재판정 줄(0171, 늘 열림)의 것, 지난 감사의 항목으로 보류 중인 것
  * (그 제품에 마지막 감사의 열린 거절이 없을 때). 별칭은 i(product_audit_items)·p(products)다. Qwen-v2 감사 두 번째 의견
- * (audit-second-opinion-auto.ts scope all)·화면 판별 대기도 같은 대상을 본다 — 재검수 거절도 사람이 연 감사가 없어도 그 일감이 된다
+ * (audit-second-opinion-auto.ts scope all)·화면 판별 대기도 같은 대상을 본다 — 재판정 거절도 사람이 연 감사가 없어도 그 일감이 된다
  */
 export function openAuditRejectUniverse(latest: number | SQL): SQL {
   return universeSql(latest);

@@ -91,7 +91,7 @@ export function auditInboxNote(held: number, backlog: { overdue: number; oldestW
   return parts.length ? parts.join(" · ") : undefined;
 }
 
-/** 감사 거절 — attentionCounts 의 auditRejectsOpen 과 같은 조건(사람이 연 마지막 감사와 공개분 변경 재검수 줄, AI 거절, 사람 손 안 탐, 아직 공개) */
+/** 감사 거절 — attentionCounts 의 auditRejectsOpen 과 같은 조건(사람이 연 마지막 감사와 공개분 변경 재판정 줄, AI 거절, 사람 손 안 탐, 아직 공개) */
 async function auditPreview(): Promise<InboxItem[]> {
   const rows = await db.select({ id: productAuditItems.id, name: products.name, reason: productAuditItems.aiReason,
     confidence: productAuditItems.aiConfidence, since: iso(productAuditItems.reviewedAt) })
@@ -104,7 +104,7 @@ async function auditPreview(): Promise<InboxItem[]> {
     since: row.since }));
 }
 
-/** 지난 감사의 항목으로 보류 중인 공개 제품 — 마지막 감사·변경 재검수 줄의 거절(auditRejectsOpen)에 이미 든 보류는 두 번 세지 않는다 */
+/** 지난 감사의 항목으로 보류 중인 공개 제품 — 마지막 감사·변경 재판정 줄의 거절(auditRejectsOpen)에 이미 든 보류는 두 번 세지 않는다 */
 async function heldOutsideLatestCampaign(): Promise<number> {
   const [row] = await db.select({ count: sql<number>`count(*)::int` }).from(products)
     .innerJoin(productAuditItems, eq(productAuditItems.id, products.auditHoldItemId))

@@ -1,4 +1,4 @@
--- 0171: 공개분 변경 재검수(2026-11-09 운영자 결정) — 이미 공개된 제품의 수집 내용이 모델이 마지막으로 본 것과 뜻있게 달라지면 1차 순위 모델로
+-- 0171: 공개분 변경 재판정(2026-11-09 운영자 결정) — 이미 공개된 제품의 수집 내용이 모델이 마지막으로 본 것과 뜻있게 달라지면 1차 순위 모델로
 -- 다시 묻고, 거절은 감사 보류와 똑같이 다룬다. 감사 표(product_audit_*)를 그대로 쓴다: 늘 열린 줄 하나(product_audit_campaigns.status = 'rolling')와
 -- 그 줄의 항목. 자세한 규칙은 lib/crawl/published-recheck.ts · lib/crawl/published-recheck-change.ts.
 --
@@ -42,4 +42,4 @@ CREATE TABLE product_recheck_baselines (
     AND (source = 'recheck') = (item_id IS NOT NULL) AND (source = 'first_review' OR content IS NOT NULL))
 );
 --> statement-breakpoint
-COMMENT ON TABLE product_recheck_baselines IS '0171: 공개분 변경 재검수의 기준 — 모델이 마지막으로 본 내용(1차 승인 attempt 를 가리키거나 재검수 답의 내용)과 마지막으로 견준 해시';
+COMMENT ON TABLE product_recheck_baselines IS '0171: 공개분 변경 재판정의 기준 — 모델이 마지막으로 본 내용(1차 승인 attempt 를 가리키거나 재판정 답의 내용)과 마지막으로 견준 해시';

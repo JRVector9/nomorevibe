@@ -42,7 +42,7 @@ import { sameOpinionModel } from "./second-opinion-rules";
  *  3. screenReviewCounts() — 감사 거절 탭의 Qwen 상태 칸·정책 처리 탭이 보이는 수(대기·그중 공개 중·엇갈림).
  */
 
-/** 사람이 연 감사 중 마지막 것(audit-stream.ts) — 공개분 변경 재검수 줄의 거절은 범위(openAuditRejectUniverse)가 따로 넣는다 */
+/** 사람이 연 감사 중 마지막 것(audit-stream.ts) — 공개분 변경 재판정 줄의 거절은 범위(openAuditRejectUniverse)가 따로 넣는다 */
 const latestCampaign = latestManualCampaignSql;
 const TIME = sql.raw(`'YYYY-MM-DD"T"HH24:MI:SS.US'`);
 

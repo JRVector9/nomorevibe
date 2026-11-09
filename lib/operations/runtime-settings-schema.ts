@@ -18,7 +18,7 @@ import { DEFAULT_MODEL_DEADLINES, DEFAULT_MODEL_DEFINITIONS, DEFAULT_MODEL_PURPO
 
 export type PurposeLimit = { maxTokens: number; concurrency: number; timeoutMs?: number };
 export type JobKnobs = { batch?: number; batchChars?: number; minCallMs?: number; slowCallMs?: number; soloAttempts?: number; callMs?: number; maxAttempts?: number; consumerConcurrency?: number; classifierConcurrency?: number;
-  /** 공개분 변경 재검수(published-recheck) — 틱마다 견줄 공개 제품 수·하루에 올릴 수·감사 잡 틱마다 물을 수·같다고 볼 낱말 유사도(%)·1차에 물러나는 상한(시간) */
+  /** 공개분 변경 재판정(published-recheck) — 틱마다 견줄 공개 제품 수·하루에 올릴 수·감사 잡 틱마다 물을 수·같다고 볼 낱말 유사도(%)·1차에 물러나는 상한(시간) */
   scanBatch?: number; dailyCap?: number; askBatch?: number; minSimilarity?: number; yieldHours?: number };
 export type JobKnobName = keyof JobKnobs;
 export type ProductTranslationPolicy = { maxSourceChars: number; batchChars: number; batchMax: 4; demandLimit: number; maxAttempts: number; jobMarginMs: number };
@@ -88,11 +88,11 @@ export const DEFAULT_RUNTIME_SETTINGS: RuntimeSettings = deepFreeze({
     // lib/jobs/products/intro-check.ts CALL_MS(CLI 호출에 직접 주는 상한)·MIN_CALL_MS
     "product-intro-check": { callMs: 90_000, minCallMs: 40_000 },
     /**
-     * 공개분 변경 재검수(lib/crawl/published-recheck.ts, 2026-11-09 운영자 결정 — 수를 코드에 박지 않고 여기서 고친다).
+     * 공개분 변경 재판정(lib/crawl/published-recheck.ts, 2026-11-09 운영자 결정 — 수를 코드에 박지 않고 여기서 고친다).
      * scanBatch: 틱(1분)마다 견줄 공개 제품 — 200 이면 공개 7만 6천여 건 한 바퀴가 약 6시간(생존 확인의 본문 다시 채우기 주기와 같다).
-     * dailyCap: 지난 24시간에 재검수 줄에 올릴 최대 수(0 이면 올리지 않음) — 2026-11-09 실측으로 하루 수십 건, 첫 바퀴의 밀린 몫도 하루 100건씩.
-     * askBatch: 감사 잡(product-audit) 틱마다 물을 재검수 항목 수(0 이면 묻지 않음). minSimilarity: 글 칸의 낱말 유사도가 이 % 아래면 바뀜.
-     * yieldHours: 1차 심사 대기에 후보가 있으면 물러나되, 가장 오래 기다린 재검수 항목이 이 시간을 넘으면 함께 묻는다(0 이면 물러나지 않음 — 장부의 background 등급만)
+     * dailyCap: 지난 24시간에 재판정 줄에 올릴 최대 수(0 이면 올리지 않음) — 2026-11-09 실측으로 하루 수십 건, 첫 바퀴의 밀린 몫도 하루 100건씩.
+     * askBatch: 감사 잡(product-audit) 틱마다 물을 재판정 항목 수(0 이면 묻지 않음). minSimilarity: 글 칸의 낱말 유사도가 이 % 아래면 바뀜.
+     * yieldHours: 1차 심사 대기에 후보가 있으면 물러나되, 가장 오래 기다린 재판정 항목이 이 시간을 넘으면 함께 묻는다(0 이면 물러나지 않음 — 장부의 background 등급만)
      */
     "published-recheck": { scanBatch: 200, dailyCap: 100, askBatch: 2, minSimilarity: 60, yieldHours: 6 },
   },
@@ -429,7 +429,7 @@ export const JOB_LABELS: Readonly<Record<string, string>> = {
   "product-stars-refresh": "스타 갱신", "product-star-observation": "스타 관측", "ai-level-refresh": "AI 제작 근거", "product-evidence-refresh": "제품 근거 갱신",
   "product-site-evidence-refresh": "사이트 근거 갱신", "agent-evidence-refresh": "에이전트 근거 갱신", "second-review": "2차 심사",
   "split-tiebreak": "2차 갈림 판가름", "human-deepseek-review": "사람 큐 DeepSeek 심사", "held-qwen-retry": "보류 Qwen 재심사", "split-confirm": "갈림 DeepSeek 확인",
-  "audit-qwen": "Qwen 직접 감사", "audit-second-opinion": "감사 두 번째 의견", "published-recheck": "공개분 변경 재검수",
+  "audit-qwen": "Qwen 직접 감사", "audit-second-opinion": "감사 두 번째 의견", "published-recheck": "공개분 변경 재판정",
   "product-thumbnail-refresh": "썸네일 갱신", "bluesky-talk": "Bluesky 화제", "crawl-seed": "검색 수집",
   "crawl-fetch": "원본 확보",
 };

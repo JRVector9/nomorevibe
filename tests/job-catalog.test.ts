@@ -162,7 +162,7 @@ describe('lanesForRole', () => {
     expect(lanesForRole('reviewer')).toHaveLength(15);
     expect(lanesForRole('text')).toHaveLength(8);
     for (const role of JOB_ROLES) expect(lanesForRole(role).length, role).toBeLessThanOrEqual(16);
-    // 모델을 부르지 않는 crawl-judge 와 공개분 변경 재검수의 견주기(published-recheck, 2026-11-09 — DB 쓸기뿐, 묻기는 product-audit 줄)만 reviewer 기본 줄에 남는다
+    // 모델을 부르지 않는 crawl-judge 와 공개분 변경 재판정의 견주기(published-recheck, 2026-11-09 — DB 쓸기뿐, 묻기는 product-audit 줄)만 reviewer 기본 줄에 남는다
     expect(lanesForRole('reviewer')[0]).toEqual(['crawl-judge', 'published-recheck']);
     expect(JOB_CATALOG.find(job => job.name === 'published-recheck')).toEqual({ name: 'published-recheck', role: 'reviewer', intervalMs: 60_000 });
     expect(JOB_CATALOG.find(job => job.name === 'crawl-judge')?.lane).toBeUndefined();

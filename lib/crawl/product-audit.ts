@@ -104,9 +104,12 @@ export async function startProductAudit(input: {
   const settings = await getSettings();
   await ensureAiTaskModels(0);
   const rank = taskModels("product-audit").find(row => row.enabled && row.connection.enabled);
-  if (rank && !isCliEngineConnection(rank.connection)) return { ok: false, error: "감사 작업 순위는 OpenCode CLI 연결을 선택해주세요. 기존 감사 설정은 순위를 비운 상태에서 유지됩니다." };
+  // 2026-11-09: 「발행분 감사 · 변경 재판정」 순위는 Claude CLI 도 받는다 — Claude 는 감사 경로의 Claude 계약(cli:claude-cli:product-audit)으로 이 워커에서 띄운다
+  const claudeRank = rank?.connection.kind === "cli" && rank.connection.cliTool === "claude" ? rank : null;
+  if (rank && !claudeRank && !isCliEngineConnection(rank.connection))
+    return { ok: false, error: "감사 작업 순위는 OpenCode·Claude CLI 연결을 선택해주세요. 기존 감사 설정은 순위를 비운 상태에서 유지됩니다." };
   let cliSource: CliEngineSource | null = null;
-  if (rank && isCliEngineConnection(rank.connection)) {
+  if (rank && !claudeRank && isCliEngineConnection(rank.connection)) {
     try {
       cliHostTargetFromConnection(rank.connection);
       cliSource = { connectionId: rank.connection.id,
@@ -114,7 +117,8 @@ export async function startProductAudit(input: {
       cliEngineRevision(cliSource);
     } catch { return { ok: false, error: "선택한 감사 CLI 연결을 확인한 뒤 다시 시작해주세요." }; }
   }
-  const reviewer = cliSource && rank ? { provider: "opencode-cli" as const, model: rank.model } : firstReviewer(settings);
+  const reviewer = claudeRank ? { provider: "claude-cli" as const, model: claudeRank.model }
+    : cliSource && rank ? { provider: "opencode-cli" as const, model: rank.model } : firstReviewer(settings);
   if (!reviewer) return { ok: false, error: "1차 심사자를 설정해야 감사를 시작할 수 있습니다." };
   try {
     return await db.transaction(async (tx) => {
@@ -294,7 +298,7 @@ export async function pendingAuditItems(campaignId: number, limit: number) {
 
 /**
  * 발행 문과 같은 입력(createReviewInput)을 만든다. 수집 원본이 없으면 null — 메이커가 직접 등록한 것.
- * 한 제품에 후보가 여럿이면(별칭) 가장 작은 id 의 후보다 — 공개분 변경 재검수의 쓸기(published-recheck.ts)가 같은 후보로 지금 내용을 만든다
+ * 한 제품에 후보가 여럿이면(별칭) 가장 작은 id 의 후보다 — 공개분 변경 재판정의 쓸기(published-recheck.ts)가 같은 후보로 지금 내용을 만든다
  */
 export async function loadAuditInput(slug: string, settings: CrawlSettings): Promise<ReviewInput | null> {
   const [row] = await db.select({ candidate: crawlCandidates, document: crawlDocuments }).from(crawlCandidates)
@@ -329,7 +333,7 @@ export async function markAuditInputFailed(itemId: number, code: string, lease: 
  * 공통 슬롯 dispatch 의 도메인 증명(05c-5). 감사 행을 잠그고, 아직 답이 없고 시도가 남았으며 원본이 있는 같은 감사의 행인지,
  * 감사가 돌고 있고 지금 묻는 제공자·모델(auditReviewer — 남은 감사 모델 바꾸기 뒤면 바꾼 것)·글 버전이 그대로인지, 입력을 읽은 제품이
  * 이 행의 제품인지 본다. 아니면 null(묻지 않는다). value.campaign 의 provider·model 은 잡이 부를 때의 심사자다.
- * 공개분 변경 재검수 줄(0171)의 항목은 감사 행의 심사자·판을 보지 않는다 — 심사자는 1차 순위가 고르고(jobs/product-audit.ts askRecheckStream),
+ * 공개분 변경 재판정 줄(0171)의 항목은 감사 행의 심사자·판을 보지 않는다 — 심사자는 1차 순위가 고르고(jobs/product-audit.ts askRecheckStream),
  * 글은 지금 코드의 것이어야 한다.
  * attempts 는 그 시점의 사진이다 — 세는 규칙은 recordAuditResult 그대로다.
  */
@@ -340,7 +344,7 @@ export async function lockAuditDispatchItem(tx: ProductTransaction, value: { ite
   const [campaign] = await tx.select().from(productAuditCampaigns).where(eq(productAuditCampaigns.id, item.campaignId)).for("share");
   if (!campaign) return null;
   if (!isManualCampaign(campaign)) {
-    // 공개분 변경 재검수 줄(0171): 끝나지 않고 판도 굳히지 않는다 — 지금 코드의 글로, 1차 순위가 고른 심사자(value.campaign)로 묻는다
+    // 공개분 변경 재판정 줄(0171): 끝나지 않고 판도 굳히지 않는다 — 지금 코드의 글로, 1차 순위가 고른 심사자(value.campaign)로 묻는다
     if (value.campaign.id !== campaign.id || value.campaign.promptVersion !== REVIEW_PROMPT_VERSION || value.campaign.rulesVersion !== REVIEW_RULES_VERSION) return null;
   } else if (campaign.status !== "running" || campaign.promptVersion !== REVIEW_PROMPT_VERSION || campaign.rulesVersion !== REVIEW_RULES_VERSION
     || campaign.promptVersion !== value.campaign.promptVersion || campaign.rulesVersion !== value.campaign.rulesVersion
@@ -388,7 +392,7 @@ export async function recordAuditResult(call: AuditCall & (
       outcome: call.ok ? call.outcome : null, errorCode: call.ok ? null : call.error.slice(0, 120),
     });
     if (call.ok) {
-      // 공개분 변경 재검수 줄(0171)의 답은 그때의 글 판을 항목에 적고, 모델이 본 내용을 그 제품의 새 기준으로 둔다(published-recheck-baseline.ts)
+      // 공개분 변경 재판정 줄(0171)의 답은 그때의 글 판을 항목에 적고, 모델이 본 내용을 그 제품의 새 기준으로 둔다(published-recheck-baseline.ts)
       const [campaign] = await tx.select({ status: productAuditCampaigns.status }).from(productAuditCampaigns).where(eq(productAuditCampaigns.id, item.campaignId));
       const rolling = campaign?.status === ROLLING_AUDIT_STATUS;
       await tx.update(productAuditItems).set({
@@ -528,7 +532,7 @@ export type AuditFindingRow = {
   aiProvider: string | null;
   /** 수집 본문 글자 수(원본 없으면 null)·화면 판정이 있는가·엇갈림(m1 과 다른 모델이 반대) — audit-text-gate.ts */
   textLength: number | null; screenJudged: boolean; m1Split: boolean;
-  /** 공개분 변경 재검수(0171)가 무엇이 바뀌어 다시 올렸나(published-recheck-change.ts). 사람이 연 감사의 항목은 null */
+  /** 공개분 변경 재판정(0171)가 무엇이 바뀌어 다시 올렸나(published-recheck-change.ts). 사람이 연 감사의 항목은 null */
   changeSummary: Record<string, unknown> | null;
 };
 

@@ -1,7 +1,7 @@
 import { reviewHash, type ReviewSnapshot } from "./agent-review-contract";
 
 /**
- * 공개분 변경 재검수(published-recheck.ts)의 "뜻있게 바뀌었나" 판정 — 순수 모듈(DB·네트워크 없음).
+ * 공개분 변경 재판정(published-recheck.ts)의 "뜻있게 바뀌었나" 판정 — 순수 모듈(DB·네트워크 없음).
  *
  * 견주는 것은 모델이 본 제품 내용(심사 입력의 product 부분, agent-review-contract.ts buildReviewProduct)의 아홉 칸뿐이다(2026-11-09 운영자 결정):
  *   name · description · pageText · readme · topics · url · accessMode · packageProof · linksOwnGithub
@@ -31,7 +31,7 @@ export const PACKAGE_PROOF_SINCE = "2026-10-06.1";
 
 /**
  * 제품 내용에서 견줄 아홉 칸만 고른다. 없는 칸은 빼 둔다(모름). packageProofKnown 이면 packageProof 가 없을 때 "없음"([])으로 적는다 —
- * 지금 만든 내용과 0171 뒤의 재검수 답은 늘 그렇고, 1차 승인은 그 판(PACKAGE_PROOF_SINCE) 뒤의 것만 그렇다.
+ * 지금 만든 내용과 0171 뒤의 재판정 답은 늘 그렇고, 1차 승인은 그 판(PACKAGE_PROOF_SINCE) 뒤의 것만 그렇다.
  */
 export function recheckContent(product: Partial<ReviewSnapshot["product"]> | null | undefined, options: { packageProofKnown: boolean }): RecheckContent {
   const source = (product ?? {}) as Record<string, unknown>;

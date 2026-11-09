@@ -30,8 +30,10 @@ export type TaskAssignInput = Readonly<{
    * 없거나 읽지 못했으면 모른다로 보고 지금 표시(「멈춤 · 순위 없음」)를 그대로 둔다.
    */
   facts?: Readonly<{ auditRunning: boolean | null; connectionsRead: boolean;
-    /** 공개분 변경 재검수 줄에 사람을 기다리는 거절이 있나(0171, null·없음 = 모름) — 감사 두 번째 의견은 감사 캠페인이 없어도 이것을 묻는다 */
-    recheckRejectsOpen?: boolean | null }>;
+    /** 공개분 변경 재판정 줄에 사람을 기다리는 거절이 있나(0171, null·없음 = 모름) — 감사 두 번째 의견은 감사 캠페인이 없어도 이것을 묻는다 */
+    recheckRejectsOpen?: boolean | null;
+    /** 공개분 변경 재판정이 꺼져 있나(실시간 한도 jobs.published-recheck 의 askBatch 0 또는 dailyCap 0, null·없음 = 모름) */
+    recheckOff?: boolean | null }>;
 }>;
 
 /** fallback = 대체 실행(작업 순위), workload_pool = 작업 분산, classifier = 기존 CLI 분류(발행 분류의 대체 실행), effective = 실행 쪽이 순위를 읽지 않는 작업(실제 적용 설정) */
@@ -227,10 +229,12 @@ export function buildTaskAssignView(input: TaskAssignInput): TaskAssignView {
     const mixed = mode === "fallback" && savedMs !== undefined && savedMs > observedMs - HOUR_MS;
     // 실행 쪽 마지막 틱이 앞 순위의 포화로 뒤 순위를 쓴 것(설계대로의 대체) — 「설정과 다름」이 아니다. 여러 칸 작업은 순위 사정이 투표자를 가르지 않아 보지 않는다
     const fallback = mode === "fallback" && !multi && runtime ? saturationFallback(runtime, entries.map(entry => entry.position)) : null;
-    // 쓰지 않는 작업(2026-11-09) — 순위가 없고 사실이 그 까닭을 말할 때만. 감사 캠페인은 진행 중인 감사가 없음, CLI 전용 작업은 받는 CLI 도구의 연결이 없음.
-    // 모르거나(못 읽음) 쓸 일이 생겼으면(감사 진행 중·연결 있음) 지금처럼 「멈춤 · 순위 없음」
+    // 쓰지 않는 작업(2026-11-09) — 순위가 없고 사실이 그 까닭을 말할 때만. CLI 전용 작업은 받는 CLI 도구의 연결이 없음.
+    // 「발행분 감사 · 변경 재판정」은 공개분 변경 재판정이 늘 이 순위로 부르므로, 진행 중인 감사가 없고 재판정도 꺼져 있다고 읽었을 때만 쓰지 않음이다
+    // (배포 뒤 순위를 저장하기 전에는 「멈춤 · 순위 없음」 — 재판정이 묻지 못하고 올리기만 쌓인다).
+    // 모르거나(못 읽음) 쓸 일이 생겼으면(감사 진행 중·재판정 켜짐·연결 있음) 지금처럼 「멈춤 · 순위 없음」
     const unused = mode !== "fallback" || slot.slot !== 1 || entries.length ? null
-      : task.id === "product-audit" ? input.facts?.auditRunning === false ? "진행 중인 감사 없음" : null
+      : task.id === "product-audit" ? input.facts?.auditRunning === false && input.facts.recheckOff === true ? "진행 중인 감사 없음 · 변경 재판정 꺼짐" : null
       : !task.api && task.cliTools.length > 0 && input.facts?.connectionsRead === true && !cliConnected(task)
         ? `${task.cliTools.map(tool => AI_CLI_TOOL_LABELS[tool]).join("·")} 연결 없음` : null;
 
@@ -294,7 +298,7 @@ export function buildTaskAssignView(input: TaskAssignInput): TaskAssignView {
     const enabledConnections = entries.filter(entry => entry.connectionId).map(entry => connectionOf(entry.connectionId!));
     const skipText = (mode === "effective" || mode === "classifier") && slot.current?.skip ? slot.current.skipStatus ?? trimDot(slot.current.skip) : null;
     // 감사 항목을 받아서만 일하는 작업 — 진행 중인 감사가 없으면 일감이 없어 쉬는 것이지 멈춘 것이 아니다(「24시간 성공 0건」으로 보이지 않게)
-    // 감사 두 번째 의견은 공개분 변경 재검수 줄의 거절도 묻는다(0171) — 그 거절이 없다고 읽었을 때만 쉰다
+    // 감사 두 번째 의견은 공개분 변경 재판정 줄의 거절도 묻는다(0171) — 그 거절이 없다고 읽었을 때만 쉰다
     const auditIdle = AUDIT_FED_TASKS.has(task.id) && input.facts?.auditRunning === false
       && (task.id !== "audit-second-opinion" || input.facts.recheckRejectsOpen === false) ? "진행 중인 감사 없음" : null;
     const idleWhy = paused ? "잡 일시중지" : unused ? "쓰지 않음" : mode === "fallback" && !entries.length ? "순위 없음"

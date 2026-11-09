@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { compareRecheckContent, contentTokens, normalizedRecheckUrl, packageProofKnownSince, recheckChangeText, recheckContent,
   recheckContentHash, tokenSimilarity, type RecheckContent } from "@/lib/crawl/published-recheck-change";
 
-/** 공개분 변경 재검수의 "뜻있게 바뀌었나" 규칙(2026-11-09 운영자 결정) — 아홉 칸만, 글은 낱말 유사도 */
+/** 공개분 변경 재판정의 "뜻있게 바뀌었나" 규칙(2026-11-09 운영자 결정) — 아홉 칸만, 글은 낱말 유사도 */
 const rule = { minSimilarity: 0.6 };
 const words = (count: number, prefix = "word") => Array.from({ length: count }, (_, index) => `${prefix}${String.fromCharCode(97 + (index % 26))}${String.fromCharCode(97 + Math.floor(index / 26))}`).join(" ");
 const base: RecheckContent = {

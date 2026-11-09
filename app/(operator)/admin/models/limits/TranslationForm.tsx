@@ -29,7 +29,7 @@ export function TranslationForm({ translation, jobKnobs, revision, readOnly }: {
     </GroupForm>
     <GroupForm group="jobs" revision={revision} readOnly={readOnly}>
       <h3 className="text-[15px] font-semibold">잡별 묶음</h3>
-      <p className="text-[13px] text-fg-3">각 잡이 한 틱에 묶는 건수·글자와 호출을 시작할 최소 남은 시간입니다. 소개 생성의 동시 호출·호출 상한은 위 경로 한도의 <code>crawl-tagline</code> 줄입니다. 2차 심사의 소비자 동시 업무는 모델 수·장비 슬롯·투표 수와 별개이며 기본 1입니다. 공개분 변경 재검수의 다섯 칸은 <code>/admin/audit?tab=recheck</code> 에서 쓰입니다.</p>
+      <p className="text-[13px] text-fg-3">각 잡이 한 틱에 묶는 건수·글자와 호출을 시작할 최소 남은 시간입니다. 소개 생성의 동시 호출·호출 상한은 위 경로 한도의 <code>crawl-tagline</code> 줄입니다. 2차 심사의 소비자 동시 업무는 모델 수·장비 슬롯·투표 수와 별개이며 기본 1입니다. 공개분 변경 재판정의 다섯 칸은 <code>/admin/audit?tab=recheck</code> 에서 쓰입니다.</p>
       <div className="overflow-x-auto"><table className="w-full min-w-[880px] text-left text-[13px]"><thead><tr className="border-b border-line">
         <th className={TH}>잡</th>{columns.map(knob => <th key={knob} className={TH}>{KNOB_HEADERS[knob]}</th>)}</tr></thead>
         <tbody>{jobKnobs.map(row => <tr key={row.job} className="border-b border-line">

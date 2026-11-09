@@ -13,21 +13,41 @@ import { recheckPublishedChanges } from "@/lib/crawl/jobs/published-recheck";
 import { recheckOverview, rollingStream } from "@/lib/crawl/published-recheck";
 import { runJob } from "@/lib/jobs/runner";
 import { setRuntimeSettingsForTest } from "@/lib/operations/runtime-settings-store";
+import { ModelCapacityDeferredError } from "@/lib/llm/capacity-deferred";
+import { setAiTaskModelsForTest, type AiTaskModelSnapshotRow } from "@/lib/llm/ai-task-models-snapshot";
+import { cliRankRow } from "../fake-cli-path";
 import { jobRunOptions } from "@/scripts/worker";
 import { ensureSchema, resetTables } from "./setup";
 
 /**
- * 공개분 변경 재검수(0171) — 견주기(published-recheck 잡)·올리기·묻기(감사 잡의 재검수 갈래)·보류·기준 갱신을 실제 DB 로 본다.
- * 모델 호출(게이트웨이)만 바꾼다. 심사자는 시험 설정의 1차 심사자를 1차 순위로 고정한 것이다(tests/integration/env.ts).
+ * 공개분 변경 재판정(0171) — 견주기(published-recheck 잡)·올리기·묻기(감사 잡의 재판정 갈래)·보류·기준 갱신을 실제 DB 로 본다.
+ * 심사자는 「작업 ↔ 모델」의 발행분 감사 · 변경 재판정(product-audit) 순위를 시험 고정(setAiTaskModelsForTest)한 것이다 — 1차 순위(env.ts 가 고정)와 따로다.
+ * 장부 입장(backgroundCliPath)과 모델 호출(원격 OpenCode·Claude CLI)만 바꾼다. 감사 경로 장부 binding·원격 호스트는 tests/integration/cli-model-capacity-admission 이 본다.
  */
-const gateway = vi.hoisted(() => vi.fn());
-vi.mock("@/lib/crawl/agent-review-gateway", async (importOriginal) => ({
-  ...await importOriginal<typeof import("@/lib/crawl/agent-review-gateway")>(), reviewWithGateway: gateway,
+const calls = vi.hoisted(() => ({ path: vi.fn(), remote: vi.fn(), agent: vi.fn() }));
+vi.mock("@/lib/llm/cli-model-capacity", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/lib/llm/cli-model-capacity")>(), backgroundCliPath: calls.path,
+}));
+vi.mock("@/lib/crawl/product-audit-model-capacity", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/lib/crawl/product-audit-model-capacity")>(), reviewAuditWithRemoteCliModelCapacity: calls.remote,
+}));
+vi.mock("@/lib/crawl/agent-review", async (importOriginal) => ({
+  ...await importOriginal<typeof import("@/lib/crawl/agent-review")>(), reviewWithAgent: calls.agent,
 }));
 const COMPANY = 'pageText: "Acme Studio" — a marketing site for a design agency, not a usable product';
 const verdict = (decision: "approve" | "reject" | "needs_review", confidence = 0.97) =>
   ({ ok: true, outcome: { decision, reason: decision === "approve" ? 'pageText: "usable app"' : COMPANY, evidenceIds: ["product"], confidence }, usage: {} });
+/** 1차 심사 설정(옛 firstReview — 1차 승인 기록의 provider·model 칸에만 쓴다) */
 const MODEL = "[MLX] gpt-oss-120b";
+const OPENCODE = "opencode-go/deepseek-v4.1-flash";
+const OPENCODE_CONNECTION = "0a0b0c0d-0000-4000-8000-000000000001";
+/** 발행분 감사 · 변경 재판정 순위 — 1순위 M3 OpenCode(원격 호스트), 2순위 Claude CLI */
+const ranks = (): AiTaskModelSnapshotRow[] => {
+  const first = cliRankRow("product-audit", OPENCODE, { rank: 1, cliTool: "opencode", label: "M3 OpenCode", connectionId: OPENCODE_CONNECTION });
+  return [Object.freeze({ ...first, connection: Object.freeze({ ...first.connection, baseUrl: "http://m3.test:4096/v1", apiKey: "k".repeat(40) }) }),
+    cliRankRow("product-audit", "sonnet", { rank: 2, cliTool: "claude", label: "Claude CLI", connectionId: "0a0b0c0d-0000-4000-8000-000000000002" })];
+};
+const remoteResult = (decision: "approve" | "reject" | "needs_review", confidence = 0.97) => ({ kind: "result", result: verdict(decision, confidence) });
 const words = (count: number, prefix: string) => Array.from({ length: count }, (_, index) =>
   `${prefix}${String.fromCharCode(97 + (index % 26))}${String.fromCharCode(97 + Math.floor(index / 26))}`).join(" ");
 const APP_TEXT = words(60, "notes");
@@ -45,10 +65,13 @@ beforeEach(async () => {
   await db.delete(crawlSettings);
   await db.delete(jobs);
   await resetTables();
-  gateway.mockReset().mockResolvedValue(verdict("approve"));
+  calls.path.mockReset().mockImplementation(async (_route: string, _model: string, provider?: string) => provider === "opencode-cli" ? "native" : "legacy");
+  calls.remote.mockReset().mockResolvedValue(remoteResult("approve"));
+  calls.agent.mockReset().mockResolvedValue(verdict("approve"));
+  setAiTaskModelsForTest(ranks());
   await saveSettings({ enabled: true, firstReview: { provider: "abcllm", model: MODEL }, reviewConcurrency: 2 }, "test");
 });
-afterEach(() => setRuntimeSettingsForTest(null));
+afterEach(() => { setRuntimeSettingsForTest(null); setAiTaskModelsForTest(null); });
 
 let sequence = 0;
 /** 원본을 바꾼다 — 다시 받은 것처럼(제목·본문·소개·토픽) */
@@ -96,7 +119,7 @@ describe("견주기 — 기준", () => {
     expect(await scan()).toMatchObject({ status: "completed" });
 
     const stream = await rollingStream();
-    expect(stream).toMatchObject({ status: "rolling", startedBy: "system:published-recheck", provider: "first-review-ranks" });
+    expect(stream).toMatchObject({ status: "rolling", startedBy: "system:published-recheck", provider: "product-audit-ranks" });
     expect(await rollingItems()).toEqual([]);
     const [attempt] = await db.select().from(crawlReviewAttempts);
     expect(await baselineOf(approved.id)).toMatchObject({ source: "first_review", attemptId: attempt.id, content: null });
@@ -105,7 +128,7 @@ describe("견주기 — 기준", () => {
     // 한 바퀴를 마쳤다 — 처음부터 다시
     expect(await cursorOf()).toEqual({ afterId: 0 });
 
-    // 사람이 연 감사의 자리는 그대로다 — 재검수 줄은 "진행 중인 감사"가 아니다
+    // 사람이 연 감사의 자리는 그대로다 — 재판정 줄은 "진행 중인 감사"가 아니다
     expect(await runningAuditCampaign()).toBeNull();
     expect((await productAuditOverview()).campaign).toBeNull();
     expect(await scan()).toMatchObject({ status: "completed" });
@@ -166,20 +189,25 @@ describe("견주기 — 바뀜", () => {
   });
 });
 
-describe("묻기 — 감사 잡의 재검수 갈래", () => {
-  it("1차 순위 모델로 묻고, 확신 높은 회사 소개 거절은 감사 보류다 — 상태는 그대로, 답이 새 기준이고, 보류 중에는 다시 올리지 않는다", async () => {
+describe("묻기 — 감사 잡의 재판정 갈래", () => {
+  it("발행분 감사 · 변경 재판정 1순위로 묻고, 확신 높은 회사 소개 거절은 감사 보류다 — 상태는 그대로, 답이 새 기준이고, 보류 중에는 다시 올리지 않는다", async () => {
     const product = await listed("e/agency");
     await scan();
     await page("e/agency", { text: words(60, "agency") });
     await scan();
-    gateway.mockResolvedValue(verdict("reject", 0.97));
+    calls.remote.mockResolvedValue(remoteResult("reject", 0.97));
     expect(await ask()).toMatchObject({ status: "completed" });
 
-    expect(gateway).toHaveBeenCalledTimes(1);
-    expect(gateway.mock.calls[0][0].snapshot.product.pageText).toContain("agencyaa");
-    expect(gateway.mock.calls[0][1]).toMatchObject({ model: MODEL });
+    expect(calls.remote).toHaveBeenCalledTimes(1);
+    expect(calls.agent).not.toHaveBeenCalled();
+    const [request] = calls.remote.mock.calls[0];
+    expect(request.input.snapshot.product.pageText).toContain("agencyaa");
+    // 순위의 연결·모델로 감사 경로(product-audit)의 원격 OpenCode 를 부른다 — 감사 시작 때 굳힌 심사자가 아니다
+    expect(request).toMatchObject({ campaign: { provider: "opencode-cli", model: OPENCODE, promptVersion: REVIEW_PROMPT_VERSION },
+      source: { connectionId: OPENCODE_CONNECTION } });
+    expect(calls.path).toHaveBeenCalledWith("product-audit", OPENCODE, "opencode-cli", OPENCODE_CONNECTION);
     const [item] = await rollingItems();
-    expect(item).toMatchObject({ aiDecision: "reject", aiProvider: "abcllm", aiModel: MODEL, promptVersion: REVIEW_PROMPT_VERSION,
+    expect(item).toMatchObject({ aiDecision: "reject", aiProvider: "opencode-cli", aiModel: OPENCODE, promptVersion: REVIEW_PROMPT_VERSION,
       rulesVersion: REVIEW_RULES_VERSION, attempts: 1, humanDecision: null });
     const [held] = await db.select().from(products).where(eq(products.id, product.id));
     expect(held).toMatchObject({ status: "seeded", auditHoldItemId: item.id });
@@ -225,13 +253,44 @@ describe("묻기 — 감사 잡의 재검수 갈래", () => {
     await page("g/app", { title: "Changed Title" });
     await scan();
     await ask();
-    expect(gateway).not.toHaveBeenCalled();
+    expect(calls.remote).not.toHaveBeenCalled();
+    expect((await rollingItems())[0]).toMatchObject({ aiDecision: null, attempts: 0 });
+  });
+
+  it("1순위가 감사 경로에서 열리지 않으면(경로·계약 없음·포화) 그 틱은 2순위로 묻는다", async () => {
+    calls.path.mockImplementation(async (_route: string, _model: string, provider?: string) => {
+      if (provider === "opencode-cli") throw new ModelCapacityDeferredError("unmapped");
+      return "legacy";
+    });
+    calls.agent.mockResolvedValue(verdict("needs_review", 0.6));
+    await listed("j/app");
+    await scan();
+    await page("j/app", { title: "Changed Title For Rank Two" });
+    await scan();
+    await ask();
+    expect(calls.remote).not.toHaveBeenCalled();
+    expect(calls.agent).toHaveBeenCalledTimes(1);
+    expect(calls.agent.mock.calls[0][1]).toMatchObject({ model: "sonnet" });
+    expect(calls.path.mock.calls.map((call) => call.slice(0, 3))).toEqual([["product-audit", OPENCODE, "opencode-cli"], ["product-audit", "sonnet"]]);
+    expect((await rollingItems())[0]).toMatchObject({ aiDecision: "needs_review", aiProvider: "claude-cli", aiModel: "sonnet" });
+  });
+
+  it("순위가 없으면 묻지 않는다 — 1차 순위로 대신 부르지 않고 항목은 기다린다", async () => {
+    setAiTaskModelsForTest([]);
+    await listed("k/app");
+    await scan();
+    await page("k/app", { title: "Changed Title Without Ranks" });
+    await scan();
+    await ask();
+    expect(calls.path).not.toHaveBeenCalled();
+    expect(calls.remote).not.toHaveBeenCalled();
+    expect(calls.agent).not.toHaveBeenCalled();
     expect((await rollingItems())[0]).toMatchObject({ aiDecision: null, attempts: 0 });
   });
 });
 
 describe("사람이 연 감사와 함께 산다", () => {
-  it("재검수 줄이 있어도 감사를 열고 닫는다 — 지금 감사·진행 중인 감사는 사람이 연 것이다", async () => {
+  it("재판정 줄이 있어도 감사를 열고 닫는다 — 지금 감사·진행 중인 감사는 사람이 연 것이다", async () => {
     await listed("h/one");
     await scan();
     const stream = (await rollingStream())!;
@@ -244,7 +303,7 @@ describe("사람이 연 감사와 함께 산다", () => {
     expect((await productAuditOverview()).campaign?.status).toBe("cancelled");
   });
 
-  it("공통 슬롯의 도메인 증명 — 재검수 항목은 지금 코드의 글 판으로만 묻는다", async () => {
+  it("공통 슬롯의 도메인 증명 — 재판정 항목은 지금 코드의 글 판으로만 묻는다", async () => {
     await listed("i/one");
     await scan();
     await page("i/one", { title: "Changed Product Name" });

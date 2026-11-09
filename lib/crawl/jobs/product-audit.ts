@@ -12,12 +12,13 @@ import { finishAuditCampaign, loadAuditInput, markAuditInputFailed, markAuditNoS
   runningAuditCampaign } from "@/lib/crawl/product-audit";
 import { sweepAuditHolds } from "@/lib/crawl/product-audit-hold";
 import { auditReviewer, QWEN_AUDIT_PROVIDER, type AuditReviewer } from "@/lib/crawl/product-audit-reviewer";
-import { firstReviewHasWork, oldestPendingRecheckHours, recheckLimits, recheckReviewerPlan, rollingStream,
-  type RecheckReviewer } from "@/lib/crawl/published-recheck";
-import { ensureReviewTaskRanks } from "@/lib/crawl/review-task-ranks";
+import { firstReviewHasWork, oldestPendingRecheckHours, recheckLimits, recheckReviewerPlan, rollingStream } from "@/lib/crawl/published-recheck";
+import { ensureAiTaskModels } from "@/lib/llm/ai-task-models-snapshot";
 import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import type { ProductAuditCampaign } from "@/lib/db/schema";
 import type { JobLease } from "@/lib/jobs/control";
+import { JobLeaseLostError } from "@/lib/jobs/lease";
+import { DrWriterFencedError } from "@/lib/operations/dr/epoch";
 import type { CliEngineSource } from "@/lib/llm/cli-engine-config";
 
 /**
@@ -50,22 +51,35 @@ const REVIEWER_DOWN = new Set(["not_configured", "auth", "missing_cli", "model_u
  * 운영 주의: PIPELINE_BACKGROUND_CONSUMER_JOBS 에 product-audit 을 넣으면 이 잡(쓸기·게이트웨이/CLI 감사)이 배경 consumer 줄에서만 돌고, 그 줄은
  * 공통 모델 슬롯이 open 일 때만 돈다(scripts/worker.ts runConsumerLane) — 쓸기도 함께 멈추니 slot 모드가 open 이 아니면 넣지 않는다.
  * audit-qwen·audit-second-opinion 은 공통 슬롯을 쓰지 않아 그 목록에 들지 않는다(lib/jobs/background-consumer.ts).
- * 2026-11-09(0171): 공개분 변경 재검수의 늘 열린 줄도 이 잡이 묻는다(askRecheckStream) — 장부 binding 의 job.name 이 product-audit 이어야 감사 경로
- * (product_audit_cli·게이트웨이 입장)를 새 binding 없이 쓸 수 있다. 올리기(견주기)는 자기 잡 published-recheck 가 한다.
+ * 2026-11-09(0171): 공개분 변경 재판정의 늘 열린 줄도 이 잡이 묻는다(askRecheckStream) — 장부 binding 의 job.name 이 product-audit 이어야 감사 경로
+ * (product_audit_cli)를 새 binding 없이 쓸 수 있다. 모델은 「작업 ↔ 모델」의 발행분 감사 · 변경 재판정 순위다. 올리기(견주기)는 자기 잡 published-recheck 가 한다.
  */
 export async function auditPublishedProducts(ctx: JobContext<null>): Promise<JobOutcome<null>> {
   const settings = await getSettings();
   await sweepAuditHolds(ctx, settings.auditHold, { autoOpinions: settings.qwenAuto.auditSecondOpinion.enabled });
-  // 공개분 변경 재검수(0171)의 항목을 먼저 조금(askBatch) 묻는다 — 하루 수십 건이라 사람이 연 감사의 틱을 거의 쓰지 않는다
-  await askRecheckStream(ctx, settings);
+  // 공개분 변경 재판정(0171)의 항목을 먼저 조금(askBatch) 묻는다 — 하루 수십 건이라 사람이 연 감사의 틱을 거의 쓰지 않는다
+  await askRecheckStreamSafely(ctx, settings);
   return askAuditCampaign(ctx, settings);
 }
 
-/** 한 호출의 재료 — 감사 행(또는 재검수 줄)·묻는 심사자·원격 OpenCode 연결(없으면 Claude CLI·게이트웨이)·호출 상한 */
+/**
+ * 재판정 갈래는 사람이 연 감사의 틱을 바꾸지 않는다 — 그 갈래의 실패(읽기·기록·호출 오류)는 로그로만 남기고 감사 묻기로 넘어간다.
+ * 작업 lease 를 잃었거나 DR writer fence 에 막혔으면 이 틱 전체가 더 쓰면 안 되므로 그대로 던진다
+ */
+async function askRecheckStreamSafely(ctx: JobContext<null>, settings: CrawlSettings): Promise<void> {
+  try { await askRecheckStream(ctx, settings); }
+  catch (error) {
+    if (error instanceof JobLeaseLostError || error instanceof DrWriterFencedError) throw error;
+    ctx.log("published_recheck.failed", { error: error instanceof ModelCapacityDeferredError ? `deferred:${error.reason}`
+      : error instanceof Error && /^[a-z0-9_:.-]{1,80}$/.test(error.message) ? error.message : "error" });
+  }
+}
+
+/** 한 호출의 재료 — 감사 행(또는 재판정 줄)·묻는 심사자·원격 OpenCode 연결(없으면 Claude CLI·게이트웨이)·호출 상한 */
 type AuditAsk = { campaign: Pick<ProductAuditCampaign, "id" | "provider" | "model" | "promptVersion" | "rulesVersion">; reviewer: AuditReviewer;
   cliEngine: CliEngineSource | null; ceiling: number };
 /**
- * 한 항목을 한 번 묻는다 — 사람이 연 감사(askAuditCampaign)와 공개분 변경 재검수(askRecheckStream)가 같은 길을 쓴다. 감사 경로(product-audit)의
+ * 한 항목을 한 번 묻는다 — 사람이 연 감사(askAuditCampaign)와 공개분 변경 재판정(askRecheckStream)가 같은 길을 쓴다. 감사 경로(product-audit)의
  * 장부 binding(product_audit_cli)·게이트웨이 입장이다. 슬롯 확인에서 이 항목만의 미룸이면 passed(다음 항목), 끊겼거나 건너뛰었으면 cut(기록하지 않고
  * 이 자리를 끝낸다). 모델·전역 미룸은 던진다. 결과는 기록하지 않는다 — 부르는 쪽이 recordAuditResult 로 적는다.
  */
@@ -130,12 +144,13 @@ async function callAuditReviewer(ctx: JobContext<null>, lease: JobLease, ask: Au
 }
 
 /**
- * 공개분 변경 재검수(0171, lib/crawl/published-recheck.ts)의 항목을 묻는다 — 감사 잡의 한 갈래(장부 job.name 이 product-audit 이어야 감사 경로의
- * binding 을 쓸 수 있다). 1차와 같은 순위(작업 first-review)를 1차와 같은 길(resolveReviewTaskRanks)로 읽어 쓸 수 있는 것 중 높은 순위부터 부른다
- * (recheckReviewerPlan — 감사 경로가 받는 claude-cli·opencode-cli·abcllm 만). 한 심사자가 이 틱에 모델·전역 미룸이거나 심사자 쪽 탈이면 다음 순위로 간다.
+ * 공개분 변경 재판정(0171, lib/crawl/published-recheck.ts)의 항목을 묻는다 — 감사 잡의 한 갈래(장부 job.name 이 product-audit 이어야 감사 경로의
+ * binding 을 쓸 수 있다). 심사자는 재판정 자신의 설정인 「작업 ↔ 모델」의 발행분 감사 · 변경 재판정(product-audit) 1·2·3순위다(recheckReviewerPlan —
+ * 사람이 연 감사를 시작할 때와 같은 해석, OpenCode·Claude CLI 연결만). 1차 순위와는 나뉜다. 한 순위가 이 틱에 모델·전역 미룸이거나 심사자 쪽 탈이면 다음 순위로 간다.
+ * 순위가 없으면 묻지 않는다 — 올리기(published-recheck)만 쌓이고 화면이 그 까닭을 말한다.
  *
  * 1차를 늦추지 않는다: 감사 경로의 요청은 장부의 background 등급이고(1차는 first), 1차 심사 대기에 후보가 있으면 물러난다 — 다만 가장 오래 기다린
- * 재검수 항목이 yieldHours 를 넘으면 함께 묻는다(1차 대기가 늘 차 있는 운영에서 영영 굶지 않게). 한 틱에 askBatch 건까지, 한 번에 하나씩 묻는다.
+ * 재판정 항목이 yieldHours 를 넘으면 함께 묻는다(1차 대기가 늘 차 있는 운영에서 영영 굶지 않게). 한 틱에 askBatch 건까지, 한 번에 하나씩 묻는다.
  * 답은 감사와 같은 길로 적는다(recordAuditResult — 확신 높은 거절은 감사 보류, 답이 곧 그 제품의 새 기준). 실패해도 이 잡을 실패로 남기지 않는다 —
  * 사람이 연 감사와 보류 쓸기를 막지 않게. 멈춘 까닭은 로그(published_recheck.*)와 /admin/audit?tab=recheck 에 보인다.
  */
@@ -155,10 +170,11 @@ async function askRecheckStream(ctx: JobContext<null>, settings: CrawlSettings):
       return;
     }
   }
-  await ensureReviewTaskRanks();
+  await ensureAiTaskModels();
   const plan = recheckReviewerPlan();
   if (!plan.reviewers.length) {
-    ctx.log("published_recheck.no_reviewer", { stream: stream.id, status: plan.status, skipped: plan.skipped.map((row) => `${row.rank}:${row.model}:${row.reason}`).slice(0, 3) });
+    ctx.log("published_recheck.no_reviewer", { stream: stream.id, status: plan.status, pending: queue.length,
+      skipped: plan.skipped.map((row) => `${row.rank}:${row.model}:${row.reason}`).slice(0, 3) });
     return;
   }
   const startedAt = Date.now();
@@ -167,10 +183,11 @@ async function askRecheckStream(ctx: JobContext<null>, settings: CrawlSettings):
   const paused = new Set<number>();
   let asked = 0, failed = 0, noSource = 0, passed = 0;
   const deferred: string[] = [];
-  const ceilingOf = (reviewer: RecheckReviewer) => reviewer.provider === "abcllm" ? reviewGatewayTimeoutMs() : reviewCliTimeoutMs();
-  const startable = (reviewer: RecheckReviewer) => !ctx.signal?.aborted && ctx.hasBudget() && remaining() >= ceilingOf(reviewer) + WRITE_MARGIN_MS;
+  // CLI 호출의 상한 — 사람이 연 감사의 CLI 심사자와 같다
+  const ceiling = reviewCliTimeoutMs();
+  const startable = () => !ctx.signal?.aborted && ctx.hasBudget() && remaining() >= ceiling + WRITE_MARGIN_MS;
   items: for (const item of queue) {
-    if (!plan.reviewers.some((reviewer) => !paused.has(reviewer.rank) && startable(reviewer))) break;
+    if (!startable() || plan.reviewers.every((reviewer) => paused.has(reviewer.rank))) break;
     let input: ReviewInput | null;
     try { input = await loadAuditInput(item.slug, settings); }
     catch (caught) {
@@ -181,14 +198,15 @@ async function askRecheckStream(ctx: JobContext<null>, settings: CrawlSettings):
     if (!input) { noSource += 1; await markAuditNoSource(item.id, lease); continue; }
     for (const reviewer of plan.reviewers) {
       if (paused.has(reviewer.rank)) continue;
-      if (!startable(reviewer)) break items;
+      if (!startable()) break items;
       const ask: AuditAsk = { campaign: { id: stream.id, provider: reviewer.provider, model: reviewer.model, promptVersion: REVIEW_PROMPT_VERSION,
         rulesVersion: REVIEW_RULES_VERSION }, reviewer: { provider: reviewer.provider, model: reviewer.model },
-        cliEngine: reviewer.provider === "opencode-cli" ? { connectionId: reviewer.connectionId, ...(reviewer.reasoningEffort ? { reasoningEffort: reviewer.reasoningEffort } : {}) } : null,
-        ceiling: ceilingOf(reviewer) };
+        // OpenCode 는 순위의 연결(원격 호스트)로, Claude 는 이 워커의 감사 경로 Claude 계약으로(callAuditReviewer)
+        cliEngine: reviewer.provider === "opencode-cli"
+          ? { connectionId: reviewer.connectionId, ...(reviewer.reasoningEffort ? { reasoningEffort: reviewer.reasoningEffort } : {}) } : null, ceiling };
       let outcome: Awaited<ReturnType<typeof callAuditReviewer>>;
       const callStartedAt = new Date();
-      try { outcome = await callAuditReviewer(ctx, lease, ask, item, input, () => startable(reviewer), remaining); }
+      try { outcome = await callAuditReviewer(ctx, lease, ask, item, input, startable, remaining); }
       catch (error) {
         if (!(error instanceof ModelCapacityDeferredError)) throw error;
         // 이 심사자가 감사 경로에서 지금 열리지 않는다(경로 매핑 없음·계약 없음·포화·draining) — 이 틱에는 다음 순위로

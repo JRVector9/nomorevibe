@@ -154,7 +154,7 @@ function ruleStop(document: CrawlDocument, settings: CrawlSettings, now: Date): 
 export type ReviewEvidenceAge = "window" | "any_age";
 
 /**
- * 심사 입력의 product 부분 — 모델이 보는 제품 내용. 1차·2차·감사가 같은 것을 보고, 공개분 변경 재검수(published-recheck.ts)가 "지금 내용"을
+ * 심사 입력의 product 부분 — 모델이 보는 제품 내용. 1차·2차·감사가 같은 것을 보고, 공개분 변경 재판정(published-recheck.ts)가 "지금 내용"을
  * 만들 때도 이 함수 하나를 쓴다(스캔·근거·규칙 멈춤은 읽지 않는다). now 는 createReviewInput 이 고친 그 시각이다.
  */
 export function buildReviewProduct(candidate: CrawlCandidate, document: CrawlDocument, settings: CrawlSettings, now: Date): ReviewSnapshot["product"] {

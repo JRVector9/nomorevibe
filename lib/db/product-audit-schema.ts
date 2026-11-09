@@ -21,7 +21,7 @@ import type { AuditProvider } from "@/lib/crawl/product-audit-reviewer";
  * published 가 rejected/approved 로 뒤집히고 발행 잡이 다시 올리려 든다.
  */
 /**
- * rolling: 공개분 변경 재검수(0171, lib/crawl/published-recheck.ts)의 늘 열린 줄 — 사람이 연 감사(running·done·cancelled)와 같은 표에 행 하나로 산다.
+ * rolling: 공개분 변경 재판정(0171, lib/crawl/published-recheck.ts)의 늘 열린 줄 — 사람이 연 감사(running·done·cancelled)와 같은 표에 행 하나로 산다.
  * 'running' 으로 두지 않는다: 사람이 연 감사가 하나뿐임(product_audit_one_running_idx)·"진행 중인 감사"를 읽는 곳이 모두 status = 'running' 을 본다
  */
 export type ProductAuditStatus = "running" | "done" | "cancelled" | "rolling";
@@ -62,7 +62,7 @@ export const productAuditCampaigns = pgTable("product_audit_campaigns", {
 }, (table) => [
   // 한 번에 하나만 돈다. 둘이 돌면 같은 제품을 두 번 묻고 목록도 둘로 갈린다
   uniqueIndex("product_audit_one_running_idx").on(table.status).where(sql`${table.status} = 'running'`),
-  // 공개분 변경 재검수의 줄은 하나뿐이다(0171)
+  // 공개분 변경 재판정의 줄은 하나뿐이다(0171)
   uniqueIndex("product_audit_one_rolling_idx").on(sql`(true)`).where(sql`${table.status} = 'rolling'`),
 ]);
 
@@ -117,22 +117,22 @@ export const productAuditItems = pgTable("product_audit_items", {
   holdReleasedAt: timestamp("hold_released_at"),
   /**
    * 같은 줄에서 그 제품의 몇 번째 항목인가(0171). 사람이 연 감사는 늘 0 이다 — 제품 하나에 항목 하나.
-   * 공개분 변경 재검수(늘 열린 줄)는 내용이 바뀔 때마다 같은 제품을 다시 올리므로 1, 2, … 로 센다
+   * 공개분 변경 재판정(늘 열린 줄)는 내용이 바뀔 때마다 같은 제품을 다시 올리므로 1, 2, … 로 센다
    */
   round: integer("round").notNull().default(0),
-  /** 공개분 변경 재검수가 올린 시각(0171) — 하루 상한을 센다. 사람이 연 감사의 항목은 비어 있다 */
+  /** 공개분 변경 재판정가 올린 시각(0171) — 하루 상한을 센다. 사람이 연 감사의 항목은 비어 있다 */
   enrolledAt: timestamp("enrolled_at"),
   /** 무엇이 바뀌어 다시 올렸나(0171, lib/crawl/published-recheck-change.ts RecheckChangeSummary). 사람이 연 감사의 항목은 비어 있다 */
   changeSummary: jsonb("change_summary").$type<Record<string, unknown>>(),
   /**
    * 이 답을 낸 심사 글·규칙의 판(0171). 사람이 연 감사는 감사 행이 굳힌 판으로 묻는다(비어 있다).
-   * 공개분 변경 재검수의 줄은 끝나지 않으므로 판이 바뀌어도 멈추지 않고, 답마다 그때의 판을 여기에 적는다
+   * 공개분 변경 재판정의 줄은 끝나지 않으므로 판이 바뀌어도 멈추지 않고, 답마다 그때의 판을 여기에 적는다
    */
   promptVersion: varchar("prompt_version", { length: 40 }),
   rulesVersion: varchar("rules_version", { length: 40 }),
 }, (table) => [
   uniqueIndex("product_audit_items_campaign_product_round_idx").on(table.campaignId, table.productId, table.round),
-  // 공개분 변경 재검수의 하루 상한(0171)
+  // 공개분 변경 재판정의 하루 상한(0171)
   index("product_audit_items_rolling_enrolled_idx").on(table.campaignId, table.enrolledAt).where(sql`${table.enrolledAt} is not null`),
   // 잡이 다음 일감을 고른다 — 아직 답을 받지 못한 것만
   index("product_audit_items_pending_idx").on(table.campaignId, table.id).where(sql`${table.aiDecision} is null`),
@@ -265,7 +265,7 @@ export const productAuditPolicyRunItems = pgTable("product_audit_policy_run_item
 ]);
 
 /**
- * 공개분 변경 재검수(0171)의 기준 — 공개 제품마다 "모델이 마지막으로 본 내용"이 무엇인지와 마지막으로 견준 내용의 해시.
+ * 공개분 변경 재판정(0171)의 기준 — 공개 제품마다 "모델이 마지막으로 본 내용"이 무엇인지와 마지막으로 견준 내용의 해시.
  *
  * source:
  *  - first_review: 발행 전 1차 심사의 마지막 성공 승인(crawl_review_attempts.snapshot 의 product). 내용을 복사하지 않고 attempt_id 로 가리킨다 —

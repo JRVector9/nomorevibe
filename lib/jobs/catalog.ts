@@ -100,7 +100,7 @@ export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs
    */
   { name: "audit-screen-review", role: "reviewer", intervalMs: 60_000, lane: "screen" },
   /**
-   * 공개분 변경 재검수(2026-11-09 운영자 결정, lib/crawl/published-recheck.ts) — 공개 제품의 받아 둔 원본을 모델이 마지막으로 본 내용과 견주고,
+   * 공개분 변경 재판정(2026-11-09 운영자 결정, lib/crawl/published-recheck.ts) — 공개 제품의 받아 둔 원본을 모델이 마지막으로 본 내용과 견주고,
    * 뜻있게 바뀐 것을 감사 표의 늘 열린 줄에 올린다. 모델·네트워크를 부르지 않는 DB 쓸기라 기본 줄(crawl-judge 와 같은 줄)에 둔다 — 줄 수·DB 풀은
    * 그대로다. 올린 것을 묻는 일은 감사 잡(product-audit, 줄 audit)이 1차 순위 모델로 한다(장부 binding·계약을 새로 만들지 않는다)
    */

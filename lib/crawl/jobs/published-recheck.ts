@@ -3,7 +3,7 @@ import { getSettings } from "@/lib/crawl/settings";
 import { ensureRollingStream, recheckLimits, scanPublishedChanges, type RecheckCursor } from "@/lib/crawl/published-recheck";
 
 /**
- * 공개분 변경 재검수 잡(published-recheck) — 공개 제품을 id 순서로 한 바퀴씩 돌며 받아 둔 원본을 모델이 마지막으로 본 내용과 견주고,
+ * 공개분 변경 재판정 잡(published-recheck) — 공개 제품을 id 순서로 한 바퀴씩 돌며 받아 둔 원본을 모델이 마지막으로 본 내용과 견주고,
  * 뜻있게 바뀐 것을 감사 표의 늘 열린 줄에 올린다(lib/crawl/published-recheck.ts). 모델도 GitHub·사이트도 부르지 않는다.
  * 올린 것은 감사 잡(product-audit)이 1차 순위 모델로 묻고, 거절은 감사 보류와 같이 다룬다.
  *
