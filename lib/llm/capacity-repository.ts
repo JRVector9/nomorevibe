@@ -43,7 +43,7 @@ import {
 } from "./capacity";
 import { ModelCapacityDeferredError } from "./capacity-deferred";
 import { LocalModelDomainRefusedError, localModelDomainRefusalEvidence } from "./local-model-domain-refusal";
-import { liveStateSql, occupyingStateSql, inFlightStateSql, openStateSql, sentStateSql } from "./capacity-states";
+import { liveStateSql, occupyingStateSql, inFlightStateSql, openStateSql, reviewStateSql, sentStateSql } from "./capacity-states";
 import { deviceCandidateSql, deviceFallbackLimit, deviceModelQuotaGateSql, deviceRouteQuotaGateSql, modelQuotaGateCapped, routeQuotaGateCapped,
   type DeviceModelQuotaGateRow, type DeviceRouteQuotaGateRow, type ModelCapacityGeneration } from "./capacity-devices";
 import { helperGateStateFromRow, helperGateStatesSql, type HelperGateState, type HelperGateStateRow } from "./capacity-helpers";
@@ -2224,7 +2224,10 @@ export type WebsearchQueryCapacityDispatchLock = Readonly<{ control: ReturnType<
 /** `broken`: the settled rows for this exact snapshot cannot be read as one outcome (duplicate or forged evidence). The caller skips this
  * one target as `ledger_mismatch` (2026-10-31, PR 3a-B) — the reader no longer throws, so one query's rows cannot fail the surrounding TX. */
 export type WebsearchQueryContinuation = { kind: "none" } | { kind: "blocked" } | { kind: "broken" }
-  | Readonly<{ kind: "settled"; requestId: string; bindingHash: string; responseHash: string; model: string; outcome: WebsearchQueryOutcome }>;
+  | Readonly<{ kind: "settled"; requestId: string; bindingHash: string; responseHash: string; model: string; outcome: WebsearchQueryOutcome }>
+  /** 이 스냅숏의 호출이 결과 미확정(indeterminate)으로 남았고 그 실패가 캐시에 닿지 못했다 — 같은 스냅숏으로는 다시 보낼 수 없다(snapshot 고유 색인).
+   * 호출자는 결과를 지어내지 않고 실패 한 번(unknown)만 적어 스냅숏을 넘긴다(2026-11-09). 장부 행은 그대로 사람 검토로 남는다. */
+  | Readonly<{ kind: "unresolved"; requestId: string; model: string }>;
 const websearchQueryLocks = new WeakMap<WebsearchQueryCapacityDispatchLock, { tx: ProductTransaction; row: RequestRow;
   identity: ModelCapacityRequestIdentity; input: WebsearchQueryInput; finished: boolean }>();
 function fixedWebsearchQueryIdentity(value: ModelCapacityRequestIdentity, input: WebsearchQueryInput): string {
@@ -2351,7 +2354,16 @@ export async function readWebsearchQueryContinuation(tx: ProductTransaction, val
     AND ${modelCapacityRequests.dispatchBinding}->>'kind'='websearch_query_gateway'
     AND ${modelCapacityRequests.dispatchBinding}->'member'->'cache'=${JSON.stringify(input.member.cache)}::text::jsonb`)
     .orderBy(asc(modelCapacityRequests.queueOrdinal));
-  if (!rows.length) return { kind: "none" };
+  if (!rows.length) {
+    // 같은 스냅숏의 결과 미확정 호출(「보낸 단계」) — 고유 색인이 같은 스냅숏의 새 전송을 막는다. 예전에는 이 검색어가 매번 23505 로 번역되지 못했다
+    const [unknown] = await tx.select({ requestId: modelCapacityRequests.requestId, model: modelCapacityRequests.model }).from(modelCapacityRequests)
+      .where(sql`${modelCapacityRequests.routeId}='search-query-translate' AND ${reviewStateSql(modelCapacityRequests.state)}
+        AND ${modelCapacityRequests.logicalWorkKey}=${websearchQueryLogicalWorkKey(input.member)}
+        AND ${modelCapacityRequests.dispatchBinding}->>'kind'='websearch_query_gateway'
+        AND ${modelCapacityRequests.dispatchBinding}->'member'->'cache'=${JSON.stringify(input.member.cache)}::text::jsonb`)
+      .orderBy(asc(modelCapacityRequests.queueOrdinal)).limit(1);
+    return unknown ? Object.freeze({ kind: "unresolved" as const, requestId: unknown.requestId, model: unknown.model }) : { kind: "none" };
+  }
   const stored = rows.map(row => storedWebsearchQueryEvidence(row));
   if (rows.length !== 1 || !stored[0] || stored[0].dispatch.binding.member.cacheKey !== input.member.cacheKey
     || !isDeepStrictEqual(stored[0].dispatch.binding.member.cache, input.member.cache)) return { kind: "broken" };
