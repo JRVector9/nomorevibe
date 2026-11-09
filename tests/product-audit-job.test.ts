@@ -15,6 +15,9 @@ vi.mock("@/lib/crawl/agent-review", () => ({ reviewWithAgent: mocks.agent, REVIE
 vi.mock("@/lib/crawl/agent-review-gateway", () => ({ reviewWithGateway: mocks.gateway, REVIEW_GATEWAY_TIMEOUT_MS: 60_000, reviewGatewayTimeoutMs: () => 60_000 }));
 // 감사 보류 쓸기는 DB 를 쓴다 — 이 테스트는 모델 호출만 본다(tests/integration/product-audit-hold.test.ts 가 쓸기를 본다)
 vi.mock("@/lib/crawl/product-audit-hold", () => ({ sweepAuditHolds: async () => 0 }));
+// 공개분 변경 재판정 갈래(0171)는 DB 를 읽는다 — 이 테스트는 사람이 연 감사의 묻기만 본다(tests/integration/published-recheck.test.ts 가 그 갈래를 본다)
+vi.mock("@/lib/crawl/published-recheck", () => ({ rollingStream: async () => null,
+  recheckLimits: () => ({ scanBatch: 200, dailyCap: 100, askBatch: 2, minSimilarity: 0.6, yieldHours: 6 }) }));
 vi.mock("@/lib/crawl/product-audit", () => ({ runningAuditCampaign: mocks.campaign, pendingAuditItems: mocks.pending,
   loadAuditInput: mocks.input, recordAuditResult: mocks.record, markAuditNoSource: mocks.noSource, finishAuditCampaign: mocks.finish }));
 // These job units do not open a database; open/draining admission is covered by cli-model-capacity-callers.test.ts.
