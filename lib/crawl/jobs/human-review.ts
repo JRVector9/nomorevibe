@@ -1,17 +1,26 @@
 import type { JobContext, JobOutcome } from '@/lib/jobs/runner';
 import { getSettings } from '../settings';
 import { humanQueueOverview } from '../review-overview';
-import { claimHumanReview, recordHumanReview, requeueInvalidHumanApprovals, humanReviewRepos, deferHumanReviewForModelCapacity } from '../human-review-repository';
+import { claimHumanReview, recordHumanReview, requeueInvalidHumanApprovals, humanReviewRepos, deferHumanReviewForModelCapacity,
+  HUMAN_REVIEW_SCAN_FACTOR, delegatedApprovalRoute, refreshStaleDelegatedSources } from '../human-review-repository';
+import { checkDelegatedRepository, type DelegatedRepoCheckResult } from '../delegated-repo-check';
 import { withLocalModelCapacity } from '@/lib/llm/local-model-capacity';
 import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
-import { REVIEW_PROMPT_VERSION } from '../agent-review-contract';
+import { REVIEW_FRESH_MS, REVIEW_PROMPT_VERSION, reviewEvidenceAgeHours } from '../agent-review-contract';
 import { reviewWithDeepSeek } from '../deepseek-review';
-import { deepseekReviewTimeoutMs } from '../deepseek-review-policy';
+import { DEEPSEEK_MIN_CONFIDENCE, deepseekReviewTimeoutMs } from '../deepseek-review-policy';
 import { withDeepSeekSlot } from '../deepseek-slot';
 import { heldQwenOwnedReasons } from '../held-qwen-retry-policy';
 
+/** 한 틱에 시작하는 위임 호출의 상한 — 실제 수는 잡 예산(110초)과 마감이 정한다(호출 평균 10초, p90 13초) */
+export const HUMAN_REVIEW_MAX_PER_TICK = 10;
+
 /**
- * 사람 큐 위임 — 사람 몫으로 넘어온 후보를 M3 DeepSeek 이 대신 본다(One local inference at a time; at most two per tick, three attempts per input).
+ * 사람 큐 위임 — 사람 몫으로 넘어온 후보를 M3 DeepSeek 이 대신 본다(One local inference at a time; as many as fit the budget,
+ * at most HUMAN_REVIEW_MAX_PER_TICK per tick, three attempts per input).
+ *
+ * 2026-11-09 운영자 결정: 최신 것부터 보고, 최신 것이 끝나면 쌓인 과거 것도 본다. 근거가 24시간 지났다고 못 보게 자르지 않는다 —
+ * 고르기는 humanReviewRepos(최근 들어온 것부터, 이 입력에서 끝낸 것 제외), 근거 나이는 any_age(agent-review-contract.ts).
  * 보류 Qwen-v2 재심사(held-qwen-retry.ts)가 맡은 사유는 집지 않는다.
  *
  * 2026-10-31(PR 3a-C) 전에는 이 틱이 보류 Qwen-v2 재심사(gpu3090) → DeepSeek 위임(M3) → 갈림 판가름의 DeepSeek 확인(M3)을 차례로 돌았다 —
@@ -28,7 +37,13 @@ export async function reviewHumanQueue(ctx: JobContext<null>): Promise<JobOutcom
     ctx.log('crawl.human_review_skipped', { reason: 'disabled', requeued });
     return { done: true };
   }
+  // 72시간 넘은 근거라 보류한 승인의 원본 재수집 요청·결과 처리(보류 한 번에 요청 한 번) — 위임 앞뒤로 한 번씩
+  const refreshed = await refreshStaleDelegatedSources(lease, settings);
   const delegated = await delegateToDeepSeek(ctx, lease, settings, requeued);
+  const after = await refreshStaleDelegatedSources(lease, settings);
+  if (refreshed.requested + refreshed.gone + refreshed.failed + after.requested + after.gone + after.failed)
+    ctx.log('crawl.human_review_stale_refresh', { requested: refreshed.requested + after.requested,
+      gone: refreshed.gone + after.gone, failed: refreshed.failed + after.failed });
   return { done: delegated === 0 };
 }
 
@@ -37,20 +52,25 @@ async function delegateToDeepSeek(ctx: JobContext<null>, lease: NonNullable<JobC
   requeued: number): Promise<number> {
   const overview = await humanQueueOverview(settings);
   const ids = [...new Set([...overview.ids.human, ...overview.ids.agreed])];
-  const repos = await humanReviewRepos(ids, heldQwenOwnedReasons(settings));
-  let started = 0, applied = 0, held = 0, failed = 0;
+  const repos = await humanReviewRepos(ids, heldQwenOwnedReasons(settings),
+    { settings, limit: HUMAN_REVIEW_MAX_PER_TICK * HUMAN_REVIEW_SCAN_FACTOR });
+  let started = 0, applied = 0, held = 0, failed = 0, unclaimed = 0, agedEvidence = 0, stale = 0, repoGone = 0, repoDeferred = 0;
+  let oldestEvidenceHours: number | null = null;
   const callTimeoutMs = deepseekReviewTimeoutMs();
   const room = () => !ctx.signal?.aborted && ctx.hasBudget()
     && !(ctx.deadlineAt !== undefined && ctx.deadlineAt - Date.now() < callTimeoutMs + 2_000);
   for (const repo of repos) {
-    if (started >= 2 || !room()) break;
+    if (started >= HUMAN_REVIEW_MAX_PER_TICK || !room()) break;
     const claim = await claimHumanReview(repo, lease);
-    if (!claim) continue;
+    if (!claim) { unclaimed++; continue; }
     if (!room()) {
       await recordHumanReview(claim, { ok: false, error: 'cancelled' });
       break;
     }
     started++;
+    const ageHours = reviewEvidenceAgeHours(claim.input);
+    if (ageHours >= REVIEW_FRESH_MS / 3600_000) agedEvidence++;
+    oldestEvidenceHours = Math.max(oldestEvidenceHours ?? ageHours, ageHours);
     const controller = new AbortController();
     const poll = setInterval(() => { if (!ctx.hasBudget()) controller.abort(); }, 250);
     poll.unref?.();
@@ -70,12 +90,22 @@ async function delegateToDeepSeek(ctx: JobContext<null>, lease: NonNullable<JobC
       ctx.log('crawl.human_review_capacity_deferred', { reason: error.reason });
       break;
     } finally { clearInterval(poll); }
-    const state = await recordHumanReview(claim, result);
+    // 24~72시간 근거의 승인은 발행 전에 저장소가 아직 있는지 묻는다(트랜잭션 밖, 한 번). 기록이 같은 나이로 다시 가른다
+    let repoCheck: DelegatedRepoCheckResult | undefined;
+    if (result.ok && result.outcome.decision === 'approve' && (result.outcome.confidence ?? 0) >= DEEPSEEK_MIN_CONFIDENCE
+      && delegatedApprovalRoute(reviewEvidenceAgeHours(claim.input, claim.startedAt)) === 'check_repo')
+      repoCheck = await checkDelegatedRepository(claim.repo, ctx.signal);
+    const state = await recordHumanReview(claim, result, repoCheck ? { repoCheck } : {});
     if (state === 'applied') applied++;
     if (state === 'held') held++;
     if (state === 'failed') failed++;
-    if (!result.ok) break;
+    if (state === 'stale') stale++;
+    if (state === 'repo_gone') repoGone++;
+    if (state === 'deferred') repoDeferred++;
+    // GitHub 를 못 물었으면(한도·전송) 이 틱의 나머지 승인도 같은 일을 겪는다 — 멈춘다
+    if (!result.ok || state === 'deferred') break;
   }
-  ctx.log('crawl.human_reviewed', { started, applied, held, failed, requeued });
-  return applied + held + failed;
+  ctx.log('crawl.human_reviewed', { started, applied, held, failed, requeued, candidates: repos.length, unclaimed,
+    agedEvidence, oldestEvidenceHours, stale, repoGone, repoDeferred });
+  return applied + held + failed + stale + repoGone;
 }

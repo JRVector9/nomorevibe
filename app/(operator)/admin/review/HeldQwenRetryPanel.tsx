@@ -47,7 +47,7 @@ export function HeldQwenRetryPanel({ status }: { status: HeldQwenStatus | null }
       24시간: 처리 <b>{n(day.processed)}</b> · 자동 경로 복귀 <b className="text-up">{n(day.pipeline)}</b> · 거부 <b>{n(day.rejected)}</b>
       {' '}· 사람에게 남김 <b>{n(day.held)}</b> · 실패 <b className={day.failed ? 'text-down' : ''}>{n(day.failed)}</b>
     </p>
-    <p className="text-fg-3">맡은 보류 {n(status.waiting)}건{status.expired ? ` · 그중 원본·스캔이 24시간 지나 갱신을 기다리는 것 ${n(status.expired)}건` : ''}
+    <p className="text-fg-3">맡은 보류 {n(status.waiting)}건{status.expired ? ` · 그중 원본·스캔이 24시간 지난 것 ${n(status.expired)}건(그대로 보고, 원본 재수집도 요청)` : ''}
       {status.lastError ? ` · 마지막 오류 ${status.lastError.code} (${time(status.lastError.at)})` : ' · 오류 없음'}
       {status.backoffUntil ? ` · ${time(status.backoffUntil)}까지 물러남(gpu3090 을 부르는 모두)` : ''}</p>
     <div className="flex flex-wrap items-end gap-3">

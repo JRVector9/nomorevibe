@@ -292,8 +292,8 @@ export async function markFrontier(
 }
 
 /** GitHub 는 지운 저장소와 비공개로 바꾼 저장소를 똑같이 404 로 답한다 — 둘을 가를 수 없다는 것까지 적는다 */
-const GONE_DETAIL = "GitHub 가 저장소를 404 로 답합니다 — 삭제됐거나 비공개로 바뀌었습니다(GitHub 는 둘을 구분해 알려주지 않습니다).";
-const EMPTY_DETAIL = "GitHub 저장소가 비어 있어 새 원본을 수집할 수 없습니다.";
+export const GONE_DETAIL = "GitHub 가 저장소를 404 로 답합니다 — 삭제됐거나 비공개로 바뀌었습니다(GitHub 는 둘을 구분해 알려주지 않습니다).";
+export const EMPTY_DETAIL = "GitHub 저장소가 비어 있어 새 원본을 수집할 수 없습니다.";
 /** 건너뛴 까닭이 기록되기 전(2026-10-08 이전)의 skipped — 404 인지 빈 저장소인지 모른다 */
 const UNKNOWN_SKIP_DETAIL = "GitHub 저장소를 수집하지 못했습니다(건너뛴 까닭 기록 없음).";
 

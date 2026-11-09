@@ -3,7 +3,8 @@ import type { ReviewInput } from '@/lib/crawl/agent-review-contract';
 
 const mocks = vi.hoisted(() => ({
   admin: vi.fn(), save: vi.fn(), ready: vi.fn(), settings: vi.fn(), overview: vi.fn(), repos: vi.fn(),
-  claim: vi.fn(), record: vi.fn(), requeue: vi.fn(), infer: vi.fn(), revalidate: vi.fn(),
+  claim: vi.fn(), record: vi.fn(), requeue: vi.fn(), infer: vi.fn(), revalidate: vi.fn(), defer: vi.fn(),
+  refresh: vi.fn(), repoCheck: vi.fn(),
 }));
 // 2026-10-31(PR 3a-C): 보류 Qwen-v2 재심사(held-qwen-retry)와 갈림 판가름의 DeepSeek 확인(split-confirm)은 자기 잡이다 — 이 잡은 둘을 부르지 않는다
 vi.mock('@/lib/crawl/held-qwen-retry', () => ({ runHeldQwenRetry: () => { throw new Error('human_review_must_not_run_held_qwen'); } }));
@@ -15,8 +16,11 @@ vi.mock('@/lib/crawl/settings', () => ({ setHumanReviewEnabled: mocks.save, getS
 vi.mock('@/lib/crawl/review-overview', () => ({ humanQueueOverview: mocks.overview }));
 vi.mock('@/lib/crawl/human-review-repository', () => ({
   claimHumanReview: mocks.claim, recordHumanReview: mocks.record, requeueInvalidHumanApprovals: mocks.requeue,
-  humanReviewRepos: mocks.repos,
+  humanReviewRepos: mocks.repos, deferHumanReviewForModelCapacity: mocks.defer, HUMAN_REVIEW_SCAN_FACTOR: 4,
+  refreshStaleDelegatedSources: mocks.refresh,
+  delegatedApprovalRoute: (hours: number) => hours > 72 ? 'refresh' : hours > 24 ? 'check_repo' : 'publish',
 }));
+vi.mock('@/lib/crawl/delegated-repo-check', () => ({ checkDelegatedRepository: mocks.repoCheck }));
 vi.mock('@/lib/crawl/deepseek-review', async importOriginal => {
   const original = await importOriginal<typeof import('@/lib/crawl/deepseek-review')>();
   return { ...original, deepseekReviewReady: mocks.ready, reviewWithDeepSeek: mocks.infer };
@@ -34,7 +38,8 @@ vi.mock('@/lib/operations/human-model-source', async importOriginal => {
 });
 
 import { setHumanReview } from '@/app/(operator)/admin/review/human-review-actions';
-import { reviewHumanQueue } from '@/lib/crawl/jobs/human-review';
+import { HUMAN_REVIEW_MAX_PER_TICK, reviewHumanQueue } from '@/lib/crawl/jobs/human-review';
+import { ModelCapacityDeferredError } from '@/lib/llm/capacity-deferred';
 import { DEEPSEEK_REVIEW_MODEL } from '@/lib/crawl/deepseek-review-policy';
 
 const input = { inputHash: 'a'.repeat(64), policyHash: 'b'.repeat(64), sourceRevisionHash: 'c'.repeat(64),
@@ -152,11 +157,62 @@ describe('human queue worker', () => {
     mocks.repos.mockResolvedValue(['a/one', 'b/two', 'c/three']);
     mocks.claim.mockResolvedValue({ input }); mocks.infer.mockResolvedValue({ ok: true, outcome: verdict });
     mocks.record.mockResolvedValue('applied');
+    mocks.refresh.mockResolvedValue({ requested: 0, gone: 0, failed: 0 });
+    mocks.repoCheck.mockResolvedValue({ check: 'present', retryAt: null });
   });
-  it('delegates up to two candidates per tick and reports remaining work', async () => {
+  const aged = (hours: number) => ({ input: { ...input, validUntil: new Date(Date.now() - (hours - 24) * 3600_000) }, startedAt: new Date() });
+  // 2026-11-09: 24~72시간 근거의 승인만 GitHub 에 저장소를 묻는다 — 72시간 넘은 것은 기록이 원본 재수집으로 보낸다
+  it('asks GitHub whether the repository still exists only for approvals on 24-72h evidence', async () => {
+    mocks.repos.mockResolvedValue(['a/fresh', 'b/aged', 'c/old']);
+    mocks.claim.mockResolvedValueOnce({ input, startedAt: new Date() }).mockResolvedValueOnce(aged(48)).mockResolvedValueOnce(aged(100));
+    await reviewHumanQueue(ctx());
+    expect(mocks.repoCheck).toHaveBeenCalledTimes(1);
+    expect(mocks.record.mock.calls.map(call => call[2])).toEqual([{}, { repoCheck: { check: 'present', retryAt: null } }, {}]);
+  });
+  it('does not ask GitHub for rejections of old evidence', async () => {
+    mocks.claim.mockResolvedValue(aged(48)); mocks.infer.mockResolvedValue({ ok: true, outcome: { ...verdict, decision: 'reject' } });
+    await reviewHumanQueue(ctx()); expect(mocks.repoCheck).not.toHaveBeenCalled();
+  });
+  it('stops the tick when the repository check had to be deferred', async () => {
+    mocks.claim.mockResolvedValue(aged(48)); mocks.repoCheck.mockResolvedValue({ check: 'deferred', retryAt: null });
+    mocks.record.mockResolvedValue('deferred');
+    await reviewHumanQueue(ctx()); expect(mocks.infer).toHaveBeenCalledTimes(1);
+  });
+  it('runs the stale-evidence refresh sweep around the delegation', async () => {
+    await reviewHumanQueue(ctx()); expect(mocks.refresh).toHaveBeenCalledTimes(2);
+  });
+  // 2026-11-09: 고정 2건 대신 예산·마감이 허락하는 만큼(상한 HUMAN_REVIEW_MAX_PER_TICK)
+  it('delegates every selected candidate that fits the budget and reports remaining work', async () => {
     expect(await reviewHumanQueue(ctx())).toEqual({ done: false });
-    expect(mocks.infer).toHaveBeenCalledTimes(2);
-    expect(mocks.record).toHaveBeenCalledTimes(2);
+    expect(mocks.infer).toHaveBeenCalledTimes(3);
+    expect(mocks.record).toHaveBeenCalledTimes(3);
+  });
+  it('bounds a tick at the per-tick upper limit even with budget left', async () => {
+    mocks.repos.mockResolvedValue(Array.from({ length: 25 }, (_, index) => `o/r${index}`));
+    await reviewHumanQueue(ctx());
+    expect(HUMAN_REVIEW_MAX_PER_TICK).toBe(10);
+    expect(mocks.infer).toHaveBeenCalledTimes(10); expect(mocks.claim).toHaveBeenCalledTimes(10);
+  });
+  it('stops starting calls once the job budget runs out', async () => {
+    mocks.repos.mockResolvedValue(Array.from({ length: 25 }, (_, index) => `o/r${index}`));
+    let left = 4;
+    await reviewHumanQueue({ ...ctx(), hasBudget: () => left-- > 0 });
+    expect(mocks.infer.mock.calls.length).toBeGreaterThan(0); expect(mocks.infer.mock.calls.length).toBeLessThan(4);
+  });
+  it('asks for a newest-first scan bounded to a small multiple of the per-tick limit', async () => {
+    await reviewHumanQueue(ctx());
+    expect(mocks.repos).toHaveBeenCalledWith([1, 2, 3], [], expect.objectContaining({ limit: HUMAN_REVIEW_MAX_PER_TICK * 4 }));
+  });
+  it('a capacity deferral releases the claim and stops the tick', async () => {
+    mocks.infer.mockRejectedValueOnce(new ModelCapacityDeferredError('capacity'));
+    expect(await reviewHumanQueue(ctx())).toEqual({ done: true });
+    expect(mocks.infer).toHaveBeenCalledTimes(1); expect(mocks.defer).toHaveBeenCalledTimes(1);
+    expect(mocks.record).not.toHaveBeenCalled();
+  });
+  it('skips unclaimable candidates and keeps going', async () => {
+    mocks.claim.mockResolvedValueOnce(null).mockResolvedValue({ input });
+    await reviewHumanQueue(ctx());
+    expect(mocks.claim).toHaveBeenCalledTimes(3); expect(mocks.infer).toHaveBeenCalledTimes(2);
   });
   it('off performs cleanup but no inference', async () => {
     mocks.settings.mockResolvedValue({ enabled: true, humanReview: { enabled: false } });
@@ -164,14 +220,14 @@ describe('human queue worker', () => {
   });
   it('takes only human/confirmation stages, deduplicates and bounds starts', async () => {
     await reviewHumanQueue(ctx());
-    expect(mocks.repos).toHaveBeenCalledWith([1, 2, 3], []); expect(mocks.infer).toHaveBeenCalledTimes(2);
+    expect(mocks.repos).toHaveBeenCalledWith([1, 2, 3], [], expect.anything()); expect(mocks.infer).toHaveBeenCalledTimes(3);
   });
   // 보류 Qwen-v2 재심사(held-qwen-retry.ts)는 2026-10-31 부터 자기 잡 — 여기서는 그 잡이 맡은 사유를 DeepSeek 이 집지 않는 것만 본다
   it('hands the held Qwen-v2 reasons away from DeepSeek when that switch is on', async () => {
     const qwenAuto = { heldRetry: { enabled: true, perTick: 10, budgetSeconds: 40, reasons: ['no_description', 'ai_review_exhausted', 'ambiguous'] } };
     mocks.settings.mockResolvedValue({ enabled: true, reviewMode: 'enforce', humanReview: { enabled: true, generation: 3 }, qwenAuto });
     await reviewHumanQueue(ctx());
-    expect(mocks.repos).toHaveBeenCalledWith([1, 2, 3], ['no_description', 'ai_review_exhausted', 'ambiguous']);
+    expect(mocks.repos).toHaveBeenCalledWith([1, 2, 3], ['no_description', 'ai_review_exhausted', 'ambiguous'], expect.anything());
   });
   it('turns off cleanly — requeue runs, no inference, done', async () => {
     mocks.settings.mockResolvedValue({ enabled: true, humanReview: { enabled: false } });
@@ -179,8 +235,9 @@ describe('human queue worker', () => {
     expect(mocks.requeue).toHaveBeenCalledTimes(1); expect(mocks.infer).not.toHaveBeenCalled();
   });
   it('bounds starts even when every result becomes superseded', async () => {
+    mocks.repos.mockResolvedValue(Array.from({ length: 25 }, (_, index) => `o/r${index}`));
     mocks.record.mockResolvedValue('superseded'); await reviewHumanQueue(ctx());
-    expect(mocks.infer).toHaveBeenCalledTimes(2);
+    expect(mocks.infer).toHaveBeenCalledTimes(HUMAN_REVIEW_MAX_PER_TICK);
   });
   it('does not infer when ownership cannot be claimed', async () => {
     mocks.claim.mockResolvedValue(null); await reviewHumanQueue(ctx()); expect(mocks.infer).not.toHaveBeenCalled();

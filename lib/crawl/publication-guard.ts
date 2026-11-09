@@ -7,7 +7,7 @@ import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { mergeWithDefaults } from "./settings";
 import type { CrawlSettings } from "./settings-schema";
 import { assertJobLeaseAtWallTime, type JobLease } from "@/lib/jobs/control";
-import { assertReviewApproval, ReviewApprovalChangedError } from "./agent-review-repository";
+import { assertReviewApproval, isDelegatedApproval, ReviewApprovalChangedError } from "./agent-review-repository";
 import { lockRepositoryAgentEvidence } from "@/lib/domain/evidence/agents/lock";
 import { effectiveAgentScanState } from "@/lib/domain/evidence/agents/coverage";
 import type { StoppedAt } from "./rules";
@@ -89,15 +89,17 @@ export async function guardPublication(tx: ProductTransaction, input: {
   await lockRepositoryAgentEvidence(tx, input.candidate.repo);
   if (input.scanId !== null) {
     const now = Date.now();
+    // 사람 몫 위임 검수의 승인은 근거 나이를 자르지 않는다(2026-11-09 운영자 결정, ReviewEvidenceAge any_age) — 미래 시각·스캔 동일성은 그대로 본다
+    const ageLimit = isDelegatedApproval(candidate) ? Infinity : 24*3600_000;
     const documentAge = now-document.fetchedAt.getTime();
-    if (!Number.isFinite(documentAge) || documentAge < 0 || documentAge >= 24*3600_000) throw new PublicationStateChangedError();
+    if (!Number.isFinite(documentAge) || documentAge < 0 || documentAge >= ageLimit) throw new PublicationStateChangedError();
     const [scan] = await tx.select().from(agentRepositoryScans).where(and(
       eq(agentRepositoryScans.repositoryKey,input.candidate.repo.toLowerCase()),eq(agentRepositoryScans.scope,""),
     )).orderBy(desc(agentRepositoryScans.startedAt),desc(agentRepositoryScans.id)).limit(1).for("share");
     if (!scan || scan.id !== input.scanId || effectiveAgentScanState(scan) !== "complete" || scan.lastErrorCode !== null
       || scan.detectorVersion !== input.settings.agentEvidence.detectorVersion
       || !scan.completedAt || !Number.isFinite(scan.completedAt.getTime())
-      || now-scan.completedAt.getTime() < 0 || now-scan.completedAt.getTime() >= 24*3600_000) throw new PublicationStateChangedError();
+      || now-scan.completedAt.getTime() < 0 || now-scan.completedAt.getTime() >= ageLimit) throw new PublicationStateChangedError();
   }
   if (input.lease) await assertReviewApproval(tx, { candidate, document, settings: input.settings, lease: input.lease });
   else if (input.settings.reviewMode === "enforce" || candidate.decidedBy === 'deepseek' || candidate.signals?.delegatedReviewAttemptId !== undefined) throw new ReviewApprovalChangedError();

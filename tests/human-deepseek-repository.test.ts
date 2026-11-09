@@ -9,7 +9,7 @@ vi.mock('@/lib/jobs/items/repository', () => ({ readItemStage: mocks.stage }));
 vi.mock('@/lib/crawl/admin-review', () => ({ lockedInput: mocks.current, candidateRevisionHash: (candidate: unknown) => JSON.stringify(candidate) }));
 vi.mock('@/lib/crawl/pipeline-stage-context', () => ({ lockPipelineInputStages: async () => ({ ai1: {}, ai2: {} }) }));
 vi.mock('@/lib/crawl/settings', () => ({ getSettings: vi.fn() }));
-vi.mock('@/lib/crawl/agent-review-repository', () => ({ reviewApprovalPredicate: vi.fn() }));
+vi.mock('@/lib/crawl/agent-review-repository', () => ({ reviewApprovalPredicate: vi.fn(), currentReviewSource: vi.fn() }));
 vi.mock('@/lib/crawl/rules', () => ({ judgeRevision: () => 'document-revision' }));
 
 import { claimHumanReview, recordHumanReview } from '@/lib/crawl/human-review-repository';
@@ -55,13 +55,59 @@ describe('delegated final write', () => {
     expect(writes.some(row => row.values.kind === 'admin_override' || row.values.decidedBy === 'admin')).toBe(false);
     expect(mocks.request).toHaveBeenCalledWith('crawl-publish', expect.anything());
   });
-  it.each(['switch-off', 'off-on', 'human', 'source', 'candidate', 'expired', 'draining'])('discards a late result after %s', async change => {
+  // 2026-11-09 운영자 결정: 근거가 24시간 지났다는 것만으로 버리지 않는다 — 결정은 적용하고 근거 나이를 감사에 남긴다
+  const agedBy = (hours: number) => {
+    const validUntil = new Date(Date.now() - (hours - 24) * 3600_000);
+    current.input.validUntil = validUntil; reads = [[{ id: 7, state: 'running', ...input, validUntil, startedAt: new Date() }]];
+  };
+  it('applies a decision made on evidence older than 24h and records its age', async () => {
+    agedBy(54);
+    expect(await recordHumanReview(claim, success, { repoCheck: { check: 'present', retryAt: null } })).toBe('applied');
+    expect(mocks.current).toHaveBeenCalledWith(expect.anything(), candidate.repo, 'any_age');
+    const audit = writes.find(row => row.values.action === 'candidate-deepseek-decision');
+    expect(audit?.values.detail).toMatchObject({ evidenceExpired: true, evidenceAgeHours: expect.any(Number) });
+    expect((audit?.values.detail as { evidenceAgeHours: number }).evidenceAgeHours).toBeGreaterThanOrEqual(53.9);
+    expect(mocks.request).toHaveBeenCalledWith('crawl-publish', expect.anything());
+  });
+  // 2026-11-09 운영자 결정: 72시간 넘은 근거의 승인은 공개 전에 다시 검수 — 승인하지 않고 사람 큐에 남긴다
+  it('holds an approval on evidence older than 72h for a source refresh instead of publishing', async () => {
+    agedBy(73);
+    expect(await recordHumanReview(claim, success)).toBe('stale');
+    expect(writes.some(row => row.values.state === 'approved' || row.values.decidedBy === 'deepseek')).toBe(false);
+    expect(writes[0].values).toMatchObject({ state: 'succeeded', reason: 'stale_evidence_refresh', outcome: { decision: 'needs_review' } });
+    expect(writes.find(row => row.values.action === 'candidate-deepseek-stale-hold')?.values.detail)
+      .toMatchObject({ cause: 'evidence_over_72h', outcome: { decision: 'approve' } });
+    expect(mocks.request).not.toHaveBeenCalled();
+  });
+  it('closes a rejection whatever the evidence age', async () => {
+    agedBy(100);
+    expect(await recordHumanReview(claim, { ok: true, outcome: { ...success.outcome, decision: 'reject' } })).toBe('applied');
+    expect(writes.some(row => row.values.state === 'rejected' && row.values.decidedBy === 'deepseek')).toBe(true);
+  });
+  it('routes a 24-72h approval of a repository GitHub no longer has to repo_deleted', async () => {
+    agedBy(48);
+    expect(await recordHumanReview(claim, success, { repoCheck: { check: 'gone', retryAt: null } })).toBe('repo_gone');
+    expect(writes.some(row => row.values.reason === 'repo_deleted' && row.values.state === undefined)).toBe(true);
+    expect(writes.some(row => row.values.state === 'approved')).toBe(false);
+    expect(mocks.request).not.toHaveBeenCalled();
+  });
+  it.each([undefined, { check: 'deferred' as const, retryAt: null }])('never publishes a 24-72h approval blind (%s)', async repoCheck => {
+    agedBy(48);
+    expect(await recordHumanReview(claim, success, repoCheck ? { repoCheck } : {})).toBe('deferred');
+    expect(writes).toHaveLength(1);
+    expect(writes[0].values).toMatchObject({ state: 'superseded', errorCode: 'repo_check_deferred', retryAfter: expect.any(Date) });
+  });
+  it('holds a renamed/archived repository for a refresh', async () => {
+    agedBy(48);
+    expect(await recordHumanReview(claim, success, { repoCheck: { check: 'changed', retryAt: null } })).toBe('stale');
+    expect(writes.some(row => row.values.state === 'approved')).toBe(false);
+  });
+  it.each(['switch-off', 'off-on', 'human', 'source', 'candidate', 'draining'])('discards a late result after %s', async change => {
     if (change === 'switch-off') current.settings.humanReview.enabled = false;
     if (change === 'off-on') current.settings.humanReview.generation = 5;
     if (change === 'human') current.candidate.decidedBy = 'admin';
     if (change === 'source') current.input.sourceRevisionHash = 'different';
     if (change === 'candidate') current.candidate.reason = 'suspected_spam';
-    if (change === 'expired') current.input.validUntil = new Date(0);
     if (change === 'draining') mocks.stage.mockResolvedValue({ mode: 'draining' });
     expect(await recordHumanReview(claim, success)).toBe('superseded');
     expect(writes).toHaveLength(1); expect(writes[0].values.state).toBe('superseded');
@@ -109,6 +155,13 @@ describe('delegated claim', () => {
     expect(await claimHumanReview(candidate.repo, lease)).toBeNull(); expect(writes).toHaveLength(0);
     current.settings = { ...owned, qwenAuto: { ...owned.qwenAuto, heldRetry: { ...owned.qwenAuto.heldRetry, enabled: false } } } as typeof current.settings;
     expect(await claimHumanReview(candidate.repo, lease)).toMatchObject({ attemptId: 7 });
+  });
+  it('claims an input whose evidence is older than 24h — no time cut for this job', async () => {
+    current.input.validUntil = new Date(Date.now() - 72 * 3600_000);
+    reads = [[], [], []];
+    expect(await claimHumanReview(candidate.repo, lease)).toMatchObject({ attemptId: 7 });
+    expect(mocks.current).toHaveBeenCalledWith(expect.anything(), candidate.repo, 'any_age');
+    expect(writes[0].values).toMatchObject({ validUntil: current.input.validUntil });
   });
   it('claims the shared candidate slot with exact source, generation and lease', async () => {
     reads = [[], [], []];

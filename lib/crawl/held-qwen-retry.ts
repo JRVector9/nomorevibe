@@ -12,7 +12,7 @@ import { readItemStage } from "@/lib/jobs/items/repository";
 import type { JobContext } from "@/lib/jobs/runner";
 import { recordHumanDecisionOverride } from "@/lib/operations/pipeline-evidence-ledger";
 import { candidateRevisionHash, lockedInput } from "./admin-review";
-import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, validateReviewOutcome, type ReviewInput, type ReviewOutcome } from "./agent-review-contract";
+import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, reviewEvidenceAgeHours, validateReviewOutcome, type ReviewInput, type ReviewOutcome } from "./agent-review-contract";
 import { firstReviewAbstainedPredicate } from "./agent-review-repository";
 import { hasLiveAgentReviewItem } from "./agent-review-ownership";
 import { hasLiveFetchItem } from "./fetch-ownership";
@@ -107,8 +107,9 @@ function sameGeneration(actor: string, model: string): SQL {
 }
 
 /**
- * 이번 틱에 볼 후보 — 오래 기다린 것부터. 지금 입력이 유효하고(원본·스캔이 24시간 안), 이 세대의 판단이 없고, 기다리거나 보는 중이 아니며,
- * 실패를 다 쓰지 않은 것. 독립 투표자가 생겨 다시 관문에 넣을 수 있게 된 "승인 의견"은 모델을 다시 부르지 않고 넣으려고 고른다.
+ * 이번 틱에 볼 후보 — 사람 큐에 최근 들어온 것부터(updated_at 내림차순), 최신 것이 끝나면 쌓인 과거 것으로 내려간다.
+ * 원본·스캔의 나이로 자르지 않는다(2026-11-09 운영자 결정, ReviewEvidenceAge any_age — 미래 시각만 거른다).
+ * 이 세대의 판단이 없고, 기다리거나 보는 중이 아니며, 실패를 다 쓰지 않은 것 — 같은 입력에서 끝낸 후보는 머리에 남지 않는다. 독립 투표자가 생겨 다시 관문에 넣을 수 있게 된 "승인 의견"은 모델을 다시 부르지 않고 넣으려고 고른다.
  * 판단 보류(ambiguous)는 1차가 지금 입력에서 판단 보류를 냈을 때만(firstReviewAbstainedPredicate) — 1차가 잠깐 실패해 기다리는 중인 것은 1차 몫이다.
  */
 export async function heldQwenCandidates(settings: CrawlSettings, model: string, limit: number): Promise<{ id: number; repo: string }[]> {
@@ -127,14 +128,14 @@ export async function heldQwenCandidates(settings: CrawlSettings, model: string,
         LEFT JOIN LATERAL (SELECT fs.id, fs.completed_at FROM agent_repository_scans fs
           WHERE fs.repository_key = lower(c.repo) AND fs.scope = '' ORDER BY fs.started_at DESC, fs.id DESC LIMIT 1) fres ON true
         WHERE fd.repo = c.repo AND fd.product_url IS NOT DISTINCT FROM c.product_url
-          AND fd.fetched_at <= ${now} AND fd.fetched_at > ${now} - interval '24 hours'
-          AND (fres.completed_at IS NULL OR (fres.completed_at <= ${now} AND fres.completed_at > ${now} - interval '24 hours'))
+          AND fd.fetched_at <= ${now}
+          AND (fres.completed_at IS NULL OR fres.completed_at <= ${now})
           AND NOT EXISTS (SELECT 1 FROM crawl_review_attempts q WHERE ${sameGeneration(actor, model)}
             AND (q.state = 'running' OR q.state = 'failed' AND q.retry_after > clock_timestamp()
               OR q.state = 'succeeded' AND NOT (c.reason <> 'no_description' AND ${heldQwenGateFirstSql(settings, null, q)})))
           AND (SELECT count(*) FROM crawl_review_attempts q WHERE ${sameGeneration(actor, model)} AND q.state = 'failed'
             AND q.error_code IN (${sql.join(COUNTED_FAILURES.map((code) => sql`${code}`), sql`, `)})) < ${MAX_FAILURES})
-    ORDER BY coalesce(c.judged_at, c.updated_at) ASC, c.id ASC
+    ORDER BY c.updated_at DESC, c.id DESC
     LIMIT ${Math.max(1, Math.min(100, limit))}`);
   return rows.map((row) => ({ id: Number(row.id), repo: row.repo }));
 }
@@ -243,13 +244,16 @@ type Locked = NonNullable<Awaited<ReturnType<typeof lockedInput>>>;
 const reasonOf = (settings: CrawlSettings, reason: string | null): HeldQwenReason | null =>
   heldQwenRetry(settings).reasons.find((value) => value === reason) ?? null;
 
-/** claim 과 기록이 함께 보는 조건 — 스위치·적용 모드·사유·상태·원본·유효기간 */
+/**
+ * claim 과 기록이 함께 보는 조건 — 스위치·적용 모드·사유·상태·원본. 근거 나이(validUntil)는 보지 않는다 — 2026-11-09 운영자 결정
+ * (과거의 것도 기간으로 잘라 못 보게 하지 않는다). 입력은 any_age 로 짓고(lockedInput), 근거 나이는 운영 감사에 남긴다.
+ */
 function eligible(current: Locked | null): current is Locked {
   if (!current) return false;
-  const { candidate, document, settings, input } = current;
+  const { candidate, document, settings } = current;
   return settings.enabled && settings.reviewMode === "enforce" && heldQwenRetry(settings).enabled
     && reasonOf(settings, candidate.reason) !== null && candidate.state === "needs_review" && candidate.decidedBy === "auto"
-    && !candidate.publishedSlug && document.productUrl === candidate.productUrl && input.validUntil > new Date();
+    && !candidate.publishedSlug && document.productUrl === candidate.productUrl;
 }
 
 /**
@@ -266,7 +270,7 @@ export async function claimHeldQwen(repo: string, lease: JobLease, model: string
     const stages = await lockPipelineInputStages(tx);
     const [ai1, ai2] = await Promise.all([readItemStage(tx, stages.ai1), readItemStage(tx, stages.ai2)]);
     if (ai1.mode === "draining" || ai2.mode === "draining") return { kind: "skipped", reason: "draining" };
-    const current = await lockedInput(tx, repo);
+    const current = await lockedInput(tx, repo, "any_age");
     if (!eligible(current)) {
       await assertJobLeaseAtWallTime(tx, lease);
       return { kind: "skipped", reason: "not_eligible" };
@@ -364,6 +368,8 @@ async function applyOutcome(tx: ProductTransaction, current: Locked, attempt: Cr
   await tx.insert(operationsAudit).values({
     actor: HELD_QWEN_ACTOR, actorKind: "model", ok: true, action: "candidate-qwen-held-review", target: candidate.repo,
     detail: { attemptId: attempt.id, result, cause, heldReason: reason, model: attempt.model, promptVersion: QWEN_V2_PROMPT_VERSION,
+      // 근거 나이 — 24시간 지난 근거로 내린 판단인지 감사에서 가려 볼 수 있게(any_age)
+      evidenceAgeHours: reviewEvidenceAgeHours(current.input, attempt.startedAt), evidenceExpired: attempt.validUntil <= attempt.startedAt,
       outcome, ...(options.raw && options.raw.decision !== outcome.decision ? { modelDecision: options.raw.decision } : {}),
       ...(options.latencyMs !== undefined ? { latencyMs: options.latencyMs } : {}), ...(options.reapplied ? { reapplied: true } : {}) },
   });
@@ -379,7 +385,7 @@ export async function recordHeldQwen(claim: HeldQwenClaim, call: HeldQwenCallRes
     if (!currentReplayDb() && !await writerSiteActive(tx)) throw new DrWriterFencedError("site_fenced");
     const stages = await lockPipelineInputStages(tx);
     const [ai1, ai2] = await Promise.all([readItemStage(tx, stages.ai1), readItemStage(tx, stages.ai2)]);
-    const current = await lockedInput(tx, claim.repo);
+    const current = await lockedInput(tx, claim.repo, "any_age");
     const [attempt] = await tx.select().from(crawlReviewAttempts).where(and(eq(crawlReviewAttempts.id, claim.attemptId), qwenRows,
       eq(crawlReviewAttempts.leaseToken, claim.lease.token))).for("update");
     if (!attempt || attempt.state !== "running") { await assertJobLeaseAtWallTime(tx, claim.lease); return "superseded"; }
@@ -541,7 +547,7 @@ export type HeldQwenStatus = {
   day: { processed: number; pipeline: number; rejected: number; held: number; failed: number };
   lastError: { code: string; at: string } | null;
   backoffUntil: string | null;
-  /** 지금 맡은 보류 — 그중 입력(원본·스캔 24시간)이 만료돼 원본·스캔 갱신을 기다리는 것 */
+  /** 지금 맡은 보류 — 그중 원본·스캔이 24시간 지난 것(2026-11-09 부터 그대로 본다 — 원본 재수집 요청은 따로 계속한다) */
   waiting: number; expired: number;
 };
 

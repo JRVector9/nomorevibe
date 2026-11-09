@@ -105,6 +105,24 @@ describe("직접 모델의 실제 admission 경계", () => {
     })).rejects.toBeInstanceOf(ModelCapacityDeferredError);
     expect(mocks.native).not.toHaveBeenCalled();
   });
+  it("미뤄진 갈림 확인은 자기 대기 행을 거두고, dispatch 가 null 이면 예약을 물린다 — 다른 대상의 대기 행은 예전처럼 남긴다(2026-11-09)", async () => {
+    const split = { kind: "split" as const, purpose: "deepseek_confirm" as const, tiebreakId: 7, candidateId: 9, generationKey: "a".repeat(64), repo: "acme/demo" };
+    const c = { ...context(), target: split, lease: { ...lease, name: "split-confirm" } };
+    mocks.control.mockResolvedValue({ mode: "open", policy: { ...policy, routes: [...policy.routes, { ...policy.routes[0], routeId: "local-deepseek-confirm" }] } });
+    mocks.requestSlot.mockResolvedValue({ kind: "deferred", reason: "capacity" });
+    await expect(withLocalModelCapacity(c, run)).rejects.toMatchObject({ reason: "capacity" });
+    expect(mocks.cancelPending).toHaveBeenCalledTimes(1);
+    expect(mocks.cancelPending.mock.calls[0][1]).toEqual(split);
+    expect(mocks.cancel).not.toHaveBeenCalled(); expect(mocks.dispatch).not.toHaveBeenCalled();
+    // 다른 대상(감사)은 바꾸지 않았다 — 대기 행을 남긴다
+    await expect(withLocalModelCapacity(context(), run)).rejects.toMatchObject({ reason: "capacity" });
+    expect(mocks.cancelPending).toHaveBeenCalledTimes(1);
+    // 장부 쪽 경합으로 dispatch 가 null 이면(정책·fence·만료) 받은 예약을 바로 물린다 — 만료를 기다리지 않는다
+    mocks.requestSlot.mockResolvedValue({ kind: "granted", reservation: { requestId: "r" } });
+    mocks.dispatch.mockResolvedValue(null);
+    await expect(withLocalModelCapacity(c, run)).rejects.toMatchObject({ reason: "reservation_lost" });
+    expect(mocks.cancel).toHaveBeenCalledExactlyOnceWith({ requestId: "r" }); expect(mocks.native).not.toHaveBeenCalled();
+  });
   it("성공한 native terminal을 먼저 정산하고 전체 context C와 실제 wire를 묶는다", async () => {
     expect(await (await withLocalModelCapacity(context(), run)).text()).toBe("native body");
     const binding = mocks.dispatch.mock.calls[0][0].binding;

@@ -180,6 +180,9 @@ export async function withLocalModelCapacity<T>(value: LocalModelCallContext,
         try {
           if (wait) await cancelOwnPendingLocalModelRequest(checked, context.target);
           else if (slot?.kind === "granted") await cancelReservedModelSlot(slot.reservation);
+          // 갈림 판가름·확인은 60초 틱마다 다시 묻는다(예약 TTL 보다 길다) — 미뤄진 입장의 대기 행을 남기면 나중에 남의 입장 판정이 그 행을
+          // reserved 로 올리고, 쓸 사람 없이 TTL 동안 한 칸을 쥐다 만료된다. 같은 TX 를 다시 잠가 자기 대기·예약 행만 거둔다(없으면 아무것도 안 한다)
+          else if (slot?.kind === "deferred" && context.target.kind === "split") await cancelOwnPendingLocalModelRequest(checked, context.target);
         }
         catch (cleanup) { throw new AggregateError([error, cleanup], "local_model_reservation_cleanup_failed"); }
         throw error;

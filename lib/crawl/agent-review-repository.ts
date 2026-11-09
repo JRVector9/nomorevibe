@@ -54,7 +54,7 @@ import {
   createReviewInput, isReviewCandidate, MAX_REVIEW_ATTEMPTS,
   REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, reviewPolicyHash, reviewHash,
   REVIEW_RETRIABLE_REASONS, validateReviewOutcome,
-  type ReviewInput, type ReviewOutcome,
+  type ReviewInput, type ReviewOutcome, type ReviewEvidenceAge,
 } from "./agent-review-contract";
 
 type Executor = typeof db | ProductTransaction;
@@ -105,6 +105,8 @@ export async function chooseFirstReviewForCandidate(context: ReviewDomainContext
 }
 export async function loadReviewInput(
   candidate: CrawlCandidate, document: CrawlDocument, settings: CrawlSettings, executor: Executor = db,
+  /** any_age 는 사람 몫 위임 검수와 그 승인의 발행 확인만 쓴다(agent-review-contract.ts ReviewEvidenceAge) */
+  evidenceAge: ReviewEvidenceAge = "window",
 ): Promise<ReviewInput> {
   if (storedReviewEvidenceRequired() && (typeof document.pageMeta?.readmeSample !== "string"
     || document.pageMeta.readmeSampleVersion !== README_SAMPLE_VERSION)) throw new Error("replay_readme_evidence_missing");
@@ -114,7 +116,7 @@ export async function loadReviewInput(
   const observations = scan ? await executor.select().from(agentRepositoryObservations)
     .where(eq(agentRepositoryObservations.scanId, scan.id)).orderBy(asc(agentRepositoryObservations.id)) : [];
   return createReviewInput(candidate, document, settings, { scan: scan ?? null,
-    observations: observations.map(row => ({ id: `observation:${row.id}`, observation: row.facts })) });
+    observations: observations.map(row => ({ id: `observation:${row.id}`, observation: row.facts })) }, undefined, evidenceAge);
 }
 
 export type ReviewDomainContext = {
@@ -254,7 +256,16 @@ function matchingSource(settings: CrawlSettings, delegated = false, retry = fals
   // 보류 Qwen-v2 의 승인(성공·승인 행만)도 지금 1차 심사자의 판단처럼 관문에 선다(held-qwen-retry-policy.ts)
   return sql`${crawlReviewAttempts.candidateId} = ${crawlCandidates.id}
     AND ${delegated ? delegatedReviewIdentity(settings) : retry ? retryReviewIdentity() : sql`((${crawlReviewAttempts.kind} = 'automatic' AND ${activeReviewIdentity(settings)}) OR ${heldQwenGateFirstSql(settings, appliedHeldQwenAttemptColumn(crawlCandidates.signals))})`}
-    AND ${crawlReviewAttempts.policyHash} = ${reviewPolicyHash(settings)}
+    AND ${currentReviewSource(settings)}`;
+}
+
+/**
+ * 시도 행(crawl_review_attempts)이 지금 후보의 원본(같은 정책·판정 시각·수집 원본·README·스캔)에서 나왔는가 — 시각 창은 보지 않는다.
+ * matchingSource 의 원본 부분이다. 사람 몫 위임 검수의 후보 고르기(human-review-repository.ts humanReviewRepos)가
+ * "이 입력에서 이미 끝낸 후보"를 SQL 로 거를 때 같은 대조를 쓴다.
+ */
+export function currentReviewSource(settings: CrawlSettings): SQL {
+  return sql`${crawlReviewAttempts.policyHash} = ${reviewPolicyHash(settings)}
     AND ${crawlReviewAttempts.promptVersion} = ${REVIEW_PROMPT_VERSION}
     AND ${crawlReviewAttempts.rulesVersion} = ${REVIEW_RULES_VERSION}
     AND (${crawlReviewAttempts.source}->>'candidateJudgedAt')::timestamp IS NOT DISTINCT FROM date_trunc('milliseconds', ${crawlCandidates.judgedAt})
@@ -326,10 +337,20 @@ export function secondReviewApprovalPredicate(settings: CrawlSettings): SQL {
     secondReviewVoters(settings), secondReviewFallbacks(settings));
 }
 
+/**
+ * 사람 몫 위임 검수(DeepSeek)가 적용한 결정인가 — 발행 관문이 위임 승인 갈래로 보는 후보.
+ * 이 갈래는 근거 나이를 자르지 않는다(ReviewEvidenceAge any_age, 2026-11-09 운영자 결정) — 같은 원본·입력 해시·정책은 그대로 본다.
+ */
+export function isDelegatedApproval(candidate: Pick<CrawlCandidate, "decidedBy" | "signals">): boolean {
+  return candidate.decidedBy === 'deepseek'
+    || candidate.decidedBy !== 'admin' && candidate.signals?.delegatedReviewAttemptId !== undefined;
+}
+
 export function reviewApprovalPredicate(settings: CrawlSettings): SQL {
+  // 위임 승인에는 validUntil 창을 걸지 않는다 — 24시간 지난 근거로 내린 승인도 같은 원본이면 발행한다(any_age).
+  // 입력 해시·원본 대조는 발행 트랜잭션의 assertReviewApproval 이 잠근 행으로 다시 잰다.
   const delegated = sql`EXISTS (SELECT 1 FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings, true)}
-    AND ${crawlReviewAttempts.state} = 'succeeded' AND ${crawlReviewAttempts.outcome}->>'decision' = 'approve'
-    AND ${crawlReviewAttempts.validUntil} > ${reviewSemanticNowSql()})`;
+    AND ${crawlReviewAttempts.state} = 'succeeded' AND ${crawlReviewAttempts.outcome}->>'decision' = 'approve')`;
   const ordinary = settings.reviewMode !== 'enforce' ? sql`true` : sql`(${crawlCandidates.decidedBy} = 'admin' OR ${starAutoApprovalPredicate(settings)} OR EXISTS (
     SELECT 1 FROM ${crawlReviewAttempts} WHERE ${matchingSource(settings)}
     AND ${crawlReviewAttempts.state} = 'succeeded' AND ${crawlReviewAttempts.outcome}->>'decision' = 'approve'
@@ -1344,8 +1365,7 @@ export async function assertReviewApproval(tx: ProductTransaction, input: {
   candidate: CrawlCandidate; document: CrawlDocument; settings: CrawlSettings;
   input?: ReviewInput; lease: JobLease; approvalId?: number;
 }): Promise<CrawlReviewAttempt | null> {
-  const delegated = input.candidate.decidedBy === 'deepseek'
-    || input.candidate.decidedBy !== 'admin' && input.candidate.signals?.delegatedReviewAttemptId !== undefined;
+  const delegated = isDelegatedApproval(input.candidate);
   if (!delegated && (input.settings.reviewMode !== "enforce" || input.candidate.decidedBy === "admin")) {
     await assertJobLease(tx, input.lease);
     return null;
@@ -1363,7 +1383,8 @@ export async function assertReviewApproval(tx: ProductTransaction, input: {
   )).orderBy(desc(agentRepositoryScans.startedAt), desc(agentRepositoryScans.id)).limit(1).for("share");
   if (scan) await tx.select({ id: agentRepositoryObservations.id }).from(agentRepositoryObservations)
     .where(eq(agentRepositoryObservations.scanId, scan.id)).for("share");
-  const current = await loadReviewInput(input.candidate, input.document, input.settings, tx);
+  // 위임 승인은 근거 나이를 자르지 않은 입력(any_age)으로 내렸다 — 같은 기준으로 다시 짓고 대조한다
+  const current = await loadReviewInput(input.candidate, input.document, input.settings, tx, delegated ? "any_age" : "window");
   const [approval] = await tx.select().from(crawlReviewAttempts).where(and(
     delegated ? delegatedReviewIdentity(input.settings, String(input.candidate.signals?.delegatedReviewAttemptId))
       : or(and(activeReviewIdentity(input.settings), eq(crawlReviewAttempts.kind, "automatic")),
@@ -1373,12 +1394,13 @@ export async function assertReviewApproval(tx: ProductTransaction, input: {
     eq(crawlReviewAttempts.sourceRevisionHash, current.sourceRevisionHash),
     eq(crawlReviewAttempts.policyHash, current.policyHash),
     eq(crawlReviewAttempts.promptVersion, REVIEW_PROMPT_VERSION), eq(crawlReviewAttempts.rulesVersion, REVIEW_RULES_VERSION),
-    sql`${crawlReviewAttempts.outcome}->>'decision' = 'approve'`, sql`${crawlReviewAttempts.validUntil} > ${reviewSemanticNowSql()}`,
+    sql`${crawlReviewAttempts.outcome}->>'decision' = 'approve'`,
+    delegated ? undefined : sql`${crawlReviewAttempts.validUntil} > ${reviewSemanticNowSql()}`,
     input.approvalId ? eq(crawlReviewAttempts.id, input.approvalId) : undefined,
   )).orderBy(desc(crawlReviewAttempts.id)).limit(1).for("share");
   await assertJobLease(tx, input.lease);
   const now = reviewSemanticNow();
-  if (!approval || current.validUntil <= now || input.document.fetchedAt > now
+  if (!approval || !delegated && current.validUntil <= now || input.document.fetchedAt > now
     || input.input && input.input.inputHash !== current.inputHash) throw new ReviewApprovalChangedError();
   validateReviewOutcome(current, approval.outcome);
   // 발행 직전에 한 번 더 — 목록을 고른 뒤 2차 표가 반대로 바뀌었을 수 있다

@@ -138,8 +138,12 @@ async function claimConfirmation(hint: SplitTiebreakHint, lease: JobLease, now: 
     if (failureCount >= SPLIT_TIEBREAK_MAX_FAILURES) {
       return done({ applied: "held_deepseek_error", deepseekState: "failed", deepseekErrorCode: row.deepseekErrorCode ?? "owner_lost", deepseekFailureCount: failureCount });
     }
-    await tx.update(t).set({ deepseekState: "running", deepseekLeaseToken: lease.token, deepseekStartedAt: now, deepseekFailureCount: failureCount })
-      .where(eq(t.id, row.id));
+    // 부를 모델을 잡는 순간 적는다 — 공통 장부의 도메인 증명(local-model-domain.ts split·deepseek_confirm)이 dispatch 때 row.deepseekModel 과
+    // 실제 호출 모델(계약 model)이 같은지 잰다. 예전에는 답을 쓸 때만 적어 새 행은 늘 null 이었고, route local-deepseek-confirm 이 생긴
+    // 2026-10-24 부터 모든 확인이 target_not_open 으로 물렸다(2026-11-09 운영: 4,254건 withdrawn·정산 0). 같은 틱 같은 scope 의 값이라
+    // reviewWithDeepSeekRaw 가 보낼 body.model 과 같다
+    await tx.update(t).set({ deepseekState: "running", deepseekLeaseToken: lease.token, deepseekStartedAt: now, deepseekFailureCount: failureCount,
+      deepseekModel: scopedModel("human-review", DEEPSEEK_REVIEW_MODEL) }).where(eq(t.id, row.id));
     await assertJobLeaseAtWallTime(tx, lease);
     return { kind: "claimed", claim: { tiebreakId: row.id, candidateId: hint.candidateId, repo: hint.repo, generationKey: hint.generationKey,
       firstAttemptId: gate.first.id, input: gate.input, candidateRevision: candidateRevisionHash(domain.candidate),

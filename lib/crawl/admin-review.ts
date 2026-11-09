@@ -11,7 +11,7 @@ import { lockRepositoryAgentEvidence } from '@/lib/domain/evidence/agents/lock';
 import { secondReviewsFor } from './second-review';
 import { translationsFor } from './translations';
 import { createReviewInput, MAX_REVIEW_ATTEMPTS, REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, reviewHash,
-  type ReviewInput } from './agent-review-contract';
+  type ReviewInput, type ReviewEvidenceAge } from './agent-review-contract';
 import { loadReviewInput } from './agent-review-repository';
 import { DEFAULT_CRAWL_SETTINGS, type CrawlSettings } from './settings-schema';
 import { mergeWithDefaults, getSettings } from './settings';
@@ -45,7 +45,8 @@ export const candidateRevisionHash = (candidate: CrawlCandidate) => reviewHash({
 });
 
 /** Same lock order as review/publication, without any network call or held external operation. */
-export async function lockedInput(tx: ProductTransaction, repo: string) {
+/** evidenceAge any_age 는 사람 몫 위임 검수(human-review-repository.ts)만 — 다른 경로는 기본(window)이다 */
+export async function lockedInput(tx: ProductTransaction, repo: string, evidenceAge: ReviewEvidenceAge = 'window') {
   const [candidate] = await tx.select().from(crawlCandidates).where(eq(crawlCandidates.repo, repo)).for('update');
   if (!candidate || candidate.state === 'published' || candidate.publishedSlug) return null;
   const [document] = await tx.select().from(crawlDocuments).where(eq(crawlDocuments.repo, repo)).for('share');
@@ -59,7 +60,7 @@ export async function lockedInput(tx: ProductTransaction, repo: string) {
   )).orderBy(desc(agentRepositoryScans.startedAt), desc(agentRepositoryScans.id)).limit(1).for('update');
   if (scan) await tx.select({ id: agentRepositoryObservations.id }).from(agentRepositoryObservations)
     .where(eq(agentRepositoryObservations.scanId, scan.id)).for('share');
-  const input = await loadReviewInput(candidate, document, settings, tx);
+  const input = await loadReviewInput(candidate, document, settings, tx, evidenceAge);
   return { candidate, document, settings, scan, input };
 }
 function matchesRequest(current: NonNullable<Awaited<ReturnType<typeof lockedInput>>>, request: AdminReviewRequest) {
