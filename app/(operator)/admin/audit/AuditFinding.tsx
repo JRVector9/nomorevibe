@@ -27,6 +27,8 @@ export type AuditFindingView = {
   screenJudged?: boolean;
   /** 엇갈림 — 확신 0.90 이상인 m1 과 다른 모델이 반대로 정했다(m1 자동 닫기가 열어 둔 것). 두 모델의 결정·사유를 펴지 않고도 보인다 */
   m1Split?: boolean;
+  /** 공개분 변경 재검수가 무엇이 바뀌어 다시 물었나('페이지 본문(유사도 0.32) · 이름') — 사람이 연 감사의 줄은 없음 */
+  changed?: string | null;
 };
 
 /** 화면 판별 대기 — 글이 적고(원본 없음 포함) 화면 판정이 아직 없다 */
@@ -78,6 +80,7 @@ export function AuditFinding({ finding }: { finding: AuditFindingView }) {
             </button>
           ) : <p className="text-fg-3">사유 없음</p>}
         </div>
+        {finding.changed && <p className="mt-1 text-fg-3"><span className="font-semibold text-fg-2">바뀐 것</span> {finding.changed}</p>}
         {showReasons && (
           <ul className="mt-1 flex flex-col gap-0.5 border-l-2 border-line pl-2" aria-label="두 번째 의견의 사유">
             {second.filter((opinion) => opinion.reason).map((opinion) => (

@@ -43,6 +43,10 @@ import { AUTO_CLOSE_KEEP_DAYS, AUTO_CLOSE_MIN_CONFIDENCE, autoCloseToday, autoRu
 import type { QwenAutoSettings } from "@/lib/crawl/settings-schema";
 import { screenReviewCounts, type ScreenReviewCounts } from "@/lib/crawl/audit-screen-review";
 import { THIN_PAGE_TEXT_CHARS } from "@/lib/crawl/second-opinion-rules";
+import { recheckOpenCount, recheckOverview, recheckReviewerPlan, recheckRouteNote } from "@/lib/crawl/published-recheck";
+import { recheckChangeText } from "@/lib/crawl/published-recheck-change";
+import { ensureReviewTaskRanks } from "@/lib/crawl/review-task-ranks";
+import { RecheckPanel } from "./RecheckPanel";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "내릴 후보 — NoMoreVibe", robots: { index: false } };
@@ -79,7 +83,7 @@ type Props = { searchParams: Promise<{ view?: string; page?: string; tab?: strin
  * 탭 — 사람이 부탁한 것(내려달라는 요청), 감사가 걸러낸 것, 처리 기록. 기다리는 요청이 있으면 요청이 먼저다:
  * 상세 페이지가 내려 준다고 약속했다. 감사의 갈래(?view=)로 들어오면 감사 탭이다.
  */
-const TABS = { requests: "내려달라는 요청", audit: "감사 거절", policy: "정책 처리", history: "처리 기록" } as const;
+const TABS = { requests: "내려달라는 요청", audit: "감사 거절", recheck: "변경 재검수", policy: "정책 처리", history: "처리 기록" } as const;
 type Tab = keyof typeof TABS;
 
 export default async function AdminAuditPage({ searchParams }: Props) {
@@ -94,7 +98,9 @@ export default async function AdminAuditPage({ searchParams }: Props) {
 
   // 목록의 "13:38 (3분 전)"은 이 시각을 기준으로 센다
   const now = new Date();
-  const [overview, summary, introPending] = await Promise.all([productAuditOverview(), takedownSummary(), pendingIntroRequestCount()]);
+  const [overview, summary, introPending, recheckOpen] = await Promise.all([productAuditOverview(), takedownSummary(), pendingIntroRequestCount(),
+    // 변경 재검수 탭의 수 — 못 읽어도 화면은 그린다
+    recheckOpenCount().catch(() => 0)]);
   const { campaign, counts } = overview;
   // 보류 중인 것이 있으면 그것부터 — 이미 목록에서 빠져 사람을 기다린다.
   // `in`은 프로토타입 키까지 통과시킨다 — 제품 관리의 ?filter=constructor 와 같은 함정
@@ -174,6 +180,7 @@ export default async function AdminAuditPage({ searchParams }: Props) {
             {name === "requests" && introPending > 0 && <span className="td-count">소개 {count(introPending)}</span>}
             {name === "audit" && <span className="td-count">{count(auditOpen)}</span>}
             {name === "audit" && overview.held > 0 && <span className="td-count">보류 {count(overview.held)}</span>}
+            {name === "recheck" && <span className="td-count">{count(recheckOpen)}</span>}
           </Link>
         ))}
       </nav>
@@ -212,6 +219,8 @@ export default async function AdminAuditPage({ searchParams }: Props) {
           auto: run.auto?.action ?? null,
           label: run.auto ? autoRunLabel(run.auto) : POLICY_RUN_LABELS[`${run.kind}:${run.action}`] ?? `${run.kind}:${run.action}` }))} />
       </>}
+
+      {tab === "recheck" && <RecheckTab now={now} />}
 
       {tab === "history" && <>
         <h2 className="text-[15px] font-bold">내려달라는 요청</h2>
@@ -306,6 +315,59 @@ export default async function AdminAuditPage({ searchParams }: Props) {
       </>}
     </main>
   );
+}
+
+/**
+ * 변경 재검수 탭 — 늘 열린 줄의 상태와 사람이 볼 것(거절·판단 보류). 줄 하나·결정은 감사 거절과 같은 줄(AuditFinding)이다 — 내리기·유지가 같은 길이다.
+ * 보류 중인 것은 감사 거절 탭의 '보류 중'에도 함께 보인다(회차와 상관없이). 한 갈래에 쪽 하나(최근 확신 높은 순 RECHECK_PAGE 건)만 보인다
+ */
+const RECHECK_PAGE = 50;
+async function loadRecheckTab() {
+  // 1차 순위는 30초 스냅숏 — 화면 프로세스가 읽지 못했으면 순위 없음으로 보인다(워커는 부를 때 다시 읽는다)
+  await ensureReviewTaskRanks().catch(() => undefined);
+  const overview = await recheckOverview();
+  const plan = recheckReviewerPlan();
+  const reviewers = plan.reviewers.map((reviewer) => ({ ...reviewer, route: recheckRouteNote(reviewer) }));
+  const stream = overview.stream;
+  const [rejects, needs] = stream ? await Promise.all([
+    listAuditFindings(stream.id, "reject", { limit: RECHECK_PAGE, offset: 0 }), listAuditFindings(stream.id, "needs_review", { limit: RECHECK_PAGE, offset: 0 }),
+  ]) : [[], []];
+  const korean = rejects.length + needs.length ? await translationsFor([...rejects, ...needs].map((finding) => finding.reason)) : new Map<string, string>();
+  return { overview, plan, reviewers, rejects, needs, korean };
+}
+
+async function RecheckTab({ now }: { now: Date }) {
+  const { overview, plan, reviewers, rejects, needs, korean } = await loadRecheckTab();
+  const section = (title: string, rows: Awaited<ReturnType<typeof listAuditFindings>>, total: number, empty: string) => (
+    <section className="flex flex-col gap-2" aria-label={title}>
+      <h2 className="text-[15px] font-bold">{title} <span className="font-normal text-fg-3">{count(total)}{total > rows.length ? ` · 앞의 ${count(rows.length)}건` : ""}</span></h2>
+      {rows.length === 0 ? <p className="rounded-[12px] border border-line bg-bg-card px-5 py-8 text-center text-[13px] text-fg-3">{empty}</p> : (
+        <div className="relative overflow-hidden rounded-[12px] border border-line bg-bg-card">
+          <ScrollTable label={title}>
+            <table className="w-full min-w-[760px] text-[13px]">
+              <thead className="bg-bg-soft text-left text-fg-3"><tr>
+                <th className="px-3 py-2 font-semibold">제품 · 바뀐 것 · AI 사유</th><th className="px-2 py-2 font-semibold">지금 분류</th>
+                <th className="px-2 py-2 font-semibold">확신 · 본 시각</th><th className="px-3 py-2"><span className="sr-only">결정</span></th>
+              </tr></thead>
+              <tbody>{rows.map((finding) => (
+                <AuditFinding key={finding.id} finding={{ ...finding, reasonKo: finding.reason ? korean.get(finding.reason) ?? null : null,
+                  reasonCategory: AUDIT_REASON_CATEGORIES[classifyAuditReason(finding.reason)].label, changed: recheckChangeText(finding.changeSummary),
+                  answeredBy: finding.aiProvider ? auditReviewerLabel({ provider: finding.aiProvider, model: "" }) || finding.aiProvider : null,
+                  reviewedAt: finding.reviewedAt ? formatListTime(finding.reviewedAt, now) : null,
+                  waitDays: finding.reviewedAt ? Math.max(0, Math.floor((now.getTime() - finding.reviewedAt.getTime()) / 86_400_000)) : null,
+                  heldAt: finding.heldAt ? formatListTime(finding.heldAt, now) : null }} />
+              ))}</tbody>
+            </table>
+          </ScrollTable>
+        </div>
+      )}
+    </section>
+  );
+  return <>
+    <RecheckPanel overview={overview} plan={plan} reviewers={reviewers} now={now} />
+    {section("다시 본 결과 — 제품 아님", rejects, overview.counts.openReject, "재검수가 거절한 것 중 사람이 볼 것이 없습니다.")}
+    {section("다시 본 결과 — 판단 보류", needs, overview.counts.openNeedsReview, "재검수가 판단을 미룬 것이 없습니다.")}
+  </>;
 }
 
 /**
