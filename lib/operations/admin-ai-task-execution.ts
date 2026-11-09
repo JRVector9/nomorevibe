@@ -160,7 +160,9 @@ export async function saveAiTaskExecutionConfig(input: unknown, actor: string): 
     const chosen = members.map(member => ({ rank: member.position,
       row: { provider: member.connectionId, model: member.model, ...(typeof member.options.reasoningEffort === "string" ? { reasoningEffort: member.options.reasoningEffort } : {}) },
       connection: connections.find(row => row.id === member.connectionId)! }));
-    const readinessInput = await readAiTaskReadinessInput();
+    // OpenCode 구성원의 연결 버전은 위에서 호스트에서 방금 읽은 값이다(기록된 옛 버전이 아니다)
+    const readinessInput = { ...await readAiTaskReadinessInput(),
+      hostCliVersions: new Set(ids.filter(id => connections.find(row => row.id === id)?.cliTool === "opencode")) };
     const readiness = aiRanksReadiness(task, chosen.map(entry => ({ rank: entry.rank, connection: entry.connection, model: entry.row.model,
       ...(typeof entry.row.reasoningEffort === "string" ? { reasoningEffort: entry.row.reasoningEffort } : {}) })), readinessInput);
     const blocking = [...readiness.flatMap(row => row.blocking), ...aiTaskCrossResourceIssues(task, readiness)];

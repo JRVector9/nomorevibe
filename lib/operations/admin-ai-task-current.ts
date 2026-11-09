@@ -92,7 +92,7 @@ export function buildAiCurrentSlots(sources: AiCurrentSources): AiCurrentSlot[] 
   };
   const slot = (task: AiTaskDef, value: Partial<AiCurrentSlot> & Pick<AiCurrentSlot, "source">, index = 1): AiCurrentSlot =>
     Object.freeze({ task: task.id, slot: index, uses: Object.freeze([...value.uses ?? []]), source: value.source, error: value.error ?? null, skip: value.skip ?? null,
-      notes: Object.freeze([...value.notes ?? []]) });
+      notes: Object.freeze([...value.notes ?? []]), ...(value.skipStatus ? { skipStatus: value.skipStatus } : {}) });
   const tableRows = (stage: AssignmentStage | null, stageId: AdminModelStage) => {
     if (!sources.tableOn || !stage) return null;
     const rows = stageAssignmentRows(stage)?.filter(row => row.role === "primary" && row.mode === "live") ?? [];
@@ -226,7 +226,8 @@ export function buildAiCurrentSlots(sources: AiCurrentSources): AiCurrentSlot[] 
         }
         case "korean-translation-direct":
           out.push(koreanTranslationQwenEnabled(sources.env) ? stageUses(task, purposeRead("korean-translation-direct", "local-direct"), "local-direct")
-            : slot(task, { source: "env KOREAN_TRANSLATION_QWEN_ENABLED", skip: "지금 꺼져 있습니다(KOREAN_TRANSLATION_QWEN_ENABLED) — 켜지 않은 경로는 옮기지 않습니다." }));
+            : slot(task, { source: "env KOREAN_TRANSLATION_QWEN_ENABLED", skip: "지금 꺼져 있습니다(KOREAN_TRANSLATION_QWEN_ENABLED) — 켜지 않은 경로는 옮기지 않습니다.",
+              skipStatus: "꺼 둠(KOREAN_TRANSLATION_QWEN_ENABLED)" }));
           break;
         case "human-review": {
           const slot = stageUses(task, purposeRead("human-review", "local-direct"), "local-direct");
@@ -304,6 +305,8 @@ export function buildAiCurrentSlots(sources: AiCurrentSources): AiCurrentSlot[] 
         }
         case "product-embedding": case "search-embedding": case "search-rerank": {
           const name = task.id === "search-rerank" ? "RERANK_URL" : "EMBEDDING_URL";
+          // 상태 칸의 말 — skip(가져오기 계획의 「옮기지 않습니다」)은 그대로 둔다(2026-11-09)
+          const skipStatus = `${task.id === "search-rerank" ? "재정렬" : "벡터"} 서버 주소(${name})가 없어 쓰지 않음`;
           if (sources.searchModels) {
             const value = sources.searchModels[task.id];
             if (!value || value.error) {
@@ -311,7 +314,7 @@ export function buildAiCurrentSlots(sources: AiCurrentSources): AiCurrentSlot[] 
               break;
             }
             if (value.source === "environment" && !value.baseUrl) {
-              out.push(slot(task, { source: "환경 API 설정", skip: `환경 API 설정에 ${name} 이(가) 없어 옮기지 않습니다.`, uses: [] }));
+              out.push(slot(task, { source: "환경 API 설정", skip: `환경 API 설정에 ${name} 이(가) 없어 옮기지 않습니다.`, skipStatus, uses: [] }));
               break;
             }
             if (!value.baseUrl || (!value.model && value.source !== "environment")) {
@@ -327,7 +330,7 @@ export function buildAiCurrentSlots(sources: AiCurrentSources): AiCurrentSlot[] 
           out.push(base ? slot(task, { source: `웹 프로세스 env ${name}`, uses: [api(task, task.kind === "embedding" ? EMBEDDING_MODEL : "rerank", "llama-server", `env ${name}`, base,
             { serverNamed: true, note: "모델 이름은 서버 목록에서 고릅니다(하나뿐이면 그것)" })],
             notes: task.id === "product-embedding" ? ["웹 프로세스의 EMBEDDING_URL 입니다 — 잡(워커)의 값이 다르면 다를 수 있습니다."] : [] })
-            : slot(task, { source: `웹 프로세스 env ${name}`, skip: `웹 프로세스에 ${name} 이(가) 없어 옮기지 않습니다.` }));
+            : slot(task, { source: `웹 프로세스 env ${name}`, skip: `웹 프로세스에 ${name} 이(가) 없어 옮기지 않습니다.`, skipStatus }));
           break;
         }
         default:

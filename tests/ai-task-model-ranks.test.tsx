@@ -341,7 +341,10 @@ describe("저장 전 준비 확인(aiRankReadiness)", () => {
       .createCliContract).toBeNull();
     const stale = aiRankReadiness(aiTask("first-review")!, 1, versioned, "sonnet", input({ contracts: [cliRow("claude-cli:crawl-agent-review", "sonnet", "2.0.9 (Claude Code)")] }));
     expect(stale.createCliContract).toEqual({ routeId: "crawl-agent-review", provider: "claude-cli", model: "sonnet", cliVersion: "2.1.0 (Claude Code)", replaces: "2.0.9 (Claude Code)" });
-    expect(aiRankPendingText(stale)[0]).toContain("CLI 계약이 버전 2.0.9 (Claude Code)입니다 — 이 줄을 저장하면 연결의 CLI 버전(2.1.0 (Claude Code))으로 바꿉니다.");
+    // 2026-11-09: 버전만 다른 계약은 「빠진 것」이 아니다 — 저장을 권하지 않고 연결의 버전을 확인하라는 알림만
+    expect(aiRankPendingText(stale).filter(text => text.includes("CLI 계약"))).toEqual([]);
+    expect(stale.warnings).toEqual(["1순위 Claude CLI · sonnet: CLI 계약은 2.0.9 (Claude Code)인데 연결에 적은 CLI 버전은 2.1.0 (Claude Code)입니다 — "
+      + "워커의 `claude --version` 출력과 맞는지 LLM 운영의 연결에서 확인하세요. 워커가 부를 때 계약과 다르면 이 순위는 쓰이지 않습니다."]);
     // 다른 도구·다른 경로·다른 모델의 계약 행은 이 순위의 것이 아니다
     expect(aiRankReadiness(aiTask("first-review")!, 1, versioned, "sonnet", input({ contracts: [cliRow("grok-cli:crawl-agent-review", "sonnet", "2.1.0 (Claude Code)"),
       cliRow("claude-cli:second-review", "sonnet", "2.1.0 (Claude Code)"), cliRow("claude-cli:crawl-agent-review", "opus", "2.1.0 (Claude Code)")] })).createCliContract)
@@ -358,6 +361,30 @@ describe("저장 전 준비 확인(aiRankReadiness)", () => {
     const intro = aiRankReadiness(aiTask("product-intro-check")!, 1, versioned, "opus", input());
     expect(intro).toMatchObject({ blocking: [], createCliContract: null });
     expect(intro.warnings).toEqual([expect.stringContaining("CLI 계약(connect 에이전트 쪽)은 이 화면이 확인하지 못합니다")]);
+  });
+  it("2026-11-09 1차 OpenCode: 계약(v2.2.6)이 연결에 기록된 버전(v2.2.5)보다 새것이면 화면은 저장을 권하지 않고 다시 조회를 권한다 — 저장은 호스트에서 방금 읽은 버전만 쓴다", () => {
+    const model = "opencode-go/deepseek-v4.1-flash";
+    const opencode = { ...claude, label: "M3 OpenCode", cliTool: "opencode" as const, cliVersion: "opencode v2.2.5", cliModels: [model], hasKey: true, deviceId: "m3-opencode-host" };
+    const contracts = [{ routeId: "cli:opencode-cli:crawl-agent-review", model, provider: null, endpoint: null, transport: "direct", cliVersion: "opencode v2.2.6" }];
+    // 화면(기록된 버전): 빠진 계약으로 보이지 않고, 기록된 버전을 「사용합니다」라고도 하지 않는다
+    const view = aiRankReadiness(aiTask("first-review")!, 1, opencode, model, input({ contracts }));
+    expect(view.blocking).toEqual([]);
+    expect(aiRankPendingText(view).filter(text => text.includes("CLI 계약"))).toEqual([]);
+    expect(view.warnings).toEqual(["1순위 M3 OpenCode · opencode-go/deepseek-v4.1-flash: CLI 계약은 opencode v2.2.6인데 이 연결에 기록된 M3 호스트 버전은 opencode v2.2.5입니다 — "
+      + "기록은 마지막으로 목록을 읽은 때의 값이라 오래됐을 수 있습니다. LLM 운영에서 이 연결을 열어 목록을 다시 조회하세요. 호출 전에는 호스트가 실제 버전을 계약과 견줍니다."]);
+    expect(view.warnings.join(" ")).not.toMatch(/저장하면|사용합니다/);
+    // 저장(호스트에서 방금 읽은 버전): 호스트와 계약이 같으면 바꾸지 않는다 — 기록된 v2.2.5 로 계약을 내리지 않는다
+    const saveSame = aiRankReadiness(aiTask("first-review")!, 1, { ...opencode, cliVersion: "opencode v2.2.6" }, model,
+      input({ contracts, hostCliVersions: new Set([opencode.id]) }));
+    expect(saveSame.createCliContract).toBeNull();
+    // 호스트가 정말 올라갔으면 저장이 호스트 버전으로 계약을 맞춘다(지금 동작 그대로)
+    const saveNewer = aiRankReadiness(aiTask("first-review")!, 1, { ...opencode, cliVersion: "opencode v2.2.7" }, model,
+      input({ contracts, hostCliVersions: new Set([opencode.id]) }));
+    expect(saveNewer.createCliContract).toEqual({ routeId: "crawl-agent-review", provider: "opencode-cli", model, cliVersion: "opencode v2.2.7", replaces: "opencode v2.2.6" });
+    expect(saveNewer.warnings).toEqual([expect.stringContaining("M3 호스트에서 조회한 CLI 버전(opencode v2.2.7)을 사용합니다")]);
+    // 계약이 아예 없으면 지금처럼 「없습니다 — 저장하면 만듭니다」
+    expect(aiRankPendingText(aiRankReadiness(aiTask("first-review")!, 1, opencode, model, input()))[0])
+      .toBe("1순위 opencode-go/deepseek-v4.1-flash: crawl-agent-review CLI 계약이 없습니다 — 이 줄을 저장하면 연결의 CLI 버전(opencode v2.2.5)으로 만듭니다.");
   });
   it.each(["product-intro-check", "product-audit"])("%s OpenCode는 실제 DB 계약 준비를 요청한다", id => {
     const model = "opencode-go/deepseek-v4.1-flash";
@@ -474,6 +501,19 @@ describe("지금 설정 → 가져오기 출처(buildAiCurrentSlots) — 1차·2
       secondReview: { ...DEFAULT_CRAWL_SETTINGS.secondReview, voters: [{ provider: "claude-cli", model: "opus" }], fallbacks: [] } });
     expect(empty.find(slot => slot.task === "first-review")).toMatchObject({ uses: [], skip: "옛 설정에 1차 심사자가 없습니다." });
     expect(empty.find(slot => slot.task === "grok-session-check")).toMatchObject({ uses: [], skip: "옛 설정에 Grok 심사자가 없습니다." });
+  });
+  it("2026-11-09: 검색 벡터·재정렬 주소가 없으면 가져오기 말(skip)은 그대로, 상태 칸의 말(skipStatus)을 따로 싣는다", () => {
+    const slots = current(DEFAULT_CRAWL_SETTINGS);
+    expect(slots.find(slot => slot.task === "search-rerank")).toMatchObject({ uses: [], skip: "웹 프로세스에 RERANK_URL 이(가) 없어 옮기지 않습니다.",
+      skipStatus: "재정렬 서버 주소(RERANK_URL)가 없어 쓰지 않음" });
+    expect(slots.find(slot => slot.task === "product-embedding")).toMatchObject({ skip: "웹 프로세스에 EMBEDDING_URL 이(가) 없어 옮기지 않습니다.",
+      skipStatus: "벡터 서버 주소(EMBEDDING_URL)가 없어 쓰지 않음" });
+    const env = buildAiCurrentSlots({ settings: DEFAULT_CRAWL_SETTINGS, modelEnv: MODEL_ENV, policy: null, agent: null, auditCampaign: null, tableOn: false, env: {},
+      searchModels: { "search-rerank": { source: "environment", model: null, baseUrl: null, error: null } } } as never);
+    expect(env.find(slot => slot.task === "search-rerank")).toMatchObject({ skip: "환경 API 설정에 RERANK_URL 이(가) 없어 옮기지 않습니다.",
+      skipStatus: "재정렬 서버 주소(RERANK_URL)가 없어 쓰지 않음" });
+    // 상태 말이 없는 skip 은 키를 싣지 않는다(가져오기 계획·다른 화면의 모양 그대로)
+    expect(slots.find(slot => slot.task === "first-review")).not.toHaveProperty("skipStatus");
   });
 });
 
