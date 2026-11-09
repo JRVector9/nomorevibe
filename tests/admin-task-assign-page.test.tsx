@@ -174,7 +174,8 @@ describe("작업 배정에서 여는 서랍(운영 홈과 같은 RankDrawer)", (
     expect(html).toContain('data-note="readiness"');
     expect(html).toContain("알림 하나");
     expect(html).toContain('data-resave="crawl-tagline#1"');
-    expect(html).toContain("장비 행 m3-mlx이(가) 없습니다 — 저장하면 1칸으로 만듭니다.");
+    // 2026-11-09: 서버 문장 속 장비 id 는 그 장비를 쓰는 연결 이름으로 보인다(이 픽스처의 m3-mlx 장비 연결은 「m3-mlx (2)」 하나)
+    expect(html).toContain("장비 행 m3-mlx (2)이(가) 없습니다 — 저장하면 1칸으로 만듭니다.");
     expect(html).toContain("바꾸지 않고 다시 저장");
     expect(html).not.toContain("작업 배정에서 전체 보기");
     // 운영 홈에서 열면 링크가 있다

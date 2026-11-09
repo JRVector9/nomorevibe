@@ -26,7 +26,13 @@ const policy: ModelCapacityPolicy = { version: 1, globalLimit: 8, providerLimits
     route("second-review", SUPA), route("product-search-verify", SUPA), route("crawl-tagline", FALLBACK)] };
 const sql = postgres(TEST_DATABASE_URL, { max: 1, prepare: false, onnotice: () => {} });
 let originalControl: unknown, floor = 0;
-const cleanup = () => sql`DELETE FROM model_capacity_devices WHERE device_id LIKE 'alloc-it-%'`;
+const cleanup = async () => {
+  await sql`DELETE FROM ai_connections WHERE device_id LIKE 'alloc-it-%'`;
+  await sql`DELETE FROM model_capacity_devices WHERE device_id LIKE 'alloc-it-%'`;
+};
+/** 연결이 없는 장비는 칸 배분에서 숨긴다(isOrphanDevice) — 열로 보일 장비마다 API 연결 하나를 붙인다 */
+const connect = (deviceId: string, label: string) => sql`INSERT INTO ai_connections (id, label, kind, base_url, device_id, capacity_slots, updated_by)
+  VALUES (gen_random_uuid(), ${label}, 'api', ${`http://${deviceId}.invalid/v1`}, ${deviceId}, 1, 'alloc-it')`;
 async function configure(deviceId: string, limitSlots: number) {
   const current = await readModelCapacityDevice(deviceId);
   await db.transaction(tx => saveModelCapacityDevice(tx, { deviceId, limitSlots, secondaryCap: limitSlots, idleMs: 60_000, reserveSlots: 0, physicalLimit: null, roles: [], note: null },
@@ -52,6 +58,8 @@ beforeAll(async () => {
     revision = revision + 1, updated_at = clock_timestamp() WHERE id = 1`;
   await configure(GPU, 5);
   await configure(SUPA, 3);
+  await connect(GPU, "alloc-it-gpu-conn");
+  await connect(SUPA, "alloc-it-supa-conn");
 });
 afterAll(async () => {
   try {
@@ -65,7 +73,9 @@ it("화면 모형: 장비 행이 있는 장비만 열, 정책 경로가 칸 — 
   const view = await allocation();
   const mine = view.devices.filter(device => device.deviceId.startsWith("alloc-it-"));
   expect(mine.map(device => [device.deviceId, device.limitSlots, device.version, device.lendIdle, device.guaranteeSum])).toEqual([[GPU, 5, 1, true, 0], [SUPA, 3, 1, true, 0]]);
-  expect(view.skipped).toEqual(expect.arrayContaining([{ deviceId: FALLBACK, reason: "policy_fallback" }]));
+  // 연결도 장부 쓰임도 없는 정책 대체 장비는 열·건너뜀 목록이 아니라 「연결도 쓰임도 없는 장비」로 따로 알린다
+  expect(view.skipped.map(entry => entry.deviceId)).not.toContain(FALLBACK);
+  expect(view.orphans).toContain(FALLBACK);
   const gpuIndex = view.devices.findIndex(device => device.deviceId === GPU);
   expect(view.devices[gpuIndex].routes).toEqual(GPU_ROUTES);
   const classify = view.rows.find(row => row.routeId === "crawl-publish-classify")!;
@@ -129,7 +139,8 @@ it("정책이 이 장비로 보내지 않는 경로의 몫은 저장하고 경�
   const view = await allocation();
   const supaIndex = view.devices.findIndex(device => device.deviceId === SUPA);
   expect(view.rows.find(row => row.routeId === "local-screen")!.cells[supaIndex]).toMatchObject({ mapped: false, minSlots: 0, maxSlots: 0 });
-  expect(view.devices[supaIndex].routes).toEqual(["second-review", "product-search-verify", "local-screen"]);
+  // 줄 순서는 갈래(검수 → 분류·감사 → 글·번역·검색) 순 — 화면 판별(분류·감사)이 검색 키워드 검수(글·번역·검색)보다 먼저다
+  expect(view.devices[supaIndex].routes).toEqual(["second-review", "local-screen", "product-search-verify"]);
 
   const count = (await trail()).length;
   admin.login = null;

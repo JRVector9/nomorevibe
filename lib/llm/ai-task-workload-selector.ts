@@ -5,7 +5,7 @@ import { aiTask, AI_CLI_TOOL_PROVIDERS, type AiCliTool } from "./ai-tasks";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { modelCapacityPolicyHash, parseModelCapacityPolicy } from "./capacity";
 import { readModelCapacityDeviceStates, listModelCapacityDevices } from "./capacity-devices-repository";
-import { deviceFits, deviceRoleRank, deviceRouteQuotaFits } from "./capacity-devices";
+import { deviceFits, deviceModelQuotaFits, deviceRoleRank, deviceRouteQuotaFits } from "./capacity-devices";
 import { ModelCapacityDeferredError } from "./capacity-deferred";
 import { taskPoolEngineKey } from "./ai-task-pool-identity";
 import { aiTaskUsesCliEngine, cliEngineRevision, type CliEngineSource } from "./cli-engine-config";
@@ -107,6 +107,9 @@ export async function chooseTaskWorkloadMember<T extends AiTaskWorkloadCandidate
         // would be refused as route_quota without queuing, and other routes' unmet guarantees stay free. SQL stays the authority.
         const quota = deviceRouteQuotaFits(state, row.candidate.routeId);
         if (!quota.fits) return [];
+        // Model cap (0170) hint, same expression as deviceModelQuotaGateSql: the ledger model string on this device at its cap would be
+        // refused as model_quota without queuing. Absolute, whatever the route guarantee says.
+        if (!deviceModelQuotaFits(state, row.route.model).fits) return [];
         // Match capacity-devices effectiveRank: helper routes never receive the rank-1 bypass. A route under its guarantee
         // passes the secondary bound like rank 1 (non-helper only), as in deviceCandidateSql.
         const roleRank = deviceRoleRank(configured?.roles ?? [], row.candidate.routeId);

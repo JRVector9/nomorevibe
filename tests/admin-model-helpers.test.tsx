@@ -349,37 +349,59 @@ describe("server action — 쓰기 관문 뒤 관리자 확인·폼 검사·CAS�
 
 describe("그리기", () => {
   const model = view();
-  it("도우미 표 — 열 이름·판정·이유·신호 나이·입장·주 장비·자기 일·섀도·자동 정지·판", () => {
+  it("도우미 표(2026-11-09 시안) — 8열, 섀도는 「표본 / 기준 · 일치율」 + 나머지는 title, 뺀 칸은 「설정」으로 펼친 줄에", () => {
     const html = renderToStaticMarkup(createElement(HelperTable, { helpers: model.helpers, now: NOW }));
-    for (const text of ["도우미 장비", "돕는 단계", "모델", "모드", "지금 판정", "신호 나이", "입장(실제)", "주 장비", "자기 일", "섀도", "자동 정지", "판"]) expect(html).toContain(text);
+    const head = html.match(/<thead>[^]*?<\/thead>/)![0];
+    expect([...head.matchAll(/<th[^>]*>([^<]+)/g)].map(match => match[1])).toEqual(["서버", "돕는 단계", "모델", "모드", "지금", "섀도 표본 · 일치율", "자동 정지", "동작"]);
     expect(html).toContain('href="#helper-m3-deepseek:ai1"');
     expect(html).toContain("섀도만");
     expect(html).toContain("주 장비 여유");
     expect(html).toContain("쉬는 중");
     expect(html).toContain("저장 전 판의 신호");
-    expect(html).toContain("4초 전");
-    expect(html).toContain("41초 남음");
-    expect(html).toContain("여유");
-    expect(html).toContain(" 3/4");
-    expect(html).toContain("대기 0");
-    expect(html).toContain("사람 검수 대기 <strong");
-    expect(html).toContain("표본 42");
-    expect(html).toContain("일치율 95.2%");
-    expect(html).toContain("잘못 승인 1.2%");
-    expect(html).toContain("실패율 2.4%");
-    expect(html).toContain("자동 정지(실전·섀도 모두 닫힘)");
-    expect(html).toContain("확인 못함 비율 초과");
-    expect(html).toContain("닫힘");
+    // 섀도 두 숫자 + 나머지 지표는 title
+    expect(html).toMatch(/title="잘못 승인 1\.2% · 잘못 거절 0\.5% · 미확인률 0% · 실패율 2\.4%">42 \/ 200 · 95\.2%<\/span>/);
+    expect(html).toContain("표본 없음");
+    // 자동 정지 칸은 짧게(효과 · 이유), 긴 효과 이름은 title
+    expect(html).toMatch(/title="자동 정지\(실전·섀도 모두 닫힘\) · [^"]+"><span class="mh-alert">정지<\/span> · 확인 못함 비율 초과/);
+    // 「설정」 단추가 펼침 줄을 연다 — 처음에는 닫혀 있고(hidden), 표에서 뺀 칸(신호 나이·입장·주 장비·자기 일·섀도 세부·판)이 그 줄에 있다
+    expect(html).toMatch(/<button type="button" class="mh-btn" aria-expanded="false" aria-controls="helper-m3-deepseek:ai1-row"[^>]*>설정<\/button>/);
+    const row = html.match(/<tr id="helper-m3-deepseek:ai1-row" class="mh-form-row" hidden="">[^]*?<\/tr>/)![0];
+    for (const text of ["신호 나이", "4초 전", "41초 남음", "입장(실제)", "실전 닫힘 · 점유 0/1", "주 장비", "여유 · 3/4 · 대기 0 · 장비 2대", "사람 검수 대기 <strong",
+      "잘못 승인 1.2%", "실패율 2.4%", "자동 정지(실전·섀도 모두 닫힘)", "판 <span class=\"mh-num\">3</span>"]) expect(row).toContain(text);
+    // 폼을 주면 펼침 줄에 그 배정의 설정 폼(테두리 없이)
+    expect(row).not.toContain('name="expectedVersion"');
+    const withForm = renderToStaticMarkup(createElement(HelperTable, { helpers: model.helpers, now: NOW, form: { defaults: model.defaults, routeDefaults: model.routeDefaults } }));
+    expect(withForm.match(/<tr id="helper-m3-deepseek:ai1-row"[^]*?<\/tr>/)![0]).toMatch(/<div id="helper-m3-deepseek:ai1" class="grid gap-3 text-\[13px\] scroll-mt-24">[^]*name="expectedVersion" value="3"/);
     expect(renderToStaticMarkup(createElement(HelperTable, { helpers: [], now: NOW }))).toContain("도우미 배정이 없습니다");
+  });
+
+  it("2026-11-09: 도우미 장비는 연결 이름으로 — 장비 id 는 title 에만(표·폼 머리·감시자 카드)", () => {
+    const deviceId = model.helpers[0].deviceId, names = { [deviceId]: "m3-deepseek · m3-gpt-oss" };
+    const table = renderToStaticMarkup(createElement(HelperTable, { helpers: model.helpers, now: NOW, names }));
+    expect(table).toContain(`title="장비 id ${deviceId}">m3-deepseek · m3-gpt-oss</a>`);
+    const head = renderToStaticMarkup(createElement(HelperForm, { helper: model.helpers[0], defaults: model.defaults, routeDefaults: model.routeDefaults, names }));
+    expect(head).toMatch(/<h3[^>]*title="장비 id [^"]+">m3-deepseek · m3-gpt-oss · /);
+    // 이름표가 없는 장비는 장비 id 그대로
+    expect(renderToStaticMarkup(createElement(HelperTable, { helpers: model.helpers, now: NOW }))).toContain(`>${deviceId}</a>`);
+    const card = renderToStaticMarkup(createElement(SupervisorCard, { supervisor: model.supervisor, names: Object.fromEntries(
+      [...(model.supervisor?.roleDemand ?? []), ...(model.supervisor?.deviceDemand ?? [])].map(entry => [entry.deviceId, `이름 ${entry.deviceId}`])) }));
+    for (const entry of model.supervisor?.roleDemand ?? []) expect(card).toContain(`title="장비 id ${entry.deviceId}">이름 ${entry.deviceId}</span>`);
   });
 
   it("감시자 카드 — 배지·스위치(켜져 있으면 끄기, 꺼져 있으면 확인 칸 + 켜기)·lease·순환 설정·beacon", () => {
     const html = renderToStaticMarkup(createElement(SupervisorCard, { supervisor: model.supervisor }));
     expect(html).toContain('data-badge="ok"');
     expect(html).toContain("정상");
+    // 표 한 줄 — 상태 · 전체 스위치 · 마지막 신호 · 신호 유효 · 순환 · 동작
+    expect([...html.match(/<thead>[^]*?<\/thead>/)![0].matchAll(/<th[^>]*>([^<]+)/g)].map(match => match[1])).toEqual(["상태", "전체 스위치", "마지막 신호", "신호 유효", "순환", "동작"]);
+    expect(html).toMatch(/<td class="r mh-num nowrap">45초<\/td><td class="r mh-num nowrap">15초<\/td>/);
     expect(html).toContain("감시자 끄기");
     expect(html).toContain('name="enabled" value="false"');
     expect(html).toContain("돌고 있는 호출은 끝까지 갑니다");
+    // 순환 설정 폼은 「시간 바꾸기」로 연다(처음엔 숨김), lease·beacon 등은 「감시자 자세히」에 접힌다
+    expect(html).toMatch(/aria-expanded="false" aria-controls="supervisor-timing">시간 바꾸기<\/button>/);
+    expect(html).toMatch(/<form id="supervisor-timing" hidden=""/);
+    expect(html).toContain("<summary>감시자 자세히</summary>");
     expect(html).toContain("Oracle");
     expect(html).toContain("oracle-osaka-1");
     expect(html).toContain("살아 있음(30초 남음)");

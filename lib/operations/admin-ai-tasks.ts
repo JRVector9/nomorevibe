@@ -217,9 +217,8 @@ export const aiTaskConnectionModelIds = (task: AiTaskDef, connection: Pick<AiCon
   }
   return aiConnectionModelIds(connection);
 };
-export const aiConnectionLabel = (connection: Pick<AiConnectionView, "label" | "kind" | "cliTool"> & Partial<Pick<AiConnectionView, "deviceId" | "baseUrl">>) => {
-  if (connection.kind === "api" && connection.deviceId === "m1-qwen" && connection.baseUrl === "https://m1-studio.tail02799e.ts.net/v1")
-    return "M1 Studio · Gemma";
+/** 연결의 보이는 이름 = 운영자가 붙인 이름 그대로(CLI 는 도구 이름을 덧붙인다). 장비 id·주소로 이름을 바꾸지 않는다(2026-11-09 — 이름은 연결 이름표가 정한다). */
+export const aiConnectionLabel = (connection: Pick<AiConnectionView, "label" | "kind" | "cliTool">) => {
   return connection.kind === "cli" && connection.cliTool && !connection.label.toLowerCase().includes("cli")
     ? `${connection.label}(${AI_CLI_TOOL_LABELS[connection.cliTool]})` : connection.label;
 };

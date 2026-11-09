@@ -18,7 +18,7 @@ export function RolesEditor({ roles, readOnly, extraRows = 1 }: { roles: DeviceR
       <th className={TH}>경로(역할)</th><th className={TH}>지금 순위</th><th className={TH}>순위</th></tr></thead>
       <tbody>
         {roles.map(role => <tr key={role.routeId} className="border-b border-line">
-          <td className={TD}>{role.label}<br /><code className="text-[13px] text-fg-3">{role.routeId}</code>{!role.inPolicy && <span className="ml-1 text-[13px] text-amber-700">현재 정책에 없음</span>}</td>
+          <td className={TD}>{role.label}{role.label !== role.routeId && <><br /><code className="text-[13px] text-fg-3">{role.routeId}</code></>}{!role.inPolicy && <span className="ml-1 text-[13px] text-amber-700">현재 정책에 없음</span>}</td>
           <td className={`${TD} tabular-nums`}>{role.rank === null ? <span className="text-fg-3">순위 없음(최하위)</span> : role.rank}</td>
           <td className={TD}><input name={`rank:${role.routeId}`} defaultValue={role.rank ?? ""} aria-label={`${role.label} 순위`} inputMode="numeric" placeholder="없음"
             disabled={readOnly} className={RANK_INPUT} /></td>

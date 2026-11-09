@@ -47,7 +47,8 @@ export async function readModelPickerAvailability(): Promise<ModelPickerAvailabi
         reserved: shared.reduce((sum, row) => sum + row.reserved, 0), running: shared.reduce((sum, row) => sum + row.running, 0),
         expiredReserved: shared.reduce((sum, row) => sum + row.expired_reserved, 0),
         waiting: device?.waiting ?? 0, indeterminate: shared.reduce((sum, row) => sum + row.indeterminate, 0), models,
-        ...(device?.routes ? { routes: device.routes } : {}), ...(device?.lendIdle === undefined ? {} : { lendIdle: device.lendIdle }) };
+        ...(device?.routes ? { routes: device.routes } : {}), ...(device?.lendIdle === undefined ? {} : { lendIdle: device.lendIdle }),
+        ...(device?.models ? { modelCaps: device.models } : {}) };
     }) };
   }, { accessMode: "read only", isolationLevel: "repeatable read" })));
 }

@@ -8,6 +8,7 @@ import { logger } from "@/lib/observability/logger";
 import { adminLog, settingsChanges, type AdminLogRow } from "./admin-log";
 import { modelStageLabel } from "./admin-models-view";
 import { DrWriterFencedError } from "./dr/epoch";
+import { routeDisplayLabel } from "./llm-display";
 import { ROUTE_LABELS } from "./runtime-settings-schema";
 
 /**
@@ -48,6 +49,9 @@ export type DeviceRoleView = {
   inPolicy: boolean };
 export type DeviceLiveView = { source: "table" | "policy_fallback"; limitSlots: number; active: number; primaryBusy: boolean; secondaryActive: number; secondaryBound: number;
   lending: boolean; waiting: number; waitingPrimary: number };
+/** 모델 상한(0170) 한 줄 — 상한 줄 ∪ 지금 점유·대기가 있는 모델(model 순). maxSlots null = 상한 없음(공유 칸만), engineMax null = 엔진 최대 모름(표시용),
+ * active·waiting null = 실시간 상태를 못 읽음 */
+export type DeviceModelLimitView = { model: string; maxSlots: number | null; engineMax: number | null; active: number | null; waiting: number | null };
 export type DeviceView = {
   deviceId: string; source: DeviceSource; enabled: boolean;
   version: number | null; updatedBy: string | null; updatedAt: string | null;
@@ -58,6 +62,8 @@ export type DeviceView = {
   roles: DeviceRoleView[];
   policyRoutes: string[];
   live: DeviceLiveView | null;
+  /** 모델 상한(0170). buildCapacityDevicesAdminView 는 늘 채운다(줄이 없으면 []); 조립 fixture 에는 없을 수 있다 */
+  models?: DeviceModelLimitView[];
   issues: string[] };
 export type DeviceAuditView = { id: number; actor: string; at: string; ok: boolean; deviceId: string; version: number | null; changes: string[]; error: string | null };
 export type CapacityDevicesAdminView = {
@@ -102,11 +108,11 @@ export const DEVICE_FIELD_LABELS: Readonly<Record<string, string>> = {
   physicalLimit: "엔진 실제 동시 처리 수", roles: "역할 순서", note: "메모", enabled: "사용",
 };
 export const deviceFieldLabel = (path: string): string => DEVICE_FIELD_LABELS[path.split(".")[0]] ?? path;
-/** 역할(경로) 이름 — 실시간 한도 화면과 같은 ROUTE_LABELS, 없으면 단계 이름, 그것도 없으면 경로 id */
+/** 역할(경로) 이름 — 실시간 한도 화면과 같은 ROUTE_LABELS, 없으면 단계 이름, 그것도 없으면 작업·보조·옛 경로 이름(llm-display routeDisplayLabel — 모르면 경로 id) */
 export function deviceRoleLabel(routeId: string): string {
   if (ROUTE_LABELS[routeId]) return ROUTE_LABELS[routeId];
   const stage = modelStageLabel(routeId);
-  return stage === "다른 모델 단계" ? routeId : stage;
+  return stage === "다른 모델 단계" ? routeDisplayLabel(routeId) : stage;
 }
 
 const settingsView = (row: Pick<ModelCapacityDeviceSettings, "limitSlots" | "secondaryCap" | "idleMs" | "reserveSlots" | "physicalLimit" | "note">): DeviceSettingsView =>
@@ -145,7 +151,22 @@ function deviceView(deviceId: string, row: ModelCapacityDeviceRow | undefined, s
   const foreign = ranked.filter(role => !role.inPolicy && policy).map(role => role.routeId);
   if (foreign.length) issues.push(`순위에 있지만 현재 정책에 없는 경로: ${foreign.join(", ")}`);
   return { deviceId, source, enabled: row?.enabled ?? true, version: row?.version ?? null, updatedBy: row?.updatedBy ?? null, updatedAt: row?.updatedAt ?? null,
-    settings, defaults, roles: [...ranked, ...unranked], policyRoutes, live, issues };
+    settings, defaults, roles: [...ranked, ...unranked], policyRoutes, live, models: deviceModelLimitViews(row, state), issues };
+}
+
+/** 모델 상한 줄(장비 행의 modelLimits, 실시간 상태가 있으면 그 상한) ∪ 실시간 상태의 모델 — 꺼진 행의 상한은 입장이 보지 않으므로 상태 쪽 값(없음)을 따른다 */
+export function deviceModelLimitViews(row: Pick<ModelCapacityDeviceRow, "modelLimits" | "enabled"> | undefined,
+  state: Pick<ModelCapacityDeviceState, "models"> | undefined): DeviceModelLimitView[] {
+  const views = new Map<string, DeviceModelLimitView>();
+  if (row?.enabled !== false) for (const limit of row?.modelLimits ?? [])
+    views.set(limit.model, { model: limit.model, maxSlots: limit.maxSlots, engineMax: limit.engineMax ?? null,
+      active: state?.models ? 0 : null, waiting: state?.models ? 0 : null });
+  for (const item of state?.models ?? []) {
+    const stored = views.get(item.model);
+    views.set(item.model, { model: item.model, maxSlots: item.maxSlots ?? stored?.maxSlots ?? null, engineMax: item.engineMax ?? stored?.engineMax ?? null,
+      active: item.active, waiting: item.waiting });
+  }
+  return [...views.values()].sort((a, b) => a.model < b.model ? -1 : a.model > b.model ? 1 : 0);
 }
 
 /** 감사 detail 의 바뀐 값 — 저장소가 남긴 { before, after }(1b-A: roles 는 [{routeId, rank}])를 "이름: 전 → 후" 로. detail.changes 가 있으면 그것을 쓴다 */

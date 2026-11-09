@@ -491,8 +491,16 @@ export const DEFAULT_QWEN_AUTO: QwenAutoSettings = {
   screenReview: { enabled: false, perTick: 2, autoClose: true },
 };
 
+/**
+ * 단계 풀이 고른 CLI 모델의 추론 강도(2026-11-09, 장비 한도 화면) — 단계 id → 등록부 key → 강도. 지금은 소개 검수(Claude CLI)만 읽는다
+ * (lib/jobs/products/intro-check.ts). 값은 실행 쪽이 모델마다 받는 강도인지 다시 보고, 아니면 어댑터 기본값을 쓴다.
+ * 모양이 틀려도 설정 전체를 기본값으로 떨어뜨리지 않게 이 칸만 버린다(catch).
+ */
+export const stageModelEffortsSchema = z.record(z.string().max(64), z.record(z.string().max(200), z.string().max(32))).optional().catch(undefined);
+
 export const crawlSettingsSchema = z.object({
   stageModelPools: adminStagePoolsSchema.optional(),
+  stageModelEfforts: stageModelEffortsSchema,
   /** 수집 자체를 멈추는 스위치. 무언가 잘못 돌 때 배포 없이 끊을 수 있어야 한다 */
   enabled: z.boolean(),
   reviewMode: z.enum(["off", "observe", "enforce"]).default("off"),

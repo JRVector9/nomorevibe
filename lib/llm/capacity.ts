@@ -315,10 +315,11 @@ export const ai1ItemGatewayTerminalEvidenceSchema = z.object({
 export type Ai1ItemGatewayTerminalEvidence = Readonly<z.infer<typeof ai1ItemGatewayTerminalEvidenceSchema>>;
 
 /** device_unconfigured: the route's device (groupId) has neither an enabled `model_capacity_devices` row nor a policy `groupLimits` fallback — no waiting row is written.
- * route_quota (step 2): the route is at its per-device cap (`model_capacity_devices.route_quotas`) — no waiting row is written (an own waiting row is withdrawn). */
+ * route_quota (step 2): the route is at its per-device cap (`model_capacity_devices.route_quotas`) — no waiting row is written (an own waiting row is withdrawn).
+ * model_quota (0170): the model is at its per-device cap (`model_capacity_devices.model_limits`) — same handling as route_quota. */
 export type ModelSlotResult = { kind: "granted"; reservation: ModelCapacityReservation }
   | { kind: "deferred"; reason: "disabled" | "draining" | "unmapped" | "capacity" | "queue_full"
-    | "policy_changed" | "withdrawn" | "dispatched" | "device_unconfigured" | "helper_ineligible" | "route_quota" };
+    | "policy_changed" | "withdrawn" | "dispatched" | "device_unconfigured" | "helper_ineligible" | "route_quota" | "model_quota" };
 
 export function parseModelCapacityPolicy(value: unknown): ModelCapacityPolicy {
   return modelCapacityPolicySchema.parse(value);

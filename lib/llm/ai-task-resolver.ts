@@ -63,6 +63,7 @@ export const TEXT_RANK_UNUSABLE_TEXT: Readonly<Record<string, string>> = Object.
   queue_full: "대기열이 가득 참",
   helper_ineligible: "도우미 경로가 닫힘",
   route_quota: "이 장비에서 이 작업 경로의 몫(상한)이 가득 참",
+  model_quota: "이 장비에서 이 모델의 상한이 가득 참",
   engine_network: "엔진에 닿지 않음(연결 거절이 잇따름)",
   engine_no_key: "엔진이 키를 거절함",
   engine_model_unavailable: "엔진에 이 모델이 없음",
@@ -246,8 +247,8 @@ export type TextRankStatus = Readonly<{ routeId: string; at: string; status: Tex
 const bindingKey = (binding: Pick<TextTaskRankBinding, "rank" | "memberId">): string => binding.memberId ? `member.${binding.memberId}` : String(binding.rank);
 const candidateKey = (candidate: TextRankCandidate): string => candidate.memberId ? `member.${candidate.memberId}` : String(candidate.rank.rank);
 
-// route_quota(경로 몫 상한, step 2)도 포화다 — 그 경로의 칸이 풀리면 곧 다시 부를 수 있다(다음 순위가 없으면 잡은 model_capacity 로 미룬다)
-const SATURATION = new Set(["capacity", "queue_full", "route_quota"]);
+// route_quota(경로 몫 상한, step 2)·model_quota(모델 상한, 0170)도 포화다 — 그 칸이 풀리면 곧 다시 부를 수 있다(다음 순위가 없으면 잡은 model_capacity 로 미룬다)
+const SATURATION = new Set(["capacity", "queue_full", "route_quota", "model_quota"]);
 const statusHolder = globalThis as unknown as { __nmvTextRankStatus?: Map<string, TextRankStatus> };
 const statuses = () => (statusHolder.__nmvTextRankStatus ??= new Map());
 /** 이 프로세스가 마지막으로 남긴 순위 사정(웹 경로: 검색어 번역). 없으면 null. */
@@ -361,7 +362,7 @@ export class TextTaskRanks {
   /** 엔진이 답했다(성공이든 그 일의 실패든) — 연결 거절 연속을 처음부터 센다. */
   answered(binding: TextTaskRankBinding): void { this.engines.get(bindingKey(binding))?.answered(); }
 
-  /** 쉬는 까닭에 포화(capacity·queue_full·route_quota)가 있다 — 줄이 풀리면 곧 다시 부를 수 있다(잡은 예전처럼 model_capacity 로 미룬다). */
+  /** 쉬는 까닭에 포화(capacity·queue_full·route_quota·model_quota)가 있다 — 줄이 풀리면 곧 다시 부를 수 있다(잡은 예전처럼 model_capacity 로 미룬다). */
   saturated(): boolean { return [...this.paused.values()].some(reason => SATURATION.has(reason)); }
   /** 쓸 수 있던 순위가 모두 엔진 쪽 까닭(engine_*)으로 쉰다 — 예전의 「엔진이 내려가 틱을 접는다」와 같다. 그 까닭(첫 순위의 것)을 돌려준다. */
   engineDown(): string | null {

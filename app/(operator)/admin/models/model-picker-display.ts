@@ -1,30 +1,42 @@
 import { aiConnectionLabel, type AiConnectionView } from "@/lib/operations/admin-ai-tasks";
+import { deviceDisplayMap, GEMMA_DISPLAY, GEMMA_MODEL as GEMMA, GEMMA_MODEL_NAMES as GEMMA_NAMES, SUPA_MODEL as SUPA } from "@/lib/operations/llm-display";
 
 /** Presentation only. Execution identities, connection records and form bindings are never rewritten here. */
-export type PickerConnection = Pick<AiConnectionView, "id" | "kind" | "cliTool"> & Partial<Pick<AiConnectionView, "label" | "baseUrl" | "deviceId" | "models">>;
+export type PickerConnection = Pick<AiConnectionView, "id" | "kind" | "cliTool"> & Partial<Pick<AiConnectionView, "label" | "baseUrl" | "deviceId" | "models" | "enabled">>;
 type Choice = { provider: string; model: string };
 type Option = Choice & { label: string; group?: string; text?: string };
-const GEMMA = "mlx-community--gemma-4-26b-a4b-it-4bit";
-/** M1 이 내보내는 Gemma 4 26B 의 이름들 — 2026-11-08 M1 서버가 목록 이름을 m1-gemma 로 바꿨다(옛 이름은 저장된 순위·계약에 남아 있을 수 있다). */
-const GEMMA_NAMES: ReadonlySet<string> = new Set([GEMMA, "m1-gemma"]);
-const SUPA = "Inferact/Qwen3.8-27B-NVFP4";
-const m1 = (connection: PickerConnection) => connection.kind === "api" && connection.deviceId === "m1-qwen"
-  && connection.baseUrl === "https://m1-studio.tail02799e.ts.net/v1";
-const supa = (connection: PickerConnection) => connection.kind === "api" && connection.deviceId === "supa-direct"
-  && connection.baseUrl === "http://100.78.219.124:8000/v1";
+/** M1 Studio 의 mlx_lm.server(Gemma 만 고를 수 있게 둔다)·Supa vLLM(supa 별칭) — 주소로 가린다. 보이는 이름은 늘 연결 이름표다(2026-11-09). */
+const m1 = (connection: PickerConnection) => connection.kind === "api" && connection.baseUrl === "https://m1-studio.tail02799e.ts.net/v1";
+const supa = (connection: PickerConnection) => connection.kind === "api" && connection.baseUrl === "http://100.78.219.124:8000/v1";
 
 export function modelPickerConnectionLabel(connection: PickerConnection): string {
   return aiConnectionLabel({ ...connection, label: connection.label ?? "" });
 }
+/** 연결의 장비 id(정책 groupId) 그대로 — 같은 이름의 연결 둘을 가를 때만 쓴다 */
 export function modelPickerConnectionDevice(connection: PickerConnection): string {
-  return m1(connection) ? "M1 Studio" : connection.deviceId ?? "";
+  return connection.deviceId ?? "";
 }
 export function modelPickerModelLabel(connection: PickerConnection, model: string): string {
-  return m1(connection) && GEMMA_NAMES.has(model) ? "Gemma 4 26B" : supa(connection) && model === "supa" ? SUPA : model;
+  return m1(connection) && GEMMA_NAMES.has(model) ? GEMMA_DISPLAY : supa(connection) && model === "supa" ? SUPA : model;
 }
-/** Existing server-generated summaries are text only; never apply this to a form field or a stored record. */
+/**
+ * 서버가 만든 요약 글 안의 장비 id 를 그 장비의 연결 이름으로 바꾼다(예: 「m1-qwen」 → 「m1-gemma」). 연결 이름표 글자 안은 건드리지 않고,
+ * 다른 이름의 일부(앞뒤가 영문·숫자·-·_)도 바꾸지 않는다. Text only — never apply this to a form field or a stored record.
+ */
 export function modelPickerVisibleText(text: string, connections: readonly PickerConnection[]): string {
-  return connections.some(m1) ? text.replaceAll("m1-qwen", "M1 Studio") : text;
+  const known = connections.filter((connection): connection is PickerConnection & { deviceId: string; label: string } => !!connection.deviceId && !!connection.label)
+    .map(connection => ({ id: connection.id, label: connection.label, kind: connection.kind, cliTool: connection.cliTool, deviceId: connection.deviceId,
+      enabled: connection.enabled ?? true }));
+  const swaps = [...deviceDisplayMap(known).values()].filter(device => device.source === "connection" && device.name !== device.deviceId)
+    .sort((a, b) => b.deviceId.length - a.deviceId.length);
+  if (!swaps.length) return text;
+  const labels = [...new Set(known.map(connection => modelPickerConnectionLabel(connection)).filter(Boolean))].sort((a, b) => b.length - a.length);
+  const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const ids = new RegExp(`(?<![A-Za-z0-9_-])(${swaps.map(device => escape(device.deviceId)).join("|")})(?![A-Za-z0-9_-])`, "g");
+  const swap = (part: string) => part.replace(ids, id => swaps.find(device => device.deviceId === id)?.name ?? id);
+  if (!labels.length) return swap(text);
+  // 연결 이름표(예: 「m3-mlx (2)」)는 그대로 두고 그 사이 글자만 바꾼다
+  return text.split(new RegExp(`(${labels.map(escape).join("|")})`)).map((part, index) => index % 2 ? part : swap(part)).join("");
 }
 export function modelPickerConnectionModels(connection: PickerConnection): AiConnectionView["models"] {
   const models = connection.models ?? null;
@@ -56,7 +68,6 @@ export function modelPickerChoiceKey(choice: Choice, connections: readonly Picke
 }
 
 function pickerGroupName(connection: PickerConnection): string {
-  if (m1(connection)) return modelPickerConnectionDevice(connection);
   return modelPickerConnectionLabel(connection) || modelPickerConnectionDevice(connection) || connection.cliTool || "";
 }
 
@@ -98,7 +109,7 @@ export function presentPickerOptions<T extends Option>(options: readonly T[], co
       if (seen.has(key)) continue;
       seen.add(key);
       const grouped = withPickerGroup(selected, connection, connections, true);
-      result.push({ ...grouped, text: "Gemma 4 26B", label: "M1 Studio · Gemma 4 26B" });
+      result.push({ ...grouped, text: GEMMA_DISPLAY, label: `${modelPickerConnectionLabel(connection)} · ${GEMMA_DISPLAY}` });
       continue;
     }
     if (supa(connection) && (option.model === "supa" || option.model === SUPA)) {
@@ -111,7 +122,7 @@ export function presentPickerOptions<T extends Option>(options: readonly T[], co
       if (seen.has(key)) continue;
       seen.add(key);
       const grouped = withPickerGroup(selected, connection, connections, Boolean(option.group));
-      result.push({ ...grouped, text: SUPA, label: `${connection.label} · ${SUPA}` });
+      result.push({ ...grouped, text: SUPA, label: `${modelPickerConnectionLabel(connection)} · ${SUPA}` });
       continue;
     }
     result.push(withPickerGroup(option, connection, connections));

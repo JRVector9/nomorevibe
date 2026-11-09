@@ -175,6 +175,15 @@ describe("pipeline control plan", () => {
     expect(() => controlSnapshotSchema.parse(draining([{ ...device("gateway", "table"), routes: [{ ...routes[0], extra: 1 } as unknown as (typeof routes)[number]] }]))).toThrow();
     expect(planPipelineControl({ ...transition("capacity", "mode", "--to=open", "--from-mode=draining", "--expect-epoch=1", "--expect-revision=2"),
       allowDeferredRoutes: true }, withQuotas).blocked).toEqual([]);
+
+    // 0170 (model limits): per-model active/waiting/maxSlots/engineMax ride along the same strict device read and block nothing
+    const models = [{ model: "deepseek-v4.1-flash-1017", active: 1, waiting: 0, maxSlots: 1, engineMax: 1 },
+      { model: "gpt-oss-120b", active: 2, waiting: 1, maxSlots: 4, engineMax: null }];
+    const withModels = draining([{ ...device("gateway", "table"), helpers, lendIdle: true, routes: [], models }, { ...device("omega", "table"), helpers: [], models: [] }]);
+    expect(controlSnapshotSchema.parse(withModels)).toEqual(withModels);
+    expect(() => controlSnapshotSchema.parse(draining([{ ...device("gateway", "table"), models: [{ ...models[0], extra: 1 } as unknown as (typeof models)[number]] }]))).toThrow();
+    expect(planPipelineControl({ ...transition("capacity", "mode", "--to=open", "--from-mode=draining", "--expect-epoch=1", "--expect-revision=2"),
+      allowDeferredRoutes: true }, withModels).blocked).toEqual([]);
   });
 
   it("changes a policy only while closed and refuses an unchanged or invalid policy", () => {

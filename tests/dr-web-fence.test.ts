@@ -391,7 +391,11 @@ it("every admin server action and every write route handler goes through the web
   // 2026-11-08 admin/models/tasks/actions.ts: hideAiConnectionModelAction(연결 모델 빼기·되돌리기) 하나가 더해져 111.
   // 2026-11-08 admin/models/tasks/actions.ts: clearUnreadAiTaskRanksAction(실행 쪽이 읽지 않는 옛 순위 기록 지우기) 하나가 더해져 112.
   // 2026-11-08 admin/models/allocation/actions.ts(칸 배분, step 3): saveRouteQuotasAction(장비 한 대의 작업 영역별 보장·상한·빌려 쓰기 저장) 하나가 더해져 113.
-  expect(wrapped).toBe(113);
+  // 2026-11-09 admin/models/devices/actions.ts: saveModelLimitsAction(모델 상한, 0170)·retireCapacityDeviceAction(쓰지 않는 장비 지우기)·
+  // pruneStaleCapacityRoutesAction(남은 정책 route 정리) 셋이 더해져 116.
+  // 2026-11-09 장비 한도 표 개편: saveDeviceRowAction(한 줄 저장 — 운영 한도 + 모델 한도, 엔진 최대치는 그대로) 하나가 더해져 117.
+  // 2026-11-09 admin/models/devices/cli-actions.ts: saveCliTaskModelAction(CLI 순위 모델·강도)·saveCliStageModelAction(소개 검수 CLI 모델·강도) 둘이 더해져 119.
+  expect(wrapped).toBe(119);
   const routes = files.filter(file => file.endsWith(`${path.sep}route.ts`));
   for (const file of routes) {
     const source = readFileSync(file, "utf8");

@@ -1,59 +1,78 @@
 import { formatListTime } from "@/lib/format/time";
-import { ageLabel, durationLabel, percentLabel, type HelperGateView, type HelperRowView } from "@/lib/operations/admin-model-helpers";
+import { ageLabel, durationLabel, percentLabel, type HelperGateView, type HelperRouteDefaults, type HelperRowView, type HelperSettingsDefaults } from "@/lib/operations/admin-model-helpers";
+import { HelperForm } from "./HelperForm";
+import { HelperRow } from "./HelperRow";
 
-const TH = "py-2 pr-3 text-[13px] font-semibold text-fg-3";
-const TD = "py-2 pr-3 align-top";
 const num = (value: number | null | undefined) => value === null || value === undefined ? "—" : value.toLocaleString("ko-KR");
-const VERDICT_CLASS: Record<HelperRowView["verdict"], string> = {
-  help: "bg-emerald-100 text-emerald-900", shadow_only: "bg-amber-100 text-amber-900", hold: "bg-bg-soft text-fg-2",
+/** 판정 배지 — 모양 하나 + 글자(색만으로 가르지 않는다) */
+const VERDICT: Record<HelperRowView["verdict"], { level: string; shape: string }> = {
+  help: { level: "ok", shape: "●" }, shadow_only: { level: "info", shape: "◐" }, hold: { level: "idle", shape: "‖" },
 };
+const COLUMNS = 8;
 
-function Gate({ label, gate }: { label: string; gate: HelperGateView | null }) {
-  if (!gate) return <div className="text-fg-3">{label} 미확인</div>;
-  return <div>{label} {gate.ok ? <strong>열림</strong> : <span className="text-fg-3">닫힘</span>}
-    <span className="tabular-nums text-fg-3"> · 점유 {num(gate.active)}/{num(gate.maxSlots)}</span></div>;
+function gateText(label: string, gate: HelperGateView | null): string {
+  return gate ? `${label} ${gate.ok ? "열림" : "닫힘"} · 점유 ${num(gate.active)}/${num(gate.maxSlots)}` : `${label} 미확인`;
+}
+
+/** 섀도 표본 · 일치율 — 나머지 지표(잘못 승인·잘못 거절·미확인률·실패율)는 title 로 */
+function shadowSummary(row: HelperRowView) {
+  if (row.shadow.samples === null) return <span className="mh-muted">표본 없음</span>;
+  const rest = `잘못 승인 ${percentLabel(row.shadow.wrongApproval)} · 잘못 거절 ${percentLabel(row.shadow.wrongRejection)} · 미확인률 ${percentLabel(row.shadow.unknownRate)} · 실패율 ${percentLabel(row.shadow.failureRate)}`;
+  return <span className="mh-num" title={rest}>{num(row.shadow.samples)} / {num(row.settings.minShadowSamples)} · {percentLabel(row.shadow.agreement)}</span>;
+}
+
+/** 펼침 줄 위쪽 — 표에서 뺀 칸(신호 나이·입장·주 장비·자기 일·섀도 세부·판·배정 이름·자동 정지 시각)을 한 덩어리로 */
+function HelperFacts({ row, now }: { row: HelperRowView; now: Date }) {
+  const primary = row.primary.full === null && row.primary.active === null ? "—"
+    : [row.primary.full === null ? null : row.primary.full ? "가득 참" : "여유", row.primary.active !== null ? `${num(row.primary.active)}/${num(row.primary.limit)}` : null,
+      row.primary.waiting !== null ? `대기 ${num(row.primary.waiting)}` : null, row.primary.devices !== null ? `장비 ${num(row.primary.devices)}대` : null].filter(Boolean).join(" · ");
+  return <dl className="mh-facts">
+    <div><dt>배정</dt><dd><code>{row.assignmentId}</code> · 판 <span className="mh-num">{row.version}</span></dd></div>
+    <div><dt>신호 나이</dt><dd>{ageLabel(row.signalAgeMs)}{row.signalLeftMs !== null && <> · {row.signalLeftMs > 0 ? `${durationLabel(row.signalLeftMs)} 남음` : "만료"}</>}
+      {row.streak !== null && row.signalUsable && <> · 연속 {num(row.streak)}</>}</dd></div>
+    <div><dt>입장(실제)</dt><dd>{gateText("실전", row.gates.live)} / {gateText("섀도", row.gates.shadow)}</dd></div>
+    <div><dt>주 장비</dt><dd>{primary}</dd></div>
+    <div><dt>자기 일</dt><dd>{row.ownWork ? <>{row.ownWork.label} <strong className="mh-num">{num(row.ownWork.backlog)}</strong>
+      {" · "}<span className={row.ownWork.fresh ? "" : "mh-warn"}>{row.ownWork.fresh ? ageLabel(row.ownWork.ageMs) : "오래됨 → 바쁨으로 봄"}</span></>
+      : <span className="mh-muted">beacon 없음 → 바쁨으로 봄</span>}
+      {row.deviceDemand?.usable && row.deviceDemand.primaryDemand && <span className="mh-warn"> · 빌려주기 멈춤</span>}</dd></div>
+    {row.shadow.samples !== null && <div><dt>섀도</dt><dd>표본 {num(row.shadow.samples)} · 일치율 {percentLabel(row.shadow.agreement)} · 잘못 승인 {percentLabel(row.shadow.wrongApproval)}
+      {" · "}잘못 거절 {percentLabel(row.shadow.wrongRejection)} · 미확인률 {percentLabel(row.shadow.unknownRate)} · 실패율 {percentLabel(row.shadow.failureRate)}</dd></div>}
+    {row.stops.map(stop => <div key={stop.id}><dt>자동 정지</dt><dd><span className="mh-alert">{stop.effectLabel}</span> · {stop.reasonLabel} · {formatListTime(stop.createdAt, now)}</dd></div>)}
+  </dl>;
 }
 
 /**
- * 도우미 표 — 배정 한 줄씩: 도우미 장비 · 돕는 단계 · 모델 · 모드 · 지금 판정(+이유) · 신호 나이 · 입장(DB 의 helper_gate) · 주 장비 · 자기 일 · 섀도 · 자동 정지 · 판.
- * 판정은 신호를 쓸 수 있을 때만 그 판정이고, 아니면 「쉬는 중」과 신호를 못 쓰는 이유다(fail-closed). 색만으로 가르지 않고 글자를 낸다.
+ * 도우미 배정 표(2026-11-09 승인 시안) — 8열: 서버 · 돕는 단계 · 모델 · 모드 · 지금(판정 + 이유) · 섀도 표본 · 일치율 · 자동 정지 · 동작(「설정」).
+ * 판정은 신호를 쓸 수 있을 때만 그 판정이고, 아니면 「쉬는 중」과 신호를 못 쓰는 이유다(fail-closed). 표에서 뺀 칸은 「설정」으로 펼친 줄 위에 있다.
+ * form 을 주면 펼친 줄에 그 배정의 설정 폼을 그린다(없으면 사실만).
  */
-export function HelperTable({ helpers, now }: { helpers: HelperRowView[]; now: Date }) {
-  if (!helpers.length) return <p className="text-[13px] text-fg-3">도우미 배정이 없습니다 — 아래 「새 배정」에서 꺼짐으로 먼저 만드세요.</p>;
-  return <div className="overflow-x-auto"><table className="w-full min-w-[1320px] text-left text-[13px]"><thead><tr className="border-b border-line">
-    <th className={TH}>도우미 장비</th><th className={TH}>돕는 단계</th><th className={TH}>모델</th><th className={TH}>모드</th><th className={TH}>지금 판정</th>
-    <th className={TH}>신호 나이</th><th className={TH}>입장(실제)</th><th className={TH}>주 장비</th><th className={TH}>자기 일</th><th className={TH}>섀도</th>
-    <th className={TH}>자동 정지</th><th className={TH}>판</th></tr></thead>
-    <tbody>{helpers.map(row => <tr key={row.assignmentId} className="border-b border-line" data-assignment={row.assignmentId}>
-      <td className={TD}><a href={`#helper-${row.assignmentId}`} className="font-mono font-semibold underline">{row.deviceId}</a>
-        <div className="font-mono text-fg-3">{row.assignmentId}</div>
-        {row.issues.length > 0 && <div className="text-amber-700" title={row.issues.join("\n")}>알림 {row.issues.length}</div>}</td>
-      <td className={TD}>{row.stageLabel}</td>
-      <td className={TD}><code className="break-all">{row.model}</code></td>
-      <td className={TD}><span className={row.mode === "off" ? "text-fg-3" : "font-semibold"}>{row.modeLabel}</span></td>
-      <td className={TD}><span data-verdict={row.verdict} className={`rounded-full px-1.5 font-semibold ${VERDICT_CLASS[row.verdict]}`}>{row.verdictLabel}</span>
-        <div className={row.signalUsable ? "" : "text-fg-3"}>{row.reasonLabel}</div>
-        {row.streak !== null && row.signalUsable && <div className="tabular-nums text-fg-3">연속 {num(row.streak)}</div>}</td>
-      <td className={`${TD} whitespace-nowrap`}>{ageLabel(row.signalAgeMs)}
-        {row.signalLeftMs !== null && <div className="text-fg-3">{row.signalLeftMs > 0 ? `${durationLabel(row.signalLeftMs)} 남음` : "만료"}</div>}</td>
-      <td className={`${TD} whitespace-nowrap`}><Gate label="실전" gate={row.gates.live} /><Gate label="섀도" gate={row.gates.shadow} /></td>
-      <td className={`${TD} tabular-nums`}>{row.primary.full === null && row.primary.active === null ? <span className="text-fg-3">—</span> : <>
-        {row.primary.full === null ? null : row.primary.full ? <strong>가득 참</strong> : "여유"}
-        {row.primary.active !== null && <> {num(row.primary.active)}/{num(row.primary.limit)}</>}
-        {row.primary.waiting !== null && <div>대기 {num(row.primary.waiting)}</div>}
-        {row.primary.devices !== null && <div className="text-fg-3">장비 {num(row.primary.devices)}대</div>}</>}</td>
-      <td className={TD}>{row.ownWork ? <>{row.ownWork.label} <strong className="tabular-nums">{num(row.ownWork.backlog)}</strong>
-        <div className={row.ownWork.fresh ? "text-fg-3" : "text-amber-700"}>{row.ownWork.fresh ? ageLabel(row.ownWork.ageMs) : "오래됨 → 바쁨으로 봄"}</div></>
-        : <span className="text-fg-3">beacon 없음 → 바쁨으로 봄</span>}
-        {row.deviceDemand?.usable && row.deviceDemand.primaryDemand && <div className="text-amber-700">빌려주기 멈춤</div>}</td>
-      <td className={`${TD} tabular-nums`}>{row.shadow.samples === null ? <span className="text-fg-3">표본 없음</span> : <>
-        <div>표본 {num(row.shadow.samples)}<span className="text-fg-3"> / 승격 기준 {num(row.settings.minShadowSamples)}</span></div>
-        <div>일치율 {percentLabel(row.shadow.agreement)}</div>
-        <div>위험 불일치 잘못 승인 {percentLabel(row.shadow.wrongApproval)} · 잘못 거절 {percentLabel(row.shadow.wrongRejection)}</div>
-        <div>미확인률 {percentLabel(row.shadow.unknownRate)} · 실패율 {percentLabel(row.shadow.failureRate)}</div></>}</td>
-      <td className={TD}>{row.stops.length === 0 ? <span className="text-fg-3">없음</span>
-        : row.stops.map(stop => <div key={stop.id}><span className="font-semibold text-red-600">{stop.effectLabel}</span><div>{stop.reasonLabel}</div>
-          <div className="whitespace-nowrap text-fg-3">{formatListTime(stop.createdAt, now)}</div></div>)}</td>
-      <td className={`${TD} font-mono`}>{row.version}</td>
-    </tr>)}</tbody></table></div>;
+export function HelperTable({ helpers, now, names, form }: { helpers: HelperRowView[]; now: Date; names?: Readonly<Record<string, string>>;
+  form?: { defaults: HelperSettingsDefaults; routeDefaults: HelperRouteDefaults; readOnly?: boolean } }) {
+  if (!helpers.length) return <p className="mh-empty">도우미 배정이 없습니다 — 아래 「새 배정 +」에서 꺼짐으로 먼저 만드세요.</p>;
+  return <div className="mh-scroll"><table className="mh-table mh-helpers">
+    <thead><tr><th>서버</th><th>돕는 단계</th><th>모델</th><th>모드</th><th>지금</th>
+      <th className="r" title="잘못 승인·잘못 거절·미확인률·실패율은 숫자에 마우스를 올리거나 「설정」을 펼치면 보입니다">섀도 표본 · 일치율</th>
+      <th>자동 정지</th><th className="r">동작</th></tr></thead>
+    <tbody>{helpers.map(row => {
+      const name = names?.[row.deviceId] ?? row.deviceId;
+      const verdict = VERDICT[row.verdict];
+      const cells = <>
+        <td className="nowrap"><a href={`#helper-${row.assignmentId}`} className="mh-name" title={`장비 id ${row.deviceId}`}>{name}</a>
+          {row.issues.length > 0 && <span className="mh-sub mh-warn" title={row.issues.join("\n")}>알림 {row.issues.length}</span>}</td>
+        <td className="nowrap">{row.stageLabel}</td>
+        <td><code>{row.model}</code></td>
+        <td><span className="mh-tag" data-mode={row.mode}>{row.modeLabel}</span></td>
+        <td><span className="mh-lv" data-l={verdict.level} data-shape={verdict.shape} data-verdict={row.verdict}>{row.verdictLabel}</span>
+          <span className={`mh-sub${row.signalUsable ? "" : " mh-muted"}`}>{row.reasonLabel}</span></td>
+        <td className="r nowrap">{shadowSummary(row)}</td>
+        <td>{row.stops.length === 0 ? <span className="mh-muted">없음</span>
+          : row.stops.map(stop => <span key={stop.id} className="mh-sub" title={`${stop.effectLabel} · ${formatListTime(stop.createdAt, now)}`}>
+            <span className="mh-alert">{stop.effect === "stop" ? "정지" : "섀도 강등"}</span> · {stop.reasonLabel}</span>)}</td>
+      </>;
+      const detail = <div className="mh-detail"><HelperFacts row={row} now={now} />
+        {form && <HelperForm helper={row} defaults={form.defaults} routeDefaults={form.routeDefaults} readOnly={form.readOnly} names={names} bare />}</div>;
+      return <HelperRow key={row.assignmentId} assignmentId={row.assignmentId} label={`${name} · ${row.stageLabel}`} cells={cells} detail={detail} colSpan={COLUMNS} />;
+    })}</tbody>
+  </table></div>;
 }

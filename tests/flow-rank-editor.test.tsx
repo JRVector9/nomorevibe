@@ -59,7 +59,8 @@ describe("처리 LLM 바꾸기 — 서랍의 줄 (2026-11-04 5차)", () => {
     const first = line(editor, "first-review#1");
     const group = (id: string) => first.options.find((option) => option.provider === id)?.group;
     expect(group(QWEN)).toBe("gpu3090-qwen · 모델 목록 확인");
-    expect(group(M3)).toBe("m3-mlx (2) · 장비 m3-mlx · 모델 목록 확인");
+    // 2026-11-09: 장비 id 는 보이는 이름에 붙이지 않는다(연결 상태 표의 title 에만)
+    expect(group(M3)).toBe("m3-mlx (2) · 모델 목록 확인");
     expect(group(SUPA)).toBe("supa-direct · 모델 목록 확인 · 키 없음");
     expect(group(M1)).toBe("m1-qwen · 꺼짐");
     const off = first.options.find((option) => option.provider === M1)!;

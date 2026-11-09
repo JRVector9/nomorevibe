@@ -10,7 +10,7 @@ import { reviewTaskRanksPinned, settingsReviewersActive } from "@/lib/crawl/revi
 import { QWEN_AUDIT_PROVIDER } from "@/lib/crawl/product-audit-reviewer";
 import { batchPolicyHash, batchPolicySchema } from "@/lib/jobs/batches";
 import { modelCapacityPolicyHash, modelCapacityPolicySchema, type ModelCapacityPolicy } from "@/lib/llm/capacity";
-import { deviceFallbackLimit, modelCapacityRouteStateSchema } from "@/lib/llm/capacity-devices";
+import { deviceFallbackLimit, modelCapacityModelStateSchema, modelCapacityRouteStateSchema } from "@/lib/llm/capacity-devices";
 import { ASSIGNMENT_STAGE_IDS, helperGateStateSchema } from "@/lib/llm/capacity-helpers";
 import { secondReviewFallbacks, secondReviewVoters } from "@/lib/crawl/second-review-voters";
 import { cliServingContractSchema, resolveCliServingContract, type CliProvider } from "@/lib/llm/cli-serving-contract";
@@ -160,7 +160,9 @@ export const controlSnapshotSchema = z.object({
     waiting: count, waitingPrimary: count, version: count.nullable(), updatedAt: z.string().nullable(),
     helpers: z.array(helperGateStateSchema).max(512).optional(),
     // 경로 몫(0169, step 2): 빌려주기와 경로마다 점유·몫. 옛 스냅숏에는 없다. 어떤 전환도 막지 않는다.
-    lendIdle: z.boolean().optional(), routes: z.array(modelCapacityRouteStateSchema).max(512).optional() }).strict()).max(512).optional(),
+    lendIdle: z.boolean().optional(), routes: z.array(modelCapacityRouteStateSchema).max(512).optional(),
+    // 모델 상한(0170): 모델마다 점유·대기·상한. 옛 스냅숏에는 없다. 어떤 전환도 막지 않는다.
+    models: z.array(modelCapacityModelStateSchema).max(512).optional() }).strict()).max(512).optional(),
   /**
    * 배정 표 읽기(PR 3b-B). 이 스냅숏을 읽은 프로세스(ops CLI·웹)의 스위치가 켜졌을 때만 있다. PR 3b-E 부터 스위치는 runtime_settings 토글
    * (`flagSource` 'runtime' — 모든 역할이 같은 행을 읽는다) 또는 env MODEL_ASSIGNMENT_TABLE 강제('env', 이 프로세스만)다. 옛 스냅숏에는 flagSource 가 없다.

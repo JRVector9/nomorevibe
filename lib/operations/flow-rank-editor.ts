@@ -108,8 +108,8 @@ function buildRankEditor(entries: readonly (readonly [LlmStationKey | "off_belt"
   const stateOf = new Map(states.map((state) => [state.id, state]));
   const group = (id: string, fallback: string) => {
     const state = stateOf.get(id);
-    // 장비 이름이 연결 이름과 같으면 한 번만 쓴다
-    return state ? `${state.label}${state.device.toLowerCase() === state.label.toLowerCase() ? "" : ` · 장비 ${state.device}`} · ${state.text}` : fallback;
+    // 연결 이름만 — 장비 id(정책 groupId)는 보이는 이름으로 쓰지 않는다(2026-11-09). 같은 장비를 쓰는 연결은 「연결 상태」 표의 장비 칸이 보인다
+    return state ? `${state.label} · ${state.text}` : fallback;
   };
   const lines: FlowRankLine[] = [];
   for (const [station, id] of entries) {

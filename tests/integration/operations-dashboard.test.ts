@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
-import { eq, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { roleOverview } from "@/lib/operations/roles";
 import { roleLeases, crawlCandidates, crawlDocuments, crawlFrontier, crawlPublicationChanges, crawlReviewAttempts, crawlTaglines, productAuditCampaigns,
@@ -43,7 +43,15 @@ const product = (slug: string, overrides: Partial<typeof products.$inferInsert> 
 });
 
 beforeAll(ensureSchema);
-afterAll(() => pinTextRanks(null));
+/** 이 파일이 만든 감사 캠페인 — 「실행 중」 캠페인은 DB 에 하나만 있을 수 있다(product_audit_one_running_idx). 남기면 같은 shard 의 뒤 파일이 캠페인을 못 만든다 */
+const auditCampaignIds: number[] = [];
+afterAll(async () => {
+  pinTextRanks(null);
+  if (auditCampaignIds.length) {
+    await db.delete(productAuditItems).where(inArray(productAuditItems.campaignId, auditCampaignIds));
+    await db.delete(productAuditCampaigns).where(inArray(productAuditCampaigns.id, auditCampaignIds));
+  }
+});
 beforeEach(() => pinReviewRanks(REVIEW_RANKS));
 beforeAll(async () => {
   pinTextRanks({ "product-search-profile": PROFILE_MODEL });
@@ -106,6 +114,7 @@ beforeAll(async () => {
   const campaign = { startedBy: "test", reason: "test", promptVersion: "test", rulesVersion: "test", provider: "abcllm", model: "m" };
   const [old] = await db.insert(productAuditCampaigns).values({ ...campaign, status: "done" }).returning();
   const [latest] = await db.insert(productAuditCampaigns).values(campaign).returning();
+  auditCampaignIds.push(old.id, latest.id);
   await db.insert(productAuditItems).values([
     { campaignId: old.id, productId: englishApp.id, slug: "english-app", aiDecision: "reject" },
     { campaignId: latest.id, productId: koreanApp.id, slug: "korean-app", aiDecision: "reject" },

@@ -4,7 +4,7 @@ import type { JobContext, JobOutcome } from "@/lib/jobs/runner";
 import { tickRemaining } from "@/lib/jobs/tick-deadline";
 import { backgroundCliPath } from "@/lib/llm/cli-model-capacity";
 import { reportProviderOutcome } from "@/lib/llm/provider-circuit-breaker";
-import { checkIntros, INTRO_CHECK_BATCH, INTRO_CHECK_MODEL, introEvidence } from "@/lib/domain/products/intro-check";
+import { checkIntros, INTRO_CHECK_BATCH, INTRO_CHECK_MODEL, introCheckEffort, introEvidence } from "@/lib/domain/products/intro-check";
 import { checkIntrosWithModelCapacity } from "@/lib/domain/products/intro-check-model-capacity";
 import { pendingIntroChecks, recordIntroCheck, type IntroCheckRecord } from "@/lib/domain/products/intro-checks";
 import { jobKnob } from "@/lib/operations/runtime-settings-schema";
@@ -36,6 +36,7 @@ export async function checkProductIntros(ctx: JobContext<null>, run?: ReviewCliR
   const knobs = runtimeSettings();
   const callMs = jobKnob(knobs, JOB, "callMs"), minCallMs = jobKnob(knobs, JOB, "minCallMs");
   const counts = { kept: 0, replaced: 0, needs_editor: 0, failed: 0 };
+  const savedEfforts = await introCheckSavedEfforts();
 
   while (ctx.hasBudget() && !ctx.signal?.aborted && remaining() >= minCallMs) {
     const tasks = await pendingIntroChecks(INTRO_CHECK_BATCH);
@@ -49,17 +50,19 @@ export async function checkProductIntros(ctx: JobContext<null>, run?: ReviewCliR
     const cliEngine = definition.cliEngine;
     const selectedModel = cliEngine ? definition.model : scopedModel("product-intro-check", INTRO_CHECK_MODEL);
     const capacity = await backgroundCliPath("product-intro-check", selectedModel, cliEngine ? "opencode-cli" : undefined, cliEngine?.connectionId);
+    // Claude CLI 의 추론 강도 = 단계 풀이 고른 등록부 key 에 저장한 값(없거나 그 모델이 받지 않으면 high). 원격 CLI 엔진은 연결의 강도를 쓴다
+    const effort = cliEngine ? undefined : introCheckEffort(savedEfforts?.[definition.key], selectedModel);
     const items = tasks.map((task) => ({ slug: task.product.slug, intro: task.product.tagline, evidence: introEvidence(task.product) }));
     const timeoutMs = Math.max(1_000, Math.min(callMs, remaining() - 1_000));
     const native = (capacity === "native" || cliEngine) ? await checkIntrosWithModelCapacity(tasks, items, lease, { timeoutMs, signal: ctx.signal,
       // 슬롯을 얻은 뒤 띄우기 직전에 이 틱의 여유를 다시 본다(루프 조건과 같다)
-      beforeSpawn: () => ctx.hasBudget() && !ctx.signal?.aborted && remaining() >= minCallMs }) : null;
+      beforeSpawn: () => ctx.hasBudget() && !ctx.signal?.aborted && remaining() >= minCallMs, effort }) : null;
     // 그사이 묶음이 바뀌었거나 여유가 모자라 띄우지 않았다 — 적지 않고 이 틱을 접는다
     if (native && native.kind !== "result") {
       ctx.log("intro_check.not_started", { ...counts, skipped: native.kind === "skipped" });
       return { done: false };
     }
-    const result = native ? native.result : await checkIntros(items, { timeoutMs, run, signal: ctx.signal });
+    const result = native ? native.result : await checkIntros(items, { timeoutMs, run, signal: ctx.signal, effort });
     for (const task of tasks) {
       const judgement = result.ok ? result.judgements.get(task.product.slug) : undefined;
       // 답이 빠진 제품은 실패로 적는다 — 다음에 다시 본다
@@ -78,4 +81,13 @@ export async function checkProductIntros(ctx: JobContext<null>, run?: ReviewCliR
   }
   ctx.log("intro_check.done", { ...counts, drained: false });
   return { done: false };
+}
+
+/** 소개 검수 단계의 저장 강도(등록부 key → 값). 설정을 못 읽으면 null — 그때는 기본 high 로 돈다(소개 검수를 멈추지 않는다). */
+async function introCheckSavedEfforts(): Promise<Readonly<Record<string, string>> | null> {
+  try {
+    const [{ getSettings }, { onPrimary }] = await Promise.all([import("@/lib/crawl/settings"), import("@/lib/db")]);
+    const settings = await onPrimary(getSettings);
+    return settings?.stageModelEfforts?.[JOB] ?? null;
+  } catch { return null; }
 }

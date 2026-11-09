@@ -4,92 +4,107 @@ import { redirect } from "next/navigation";
 import { currentAdmin } from "@/lib/auth/admin";
 import { formatListTime } from "@/lib/format/time";
 import { capacityDeviceIssueMessage, readCapacityDevicesAdminView } from "@/lib/operations/admin-capacity-devices";
-import { readEngineLimitMetadata } from "@/lib/operations/admin-engine-limits";
+import { buildDeviceTableRows, staleRouteItems } from "@/lib/operations/admin-capacity-device-table-view";
+import { capacityRetireIssueMessage, readAdminStaleCapacityRoutes } from "@/lib/operations/admin-capacity-retire";
+import { listAiConnections } from "@/lib/operations/admin-ai-tasks-repository";
+import { readAdminModelsObservation } from "@/lib/operations/admin-models-repository";
+import { adminWorkspaceReadOnly } from "@/lib/operations/admin-workspace-preview";
+import { cliTaskUsagesByDevice, readCliTaskUsages, type CliTaskUsageView } from "@/lib/operations/cli-task-usage";
+import { deviceDisplay } from "@/lib/operations/llm-display";
 import { PageStamp } from "../../components/PageStamp";
 import { modelsAdvancedEditor } from "../../workspace-navigation";
 import { AdvancedEditorLinks, advancedEditorTitle } from "../advanced/AdvancedEditorLinks";
 import { DeviceForm } from "./DeviceForm";
-import { DeviceTable } from "./DeviceTable";
-import { SharedLimitForm } from "./SharedLimitForm";
+import { CliTaskRows } from "./CliTaskRows";
+import { DeviceLimitsTable, type DeviceCliRows } from "./DeviceLimitsTable";
+import { DeviceName, DeviceTable, type DeviceNames } from "./DeviceTable";
+import { StaleRoutesPanel } from "./StaleRoutesPanel";
 import { llmHistoryHref, RECENT_AUDIT_ROWS } from "@/lib/operations/llm-ops-history";
+import "./devices.css";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: advancedEditorTitle("devices"), robots: { index: false } };
 const EDITOR = modelsAdvancedEditor("devices");
 
 /**
- * 장비 한도(model_capacity_devices·model_capacity_device_roles, PR 1b) — 장비별 칸 수·낮은 순위 상한·유휴 판정·비워 둘 칸·역할 순서를 저장하면
- * 입장 판정이 트랜잭션 안에서 이 표를 바로 읽어 다음 입장부터 쓴다. 정책 세대(hash)와 분리되어 DRAIN·배포·"읽은 판"이 없다.
- * 점유는 예약+진행만 센다 — 미확인(indeterminate) 행은 점유가 아니다.
+ * 장비 한도(model_capacity_devices·model_capacity_device_roles, PR 1b; 2026-11-09 개편 시안 #devices) — 서버 한 대가 한 줄인 표 하나.
+ * 운영 한도(칸 수)·모델 한도를 저장하면 입장 판정이 트랜잭션 안에서 이 표를 바로 읽어 다음 입장부터 쓴다 — DRAIN·배포·"읽은 판"이 없다.
+ * 점유는 예약+진행만 센다 — 미확인(indeterminate) 행은 점유가 아니다. 역할 순서·유휴 시간·비워 둘 칸·새 장비는 맨 아래 「세부 설정」에 접어 둔다.
+ *
+ * CLI(Claude·Codex) 장비 줄 아래에는 작업별 「모델 ▾ · 추론 강도 ▾」 줄(CliTaskRows)을 끼운다 — 읽기는 readCliTaskUsages, 저장은 devices/cli-actions.
  */
 export default async function CapacityDevicesPage() {
   if (!await currentAdmin()) redirect("/admin/login");
   const now = new Date();
-  const [view, engines] = await Promise.all([readCapacityDevicesAdminView(now), readEngineLimitMetadata()]);
-  const readOnly = view.rowsError !== null;
-  const mapped = view.devices.flatMap(device => {
-    const engine = engines.engines.find(engine => engine.deviceId === device.deviceId);
-    return engine?.connections.length ? [{ device, engine }] : [];
-  });
-  return <main className="mx-auto grid max-w-6xl gap-6 p-4">
+  const [view, connections, observation, stale, cli] = await Promise.all([readCapacityDevicesAdminView(now), listAiConnections().catch(() => null),
+    readAdminModelsObservation({ throughput: false }).catch(() => null), readAdminStaleCapacityRoutes(),
+    readCliTaskUsages().catch((): CliTaskUsageView => ({ usages: [], unavailable: ["CLI 작업별 모델·추론 강도를 읽지 못했습니다."] }))]);
+  const { byDevice: cliByDevice, unmapped: cliUnmapped } = cliTaskUsagesByDevice(cli.usages);
+  const cliRows: DeviceCliRows = Object.fromEntries(Object.entries(cliByDevice).map(([deviceId, usages]) => [deviceId, <CliTaskRows key={deviceId} usages={usages} columns={7} />]));
+  // 장비 이름 = 그 장비를 쓰는 연결 이름(장비 id 는 정책 groupId 라 옆에 작게 둔다). 연결이 없는 장비는 「연결 없음」
+  const names: DeviceNames = Object.fromEntries([...view.devices.map(device => device.deviceId), ...view.audit.slice(0, RECENT_AUDIT_ROWS).map(row => row.deviceId)].map(deviceId => {
+    const display = deviceDisplay(deviceId, connections, observation);
+    return [deviceId, { name: display.name, connected: connections === null ? null : display.source !== "id" }];
+  }));
+  const readOnly = view.rowsError !== null || adminWorkspaceReadOnly();
+  const rows = buildDeviceTableRows({ devices: view.devices, connections, observation, readOnly });
+  const active = view.devices.reduce((sum, device) => sum + (device.live?.active ?? 0), 0);
+  const waiting = view.devices.reduce((sum, device) => sum + (device.live?.waiting ?? 0), 0);
+  return <main className="devlim mx-auto grid max-w-6xl gap-4 p-4">
     <PageStamp />
-    <header className="grid gap-1">
-      <AdvancedEditorLinks next={["allocation", "limits", "helpers"]} />
-      <h1 className="text-[22px] font-semibold">{EDITOR.label}</h1>
-      <p className="text-[15px] text-fg-2">같은 엔진을 사용하는 1차·2차 검수와 글 짓기 등 모든 작업이 하나의 동시 실행 한도를 나눠 씁니다. 예를 들어 5건으로 저장하면 각 단계의 예약·실행 합계가 최대 5건입니다.</p>
-      <p className="text-[13px] text-fg-3">저장하면 입장 판정이 트랜잭션 안에서 이 표를 바로 읽어
-        <strong> 다음 입장부터</strong> 쓰입니다 — DRAIN·배포·&apos;읽은 판&apos;이 없습니다. 이미 잡힌 행(예약·진행)은 그대로이고 한도를 낮추면 새 입장만 막힙니다.
-        경로→장비 매핑을 바꾸는 것만 정책 개정(DRAIN)입니다.</p>
-      <p className="text-[13px] text-fg-2">접수 <strong>{view.mode?.toUpperCase() ?? "미확인"}</strong>
-        {view.epoch !== null && <> · 정책 epoch <span className="font-mono">{view.epoch}</span> revision <span className="font-mono">{view.revision}</span></>}
-        {" · "}장비 {view.devices.length}대{view.lendingCount > 0 && <> · 지금 빌려 쓰는 중 {view.lendingCount}대</>}</p>
-      {view.controlError && <p role="alert" className="text-[13px] text-red-600">용량 제어 행을 읽지 못했습니다({capacityDeviceIssueMessage(view.controlError)}) — 정책 경로 없이 장비 행만 보입니다.</p>}
-      {view.rowsError && <p role="alert" className="text-[13px] text-red-600">장비 행을 읽지 못했습니다({capacityDeviceIssueMessage(view.rowsError)}). 아래 값은 정책 대체값이며 저장할 수 없습니다.</p>}
-      {view.statesError && <p role="note" className="text-[13px] text-amber-700">실시간 상태를 읽지 못했습니다({capacityDeviceIssueMessage(view.statesError)}) — 점유·빌려 쓰기 칸이 비어 있습니다.</p>}
-      {view.issues.map(text => <p key={text} role="alert" className="text-[13px] text-red-600">정책 문제 — {text}</p>)}
+    <header className="devlim-head">
+      <div className="grid gap-1">
+        <AdvancedEditorLinks next={["allocation", "limits", "helpers"]} />
+        <h1 className="text-[22px] font-semibold">{EDITOR.label}</h1>
+      </div>
+      <p className="devlim-meta">
+        <span>접수 <b>{view.mode?.toUpperCase() ?? "미확인"}</b></span>
+        <span>서버 <b>{view.devices.length}</b></span>
+        {view.statesError === null && <span>지금 <b>{active}</b> · 대기 <b>{waiting}</b></span>}
+        {view.lendingCount > 0 && <span>빌려 쓰는 중 <b>{view.lendingCount}</b></span>}
+        <Link href={llmHistoryHref({ kind: "limit" })} prefetch={false} className="devlim-link">저장 기록 →</Link>
+      </p>
     </header>
-    <section id="shared-limits" className="grid gap-3">
-      <h2 className="text-[18px] font-semibold">등록된 엔진 ({mapped.length})</h2>
-      {engines.error && <p role="alert" className="text-[15px] text-amber-700">등록 연결과 공유 작업을 확인하지 못했습니다. 새로고침해 주세요. 기존 장비 설정은 아래에서 확인할 수 있습니다.</p>}
-      <div className="grid gap-4 lg:grid-cols-2">{mapped.map(({ device, engine }) => <SharedLimitForm
-        key={`${device.deviceId}#${device.version ?? "new"}#${engines.policyHash}`} device={device} engine={engine} policyHash={engines.policyHash!}
-        readOnly={readOnly || !view.policyVerified || !device.enabled} />)}</div>
-      {!engines.error && !mapped.length && <p className="text-[15px] text-fg-3">현재 정책과 연결된 등록 엔진이 없습니다. 아래 세부 설정에서 정책 그룹을 확인해 주세요.</p>}
-      {mapped.length < view.devices.length && <p className="text-[13px] text-fg-3">등록 연결이 확인되지 않은 정책 그룹 {view.devices.length - mapped.length}개는 아래 세부 설정에 표시합니다. 다른 그룹의 한도를 같은 엔진 한도로 대신 적용하지 않습니다.</p>}
-    </section>
-    <details className="grid gap-4 rounded-xl border border-line p-4">
-      <summary className="cursor-pointer text-[17px] font-semibold">세부 설정 · 전체 정책 그룹, 역할 우선순위</summary>
-      <div className="mt-4 grid gap-6">
-    <section id="devices" className="grid gap-2 scroll-mt-6">
-      <h2 className="text-[18px] font-semibold">장비 목록 ({view.devices.length})</h2>
-      <p className="text-[13px] text-fg-3">점유는 예약+진행만 셉니다(미확인 행은 점유가 아닙니다). 「빌려 쓰는 중」은 우선 역할이 유휴라 낮은 순위 역할이 평소 상한을 넘어 쓰는 상태이며,
-        우선 역할 요청이 오면 새 낮은 순위 입장은 바로 멈추고 빈 칸은 우선 역할로 갑니다(진행 중 호출은 끊지 않습니다).</p>
-      <DeviceTable devices={view.devices} now={now} />
-    </section>
-    <section id="edit" className="grid gap-4 scroll-mt-6">
-      <h2 className="text-[18px] font-semibold">장비별 설정</h2>
-      {view.devices.length === 0 && <p className="text-[13px] text-fg-3">장비가 없습니다 — 아래에서 새 장비를 만들거나 정책을 적용하세요.</p>}
-      {view.devices.map(device => <DeviceForm key={device.deviceId} device={device} readOnly={readOnly} />)}
-    </section>
-    <section id="new" className="grid gap-2 scroll-mt-6">
-      <h2 className="text-[18px] font-semibold">새 장비</h2>
-      <p className="text-[13px] text-fg-3">정책에 아직 없는 장비 이름도 받습니다(예: 장비를 나누기 전에 행을 먼저 만들고 정책을 적용). 이름은 정책 경로의 groupId 와 같아야 합니다.</p>
-      <DeviceForm device={null} readOnly={readOnly} />
-    </section>
+    <p className="devlim-lede">한도는 그 서버의 모든 작업이 함께 쓰는 동시 실행 수입니다. 저장하면 다음 입장부터 쓰고, 낮춰도 진행 중 호출은 끝까지 갑니다.</p>
+    {view.controlError && <p role="alert" className="devlim-refusal">용량 제어 행을 읽지 못했습니다({capacityDeviceIssueMessage(view.controlError)}) — 정책 경로 없이 장비 행만 보입니다.</p>}
+    {view.rowsError && <p role="alert" className="devlim-refusal">장비 행을 읽지 못했습니다({capacityDeviceIssueMessage(view.rowsError)}). 아래 값은 정책 대체값이며 저장할 수 없습니다.</p>}
+    {view.statesError && <p role="note" className="devlim-note">실시간 상태를 읽지 못했습니다({capacityDeviceIssueMessage(view.statesError)}) — 지금·대기 칸이 비어 있습니다.</p>}
+    {connections === null && <p role="note" className="devlim-note">AI 연결 목록을 읽지 못해 서버 이름을 장비 id 로 보이고, 지워도 되는지 판정하지 않습니다.</p>}
+    {view.issues.map(text => <p key={text} role="alert" className="devlim-refusal">정책 문제 — {text}</p>)}
+    {cli.unavailable.map(text => <p key={text} role="note" className="devlim-note">{text}</p>)}
+    {cliUnmapped.length > 0 && <p role="note" className="devlim-note">장비를 알 수 없는 CLI 작업 {cliUnmapped.length}개: {cliUnmapped.map(usage => usage.taskLabel).join(" · ")}</p>}
+    {rows.length ? <DeviceLimitsTable rows={rows} cliRows={cliRows} /> : <p className="devlim-note">장비가 없습니다 — 아래 세부 설정에서 새 장비를 만들거나 정책을 적용하세요.</p>}
+    <StaleRoutesPanel items={staleRouteItems(stale.candidates, connections, observation)} revision={stale.revision} readOnly={readOnly}
+      error={stale.error ? capacityRetireIssueMessage(stale.error) : null} />
+    <details className="devlim-panel devlim-details">
+      <summary className="devlim-panel-head"><h2>세부 설정</h2> <span className="devlim-muted">역할 순서 · 유휴 시간 · 비워 둘 칸 · 엔진 실제 동시 처리 수 · 서버 추가 · 최근 저장</span></summary>
+      <div className="grid gap-6 p-4">
+        <section id="devices" className="grid gap-2 scroll-mt-6">
+          <h3 className="text-[17px] font-semibold">장비 상태 ({view.devices.length})</h3>
+          <DeviceTable devices={view.devices} now={now} names={names} />
+        </section>
+        <section id="edit" className="grid gap-4 scroll-mt-6">
+          <h3 className="text-[17px] font-semibold">장비별 설정</h3>
+          {view.devices.map(device => <DeviceForm key={device.deviceId} device={device} readOnly={readOnly} name={names[device.deviceId]?.name} />)}
+        </section>
+        <section id="new" className="grid gap-2 scroll-mt-6">
+          <h3 className="text-[17px] font-semibold">새 장비</h3>
+          <p className="text-[13px] text-fg-3">이름은 정책 경로의 groupId 와 같아야 합니다(정책에 아직 없는 이름도 받습니다).</p>
+          <DeviceForm device={null} readOnly={readOnly} />
+        </section>
+        <section id="audit" className="grid gap-2 scroll-mt-6">
+          <h3 className="text-[17px] font-semibold">최근 저장 {Math.min(view.audit.length, RECENT_AUDIT_ROWS)}건</h3>
+          {view.audit.length === 0 ? <p className="text-[13px] text-fg-3">아직 저장 기록이 없습니다.</p>
+            : <div className="overflow-x-auto"><table className="w-full min-w-[720px] text-left text-[13px]"><thead><tr className="border-b border-line">
+              <th className="py-2 pr-3">시각</th><th className="py-2 pr-3">누가</th><th className="py-2 pr-3">장비 · 판</th><th className="py-2 pr-3">바뀐 값</th></tr></thead>
+              <tbody>{view.audit.slice(0, RECENT_AUDIT_ROWS).map(row => <tr key={row.id} className="border-b border-line align-top">
+                <td className="py-2 pr-3 whitespace-nowrap">{formatListTime(row.at, now)}</td>
+                <td className="py-2 pr-3">{row.actor}</td>
+                <td className="py-2 pr-3"><DeviceName deviceId={row.deviceId} names={names} />{row.version !== null && <> · <span className="font-mono">{row.version}</span></>}{!row.ok && <span className="ml-1 text-red-600">거절</span>}</td>
+                <td className="py-2 pr-3">{row.ok ? (row.changes.length ? row.changes.map(line => <div key={line}>{line}</div>) : "—") : <span className="text-red-600">{row.error ? capacityDeviceIssueMessage(row.error) : "거절"}</span>}</td>
+              </tr>)}</tbody></table></div>}
+        </section>
       </div>
     </details>
-    <section id="audit" className="grid gap-2 scroll-mt-6">
-      <h2 className="text-[18px] font-semibold">최근 저장 {Math.min(view.audit.length, RECENT_AUDIT_ROWS)}건</h2>
-      {view.audit.length === 0 ? <p className="text-[13px] text-fg-3">아직 저장 기록이 없습니다.</p>
-        : <div className="overflow-x-auto"><table className="w-full min-w-[720px] text-left text-[13px]"><thead><tr className="border-b border-line">
-          <th className="py-2 pr-3">시각</th><th className="py-2 pr-3">누가</th><th className="py-2 pr-3">장비 · 판</th><th className="py-2 pr-3">바뀐 값</th></tr></thead>
-          <tbody>{view.audit.slice(0, RECENT_AUDIT_ROWS).map(row => <tr key={row.id} className="border-b border-line align-top">
-            <td className="py-2 pr-3 whitespace-nowrap">{formatListTime(row.at, now)}</td>
-            <td className="py-2 pr-3">{row.actor}</td>
-            <td className="py-2 pr-3"><code>{row.deviceId}</code>{row.version !== null && <> · <span className="font-mono">{row.version}</span></>}{!row.ok && <span className="ml-1 text-red-600">거절</span>}</td>
-            <td className="py-2 pr-3">{row.ok ? (row.changes.length ? row.changes.map(line => <div key={line}>{line}</div>) : "—") : <span className="text-red-600">{row.error ? capacityDeviceIssueMessage(row.error) : "거절"}</span>}</td>
-          </tr>)}</tbody></table></div>}
-      <Link href={llmHistoryHref({ kind: "limit" })} prefetch={false} className="text-[13px] font-semibold text-accent-ink">LLM 운영 › 기록에서 전체 보기 →</Link>
-    </section>
   </main>;
 }

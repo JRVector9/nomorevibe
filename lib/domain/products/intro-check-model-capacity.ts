@@ -18,7 +18,7 @@ export type IntroCheckCapacityResult = Readonly<{ kind: "result"; result: IntroC
  * cliEngine(local-direct)이 설정되면 같은 묶음·해시·잠금 검사를 원격 CLI 경로로 하고, Claude 경로로 떨어지지 않는다.
  */
 export async function checkIntrosWithModelCapacity(tasks: readonly IntroTask[], items: readonly IntroItem[], lease: JobLease,
-  options: { timeoutMs: number; signal?: AbortSignal; beforeSpawn: () => boolean }): Promise<IntroCheckCapacityResult> {
+  options: { timeoutMs: number; signal?: AbortSignal; beforeSpawn: () => boolean; effort?: string }): Promise<IntroCheckCapacityResult> {
   if (lease.name !== "product-intro-check") throw new Error("intro_check_job_lease_required");
   const job = { name: "product-intro-check" as const, token: lease.token, requestedVersion: lease.requestedVersion };
   const definition = configuredModelDefinition("product-intro-check");
@@ -83,7 +83,7 @@ export async function checkIntrosWithModelCapacity(tasks: readonly IntroTask[], 
         totalTokenBound: call.totalTokenBound, chargedTokens: call.totalTokenBound, job };
     },
   });
-  const result = await checkIntros(items, { timeoutMs: options.timeoutMs, signal: options.signal, run: native.run });
+  const result = await checkIntros(items, { timeoutMs: options.timeoutMs, signal: options.signal, run: native.run, effort: options.effort });
   const run = native.settled();
   return !run || run.kind === "ran" ? { kind: "result", result } : { kind: run.kind };
 }

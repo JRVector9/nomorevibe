@@ -62,7 +62,7 @@ async function readActiveLedger(): Promise<LlmActiveRow[]> {
 
 export async function readLlmInputs(now: string): Promise<LlmInputs> {
   const connectionsTask = listAiConnections().then((list): LlmConnection[] => list.map((row) => ({ id: row.id, label: aiConnectionLabel(row), kind: row.kind, baseUrl: row.baseUrl,
-    cliTool: row.cliTool, hasKey: row.hasKey, enabled: row.enabled, updatedAt: row.updatedAt }))).catch(warn("conveyor.llm_connections_unavailable"));
+    cliTool: row.cliTool, hasKey: row.hasKey, enabled: row.enabled, updatedAt: row.updatedAt, deviceId: row.deviceId }))).catch(warn("conveyor.llm_connections_unavailable"));
   const [connections, rows, used, runtime, execution, active, effective] = await Promise.all([
     connectionsTask,
     // Keep the save timestamp with the same primary read; old tick failures are about the old ranks.

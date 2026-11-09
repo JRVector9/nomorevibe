@@ -2,12 +2,12 @@ import { db, onPrimary } from "@/lib/db";
 import type { ModelCapacityRouteQuota } from "@/lib/llm/capacity-devices";
 import { saveModelCapacityRouteQuotas } from "@/lib/llm/capacity-devices-repository";
 import { logger } from "@/lib/observability/logger";
-import { listAiConnections } from "./admin-ai-tasks-repository";
+import { readAiTaskExecutionAdminViews } from "./admin-ai-task-execution";
+import { listAiConnections, listAiTaskRows } from "./admin-ai-tasks-repository";
 import { capacityDeviceIssueMessage } from "./admin-capacity-devices";
 import { readAdminModelsObservation } from "./admin-models-repository";
 import { allocationAreaLabel, buildCapacityAllocationView, compareRouteIds, routeQuotaText, type AllocationView, type RouteQuotasFormInput } from "./capacity-allocation-view";
 import { DrWriterFencedError } from "./dr/epoch";
-import { deviceLabels } from "./llm-ops-view";
 
 /**
  * 「칸 배분」(/admin/models/allocation, step 3)의 읽기·저장·거절 문장. 서버에서만 import 한다(DB 를 읽고 쓴다).
@@ -16,10 +16,16 @@ import { deviceLabels } from "./llm-ops-view";
  * operations_audit 한 줄). 여기서는 감사 줄을 또 쓰지 않는다.
  */
 
-/** 화면 한 번 그리기 — 장부 관측(같은 읽기 전용 스냅숏 안의 장비 상태·정책 경로·최근 1시간 정산)과 연결 이름. 연결을 못 읽으면 장비 id 만 보인다 */
+/**
+ * 화면 한 번 그리기 — 장부 관측(같은 읽기 전용 스냅숏 안의 장비 상태·정책 경로·최근 1시간 정산), 연결(장비 이름·모델), 순위·분산 구성이 쓰는 모델(낡은 경로 판정).
+ * 연결을 못 읽으면 장비 id 만 보이고 아무것도 숨기지 않는다. 순위·분산을 못 읽으면 옛 경로 id 만 낡았다고 본다.
+ */
 export async function readCapacityAllocationView(): Promise<AllocationView> {
-  const [observation, connections] = await Promise.all([readAdminModelsObservation({ throughput: false }), listAiConnections().catch(() => null)]);
-  return buildCapacityAllocationView({ observation, labels: connections ? deviceLabels(connections, observation) : null });
+  const [observation, connections, ranks, executions] = await Promise.all([readAdminModelsObservation({ throughput: false }), listAiConnections().catch(() => null),
+    Promise.resolve().then(() => listAiTaskRows()).catch(() => null), Promise.resolve().then(() => readAiTaskExecutionAdminViews()).catch(() => null)]);
+  const references = ranks && executions ? new Set([...ranks.map(row => row.model),
+    ...executions.filter(execution => execution.mode === "workload_pool").flatMap(execution => execution.members.map(member => member.model))]) : null;
+  return buildCapacityAllocationView({ observation, connections, references });
 }
 
 export type SaveRouteQuotasResult = { ok: true; deviceId: string; version: number; changes: string[]; warnings: string[] } | { ok: false; issues: string[] };

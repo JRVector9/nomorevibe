@@ -3,10 +3,11 @@ import { aiConnectionLabel, aiModelsErrorText, aiTaskRanksUnread, type AiConnect
 import type { AiTaskExecutionAdminView } from "./admin-ai-task-execution";
 import type { AiTaskRuntimeView } from "./admin-ai-tasks-repository";
 import type { AdminModelMetrics, AdminModelsObservation } from "./admin-models-observation";
-import { elapsedModelTime, modelStageId, modelStageLabel } from "./admin-models-view";
+import { elapsedModelTime } from "./admin-models-view";
 import type { StationLlm } from "./conveyor-llm";
 import type { BeltTone, Conveyor } from "./conveyor-model";
 import { FLOW_MODEL_STAGES, type FlowModelStage } from "./flow-model-catalog";
+import { CLI_VENDOR_DEVICES, cliProviderLabel, deviceDisplayMap, deviceName, isCliProvider, isOrphanDevice, routeDisplayLabel, taskOfRoute, type DeviceDisplay } from "./llm-display";
 import { LLM_CONTRACTS_HREF, LLM_FAILURES_HREF, LLM_RETRY_HREF, llmAllocationHref, llmEditHref, type LlmFixField } from "./llm-ops-links";
 export { LLM_ALLOCATION_HREF, LLM_CONTRACTS_HREF, LLM_FAILURES_HREF, LLM_FIX_FIELDS, LLM_RETRY_HREF, llmAllocationAnchor, llmAllocationHref, llmEditHref, llmFieldAnchor, llmFixField, llmRetryRowHref, type LlmFixField } from "./llm-ops-links";
 
@@ -61,7 +62,7 @@ const REASON_SHORT: Readonly<Record<string, string>> = Object.freeze({
   commit_unknown: "정산 결과 모름",
   // 용량·정책
   unmapped: "정책 경로 없음", device_unconfigured: "장비 행 없음", capacity: "칸 가득", queue_full: "대기열 가득",
-  blocked_unconfirmed: "미확인 점유로 가득", helper_ineligible: "도우미 경로 닫힘", route_quota: "경로 몫 가득", model_paused: "쉬는 중",
+  blocked_unconfirmed: "미확인 점유로 가득", helper_ineligible: "도우미 경로 닫힘", route_quota: "경로 몫 가득", model_quota: "모델 상한 가득", model_paused: "쉬는 중",
   // 작업
   no_task_models: "순위 없음", all_ranks_unusable: "쓸 수 있는 순위 없음", task_models_unreadable: "순위 못 읽음",
 });
@@ -134,6 +135,8 @@ export function llmReasonFix(code: string, at: LlmFixAt): LlmFix | null {
     case "helper_ineligible": return { href: "/admin/models/helpers", label: "도우미 보기" };
     // 경로 몫(step 2)이 가득 — 몫을 고치는 곳은 칸 배분(step 3) 표다
     case "route_quota": return { href: llmAllocationHref(), label: "칸 배분" };
+    // 모델 상한(0170)이 가득 — 상한은 장비 한도(장비 행)에 붙어 있다
+    case "model_quota": return { href: "/admin/models/devices#devices", label: "장비 한도" };
     default: return null;
   }
 }
@@ -149,37 +152,17 @@ export type JobPause = Readonly<{ name: string; paused: boolean }>;
 export const observationReadable = (observation: AdminModelsObservation) => !observation.error && !!observation.observedAt;
 const sum = (rows: readonly AdminModelMetrics[], key: "dispatched" | "reserved" | "waiting" | "indeterminate" | "succeeded1h" | "failed1h" | "unclassified1h") =>
   rows.reduce((total, row) => total + row[key], 0);
-/** 장부 route → AI 작업(작업 목록의 routeId, 없으면 단계 id). */
-export function taskOfRoute(routeId: string): AiTaskDef | null {
-  return AI_TASKS.find(task => task.routeId === routeId) ?? aiTask(modelStageId(routeId));
-}
-export const routeTaskLabel = (routeId: string) => {
-  const task = taskOfRoute(routeId);
-  if (task) return task.label;
-  const stage = modelStageLabel(routeId);
-  return stage === "다른 모델 단계" ? routeId : stage;
-};
+export { taskOfRoute } from "./llm-display";
+/** 용량 경로의 사람 이름(보조 경로 「보조 · 연결 확인」, 작업·단계 이름, 옛 경로) — llm-display routeDisplayLabel */
+export const routeTaskLabel = routeDisplayLabel;
 const pausedTaskIds = (jobs: readonly JobPause[] | null): Set<string> | null => {
   if (!jobs) return null;
   const paused = new Set(jobs.filter(job => job.paused).map(job => job.name));
   return new Set(AI_TASKS.filter(task => task.jobs.length > 0 && task.jobs.every(job => paused.has(job))).map(task => task.id));
 };
-/** 잘 알려진 CLI 장비 이름 → 그 도구(정책 경로가 없을 때도 장비 행만으로 CLI 행을 세운다). */
-const CLI_VENDOR_DEVICES: Readonly<Record<string, string>> = Object.freeze({ "anthropic-cli": "claude-cli", "openai-cli": "codex-cli", "xai-cli": "grok-cli" });
-const isCliProvider = (provider: string) => /-cli$/.test(provider);
-const cliProviderLabel = (provider: string) => {
-  const tool = aiCliToolOfProvider(provider);
-  return tool ? AI_CLI_TOOL_LABELS[tool] : provider;
-};
-
-/** 장비 id → 사람이 읽는 이름(그 장비를 쓰는 연결 이름, 없으면 CLI 도구 이름). */
-export function deviceLabels(connections: readonly AiConnectionView[] | null, observation: AdminModelsObservation): Map<string, string> {
-  const names = new Map<string, string[]>();
-  const add = (deviceId: string, name: string) => { const list = names.get(deviceId) ?? []; if (!list.includes(name)) list.push(name); names.set(deviceId, list); };
-  for (const connection of [...connections ?? []].sort((a, b) => Number(b.enabled) - Number(a.enabled))) add(connection.deviceId, aiConnectionLabel(connection));
-  for (const route of observation.configuredRoutes ?? []) if (isCliProvider(route.provider) && !names.has(route.groupId)) add(route.groupId, cliProviderLabel(route.provider));
-  return new Map([...names].map(([deviceId, list]) => [deviceId, list.join(" · ")]));
-}
+/** 장비 id → 이름·모델(llm-display deviceDisplay — 연결 이름, 없으면 CLI 도구 이름, 그것도 없으면 장비 id) */
+export const deviceDisplays = (connections: readonly AiConnectionView[] | null, observation: AdminModelsObservation): Map<string, DeviceDisplay> =>
+  deviceDisplayMap(connections, observation);
 
 // ── 대시보드 ────────────────────────────────────────────────────────────────────────────────────────
 
@@ -196,7 +179,8 @@ export type DashboardInput = Readonly<{
   requeueSupported?: (routeId: string) => boolean;
 }>;
 export type DashboardKpi = Readonly<{ id: "running" | "waiting" | "settled" | "retry"; label: string; value: string; foot: string; level: LlmOpsLevel }>;
-export type DashboardDevice = Readonly<{ deviceId: string; label: string; held: number; limit: number | null; percent: number | null; waiting: number | null;
+/** label = 보이는 이름(연결 이름), models = 그 장비의 모델(이름 아래 한 줄). 장비 id 는 보조 표시(title)에만 쓴다 */
+export type DashboardDevice = Readonly<{ deviceId: string; label: string; models: readonly string[]; held: number; limit: number | null; percent: number | null; waiting: number | null;
   lending: boolean; level: LlmOpsLevel; note: string | null }>;
 export type DashboardStage = Readonly<{ id: string; label: string; level: LlmOpsLevel; status: string; model: string | null; detail: string | null; href: string }>;
 /** retry: 결과 미확정을 그 자리에서 다시 대기열에 넣는 단추(단계마다, 서버 지원 단계만) — 기록 › 재실행 패널과 같은 서버 동작이다. */
@@ -204,7 +188,8 @@ export type DashboardTodo = Readonly<{ id: string; level: LlmOpsLevel; title: st
   retry?: readonly { routeId: string; label: string; count: number }[] }>;
 export type DashboardView = Readonly<{
   readable: boolean; observedAt: string | null; flowAt: string | null;
-  banner: { level: LlmOpsLevel; title: string; lines: string[] };
+  /** lines = 둘째 이후 문제 + 의도적 중지 한 줄(옛 모양 그대로). notes = 둘째 이후 문제만, paused = 의도적으로 멈춘 작업 이름 — 띠가 「의도적 중지」를 따로 그린다 */
+  banner: { level: LlmOpsLevel; title: string; lines: string[]; notes: string[]; paused: string[] };
   admission: { mode: AdminModelsObservation["mode"]; text: string; level: LlmOpsLevel; detail: string };
   kpis: DashboardKpi[]; devices: DashboardDevice[]; devicesNote: string | null;
   stages: DashboardStage[]; todos: DashboardTodo[]; moreTodos: number;
@@ -281,7 +266,7 @@ export function buildDashboardView(input: DashboardInput): DashboardView {
   const readable = observationReadable(observation);
   const rows = readable ? observation.rows : [];
   const paused = pausedTaskIds(input.jobs);
-  const labels = deviceLabels(input.connections, observation);
+  const names = deviceDisplays(input.connections, observation);
 
   // 접수
   const mode = readable ? observation.mode : null;
@@ -293,7 +278,9 @@ export function buildDashboardView(input: DashboardInput): DashboardView {
   const dispatched = sum(rows, "dispatched"), reserved = sum(rows, "reserved"), waiting = sum(rows, "waiting"), indeterminate = sum(rows, "indeterminate");
   const succeeded = sum(rows, "succeeded1h"), failed = sum(rows, "failed1h"), unclassified = sum(rows, "unclassified1h");
   const configuredGroups = new Set((observation.configuredRoutes ?? []).map(route => route.groupId));
-  const groups = readable ? observation.groups.filter(group => group.source !== null || configuredGroups.has(group.groupId) || group.held > 0) : [];
+  // 연결도 쓰임도 없는 장비(isOrphanDevice — 예: 연결 없이 옛 정책 경로만 남은 supa)는 손댈 곳(장비 한도)에만 두고 여기서는 뺀다
+  const groups = readable ? observation.groups.filter(group => (group.source !== null || configuredGroups.has(group.groupId) || group.held > 0)
+    && !isOrphanDevice(group.groupId, input.connections, observation)) : [];
   const known = groups.filter(group => group.limit !== null);
   const totalSlots = known.length ? known.reduce((total, group) => total + group.limit!, 0) : null;
   const missingLimits = groups.length - known.length;
@@ -316,7 +303,8 @@ export function buildDashboardView(input: DashboardInput): DashboardView {
     const level: LlmOpsLevel = group.limit === null ? "unknown" : group.held >= group.limit ? "warn" : "ok";
     const note = [group.limit === null ? "한도 확인 불가" : null, group.source === "policy_fallback" ? "장비 행 없음 · 정책 대체 한도" : null,
       group.lending ? "빌려 쓰는 중" : null, state && state.waiting > 0 ? `대기 ${fmt(state.waiting)}` : null].filter(Boolean).join(" · ") || null;
-    return { deviceId: group.groupId, label: labels.get(group.groupId) ?? group.groupId, held: group.held, limit: group.limit, percent,
+    const display = names.get(group.groupId);
+    return { deviceId: group.groupId, label: display?.name ?? group.groupId, models: display?.models ?? [], held: group.held, limit: group.limit, percent,
       waiting: state ? state.waiting : null, lending: group.lending, level, note };
   });
   const devicesNote = !readable ? "장비 점유를 읽지 못했습니다." : !observation.devicesRead ? "장비 행을 읽지 못해 정책 대체 한도만 보입니다." : null;
@@ -343,7 +331,8 @@ export function buildDashboardView(input: DashboardInput): DashboardView {
   const ranked = [...issues].sort((a, b) => LEVEL_RANK[b.level] - LEVEL_RANK[a.level]);
   const level = ranked.reduce<LlmOpsLevel>((worst, issue) => worseLevel(worst, issue.level), "ok");
   const title = ranked[0]?.text ?? (pausedStages.length ? "정상 — 의도적으로 멈춘 작업 외에는 문제가 없습니다." : "모든 LLM 단계가 정상입니다.");
-  const lines = [...ranked.slice(1).map(issue => issue.text), ...(pausedLine ? [pausedLine] : [])];
+  const notes = ranked.slice(1).map(issue => issue.text);
+  const lines = [...notes, ...(pausedLine ? [pausedLine] : [])];
 
   // 먼저 할 일
   const todos: DashboardTodo[] = [];
@@ -359,7 +348,7 @@ export function buildDashboardView(input: DashboardInput): DashboardView {
       href: LLM_RETRY_HREF, action: "재실행 패널", retry: retryButtons(rows, input.requeueSupported) });
   }
   for (const row of failureOnly.slice(0, 2)) todos.push({ id: `fail-${row.routeId}-${row.model}-${row.groupId}`, level: "bad",
-    title: `${routeTaskLabel(row.routeId)} · ${row.model} 실패 ${fmt(row.failed1h)}건`, detail: `최근 1시간 성공 0건(장비 ${labels.get(row.groupId) ?? row.groupId}) — 연결 상태와 까닭을 확인하세요.`,
+    title: `${routeTaskLabel(row.routeId)} · ${row.model} 실패 ${fmt(row.failed1h)}건`, detail: `최근 1시간 성공 0건(장비 ${deviceName(names, row.groupId)}) — 연결 상태와 까닭을 확인하세요.`,
     href: "/admin/models/llm", action: "LLM 운영에서 보기" });
   if (readable && observation.devicesRead) for (const connection of input.connections ?? []) {
     if (!connection.enabled) continue;
@@ -383,7 +372,7 @@ export function buildDashboardView(input: DashboardInput): DashboardView {
   const sorted = todos.map((todo, index) => ({ todo, index })).sort((a, b) => LEVEL_RANK[b.todo.level] - LEVEL_RANK[a.todo.level] || a.index - b.index).map(entry => entry.todo);
 
   return { readable, observedAt: observation.observedAt, flowAt: input.conveyor?.measuredAt ?? null,
-    banner: { level, title, lines }, admission, kpis, devices, devicesNote, stages, todos: sorted.slice(0, 3), moreTodos: Math.max(0, sorted.length - 3) };
+    banner: { level, title, lines, notes, paused: pausedLabels }, admission, kpis, devices, devicesNote, stages, todos: sorted.slice(0, 3), moreTodos: Math.max(0, sorted.length - 3) };
 }
 
 // ── LLM 운영 ────────────────────────────────────────────────────────────────────────────────────────
@@ -457,6 +446,8 @@ const statusLine = (level: LlmOpsLevel, text: string, reason: string | null, det
 export type LlmOpsRow = Readonly<{
   key: string; anchor: string; source: "connection" | "cli-tool";
   connection: AiConnectionView | null;
+  /** 연결 행: 그 연결이 쓰는 장비의 보이는 이름(같은 장비를 쓰는 연결 이름들 — llm-display deviceDisplay). CLI 도구 행은 null */
+  deviceName: string | null;
   label: string; kind: "api" | "cli"; kindText: string; address: string | null; version: string | null; versionSource: string | null;
   enabled: boolean; keyText: string | null;
   models: { ids: string[]; title: string; error: string | null; readAt: string | null };
@@ -588,6 +579,7 @@ export function buildLlmOpsView(input: LlmOpsInput): LlmOpsView {
   const ledgerRows = readable ? observation.rows : null;
   const policy = observation.configuredRoutes ?? [];
   const labelOf = (connection: AiConnectionView) => aiConnectionLabel(connection);
+  const names = deviceDisplays(input.connections, observation);
 
   // 연결마다 순위·분산 칩
   const chipsOf = (connection: AiConnectionView): LlmTaskChip[] => {
@@ -717,7 +709,7 @@ export function buildLlmOpsView(input: LlmOpsInput): LlmOpsView {
       : statusOf(signals, base);
     const versions = connection.cliVersion ? [connection.cliVersion] : [...(extra?.versions.keys() ?? [])];
     const others = sharedWith(connection.deviceId, label);
-    rows.push({ key: connection.id, anchor: `conn-${connection.id}`, source: "connection", connection, label, kind: connection.kind,
+    rows.push({ key: connection.id, anchor: `conn-${connection.id}`, source: "connection", connection, deviceName: deviceName(names, connection.deviceId), label, kind: connection.kind,
       kindText: connection.kind === "api" ? "API" : `CLI · ${connection.cliTool ? AI_CLI_TOOL_LABELS[connection.cliTool] : "도구 미확인"}`,
       address: connection.kind === "api" ? connection.host ?? connection.baseUrl : connection.cliTool === "opencode" ? connection.host : null,
       version: versions[0] ?? null, versionSource: connection.cliVersion ? "연결" : versions.length ? extra!.versions.get(versions[0]) ?? null : null,
@@ -753,7 +745,7 @@ export function buildLlmOpsView(input: LlmOpsInput): LlmOpsView {
       { href: "/admin/models/contracts", label: "CLI 계약" },
       ...(devices.length ? [{ href: "/admin/models/devices", label: "장비 한도" }] : []),
     ];
-    rows.push({ key: `cli:${entry.provider}`, anchor: `cli-${entry.provider}`, source: "cli-tool", connection: null, label, kind: "cli", kindText: `CLI 도구 · ${entry.provider}`,
+    rows.push({ key: `cli:${entry.provider}`, anchor: `cli-${entry.provider}`, source: "cli-tool", connection: null, deviceName: null, label, kind: "cli", kindText: `CLI 도구 · ${entry.provider}`,
       address: devices.length ? `장비 ${devices.join(" · ")}` : null, version: versions[0] ?? null, versionSource: versions.length ? entry.versions.get(versions[0]) ?? null : null,
       enabled: true, keyText: null,
       models: { ids: [...entry.models].sort(), title: `설정·관측 ${entry.models.size}개`, error: null, readAt: null },
