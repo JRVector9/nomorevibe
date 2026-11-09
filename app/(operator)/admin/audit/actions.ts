@@ -12,7 +12,9 @@ import { fixIntroFromRequest, isIntroRequestOutcome, resolveIntroRequest } from 
 import { LIMITS } from '@/lib/domain/products/limits';
 import { logger } from '@/lib/observability/logger';
 import { recordAdminAction, recordAdminActions } from '@/lib/operations/admin-log';
+import { fieldLabel, RECHECK_LIMIT_KNOBS, RECHECK_LIMITS_JOB, runtimeSettingsIssueMessage, runtimeSettingsPatchFromForm } from '@/lib/operations/admin-runtime-settings';
 import { webWriteAction } from '@/lib/operations/dr/web-gate';
+import { saveRuntimeSettings } from '@/lib/operations/runtime-settings';
 
 export type AuditActionState = { error?: string; message?: string } | null;
 /** 묶어 내리기 결과 — 화면이 알림으로 요약한다 */
@@ -176,6 +178,45 @@ export const saveAuditHold = webWriteAction(async function saveAuditHold(_previo
   logger.info('admin.audit_hold_saved', { login: admin.login, enabled: result.auditHold.enabled });
   revalidatePath('/admin/audit'); revalidatePath('/admin/requests');
   return { message: result.auditHold.enabled ? '보류 설정을 저장했습니다.' : '자동 보류를 껐습니다. 이미 건 보류는 남아 있습니다.' };
+});
+
+/** 재판정 한도 저장의 결과 — 바뀐 값·revision 또는 거절 사유(그 칸 옆에 보인다) */
+export type RecheckLimitsSaveState = { ok?: true; message?: string; revision?: number; issues?: string[] } | null;
+const RECHECK_LIMIT_PATHS: ReadonlySet<string> = new Set(RECHECK_LIMIT_KNOBS.map(knob => `jobs.${RECHECK_LIMITS_JOB}.${knob}`));
+
+/**
+ * 공개분 변경 재판정 한도(jobs.published-recheck 다섯 칸)를 /admin/audit?tab=recheck 에서 바로 저장한다(2026-11-09 운영자 요청).
+ * 실시간 한도 화면(/admin/models/limits saveRuntimeSettingsGroup)과 같은 길이다: 쓰기 관문(webWriteAction — 읽기 전용 미리보기·DR fence 거절) → 관리자 확인 →
+ * 폼 → sparse patch(runtimeSettingsPatchFromForm, 바뀐 칸만) → saveRuntimeSettings(group jobs, 숨은 expectedRevision CAS, 스키마 범위·교차 검사, 감사 runtime-settings-save 한 줄).
+ * 이 다섯 칸 밖의 경로는 받지 않는다. 저장 뒤 이 화면과 실시간 한도 화면을 다시 그린다 — 화면은 저장 행을 바로 읽는다(readRecheckLimitsControl).
+ */
+export const saveRecheckLimits = webWriteAction(async function saveRecheckLimits(_previous: RecheckLimitsSaveState, form: FormData): Promise<RecheckLimitsSaveState> {
+  const admin = await currentAdmin();
+  if (!admin) return { issues: [UNAUTHORIZED.error] };
+  const revisionText = String(form.get('expectedRevision') ?? '').trim();
+  const expectedRevision = /^\d{1,15}$/.test(revisionText) ? Number(revisionText) : NaN;
+  if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1) return { issues: ['판 번호(revision)를 읽지 못했습니다. 새로고침해주세요.'] };
+  const outside = [...form.keys()].filter(name => name.startsWith('value:') && !RECHECK_LIMIT_PATHS.has(name.slice('value:'.length)));
+  if (outside.length) return { issues: [`재판정 한도가 아닌 칸입니다: ${outside.map(name => name.slice('value:'.length)).join(', ')}`] };
+  const parsed = runtimeSettingsPatchFromForm('jobs', form);
+  if (parsed.issues.length) return { issues: parsed.issues };
+  if (!parsed.changed.length) return { issues: ['바뀐 값이 없습니다.'] };
+  try {
+    const result = await saveRuntimeSettings(parsed.patch, admin.login, { expectedRevision, group: 'jobs' });
+    if (!result.ok) return { issues: result.issues.map(runtimeSettingsIssueMessage) };
+    const changes = parsed.changed.map(path => {
+      const unit = String(form.get(`unit:${path}`) ?? '').slice(0, 8);
+      const before = String(form.get(`initial:${path}`) ?? '');
+      const after = form.get(`reset:${path}`) === 'on' ? '기본값' : `${String(form.get(`value:${path}`) ?? '').trim()}${unit}`;
+      return `${fieldLabel(path)} ${before}${unit} → ${after}`;
+    });
+    logger.info('admin.recheck_limits_saved', { login: admin.login, revision: result.revision, changed: parsed.changed });
+    for (const path of ['/admin/audit', '/admin/models/limits', '/admin/models', '/admin/status']) revalidatePath(path);
+    return { ok: true, revision: result.revision,
+      message: `저장했습니다 — ${changes.join(' · ')} (revision ${result.revision}). 각 워커는 30초 안에 다음 틱부터 씁니다.` };
+  } catch (error) {
+    return { issues: [runtimeSettingsIssueMessage(error instanceof Error ? error.message : '저장하지 못했습니다. 새로고침해 현재 상태를 확인해주세요.')] };
+  }
 });
 
 /** 요청 번호 — 폼이 하나만 싣는다 */

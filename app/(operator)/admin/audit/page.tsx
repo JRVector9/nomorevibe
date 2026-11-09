@@ -43,9 +43,11 @@ import { AUTO_CLOSE_KEEP_DAYS, AUTO_CLOSE_MIN_CONFIDENCE, autoCloseToday, autoRu
 import type { QwenAutoSettings } from "@/lib/crawl/settings-schema";
 import { screenReviewCounts, type ScreenReviewCounts } from "@/lib/crawl/audit-screen-review";
 import { THIN_PAGE_TEXT_CHARS } from "@/lib/crawl/second-opinion-rules";
-import { recheckOpenCount, recheckOverview, recheckReviewerPlan, recheckRouteNote } from "@/lib/crawl/published-recheck";
+import { recheckLimits, recheckOpenCount, recheckOverview, recheckReviewerPlan, recheckRouteNote } from "@/lib/crawl/published-recheck";
 import { recheckChangeText } from "@/lib/crawl/published-recheck-change";
 import { ensureReviewTaskRanks } from "@/lib/crawl/review-task-ranks";
+import { readRecheckLimitsControl } from "@/lib/operations/admin-runtime-settings";
+import { adminWorkspaceReadOnly } from "@/lib/operations/admin-workspace-preview";
 import { RecheckPanel } from "./RecheckPanel";
 
 export const dynamic = "force-dynamic";
@@ -325,7 +327,9 @@ const RECHECK_PAGE = 50;
 async function loadRecheckTab() {
   // 1차 순위는 30초 스냅숏 — 화면 프로세스가 읽지 못했으면 순위 없음으로 보인다(워커는 부를 때 다시 읽는다)
   await ensureReviewTaskRanks().catch(() => undefined);
-  const overview = await recheckOverview();
+  // 한도는 저장 행을 바로 읽는다(30초 스냅숏이 아니다) — 이 화면에서 저장한 뒤 새 값으로 그린다
+  const limitsControl = await readRecheckLimitsControl();
+  const overview = await recheckOverview(recheckLimits(limitsControl.settings));
   const plan = recheckReviewerPlan();
   const reviewers = plan.reviewers.map((reviewer) => ({ ...reviewer, route: recheckRouteNote(reviewer) }));
   const stream = overview.stream;
@@ -333,11 +337,11 @@ async function loadRecheckTab() {
     listAuditFindings(stream.id, "reject", { limit: RECHECK_PAGE, offset: 0 }), listAuditFindings(stream.id, "needs_review", { limit: RECHECK_PAGE, offset: 0 }),
   ]) : [[], []];
   const korean = rejects.length + needs.length ? await translationsFor([...rejects, ...needs].map((finding) => finding.reason)) : new Map<string, string>();
-  return { overview, plan, reviewers, rejects, needs, korean };
+  return { overview, plan, reviewers, rejects, needs, korean, limitsControl };
 }
 
 async function RecheckTab({ now }: { now: Date }) {
-  const { overview, plan, reviewers, rejects, needs, korean } = await loadRecheckTab();
+  const { overview, plan, reviewers, rejects, needs, korean, limitsControl } = await loadRecheckTab();
   const section = (title: string, rows: Awaited<ReturnType<typeof listAuditFindings>>, total: number, empty: string) => (
     <section className="flex flex-col gap-2" aria-label={title}>
       <h2 className="text-[15px] font-bold">{title} <span className="font-normal text-fg-3">{count(total)}{total > rows.length ? ` · 앞의 ${count(rows.length)}건` : ""}</span></h2>
@@ -364,7 +368,9 @@ async function RecheckTab({ now }: { now: Date }) {
     </section>
   );
   return <>
-    <RecheckPanel overview={overview} plan={plan} reviewers={reviewers} now={now} />
+    <RecheckPanel overview={overview} plan={plan} reviewers={reviewers} now={now}
+      limitsControl={{ fields: limitsControl.fields, revision: limitsControl.revision, rowError: limitsControl.rowError }}
+      readOnly={limitsControl.revision === null || adminWorkspaceReadOnly()} />
     {section("다시 본 결과 — 제품 아님", rejects, overview.counts.openReject, "재판정가 거절한 것 중 사람이 볼 것이 없습니다.")}
     {section("다시 본 결과 — 판단 보류", needs, overview.counts.openNeedsReview, "재판정가 판단을 미룬 것이 없습니다.")}
   </>;

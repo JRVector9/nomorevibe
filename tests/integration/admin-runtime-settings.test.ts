@@ -144,3 +144,30 @@ it("비관리자는 쓰기 관문 뒤에서 막히고 저장 경로·감사에 �
   } finally { admin.login = { login: "operator" }; }
   expect((await saved()).length).toBe(count);
 });
+
+it("2026-11-09 재판정 한도를 /admin/audit 에서 저장 — 같은 저장(group jobs·CAS·감사 한 줄), 저장 행을 바로 읽은 화면 값이 바뀌고, 범위 밖·옛 revision 은 거절한다", async () => {
+  const { saveRecheckLimits } = await import("@/app/(operator)/admin/audit/actions");
+  const { readRecheckLimitsControl } = await import("@/lib/operations/admin-runtime-settings");
+  const { readRuntimeSettingsRow } = await import("@/lib/operations/runtime-settings");
+  const before = await readRecheckLimitsControl();
+  expect(before.rowError).toBeNull();
+  const yieldField = before.fields.find(field => field.knob === "yieldHours")!;
+  const path = "jobs.published-recheck.yieldHours";
+  const cell = (value: string, revision: number) => form({ expectedRevision: String(revision), [`value:${path}`]: value, [`initial:${path}`]: yieldField.input,
+    [`stored:${path}`]: yieldField.overridden ? "1" : "0", [`unit:${path}`]: "시간" });
+  const result = await saveRecheckLimits(null, cell("1", before.revision!));
+  expect(result).toMatchObject({ ok: true, revision: before.revision! + 1, message: expect.stringContaining(`1차 양보 상한(시간) ${yieldField.input}시간 → 1시간 (revision ${before.revision! + 1})`) });
+  const [row] = await saved();
+  expect(row).toMatchObject({ actor: "operator", ok: true, target: "runtime_settings:jobs" });
+  const after = await readRecheckLimitsControl();
+  expect(after.revision).toBe(before.revision! + 1);
+  expect(after.fields.find(field => field.knob === "yieldHours")).toMatchObject({ input: "1", overridden: true });
+  // 범위 밖(0~168) — 저장되지 않고 범위를 말한다
+  const outOfRange = await saveRecheckLimits(null, form({ expectedRevision: String(after.revision), [`value:${path}`]: "500", [`initial:${path}`]: "1",
+    [`stored:${path}`]: "1", [`unit:${path}`]: "시간" }));
+  expect(outOfRange).toEqual({ issues: ["공개분 변경 재판정 1차 양보 상한(시간): 범위를 벗어났습니다(0~168)"] });
+  expect((await saved())[0]).toMatchObject({ ok: false, target: "runtime_settings:jobs" });
+  // 옛 revision — 거절, 문서는 그대로
+  expect((await saveRecheckLimits(null, cell("2", before.revision!)))?.issues?.[0]).toContain("그 사이 다른 곳에서 설정이 바뀌었습니다");
+  expect((await readRuntimeSettingsRow()).revision).toBe(after.revision);
+});
