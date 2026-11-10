@@ -71,14 +71,16 @@ describe('least-privilege profile (pr2-plan §3.2)', () => {
       model_capacity_control: { select: ['id', 'mode', 'epoch', 'revision', 'policy', 'policy_hash', 'updated_at'] },
       model_capacity_requests: { select: ['request_id', 'state', 'class', 'pool', 'route_id', 'provider', 'model', 'group_id', 'epoch', 'revision',
         'policy_hash', 'queued_at', 'queue_until', 'reserved_until', 'dispatched_at', 'settled_at', 'updated_at'] },
-      model_capacity_devices: { select: true }, model_capacity_device_roles: { select: true },
+      model_capacity_devices: { select: true }, model_capacity_device_roles: { select: true }, runtime_settings: { select: true },
       operations_observations: { select: true, insert: true, update: ['value', 'observed_at'] },
     });
   });
-  it('holds no domain, runtime, admin-switch, ledger-write or secret authority', () => {
+  it('holds no domain, runtime-write, admin-switch, ledger-write or secret authority', () => {
     const tables = profile.profile.tables;
     for (const table of [...ORACLE_CONSUMER_FORBIDDEN_TABLES, 'crawl_settings', 'crawl_candidates', 'crawl_review_attempts', 'second_reviews', 'products',
-      'runtime_settings', 'model_serving_contracts', 'model_capacity_events', 'operations_audit']) expect(tables[table], table).toBeUndefined();
+      'model_serving_contracts', 'model_capacity_events', 'operations_audit']) expect(tables[table], table).toBeUndefined();
+    // 2026-11-10: 결과 미확정 유지 시간을 입장과 같은 값으로 세려고 runtime_settings 는 읽기만 — 쓰기·삭제는 없다
+    expect(tables.runtime_settings).toEqual({ select: true });
     expect(tables.model_supervisor_control.update).not.toEqual(expect.arrayContaining(['enabled']));
     for (const column of ['enabled', 'signal_principal', 'signal_ttl_ms', 'loop_ms', 'updated_by', 'updated_at'])
       expect(tables.model_supervisor_control.update, column).not.toContain(column);

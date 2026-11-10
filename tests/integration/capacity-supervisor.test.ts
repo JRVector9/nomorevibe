@@ -209,9 +209,13 @@ describe('lease (TX-A) and write (TX-B) as the supervisor principal', () => {
       'SELECT helper_outcome FROM model_helper_shadow_runs', 'SELECT job_token FROM model_helper_shadow_runs',
       'SELECT dispatch_binding FROM model_capacity_requests', 'SELECT owner_instance_id FROM model_capacity_requests',
       "UPDATE model_capacity_requests SET state = 'settled' WHERE false", 'SELECT 1 FROM crawl_settings', 'SELECT 1 FROM jobs',
-      'SELECT 1 FROM role_leases', 'SELECT 1 FROM runtime_settings', 'UPDATE operations_observations SET key = key WHERE false',
-      'CREATE TABLE public.supervisor_negative_probe(id integer)'])
+      'SELECT 1 FROM role_leases', "UPDATE runtime_settings SET updated_by = 'x' WHERE false", 'DELETE FROM runtime_settings WHERE false',
+      'UPDATE operations_observations SET key = key WHERE false', 'CREATE TABLE public.supervisor_negative_probe(id integer)'])
       expect(await failure(statement), statement).toBe('42501');
+  });
+  it('reads runtime_settings (2026-11-10: unknown hold window) but cannot write it', async () => {
+    expect(await failure('SELECT 1 FROM runtime_settings')).toBe('allowed');
+    expect(await failure("UPDATE runtime_settings SET updated_by = 'x' WHERE false")).toBe('42501');
   });
 });
 
