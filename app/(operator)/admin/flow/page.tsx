@@ -9,6 +9,7 @@ import { STALE_LOCK_MS } from "@/lib/jobs/lease";
 import { isPausedJob, jobStatusLabel } from "@/lib/jobs/status";
 import { adminJobControlVersions } from "@/lib/operations/admin-job-control";
 import { readConveyor } from "@/lib/operations/conveyor";
+import { HUMAN_ASSIST_TASKS, readHumanAssistProgress } from "@/lib/operations/human-assist-progress";
 import { SOCIAL_FLOW_JOBS } from "@/lib/operations/flow-overview-read";
 import { readFlowRankEditor } from "@/lib/operations/flow-rank-editor-read";
 import { adminWorkspaceReadOnly } from "@/lib/operations/admin-workspace-preview";
@@ -22,6 +23,7 @@ import { readOperatorAway, readOperatorChanges, readOperatorDeskShared, readOper
 import type { FlowControls } from "./FlowBoard";
 import { FlowBoard } from "./FlowBoard";
 import { HumanModelSettings } from "./HumanModelSettings";
+import { HumanAssistDecided, HumanAssistTaskProgress } from "./HumanAssistProgress";
 import { PrototypeFlow, PrototypeFlowAway, PrototypeFlowChanges } from "./PrototypeFlow";
 import type { OperatorDesk } from "@/lib/operations/operator-desk-model";
 import { FlowOverviewSummary, SocialFlowSummary } from "./FlowOverview";
@@ -98,6 +100,13 @@ async function FlowWorkspace({ admin, fresh, tab, advanced }: {
     diagnostics ? Promise.resolve(null) : heldReactionComments(1).catch(quiet("flow.reactions_unavailable")),
   ]);
   if (!conveyor) return <p role="status" className="notice">흐름을 읽지 못했습니다 — 다음 자동 갱신에서 다시 읽습니다.</p>;
+  // 사람 확인 · AI 보조 카드의 처리 현황 — 한 번 읽어 카드마다 나눠 그린다. 늦어도 흐름 화면을 막지 않는다(Suspense)
+  const assistRead = diagnostics ? null : readHumanAssistProgress().catch(quiet("flow.human_assist_unavailable"));
+  const humanAssist = assistRead ? {
+    decided: <Suspense fallback="읽는 중…"><HumanAssistDecided read={assistRead} /></Suspense>,
+    ...Object.fromEntries(HUMAN_ASSIST_TASKS.map(task => [task,
+      <Suspense key={task} fallback={<span className="flow-model-note" aria-busy="true">처리 현황을 읽는 중…</span>}><HumanAssistTaskProgress read={assistRead} task={task} /></Suspense>])),
+  } : undefined;
   const desk: OperatorDesk | null = base ? { ...base, away: null } : null;
   const controls = control ?? { jobs: {}, csrf: null };
   const advancedContent = diagnostics && !advanced
@@ -105,7 +114,7 @@ async function FlowWorkspace({ admin, fresh, tab, advanced }: {
     : <Suspense fallback={<p className="small muted" aria-busy="true">고급 운영 관측을 읽는 중…</p>}>
         <AdvancedFlow data={conveyor} controls={controls} deskRead={fullDeskRead} editor={editor} readRanks={diagnostics} login={admin.login} fresh={fresh} />
       </Suspense>;
-  return <PrototypeFlow humanModelSettings={!diagnostics ? <Suspense fallback={<p className="small muted" aria-busy="true">AI 보조 모델 설정을 읽는 중…</p>}><HumanModelSettings /></Suspense> : undefined} data={conveyor} desk={desk} controls={controls} editor={editor} tab={tab}
+  return <PrototypeFlow humanModelSettings={!diagnostics ? <Suspense fallback={<p className="small muted" aria-busy="true">AI 보조 모델 설정을 읽는 중…</p>}><HumanModelSettings /></Suspense> : undefined} data={conveyor} desk={desk} controls={controls} editor={editor} tab={tab} humanAssist={humanAssist}
     reactionRequests={reactions?.count ?? null} advancedContent={advancedContent}
     overviewContent={!diagnostics ? <Suspense fallback={<p className="notice" aria-busy="true">프로젝트 등록 수와 발행 추이를 읽는 중…</p>}>
       <FlowOverviewSummary data={conveyor} desk={desk} reactionRequests={reactions?.count ?? null} />
