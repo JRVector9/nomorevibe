@@ -26,8 +26,10 @@ import { endpointBackoffActive, noteQwenCallFailure, noteQwenEndpointSuccess, qw
 import { QWEN_V2_PROMPT_VERSION, QwenDirectError, qwenDirectConfig, qwenEndpointFailure, reviewWithQwenDirect,
   type QwenDirectErrorCode, type QwenDirectReview } from "./qwen-direct-review";
 import { reviewSemanticNow, reviewSemanticNowSql } from "./review-replay-context";
-import { HELD_QWEN_ACTOR, HELD_QWEN_DECIDED_BY, HELD_QWEN_MIN_CONFIDENCE, HELD_QWEN_PROVIDER, heldQwenActor, heldQwenGateable,
+import { HELD_QWEN_ACTOR, HELD_QWEN_COUNTED_FAILURES as COUNTED_FAILURES, HELD_QWEN_DECIDED_BY, HELD_QWEN_MAX_FAILURES as MAX_FAILURES,
+  HELD_QWEN_MIN_CONFIDENCE, HELD_QWEN_PROVIDER, heldQwenActor, heldQwenCountedFailure as countedFailure, heldQwenGateable,
   heldQwenGateFirstSql, heldQwenRetry } from "./held-qwen-retry-policy";
+import { heldQwenHandedOff, heldQwenHandedOffSql, inputDelegatedAttempts } from "./held-qwen-handoff";
 import type { CrawlSettings, HeldQwenReason } from "./settings-schema";
 
 /**
@@ -42,8 +44,10 @@ import type { CrawlSettings, HeldQwenReason } from "./settings-schema";
  *    (publish.ts no_description) 되돌리지 않고 "승인 의견"으로 사람에게 둔다 — 사람은 소개만 적으면 된다.
  *  - 판단 보류·오류: 사람 큐에 그대로 둔다(심사 큐의 «Qwen-v2: 판단 보류» 배지).
  *
- * DeepSeek 위임과 나누는 법: 스위치가 켜져 있으면 이 세 사유는 Qwen-v2 만 맡는다(heldQwenOwns — DeepSeek claim 이 같은 잠긴
- * 설정 행으로 재고 건너뛴다). 한 후보에 진행 중 시도는 하나뿐이라(crawl_review_one_active_idx) 바꾸는 순간에도 겹치지 않는다.
+ * DeepSeek 위임과 나누는 법: 스위치가 켜져 있으면 이 세 사유는 먼저 Qwen-v2 가 맡는다(heldQwenOwns — DeepSeek claim 이 같은 잠긴
+ * 설정 행으로 잰다). 한 후보에 진행 중 시도는 하나뿐이라(crawl_review_one_active_idx) 바꾸는 순간에도 겹치지 않는다.
+ * Qwen-v2 가 지금 입력에서 끝내면(판단 보류·승인 의견·실패 상한) DeepSeek 위임이 이어 본다(2026-11-10 운영자 결정, held-qwen-handoff.ts).
+ * DeepSeek 이 그 입력을 맡은 뒤에는 Qwen 모델·덧붙임 판이 바뀌어도 그 입력을 다시 묻지 않는다(heldQwenHandedOff — 되풀이 막기).
  *
  * 자기 잡 held-qwen-retry(lib/crawl/jobs/held-qwen-retry.ts, 전용 줄 held)에서 돈다 — 2026-10-31(PR 3a-C) 전에는 사람 검토 잡
  * human-deepseek-review 틱의 앞부분이었다. 한 틱에 perTick 개·budgetSeconds 초까지.
@@ -57,7 +61,6 @@ import type { CrawlSettings, HeldQwenReason } from "./settings-schema";
 const JOB = "held-qwen-retry";
 /** 한 번 부를 때의 제한 시간 — 실측 2.2~4.7초(qwen-direct-review.ts). 넘는 것은 탈로 본다. 틱마다 등록부 경로 held-review-retry 를 읽는다(관리자 실시간 한도) */
 export function heldQwenCallTimeoutMs(): number { return modelTimeoutMs("held-review-retry"); }
-const MAX_FAILURES = 3;
 const RETRY_MS = 15 * 60_000;
 const STALE_RUNNING_MS = 120_000;
 
@@ -87,14 +90,6 @@ export function heldQwenEndpointFailure(code: string | null | undefined): boolea
   return typeof code === "string" && code.startsWith("qwen_") && qwenEndpointFailure(code as QwenDirectErrorCode);
 }
 /**
- * 후보의 세 번에 드는 실패 — 그 입력 때문에 난 것(형식·입력 초과·요청 거절)만. 부르는 곳의 탈은 후보 탓이 아니라 세지 않는다 —
- * 그동안은 gpu3090 을 부르는 모두가 함께 물러나고(qwen-endpoint-backoff.ts), 후보마다 15분을 기다린다. 제공자의 고정 코드 목록이라 SQL 도 같은 목록을 쓴다
- */
-const COUNTED_FAILURES = ["qwen_invalid_json", "qwen_input_too_large", "qwen_http_400", "qwen_http_413", "qwen_http_422"] as const;
-const countedFailure = (row: Pick<CrawlReviewAttempt, "state" | "errorCode">) =>
-  row.state === "failed" && (COUNTED_FAILURES as readonly string[]).includes(row.errorCode ?? "");
-
-/**
  * 같은 입력 세대의 시도 — 원본(문서 id·수집 시각)·판정 시각·스캔이 같은 것. SQL 이 고를 때 쓰는 어림이고, claim 이 입력·원본 해시로 다시 잰다.
  * c·fd·fres 는 고르는 SQL 의 별칭이다.
  */
@@ -111,6 +106,7 @@ function sameGeneration(actor: string, model: string): SQL {
  * 원본·스캔의 나이로 자르지 않는다(2026-11-09 운영자 결정, ReviewEvidenceAge any_age — 미래 시각만 거른다).
  * 이 세대의 판단이 없고, 기다리거나 보는 중이 아니며, 실패를 다 쓰지 않은 것 — 같은 입력에서 끝낸 후보는 머리에 남지 않는다. 독립 투표자가 생겨 다시 관문에 넣을 수 있게 된 "승인 의견"은 모델을 다시 부르지 않고 넣으려고 고른다.
  * 판단 보류(ambiguous)는 1차가 지금 입력에서 판단 보류를 냈을 때만(firstReviewAbstainedPredicate) — 1차가 잠깐 실패해 기다리는 중인 것은 1차 몫이다.
+ * DeepSeek 위임에 넘긴 입력(heldQwenHandedOffSql)은 새 세대라도 고르지 않는다 — 이 세대의 승인 의견을 다시 넣는 것만 남는다(claim 의 같은 갈래).
  */
 export async function heldQwenCandidates(settings: CrawlSettings, model: string, limit: number): Promise<{ id: number; repo: string }[]> {
   const policy = heldQwenRetry(settings);
@@ -134,7 +130,9 @@ export async function heldQwenCandidates(settings: CrawlSettings, model: string,
             AND (q.state = 'running' OR q.state = 'failed' AND q.retry_after > clock_timestamp()
               OR q.state = 'succeeded' AND NOT (c.reason <> 'no_description' AND ${heldQwenGateFirstSql(settings, null, q)})))
           AND (SELECT count(*) FROM crawl_review_attempts q WHERE ${sameGeneration(actor, model)} AND q.state = 'failed'
-            AND q.error_code IN (${sql.join(COUNTED_FAILURES.map((code) => sql`${code}`), sql`, `)})) < ${MAX_FAILURES})
+            AND q.error_code IN (${sql.join(COUNTED_FAILURES.map((code) => sql`${code}`), sql`, `)})) < ${MAX_FAILURES}
+          AND (NOT EXISTS (SELECT 1 FROM ${crawlCandidates} WHERE ${crawlCandidates.id} = c.id AND ${heldQwenHandedOffSql(settings)})
+            OR EXISTS (SELECT 1 FROM crawl_review_attempts q WHERE ${sameGeneration(actor, model)} AND q.state = 'succeeded')))
     ORDER BY c.updated_at DESC, c.id DESC
     LIMIT ${Math.max(1, Math.min(100, limit))}`);
   return rows.map((row) => ({ id: Number(row.id), repo: row.repo }));
@@ -313,6 +311,12 @@ export async function claimHeldQwen(repo: string, lease: JobLease, model: string
       }
       await assertJobLeaseAtWallTime(tx, lease);
       return { kind: "skipped", reason: "decided" };
+    }
+    // DeepSeek 위임에 넘긴 입력은 다시 묻지 않는다 — 이 입력에서 끝냈고(다른 모델·덧붙임 판이라도) DeepSeek 이 맡았다(held-qwen-handoff.ts).
+    // 위의 승인 의견 다시 넣기는 모델을 부르지 않으므로 막지 않는다
+    if (heldQwenHandedOff(settings, reason, await inputDelegatedAttempts(tx, candidate.id, input))) {
+      await assertJobLeaseAtWallTime(tx, lease);
+      return { kind: "skipped", reason: "handed_off" };
     }
     // 세 번에 드는 것은 입력 때문에 난 실패뿐이다(countedFailure). 기다림은 모든 실패에 건다
     const lastFailure = attempts.find((row) => row.state === "failed");

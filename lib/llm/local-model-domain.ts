@@ -17,7 +17,8 @@ import { freshLocalModelScreenProof, localModelJob, type LocalModelScreenProof, 
 import { readItemStage } from "@/lib/jobs/items/repository";
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION, type ReviewEvidenceAge } from "@/lib/crawl/agent-review-contract";
 import { deepseekActor } from "@/lib/crawl/deepseek-review-policy";
-import { heldQwenActor, heldQwenOwns } from "@/lib/crawl/held-qwen-retry-policy";
+import { heldQwenActor, heldQwenConcluded, heldQwenOwns } from "@/lib/crawl/held-qwen-retry-policy";
+import { inputDelegatedAttempts } from "@/lib/crawl/held-qwen-handoff";
 import { QWEN_V2_PROMPT_VERSION } from "@/lib/crawl/qwen-direct-review";
 import type { LocalModelDomainCheck, LocalModelDomainRefusal } from "./local-model-domain-refusal";
 
@@ -156,13 +157,16 @@ export async function localModelDomainRefusal(tx: ProductTransaction, target: Lo
       .where(and(eq(secondReviews.candidateId, current.candidate.id), eq(secondReviews.status, "pending"))).for("share");
     if (pending.length) return refuse("target_not_open");
     const [row] = await tx.select().from(crawlReviewAttempts).where(eq(crawlReviewAttempts.id, target.attemptId)).for("update");
+    // 보류 재심사가 맡은 사유는 그쪽이 지금 입력에서 끝낸 뒤에만 위임이 부른다 — 위임 claim 과 같은 판단(held-qwen-handoff.ts, 2026-11-10)
+    const delegateMay = target.purpose !== "human_deepseek" || !heldQwenOwns(current.settings, current.candidate.reason)
+      || heldQwenConcluded(current.settings, current.candidate.reason, await inputDelegatedAttempts(tx, current.candidate.id, input));
     valid = Boolean(row && row.candidateId === current.candidate.id && row.candidateId === target.candidateId && current.candidate.repo === target.repo
       && row.state === "running" && row.kind === "delegated" && row.leaseToken === job.token
       && row.inputHash === input.inputHash && row.sourceRevisionHash === input.sourceRevisionHash
       && row.policyHash === input.policyHash && row.promptVersion === REVIEW_PROMPT_VERSION && row.rulesVersion === REVIEW_RULES_VERSION
       && row.model === model && (target.purpose === "human_deepseek"
         ? row.provider === "m3-deepseek" && current.settings.humanReview.enabled
-          && row.actor === deepseekActor(current.settings.humanReview.generation) && !heldQwenOwns(current.settings, current.candidate.reason)
+          && row.actor === deepseekActor(current.settings.humanReview.generation) && delegateMay
         : row.provider === "qwen-direct" && heldQwenOwns(current.settings, current.candidate.reason)
           && row.actor === heldQwenActor(QWEN_V2_PROMPT_VERSION)));
   } else {

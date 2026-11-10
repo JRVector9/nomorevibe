@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { heldQwenGateable, heldQwenGateFirst, heldQwenIndependentVoters, heldQwenOwnedReasons, heldQwenOwns, heldQwenSameModelFallback } from "@/lib/crawl/held-qwen-retry-policy";
+import { heldQwenConcluded, heldQwenGateable, heldQwenGateFirst, heldQwenIndependentVoters, heldQwenOwnedReasons, heldQwenOwns,
+  heldQwenSameModelFallback } from "@/lib/crawl/held-qwen-retry-policy";
 import { sameReviewModel, sameUnderlyingModel } from "@/lib/crawl/review-model-identity";
 import { combineVerdicts } from "@/lib/crawl/second-review";
 import { mergeWithDefaults, storedQwenAuto } from "@/lib/crawl/settings";
@@ -94,6 +95,31 @@ describe("보류 Qwen-v2 재심사 정책", () => {
     expect(combineVerdicts(first, { decision: "approve", confidence: 0.9, provider: "abcllm", model: "[gpu3090] qwen3.8-flash-next" }, 0.85, false))
       .toBe("agreed");
     expect(combineVerdicts(first, { decision: "approve", confidence: 0.9, provider: "abcllm", model: "[supa] Qwen3.8-27B-NVFP4" }, 0.85, false)).toBe("agreed");
+  });
+
+  // 2026-11-10 운영자 결정 — Qwen-v2 가 지금 입력에서 끝내면 사람 몫 위임 검수(DeepSeek)가 이어 본다(held-qwen-handoff.ts)
+  it("위임으로 넘기는 끝냄 — 판단 보류·관문에 못 넣은 승인 의견·세대별 세는 실패 상한. 보는 중·다시 볼 실패·지금 넣을 승인 의견은 아니다", () => {
+    const row = (patch: Partial<Row & { errorCode: string | null }>) => ({ ...attempt, errorCode: null, ...patch });
+    const approve = row({}), held = row({ outcome: { ...attempt.outcome!, decision: "needs_review" } });
+    const failed = row({ state: "failed", outcome: null, errorCode: "qwen_invalid_json" });
+    expect(heldQwenConcluded(settings(), "ai_review_exhausted", [])).toBe(false);
+    expect(heldQwenConcluded(settings(), "ai_review_exhausted", [held])).toBe(true);
+    // 보는 중이면 끝이 아니다 — 같은 입력의 다른 세대 판단이 있어도
+    expect(heldQwenConcluded(settings(), "ai_review_exhausted", [held, row({ state: "running", outcome: null, model: "qwen-next" })])).toBe(false);
+    // 지금 관문에 넣을 수 있는 승인 의견은 보류 재심사가 다시 넣는다 — 소개 없음이나 독립 투표자가 없을 때만 끝이다
+    expect(heldQwenConcluded(settings(), "ai_review_exhausted", [approve])).toBe(false);
+    expect(heldQwenConcluded(settings(), "no_description", [approve])).toBe(true);
+    voterSlots([QWEN]);
+    expect(heldQwenConcluded(settings(), "ai_review_exhausted", [approve])).toBe(true);
+    voterSlots([QWEN], [GPT]);
+    // 세는 실패는 한 세대(덧붙임 판·모델)에서 상한(3)에 닿아야 끝이다. 부르는 곳의 탈은 세지 않는다
+    expect(heldQwenConcluded(settings(), "ambiguous", [failed, failed])).toBe(false);
+    expect(heldQwenConcluded(settings(), "ambiguous", [failed, failed, failed])).toBe(true);
+    expect(heldQwenConcluded(settings(), "ambiguous", [failed, failed, { ...failed, model: "qwen-next" }])).toBe(false);
+    expect(heldQwenConcluded(settings(), "ambiguous", Array(3).fill(row({ state: "failed", outcome: null, errorCode: "qwen_timeout" })))).toBe(false);
+    // 다른 일의 행(갈림 판가름 'qwen-v2-auto', DeepSeek 위임)은 보류 재심사의 끝냄이 아니다
+    expect(heldQwenConcluded(settings(), "ai_review_exhausted", [{ ...held, actor: "qwen-v2-auto" }])).toBe(false);
+    expect(heldQwenConcluded(settings(), "ai_review_exhausted", [{ ...held, provider: "m3-deepseek", actor: "m3-deepseek:3" }])).toBe(false);
   });
 
   it("저장된 값은 따로 읽는다 — 없거나 깨졌으면 꺼짐(빠진 칸을 채우지 않는다)", () => {

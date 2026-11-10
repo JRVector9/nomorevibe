@@ -21,7 +21,7 @@ export const HUMAN_REVIEW_MAX_PER_TICK = 10;
  *
  * 2026-11-09 운영자 결정: 최신 것부터 보고, 최신 것이 끝나면 쌓인 과거 것도 본다. 근거가 24시간 지났다고 못 보게 자르지 않는다 —
  * 고르기는 humanReviewRepos(최근 들어온 것부터, 이 입력에서 끝낸 것 제외), 근거 나이는 any_age(agent-review-contract.ts).
- * 보류 Qwen-v2 재심사(held-qwen-retry.ts)가 맡은 사유는 집지 않는다.
+ * 보류 Qwen-v2 재심사(held-qwen-retry.ts)가 맡은 사유는 그쪽이 지금 입력에서 끝낸 뒤에만 집는다(2026-11-10 운영자 결정, held-qwen-handoff.ts).
  *
  * 2026-10-31(PR 3a-C) 전에는 이 틱이 보류 Qwen-v2 재심사(gpu3090) → DeepSeek 위임(M3) → 갈림 판가름의 DeepSeek 확인(M3)을 차례로 돌았다 —
  * 한 장비의 느림이 다른 장비의 큐를 미뤘다. 이제 셋은 자기 잡·자기 줄이다: held-qwen-retry(jobs/held-qwen-retry.ts), 이 잡, split-confirm
