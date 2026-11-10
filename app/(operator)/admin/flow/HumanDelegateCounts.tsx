@@ -2,8 +2,8 @@ import Link from "next/link";
 import { DELEGATE_GROUP_GUIDE, delegateGroupHref, type DelegateGroup } from "@/lib/crawl/delegate-groups";
 import type { HumanDelegateSummary } from "@/lib/operations/human-delegate-summary";
 
-/** 운영 홈 「사람이 처리할 일」에 줄로 거는 AI 위임 결과 갈래 — 근거 부족(운영자가 따로 보자고 한 목록)과 확신 부족 */
-export const FLOW_DELEGATE_GROUPS = ["abstained", "low_confidence"] as const satisfies readonly DelegateGroup[];
+/** 운영 홈 「사람이 처리할 일」에 줄로 거는 AI 위임 결과 갈래 — 여섯 갈래 모두(2026-11-10 시안 B: 묶음 상자 안의 줄) */
+export const FLOW_DELEGATE_GROUPS = ["abstained", "low_confidence", "human_only", "legacy", "admin", "unreviewed"] as const satisfies readonly DelegateGroup[];
 export const flowDelegateSlot = (group: DelegateGroup) => `delegate-${group}`;
 
 /** 갈래 하나의 수 — 누르면 그 갈래만 남은 사람 몫 목록이 열린다. 못 읽으면 미확인 */
