@@ -84,12 +84,16 @@ it('lets every job-running Oracle principal read the admin runtime settings, reg
     expect(ORACLE_CONSUMER_DB_PROFILES[consumer]!.profile.tables.model_serving_contracts, consumer).toBeUndefined();
   }
   expect(ORACLE_CONSUMER_DB_PROFILES.uptime!.profile.tables.runtime_settings).toBeUndefined();
+  // 2026-11-10: 도우미 장비 감시자도 결과 미확정 유지 시간(capacity.unknownHoldSeconds)을 읽으려고 runtime_settings 읽기만 — 계약은 여전히 없다
+  expect(ORACLE_CONSUMER_DB_PROFILES['capacity-supervisor']!.profile.tables.runtime_settings).toEqual({ select: true });
+  expect(ORACLE_CONSUMER_DB_PROFILES['capacity-supervisor']!.profile.tables.model_serving_contracts).toBeUndefined();
   const rendered = renderOracleDbGrantSql();
   expect(rendered).toContain('GRANT SELECT ON TABLE public.runtime_settings TO nomorevibe_oracle_translation;');
   expect(rendered).toContain('GRANT SELECT ON TABLE public.model_registry_overrides TO nomorevibe_oracle_translation;');
   expect(rendered).toContain('GRANT SELECT ON TABLE public.runtime_settings TO nomorevibe_oracle_agent_scan;');
+  expect(rendered).toContain('GRANT SELECT ON TABLE public.runtime_settings TO nomorevibe_oracle_capacity_supervisor;');
   expect(rendered).toContain('GRANT SELECT ON TABLE public.model_serving_contracts TO nomorevibe_oracle_translation;');
-  expect(rendered.match(/public\.runtime_settings TO/g)).toHaveLength(6);
+  expect(rendered.match(/public\.runtime_settings TO/g)).toHaveLength(7);
 });
 
 it('lets every job-running Oracle principal read the device admission settings (PR 1b, 0153) and nobody write them', () => {

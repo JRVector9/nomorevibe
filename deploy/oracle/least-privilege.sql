@@ -296,6 +296,7 @@ GRANT SELECT ON TABLE public.model_supervisor_control TO nomorevibe_oracle_capac
 GRANT UPDATE (owner_instance_id, owner_boot_id, epoch, lease_until, heartbeat_at, loop_seq, release) ON TABLE public.model_supervisor_control TO nomorevibe_oracle_capacity_supervisor;
 GRANT SELECT, INSERT ON TABLE public.operations_observations TO nomorevibe_oracle_capacity_supervisor;
 GRANT UPDATE (value, observed_at) ON TABLE public.operations_observations TO nomorevibe_oracle_capacity_supervisor;
+GRANT SELECT ON TABLE public.runtime_settings TO nomorevibe_oracle_capacity_supervisor;
 GRANT USAGE ON SEQUENCE public.model_helper_stops_id_seq TO nomorevibe_oracle_capacity_supervisor;
 
 -- consumer github-ko-discovery

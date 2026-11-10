@@ -202,7 +202,9 @@ export const ORACLE_CONSUMER_DB_PROFILES: Partial<Record<string, OracleConsumerD
   // control 의 enabled·signal_principal·signal_ttl_ms·loop_ms 는 관리자만 바꾼다(UPDATE 는 lease 열뿐). written_by·observed_at 은 0154 stamp
   // 트리거가 current_user·clock_timestamp() 로 다시 쓰므로 UPDATE 목록의 written_by 는 위조 수단이 아니다. 관측 키는 0107 함수 확장이
   // capacity-supervisor:·service:maintenance: + capacity-supervisor-consumer-* 로 좁힌다(WP-2a-A 0154). 남은 위험은 uptime 과 같다:
-  // lock 용 UPDATE(id) 로 fence 행을 FOR UPDATE 로 쥘 수 있다
+  // lock 용 UPDATE(id) 로 fence 행을 FOR UPDATE 로 쥘 수 있다.
+  // runtime_settings 는 읽기만(2026-11-10 소유자 결정) — 결과 미확정 유지 시간(capacity.unknownHoldSeconds, #881)을 입장과 같은 값으로 세려고.
+  // 다른 Oracle 계정(github-ko-discovery·LIVE_SETTINGS)과 같은 SELECT 이고, 쓰기·관리자 스위치 권한은 여전히 없다.
   'capacity-supervisor': { principal: 'nomorevibe_oracle_capacity_supervisor', profile: { statementTimeout: '10s',
     sequences: ['model_helper_stops_id_seq'],
     tables: { dr_writer_fence: lock('id'),
@@ -214,7 +216,7 @@ export const ORACLE_CONSUMER_DB_PROFILES: Partial<Record<string, OracleConsumerD
       model_role_demand: read,
       model_helper_shadow_runs: { select: HELPER_SHADOW_RUN_READ }, model_helper_live_outputs: { select: HELPER_LIVE_OUTPUT_READ },
       model_capacity_control: { select: CAPACITY_CONTROL_READ }, model_capacity_requests: { select: CAPACITY_REQUEST_READ },
-      model_capacity_devices: read, model_capacity_device_roles: read,
+      model_capacity_devices: read, model_capacity_device_roles: read, runtime_settings: read,
       operations_observations: observationsWrite } } },
 };
 export const ORACLE_CONSUMER_FORBIDDEN_TABLES = ['jobs', 'role_leases', 'job_batch_control', 'job_batch_candidates', 'pipeline_item_leases'] as const;
