@@ -126,6 +126,17 @@ def cycle(config, state, reports, *, now=None, recover=None):
             attempts = [at for at in attempts if now - at < 86400]
             target = {'at': now, 'bad': bad, 'actionable': actionable, 'reason': row['reason'],
                       'version': row['version'], 'attempts': attempts}
+            # 2026-11-10 배포 알림 소음: 끊김 없이 이어진 고장의 시작 시각과 마지막 재시작(warming_up) 시각을 둔다.
+            # 판 번호(version)가 바뀌어도(배포) 이어진 고장은 이어진 것으로 본다 — 재시작 되풀이(크래시 루프)를 시간으로 잰다.
+            # 알림(incident_notifications)이 이 둘로 배포 직후의 잠깐 고장과 진짜 장애를 가른다. 복구 판단(bad·actionable)은 그대로다.
+            def stamp(value):
+                return value if type(value) in (int, float) and math.isfinite(value) and 0 <= value <= now else None
+            continuous_fault = 0 <= now - old.get('at', 0) <= 150 and old.get('bad', 0) > 0
+            if not row['ok']:
+                target['faultSince'] = (stamp(old.get('faultSince')) if continuous_fault else None) or now
+            restarted = now if row['reason'] == 'warming_up' else stamp(old.get('restartedAt'))
+            if restarted is not None and now - restarted < 86400:
+                target['restartedAt'] = restarted
             # Provider retries refresh database timestamps. The independent,
             # durable observer measures uninterrupted failure instead of the
             # age of the last retry. Releases alone do not reset this clock.
@@ -217,7 +228,12 @@ def cycle(config, state, reports, *, now=None, recover=None):
                 except Exception:
                     outcome = None
                 events.append({'target': key, 'recovery': outcome if outcome in ('requested', 'refused', 'limited') else 'unknown'})
-            events.append({'target': key, 'reason': row['reason'], 'bad': bad})
+            event = {'target': key, 'reason': row['reason'], 'bad': bad}
+            if 'faultSince' in target:
+                event['faultSeconds'] = round(now - target['faultSince'])
+            if 'restartedAt' in target:
+                event['restartSeconds'] = round(now - target['restartedAt'])
+            events.append(event)
         if report is not None:
             state['targets'].pop(host + '/host', None)
     save(config['state'], state)

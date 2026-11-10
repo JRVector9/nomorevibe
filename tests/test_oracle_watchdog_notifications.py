@@ -69,6 +69,62 @@ class NotificationTests(unittest.TestCase):
     def recover_rows(self):
         self.rows[:] = [self.row('web'), self.row('monitor')]
 
+    def set_row(self, key, reason='ok', version=12):
+        row = {**self.row(key, reason), 'version': version}
+        self.rows[:] = [row if item['key'] == key else item for item in self.rows]
+
+    def test_deploy_restart_warm_up_is_not_an_incident(self):
+        # 2026-11-10 운영: 배포 때 앱마다 3분 준비(warming_up)가 알림 46건이 됐다 — 새 판으로 다시 떠 3분 안에 정상이면 알리지 않는다
+        self.set_row('web', 'warming_up', version=13)
+        for now in (1000, 1060, 1120, 1180):
+            self.cycle(now)
+        self.set_row('web', 'ok', version=13)
+        self.cycle(1240)
+        self.assertEqual(self.messages, [])
+        self.assertEqual(self.state['notifications']['incidents'], {})
+
+    def test_restart_loop_alerts_once_after_ten_minutes_in_korean(self):
+        # 재시작을 되풀이하면(크래시 루프) 판 번호와 사유가 바뀌어도 고장은 이어진 것으로 보고 10분 뒤 한 번 알린다
+        for index, now in enumerate(range(1000, 1600, 60)):
+            self.set_row('web', 'warming_up' if index % 3 else 'replicas_missing', version=12)
+            self.cycle(now)
+        self.assertEqual(self.messages, [])
+        self.set_row('web', 'warming_up', version=12)
+        self.cycle(1600)
+        self.cycle(1660)
+        self.assertEqual(len(self.messages), 1)
+        self.assertTrue(self.messages[0].startswith('NoMoreVibe 장애 알림\n- m3/web warming_up — 10분 넘게 재시작을 되풀이함'))
+
+    def test_pipeline_alarm_right_after_monitor_restart_waits_but_plain_alarm_alerts(self):
+        # 감시가 다시 뜬 직후의 파이프라인 경보(멈춘 잡 재개 전)는 10분 안에 풀리면 알리지 않는다
+        self.set_row('monitor', 'warming_up', version=13)
+        self.cycle(1000)
+        self.cycle(1060)
+        self.set_row('monitor', 'pipeline_alarm', version=13)
+        self.cycle(1120)
+        self.cycle(1180)
+        self.set_row('monitor', 'ok', version=13)
+        self.cycle(1240)
+        self.assertEqual(self.messages, [])
+        # 재시작 없이 난 경보는 예전처럼 두 번째 관측에서 알린다
+        self.set_row('monitor', 'pipeline_alarm', version=13)
+        for now in (2000, 2060, 2120):
+            self.cycle(now)
+        self.assertEqual(len(self.messages), 1)
+        self.assertIn('m3/monitor pipeline_alarm — 파이프라인 단계가 멈춤', self.messages[0])
+
+    def test_replicas_missing_without_restart_and_old_watchdog_events_alert_as_before(self):
+        self.set_row('web', 'replicas_missing')
+        self.cycle(1000)
+        self.cycle(1060)
+        self.assertEqual(len(self.messages), 1)
+        self.assertIn('m3/web replicas_missing — 컨테이너가 떠 있지 않음', self.messages[0])
+        # 시각이 없는 옛 감시의 사건은 재시작 유예를 받지 않는다(알림을 잃지 않게)
+        self.assertFalse(self.n.restart_grace({'reason': 'warming_up', 'bad': 2}))
+        self.assertTrue(self.n.restart_grace({'reason': 'warming_up', 'bad': 2, 'faultSeconds': 120}))
+        self.assertFalse(self.n.restart_grace({'reason': 'warming_up', 'bad': 3, 'faultSeconds': 600}))
+        self.assertFalse(self.n.restart_grace({'reason': 'database_unavailable', 'bad': 2, 'faultSeconds': 60, 'restartSeconds': 30}))
+
     def test_new_fault_alerts_while_aggregate_is_already_down_and_ack_survives_reload(self):
         self.fail_service()
         self.cycle(1000)
@@ -295,7 +351,7 @@ class NotificationTests(unittest.TestCase):
         self.alarm_pipeline()
         self.cycle(1000)
         self.cycle(1030)
-        self.assertEqual(self.messages, ['NoMoreVibe incidents\n- m3/monitor pipeline_alarm'])
+        self.assertEqual(self.messages, ['NoMoreVibe 장애 알림\n- m3/monitor pipeline_alarm — 파이프라인 단계가 멈춤 — 운영 홈 확인'])
         self.recover_rows()
         self.cycle(1060)
         self.cycle(1210)
