@@ -44,6 +44,7 @@ import {
 import { ModelCapacityDeferredError } from "./capacity-deferred";
 import { LocalModelDomainRefusedError, localModelDomainRefusalEvidence } from "./local-model-domain-refusal";
 import { liveStateSql, occupyingStateSql, inFlightStateSql, openStateSql, reviewStateSql, sentStateSql } from "./capacity-states";
+import { readModelCapacityUnknownHoldMs } from "./capacity-unknown-hold";
 import { deviceCandidateSql, deviceFallbackLimit, deviceModelQuotaGateSql, deviceRouteQuotaGateSql, modelQuotaGateCapped, routeQuotaGateCapped,
   type DeviceModelQuotaGateRow, type DeviceRouteQuotaGateRow, type ModelCapacityGeneration } from "./capacity-devices";
 import { helperGateStateFromRow, helperGateStatesSql, type HelperGateState, type HelperGateStateRow } from "./capacity-helpers";
@@ -180,11 +181,12 @@ async function expireRequests(tx: ProductTransaction, state: Control): Promise<v
 /**
  * 장비별 입장(PR 1b). 현재 세대의 대기 행이 있는 장비(group_id)마다 `deviceCandidateSql` 을 한 번 실행해 맞는 행 하나를 예약한다 —
  * 장비마다 pass 당 하나, control 행 FOR UPDATE 아래. 판정은 DB 안에서만: 장비 D 의 enabled 설정 행(없으면 정책 groupLimits 대체, 둘 다 없으면
- * grant 없음), 점유 = reserved·dispatched(모든 세대, indeterminate 제외), 우선(rank 1) 바쁨 = 대기·점유·최근(idle_ms) rank-1 행,
+ * grant 없음), 점유 = reserved·dispatched + 유지 시간(`unknownHoldMs`) 안의 indeterminate(모든 세대, 2026-11-10 capacity-unknown-hold.ts),
+ * 우선(rank 1) 바쁨 = 대기·점유·최근(idle_ms) rank-1 행,
  * fits ⇔ active < limit AND (rank = 1 OR secondaryActive < (primaryBusy ? cap : max(cap, limit − reserve))), (rank, queue_ordinal) 최소 하나.
  * 전역·공급자·풀 한도와 class 가중치 순환은 더 읽지 않는다. cursor 는 0 에 머문다(control 행을 쓰지 않는다).
  */
-async function grantOne(tx: ProductTransaction, state: Control): Promise<void> {
+async function grantOne(tx: ProductTransaction, state: Control, unknownHoldMs: number): Promise<void> {
   const policy = state.policy;
   if (!policy) return fail("model_capacity_policy_missing");
   if (state.policyHash === null) return fail("model_capacity_policy_hash_missing");
@@ -194,7 +196,7 @@ async function grantOne(tx: ProductTransaction, state: Control): Promise<void> {
     WHERE state = 'waiting' AND epoch = ${generation.epoch} AND revision = ${generation.revision} AND policy_hash = ${generation.policyHash}
       AND queue_until > clock_timestamp() ORDER BY group_id`);
   for (const { group_id } of devices) {
-    const [candidate] = await tx.execute<{ request_id: string }>(deviceCandidateSql(group_id, generation, groupLimitsJson));
+    const [candidate] = await tx.execute<{ request_id: string }>(deviceCandidateSql(group_id, generation, groupLimitsJson, unknownHoldMs));
     if (!candidate) continue;
     const [changed] = await tx.update(modelCapacityRequests).set({ state: "reserved", token: randomUUID(),
       reservedUntil: sql`clock_timestamp() + ${policy.reservationTtlMs} * interval '1 millisecond'`,
@@ -217,12 +219,13 @@ async function deviceConfigured(tx: ProductTransaction, policy: NonNullable<Cont
  * 몫 줄이 없거나 cap 이 없으면 false(오늘과 같다). `ownRequestId` 는 이미 줄에 선 이 요청(그보다 앞선 대기만 센다), 새 요청은 null.
  * 입장 후보 SQL(deviceCandidateSql)과 같은 quota_state CTE, 같은 control 잠금 아래.
  */
-async function routeQuotaCapped(tx: ProductTransaction, state: Control, deviceId: string, routeId: string, ownRequestId: string | null): Promise<boolean> {
+async function routeQuotaCapped(tx: ProductTransaction, state: Control, deviceId: string, routeId: string, ownRequestId: string | null,
+  unknownHoldMs: number): Promise<boolean> {
   if (!state.policy) return fail("model_capacity_policy_missing");
   if (state.policyHash === null) return fail("model_capacity_policy_hash_missing");
   const generation: ModelCapacityGeneration = { epoch: state.epoch, revision: state.revision, policyHash: state.policyHash };
   const [row] = await tx.execute<DeviceRouteQuotaGateRow>(deviceRouteQuotaGateSql(deviceId, generation, JSON.stringify(state.policy.groupLimits ?? {}),
-    routeId, ownRequestId));
+    routeId, ownRequestId, unknownHoldMs));
   return routeQuotaGateCapped(row);
 }
 
@@ -230,10 +233,11 @@ async function routeQuotaCapped(tx: ProductTransaction, state: Control, deviceId
  * 모델 상한 사전 거절(0170, 운영자 결정 2026-11-09): 장비에서 이 model 이 상한에 닿았는가 — modelActive + 앞선 현재 세대 대기(같은 모델, 경로·공급자 무관) ≥ max_slots.
  * 상한 줄이 없으면 false(오늘과 같다). `ownRequestId` 는 이미 줄에 선 이 요청, 새 요청은 null. 입장 후보 SQL 과 같은 model_state CTE, 같은 control 잠금 아래.
  */
-async function modelQuotaCapped(tx: ProductTransaction, state: Control, deviceId: string, model: string, ownRequestId: string | null): Promise<boolean> {
+async function modelQuotaCapped(tx: ProductTransaction, state: Control, deviceId: string, model: string, ownRequestId: string | null,
+  unknownHoldMs: number): Promise<boolean> {
   if (state.policyHash === null) return fail("model_capacity_policy_hash_missing");
   const generation: ModelCapacityGeneration = { epoch: state.epoch, revision: state.revision, policyHash: state.policyHash };
-  const [row] = await tx.execute<DeviceModelQuotaGateRow>(deviceModelQuotaGateSql(deviceId, generation, model, ownRequestId));
+  const [row] = await tx.execute<DeviceModelQuotaGateRow>(deviceModelQuotaGateSql(deviceId, generation, model, ownRequestId, unknownHoldMs));
   return modelQuotaGateCapped(row);
 }
 
@@ -249,8 +253,9 @@ async function withdrawOwnWaiting(tx: ProductTransaction, existing: { requestId:
  * 이 요청의 (route, provider, model) 이 장비의 도우미 경로인가(PR 2a Layer B). 0 줄 = 도우미 경로가 아니다(우선·보통 역할: 도우미 상태와 무관).
  * 줄이 있으면 helper_gate.ok·배정 점유·max_slots 로 판정한다 — 입장 후보 SQL(deviceCandidateSql)과 같은 helperGateCte 조각, 같은 control 잠금 아래.
  */
-async function helperRouteGates(tx: ProductTransaction, deviceId: string, value: ModelCapacityRequestIdentity): Promise<HelperGateState[]> {
-  const rows = await tx.execute<HelperGateStateRow>(helperGateStatesSql(deviceId,
+async function helperRouteGates(tx: ProductTransaction, deviceId: string, value: ModelCapacityRequestIdentity,
+  unknownHoldMs: number): Promise<HelperGateState[]> {
+  const rows = await tx.execute<HelperGateStateRow>(helperGateStatesSql(deviceId, unknownHoldMs,
     { routeId: value.routeId, provider: value.provider, model: value.model }));
   return rows.map(helperGateStateFromRow);
 }
@@ -699,21 +704,24 @@ function requestSlot(checked: ModelCapacityRequest, logicalKey: string | null, m
       && route.provider === checked.provider && route.model === checked.model);
     if (!route) return { kind: "deferred", reason: "unmapped" };
     if (!await deviceConfigured(tx, state.policy, route.groupId)) return { kind: "deferred", reason: "device_unconfigured" };
+    // 결과 미확정 점유(2026-11-10): 유지 시간을 control 잠금 아래에서 한 번 읽어 이 TX 의 모든 칸 판정(도우미·경로 몫·모델 상한·grantOne)에 쓴다.
+    // 저장 즉시 다음 입장부터 바뀐다(30초 스냅숏을 거치지 않는다). 정책 변경(옛 세대) 판정과 작업 키 fence 는 이 값을 쓰지 않는다(10-30 그대로).
+    const unknownHoldMs = await readModelCapacityUnknownHoldMs(tx);
     // 도우미 경로(PR 2a): 닫혀 있거나(신호 없음·만료·다른 epoch·판·계정, 감시자 꺼짐, 정지·mode·판정) 배정 점유가 찼으면 대기 행·event 없이 미룬다.
     // 도우미가 아닌 경로는 0 줄이라 이 검사를 지나간다 — 우선 역할 일은 도우미 상태로 막히지 않는다.
-    const helperGates = await helperRouteGates(tx, route.groupId, checked);
+    const helperGates = await helperRouteGates(tx, route.groupId, checked, unknownHoldMs);
     if (helperGates.some(gate => !gate.ok || gate.active >= gate.maxSlots)) return { kind: "deferred", reason: "helper_ineligible" };
     // 경로 몫(step 2): 이 장비에서 이 route 가 상한에 닿았으면 줄에 서지 않고 바로 미룬다(route_quota, 모델 범위) — 호출자는 다음 순위로 넘긴다.
     // 이미 줄에 서 있던 이 요청이면(상한이 그 사이 찼다) 그 대기 행을 같은 TX 에서 거둔다(도우미 grant-or-nothing 과 같은 wait_cancelled):
     // 남은 대기 행은 같은 작업의 다음 순위 요청을 fence 로 막고, 나중에 예약되면 쓸 사람 없이 칸을 쥔다. 몫이 없으면 0 행이라 지나간다.
     const ownWaiting = existing?.state === "waiting" ? existing.requestId : null;
-    if (await routeQuotaCapped(tx, state, route.groupId, checked.routeId, ownWaiting)) {
+    if (await routeQuotaCapped(tx, state, route.groupId, checked.routeId, ownWaiting, unknownHoldMs)) {
       await withdrawOwnWaiting(tx, existing);
       return { kind: "deferred", reason: "route_quota" };
     }
     // 모델 상한(0170): 이 장비에서 이 model(장부 문자열, 공급자 무관)이 상한에 닿았으면 같은 방식으로 줄에 서지 않고 미룬다(model_quota, 모델 범위).
     // 상한 줄이 없으면 0 행이라 지나간다 — 경로 몫이 보장한 경로라도 모델 상한은 넘지 못한다(절대 상한).
-    if (await modelQuotaCapped(tx, state, route.groupId, checked.model, ownWaiting)) {
+    if (await modelQuotaCapped(tx, state, route.groupId, checked.model, ownWaiting, unknownHoldMs)) {
       await withdrawOwnWaiting(tx, existing);
       return { kind: "deferred", reason: "model_quota" };
     }
@@ -742,7 +750,7 @@ function requestSlot(checked: ModelCapacityRequest, logicalKey: string | null, m
         queueUntil: sql`clock_timestamp() + ${state.policy.queueTtlMs} * interval '1 millisecond'` }).returning();
       await event(tx, waiting, "queued", null, "waiting");
     }
-    await grantOne(tx, state);
+    await grantOne(tx, state, unknownHoldMs);
     const [own] = await tx.select().from(modelCapacityRequests).where(eq(modelCapacityRequests.requestId, checked.requestId));
     sameIdentity(own, checked);
     if (own.state === "reserved") return { kind: "granted", reservation: reservation(own) };
@@ -872,7 +880,8 @@ export async function markModelDispatchIndeterminate(value: ModelCapacityDispatc
 }
 
 /**
- * 사람 검토 완료(0151, 2026-10-30 소유자 결정). indeterminate 행은 점유가 아니므로 용량은 바뀌지 않는다 — 검토 목록에서 빼고 운영자·메모·DB 시각을
+ * 사람 검토 완료(0151, 2026-10-30 소유자 결정). 유지 시간이 지난 indeterminate 행은 칸을 쥐지 않아 용량은 바뀌지 않고, 유지 시간 안의 행(2026-11-10
+ * 결과 미확정 점유)은 withdrawn 이 되는 순간 칸을 놓는다(닫힌 행은 쥐지 않는다) — 검토 목록에서 빼고 운영자·메모·DB 시각을
  * 행(terminal_evidence·hash)과 dispatch_reviewed event 에 같은 값으로 남긴다. dispatch binding(C)은 그대로, 사용량 근거는 없다. 늦은 종료 근거는
  * 이 뒤로는 받지 않는다(withdrawn). 호출자(관리자 action)가 operations_audit 를 따로 남긴다.
  */
@@ -2770,7 +2779,7 @@ const sameRoute = (a: ModelCapacityRoute, b: ModelCapacityRoute) => routeKey(a) 
  *   지금 revision 을 돌려준다(같은 저장을 다시 해도 revision 이 그대로다).
  * - 같은 (routeId, provider, model) 이 다른 예산·장비로 있으면 `model_capacity_route_conflict` — 옛 route 를 바꾸는 것은 정책 개정(DRAIN)이다.
  * - 합이 MODEL_CAPACITY_ROUTES_MAX 를 넘으면 `model_capacity_routes_cap`.
- * - 잡힌 행(reserved·dispatched, indeterminate 는 점유가 아니다)은 앞 판 사슬(`compatiblePredecessors`, PR 3b-B)로 살린다 —
+ * - 잡힌 행(reserved·dispatched, indeterminate 는 옛 세대 판정에 들지 않는다)은 앞 판 사슬(`compatiblePredecessors`, PR 3b-B)로 살린다 —
  *   compatibleModelCapacityGeneration 이 그 행의 (epoch, revision, policy_hash) 를 사슬 칸과 견준다. 덧붙일 때마다:
  *   지금 사슬(옛 단일 `compatiblePredecessor` 는 그 문서 hash 의 한 칸으로 읽는다) + 지금 세대 → 장부에 그 세대의 waiting·reserved·dispatched 행이
  *   하나도 없거나 epoch 가 다른 칸은 뺀다 → 남은 칸이 MODEL_CAPACITY_PREDECESSORS_MAX 를 넘으면 `model_capacity_append_chain_full`

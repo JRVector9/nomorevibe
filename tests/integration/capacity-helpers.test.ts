@@ -59,7 +59,7 @@ const generation = async (): Promise<ModelCapacityGeneration> => {
 };
 const candidate = async (deviceId: string) => {
   const gen = await generation();
-  return db.transaction(async tx => (await tx.execute<{ request_id: string }>(deviceCandidateSql(deviceId, gen, "{}")))[0]?.request_id ?? null);
+  return db.transaction(async tx => (await tx.execute<{ request_id: string }>(deviceCandidateSql(deviceId, gen, "{}", 0)))[0]?.request_id ?? null);
 };
 async function installPolicy(value: ModelCapacityPolicy) {
   await client`UPDATE model_capacity_control SET mode = 'open', policy = ${JSON.stringify(value)}::jsonb, policy_hash = ${modelCapacityPolicyHash(value)},

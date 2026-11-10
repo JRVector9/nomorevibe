@@ -126,8 +126,8 @@ function CardRows({ card, observation, controls, probe, busy, onProbe, recovery,
           <span className="mt-0.5 block text-fg-2">대기 {stage.waiting} · 미확인 {stage.unknown ? <a href={unknownRequest ? llmRetryRowHref(unknownRequest.requestId) : LLM_RETRY_HREF} className="font-semibold text-warn underline underline-offset-[3px]">{stage.unknown} →</a> : 0}</span>
           {status === "down" && !probe && <span className="mt-0.5 block text-fg-2">최근 성공·연결 확인 기록 없음</span>}
           {status === "hold" && full && <span className="mt-0.5 block text-fg-2">슬롯 상한 도달</span>}</td>
-        {group.shared ? (si === 0 && <td rowSpan={group.stages.length} className={`${span} text-right tabular-nums`}><span className="font-semibold">{group.held} / {limit ?? "미확인"}</span> <small className="text-fg-2">공유</small>{lending && <span className="block text-fg-2">빌려 쓰는 중</span>}</td>)
-          : <td className={`${cell} whitespace-nowrap text-right tabular-nums`}><span className="font-semibold">{stage.held} / {limit ?? "미확인"}</span>{lending && <span className="block text-fg-2">빌려 쓰는 중</span>}</td>}
+        {group.shared ? (si === 0 && <td rowSpan={group.stages.length} className={`${span} text-right tabular-nums`}><span className="font-semibold">{group.held} / {limit ?? "미확인"}</span> <small className="text-fg-2">공유</small>{lending && <span className="block text-fg-2">빌려 쓰는 중</span>}{group.heldUnknown > 0 && <span className="block text-warn">미확정 점유 {group.heldUnknown}</span>}</td>)
+          : <td className={`${cell} whitespace-nowrap text-right tabular-nums`}><span className="font-semibold">{stage.held} / {limit ?? "미확인"}</span>{lending && <span className="block text-fg-2">빌려 쓰는 중</span>}{stage.heldUnknown > 0 && <span className="block text-warn">미확정 점유 {stage.heldUnknown}</span>}</td>}
         <td className={`${cell} whitespace-nowrap text-right tabular-nums`}><span className="text-up">{stage.succeeded1h}</span> / <span className="text-down">{stage.failed1h}</span></td>
         <td className={`${cell} whitespace-nowrap`} title={stage.lastSuccessAt ? `${kstClock(stage.lastSuccessAt)} KST` : undefined}>{stage.lastSuccessAt ? <>{elapsedModelTime(stage.lastSuccessAt, observation.observedAt)} 전<span className="block font-mono text-fg-2">{kstClock(stage.lastSuccessAt)}</span></> : <span className="text-fg-2">기록 없음</span>}</td>
         {si === 0 && <td rowSpan={group.stages.length} className={first ? cell : span}><ProbeCell probe={probe} observation={observation} probeable={probeable} shared={gi > 0} busy={busy} /></td>}
@@ -168,7 +168,7 @@ function StageCard({ card, observation, controls, probe, busy, onProbe, recovery
         const unknownRequest = stage.requests.find(row => row.state === "indeterminate");
         return <div key={`${group.id}:${stage.stage}`}>
           <dt className="font-semibold">{stage.label}</dt>
-          <dd className="text-fg-2"><ModelStatusBadge status={status} /> · {stage.held} 점유 · 대기 {stage.waiting} · 성공 {stage.succeeded1h} / 실패 {stage.failed1h}
+          <dd className="text-fg-2"><ModelStatusBadge status={status} /> · {stage.held} 점유{stage.heldUnknown > 0 && <> (미확정 점유 {stage.heldUnknown})</>} · 대기 {stage.waiting} · 성공 {stage.succeeded1h} / 실패 {stage.failed1h}
             {stage.unknown ? <> · <a href={unknownRequest ? llmRetryRowHref(unknownRequest.requestId) : LLM_RETRY_HREF} className="font-semibold text-warn">미확인 {stage.unknown}</a></> : null}
             {stage.lastSuccessAt ? ` · ${elapsedModelTime(stage.lastSuccessAt, observation.observedAt)} 전` : ""}</dd>
         </div>;

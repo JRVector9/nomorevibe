@@ -53,12 +53,12 @@ function equipmentSteps(desk: OperatorDesk | null): { checks: string[]; steps: R
     const devices = desk!.equipment!.devices.filter((device) => device.stuck > 0).map((device) => `${device.name} ${device.stuck}칸`).join(" · ");
     checks.push(`전송 중(dispatched)에 멈춘 호출 ${n(ledger.stuckDispatched)}건이 장비 칸을 잡고 있습니다${devices ? ` — ${devices}` : ""}`);
     steps.push({ kind: "manual", label: "소유 프로세스가 사라진 전송 중 행을 미확정으로 바꾸기",
-      why: "워커가 다시 떠 옛 프로세스가 끝낼 수 없는 호출입니다. 미확정으로 바꾸면 칸이 풀리고 사람 검토로 닫습니다",
+      why: "워커가 다시 떠 옛 프로세스가 끝낼 수 없는 호출입니다. 미확정으로 바꾸면 보낸 지 유지 시간(실시간 한도 「모델 장부 점유」)이 지난 뒤 칸이 풀리고 사람 검토로 닫습니다",
       where: "화면 조치 없음 — scripts/ops/model-owner-gone.ts mark → close-review(PR #800). 판정 근거를 확인한 뒤 운영자가 실행" });
   }
   if (ledger && (ledger.reasons.includes("review_backlog") || ledger.reasons.includes("review_stale") || ledger.reviewCount > 0)) {
     steps.push({ kind: "link", label: `확인 못함(미확정) ${n(ledger.reviewCount)}건 다시 대기열에 넣거나 닫기`, href: LLM_RETRY_HREF, risk: "careful",
-      why: "점유하지 않는 미확정 행이 쌓이면 review_backlog·review_stale 경보가 납니다", undo: "닫은 행은 다시 열리지 않습니다(점유에는 영향 없음) · 다시 넣은 작업은 그 단계가 다시 실행합니다" });
+      why: "미확정 행이 쌓이면 review_backlog·review_stale 경보가 납니다(보낸 뒤 유지 시간 동안은 칸도 차지합니다)", undo: "닫은 행은 다시 열리지 않습니다(유지 시간 안의 행이면 그 칸이 바로 풀립니다) · 다시 넣은 작업은 그 단계가 다시 실행합니다" });
   }
   return { checks, steps };
 }

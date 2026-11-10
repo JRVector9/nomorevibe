@@ -24,7 +24,9 @@ export type ModelBudget = { budget: string; limit: number | null; waiting: numbe
 /** 장비(group_id)별. limit 은 `model_capacity_devices` 의 enabled 행(source table), 없으면 정책 groupLimits 대체(policy_fallback), 둘 다 없으면 null. */
 export type ModelGroup = { group: string; limit: number | null; limitSource?: 'table' | 'policy_fallback' | null; firstModels: { provider: string; model: string }[];
   waitingFirst: number; reserved: number; dispatched: number; indeterminate: number;
-  occupants: { route: string; state: 'reserved' | 'dispatched' | 'indeterminate'; count: number }[] };
+  /** 결과 미확정 점유(2026-11-10): indeterminate 중 유지 시간 안이라 칸을 차지하는 수(입장과 같은 규칙). 옛 집계에는 없다(0). */
+  heldUnknown?: number;
+  occupants: { route: string; state: 'reserved' | 'dispatched' | 'indeterminate'; count: number; held?: number }[] };
 export type DrStatus = { state: 'active' | 'fenced' | null; epoch: number | null; reason: string | null; updatedAt: string | null;
   promoted: number | null; sealed: { id: string; fromEpoch: number; toEpoch: number; sealedAt: string; evidence: string[] }[] | null };
 export type OracleRole = { role: string; candidate: boolean | null; db: string | null; http: string | null; model: string | null;
@@ -44,6 +46,8 @@ const budgetsSchema = z.array(z.object({ budget: z.string().min(1).max(120), wai
   dispatched: count, indeterminate: count, oldestWaitingAt: timestamp.nullable(), oldestUnsettledAt: timestamp.nullable(), untimed: count }));
 const groupRowsSchema = z.object({ limited: z.literal(false), rows: z.array(z.object({ group: z.string().min(1).max(120),
   route: z.string().min(1).max(120), state: z.enum(['waiting', 'reserved', 'dispatched', 'indeterminate']), count,
+  // 결과 미확정 점유(2026-11-10): 그 줄 중 유지 시간 안의 미확정 수. 옛 집계에는 없다
+  held: count.optional(),
 })).max(512) });
 const drSchema = z.object({ state: z.enum(['active', 'fenced']), epoch: positive, reason: z.enum(['operator_fence', 'promotion_sealed']).nullable(),
   updatedAt: timestamp, promoted: count, sealed: z.array(z.object({ id: z.uuid(), fromEpoch: positive, toEpoch: positive, sealedAt: timestamp,
@@ -120,7 +124,9 @@ export function buildPipelineRuntimeStatus(raw: unknown, ctx: RuntimeContext): P
           firstModels: model?.policy?.routes.filter(row => row.routeId === 'crawl-agent-review' && row.groupId === group)
             .map(row => ({ provider: row.provider, model: row.model })) ?? [],
           waitingFirst: total('waiting'), reserved: total('reserved'), dispatched: total('dispatched'), indeterminate: total('indeterminate'),
-          occupants: rows.flatMap(row => row.state === 'waiting' ? [] : [{ route: row.route, state: row.state, count: row.count }]),
+          heldUnknown: rows.filter(row => row.state === 'indeterminate').reduce((sum, row) => sum + (row.held ?? 0), 0),
+          occupants: rows.flatMap(row => row.state === 'waiting' ? [] : [{ route: row.route, state: row.state, count: row.count,
+            ...(row.state === 'indeterminate' && row.held !== undefined ? { held: row.held } : {}) }]),
         };
       });
     }

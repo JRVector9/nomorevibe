@@ -61,7 +61,7 @@ async function insertRequest(fixture: Fixture): Promise<string> {
 }
 const clearRequests = () => client`DELETE FROM model_capacity_requests WHERE owner_instance_id = ${owner.instanceId}`;
 const candidate = (deviceId: string) => db.transaction(async tx => {
-  const rows = await tx.execute<{ request_id: string }>(deviceCandidateSql(deviceId, generation, JSON.stringify(storedPolicy.groupLimits)));
+  const rows = await tx.execute<{ request_id: string }>(deviceCandidateSql(deviceId, generation, JSON.stringify(storedPolicy.groupLimits), 0));
   return rows[0]?.request_id ?? null;
 });
 const save = (input: unknown, expectedVersion: number | null, actor = "jr") => db.transaction(tx => saveModelCapacityDevice(tx, input, expectedVersion, actor));

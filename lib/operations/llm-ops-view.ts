@@ -276,6 +276,8 @@ export function buildDashboardView(input: DashboardInput): DashboardView {
 
   // KPI
   const dispatched = sum(rows, "dispatched"), reserved = sum(rows, "reserved"), waiting = sum(rows, "waiting"), indeterminate = sum(rows, "indeterminate");
+  // 결과 미확정 점유(2026-11-10): 유지 시간 안의 미확정은 입장과 같이 칸을 차지한다
+  const heldUnknown = rows.reduce((total, row) => total + (row.heldUnknown ?? 0), 0);
   const succeeded = sum(rows, "succeeded1h"), failed = sum(rows, "failed1h"), unclassified = sum(rows, "unclassified1h");
   const configuredGroups = new Set((observation.configuredRoutes ?? []).map(route => route.groupId));
   // 연결도 쓰임도 없는 장비(isOrphanDevice — 예: 연결 없이 옛 정책 경로만 남은 supa)는 손댈 곳(장비 한도)에만 두고 여기서는 뺀다
@@ -287,13 +289,15 @@ export function buildDashboardView(input: DashboardInput): DashboardView {
   const unreadableKpi = (id: DashboardKpi["id"], label: string): DashboardKpi => ({ id, label, value: UNREADABLE, foot: "운영 DB 실측을 읽지 못했습니다 — 0으로 보지 않습니다", level: "unknown" });
   const kpis: DashboardKpi[] = readable ? [
     { id: "running", label: "실행 중 / 전체 칸", value: `${fmt(dispatched)} / ${totalSlots === null ? UNREADABLE : fmt(totalSlots)}`,
-      foot: `예약 ${fmt(reserved)} 포함 점유 ${fmt(dispatched + reserved)}${missingLimits ? ` · 한도 확인 불가 장비 ${missingLimits}대` : ""}`,
-      level: totalSlots !== null && dispatched + reserved >= totalSlots && totalSlots > 0 ? "warn" : totalSlots === null ? "unknown" : "ok" },
+      foot: `예약 ${fmt(reserved)}${heldUnknown ? ` · 미확정 점유 ${fmt(heldUnknown)}` : ""} 포함 점유 ${fmt(dispatched + reserved + heldUnknown)}${missingLimits ? ` · 한도 확인 불가 장비 ${missingLimits}대` : ""}`,
+      level: totalSlots !== null && dispatched + reserved + heldUnknown >= totalSlots && totalSlots > 0 ? "warn" : totalSlots === null ? "unknown" : "ok" },
     { id: "waiting", label: "대기", value: fmt(waiting), foot: "빈 칸을 기다리는 호출(현재 정책 세대)", level: waiting > 0 ? "warn" : "ok" },
     { id: "settled", label: "최근 1시간 정산", value: fmt(succeeded + failed + unclassified),
       foot: `성공 ${fmt(succeeded)} · 실패 ${fmt(failed)}${unclassified ? ` · 판정 없음 ${fmt(unclassified)}` : ""}`,
       level: failed > 0 && succeeded === 0 ? "bad" : failed > 0 ? "warn" : "ok" },
-    { id: "retry", label: "재실행 대기", value: fmt(indeterminate), foot: `결과 미확정 ${fmt(indeterminate)}건 · 칸을 차지하지 않음`, level: indeterminate > 0 ? "warn" : "ok" },
+    { id: "retry", label: "재실행 대기", value: fmt(indeterminate), foot: heldUnknown
+      ? `결과 미확정 ${fmt(indeterminate)}건 · 그중 ${fmt(heldUnknown)}건은 유지 시간 안이라 칸을 차지`
+      : `결과 미확정 ${fmt(indeterminate)}건 · 칸을 차지하지 않음(유지 시간 지남)`, level: indeterminate > 0 ? "warn" : "ok" },
   ] : [unreadableKpi("running", "실행 중 / 전체 칸"), unreadableKpi("waiting", "대기"), unreadableKpi("settled", "최근 1시간 정산"), unreadableKpi("retry", "재실행 대기")];
 
   // 장비 점유
@@ -302,7 +306,8 @@ export function buildDashboardView(input: DashboardInput): DashboardView {
     const percent = group.limit ? Math.min(100, Math.round(group.held / group.limit * 100)) : null;
     const level: LlmOpsLevel = group.limit === null ? "unknown" : group.held >= group.limit ? "warn" : "ok";
     const note = [group.limit === null ? "한도 확인 불가" : null, group.source === "policy_fallback" ? "장비 행 없음 · 정책 대체 한도" : null,
-      group.lending ? "빌려 쓰는 중" : null, state && state.waiting > 0 ? `대기 ${fmt(state.waiting)}` : null].filter(Boolean).join(" · ") || null;
+      group.lending ? "빌려 쓰는 중" : null, group.heldUnknown ? `미확정 점유 ${fmt(group.heldUnknown)}` : null,
+      state && state.waiting > 0 ? `대기 ${fmt(state.waiting)}` : null].filter(Boolean).join(" · ") || null;
     const display = names.get(group.groupId);
     return { deviceId: group.groupId, label: display?.name ?? group.groupId, models: display?.models ?? [], held: group.held, limit: group.limit, percent,
       waiting: state ? state.waiting : null, lending: group.lending, level, note };

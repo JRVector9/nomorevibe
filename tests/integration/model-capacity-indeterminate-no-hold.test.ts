@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
-import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
 import { modelCapacityPolicyHash, operatorReviewEvidenceHash, type ModelCapacityPolicy, type ModelCapacityRequest } from "@/lib/llm/capacity";
 import { beginModelDispatch, closeModelCapacityUnknownReview, findOwnPendingModelRequest, markModelDispatchIndeterminate,
   requestModelSlot } from "@/lib/llm/capacity-repository";
@@ -8,12 +8,15 @@ import { ensureSchema, TEST_DATABASE_URL } from "./setup";
 
 /**
  * 2026-10-30 소유자 결정: 미확인(indeterminate) 행은 사람 검토용으로 남지만 슬롯을 점유하지 않고, 같은 작업의 재접수와 정책 변경을 막지 않는다.
- * 이 파일은 공개 API 만 쓰고 자기 owner 의 행만 지운다(control 행은 원래 값으로 되돌린다).
+ * 2026-11-10 결과 미확정 점유 뒤로 칸 점유는 유지 시간(runtime_settings capacity.unknownHoldSeconds) 동안만이다 — 이 파일은 그 값을 0(= 10-30 규칙)으로
+ * 두고 본다(유지 시간이 있을 때는 model-capacity-unknown-hold.test.ts). 재접수 fence·정책 변경은 유지 시간과 무관하게 10-30 그대로다.
+ * 이 파일은 공개 API 만 쓰고 자기 owner 의 행만 지운다(control·runtime_settings 행은 원래 값으로 되돌린다).
  */
 const instanceId = `nohold-${randomUUID()}`;
 const owner = { instanceId, bootId: randomUUID() };
 const admin = postgres(TEST_DATABASE_URL, { max: 1, prepare: false, onnotice: () => {}, connection: { application_name: "model-capacity-indeterminate-no-hold" } });
 let originalControl: Record<string, unknown>;
+let originalSettings: unknown;
 
 const policy: ModelCapacityPolicy = { version: 1, globalLimit: 1, providerLimits: { account: 1 }, groupLimits: { shared: 1 },
   poolLimits: { reviewer: 1, text: 1 }, weights: { first: 2, second: 1, background: 1 }, maxWaiting: 32, queueTtlMs: 60_000, reservationTtlMs: 60_000,
@@ -41,6 +44,10 @@ beforeAll(async () => {
   ensureSchema();
   [originalControl] = await admin`SELECT to_jsonb(c) AS value FROM model_capacity_control c WHERE id=1`.then(rows => rows.map(row => row.value));
   expect(originalControl).toMatchObject({ mode: "disabled", policy: null });
+  [{ values: originalSettings }] = await admin`SELECT values FROM runtime_settings WHERE id = 1`;
+});
+beforeEach(async () => {
+  await admin`UPDATE runtime_settings SET values = jsonb_set(values, '{capacity}', '{"unknownHoldSeconds":0}'::jsonb) WHERE id = 1`;
 });
 afterEach(async () => {
   await admin.begin(async tx => {
@@ -48,13 +55,14 @@ afterEach(async () => {
     await tx`DELETE FROM model_capacity_events WHERE request_id IN (SELECT request_id FROM model_capacity_requests WHERE owner_instance_id=${instanceId})`;
     await tx`DELETE FROM model_capacity_requests WHERE owner_instance_id=${instanceId}`;
     await tx`ALTER TABLE model_capacity_events ENABLE ALWAYS TRIGGER model_capacity_events_no_change`;
+    await tx`UPDATE runtime_settings SET values=${JSON.stringify(originalSettings)}::text::jsonb WHERE id=1`;
     await tx`UPDATE model_capacity_control c SET mode=r.mode,epoch=r.epoch,revision=r.revision,policy=r.policy,policy_hash=r.policy_hash,cursor=r.cursor,updated_at=r.updated_at
       FROM jsonb_populate_recordset(NULL::model_capacity_control,${JSON.stringify([originalControl])}::text::jsonb) r WHERE c.id=r.id`;
   });
 });
 afterAll(() => admin.end({ timeout: 3 }));
 
-it("an indeterminate row frees its slot: the next request is granted at globalLimit 1 and the unknown row stays for review with its reason", async () => {
+it("hold 0: an indeterminate row frees its slot: the next request is granted at globalLimit 1 and the unknown row stays for review with its reason", async () => {
   await installPolicy();
   const { value, dispatch } = await unknownRow("client_timeout");
   expect(await occupying()).toBe(0);
@@ -84,7 +92,9 @@ it("the same logical work (owner + work key) re-admits with a new requestId whil
   expect(await requestModelSlot(value)).toEqual({ kind: "deferred", reason: "dispatched" });
 });
 
-it("a policy change with only indeterminate old-generation rows does not defer, while a dispatched old-generation row still does", async () => {
+it("a policy change with only indeterminate old-generation rows does not defer (with or without a hold), while a dispatched old-generation row still does", async () => {
+  // 유지 시간이 있어도 옛 세대 판정은 미확정을 세지 않는다(칸 점유만 유지 시간을 본다 — 이 행은 옛 장비 shared 의 칸만 쥔다)
+  await admin`UPDATE runtime_settings SET values = jsonb_set(values, '{capacity}', '{"unknownHoldSeconds":600}'::jsonb) WHERE id = 1`;
   await installPolicy();
   await unknownRow("transport_unknown");
   const renamed: ModelCapacityPolicy = { ...policy, groupLimits: { renamed: 1 }, routes: policy.routes.map(route => ({ ...route, groupId: "renamed" })) };

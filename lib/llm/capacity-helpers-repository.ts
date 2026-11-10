@@ -9,6 +9,7 @@ import { isRetiredGatewayUrl } from "@/lib/operations/admin-models-view";
 import { DrWriterFencedError, writerSiteActive } from "@/lib/operations/dr/epoch";
 import type { EngineContractProbe } from "@/lib/operations/admin-engine-connect";
 import { parseModelCapacityPolicy, type ModelCapacityPolicy, type ModelCapacityRoute } from "./capacity";
+import { readModelCapacityUnknownHoldMs } from "./capacity-unknown-hold";
 import type { CliProvider, CliServingContract } from "./cli-serving-contract";
 import { readModelRegistry, type ModelDefinition, type ModelRegistry } from "./model-registry";
 import {
@@ -239,17 +240,19 @@ export async function listHelperAssignments(tx?: ProductTransaction): Promise<He
 
 /** 배정이 있는 모든 장비의 도우미 경로 상태 — 한 문장(LATERAL + helperGateStatesSql), 잠그지 않는다. */
 async function allGateStates(reader: Reader): Promise<HelperGateState[]> {
+  const unknownHoldMs = await readModelCapacityUnknownHoldMs(reader, { whenReadable: true });
   const rows = await reader.execute<HelperGateStateRow>(sql`SELECT x.* FROM (SELECT DISTINCT a.device_id FROM model_helper_assignments a WHERE a.role = 'helper') ids,
-    LATERAL (${helperGateStatesSql(sql`ids.device_id`)}) x ORDER BY x.assignment_id, x.kind`);
+    LATERAL (${helperGateStatesSql(sql`ids.device_id`, unknownHoldMs)}) x ORDER BY x.assignment_id, x.kind`);
   return rows.map(helperGateStateFromRow);
 }
 
-/** 도우미 경로 상태(helperGateStatesSql). deviceId 가 없으면 배정이 있는 모든 장비(한 문장, LATERAL). primary 에서 잠그지 않고 읽는다. */
+/** 도우미 경로 상태(helperGateStatesSql). deviceId 가 없으면 배정이 있는 모든 장비(한 문장, LATERAL). primary 에서 잠그지 않고 읽는다.
+ * 배정 점유(active)는 입장과 같이 유지 시간 안의 미확정 행까지 센다(2026-11-10). */
 export async function readHelperGateStates(deviceId?: string): Promise<HelperGateState[]> {
   if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
   if (deviceId !== undefined && (typeof deviceId !== "string" || !deviceId || deviceId.length > 120)) fail("model_helper_invalid:deviceId");
   return onPrimary(async () => deviceId === undefined ? allGateStates(db)
-    : (await db.execute<HelperGateStateRow>(helperGateStatesSql(deviceId))).map(helperGateStateFromRow));
+    : (await db.execute<HelperGateStateRow>(helperGateStatesSql(deviceId, await readModelCapacityUnknownHoldMs(db, { whenReadable: true })))).map(helperGateStateFromRow));
 }
 
 const controlOf = (row: typeof modelSupervisorControl.$inferSelect): SupervisorControlRow => Object.freeze({

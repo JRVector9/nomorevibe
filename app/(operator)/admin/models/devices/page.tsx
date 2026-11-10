@@ -29,7 +29,7 @@ const EDITOR = modelsAdvancedEditor("devices");
 /**
  * 장비 한도(model_capacity_devices·model_capacity_device_roles, PR 1b; 2026-11-09 개편 시안 #devices) — 서버 한 대가 한 줄인 표 하나.
  * 운영 한도(칸 수)·모델 한도를 저장하면 입장 판정이 트랜잭션 안에서 이 표를 바로 읽어 다음 입장부터 쓴다 — DRAIN·배포·"읽은 판"이 없다.
- * 점유는 예약+진행만 센다 — 미확인(indeterminate) 행은 점유가 아니다. 역할 순서·유휴 시간·비워 둘 칸·새 장비는 맨 아래 「세부 설정」에 접어 둔다.
+ * 점유는 예약+진행+결과 미확정 점유(유지 시간 안의 indeterminate, 2026-11-10 — 입장과 같은 규칙)를 센다. 역할 순서·유휴 시간·비워 둘 칸·새 장비는 맨 아래 「세부 설정」에 접어 둔다.
  *
  * CLI(Claude·Codex) 장비 줄 아래에는 작업별 「모델 ▾ · 추론 강도 ▾」 줄(CliTaskRows)을 끼운다 — 읽기는 readCliTaskUsages, 저장은 devices/cli-actions.
  */

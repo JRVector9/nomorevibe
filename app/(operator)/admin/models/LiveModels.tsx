@@ -11,7 +11,7 @@ import { probeAdminModel, type ModelProbeResult } from "./operation-actions";
 import { ModelOpsPanel } from "./ModelOpsPanel";
 import type { OpsState } from "@/lib/operations/ops-runner/contract";
 import { ModelStageTable, ModelStatusBadge, PROBE_PROVIDERS, cardProvider } from "./ModelStageTable";
-import { SummaryTiles, type LeaseTile } from "./SummaryTiles";
+import { SummaryTiles, unknownHoldText, type LeaseTile } from "./SummaryTiles";
 import { LLM_RETRY_HREF } from "@/lib/operations/llm-ops-links";
 
 export { ModelStatusBadge, PROBE_PROVIDERS };
@@ -89,7 +89,7 @@ export function LiveModels({ observation, models = [], assignments = [], contrac
       <ModelOpsPanel mode={observation.mode} requests={[]} models={[]} initialStates={opsStates} {...opsActions}
         renderControls={controls => <div className="flex min-w-0 flex-col gap-3">
           <SummaryTiles observation={observation} cards={cards} controls={controls} probes={probes} leases={leases} readiness={readiness} alarms={alarms} />
-          {unknownCount > 0 && <p role="alert" className="rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-[13px]"><strong className="text-warn">확인 못함 {unknownCount}건 · 사람 검토</strong> — 슬롯을 점유하지 않습니다. 표의 「미확인」 수를 누르면 <a href={LLM_RETRY_HREF} className="underline underline-offset-[3px]">기록 › 재실행 대기</a>의 그 요청으로 갑니다.</p>}
+          {unknownCount > 0 && <p role="alert" className="rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-[13px]"><strong className="text-warn">확인 못함 {unknownCount}건 · 사람 검토</strong> — 보낸 뒤 {unknownHoldText(observation) ?? "유지 시간"} 동안만 칸을 차지하고(미확정 점유) 그 뒤로는 차지하지 않습니다. 표의 「미확인」 수를 누르면 <a href={LLM_RETRY_HREF} className="underline underline-offset-[3px]">기록 › 재실행 대기</a>의 그 요청으로 갑니다.</p>}
           {observation.truncated && <p role="alert" className="text-[13px]">열린 요청은 미확인 우선 100건만 표시합니다. 점유·미확인 합계는 전체 장부 기준입니다.</p>}
           <section className="min-w-0 rounded-xl border border-line bg-bg-card" aria-labelledby="models-table-heading">
             <div className="models-stage-head flex flex-wrap items-baseline gap-x-3.5 gap-y-1.5 border-b border-line px-3 py-2.5">

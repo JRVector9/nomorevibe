@@ -30,7 +30,7 @@ export const ACTION_LINKS = {
   models: "/admin/status#models",
   firstReviewStatus: "/admin/status#first-review-status",
   modelCapacity: "/admin/status#pipeline-models-title",
-  /** 확인 못함 — 재실행 대기(미확인 모델 호출, 슬롯 점유 아님 · 2026-10-30, 2026-11-07 기록 화면으로 옮김) */
+  /** 확인 못함 — 재실행 대기(미확인 모델 호출, 보낸 뒤 유지 시간 동안만 칸 점유 · 2026-10-30·11-10, 2026-11-07 기록 화면으로 옮김) */
   unknownReview: "/admin/models/history#retry",
   /** 직접 판단 구간, 오래 기다린 것부터 */
   reviewHuman: "/admin/review?stage=human&sort=wait#review-list",

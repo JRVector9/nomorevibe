@@ -20,7 +20,8 @@ import { ROUTE_LABELS } from "./runtime-settings-schema";
  *
  * - 화면은 장비마다 설정값(칸 수·낮은 순위 평소 상한·유휴 판정 시간·항상 비워 둘 칸·엔진 실제 동시 처리 수·메모)과 기본값, 역할 순서(route → rank),
  *   실시간 상태(점유·우선 역할 바쁨/유휴·낮은 순위 n/상한·빌려 쓰는 중·대기), 판(version)·마지막 저장을 함께 보인다.
- * - 점유는 예약(reserved)+진행(dispatched)만이다 — 미확인(indeterminate) 행은 점유가 아니다(live-settings-plan §7 PR 1b, 소유자 결정 a).
+ * - 점유는 예약(reserved)+진행(dispatched)+결과 미확정 점유(유지 시간 안의 indeterminate, 2026-11-10 소유자 결정 — 입장과 같은 규칙,
+ *   lib/llm/capacity-unknown-hold.ts)다. 유지 시간이 지난 미확인 행은 점유가 아니다(live-settings-plan §7 PR 1b, 소유자 결정 a 그대로).
  * - 장비 목록 = 장비 행 ∪ 현재 정책 경로의 groupId ∪ 실시간 상태의 deviceId. 행이 없는 정책 장비는 policy_fallback(groupLimits 값으로 대신) 또는
  *   unconfigured(groupLimits 도 없어 device_unconfigured 로 보류)로 표시한다.
  * - 저장은 WP-A 의 saveModelCapacityDevice 한 번이다(그 안에서 replay 거부 → DR fence → control FOR UPDATE → zod → CAS → upsert → 역할 교체 →
@@ -48,7 +49,9 @@ export type DeviceRoleView = {
   /** 현재 정책의 경로가 이 장비를 쓴다 */
   inPolicy: boolean };
 export type DeviceLiveView = { source: "table" | "policy_fallback"; limitSlots: number; active: number; primaryBusy: boolean; secondaryActive: number; secondaryBound: number;
-  lending: boolean; waiting: number; waitingPrimary: number };
+  lending: boolean; waiting: number; waitingPrimary: number;
+  /** active 중 결과 미확정 점유(유지 시간 안의 indeterminate). 실시간 상태에 없으면(옛 읽기) 0 */
+  heldUnknown?: number };
 /** 모델 상한(0170) 한 줄 — 상한 줄 ∪ 지금 점유·대기가 있는 모델(model 순). maxSlots null = 상한 없음(공유 칸만), engineMax null = 엔진 최대 모름(표시용),
  * active·waiting null = 실시간 상태를 못 읽음 */
 export type DeviceModelLimitView = { model: string; maxSlots: number | null; engineMax: number | null; active: number | null; waiting: number | null };
@@ -139,7 +142,8 @@ function deviceView(deviceId: string, row: ModelCapacityDeviceRow | undefined, s
   const unranked = policyRoutes.filter(routeId => !ranked.some(role => role.routeId === routeId))
     .map(routeId => ({ routeId, rank: null, label: deviceRoleLabel(routeId), inPolicy: true }));
   const live: DeviceLiveView | null = state ? { source: state.source, limitSlots: state.limitSlots, active: state.active, primaryBusy: state.primaryBusy,
-    secondaryActive: state.secondaryActive, secondaryBound: state.secondaryBound, lending: state.lending, waiting: state.waiting, waitingPrimary: state.waitingPrimary } : null;
+    secondaryActive: state.secondaryActive, secondaryBound: state.secondaryBound, lending: state.lending, waiting: state.waiting, waitingPrimary: state.waitingPrimary,
+    ...(state.heldUnknown === undefined ? {} : { heldUnknown: state.heldUnknown }) } : null;
   const issues: string[] = [];
   if (!row && fallback !== null) issues.push(`장비 행이 없어 정책 groupLimits 값(${fmt(fallback)}칸, 낮은 순위 상한도 ${fmt(fallback)})으로 대신합니다(policy_fallback) — 저장하면 이 표가 기준이 됩니다`);
   if (!row && fallback === null) issues.push("장비 행도 정책 groupLimits 도 없어 이 장비로 가는 요청은 device_unconfigured 로 보류됩니다 — OPEN 전에 저장해 주세요");
@@ -147,7 +151,8 @@ function deviceView(deviceId: string, row: ModelCapacityDeviceRow | undefined, s
   if (row && policy && !policyRoutes.length) issues.push("현재 정책의 어느 경로도 이 장비를 쓰지 않습니다(정책 개정 전에 미리 만든 행이면 정상)");
   if (settings.physicalLimit !== null && settings.limitSlots !== null && settings.limitSlots > settings.physicalLimit)
     issues.push(`칸 수(${fmt(settings.limitSlots)})가 엔진 실제 동시 처리 수(${fmt(settings.physicalLimit)})를 넘습니다`);
-  if (live && live.active > live.limitSlots) issues.push(`점유 ${fmt(live.active)}가 칸 수 ${fmt(live.limitSlots)}를 넘습니다(한도를 낮춘 뒤 아직 끝나지 않은 호출) — 새 입장만 막히고 잡힌 행은 그대로입니다`);
+  if (live && live.active > live.limitSlots) issues.push(`점유 ${fmt(live.active)}가 칸 수 ${fmt(live.limitSlots)}를 넘습니다(한도를 낮춘 뒤 아직 끝나지 않은 호출${(live.heldUnknown ?? 0) > 0
+    ? ` 또는 유지 시간 안의 결과 미확정 ${fmt(live.heldUnknown ?? 0)}건` : ""}) — 새 입장만 막히고 잡힌 행은 그대로입니다`);
   const foreign = ranked.filter(role => !role.inPolicy && policy).map(role => role.routeId);
   if (foreign.length) issues.push(`순위에 있지만 현재 정책에 없는 경로: ${foreign.join(", ")}`);
   return { deviceId, source, enabled: row?.enabled ?? true, version: row?.version ?? null, updatedBy: row?.updatedBy ?? null, updatedAt: row?.updatedAt ?? null,

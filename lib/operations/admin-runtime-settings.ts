@@ -8,6 +8,7 @@ import { adminLog, type AdminLogRow } from "./admin-log";
 import { ROLE_LABELS } from "./contracts";
 import { isConsumerServiceInstance, parseServiceObservationKey } from "./instance";
 import { readRuntimeSettingsApply, readRuntimeSettingsRow, RUNTIME_SETTINGS_AUDIT_ACTION, type RuntimeSettingsRow } from "./runtime-settings";
+import { MODEL_CAPACITY_UNKNOWN_HOLD_SECONDS_MAX } from "@/lib/llm/capacity-unknown-hold";
 import { ASSIGNMENT_TABLE_READS, ASSIGNMENT_TABLE_READS_LABELS, BUDGET_CALL_MARGIN_MS, BUDGET_THIN_MARGIN_MS, DEFAULT_JOB_BUDGET_MS, DEFAULT_RUNTIME_SETTINGS,
   effectiveJobBudgetMs, GROUP_LABELS, JOB_CALL_ROUTES, JOB_KNOB_NAMES, JOB_LABELS, jobCallCeilingMs, jobKnobsSchema, resolveRuntimeSettings, ROUTE_LABELS, RUNTIME_SETTING_GROUPS,
   runtimeSettingLabel, runtimeSettingsWarnings, shortRuntimeSettingsVersion, storedSettingsVersion, type JobKnobName, type ProductTranslationPolicy,
@@ -82,6 +83,8 @@ export type RuntimeSettingsAdminView = {
   routes: RouteRow[]; ladders: LadderRow[]; translation: SettingField[]; jobKnobs: JobKnobRow[]; budgets: BudgetRow[];
   /** 모델 배정 읽기(3b-E) — 열거 칸(assignments.tableReads) */
   assignments: SettingField[];
+  /** 모델 장부 점유(2026-11-10) — 결과 미확정 점유 유지 시간(capacity.unknownHoldSeconds, 초 정수) */
+  capacity: SettingField[];
   apply: SettingsApply | null; roles: RoleEnvView[];
   audit: AuditView[];
 };
@@ -136,6 +139,17 @@ export function assignmentFields(stored: unknown, effective: RuntimeSettings, de
   return [field(stored, "assignments.tableReads", effective.assignments.tableReads, defaults.assignments.tableReads,
     { note: "켜면 1차·2차·단계 풀·등록부 기본값이 배정 표의 실전(live) 행으로 고릅니다(쓸 행이 없는 단계는 설정 그대로). 모든 역할이 30초 안에 같은 값을 읽습니다 — 재배포 없음. "
       + "env MODEL_ASSIGNMENT_TABLE(1·0)이 있는 앱은 그 값이 이깁니다(비상용)." })];
+}
+
+/**
+ * 모델 장부 점유(2026-11-10 소유자 결정 「결과 미확정 점유」) — 정수 칸 하나(초). 입장 TX 가 이 행을 바로 읽으므로 저장 즉시 다음 입장부터 바뀐다.
+ * 범위 0~3600(0 = 예전처럼 차지하지 않음).
+ */
+export function capacityFields(stored: unknown, effective: RuntimeSettings, defaults: RuntimeSettings): SettingField[] {
+  return [field(stored, "capacity.unknownHoldSeconds", effective.capacity.unknownHoldSeconds, defaults.capacity.unknownHoldSeconds,
+    { note: "결과 미확정(확인 못함) 호출은 보낸 시각부터 이 시간 동안 장비 칸·모델 상한·경로 몫을 계속 차지합니다 — 취소가 없는 엔진(M1 mlx-lm·supa)은 "
+      + "기한이 지나도 생성을 계속하기 때문입니다. 지나면 칸을 놓고 재실행 대기 목록에만 남습니다(행 상태는 그대로). "
+      + `0 이면 차지하지 않습니다(10-30 규칙). 범위 0~${MODEL_CAPACITY_UNKNOWN_HOLD_SECONDS_MAX}초. 저장 즉시 다음 모델 입장부터 씁니다.` })];
 }
 
 function modelCeiling(route: string, models: readonly ModelDefinition[]): string | null {
@@ -279,6 +293,7 @@ export function buildRuntimeSettingsAdminView(input: AdminViewInput): RuntimeSet
     routes: routeRows(stored, effective, defaults, models), ladders: ladderRows(stored, effective, defaults), translation: translationFields(stored, effective, defaults),
     jobKnobs: jobKnobRows(stored, effective, defaults), budgets: budgetRows(stored, effective, defaults, models, roles, warnings, now),
     assignments: assignmentFields(stored, effective, defaults),
+    capacity: capacityFields(stored, effective, defaults),
     apply: input.apply ?? null,
     // env 등록부 여부는 관측에서 직접 읽은 것과 적용 확인(WP-B settings-apply.ts RoleSettingsApply.registryEnv, 선택 필드) 중 하나라도 true 면 true
     roles: RUNTIME_SETTINGS_ROLES.map(role => ({ role, label: ROLE_LABELS[role] ?? role,
@@ -474,7 +489,8 @@ export function runtimeSettingsIssueMessage(issue: string): string {
     case "runtime_settings_invalid": {
       if (detail in CHOICE_OPTIONS) return `${runtimeSettingLabel(detail)}: 고를 수 있는 값이 아닙니다(${CHOICE_OPTIONS[detail].map(option => option.value).join(" · ")})`;
       // 잡별 묶음의 정수 칸은 스키마 범위를 함께 말한다(2026-11-09 — 재판정 한도를 그 자리에서 고칠 때 무엇을 넣어야 하는지 보이게). ms 칸은 화면 단위가 초라 범위를 붙이지 않는다
-      const parts = detail.split("."), range = parts[0] === "jobs" && parts.length === 3 && fieldKind(detail) === "int" ? jobKnobRange(parts[2]) : null;
+      const parts = detail.split("."), range = parts[0] === "jobs" && parts.length === 3 && fieldKind(detail) === "int" ? jobKnobRange(parts[2])
+        : detail === "capacity.unknownHoldSeconds" ? { min: 0, max: MODEL_CAPACITY_UNKNOWN_HOLD_SECONDS_MAX } : null;
       return `${runtimeSettingLabel(detail)}: 범위를 벗어났습니다${range ? `(${range.min}~${range.max})` : ""}`;
     }
     case "runtime_settings_version": return `저장 문서 판 표시가 다릅니다: ${detail}`;

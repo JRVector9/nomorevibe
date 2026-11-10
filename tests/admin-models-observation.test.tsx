@@ -22,19 +22,24 @@ function snapshot(metricsRows: unknown[] = [metrics], requests: unknown[] = [req
     policy, policyHash: modelCapacityPolicyHash(policy), updatedAt: at }, metrics: metricsRows, requests };
 }
 describe("admin-models DB 관측 표시", () => {
-  it("예약은 기한과 무관하게 같은 그룹의 점유에 포함하고 미확인은 점유에 세지 않는다", () => {
-    // 2026-10-30 결정: 미확인(indeterminate)은 슬롯을 점유하지 않는다 — reserved 1 만 held 에 든다(미확인 1 은 요청 목록에만 남는다).
+  it("예약은 기한과 무관하게 같은 그룹의 점유에 포함하고, 미확인은 유지 시간 안의 것(heldUnknown)만 점유에 센다", () => {
+    // 유지 시간이 지난 미확인(heldUnknown 0)은 점유가 아니다 — reserved 1 만 held 에 든다(미확인 1 은 요청 목록에만 남는다).
     const result = buildAdminModelsObservation(snapshot());
     // 장비 상태를 읽지 않은 호출(devices 없음)은 정책 groupLimits 대체값을 한도로 쓴다.
-    expect(result.groups).toEqual([{ groupId: "m1", held: 1, limit: 1, lending: false, source: null }]);
+    expect(result.groups).toEqual([{ groupId: "m1", held: 1, heldUnknown: 0, limit: 1, lending: false, source: null }]);
     expect(result).toMatchObject({ devices: [], devicesRead: false });
     expect(result.requests[0]).toMatchObject({ requestId: request.requestId, state: "indeterminate" });
     expect(result.rows[0]).toMatchObject({ succeeded1h: 3, failed1h: 1, withdrawn1h: 2, unclassified1h: 4 });
+    // 결과 미확정 점유(2026-11-10): 유지 시간 안의 미확인 1 은 입장처럼 점유에 든다 — 한도 1 이 찼다
+    const held = buildAdminModelsObservation({ ...snapshot([{ ...metrics, reserved: 0, heldUnknown: 1 }]), unknownHoldMs: 600_000 });
+    expect(held.groups).toEqual([{ groupId: "m1", held: 1, heldUnknown: 1, limit: 1, lending: false, source: null }]);
+    expect(held.unknownHoldMs).toBe(600_000);
+    expect(result).not.toHaveProperty("unknownHoldMs");
   });
   it("같은 모델의 예전 그룹과 현재 그룹을 합쳐 숨기지 않는다", () => {
     const result = buildAdminModelsObservation(snapshot([metrics, { ...metrics, groupId: "old", reserved: 0, indeterminate: 1 }]));
     // 2026-10-30 결정: 옛 그룹의 미확인 1 은 점유 0 이지만 그룹은 그대로 보인다(사람 검토 대상이 숨지 않는다).
-    expect(result.groups.find(row => row.groupId === "old")).toEqual({ groupId: "old", limit: null, held: 0, lending: false, source: null });
+    expect(result.groups.find(row => row.groupId === "old")).toEqual({ groupId: "old", limit: null, held: 0, heldUnknown: 0, lending: false, source: null });
     expect(result.rows).toHaveLength(2);
   });
   it("정책 해시 검증에 실패하면 상한이나 0건을 추정하지 않는다", () => {
@@ -48,12 +53,12 @@ describe("admin-models DB 관측 표시", () => {
     const device = { deviceId: "m1", source: "table" as const, limitSlots: 3, secondaryCap: 1, idleMs: 60_000, reserveSlots: 0, active: 1, secondaryActive: 1,
       secondaryBound: 3, primaryBusy: false, lending: true, waiting: 0, waitingPrimary: 0, version: 2, updatedAt: at };
     const result = buildAdminModelsObservation({ ...snapshot(), devices: [device] });
-    expect(result.groups).toEqual([{ groupId: "m1", held: 1, limit: 3, lending: true, source: "table" }]);
+    expect(result.groups).toEqual([{ groupId: "m1", held: 1, heldUnknown: 0, limit: 3, lending: true, source: "table" }]);
     expect(result).toMatchObject({ devices: [device], devicesRead: true });
     expect(result).not.toHaveProperty("globalLimit");
     // 장비 상태 읽기에 실패하면(null) 한도를 정책값으로 꾸미지 않는다.
     const failed = buildAdminModelsObservation({ ...snapshot(), devices: null });
-    expect(failed.groups).toEqual([{ groupId: "m1", held: 1, limit: null, lending: false, source: null }]);
+    expect(failed.groups).toEqual([{ groupId: "m1", held: 1, heldUnknown: 0, limit: null, lending: false, source: null }]);
     expect(failed.devicesRead).toBe(false);
     const html = renderToStaticMarkup(createElement(LiveModels, { observation: result }));
     expect(html).toContain("빌려 쓰는 중"); expect(html).toContain("/admin/models/devices"); expect(html).not.toContain("상한 미확인");

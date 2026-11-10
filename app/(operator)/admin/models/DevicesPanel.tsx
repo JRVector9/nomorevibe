@@ -21,13 +21,13 @@ export function deviceProbeStatus(deviceId: string, models: readonly ModelDefini
 
 /**
  * 장비 표(승인 시안, 2열의 왼쪽) — /admin/models/devices 와 같은 로더(readCapacityDevicesAdminView)의 값을 요약한다:
- * 장비 · 서버(이름·엔진 주소) · 한도 · 보조 상한 · 점유 · 보조/상한 · 대기 · 역할 순위 · 물리 한도 · 상태 · 판. 점유는 예약+진행만(미확인은 점유 아님).
+ * 장비 · 서버(이름·엔진 주소) · 한도 · 보조 상한 · 점유 · 보조/상한 · 대기 · 역할 순위 · 물리 한도 · 상태 · 판. 점유는 예약+진행+유지 시간 안의 미확인(2026-11-10).
  */
 export function DevicesPanel({ view, models, probes }: { view: CapacityDevicesAdminView; models: readonly ModelDefinition[]; probes: Record<string, ProbeObservation> }) {
   return <section className="min-w-0 rounded-xl border border-line bg-bg-card scroll-mt-28 md:scroll-mt-16" id="devices" aria-labelledby="devices-heading">
     <div className="flex flex-wrap items-baseline gap-x-3.5 gap-y-1.5 border-b border-line px-3 py-2.5">
       <h2 id="devices-heading" className="text-[15px] font-semibold">장비 <span className="font-mono tabular-nums">{view.devices.length}</span>대</h2>
-      <p className="min-w-0 flex-[1_1_240px] text-[13px] text-fg-2">점유는 예약+진행만(미확인 행은 점유 아님). 보조 상한은 낮은 순위 역할의 평소 상한, 「빌려 쓰는 중」은 우선 역할이 쉬어 상한을 넘은 상태.</p>
+      <p className="min-w-0 flex-[1_1_240px] text-[13px] text-fg-2">점유는 예약+진행+미확정 점유(유지 시간 안의 결과 미확정 호출 — 실시간 한도의 「모델 장부 점유」). 보조 상한은 낮은 순위 역할의 평소 상한, 「빌려 쓰는 중」은 우선 역할이 쉬어 상한을 넘은 상태.</p>
       <span className="flex flex-wrap gap-x-3 text-[13px]"><a href="#assign" className="text-accent-ink underline underline-offset-[3px]">배정 표 ↓</a><Link href="/admin/models/devices" prefetch={false} className="text-accent-ink underline underline-offset-[3px]">장비 설정 →</Link></span>
     </div>
     {view.controlError && <p role="alert" className="px-3 pt-2 text-[13px] text-down">용량 제어 행을 읽지 못했습니다({capacityDeviceIssueMessage(view.controlError)}).</p>}
@@ -55,7 +55,8 @@ function DeviceRow({ device, models, probes }: { device: DeviceView; models: rea
     <td className={TD}>{server.name}{server.hosts.map(host => <span key={host} className="block break-all font-mono text-fg-2">{host}</span>)}{!server.hosts.length && <span className="block font-mono text-fg-2">주소 없음</span>}</td>
     <td className={`${TD} text-right tabular-nums`}>{num(device.settings.limitSlots)}</td>
     <td className={`${TD} text-right tabular-nums`}>{num(device.settings.secondaryCap)}</td>
-    <td className={`${TD} text-right tabular-nums`}>{live ? <><b>{num(live.active)}</b> / {num(live.limitSlots)}{live.active > live.limitSlots && <span className="text-down"> 초과</span>}</> : <span className="text-fg-2">미확인</span>}</td>
+    <td className={`${TD} text-right tabular-nums`}>{live ? <><b>{num(live.active)}</b> / {num(live.limitSlots)}{live.active > live.limitSlots && <span className="text-down"> 초과</span>}
+      {(live.heldUnknown ?? 0) > 0 && <span className="block text-warn">미확정 점유 {num(live.heldUnknown ?? 0)}</span>}</> : <span className="text-fg-2">미확인</span>}</td>
     <td className={`${TD} text-right tabular-nums`}>{live ? <>{num(live.secondaryActive)} / {num(live.secondaryBound)}{live.lending && <span className="block text-warn">빌려 쓰는 중</span>}</> : <span className="text-fg-2">—</span>}</td>
     <td className={`${TD} text-right tabular-nums`}>{live ? <>{num(live.waiting)}{live.waitingPrimary > 0 && <span className="block text-fg-2">우선 {num(live.waitingPrimary)}</span>}</> : <span className="text-fg-2">—</span>}</td>
     <td className={TD}>{ranked.length ? <div className="grid gap-px">{ranked.map(role => <span key={role.routeId} className="whitespace-nowrap"><i className="inline-block w-[1.3em] not-italic font-mono text-fg-2">{role.rank}</i>{role.label}{!role.inPolicy && <span className="text-warn"> 정책 밖</span>}</span>)}</div>

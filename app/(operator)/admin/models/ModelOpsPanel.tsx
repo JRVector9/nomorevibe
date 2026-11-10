@@ -78,7 +78,7 @@ export function ModelOpsPanel({ mode, requests, models, initialStates = [], subm
     {dialog && <OpsConfirm title={titles[dialog.action]} busy={busy} close={() => setDialog(null)}>
       <p>대상: {dialog.label ?? (dialog.action.startsWith("admission-") ? "모든 공통 모델" : dialog.targetId)}</p>
       <details><summary>자세히</summary><p className="break-all">대상 ID {dialog.targetId} · 작업 ID {dialog.id}</p></details>
-      <p>{dialog.action === "request-release" ? "접수 중지 → 요청 보낸 서비스·모델 종료 확인 → 근거 검증 후 정산(확인 못함 행은 점유가 아니므로 검토 목록에서만 닫힘) → 원래 설정 복원 → 접수 재개. 업무 기록과 사용량 미확인을 보존합니다."
+      <p>{dialog.action === "request-release" ? "접수 중지 → 요청 보낸 서비스·모델 종료 확인 → 근거 검증 후 정산(확인 못함 행은 검토 목록에서 닫힘 — 유지 시간 안의 행이면 그 칸도 풀림) → 원래 설정 복원 → 접수 재개. 업무 기록과 사용량 미확인을 보존합니다."
         : dialog.action === "model-restart" ? "접수 중지 → 모델과 관련 서비스 종료 확인 → 원래 설정으로 복원 → 접수 재개. 요청 해제는 수행하지 않습니다."
           : "모든 공통 모델의 접수 상태를 바꿉니다. 진행 중 요청과 업무 기록은 보존합니다."}</p>
       <p className={hintClass}>종료 근거를 얻지 못하면 해당 단계에서 멈춥니다. M3 native verify-stop은 native verify로 재확인합니다. M1 sudo 종료·복원은 사람이 장비에서 할 일이며 자동 실행하지 않습니다.</p>

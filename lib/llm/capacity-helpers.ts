@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
-import { MODEL_CAPACITY_OCCUPYING_STATES_SQL } from "./capacity-states";
+import { slotHoldingSql } from "./capacity-unknown-hold";
 
 /**
  * 도우미 장비 · Oracle 감시자(PR 2a, Layer B) — WP-2a-A 가 day 0 에 고정한 계약. WP-2a-B(감시자)·WP-2a-C(관리자 화면)는 이 모듈의 이름만 쓴다.
@@ -522,12 +522,12 @@ const SQL_ALIAS = /^[a-z_][a-z0-9_]{0,30}$/;
  * - sup: control 한 행(enabled·epoch·principal·lease 살아 있음). 행이 없으면 LEFT JOIN 이 NULL 을 주고 coalesce 가 닫는다.
  * - helper_gate: 배정마다 live·shadow 두 줄과 `ok`(§1.3 + 정지 + mode·verdict). NULL 은 모두 false.
  *   도우미 행(role 'helper')만 — 배정 표 행(role 'primary', 0156)의 route 는 그 장비의 보통 역할이라 도우미 관문에 걸리지 않는다.
- * - helper_active: 배정별 도우미 경로 점유 수(reserved/dispatched — indeterminate 는 점유가 아니다).
+ * - helper_active: 배정별 도우미 경로 점유 수(칸을 쥔 행 = reserved/dispatched + 유지 시간 안의 indeterminate, 2026-11-10 capacity-unknown-hold.ts).
+ *   `unknownHoldMs` 가 0 이면 예전처럼 reserved/dispatched 만이다.
  * - demand: 신선한 primary_demand 신호가 있는가(`on_`). 신선하지 않으면 false = 무시.
  */
-export function helperGateCte(deviceId: SQL | string): SQL {
+export function helperGateCte(deviceId: SQL | string, unknownHoldMs: number): SQL {
   const device = deviceRef(deviceId);
-  const occupying = sql.raw(MODEL_CAPACITY_OCCUPYING_STATES_SQL);
   const shadowProvider = sql.raw(`'${HELPER_SHADOW_PROVIDER}'`);
   return sql`sup AS MATERIALIZED (
       SELECT c.enabled, c.epoch, c.signal_principal, c.lease_until > clock_timestamp() AS live
@@ -550,7 +550,7 @@ export function helperGateCte(deviceId: SQL | string): SQL {
     ),
     helper_active AS MATERIALIZED (
       SELECT g.assignment_id, count(*)::int AS n FROM helper_gate g JOIN model_capacity_requests r
-        ON r.group_id = ${device} AND r.route_id = g.route_id AND r.provider = g.provider AND r.model = g.model AND r.state IN ${occupying}
+        ON r.group_id = ${device} AND r.route_id = g.route_id AND r.provider = g.provider AND r.model = g.model AND ${slotHoldingSql("r", unknownHoldMs)}
       GROUP BY g.assignment_id
     ),
     demand AS MATERIALIZED (
@@ -596,10 +596,12 @@ export type HelperGateStateRow = {
 /**
  * 장비 D 의 도우미 경로 상태(잠그지 않는다; assignment_id, kind 순). `route` 를 주면 그 (route, provider, model) 한 줄만 — requestSlot 의
  * 사전 거절(§2.2: 0 행 = 도우미 경로가 아님, 1 행 = ok·active·max_slots 로 판정). `deviceId` 가 SQL 이면 LATERAL 안에서 쓸 수 있다.
+ * `unknownHoldMs` = 결과 미확정 점유 유지 시간(ms) — active 는 입장과 같은 정의로 센다(helperGateCte).
  */
-export function helperGateStatesSql(deviceId: SQL | string, route?: Readonly<{ routeId: string; provider: string; model: string }>): SQL {
+export function helperGateStatesSql(deviceId: SQL | string, unknownHoldMs: number,
+  route?: Readonly<{ routeId: string; provider: string; model: string }>): SQL {
   const filter = route ? sql` WHERE g.route_id = ${route.routeId} AND g.provider = ${route.provider} AND g.model = ${route.model}` : sql``;
-  return sql`WITH ${helperGateCte(deviceId)}
+  return sql`WITH ${helperGateCte(deviceId, unknownHoldMs)}
     SELECT g.assignment_id, g.kind, g.route_id, g.provider, g.model, g.ok, coalesce(a.n, 0)::int AS active, g.max_slots
     FROM helper_gate g LEFT JOIN helper_active a ON a.assignment_id = g.assignment_id${filter}
     ORDER BY g.assignment_id, g.kind`;

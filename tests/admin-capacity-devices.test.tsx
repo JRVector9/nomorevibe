@@ -225,9 +225,9 @@ describe("server action — 쓰기 관문 뒤 관리자 확인·폼 검사·CAS�
 
 describe("그리기", () => {
   const model = view();
-  it("장비 목록 표 — 출처·설정값·역할 순서·점유(예약+진행)·우선 역할·빌려 쓰는 중·판·마지막 저장", () => {
+  it("장비 목록 표 — 출처·설정값·역할 순서·점유(예약+진행+미확정)·우선 역할·빌려 쓰는 중·판·마지막 저장", () => {
     const html = renderToStaticMarkup(createElement(DeviceTable, { devices: model.devices, now: NOW }));
-    for (const text of ["점유(예약+진행)", "낮은 순위 평소 상한", "유휴 판정", "비워 둘 칸", "엔진 실제", "역할 순서", "우선 역할", "대기", "마지막 저장"]) expect(html).toContain(text);
+    for (const text of ["점유(예약+진행+미확정)", "낮은 순위 평소 상한", "유휴 판정", "비워 둘 칸", "엔진 실제", "역할 순서", "우선 역할", "대기", "마지막 저장"]) expect(html).toContain(text);
     expect(html).toContain('href="#device-supa"');
     expect(html).toContain("빌려 쓰는 중");
     expect(html).toContain("정책 대체");

@@ -16,6 +16,7 @@ import { RoutesForm } from "@/app/(operator)/admin/models/limits/RoutesForm";
 import { TranslationForm } from "@/app/(operator)/admin/models/limits/TranslationForm";
 import { SettingsApplyLine } from "@/app/(operator)/admin/settings/SettingsApplyLine";
 import { AssignmentsForm } from "@/app/(operator)/admin/models/limits/AssignmentsForm";
+import { CapacityForm } from "@/app/(operator)/admin/models/limits/CapacityForm";
 import { auditChangeLines, buildAssignmentReadsControl, buildRuntimeSettingsAdminView, fieldLabel, latestRoleObservations, runtimeSettingsIssueMessage,
   runtimeSettingsPatchFromForm, type AdminObservation } from "@/lib/operations/admin-runtime-settings";
 import type { AdminLogRow } from "@/lib/operations/admin-log";
@@ -76,6 +77,21 @@ describe("화면 모형 — 유효값·기본값·덮어씀", () => {
     const control = buildAssignmentReadsControl({ ...ROW, values: { ...STORED, assignments: { tableReads: "on" } } });
     expect(control).toMatchObject({ revision: 3, rowError: null, fields: [{ path: "assignments.tableReads", input: "on", overridden: true }] });
     expect(buildAssignmentReadsControl(null, "runtime_settings_row_missing")).toMatchObject({ revision: null, rowError: "runtime_settings_row_missing", fields: [{ input: "off", overridden: false }] });
+  });
+
+  it("모델 장부 점유(2026-11-10) — 결과 미확정 점유 유지 시간은 초 정수 칸 하나: 기본 600, 저장 문서가 0 이면 덮어씀, 폼은 정수 그대로 sparse patch", () => {
+    const [hold] = view().capacity;
+    expect(hold).toMatchObject({ path: "capacity.unknownHoldSeconds", label: "결과 미확정 점유 유지(초)", kind: "int", value: 600, defaultValue: 600,
+      input: "600", defaultInput: "600", overridden: false });
+    expect(hold.note).toContain("0 이면 차지하지 않습니다");
+    expect(hold.note).toContain("저장 즉시 다음 모델 입장부터");
+    expect(view({ row: { ...ROW, values: { ...STORED, capacity: { unknownHoldSeconds: 0 } } } }).capacity[0]).toMatchObject({ value: 0, input: "0", overridden: true });
+    const patch = (over: Record<string, string>) => runtimeSettingsPatchFromForm("capacity", form({ "value:capacity.unknownHoldSeconds": "600",
+      "initial:capacity.unknownHoldSeconds": "600", "stored:capacity.unknownHoldSeconds": "0", ...over }));
+    expect(patch({ "value:capacity.unknownHoldSeconds": "300" })).toEqual({ patch: { capacity: { unknownHoldSeconds: 300 } }, changed: ["capacity.unknownHoldSeconds"], issues: [] });
+    expect(patch({ "value:capacity.unknownHoldSeconds": "0" }).patch).toEqual({ capacity: { unknownHoldSeconds: 0 } });
+    expect(patch({ "value:capacity.unknownHoldSeconds": "1.5" }).issues).toEqual(["결과 미확정 점유 유지(초): 정수를 넣어주세요"]);
+    expect(runtimeSettingsIssueMessage("runtime_settings_invalid:capacity.unknownHoldSeconds")).toBe("결과 미확정 점유 유지(초): 범위를 벗어났습니다(0~3600)");
   });
 
   it("경로 한도 — 호출 상한 칸은 timeouts·limits.timeoutMs·사다리 중 그 경로가 실제로 읽는 자리고, 모델 상한은 등록부에서 읽기 전용으로 붙는다", () => {
@@ -260,6 +276,11 @@ describe("server action — 쓰기 관문 뒤 관리자 확인·CAS·거절 문�
       "value:translation.product.maxAttempts": "4", "initial:translation.product.maxAttempts": "4" }));
     expect(mocks.save).toHaveBeenCalledWith({ translation: { product: { batchChars: 6_000 } } }, "operator", { expectedRevision: 3, group: "translation" });
     expect(result).toEqual({ ok: true, message: "저장했습니다(판 vabcdef, revision 4). 각 워커는 30초 안에 다음 틱부터 씁니다." });
+    // 모델 장부 점유는 입장 TX 가 행을 바로 읽는다 — 30초 스냅숏 문구를 쓰지 않는다
+    const capacity = await saveRuntimeSettingsGroup(null, form({ group: "capacity", expectedRevision: "4",
+      "value:capacity.unknownHoldSeconds": "300", "initial:capacity.unknownHoldSeconds": "600", "stored:capacity.unknownHoldSeconds": "0" }));
+    expect(mocks.save).toHaveBeenLastCalledWith({ capacity: { unknownHoldSeconds: 300 } }, "operator", { expectedRevision: 4, group: "capacity" });
+    expect(capacity).toEqual({ ok: true, message: "저장했습니다(판 vabcdef, revision 4). 다음 모델 입장부터 씁니다." });
   });
 
   it("CAS 거절과 검사 거절은 그대로 한국어로 보이고 성공으로 바꾸지 않는다", async () => {
@@ -325,6 +346,16 @@ describe("폼 그리기", () => {
     const locked = renderToStaticMarkup(createElement(AssignmentsForm, { fields: model.assignments, revision: null, readOnly: true }));
     expect(locked).toMatch(/<select name="value:assignments\.tableReads"[^>]*disabled=""/);
     expect(locked).toContain("저장 행을 읽지 못해 읽기 전용입니다.");
+  });
+  it("모델 장부 점유 — capacity 묶음 폼: 초 단위 정수 칸·기본값 글·저장 즉시 적용 안내", () => {
+    const html = renderToStaticMarkup(createElement(CapacityForm, { fields: model.capacity, revision: model.revision }));
+    expect(html).toContain('name="group" value="capacity"');
+    expect(html).toContain('name="expectedRevision" value="3"');
+    expect(html).toContain('name="value:capacity.unknownHoldSeconds"');
+    expect(html).toContain('aria-label="결과 미확정 점유 유지(초)"');
+    expect(html).toContain('value="600"');
+    expect(html).toContain("기본 600초");
+    expect(html).toContain("이 묶음 저장");
   });
   it("번역·묶음 — 공개 번역과 잡별 묶음은 저장 묶음이 다른 두 폼이다", () => {
     const html = renderToStaticMarkup(createElement(TranslationForm, { translation: model.translation, jobKnobs: model.jobKnobs, revision: model.revision }));

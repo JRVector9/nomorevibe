@@ -68,7 +68,7 @@ describe("runtime settings defaults", () => {
     expect(RUNTIME_SETTING_LABELS["routes.limits.product-translate.timeoutMs"]).toBe("공개 번역 호출 상한(ms)");
     expect(runtimeSettingLabel("budgets.crawl-fetch")).toBe("원본 확보 틱 예산(ms)");
     expect(runtimeSettingLabel("routes.timeouts.brand-new-route")).toBe("brand-new-route 호출 상한(ms)");
-    expect(RUNTIME_SETTING_GROUPS).toEqual(["routes", "translation", "jobs", "budgets", "assignments", "devices"]);
+    expect(RUNTIME_SETTING_GROUPS).toEqual(["routes", "translation", "jobs", "budgets", "assignments", "capacity", "devices"]);
     expect(RUNTIME_SETTING_LABELS["assignments.tableReads"]).toBe("배정 표 읽기");
     expect(GROUP_LABELS.assignments).toBe("모델 배정 읽기");
   });

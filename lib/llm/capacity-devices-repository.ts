@@ -11,6 +11,7 @@ import { MODEL_CAPACITY_DEVICE_SAVE_AUDIT_ACTION, MODEL_CAPACITY_MODEL_LIMIT_SAV
   type DeviceStateRow, type ModelCapacityDeviceRow, type ModelCapacityDeviceState, type ModelCapacityGeneration,
   type ModelCapacityModelLimit, type ModelCapacityRouteQuota } from "./capacity-devices";
 import { parseModelCapacityPolicy } from "./capacity";
+import { readModelCapacityUnknownHoldMs } from "./capacity-unknown-hold";
 
 /**
  * 장비 설정 표(model_capacity_devices / model_capacity_device_roles, 0153)의 DB 읽기·저장 — 1b-A.
@@ -203,8 +204,10 @@ type ControlRow = { epoch: string | number; revision: string | number; policy_ha
  * 모든 장비의 실시간 상태 — enabled 설정 행 ∪ 정책 groupLimits 키 ∪ 정책 route 의 groupId(설정 출처가 없는 장비는 빠진다: 관리자 화면은
  * 정책 route 목록과 견줘 `device_unconfigured` 를 표시한다). 한 문장(LATERAL + deviceStateCte), 잠그지 않는다. tx 를 주면 그 TX 가 보는
  * 스냅샷으로 읽고(1b-C 의 입장 TX·status), 없으면 primary 에서 읽는다.
+ * 점유(active·routes·models·helpers)는 입장과 같은 정의다 — 유지 시간 안의 미확정 행까지 세고 그 수를 heldUnknown 으로 싣는다(2026-11-10).
+ * 유지 시간은 같은 TX 에서 runtime_settings 를 읽는다(options.unknownHoldMs 를 주면 그 값). 그 표를 읽을 권한이 없는 계정(Oracle 감시자)은 기본값(600초)으로 센다.
  */
-export async function readModelCapacityDeviceStates(tx?: ProductTransaction): Promise<ModelCapacityDeviceState[]> {
+export async function readModelCapacityDeviceStates(tx?: ProductTransaction, options: { unknownHoldMs?: number } = {}): Promise<ModelCapacityDeviceState[]> {
   if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
   const load = async (reader: Reader) => {
     const [control] = await reader.execute<ControlRow>(sql`SELECT epoch, revision, policy_hash,
@@ -216,6 +219,8 @@ export async function readModelCapacityDeviceStates(tx?: ProductTransaction): Pr
     const generation: ModelCapacityGeneration = { epoch: Number(control.epoch), revision: Number(control.revision), policyHash: control.policy_hash ?? "" };
     const groupLimits = control.group_limits && typeof control.group_limits === "object" ? control.group_limits as Record<string, unknown> : {};
     const groupLimitsJson = JSON.stringify(groupLimits);
+    // 호출자가 같은 TX 에서 이미 읽었으면(관리자 모델 관측) 그 값을 쓴다 — 한 화면이 한 값으로 센다
+    const unknownHoldMs = options.unknownHoldMs ?? await readModelCapacityUnknownHoldMs(reader, { whenReadable: true });
     // 장비 id 는 요청 행의 group_id 와 같은 identity 규칙(공백·제어문자 없음, 120자)을 지키는 것만 — seed(0153)와 같은 필터
     const rows = await reader.execute<DeviceStateRow>(sql`SELECT x.* FROM (
         SELECT candidates.device_id FROM (
@@ -224,7 +229,7 @@ export async function readModelCapacityDeviceStates(tx?: ProductTransaction): Pr
           UNION SELECT r.value FROM jsonb_array_elements_text(${JSON.stringify(Array.isArray(control.route_groups) ? control.route_groups : [])}::jsonb) r(value)
         ) candidates
         WHERE char_length(candidates.device_id) BETWEEN 1 AND 120 AND candidates.device_id = btrim(candidates.device_id) AND candidates.device_id !~ '[[:cntrl:]]'
-      ) ids, LATERAL (${deviceStateSql(sql`ids.device_id`, generation, groupLimitsJson)}) x ORDER BY x.device_id`);
+      ) ids, LATERAL (${deviceStateSql(sql`ids.device_id`, generation, groupLimitsJson, unknownHoldMs)}) x ORDER BY x.device_id`);
     return rows.map(deviceStateFromRow);
   };
   return tx ? load(tx) : onPrimary(() => load(db));
