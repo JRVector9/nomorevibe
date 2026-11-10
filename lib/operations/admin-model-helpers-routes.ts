@@ -64,7 +64,8 @@ export function buildHelperRoutesView(input: Readonly<{ observation: AdminModels
       succeeded1h: 0, failed1h: 0 };
     acc.models.add(row.model);
     acc.lastSuccessAt = later(acc.lastSuccessAt, row.lastSuccessAt);
-    acc.held += row.reserved + row.dispatched; acc.waiting += row.waiting; acc.indeterminate += row.indeterminate;
+    // 점유 = 예약 + 보냄 + 결과 미확정 점유(유지 시간 안의 미확인, 2026-11-10 — 입장과 같은 규칙)
+    acc.held += row.reserved + row.dispatched + (row.heldUnknown ?? 0); acc.waiting += row.waiting; acc.indeterminate += row.indeterminate;
     acc.succeeded1h += row.succeeded1h; acc.failed1h += row.failed1h;
     byKey.set(key, acc);
   }

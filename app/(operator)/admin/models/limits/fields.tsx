@@ -13,8 +13,10 @@ import { saveRuntimeSettingsGroup, type LimitsSaveState } from "./actions";
 export const INPUT = "w-24 rounded border border-line bg-bg px-2 py-1 text-right tabular-nums";
 export const INPUT_WIDE = "w-28 rounded border border-line bg-bg px-2 py-1 text-right tabular-nums";
 
-export function GroupForm({ group, revision, readOnly, children, footer }: { group: RuntimeSettingGroup; revision: number | null; readOnly?: boolean;
-  children: ReactNode; footer?: ReactNode }) {
+export function GroupForm({ group, revision, readOnly, children, footer, summary }: { group: RuntimeSettingGroup; revision: number | null; readOnly?: boolean;
+  children: ReactNode; footer?: ReactNode;
+  /** 저장 확인에 보일 적용 시점 — 기본은 워커 30초 스냅숏. 입장 TX 가 행을 바로 읽는 묶음(capacity)은 「저장 즉시」다 */
+  summary?: string }) {
   const [state, action, pending] = useActionState<LimitsSaveState, FormData>(saveRuntimeSettingsGroup, null);
   const [dirty, setDirty] = useState(false);
   return <form action={action} data-dirty={dirty || undefined} onChange={() => setDirty(true)} className="grid gap-3 rounded-xl border border-line bg-bg-card p-5 text-[14px]">
@@ -24,7 +26,7 @@ export function GroupForm({ group, revision, readOnly, children, footer }: { gro
     <div className="flex flex-wrap items-center gap-3">
       {/* 두 단계 확인(PR 5) — 바뀌는 칸(이전 → 이후)을 보이고 「저장 확인」으로 보낸다. 판(revision)이 바뀌면 그 값이 새 기준이다 */}
       <ConfirmSubmit label="이 묶음 저장" pending={pending} disabled={readOnly || revision === null} savedKey={revision}
-        summary="저장하면 배포 없이 각 워커가 30초 안에 다음 틱부터 씁니다." />
+        summary={summary ?? "저장하면 배포 없이 각 워커가 30초 안에 다음 틱부터 씁니다."} />
       {footer}
       {readOnly && <span className="text-[13px] text-fg-3">저장 행을 읽지 못해 읽기 전용입니다.</span>}
     </div>

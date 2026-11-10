@@ -7,7 +7,7 @@ import type { ModelCapacityDispatch } from "./capacity";
  * 2026-11-07 19:25Z 키워드 검수(product-search-verify, supa) 호출 하나가 dispatched 로 5시간 남았다. 주인(m3-text)은 살아서 같은 잡을
  * 계속 돌렸고, 그 행에는 dispatch_started 뒤 어떤 사건도 없었다 — 호출 쪽이 정산·indeterminate 표시를 쓰지 못하고(정리 쓰기 실패,
  * 「전송 중」 커밋 응답 모름 등) 빠져나간 것이다. HTTP 기한(AbortSignal.timeout)은 그대로 동작했다(1,991건 모두 61초 안).
- * dispatched 는 장비 칸을 점유하고(indeterminate 는 점유가 아니다, capacity-devices) 배포 관문도 막는다 — supa 2칸 중 1칸이
+ * dispatched 는 장비 칸을 점유하고(indeterminate 는 보낸 뒤 유지 시간 동안만 점유한다, 2026-11-10 capacity-unknown-hold) 배포 관문도 막는다 — supa 2칸 중 1칸이
  * 5시간 묶여 키워드 검수 처리량이 절반이 됐고, 배포 창 #864 가 DRAIN 에서 멈췄다.
  *
  * 그래서 이 프로세스가 커밋한 dispatch 를 기억해 두고, 호출 기한 + OVERDUE_GRACE_MS 가 지나도 행이 아직 dispatched 면

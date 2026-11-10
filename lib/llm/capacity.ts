@@ -1109,7 +1109,8 @@ export type GatewayLocalEndFact = Readonly<z.infer<typeof gatewayLocalEndFactSch
 export type ModelDispatchReleaseEvidence = Readonly<z.infer<typeof modelDispatchReleaseEvidenceSchema>>;
 
 /**
- * 사람 검토 완료(0151, 2026-10-30 소유자 결정). indeterminate 행은 점유가 아니므로 이 정산은 용량을 풀지 않는다 — 검토 목록에서 빼고
+ * 사람 검토 완료(0151, 2026-10-30 소유자 결정). 유지 시간이 지난 indeterminate 행은 칸을 쥐지 않으므로 이 정산은 용량을 풀지 않는다 — 유지 시간 안의
+ * 행(2026-11-10 결과 미확정 점유)이면 닫는 순간 그 칸이 풀린다. 검토 목록에서 빼고
  * 운영자·메모·시각을 행(terminal_evidence)과 dispatch_reviewed event 에 같은 값으로 남긴다. 사용량 근거는 아니며 dispatch binding(C)은 그대로다.
  * 이 뒤에 오는 늦은 종료 근거는 withdrawn 행에 정산되지 않는다(검토가 그 호출의 끝이다).
  */

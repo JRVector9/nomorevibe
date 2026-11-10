@@ -9,7 +9,8 @@ import { MODEL_CAPACITY_INDETERMINATE_REASONS, inFlightStateSql, reviewStateSql 
 /**
  * 감시(monitor·Oracle)가 읽는 모델 장부 요약 — 2026-10-31 판(소유자 결정 2026-10-30: 미확인은 일을 멈추지 않고 사람 검토 목록으로만 간다).
  *
- * - `review`  = "확인 못함 · 사람 검토": indeterminate 행이 있다. 슬롯을 점유하지 않고 아무것도 막지 않는다(lib/llm/capacity-states.ts).
+ * - `review`  = "확인 못함 · 사람 검토": indeterminate 행이 있다. 일을 멈추지 않는다 — 보낸 뒤 유지 시간(기본 600초) 동안만 칸을 차지해
+ *               새 호출을 기다리게 하고(2026-11-10 결과 미확정 점유, lib/llm/capacity-unknown-hold.ts), 그 뒤로는 칸도 쥐지 않는다.
  *               overall 경보·Kuma DOWN·Oracle 장애 알림을 만들지 않는다. 목록은 /admin/models 의 사람 검토 목록이다.
  * - `alarm`   = 아직 "일이 멈췄다"는 뜻인 것만: 검토 목록이 문턱을 넘게 쌓였거나(review_backlog·review_stale),
  *               점유 행(dispatched)이 기한을 한참 넘겨 슬롯을 잡고 있다(dispatch_stuck — 워커가 죽어 표식 없이 남은 전송 등).
@@ -114,7 +115,7 @@ export async function readModelCapacityUnknowns(thresholds: CapacityMonitorThres
   } catch { return unknownCapacityReport(); }
 }
 
-/** 사람 검토 목록 한 줄 — 경로·모델/장비·작업 키·전송 시각·미확인 사유. 슬롯 점유가 아니다(2026-10-30). */
+/** 사람 검토 목록 한 줄 — 경로·모델/장비·작업 키·전송 시각·미확인 사유. 보낸 뒤 유지 시간 동안만 칸을 차지한다(2026-11-10). */
 export const capacityReviewItemSchema = z.object({ requestId: z.uuid(), routeId: label, provider: label, model: z.string().min(1).max(200),
   groupId: label, providerBudgetId: label, workKey: z.string().min(1).max(400), logicalWorkKey: z.string().max(400).nullable(),
   ownerInstanceId: z.string().min(1).max(200), dispatchedAt: z.string().nullable(), markedAt: z.string().nullable(),
@@ -154,7 +155,7 @@ export async function readModelCapacityReviewQueue(): Promise<CapacityReviewQueu
 
 /**
  * 사람 검토 상세 — 실제 등록/후보 프로젝트·사유·모델/장비·대기/전송/표식/로컬 종료 DB 시각.
- * 기존 검토 행은 슬롯 점유가 아니며, 이 읽기는 닫기·종료·승인을 하지 않는다.
+ * 검토 행은 보낸 뒤 유지 시간 동안만 칸을 차지한다(2026-11-10). 이 읽기는 닫기·종료·승인을 하지 않는다.
  */
 export type CapacityReviewProject = { kind: 'candidate' | 'product'; id: number; label: string; href: string | null };
 export type CapacityReviewDetailsItem = CapacityReviewItem & { queuedAt: string | null; localEndedAt: string | null;

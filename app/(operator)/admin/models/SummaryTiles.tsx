@@ -15,8 +15,11 @@ export function Chip({ tone, children, title }: { tone: keyof typeof CHIP; child
   return <span title={title} className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[13px] leading-[1.5] ${CHIP[tone]}`}>
     {GLYPH[tone] && <span aria-hidden="true" className="model-glyph" data-glyph={GLYPH[tone]} />}{children}</span>;
 }
-const sum = (cards: ModelCard[], key: "succeeded1h" | "failed1h" | "withdrawn1h" | "dispatched" | "reserved" | "waiting" | "indeterminate") =>
-  cards.reduce((n, card) => n + card.rows.reduce((m, row) => m + row[key], 0), 0);
+const sum = (cards: ModelCard[], key: "succeeded1h" | "failed1h" | "withdrawn1h" | "dispatched" | "reserved" | "waiting" | "indeterminate" | "heldUnknown") =>
+  cards.reduce((n, card) => n + card.rows.reduce((m, row) => m + (row[key] ?? 0), 0), 0);
+/** 결과 미확정 점유 유지 시간 글자(「600초」). 관측이 그 값을 싣지 않았으면 null */
+export const unknownHoldText = (observation: Pick<AdminModelsObservation, "unknownHoldMs">) =>
+  observation.unknownHoldMs === undefined ? null : `${Math.round(observation.unknownHoldMs / 1000)}초`;
 const tile = "flex min-w-0 flex-col gap-1.5 rounded-lg border border-line bg-bg-card px-3 py-2.5";
 const head = "text-[13px] font-semibold tracking-[.02em] text-fg-2";
 
@@ -33,7 +36,7 @@ export function SummaryTiles({ observation, cards, controls, probes, leases, rea
   observation: AdminModelsObservation; cards: ModelCard[]; controls: ModelOpsControls; probes: Record<string, ProbeObservation>;
   leases: LeaseTile[]; readiness: "ok" | "alarm" | null; alarms: CapacityAlarmSummary | null;
 }) {
-  const mode = observation.mode?.toUpperCase() ?? "미확인", held = sum(cards, "reserved") + sum(cards, "dispatched"), waiting = sum(cards, "waiting"), unknown = sum(cards, "indeterminate");
+  const mode = observation.mode?.toUpperCase() ?? "미확인", heldUnknown = sum(cards, "heldUnknown"), held = sum(cards, "reserved") + sum(cards, "dispatched") + heldUnknown, waiting = sum(cards, "waiting"), unknown = sum(cards, "indeterminate");
   const down = cards.filter(card => { const probe = probes[probeObservationKey(probeIdentityOf(card))]; return probe && (probe.listed === false || (probe.error && probe.listed !== true)); });
   const chips = capacityAlarmChips(alarms), firing = chips.filter(chip => chip.tone === "bad" && chip.id !== "ledger");
   return <section className="grid gap-2.5 [grid-template-columns:repeat(auto-fit,minmax(230px,1fr))]" aria-label="요약">
@@ -57,7 +60,7 @@ export function SummaryTiles({ observation, cards, controls, probes, leases, rea
         <span className="flex items-baseline gap-1.5"><b className={`font-mono text-[20px] ${unknown ? "text-down" : ""}`} data-sum="unknown">{unknown}</b><span className="text-[13px] text-fg-2">확인 못함</span></span>
       </div>
       <p className="text-[13px] text-fg-2 tabular-nums">최근 1시간 성공 <span className="font-mono text-up">{sum(cards, "succeeded1h")}</span> · 실패 <span className="font-mono text-down">{sum(cards, "failed1h")}</span> · 철회 <span className="font-mono">{sum(cards, "withdrawn1h")}</span></p>
-      <p className="text-[13px] text-fg-2">확인 못함은 슬롯을 점유하지 않음 · <a href={LLM_RETRY_HREF} className="text-accent-ink underline underline-offset-[3px]">재실행 대기 →</a></p>
+      <p className="text-[13px] text-fg-2">{heldUnknown > 0 ? <>진행 중에 미확정 점유 <span className="font-mono tabular-nums">{heldUnknown}</span> 포함 · </> : null}확인 못함은 보낸 뒤 {unknownHoldText(observation) ?? "유지 시간"} 동안만 칸을 차지 · <a href={LLM_RETRY_HREF} className="text-accent-ink underline underline-offset-[3px]">재실행 대기 →</a></p>
     </div>
     <div className={tile}>
       <h2 className={head}>경보</h2>

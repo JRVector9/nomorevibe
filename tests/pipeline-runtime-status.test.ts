@@ -125,7 +125,7 @@ describe('runtime readback', () => {
     }, readiness);
     // 장비 행이 없으면 정책 groupLimits 대체(policy_fallback), enabled 장비 행이 있으면 그 한도(table) — PR 1b
     expect(status.runtime.modelGroups).toEqual([{ group: 'g', limit: 2, limitSource: 'policy_fallback', firstModels: [{ provider: 'abcllm', model: 'first-model' }],
-      waitingFirst: 4, reserved: 0, dispatched: 0, indeterminate: 1,
+      waitingFirst: 4, reserved: 0, dispatched: 0, indeterminate: 1, heldUnknown: 0,
       occupants: [{ route: 'reason-translate', state: 'indeterminate', count: 1 }] }]);
     const live = buildPipelineControlStatus({ ...raw, modelGroups: { limited: false, rows: [] },
       modelDevices: [{ device: 'g', limit: 5 }, { device: 'spare', limit: 1 }] }, readiness).runtime.modelGroups;

@@ -148,7 +148,7 @@ describe('evidence key and actor', () => {
 
 describe('helper gate SQL (§2.1)', () => {
   it('renders the four CTEs with every fail-closed predicate', () => {
-    const { sql: text, params } = render(sql`WITH ${helperGateCte('m3-deepseek')} SELECT 1`);
+    const { sql: text, params } = render(sql`WITH ${helperGateCte('m3-deepseek', 0)} SELECT 1`);
     for (const name of ['sup AS MATERIALIZED', 'helper_gate AS MATERIALIZED', 'helper_active AS MATERIALIZED', 'demand AS MATERIALIZED']) expect(text).toContain(name);
     expect(text).not.toMatch(/^\s*WITH\s+WITH/);
     for (const fragment of ['coalesce(sup.enabled AND sup.live', 'hs.supervisor_epoch = sup.epoch', 'hs.written_by = sup.signal_principal',
@@ -162,7 +162,7 @@ describe('helper gate SQL (§2.1)', () => {
   });
 
   it('takes an outer column reference for LATERAL use', () => {
-    const { sql: text, params } = render(sql`WITH ${helperGateCte(sql`d.device_id`)} SELECT 1`);
+    const { sql: text, params } = render(sql`WITH ${helperGateCte(sql`d.device_id`, 0)} SELECT 1`);
     expect(text).toContain('WHERE ha.device_id = d.device_id');
     expect(params).toEqual([]);
   });
@@ -176,11 +176,11 @@ describe('helper gate SQL (§2.1)', () => {
     expect(() => helperCandidateExclusionSql('q; DROP')).toThrow('model_helper_invalid:alias');
     expect(render(sql`${helperDemandOnSql()}`).sql).toBe('coalesce((SELECT d.on_ FROM demand d), false)');
 
-    const all = render(helperGateStatesSql('m3-deepseek'));
+    const all = render(helperGateStatesSql('m3-deepseek', 0));
     expect(all.sql).toMatch(/^WITH sup AS MATERIALIZED/);
     expect(all.sql).toContain('coalesce(a.n, 0)::int AS active, g.max_slots');
     expect(all.sql).toContain('ORDER BY g.assignment_id, g.kind');
-    const one = render(helperGateStatesSql('m3-deepseek', { routeId: 'local-ai1-helper', provider: 'local-direct', model: 'DeepSeek' }));
+    const one = render(helperGateStatesSql('m3-deepseek', 0, { routeId: 'local-ai1-helper', provider: 'local-direct', model: 'DeepSeek' }));
     expect(one.sql).toContain('WHERE g.route_id = $4 AND g.provider = $5 AND g.model = $6');
     expect(one.params.slice(3)).toEqual(['local-ai1-helper', 'local-direct', 'DeepSeek']);
     const gate = helperGateStateFromRow({ assignment_id: 'm3-deepseek:ai1', kind: 'live', route_id: 'local-ai1-helper', provider: 'local-direct',
@@ -350,7 +350,7 @@ describe('assignment table vocabulary (PR 3b-A)', () => {
   });
 
   it('keeps primary rows out of the helper gate', () => {
-    const { sql: text } = render(sql`WITH ${helperGateCte('supa')} SELECT 1`);
+    const { sql: text } = render(sql`WITH ${helperGateCte('supa', 0)} SELECT 1`);
     expect(text).toContain("WHERE ha.device_id = $1 AND ha.role = 'helper'");
   });
 

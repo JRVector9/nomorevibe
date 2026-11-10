@@ -111,6 +111,8 @@ export type ModelEvent = { toState: ModelCapacityState | null; atMs: number };
  * 대기는 queue_until, 아직 보내지 않은 예약은 reserved_until에서 끝난 것으로 본다 — 다음 승인 TX가 그 전에 같은 행을 회수한다
  * (expireRequests). 회수 이벤트가 늦게 남아도 그 사이를 대기·점유로 세지 않아 포화를 부풀리지 않는다.
  * 미확인(indeterminate)으로 옮긴 시각에는 점유를 끝낸다 — 늦은 정산 시각까지 슬롯을 잡는 것으로 세지 않는다(2026-10-30 소유자 결정).
+ * 2026-11-10 결과 미확정 점유(입장은 유지 시간 안의 미확인을 칸으로 센다)는 이 관측이 재현하지 않는다 — 그 시각의 유지 시간 설정을 기록하지 않기 때문이다.
+ * 그래서 그 사이의 대기는 free 로 셀 수 있다(아래 integrateModelSlots 의 free 는 상한이다).
  */
 export function modelRequestIntervals(events: readonly ModelEvent[], caps: { queueUntilMs: number; reservedUntilMs: number | null }) {
   let current: string | null = null, waitFrom: number | null = null, waitTo: number | null = null;
@@ -144,7 +146,7 @@ const RANK: Record<Verdict, number> = { full: 0, unknown: 1, free: 2 };
  * 대체다. 요청의 policy hash가 현재 정책과 다르거나 한도를 모르면 unknown이다. 낮은 순위 상한(secondary_cap)·유휴 대여는 집계로 재현할 수 없어
  * 보지 않는다 — 그래서 free 는 "장비에 빈 칸이 있었다"의 상한이다.
  * scope 안의 대기 중 하나라도 free면 free, 아니면 unknown이 하나라도 있으면 unknown, 모두 full일 때만 full로 센다
- * (포화를 과장하지 않는 보수적 정의). 점유는 reserved·dispatched 다(장부 승인과 같은 집계; indeterminate 는 점유가 아니다).
+ * (포화를 과장하지 않는 보수적 정의). 점유는 reserved·dispatched 다(유지 시간 안의 indeterminate 는 입장이 세지만 여기서는 세지 않는다 — modelRequestIntervals).
  * 구간은 [from, to)이며 [0, durationMs]로 자른다.
  */
 export function integrateModelSlots(requests: readonly SlotRequest[], policy: ModelCapacityPolicy | null, durationMs: number,

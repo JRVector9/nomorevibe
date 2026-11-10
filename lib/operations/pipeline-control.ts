@@ -162,7 +162,9 @@ export const controlSnapshotSchema = z.object({
     // 경로 몫(0169, step 2): 빌려주기와 경로마다 점유·몫. 옛 스냅숏에는 없다. 어떤 전환도 막지 않는다.
     lendIdle: z.boolean().optional(), routes: z.array(modelCapacityRouteStateSchema).max(512).optional(),
     // 모델 상한(0170): 모델마다 점유·대기·상한. 옛 스냅숏에는 없다. 어떤 전환도 막지 않는다.
-    models: z.array(modelCapacityModelStateSchema).max(512).optional() }).strict()).max(512).optional(),
+    models: z.array(modelCapacityModelStateSchema).max(512).optional(),
+    // 결과 미확정 점유(2026-11-10): active 중 유지 시간 안의 indeterminate 수. 옛 스냅숏에는 없다. 어떤 전환도 막지 않는다.
+    heldUnknown: count.optional() }).strict()).max(512).optional(),
   /**
    * 배정 표 읽기(PR 3b-B). 이 스냅숏을 읽은 프로세스(ops CLI·웹)의 스위치가 켜졌을 때만 있다. PR 3b-E 부터 스위치는 runtime_settings 토글
    * (`flagSource` 'runtime' — 모든 역할이 같은 행을 읽는다) 또는 env MODEL_ASSIGNMENT_TABLE 강제('env', 이 프로세스만)다. 옛 스냅숏에는 flagSource 가 없다.
@@ -419,7 +421,8 @@ export function planPipelineControl(command: TransitionCommand, snapshot: Contro
     const c = command.area === "capacity" ? snapshot.capacity : snapshot.http;
     const target = command.area === "capacity" ? "model_capacity_control" : "http_origin_control";
     expect("mode", o.fromMode, c.mode); expect("epoch", o.expectEpoch, c.epoch); expect("revision", o.expectRevision, c.revision);
-    // indeterminate 는 점유가 아니다(2026-10-30) — 사람 검토 항목이지 옛 세대 보유가 아니다.
+    // indeterminate 는 옛 세대 보유가 아니다(2026-10-30) — 사람 검토 항목이다. 칸 점유(2026-11-10 결과 미확정 점유, 장비 판정)와 달리
+    // 정책 변경·DRAIN 판정은 유지 시간 안의 미확정도 세지 않는다: 장비 칸은 모든 세대를 세므로 새 세대도 그 칸을 비워 둔다.
     const held = c.reserved + c.dispatched;
     const unmappedInstances = (policy: unknown) => {
       const hosts = httpOriginPolicySchema.safeParse(policy).data?.instanceHosts ?? {};

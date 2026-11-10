@@ -12,6 +12,7 @@ import { AdvancedEditorLinks, advancedEditorTitle } from "../advanced/AdvancedEd
 import { SettingsApplyLine } from "../../settings/SettingsApplyLine";
 import { AssignmentsForm } from "./AssignmentsForm";
 import { BudgetsForm } from "./BudgetsForm";
+import { CapacityForm } from "./CapacityForm";
 import { RoutesForm } from "./RoutesForm";
 import { TranslationForm } from "./TranslationForm";
 import { llmHistoryHref, RECENT_AUDIT_ROWS } from "@/lib/operations/llm-ops-history";
@@ -70,6 +71,12 @@ export default async function RuntimeLimitsPage() {
       <p className="text-[13px] text-fg-3">단계별 모델 고르기가 <Link href={modelsAdvancedEditor("assignments").href} className="underline">{modelsAdvancedEditor("assignments").label}</Link>를 읽는지(켬) 설정(legacy)을 읽는지(끔)입니다.
         저장하면 웹·reviewer·text·소비자가 30초 안에 같은 값을 읽습니다 — 재배포 없음. 켜기 전에 배정 화면에서 「현재 설정 → 배정 표 가져오기」로 행을 채우고 상태 띠를 확인합니다.</p>
       <AssignmentsForm fields={view.assignments} revision={view.revision} readOnly={readOnly} />
+    </section>
+    <section id="capacity" className="grid gap-2 scroll-mt-6">
+      <h2 className="text-[18px] font-semibold">{GROUP_LABELS.capacity}</h2>
+      <p className="text-[13px] text-fg-3">결과 미확정(확인 못함) 호출이 칸을 얼마나 오래 차지하는지입니다. 이 시간 안의 미확정 호출은 장비·모델 한도에서 「미확정 점유」로 보이고
+        새 호출을 그만큼 막습니다. 장비별 칸 수는 <Link href={modelsAdvancedEditor("devices").href} className="underline">{modelsAdvancedEditor("devices").label}</Link>가 맡습니다.</p>
+      <CapacityForm fields={view.capacity} revision={view.revision} readOnly={readOnly} />
     </section>
     <section id="audit" className="grid gap-2 scroll-mt-6">
       <h2 className="text-[18px] font-semibold">최근 저장 {Math.min(view.audit.length, RECENT_AUDIT_ROWS)}건</h2>

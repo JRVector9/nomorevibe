@@ -91,6 +91,15 @@ const attempts = async (id: number) => (await admin`SELECT to_jsonb(a) AS row FR
 const requests = async () => (await admin`SELECT to_jsonb(r) AS row FROM model_capacity_requests r WHERE owner_instance_id=${instanceId} AND owner_boot_id=${bootId} ORDER BY queue_ordinal`).map(row => row.row);
 const events = async (id: string) => (await admin`SELECT kind FROM model_capacity_events WHERE request_id=${id}::uuid ORDER BY id`).map(row => row.kind);
 // Match scripts/worker.ts: a full AI1 transport ceiling must fit in the runner budget.
+/**
+ * 결과 미확정 점유(2026-11-10): 유지 시간 안의 미확정 행은 장비 칸(fixture 1칸)을 쥔다. 재진입 시험은 먼저 기본 유지 시간에서 칸에 막히는 것을 보고,
+ * 유지 시간 0(10-30 규칙)에서 미확정이 fence 가 아님을 본다. runtime_settings 의 원래 문서로 되돌린다(전체 표 기준선과 같게).
+ */
+async function withoutUnknownHold<T>(load: () => Promise<T>): Promise<T> {
+  const [{ values }] = await admin`SELECT values FROM runtime_settings WHERE id = 1`;
+  await admin`UPDATE runtime_settings SET values = jsonb_set(values, '{capacity}', '{"unknownHoldSeconds":0}'::jsonb) WHERE id = 1`;
+  try { return await load(); } finally { await admin`UPDATE runtime_settings SET values = ${JSON.stringify(values)}::text::jsonb WHERE id = 1`; }
+}
 const tick = (handler: typeof reviewCrawlCandidates = reviewCrawlCandidates) => track(runJob('crawl-agent-review', handler, { requestedOnly: true, roleLease: role!, budgetMs: 110_000 }));
 async function until(load: () => Promise<boolean>, label: string) {
   const deadline = Date.now() + 2500;
@@ -360,8 +369,13 @@ it('native EOF without a terminal retains charge and a new actual tick cannot PO
     expect(await events(String(unknown.request_id))).toEqual(['queued','reserved','dispatch_started','dispatch_indeterminate']);
     const originalAttempts = await attempts(context.candidate.id); expect(originalAttempts).toMatchObject([{ state: 'failed' }]);
     await track(requestJob('crawl-agent-review'));
-    // 2026-10-30: 미확인(indeterminate) 행은 점유도 fence 도 아니다 — 같은 작업이 새 requestId 로 다시 들어간다(원 미확인 행은 사람 검토용으로 남는다).
+    // 2026-11-10: 유지 시간 안의 미확정 행은 장비 칸(1칸)을 쥔다 — 같은 작업의 새 접수는 칸에 막혀 미뤄지고 POST 하지 않는다
     expect(await tick(async ctx => { await claimAgentReviewModelCapacity({ ...context, lease: ctx.lease! }); throw new Error('unknown_dispatch_reentered'); }))
+      .toMatchObject({ status: 'deferred' });
+    expect(calls.count).toBe(1);
+    await track(requestJob('crawl-agent-review'));
+    // 2026-10-30(유지 시간 0): 미확인(indeterminate) 행은 점유도 fence 도 아니다 — 같은 작업이 새 requestId 로 다시 들어간다(원 미확인 행은 사람 검토용으로 남는다).
+    expect(await withoutUnknownHold(() => tick(async ctx => { await claimAgentReviewModelCapacity({ ...context, lease: ctx.lease! }); throw new Error('unknown_dispatch_reentered'); })))
       .toMatchObject({ status: 'failed' });
     expect(await requests()).toContainEqual(unknown); expect(calls.count).toBe(1);
   }, true);
@@ -414,8 +428,12 @@ it('caller abort after native POST retains unknown charge and a fresh-signal tic
       expect(await events(String(unknown.request_id))).toEqual(['queued','reserved','dispatch_started','dispatch_indeterminate']);
       expect(await observer`SELECT reason FROM model_capacity_events WHERE request_id=${String(unknown.request_id)}::uuid AND kind='dispatch_indeterminate'`).toMatchObject([{ reason: 'local_abort' }]);
       await track(requestJob('crawl-agent-review'));
-      expect(await tick(async ctx => { expect(ctx.signal?.aborted).not.toBe(true); await claimAgentReviewModelCapacity({ ...context, lease: ctx.lease! }); throw new Error('aborted_dispatch_reentered'); }))
-        .toMatchObject({ status: 'failed' }); // 2026-10-30: 미확인(indeterminate) 행은 점유도 fence 도 아니다 — 같은 작업이 새 requestId 로 다시 들어간다(원 미확인 행은 사람 검토용으로 남는다).
+      // 2026-11-10: 유지 시간 안의 미확정 행이 장비 칸을 쥐어 새 접수는 미뤄진다(POST 없음)
+      expect(await tick(async ctx => { await claimAgentReviewModelCapacity({ ...context, lease: ctx.lease! }); throw new Error('aborted_dispatch_reentered'); }))
+        .toMatchObject({ status: 'deferred' });
+      await track(requestJob('crawl-agent-review'));
+      expect(await withoutUnknownHold(() => tick(async ctx => { expect(ctx.signal?.aborted).not.toBe(true); await claimAgentReviewModelCapacity({ ...context, lease: ctx.lease! }); throw new Error('aborted_dispatch_reentered'); })))
+        .toMatchObject({ status: 'failed' }); // 2026-10-30(유지 시간 0): 미확인(indeterminate) 행은 점유도 fence 도 아니다 — 같은 작업이 새 requestId 로 다시 들어간다(원 미확인 행은 사람 검토용으로 남는다).
       expect(await requests()).toContainEqual(unknown); expect(calls.count).toBe(1);
     } catch (error) { errors.push(error); }
     finally { finish(); await allSteps([async () => { await execution; }], errors); }

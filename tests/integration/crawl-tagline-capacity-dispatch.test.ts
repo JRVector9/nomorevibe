@@ -338,7 +338,11 @@ it("passes a candidate fenced by its own unknown phase row and keeps writing the
     expect(unknown.state).toBe("indeterminate");
     setReply(response => { response.end(JSON.stringify(replyBody())); });
     // 예전: 맨 앞 후보의 fence 미룸이 틱 전체를 deferred 로 끝내 뒤의 후보가 차례를 잃었다.
-    expect(await tick()).toMatchObject({ status: "completed" });
+    // 이 시험은 fence 만 본다 — 결과 미확정 점유(2026-11-10)가 2칸 중 1칸을 쥐어 동시 호출이 칸에 막히지 않게, 이 틱은 유지 시간 0(10-30 규칙)으로 돈다
+    const [{ values }] = await admin`SELECT values FROM runtime_settings WHERE id = 1`;
+    await admin`UPDATE runtime_settings SET values = jsonb_set(values, '{capacity}', '{"unknownHoldSeconds":0}'::jsonb) WHERE id = 1`;
+    try { expect(await tick()).toMatchObject({ status: "completed" }); }
+    finally { await admin`UPDATE runtime_settings SET values = ${JSON.stringify(values)}::text::jsonb WHERE id = 1`; }
     expect(bodies).toHaveLength(1 + next.length);
     expect(await admin`SELECT repo FROM crawl_taglines WHERE repo=ANY(${next.map(task => task.candidate.repo)}::text[]) ORDER BY repo`)
       .toEqual(next.map(task => ({ repo: task.candidate.repo })).sort((a, b) => a.repo.localeCompare(b.repo)));

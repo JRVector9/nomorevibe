@@ -131,20 +131,35 @@ describe("lending an idle device and returning it", () => {
     expect(await stateOf("alpha")).toMatchObject({ active: 4, primaryBusy: true });
   });
 
-  it("treats a primary left indeterminate as neither occupancy nor a busy signal, except for its idle_ms recency window", async () => {
-    await configure("alpha", { limitSlots: 1, secondaryCap: 0, idleMs: 60_000 });
+  it("holds a primary left indeterminate as occupancy and a busy signal for the unknown hold window (2026-11-10)", async () => {
+    await configure("alpha", { limitSlots: 1, secondaryCap: 0, idleMs: 0 });
     const primary = await granted(request("primary-route"));
     const begun = await beginModelDispatch(primary);
     if (begun.kind !== "dispatched") throw new Error("fixture_dispatch");
     expect(await markModelDispatchIndeterminate(begun.dispatch, "transport_unknown")).toBe(true);
-    const secondary = request("secondary-route");
-    // the unknown row holds no slot, but its fresh updated_at keeps the primary "busy" for idle_ms → cap 0 blocks the secondary
-    await deferred(secondary, "capacity");
-    expect(await stateOf("alpha")).toMatchObject({ active: 0, primaryBusy: true, secondaryBound: 0 });
-    await configure("alpha", { limitSlots: 1, secondaryCap: 0, idleMs: 0 });
-    expect((await requestModelSlot(secondary)).kind).toBe("granted");
-    expect(await stateOf("alpha")).toMatchObject({ active: 1, secondaryActive: 1, primaryBusy: false, lending: true });
-    expect((await rows(["indeterminate"])).map(row => row.route_id)).toEqual(["primary-route"]);
+    // 기본 유지 시간(600초) 안: 미확정 우선 역할 행이 칸 1 과 우선 역할 바쁨을 쥔다(idle_ms 0 이어도)
+    await deferred(request("secondary-route"), "capacity");
+    await deferred(request("primary-route"), "capacity");
+    expect(await stateOf("alpha")).toMatchObject({ active: 1, heldUnknown: 1, primaryBusy: true, secondaryBound: 0 });
+  });
+
+  it("with an unknown hold of 0, treats a primary left indeterminate as neither occupancy nor a busy signal, except for its idle_ms recency window", async () => {
+    await client`UPDATE runtime_settings SET values = jsonb_set(values, '{capacity}', '{"unknownHoldSeconds":0}'::jsonb) WHERE id = 1`;
+    try {
+      await configure("alpha", { limitSlots: 1, secondaryCap: 0, idleMs: 60_000 });
+      const primary = await granted(request("primary-route"));
+      const begun = await beginModelDispatch(primary);
+      if (begun.kind !== "dispatched") throw new Error("fixture_dispatch");
+      expect(await markModelDispatchIndeterminate(begun.dispatch, "transport_unknown")).toBe(true);
+      const secondary = request("secondary-route");
+      // the unknown row holds no slot, but its fresh updated_at keeps the primary "busy" for idle_ms → cap 0 blocks the secondary
+      await deferred(secondary, "capacity");
+      expect(await stateOf("alpha")).toMatchObject({ active: 0, heldUnknown: 0, primaryBusy: true, secondaryBound: 0 });
+      await configure("alpha", { limitSlots: 1, secondaryCap: 0, idleMs: 0 });
+      expect((await requestModelSlot(secondary)).kind).toBe("granted");
+      expect(await stateOf("alpha")).toMatchObject({ active: 1, secondaryActive: 1, primaryBusy: false, lending: true });
+      expect((await rows(["indeterminate"])).map(row => row.route_id)).toEqual(["primary-route"]);
+    } finally { await client`UPDATE runtime_settings SET values = values - 'capacity' WHERE id = 1`; }
   });
 });
 

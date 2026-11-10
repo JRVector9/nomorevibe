@@ -23,7 +23,8 @@ export type ModelCard = { id: string; name: string; equipment: string; equipment
   /** 이 모델을 부르는 주소(host:port)들 — 관리 계약 endpoint 와 등록부 baseUrl. 키 없음. */
   hosts: string[]; contracts: ModelContractLink[];
   rows: AdminModelMetrics[]; requests: AdminModelRequest[]; stages: string[] };
-/** 2026-10-30 결정: 미확인(indeterminate)은 점유가 아니므로 단계가 "멈춤"이 되지 않는다 — "미확인 · 사람 검토"로만 보인다. */
+/** 2026-10-30 결정: 미확인(indeterminate)이 있어도 단계가 "멈춤"이 되지 않는다 — "미확인 · 사람 검토"로 보인다. 유지 시간 안의 미확인은
+ * 칸을 차지하지만(2026-11-10 결과 미확정 점유) 그것도 한도에 닿아 기다리는 것이지 멈춤이 아니다. */
 export type StageHealth = "정상" | "느림" | "미확인" | "접수 중지";
 const routeStage: Record<string, string> = { "crawl-agent-review": "first-review", "review-gateway": "first-review", "review-cli": "first-review",
   "human-deepseek-review": "human-review", "product-audit": "audit-review", "korean-tagline": "product-tagline-ko",
@@ -166,7 +167,8 @@ export function stageUnknownRows(observation: AdminModelsObservation, rows: Admi
   const groups = new Set(rows.map(row => row.groupId));
   return observation.rows.filter(row => groups.has(row.groupId) && row.indeterminate > 0);
 }
-/** An unknown row in a stage's capacity group marks the stage 미확인 for human review; it occupies no slot, so it never stops the stage (2026-10-30). */
+/** An unknown row in a stage's capacity group marks the stage 미확인 for human review. It never stops the stage (2026-10-30); inside the hold
+ * window it occupies a slot like a dispatched call (2026-11-10), which only makes new calls wait. */
 export function stageHealth(observation: AdminModelsObservation, rows: AdminModelMetrics[], requests: AdminModelRequest[]): StageHealth {
   if (observation.mode === "draining" || observation.mode === "disabled") return "접수 중지";
   if (observation.error || !observation.observedAt || !rows.length) return "미확인";
@@ -194,17 +196,19 @@ export const TEXT_STAGE_IDS: readonly string[] = ADMIN_MODEL_STAGES.filter(stage
 /** 넓은 화면 열. 장비·전송·대기·미확인은 모델·상태 칸에 접어 페이지가 가로로 넘치지 않게 한다. */
 export const MODEL_TABLE_COLUMNS = ["단계 · 경로", "모델 · 장비 · 전송", "상태", "점유 / 한도", "1시간 성공 / 실패", "마지막 성공", "연결 확인 · 결과", "동작"] as const;
 
+/** held = 예약 + 보냄 + 결과 미확정 점유(heldUnknown, 유지 시간 안의 미확인 — 2026-11-10 입장과 같은 규칙). unknown = 미확인 전부(검토 대상). */
 export type ModelStageRow = { stage: string; label: string; routeIds: string[]; rows: AdminModelMetrics[]; requests: AdminModelRequest[];
-  held: number; waiting: number; unknown: number; succeeded1h: number; failed1h: number; withdrawn1h: number; lastSuccessAt: string | null };
+  held: number; heldUnknown: number; waiting: number; unknown: number; succeeded1h: number; failed1h: number; withdrawn1h: number; lastSuccessAt: string | null };
 /** 표의 한 묶음 — 모델·장비·전송·연결 확인·동작 셀을 rowspan 으로 공유하는 단계 행들. shared 는 text 7경로처럼 둘 이상이 한 슬롯을 나눠 쓸 때다. */
-export type ModelRowGroup = { id: string; shared: boolean; stages: ModelStageRow[]; held: number; waiting: number; unknown: number; groupIds: string[] };
+export type ModelRowGroup = { id: string; shared: boolean; stages: ModelStageRow[]; held: number; heldUnknown: number; waiting: number; unknown: number; groupIds: string[] };
 const stageOrder = (id: string) => { const index = MODEL_DASHBOARD_STAGES.findIndex(stage => stage.id === id); return index < 0 ? MODEL_DASHBOARD_STAGES.length : index; };
 export function modelStageRows(card: ModelCard): ModelStageRow[] {
   const stages = [...new Set(card.stages.length ? card.stages : card.requests.map(request => modelStageId(request.routeId)))].sort((a, b) => stageOrder(a) - stageOrder(b));
   const build = (stage: string, rows: AdminModelMetrics[], requests: AdminModelRequest[]): ModelStageRow => {
     const sum = (key: "succeeded1h" | "failed1h" | "withdrawn1h" | "dispatched" | "reserved" | "waiting" | "indeterminate") => rows.reduce((n, row) => n + row[key], 0);
+    const heldUnknown = rows.reduce((n, row) => n + (row.heldUnknown ?? 0), 0);
     return { stage, label: stage ? modelStageLabel(stage) : "사용 단계 미확인", routeIds: [...new Set([...rows.map(row => row.routeId), ...requests.map(row => row.routeId)])], rows, requests,
-      held: sum("reserved") + sum("dispatched"), waiting: sum("waiting"), unknown: sum("indeterminate"), succeeded1h: sum("succeeded1h"), failed1h: sum("failed1h"),
+      held: sum("reserved") + sum("dispatched") + heldUnknown, heldUnknown, waiting: sum("waiting"), unknown: sum("indeterminate"), succeeded1h: sum("succeeded1h"), failed1h: sum("failed1h"),
       withdrawn1h: sum("withdrawn1h"), lastSuccessAt: lastModelSuccess(rows) };
   };
   if (!stages.length) return [build("", card.rows, card.requests)];
@@ -212,12 +216,12 @@ export function modelStageRows(card: ModelCard): ModelStageRow[] {
 }
 export function modelRowGroups(card: ModelCard): ModelRowGroup[] {
   const groups: ModelRowGroup[] = []; let text: ModelRowGroup | null = null;
-  const empty = (id: string, shared: boolean): ModelRowGroup => ({ id, shared, stages: [], held: 0, waiting: 0, unknown: 0, groupIds: [] });
+  const empty = (id: string, shared: boolean): ModelRowGroup => ({ id, shared, stages: [], held: 0, heldUnknown: 0, waiting: 0, unknown: 0, groupIds: [] });
   for (const row of modelStageRows(card)) {
     let group: ModelRowGroup;
     if (TEXT_STAGE_IDS.includes(row.stage)) { if (!text) { text = empty(`${card.id}:text`, true); groups.push(text); } group = text; }
     else { group = empty(`${card.id}:${row.stage || "none"}`, false); groups.push(group); }
-    group.stages.push(row); group.held += row.held; group.waiting += row.waiting; group.unknown += row.unknown;
+    group.stages.push(row); group.held += row.held; group.heldUnknown += row.heldUnknown; group.waiting += row.waiting; group.unknown += row.unknown;
     for (const metric of row.rows) if (!group.groupIds.includes(metric.groupId)) group.groupIds.push(metric.groupId);
     for (const request of row.requests) if (!group.groupIds.includes(request.groupId)) group.groupIds.push(request.groupId);
   }
@@ -238,7 +242,7 @@ export const MODEL_ROW_STATUS: Readonly<Record<ModelRowStatus, { label: string; 
 export type ProbeLike = { listed?: boolean | null; error?: string | null } | null | undefined;
 /**
  * 미확인 → (연결 확인이 목록에 없음/오류) 연결 안 됨 → 처리 중 → 접수 중지(DRAINING) → 보류(대기만) → 연결됨(최근 성공 또는 목록 있음) → 연결 안 됨(근거 없음).
- * 2026-10-30 결정대로 미확인은 점유가 아니라 「확인 못함 N」으로만 보인다.
+ * 미확인은 「확인 못함 N」으로 보인다(2026-10-30). 유지 시간 안의 미확인은 held 에도 들어 점유로 센다(2026-11-10) — 상태는 여전히 「확인 못함」이 먼저다.
  */
 export function modelRowStatus(input: { unknown: number; held: number; waiting: number; lastSuccessAt: string | null; mode: AdminModelsObservation["mode"]; probe?: ProbeLike }): ModelRowStatus {
   if (input.unknown > 0) return "unknown";

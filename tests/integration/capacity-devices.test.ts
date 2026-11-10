@@ -61,7 +61,7 @@ async function insertRequest(fixture: Fixture): Promise<string> {
 }
 const clearRequests = () => client`DELETE FROM model_capacity_requests WHERE owner_instance_id = ${owner.instanceId}`;
 const candidate = (deviceId: string) => db.transaction(async tx => {
-  const rows = await tx.execute<{ request_id: string }>(deviceCandidateSql(deviceId, generation, JSON.stringify(storedPolicy.groupLimits)));
+  const rows = await tx.execute<{ request_id: string }>(deviceCandidateSql(deviceId, generation, JSON.stringify(storedPolicy.groupLimits), 0));
   return rows[0]?.request_id ?? null;
 });
 const save = (input: unknown, expectedVersion: number | null, actor = "jr") => db.transaction(tx => saveModelCapacityDevice(tx, input, expectedVersion, actor));
@@ -166,14 +166,14 @@ describe("saveModelCapacityDevice", () => {
 });
 
 describe("readModelCapacityDeviceStates", () => {
-  it("counts reserved/dispatched only, reports busy/bound/lending/waiting per device, and falls back to the policy for a device without an enabled row", async () => {
+  it("counts reserved/dispatched and unknowns inside the hold window (2026-11-10, default 600 s), reports busy/bound/lending/waiting per device, and falls back to the policy for a device without an enabled row", async () => {
     await save({ deviceId: "alpha", limitSlots: 4, secondaryCap: 1, idleMs: 0, reserveSlots: 0, physicalLimit: null,
       roles: [{ routeId: "primary-route", rank: 1 }, { routeId: "secondary-route", rank: 2 }], note: null }, 1);
     await client`UPDATE model_capacity_devices SET enabled = false WHERE device_id = 'beta'`;
     await insertRequest({ routeId: "primary-route", state: "dispatched" });                                 // occupies, primary busy
     await insertRequest({ routeId: "secondary-route", state: "reserved" });                                 // occupies as secondary
-    await insertRequest({ routeId: "secondary-route", state: "indeterminate" });                            // holds nothing
-    await insertRequest({ routeId: "primary-route", state: "indeterminate", updatedAgoMs: 3_600_000 });     // neither occupancy nor busy
+    await insertRequest({ routeId: "secondary-route", state: "indeterminate" });                            // just became unknown: holds its slot (secondary)
+    await insertRequest({ routeId: "primary-route", state: "indeterminate", updatedAgoMs: 3_600_000 });     // past the window: neither occupancy nor busy
     await insertRequest({ routeId: "secondary-route", state: "waiting" });                                  // waiting (current generation)
     await insertRequest({ routeId: "primary-route", state: "waiting", generation: { ...generation, revision: 2 } }); // old generation: not waiting here
     await insertRequest({ routeId: "primary-route", state: "waiting", queueUntilMs: -1_000 });               // expired: not waiting
@@ -183,15 +183,16 @@ describe("readModelCapacityDeviceStates", () => {
     const states = await readModelCapacityDeviceStates();
     expect(states.map(state => state.deviceId)).toEqual(["alpha", "beta", "gamma"]); // omega: route without row or groupLimits → unconfigured, absent; huge/" spaced": invalid fallback
     expect(states[0]).toMatchObject({ deviceId: "alpha", source: "table", limitSlots: 4, secondaryCap: 1, idleMs: 0, reserveSlots: 0,
-      active: 3, secondaryActive: 2, primaryBusy: true, secondaryBound: 1, lending: false, waiting: 1, waitingPrimary: 0, version: 2 });
+      active: 4, heldUnknown: 1, secondaryActive: 3, primaryBusy: true, secondaryBound: 1, lending: false, waiting: 1, waitingPrimary: 0, version: 2 });
     expect(states[0].updatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    // beta: the fresh unknown holds its slot too, so the fallback device (1 slot) shows 2 / 1 — new admissions wait, held rows stay
     expect(states[1]).toEqual({ deviceId: "beta", source: "policy_fallback", limitSlots: 1, secondaryCap: 1, idleMs: 60_000, reserveSlots: 0,
-      active: 1, secondaryActive: 1, primaryBusy: false, secondaryBound: 1, lending: false, waiting: 0, waitingPrimary: 0, version: null, updatedAt: null,
+      active: 2, heldUnknown: 1, secondaryActive: 2, primaryBusy: false, secondaryBound: 1, lending: true, waiting: 0, waitingPrimary: 0, version: null, updatedAt: null,
       helpers: [], // PR 2a: no helper assignment on this device
-      // 0169 (route quotas): the policy fallback lends idle slots and has no quota lines; the per-route occupancy still shows (indeterminate holds nothing)
-      lendIdle: true, routes: [{ routeId: "beta-route", active: 1, waiting: 0, minSlots: null, maxSlots: null, cap: null, demand: false, held: 0 }],
-      // 0170 (model limits): no limit lines on a fallback device; the per-model occupancy still shows (indeterminate holds nothing)
-      models: [{ model: "m", active: 1, waiting: 0, maxSlots: null, engineMax: null }] });
+      // 0169 (route quotas): the policy fallback lends idle slots and has no quota lines; the per-route occupancy counts the held unknown
+      lendIdle: true, routes: [{ routeId: "beta-route", active: 2, waiting: 0, minSlots: null, maxSlots: null, cap: null, demand: false, held: 0 }],
+      // 0170 (model limits): no limit lines on a fallback device; the per-model occupancy counts the held unknown
+      models: [{ model: "m", active: 2, waiting: 0, maxSlots: null, engineMax: null }] });
     expect(states[2]).toMatchObject({ deviceId: "gamma", source: "table", active: 0 });
     // the same read inside a caller transaction (1b-C's admission TX) sees the same snapshot
     expect(await db.transaction(tx => readModelCapacityDeviceStates(tx))).toEqual(states);

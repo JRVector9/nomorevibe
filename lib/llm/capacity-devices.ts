@@ -1,6 +1,6 @@
 import { sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
-import { MODEL_CAPACITY_OCCUPYING_STATES_SQL } from "./capacity-states";
+import { slotHoldingSql } from "./capacity-unknown-hold";
 import { helperCandidateExclusionSql, helperDemandOnSql, helperGateCte, helperGateStatesFromJson, helperRouteMatchSql,
   type HelperGateState } from "./capacity-helpers";
 
@@ -18,9 +18,11 @@ import { helperCandidateExclusionSql, helperDemandOnSql, helperGateCte, helperGa
  * - S = D 의 enabled 설정 행. 없으면 정책 `groupLimits[D]` 로 대체(limit = cap = 그 값, idle 60000, reserve 0, 순위 없음; source `policy_fallback`).
  *   둘 다 없으면 D 에는 grant 가 없다(`device_unconfigured`, 1b-C).
  * - rank(row) = `model_capacity_device_roles.role_rank`(D, row.route_id), 없으면 UNRANKED_ROLE_RANK(32767).
- * - active(D) = `group_id = D AND state IN ('reserved','dispatched')` 행 수 — 모든 세대. **indeterminate 는 점유가 아니다**(소유자 결정 2026-10-30).
+ * - active(D) = `group_id = D` 이고 칸을 쥔 행 수 — 모든 세대. 칸을 쥔 행 = reserved·dispatched, 그리고 보낸 시각(없으면 미확정이 된 시각)이
+ *   유지 시간(runtime_settings capacity.unknownHoldSeconds, 기본 600초) 안인 indeterminate(소유자 결정 2026-11-10, lib/llm/capacity-unknown-hold.ts).
+ *   유지 시간이 0 이면 예전(2026-10-30)처럼 indeterminate 를 세지 않는다. 아래 routeActive·modelActive·도우미 배정 점유·우선 역할 바쁨도 같은 정의다.
  * - secondaryActive(D) = 그중 rank > 1.
- * - primaryBusy(D) = rank 1 행이 (현재 세대 waiting 이고 queue_until > now) 또는 reserved/dispatched 또는 updated_at ≥ now − idle_ms 중 하나.
+ * - primaryBusy(D) = rank 1 행이 (현재 세대 waiting 이고 queue_until > now) 또는 칸을 쥔 행 또는 updated_at ≥ now − idle_ms 중 하나.
  * - secondaryBound(D) = primaryBusy ? secondary_cap : greatest(secondary_cap, limit_slots − reserve_slots).
  * - 대기 행 q 가 **맞는다** ⇔ active(D) < limit_slots AND (rank(q) = 1 OR secondaryActive(D) < secondaryBound(D)).
  * - D 안에서는 (rank, queue_ordinal) 이 가장 작은 맞는 행 하나를 뽑는다(장비마다 pass 당 하나).
@@ -33,7 +35,7 @@ import { helperCandidateExclusionSql, helperDemandOnSql, helperGateCte, helperGa
  * 도우미 상태는 도우미가 아닌 행의 rank 1 판정을 바꾸지 않는다: 우선 역할 일은 어떤 신호로도 막히지 않는다.
  *
  * 경로 몫(step 2, 운영자 결정 2026-11-08; 0169 model_capacity_devices.route_quotas·lend_idle). 몫 줄이 없는 경로·장비는 위 판정 그대로다.
- * - quota(D, R) = (min_slots 보장, max_slots 상한|NULL). routeActive(R) = D 에서 route R 의 reserved/dispatched 행 수(모든 세대).
+ * - quota(D, R) = (min_slots 보장, max_slots 상한|NULL). routeActive(R) = D 에서 route R 의 칸을 쥔 행 수(모든 세대).
  * - demand(R) = R 의 행이 점유 중이거나, 현재 세대 대기 중이거나, idle_ms 안에 settled/withdrawn 됐다(우선 역할 바쁨과 같은 「최근」 창).
  * - cap(R) = 빌려주기 켜짐: max_slots / 꺼짐: min_slots > 0 이면 min_slots, 아니면 max_slots(NULL = 상한 없음).
  * - held(R) = (빌려주기 꺼짐 OR demand(R)) 이면 greatest(min_slots − routeActive(R), 0), 아니면 0 — 다른 경로가 비워 둬야 하는 R 의 못 채운 보장.
@@ -44,15 +46,12 @@ import { helperCandidateExclusionSql, helperDemandOnSql, helperGateCte, helperGa
  *
  * 모델 상한(운영자 결정 2026-11-09; 0170 model_capacity_devices.model_limits). 상한 줄이 없는 모델·장비는 위 판정 그대로다.
  * 한 장비를 서로 다른 서버·모델이 함께 쓸 때(m3-mlx: deepseek 엔진 최대 1 · gpt-oss 엔진 최대 4, 공유 칸 2) 공유 칸(limit_slots)과 따로 모델마다 상한을 둔다.
- * - modelActive(M) = D 에서 model = M 인 reserved/dispatched 행 수(모든 세대) — routeActive 와 같은 거르기를 모델(장부 model 문자열, 공급자 무관)로 나눈 것.
+ * - modelActive(M) = D 에서 model = M 인 칸을 쥔 행 수(모든 세대) — routeActive 와 같은 거르기를 모델(장부 model 문자열, 공급자 무관)로 나눈 것.
  * - 대기 행 q 는 위 모든 조건(공유 칸·낮은 순위 상한·경로 몫)에 더해 **(model(q) 의 상한 줄이 없거나 modelActive(model(q)) < max_slots)** 일 때만 맞는다.
  *   모델 상한은 절대적이다 — 보장 아래의 행(under)·rank 1·도우미 행 모두 이 조건을 지난다.
  * - 새 요청은 modelActive + (같은 모델의 앞선 현재 세대 대기 행) ≥ max_slots 이면 대기 행 없이 바로 `model_quota` 로 미룬다
  *   (deviceModelQuotaGateSql; 이미 줄에 선 자기 대기 행은 거둔다) — 호출자는 `route_quota` 처럼 다음 순위로 넘긴다.
  */
-
-/** 점유로 세는 상태 = lib/llm/capacity-states.ts 의 하나(reserved·dispatched). indeterminate 는 사람 검토용 행이며 슬롯을 쥐지 않고 바쁨 신호도 아니다(PR #750). */
-const DEVICE_OCCUPYING_STATES_SQL = MODEL_CAPACITY_OCCUPYING_STATES_SQL;
 
 export const MODEL_CAPACITY_DEVICE_ID_MAX = 120;
 export const MODEL_CAPACITY_DEVICE_LIMIT_MAX = 256;
@@ -195,7 +194,7 @@ export const modelCapacityRouteStateSchema = z.object({
 /** 장비 안 경로 하나의 실시간 몫 상태(deviceStateSql 의 routes). 몫 줄이 없는 경로는 minSlots·maxSlots·cap 이 null 이고 held 0 이다. */
 export type ModelCapacityRouteState = Readonly<{
   routeId: string;
-  /** reserved/dispatched(모든 세대). */
+  /** 칸을 쥔 행(모든 세대): reserved/dispatched + 유지 시간 안의 indeterminate. */
   active: number;
   /** 현재 세대 대기(queue_until > now). */
   waiting: number;
@@ -275,7 +274,7 @@ export const modelCapacityModelStateSchema = z.object({
 export type ModelCapacityModelState = Readonly<{
   /** 장부 행의 model 문자열(공급자 무관). */
   model: string;
-  /** reserved/dispatched(모든 세대). */
+  /** 칸을 쥔 행(모든 세대): reserved/dispatched + 유지 시간 안의 indeterminate. */
   active: number;
   /** 현재 세대 대기(queue_until > now). */
   waiting: number;
@@ -289,8 +288,10 @@ export type ModelCapacityModelState = Readonly<{
 export type ModelCapacityDeviceState = Readonly<{
   deviceId: string; source: "table" | "policy_fallback";
   limitSlots: number; secondaryCap: number; idleMs: number; reserveSlots: number;
-  /** reserved/dispatched 행 수(모든 세대). */
+  /** 칸을 쥔 행 수(모든 세대): reserved/dispatched + 유지 시간 안의 indeterminate(2026-11-10, capacity-unknown-hold.ts). */
   active: number;
+  /** 그중 유지 시간 안의 indeterminate(「미확정 점유」). deviceStateSql 행에는 늘 있다(옛 읽기·테스트 조립 행에는 없을 수 있다). */
+  heldUnknown?: number;
   /** 그중 rank > 1. */
   secondaryActive: number;
   /** 지금 rank > 1 역할이 새로 들어갈 수 있는 합계 상한. */
@@ -417,12 +418,16 @@ const effectiveRank = (alias: string): SQL => sql`CASE WHEN ${helperRouteMatchSq
  * deviceStateSql(관측)이 같은 접두를 쓴다 — 조건의 단일 출처. `deviceId` 는 bind 값(string) 또는 바깥 열 참조(SQL, LATERAL 안에서 d.device_id 등)다.
  * `groupLimitsJson` 은 정책 `groupLimits` 의 JSON 문자열(없으면 "{}") — 설정 행이 없을 때의 대체 한도(policy_fallback).
  * 도우미 조각(helperGateCte)은 자기 안에서만 참조하므로 맨 앞에 두고, `busy` 가 그 `demand` 를 읽는다.
+ * `unknownHoldMs` 는 결과 미확정 점유 유지 시간(ms, readModelCapacityUnknownHoldMs) — 칸을 쥔 행(slotHoldingSql)의 정의다. 0 이면 예전 글자 그대로
+ * (reserved·dispatched 만)이고, `active.unknown`·`counts.unknown`(유지 시간 안의 미확정 수, 관측의 「미확정 점유」)은 늘 0 이다.
  */
-export function deviceStateCte(deviceId: SQL | string, generation: ModelCapacityGeneration, groupLimitsJson: string): SQL {
+export function deviceStateCte(deviceId: SQL | string, generation: ModelCapacityGeneration, groupLimitsJson: string, unknownHoldMs: number): SQL {
   const device = deviceRef(deviceId);
-  const occupying = sql.raw(DEVICE_OCCUPYING_STATES_SQL);
+  const holding = slotHoldingSql("r", unknownHoldMs);
+  // active 에 든 미확정 행은 모두 유지 시간 안이다 — 0 이면 늘 false(예전 SQL 에 'indeterminate' 글자를 넣지 않는다)
+  const unknown = unknownHoldMs === 0 ? sql`false` : sql`(r.state = 'indeterminate')`;
   const limitPattern = sql.raw(`'${DEVICE_FALLBACK_LIMIT_PATTERN.source}'`);
-  return sql`WITH ${helperGateCte(device)},
+  return sql`WITH ${helperGateCte(device, unknownHoldMs)},
     s AS MATERIALIZED (
       SELECT d.limit_slots, d.secondary_cap, d.idle_ms, d.reserve_slots, 'table'::text AS source, d.version, d.updated_at, d.lend_idle
       FROM model_capacity_devices d WHERE d.device_id = ${device} AND d.enabled
@@ -435,9 +440,9 @@ export function deviceStateCte(deviceId: SQL | string, generation: ModelCapacity
     ),
     roles AS MATERIALIZED (SELECT ro.route_id, ro.role_rank FROM model_capacity_device_roles ro WHERE ro.device_id = ${device}),
     active AS MATERIALIZED (
-      SELECT ${effectiveRank("r")} AS role_rank
+      SELECT ${effectiveRank("r")} AS role_rank, ${unknown} AS unknown
       FROM model_capacity_requests r LEFT JOIN roles ro ON ro.route_id = r.route_id
-      WHERE r.group_id = ${device} AND r.state IN ${occupying}
+      WHERE r.group_id = ${device} AND ${holding}
     ),
     busy AS MATERIALIZED (
       SELECT (EXISTS (
@@ -445,12 +450,12 @@ export function deviceStateCte(deviceId: SQL | string, generation: ModelCapacity
         WHERE r.group_id = ${device} AND NOT ${helperRouteMatchSql("r")} AND (
           (r.state = 'waiting' AND r.epoch = ${generation.epoch} AND r.revision = ${generation.revision}
             AND r.policy_hash = ${generation.policyHash} AND r.queue_until > clock_timestamp())
-          OR r.state IN ${occupying}
+          OR ${holding}
           OR r.updated_at >= clock_timestamp() - s.idle_ms * interval '1 millisecond')
       ) OR ${helperDemandOnSql()}) AS primary_busy
     ),
     counts AS MATERIALIZED (
-      SELECT count(*)::int AS total, (count(*) FILTER (WHERE role_rank > 1))::int AS secondary FROM active
+      SELECT count(*)::int AS total, (count(*) FILTER (WHERE role_rank > 1))::int AS secondary, (count(*) FILTER (WHERE unknown))::int AS unknown FROM active
     ),
     waiting AS MATERIALIZED (
       SELECT count(*)::int AS waiting, (count(*) FILTER (WHERE ${effectiveRank("r")} = 1))::int AS waiting_primary
@@ -458,20 +463,19 @@ export function deviceStateCte(deviceId: SQL | string, generation: ModelCapacity
       WHERE r.group_id = ${device} AND r.state = 'waiting' AND r.epoch = ${generation.epoch} AND r.revision = ${generation.revision}
         AND r.policy_hash = ${generation.policyHash} AND r.queue_until > clock_timestamp()
     ),
-    ${routeQuotaCte(device, generation)},
-    ${modelLimitCte(device, generation)}`;
+    ${routeQuotaCte(device, generation, unknownHoldMs)},
+    ${modelLimitCte(device, generation, unknownHoldMs)}`;
 }
 
 /**
  * 경로 몫 CTE(step 2, 0169) — deviceStateCte 의 끝에 붙는다(s 를 읽는다). 몫 줄이 없는 장비는 quota·quota_state 가 비어 입장이 오늘과 같다.
  * - quota: enabled 장비 행의 route_quotas 줄.
- * - route_use: 경로별 점유(reserved/dispatched, 모든 세대)·현재 세대 대기 — active·waiting CTE 와 같은 거르기(같은 부분 색인)를 경로로 나눈 것.
+ * - route_use: 경로별 점유(칸을 쥔 행 = slotHoldingSql, 모든 세대)·현재 세대 대기 — active·waiting CTE 와 같은 거르기(같은 부분 색인)를 경로로 나눈 것.
  * - recent: 보장이 있는 경로 중 idle_ms 안에 settled·withdrawn 된 행이 있는 것(부분 색인 settled_at·withdrawn_at 으로 읽는다; 기준 시각은 한 번 계산한다).
  * - quota_state: 몫 줄마다 active·waiting·demand·cap·held(정의는 이 파일 머리 주석).
  * 열은 감시자 계정의 열 단위 SELECT(lib/runtime/oracle-db-profile.ts CAPACITY_REQUEST_READ) 안의 것만 쓴다 — queue_ordinal 은 쓰지 않는다.
  */
-function routeQuotaCte(device: SQL, generation: ModelCapacityGeneration): SQL {
-  const occupying = sql.raw(DEVICE_OCCUPYING_STATES_SQL);
+function routeQuotaCte(device: SQL, generation: ModelCapacityGeneration, unknownHoldMs: number): SQL {
   const cutoff = sql`(SELECT clock_timestamp() - s.idle_ms * interval '1 millisecond' FROM s)`;
   const recentDemand = sql`EXISTS (SELECT 1 FROM recent rc WHERE rc.route_id = qu.route_id)`;
   return sql`quota AS MATERIALIZED (
@@ -482,7 +486,7 @@ function routeQuotaCte(device: SQL, generation: ModelCapacityGeneration): SQL {
     route_use AS MATERIALIZED (
       SELECT u.route_id, sum(u.active)::int AS active, sum(u.waiting)::int AS waiting FROM (
         SELECT r.route_id, count(*) AS active, 0::bigint AS waiting FROM model_capacity_requests r
-        WHERE r.group_id = ${device} AND r.state IN ${occupying} GROUP BY r.route_id
+        WHERE r.group_id = ${device} AND ${slotHoldingSql("r", unknownHoldMs)} GROUP BY r.route_id
         UNION ALL
         SELECT r.route_id, 0::bigint, count(*) FROM model_capacity_requests r
         WHERE r.group_id = ${device} AND r.state = 'waiting' AND r.epoch = ${generation.epoch} AND r.revision = ${generation.revision}
@@ -508,12 +512,11 @@ function routeQuotaCte(device: SQL, generation: ModelCapacityGeneration): SQL {
  * 모델 상한 CTE(0170) — deviceStateCte 의 끝에 붙고, deviceModelQuotaGateSql 은 이것만 쓴다(s 를 읽지 않는다). 상한 줄이 없는 장비는 model_limit·
  * model_state 가 비어 입장이 오늘과 같다.
  * - model_limit: enabled 장비 행의 model_limits 줄.
- * - model_use: 모델별 점유(reserved/dispatched, 모든 세대)·현재 세대 대기 — route_use 와 같은 거르기(같은 부분 색인)를 장부 model 로 나눈 것(공급자 무관).
+ * - model_use: 모델별 점유(칸을 쥔 행 = slotHoldingSql, 모든 세대)·현재 세대 대기 — route_use 와 같은 거르기(같은 부분 색인)를 장부 model 로 나눈 것(공급자 무관).
  * - model_state: 상한 줄마다 max_slots·active·waiting(engine_max 는 표시용으로 실을 뿐 판정에 쓰지 않는다).
  * 열은 감시자 계정의 열 단위 SELECT(CAPACITY_REQUEST_READ) 안의 것만 쓴다(model 은 그 안에 있다).
  */
-function modelLimitCte(device: SQL, generation: ModelCapacityGeneration): SQL {
-  const occupying = sql.raw(DEVICE_OCCUPYING_STATES_SQL);
+function modelLimitCte(device: SQL, generation: ModelCapacityGeneration, unknownHoldMs: number): SQL {
   return sql`model_limit AS MATERIALIZED (
       SELECT x.model, x.max_slots, x.engine_max
       FROM model_capacity_devices d CROSS JOIN LATERAL jsonb_to_recordset(d.model_limits) AS x(model text, max_slots int, engine_max int)
@@ -522,7 +525,7 @@ function modelLimitCte(device: SQL, generation: ModelCapacityGeneration): SQL {
     model_use AS MATERIALIZED (
       SELECT u.model, sum(u.active)::int AS active, sum(u.waiting)::int AS waiting FROM (
         SELECT r.model, count(*) AS active, 0::bigint AS waiting FROM model_capacity_requests r
-        WHERE r.group_id = ${device} AND r.state IN ${occupying} GROUP BY r.model
+        WHERE r.group_id = ${device} AND ${slotHoldingSql("r", unknownHoldMs)} GROUP BY r.model
         UNION ALL
         SELECT r.model, 0::bigint, count(*) FROM model_capacity_requests r
         WHERE r.group_id = ${device} AND r.state = 'waiting' AND r.epoch = ${generation.epoch} AND r.revision = ${generation.revision}
@@ -540,13 +543,13 @@ function modelLimitCte(device: SQL, generation: ModelCapacityGeneration): SQL {
  * 장비마다 한 번 실행한다. 설정 출처가 없으면(s 가 비면) 행이 나오지 않는다 → 그 장비는 grant 없음.
  * 도우미 행(h.helper)은 rank 1 우회가 없고, 열린 경로·max_slots 안에서만 맞으며(helperCandidateExclusionSql), 자기 역할 행 뒤에 정렬된다.
  */
-export function deviceCandidateSql(deviceId: string, generation: ModelCapacityGeneration, groupLimitsJson: string): SQL {
+export function deviceCandidateSql(deviceId: string, generation: ModelCapacityGeneration, groupLimitsJson: string, unknownHoldMs: number): SQL {
   const device = deviceRef(deviceId);
   // 경로 몫(step 2): 보장 아래의 행(under)은 다른 경로의 held 를 보지 않고 rank 1 처럼 낮은 순위 상한을 넘는다(도우미 행 제외).
   // 몫 줄이 없으면 qs 가 NULL 이라 cap 조건은 참, under 는 거짓, held 합은 0 — 조건이 오늘의 `c.total < s.limit_slots` 와 같아진다.
   // 모델 상한(0170): 행의 model 에 상한 줄이 있으면 modelActive < max_slots 여야 한다(보장·rank 1·도우미와 무관하게 절대적). 줄이 없으면 ms 가 NULL 이라 참.
   const under = sql`coalesce(qs.active < qs.min_slots, false)`;
-  return sql`${deviceStateCte(deviceId, generation, groupLimitsJson)}
+  return sql`${deviceStateCte(deviceId, generation, groupLimitsJson, unknownHoldMs)}
     SELECT q.request_id FROM model_capacity_requests q
       LEFT JOIN roles ro ON ro.route_id = q.route_id
       LEFT JOIN quota_state qs ON qs.route_id = q.route_id
@@ -571,11 +574,11 @@ export function deviceCandidateSql(deviceId: string, generation: ModelCapacityGe
  * control 행 FOR UPDATE 아래 입장 TX 에서만 부른다(queue_ordinal 을 읽는다 — 감시자 관측 경로에서는 쓰지 않는다).
  */
 export function deviceRouteQuotaGateSql(deviceId: string, generation: ModelCapacityGeneration, groupLimitsJson: string, routeId: string,
-  ownRequestId: string | null): SQL {
+  ownRequestId: string | null, unknownHoldMs: number): SQL {
   const device = deviceRef(deviceId);
   const behindOwn = ownRequestId === null ? sql`true`
     : sql`w.request_id <> ${ownRequestId}::uuid AND w.queue_ordinal < (SELECT o.queue_ordinal FROM model_capacity_requests o WHERE o.request_id = ${ownRequestId}::uuid)`;
-  return sql`${deviceStateCte(deviceId, generation, groupLimitsJson)}
+  return sql`${deviceStateCte(deviceId, generation, groupLimitsJson, unknownHoldMs)}
     SELECT qs.cap, qs.active, qs.min_slots, (SELECT count(*)::int FROM model_capacity_requests w
         WHERE w.group_id = ${device} AND w.route_id = ${routeId} AND w.state = 'waiting'
           AND w.epoch = ${generation.epoch} AND w.revision = ${generation.revision} AND w.policy_hash = ${generation.policyHash}
@@ -594,11 +597,12 @@ export const routeQuotaGateCapped = (row: DeviceRouteQuotaGateRow | undefined): 
  * 이 요청보다 앞선 것(새 요청은 전부; 경로·공급자 무관). modelActive + ahead ≥ max_slots 이면 대기 행 없이(있던 자기 대기 행은 거두고) model_quota.
  * modelLimitCte 하나만 쓴다(장비 판정 CTE 전체를 다시 돌리지 않는다). control 행 FOR UPDATE 아래 입장 TX 에서만 부른다(queue_ordinal 을 읽는다).
  */
-export function deviceModelQuotaGateSql(deviceId: string, generation: ModelCapacityGeneration, model: string, ownRequestId: string | null): SQL {
+export function deviceModelQuotaGateSql(deviceId: string, generation: ModelCapacityGeneration, model: string, ownRequestId: string | null,
+  unknownHoldMs: number): SQL {
   const device = deviceRef(deviceId);
   const behindOwn = ownRequestId === null ? sql`true`
     : sql`w.request_id <> ${ownRequestId}::uuid AND w.queue_ordinal < (SELECT o.queue_ordinal FROM model_capacity_requests o WHERE o.request_id = ${ownRequestId}::uuid)`;
-  return sql`WITH ${modelLimitCte(device, generation)}
+  return sql`WITH ${modelLimitCte(device, generation, unknownHoldMs)}
     SELECT ms.max_slots, ms.active, (SELECT count(*)::int FROM model_capacity_requests w
         WHERE w.group_id = ${device} AND w.model = ${model} AND w.state = 'waiting'
           AND w.epoch = ${generation.epoch} AND w.revision = ${generation.revision} AND w.policy_hash = ${generation.policyHash}
@@ -625,17 +629,19 @@ export type DeviceStateRow = {
   routes?: unknown;
   /** 모델 상한(0170): jsonb 배열 [{model, active, waiting, max_slots, engine_max}]. 이 열이 없는 옛 행 모양도 받는다(그때는 상태에 싣지 않는다). */
   models?: unknown;
+  /** 결과 미확정 점유(2026-11-10): active 중 유지 시간 안의 indeterminate 수. 이 열이 없는 옛 행 모양도 받는다(그때는 상태에 싣지 않는다). */
+  held_unknown?: number;
 };
 
 /**
  * 장비 D 의 관측 행 하나(잠그지 않는다). 설정 출처가 없으면 0행. `deviceId` 가 SQL 이면 LATERAL 안에서 바깥 장비 목록에 붙일 수 있다
  * (readModelCapacityDeviceStates 가 그렇게 한 문장으로 모든 장비를 읽는다).
  */
-export function deviceStateSql(deviceId: SQL | string, generation: ModelCapacityGeneration, groupLimitsJson: string): SQL {
+export function deviceStateSql(deviceId: SQL | string, generation: ModelCapacityGeneration, groupLimitsJson: string, unknownHoldMs: number): SQL {
   const device = deviceRef(deviceId);
-  return sql`${deviceStateCte(deviceId, generation, groupLimitsJson)}
+  return sql`${deviceStateCte(deviceId, generation, groupLimitsJson, unknownHoldMs)}
     SELECT ${device}::text AS device_id, s.source, s.limit_slots, s.secondary_cap, s.idle_ms, s.reserve_slots, s.version, s.updated_at,
-      c.total AS active, c.secondary AS secondary_active, b.primary_busy,
+      c.total AS active, c.unknown AS held_unknown, c.secondary AS secondary_active, b.primary_busy,
       CASE WHEN b.primary_busy THEN s.secondary_cap ELSE greatest(s.secondary_cap, s.limit_slots - s.reserve_slots) END AS secondary_bound,
       (NOT b.primary_busy AND c.secondary > s.secondary_cap) AS lending,
       w.waiting, w.waiting_primary,
@@ -692,5 +698,6 @@ export function deviceStateFromRow(row: DeviceStateRow): ModelCapacityDeviceStat
     ...(row.lend_idle === undefined ? {} : { lendIdle: row.lend_idle !== false }),
     ...(row.routes === undefined ? {} : { routes: routeStatesFromJson(row.routes) }),
     ...(row.models === undefined ? {} : { models: modelStatesFromJson(row.models) }),
+    ...(row.held_unknown === undefined ? {} : { heldUnknown: Number(row.held_unknown) }),
   });
 }

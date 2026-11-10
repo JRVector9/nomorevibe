@@ -83,14 +83,27 @@ describe("AI 1차 상세 상태", () => {
     expect(out).toContain("AI 1차 실행0·실패0만으로 용량이 비었다고 판단하지 않습니다");
   });
 
-  it("확인 못함(미확인) 호출은 점유·막힘이 아니라 사람 검토 목록으로 보낸다 (2026-10-30)", () => {
+  it("유지 시간이 지난 확인 못함(미확인) 호출은 점유·막힘이 아니라 사람 검토 목록으로 보낸다 (2026-10-30·11-10)", () => {
     const out = html({ control: groupControl("indeterminate") });
     expect(out).not.toContain("공유 모델 슬롯 대기");
     expect(out).toContain("유효 예약·호출 0 / 상한 1");
     expect(out).toContain("확인 못함 1건 · 사람 검토");
-    expect(out).toContain("확인 못함 · 사람 검토(점유 아님) 1건");
+    expect(out).toContain("(유지 시간 안의 0건만 점유)");
+    expect(out).toContain("확인 못함 · 사람 검토(점유 0건) 1건");
     expect(out).toContain('href="/admin/models/history#retry"');
     expect(out).not.toMatch(/종료 미확정|계속 점유/);
+  });
+
+  it("유지 시간 안의 확인 못함은 입장처럼 칸을 차지해 공유 그룹을 막는다 (2026-11-10 결과 미확정 점유)", () => {
+    const control = groupControl("indeterminate");
+    control.runtime.modelGroups = control.runtime.modelGroups!.map(group => ({ ...group, heldUnknown: 1,
+      occupants: group.occupants.map(row => ({ ...row, held: 1 })) }));
+    const out = html({ control });
+    expect(out).toContain("공유 모델 슬롯 대기");
+    expect(out).toContain("유효 예약·호출 1 / 상한 1");
+    expect(out).toContain("(미확정 점유 1 포함)");
+    expect(out).toContain("(유지 시간 안의 1건만 점유)");
+    expect(out).toContain("확인 못함 · 사람 검토(점유 1건) 1건");
   });
 
   it("대기 나이를 모르면 수집 압력 미만이라고 단정하지 않는다", () => {

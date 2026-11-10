@@ -7,10 +7,12 @@ import { db, onPrimary } from "@/lib/db";
 import { withDbDeadline } from "@/lib/db/pool";
 import { buildAdminModelsObservation, unavailableAdminModels, type AdminModelsObservation } from "./admin-models-observation";
 import { readModelCapacityDeviceStates } from "@/lib/llm/capacity-devices-repository";
+import { DEFAULT_MODEL_CAPACITY_UNKNOWN_HOLD_SECONDS, heldUnknownSql, storedUnknownHoldMsSql } from "@/lib/llm/capacity-unknown-hold";
 
 /**
- * Read-only primary snapshot. Reservations follow device admission accounting until cleanup;
- * historical unknowns remain visible for review and never count as occupied slots.
+ * Read-only primary snapshot. Reservations follow device admission accounting until cleanup.
+ * Unknowns (indeterminate) count as occupied slots while they are inside the hold window (owner decision 2026-11-10,
+ * lib/llm/capacity-unknown-hold.ts) — `heldUnknown` per row, the same rule admission uses; older unknowns stay visible for review only.
  * Basic status boards can skip the completion sample used only by advanced throughput charts.
  * The default/full reader retains its sample bound and one repeatable-read snapshot.
  */
@@ -18,13 +20,16 @@ export async function readAdminModelsObservation(options: { throughput?: boolean
   try {
     return await withDbDeadline(Date.now() + 4000, () => onPrimary(() => db.transaction(async tx => {
       await tx.execute(sql`SET LOCAL statement_timeout = '3s'`);
+      // 결과 미확정 점유 유지 시간(ms)도 같은 문장으로 읽는다 — 입장이 읽는 runtime_settings 행, 같은 거르기(storedUnknownHoldMsSql)
       const [control] = await tx.execute<{ observedAt: string; mode: "open" | "draining" | "disabled";
-        epoch: number; revision: number; policy: unknown; policyHash: string | null; updatedAt: string }>(sql`
+        epoch: number; revision: number; policy: unknown; policyHash: string | null; updatedAt: string; unknownHoldMs: number | string | null }>(sql`
         SELECT to_char(transaction_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "observedAt",
           mode, epoch::float8, revision::float8, policy, policy_hash AS "policyHash",
-          to_char(updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "updatedAt"
+          to_char(updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "updatedAt", ${storedUnknownHoldMsSql} AS "unknownHoldMs"
         FROM model_capacity_control WHERE id = 1`);
       if (!control) return unavailableAdminModels();
+      const storedHold = Number(control.unknownHoldMs);
+      const unknownHoldMs = Number.isSafeInteger(storedHold) && storedHold >= 0 ? storedHold : DEFAULT_MODEL_CAPACITY_UNKNOWN_HOLD_SECONDS * 1000;
       const metrics = await tx.execute(sql`
         WITH measured AS (
           SELECT r.*, CASE
@@ -47,6 +52,7 @@ export async function readAdminModelsObservation(options: { throughput?: boolean
           count(*) FILTER (WHERE state='reserved')::int AS reserved,
           count(*) FILTER (WHERE state='dispatched')::int AS dispatched,
           count(*) FILTER (WHERE state='indeterminate')::int AS indeterminate,
+          count(*) FILTER (WHERE ${heldUnknownSql("measured", unknownHoldMs)})::int AS "heldUnknown",
           to_char(max(settled_at) FILTER (WHERE response_ok) AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "lastSuccessAt"
         FROM measured GROUP BY route_id,provider,model,group_id,provider_budget_id
         ORDER BY route_id,provider,model,group_id,provider_budget_id LIMIT 1001`);
@@ -78,8 +84,9 @@ export async function readAdminModelsObservation(options: { throughput?: boolean
       // Never render a partial sample as a complete rate or percentile.
       if (completions && completions.length > 50000) return unavailableAdminModels();
       // 장비별 한도·점유·빌려 쓰기(PR 1b) — 같은 읽기 전용 스냅숏 안에서 읽는다. 못 읽으면 null(한도 미확인; 0 이나 정책값으로 꾸미지 않는다).
-      const devices = await readModelCapacityDeviceStates(tx).catch(() => null);
-      const observation = buildAdminModelsObservation({ observedAt: control.observedAt, control, metrics: Array.from(metrics), requests: Array.from(requests), devices });
+      const devices = await readModelCapacityDeviceStates(tx, { unknownHoldMs }).catch(() => null);
+      const observation = buildAdminModelsObservation({ observedAt: control.observedAt, control, metrics: Array.from(metrics), requests: Array.from(requests), devices,
+        unknownHoldMs });
       if (!completions) return observation;
       const registry = readModelRegistry();
       return { ...observation,

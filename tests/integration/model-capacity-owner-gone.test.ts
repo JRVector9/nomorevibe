@@ -98,7 +98,7 @@ afterEach(async () => {
 });
 afterAll(() => admin.end({ timeout: 3 }));
 
-it("a gone owner's dispatched row becomes indeterminate with evidence and an audit row, frees its slot and the monitor's stuck count, then closes by operator review", async () => {
+it("a gone owner's dispatched row becomes indeterminate with evidence and an audit row, frees its slot after the unknown hold window and the monitor's stuck count at once, then closes by operator review", async () => {
   await installPolicy();
   const fixture = await ownerGoneFixture(), id = fixture.value.requestId;
   // 슬롯 1칸을 죽은 owner 의 전송이 쥐고 있다 — 다음 요청은 줄에서 기다린다.
@@ -122,8 +122,13 @@ it("a gone owner's dispatched row becomes indeterminate with evidence and an aud
   expect(await audits(id)).toEqual([{ action: "model-capacity-owner-gone", actor: "jr", ok: true,
     detail: { fromState: "dispatched", toState: "indeterminate", reason: "process_exit", evidence: row.evidence } }]);
 
-  // indeterminate 는 슬롯을 차지하지 않는다(2026-10-30) — 같은 한도 1에서 다음 요청이 바로 받는다.
+  // 결과 미확정 점유(2026-11-10): 보낸 시각부터 유지 시간(기본 600초) 동안 칸을 쥔다. 이 fixture 행은 binding 이 없어 dispatched_at 이 비므로
+  // 미확정이 된 시각(지금)부터 잰다 — 운영의 전송 행은 모두 묶인 전송이라 dispatched_at 이 있어 120분 전 전송은 바로 칸을 놓는다.
+  expect(await requestModelSlot(waiting)).toEqual({ kind: "deferred", reason: "capacity" });
+  await admin`UPDATE model_capacity_requests SET updated_at = updated_at - interval '11 minutes' WHERE request_id = ${id}::uuid`;
+  // 유지 시간이 지나면 같은 한도 1에서 다음 요청이 받는다(행은 그대로 indeterminate).
   expect((await requestModelSlot(waiting)).kind).toBe("granted");
+  expect(await stateOf(id)).toBe("indeterminate");
   const after = await readModelCapacityUnknowns(stuckThresholds);
   if (after.status === "unknown") throw new Error("monitor_unknown");
   expect(after.stuckDispatched).toBe(before.stuckDispatched - 1);

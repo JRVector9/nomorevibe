@@ -147,7 +147,7 @@ describe('lease (TX-A) and write (TX-B) as the supervisor principal', () => {
       supervisor_epoch: held.epoch, verdict: 'shadow_only', reason: 'primary_not_full', streak: 0, written_by: SUPERVISOR_PRINCIPAL, ttl_ms: 45_000, fresh: true }]);
     expect((await admin`SELECT device_id, primary_demand, backlog, written_by, metrics FROM model_device_signals`)).toEqual([
       { device_id: 'm3-deepseek', primary_demand: false, backlog: 0, written_by: SUPERVISOR_PRINCIPAL, metrics: { reason: 'fresh', roles: 1, freshRoles: 1 } }]);
-    const gate = async () => (await db.execute<HelperGateStateRow>(helperGateStatesSql('m3-deepseek'))).map(row => [row.kind, row.ok]);
+    const gate = async () => (await db.execute<HelperGateStateRow>(helperGateStatesSql('m3-deepseek', 0))).map(row => [row.kind, row.ok]);
     expect(await gate()).toEqual([['live', false], ['shadow', true]]);
     // fail-closed: 신호 만료 · 다른 계정 · 다른 판 · 감시자 꺼짐 · lease 만료 ⇒ 닫힘
     for (const change of [sql`UPDATE model_helper_signals SET valid_until = clock_timestamp() - interval '1 millisecond', observed_at = clock_timestamp() - interval '1 second'`,
@@ -157,7 +157,7 @@ describe('lease (TX-A) and write (TX-B) as the supervisor principal', () => {
         // stamp 트리거(0154)는 observed_at 을 앞당기지 못하게 한다 — 만료를 흉내 내려고 이 되돌릴 TX 에서만 끈다
         await tx.execute(sql`ALTER TABLE model_helper_signals DISABLE TRIGGER USER`);
         await tx.execute(change);
-        expect((await tx.execute<HelperGateStateRow>(helperGateStatesSql('m3-deepseek'))).map(row => row.ok)).toEqual([false, false]);
+        expect((await tx.execute<HelperGateStateRow>(helperGateStatesSql('m3-deepseek', 0))).map(row => row.ok)).toEqual([false, false]);
         tx.rollback();
       }).catch(error => { if (!String(error).includes('Rollback')) throw error; });
     }
@@ -195,7 +195,7 @@ describe('lease (TX-A) and write (TX-B) as the supervisor principal', () => {
     const stops = await admin`SELECT assignment_id, assignment_version::int, effect, reason, written_by, evidence FROM model_helper_stops`;
     expect(stops).toEqual([{ assignment_id: 'm3-deepseek:ai1', assignment_version: 2, effect: 'stop', reason: 'unknown_rate', written_by: SUPERVISOR_PRINCIPAL,
       evidence: expect.objectContaining({ rule: 'consecutive_unknowns', consecutiveUnknowns: 3 }) }]);
-    expect((await db.execute<HelperGateStateRow>(helperGateStatesSql('m3-deepseek'))).map(row => row.ok)).toEqual([false, false]);
+    expect((await db.execute<HelperGateStateRow>(helperGateStatesSql('m3-deepseek', 0))).map(row => row.ok)).toEqual([false, false]);
     // 관리자가 다시 저장하면(version +1) 새 건강 창이 열려 그 판에는 정지가 없다
     await admin`UPDATE model_helper_assignments SET version = 3, updated_at = clock_timestamp()`;
     const held = await lease(a);

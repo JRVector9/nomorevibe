@@ -169,9 +169,9 @@ export function buildPipelineControlStatus(raw: unknown, readiness: unknown): Pi
  * 읽기 전용 TX 의 문장 상한으로 주 DB 로 넘어가도 오래 붙잡지 않고, 읽지 못하면 화면은 '읽지 못했습니다'에 남기고 로그를 남긴다. */
 export async function readPipelineControlStatus(): Promise<PipelineControlStatus> {
   const [{ db, onReplica }, { sql }, { readJobBatchReadiness }, { logger }, { uptimeSplitReadbackSql }, { ensureRuntimeSettings },
-    { occupyingStateSql, openStateSql, reviewStateSql, unsettledDispatchStateSql }] = await Promise.all([
+    { occupyingStateSql, openStateSql, reviewStateSql, unsettledDispatchStateSql }, { heldUnknownSql, storedUnknownHoldMsSql }] = await Promise.all([
     import('@/lib/db'), import('drizzle-orm'), import('./job-batch-readiness'), import('@/lib/observability/logger'),
-    import('./uptime-split-repository'), import('./runtime-settings-store'), import('@/lib/llm/capacity-states'),
+    import('./uptime-split-repository'), import('./runtime-settings-store'), import('@/lib/llm/capacity-states'), import('@/lib/llm/capacity-unknown-hold'),
   ]);
   const [snapshot, readiness, runtimeSnapshot] = await Promise.allSettled([
     onReplica(() => db.transaction(async tx => {
@@ -179,13 +179,14 @@ export async function readPipelineControlStatus(): Promise<PipelineControlStatus
       const [row] = await tx.execute<{ snapshot: unknown }>(sql`
         WITH observation_clock AS MATERIALIZED (SELECT clock_timestamp() AS at),
         -- Bounded indexed live-set read; settled history and request payloads never enter the view.
+        -- 결과 미확정 점유(2026-11-10): 미확정 행 중 유지 시간 안의 것(held)을 입장과 같은 규칙·같은 저장값(runtime_settings)으로 센다
         model_group_rows AS MATERIALIZED (
-          SELECT group_id, route_id, state FROM (
-            SELECT group_id, route_id, state FROM model_capacity_requests
-              WHERE (${occupyingStateSql('state')} OR ${reviewStateSql('state')})
-                AND (state <> 'reserved' OR reserved_until > (SELECT at FROM observation_clock))
+          SELECT group_id, route_id, state, held FROM (
+            SELECT r.group_id, r.route_id, r.state, ${heldUnknownSql('r', storedUnknownHoldMsSql)} AS held FROM model_capacity_requests r
+              WHERE (${occupyingStateSql('r.state')} OR ${reviewStateSql('r.state')})
+                AND (r.state <> 'reserved' OR r.reserved_until > (SELECT at FROM observation_clock))
             UNION ALL
-            SELECT group_id, route_id, state FROM model_capacity_requests
+            SELECT group_id, route_id, state, false FROM model_capacity_requests
               WHERE state='waiting' AND class='first' AND queue_until > (SELECT at FROM observation_clock)
           ) live LIMIT 513)
         SELECT jsonb_build_object(
@@ -234,7 +235,7 @@ export async function readPipelineControlStatus(): Promise<PipelineControlStatus
             FROM (SELECT device_id, limit_slots FROM model_capacity_devices WHERE enabled LIMIT 512) d),'[]'::jsonb),
           'modelGroups', jsonb_build_object('limited',(SELECT count(*) FROM model_group_rows)>512,
             'rows',coalesce((SELECT jsonb_agg(to_jsonb(g) ORDER BY g."group",g.route,g.state) FROM (
-              SELECT group_id AS "group", route_id AS route, state, count(*)::int AS count
+              SELECT group_id AS "group", route_id AS route, state, count(*)::int AS count, (count(*) FILTER (WHERE held))::int AS held
               FROM model_group_rows GROUP BY group_id,route_id,state) g),'[]'::jsonb)),
           'modelBudgets', coalesce((SELECT jsonb_agg(to_jsonb(b) ORDER BY b.budget) FROM (SELECT r.provider_budget_id AS budget,
               count(*) FILTER (WHERE r.state='waiting') AS waiting, count(*) FILTER (WHERE r.state='reserved') AS reserved,

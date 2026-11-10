@@ -102,7 +102,7 @@ describe('policy fallback and pure predicate helpers', () => {
 
 describe('candidate SQL', () => {
   it('renders the locked one-row candidate with the generation filter, fallback branch, reserve bound and rank order', () => {
-    const query = render(deviceCandidateSql('supa', generation, '{"supa":4}'));
+    const query = render(deviceCandidateSql('supa', generation, '{"supa":4}', 0));
     expect(query.sql).toContain('FOR UPDATE OF q');
     expect(query.sql).toMatch(/LIMIT 1 FOR UPDATE OF q$/);
     expect(query.sql).toContain('ORDER BY h.helper, coalesce(ro.role_rank, 32767), q.queue_ordinal');
@@ -122,7 +122,7 @@ describe('candidate SQL', () => {
   });
 
   it('counts occupancy from reserved/dispatched rows only (indeterminate holds nothing) and busy from rank-1 live/recent rows', () => {
-    const query = render(deviceCandidateSql('supa', generation, '{}')).sql;
+    const query = render(deviceCandidateSql('supa', generation, '{}', 0)).sql;
     // helper_active + active CTE + busy CTE + route_use CTE (0169 route quotas: the same occupancy, split by route) + model_use CTE (0170, split by model)
     expect(query.match(/r\.state IN \('reserved','dispatched'\)/g)).toHaveLength(5);
     expect(query).not.toContain("'indeterminate'");
@@ -134,7 +134,7 @@ describe('candidate SQL', () => {
   });
 
   it('shares the CTE prefix with the state view and accepts an outer column reference for the LATERAL form', () => {
-    const state = render(deviceStateSql(sql`ids.device_id`, generation, '{}'));
+    const state = render(deviceStateSql(sql`ids.device_id`, generation, '{}', 0));
     expect(state.sql).toContain('d.device_id = ids.device_id AND d.enabled');
     expect(state.sql).toContain('ids.device_id::text AS device_id');
     expect(state.sql).toContain('(NOT b.primary_busy AND c.secondary > s.secondary_cap) AS lending');
@@ -142,13 +142,13 @@ describe('candidate SQL', () => {
     expect(state.sql).toContain('w.waiting, w.waiting_primary');
     expect(state.sql).toContain('FROM s, counts c, busy b, waiting w');
     expect(state.sql).not.toMatch(/\bFOR\s+(SHARE|UPDATE)\b/);
-    const prefix = render(deviceStateCte('supa', generation, '{}')).sql;
-    expect(render(deviceCandidateSql('supa', generation, '{}')).sql.startsWith(prefix)).toBe(true);
-    expect(render(deviceStateSql('supa', generation, '{}')).sql.startsWith(prefix)).toBe(true);
+    const prefix = render(deviceStateCte('supa', generation, '{}', 0)).sql;
+    expect(render(deviceCandidateSql('supa', generation, '{}', 0)).sql.startsWith(prefix)).toBe(true);
+    expect(render(deviceStateSql('supa', generation, '{}', 0)).sql.startsWith(prefix)).toBe(true);
   });
 
   it('composes the helper gate before busy: helper rows rank ≥ 2, sort after own roles, need an open gate, and fresh demand ends lending', () => {
-    const prefix = render(deviceStateCte('supa', generation, '{}')).sql;
+    const prefix = render(deviceStateCte('supa', generation, '{}', 0)).sql;
     expect(prefix).toMatch(/^WITH sup AS MATERIALIZED/);
     expect(prefix.indexOf('demand AS MATERIALIZED')).toBeLessThan(prefix.indexOf('busy AS MATERIALIZED'));
     expect(prefix.indexOf('helper_gate AS MATERIALIZED')).toBeLessThan(prefix.indexOf('active AS MATERIALIZED'));
@@ -156,12 +156,12 @@ describe('candidate SQL', () => {
     expect(prefix).toContain('THEN greatest(coalesce(ro.role_rank, 32767), 2) ELSE coalesce(ro.role_rank, 32767) END AS role_rank');
     expect(prefix).toContain('NOT EXISTS (SELECT 1 FROM helper_gate hg WHERE hg.route_id = r.route_id AND hg.provider = r.provider AND hg.model = r.model)');
     expect(prefix).toContain('OR coalesce((SELECT d.on_ FROM demand d), false)) AS primary_busy');
-    const candidate = render(deviceCandidateSql('supa', generation, '{}')).sql;
+    const candidate = render(deviceCandidateSql('supa', generation, '{}', 0)).sql;
     expect(candidate).toContain('CROSS JOIN LATERAL (SELECT EXISTS (SELECT 1 FROM helper_gate hg WHERE hg.route_id = q.route_id');
     expect(candidate).toContain('AND NOT EXISTS (SELECT 1 FROM helper_gate g');
     expect(candidate).toContain('>= g.max_slots))');
     expect(candidate).toMatch(/ORDER BY h\.helper, coalesce\(ro\.role_rank, 32767\), q\.queue_ordinal LIMIT 1 FOR UPDATE OF q$/);
-    const state = render(deviceStateSql('supa', generation, '{}')).sql;
+    const state = render(deviceStateSql('supa', generation, '{}', 0)).sql;
     expect(state).toContain("'max_slots', g.max_slots)");
     expect(state).toContain('AS helpers');
     expect(state).not.toMatch(/\bFOR\s+(SHARE|UPDATE)\b/);
@@ -242,7 +242,7 @@ describe('route quotas (step 2, 0169)', () => {
   });
 
   it('pins the candidate predicate, the pre-check and the observation shape', () => {
-    const candidate = render(deviceCandidateSql('supa', generation, '{}')).sql;
+    const candidate = render(deviceCandidateSql('supa', generation, '{}', 0)).sql;
     for (const cte of ['quota', 'route_use', 'recent', 'quota_state']) expect(candidate).toContain(`${cte} AS MATERIALIZED`);
     expect(candidate).toContain('jsonb_to_recordset(d.route_quotas) AS x(route_id text, min_slots int, max_slots int)');
     expect(candidate).toContain('LEFT JOIN quota_state qs ON qs.route_id = q.route_id');
@@ -253,16 +253,16 @@ describe('route quotas (step 2, 0169)', () => {
     expect(candidate).toContain("(r.state = 'settled' AND r.settled_at >= (SELECT clock_timestamp() - s.idle_ms * interval '1 millisecond' FROM s))");
     expect(candidate).toMatch(/ORDER BY h\.helper, coalesce\(ro\.role_rank, 32767\), q\.queue_ordinal LIMIT 1 FOR UPDATE OF q$/);
     // observation stays readable by the supervisor's column-limited SELECT (no queue_ordinal) and never locks
-    const state = render(deviceStateSql('supa', generation, '{}')).sql;
+    const state = render(deviceStateSql('supa', generation, '{}', 0)).sql;
     expect(state).toContain('s.lend_idle');
     expect(state).toContain('FROM quota_state qs FULL JOIN route_use u ON u.route_id = qs.route_id) x) AS routes');
     expect(state).not.toContain('queue_ordinal');
     expect(state).not.toMatch(/\bFOR\s+(SHARE|UPDATE)\b/);
-    const fresh = render(deviceRouteQuotaGateSql('supa', generation, '{}', 'second-review', null));
+    const fresh = render(deviceRouteQuotaGateSql('supa', generation, '{}', 'second-review', null, 0));
     expect(fresh.sql).toContain('FROM quota_state qs WHERE qs.route_id = $');
     expect(fresh.sql).not.toContain('w.queue_ordinal <');
     expect(fresh.params).toContain('second-review');
-    const own = render(deviceRouteQuotaGateSql('supa', generation, '{}', 'second-review', '7e2c1a90-0000-4000-8000-000000000001')).sql;
+    const own = render(deviceRouteQuotaGateSql('supa', generation, '{}', 'second-review', '7e2c1a90-0000-4000-8000-000000000001', 0)).sql;
     expect(own).toContain('w.queue_ordinal < (SELECT o.queue_ordinal FROM model_capacity_requests o WHERE o.request_id = $');
     expect(routeQuotaGateCapped(undefined)).toBe(false);
     expect(routeQuotaGateCapped({ cap: null, active: 9, min_slots: 0, ahead: 9 })).toBe(false);
@@ -343,7 +343,7 @@ describe('model limits (0170)', () => {
   });
 
   it('pins the candidate predicate, the pre-check and the observation shape', () => {
-    const candidate = render(deviceCandidateSql('m3-mlx', generation, '{}')).sql;
+    const candidate = render(deviceCandidateSql('m3-mlx', generation, '{}', 0)).sql;
     for (const cte of ['model_limit', 'model_use', 'model_state']) expect(candidate).toContain(`${cte} AS MATERIALIZED`);
     expect(candidate).toContain('jsonb_to_recordset(d.model_limits) AS x(model text, max_slots int, engine_max int)');
     expect(candidate).toContain('LEFT JOIN model_state ms ON ms.model = q.model');
@@ -351,10 +351,10 @@ describe('model limits (0170)', () => {
     expect(candidate).toMatch(/\n\s+AND \(ms\.max_slots IS NULL OR ms\.active < ms\.max_slots\)\n\s+ORDER BY h\.helper/);
     expect(candidate).toContain('GROUP BY r.model');
     expect(candidate).not.toContain('engine_max <');
-    const state = render(deviceStateSql('m3-mlx', generation, '{}')).sql;
+    const state = render(deviceStateSql('m3-mlx', generation, '{}', 0)).sql;
     expect(state).toContain('FROM model_limit ml FULL JOIN model_use u ON u.model = ml.model) x) AS models');
     expect(state).not.toContain('queue_ordinal');
-    const fresh = render(deviceModelQuotaGateSql('m3-mlx', generation, 'deepseek-v4.1-flash-1017', null));
+    const fresh = render(deviceModelQuotaGateSql('m3-mlx', generation, 'deepseek-v4.1-flash-1017', null, 0));
     expect(fresh.sql).toMatch(/^WITH model_limit AS MATERIALIZED/);
     expect(fresh.sql).not.toContain('quota_state');      // the light gate does not re-run the whole device CTE
     expect(fresh.sql).toContain('FROM model_state ms WHERE ms.model = $');
@@ -362,7 +362,7 @@ describe('model limits (0170)', () => {
     expect(fresh.sql).not.toContain('w.route_id');       // any route, any provider: the exact model string
     expect(fresh.sql).not.toContain('w.queue_ordinal <');
     expect(fresh.params).toContain('deepseek-v4.1-flash-1017');
-    const own = render(deviceModelQuotaGateSql('m3-mlx', generation, GPT, '7e2c1a90-0000-4000-8000-000000000001')).sql;
+    const own = render(deviceModelQuotaGateSql('m3-mlx', generation, GPT, '7e2c1a90-0000-4000-8000-000000000001', 0)).sql;
     expect(own).toContain('w.queue_ordinal < (SELECT o.queue_ordinal FROM model_capacity_requests o WHERE o.request_id = $');
     expect(modelQuotaGateCapped(undefined)).toBe(false);
     expect(modelQuotaGateCapped({ max_slots: 2, active: 1, ahead: 0 })).toBe(false);

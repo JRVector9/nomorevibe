@@ -88,6 +88,8 @@ beforeEach(async () => {
   const globals = globalThis as { db?: unknown; pgClient?: unknown }; globals.db = drizzle(current.client, { schema }); globals.pgClient = current.client;
   await client()`UPDATE model_capacity_control SET mode = 'open', policy = ${JSON.stringify(policy)}::jsonb, policy_hash = ${modelCapacityPolicyHash(policy)},
     revision = revision + 1, cursor = 0, updated_at = clock_timestamp() WHERE id = 1`;
+  // 이 파일은 미확정 표시로 옛 점유를 끝낸다(10-30 규칙) — 결과 미확정 점유 유지 시간(2026-11-10)을 0 으로 둔다(model-capacity-unknown-hold.test.ts 가 유지 시간을 본다)
+  await client()`UPDATE runtime_settings SET values = jsonb_set(values, '{capacity}', '{"unknownHoldSeconds":0}'::jsonb) WHERE id = 1`;
   for (const [deviceId, limitSlots, roles] of [["dev-live", 1, []], ["dev-gone", 2, [{ routeId: "crawl-agent-review", rank: 1 }]]] as const)
     await db.transaction(tx => saveModelCapacityDevice(tx, { deviceId, limitSlots, secondaryCap: limitSlots, idleMs: 0, reserveSlots: 0, physicalLimit: null,
       roles: [...roles], note: null }, null, "retire-test"));
