@@ -16,7 +16,8 @@ import type { CrawlSettings } from './settings-schema';
 import { DEEPSEEK_MIN_CONFIDENCE, DEEPSEEK_REVIEW_MODEL, DEEPSEEK_REVIEW_PROVIDER, deepseekActor } from './deepseek-review-policy';
 import type { DeepSeekReviewResult } from './deepseek-review';
 import { delegatedModelOutcome, type DelegatedEnding } from './delegated-model-outcome';
-import { heldQwenOwns } from './held-qwen-retry-policy';
+import { heldQwenConcluded, heldQwenOwns } from './held-qwen-retry-policy';
+import { heldQwenConcludedSql, inputDelegatedAttempts } from './held-qwen-handoff';
 import type { DelegatedRepoCheckResult } from './delegated-repo-check';
 import { EMPTY_DETAIL, GONE_DETAIL, lockFrontierIdentity, SKIP_EMPTY_REPOSITORY, SKIP_NOT_FOUND } from './repository';
 import { hasLiveFetchItem } from './fetch-ownership';
@@ -60,9 +61,11 @@ const MAX_DELEGATED_ATTEMPTS = 3;
  * 110초 예산을 다 써 started=0). 원본이 바뀌면(currentReviewSource 가 어긋나면) 다시 대상이 된다.
  * 정확한 판정(입력 해시·lease·상태)은 claimHumanReview 가 잠근 행으로 다시 한다 — 여기는 줄 세우기다.
  *
- * skipReasons — 보류 Qwen-v2 재심사가 맡은 사유(heldQwenOwnedReasons). 같은 후보를 두 모델이 따로 가르지 않는다.
+ * qwenReasons — 보류 Qwen-v2 재심사가 맡은 사유(heldQwenOwnedReasons). 이 사유의 후보는 Qwen-v2 가 지금 입력에서 끝낸 뒤에만 고른다
+ * (heldQwenConcludedSql — 판단 보류·승인 의견·실패 상한, 2026-11-10 운영자 결정 "Deepseek 위임검수로 넘겨"). 끝내기 전에는 Qwen-v2 몫이라
+ * 같은 후보를 두 모델이 따로 가르지 않는다. 원본이 바뀌면 다시 Qwen-v2 차례다.
  */
-export async function humanReviewRepos(ids: number[], skipReasons: readonly string[] = [],
+export async function humanReviewRepos(ids: number[], qwenReasons: readonly string[] = [],
   options: { settings?: CrawlSettings; limit?: number } = {}): Promise<string[]> {
   if (!ids.length) return [];
   const settings = options.settings ?? await getSettings();
@@ -73,7 +76,8 @@ export async function humanReviewRepos(ids: number[], skipReasons: readonly stri
   const rows = await db.select({ repo: crawlCandidates.repo }).from(crawlCandidates).where(and(
     inArray(crawlCandidates.id, ids), eq(crawlCandidates.state, 'needs_review'), eq(crawlCandidates.decidedBy, 'auto'),
     isNull(crawlCandidates.publishedSlug),
-    skipReasons.length ? or(isNull(crawlCandidates.reason), notInArray(crawlCandidates.reason, [...skipReasons] as DecisionReason[])) : undefined,
+    qwenReasons.length ? or(isNull(crawlCandidates.reason), notInArray(crawlCandidates.reason, [...qwenReasons] as DecisionReason[]),
+      heldQwenConcludedSql(settings)) : undefined,
     sql`NOT EXISTS (SELECT 1 FROM ${secondReviews} WHERE ${secondReviews.candidateId} = ${crawlCandidates.id} AND ${secondReviews.status} = 'pending')`,
     // 이 원본에서 모델의 판단(보류 포함)은 끝이다 — claim 의 attempts.some(succeeded) 와 같은 규칙
     sql`NOT EXISTS (SELECT 1 FROM ${crawlReviewAttempts} WHERE ${delegated} AND ${crawlReviewAttempts.state} = 'succeeded')`,
@@ -96,10 +100,12 @@ export async function claimHumanReview(repo: string, lease: JobLease): Promise<H
     await assertJobLeaseAtWallTime(tx, lease);
     if (!current || !current.settings.enabled || !current.settings.humanReview.enabled
       || current.candidate.state !== 'needs_review' || current.candidate.decidedBy !== 'auto'
-      || current.candidate.publishedSlug || current.document.productUrl !== current.candidate.productUrl
-      // 보류 Qwen-v2 재심사가 맡은 사유는 그쪽만 가른다 — 같은 잠긴 설정 행으로 재므로 두 claim 이 한 후보에 겹치지 않는다
-      || heldQwenOwns(current.settings, current.candidate.reason)) return null;
+      || current.candidate.publishedSlug || current.document.productUrl !== current.candidate.productUrl) return null;
     const { candidate, input } = current;
+    // 보류 Qwen-v2 재심사가 맡은 사유는 그쪽이 지금 입력에서 끝낸 뒤에만 집는다(held-qwen-handoff.ts) — 같은 잠긴 설정 행으로 재고,
+    // 잠근 후보 행 아래에서 Qwen-v2 의 claim·기록과 줄을 서므로 두 claim 이 한 후보에 겹치지 않는다. 고르기(SQL)의 어림을 여기서 다시 잰다
+    if (heldQwenOwns(current.settings, candidate.reason)
+      && !heldQwenConcluded(current.settings, candidate.reason, await inputDelegatedAttempts(tx, candidate.id, input))) return null;
     if (input.snapshot.adminFirstReviewRerunId) {
       const [rerun] = await tx.select({ id: crawlReviewAttempts.id }).from(crawlReviewAttempts).where(and(
         eq(crawlReviewAttempts.candidateId, candidate.id), eq(crawlReviewAttempts.kind, 'automatic'),

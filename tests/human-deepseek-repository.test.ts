@@ -192,7 +192,7 @@ describe('delegated claim', () => {
     reads = [[{ id: 99 }]];
     expect(await claimHumanReview(candidate.repo, lease)).toBeNull(); expect(writes).toHaveLength(0);
   });
-  // 보류 Qwen-v2 재심사가 맡은 사유는 DeepSeek 이 집지 않는다 — 같은 잠긴 설정으로 재고, 끄면 다시 DeepSeek 몫이다
+  // 보류 Qwen-v2 재심사가 맡은 사유는 그쪽이 끝내기 전에는 DeepSeek 이 집지 않는다 — 같은 잠긴 설정으로 재고, 끄면 다시 DeepSeek 몫이다
   it('leaves reasons owned by the held Qwen-v2 retry alone', async () => {
     const owned = { ...current.settings, reviewMode: 'enforce', qwenAuto: { heldRetry: { enabled: true, perTick: 10,
       budgetSeconds: 40, reasons: ['no_description', 'ai_review_exhausted', 'ambiguous'] } } };
@@ -202,6 +202,28 @@ describe('delegated claim', () => {
     expect(await claimHumanReview(candidate.repo, lease)).toBeNull(); expect(writes).toHaveLength(0);
     current.settings = { ...owned, qwenAuto: { ...owned.qwenAuto, heldRetry: { ...owned.qwenAuto.heldRetry, enabled: false } } } as typeof current.settings;
     expect(await claimHumanReview(candidate.repo, lease)).toMatchObject({ attemptId: 7 });
+  });
+  // 2026-11-10 운영자 결정: Qwen-v2 가 지금 입력에서 끝냈으면(판단 보류·승인 의견·실패 상한) DeepSeek 이 이어 본다 — 잠긴 후보 아래에서 다시 잰다
+  it('takes an owned reason once the held Qwen-v2 retry has concluded on this input', async () => {
+    current.candidate.reason = 'no_description';
+    current.settings = { ...current.settings, reviewMode: 'enforce', qwenAuto: { heldRetry: { enabled: true, perTick: 10,
+      budgetSeconds: 40, reasons: ['no_description', 'ai_review_exhausted', 'ambiguous'] } } } as typeof current.settings;
+    const qwen = { kind: 'delegated', provider: 'qwen-direct', actor: 'qwen-v2:2026-10-21.v2', model: 'qwen', errorCode: null, outcome: null };
+    const failed = { ...qwen, state: 'failed', errorCode: 'qwen_invalid_json' };
+    // 보는 중 · 다시 볼 실패가 남음 · 세지 않는 실패 · 다른 일(갈림 판가름)의 판단 — Qwen-v2 가 끝낸 것이 아니다
+    for (const rows of [[{ ...qwen, state: 'running' }], [failed, failed], [{ ...qwen, state: 'failed', errorCode: 'qwen_timeout' }],
+      [{ ...qwen, actor: 'qwen-v2-auto', state: 'succeeded', outcome: { decision: 'needs_review' } }]]) {
+      reads = [rows];
+      expect(await claimHumanReview(candidate.repo, lease)).toBeNull();
+    }
+    expect(writes).toHaveLength(0);
+    // 판단 보류 · 소개 없음의 승인 의견 · 세는 실패 상한 — 끝냈다
+    for (const rows of [[{ ...qwen, state: 'succeeded', outcome: { decision: 'needs_review' } }],
+      [{ ...qwen, state: 'succeeded', outcome: { decision: 'approve' } }], [failed, failed, failed]]) {
+      reads = [rows, [], [], []]; writes = [];
+      expect(await claimHumanReview(candidate.repo, lease)).toMatchObject({ attemptId: 7 });
+      expect(writes[0].values).toMatchObject({ kind: 'delegated', state: 'running', actor: 'm3-deepseek:3' });
+    }
   });
   it('claims an input whose evidence is older than 24h — no time cut for this job', async () => {
     current.input.validUntil = new Date(Date.now() - 72 * 3600_000);

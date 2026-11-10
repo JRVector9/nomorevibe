@@ -30,7 +30,10 @@ export function heldQwenRetry(settings: CrawlSettings): HeldQwenRetrySettings {
   return (settings.qwenAuto as CrawlSettings["qwenAuto"] | undefined)?.heldRetry ?? OFF;
 }
 
-/** 이 사유의 보류를 지금 Qwen-v2 가 맡는가 — DeepSeek 위임은 맡은 것을 집지 않는다(human-review-repository.ts) */
+/**
+ * 이 사유의 보류를 지금 Qwen-v2 가 맡는가 — DeepSeek 위임은 맡은 것을 Qwen-v2 가 지금 입력에서 끝내기 전에는 집지 않는다
+ * (heldQwenConcluded, human-review-repository.ts — 2026-11-10 전에는 끝낸 뒤에도 집지 않았다)
+ */
 export function heldQwenOwns(settings: CrawlSettings, reason: string | null | undefined): boolean {
   const policy = heldQwenRetry(settings);
   return settings.enabled && settings.reviewMode === "enforce" && policy.enabled
@@ -39,6 +42,43 @@ export function heldQwenOwns(settings: CrawlSettings, reason: string | null | un
 export function heldQwenOwnedReasons(settings: CrawlSettings): HeldQwenReason[] {
   const policy = heldQwenRetry(settings);
   return settings.enabled && settings.reviewMode === "enforce" && policy.enabled ? [...policy.reasons] : [];
+}
+
+/** 이 재심사의 시도 행인가 — actor 'qwen-v2:<판>' 으로 가른다. 같은 qwen-direct 를 쓰는 다른 일(갈림 판가름의 'qwen-v2-auto')은 아니다 */
+export const isHeldQwenAttempt = (row: Pick<CrawlReviewAttempt, "kind" | "provider" | "actor">) =>
+  row.kind === "delegated" && row.provider === HELD_QWEN_PROVIDER && typeof row.actor === "string" && row.actor.startsWith(`${HELD_QWEN_ACTOR}:`);
+/** 같은 입력 세대(입력·원본 해시, 덧붙임 판, 모델)에서 세는 실패의 상한 — 닿으면 이 재심사는 그 세대를 그만 묻는다 */
+export const HELD_QWEN_MAX_FAILURES = 3;
+/**
+ * 후보의 세 번에 드는 실패 — 그 입력 때문에 난 것(형식·입력 초과·요청 거절)만. 부르는 곳의 탈은 후보 탓이 아니라 세지 않는다 —
+ * 그동안은 gpu3090 을 부르는 모두가 함께 물러나고(qwen-endpoint-backoff.ts), 후보마다 15분을 기다린다. 제공자의 고정 코드 목록이라 SQL 도 같은 목록을 쓴다
+ */
+export const HELD_QWEN_COUNTED_FAILURES = ["qwen_invalid_json", "qwen_input_too_large", "qwen_http_400", "qwen_http_413", "qwen_http_422"] as const;
+export const heldQwenCountedFailure = (row: Pick<CrawlReviewAttempt, "state" | "errorCode">) =>
+  row.state === "failed" && (HELD_QWEN_COUNTED_FAILURES as readonly string[]).includes(row.errorCode ?? "");
+
+/**
+ * 보류 재심사가 이 입력에서 끝냈는가(TS) — 사람 몫 위임 검수로 넘기는 조건(held-qwen-handoff.ts, 2026-11-10 운영자 결정).
+ * rows 는 지금 입력(입력·원본 해시)의 시도 행이다 — 다른 일의 행은 여기서 거른다. heldQwenConcludedSql 과 같은 조건이다
+ * (SQL 은 진행 중 행을 입력과 상관없이 본다 — claim 은 뒤의 진행 중 확인이 그 일을 한다).
+ *  - 보는 중(진행 중 행)이면 끝이 아니다.
+ *  - 판단(succeeded)이 있으면 끝이다 — 판단 보류·낮은 확신·관문에 못 넣은 승인 의견(소개 없음은 늘 이쪽).
+ *    지금 관문에 넣을 수 있게 된 승인 의견은 이 재심사가 다시 넣으므로(reapplied) 끝이 아니다.
+ *  - 한 세대(덧붙임 판·모델)의 세는 실패가 상한에 닿았으면 끝이다 — 그 입력을 그만 물었다.
+ * 모델·덧붙임 판은 가르지 않는다 — 어느 세대든 이 입력에서 끝낸 것이 있으면 넘긴다.
+ */
+export function heldQwenConcluded(settings: CrawlSettings, reason: string | null | undefined,
+  rows: readonly Pick<CrawlReviewAttempt, "kind" | "provider" | "actor" | "state" | "outcome" | "model" | "errorCode">[]): boolean {
+  const mine = rows.filter(isHeldQwenAttempt);
+  if (mine.some((row) => row.state === "running")) return false;
+  if (mine.some((row) => row.state === "succeeded" && !(reason !== "no_description" && row.outcome?.decision === "approve"
+    && Boolean(row.model?.trim()) && heldQwenGateable(settings, row.model)))) return true;
+  const failures = new Map<string, number>();
+  for (const row of mine.filter(heldQwenCountedFailure)) {
+    const generation = JSON.stringify([row.actor, row.model]);
+    failures.set(generation, (failures.get(generation) ?? 0) + 1);
+  }
+  return [...failures.values()].some((count) => count >= HELD_QWEN_MAX_FAILURES);
 }
 
 /**

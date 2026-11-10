@@ -1,9 +1,10 @@
+import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { crawlCandidates, crawlDocuments, crawlFrontier, crawlReviewAttempts, crawlSettings, jobs, products, secondReviews } from "@/lib/db/schema";
+import { crawlCandidates, crawlDocuments, crawlFrontier, crawlReviewAttempts, crawlSettings, crawlTaglines, jobs, products, roleLeases, secondReviews } from "@/lib/db/schema";
 import { changeReviewMode, getSettings, saveSettings, setHumanReviewEnabled, setQwenAutoStep } from "@/lib/crawl/settings";
 import { listReviewCandidates, loadReviewInput, reviewApprovalPredicate } from "@/lib/crawl/agent-review-repository";
 import { pendingTaglines, recordTaglineResult } from "@/lib/crawl/taglines";
@@ -13,10 +14,14 @@ import { runJob } from "@/lib/jobs/runner";
 import type { JobLease } from "@/lib/jobs/control";
 import { publishCandidates } from "@/lib/crawl/jobs/publish";
 import { retryHeldQwen } from "@/lib/crawl/jobs/held-qwen-retry";
-import { claimHumanReview, humanReviewRepos } from "@/lib/crawl/human-review-repository";
-import { heldQwenBadges, heldQwenCandidates, heldQwenRetryStatus, runHeldQwenRetry } from "@/lib/crawl/held-qwen-retry";
+import { claimHumanReview, humanReviewRepos, recordHumanReview } from "@/lib/crawl/human-review-repository";
+import { claimHeldQwen, heldQwenBadges, heldQwenCandidates, heldQwenRetryStatus, runHeldQwenRetry } from "@/lib/crawl/held-qwen-retry";
 import { heldQwenOwnedReasons } from "@/lib/crawl/held-qwen-retry-policy";
-import { QWEN_V2_ADDENDUM, QWEN_V2_PROMPT_VERSION } from "@/lib/crawl/qwen-direct-review";
+import { QWEN_V2_ADDENDUM, QWEN_V2_PROMPT_VERSION, qwenDirectConfig } from "@/lib/crawl/qwen-direct-review";
+import { deepseekActor } from "@/lib/crawl/deepseek-review-policy";
+import type { DeepSeekReviewResult } from "@/lib/crawl/deepseek-review";
+import { localModelDomainRefusal } from "@/lib/llm/local-model-domain";
+import { releaseRole, tryAcquireRole } from "@/lib/jobs/role-leader";
 import { qwenEndpointBackingOff, qwenEndpointBackoffOf, resetQwenAuditBackoff } from "@/lib/crawl/qwen-endpoint-backoff";
 import { DEFAULT_HELD_QWEN_RETRY, type QwenAutoSettings } from "@/lib/crawl/settings-schema";
 import { enqueueSecondReviewsFixture as enqueueSecondReviews, recordSecondReviewFixture } from "./second-review-receipt-fixtures";
@@ -605,5 +610,178 @@ describe("보류 Qwen-v2 재심사", () => {
     expect(after.day.pipeline - before.day.pipeline).toBe(1);
     expect(after.day.held - before.day.held).toBe(1);
     expect(after).toMatchObject({ enabled: true, model: "qwen3.8-flash-next", configured: true, waiting: 1, expired: 0 });
+  });
+});
+
+/**
+ * 보류 재심사 → 사람 몫 위임 검수 넘김(2026-11-10 운영자 결정 "Deepseek 위임검수로 넘겨", held-qwen-handoff.ts).
+ * Qwen-v2 가 지금 입력에서 끝내면(판단 보류·승인 의견·실패 상한) DeepSeek 위임이 이어 본다. 끝내기 전·원본이 바뀐 뒤는 Qwen-v2 몫이고,
+ * DeepSeek 이 맡은 입력은 Qwen-v2 가 새 세대(모델·덧붙임 판)로도 다시 묻지 않는다.
+ */
+describe("보류 재심사 → 사람 몫 위임 검수 넘김", () => {
+  const deepseek = (decision: "approve" | "reject" | "needs_review", confidence = 0.97): DeepSeekReviewResult =>
+    ({ ok: true, outcome: { decision, reason: `DeepSeek says ${decision}`, evidenceIds: decision === "needs_review" ? [] : ["product"], confidence } });
+  /** 위임 잡의 고르기 — 잡처럼 Qwen-v2 가 맡은 사유를 넘긴다(jobs/human-review.ts) */
+  const delegateQueue = async (...ids: number[]) => {
+    const settings = await getSettings();
+    return humanReviewRepos(ids, heldQwenOwnedReasons(settings), { settings });
+  };
+  const delegate = (repo: string, result: DeepSeekReviewResult) => withHumanJob(async (lease) => {
+    const claim = await claimHumanReview(repo, lease);
+    return claim ? recordHumanReview(claim, result) : null;
+  });
+  const qwenModel = () => qwenDirectConfig(process.env)!.model;
+
+  beforeEach(async () => {
+    const settings = await getSettings();
+    if (!settings.humanReview.enabled)
+      expect(await setHumanReviewEnabled({ enabled: true, expectedGeneration: settings.humanReview.generation, actor: "test" })).toMatchObject({ ok: true });
+  });
+
+  it("Qwen-v2 가 끝내기 전에는 위임이 고르지도 집지도 부르지도 않고, 판단 보류로 끝내면 이어 본다 — DeepSeek 도 보류하면 사람 몫이다", async () => {
+    const { row, document } = await held(0);
+    const role = await tryAcquireRole({ role: "reviewer", instanceId: `handoff-${randomUUID().slice(0, 8)}`, bootId: randomUUID(),
+      release: "fixture", kind: "primary" });
+    if (!role) throw new Error("fixture_role");
+    try {
+      // 호출 직전 증명 — 같은 입력·lease 의 DeepSeek 진행 중 행이어도 Qwen-v2 가 끝내기 전이면 거절하고, 끝낸 뒤에는 통과한다
+      const proveDeepSeek = () => withHumanJob(async (lease) => {
+        const settings = await getSettings();
+        const input = await loadReviewInput(await candidateRow(row.id), document, settings, db, "any_age");
+        const [attempt] = await db.insert(crawlReviewAttempts).values({ candidateId: row.id, kind: "delegated", state: "running",
+          inputHash: input.inputHash, policyHash: input.policyHash, sourceRevisionHash: input.sourceRevisionHash, snapshot: input.snapshot,
+          source: input.source, promptVersion: REVIEW_PROMPT_VERSION, rulesVersion: REVIEW_RULES_VERSION, provider: "m3-deepseek",
+          model: "deepseek-test", actor: deepseekActor(settings.humanReview.generation), attemptNumber: 1, leaseToken: lease.token,
+          validUntil: input.validUntil }).returning();
+        const target = { kind: "candidate" as const, purpose: "human_deepseek" as const, attemptId: attempt.id, candidateId: row.id, repo: row.repo };
+        try { return await db.transaction((tx) => localModelDomainRefusal(tx, target, input, lease, role, "deepseek-test")); }
+        finally { await db.delete(crawlReviewAttempts).where(eq(crawlReviewAttempts.id, attempt.id)); }
+      });
+
+      expect(await delegateQueue(row.id)).toEqual([]);
+      expect(await withHumanJob((lease) => claimHumanReview(row.repo, lease))).toBeNull();
+      expect(await proveDeepSeek()).toMatchObject({ check: "target_not_open" });
+
+      reply(outcome("needs_review", 0.5));
+      await tick();
+      expect(await qwenAttempts(row.id)).toMatchObject([{ state: "succeeded", outcome: { decision: "needs_review" } }]);
+      expect(await proveDeepSeek()).toBeNull();
+      expect(await delegateQueue(row.id)).toEqual([row.repo]);
+      expect(await delegate(row.repo, deepseek("needs_review", 0.5))).toBe("held");
+    } finally {
+      await releaseRole(role);
+      await db.delete(roleLeases).where(eq(roleLeases.role, "reviewer"));
+    }
+    // DeepSeek 의 판단도 이 입력에서 끝이다 — 두 잡 모두 다시 묻지 않고 사람에게 남는다
+    expect(await delegateQueue(row.id)).toEqual([]);
+    await tick();
+    expect(requests).toHaveLength(1);
+    expect(await candidateRow(row.id)).toMatchObject({ state: "needs_review", reason: "ai_review_exhausted", decidedBy: "auto" });
+  });
+
+  it("원본이 바뀌면 다시 Qwen-v2 차례다 — 옛 입력에서 끝낸 보류로는 넘기지 않는다", async () => {
+    const { row, document } = await held(0);
+    reply(outcome("needs_review", 0.5));
+    await tick();
+    expect(await delegateQueue(row.id)).toEqual([row.repo]);
+
+    await db.update(crawlDocuments).set({ fetchedAt: new Date(Date.now() - 500), pageMeta: { title: "Held 0", description: "A rewritten application page" } })
+      .where(eq(crawlDocuments.id, document.id));
+    expect(await delegateQueue(row.id)).toEqual([]);
+    expect(await withHumanJob((lease) => claimHumanReview(row.repo, lease))).toBeNull();
+    expect((await heldQwenCandidates(await getSettings(), qwenModel(), 10)).map((candidate) => candidate.id)).toEqual([row.id]);
+    reply(outcome("needs_review", 0.5));
+    await tick();
+    expect(requests).toHaveLength(2);
+    expect(await delegateQueue(row.id)).toEqual([row.repo]);
+  });
+
+  it("다시 볼 실패가 남은 동안은 Qwen-v2 몫이고, 세는 실패 상한(3)에 닿으면 위임이 집는다 — DeepSeek 이 닫은 뒤에는 Qwen-v2 가 다시 묻지 않는다", async () => {
+    const { row } = await held(0);
+    const due = () => db.update(crawlReviewAttempts).set({ retryAfter: new Date(Date.now() - 1000) }).where(eq(crawlReviewAttempts.candidateId, row.id));
+    for (let attempt = 0; attempt < 3; attempt++) {
+      reply({ raw: "not json" });
+      await tick();
+      expect(requests).toHaveLength(attempt + 1);
+      if (attempt === 2) break;
+      // 15분 기다리는 동안도, 기다림이 끝난 뒤에도 Qwen-v2 가 다시 볼 차례다
+      expect(await delegateQueue(row.id)).toEqual([]);
+      await due();
+      expect(await delegateQueue(row.id)).toEqual([]);
+      expect(await withHumanJob((lease) => claimHumanReview(row.repo, lease))).toBeNull();
+    }
+    expect((await qwenAttempts(row.id)).map((attempt) => attempt.errorCode)).toEqual(Array(3).fill("qwen_invalid_json"));
+    await due();
+    await tick();
+    expect(requests).toHaveLength(3);
+
+    expect(await delegateQueue(row.id)).toEqual([row.repo]);
+    expect(await delegate(row.repo, deepseek("reject"))).toBe("applied");
+    expect(await candidateRow(row.id)).toMatchObject({ state: "rejected", reason: "not_a_product", decidedBy: "deepseek" });
+    // 새 세대(모델을 바꾼 것처럼)라도 닫힌 후보는 다시 묻지 않는다
+    await db.update(crawlReviewAttempts).set({ model: "qwen3.7-old" }).where(eq(crawlReviewAttempts.provider, "qwen-direct"));
+    await tick();
+    expect(requests).toHaveLength(3);
+  });
+
+  it("DeepSeek 이 맡은 입력은 Qwen 모델이 바뀐 새 세대라도 Qwen-v2 가 다시 묻지 않는다 — 맡기 전이면 새 세대는 다시 묻는다", async () => {
+    const taken = await held(0), waiting = await held(1);
+    reply(outcome("needs_review", 0.5), outcome("needs_review", 0.5));
+    await tick();
+    expect(requests).toHaveLength(2);
+    expect(await delegate(taken.row.repo, deepseek("needs_review", 0.5))).toBe("held");
+
+    // Qwen 모델을 바꾼 것처럼 — 지금까지의 판단은 옛 모델의 세대다
+    await db.update(crawlReviewAttempts).set({ model: "qwen3.7-old" }).where(eq(crawlReviewAttempts.provider, "qwen-direct"));
+    expect((await heldQwenCandidates(await getSettings(), qwenModel(), 10)).map((candidate) => candidate.id)).toEqual([waiting.row.id]);
+    expect(await withHeldJob((lease) => claimHeldQwen(taken.row.repo, lease, qwenModel()))).toEqual({ kind: "skipped", reason: "handed_off" });
+    reply(outcome("needs_review", 0.5));
+    await tick();
+    expect(requests).toHaveLength(3);
+    expect(await qwenAttempts(taken.row.id)).toHaveLength(1);
+    expect(await qwenAttempts(waiting.row.id)).toHaveLength(2);
+    expect(await delegateQueue(taken.row.id, waiting.row.id)).toEqual([waiting.row.repo]);
+
+    // DeepSeek 이 보는 중(진행 중 행)에도 새 세대의 Qwen-v2 는 고르지도 집지도 않는다
+    const claim = await withHumanJob((lease) => claimHumanReview(waiting.row.repo, lease));
+    expect(claim).not.toBeNull();
+    await db.update(crawlReviewAttempts).set({ model: "qwen3.6-older" }).where(eq(crawlReviewAttempts.provider, "qwen-direct"));
+    expect(await heldQwenCandidates(await getSettings(), qwenModel(), 10)).toEqual([]);
+    expect(await withHeldJob((lease) => claimHeldQwen(waiting.row.repo, lease, qwenModel()))).toEqual({ kind: "skipped", reason: "running" });
+    expect(await candidateRow(taken.row.id)).toMatchObject({ state: "needs_review", reason: "ai_review_exhausted", decidedBy: "auto" });
+  });
+
+  it("소개 없음의 «승인 의견»도 넘긴다 — DeepSeek 승인은 소개가 생길 때까지 발행하지 않고 사람 큐에 남으며, 소개를 지으면 그 승인으로 발행된다", async () => {
+    const { row, document } = await held(0, "no_description");
+    // 소개가 아무 데도 없는 원본 — 발행은 지은 소개를 기다린다(publish.ts no_description). 앞 테스트가 지은 줄은 지운다(beforeEach 가 비우지 않는다)
+    await db.update(crawlDocuments).set({ repoMeta: {}, pageMeta: { title: "Held 0" } }).where(eq(crawlDocuments.id, document.id));
+    await db.delete(crawlTaglines).where(eq(crawlTaglines.repo, row.repo));
+    reply(outcome("approve", 0.97));
+    await tick();
+    expect(await candidateRow(row.id)).toMatchObject({ state: "needs_review", reason: "no_description", decidedBy: "auto" });
+    expect(await delegateQueue(row.id)).toEqual([row.repo]);
+    expect(await delegate(row.repo, deepseek("approve"))).toBe("applied");
+    expect(await candidateRow(row.id)).toMatchObject({ state: "approved", reason: "passed", decidedBy: "deepseek" });
+
+    await publish();
+    expect(await db.select().from(products)).toHaveLength(0);
+    expect(await candidateRow(row.id)).toMatchObject({ state: "needs_review", reason: "no_description", decidedBy: "deepseek" });
+    // 두 위임 잡 모두 다시 집지 않는다 — 소개 짓기 잡(또는 사람)의 몫이다
+    expect(await delegateQueue(row.id)).toEqual([]);
+    await tick();
+    expect(requests).toHaveLength(1);
+
+    const released = await runJob<null>("crawl-tagline", async (ctx) => {
+      const [task] = await pendingTaglines(10);
+      expect(task?.candidate.id).toBe(row.id);
+      expect(await recordTaglineResult(task, ctx.lease!, { kind: "success", tagline: "할 일을 정리하는 앱", source: "page", model: "test" }))
+        .toMatchObject({ stored: true, released: true });
+      return { done: true };
+    });
+    expect(released).toMatchObject({ status: "completed" });
+    expect(await candidateRow(row.id)).toMatchObject({ state: "approved", decidedBy: "deepseek" });
+    await publish();
+    expect(await candidateRow(row.id)).toMatchObject({ state: "published" });
+    expect(await db.select().from(products)).toMatchObject([{ tagline: "할 일을 정리하는 앱" }]);
   });
 });
