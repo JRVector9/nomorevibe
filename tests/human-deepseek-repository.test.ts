@@ -127,6 +127,53 @@ describe('delegated final write', () => {
   });
 });
 
+// 0173: 위임 시도를 succeeded 로 닫을 때 모델의 원래 답과 남긴 까닭을 model_outcome 에 적는다 — 결정·적용은 그대로다
+describe('delegated model outcome', () => {
+  const attemptWrite = () => writes.find(row => row.values.state === 'succeeded')?.values;
+  const agedBy = (hours: number) => {
+    const validUntil = new Date(Date.now() - (hours - 24) * 3600_000);
+    current.input.validUntil = validUntil; reads = [[{ id: 7, state: 'running', ...input, validUntil, startedAt: new Date() }]];
+  };
+  it('applied approve and reject keep no hold cause', async () => {
+    expect(await recordHumanReview(claim, { ...success, original: success.outcome })).toBe('applied');
+    expect(attemptWrite()?.modelOutcome).toEqual({ decision: 'approve', confidence: 0.97, holdCause: null });
+    writes = []; reads = [[{ id: 7, state: 'running', ...input }]];
+    expect(await recordHumanReview(claim, { ok: true, outcome: { ...success.outcome, decision: 'reject', confidence: 0.93 } })).toBe('applied');
+    expect(attemptWrite()?.modelOutcome).toEqual({ decision: 'reject', confidence: 0.93, holdCause: null });
+  });
+  it('a low-confidence approval keeps the model decision the transport turned into needs_review', async () => {
+    const original = { ...success.outcome, confidence: 0.8 };
+    expect(await recordHumanReview(claim, { ok: true, outcome: { ...original, decision: 'needs_review' }, original })).toBe('held');
+    expect(attemptWrite()).toMatchObject({ outcome: { decision: 'needs_review' },
+      modelOutcome: { decision: 'approve', confidence: 0.8, holdCause: 'low_confidence' } });
+    expect(writes.some(row => row.values.state === 'approved')).toBe(false);
+  });
+  it('a model abstention is model_abstained, an approval on a human-only reason is cannot_approve', async () => {
+    const abstain = { decision: 'needs_review' as const, reason: 'Unclear', evidenceIds: [], confidence: 0.6 };
+    expect(await recordHumanReview(claim, { ok: true, outcome: abstain, original: abstain })).toBe('held');
+    expect(attemptWrite()?.modelOutcome).toEqual({ decision: 'needs_review', confidence: 0.6, holdCause: 'model_abstained' });
+    current.candidate.reason = 'suspected_spam'; writes = []; reads = [[{ id: 7, state: 'running', ...input }]];
+    expect(await recordHumanReview({ ...claim, candidateRevision: JSON.stringify(current.candidate) }, success)).toBe('held');
+    expect(attemptWrite()?.modelOutcome).toEqual({ decision: 'approve', confidence: 0.97, holdCause: 'cannot_approve' });
+    expect(writes.some(row => row.values.state === 'approved')).toBe(false);
+  });
+  it.each([[73, undefined, 'stale', 'stale_evidence'], [48, 'changed', 'stale', 'repo_changed'], [48, 'gone', 'repo_gone', 'repo_gone']] as const)(
+    'an approval on %sh evidence (repo check %s) ends %s with %s', async (hours, check, state, holdCause) => {
+      agedBy(hours);
+      expect(await recordHumanReview(claim, success, check ? { repoCheck: { check, retryAt: null } } : {})).toBe(state);
+      expect(attemptWrite()).toMatchObject({ outcome: { decision: 'needs_review' }, modelOutcome: { decision: 'approve', confidence: 0.97, holdCause } });
+    });
+  it('failed, superseded and repo-check-deferred attempts write no model outcome', async () => {
+    expect(await recordHumanReview(claim, { ok: false, error: 'timeout' })).toBe('failed');
+    agedBy(48);
+    expect(await recordHumanReview(claim, success)).toBe('deferred');
+    reads = [[{ id: 7, state: 'running', ...input }]]; current.settings.humanReview.generation = 5;
+    expect(await recordHumanReview(claim, success)).toBe('superseded');
+    expect(writes.map(row => row.values.state)).toEqual(['failed', 'superseded', 'superseded']);
+    expect(writes.some(row => 'modelOutcome' in row.values)).toBe(false);
+  });
+});
+
 describe('delegated claim', () => {
   it('does not call the model again after a successful abstention', async () => {
     reads = [[], [], [{ state: 'succeeded', outcome: { decision: 'needs_review' } }]];

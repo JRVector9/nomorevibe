@@ -39,7 +39,7 @@ function fixture(published = false) {
   const first: CrawlReviewAttempt = { id: 101, candidateId: candidate.id, kind: "automatic", state: "succeeded",
     inputHash: input.inputHash, sourceRevisionHash: input.sourceRevisionHash, policyHash: input.policyHash,
     snapshot: input.snapshot, source: input.source, promptVersion: REVIEW_PROMPT_VERSION, rulesVersion: REVIEW_RULES_VERSION,
-    provider: "abcllm", model: "first-model", attemptNumber: 1, reusedFromAttemptId: null,
+    provider: "abcllm", model: "first-model", attemptNumber: 1, reusedFromAttemptId: null, modelOutcome: null,
     outcome: { decision: "approve", confidence: 0.94, reason: "A deployed application", evidenceIds: ["product"] },
     errorCode: null, inputTokens: 10, outputTokens: 5, costUsd: null, actor: null, reason: null,
     leaseToken: "historical-first-token", startedAt: new Date(+now - 500), completedAt: now,

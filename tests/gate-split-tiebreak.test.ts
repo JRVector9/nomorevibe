@@ -127,6 +127,15 @@ describe("DeepSeek 원래 답과 위임의 문턱", async () => {
     expect(await reviewWithDeepSeek(input, { request: answer(0.95) })).toMatchObject({ ok: true, outcome: { decision: "reject" } });
   });
 
+  // 0173: 위임 기록(model_outcome)이 사람에게 남긴 까닭을 가르도록 원래 답을 함께 넘긴다 — 결정은 그대로, 확인 쪽(Raw)은 바뀌지 않는다
+  it("위임은 문턱 걸기 전 원래 답을 original 로 함께 넘기고, 갈림 판가름 확인(Raw)의 답에는 original 이 없다", async () => {
+    expect(await reviewWithDeepSeek(input, { request: answer(0.78) })).toMatchObject({ ok: true,
+      outcome: { decision: "needs_review", confidence: 0.78 }, original: { decision: "reject", confidence: 0.78 } });
+    expect(await reviewWithDeepSeek(input, { request: answer(0.95) })).toMatchObject({ ok: true,
+      outcome: { decision: "reject", confidence: 0.95 }, original: { decision: "reject", confidence: 0.95 } });
+    expect(await reviewWithDeepSeekRaw(input, { request: answer(0.78) })).not.toHaveProperty("original");
+  });
+
   it("응답 전에 끊기면 확인 쪽은 unreachable(부르는 곳의 탈), 위임은 예전처럼 invalid_response", async () => {
     const down = (async () => { throw new TypeError("fetch failed"); }) as unknown as typeof fetch;
     expect(await reviewWithDeepSeekRaw(input, { request: down })).toEqual({ ok: false, error: "unreachable" });

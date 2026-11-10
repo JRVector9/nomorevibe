@@ -263,7 +263,7 @@ describe("AI2 voters from the table", () => {
     const first: CrawlReviewAttempt = { id: 101, candidateId: candidate.id, kind: "automatic", state: "succeeded", inputHash: input.inputHash,
       sourceRevisionHash: input.sourceRevisionHash, policyHash: input.policyHash, snapshot: input.snapshot, source: input.source,
       promptVersion: REVIEW_PROMPT_VERSION, rulesVersion: REVIEW_RULES_VERSION, provider: "abcllm", model: "first-model", attemptNumber: 1,
-      reusedFromAttemptId: null, outcome: { decision: "approve", confidence: 0.94, reason: "A deployed application", evidenceIds: ["product"] },
+      reusedFromAttemptId: null, modelOutcome: null, outcome: { decision: "approve", confidence: 0.94, reason: "A deployed application", evidenceIds: ["product"] },
       errorCode: null, inputTokens: 10, outputTokens: 5, costUsd: null, actor: null, reason: null, leaseToken: "t", startedAt: new Date(+now - 500),
       completedAt: now, retryAfter: null, validUntil: input.validUntil };
     const vote = (model: string, provider: SecondReview["provider"], extra: Partial<SecondReview> = {}): SecondReview => ({ id: 201, candidateId: candidate.id,
