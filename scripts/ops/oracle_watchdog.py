@@ -28,6 +28,8 @@ REASONS = {'probe_unknown', 'replica_intent_changed', 'replicas_missing', 'warmi
 # 2026-10-31: unknown-outcome model calls (확인 못함) are a human review list (/admin/models), never an incident by
 # themselves. The monitor decides the review thresholds; Oracle only relays its summarized alarm reasons
 # (review_backlog/review_stale/dispatch_stuck) and keeps no per-request clock or per-request incident.
+# 2026-11-10: an alarm of review_* reasons only with no stuck dispatched row (recovery_gateway.capacity_review_only) is not
+# an Oracle alarm or DOWN; the monitor's UP push carries the review message. Its one Telegram notice per reason is kept.
 
 
 def validate_report(report):

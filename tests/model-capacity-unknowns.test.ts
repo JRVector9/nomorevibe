@@ -7,8 +7,8 @@ import { PgDialect } from 'drizzle-orm/pg-core';
 const mocks = vi.hoisted(() => ({ execute: vi.fn(), transaction: vi.fn(), replay: vi.fn() }));
 vi.mock('@/lib/db', () => ({ db: { transaction: mocks.transaction }, onPrimary: (load: () => unknown) => load() }));
 vi.mock('@/lib/db/replay-scope', () => ({ currentReplayDb: mocks.replay }));
-import { CAPACITY_MONITOR_DEFAULTS, capacityMonitorThresholds, capacityUnknownReportSchema, readModelCapacityUnknowns,
-  summarizeCapacityReview } from '@/lib/operations/model-capacity-unknowns';
+import { CAPACITY_MONITOR_DEFAULTS, capacityMonitorThresholds, capacityReviewOnlyAlarm, capacityUnknownReportSchema,
+  readModelCapacityUnknowns, summarizeCapacityReview } from '@/lib/operations/model-capacity-unknowns';
 import { combineMonitorStatus, exitCodeFor } from '@/lib/operations/failover-monitor';
 import { monitorPushMessage, recordMonitorHeartbeat, runMonitorCycle } from '@/scripts/watch-failover-readiness';
 beforeEach(() => { vi.clearAllMocks(); mocks.replay.mockReturnValue(undefined);
@@ -85,23 +85,28 @@ it('fails closed on read permission errors, malformed or inconsistent rows and r
 describe('alarm only when work is actually stopped or the review queue is neglected', () => {
   const review = (count: number, oldestAgeSeconds: number | null, stuckDispatched = 0) => summarizeCapacityReview({
     requests: Array.from({ length: Math.min(count, 64) }, () => request()), count, oldestAgeSeconds, stuckDispatched });
+  // 2026-11-10: 검토 문턱(review_*)만 넘은 장부는 overall 에 넣지 않는다(보고는 alarm 그대로). 문턱 값은 그대로다.
   it.each([
-    [50, 3_600, 0, 'review', []],
-    [51, 3_600, 0, 'alarm', ['review_backlog']],
-    [3, 86_400, 0, 'review', []],
-    [3, 86_401, 0, 'alarm', ['review_stale']],
-    [0, null, 1, 'alarm', ['dispatch_stuck']],
-    [80, 90_000, 2, 'alarm', ['dispatch_stuck', 'review_backlog', 'review_stale']],
-  ] as const)('count %i, oldest %s s, stuck %i => %s %j', (count, age, stuck, status, reasons) => {
+    [50, 3_600, 0, 'review', [], 'ok'],
+    [51, 3_600, 0, 'alarm', ['review_backlog'], 'ok'],
+    [3, 86_400, 0, 'review', [], 'ok'],
+    [3, 86_401, 0, 'alarm', ['review_stale'], 'ok'],
+    [80, 90_000, 0, 'alarm', ['review_backlog', 'review_stale'], 'ok'],
+    [0, null, 1, 'alarm', ['dispatch_stuck'], 'alarm'],
+    [3, 86_401, 1, 'alarm', ['dispatch_stuck', 'review_stale'], 'alarm'],
+    [80, 90_000, 2, 'alarm', ['dispatch_stuck', 'review_backlog', 'review_stale'], 'alarm'],
+  ] as const)('count %i, oldest %s s, stuck %i => %s %j, overall %s', (count, age, stuck, status, reasons, overall) => {
     const capacity = review(count, age, stuck);
     expect(capacity).toMatchObject({ status, alarmReasons: reasons, count, stuckDispatched: stuck });
-    expect(combineMonitorStatus(ready, progress, capacity).overall).toBe(status === 'alarm' ? 'alarm' : 'ok');
+    expect(combineMonitorStatus(ready, progress, capacity).overall).toBe(overall);
   });
   it('names the alarm and the review queue in the Kuma message without exposing request IDs', () => {
     const capacity = review(51, 90_000);
     const message = monitorPushMessage(combineMonitorStatus(ready, progress, capacity));
-    expect(message).toBe('worker failover alarm; capacity alarm review_backlog+review_stale; capacity review 51 (oldest 1d)');
+    expect(message).toBe('worker failover ok; 검토 대기 51건(가장 오래된 25시간) — 사람 검토 필요 (review_backlog+review_stale)');
     expect(message).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}/);
+    expect(monitorPushMessage(combineMonitorStatus(ready, progress, review(51, 90_000, 1))))
+      .toBe('worker failover alarm; capacity alarm dispatch_stuck+review_backlog+review_stale; capacity review 51 (oldest 1d)');
     expect(monitorPushMessage(combineMonitorStatus(ready, progress, review(0, null, 1)))).toBe('worker failover alarm; capacity alarm dispatch_stuck');
     expect(monitorPushMessage(combineMonitorStatus(ready, progress, review(0, null)))).toBe('worker failover ok');
   });
@@ -118,6 +123,100 @@ describe('alarm only when work is actually stopped or the review queue is neglec
     }
     expect(summarizeCapacityReview({ requests: [request()], count: 1, oldestAgeSeconds: 7_200, stuckDispatched: 0 },
       { ...CAPACITY_MONITOR_DEFAULTS, reviewMaxAgeSeconds: 3_600 })).toMatchObject({ status: 'alarm', alarmReasons: ['review_stale'] });
+  });
+});
+
+describe('2026-11-10 owner decision: a review-only ledger alarm pushes UP with a message, everything else keeps DOWN', () => {
+  const review = (count: number, oldestAgeSeconds: number | null, stuckDispatched = 0) => summarizeCapacityReview({
+    requests: Array.from({ length: Math.min(count, 64) }, () => request()), count, oldestAgeSeconds, stuckDispatched });
+  // 11-09 배포 창: indeterminate 35건, 가장 오래된 41시간 → review_stale 하나.
+  const staleOnly = () => review(35, 147_600);
+  const reviewMessage = '검토 대기 35건(가장 오래된 41시간) — 사람 검토 필요 (review_stale)';
+  const cycleTwice = async (status: ReturnType<typeof combineMonitorStatus>) => {
+    const push = vi.fn().mockResolvedValue(undefined), record = vi.fn();
+    const first = await runMonitorCycle({ badSamples: 0 }, status, { push, record });
+    const second = await runMonitorCycle(first, status, { push, record });
+    return { push, first, second };
+  };
+
+  it('classifies only review_* reasons with no stuck dispatched row as review-only', () => {
+    expect(capacityReviewOnlyAlarm(staleOnly())).toBe(true);
+    expect(capacityReviewOnlyAlarm(review(51, 3_600))).toBe(true);
+    expect(capacityReviewOnlyAlarm(review(80, 90_000))).toBe(true);
+    expect(capacityReviewOnlyAlarm(review(35, 147_600, 1))).toBe(false);
+    expect(capacityReviewOnlyAlarm(review(0, null, 1))).toBe(false);
+    expect(capacityReviewOnlyAlarm(review(3, 3_600))).toBe(false);
+    expect(capacityReviewOnlyAlarm(review(0, null))).toBe(false);
+    expect(capacityReviewOnlyAlarm({ status: 'unknown', truncated: false, requests: [] })).toBe(false);
+    expect(capacityReviewOnlyAlarm(undefined)).toBe(false);
+  });
+
+  it('review-only: overall ok, UP at once with the review message, and the review condition stays in the output', async () => {
+    const capacity = staleOnly();
+    expect(capacity).toMatchObject({ status: 'alarm', alarmReasons: ['review_stale'], count: 35, oldestAgeSeconds: 147_600, stuckDispatched: 0 });
+    const status = combineMonitorStatus(ready, progress, capacity);
+    expect(status).toMatchObject({ overall: 'ok', warnings: ['capacity_review'], capacityUnknowns: capacity });
+    expect(exitCodeFor(status.overall)).toBe(0);
+    expect(monitorPushMessage(status)).toBe(`worker failover ok; ${reviewMessage}`);
+    const push = vi.fn().mockResolvedValue(undefined);
+    // A previous bad sample does not delay the UP: the review-only sample is a good sample.
+    expect(await runMonitorCycle({ badSamples: 1 }, status, { push, record: vi.fn() })).toEqual({ badSamples: 0 });
+    expect(push).toHaveBeenCalledWith('up', `worker failover ok; ${reviewMessage}`);
+    const dir = mkdtempSync(join(tmpdir(), 'capacity-review-only-'));
+    try {
+      recordMonitorHeartbeat(status, join(dir, 'health.json'));
+      const heartbeat = JSON.parse(readFileSync(join(dir, 'health.json'), 'utf8'));
+      expect(heartbeat.overall).toBe('ok');
+      expect(heartbeat.capacityUnknowns).toEqual(capacity);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it('review + stuck dispatched row: alarm and DOWN after two samples, as before', async () => {
+    const status = combineMonitorStatus(ready, progress, review(35, 147_600, 1));
+    expect(status.overall).toBe('alarm');
+    expect(status.warnings).toBeUndefined();
+    expect(exitCodeFor(status.overall)).toBe(2);
+    const { push, first, second } = await cycleTwice(status);
+    expect([first.badSamples, second.badSamples]).toEqual([1, 2]);
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(push).toHaveBeenCalledWith('down', 'worker failover alarm; capacity alarm dispatch_stuck+review_stale; capacity review 35 (oldest 1d)');
+  });
+
+  it('review + another alarm or an unreadable state: DOWN after two samples, the review stays a warning', async () => {
+    for (const [status, overall] of [
+      [combineMonitorStatus({ ...ready, overall: 'alarm' }, progress, staleOnly()), 'alarm'],
+      [combineMonitorStatus(ready, { ...progress, overall: 'alarm' }, staleOnly()), 'alarm'],
+      [combineMonitorStatus(ready, { ...progress, overall: 'unknown' }, staleOnly()), 'unknown'],
+      [combineMonitorStatus(null, progress, staleOnly()), 'unknown'],
+      [combineMonitorStatus(ready, null, staleOnly()), 'unknown'],
+    ] as const) {
+      expect(status).toMatchObject({ overall, warnings: ['capacity_review'] });
+      expect(exitCodeFor(status.overall)).toBe(overall === 'alarm' ? 2 : 1);
+      const { push, second } = await cycleTwice(status);
+      expect(second.badSamples).toBe(2);
+      expect(push).toHaveBeenCalledTimes(1);
+      expect(push).toHaveBeenCalledWith('down', `worker failover ${overall}; ${reviewMessage}`);
+    }
+  });
+
+  it('no review-only alarm: unchanged', async () => {
+    for (const [capacity, message] of [
+      [review(0, null), 'worker failover ok'],
+      [review(3, 3_600), 'worker failover ok; capacity review 3 (oldest 1h)'],
+      [undefined, 'worker failover ok'],
+    ] as const) {
+      const status = combineMonitorStatus(ready, progress, capacity);
+      expect(status.overall).toBe('ok');
+      expect(status.warnings).toBeUndefined();
+      expect(monitorPushMessage(status)).toBe(message);
+      const push = vi.fn().mockResolvedValue(undefined);
+      await runMonitorCycle({ badSamples: 0 }, status, { push, record: vi.fn() });
+      expect(push).toHaveBeenCalledWith('up', message);
+    }
+    const unread = combineMonitorStatus(ready, progress, { status: 'unknown', truncated: false, requests: [] });
+    expect(unread).toMatchObject({ overall: 'unknown' });
+    expect(unread.warnings).toBeUndefined();
+    expect(monitorPushMessage(unread)).toBe('worker failover unknown');
   });
 });
 

@@ -14,6 +14,8 @@ import { MODEL_CAPACITY_INDETERMINATE_REASONS, inFlightStateSql, reviewStateSql 
  * - `alarm`   = 아직 "일이 멈췄다"는 뜻인 것만: 검토 목록이 문턱을 넘게 쌓였거나(review_backlog·review_stale),
  *               점유 행(dispatched)이 기한을 한참 넘겨 슬롯을 잡고 있다(dispatch_stuck — 워커가 죽어 표식 없이 남은 전송 등).
  * - `unknown` = 장부를 읽지 못했다(빈 목록으로 보지 않는다).
+ * - 2026-11-10 소유자 결정: `alarm` 사유가 검토 목록 문턱(review_*)뿐이고 기한 넘긴 점유 행이 없으면(stuckDispatched 0)
+ *   장애가 아니라 사람 검토 알림이다(capacityReviewOnlyAlarm). 보고는 그대로 `alarm`·alarmReasons 이고, monitor overall·Kuma 만 UP 이다.
  *
  * 전송 형식(heartbeat → SSH gateway → Oracle): status·truncated·requests(최대 64건)는 예전 그대로이고, 요약(count·oldestAgeSeconds·
  * stuckDispatched·alarmReasons)은 unknown 이 아닐 때 항상 붙는다. 예전(요약 없는) 'alarm' 은 "검토 대기"였다 — Oracle·gateway 는 요약 없는 alarm 을 review 로 읽는다.
@@ -66,6 +68,16 @@ export function summarizeCapacityReview(observed: { requests: readonly CapacityU
     : reason === 'review_backlog' ? count > thresholds.reviewMaxRows : oldestAgeSeconds !== null && oldestAgeSeconds > thresholds.reviewMaxAgeSeconds);
   return capacityUnknownReportSchema.parse({ status: alarmReasons.length ? 'alarm' : count ? 'review' : 'ok', truncated: count > 64,
     requests: observed.requests.slice(0, 64), count, oldestAgeSeconds, stuckDispatched, alarmReasons });
+}
+
+/**
+ * 2026-11-10 소유자 결정: 장부 경보 사유가 검토 목록 문턱(review_backlog·review_stale 등 review_*)뿐이고 기한 넘긴 점유 행이 없으면
+ * (stuckDispatched 0) 검토 행은 아무것도 막지 않으므로 장애가 아니다 — monitor overall 에 넣지 않고 Kuma 는 UP(메시지에 건수·나이)이다.
+ * 문턱은 바꾸지 않는다. 같은 규칙: scripts/ops/recovery_gateway.py capacity_review_only(M3/mini gateway·Oracle watchdog).
+ */
+export function capacityReviewOnlyAlarm(report: CapacityUnknownReport | undefined): boolean {
+  return report?.status === 'alarm' && report.stuckDispatched === 0 && report.alarmReasons.length > 0
+    && report.alarmReasons.every(reason => reason.startsWith('review_'));
 }
 
 /** Bounded primary SELECT (한 repeatable-read 스냅숏). 멈춤·정책 개정·새 성공 작업이 검토 행을 숨기지 않는다. 쓰지 않는다. */

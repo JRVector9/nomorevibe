@@ -118,8 +118,9 @@ def valid_stage_failures(value):
 
 
 # 2026-10-31 (owner decision 2026-10-30): an unknown-outcome model call never stops work. 'review' (확인 못함 · 사람 검토)
-# is informational only. Only a summarized 'alarm' (review backlog/stale over the monitor thresholds, or an occupying
-# dispatched row past its bound) or an unreadable ledger ('unknown') is an incident. A pre-2026-10-31 monitor sends the
+# is informational only. Only a summarized 'alarm' with an occupying dispatched row past its bound (dispatch_stuck) or an
+# unreadable ledger ('unknown') is an incident. Since 2026-11-10 an alarm of review backlog/stale reasons only (over the
+# monitor thresholds) is a human review notice, not an incident (capacity_review_only). A pre-2026-10-31 monitor sends the
 # three-key shape, where 'alarm' only meant "review pending"; it is read as review.
 CAPACITY_STATUSES = ('ok', 'review', 'alarm', 'unknown')
 CAPACITY_ALARM_REASONS = ('dispatch_stuck', 'review_backlog', 'review_stale')
@@ -164,9 +165,20 @@ def validate_capacity_unknowns(value):
     return value
 
 
+def capacity_review_only(value):
+    """Owner decision 2026-11-10: a summarized alarm whose only reasons are review-list thresholds (review_backlog, review_stale,
+    any review_*) with no stuck dispatched row asks for human review and blocks nothing, so it is not an incident. Same rule as
+    lib/operations/model-capacity-unknowns.ts capacityReviewOnlyAlarm: the monitor pushes UP with a message, the gateway row
+    follows the monitor's own overall, Oracle does not alarm. The summary itself (status/alarmReasons) is relayed unchanged."""
+    reasons = value.get('alarmReasons')
+    return (value['status'] == 'alarm' and isinstance(reasons, list) and bool(reasons) and value.get('stuckDispatched') == 0 and
+            all(isinstance(reason, str) and reason.startswith('review_') for reason in reasons))
+
+
 def capacity_alarm(value):
-    """Validated capacity summary -> incident. Review-only (also legacy 'alarm') is not; a summarized alarm or a failed read is."""
-    return value['status'] == 'unknown' or value['status'] == 'alarm' and 'alarmReasons' in value
+    """Validated capacity summary -> incident. Review-only (also legacy 'alarm', and a summarized alarm of review_* reasons only
+    since 2026-11-10) is not; a summarized alarm with dispatch_stuck or a failed read is."""
+    return value['status'] == 'unknown' or value['status'] == 'alarm' and 'alarmReasons' in value and not capacity_review_only(value)
 
 
 def capacity_pending(value):
@@ -323,7 +335,8 @@ def observe(key, cfg, run=command, now=None):
                 if capacity:
                     merged = merge_capacity_unknowns(capacity, len(capacity) == len(checks))
                     result['capacityUnknowns'] = merged
-                    # 확인 못함(review) alone leaves the row as the monitor's own overall reports it.
+                    # 확인 못함(review) alone, or an alarm of review_* reasons only (2026-11-10), leaves the row as the
+                    # monitor's own overall reports it.
                     if capacity_alarm(merged):
                         result.update(reason='pipeline_alarm', ok=False, recoverable=False)
         else:
