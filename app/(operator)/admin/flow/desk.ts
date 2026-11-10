@@ -24,9 +24,10 @@ import { sortActions } from "../status/dashboard/AttentionList";
  * 장부 경보 readModelCapacityUnknowns · 역할 lease roleOverview · 작업 로그). 새로 세는 것은 작업 로그 몇 줄과 부재 중의 수 둘뿐이다.
  *
  * 칸마다 따로 실패한다(그 칸만 null — 화면은 "읽지 못함"이라고 쓰고 0 으로 보이지 않는다). 공통 부분은 웹들이 15초 나눠 쓴다.
+ * 15초가 지났어도 2분 안의 값이면 기다리지 않고 그 값(관측 시각 measuredAt 이 함께 보인다)을 주며 뒤에서 다시 센다(conveyor.ts 와 같다).
  * 조치 목록은 운영센터 배지와 같은 수를 남긴다(rememberCriticalCount) — 흐름을 열어 둔 동안 배지가 한 번 더 세지 않는다.
  */
-const shared = sharedLoader<Omit<OperatorDesk, "away">>({ namespace: "admin:desk:v1", ttlMs: 15_000, store: sharedStore });
+const shared = sharedLoader<Omit<OperatorDesk, "away">>({ namespace: "admin:desk:v1", ttlMs: 15_000, staleMs: 120_000, store: sharedStore });
 
 const quiet = <T,>(event: string) => (error: unknown): T | null => {
   logger.warn(event, { errorName: error instanceof Error ? error.name : "unknown" });

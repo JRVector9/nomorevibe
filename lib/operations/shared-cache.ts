@@ -27,6 +27,11 @@ export type SharedLoaderOptions = {
   freshPerMinute?: number;
   /** 인스턴스 층에 남기는 열쇠 수 */
   max?: number;
+  /**
+   * ttl 이 지난 값을 이만큼 더 들고 있다가, 그 사이에 부르면 기다리지 않고 지난 값을 주며 뒤에서 다시 센다(stale-while-revalidate).
+   * 없거나 0 이면 지금처럼 ttl 이 지나면 다시 셀 때까지 기다린다. 값마다 센 시각이 화면에 보이는 곳에만 쓴다.
+   */
+  staleMs?: number;
   now?: () => number;
 };
 
@@ -43,44 +48,57 @@ export type SharedLoaderOptions = {
 export function sharedLoader<T>(options: SharedLoaderOptions) {
   const clock = options.now ?? (() => Date.now());
   const max = options.max ?? 4;
-  /** measuredAt — 센 시각. 나눠 쓰는 층의 값이 이 인스턴스가 쥔 값보다 이르면 받지 않는다(숫자가 뒤로 가지 않게) */
-  const local = new Map<string, { value: T; expiresAt: number; measuredAt: number }>();
+  const staleMs = Math.max(0, options.staleMs ?? 0);
+  /** measuredAt — 센 시각. 나눠 쓰는 층의 값이 이 인스턴스가 쥔 값보다 이르면 받지 않는다(숫자가 뒤로 가지 않게). keepUntil — 지난 값을 줄 수 있는 끝 */
+  const local = new Map<string, { value: T; expiresAt: number; keepUntil: number; measuredAt: number }>();
   const pending = new Map<string, Promise<T>>();
   const budget = freshBudget(options.freshPerMinute ?? 3, clock);
-  const remember = (key: string, value: T, expiresAt: number, measuredAt: number) => {
+  const remember = (key: string, value: T, expiresAt: number, keepUntil: number, measuredAt: number) => {
     local.delete(key);
-    local.set(key, { value, expiresAt, measuredAt });
+    local.set(key, { value, expiresAt, keepUntil, measuredAt });
     while (local.size > max) local.delete(local.keys().next().value!);
   };
   const remoteKey = (key: string) => `${options.namespace}:${key}`;
-
-  return async function get(key: string, load: () => Promise<T>, fresh = false): Promise<T> {
-    const inflight = pending.get(key);
-    if (inflight) return inflight;
-    const bypass = fresh && budget();
-    if (!bypass) {
-      const remote = options.store ? await options.store.get<{ v: T; measuredAt: number }>(remoteKey(key)) : null;
-      const hit = local.get(key);
-      const remoteAt = remote && Number.isFinite(remote.value?.measuredAt) ? remote.value.measuredAt : null;
-      if (remote && remoteAt !== null && remote.expiresAt > clock() && (!hit || remoteAt >= hit.measuredAt)) {
-        remember(key, remote.value.v, remote.expiresAt, remoteAt);
-        return remote.value.v;
-      }
-      if (hit && hit.expiresAt > clock()) return hit.value;
-      // Valkey 를 묻는 사이 다른 렌더가 세기 시작했으면 그것을 기다린다
-      const started = pending.get(key);
-      if (started) return started;
-    }
+  /** 세고 두 층에 쓴다. 같은 열쇠는 한 번만 센다. 실패는 담지 않는다 */
+  const start = (key: string, load: () => Promise<T>): Promise<T> => {
     const loading: Promise<T> = (async () => {
       const measuredAt = clock();
       const value = await load();
       const expiresAt = clock() + options.ttlMs;
-      remember(key, value, expiresAt, measuredAt);
-      options.store?.set(remoteKey(key), { v: value, measuredAt }, expiresAt);
+      remember(key, value, expiresAt, expiresAt + staleMs, measuredAt);
+      // 지난 값을 줄 수 있게 나눠 쓰는 층에는 그 끝까지 둔다 — 새것인 끝(freshUntil)은 값 안에 적는다
+      options.store?.set(remoteKey(key), staleMs ? { v: value, measuredAt, freshUntil: expiresAt } : { v: value, measuredAt }, expiresAt + staleMs);
       return value;
     })().finally(() => { if (pending.get(key) === loading) pending.delete(key); });
     pending.set(key, loading);
     return loading;
+  };
+
+  return async function get(key: string, load: () => Promise<T>, fresh = false): Promise<T> {
+    const inflight = pending.get(key);
+    // 이미 세는 중인 값은 새로고침에도 충분히 새것이다. 지난 값을 줄 수 있으면(staleMs) 그 값을 먼저 찾는다
+    if (inflight && (fresh || !staleMs)) return inflight;
+    const bypass = !inflight && fresh && budget();
+    if (!bypass) {
+      const remote = options.store ? await options.store.get<{ v: T; measuredAt: number; freshUntil?: number }>(remoteKey(key)) : null;
+      const hit = local.get(key);
+      const remoteAt = remote && Number.isFinite(remote.value?.measuredAt) ? remote.value.measuredAt : null;
+      if (remote && remoteAt !== null && remote.expiresAt > clock() && (!hit || remoteAt >= hit.measuredAt)) {
+        const freshUntil = Number.isFinite(remote.value.freshUntil) ? Math.min(remote.value.freshUntil!, remote.expiresAt) : remote.expiresAt;
+        remember(key, remote.value.v, freshUntil, remote.expiresAt, remoteAt);
+      }
+      const best = local.get(key);
+      if (best && best.expiresAt > clock()) return best.value;
+      if (best && staleMs && best.keepUntil > clock()) {
+        // 기다리지 않는다 — 지난 값(센 시각이 함께 보인다)을 주고 뒤에서 다시 센다. 실패하면 다음 부름이 다시 센다
+        if (!pending.has(key)) start(key, load).catch(() => undefined);
+        return best.value;
+      }
+      // Valkey 를 묻는 사이 다른 렌더가 세기 시작했으면 그것을 기다린다
+      const started = pending.get(key);
+      if (started) return started;
+    }
+    return start(key, load);
   };
 }
 
