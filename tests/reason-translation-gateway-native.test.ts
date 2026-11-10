@@ -120,7 +120,8 @@ it("sends one native POST with the whole original ordered wire and private immut
     await expect(send(texts, owned, prepared(texts))).rejects.toThrow("reason_translation_gateway_call_mismatch"); expect(bodies).toHaveLength(1);
   });
 });
-it.each([["short"], ["a".repeat(5000)], ["a", "b", "c", "d"]])("preserves the original max-token formula and user array: %j", async (...texts) => {
+// 긴 글은 낱말 글(띄어쓰기 있음)로 잰다 — 같은 글자 반복·base64 덩어리는 보내기 전에 줄인다(compactTranslationNoise, translate.test.ts)
+it.each([["short"], ["word ".repeat(1000)], ["a", "b", "c", "d"]])("preserves the original max-token formula and user array: %j", async (...texts) => {
   await server(async ({ bodies, reply }) => {
     reply(response => response.end(JSON.stringify(envelope({ choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify(texts.map(() => "한국어")) }, finish_reason: "stop" }] }))));
     const call = prepared(texts), result = await send(texts, dispatch(texts, call), call);

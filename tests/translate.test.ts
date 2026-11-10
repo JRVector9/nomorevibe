@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { needsKorean, parseTranslations, reasonTranslationGatewayWire, textHash, translateToKorean } from "@/lib/crawl/translate";
+import { compactTranslationNoise, needsKorean, parseTranslations, reasonTranslationGatewayWire, textHash, translateToKorean } from "@/lib/crawl/translate";
 
 // These legacy transport units do not open a database; actual disabled SQL is covered separately.
 vi.mock("@/lib/llm/capacity-repository", () => ({
@@ -42,6 +42,27 @@ describe("parseTranslations — 받은 번역을 그대로 믿지 않는다", ()
 
   it("원문이 짧은 기호·코드뿐이면 한글이 없어도 받는다", () => {
     expect(parseTranslations('["`gem install x`"]', ["`gem install x`"])).toEqual({ ok: true, translations: ["`gem install x`"] });
+  });
+});
+
+describe("compactTranslationNoise — 옮길 필요 없는 덩어리는 줄여 보낸다", () => {
+  // 운영 2026-11-10: 페이지의 base64 를 옮겨 적은 2,000자 사유가 매번 45초를 넘겨 결과 미확정 23건을 남겼다
+  const base64 = "z///f//36em/nN479tWRZrXn0YjVx7K4Mh1m9cyiECTBnACJsChkCXbHVrCVeW8NEgLPogVjKXC9ckGcxK5KKPJ5b+i7t7fF33y3t6dn396hG4QFGH8CFBUXRQ";
+  it("base64 꼴 덩어리와 같은 글자 반복은 「…」로 줄이고 앞뒤 글은 둔다", () => {
+    expect(compactTranslationNoise(`The page text is unreadable binary data ('${base64}').`)).toBe("The page text is unreadable binary data ('…').");
+    expect(compactTranslationNoise(`tail ${"q".repeat(300)} end`)).toBe("tail … end");
+  });
+  it("파일 경로·저장소 이름처럼 긴 낱말 덩어리는 건드리지 않는다", () => {
+    const path = "The repo ships agents/claude-code/skills/backend/govkit-adr-author/SKILL.md and MesozoicLabs/VelociraptorMongoliensis-Anatomical-v0.";
+    expect(compactTranslationNoise(path)).toBe(path);
+    expect(compactTranslationNoise("sha256 " + "a1b2c3d4".repeat(8))).toBe("sha256 " + "a1b2c3d4".repeat(8));
+  });
+  it("사유 번역 요청은 줄인 글을 보내고 출력 상한도 줄인 글로 잰다 — 원문 해시는 그대로다", () => {
+    const original = `Unreadable ('${base64.repeat(15)}')`;
+    const wire = JSON.parse(reasonTranslationGatewayWire([original], "m1-gemma"));
+    expect(JSON.parse(wire.messages[1].content)).toEqual(["Unreadable ('…')"]);
+    expect(wire.max_tokens).toBe(400 + Math.ceil("Unreadable ('…')".length * 1.2));
+    expect(textHash(original)).not.toBe(textHash("Unreadable ('…')"));
   });
 });
 
