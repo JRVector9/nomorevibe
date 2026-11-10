@@ -98,6 +98,78 @@ describe("1분 집계 캐시 — 숫자가 뒤로 가지 않게", () => {
   });
 });
 
+describe("1분 집계 캐시 — 지난 값을 주며 뒤에서 다시 센다(staleMs)", () => {
+  it("ttl 이 지나도 stale 안이면 기다리지 않고 지난 값을 주고 한 번만 다시 센다 · 다음 부름은 새 값 · stale 을 넘으면 기다린다", async () => {
+    const get = sharedLoader<{ n: number }>({ namespace: "t", ttlMs: 15_000, staleMs: 120_000, store: null, now });
+    let n = 0;
+    let release: () => void = () => {};
+    const load = vi.fn(() => new Promise<{ n: number }>(resolve => { const value = { n: ++n }; release = () => resolve(value); }));
+    const first = get("k", load);
+    release();
+    expect(await first).toEqual({ n: 1 });
+    clock += 16_000;
+    // 다시 세기가 끝나지 않았어도 지난 값을 곧바로 준다 — 같은 때 여러 번 불러도 다시 세기는 하나
+    expect(await get("k", load)).toEqual({ n: 1 });
+    expect(await get("k", load)).toEqual({ n: 1 });
+    expect(load).toHaveBeenCalledTimes(2);
+    release();
+    await Promise.resolve(); await Promise.resolve();
+    expect(await get("k", load)).toEqual({ n: 2 });
+    expect(load).toHaveBeenCalledTimes(2);
+    // ttl + stale 을 넘긴 값은 주지 않는다 — 새로 셀 때까지 기다린다
+    clock += 15_000 + 120_000 + 1;
+    const waited = get("k", load);
+    let settled = false;
+    void waited.then(() => { settled = true; });
+    await Promise.resolve(); await Promise.resolve();
+    expect(settled).toBe(false);
+    release();
+    expect(await waited).toEqual({ n: 3 });
+  });
+
+  it("뒤에서 다시 세다 실패하면 값을 바꾸지 않고 다음 부름이 다시 센다 — 거절이 새지 않는다", async () => {
+    const get = sharedLoader<{ n: number }>({ namespace: "t", ttlMs: 15_000, staleMs: 120_000, store: null, now });
+    await get("k", async () => ({ n: 1 }));
+    clock += 16_000;
+    const failing = vi.fn(async (): Promise<{ n: number }> => { throw new Error("db"); });
+    expect(await get("k", failing)).toEqual({ n: 1 });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(await get("k", vi.fn(async () => ({ n: 2 })))).toEqual({ n: 1 });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(await get("k", vi.fn(async () => ({ n: 3 })))).toEqual({ n: 2 });
+    expect(failing).toHaveBeenCalledTimes(1);
+  });
+
+  it("다른 웹이 쓴 지난 값도 Valkey 에서 stale 끝까지 받아 곧바로 준다 — 새것인 끝은 값 안의 freshUntil", async () => {
+    const store = fakeStore();
+    const webA = sharedLoader<{ n: number }>({ namespace: "t", ttlMs: 15_000, staleMs: 120_000, store, now });
+    const webB = sharedLoader<{ n: number }>({ namespace: "t", ttlMs: 15_000, staleMs: 120_000, store, now });
+    await webA("k", async () => ({ n: 1 }));
+    expect(store.values.get("t:k")).toMatchObject({ value: { v: { n: 1 }, freshUntil: clock + 15_000 }, expiresAt: clock + 135_000 });
+    clock += 60_000;
+    const loadB = vi.fn(async () => ({ n: 2 }));
+    expect(await webB("k", loadB)).toEqual({ n: 1 });
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(loadB).toHaveBeenCalledTimes(1);
+    // B 가 다시 센 값을 A 도 본다(센 시각이 더 늦다)
+    expect(await webA("k", vi.fn(async () => ({ n: 9 })))).toEqual({ n: 2 });
+  });
+
+  it("새로고침은 지난 값을 주지 않고 기다려 새로 센다(분당 상한 안에서)", async () => {
+    const get = sharedLoader<{ n: number }>({ namespace: "t", ttlMs: 15_000, staleMs: 120_000, store: null, now });
+    await get("k", async () => ({ n: 1 }));
+    clock += 16_000;
+    expect(await get("k", async () => ({ n: 2 }), true)).toEqual({ n: 2 });
+  });
+
+  it("staleMs 가 없으면 지금처럼 ttl 이 지나면 기다려 다시 센다", async () => {
+    const get = sharedLoader<{ n: number }>({ namespace: "t", ttlMs: 15_000, store: null, now });
+    await get("k", async () => ({ n: 1 }));
+    clock += 16_000;
+    expect(await get("k", async () => ({ n: 2 }))).toEqual({ n: 2 });
+  });
+});
+
 describe("기다리지 않는 공유 값(sharedStale) — 메뉴 배지", () => {
   it("처음엔 null 을 주고 뒤에서 센다 · ttl 동안 그대로 · 지나면 지난 값을 주며 한 번만 다시 센다 · stale 넘으면 null", async () => {
     const store = fakeStore();

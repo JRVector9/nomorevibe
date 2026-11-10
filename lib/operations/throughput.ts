@@ -12,12 +12,28 @@ import type { CrawlSettings } from "@/lib/crawl/settings-schema";
 import { classificationReadyPredicate } from "./categories";
 import { throughputStatus, type ThroughputSnapshot, type ThroughputStage } from "./throughput-model";
 
+/** 설정마다 지금 세는 중인 처리량 — 담아 두는 캐시가 아니다(끝나면 지운다) */
+const inflightThroughput = new Map<string, Promise<ThroughputSnapshot>>();
+
 /**
  * One statement, one window cutoff. Count persisted items, not job ticks or log samples.
  * Documents, rule verdicts and second votes retain their latest timestamp only;
  * these rates intentionally do not claim to measure every retry/network call.
  */
-export async function pipelineThroughput(settings: CrawlSettings, now = new Date()): Promise<ThroughputSnapshot> {
+export async function pipelineThroughput(settings: CrawlSettings, now?: Date): Promise<ThroughputSnapshot> {
+  if (now) return readThroughputSnapshot(settings, now);
+  // 시각을 주지 않은 부름(관리자 화면 — 흐름 판·조치 목록·메뉴 배지)이 같은 때 겹치면 한 번만 센다. 이 집계는 혼자 1초, 셋이 겹치면
+  // 서로 밀려 2.6초였다(2026-11-10 프로드). 이미 세는 중인 값을 나눌 뿐 담아 두지 않는다 — 끝나면 다음 부름은 새로 센다
+  const key = JSON.stringify(settings);
+  const running = inflightThroughput.get(key);
+  if (running) return running;
+  const read = readThroughputSnapshot(settings, new Date())
+    .finally(() => { if (inflightThroughput.get(key) === read) inflightThroughput.delete(key); });
+  inflightThroughput.set(key, read);
+  return read;
+}
+
+function readThroughputSnapshot(settings: CrawlSettings, now: Date): Promise<ThroughputSnapshot> {
   return withReadOnlyAiTaskModels(async () => {
     // Approval predicates synchronously resolve the current pool/legacy membership and contracts.
     // A fresh monitor process must await those read-only snapshots before constructing SQL.

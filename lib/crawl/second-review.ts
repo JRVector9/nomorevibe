@@ -354,13 +354,16 @@ export function combineVotes(first: Verdict, second: Vote[], options: {
   agreeAt: number; published: boolean; pending: number;
   /** 1차를 본 모델의 관측값. 같은 모델의 별도 2차 호출도 허용한다. */
   firstModel?: string | null;
+  /** 모델 이름 → 독립 표 열쇠. 후보 수천을 한 번에 세는 쪽(secondReviewSummary)이 이름마다 한 번 가른 기억을 준다. 없으면 reviewIndependenceKey */
+  independenceKey?: (model: string) => string;
 }): CandidateVerdict {
   // Deduplicate model aliases within the second stage, not across stages.
   const votes: Vote[] = [];
   const known = new Map<string, Vote>();
+  const independenceKey = options.independenceKey ?? reviewIndependenceKey;
   for (const vote of second) {
     if (!vote.model) { votes.push(vote); continue; }
-    const key = reviewIndependenceKey(vote.model);
+    const key = independenceKey(vote.model);
     const prior = known.get(key);
     if (prior) {
       // Conflicting duplicate results cannot silently become an agreeing vote.
@@ -1490,6 +1493,15 @@ export async function secondReviewSummary(agreeAt: number): Promise<{ counts: Se
 
   const ids: Record<SecondChipKey, number[]> = { unanimous_reject: [], unanimous_approve: [], agreed_reject: [], agreed_approve: [], needs_human: [] };
   let published = 0, pending = 0;
+  // 독립 표 열쇠는 모델 이름마다 한 번만 가른다. reviewIndependenceKey 는 부를 때마다 모델 등록표를 다시 검사해(0.6ms 안팎) 후보 수천에
+  // 3~5초가 들었고, 그동안 웹의 이벤트 루프가 멈춰 다른 화면도 기다렸다(2026-11-10 프로드 5,975 후보 실측). 아래 고리는 기다림 없이 한 번에 돌아
+  // 그 사이 등록표가 바뀌지 않으므로 값은 그대로다.
+  const independenceKeys = new Map<string, string>();
+  const independenceKey = (model: string): string => {
+    let key = independenceKeys.get(model);
+    if (key === undefined) independenceKeys.set(model, key = reviewIndependenceKey(model));
+    return key;
+  };
   for (const [candidateId, group] of byCandidate) {
     if (new Set(group.map(row => `${row.inputHash}:${row.generationKey}`)).size > 1 || group.some(row => row.generationKey === "legacy")) {
       if (group.some(row => row.published)) published += 1;
@@ -1503,7 +1515,7 @@ export async function secondReviewSummary(agreeAt: number): Promise<{ counts: Se
       .map((row) => ({ decision: row.decision ?? "", confidence: row.confidence, provider: row.provider, model: pool
         ? secondReviewAssignedVoteCanonical(row.model, assignments.get(row.fallbackForId ?? row.id), !!row.fallbackForId) : row.model }));
     const verdict = combineVotes(first, votes, { agreeAt, published: Boolean(group[0].published),
-      pending: outstanding, firstModel: group[0].firstModel });
+      pending: outstanding, firstModel: group[0].firstModel, independenceKey });
     if (verdict.status === "pending") { pending += 1; continue; }
     const unverifiedPoolModel = pool && group.some(row =>
       !secondReviewVoteEligible(row.model, assignments.get(row.fallbackForId ?? row.id), !!row.fallbackForId));

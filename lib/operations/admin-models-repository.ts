@@ -30,9 +30,12 @@ export async function readAdminModelsObservation(options: { throughput?: boolean
       if (!control) return unavailableAdminModels();
       const storedHold = Number(control.unknownHoldMs);
       const unknownHoldMs = Number.isSafeInteger(storedHold) && storedHold >= 0 ? storedHold : DEFAULT_MODEL_CAPACITY_UNKNOWN_HOLD_SECONDS * 1000;
+      // measured 는 MATERIALIZED 로 한 번만 짓고 쓰는 칸만 담는다. 그냥 두면 플래너가 CTE 를 펼쳐 response_ok(terminal_evidence 의 jsonb 를 여러 번 푼다)를
+      // 아래 FILTER 마다 다시 계산했다 — 2026-11-10 프로드 24시간 3.7만 행에 1.7초(공유 버퍼 191만). 굳히면 0.2초, 같은 스냅숏에서 결과가 같다.
       const metrics = await tx.execute(sql`
-        WITH measured AS (
-          SELECT r.*, CASE
+        WITH measured AS MATERIALIZED (
+          SELECT r.route_id, r.provider, r.model, r.group_id, r.provider_budget_id, r.state, r.settled_at, r.updated_at, r.dispatched_at,
+            r.queue_until, r.epoch, r.revision, r.policy_hash, CASE
             WHEN state <> 'settled' THEN NULL
             WHEN terminal_evidence->'outcome'->>'ok' IN ('true','false') THEN (terminal_evidence->'outcome'->>'ok')::boolean
             WHEN terminal_evidence->>'finishReason' IS NOT NULL THEN terminal_evidence->>'finishReason' IN ('stop','tool_calls','function_call')
