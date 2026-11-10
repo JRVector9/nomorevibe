@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { combineVotes, combineVerdicts, inSample, riskSignals } from "@/lib/crawl/second-review";
+import { reviewIndependenceKey } from "@/lib/crawl/review-model-identity";
 
 const base = { name: "Taskly", productUrl: "https://taskly.app", textSample: "Plan your week", readme: null };
 
@@ -145,6 +146,19 @@ describe("1차와 같은 모델의 표", () => {
   it("1차 모델을 모르면 예전처럼 전부 센다", () => {
     const options = { agreeAt: 0.85, published: false, pending: 0 };
     expect(combineVotes(first, [gateway("reject", "[MLX] gemma4-26b")], options)).toMatchObject({ status: "agreed", votes: 2 });
+  });
+
+  it("독립 표 열쇠는 세는 쪽이 준 기억(independenceKey)을 쓴다 — 없으면 reviewIndependenceKey 와 같다", () => {
+    const votes = [gateway("reject", "[MLX] gemma4-26b"), gateway("reject", "[MLX] gemma4-31b")];
+    const options = { agreeAt: 0.85, published: false, pending: 0 };
+    const keys: string[] = [];
+    // 둘을 같은 열쇠로 주면 2차 안의 중복으로 한 표만 센다 — 준 함수가 실제로 쓰였다
+    expect(combineVotes(first, votes, { ...options, independenceKey: model => { keys.push(model); return "same"; } })).toMatchObject({ status: "agreed", votes: 2 });
+    expect(keys).toEqual(["[MLX] gemma4-26b", "[MLX] gemma4-31b"]);
+    // 기억이 기본 열쇠를 그대로 돌려주면 결과도 기본과 같다
+    const memo = new Map<string, string>();
+    const remembered = (model: string) => memo.get(model) ?? memo.set(model, reviewIndependenceKey(model)).get(model)!;
+    expect(combineVotes(first, votes, { ...options, independenceKey: remembered })).toEqual(combineVotes(first, votes, options));
   });
 
   it("행 상태도 같은 규칙을 따른다", () => {
