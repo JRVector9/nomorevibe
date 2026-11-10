@@ -1,7 +1,10 @@
 import Link from "next/link";
+import { Suspense } from "react";
 import { listTalkPostsWorkspacePage, talkAdminFilter } from "@/lib/social/admin";
+import { readSocialCollectors } from "@/lib/operations/flow-overview-read";
+import { logger } from "@/lib/observability/logger";
 import { listNewsPage, newsFilter } from "../news/list";
-import { discussionUrl, SOURCE_NAME } from "@/components/social/talk-format";
+import { discussionUrl, linkOnly, shortLink, socialPostLabel, SOURCE_NAME } from "@/components/social/talk-format";
 import { formatDetailTime } from "@/lib/format/time";
 import { getSettings } from "@/lib/crawl/settings";
 import { NEWS_SOURCES } from "@/lib/news/sources";
@@ -11,6 +14,7 @@ import { DEFAULT_RANKING_POLICY, parseRankingPolicy } from "@/lib/domain/ranking
 import { RankingPolicyForm } from "../ranking/RankingPolicyForm";
 import { PrototypeEmpty, PrototypeFacts, PrototypePanel, PrototypeTag, n } from "../products/PrototypeParts";
 import { PrototypeContentActions, PrototypeHomeDecision } from "./PrototypeContentActions";
+import { SocialCollectorStrip } from "./SocialCollectorStrip";
 
 export type ContentQuery = Record<string, string | string[] | undefined>;
 const value = (query: ContentQuery, key: string) => typeof query[key] === "string" ? query[key] : undefined;
@@ -18,13 +22,20 @@ const pageOf = (query: ContentQuery) => { const page=Number(value(query,"page"))
 
 export async function PrototypeSocialContent({ query }: { query: ContentQuery }) {
   const filter = talkAdminFilter(query), page = pageOf(query), now = new Date();
+  // 수집기 줄은 목록과 같이 읽기 시작하되 목록을 막지 않는다(Suspense). 못 읽으면 미확인으로 그린다
+  const collectors = readSocialCollectors().catch((error: unknown) => {
+    logger.warn("content.social_collectors_unavailable", { errorName: error instanceof Error ? error.name : "unknown" });
+    return null;
+  });
+  const status = <Suspense fallback={<p className="small muted" aria-busy="true">수집기 상태를 읽는 중…</p>}><SocialCollectorStrip read={collectors} /></Suspense>;
   const listed = await listTalkPostsWorkspacePage(filter, { now, page, pageSize: 25 }).catch(() => null);
-  if (!listed) return <PrototypeEmpty>SNS 콘텐츠 원본을 읽지 못했습니다.</PrototypeEmpty>;
+  if (!listed) return <>{status}<PrototypeEmpty>SNS 콘텐츠 원본을 읽지 못했습니다.</PrototypeEmpty></>;
   const chosen = listed.rows.find(row => String(row.id) === value(query, "id")) ?? listed.rows[0];
   const href = (extra: Record<string,string>) => `/admin/content?${new URLSearchParams({ tab: "social", ...Object.fromEntries(Object.entries(filter)), page: String(page), ...extra })}`;
-  return <><div className="page-heading"><div className="heading-actions"><Link className="button small" href="/admin/talk">수집·홈 순위 상세 운영</Link></div></div><form className="toolbar" action="/admin/content"><input type="hidden" name="tab" value="social" /><select name="source" defaultValue={filter.source} aria-label="SNS 출처">{["all","hn","x","bluesky","geeknews"].map(source => <option key={source} value={source}>{source === "all" ? "전체 출처" : source}</option>)}</select><select name="state" defaultValue={filter.state} aria-label="SNS 상태">{["all","visible","hidden","gone"].map(state => <option key={state} value={state}>{({ all:"전체 상태",visible:"보임",hidden:"숨김",gone:"원문 삭제" })[state]}</option>)}</select><button className="button small">조회</button><span className="small muted spacer">{n(listed.total)}개 · {page}쪽</span></form>
-    <div className="grid detail"><section className="panel"><div className="table-scroll"><table style={{ minWidth: 580 }}><thead><tr><th>콘텐츠</th><th>유입·상태</th><th>관리</th></tr></thead><tbody>{listed.rows.map(row => <tr key={row.id} className={chosen?.id === row.id ? "selected" : ""}><td><Link className="name" href={href({ id:String(row.id) })}>{row.title || "제목 없는 게시물"}</Link><p>#{row.id} · {formatDetailTime(row.postedAt)}</p></td><td>{SOURCE_NAME[row.source]}<p><PrototypeTag tone={row.state === "hidden" ? "gray" : row.state === "gone" ? "amber" : "green"}>{({visible:"보임",hidden:"숨김",gone:"원문 삭제",approved:"게시",pending:"대기"})[row.state]}</PrototypeTag>{row.talk.shown && <PrototypeTag tone="blue">화제 노출</PrototypeTag>}</p></td><td><Link className="button small" href={href({ id:String(row.id) })}>선택</Link></td></tr>)}</tbody></table></div>{listed.rows.length === 0 && <PrototypeEmpty>조건에 맞는 콘텐츠가 없습니다.</PrototypeEmpty>}<div className="panel-foot"><Link className="text-button" href={href({ page:String(Math.max(1,page-1)),id:"" })}>이전</Link>{page*25 < listed.total && <Link className="text-button" href={href({ page:String(page+1),id:"" })}>다음 →</Link>}</div></section>
-      <section className="panel pad">{chosen ? <><div className="eyebrow">SOCIAL CURATION / 미리보기</div><div className="article-preview mt"><span className="small muted">{SOURCE_NAME[chosen.source]} · {formatDetailTime(chosen.postedAt)}</span><h3>{chosen.title}</h3><p>{chosen.points.toLocaleString("ko-KR")} 반응 · {chosen.comments.toLocaleString("ko-KR")} 댓글</p><p>{chosen.talk.shown ? "현재 화제 목록에 노출됩니다." : chosen.talk.reasons.join(" · ")}</p><a className="text-button" href={discussionUrl(chosen)} target="_blank" rel="noopener noreferrer">출처 원문 확인 ↗</a></div><PrototypeContentActions id={chosen.id} kind="social" state={chosen.state} />{chosen.repositoryKey && <PrototypeHomeDecision repository={chosen.repositoryKey} />}<p className="small muted mt">사용자가 작성한 피드백·답장·써봤어요 검수는 요청함에서 처리합니다.</p></> : <PrototypeEmpty>목록에서 콘텐츠를 선택하세요.</PrototypeEmpty>}</section></div>
+  const target = chosen && chosen.linkUrl !== discussionUrl(chosen) ? shortLink(chosen.linkUrl) : null;
+  return <><div className="page-heading"><div className="heading-actions"><Link className="button small" href="/admin/talk">수집·홈 순위 상세 운영</Link></div></div>{status}<form className="toolbar" action="/admin/content"><input type="hidden" name="tab" value="social" /><select name="source" defaultValue={filter.source} aria-label="SNS 출처">{["all","hn","x","bluesky","geeknews"].map(source => <option key={source} value={source}>{source === "all" ? "전체 출처" : source}</option>)}</select><select name="state" defaultValue={filter.state} aria-label="SNS 상태">{["all","visible","hidden","gone"].map(state => <option key={state} value={state}>{({ all:"전체 상태",visible:"보임",hidden:"숨김",gone:"원문 삭제" })[state]}</option>)}</select><button className="button small">조회</button><span className="small muted spacer">{n(listed.total)}개 · {page}쪽</span></form>
+    <div className="grid detail"><section className="panel"><div className="table-scroll"><table style={{ minWidth: 580 }}><thead><tr><th>콘텐츠</th><th>유입·상태</th><th>관리</th></tr></thead><tbody>{listed.rows.map(row => <tr key={row.id} className={chosen?.id === row.id ? "selected" : ""}><td><Link className="name" href={href({ id:String(row.id) })}>{socialPostLabel(row)}</Link><p>#{row.id} · {formatDetailTime(row.postedAt)}</p></td><td>{SOURCE_NAME[row.source]}<p><PrototypeTag tone={row.state === "hidden" ? "gray" : row.state === "gone" ? "amber" : "green"}>{({visible:"보임",hidden:"숨김",gone:"원문 삭제",approved:"게시",pending:"대기"})[row.state]}</PrototypeTag>{row.talk.shown && <PrototypeTag tone="blue">화제 노출</PrototypeTag>}</p></td><td><Link className="button small" href={href({ id:String(row.id) })}>선택</Link></td></tr>)}</tbody></table></div>{listed.rows.length === 0 && <PrototypeEmpty>조건에 맞는 콘텐츠가 없습니다.</PrototypeEmpty>}<div className="panel-foot"><Link className="text-button" href={href({ page:String(Math.max(1,page-1)),id:"" })}>이전</Link>{page*25 < listed.total && <Link className="text-button" href={href({ page:String(page+1),id:"" })}>다음 →</Link>}</div></section>
+      <section className="panel pad">{chosen ? <><div className="eyebrow">SOCIAL CURATION / 미리보기</div><div className="article-preview mt"><span className="small muted">{SOURCE_NAME[chosen.source]} · {formatDetailTime(chosen.postedAt)}</span><h3>{socialPostLabel(chosen)}</h3><p>{chosen.points.toLocaleString("ko-KR")} 반응 · {chosen.comments.toLocaleString("ko-KR")} 댓글</p><p>{chosen.talk.shown ? "현재 화제 목록에 노출됩니다." : chosen.talk.reasons.join(" · ")}</p>{!chosen.title.trim() && linkOnly(chosen.source) && <p className="small muted">{SOURCE_NAME[chosen.source]} 글은 본문·작성자를 저장하지 않아 출처와 가리킨 곳으로 이름을 붙입니다.</p>}<a className="text-button" href={discussionUrl(chosen)} target="_blank" rel="noopener noreferrer">출처 원문 확인 ↗</a>{target && <> <a className="text-button" href={chosen.linkUrl} target="_blank" rel="noopener noreferrer nofollow">가리킨 곳 {target} ↗</a></>}</div><PrototypeContentActions id={chosen.id} kind="social" state={chosen.state} />{chosen.repositoryKey && <PrototypeHomeDecision repository={chosen.repositoryKey} />}<p className="small muted mt">사용자가 작성한 피드백·답장·써봤어요 검수는 요청함에서 처리합니다.</p></> : <PrototypeEmpty>목록에서 콘텐츠를 선택하세요.</PrototypeEmpty>}</section></div>
   </>;
 }
 

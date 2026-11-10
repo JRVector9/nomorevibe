@@ -5,13 +5,11 @@ import Link from "next/link";
 import { Suspense } from "react";
 import { authSecret, currentAdmin } from "@/lib/auth/admin";
 import { listJobStates } from "@/lib/jobs/runner";
-import { STALE_LOCK_MS } from "@/lib/jobs/lease";
-import { isPausedJob, jobStatusLabel } from "@/lib/jobs/status";
 import { adminJobControlVersions } from "@/lib/operations/admin-job-control";
 import { readConveyor } from "@/lib/operations/conveyor";
 import { HUMAN_ASSIST_TASKS, readHumanAssistProgress } from "@/lib/operations/human-assist-progress";
 import { readHumanDelegateSummary } from "@/lib/operations/human-delegate-summary";
-import { SOCIAL_FLOW_JOBS } from "@/lib/operations/flow-overview-read";
+import { jobRuntimeState, SOCIAL_FLOW_JOBS } from "@/lib/operations/flow-overview-read";
 import { readFlowRankEditor } from "@/lib/operations/flow-rank-editor-read";
 import { adminWorkspaceReadOnly } from "@/lib/operations/admin-workspace-preview";
 import { heldReactionComments } from "@/lib/domain/reactions/review";
@@ -47,11 +45,10 @@ async function readControls(admin: { login: string; exp: number }): Promise<Flow
   const secret = authSecret();
   return {
     measuredAt: new Date(now).toISOString(),
+    // 멈춤·이름표·잠김은 SNS 수집기 줄(콘텐츠 운영)과 같은 계산(jobRuntimeState)
     jobs: Object.fromEntries(states.filter((job) => names.has(job.name)).map((job) => [job.name, {
-      paused: isPausedJob(job, now), notBefore: job.notBefore?.toISOString() ?? null, version: versions[job.name] ?? 0,
-      lastSuccessAt: job.lastSuccessAt?.toISOString() ?? null, lastRunAt: job.lastRunAt?.toISOString() ?? null,
-      workerSeenAt: job.workerSeenAt?.toISOString() ?? null, runtimeLabel: jobStatusLabel(job, now),
-      execution: job.lockedAt ? now - job.lockedAt.getTime() > STALE_LOCK_MS ? "stale" : "locked" : "none", lastError: !!job.lastError }])),
+      ...jobRuntimeState(job, now), notBefore: job.notBefore?.toISOString() ?? null, version: versions[job.name] ?? 0,
+      lastRunAt: job.lastRunAt?.toISOString() ?? null, workerSeenAt: job.workerSeenAt?.toISOString() ?? null }])),
     csrf: secret && !adminWorkspaceReadOnly() ? { token: jobControlCsrf(admin, secret), expiresAt: admin.exp } : null,
   };
 }
