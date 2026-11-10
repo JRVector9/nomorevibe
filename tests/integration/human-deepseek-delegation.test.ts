@@ -299,6 +299,90 @@ describe("72시간 넘은 근거의 승인 — 공개 전에 다시 검수(2026-
   });
 });
 
+// 0173(2026-11-10 운영자 요청): 「사람에게 남김」이 모델의 판단 보류인지 문턱에 못 미친 승인·반려인지 가르게, succeeded 로 닫는 위임 시도에
+// 모델의 원래 답과 남긴 까닭을 model_outcome 에 적는다. 결정·적용·감사는 예전 그대로다
+describe("위임 시도의 원래 답(model_outcome)", () => {
+  const modelOutcome = async (candidateId: number) => (await delegatedAttempts(candidateId)).map(row => row.modelOutcome);
+  /** reviewWithDeepSeek 가 돌려주는 모양 — 결정(outcome)은 문턱을 건 것, original 은 모델의 원래 답 */
+  const answered = (decision: "approve" | "reject" | "needs_review", confidence: number): DeepSeekReviewResult => {
+    const original = { decision, reason: "Read from the evidence.", evidenceIds: decision === "needs_review" ? [] : ["product"], confidence };
+    return { ok: true, outcome: { ...original, decision: decision !== "needs_review" && confidence < 0.9 ? "needs_review" : decision }, original };
+  };
+
+  it("적용한 승인·반려는 까닭 없이 원래 결정·확신을 적고, 후보는 예전처럼 승인·반려된다", async () => {
+    const floor = await auditFloor();
+    const approved = await split(0), rejected = await split(1);
+    expect(await review(approved.row.repo, answered("approve", 0.97))).toMatchObject({ state: "applied" });
+    expect(await review(rejected.row.repo, answered("reject", 0.93))).toMatchObject({ state: "applied" });
+    expect(await candidateRow(approved.row.id)).toMatchObject({ state: "approved", decidedBy: "deepseek" });
+    expect(await candidateRow(rejected.row.id)).toMatchObject({ state: "rejected", decidedBy: "deepseek", reason: "not_a_product" });
+    expect(await modelOutcome(approved.row.id)).toEqual([{ decision: "approve", confidence: 0.97, holdCause: null }]);
+    expect(await modelOutcome(rejected.row.id)).toEqual([{ decision: "reject", confidence: 0.93, holdCause: null }]);
+    expect((await delegatedAttempts(rejected.row.id))[0]).toMatchObject({ state: "succeeded", outcome: { decision: "reject" } });
+    expect(await auditRowsAfter(floor, "candidate-deepseek-decision")).toHaveLength(2);
+  });
+
+  it("모델 보류는 model_abstained, 문턱 미만의 승인은 운반이 needs_review 로 바꾼 뒤에도 원래 승인과 low_confidence 로 남는다", async () => {
+    const floor = await auditFloor();
+    const abstained = await split(0), unsure = await split(1);
+    expect(await review(abstained.row.repo, answered("needs_review", 0.5))).toMatchObject({ state: "held" });
+    expect(await review(unsure.row.repo, answered("approve", 0.82))).toMatchObject({ state: "held" });
+    for (const { row } of [abstained, unsure])
+      expect(await candidateRow(row.id)).toMatchObject({ state: "needs_review", reason: "second_review_split", decidedBy: "auto" });
+    expect(await modelOutcome(abstained.row.id)).toEqual([{ decision: "needs_review", confidence: 0.5, holdCause: "model_abstained" }]);
+    expect(await modelOutcome(unsure.row.id)).toEqual([{ decision: "approve", confidence: 0.82, holdCause: "low_confidence" }]);
+    expect((await delegatedAttempts(unsure.row.id))[0]).toMatchObject({ state: "succeeded", outcome: { decision: "needs_review" } });
+    expect(await auditRowsAfter(floor, "candidate-deepseek-decision")).toHaveLength(0);
+    // 끝낸 입력이라 다시 고르지 않는 것도 그대로다
+    expect(await queue(abstained.row.id, unsure.row.id)).toEqual([]);
+  });
+
+  it("사람만 승인할 수 있는 사유(스팸 의심)의 승인은 cannot_approve 로 남기고 발행하지 않는다", async () => {
+    const { row } = await split(0);
+    await db.update(crawlCandidates).set({ reason: "suspected_spam" }).where(eq(crawlCandidates.id, row.id));
+    expect(await review(row.repo, approve)).toMatchObject({ state: "held" });
+    expect(await candidateRow(row.id)).toMatchObject({ state: "needs_review", reason: "suspected_spam", decidedBy: "auto" });
+    expect(await modelOutcome(row.id)).toEqual([{ decision: "approve", confidence: 0.97, holdCause: "cannot_approve" }]);
+    await publish();
+    expect(await db.select().from(products)).toHaveLength(0);
+  });
+
+  it("72시간 넘은 근거의 승인은 stale_evidence, 24~72시간 저장소 사라짐은 repo_gone 으로 남기고 — 미룸·실패는 적지 않는다", async () => {
+    const floor = await auditFloor();
+    const stale = await split(0, { ageHours: 73 }), gone = await split(1, { ageHours: 48 }), unknown = await split(2, { ageHours: 48 });
+    const failed = await split(3);
+    expect(await review(stale.row.repo, approve)).toMatchObject({ state: "stale" });
+    expect(await review(gone.row.repo, approve, "gone")).toMatchObject({ state: "repo_gone" });
+    expect(await review(unknown.row.repo, approve, "deferred")).toMatchObject({ state: "deferred" });
+    expect(await review(failed.row.repo, { ok: false, error: "timeout" })).toMatchObject({ state: "failed" });
+    expect((await delegatedAttempts(stale.row.id))[0]).toMatchObject({ state: "succeeded", reason: "stale_evidence_refresh",
+      outcome: { decision: "needs_review" }, modelOutcome: { decision: "approve", confidence: 0.97, holdCause: "stale_evidence" } });
+    expect(await modelOutcome(gone.row.id)).toEqual([{ decision: "approve", confidence: 0.97, holdCause: "repo_gone" }]);
+    expect(await candidateRow(gone.row.id)).toMatchObject({ state: "needs_review", reason: "repo_deleted" });
+    expect((await delegatedAttempts(unknown.row.id))[0]).toMatchObject({ state: "superseded", errorCode: "repo_check_deferred", modelOutcome: null });
+    expect((await delegatedAttempts(failed.row.id))[0]).toMatchObject({ state: "failed", modelOutcome: null });
+    expect(await auditRowsAfter(floor, "candidate-deepseek-stale-hold")).toHaveLength(1);
+    expect(await auditRowsAfter(floor, "candidate-deepseek-repo-gone")).toHaveLength(1);
+    await publish();
+    expect(await db.select().from(products)).toHaveLength(0);
+  });
+
+  it("문턱 미리보기는 적은 원래 답을 읽어 지금 문턱에서 실제 적용 수와 같고, 문턱을 내리면 확신 부족만 넘어온다", async () => {
+    const { readDelegateThresholdPreview } = await import("@/lib/operations/delegate-threshold-preview");
+    const applied = await split(0), unsure = await split(1), old = await split(2, { ageHours: 80 }), abstained = await split(3);
+    expect(await review(applied.row.repo, approve)).toMatchObject({ state: "applied" });
+    expect(await review(unsure.row.repo, answered("approve", 0.82))).toMatchObject({ state: "held" });
+    expect(await review(old.row.repo, answered("approve", 0.86))).toMatchObject({ state: "held" });
+    expect(await review(abstained.row.repo, abstain)).toMatchObject({ state: "held" });
+    const preview = await readDelegateThresholdPreview(24);
+    expect(preview).toMatchObject({ total: 4, ending: { applied: 1, low_confidence: 2, model_abstained: 1 } });
+    expect(preview.thresholds.find(line => line.threshold === 0.9)).toMatchObject({ approve: 1, reject: 0, approveStale: 0, held: 3 });
+    // 0.85: 80시간 근거의 0.86 승인은 적용이 아니라 원본 재수집으로 남는다. 0.8: 0.82 승인이 넘어온다
+    expect(preview.thresholds.find(line => line.threshold === 0.85)).toMatchObject({ approve: 1, approveStale: 1, held: 3 });
+    expect(preview.thresholds.find(line => line.threshold === 0.8)).toMatchObject({ approve: 2, approveStale: 1, held: 2 });
+  });
+});
+
 describe("호출 직전 증명", () => {
   it("사람 큐 후보(human_deepseek·held_qwen)는 24시간 지난 입력을 통과시키고, 다른 대상(공개분 거르기·갈림 판가름)은 그대로 input_expired 로 거절한다", async () => {
     const { row } = await split(0, { ageHours: 30 });
