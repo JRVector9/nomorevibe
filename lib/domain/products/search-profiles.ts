@@ -298,6 +298,28 @@ export async function recordVerificationResult(task: ProfileTask, lease: JobLeas
   });
 }
 
+/** 공동 기한이 끝난 검수 실행을 쉬게 하는 시간 — 게이트웨이가 막힌 실패와 같이 세지 않고 쉰다 */
+export const VERIFY_EXPIRED_REST_MINUTES = 30;
+/**
+ * 공동 기한이 끝난 제품을 쉬게 한다(2026-11-10). 나눠 검수(chunk)는 단계마다 칸을 새로 받는다. 칸을 기다리다 공동 기한이 끝나면
+ * 제품 탓이 아니므로 시도로 세지 않는다(expired). 그런데 아무것도 적지 않으면 운영자 재요청(실패 원인 있음·재시도 시각 없음)이
+ * 대기열 맨 앞에 남는다. 그러면 틱마다 첫 단계부터 다시 부르며 끝나지 않는다(운영 11-10: 제품 71303, 7시간 동안 호출 440번·미확정 51건).
+ * 재시도 시각만 뒤로 미룬다. 시도 횟수와 실패 원인은 두어 나눠 검수를 유지하고, updated_at(30일 재생성 기준)도 바꾸지 않는다.
+ * 그사이 다른 워커가 적었거나 키워드를 다시 짓는 중이면 적지 않는다. 리스 확인은 맨 마지막이다.
+ */
+export async function restExpiredVerification(task: ProfileTask, lease: JobLease): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    const [current] = await tx.select().from(productSearchProfiles)
+      .where(eq(productSearchProfiles.productId, task.product.id)).for("update");
+    if (!current || !task.profile || !sameProfile(current, task.profile) || current.needsRefresh || current.errorCode || current.verifiedAt) return false;
+    await tx.update(productSearchProfiles)
+      .set({ verifyRetryAt: sql`now() + make_interval(mins => ${VERIFY_EXPIRED_REST_MINUTES}::int)` })
+      .where(eq(productSearchProfiles.productId, task.product.id));
+    await assertJobLease(tx, lease);
+    return true;
+  });
+}
+
 /** 기존 데이터 복구. 해시를 덮지 않고 실제 생성/검수 대기열에 넣는다. 기본은 읽기 전용. */
 export async function reconcileSearchProfileBatch(options: {
   afterId?: number; limit?: number; apply?: boolean; retryInvalidOutput?: boolean; retryEmpty?: boolean;

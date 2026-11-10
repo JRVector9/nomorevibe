@@ -18,7 +18,7 @@ const state = vi.hoisted(() => ({
   posts: [] as { keywords: string[]; timeoutMs: number; requestId: string }[],
   inputs: [] as SearchVerifyInput[], reserved: [] as { remainingMs: number; input: SearchVerifyInput }[],
   cancelled: 0, marked: [] as string[], settled: [] as string[],
-  writes: vi.fn(), pending: vi.fn(),
+  writes: vi.fn(), pending: vi.fn(), rests: vi.fn(),
 }));
 vi.mock("@/lib/llm/capacity-repository", () => ({
   readModelCapacityCallerControl: async () => ({ mode: state.mode, epoch: 1, revision: 1, policyHash: null,
@@ -35,7 +35,7 @@ vi.mock("@/lib/llm/capacity-repository", () => ({
   readSearchVerifyContinuation: async () => state.continuation ?? { generationHash: "9".repeat(64), nowMs: Date.now(), unresolved: false, nextExecution: 0, latest: null },
 }));
 vi.mock("@/lib/domain/products/search-profiles", () => ({
-  pendingVerifications: state.pending, recordVerificationResult: state.writes, sealSearchVerifyWriteExpectation: () => {},
+  pendingVerifications: state.pending, recordVerificationResult: state.writes, restExpiredVerification: state.rests, sealSearchVerifyWriteExpectation: () => {},
   prepareSearchVerifyModelDispatch: async (_task: unknown, _lease: unknown, options: { mode: "full" | "chunk"; keywords: string[];
     reserved?: { remainingMs: number; input: SearchVerifyInput; reservation: { requestId: string } } }) => {
     if (!options.reserved) return state.initial === "disabled" ? { kind: "disabled" } : { kind: "ready", role: { instanceId: "text-unit", bootId: boot }, expectation,
@@ -90,7 +90,7 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] }); pinDirectContract(); pinTextRanks({ "product-search-verify": VERIFY_MODEL });
   Object.assign(state, { mode: "open", initial: "ready", mapped: true, continuation: null, slots: [], prepares: [], replies: [], posts: [], inputs: [], reserved: [],
     cancelled: 0, marked: [], settled: [] });
-  state.writes.mockReset(); state.pending.mockReset(); state.writes.mockResolvedValue(true);
+  state.writes.mockReset(); state.pending.mockReset(); state.rests.mockReset(); state.writes.mockResolvedValue(true); state.rests.mockResolvedValue(true);
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); setServingContractSnapshotForTest(null); pinTextRanks(null); });
 
@@ -198,6 +198,20 @@ describe("shared deadline continuation", () => {
     expect(await run()).toEqual({ kind: "result", result: { ok: false, error: "timeout" }, expectation });
     expect(state.posts).toHaveLength(1);
   });
+  it("never asks a permit for a resumed step when less than minStepMs of the shared deadline is left", async () => {
+    // 운영 11-10: 남은 2~8초에 보낸 단계(호출 ~9초)는 늘 시간 초과로 미확정 행만 남겼다 — 보내지 않고 기한 만료로 끝낸다
+    resumable({ kind: "chunk", chunk: 1 }, 15_000, [{ step: { kind: "chunk", chunk: 0 }, outcome: { ok: true, removed: [] } }]);
+    expect(await run({ minStepMs: 20_000 })).toEqual({ kind: "expired" });
+    expect(state.inputs).toEqual([]); expect(state.posts).toEqual([]); expect(state.cancelled).toBe(0); expect(state.marked).toEqual([]);
+  });
+  it("sends the first step even under minStepMs, but stops a fresh execution before a short continuing step", async () => {
+    state.replies = [{ ...ok(), delayMs: 45_000 }];
+    expect(await run({ minStepMs: 20_000 })).toEqual({ kind: "result", result: { ok: false, error: "timeout" }, expectation });
+    expect(state.posts).toHaveLength(1); expect(state.inputs).toHaveLength(1); expect(state.settled).toHaveLength(1);
+    Object.assign(state, { posts: [], inputs: [], settled: [], replies: [] });
+    await run({ timeoutMs: 10_000, minStepMs: 20_000 });
+    expect(state.posts[0]?.keywords).toHaveLength(5);
+  });
   it("reuses a complete execution inside its deadline instead of sending again", async () => {
     resumable("done", 5_000, [{ step: { kind: "chunk", chunk: 0 }, outcome: { ok: true, removed: ["keyword-4"] } }]);
     expect(await run()).toEqual({ kind: "result", result: { ok: true, unsupported: ["keyword-4"] }, expectation });
@@ -217,11 +231,21 @@ describe("job wiring keeps deferred and expired unconsumed", () => {
   const ctx = (): JobContext<null> => ({ cursor: null, lease, hasBudget: () => true, log: vi.fn(), save: vi.fn() });
   const stubRole = () => { for (const [key, value] of Object.entries({ ROLE_LEASE_ROLE: "text", ROLE_LEASE_INSTANCE_ID: "text-unit",
     ROLE_LEASE_BOOT_ID: boot, ROLE_LEASE_RELEASE: "unit", ROLE_LEASE_EPOCH: "1" })) vi.stubEnv(key, value); };
-  it("records nothing and ends the tick when the shared deadline expired", async () => {
+  it("records no attempt, rests the product and ends the tick when the shared deadline expired", async () => {
     stubRole(); state.pending.mockResolvedValueOnce([task()]).mockResolvedValue([]);
     resumable({ kind: "chunk", chunk: 1 }, 5_000, []); state.prepares = ["expired"];
-    expect(await verifySearchKeywords(ctx())).toEqual({ done: false });
+    const context = ctx();
+    expect(await verifySearchKeywords(context)).toEqual({ done: false });
     expect(state.writes).not.toHaveBeenCalled(); expect(state.posts).toEqual([]);
+    expect(state.rests).toHaveBeenCalledTimes(1); expect(state.rests).toHaveBeenCalledWith(expect.objectContaining({ product: expect.objectContaining({ id: 7 }) }), lease);
+    expect(context.log).toHaveBeenCalledWith("search_verify.expired_rest", { productId: 7 });
+  });
+  it("passes the job's minCallMs as the continuing-step floor", async () => {
+    // 잡의 minCallMs(기본 20초)보다 적게 남은 이어지는 단계는 보내지 않는다 — 기한 만료로 쉬게 한다
+    stubRole(); state.pending.mockResolvedValueOnce([task()]).mockResolvedValue([]);
+    resumable({ kind: "chunk", chunk: 1 }, 15_000, [{ step: { kind: "chunk", chunk: 0 }, outcome: { ok: true, removed: [] } }]);
+    expect(await verifySearchKeywords(ctx())).toEqual({ done: false });
+    expect(state.inputs).toEqual([]); expect(state.posts).toEqual([]); expect(state.rests).toHaveBeenCalledTimes(1);
   });
   it("records nothing on a capacity deferral and defers the tick as model_capacity", async () => {
     // 포화는 이 모델만의 까닭이라(PR B) 그 순위를 쉬게 하고, 쉬는 순위만 남으면 예전처럼 model_capacity 로 미룬다(러너가 받던 것과 같은 미룸)
