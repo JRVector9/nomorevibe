@@ -82,13 +82,13 @@ class CapacityReviewTests(unittest.TestCase):
         self.send.assert_not_called()
 
     def test_summarized_alarm_is_one_incident_per_reason_and_clears_after_ten_clear_minutes(self):
-        self.row.update(ok=False, reason='pipeline_alarm', capacityUnknowns=self.alarm())
+        self.row.update(ok=False, reason='pipeline_alarm', capacityUnknowns=self.alarm(('dispatch_stuck', 'review_backlog'), stuck=1))
         result, _ = self.cycle(1000)
         self.assertFalse(result['ok'])
         self.assertIn({'target': 'm3/monitor', 'stage': 'capacity', 'reason': 'review_backlog', 'count': 51,
-                       'oldestAgeSeconds': 7200, 'stuckDispatched': 0}, result['events'])
-        signature = 'm3/monitor/capacity/review_backlog'
-        self.assertIn(signature, self.incidents())
+                       'oldestAgeSeconds': 7200, 'stuckDispatched': 1}, result['events'])
+        signatures = {'m3/monitor/capacity/dispatch_stuck', 'm3/monitor/capacity/review_backlog'}
+        self.assertEqual(set(self.incidents()), signatures)
         self.assertIn('m3/monitor/capacity review_backlog', self.send.call_args.args[1])
         self.assertIn('/admin/models', self.send.call_args.args[1])
         self.assertNotIn(REQUEST, self.send.call_args.args[1])
@@ -96,10 +96,41 @@ class CapacityReviewTests(unittest.TestCase):
         self.row.update(ok=True, reason='ok', capacityUnknowns=self.review)
         for now in range(1030, 1630, 30):
             self.assertTrue(self.cycle(now)[0]['ok'])
-            self.assertIn(signature, self.incidents())
+            self.assertEqual(set(self.incidents()), signatures)
         self.cycle(1630)
-        self.assertNotIn(signature, self.incidents())
+        self.assertEqual(self.incidents(), {})
         self.assertEqual(self.send.call_count, 1)
+
+    def test_review_only_alarm_is_not_an_oracle_alarm_but_keeps_one_notice(self):
+        """Owner decision 2026-11-10: review_* reasons only with no stuck dispatched row -> UP, the condition stays visible."""
+        stale = self.alarm(('review_stale',), count=35)
+        self.row['capacityUnknowns'] = stale  # new gateway: the row follows the monitor's own overall (ok)
+        self.w.validate_report({'services': [self.row]})  # an ok row with a review-only alarm is not a false recovery claim
+        for index in range(25):
+            result, notifications = self.cycle(1000 + index * 30)
+            self.assertTrue(result['ok'])
+            self.assertIn({'target': 'm3/monitor', 'stage': 'capacity', 'reason': 'review_stale', 'count': 35,
+                           'oldestAgeSeconds': 7200, 'stuckDispatched': 0}, result['events'])
+            self.assertEqual(notifications['pending'], 0)
+        self.assertEqual(self.state['targets']['m3/monitor']['capacityUnknowns'], stale)
+        self.assertEqual(set(self.incidents()), {'m3/monitor/capacity/review_stale'})
+        self.assertEqual(self.send.call_count, 1)  # one Telegram notice, not repeated
+        self.assertIn('m3/monitor/capacity review_stale', self.send.call_args.args[1])
+        self.assertIn('/admin/models', self.send.call_args.args[1])
+        self.assertTrue(self.cycle(1800, report={'m3': None})[0]['ok'])  # a stored review-only alarm is not an alarm either
+        self.recover.assert_not_called()
+
+    def test_review_only_alarm_with_another_monitor_alarm_or_a_stuck_row_still_alarms(self):
+        # The monitor's own overall is not ok (another alarm, or a pre-2026-11-10 monitor): DOWN after two samples, as before.
+        self.row.update(ok=False, reason='pipeline_alarm', capacityUnknowns=self.alarm(('review_stale',), count=35))
+        self.assertTrue(self.cycle(1000)[0]['ok'])
+        self.assertFalse(self.cycle(1030)[0]['ok'])
+        # A stuck dispatched row next to the review reasons is an alarm at once.
+        self.state = {'targets': {}}
+        self.path.unlink()
+        self.row.update(capacityUnknowns=self.alarm(('dispatch_stuck', 'review_stale'), count=35, stuck=1))
+        self.assertFalse(self.cycle(2000)[0]['ok'])
+        self.recover.assert_not_called()
 
     def test_flapping_or_unobserved_alarm_does_not_resend_or_clear(self):
         self.row.update(ok=False, reason='pipeline_alarm', capacityUnknowns=self.alarm())
@@ -147,7 +178,10 @@ class CapacityReviewTests(unittest.TestCase):
     def test_unreachable_host_alarms_on_a_stored_alarm_but_not_on_a_stored_review(self):
         self.cycle(1000)
         self.assertTrue(self.cycle(1010, report={'m3': None})[0]['ok'])
-        self.row.update(ok=False, reason='pipeline_alarm', capacityUnknowns=self.alarm())
+        self.row['capacityUnknowns'] = self.alarm()  # review-only alarm (2026-11-10)
+        self.cycle(1020)
+        self.assertTrue(self.cycle(1030, report={'m3': None})[0]['ok'])
+        self.row.update(ok=False, reason='pipeline_alarm', capacityUnknowns=self.alarm(('dispatch_stuck',), count=0, stuck=1))
         self.cycle(1040)
         self.assertFalse(self.cycle(1050, report={'m3': None})[0]['ok'])
 
@@ -190,10 +224,15 @@ class CapacityReviewTests(unittest.TestCase):
         partial.pop('stuckDispatched')
         with self.assertRaises(ValueError):
             self.w.validate_report({'services': [{**self.row, 'capacityUnknowns': partial}]})
-        for patch in [{'ok': True, 'reason': 'ok'}, {'recoverable': True}]:
-            with self.subTest(claim=patch), self.assertRaises(ValueError):
-                self.w.validate_report({'services': [{**self.row, 'ok': False, 'reason': 'pipeline_alarm',
-                                                      'capacityUnknowns': self.alarm(), **patch}]})
+        for capacity in [self.alarm(('dispatch_stuck',), count=0, stuck=1), self.alarm(('dispatch_stuck', 'review_backlog'), stuck=1)]:
+            for patch in [{'ok': True, 'reason': 'ok'}, {'recoverable': True}]:
+                with self.subTest(claim=patch, capacity=capacity), self.assertRaises(ValueError):
+                    self.w.validate_report({'services': [{**self.row, 'ok': False, 'reason': 'pipeline_alarm',
+                                                          'capacityUnknowns': capacity, **patch}]})
+        # A review-only alarm (2026-11-10) is not an incident, so an ok row is not a false claim; recoverable still is.
+        self.w.validate_report({'services': [{**self.row, 'capacityUnknowns': self.alarm()}]})
+        with self.assertRaises(ValueError):
+            self.w.validate_report({'services': [{**self.row, 'recoverable': True, 'capacityUnknowns': self.alarm()}]})
 
 
 if __name__ == '__main__':

@@ -158,7 +158,8 @@ class StageProbeTests(unittest.TestCase):
 
 
 class CapacityProbeTests(unittest.TestCase):
-    """2026-10-31: review (확인 못함 · 사람 검토) passes through as information; only a summarized alarm/unread ledger fails the row."""
+    """2026-10-31: review (확인 못함 · 사람 검토) passes through as information; only a summarized alarm/unread ledger fails the row.
+    2026-11-10: a summarized alarm of review_* reasons only (no stuck dispatched row) is information too."""
     def setUp(self):
         self.gateway = load('recovery_gateway_capacity', ROOT / 'scripts/ops/recovery_gateway.py')
         self.fixtures = load('recovery_capacity_fixtures', ROOT / 'tests/test_recovery_observation.py')
@@ -167,6 +168,10 @@ class CapacityProbeTests(unittest.TestCase):
         self.review = {'status': 'review', 'truncated': False, 'requests': [self.request], 'count': 1,
                        'oldestAgeSeconds': 7200, 'stuckDispatched': 0, 'alarmReasons': []}
         self.alarm = {**self.review, 'status': 'alarm', 'count': 51, 'alarmReasons': ['review_backlog']}
+        # 11-09 deploy window: 35 review rows, oldest 41h -> review_stale only.
+        self.stale = {**self.review, 'status': 'alarm', 'count': 35, 'oldestAgeSeconds': 147600, 'alarmReasons': ['review_stale']}
+        self.stuck = {**self.review, 'status': 'alarm', 'count': 51, 'stuckDispatched': 1,
+                      'alarmReasons': ['dispatch_stuck', 'review_backlog']}
         self.legacy = {'status': 'alarm', 'truncated': False, 'requests': [self.request]}
         self.empty = {'status': 'ok', 'truncated': False, 'requests': [], 'count': 0, 'oldestAgeSeconds': None,
                       'stuckDispatched': 0, 'alarmReasons': []}
@@ -204,7 +209,7 @@ class CapacityProbeTests(unittest.TestCase):
         self.assertEqual((row['reason'], row['ok'], row['recoverable']), ('ok', True, False))
 
     def test_summarized_alarm_or_unread_ledger_fails_the_row_without_recovery(self):
-        for values in [(self.alarm, self.review), (self.unknown, self.empty), (self.empty, None),
+        for values in [(self.stuck, self.review), (self.stuck, self.alarm), (self.unknown, self.empty), (self.empty, None),
                        ({**self.review, 'count': 0}, self.empty)]:  # contradictory summary is unread, never a clear
             with self.subTest(values=values):
                 row = self.observe(*values)
@@ -212,8 +217,30 @@ class CapacityProbeTests(unittest.TestCase):
                 self.assertTrue(self.gateway.capacity_alarm(row['capacityUnknowns']))
         self.assertEqual(self.observe(self.alarm, self.review)['capacityUnknowns'],
                          {**self.alarm, 'alarmReasons': ['review_backlog']})
+        self.assertEqual(self.observe(self.stuck, self.alarm)['capacityUnknowns'], self.stuck)
         self.assertEqual(self.observe(self.empty, None)['capacityUnknowns'], self.unknown)
         self.assertEqual(self.observe(self.empty, self.empty)['capacityUnknowns'], self.empty)
+
+    def test_review_only_alarm_follows_the_monitor_overall_and_is_relayed_unchanged(self):
+        """Owner decision 2026-11-10: review_* reasons only, no stuck dispatched row -> not an incident."""
+        for values in [(self.alarm, self.alarm), (self.stale, self.stale), (self.alarm, self.review)]:
+            with self.subTest(values=values):
+                row = self.observe(*values)
+                self.assertEqual((row['reason'], row['ok'], row['recoverable']), ('ok', True, False))
+                self.assertEqual(row['capacityUnknowns']['status'], 'alarm')
+                self.assertTrue(self.gateway.capacity_review_only(row['capacityUnknowns']))
+                self.assertFalse(self.gateway.capacity_alarm(row['capacityUnknowns']))
+        self.assertEqual(self.observe(self.stale, self.stale)['capacityUnknowns'], self.stale)
+        # Another alarm in the monitor itself (or a pre-2026-11-10 monitor) still fails the row through its overall.
+        for overall in ('alarm', 'unknown'):
+            with self.subTest(overall=overall):
+                row = self.observe(self.stale, self.stale, overall=overall)
+                self.assertEqual((row['reason'], row['ok'], row['recoverable']), ('pipeline_alarm', False, False))
+        for value in (self.review, self.empty, self.unknown, self.legacy, self.stuck,
+                      {**self.review, 'status': 'alarm', 'count': 0, 'requests': [], 'oldestAgeSeconds': None,
+                       'stuckDispatched': 1, 'alarmReasons': ['dispatch_stuck']}):
+            with self.subTest(value=value):
+                self.assertFalse(self.gateway.capacity_review_only(value))
 
     def test_pre_upgrade_monitor_alarm_is_read_as_review_and_its_own_overall_still_decides_the_row(self):
         row = self.observe(self.legacy, self.legacy, overall='alarm')

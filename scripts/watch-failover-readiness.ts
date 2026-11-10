@@ -5,7 +5,7 @@ import { fetch as monitorFetch } from 'undici';
 import { readMonitorStatus, type MonitorStatus } from '../lib/operations/failover-monitor';
 import { TEXT_PROGRESS_STAGE_JOBS } from '../lib/operations/worker-progress';
 import { readBodyStrictlyCapped } from '../lib/net/fetch';
-import { capacityMonitorThresholds } from '../lib/operations/model-capacity-unknowns';
+import { capacityMonitorThresholds, capacityReviewOnlyAlarm } from '../lib/operations/model-capacity-unknowns';
 
 export type MonitorCycleState = { badSamples: number };
 export type MonitorPushTarget = { name: 'primary' | 'external'; url: string };
@@ -24,11 +24,20 @@ const KNOWN_PROGRESS_REASONS = new Set(['paused', 'no_work', 'progressing', 'run
 
 const ageText = (seconds: number) => seconds >= 86_400 ? `${Math.floor(seconds / 86_400)}d` : seconds >= 3_600
   ? `${Math.floor(seconds / 3_600)}h` : `${Math.floor(seconds / 60)}m`;
+const hoursText = (seconds: number) => seconds >= 3_600 ? `${Math.floor(seconds / 3_600)}시간` : `${Math.floor(seconds / 60)}분`;
 
-/** Kuma 메시지. 확인 못함(review)은 UP 메시지에 건수·가장 오래된 나이만 덧붙인다 — 상태(up/down)는 바꾸지 않는다. */
+/**
+ * Kuma 메시지. 확인 못함(review)은 UP 메시지에 건수·가장 오래된 나이만 덧붙인다 — 상태(up/down)는 바꾸지 않는다.
+ * 검토 목록 문턱만 넘은 장부(2026-11-10, capacityReviewOnlyAlarm)는 경보가 아니므로 「검토 대기 N건(가장 오래된 H시간) — 사람 검토 필요」로
+ * 적는다 — UP 이어도 Kuma 에 남는다. 다른 경보로 DOWN 일 때도 같은 문구여서 장부가 원인으로 읽히지 않는다.
+ */
 export function monitorPushMessage(status: MonitorStatus): string {
   const capacity = status.capacityUnknowns, base = `worker failover ${status.overall}`;
   if (!capacity || capacity.status === 'unknown' || capacity.status === 'ok') return base;
+  if (capacityReviewOnlyAlarm(capacity)) {
+    const oldest = capacity.oldestAgeSeconds === null ? '' : `(가장 오래된 ${hoursText(capacity.oldestAgeSeconds)})`;
+    return `${base}; 검토 대기 ${capacity.count}건${oldest} — 사람 검토 필요 (${capacity.alarmReasons.join('+')})`;
+  }
   const review = capacity.count ? `capacity review ${capacity.count}${capacity.oldestAgeSeconds === null ? '' : ` (oldest ${ageText(capacity.oldestAgeSeconds)})`}` : '';
   const alarm = capacity.alarmReasons.length ? `capacity alarm ${capacity.alarmReasons.join('+')}` : '';
   return [base, alarm, review].filter(Boolean).join('; ');
@@ -196,7 +205,7 @@ async function main() {
       console.error('monitor push failed');
     }
     console.log(JSON.stringify({ measuredAt: status.measuredAt, overall: status.overall,
-      badSamples: state.badSamples }));
+      badSamples: state.badSamples, ...(status.warnings ? { warnings: status.warnings } : {}) }));
     await new Promise<void>(resolve => {
       const onAbort = () => { clearTimeout(timer); resolve(); };
       const timer = setTimeout(() => { stop.signal.removeEventListener('abort', onAbort); resolve(); }, 30_000);

@@ -45,12 +45,18 @@ monitor heartbeat의 `capacityUnknowns`는 다음 뜻이다.
 | --- | --- | --- | --- | --- |
 | `ok` | 검토 행 0, 기한 넘긴 보낸 호출 0 | 영향 없음 | 영향 없음 | 지움 |
 | `review` | 검토 행이 있다(점유 아님) | 영향 없음 — UP 메시지에 `capacity review N (oldest …)`만 붙음 | monitor 자신의 overall대로 | 로그 이벤트 `model_review_pending`만, 알림 없음 |
-| `alarm` | 아래 문턱 초과(`alarmReasons`) | `alarm` → 2표본 뒤 DOWN | `pipeline_alarm` | 사유별 장애 `<host>/<service>/capacity/<reason>` 한 건, 명시적 비경보 관측 600초 연속 뒤 해제 |
+| `alarm`(검토 문턱만) | `alarmReasons`가 `review_backlog`·`review_stale`뿐이고 `stuckDispatched` 0 | 영향 없음(2026-11-10) — UP, 메시지 `검토 대기 N건(가장 오래된 H시간) — 사람 검토 필요 (사유)`, `check-failover-readiness` 출력·watcher 주기 로그에 `warnings: ["capacity_review"]` | monitor 자신의 overall대로 | 경보·DOWN 아님. 사유별 Telegram 알림 한 건은 그대로(600초 연속 해제 규칙 같음) |
+| `alarm` | `dispatch_stuck`이 있는 문턱 초과(`alarmReasons`) | `alarm` → 2표본 뒤 DOWN | `pipeline_alarm` | 사유별 장애 `<host>/<service>/capacity/<reason>` 한 건, 명시적 비경보 관측 600초 연속 뒤 해제 |
 | `unknown` | 장부를 읽지 못함 | `unknown` | `pipeline_alarm` | 경보, 이전 검토 목록을 지우지 않음 |
+
+2026-11-10 소유자 결정: 검토 행은 아무것도 막지 않으므로 검토 문턱만 넘은 장부로 monitor를 DOWN으로 만들지 않는다(11-09 배포 창이
+indeterminate 35건·가장 오래된 41시간의 `review_stale` 때문에 `monitor_push_state_not_up`으로 멈췄다). 문턱 값은 그대로이고,
+`capacityUnknowns`의 `status: alarm`·`alarmReasons`도 그대로 보고한다. 같은 규칙이 TS `capacityReviewOnlyAlarm`과
+Python `recovery_gateway.capacity_review_only`에 있다. 다른 경보·unknown과 겹치면 지금처럼 DOWN이다.
 
 `alarm` 사유와 기본 문턱(monitor 앱 env, 양의 정수만, 틀리면 기본값; 시작 로그 `monitor.configured.capacityThresholds`에 실제 값):
 
-- `review_backlog`: 검토 행이 `MONITOR_CAPACITY_REVIEW_MAX_ROWS`(기본 **50**)보다 많다.
+- `review_backlog`: 검토 행이 `MONITOR_CAPACITY_REVIEW_MAX_ROWS`(기본 **50**)보다 많다. 이 사유와 `review_stale`만 있으면 위의 「검토 문턱만」 줄이다.
 - `review_stale`: 가장 오래된 검토 행(전송 시각, 없으면 접수 시각)이 `MONITOR_CAPACITY_REVIEW_MAX_AGE_SECONDS`(기본 **86400** = 24시간)보다 오래됐다.
 - `dispatch_stuck`: 보낸 호출(`dispatched`, 슬롯을 실제로 점유)이 `MONITOR_CAPACITY_DISPATCH_STUCK_SECONDS`(기본 **1800** = 30분, 가장 긴 기본 호출 상한 300초의 6배)보다 오래 남았다 — 워커가 죽어 표식 없이 남은 전송 등 실제로 슬롯을 막는 상태.
 
@@ -60,6 +66,11 @@ monitor heartbeat의 `capacityUnknowns`는 다음 뜻이다.
 적용 순서는 위와 같다: **Oracle watchdog·incident notifier(`oracle_watchdog.py`·`incident_notifications.py`·Oracle에 함께 설치된 `recovery_gateway.py`) → M3/mini SSH gateway(`recovery_gateway.py`) → monitor 앱**.
 새 gateway가 내는 `review`·요약 필드를 구버전 Oracle validator가 거절하므로 Oracle이 먼저다. 새 Oracle은 구 gateway·구 monitor의 형식을 받는다.
 monitor만 먼저 배포되면 구 gateway가 `review`를 `unknown`으로 읽어 지금처럼 검토 행이 있을 때 `pipeline_alarm`이 난다(지금보다 나빠지지 않음).
+
+2026-11-10 「검토 문턱만」 규칙도 같은 순서다. 새 gateway는 검토 문턱만 넘은 장부에서 행을 `ok`로 보내는데, 구 Oracle validator는
+그 행을 `invalid_capacity_recovery_claim`으로 거절해 그 호스트 전체가 `probe_unknown`이 된다. 그래서 Oracle 세 파일을 먼저 바꾸고 gateway를 바꾼다.
+monitor 앱은 언제 배포해도 된다 — 새 monitor + 구 gateway·구 Oracle에서는 monitor Push만 UP이고 Oracle은 지금처럼 DOWN이다.
+`native_recovery_gateway.py`는 `recovery_gateway.py`에서 `bounded_output`·`save`만 써서 동작이 바뀌지 않는다.
 
 ## 장애별 현재 검증 범위
 
