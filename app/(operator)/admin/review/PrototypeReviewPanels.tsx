@@ -32,7 +32,7 @@ export async function PrototypeReviewFilters({ filter, loadCauses }: { filter: R
       <select name="reason" defaultValue={reason} aria-label="저장된 판정 사유"><option value="">사유 전체</option>{Object.entries(REASON_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>
       <select name="ai" defaultValue={ai} aria-label="1차 AI 판단"><option value="">1차 판단 전체</option>{PROTOTYPE_AI_FILTERS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>
     </> : <>
-      {reason && <input type="hidden" name="reason" value={reason} />}
+      {reason && <input type="hidden" name="reason" value={reason} />}{filter.delegate && <input type="hidden" name="delegate" value={filter.delegate} />}
       <select name="cause" defaultValue={cause} aria-label="검수 갈래"><option value="">갈래 전체</option>{causes?.counts.map(row => <option value={row.cause} key={row.cause}>{CAUSE_GUIDE[row.cause].label} · {row.count}</option>)}</select>
       <select name="ai" defaultValue={ai} aria-label="1차 AI 판단"><option value="">1차 판단 전체</option>{PROTOTYPE_AI_FILTERS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select><select name="second" defaultValue={second} aria-label="2차 판단"><option value="">2차 판단 전체</option>{SECOND_FILTERS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}<option value="published">공개분 확인</option></select>
     </>}

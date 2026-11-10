@@ -26,6 +26,8 @@ import { splitTiebreakApproved, splitTiebreakApprovedFirst, splitTiebreakVerdict
 
 import { reviewCursorKind, reviewCursorPredicate, type ReviewCursor } from "./admin-review-cursor";
 import { adminReviewCandidateStates, adminReviewListPredicates, type AdminReviewFilterState, type AdminReviewListOptions } from './admin-review-query';
+import { delegateOpinions } from './delegate-opinions-read';
+import type { DelegateOpinion } from './delegate-groups';
 export { adminReviewCandidateStates };
 export type { AdminReviewFilterState, AdminReviewListOptions };
 
@@ -499,6 +501,8 @@ export type AdminReviewEntry = {
     echo: boolean; isFallback?: boolean }[];
   /** 갈림 보류에 Qwen-v2 가 낸 판가름(gate-split-tiebreak.ts) — 없으면 null. current 이고 승인이면 «Qwen-v2 승인 — 발행 후보» 배지 */
   tiebreak?: SplitTiebreakView | null;
+  /** 사람 몫 위임 검수(human-deepseek-review)의 마지막 성공 판단 — 의견·확신·사유·남긴 까닭(delegate-opinions-read.ts). 없으면 null */
+  delegate?: DelegateOpinion | null;
 };
 
 /**
@@ -576,7 +580,7 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: A
       eq(crawlReviewAttempts.state, 'succeeded')))
       .orderBy(crawlReviewAttempts.candidateId, desc(crawlReviewAttempts.id)),
   ]);
-  const [seconds, tiebreaks] = await Promise.all([secondReviewsFor(ids), splitTiebreakVerdicts(ids)]);
+  const [seconds, tiebreaks, delegates] = await Promise.all([secondReviewsFor(ids), splitTiebreakVerdicts(ids), delegateOpinions(settings, ids)]);
   // 지은 한 줄 소개 — 소개 없음으로 멈춘 후보의 상세가 쓴다
   const taglines = await db.select().from(crawlTaglines).where(inArray(crawlTaglines.repo, repos));
   const observations = scans.length ? await db.select().from(agentRepositoryObservations)
@@ -628,6 +632,7 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: A
         // Same-model reuse across stages no longer excludes this actual second-stage result.
         echo: false })),
       tiebreak: tiebreaks.get(candidate.id) ?? null,
+      delegate: delegates.get(candidate.id) ?? null,
       verdict: recomputed ? {
         trace: recomputed.trace, signals: recomputed.signals, cause: recomputed.cause ?? null,
         state: recomputed.state, reason: recomputed.reason,
@@ -635,9 +640,10 @@ export async function listAdminReviewEntries(settings: CrawlSettings, options: A
       } : null,
     };
   });
-  const korean = await translationsFor(entries.flatMap((entry) => [entry.review?.reason, entry.latest?.reason, ...entry.seconds.map((vote) => vote.reason)]));
+  const korean = await translationsFor(entries.flatMap((entry) => [entry.review?.reason, entry.latest?.reason, entry.delegate?.reason,
+    ...entry.seconds.map((vote) => vote.reason)]));
   for (const entry of entries) {
-    for (const part of [entry.review, entry.latest, ...entry.seconds]) if (part?.reason) part.reasonKo = korean.get(part.reason) ?? null;
+    for (const part of [entry.review, entry.latest, entry.delegate, ...entry.seconds]) if (part?.reason) part.reasonKo = korean.get(part.reason) ?? null;
   }
   const last = page.at(-1)!;
   const nextCursor: ReviewCursor | null = candidates.length > limit ? { id: last.id, priority: Boolean(last._cursorPriority), value: last._cursorValue } : null;

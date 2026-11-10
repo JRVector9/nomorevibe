@@ -1,6 +1,7 @@
 import { getSettings } from "@/lib/crawl/settings";
 import { listAdminReviewEntries, reviewQueueCauses } from "@/lib/crawl/admin-review";
 import { humanQueueOverview } from "@/lib/crawl/review-overview";
+import { readDelegateGroups } from "@/lib/crawl/delegate-groups-read";
 import { listAuditFindings, productAuditOverview } from "@/lib/crawl/product-audit";
 import { listProducts } from "@/lib/domain/products/repository";
 import { formatDetailTime } from "@/lib/format/time";
@@ -68,11 +69,12 @@ async function reviewQuery(params: URLSearchParams) {
   if (!params.has("tab") && !params.has("state") && !params.has("stage")) { values.tab = "all"; values.state = "pending"; }
   const filter = prototypeReviewFilter(values), settings = await getSettings();
   const needs = prototypeReviewNeeds(filter);
-  const [causes, overview] = await Promise.all([
+  const [causes, overview, delegateGroups] = await Promise.all([
     needs.causes ? reviewQueueCauses(settings) : null,
     needs.overview ? humanQueueOverview(settings) : null,
+    needs.delegate ? readDelegateGroups(settings) : null,
   ]);
-  return { settings, options: prototypeReviewOptions(filter, causes, overview) };
+  return { settings, options: prototypeReviewOptions(filter, causes, overview, delegateGroups) };
 }
 
 type ReviewEntry = Awaited<ReturnType<typeof listAdminReviewEntries>>["entries"][number];
@@ -81,7 +83,10 @@ const review: ExportView = {
     { key: "id", label: "후보 id" }, { key: "repo", label: "저장소" }, { key: "name", label: "이름" }, { key: "state", label: "상태" },
     { key: "reason", label: "규칙 사유" }, { key: "bucket", label: "갈래" }, { key: "productUrl", label: "주소" },
     { key: "aiDecision", label: "AI 판단" }, { key: "aiConfidence", label: "AI 확신" }, { key: "aiReason", label: "AI 사유" },
-    { key: "seconds", label: "2차 표" }, { key: "waitingSince", label: "기다린 시작" },
+    { key: "seconds", label: "2차 표" },
+    { key: "delegateDecision", label: "AI 위임 의견" }, { key: "delegateConfidence", label: "AI 위임 확신" },
+    { key: "delegateHoldCause", label: "AI 위임 남긴 까닭" }, { key: "delegateReason", label: "AI 위임 사유" },
+    { key: "waitingSince", label: "기다린 시작" },
   ],
   async load(params, limit) {
     const { settings, options } = await reviewQuery(params);
@@ -98,6 +103,11 @@ const review: ExportView = {
       bucket: entry.bucket, productUrl: entry.candidate.productUrl, aiDecision: entry.review?.decision ?? null,
       aiConfidence: entry.review?.confidence ?? null, aiReason: entry.review?.reason ?? null,
       seconds: entry.seconds.map((vote) => `${vote.model ?? "?"}: ${vote.decision ?? vote.status}`).join(" / ") || null,
+      // 모델의 원래 답(0173). 옛 행은 적용한 결정과 unrecorded(까닭 미기록)
+      delegateDecision: entry.delegate ? entry.delegate.model?.decision ?? entry.delegate.applied : null,
+      delegateConfidence: entry.delegate?.confidence ?? null,
+      delegateHoldCause: entry.delegate ? entry.delegate.model ? entry.delegate.model.holdCause : "unrecorded" : null,
+      delegateReason: entry.delegate?.reason ?? null,
       waitingSince: time(entry.candidate.judgedAt ?? entry.candidate.updatedAt),
     }));
   },

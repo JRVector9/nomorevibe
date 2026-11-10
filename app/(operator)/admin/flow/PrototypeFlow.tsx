@@ -77,9 +77,10 @@ function HumanWork({ data, controls, modelSettings, assist }: { data: Conveyor; 
     <div className="panel-body flow-human-grid">
       <section className="flow-human-decisions"><h4>사람이 처리할 일</h4>
         <Facts rows={[["직접 판단", stageCount("human", human?.direct, "직접 판단")], ["확정 필요", stageCount("agreed", human?.agreed, "확정 필요")],
+          ["근거 부족 · AI 판단 보류", assist?.["delegate-abstained"] ?? "—"], ["확신 부족 · AI 의견 있음", assist?.["delegate-low_confidence"] ?? "—"],
           ["24시간 사람 결정", `${number(human?.decided24h)}건`], ["24시간 AI 결정", assist?.decided ?? "—"],
           ["최장 대기", human?.oldestDays == null ? "미확인" : `${number(human.oldestDays)}일`]]} />
-        <p className="small muted">AI 결론 대기 {stageCount("ai", human?.awaitingAi, "AI 결론 대기")} · 2차 결론 대기 {stageCount("second", human?.awaitingSecond, "2차 결론 대기")}은 직접 판단 수와 분리합니다. 24시간 AI 결정은 AI가 사람 대기열에서 빼낸 수입니다.</p>
+        <p className="small muted">AI 결론 대기 {stageCount("ai", human?.awaitingAi, "AI 결론 대기")} · 2차 결론 대기 {stageCount("second", human?.awaitingSecond, "2차 결론 대기")}은 직접 판단 수와 분리합니다. 근거 부족·확신 부족은 직접 판단·확정 필요 안에서 AI 위임 검수가 사람에게 남긴 것입니다 — 근거 부족은 사람이 근거를 보고 승인·반려할 목록입니다. 24시간 AI 결정은 AI가 사람 대기열에서 빼낸 수입니다.</p>
         <div className="flex"><Link prefetch={false} className="button small" href="/admin/review?tab=human">판단·승인·반려 →</Link>
           <Link prefetch={false} className="text-button" href="/admin/review?stage=rejected">반려 기록 →</Link></div>
       </section>
