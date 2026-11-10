@@ -3,11 +3,11 @@ import { and, asc, eq, gt, inArray, sql } from "drizzle-orm";
 import { db, onPrimary } from "@/lib/db";
 import type { ProductTransaction } from "@/lib/domain/products/generation";
 import { aiConnections, aiTaskExecutionConfigs, aiTaskPoolMembers, aiTaskModels, operationsAudit } from "@/lib/db/schema";
-import { aiTask, aiTaskAccepts, aiTaskSlots } from "@/lib/llm/ai-tasks";
+import { aiConnectionTaskAllowed, aiTask, aiTaskAccepts, aiTaskSlots } from "@/lib/llm/ai-tasks";
 import { aiTaskExecutionInputSchema, aiTaskWorkloadPoolApiOnly, AI_TASK_EXECUTION_SAVE_AUDIT_ACTION, type AiTaskExecutionInput } from "@/lib/llm/ai-task-execution-config";
 import { taskPoolEngineKey } from "@/lib/llm/ai-task-pool-identity";
 import { aiTaskUsesCliEngine } from "@/lib/llm/cli-engine-config";
-import { aiConnectionKeyAad, aiTaskConnectionModelIds, aiRankReasoningEfforts, aiRanksReadiness } from "./admin-ai-tasks";
+import { aiConnectionKeyAad, aiConnectionManualOnly, aiTaskConnectionModelIds, aiRankReasoningEfforts, aiRanksReadiness } from "./admin-ai-tasks";
 import { aiTaskCrossResourceIssues, listAiConnections, prepareAiTaskServingResources,
   readAiTaskReadinessInput, saveAiTaskServingResources } from "./admin-ai-tasks-repository";
 import { readAdminCliCatalog } from "./admin-cli-catalog";
@@ -96,6 +96,8 @@ export async function saveAiTaskExecutionConfig(input: unknown, actor: string): 
       if (!connection.enabled || !record.enabled
         || !(connection.kind === "api" || cliEngine || (!aiTaskWorkloadPoolApiOnly(task.id) && aiTaskAccepts(task, connection))))
         fail("ai_task_pool_connection_unsupported");
+      // 연결의 「쓸 수 있는 작업」(2026-11-10) — 예: 비상업 전용 API 를 심사 사유 번역에만 묶은 연결은 다른 작업의 분산에 넣지 않는다
+      if (!aiConnectionTaskAllowed(task.id, connection)) fail("ai_task_pool_connection_restricted");
       if (connection.cliTool === "opencode") {
         const catalog = await readAdminCliCatalog({ fresh: true, connectionId: id });
         connections = connections.map(row => row.id === id ? { ...row, cliVersion: catalog.cliVersion, cliCatalog: catalog } : row);
@@ -119,6 +121,13 @@ export async function saveAiTaskExecutionConfig(input: unknown, actor: string): 
       const record = records.find(row => row.id === member.connectionId)!;
       const key = record.apiKeyCiphertext ? openSecret(record.apiKeyCiphertext, aiConnectionKeyAad(record.id)) : null;
       if (record.apiKeyCiphertext && key === null) fail("ai_connection_key_unreadable");
+      // 목록(/models)이 없는 서버에 적은 모델(2026-11-10): 대조할 목록이 없다 — 엔진 이름이 곧 canonical 이고, 계약은 아래 준비가 1토큰 시험으로 확인해 만든다.
+      // 같은 주소에 모델이 둘 이상이면 같은 엔진인지 가를 근거(root)가 없어 예전처럼 거절한다
+      if (aiConnectionManualOnly(connection, member.model)) {
+        if ((endpointModels.get(connection.baseUrl!)?.size ?? 0) > 1) fail("ai_task_pool_engine_identity_unconfirmed");
+        canonical.set(member.connectionId + "\n" + member.model, member.model);
+        continue;
+      }
       if (!catalogs.has(connection.id)) catalogs.set(connection.id,
         await readbackServingEndpoint(`${connection.baseUrl}/chat/completions`, key));
       const catalog = catalogs.get(connection.id)!;

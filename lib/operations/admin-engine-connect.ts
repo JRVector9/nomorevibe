@@ -69,16 +69,25 @@ export async function probeResponseModel(endpoint: string, model: string, apiKey
  */
 export type EngineContractProbe = Readonly<{ endpoint: string; requestModel: string; responseModel: string; totalTokenBound: number;
   totalTokenBoundFrom: EngineConnectBoundOrigin }>;
-export async function probeEngineContract(input: { endpoint: string; engineModel: string; apiKey: string | null; maxModelLen?: number | null },
+export async function probeEngineContract(input: { endpoint: string; engineModel: string; apiKey: string | null; maxModelLen?: number | null;
+  /**
+   * 목록(GET /models)이 없는 서버에 운영자가 적은 모델(2026-11-10, 예: LG EXAONE API — /v1/models 가 없다). readback 을 건너뛰고 운영자가 적은 상한을 쓴다
+   * (없으면 engine_max_len_unknown). 모델이 실제로 있는지는 아래 1토큰 시험이 정한다(없는 모델이면 서버가 거절해 engine_probe_failed).
+   */
+  unlisted?: boolean },
   request: typeof fetch = fetch): Promise<EngineContractProbe> {
   const { endpoint, engineModel, apiKey } = input;
-  const readback = await readbackServingEndpoint(endpoint, apiKey, request);
-  if (!readback.ok) throw new Error(`engine_unreachable:${readback.reason}`);
-  const served = readback.models.find(model => model.id === engineModel);
-  if (!served) throw new Error("engine_model_not_found");
+  let servedBound: number | null = null;
+  if (!input.unlisted) {
+    const readback = await readbackServingEndpoint(endpoint, apiKey, request);
+    if (!readback.ok) throw new Error(`engine_unreachable:${readback.reason}`);
+    const served = readback.models.find(model => model.id === engineModel);
+    if (!served) throw new Error("engine_model_not_found");
+    servedBound = served.maxModelLen || null;
+  }
   // The served max_model_len is authoritative. Without it (mlx_lm.server, the M3 mlx-serve proxy omit it) the operator's typed
   // bound stands in; a typed bound beside a served one must match, so neither is silently picked over the other.
-  const servedBound = served.maxModelLen || null, typedBound = input.maxModelLen ?? null;
+  const typedBound = input.maxModelLen ?? null;
   if (typedBound !== null && !(Number.isSafeInteger(typedBound) && typedBound > 0 && typedBound <= ENGINE_CONNECT_MAX_MODEL_LEN)) throw new Error("engine_max_len_invalid");
   if (servedBound !== null && typedBound !== null && typedBound !== servedBound) throw new Error(`engine_max_len_mismatch:${servedBound}:${typedBound}`);
   const totalTokenBound = servedBound ?? typedBound;
@@ -127,7 +136,7 @@ export async function readServedContractModels(request: typeof fetch = fetch): P
 
 /** The plain total-bound contract of one gateway route for a directly connected (or gateway) engine model; null when the route schema refuses it. */
 export function engineRouteContract(routeId: GatewayServingRoute, model: string, responseModel: string, endpoint: string, totalTokenBound: number, equipment: string,
-  boundFrom: EngineConnectBoundOrigin, engineModel: string | null = null) {
+  boundFrom: EngineConnectBoundOrigin, engineModel: string | null = null, reasoningTokenReserve: number | null = null) {
   // The route's plain total-bound gateway shape: crawl-agent-review also accepts a direct-openai-chat-v1 contract (PR 3b-C), which this
   // connection does not write — it needs the engine's tokenizer read back and is configured separately, like AI2's direct contract.
   const shape = (registeredGatewayContractShape(routeId) as unknown as { shape?: Record<string, { value?: unknown }> } | null)?.shape;
@@ -144,6 +153,8 @@ export function engineRouteContract(routeId: GatewayServingRoute, model: string,
     if (!shape || !("engineModel" in shape)) return null;
     contract.engineModel = engineModel;
   }
+  // 추론 토큰이 max_tokens 에 포함되는 모델의 여유(2026-11-10): 그 칸을 받는 경로(사유 번역)의 계약에만 싣는다 — 다른 경로는 그대로(화면이 알린다)
+  if (reasoningTokenReserve && shape && "reasoningTokenReserve" in shape) contract.reasoningTokenReserve = reasoningTokenReserve;
   const checked = validateAdminServingContract(routeId, contract);
   return checked.ok ? checked.contract : null;
 }

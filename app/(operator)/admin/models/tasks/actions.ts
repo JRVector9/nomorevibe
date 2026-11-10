@@ -30,9 +30,11 @@ export const saveAiConnectionAction = webWriteAction(async function saveAiConnec
   const saved = await saveAiConnection(parsed.input, admin.login);
   if (!saved.ok) return { issues: messages(saved.issues) };
   revalidate();
+  const manual = parsed.input.kind === "api" ? parsed.input.manualModels.length : 0;
   const models = parsed.input.kind === "cli" ? `CLI 모델 ${parsed.input.cliModels.length}개` : saved.modelsError
-    ? `모델 목록을 읽지 못했습니다(${aiModelsErrorText(saved.modelsError)}) — 주소·키를 확인하고 「다시 읽기」를 누르세요`
-    : `모델 ${saved.models ?? 0}개를 읽었습니다`;
+    ? manual ? `모델 목록은 읽지 못했습니다(${aiModelsErrorText(saved.modelsError)}) — 직접 적은 모델 ${manual}개를 씁니다(순위·분산 저장 때 1토큰 시험으로 확인)`
+      : `모델 목록을 읽지 못했습니다(${aiModelsErrorText(saved.modelsError)}) — 주소·키를 확인하고 「다시 읽기」를 누르세요`
+    : `모델 ${saved.models ?? 0}개를 읽었습니다${manual ? ` · 직접 적은 모델 ${manual}개` : ""}`;
   return { ok: true, connectionId: saved.id, message: `「${parsed.input.label}」 연결을 ${saved.created ? "만들었습니다" : "저장했습니다"}(판 ${saved.version}). ${models}.` };
 });
 

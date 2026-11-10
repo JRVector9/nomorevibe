@@ -840,7 +840,9 @@ export function prepareReasonTranslationGatewayCall(texts: readonly string[], op
   if (!resolved) return unsupported;
   const contract = reasonTranslationRouteServingContractSchema.parse(structuredClone(resolved));
   if (contract.provider !== provider || contractBearer(contract) === undefined) return unsupported;
-  const wire = textWireFor(contract, model, engine => reasonTranslationGatewayWire(snapshot, engine)), sourceHashes = snapshot.map(textHash);
+  // 추론 토큰 여유는 abcllm 형 계약의 칸이다(직접 계약 모양에는 없다) — wire 에 들어가 wireHash·계약 hash 로 binding 에 묶인다
+  const reserve = "reasoningTokenReserve" in contract ? contract.reasoningTokenReserve ?? 0 : 0;
+  const wire = textWireFor(contract, model, engine => reasonTranslationGatewayWire(snapshot, engine, reserve)), sourceHashes = snapshot.map(textHash);
   const call = freeze({ kind: "prepared" as const, provider, wireHash: sha(wire),
     servingContractHash: reasonTranslationServingContractHash(contract), totalTokenBound: contract.totalTokenBound,
     model, sourceHashes: [...sourceHashes] });

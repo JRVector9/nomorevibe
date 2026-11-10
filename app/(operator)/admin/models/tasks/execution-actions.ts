@@ -19,6 +19,7 @@ const ISSUE_TEXT: Readonly<Record<string, string>> = {
   ai_task_pool_engine_identity_unconfirmed: "같은 주소의 모델이 서로 다른 엔진인지 확인할 수 없습니다.",
   ai_task_pool_model_not_offered: "서버 모델 목록이 바뀌었습니다. 목록을 다시 읽고 선택하세요.",
   ai_task_pool_connection_unsupported: "이 작업에서 사용할 수 없는 연결입니다.",
+  ai_task_pool_connection_restricted: "이 연결은 다른 작업에만 쓰도록 제한돼 있습니다. LLM 운영에서 그 연결의 「쓸 수 있는 작업」을 확인하세요.",
   ai_task_pool_reasoning_unsupported: "선택한 작업·모델이 지원하는 추론 강도를 골라주세요.",
   ai_task_pool_ai2_single_slot_only: "2차 분산은 투표자 1에서만 지원합니다.",
   ai_task_pool_ai2_other_slots_configured: "2차 분산은 투표자 1개 구성에서 지원합니다. 다른 투표자 설정은 자동으로 지우지 않습니다.",

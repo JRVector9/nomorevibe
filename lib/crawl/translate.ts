@@ -87,11 +87,16 @@ export function compactTranslationNoise(text: string): string {
   return text.replace(TRANSLATION_NOISE_REPEAT, "…").replace(TRANSLATION_NOISE_RUN, run => noisyRun(run) ? "…" : run);
 }
 
-/** The native reason path uses exactly the original ordered, non-raw request — noise runs compacted (compactTranslationNoise). */
-export function reasonTranslationGatewayWire(texts: readonly string[], model: string): string {
+/**
+ * The native reason path uses exactly the original ordered, non-raw request — noise runs compacted (compactTranslationNoise).
+ * reasoningTokenReserve(계약의 칸, 2026-11-10): 추론 토큰이 max_tokens 에 포함되는 모델이면 답 몫(위 식) 위에 추론 몫을 더한다 — 그 모델의 추론이 답 몫을
+ * 다 먹으면 content 가 비어 늘 invalid_output 이 된다. 없으면(0) 예전 wire 그대로다.
+ */
+export function reasonTranslationGatewayWire(texts: readonly string[], model: string, reasoningTokenReserve = 0): string {
   const sent = texts.map(compactTranslationNoise);
+  const reserve = Number.isSafeInteger(reasoningTokenReserve) && reasoningTokenReserve > 0 ? reasoningTokenReserve : 0;
   return chatWire({ system: SYSTEM, user: JSON.stringify(sent), temperature: 0.1,
-    maxTokens: Math.min(modelRequestBudget("reason-translate").maxTokens, 400 + Math.ceil(sent.join("").length * 1.2)) }, model);
+    maxTokens: Math.min(modelRequestBudget("reason-translate").maxTokens, 400 + Math.ceil(sent.join("").length * 1.2)) + reserve }, model);
 }
 
 async function chat(

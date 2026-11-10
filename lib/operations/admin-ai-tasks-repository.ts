@@ -22,7 +22,8 @@ import { openSecret, sealSecret, secretBoxReady } from "@/lib/security/secret-bo
 import {
   AI_CONNECTION_DELETE_AUDIT_ACTION, AI_CONNECTION_KEY_FILL_AUDIT_ACTION, AI_CONNECTION_MODEL_HIDE_AUDIT_ACTION, AI_CONNECTION_MODELS_AUDIT_ACTION, AI_CONNECTION_SAVE_AUDIT_ACTION, AI_TASK_AUDIT_ACTIONS,
   AI_TASK_MODELS_IMPORT_AUDIT_ACTION,
-  AI_TASK_MODELS_SAVE_AUDIT_ACTION, aiConnectionBaseUrl, aiConnectionHiddenModels, aiConnectionHost, aiTaskRanksUnread, aiConnectionKeyAad, aiImportPlanDigestInput, aiRanksReadiness, aiTaskRankNotices,
+  AI_TASK_MODELS_SAVE_AUDIT_ACTION, aiConnectionBaseUrl, aiConnectionHiddenModels, aiConnectionHost, aiConnectionManualOnly, aiTaskRanksUnread, aiConnectionKeyAad, aiImportPlanDigestInput,
+  aiRanksReadiness, aiTaskRankNotices,
   aiRankSavedOptions, aiTaskRankOptions, aiTaskSlotDigestInput, buildAiImportPlan, validateAiTaskRanks,
   type AiConnectionInput, type AiConnectionView, type AiCurrentSlot, type AiImportPlan, type AiPolicyRoute, type AiRankChoice, type AiRankOption,
   type AiImportConnection, type AiRankReadiness, type AiReadinessInput, type AiTaskRankRow, type AiTaskRanksInput,
@@ -105,7 +106,18 @@ export function aiConnectionView(row: ConnectionRecord): AiConnectionView {
     cliTool: row.cliTool, cliModels: Object.freeze(row.cliModels.filter(shown)), models: models && Object.freeze(models), modelsReadAt: cliCatalog?.observedAt ?? iso(row.modelsReadAt), modelsError: row.modelsError,
     deviceId: row.deviceId, capacitySlots: row.capacitySlots, contextTokens: typeof row.options?.contextTokens === "number" ? row.options.contextTokens : null,
     enabled: row.enabled, version: Number(row.version), note: row.note, updatedBy: row.updatedBy, updatedAt: new Date(row.updatedAt).toISOString(),
-    hiddenModels: Object.freeze(hidden), cliVersion, ...(row.kind === "cli" && row.cliTool === "opencode" ? { cliCatalog } : {}) });
+    hiddenModels: Object.freeze(hidden), cliVersion, ...(row.kind === "cli" && row.cliTool === "opencode" ? { cliCatalog } : {}),
+    ...connectionExtras(storedOptions, row.kind, shown) });
+}
+/** 2026-11-10 연결 옵션(목록 없는 서버의 모델·쓸 수 있는 작업·추론 여유·키 저장 시각·유효 기간). 모양이 틀린 값은 버린다 */
+function connectionExtras(options: Record<string, unknown>, kind: string, shown: (id: string) => boolean) {
+  const strings = (value: unknown) => Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0 && entry.length <= 200) : [];
+  const positive = (value: unknown) => typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : null;
+  return { manualModels: Object.freeze(kind === "api" ? strings(options.manualModels).filter(shown) : []),
+    allowedTasks: Object.freeze(strings(options.allowedTasks).filter(id => aiTask(id))),
+    reasoningTokenReserve: kind === "api" ? positive(options.reasoningTokenReserve) : null,
+    keySetAt: typeof options.keySetAt === "string" && !Number.isNaN(Date.parse(options.keySetAt)) ? options.keySetAt : null,
+    keyValidDays: kind === "api" ? positive(options.keyValidDays) : null };
 }
 export async function listAiConnections(reader?: Reader): Promise<AiConnectionView[]> {
   const load = async (from: Reader) => (await from.select().from(aiConnections).orderBy(asc(aiConnections.kind), asc(aiConnections.label))).map(aiConnectionView);
@@ -133,7 +145,8 @@ async function readReadinessInput(): Promise<AiReadinessInput & { policyError: s
       provider: typeof contract.provider === "string" ? contract.provider : null, endpoint: typeof contract.endpoint === "string" ? contract.endpoint : null,
       engineModel: typeof contract.engineModel === "string" ? contract.engineModel : null,
       cliVersion: typeof contract.cliVersion === "string" ? contract.cliVersion : null,
-      deploymentRevision: typeof contract.deploymentRevision === "string" ? contract.deploymentRevision : null };
+      deploymentRevision: typeof contract.deploymentRevision === "string" ? contract.deploymentRevision : null,
+      reasoningTokenReserve: typeof contract.reasoningTokenReserve === "number" ? contract.reasoningTokenReserve : null };
   });
   let policy: AiReadinessInput["policy"] = null, policyError: string | null = null;
   try {
@@ -426,7 +439,15 @@ export async function saveAiConnection(input: AiConnectionInput, actor: string):
       const options: Record<string, unknown> = { ...locked?.options };
       if (!offlineDisable) {
         delete options.contextTokens; delete options.cliVersion; delete options.cliHostCatalog;
+        delete options.manualModels; delete options.allowedTasks; delete options.reasoningTokenReserve; delete options.keyValidDays;
         if (input.contextTokens) options.contextTokens = input.contextTokens;
+        // 2026-11-10: 목록 없는 서버의 모델·쓸 수 있는 작업·추론 여유·키 유효 기간. 키를 새로 넣으면 그 시각을 적고(만료 안내), 지우면 뺀다
+        if (input.kind === "api" && input.manualModels?.length) options.manualModels = [...input.manualModels];
+        if (input.allowedTasks?.length) options.allowedTasks = [...input.allowedTasks];
+        if (input.kind === "api" && input.reasoningTokenReserve) options.reasoningTokenReserve = input.reasoningTokenReserve;
+        if (input.kind === "api" && input.keyValidDays) options.keyValidDays = input.keyValidDays;
+        if (input.kind !== "api" || input.key.mode === "clear") delete options.keySetAt;
+        else if (input.key.mode === "set") options.keySetAt = new Date(now()).toISOString();
         const cliVersion = cliCatalog?.cliVersion ?? input.cliVersion;
         if (input.kind === "cli" && cliVersion) options.cliVersion = cliVersion;
         if (cliCatalog) options.cliHostCatalog = { modelsHash: sha256(JSON.stringify(input.cliModels)), observedAt: cliCatalog.observedAt,
@@ -504,7 +525,9 @@ export async function setAiConnectionModelsHidden(input: { id: string; expectedV
       if (Number(row!.version) !== input.expectedVersion || Number(row!.version) >= VERSION_MAX) fail("ai_connection_version_mismatch");
       const before = hiddenModelsOf(row!.options);
       if (input.hidden) {
-        const listed = new Set([...(Array.isArray(row!.models) ? row!.models.flatMap(entry => entry && typeof entry.id === "string" ? [entry.id] : []) : []), ...row!.cliModels]);
+        const stored = (row!.options as Record<string, unknown>).manualModels;
+        const manual = Array.isArray(stored) ? stored.filter((entry): entry is string => typeof entry === "string") : [];
+        const listed = new Set([...(Array.isArray(row!.models) ? row!.models.flatMap(entry => entry && typeof entry.id === "string" ? [entry.id] : []) : []), ...row!.cliModels, ...manual]);
         if (models.some(model => !listed.has(model) || before.includes(model))) fail("ai_connection_model_missing");
         const [ranked] = await tx.select({ id: aiTaskModels.id }).from(aiTaskModels)
           .where(and(eq(aiTaskModels.connectionId, input.id), inArray(aiTaskModels.model, models))).limit(1);
@@ -876,15 +899,17 @@ export async function prepareAiTaskServingResources(task: AiTaskDef, chosen: rea
     const served = connection.models?.find(model => model.id === row.model);
     let probed;
     try {
+      // 목록 없는 서버에 적은 모델(2026-11-10)은 GET /models 대조 없이 1토큰 시험만 한다 — 상한은 연결의 「컨텍스트 상한」
       probed = await probeEngineContract({ endpoint: `${connection.baseUrl}/chat/completions`, engineModel: row.model, apiKey: key,
-        maxModelLen: served?.maxModelLen ? null : connection.contextTokens }, request());
+        maxModelLen: served?.maxModelLen ? null : connection.contextTokens, unlisted: aiConnectionManualOnly(connection, row.model) }, request());
     } catch (error) {
       const reason = error instanceof Error && /^[a-z0-9_:.-]{1,80}$/.test(error.message) ? error.message : "error";
       return { ok: false as const, issues: [`ai_task_contract_probe_failed:${ready.createContract.routeId}:${reason}`] };
     }
     // 장부 이름(identity)이 계약 행의 열쇠다. 같은 모델을 다른 연결에도 둔 순위는 연결로 가른 이름이고 엔진에는 engineModel(= 순위 모델)이 나간다(PR B)
+    // 추론 토큰 여유는 그 칸을 받는 경로(사유 번역)의 계약에만 실린다
     const contract = engineRouteContract(ready.createContract.routeId as GatewayServingRoute, ready.createContract.identity, probed.responseModel, probed.endpoint,
-      probed.totalTokenBound, connection.deviceId, probed.totalTokenBoundFrom, ready.createContract.engineModel);
+      probed.totalTokenBound, connection.deviceId, probed.totalTokenBoundFrom, ready.createContract.engineModel, connection.reasoningTokenReserve ?? null);
     if (!contract) return { ok: false as const, issues: [`ai_task_contract_probe_failed:${ready.createContract.routeId}:contract_schema_invalid`] };
     contracts.push({ routeId: ready.createContract.routeId, model: ready.createContract.identity, contract, key, label: connection.label });
   }
@@ -904,7 +929,7 @@ export async function prepareAiTaskServingResources(task: AiTaskDef, chosen: rea
     let probed;
     try {
       probed = await probeEngineContract({ endpoint: wanted.endpoint, engineModel: row.model, apiKey: key,
-        maxModelLen: served?.maxModelLen ? null : connection.contextTokens }, request());
+        maxModelLen: served?.maxModelLen ? null : connection.contextTokens, unlisted: aiConnectionManualOnly(connection, row.model) }, request());
     } catch (error) {
       const reason = error instanceof Error && /^[a-z0-9_:.-]{1,80}$/.test(error.message) ? error.message : "error";
       return { ok: false as const, issues: [`ai_task_contract_probe_failed:${wanted.routeId}:${reason}`] };
@@ -978,7 +1003,12 @@ export async function saveAiTaskServingResources(tx: ProductTransaction, task: A
   let appended: readonly { routeId: string; provider: string; model: string; groupId: string }[] = [], policyRevision: number | null = null;
   if (wantRoutes.length) {
     const { appendCompatibleRoutes } = await import("@/lib/llm/capacity-repository");
-    const done = await appendCompatibleRoutes(tx, wantRoutes);
+    // 정책에 한도 선언 맵(groupLimits·providerLimits)이 있으면 새 장비·예산 이름도 거기 있어야 정책이 파싱된다(운영 정책 rev31 은 두 맵이 있다).
+    // 입장은 그 값을 읽지 않으므로(장비 행이 한도) 이 저장이 쓰는(방금 만든) 장비 행의 한도로 선언한다 — 이미 선언된 이름은 그대로 둔다
+    const groups = [...new Set(wantRoutes.map(route => route.groupId))];
+    const rows = await tx.select({ deviceId: modelCapacityDevices.deviceId, limitSlots: modelCapacityDevices.limitSlots }).from(modelCapacityDevices)
+      .where(inArray(modelCapacityDevices.deviceId, groups));
+    const done = await appendCompatibleRoutes(tx, wantRoutes, { declareLimit: groupId => rows.find(row => row.deviceId === groupId)?.limitSlots });
     appended = done.appended; policyRevision = done.policyRevision;
   }
   return { contracts: madeContracts, devices: madeDevices, routes: appended.map(route => `${route.routeId} / ${route.provider} / ${route.model} → ${route.groupId}`), policyRevision };

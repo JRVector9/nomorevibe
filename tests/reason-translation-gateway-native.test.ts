@@ -153,6 +153,27 @@ it("preserves partial null quality and valid length terminal", async () => {
     expect(readReasonTranslationGatewayTerminal(result.terminal)?.finishReason).toBe("length");
   });
 });
+// 2026-11-10 LG EXAONE(K-EXAONE, 추론이 늘 켜짐) 꼴: 계약의 추론 토큰 여유가 max_tokens 에 더해지고, 답은 content(앞에 빈 줄)만 읽으며
+// reasoning_content·usage.reasoning_tokens 는 terminal·parse 를 바꾸지 않는다. 운영 값이 아니다 — 로컬 fixture 계약이다
+it("adds the contract's reasoning reserve to max_tokens and parses only the answer content of a reasoning reply", async () => {
+  await server(async ({ bodies, reply }) => {
+    fixture.contract = { ...fixture.contract!, reasoningTokenReserve: 4096 } as ReasonTranslationServingContract; pinDirect(fixture.contract);
+    reply(response => response.end(JSON.stringify(envelope({ metadata: { weight_version: "default" },
+      choices: [{ index: 0, message: { role: "assistant", content: `\n\n${JSON.stringify(translated)}`, reasoning_content: "[\"생각 중인 배열\"]" },
+        finish_reason: "stop", matched_stop: 53 }],
+      usage: { prompt_tokens: 80, completion_tokens: 620, total_tokens: 700, reasoning_tokens: 600 }, usage_provenance: undefined }))));
+    const texts = sources(), call = prepared(texts), outcome = await send(texts, dispatch(texts, call), call);
+    expect(outcome.result).toEqual({ ok: true, translations: translated });
+    const sent = JSON.parse(bodies[0]) as { max_tokens: number; reasoning_effort: string };
+    expect(sent).toMatchObject({ max_tokens: (JSON.parse(originalWire(texts, model)) as { max_tokens: number }).max_tokens + 4096, reasoning_effort: "low" });
+    expect(readReasonTranslationGatewayTerminal(outcome.terminal)).toMatchObject({ finishReason: "stop",
+      actualUsage: { inputTokens: 80, outputTokens: 620, totalTokens: 700 }, provenance: "upstream_reported" });
+    // 여유가 없는 계약의 wire 는 예전 그대로다(위 「preserves the original max-token formula」와 같은 값)
+    fixture.contract = { ...fixture.contract!, reasoningTokenReserve: undefined } as ReasonTranslationServingContract; pinDirect(fixture.contract);
+    const plain = prepared(texts); await send(texts, dispatch(texts, plain), plain);
+    expect(bodies[1]).toBe(originalWire(texts, model));
+  });
+});
 it("keeps terminal evidence when the original business parser rejects a truncated array", async () => {
   await server(async ({ reply }) => {
     reply(response => response.end(JSON.stringify(envelope({ choices: [{ index: 0, message: { role: "assistant", content: '["잘린 번역"' }, finish_reason: "length" }] }))));

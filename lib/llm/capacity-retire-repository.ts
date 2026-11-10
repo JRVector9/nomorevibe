@@ -56,6 +56,7 @@ function hiddenOf(options: unknown): string[] {
   const raw = options && typeof options === "object" ? (options as Record<string, unknown>).hiddenModels : undefined;
   return stringList(raw);
 }
+const manualOf = (options: unknown): string[] => stringList(options && typeof options === "object" ? (options as Record<string, unknown>).manualModels : undefined);
 const text = (value: unknown) => typeof value === "string" ? value : null;
 
 /**
@@ -83,7 +84,9 @@ export async function readCapacityReferenceSnapshot(reader: Reader, routes: read
   return Object.freeze({
     routes,
     connections: connections.map(row => Object.freeze({ id: row.id, label: row.label, deviceId: row.deviceId, enabled: row.enabled, kind: row.kind,
-      models: row.kind === "cli" ? [...row.cliModels] : Array.isArray(row.models) ? row.models.flatMap(entry => entry && typeof entry.id === "string" ? [entry.id] : []) : [],
+      // API: 서버 목록 + 목록(/models) 없는 서버에 적은 모델 이름(options.manualModels, 2026-11-10 — 예: LG EXAONE)
+      models: row.kind === "cli" ? [...row.cliModels] : [...new Set([...Array.isArray(row.models) ? row.models.flatMap(entry => entry && typeof entry.id === "string" ? [entry.id] : []) : [],
+        ...manualOf(row.options)])],
       hiddenModels: hiddenOf(row.options) })),
     ranks: ranks.map(row => Object.freeze({ ...row, routeId: routeOf(row.task) })),
     poolMembers: members.map(row => Object.freeze({ ...row, routeId: routeOf(row.task) })),

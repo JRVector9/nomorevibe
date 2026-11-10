@@ -2,8 +2,8 @@
 import "./agent-review-serving-contract";
 import "./second-review-serving-contract";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { AI_CLI_TOOL_PROVIDERS, AI_TASK_KEY_MISSING_CAUSE, AI_TASK_RANK_DEGRADED_CODES, aiTask, aiTaskSlotLabel, onlyKeyMissing, type AiCliTool,
-  type AiReviewTaskId } from "@/lib/llm/ai-tasks";
+import { AI_CLI_TOOL_PROVIDERS, AI_TASK_KEY_MISSING_CAUSE, AI_TASK_RANK_DEGRADED_CODES, aiConnectionTaskAllowed, aiTask, aiTaskSlotLabel, onlyKeyMissing,
+  type AiCliTool, type AiReviewTaskId } from "@/lib/llm/ai-tasks";
 import { aiTaskModelsReadState, ensureAiTaskModels } from "@/lib/llm/ai-task-models-snapshot";
 import { taskModels, textRankUnusableText, type AiTaskRank } from "@/lib/llm/ai-task-resolver";
 import { cliServingContractDiagnosis, cliToolVersionEpoch, type CliProvider } from "@/lib/llm/cli-serving-contract";
@@ -88,6 +88,7 @@ export function bindReviewTaskRank(task: AiReviewTaskId, rank: AiTaskRank, contr
   const connection = rank.connection;
   if (!rank.enabled) return result(null, "rank_disabled");
   if (!connection.enabled) return result(null, "connection_disabled");
+  if (!aiConnectionTaskAllowed(task, connection)) return result(null, "connection_task_not_allowed");
   const base = { task, slot: rank.slot, rank: rank.rank, routeId, connectionId: connection.id, connectionLabel: connection.label, deviceId: connection.deviceId };
   if (connection.kind === "cli") {
     const provider = connection.cliTool ? AI_CLI_TOOL_PROVIDERS[connection.cliTool as AiCliTool] : null;
