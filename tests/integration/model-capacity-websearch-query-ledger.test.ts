@@ -335,8 +335,10 @@ it("grants exactly one of two concurrent backends for one target and fences the 
   if (winner.kind === "granted") expect(await ledger.cancelReservedModelSlot(winner.reservation)).toBe(true);
 });
 it("stores the fixed member on the first waiting INSERT and reuses the own pending id without a duplicate", async () => {
-  // 2026-10-30 결정: 앞 시험의 full C(indeterminate)는 자리를 잡지 않는다 — 점유(reserved·dispatched)만 세고 남은 자리를 모두 채운다
-  const [{ active }] = await admin`SELECT count(*)::int AS active FROM model_capacity_requests WHERE state IN ('reserved','dispatched')`;
+  // 2026-10-30 결정 뒤 2026-11-10 결과 미확정 점유: 앞 시험의 full C(indeterminate)는 보낸 시각부터 유지 시간(기본 600초) 동안만 자리를 잡는다 —
+  // 점유(reserved·dispatched)와 유지 시간 안의 미확정을 세고 남은 자리를 모두 채운다
+  const [{ active }] = await admin`SELECT count(*)::int AS active FROM model_capacity_requests WHERE state IN ('reserved','dispatched')
+    OR (state = 'indeterminate' AND coalesce(dispatched_at, updated_at) > clock_timestamp() - interval '600 seconds')`;
   expect(active).toBeLessThan(4);
   expect((await admin`SELECT count(*)::int AS unknown FROM model_capacity_requests WHERE state = 'indeterminate'`)[0].unknown).toBeGreaterThanOrEqual(1);
   const busy = await Promise.all(Array.from({ length: 4 - active }, () => ledger.requestModelSlot({ requestId: randomUUID(), workKey: randomUUID(),

@@ -408,7 +408,7 @@ describe("Layer A gate (requestSlot early refusal)", () => {
     await granted(request("helper-live"));
   });
 
-  it("holds helper occupancy to max_slots and counts an indeterminate helper row as no occupancy", async () => {
+  it("holds helper occupancy to max_slots; an indeterminate helper row holds it for the unknown hold window (2026-11-10), none with a window of 0", async () => {
     await configure(DEVICE, { limitSlots: 3, secondaryCap: 0 });
     await openLiveHelper(1);
     const first = await granted(request("helper-live"));
@@ -417,9 +417,17 @@ describe("Layer A gate (requestSlot early refusal)", () => {
     const begun = await beginModelDispatch(first);
     if (begun.kind !== "dispatched") throw new Error("fixture_dispatch");
     expect(await markModelDispatchIndeterminate(begun.dispatch, "transport_unknown")).toBe(true);
-    expect((await readHelperGateStates(DEVICE)).find(gate => gate.kind === "live")).toMatchObject({ active: 0 });
-    await granted(request("helper-live"));
-    expect(await stateOf(DEVICE)).toMatchObject({ active: 1, secondaryActive: 1, primaryBusy: false });
+    // 기본 유지 시간(600초) 안: 미확정 도우미 행이 배정 칸을 계속 쥔다
+    expect((await readHelperGateStates(DEVICE)).find(gate => gate.kind === "live")).toMatchObject({ active: 1 });
+    await deferred(request("helper-live"), "helper_ineligible");
+    expect(await stateOf(DEVICE)).toMatchObject({ active: 1, heldUnknown: 1 });
+    await client`UPDATE runtime_settings SET values = jsonb_set(values, '{capacity}', '{"unknownHoldSeconds":0}'::jsonb) WHERE id = 1`;
+    try {
+      // 유지 시간 0(10-30 규칙): 미확정 행은 점유가 아니다
+      expect((await readHelperGateStates(DEVICE)).find(gate => gate.kind === "live")).toMatchObject({ active: 0 });
+      await granted(request("helper-live"));
+      expect(await stateOf(DEVICE)).toMatchObject({ active: 1, heldUnknown: 0, secondaryActive: 1, primaryBusy: false });
+    } finally { await client`UPDATE runtime_settings SET values = values - 'capacity' WHERE id = 1`; }
   });
 
   it("is grant-or-nothing: a helper that is not granted in its pass leaves no waiting row", async () => {
