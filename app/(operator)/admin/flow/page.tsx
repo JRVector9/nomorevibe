@@ -10,6 +10,7 @@ import { isPausedJob, jobStatusLabel } from "@/lib/jobs/status";
 import { adminJobControlVersions } from "@/lib/operations/admin-job-control";
 import { readConveyor } from "@/lib/operations/conveyor";
 import { HUMAN_ASSIST_TASKS, readHumanAssistProgress } from "@/lib/operations/human-assist-progress";
+import { readHumanDelegateSummary } from "@/lib/operations/human-delegate-summary";
 import { SOCIAL_FLOW_JOBS } from "@/lib/operations/flow-overview-read";
 import { readFlowRankEditor } from "@/lib/operations/flow-rank-editor-read";
 import { adminWorkspaceReadOnly } from "@/lib/operations/admin-workspace-preview";
@@ -24,6 +25,7 @@ import type { FlowControls } from "./FlowBoard";
 import { FlowBoard } from "./FlowBoard";
 import { HumanModelSettings } from "./HumanModelSettings";
 import { HumanAssistDecided, HumanAssistTaskProgress } from "./HumanAssistProgress";
+import { FLOW_DELEGATE_GROUPS, flowDelegateSlot, HumanDelegateCount } from "./HumanDelegateCounts";
 import { PrototypeFlow, PrototypeFlowAway, PrototypeFlowChanges } from "./PrototypeFlow";
 import type { OperatorDesk } from "@/lib/operations/operator-desk-model";
 import { FlowOverviewSummary, SocialFlowSummary } from "./FlowOverview";
@@ -102,10 +104,14 @@ async function FlowWorkspace({ admin, fresh, tab, advanced }: {
   if (!conveyor) return <p role="status" className="notice">흐름을 읽지 못했습니다 — 다음 자동 갱신에서 다시 읽습니다.</p>;
   // 사람 확인 · AI 보조 카드의 처리 현황 — 한 번 읽어 카드마다 나눠 그린다. 늦어도 흐름 화면을 막지 않는다(Suspense)
   const assistRead = diagnostics ? null : readHumanAssistProgress().catch(quiet("flow.human_assist_unavailable"));
-  const humanAssist = assistRead ? {
+  // 사람 몫의 AI 위임 결과(근거 부족·확신 부족) — 복제본 한 번. 늦거나 못 읽어도 흐름 화면을 막지 않는다(미확인)
+  const delegateRead = diagnostics ? null : readHumanDelegateSummary(fresh).catch(quiet("flow.human_delegate_unavailable"));
+  const humanAssist = assistRead && delegateRead ? {
     decided: <Suspense fallback="읽는 중…"><HumanAssistDecided read={assistRead} /></Suspense>,
     ...Object.fromEntries(HUMAN_ASSIST_TASKS.map(task => [task,
       <Suspense key={task} fallback={<span className="flow-model-note" aria-busy="true">처리 현황을 읽는 중…</span>}><HumanAssistTaskProgress read={assistRead} task={task} /></Suspense>])),
+    ...Object.fromEntries(FLOW_DELEGATE_GROUPS.map(group => [flowDelegateSlot(group),
+      <Suspense key={group} fallback="읽는 중…"><HumanDelegateCount read={delegateRead} group={group} /></Suspense>])),
   } : undefined;
   const desk: OperatorDesk | null = base ? { ...base, away: null } : null;
   const controls = control ?? { jobs: {}, csrf: null };

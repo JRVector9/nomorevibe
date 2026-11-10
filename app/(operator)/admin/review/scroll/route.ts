@@ -4,6 +4,7 @@ import { listAdminReviewEntries, reviewQueueCauses } from "@/lib/crawl/admin-rev
 import { decodeReviewCursor, encodeReviewCursor } from "@/lib/crawl/admin-review-cursor";
 import { getSettings } from "@/lib/crawl/settings";
 import { humanQueueOverview } from "@/lib/crawl/review-overview";
+import { readDelegateGroups } from "@/lib/crawl/delegate-groups-read";
 import { prototypeReviewFilter, prototypeReviewNeeds, prototypeReviewOptions } from "../PrototypeReviewQuery";
 
 export const dynamic = "force-dynamic";
@@ -19,8 +20,9 @@ export async function GET(request: Request) {
   } catch { return NextResponse.json({ error: "목록 조건이 바뀌었습니다. 새로고침해 다시 확인하세요." }, { status: 400, headers }); }
   try {
     const settings = await getSettings(), needs = prototypeReviewNeeds(filter);
-    const [causes, overview] = await Promise.all([needs.causes ? reviewQueueCauses(settings) : null, needs.overview ? humanQueueOverview(settings) : null]);
-    const options = prototypeReviewOptions(filter, causes, overview);
+    const [causes, overview, delegateGroups] = await Promise.all([needs.causes ? reviewQueueCauses(settings) : null,
+      needs.overview ? humanQueueOverview(settings) : null, needs.delegate ? readDelegateGroups(settings) : null]);
+    const options = prototypeReviewOptions(filter, causes, overview, delegateGroups);
     const page = await listAdminReviewEntries(settings, { ...options, cursor, limit: 30 });
     return NextResponse.json({ entries: page.entries, nextCursor: encodeReviewCursor(page.nextCursor, filter), observedAt: Date.now() }, { headers });
   } catch { return NextResponse.json({ error: "다음 목록을 읽지 못했습니다. 다시 시도하세요." }, { status: 503, headers }); }

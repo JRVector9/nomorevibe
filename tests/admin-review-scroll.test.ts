@@ -4,11 +4,12 @@ import { sql } from "drizzle-orm";
 import { decodeReviewCursor, encodeReviewCursor, reviewCursorKind, reviewCursorPredicate } from "@/lib/crawl/admin-review-cursor";
 import { prototypeReviewFilter } from "@/app/(operator)/admin/review/PrototypeReviewQuery";
 
-const fake = vi.hoisted(() => ({ admin: vi.fn(), settings: vi.fn(), list: vi.fn(), causes: vi.fn(), overview: vi.fn() }));
+const fake = vi.hoisted(() => ({ admin: vi.fn(), settings: vi.fn(), list: vi.fn(), causes: vi.fn(), overview: vi.fn(), delegate: vi.fn() }));
 vi.mock("@/lib/auth/admin", () => ({ currentAdmin: fake.admin }));
 vi.mock("@/lib/crawl/settings", () => ({ getSettings: fake.settings }));
 vi.mock("@/lib/crawl/admin-review", async original => ({ ...await original<typeof import("@/lib/crawl/admin-review")>(), listAdminReviewEntries: fake.list, reviewQueueCauses: fake.causes }));
 vi.mock("@/lib/crawl/review-overview", () => ({ humanQueueOverview: fake.overview }));
+vi.mock("@/lib/crawl/delegate-groups-read", () => ({ readDelegateGroups: fake.delegate }));
 const { GET } = await import("@/app/(operator)/admin/review/scroll/route");
 const after = { id: 43, priority: false, value: "2026-11-05 01:03:20.123456" };
 const filter = prototypeReviewFilter({ tab: "all", q: "needle", sort: "wait_short" });
@@ -66,11 +67,25 @@ it("reads a bounded next30 with the same filters and cursor without closed-panel
   const response = await GET(request());
   expect(response.status).toBe(200);
   expect(fake.list).toHaveBeenCalledWith({}, expect.objectContaining({ state: "all", search: "needle", sort: "wait_short", cursor: after, limit: 30 }));
-  expect(fake.causes).not.toHaveBeenCalled(); expect(fake.overview).not.toHaveBeenCalled();
+  expect(fake.causes).not.toHaveBeenCalled(); expect(fake.overview).not.toHaveBeenCalled(); expect(fake.delegate).not.toHaveBeenCalled();
   expect(await response.json()).toMatchObject({ entries: [], nextCursor: null });
 });
 it("keeps failures retryable instead of returning an empty successful queue", async () => {
   fake.list.mockRejectedValue(new Error("private failure"));
   const response = await GET(request());
   expect(response.status).toBe(503); expect(JSON.stringify(await response.json())).not.toContain("private failure");
+});
+it("keeps the AI delegate group (?delegate=) in the next page's membership and cursor", async () => {
+  const { humanOverview } = await import("./fixtures/human-queue");
+  fake.overview.mockResolvedValue(humanOverview({ human: 2, agreed: 1 }));
+  fake.delegate.mockResolvedValue({ ids: { abstained: [2, 7], low_confidence: [], human_only: [], legacy: [], unreviewed: [], admin: [] } });
+  const selected = prototypeReviewFilter({ tab: "human", delegate: "abstained", sort: "wait_short" });
+  const url = `https://admin.test/admin/review/scroll?tab=human&delegate=abstained&sort=wait_short&cursor=${encodeReviewCursor(after, selected)}`;
+  const response = await GET(new Request(url));
+  expect(response.status).toBe(200);
+  expect(fake.delegate).toHaveBeenCalledTimes(1);
+  expect(fake.list).toHaveBeenCalledWith({}, expect.objectContaining({ state: "needs_review", ids: [2], cursor: after }));
+  // 갈래를 바꾼 주소에 옛 cursor 를 쓰면 거절한다
+  const changed = await GET(new Request(url.replace("delegate=abstained", "delegate=legacy")));
+  expect(changed.status).toBe(400);
 });

@@ -15,6 +15,7 @@ import type { DecidedResult } from "./ReviewDetail";
 import { formatWait } from "@/lib/domain/products/takedown-view";
 import { PrototypeReviewDetail } from "./PrototypeReviewDetail";
 import { AsyncScrollBoundary } from "../components/AsyncScrollBoundary";
+import { DelegateOpinionTag } from "./DelegateOpinion";
 
 const states: Record<string, string> = { new: "규칙 판정 대기", needs_review: "사람·AI 검토", approved: "발행 대기", published: "발행 완료", rejected: "반려" };
 export function PrototypeReviewConsole({ entries: initialEntries, reasons, focus, title, total, footer, now, focusedEntry = null, nextCursor = null, scrollQuery = "" }: {
@@ -107,7 +108,7 @@ export function PrototypeReviewConsole({ entries: initialEntries, reasons, focus
           <td className="col-check"><input type="checkbox" aria-label={`${entry.name} 선택`} checked={checked.has(entry.candidate.id) && !selection.changed.has(entry.candidate.id)} disabled={!selectable.includes(entry)} onChange={() => toggle(entry)} /></td>
           <td><button className="text-button name" onClick={() => activate(entry)}>{entry.name}</button><p>{entry.candidate.repo}</p>{selection.changed.has(entry.candidate.id) && <span className="tag amber">원문 변경 · 다시 선택 필요</span>}</td>
           <td>{entry.bucket ? causeLabel(entry.bucket) : entry.candidate.reason ?? "—"}<p>{entry.candidate.judgedAt || entry.candidate.updatedAt ? `${formatWait(Math.max(0, (now - new Date(entry.candidate.judgedAt ?? entry.candidate.updatedAt).getTime()) / 3_600_000))} 대기` : "대기 —"}</p></td>
-          <td><span className={`tag ${entry.candidate.state === "rejected" ? "red" : entry.candidate.state === "approved" || entry.candidate.state === "published" ? "green" : "amber"}`}>{states[entry.candidate.state] ?? entry.candidate.state}</span></td>
+          <td><span className={`tag ${entry.candidate.state === "rejected" ? "red" : entry.candidate.state === "approved" || entry.candidate.state === "published" ? "green" : "amber"}`}>{states[entry.candidate.state] ?? entry.candidate.state}</span><DelegateOpinionTag opinion={entry.delegate} /></td>
         </tr>)}
       </tbody></table>
       <AsyncScrollBoundary hasMore={!!cursor} loading={loading} error={error} onLoad={() => { void loadMore(); }} />

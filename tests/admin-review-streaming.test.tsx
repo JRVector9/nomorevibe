@@ -4,12 +4,13 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
 import { humanOverview } from "./fixtures/human-queue";
 
-const fake = vi.hoisted(() => ({ causes: vi.fn(), overview: vi.fn(), list: vi.fn(), held: vi.fn(), tiebreak: vi.fn(), replace: vi.fn(), search: "" }));
+const fake = vi.hoisted(() => ({ causes: vi.fn(), overview: vi.fn(), list: vi.fn(), held: vi.fn(), tiebreak: vi.fn(), replace: vi.fn(), delegate: vi.fn(), search: "" }));
 vi.mock("next/navigation", () => ({ redirect: () => { throw new Error("redirect"); }, useRouter: () => ({ replace: fake.replace }), usePathname: () => "/admin/review", useSearchParams: () => new URLSearchParams(fake.search) }));
 vi.mock("@/lib/auth/admin", () => ({ currentAdmin: async () => ({ login: "admin" }) }));
 vi.mock("@/lib/crawl/settings", () => ({ getSettings: async () => DEFAULT_CRAWL_SETTINGS }));
 vi.mock("@/lib/crawl/admin-review", async original => ({ ...await original<typeof import("@/lib/crawl/admin-review")>(), reviewQueueCauses: fake.causes, listAdminReviewEntries: fake.list }));
 vi.mock("@/lib/crawl/review-overview", () => ({ humanQueueOverview: fake.overview }));
+vi.mock("@/lib/crawl/delegate-groups-read", () => ({ readDelegateGroups: fake.delegate }));
 vi.mock("@/lib/operations/model-env", () => ({ currentModelEnv: async () => null }));
 vi.mock("@/lib/crawl/held-qwen-retry", () => ({ heldQwenRetryStatus: fake.held }));
 vi.mock("@/lib/crawl/gate-split-tiebreak-read", () => ({ splitTiebreakStatus: fake.tiebreak }));
@@ -29,8 +30,18 @@ beforeEach(() => {
   fake.overview.mockResolvedValue(humanOverview({ human: 2, agreed: 1 }));
   fake.held.mockResolvedValue(null);
   fake.tiebreak.mockResolvedValue(null);
+  fake.delegate.mockResolvedValue({ ids: { abstained: [1, 8], low_confidence: [3], human_only: [], legacy: [2], unreviewed: [], admin: [] } });
   fake.search = "";
 });
+
+async function renderAll(page: React.ReactNode): Promise<string> {
+  const output = new PassThrough();
+  let html = "";
+  output.on("data", chunk => { html += String(chunk); });
+  const finished = new Promise<void>(resolve => output.once("end", resolve));
+  const stream = renderToPipeableStream(page, { onShellReady: () => stream.pipe(output) });
+  try { await finished; return html; } finally { stream.abort(); }
+}
 
 it("finishes the default response without starting any closed-panel analysis or management reads", async () => {
   fake.causes.mockImplementation(() => new Promise(() => {}));
@@ -108,6 +119,33 @@ it("still loads fresh human/agreed membership before reading the human queue", a
   expect(fake.overview).toHaveBeenCalledTimes(1);
   expect(fake.list).toHaveBeenCalledWith(DEFAULT_CRAWL_SETTINGS, expect.objectContaining({ state: "needs_review", ids: [1, 2, 3] }));
   expect(fake.causes).not.toHaveBeenCalled();
+  // AI 위임 결과 칩은 목록을 막지 않는다 — 칩 칸을 그릴 때 읽는다
+  expect(fake.delegate).not.toHaveBeenCalled();
+});
+
+it("streams the AI delegate group chips on the human tab with the same counts the filtered lists show", async () => {
+  const html = await renderAll(await ReviewPage({ searchParams: Promise.resolve({ tab: "human" }) }));
+  expect(fake.delegate).toHaveBeenCalledTimes(1);
+  expect(html).toContain("data-delegate-nav");
+  expect(html).toMatch(/data-delegate-group="abstained"[^>]*>근거 부족 · AI 판단 보류 1건</);
+  expect(html).toMatch(/data-delegate-group="legacy"[^>]*>이전 기록 · 까닭 미기록 1건</);
+  expect(html).toContain('href="/admin/review?tab=human&amp;sort=wait_short&amp;delegate=abstained"');
+});
+
+it("opens 근거 부족 as its own list for human approval, waiting for fresh group membership", async () => {
+  const html = await renderAll(await ReviewPage({ searchParams: Promise.resolve({ tab: "human", delegate: "abstained" }) }));
+  expect(fake.delegate).toHaveBeenCalledTimes(1);
+  expect(fake.list).toHaveBeenCalledWith(DEFAULT_CRAWL_SETTINGS, expect.objectContaining({ state: "needs_review", ids: [1] }));
+  expect(html).toContain("근거 부족 · AI 판단 보류 — 사람이 승인·반려할 후보");
+  expect(html).toMatch(/aria-current="page" data-delegate-group="abstained"/);
+  expect(html).toContain('<input type="hidden" name="delegate" value="abstained"/>');
+});
+
+it("does not read an unfiltered queue when the delegate group membership is unavailable", async () => {
+  fake.delegate.mockRejectedValue(new Error("unavailable"));
+  const html = await renderAll(await ReviewPage({ searchParams: Promise.resolve({ tab: "human", delegate: "abstained" }) }));
+  expect(fake.list).not.toHaveBeenCalled();
+  expect(html).toContain("검수 데이터를 불러오지 못했습니다");
 });
 
 it("does not read an unfiltered queue when active cause membership is unavailable", async () => {

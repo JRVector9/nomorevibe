@@ -13,6 +13,7 @@ vi.mock("@/lib/operations/admin-job-control", () => ({ adminJobControlVersions: 
 vi.mock("@/lib/operations/conveyor", () => ({ readConveyor: read.conveyor }));
 // 사람 확인 · AI 보조 처리 현황 — 이 시험은 흐름 화면의 읽기 순서만 본다(DB 없이)
 vi.mock("@/lib/operations/human-assist-progress", () => ({ HUMAN_ASSIST_TASKS: ["human-review", "split-confirm", "split-tiebreak", "held-review-retry"], readHumanAssistProgress: async () => null }));
+vi.mock("@/lib/operations/human-delegate-summary", () => ({ readHumanDelegateSummary: async () => null }));
 vi.mock("@/lib/operations/flow-rank-editor-read", () => ({ readFlowRankEditor: read.editor }));
 vi.mock("@/lib/operations/admin-workspace-preview", () => ({ adminWorkspaceReadOnly: () => true }));
 vi.mock("@/lib/domain/reactions/review", () => ({ heldReactionComments: read.reactions }));
