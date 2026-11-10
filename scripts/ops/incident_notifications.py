@@ -22,11 +22,48 @@ FAULTS = frozenset({'probe_unknown', 'replica_intent_changed', 'replicas_missing
                     'database_unavailable', 'web_page_failed', 'web_not_ready', 'monitor_stale',
                     'pipeline_alarm', 'container_unhealthy', 'native_unit_failed',
                     'native_unit_inactive', 'native_unit_unknown'})
+# 2026-11-10 운영자: 「문제가 있거나 장애가 날 때만 받고 싶다」 — 하루 알림 48건 중 46건이 배포 때 앱이 다시 뜨는 「warming_up」(3분 준비)이었다.
+# 재시작 직후의 잠깐 고장은 알리지 않는다: warming_up 은 늘, 나머지 셋은 10분 안에 재시작(warming_up)이 있었을 때만 잠깐 고장으로 본다.
+# 고장이 끊김 없이 RESTART_GRACE_SECONDS 넘게 이어지면(크래시 루프·재시작 뒤 멈춤) 예전처럼 알린다. 감시가 시각을 주지 않으면(옛 판) 예전대로 알린다.
+RESTART_GRACE_REASONS = frozenset({'warming_up', 'replicas_missing', 'web_not_ready', 'pipeline_alarm'})
+RESTART_GRACE_SECONDS = 600
+# 알림 한 줄의 한국어 설명 — 무슨 상황인지 알 수 있게(2026-11-10). 영어 사유 코드는 그대로 앞에 둔다(로그·감시 기록과 맞춰 찾기)
+SERVICE_TEXT = {
+    'probe_unknown': '감시가 이 호스트의 상태를 읽지 못함 — 호스트·게이트웨이 확인',
+    'replica_intent_changed': '서비스 복제본 수 설정이 바뀜',
+    'replicas_missing': '컨테이너가 떠 있지 않음',
+    'warming_up': '10분 넘게 재시작을 되풀이함 — 크래시 루프 의심',
+    'database_unavailable': 'DB 에 연결하지 못함',
+    'web_page_failed': '웹 페이지 응답 실패',
+    'web_not_ready': '웹이 준비 상태가 아님',
+    'monitor_stale': '감시(monitor) 관측이 멈춤',
+    'pipeline_alarm': '파이프라인 단계가 멈춤 — 운영 홈 확인',
+    'container_unhealthy': '컨테이너 상태 점검 실패',
+    'native_unit_failed': '호스트 서비스 실패',
+    'native_unit_inactive': '호스트 서비스가 꺼져 있음',
+    'native_unit_unknown': '호스트 서비스 상태를 알 수 없음',
+}
 MESSAGE_LIMIT = 4096
 RESPONSE_LIMIT = 16384
 INPUT_LIMIT = 32768
 PIPELINE_RECOVERY_SECONDS = 600
 PIPELINE_RECOVERY_GAP_SECONDS = 150
+
+
+def _seconds(value):
+    return value if type(value) in (int, float) and math.isfinite(value) and value >= 0 else None
+
+
+def restart_grace(event):
+    """재시작 직후의 잠깐 고장이면 True — 알림을 만들지 않는다. 10분 넘게 이어지면 False(알린다)."""
+    reason = event.get('reason')
+    fault = _seconds(event.get('faultSeconds'))
+    if reason not in RESTART_GRACE_REASONS or fault is None or fault >= RESTART_GRACE_SECONDS:
+        return False
+    if reason == 'warming_up':
+        return True
+    restart = _seconds(event.get('restartSeconds'))
+    return restart is not None and restart < RESTART_GRACE_SECONDS
 
 
 def valid_review_failures(value):
@@ -283,7 +320,8 @@ def notify(config, state, reports, result, receipts, *, now=None, send=send_tele
                 (stage in REVIEW_STAGES and reason in REVIEW_REASONS and type(event.get('bad')) is int and event['bad'] >= 2) or
                 (_stage_signature(stage, reason) and type(event.get('bad')) is int and event['bad'] >= 2) or
                 (stage == 'capacity' and reason in CAPACITY_REASONS) or
-                (stage == 'service' and reason in FAULTS and type(event.get('bad')) is int and event['bad'] >= 2)):
+                (stage == 'service' and reason in FAULTS and type(event.get('bad')) is int and event['bad'] >= 2
+                 and not restart_grace(event))):
             continue
         signature = event['target'] + '/' + stage + '/' + reason
         incidents.setdefault(signature, {'sent': False, 'firstSeen': now})
@@ -301,12 +339,14 @@ def notify(config, state, reports, result, receipts, *, now=None, send=send_tele
 
     pending = sorted((key for key, item in incidents.items() if not item['sent'] and key not in quiet),
                      key=lambda key: (incidents[key]['firstSeen'], key))
-    message, included = 'NoMoreVibe incidents', []
+    message, included = 'NoMoreVibe 장애 알림', []
     for signature in pending:
         host, service, stage, reason = signature.split('/')
         label = stage[len('progress-'):] if stage.startswith('progress-') else stage
         line = '\n- ' + host + '/' + service + ('/' + label if stage != 'service' else '') + ' ' + reason
-        if stage in REVIEW_STAGES:
+        if stage == 'service' and reason in SERVICE_TEXT:
+            line += ' — ' + SERVICE_TEXT[reason]
+        elif stage in REVIEW_STAGES:
             line += ' (' + ('provider completion evidence required; restart does not release capacity' if reason == 'capacity_blocked'
                             else 'local fenced supervisor handles recovery' if reason == 'local_stalled'
                             else 'operator attention required; no automatic model kill') + ')'

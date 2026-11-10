@@ -49,6 +49,14 @@ monitor heartbeat의 `capacityUnknowns`는 다음 뜻이다.
 | `alarm` | `dispatch_stuck`이 있는 문턱 초과(`alarmReasons`) | `alarm` → 2표본 뒤 DOWN | `pipeline_alarm` | 사유별 장애 `<host>/<service>/capacity/<reason>` 한 건, 명시적 비경보 관측 600초 연속 뒤 해제 |
 | `unknown` | 장부를 읽지 못함 | `unknown` | `pipeline_alarm` | 경보, 이전 검토 목록을 지우지 않음 |
 
+**재시작 직후 알림 유예(2026-11-10, 운영자: 「문제나 장애일 때만 받고 싶다」).** 하루 Telegram 48건 중 46건이 배포 때 앱이 다시 뜨는
+`warming_up`(컨테이너 시작 180초 이내)이었다. Oracle watchdog 은 대상마다 끊김 없는 고장의 시작(`faultSince`)과 마지막 재시작(`restartedAt`,
+`warming_up` 관측 시각)을 상태에 두고 사건에 `faultSeconds`·`restartSeconds` 로 넘긴다. 알림은 `warming_up` 을 늘, `replicas_missing`·
+`web_not_ready`·`pipeline_alarm` 은 10분 안에 재시작이 있었을 때만 「재시작 직후의 잠깐 고장」으로 보고, 고장이 끊김 없이 600초 넘게 이어질 때만
+보낸다(크래시 루프·재시작 뒤 멈춤). 판 번호가 바뀌어도(배포) 이어진 고장은 이어진 것으로 잰다. 그 밖의 사유와 시각 없는 옛 사건은 예전처럼
+두 번째 관측에서 알린다. 복구 판단(`bad`·`actionable`)은 바뀌지 않았다. 메시지 머리는 `NoMoreVibe 장애 알림`, 줄마다 사유 코드 뒤에 한국어 설명이 붙는다
+(`scripts/ops/incident_notifications.py` `SERVICE_TEXT`).
+
 2026-11-10 소유자 결정: 검토 행은 아무것도 막지 않으므로 검토 문턱만 넘은 장부로 monitor를 DOWN으로 만들지 않는다(11-09 배포 창이
 indeterminate 35건·가장 오래된 41시간의 `review_stale` 때문에 `monitor_push_state_not_up`으로 멈췄다). 문턱 값은 그대로이고,
 `capacityUnknowns`의 `status: alarm`·`alarmReasons`도 그대로 보고한다. 같은 규칙이 TS `capacityReviewOnlyAlarm`과
