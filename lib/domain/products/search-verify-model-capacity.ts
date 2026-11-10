@@ -18,19 +18,23 @@ import { textTaskModel } from "@/lib/llm/ai-task-rank-scope";
 
 /**
  * "expired": the original shared deadline ended while the next permit was unavailable, or a resumed execution ran out.
- * Nothing is recorded: no attempt, failure or timeout. A later tick starts a new execution from its first step.
+ * No attempt, failure or timeout is counted. The job only rests the product (restExpiredVerification), and a later tick
+ * starts a new execution from its first step.
  */
 export type SearchVerifyCapacityResult = { kind: "skipped" } | { kind: "expired" }
   | { kind: "result"; result: VerifyResult; expectation?: SearchVerifyWriteExpectation };
 
 /** Fixed verifier coordinator. One permit allows exactly one physical POST; neither slot waiting nor HTTP holds a DB TX.
- * Steps follow verifyKeywordsInChunks exactly and continue only inside the original shared deadline. */
+ * Steps follow verifyKeywordsInChunks exactly and continue only inside the original shared deadline.
+ * minStepMs (the job's minCallMs) is the least shared-deadline time a continuing chunk step needs before it asks for a permit.
+ * A shorter rest ends as the deadline did, without a POST. Prod 11-10: steps sent with 2–8s left against ~9s calls always
+ * timed out, and each one left an indeterminate ledger row. */
 export async function verifyKeywordsWithModelCapacity(task: ProfileTask, lease: JobLease, valueOptions: {
-  timeoutMs: number; chunked: boolean; signal?: AbortSignal; request?: typeof fetch; roleLease?: RoleLease;
+  timeoutMs: number; chunked: boolean; signal?: AbortSignal; request?: typeof fetch; roleLease?: RoleLease; minStepMs?: number;
 }): Promise<SearchVerifyCapacityResult> {
   const snapshot = structuredClone(task), job = structuredClone(lease);
   const options = { timeoutMs: valueOptions.timeoutMs, chunked: valueOptions.chunked, signal: valueOptions.signal, request: valueOptions.request,
-    roleLease: valueOptions.roleLease && structuredClone(valueOptions.roleLease) };
+    roleLease: valueOptions.roleLease && structuredClone(valueOptions.roleLease), minStepMs: Math.max(0, valueOptions.minStepMs ?? 0) };
   const item = { evidence: profileEvidence(snapshot.product, snapshot.reviewerNote),
     keywords: [...snapshot.profile!.keywordsEn, ...snapshot.profile!.keywordsKo] };
   const provider = searchVerifyServingProvider(textTaskModel("product-search-verify"));
@@ -71,6 +75,8 @@ export async function verifyKeywordsWithModelCapacity(task: ProfileTask, lease: 
     if (step === "done") return { kind: "result", result: { ok: true, unsupported: [...removed] }, expectation };
     if (step === "stop") return { kind: "result", result: { ok: false, error: "invalid_output" }, expectation };
     const before = stopped(); if (before) return finish(before);
+    // A continuing step (it has a parent) is not sent into a remainder shorter than one call; its timeout would only leave an indeterminate row.
+    if (!full && parent && deadline - Date.now() < options.minStepMs) return finish({ ok: false, error: "timeout" });
     const sent = searchVerifyStepKeywords(keywords, step), timeoutMs = Math.max(1, full ? options.timeoutMs : deadline - Date.now());
     const call = prepareSearchVerifyGatewayCall({ evidence: item.evidence, keywords: sent }, { model, timeoutMs, provider });
     if (call.kind !== "prepared") throw new ModelCapacityDeferredError(call.reason);

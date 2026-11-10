@@ -56,7 +56,7 @@ capacityHook.verify = async (task, options) => {
     { request: options.request, signal: options.signal, timeoutMs: options.timeoutMs }) };
 };
 const { runJob } = await import("@/lib/jobs/runner");
-const { pendingVerifications, recordVerificationResult, reconcileSearchProfileBatch } = await import("@/lib/domain/products/search-profiles");
+const { pendingVerifications, recordVerificationResult, reconcileSearchProfileBatch, restExpiredVerification } = await import("@/lib/domain/products/search-profiles");
 const { ensureSchema, resetTables } = await import("./setup");
 
 async function seed(slug: string, en: string[], ko: string[], values: Partial<typeof products.$inferInsert> = {}) {
@@ -157,6 +157,39 @@ describe("검색 키워드 검수 잡", () => {
     expect(request.calls).toHaveLength(0);
     expect(await profile(id)).toMatchObject({ verifyAttempts: 1, verifyError: "no_key", verifiedAt: null, removedKeywords: [] });
     expect(await keywordsOf(id)).toBe(keys.join(" · "));
+  });
+  it("rests an operator-requeued product whose shared deadline expired, without an attempt, so it leaves the queue head", async () => {
+    // 운영 11-10: 제품 71303 은 운영자 재요청(실패 원인 있음·재시도 시각 없음)으로 맨 앞에 서서, 매 틱 기한 만료(expired)로 끝나고도
+    // 아무것도 적히지 않아 7시간 동안 첫 단계부터 다시 불렸다. 이제 시도·실패 원인·updated_at 은 두고 재시도 시각만 30분 뒤로 미룬다.
+    const keys = Array.from({ length: 16 }, (_, i) => `key-${i}`);
+    const id = await seed("expired-head", keys, []);
+    await db.update(productSearchProfiles).set({ verifyError: "timeout", verifyAttempts: 0, verifyRetryAt: null })
+      .where(eq(productSearchProfiles.productId, id));
+    const before = await profile(id);
+    expect((await pendingVerifications(1))[0]?.product.id).toBe(id);
+    const original = capacityHook.verify;
+    const seen: number[] = [];
+    capacityHook.verify = async task => { seen.push(task.product.id); return { kind: "expired" }; };
+    try { await tick(gateway(() => ({}))); } finally { capacityHook.verify = original; }
+    expect(seen[0]).toBe(id);
+    const after = await profile(id);
+    expect(after).toMatchObject({ verifyError: "timeout", verifyAttempts: 0, verifiedAt: null, removedKeywords: [] });
+    expect(after.updatedAt.getTime()).toBe(before.updatedAt.getTime());
+    const [{ restMinutes }] = await db.execute<{ restMinutes: number }>(sql`SELECT
+      extract(epoch from (verify_retry_at - now())) / 60 AS "restMinutes" FROM product_search_profiles WHERE product_id = ${id}`);
+    expect(Number(restMinutes)).toBeGreaterThan(29); expect(Number(restMinutes)).toBeLessThanOrEqual(30);
+    expect((await pendingVerifications(10)).map(task => task.product.id)).not.toContain(id);
+  });
+  it("does not rest a product another writer changed after it was picked", async () => {
+    const id = await seed("expired-raced", ["calendar"], []);
+    const [task] = await pendingVerifications(1);
+    await db.update(productSearchProfiles).set({ sourceRevision: sql`${productSearchProfiles.sourceRevision} + 1` })
+      .where(eq(productSearchProfiles.productId, id));
+    await runJob("product-search-verify", async ctx => {
+      expect(await restExpiredVerification(task, ctx.lease!)).toBe(false);
+      return { done: true };
+    });
+    expect(await profile(id)).toMatchObject({ verifyRetryAt: null, verifyAttempts: 0 });
   });
   // 앞 묶음의 뺄 키워드를 뒤 묶음 실패 때 버리는 규칙은 묶음 전송과 함께 native 경로로 옮겨 갔다:
   // search-verify-capacity-dispatch "dispatches each chunk and singleton under its own permit and writes only the complete verification".

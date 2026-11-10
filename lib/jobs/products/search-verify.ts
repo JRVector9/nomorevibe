@@ -2,7 +2,7 @@ import { modelRequestBudget, modelRouteTimeoutMs } from "@/lib/llm/model-registr
 import { deferredJob, type JobContext, type JobOutcome } from "@/lib/jobs/runner";
 import { tickRemaining } from "@/lib/jobs/tick-deadline";
 import { ModelCapacityDeferredError, modelCapacityDeferralIsPerWork } from "@/lib/llm/capacity-deferred";
-import { pendingVerifications, recordVerificationResult, readSearchVerifyAffinityMember } from "@/lib/domain/products/search-profiles";
+import { pendingVerifications, recordVerificationResult, readSearchVerifyAffinityMember, restExpiredVerification } from "@/lib/domain/products/search-profiles";
 import { verifyKeywordsWithModelCapacity } from "@/lib/domain/products/search-verify-model-capacity";
 import { jobKnob } from "@/lib/operations/runtime-settings-schema";
 import { runtimeSettings } from "@/lib/operations/runtime-settings-store";
@@ -88,10 +88,15 @@ async function verifySearchKeywordsWithRanks(ctx: JobContext<null>, ranks: TextT
                 prefer = await pendingTextPoolTargetModel(ranks, { routeId: JOB, member });
               }
               attempt = await ranks.run(async (binding): Promise<Flow> => {
-                const outcome = await verifyKeywordsWithModelCapacity(task, lease, { request, signal, timeoutMs, chunked });
+                const outcome = await verifyKeywordsWithModelCapacity(task, lease, { request, signal, timeoutMs, chunked, minStepMs: minCallMs });
                 if (outcome.kind === "skipped") return "stop";
-                // The original shared deadline ended while waiting for a permit: no attempt or failure, next tick starts anew.
-                if (outcome.kind === "expired") { blocked ||= "deadline_expired"; return "stop"; }
+                // The original shared deadline ended while waiting for a permit: no attempt or failure.
+                // The product rests instead of staying at the queue head; each tick would otherwise restart it from step one forever (prod 11-10).
+                if (outcome.kind === "expired") {
+                  if (await restExpiredVerification(task, lease)) ctx.log("search_verify.expired_rest", { productId: task.product.id });
+                  blocked ||= "deadline_expired";
+                  return "stop";
+                }
                 const result = outcome.result;
                 if (signal.aborted) return "stop";
                 if (!result.ok) {
