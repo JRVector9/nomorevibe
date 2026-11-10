@@ -15,6 +15,7 @@ import { currentReviewSource, reviewApprovalPredicate } from './agent-review-rep
 import type { CrawlSettings } from './settings-schema';
 import { DEEPSEEK_MIN_CONFIDENCE, DEEPSEEK_REVIEW_MODEL, DEEPSEEK_REVIEW_PROVIDER, deepseekActor } from './deepseek-review-policy';
 import type { DeepSeekReviewResult } from './deepseek-review';
+import { delegatedModelOutcome, type DelegatedEnding } from './delegated-model-outcome';
 import { heldQwenOwns } from './held-qwen-retry-policy';
 import type { DelegatedRepoCheckResult } from './delegated-repo-check';
 import { EMPTY_DETAIL, GONE_DETAIL, lockFrontierIdentity, SKIP_EMPTY_REPOSITORY, SKIP_NOT_FOUND } from './repository';
@@ -164,6 +165,8 @@ export type HumanReviewRecordState = 'applied' | 'held' | 'failed' | 'superseded
 /**
  * Recheck switch generation, human decisions, all evidence and lease at the final write.
  * repoCheck — 24~72시간 근거의 승인일 때 잡이 트랜잭션 밖에서 물은 저장소 확인(checkDelegatedRepository). 없으면 모르는 것(deferred)으로 본다.
+ * succeeded 로 닫는 시도에는 모델의 원래 답(result.original — 문턱 걸기 전)과 사람에게 남긴 까닭을 model_outcome 에 함께 적는다(0173,
+ * delegated-model-outcome.ts). 적기만 한다 — 결정·적용·감사는 그대로다. 실패·밀려남·저장소 확인 미룸은 NULL 로 둔다.
  */
 export async function recordHumanReview(claim: HumanReviewClaim, result: DeepSeekReviewResult,
   options: { repoCheck?: DelegatedRepoCheckResult } = {}): Promise<HumanReviewRecordState> {
@@ -193,9 +196,13 @@ export async function recordHumanReview(claim: HumanReviewClaim, result: DeepSee
       return 'failed';
     }
     const outcome = validateReviewOutcome(current.input, result.outcome);
+    // 모델의 원래 답 — 아래에서 outcome.decision 을 바꾸기 전에 떠 둔다. original 이 없으면(직접 만든 결과) outcome 이 원래 답이다
+    const original = result.original ?? result.outcome;
+    const answer = { decision: original.decision, confidence: original.confidence };
     // These approvals still need fresh source/safety facts or an actual human.
     const cannotApprove = ['suspected_spam', 'repo_deleted', 'source_refresh_failed'].includes(current.candidate.reason ?? '');
     if ((outcome.confidence ?? 0) < DEEPSEEK_MIN_CONFIDENCE || outcome.decision === 'approve' && cannotApprove) outcome.decision = 'needs_review';
+    const modelOutcome = (ending: DelegatedEnding) => delegatedModelOutcome(answer, ending, { cannotApprove, minConfidence: DEEPSEEK_MIN_CONFIDENCE });
     // 근거 나이 — 24시간이 지난 근거로 내린 결정인지 운영자가 감사에서 가려 볼 수 있게(evidenceExpired). 시도 행의 validUntil·source 로도 다시 잴 수 있다
     const evidenceAgeHours = reviewEvidenceAgeHours(current.input, attempt.startedAt);
     const evidence = { evidenceAgeHours, evidenceExpired: attempt.validUntil <= attempt.startedAt, validUntil: attempt.validUntil.toISOString() };
@@ -215,6 +222,7 @@ export async function recordHumanReview(claim: HumanReviewClaim, result: DeepSee
         const gone = check?.check === 'gone';
         // 승인을 적용하지 않는다 — 모델의 답은 감사에 남기고, 시도 행은 이 입력의 판단 보류로 닫는다(같은 입력은 다시 집지 않는다)
         await tx.update(crawlReviewAttempts).set({ state: 'succeeded', outcome: { ...outcome, decision: 'needs_review' },
+          modelOutcome: modelOutcome(gone ? 'repo_gone' : check?.check === 'changed' ? 'repo_changed' : 'stale'),
           reason: gone ? 'repo_deleted' : STALE_EVIDENCE_REFRESH, completedAt: now }).where(eq(crawlReviewAttempts.id, attempt.id));
         if (gone) {
           // 수집이 404 를 만났을 때(handOffFailedSourceRefreshes)와 같은 사유·발자국으로 사람에게 넘긴다
@@ -232,7 +240,8 @@ export async function recordHumanReview(claim: HumanReviewClaim, result: DeepSee
         return gone ? 'repo_gone' : 'stale';
       }
     }
-    await tx.update(crawlReviewAttempts).set({ state: 'succeeded', outcome, reason: outcome.reason, completedAt: now })
+    await tx.update(crawlReviewAttempts).set({ state: 'succeeded', outcome,
+      modelOutcome: modelOutcome(outcome.decision === 'needs_review' ? 'held' : 'applied'), reason: outcome.reason, completedAt: now })
       .where(eq(crawlReviewAttempts.id, attempt.id));
     if (outcome.decision === 'needs_review') return 'held';
     await tx.update(crawlCandidates).set({ state: outcome.decision === 'approve' ? 'approved' : 'rejected',
