@@ -71,10 +71,27 @@ function chatWire(body: { system: string; user: string; maxTokens: number; tempe
   });
 }
 
-/** The native reason path uses exactly the original ordered, non-raw request. */
+/**
+ * 옮길 필요가 없는 덩어리 — 모델 사유가 페이지의 깨진 글(base64·이진)을 그대로 옮겨 적으면 생긴다. 그대로 보내면 번역 모델이 그 덩어리를
+ * 따라 쓰다 제한 시간을 넘긴다 — 운영 2026-11-10: 2,000자 사유 하나(대부분 base64)가 M1 에서 매번 45초를 넘겨 24시간에 결과 미확정 23건을 남기고
+ * 재시도를 되풀이했다. 그런 덩어리만 「…」 하나로 줄여 보낸다:
+ *  - 띄어쓰기 없이 64자 넘게 이어지고 숫자·대문자가 각각 8개 이상인 base64 꼴 덩어리
+ *  - 같은 글자가 32번 넘게 이어지는 덩어리
+ * 파일 경로·저장소 이름(소문자·하이픈 위주)은 건드리지 않는다 — 30일 사유 117,455건 중 48자 넘는 덩어리가 있는 235건에서 바뀌는 것은 2건(실측 2026-11-10).
+ * 원문 해시(textHash)·화면의 원문은 그대로다 — 모델에 보내는 글과 그 출력 상한만 줄어든다.
+ */
+const TRANSLATION_NOISE_RUN = /[A-Za-z0-9+/=_-]{64,}/g;
+const TRANSLATION_NOISE_REPEAT = /(.)\1{31,}/g;
+const noisyRun = (run: string) => (run.match(/\d/g)?.length ?? 0) >= 8 && (run.match(/[A-Z]/g)?.length ?? 0) >= 8;
+export function compactTranslationNoise(text: string): string {
+  return text.replace(TRANSLATION_NOISE_REPEAT, "…").replace(TRANSLATION_NOISE_RUN, run => noisyRun(run) ? "…" : run);
+}
+
+/** The native reason path uses exactly the original ordered, non-raw request — noise runs compacted (compactTranslationNoise). */
 export function reasonTranslationGatewayWire(texts: readonly string[], model: string): string {
-  return chatWire({ system: SYSTEM, user: JSON.stringify(texts), temperature: 0.1,
-    maxTokens: Math.min(modelRequestBudget("reason-translate").maxTokens, 400 + Math.ceil(texts.join("").length * 1.2)) }, model);
+  const sent = texts.map(compactTranslationNoise);
+  return chatWire({ system: SYSTEM, user: JSON.stringify(sent), temperature: 0.1,
+    maxTokens: Math.min(modelRequestBudget("reason-translate").maxTokens, 400 + Math.ceil(sent.join("").length * 1.2)) }, model);
 }
 
 async function chat(
@@ -90,10 +107,11 @@ async function chat(
 }
 
 export async function translateToKorean(texts: string[], timeoutMs: number, request: typeof fetch = fetch, signal?: AbortSignal): Promise<TranslateResult> {
+  const sent = texts.map(compactTranslationNoise);
   const result = await chat({
     routeId: "reason-translate",
-    system: SYSTEM, user: JSON.stringify(texts), temperature: 0.1,
-    maxTokens: Math.min(modelRequestBudget("reason-translate").maxTokens, 400 + Math.ceil(texts.join("").length * 1.2)),
+    system: SYSTEM, user: JSON.stringify(sent), temperature: 0.1,
+    maxTokens: Math.min(modelRequestBudget("reason-translate").maxTokens, 400 + Math.ceil(sent.join("").length * 1.2)),
   }, timeoutMs, request, signal);
   return result.ok ? parseTranslations(result.content, texts) : result;
 }
