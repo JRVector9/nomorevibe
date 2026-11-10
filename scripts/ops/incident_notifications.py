@@ -24,6 +24,7 @@ FAULTS = frozenset({'probe_unknown', 'replica_intent_changed', 'replicas_missing
                     'native_unit_inactive', 'native_unit_unknown'})
 # 2026-11-10 운영자: 「문제가 있거나 장애가 날 때만 받고 싶다」 — 하루 알림 48건 중 46건이 배포 때 앱이 다시 뜨는 「warming_up」(3분 준비)이었다.
 # 재시작 직후의 잠깐 고장은 알리지 않는다: warming_up 은 늘, 나머지 셋은 10분 안에 재시작(warming_up)이 있었을 때만 잠깐 고장으로 본다.
+# pipeline_alarm 의 재시작은 함대 전체에서 가장 최근 것이다(oracle_watchdog) — 배포 창에서 다른 앱이 다시 뜨는 동안의 진행 경보도 같이 유예한다.
 # 고장이 끊김 없이 RESTART_GRACE_SECONDS 넘게 이어지면(크래시 루프·재시작 뒤 멈춤) 예전처럼 알린다. 감시가 시각을 주지 않으면(옛 판) 예전대로 알린다.
 RESTART_GRACE_REASONS = frozenset({'warming_up', 'replicas_missing', 'web_not_ready', 'pipeline_alarm'})
 RESTART_GRACE_SECONDS = 600
