@@ -45,7 +45,11 @@ export type SocialCollector = {
   new24h: number;
   note: string;
   href: string;
+  /** 수집기 상태를 자세히 보는 곳(작업 상세·X 보고). 자동 잡이 없으면 null */
+  statusHref: string | null;
 };
+/** 콘텐츠 운영 SNS 탭의 수집기 줄 — 운영 홈 SNS 칸과 같은 판정 */
+export type SocialCollectorStatus = { measuredAt: string; collectors: SocialCollector[] };
 export type SocialFlowOverview = {
   measuredAt: string;
   stored: number;

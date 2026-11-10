@@ -26,8 +26,10 @@ import { buildWorkerProgress } from "./worker-progress-query";
  *
  * 한 묶음이 실패해도 화면은 나간다(그 칸만 미확인). 웹 여러 대·열린 창 여러 개가 15초 나눠 쓴다(sharedLoader) —
  * 운영센터와 같은 주 DB 집계를 이 화면이 한 번 더 부르는 셈이라, 창마다 따로 세지 않게 한다. 새로고침(ops_fresh)은 1분 3번까지 건너뛴다.
+ * 15초가 지났어도 2분 안의 값이면 화면을 기다리게 하지 않고 그 값(관측 시각이 함께 보인다)을 주며 뒤에서 다시 센다 — 다음 자동 갱신이 새 값을 보인다.
+ * 다시 세기는 1초 넘게 걸려(처리량 집계, 2026-11-10 프로드) 화면을 옮길 때마다 「운영 흐름을 읽는 중」이 길게 떴다.
  */
-const conveyorCache = sharedLoader<Conveyor>({ namespace: "admin:conveyor", ttlMs: 15_000, store: sharedStore });
+const conveyorCache = sharedLoader<Conveyor>({ namespace: "admin:conveyor", ttlMs: 15_000, staleMs: 120_000, store: sharedStore });
 
 /** 탐색 소스 — 카탈로그 잡 이름과 화면 이름(stage-registry 의 source 단계와 같은 잡) */
 const SOURCES = [
