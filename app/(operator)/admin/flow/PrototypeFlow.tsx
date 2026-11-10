@@ -61,7 +61,14 @@ export function PrototypeFlowAway({ desk }: { desk: OperatorDesk | null }) {
   return <ul className="list-rows"><li><span className="dot" /><div className="main"><b>새 프로젝트 {number(desk?.away?.published)}건 공개</b><p>{clock(desk?.away?.since)} 이후 실제 발행 결과</p></div><Tag tone="green">업무 결과</Tag></li><li><span className="dot amber" /><div className="main"><b>새 보류 {number(desk?.away?.newHolds)}건</b><p>부재 중 보류로 남은 후보</p></div><Link prefetch={false} className="text-button" href="/admin/review">검수 →</Link></li><li><span className="dot" /><div className="main"><b>최근 설정·제어 변경</b><p>{desk?.changes?.[0] ? `${desk.changes[0].target} · ${desk.changes[0].label}` : "최근 변경 미확인"}</p></div><Link prefetch={false} className="text-button" href="/admin/flow?tab=changes">변경 비교 →</Link></li></ul>;
 }
 
-function HumanWork({ data, controls, modelSettings }: { data: Conveyor; controls: FlowControls; modelSettings?: ReactNode }) {
+/** 사람 몫 구간 → 심사 목록(같은 구간 id 로 거른 목록). 숫자를 누르면 그 목록이 열린다 */
+const humanStageHref = (stage: "human" | "agreed" | "ai" | "second") => `/admin/review?tab=human&stage=${stage}`;
+const stageCount = (stage: "human" | "agreed" | "ai" | "second", value: number | null | undefined, label: string) =>
+  value == null ? "—" : <Link prefetch={false} className="text-button" href={humanStageHref(stage)} aria-label={`${label} ${number(value)}건 목록 보기`}>{number(value)}건 →</Link>;
+
+/** assist — 카드별 처리 현황(서버 구성 요소, page.tsx 가 한 번 읽어 나눠 준다)과 24시간 AI 결정 수(decided) */
+function HumanWork({ data, controls, modelSettings, assist }: { data: Conveyor; controls: FlowControls; modelSettings?: ReactNode;
+  assist?: Partial<Record<string, ReactNode>> }) {
   const human = data.human;
   const llm = human?.llm;
   return <section className="panel flow-human-work" id="flow-human-work" aria-labelledby="flow-human-title">
@@ -69,9 +76,10 @@ function HumanWork({ data, controls, modelSettings }: { data: Conveyor; controls
       <div className="right"><FlowPromptButton stage="human" /><Link prefetch={false} className="text-button" href="/admin/models#flow-stage-human">모델·단계 설정 →</Link><Tag tone={human?.waiting ? "amber" : human ? "green" : "gray"}>{human ? human.waiting ? "판단 대기" : "대기 없음" : "미확인"}</Tag><ReadStamp at={data.measuredAt} /></div></div>
     <div className="panel-body flow-human-grid">
       <section className="flow-human-decisions"><h4>사람이 처리할 일</h4>
-        <Facts rows={[["직접 판단", `${number(human?.direct)}건`], ["확정 필요", `${number(human?.agreed)}건`],
-          ["24시간 결정", `${number(human?.decided24h)}건`], ["최장 대기", human?.oldestDays == null ? "미확인" : `${number(human.oldestDays)}일`]]} />
-        <p className="small muted">AI 결론 대기 {number(human?.awaitingAi)} · 2차 결론 대기 {number(human?.awaitingSecond)}건은 직접 판단 수와 분리합니다.</p>
+        <Facts rows={[["직접 판단", stageCount("human", human?.direct, "직접 판단")], ["확정 필요", stageCount("agreed", human?.agreed, "확정 필요")],
+          ["24시간 사람 결정", `${number(human?.decided24h)}건`], ["24시간 AI 결정", assist?.decided ?? "—"],
+          ["최장 대기", human?.oldestDays == null ? "미확인" : `${number(human.oldestDays)}일`]]} />
+        <p className="small muted">AI 결론 대기 {stageCount("ai", human?.awaitingAi, "AI 결론 대기")} · 2차 결론 대기 {stageCount("second", human?.awaitingSecond, "2차 결론 대기")}은 직접 판단 수와 분리합니다. 24시간 AI 결정은 AI가 사람 대기열에서 빼낸 수입니다.</p>
         <div className="flex"><Link prefetch={false} className="button small" href="/admin/review?tab=human">판단·승인·반려 →</Link>
           <Link prefetch={false} className="text-button" href="/admin/review?stage=rejected">반려 기록 →</Link></div>
       </section>
@@ -88,6 +96,7 @@ function HumanWork({ data, controls, modelSettings }: { data: Conveyor; controls
             <ConfiguredModelRows llm={subset} compact />
             <span className="flow-model-note">현재 호출</span>
             <LiveModelRows llm={subset} compact />
+            {assist?.[task.task]}
             {job && <Link prefetch={false} className="text-button small" href={`/admin/status?tab=jobs&job=${job.job}`}>작업 상태·제어 →</Link>}
           </li>;
         })}</ul> : <p className="small muted">AI 보조 실행 관측을 읽지 못했습니다.</p>}
@@ -100,7 +109,7 @@ function HumanWork({ data, controls, modelSettings }: { data: Conveyor; controls
   </section>;
 }
 
-export function PrototypeFlow({ data, desk, controls, editor, tab = "flow", userRequests, reactionRequests = null, awayContent, advancedContent, overviewContent, socialContent, humanModelSettings }: { data: Conveyor; desk: OperatorDesk | null; controls: FlowControls; editor: FlowRankEditor | null; tab?: string; reactionRequests?: number | null; userRequests?: { count: number | null; knownCount: number; failed: number }; awayContent?: ReactNode; advancedContent?: ReactNode; overviewContent?: ReactNode; socialContent?: ReactNode; humanModelSettings?: ReactNode }) {
+export function PrototypeFlow({ data, desk, controls, editor, tab = "flow", userRequests, reactionRequests = null, awayContent, advancedContent, overviewContent, socialContent, humanModelSettings, humanAssist }: { data: Conveyor; desk: OperatorDesk | null; controls: FlowControls; editor: FlowRankEditor | null; tab?: string; reactionRequests?: number | null; userRequests?: { count: number | null; knownCount: number; failed: number }; awayContent?: ReactNode; advancedContent?: ReactNode; overviewContent?: ReactNode; socialContent?: ReactNode; humanModelSettings?: ReactNode; humanAssist?: Partial<Record<string, ReactNode>> }) {
   const [range, setRange] = useState<Range>("1h");
   const [selected, setSelected] = useState<Station["key"] | "public">(data.bottleneck && data.bottleneck !== "human" ? data.bottleneck : "second");
   const [changing, setChanging] = useState<LlmStationKey | null>(null);
@@ -158,7 +167,7 @@ export function PrototypeFlow({ data, desk, controls, editor, tab = "flow", user
         })}</div>
       </div>
       <div className="flow-branches"><Link prefetch={false} className="branch flow-branch-human" href="#flow-human-work"><strong>↳ {humanStageLabel}</strong><small>갈림·근거 부족·확정 필요</small><span className="branch-count mono">{number(data.human?.waiting)}</span></Link><Link prefetch={false} className="branch" href="/admin/review?stage=rejected"><strong>↳ 후보 반려</strong><small>공개 전 판정 기록 · 누적</small><span className="branch-count mono">{number(data.rejected)}</span></Link><Link prefetch={false} className="branch" href="/admin/products?tab=quality"><strong>↳ 공개 후 품질관리</strong><small>감사·생존·사용자 요청</small><span className="branch-count">→</span></Link></div><div className="panel-foot"><span>공개 완료 뒤의 검색·번역은 별도 후처리 분기입니다. 후보·2차 표·후처리 수를 합산하지 않습니다.</span><span>— 는 미집계·확인 불가</span></div></section>
-    <HumanWork data={data} controls={controls} modelSettings={humanModelSettings} />
+    <HumanWork data={data} controls={controls} modelSettings={humanModelSettings} assist={humanAssist} />
     <Panel id="prototype-selected-stage" title={<><span className="eyebrow">선택한 단계</span> &nbsp; {current ? stageLabel(current) : publicStageLabel}</>} tool={<><Tag tone={pickedBadge?.tone ?? pickedTone}>{pickedBadge?.label ?? "발행 결과"}</Tag><ReadStamp at={data.measuredAt} /></>}><div className="stage-detail"><div className="stage-detail-main"><div className="detail-summary"><div className="mini-stat"><span>현재 대기</span><b className="mono">{number(current?.waiting)}</b><small>{current?.key === "second" ? "후보 · 완료는 표 수" : "현재 잔량"}</small></div><div className="mini-stat"><span>장부 전송 중</span><b className="mono">{current ? number(modelCallCount(current.llm)) : "—"}</b><small>예약·미확정 제외 · 장부 밖 호출 별도</small></div><div className="mini-stat"><span>최장 대기</span><b className="mono">{current?.waiting ? ageText(current.oldestMinutes) : "—"}</b><small>미집계와 일시 중지를 구분</small></div><div className="mini-stat"><span>최근 5분 완료</span><b className="mono">{number(current?.done5m)}</b><small>{current?.unit ?? "발행 결과 기준"}</small></div></div>
       <div className={`cause ${pickedTone}`}><div className="cause-head"><Tag tone={pickedTone}>{current?.status ?? "공개 완료"}</Tag><b>왜 이 상태인가?</b></div><p>{current?.reason ?? current?.what ?? "발행 결과를 기준으로 공개 반영을 확인합니다. 공개 후 검색·번역 완료는 별도입니다."}</p></div>
       <div className="stage-context">
