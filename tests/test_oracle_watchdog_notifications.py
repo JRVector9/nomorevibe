@@ -113,6 +113,22 @@ class NotificationTests(unittest.TestCase):
         self.assertEqual(len(self.messages), 1)
         self.assertIn('m3/monitor pipeline_alarm — 파이프라인 단계가 멈춤', self.messages[0])
 
+    def test_pipeline_alarm_while_other_apps_restart_waits_for_ten_minutes(self):
+        # 2026-11-10 10:28Z: 배포 창에서 다른 앱(text·maintenance)이 다시 뜨는 동안 monitor 의 진행 경보가 알림이 됐다 — monitor 자신은 재시작 전이었다
+        self.set_row('web', 'warming_up', version=13)
+        self.cycle(1000)
+        self.set_row('monitor', 'pipeline_alarm', version=12)
+        self.cycle(1035)
+        self.cycle(1070)
+        self.set_row('web', 'ok', version=13)
+        self.cycle(1105)
+        self.assertEqual(self.messages, [])
+        # 진행 경보가 10분 넘게 이어지면(배포가 아니라 진짜 멈춤) 알린다
+        for now in range(1140, 1700, 35):
+            self.cycle(now)
+        self.assertEqual(len(self.messages), 1)
+        self.assertIn('m3/monitor pipeline_alarm — 파이프라인 단계가 멈춤', self.messages[0])
+
     def test_replicas_missing_without_restart_and_old_watchdog_events_alert_as_before(self):
         self.set_row('web', 'replicas_missing')
         self.cycle(1000)

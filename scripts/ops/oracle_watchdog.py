@@ -236,6 +236,15 @@ def cycle(config, state, reports, *, now=None, recover=None):
             events.append(event)
         if report is not None:
             state['targets'].pop(host + '/host', None)
+    # 2026-11-10 배포 알림 소음 둘째: monitor 의 파이프라인 경보는 함대 전체의 진행을 본다 — 배포 창(DRAIN·잡 멈춤·앱 재시작) 동안 잠깐 난다.
+    # 그래서 그 경보의 재시작 시각은 monitor 자신이 아니라 모든 대상 중 가장 최근 재시작으로 준다(알림이 10분 유예를 판단, incident_notifications).
+    latest = [target.get('restartedAt') for target in state['targets'].values() if isinstance(target, dict)]
+    latest = [value for value in latest if type(value) in (int, float) and math.isfinite(value) and 0 <= value <= now]
+    if latest:
+        fleet = round(now - max(latest))
+        for event in events:
+            if event.get('reason') == 'pipeline_alarm' and 'faultSeconds' in event:
+                event['restartSeconds'] = min(event.get('restartSeconds', fleet), fleet)
     save(config['state'], state)
     return {'ok': not alarm, 'events': events}
 

@@ -54,7 +54,10 @@ monitor heartbeat의 `capacityUnknowns`는 다음 뜻이다.
 `warming_up` 관측 시각)을 상태에 두고 사건에 `faultSeconds`·`restartSeconds` 로 넘긴다. 알림은 `warming_up` 을 늘, `replicas_missing`·
 `web_not_ready`·`pipeline_alarm` 은 10분 안에 재시작이 있었을 때만 「재시작 직후의 잠깐 고장」으로 보고, 고장이 끊김 없이 600초 넘게 이어질 때만
 보낸다(크래시 루프·재시작 뒤 멈춤). 판 번호가 바뀌어도(배포) 이어진 고장은 이어진 것으로 잰다. 그 밖의 사유와 시각 없는 옛 사건은 예전처럼
-두 번째 관측에서 알린다. 복구 판단(`bad`·`actionable`)은 바뀌지 않았다. 메시지 머리는 `NoMoreVibe 장애 알림`, 줄마다 사유 코드 뒤에 한국어 설명이 붙는다
+두 번째 관측에서 알린다. 복구 판단(`bad`·`actionable`)은 바뀌지 않았다.
+monitor 의 `pipeline_alarm` 은 함대 전체의 진행을 보므로 그 사건의 `restartSeconds` 는 monitor 자신이 아니라 모든 대상 중 가장 최근 재시작이다
+(2026-11-10 10:28Z: 배포 창에서 text·maintenance 가 다시 뜨는 동안 monitor 재시작 전 진행 경보가 알림이 됐다). DRAIN 만 걸고 아직 아무 앱도 다시 뜨지 않은
+때의 진행 경보는 유예되지 않는다. 메시지 머리는 `NoMoreVibe 장애 알림`, 줄마다 사유 코드 뒤에 한국어 설명이 붙는다
 (`scripts/ops/incident_notifications.py` `SERVICE_TEXT`).
 
 2026-11-10 소유자 결정: 검토 행은 아무것도 막지 않으므로 검토 문턱만 넘은 장부로 monitor를 DOWN으로 만들지 않는다(11-09 배포 창이
