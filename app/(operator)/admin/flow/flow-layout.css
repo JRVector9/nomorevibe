@@ -220,10 +220,50 @@
 .admin-prototype .flow-human-grid .facts { margin:8px 0; }
 .admin-prototype .flow-human-decisions { border-right:1px solid var(--line); padding-right:16px; }
 .admin-prototype .flow-human-decisions > .flex { margin-top:8px; }
-.admin-prototype .flow-human-jobs { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; padding:0; margin:0; list-style:none; }
-.admin-prototype .flow-human-jobs > li { min-width:0; border:1px solid var(--line); border-radius:6px; padding:8px; }
-.admin-prototype .flow-human-job-head { display:flex; flex-wrap:wrap; justify-content:space-between; gap:4px; margin-bottom:4px; }
-.admin-prototype .flow-human-settings { margin-top:10px; }
+/* 사람 확인 · AI 보조 — 2026-11-10 시안 B. 왼쪽 묶음 상자, 오른쪽 작업 한 줄씩 + 5분·1시간·24시간 */
+.admin-prototype .flow-human-decisions { display:flex; flex-direction:column; gap:10px; }
+.admin-prototype .flow-human-decisions h4,.admin-prototype .flow-human-assist h4 { margin:0; }
+.admin-prototype .flow-human-quick { display:flex; align-items:center; gap:10px; min-height:44px; margin:0; padding:8px 12px; border-radius:8px; background:var(--green-soft); color:var(--green); text-decoration:none; }
+.admin-prototype .flow-human-quick > b { font-size:1.25em; }
+.admin-prototype .flow-human-quick > span:nth-child(2) { flex:1; }
+.admin-prototype .flow-human-quick[data-empty=true] { background:var(--surface-2); color:var(--muted); }
+.admin-prototype .flow-human-group { border:1px solid var(--line); border-radius:8px; background:var(--surface); overflow:hidden; }
+.admin-prototype .flow-human-group-title { display:block; padding:6px 12px; font-size:.92em; font-weight:700; color:var(--soft); background:var(--surface-2); border-bottom:1px solid var(--line); }
+.admin-prototype .flow-human-group[data-tone=first] { border-color:var(--amber); }
+.admin-prototype .flow-human-group[data-tone=first] .flow-human-group-title { color:var(--amber); background:var(--amber-soft); border-bottom-color:var(--amber); }
+.admin-prototype .flow-human-group[data-tone=waiting] { border-style:dashed; background:transparent; }
+.admin-prototype .flow-human-group[data-tone=waiting] .flow-human-group-title { background:transparent; }
+.admin-prototype .flow-human-group ul { list-style:none; margin:0; padding:0; }
+.admin-prototype .flow-human-group li { display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:40px; padding:4px 12px; }
+.admin-prototype .flow-human-group li + li { border-top:1px solid var(--line); }
+.admin-prototype .flow-human-group[data-tone=waiting] li { color:var(--muted); }
+.admin-prototype .flow-human-first { margin-left:6px; border-radius:999px; padding:1px 7px; font-size:.82em; font-weight:700; color:var(--amber); background:var(--amber-soft); }
+.admin-prototype .flow-human-day { margin:0; }
+.admin-prototype .flow-human-assist { display:flex; flex-direction:column; gap:10px; }
+.admin-prototype .flow-human-assist-head { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; }
+.admin-prototype .flow-window-toggle { display:inline-flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+.admin-prototype .flow-window-toggle button { min-height:34px; padding:0 12px; border:0; background:var(--surface); color:var(--ink); font:inherit; font-size:.92em; cursor:pointer; }
+.admin-prototype .flow-window-toggle button + button { border-left:1px solid var(--line); }
+.admin-prototype .flow-window-toggle button[aria-pressed=true] { background:var(--ink); color:var(--surface); }
+.admin-prototype .flow-human-jobs { display:grid; grid-template-columns:minmax(0,1fr); gap:8px; padding:0; margin:0; list-style:none; }
+.admin-prototype .flow-human-jobs > li { min-width:0; border:1px solid var(--line); border-radius:8px; padding:8px 12px; display:flex; flex-direction:column; gap:6px; }
+.admin-prototype .flow-human-job-head { display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; }
+.admin-prototype .flow-human-job-head > .tag { margin-left:auto; }
+.admin-prototype .flow-human-job-name { font-weight:700; color:var(--ink); }
+.admin-prototype .flow-assist-bar { display:flex; height:6px; border-radius:999px; overflow:hidden; background:var(--surface-2); }
+.admin-prototype .flow-assist-bar > span[data-kind=decided],.admin-prototype .flow-assist-fact[data-kind=decided] > i { background:var(--green); }
+.admin-prototype .flow-assist-bar > span[data-kind=forward],.admin-prototype .flow-assist-fact[data-kind=forward] > i { background:var(--blue); }
+.admin-prototype .flow-assist-bar > span[data-kind=held],.admin-prototype .flow-assist-fact[data-kind=held] > i { background:#b8bfb3; }
+.admin-prototype .flow-assist-bar > span[data-kind=failed],.admin-prototype .flow-assist-fact[data-kind=failed] > i { background:var(--amber); }
+.admin-prototype .flow-assist-facts { display:flex; flex-wrap:wrap; align-items:baseline; gap:2px 14px; margin-top:6px; }
+.admin-prototype .flow-assist-fact { display:inline-flex; align-items:baseline; gap:5px; }
+.admin-prototype .flow-assist-fact > i { display:inline-block; width:8px; height:8px; border-radius:2px; }
+.admin-prototype .flow-assist-wait { margin-left:auto; }
+.admin-prototype .flow-assist-insight { margin:0; }
+.admin-prototype .flow-human-assist[data-window=five] [data-window-block]:not([data-window-block=five]),
+.admin-prototype .flow-human-assist[data-window=hour] [data-window-block]:not([data-window-block=hour]),
+.admin-prototype .flow-human-assist[data-window=day] [data-window-block]:not([data-window-block=day]) { display:none; }
+.admin-prototype .flow-human-settings { margin-top:0; }
 .admin-prototype .flow-workspace .flow-branches .branch.flow-branch-human {
   border-color:var(--amber);
   background:var(--amber-soft);
@@ -239,7 +279,4 @@
 @media(max-width:900px) {
   .admin-prototype .flow-human-grid { grid-template-columns:minmax(0,1fr); }
   .admin-prototype .flow-human-decisions { border-right:0; border-bottom:1px solid var(--line); padding:0 0 12px; }
-}
-@media(max-width:560px) {
-  .admin-prototype .flow-human-jobs { grid-template-columns:minmax(0,1fr); }
 }

@@ -66,45 +66,77 @@ const humanStageHref = (stage: "human" | "agreed" | "ai" | "second") => `/admin/
 const stageCount = (stage: "human" | "agreed" | "ai" | "second", value: number | null | undefined, label: string) =>
   value == null ? "—" : <Link prefetch={false} className="text-button" href={humanStageHref(stage)} aria-label={`${label} ${number(value)}건 목록 보기`}>{number(value)}건 →</Link>;
 
-/** assist — 카드별 처리 현황(서버 구성 요소, page.tsx 가 한 번 읽어 나눠 준다)과 24시간 AI 결정 수(decided) */
+type HumanRow = { label: string; count: ReactNode; first?: boolean };
+/** 「사람이 처리할 일」의 한 묶음 — 묶음마다 상자 하나(2026-11-10 운영자: 영역 구분을 또렷하게) */
+function HumanGroup({ title, tone, rows }: { title: string; tone: "first" | "other" | "waiting"; rows: HumanRow[] }) {
+  return <div className="flow-human-group" data-tone={tone}><span className="flow-human-group-title">{title}</span>
+    <ul>{rows.map(row => <li key={row.label}><span>{row.label}{row.first && <span className="flow-human-first">먼저</span>}</span><span>{row.count}</span></li>)}</ul></div>;
+}
+
+const ASSIST_JOB: Record<string, string> = { "human-review": "human-deepseek-review", "split-confirm": "split-confirm", "split-tiebreak": "split-tiebreak", "held-review-retry": "held-qwen-retry" };
+type AssistWindow = "five" | "hour" | "day";
+const ASSIST_WINDOWS: { key: AssistWindow; label: string }[] = [{ key: "five", label: "최근 5분" }, { key: "hour", label: "최근 1시간" }, { key: "day", label: "최근 24시간" }];
+
+/**
+ * 사람 확인 · AI 보조(2026-11-10 시안 B): 왼쪽은 사람 몫을 묶음 상자로(바로 확정 · 먼저 볼 것 · 그 밖의 보류 · AI가 처리 중),
+ * 오른쪽은 AI 작업마다 한 줄(모델 · 상태 · 막대 · 숫자)과 5분·1시간·24시간 단추. 설정 출처·현재 호출 세부는 작업 상태 화면으로 보낸다.
+ * assist — page.tsx 가 서버에서 한 번 읽어 나눠 준 칸: 갈래 수(delegate-*), 카드별 처리 현황(작업 id), 위임 요약(insight), 24시간 AI 결정(decided).
+ */
 function HumanWork({ data, controls, modelSettings, assist }: { data: Conveyor; controls: FlowControls; modelSettings?: ReactNode;
   assist?: Partial<Record<string, ReactNode>> }) {
   const human = data.human;
   const llm = human?.llm;
+  const [assistWindow, setAssistWindow] = useState<AssistWindow>("hour");
+  const slot = (key: string) => assist?.[key] ?? "—";
   return <section className="panel flow-human-work" id="flow-human-work" aria-labelledby="flow-human-title">
-    <div className="panel-head"><div><h3 id="flow-human-title">{humanStageLabel}</h3><p>자동 검수에서 남은 보류 → 사람 판단·확정 → 승인 시 준비·발행 / 반려 시 종료</p></div>
+    <div className="panel-head"><div><h3 id="flow-human-title">{humanStageLabel}</h3><p>자동 검수에서 남은 보류 → AI가 먼저 판단 → 남은 것만 사람이 승인·반려</p></div>
       <div className="right"><FlowPromptButton stage="human" /><Link prefetch={false} className="text-button" href="/admin/models#flow-stage-human">모델·단계 설정 →</Link><Tag tone={human?.waiting ? "amber" : human ? "green" : "gray"}>{human ? human.waiting ? "판단 대기" : "대기 없음" : "미확인"}</Tag><ReadStamp at={data.measuredAt} /></div></div>
     <div className="panel-body flow-human-grid">
       <section className="flow-human-decisions"><h4>사람이 처리할 일</h4>
-        <Facts rows={[["직접 판단", stageCount("human", human?.direct, "직접 판단")], ["확정 필요", stageCount("agreed", human?.agreed, "확정 필요")],
-          ["근거 부족 · AI 판단 보류", assist?.["delegate-abstained"] ?? "—"], ["확신 부족 · AI 의견 있음", assist?.["delegate-low_confidence"] ?? "—"],
-          ["24시간 사람 결정", `${number(human?.decided24h)}건`], ["24시간 AI 결정", assist?.decided ?? "—"],
-          ["최장 대기", human?.oldestDays == null ? "미확인" : `${number(human.oldestDays)}일`]]} />
-        <p className="small muted">AI 결론 대기 {stageCount("ai", human?.awaitingAi, "AI 결론 대기")} · 2차 결론 대기 {stageCount("second", human?.awaitingSecond, "2차 결론 대기")}은 직접 판단 수와 분리합니다. 근거 부족·확신 부족은 직접 판단·확정 필요 안에서 AI 위임 검수가 사람에게 남긴 것입니다 — 근거 부족은 사람이 근거를 보고 승인·반려할 목록입니다. 24시간 AI 결정은 AI가 사람 대기열에서 빼낸 수입니다.</p>
+        {human?.agreed ? <Link prefetch={false} className="flow-human-quick" href={humanStageHref("agreed")} aria-label={`확정 필요 ${number(human.agreed)}건 목록 보기`}>
+          <b>{number(human.agreed)}</b><span>두 모델 같은 결론 — 한 번에 확정</span><span aria-hidden="true">→</span></Link>
+          : <p className="flow-human-quick" data-empty="true">두 모델 같은 결론으로 확정할 후보 없음</p>}
+        <HumanGroup title="먼저 볼 것" tone="first" rows={[
+          { label: "근거 부족 · AI 판단 보류", count: slot("delegate-abstained"), first: true },
+          { label: "확신 부족 · AI 의견 있음", count: slot("delegate-low_confidence") }]} />
+        <HumanGroup title="그 밖의 보류" tone="other" rows={[
+          { label: "원본 문제 · 사람만 승인", count: slot("delegate-human_only") },
+          { label: "이전 기록 · 까닭 미기록", count: slot("delegate-legacy") },
+          { label: "관리자 보류 · AI 대상 아님", count: slot("delegate-admin") }]} />
+        <HumanGroup title="AI가 처리 중 — 기다리면 줄어듦" tone="waiting" rows={[
+          { label: "AI 미검토", count: slot("delegate-unreviewed") },
+          { label: "2차 결론 대기", count: stageCount("second", human?.awaitingSecond, "2차 결론 대기") },
+          ...(human?.awaitingAi ? [{ label: "AI 결론 대기", count: stageCount("ai", human.awaitingAi, "AI 결론 대기") }] : [])]} />
+        <p className="small muted flow-human-day">24시간 결정 — AI {slot("decided")} · 사람 {number(human?.decided24h)}건 · 최장 대기 {human?.oldestDays == null ? "미확인" : `${number(human.oldestDays)}일`}</p>
         <div className="flex"><Link prefetch={false} className="button small" href="/admin/review?tab=human">판단·승인·반려 →</Link>
           <Link prefetch={false} className="text-button" href="/admin/review?stage=rejected">반려 기록 →</Link></div>
       </section>
-      <section className="flow-human-assist"><h4>AI 위임·재심사 실행</h4>
+      <section className="flow-human-assist" data-window={assistWindow}>
+        <div className="flow-human-assist-head"><h4>AI 위임·재심사 실행</h4>
+          <div className="flow-window-toggle" role="group" aria-label="처리 현황 기간">{ASSIST_WINDOWS.map(option =>
+            <button key={option.key} type="button" aria-pressed={assistWindow === option.key} onClick={() => setAssistWindow(option.key)}>{option.label}</button>)}</div></div>
         {llm?.kind === "llm" ? <ul className="flow-human-jobs">{llm.tasks.map(task => {
-          const job = STATION_JOBS.human.find(row => row.job === ({ "human-review": "human-deepseek-review", "split-confirm": "split-confirm", "split-tiebreak": "split-tiebreak", "held-review-retry": "held-qwen-retry" } as Record<string, string>)[task.task]);
+          const job = STATION_JOBS.human.find(row => row.job === ASSIST_JOB[task.task]);
           const state = job ? controls.jobs[job.job] : null;
           const subset: StationLlm = { ...llm, tasks: [task], head: task };
           const running = modelCallCount(subset);
-          return <li key={task.task}><div className="flow-human-job-head"><b>{task.label}</b><Tag tone={state?.paused ? "gray" : state?.lastError ? "amber" : running ? "green" : "gray"}>
+          const uncertain = (task.active ?? []).filter(row => row.state === "indeterminate");
+          return <li key={task.task}><div className="flow-human-job-head">
+            {job ? <Link prefetch={false} className="flow-human-job-name" href={`/admin/status?tab=jobs&job=${job.job}`}>{task.label}</Link> : <b>{task.label}</b>}
+            <span className="flow-model-note">{task.head ? `${task.head.where} · ${task.head.model}` : "모델 미확인"}</span>
+            {uncertain.map((row, index) => <FlowUnknownReviews key={`${row.model}:${index}`} task={task.task} model={row.model} label={`종료 미확정 ${number(row.count)}`} className="flow-model-state fu-trigger" />)}
+            <Tag tone={state?.paused ? "gray" : state?.lastError ? "amber" : running ? "green" : "gray"}>
             {state?.paused ? running === null || running > 0 || state.execution === "locked" ? "신규 중지" : "일시정지"
-              : state?.lastError ? "오류 확인" : running === null ? "호출 미확인" : running > 0 ? "전송 중" : state ? "장부 대기" : "미확인"}</Tag></div>
-            <span className="flow-model-note">현재 설정</span>
-            <ConfiguredModelRows llm={subset} compact />
-            <span className="flow-model-note">현재 호출</span>
-            <LiveModelRows llm={subset} compact />
-            {assist?.[task.task]}
-            {job && <Link prefetch={false} className="text-button small" href={`/admin/status?tab=jobs&job=${job.job}`}>작업 상태·제어 →</Link>}
+              : state?.lastError ? "오류 확인" : running === null ? "호출 미확인" : running > 0 ? `전송 중 ${number(running)}` : state ? "대기" : "미확인"}</Tag></div>
+            {assist?.[task.task] ?? <p className="flow-model-note">처리 현황 미확인</p>}
           </li>;
         })}</ul> : <p className="small muted">AI 보조 실행 관측을 읽지 못했습니다.</p>}
-        <details className="flow-human-settings"><summary className="text-button">AI 보조 실행 모델 지정</summary>
-          {modelSettings ?? <Link prefetch={false} className="button small" href="/admin/models/advanced#model-settings">실행 모델 설정 →</Link>}
-          <Link prefetch={false} className="text-button small" href="/admin/models/human#human-review">사람 위임 모델 설정 →</Link>
-        </details>
+        {assist?.insight}
+        <div className="flex"><Link prefetch={false} className="text-button small" href="/admin/status?tab=jobs">작업 상태·제어 →</Link>
+          <details className="flow-human-settings"><summary className="text-button">AI 보조 실행 모델 지정</summary>
+            {modelSettings ?? <Link prefetch={false} className="button small" href="/admin/models/advanced#model-settings">실행 모델 설정 →</Link>}
+            <Link prefetch={false} className="text-button small" href="/admin/models/human#human-review">사람 위임 모델 설정 →</Link>
+          </details></div>
       </section>
     </div>
   </section>;

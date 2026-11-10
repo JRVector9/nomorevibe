@@ -4,7 +4,7 @@ import { db, onReplica } from "@/lib/db";
 /**
  * 사람 확인 · AI 보조 카드의 「처리 현황」(2026-11-10 운영자 요청: 지금 작업이 얼마나 처리되는지 보이지 않는다).
  *
- * 카드마다 최근 1시간·24시간에 AI가 끝낸 일을 결과별로 센다. 「현재 호출」이 장부의 전송 중 호출만 보여 주던 것과 달리,
+ * 카드마다 최근 5분·1시간·24시간에 AI가 끝낸 일을 결과별로 센다(5분은 2026-11-10 운영자 요청). 「현재 호출」이 장부의 전송 중 호출만 보여 주던 것과 달리,
  * 모델이 사람 대기열에서 무엇을 빼냈는지(결정)와 무엇을 사람에게 남겼는지를 가른다. 모델을 부르거나 쓰지 않는다 — 읽기만 한다.
  *  - 사람 몫 위임 검수(human-deepseek-review): crawl_review_attempts(kind=delegated, provider=m3-deepseek)의 끝난 시도.
  *    승인(발행으로 넘김)·반려는 결정이다. 72시간 넘은 근거로 승인을 미뤄 원본을 다시 받게 한 것과 저장소가 사라진 것은 「다시 받기」,
@@ -17,7 +17,11 @@ export const HUMAN_ASSIST_TASKS = ["human-review", "split-confirm", "split-tiebr
 export type HumanAssistTask = (typeof HUMAN_ASSIST_TASKS)[number];
 export type HumanAssistOutcome = "approve" | "reject" | "forward" | "held" | "refresh" | "ineligible" | "failed";
 export type HumanAssistWindow = Record<HumanAssistOutcome, number>;
-export type HumanAssistTaskProgress = { hour: HumanAssistWindow; day: HumanAssistWindow;
+/** 창 — 5분·1시간·24시간. 화면의 기간 단추와 같은 순서다 */
+export const HUMAN_ASSIST_WINDOWS = ["five", "hour", "day"] as const;
+export type HumanAssistWindowKey = (typeof HUMAN_ASSIST_WINDOWS)[number];
+export const HUMAN_ASSIST_WINDOW_LABELS: Record<HumanAssistWindowKey, string> = { five: "최근 5분", hour: "최근 1시간", day: "최근 24시간" };
+export type HumanAssistTaskProgress = { five: HumanAssistWindow; hour: HumanAssistWindow; day: HumanAssistWindow;
   /** 지금 이 작업을 기다리는 수. null = 이 작업은 세지 않는다 */
   waiting: number | null };
 export type HumanAssistProgress = {
@@ -34,16 +38,16 @@ const emptyWindow = (): HumanAssistWindow => Object.fromEntries(OUTCOMES.map(key
 /** SQL 집계 줄 → 카드별 창. 모르는 작업·결과·창 이름은 버린다(화면이 지어낸 수를 보이지 않게) */
 export function summarizeHumanAssist(rows: readonly HumanAssistRow[], waiting: { humanReview: number | null; splitConfirm: number | null },
   measuredAt: string): HumanAssistProgress {
-  const tasks = Object.fromEntries(HUMAN_ASSIST_TASKS.map(task => [task, { hour: emptyWindow(), day: emptyWindow(), waiting: null }])) as
+  const tasks = Object.fromEntries(HUMAN_ASSIST_TASKS.map(task => [task, { five: emptyWindow(), hour: emptyWindow(), day: emptyWindow(), waiting: null }])) as
     Record<HumanAssistTask, HumanAssistTaskProgress>;
   tasks["human-review"].waiting = waiting.humanReview;
   tasks["split-confirm"].waiting = waiting.splitConfirm;
   for (const row of rows) {
     if (!(HUMAN_ASSIST_TASKS as readonly string[]).includes(row.task) || !(OUTCOMES as readonly string[]).includes(row.outcome)) continue;
-    if (row.bucket !== "hour" && row.bucket !== "day") continue;
+    if (!(HUMAN_ASSIST_WINDOWS as readonly string[]).includes(row.bucket)) continue;
     const count = Number(row.n);
     if (!Number.isFinite(count) || count < 0) continue;
-    tasks[row.task as HumanAssistTask][row.bucket][row.outcome as HumanAssistOutcome] += count;
+    tasks[row.task as HumanAssistTask][row.bucket as HumanAssistWindowKey][row.outcome as HumanAssistOutcome] += count;
   }
   const day = (task: HumanAssistTask) => tasks[task].day;
   const decidedDay = day("human-review").approve + day("human-review").reject + day("split-confirm").reject
@@ -51,7 +55,7 @@ export function summarizeHumanAssist(rows: readonly HumanAssistRow[], waiting: {
   return { measuredAt, tasks, decidedDay };
 }
 
-/** 한 창(1시간은 24시간의 부분집합)마다 같은 결과 갈래를 센다 — 행은 bucket 둘(hour·day)로 나온다 */
+/** 한 창(5분 ⊂ 1시간 ⊂ 24시간)마다 같은 결과 갈래를 센다 — 행은 bucket 셋(five·hour·day)으로 나온다 */
 const progressSql = sql`
   WITH delegated AS (
     SELECT 'human-review'::text AS task, completed_at AS at, CASE
@@ -84,7 +88,9 @@ const progressSql = sql`
   )
   SELECT task, 'day' AS bucket, outcome, count(*)::int AS n FROM done WHERE outcome IS NOT NULL GROUP BY 1, 3
   UNION ALL
-  SELECT task, 'hour', outcome, count(*)::int FROM done WHERE outcome IS NOT NULL AND at > now() - interval '1 hour' GROUP BY 1, 3`;
+  SELECT task, 'hour', outcome, count(*)::int FROM done WHERE outcome IS NOT NULL AND at > now() - interval '1 hour' GROUP BY 1, 3
+  UNION ALL
+  SELECT task, 'five', outcome, count(*)::int FROM done WHERE outcome IS NOT NULL AND at > now() - interval '5 minutes' GROUP BY 1, 3`;
 
 /**
  * 위임 검수가 아직 판단을 남기지 않은 사람 몫 후보 — 자동 판정 보류(decided_by=auto)이고 2차 대기가 없으며 위임 판단(succeeded) 기록이 없다.

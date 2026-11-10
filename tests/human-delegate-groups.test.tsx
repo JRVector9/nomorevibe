@@ -145,10 +145,12 @@ describe("화면", () => {
     const data = buildConveyor({ now: "2026-11-10T06:40:35.000Z", enabled: true, throughput: null, flow: null, hourly: null, human: humanOverview({ human: 2, agreed: 1 }),
       progress: null, search: null, holds: null, rejected: null, classification: null, sources: [] });
     const html = renderToStaticMarkup(<PrototypeFlow data={data} desk={null} controls={{ jobs: {}, csrf: null }} editor={null}
-      humanAssist={{ "delegate-abstained": <>12건 →</>, "delegate-low_confidence": <>3건 →</> }} />);
-    expect(html).toContain("<dt>근거 부족 · AI 판단 보류</dt><dd>12건 →</dd>");
-    expect(html).toContain("<dt>확신 부족 · AI 의견 있음</dt><dd>3건 →</dd>");
+      humanAssist={{ "delegate-abstained": <>12건 →</>, "delegate-low_confidence": <>3건 →</>, "delegate-legacy": <>40건 →</>, "delegate-unreviewed": <>7건 →</> }} />);
+    expect(html).toContain('<li><span>근거 부족 · AI 판단 보류<span class="flow-human-first">먼저</span></span><span>12건 →</span></li>');
+    expect(html).toContain("<li><span>확신 부족 · AI 의견 있음</span><span>3건 →</span></li>");
+    expect(html).toContain("<li><span>이전 기록 · 까닭 미기록</span><span>40건 →</span></li>");
+    expect(html).toContain("<li><span>AI 미검토</span><span>7건 →</span></li>");
     const missing = renderToStaticMarkup(<PrototypeFlow data={data} desk={null} controls={{ jobs: {}, csrf: null }} editor={null} />);
-    expect(missing).toContain("<dt>근거 부족 · AI 판단 보류</dt><dd>—</dd>");
+    expect(missing).toContain('<li><span>근거 부족 · AI 판단 보류<span class="flow-human-first">먼저</span></span><span>—</span></li>');
   });
 });

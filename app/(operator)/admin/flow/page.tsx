@@ -24,7 +24,7 @@ import { readOperatorAway, readOperatorChanges, readOperatorDeskShared, readOper
 import type { FlowControls } from "./FlowBoard";
 import { FlowBoard } from "./FlowBoard";
 import { HumanModelSettings } from "./HumanModelSettings";
-import { HumanAssistDecided, HumanAssistTaskProgress } from "./HumanAssistProgress";
+import { HumanAssistDecided, HumanAssistInsight, HumanAssistTaskProgress } from "./HumanAssistProgress";
 import { FLOW_DELEGATE_GROUPS, flowDelegateSlot, HumanDelegateCount } from "./HumanDelegateCounts";
 import { PrototypeFlow, PrototypeFlowAway, PrototypeFlowChanges } from "./PrototypeFlow";
 import type { OperatorDesk } from "@/lib/operations/operator-desk-model";
@@ -108,6 +108,7 @@ async function FlowWorkspace({ admin, fresh, tab, advanced }: {
   const delegateRead = diagnostics ? null : readHumanDelegateSummary(fresh).catch(quiet("flow.human_delegate_unavailable"));
   const humanAssist = assistRead && delegateRead ? {
     decided: <Suspense fallback="읽는 중…"><HumanAssistDecided read={assistRead} /></Suspense>,
+    insight: <Suspense fallback={null}><HumanAssistInsight read={assistRead} /></Suspense>,
     ...Object.fromEntries(HUMAN_ASSIST_TASKS.map(task => [task,
       <Suspense key={task} fallback={<span className="flow-model-note" aria-busy="true">처리 현황을 읽는 중…</span>}><HumanAssistTaskProgress read={assistRead} task={task} /></Suspense>])),
     ...Object.fromEntries(FLOW_DELEGATE_GROUPS.map(group => [flowDelegateSlot(group),
