@@ -157,10 +157,16 @@ export async function recordWorkerTranslations(results: TranslationResult[], mod
   });
 }
 
+/**
+ * 글 탓이 아닌 실패 — 시도 수를 세지 않는다(재시도 시각은 그대로 미룬다). tokenizer 확인 실패와, 공급자가 요청 빈도 한도로 돌려보낸 429(rate_limit,
+ * 2026-11-10 — LG EXAONE API 처럼 초당 한도가 있는 공급자). 세면 혼자 보내기(soloAttempts)·뒤로 미룸이 글 탓처럼 커진다.
+ */
+export const uncountedTranslationFailure = (error: string | null | undefined): boolean => error === "tokenizer_unavailable" || error === "rate_limit";
+
 async function writeTranslations(executor: ProductTransaction | typeof db, results: { hash: string; translated: string | null; error?: string }[], model: string, targetLang = "ko"): Promise<void> {
   for (const result of results) {
     const done = result.translated !== null;
-    const attempt = !done && result.error === "tokenizer_unavailable" ? 0 : 1;
+    const attempt = !done && uncountedTranslationFailure(result.error) ? 0 : 1;
     await executor.insert(textTranslations).values({
       sourceHash: result.hash, targetLang, status: done ? "done" : "failed", translated: result.translated, model,
       attempts: attempt, errorCode: done ? null : (result.error ?? "invalid_output").slice(0, 60),
@@ -400,7 +406,7 @@ async function writeReservedReasonTranslations(value: TranslationResult[], model
       for (const result of [...results].sort((a, b) => a.hash.localeCompare(b.hash))) {
         const expected = proof.rows.find(row => row.sourceHash === result.hash)!, done = result.translated !== null;
         const error = done ? null : (result.error ?? 'invalid_output').slice(0, 60);
-        const attempt = error === 'tokenizer_unavailable' ? 0 : 1;
+        const attempt = uncountedTranslationFailure(error) ? 0 : 1;
         const changed = expected.raw === null
           ? await tx.execute(sql`INSERT INTO text_translations
               (source_hash,target_lang,status,translated,model,attempts,error_code,retry_at,updated_at)

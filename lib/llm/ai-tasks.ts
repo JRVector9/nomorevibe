@@ -190,7 +190,17 @@ export const aiTask = (id: string): AiTaskDef | null => AI_TASKS.find(row => row
 export const aiTaskSlots = (): { task: AiTaskDef; slot: number }[] =>
   AI_TASKS.flatMap(row => Array.from({ length: row.slots }, (_, index) => ({ task: row, slot: index + 1 })));
 export const aiTaskSlotLabel = (row: AiTaskDef, slot: number): string => row.slotLabel ? `${row.label} · ${row.slotLabel} ${slot}` : row.label;
-/** 이 작업이 이 연결을 받는가(종류·도구). */
-export function aiTaskAccepts(row: Pick<AiTaskDef, "api" | "cliTools">, connection: { kind: "api" | "cli"; cliTool: string | null }): boolean {
-  return connection.kind === "api" ? row.api : (row.cliTools as readonly string[]).includes(connection.cliTool ?? "");
+/**
+ * 연결이 이 작업에 쓰이도록 허락됐는가(2026-11-10) — 연결의 「쓸 수 있는 작업」(ai_connections.options.allowedTasks). 비었거나 없으면 모든 작업이다.
+ * 약관상 비상업 이용만 되는 API(예: LG EXAONE)를 관리자만 보는 작업(심사 사유 번역)에 묶어 두는 데 쓴다 — 선택지·저장 검증·실행 쪽이 같이 본다.
+ */
+export function aiConnectionTaskAllowed(taskId: string, connection: { allowedTasks?: readonly string[] | null }): boolean {
+  const allowed = connection.allowedTasks;
+  return !allowed || allowed.length === 0 || allowed.includes(taskId);
+}
+/** 이 작업이 이 연결을 받는가(종류·도구, 그리고 연결의 「쓸 수 있는 작업」 제한). */
+export function aiTaskAccepts(row: Pick<AiTaskDef, "api" | "cliTools"> & Partial<Pick<AiTaskDef, "id">>,
+  connection: { kind: "api" | "cli"; cliTool: string | null; allowedTasks?: readonly string[] | null }): boolean {
+  const kind = connection.kind === "api" ? row.api : (row.cliTools as readonly string[]).includes(connection.cliTool ?? "");
+  return kind && (row.id === undefined || aiConnectionTaskAllowed(row.id, connection));
 }

@@ -7,7 +7,7 @@ import "./websearch-query-serving-contract";
 import "./text-profile-serving-contract";
 import "./search-verify-serving-contract";
 import { EngineDownTally } from "@/lib/jobs/engine-down";
-import { AI_TASK_KEY_MISSING_CAUSE, aiTask, isAiTextTask, onlyKeyMissing, type AiTextTaskId } from "./ai-tasks";
+import { AI_TASK_KEY_MISSING_CAUSE, aiConnectionTaskAllowed, aiTask, isAiTextTask, onlyKeyMissing, type AiTextTaskId } from "./ai-tasks";
 import { aiTaskModelRows, aiTaskModelsReadState, ensureAiTaskModels, type AiTaskConnectionSnapshot } from "./ai-task-models-snapshot";
 import { runInTextTaskRank, type TextTaskRankBinding } from "./ai-task-rank-scope";
 import { ModelCapacityDeferredError, modelCapacityDeferralIsPerModel } from "./capacity-deferred";
@@ -51,6 +51,7 @@ export async function loadTaskModels(taskId: string, slot = 1): Promise<AiTaskRa
 export const TEXT_RANK_UNUSABLE_TEXT: Readonly<Record<string, string>> = Object.freeze({
   rank_disabled: "순위가 꺼져 있음",
   connection_disabled: "연결이 꺼져 있음",
+  connection_task_not_allowed: "이 연결은 이 작업에 쓰지 않도록 제한됨(AI 연결의 「쓸 수 있는 작업」)",
   connection_not_api: "API 주소 연결이 아님(이 작업은 CLI 를 받지 않음)",
   stored_key_unreadable: "연결에 저장한 키를 열 수 없음(암호 상자 키 확인)",
   connection_key_missing: "연결에 키가 없음 — 이 서버의 계약은 키를 씀(같은 주소의 계약 키로도 채우지 못함, 연결에 키를 넣으세요)",
@@ -190,6 +191,8 @@ export function bindApiTaskRank(routeId: GatewayServingRoute, rank: AiTaskRank, 
   const connection = rank.connection;
   if (!rank.enabled) return unusable("rank_disabled");
   if (!connection.enabled) return unusable("connection_disabled");
+  // 저장 뒤에 연결의 「쓸 수 있는 작업」을 좁혀도 그 작업의 옛 순위·구성원으로 부르지 않는다(2026-11-10)
+  if (!aiConnectionTaskAllowed(rank.task, connection)) return unusable("connection_task_not_allowed");
   if (isCliEngineTask(rank.task) && isCliEngineConnection(connection)) return bindCliEngineTaskRank(routeId, rank, contracts);
   if (connection.kind !== "api" || !connection.baseUrl) return unusable("connection_not_api");
   if (connection.keyUnreadable) return unusable("stored_key_unreadable");

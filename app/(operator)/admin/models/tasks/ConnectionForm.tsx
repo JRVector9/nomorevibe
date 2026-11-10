@@ -1,15 +1,17 @@
 "use client";
 import Link from "next/link";
 import { useActionState, useEffect, useState } from "react";
-import { AI_CLI_TOOL_LABELS, AI_CLI_TOOLS, type AiCliTool } from "@/lib/llm/ai-tasks";
+import { AI_CLI_TOOL_LABELS, AI_CLI_TOOLS, AI_TASK_GROUP_LABELS, AI_TASKS, type AiCliTool } from "@/lib/llm/ai-tasks";
 // 형과 순수 함수만 — 서버 모듈(DB)은 actions 를 거친다
-import { aiDeviceSlug, type AiConnectionView } from "@/lib/operations/admin-ai-tasks";
+import { AI_REASONING_TOKEN_RESERVE_MAX, aiAllowedTaskField, aiDeviceSlug, type AiConnectionView } from "@/lib/operations/admin-ai-tasks";
 import { llmFieldAnchor, type LlmFixField } from "@/lib/operations/llm-ops-links";
 import { saveAiConnectionAction, type AiTaskActionState } from "./actions";
 import { saveCapacityDevice } from "../devices/actions";
 import { OpenCodeCatalogFields } from "./OpenCodeCatalogFields";
 
 const INPUT = "rounded border border-line bg-bg p-2 text-[13px]";
+/** ISO 시각 → KST 날짜(YYYY-MM-DD). 서버·브라우저가 같은 글을 그리게 Intl 을 쓰지 않는다 */
+const kstDay = (at: string) => new Date(Date.parse(at) + 9 * 3_600_000).toISOString().slice(0, 10);
 
 /**
  * 「칸 수」 대신 장비 행(실제 적용 값)의 「동시 실행 한도」 한 칸(2026-11-07 PR 2, PR 4 에서 옛 「칸 수」 칸을 없앴다 — 장비 행이 있으면 그 값이 이겨 헷갈렸다).
@@ -123,6 +125,22 @@ export function ConnectionForm({ initial, secretBox, limit: given = null, cancel
       <label className="grid gap-1">컨텍스트 상한(토큰) — /models 가 최대 길이를 알려 주지 않는 엔진에만
         <input name="contextTokens" type="number" inputMode="numeric" min={1} max={2097152} step={1} defaultValue={initial?.contextTokens ?? ""}
           placeholder="예: 131072 — 엔진이 알려 주면 비워 둡니다" autoComplete="off" className={`${INPUT} font-mono`} /></label>
+      <label className="grid gap-1">모델 이름 직접 적기 — 모델 목록(GET /models)을 주지 않는 서버에만
+        <textarea name="manualModels" rows={1} defaultValue={initial?.manualModels?.join(" ") ?? ""} placeholder="예: k-exaone_v2.5 (띄어쓰기·쉼표로 나눔)"
+          className={`${INPUT} font-mono`} />
+        <span className="text-[13px] text-fg-3">목록이 없어도 이 이름이 순위·작업 분산 선택지에 오릅니다. 저장할 때 목록 대조 없이 1토큰 시험 호출로 확인하고,
+          계약 상한은 위 「컨텍스트 상한」을 씁니다(비우면 저장이 막힙니다).</span></label>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="grid gap-1">추론 토큰 여유 — 추론이 max_tokens 에 포함되는 추론 모델만
+          <input name="reasoningTokenReserve" type="number" inputMode="numeric" min={1} max={AI_REASONING_TOKEN_RESERVE_MAX} step={1}
+            defaultValue={initial?.reasoningTokenReserve ?? ""} placeholder="예: 4096 — 일반 모델은 비워 둡니다" autoComplete="off" className={`${INPUT} font-mono`} />
+          <span className="text-[13px] text-fg-3">심사 사유 번역 요청의 max_tokens 에 더합니다. 그 작업의 계약을 처음 만들 때 계약에 들어갑니다(나중에 바꾸면 계약을 끄고 다시 저장).</span></label>
+        <label className="grid gap-1">키 유효 기간(일) — 키가 정해진 날 뒤 만료되는 API만
+          <input name="keyValidDays" type="number" inputMode="numeric" min={1} max={3650} step={1} defaultValue={initial?.keyValidDays ?? ""}
+            placeholder="예: 30" autoComplete="off" className={`${INPUT} font-mono`} />
+          <span className="text-[13px] text-fg-3">키를 넣은 날부터 세어 LLM 운영에 만료일을 보이고, 5일 안으로 남으면 상태에 알립니다.
+            {initial?.keySetAt ? ` 지금 키를 넣은 날: ${kstDay(initial.keySetAt)}(KST).` : ""}</span></label>
+      </div>
     </> : <>
       <label className="grid gap-1">CLI 도구
         <select name="cliTool" value={cliTool} onChange={event => { setCliTool(event.target.value as AiCliTool); setCatalogReady(false); }} className={INPUT}>
@@ -151,6 +169,16 @@ export function ConnectionForm({ initial, secretBox, limit: given = null, cancel
           {" "}{limit.eligible ? "값을 바꿔 저장하면 장비 행도 이 값으로 바뀝니다 — 같은 장비를 쓰는 모든 작업이 이 한도를 나눠 씁니다." : limit.reason ?? "새 연결은 순위를 저장할 때 이 값으로 장비 행을 만듭니다(같은 이름의 장비 행이 있으면 그 값이 쓰입니다)."}</span>
         {limitHint && <span className="llm-fix-hint text-[13px]" data-limit-hint="true">{limitHint}</span>}</label>
     </div>
+    <details className="grid gap-1" open={(initial?.allowedTasks?.length ?? 0) > 0 || undefined}>
+      <summary className="cursor-pointer">쓸 수 있는 작업{initial?.allowedTasks?.length ? ` — ${initial.allowedTasks.length}개로 제한됨` : " — 제한 없음(모든 작업)"}</summary>
+      <p className="text-[13px] text-fg-3">체크한 작업에서만 이 연결을 고를 수 있고, 실행 쪽도 다른 작업에는 부르지 않습니다. 아무것도 체크하지 않으면 모든 작업입니다.
+        약관이 상업적 이용을 막는 API(비상업 전용 키 등)는 관리자만 보는 작업(예: 심사 사유 번역)에만 체크하세요 — 공개 화면에 나가는 번역·소개에 쓰면 약관 위반일 수 있습니다.</p>
+      <div className="grid gap-1 sm:grid-cols-2">
+        {AI_TASKS.filter(task => kind === "api" ? task.api : task.cliTools.includes(cliTool)).map(task =>
+          <label key={task.id} className="flex items-center gap-2 text-[13px]"><input type="checkbox" name={aiAllowedTaskField(task.id)} value="1"
+            defaultChecked={initial?.allowedTasks?.includes(task.id) ?? false} />{AI_TASK_GROUP_LABELS[task.group]} · {task.label}</label>)}
+      </div>
+    </details>
     <label className="grid gap-1" {...fixField("enabled")}>상태
       <select name="enabled" value={enabled ? "1" : "0"} onChange={event => setEnabled(event.target.value !== "0")} className={INPUT}>
         <option value="1">켜짐</option><option value="0">꺼짐 — 순위 선택지에서 뺍니다(저장된 순위는 남습니다)</option></select></label>

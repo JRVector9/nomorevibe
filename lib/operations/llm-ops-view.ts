@@ -1,5 +1,6 @@
 import { AI_CLI_TOOL_LABELS, AI_CLI_TOOL_PROVIDERS, AI_TASKS, aiCliToolOfProvider, aiTask, aiTaskSlotLabel, type AiTaskDef } from "@/lib/llm/ai-tasks";
-import { aiConnectionLabel, aiModelsErrorText, aiTaskRanksUnread, type AiConnectionView, type AiCurrentSlot, type AiTaskRankRow } from "./admin-ai-tasks";
+import { aiConnectionLabel, aiConnectionModelIds, aiConnectionModelsMissing, aiModelsErrorText, aiTaskRanksUnread, type AiConnectionView, type AiCurrentSlot,
+  type AiTaskRankRow } from "./admin-ai-tasks";
 import type { AiTaskExecutionAdminView } from "./admin-ai-task-execution";
 import type { AiTaskRuntimeView } from "./admin-ai-tasks-repository";
 import type { AdminModelMetrics, AdminModelsObservation } from "./admin-models-observation";
@@ -51,6 +52,7 @@ const REASON_SHORT: Readonly<Record<string, string>> = Object.freeze({
   cli_engine_auth_invalid: "인증 정보 오류",
   // 연결·순위
   connection_disabled: "연결 꺼짐", rank_disabled: "순위 꺼짐", connection_not_api: "연결 종류 다름", cli_tool_unsupported: "연결 종류 다름",
+  connection_task_not_allowed: "작업 제한됨",
   // 서버
   engine_network: "서버 응답 없음", unreachable: "서버 응답 없음", engine_model_unavailable: "서버에 모델 없음",
   engine_tokenizer_unavailable: "tokenizer 확인 실패", endpoint_invalid: "주소 오류", cli_engine_endpoint_invalid: "주소 오류",
@@ -78,7 +80,7 @@ export function llmReasonShort(code: string | null | undefined): string | null {
 const HARD_REASONS = new Set(["connection_key_missing", "stored_key_unreadable", "no_direct_contract", "cli_contract_missing", "cli_version_mismatch",
   "cli_contract_unavailable", "gateway_auth", "unmapped", "device_unconfigured", "provider_contract_unavailable", "engine_no_key", "engine_model_unavailable",
   "engine_network", "cli_tool_unsupported", "cli_model_invalid", "cli_engine_endpoint_invalid", "cli_engine_source_invalid", "cli_engine_auth_invalid",
-  "cli_engine_contract_not_stored", "connection_not_api", "engine_tokenizer_unavailable"]);
+  "cli_engine_contract_not_stored", "connection_not_api", "engine_tokenizer_unavailable", "connection_task_not_allowed"]);
 export const llmReasonLevel = (code: string): LlmOpsLevel => HARD_REASONS.has(code) ? "bad" : code === "rank_disabled" || code === "connection_disabled" ? "idle" : "warn";
 
 // ── 고칠 곳(문제 표시 → 고치는 화면) ───────────────────────────────────────────────────────────────────
@@ -126,6 +128,7 @@ export function llmReasonFix(code: string, at: LlmFixAt): LlmFix | null {
     case "engine_no_key": return api ? edit("key", "키 확인") : null;
     case "connection_disabled": return edit("enabled", "연결 켜기");
     case "rank_disabled": return rank("순위 켜기");
+    case "connection_task_not_allowed": return rank("순위 바꾸기");
     case "connection_not_api": case "cli_tool_unsupported": case "cli_model_invalid": case "engine_model_unavailable": return rank("순위 바꾸기");
     case "no_task_models": case "all_ranks_unusable": case "task_models_unreadable": return rank("작업 배정");
     case "engine_network": case "unreachable": case "engine_tokenizer_unavailable": return api ? edit("address", "다시 읽기") : null;
@@ -364,7 +367,7 @@ export function buildDashboardView(input: DashboardInput): DashboardView {
         href: llmEditHref(connection.id, "limit"), action: "LLM 운영에서 맞추기" });
   }
   for (const connection of input.connections ?? []) {
-    if (!connection.enabled || connection.kind !== "api" || (connection.models && connection.models.length)) continue;
+    if (!aiConnectionModelsMissing(connection)) continue;
     todos.push({ id: `models-${connection.id}`, level: "warn", title: `${aiConnectionLabel(connection)} 모델 목록 못 읽음`,
       detail: llmReasonShort(connection.modelsError) ?? (connection.models === null ? "아직 읽지 않았습니다" : "모델 0개"),
       href: `/admin/models/llm?edit=${connection.id}#conn-${connection.id}`, action: "LLM 운영에서 다시 읽기" });
@@ -448,6 +451,22 @@ export type LlmOpsReason = Readonly<{ text: string; fix: LlmFix | null }>;
 export type LlmOpsStatus = Readonly<{ level: LlmOpsLevel; text: string; reason: string | null; detail: string | null; reasons: readonly LlmOpsReason[] }>;
 const statusLine = (level: LlmOpsLevel, text: string, reason: string | null, detail: string | null = null, fix: LlmFix | null = null): LlmOpsStatus =>
   ({ level, text, reason, detail, reasons: reason ? [{ text: reason, fix }] : [] });
+/** 키 만료까지 남은 날(연결에 키 유효 기간을 적었을 때만, 2026-11-10 — 예: LG EXAONE API 키는 발급 30일 뒤 만료). 모르면 null */
+export function llmKeyDaysLeft(connection: Pick<AiConnectionView, "hasKey"> & Partial<Pick<AiConnectionView, "keySetAt" | "keyValidDays">>, now: string): number | null {
+  if (!connection.hasKey || !connection.keySetAt || !connection.keyValidDays) return null;
+  const expires = Date.parse(connection.keySetAt) + connection.keyValidDays * 86_400_000, at = Date.parse(now);
+  return Number.isFinite(expires) && Number.isFinite(at) ? Math.floor((expires - at) / 86_400_000) : null;
+}
+/** 「키 저장됨」 뒤에 붙는 저장일·만료일(KST 날짜). 키를 넣은 시각을 모르면(이 기능 전에 넣은 키) 빈 글 */
+function keyExpiryText(connection: AiConnectionView, now: string): string {
+  if (!connection.keySetAt) return "";
+  const day = (ms: number) => new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Seoul", month: "2-digit", day: "2-digit" }).format(new Date(ms));
+  const saved = Date.parse(connection.keySetAt), left = llmKeyDaysLeft(connection, now);
+  if (left === null || !connection.keyValidDays) return `(${day(saved)} 넣음)`;
+  return `(${day(saved)} 넣음 · ${day(saved + connection.keyValidDays * 86_400_000)} 만료${left < 0 ? " — 지남" : ` — ${left}일 남음`})`;
+}
+/** 만료가 이만큼 남으면 상태에 알린다(교체할 시간) */
+const KEY_EXPIRY_WARN_DAYS = 5;
 export type LlmOpsRow = Readonly<{
   key: string; anchor: string; source: "connection" | "cli-tool";
   connection: AiConnectionView | null;
@@ -697,12 +716,17 @@ export function buildLlmOpsView(input: LlmOpsInput): LlmOpsView {
     const extra = provider && covered.get(provider)?.id === connection.id ? tools.get(provider) ?? null : null;
     const ranked = chipsOf(connection);
     const tasks = dedupe([...ranked, ...(extra?.chips.filter(chip => !ranked.some(own => own.task === chip.task)) ?? [])]).sort(chipSort);
-    const ids = connection.kind === "api" ? (connection.models ?? []).map(model => model.id) : [...connection.cliModels];
+    // API: 서버 목록 + 목록 없는 서버에 적은 모델 이름(2026-11-10)
+    const ids = connection.kind === "api" ? aiConnectionModelIds(connection) : [...connection.cliModels];
     const modelTasks: Record<string, LlmTaskChip[]> = {};
     for (const chip of tasks) (modelTasks[chip.model] ??= []).push(chip);
     const own = ledgerRows ? ledgerRows.filter(row => row.groupId === connection.deviceId) : null;
     const { signals, base } = commonSignals(own, tasks);
-    if (connection.enabled && connection.kind === "api" && (!connection.models || !connection.models.length))
+    const keyLeft = connection.enabled && connection.kind === "api" ? llmKeyDaysLeft(connection, input.now) : null;
+    if (keyLeft !== null && keyLeft <= KEY_EXPIRY_WARN_DAYS)
+      signals.push(statusLine(keyLeft < 0 ? "bad" : "warn", keyLeft < 0 ? "키 만료" : "키 만료 임박", keyLeft < 0 ? "키 유효 기간이 지났습니다" : `키 만료까지 ${keyLeft}일`,
+        "공급자에서 새 키를 발급받아 이 연결의 「API 키」에 넣고 저장하세요.", { href: llmEditHref(connection.id, "key"), label: "새 키 넣기" }));
+    if (aiConnectionModelsMissing(connection))
       signals.push(statusLine("bad", "목록 못 읽음", llmReasonShort(connection.modelsError) ?? (connection.models === null ? "아직 읽지 않음" : "모델 0개"),
         aiModelsErrorText(connection.modelsError), modelsFix(connection)));
     for (const entry of connection.enabled ? runtimeUnusable(connection.id, input) : []) {
@@ -721,8 +745,9 @@ export function buildLlmOpsView(input: LlmOpsInput): LlmOpsView {
       address: connection.kind === "api" ? connection.host ?? connection.baseUrl : connection.cliTool === "opencode" ? connection.host : null,
       version: versions[0] ?? null, versionSource: connection.cliVersion ? "연결" : versions.length ? extra!.versions.get(versions[0]) ?? null : null,
       enabled: connection.enabled,
-      keyText: connection.kind === "api" ? (connection.hasKey ? "키 저장됨" : "키 없음") : connection.cliTool === "opencode" ? (connection.hasKey ? "호스트 인증 저장됨" : "호스트 인증 미확인") : null,
-      models: { ids, title: connection.kind === "api" ? (connection.models ? `${ids.length}개` : "목록 없음")
+      keyText: connection.kind === "api" ? (connection.hasKey ? `키 저장됨${keyExpiryText(connection, input.now)}` : "키 없음")
+        : connection.cliTool === "opencode" ? (connection.hasKey ? "호스트 인증 저장됨" : "호스트 인증 미확인") : null,
+      models: { ids, title: connection.kind === "api" ? (connection.models ? `${ids.length}개` : connection.manualModels?.length ? `직접 적음 ${ids.length}개` : "목록 없음")
         : connection.cliTool === "opencode" ? `카탈로그 ${ids.length}개` : `${ids.length}개`,
         error: aiModelsErrorText(connection.modelsError), readAt: connection.modelsReadAt },
       modelTasks, capacity: capacityOf(connection.deviceId, observation, connection.capacitySlots, others, connection.id), otherDevices: [],

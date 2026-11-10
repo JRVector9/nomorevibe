@@ -46,6 +46,8 @@ export type AiTaskConnectionSnapshot = Readonly<{
   keyUnreadable: boolean;
   /** 연결 행 버전(있으면 정확히 일치해야 한다). 예전 시험 고정에는 없다. */
   version?: number;
+  /** 이 연결을 쓸 수 있는 작업(options.allowedTasks, 2026-11-10). 없으면 모든 작업 — 실행 쪽 묶기가 다른 작업의 순위·구성원을 쓰지 않는다 */
+  allowedTasks?: readonly string[];
 }>;
 export type AiTaskModelSnapshotRow = Readonly<{
   task: string; slot: number; rank: number; model: string; enabled: boolean; options: Readonly<Record<string, unknown>>;
@@ -160,6 +162,7 @@ function connectionSnapshotFromRaw(row: RawConnection, hydrated?: HydratedCliCat
   const allModels = row.kind === "cli" ? (hydrated?.models ?? catalogModelEntries(catalog)) : modelEntries(row.models);
   const models = allModels && hidden.size ? Object.freeze(allModels.filter(model => !hidden.has(model.id))) : allModels;
   const contextTokens = typeof options.contextTokens === "number" ? options.contextTokens : null;
+  const allowedTasks = Array.isArray(options.allowedTasks) ? options.allowedTasks.filter((entry): entry is string => typeof entry === "string" && entry.length > 0) : [];
   const version = safeInteger(row.connection_version);
   const apiKey = row.api_key_ciphertext ? openSecret(row.api_key_ciphertext, aad(row.connection_id)) : null;
   return Object.freeze({
@@ -168,6 +171,7 @@ function connectionSnapshotFromRaw(row: RawConnection, hydrated?: HydratedCliCat
     ...(cliModels ? { cliModels } : {}), cliVersion: hydrated?.cliVersion ?? catalog?.cliVersion ?? optionCliVersion, cliCatalog: catalog,
     capacitySlots: safeInteger(row.capacity_slots) ?? 0, apiKey, keyUnreadable: !!row.api_key_ciphertext && apiKey === null,
     ...(version !== null ? { version } : {}),
+    ...(allowedTasks.length ? { allowedTasks: Object.freeze(allowedTasks) } : {}),
   });
 }
 

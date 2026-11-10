@@ -2,8 +2,8 @@ import { aiTaskReasoningEfforts } from "@/lib/llm/ai-task-reasoning";
 import type { CliCatalogMetadata } from "@/lib/llm/cli-catalog-metadata";
 import { OPENCODE_NATIVE_TASK_ROUTES, aiTaskUsesCliEngine, cliEngineEndpoint, cliEngineRevision, type CliEngineSource } from "@/lib/llm/cli-engine-config";
 import { AI_TASK_EXECUTION_SAVE_AUDIT_ACTION } from "@/lib/llm/ai-task-execution-config";
-import { AI_CLI_TOOL_LABELS, AI_CLI_TOOL_PROVIDERS, AI_CLI_TOOLS, AI_TASK_RANK_MAX, AI_TASKS, AUDIT_DIRECT_ROUTE, aiTask, aiTaskAccepts, aiTaskAliasIdentity, aiTaskSlotLabel,
-  isAiLiveTask, type AiCliTool, type AiTaskDef } from "@/lib/llm/ai-tasks";
+import { AI_CLI_TOOL_LABELS, AI_CLI_TOOL_PROVIDERS, AI_CLI_TOOLS, AI_TASK_RANK_MAX, AI_TASKS, AUDIT_DIRECT_ROUTE, aiConnectionTaskAllowed, aiTask, aiTaskAccepts, aiTaskAliasIdentity,
+  aiTaskSlotLabel, isAiLiveTask, type AiCliTool, type AiTaskDef } from "@/lib/llm/ai-tasks";
 
 /**
  * 「AI 연결」·「작업 ↔ 모델」 관리 화면의 순수 규칙(2026-11-02, PR A) — 입력 읽기·선택지·순위 검증·저장 전 준비 확인·가져오기 계획·한국어 문장.
@@ -26,6 +26,18 @@ export type AiConnectionView = Readonly<{
   cliVersion: string | null;
   /** Whitelisted metadata from the existing M3 CLI host, never provider configuration or keys. */
   cliCatalog?: CliCatalogMetadata | null;
+  /**
+   * 목록(GET /models)이 없는 서버에 운영자가 적은 모델 이름(options.manualModels, API 만, 2026-11-10 — 예: LG EXAONE API). 서버 목록에 없을 때도 선택지에 오르고,
+   * 순위·분산 저장이 1토큰 시험으로 확인한다(목록 대조 없이 연결의 「컨텍스트 상한」을 계약 상한으로 쓴다).
+   */
+  manualModels?: readonly string[];
+  /** 이 연결을 쓸 수 있는 작업(options.allowedTasks). 비었거나 없으면 모든 작업 */
+  allowedTasks?: readonly string[];
+  /** 추론 토큰이 max_tokens 에 포함되는 모델의 여유(options.reasoningTokenReserve) — 심사 사유 번역 계약을 만들 때 계약에 들어간다 */
+  reasoningTokenReserve?: number | null;
+  /** 마지막으로 키를 넣은 시각(options.keySetAt, ISO)과 운영자가 적은 키 유효 기간(일, options.keyValidDays) — 만료 안내만 한다 */
+  keySetAt?: string | null;
+  keyValidDays?: number | null;
 }>;
 export type AiTaskRankRow = Readonly<{ task: string; slot: number; rank: number; connectionId: string; model: string;
   options: Readonly<Record<string, unknown>>; enabled: boolean;
@@ -91,6 +103,15 @@ export const aiConnectionKeyAad = (id: string) => `ai_connections\n${id}`;
 const CONTROL = /[\p{Cc}]/u;
 const LABEL_MAX = 80, NOTE_MAX = 400, DEVICE_MAX = 120, CLI_MODEL = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$/;
 export const AI_CONNECTION_CONTEXT_MAX = 2_097_152;
+/** 목록 없는 서버에 적는 모델 이름(2026-11-10) — 엔진 이름 그대로(밑줄 포함, 예: k-exaone_v2.5). 계약·장부 이름(200자)에 들어간다 */
+const MANUAL_MODEL = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$/;
+export const AI_CONNECTION_MANUAL_MODELS_MAX = 16;
+/** 추론 토큰 여유 상한 — 사유 번역 요청 하나의 max_tokens 에 더하는 값이다 */
+export const AI_REASONING_TOKEN_RESERVE_MAX = 32_768;
+/** 추론 여유를 계약에 싣는 작업(경로) — 그 경로의 wire 만 이 값을 max_tokens 에 더한다(reason-translation-serving-contract.ts) */
+export const AI_REASONING_RESERVE_TASKS: readonly string[] = Object.freeze(["reason-translate"]);
+/** 「쓸 수 있는 작업」 체크 칸 이름 */
+export const aiAllowedTaskField = (taskId: string) => `allowedTask.${taskId}`;
 
 /**
  * OpenAI 호환 주소 → `origin/v1`. 받는 꼴: `…/v1`, `…/v1/`, `…/v1/chat/completions`, `…/v1/models`, 경로 없는 주소(→ `/v1` 을 붙인다).
@@ -117,6 +138,10 @@ export type AiConnectionInput = Readonly<{
   cliTool: AiCliTool | null; cliModels: string[]; deviceId: string; capacitySlots: number; contextTokens: number | null; enabled: boolean; note: string | null;
   /** CLI 만, 선택: `<도구> --version` 출력 그대로(PR C1) */
   cliVersion: string | null;
+  /** API 만, 선택(2026-11-10): 목록(/models)이 없는 서버의 모델 이름 · 추론 토큰 여유 · 키 유효 기간(일) */
+  manualModels: string[]; reasoningTokenReserve: number | null; keyValidDays: number | null;
+  /** 이 연결을 쓸 수 있는 작업(빈 목록 = 모든 작업) */
+  allowedTasks: string[];
 }>;
 type FormLike = { get(name: string): FormDataEntryValue | null };
 const text = (form: FormLike, name: string) => { const value = form.get(name); return typeof value === "string" ? value.trim() : ""; };
@@ -162,8 +187,22 @@ export function aiConnectionInputFromForm(form: FormLike): { input: AiConnection
   const note = text(form, "note") || null;
   if (note && (note.length > NOTE_MAX || CONTROL.test(note))) issues.push("ai_connection_invalid:note");
   const enabled = text(form, "enabled") !== "0";
+  // 목록 없는 서버의 모델·추론 여유·키 유효 기간(API 만, 2026-11-10)
+  const manualModels = kind === "api" ? [...new Set(text(form, "manualModels").split(/[\s,]+/).map(value => value.trim()).filter(Boolean))] : [];
+  if (manualModels.length > AI_CONNECTION_MANUAL_MODELS_MAX || manualModels.some(model => !MANUAL_MODEL.test(model))) issues.push("ai_connection_invalid:manualModels");
+  const optionalInteger = (name: string, max: number): number | null => {
+    const raw = kind === "api" ? text(form, name) : "";
+    if (!raw) return null;
+    if (/^\d{1,7}$/.test(raw) && Number(raw) >= 1 && Number(raw) <= max) return Number(raw);
+    issues.push(`ai_connection_invalid:${name}`);
+    return null;
+  };
+  const reasoningTokenReserve = optionalInteger("reasoningTokenReserve", AI_REASONING_TOKEN_RESERVE_MAX);
+  const keyValidDays = optionalInteger("keyValidDays", 3_650);
+  const allowedTasks = AI_TASKS.filter(task => text(form, aiAllowedTaskField(task.id)) === "1").map(task => task.id);
   if (issues.length) return { input: null, issues };
-  return { input: Object.freeze({ id, expectedVersion, label, kind, baseUrl, key, cliTool, cliModels, deviceId, capacitySlots, contextTokens, enabled, note, cliVersion }), issues };
+  return { input: Object.freeze({ id, expectedVersion, label, kind, baseUrl, key, cliTool, cliModels, deviceId, capacitySlots, contextTokens, enabled, note, cliVersion,
+    manualModels, reasoningTokenReserve, keyValidDays, allowedTasks }), issues };
 }
 
 /** 「작업 ↔ 모델」 한 줄의 폼 칸 이름(RankSelects slotNames). */
@@ -199,9 +238,15 @@ export function stableJson(value: unknown): unknown {
 
 // ── 선택지 ───────────────────────────────────────────────────────────────────────────────────────────────
 
-/** API uses the last /models list; OpenCode requires verified host metadata; other CLI tools keep their registered names. */
-export const aiConnectionModelIds = (connection: Pick<AiConnectionView, "kind" | "models" | "cliModels"> & Partial<Pick<AiConnectionView, "cliTool" | "cliCatalog">>): string[] => {
-  if (connection.kind === "api") return (connection.models ?? []).map(model => model.id);
+/**
+ * API uses the last /models list plus the operator-typed names of a server without one (manualModels, 2026-11-10);
+ * OpenCode requires verified host metadata; other CLI tools keep their registered names.
+ */
+export const aiConnectionModelIds = (connection: Pick<AiConnectionView, "kind" | "models" | "cliModels"> & Partial<Pick<AiConnectionView, "cliTool" | "cliCatalog" | "manualModels">>): string[] => {
+  if (connection.kind === "api") {
+    const served = (connection.models ?? []).map(model => model.id);
+    return [...served, ...(connection.manualModels ?? []).filter(model => !served.includes(model))];
+  }
   if (connection.cliTool === "opencode") {
     const verified = new Set(connection.cliCatalog?.models.map(model => model.id) ?? []);
     return connection.cliModels.filter(model => verified.has(model));
@@ -209,8 +254,15 @@ export const aiConnectionModelIds = (connection: Pick<AiConnectionView, "kind" |
   return [...connection.cliModels];
 };
 
+/** 서버 목록에는 없고 운영자가 적은 이름으로만 있는 모델인가(API) — 저장은 목록 대조 없이 1토큰 시험과 연결의 컨텍스트 상한으로 계약을 만든다. */
+export const aiConnectionManualOnly = (connection: Pick<AiConnectionView, "kind" | "models"> & Partial<Pick<AiConnectionView, "manualModels">>, model: string): boolean =>
+  connection.kind === "api" && (connection.manualModels ?? []).includes(model) && !(connection.models ?? []).some(entry => entry.id === model);
+/** 켜진 API 연결이 고를 모델이 하나도 없다(목록을 못 읽었거나 0개이고, 적은 모델 이름도 없다) — 「목록 못 읽음」 알림의 조건 */
+export const aiConnectionModelsMissing = (connection: Pick<AiConnectionView, "kind" | "models" | "enabled"> & Partial<Pick<AiConnectionView, "manualModels">>): boolean =>
+  connection.enabled && connection.kind === "api" && !(connection.models?.length) && !(connection.manualModels?.length);
+
 /** 작업이 실제로 고를 수 있는 모델 id — OpenCode chat은 DeepSeek, vision은 카탈로그의 실제 vision=true만. 그 밖의 CLI/API는 기존과 같다. */
-export const aiTaskConnectionModelIds = (task: AiTaskDef, connection: Pick<AiConnectionView, "kind" | "models" | "cliModels"> & Partial<Pick<AiConnectionView, "cliTool" | "cliCatalog">>): string[] => {
+export const aiTaskConnectionModelIds = (task: AiTaskDef, connection: Pick<AiConnectionView, "kind" | "models" | "cliModels"> & Partial<Pick<AiConnectionView, "cliTool" | "cliCatalog" | "manualModels">>): string[] => {
   if (connection.kind === "cli" && connection.cliTool === "opencode") {
     if (task.kind === "vision") return (connection.cliCatalog?.models ?? []).filter(model => model.vision === true && /deepseek/i.test(model.id) && connection.cliModels.includes(model.id)).map(model => model.id);
     const ids = aiConnectionModelIds(connection);
@@ -265,6 +317,10 @@ export function aiRankOptionBlocked(task: Pick<AiTaskDef, "id" | "slots" | "same
   return task.slots > 1 && rows.some(row => row.task === task.id && row.slot !== slot && aiSameUnderlyingModel(row.model, option.model));
 }
 
+/** 연결의 「쓸 수 있는 작업」을 사람 말로(작업 이름을 「·」로 잇는다) — 제한이 없으면 「모든」 */
+export const aiConnectionAllowedText = (connection: Partial<Pick<AiConnectionView, "allowedTasks">>): string =>
+  connection.allowedTasks?.length ? connection.allowedTasks.map(id => aiTask(id)?.label ?? id).join("·") : "모든";
+
 export const AI_KEY_CONFLICT_TEXT = "같은 주소의 계약 키가 서로 다름";
 /**
  * 켜진 API 연결 중 모델 목록을 못 읽은 것 — 그 서버의 모델은 드롭다운에 없다(화면이 까닭과 함께 위에 알린다).
@@ -272,9 +328,9 @@ export const AI_KEY_CONFLICT_TEXT = "같은 주소의 계약 키가 서로 다�
  */
 export function aiUnreadConnections(connections: readonly AiConnectionView[], keyConflicts: readonly string[] = []): { id: string; label: string; reason: string }[] {
   const conflict = new Set(keyConflicts);
-  return connections.filter(row => row.enabled && row.kind === "api" && (row.models === null || row.models.length === 0 || (!row.hasKey && conflict.has(row.id))))
+  return connections.filter(row => row.enabled && row.kind === "api" && (aiConnectionModelsMissing(row) || (!row.hasKey && conflict.has(row.id))))
     .map(row => ({ id: row.id, label: row.label, reason: [row.hasKey ? "" : "키 없음", !row.hasKey && conflict.has(row.id) ? AI_KEY_CONFLICT_TEXT : "",
-      row.models === null || row.models.length === 0 ? aiModelsErrorText(row.modelsError) ?? (row.models === null ? "아직 못 읽음" : "모델 0개") : ""].filter(Boolean).join(" · ") }));
+      aiConnectionModelsMissing(row) ? aiModelsErrorText(row.modelsError) ?? (row.models === null ? "아직 못 읽음" : "모델 0개") : ""].filter(Boolean).join(" · ") }));
 }
 
 // ── 검증 ───────────────────────────────────────────────────────────────────────────────────────────────
@@ -306,7 +362,10 @@ export function validateAiTaskRanks(taskId: string, slot: number, ranks: readonl
     const rank = index + 1, connection = context.connections.find(entry => entry.id === row.provider);
     if (!connection) { issues.push(`${rank}순위: 연결을 찾지 못했습니다(지워졌을 수 있습니다). 다시 골라주세요.`); return; }
     if (!connection.enabled) issues.push(`${rank}순위: 연결 「${connection.label}」이 꺼져 있습니다. AI 연결에서 켜거나 다른 연결을 고르세요.`);
-    if (!aiTaskAccepts(task, connection)) issues.push(connection.kind === "api"
+    if (!aiConnectionTaskAllowed(task.id, connection))
+      issues.push(`${rank}순위: 연결 「${connection.label}」은(는) ${aiConnectionAllowedText(connection)} 작업에만 쓰도록 제한돼 있습니다. `
+        + "다른 작업에 쓰려면 LLM 운영에서 그 연결의 「쓸 수 있는 작업」을 바꾸세요(약관상 이용 범위를 먼저 확인하세요).");
+    else if (!aiTaskAccepts(task, connection)) issues.push(connection.kind === "api"
       ? `${rank}순위: ${task.label}은(는) API 주소 연결을 받지 않습니다(CLI ${task.cliTools.map(tool => AI_CLI_TOOL_LABELS[tool]).join("·") || "없음"}만).`
       : `${rank}순위: ${task.label}은(는) ${connection.cliTool ? AI_CLI_TOOL_LABELS[connection.cliTool] : "이 CLI"}를 받지 않습니다.`);
     if (row.reasoningEffort && !aiRankReasoningEfforts(task.id, connection, row.model).includes(row.reasoningEffort))
@@ -376,7 +435,9 @@ export type AiReadinessInput = Readonly<{
     /** CLI 계약 행(`cli:<provider>:<route>`)의 버전(PR C1) */
     cliVersion?: string | null;
     /** CLI 엔진 계약의 배포 리비전 — prepared source와 다르면 계약을 새로 만든다. */
-    deploymentRevision?: string | null }>[];
+    deploymentRevision?: string | null;
+    /** 계약에 실린 추론 토큰 여유(사유 번역 계약만, 2026-11-10) — 연결의 값과 다르면 알린다 */
+    reasoningTokenReserve?: number | null }>[];
   /** 고정 로컬 경로의 계약(backendId = 정책 route 의 providerBudgetId) */
   localContract: (backendId: string) => Readonly<{ model: string; endpoint: string | null }> | null;
   /**
@@ -592,6 +653,15 @@ export function aiRankReadiness(task: AiTaskDef, rank: number, connection: AiCon
         }
       }
       checkDevice(checkRoute(provider, provider === "abcllm", "로컬 직접 경로는 예산·장비 이름이 계약과 같아야 해서 자동으로 만들지 않습니다."));
+      // 목록 없는 서버에 적은 모델(2026-11-10): 목록 대조 없이 1토큰 시험으로 확인하므로 계약 상한은 연결의 「컨텍스트 상한」이다
+      if (createContract && aiConnectionManualOnly(connection, model) && !connection.contextTokens)
+        blocking.push(`${head}: 목록(/models)에 없는 모델이라 계약 상한을 알 수 없습니다. LLM 운영에서 이 연결의 「컨텍스트 상한」을 적은 뒤 저장하세요.`);
+      const reserve = connection.reasoningTokenReserve ?? null;
+      if (reserve && !AI_REASONING_RESERVE_TASKS.includes(task.id))
+        warnings.push(`${head}: 이 작업의 요청은 연결의 추론 토큰 여유(${reserve})를 쓰지 않습니다 — 추론 토큰이 max_tokens 에 들어가는 모델이면 답이 잘릴 수 있습니다.`);
+      else if (!createContract && own.length && AI_REASONING_RESERVE_TASKS.includes(task.id) && (own[0].reasoningTokenReserve ?? null) !== reserve)
+        warnings.push(`${head}: 계약의 추론 토큰 여유(${own[0].reasoningTokenReserve ?? "없음"})가 연결의 값(${reserve ?? "없음"})과 다릅니다 — 계약의 값으로 부릅니다. `
+          + `바꾸려면 서빙 계약 화면에서 ${routeId} · ${identity} 계약을 끈 뒤 이 설정을 다시 저장하세요.`);
       return result();
     }
     case "audit-direct": {
@@ -876,6 +946,8 @@ const FIELD_LABELS: Readonly<Record<string, string>> = {
   cliTool: "CLI 도구(claude·codex·grok·opencode)", cliModels: "CLI 모델 이름(일반 CLI 1~32개, M3 OpenCode 실제 목록 1~512개)", cliVersion: "CLI 버전(80자까지, `--version` 출력 그대로)",
   deviceId: "장비 이름(공백 없이 120자까지)",
   capacitySlots: "칸 수(1~256)", contextTokens: "컨텍스트 상한(1~2097152 토큰)", note: "메모(400자까지)",
+  manualModels: "목록 없는 서버의 모델 이름(16개까지, 영문·숫자·._:/@+- 200자까지)", reasoningTokenReserve: "추론 토큰 여유(1~32768)",
+  keyValidDays: "키 유효 기간(1~3650일)",
   task: "작업", slot: "칸", revision: "화면 판", rank: "순위 칸",
 };
 const CODE_MESSAGES: Readonly<Record<string, string>> = {
@@ -903,6 +975,7 @@ const CODE_MESSAGES: Readonly<Record<string, string>> = {
   model_capacity_policy_missing: "용량 정책이 없어 경로를 덧붙일 수 없습니다.",
   model_capacity_route_conflict: "용량 정책에 같은 경로·모델이 다른 예산·장비로 있어 덧붙일 수 없습니다(정책 개정 필요).",
   model_capacity_routes_cap: "용량 정책의 경로 수가 한도를 넘습니다.",
+  model_capacity_route_undeclared: "용량 정책의 한도 선언(groupLimits·providerLimits)에 새 장비를 넣을 값을 찾지 못했습니다. 장비 한도 화면에서 장비 행을 확인하세요.",
   model_capacity_append_chain_full: "용량 정책의 앞 판 사슬이 가득 찼습니다. 옛 판의 호출이 끝난 뒤 다시 저장하세요.",
   invalid_actor: "관리자 이름을 읽지 못했습니다. 다시 로그인하세요.",
   denied: "권한이 없습니다. 다시 로그인해주세요.",

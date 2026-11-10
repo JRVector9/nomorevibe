@@ -496,6 +496,17 @@ it('retains full C after EOF for review while a new boot retries the failed cach
     expect((await admin`SELECT state FROM model_capacity_requests WHERE request_id=${unknown.request_id}::uuid`)[0].state).toBe('indeterminate');
   });
 }));
+// 2026-11-10: 공급자의 요청 빈도 한도(HTTP 429 → rate_limit, 예: LG EXAONE API 의 초당 한도)는 글 탓이 아니다 — 캐시 시도 수를 세지 않고 재시도 시각만 미룬다.
+// 보낸 뒤의 응답이라 보내지 않았다는 증인이 없다 — 장부 행은 예전처럼 결과 미확정(indeterminate)으로 남는다.
+it('records a provider 429 as rate_limit without counting the cache attempt', exercise(async () => {
+  const item = await seed(2); await server(async ({ bodies, setReply }) => {
+    setReply(response => { response.statusCode = 429; response.setHeader('retry-after', '1'); response.end('{"result_code":429,"description":"rate limit"}'); });
+    expect(await tick()).toMatchObject({ status: 'completed' }); expect(bodies).toHaveLength(1);
+    const [row] = await admin`SELECT status,attempts,error_code,retry_at>clock_timestamp() AS backed_off FROM text_translations WHERE source_hash=${item.hash}`;
+    expect(row).toEqual({ status: 'failed', attempts: 2, error_code: 'rate_limit', backed_off: true });
+    expect(Array.from(await admin`SELECT state FROM model_capacity_requests WHERE owner_instance_id=${prefix}`)).toEqual([{ state: 'indeterminate' }]);
+  });
+}));
 it('settles a direct engine\'s complete answer without the gateway\'s PR3 usage_provenance even under the strict opt-in', exercise(async () => {
   // PR3 의 usage_provenance 표시는 게이트웨이가 붙이던 것이다. 게이트웨이가 없어진 뒤(2026-10-30) 계약은 엔진 직접 연결로만 열리므로
   // opt-in 헤더는 그대로 보내되, 표시 없는 엔진의 완결 응답은 terminal 이고 엔진이 보고한 usage 로 정산한다.

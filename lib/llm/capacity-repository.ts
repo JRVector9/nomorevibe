@@ -2787,8 +2787,13 @@ const sameRoute = (a: ModelCapacityRoute, b: ModelCapacityRoute) => routeKey(a) 
  *   지금 세대의 hash 는 control 을 읽을 때 문서와 대조됐다(parsedControl). 장부 확인과 쓰기가 같은 control FOR UPDATE 아래라 사이에 새 행이 생기지 않는다.
  * 대기 행은 다음 poll 에서 여느 정책 변경처럼 policy_changed 로 거둬지고, 옛 판의 reserved 행은 dispatch 에서 ownership_lost 다(점유는 인증된다).
  * 사슬 칸이 있는 정책은 옛 parser 가 읽지 못한다 — 모든 용량 소비자가 이 판을 돈 뒤에만 배정을 저장한다(같은 창 배포).
+ * - 한도 선언 맵(2026-11-10): 정책에 `groupLimits`·`providerLimits` 가 있으면 route 의 장비·예산 이름이 그 키에 있어야 정책이 파싱된다. 입장은 그 값을
+ *   읽지 않는 칸(MODEL_CAPACITY_POLICY_IGNORED_FIELDS — 장비 행이 한도, groupLimits 는 장비 행이 없을 때의 대체 한도)이고 덧붙이기 호환 판정도 견주지 않는다.
+ *   `declareLimit` 을 주면 새 route 의 아직 없는 장비·예산 키를 그 장비 값(1..256)으로 넣는다. 이미 있는 키는 바꾸지 않는다. 값을 모르면
+ *   `model_capacity_route_undeclared` 로 아무것도 쓰지 않는다. 주지 않으면 예전 그대로다(선언 없는 이름은 파싱 오류).
  */
-export async function appendCompatibleRoutes(tx: ProductTransaction, routes: readonly NewModelCapacityRoute[]):
+export async function appendCompatibleRoutes(tx: ProductTransaction, routes: readonly NewModelCapacityRoute[],
+  options: { declareLimit?: (groupId: string) => number | undefined } = {}):
   Promise<{ appended: ModelCapacityRoute[]; policyRevision: number }> {
   if (currentReplayDb()) throw new Error("model_capacity_replay_unsupported");
   const wanted: ModelCapacityRoute[] = [];
@@ -2818,7 +2823,23 @@ export async function appendCompatibleRoutes(tx: ProductTransaction, routes: rea
   if (chain.length > MODEL_CAPACITY_PREDECESSORS_MAX) return fail("model_capacity_append_chain_full");
   const { compatiblePredecessor: _single, compatiblePredecessors: _chain, ...base } = current;
   void _single; void _chain;
-  const next = parseModelCapacityPolicy({ ...base, routes: [...current.routes, ...added], ...(chain.length ? { compatiblePredecessors: chain } : {}) });
+  const declared: { groupLimits?: Record<string, number>; providerLimits?: Record<string, number> } = {};
+  if (options.declareLimit) {
+    const groupLimits = current.groupLimits ? { ...current.groupLimits } : undefined;
+    const providerLimits = current.providerLimits ? { ...current.providerLimits } : undefined;
+    for (const route of added) {
+      const missingGroup = groupLimits && !Object.hasOwn(groupLimits, route.groupId);
+      const missingBudget = providerLimits && !Object.hasOwn(providerLimits, route.providerBudgetId);
+      if (!missingGroup && !missingBudget) continue;
+      const value = options.declareLimit(route.groupId);
+      if (!(typeof value === "number" && Number.isSafeInteger(value) && value >= 1 && value <= 256)) fail("model_capacity_route_undeclared");
+      if (missingGroup) groupLimits![route.groupId] = value!;
+      if (missingBudget) providerLimits![route.providerBudgetId] = value!;
+    }
+    if (groupLimits) declared.groupLimits = groupLimits;
+    if (providerLimits) declared.providerLimits = providerLimits;
+  }
+  const next = parseModelCapacityPolicy({ ...base, ...declared, routes: [...current.routes, ...added], ...(chain.length ? { compatiblePredecessors: chain } : {}) });
   const [row] = await tx.update(modelCapacityControl).set({ policy: next, policyHash: modelCapacityPolicyHash(next),
     revision: sql`${modelCapacityControl.revision} + 1`, updatedAt: sql`clock_timestamp()` })
     .where(and(eq(modelCapacityControl.id, 1), eq(modelCapacityControl.revision, state.revision))).returning({ revision: modelCapacityControl.revision });
