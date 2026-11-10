@@ -1,6 +1,7 @@
 import { pgTable, serial, text, varchar, timestamp, jsonb, integer, index, doublePrecision, uniqueIndex } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import type { ReviewOutcome, ReviewSnapshot, ReviewSource } from "@/lib/crawl/agent-review-contract";
+import type { DelegatedModelOutcome } from "@/lib/crawl/delegated-hold";
 
 /**
  * 크롤 파이프라인.
@@ -231,6 +232,8 @@ export const crawlReviewAttempts = pgTable("crawl_review_attempts", {
   attemptNumber: integer("attempt_number").notNull(),
   reusedFromAttemptId: integer("reused_from_attempt_id"),
   outcome: jsonb("outcome").$type<ReviewOutcome>(),
+  /** 위임 검수의 모델 원래 답과 사람에게 남긴 까닭(0173, lib/crawl/delegated-hold.ts). 위임 시도만 쓰고 옛 행은 NULL */
+  modelOutcome: jsonb("model_outcome").$type<DelegatedModelOutcome>(),
   errorCode: varchar("error_code", { length: 120 }),
   inputTokens: integer("input_tokens"),
   outputTokens: integer("output_tokens"),

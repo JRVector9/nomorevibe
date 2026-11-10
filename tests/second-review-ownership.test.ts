@@ -32,7 +32,7 @@ function context(published = false): SecondReviewDomainContext {
   const first: CrawlReviewAttempt = { id: 31, candidateId: candidate.id, kind: "automatic", state: "succeeded",
     inputHash: input.inputHash, sourceRevisionHash: input.sourceRevisionHash, policyHash: input.policyHash,
     snapshot: input.snapshot, source: input.source, promptVersion: REVIEW_PROMPT_VERSION, rulesVersion: REVIEW_RULES_VERSION,
-    provider: "abcllm", model: "first-model", attemptNumber: 1, reusedFromAttemptId: null,
+    provider: "abcllm", model: "first-model", attemptNumber: 1, reusedFromAttemptId: null, modelOutcome: null,
     outcome: { decision: "approve", confidence: 0.94, reason: "A task application", evidenceIds: ["product"] },
     errorCode: null, inputTokens: null, outputTokens: null, costUsd: null, actor: null, reason: null,
     leaseToken: "historical-first", startedAt: now, completedAt: now, retryAfter: null, validUntil: input.validUntil };
