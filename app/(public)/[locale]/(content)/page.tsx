@@ -258,7 +258,7 @@ function EmptyReason({
     <div className="projects-grid">
       <div className="empty-state">
         <Heading>{t("empty.noProjects")}</Heading>
-        <p><Link href={localePath(locale, "/launch")} className="font-semibold text-accent">{t("empty.launchHint", { command: "/nomorevibe" })}</Link>
+        <p><Link prefetch={false} href={localePath(locale, "/launch")} className="font-semibold text-accent">{t("empty.launchHint", { command: "/nomorevibe" })}</Link>
         </p>
       </div>
     </div>

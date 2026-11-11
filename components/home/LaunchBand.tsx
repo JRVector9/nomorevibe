@@ -18,7 +18,7 @@ export function LaunchBand() {
       </div>
       <div className="launch-actions">
         <code className="launch-command">{LAUNCH_COMMAND}</code>
-        <Link className="primary" href={localePath(locale, "/launch")}>{t("launch.flow")}</Link>
+        <Link prefetch={false} className="primary" href={localePath(locale, "/launch")}>{t("launch.flow")}</Link>
       </div>
     </section>
   );

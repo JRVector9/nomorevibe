@@ -18,6 +18,7 @@ import { gatewayLocalDirectDispatchSql, gatewayLocalDirectEventTerminalSql, gate
   gatewayLocalDirectTerminalSql } from "@/lib/llm/gateway-local-direct-sql";
 import { textLocalDirectDispatchSql, textLocalDirectEventTerminalSql, textLocalDirectTerminalSql } from "@/lib/llm/gateway-local-direct-binding-sql";
 import { opencodeCliLogicalSql, opencodeCliDispatchSql, opencodeCliEventTerminalSql } from "@/lib/llm/opencode-cli-binding-sql";
+import { applied0168Rules } from "@/scripts/ops/generate-opencode-task-sql";
 import { db } from "@/lib/db";
 import { createReviewInput, reviewHash, type ReviewInput } from "@/lib/crawl/agent-review-contract";
 import { DEFAULT_CRAWL_SETTINGS } from "@/lib/crawl/settings-schema";
@@ -670,9 +671,13 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
     const publication: Record<string, string> = { model_capacity_requests_logical_check: publicationApiLogicalSql,
       model_capacity_requests_members_check: publicationApiLogicalSql, model_capacity_requests_dispatch_check: publicationApiDispatchSql,
       model_capacity_requests_terminal_check: publicationApiTerminalSql, model_capacity_events_terminal_check: publicationApiEventSql };
+    // 0168 as applied (its migration file): the dispatch/events-terminal twins still carried the JSON provider '"claude-cli"'::jsonb until 0175.
+    const applied0168 = applied0168Rules(readFileSync(path.join(root, "drizzle/0168_opencode_task_cli.sql"), "utf8"));
     const opencodeTask: Record<string, string> = { model_capacity_requests_logical_check: opencodeTaskLogicalSql,
-      model_capacity_requests_members_check: opencodeTaskMembersSql, model_capacity_requests_dispatch_check: opencodeTaskDispatchSql,
-      model_capacity_events_terminal_check: opencodeTaskEventTerminalSql };
+      model_capacity_requests_members_check: opencodeTaskMembersSql, model_capacity_requests_dispatch_check: applied0168.model_capacity_requests_dispatch_check,
+      model_capacity_events_terminal_check: applied0168.model_capacity_events_terminal_check };
+    expect(applied0168.model_capacity_requests_logical_check).toBe(opencodeTaskLogicalSql);
+    expect(applied0168.model_capacity_requests_members_check).toBe(opencodeTaskMembersSql);
     for (const name of [...LEFT, ...UNTOUCHED]) {
       const branch = publication[name];
       if (!branch) { expect(current0168[name], `${name}: unchanged by 0166/0168`).toBe(after0163[name]); continue; }
@@ -681,7 +686,8 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
       expect(current0168[name], `${name}: exact prior ordinals plus the 0166 publication and 0168 task branches`).toBe(`CHECK (${predecessor} OR (${branch})${taskTail})`);
     }
     // 0174 appends only the HTTP-rejected branch to the two terminal CHECKs (next ordinal); every other CHECK is byte-identical.
-    await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
+    expect(journal.entries.find(entry => entry.idx === 174)!.tag).toBe("0174_gateway_http_rejected");
+    await migrateThrough(174);
     const current0174 = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
     const rejected: Record<string, string> = { model_capacity_requests_terminal_check: gatewayHttpRejectedTerminalSql,
       model_capacity_events_terminal_check: gatewayHttpRejectedEventTerminalSql };
@@ -689,6 +695,18 @@ it("0102: exact migration prefixes preserve earlier CHECKs; current constraints 
       const branch = rejected[name];
       if (!branch) { expect(current0174[name], `${name}: unchanged by 0174`).toBe(current0168[name]); continue; }
       expect(current0174[name], `${name}: exact prior ordinals plus the 0174 HTTP-rejected branch`).toBe(`CHECK (${inner(current0168[name])} OR (${branch}))`);
+    }
+    // 0175 replaces the two defective 0168 leaves in place (same ordinal) with the corrected twins; every other leaf and CHECK is byte-identical.
+    await migrate(drizzle(step), { migrationsFolder: path.join(root, "drizzle") });
+    const current0175 = await constraintDefs(step, [...LEFT, ...UNTOUCHED]);
+    const repaired: Record<string, [string, string]> = {
+      model_capacity_requests_dispatch_check: [applied0168.model_capacity_requests_dispatch_check, opencodeTaskDispatchSql],
+      model_capacity_events_terminal_check: [applied0168.model_capacity_events_terminal_check, opencodeTaskEventTerminalSql] };
+    for (const name of [...LEFT, ...UNTOUCHED]) {
+      const pair = repaired[name];
+      if (!pair) { expect(current0175[name], `${name}: unchanged by 0175`).toBe(current0174[name]); continue; }
+      expect(current0174[name].split(`(${pair[0]})`), `${name}: the applied 0168 leaf occurs once before 0175`).toHaveLength(2);
+      expect(current0175[name], `${name}: 0168 leaf replaced in place by the corrected twin`).toBe(current0174[name].replace(`(${pair[0]})`, () => `(${pair[1]})`));
     }
     expect((await step<{ count: number }[]>`SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations`)[0].count).toBe(journal.entries.length);
   } finally { rmSync(partial, { recursive: true, force: true }); await step.end({ timeout: 5 }); }
