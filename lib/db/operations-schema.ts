@@ -134,6 +134,8 @@ export const modelCapacityControl = pgTable('model_capacity_control', {
  * nmv_model_capacity_check_guard_rebuild(표) 를 부른다(drizzle/0160_ledger_check_rules.sql, docs/operations/2026-11-01-ledger-check-cost.md).
  * 0161 은 text 7경로 local-direct 가지(textLocalDirect*Sql), 0163 은 OpenCode 검수 가지(opencodeCli*Sql)를 그 다음 ordinal 로 넣는다.
  * 0174 는 text 7경로의 HTTP 거절 정산 가지(gatewayHttpRejected*Sql — requests terminal·events terminal)를 그 다음 ordinal 로 넣는다.
+ * 0175 는 행을 더하지 않고 0168 의 OpenCode 소개·감사 가지 중 requests dispatch·events terminal 두 행을 같은 ordinal 에서 고친 글(opencodeTask*Sql)로
+ * 바꾼다 — 0168 이 JSON 공급자 글자('"claude-cli"'::jsonb)를 그대로 두어 OpenCode 가지가 성립할 수 없었다. 아래 선언은 고친 상수를 그대로 쓴다.
  * 이 선언도 같은 순서로 OR 를 이어 둔다 — DB 술어와 글자 단위로 같게 다시 파싱하지 않고, 시험은 rules 행 (ordinal, predicate) 을 상수와 직접 비교한다.
  */
 export const modelCapacityRequests = pgTable('model_capacity_requests', {

@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { setAiTaskModelsForTest, type AiTaskModelSnapshotRow } from "@/lib/llm/ai-task-models-snapshot";
 import { setReviewRanksForTest } from "@/lib/crawl/review-task-ranks";
 import { RECHECK_TASK_LABEL, recheckDirectEndpoint, recheckReviewerPlan, recheckReviewerPlanText } from "@/lib/crawl/published-recheck";
-import { claimRecheckItem, clearRecheckRankPause, noteRecheckItemRankRefused, noteRecheckRankPaused, RECHECK_ITEM_SKIP_MS, RECHECK_RANK_PAUSE_MS,
+import { claimRecheckItem, clearRecheckRankPause, noteRecheckItemRankRefused, noteRecheckRankFailed, noteRecheckRankPaused, RECHECK_ITEM_SKIP_MS,
+  RECHECK_RANK_FAILURE_PAUSE_MS, recheckRankFailed, RECHECK_RANK_PAUSE_MS,
   recheckItemRankRefused, recheckLaneOf, recheckRankPaused, recheckSkips, recheckTurn, releaseRecheckItem, resetRecheckLanes } from "@/lib/crawl/published-recheck-lanes";
 import { cliRankRow } from "./fake-cli-path";
 
@@ -124,6 +125,21 @@ describe("두 묻기 줄의 순위 차례(published-recheck-lanes.ts)", () => {
     expect(recheckSkips(api2, "cli", new Set(), 1_000, 7)).toBe(true);
     expect(recheckItemRankRefused(7, api2, 1_000 + RECHECK_ITEM_SKIP_MS - 1)).toBe(true);
     expect(recheckItemRankRefused(7, api2, 1_000 + RECHECK_ITEM_SKIP_MS)).toBe(false);
+  });
+
+  it("호출이 오류로 던진 순위는 두 줄 모두(자기 줄도) 잠시 건너뛰고, 쉼이 끝나거나 그 순위가 답하면 다시 차례다", () => {
+    const plan = [cli1, api2, cli3];
+    noteRecheckRankFailed(cli1, 1_000);
+    // 미룸의 쉼과 달리 자기 줄(cli)도 다음 틱에 그 순위를 건너뛴다
+    expect(recheckTurn(plan, "cli", new Set(), 1_000)).toBe(api2);
+    expect(recheckTurn(plan, "api", new Set(), 1_000)).toBe(api2);
+    expect(recheckRankFailed(cli1, 1_000 + RECHECK_RANK_FAILURE_PAUSE_MS - 1)).toBe(true);
+    expect(recheckRankPaused(cli1, 1_000)).toBe(false);
+    expect(recheckTurn(plan, "cli", new Set(), 1_000 + RECHECK_RANK_FAILURE_PAUSE_MS)).toBe(cli1);
+    noteRecheckRankFailed(cli3, 2_000);
+    expect(recheckTurn([cli3], "cli", new Set(), 2_001)).toBeNull();
+    clearRecheckRankPause(cli3);
+    expect(recheckTurn([cli3], "cli", new Set(), 2_001)).toBe(cli3);
   });
 
   it("묻는 동안 항목을 잡아 두 줄이 같은 항목을 함께 묻지 않는다", () => {
