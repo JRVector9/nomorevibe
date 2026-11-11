@@ -36,7 +36,7 @@ describe("catalog collector coverage", () => {
       job("product-stars-refresh", { notBefore: new Date(now.getTime() + 30_000), lastError: "token-secret upstream" }),
       job("product-star-observation", { requestedVersion: 3 }),
       job("ai-level-refresh", { lockedAt: old, leaseToken: "secret-lease" }),
-    ], settings: { ...settings, discover: { ...settings.discover, showHn: { ...settings.discover.showHn, enabled: false } } } }).jobs;
+    ], settings: { ...settings, discover: { ...settings.discover, showHn: { ...settings.discover.showHn, enabled: false }, showGn: { ...settings.discover.showGn, enabled: false } } } }).jobs;
     const state = (name: string) => rows.find(row => row.name === name)?.state;
     expect(state("crawl-fetch")).toBe("running");
     expect(state("product-readme-refresh")).toBe("paused");
@@ -44,6 +44,7 @@ describe("catalog collector coverage", () => {
     expect(state("product-star-observation")).toBe("queued");
     expect(state("ai-level-refresh")).toBe("stale-lock");
     expect(state("hn-show-seed")).toBe("disabled");
+    expect(state("gn-show-seed")).toBe("disabled");
     expect(state("news-refresh")).toBe("never-run");
     expect(build({ settings: { ...settings, enabled: false } }).jobs.find(row => row.name === "crawl-fetch")?.state).toBe("disabled");
     expect(build({ settings: { ...settings, enabled: false } }).jobs.find(row => row.name === "uptime-ping")?.state).toBe("never-run");

@@ -44,8 +44,8 @@ describe("단계 표", () => {
   const labels = (group: string, headline?: boolean) => PIPELINE_STAGES
     .filter((row) => row.group === group && (headline === undefined || (row.headline === true) === headline)).map((row) => row.label);
 
-  it("들어오는 곳 3 · 심사 흐름 6 · 발행 후 보강 12칸과 그 밖 — 쉬운 말과 차례", () => {
-    expect(labels("source")).toEqual(["GitHub 검색", "Show HN", "X"]);
+  it("들어오는 곳 4 · 심사 흐름 6 · 발행 후 보강 12칸과 그 밖 — 쉬운 말과 차례", () => {
+    expect(labels("source")).toEqual(["GitHub 검색", "Show HN", "Show GN", "X"]);
     expect(labels("review")).toEqual(["원본 수집", "규칙 심사", "AI 1차", "AI 2차", "사람 심사", "발행"]);
     expect(labels("enrichment", true)).toEqual([
       "공개 근거", "개발 AI 근거", "AI 단계", "키워드 짓기", "키워드 검수", "의미 검색 벡터", "제품 번역", "사유 번역", "발행분 감사", "저장소·스타", "응답 점검", "소개 검수",

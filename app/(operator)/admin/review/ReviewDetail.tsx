@@ -170,6 +170,8 @@ export function ReviewDetail({ entry, reasons, onDecided }: {
       </div>}
       <div>
         <h2 className="text-[15px] font-bold leading-snug">{entry.name}</h2>
+      {entry.discoverySource?.source === "geeknews" && /^\d{1,12}$/.test(entry.discoverySource.topicId) && <a href={`https://news.hada.io/topic?id=${entry.discoverySource.topicId}`} target="_blank" rel="noreferrer noopener">GeekNews · Show GN #{entry.discoverySource.topicId} ↗</a>}
+
         <a href={`https://github.com/${candidate.repo}`} target="_blank" rel="noreferrer noopener"
           className="font-mono text-[13px] text-fg-3 hover:text-accent">{candidate.repo}</a>
         {productUrl && (

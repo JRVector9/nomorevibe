@@ -40,7 +40,7 @@ export const OFF_BELT_TASKS: readonly string[] = Object.freeze([
 
 /** LLM 을 안 쓰는 칸 — 짧은 말(카드)과 코드 근거(자세히) */
 export const NO_LLM: Readonly<Record<"discover" | "fetch" | "judge" | "sink", { short: string; why: string }>> = Object.freeze({
-  discover: { short: "탐색 API", why: "GitHub 검색·Show HN·한국어 프로젝트 탐색은 검색 API 호출과 규칙으로만 합니다(lib/crawl/jobs/seed.ts·hn-show.ts, 잡 crawl-seed·hn-show-seed·crawl-ko-apply — AI 작업 목록에 없음)." },
+  discover: { short: "탐색 API", why: "GitHub 검색·Show HN·Show GN·한국어 프로젝트 탐색은 검색 API·RSS 호출과 규칙으로만 합니다(lib/crawl/jobs/seed.ts·hn-show.ts·gn-show.ts, 잡 crawl-seed·hn-show-seed·gn-show-seed·crawl-ko-apply — AI 작업 목록에 없음)." },
   fetch: { short: "내려받기", why: "README·홈페이지를 내려받습니다. 「AI 흔적 더듬기」도 파일 목록과 커밋 문구 규칙일 뿐 모델을 부르지 않습니다(lib/crawl/ai-evidence-gate.ts, 잡 crawl-fetch)." },
   judge: { short: "규칙", why: "포크·대형 오픈소스·URL 없음 같은 규칙으로 거릅니다. 잡 카탈로그에 「crawl-judge 모델 없음」으로 적혀 있고 AI 작업 목록에도 없습니다(lib/jobs/catalog.ts)." },
   sink: { short: "게시", why: "공개 목록에 올라간 제품 수를 보여 주는 끝 칸입니다." },

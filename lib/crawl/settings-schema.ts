@@ -24,6 +24,7 @@ export const searchSortSchema = z.enum(["relevance", "recent"]).describe(
 
 /** Show HN 게시물로 넣은 프론티어 항목의 signal 라벨 — 수집 잡(jobs/hn-show.ts)과 흔적 게이트(jobs/fetch.ts)가 같이 쓴다 */
 export const SHOW_HN_SIGNAL = "Show HN";
+export const SHOW_GN_SIGNAL = "Show GN";
 
 const discoverSchema = z.object({
   sourceBuffer: z.object({ enabled: z.boolean() }).strict().default({ enabled: false }),
@@ -80,6 +81,14 @@ const discoverSchema = z.object({
     /** 스스로 내놓은 것이라 커밋 트레일러로 주운 것보다 먼저 본다 */
     priority: z.number().int().min(0).max(1000),
     /** 검색 신호의 requireEvidence 와 같다 — Show HN 게시물에는 AI 조건이 없어 흔적으로 거른다(발행분 트레일러 0.8%) */
+    requireEvidence: z.boolean().optional(),
+  }).strict().default({ enabled: true, priority: 120 }),
+  /** GeekNews 자작 프로젝트 소개 — 저장소만 기존 심사 경로로 보낸다 */
+  showGn: z.object({
+    enabled: z.boolean(),
+    /** 스스로 내놓은 것이라 커밋 트레일러로 주운 것보다 먼저 본다 */
+    priority: z.number().int().min(0).max(1000),
+    /** 검색 신호의 requireEvidence 와 같다 — Show GN 게시물 자체는 AI 제작 근거가 아니다 */
     requireEvidence: z.boolean().optional(),
   }).strict().default({ enabled: true, priority: 120 }),
 });
@@ -677,6 +686,7 @@ export const DEFAULT_CRAWL_SETTINGS: CrawlSettings = {
     maxNewPerHour: 3000,
     maxReviewBacklog: 1_000_000,
     showHn: { enabled: true, priority: 120 },
+    showGn: { enabled: true, priority: 120 },
   },
   judge: {
     autoApproveMinStars: 500,

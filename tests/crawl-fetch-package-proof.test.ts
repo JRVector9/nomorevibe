@@ -19,7 +19,7 @@ vi.mock("@/lib/crawl/repository", () => ({
 vi.mock("@/lib/crawl/settings", () => ({ getSettings: async () => ({
   enabled: true, judge: { docsGenerators: [] },
   discover: { queries: [{ label: "Claude 커밋 트레일러", requireEvidence: false, enabled: true }],
-    showHn: { enabled: true, priority: 120, requireEvidence: false } },
+    showGn: { enabled: true, priority: 120 }, showHn: { enabled: true, priority: 120, requireEvidence: false } },
 }) }));
 vi.mock("@/lib/crawl/github", () => ({ getRepo: mocks.repo }));
 vi.mock("@/lib/crawl/package-probe", () => ({ probePackageManifests: mocks.probe }));
@@ -30,7 +30,7 @@ const { fetchCrawlDocuments } = await import("@/lib/crawl/jobs/fetch");
 
 const job = { name: "crawl-fetch", token: "fetch-unit-token", requestedVersion: 1 };
 const entry = (repo: string): FetchClaim => ({ id: 1, repo, signal: "Claude 커밋 트레일러", builder: null,
-  priority: 0, state: "fetching", attempts: 1, nextAttemptAt: new Date(0), lastError: null, aliasOf: null,
+  priority: 0, state: "fetching", attempts: 1, nextAttemptAt: new Date(0), lastError: null, discoverySource: null, aliasOf: null,
   discoveredAt: new Date(0), updatedAt: new Date(0), ownership: { kind: "legacy", stageEpoch: 1, job } });
 const context = () => ({ cursor: null, lease: job, hasBudget: () => true, save: vi.fn(), log: vi.fn() });
 const run = async (meta: Record<string, unknown>) => {

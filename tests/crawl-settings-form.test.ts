@@ -270,6 +270,20 @@ describe("2026-10-08 리디자인", () => {
     expect(saveSettings.mock.calls[0][0].discover).not.toHaveProperty("showHn");
   });
 
+  it("Show GN 행을 그리고, 그 칸을 보낸 폼만 Show GN 설정을 바꾼다", async () => {
+    const html = render(settingsWithShowHn);
+    expect(html).toContain('name="showGn.priority"');
+    expect(html).toMatch(/name="showGn\.enabled"[^>]*checked/);
+
+    await saveCrawlSettings(null, submitted({ "showGn.priority": "130", "showGn.requireEvidence": "on" }));
+    expect(saveSettings.mock.calls[0][0].discover.showGn).toEqual({ enabled: false, priority: 130, requireEvidence: true });
+
+    saveSettings.mockClear();
+    await saveCrawlSettings(null, submitted());
+    // 옛 폼(그 칸이 없다)은 Show GN 을 건드리지 않는다 — 꺼진 것으로 저장되면 수집이 멈춘다
+    expect(saveSettings.mock.calls[0][0].discover).not.toHaveProperty("showGn");
+  });
+
   it("공개 목록의 급상승 확인 기간을 그리고, 그 칸을 보낸 폼만 기간을 바꾼다", async () => {
     const html = render({ ...twoSignals, rising: { freshDays: 10 } });
     expect(html).toMatch(/<input[^>]*name="risingFreshDays"[^>]*value="10"/);

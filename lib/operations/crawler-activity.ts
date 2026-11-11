@@ -136,6 +136,7 @@ function enabled(name: string, settings: CrawlSettings): boolean {
   if (name === "crawl-fetch") return settings.enabled;
   if (name === "crawl-seed") return settings.enabled && settings.discover.queries.some(query => query.enabled);
   if (name === "hn-show-seed") return settings.enabled && settings.discover.showHn.enabled;
+  if (name === "gn-show-seed") return settings.enabled && settings.discover.showGn.enabled;
   if (name === "agent-evidence-refresh") return settings.agentEvidence.enabled;
   if (name === "news-refresh") return NEWS_SOURCE_KEYS.some(key => !settings.news.disabledSources.includes(key));
   return true;

@@ -43,3 +43,10 @@ it("공개 후 확인도 시안 선택 상세에서 기존 ID·slug·결정을 �
   const html = renderToStaticMarkup(<PrototypeReviewPublished rows={[{ id: 9, slug: "real-project", repo: "real/project", decision: "reject", confidence: .81, reason: "원본 판단", reasonKo: null, trigger: "risk", signals: [] }]} />);
   expect(html).toContain('class="grid detail"'); expect(html).toContain('name="id" value="9"'); expect(html).toContain('name="slug" value="real-project"'); expect(html).toMatch(/<button(?=[^>]*name="decision")(?=[^>]*value="keep")[^>]*>/); expect(html).toContain("공개 중단");
 });
+
+it("GeekNews에서 온 후보의 원문을 표시하고 저장된 임의 URL을 링크로 쓰지 않는다", () => {
+  const html = renderToStaticMarkup(<PrototypeReviewDetail entry={{ ...entry, discoverySource: { source: "geeknews", topicId: "36977", url: "https://untrusted.example" } }} reasons={[]} />);
+  expect(html).toContain("GeekNews · Show GN #36977");
+  expect(html).toContain('href="https://news.hada.io/topic?id=36977"');
+  expect(html).not.toContain("untrusted.example");
+});
