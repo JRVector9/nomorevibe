@@ -344,26 +344,71 @@ it("never reuses an expired completed execution for a changed profile generation
   expect((await ledger(task.product.id)).map(row => row.binding.member.profile.sourceRevision)).toEqual([0, 1]);
 }), 20_000);
 
-it("refuses stale raw rows by one microsecond and a lost job lease after historical settlement", exercise(async () => {
+it("recovers a settled invalid-output stop once after expiry and honors its retry backoff", exercise(async () => {
+  const words = keywords(3), task = await seed(words, null), before = await profileRow(task.product.id);
+  await server(async ({ bodies, setReply }) => {
+    // HTTP 200 with a completed parser failure is definite output, not unknown transport state.
+    setReply((_sent, response) => { response.end(JSON.stringify(envelope("not valid verification JSON"))); });
+    const controller = new AbortController(), reconcile = capacityRepository.reconcileSearchVerifyGatewayTerminal;
+    const interruption = vi.spyOn(capacityRepository, "reconcileSearchVerifyGatewayTerminal").mockImplementation(async (...args) => {
+      const result = await reconcile(...args);
+      controller.abort();
+      return result;
+    });
+    try {
+      expect(await custom(async lease => {
+        const outcome = await tracked(verifyKeywordsWithModelCapacity(task, lease,
+          { timeoutMs: 1_000, chunked: false, roleLease: role, signal: controller.signal }));
+        expect(outcome).toMatchObject({ kind: "result", result: { ok: false, error: "cancelled" } });
+      })).toMatchObject({ status: "completed" });
+    } finally { interruption.mockRestore(); }
+    expect(bodies).toHaveLength(1);
+    expect(await profileRow(task.product.id)).toEqual(before);
+    const [settled] = await ledger(task.product.id);
+    expect(settled).toMatchObject({ state: "settled", outcome: { ok: false, error: "invalid_output" } });
+    await new Promise(resolve => setTimeout(resolve, Math.max(0, Number(settled.binding.deadlineAt) - Date.now()) + 25));
+
+    expect(await custom(async lease => {
+      const outcome = await verify(task, lease);
+      expect(outcome).toMatchObject({ kind: "result", result: { ok: false, error: "invalid_output" } });
+      expect(bodies).toHaveLength(1);
+      if (outcome.kind !== "result" || !outcome.expectation) throw new Error("fixture_result_required");
+      expect(await tracked(recordVerificationResult(task, lease,
+        { kind: "failure", error: "invalid_output" }, outcome.expectation))).toBe(true);
+    })).toMatchObject({ status: "completed" });
+    const saved = await profileRow(task.product.id);
+    expect(saved).toMatchObject({ verified_at: null, verify_attempts: 1, verify_error: "invalid_output" });
+    expect((await admin`SELECT verify_retry_at > clock_timestamp() AS future FROM product_search_profiles WHERE product_id=${task.product.id}`)[0].future).toBe(true);
+    expect(await jobTick()).toMatchObject({ status: "completed" });
+    expect(bodies).toHaveLength(1);
+    expect(await profileRow(task.product.id)).toEqual(saved);
+  });
+  expect(await ledger(task.product.id)).toHaveLength(1);
+}), 20_000);
+
+it.each(["success", "invalid_output"] as const)("refuses stale raw rows by one microsecond and a lost job lease after historical settlement: %s", outcomeKind => exercise(async () => {
   const words = keywords(3), task = await seed(words, null);
-  await server(async ({ bodies }) => {
+  const result = outcomeKind === "success" ? { kind: "success" as const, removed: [], model: VERIFY_MODEL }
+    : { kind: "failure" as const, error: "invalid_output" };
+  await server(async ({ bodies, setReply }) => {
+    if (outcomeKind === "invalid_output") setReply((_sent, response) => { response.end(JSON.stringify(envelope("not valid verification JSON"))); });
     let stale: Awaited<ReturnType<typeof verify>> | undefined, late: Awaited<ReturnType<typeof verify>> | undefined, lateLease: JobLease | undefined;
     await custom(async lease => {
       stale = await verify(task, lease);
       await admin`UPDATE product_search_profiles SET updated_at=updated_at+interval '1 microsecond' WHERE product_id=${task.product.id}`;
       if (stale.kind !== "result" || !stale.expectation) throw new Error("fixture_positive_result_required");
-      expect(await tracked(recordVerificationResult(task, lease, { kind: "success", removed: [], model: VERIFY_MODEL }, stale.expectation))).toBe(false);
-      await expect(recordVerificationResult(task, lease, { kind: "success", removed: [], model: VERIFY_MODEL }, stale.expectation)).rejects.toThrow("invalid_search_verify_write_expectation");
+      expect(await tracked(recordVerificationResult(task, lease, result, stale.expectation))).toBe(false);
+      await expect(recordVerificationResult(task, lease, result, stale.expectation)).rejects.toThrow("invalid_search_verify_write_expectation");
     });
     const [fresh] = (await tracked(pendingVerifications(1000))).filter(candidate => candidate.product.id === task.product.id);
     expect(await custom(async lease => { lateLease = lease; late = await verify(fresh, lease); })).toMatchObject({ status: "completed" });
     if (!late || late.kind !== "result" || !late.expectation || !lateLease) throw new Error("fixture_late_result_required");
-    await expect(recordVerificationResult(fresh, lateLease, { kind: "success", removed: [], model: VERIFY_MODEL }, late.expectation)).rejects.toBeInstanceOf(JobLeaseLostError);
+    await expect(recordVerificationResult(fresh, lateLease, result, late.expectation)).rejects.toBeInstanceOf(JobLeaseLostError);
     expect(bodies).toHaveLength(2);
   });
   expect((await ledger(task.product.id)).map(row => row.state)).toEqual(["settled", "settled"]);
   expect(await profileRow(task.product.id)).toMatchObject({ verified_at: null, verify_attempts: 0, removed_keywords: [] });
-}), 20_000);
+})(), 20_000);
 
 it("fences the fixed product target across owners, reuses own ID and blocks exact-step or numeric-spelling duplicates", exercise(async () => {
   const words = keywords(2), task = await seed(words, null);
