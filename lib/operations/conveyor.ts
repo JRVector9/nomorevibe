@@ -35,6 +35,7 @@ const conveyorCache = sharedLoader<Conveyor>({ namespace: "admin:conveyor", ttlM
 const SOURCES = [
   { job: "crawl-seed", label: "GitHub 검색" },
   { job: "hn-show-seed", label: "Show HN" },
+  { job: "gn-show-seed", label: "Show GN" },
   { job: "crawl-ko-apply", label: "한국어 프로젝트" },
 ] as const;
 

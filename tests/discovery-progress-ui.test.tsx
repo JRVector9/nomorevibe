@@ -30,3 +30,14 @@ describe("discovery progress operator panel", () => {
     expect(html).toContain("완료 범위 미확인");
   });
 });
+
+it("Show GN의 요청·신규 수는 표시하고 RSS를 전체기간 완료로 표시하지 않는다", () => {
+  const at = "2026-11-11T03:30:00Z";
+  const report = buildDiscoveryProgress(at, [{ key: "discovery-progress:geeknews:test", value: {
+    v: 1, worker: "home-crawler", lane: "geeknews", signal: "Show GN", at,
+    counts: { "2026-11-11T03:30|searchRequests": 3, "2026-11-11T03:30|discovered": 2 },
+  } }]);
+  const html = renderToStaticMarkup(createElement(DiscoveryProgress, { read: { ok: true, value: report } }));
+  expect(html).toContain("GeekNews Show GN"); expect(html).toContain("요청 3"); expect(html).toContain("신규 2");
+  expect(report.rows[0].completedThrough).toBeNull();
+});

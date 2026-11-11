@@ -51,6 +51,7 @@ export const JOB_CATALOG: readonly { name: string; role: CatalogRole; intervalMs
   { name: "crawl-seed", role: "crawler", intervalMs: 60_000, lane: "discovery" },
   // 하루 약 123건이 올라온다. 30분이면 한 번에 100건 상한에 걸릴 일이 없다.
   { name: "hn-show-seed", role: "crawler", intervalMs: 30 * 60_000 },
+  { name: "gn-show-seed", role: "crawler", intervalMs: 30 * 60_000 },
   // HN 화제 글 기록 — 최근 72시간·10점 이상 GitHub 글을 한두 요청으로 다시 읽는다(lib/social/hn-talk.ts)
   { name: "hn-talk", role: "crawler", intervalMs: 30 * 60_000 },
   /**

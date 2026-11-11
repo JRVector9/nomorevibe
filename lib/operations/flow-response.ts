@@ -20,7 +20,7 @@ export type StationResponse = { checks: string[]; steps: ResponseStep[] };
 
 /** 칸마다 멈추고 다시 켤 수 있는 작업 — 카탈로그 잡 이름. 2차는 AI2 소비자(service)도 돌아 잡 멈춤만으로는 서지 않을 수 있다 */
 export const STATION_JOBS: Readonly<Record<StationKey | "human", readonly { job: string; label: string }[]>> = {
-  discover: [{ job: "crawl-seed", label: "GitHub 검색" }, { job: "hn-show-seed", label: "Show HN" }, { job: "crawl-ko-apply", label: "한국어 프로젝트" }],
+  discover: [{ job: "crawl-seed", label: "GitHub 검색" }, { job: "hn-show-seed", label: "Show HN" }, { job: "gn-show-seed", label: "Show GN" }, { job: "crawl-ko-apply", label: "한국어 프로젝트" }],
   fetch: [{ job: "crawl-fetch", label: "원본 수집" }],
   judge: [{ job: "crawl-judge", label: "규칙 심사" }],
   first: [{ job: "crawl-agent-review", label: "AI 1차 심사" }],

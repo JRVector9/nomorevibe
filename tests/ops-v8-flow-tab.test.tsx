@@ -164,13 +164,13 @@ describe("흐름 상세 탭", () => {
 
   it("소스 → 심사 흐름 → 보강 12(+그 밖) → 노드 상세 → 장부 요약 · 모델 자리 표 → 미룬 이유 차례로 그린다", () => {
     const html = renderToStaticMarkup(view());
-    const nodes = ["github", "show-hn", "x", "fetch", "judge", "first", "second", "human", "publish", "evidence", "agent-evidence", "intro-check", "others"]
+    const nodes = ["github", "show-hn", "show-gn", "x", "fetch", "judge", "first", "second", "human", "publish", "evidence", "agent-evidence", "intro-check", "others"]
       .map((key) => `data-node="${key}"`);
     const order = [...nodes, "ops-flow-panel", "장부 쉬운 말 요약", "모델 자리 전체", "미룬 이유 · 최근 1시간"].map((text) => html.indexOf(text));
     expect(order.every((index) => index >= 0), JSON.stringify(order)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
-    expect(html.match(/class="ops-flow-node"/g)?.length).toBe(3 + 6 + 13);
-    for (const label of ["GitHub 검색", "Show HN", "원본 수집", "규칙 심사", "AI 1차", "AI 2차", "사람 심사", "발행", "공개 근거", "개발 AI 근거", "소개 검수", "그 밖의 보강"])
+    expect(html.match(/class="ops-flow-node"/g)?.length).toBe(4 + 6 + 13);
+    for (const label of ["GitHub 검색", "Show HN", "Show GN", "원본 수집", "규칙 심사", "AI 1차", "AI 2차", "사람 심사", "발행", "공개 근거", "개발 AI 근거", "소개 검수", "그 밖의 보강"])
       expect(html).toContain(`<span class="nm">${label}</span>`);
     expect(html).toContain("GitHub 449");
     expect(html).toContain("기준 08:40:00 (DB)");

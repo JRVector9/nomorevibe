@@ -77,6 +77,11 @@ export const saveCrawlSettings = webWriteAction(async function saveCrawlSettings
         priority: num(form.get("showHn.priority")),
         requireEvidence: form.get("showHn.requireEvidence") === "on",
       } } : {}),
+      ...(form.has("showGn.priority") ? { showGn: {
+        enabled: form.get("showGn.enabled") === "on",
+        priority: num(form.get("showGn.priority")),
+        requireEvidence: form.get("showGn.requireEvidence") === "on",
+      } } : {}),
     },
     judge: {
       autoApproveMinStars: num(form.get("autoApproveMinStars")),

@@ -202,3 +202,8 @@ describe('lanesForRole', () => {
     }
   });
 });
+
+it('Show GN은 Show HN과 같은 crawler 줄에서 30분 주기로 등록된다', () => {
+  expect(JOB_CATALOG.find(job => job.name === 'gn-show-seed')).toEqual({ name: 'gn-show-seed', role: 'crawler', intervalMs: 30 * 60_000 });
+  expect(lanesForRole('crawler').find(lane => lane.includes('hn-show-seed'))).toContain('gn-show-seed');
+});

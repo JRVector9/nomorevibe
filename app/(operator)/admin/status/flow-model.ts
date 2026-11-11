@@ -4,7 +4,7 @@ import { secondReviewVoterSets } from "@/lib/crawl/second-review-voters";
 import { REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import { JOB_CATALOG } from "@/lib/jobs/catalog";
 import { sameReviewModel } from "@/lib/crawl/review-model-identity";
-import { SHOW_HN_SIGNAL, type CrawlSettings } from "@/lib/crawl/settings-schema";
+import { SHOW_GN_SIGNAL, SHOW_HN_SIGNAL, type CrawlSettings } from "@/lib/crawl/settings-schema";
 import { formatAgo, formatDetailTime } from "@/lib/format/time";
 import { isPausedJob } from "@/lib/jobs/status";
 import type { AttentionCounts, HourlySeries, ModelHealth } from "@/lib/operations/dashboard";
@@ -198,13 +198,13 @@ export function xSummary(view: XStatusView): CellSummary {
 
 /** 들어오는 곳 칸 — 이번 시 GitHub 검색(설정의 검색 신호) · Show HN · 그 밖(관리자 재수집 등) */
 export function sourceSummary(split: ReplicaRead<SourceSplit>, settings: Pick<CrawlSettings, "discover">):
-  CellSummary & { at: string | null; counts: { github: number; showHn: number; other: number } | null } {
+  CellSummary & { at: string | null; counts: { github: number; showHn: number; showGn: number; other: number } | null } {
   if (!split.ok) return { tone: "idle", value: "보류", note: replicaHoldText(split.reason), at: null, counts: null };
   const queries = new Set(settings.discover.queries.map((query) => query.label));
-  const counts = { github: 0, showHn: 0, other: 0 };
-  for (const row of split.value.signals) counts[row.signal === SHOW_HN_SIGNAL ? "showHn" : queries.has(row.signal) ? "github" : "other"] += row.count;
-  return { tone: counts.github + counts.showHn > 0 ? "ok" : "idle", counts, at: split.value.at,
-    value: `GitHub ${n(counts.github)} · Show HN ${n(counts.showHn)}${counts.other ? ` · 기타 ${n(counts.other)}` : ""}`,
+  const counts = { github: 0, showHn: 0, showGn: 0, other: 0 };
+  for (const row of split.value.signals) counts[row.signal === SHOW_HN_SIGNAL ? "showHn" : row.signal === SHOW_GN_SIGNAL ? "showGn" : queries.has(row.signal) ? "github" : "other"] += row.count;
+  return { tone: counts.github + counts.showHn + counts.showGn > 0 ? "ok" : "idle", counts, at: split.value.at,
+    value: `GitHub ${n(counts.github)} · Show HN ${n(counts.showHn)} · Show GN ${n(counts.showGn)}${counts.other ? ` · 기타 ${n(counts.other)}` : ""}`,
     note: `이번 시 · 기준 ${dbClock(split.value.at)} (DB)` };
 }
 
@@ -399,6 +399,7 @@ export function sourceNodes({ settings, split, x, quota, jobs, now }: {
     node("github", counts?.github, queries.some((query) => query.enabled), "crawl-seed",
       `검색 신호 ${queries.filter((query) => query.enabled).length}/${queries.length} 켜짐${quota ? ` · GitHub 한도 최신 ${fresh}/${quota.sources.length}` : ""}`),
     node("show-hn", counts?.showHn, settings.discover.showHn.enabled !== false, "hn-show-seed", settings.discover.showHn.requireEvidence ? "AI 흔적 요구" : "흔적 요구 없음"),
+    node("show-gn", counts?.showGn, settings.discover.showGn.enabled !== false, "gn-show-seed", settings.discover.showGn.requireEvidence ? "AI 흔적 요구" : "흔적 요구 없음"),
     { key: "x", label: xDef.label, code: xDef.code, tone: xs.tone, state: x.state === "unconfigured" || x.state === "missing" ? "연결 전" : xs.value.replace(/^X /, ""),
       big: x.state === "ok" ? n(x.report!.candidates) : null, unit: x.state === "ok" ? "후보" : "",
       io: `하루 1회 · ${limit !== undefined ? `최대 ${n(limit)}건 읽기 · ` : ""}후보만 저장` },

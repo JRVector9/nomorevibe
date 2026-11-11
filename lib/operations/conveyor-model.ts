@@ -271,7 +271,7 @@ function discoverStation(inputs: ConveyorInputs): Station {
   else { tone = "flow"; status = TONE_LABELS.flow; }
   const frontier = inputs.flow?.stages.find((row) => row.key === "discover")?.waiting;
   return {
-    key: "discover", phase: "explore", label: "탐색", what: "GitHub 검색·Show HN에서 새 저장소를 찾아 수집 줄에 올립니다",
+    key: "discover", phase: "explore", label: "탐색", what: "GitHub 검색·Show HN·Show GN에서 새 저장소를 찾아 수집 줄에 올립니다",
     waiting: null, oldestMinutes: null, done5m: null, doneHour, done24h, unit: "건",
     spark: series(inputs.hourly, (point) => point.discovered), tone, status, reason, holds: [],
     facts: [

@@ -1226,6 +1226,13 @@
       "when": 1794172801085,
       "tag": "0175_opencode_task_provider_literal",
       "breakpoints": true
+    },
+    {
+      "idx": 176,
+      "version": "7",
+      "when": 1794355200000,
+      "tag": "0176_geeknews_discovery_source",
+      "breakpoints": true
     }
   ]
 }

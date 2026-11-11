@@ -6,7 +6,7 @@ import { cdnPurges, crawlCandidates, crawlFrontier, crawlTaglines, crawlReviewAt
 import { REVIEW_PROMPT_VERSION, REVIEW_RULES_VERSION } from "@/lib/crawl/agent-review-contract";
 import { heldPublic } from "@/lib/crawl/product-audit-hold";
 import { latestManualCampaignSql, rollingCampaignSql } from "@/lib/crawl/audit-stream";
-import { SHOW_HN_SIGNAL, type CrawlSettings } from "@/lib/crawl/settings-schema";
+import { SHOW_GN_SIGNAL, SHOW_HN_SIGNAL, type CrawlSettings } from "@/lib/crawl/settings-schema";
 import { RECHECK_AFTER_MINUTES } from "@/lib/domain/products/health-freshness";
 import { countProducts, repoGone, SPAM_AUTO_BAN_ACTOR, SPAM_AUTO_BAN_REASON, spamAutoBanned } from "@/lib/domain/products/repository";
 import { repoReviewOpen } from "@/lib/domain/products/repo-reviews";
@@ -335,6 +335,7 @@ export async function signalYields(settings: CrawlSettings, days = 7, options: C
   // 설정은 담아 둔 집계에 섞지 않는다 — 흔적 요구를 바꾸면 바로 보인다
   return rows.map((row) => ({ ...row, requireEvidence: row.signal === SHOW_HN_SIGNAL
     ? settings.discover.showHn.requireEvidence === true
+    : row.signal === SHOW_GN_SIGNAL ? settings.discover.showGn.requireEvidence === true
     : settings.discover.queries.find((query) => query.label === row.signal)?.requireEvidence === true }));
 }
 

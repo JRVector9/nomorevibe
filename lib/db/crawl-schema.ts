@@ -26,6 +26,8 @@ import type { DelegatedModelOutcome } from "@/lib/crawl/delegated-hold";
  */
 export type FrontierState = "pending" | "fetching" | "done" | "failed" | "skipped";
 
+export type DiscoverySource = { source: "geeknews"; topicId: string; url: string };
+
 export const crawlFrontier = pgTable(
   "crawl_frontier",
   {
@@ -34,6 +36,8 @@ export const crawlFrontier = pgTable(
     repo: varchar("repo", { length: 200 }).notNull().unique(),
     /** 어떤 신호로 발견했는지 (commit-trailer 등) — 신호별 수율을 나중에 비교하려면 필요 */
     signal: varchar("signal", { length: 40 }).notNull(),
+    /** 최초 발굴 글의 출처. 화제성 점수나 AI 제작 근거가 아니다 */
+    discoverySource: jsonb("discovery_source").$type<DiscoverySource>(),
     /**
      * 그 신호가 말하는 "만든 AI" 추정값. 없으면 추정하지 않는다.
      *
