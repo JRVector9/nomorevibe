@@ -30,17 +30,8 @@ import { inTextRank, pinTextRanks, textContract } from "../text-task-ranks-fixtu
 // fresh 전용 테스트 DB만 허용한다(setup이 localhost·nomorevibe_test를 강제). 이 파일은 reset/truncate하지 않는다.
 if (process.env.TEST_DATABASE_URL !== TEST_DATABASE_URL) throw new Error("crawl_tagline_runtime_test_database_required");
 const serving = vi.hoisted(() => ({ contract: null as CrawlTaglineServingContract | null }));
-const afterNative = vi.hoisted(() => ({ run: null as null | ((result: CrawlTaglineCapacityResult) => Promise<void>) }));
 vi.mock("@/lib/llm/crawl-tagline-serving-contract", async load => ({ ...await load<typeof import("@/lib/llm/crawl-tagline-serving-contract")>(),
   resolveCrawlTaglineServingContract: () => serving.contract }));
-vi.mock("@/lib/crawl/tagline-model-capacity", async load => {
-  const actual = await load<typeof import("@/lib/crawl/tagline-model-capacity")>();
-  return { ...actual, writeCrawlTaglineWithModelCapacity: async (...args: Parameters<typeof actual.writeCrawlTaglineWithModelCapacity>) => {
-    const result = await actual.writeCrawlTaglineWithModelCapacity(...args);
-    await afterNative.run?.(result); // Fault injection after the real HTTP and SQL settlement.
-    return result;
-  } };
-});
 type Raw = Record<string, unknown>;
 // 「작업 ↔ 모델」 순위(PR B)의 1순위 모델 — 예전 TAGLINE_MODEL(등록부 기본값)과 같은 이름이다
 const TAGLINE_MODEL = "qwen3.6-35b-heretic";
@@ -191,10 +182,22 @@ beforeEach(async () => { pinTextRanks({ [jobName]: TAGLINE_MODEL }); setServingC
   await admin`INSERT INTO crawl_settings(id,values) VALUES(1,'{"enabled":true}') ON CONFLICT(id) DO UPDATE SET values=crawl_settings.values||'{"enabled":true}'::jsonb`;
   await elect();
 });
-afterEach(() => tracked(steps([() => drain(exercises), () => drain(work), cleanup, async () => { afterNative.run = null; serving.contract = null; setServingContractSnapshotForTest(null); pinTextRanks(null); vi.unstubAllEnvs();
+afterEach(() => tracked(steps([() => drain(exercises), () => drain(work), cleanup, async () => { serving.contract = null; setServingContractSnapshotForTest(null); pinTextRanks(null); vi.unstubAllEnvs();
   resetProviderRateLimitsForTest(); }]), hooks));
 afterAll(async () => { await steps([() => drain(exercises), () => drain(work), () => drain(hooks), cleanup, () => admin.end({ timeout: 5 }),
   async () => { await (globalThis as { pgClient?: ReturnType<typeof postgres> }).pgClient?.end({ timeout: 5 }); }]); });
+
+const afterNative = vi.hoisted(() => ({ run: null as null | ((result: CrawlTaglineCapacityResult) => Promise<void>) }));
+vi.mock("@/lib/crawl/tagline-model-capacity", async load => {
+  const actual = await load<typeof import("@/lib/crawl/tagline-model-capacity")>();
+  return { ...actual, writeCrawlTaglineWithModelCapacity: async (...args: Parameters<typeof actual.writeCrawlTaglineWithModelCapacity>) => {
+    const result = await actual.writeCrawlTaglineWithModelCapacity(...args);
+    await afterNative.run?.(result); // Fault injection after the real HTTP and SQL settlement.
+    return result;
+  } };
+});
+// The helper also resets in finally; this covers a failed test before helper completion.
+afterEach(() => { afterNative.run = null; });
 
 async function tickAfterBudgetEndsAt(ordinal: 1 | 2) {
   let budget = true, injected = false;
