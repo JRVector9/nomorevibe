@@ -36,6 +36,16 @@ const nextConfig: NextConfig = {
    */
   serverExternalPackages: ["postgres", "drizzle-orm"],
 
+  experimental: {
+    /**
+     * 미리 받은 화면(router.prefetch full — components/IntentPrefetch.tsx)을 브라우저가 들고 있는 시간. 기본 5분이면
+     * 엣지에서 이미 최대 5분 지난 사본(상세 max-age 240 + SWR 60)을 5분 더 보여 줄 수 있다. 상세의 '어떤 경우에도 5분' 원칙에
+     * 가깝게, Next 가 허용하는 가장 짧은 30초로 둔다(머문 뒤 누르기까지는 보통 1초 안이다).
+     * 보통 이동(dynamic)은 기본값 0초 그대로 — 누를 때마다 새로 받는다.
+     */
+    staleTimes: { static: 30 },
+  },
+
   // skill/SKILL.md는 빌드 산출물이 아니므로 명시적으로 포함시켜야 /skill.md가 런타임에 읽을 수 있다
   outputFileTracingIncludes: {
     "/skill.md": ["./skill/SKILL.md"],

@@ -6,6 +6,7 @@ import { publicUserAuthEnabled } from "@/lib/domain/github-integration/flags";
 import { talkPublicEnabled } from "@/lib/social/flags";
 import { analyticsEnabled } from "@/lib/analytics/config";
 import { GoogleAnalytics } from "@/components/analytics/GoogleAnalytics";
+import { IntentPrefetch } from "@/components/IntentPrefetch";
 import { SiteHeader } from "./SiteHeader";
 import { SiteFooter } from "./SiteFooter";
 import { MobileNav } from "./MobileNav";
@@ -28,6 +29,8 @@ export async function PublicShell({ locale, children, seasonfooter }: {
       <SavedToast />
       {/* 방문 분석은 공개 화면 틀에만 — 관리자·API·/go 에는 없다(lib/analytics/routes.ts) */}
       <GoogleAnalytics />
+      {/* 누를 것 같은 링크(머묾·터치·키보드)만 미리 받는다 — 화면에 보이는 링크는 받지 않는다(lib/web/intent-prefetch.ts) */}
+      <IntentPrefetch />
     </>
   );
 }
